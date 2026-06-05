@@ -1,0 +1,37 @@
+{
+    "cSpell.words": [
+        "anullsrc",
+        "BILI",
+        "DASHSCOPE",
+        "DEEPSEEK",
+        "demuxer",
+        "ffprobe",
+        "Freetype",
+        "KLING",
+        "lavfi",
+        "libass",
+        "libx",
+        "Qwen"
+    ],
+    "cSpell.useGitignore": true,
+    "cSpell.ignorePaths": [
+        "data/**",
+        "**/*.db",
+        "**/*_cache/**",
+    ],
+    "cSpell.enabledFileTypes": {
+        "dotenv": true,
+        "properties": true
+    },
+    "cSpell.ignoreRegExpList": [
+        "\\b[a-zA-Z_][a-zA-Z0-9_]*\\s*\\(", // 忽略函数调用
+        "\\b[a-zA-Z_][a-zA-Z0-9_]*\\.[a-zA-Z_][a-zA-Z0-9_]*\\s*\\(", // 忽略方法调用
+        "^\\s*from\\s+\\S+\\s+import\\s+.+$", // 忽略 from xxx import xxx
+        "^\\s*import\\s+.+$" // 忽略 import xxx
+    ],
+    "python-envs.defaultEnvManager": "ms-python.python:conda",
+    "python-envs.defaultPackageManager": "ms-python.python:conda",
+    "python-envs.pythonProjects": [],
+    "python.defaultInterpreterPath": "/opt/homebrew/Caskroom/miniconda/base/envs/flask_env/bin/python",
+    "python.terminal.activateEnvInCurrentTerminal": true
+}
