@@ -10,12 +10,9 @@ def create_job_from_title(
     *,
     skip_publish: bool = True,
 ) -> dict:
-    from app.config import get_settings
-
-    settings = get_settings()
     cleaned = title.strip()
-    if len(cleaned) > settings.max_title_length:
-        cleaned = cleaned[: settings.max_title_length]
+    if not cleaned:
+        raise ValueError("title is empty")
     with connection() as conn:
         job = job_repo.create_job(
             conn,

@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from app.config import get_settings
-from app.services.visual.text_render import split_sentences
+from app.services.visual.text_render import split_phrase_chunks
 
 __all__ = [
     "SubtitleCue",
@@ -42,12 +42,20 @@ class TTSClient:
         raise NotImplementedError
 
 
-def sentences_for_segment(segment: dict) -> list[str]:
+def phrase_chunks_for_segment(segment: dict) -> list[tuple[str, str]]:
+    """返回分镜内 (TTS文本, 字幕文本) 列表。"""
     text = (segment.get("text") or "").strip()
     if not text:
         raise ValueError(f"segment {segment.get('segment_index')} has empty text")
-    sentences = split_sentences(text)
-    return sentences if sentences else [text]
+    chunks = split_phrase_chunks(text)
+    if chunks:
+        return chunks
+    return [(text, text)]
+
+
+def sentences_for_segment(segment: dict) -> list[str]:
+    """兼容旧调用：返回 TTS 文本（含标点）。"""
+    return [tts for tts, _ in phrase_chunks_for_segment(segment)]
 
 
 def subtitle_cues_path_for(audio_dir: Path) -> Path:

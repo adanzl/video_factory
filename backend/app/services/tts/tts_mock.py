@@ -9,8 +9,8 @@ from app.services.tts.tts_mgr import (
     SubtitleCue,
     TTSClient,
     TTSResult,
+    phrase_chunks_for_segment,
     save_subtitle_cues,
-    sentences_for_segment,
     subtitle_cues_path_for,
 )
 
@@ -46,15 +46,15 @@ class MockTTSClient(TTSClient):
         for seg in segments:
             seg_index = seg["segment_index"]
             seg_duration = 0.0
-            for sent_index, sentence in enumerate(sentences_for_segment(seg)):
-                duration = _estimate_duration(sentence)
+            for sent_index, (tts_text, subtitle_text) in enumerate(phrase_chunks_for_segment(seg)):
+                duration = _estimate_duration(tts_text)
                 clip_path = clips_dir / f"{seg_index}_{sent_index}.mp3"
                 generate_silent_mp3(clip_path, duration)
                 clip_paths.append(clip_path)
                 subtitle_cues.append(
                     SubtitleCue(
                         segment_index=seg_index,
-                        text=sentence,
+                        text=subtitle_text,
                         duration_sec=duration,
                     )
                 )

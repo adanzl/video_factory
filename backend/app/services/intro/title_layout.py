@@ -21,8 +21,9 @@ def render_feed_title(
     max_size: int = 118,
     min_size: int = 58,
     max_lines: int = 3,
+    max_height: int | None = None,
 ) -> Image.Image:
-    """渲染标题文字块（不含背景圆）。"""
+    """渲染标题文字块（不含背景圆），最多 max_lines 行。"""
     normalized = title.strip()
 
     def _load(size: int):
@@ -36,6 +37,7 @@ def render_feed_title(
         min_size=min_size,
         wrap_fn=wrap_text,
         max_lines=max_lines,
+        max_height=max_height,
     )
     line_gap = max(8, font_size // 14)
     stroke = STROKE_WIDTH + 2
