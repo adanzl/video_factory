@@ -4,11 +4,11 @@ STAGES: tuple[str, ...] = (
     "title",
     "script",
     "image",
-    "cover",
     "intro",
     "tts",
     "quality",
     "ffmpeg",
+    "cover",
     "publish",
     "done",
 )

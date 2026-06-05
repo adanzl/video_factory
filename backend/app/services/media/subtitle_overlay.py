@@ -1,21 +1,19 @@
-"""字幕烧录：PIL 透明层 + Ken Burns 单次 FFmpeg 合成。
+"""字幕烧录：PIL 透明层 + 连续 Ken Burns 单次 FFmpeg 合成。
 
-按 TTS 句级时间轴逐句绘制 overlay PNG，与分镜图一次性编码为 clip。
-样式与片头共用 title_render（黄字、描边、斜投影、2x 超采样）。
+按 TTS 句级时间轴绘制 overlay PNG，在同一分镜内按 t 切换字幕（方案 A）。
 """
 
 from __future__ import annotations
 
 import os
-import shutil
 from pathlib import Path
 
 from PIL import Image
 
 from app.config import get_settings
-from app.services.media.ffmpeg_utils import (
-    concat_clips,
+from app.services.media.clip_render import (
     image_to_clip,
+    image_to_clip_timed_overlays,
     image_to_clip_with_overlay,
 )
 from app.services.visual.text_render import load_cjk_font, wrap_text
@@ -108,6 +106,7 @@ def burn_subtitled_clip(
     output_path: Path,
     duration_sec: float,
     motion_preset: str,
+    segment_index: int = 0,
 ) -> Path:
     """PIL 绘制 overlay + Ken Burns，单次编码输出带字幕 clip。"""
     overlay_path = output_path.with_suffix(".sub.png")
@@ -119,6 +118,7 @@ def burn_subtitled_clip(
             output_path,
             duration_sec,
             preset=motion_preset,
+            segment_index=segment_index,
         )
     finally:
         if not _keep_overlay_png():
@@ -134,33 +134,51 @@ def build_segment_clip(
     work_dir: Path,
     segment_index: int,
 ) -> Path:
-    """分镜内按句级时间轴逐句烧字幕后 concat。"""
+    """分镜内连续动效 + 句级字幕按时间轴切换，单次编码。"""
     if not subtitle_cues:
         raise ValueError(f"segment {segment_index} has no subtitle cues")
 
-    sub_clips: list[Path] = []
+    total_duration = sum(duration for _, duration in subtitle_cues if duration > 0)
+    if total_duration <= 0:
+        raise ValueError(f"segment {segment_index} has zero duration")
+
+    overlay_windows: list[tuple[Path, float, float]] = []
+    overlay_paths: list[Path] = []
+    cursor = 0.0
     for idx, (sentence, duration) in enumerate(subtitle_cues):
         if duration <= 0:
             continue
-        sub_clip = work_dir / f"{segment_index}_{idx}.mp4"
-        if sentence.strip():
-            burn_subtitled_clip(
-                image_path=image_path,
-                text=sentence,
-                output_path=sub_clip,
-                duration_sec=duration,
-                motion_preset=motion_preset,
-            )
-        else:
-            image_to_clip(image_path, sub_clip, duration, preset=motion_preset)
-        sub_clips.append(sub_clip)
+        start = cursor
+        end = cursor + duration
+        cursor = end
+        if not sentence.strip():
+            continue
+        overlay_path = work_dir / f"{segment_index}_{idx}.sub.png"
+        render_subtitle_overlay(sentence, overlay_path)
+        overlay_paths.append(overlay_path)
+        overlay_windows.append((overlay_path, start, end))
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    if len(sub_clips) == 1:
-        shutil.move(str(sub_clips[0]), str(output_path))
-        return output_path
-
-    concat_clips(sub_clips, output_path)
-    for path in sub_clips:
-        path.unlink(missing_ok=True)
+    try:
+        if overlay_windows:
+            image_to_clip_timed_overlays(
+                image_path,
+                overlay_windows,
+                output_path,
+                total_duration,
+                preset=motion_preset,
+                segment_index=segment_index,
+            )
+        else:
+            image_to_clip(
+                image_path,
+                output_path,
+                total_duration,
+                preset=motion_preset,
+                segment_index=segment_index,
+            )
+    finally:
+        if not _keep_overlay_png():
+            for path in overlay_paths:
+                path.unlink(missing_ok=True)
     return output_path

@@ -6,10 +6,25 @@ from pathlib import Path
 from app.config import get_settings
 
 
-def _scale_crop_filter() -> str:
-    s = get_settings()
-    w, h = s.video_width, s.video_height
-    return f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}"
+def extract_first_frame(video_path: Path, output_path: Path) -> Path:
+    """从视频提取首帧，保存为 JPEG 封面。"""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(video_path),
+            "-frames:v",
+            "1",
+            "-q:v",
+            "2",
+            str(output_path),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    return output_path
 
 
 def probe_duration(path: Path) -> float:
@@ -86,99 +101,56 @@ def generate_silent_mp3(output_path: Path, duration_sec: float) -> Path:
     return output_path
 
 
-def image_to_clip(
-    image_path: Path,
+def sequence_to_video(
+    frames_dir: Path,
     output_path: Path,
-    duration_sec: float,
     *,
-    preset: str = "ken_burns_slow",
+    fps: int = 25,
+    frame_count: int | None = None,
 ) -> Path:
+    """将 frame_0000.png 序列编码为 H.264 视频（无音轨）。"""
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fps = 25
-    frames = max(int(duration_sec * fps), 1)
-    settings = get_settings()
-    w, h = settings.video_width, settings.video_height
-    zoom = "1.08" if preset == "ken_burns_slow" else "1.15"
-    vf = (
-        f"{_scale_crop_filter()},"
-        f"zoompan=z='min(zoom+0.0008,{zoom})':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"  # cSpell: disable-line
-        f"d={frames}:s={w}x{h}:fps={fps},format=yuv444p")
-    subprocess.run(
-        [
-            "ffmpeg",
-            "-y",
-            "-loop",
-            "1",
-            "-i",
-            str(image_path),
-            "-vf",
-            vf,
-            "-t",
-            str(duration_sec),
-            "-c:v",
-            "libx264",
-            "-crf",
-            "18",
-            "-pix_fmt",
-            "yuv444p",
-            str(output_path),
-        ],
-        check=True,
-        capture_output=True,
-    )
+    pattern = frames_dir / "frame_%04d.png"
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-framerate",
+        str(fps),
+        "-i",
+        str(pattern),
+        "-c:v",
+        "libx264",
+        "-crf",
+        "18",
+        "-pix_fmt",
+        "yuv420p",
+    ]
+    if frame_count is not None:
+        cmd.extend(["-frames:v", str(frame_count)])
+    cmd.append(str(output_path))
+    subprocess.run(cmd, check=True, capture_output=True)
     return output_path
 
 
-def image_to_clip_with_overlay(
-    image_path: Path,
-    overlay_path: Path,
-    output_path: Path,
-    duration_sec: float,
-    *,
-    preset: str = "ken_burns_slow",
-    crf: int = 14,
-) -> Path:
-    """Ken Burns 动效 + 字幕 overlay，单次编码（减少字缘压缩损失）。"""
+def mux_video_audio(video_path: Path, audio_path: Path, output_path: Path) -> Path:
+    """合并视频与音频，以视频时长为准。"""
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fps = 25
-    frames = max(int(duration_sec * fps), 1)
-    settings = get_settings()
-    w, h = settings.video_width, settings.video_height
-    zoom = "1.08" if preset == "ken_burns_slow" else "1.15"
-    motion = (
-        f"{_scale_crop_filter()},"
-        f"zoompan=z='min(zoom+0.0008,{zoom})':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"  # cSpell: disable-line
-        f"d={frames}:s={w}x{h}:fps={fps}"
-    )
-    filter_complex = (
-        f"[0:v]{motion},format=yuv444p[bg];"
-        f"[1:v]format=rgba[fg];"
-        f"[bg][fg]overlay=0:0:format=auto,format=yuv444p"
-    )
     subprocess.run(
         [
             "ffmpeg",
             "-y",
-            "-loop",
-            "1",
             "-i",
-            str(image_path),
+            str(video_path),
             "-i",
-            str(overlay_path),
-            "-filter_complex",
-            filter_complex,
-            "-t",
-            str(duration_sec),
+            str(audio_path),
             "-c:v",
-            "libx264",
-            "-crf",
-            str(crf),
-            "-preset",
-            "medium",
-            "-pix_fmt",
-            "yuv444p",
-            "-sws_flags",
-            "lanczos+accurate_rnd+full_chroma_int",
+            "copy",
+            "-c:a",
+            "aac",
+            "-map",
+            "0:v:0",
+            "-map",
+            "1:a:0",
             str(output_path),
         ],
         check=True,
@@ -205,7 +177,7 @@ def image_to_video(
     with Image.open(image_path) as img:
         need_scale = img.size != (width, height)
     vf = (
-        f"scale={width}:{height}:flags=lanczos,format=yuv420p"
+        f"scale={width}:{height}:flags=lanczos,format=yuv420p"  # cSpell: disable-line
         if need_scale
         else "format=yuv420p"
     )
@@ -290,14 +262,36 @@ def _probe_audio_sample_rate(path: Path) -> int | None:
     return int(rate)
 
 
-def prepend_intro(intro_path: Path, body_path: Path, output_path: Path) -> Path:
-    """片头（通常无音轨）接正文，保留正文配音。"""
+def prepend_intro(intro_path: Path, body_path: Path,
+                  output_path: Path) -> Path:
+    """片头接正文；片头有音轨则保留，否则片头段静音。"""
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    sample_rate = _probe_audio_sample_rate(body_path)
-    if sample_rate is None:
+    body_rate = _probe_audio_sample_rate(body_path)
+    intro_rate = _probe_audio_sample_rate(intro_path)
+    intro_dur = probe_duration(intro_path)
+
+    if body_rate is None:
         return concat_clips([intro_path, body_path], output_path)
 
-    intro_dur = probe_duration(intro_path)
+    if intro_rate is not None:
+        filter_complex = (
+            "[0:v]setpts=PTS-STARTPTS[v0];"
+            "[1:v]setpts=PTS-STARTPTS[v1];"
+            "[v0][v1]concat=n=2:v=1:a=0[vout];"
+            "[0:a]aformat=sample_rates={}:channel_layouts=mono,asetpts=PTS-STARTPTS[a0];"
+            "[1:a]asetpts=PTS-STARTPTS[a1];"
+            "[a0][a1]concat=n=2:v=0:a=1[aout]"
+        ).format(body_rate)
+    else:
+        filter_complex = (
+            "[0:v]setpts=PTS-STARTPTS[v0];"
+            "[1:v]setpts=PTS-STARTPTS[v1];"
+            "[v0][v1]concat=n=2:v=1:a=0[vout];"
+            f"anullsrc=r={body_rate}:cl=mono,atrim=0:{intro_dur},asetpts=PTS-STARTPTS[asilent];"
+            "[1:a]asetpts=PTS-STARTPTS[a1];"
+            "[asilent][a1]concat=n=2:v=0:a=1[aout]"
+        )
+
     subprocess.run(
         [
             "ffmpeg",
@@ -307,14 +301,7 @@ def prepend_intro(intro_path: Path, body_path: Path, output_path: Path) -> Path:
             "-i",
             str(body_path),
             "-filter_complex",
-            (
-                "[0:v]setpts=PTS-STARTPTS[v0];"
-                "[1:v]setpts=PTS-STARTPTS[v1];"
-                "[v0][v1]concat=n=2:v=1:a=0[vout];"
-                f"anullsrc=r={sample_rate}:cl=mono,atrim=0:{intro_dur},asetpts=PTS-STARTPTS[asilent];"
-                "[1:a]asetpts=PTS-STARTPTS[a1];"
-                "[asilent][a1]concat=n=2:v=0:a=1[aout]"
-            ),
+            filter_complex,
             "-map",
             "[vout]",
             "-map",

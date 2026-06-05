@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from app.repositories import job_log_repo, job_repo
 from app.repositories.connection import connection
-from app.services.visual.visual_mgr import generate_intro
+from app.services.intro import generate_intro
 from worker.context import JobContext
 from worker.stages.base import StageExecutor
 

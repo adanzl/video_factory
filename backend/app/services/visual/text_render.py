@@ -111,4 +111,3 @@ def split_sentences(text: str) -> list[str]:
     if buf.strip():
         sentences.append(buf.strip())
     return sentences
-

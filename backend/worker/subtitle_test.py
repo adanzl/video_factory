@@ -49,6 +49,7 @@ def rebuild_segment_subtitles(
             output_path=out_path,
             duration_sec=duration,
             motion_preset=settings.motion_preset,
+            segment_index=segment_index,
         )
         return out_path
 

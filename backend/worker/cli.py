@@ -28,7 +28,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--skip-publish",
         action="store_true",
         default=None,
-        help="stop after ffmpeg (default from env)",
+        help="stop before publish (default from env)",
     )
     run_p.add_argument("--publish", action="store_true", help="enable publish stage")
 
