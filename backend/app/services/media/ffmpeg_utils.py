@@ -215,9 +215,48 @@ def merge_audio_video(
     *,
     subtitle_path: Path | None = None,
 ) -> Path:
-    """合并画面与配音。字幕已在分镜阶段烧录；subtitle_path 仅保留供质检/外挂使用。"""
+    """合并画面与配音，以音频时长为准，不拉伸/压缩音频。"""
     _ = subtitle_path
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    audio_dur = probe_duration(audio_path)
+    video_dur = probe_duration(video_path)
+    drift = video_dur - audio_dur
+
+    if abs(drift) <= 0.08:
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-i",
+                str(video_path),
+                "-i",
+                str(audio_path),
+                "-map",
+                "0:v:0",
+                "-map",
+                "1:a:0",
+                "-c:v",
+                "copy",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "128k",
+                "-t",
+                f"{audio_dur:.3f}",
+                "-movflags",
+                "+faststart",
+                str(output_path),
+            ],
+            check=True,
+            capture_output=True,
+        )
+        return output_path
+
+    if drift > 0:
+        vf = f"trim=0:{audio_dur:.3f},setpts=PTS-STARTPTS"
+    else:
+        vf = f"tpad=stop_mode=clone:stop_duration={audio_dur - video_dur:.3f}"
+
     subprocess.run(
         [
             "ffmpeg",
@@ -226,11 +265,24 @@ def merge_audio_video(
             str(video_path),
             "-i",
             str(audio_path),
+            "-filter_complex",
+            f"[0:v]{vf}[vout]",
+            "-map",
+            "[vout]",
+            "-map",
+            "1:a:0",
             "-c:v",
-            "copy",
+            "libx264",
+            "-crf",
+            "18",
             "-c:a",
             "aac",
-            "-shortest",
+            "-b:a",
+            "128k",
+            "-t",
+            f"{audio_dur:.3f}",
+            "-movflags",
+            "+faststart",
             str(output_path),
         ],
         check=True,

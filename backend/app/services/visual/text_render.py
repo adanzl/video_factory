@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from PIL import ImageFont
@@ -94,8 +95,68 @@ def wrap_text(
 _SENTENCE_END = frozenset("。！？!?；;")
 
 
+_SUBTITLE_SPLIT_PUNCT = re.compile(
+    r'[。！？；：，、,.!?;:…—·「」『』【】（）()\[\]{}《》〈〉—－~～\'"]+'
+)
+
+
+def balance_title_lines(text: str, max_lines: int) -> list[str]:
+    """将标题均分为最多 max_lines 行，避免末行只剩一两个字。"""
+    normalized = text.strip()
+    if not normalized or max_lines <= 1:
+        return [normalized] if normalized else []
+    if len(normalized) <= max_lines:
+        return [normalized]
+    n = len(normalized)
+    base, extra = divmod(n, max_lines)
+    lines: list[str] = []
+    idx = 0
+    for i in range(max_lines):
+        length = base + (1 if i < extra else 0)
+        if length <= 0:
+            break
+        lines.append(normalized[idx : idx + length])
+        idx += length
+    return lines
+
+
+def split_phrase_chunks(text: str) -> list[tuple[str, str]]:
+    """按标点分条，返回 (TTS 文本含标点, 字幕文本无标点)。"""
+    text = text.strip()
+    if not text:
+        return []
+
+    tokens = re.split(
+        r'([。！？；：，、,.!?;:…—·「」『』【】（）()\[\]{}《》〈〉—－~～\'"]+)',
+        text,
+    )
+    chunks: list[tuple[str, str]] = []
+    buf = ""
+    for token in tokens:
+        if not token:
+            continue
+        if _SUBTITLE_SPLIT_PUNCT.fullmatch(token):
+            buf += token
+            display = _SUBTITLE_SPLIT_PUNCT.sub("", buf).strip()
+            if display:
+                chunks.append((buf.strip(), display))
+            buf = ""
+        else:
+            buf += token
+    if buf.strip():
+        display = _SUBTITLE_SPLIT_PUNCT.sub("", buf).strip()
+        if display:
+            chunks.append((buf.strip(), display))
+    return chunks
+
+
+def split_subtitle_phrases(text: str) -> list[str]:
+    """按标点分条，字幕展示用（不含标点）。"""
+    return [display for _, display in split_phrase_chunks(text)]
+
+
 def split_sentences(text: str) -> list[str]:
-    """按句末标点断句。"""
+    """兼容旧逻辑：按句末标点断句（保留标点）。"""
     text = text.strip()
     if not text:
         return []

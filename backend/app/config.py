@@ -83,6 +83,7 @@ class Settings:
     intro_tts_rate: float
     intro_tts_pitch: float
     max_title_length: int
+    segment_target_sec: float
 
     def video_size(self) -> str:
         return _size_str(self.video_width, self.video_height)
@@ -204,4 +205,5 @@ def get_settings() -> Settings:
         intro_tts_rate=float(os.getenv("INTRO_TTS_RATE", "1.25")),
         intro_tts_pitch=float(os.getenv("INTRO_TTS_PITCH", "1.15")),
         max_title_length=int(os.getenv("MAX_TITLE_LENGTH", "24")),
+        segment_target_sec=float(os.getenv("SEGMENT_TARGET_SEC", "12")),
     )

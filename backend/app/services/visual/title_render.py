@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
+from app.services.visual.text_render import balance_title_lines
+
 # 描边 / 阴影
 STROKE_WIDTH = 1
 SHADOW_BLUR = 4
@@ -188,8 +190,10 @@ def fit_font_and_lines(
     min_size: int,
     wrap_fn,
     max_lines: int | None = None,
+    max_height: int | None = None,
+    line_gap_ratio: float = 1 / 14,
 ) -> tuple[ImageFont.FreeTypeFont, list[str], int]:
-    """从大字号尝试，直到折行后每行都不超宽（可选限制最大行数）。"""
+    """从大字号尝试，直到折行后每行都不超宽（可选限制行数与总高度）。"""
     normalized = text.strip()
     if not normalized:
         font = load_font(max_size)
@@ -197,15 +201,36 @@ def fit_font_and_lines(
 
     for size in range(max_size, min_size - 1, -2):
         font = load_font(size)
-        lines = wrap_fn(normalized, font, max_width)
+        if max_lines is not None:
+            lines = balance_title_lines(normalized, max_lines)
+        else:
+            lines = wrap_fn(normalized, font, max_width)
         if max_lines is not None and len(lines) > max_lines:
             continue
-        if all(text_bbox(line, font)[0] <= max_width for line in lines):
-            return font, lines, size
+        if not all(text_bbox(line, font)[0] <= max_width for line in lines):
+            if max_lines is not None:
+                lines = wrap_fn(normalized, font, max_width)
+                if len(lines) > max_lines:
+                    lines = balance_title_lines(normalized, max_lines)
+            else:
+                continue
+        if not all(text_bbox(line, font)[0] <= max_width for line in lines):
+            continue
+        if max_height is not None:
+            gap = max(8, int(size * line_gap_ratio))
+            total_h = sum(text_bbox(line, font)[1] for line in lines) + gap * max(
+                len(lines) - 1,
+                0,
+            )
+            if total_h > max_height:
+                continue
+        return font, lines, size
+
     font = load_font(min_size)
-    lines = wrap_fn(normalized, font, max_width)
     if max_lines is not None:
-        lines = lines[:max_lines]
+        lines = balance_title_lines(normalized, max_lines)
+    else:
+        lines = wrap_fn(normalized, font, max_width)
     return font, lines, min_size
 
 

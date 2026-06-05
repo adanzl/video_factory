@@ -17,8 +17,8 @@ from app.services.tts.tts_mgr import (
     SubtitleCue,
     TTSClient,
     TTSResult,
+    phrase_chunks_for_segment,
     save_subtitle_cues,
-    sentences_for_segment,
     subtitle_cues_path_for,
 )
 
@@ -202,25 +202,26 @@ class AliTTSClient(TTSClient):
 
         for seg in segments:
             seg_index = seg["segment_index"]
-            sentences = sentences_for_segment(seg)
+            phrases = phrase_chunks_for_segment(seg)
             seg_duration = 0.0
-            logger.info("tts ali segment %s, %s sentences", seg_index, len(sentences))
+            logger.info("tts ali segment %s, %s phrases", seg_index, len(phrases))
 
-            for sent_index, sentence in enumerate(sentences):
+            for sent_index, (tts_text, subtitle_text) in enumerate(phrases):
                 logger.info(
-                    "tts ali segment %s sentence %s, %s chars",
+                    "tts ali segment %s phrase %s, tts=%s chars, sub=%s chars",
                     seg_index,
                     sent_index,
-                    len(sentence),
+                    len(tts_text),
+                    len(subtitle_text),
                 )
                 clip_path = clips_dir / f"{seg_index}_{sent_index}.mp3"
-                clip_path.write_bytes(_synthesize_utterance(sentence))
+                clip_path.write_bytes(_synthesize_utterance(tts_text))
                 duration = probe_duration(clip_path)
                 clip_paths.append(clip_path)
                 subtitle_cues.append(
                     SubtitleCue(
                         segment_index=seg_index,
-                        text=sentence,
+                        text=subtitle_text,
                         duration_sec=duration,
                     )
                 )

@@ -231,6 +231,7 @@ def _build_title_layer(
     center_x = width // 2
     center_y = int(height * _TITLE_CIRCLE_CENTER_Y_RATIO)
     text_max_w = int(width * _TITLE_TEXT_WIDTH_RATIO)
+    text_max_h = int(diameter * 0.68)
 
     text_block = render_feed_title(
         title,
@@ -239,6 +240,7 @@ def _build_title_layer(
         max_size=_EPISODE_FONT_MAX,
         min_size=_EPISODE_FONT_MIN,
         max_lines=_EPISODE_MAX_LINES,
+        max_height=text_max_h,
     )
 
     layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))

@@ -10,7 +10,7 @@ __all__ = ["LLMClient", "generate_script"]
 
 
 class LLMClient:
-    def generate_script(self, title: str) -> dict[str, Any]:
+    def generate_script(self, title: str, *, feedback: str | None = None) -> dict[str, Any]:
         raise NotImplementedError
 
 
@@ -23,5 +23,5 @@ def _get_client() -> LLMClient:
     return DeepSeekClient()
 
 
-def generate_script(title: str) -> dict[str, Any]:
-    return _get_client().generate_script(title)
+def generate_script(title: str, *, feedback: str | None = None) -> dict[str, Any]:
+    return _get_client().generate_script(title, feedback=feedback)
