@@ -54,6 +54,7 @@ def _fit_subtitle(text: str, max_width: int) -> tuple[list[str], int]:
         min_size=_SUBTITLE_FONT_MIN,
         wrap_fn=wrap_text,
         max_lines=_MAX_LINES,
+        balance_overflow=False,
     )
     return lines, font_size
 

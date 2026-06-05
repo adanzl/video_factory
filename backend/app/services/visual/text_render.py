@@ -95,19 +95,23 @@ def wrap_text(
 _SENTENCE_END = frozenset("。！？!?；;")
 
 
+_SUBTITLE_STRIP_PUNCT = re.compile(
+    r'[。！？；，,.!?;"]+'
+)
+# 分条断点：顿号、书名号《》〈〉、各类括号不分割，保留在句内
 _SUBTITLE_SPLIT_PUNCT = re.compile(
-    r'[。！？；：，、,.!?;:…—·「」『』【】（）()\[\]{}《》〈〉—－~～\'"]+'
+    r'[。！？；，,.!?;"]+'
 )
 
 
 def balance_title_lines(text: str, max_lines: int) -> list[str]:
-    """将标题均分为最多 max_lines 行，避免末行只剩一两个字。"""
+    """将过长标题均分为最多 max_lines 行（仅当自然折行仍超行数时使用）。"""
     normalized = text.strip()
     if not normalized or max_lines <= 1:
         return [normalized] if normalized else []
-    if len(normalized) <= max_lines:
-        return [normalized]
     n = len(normalized)
+    if n <= max_lines:
+        return [normalized]
     base, extra = divmod(n, max_lines)
     lines: list[str] = []
     idx = 0
@@ -121,13 +125,13 @@ def balance_title_lines(text: str, max_lines: int) -> list[str]:
 
 
 def split_phrase_chunks(text: str) -> list[tuple[str, str]]:
-    """按标点分条，返回 (TTS 文本含标点, 字幕文本无标点)。"""
+    """按标点分条，返回 (TTS 文本含标点, 字幕文本：去句读标点，保留书名号/括号/顿号)。"""
     text = text.strip()
     if not text:
         return []
 
     tokens = re.split(
-        r'([。！？；：，、,.!?;:…—·「」『』【】（）()\[\]{}《》〈〉—－~～\'"]+)',
+        r'([。！？；：，,.!?;:…—·—－~～\'"]+)',
         text,
     )
     chunks: list[tuple[str, str]] = []
@@ -137,21 +141,21 @@ def split_phrase_chunks(text: str) -> list[tuple[str, str]]:
             continue
         if _SUBTITLE_SPLIT_PUNCT.fullmatch(token):
             buf += token
-            display = _SUBTITLE_SPLIT_PUNCT.sub("", buf).strip()
+            display = _SUBTITLE_STRIP_PUNCT.sub("", buf).strip()
             if display:
                 chunks.append((buf.strip(), display))
             buf = ""
         else:
             buf += token
     if buf.strip():
-        display = _SUBTITLE_SPLIT_PUNCT.sub("", buf).strip()
+        display = _SUBTITLE_STRIP_PUNCT.sub("", buf).strip()
         if display:
             chunks.append((buf.strip(), display))
     return chunks
 
 
 def split_subtitle_phrases(text: str) -> list[str]:
-    """按标点分条，字幕展示用（不含标点）。"""
+    """按标点分条，字幕展示用（句读标点去掉，书名号/括号/顿号保留）。"""
     return [display for _, display in split_phrase_chunks(text)]
 
 
