@@ -1,0 +1,6 @@
+flask>=3.0
+python-dotenv>=1.0
+requests>=2.31
+Pillow>=10.0
+redis>=5.0
+websocket-client>=1.8
