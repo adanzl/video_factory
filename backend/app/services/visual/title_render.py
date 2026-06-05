@@ -192,6 +192,7 @@ def fit_font_and_lines(
     max_lines: int | None = None,
     max_height: int | None = None,
     line_gap_ratio: float = 1 / 14,
+    balance_overflow: bool = True,
 ) -> tuple[ImageFont.FreeTypeFont, list[str], int]:
     """从大字号尝试，直到折行后每行都不超宽（可选限制行数与总高度）。"""
     normalized = text.strip()
@@ -199,21 +200,18 @@ def fit_font_and_lines(
         font = load_font(max_size)
         return font, [text], max_size
 
+    best: tuple[ImageFont.FreeTypeFont, list[str], int] | None = None
+
     for size in range(max_size, min_size - 1, -2):
         font = load_font(size)
-        if max_lines is not None:
-            lines = balance_title_lines(normalized, max_lines)
-        else:
-            lines = wrap_fn(normalized, font, max_width)
+        lines = wrap_fn(normalized, font, max_width)
         if max_lines is not None and len(lines) > max_lines:
-            continue
-        if not all(text_bbox(line, font)[0] <= max_width for line in lines):
-            if max_lines is not None:
-                lines = wrap_fn(normalized, font, max_width)
-                if len(lines) > max_lines:
-                    lines = balance_title_lines(normalized, max_lines)
+            if balance_overflow:
+                lines = balance_title_lines(normalized, max_lines)
             else:
                 continue
+        if max_lines is not None and len(lines) > max_lines:
+            continue
         if not all(text_bbox(line, font)[0] <= max_width for line in lines):
             continue
         if max_height is not None:
@@ -224,13 +222,18 @@ def fit_font_and_lines(
             )
             if total_h > max_height:
                 continue
-        return font, lines, size
+        if best is None or len(lines) < len(best[1]) or (
+            len(lines) == len(best[1]) and size > best[2]
+        ):
+            best = (font, lines, size)
+
+    if best is not None:
+        return best
 
     font = load_font(min_size)
-    if max_lines is not None:
+    lines = wrap_fn(normalized, font, max_width)
+    if max_lines is not None and len(lines) > max_lines and balance_overflow:
         lines = balance_title_lines(normalized, max_lines)
-    else:
-        lines = wrap_fn(normalized, font, max_width)
     return font, lines, min_size
 
 

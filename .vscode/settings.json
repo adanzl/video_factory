@@ -13,6 +13,7 @@
         "libass",
         "libmp",
         "libx",
+        "PUNCT",
         "Qwen"
     ],
     "cSpell.useGitignore": true,
