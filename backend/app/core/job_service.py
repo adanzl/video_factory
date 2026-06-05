@@ -10,15 +10,21 @@ def create_job_from_title(
     *,
     skip_publish: bool = True,
 ) -> dict:
+    from app.config import get_settings
+
+    settings = get_settings()
+    cleaned = title.strip()
+    if len(cleaned) > settings.max_title_length:
+        cleaned = cleaned[: settings.max_title_length]
     with connection() as conn:
         job = job_repo.create_job(
             conn,
-            title.strip(),
+            cleaned,
             skip_publish=skip_publish,
             stage="script",
             status="pending",
         )
-        job_log_repo.append_log(conn, job["id"], "title", f"created job: {title}")
+        job_log_repo.append_log(conn, job["id"], "title", f"created job: {cleaned}")
         return job
 
 

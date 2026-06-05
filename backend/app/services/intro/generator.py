@@ -1,0 +1,422 @@
+"""片头视频：品牌喊声 + 本期标题 + 双人 IP，按分类色系程序化合成。"""
+
+from __future__ import annotations
+
+import math
+import shutil
+from pathlib import Path
+
+from PIL import Image, ImageChops, ImageDraw
+
+from app.config import get_settings
+from app.services.intro.title_layout import render_feed_title
+from app.services.intro.themes import get_intro_theme
+from app.services.media.ffmpeg_utils import mux_video_audio, probe_duration, sequence_to_video
+from app.services.visual.text_render import load_cjk_font
+from app.services.visual.title_render import STROKE_WIDTH, compose_hstack, render_text_rgba
+
+_FPS = 25
+_ENTER_SEC = 0.32
+_HOLD_TAIL_SEC = 0.35
+_BRAND_FONT_SIZE = 72
+_EPISODE_FONT_MAX = 118
+_EPISODE_FONT_MIN = 58
+_EPISODE_MAX_LINES = 3
+_BADGE_FONT_SIZE = 30
+_BRAND_TOP_RATIO = 0.06
+_TITLE_CIRCLE_WIDTH_RATIO = 0.60
+_TITLE_MOON_SCALE = 1.5
+_TITLE_CIRCLE_CENTER_Y_RATIO = 0.36
+_TITLE_TEXT_WIDTH_RATIO = 0.90
+_HOST_HEIGHT_RATIO = 0.42
+_HOST_WIDTH_RATIO = 0.94
+
+
+def _is_han(char: str) -> bool:
+    code = ord(char)
+    return (
+        0x4E00 <= code <= 0x9FFF
+        or 0x3400 <= code <= 0x4DBF
+        or 0xF900 <= code <= 0xFAFF
+        or 0x20000 <= code <= 0x2A6DF
+    )
+
+
+def _normalize_title(text: str) -> str:
+    parts: list[str] = []
+    for char in text:
+        if char in "？?":
+            parts.append("？")
+        elif char.isspace():
+            continue
+        elif _is_han(char) or (char.isascii() and char.isalnum()):
+            parts.append(char)
+    return "".join(parts)
+
+
+def _ease_out_back(t: float, s: float = 1.4) -> float:
+    t = max(0.0, min(1.0, t))
+    t -= 1.0
+    return t * t * ((s + 1.0) * t + s) + 1.0
+
+
+def _draw_vertical_gradient_rgba(
+    width: int,
+    height: int,
+    top: tuple[int, int, int, int],
+    bottom: tuple[int, int, int, int],
+) -> Image.Image:
+    image = Image.new("RGBA", (width, height))
+    draw = ImageDraw.Draw(image)
+    for y in range(height):
+        t = y / max(height - 1, 1)
+        color = tuple(int(top[i] + (bottom[i] - top[i]) * t) for i in range(4))
+        draw.line([(0, y), (width, y)], fill=color)
+    return image
+
+
+def _key_black_to_alpha(img: Image.Image, *, threshold: int = 35) -> Image.Image:
+    rgba = img.convert("RGBA")
+    pixels = rgba.load()
+    w, h = rgba.size
+    for y in range(h):
+        for x in range(w):
+            r, g, b, a = pixels[x, y]
+            if a == 0 or (r <= threshold and g <= threshold and b <= threshold):
+                pixels[x, y] = (0, 0, 0, 0)
+    return rgba
+
+
+def _tint_image(
+    img: Image.Image,
+    color: tuple[int, int, int],
+    *,
+    strength: float = 0.5,
+) -> Image.Image:
+    tinted = img.copy()
+    pixels = tinted.load()
+    w, h = tinted.size
+    tr, tg, tb = color
+    mix = max(0.0, min(1.0, strength))
+    keep = 1.0 - mix
+    for y in range(h):
+        for x in range(w):
+            r, g, b, a = pixels[x, y]
+            if a == 0:
+                continue
+            pixels[x, y] = (
+                int(r * keep + tr * mix),
+                int(g * keep + tg * mix),
+                int(b * keep + tb * mix),
+                a,
+            )
+    return tinted
+
+
+def _load_moon_backdrop(
+    path: Path,
+    diameter: int,
+    theme,
+    *,
+    tint_yellow: bool = False,
+) -> Image.Image:
+    if not path.exists():
+        raise FileNotFoundError(f"片头月亮素材不存在: {path}")
+    moon = Image.open(path).convert("RGBA")
+    moon = moon.resize((diameter, diameter), Image.Resampling.LANCZOS)
+    moon = _key_black_to_alpha(moon)
+    if tint_yellow:
+        moon = _tint_image(moon, theme.title_fill[:3], strength=0.58)
+    fade = _draw_vertical_gradient_rgba(
+        diameter,
+        diameter,
+        (255, 255, 255, theme.title_circle_top[3]),
+        (255, 255, 255, theme.title_circle_bottom[3]),
+    )
+    moon.putalpha(ImageChops.multiply(moon.split()[3], fade.split()[3]))
+    return moon
+
+
+def _draw_gradient(width: int, height: int, top: tuple[int, int, int], bottom: tuple[int, int, int]) -> Image.Image:
+    image = Image.new("RGBA", (width, height))
+    draw = ImageDraw.Draw(image)
+    for y in range(height):
+        t = y / max(height - 1, 1)
+        color = (
+            int(top[0] + (bottom[0] - top[0]) * t),
+            int(top[1] + (bottom[1] - top[1]) * t),
+            int(top[2] + (bottom[2] - top[2]) * t),
+            255,
+        )
+        draw.line([(0, y), (width, y)], fill=color)
+    return image
+
+
+def _draw_particles(width: int, height: int, color: tuple[int, int, int, int]) -> Image.Image:
+    layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(layer)
+    spacing = 56
+    for x in range(0, width + spacing, spacing):
+        for y in range(0, height + spacing, spacing):
+            alpha = color[3] + int(12 * math.sin(x * 0.03 + y * 0.02))
+            r = 2 + int(abs(math.sin(x * 0.01)) * 2)
+            draw.ellipse([x - r, y - r, x + r, y + r], fill=(color[0], color[1], color[2], min(alpha, 90)))
+    return layer
+
+
+def _load_host_sprite(settings) -> Image.Image:
+    """加载片头双人图 intro.png，仅等比缩放，不裁剪。"""
+    path = settings.host_intro_path
+    if not path.exists():
+        raise FileNotFoundError(f"片头讲解人素材不存在: {path}")
+    img = Image.open(path).convert("RGBA")
+    width, height = settings.video_width, settings.video_height
+    max_w = int(width * _HOST_WIDTH_RATIO)
+    max_h = int(height * _HOST_HEIGHT_RATIO)
+    shrink = min(1.0, max_w / img.size[0], max_h / img.size[1])
+    if shrink >= 1.0:
+        return img
+    return img.resize(
+        (int(img.size[0] * shrink), int(img.size[1] * shrink)),
+        Image.Resampling.LANCZOS,
+    )
+
+
+def _render_badge(theme) -> Image.Image:
+    font = load_cjk_font(_BADGE_FONT_SIZE)
+    probe = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+    bbox = probe.textbbox((0, 0), theme.badge_text, font=font)
+    pad_x, pad_y = 18, 10
+    box_w = bbox[2] - bbox[0] + pad_x * 2
+    box_h = bbox[3] - bbox[1] + pad_y * 2
+    canvas = Image.new("RGBA", (box_w, box_h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(canvas)
+    draw.rounded_rectangle([0, 0, box_w, box_h], radius=12, fill=theme.badge_bg)
+    draw.text((pad_x - bbox[0], pad_y - bbox[1]), theme.badge_text, font=font, fill=theme.badge_fg)
+    return canvas
+
+
+def _render_brand_mark(theme, brand: str) -> Image.Image:
+    """昭墨百科：红字 + 白色描边，无背景。"""
+    font = load_cjk_font(_BRAND_FONT_SIZE)
+    return render_text_rgba(
+        brand,
+        font,
+        fill=theme.brand_fill,
+        stroke_width=STROKE_WIDTH + 4,
+        stroke_fill=theme.brand_stroke,
+        with_shadow=True,
+        shadow_blur=6,
+    )
+
+
+def _render_brand_header(theme, brand: str) -> Image.Image:
+    """顶栏：百科标在左，昭墨百科在右。"""
+    badge = _render_badge(theme)
+    mark = _render_brand_mark(theme, brand)
+    return compose_hstack([badge, mark], gap=16, align="center")
+
+
+def _build_title_layer(
+    title: str,
+    theme,
+    width: int,
+    height: int,
+    *,
+    moon_path: Path,
+    moon_tint_yellow: bool = False,
+) -> Image.Image:
+    """标题月亮底 60% 宽；文字换行按画面宽度，与月亮无关。"""
+    diameter = int(width * _TITLE_CIRCLE_WIDTH_RATIO * _TITLE_MOON_SCALE)
+    center_x = width // 2
+    center_y = int(height * _TITLE_CIRCLE_CENTER_Y_RATIO)
+    text_max_w = int(width * _TITLE_TEXT_WIDTH_RATIO)
+
+    text_block = render_feed_title(
+        title,
+        theme,
+        text_max_w,
+        max_size=_EPISODE_FONT_MAX,
+        min_size=_EPISODE_FONT_MIN,
+        max_lines=_EPISODE_MAX_LINES,
+    )
+
+    layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    left = center_x - diameter // 2
+    top = center_y - diameter // 2
+    moon = _load_moon_backdrop(
+        moon_path,
+        diameter,
+        theme,
+        tint_yellow=moon_tint_yellow,
+    )
+    layer.alpha_composite(moon, (left, top))
+    layer.alpha_composite(
+        text_block,
+        (center_x - text_block.size[0] // 2, center_y - text_block.size[1] // 2),
+    )
+    return layer
+
+
+def _build_layers(
+    title: str,
+    brand: str,
+    theme,
+    width: int,
+    height: int,
+    host: Image.Image,
+    *,
+    moon_path: Path,
+    moon_tint_yellow: bool = False,
+) -> dict:
+    normalized = _normalize_title(title) or title.strip()
+    title_layer = _build_title_layer(
+        normalized,
+        theme,
+        width,
+        height,
+        moon_path=moon_path,
+        moon_tint_yellow=moon_tint_yellow,
+    )
+
+    brand_header = _render_brand_header(theme, brand)
+
+    bg = _draw_gradient(width, height, theme.bg_top, theme.bg_bottom)
+    bg.alpha_composite(_draw_particles(width, height, theme.particle))
+
+    host_scaled = host
+
+    return {
+        "bg": bg,
+        "title_layer": title_layer,
+        "brand_header": brand_header,
+        "host": host_scaled,
+        "width": width,
+        "height": height,
+    }
+
+
+def _compose_frame(layers: dict, t: float) -> Image.Image:
+    width = layers["width"]
+    height = layers["height"]
+    frame = layers["bg"].copy()
+
+    enter = _ease_out_back(min(t / _ENTER_SEC, 1.0))
+    opacity = min(1.0, t / 0.12) if t < _ENTER_SEC else 1.0
+    breathe = 1.0 + 0.012 * math.sin(max(0.0, t - _ENTER_SEC) * 5.5)
+
+    host: Image.Image = layers["host"]
+    host_w = int(host.size[0] * (0.88 + 0.12 * enter) * breathe)
+    host_h = int(host.size[1] * (0.88 + 0.12 * enter) * breathe)
+    host_frame = host.resize((host_w, host_h), Image.Resampling.LANCZOS)
+    host_x = (width - host_w) // 2
+    host_y = height - host_h - int(height * 0.02)
+    host_y += int((1.0 - enter) * 80)
+    frame.alpha_composite(host_frame, (host_x, host_y))
+
+    header: Image.Image = layers["brand_header"]
+    header_x = (width - header.size[0]) // 2
+    header_y = int(height * _BRAND_TOP_RATIO)
+    frame.alpha_composite(_with_opacity(header, opacity), (header_x, header_y))
+
+    title: Image.Image = layers["title_layer"]
+    frame.alpha_composite(_with_opacity(title, opacity), (0, 0))
+
+    accent_w = int(width * 0.55)
+    accent_x = (width - accent_w) // 2
+    accent_y = height - 24
+    draw = ImageDraw.Draw(frame)
+    draw.rounded_rectangle(
+        [accent_x, accent_y, accent_x + accent_w, accent_y + 6],
+        radius=3,
+        fill=(255, 214, 64, int(220 * opacity)),
+    )
+
+    return frame
+
+
+def _with_opacity(img: Image.Image, opacity: float) -> Image.Image:
+    if opacity >= 0.999:
+        return img
+    out = img.copy()
+    alpha = out.split()[3].point(lambda a: int(a * opacity))
+    out.putalpha(alpha)
+    return out
+
+
+def _render_frames(
+    layers: dict,
+    frames_dir: Path,
+    *,
+    duration: float,
+    fps: int = _FPS,
+) -> int:
+    frames_dir.mkdir(parents=True, exist_ok=True)
+    total = max(int(duration * fps), 1)
+    for i in range(total):
+        t = i / fps
+        frame = _compose_frame(layers, t)
+        frame.convert("RGB").save(frames_dir / f"frame_{i:04d}.png", compress_level=1)
+    return total
+
+
+def _brand_audio_path(work_dir: Path) -> Path:
+    """优先使用 res 预置喊声；缺失时抛出明确错误。"""
+    settings = get_settings()
+    src = settings.intro_shout_path
+    if not src.exists():
+        raise FileNotFoundError(
+            f"片头喊声音频不存在: {src}，请运行 scripts/prepare_intro_audio.py 生成"
+        )
+    dest = work_dir / "intro_shout.mp3"
+    shutil.copy2(src, dest)
+    return dest
+
+
+def generate_intro(
+    title: str,
+    output_path: Path,
+    *,
+    category: str | None = None,
+    work_dir: Path | None = None,
+) -> Path:
+    """生成带品牌喊声的片头 MP4。"""
+    settings = get_settings()
+    theme = get_intro_theme(category)
+    width, height = settings.video_width, settings.video_height
+    host = _load_host_sprite(settings)
+
+    work = work_dir or output_path.parent / "intro_work"
+    if work.exists():
+        shutil.rmtree(work)
+    work.mkdir(parents=True, exist_ok=True)
+
+    audio_path = _brand_audio_path(work)
+    audio_dur = probe_duration(audio_path)
+    duration = audio_dur + _HOLD_TAIL_SEC
+
+    moon_tint_yellow = settings.intro_moon_tint in {"yellow", "tint", "gold", "1", "true"}
+    layers = _build_layers(
+        title,
+        settings.brand_name,
+        theme,
+        width,
+        height,
+        host,
+        moon_path=settings.intro_moon_path,
+        moon_tint_yellow=moon_tint_yellow,
+    )
+    frames_dir = work / "frames"
+    frame_count = _render_frames(layers, frames_dir, duration=duration, fps=_FPS)
+
+    silent_video = work / "video.mp4"
+    sequence_to_video(frames_dir, silent_video, fps=_FPS, frame_count=frame_count)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    mux_video_audio(silent_video, audio_path, output_path)
+
+    preview = output_path.with_suffix(".png")
+    _compose_frame(layers, duration * 0.45).convert("RGB").save(preview, compress_level=1)
+
+    shutil.rmtree(work, ignore_errors=True)
+    return output_path

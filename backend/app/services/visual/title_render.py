@@ -57,6 +57,7 @@ def render_text_rgba(
     *,
     fill: tuple[int, int, int, int],
     stroke_width: int = STROKE_WIDTH,
+    stroke_fill: tuple[int, int, int, int] = STROKE_FILL,
     with_shadow: bool = True,
     shadow_blur: int | None = None,
     shadow_offset_x: int = SHADOW_OFFSET_X,
@@ -77,7 +78,9 @@ def render_text_rgba(
 
     layer = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(layer)
-    _draw_styled_text(draw, (pad, pad), text, font, fill, stroke_width=stroke_width)
+    _draw_styled_text(
+        draw, (pad, pad), text, font, fill, stroke_width=stroke_width, stroke_fill=stroke_fill
+    )
 
     if with_glow:
         glow = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
@@ -104,7 +107,7 @@ def render_text_rgba(
             font,
             SHADOW_FILL,
             stroke_width=stroke_width,
-            stroke_fill=SHADOW_FILL,
+            stroke_fill=stroke_fill,
         )
         if blur > 0:
             shadow = shadow.filter(ImageFilter.GaussianBlur(radius=blur))
@@ -124,6 +127,31 @@ def render_text_rgba(
             min(merged.size[1], bbox[3] + margin),
         )
     )
+
+
+def compose_hstack(
+    images: list[Image.Image],
+    *,
+    gap: int = 0,
+    align: str = "bottom",
+) -> Image.Image:
+    valid = [img for img in images if img.size[0] > 0 and img.size[1] > 0]
+    if not valid:
+        return Image.new("RGBA", (1, 1), (0, 0, 0, 0))
+    total_w = sum(img.size[0] for img in valid) + gap * (len(valid) - 1)
+    max_h = max(img.size[1] for img in valid)
+    canvas = Image.new("RGBA", (total_w, max_h), (0, 0, 0, 0))
+    x = 0
+    for img in valid:
+        if align == "top":
+            y = 0
+        elif align == "center":
+            y = (max_h - img.size[1]) // 2
+        else:
+            y = max_h - img.size[1]
+        canvas.alpha_composite(img, (x, y))
+        x += img.size[0] + gap
+    return canvas
 
 
 def compose_vstack(

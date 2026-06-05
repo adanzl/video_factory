@@ -16,6 +16,7 @@ __all__ = [
     "load_subtitle_cues",
     "save_subtitle_cues",
     "synthesize",
+    "synthesize_utterance",
 ]
 
 
@@ -90,3 +91,22 @@ def _get_client() -> TTSClient:
 
 def synthesize(narration: str, segments: list[dict], output_dir: Path) -> TTSResult:
     return _get_client().synthesize(narration, segments, output_dir)
+
+
+def synthesize_utterance(
+    text: str,
+    output_path: Path,
+    *,
+    rate: float | None = None,
+    pitch: float | None = None,
+) -> Path:
+    """合成单句 MP3（片头品牌喊声等）。有 TTS Key 时始终走真实合成，不受 MOCK_MODE 影响。"""
+    settings = get_settings()
+    has_tts = bool(settings.tts_api_key or settings.dashscope_api_key)
+    if not has_tts:
+        from app.services.tts.tts_mock import synthesize_utterance as _mock_utterance
+
+        return _mock_utterance(text, output_path, rate=rate)
+    from app.services.tts.tts_ali import synthesize_utterance as _ali_utterance
+
+    return _ali_utterance(text, output_path, rate=rate, pitch=pitch)

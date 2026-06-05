@@ -58,12 +58,11 @@ def run_job(job_id: int, *, from_stage: str | None = None) -> dict:
             mark_failed(job_id, stage, str(exc))
             raise
 
-        if stage == "ffmpeg" and job.get("skip_publish"):
-            with connection() as conn:
-                job_repo.update_job(conn, job_id, stage="done", status="done")
-            return _reload_job(job_id)
-
         next_stage = pipeline.next_stage(stage)
+        job = _reload_job(job_id)
+        if next_stage == "publish" and job.get("skip_publish"):
+            mark_done(job_id)
+            return _reload_job(job_id)
         with connection() as conn:
             job_repo.update_job(conn, job_id, stage=next_stage, status="running")
         stage = next_stage

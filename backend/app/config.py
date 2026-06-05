@@ -54,6 +54,9 @@ class Settings:
     # 万相 API 出图尺寸（可与上面不同）
     wan_image_size: str
     wan_cover_size: str
+    z_image_model: str
+    z_image_size: str
+    z_image_prompt_extend: bool
     motion_preset: str
     deepseek_api_key: str | None
     deepseek_base_url: str
@@ -70,6 +73,16 @@ class Settings:
     bili_client_secret: str | None
     bili_access_token: str | None
     enable_scheduler: bool
+    brand_name: str
+    host_intro_path: Path
+    host_boy_path: Path
+    host_girl_path: Path
+    intro_moon_path: Path
+    intro_moon_tint: str
+    intro_shout_path: Path
+    intro_tts_rate: float
+    intro_tts_pitch: float
+    max_title_length: int
 
     def video_size(self) -> str:
         return _size_str(self.video_width, self.video_height)
@@ -94,6 +107,21 @@ def get_settings() -> Settings:
     intro_bg_path = Path(os.getenv("INTRO_BG_PATH", res_dir / "bg" / "bg1.png"))
     if not intro_bg_path.is_absolute():
         intro_bg_path = (root / intro_bg_path).resolve()
+    host_intro_path = Path(os.getenv("HOST_INTRO_PATH", res_dir / "host" / "intro.png"))
+    if not host_intro_path.is_absolute():
+        host_intro_path = (root / host_intro_path).resolve()
+    host_boy_path = Path(os.getenv("HOST_BOY_PATH", res_dir / "host" / "boy.png"))
+    if not host_boy_path.is_absolute():
+        host_boy_path = (root / host_boy_path).resolve()
+    host_girl_path = Path(os.getenv("HOST_GIRL_PATH", res_dir / "host" / "girl.png"))
+    if not host_girl_path.is_absolute():
+        host_girl_path = (root / host_girl_path).resolve()
+    intro_moon_path = Path(os.getenv("INTRO_MOON_PATH", res_dir / "host" / "moon.png"))
+    if not intro_moon_path.is_absolute():
+        intro_moon_path = (root / intro_moon_path).resolve()
+    intro_shout_path = Path(os.getenv("INTRO_SHOUT_PATH", res_dir / "audio" / "intro_shout.mp3"))
+    if not intro_shout_path.is_absolute():
+        intro_shout_path = (root / intro_shout_path).resolve()
     if not data_dir.is_absolute():
         data_dir = (root / data_dir).resolve()
     if not sqlite.is_absolute():
@@ -132,14 +160,17 @@ def get_settings() -> Settings:
         skip_publish_default=_bool("SKIP_PUBLISH_DEFAULT", True),
         host_enabled=_bool("HOST_ENABLED", False),
         kling_upgrade_enabled=_bool("KLING_UPGRADE_ENABLED", False),
-        image_provider=os.getenv("IMAGE_PROVIDER", "wan_t2i"),
+        image_provider=os.getenv("IMAGE_PROVIDER", "z_image_t2i"),
+        z_image_model=os.getenv("Z_IMAGE_MODEL", "z-image-turbo"),
+        z_image_size=os.getenv("Z_IMAGE_SIZE", os.getenv("WAN_IMAGE_SIZE", "720*1280")),
+        z_image_prompt_extend=_bool("Z_IMAGE_PROMPT_EXTEND", False),
         image_max_workers=int(os.getenv("IMAGE_MAX_WORKERS", "1")),
         image_submit_interval_sec=float(os.getenv("IMAGE_SUBMIT_INTERVAL_SEC", "3")),
         video_width=video_width,
         video_height=video_height,
         cover_width=cover_width,
         cover_height=cover_height,
-        wan_model=os.getenv("WAN_MODEL", "wanx2.1-t2i-turbo"),
+        wan_model=os.getenv("WAN_MODEL", "wanx2.1-t2i-turbo"),  # cSpell: disable-line
         wan_image_size=wan_image_size,
         wan_cover_size=wan_cover_size,
         motion_preset=os.getenv("MOTION_PRESET", "ken_burns_slow"),
@@ -151,9 +182,9 @@ def get_settings() -> Settings:
         tts_base_url=os.getenv("TTS_BASE_URL"),
         dashscope_ws_uri=os.getenv(
             "DASHSCOPE_WS_URI",
-            "wss://dashscope.aliyuncs.com/api-ws/v1/inference/",
+            "wss://dashscope.aliyuncs.com/api-ws/v1/inference/", # cSpell: disable-line
         ),
-        tts_voice=os.getenv("TTS_VOICE") or os.getenv("COSYVOICE_VOICE", "longwan_v3"),
+        tts_voice=os.getenv("TTS_VOICE") or os.getenv("COSYVOICE_VOICE", "longwan_v3"),  # cSpell: disable-line
         tts_model=os.getenv("TTS_MODEL") or os.getenv("COSYVOICE_MODEL") or None,
         tts_speech_rate=float(
             os.getenv("TTS_SPEECH_RATE") or os.getenv("COSYVOICE_SPEECH_RATE", "1.0")
@@ -163,4 +194,14 @@ def get_settings() -> Settings:
         bili_client_secret=os.getenv("BILI_CLIENT_SECRET") or None,
         bili_access_token=os.getenv("BILI_ACCESS_TOKEN") or None,
         enable_scheduler=_bool("ENABLE_SCHEDULER", False),
+        brand_name=os.getenv("BRAND_NAME", "昭墨百科"),
+        host_intro_path=host_intro_path,
+        host_boy_path=host_boy_path,
+        host_girl_path=host_girl_path,
+        intro_moon_path=intro_moon_path,
+        intro_moon_tint=os.getenv("INTRO_MOON_TINT", "natural").strip().lower(),
+        intro_shout_path=intro_shout_path,
+        intro_tts_rate=float(os.getenv("INTRO_TTS_RATE", "1.25")),
+        intro_tts_pitch=float(os.getenv("INTRO_TTS_PITCH", "1.15")),
+        max_title_length=int(os.getenv("MAX_TITLE_LENGTH", "24")),
     )

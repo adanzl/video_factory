@@ -20,6 +20,19 @@ def _estimate_duration(text: str) -> float:
     return max(chars / 4.5, 1.0)
 
 
+def synthesize_utterance(
+    text: str,
+    output_path: Path,
+    *,
+    rate: float | None = None,
+) -> Path:
+    duration = _estimate_duration(text)
+    if rate:
+        duration /= max(rate, 0.5)
+    generate_silent_mp3(output_path, duration)
+    return output_path
+
+
 class MockTTSClient(TTSClient):
     def synthesize(self, narration: str, segments: list[dict], output_dir: Path) -> TTSResult:
         output_dir.mkdir(parents=True, exist_ok=True)

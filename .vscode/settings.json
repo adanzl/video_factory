@@ -2,6 +2,7 @@
     "cSpell.words": [
         "anullsrc",
         "BILI",
+        "COSYVOICE",
         "DASHSCOPE",
         "DEEPSEEK",
         "demuxer",
@@ -10,6 +11,7 @@
         "KLING",
         "lavfi",
         "libass",
+        "libmp",
         "libx",
         "Qwen"
     ],
@@ -29,9 +31,9 @@
         "^\\s*from\\s+\\S+\\s+import\\s+.+$", // 忽略 from xxx import xxx
         "^\\s*import\\s+.+$" // 忽略 import xxx
     ],
+    // 解释器路径因系统/安装位置而异，勿写入仓库；首次用命令面板选 conda 环境 flask_env 即可
     "python-envs.defaultEnvManager": "ms-python.python:conda",
     "python-envs.defaultPackageManager": "ms-python.python:conda",
     "python-envs.pythonProjects": [],
-    "python.defaultInterpreterPath": "/opt/homebrew/Caskroom/miniconda/base/envs/flask_env/bin/python",
     "python.terminal.activateEnvInCurrentTerminal": true
 }

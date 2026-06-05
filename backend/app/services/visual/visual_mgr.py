@@ -1,4 +1,4 @@
-"""画面模块总入口：出图、封面、片头。"""
+"""画面模块总入口：出图、封面。"""
 
 from __future__ import annotations
 
@@ -7,9 +7,8 @@ from pathlib import Path
 from typing import Protocol
 
 from app.config import get_settings
-from app.services.visual.intro import generate_intro as _generate_intro
 
-__all__ = ["ImageProvider", "VideoProvider", "generate_cover", "generate_intro", "generate_segment_images"]
+__all__ = ["ImageProvider", "VideoProvider", "generate_cover", "generate_segment_images"]
 
 
 class ImageProvider(Protocol):
@@ -23,10 +22,16 @@ class VideoProvider(Protocol):
 def _get_image_provider() -> ImageProvider:
     from app.services.visual.image_mock import MockImageProvider
     from app.services.visual.image_wan import WanImageProvider
+    from app.services.visual.image_zimage import ZImageProvider
 
     if get_settings().mock_mode:
         return MockImageProvider()
-    return WanImageProvider()
+    provider = get_settings().image_provider
+    if provider == "z_image_t2i":
+        return ZImageProvider()
+    if provider == "wan_t2i":
+        return WanImageProvider()
+    raise ValueError(f"unknown IMAGE_PROVIDER: {provider}")
 
 
 def generate_segment_images(
@@ -57,7 +62,3 @@ def generate_cover(title: str, output_path: Path, *, base_prompt: str | None = N
         f"B站科普视频封面，16:9，信息图风格，标题文字区域留白，主题：{title}"
     )
     return _get_image_provider().generate(prompt, output_path, size=get_settings().wan_cover_size)
-
-
-def generate_intro(title: str, output_path: Path) -> Path:
-    return _generate_intro(title, output_path)

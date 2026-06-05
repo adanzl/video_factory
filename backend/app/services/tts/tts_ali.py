@@ -41,7 +41,13 @@ DEFAULT_MODEL = "cosyvoice-v3-flash"
 # cSpell: enable
 
 
-def _synthesize_utterance(text: str, *, timeout: float = 120) -> bytes:
+def _synthesize_utterance(
+    text: str,
+    *,
+    timeout: float = 120,
+    rate: float | None = None,
+    pitch: float | None = None,
+) -> bytes:
     """整句一次性 WebSocket 合成，返回 MP3 字节。"""
     settings = get_settings()
     api_key = settings.tts_api_key or settings.dashscope_api_key or ""
@@ -77,8 +83,8 @@ def _synthesize_utterance(text: str, *, timeout: float = 120) -> bytes:
                         "format": "mp3",
                         "sample_rate": 22050,
                         "volume": settings.tts_volume,
-                        "rate": settings.tts_speech_rate,
-                        "pitch": 1,
+                        "rate": rate if rate is not None else settings.tts_speech_rate,
+                        "pitch": pitch if pitch is not None else 1,
                         "enable_ssml": False,  # cSpell: disable-line
                     },
                     "input": {},
@@ -165,6 +171,18 @@ def _synthesize_utterance(text: str, *, timeout: float = 120) -> bytes:
     if not audio:
         raise RuntimeError("TTS 返回空音频")
     return audio
+
+
+def synthesize_utterance(
+    text: str,
+    output_path: Path,
+    *,
+    rate: float | None = None,
+    pitch: float | None = None,
+) -> Path:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_bytes(_synthesize_utterance(text, rate=rate, pitch=pitch))
+    return output_path
 
 
 class AliTTSClient(TTSClient):

@@ -28,5 +28,6 @@ class ImageStage(StageExecutor):
                 conn,
                 ctx.job["id"],
                 self.name,
-                f"generated {len(segments)} images (mock={get_settings().mock_mode})",
+                f"generated {len(segments)} images "
+                f"(provider={get_settings().image_provider}, mock={get_settings().mock_mode})",
             )
