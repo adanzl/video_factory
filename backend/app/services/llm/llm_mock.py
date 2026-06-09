@@ -41,17 +41,23 @@ class MockLLMClient(LLMClient):
                 "最后，遇到争议话题，查权威来源、看实验设计，比听传言更可靠。",
                 "记住：科普不是站队，而是把复杂问题讲清楚，让你下次能自己判断。",
             ]
+        visual_style = "3D卡通渲染科普插画，暖黄侧光，浅木色场景，银红条形磁铁统一造型"
         segments = []
         narration_parts: list[str] = []
-        for idx, text in enumerate(templates):
+        for idx, text in enumerate(templates, start=1):
             narration_parts.append(text)
+            brief = f"第{idx}镜：围绕「{display_title}」展示一个生活化科普场景与关键对比。"
             segments.append(
                 {
                     "segment_index": idx,
                     "text": text,
+                    "visual_brief": brief,
                     "image_prompt": (
-                        f"竖屏9:16卡通插画，扁平信息图风格，主题：{display_title}，"
-                        f"场景{idx + 1}，无文字无水印"
+                        f"采用中景镜头拍摄的3D卡通渲染科普插画，遵循画风：{visual_style}。"
+                        f"本镜对应口播主题，场景{idx}，明亮温馨，浅木色台面，"
+                        f"主体道具造型简化，左上方暖黄窗光，右侧冷白补光，"
+                        f"背景虚化可见家居轮廓，主色银白暖木，焦点高光清晰，"
+                        f"画面表达与口播一致，无文字无水印。"
                     ),
                     "visual_mode": "static_motion",
                 }
@@ -61,5 +67,6 @@ class MockLLMClient(LLMClient):
             "title": display_title,
             "narration": narration,
             "word_count": len(re.sub(r"\s+", "", narration)),
+            "visual_style": visual_style,
             "segments": segments,
         }

@@ -9,6 +9,7 @@ import requests
 
 from app.config import get_settings
 from app.services.visual.image_mock import MockImageProvider
+from app.services.visual.visual_mgr import ImageProvider
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +19,7 @@ _GENERATION_URL = (
 _RETRYABLE = {429, 500, 502, 503, 504}
 
 
-class ZImageProvider:
+class ZImageProvider(ImageProvider):
     _submit_lock = threading.Lock()
 
     def __init__(self) -> None:

@@ -9,6 +9,7 @@ import requests
 
 from app.config import get_settings
 from app.services.visual.image_mock import MockImageProvider
+from app.services.visual.visual_mgr import ImageProvider
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +17,7 @@ _SUBMIT_URL = "https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/im
 _RETRYABLE = {429, 500, 502, 503, 504}
 
 
-class WanImageProvider:
+class WanImageProvider(ImageProvider):
     _submit_lock = threading.Lock()
 
     def __init__(self) -> None:

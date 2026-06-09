@@ -58,13 +58,37 @@ backend/
 │   ├── core/        # pipeline、job_service
 │   ├── repositories/# SQLite 裸 SQL
 │   ├── services/    # LLM / TTS / 出图 / FFmpeg
-│   └── quality/     # 质检编排
+│   └── quality/     # 各步骤内置质检（checkers + gate）
 └── scripts/init_db.py
 ```
 
-流水线：`script → image → cover → intro → tts → quality → ffmpeg → publish → done`
+流水线：`script → intro → cover → tts → segment → host → merge → publish → done`
 
-讲解人卡通 IP（`HOST_ENABLED`）暂未接入，片头为纯文字模板。
+- 封面由 `intro.png` 导出，不用 AI
+- `segment`：分镜（ImageProvider 出图 → ClipProvider 片段；可灵为可选 ClipProvider）
+- 质检嵌入各步骤：`copy` / `storyboard` / `tts` / `visual` / `clip` / `final` → `quality_report`
+- TTS 后 loudnorm 归一；`tts` / `final` 检测响度与静音
+- `host`：讲解人叠图占位（儿童 IP，`HOST_ENABLED` 未开时自动跳过）
+- **儿童科普线**：`longhuhu_v3` + `TTS_INSTRUCT_PRESET=science_child`（片头喊声与正文 TTS 一致）
+- FFmpeg 仅为 media 层工具，不是 stage 名
+
+### 重跑模式
+
+| 参数 | 行为 |
+| --- | --- |
+| `--from-stage X` | 清空 X 及下游产物，从 X **连续跑到结束** |
+| `--only-stage X` | 清空 X 及下游产物，**只执行 X 一步**，完成后 `stage` 指向下游、`status=pending` |
+
+```bash
+# 从 merge 跑到成片（含 host）
+python -m worker run --job-id 2 --from-stage merge --skip-publish
+
+# 只重跑 TTS（保留分镜静图，清 clip + 成片）
+python -m worker run --job-id 2 --only-stage tts --skip-publish
+
+# 只重跑指定分镜
+python -m worker run --job-id 2 --only-stage segment --segments 1,3 --skip-publish
+```
 
 ## 文档
 

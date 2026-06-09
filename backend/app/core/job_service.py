@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from app.core import pipeline
-from app.repositories import job_log_repo, job_repo, segment_repo
+from app.core.job_reset import prepare_job_rerun, reset_job_from_stage
+from app.repositories import job_log_repo, job_repo
 from app.repositories.connection import connection
 
 
@@ -25,24 +25,6 @@ def create_job_from_title(
         return job
 
 
-def reset_job_from_stage(job_id: int, from_stage: str) -> dict:
-    if from_stage not in pipeline.STAGES:
-        raise ValueError(f"invalid stage: {from_stage}")
-    with connection() as conn:
-        job = job_repo.update_job(
-            conn,
-            job_id,
-            stage=from_stage,
-            status="pending",
-            fail_stage=None,
-            error_message=None,
-        )
-        if from_stage in {"script", "title"}:
-            segment_repo.delete_segments(conn, job_id)
-        job_log_repo.append_log(conn, job_id, from_stage, f"reset from stage {from_stage}")
-        return job
-
-
 def mark_running(job_id: int) -> dict:
     with connection() as conn:
         return job_repo.update_job(conn, job_id, status="running")
@@ -62,3 +44,13 @@ def mark_failed(job_id: int, stage: str, message: str) -> dict:
             status="failed",
             error_message=message,
         )
+
+
+__all__ = [
+    "create_job_from_title",
+    "mark_done",
+    "mark_failed",
+    "mark_running",
+    "prepare_job_rerun",
+    "reset_job_from_stage",
+]

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Protocol
@@ -11,8 +12,10 @@ from app.config import get_settings
 __all__ = ["ImageProvider", "VideoProvider", "generate_cover", "generate_segment_images"]
 
 
-class ImageProvider(Protocol):
-    def generate(self, prompt: str, output_path: Path, *, size: str | None = None) -> Path: ...
+class ImageProvider(ABC):
+    @abstractmethod
+    def generate(self, prompt: str, output_path: Path, *, size: str | None = None) -> Path:
+        ...
 
 
 class VideoProvider(Protocol):

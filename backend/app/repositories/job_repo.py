@@ -11,6 +11,8 @@ def _row_to_dict(row: sqlite3.Row) -> dict:
         data["script_json"] = json.loads(data["script_json"])
     if data.get("quality_report"):
         data["quality_report"] = json.loads(data["quality_report"])
+    if data.get("tts_usage_json"):
+        data["tts_usage_json"] = json.loads(data["tts_usage_json"])
     data["skip_publish"] = bool(data.get("skip_publish"))
     return data
 
@@ -59,6 +61,7 @@ def update_job(conn: sqlite3.Connection, job_id: int, **fields: Any) -> dict:
         "intro_path",
         "audio_path",
         "subtitle_path",
+        "tts_usage_json",
         "error_message",
     }
     parts: list[str] = ["updated_at = datetime('now')"]
@@ -66,7 +69,7 @@ def update_job(conn: sqlite3.Connection, job_id: int, **fields: Any) -> dict:
     for key, value in fields.items():
         if key not in allowed:
             continue
-        if key in {"script_json", "quality_report"} and value is not None:
+        if key in {"script_json", "quality_report", "tts_usage_json"} and value is not None:
             value = json.dumps(value, ensure_ascii=False)
         if key == "skip_publish":
             value = int(bool(value))
