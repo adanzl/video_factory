@@ -21,6 +21,7 @@ def apply_schema(conn: sqlite3.Connection) -> None:
             intro_path TEXT,
             audio_path TEXT,
             subtitle_path TEXT,
+            tts_usage_json TEXT,
             error_message TEXT,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -56,3 +57,32 @@ def apply_schema(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_job_log_job ON job_log(job_id);
         """
     )
+    conn.execute(
+        "UPDATE video_job SET stage = 'segment' WHERE stage = 'ffmpeg'"
+    )
+    conn.execute(
+        "UPDATE video_job SET fail_stage = 'segment' WHERE fail_stage = 'ffmpeg'"
+    )
+    conn.execute(
+        "UPDATE video_job SET stage = 'segment' WHERE stage = 'image'"
+    )
+    conn.execute(
+        "UPDATE video_job SET fail_stage = 'segment' WHERE fail_stage = 'image'"
+    )
+    conn.execute(
+        "UPDATE video_job SET stage = 'segment' WHERE stage = 'quality'"
+    )
+    _ensure_column(conn, "video_job", "tts_usage_json", "TEXT")
+
+
+def _ensure_column(
+    conn: sqlite3.Connection,
+    table: str,
+    column: str,
+    ddl: str,
+) -> None:
+    columns = {
+        row[1] for row in conn.execute(f"PRAGMA table_info({table})")
+    }
+    if column not in columns:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")

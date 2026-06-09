@@ -25,7 +25,9 @@ class CoverStage(StageExecutor):
                 job = job_repo.get_job(conn, ctx.job["id"])
             final_path = job.get("final_path")
             if not final_path:
-                raise ValueError("final_path missing, run ffmpeg stage first")
+                raise ValueError(
+                    "intro.png 不存在且 final_path 缺失，请先跑 intro 或 merge 阶段"
+                )
             extract_first_frame(Path(final_path), cover_path)
             source = f"final first frame: {final_path}"
 

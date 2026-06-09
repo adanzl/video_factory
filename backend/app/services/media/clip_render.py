@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 
 from app.config import get_settings
+from app.services.media.ffmpeg_utils import run_ffmpeg
 
 CLIP_FPS = 25
 _MOTION_FINISH_RATIO = 0.42  # 动效在前 42% 时长内完成，之后保持
@@ -73,13 +73,6 @@ def _motion_vf(duration_sec: float, *, preset: str, segment_index: int) -> str:
     )
 
 
-def _run_ffmpeg(args: list[str]) -> None:
-    result = subprocess.run(args, capture_output=True, text=True)
-    if result.returncode != 0:
-        detail = (result.stderr or result.stdout or "").strip()
-        raise RuntimeError(f"ffmpeg failed: {detail[-2000:]}")
-
-
 def image_to_clip(
     image_path: Path,
     output_path: Path,
@@ -90,7 +83,7 @@ def image_to_clip(
 ) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     vf = _motion_vf(duration_sec, preset=preset, segment_index=segment_index)
-    _run_ffmpeg(
+    run_ffmpeg(
         [
             "ffmpeg",
             "-y",
@@ -134,7 +127,7 @@ def image_to_clip_with_overlay(
         f"[1:v]format=rgba[fg];"
         f"[bg][fg]overlay=0:0:format=auto,format=yuv444p"
     )
-    _run_ffmpeg(
+    run_ffmpeg(
         [
             "ffmpeg",
             "-y",
@@ -231,5 +224,5 @@ def image_to_clip_timed_overlays(
             str(output_path),
         ]
     )
-    _run_ffmpeg(cmd)
+    run_ffmpeg(cmd)
     return output_path

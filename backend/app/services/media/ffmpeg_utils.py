@@ -5,6 +5,85 @@ from pathlib import Path
 
 from app.config import get_settings
 
+# cSpell: disable
+
+
+def _combined_output(result: subprocess.CompletedProcess[str]) -> str:
+    return f"{result.stderr or ''}\n{result.stdout or ''}"
+
+
+def run_ffmpeg(
+    args: list[str],
+    *,
+    check: bool = True,
+) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(args, capture_output=True, text=True, check=False)
+    if check and result.returncode != 0:
+        detail = _combined_output(result).strip()
+        raise RuntimeError(f"ffmpeg failed: {detail[-2000:]}")
+    return result
+
+
+def _null_sink_output(input_path: Path, *, af: str | None = None) -> str:
+    args = ["ffmpeg", "-hide_banner", "-i", str(input_path)]
+    if af:
+        args.extend(["-af", af])
+    args.extend(["-f", "null", "-"])
+    return _combined_output(run_ffmpeg(args, check=False))
+
+
+def silence_detect_log(
+    path: Path,
+    *,
+    noise_db: float = -40.0,
+    min_duration_sec: float = 0.35,
+) -> str:
+    return _null_sink_output(
+        path,
+        af=f"silencedetect=noise={noise_db}dB:d={min_duration_sec}",
+    )
+
+
+def loudnorm_measure_log(path: Path) -> str:
+    return _null_sink_output(path, af="loudnorm=print_format=summary")
+
+
+def loudnorm_apply(
+    input_path: Path,
+    output_path: Path,
+    *,
+    target_lufs: float = -16.0,
+    true_peak: float = -1.5,
+    lra: float = 11.0,
+) -> Path:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    run_ffmpeg(
+        [
+            "ffmpeg",
+            "-y",
+            "-hide_banner",
+            "-i",
+            str(input_path),
+            "-af",
+            f"loudnorm=I={target_lufs}:TP={true_peak}:LRA={lra}",
+            str(output_path),
+        ]
+    )
+    return output_path
+
+
+def loudnorm_replace(
+    path: Path,
+    *,
+    target_lufs: float = -16.0,
+    true_peak: float = -1.5,
+    lra: float = 11.0,
+) -> Path:
+    tmp = path.with_name(f"{path.stem}.norm{path.suffix}")
+    loudnorm_apply(path, tmp, target_lufs=target_lufs, true_peak=true_peak, lra=lra)
+    tmp.replace(path)
+    return path
+
 
 def extract_first_frame(video_path: Path, output_path: Path) -> Path:
     """从视频提取首帧，保存为 JPEG 封面。"""
@@ -47,8 +126,21 @@ def probe_duration(path: Path) -> float:
 
 
 def concat_clips(clips: list[Path], output_path: Path) -> Path:
-    """ffmpeg concat demuxer，适用于同编码的音频/视频片段。"""
+    """拼接同编码片段；音频 MP3 多条时重编码，避免 -c copy 接缝咔嗒。"""
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    if not clips:
+        raise ValueError("no clips to concat")
+    if len(clips) == 1:
+        subprocess.run(
+            ["ffmpeg", "-y", "-hide_banner", "-i", str(clips[0]), "-c", "copy", str(output_path)],
+            check=True,
+            capture_output=True,
+        )
+        return output_path
+
+    if output_path.suffix.lower() in {".mp3", ".wav"}:
+        return _concat_audio_reencode(clips, output_path)
+
     list_file = output_path.with_suffix(".txt")
     list_file.write_text(
         "\n".join(f"file '{clip.resolve()}'" for clip in clips),
@@ -72,6 +164,39 @@ def concat_clips(clips: list[Path], output_path: Path) -> Path:
         capture_output=True,
     )
     list_file.unlink(missing_ok=True)
+    return output_path
+
+
+def _concat_audio_reencode(clips: list[Path], output_path: Path) -> Path:
+    n = len(clips)
+    inputs: list[str] = []
+    for clip in clips:
+        inputs.extend(["-i", str(clip.resolve())])
+    chains = "".join(f"[{i}:a]" for i in range(n))
+    filter_graph = f"{chains}concat=n={n}:v=0:a=1[outa]"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-hide_banner",
+            *inputs,
+            "-filter_complex",
+            filter_graph,
+            "-map",
+            "[outa]",
+            "-ar",
+            "22050",
+            "-ac",
+            "1",
+            "-c:a",
+            "libmp3lame",
+            "-q:a",
+            "2",
+            str(output_path),
+        ],
+        check=True,
+        capture_output=True,
+    )
     return output_path
 
 
@@ -390,3 +515,6 @@ def build_srt_from_cues(cues: list) -> str:
         cursor = end
         lines.extend([str(idx), f"{_fmt_srt(start)} --> {_fmt_srt(end)}", text, ""])
     return "\n".join(lines)
+
+
+# cSpell: enable

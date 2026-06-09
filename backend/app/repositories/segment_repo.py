@@ -71,3 +71,58 @@ def update_segment(
         f"UPDATE video_segment SET {', '.join(parts)} WHERE id = ?",
         values,
     )
+
+
+def clear_segment_durations(conn: sqlite3.Connection, job_id: int) -> None:
+    conn.execute(
+        "UPDATE video_segment SET duration_sec = NULL WHERE job_id = ?",
+        (job_id,),
+    )
+
+
+def clear_segment_clips(
+    conn: sqlite3.Connection,
+    job_id: int,
+    segment_indices: list[int] | None = None,
+) -> None:
+    if segment_indices:
+        placeholders = ",".join("?" for _ in segment_indices)
+        conn.execute(
+            f"""
+            UPDATE video_segment
+            SET clip_path = NULL
+            WHERE job_id = ? AND segment_index IN ({placeholders})
+            """,
+            (job_id, *segment_indices),
+        )
+        return
+    conn.execute(
+        "UPDATE video_segment SET clip_path = NULL WHERE job_id = ?",
+        (job_id,),
+    )
+
+
+def clear_segment_media(
+    conn: sqlite3.Connection,
+    job_id: int,
+    segment_indices: list[int] | None,
+) -> None:
+    if segment_indices:
+        placeholders = ",".join("?" for _ in segment_indices)
+        conn.execute(
+            f"""
+            UPDATE video_segment
+            SET image_path = NULL, clip_path = NULL, status = 'pending'
+            WHERE job_id = ? AND segment_index IN ({placeholders})
+            """,
+            (job_id, *segment_indices),
+        )
+        return
+    conn.execute(
+        """
+        UPDATE video_segment
+        SET image_path = NULL, clip_path = NULL, status = 'pending'
+        WHERE job_id = ?
+        """,
+        (job_id,),
+    )

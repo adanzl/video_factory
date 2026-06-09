@@ -5,10 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from app.services.media.ffmpeg_utils import build_srt_from_cues, concat_clips, generate_silent_mp3
+from app.services.tts.phrase_timing import build_segment_tts_text
 from app.services.tts.tts_mgr import (
     SubtitleCue,
     TTSClient,
     TTSResult,
+    TTSUsageTask,
     phrase_chunks_for_segment,
     save_subtitle_cues,
     subtitle_cues_path_for,
@@ -42,15 +44,21 @@ class MockTTSClient(TTSClient):
         clip_paths: list[Path] = []
         subtitle_cues: list[SubtitleCue] = []
         segment_durations: list[float] = []
+        usage_tasks: list[TTSUsageTask] = []
 
         for seg in segments:
             seg_index = seg["segment_index"]
-            seg_duration = 0.0
-            for sent_index, (tts_text, subtitle_text) in enumerate(phrase_chunks_for_segment(seg)):
-                duration = _estimate_duration(tts_text)
-                clip_path = clips_dir / f"{seg_index}_{sent_index}.mp3"
-                generate_silent_mp3(clip_path, duration)
-                clip_paths.append(clip_path)
+            phrases = phrase_chunks_for_segment(seg)
+            segment_text = build_segment_tts_text(phrases)
+            seg_duration = _estimate_duration(segment_text)
+            clip_path = clips_dir / f"{seg_index}.mp3"
+            generate_silent_mp3(clip_path, seg_duration)
+            clip_paths.append(clip_path)
+
+            total_chars = sum(max(len(tts.strip()), 1) for tts, _ in phrases) or 1
+            for tts_text, subtitle_text in phrases:
+                weight = max(len(tts_text.strip()), 1)
+                duration = max(seg_duration * weight / total_chars, 0.05)
                 subtitle_cues.append(
                     SubtitleCue(
                         segment_index=seg_index,
@@ -58,8 +66,13 @@ class MockTTSClient(TTSClient):
                         duration_sec=duration,
                     )
                 )
-                seg_duration += duration
             segment_durations.append(seg_duration)
+            usage_tasks.append(
+                TTSUsageTask(
+                    segment_index=seg_index,
+                    usage={"characters": len(segment_text.replace(" ", ""))},
+                )
+            )
 
         audio_path = output_dir / "narration.mp3"
         concat_clips(clip_paths, audio_path)
@@ -77,4 +90,5 @@ class MockTTSClient(TTSClient):
             duration_sec=sum(segment_durations),
             segment_durations=segment_durations,
             subtitle_cues=subtitle_cues,
+            usage_tasks=usage_tasks,
         )

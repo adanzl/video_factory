@@ -37,7 +37,10 @@ def main() -> None:
         rate=settings.intro_tts_rate,
         pitch=settings.intro_tts_pitch,
     )
-    print(f"TTS: {out} ({probe_duration(out):.2f}s, voice={settings.tts_voice})")
+    print(
+        f"TTS: {out} ({probe_duration(out):.2f}s, "
+        f"voice={settings.tts_voice}, preset={settings.tts_instruct_preset})"
+    )
 
 
 if __name__ == "__main__":

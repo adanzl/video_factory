@@ -1,4 +1,9 @@
-"""单分镜字幕预览：只重建 segments/{N}.mp4，便于调样式。"""
+"""单分镜字幕预览：只重建 segments/{N}.mp4，便于调样式。
+
+用法:
+  python -m worker subtitle-test --job-id 2 --segment 3
+  python -m worker subtitle-test --job-id 2 --segment 3 --sentence 0
+"""
 
 from __future__ import annotations
 

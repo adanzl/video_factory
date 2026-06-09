@@ -28,6 +28,15 @@ class SubtitleCue:
 
 
 @dataclass
+class TTSUsageTask:
+    """单次 WebSocket 合成的计费 usage（取该 task 最后一次 payload.usage）。"""
+
+    usage: dict
+    segment_index: int | None = None
+    kind: str = "segment"
+
+
+@dataclass
 class TTSResult:
     audio_path: Path
     subtitle_path: Path
@@ -35,6 +44,27 @@ class TTSResult:
     duration_sec: float
     segment_durations: list[float]
     subtitle_cues: list[SubtitleCue]
+    usage_tasks: list[TTSUsageTask] | None = None
+
+    @property
+    def total_characters(self) -> int:
+        if not self.usage_tasks:
+            return 0
+        return sum(int(task.usage.get("characters") or 0) for task in self.usage_tasks)
+
+    def usage_summary(self) -> dict:
+        tasks = self.usage_tasks or []
+        return {
+            "total_characters": self.total_characters,
+            "tasks": [
+                {
+                    "kind": task.kind,
+                    "segment_index": task.segment_index,
+                    "usage": task.usage,
+                }
+                for task in tasks
+            ],
+        }
 
 
 class TTSClient:

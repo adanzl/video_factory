@@ -4,6 +4,7 @@
         "BILI",
         "COSYVOICE",
         "DASHSCOPE",
+        "dbtp",
         "DEEPSEEK",
         "demuxer",
         "ffprobe",
@@ -13,8 +14,13 @@
         "libass",
         "libmp",
         "libx",
+        "longwan",
+        "loudnorm",
+        "lufs",
         "PUNCT",
-        "Qwen"
+        "Qwen",
+        "vout",
+        "zoompan"
     ],
     "cSpell.useGitignore": true,
     "cSpell.ignorePaths": [

@@ -6,9 +6,10 @@ from PIL import Image, ImageDraw
 
 from app.config import get_settings
 from app.services.visual.text_render import load_cjk_font
+from app.services.visual.visual_mgr import ImageProvider
 
 
-class MockImageProvider:
+class MockImageProvider(ImageProvider):
     def generate(self, prompt: str, output_path: Path, *, size: str | None = None) -> Path:
         settings = get_settings()
         size_str = size or settings.wan_image_size
