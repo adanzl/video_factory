@@ -131,7 +131,7 @@ class WanClipProvider(ClipProvider):
         task_id = body["output"]["task_id"]
 
         state = "PENDING"
-        for _ in range(120):
+        for poll_idx in range(120):
             status_resp = self._request(
                 "GET",
                 f"https://dashscope.aliyuncs.com/api/v1/tasks/{task_id}",
@@ -142,6 +142,13 @@ class WanClipProvider(ClipProvider):
                 raise RuntimeError(f"wan i2v poll error: {poll.get('code')} - {poll.get('message')}")
             output = poll.get("output", {})
             state = output.get("task_status", "UNKNOWN")
+            if poll_idx % 10 == 0 and state in {"PENDING", "RUNNING", "UNKNOWN"}:
+                logger.info(
+                    "wan i2v task %s polling... state=%s (~%ss)",
+                    task_id,
+                    state,
+                    poll_idx * 3,
+                )
             if state == "SUCCEEDED":
                 video_url = output.get("video_url")
                 if not video_url:

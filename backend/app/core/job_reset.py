@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 from app.core import pipeline
@@ -17,7 +18,44 @@ def _delete_files(paths: list[Path]) -> None:
             path.unlink()
 
 
+def _archive_file(src: Path, dest: Path) -> None:
+    if not src.exists():
+        return
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dest)
+
+
+def _archive_wan_clips(media_dir: Path, *, clip_names: list[str] | None = None) -> None:
+    """重跑前将图生视频分镜 clip 归档到 segments_wan/，避免被覆盖删除。"""
+    clips_dir = media_dir / "segments"
+    if not clips_dir.exists():
+        return
+    clips = (
+        [clips_dir / name for name in clip_names]
+        if clip_names
+        else sorted(clips_dir.glob("*.mp4"))
+    )
+    if not any(p.exists() for p in clips):
+        return
+    archive_dir = media_dir / "segments_wan"
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    for clip in clips:
+        if clip.exists():
+            _archive_file(clip, archive_dir / clip.name)
+
+
+def _archive_wan_merge(media_dir: Path) -> None:
+    """重跑 merge 前归档成片，保留图生视频版本。"""
+    for src_name, dest_name in (
+        ("final.mp4", "final_wan.mp4"),
+        ("body.mp4", "body_wan.mp4"),
+        ("body_with_audio.mp4", "body_with_audio_wan.mp4"),
+    ):
+        _archive_file(media_dir / src_name, media_dir / dest_name)
+
+
 def _clear_merge_artifacts(media_dir: Path) -> None:
+    _archive_wan_merge(media_dir)
     _delete_files(
         [
             media_dir / "final.mp4",
@@ -42,6 +80,7 @@ def _clear_tts_artifacts(conn, job_id: int, media_dir: Path) -> None:
 
 def _clear_segment_clips(conn, job_id: int, media_dir: Path) -> None:
     """TTS 变更后：clip 依赖字幕时间轴，静图可保留。"""
+    _archive_wan_clips(media_dir)
     segment_repo.clear_segment_clips(conn, job_id, None)
     segment_repo.clear_segment_durations(conn, job_id)
     clips_dir = media_dir / "segments"
@@ -51,6 +90,7 @@ def _clear_segment_clips(conn, job_id: int, media_dir: Path) -> None:
 
 
 def _clear_all_segment_media(conn, job_id: int, media_dir: Path) -> None:
+    _archive_wan_clips(media_dir)
     segment_repo.clear_segment_media(conn, job_id, None)
     images_dir = media_dir / "images"
     if images_dir.exists():
@@ -69,6 +109,8 @@ def _clear_partial_segment_media(
     segment_indices: list[int],
 ) -> None:
     segment_repo.clear_segment_media(conn, job_id, segment_indices)
+    clip_names = [f"{index}.mp4" for index in segment_indices]
+    _archive_wan_clips(media_dir, clip_names=clip_names)
     for index in segment_indices:
         _delete_files(
             [

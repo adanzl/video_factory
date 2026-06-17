@@ -149,11 +149,16 @@ class DeepSeekClient(LLMClient):
         )
         if feedback:
             user += f"\n\n上次不合格：{feedback}。请按要求重写。"
-        data = json.loads(self._chat(system, user))
-        prompts = data.get("image_prompts")
+        raw = json.loads(self._chat(system, user))
+        if isinstance(raw, list):
+            prompts = raw
+        elif isinstance(raw, dict):
+            prompts = raw.get("image_prompts")
+        else:
+            raise ValueError("LLM image prompt response has unexpected shape")
         if not prompts:
             raise ValueError("LLM image prompt response missing image_prompts")
-        return data
+        return {"image_prompts": prompts}
 
     def _merge_image_prompts(self, script: dict[str, Any], prompts: list[dict]) -> None:
         by_index: dict[int, dict] = {
