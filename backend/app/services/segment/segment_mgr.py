@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import logging
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
 from app.services.media.media_mgr import SegmentClipsResult, build_segment_clips
 from app.services.visual.visual_mgr import generate_segment_images
+
+logger = logging.getLogger(__name__)
 
 __all__ = ["SegmentProduceResult", "produce_segments"]
 
@@ -35,6 +39,7 @@ def produce_segments(
     audio_path: Path | None = None,
     only_segment_indices: set[int] | None = None,
 ) -> SegmentProduceResult:
+    t0 = time.time()
     images_dir = media_dir / "images"
     path_by_id: dict[int, Path] = {}
     image_targets: list[dict] = []
@@ -58,6 +63,7 @@ def produce_segments(
 
         image_targets.append(seg)
 
+    logger.info("produce_segments: %s images to generate, %s cached", len(image_targets), len(path_by_id))
     generated = generate_segment_images(image_targets, images_dir) if image_targets else []
     for seg_id, path in generated:
         path_by_id[seg_id] = path
@@ -66,6 +72,7 @@ def produce_segments(
         {**seg, "image_path": str(path_by_id[seg["id"]])} for seg in segments
     ]
     if audio_path is not None:
+        logger.info("produce_segments: building clips (audio available)...")
         clips = build_segment_clips(
             media_dir=media_dir,
             segments=segments_with_images,
@@ -73,5 +80,8 @@ def produce_segments(
             only_segment_indices=only_segment_indices,
         )
     else:
+        logger.info("produce_segments: no audio, skipping clips")
         clips = SegmentClipsResult(segment_clip_paths=[])
+    elapsed = time.time() - t0
+    logger.info("produce_segments: done in %.1fs (images=%s, clips=%s)", elapsed, len(generated), len(clips.segment_clip_paths))
     return SegmentProduceResult(image_paths=generated, clips=clips)

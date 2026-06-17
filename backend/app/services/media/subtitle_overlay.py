@@ -11,11 +11,7 @@ from pathlib import Path
 from PIL import Image
 
 from app.config import get_settings
-from app.services.media.clip_render import (
-    image_to_clip,
-    image_to_clip_timed_overlays,
-    image_to_clip_with_overlay,
-)
+from app.services.media.clip.render import image_to_clip_with_overlay
 from app.services.visual.text_render import load_cjk_font, wrap_text
 from app.services.visual.title_render import (
     SHADOW_OFFSET_X,
@@ -134,52 +130,20 @@ def build_segment_clip(
     motion_preset: str,
     work_dir: Path,
     segment_index: int,
+    clip_provider: str | None = None,
+    motion_prompt: str | None = None,
 ) -> Path:
-    """分镜内连续动效 + 句级字幕按时间轴切换，单次编码。"""
-    if not subtitle_cues:
-        raise ValueError(f"segment {segment_index} has no subtitle cues")
+    """分镜内连续动效 + 句级字幕按时间轴切换。"""
+    from app.services.media.clip import build_segment_clip as _build_segment_clip
 
-    total_duration = sum(duration for _, duration in subtitle_cues if duration > 0)
-    if total_duration <= 0:
-        raise ValueError(f"segment {segment_index} has zero duration")
-
-    overlay_windows: list[tuple[Path, float, float]] = []
-    overlay_paths: list[Path] = []
-    cursor = 0.0
-    for idx, (sentence, duration) in enumerate(subtitle_cues):
-        if duration <= 0:
-            continue
-        start = cursor
-        end = cursor + duration
-        cursor = end
-        if not sentence.strip():
-            continue
-        overlay_path = work_dir / f"{segment_index}_{idx}.sub.png"
-        render_subtitle_overlay(sentence, overlay_path)
-        overlay_paths.append(overlay_path)
-        overlay_windows.append((overlay_path, start, end))
-
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        if overlay_windows:
-            image_to_clip_timed_overlays(
-                image_path,
-                overlay_windows,
-                output_path,
-                total_duration,
-                preset=motion_preset,
-                segment_index=segment_index,
-            )
-        else:
-            image_to_clip(
-                image_path,
-                output_path,
-                total_duration,
-                preset=motion_preset,
-                segment_index=segment_index,
-            )
-    finally:
-        if not _keep_overlay_png():
-            for path in overlay_paths:
-                path.unlink(missing_ok=True)
-    return output_path
+    provider = clip_provider or get_settings().clip_provider
+    return _build_segment_clip(
+        clip_provider=provider,
+        image_path=image_path,
+        subtitle_cues=subtitle_cues,
+        output_path=output_path,
+        motion_preset=motion_preset,
+        work_dir=work_dir,
+        segment_index=segment_index,
+        motion_prompt=motion_prompt,
+    )

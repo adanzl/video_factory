@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import logging
+import time
+
 from app.core import pipeline
+
+logger = logging.getLogger(__name__)
 from app.core.job_service import mark_done, mark_failed, mark_running
 from app.repositories import job_log_repo, job_repo
 from app.repositories.connection import connection
@@ -49,11 +54,15 @@ def _run_one_stage(
     with connection() as conn:
         job_log_repo.append_log(conn, job_id, stage, "stage started")
 
+    t0 = time.time()
     try:
         executor.run(ctx)
     except Exception as exc:
+        logger.error("stage %s failed after %.1fs: %s", stage, time.time() - t0, exc)
         mark_failed(job_id, stage, str(exc))
         raise
+    elapsed = time.time() - t0
+    logger.info("stage %s done in %.1fs", stage, elapsed)
 
     job = _reload_job(job_id)
     next_stage = pipeline.next_stage(stage)
@@ -97,12 +106,15 @@ def run_job(
 
         with connection() as conn:
             job_log_repo.append_log(conn, job_id, stage, "stage started")
-
+        logger.info("=== stage %s started ===", stage)
+        t0 = time.time()
         try:
             executor.run(ctx)
         except Exception as exc:
+            logger.error("=== stage %s failed after %.1fs: %s ===", stage, time.time() - t0, exc)
             mark_failed(job_id, stage, str(exc))
             raise
+        logger.info("=== stage %s done in %.1fs ===", stage, time.time() - t0)
 
         next_stage = pipeline.next_stage(stage)
         job = _reload_job(job_id)

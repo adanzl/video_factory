@@ -19,17 +19,19 @@ _VISUAL_BRIEF_RULE = (
 )
 
 _IMAGE_PROMPT_RULE = (
-    "根据每段口播text与visual_brief，扩写为文生图用的image_prompt。"
-    "全片须遵循输入的visual_style，各段视觉风格统一。"
-    "默认高品质3D卡通渲染科普插画：电影感布光与景深，物体适度风格化，不追求摄影写实；"
-    "磁铁等小道具卡通简化，忌镍涂层等过细材质。"
-    "每段image_prompt须250-450字连贯自然语言，分层展开："
-    "①镜头景别与视角；②场景氛围；③主体外观/体态；④动作或对比关系；"
-    "⑤道具细节；⑥背景层次；⑦光线明暗；⑧色调风格。"
+    "根据每段口播text与visual_brief，扩写为文生图用的image_prompt"
+    "和video用的motion_prompt。"
+    "全片统一画风：电影级写实科普视觉，布光考究、景深自然、材质细节真实可辨，"
+    "色彩明快有层次，适配9:16竖屏构图。所有分镜严格遵守此风格。"
+    "每段image_prompt须300-500字，围绕一个视觉焦点展开（如主体特写、关键对比、核心原理可视化），"
+    "避免要素平铺罗列。若口播涉及对比（A/B、前后变化），画面须并排展示两种状态，"
+    "用箭头、流向线、对勾/叉号等视觉编码辅助说明，禁用可读文字/数字/化学式/水印。"
+    "色调忌整体发灰，须有暖色点缀。"
     "须严格对应该段text与visual_brief，禁止提前画后续段落内容。"
-    "口播有对比时画面须并排展示两种状态。用吸附状态、对勾叉号、箭头等视觉编码，"
-    "禁止可读中文/英文/数字/化学符号/水印，禁止「标注」「但无文字」，禁止抽象隐喻。"
-    "不必写画幅比例。色调忌整体发灰，须有暖色点缀。"
+    "每段motion_prompt须30-80字，描述画面如何运动，如镜头运动（推近/环绕/平移）、"
+    "主体运动（旋转/流动/吸附/弹开）、指示动画（箭头延伸/对勾出现/光晕脉动）、"
+    "原理可视化（电流流动/板块挤压/细胞分裂），要求自然流畅不突兀。"
+    "若无明显运动，写'静态画面，轻微镜头呼吸感'。"
 )
 
 
@@ -133,8 +135,8 @@ class DeepSeekClient(LLMClient):
             for seg in segments
         ]
         system = (
-            "你是科普视频文生图提示词专家。输出JSON，字段：image_prompts。"
-            "image_prompts为数组，每项含segment_index与image_prompt。"
+            "你是科普视频文生图与运动提示词专家。输出JSON，字段：image_prompts。"
+            "image_prompts为数组，每项含segment_index、image_prompt与motion_prompt。"
             f"{_IMAGE_PROMPT_RULE}"
             "image_prompts须覆盖输入的每一段，segment_index一一对应，不得遗漏。"
         )
@@ -154,8 +156,8 @@ class DeepSeekClient(LLMClient):
         return data
 
     def _merge_image_prompts(self, script: dict[str, Any], prompts: list[dict]) -> None:
-        by_index = {
-            int(item["segment_index"]): item["image_prompt"]
+        by_index: dict[int, dict] = {
+            int(item["segment_index"]): item
             for item in prompts
             if item.get("image_prompt")
         }
@@ -167,7 +169,9 @@ class DeepSeekClient(LLMClient):
         if missing:
             raise ValueError(f"image_prompts missing segments: {missing}")
         for seg in script["segments"]:
-            seg["image_prompt"] = by_index[seg["segment_index"]]
+            item = by_index[seg["segment_index"]]
+            seg["image_prompt"] = item["image_prompt"]
+            seg["motion_prompt"] = item.get("motion_prompt", "")
 
     def generate_script(self, title: str, *, feedback: str | None = None) -> dict[str, Any]:
         data = self._generate_storyboard(title, feedback=feedback)

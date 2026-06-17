@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+import logging
 import shutil
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
 from app.config import get_settings
+
+logger = logging.getLogger(__name__)
 from app.services.media.ffmpeg_utils import (
     concat_clips,
     merge_audio_video,
     prepend_intro,
 )
-from app.services.media.subtitle_overlay import build_segment_clip
+from app.services.media.clip import build_segment_clip
 from app.services.tts.tts_mgr import cues_for_segment, load_subtitle_cues, subtitle_cues_path_for
 
 __all__ = [
@@ -39,7 +43,11 @@ def _resolve_clip_provider(*, visual_mode: str) -> str:
     settings = get_settings()
     if visual_mode == "kling_std" and settings.kling_upgrade_enabled:
         return "kling_std"
-    return "static_motion"
+    if visual_mode == "wan_i2v":
+        return "wan_i2v"
+    if visual_mode == "static_motion":
+        return settings.clip_provider
+    return settings.clip_provider
 
 
 def build_segment_clips(
@@ -60,7 +68,9 @@ def build_segment_clips(
         )
 
     segment_clips: list[tuple[int, Path]] = []
-    for seg in segments:
+    total = len(segments)
+    t_start = time.time()
+    for i, seg in enumerate(segments, 1):
         index = seg["segment_index"]
         clip_path = clips_dir / f"{index}.mp4"
         if only_segment_indices and index not in only_segment_indices:
@@ -82,16 +92,23 @@ def build_segment_clips(
         seg_cues = cues_for_segment(subtitle_cues, index)
         if not seg_cues:
             raise ValueError(f"segment {index} 无句级字幕时间轴")
+        motion_prompt = seg.get("motion_prompt") or seg.get("visual_brief") or ""
+        logger.info("clip %s/%s building (provider=%s)...", i, total, provider)
         build_segment_clip(
+            clip_provider=provider,
             image_path=Path(seg["image_path"]),
             subtitle_cues=seg_cues,
             output_path=clip_path,
             motion_preset=settings.motion_preset,
             work_dir=clips_dir,
             segment_index=index,
+            motion_prompt=motion_prompt,
         )
         segment_clips.append((seg["id"], clip_path))
+        logger.info("clip %s/%s done (segment %s)", i, total, index)
 
+    elapsed = time.time() - t_start
+    logger.info("clip total: %s/%s built in %.1fs", len(segment_clips), total, elapsed)
     return SegmentClipsResult(segment_clip_paths=segment_clips)
 
 
@@ -103,6 +120,7 @@ def merge_final(
     subtitle_path: Path | None,
     intro_path: Path | None,
 ) -> MergeResult:
+    t0 = time.time()
     clips_dir = media_dir / "segments"
     clip_paths: list[Path] = []
     for seg in sorted(segments, key=lambda s: s["segment_index"]):
@@ -117,18 +135,24 @@ def merge_final(
                 )
             clip_paths.append(fallback)
 
+    logger.info("merge: concatenating %s clips", len(clip_paths))
     body_path = media_dir / "body.mp4"
     concat_clips(clip_paths, body_path)
+    logger.info("merge: body.mp4 done")
 
     body_with_audio = media_dir / "body_with_audio.mp4"
     merge_audio_video(body_path, audio_path, body_with_audio, subtitle_path=subtitle_path)
+    logger.info("merge: audio+subtitles merged")
 
     final_path = media_dir / "final.mp4"
     if intro_path and intro_path.exists():
+        logger.info("merge: prepending intro")
         prepend_intro(intro_path, body_with_audio, final_path)
     else:
         shutil.copy2(body_with_audio, final_path)
 
+    elapsed = time.time() - t0
+    logger.info("merge: done in %.1fs -> %s", elapsed, final_path)
     return MergeResult(
         body_path=body_path,
         body_with_audio_path=body_with_audio,

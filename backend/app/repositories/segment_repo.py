@@ -17,14 +17,15 @@ def insert_segments(
         conn.execute(
             """
             INSERT INTO video_segment (
-                job_id, segment_index, text, image_prompt, visual_mode, status
-            ) VALUES (?, ?, ?, ?, ?, 'pending')
+                job_id, segment_index, text, image_prompt, motion_prompt, visual_mode, status
+            ) VALUES (?, ?, ?, ?, ?, ?, 'pending')
             """,
             (
                 job_id,
                 seg["segment_index"],
                 seg["text"],
                 seg.get("image_prompt"),
+                seg.get("motion_prompt"),
                 seg.get("visual_mode", "static_motion"),
             ),
         )
@@ -33,7 +34,7 @@ def insert_segments(
 def list_segments(conn: sqlite3.Connection, job_id: int) -> list[dict]:
     rows = conn.execute(
         """
-        SELECT id, segment_index, text, image_prompt, visual_mode,
+        SELECT id, segment_index, text, image_prompt, motion_prompt, visual_mode,
                image_path, clip_path, duration_sec, status
         FROM video_segment
         WHERE job_id = ?
@@ -55,6 +56,7 @@ def update_segment(
         "duration_sec",
         "status",
         "image_prompt",
+        "motion_prompt",
         "visual_mode",
     }
     parts: list[str] = []

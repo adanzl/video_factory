@@ -1,0 +1,53 @@
+"""FFmpeg Ken Burns 动效 ClipProvider。"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from app.services.media.clip.mgr import ClipProvider, cleanup_overlay_paths, prepare_subtitle_overlays
+from app.services.media.clip.render import image_to_clip, image_to_clip_timed_overlays
+
+
+class FfmpegClipProvider(ClipProvider):
+    def build_segment_clip(
+        self,
+        *,
+        image_path: Path,
+        subtitle_cues: list[tuple[str, float]],
+        output_path: Path,
+        motion_preset: str,
+        work_dir: Path,
+        segment_index: int,
+        motion_prompt: str | None = None,
+    ) -> Path:
+        _ = motion_prompt
+        total_duration, overlay_windows, overlay_paths = prepare_subtitle_overlays(
+            subtitle_cues=subtitle_cues,
+            work_dir=work_dir,
+            segment_index=segment_index,
+        )
+        if total_duration <= 0:
+            raise ValueError(f"segment {segment_index} has zero duration")
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            if overlay_windows:
+                image_to_clip_timed_overlays(
+                    image_path,
+                    overlay_windows,
+                    output_path,
+                    total_duration,
+                    preset=motion_preset,
+                    segment_index=segment_index,
+                )
+            else:
+                image_to_clip(
+                    image_path,
+                    output_path,
+                    total_duration,
+                    preset=motion_preset,
+                    segment_index=segment_index,
+                )
+        finally:
+            cleanup_overlay_paths(overlay_paths)
+        return output_path

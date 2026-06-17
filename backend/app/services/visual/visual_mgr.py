@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import logging
+import time
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Protocol
 
 from app.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 __all__ = ["ImageProvider", "VideoProvider", "generate_cover", "generate_segment_images"]
 
@@ -45,18 +49,29 @@ def generate_segment_images(
     provider = _get_image_provider()
     settings = get_settings()
     max_workers = 1 if settings.mock_mode else max(1, settings.image_max_workers)
+    total = len(segments)
+    done = 0
+    start = time.time()
 
     def render(seg: dict) -> tuple[int, Path]:
-        out = images_dir / f"{seg['segment_index']}.png"
+        index = seg["segment_index"]
+        t0 = time.time()
+        logger.info("image %s/%s generating (segment %s)...", done + 1, total, index)
+        out = images_dir / f"{index}.png"
         prompt = seg.get("image_prompt") or seg["text"]
         provider.generate(prompt, out)
+        elapsed = time.time() - t0
+        logger.info("image %s/%s done (segment %s, %.1fs)", done + 1, total, index, elapsed)
         return seg["id"], out
 
     results: list[tuple[int, Path]] = []
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        futures = [pool.submit(render, seg) for seg in segments]
+        futures = {pool.submit(render, seg): seg for seg in segments}
         for fut in as_completed(futures):
             results.append(fut.result())
+            done += 1
+    elapsed = time.time() - start
+    logger.info("image total: %s/%s done in %.1fs", done, total, elapsed)
     return results
 
 

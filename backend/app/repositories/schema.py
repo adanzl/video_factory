@@ -73,6 +73,7 @@ def apply_schema(conn: sqlite3.Connection) -> None:
         "UPDATE video_job SET stage = 'segment' WHERE stage = 'quality'"
     )
     _ensure_column(conn, "video_job", "tts_usage_json", "TEXT")
+    _ensure_column(conn, "video_segment", "motion_prompt", "TEXT")
 
 
 def _ensure_column(

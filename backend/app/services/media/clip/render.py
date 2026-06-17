@@ -5,15 +5,17 @@ from __future__ import annotations
 from pathlib import Path
 
 from app.config import get_settings
-from app.services.media.ffmpeg_utils import run_ffmpeg
+from app.services.media.ffmpeg_utils import probe_duration, run_ffmpeg
 
 CLIP_FPS = 25
 _MOTION_FINISH_RATIO = 0.42  # 动效在前 42% 时长内完成，之后保持
 
 __all__ = [
+    "fit_video_duration",
     "image_to_clip",
     "image_to_clip_timed_overlays",
     "image_to_clip_with_overlay",
+    "video_to_clip_timed_overlays",
 ]
 
 
@@ -200,6 +202,120 @@ def image_to_clip_timed_overlays(
         "1",
         "-i",
         str(image_path),
+    ]
+    for overlay_path, _, _ in overlay_windows:
+        cmd.extend(["-i", str(overlay_path)])
+    cmd.extend(
+        [
+            "-filter_complex",
+            ";".join(parts),
+            "-map",
+            "[out]",
+            "-t",
+            str(duration_sec),
+            "-c:v",
+            "libx264",
+            "-crf",
+            str(crf),
+            "-preset",
+            "medium",
+            "-pix_fmt",
+            "yuv444p",
+            "-sws_flags",
+            "lanczos+accurate_rnd+full_chroma_int",  # cSpell: disable-line
+            str(output_path),
+        ]
+    )
+    run_ffmpeg(cmd)
+    return output_path
+
+
+def _scale_pad_vf(*, width: int, height: int) -> str:
+    return (
+        f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
+        f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1"
+    )
+
+
+def fit_video_duration(
+    video_path: Path,
+    output_path: Path,
+    duration_sec: float,
+    *,
+    width: int | None = None,
+    height: int | None = None,
+) -> Path:
+    """缩放至成片尺寸，并按目标时长裁切或末帧定格。"""
+    settings = get_settings()
+    width = width if width is not None else settings.video_width
+    height = height if height is not None else settings.video_height
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    video_dur = probe_duration(video_path)
+    scale = _scale_pad_vf(width=width, height=height)
+    drift = video_dur - duration_sec
+
+    if abs(drift) <= 0.08:
+        vf = scale
+    elif drift > 0:
+        vf = f"{scale},trim=0:{duration_sec:.3f},setpts=PTS-STARTPTS"
+    else:
+        pad = duration_sec - video_dur
+        vf = f"{scale},tpad=stop_mode=clone:stop_duration={pad:.3f}"
+
+    run_ffmpeg(
+        [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(video_path),
+            "-vf",
+            vf,
+            "-t",
+            f"{duration_sec:.3f}",
+            "-c:v",
+            "libx264",
+            "-crf",
+            "18",
+            "-pix_fmt",
+            "yuv420p",
+            str(output_path),
+        ]
+    )
+    return output_path
+
+
+def video_to_clip_timed_overlays(
+    video_path: Path,
+    overlay_windows: list[tuple[Path, float, float]],
+    output_path: Path,
+    duration_sec: float,
+    *,
+    crf: int = 14,
+) -> Path:
+    """已有视频 + 多段字幕按时间轴切换，单次编码。"""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    if not overlay_windows:
+        fit_video_duration(video_path, output_path, duration_sec)
+        return output_path
+
+    parts = ["[0:v]format=yuv444p[bg]"]
+    for idx, (overlay_path, _, _) in enumerate(overlay_windows):
+        parts.append(f"[{idx + 1}:v]format=rgba[s{idx}]")
+
+    current = "bg"
+    for idx, (_, start, end) in enumerate(overlay_windows):
+        nxt = "out" if idx == len(overlay_windows) - 1 else f"v{idx}"
+        parts.append(
+            f"[{current}][s{idx}]overlay=0:0:format=auto:enable='between(t,{start:.3f},{end:.3f})'[{nxt}]"
+        )
+        current = nxt
+
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(video_path),
     ]
     for overlay_path, _, _ in overlay_windows:
         cmd.extend(["-i", str(overlay_path)])

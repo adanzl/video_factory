@@ -96,6 +96,13 @@ class Config:
     cover_width: int = _COVER_W
     cover_height: int = _COVER_H
     motion_preset: str = os.getenv("MOTION_PRESET", "ken_burns_slow")
+    clip_provider: str = os.getenv("CLIP_PROVIDER", "ffmpeg")
+    clip_submit_interval_sec: float = float(
+        os.getenv("CLIP_SUBMIT_INTERVAL_SEC", os.getenv("IMAGE_SUBMIT_INTERVAL_SEC", "3"))
+    )
+    wan_i2v_model: str = os.getenv("WAN_I2V_MODEL", "wanx2.1-i2v-turbo")  # cSpell: disable-line
+    wan_i2v_resolution: str = os.getenv("WAN_I2V_RESOLUTION", "720P")
+    wan_i2v_prompt_extend: bool = _bool("WAN_I2V_PROMPT_EXTEND", True)
     max_title_length: int = int(os.getenv("MAX_TITLE_LENGTH", "24"))
     segment_target_sec: float = float(os.getenv("SEGMENT_TARGET_SEC", "12"))
     final_min_duration_sec: float = float(
@@ -112,6 +119,7 @@ class Config:
     wan_model: str = os.getenv("WAN_MODEL", "wanx2.1-t2i-turbo")  # cSpell: disable-line
     wan_image_size: str = _WAN_IMAGE_SIZE
     wan_cover_size: str = os.getenv("WAN_COVER_SIZE", _size_str(_COVER_W, _COVER_H))
+    wan_prompt_extend: bool = _bool("WAN_PROMPT_EXTEND")
     z_image_model: str = os.getenv("Z_IMAGE_MODEL", "z-image-turbo")
     z_image_size: str = os.getenv("Z_IMAGE_SIZE", _WAN_IMAGE_SIZE)
     z_image_prompt_extend: bool = _bool("Z_IMAGE_PROMPT_EXTEND")
