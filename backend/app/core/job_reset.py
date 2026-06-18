@@ -108,16 +108,11 @@ def _clear_partial_segment_media(
     media_dir: Path,
     segment_indices: list[int],
 ) -> None:
-    segment_repo.clear_segment_media(conn, job_id, segment_indices)
+    segment_repo.clear_segment_clips_only(conn, job_id, segment_indices)
     clip_names = [f"{index}.mp4" for index in segment_indices]
     _archive_wan_clips(media_dir, clip_names=clip_names)
     for index in segment_indices:
-        _delete_files(
-            [
-                media_dir / "images" / f"{index}.png",
-                media_dir / "segments" / f"{index}.mp4",
-            ]
-        )
+        _delete_files([media_dir / "segments" / f"{index}.mp4"])
 
 
 def _clear_downstream(conn, job_id: int, stage: str, media_dir: Path) -> None:

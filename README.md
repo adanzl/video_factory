@@ -54,6 +54,7 @@ sqlite3 data/data.db "SELECT id, title, stage, status FROM video_job ORDER BY id
 ```text
 backend/
 ├── worker/          # CLI + 流水线 stage 执行器
+├── topic/           # 选题 CLI（python -m topic）
 ├── app/
 │   ├── core/        # pipeline、job_service
 │   ├── repositories/# SQLite 裸 SQL
@@ -88,6 +89,15 @@ python -m worker run --job-id 2 --only-stage tts --skip-publish
 
 # 只重跑指定分镜
 python -m worker run --job-id 2 --only-stage segment --segments 1,3 --skip-publish
+```
+
+### 选题（LLM 生成标题候选）
+
+```bash
+cd backend
+python -m topic --theme "高考志愿填报"
+python -m topic -t "磁铁与不锈钢" -n 10 -v   # 显示赛道与钩子
+python -m topic -t "日常用电安全" --json      # JSON 输出
 ```
 
 ## 文档

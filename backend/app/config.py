@@ -103,6 +103,10 @@ class Config:
     wan_i2v_model: str = os.getenv("WAN_I2V_MODEL", "wanx2.1-i2v-turbo")  # cSpell: disable-line
     wan_i2v_resolution: str = os.getenv("WAN_I2V_RESOLUTION", "720P")
     wan_i2v_prompt_extend: bool = _bool("WAN_I2V_PROMPT_EXTEND", True)
+    dashscope_http_max_retries: int = int(os.getenv("DASHSCOPE_HTTP_MAX_RETRIES", "2"))
+    wan_i2v_task_max_retries: int = int(os.getenv("WAN_I2V_TASK_MAX_RETRIES", "1"))
+    wan_i2v_poll_max_attempts: int = int(os.getenv("WAN_I2V_POLL_MAX_ATTEMPTS", "60"))
+    wan_t2i_poll_max_attempts: int = int(os.getenv("WAN_T2I_POLL_MAX_ATTEMPTS", "45"))
     max_title_length: int = int(os.getenv("MAX_TITLE_LENGTH", "24"))
     segment_target_sec: float = float(os.getenv("SEGMENT_TARGET_SEC", "12"))
     final_min_duration_sec: float = float(

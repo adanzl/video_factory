@@ -32,6 +32,9 @@ class WanClipProvider(ClipProvider):
         self._resolution = settings.wan_i2v_resolution
         self._prompt_extend = settings.wan_i2v_prompt_extend
         self._submit_interval = settings.clip_submit_interval_sec
+        self._http_max_retries = settings.dashscope_http_max_retries
+        self._task_max_retries = settings.wan_i2v_task_max_retries
+        self._poll_max_attempts = settings.wan_i2v_poll_max_attempts
 
     def _throttle_submit(self) -> None:
         with self._submit_lock:
@@ -49,12 +52,13 @@ class WanClipProvider(ClipProvider):
         *,
         headers: dict | None = None,
         json: dict | None = None,
-        max_retries: int = 6,
+        max_retries: int | None = None,
         timeout: int = 120,
     ) -> requests.Response:
+        retries = max_retries if max_retries is not None else self._http_max_retries
         h = headers or {}
         last_exc: Exception | None = None
-        for attempt in range(max_retries):
+        for attempt in range(retries):
             try:
                 resp = requests.request(method, url, headers=h, json=json, timeout=timeout)
                 if resp.status_code in _RETRYABLE:
@@ -64,7 +68,7 @@ class WanClipProvider(ClipProvider):
                         resp.status_code,
                         url,
                         attempt + 1,
-                        max_retries,
+                        retries,
                         wait,
                     )
                     time.sleep(wait)
@@ -78,7 +82,7 @@ class WanClipProvider(ClipProvider):
                 time.sleep(wait)
         if last_exc:
             raise last_exc
-        raise RuntimeError(f"dashscope request failed after {max_retries} retries: {url}")
+        raise RuntimeError(f"dashscope request failed after {retries} retries: {url}")
 
     @staticmethod
     def _encode_image(path: Path) -> str:
@@ -125,7 +129,8 @@ class WanClipProvider(ClipProvider):
         }
         self._throttle_submit()
         last_exc: Exception | None = None
-        for attempt in range(3):
+        max_attempts = max(1, self._task_max_retries)
+        for attempt in range(max_attempts):
             try:
                 return self._submit_and_poll(
                     headers=headers,
@@ -135,12 +140,13 @@ class WanClipProvider(ClipProvider):
             except RuntimeError as exc:
                 last_exc = exc
                 msg = str(exc)
-                if attempt >= 2 or "FAILED" not in msg and "timeout" not in msg.lower():
+                if attempt >= max_attempts - 1 or "FAILED" not in msg and "timeout" not in msg.lower():
                     raise
                 wait = 10 * (attempt + 1)
                 logger.warning(
-                    "wan i2v attempt %s/3 failed, retry in %ss: %s",
+                    "wan i2v attempt %s/%s failed, retry in %ss: %s",
                     attempt + 1,
+                    max_attempts,
                     wait,
                     msg[:200],
                 )
@@ -163,7 +169,7 @@ class WanClipProvider(ClipProvider):
         task_id = body["output"]["task_id"]
 
         state = "PENDING"
-        for poll_idx in range(120):
+        for poll_idx in range(self._poll_max_attempts):
             status_resp = self._request(
                 "GET",
                 f"https://dashscope.aliyuncs.com/api/v1/tasks/{task_id}",

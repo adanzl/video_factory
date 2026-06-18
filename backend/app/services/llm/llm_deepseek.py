@@ -5,6 +5,7 @@ from typing import Any
 
 from app.config import get_settings
 from app.services.llm.llm_mgr import LLMClient
+from app.services.llm.llm_topics import build_topic_system_prompt, parse_topics_payload
 
 # 中文口播约 7.5 字/秒（12s ≈ 90 字）
 _CHARS_PER_SEC = 7.5
@@ -197,3 +198,15 @@ class DeepSeekClient(LLMClient):
                 f"need >={_MIN_IMAGE_PROMPT_CHARS} chars each, expand all layers"
             )
         return data
+
+    def generate_topics(self, theme: str, *, count: int = 10) -> list[dict[str, str]]:
+        settings = get_settings()
+        count = max(1, min(count, 20))
+        system = build_topic_system_prompt(max_title_len=settings.max_title_length)
+        user = (
+            f"主题方向：{theme.strip()}\n"
+            f"请生成 {count} 个互不重复、适合 AI 全自动科普成片的中文视频标题。"
+        )
+        raw = json.loads(self._chat(system, user))
+        topics = parse_topics_payload(raw, max_title_len=settings.max_title_length)
+        return topics[:count]

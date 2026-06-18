@@ -70,3 +70,39 @@ class MockLLMClient(LLMClient):
             "visual_style": visual_style,
             "segments": segments,
         }
+
+    def generate_topics(self, theme: str, *, count: int = 10) -> list[dict[str, str]]:
+        settings = get_settings()
+        count = max(1, min(count, 20))
+        theme = re.sub(r"\s+", "", theme.strip()) or "科普"
+        max_len = settings.max_title_length
+        patterns = [
+            ("误区反问式", "日常科学原理", f"{theme}里最常见的误区，你中招了吗？"),
+            ("误区反问式", "生活避坑实用常识", f"关于{theme}，多数人第一步就错了？"),
+            ("反差好奇式", "日常科学原理", f"同样是{theme}，为什么结果差这么多？"),
+            ("误区反问式", "数码小白避坑", f"{theme}越贵越好？真相可能相反"),
+            ("实操避坑式", "生活避坑实用常识", f"{theme}暗藏陷阱？三招快速辨别"),
+            ("误区反问式", "古代冷门生活史", f"古人没有现代工具，怎么解决{theme}？"),
+            ("反差好奇式", "日常科学原理", f"看起来一样的{theme}，原理完全不同？"),
+            ("误区反问式", "生活避坑实用常识", f"{theme}这样做，反而更危险？"),
+            ("误区反问式", "数码小白避坑", f"买{theme}只看参数？最容易踩的坑"),
+            ("实操避坑式", "日常科学原理", f"一文搞懂{theme}：别被直觉骗了"),
+        ]
+        tracks_hooks = {
+            "日常科学原理": "反常识原理最容易引发好奇点击",
+            "生活避坑实用常识": "生活误区是稳定长尾搜索流量",
+            "数码小白避坑": "参数误区对小白用户转化高",
+            "古代冷门生活史": "古今对比制造新鲜感和完播",
+        }
+        out: list[dict[str, str]] = []
+        for template, track, title in patterns[:count]:
+            display = title[:max_len]
+            out.append(
+                {
+                    "title": display,
+                    "track": track,
+                    "template": template,
+                    "hook": tracks_hooks[track],
+                }
+            )
+        return out

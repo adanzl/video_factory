@@ -35,6 +35,8 @@ class WanImageProvider(ImageProvider):
         self._fallback = MockImageProvider()
         self._last_submit_at = 0.0
         self._use_sync = self._model in _SYNC_MODELS
+        self._http_max_retries = settings.dashscope_http_max_retries
+        self._poll_max_attempts = settings.wan_t2i_poll_max_attempts
 
     def _throttle_submit(self) -> None:
         with self._submit_lock:
@@ -50,12 +52,13 @@ class WanImageProvider(ImageProvider):
         *,
         headers: dict | None = None,
         json: dict | None = None,
-        max_retries: int = 6,
+        max_retries: int | None = None,
         timeout: int = 60,
     ) -> requests.Response:
+        retries = max_retries if max_retries is not None else self._http_max_retries
         h = headers or {}
         last_exc: Exception | None = None
-        for attempt in range(max_retries):
+        for attempt in range(retries):
             try:
                 resp = requests.request(method, url, headers=h, json=json, timeout=timeout)
                 if resp.status_code in _RETRYABLE:
@@ -65,7 +68,7 @@ class WanImageProvider(ImageProvider):
                         resp.status_code,
                         url,
                         attempt + 1,
-                        max_retries,
+                        retries,
                         wait,
                     )
                     time.sleep(wait)
@@ -79,7 +82,7 @@ class WanImageProvider(ImageProvider):
                 time.sleep(wait)
         if last_exc:
             raise last_exc
-        raise RuntimeError(f"dashscope request failed after {max_retries} retries: {url}")
+        raise RuntimeError(f"dashscope request failed after {retries} retries: {url}")
 
     def _generate_sync(self, prompt: str, output_path: Path, *, size: str) -> Path:
         headers = {
@@ -136,7 +139,7 @@ class WanImageProvider(ImageProvider):
         }
         resp = self._request("POST", _ASYNC_SUBMIT_URL, headers=headers, json=payload)
         task_id = resp.json()["output"]["task_id"]
-        for _ in range(90):
+        for _ in range(self._poll_max_attempts):
             status_resp = self._request(
                 "GET",
                 f"https://dashscope.aliyuncs.com/api/v1/tasks/{task_id}",

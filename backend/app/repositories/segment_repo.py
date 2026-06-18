@@ -104,6 +104,22 @@ def clear_segment_clips(
     )
 
 
+def clear_segment_clips_only(
+    conn: sqlite3.Connection,
+    job_id: int,
+    segment_indices: list[int],
+) -> None:
+    placeholders = ",".join("?" for _ in segment_indices)
+    conn.execute(
+        f"""
+        UPDATE video_segment
+        SET clip_path = NULL, status = 'pending'
+        WHERE job_id = ? AND segment_index IN ({placeholders})
+        """,
+        (job_id, *segment_indices),
+    )
+
+
 def clear_segment_media(
     conn: sqlite3.Connection,
     job_id: int,

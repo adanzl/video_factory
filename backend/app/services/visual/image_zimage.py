@@ -31,6 +31,7 @@ class ZImageProvider(ImageProvider):
         self._submit_interval = settings.image_submit_interval_sec
         self._fallback = MockImageProvider()
         self._last_submit_at = 0.0
+        self._http_max_retries = settings.dashscope_http_max_retries
 
     def _throttle_submit(self) -> None:
         with self._submit_lock:
@@ -46,11 +47,12 @@ class ZImageProvider(ImageProvider):
         *,
         headers: dict | None = None,
         json: dict | None = None,
-        max_retries: int = 6,
+        max_retries: int | None = None,
     ) -> requests.Response:
+        retries = max_retries if max_retries is not None else self._http_max_retries
         h = headers or {}
         last_exc: Exception | None = None
-        for attempt in range(max_retries):
+        for attempt in range(retries):
             try:
                 resp = requests.request(method, url, headers=h, json=json, timeout=120)
                 if resp.status_code in _RETRYABLE:
@@ -60,7 +62,7 @@ class ZImageProvider(ImageProvider):
                         resp.status_code,
                         url,
                         attempt + 1,
-                        max_retries,
+                        retries,
                         wait,
                     )
                     time.sleep(wait)
@@ -74,7 +76,7 @@ class ZImageProvider(ImageProvider):
                 time.sleep(wait)
         if last_exc:
             raise last_exc
-        raise RuntimeError(f"dashscope z-image request failed after {max_retries} retries: {url}")
+        raise RuntimeError(f"dashscope z-image request failed after {retries} retries: {url}")
 
     def _extract_image_url(self, body: dict) -> str | None:
         if body.get("code"):

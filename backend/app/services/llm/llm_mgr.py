@@ -6,11 +6,14 @@ from typing import Any
 
 from app.config import get_settings
 
-__all__ = ["LLMClient", "generate_script"]
+__all__ = ["LLMClient", "generate_script", "generate_topics"]
 
 
 class LLMClient:
     def generate_script(self, title: str, *, feedback: str | None = None) -> dict[str, Any]:
+        raise NotImplementedError
+
+    def generate_topics(self, theme: str, *, count: int = 10) -> list[dict[str, str]]:
         raise NotImplementedError
 
 
@@ -25,3 +28,7 @@ def _get_client() -> LLMClient:
 
 def generate_script(title: str, *, feedback: str | None = None) -> dict[str, Any]:
     return _get_client().generate_script(title, feedback=feedback)
+
+
+def generate_topics(theme: str, *, count: int = 10) -> list[dict[str, str]]:
+    return _get_client().generate_topics(theme, count=count)
