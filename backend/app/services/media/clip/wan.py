@@ -124,6 +124,38 @@ class WanClipProvider(ClipProvider):
             },
         }
         self._throttle_submit()
+        last_exc: Exception | None = None
+        for attempt in range(3):
+            try:
+                return self._submit_and_poll(
+                    headers=headers,
+                    payload=payload,
+                    output_path=output_path,
+                )
+            except RuntimeError as exc:
+                last_exc = exc
+                msg = str(exc)
+                if attempt >= 2 or "FAILED" not in msg and "timeout" not in msg.lower():
+                    raise
+                wait = 10 * (attempt + 1)
+                logger.warning(
+                    "wan i2v attempt %s/3 failed, retry in %ss: %s",
+                    attempt + 1,
+                    wait,
+                    msg[:200],
+                )
+                time.sleep(wait)
+        if last_exc:
+            raise last_exc
+        raise RuntimeError("wan i2v failed without exception")
+
+    def _submit_and_poll(
+        self,
+        *,
+        headers: dict,
+        payload: dict,
+        output_path: Path,
+    ) -> Path:
         resp = self._request("POST", _SUBMIT_URL, headers=headers, json=payload)
         body = resp.json()
         if body.get("code"):
