@@ -61,7 +61,7 @@ _COVER_W, _COVER_H = _size("COVER", 1280, 720)
 _WAN_IMAGE_SIZE = os.getenv("WAN_IMAGE_SIZE", "720*1280")
 _DEEPSEEK_KEY = _opt("DEEPSEEK_API_KEY")
 _DASHSCOPE_KEY = _opt("DASHSCOPE_API_KEY")
-_TTS_KEY = _opt("TTS_API_KEY") or _DASHSCOPE_KEY
+_TTS_KEY = _DASHSCOPE_KEY or _opt("TTS_API_KEY")
 _FINAL_STRICT = _bool("FINAL_DURATION_STRICT")
 
 
@@ -75,6 +75,8 @@ class Config:
     intro_bg_path: Path = _path("INTRO_BG_PATH", _RES_DIR / "bg/bg1.png")
     sqlite_path: Path = _path("SQLITE_PATH", ROOT_DIR / "data/data.db")
     video_data_dir: Path = _path("VIDEO_DATA_DIR", ROOT_DIR / "data/media")
+    log_dir: Path = _path("LOG_DIR", ROOT_DIR / "data/logs")
+    log_retention_days: int = int(os.getenv("LOG_RETENTION_DAYS", "3"))
     host_intro_path: Path = _path("HOST_INTRO_PATH", _RES_DIR / "host/intro.png")
     host_boy_path: Path = _path("HOST_BOY_PATH", _RES_DIR / "host/boy.png")
     host_girl_path: Path = _path("HOST_GIRL_PATH", _RES_DIR / "host/girl.png")

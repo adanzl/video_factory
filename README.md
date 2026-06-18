@@ -49,6 +49,14 @@ python -m worker run \
 sqlite3 data/data.db "SELECT id, title, stage, status FROM video_job ORDER BY id DESC;"
 ```
 
+日志写入 `data/logs/worker.log`（**按天切割，默认保留 3 天**）；每次跑 job 另写 `data/media/{job_id}/run.log`：
+
+```bash
+tail -f data/logs/worker.log
+tail -f data/media/4/run.log
+ls data/logs/worker.log*    # worker.log.2026-06-17 等归档
+```
+
 ## 架构
 
 ```text

@@ -84,9 +84,9 @@ def _run_tts_task(
     pitch: float | None = None,
 ) -> _SynthesisResult:
     settings = get_settings()
-    api_key = settings.tts_api_key or settings.dashscope_api_key or ""
+    api_key = settings.dashscope_api_key or settings.tts_api_key or ""
     if not api_key:
-        raise ValueError("TTS_API_KEY or DASHSCOPE_API_KEY is required")
+        raise ValueError("DASHSCOPE_API_KEY is required for TTS")
     if not text.strip():
         raise ValueError("TTS text is empty")
 

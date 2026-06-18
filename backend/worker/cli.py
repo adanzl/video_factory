@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import logging
 import sys
 from pathlib import Path
 
@@ -9,13 +8,14 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    datefmt="%H:%M:%S",
+from app.config import get_settings
+from app.core.log_config import attach_job_log, setup_logging
+
+WORKER_LOG = setup_logging(
+    log_dir=get_settings().log_dir,
+    retention_days=get_settings().log_retention_days,
 )
 
-from app.config import get_settings
 from app.core import pipeline
 from app.core.job_service import create_job_from_title
 from app.core.job_reset import prepare_job_rerun
@@ -126,7 +126,10 @@ def cmd_run(args: argparse.Namespace) -> int:
         return 2
 
     mode = "mock" if settings.mock_mode else "live"
+    job_log = attach_job_log(settings.video_data_dir, job_id)
     print(f"Running job {job_id} (mode={mode}, skip_publish={skip_publish})")
+    print(f"Log: {WORKER_LOG}")
+    print(f"Job log: {job_log}")
     if rerun_stage:
         print(f"Rerun [{rerun_mode}]: {rerun_stage}")
     if segment_indices:

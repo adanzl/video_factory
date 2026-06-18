@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import logging
 import sys
 from pathlib import Path
 
@@ -10,10 +9,12 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    datefmt="%H:%M:%S",
+from app.config import get_settings
+from app.core.log_config import setup_logging
+
+setup_logging(
+    log_dir=get_settings().log_dir,
+    retention_days=get_settings().log_retention_days,
 )
 
 from app.services.llm.llm_mgr import generate_topics
