@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from app.services.media.clip.mgr import ClipProvider, cleanup_overlay_paths, prepare_subtitle_overlays
+from app.services.media.clip.mgr import ClipProvider, clip_mgr
 from app.services.media.clip.render import image_to_clip, image_to_clip_timed_overlays
 
 
@@ -21,7 +21,7 @@ class FfmpegClipProvider(ClipProvider):
         motion_prompt: str | None = None,
     ) -> Path:
         _ = motion_prompt
-        total_duration, overlay_windows, overlay_paths = prepare_subtitle_overlays(
+        total_duration, overlay_windows, overlay_paths = clip_mgr.prepare_subtitle_overlays(
             subtitle_cues=subtitle_cues,
             work_dir=work_dir,
             segment_index=segment_index,
@@ -49,5 +49,5 @@ class FfmpegClipProvider(ClipProvider):
                     segment_index=segment_index,
                 )
         finally:
-            cleanup_overlay_paths(overlay_paths)
+            clip_mgr.cleanup_overlay_paths(overlay_paths)
         return output_path

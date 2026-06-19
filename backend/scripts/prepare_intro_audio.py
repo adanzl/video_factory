@@ -16,7 +16,7 @@ sys.path.insert(0, str(ROOT / "backend"))
 
 from app.config import get_settings
 from app.services.media.ffmpeg_utils import generate_silent_mp3, probe_duration
-from app.services.tts.tts_mgr import synthesize_utterance
+from app.services.tts.tts_mgr import tts_mgr
 
 
 def main() -> None:
@@ -31,7 +31,7 @@ def main() -> None:
         print(f"无 TTS Key: 已写入静音占位 {out} ({probe_duration(out):.2f}s)")
         return
 
-    synthesize_utterance(
+    tts_mgr.synthesize_utterance(
         text,
         out,
         rate=settings.intro_tts_rate,

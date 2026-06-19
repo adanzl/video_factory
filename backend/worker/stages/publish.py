@@ -4,7 +4,7 @@ from pathlib import Path
 
 from app.repositories import job_log_repo
 from app.repositories.connection import connection
-from app.services.publish.publish_mgr import publish
+from app.services.publish.publish_mgr import publish_mgr
 from worker.context import JobContext
 from worker.stages.base import StageExecutor
 
@@ -19,7 +19,7 @@ class PublishStage(StageExecutor):
             return
         video_path = Path(ctx.job.get("final_path") or ctx.rel("final.mp4"))
         cover_path = Path(ctx.job["cover_path"]) if ctx.job.get("cover_path") else None
-        result = publish(
+        result = publish_mgr.publish(
             title=ctx.job["title"],
             video_path=video_path,
             cover_path=cover_path,

@@ -6,7 +6,7 @@ from app.quality.gate import apply_quality_checks
 from app.repositories import job_log_repo, job_repo, segment_repo
 from app.repositories.connection import connection
 from app.services.media.audio_analysis import analyze_loudness, analyze_silence, normalize_loudness
-from app.services.tts.tts_mgr import synthesize
+from app.services.tts.tts_mgr import tts_mgr
 from worker.context import JobContext
 from worker.stages.base import StageExecutor
 
@@ -20,7 +20,7 @@ class TTSStage(StageExecutor):
             job = job_repo.get_job(conn, ctx.job["id"])
             segments = segment_repo.list_segments(conn, ctx.job["id"])
         script = job.get("script_json") or {}
-        result = synthesize(script.get("narration", ""), segments, ctx.media_dir / "audio")
+        result = tts_mgr.synthesize(script.get("narration", ""), segments, ctx.media_dir / "audio")
         normalize_loudness(
             result.audio_path,
             target_lufs=settings.audio_target_lufs,

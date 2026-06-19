@@ -7,7 +7,7 @@ from app.quality.checkers import check_copy, check_storyboard
 from app.quality.gate import apply_quality_checks
 from app.repositories import job_log_repo, job_repo, segment_repo
 from app.repositories.connection import connection
-from app.services.llm.llm_mgr import generate_script
+from app.services.llm.llm_mgr import llm_mgr
 from worker.context import JobContext
 from worker.stages.base import StageExecutor
 
@@ -127,7 +127,7 @@ class ScriptStage(StageExecutor):
         feedback: str | None = None
         accept_warnings: list[str] = []
         for attempt in range(6):
-            script = generate_script(title, feedback=feedback)
+            script = llm_mgr.generate_script(title, feedback=feedback)
             try:
                 accept_warnings = _validate_script(script)
                 break

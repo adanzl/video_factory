@@ -17,8 +17,7 @@ WORKER_LOG = setup_logging(
 )
 
 from app.core import pipeline
-from app.core.job_service import create_job_from_title
-from app.core.job_reset import prepare_job_rerun
+from app.services.job import job_mgr
 from app.repositories import job_repo
 from app.repositories.connection import connection
 from worker.loop import drain_pending, run_job
@@ -100,10 +99,10 @@ def cmd_run(args: argparse.Namespace) -> int:
     rerun_mode = "only" if args.only_stage else "from"
 
     if args.title:
-        job = create_job_from_title(args.title, skip_publish=skip_publish)
+        job = job_mgr.create_from_title(args.title, skip_publish=skip_publish)
         job_id = job["id"]
         if rerun_stage:
-            prepare_job_rerun(
+            job_mgr.prepare_rerun(
                 job_id,
                 rerun_stage,
                 segment_indices=segment_indices,
@@ -112,7 +111,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     elif args.job_id:
         job_id = args.job_id
         if rerun_stage:
-            prepare_job_rerun(
+            job_mgr.prepare_rerun(
                 job_id,
                 rerun_stage,
                 segment_indices=segment_indices,

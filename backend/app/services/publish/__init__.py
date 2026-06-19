@@ -1,3 +1,3 @@
-from app.services.publish import publish_mgr
+from app.services.publish.publish_mgr import PublishMgr, publish_mgr
 
-__all__ = ["publish_mgr"]
+__all__ = ["PublishMgr", "publish_mgr"]

@@ -9,7 +9,7 @@ from app.core import pipeline
 from app.repositories import job_log_repo, job_repo, segment_repo
 from app.repositories.connection import connection
 
-__all__ = ["prepare_job_rerun"]
+__all__ = ["prepare_for_action", "prepare_job_rerun", "reset_job_from_stage"]
 
 
 def _delete_files(paths: list[Path]) -> None:
@@ -134,6 +134,29 @@ def _clear_downstream(conn, job_id: int, stage: str, media_dir: Path) -> None:
         _clear_merge_artifacts(media_dir)
 
 
+def _clear_segment_images(
+    conn,
+    job_id: int,
+    media_dir: Path,
+    segment_indices: list[int] | None,
+) -> None:
+    segment_repo.clear_segment_media(conn, job_id, segment_indices)
+    if segment_indices:
+        for index in segment_indices:
+            _delete_files([media_dir / "images" / f"{index}.png"])
+            _delete_files([media_dir / "segments" / f"{index}.mp4"])
+        return
+    images_dir = media_dir / "images"
+    if images_dir.exists():
+        for img in images_dir.glob("*.png"):
+            img.unlink()
+    _archive_wan_clips(media_dir)
+    clips_dir = media_dir / "segments"
+    if clips_dir.exists():
+        for clip in clips_dir.glob("*.mp4"):
+            clip.unlink()
+
+
 def _clear_stage_self(
     conn,
     job_id: int,
@@ -141,6 +164,7 @@ def _clear_stage_self(
     media_dir: Path,
     *,
     segment_indices: list[int] | None,
+    segment_scope: str | None = None,
 ) -> None:
     """清空 stage 自身产物，以便重新执行。"""
     if stage in {"title", "script"}:
@@ -180,7 +204,14 @@ def _clear_stage_self(
         return
 
     if stage == "segment" and media_dir.exists():
-        if segment_indices:
+        if segment_scope == "clips":
+            if segment_indices:
+                _clear_partial_segment_media(conn, job_id, media_dir, segment_indices)
+            else:
+                _clear_segment_clips(conn, job_id, media_dir)
+        elif segment_scope == "images":
+            _clear_segment_images(conn, job_id, media_dir, segment_indices)
+        elif segment_indices:
             _clear_partial_segment_media(conn, job_id, media_dir, segment_indices)
         else:
             _clear_all_segment_media(conn, job_id, media_dir)
@@ -192,6 +223,62 @@ def _clear_stage_self(
             _clear_merge_artifacts(media_dir)
 
 
+def prepare_for_action(
+    job_id: int,
+    action: str,
+    *,
+    segment_indices: list[int] | None = None,
+) -> dict:
+    """按 API 动作名清理产物并将 job 指到对应 stage。"""
+    if action == "segment/images":
+        stage = "segment"
+        segment_scope = "images"
+    elif action == "segment/clips":
+        stage = "segment"
+        segment_scope = "clips"
+    else:
+        stage = action
+        segment_scope = None
+
+    if stage not in pipeline.STAGES or stage == "done":
+        raise ValueError(f"invalid action: {action}")
+    if segment_indices is not None:
+        if not action.startswith("segment/"):
+            raise ValueError("segments 仅可用于 segment/images 或 segment/clips")
+        if not segment_indices:
+            raise ValueError("segments 不能为空")
+
+    from app.config import get_settings
+
+    settings = get_settings()
+    media_dir = settings.video_data_dir / str(job_id)
+
+    with connection() as conn:
+        _clear_stage_self(
+            conn,
+            job_id,
+            stage,
+            media_dir,
+            segment_indices=segment_indices,
+            segment_scope=segment_scope,
+        )
+        _clear_downstream(conn, job_id, stage, media_dir)
+
+        job = job_repo.update_job(
+            conn,
+            job_id,
+            stage=stage,
+            status="pending",
+            fail_stage=None,
+            error_message=None,
+        )
+        detail = f"action={action}"
+        if segment_indices:
+            detail += f", segments={segment_indices}"
+        job_log_repo.append_log(conn, job_id, stage, detail)
+        return job
+
+
 def prepare_job_rerun(
     job_id: int,
     stage: str,
@@ -199,12 +286,7 @@ def prepare_job_rerun(
     segment_indices: list[int] | None = None,
     mode: str = "from",
 ) -> dict:
-    """准备重跑：清空 stage 自身 + 下游产物，并将 job 指到 stage。
-
-    mode:
-      - ``from``: 从 stage 跑到流水线结束（--from-stage）
-      - ``only``: 只执行 stage 一步（--only-stage）
-    """
+    """准备重跑（CLI）：清空 stage 自身 + 下游产物，并将 job 指到 stage。"""
     if stage not in pipeline.STAGES or stage == "done":
         raise ValueError(f"invalid stage: {stage}")
     if mode not in {"from", "only"}:
@@ -221,7 +303,14 @@ def prepare_job_rerun(
     media_dir = settings.video_data_dir / str(job_id)
 
     with connection() as conn:
-        _clear_stage_self(conn, job_id, stage, media_dir, segment_indices=segment_indices)
+        _clear_stage_self(
+            conn,
+            job_id,
+            stage,
+            media_dir,
+            segment_indices=segment_indices,
+            segment_scope=None,
+        )
         _clear_downstream(conn, job_id, stage, media_dir)
 
         job = job_repo.update_job(
@@ -245,7 +334,6 @@ def reset_job_from_stage(
     *,
     segment_indices: list[int] | None = None,
 ) -> dict:
-    """兼容旧名。"""
     return prepare_job_rerun(
         job_id,
         from_stage,

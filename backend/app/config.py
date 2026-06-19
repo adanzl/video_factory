@@ -68,6 +68,12 @@ _FINAL_STRICT = _bool("FINAL_DURATION_STRICT")
 class Config:
     """应用配置。"""
 
+    # ========== 服务器 ==========
+    env: str = os.getenv("ENV", "development").strip().lower()
+    is_production: bool = env == "production"
+    host: str = os.getenv("HOST", "0.0.0.0")
+    port: int = int(os.getenv("PORT", "9002"))
+
     # ========== 路径 ==========
     root_dir: Path = ROOT_DIR
     res_dir: Path = _RES_DIR

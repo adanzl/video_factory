@@ -7,7 +7,7 @@ from app.quality.checkers import check_segment_clips, check_visual
 from app.quality.gate import apply_quality_checks
 from app.repositories import job_log_repo, job_repo, segment_repo
 from app.repositories.connection import connection
-from app.services.segment.segment_mgr import produce_segments
+from app.services.segment.segment_mgr import segment_mgr
 from worker.context import JobContext
 from worker.stages.base import StageExecutor
 
@@ -22,11 +22,12 @@ class SegmentStage(StageExecutor):
             segments = segment_repo.list_segments(conn, ctx.job["id"])
 
         audio_path = Path(job["audio_path"]) if job.get("audio_path") else None
-        result = produce_segments(
+        result = segment_mgr.produce_segments(
             segments=segments,
             media_dir=ctx.media_dir,
             audio_path=audio_path,
             only_segment_indices=ctx.segment_indices_set(),
+            scope=ctx.segment_scope or "all",
         )
 
         image_by_id = dict(result.image_paths)

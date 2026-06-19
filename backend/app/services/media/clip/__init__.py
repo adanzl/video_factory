@@ -1,5 +1,5 @@
-"""分镜 clip 合成：对外请使用 clip.mgr。"""
+"""分镜 clip 合成：对外请使用 clip_mgr。"""
 
-from app.services.media.clip.mgr import ClipProvider, build_segment_clip, get_clip_provider
+from app.services.media.clip.mgr import ClipMgr, ClipProvider, clip_mgr
 
-__all__ = ["ClipProvider", "build_segment_clip", "get_clip_provider"]
+__all__ = ["ClipMgr", "ClipProvider", "clip_mgr"]

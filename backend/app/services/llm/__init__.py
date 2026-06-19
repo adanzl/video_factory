@@ -1,3 +1,3 @@
-from app.services.llm import llm_mgr
+from app.services.llm.llm_mgr import LLMClient, LLMMgr, llm_mgr
 
-__all__ = ["llm_mgr"]
+__all__ = ["LLMClient", "LLMMgr", "llm_mgr"]

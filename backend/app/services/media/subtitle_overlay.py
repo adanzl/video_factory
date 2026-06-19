@@ -134,10 +134,10 @@ def build_segment_clip(
     motion_prompt: str | None = None,
 ) -> Path:
     """分镜内连续动效 + 句级字幕按时间轴切换。"""
-    from app.services.media.clip import build_segment_clip as _build_segment_clip
+    from app.services.media.clip.mgr import clip_mgr
 
     provider = clip_provider or get_settings().clip_provider
-    return _build_segment_clip(
+    return clip_mgr.build_segment_clip(
         clip_provider=provider,
         image_path=image_path,
         subtitle_cues=subtitle_cues,

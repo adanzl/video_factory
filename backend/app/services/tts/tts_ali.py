@@ -25,9 +25,7 @@ from app.services.tts.tts_mgr import (
     TTSClient,
     TTSResult,
     TTSUsageTask,
-    phrase_chunks_for_segment,
-    save_subtitle_cues,
-    subtitle_cues_path_for,
+    tts_mgr,
 )
 
 logger = logging.getLogger(__name__)
@@ -276,7 +274,7 @@ class AliTTSClient(TTSClient):
 
         for seg in segments:
             seg_index = seg["segment_index"]
-            phrases = phrase_chunks_for_segment(seg)
+            phrases = tts_mgr.phrase_chunks_for_segment(seg)
             segment_text = build_segment_tts_text(phrases)
             logger.info(
                 "tts segment %s start phrases=%s text_chars=%s",
@@ -337,8 +335,8 @@ class AliTTSClient(TTSClient):
         audio_path = output_dir / "narration.mp3"
         concat_clips(clip_paths, audio_path)
 
-        cues_path = subtitle_cues_path_for(output_dir)
-        save_subtitle_cues(cues_path, subtitle_cues)
+        cues_path = tts_mgr.subtitle_cues_path_for(output_dir)
+        tts_mgr.save_subtitle_cues(cues_path, subtitle_cues)
 
         subtitle_path = output_dir / "subtitles.srt"
         subtitle_path.write_text(build_srt_from_cues(subtitle_cues), encoding="utf-8")

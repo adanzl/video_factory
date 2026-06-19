@@ -12,6 +12,7 @@ class JobContext:
     settings: Settings
     media_dir: Path
     rerun_segment_indices: tuple[int, ...] | None = None
+    segment_scope: str | None = None
 
     @classmethod
     def from_job(
@@ -19,6 +20,7 @@ class JobContext:
         job: dict,
         *,
         rerun_segment_indices: tuple[int, ...] | None = None,
+        segment_scope: str | None = None,
     ) -> "JobContext":
         settings = get_settings()
         media_dir = settings.video_data_dir / str(job["id"])
@@ -28,6 +30,7 @@ class JobContext:
             settings=settings,
             media_dir=media_dir,
             rerun_segment_indices=rerun_segment_indices,
+            segment_scope=segment_scope,
         )
 
     def rel(self, name: str) -> Path:

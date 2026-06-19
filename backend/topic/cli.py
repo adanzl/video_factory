@@ -17,7 +17,7 @@ setup_logging(
     retention_days=get_settings().log_retention_days,
 )
 
-from app.services.llm.llm_mgr import generate_topics
+from app.services.llm.llm_mgr import llm_mgr
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -33,7 +33,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     count = max(1, min(args.count, 20))
     try:
-        topics = generate_topics(args.theme, count=count)
+        topics = llm_mgr.generate_topics(args.theme, count=count)
     except Exception as exc:
         print(f"选题生成失败: {exc}", file=sys.stderr)
         return 1

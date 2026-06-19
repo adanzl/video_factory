@@ -12,7 +12,7 @@ from pathlib import Path
 import requests
 
 from app.config import get_settings
-from app.services.media.clip.mgr import ClipProvider, cleanup_overlay_paths, prepare_subtitle_overlays
+from app.services.media.clip.mgr import ClipProvider, clip_mgr
 from app.services.media.clip.render import fit_video_duration, video_to_clip_timed_overlays
 
 logger = logging.getLogger(__name__)
@@ -217,7 +217,7 @@ class WanClipProvider(ClipProvider):
     ) -> Path:
         _ = motion_preset
         t0 = time.time()
-        total_duration, overlay_windows, overlay_paths = prepare_subtitle_overlays(
+        total_duration, overlay_windows, overlay_paths = clip_mgr.prepare_subtitle_overlays(
             subtitle_cues=subtitle_cues,
             work_dir=work_dir,
             segment_index=segment_index,
@@ -252,7 +252,7 @@ class WanClipProvider(ClipProvider):
             else:
                 fitted_path.replace(output_path)
         finally:
-            cleanup_overlay_paths(overlay_paths)
+            clip_mgr.cleanup_overlay_paths(overlay_paths)
             raw_path.unlink(missing_ok=True)
             if fitted_path.exists() and fitted_path != output_path:
                 fitted_path.unlink(missing_ok=True)

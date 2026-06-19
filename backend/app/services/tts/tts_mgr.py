@@ -12,11 +12,9 @@ from app.services.visual.text_render import split_phrase_chunks
 __all__ = [
     "SubtitleCue",
     "TTSClient",
+    "TTSMgr",
     "TTSResult",
-    "load_subtitle_cues",
-    "save_subtitle_cues",
-    "synthesize",
-    "synthesize_utterance",
+    "tts_mgr",
 ]
 
 
@@ -72,79 +70,82 @@ class TTSClient:
         raise NotImplementedError
 
 
-def phrase_chunks_for_segment(segment: dict) -> list[tuple[str, str]]:
-    """返回分镜内 (TTS文本, 字幕文本) 列表。"""
-    text = (segment.get("text") or "").strip()
-    if not text:
-        raise ValueError(f"segment {segment.get('segment_index')} has empty text")
-    chunks = split_phrase_chunks(text)
-    if chunks:
-        return chunks
-    return [(text, text)]
+class TTSMgr:
+    """TTS 管理器。"""
 
+    def phrase_chunks_for_segment(self, segment: dict) -> list[tuple[str, str]]:
+        """返回分镜内 (TTS文本, 字幕文本) 列表。"""
+        text = (segment.get("text") or "").strip()
+        if not text:
+            raise ValueError(f"segment {segment.get('segment_index')} has empty text")
+        chunks = split_phrase_chunks(text)
+        if chunks:
+            return chunks
+        return [(text, text)]
 
-def sentences_for_segment(segment: dict) -> list[str]:
-    """兼容旧调用：返回 TTS 文本（含标点）。"""
-    return [tts for tts, _ in phrase_chunks_for_segment(segment)]
+    def sentences_for_segment(self, segment: dict) -> list[str]:
+        """兼容旧调用：返回 TTS 文本（含标点）。"""
+        return [tts for tts, _ in self.phrase_chunks_for_segment(segment)]
 
+    def subtitle_cues_path_for(self, audio_dir: Path) -> Path:
+        return audio_dir / "subtitle_cues.json"
 
-def subtitle_cues_path_for(audio_dir: Path) -> Path:
-    return audio_dir / "subtitle_cues.json"
-
-
-def save_subtitle_cues(path: Path, cues: list[SubtitleCue]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps([asdict(c) for c in cues], ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-
-
-def load_subtitle_cues(path: Path) -> list[SubtitleCue]:
-    if not path.exists():
-        return []
-    raw = json.loads(path.read_text(encoding="utf-8"))
-    return [
-        SubtitleCue(
-            segment_index=int(item["segment_index"]),
-            text=str(item["text"]),
-            duration_sec=float(item["duration_sec"]),
+    def save_subtitle_cues(self, path: Path, cues: list[SubtitleCue]) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps([asdict(c) for c in cues], ensure_ascii=False, indent=2),
+            encoding="utf-8",
         )
-        for item in raw
-    ]
+
+    def load_subtitle_cues(self, path: Path) -> list[SubtitleCue]:
+        if not path.exists():
+            return []
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        return [
+            SubtitleCue(
+                segment_index=int(item["segment_index"]),
+                text=str(item["text"]),
+                duration_sec=float(item["duration_sec"]),
+            )
+            for item in raw
+        ]
+
+    def cues_for_segment(
+        self,
+        cues: list[SubtitleCue],
+        segment_index: int,
+    ) -> list[tuple[str, float]]:
+        return [(c.text, c.duration_sec) for c in cues if c.segment_index == segment_index]
+
+    def _get_client(self) -> TTSClient:
+        from app.services.tts.tts_ali import AliTTSClient
+        from app.services.tts.tts_mock import MockTTSClient
+
+        if get_settings().mock_mode:
+            return MockTTSClient()
+        return AliTTSClient()
+
+    def synthesize(self, narration: str, segments: list[dict], output_dir: Path) -> TTSResult:
+        return self._get_client().synthesize(narration, segments, output_dir)
+
+    def synthesize_utterance(
+        self,
+        text: str,
+        output_path: Path,
+        *,
+        rate: float | None = None,
+        pitch: float | None = None,
+    ) -> Path:
+        """合成单句 MP3（片头品牌喊声等）。有 TTS Key 时始终走真实合成，不受 MOCK_MODE 影响。"""
+        settings = get_settings()
+        has_tts = bool(settings.tts_api_key or settings.dashscope_api_key)
+        if not has_tts:
+            from app.services.tts.tts_mock import synthesize_utterance as _mock_utterance
+
+            return _mock_utterance(text, output_path, rate=rate)
+        from app.services.tts.tts_ali import synthesize_utterance as _ali_utterance
+
+        return _ali_utterance(text, output_path, rate=rate, pitch=pitch)
 
 
-def cues_for_segment(cues: list[SubtitleCue], segment_index: int) -> list[tuple[str, float]]:
-    return [(c.text, c.duration_sec) for c in cues if c.segment_index == segment_index]
-
-
-def _get_client() -> TTSClient:
-    from app.services.tts.tts_ali import AliTTSClient
-    from app.services.tts.tts_mock import MockTTSClient
-
-    if get_settings().mock_mode:
-        return MockTTSClient()
-    return AliTTSClient()
-
-
-def synthesize(narration: str, segments: list[dict], output_dir: Path) -> TTSResult:
-    return _get_client().synthesize(narration, segments, output_dir)
-
-
-def synthesize_utterance(
-    text: str,
-    output_path: Path,
-    *,
-    rate: float | None = None,
-    pitch: float | None = None,
-) -> Path:
-    """合成单句 MP3（片头品牌喊声等）。有 TTS Key 时始终走真实合成，不受 MOCK_MODE 影响。"""
-    settings = get_settings()
-    has_tts = bool(settings.tts_api_key or settings.dashscope_api_key)
-    if not has_tts:
-        from app.services.tts.tts_mock import synthesize_utterance as _mock_utterance
-
-        return _mock_utterance(text, output_path, rate=rate)
-    from app.services.tts.tts_ali import synthesize_utterance as _ali_utterance
-
-    return _ali_utterance(text, output_path, rate=rate, pitch=pitch)
+tts_mgr = TTSMgr()

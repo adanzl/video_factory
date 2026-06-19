@@ -36,6 +36,39 @@ def create_job(
     return get_job(conn, job_id)
 
 
+def list_jobs(
+    conn: sqlite3.Connection,
+    *,
+    status: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[dict]:
+    limit = max(1, min(limit, 200))
+    offset = max(0, offset)
+    if status:
+        rows = conn.execute(
+            """
+            SELECT id, title, stage, status, final_path, updated_at, error_message
+            FROM video_job
+            WHERE status = ?
+            ORDER BY id DESC
+            LIMIT ? OFFSET ?
+            """,
+            (status, limit, offset),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """
+            SELECT id, title, stage, status, final_path, updated_at, error_message
+            FROM video_job
+            ORDER BY id DESC
+            LIMIT ? OFFSET ?
+            """,
+            (limit, offset),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def get_job(conn: sqlite3.Connection, job_id: int) -> dict:
     row = conn.execute(
         "SELECT * FROM video_job WHERE id = ?",
@@ -81,6 +114,12 @@ def update_job(conn: sqlite3.Connection, job_id: int, **fields: Any) -> dict:
         values,
     )
     return get_job(conn, job_id)
+
+
+def delete_job(conn: sqlite3.Connection, job_id: int) -> None:
+    cur = conn.execute("DELETE FROM video_job WHERE id = ?", (job_id,))
+    if cur.rowcount == 0:
+        raise KeyError(f"job {job_id} not found")
 
 
 def claim_next_pending(conn: sqlite3.Connection) -> dict | None:

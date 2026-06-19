@@ -1,0 +1,39 @@
+# Video Factory Frontend
+
+Vue 3 + Vite + TypeScript 管理后台脚手架，目录结构仿照 MyTodo `server/frontend`。
+
+## 开发
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+默认开发地址：http://localhost:5174/web/
+
+API 代理：`/v_factory` → `http://localhost:9002`
+
+## 构建
+
+```bash
+npm run build
+```
+
+构建产物输出到 `dist/`，部署路径 base 为 `/web/`。
+
+## 目录结构
+
+```
+src/
+├── api/          # axios 配置 + 业务 API
+├── components/   # 通用组件
+├── composables/  # 组合式函数
+├── constants/    # 常量
+├── router/       # 路由
+├── stores/       # Pinia 状态
+├── styles/       # 全局样式
+├── types/        # TypeScript 类型
+├── utils/        # 工具函数
+└── views/        # 页面（Page*/Tab*/dialogs/）
+```

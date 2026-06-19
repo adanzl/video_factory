@@ -8,7 +8,7 @@ from app.quality.gate import apply_quality_checks
 from app.repositories import job_log_repo, job_repo, segment_repo
 from app.repositories.connection import connection
 from app.services.media.audio_analysis import analyze_loudness
-from app.services.media.media_mgr import merge_final
+from app.services.media.media_mgr import media_mgr
 from worker.context import JobContext
 from worker.stages.base import StageExecutor
 
@@ -29,7 +29,7 @@ class MergeStage(StageExecutor):
             if fallback.exists():
                 intro_path = fallback
 
-        result = merge_final(
+        result = media_mgr.merge_final(
             media_dir=ctx.media_dir,
             segments=segments,
             audio_path=Path(job["audio_path"]),
