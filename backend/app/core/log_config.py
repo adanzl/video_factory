@@ -68,10 +68,9 @@ def setup_server_logging(*, log_dir: Path, is_production: bool) -> tuple[logging
         console.setFormatter(formatter)
         app_logger.addHandler(console)
 
-        if is_production:
-            file_handler = _rotating_file_handler(log_dir / "app.log", retention_days=3)
-            app_logger.addHandler(file_handler)
-            app_logger.info("Server log: %s (rotating daily)", log_dir / "app.log")
+        file_handler = _rotating_file_handler(log_dir / "app.log", retention_days=3)
+        app_logger.addHandler(file_handler)
+        app_logger.info("Server log: %s (rotating daily)", log_dir / "app.log")
 
     gevent_access_logger = logging.getLogger("gevent.access")
     gevent_access_logger.setLevel(logging.INFO if is_production else logging.CRITICAL)
