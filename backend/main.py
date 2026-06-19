@@ -21,44 +21,14 @@ from gevent import monkey
 # subprocess=True 保留子进程能力；queue=False 避免与标准库队列行为冲突
 monkey.patch_all(subprocess=True, thread=False, queue=False)
 
-from flask import Flask, jsonify, make_response, request
+from flask import make_response
 
-from app.api import register_api
 from app.config import config
-from app.core.log_config import setup_server_logging
+from app.core import app_logger, create_app, gevent_access_logger
 
-app_logger, gevent_access_logger = setup_server_logging(
-    log_dir=config.log_dir,
-    is_production=config.is_production,
-)
 log = app_logger
 
 IS_PRODUCTION = config.is_production
-
-
-def create_app() -> Flask:
-    app = Flask(__name__)
-
-    @app.after_request
-    def add_cors_headers(response):
-        response.headers["Access-Control-Allow-Origin"] = "*"
-        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
-        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
-        return response
-
-    @app.route("/")
-    def main_page():
-        return "<p>Video Factory API</p>"
-
-    @app.route("/health", methods=["GET", "OPTIONS"])
-    def health():
-        if request.method == "OPTIONS":
-            return "", 204
-        return jsonify({"status": "ok"})
-
-    register_api(app)
-    return app
-
 
 app = create_app()
 

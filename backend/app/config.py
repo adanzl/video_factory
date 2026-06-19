@@ -73,6 +73,10 @@ class Config:
     is_production: bool = env == "production"
     host: str = os.getenv("HOST", "0.0.0.0")
     port: int = int(os.getenv("PORT", "9002"))
+    cors_origins: str = os.getenv(
+        "CORS_ORIGINS",
+        "http://localhost:5175,http://127.0.0.1:5175",
+    )
 
     # ========== 路径 ==========
     root_dir: Path = ROOT_DIR
@@ -184,6 +188,11 @@ class Config:
 
     def cover_size(self) -> str:
         return _size_str(self.cover_width, self.cover_height)
+
+    def get_cors_origins(self) -> list[str]:
+        if self.cors_origins.strip() == "*":
+            return ["*"]
+        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
 
 
 config = Config()

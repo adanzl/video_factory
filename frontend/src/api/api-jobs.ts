@@ -1,12 +1,12 @@
 /**
- * 任务 API（占位）
+ * 任务 API
  */
 import { api } from "./config";
-import type { Job } from "@/types/jobs";
+import type { JobListItem, ListJobsParams } from "@/types/jobs";
 
-export async function listJobs(): Promise<Job[]> {
-  const response = await api.get<{ data?: Job[] }>("/v_factory/api/jobs");
-  return response.data?.data ?? [];
+export async function listJobs(params: ListJobsParams = {}): Promise<JobListItem[]> {
+  const response = await api.get<JobListItem[]>("/v_factory/api/jobs", { params });
+  return Array.isArray(response.data) ? response.data : [];
 }
 
 export async function cleanJob(jobId: number): Promise<{
