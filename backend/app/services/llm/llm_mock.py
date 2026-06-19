@@ -71,10 +71,20 @@ class MockLLMClient(LLMClient):
             "segments": segments,
         }
 
-    def generate_topics(self, theme: str, *, count: int = 10) -> list[dict[str, str]]:
+    def generate_topics(
+        self,
+        theme: str,
+        *,
+        count: int = 10,
+        system_prompt: str | None = None,
+        user_prompt: str | None = None,
+    ) -> list[dict[str, str]]:
+        _ = system_prompt
         settings = get_settings()
         count = max(1, min(count, 20))
         theme = re.sub(r"\s+", "", theme.strip()) or "科普"
+        if user_prompt:
+            theme = re.sub(r"\s+", "", user_prompt.strip()) or theme
         max_len = settings.max_title_length
         patterns = [
             ("误区反问式", "日常科学原理", f"{theme}里最常见的误区，你中招了吗？"),

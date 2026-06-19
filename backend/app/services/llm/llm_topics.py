@@ -32,6 +32,13 @@ def build_topic_system_prompt(*, max_title_len: int) -> str:
     )
 
 
+def build_topic_user_prompt(*, theme: str, count: int) -> str:
+    return (
+        f"主题方向：{theme.strip()}\n"
+        f"请生成 {count} 个互不重复、适合 AI 全自动科普成片的中文视频标题。"
+    )
+
+
 def normalize_title(title: str, *, max_len: int) -> str:
     cleaned = re.sub(r"\s+", "", title.strip())
     if len(cleaned) > max_len:
@@ -40,6 +47,17 @@ def normalize_title(title: str, *, max_len: int) -> str:
 
 
 def parse_topics_payload(raw: dict[str, Any], *, max_title_len: int) -> list[dict[str, str]]:
+    for key in ("topics", "titles"):
+        items = raw.get(key)
+        if not isinstance(items, list) or not items:
+            continue
+        if all(isinstance(item, str) for item in items):
+            out = _topics_from_titles(items, max_title_len=max_title_len)
+            if out:
+                return out
+        if key == "topics":
+            break
+
     items = raw.get("topics")
     if not isinstance(items, list) or not items:
         raise ValueError("LLM response missing topics array")
@@ -70,4 +88,23 @@ def parse_topics_payload(raw: dict[str, Any], *, max_title_len: int) -> list[dic
         )
     if not out:
         raise ValueError("LLM topics array has no valid entries")
+    return out
+
+
+def _topics_from_titles(titles: list[str], *, max_title_len: int) -> list[dict[str, str]]:
+    out: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for raw in titles:
+        title = normalize_title(raw, max_len=max_title_len)
+        if not title or title in seen:
+            continue
+        seen.add(title)
+        out.append(
+            {
+                "title": title,
+                "track": "日常科学原理",
+                "template": "误区反问式",
+                "hook": "",
+            }
+        )
     return out

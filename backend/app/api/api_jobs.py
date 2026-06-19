@@ -144,6 +144,17 @@ def delete_job_route():
     return json_ok({"id": job_id, "deleted": True})
 
 
+@bp.post("/clean")
+def clean_job_route():
+    data = get_json_body()
+    job_id = parse_id(data)
+    try:
+        result = job_mgr.clean_job_files(job_id)
+    except JobBusyError as exc:
+        raise APIError(str(exc), status_code=409, code="job_busy") from exc
+    return json_ok(result)
+
+
 @bp.get("/<int:job_id>/segments")
 def get_job_segments_route(job_id: int):
     return json_ok(job_mgr.get_segments(job_id))

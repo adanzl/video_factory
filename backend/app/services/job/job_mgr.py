@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
+import shutil
 import threading
 from collections.abc import Callable
+from pathlib import Path
 
 from app.services.job.job_reset import prepare_for_action, prepare_job_rerun
 from app.repositories import job_log_repo, job_repo, segment_repo
@@ -101,6 +103,36 @@ class JobMgr:
     def delete_job(self, job_id: int) -> None:
         with connection() as conn:
             job_repo.delete_job(conn, job_id)
+
+    def clean_job_files(self, job_id: int) -> dict:
+        """删除任务本地媒体文件，保留数据库记录。"""
+        lock = self._job_lock(job_id)
+        if not lock.acquire(blocking=False):
+            raise JobBusyError(f"job {job_id} is running")
+
+        try:
+            job = self.get_job(job_id)
+            if job["status"] == "running":
+                raise JobBusyError(f"job {job_id} is running")
+
+            from app.config import get_settings
+
+            media_dir: Path = get_settings().video_data_dir / str(job_id)
+            cleaned = False
+            if media_dir.exists():
+                shutil.rmtree(media_dir)
+                cleaned = True
+
+            with connection() as conn:
+                job_log_repo.append_log(conn, job_id, "api", "cleaned local media files")
+
+            return {
+                "id": job_id,
+                "cleaned": cleaned,
+                "media_dir": str(media_dir),
+            }
+        finally:
+            lock.release()
 
     def mark_running(self, job_id: int) -> dict:
         with connection() as conn:

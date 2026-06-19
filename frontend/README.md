@@ -10,7 +10,7 @@ npm install
 npm run dev
 ```
 
-默认开发地址：http://localhost:5174/web/
+默认开发地址：http://localhost:5175/video_factory/web/
 
 API 代理：`/v_factory` → `http://localhost:9002`
 
@@ -20,7 +20,7 @@ API 代理：`/v_factory` → `http://localhost:9002`
 npm run build
 ```
 
-构建产物输出到 `dist/`，部署路径 base 为 `/web/`。
+构建产物输出到 `dist/`，部署路径 base 为 `/video_factory/web/`。
 
 ## 目录结构
 

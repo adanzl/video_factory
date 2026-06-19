@@ -96,7 +96,7 @@ if __name__ == "__main__":
         static_dir = BACKEND_DIR / "static"
         if static_dir.is_dir():
             static_app = SharedDataMiddleware(null_application, {"/": str(static_dir)})
-            application = DispatcherMiddleware(app, {"/web": static_app})
+            application = DispatcherMiddleware(app, {"/video_factory/web": static_app})
         else:
             application = app
 

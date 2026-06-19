@@ -11,7 +11,7 @@ import AutoImport from "unplugin-auto-import/vite";
 const __viteConfigDir = dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
-  base: "/web/",
+  base: "/video_factory/web/",
   plugins: [
     vue(),
     AutoImport({
@@ -48,7 +48,7 @@ export default defineConfig({
   },
   server: {
     host: "localhost",
-    port: 5174,
+    port: 5175,
     proxy: {
       "/v_factory": {
         target: "http://localhost:9002",

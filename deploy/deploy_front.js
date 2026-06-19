@@ -85,12 +85,11 @@ if (!existsSync(indexPath)) {
 
 let indexHtml = readFileSync(indexPath, "utf-8");
 
-// 由于 vite.config.ts 中设置了 base: "/web/"，资源路径应该是 /web/assets/...
-// 确保路径正确（不需要修改，因为 base: "/web/" 已经处理了）
-// 但如果构建后的 HTML 中有错误的路径，这里可以修复
-// indexHtml = indexHtml.replace(/src="\/assets\//g, 'src="/web/assets/');
-// indexHtml = indexHtml.replace(/href="\/assets\//g, 'href="/web/assets/');
-indexHtml = indexHtml.replace(/href="\/favicon\.ico"/g, 'href="/web/favicon.ico"');
+// 由于 vite.config.ts 中设置了 base: "/video_factory/web/"，资源路径应为 /video_factory/web/assets/...
+// 确保路径正确（不需要修改，因为 base 已处理）
+// indexHtml = indexHtml.replace(/src="\/assets\//g, 'src="/video_factory/web/assets/');
+// indexHtml = indexHtml.replace(/href="\/assets\//g, 'href="/video_factory/web/assets/');
+indexHtml = indexHtml.replace(/href="\/favicon\.ico"/g, 'href="/video_factory/web/favicon.ico"');
 
 // 保存修复后的 index.html 到 static 目录
 const staticIndexPath = join(staticDir, "index.html");

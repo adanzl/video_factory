@@ -13,7 +13,14 @@ class LLMClient:
     def generate_script(self, title: str, *, feedback: str | None = None) -> dict[str, Any]:
         raise NotImplementedError
 
-    def generate_topics(self, theme: str, *, count: int = 10) -> list[dict[str, str]]:
+    def generate_topics(
+        self,
+        theme: str,
+        *,
+        count: int = 10,
+        system_prompt: str | None = None,
+        user_prompt: str | None = None,
+    ) -> list[dict[str, str]]:
         raise NotImplementedError
 
 
@@ -31,8 +38,20 @@ class LLMMgr:
     def generate_script(self, title: str, *, feedback: str | None = None) -> dict[str, Any]:
         return self._get_client().generate_script(title, feedback=feedback)
 
-    def generate_topics(self, theme: str, *, count: int = 10) -> list[dict[str, str]]:
-        return self._get_client().generate_topics(theme, count=count)
+    def generate_topics(
+        self,
+        theme: str,
+        *,
+        count: int = 10,
+        system_prompt: str | None = None,
+        user_prompt: str | None = None,
+    ) -> list[dict[str, str]]:
+        return self._get_client().generate_topics(
+            theme,
+            count=count,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+        )
 
 
 llm_mgr = LLMMgr()
