@@ -49,16 +49,6 @@ export default defineConfig({
   server: {
     host: "localhost",
     port: 5175,
-    proxy: {
-      "/v_factory": {
-        target: "http://localhost:9002",
-        changeOrigin: true,
-      },
-      "/health": {
-        target: "http://localhost:9002",
-        changeOrigin: true,
-      },
-    },
   },
   build: {
     outDir: "dist",

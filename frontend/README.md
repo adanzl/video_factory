@@ -12,7 +12,7 @@ npm run dev
 
 默认开发地址：http://localhost:5175/video_factory/web/
 
-API 代理：`/v_factory` → `http://localhost:9002`
+API 地址由 `src/api/config.ts` 自动探测：局域网 nginx 可达时用本地，否则用远程 natapp。
 
 ## 构建
 

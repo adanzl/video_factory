@@ -14,7 +14,6 @@ const REMOTE = {
 const LOCAL_IP = "192.168.50.172";
 const LOCAL_HTTP_PORT = 8848;
 const LOCAL_HTTPS_PORT = 8843;
-const LOCAL_BACKEND_PORT = 9002;
 
 const LOCAL_BASE_URL = `https://${LOCAL_IP}:${LOCAL_HTTPS_PORT}`;
 
@@ -52,13 +51,6 @@ function getRemoteServerOrigin(): string {
 
 function normalizeOrigin(url: string): string {
   return url.replace(/\/+$/, "");
-}
-
-function getLocalProbeUrl(): string {
-  if (import.meta.env.DEV) {
-    return `http://127.0.0.1:${LOCAL_BACKEND_PORT}/health`;
-  }
-  return getLocalServerOrigin();
 }
 
 function markLocalProbeSuccess(): void {
@@ -117,7 +109,7 @@ async function checkAddress(url: string, timeout = LOCAL_IP_CHECK_TIMEOUT): Prom
 
 async function probeLocalServer(): Promise<boolean> {
   try {
-    const isAvailable = await checkAddress(getLocalProbeUrl());
+    const isAvailable = await checkAddress(getLocalServerOrigin());
     if (isAvailable) {
       markLocalProbeSuccess();
       return true;
@@ -130,24 +122,17 @@ async function probeLocalServer(): Promise<boolean> {
   return false;
 }
 
-function resolveBaseUrl(mode: ServerMode): string {
-  if (mode === "local") {
-    // 开发环境走 Vite 代理，生产环境走局域网 nginx
-    return import.meta.env.DEV ? "" : getLocalServerOrigin();
-  }
-  return getRemoteServerOrigin();
-}
-
 function applyServerMode(mode: ServerMode): void {
-  const nextBaseUrl = normalizeOrigin(resolveBaseUrl(mode));
+  const nextBaseUrl = normalizeOrigin(
+    mode === "local" ? getLocalServerOrigin() : getRemoteServerOrigin()
+  );
   const changed = activeServerMode !== mode || normalizeOrigin(api.defaults.baseURL || "") !== nextBaseUrl;
 
   activeServerMode = mode;
   api.defaults.baseURL = nextBaseUrl;
 
   if (changed) {
-    const label = nextBaseUrl || "(vite proxy)";
-    logger.info(`[API Config] Switched to ${mode} server: ${label}`);
+    logger.info(`[API Config] Switched to ${mode} server: ${nextBaseUrl}`);
   }
 }
 

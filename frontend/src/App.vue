@@ -43,9 +43,6 @@ const handleCollapseChange = (collapsed: boolean) => {
 
 const serverStatusText = computed(() => {
   if (localIpStatus.value === true) {
-    if (import.meta.env.DEV) {
-      return "本地 (127.0.0.1:9002)";
-    }
     return `本地 (${LOCAL_IP}:${getCurrentLocalPort()})`;
   }
   if (localIpStatus.value === false) {
@@ -74,9 +71,7 @@ onMounted(async () => {
     }
 
     if (isUsingLocalServer) {
-      logger.info(
-        `[Server Switch] 切换到本地服务器: ${import.meta.env.DEV ? "127.0.0.1:9002" : `${LOCAL_IP}:${getCurrentLocalPort()}`}`
-      );
+      logger.info(`[Server Switch] 切换到本地服务器: ${LOCAL_IP}:${getCurrentLocalPort()}`);
       return;
     }
 

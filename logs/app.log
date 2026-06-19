@@ -4,3 +4,11 @@
 22:46:17 [INFO] app: Server log: C:\Users\adanz\project\video_factory\logs\app.log (rotating daily)
 22:48:10 [INFO] app: Server log: C:\Users\adanz\project\video_factory\logs\app.log (rotating daily)
 22:48:10 [INFO] app: [CORS] 配置允许的 origins: ['https://leo-zhao.natapp4.cc', 'http://localhost:5173']，启用 credentials 支持
+22:56:24 [INFO] app: Server log: C:\Users\adanz\project\video_factory\logs\app.log (rotating daily)
+22:56:24 [INFO] app: [CORS] 配置允许的 origins: ['https://leo-zhao.natapp4.cc', 'http://localhost:5173']，启用 credentials 支持
+22:56:51 [INFO] app: Server log: C:\Users\adanz\project\video_factory\logs\app.log (rotating daily)
+22:56:51 [INFO] app: [CORS] 配置允许的 origins: ['https://leo-zhao.natapp4.cc', 'http://localhost:5173', 'http://127.0.0.1:5173']，启用 credentials 支持
+22:56:51 [WARNING] app: [CORS] Origin 未放行: http://localhost:5175, path=/v_factory/api/jobs
+22:56:51 [WARNING] app: [CORS] Origin 未放行: http://127.0.0.1:5175, path=/v_factory/api/jobs
+23:20:33 [INFO] app: Server log: C:\Users\adanz\project\video_factory\logs\app.log (rotating daily)
+23:20:33 [INFO] app: [CORS] 配置允许的 origins: ['https://leo-zhao.natapp4.cc', 'http://localhost:5173', 'http://127.0.0.1:5173']，启用 credentials 支持

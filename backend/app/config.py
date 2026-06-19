@@ -192,7 +192,7 @@ class Config:
     def get_cors_origins(self) -> list[str]:
         if self.cors_origins.strip() == "*":
             return ["*"]
-        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+        return [origin.strip() for origin in self.cors_origins.split(",")]
 
 
 config = Config()
