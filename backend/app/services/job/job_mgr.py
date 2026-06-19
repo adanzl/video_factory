@@ -11,6 +11,7 @@ from pathlib import Path
 from app.services.job.job_reset import prepare_for_action, prepare_job_rerun
 from app.repositories import job_log_repo, job_repo, segment_repo
 from app.repositories.connection import connection
+from app.utils.async_util import run_in_background
 
 logger = logging.getLogger(__name__)
 
@@ -175,6 +176,7 @@ class JobMgr:
             fail_stage = action.split("/")[0]
 
             def _worker() -> None:
+                logger.info("job %s action %s started in background thread", job_id, action)
                 try:
                     run()
                 except Exception as exc:
@@ -183,7 +185,7 @@ class JobMgr:
                     if job["status"] == "running":
                         self.mark_failed(job_id, fail_stage, str(exc))
 
-            threading.Thread(target=_worker, daemon=True).start()
+            run_in_background(_worker)
             return self.get_job(job_id)
         finally:
             lock.release()

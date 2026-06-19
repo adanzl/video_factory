@@ -1,23 +1,49 @@
 from __future__ import annotations
 
-import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
 from app.config import get_settings
+from app.utils.async_util import run_subprocess_safe
 
 # cSpell: disable
 
+_FFMPEG_TIMEOUT = 600.0
+_PROBE_TIMEOUT = 60.0
 
-def _combined_output(result: subprocess.CompletedProcess[str]) -> str:
+
+@dataclass(frozen=True)
+class _CmdResult:
+    args: list[str]
+    returncode: int
+    stdout: str
+    stderr: str
+
+
+def _combined_output(result: _CmdResult) -> str:
     return f"{result.stderr or ''}\n{result.stdout or ''}"
+
+
+def _run_cmd(
+    args: list[str],
+    *,
+    check: bool = True,
+    timeout: float = _FFMPEG_TIMEOUT,
+) -> _CmdResult:
+    returncode, stdout, stderr = run_subprocess_safe(args, timeout=timeout)
+    result = _CmdResult(args=args, returncode=returncode, stdout=stdout, stderr=stderr)
+    if check and returncode != 0:
+        detail = _combined_output(result).strip()
+        raise RuntimeError(f"command failed: {detail[-2000:]}")
+    return result
 
 
 def run_ffmpeg(
     args: list[str],
     *,
     check: bool = True,
-) -> subprocess.CompletedProcess[str]:
-    result = subprocess.run(args, capture_output=True, text=True, check=False)
+) -> _CmdResult:
+    result = _run_cmd(args, check=False)
     if check and result.returncode != 0:
         detail = _combined_output(result).strip()
         raise RuntimeError(f"ffmpeg failed: {detail[-2000:]}")
@@ -88,7 +114,7 @@ def loudnorm_replace(
 def extract_first_frame(video_path: Path, output_path: Path) -> Path:
     """从视频提取首帧，保存为 JPEG 封面。"""
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run(
+    _run_cmd(
         [
             "ffmpeg",
             "-y",
@@ -100,14 +126,12 @@ def extract_first_frame(video_path: Path, output_path: Path) -> Path:
             "2",
             str(output_path),
         ],
-        check=True,
-        capture_output=True,
     )
     return output_path
 
 
 def probe_duration(path: Path) -> float:
-    out = subprocess.run(
+    out = _run_cmd(
         [
             "ffprobe",
             "-v",
@@ -118,9 +142,7 @@ def probe_duration(path: Path) -> float:
             "default=noprint_wrappers=1:nokey=1",  # cSpell: disable-line
             str(path),
         ],
-        check=True,
-        capture_output=True,
-        text=True,
+        timeout=_PROBE_TIMEOUT,
     )
     return float(out.stdout.strip())
 
@@ -131,10 +153,8 @@ def concat_clips(clips: list[Path], output_path: Path) -> Path:
     if not clips:
         raise ValueError("no clips to concat")
     if len(clips) == 1:
-        subprocess.run(
+        _run_cmd(
             ["ffmpeg", "-y", "-hide_banner", "-i", str(clips[0]), "-c", "copy", str(output_path)],
-            check=True,
-            capture_output=True,
         )
         return output_path
 
@@ -146,7 +166,7 @@ def concat_clips(clips: list[Path], output_path: Path) -> Path:
         "\n".join(f"file '{clip.resolve()}'" for clip in clips),
         encoding="utf-8",
     )
-    subprocess.run(
+    _run_cmd(
         [
             "ffmpeg",
             "-y",
@@ -160,8 +180,6 @@ def concat_clips(clips: list[Path], output_path: Path) -> Path:
             "copy",
             str(output_path),
         ],
-        check=True,
-        capture_output=True,
     )
     list_file.unlink(missing_ok=True)
     return output_path
@@ -174,7 +192,7 @@ def _concat_audio_reencode(clips: list[Path], output_path: Path) -> Path:
         inputs.extend(["-i", str(clip.resolve())])
     chains = "".join(f"[{i}:a]" for i in range(n))
     filter_graph = f"{chains}concat=n={n}:v=0:a=1[outa]"
-    subprocess.run(
+    _run_cmd(
         [
             "ffmpeg",
             "-y",
@@ -194,8 +212,6 @@ def _concat_audio_reencode(clips: list[Path], output_path: Path) -> Path:
             "2",
             str(output_path),
         ],
-        check=True,
-        capture_output=True,
     )
     return output_path
 
@@ -206,7 +222,7 @@ def concat_videos(clips: list[Path], output_path: Path) -> Path:
 
 def generate_silent_mp3(output_path: Path, duration_sec: float) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run(
+    _run_cmd(
         [
             "ffmpeg",
             "-y",
@@ -220,8 +236,6 @@ def generate_silent_mp3(output_path: Path, duration_sec: float) -> Path:
             "libmp3lame",
             str(output_path),
         ],
-        check=True,
-        capture_output=True,
     )
     return output_path
 
@@ -253,14 +267,14 @@ def sequence_to_video(
     if frame_count is not None:
         cmd.extend(["-frames:v", str(frame_count)])
     cmd.append(str(output_path))
-    subprocess.run(cmd, check=True, capture_output=True)
+    _run_cmd(cmd)
     return output_path
 
 
 def mux_video_audio(video_path: Path, audio_path: Path, output_path: Path) -> Path:
     """合并视频与音频，以视频时长为准。"""
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run(
+    _run_cmd(
         [
             "ffmpeg",
             "-y",
@@ -278,8 +292,6 @@ def mux_video_audio(video_path: Path, audio_path: Path, output_path: Path) -> Pa
             "1:a:0",
             str(output_path),
         ],
-        check=True,
-        capture_output=True,
     )
     return output_path
 
@@ -307,7 +319,7 @@ def image_to_video(
         else "format=yuv420p"
     )
 
-    subprocess.run(
+    _run_cmd(
         [
             "ffmpeg",
             "-y",
@@ -327,8 +339,6 @@ def image_to_video(
             "yuv420p",
             str(output_path),
         ],
-        check=True,
-        capture_output=True,
     )
     return output_path
 
@@ -348,7 +358,7 @@ def merge_audio_video(
     drift = video_dur - audio_dur
 
     if abs(drift) <= 0.08:
-        subprocess.run(
+        _run_cmd(
             [
                 "ffmpeg",
                 "-y",
@@ -372,8 +382,6 @@ def merge_audio_video(
                 "+faststart",
                 str(output_path),
             ],
-            check=True,
-            capture_output=True,
         )
         return output_path
 
@@ -382,7 +390,7 @@ def merge_audio_video(
     else:
         vf = f"tpad=stop_mode=clone:stop_duration={audio_dur - video_dur:.3f}"
 
-    subprocess.run(
+    _run_cmd(
         [
             "ffmpeg",
             "-y",
@@ -410,14 +418,12 @@ def merge_audio_video(
             "+faststart",
             str(output_path),
         ],
-        check=True,
-        capture_output=True,
     )
     return output_path
 
 
 def _probe_audio_sample_rate(path: Path) -> int | None:
-    out = subprocess.run(
+    out = _run_cmd(
         [
             "ffprobe",
             "-v",
@@ -430,8 +436,8 @@ def _probe_audio_sample_rate(path: Path) -> int | None:
             "default=noprint_wrappers=1:nokey=1",  # cSpell: disable-line
             str(path),
         ],
-        capture_output=True,
-        text=True,
+        check=False,
+        timeout=_PROBE_TIMEOUT,
     )
     rate = out.stdout.strip()
     if not rate:
@@ -469,7 +475,7 @@ def prepend_intro(intro_path: Path, body_path: Path,
             "[asilent][a1]concat=n=2:v=0:a=1[aout]"
         )
 
-    subprocess.run(
+    _run_cmd(
         [
             "ffmpeg",
             "-y",
@@ -489,8 +495,6 @@ def prepend_intro(intro_path: Path, body_path: Path,
             "aac",
             str(output_path),
         ],
-        check=True,
-        capture_output=True,
     )
     return output_path
 

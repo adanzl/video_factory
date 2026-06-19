@@ -8,7 +8,21 @@ export interface JobListItem {
   error_message?: string | null;
 }
 
-export type Job = JobListItem;
+export interface JobDetail extends JobListItem {
+  fail_stage?: string | null;
+  retry_count?: number;
+  skip_publish?: boolean;
+  script_json?: unknown;
+  quality_report?: unknown;
+  cover_path?: string | null;
+  intro_path?: string | null;
+  audio_path?: string | null;
+  subtitle_path?: string | null;
+  tts_usage_json?: unknown;
+  created_at?: string | null;
+}
+
+export type Job = JobDetail;
 
 export interface ListJobsParams {
   status?: string;
