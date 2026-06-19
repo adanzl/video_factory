@@ -17,7 +17,7 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import TabJobs from "./TabJobs.vue";
-import TabJobDetail from "./TabJobDetail.vue";
+import TabJobDetail from "./detail/TabJobDetail.vue";
 import TabJobHistory from "./TabJobHistory.vue";
 
 const activeTab = ref("jobs");

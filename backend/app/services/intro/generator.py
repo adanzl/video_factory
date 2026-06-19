@@ -384,6 +384,7 @@ def generate_intro(
     *,
     category: str | None = None,
     work_dir: Path | None = None,
+    hold_tail_sec: float | None = None,
 ) -> Path:
     """生成带品牌喊声的片头 MP4。"""
     settings = get_settings()
@@ -398,7 +399,8 @@ def generate_intro(
 
     audio_path = _brand_audio_path(work)
     audio_dur = probe_duration(audio_path)
-    duration = audio_dur + _HOLD_TAIL_SEC
+    tail = _HOLD_TAIL_SEC if hold_tail_sec is None else max(0.0, hold_tail_sec)
+    duration = audio_dur + tail
 
     moon_tint_yellow = settings.intro_moon_tint in {"yellow", "tint", "gold", "1", "true"}
     layers = _build_layers(

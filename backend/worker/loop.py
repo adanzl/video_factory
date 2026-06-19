@@ -68,12 +68,14 @@ def _run_one_stage(
     segment_indices: list[int] | None = None,
     segment_scope: str | None = None,
     advance: bool = True,
+    intro_hold_tail_sec: float | None = None,
 ) -> dict:
     job = _reload_job(job_id)
     ctx = JobContext.from_job(
         job,
         rerun_segment_indices=tuple(segment_indices) if segment_indices else None,
         segment_scope=segment_scope,
+        intro_hold_tail_sec=intro_hold_tail_sec,
     )
     _execute_stage(job_id, stage_cls, ctx)
 
@@ -96,6 +98,7 @@ def _run_from(
     *,
     segment_indices: list[int] | None = None,
     segment_scope: str | None = None,
+    intro_hold_tail_sec: float | None = None,
 ) -> dict:
     job_mgr.mark_running(job_id)
     stage_cls: type[StageExecutor] | None = start_cls
@@ -108,6 +111,7 @@ def _run_from(
             job,
             rerun_segment_indices=rerun_segments,
             segment_scope=scope if stage_cls is SegmentStage else None,
+            intro_hold_tail_sec=intro_hold_tail_sec if stage_cls is IntroStage else None,
         )
         _execute_stage(job_id, stage_cls, ctx)
 
@@ -163,10 +167,10 @@ def run_script(job_id: int, *, to_end: bool = False) -> dict:
     return _run_one_stage(job_id, ScriptStage)
 
 
-def run_intro(job_id: int, *, to_end: bool = False) -> dict:
+def run_intro(job_id: int, *, to_end: bool = False, hold_tail_sec: float | None = None) -> dict:
     if to_end:
-        return _run_from(job_id, IntroStage)
-    return _run_one_stage(job_id, IntroStage)
+        return _run_from(job_id, IntroStage, intro_hold_tail_sec=hold_tail_sec)
+    return _run_one_stage(job_id, IntroStage, intro_hold_tail_sec=hold_tail_sec)
 
 
 def run_cover(job_id: int, *, to_end: bool = False) -> dict:

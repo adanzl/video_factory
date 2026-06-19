@@ -61,11 +61,7 @@ function markLocalProbeFailure(): void {
   consecutiveLocalProbeFailures += 1;
 }
 
-function getNextServerCheckDelay(isLocalAvailable: boolean): number {
-  if (isLocalAvailable) {
-    return SERVER_CHECK_BASE_INTERVAL_MS;
-  }
-
+function getNextServerCheckDelay(): number {
   return Math.min(
     SERVER_CHECK_BASE_INTERVAL_MS * 2 ** consecutiveLocalProbeFailures,
     SERVER_CHECK_MAX_INTERVAL_MS
@@ -157,16 +153,23 @@ export async function checkAndSwitchServer(): Promise<boolean> {
 async function runServerMonitorCycle(): Promise<void> {
   const previousMode = activeServerMode;
   const isLocal = await checkAndSwitchServer();
-  const nextDelay = getNextServerCheckDelay(isLocal);
+
+  emitServerStatus(isLocal, previousMode !== activeServerMode);
 
   if (!serverMonitorRunning) {
     return;
   }
 
-  emitServerStatus(isLocal, previousMode !== activeServerMode);
+  if (isLocal) {
+    serverMonitorRunning = false;
+    serverMonitorTimer = null;
+    logger.info("[Server Monitor] Local server connected, monitoring stopped");
+    return;
+  }
+
   serverMonitorTimer = setTimeout(() => {
     void runServerMonitorCycle();
-  }, nextDelay);
+  }, getNextServerCheckDelay());
 }
 
 export async function startServerMonitor(): Promise<void> {
@@ -176,7 +179,7 @@ export async function startServerMonitor(): Promise<void> {
 
   serverMonitorRunning = true;
   logger.info(
-    `[Server Monitor] Started, base ${SERVER_CHECK_BASE_INTERVAL_MS / 1000}s, max ${SERVER_CHECK_MAX_INTERVAL_MS / 1000}s`
+    `[Server Monitor] Started, probing until local is reachable (retry ${SERVER_CHECK_BASE_INTERVAL_MS / 1000}s–${SERVER_CHECK_MAX_INTERVAL_MS / 1000}s)`
   );
   await runServerMonitorCycle();
 }

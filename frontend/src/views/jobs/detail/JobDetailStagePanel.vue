@@ -1,6 +1,7 @@
 <template>
   <div class="stage-panel">
     <JobStageActionBar
+      v-if="stage !== 'intro'"
       :stage="stage"
       :job="job"
       :segments="segments"
@@ -26,7 +27,7 @@
     </template>
 
     <template v-else-if="stage === 'intro'">
-      <PathField label="片头路径" :path="job.intro_path" />
+      <JobIntroStagePanel :job="job" :segments="segments" @submitted="emit('refresh')" />
     </template>
 
     <template v-else-if="stage === 'cover'">
@@ -108,6 +109,7 @@ import { formatDateTime } from "@/utils/date";
 import EmptyHint from "./JobDetailEmptyHint.vue";
 import JsonBlock from "./JobDetailJsonBlock.vue";
 import PathField from "./JobDetailPathField.vue";
+import JobIntroStagePanel from "./JobIntroStagePanel.vue";
 import JobScriptView from "./JobScriptView.vue";
 import JobStageActionBar from "./JobStageActionBar.vue";
 

@@ -85,6 +85,7 @@ class Config:
     intro_bg_path: Path = _path("INTRO_BG_PATH", _RES_DIR / "bg/bg1.png")
     sqlite_path: Path = _path("SQLITE_PATH", ROOT_DIR / "data/data.db")
     video_data_dir: Path = _path("VIDEO_DATA_DIR", ROOT_DIR / "data/media")
+    allowed_dir: str = os.getenv("ALLOWED_DIR", "/mnt").strip()
     log_dir: Path = _path("LOG_DIR", ROOT_DIR / "logs")
     log_retention_days: int = int(os.getenv("LOG_RETENTION_DAYS", "3"))
     host_intro_path: Path = _path("HOST_INTRO_PATH", _RES_DIR / "host/intro.png")

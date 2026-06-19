@@ -1,5 +1,5 @@
 <template>
-  <div class="stage-action-bar mb-4 rounded border border-gray-200 p-4">
+  <div class="stage-action-bar" :class="{ 'stage-action-bar--embedded': embedded }">
     <div class="mb-3 flex flex-wrap items-center gap-2">
       <el-button
         type="primary"
@@ -59,6 +59,16 @@
             :value="segment.segment_index"
           />
         </el-select>
+        <el-input-number
+          v-else-if="param.type === 'number'"
+          v-model="paramValues[param.key]"
+          :min="param.min"
+          :max="param.max"
+          :step="param.step ?? 1"
+          :placeholder="param.placeholder"
+          controls-position="right"
+          class="w-40!"
+        />
       </el-form-item>
     </el-form>
   </div>
@@ -70,14 +80,20 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import { runJobStageAction, updateJob } from "@/api/api-jobs";
 import { getStageActionConfig, resolveStageEndpoint } from "@/constants/jobStageActions";
 import { JOB_STAGES } from "@/constants/jobStages";
-import type { JobDetail, JobSegment, StageParamValues } from "@/types/jobs";
+import type { JobDetail, JobSegment, RunStageActionPayload, StageParamValues } from "@/types/jobs";
 import { useErrorHandler } from "@/composables/useErrorHandler";
 
-const props = defineProps<{
-  stage: string;
-  job: JobDetail;
-  segments: JobSegment[];
-}>();
+const props = withDefaults(
+  defineProps<{
+    stage: string;
+    job: JobDetail;
+    segments: JobSegment[];
+    embedded?: boolean;
+  }>(),
+  {
+    embedded: false,
+  }
+);
 
 const emit = defineEmits<{
   submitted: [];
@@ -131,6 +147,11 @@ const resetParamValues = () => {
       paramValues[param.key] = [];
       continue;
     }
+    if (param.type === "number") {
+      const raw = param.defaultValue;
+      paramValues[param.key] = typeof raw === "number" ? raw : Number(raw ?? 0);
+      continue;
+    }
     if (param.key === "title") {
       paramValues[param.key] = props.job.title;
       continue;
@@ -165,6 +186,18 @@ const applySideEffects = async () => {
   }
 };
 
+const buildExtraPayload = (): Pick<RunStageActionPayload, "hold_tail_sec"> => {
+  if (props.stage !== "intro") {
+    return {};
+  }
+  const raw = paramValues.hold_tail_sec;
+  const value = typeof raw === "number" ? raw : Number(raw);
+  if (!Number.isFinite(value) || value < 0) {
+    return {};
+  }
+  return { hold_tail_sec: value };
+};
+
 const handleRun = async (toEnd: boolean) => {
   const endpoint = resolveStageEndpoint(props.stage, paramValues);
   if (!endpoint) {
@@ -196,9 +229,10 @@ const handleRun = async (toEnd: boolean) => {
   try {
     await applySideEffects();
 
-    const payload: { id: number; to_end: boolean; segments?: number[] } = {
+    const payload: RunStageActionPayload = {
       id: props.job.id,
       to_end: toEnd,
+      ...buildExtraPayload(),
     };
     const segments = buildSegments();
     if (segments) {
@@ -225,6 +259,20 @@ watch(
 </script>
 
 <style scoped>
+.stage-action-bar {
+  margin-bottom: 16px;
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.stage-action-bar--embedded {
+  margin-bottom: 0;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+}
+
 .stage-action-form :deep(.el-form-item) {
   margin-bottom: 12px;
 }

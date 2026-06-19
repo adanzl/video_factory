@@ -12,6 +12,7 @@ from app.api.utils import (
     parse_bool,
     parse_id,
     parse_int_list,
+    parse_optional_float,
     parse_query_int,
     parse_str,
 )
@@ -42,10 +43,22 @@ def run_script_route():
     return _accept_stage(job_id, lambda: job_mgr.run_script(job_id, to_end=to_end))
 
 
+def _parse_intro_body() -> tuple[int, bool, float | None]:
+    data = get_json_body()
+    return (
+        parse_id(data),
+        parse_bool(data, "to_end", default=False),
+        parse_optional_float(data, "hold_tail_sec", minimum=0.0, maximum=5.0),
+    )
+
+
 @bp.post("/intro")
 def run_intro_route():
-    job_id, to_end = _parse_stage_body()
-    return _accept_stage(job_id, lambda: job_mgr.run_intro(job_id, to_end=to_end))
+    job_id, to_end, hold_tail_sec = _parse_intro_body()
+    return _accept_stage(
+        job_id,
+        lambda: job_mgr.run_intro(job_id, to_end=to_end, hold_tail_sec=hold_tail_sec),
+    )
 
 
 @bp.post("/cover")

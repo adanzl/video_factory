@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
 from app.services.media.ffmpeg_utils import probe_duration
-from app.utils.media_path import allowed_media_roots, normalize_media_path
+from app.utils.media_path import allowed_media_roots, normalize_media_path, resolve_media_serve_path
 
 logger = logging.getLogger(__name__)
 
@@ -44,18 +45,15 @@ class MediaServeMgr:
             allowed_roots=self.allowed_roots,
             must_be_file=True,
         )
-        duration = probe_duration(path)
-        return {"duration": duration, "path": str(path)}
+        duration = probe_duration(Path(path))
+        return {"duration": duration, "path": path}
 
     def prepare_serve_file(self, filepath: str) -> dict[str, Any]:
-        path = normalize_media_path(
-            filepath,
-            allowed_roots=self.allowed_roots,
-            must_be_file=True,
-        )
-        mimetype = MIMETYPE_MAP.get(path.suffix.lower(), "application/octet-stream")
-        logger.info("[MEDIA] serving %s (%s)", path, mimetype)
-        return {"path": str(path), "mimetype": mimetype}
+        path = resolve_media_serve_path(filepath, allowed_roots=self.allowed_roots)
+        ext = os.path.splitext(path)[1].lower()
+        mimetype = MIMETYPE_MAP.get(ext, "application/octet-stream")
+        logger.info("[MEDIA] Serving file: %s (MIME: %s)", path, mimetype)
+        return {"path": path, "mimetype": mimetype}
 
 
 media_serve_mgr = MediaServeMgr()

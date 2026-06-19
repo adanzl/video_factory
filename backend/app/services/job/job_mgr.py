@@ -200,14 +200,14 @@ class JobMgr:
             lambda: run_script(job_id, to_end=to_end),
         )
 
-    def run_intro(self, job_id: int, *, to_end: bool = False) -> dict:
+    def run_intro(self, job_id: int, *, to_end: bool = False, hold_tail_sec: float | None = None) -> dict:
         """生成片头。实现：worker/loop.run_intro → worker/stages/intro.py"""
         from worker.loop import run_intro
 
         return self._run_in_background(
             job_id,
             "intro",
-            lambda: run_intro(job_id, to_end=to_end),
+            lambda: run_intro(job_id, to_end=to_end, hold_tail_sec=hold_tail_sec),
         )
 
     def run_cover(self, job_id: int, *, to_end: bool = False) -> dict:

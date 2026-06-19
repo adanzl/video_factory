@@ -19,7 +19,18 @@ export const STAGE_ACTION_CONFIG: Record<string, StageActionConfig> = {
   },
   intro: {
     endpoint: "intro",
-    params: [],
+    params: [
+      {
+        key: "hold_tail_sec",
+        label: "尾部停留 (秒)",
+        type: "number",
+        defaultValue: 0.35,
+        min: 0,
+        max: 5,
+        step: 0.05,
+        placeholder: "秒",
+      },
+    ],
   },
   cover: {
     endpoint: "cover",

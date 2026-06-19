@@ -1,4 +1,4 @@
-export type StageParamType = "text" | "boolean" | "select" | "segment-indices";
+export type StageParamType = "text" | "boolean" | "select" | "segment-indices" | "number";
 
 export interface StageParamOption {
   label: string;
@@ -10,8 +10,11 @@ export interface StageParamDef {
   label: string;
   type: StageParamType;
   placeholder?: string;
-  defaultValue?: string | boolean;
+  defaultValue?: string | boolean | number;
   options?: StageParamOption[];
+  min?: number;
+  max?: number;
+  step?: number;
 }
 
 export interface StageActionConfig {
@@ -25,6 +28,7 @@ export interface RunStageActionPayload {
   id: number;
   to_end: boolean;
   segments?: number[];
+  hold_tail_sec?: number;
 }
 
-export type StageParamValues = Record<string, string | boolean | number[]>;
+export type StageParamValues = Record<string, string | boolean | number | number[]>;

@@ -3,6 +3,7 @@
  */
 import { api } from "./config";
 import type { JobDetail, JobListItem, JobLog, JobSegment, ListJobsParams } from "@/types/jobs";
+import type { RunStageActionPayload } from "@/types/jobs/stageAction";
 
 export async function listJobs(params: ListJobsParams = {}): Promise<JobListItem[]> {
   const response = await api.get<JobListItem[]>("/v_factory/api/jobs", { params });
@@ -34,7 +35,7 @@ export async function updateJob(
 
 export async function runJobStageAction(
   endpoint: string,
-  payload: { id: number; to_end: boolean; segments?: number[] }
+  payload: RunStageActionPayload
 ): Promise<JobDetail> {
   const response = await api.post<JobDetail>(`/v_factory/api/jobs/${endpoint}`, payload);
   return response.data;

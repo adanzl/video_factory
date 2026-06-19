@@ -78,6 +78,28 @@ def parse_bool(data: JsonDict, field: str, *, default: bool = False) -> bool:
     return value
 
 
+def parse_optional_float(
+    data: JsonDict,
+    field: str,
+    *,
+    minimum: float = 0.0,
+    maximum: float = 5.0,
+) -> float | None:
+    """解析可选浮点字段；缺失时返回 None。"""
+    if field not in data:
+        return None
+    raw = data[field]
+    try:
+        value = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise APIError(f"{field} must be a number") from exc
+    if value < minimum:
+        raise APIError(f"{field} must be >= {minimum}")
+    if value > maximum:
+        raise APIError(f"{field} must be <= {maximum}")
+    return value
+
+
 def parse_int_list(
     data: JsonDict,
     field: str,
