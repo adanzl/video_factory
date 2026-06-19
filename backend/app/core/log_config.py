@@ -7,13 +7,21 @@ import sys
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 
-_LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+_LOG_FORMAT = "%(asctime)s [%(levelname_fixed)s] %(name)s:%(lineno)d: %(message)s"
 _DATE_FORMAT = "%H:%M:%S"
 _CONFIGURED = False
 
 
+class _AppLogFormatter(logging.Formatter):
+    """levelname 固定 5 字符：过长截断，不足右侧补空格。"""
+
+    def format(self, record: logging.LogRecord) -> str:
+        record.levelname_fixed = record.levelname[:4].ljust(4)
+        return super().format(record)
+
+
 def _formatter() -> logging.Formatter:
-    return logging.Formatter(_LOG_FORMAT, datefmt=_DATE_FORMAT)
+    return _AppLogFormatter(_LOG_FORMAT, datefmt=_DATE_FORMAT)
 
 
 def _rotating_file_handler(log_file: Path, *, retention_days: int) -> TimedRotatingFileHandler:
@@ -58,7 +66,7 @@ def setup_server_logging(*, log_dir: Path, is_production: bool) -> tuple[logging
     """初始化 Web 服务日志：app + gevent.access。"""
     log_dir.mkdir(parents=True, exist_ok=True)
 
-    formatter = logging.Formatter(_LOG_FORMAT, datefmt=_DATE_FORMAT)
+    formatter = _formatter()
     app_logger = logging.getLogger("app")
     app_logger.setLevel(logging.INFO)
     app_logger.propagate = False

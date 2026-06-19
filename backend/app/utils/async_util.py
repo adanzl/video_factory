@@ -2,6 +2,9 @@
 
 主进程使用 gevent（main.py 设置 thread=False），标准库 threading 仍是真实 OS 线程。
 subprocess 被 gevent patch 后，子线程中不能直接调用 subprocess，需用 os.system 降级。
+
+注意：gevent hub 跑在主线程上，主线程里 thread.join 会卡死所有接口；
+等待子线程结果时必须轮询 + gevent.sleep 让出 hub。
 """
 from __future__ import annotations
 
@@ -11,13 +14,76 @@ import shlex
 import sys
 import tempfile
 import threading
+import time
 from collections.abc import Callable, Sequence
+from queue import Empty
 from typing import Optional
 
 
 def run_in_background(func: Callable[[], None], *, daemon: bool = True) -> None:
     """后台线程执行，不等待结果。"""
     threading.Thread(target=func, daemon=daemon).start()
+
+
+def _on_gevent_hub() -> bool:
+    """gevent WSGI 的请求处理跑在主线程，join 会阻塞整个 hub。"""
+    return threading.current_thread() is threading.main_thread()
+
+
+def _hub_sleep(seconds: float) -> None:
+    try:
+        from gevent import sleep as gevent_sleep
+
+        gevent_sleep(seconds)
+    except ImportError:
+        time.sleep(seconds)
+
+
+def _wait_worker_thread(
+    thread: threading.Thread,
+    *,
+    result_q: queue.Queue[tuple[int, str, str]],
+    error_q: queue.Queue[BaseException],
+    timeout: float,
+    cmd_label: str,
+) -> tuple[int, str, str]:
+    """等待工作线程结束；在 gevent hub 上轮询，避免 thread.join 卡死接口。"""
+    wait = timeout + 5.0
+    deadline = time.time() + wait
+
+    def _drain_queues() -> tuple[int, str, str] | None:
+        try:
+            raise error_q.get_nowait()
+        except Empty:
+            pass
+        try:
+            return result_q.get_nowait()
+        except Empty:
+            return None
+
+    if _on_gevent_hub():
+        while thread.is_alive():
+            if time.time() > deadline:
+                raise TimeoutError(f"命令执行超时: {cmd_label}")
+            ready = _drain_queues()
+            if ready is not None:
+                return ready
+            _hub_sleep(0.01)
+    else:
+        thread.join(timeout=wait)
+        if thread.is_alive():
+            raise TimeoutError(f"命令执行超时: {cmd_label}")
+
+    try:
+        raise error_q.get_nowait()
+    except Empty:
+        pass
+
+    ready = _drain_queues()
+    if ready is not None:
+        return ready
+
+    raise TimeoutError(f"命令执行超时或进程异常退出: {cmd_label}")
 
 
 def run_subprocess_safe(
@@ -32,6 +98,7 @@ def run_subprocess_safe(
     Returns:
         (returncode, stdout, stderr)
     """
+    cmd_label = " ".join(cmd)
     result_queue: queue.Queue[tuple[int, str, str]] = queue.Queue(maxsize=1)
     error_queue: queue.Queue[BaseException] = queue.Queue(maxsize=1)
 
@@ -43,18 +110,13 @@ def run_subprocess_safe(
 
     thread = threading.Thread(target=_run, daemon=True)
     thread.start()
-    thread.join(timeout=timeout + 5)
-
-    if thread.is_alive():
-        raise TimeoutError(f"命令执行超时: {' '.join(cmd)}")
-
-    if not error_queue.empty():
-        raise error_queue.get()
-
-    if result_queue.empty():
-        raise TimeoutError(f"命令执行超时或进程异常退出: {' '.join(cmd)}")
-
-    return result_queue.get()
+    return _wait_worker_thread(
+        thread,
+        result_q=result_queue,
+        error_q=error_queue,
+        timeout=timeout,
+        cmd_label=cmd_label,
+    )
 
 
 def _run_with_os_system(

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import shutil
+import time
 from pathlib import Path
 
 from PIL import Image, ImageChops, ImageDraw
@@ -359,6 +360,8 @@ def _render_frames(
         t = i / fps
         frame = _compose_frame(layers, t)
         frame.convert("RGB").save(frames_dir / f"frame_{i:04d}.png", compress_level=1)
+        # 让出 GIL，避免片头逐帧渲染时卡死 gevent 主线程接口
+        time.sleep(0.001)
     return total
 
 

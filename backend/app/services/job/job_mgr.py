@@ -176,7 +176,7 @@ class JobMgr:
             fail_stage = action.split("/")[0]
 
             def _worker() -> None:
-                logger.info("job %s action %s started in background thread", job_id, action)
+                logger.info("job %s action [%s] started in background thread", job_id, action)
                 try:
                     run()
                 except Exception as exc:
