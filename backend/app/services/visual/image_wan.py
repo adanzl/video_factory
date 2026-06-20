@@ -38,6 +38,14 @@ class WanImageProvider(ImageProvider):
         self._http_max_retries = settings.dashscope_http_max_retries
         self._poll_max_attempts = settings.wan_t2i_poll_max_attempts
 
+    def describe_params(self, *, size: str | None = None) -> str:
+        size = size or self._default_size
+        mode = "sync" if self._use_sync else "async"
+        return (
+            f"provider=wan_t2i, model={self._model}, mode={mode}, size={size}, "
+            f"prompt_extend={self._prompt_extend}"
+        )
+
     def _throttle_submit(self) -> None:
         with self._submit_lock:
             elapsed = time.monotonic() - self._last_submit_at
@@ -172,10 +180,17 @@ class WanImageProvider(ImageProvider):
         if not self._api_key:
             return self._fallback.generate(prompt, output_path, size=size)
         self._throttle_submit()
+        logger.info(
+            "wan request: %s, prompt_chars=%s",
+            self.describe_params(size=size),
+            len(prompt),
+        )
         try:
             if self._use_sync:
                 return self._generate_sync(prompt, output_path, size=size)
             return self._generate_async(prompt, output_path, size=size)
         except Exception as exc:
-            logger.error("wan generate failed, fallback to mock: %s", exc)
-        return self._fallback.generate(prompt, output_path, size=size)
+            logger.error("wan generate failed: %s", exc)
+            if get_settings().mock_mode:
+                return self._fallback.generate(prompt, output_path, size=size)
+            raise

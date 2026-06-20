@@ -21,6 +21,9 @@ class ImageProvider(ABC):
     def generate(self, prompt: str, output_path: Path, *, size: str | None = None) -> Path:
         ...
 
+    def describe_params(self, *, size: str | None = None) -> str:
+        return "provider=unknown"
+
 
 class VideoProvider(Protocol):
     def generate(self, prompt: str, output_path: Path, *, duration: int = 5) -> Path: ...
@@ -55,17 +58,38 @@ class VisualMgr:
         total = len(segments)
         done = 0
         start = time.time()
+        params_desc = provider.describe_params()
+        logger.info(
+            "image batch start: count=%s, workers=%s, %s",
+            total,
+            max_workers,
+            params_desc,
+        )
 
         def render(seg: dict) -> tuple[int, Path]:
             nonlocal done
             index = seg["segment_index"]
             t0 = time.time()
-            logger.info("image %s/%s generating (segment %s)...", done + 1, total, index)
             out = images_dir / f"{index}.png"
             prompt = seg.get("image_prompt") or seg["text"]
+            logger.info(
+                "image %s/%s generating segment %s | %s | prompt_chars=%s",
+                done + 1,
+                total,
+                index,
+                params_desc,
+                len(prompt),
+            )
             provider.generate(prompt, out)
             elapsed = time.time() - t0
-            logger.info("image %s/%s done (segment %s, %.1fs)", done + 1, total, index, elapsed)
+            logger.info(
+                "image %s/%s done segment %s in %.1fs | %s",
+                done + 1,
+                total,
+                index,
+                elapsed,
+                params_desc,
+            )
             return seg["id"], out
 
         results: list[tuple[int, Path]] = []
@@ -75,7 +99,7 @@ class VisualMgr:
                 results.append(fut.result())
                 done += 1
         elapsed = time.time() - start
-        logger.info("image total: %s/%s done in %.1fs", done, total, elapsed)
+        logger.info("image batch done: %s/%s in %.1fs | %s", done, total, elapsed, params_desc)
         return results
 
     def generate_cover(

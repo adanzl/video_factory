@@ -33,6 +33,13 @@ class ZImageProvider(ImageProvider):
         self._last_submit_at = 0.0
         self._http_max_retries = settings.dashscope_http_max_retries
 
+    def describe_params(self, *, size: str | None = None) -> str:
+        size = size or self._default_size
+        return (
+            f"provider=z_image_t2i, model={self._model}, size={size}, "
+            f"prompt_extend={self._prompt_extend}"
+        )
+
     def _throttle_submit(self) -> None:
         with self._submit_lock:
             elapsed = time.monotonic() - self._last_submit_at
@@ -115,6 +122,11 @@ class ZImageProvider(ImageProvider):
                 "prompt_extend": self._prompt_extend,
             },
         }
+        logger.info(
+            "z-image request: %s, prompt_chars=%s",
+            self.describe_params(size=size),
+            len(prompt),
+        )
         try:
             resp = self._request("POST", _GENERATION_URL, headers=headers, json=payload)
             image_url = self._extract_image_url(resp.json())
@@ -126,5 +138,7 @@ class ZImageProvider(ImageProvider):
             output_path.write_bytes(img.content)
             return output_path
         except Exception as exc:
-            logger.error("z-image generate failed, fallback to mock: %s", exc)
-        return self._fallback.generate(prompt, output_path, size=size)
+            logger.error("z-image generate failed: %s", exc)
+            if get_settings().mock_mode:
+                return self._fallback.generate(prompt, output_path, size=size)
+            raise

@@ -13,6 +13,7 @@
       <el-form label-width="96px">
         <el-form-item label="重跑模式">
           <el-radio-group v-model="segmentScope">
+            <el-radio value="segment/all">全部</el-radio>
             <el-radio value="segment/images">分镜静图</el-radio>
             <el-radio value="segment/clips">图生视频</el-radio>
           </el-radio-group>
@@ -107,13 +108,13 @@
               v-if="segment.image_path"
               :src="getMediaFileUrl(segment.image_path)"
               fit="cover"
-              class="aspect-video w-full rounded border border-gray-100"
+              class="aspect-[9/16] w-full rounded border border-gray-100"
               :preview-src-list="[getMediaFileUrl(segment.image_path)]"
               preview-teleported
             />
             <div
               v-else
-              class="flex aspect-video w-full items-center justify-center rounded border border-dashed border-gray-200 bg-gray-50 text-xs text-gray-400"
+              class="flex aspect-[9/16] w-full items-center justify-center rounded border border-dashed border-gray-200 bg-gray-50 text-xs text-gray-400"
             >
               暂无图片
             </div>

@@ -236,6 +236,9 @@ def prepare_for_action(
     elif action == "segment/clips":
         stage = "segment"
         segment_scope = "clips"
+    elif action == "segment/all":
+        stage = "segment"
+        segment_scope = None
     else:
         stage = action
         segment_scope = None
@@ -244,7 +247,7 @@ def prepare_for_action(
         raise ValueError(f"invalid action: {action}")
     if segment_indices is not None:
         if not action.startswith("segment/"):
-            raise ValueError("segments 仅可用于 segment/images 或 segment/clips")
+            raise ValueError("segments 仅可用于 segment/all、segment/images 或 segment/clips")
         if not segment_indices:
             raise ValueError("segments 不能为空")
 

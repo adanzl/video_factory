@@ -265,6 +265,27 @@ class JobMgr:
             ),
         )
 
+    def run_segment_all(
+        self,
+        job_id: int,
+        *,
+        to_end: bool = False,
+        segment_indices: list[int] | None = None,
+    ) -> dict:
+        """重跑分镜静图与图生视频。实现：worker/loop.run_segment_all → worker/stages/segment.py"""
+        from worker.loop import run_segment_all
+
+        return self._run_in_background(
+            job_id,
+            "segment/all",
+            lambda: run_segment_all(
+                job_id,
+                to_end=to_end,
+                segment_indices=segment_indices,
+            ),
+            segment_indices=segment_indices,
+        )
+
     def run_segment_images(
         self,
         job_id: int,

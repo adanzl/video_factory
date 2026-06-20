@@ -111,6 +111,22 @@ def run_tts_route():
     )
 
 
+@bp.post("/segment/all")
+def run_segment_all_route():
+    data = get_json_body()
+    job_id = parse_id(data)
+    to_end = parse_bool(data, "to_end", default=False)
+    segment_indices = parse_int_list(data, "segments")
+    return _accept_stage(
+        job_id,
+        lambda: job_mgr.run_segment_all(
+            job_id,
+            to_end=to_end,
+            segment_indices=segment_indices,
+        ),
+    )
+
+
 @bp.post("/segment/images")
 def run_segment_images_route():
     data = get_json_body()

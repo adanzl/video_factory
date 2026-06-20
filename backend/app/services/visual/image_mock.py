@@ -10,6 +10,11 @@ from app.services.visual.visual_mgr import ImageProvider
 
 
 class MockImageProvider(ImageProvider):
+    def describe_params(self, *, size: str | None = None) -> str:
+        settings = get_settings()
+        size = size or settings.wan_image_size
+        return f"provider=mock, size={size}"
+
     def generate(self, prompt: str, output_path: Path, *, size: str | None = None) -> Path:
         settings = get_settings()
         size_str = size or settings.wan_image_size

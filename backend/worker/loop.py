@@ -261,6 +261,25 @@ def run_publish(job_id: int, *, to_end: bool = False) -> dict:
     return _run_one_stage(job_id, PublishStage, hold=True)
 
 
+def run_segment_all(
+    job_id: int,
+    *,
+    to_end: bool = False,
+    segment_indices: list[int] | None = None,
+) -> dict:
+    job_mgr.mark_running(job_id)
+    _run_one_stage(
+        job_id,
+        SegmentStage,
+        segment_indices=segment_indices,
+        segment_scope="all",
+        advance=True,
+    )
+    if not to_end:
+        return _reload_job(job_id)
+    return _run_from(job_id, HostStage)
+
+
 def run_segment_images(
     job_id: int,
     *,

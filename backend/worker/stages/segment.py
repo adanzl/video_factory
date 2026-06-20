@@ -66,6 +66,13 @@ class SegmentStage(StageExecutor):
                 if audio_path is not None
                 else "clips=skipped(no tts)"
             )
+            model = (
+                settings.z_image_model
+                if settings.image_provider == "z_image_t2i"
+                else settings.wan_model
+                if settings.image_provider == "wan_t2i"
+                else settings.image_provider
+            )
             job_log_repo.append_log(
                 conn,
                 ctx.job["id"],
@@ -73,7 +80,7 @@ class SegmentStage(StageExecutor):
                 (
                     f"scope={log_scope}, "
                     f"images={len(result.image_paths)} "
-                    f"(provider={settings.image_provider}), "
+                    f"(provider={settings.image_provider}, model={model}), "
                     f"{clip_note}"
                 ),
             )
