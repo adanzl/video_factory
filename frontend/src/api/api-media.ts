@@ -3,6 +3,7 @@
  */
 import { api } from "./config";
 import type { MediaDurationResult } from "@/types/media";
+import { normalizeMediaServePath } from "@/utils/media";
 
 export async function getMediaDuration(path: string): Promise<number | null> {
   if (!path?.trim()) {
@@ -10,7 +11,7 @@ export async function getMediaDuration(path: string): Promise<number | null> {
   }
   try {
     const response = await api.get<MediaDurationResult>("/v_factory/api/media/getDuration", {
-      params: { path },
+      params: { path: normalizeMediaServePath(path) },
     });
     return typeof response.data?.duration === "number" ? response.data.duration : null;
   } catch {
@@ -19,7 +20,7 @@ export async function getMediaDuration(path: string): Promise<number | null> {
 }
 
 export async function getMediaText(path: string): Promise<string | null> {
-  const normalized = path?.trim().replace(/\\/g, "/");
+  const normalized = normalizeMediaServePath(path ?? "");
   if (!normalized) {
     return null;
   }
@@ -38,11 +39,10 @@ export async function getMediaText(path: string): Promise<string | null> {
 }
 
 export async function downloadMediaFile(filePath: string, filename?: string): Promise<void> {
-  const normalized = filePath?.trim().replace(/\\/g, "/");
-  if (!normalized) {
+  const path = normalizeMediaServePath(filePath ?? "");
+  if (!path) {
     throw new Error("path is empty");
   }
-  const path = normalized.startsWith("/") ? normalized.slice(1) : normalized;
   const encodedPath = path
     .split("/")
     .map(part => encodeURIComponent(part))

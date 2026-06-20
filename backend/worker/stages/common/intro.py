@@ -29,7 +29,7 @@ class IntroStage(StageExecutor):
             height=height,
         )
         with connection() as conn:
-            job_repo.update_job(conn, ctx.job["id"], intro_path=str(intro_path))
+            job_repo.update_job(conn, ctx.job["id"], intro_path=f"{ctx.job['id']}/intro.mp4")
             detail = f"intro at {intro_path}, size={width}x{height}, orientation={orient_label}"
             if ctx.intro_hold_tail_sec is not None:
                 detail += f", hold_tail_sec={ctx.intro_hold_tail_sec:.2f}"
