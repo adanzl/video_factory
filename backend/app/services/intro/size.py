@@ -52,6 +52,17 @@ def landscape_size(settings: Settings) -> tuple[int, int]:
     return w, h
 
 
+def design_size_for_source(
+    source_width: int,
+    source_height: int,
+    settings: Settings,
+) -> tuple[int, int]:
+    """按源视频横竖屏选择设计画布（竖屏 9:16 / 横屏 16:9）。"""
+    if source_width > source_height:
+        return landscape_size(settings)
+    return portrait_size(settings)
+
+
 def _material_record_size(job: dict) -> tuple[int, int] | None:
     material_id = job.get("material_id")
     if not material_id:
@@ -78,8 +89,13 @@ def _material_record_size(job: dict) -> tuple[int, int] | None:
     return None
 
 
-def resolve_auto_intro_size(*, job: dict, media_dir: Path) -> tuple[int, int] | None:
-    """自动模式：任务目录基底 → 素材库记录。"""
+def resolve_auto_intro_size(
+    *,
+    settings: Settings,
+    job: dict,
+    media_dir: Path,
+) -> tuple[int, int] | None:
+    """自动模式：已归一化的任务基底 → 素材库原始尺寸推断设计画布。"""
     try:
         size = base_video_size(job=job, media_dir=media_dir)
         if size:
@@ -87,7 +103,10 @@ def resolve_auto_intro_size(*, job: dict, media_dir: Path) -> tuple[int, int] | 
     except Exception as exc:
         logger.warning("base_video_size failed for job %s: %s", job.get("id"), exc)
 
-    return _material_record_size(job)
+    raw = _material_record_size(job)
+    if raw:
+        return design_size_for_source(raw[0], raw[1], settings)
+    return None
 
 
 def resolve_intro_size(
@@ -104,7 +123,7 @@ def resolve_intro_size(
         return landscape_size(settings)
 
     if is_material_job(job):
-        size = resolve_auto_intro_size(job=job, media_dir=media_dir)
+        size = resolve_auto_intro_size(settings=settings, job=job, media_dir=media_dir)
         if size:
             return size
         logger.warning(

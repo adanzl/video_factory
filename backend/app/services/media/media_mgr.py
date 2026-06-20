@@ -16,6 +16,7 @@ from app.services.media.ffmpeg_utils import (
     merge_audio_video,
     prepend_intro,
     probe_duration,
+    probe_video_size,
 )
 from app.services.tts.tts_mgr import tts_mgr
 
@@ -190,7 +191,14 @@ class MediaMgr:
         body_path = media_dir / "body.mp4"
         try:
             fitted = work_dir / "base_fitted.mp4"
-            fit_video_duration(base_video_path, fitted, audio_dur)
+            base_w, base_h = probe_video_size(base_video_path)
+            fit_video_duration(
+                base_video_path,
+                fitted,
+                audio_dur,
+                width=base_w,
+                height=base_h,
+            )
             if flat_cues:
                 _, overlay_windows, overlay_paths = clip_mgr.prepare_subtitle_overlays(
                     subtitle_cues=flat_cues,

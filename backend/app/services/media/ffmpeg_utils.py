@@ -170,6 +170,54 @@ def probe_video_size(path: Path) -> tuple[int, int]:
     return int(width), int(height)
 
 
+def scale_pad_filter(*, width: int, height: int) -> str:
+    """等比缩放至目标画布内，不足处留黑边。"""
+    return (
+        f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
+        f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,format=yuv420p"
+    )
+
+
+def fit_video_to_canvas(
+    input_path: Path,
+    output_path: Path,
+    *,
+    width: int,
+    height: int,
+) -> Path:
+    """将视频归一化到设计分辨率（等比缩放 + 黑边，保留音轨）。"""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    run_ffmpeg(
+        [
+            "ffmpeg",
+            "-y",
+            "-hide_banner",
+            "-i",
+            str(input_path),
+            "-vf",
+            scale_pad_filter(width=width, height=height),
+            "-map",
+            "0:v:0",
+            "-map",
+            "0:a:0?",
+            "-c:v",
+            "libx264",
+            "-crf",
+            "18",
+            "-preset",
+            "medium",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-movflags",
+            "+faststart",
+            str(output_path),
+        ]
+    )
+    return output_path
+
+
 def concat_clips(clips: list[Path], output_path: Path) -> Path:
     """拼接同编码片段；音频 MP3 多条时重编码，避免 -c copy 接缝咔嗒。"""
     output_path.parent.mkdir(parents=True, exist_ok=True)
