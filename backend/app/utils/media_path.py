@@ -9,6 +9,16 @@ from pathlib import Path
 from urllib.parse import unquote
 
 _WINDOWS_ABS_RE = re.compile(r"^[A-Za-z]:[/\\]")
+_JOB_MEDIA_TAIL_RE = re.compile(
+    r"(\d+/(?:intro\.mp4|base\.mp4|intro\.png|cover\.(?:jpg|png)|audio\.(?:mp3|wav|aac)))$",
+    re.IGNORECASE,
+)
+
+
+def _job_media_tail(filepath: str) -> str | None:
+    cleaned = filepath.replace("\\", "/")
+    match = _JOB_MEDIA_TAIL_RE.search(cleaned)
+    return match.group(1) if match else None
 
 
 def decode_url_path(path: str) -> str:
@@ -93,12 +103,22 @@ def normalize_media_path(
         cleaned = os.path.normpath(cleaned)
 
     if not path_under_allowed_roots(cleaned, roots):
-        raise ValueError("path not in allowed directory")
+        tail = _job_media_tail(cleaned)
+        if tail:
+            cleaned = os.path.normpath(os.path.join(base_dir, tail))
+        if not path_under_allowed_roots(cleaned, roots):
+            raise ValueError("path not in allowed directory")
 
     try:
         st = os.lstat(cleaned)
-    except FileNotFoundError as exc:
-        raise FileNotFoundError(f"file not found: {cleaned}") from exc
+    except FileNotFoundError:
+        tail = _job_media_tail(cleaned)
+        if not tail:
+            raise FileNotFoundError(f"file not found: {cleaned}") from None
+        cleaned = os.path.normpath(os.path.join(roots[0], tail))
+        if not path_under_allowed_roots(cleaned, roots):
+            raise ValueError("path not in allowed directory")
+        st = os.lstat(cleaned)
     except RecursionError as exc:
         raise ValueError("Invalid path: 路径解析失败") from exc
     except OSError as exc:
@@ -124,6 +144,11 @@ def resolve_media_serve_path(
         filepath = os.path.normpath(filepath)
     else:
         filepath = os.path.normpath(os.path.join(roots[0], filepath.lstrip("/\\")))
+
+    if not os.path.isfile(filepath):
+        tail = _job_media_tail(filepath)
+        if tail:
+            filepath = os.path.normpath(os.path.join(roots[0], tail))
 
     if not os.path.isfile(filepath):
         raise FileNotFoundError(f"file not found: {filepath}")
