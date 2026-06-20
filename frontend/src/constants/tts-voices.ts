@@ -7,6 +7,13 @@ export interface TtsVoiceOption {
 }
 
 // cSpell: disable
+const CLONED_VOICES: TtsVoiceOption[] = [
+  {
+    label: "人声复刻 (cancan)",
+    value: "cosyvoice-v3.5-flash-leo-60621bdce780434ab0734555e5196d7d",
+  },
+];
+
 const TTS_VOICE_IDS = [
   "longwan_v3",
   "longyingjing_v3",
@@ -30,10 +37,12 @@ const TTS_VOICE_IDS = [
 
 const previewMap = cosyvoiceVoicePreviews as Record<string, string>;
 
-export const TTS_VOICE_OPTIONS: TtsVoiceOption[] = TTS_VOICE_IDS.map(value => ({
+const systemVoiceOptions: TtsVoiceOption[] = TTS_VOICE_IDS.map(value => ({
   label: value,
   value,
   previewUrl: previewMap[value],
 }));
+
+export const TTS_VOICE_OPTIONS: TtsVoiceOption[] = [...CLONED_VOICES, ...systemVoiceOptions];
 
 export const getTtsVoicePreviewUrl = (voiceId: string): string | undefined => previewMap[voiceId];

@@ -48,6 +48,7 @@ VOICE_MODEL_MAP = {
     "longniuniu": "cosyvoice-v3-flash",
     "longxian_v3": "cosyvoice-v3-flash",
     "longjielidou_v3": "cosyvoice-v3-flash",
+    "cosyvoice-v3.5-flash-leo-60621bdce780434ab0734555e5196d7d": "cosyvoice-v3.5-flash",
 }
 DEFAULT_VOICE = "longhuhu_v3"
 DEFAULT_MODEL = "cosyvoice-v3-flash"
@@ -90,7 +91,7 @@ def _run_tts_task(
         raise ValueError("TTS text is empty")
 
     voice = voice or settings.tts_voice
-    model = settings.tts_model or VOICE_MODEL_MAP.get(voice, DEFAULT_MODEL)
+    model = VOICE_MODEL_MAP.get(voice) or settings.tts_model or DEFAULT_MODEL
     instruction = resolve_instruction(
         voice,
         explicit=settings.tts_instruction,
@@ -281,7 +282,7 @@ class AliTTSClient(TTSClient):
             "tts start segments=%s voice=%s model=%s rate=%s",
             len(segments),
             effective_voice,
-            settings.tts_model or VOICE_MODEL_MAP.get(effective_voice, DEFAULT_MODEL),
+            VOICE_MODEL_MAP.get(effective_voice) or settings.tts_model or DEFAULT_MODEL,
             effective_rate,
         )
 
