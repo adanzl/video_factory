@@ -1,0 +1,127 @@
+"""选题标题规则打分（见 docs/选题.md §5）。"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+
+_SCORE_THRESHOLD = 65
+
+_HARD_REJECT_PATTERNS = (
+    r"医疗|养生|保健|药品|治病|手术|癌症|肿瘤",
+    r"理财|股票|股市|基金|投资|赚钱|暴富",
+    r"时政|情感|离婚|出轨|明星八卦",
+    r"热点|热搜|今日|昨天|刚刚|突发",
+    r"真人出镜|真人拍摄|实拍|采访",
+)
+
+_CURIOSITY_PATTERNS = (
+    r"[?？]",
+    r"为什么|怎么|如何|居然|竟然|真相|误区|多数人|不知道|暗藏|猫腻",
+)
+
+_VISUAL_POSITIVE = (
+    r"水|电|温度|气压|化学|光|磁|电池|网线|宽带|路由器|不锈钢|玻璃|塑料",
+)
+
+_TIMELY_PATTERNS = (
+    r"\d{4}年|今年|去年|春节|国庆|高考季|双十一",
+)
+
+
+@dataclass(frozen=True)
+class ScoreResult:
+    visual: int
+    fact: int
+    curiosity: int
+    compliance: int
+    total: int
+    rejected_reason: str | None
+
+    def to_dict(self) -> dict:
+        return {
+            "visual": self.visual,
+            "fact": self.fact,
+            "curiosity": self.curiosity,
+            "compliance": self.compliance,
+            "total": self.total,
+            "rejected_reason": self.rejected_reason,
+        }
+
+
+def _has_pattern(text: str, patterns: tuple[str, ...]) -> bool:
+    return any(re.search(p, text) for p in patterns)
+
+
+def _clamp(value: float) -> int:
+    return max(0, min(100, round(value)))
+
+
+def score_title(
+    title: str,
+    *,
+    track: str | None = None,
+    template: str | None = None,
+    hook: str | None = None,
+) -> ScoreResult:
+    text = title.strip()
+    combined = f"{text} {hook or ''}"
+
+    for pattern in _HARD_REJECT_PATTERNS:
+        if re.search(pattern, combined):
+            return ScoreResult(
+                visual=0,
+                fact=0,
+                curiosity=0,
+                compliance=0,
+                total=0,
+                rejected_reason=f"命中硬性约束：{pattern}",
+            )
+
+    visual = 70.0
+    if _has_pattern(text, _VISUAL_POSITIVE):
+        visual += 15
+    if len(text) > 28:
+        visual -= 10
+
+    fact = 65.0
+    if track in {"日常科学原理", "生活避坑实用常识", "数码小白避坑"}:
+        fact += 15
+    if template in {"误区反问式", "实操避坑式"}:
+        fact += 5
+
+    curiosity = 50.0
+    if _has_pattern(text, _CURIOSITY_PATTERNS):
+        curiosity += 30
+    if template == "反差好奇式":
+        curiosity += 10
+    if hook and len(hook) >= 10:
+        curiosity += 5
+
+    compliance = 80.0
+    if _has_pattern(combined, _TIMELY_PATTERNS):
+        compliance -= 40
+    if not track:
+        compliance -= 5
+
+    total = _clamp(
+        visual * 0.3 + fact * 0.3 + curiosity * 0.2 + compliance * 0.2
+    )
+    rejected_reason = None
+    if total < _SCORE_THRESHOLD:
+        rejected_reason = f"总分 {total} 低于阈值 {_SCORE_THRESHOLD}"
+
+    return ScoreResult(
+        visual=_clamp(visual),
+        fact=_clamp(fact),
+        curiosity=_clamp(curiosity),
+        compliance=_clamp(compliance),
+        total=total,
+        rejected_reason=rejected_reason,
+    )
+
+
+def status_from_score(result: ScoreResult) -> str:
+    if result.rejected_reason and result.total < _SCORE_THRESHOLD:
+        return "rejected"
+    return "queued"
