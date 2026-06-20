@@ -3,7 +3,6 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from app.config import get_settings
 from app.quality.checkers import check_final
 from app.quality.gate import apply_quality_checks
 from app.repositories import job_log_repo, job_repo, segment_repo
@@ -53,7 +52,7 @@ class MergeStage(StageExecutor):
                 ),
             }
             if intro_path and not job.get("intro_path"):
-                updates["intro_path"] = str(intro_path)
+                updates["intro_path"] = str(intro_path.resolve())
             job_repo.update_job(conn, ctx.job["id"], **updates)
             job_log_repo.append_log(
                 conn,

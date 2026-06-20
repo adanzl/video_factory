@@ -1,22 +1,8 @@
 import { api } from "@/api/config";
 import type { FinalAsset } from "@/types/jobs";
 
-/** 从绝对/杂乱路径提取 {jobId}/filename，供媒体 API 使用 */
-const JOB_MEDIA_FILE_RE =
-  /(\d+\/(?:intro\.mp4|base\.mp4|intro\.png|cover\.(?:jpg|png)|audio\.(?:mp3|wav|aac)))$/i;
-
-export function normalizeMediaServePath(filePath: string): string {
-  const normalized = filePath.trim().replace(/\\/g, "/");
-  const withoutLead = normalized.startsWith("/") ? normalized.slice(1) : normalized;
-  const tailMatch = withoutLead.match(JOB_MEDIA_FILE_RE);
-  if (tailMatch) {
-    return tailMatch[1];
-  }
-  return withoutLead;
-}
-
 /**
- * 将本地媒体路径转为可通过 HTTP 访问的 URL（对齐 MyTodo utils/file.ts getMediaFileUrl）
+ * 将本地媒体绝对路径转为可通过 HTTP 访问的 URL
  */
 export function getMediaFileUrl(filePath: string): string {
   if (!filePath || typeof filePath !== "string" || filePath.trim() === "") {
@@ -29,7 +15,8 @@ export function getMediaFileUrl(filePath: string): string {
       return "";
     }
 
-    const path = normalizeMediaServePath(filePath);
+    const normalized = filePath.trim().replace(/\\/g, "/");
+    const path = normalized.startsWith("/") ? normalized.slice(1) : normalized;
     if (!path) {
       return "";
     }

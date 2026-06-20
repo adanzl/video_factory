@@ -29,16 +29,24 @@ def test_to_media_url_path_strips_leading_slash():
     assert to_media_url_path("/mnt/data/clip.mp4") == "mnt/data/clip.mp4"
 
 
-def test_normalize_media_path_relative(media_root):
-    file_path = media_root / "clip.mp4"
-    file_path.write_bytes(b"x")
-    resolved = normalize_media_path("clip.mp4", allowed_roots=media_serve_mgr.allowed_roots)
-    assert resolved == str(file_path.resolve())
+def test_normalize_media_path_rejects_relative(media_root):
+    with pytest.raises(ValueError, match="absolute"):
+        normalize_media_path("clip.mp4", allowed_roots=media_serve_mgr.allowed_roots)
 
 
 def test_normalize_media_path_rejects_traversal(media_root):
     with pytest.raises(ValueError, match="traversal"):
         normalize_media_path("../secret.mp4", allowed_roots=media_serve_mgr.allowed_roots)
+
+
+def test_normalize_media_path_absolute(media_root):
+    file_path = media_root / "clip.mp4"
+    file_path.write_bytes(b"x")
+    resolved = normalize_media_path(
+        str(file_path.resolve()),
+        allowed_roots=media_serve_mgr.allowed_roots,
+    )
+    assert resolved == str(file_path.resolve())
 
 
 def test_resolve_media_serve_path_absolute_without_leading_slash(media_root):
@@ -50,16 +58,24 @@ def test_resolve_media_serve_path_absolute_without_leading_slash(media_root):
     assert os.path.normpath(resolved) == os.path.normpath(str(file_path.resolve()))
 
 
-def test_resolve_media_serve_path_relative(media_root):
-    file_path = media_root / "42" / "base.mp4"
+def test_resolve_media_serve_path_nested_audio(media_root):
+    file_path = media_root / "13" / "audio" / "narration.mp3"
     file_path.parent.mkdir(parents=True)
-    file_path.write_bytes(b"video")
+    file_path.write_bytes(b"audio")
+    url_path = to_media_url_path(str(file_path.resolve()))
     resolved = resolve_media_serve_path(
-        "42/base.mp4",
+        url_path,
         allowed_roots=media_serve_mgr.allowed_roots,
     )
     assert os.path.normpath(resolved) == os.path.normpath(str(file_path.resolve()))
 
+
+def test_resolve_media_serve_path_rejects_relative(media_root):
+    with pytest.raises(FileNotFoundError, match="absolute"):
+        resolve_media_serve_path(
+            "13/audio/narration.mp3",
+            allowed_roots=media_serve_mgr.allowed_roots,
+        )
 
 
 def test_get_duration(media_root, monkeypatch):
