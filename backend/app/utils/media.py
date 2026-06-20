@@ -30,12 +30,30 @@ def _read_base_meta(media_dir: Path) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def _coerce_positive_int(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value > 0 else None
+    if isinstance(value, float) and value.is_integer():
+        coerced = int(value)
+        return coerced if coerced > 0 else None
+    return None
+
+
+def _pair_from_meta(data: dict) -> tuple[int, int] | None:
+    width = _coerce_positive_int(data.get("width"))
+    height = _coerce_positive_int(data.get("height"))
+    if width and height:
+        return width, height
+    return None
+
+
 def base_video_size(*, job: dict, media_dir: Path) -> tuple[int, int] | None:
     """素材任务基底视频分辨率；优先 base_meta，其次探测 base.mp4。"""
-    data = _read_base_meta(media_dir)
-    width, height = data.get("width"), data.get("height")
-    if isinstance(width, int) and isinstance(height, int) and width > 0 and height > 0:
-        return width, height
+    size = _pair_from_meta(_read_base_meta(media_dir))
+    if size:
+        return size
 
     base_path = job.get("base_path")
     if base_path:

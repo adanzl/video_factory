@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from app.config import Settings
-from app.utils.media import base_video_size
+from app.repositories import material_repo
+from app.repositories.connection import connection
+from app.services.media.ffmpeg_utils import probe_video_size
+from app.utils.media import _coerce_positive_int, base_video_size
+
+logger = logging.getLogger(__name__)
 
 INTRO_ORIENTATION_PORTRAIT = "portrait"
 INTRO_ORIENTATION_LANDSCAPE = "landscape"
+PIPELINE_MATERIAL = "material"
 
 
 def parse_intro_orientation(value: str | None) -> str | None:
@@ -25,6 +32,12 @@ def parse_intro_orientation(value: str | None) -> str | None:
     raise ValueError(f"无效的片头方向: {value!r}，可选 portrait / landscape / auto")
 
 
+def is_material_job(job: dict) -> bool:
+    if (job.get("pipeline") or "standard").strip() == PIPELINE_MATERIAL:
+        return True
+    return job.get("material_id") is not None
+
+
 def portrait_size(settings: Settings) -> tuple[int, int]:
     w, h = settings.video_width, settings.video_height
     if w > h:
@@ -37,6 +50,44 @@ def landscape_size(settings: Settings) -> tuple[int, int]:
     if h > w:
         w, h = h, w
     return w, h
+
+
+def _material_record_size(job: dict) -> tuple[int, int] | None:
+    material_id = job.get("material_id")
+    if not material_id:
+        return None
+    try:
+        with connection() as conn:
+            material = material_repo.get_material(conn, int(material_id))
+    except (KeyError, TypeError, ValueError):
+        return None
+
+    width = _coerce_positive_int(material.get("width"))
+    height = _coerce_positive_int(material.get("height"))
+    if width and height:
+        return width, height
+
+    file_path = material.get("file_path")
+    if file_path:
+        path = Path(str(file_path))
+        if path.is_file():
+            try:
+                return probe_video_size(path)
+            except Exception as exc:
+                logger.warning("probe material source failed: %s", exc)
+    return None
+
+
+def resolve_auto_intro_size(*, job: dict, media_dir: Path) -> tuple[int, int] | None:
+    """自动模式：任务目录基底 → 素材库记录。"""
+    try:
+        size = base_video_size(job=job, media_dir=media_dir)
+        if size:
+            return size
+    except Exception as exc:
+        logger.warning("base_video_size failed for job %s: %s", job.get("id"), exc)
+
+    return _material_record_size(job)
 
 
 def resolve_intro_size(
@@ -52,9 +103,13 @@ def resolve_intro_size(
     if orientation == INTRO_ORIENTATION_LANDSCAPE:
         return landscape_size(settings)
 
-    pipeline = (job.get("pipeline") or "standard").strip()
-    if pipeline == "material":
-        size = base_video_size(job=job, media_dir=media_dir)
+    if is_material_job(job):
+        size = resolve_auto_intro_size(job=job, media_dir=media_dir)
         if size:
             return size
+        logger.warning(
+            "intro auto size fallback to portrait for material job %s "
+            "(no base_meta/base.mp4/material dimensions)",
+            job.get("id"),
+        )
     return portrait_size(settings)
