@@ -18,4 +18,23 @@ export async function getMediaDuration(path: string): Promise<number | null> {
   }
 }
 
+export async function getMediaText(path: string): Promise<string | null> {
+  const normalized = path?.trim().replace(/\\/g, "/");
+  if (!normalized) {
+    return null;
+  }
+  const encodedPath = normalized
+    .split("/")
+    .map(part => encodeURIComponent(part))
+    .join("/");
+  try {
+    const response = await api.get<string>(`/v_factory/api/media/files/${encodedPath}`, {
+      responseType: "text",
+    });
+    return typeof response.data === "string" ? response.data : null;
+  } catch {
+    return null;
+  }
+}
+
 export { getMediaFileUrl } from "@/utils/media";

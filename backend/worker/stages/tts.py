@@ -20,7 +20,13 @@ class TTSStage(StageExecutor):
             job = job_repo.get_job(conn, ctx.job["id"])
             segments = segment_repo.list_segments(conn, ctx.job["id"])
         script = job.get("script_json") or {}
-        result = tts_mgr.synthesize(script.get("narration", ""), segments, ctx.media_dir / "audio")
+        result = tts_mgr.synthesize(
+            script.get("narration", ""),
+            segments,
+            ctx.media_dir / "audio",
+            voice=ctx.tts_voice_id,
+            speech_rate=ctx.tts_speech_rate,
+        )
         normalize_loudness(
             result.audio_path,
             target_lufs=settings.audio_target_lufs,

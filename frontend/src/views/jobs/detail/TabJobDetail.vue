@@ -6,9 +6,8 @@
 
     <template v-else-if="job">
       <div class="mb-4 flex flex-wrap items-center gap-3">
-        <el-button type="primary" :loading="loading" @click="fetchDetail">
+        <el-button type="primary" :disabled="loading" @click="fetchDetail">
           <el-icon><Refresh /></el-icon>
-          刷新
         </el-button>
         <span class="font-medium">{{ job.title }}</span>
         <span class="text-gray-500">#{{ job.id }}</span>
@@ -32,8 +31,8 @@
               当前
             </el-tag>
           </template>
-          <JobDetailStagePanel
-            :stage="stage.name"
+          <component
+            :is="STAGE_PANELS[stage.name]"
             :job="job"
             :segments="segments"
             :logs="logsByStage[stage.name] || []"
@@ -49,12 +48,33 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
+import type { Component } from "vue";
 import { Refresh } from "@element-plus/icons-vue";
 import { getJob, getJobLogs, getJobSegments } from "@/api/api-jobs";
 import { JOB_STAGE_NAMES, JOB_STAGES } from "@/constants/jobStages";
 import type { JobDetail, JobLog, JobSegment } from "@/types/jobs";
 import { useErrorHandler } from "@/composables/useErrorHandler";
-import JobDetailStagePanel from "./JobDetailStagePanel.vue";
+import StageCover from "./StageCover.vue";
+import StageHost from "./StageHost.vue";
+import StageIntro from "./StageIntro.vue";
+import StageMerge from "./StageMerge.vue";
+import StagePublish from "./StagePublish.vue";
+import StageScript from "./StageScript.vue";
+import StageSegment from "./StageSegment.vue";
+import StageTitle from "./StageTitle.vue";
+import StageTts from "./StageTts.vue";
+
+const STAGE_PANELS: Record<string, Component> = {
+  title: StageTitle,
+  script: StageScript,
+  intro: StageIntro,
+  cover: StageCover,
+  tts: StageTts,
+  segment: StageSegment,
+  host: StageHost,
+  merge: StageMerge,
+  publish: StagePublish,
+};
 
 const props = defineProps<{
   jobId?: number;

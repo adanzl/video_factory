@@ -14,6 +14,11 @@ class JobContext:
     rerun_segment_indices: tuple[int, ...] | None = None
     segment_scope: str | None = None
     intro_hold_tail_sec: float | None = None
+    tts_speech_rate: float | None = None
+    tts_voice_id: str | None = None
+    script_segment_target_sec: float | None = None
+    script_max_title_length: int | None = None
+    script_narration_target_words: int | None = None
 
     @classmethod
     def from_job(
@@ -23,6 +28,11 @@ class JobContext:
         rerun_segment_indices: tuple[int, ...] | None = None,
         segment_scope: str | None = None,
         intro_hold_tail_sec: float | None = None,
+        tts_speech_rate: float | None = None,
+        tts_voice_id: str | None = None,
+        script_segment_target_sec: float | None = None,
+        script_max_title_length: int | None = None,
+        script_narration_target_words: int | None = None,
     ) -> "JobContext":
         settings = get_settings()
         media_dir = settings.video_data_dir / str(job["id"])
@@ -34,6 +44,11 @@ class JobContext:
             rerun_segment_indices=rerun_segment_indices,
             segment_scope=segment_scope,
             intro_hold_tail_sec=intro_hold_tail_sec,
+            tts_speech_rate=tts_speech_rate,
+            tts_voice_id=tts_voice_id,
+            script_segment_target_sec=script_segment_target_sec,
+            script_max_title_length=script_max_title_length,
+            script_narration_target_words=script_narration_target_words,
         )
 
     def rel(self, name: str) -> Path:

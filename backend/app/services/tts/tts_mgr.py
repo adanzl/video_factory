@@ -66,7 +66,15 @@ class TTSResult:
 
 
 class TTSClient:
-    def synthesize(self, narration: str, segments: list[dict], output_dir: Path) -> TTSResult:
+    def synthesize(
+        self,
+        narration: str,
+        segments: list[dict],
+        output_dir: Path,
+        *,
+        voice: str | None = None,
+        speech_rate: float | None = None,
+    ) -> TTSResult:
         raise NotImplementedError
 
 
@@ -125,8 +133,22 @@ class TTSMgr:
             return MockTTSClient()
         return AliTTSClient()
 
-    def synthesize(self, narration: str, segments: list[dict], output_dir: Path) -> TTSResult:
-        return self._get_client().synthesize(narration, segments, output_dir)
+    def synthesize(
+        self,
+        narration: str,
+        segments: list[dict],
+        output_dir: Path,
+        *,
+        voice: str | None = None,
+        speech_rate: float | None = None,
+    ) -> TTSResult:
+        return self._get_client().synthesize(
+            narration,
+            segments,
+            output_dir,
+            voice=voice,
+            speech_rate=speech_rate,
+        )
 
     def synthesize_utterance(
         self,

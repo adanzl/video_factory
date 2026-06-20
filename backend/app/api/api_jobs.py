@@ -13,6 +13,8 @@ from app.api.utils import (
     parse_id,
     parse_int_list,
     parse_optional_float,
+    parse_optional_int,
+    parse_optional_str,
     parse_query_int,
     parse_str,
 )
@@ -37,10 +39,34 @@ def _accept_stage(job_id: int, submit) -> tuple:
     return json_accepted(job)
 
 
+def _parse_script_body() -> tuple[int, bool, str | None, float | None, int | None, int | None]:
+    data = get_json_body()
+    return (
+        parse_id(data),
+        parse_bool(data, "to_end", default=False),
+        parse_optional_str(data, "title"),
+        parse_optional_float(data, "segment_target_sec", minimum=0.0, maximum=60.0),
+        parse_optional_int(data, "max_title_length", minimum=8, maximum=48),
+        parse_optional_int(data, "narration_target_words", minimum=200, maximum=3000),
+    )
+
+
 @bp.post("/script")
 def run_script_route():
-    job_id, to_end = _parse_stage_body()
-    return _accept_stage(job_id, lambda: job_mgr.run_script(job_id, to_end=to_end))
+    job_id, to_end, title, segment_target_sec, max_title_length, narration_target_words = (
+        _parse_script_body()
+    )
+    return _accept_stage(
+        job_id,
+        lambda: job_mgr.run_script(
+            job_id,
+            to_end=to_end,
+            title=title,
+            segment_target_sec=segment_target_sec,
+            max_title_length=max_title_length,
+            narration_target_words=narration_target_words,
+        ),
+    )
 
 
 def _parse_intro_body() -> tuple[int, bool, float | None]:
@@ -69,8 +95,20 @@ def run_cover_route():
 
 @bp.post("/tts")
 def run_tts_route():
-    job_id, to_end = _parse_stage_body()
-    return _accept_stage(job_id, lambda: job_mgr.run_tts(job_id, to_end=to_end))
+    data = get_json_body()
+    job_id = parse_id(data)
+    to_end = parse_bool(data, "to_end", default=False)
+    speech_rate = parse_optional_float(data, "speech_rate", minimum=0.5, maximum=2.0)
+    voice_id = parse_optional_str(data, "voice_id")
+    return _accept_stage(
+        job_id,
+        lambda: job_mgr.run_tts(
+            job_id,
+            to_end=to_end,
+            speech_rate=speech_rate,
+            voice_id=voice_id,
+        ),
+    )
 
 
 @bp.post("/segment/images")

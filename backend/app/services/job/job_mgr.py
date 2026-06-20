@@ -190,14 +190,37 @@ class JobMgr:
         finally:
             lock.release()
 
-    def run_script(self, job_id: int, *, to_end: bool = False) -> dict:
+    def run_script(
+        self,
+        job_id: int,
+        *,
+        to_end: bool = False,
+        title: str | None = None,
+        segment_target_sec: float | None = None,
+        max_title_length: int | None = None,
+        narration_target_words: int | None = None,
+    ) -> dict:
         """生成文案。实现：worker/loop.run_script → worker/stages/script.py"""
         from worker.loop import run_script
+
+        if title is not None:
+            cleaned = title.strip()
+            if not cleaned:
+                raise ValueError("title is empty")
+            job = self.get_job(job_id)
+            if cleaned != job["title"]:
+                self.update_job(job_id, title=cleaned)
 
         return self._run_in_background(
             job_id,
             "script",
-            lambda: run_script(job_id, to_end=to_end),
+            lambda: run_script(
+                job_id,
+                to_end=to_end,
+                segment_target_sec=segment_target_sec,
+                max_title_length=max_title_length,
+                narration_target_words=narration_target_words,
+            ),
         )
 
     def run_intro(self, job_id: int, *, to_end: bool = False, hold_tail_sec: float | None = None) -> dict:
@@ -220,14 +243,26 @@ class JobMgr:
             lambda: run_cover(job_id, to_end=to_end),
         )
 
-    def run_tts(self, job_id: int, *, to_end: bool = False) -> dict:
+    def run_tts(
+        self,
+        job_id: int,
+        *,
+        to_end: bool = False,
+        speech_rate: float | None = None,
+        voice_id: str | None = None,
+    ) -> dict:
         """生成配音。实现：worker/loop.run_tts → worker/stages/tts.py"""
         from worker.loop import run_tts
 
         return self._run_in_background(
             job_id,
             "tts",
-            lambda: run_tts(job_id, to_end=to_end),
+            lambda: run_tts(
+                job_id,
+                to_end=to_end,
+                speech_rate=speech_rate,
+                voice_id=voice_id,
+            ),
         )
 
     def run_segment_images(

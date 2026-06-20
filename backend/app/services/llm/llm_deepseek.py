@@ -44,6 +44,11 @@ def _format_segment_target_sec(target: float) -> str | float:
     return int(target) if target == int(target) else target
 
 
+def _narration_word_range(target: int) -> tuple[int, int]:
+    margin = max(50, int(target * 0.1))
+    return max(200, target - margin), target + margin
+
+
 def _storyboard_segment_rule(target: float) -> str:
     common = f"segments为分镜数组；{_VISUAL_BRIEF_RULE}"
     if target <= 0:
@@ -90,19 +95,29 @@ class DeepSeekClient(LLMClient):
         return resp.json()["choices"][0]["message"]["content"]
 
     def _generate_storyboard(
-        self, title: str, *, feedback: str | None = None
+        self,
+        title: str,
+        *,
+        feedback: str | None = None,
+        segment_target_sec: float | None = None,
+        max_title_length: int | None = None,
+        narration_target_words: int | None = None,
     ) -> dict[str, Any]:
         settings = get_settings()
-        target = settings.segment_target_sec
+        target = (
+            settings.segment_target_sec if segment_target_sec is None else segment_target_sec
+        )
         seg_rule = _storyboard_segment_rule(target)
-        max_title = settings.max_title_length
+        max_title = settings.max_title_length if max_title_length is None else max_title_length
+        narr_target = narration_target_words if narration_target_words is not None else 1050
+        narr_lo, narr_hi = _narration_word_range(narr_target)
         system = (
             "你是科普视频编剧。输出JSON，字段：title, narration, word_count, "
             "visual_style, segments。"
             f"title为精简后的视频标题，保留原标题核心意思，"
             f"不含空格换行，字数不超过{max_title}，适合封面最多三行展示。"
             f"{seg_rule}"
-            "narration为完整口播，总字数950-1150（不含空格换行），口语化，结构完整有开头结尾；"
+            f"narration为完整口播，总字数{narr_lo}-{narr_hi}（不含空格换行），口语化，结构完整有开头结尾；"
             "选题撑不满时可略短，但须结构完整。"
             "禁止口播开头自我介绍或人设铺垫；第一句直接进入主题或抛出问题。"
             "word_count必须等于narration实际字数，不得虚报。"
@@ -183,8 +198,22 @@ class DeepSeekClient(LLMClient):
             seg["image_prompt"] = item["image_prompt"]
             seg["motion_prompt"] = item.get("motion_prompt", "")
 
-    def generate_script(self, title: str, *, feedback: str | None = None) -> dict[str, Any]:
-        data = self._generate_storyboard(title, feedback=feedback)
+    def generate_script(
+        self,
+        title: str,
+        *,
+        feedback: str | None = None,
+        segment_target_sec: float | None = None,
+        max_title_length: int | None = None,
+        narration_target_words: int | None = None,
+    ) -> dict[str, Any]:
+        data = self._generate_storyboard(
+            title,
+            feedback=feedback,
+            segment_target_sec=segment_target_sec,
+            max_title_length=max_title_length,
+            narration_target_words=narration_target_words,
+        )
 
         prompt_feedback: str | None = None
         for attempt in range(4):

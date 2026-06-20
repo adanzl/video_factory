@@ -78,6 +78,28 @@ def parse_bool(data: JsonDict, field: str, *, default: bool = False) -> bool:
     return value
 
 
+def parse_optional_int(
+    data: JsonDict,
+    field: str,
+    *,
+    minimum: int = 0,
+    maximum: int | None = None,
+) -> int | None:
+    """解析可选整数字段；缺失时返回 None。"""
+    if field not in data:
+        return None
+    raw = data[field]
+    try:
+        value = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise APIError(f"{field} must be an integer") from exc
+    if value < minimum:
+        raise APIError(f"{field} must be >= {minimum}")
+    if maximum is not None and value > maximum:
+        raise APIError(f"{field} must be <= {maximum}")
+    return value
+
+
 def parse_optional_float(
     data: JsonDict,
     field: str,
@@ -115,6 +137,18 @@ def parse_int_list(
     if not raw and not allow_empty:
         raise APIError(f"{field} 不能为空")
     return list(raw)
+
+
+def parse_optional_str(data: JsonDict, field: str) -> str | None:
+    """解析可选字符串字段；缺失或空字符串时返回 None。"""
+    if field not in data:
+        return None
+    value = data[field]
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return value.strip()
 
 
 def get_query(name: str, *, default: str | None = None) -> str | None:

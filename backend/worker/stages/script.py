@@ -18,6 +18,13 @@ MIN_ACCEPT_NARRATION_CHARS = 200
 MIN_IMAGE_PROMPT_CHARS = 200
 
 
+def _min_narration_chars(narration_target_words: int | None) -> int:
+    if narration_target_words is None:
+        return MIN_NARRATION_CHARS
+    target = max(MIN_ACCEPT_NARRATION_CHARS, narration_target_words)
+    return max(MIN_ACCEPT_NARRATION_CHARS, int(target * 0.67))
+
+
 class ScriptValidationError(ValueError):
     def __init__(self, message: str, *, retryable: bool = True) -> None:
         super().__init__(message)
@@ -46,16 +53,28 @@ def _normalize_segments(segments: list[dict]) -> list[dict]:
     return out
 
 
-def _validate_script(script: dict) -> list[str]:
+def _validate_script(
+    script: dict,
+    *,
+    segment_target_sec: float | None = None,
+    max_title_length: int | None = None,
+    min_narration_chars: int | None = None,
+) -> list[str]:
     settings = get_settings()
+    seg_target = (
+        settings.segment_target_sec if segment_target_sec is None else segment_target_sec
+    )
+    max_len = settings.max_title_length if max_title_length is None else max_title_length
+    min_narr = MIN_NARRATION_CHARS if min_narration_chars is None else min_narration_chars
     narration = script.get("narration", "")
     segments = script.get("segments") or []
     warnings: list[str] = []
     chars = _narration_chars(narration)
-    if chars < MIN_NARRATION_CHARS:
-        if _narration_short_retryable(chars):
+    if chars < min_narr:
+        retry_min = max(MIN_ACCEPT_NARRATION_CHARS, int(min_narr * 0.8))
+        if chars >= retry_min:
             raise ScriptValidationError(
-                f"narration too short: {chars} chars (need >= {MIN_NARRATION_CHARS})",
+                f"narration too short: {chars} chars (need >= {min_narr})",
                 retryable=True,
             )
         if chars < MIN_ACCEPT_NARRATION_CHARS:
@@ -64,7 +83,7 @@ def _validate_script(script: dict) -> list[str]:
                 retryable=False,
             )
         warnings.append(
-            f"cannot reach {MIN_NARRATION_CHARS} chars ({chars} got), continuing with shorter copy"
+            f"cannot reach {min_narr} chars ({chars} got), continuing with shorter copy"
         )
     if not segments:
         raise ScriptValidationError("no segments", retryable=False)
@@ -83,8 +102,8 @@ def _validate_script(script: dict) -> list[str]:
                 f"{len(prompt)} chars (need >= {MIN_IMAGE_PROMPT_CHARS})",
                 retryable=True,
             )
-    if settings.segment_target_sec > 0:
-        cap = max(20, int(settings.segment_target_sec * 7.5))
+    if seg_target > 0:
+        cap = max(20, int(seg_target * 7.5))
         hard_cap = int(cap * 1.15)
         overflow: list[tuple[int, int]] = []
         for seg in segments:
@@ -93,7 +112,7 @@ def _validate_script(script: dict) -> list[str]:
                 overflow.append((seg.get("segment_index", -1), seg_chars))
         if overflow:
             raise ScriptValidationError(
-                f"segment text exceeds {settings.segment_target_sec}s cap (~{cap} chars): "
+                f"segment text exceeds {seg_target}s cap (~{cap} chars): "
                 f"{overflow}",
                 retryable=True,
             )
@@ -101,13 +120,12 @@ def _validate_script(script: dict) -> list[str]:
         if len(segments) < needed:
             raise ScriptValidationError(
                 f"too few segments: {len(segments)} (need >= {needed} for "
-                f"{settings.segment_target_sec}s/segment cap, {chars} chars narration)",
+                f"{seg_target}s/segment cap, {chars} chars narration)",
                 retryable=True,
             )
     title = _title_chars(script.get("title") or "")
     if not title:
         raise ScriptValidationError("title is empty")
-    max_len = settings.max_title_length
     if len(title) > max_len:
         raise ScriptValidationError(
             f"title too long: {len(title)} chars (need <= {max_len})"
@@ -122,14 +140,29 @@ class ScriptStage(StageExecutor):
 
     def run(self, ctx: JobContext) -> None:
         title = ctx.job["title"]
+        segment_target_sec = ctx.script_segment_target_sec
+        max_title_length = ctx.script_max_title_length
+        narration_target_words = ctx.script_narration_target_words
+        min_narration_chars = _min_narration_chars(narration_target_words)
         last_exc: Exception | None = None
         script: dict | None = None
         feedback: str | None = None
         accept_warnings: list[str] = []
         for attempt in range(6):
-            script = llm_mgr.generate_script(title, feedback=feedback)
+            script = llm_mgr.generate_script(
+                title,
+                feedback=feedback,
+                segment_target_sec=segment_target_sec,
+                max_title_length=max_title_length,
+                narration_target_words=narration_target_words,
+            )
             try:
-                accept_warnings = _validate_script(script)
+                accept_warnings = _validate_script(
+                    script,
+                    segment_target_sec=segment_target_sec,
+                    max_title_length=max_title_length,
+                    min_narration_chars=min_narration_chars,
+                )
                 break
             except ScriptValidationError as exc:
                 last_exc = exc

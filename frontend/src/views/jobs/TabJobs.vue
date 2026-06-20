@@ -1,9 +1,8 @@
 <template>
   <div>
     <div class="mb-4 flex items-center gap-3">
-      <el-button type="primary" :loading="loading" @click="fetchJobs">
+      <el-button type="primary" :disabled="loading" @click="fetchJobs">
         <el-icon><Refresh /></el-icon>
-        刷新
       </el-button>
       <el-select
         v-model="statusFilter"

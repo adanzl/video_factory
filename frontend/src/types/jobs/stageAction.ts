@@ -29,6 +29,12 @@ export interface RunStageActionPayload {
   to_end: boolean;
   segments?: number[];
   hold_tail_sec?: number;
+  speech_rate?: number;
+  voice_id?: string;
+  title?: string;
+  segment_target_sec?: number;
+  max_title_length?: number;
+  narration_target_words?: number;
 }
 
 export type StageParamValues = Record<string, string | boolean | number | number[]>;

@@ -34,7 +34,15 @@ def synthesize_utterance(
 
 
 class MockTTSClient(TTSClient):
-    def synthesize(self, narration: str, segments: list[dict], output_dir: Path) -> TTSResult:
+    def synthesize(
+        self,
+        narration: str,
+        segments: list[dict],
+        output_dir: Path,
+        *,
+        voice: str | None = None,
+        speech_rate: float | None = None,
+    ) -> TTSResult:
         output_dir.mkdir(parents=True, exist_ok=True)
         clips_dir = output_dir / "clips"
         clips_dir.mkdir(parents=True, exist_ok=True)

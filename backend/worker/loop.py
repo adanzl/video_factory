@@ -69,6 +69,11 @@ def _run_one_stage(
     segment_scope: str | None = None,
     advance: bool = True,
     intro_hold_tail_sec: float | None = None,
+    tts_speech_rate: float | None = None,
+    tts_voice_id: str | None = None,
+    script_segment_target_sec: float | None = None,
+    script_max_title_length: int | None = None,
+    script_narration_target_words: int | None = None,
 ) -> dict:
     job = _reload_job(job_id)
     ctx = JobContext.from_job(
@@ -76,6 +81,11 @@ def _run_one_stage(
         rerun_segment_indices=tuple(segment_indices) if segment_indices else None,
         segment_scope=segment_scope,
         intro_hold_tail_sec=intro_hold_tail_sec,
+        tts_speech_rate=tts_speech_rate,
+        tts_voice_id=tts_voice_id,
+        script_segment_target_sec=script_segment_target_sec,
+        script_max_title_length=script_max_title_length,
+        script_narration_target_words=script_narration_target_words,
     )
     _execute_stage(job_id, stage_cls, ctx)
 
@@ -99,6 +109,11 @@ def _run_from(
     segment_indices: list[int] | None = None,
     segment_scope: str | None = None,
     intro_hold_tail_sec: float | None = None,
+    tts_speech_rate: float | None = None,
+    tts_voice_id: str | None = None,
+    script_segment_target_sec: float | None = None,
+    script_max_title_length: int | None = None,
+    script_narration_target_words: int | None = None,
 ) -> dict:
     job_mgr.mark_running(job_id)
     stage_cls: type[StageExecutor] | None = start_cls
@@ -112,6 +127,13 @@ def _run_from(
             rerun_segment_indices=rerun_segments,
             segment_scope=scope if stage_cls is SegmentStage else None,
             intro_hold_tail_sec=intro_hold_tail_sec if stage_cls is IntroStage else None,
+            tts_speech_rate=tts_speech_rate if stage_cls is TTSStage else None,
+            tts_voice_id=tts_voice_id if stage_cls is TTSStage else None,
+            script_segment_target_sec=script_segment_target_sec if stage_cls is ScriptStage else None,
+            script_max_title_length=script_max_title_length if stage_cls is ScriptStage else None,
+            script_narration_target_words=(
+                script_narration_target_words if stage_cls is ScriptStage else None
+            ),
         )
         _execute_stage(job_id, stage_cls, ctx)
 
@@ -161,10 +183,29 @@ def run_job(
     return _run_from(job_id, stage_class(job["stage"]))
 
 
-def run_script(job_id: int, *, to_end: bool = False) -> dict:
+def run_script(
+    job_id: int,
+    *,
+    to_end: bool = False,
+    segment_target_sec: float | None = None,
+    max_title_length: int | None = None,
+    narration_target_words: int | None = None,
+) -> dict:
     if to_end:
-        return _run_from(job_id, ScriptStage)
-    return _run_one_stage(job_id, ScriptStage)
+        return _run_from(
+            job_id,
+            ScriptStage,
+            script_segment_target_sec=segment_target_sec,
+            script_max_title_length=max_title_length,
+            script_narration_target_words=narration_target_words,
+        )
+    return _run_one_stage(
+        job_id,
+        ScriptStage,
+        script_segment_target_sec=segment_target_sec,
+        script_max_title_length=max_title_length,
+        script_narration_target_words=narration_target_words,
+    )
 
 
 def run_intro(job_id: int, *, to_end: bool = False, hold_tail_sec: float | None = None) -> dict:
@@ -179,10 +220,26 @@ def run_cover(job_id: int, *, to_end: bool = False) -> dict:
     return _run_one_stage(job_id, CoverStage)
 
 
-def run_tts(job_id: int, *, to_end: bool = False) -> dict:
+def run_tts(
+    job_id: int,
+    *,
+    to_end: bool = False,
+    speech_rate: float | None = None,
+    voice_id: str | None = None,
+) -> dict:
     if to_end:
-        return _run_from(job_id, TTSStage)
-    return _run_one_stage(job_id, TTSStage)
+        return _run_from(
+            job_id,
+            TTSStage,
+            tts_speech_rate=speech_rate,
+            tts_voice_id=voice_id,
+        )
+    return _run_one_stage(
+        job_id,
+        TTSStage,
+        tts_speech_rate=speech_rate,
+        tts_voice_id=voice_id,
+    )
 
 
 def run_merge(job_id: int, *, to_end: bool = False) -> dict:

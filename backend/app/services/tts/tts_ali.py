@@ -80,6 +80,7 @@ def _run_tts_task(
     timeout: float = 120,
     rate: float | None = None,
     pitch: float | None = None,
+    voice: str | None = None,
 ) -> _SynthesisResult:
     settings = get_settings()
     api_key = settings.dashscope_api_key or settings.tts_api_key or ""
@@ -88,7 +89,7 @@ def _run_tts_task(
     if not text.strip():
         raise ValueError("TTS text is empty")
 
-    voice = settings.tts_voice
+    voice = voice or settings.tts_voice
     model = settings.tts_model or VOICE_MODEL_MAP.get(voice, DEFAULT_MODEL)
     instruction = resolve_instruction(
         voice,
@@ -251,7 +252,15 @@ def synthesize_utterance(
 class AliTTSClient(TTSClient):
     """按分镜整段合成（每 segment 一次 WebSocket），字幕仍用 phrase_chunks 断句。"""
 
-    def synthesize(self, narration: str, segments: list[dict], output_dir: Path) -> TTSResult:
+    def synthesize(
+        self,
+        narration: str,
+        segments: list[dict],
+        output_dir: Path,
+        *,
+        voice: str | None = None,
+        speech_rate: float | None = None,
+    ) -> TTSResult:
         if not segments:
             raise ValueError("no segments to synthesize")
 
@@ -260,16 +269,20 @@ class AliTTSClient(TTSClient):
         clips_dir = output_dir / "clips"
         clips_dir.mkdir(parents=True, exist_ok=True)
 
+        effective_voice = voice or settings.tts_voice
+        effective_rate = speech_rate if speech_rate is not None else settings.tts_speech_rate
+
         clip_paths: list[Path] = []
         subtitle_cues: list[SubtitleCue] = []
         segment_durations: list[float] = []
         usage_tasks: list[TTSUsageTask] = []
 
         logger.info(
-            "tts start segments=%s voice=%s model=%s",
+            "tts start segments=%s voice=%s model=%s rate=%s",
             len(segments),
-            settings.tts_voice,
-            settings.tts_model or VOICE_MODEL_MAP.get(settings.tts_voice, DEFAULT_MODEL),
+            effective_voice,
+            settings.tts_model or VOICE_MODEL_MAP.get(effective_voice, DEFAULT_MODEL),
+            effective_rate,
         )
 
         for seg in segments:
@@ -287,6 +300,8 @@ class AliTTSClient(TTSClient):
                 segment_text,
                 word_timestamps=True,
                 timeout=_segment_timeout(segment_text),
+                rate=effective_rate,
+                voice=effective_voice,
             )
             segment_mp3 = clips_dir / f"{seg_index}.mp3"
             segment_mp3.write_bytes(result.audio)

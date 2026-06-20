@@ -8,14 +8,25 @@ from app.services.llm.llm_mgr import LLMClient
 
 
 class MockLLMClient(LLMClient):
-    def generate_script(self, title: str, *, feedback: str | None = None) -> dict[str, Any]:
+    def generate_script(
+        self,
+        title: str,
+        *,
+        feedback: str | None = None,
+        segment_target_sec: float | None = None,
+        max_title_length: int | None = None,
+        narration_target_words: int | None = None,
+    ) -> dict[str, Any]:
         _ = feedback
         settings = get_settings()
         display_title = re.sub(r"\s+", "", title.strip())
-        max_len = settings.max_title_length
+        max_len = settings.max_title_length if max_title_length is None else max_title_length
+        seg_target = (
+            settings.segment_target_sec if segment_target_sec is None else segment_target_sec
+        )
         if len(display_title) > max_len:
             display_title = display_title[:max_len]
-        if settings.segment_target_sec > 0:
+        if seg_target > 0:
             templates = [
                 f"你有没有想过，{display_title}？很多人第一反应是凭直觉，但真相往往更复杂。",
                 "今天我们从最基础的概念讲起，用生活里的例子帮你建立正确认知。",

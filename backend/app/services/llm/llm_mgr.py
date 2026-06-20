@@ -10,7 +10,15 @@ __all__ = ["LLMClient", "LLMMgr", "llm_mgr"]
 
 
 class LLMClient:
-    def generate_script(self, title: str, *, feedback: str | None = None) -> dict[str, Any]:
+    def generate_script(
+        self,
+        title: str,
+        *,
+        feedback: str | None = None,
+        segment_target_sec: float | None = None,
+        max_title_length: int | None = None,
+        narration_target_words: int | None = None,
+    ) -> dict[str, Any]:
         raise NotImplementedError
 
     def generate_topics(
@@ -35,8 +43,22 @@ class LLMMgr:
             return MockLLMClient()
         return DeepSeekClient()
 
-    def generate_script(self, title: str, *, feedback: str | None = None) -> dict[str, Any]:
-        return self._get_client().generate_script(title, feedback=feedback)
+    def generate_script(
+        self,
+        title: str,
+        *,
+        feedback: str | None = None,
+        segment_target_sec: float | None = None,
+        max_title_length: int | None = None,
+        narration_target_words: int | None = None,
+    ) -> dict[str, Any]:
+        return self._get_client().generate_script(
+            title,
+            feedback=feedback,
+            segment_target_sec=segment_target_sec,
+            max_title_length=max_title_length,
+            narration_target_words=narration_target_words,
+        )
 
     def generate_topics(
         self,
