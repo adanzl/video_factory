@@ -6,10 +6,14 @@ from pathlib import Path
 
 from app.config import get_settings
 from app.services.media.ffmpeg_utils import (
+    cpu_pix_fmt_suffix,
+    ffmpeg_cmd_start,
+    finalize_filter_complex,
     libx264_encode_args,
     probe_duration,
     probe_video_size,
     run_ffmpeg,
+    vf_for_encode,
 )
 
 CLIP_FPS = 25
@@ -18,7 +22,7 @@ _PIX_FMT = "yuv420p"  # 浏览器兼容；避免 yuv444p (High 4:4:4)
 
 
 def _pix_fmt_filter_suffix() -> str:
-    return f",format={_PIX_FMT}"
+    return cpu_pix_fmt_suffix()
 
 __all__ = [
     "fit_video_duration",
@@ -97,14 +101,13 @@ def image_to_clip(
     vf = _motion_vf(duration_sec, preset=preset, segment_index=segment_index)
     run_ffmpeg(
         [
-            "ffmpeg",
-            "-y",
+            *ffmpeg_cmd_start(),
             "-loop",
             "1",
             "-i",
             str(image_path),
             "-vf",
-            vf,
+            vf_for_encode(vf),
             "-t",
             str(duration_sec),
             *libx264_encode_args(),
@@ -128,15 +131,16 @@ def image_to_clip_with_overlay(
     motion = _motion_vf(duration_sec, preset=preset, segment_index=segment_index).removesuffix(
         _pix_fmt_filter_suffix()
     )
-    filter_complex = (
-        f"[0:v]{motion}{_pix_fmt_filter_suffix()}[bg];"
-        f"[1:v]format=rgba[fg];"
-        f"[bg][fg]overlay=0:0:format=auto{_pix_fmt_filter_suffix()}"
-    )
+    filter_parts = [
+        f"[0:v]{motion}{_pix_fmt_filter_suffix()}[bg]",
+        "[1:v]format=rgba[fg]",
+        f"[bg][fg]overlay=0:0:format=auto{_pix_fmt_filter_suffix()}[out]",
+    ]
+    filter_complex = ";".join(finalize_filter_complex(filter_parts))
+
     run_ffmpeg(
         [
-            "ffmpeg",
-            "-y",
+            *ffmpeg_cmd_start(),
             "-loop",
             "1",
             "-i",
@@ -145,6 +149,8 @@ def image_to_clip_with_overlay(
             str(overlay_path),
             "-filter_complex",
             filter_complex,
+            "-map",
+            "[out]",
             "-t",
             str(duration_sec),
             *libx264_encode_args(subtitle=True),
@@ -191,9 +197,9 @@ def image_to_clip_timed_overlays(
         )
         current = nxt
 
+    parts = finalize_filter_complex(parts)
     cmd = [
-        "ffmpeg",
-        "-y",
+        *ffmpeg_cmd_start(),
         "-loop",
         "1",
         "-i",
@@ -263,12 +269,11 @@ def fit_video_duration(
 
     run_ffmpeg(
         [
-            "ffmpeg",
-            "-y",
+            *ffmpeg_cmd_start(),
             "-i",
             str(video_path),
             "-vf",
-            vf,
+            vf_for_encode(vf),
             "-t",
             f"{duration_sec:.3f}",
             *libx264_encode_args(),
@@ -304,9 +309,9 @@ def video_to_clip_timed_overlays(
         )
         current = nxt
 
+    parts = finalize_filter_complex(parts)
     cmd = [
-        "ffmpeg",
-        "-y",
+        *ffmpeg_cmd_start(),
         "-i",
         str(video_path),
     ]

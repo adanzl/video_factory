@@ -12,6 +12,7 @@ from app.utils.async_util import run_subprocess_safe
 _FFMPEG_TIMEOUT = 600.0
 _PROBE_TIMEOUT = 60.0
 _PIX_FMT = "yuv420p"
+_VAAPI_HWUPLOAD = "format=nv12,hwupload"
 
 
 @dataclass(frozen=True)
@@ -52,10 +53,62 @@ def run_ffmpeg(
     return result
 
 
+def vaapi_enabled() -> bool:
+    return get_settings().ffmpeg_hwaccel == "vaapi"
+
+
+def ffmpeg_cmd_start(*, hide_banner: bool = False) -> list[str]:
+    """ffmpeg 命令前缀；VAAPI 时注入 -vaapi_device。"""
+    cmd = ["ffmpeg", "-y"]
+    if hide_banner:
+        cmd.append("-hide_banner")
+    if vaapi_enabled():
+        cmd.extend(["-vaapi_device", get_settings().ffmpeg_vaapi_device])
+    return cmd
+
+
+def cpu_pix_fmt_suffix() -> str:
+    """滤镜链中间步骤：软件像素格式。"""
+    return f",format={_PIX_FMT}"
+
+
+def vf_for_encode(base_vf: str) -> str:
+    """-vf 链末尾：VAAPI 时 hwupload，否则 yuv420p。"""
+    if vaapi_enabled():
+        return f"{base_vf},{_VAAPI_HWUPLOAD}"
+    if f"format={_PIX_FMT}" in base_vf:
+        return base_vf
+    return f"{base_vf},format={_PIX_FMT}"
+
+
+def finalize_filter_complex(parts: list[str], *, out_label: str = "out") -> list[str]:
+    """filter_complex 末尾：VAAPI 时在输出标签前插入 hwupload。"""
+    if not vaapi_enabled() or not parts:
+        return parts
+    updated = list(parts)
+    last = updated[-1]
+    updated[-1] = last.replace(f"[{out_label}]", "[vpre]")
+    updated.append(f"[vpre]{_VAAPI_HWUPLOAD}[{out_label}]")
+    return updated
+
+
+def _crf_to_vaapi_qp(crf: int) -> int:
+    return max(18, min(40, crf + 4))
+
+
 def libx264_encode_args(*, subtitle: bool = False) -> list[str]:
-    """统一 libx264 编码参数（浏览器兼容 yuv420p + faststart）。"""
+    """统一视频编码参数；VAAPI 时用 h264_vaapi + qp，否则 libx264 + crf。"""
     settings = get_settings()
     crf = settings.ffmpeg_subtitle_crf if subtitle else settings.ffmpeg_crf
+    if vaapi_enabled():
+        return [
+            "-c:v",
+            settings.ffmpeg_vaapi_codec,
+            "-qp",
+            str(_crf_to_vaapi_qp(crf)),
+            "-movflags",
+            "+faststart",
+        ]
     return [
         "-c:v",
         "libx264",
@@ -241,13 +294,11 @@ def fit_video_to_canvas(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     run_ffmpeg(
         [
-            "ffmpeg",
-            "-y",
-            "-hide_banner",
+            *ffmpeg_cmd_start(hide_banner=True),
             "-i",
             str(input_path),
             "-vf",
-            scale_pad_filter(width=width, height=height),
+            vf_for_encode(scale_pad_filter(width=width, height=height)),
             "-map",
             "0:v:0",
             "-map",
@@ -378,14 +429,15 @@ def sequence_to_video(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     pattern = frames_dir / "frame_%04d.png"
     cmd = [
-        "ffmpeg",
-        "-y",
+        *ffmpeg_cmd_start(),
         "-framerate",
         str(fps),
         "-i",
         str(pattern),
-        *libx264_encode_args(),
     ]
+    if vaapi_enabled():
+        cmd.extend(["-vf", _VAAPI_HWUPLOAD])
+    cmd.extend(libx264_encode_args())
     if frame_count is not None:
         cmd.extend(["-frames:v", str(frame_count)])
     cmd.append(str(output_path))
@@ -436,15 +488,20 @@ def image_to_video(
     with Image.open(image_path) as img:
         need_scale = img.size != (width, height)
     vf = (
-        f"scale={width}:{height}:flags=lanczos,format=yuv420p"  # cSpell: disable-line
+        f"scale={width}:{height}:flags=lanczos"  # cSpell: disable-line
         if need_scale
-        else "format=yuv420p"
+        else ""
     )
+    if vf:
+        vf = vf_for_encode(vf)
+    elif vaapi_enabled():
+        vf = _VAAPI_HWUPLOAD
+    else:
+        vf = f"format={_PIX_FMT}"
 
     _run_cmd(
         [
-            "ffmpeg",
-            "-y",
+            *ffmpeg_cmd_start(),
             "-loop",
             "1",
             "-i",
@@ -509,14 +566,13 @@ def merge_audio_video(
 
     _run_cmd(
         [
-            "ffmpeg",
-            "-y",
+            *ffmpeg_cmd_start(),
             "-i",
             str(video_path),
             "-i",
             str(audio_path),
             "-filter_complex",
-            f"[0:v]{vf}[vout]",
+            f"[0:v]{vf_for_encode(vf)}[vout]",
             "-map",
             "[vout]",
             "-map",
@@ -591,7 +647,7 @@ def prepend_intro(intro_path: Path, body_path: Path,
         filter_complex = (
             "[0:v]setpts=PTS-STARTPTS[v0];"
             "[1:v]setpts=PTS-STARTPTS[v1];"
-            "[v0][v1]concat=n=2:v=1:a=0[vout];"
+            "[v0][v1]concat=n=2:v=1:a=0[vraw];"
             "[0:a]aformat=sample_rates={}:channel_layouts=mono,asetpts=PTS-STARTPTS[a0];"
             "[1:a]asetpts=PTS-STARTPTS[a1];"
             "[a0][a1]concat=n=2:v=0:a=1[aout]"
@@ -600,16 +656,20 @@ def prepend_intro(intro_path: Path, body_path: Path,
         filter_complex = (
             "[0:v]setpts=PTS-STARTPTS[v0];"
             "[1:v]setpts=PTS-STARTPTS[v1];"
-            "[v0][v1]concat=n=2:v=1:a=0[vout];"
+            "[v0][v1]concat=n=2:v=1:a=0[vraw];"
             f"anullsrc=r={body_rate}:cl=mono,atrim=0:{intro_dur},asetpts=PTS-STARTPTS[asilent];"
             "[1:a]asetpts=PTS-STARTPTS[a1];"
             "[asilent][a1]concat=n=2:v=0:a=1[aout]"
         )
 
+    if vaapi_enabled():
+        filter_complex += f";[vraw]{_VAAPI_HWUPLOAD}[vout]"
+    else:
+        filter_complex = filter_complex.replace("[vraw]", "[vout]")
+
     _run_cmd(
         [
-            "ffmpeg",
-            "-y",
+            *ffmpeg_cmd_start(),
             "-i",
             str(intro_path),
             "-i",
