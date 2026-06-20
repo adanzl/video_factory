@@ -9,6 +9,19 @@ from app.services.media.ffmpeg_utils import probe_duration, run_ffmpeg
 
 CLIP_FPS = 25
 _MOTION_FINISH_RATIO = 0.42  # 动效在前 42% 时长内完成，之后保持
+_PIX_FMT = "yuv420p"  # 浏览器兼容；避免 yuv444p (High 4:4:4)
+
+
+def _libx264_browser_args(*, crf: int = 18, preset: str | None = None) -> list[str]:
+    args = ["-c:v", "libx264", "-crf", str(crf)]
+    if preset:
+        args.extend(["-preset", preset])
+    args.extend(["-pix_fmt", _PIX_FMT, "-movflags", "+faststart"])
+    return args
+
+
+def _pix_fmt_filter_suffix() -> str:
+    return f",format={_PIX_FMT}"
 
 __all__ = [
     "fit_video_duration",
@@ -71,7 +84,7 @@ def _motion_vf(duration_sec: float, *, preset: str, segment_index: int) -> str:
     return (
         f"{prep},"
         f"zoompan=z='{z_expr}':x='{x_expr}':y='{y_expr}':"
-        f"d={frames}:s={w}x{h}:fps={CLIP_FPS},format=yuv444p"
+        f"d={frames}:s={w}x{h}:fps={CLIP_FPS}{_pix_fmt_filter_suffix()}"
     )
 
 
@@ -97,12 +110,7 @@ def image_to_clip(
             vf,
             "-t",
             str(duration_sec),
-            "-c:v",
-            "libx264",
-            "-crf",
-            "18",
-            "-pix_fmt",
-            "yuv444p",
+            *_libx264_browser_args(crf=18),
             str(output_path),
         ]
     )
@@ -122,12 +130,12 @@ def image_to_clip_with_overlay(
     """Ken Burns 动效 + 单张字幕 overlay，单次编码。"""
     output_path.parent.mkdir(parents=True, exist_ok=True)
     motion = _motion_vf(duration_sec, preset=preset, segment_index=segment_index).removesuffix(
-        ",format=yuv444p"
+        _pix_fmt_filter_suffix()
     )
     filter_complex = (
-        f"[0:v]{motion},format=yuv444p[bg];"
+        f"[0:v]{motion}{_pix_fmt_filter_suffix()}[bg];"
         f"[1:v]format=rgba[fg];"
-        f"[bg][fg]overlay=0:0:format=auto,format=yuv444p"
+        f"[bg][fg]overlay=0:0:format=auto{_pix_fmt_filter_suffix()}"
     )
     run_ffmpeg(
         [
@@ -143,14 +151,7 @@ def image_to_clip_with_overlay(
             filter_complex,
             "-t",
             str(duration_sec),
-            "-c:v",
-            "libx264",
-            "-crf",
-            str(crf),
-            "-preset",
-            "medium",
-            "-pix_fmt",
-            "yuv444p",
+            *_libx264_browser_args(crf=crf, preset="medium"),
             "-sws_flags",
             "lanczos+accurate_rnd+full_chroma_int",  # cSpell: disable-line
             str(output_path),
@@ -181,9 +182,9 @@ def image_to_clip_timed_overlays(
         )
 
     motion = _motion_vf(duration_sec, preset=preset, segment_index=segment_index).removesuffix(
-        ",format=yuv444p"
+        _pix_fmt_filter_suffix()
     )
-    parts = [f"[0:v]{motion},format=yuv444p[bg]"]
+    parts = [f"[0:v]{motion}{_pix_fmt_filter_suffix()}[bg]"]
     for idx, (overlay_path, _, _) in enumerate(overlay_windows):
         parts.append(f"[{idx + 1}:v]format=rgba[s{idx}]")
 
@@ -213,14 +214,7 @@ def image_to_clip_timed_overlays(
             "[out]",
             "-t",
             str(duration_sec),
-            "-c:v",
-            "libx264",
-            "-crf",
-            str(crf),
-            "-preset",
-            "medium",
-            "-pix_fmt",
-            "yuv444p",
+            *_libx264_browser_args(crf=crf, preset="medium"),
             "-sws_flags",
             "lanczos+accurate_rnd+full_chroma_int",  # cSpell: disable-line
             str(output_path),
@@ -273,12 +267,7 @@ def fit_video_duration(
             vf,
             "-t",
             f"{duration_sec:.3f}",
-            "-c:v",
-            "libx264",
-            "-crf",
-            "18",
-            "-pix_fmt",
-            "yuv420p",
+            *_libx264_browser_args(crf=18),
             str(output_path),
         ]
     )
@@ -299,7 +288,7 @@ def video_to_clip_timed_overlays(
         fit_video_duration(video_path, output_path, duration_sec)
         return output_path
 
-    parts = ["[0:v]format=yuv444p[bg]"]
+    parts = [f"[0:v]format={_PIX_FMT}[bg]"]
     for idx, (overlay_path, _, _) in enumerate(overlay_windows):
         parts.append(f"[{idx + 1}:v]format=rgba[s{idx}]")
 
@@ -327,14 +316,7 @@ def video_to_clip_timed_overlays(
             "[out]",
             "-t",
             str(duration_sec),
-            "-c:v",
-            "libx264",
-            "-crf",
-            str(crf),
-            "-preset",
-            "medium",
-            "-pix_fmt",
-            "yuv444p",
+            *_libx264_browser_args(crf=crf, preset="medium"),
             "-sws_flags",
             "lanczos+accurate_rnd+full_chroma_int",  # cSpell: disable-line
             str(output_path),

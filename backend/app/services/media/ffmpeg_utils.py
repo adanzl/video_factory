@@ -154,7 +154,18 @@ def concat_clips(clips: list[Path], output_path: Path) -> Path:
         raise ValueError("no clips to concat")
     if len(clips) == 1:
         _run_cmd(
-            ["ffmpeg", "-y", "-hide_banner", "-i", str(clips[0]), "-c", "copy", str(output_path)],
+            [
+                "ffmpeg",
+                "-y",
+                "-hide_banner",
+                "-i",
+                str(clips[0]),
+                "-c",
+                "copy",
+                "-movflags",
+                "+faststart",
+                str(output_path),
+            ],
         )
         return output_path
 
@@ -263,6 +274,8 @@ def sequence_to_video(
         "18",
         "-pix_fmt",
         "yuv420p",
+        "-movflags",
+        "+faststart",
     ]
     if frame_count is not None:
         cmd.extend(["-frames:v", str(frame_count)])
@@ -337,6 +350,8 @@ def image_to_video(
             "18",
             "-pix_fmt",
             "yuv420p",
+            "-movflags",
+            "+faststart",
             str(output_path),
         ],
     )
@@ -408,6 +423,8 @@ def merge_audio_video(
             "libx264",
             "-crf",
             "18",
+            "-pix_fmt",
+            "yuv420p",
             "-c:a",
             "aac",
             "-b:a",

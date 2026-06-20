@@ -105,11 +105,11 @@
           <section class="flex flex-col gap-1">
             <div class="text-xs font-medium text-gray-600">分段图片</div>
             <el-image
-              v-if="segment.image_path"
-              :src="getMediaFileUrl(segment.image_path)"
+              v-if="segment.imageUrl"
+              :src="segment.imageUrl"
               fit="cover"
               class="aspect-[9/16] w-full rounded border border-gray-100"
-              :preview-src-list="[getMediaFileUrl(segment.image_path)]"
+              :preview-src-list="[segment.imageUrl]"
               preview-teleported
             />
             <div
@@ -122,13 +122,19 @@
 
           <section class="flex flex-col gap-1">
             <div class="text-xs font-medium text-gray-600">视频预览</div>
-            <video
-              v-if="segment.clip_path"
-              :src="getMediaFileUrl(segment.clip_path)"
-              controls
-              preload="metadata"
-              class="aspect-video w-full rounded border border-gray-100 bg-black"
-            />
+            <div
+              v-if="segment.clipUrl"
+              class="w-full overflow-hidden rounded border border-gray-200 bg-black"
+            >
+              <video
+                :key="segment.clipUrl"
+                class="block aspect-video w-full bg-black"
+                :src="segment.clipUrl"
+                controls
+                playsinline
+                preload="metadata"
+              />
+            </div>
             <div
               v-else
               class="flex aspect-video w-full items-center justify-center rounded border border-dashed border-gray-200 bg-gray-50 text-xs text-gray-400"
@@ -196,11 +202,31 @@ const visualBriefByIndex = computed(() => {
   return map;
 });
 
+const resolveSegmentClipPath = (segment: JobSegment): string => {
+  const clipPath = segment.clip_path?.trim();
+  if (clipPath) {
+    return clipPath;
+  }
+  const imagePath = segment.image_path?.trim();
+  if (!imagePath) {
+    return "";
+  }
+  return imagePath.replace(/\/images\/(\d+)\.png$/i, "/segments/$1.mp4");
+};
+
+const toMediaUrl = getMediaFileUrl;
+
 const displaySegments = computed(() =>
-  props.segments.map(segment => ({
-    ...segment,
-    visual_brief: visualBriefByIndex.value.get(segment.segment_index) ?? null,
-  }))
+  props.segments.map(segment => {
+    const imagePath = segment.image_path?.trim() ?? "";
+    const clipPath = resolveSegmentClipPath(segment);
+    return {
+      ...segment,
+      visual_brief: visualBriefByIndex.value.get(segment.segment_index) ?? null,
+      imageUrl: toMediaUrl(imagePath),
+      clipUrl: toMediaUrl(clipPath),
+    };
+  })
 );
 
 const truncate = (text: string, max: number) => {
