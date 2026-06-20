@@ -49,6 +49,14 @@ def apply_material_schema(conn: sqlite3.Connection) -> None:
     _ensure_column(conn, "video_job", "pipeline", "TEXT NOT NULL DEFAULT 'standard'")
     _ensure_column(conn, "video_job", "material_id", "INTEGER")
     _ensure_column(conn, "video_material", "job_id", "INTEGER")
+    _ensure_journal_mode_delete(conn)
+
+
+def _ensure_journal_mode_delete(conn: sqlite3.Connection) -> None:
+    row = conn.execute("PRAGMA journal_mode").fetchone()
+    if row and str(row[0]).upper() == "DELETE":
+        return
+    conn.execute("PRAGMA journal_mode=DELETE")
 
 
 def apply_title_schema(conn: sqlite3.Connection) -> None:
