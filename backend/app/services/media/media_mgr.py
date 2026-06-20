@@ -68,19 +68,16 @@ class MediaMgr:
             )
 
         segment_clips: list[tuple[int, Path]] = []
-        total = len(segments)
+        targets = (
+            [seg for seg in segments if seg["segment_index"] in only_segment_indices]
+            if only_segment_indices is not None
+            else segments
+        )
+        total = len(targets)
         t_start = time.time()
-        for i, seg in enumerate(segments, 1):
+        for i, seg in enumerate(targets, 1):
             index = seg["segment_index"]
             clip_path = clips_dir / f"{index}.mp4"
-            if only_segment_indices and index not in only_segment_indices:
-                existing = Path(seg["clip_path"]) if seg.get("clip_path") else clip_path
-                if not existing.exists():
-                    raise FileNotFoundError(
-                        f"segment {index} 缺少 clip，请全量重跑 segment 或指定该段"
-                    )
-                segment_clips.append((seg["id"], existing))
-                continue
 
             visual_mode = seg.get("visual_mode") or "static_motion"
             provider = self._resolve_clip_provider(visual_mode=visual_mode)

@@ -113,7 +113,15 @@ class SegmentMgr:
                 logger.info("produce_segments: images only, skipping clips")
             clips = SegmentClipsResult(segment_clip_paths=[])
         else:
-            logger.info("produce_segments: building clips (audio available)...")
+            clip_targets = (
+                len(only_segment_indices)
+                if only_segment_indices is not None
+                else len(segments)
+            )
+            logger.info(
+                "produce_segments: building clips (audio available, targets=%s)...",
+                clip_targets,
+            )
             clips = media_mgr.build_segment_clips(
                 media_dir=media_dir,
                 segments=segments_with_images,

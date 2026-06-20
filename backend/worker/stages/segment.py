@@ -85,10 +85,21 @@ class SegmentStage(StageExecutor):
                 ),
             )
             qc_checks: dict = {}
+            rerun_indices = ctx.segment_indices_set()
             if produce_scope in {"all", "images"}:
-                qc_checks["visual"] = check_visual(segments_for_qc)
+                visual_qc = segments_for_qc
+                if rerun_indices is not None and produce_scope == "images":
+                    visual_qc = [
+                        seg for seg in segments_for_qc if seg["segment_index"] in rerun_indices
+                    ]
+                qc_checks["visual"] = check_visual(visual_qc)
             if produce_scope in {"all", "clips"} and audio_path is not None:
-                qc_checks["clip"] = check_segment_clips(segments_for_qc)
+                clip_qc = segments_for_qc
+                if rerun_indices is not None:
+                    clip_qc = [
+                        seg for seg in segments_for_qc if seg["segment_index"] in rerun_indices
+                    ]
+                qc_checks["clip"] = check_segment_clips(clip_qc)
             apply_quality_checks(
                 conn,
                 ctx.job["id"],
