@@ -63,6 +63,8 @@ _DEEPSEEK_KEY = _opt("DEEPSEEK_API_KEY")
 _DASHSCOPE_KEY = _opt("DASHSCOPE_API_KEY")
 _TTS_KEY = _DASHSCOPE_KEY or _opt("TTS_API_KEY")
 _FINAL_STRICT = _bool("FINAL_DURATION_STRICT")
+_FFMPEG_CRF = int(os.getenv("FFMPEG_CRF", "20"))
+_FFMPEG_SUBTITLE_CRF_RAW = os.getenv("FFMPEG_SUBTITLE_CRF")
 
 
 class Config:
@@ -111,6 +113,12 @@ class Config:
     cover_height: int = _COVER_H
     motion_preset: str = os.getenv("MOTION_PRESET", "ken_burns_slow")
     clip_provider: str = os.getenv("CLIP_PROVIDER", "ffmpeg")
+    # FFmpeg 编码：preset 越快体积略增；CRF 越大越快、画质略降
+    ffmpeg_preset: str = os.getenv("FFMPEG_PRESET", "veryfast")
+    ffmpeg_crf: int = _FFMPEG_CRF
+    ffmpeg_subtitle_crf: int = (
+        int(_FFMPEG_SUBTITLE_CRF_RAW) if _FFMPEG_SUBTITLE_CRF_RAW else _FFMPEG_CRF
+    )
     clip_submit_interval_sec: float = float(
         os.getenv("CLIP_SUBMIT_INTERVAL_SEC", os.getenv("IMAGE_SUBMIT_INTERVAL_SEC", "3"))
     )

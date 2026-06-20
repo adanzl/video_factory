@@ -5,19 +5,16 @@ from __future__ import annotations
 from pathlib import Path
 
 from app.config import get_settings
-from app.services.media.ffmpeg_utils import probe_duration, probe_video_size, run_ffmpeg
+from app.services.media.ffmpeg_utils import (
+    libx264_encode_args,
+    probe_duration,
+    probe_video_size,
+    run_ffmpeg,
+)
 
 CLIP_FPS = 25
 _MOTION_FINISH_RATIO = 0.42  # 动效在前 42% 时长内完成，之后保持
 _PIX_FMT = "yuv420p"  # 浏览器兼容；避免 yuv444p (High 4:4:4)
-
-
-def _libx264_browser_args(*, crf: int = 18, preset: str | None = None) -> list[str]:
-    args = ["-c:v", "libx264", "-crf", str(crf)]
-    if preset:
-        args.extend(["-preset", preset])
-    args.extend(["-pix_fmt", _PIX_FMT, "-movflags", "+faststart"])
-    return args
 
 
 def _pix_fmt_filter_suffix() -> str:
@@ -110,7 +107,7 @@ def image_to_clip(
             vf,
             "-t",
             str(duration_sec),
-            *_libx264_browser_args(crf=18),
+            *libx264_encode_args(),
             str(output_path),
         ]
     )
@@ -125,7 +122,6 @@ def image_to_clip_with_overlay(
     *,
     preset: str = "ken_burns_slow",
     segment_index: int = 0,
-    crf: int = 14,
 ) -> Path:
     """Ken Burns 动效 + 单张字幕 overlay，单次编码。"""
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -151,7 +147,7 @@ def image_to_clip_with_overlay(
             filter_complex,
             "-t",
             str(duration_sec),
-            *_libx264_browser_args(crf=crf, preset="medium"),
+            *libx264_encode_args(subtitle=True),
             "-sws_flags",
             "lanczos+accurate_rnd+full_chroma_int",  # cSpell: disable-line
             str(output_path),
@@ -168,7 +164,6 @@ def image_to_clip_timed_overlays(
     *,
     preset: str = "ken_burns_slow",
     segment_index: int = 0,
-    crf: int = 14,
 ) -> Path:
     """连续 Ken Burns + 多段字幕按时间轴切换，单次编码。"""
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -223,7 +218,7 @@ def image_to_clip_timed_overlays(
             "[out]",
             "-t",
             str(duration_sec),
-            *_libx264_browser_args(crf=crf, preset="medium"),
+            *libx264_encode_args(subtitle=True),
             "-sws_flags",
             "lanczos+accurate_rnd+full_chroma_int",  # cSpell: disable-line
             str(output_path),
@@ -276,7 +271,7 @@ def fit_video_duration(
             vf,
             "-t",
             f"{duration_sec:.3f}",
-            *_libx264_browser_args(crf=18),
+            *libx264_encode_args(),
             str(output_path),
         ]
     )
@@ -288,8 +283,6 @@ def video_to_clip_timed_overlays(
     overlay_windows: list[tuple[Path, float, float]],
     output_path: Path,
     duration_sec: float,
-    *,
-    crf: int = 14,
 ) -> Path:
     """已有视频 + 多段字幕按时间轴切换，单次编码。"""
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -336,7 +329,7 @@ def video_to_clip_timed_overlays(
             "[out]",
             "-t",
             str(duration_sec),
-            *_libx264_browser_args(crf=crf, preset="medium"),
+            *libx264_encode_args(subtitle=True),
             "-sws_flags",
             "lanczos+accurate_rnd+full_chroma_int",  # cSpell: disable-line
             str(output_path),

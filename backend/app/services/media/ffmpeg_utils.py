@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -10,6 +11,7 @@ from app.utils.async_util import run_subprocess_safe
 
 _FFMPEG_TIMEOUT = 600.0
 _PROBE_TIMEOUT = 60.0
+_PIX_FMT = "yuv420p"
 
 
 @dataclass(frozen=True)
@@ -48,6 +50,56 @@ def run_ffmpeg(
         detail = _combined_output(result).strip()
         raise RuntimeError(f"ffmpeg failed: {detail[-2000:]}")
     return result
+
+
+def libx264_encode_args(*, subtitle: bool = False) -> list[str]:
+    """统一 libx264 编码参数（浏览器兼容 yuv420p + faststart）。"""
+    settings = get_settings()
+    crf = settings.ffmpeg_subtitle_crf if subtitle else settings.ffmpeg_crf
+    return [
+        "-c:v",
+        "libx264",
+        "-crf",
+        str(crf),
+        "-preset",
+        settings.ffmpeg_preset,
+        "-pix_fmt",
+        _PIX_FMT,
+        "-movflags",
+        "+faststart",
+    ]
+
+
+def _probe_video_stream(path: Path) -> dict | None:
+    out = _run_cmd(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=codec_name,width,height,pix_fmt",
+            "-of",
+            "json",
+            str(path),
+        ],
+        timeout=_PROBE_TIMEOUT,
+    )
+    streams = json.loads(out.stdout).get("streams") or []
+    if not streams:
+        return None
+    stream = streams[0]
+    width = stream.get("width")
+    height = stream.get("height")
+    if width is None or height is None:
+        return None
+    return {
+        "codec": stream.get("codec_name"),
+        "width": int(width),
+        "height": int(height),
+        "pix_fmt": stream.get("pix_fmt"),
+    }
 
 
 def _null_sink_output(input_path: Path, *, af: str | None = None) -> str:
@@ -200,20 +252,11 @@ def fit_video_to_canvas(
             "0:v:0",
             "-map",
             "0:a:0?",
-            "-c:v",
-            "libx264",
-            "-crf",
-            "18",
-            "-preset",
-            "medium",
-            "-pix_fmt",
-            "yuv420p",
+            *libx264_encode_args(),
             "-c:a",
             "aac",
             "-b:a",
             "192k",
-            "-movflags",
-            "+faststart",
             str(output_path),
         ]
     )
@@ -341,14 +384,7 @@ def sequence_to_video(
         str(fps),
         "-i",
         str(pattern),
-        "-c:v",
-        "libx264",
-        "-crf",
-        "18",
-        "-pix_fmt",
-        "yuv420p",
-        "-movflags",
-        "+faststart",
+        *libx264_encode_args(),
     ]
     if frame_count is not None:
         cmd.extend(["-frames:v", str(frame_count)])
@@ -417,14 +453,7 @@ def image_to_video(
             str(duration),
             "-vf",
             vf,
-            "-c:v",
-            "libx264",
-            "-crf",
-            "18",
-            "-pix_fmt",
-            "yuv420p",
-            "-movflags",
-            "+faststart",
+            *libx264_encode_args(),
             str(output_path),
         ],
     )
@@ -492,20 +521,13 @@ def merge_audio_video(
             "[vout]",
             "-map",
             "1:a:0",
-            "-c:v",
-            "libx264",
-            "-crf",
-            "18",
-            "-pix_fmt",
-            "yuv420p",
+            *libx264_encode_args(),
             "-c:a",
             "aac",
             "-b:a",
             "128k",
             "-t",
             f"{audio_dur:.3f}",
-            "-movflags",
-            "+faststart",
             str(output_path),
         ],
     )
@@ -535,10 +557,29 @@ def _probe_audio_sample_rate(path: Path) -> int | None:
     return int(rate)
 
 
+def _can_concat_demuxer_copy(intro_path: Path, body_path: Path) -> bool:
+    """片头与正文分辨率/编码一致且音轨采样率相同，可 concat demuxer -c copy。"""
+    intro_v = _probe_video_stream(intro_path)
+    body_v = _probe_video_stream(body_path)
+    if not intro_v or not body_v:
+        return False
+    if intro_v["codec"] != "h264" or intro_v != body_v:
+        return False
+    intro_rate = _probe_audio_sample_rate(intro_path)
+    body_rate = _probe_audio_sample_rate(body_path)
+    if intro_rate is None or body_rate is None:
+        return False
+    return intro_rate == body_rate
+
+
 def prepend_intro(intro_path: Path, body_path: Path,
                   output_path: Path) -> Path:
-    """片头接正文；片头有音轨则保留，否则片头段静音。"""
+    """片头接正文；参数兼容时 -c copy，否则 filter 重编码。"""
     output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if _can_concat_demuxer_copy(intro_path, body_path):
+        return concat_clips([intro_path, body_path], output_path)
+
     body_rate = _probe_audio_sample_rate(body_path)
     intro_rate = _probe_audio_sample_rate(intro_path)
     intro_dur = probe_duration(intro_path)
@@ -579,8 +620,7 @@ def prepend_intro(intro_path: Path, body_path: Path,
             "[vout]",
             "-map",
             "[aout]",
-            "-c:v",
-            "libx264",
+            *libx264_encode_args(),
             "-c:a",
             "aac",
             str(output_path),
