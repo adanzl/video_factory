@@ -1,3 +1,5 @@
 00:25:04 [INFO] app:81: Server log: C:\Users\adanz\project\video_factory\logs\app.log (rotating daily)
 00:25:18 [INFO] app:81: Server log: C:\Users\adanz\project\video_factory\logs\app.log (rotating daily)
 00:26:36 [INFO] app:81: Server log: C:\Users\adanz\project\video_factory\logs\app.log (rotating daily)
+02:41:41 [INFO] app:81: Server log: C:\Users\adanz\project\video_factory\logs\app.log (rotating daily)
+02:41:41 [INFO] app:30: [CORS] 配置允许的 origins: ['https://leo-zhao.natapp4.cc', 'http://localhost:5173']，启用 credentials 支持

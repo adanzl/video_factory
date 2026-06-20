@@ -1,7 +1,17 @@
 from __future__ import annotations
 
-from app.core.pipelines import is_material_job
 from app.repositories import job_log_repo, job_repo
+from app.repositories.connection import connection
+from app.services.intro import generate_intro
+from app.utils.media import base_video_size
+from worker.context import JobContext
+from worker.stages.base import StageExecutor
+
+_PIPELINE_MATERIAL = "material"
+
+
+def _is_material_job(job: dict) -> bool:
+    return (job.get("pipeline") or "standard").strip() == _PIPELINE_MATERIAL
 from app.repositories.connection import connection
 from app.services.intro import generate_intro
 from app.utils.media import base_video_size
@@ -16,7 +26,7 @@ class IntroStage(StageExecutor):
         intro_path = ctx.rel("intro.mp4")
         width: int | None = None
         height: int | None = None
-        if is_material_job(ctx.job):
+        if _is_material_job(ctx.job):
             size = base_video_size(job=ctx.job, media_dir=ctx.media_dir)
             if size:
                 width, height = size

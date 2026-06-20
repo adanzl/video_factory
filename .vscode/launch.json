@@ -5,7 +5,7 @@
             "name": "Python: Flask (后端)",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/main.py",
+            "program": "${workspaceFolder}/backend/main.py",
             "console": "integratedTerminal",
             "justMyCode": false,
             "env": {
@@ -13,7 +13,7 @@
                 "FLASK_DEBUG": "1"
             },
             "python": "${command:python.interpreterPath}",
-            "cwd": "${workspaceFolder}",
+            "cwd": "${workspaceFolder}/backend",
             "envFile": "${workspaceFolder}/.env"
         },
         {
