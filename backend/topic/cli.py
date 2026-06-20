@@ -19,6 +19,10 @@ setup_logging(
 
 from app.services.llm.llm_mgr import llm_mgr
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="topic", description="科普视频选题生成")
@@ -32,9 +36,11 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     count = max(1, min(args.count, 20))
+    logger.info("[TOPIC] cli generate theme=%r count=%d", args.theme, count)
     try:
         topics = llm_mgr.generate_topics(args.theme, count=count)
     except Exception as exc:
+        logger.exception("[TOPIC] cli generate failed theme=%r", args.theme)
         print(f"选题生成失败: {exc}", file=sys.stderr)
         return 1
 

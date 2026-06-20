@@ -12,6 +12,7 @@
         @change="onFilterChange"
       >
         <el-option label="待处理" value="pending" />
+        <el-option label="待操作" value="idle" />
         <el-option label="运行中" value="running" />
         <el-option label="已完成" value="done" />
         <el-option label="失败" value="failed" />
@@ -24,7 +25,7 @@
       <el-table-column prop="stage" label="阶段" width="120" />
       <el-table-column label="状态" width="100">
         <template #default="{ row }">
-          <el-tag :type="statusTagType(row.status)" size="small">{{ row.status }}</el-tag>
+          <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
         </template>
       </el-table-column>
       <el-table-column label="更新时间" width="180">
@@ -95,8 +96,27 @@ const statusTagType = (status: string) => {
       return "warning";
     case "failed":
       return "danger";
+    case "idle":
+      return "info";
     default:
       return "info";
+  }
+};
+
+const statusLabel = (status: string) => {
+  switch (status) {
+    case "pending":
+      return "待处理";
+    case "idle":
+      return "待操作";
+    case "running":
+      return "运行中";
+    case "done":
+      return "已完成";
+    case "failed":
+      return "失败";
+    default:
+      return status;
   }
 };
 

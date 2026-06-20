@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from flask import Blueprint
 
 from app.api.errors import APIError
@@ -16,6 +18,8 @@ from app.services.llm.llm_mgr import llm_mgr
 from app.services.topic.topic_mgr import topic_mgr
 
 bp = Blueprint("api_topic", __name__, url_prefix="/v_factory/api/topic")
+
+logger = logging.getLogger(__name__)
 
 
 def _parse_count(data: dict, *, default: int = 10) -> int:
@@ -50,6 +54,14 @@ def generate_topic_route():
     if not theme and not user_prompt:
         raise APIError("theme or user_prompt is required")
 
+    logger.info(
+        "[TOPIC] api /gen theme=%r count=%d save=%s custom_prompt=%s",
+        theme or "",
+        count,
+        save,
+        bool(system_prompt or user_prompt),
+    )
+
     if save:
         result = topic_mgr.generate_and_save(
             theme or "",
@@ -82,13 +94,24 @@ def score_topics_route():
     return json_ok(topic_mgr.score_titles(ids))
 
 
+_RUN_MODES = frozenset({"none", "script", "full"})
+
+
+def _parse_run_mode(data: dict) -> str:
+    raw = data.get("run_mode", "script")
+    if not isinstance(raw, str) or raw not in _RUN_MODES:
+        raise APIError("run_mode must be none, script, or full")
+    return raw
+
+
 @bp.post("/enqueue")
 def enqueue_topics_route():
     data = get_json_body(required=False)
     ids = parse_int_list(data or {}, "ids", allow_empty=True)
     skip_publish = parse_bool(data or {}, "skip_publish", default=True)
+    run_mode = _parse_run_mode(data or {})
     return json_ok(
-        topic_mgr.enqueue_titles(ids, skip_publish=skip_publish)
+        topic_mgr.enqueue_titles(ids, skip_publish=skip_publish, run_mode=run_mode)
     )
 
 

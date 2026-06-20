@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import logging
+import time
 from typing import Any
 
 from app.config import get_settings
 
 __all__ = ["LLMClient", "LLMMgr", "llm_mgr"]
+
+logger = logging.getLogger(__name__)
 
 
 class LLMClient:
@@ -68,12 +72,39 @@ class LLMMgr:
         system_prompt: str | None = None,
         user_prompt: str | None = None,
     ) -> list[dict[str, str]]:
-        return self._get_client().generate_topics(
+        count = max(1, min(count, 20))
+        custom_prompt = bool(system_prompt or user_prompt)
+        logger.info(
+            "[TOPIC] generate start theme=%r count=%d custom_prompt=%s mock=%s",
             theme,
-            count=count,
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
+            count,
+            custom_prompt,
+            get_settings().mock_mode,
         )
+        started = time.perf_counter()
+        try:
+            topics = self._get_client().generate_topics(
+                theme,
+                count=count,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+            )
+        except Exception:
+            logger.exception(
+                "[TOPIC] generate failed theme=%r count=%d",
+                theme,
+                count,
+            )
+            raise
+        elapsed = time.perf_counter() - started
+        titles = [item["title"] for item in topics]
+        logger.info(
+            "[TOPIC] generate done count=%d elapsed=%.1fs titles=%s",
+            len(topics),
+            elapsed,
+            titles,
+        )
+        return topics
 
 
 llm_mgr = LLMMgr()

@@ -3,6 +3,8 @@
  */
 import { api } from "./config";
 import type {
+  EnqueueRunMode,
+  EnqueueTopicsParams,
   EnqueueTopicsResult,
   GenerateAndSaveResult,
   GenerateTopicsParams,
@@ -37,12 +39,12 @@ export async function scoreTopics(ids?: number[]): Promise<ScoreTopicsResult> {
 }
 
 export async function enqueueTopics(
-  ids?: number[],
-  skipPublish = true
+  params: EnqueueTopicsParams = {}
 ): Promise<EnqueueTopicsResult> {
   const response = await api.post<EnqueueTopicsResult>("/v_factory/api/topic/enqueue", {
-    ids: ids ?? [],
-    skip_publish: skipPublish,
+    ids: params.ids ?? [],
+    skip_publish: params.skip_publish ?? true,
+    run_mode: params.run_mode ?? "script",
   });
   return response.data;
 }

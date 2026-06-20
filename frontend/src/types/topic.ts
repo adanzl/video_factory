@@ -64,7 +64,16 @@ export interface ScoreTopicsResult {
   count: number;
 }
 
+export type EnqueueRunMode = "none" | "script" | "full";
+
+export interface EnqueueTopicsParams {
+  ids?: number[];
+  skip_publish?: boolean;
+  run_mode?: EnqueueRunMode;
+}
+
 export interface EnqueueTopicsResult {
   jobs: { id: number; title: string }[];
   count: number;
+  run_mode: EnqueueRunMode;
 }

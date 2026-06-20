@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import logging
+
 from app.config import get_settings
 from app.repositories import job_repo, title_repo
 from app.repositories.connection import connection
+from app.services.job.job_mgr import job_mgr
 from app.services.llm.llm_mgr import llm_mgr
 from app.services.llm.llm_topics import normalize_title
 from app.services.topic.title_scorer import score_title, status_from_score
+
+logger = logging.getLogger(__name__)
+
+_RUN_MODES = frozenset({"none", "script", "full"})
 
 
 class TopicMgr:
@@ -62,6 +69,7 @@ class TopicMgr:
         system_prompt: str | None = None,
         user_prompt: str | None = None,
     ) -> dict:
+        logger.info("[TOPIC] save start theme=%r count=%d", theme, count)
         topics = llm_mgr.generate_topics(
             theme,
             count=count,
@@ -69,6 +77,13 @@ class TopicMgr:
             user_prompt=user_prompt,
         )
         result = self.add_topics(topics, source="llm")
+        logger.info(
+            "[TOPIC] save done theme=%r generated=%d added=%d skipped=%d",
+            theme,
+            len(topics),
+            result["count"],
+            result["skipped"],
+        )
         return {
             "theme": theme,
             "generated": len(topics),
@@ -113,7 +128,11 @@ class TopicMgr:
         title_ids: list[int] | None = None,
         *,
         skip_publish: bool = True,
+        run_mode: str = "script",
     ) -> dict:
+        if run_mode not in _RUN_MODES:
+            raise ValueError(f"run_mode must be one of {sorted(_RUN_MODES)}")
+
         with connection() as conn:
             if title_ids:
                 rows = title_repo.list_by_ids(conn, title_ids)
@@ -131,7 +150,7 @@ class TopicMgr:
                     row["title"],
                     skip_publish=skip_publish,
                     stage="script",
-                    status="pending",
+                    status="idle",
                 )
                 title_repo.update_title(
                     conn,
@@ -140,7 +159,21 @@ class TopicMgr:
                     job_id=job["id"],
                 )
                 jobs.append(job)
-        return {"jobs": jobs, "count": len(jobs)}
+
+        if run_mode == "script":
+            for job in jobs:
+                job_mgr.run_script(job["id"], to_end=False)
+        elif run_mode == "full":
+            for job in jobs:
+                job_mgr.run_script(job["id"], to_end=True)
+
+        logger.info(
+            "[TOPIC] enqueue done count=%d run_mode=%s job_ids=%s",
+            len(jobs),
+            run_mode,
+            [job["id"] for job in jobs],
+        )
+        return {"jobs": jobs, "count": len(jobs), "run_mode": run_mode}
 
 
 topic_mgr = TopicMgr()

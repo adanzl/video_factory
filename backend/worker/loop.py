@@ -68,6 +68,7 @@ def _run_one_stage(
     segment_indices: list[int] | None = None,
     segment_scope: str | None = None,
     advance: bool = True,
+    hold: bool = False,
     intro_hold_tail_sec: float | None = None,
     tts_speech_rate: float | None = None,
     tts_voice_id: str | None = None,
@@ -96,7 +97,11 @@ def _run_one_stage(
             job_log_repo.append_log(conn, job_id, stage_name, "partial stage done")
         return _reload_job(job_id)
 
-    done = _advance_after_stage(job_id, stage_cls, status="pending")
+    done = _advance_after_stage(
+        job_id,
+        stage_cls,
+        status="idle" if hold else "pending",
+    )
     if done is not None:
         return done
     return _reload_job(job_id)
@@ -202,6 +207,7 @@ def run_script(
     return _run_one_stage(
         job_id,
         ScriptStage,
+        hold=True,
         script_segment_target_sec=segment_target_sec,
         script_max_title_length=max_title_length,
         script_narration_target_words=narration_target_words,
@@ -211,13 +217,13 @@ def run_script(
 def run_intro(job_id: int, *, to_end: bool = False, hold_tail_sec: float | None = None) -> dict:
     if to_end:
         return _run_from(job_id, IntroStage, intro_hold_tail_sec=hold_tail_sec)
-    return _run_one_stage(job_id, IntroStage, intro_hold_tail_sec=hold_tail_sec)
+    return _run_one_stage(job_id, IntroStage, hold=True, intro_hold_tail_sec=hold_tail_sec)
 
 
 def run_cover(job_id: int, *, to_end: bool = False) -> dict:
     if to_end:
         return _run_from(job_id, CoverStage)
-    return _run_one_stage(job_id, CoverStage)
+    return _run_one_stage(job_id, CoverStage, hold=True)
 
 
 def run_tts(
@@ -237,6 +243,7 @@ def run_tts(
     return _run_one_stage(
         job_id,
         TTSStage,
+        hold=True,
         tts_speech_rate=speech_rate,
         tts_voice_id=voice_id,
     )
@@ -245,13 +252,13 @@ def run_tts(
 def run_merge(job_id: int, *, to_end: bool = False) -> dict:
     if to_end:
         return _run_from(job_id, MergeStage)
-    return _run_one_stage(job_id, MergeStage)
+    return _run_one_stage(job_id, MergeStage, hold=True)
 
 
 def run_publish(job_id: int, *, to_end: bool = False) -> dict:
     if to_end:
         return _run_from(job_id, PublishStage)
-    return _run_one_stage(job_id, PublishStage)
+    return _run_one_stage(job_id, PublishStage, hold=True)
 
 
 def run_segment_images(

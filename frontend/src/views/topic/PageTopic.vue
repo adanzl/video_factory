@@ -16,7 +16,7 @@
         type="success"
         :disabled="!selectedIds.length"
         :loading="enqueuing"
-        @click="handleEnqueueSelected"
+        @click="openEnqueueDialog(selectedIds)"
       >
         入队生产
       </el-button>
@@ -95,8 +95,8 @@
             type="success"
             link
             size="small"
-            :loading="enqueuingId === row.id"
-            @click="handleEnqueueOne(row.id)"
+            :loading="enqueuing && pendingEnqueueIds.includes(row.id)"
+            @click="openEnqueueDialog([row.id])"
           >
             入队
           </el-button>
@@ -146,6 +146,23 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="showEnqueueDialog" title="入队生产" width="480px" destroy-on-close>
+      <p class="mb-4 text-sm text-gray-500">
+        将创建 {{ pendingEnqueueIds.length }} 个生产任务，请选择执行方式：
+      </p>
+      <el-radio-group v-model="enqueueRunMode" class="flex flex-col items-start gap-3">
+        <el-radio value="script">仅文案（默认，第一步）</el-radio>
+        <el-radio value="none">仅创建任务，暂不执行</el-radio>
+        <el-radio value="full">全流程（文案 → 成片）</el-radio>
+      </el-radio-group>
+      <template #footer>
+        <el-button @click="showEnqueueDialog = false">取消</el-button>
+        <el-button type="primary" :loading="enqueuing" @click="confirmEnqueue">
+          确认入队
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -160,7 +177,7 @@ import {
   listTitles,
   scoreTopics,
 } from "@/api/api-topic";
-import type { TitleRecord, TitleStatus } from "@/types/topic";
+import type { EnqueueRunMode, TitleRecord, TitleStatus } from "@/types/topic";
 import { useErrorHandler } from "@/composables/useErrorHandler";
 import { formatDateTime } from "@/utils/date";
 
@@ -179,9 +196,11 @@ const enqueuing = ref(false);
 const deleting = ref(false);
 const generating = ref(false);
 const scoringId = ref<number>();
-const enqueuingId = ref<number>();
 
 const showGenerateDialog = ref(false);
+const showEnqueueDialog = ref(false);
+const pendingEnqueueIds = ref<number[]>([]);
+const enqueueRunMode = ref<EnqueueRunMode>("script");
 
 const generateForm = reactive({
   theme: "",
@@ -291,29 +310,40 @@ const handleScoreOne = async (id: number) => {
   }
 };
 
-const handleEnqueueSelected = async () => {
+const openEnqueueDialog = (ids: number[]) => {
+  if (!ids.length) {
+    return;
+  }
+  pendingEnqueueIds.value = ids;
+  enqueueRunMode.value = "script";
+  showEnqueueDialog.value = true;
+};
+
+const enqueueModeLabel = (mode: EnqueueRunMode) => {
+  switch (mode) {
+    case "script":
+      return "已创建并开始文案生成";
+    case "full":
+      return "已创建并开始全流程";
+    default:
+      return "已创建任务";
+  }
+};
+
+const confirmEnqueue = async () => {
   enqueuing.value = true;
   try {
-    const result = await enqueueTopics(selectedIds.value);
-    ElMessage.success(`已创建 ${result.count} 个生产任务`);
+    const result = await enqueueTopics({
+      ids: pendingEnqueueIds.value,
+      run_mode: enqueueRunMode.value,
+    });
+    ElMessage.success(`${enqueueModeLabel(result.run_mode)}，共 ${result.count} 个`);
+    showEnqueueDialog.value = false;
     await fetchTitles();
   } catch (error) {
     handleError(error, "入队失败");
   } finally {
     enqueuing.value = false;
-  }
-};
-
-const handleEnqueueOne = async (id: number) => {
-  enqueuingId.value = id;
-  try {
-    const result = await enqueueTopics([id]);
-    ElMessage.success(`已创建任务 #${result.jobs[0]?.id}`);
-    await fetchTitles();
-  } catch (error) {
-    handleError(error, "入队失败");
-  } finally {
-    enqueuingId.value = undefined;
   }
 };
 
