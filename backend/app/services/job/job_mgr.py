@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import shutil
 import threading
 from collections.abc import Callable
@@ -97,7 +98,13 @@ class JobMgr:
         if "status" in updates and updates["status"] not in _VALID_STATUSES:
             raise ValueError(f"status must be one of: {', '.join(sorted(_VALID_STATUSES))}")
         with connection() as conn:
-            job_repo.get_job(conn, job_id)
+            job = job_repo.get_job(conn, job_id)
+            if "title" in updates:
+                script = job.get("script_json")
+                if isinstance(script, dict):
+                    synced = dict(script)
+                    synced["title"] = re.sub(r"\s+", "", updates["title"].strip())
+                    updates["script_json"] = synced
             job = job_repo.update_job(conn, job_id, **updates)
             job_log_repo.append_log(conn, job_id, "api", f"updated fields: {', '.join(updates)}")
             return job
