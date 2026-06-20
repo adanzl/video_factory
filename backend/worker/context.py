@@ -14,6 +14,7 @@ class JobContext:
     rerun_segment_indices: tuple[int, ...] | None = None
     segment_scope: str | None = None
     intro_hold_tail_sec: float | None = None
+    intro_orientation: str | None = None
     tts_speech_rate: float | None = None
     tts_voice_id: str | None = None
     script_segment_target_sec: float | None = None
@@ -30,6 +31,7 @@ class JobContext:
         rerun_segment_indices: tuple[int, ...] | None = None,
         segment_scope: str | None = None,
         intro_hold_tail_sec: float | None = None,
+        intro_orientation: str | None = None,
         tts_speech_rate: float | None = None,
         tts_voice_id: str | None = None,
         script_segment_target_sec: float | None = None,
@@ -48,6 +50,7 @@ class JobContext:
             rerun_segment_indices=rerun_segment_indices,
             segment_scope=segment_scope,
             intro_hold_tail_sec=intro_hold_tail_sec,
+            intro_orientation=intro_orientation,
             tts_speech_rate=tts_speech_rate,
             tts_voice_id=tts_voice_id,
             script_segment_target_sec=script_segment_target_sec,

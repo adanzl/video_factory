@@ -18,6 +18,7 @@ from app.api.utils import (
     parse_query_int,
     parse_str,
 )
+from app.services.intro.size import parse_intro_orientation
 from app.services.job.job_mgr import JobBusyError, job_mgr
 
 bp = Blueprint("api_jobs", __name__, url_prefix="/v_factory/api/jobs")
@@ -71,21 +72,27 @@ def run_script_route():
     )
 
 
-def _parse_intro_body() -> tuple[int, bool, float | None]:
+def _parse_intro_body() -> tuple[int, bool, float | None, str | None]:
     data = get_json_body()
     return (
         parse_id(data),
         parse_bool(data, "to_end", default=False),
         parse_optional_float(data, "hold_tail_sec", minimum=0.0, maximum=5.0),
+        parse_intro_orientation(parse_optional_str(data, "orientation")),
     )
 
 
 @bp.post("/intro")
 def run_intro_route():
-    job_id, to_end, hold_tail_sec = _parse_intro_body()
+    job_id, to_end, hold_tail_sec, orientation = _parse_intro_body()
     return _accept_stage(
         job_id,
-        lambda: job_mgr.run_intro(job_id, to_end=to_end, hold_tail_sec=hold_tail_sec),
+        lambda: job_mgr.run_intro(
+            job_id,
+            to_end=to_end,
+            hold_tail_sec=hold_tail_sec,
+            orientation=orientation,
+        ),
     )
 
 

@@ -29,6 +29,7 @@ export interface RunStageActionPayload {
   to_end: boolean;
   segments?: number[];
   hold_tail_sec?: number;
+  orientation?: "portrait" | "landscape" | "auto";
   speech_rate?: number;
   voice_id?: string;
   title?: string;

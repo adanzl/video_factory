@@ -15,6 +15,13 @@
               <span v-if="actionDisabledReason" class="text-sm text-gray-400">{{ actionDisabledReason }}</span>
             </div>
             <el-form label-width="96px">
+              <el-form-item label="画面方向">
+                <el-select v-model="introOrientation" class="w-full!">
+                  <el-option label="自动（素材跟基底）" value="auto" />
+                  <el-option label="竖屏 9:16" value="portrait" />
+                  <el-option label="横屏 16:9" value="landscape" />
+                </el-select>
+              </el-form-item>
               <el-form-item label="尾部停留 (秒)">
                 <el-input-number
                   v-model="holdTailSec"
@@ -38,6 +45,7 @@
           </el-form>
           <p class="mt-2 text-xs leading-normal text-gray-400">
             总时长 = 品牌喊声时长 + 尾部停留；调整尾部停留后需重新生成。
+            素材任务选「自动」将跟随基底视频分辨率。
           </p>
         </div>
       </div>
@@ -116,6 +124,9 @@ const PREVIEW_MAX_WIDTH_PX = 420;
 
 const submitting = ref(false);
 const holdTailSec = ref(0.35);
+const introOrientation = ref<"auto" | "portrait" | "landscape">(
+  props.job.pipeline === "material" ? "auto" : "portrait"
+);
 const actualDuration = ref<number | null>(null);
 const loadError = ref("");
 const videoMeta = ref<{ width: number; height: number } | null>(null);
@@ -206,12 +217,20 @@ const handleRun = async (toEnd: boolean) => {
 
   submitting.value = true;
   try {
-    const payload: { id: number; to_end: boolean; hold_tail_sec?: number } = {
+    const payload: {
+      id: number;
+      to_end: boolean;
+      hold_tail_sec?: number;
+      orientation?: "portrait" | "landscape";
+    } = {
       id: props.job.id,
       to_end: toEnd,
     };
     if (Number.isFinite(holdTailSec.value) && holdTailSec.value >= 0) {
       payload.hold_tail_sec = holdTailSec.value;
+    }
+    if (introOrientation.value !== "auto") {
+      payload.orientation = introOrientation.value;
     }
     await runJobStageAction("intro", payload);
     ElMessage.success(`已提交${actionLabel}，任务已开始执行`);
