@@ -76,6 +76,7 @@ def create_job_from_material_route():
     script_mode = parse_optional_str(data, "script_mode") or "ai"
     narration = parse_optional_str(data, "narration")
     skip_publish = parse_bool(data, "skip_publish", default=True)
+    run_mode = parse_optional_str(data, "run_mode") or "prepare"
     try:
         job = material_mgr.create_job_from_material(
             material_id,
@@ -83,6 +84,7 @@ def create_job_from_material_route():
             narration=narration,
             script_mode=script_mode,
             skip_publish=skip_publish,
+            run_mode=run_mode,
         )
     except ValueError as exc:
         raise APIError(str(exc), status_code=400) from exc

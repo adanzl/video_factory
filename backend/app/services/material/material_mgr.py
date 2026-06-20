@@ -12,9 +12,11 @@ from app.config import get_settings
 from app.core.pipelines import PIPELINE_MATERIAL
 from app.repositories import job_log_repo, job_repo, material_repo
 from app.repositories.connection import connection
+from app.services.job.job_mgr import job_mgr
 from app.services.media.ffmpeg_utils import extract_first_frame, probe_duration, probe_video_size
 
 _ALLOWED_EXTENSIONS = {".mp4", ".mov", ".webm", ".mkv"}
+_RUN_MODES = frozenset({"none", "prepare", "full"})
 _MAX_UPLOAD_BYTES = 500 * 1024 * 1024
 _PLACEHOLDER_PATH = "pending"
 
@@ -138,6 +140,7 @@ class MaterialMgr:
         narration: str | None = None,
         script_mode: str = "ai",
         skip_publish: bool = True,
+        run_mode: str = "prepare",
     ) -> dict:
         cleaned_title = re.sub(r"\s+", "", title.strip())
         if not cleaned_title:
@@ -150,6 +153,9 @@ class MaterialMgr:
                 raise ValueError("narration is required for manual script_mode")
             if len(re.sub(r"\s+", "", narration)) < 200:
                 raise ValueError("narration too short (need >= 200 chars)")
+        run = run_mode.strip().lower()
+        if run not in _RUN_MODES:
+            raise ValueError(f"run_mode must be one of {sorted(_RUN_MODES)}")
 
         with connection() as conn:
             material_repo.get_material(conn, material_id)
@@ -163,7 +169,7 @@ class MaterialMgr:
                 cleaned_title,
                 skip_publish=skip_publish,
                 stage="prepare",
-                status="pending",
+                status="idle",
                 pipeline=PIPELINE_MATERIAL,
                 material_id=material_id,
                 script_json=script_json,
@@ -172,9 +178,16 @@ class MaterialMgr:
                 conn,
                 job["id"],
                 "prepare",
-                f"created material job from material #{material_id}, script_mode={mode}",
+                f"created material job from material #{material_id}, "
+                f"script_mode={mode}, run_mode={run}",
             )
-            return job
+
+        if run == "prepare":
+            job_mgr.run_prepare(job["id"], to_end=False)
+        elif run == "full":
+            job_mgr.run_prepare(job["id"], to_end=True)
+
+        return job
 
 
 material_mgr = MaterialMgr()

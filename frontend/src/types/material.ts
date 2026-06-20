@@ -21,12 +21,15 @@ export interface ListMaterialsParams {
   offset?: number;
 }
 
+export type MaterialJobRunMode = "none" | "prepare" | "full";
+
 export interface CreateJobFromMaterialParams {
   material_id: number;
   title: string;
   script_mode?: "ai" | "manual";
   narration?: string;
   skip_publish?: boolean;
+  run_mode?: MaterialJobRunMode;
 }
 
 export interface UploadMaterialParams {

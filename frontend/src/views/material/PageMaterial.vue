@@ -23,13 +23,15 @@
       @selection-change="onSelectionChange"
     >
       <el-table-column type="selection" width="48" />
-      <el-table-column label="预览" width="100">
+      <el-table-column label="预览" width="88">
         <template #default="{ row }">
-          <img
+          <el-image
             v-if="thumbUrl(row)"
             :src="thumbUrl(row)"
-            alt=""
-            class="h-16 w-9 rounded border border-gray-200 object-cover"
+            :preview-src-list="[thumbUrl(row)]"
+            fit="contain"
+            preview-teleported
+            class="block size-16 cursor-pointer overflow-hidden rounded border border-gray-200 bg-black [&_.el-image__inner]:h-full [&_.el-image__inner]:w-full [&_.el-image__inner]:object-contain"
           />
           <span v-else class="text-gray-400">-</span>
         </template>
@@ -54,11 +56,22 @@
       <el-table-column label="创建时间" width="170">
         <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="120" fixed="right">
+      <el-table-column label="操作" width="160" fixed="right">
         <template #default="{ row }">
-          <el-button type="success" link size="small" @click="openCreateJobDialog(row)">
-            发起任务
-          </el-button>
+          <div class="flex items-center gap-1 whitespace-nowrap">
+            <el-button
+              type="primary"
+              link
+              size="small"
+              :disabled="!videoUrl(row)"
+              @click="openPlayDialog(row)"
+            >
+              播放
+            </el-button>
+            <el-button type="success" link size="small" @click="openCreateJobDialog(row)">
+              发起任务
+            </el-button>
+          </div>
         </template>
       </el-table-column>
     </el-table>
@@ -114,17 +127,51 @@
         <el-form-item label="跳过投稿">
           <el-switch v-model="createJobSkipPublish" />
         </el-form-item>
+        <el-form-item label="执行方式">
+          <el-radio-group v-model="createJobRunMode" class="create-job-run-mode">
+            <el-radio value="prepare">仅基底（默认，第一步）</el-radio>
+            <el-radio value="none">仅创建任务，暂不执行</el-radio>
+            <el-radio value="full">全流程（基底 → 成片）</el-radio>
+          </el-radio-group>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="showCreateJobDialog = false">取消</el-button>
-        <el-button type="primary" :loading="creatingJob" @click="handleCreateJob">创建并入队</el-button>
+        <el-button type="primary" :loading="creatingJob" @click="handleCreateJob">确认创建</el-button>
       </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="showPlayDialog"
+      :title="playMaterial ? `${playMaterial.name} (#${playMaterial.id})` : '视频预览'"
+      :width="playDialogWidth"
+      destroy-on-close
+      @closed="onPlayDialogClosed"
+    >
+      <div v-if="playVideoUrl" class="flex justify-center">
+        <div
+          class="overflow-hidden rounded-lg border border-gray-200 bg-black"
+          :style="playBoxStyle"
+        >
+          <video
+            :key="playVideoUrl"
+            class="block h-full w-full object-contain bg-black"
+            :src="playVideoUrl"
+            controls
+            autoplay
+            playsinline
+            preload="metadata"
+            @loadedmetadata="onPlayVideoMetadata"
+          />
+        </div>
+      </div>
+      <div v-else class="py-8 text-center text-sm text-gray-400">无法加载视频</div>
     </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { Refresh } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import {
@@ -133,7 +180,7 @@ import {
   listMaterials,
   uploadMaterial,
 } from "@/api/api-materials";
-import type { MaterialRecord } from "@/types/material";
+import type { MaterialJobRunMode, MaterialRecord } from "@/types/material";
 import { useErrorHandler } from "@/composables/useErrorHandler";
 import { formatDateTime } from "@/utils/date";
 import { formatFileSize, formatMediaDuration, getMediaFileUrl } from "@/utils/media";
@@ -162,9 +209,95 @@ const createJobTitle = ref("");
 const createJobScriptMode = ref<"ai" | "manual">("ai");
 const createJobNarration = ref("");
 const createJobSkipPublish = ref(true);
+const createJobRunMode = ref<MaterialJobRunMode>("prepare");
+
+const showPlayDialog = ref(false);
+const playMaterial = ref<MaterialRecord | null>(null);
+const playVideoMeta = ref<{ width: number; height: number } | null>(null);
+
+const PLAY_MAX_VIEWPORT_RATIO = 0.7;
+const PLAY_MAX_WIDTH_PX = 800;
+
+const playVideoUrl = computed(() =>
+  playMaterial.value?.file_path ? getMediaFileUrl(playMaterial.value.file_path) : ""
+);
+
+const playVideoDimensions = computed(() => {
+  const material = playMaterial.value;
+  const width = material?.width ?? playVideoMeta.value?.width;
+  const height = material?.height ?? playVideoMeta.value?.height;
+  if (width && height && width > 0 && height > 0) {
+    return { width, height };
+  }
+  return null;
+});
+
+const playBoxStyle = computed(() => {
+  const dims = playVideoDimensions.value;
+  if (!dims) {
+    return { width: "100%", maxWidth: "420px", aspectRatio: "16 / 9" };
+  }
+
+  const ratio = dims.width / dims.height;
+  const maxH = (typeof window !== "undefined" ? window.innerHeight : 800) * PLAY_MAX_VIEWPORT_RATIO;
+  const maxW = Math.min(
+    PLAY_MAX_WIDTH_PX,
+    typeof window !== "undefined" ? window.innerWidth * 0.9 : PLAY_MAX_WIDTH_PX
+  );
+
+  let boxW: number;
+  let boxH: number;
+  if (ratio >= 1) {
+    boxW = Math.min(maxW, maxH * ratio);
+    boxH = boxW / ratio;
+  } else {
+    boxH = Math.min(maxH, maxW / ratio);
+    boxW = boxH * ratio;
+  }
+
+  return {
+    width: `${Math.round(boxW)}px`,
+    height: `${Math.round(boxH)}px`,
+  };
+});
+
+const playDialogWidth = computed(() => {
+  const style = playBoxStyle.value;
+  if (typeof style.width === "string" && style.width.endsWith("px")) {
+    return `${parseInt(style.width, 10) + 48}px`;
+  }
+  return "468px";
+});
+
+const onPlayVideoMetadata = (event: Event) => {
+  const video = event.target as HTMLVideoElement;
+  if (!video.videoWidth || !video.videoHeight) {
+    return;
+  }
+  if (playMaterial.value?.width && playMaterial.value?.height) {
+    return;
+  }
+  playVideoMeta.value = { width: video.videoWidth, height: video.videoHeight };
+};
+
+const onPlayDialogClosed = () => {
+  playMaterial.value = null;
+  playVideoMeta.value = null;
+};
 
 const thumbUrl = (row: MaterialRecord) =>
   row.thumbnail_path ? getMediaFileUrl(row.thumbnail_path) : "";
+
+const videoUrl = (row: MaterialRecord) =>
+  row.file_path ? getMediaFileUrl(row.file_path) : "";
+
+const openPlayDialog = (row: MaterialRecord) => {
+  if (!videoUrl(row)) {
+    return;
+  }
+  playMaterial.value = row;
+  showPlayDialog.value = true;
+};
 
 const onSelectionChange = (rows: MaterialRecord[]) => {
   selectedIds.value = rows.map(row => row.id);
@@ -253,7 +386,19 @@ const openCreateJobDialog = (row: MaterialRecord) => {
   createJobScriptMode.value = "ai";
   createJobNarration.value = "";
   createJobSkipPublish.value = true;
+  createJobRunMode.value = "prepare";
   showCreateJobDialog.value = true;
+};
+
+const createJobRunModeLabel = (mode: MaterialJobRunMode) => {
+  switch (mode) {
+    case "prepare":
+      return "已创建并开始基底准备";
+    case "full":
+      return "已创建并开始全流程";
+    default:
+      return "已创建任务";
+  }
 };
 
 const handleCreateJob = async () => {
@@ -263,14 +408,16 @@ const handleCreateJob = async () => {
   }
   creatingJob.value = true;
   try {
+    const runMode = createJobRunMode.value;
     const job = await createJobFromMaterial({
       material_id: createJobMaterial.value.id,
       title: createJobTitle.value.trim(),
       script_mode: createJobScriptMode.value,
       narration: createJobScriptMode.value === "manual" ? createJobNarration.value : undefined,
       skip_publish: createJobSkipPublish.value,
+      run_mode: runMode,
     });
-    ElMessage.success(`任务 #${job.id} 已创建并入队，请在任务队列查看`);
+    ElMessage.success(`${createJobRunModeLabel(runMode)}，任务 #${job.id}，请在任务队列查看`);
     showCreateJobDialog.value = false;
   } catch (error) {
     handleError(error, "创建任务失败");
