@@ -120,10 +120,10 @@ def resolve_media_serve_path(
     filepath = decode_url_path((url_path or "").strip())
     filepath = filepath.replace("../", "").replace("..\\", "")
 
-    if not filepath.startswith("/") and not _WINDOWS_ABS_RE.match(filepath):
-        filepath = "/" + filepath
-
-    filepath = os.path.normpath(filepath)
+    if _WINDOWS_ABS_RE.match(filepath) or os.path.isabs(filepath):
+        filepath = os.path.normpath(filepath)
+    else:
+        filepath = os.path.normpath(os.path.join(roots[0], filepath.lstrip("/\\")))
 
     if not os.path.isfile(filepath):
         raise FileNotFoundError(f"file not found: {filepath}")
