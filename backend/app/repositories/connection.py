@@ -17,7 +17,7 @@ def get_connection() -> sqlite3.Connection:
     _ensure_parent(settings.sqlite_path)
     conn = sqlite3.connect(settings.sqlite_path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA journal_mode=DELETE")
     conn.execute("PRAGMA foreign_keys=ON")
     return conn
 
