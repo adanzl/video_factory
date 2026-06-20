@@ -2,40 +2,39 @@
   <div>
     <div class="flex flex-wrap items-start gap-4">
       <div class="min-w-[280px] max-w-full shrink-0 basis-80">
-        <div class="rounded border border-gray-200 p-4">
-          <div class="mb-3 text-sm font-medium text-gray-700">参数配置</div>
-          <div>
-            <div class="mb-3 flex flex-wrap items-center gap-2">
-              <el-button type="primary" :loading="submitting" :disabled="actionDisabled" @click="handleRun(false)">
-                重新生成
-              </el-button>
-              <el-button type="success" :loading="submitting" :disabled="actionDisabled" @click="handleRun(true)">
-                从此成片
-              </el-button>
-              <span v-if="actionDisabledReason" class="text-sm text-gray-400">{{ actionDisabledReason }}</span>
-            </div>
-            <el-form label-width="96px">
-              <el-form-item label="画面方向">
-                <el-select v-model="introOrientation" class="w-full!">
-                  <el-option label="自动（素材跟基底）" value="auto" />
-                  <el-option label="竖屏 9:16" value="portrait" />
-                  <el-option label="横屏 16:9" value="landscape" />
-                </el-select>
-              </el-form-item>
-              <el-form-item label="尾部停留 (秒)">
-                <el-input-number
-                  v-model="holdTailSec"
-                  :min="0"
-                  :max="5"
-                  :step="0.05"
-                  placeholder="秒"
-                  controls-position="right"
-                  class="w-40!"
-                />
-              </el-form-item>
-            </el-form>
+        <div class="rounded-lg border border-gray-200 p-4">
+          <div class="mb-3 flex flex-wrap items-center gap-2">
+            <el-button type="primary" :loading="submitting" :disabled="actionDisabled" @click="handleRun(false)">
+              重新生成
+            </el-button>
+            <el-button type="success" :loading="submitting" :disabled="actionDisabled" @click="handleRun(true)">
+              从此成片
+            </el-button>
+            <span v-if="actionDisabledReason" class="text-sm text-gray-400">{{ actionDisabledReason }}</span>
           </div>
-          <el-form label-width="96px" class="[&_.el-form-item]:mb-2">
+          <el-form
+            label-width="96px"
+            class="[&_.el-form-item]:mb-3 [&_.el-form-item__content]:min-w-0 [&_.el-form-item__content]:flex-1"
+          >
+            <el-form-item label="画面方向">
+              <el-radio-group v-model="introOrientation" class="intro-orientation-group">
+                <el-radio value="auto">自动</el-radio>
+                <el-radio value="portrait">竖屏 9:16</el-radio>
+                <el-radio value="landscape">横屏 16:9</el-radio>
+              </el-radio-group>
+            </el-form-item>
+            <el-form-item label="尾部停留">
+              <el-input-number
+                v-model="holdTailSec"
+                :min="0"
+                :max="5"
+                :step="0.05"
+                placeholder="秒"
+                controls-position="right"
+                class="w-40!"
+              />
+              <span class="ml-2 text-sm text-gray-500">秒</span>
+            </el-form-item>
             <el-form-item label="成片时长">
               <span class="text-gray-700">{{ actualDurationText }}</span>
             </el-form-item>
@@ -43,15 +42,14 @@
               <span class="break-all text-gray-600">{{ job.intro_path || "-" }}</span>
             </el-form-item>
           </el-form>
-          <p class="mt-2 text-xs leading-normal text-gray-400">
-            总时长 = 品牌喊声时长 + 尾部停留；调整尾部停留后需重新生成。
-            素材任务选「自动」将跟随基底视频分辨率。
+          <p class="mt-1 text-xs leading-normal text-gray-400">
+            总时长 = 品牌喊声时长 + 尾部停留。「自动」时素材任务跟随基底视频分辨率。
           </p>
         </div>
       </div>
 
       <div class="min-w-[280px] flex-1 basis-[360px]">
-        <div class="rounded border border-gray-200 p-4">
+        <div class="rounded-lg border border-gray-200 p-4">
           <div class="mb-3 text-sm font-medium text-gray-700">视频预览</div>
           <div v-if="videoUrl" class="flex justify-center">
             <div
@@ -252,3 +250,17 @@ watch(
   { immediate: true }
 );
 </script>
+
+<style scoped>
+.intro-orientation-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 20px;
+}
+
+.intro-orientation-group :deep(.el-radio) {
+  margin-right: 0;
+  height: 32px;
+}
+</style>
