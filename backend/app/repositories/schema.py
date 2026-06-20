@@ -2,6 +2,31 @@ from __future__ import annotations
 
 import sqlite3
 
+_TITLE_DDL = """
+CREATE TABLE IF NOT EXISTS title (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL UNIQUE,
+    track TEXT,
+    template TEXT,
+    hook TEXT,
+    score INTEGER,
+    score_detail TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    job_id INTEGER,
+    source TEXT NOT NULL DEFAULT 'manual',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (job_id) REFERENCES video_job(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_title_status ON title(status);
+"""
+
+
+def apply_title_schema(conn: sqlite3.Connection) -> None:
+    """创建选题库 title 表（幂等，可单独对已有库执行）。"""
+    conn.executescript(_TITLE_DDL)
+
 
 def apply_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(
@@ -52,28 +77,12 @@ def apply_schema(conn: sqlite3.Connection) -> None:
             FOREIGN KEY (job_id) REFERENCES video_job(id) ON DELETE CASCADE
         );
 
-        CREATE TABLE IF NOT EXISTS title (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT NOT NULL UNIQUE,
-            track TEXT,
-            template TEXT,
-            hook TEXT,
-            score INTEGER,
-            score_detail TEXT,
-            status TEXT NOT NULL DEFAULT 'pending',
-            job_id INTEGER,
-            source TEXT NOT NULL DEFAULT 'manual',
-            created_at TEXT NOT NULL DEFAULT (datetime('now')),
-            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-            FOREIGN KEY (job_id) REFERENCES video_job(id)
-        );
-
         CREATE INDEX IF NOT EXISTS idx_video_job_status ON video_job(status);
         CREATE INDEX IF NOT EXISTS idx_video_segment_job ON video_segment(job_id);
         CREATE INDEX IF NOT EXISTS idx_job_log_job ON job_log(job_id);
-        CREATE INDEX IF NOT EXISTS idx_title_status ON title(status);
         """
     )
+    apply_title_schema(conn)
     conn.execute(
         "UPDATE video_job SET stage = 'segment' WHERE stage = 'ffmpeg'"
     )
