@@ -78,6 +78,7 @@ class JobMgr:
                 skip_publish=skip_publish,
                 stage="script",
                 status="pending",
+                pipeline="standard",
             )
             job_log_repo.append_log(conn, job["id"], "title", f"created job: {cleaned}")
             return job
@@ -200,7 +201,7 @@ class JobMgr:
         max_title_length: int | None = None,
         narration_target_words: int | None = None,
     ) -> dict:
-        """生成文案。实现：worker/loop.run_script → worker/stages/script.py"""
+        """生成文案。实现：worker/loop.run_script → worker/stages/*/script.py"""
         from worker.loop import run_script
 
         if title is not None:
@@ -224,7 +225,7 @@ class JobMgr:
         )
 
     def run_intro(self, job_id: int, *, to_end: bool = False, hold_tail_sec: float | None = None) -> dict:
-        """生成片头。实现：worker/loop.run_intro → worker/stages/intro.py"""
+        """生成片头。实现：worker/loop.run_intro → worker/stages/common/intro.py"""
         from worker.loop import run_intro
 
         return self._run_in_background(
@@ -234,7 +235,7 @@ class JobMgr:
         )
 
     def run_cover(self, job_id: int, *, to_end: bool = False) -> dict:
-        """生成封面。实现：worker/loop.run_cover → worker/stages/cover.py"""
+        """生成封面。实现：worker/loop.run_cover → worker/stages/common/cover.py"""
         from worker.loop import run_cover
 
         return self._run_in_background(
@@ -251,7 +252,7 @@ class JobMgr:
         speech_rate: float | None = None,
         voice_id: str | None = None,
     ) -> dict:
-        """生成配音。实现：worker/loop.run_tts → worker/stages/tts.py"""
+        """生成配音。实现：worker/loop.run_tts → worker/stages/common/tts.py"""
         from worker.loop import run_tts
 
         return self._run_in_background(
@@ -272,7 +273,7 @@ class JobMgr:
         to_end: bool = False,
         segment_indices: list[int] | None = None,
     ) -> dict:
-        """重跑分镜静图与图生视频。实现：worker/loop.run_segment_all → worker/stages/segment.py"""
+        """重跑分镜静图与图生视频。实现：worker/loop.run_segment_all → worker/stages/standard/segment.py"""
         from worker.loop import run_segment_all
 
         return self._run_in_background(
@@ -293,7 +294,7 @@ class JobMgr:
         to_end: bool = False,
         segment_indices: list[int] | None = None,
     ) -> dict:
-        """重出分镜静图。实现：worker/loop.run_segment_images → worker/stages/segment.py"""
+        """重出分镜静图。实现：worker/loop.run_segment_images → worker/stages/standard/segment.py"""
         from worker.loop import run_segment_images
 
         return self._run_in_background(
@@ -314,7 +315,7 @@ class JobMgr:
         to_end: bool = False,
         segment_indices: list[int] | None = None,
     ) -> dict:
-        """重跑图生视频。实现：worker/loop.run_segment_clips → worker/stages/segment.py"""
+        """重跑图生视频。实现：worker/loop.run_segment_clips → worker/stages/standard/segment.py"""
         from worker.loop import run_segment_clips
 
         return self._run_in_background(
@@ -329,7 +330,7 @@ class JobMgr:
         )
 
     def run_merge(self, job_id: int, *, to_end: bool = False) -> dict:
-        """合成成片。实现：worker/loop.run_merge → worker/stages/merge.py"""
+        """合成成片。实现：worker/loop.run_merge → merge stage（按 pipeline 分发）"""
         from worker.loop import run_merge
 
         return self._run_in_background(
@@ -338,8 +339,18 @@ class JobMgr:
             lambda: run_merge(job_id, to_end=to_end),
         )
 
+    def run_prepare(self, job_id: int, *, to_end: bool = False) -> dict:
+        """素材任务：复制基底视频。实现：worker/loop.run_prepare → worker/stages/material/prepare.py"""
+        from worker.loop import run_prepare
+
+        return self._run_in_background(
+            job_id,
+            "prepare",
+            lambda: run_prepare(job_id, to_end=to_end),
+        )
+
     def run_publish(self, job_id: int, *, to_end: bool = False) -> dict:
-        """发布。实现：worker/loop.run_publish → worker/stages/publish.py"""
+        """发布。实现：worker/loop.run_publish → worker/stages/common/publish.py"""
         from worker.loop import run_publish
 
         return self._run_in_background(

@@ -10,10 +10,12 @@ from pathlib import Path
 
 from app.config import get_settings
 from app.services.media.clip.mgr import clip_mgr
+from app.services.media.clip.render import fit_video_duration, video_to_clip_timed_overlays
 from app.services.media.ffmpeg_utils import (
     concat_clips,
     merge_audio_video,
     prepend_intro,
+    probe_duration,
 )
 from app.services.tts.tts_mgr import tts_mgr
 
@@ -150,6 +152,77 @@ class MediaMgr:
 
         elapsed = time.time() - t0
         logger.info("merge: done in %.1fs -> %s", elapsed, final_path)
+        return MergeResult(
+            body_path=body_path,
+            body_with_audio_path=body_with_audio,
+            final_path=final_path,
+        )
+
+    def merge_material_final(
+        self,
+        *,
+        media_dir: Path,
+        base_video_path: Path,
+        audio_path: Path,
+        intro_path: Path | None,
+    ) -> MergeResult:
+        """素材流水线：基底视频 + 字幕烧录 + TTS + 片头。"""
+        t0 = time.time()
+        subtitle_cues = tts_mgr.load_subtitle_cues(
+            tts_mgr.subtitle_cues_path_for(audio_path.parent)
+        )
+        if not subtitle_cues:
+            raise FileNotFoundError(
+                f"缺少 {tts_mgr.subtitle_cues_path_for(audio_path.parent)}，请从 tts 阶段重跑"
+            )
+
+        audio_dur = probe_duration(audio_path)
+        flat_cues = [
+            (cue.text, cue.duration_sec)
+            for cue in subtitle_cues
+            if cue.duration_sec > 0 and cue.text.strip()
+        ]
+
+        work_dir = media_dir / "merge_work"
+        work_dir.mkdir(parents=True, exist_ok=True)
+        overlay_paths: list[Path] = []
+
+        body_path = media_dir / "body.mp4"
+        try:
+            fitted = work_dir / "base_fitted.mp4"
+            fit_video_duration(base_video_path, fitted, audio_dur)
+            if flat_cues:
+                _, overlay_windows, overlay_paths = clip_mgr.prepare_subtitle_overlays(
+                    subtitle_cues=flat_cues,
+                    work_dir=work_dir,
+                    segment_index=0,
+                )
+                video_to_clip_timed_overlays(
+                    fitted,
+                    overlay_windows,
+                    body_path,
+                    audio_dur,
+                )
+            else:
+                shutil.copy2(fitted, body_path)
+        finally:
+            clip_mgr.cleanup_overlay_paths(overlay_paths)
+
+        logger.info("merge_material: body.mp4 done")
+
+        body_with_audio = media_dir / "body_with_audio.mp4"
+        merge_audio_video(body_path, audio_path, body_with_audio, subtitle_path=None)
+        logger.info("merge_material: audio merged")
+
+        final_path = media_dir / "final.mp4"
+        if intro_path and intro_path.exists():
+            logger.info("merge_material: prepending intro")
+            prepend_intro(intro_path, body_with_audio, final_path)
+        else:
+            shutil.copy2(body_with_audio, final_path)
+
+        elapsed = time.time() - t0
+        logger.info("merge_material: done in %.1fs -> %s", elapsed, final_path)
         return MergeResult(
             body_path=body_path,
             body_with_audio_path=body_with_audio,

@@ -1,0 +1,36 @@
+export type JobPipeline = "standard" | "material";
+
+export interface MaterialRecord {
+  id: number;
+  name: string;
+  file_path: string;
+  duration_sec?: number | null;
+  width?: number | null;
+  height?: number | null;
+  size_bytes?: number | null;
+  thumbnail_path?: string | null;
+  note?: string | null;
+  status?: string;
+  job_count?: number;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface ListMaterialsParams {
+  limit?: number;
+  offset?: number;
+}
+
+export interface CreateJobFromMaterialParams {
+  material_id: number;
+  title: string;
+  script_mode?: "ai" | "manual";
+  narration?: string;
+  skip_publish?: boolean;
+}
+
+export interface UploadMaterialParams {
+  file: File;
+  name?: string;
+  note?: string;
+}

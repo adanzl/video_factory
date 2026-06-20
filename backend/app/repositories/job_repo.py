@@ -35,13 +35,29 @@ def create_job(
     skip_publish: bool = True,
     stage: str = "script",
     status: str = "pending",
+    pipeline: str = "standard",
+    material_id: int | None = None,
+    script_json: dict | None = None,
 ) -> dict:
+    script_payload = None
+    if script_json is not None:
+        script_payload = json.dumps(script_json, ensure_ascii=False)
     cur = conn.execute(
         """
-        INSERT INTO video_job (title, stage, status, skip_publish)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO video_job (
+            title, stage, status, skip_publish, pipeline, material_id, script_json
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
-        (title, stage, status, int(skip_publish)),
+        (
+            title,
+            stage,
+            status,
+            int(skip_publish),
+            pipeline,
+            material_id,
+            script_payload,
+        ),
     )
     job_id = cur.lastrowid
     return get_job(conn, job_id)
@@ -59,7 +75,7 @@ def list_jobs(
     if status:
         rows = conn.execute(
             """
-            SELECT id, title, stage, status, final_path, updated_at, error_message
+            SELECT id, title, stage, status, pipeline, final_path, updated_at, error_message
             FROM video_job
             WHERE status = ?
             ORDER BY id DESC
@@ -70,7 +86,7 @@ def list_jobs(
     else:
         rows = conn.execute(
             """
-            SELECT id, title, stage, status, final_path, updated_at, error_message
+            SELECT id, title, stage, status, pipeline, final_path, updated_at, error_message
             FROM video_job
             ORDER BY id DESC
             LIMIT ? OFFSET ?
@@ -98,6 +114,8 @@ def update_job(conn: sqlite3.Connection, job_id: int, **fields: Any) -> dict:
         "fail_stage",
         "retry_count",
         "skip_publish",
+        "pipeline",
+        "material_id",
         "script_json",
         "quality_report",
         "final_path",

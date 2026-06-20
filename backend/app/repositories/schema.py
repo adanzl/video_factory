@@ -23,12 +23,40 @@ CREATE INDEX IF NOT EXISTS idx_title_status ON title(status);
 """
 
 
+_MATERIAL_DDL = """
+CREATE TABLE IF NOT EXISTS video_material (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    file_path TEXT NOT NULL,
+    duration_sec REAL,
+    width INTEGER,
+    height INTEGER,
+    size_bytes INTEGER,
+    thumbnail_path TEXT,
+    note TEXT,
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_video_material_status ON video_material(status);
+"""
+
+
+def apply_material_schema(conn: sqlite3.Connection) -> None:
+    """创建视频素材库表，并为 video_job 增加 pipeline / material_id（幂等）。"""
+    conn.executescript(_MATERIAL_DDL)
+    _ensure_column(conn, "video_job", "pipeline", "TEXT NOT NULL DEFAULT 'standard'")
+    _ensure_column(conn, "video_job", "material_id", "INTEGER")
+
+
 def apply_title_schema(conn: sqlite3.Connection) -> None:
     """创建选题库 title 表（幂等，可单独对已有库执行）。"""
     conn.executescript(_TITLE_DDL)
 
 
 def apply_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript(_MATERIAL_DDL)
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS video_job (
@@ -36,6 +64,8 @@ def apply_schema(conn: sqlite3.Connection) -> None:
             title TEXT NOT NULL,
             stage TEXT NOT NULL DEFAULT 'title',
             status TEXT NOT NULL DEFAULT 'pending',
+            pipeline TEXT NOT NULL DEFAULT 'standard',
+            material_id INTEGER,
             fail_stage TEXT,
             retry_count INTEGER NOT NULL DEFAULT 0,
             skip_publish INTEGER NOT NULL DEFAULT 1,
@@ -83,6 +113,7 @@ def apply_schema(conn: sqlite3.Connection) -> None:
         """
     )
     apply_title_schema(conn)
+    apply_material_schema(conn)
     conn.execute(
         "UPDATE video_job SET stage = 'segment' WHERE stage = 'ffmpeg'"
     )

@@ -11,6 +11,7 @@
         </el-button>
         <span class="font-medium">{{ job.title }}</span>
         <span class="text-gray-500">#{{ job.id }}</span>
+        <el-tag size="small" type="info">{{ pipelineLabel(job.pipeline) }}</el-tag>
         <el-tag :type="statusTagType(job.status)" size="small">{{ job.status }}</el-tag>
         <el-tag v-if="job.fail_stage" type="danger" size="small">失败于 {{ job.fail_stage }}</el-tag>
       </div>
@@ -24,7 +25,7 @@
       />
 
       <el-tabs v-model="activeStage" type="border-card">
-        <el-tab-pane v-for="stage in JOB_STAGES" :key="stage.name" :name="stage.name">
+        <el-tab-pane v-for="stage in jobStages" :key="stage.name" :name="stage.name">
           <template #label>
             <span>{{ stage.label }}</span>
             <el-tag v-if="job.stage === stage.name" size="small" type="warning" class="ml-1">
@@ -52,13 +53,14 @@ import type { Component } from "vue";
 import { Refresh } from "@element-plus/icons-vue";
 import { getJob, getJobLogs, getJobSegments } from "@/api/api-jobs";
 import { JOB_STATUS_RUNNING } from "@/constants/job";
-import { JOB_STAGE_NAMES, JOB_STAGES } from "@/constants/jobStages";
+import { pipelineLabel, stageNamesForJob, stagesForJob } from "@/constants/jobStages";
 import type { JobDetail, JobLog, JobSegment } from "@/types/jobs";
 import { useErrorHandler } from "@/composables/useErrorHandler";
 import StageCover from "./StageCover.vue";
 import StageHost from "./StageHost.vue";
 import StageIntro from "./StageIntro.vue";
 import StageMerge from "./StageMerge.vue";
+import StagePrepare from "./StagePrepare.vue";
 import StagePublish from "./StagePublish.vue";
 import StageScript from "./StageScript.vue";
 import StageSegment from "./StageSegment.vue";
@@ -67,6 +69,7 @@ import StageTts from "./StageTts.vue";
 
 const STAGE_PANELS: Record<string, Component> = {
   title: StageTitle,
+  prepare: StagePrepare,
   script: StageScript,
   intro: StageIntro,
   cover: StageCover,
@@ -87,7 +90,9 @@ const job = ref<JobDetail>();
 const segments = ref<JobSegment[]>([]);
 const logs = ref<JobLog[]>([]);
 const loading = ref(false);
-const activeStage = ref(JOB_STAGES[0].name);
+const activeStage = ref("script");
+
+const jobStages = computed(() => (job.value ? stagesForJob(job.value) : []));
 
 const RUNNING_POLL_INTERVAL_MS = 3000;
 let runningPollTimer: ReturnType<typeof setInterval> | null = null;
@@ -126,10 +131,11 @@ const statusTagType = (status: string) => {
 };
 
 const syncActiveStage = (detail: JobDetail) => {
-  if (detail.stage && JOB_STAGE_NAMES.has(detail.stage)) {
+  const names = stageNamesForJob(detail);
+  if (detail.stage && names.has(detail.stage)) {
     activeStage.value = detail.stage;
   } else {
-    activeStage.value = JOB_STAGES[0].name;
+    activeStage.value = stagesForJob(detail)[0]?.name ?? "script";
   }
 };
 

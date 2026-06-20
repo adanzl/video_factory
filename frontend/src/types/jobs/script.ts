@@ -14,5 +14,6 @@ export interface ScriptJson {
   word_count?: number;
   cost_time?: number;
   visual_style?: string;
+  script_mode?: "ai" | "manual";
   segments?: ScriptSegment[];
 }

@@ -10,6 +10,8 @@ export interface JobListItem {
   title: string;
   stage: string;
   status: string;
+  pipeline?: string | null;
+  material_id?: number | null;
   final_path?: FinalAsset | null;
   updated_at?: string | null;
   error_message?: string | null;

@@ -6,7 +6,7 @@ import type { JobDetail, JobListItem, JobLog, JobSegment, ListJobsParams } from 
 import type { RunStageActionPayload } from "@/types/jobs/stageAction";
 
 export async function listJobs(params: ListJobsParams = {}): Promise<JobListItem[]> {
-  const response = await api.get<JobListItem[]>("/v_factory/api/jobs", { params });
+  const response = await api.get<JobListItem[]>("/v_factory/api/jobs/list", { params });
   return Array.isArray(response.data) ? response.data : [];
 }
 

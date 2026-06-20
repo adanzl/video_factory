@@ -52,6 +52,7 @@ def allowed_media_roots() -> list[str]:
     settings = get_settings()
     roots = [
         str(settings.video_data_dir.resolve()),
+        str(settings.material_data_dir.resolve()),
         str((settings.root_dir / "data").resolve()),
     ]
     allowed_dir = (settings.allowed_dir or "").strip()

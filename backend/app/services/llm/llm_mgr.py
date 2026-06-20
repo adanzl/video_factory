@@ -44,6 +44,16 @@ class LLMClient:
     ) -> str:
         raise NotImplementedError
 
+    def generate_material_script(
+        self,
+        title: str,
+        *,
+        feedback: str | None = None,
+        max_title_length: int | None = None,
+        narration_target_words: int | None = None,
+    ) -> dict[str, Any]:
+        raise NotImplementedError
+
 
 class LLMMgr:
     """LLM 管理器。"""
@@ -143,6 +153,21 @@ class LLMMgr:
             elapsed,
         )
         return title
+
+    def generate_material_script(
+        self,
+        title: str,
+        *,
+        feedback: str | None = None,
+        max_title_length: int | None = None,
+        narration_target_words: int | None = None,
+    ) -> dict[str, Any]:
+        return self._get_client().generate_material_script(
+            title,
+            feedback=feedback,
+            max_title_length=max_title_length,
+            narration_target_words=narration_target_words,
+        )
 
 
 llm_mgr = LLMMgr()

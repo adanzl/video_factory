@@ -159,6 +159,12 @@ def run_segment_clips_route():
     )
 
 
+@bp.post("/prepare")
+def run_prepare_route():
+    job_id, to_end = _parse_stage_body()
+    return _accept_stage(job_id, lambda: job_mgr.run_prepare(job_id, to_end=to_end))
+
+
 @bp.post("/merge")
 def run_merge_route():
     job_id, to_end = _parse_stage_body()
@@ -171,7 +177,7 @@ def run_publish_route():
     return _accept_stage(job_id, lambda: job_mgr.run_publish(job_id, to_end=to_end))
 
 
-@bp.get("")
+@bp.get("/list")
 def list_jobs_route():
     status = get_query("status")
     limit = parse_query_int("limit", 50, minimum=1, maximum=200)

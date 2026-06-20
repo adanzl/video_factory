@@ -147,6 +147,29 @@ def probe_duration(path: Path) -> float:
     return float(out.stdout.strip())
 
 
+def probe_video_size(path: Path) -> tuple[int, int]:
+    out = _run_cmd(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=width,height",
+            "-of",
+            "csv=p=0:s=x",
+            str(path),
+        ],
+        timeout=_PROBE_TIMEOUT,
+    )
+    raw = out.stdout.strip()
+    if "x" not in raw:
+        raise ValueError(f"cannot probe video size: {path}")
+    width, height = raw.split("x", 1)
+    return int(width), int(height)
+
+
 def concat_clips(clips: list[Path], output_path: Path) -> Path:
     """拼接同编码片段；音频 MP3 多条时重编码，避免 -c copy 接缝咔嗒。"""
     output_path.parent.mkdir(parents=True, exist_ok=True)

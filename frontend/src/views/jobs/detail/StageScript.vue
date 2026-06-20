@@ -23,7 +23,7 @@
             <span v-if="actionDisabledReason" class="shrink-0 text-xs text-gray-400">{{ actionDisabledReason }}</span>
           </div>
         </el-form-item>
-        <div class="flex flex-wrap items-start gap-x-4">
+        <div v-if="!isMaterialJob" class="flex flex-wrap items-start gap-x-4">
           <el-form-item label="单镜(秒)" class="!mb-0">
             <el-input-number
               v-model="segmentTargetSec"
@@ -71,7 +71,12 @@
         <el-descriptions-item label="生成耗时">{{ formatCostTime(script.cost_time) }}</el-descriptions-item>
         <el-descriptions-item label="字数">{{ script.word_count ?? "-" }}</el-descriptions-item>
         <el-descriptions-item label="分镜数">{{ script.segments?.length ?? 0 }}</el-descriptions-item>
-        <el-descriptions-item label="画风定调" :span="3">{{ script.visual_style || "-" }}</el-descriptions-item>
+        <el-descriptions-item v-if="!isMaterialJob" label="画风定调" :span="3">
+          {{ script.visual_style || "-" }}
+        </el-descriptions-item>
+        <el-descriptions-item v-if="isMaterialJob && script.script_mode" label="文案模式">
+          {{ script.script_mode === "manual" ? "手动" : "AI" }}
+        </el-descriptions-item>
       </el-descriptions>
 
       <div class="mb-5">
@@ -94,26 +99,28 @@
               <div class="leading-relaxed break-words whitespace-pre-wrap">{{ row.text }}</div>
             </template>
           </el-table-column>
-          <el-table-column prop="visual_brief" label="画面描述" min-width="150">
-            <template #default="{ row }">
-              <div class="leading-relaxed break-words whitespace-pre-wrap">{{ row.visual_brief || "-" }}</div>
-            </template>
-          </el-table-column>
-          <el-table-column prop="visual_mode" label="模式" width="120" />
-          <el-table-column prop="image_prompt" label="文生图提示词" min-width="240">
-            <template #default="{ row }">
-              <div class="text-xs leading-relaxed break-words whitespace-pre-wrap text-gray-500">
-                {{ row.image_prompt || "-" }}
-              </div>
-            </template>
-          </el-table-column>
-          <el-table-column prop="motion_prompt" label="运动提示词" min-width="100">
-            <template #default="{ row }">
-              <div class="text-xs leading-relaxed break-words whitespace-pre-wrap text-gray-500">
-                {{ row.motion_prompt || "-" }}
-              </div>
-            </template>
-          </el-table-column>
+          <template v-if="!isMaterialJob">
+            <el-table-column prop="visual_brief" label="画面描述" min-width="150">
+              <template #default="{ row }">
+                <div class="leading-relaxed break-words whitespace-pre-wrap">{{ row.visual_brief || "-" }}</div>
+              </template>
+            </el-table-column>
+            <el-table-column prop="visual_mode" label="模式" width="120" />
+            <el-table-column prop="image_prompt" label="文生图提示词" min-width="240">
+              <template #default="{ row }">
+                <div class="text-xs leading-relaxed break-words whitespace-pre-wrap text-gray-500">
+                  {{ row.image_prompt || "-" }}
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column prop="motion_prompt" label="运动提示词" min-width="100">
+              <template #default="{ row }">
+                <div class="text-xs leading-relaxed break-words whitespace-pre-wrap text-gray-500">
+                  {{ row.motion_prompt || "-" }}
+                </div>
+              </template>
+            </el-table-column>
+          </template>
         </el-table>
         <div v-else class="py-8 text-center text-sm text-gray-400">暂无分镜</div>
       </div>
@@ -177,6 +184,7 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import { runJobStageAction } from "@/api/api-jobs";
 import type { JobDetail, JobLog, ScriptJson } from "@/types/jobs";
 import type { RunStageActionPayload } from "@/types/jobs/stageAction";
+import { isMaterialJob as checkMaterialJob } from "@/constants/jobStages";
 import { formatDateTime } from "@/utils/date";
 import { formatCostTime } from "@/utils/media";
 import { useErrorHandler } from "@/composables/useErrorHandler";
@@ -202,6 +210,7 @@ const maxTitleLength = ref(DEFAULT_MAX_TITLE_LENGTH);
 const narrationTargetWords = ref(DEFAULT_NARRATION_TARGET_WORDS);
 
 const actionDisabled = computed(() => props.job.status === "running");
+const isMaterialJob = computed(() => checkMaterialJob(props.job));
 const actionDisabledReason = computed(() =>
   props.job.status === "running" ? "任务运行中，请稍后再试" : ""
 );

@@ -10,6 +10,10 @@
           <el-icon><List /></el-icon>
           <template #title>任务队列</template>
         </el-menu-item>
+        <el-menu-item index="/materials">
+          <el-icon><VideoCamera /></el-icon>
+          <template #title>视频素材</template>
+        </el-menu-item>
         <el-menu-item index="/topic">
           <el-icon><Document /></el-icon>
           <template #title>选题库</template>
@@ -30,7 +34,7 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import { useRoute } from "vue-router";
-import { HomeFilled, List, Document, Setting, Expand, Fold } from "@element-plus/icons-vue";
+import { HomeFilled, List, Document, Setting, Expand, Fold, VideoCamera } from "@element-plus/icons-vue";
 
 const emit = defineEmits<{
   collapseChange: [collapsed: boolean];

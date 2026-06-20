@@ -22,6 +22,11 @@
     <el-table :data="jobs" stripe class="w-full" v-loading="loading">
       <el-table-column prop="id" label="ID" width="80" />
       <el-table-column prop="title" label="标题" min-width="200" show-overflow-tooltip />
+      <el-table-column label="类型" width="80">
+        <template #default="{ row }">
+          <el-tag size="small" type="info">{{ pipelineLabel(row.pipeline) }}</el-tag>
+        </template>
+      </el-table-column>
       <el-table-column prop="stage" label="阶段" width="120" />
       <el-table-column label="状态" width="100">
         <template #default="{ row }">
@@ -70,6 +75,7 @@ import { onMounted, ref } from "vue";
 import { Refresh } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { deleteJob, listJobs } from "@/api/api-jobs";
+import { pipelineLabel } from "@/constants/jobStages";
 import type { JobListItem } from "@/types/jobs";
 import { useErrorHandler } from "@/composables/useErrorHandler";
 import { formatDateTime } from "@/utils/date";

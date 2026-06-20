@@ -244,6 +244,38 @@ class DeepSeekClient(LLMClient):
             )
         return data
 
+    def generate_material_script(
+        self,
+        title: str,
+        *,
+        feedback: str | None = None,
+        max_title_length: int | None = None,
+        narration_target_words: int | None = None,
+    ) -> dict[str, Any]:
+        settings = get_settings()
+        max_title = settings.max_title_length if max_title_length is None else max_title_length
+        narr_target = narration_target_words if narration_target_words is not None else 800
+        narr_lo, narr_hi = _narration_word_range(narr_target)
+        system = (
+            "你是科普视频口播编剧。视频画面已由用户上传的基底视频提供，无需描述画面。"
+            "输出 JSON，字段：title, narration, word_count, segments。"
+            f"title 为精简视频标题，不含空格换行，字数不超过 {max_title}。"
+            f"narration 为完整口播，总字数 {narr_lo}-{narr_hi}（不含空格换行），口语化；"
+            "禁止开头自我介绍；第一句直接进入主题。"
+            "segments 为分句数组，每项含 segment_index 与 text；"
+            "各段 text 按顺序拼接须与 narration 完全一致；按自然断句切分，无需 visual 字段。"
+            "word_count 必须等于 narration 实际字数。"
+        )
+        user = f"原标题：{title}\n请输出 title、完整口播 narration 与分句 segments。"
+        if feedback:
+            user += f"\n\n上次不合格：{feedback}。请按要求重写。"
+        data = json.loads(self._chat(system, user))
+        if "segments" not in data:
+            raise ValueError("LLM material script response missing segments")
+        for seg in data["segments"]:
+            seg.setdefault("visual_mode", "material")
+        return data
+
     def optimize_script_title(
         self,
         draft_title: str,

@@ -1,53 +1,34 @@
-"""Stage 注册表：显式声明流水线顺序与 next_stage 链接。"""
+"""Stage 注册表：从 app.core.pipelines 导出，兼容旧 import 路径。"""
 
 from __future__ import annotations
 
-from worker.stages.base import StageExecutor
-from worker.stages.cover import CoverStage
-from worker.stages.host import HostStage
-from worker.stages.intro import IntroStage
-from worker.stages.merge import MergeStage
-from worker.stages.publish import PublishStage
-from worker.stages.script import ScriptStage
-from worker.stages.segment import SegmentStage
-from worker.stages.title import TitleStage
-from worker.stages.tts import TTSStage
-
-STAGE_CHAIN: tuple[type[StageExecutor], ...] = (
-    TitleStage,
-    ScriptStage,
-    IntroStage,
-    CoverStage,
-    TTSStage,
-    SegmentStage,
-    HostStage,
-    MergeStage,
-    PublishStage,
+from app.core.pipelines import (
+    EXECUTORS,
+    PIPELINE_STANDARD,
+    STAGES,
+    STAGE_CLASS_BY_KEY,
+    executor_for_stage,
+    stage_class_for,
 )
 
-
-def _link_next_stages() -> None:
-    for index, stage_cls in enumerate(STAGE_CHAIN):
-        stage_cls.next_stage = STAGE_CHAIN[index + 1] if index + 1 < len(STAGE_CHAIN) else None
-
-
-_link_next_stages()
-
-EXECUTORS: dict[str, StageExecutor] = {stage_cls.name: stage_cls() for stage_cls in STAGE_CHAIN}
-STAGE_CLASS_BY_NAME: dict[str, type[StageExecutor]] = {stage_cls.name: stage_cls for stage_cls in STAGE_CHAIN}
-STAGES: tuple[str, ...] = tuple(stage_cls.name for stage_cls in STAGE_CHAIN) + ("done",)
+__all__ = [
+    "EXECUTORS",
+    "STAGES",
+    "STAGE_CLASS_BY_NAME",
+    "executor_for",
+    "stage_class",
+]
 
 
-def stage_class(name: str) -> type[StageExecutor]:
-    try:
-        return STAGE_CLASS_BY_NAME[name]
-    except KeyError as exc:
-        raise ValueError(f"unknown stage: {name}") from exc
+# 标准流水线 stage 名 → class（兼容 loop / CLI）
+STAGE_CLASS_BY_NAME: dict[str, type] = {
+    name: cls for (pipe, name), cls in STAGE_CLASS_BY_KEY.items() if pipe == PIPELINE_STANDARD
+}
 
 
-def executor_for(stage_cls: type[StageExecutor]) -> StageExecutor:
-    return EXECUTORS[stage_cls.name]
+def stage_class(name: str):
+    return stage_class_for(name, pipeline=PIPELINE_STANDARD)
 
 
-def stage_index(stage: str) -> int:
-    return STAGES.index(stage)
+def executor_for(stage_cls: type) -> object:
+    return executor_for_stage(stage_cls.name, pipeline=PIPELINE_STANDARD)

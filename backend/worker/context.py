@@ -19,6 +19,7 @@ class JobContext:
     script_segment_target_sec: float | None = None
     script_max_title_length: int | None = None
     script_narration_target_words: int | None = None
+    material_narration: str | None = None
 
     @classmethod
     def from_job(
@@ -33,6 +34,7 @@ class JobContext:
         script_segment_target_sec: float | None = None,
         script_max_title_length: int | None = None,
         script_narration_target_words: int | None = None,
+        material_narration: str | None = None,
     ) -> "JobContext":
         settings = get_settings()
         media_dir = settings.video_data_dir / str(job["id"])
@@ -49,6 +51,7 @@ class JobContext:
             script_segment_target_sec=script_segment_target_sec,
             script_max_title_length=script_max_title_length,
             script_narration_target_words=script_narration_target_words,
+            material_narration=material_narration,
         )
 
     def rel(self, name: str) -> Path:

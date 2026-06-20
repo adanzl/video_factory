@@ -5,11 +5,35 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from app.core import pipeline
+from app.core.pipelines import (
+    PIPELINE_MATERIAL,
+    is_material_job,
+    resolve_pipeline,
+    stage_index,
+    stages_for,
+)
 from app.repositories import job_log_repo, job_repo, segment_repo
 from app.repositories.connection import connection
 
 __all__ = ["prepare_for_action", "prepare_job_rerun", "reset_job_from_stage"]
+
+
+def _material_script_reset_seed(job: dict) -> dict | None:
+    script_json = job.get("script_json")
+    if not isinstance(script_json, dict):
+        return None
+    pending = script_json.get("pending_narration")
+    if pending:
+        return {
+            "pending_narration": pending,
+            "script_mode": script_json.get("script_mode", "manual"),
+        }
+    if script_json.get("script_mode") == "manual" and script_json.get("narration"):
+        return {
+            "pending_narration": script_json["narration"],
+            "script_mode": "manual",
+        }
+    return None
 
 
 def _delete_files(paths: list[Path]) -> None:
@@ -115,21 +139,28 @@ def _clear_partial_segment_media(
         _delete_files([media_dir / "segments" / f"{index}.mp4"])
 
 
-def _clear_downstream(conn, job_id: int, stage: str, media_dir: Path) -> None:
+def _clear_downstream(conn, job_id: int, stage: str, media_dir: Path, job: dict) -> None:
     """清空 stage 之后各阶段的产物（不含 stage 自身）。"""
     if not media_dir.exists():
         return
 
-    idx = pipeline.stage_index(stage)
+    pipe = resolve_pipeline(job)
+    idx = stage_index(stage, job)
 
-    if idx < pipeline.stage_index("cover"):
+    if idx < stage_index("cover", job):
         job_repo.update_job(conn, job_id, cover_path=None)
         _delete_files([media_dir / "cover.jpg"])
 
-    if idx < pipeline.stage_index("segment"):
+    if pipe == PIPELINE_MATERIAL:
+        if idx < stage_index("merge", job):
+            job_repo.update_job(conn, job_id, final_path=None)
+            _clear_merge_artifacts(media_dir)
+        return
+
+    if idx < stage_index("segment", job):
         _clear_segment_clips(conn, job_id, media_dir)
 
-    if idx < pipeline.stage_index("merge"):
+    if idx < stage_index("merge", job):
         job_repo.update_job(conn, job_id, final_path=None)
         _clear_merge_artifacts(media_dir)
 
@@ -162,17 +193,28 @@ def _clear_stage_self(
     job_id: int,
     stage: str,
     media_dir: Path,
+    job: dict,
     *,
     segment_indices: list[int] | None,
     segment_scope: str | None = None,
 ) -> None:
     """清空 stage 自身产物，以便重新执行。"""
+    pipe = resolve_pipeline(job)
+
+    if stage == "prepare":
+        _delete_files([media_dir / "base.mp4", media_dir / "base_meta.json"])
+        return
+
     if stage in {"title", "script"}:
+        preserve_base = pipe == PIPELINE_MATERIAL and stage == "script"
+        reset_script_json = None
+        if preserve_base:
+            reset_script_json = _material_script_reset_seed(job)
         segment_repo.delete_segments(conn, job_id)
         job_repo.update_job(
             conn,
             job_id,
-            script_json=None,
+            script_json=reset_script_json,
             audio_path=None,
             subtitle_path=None,
             tts_usage_json=None,
@@ -182,9 +224,15 @@ def _clear_stage_self(
             quality_report=None,
         )
         if media_dir.exists():
+            if not preserve_base:
+                _delete_files([media_dir / "base.mp4", media_dir / "base_meta.json"])
             _clear_tts_artifacts(conn, job_id, media_dir)
-            _clear_all_segment_media(conn, job_id, media_dir)
+            if pipe != PIPELINE_MATERIAL:
+                _clear_all_segment_media(conn, job_id, media_dir)
             _clear_merge_artifacts(media_dir)
+            merge_work = media_dir / "merge_work"
+            if merge_work.exists():
+                shutil.rmtree(merge_work)
         return
 
     if stage == "intro":
@@ -243,8 +291,6 @@ def prepare_for_action(
         stage = action
         segment_scope = None
 
-    if stage not in pipeline.STAGES or stage == "done":
-        raise ValueError(f"invalid action: {action}")
     if segment_indices is not None:
         if not action.startswith("segment/"):
             raise ValueError("segments 仅可用于 segment/all、segment/images 或 segment/clips")
@@ -257,15 +303,21 @@ def prepare_for_action(
     media_dir = settings.video_data_dir / str(job_id)
 
     with connection() as conn:
+        job = job_repo.get_job(conn, job_id)
+        if stage not in stages_for(job) or stage == "done":
+            raise ValueError(f"invalid action: {action}")
+        if is_material_job(job) and action.startswith("segment/"):
+            raise ValueError(f"action not supported for material pipeline: {action}")
         _clear_stage_self(
             conn,
             job_id,
             stage,
             media_dir,
+            job,
             segment_indices=segment_indices,
             segment_scope=segment_scope,
         )
-        _clear_downstream(conn, job_id, stage, media_dir)
+        _clear_downstream(conn, job_id, stage, media_dir, job)
 
         job = job_repo.update_job(
             conn,
@@ -290,8 +342,6 @@ def prepare_job_rerun(
     mode: str = "from",
 ) -> dict:
     """准备重跑（CLI）：清空 stage 自身 + 下游产物，并将 job 指到 stage。"""
-    if stage not in pipeline.STAGES or stage == "done":
-        raise ValueError(f"invalid stage: {stage}")
     if mode not in {"from", "only"}:
         raise ValueError(f"invalid rerun mode: {mode}")
     if segment_indices is not None:
@@ -306,15 +356,19 @@ def prepare_job_rerun(
     media_dir = settings.video_data_dir / str(job_id)
 
     with connection() as conn:
+        job = job_repo.get_job(conn, job_id)
+        if stage not in stages_for(job) or stage == "done":
+            raise ValueError(f"invalid stage: {stage}")
         _clear_stage_self(
             conn,
             job_id,
             stage,
             media_dir,
+            job,
             segment_indices=segment_indices,
             segment_scope=None,
         )
-        _clear_downstream(conn, job_id, stage, media_dir)
+        _clear_downstream(conn, job_id, stage, media_dir, job)
 
         job = job_repo.update_job(
             conn,

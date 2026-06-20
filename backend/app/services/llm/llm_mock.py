@@ -88,6 +88,36 @@ class MockLLMClient(LLMClient):
             "segments": segments,
         }
 
+    def generate_material_script(
+        self,
+        title: str,
+        *,
+        feedback: str | None = None,
+        max_title_length: int | None = None,
+        narration_target_words: int | None = None,
+    ) -> dict[str, Any]:
+        _ = feedback, narration_target_words
+        base = self.generate_script(
+            title,
+            segment_target_sec=0,
+            max_title_length=max_title_length,
+        )
+        segments = []
+        for seg in base["segments"]:
+            segments.append(
+                {
+                    "segment_index": seg["segment_index"],
+                    "text": seg["text"],
+                    "visual_mode": "material",
+                }
+            )
+        return {
+            "title": base["title"],
+            "narration": base["narration"],
+            "word_count": base["word_count"],
+            "segments": segments,
+        }
+
     def optimize_script_title(
         self,
         draft_title: str,

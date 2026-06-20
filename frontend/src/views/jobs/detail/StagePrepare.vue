@@ -5,41 +5,28 @@
         <div class="mb-4 rounded-lg border border-gray-200 p-4">
           <div class="flex flex-wrap items-center gap-2">
             <el-button type="primary" :loading="submitting" :disabled="actionDisabled" @click="handleRun(false)">
-              重新生成
+              重新复制
             </el-button>
             <el-button type="success" :loading="submitting" :disabled="actionDisabled" @click="handleRun(true)">
-              从此成片
+              从此继续
             </el-button>
             <span v-if="actionDisabledReason" class="text-sm text-gray-400">{{ actionDisabledReason }}</span>
           </div>
         </div>
 
-        <el-descriptions :column="1" border label-width="70px">
+        <el-descriptions :column="1" border label-width="80px">
+          <el-descriptions-item label="素材 ID">{{ job.material_id ?? "-" }}</el-descriptions-item>
+          <el-descriptions-item label="分辨率">{{ resolutionText }}</el-descriptions-item>
           <el-descriptions-item label="时长">{{ durationText }}</el-descriptions-item>
-          <el-descriptions-item label="大小">{{ sizeText }}</el-descriptions-item>
-          <el-descriptions-item label="耗时">{{ costTimeText }}</el-descriptions-item>
           <el-descriptions-item label="路径">
-            <span class="break-all">{{ finalFilePath || "-" }}</span>
+            <span class="break-all">{{ baseFilePath }}</span>
           </el-descriptions-item>
         </el-descriptions>
-
-        <el-alert
-          v-if="job.fail_stage === 'merge' && job.error_message"
-          type="error"
-          :title="job.error_message"
-          :closable="false"
-          class="mt-4"
-        />
       </div>
 
       <div class="min-w-[200px] max-w-xs flex-1 basis-[288px]">
         <div class="rounded border border-gray-200 p-4">
-          <div class="mb-3 flex items-center justify-between gap-2">
-            <div class="text-sm font-medium text-gray-700">成片预览</div>
-            <el-button v-if="videoUrl" size="small" :loading="downloading" @click="handleDownload">
-              下载
-            </el-button>
-          </div>
+          <div class="mb-3 text-sm font-medium text-gray-700">基底预览</div>
           <div v-if="videoUrl" class="w-full overflow-hidden rounded-lg border border-gray-200 bg-black">
             <video
               :key="videoUrl"
@@ -51,14 +38,11 @@
               @error="onVideoError"
             />
           </div>
-          <div
-            v-else-if="!finalFilePath"
-            class="flex aspect-[9/16] items-center justify-center text-sm text-gray-400"
-          >
-            暂无成片，请先生成
+          <div v-else class="flex aspect-[9/16] items-center justify-center text-sm text-gray-400">
+            暂无基底视频，请先执行 prepare
           </div>
           <el-alert
-            v-else-if="loadError"
+            v-if="loadError"
             type="warning"
             :title="loadError"
             :closable="false"
@@ -86,16 +70,9 @@
 import { computed, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { runJobStageAction } from "@/api/api-jobs";
-import { downloadMediaFile } from "@/api/api-media";
 import type { JobDetail, JobLog } from "@/types/jobs";
 import { formatDateTime } from "@/utils/date";
-import {
-  formatCostTime,
-  formatFileSize,
-  formatMediaDuration,
-  getMediaFileUrl,
-  resolveFinalPath,
-} from "@/utils/media";
+import { formatMediaDuration, getMediaFileUrl } from "@/utils/media";
 import { useErrorHandler } from "@/composables/useErrorHandler";
 
 const props = defineProps<{
@@ -109,7 +86,6 @@ const emit = defineEmits<{
 
 const { handleError } = useErrorHandler();
 const submitting = ref(false);
-const downloading = ref(false);
 const loadError = ref("");
 
 const actionDisabled = computed(() => props.job.status === "running");
@@ -117,64 +93,27 @@ const actionDisabledReason = computed(() =>
   props.job.status === "running" ? "任务运行中，请稍后再试" : ""
 );
 
-const finalAsset = computed(() => props.job.final_path);
-const finalFilePath = computed(() => resolveFinalPath(props.job.final_path));
-const videoUrl = computed(() => getMediaFileUrl(finalFilePath.value));
+const baseFilePath = computed(() => `${props.job.id}/base.mp4`);
+const videoUrl = computed(() => getMediaFileUrl(baseFilePath.value));
 
 const durationText = computed(() => {
-  if (!finalAsset.value) {
-    return "-";
+  const asset = props.job.final_path;
+  if (asset && typeof asset === "object" && asset.duration != null) {
+    return formatMediaDuration(asset.duration);
   }
-  const duration =
-    typeof finalAsset.value === "object" ? finalAsset.value.duration : null;
-  if (duration === null || duration === undefined) {
-    return "-";
-  }
-  return formatMediaDuration(duration);
+  return "-";
 });
 
-const sizeText = computed(() => {
-  if (!finalAsset.value || typeof finalAsset.value !== "object") {
-    return "-";
-  }
-  return formatFileSize(finalAsset.value.size);
-});
-
-const costTimeText = computed(() => {
-  if (!finalAsset.value || typeof finalAsset.value !== "object") {
-    return "-";
-  }
-  return formatCostTime(finalAsset.value.cost_time);
-});
+const resolutionText = computed(() => "-");
 
 const onVideoError = () => {
-  loadError.value = "视频加载失败，请确认文件已生成且服务可访问";
-};
-
-const downloadFilename = computed(() => {
-  const fromPath = finalFilePath.value.split("/").pop();
-  return fromPath || `job-${props.job.id}-final.mp4`;
-});
-
-const handleDownload = async () => {
-  if (!finalFilePath.value) {
-    return;
-  }
-  downloading.value = true;
-  try {
-    await downloadMediaFile(finalFilePath.value, downloadFilename.value);
-    ElMessage.success("已开始下载");
-  } catch (error) {
-    handleError(error, "下载失败");
-  } finally {
-    downloading.value = false;
-  }
+  loadError.value = "视频加载失败，请确认基底文件已复制且服务可访问";
 };
 
 const handleRun = async (toEnd: boolean) => {
-  const actionLabel = toEnd ? "从此成片" : "重新生成";
+  const actionLabel = toEnd ? "从此继续" : "重新复制";
   try {
-    await ElMessageBox.confirm(`确定对「合成」阶段执行「${actionLabel}」吗？`, "确认执行", {
+    await ElMessageBox.confirm(`确定对「基底准备」执行「${actionLabel}」吗？`, "确认执行", {
       type: "warning",
       confirmButtonText: "执行",
       cancelButtonText: "取消",
@@ -185,7 +124,7 @@ const handleRun = async (toEnd: boolean) => {
 
   submitting.value = true;
   try {
-    await runJobStageAction("merge", { id: props.job.id, to_end: toEnd });
+    await runJobStageAction("prepare", { id: props.job.id, to_end: toEnd });
     ElMessage.success(`已提交${actionLabel}，任务已开始执行`);
     emit("refresh");
   } catch (error) {
@@ -195,7 +134,7 @@ const handleRun = async (toEnd: boolean) => {
   }
 };
 
-watch(finalFilePath, () => {
+watch(baseFilePath, () => {
   loadError.value = "";
 });
 </script>
