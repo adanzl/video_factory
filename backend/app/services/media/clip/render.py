@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from app.config import get_settings
-from app.services.media.ffmpeg_utils import probe_duration, run_ffmpeg
+from app.services.media.ffmpeg_utils import probe_duration, probe_video_size, run_ffmpeg
 
 CLIP_FPS = 25
 _MOTION_FINISH_RATIO = 0.42  # 动效在前 42% 时长内完成，之后保持
@@ -205,7 +205,16 @@ def image_to_clip_timed_overlays(
         str(image_path),
     ]
     for overlay_path, _, _ in overlay_windows:
-        cmd.extend(["-i", str(overlay_path)])
+        cmd.extend(
+            [
+                "-loop",
+                "1",
+                "-framerate",
+                str(CLIP_FPS),
+                "-i",
+                str(overlay_path),
+            ]
+        )
     cmd.extend(
         [
             "-filter_complex",
@@ -288,9 +297,11 @@ def video_to_clip_timed_overlays(
         fit_video_duration(video_path, output_path, duration_sec)
         return output_path
 
+    video_w, video_h = probe_video_size(video_path)
     parts = [f"[0:v]format={_PIX_FMT}[bg]"]
     for idx, (overlay_path, _, _) in enumerate(overlay_windows):
-        parts.append(f"[{idx + 1}:v]format=rgba[s{idx}]")
+        _ = overlay_path
+        parts.append(f"[{idx + 1}:v]format=rgba,scale={video_w}:{video_h}[s{idx}]")
 
     current = "bg"
     for idx, (_, start, end) in enumerate(overlay_windows):
@@ -307,7 +318,16 @@ def video_to_clip_timed_overlays(
         str(video_path),
     ]
     for overlay_path, _, _ in overlay_windows:
-        cmd.extend(["-i", str(overlay_path)])
+        cmd.extend(
+            [
+                "-loop",
+                "1",
+                "-framerate",
+                str(CLIP_FPS),
+                "-i",
+                str(overlay_path),
+            ]
+        )
     cmd.extend(
         [
             "-filter_complex",

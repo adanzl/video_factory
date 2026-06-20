@@ -75,7 +75,8 @@ class MaterialMergeStage(StageExecutor):
                 (
                     f"material final at {result.final_path}, "
                     f"lufs={loudness.integrated_lufs}, "
-                    f"cost_time={updates['final_path']['cost_time']}s"
+                    f"cost_time={updates['final_path']['cost_time']}s, "
+                    f"subtitles=burned"
                 ),
             )
             apply_quality_checks(

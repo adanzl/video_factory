@@ -199,13 +199,20 @@ class MediaMgr:
                 width=base_w,
                 height=base_h,
             )
+            video_w, video_h = probe_video_size(fitted)
             if flat_cues:
+                logger.info(
+                    "merge_material: burning %s subtitle cues on %sx%s",
+                    len(flat_cues),
+                    video_w,
+                    video_h,
+                )
                 _, overlay_windows, overlay_paths = clip_mgr.prepare_subtitle_overlays(
                     subtitle_cues=flat_cues,
                     work_dir=work_dir,
                     segment_index=0,
-                    width=base_w,
-                    height=base_h,
+                    width=video_w,
+                    height=video_h,
                 )
                 video_to_clip_timed_overlays(
                     fitted,
@@ -214,6 +221,7 @@ class MediaMgr:
                     audio_dur,
                 )
             else:
+                logger.warning("merge_material: no subtitle cues with duration, skipping burn")
                 shutil.copy2(fitted, body_path)
         finally:
             clip_mgr.cleanup_overlay_paths(overlay_paths)
