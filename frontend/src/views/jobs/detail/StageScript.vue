@@ -59,11 +59,19 @@
     </div>
 
     <div v-if="script">
-      <el-descriptions :column="2" border class="mb-4">
-        <el-descriptions-item label="脚本标题" :span="2">{{ script.title || "-" }}</el-descriptions-item>
+      <el-descriptions :column="3" border class="mb-4">
+        <el-descriptions-item label="脚本标题" :span="3">{{ script.title || "-" }}</el-descriptions-item>
+        <el-descriptions-item
+          v-if="script.draft_title && script.draft_title !== script.title"
+          label="初稿标题"
+          :span="3"
+        >
+          {{ script.draft_title }}
+        </el-descriptions-item>
+        <el-descriptions-item label="生成耗时">{{ formatCostDuration(script.cost_duration) }}</el-descriptions-item>
         <el-descriptions-item label="字数">{{ script.word_count ?? "-" }}</el-descriptions-item>
         <el-descriptions-item label="分镜数">{{ script.segments?.length ?? 0 }}</el-descriptions-item>
-        <el-descriptions-item label="画风定调" :span="2">{{ script.visual_style || "-" }}</el-descriptions-item>
+        <el-descriptions-item label="画风定调" :span="3">{{ script.visual_style || "-" }}</el-descriptions-item>
       </el-descriptions>
 
       <div class="mb-5">
@@ -206,6 +214,13 @@ const script = computed<ScriptJson | null>(() => {
 });
 
 const rawJson = computed(() => JSON.stringify(props.job.script_json, null, 2));
+
+const formatCostDuration = (value?: number | null) => {
+  if (value === null || value === undefined) {
+    return "-";
+  }
+  return `${value.toFixed(1)} 秒`;
+};
 
 const QUALITY_STEP_LABELS: Record<string, string> = {
   copy: "文案",

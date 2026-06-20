@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import time
 
 from app.config import get_settings
 from app.quality.checkers import check_copy, check_storyboard
@@ -65,16 +66,18 @@ def _validate_script(
         settings.segment_target_sec if segment_target_sec is None else segment_target_sec
     )
     max_len = settings.max_title_length if max_title_length is None else max_title_length
-    min_narr = MIN_NARRATION_CHARS if min_narration_chars is None else min_narration_chars
+    required_narration_chars = (
+        MIN_NARRATION_CHARS if min_narration_chars is None else min_narration_chars
+    )
     narration = script.get("narration", "")
     segments = script.get("segments") or []
     warnings: list[str] = []
     chars = _narration_chars(narration)
-    if chars < min_narr:
-        retry_min = max(MIN_ACCEPT_NARRATION_CHARS, int(min_narr * 0.8))
+    if chars < required_narration_chars:
+        retry_min = max(MIN_ACCEPT_NARRATION_CHARS, int(required_narration_chars * 0.8))
         if chars >= retry_min:
             raise ScriptValidationError(
-                f"narration too short: {chars} chars (need >= {min_narr})",
+                f"narration too short: {chars} chars (need >= {required_narration_chars})",
                 retryable=True,
             )
         if chars < MIN_ACCEPT_NARRATION_CHARS:
@@ -83,7 +86,7 @@ def _validate_script(
                 retryable=False,
             )
         warnings.append(
-            f"cannot reach {min_narr} chars ({chars} got), continuing with shorter copy"
+            f"cannot reach {required_narration_chars} chars ({chars} got), continuing with shorter copy"
         )
     if not segments:
         raise ScriptValidationError("no segments", retryable=False)
@@ -139,6 +142,7 @@ class ScriptStage(StageExecutor):
     name = "script"
 
     def run(self, ctx: JobContext) -> None:
+        started = time.perf_counter()
         title = ctx.job["title"]
         segment_target_sec = ctx.script_segment_target_sec
         max_title_length = ctx.script_max_title_length
@@ -179,7 +183,36 @@ class ScriptStage(StageExecutor):
         if script is None:
             raise last_exc or RuntimeError("script generation failed")
 
+        draft_title = script["title"]
+        max_len = (
+            max_title_length
+            if max_title_length is not None
+            else get_settings().max_title_length
+        )
+        try:
+            optimized_title = llm_mgr.optimize_script_title(
+                draft_title,
+                script.get("narration", ""),
+                max_title_length=max_len,
+            )
+            script["draft_title"] = draft_title
+            script["title"] = _title_chars(optimized_title)
+            if len(script["title"]) > max_len:
+                raise ScriptValidationError(
+                    f"optimized title too long: {len(script['title'])} chars (need <= {max_len})"
+                )
+        except Exception as exc:
+            with connection() as conn:
+                job_log_repo.append_log(
+                    conn,
+                    ctx.job["id"],
+                    self.name,
+                    f"title optimize failed, keep draft: {exc}",
+                    level="warning",
+                )
+
         script["word_count"] = _narration_chars(script.get("narration", ""))
+        script["cost_duration"] = round(time.perf_counter() - started, 1)
         display_title = script["title"]
         with connection() as conn:
             for warning in accept_warnings:
@@ -202,7 +235,9 @@ class ScriptStage(StageExecutor):
                 ctx.job["id"],
                 self.name,
                 f"script ready, segments={len(script['segments'])}, "
-                f"words={script['word_count']}",
+                f"words={script['word_count']}, "
+                f"title={script['title']}, "
+                f"cost_duration={script['cost_duration']}s",
             )
             apply_quality_checks(
                 conn,

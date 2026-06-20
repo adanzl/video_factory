@@ -78,36 +78,38 @@
           {{ formatDateTime(row.created_at) }}
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="160" fixed="right">
+      <el-table-column label="操作" width="180" fixed="right">
         <template #default="{ row }">
-          <el-button
-            v-if="row.status !== 'enqueued'"
-            type="primary"
-            link
-            size="small"
-            :loading="scoringId === row.id"
-            @click="handleScoreOne(row.id)"
-          >
-            打分
-          </el-button>
-          <el-button
-            v-if="row.status === 'queued'"
-            type="success"
-            link
-            size="small"
-            :loading="enqueuing && pendingEnqueueIds.includes(row.id)"
-            @click="openEnqueueDialog([row.id])"
-          >
-            入队
-          </el-button>
-          <el-button
-            type="danger"
-            link
-            size="small"
-            @click="handleDeleteOne(row)"
-          >
-            删除
-          </el-button>
+          <div class="flex items-center gap-2 whitespace-nowrap">
+            <el-button
+              v-if="row.status !== 'enqueued'"
+              type="primary"
+              link
+              size="small"
+              :loading="scoringId === row.id"
+              @click="handleScoreOne(row.id)"
+            >
+              打分
+            </el-button>
+            <el-button
+              v-if="row.status === 'queued'"
+              type="success"
+              link
+              size="small"
+              :loading="enqueuing && pendingEnqueueIds.includes(row.id)"
+              @click="openEnqueueDialog([row.id])"
+            >
+              入队
+            </el-button>
+            <el-button
+              type="danger"
+              link
+              size="small"
+              @click="handleDeleteOne(row)"
+            >
+              删除
+            </el-button>
+          </div>
         </template>
       </el-table-column>
     </el-table>
@@ -151,7 +153,7 @@
       <p class="mb-4 text-sm text-gray-500">
         将创建 {{ pendingEnqueueIds.length }} 个生产任务，请选择执行方式：
       </p>
-      <el-radio-group v-model="enqueueRunMode" class="flex flex-col items-start gap-3">
+      <el-radio-group v-model="enqueueRunMode" class="enqueue-run-mode">
         <el-radio value="script">仅文案（默认，第一步）</el-radio>
         <el-radio value="none">仅创建任务，暂不执行</el-radio>
         <el-radio value="full">全流程（文案 → 成片）</el-radio>
@@ -426,3 +428,18 @@ const handleGenerate = async () => {
 
 onMounted(fetchTitles);
 </script>
+
+<style scoped>
+.enqueue-run-mode {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+}
+
+.enqueue-run-mode :deep(.el-radio) {
+  margin-right: 0;
+  height: auto;
+}
+</style>

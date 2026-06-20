@@ -5,6 +5,11 @@ from typing import Any
 
 from app.config import get_settings
 from app.services.llm.llm_mgr import LLMClient
+from app.services.llm.llm_script_title import (
+    build_title_optimize_system_prompt,
+    build_title_optimize_user_prompt,
+    parse_title_optimize_payload,
+)
 from app.services.llm.llm_topics import (
     build_topic_system_prompt,
     build_topic_user_prompt,
@@ -238,6 +243,24 @@ class DeepSeekClient(LLMClient):
                 "expand all six layers (composition, subject, environment, lighting, color, scope)"
             )
         return data
+
+    def optimize_script_title(
+        self,
+        draft_title: str,
+        narration: str,
+        *,
+        max_title_length: int | None = None,
+    ) -> str:
+        settings = get_settings()
+        max_len = settings.max_title_length if max_title_length is None else max_title_length
+        system = build_title_optimize_system_prompt(max_title_len=max_len)
+        user = build_title_optimize_user_prompt(
+            draft_title=draft_title,
+            narration=narration,
+            max_title_len=max_len,
+        )
+        raw = json.loads(self._chat(system, user))
+        return parse_title_optimize_payload(raw, max_title_len=max_len)
 
     def generate_topics(
         self,

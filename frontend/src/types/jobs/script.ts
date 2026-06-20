@@ -9,8 +9,10 @@ export interface ScriptSegment {
 
 export interface ScriptJson {
   title?: string;
+  draft_title?: string;
   narration?: string;
   word_count?: number;
+  cost_duration?: number;
   visual_style?: string;
   segments?: ScriptSegment[];
 }

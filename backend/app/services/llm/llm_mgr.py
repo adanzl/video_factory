@@ -35,6 +35,15 @@ class LLMClient:
     ) -> list[dict[str, str]]:
         raise NotImplementedError
 
+    def optimize_script_title(
+        self,
+        draft_title: str,
+        narration: str,
+        *,
+        max_title_length: int | None = None,
+    ) -> str:
+        raise NotImplementedError
+
 
 class LLMMgr:
     """LLM 管理器。"""
@@ -105,6 +114,35 @@ class LLMMgr:
             titles,
         )
         return topics
+
+    def optimize_script_title(
+        self,
+        draft_title: str,
+        narration: str,
+        *,
+        max_title_length: int | None = None,
+    ) -> str:
+        settings = get_settings()
+        max_len = settings.max_title_length if max_title_length is None else max_title_length
+        logger.info("[SCRIPT] optimize title start draft=%r max_len=%d", draft_title, max_len)
+        started = time.perf_counter()
+        try:
+            title = self._get_client().optimize_script_title(
+                draft_title,
+                narration,
+                max_title_length=max_len,
+            )
+        except Exception:
+            logger.exception("[SCRIPT] optimize title failed draft=%r", draft_title)
+            raise
+        elapsed = time.perf_counter() - started
+        logger.info(
+            "[SCRIPT] optimize title done draft=%r title=%r elapsed=%.1fs",
+            draft_title,
+            title,
+            elapsed,
+        )
+        return title
 
 
 llm_mgr = LLMMgr()

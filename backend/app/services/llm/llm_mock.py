@@ -88,6 +88,27 @@ class MockLLMClient(LLMClient):
             "segments": segments,
         }
 
+    def optimize_script_title(
+        self,
+        draft_title: str,
+        narration: str,
+        *,
+        max_title_length: int | None = None,
+    ) -> str:
+        _ = narration
+        from app.services.llm.llm_topics import normalize_title
+
+        settings = get_settings()
+        max_len = settings.max_title_length if max_title_length is None else max_title_length
+        cleaned = re.sub(r"\s+", "", draft_title.strip())
+        if "？" in cleaned or "?" in cleaned:
+            optimized = cleaned
+        elif cleaned.endswith("吗"):
+            optimized = f"{cleaned}？"
+        else:
+            optimized = f"{cleaned}，多数人不知道？"
+        return normalize_title(optimized, max_len=max_len)
+
     def generate_topics(
         self,
         theme: str,
