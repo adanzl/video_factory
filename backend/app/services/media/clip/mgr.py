@@ -40,6 +40,8 @@ class ClipMgr:
         subtitle_cues: list[tuple[str, float]],
         work_dir: Path,
         segment_index: int,
+        width: int | None = None,
+        height: int | None = None,
     ) -> tuple[float, list[tuple[Path, float, float]], list[Path]]:
         from app.services.media.subtitle_overlay import render_subtitle_overlay
 
@@ -56,7 +58,12 @@ class ClipMgr:
             if not sentence.strip():
                 continue
             overlay_path = work_dir / f"{segment_index}_{idx}.sub.png"
-            render_subtitle_overlay(sentence, overlay_path)
+            render_subtitle_overlay(
+                sentence,
+                overlay_path,
+                width=width,
+                height=height,
+            )
             overlay_paths.append(overlay_path)
             overlay_windows.append((overlay_path, start, end))
         return total_duration, overlay_windows, overlay_paths

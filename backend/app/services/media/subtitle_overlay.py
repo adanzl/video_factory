@@ -41,13 +41,40 @@ def _keep_overlay_png() -> bool:
     return os.getenv("SUBTITLE_KEEP_OVERLAY", "").lower() in {"1", "true", "yes"}
 
 
-def _fit_subtitle(text: str, max_width: int) -> tuple[list[str], int]:
+def _layout_for_canvas(width: int, height: int) -> dict:
+    """按画布尺寸缩放边距与字号（以竖屏 1080×1920 为基准）。"""
+    settings = get_settings()
+    ref_w, ref_h = settings.video_width, settings.video_height
+    if ref_w > ref_h:
+        ref_w, ref_h = ref_h, ref_w
+    h_scale = height / ref_h
+    w_scale = width / ref_w
+    font_max = max(_SUBTITLE_FONT_MIN, int(_SUBTITLE_FONT_SIZE * h_scale))
+    font_min = max(28, int(_SUBTITLE_FONT_MIN * h_scale))
+    if font_min > font_max:
+        font_min = font_max
+    return {
+        "width": width,
+        "height": height,
+        "side_margin": max(24, int(_SIDE_MARGIN * w_scale)),
+        "font_max": font_max,
+        "font_min": font_min,
+    }
+
+
+def _fit_subtitle(
+    text: str,
+    max_width: int,
+    *,
+    font_max: int = _SUBTITLE_FONT_SIZE,
+    font_min: int = _SUBTITLE_FONT_MIN,
+) -> tuple[list[str], int]:
     _, lines, font_size = fit_font_and_lines(
         text,
         max_width,
         load_cjk_font,
-        max_size=_SUBTITLE_FONT_SIZE,
-        min_size=_SUBTITLE_FONT_MIN,
+        max_size=font_max,
+        min_size=font_min,
         wrap_fn=wrap_text,
         max_lines=_MAX_LINES,
         balance_overflow=False,
@@ -77,13 +104,28 @@ def _render_subtitle_block(lines: list[str], font_size: int, line_gap: int) -> I
     )
 
 
-def render_subtitle_overlay(text: str, output_path: Path) -> Path:
-    """生成整帧字幕透明 PNG（1080×1920 RGBA）。"""
+def render_subtitle_overlay(
+    text: str,
+    output_path: Path,
+    *,
+    width: int | None = None,
+    height: int | None = None,
+) -> Path:
+    """生成整帧字幕透明 PNG（默认 1080×1920 RGBA，可传入基底视频尺寸）。"""
     settings = get_settings()
-    width, height = settings.video_width, settings.video_height
+    if width is None or height is None:
+        width, height = settings.video_width, settings.video_height
+    layout = _layout_for_canvas(width, height)
+    width = layout["width"]
+    height = layout["height"]
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    lines, font_size = _fit_subtitle(text, width - _SIDE_MARGIN * 2)
+    lines, font_size = _fit_subtitle(
+        text,
+        width - layout["side_margin"] * 2,
+        font_max=layout["font_max"],
+        font_min=layout["font_min"],
+    )
     line_gap = max(4, font_size // 24)
     text_block = _render_subtitle_block(lines, font_size, line_gap)
 

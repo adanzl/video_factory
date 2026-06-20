@@ -15,6 +15,7 @@
         </div>
 
         <el-descriptions :column="1" border label-width="70px">
+          <el-descriptions-item label="分辨率">{{ resolutionText }}</el-descriptions-item>
           <el-descriptions-item label="时长">{{ durationText }}</el-descriptions-item>
           <el-descriptions-item label="大小">{{ sizeText }}</el-descriptions-item>
           <el-descriptions-item label="耗时">{{ costTimeText }}</el-descriptions-item>
@@ -32,7 +33,7 @@
         />
       </div>
 
-      <div class="min-w-[200px] max-w-xs flex-1 basis-[288px]">
+      <div class="min-w-[280px] flex-1 basis-[360px]">
         <div class="rounded border border-gray-200 p-4">
           <div class="mb-3 flex items-center justify-between gap-2">
             <div class="text-sm font-medium text-gray-700">成片预览</div>
@@ -40,25 +41,32 @@
               下载
             </el-button>
           </div>
-          <div v-if="videoUrl" class="w-full overflow-hidden rounded-lg border border-gray-200 bg-black">
-            <video
-              :key="videoUrl"
-              class="block aspect-[9/16] w-full bg-black"
-              :src="videoUrl"
-              controls
-              playsinline
-              preload="metadata"
-              @error="onVideoError"
-            />
+          <div v-if="videoUrl" class="flex justify-center">
+            <div
+              class="overflow-hidden rounded-lg border border-gray-200 bg-black"
+              :style="previewBoxStyle"
+            >
+              <video
+                :key="videoUrl"
+                class="block h-full w-full bg-black object-contain"
+                :src="videoUrl"
+                controls
+                playsinline
+                preload="metadata"
+                @error="onVideoError"
+                @loadedmetadata="onVideoMetadata"
+              />
+            </div>
           </div>
           <div
             v-else-if="!finalFilePath"
-            class="flex aspect-[9/16] items-center justify-center text-sm text-gray-400"
+            class="flex items-center justify-center text-sm text-gray-400"
+            :style="previewPlaceholderStyle"
           >
             暂无成片，请先生成
           </div>
           <el-alert
-            v-else-if="loadError"
+            v-if="loadError"
             type="warning"
             :title="loadError"
             :closable="false"
@@ -111,6 +119,60 @@ const { handleError } = useErrorHandler();
 const submitting = ref(false);
 const downloading = ref(false);
 const loadError = ref("");
+const videoMeta = ref<{ width: number; height: number } | null>(null);
+
+const PREVIEW_MAX_VIEWPORT_RATIO = 0.7;
+const PREVIEW_MAX_WIDTH_PX = 420;
+
+const buildPreviewBoxStyle = (width?: number | null, height?: number | null) => {
+  if (width && height && width > 0 && height > 0) {
+    const ratio = width / height;
+    const maxH =
+      (typeof window !== "undefined" ? window.innerHeight : 800) * PREVIEW_MAX_VIEWPORT_RATIO;
+    const maxW = Math.min(
+      PREVIEW_MAX_WIDTH_PX,
+      typeof window !== "undefined" ? window.innerWidth * 0.9 : PREVIEW_MAX_WIDTH_PX
+    );
+
+    let boxW: number;
+    let boxH: number;
+    if (ratio >= 1) {
+      boxW = Math.min(maxW, maxH * ratio);
+      boxH = boxW / ratio;
+    } else {
+      boxH = Math.min(maxH, maxW / ratio);
+      boxW = boxH * ratio;
+    }
+
+    return {
+      width: `${Math.round(boxW)}px`,
+      height: `${Math.round(boxH)}px`,
+    };
+  }
+
+  return {
+    width: "100%",
+    maxWidth: `${PREVIEW_MAX_WIDTH_PX}px`,
+    aspectRatio: "16 / 9",
+  };
+};
+
+const previewBoxStyle = computed(() =>
+  buildPreviewBoxStyle(videoMeta.value?.width, videoMeta.value?.height)
+);
+
+const previewPlaceholderStyle = computed(() => ({
+  ...buildPreviewBoxStyle(null, null),
+  minHeight: "120px",
+}));
+
+const resolutionText = computed(() => {
+  const meta = videoMeta.value;
+  if (meta?.width && meta?.height) {
+    return `${meta.width}×${meta.height}`;
+  }
+  return "-";
+});
 
 const actionDisabled = computed(() => props.job.status === "running");
 const actionDisabledReason = computed(() =>
@@ -149,6 +211,14 @@ const costTimeText = computed(() => {
 
 const onVideoError = () => {
   loadError.value = "视频加载失败，请确认文件已生成且服务可访问";
+};
+
+const onVideoMetadata = (event: Event) => {
+  const video = event.target as HTMLVideoElement;
+  if (!video.videoWidth || !video.videoHeight) {
+    return;
+  }
+  videoMeta.value = { width: video.videoWidth, height: video.videoHeight };
 };
 
 const downloadFilename = computed(() => {
@@ -197,5 +267,6 @@ const handleRun = async (toEnd: boolean) => {
 
 watch(finalFilePath, () => {
   loadError.value = "";
+  videoMeta.value = null;
 });
 </script>
