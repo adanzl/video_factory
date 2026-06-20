@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import shutil
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from PIL import Image, ImageChops, ImageDraw
@@ -19,18 +20,92 @@ from app.services.visual.title_render import STROKE_WIDTH, compose_hstack, rende
 _FPS = 25
 _ENTER_SEC = 0.32
 _HOLD_TAIL_SEC = 0.35
-_BRAND_FONT_SIZE = 72
-_EPISODE_FONT_MAX = 118
-_EPISODE_FONT_MIN = 58
-_EPISODE_MAX_LINES = 3
 _BADGE_FONT_SIZE = 30
-_BRAND_TOP_RATIO = 0.06
-_TITLE_CIRCLE_WIDTH_RATIO = 0.60
-_TITLE_MOON_SCALE = 1.5
-_TITLE_CIRCLE_CENTER_Y_RATIO = 0.36
-_TITLE_TEXT_WIDTH_RATIO = 0.90
-_HOST_HEIGHT_RATIO = 0.42
-_HOST_WIDTH_RATIO = 0.94
+
+
+@dataclass(frozen=True)
+class _IntroLayout:
+    """竖屏 / 横屏片头布局参数。"""
+
+    landscape: bool
+    brand_top_ratio: float
+    badge_margin_x_ratio: float
+    title_circle_width_ratio: float
+    title_moon_scale: float
+    title_center_x_ratio: float
+    title_center_y_ratio: float
+    title_text_width_ratio: float
+    title_circle_height_cap_ratio: float | None
+    host_height_ratio: float
+    host_width_ratio: float
+    host_right_ratio: float | None
+    host_bottom_ratio: float
+    host_visible_fraction: float
+    episode_font_max: int
+    episode_font_min: int
+    episode_max_lines: int
+    accent_width_ratio: float
+    title_text_moon_width_ratio: float
+
+
+_PORTRAIT_LAYOUT = _IntroLayout(
+    landscape=False,
+    brand_top_ratio=0.06,
+    badge_margin_x_ratio=0.04,
+    title_circle_width_ratio=0.60,
+    title_moon_scale=1.5,
+    title_center_x_ratio=0.5,
+    title_center_y_ratio=0.36,
+    title_text_width_ratio=0.90,
+    title_circle_height_cap_ratio=None,
+    host_height_ratio=0.42,
+    host_width_ratio=0.94,
+    host_right_ratio=None,
+    host_bottom_ratio=0.02,
+    host_visible_fraction=1.0,
+    episode_font_max=118,
+    episode_font_min=58,
+    episode_max_lines=3,
+    accent_width_ratio=0.55,
+    title_text_moon_width_ratio=0.88,
+)
+
+_LANDSCAPE_LAYOUT = _IntroLayout(
+    landscape=True,
+    brand_top_ratio=0.05,
+    badge_margin_x_ratio=0.04,
+    title_circle_width_ratio=0.52,
+    title_moon_scale=1.12,
+    title_center_x_ratio=0.5,
+    title_center_y_ratio=0.36,
+    title_text_width_ratio=0.88,
+    title_circle_height_cap_ratio=0.88,
+    host_height_ratio=0.88,
+    host_width_ratio=0.72,
+    host_right_ratio=None,
+    host_bottom_ratio=0.0,
+    host_visible_fraction=0.58,
+    episode_font_max=184,
+    episode_font_min=100,
+    episode_max_lines=3,
+    accent_width_ratio=0.0,
+    title_text_moon_width_ratio=1.28,
+)
+
+
+def _layout_for(width: int, height: int) -> _IntroLayout:
+    return _LANDSCAPE_LAYOUT if width > height else _PORTRAIT_LAYOUT
+
+
+def _moon_diameter(layout: _IntroLayout, width: int, height: int) -> int:
+    from_width = int(width * layout.title_circle_width_ratio * layout.title_moon_scale)
+    if layout.title_circle_height_cap_ratio is None:
+        return from_width
+    from_height = int(height * layout.title_circle_height_cap_ratio)
+    return min(from_width, from_height)
+
+
+_BRAND_FONT_SIZE = 72
 
 
 def _is_han(char: str) -> bool:
@@ -165,15 +240,14 @@ def _draw_particles(width: int, height: int, color: tuple[int, int, int, int]) -
     return layer
 
 
-def _load_host_sprite(settings) -> Image.Image:
+def _load_host_sprite(settings, *, width: int, height: int, layout: _IntroLayout) -> Image.Image:
     """加载片头双人图 intro.png，仅等比缩放，不裁剪。"""
     path = settings.host_intro_path
     if not path.exists():
         raise FileNotFoundError(f"片头讲解人素材不存在: {path}")
     img = Image.open(path).convert("RGBA")
-    width, height = settings.video_width, settings.video_height
-    max_w = int(width * _HOST_WIDTH_RATIO)
-    max_h = int(height * _HOST_HEIGHT_RATIO)
+    max_w = int(width * layout.host_width_ratio)
+    max_h = int(height * layout.host_height_ratio)
     shrink = min(1.0, max_w / img.size[0], max_h / img.size[1])
     if shrink >= 1.0:
         return img
@@ -212,39 +286,43 @@ def _render_brand_mark(theme, brand: str) -> Image.Image:
 
 
 def _render_brand_header(theme, brand: str) -> Image.Image:
-    """顶栏：百科标在左，昭墨百科在右。"""
+    """顶栏：百科标 + 昭墨百科，横向排列。"""
     badge = _render_badge(theme)
     mark = _render_brand_mark(theme, brand)
     return compose_hstack([badge, mark], gap=16, align="center")
 
 
-def _build_title_layer(
+def _build_title_layers(
     title: str,
     theme,
     width: int,
     height: int,
+    layout: _IntroLayout,
     *,
     moon_path: Path,
     moon_tint_yellow: bool = False,
-) -> Image.Image:
-    """标题月亮底 60% 宽；文字换行按画面宽度，与月亮无关。"""
-    diameter = int(width * _TITLE_CIRCLE_WIDTH_RATIO * _TITLE_MOON_SCALE)
-    center_x = width // 2
-    center_y = int(height * _TITLE_CIRCLE_CENTER_Y_RATIO)
-    text_max_w = int(width * _TITLE_TEXT_WIDTH_RATIO)
+) -> tuple[Image.Image, Image.Image]:
+    """分别生成月亮层与标题文字层（全画布透明底）。"""
+    diameter = _moon_diameter(layout, width, height)
+    center_x = int(width * layout.title_center_x_ratio)
+    center_y = int(height * layout.title_center_y_ratio)
+    if layout.landscape:
+        text_max_w = int(diameter * layout.title_text_moon_width_ratio)
+    else:
+        text_max_w = int(width * layout.title_text_width_ratio)
+        text_max_w = min(text_max_w, int(diameter * layout.title_text_moon_width_ratio))
     text_max_h = int(diameter * 0.68)
 
     text_block = render_feed_title(
         title,
         theme,
         text_max_w,
-        max_size=_EPISODE_FONT_MAX,
-        min_size=_EPISODE_FONT_MIN,
-        max_lines=_EPISODE_MAX_LINES,
+        max_size=layout.episode_font_max,
+        min_size=layout.episode_font_min,
+        max_lines=layout.episode_max_lines,
         max_height=text_max_h,
     )
 
-    layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     left = center_x - diameter // 2
     top = center_y - diameter // 2
     moon = _load_moon_backdrop(
@@ -253,12 +331,16 @@ def _build_title_layer(
         theme,
         tint_yellow=moon_tint_yellow,
     )
-    layer.alpha_composite(moon, (left, top))
-    layer.alpha_composite(
+
+    moon_layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    moon_layer.alpha_composite(moon, (left, top))
+
+    text_layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    text_layer.alpha_composite(
         text_block,
         (center_x - text_block.size[0] // 2, center_y - text_block.size[1] // 2),
     )
-    return layer
+    return moon_layer, text_layer
 
 
 def _build_layers(
@@ -268,16 +350,18 @@ def _build_layers(
     width: int,
     height: int,
     host: Image.Image,
+    layout: _IntroLayout,
     *,
     moon_path: Path,
     moon_tint_yellow: bool = False,
 ) -> dict:
     normalized = _normalize_title(title) or title.strip()
-    title_layer = _build_title_layer(
+    moon_layer, text_layer = _build_title_layers(
         normalized,
         theme,
         width,
         height,
+        layout,
         moon_path=moon_path,
         moon_tint_yellow=moon_tint_yellow,
     )
@@ -291,17 +375,38 @@ def _build_layers(
 
     return {
         "bg": bg,
-        "title_layer": title_layer,
+        "moon_layer": moon_layer,
+        "text_layer": text_layer,
         "brand_header": brand_header,
         "host": host_scaled,
+        "layout": layout,
         "width": width,
         "height": height,
     }
 
 
+def _host_position(layers: dict, host_w: int, host_h: int, *, enter: float) -> tuple[int, int]:
+    width = layers["width"]
+    height = layers["height"]
+    layout: _IntroLayout = layers["layout"]
+    if layout.host_right_ratio is not None:
+        host_x = width - host_w - int(width * layout.host_right_ratio)
+    else:
+        host_x = (width - host_w) // 2
+    visible = max(0.0, min(1.0, layout.host_visible_fraction))
+    if visible < 1.0:
+        # 仅露出上方 visible 比例，其余在屏幕外（横屏：下半身在画面下缘之外）
+        host_y = height - int(host_h * visible)
+    else:
+        host_y = height - host_h - int(height * layout.host_bottom_ratio)
+    host_y += int((1.0 - enter) * (60 if layout.landscape else 80))
+    return host_x, host_y
+
+
 def _compose_frame(layers: dict, t: float) -> Image.Image:
     width = layers["width"]
     height = layers["height"]
+    layout: _IntroLayout = layers["layout"]
     frame = layers["bg"].copy()
 
     enter = _ease_out_back(min(t / _ENTER_SEC, 1.0))
@@ -312,28 +417,31 @@ def _compose_frame(layers: dict, t: float) -> Image.Image:
     host_w = int(host.size[0] * (0.88 + 0.12 * enter) * breathe)
     host_h = int(host.size[1] * (0.88 + 0.12 * enter) * breathe)
     host_frame = host.resize((host_w, host_h), Image.Resampling.LANCZOS)
-    host_x = (width - host_w) // 2
-    host_y = height - host_h - int(height * 0.02)
-    host_y += int((1.0 - enter) * 80)
+    host_x, host_y = _host_position(layers, host_w, host_h, enter=enter)
+
+    moon: Image.Image = layers["moon_layer"]
+    frame.alpha_composite(_with_opacity(moon, opacity), (0, 0))
+
     frame.alpha_composite(host_frame, (host_x, host_y))
 
     header: Image.Image = layers["brand_header"]
-    header_x = (width - header.size[0]) // 2
-    header_y = int(height * _BRAND_TOP_RATIO)
+    header_x = int(width * layout.badge_margin_x_ratio)
+    header_y = int(height * layout.brand_top_ratio)
     frame.alpha_composite(_with_opacity(header, opacity), (header_x, header_y))
 
-    title: Image.Image = layers["title_layer"]
-    frame.alpha_composite(_with_opacity(title, opacity), (0, 0))
+    text: Image.Image = layers["text_layer"]
+    frame.alpha_composite(_with_opacity(text, opacity), (0, 0))
 
-    accent_w = int(width * 0.55)
-    accent_x = (width - accent_w) // 2
-    accent_y = height - 24
-    draw = ImageDraw.Draw(frame)
-    draw.rounded_rectangle(
-        [accent_x, accent_y, accent_x + accent_w, accent_y + 6],
-        radius=3,
-        fill=(255, 214, 64, int(220 * opacity)),
-    )
+    if layout.accent_width_ratio > 0:
+        accent_w = int(width * layout.accent_width_ratio)
+        accent_x = (width - accent_w) // 2
+        accent_y = height - 24
+        draw = ImageDraw.Draw(frame)
+        draw.rounded_rectangle(
+            [accent_x, accent_y, accent_x + accent_w, accent_y + 6],
+            radius=3,
+            fill=(255, 214, 64, int(220 * opacity)),
+        )
 
     return frame
 
@@ -385,12 +493,16 @@ def generate_intro(
     category: str | None = None,
     work_dir: Path | None = None,
     hold_tail_sec: float | None = None,
+    width: int | None = None,
+    height: int | None = None,
 ) -> Path:
-    """生成带品牌喊声的片头 MP4。"""
+    """生成带品牌喊声的片头 MP4。width/height 缺省时使用全局 VIDEO 配置。"""
     settings = get_settings()
     theme = get_intro_theme(category)
-    width, height = settings.video_width, settings.video_height
-    host = _load_host_sprite(settings)
+    video_w = width if width is not None else settings.video_width
+    video_h = height if height is not None else settings.video_height
+    layout = _layout_for(video_w, video_h)
+    host = _load_host_sprite(settings, width=video_w, height=video_h, layout=layout)
 
     work = work_dir or output_path.parent / "intro_work"
     if work.exists():
@@ -407,9 +519,10 @@ def generate_intro(
         title,
         settings.brand_name,
         theme,
-        width,
-        height,
+        video_w,
+        video_h,
         host,
+        layout,
         moon_path=settings.intro_moon_path,
         moon_tint_yellow=moon_tint_yellow,
     )

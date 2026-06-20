@@ -45,17 +45,23 @@
       <div class="min-w-[280px] flex-1 basis-[360px]">
         <div class="rounded border border-gray-200 p-4">
           <div class="mb-3 text-sm font-medium text-gray-700">视频预览</div>
-          <div v-if="videoUrl" class="w-full overflow-hidden rounded-lg border border-gray-200 bg-black">
-            <video
-              :key="videoUrl"
-              class="block max-h-[405px] w-full bg-black"
-              :src="videoUrl"
-              :poster="posterUrl || undefined"
-              controls
-              playsinline
-              preload="metadata"
-              @error="onVideoError"
-            />
+          <div v-if="videoUrl" class="flex justify-center">
+            <div
+              class="overflow-hidden rounded-lg border border-gray-200 bg-black"
+              :style="previewBoxStyle"
+            >
+              <video
+                :key="videoUrl"
+                class="block h-full w-full bg-black object-contain"
+                :src="videoUrl"
+                :poster="posterUrl || undefined"
+                controls
+                playsinline
+                preload="metadata"
+                @error="onVideoError"
+                @loadedmetadata="onVideoMetadata"
+              />
+            </div>
           </div>
           <div v-else-if="!job.intro_path" class="py-8 text-center text-sm text-gray-400">
             暂无片头视频，请先生成
@@ -105,10 +111,14 @@ const emit = defineEmits<{
 
 const { handleError } = useErrorHandler();
 
+const PREVIEW_MAX_VIEWPORT_RATIO = 0.7;
+const PREVIEW_MAX_WIDTH_PX = 420;
+
 const submitting = ref(false);
 const holdTailSec = ref(0.35);
 const actualDuration = ref<number | null>(null);
 const loadError = ref("");
+const videoMeta = ref<{ width: number; height: number } | null>(null);
 
 const actionDisabled = computed(() => props.job.status === "running");
 const actionDisabledReason = computed(() =>
@@ -132,6 +142,37 @@ const posterUrl = computed(() => {
   return getMediaFileUrl(videoPath.replace(/\.mp4$/i, ".png"));
 });
 
+const buildPreviewBoxStyle = (width?: number | null, height?: number | null) => {
+  if (width && height && width > 0 && height > 0) {
+    const ratio = width / height;
+    const maxH =
+      (typeof window !== "undefined" ? window.innerHeight : 800) * PREVIEW_MAX_VIEWPORT_RATIO;
+    const maxW = Math.min(
+      PREVIEW_MAX_WIDTH_PX,
+      typeof window !== "undefined" ? window.innerWidth * 0.9 : PREVIEW_MAX_WIDTH_PX
+    );
+    let boxW = maxW;
+    let boxH = boxW / ratio;
+    if (boxH > maxH) {
+      boxH = Math.min(maxH, maxW / ratio);
+      boxW = boxH * ratio;
+    }
+    return {
+      width: `${Math.round(boxW)}px`,
+      height: `${Math.round(boxH)}px`,
+    };
+  }
+  return {
+    width: "100%",
+    maxWidth: `${PREVIEW_MAX_WIDTH_PX}px`,
+    aspectRatio: "9 / 16",
+  };
+};
+
+const previewBoxStyle = computed(() =>
+  buildPreviewBoxStyle(videoMeta.value?.width, videoMeta.value?.height)
+);
+
 const loadDuration = async () => {
   if (!props.job.intro_path) {
     actualDuration.value = null;
@@ -142,6 +183,13 @@ const loadDuration = async () => {
 
 const onVideoError = () => {
   loadError.value = "视频加载失败，请确认文件已生成且服务可访问";
+};
+
+const onVideoMetadata = (event: Event) => {
+  const video = event.target as HTMLVideoElement;
+  if (video.videoWidth > 0 && video.videoHeight > 0) {
+    videoMeta.value = { width: video.videoWidth, height: video.videoHeight };
+  }
 };
 
 const handleRun = async (toEnd: boolean) => {
@@ -179,6 +227,7 @@ watch(
   () => props.job.intro_path,
   () => {
     loadError.value = "";
+    videoMeta.value = null;
     void loadDuration();
   },
   { immediate: true }
