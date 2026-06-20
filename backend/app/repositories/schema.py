@@ -48,6 +48,7 @@ def apply_material_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(_MATERIAL_DDL)
     _ensure_column(conn, "video_job", "pipeline", "TEXT NOT NULL DEFAULT 'standard'")
     _ensure_column(conn, "video_job", "material_id", "INTEGER")
+    _ensure_column(conn, "video_material", "job_id", "INTEGER")
 
 
 def apply_title_schema(conn: sqlite3.Connection) -> None:

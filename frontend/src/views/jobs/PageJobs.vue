@@ -15,10 +15,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
+import { onMounted, ref, watch } from "vue";
+import { useRoute } from "vue-router";
 import TabJobs from "./TabJobs.vue";
 import TabJobDetail from "./detail/TabJobDetail.vue";
 import TabJobHistory from "./TabJobHistory.vue";
+
+const route = useRoute();
 
 const activeTab = ref("jobs");
 const selectedJobId = ref<number>();
@@ -27,4 +30,15 @@ const openJobDetail = (jobId: number) => {
   selectedJobId.value = jobId;
   activeTab.value = "detail";
 };
+
+const applyJobFromQuery = () => {
+  const raw = route.query.id;
+  const jobId = typeof raw === "string" ? Number.parseInt(raw, 10) : Number.NaN;
+  if (Number.isFinite(jobId) && jobId > 0) {
+    openJobDetail(jobId);
+  }
+};
+
+onMounted(applyJobFromQuery);
+watch(() => route.query.id, applyJobFromQuery);
 </script>

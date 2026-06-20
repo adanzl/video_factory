@@ -11,7 +11,7 @@ export interface MaterialRecord {
   thumbnail_path?: string | null;
   note?: string | null;
   status?: string;
-  job_count?: number;
+  job_id?: number | null;
   created_at?: string | null;
   updated_at?: string | null;
 }

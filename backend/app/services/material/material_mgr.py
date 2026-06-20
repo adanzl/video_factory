@@ -28,9 +28,7 @@ class MaterialMgr:
 
     def get_material(self, material_id: int) -> dict:
         with connection() as conn:
-            material = material_repo.get_material(conn, material_id)
-            material["job_count"] = material_repo.count_jobs_for_material(conn, material_id)
-            return material
+            return material_repo.get_material(conn, material_id)
 
     def update_material(self, material_id: int, **fields: object) -> dict:
         updates = {k: v for k, v in fields.items() if k in {"name", "note"}}
@@ -181,6 +179,7 @@ class MaterialMgr:
                 f"created material job from material #{material_id}, "
                 f"script_mode={mode}, run_mode={run}",
             )
+            material_repo.update_material(conn, material_id, job_id=job["id"])
 
         if run == "prepare":
             job_mgr.run_prepare(job["id"], to_end=False)

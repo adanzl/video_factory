@@ -63,7 +63,8 @@ def list_materials(
     rows = conn.execute(
         """
         SELECT id, name, file_path, duration_sec, width, height,
-               size_bytes, thumbnail_path, note, status, created_at, updated_at
+               size_bytes, thumbnail_path, note, status, job_id,
+               created_at, updated_at
         FROM video_material
         WHERE status = 'active'
         ORDER BY id DESC
@@ -79,6 +80,7 @@ def update_material(conn: sqlite3.Connection, material_id: int, **fields: Any) -
         "name",
         "note",
         "status",
+        "job_id",
         "file_path",
         "duration_sec",
         "width",
@@ -101,14 +103,6 @@ def update_material(conn: sqlite3.Connection, material_id: int, **fields: Any) -
         values,
     )
     return get_material(conn, material_id)
-
-
-def count_jobs_for_material(conn: sqlite3.Connection, material_id: int) -> int:
-    row = conn.execute(
-        "SELECT COUNT(*) AS cnt FROM video_job WHERE material_id = ?",
-        (material_id,),
-    ).fetchone()
-    return int(row["cnt"]) if row else 0
 
 
 def soft_delete_material(conn: sqlite3.Connection, material_id: int) -> None:

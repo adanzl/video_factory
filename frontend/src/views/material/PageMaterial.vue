@@ -56,7 +56,7 @@
       <el-table-column label="创建时间" width="170">
         <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="160" fixed="right">
+      <el-table-column label="操作" width="220" fixed="right">
         <template #default="{ row }">
           <div class="flex items-center gap-1 whitespace-nowrap">
             <el-button
@@ -70,6 +70,15 @@
             </el-button>
             <el-button type="success" link size="small" @click="openCreateJobDialog(row)">
               发起任务
+            </el-button>
+            <el-button
+              v-if="row.job_id"
+              type="warning"
+              link
+              size="small"
+              @click="goToJob(row.job_id!)"
+            >
+              跳转任务
             </el-button>
           </div>
         </template>
@@ -172,6 +181,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
+import { useRouter } from "vue-router";
 import { Refresh } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import {
@@ -185,6 +195,7 @@ import { useErrorHandler } from "@/composables/useErrorHandler";
 import { formatDateTime } from "@/utils/date";
 import { formatFileSize, formatMediaDuration, getMediaFileUrl } from "@/utils/media";
 
+const router = useRouter();
 const { handleError } = useErrorHandler();
 
 const materials = ref<MaterialRecord[]>([]);
@@ -297,6 +308,10 @@ const openPlayDialog = (row: MaterialRecord) => {
   }
   playMaterial.value = row;
   showPlayDialog.value = true;
+};
+
+const goToJob = (jobId: number) => {
+  void router.push({ path: "/jobs", query: { id: String(jobId) } });
 };
 
 const onSelectionChange = (rows: MaterialRecord[]) => {
@@ -419,6 +434,7 @@ const handleCreateJob = async () => {
     });
     ElMessage.success(`${createJobRunModeLabel(runMode)}，任务 #${job.id}，请在任务队列查看`);
     showCreateJobDialog.value = false;
+    await fetchMaterials();
   } catch (error) {
     handleError(error, "创建任务失败");
   } finally {
