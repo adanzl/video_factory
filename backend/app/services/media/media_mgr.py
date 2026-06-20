@@ -204,6 +204,8 @@ class MediaMgr:
                     subtitle_cues=flat_cues,
                     work_dir=work_dir,
                     segment_index=0,
+                    width=base_w,
+                    height=base_h,
                 )
                 video_to_clip_timed_overlays(
                     fitted,

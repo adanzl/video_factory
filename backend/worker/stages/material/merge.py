@@ -15,6 +15,15 @@ from worker.context import JobContext
 from worker.stages.base import StageExecutor
 
 
+def _resolve_base_video(job: dict, ctx: JobContext) -> Path:
+    raw = job.get("base_path")
+    if raw:
+        path = Path(str(raw))
+        if path.is_file():
+            return path
+    return ctx.rel("base.mp4")
+
+
 class MaterialMergeStage(StageExecutor):
     name = "merge"
 
@@ -23,8 +32,8 @@ class MaterialMergeStage(StageExecutor):
         with connection() as conn:
             job = job_repo.get_job(conn, ctx.job["id"])
 
-        base_path = ctx.rel("base.mp4")
-        if not base_path.exists():
+        base_path = _resolve_base_video(job, ctx)
+        if not base_path.is_file():
             raise FileNotFoundError(f"base video missing: {base_path}")
 
         if not job.get("audio_path"):
