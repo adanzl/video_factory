@@ -7,10 +7,13 @@ export interface TtsVoiceOption {
 }
 
 // cSpell: disable
+export const DEFAULT_TTS_VOICE =
+  "cosyvoice-v3.5-flash-leo-60621bdce780434ab0734555e5196d7d";
+
 const CLONED_VOICES: TtsVoiceOption[] = [
   {
     label: "人声复刻 (cancan)",
-    value: "cosyvoice-v3.5-flash-leo-60621bdce780434ab0734555e5196d7d",
+    value: DEFAULT_TTS_VOICE,
   },
 ];
 
