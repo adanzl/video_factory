@@ -74,7 +74,7 @@ class MaterialMgr:
 
         original = Path(file.filename).name
         ext = Path(original).suffix.lower()
-        if ext not in _ALLOW_EXTENSIONS:
+        if ext not in _ALLOWED_EXTENSIONS:
             raise ValueError(f"unsupported file type: {ext or '(none)'}")
 
         settings = get_settings()

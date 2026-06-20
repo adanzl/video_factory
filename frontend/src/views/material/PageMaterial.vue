@@ -75,7 +75,7 @@
     />
 
     <el-dialog v-model="showUploadDialog" title="上传视频素材" width="480px" destroy-on-close>
-      <el-form label-width="72px">
+      <el-form label-width="90px">
         <el-form-item label="视频文件" required>
           <input ref="fileInputRef" type="file" accept="video/*,.mp4,.mov,.webm,.mkv" @change="onFileChange" />
         </el-form-item>
