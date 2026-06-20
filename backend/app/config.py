@@ -65,6 +65,7 @@ _TTS_KEY = _DASHSCOPE_KEY or _opt("TTS_API_KEY")
 _FINAL_STRICT = _bool("FINAL_DURATION_STRICT")
 _FFMPEG_CRF = int(os.getenv("FFMPEG_CRF", "20"))
 _FFMPEG_SUBTITLE_CRF_RAW = os.getenv("FFMPEG_SUBTITLE_CRF")
+_DEFAULT_TTS_VOICE = "cosyvoice-v3.5-flash-leo-60621bdce780434ab0734555e5196d7d"  # cSpell: disable-line
 
 
 class Config:
@@ -163,10 +164,10 @@ class Config:
         "DASHSCOPE_WS_URI",
         "wss://dashscope.aliyuncs.com/api-ws/v1/inference/",  # cSpell: disable-line
     )
-    tts_voice: str = _first("TTS_VOICE", "COSYVOICE_VOICE", default="longwan_v3")  # cSpell: disable-line
+    tts_voice: str = _first("TTS_VOICE", "COSYVOICE_VOICE", default=_DEFAULT_TTS_VOICE)  # cSpell: disable-line
     tts_model: str | None = _first("TTS_MODEL", "COSYVOICE_MODEL") or None
     tts_speech_rate: float = float(
-        _first("TTS_SPEECH_RATE", "COSYVOICE_SPEECH_RATE", default="1.0")
+        _first("TTS_SPEECH_RATE", "COSYVOICE_SPEECH_RATE", default="1.1")
     )
     tts_volume: int = int(_first("TTS_VOLUME", "COSYVOICE_VOLUME", default="50"))
     tts_instruction: str | None = _opt("TTS_INSTRUCTION")
