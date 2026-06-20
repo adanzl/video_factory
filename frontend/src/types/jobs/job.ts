@@ -2,6 +2,7 @@ export interface FinalAsset {
   path: string;
   duration?: number | null;
   size?: number | null;
+  cost_time?: number | null;
 }
 
 export interface JobListItem {

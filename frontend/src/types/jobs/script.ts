@@ -12,7 +12,7 @@ export interface ScriptJson {
   draft_title?: string;
   narration?: string;
   word_count?: number;
-  cost_duration?: number;
+  cost_time?: number;
   visual_style?: string;
   segments?: ScriptSegment[];
 }

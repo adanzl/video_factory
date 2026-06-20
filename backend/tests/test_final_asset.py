@@ -10,25 +10,30 @@ def test_parse_legacy_string():
         "path": "/data/media/1/final.mp4",
         "duration": None,
         "size": None,
+        "cost_time": None,
     }
 
 
 def test_parse_json():
-    raw = json.dumps({"path": "/a/final.mp4", "duration": 123.456, "size": 2048})
+    raw = json.dumps(
+        {"path": "/a/final.mp4", "duration": 123.456, "size": 2048, "cost_time": 9.8}
+    )
     assert parse_final_asset(raw) == {
         "path": "/a/final.mp4",
         "duration": 123.456,
         "size": 2048,
+        "cost_time": 9.8,
     }
 
 
 def test_build_final_asset(tmp_path):
     video = tmp_path / "final.mp4"
     video.write_bytes(b"0123456789")
-    asset = build_final_asset(video, duration=12.3456)
+    asset = build_final_asset(video, duration=12.3456, cost_time=3.456)
     assert asset["path"] == str(video)
     assert asset["duration"] == 12.346
     assert asset["size"] == 10
+    assert asset["cost_time"] == 3.5
 
 
 def test_resolve_final_path_file():

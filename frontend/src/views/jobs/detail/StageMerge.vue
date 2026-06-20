@@ -17,6 +17,7 @@
         <el-descriptions :column="1" border label-width="70px">
           <el-descriptions-item label="时长">{{ durationText }}</el-descriptions-item>
           <el-descriptions-item label="大小">{{ sizeText }}</el-descriptions-item>
+          <el-descriptions-item label="处理耗时">{{ costTimeText }}</el-descriptions-item>
           <el-descriptions-item label="路径">
             <span class="break-all">{{ finalFilePath || "-" }}</span>
           </el-descriptions-item>
@@ -89,6 +90,7 @@ import { downloadMediaFile } from "@/api/api-media";
 import type { JobDetail, JobLog } from "@/types/jobs";
 import { formatDateTime } from "@/utils/date";
 import {
+  formatCostTime,
   formatFileSize,
   formatMediaDuration,
   getMediaFileUrl,
@@ -136,6 +138,13 @@ const sizeText = computed(() => {
     return "-";
   }
   return formatFileSize(finalAsset.value.size);
+});
+
+const costTimeText = computed(() => {
+  if (!finalAsset.value || typeof finalAsset.value !== "object") {
+    return "-";
+  }
+  return formatCostTime(finalAsset.value.cost_time);
 });
 
 const onVideoError = () => {

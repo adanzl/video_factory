@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 from app.config import get_settings
@@ -19,6 +20,7 @@ class MergeStage(StageExecutor):
     name = "merge"
 
     def run(self, ctx: JobContext) -> None:
+        started = time.perf_counter()
         with connection() as conn:
             job = job_repo.get_job(conn, ctx.job["id"])
             segments = segment_repo.list_segments(conn, ctx.job["id"])
@@ -40,12 +42,14 @@ class MergeStage(StageExecutor):
         )
         loudness = analyze_loudness(result.final_path)
         duration = probe_duration(result.final_path)
+        cost_time = time.perf_counter() - started
 
         with connection() as conn:
             updates: dict = {
                 "final_path": build_final_asset(
                     result.final_path,
                     duration=duration,
+                    cost_time=cost_time,
                 ),
             }
             if intro_path and not job.get("intro_path"):
@@ -57,7 +61,8 @@ class MergeStage(StageExecutor):
                 self.name,
                 (
                     f"final at {result.final_path}, "
-                    f"lufs={loudness.integrated_lufs}"
+                    f"lufs={loudness.integrated_lufs}, "
+                    f"cost_time={updates['final_path']['cost_time']}s"
                 ),
             )
             apply_quality_checks(

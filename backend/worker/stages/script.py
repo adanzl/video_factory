@@ -212,7 +212,7 @@ class ScriptStage(StageExecutor):
                 )
 
         script["word_count"] = _narration_chars(script.get("narration", ""))
-        script["cost_duration"] = round(time.perf_counter() - started, 1)
+        script["cost_time"] = round(time.perf_counter() - started, 1)
         display_title = script["title"]
         with connection() as conn:
             for warning in accept_warnings:
@@ -237,7 +237,7 @@ class ScriptStage(StageExecutor):
                 f"script ready, segments={len(script['segments'])}, "
                 f"words={script['word_count']}, "
                 f"title={script['title']}, "
-                f"cost_duration={script['cost_duration']}s",
+                f"cost_time={script['cost_time']}s",
             )
             apply_quality_checks(
                 conn,

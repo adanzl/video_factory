@@ -68,7 +68,7 @@
         >
           {{ script.draft_title }}
         </el-descriptions-item>
-        <el-descriptions-item label="生成耗时">{{ formatCostDuration(script.cost_duration) }}</el-descriptions-item>
+        <el-descriptions-item label="生成耗时">{{ formatCostTime(script.cost_time) }}</el-descriptions-item>
         <el-descriptions-item label="字数">{{ script.word_count ?? "-" }}</el-descriptions-item>
         <el-descriptions-item label="分镜数">{{ script.segments?.length ?? 0 }}</el-descriptions-item>
         <el-descriptions-item label="画风定调" :span="3">{{ script.visual_style || "-" }}</el-descriptions-item>
@@ -178,6 +178,7 @@ import { runJobStageAction } from "@/api/api-jobs";
 import type { JobDetail, JobLog, ScriptJson } from "@/types/jobs";
 import type { RunStageActionPayload } from "@/types/jobs/stageAction";
 import { formatDateTime } from "@/utils/date";
+import { formatCostTime } from "@/utils/media";
 import { useErrorHandler } from "@/composables/useErrorHandler";
 
 const DEFAULT_SEGMENT_TARGET_SEC = 12;
@@ -214,13 +215,6 @@ const script = computed<ScriptJson | null>(() => {
 });
 
 const rawJson = computed(() => JSON.stringify(props.job.script_json, null, 2));
-
-const formatCostDuration = (value?: number | null) => {
-  if (value === null || value === undefined) {
-    return "-";
-  }
-  return `${value.toFixed(1)} 秒`;
-};
 
 const QUALITY_STEP_LABELS: Record<string, string> = {
   copy: "文案",

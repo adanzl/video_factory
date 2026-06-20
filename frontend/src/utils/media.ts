@@ -65,6 +65,14 @@ export function resolveFinalPath(finalPath?: FinalAsset | string | null): string
   return finalPath.path?.trim() ?? "";
 }
 
+/** 格式化处理耗时（秒） */
+export function formatCostTime(seconds?: number | null): string {
+  if (seconds === null || seconds === undefined || Number.isNaN(seconds)) {
+    return "-";
+  }
+  return `${seconds.toFixed(1)} 秒`;
+}
+
 /** 格式化媒体时长（秒 → mm:ss） */
 export function formatMediaDuration(seconds?: number | null): string {
   if (seconds === null || seconds === undefined || Number.isNaN(seconds)) {
