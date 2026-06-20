@@ -200,6 +200,7 @@ class JobMgr:
         segment_target_sec: float | None = None,
         max_title_length: int | None = None,
         narration_target_words: int | None = None,
+        skip_title_optimize: bool = False,
     ) -> dict:
         """生成文案。实现：worker/loop.run_script → worker/stages/*/script.py"""
         from worker.loop import run_script
@@ -221,6 +222,7 @@ class JobMgr:
                 segment_target_sec=segment_target_sec,
                 max_title_length=max_title_length,
                 narration_target_words=narration_target_words,
+                skip_title_optimize=skip_title_optimize,
             ),
         )
 

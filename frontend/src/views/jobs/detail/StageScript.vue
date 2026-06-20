@@ -54,6 +54,37 @@
               class="w-32!"
             />
           </el-form-item>
+          <el-form-item label="标题优化" class="!mb-0">
+            <el-checkbox v-model="skipTitleOptimize">跳过</el-checkbox>
+          </el-form-item>
+        </div>
+        <div v-else class="flex flex-wrap items-start gap-x-4">
+          <el-form-item label="标题上限" class="!mb-0">
+            <el-input-number
+              v-model="maxTitleLength"
+              :min="8"
+              :max="48"
+              :step="1"
+              controls-position="right"
+              class="w-28!"
+            />
+          </el-form-item>
+          <el-form-item label="口播字数" class="!mb-0">
+            <div class="flex flex-col gap-1">
+              <el-input-number
+                v-model="narrationTargetWords"
+                :min="200"
+                :max="3000"
+                :step="50"
+                controls-position="right"
+                class="w-32!"
+              />
+              <span v-if="baseDurationHint" class="text-xs text-gray-400">{{ baseDurationHint }}</span>
+            </div>
+          </el-form-item>
+          <el-form-item label="标题优化" class="!mb-0">
+            <el-checkbox v-model="skipTitleOptimize">跳过</el-checkbox>
+          </el-form-item>
         </div>
       </el-form>
     </div>
@@ -181,17 +212,19 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
+import { getMediaDuration } from "@/api/api-media";
 import { runJobStageAction } from "@/api/api-jobs";
 import type { JobDetail, JobLog, ScriptJson } from "@/types/jobs";
 import type { RunStageActionPayload } from "@/types/jobs/stageAction";
 import { isMaterialJob as checkMaterialJob } from "@/constants/jobStages";
 import { formatDateTime } from "@/utils/date";
-import { formatCostTime } from "@/utils/media";
+import { estimateNarrationTargetWords, formatCostTime, formatMediaDuration } from "@/utils/media";
 import { useErrorHandler } from "@/composables/useErrorHandler";
 
 const DEFAULT_SEGMENT_TARGET_SEC = 12;
 const DEFAULT_MAX_TITLE_LENGTH = 24;
 const DEFAULT_NARRATION_TARGET_WORDS = 1050;
+const DEFAULT_MATERIAL_NARRATION_TARGET_WORDS = 800;
 
 const props = defineProps<{
   job: JobDetail;
@@ -208,6 +241,8 @@ const sourceTitle = ref("");
 const segmentTargetSec = ref(DEFAULT_SEGMENT_TARGET_SEC);
 const maxTitleLength = ref(DEFAULT_MAX_TITLE_LENGTH);
 const narrationTargetWords = ref(DEFAULT_NARRATION_TARGET_WORDS);
+const skipTitleOptimize = ref(false);
+const baseDurationSec = ref<number | null>(null);
 
 const actionDisabled = computed(() => props.job.status === "running");
 const isMaterialJob = computed(() => checkMaterialJob(props.job));
@@ -374,6 +409,30 @@ const parseQualityReport = (value: unknown): QualityReportRow[] => {
 
 const qualityReportRows = computed(() => parseQualityReport(props.job.quality_report));
 
+const baseDurationHint = computed(() => {
+  if (!isMaterialJob.value || baseDurationSec.value === null) {
+    return "";
+  }
+  const durationLabel = formatMediaDuration(baseDurationSec.value);
+  const estimated = estimateNarrationTargetWords(baseDurationSec.value);
+  return `基底 ${durationLabel}，推荐约 ${estimated} 字`;
+});
+
+const loadBaseDuration = async () => {
+  if (!isMaterialJob.value || !props.job.base_path) {
+    baseDurationSec.value = null;
+    narrationTargetWords.value = DEFAULT_MATERIAL_NARRATION_TARGET_WORDS;
+    return;
+  }
+  const duration = await getMediaDuration(props.job.base_path);
+  baseDurationSec.value = duration;
+  if (duration !== null && duration > 0) {
+    narrationTargetWords.value = estimateNarrationTargetWords(duration);
+  } else {
+    narrationTargetWords.value = DEFAULT_MATERIAL_NARRATION_TARGET_WORDS;
+  }
+};
+
 const handleRun = async (toEnd: boolean) => {
   const actionLabel = toEnd ? "从此成片" : "重新生成";
   const trimmedTitle = sourceTitle.value.trim();
@@ -407,6 +466,9 @@ const handleRun = async (toEnd: boolean) => {
     if (Number.isFinite(narrationTargetWords.value)) {
       payload.narration_target_words = narrationTargetWords.value;
     }
+    if (skipTitleOptimize.value) {
+      payload.skip_title_optimize = true;
+    }
     await runJobStageAction("script", payload);
     ElMessage.success(`已提交${actionLabel}，任务已开始执行`);
     emit("refresh");
@@ -421,6 +483,14 @@ watch(
   () => props.job.title,
   value => {
     sourceTitle.value = value;
+  },
+  { immediate: true }
+);
+
+watch(
+  () => [props.job.base_path, isMaterialJob.value] as const,
+  () => {
+    void loadBaseDuration();
   },
   { immediate: true }
 );

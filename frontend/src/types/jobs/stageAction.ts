@@ -35,6 +35,7 @@ export interface RunStageActionPayload {
   segment_target_sec?: number;
   max_title_length?: number;
   narration_target_words?: number;
+  skip_title_optimize?: boolean;
 }
 
 export type StageParamValues = Record<string, string | boolean | number | number[]>;

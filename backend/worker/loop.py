@@ -73,6 +73,7 @@ def _run_one_stage(
     script_segment_target_sec: float | None = None,
     script_max_title_length: int | None = None,
     script_narration_target_words: int | None = None,
+    script_skip_title_optimize: bool = False,
     material_narration: str | None = None,
 ) -> dict:
     job = _reload_job(job_id)
@@ -86,6 +87,7 @@ def _run_one_stage(
         script_segment_target_sec=script_segment_target_sec,
         script_max_title_length=script_max_title_length,
         script_narration_target_words=script_narration_target_words,
+        script_skip_title_optimize=script_skip_title_optimize,
         material_narration=material_narration,
     )
     _execute_stage(job_id, stage_cls, ctx)
@@ -119,6 +121,7 @@ def _run_from(
     script_segment_target_sec: float | None = None,
     script_max_title_length: int | None = None,
     script_narration_target_words: int | None = None,
+    script_skip_title_optimize: bool = False,
     material_narration: str | None = None,
 ) -> dict:
     job_mgr.mark_running(job_id)
@@ -139,6 +142,9 @@ def _run_from(
             script_max_title_length=script_max_title_length if stage_cls.name == "script" else None,
             script_narration_target_words=(
                 script_narration_target_words if stage_cls.name == "script" else None
+            ),
+            script_skip_title_optimize=(
+                script_skip_title_optimize if stage_cls.name == "script" else False
             ),
             material_narration=material_narration if stage_cls.name == "script" else None,
         )
@@ -197,6 +203,7 @@ def run_script(
     segment_target_sec: float | None = None,
     max_title_length: int | None = None,
     narration_target_words: int | None = None,
+    skip_title_optimize: bool = False,
     material_narration: str | None = None,
 ) -> dict:
     job = _reload_job(job_id)
@@ -208,6 +215,7 @@ def run_script(
             script_segment_target_sec=segment_target_sec,
             script_max_title_length=max_title_length,
             script_narration_target_words=narration_target_words,
+            script_skip_title_optimize=skip_title_optimize,
             material_narration=material_narration,
         )
     return _run_one_stage(
@@ -217,6 +225,7 @@ def run_script(
         script_segment_target_sec=segment_target_sec,
         script_max_title_length=max_title_length,
         script_narration_target_words=narration_target_words,
+        script_skip_title_optimize=skip_title_optimize,
         material_narration=material_narration,
     )
 
@@ -289,10 +298,11 @@ def run_segment_all(
         raise ValueError("segment stage is not available for material pipeline jobs")
     from worker.stages.standard.host import HostStage
 
+    segment_cls = stage_class_for("segment", job)
     job_mgr.mark_running(job_id)
     _run_one_stage(
         job_id,
-        SegmentStage,
+        segment_cls,
         segment_indices=segment_indices,
         segment_scope="all",
         advance=True,
@@ -313,10 +323,11 @@ def run_segment_images(
         raise ValueError("segment stage is not available for material pipeline jobs")
     from worker.stages.standard.host import HostStage
 
+    segment_cls = stage_class_for("segment", job)
     job_mgr.mark_running(job_id)
     _run_one_stage(
         job_id,
-        SegmentStage,
+        segment_cls,
         segment_indices=segment_indices,
         segment_scope="images",
         advance=False,
@@ -326,7 +337,7 @@ def run_segment_images(
 
     _run_one_stage(
         job_id,
-        SegmentStage,
+        segment_cls,
         segment_indices=segment_indices,
         segment_scope="clips",
         advance=True,
@@ -345,10 +356,11 @@ def run_segment_clips(
         raise ValueError("segment stage is not available for material pipeline jobs")
     from worker.stages.standard.host import HostStage
 
+    segment_cls = stage_class_for("segment", job)
     job_mgr.mark_running(job_id)
     _run_one_stage(
         job_id,
-        SegmentStage,
+        segment_cls,
         segment_indices=segment_indices,
         segment_scope="clips",
         advance=True,

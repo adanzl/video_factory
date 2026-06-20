@@ -9,10 +9,12 @@ from app.quality.gate import apply_quality_checks
 from app.repositories import job_log_repo, job_repo, segment_repo
 from app.repositories.connection import connection
 from app.services.llm.llm_mgr import llm_mgr
+from app.utils.media import base_video_duration_sec, estimate_narration_target_words
 from worker.context import JobContext
 from worker.stages.base import StageExecutor
 from worker.stages.standard.script import (
     ScriptValidationError,
+    _apply_script_title,
     _min_narration_chars,
     _normalize_segments,
     _narration_chars,
@@ -87,6 +89,20 @@ class MaterialScriptStage(StageExecutor):
         title = ctx.job["title"]
         max_title_length = ctx.script_max_title_length
         narration_target_words = ctx.script_narration_target_words
+        if narration_target_words is None:
+            duration = base_video_duration_sec(job=ctx.job, media_dir=ctx.media_dir)
+            if duration:
+                narration_target_words = estimate_narration_target_words(duration)
+                with connection() as conn:
+                    job_log_repo.append_log(
+                        conn,
+                        ctx.job["id"],
+                        self.name,
+                        (
+                            f"narration target from base duration {duration:.1f}s "
+                            f"-> {narration_target_words} chars"
+                        ),
+                    )
         min_narration_chars = _min_narration_chars(narration_target_words)
 
         pending = ctx.job.get("script_json") or {}
@@ -147,27 +163,14 @@ class MaterialScriptStage(StageExecutor):
             if max_title_length is not None
             else get_settings().max_title_length
         )
-        try:
-            optimized_title = llm_mgr.optimize_script_title(
-                script["title"],
-                script.get("narration", ""),
-                max_title_length=max_len,
-            )
-            script["draft_title"] = script["title"]
-            script["title"] = _title_chars(optimized_title)
-            if len(script["title"]) > max_len:
-                raise ScriptValidationError(
-                    f"optimized title too long: {len(script['title'])} chars (need <= {max_len})"
-                )
-        except Exception as exc:
-            with connection() as conn:
-                job_log_repo.append_log(
-                    conn,
-                    ctx.job["id"],
-                    self.name,
-                    f"title optimize failed, keep draft: {exc}",
-                    level="warning",
-                )
+        _apply_script_title(
+            script,
+            source_title=title,
+            max_len=max_len,
+            skip_optimize=bool(ctx.script_skip_title_optimize),
+            job_id=ctx.job["id"],
+            stage_name=self.name,
+        )
 
         script.pop("pending_narration", None)
         script["word_count"] = _narration_chars(script.get("narration", ""))

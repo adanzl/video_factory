@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from app.config import get_settings
@@ -58,6 +59,19 @@ def _format_segment_target_sec(target: float) -> str | float:
 def _narration_word_range(target: int) -> tuple[int, int]:
     margin = max(50, int(target * 0.1))
     return max(200, target - margin), target + margin
+
+
+def _title_rule(title: str, max_title: int) -> tuple[str, str]:
+    cleaned = re.sub(r"\s+", "", title.strip())
+    if len(cleaned) <= max_title:
+        return (
+            f"title 必须与原标题完全一致：{cleaned}，不要改写、精简或替换。",
+            f"原标题：{title}\n请输出 title（与原标题一致）、完整口播",
+        )
+    return (
+        f"title 为精简视频标题，保留原标题核心意思，不含空格换行，字数不超过 {max_title}。",
+        f"原标题：{title}\n请输出精简 title（≤{max_title}字）、完整口播",
+    )
 
 
 def _storyboard_segment_rule(target: float) -> str:
@@ -122,11 +136,11 @@ class DeepSeekClient(LLMClient):
         max_title = settings.max_title_length if max_title_length is None else max_title_length
         narr_target = narration_target_words if narration_target_words is not None else 1050
         narr_lo, narr_hi = _narration_word_range(narr_target)
+        title_rule, title_user_prefix = _title_rule(title, max_title)
         system = (
             "你是科普视频编剧。输出JSON，字段：title, narration, word_count, "
             "visual_style, segments。"
-            f"title为精简后的视频标题，保留原标题核心意思，"
-            f"不含空格换行，字数不超过{max_title}，适合封面最多三行展示。"
+            f"{title_rule}"
             f"{seg_rule}"
             f"narration为完整口播，总字数{narr_lo}-{narr_hi}（不含空格换行），口语化，结构完整有开头结尾；"
             "选题撑不满时可略短，但须结构完整。"
@@ -140,8 +154,7 @@ class DeepSeekClient(LLMClient):
         else:
             split_hint = "并按口播内容逻辑动态切分分镜"
         user = (
-            f"原标题：{title}\n"
-            f"请输出精简 title（≤{max_title}字）、完整口播、visual_style 与分镜，{split_hint}。"
+            f"{title_user_prefix}、visual_style 与分镜，{split_hint}。"
             "每段 visual_brief 写清该镜画面主旨与对比关系，便于下一步扩写文生图提示词。"
         )
         if feedback:
@@ -256,17 +269,18 @@ class DeepSeekClient(LLMClient):
         max_title = settings.max_title_length if max_title_length is None else max_title_length
         narr_target = narration_target_words if narration_target_words is not None else 800
         narr_lo, narr_hi = _narration_word_range(narr_target)
+        title_rule, title_user_prefix = _title_rule(title, max_title)
         system = (
             "你是科普视频口播编剧。视频画面已由用户上传的基底视频提供，无需描述画面。"
             "输出 JSON，字段：title, narration, word_count, segments。"
-            f"title 为精简视频标题，不含空格换行，字数不超过 {max_title}。"
+            f"{title_rule}"
             f"narration 为完整口播，总字数 {narr_lo}-{narr_hi}（不含空格换行），口语化；"
             "禁止开头自我介绍；第一句直接进入主题。"
             "segments 为分句数组，每项含 segment_index 与 text；"
             "各段 text 按顺序拼接须与 narration 完全一致；按自然断句切分，无需 visual 字段。"
             "word_count 必须等于 narration 实际字数。"
         )
-        user = f"原标题：{title}\n请输出 title、完整口播 narration 与分句 segments。"
+        user = f"{title_user_prefix} narration 与分句 segments。"
         if feedback:
             user += f"\n\n上次不合格：{feedback}。请按要求重写。"
         data = json.loads(self._chat(system, user))

@@ -73,6 +73,18 @@ export function formatCostTime(seconds?: number | null): string {
   return `${seconds.toFixed(1)} 秒`;
 }
 
+/** 中文口播约 7.5 字/秒，与后端 app/utils/media 对齐 */
+const NARRATION_CHARS_PER_SEC = 7.5;
+const NARRATION_FILL_RATIO = 0.92;
+const NARRATION_MIN_CHARS = 200;
+const NARRATION_MAX_CHARS = 3000;
+
+/** 按基底视频时长估算推荐口播字数 */
+export function estimateNarrationTargetWords(durationSec: number): number {
+  const target = Math.floor(durationSec * NARRATION_CHARS_PER_SEC * NARRATION_FILL_RATIO);
+  return Math.max(NARRATION_MIN_CHARS, Math.min(NARRATION_MAX_CHARS, target));
+}
+
 /** 格式化媒体时长（秒 → mm:ss） */
 export function formatMediaDuration(seconds?: number | null): string {
   if (seconds === null || seconds === undefined || Number.isNaN(seconds)) {

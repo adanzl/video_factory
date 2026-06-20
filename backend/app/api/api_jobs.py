@@ -39,7 +39,7 @@ def _accept_stage(job_id: int, submit) -> tuple:
     return json_accepted(job)
 
 
-def _parse_script_body() -> tuple[int, bool, str | None, float | None, int | None, int | None]:
+def _parse_script_body() -> tuple[int, bool, str | None, float | None, int | None, int | None, bool]:
     data = get_json_body()
     return (
         parse_id(data),
@@ -48,12 +48,13 @@ def _parse_script_body() -> tuple[int, bool, str | None, float | None, int | Non
         parse_optional_float(data, "segment_target_sec", minimum=0.0, maximum=60.0),
         parse_optional_int(data, "max_title_length", minimum=8, maximum=48),
         parse_optional_int(data, "narration_target_words", minimum=200, maximum=3000),
+        parse_bool(data, "skip_title_optimize", default=False),
     )
 
 
 @bp.post("/script")
 def run_script_route():
-    job_id, to_end, title, segment_target_sec, max_title_length, narration_target_words = (
+    job_id, to_end, title, segment_target_sec, max_title_length, narration_target_words, skip_title_optimize = (
         _parse_script_body()
     )
     return _accept_stage(
@@ -65,6 +66,7 @@ def run_script_route():
             segment_target_sec=segment_target_sec,
             max_title_length=max_title_length,
             narration_target_words=narration_target_words,
+            skip_title_optimize=skip_title_optimize,
         ),
     )
 

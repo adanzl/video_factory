@@ -40,6 +40,64 @@ def _title_chars(title: str) -> str:
     return re.sub(r"\s+", "", title.strip())
 
 
+def _resolve_script_title(*, source_title: str, llm_title: str, max_len: int) -> str:
+    """原标题未超长则沿用；否则采用 LLM 精简结果。"""
+    source = _title_chars(source_title)
+    if len(source) <= max_len:
+        return source
+    candidate = _title_chars(llm_title)
+    if not candidate:
+        raise ScriptValidationError(
+            f"title too long: {len(source)} chars (need <= {max_len})",
+            retryable=True,
+        )
+    if len(candidate) > max_len:
+        raise ScriptValidationError(
+            f"title too long: {len(candidate)} chars (need <= {max_len})",
+            retryable=True,
+        )
+    return candidate
+
+
+def _apply_script_title(
+    script: dict,
+    *,
+    source_title: str,
+    max_len: int,
+    skip_optimize: bool,
+    job_id: int,
+    stage_name: str,
+) -> None:
+    script["title"] = _resolve_script_title(
+        source_title=source_title,
+        llm_title=str(script.get("title") or ""),
+        max_len=max_len,
+    )
+    if skip_optimize:
+        return
+    try:
+        optimized_title = llm_mgr.optimize_script_title(
+            script["title"],
+            script.get("narration", ""),
+            max_title_length=max_len,
+        )
+        script["draft_title"] = script["title"]
+        script["title"] = _title_chars(optimized_title)
+        if len(script["title"]) > max_len:
+            raise ScriptValidationError(
+                f"optimized title too long: {len(script['title'])} chars (need <= {max_len})"
+            )
+    except Exception as exc:
+        with connection() as conn:
+            job_log_repo.append_log(
+                conn,
+                job_id,
+                stage_name,
+                f"title optimize failed, keep draft: {exc}",
+                level="warning",
+            )
+
+
 def _narration_short_retryable(chars: int) -> bool:
     return chars >= NARRATION_RETRY_MIN_CHARS
 
@@ -183,33 +241,19 @@ class ScriptStage(StageExecutor):
         if script is None:
             raise last_exc or RuntimeError("script generation failed")
 
-        draft_title = script["title"]
         max_len = (
             max_title_length
             if max_title_length is not None
             else get_settings().max_title_length
         )
-        try:
-            optimized_title = llm_mgr.optimize_script_title(
-                draft_title,
-                script.get("narration", ""),
-                max_title_length=max_len,
-            )
-            script["draft_title"] = draft_title
-            script["title"] = _title_chars(optimized_title)
-            if len(script["title"]) > max_len:
-                raise ScriptValidationError(
-                    f"optimized title too long: {len(script['title'])} chars (need <= {max_len})"
-                )
-        except Exception as exc:
-            with connection() as conn:
-                job_log_repo.append_log(
-                    conn,
-                    ctx.job["id"],
-                    self.name,
-                    f"title optimize failed, keep draft: {exc}",
-                    level="warning",
-                )
+        _apply_script_title(
+            script,
+            source_title=title,
+            max_len=max_len,
+            skip_optimize=bool(ctx.script_skip_title_optimize),
+            job_id=ctx.job["id"],
+            stage_name=self.name,
+        )
 
         script["word_count"] = _narration_chars(script.get("narration", ""))
         script["cost_time"] = round(time.perf_counter() - started, 1)
