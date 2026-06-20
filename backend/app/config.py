@@ -120,6 +120,10 @@ class Config:
     ffmpeg_subtitle_crf: int = (
         int(_FFMPEG_SUBTITLE_CRF_RAW) if _FFMPEG_SUBTITLE_CRF_RAW else _FFMPEG_CRF
     )
+    # Linux AMD/Intel GPU：vaapi + h264_vaapi（默认关，服务器 .env 开启）
+    ffmpeg_hwaccel: str = os.getenv("FFMPEG_HWACCEL", "none").strip().lower()
+    ffmpeg_vaapi_device: str = os.getenv("FFMPEG_VAAPI_DEVICE", "/dev/dri/renderD128")
+    ffmpeg_vaapi_codec: str = os.getenv("FFMPEG_VAAPI_CODEC", "h264_vaapi")
     clip_submit_interval_sec: float = float(
         os.getenv("CLIP_SUBMIT_INTERVAL_SEC", os.getenv("IMAGE_SUBMIT_INTERVAL_SEC", "3"))
     )
