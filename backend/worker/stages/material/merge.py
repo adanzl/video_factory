@@ -57,7 +57,7 @@ class MaterialMergeStage(StageExecutor):
                 ),
             }
             if intro_path and not job.get("intro_path"):
-                updates["intro_path"] = str(intro_path)
+                updates["intro_path"] = str(intro_path.resolve())
             job_repo.update_job(conn, ctx.job["id"], **updates)
             job_log_repo.append_log(
                 conn,

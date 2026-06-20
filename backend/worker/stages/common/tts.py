@@ -45,8 +45,8 @@ class TTSStage(StageExecutor):
             job_repo.update_job(
                 conn,
                 ctx.job["id"],
-                audio_path=str(result.audio_path),
-                subtitle_path=str(result.subtitle_path),
+                audio_path=str(result.audio_path.resolve()),
+                subtitle_path=str(result.subtitle_path.resolve()),
                 tts_usage_json=result.usage_summary(),
             )
             job_log_repo.append_log(

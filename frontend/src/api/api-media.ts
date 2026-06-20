@@ -3,7 +3,7 @@
  */
 import { api } from "./config";
 import type { MediaDurationResult } from "@/types/media";
-import { normalizeMediaServePath } from "@/utils/media";
+import { getMediaFileUrl } from "@/utils/media";
 
 export async function getMediaDuration(path: string): Promise<number | null> {
   if (!path?.trim()) {
@@ -11,7 +11,7 @@ export async function getMediaDuration(path: string): Promise<number | null> {
   }
   try {
     const response = await api.get<MediaDurationResult>("/v_factory/api/media/getDuration", {
-      params: { path: normalizeMediaServePath(path) },
+      params: { path },
     });
     return typeof response.data?.duration === "number" ? response.data.duration : null;
   } catch {
@@ -20,18 +20,12 @@ export async function getMediaDuration(path: string): Promise<number | null> {
 }
 
 export async function getMediaText(path: string): Promise<string | null> {
-  const normalized = normalizeMediaServePath(path ?? "");
-  if (!normalized) {
+  const url = getMediaFileUrl(path);
+  if (!url) {
     return null;
   }
-  const encodedPath = normalized
-    .split("/")
-    .map(part => encodeURIComponent(part))
-    .join("/");
   try {
-    const response = await api.get<string>(`/v_factory/api/media/files/${encodedPath}`, {
-      responseType: "text",
-    });
+    const response = await api.get<string>(url, { responseType: "text" });
     return typeof response.data === "string" ? response.data : null;
   } catch {
     return null;
@@ -39,18 +33,12 @@ export async function getMediaText(path: string): Promise<string | null> {
 }
 
 export async function downloadMediaFile(filePath: string, filename?: string): Promise<void> {
-  const path = normalizeMediaServePath(filePath ?? "");
-  if (!path) {
+  const url = getMediaFileUrl(filePath);
+  if (!url) {
     throw new Error("path is empty");
   }
-  const encodedPath = path
-    .split("/")
-    .map(part => encodeURIComponent(part))
-    .join("/");
-  const response = await api.get<Blob>(`/v_factory/api/media/files/${encodedPath}`, {
-    responseType: "blob",
-  });
-  const name = filename ?? path.split("/").pop() ?? "download";
+  const response = await api.get<Blob>(url, { responseType: "blob" });
+  const name = filename ?? filePath.trim().replace(/\\/g, "/").split("/").pop() ?? "download";
   const blobUrl = URL.createObjectURL(response.data);
   const anchor = document.createElement("a");
   anchor.href = blobUrl;

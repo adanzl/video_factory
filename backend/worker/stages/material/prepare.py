@@ -63,7 +63,7 @@ class MaterialPrepareStage(StageExecutor):
         )
 
         with connection() as conn:
-            job_repo.update_job(conn, ctx.job["id"], base_path=f"{ctx.job['id']}/base.mp4")
+            job_repo.update_job(conn, ctx.job["id"], base_path=str(dest.resolve()))
             job_log_repo.append_log(
                 conn,
                 ctx.job["id"],

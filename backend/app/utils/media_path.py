@@ -1,28 +1,18 @@
-"""媒体文件路径校验与 URL 互转（对齐 MyTodo utils.validate_and_normalize_path / get_media_url）。"""
+"""媒体文件路径校验与 URL 互转（仅接受绝对路径）。"""
 
 from __future__ import annotations
 
 import os
 import re
 import stat
-from pathlib import Path
 from urllib.parse import unquote
 
 _WINDOWS_ABS_RE = re.compile(r"^[A-Za-z]:[/\\]")
-_JOB_MEDIA_TAIL_RE = re.compile(
-    r"(\d+/(?:intro\.mp4|base\.mp4|intro\.png|cover\.(?:jpg|png)|audio\.(?:mp3|wav|aac)))$",
-    re.IGNORECASE,
-)
-
-
-def _job_media_tail(filepath: str) -> str | None:
-    cleaned = filepath.replace("\\", "/")
-    match = _JOB_MEDIA_TAIL_RE.search(cleaned)
-    return match.group(1) if match else None
+_JOB_RELATIVE_RE = re.compile(r"^\d+/")
 
 
 def decode_url_path(path: str) -> str:
-    """解码 URL 编码路径（支持多次编码，对齐 MyTodo）。"""
+    """解码 URL 编码路径（支持多次编码）。"""
     for _ in range(32):
         if "%" not in path:
             break
@@ -47,7 +37,6 @@ def to_media_url_path(local_path: str) -> str:
 
 
 def path_under_allowed_roots(file_path: str, roots: list[str]) -> bool:
-    """路径须在允许的根目录之下（对齐 MyTodo _path_under_allowed_roots）。"""
     norm = os.path.normpath(file_path)
     for root in roots:
         root_norm = os.path.normpath(root)
@@ -78,47 +67,47 @@ def allowed_media_roots() -> list[str]:
     return unique
 
 
+def _absolute_path_from_segment(segment: str) -> str:
+    """URL 路径段或 API 参数 → 磁盘绝对路径（不接受相对路径）。"""
+    cleaned = (segment or "").strip().replace("\\", "/")
+    if not cleaned:
+        raise ValueError("path is required")
+    if ".." in cleaned.split("/") or cleaned.startswith("~"):
+        raise ValueError("path traversal not allowed")
+
+    if _WINDOWS_ABS_RE.match(cleaned):
+        return os.path.normpath(cleaned)
+    if os.path.isabs(cleaned):
+        return os.path.normpath(cleaned)
+    if _JOB_RELATIVE_RE.match(cleaned):
+        raise ValueError("path must be absolute")
+    if "/" not in cleaned:
+        raise ValueError("path must be absolute")
+
+    # getMediaFileUrl 会去掉 Linux 绝对路径开头的 /（如 mnt/data/...）
+    return os.path.normpath("/" + cleaned.lstrip("/"))
+
+
 def normalize_media_path(
     file_path: str,
     *,
     allowed_roots: list[str] | None = None,
     must_be_file: bool = True,
 ) -> str:
-    """验证并规范化媒体路径（对齐 MyTodo validate_and_normalize_path）。"""
-    if not file_path:
-        raise ValueError("path is required")
-
-    cleaned = decode_url_path(file_path.strip())
-    if ".." in cleaned.split("/") or cleaned.startswith("~"):
-        raise ValueError("path traversal not allowed")
+    """验证并返回磁盘绝对路径。"""
+    cleaned = _absolute_path_from_segment(decode_url_path(file_path.strip()))
 
     roots = allowed_roots or allowed_media_roots()
     if not roots:
         raise ValueError("no allowed media roots configured")
 
-    base_dir = roots[0]
-    if not os.path.isabs(cleaned):
-        cleaned = os.path.normpath(os.path.join(base_dir, cleaned.lstrip("/")))
-    else:
-        cleaned = os.path.normpath(cleaned)
-
     if not path_under_allowed_roots(cleaned, roots):
-        tail = _job_media_tail(cleaned)
-        if tail:
-            cleaned = os.path.normpath(os.path.join(base_dir, tail))
-        if not path_under_allowed_roots(cleaned, roots):
-            raise ValueError("path not in allowed directory")
+        raise ValueError("path not in allowed directory")
 
     try:
         st = os.lstat(cleaned)
-    except FileNotFoundError:
-        tail = _job_media_tail(cleaned)
-        if not tail:
-            raise FileNotFoundError(f"file not found: {cleaned}") from None
-        cleaned = os.path.normpath(os.path.join(roots[0], tail))
-        if not path_under_allowed_roots(cleaned, roots):
-            raise ValueError("path not in allowed directory")
-        st = os.lstat(cleaned)
+    except FileNotFoundError as exc:
+        raise FileNotFoundError(f"file not found: {cleaned}") from exc
     except RecursionError as exc:
         raise ValueError("Invalid path: 路径解析失败") from exc
     except OSError as exc:
@@ -135,25 +124,19 @@ def resolve_media_serve_path(
     *,
     allowed_roots: list[str] | None = None,
 ) -> str:
-    """解析媒体文件 URL 路径（对齐 MyTodo media_mgr.prepare_serve_file）。"""
+    """解析 HTTP 媒体 URL 路径段 → 磁盘绝对路径。"""
     roots = allowed_roots or allowed_media_roots()
-    filepath = decode_url_path((url_path or "").strip())
-    filepath = filepath.replace("../", "").replace("..\\", "")
+    filepath = decode_url_path((url_path or "").strip()).replace("../", "").replace("..\\", "")
 
-    if _WINDOWS_ABS_RE.match(filepath) or os.path.isabs(filepath):
-        filepath = os.path.normpath(filepath)
-    else:
-        filepath = os.path.normpath(os.path.join(roots[0], filepath.lstrip("/\\")))
+    try:
+        cleaned = _absolute_path_from_segment(filepath)
+    except ValueError as exc:
+        raise FileNotFoundError(str(exc)) from exc
 
-    if not os.path.isfile(filepath):
-        tail = _job_media_tail(filepath)
-        if tail:
-            filepath = os.path.normpath(os.path.join(roots[0], tail))
-
-    if not os.path.isfile(filepath):
-        raise FileNotFoundError(f"file not found: {filepath}")
-
-    if not path_under_allowed_roots(filepath, roots):
+    if not path_under_allowed_roots(cleaned, roots):
         raise ValueError("path not in allowed directory")
 
-    return filepath
+    if not os.path.isfile(cleaned):
+        raise FileNotFoundError(f"file not found: {cleaned}")
+
+    return cleaned
