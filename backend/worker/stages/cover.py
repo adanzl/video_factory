@@ -7,6 +7,7 @@ from PIL import Image
 from app.repositories import job_log_repo, job_repo
 from app.repositories.connection import connection
 from app.services.media.ffmpeg_utils import extract_first_frame
+from app.utils.final_asset import resolve_final_path_file
 from worker.context import JobContext
 from worker.stages.base import StageExecutor
 
@@ -23,13 +24,13 @@ class CoverStage(StageExecutor):
         else:
             with connection() as conn:
                 job = job_repo.get_job(conn, ctx.job["id"])
-            final_path = job.get("final_path")
-            if not final_path:
+            final_file = resolve_final_path_file(job.get("final_path"))
+            if not final_file:
                 raise ValueError(
                     "intro.png 不存在且 final_path 缺失，请先跑 intro 或 merge 阶段"
                 )
-            extract_first_frame(Path(final_path), cover_path)
-            source = f"final first frame: {final_path}"
+            extract_first_frame(Path(final_file), cover_path)
+            source = f"final first frame: {final_file}"
 
         with connection() as conn:
             job_repo.update_job(conn, ctx.job["id"], cover_path=str(cover_path))

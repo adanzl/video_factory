@@ -4,6 +4,8 @@ import json
 import sqlite3
 from typing import Any
 
+from app.utils.final_asset import parse_final_asset
+
 
 def _row_to_dict(row: sqlite3.Row) -> dict:
     data = dict(row)
@@ -13,7 +15,16 @@ def _row_to_dict(row: sqlite3.Row) -> dict:
         data["quality_report"] = json.loads(data["quality_report"])
     if data.get("tts_usage_json"):
         data["tts_usage_json"] = json.loads(data["tts_usage_json"])
+    if data.get("final_path"):
+        data["final_path"] = parse_final_asset(data["final_path"])
     data["skip_publish"] = bool(data.get("skip_publish"))
+    return data
+
+
+def _normalize_list_row(row: sqlite3.Row) -> dict:
+    data = dict(row)
+    if data.get("final_path"):
+        data["final_path"] = parse_final_asset(data["final_path"])
     return data
 
 
@@ -66,7 +77,7 @@ def list_jobs(
             """,
             (limit, offset),
         ).fetchall()
-    return [dict(row) for row in rows]
+    return [_normalize_list_row(row) for row in rows]
 
 
 def get_job(conn: sqlite3.Connection, job_id: int) -> dict:
@@ -103,6 +114,8 @@ def update_job(conn: sqlite3.Connection, job_id: int, **fields: Any) -> dict:
         if key not in allowed:
             continue
         if key in {"script_json", "quality_report", "tts_usage_json"} and value is not None:
+            value = json.dumps(value, ensure_ascii=False)
+        if key == "final_path" and isinstance(value, dict):
             value = json.dumps(value, ensure_ascii=False)
         if key == "skip_publish":
             value = int(bool(value))

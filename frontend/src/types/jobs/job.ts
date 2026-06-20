@@ -1,9 +1,15 @@
+export interface FinalAsset {
+  path: string;
+  duration?: number | null;
+  size?: number | null;
+}
+
 export interface JobListItem {
   id: number;
   title: string;
   stage: string;
   status: string;
-  final_path?: string | null;
+  final_path?: FinalAsset | null;
   updated_at?: string | null;
   error_message?: string | null;
 }

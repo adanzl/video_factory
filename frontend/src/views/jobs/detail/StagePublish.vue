@@ -19,7 +19,7 @@
 
     <el-descriptions :column="1" border class="mb-4">
       <el-descriptions-item label="跳过发布">{{ job.skip_publish ? "是" : "否" }}</el-descriptions-item>
-      <el-descriptions-item label="成片路径">{{ job.final_path || "-" }}</el-descriptions-item>
+      <el-descriptions-item label="成片路径">{{ resolveFinalPath(job.final_path) || "-" }}</el-descriptions-item>
     </el-descriptions>
 
     <el-alert v-if="job.skip_publish" type="info" title="该任务配置为跳过发布" :closable="false" />
@@ -44,6 +44,7 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import { runJobStageAction, updateJob } from "@/api/api-jobs";
 import type { JobDetail, JobLog } from "@/types/jobs";
 import { formatDateTime } from "@/utils/date";
+import { resolveFinalPath } from "@/utils/media";
 import { useErrorHandler } from "@/composables/useErrorHandler";
 
 const props = defineProps<{

@@ -128,7 +128,7 @@
             >
               <video
                 :key="segment.clipUrl"
-                class="block aspect-video w-full bg-black"
+                class="block aspect-[9/16] w-full bg-black"
                 :src="segment.clipUrl"
                 controls
                 playsinline
@@ -137,7 +137,7 @@
             </div>
             <div
               v-else
-              class="flex aspect-video w-full items-center justify-center rounded border border-dashed border-gray-200 bg-gray-50 text-xs text-gray-400"
+              class="flex aspect-[9/16] w-full items-center justify-center rounded border border-dashed border-gray-200 bg-gray-50 text-xs text-gray-400"
             >
               暂无视频
             </div>

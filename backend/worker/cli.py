@@ -142,7 +142,9 @@ def cmd_run(args: argparse.Namespace) -> int:
     )
     print(f"Done: stage={job['stage']} status={job['status']}")
     if job.get("final_path"):
-        print(f"Final: {job['final_path']}")
+        from app.utils.final_asset import resolve_final_path_file
+
+        print(f"Final: {resolve_final_path_file(job['final_path'])}")
     if job["status"] == "done":
         return 0
     if job["status"] == "pending":

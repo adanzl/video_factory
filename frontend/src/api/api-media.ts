@@ -37,4 +37,26 @@ export async function getMediaText(path: string): Promise<string | null> {
   }
 }
 
+export async function downloadMediaFile(filePath: string, filename?: string): Promise<void> {
+  const normalized = filePath?.trim().replace(/\\/g, "/");
+  if (!normalized) {
+    throw new Error("path is empty");
+  }
+  const path = normalized.startsWith("/") ? normalized.slice(1) : normalized;
+  const encodedPath = path
+    .split("/")
+    .map(part => encodeURIComponent(part))
+    .join("/");
+  const response = await api.get<Blob>(`/v_factory/api/media/files/${encodedPath}`, {
+    responseType: "blob",
+  });
+  const name = filename ?? path.split("/").pop() ?? "download";
+  const blobUrl = URL.createObjectURL(response.data);
+  const anchor = document.createElement("a");
+  anchor.href = blobUrl;
+  anchor.download = name;
+  anchor.click();
+  URL.revokeObjectURL(blobUrl);
+}
+
 export { getMediaFileUrl } from "@/utils/media";

@@ -5,6 +5,7 @@ from pathlib import Path
 from app.repositories import job_log_repo
 from app.repositories.connection import connection
 from app.services.publish.publish_mgr import publish_mgr
+from app.utils.final_asset import resolve_final_path_file
 from worker.context import JobContext
 from worker.stages.base import StageExecutor
 
@@ -17,7 +18,8 @@ class PublishStage(StageExecutor):
             with connection() as conn:
                 job_log_repo.append_log(conn, ctx.job["id"], self.name, "skipped (skip_publish)")
             return
-        video_path = Path(ctx.job.get("final_path") or ctx.rel("final.mp4"))
+        video_file = resolve_final_path_file(ctx.job.get("final_path"))
+        video_path = Path(video_file or ctx.rel("final.mp4"))
         cover_path = Path(ctx.job["cover_path"]) if ctx.job.get("cover_path") else None
         result = publish_mgr.publish(
             title=ctx.job["title"],

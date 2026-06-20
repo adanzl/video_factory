@@ -8,7 +8,9 @@ from app.quality.gate import apply_quality_checks
 from app.repositories import job_log_repo, job_repo, segment_repo
 from app.repositories.connection import connection
 from app.services.media.audio_analysis import analyze_loudness
+from app.services.media.ffmpeg_utils import probe_duration
 from app.services.media.media_mgr import media_mgr
+from app.utils.final_asset import build_final_asset
 from worker.context import JobContext
 from worker.stages.base import StageExecutor
 
@@ -37,9 +39,15 @@ class MergeStage(StageExecutor):
             intro_path=intro_path,
         )
         loudness = analyze_loudness(result.final_path)
+        duration = probe_duration(result.final_path)
 
         with connection() as conn:
-            updates: dict = {"final_path": str(result.final_path)}
+            updates: dict = {
+                "final_path": build_final_asset(
+                    result.final_path,
+                    duration=duration,
+                ),
+            }
             if intro_path and not job.get("intro_path"):
                 updates["intro_path"] = str(intro_path)
             job_repo.update_job(conn, ctx.job["id"], **updates)
