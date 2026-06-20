@@ -68,6 +68,7 @@ def _run_one_stage(
     advance: bool = True,
     hold: bool = False,
     intro_hold_tail_sec: float | None = None,
+    intro_orientation: str | None = None,
     tts_speech_rate: float | None = None,
     tts_voice_id: str | None = None,
     script_segment_target_sec: float | None = None,
@@ -82,6 +83,7 @@ def _run_one_stage(
         rerun_segment_indices=tuple(segment_indices) if segment_indices else None,
         segment_scope=segment_scope,
         intro_hold_tail_sec=intro_hold_tail_sec,
+        intro_orientation=intro_orientation,
         tts_speech_rate=tts_speech_rate,
         tts_voice_id=tts_voice_id,
         script_segment_target_sec=script_segment_target_sec,
@@ -116,6 +118,7 @@ def _run_from(
     segment_indices: list[int] | None = None,
     segment_scope: str | None = None,
     intro_hold_tail_sec: float | None = None,
+    intro_orientation: str | None = None,
     tts_speech_rate: float | None = None,
     tts_voice_id: str | None = None,
     script_segment_target_sec: float | None = None,
@@ -136,6 +139,7 @@ def _run_from(
             rerun_segment_indices=rerun_segments,
             segment_scope=scope if stage_cls.name == "segment" else None,
             intro_hold_tail_sec=intro_hold_tail_sec if stage_cls.name == "intro" else None,
+            intro_orientation=intro_orientation if stage_cls.name == "intro" else None,
             tts_speech_rate=tts_speech_rate if stage_cls.name == "tts" else None,
             tts_voice_id=tts_voice_id if stage_cls.name == "tts" else None,
             script_segment_target_sec=script_segment_target_sec if stage_cls.name == "script" else None,
@@ -230,12 +234,29 @@ def run_script(
     )
 
 
-def run_intro(job_id: int, *, to_end: bool = False, hold_tail_sec: float | None = None) -> dict:
+def run_intro(
+    job_id: int,
+    *,
+    to_end: bool = False,
+    hold_tail_sec: float | None = None,
+    orientation: str | None = None,
+) -> dict:
     job = _reload_job(job_id)
     intro_cls = stage_class_for("intro", job)
     if to_end:
-        return _run_from(job_id, intro_cls, intro_hold_tail_sec=hold_tail_sec)
-    return _run_one_stage(job_id, intro_cls, hold=True, intro_hold_tail_sec=hold_tail_sec)
+        return _run_from(
+            job_id,
+            intro_cls,
+            intro_hold_tail_sec=hold_tail_sec,
+            intro_orientation=orientation,
+        )
+    return _run_one_stage(
+        job_id,
+        intro_cls,
+        hold=True,
+        intro_hold_tail_sec=hold_tail_sec,
+        intro_orientation=orientation,
+    )
 
 
 def run_cover(job_id: int, *, to_end: bool = False) -> dict:

@@ -226,14 +226,26 @@ class JobMgr:
             ),
         )
 
-    def run_intro(self, job_id: int, *, to_end: bool = False, hold_tail_sec: float | None = None) -> dict:
+    def run_intro(
+        self,
+        job_id: int,
+        *,
+        to_end: bool = False,
+        hold_tail_sec: float | None = None,
+        orientation: str | None = None,
+    ) -> dict:
         """生成片头。实现：worker/loop.run_intro → worker/stages/common/intro.py"""
         from worker.loop import run_intro
 
         return self._run_in_background(
             job_id,
             "intro",
-            lambda: run_intro(job_id, to_end=to_end, hold_tail_sec=hold_tail_sec),
+            lambda: run_intro(
+                job_id,
+                to_end=to_end,
+                hold_tail_sec=hold_tail_sec,
+                orientation=orientation,
+            ),
         )
 
     def run_cover(self, job_id: int, *, to_end: bool = False) -> dict:
