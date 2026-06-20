@@ -58,18 +58,24 @@ class MockLLMClient(LLMClient):
         for idx, text in enumerate(templates, start=1):
             narration_parts.append(text)
             brief = f"第{idx}镜：围绕「{display_title}」展示一个生活化科普场景与关键对比。"
+            image_prompt = (
+                f"采用中景竖屏构图的3D卡通渲染科普插画，严格遵循画风：{visual_style}。"
+                f"本镜对应口播主题，场景序号{idx}，主体居中略偏上，留出下方字幕安全区，"
+                f"单一视觉焦点落在核心道具或对比物上，明亮温馨不压抑。"
+                f"前景浅木色台面有轻微景深虚化，中景主体道具造型统一、边缘高光清晰，"
+                f"背景为虚化家居轮廓与暖色墙面，左上方暖黄窗光为主光，右侧冷白补光勾边，"
+                f"材质区分木质纹理、金属反光与塑料哑光，主色银白暖木辅以少量红色点缀，"
+                f"若本镜含对比则左右并排两状态并用箭头连接，辅色点缀提升层次，"
+                f"整体氛围清晰易懂、适合竖屏短视频科普表达，画面无文字无水印，"
+                f"仅表达当前分镜内容，不提前展示后续情节。"
+            )
             segments.append(
                 {
                     "segment_index": idx,
                     "text": text,
                     "visual_brief": brief,
-                    "image_prompt": (
-                        f"采用中景镜头拍摄的3D卡通渲染科普插画，遵循画风：{visual_style}。"
-                        f"本镜对应口播主题，场景{idx}，明亮温馨，浅木色台面，"
-                        f"主体道具造型简化，左上方暖黄窗光，右侧冷白补光，"
-                        f"背景虚化可见家居轮廓，主色银白暖木，焦点高光清晰，"
-                        f"画面表达与口播一致，无文字无水印。"
-                    ),
+                    "image_prompt": image_prompt,
+                    "motion_prompt": "镜头缓慢推近主体，指示箭头轻微延伸，整体保持轻微呼吸感。",
                     "visual_mode": "static_motion",
                 }
             )

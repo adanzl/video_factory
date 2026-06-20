@@ -3,6 +3,7 @@ export interface ScriptSegment {
   text: string;
   visual_brief?: string;
   image_prompt?: string;
+  motion_prompt?: string;
   visual_mode?: string;
 }
 

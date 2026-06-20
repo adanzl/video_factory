@@ -8,6 +8,7 @@ from app.quality.gate import apply_quality_checks
 from app.repositories import job_log_repo, job_repo, segment_repo
 from app.repositories.connection import connection
 from app.services.llm.llm_mgr import llm_mgr
+from app.services.llm.llm_deepseek import MIN_IMAGE_PROMPT_CHARS
 from worker.context import JobContext
 from worker.stages.base import StageExecutor
 
@@ -15,7 +16,6 @@ MIN_NARRATION_CHARS = 700
 # 低于此比例视为「主题撑不满」，不再重试，直接沿用当前文案继续。
 NARRATION_RETRY_MIN_CHARS = int(MIN_NARRATION_CHARS * 0.8)
 MIN_ACCEPT_NARRATION_CHARS = 200
-MIN_IMAGE_PROMPT_CHARS = 200
 
 
 def _min_narration_chars(narration_target_words: int | None) -> int:

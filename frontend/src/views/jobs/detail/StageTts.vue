@@ -6,9 +6,6 @@
           <div class="mb-3 text-sm font-medium text-gray-700">参数配置</div>
           <div>
             <div class="mb-3 flex flex-wrap items-center gap-2">
-              <el-button type="primary" @click="emit('refresh')">
-                <el-icon><Refresh /></el-icon>
-              </el-button>
               <el-button type="primary" :loading="submitting" :disabled="actionDisabled" @click="handleRun(false)">
                 重新生成
               </el-button>
@@ -157,7 +154,6 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { Refresh } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { runJobStageAction } from "@/api/api-jobs";
 import { getMediaFileUrl, getMediaText } from "@/api/api-media";

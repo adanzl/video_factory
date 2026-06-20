@@ -13,7 +13,7 @@ from app.services.llm.llm_topics import (
 
 # 中文口播约 7.5 字/秒（12s ≈ 90 字）
 _CHARS_PER_SEC = 7.5
-_MIN_IMAGE_PROMPT_CHARS = 200
+MIN_IMAGE_PROMPT_CHARS = 300
 
 _VISUAL_BRIEF_RULE = (
     "各段含segment_index,text,visual_brief,visual_mode=static_motion；"
@@ -24,15 +24,21 @@ _VISUAL_BRIEF_RULE = (
 )
 
 _IMAGE_PROMPT_RULE = (
-    "根据每段口播text与visual_brief，扩写为文生图用的image_prompt"
+    "根据每段口播text、visual_brief与全片visual_style，扩写为文生图用的image_prompt"
     "和video用的motion_prompt。"
-    "全片统一画风：电影级写实科普视觉，布光考究、景深自然、材质细节真实可辨，"
-    "色彩明快有层次，适配9:16竖屏构图。所有分镜严格遵守此风格。"
-    "每段image_prompt须300-500字，围绕一个视觉焦点展开（如主体特写、关键对比、核心原理可视化），"
-    "避免要素平铺罗列。若口播涉及对比（A/B、前后变化），画面须并排展示两种状态，"
+    "image_prompt须严格遵循visual_style画风定调，全片统一：电影级写实科普视觉，布光考究、"
+    "景深自然、材质细节真实可辨，色彩明快有层次，适配9:16竖屏构图。"
+    f"每段image_prompt须350-550字（任何一段不得低于{MIN_IMAGE_PROMPT_CHARS}字），"
+    "须按以下六层逐层展开，每层写具体可见细节，禁止一句话带过或空泛形容词："
+    "①构图景别（竖屏主体位置与占比、留白、单一视觉焦点）；"
+    "②主体动作（主体是谁/何物、姿态、关键互动，或A/B对比并排）；"
+    "③场景环境（前景/中景/背景元素、空间纵深、虚化程度）；"
+    "④光影材质（主光与辅光方向、高光反光、主体与道具材质质感）；"
+    "⑤色彩氛围（主辅色、冷暖对比、情绪基调，须有暖色点缀，忌整体发灰）；"
+    "⑥语义边界（仅表达本段text与visual_brief，禁止提前画后续段落内容）。"
+    "围绕一个视觉焦点展开，避免要素平铺罗列。"
+    "若口播涉及对比（A/B、前后变化），画面须并排展示两种状态，"
     "用箭头、流向线、对勾/叉号等视觉编码辅助说明，禁用可读文字/数字/化学式/水印。"
-    "色调忌整体发灰，须有暖色点缀。"
-    "须严格对应该段text与visual_brief，禁止提前画后续段落内容。"
     "每段motion_prompt须30-80字，描述画面如何运动，如镜头运动（推近/环绕/平移）、"
     "主体运动（旋转/流动/吸附/弹开）、指示动画（箭头延伸/对勾出现/光晕脉动）、"
     "原理可视化（电流流动/板块挤压/细胞分裂），要求自然流畅不突兀。"
@@ -165,7 +171,7 @@ class DeepSeekClient(LLMClient):
             f"全片画风定调 visual_style：{script.get('visual_style', '')}\n\n"
             "各分镜口播与画面描述：\n"
             + "\n".join(lines)
-            + "\n\n请为每段扩写 image_prompt。"
+            + "\n\n请为每段扩写 image_prompt 与 motion_prompt，确保 image_prompt 满足字数与六层结构要求。"
         )
         if feedback:
             user += f"\n\n上次不合格：{feedback}。请按要求重写。"
@@ -222,13 +228,14 @@ class DeepSeekClient(LLMClient):
             short = [
                 (seg["segment_index"], len(seg["image_prompt"]))
                 for seg in data["segments"]
-                if len(seg["image_prompt"]) < _MIN_IMAGE_PROMPT_CHARS
+                if len(seg["image_prompt"]) < MIN_IMAGE_PROMPT_CHARS
             ]
             if not short:
                 break
             prompt_feedback = (
                 f"image_prompt too short: {short}; "
-                f"need >={_MIN_IMAGE_PROMPT_CHARS} chars each, expand all layers"
+                f"need >={MIN_IMAGE_PROMPT_CHARS} chars each; "
+                "expand all six layers (composition, subject, environment, lighting, color, scope)"
             )
         return data
 

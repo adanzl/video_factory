@@ -81,12 +81,12 @@
         <div class="mb-2 text-sm font-medium text-gray-700">分镜列表</div>
         <el-table v-if="script.segments?.length" :data="script.segments" stripe class="w-full">
           <el-table-column prop="segment_index" label="#" width="60" />
-          <el-table-column prop="text" label="口播文案" min-width="220">
+          <el-table-column prop="text" label="口播文案" min-width="150">
             <template #default="{ row }">
               <div class="leading-relaxed break-words whitespace-pre-wrap">{{ row.text }}</div>
             </template>
           </el-table-column>
-          <el-table-column prop="visual_brief" label="画面描述" min-width="200">
+          <el-table-column prop="visual_brief" label="画面描述" min-width="150">
             <template #default="{ row }">
               <div class="leading-relaxed break-words whitespace-pre-wrap">{{ row.visual_brief || "-" }}</div>
             </template>
@@ -96,6 +96,13 @@
             <template #default="{ row }">
               <div class="text-xs leading-relaxed break-words whitespace-pre-wrap text-gray-500">
                 {{ row.image_prompt || "-" }}
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column prop="motion_prompt" label="运动提示词" min-width="100">
+            <template #default="{ row }">
+              <div class="text-xs leading-relaxed break-words whitespace-pre-wrap text-gray-500">
+                {{ row.motion_prompt || "-" }}
               </div>
             </template>
           </el-table-column>

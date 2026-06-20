@@ -6,7 +6,7 @@
 
     <template v-else-if="job">
       <div class="mb-4 flex flex-wrap items-center gap-3">
-        <el-button type="primary" :disabled="loading" @click="fetchDetail">
+        <el-button type="primary" :disabled="loading" @click="() => fetchDetail()">
           <el-icon><Refresh /></el-icon>
         </el-button>
         <span class="font-medium">{{ job.title }}</span>
@@ -47,10 +47,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, onUnmounted, ref, watch } from "vue";
 import type { Component } from "vue";
 import { Refresh } from "@element-plus/icons-vue";
 import { getJob, getJobLogs, getJobSegments } from "@/api/api-jobs";
+import { JOB_STATUS_RUNNING } from "@/constants/job";
 import { JOB_STAGE_NAMES, JOB_STAGES } from "@/constants/jobStages";
 import type { JobDetail, JobLog, JobSegment } from "@/types/jobs";
 import { useErrorHandler } from "@/composables/useErrorHandler";
@@ -88,6 +89,15 @@ const logs = ref<JobLog[]>([]);
 const loading = ref(false);
 const activeStage = ref(JOB_STAGES[0].name);
 
+const RUNNING_POLL_INTERVAL_MS = 3000;
+let runningPollTimer: ReturnType<typeof setInterval> | null = null;
+
+const compareLogTimeDesc = (a: JobLog, b: JobLog) => {
+  const ta = a.created_at ? Date.parse(a.created_at) : 0;
+  const tb = b.created_at ? Date.parse(b.created_at) : 0;
+  return tb - ta;
+};
+
 const logsByStage = computed(() => {
   const grouped: Record<string, JobLog[]> = {};
   for (const entry of logs.value) {
@@ -95,6 +105,9 @@ const logsByStage = computed(() => {
       grouped[entry.stage] = [];
     }
     grouped[entry.stage].push(entry);
+  }
+  for (const stage of Object.keys(grouped)) {
+    grouped[stage].sort(compareLogTimeDesc);
   }
   return grouped;
 });
@@ -120,7 +133,8 @@ const syncActiveStage = (detail: JobDetail) => {
   }
 };
 
-const fetchDetail = async () => {
+const fetchDetail = async (options: { silent?: boolean } = {}) => {
+  const { silent = false } = options;
   if (!props.jobId) {
     job.value = undefined;
     segments.value = [];
@@ -128,7 +142,9 @@ const fetchDetail = async () => {
     return;
   }
 
-  loading.value = true;
+  if (!silent) {
+    loading.value = true;
+  }
   try {
     const [detail, segmentList, logList] = await Promise.all([
       getJob(props.jobId),
@@ -138,22 +154,56 @@ const fetchDetail = async () => {
     job.value = detail;
     segments.value = segmentList;
     logs.value = logList;
-    syncActiveStage(detail);
   } catch (error) {
-    job.value = undefined;
-    segments.value = [];
-    logs.value = [];
-    handleError(error, "加载任务详情失败");
+    if (!silent) {
+      job.value = undefined;
+      segments.value = [];
+      logs.value = [];
+      handleError(error, "加载任务详情失败");
+    }
   } finally {
-    loading.value = false;
+    if (!silent) {
+      loading.value = false;
+    }
   }
 };
 
+const stopRunningPoll = () => {
+  if (runningPollTimer !== null) {
+    clearInterval(runningPollTimer);
+    runningPollTimer = null;
+  }
+};
+
+const startRunningPoll = () => {
+  stopRunningPoll();
+  runningPollTimer = setInterval(() => {
+    void fetchDetail({ silent: true });
+  }, RUNNING_POLL_INTERVAL_MS);
+};
+
+watch(
+  () => job.value?.status,
+  status => {
+    if (status === JOB_STATUS_RUNNING) {
+      startRunningPoll();
+    } else {
+      stopRunningPoll();
+    }
+  }
+);
+
 watch(
   () => props.jobId,
-  () => {
-    fetchDetail();
+  async () => {
+    stopRunningPoll();
+    await fetchDetail();
+    if (job.value) {
+      syncActiveStage(job.value);
+    }
   },
   { immediate: true }
 );
+
+onUnmounted(stopRunningPoll);
 </script>
