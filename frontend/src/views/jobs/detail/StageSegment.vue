@@ -11,11 +11,11 @@
         <span v-if="actionDisabledReason" class="text-sm text-gray-400">{{ actionDisabledReason }}</span>
       </div>
       <el-form label-width="96px">
-        <el-form-item label="重跑范围">
-          <el-select v-model="segmentScope" class="w-48!">
-            <el-option label="分镜静图" value="segment/images" />
-            <el-option label="图生视频" value="segment/clips" />
-          </el-select>
+        <el-form-item label="重跑模式">
+          <el-radio-group v-model="segmentScope">
+            <el-radio value="segment/images">分镜静图</el-radio>
+            <el-radio value="segment/clips">图生视频</el-radio>
+          </el-radio-group>
         </el-form-item>
         <el-form-item label="分段序号">
           <el-select
@@ -38,21 +38,106 @@
       </el-form>
     </div>
 
-    <el-table v-if="segments.length" :data="segments" stripe class="w-full">
-      <el-table-column prop="segment_index" label="#" width="60" />
-      <el-table-column prop="text" label="文案" min-width="200" show-overflow-tooltip />
-      <el-table-column prop="visual_mode" label="模式" width="120" />
-      <el-table-column prop="status" label="状态" width="100">
-        <template #default="{ row }">
-          <el-tag size="small">{{ row.status }}</el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column label="时长(s)" width="90">
-        <template #default="{ row }">{{ formatDuration(row.duration_sec) }}</template>
-      </el-table-column>
-      <el-table-column prop="image_path" label="图片" min-width="160" show-overflow-tooltip />
-      <el-table-column prop="clip_path" label="片段" min-width="160" show-overflow-tooltip />
-    </el-table>
+    <div v-if="displaySegments.length" class="overflow-x-auto pb-2">
+      <div class="flex w-max min-w-full gap-4">
+        <article
+          v-for="segment in displaySegments"
+          :key="segment.segment_index"
+          class="flex w-72 shrink-0 flex-col gap-3 rounded-lg border border-gray-200 bg-white p-3"
+        >
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-sm font-medium text-gray-800">#{{ segment.segment_index }}</span>
+            <el-tag size="small">{{ segment.status }}</el-tag>
+          </div>
+          <div class="text-xs text-gray-400">
+            {{ segment.visual_mode }} · {{ formatDuration(segment.duration_sec) }}s
+          </div>
+
+          <section class="flex flex-col gap-1">
+            <div class="text-xs font-medium text-gray-600">文案</div>
+            <el-tooltip placement="top" :show-after="300" :disabled="!segment.text">
+              <template #content>
+                <div class="max-w-sm whitespace-pre-wrap break-words text-sm">{{ segment.text }}</div>
+              </template>
+              <div class="line-clamp-3 min-h-[3lh] cursor-default text-sm leading-relaxed break-words">
+                {{ segment.text }}
+              </div>
+            </el-tooltip>
+          </section>
+
+          <section class="flex flex-col gap-1">
+            <div class="text-xs font-medium text-gray-600">画面描述</div>
+            <el-tooltip placement="top" :show-after="300" :disabled="!segment.visual_brief">
+              <template #content>
+                <div class="max-w-sm whitespace-pre-wrap break-words text-sm">{{ segment.visual_brief }}</div>
+              </template>
+              <div class="line-clamp-4 min-h-[4lh] cursor-default text-sm leading-relaxed break-words">
+                {{ segment.visual_brief || "-" }}
+              </div>
+            </el-tooltip>
+          </section>
+
+          <section class="flex flex-col gap-1">
+            <div class="text-xs font-medium text-gray-600">文生图提示词</div>
+            <el-tooltip placement="top" :show-after="300" :disabled="!segment.image_prompt">
+              <template #content>
+                <div class="max-w-sm whitespace-pre-wrap break-words text-xs">{{ segment.image_prompt }}</div>
+              </template>
+              <div class="line-clamp-2 min-h-[2lh] cursor-default text-xs leading-relaxed break-words text-gray-500">
+                {{ segment.image_prompt || "-" }}
+              </div>
+            </el-tooltip>
+          </section>
+
+          <section class="flex flex-col gap-1">
+            <div class="text-xs font-medium text-gray-600">运动提示词</div>
+            <el-tooltip placement="top" :show-after="300" :disabled="!segment.motion_prompt">
+              <template #content>
+                <div class="max-w-sm whitespace-pre-wrap break-words text-xs">{{ segment.motion_prompt }}</div>
+              </template>
+              <div class="line-clamp-3 min-h-[3lh] cursor-default text-xs leading-relaxed break-words text-gray-500">
+                {{ segment.motion_prompt || "-" }}
+              </div>
+            </el-tooltip>
+          </section>
+
+          <section class="flex flex-col gap-1">
+            <div class="text-xs font-medium text-gray-600">分段图片</div>
+            <el-image
+              v-if="segment.image_path"
+              :src="getMediaFileUrl(segment.image_path)"
+              fit="cover"
+              class="aspect-video w-full rounded border border-gray-100"
+              :preview-src-list="[getMediaFileUrl(segment.image_path)]"
+              preview-teleported
+            />
+            <div
+              v-else
+              class="flex aspect-video w-full items-center justify-center rounded border border-dashed border-gray-200 bg-gray-50 text-xs text-gray-400"
+            >
+              暂无图片
+            </div>
+          </section>
+
+          <section class="flex flex-col gap-1">
+            <div class="text-xs font-medium text-gray-600">视频预览</div>
+            <video
+              v-if="segment.clip_path"
+              :src="getMediaFileUrl(segment.clip_path)"
+              controls
+              preload="metadata"
+              class="aspect-video w-full rounded border border-gray-100 bg-black"
+            />
+            <div
+              v-else
+              class="flex aspect-video w-full items-center justify-center rounded border border-dashed border-gray-200 bg-gray-50 text-xs text-gray-400"
+            >
+              暂无视频
+            </div>
+          </section>
+        </article>
+      </div>
+    </div>
     <div v-else class="py-8 text-center text-sm text-gray-400">暂无分段数据</div>
 
     <div class="mt-6">
@@ -73,7 +158,8 @@
 import { computed, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { runJobStageAction } from "@/api/api-jobs";
-import type { JobDetail, JobLog, JobSegment } from "@/types/jobs";
+import { getMediaFileUrl } from "@/api/api-media";
+import type { JobDetail, JobLog, JobSegment, ScriptJson } from "@/types/jobs";
 import { formatDateTime } from "@/utils/date";
 import { useErrorHandler } from "@/composables/useErrorHandler";
 
@@ -96,6 +182,24 @@ const selectedSegments = ref<number[]>([]);
 const actionDisabled = computed(() => props.job.status === "running");
 const actionDisabledReason = computed(() =>
   props.job.status === "running" ? "任务运行中，请稍后再试" : ""
+);
+
+const visualBriefByIndex = computed(() => {
+  const script = props.job.script_json as ScriptJson | null;
+  const map = new Map<number, string>();
+  for (const seg of script?.segments ?? []) {
+    if (seg.visual_brief) {
+      map.set(seg.segment_index, seg.visual_brief);
+    }
+  }
+  return map;
+});
+
+const displaySegments = computed(() =>
+  props.segments.map(segment => ({
+    ...segment,
+    visual_brief: visualBriefByIndex.value.get(segment.segment_index) ?? null,
+  }))
 );
 
 const truncate = (text: string, max: number) => {

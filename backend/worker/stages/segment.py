@@ -22,12 +22,13 @@ class SegmentStage(StageExecutor):
             segments = segment_repo.list_segments(conn, ctx.job["id"])
 
         audio_path = Path(job["audio_path"]) if job.get("audio_path") else None
+        produce_scope = ctx.segment_scope or "all"
         result = segment_mgr.produce_segments(
             segments=segments,
             media_dir=ctx.media_dir,
             audio_path=audio_path,
             only_segment_indices=ctx.segment_indices_set(),
-            scope=ctx.segment_scope or "all",
+            scope=produce_scope,
         )
 
         image_by_id = dict(result.image_paths)
@@ -55,7 +56,7 @@ class SegmentStage(StageExecutor):
             for seg_id, clip_path in result.clips.segment_clip_paths:
                 segment_repo.update_segment(conn, seg_id, clip_path=str(clip_path))
 
-            scope = (
+            log_scope = (
                 f"segments={list(ctx.rerun_segment_indices)}"
                 if ctx.rerun_segment_indices
                 else "all"
@@ -70,14 +71,16 @@ class SegmentStage(StageExecutor):
                 ctx.job["id"],
                 self.name,
                 (
-                    f"scope={scope}, "
+                    f"scope={log_scope}, "
                     f"images={len(result.image_paths)} "
                     f"(provider={settings.image_provider}), "
                     f"{clip_note}"
                 ),
             )
-            qc_checks = {"visual": check_visual(segments_for_qc)}
-            if audio_path is not None:
+            qc_checks: dict = {}
+            if produce_scope in {"all", "images"}:
+                qc_checks["visual"] = check_visual(segments_for_qc)
+            if produce_scope in {"all", "clips"} and audio_path is not None:
                 qc_checks["clip"] = check_segment_clips(segments_for_qc)
             apply_quality_checks(
                 conn,
