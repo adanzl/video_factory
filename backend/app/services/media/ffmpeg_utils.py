@@ -206,6 +206,8 @@ def fit_video_to_canvas(
             "18",
             "-preset",
             "medium",
+            "-pix_fmt",
+            "yuv420p",
             "-c:a",
             "aac",
             "-b:a",

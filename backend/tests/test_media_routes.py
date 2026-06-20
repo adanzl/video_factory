@@ -50,6 +50,17 @@ def test_resolve_media_serve_path_absolute_without_leading_slash(media_root):
     assert os.path.normpath(resolved) == os.path.normpath(str(file_path.resolve()))
 
 
+def test_resolve_media_serve_path_relative(media_root):
+    file_path = media_root / "42" / "base.mp4"
+    file_path.parent.mkdir(parents=True)
+    file_path.write_bytes(b"video")
+    resolved = resolve_media_serve_path(
+        "42/base.mp4",
+        allowed_roots=media_serve_mgr.allowed_roots,
+    )
+    assert os.path.normpath(resolved) == os.path.normpath(str(file_path.resolve()))
+
+
 
 def test_get_duration(media_root, monkeypatch):
     file_path = media_root / "a.mp4"
