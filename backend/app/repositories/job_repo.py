@@ -121,6 +121,7 @@ def update_job(conn: sqlite3.Connection, job_id: int, **fields: Any) -> dict:
         "final_path",
         "cover_path",
         "intro_path",
+        "base_path",
         "audio_path",
         "subtitle_path",
         "tts_usage_json",

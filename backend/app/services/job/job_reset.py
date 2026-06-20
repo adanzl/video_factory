@@ -203,6 +203,7 @@ def _clear_stage_self(
 
     if stage == "prepare":
         _delete_files([media_dir / "base.mp4", media_dir / "base_meta.json"])
+        job_repo.update_job(conn, job_id, base_path=None)
         return
 
     if stage in {"title", "script"}:

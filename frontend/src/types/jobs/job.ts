@@ -25,6 +25,7 @@ export interface JobDetail extends JobListItem {
   quality_report?: unknown;
   cover_path?: string | null;
   intro_path?: string | null;
+  base_path?: string | null;
   audio_path?: string | null;
   subtitle_path?: string | null;
   tts_usage_json?: unknown;

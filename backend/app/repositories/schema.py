@@ -49,6 +49,7 @@ def apply_material_schema(conn: sqlite3.Connection) -> None:
     _ensure_column(conn, "video_job", "pipeline", "TEXT NOT NULL DEFAULT 'standard'")
     _ensure_column(conn, "video_job", "material_id", "INTEGER")
     _ensure_column(conn, "video_material", "job_id", "INTEGER")
+    _ensure_column(conn, "video_job", "base_path", "TEXT")
     _ensure_journal_mode_delete(conn)
 
 

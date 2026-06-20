@@ -3,7 +3,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from app.repositories import job_log_repo, material_repo
+from app.repositories import job_log_repo, job_repo, material_repo
 from app.repositories.connection import connection
 from app.services.media.ffmpeg_utils import probe_duration, probe_video_size
 from worker.context import JobContext
@@ -44,6 +44,7 @@ class MaterialPrepareStage(StageExecutor):
         )
 
         with connection() as conn:
+            job_repo.update_job(conn, ctx.job["id"], base_path=str(dest.resolve()))
             job_log_repo.append_log(
                 conn,
                 ctx.job["id"],
