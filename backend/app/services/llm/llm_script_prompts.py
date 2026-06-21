@@ -6,6 +6,13 @@ import re
 from typing import Any
 
 from app.config import get_settings
+from app.services.llm.llm_script_timeline import (
+    VideoTimeline,
+    append_timeline_to_user,
+    narration_range_for_timeline,
+    parse_video_timeline,
+    timeline_system_clause,
+)
 from app.services.llm.llm_script_title import (
     build_title_optimize_system_prompt,
     build_title_optimize_user_prompt,
@@ -85,7 +92,23 @@ def _supplementary_system_clause(supplementary_info: str | None) -> str:
     extra = (supplementary_info or "").strip()
     if not extra:
         return ""
-    return "用户会提供补充信息，须在输出中合理体现。"
+    return (
+        "用户会提供补充信息：须融入口播内容与表达风格，"
+        "但不得与画面时间表冲突；若冲突以时间表为准。"
+    )
+
+
+def _resolve_video_timeline(
+    video_timeline: str | None,
+    *,
+    script: dict | None = None,
+) -> VideoTimeline | None:
+    raw = (video_timeline or "").strip()
+    if not raw and script:
+        saved = script.get("video_timeline")
+        if isinstance(saved, str) and saved.strip():
+            raw = saved.strip()
+    return parse_video_timeline(raw) if raw else None
 
 
 def _title_rule(title: str, max_title: int) -> tuple[str, str]:
@@ -210,28 +233,52 @@ def build_material_script_prompts(
     max_title_length: int | None = None,
     narration_target_words: int | None = None,
     supplementary_info: str | None = None,
+    video_timeline: str | None = None,
+    script: dict | None = None,
 ) -> dict[str, str]:
     settings = get_settings()
     max_title = settings.max_title_length if max_title_length is None else max_title_length
-    narr_target = narration_target_words if narration_target_words is not None else 800
-    narr_lo, narr_hi = _narration_word_range(narr_target)
+    timeline = _resolve_video_timeline(video_timeline, script=script)
+    if timeline:
+        narr_lo, narr_hi = narration_range_for_timeline(timeline)
+    else:
+        narr_target = narration_target_words if narration_target_words is not None else 800
+        narr_lo, narr_hi = _narration_word_range(narr_target)
     title_rule, title_user_prefix = _title_rule(title, max_title)
+    segment_rule = (
+        f"segments 必须恰好 {len(timeline.slots)} 条，与画面时间表逐段一一对应；"
+        "每项含 segment_index 与 text，第 i 段只讲第 i 段画面；"
+        "各段 text 按顺序拼接须与 narration 完全一致，口吻同样保持童趣。"
+        if timeline
+        else (
+            "segments 为分句数组，每项含 segment_index 与 text；"
+            "各段 text 按顺序拼接须与 narration 完全一致，口吻同样保持童趣；"
+            "按自然断句切分，无需 visual 字段。"
+        )
+    )
+    opening_rule = (
+        "禁止开场钩子、悬念反问、自我介绍或全片总起；"
+        "narration 第一句必须从时间表第 1 段画面内容直接讲起。"
+        if timeline
+        else "禁止开头自我介绍；第一句直接进入主题。"
+    )
     system = (
         "你是给小朋友讲科普的视频口播编剧。视频画面已由用户上传的基底视频提供，无需描述画面。"
         "输出 JSON，字段：title, narration, word_count, segments。"
         f"{title_rule}"
         f"narration 为完整口播，总字数 {narr_lo}-{narr_hi}（不含空格换行），{_NARRATION_VOICE_RULE}"
-        "禁止开头自我介绍；第一句直接进入主题。"
-        "segments 为分句数组，每项含 segment_index 与 text；"
-        "各段 text 按顺序拼接须与 narration 完全一致，口吻同样保持童趣；"
-        "按自然断句切分，无需 visual 字段。"
+        f"{opening_rule}"
+        f"{segment_rule}"
         "word_count 必须等于 narration 实际字数。"
+        f"{timeline_system_clause(timeline) if timeline else ''}"
         f"{_supplementary_system_clause(supplementary_info)}"
     )
     user = _append_supplementary_to_user(
         f"{title_user_prefix} narration 与分句 segments。",
         supplementary_info,
     )
+    if timeline:
+        user = append_timeline_to_user(user, timeline)
     if feedback:
         user += f"\n\n上次不合格：{feedback}。请按要求重写。"
     return _prompt_step("material_script", system, user)
@@ -266,6 +313,7 @@ def collect_script_prompts(
     max_title_length: int | None = None,
     narration_target_words: int | None = None,
     supplementary_info: str | None = None,
+    video_timeline: str | None = None,
     script: dict | None = None,
     skip_title_optimize: bool = False,
 ) -> list[dict[str, str]]:
@@ -275,6 +323,11 @@ def collect_script_prompts(
         saved = script.get("supplementary_info")
         if isinstance(saved, str) and saved.strip():
             extra = saved.strip()
+    timeline_raw = (video_timeline or "").strip() or None
+    if timeline_raw is None and script:
+        saved_timeline = script.get("video_timeline")
+        if isinstance(saved_timeline, str) and saved_timeline.strip():
+            timeline_raw = saved_timeline.strip()
     prompts: list[dict[str, str]] = []
     if _is_material_job(job):
         prompts.append(
@@ -283,6 +336,8 @@ def collect_script_prompts(
                 max_title_length=max_title_length,
                 narration_target_words=narration_target_words,
                 supplementary_info=extra,
+                video_timeline=timeline_raw,
+                script=script,
             )
         )
     else:
@@ -325,6 +380,7 @@ def attach_llm_prompts_to_script(
     max_title_length: int | None = None,
     narration_target_words: int | None = None,
     supplementary_info: str | None = None,
+    video_timeline: str | None = None,
     skip_title_optimize: bool = False,
 ) -> None:
     script["llm_prompts"] = collect_script_prompts(
@@ -334,6 +390,7 @@ def attach_llm_prompts_to_script(
         max_title_length=max_title_length,
         narration_target_words=narration_target_words,
         supplementary_info=supplementary_info,
+        video_timeline=video_timeline,
         script=script,
         skip_title_optimize=skip_title_optimize,
     )

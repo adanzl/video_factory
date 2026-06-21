@@ -53,6 +53,7 @@ class LLMClient:
         max_title_length: int | None = None,
         narration_target_words: int | None = None,
         supplementary_info: str | None = None,
+        video_timeline: str | None = None,
     ) -> dict[str, Any]:
         raise NotImplementedError
 
@@ -166,6 +167,7 @@ class LLMMgr:
         max_title_length: int | None = None,
         narration_target_words: int | None = None,
         supplementary_info: str | None = None,
+        video_timeline: str | None = None,
     ) -> dict[str, Any]:
         return self._get_client().generate_material_script(
             title,
@@ -173,6 +175,7 @@ class LLMMgr:
             max_title_length=max_title_length,
             narration_target_words=narration_target_words,
             supplementary_info=supplementary_info,
+            video_timeline=video_timeline,
         )
 
 

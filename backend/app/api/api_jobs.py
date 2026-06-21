@@ -41,10 +41,11 @@ def _accept_stage(job_id: int, submit) -> tuple:
 
 
 def _parse_script_body() -> tuple[
-    int, bool, str | None, float | None, int | None, int | None, bool, str | None
+    int, bool, str | None, float | None, int | None, int | None, bool, str | None, str | None
 ]:
     data = get_json_body()
     supplementary = parse_optional_str(data, "supplementary_info")
+    video_timeline = parse_optional_str(data, "video_timeline")
     return (
         parse_id(data),
         parse_bool(data, "to_end", default=False),
@@ -54,12 +55,13 @@ def _parse_script_body() -> tuple[
         parse_optional_int(data, "narration_target_words", minimum=200, maximum=3000),
         parse_bool(data, "skip_title_optimize", default=False),
         supplementary,
+        video_timeline,
     )
 
 
 @bp.post("/script")
 def run_script_route():
-    job_id, to_end, title, segment_target_sec, max_title_length, narration_target_words, skip_title_optimize, supplementary_info = (
+    job_id, to_end, title, segment_target_sec, max_title_length, narration_target_words, skip_title_optimize, supplementary_info, video_timeline = (
         _parse_script_body()
     )
     return _accept_stage(
@@ -73,6 +75,7 @@ def run_script_route():
             narration_target_words=narration_target_words,
             skip_title_optimize=skip_title_optimize,
             supplementary_info=supplementary_info,
+            video_timeline=video_timeline,
         ),
     )
 
@@ -88,6 +91,7 @@ def preview_script_prompts_route():
     skip_title_optimize = parse_bool(data, "skip_title_optimize", default=False)
     use_saved_script = parse_bool(data, "use_saved_script", default=False)
     supplementary_info = parse_optional_str(data, "supplementary_info")
+    video_timeline = parse_optional_str(data, "video_timeline")
     try:
         prompts = job_mgr.preview_script_prompts(
             job_id,
@@ -97,6 +101,7 @@ def preview_script_prompts_route():
             narration_target_words=narration_target_words,
             skip_title_optimize=skip_title_optimize,
             supplementary_info=supplementary_info,
+            video_timeline=video_timeline,
             use_saved_script=use_saved_script,
         )
     except ValueError as exc:

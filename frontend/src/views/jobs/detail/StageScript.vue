@@ -88,12 +88,21 @@
             <el-checkbox v-model="skipTitleOptimize">跳过</el-checkbox>
           </el-form-item>
         </div>
+        <el-form-item v-if="isMaterialJob" label="时间表" class="!mb-2">
+          <el-input
+            v-model="videoTimeline"
+            type="textarea"
+            :rows="5"
+            placeholder="可选：粘贴画面时间表 JSON（含 balls/segments/items 数组与 start_sec、end_sec），口播将逐段对齐"
+            clearable
+          />
+        </el-form-item>
         <el-form-item label="补充信息" class="!mb-0">
           <el-input
             v-model="supplementaryInfo"
             type="textarea"
             :rows="3"
-            placeholder="可选：背景知识、必讲要点、禁忌表述等，将写入大模型提示词"
+            placeholder="可选：背景知识、必讲要点、表达风格、禁忌表述等（不含时间表 JSON）"
             clearable
           />
         </el-form-item>
@@ -165,6 +174,20 @@
         </el-descriptions-item>
         <el-descriptions-item v-if="isMaterialJob && script.script_mode" label="文案模式">
           {{ script.script_mode === "manual" ? "手动" : "AI" }}
+        </el-descriptions-item>
+        <el-descriptions-item v-if="isMaterialJob && script.video_timeline" label="时间表">
+          <el-tooltip placement="top-start" :show-after="300">
+            <template #content>
+              <div
+                class="max-h-96 max-w-2xl overflow-auto whitespace-pre-wrap break-words font-mono text-xs leading-relaxed"
+              >
+                {{ script.video_timeline }}
+              </div>
+            </template>
+            <div class="line-clamp-2 cursor-default font-mono text-xs leading-relaxed break-all text-gray-600">
+              {{ script.video_timeline }}
+            </div>
+          </el-tooltip>
         </el-descriptions-item>
         <el-descriptions-item v-if="script.supplementary_info" label="补充信息">
           <el-tooltip placement="top-start" :show-after="300">
@@ -329,6 +352,7 @@ const maxTitleLength = ref(DEFAULT_MAX_TITLE_LENGTH);
 const narrationTargetWords = ref(DEFAULT_NARRATION_TARGET_WORDS);
 const skipTitleOptimize = ref(false);
 const supplementaryInfo = ref("");
+const videoTimeline = ref("");
 const baseDurationSec = ref<number | null>(null);
 const narrationWordsTouched = ref(false);
 const promptPanelOpen = ref<string[]>([]);
@@ -544,6 +568,7 @@ const normalizeSupplementary = (value: unknown) =>
 
 const loadSupplementaryFromScript = () => {
   supplementaryInfo.value = normalizeSupplementary(script.value?.supplementary_info);
+  videoTimeline.value = normalizeSupplementary(script.value?.video_timeline);
 };
 
 const loadLlmPrompts = async () => {
@@ -566,6 +591,7 @@ const loadLlmPrompts = async () => {
       narration_target_words: Math.round(narrationTargetWords.value),
       skip_title_optimize: skipTitleOptimize.value,
       supplementary_info: supplementaryInfo.value.trim() || undefined,
+      video_timeline: videoTimeline.value.trim() || undefined,
       use_saved_script: promptSource.value === "saved",
     });
   } catch (error) {
@@ -618,6 +644,10 @@ const handleRun = async (toEnd: boolean) => {
     if (extra) {
       payload.supplementary_info = extra;
     }
+    const timeline = videoTimeline.value.trim();
+    if (timeline) {
+      payload.video_timeline = timeline;
+    }
     await runJobStageAction("script", payload);
     ElMessage.success(`已提交${actionLabel}，任务已开始执行`);
     emit("refresh");
@@ -647,11 +677,12 @@ watch(
     llmPrompts.value = [];
     promptPanelOpen.value = [];
     supplementaryInfo.value = "";
+    videoTimeline.value = "";
   }
 );
 
 watch(
-  () => script.value?.supplementary_info,
+  () => [script.value?.supplementary_info, script.value?.video_timeline] as const,
   () => {
     loadSupplementaryFromScript();
   },

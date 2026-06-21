@@ -9,6 +9,7 @@ from app.quality.gate import apply_quality_checks
 from app.repositories import job_log_repo, job_repo, segment_repo
 from app.repositories.connection import connection
 from app.services.llm.llm_mgr import llm_mgr
+from app.services.llm.llm_script_timeline import parse_video_timeline, validate_timeline_script
 from app.utils.media import base_video_duration_sec, estimate_narration_target_words
 from worker.context import JobContext
 from worker.stages.base import StageExecutor
@@ -50,6 +51,7 @@ def _validate_material_script(
     *,
     max_title_length: int | None = None,
     min_narration_chars: int | None = None,
+    video_timeline_raw: str | None = None,
 ) -> list[str]:
     settings = get_settings()
     max_len = settings.max_title_length if max_title_length is None else max_title_length
@@ -76,6 +78,12 @@ def _validate_material_script(
         raise ScriptValidationError(f"title too long: {len(title)} chars (need <= {max_len})")
     script["title"] = title
     script["segments"] = _normalize_segments(segments)
+
+    timeline = parse_video_timeline(video_timeline_raw)
+    if timeline:
+        timeline_error = validate_timeline_script(script, timeline)
+        if timeline_error:
+            raise ScriptValidationError(timeline_error, retryable=True)
     return warnings
 
 
@@ -92,6 +100,11 @@ class MaterialScriptStage(StageExecutor):
         supplementary_info = (
             ctx.script_supplementary_info.strip()
             if ctx.script_supplementary_info and ctx.script_supplementary_info.strip()
+            else None
+        )
+        video_timeline = (
+            ctx.script_video_timeline.strip()
+            if ctx.script_video_timeline and ctx.script_video_timeline.strip()
             else None
         )
         if narration_target_words is None:
@@ -127,6 +140,7 @@ class MaterialScriptStage(StageExecutor):
                 script,
                 max_title_length=max_title_length,
                 min_narration_chars=min_narration_chars,
+                video_timeline_raw=video_timeline,
             )
         else:
             last_exc: Exception | None = None
@@ -140,12 +154,14 @@ class MaterialScriptStage(StageExecutor):
                     max_title_length=max_title_length,
                     narration_target_words=narration_target_words,
                     supplementary_info=supplementary_info,
+                    video_timeline=video_timeline,
                 )
                 try:
                     accept_warnings = _validate_material_script(
                         script,
                         max_title_length=max_title_length,
                         min_narration_chars=min_narration_chars,
+                        video_timeline_raw=video_timeline,
                     )
                     break
                 except ScriptValidationError as exc:
@@ -187,6 +203,7 @@ class MaterialScriptStage(StageExecutor):
             narration_target_words=narration_target_words,
             max_title_length=max_title_length,
             supplementary_info=supplementary_info,
+            video_timeline=video_timeline,
             skip_title_optimize=bool(ctx.script_skip_title_optimize),
         )
 
@@ -194,6 +211,10 @@ class MaterialScriptStage(StageExecutor):
             script["supplementary_info"] = supplementary_info
         else:
             script.pop("supplementary_info", None)
+        if video_timeline:
+            script["video_timeline"] = video_timeline
+        else:
+            script.pop("video_timeline", None)
 
         script.pop("pending_narration", None)
         script["word_count"] = _narration_chars(script.get("narration", ""))

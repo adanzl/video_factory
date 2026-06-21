@@ -76,6 +76,7 @@ def _run_one_stage(
     script_narration_target_words: int | None = None,
     script_skip_title_optimize: bool = False,
     script_supplementary_info: str | None = None,
+    script_video_timeline: str | None = None,
     material_narration: str | None = None,
 ) -> dict:
     job = _reload_job(job_id)
@@ -92,6 +93,7 @@ def _run_one_stage(
         script_narration_target_words=script_narration_target_words,
         script_skip_title_optimize=script_skip_title_optimize,
         script_supplementary_info=script_supplementary_info,
+        script_video_timeline=script_video_timeline,
         material_narration=material_narration,
     )
     _execute_stage(job_id, stage_cls, ctx)
@@ -128,6 +130,7 @@ def _run_from(
     script_narration_target_words: int | None = None,
     script_skip_title_optimize: bool = False,
     script_supplementary_info: str | None = None,
+    script_video_timeline: str | None = None,
     material_narration: str | None = None,
 ) -> dict:
     job_mgr.mark_running(job_id)
@@ -155,6 +158,9 @@ def _run_from(
             ),
             script_supplementary_info=(
                 script_supplementary_info if stage_cls.name == "script" else None
+            ),
+            script_video_timeline=(
+                script_video_timeline if stage_cls.name == "script" else None
             ),
             material_narration=material_narration if stage_cls.name == "script" else None,
         )
@@ -215,6 +221,7 @@ def run_script(
     narration_target_words: int | None = None,
     skip_title_optimize: bool = False,
     supplementary_info: str | None = None,
+    video_timeline: str | None = None,
     material_narration: str | None = None,
 ) -> dict:
     job = _reload_job(job_id)
@@ -228,6 +235,7 @@ def run_script(
             script_narration_target_words=narration_target_words,
             script_skip_title_optimize=skip_title_optimize,
             script_supplementary_info=supplementary_info,
+            script_video_timeline=video_timeline,
             material_narration=material_narration,
         )
     return _run_one_stage(
@@ -239,6 +247,7 @@ def run_script(
         script_narration_target_words=narration_target_words,
         script_skip_title_optimize=skip_title_optimize,
         script_supplementary_info=supplementary_info,
+        script_video_timeline=video_timeline,
         material_narration=material_narration,
     )
 

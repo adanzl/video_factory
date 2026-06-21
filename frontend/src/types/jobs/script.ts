@@ -25,4 +25,5 @@ export interface ScriptJson {
   segments?: ScriptSegment[];
   llm_prompts?: LlmPromptStep[];
   supplementary_info?: string;
+  video_timeline?: string;
 }
