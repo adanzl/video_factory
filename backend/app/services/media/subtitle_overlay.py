@@ -12,6 +12,18 @@ from PIL import Image
 
 from app.config import get_settings
 from app.services.media.clip.render import image_to_clip_with_overlay
+from app.services.media.subtitle_style import (
+    MAX_LINES,
+    SUBTITLE_ASS_PRIMARY_COLOUR,
+    SUBTITLE_COLOR_RGB,
+    SUBTITLE_FONT_MIN,
+    SUBTITLE_FONT_SIZE,
+    SUBTITLE_SHADOW_BLUR,
+    SUBTITLE_STROKE_WIDTH,
+    SUBTITLE_Y_RATIO,
+    layout_for_canvas,
+    subtitle_style_for_canvas,
+)
 from app.services.visual.text_render import load_cjk_font, wrap_text
 from app.services.visual.title_render import (
     SHADOW_OFFSET_X,
@@ -20,20 +32,17 @@ from app.services.visual.title_render import (
     render_title_block,
 )
 
-# 布局
-_SIDE_MARGIN = 48
-_SUBTITLE_Y_RATIO = 0.75
-_MAX_LINES = 2
-
-# 样式（与片头黄条同色）
-_SUBTITLE_FONT_SIZE = 68
-_SUBTITLE_FONT_MIN = 54
+# 布局 / 样式常量见 subtitle_style.py
 _SUBTITLE_RENDER_SCALE = 2
-_SUBTITLE_COLOR = (255, 214, 64, 255)
-_SUBTITLE_STROKE_WIDTH = 1
-_SUBTITLE_SHADOW_BLUR = 2
+_SUBTITLE_COLOR = (*SUBTITLE_COLOR_RGB, 255)
 
-__all__ = ["build_segment_clip", "burn_subtitled_clip", "render_subtitle_overlay"]
+__all__ = [
+    "SUBTITLE_ASS_PRIMARY_COLOUR",
+    "build_segment_clip",
+    "burn_subtitled_clip",
+    "render_subtitle_overlay",
+    "subtitle_style_for_canvas",
+]
 
 
 def _keep_overlay_png() -> bool:
@@ -42,32 +51,15 @@ def _keep_overlay_png() -> bool:
 
 
 def _layout_for_canvas(width: int, height: int) -> dict:
-    """按画布尺寸缩放边距与字号（以竖屏 1080×1920 为基准）。"""
-    settings = get_settings()
-    ref_w, ref_h = settings.video_width, settings.video_height
-    if ref_w > ref_h:
-        ref_w, ref_h = ref_h, ref_w
-    h_scale = height / ref_h
-    w_scale = width / ref_w
-    font_max = max(_SUBTITLE_FONT_MIN, int(_SUBTITLE_FONT_SIZE * h_scale))
-    font_min = max(28, int(_SUBTITLE_FONT_MIN * h_scale))
-    if font_min > font_max:
-        font_min = font_max
-    return {
-        "width": width,
-        "height": height,
-        "side_margin": max(24, int(_SIDE_MARGIN * w_scale)),
-        "font_max": font_max,
-        "font_min": font_min,
-    }
+    return layout_for_canvas(width, height)
 
 
 def _fit_subtitle(
     text: str,
     max_width: int,
     *,
-    font_max: int = _SUBTITLE_FONT_SIZE,
-    font_min: int = _SUBTITLE_FONT_MIN,
+    font_max: int = SUBTITLE_FONT_SIZE,
+    font_min: int = SUBTITLE_FONT_MIN,
 ) -> tuple[list[str], int]:
     _, lines, font_size = fit_font_and_lines(
         text,
@@ -76,7 +68,7 @@ def _fit_subtitle(
         max_size=font_max,
         min_size=font_min,
         wrap_fn=wrap_text,
-        max_lines=_MAX_LINES,
+        max_lines=MAX_LINES,
         balance_overflow=False,
     )
     return lines, font_size
@@ -91,9 +83,9 @@ def _render_subtitle_block(lines: list[str], font_size: int, line_gap: int) -> I
         scaled_font,
         fill=_SUBTITLE_COLOR,
         line_gap=line_gap * scale,
-        stroke_width=_SUBTITLE_STROKE_WIDTH * scale,
+        stroke_width=SUBTITLE_STROKE_WIDTH * scale,
         with_shadow=True,
-        shadow_blur=_SUBTITLE_SHADOW_BLUR * scale,
+        shadow_blur=SUBTITLE_SHADOW_BLUR * scale,
         shadow_offset_x=SHADOW_OFFSET_X * scale,
         shadow_offset_y=SHADOW_OFFSET_Y * scale,
         with_glow=False,
@@ -131,7 +123,7 @@ def render_subtitle_overlay(
 
     canvas = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     text_x = (width - text_block.size[0]) // 2
-    text_y = int(height * _SUBTITLE_Y_RATIO - text_block.size[1] / 2)
+    text_y = int(height * SUBTITLE_Y_RATIO - text_block.size[1] / 2)
     text_y = max(0, min(text_y, height - text_block.size[1]))
     canvas.alpha_composite(text_block, (text_x, text_y))
     canvas.save(output_path, compress_level=0)
