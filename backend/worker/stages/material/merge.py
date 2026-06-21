@@ -8,7 +8,7 @@ from app.quality.gate import apply_quality_checks
 from app.repositories import job_log_repo, job_repo
 from app.repositories.connection import connection
 from app.services.media.audio_analysis import analyze_loudness
-from app.services.media.ffmpeg_utils import probe_duration
+from app.services.media.ffmpeg_utils import ffmpeg_hwaccel_config_summary, probe_duration
 from app.services.media.media_mgr import media_mgr
 from app.utils.final_asset import build_final_asset
 from worker.context import JobContext
@@ -31,6 +31,12 @@ class MaterialMergeStage(StageExecutor):
         started = time.perf_counter()
         with connection() as conn:
             job = job_repo.get_job(conn, ctx.job["id"])
+            job_log_repo.append_log(
+                conn,
+                ctx.job["id"],
+                self.name,
+                f"ffmpeg encode: {ffmpeg_hwaccel_config_summary()}",
+            )
 
         base_path = _resolve_base_video(job, ctx)
         if not base_path.is_file():

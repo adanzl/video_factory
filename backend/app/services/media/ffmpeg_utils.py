@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -8,6 +9,8 @@ from app.config import get_settings
 from app.utils.async_util import run_subprocess_safe
 
 # cSpell: disable
+
+_logger = logging.getLogger(__name__)
 
 _FFMPEG_TIMEOUT = 600.0
 _PROBE_TIMEOUT = 60.0
@@ -121,6 +124,26 @@ def libx264_encode_args(*, subtitle: bool = False) -> list[str]:
         "-movflags",
         "+faststart",
     ]
+
+
+def ffmpeg_hwaccel_config_summary() -> str:
+    """当前视频重编码所用的硬件加速/编码器配置（供日志与阶段记录）。"""
+    settings = get_settings()
+    if vaapi_enabled():
+        qp = _crf_to_vaapi_qp(settings.ffmpeg_crf)
+        sub_qp = _crf_to_vaapi_qp(settings.ffmpeg_subtitle_crf)
+        return (
+            f"hwaccel=vaapi device={settings.ffmpeg_vaapi_device} "
+            f"encoder={settings.ffmpeg_vaapi_codec} qp={qp} subtitle_qp={sub_qp}"
+        )
+    return (
+        f"hwaccel=none encoder=libx264 crf={settings.ffmpeg_crf} "
+        f"subtitle_crf={settings.ffmpeg_subtitle_crf} preset={settings.ffmpeg_preset}"
+    )
+
+
+def log_ffmpeg_hwaccel_config(*, context: str = "encode") -> None:
+    _logger.info("[FFMPEG] %s: %s", context, ffmpeg_hwaccel_config_summary())
 
 
 def _probe_video_stream(path: Path) -> dict | None:
@@ -523,15 +546,51 @@ def merge_audio_video(
     output_path: Path,
     *,
     subtitle_path: Path | None = None,
+    silent_tail_when_video_longer: bool = False,
 ) -> Path:
-    """合并画面与配音，以音频时长为准，不拉伸/压缩音频。"""
+    """合并画面与配音，以音频时长为准，不拉伸/压缩音频。
+
+    silent_tail_when_video_longer=True 时：若画面长于配音，保留完整画面并在末尾补静音
+    （素材流水线：口播结束后画面继续、无配音）。
+    """
     _ = subtitle_path
     output_path.parent.mkdir(parents=True, exist_ok=True)
     audio_dur = probe_duration(audio_path)
     video_dur = probe_duration(video_path)
     drift = video_dur - audio_dur
+    tail_tol = 0.08
 
-    if abs(drift) <= 0.08:
+    if silent_tail_when_video_longer and drift > tail_tol:
+        pad_sec = video_dur - audio_dur
+        _run_cmd(
+            [
+                *ffmpeg_cmd_start(),
+                "-i",
+                str(video_path),
+                "-i",
+                str(audio_path),
+                "-filter_complex",
+                f"[1:a]apad=pad_dur={pad_sec:.3f}[aout]",
+                "-map",
+                "0:v:0",
+                "-map",
+                "[aout]",
+                "-c:v",
+                "copy",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "128k",
+                "-t",
+                f"{video_dur:.3f}",
+                "-movflags",
+                "+faststart",
+                str(output_path),
+            ],
+        )
+        return output_path
+
+    if abs(drift) <= tail_tol:
         _run_cmd(
             [
                 "ffmpeg",

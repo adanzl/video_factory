@@ -162,7 +162,7 @@ def process_one(
     frames_out = work / "out"
 
     if work.exists():
-        shutil.rmtree(work)
+        shutil.rmtree(work, ignore_errors=True)
     frames_in.mkdir(parents=True)
 
     print(f"extract frames ({limit_sec or duration:.1f}s max)...")
@@ -192,20 +192,29 @@ def process_one(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Remove overlays with LaMa inpainting.")
-    parser.add_argument("inputs", nargs="*", help="Input mp4; default: none (require input)")
+    parser.add_argument("inputs", nargs="*", help="Input mp4; use --in-dir to batch")
+    parser.add_argument("--in-dir", type=Path, default=DEFAULT_IN, help=f"Batch input directory (default: {DEFAULT_IN})")
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT)
     parser.add_argument("--limit-sec", type=float, default=None, help="Only process first N seconds")
     parser.add_argument("--keep-work", action="store_true", help="Keep intermediate frames")
+    parser.add_argument("--skip-existing", action="store_true", help="Skip when output already exists")
     parser.add_argument("--cpu", action="store_true", help="Force libx264 on mux")
     args = parser.parse_args()
 
-    if not args.inputs:
-        parser.error("provide at least one input mp4")
+    if args.inputs:
+        sources = [Path(p).resolve() for p in args.inputs]
+    else:
+        sources = sorted(p.resolve() for p in args.in_dir.glob("*.mp4") if p.is_file())
+
+    if not sources:
+        parser.error("no input mp4 files found")
 
     manifest: list[dict] = []
-    for raw in args.inputs:
-        src = Path(raw).resolve()
+    for src in sources:
         dst = args.out_dir / src.name
+        if args.skip_existing and dst.exists():
+            print(f"\n[{src.name}] skip (exists)")
+            continue
         print(f"\n[{src.name}]")
         entry = process_one(
             src,
@@ -219,6 +228,11 @@ def main() -> None:
     if len(manifest) > 1:
         args.out_dir.mkdir(parents=True, exist_ok=True)
         manifest_path = args.out_dir / "clean_lama_manifest.json"
+        if manifest_path.exists():
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8")) + manifest
+            except json.JSONDecodeError:
+                pass
         manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
         print(f"\nWrote {manifest_path}")
 
