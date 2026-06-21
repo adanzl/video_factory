@@ -2,8 +2,8 @@
   <div>
     <div class="mb-4 rounded-lg border border-gray-200 p-3">
       <el-form
-        label-width="88px"
-        class="[&_.el-form-item]:mb-2 [&_.el-form-item__content]:min-w-0 [&_.el-form-item__content]:flex-1"
+        :label-width="FORM_LABEL_WIDTH"
+        class="script-stage-form [&_.el-form-item]:mb-2 [&_.el-form-item__content]:min-w-0 [&_.el-form-item__content]:flex-1"
       >
         <el-form-item label="原标题">
           <div class="flex w-full min-w-0 items-center gap-2">
@@ -23,8 +23,8 @@
             <span v-if="actionDisabledReason" class="shrink-0 text-xs text-gray-400">{{ actionDisabledReason }}</span>
           </div>
         </el-form-item>
-        <div v-if="!isMaterialJob" class="flex flex-wrap items-start gap-x-4">
-          <el-form-item label="单镜(秒)" class="!mb-0">
+        <div v-if="!isMaterialJob" class="flex w-full flex-wrap items-start gap-x-4">
+          <el-form-item label="单镜(秒)" :label-width="FORM_LABEL_WIDTH" class="!mb-0">
             <el-input-number
               v-model="segmentTargetSec"
               :min="0"
@@ -34,7 +34,7 @@
               class="w-28!"
             />
           </el-form-item>
-          <el-form-item label="标题上限" class="!mb-0">
+          <el-form-item label="标题上限" :label-width="FORM_LABEL_WIDTH" class="!mb-0">
             <el-input-number
               v-model="maxTitleLength"
               :min="8"
@@ -44,7 +44,7 @@
               class="w-28!"
             />
           </el-form-item>
-          <el-form-item label="口播字数" class="!mb-0">
+          <el-form-item label="口播字数" :label-width="FORM_LABEL_WIDTH" class="!mb-0">
             <el-input-number
               v-model="narrationTargetWords"
               :min="NARRATION_WORDS_MIN"
@@ -55,12 +55,12 @@
               @change="narrationWordsTouched = true"
             />
           </el-form-item>
-          <el-form-item label="标题优化" class="!mb-0">
+          <el-form-item label="标题优化" :label-width="FORM_LABEL_WIDTH" class="!mb-0">
             <el-checkbox v-model="skipTitleOptimize">跳过</el-checkbox>
           </el-form-item>
         </div>
         <div v-else class="flex flex-wrap items-start gap-x-4">
-          <el-form-item label="标题上限" class="!mb-0">
+          <el-form-item label="标题上限" :label-width="FORM_LABEL_WIDTH" class="!mb-0">
             <el-input-number
               v-model="maxTitleLength"
               :min="8"
@@ -70,7 +70,7 @@
               class="w-28!"
             />
           </el-form-item>
-          <el-form-item label="口播字数" class="!mb-0">
+          <el-form-item label="口播字数" :label-width="FORM_LABEL_WIDTH" class="!mb-0">
             <div class="flex flex-col gap-1">
               <el-input-number
                 v-model="narrationTargetWords"
@@ -84,7 +84,7 @@
               <span v-if="baseDurationHint" class="text-xs text-gray-400">{{ baseDurationHint }}</span>
             </div>
           </el-form-item>
-          <el-form-item label="标题优化" class="!mb-0">
+          <el-form-item label="标题优化" :label-width="FORM_LABEL_WIDTH" class="!mb-0">
             <el-checkbox v-model="skipTitleOptimize">跳过</el-checkbox>
           </el-form-item>
         </div>
@@ -147,27 +147,50 @@
     </div>
 
     <div v-if="script">
-      <el-descriptions :column="3" border class="mb-4">
-        <el-descriptions-item label="脚本标题" :span="3">{{ script.title || "-" }}</el-descriptions-item>
+      <el-descriptions
+        :column="1"
+        border
+        :label-width="FORM_LABEL_WIDTH"
+        class="script-meta-desc mb-2"
+      >
+        <el-descriptions-item label="脚本标题">{{ script.title || "-" }}</el-descriptions-item>
         <el-descriptions-item
           v-if="script.draft_title && script.draft_title !== script.title"
           label="初稿标题"
-          :span="3"
         >
           {{ script.draft_title }}
         </el-descriptions-item>
-        <el-descriptions-item label="生成耗时">{{ formatCostTime(script.cost_time) }}</el-descriptions-item>
-        <el-descriptions-item label="字数">{{ script.word_count ?? "-" }}</el-descriptions-item>
-        <el-descriptions-item label="分镜数">{{ script.segments?.length ?? 0 }}</el-descriptions-item>
-        <el-descriptions-item v-if="!isMaterialJob" label="画风定调" :span="3">
+        <el-descriptions-item v-if="!isMaterialJob" label="画风定调">
           {{ script.visual_style || "-" }}
         </el-descriptions-item>
         <el-descriptions-item v-if="isMaterialJob && script.script_mode" label="文案模式">
           {{ script.script_mode === "manual" ? "手动" : "AI" }}
         </el-descriptions-item>
-        <el-descriptions-item v-if="script.supplementary_info" label="补充信息" :span="3">
-          <div class="leading-relaxed break-words whitespace-pre-wrap">{{ script.supplementary_info }}</div>
+        <el-descriptions-item v-if="script.supplementary_info" label="补充信息">
+          <el-tooltip placement="top-start" :show-after="300">
+            <template #content>
+              <div
+                class="max-h-96 max-w-2xl overflow-auto whitespace-pre-wrap break-words text-sm leading-relaxed"
+              >
+                {{ script.supplementary_info }}
+              </div>
+            </template>
+            <div class="line-clamp-2 cursor-default text-sm leading-relaxed break-words text-gray-600">
+              {{ script.supplementary_info }}
+            </div>
+          </el-tooltip>
         </el-descriptions-item>
+      </el-descriptions>
+
+      <el-descriptions
+        :column="3"
+        border
+        :label-width="FORM_LABEL_WIDTH"
+        class="script-meta-desc mb-4"
+      >
+        <el-descriptions-item label="生成耗时">{{ formatCostTime(script.cost_time) }}</el-descriptions-item>
+        <el-descriptions-item label="字数">{{ script.word_count ?? "-" }}</el-descriptions-item>
+        <el-descriptions-item label="分镜数">{{ script.segments?.length ?? 0 }}</el-descriptions-item>
       </el-descriptions>
 
       <div class="mb-5">
@@ -281,6 +304,7 @@ import { formatDateTime } from "@/utils/date";
 import { estimateNarrationTargetWords, formatCostTime, formatMediaDuration } from "@/utils/media";
 import { useErrorHandler } from "@/composables/useErrorHandler";
 
+const FORM_LABEL_WIDTH = "88px";
 const DEFAULT_SEGMENT_TARGET_SEC = 12;
 const DEFAULT_MAX_TITLE_LENGTH = 24;
 const DEFAULT_NARRATION_TARGET_WORDS = 1050;
@@ -657,3 +681,18 @@ watch(
   { immediate: true }
 );
 </script>
+
+<style scoped>
+.script-stage-form :deep(.el-form-item__label) {
+  width: v-bind(FORM_LABEL_WIDTH);
+  min-width: v-bind(FORM_LABEL_WIDTH);
+  flex-shrink: 0;
+  justify-content: flex-end;
+}
+
+.script-meta-desc :deep(.el-descriptions__label) {
+  width: v-bind(FORM_LABEL_WIDTH) !important;
+  min-width: v-bind(FORM_LABEL_WIDTH) !important;
+  max-width: v-bind(FORM_LABEL_WIDTH) !important;
+}
+</style>

@@ -6,7 +6,9 @@ from pathlib import Path
 
 from app.config import get_settings
 from app.services.media.ffmpeg_utils import (
+    build_ass_from_phrase_cues,
     cpu_pix_fmt_suffix,
+    escape_ffmpeg_filter_path,
     ffmpeg_cmd_start,
     finalize_filter_complex,
     libx264_encode_args,
@@ -241,6 +243,62 @@ def _scale_pad_vf(*, width: int, height: int) -> str:
     )
 
 
+def _fit_vf_chain(
+    video_dur: float,
+    duration_sec: float,
+    *,
+    width: int,
+    height: int,
+) -> str:
+    scale = _scale_pad_vf(width=width, height=height)
+    drift = video_dur - duration_sec
+    if abs(drift) <= 0.08:
+        return scale
+    if drift > 0:
+        return f"{scale},trim=0:{duration_sec:.3f},setpts=PTS-STARTPTS"
+    pad = duration_sec - video_dur
+    return f"{scale},tpad=stop_mode=clone:stop_duration={pad:.3f}"
+
+
+def fit_video_with_ass_subtitles(
+    video_path: Path,
+    ass_path: Path,
+    output_path: Path,
+    duration_sec: float,
+    *,
+    width: int | None = None,
+    height: int | None = None,
+    fonts_dir: Path | None = None,
+) -> Path:
+    """缩放/对齐时长 + ASS 烧字幕，单次编码（素材 merge 用）。"""
+    settings = get_settings()
+    width = width if width is not None else settings.video_width
+    height = height if height is not None else settings.video_height
+    fonts_dir = fonts_dir if fonts_dir is not None else settings.font_path.parent
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    video_dur = probe_duration(video_path)
+    base_vf = _fit_vf_chain(video_dur, duration_sec, width=width, height=height)
+    ass_esc = escape_ffmpeg_filter_path(ass_path)
+    fonts_esc = escape_ffmpeg_filter_path(fonts_dir)
+    vf = f"{base_vf},subtitles={ass_esc}:fontsdir={fonts_esc}"
+
+    run_ffmpeg(
+        [
+            *ffmpeg_cmd_start(),
+            "-i",
+            str(video_path),
+            "-vf",
+            vf_for_encode(vf),
+            "-t",
+            f"{duration_sec:.3f}",
+            *libx264_encode_args(subtitle=True),
+            str(output_path),
+        ]
+    )
+    return output_path
+
+
 def fit_video_duration(
     video_path: Path,
     output_path: Path,
@@ -256,16 +314,7 @@ def fit_video_duration(
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     video_dur = probe_duration(video_path)
-    scale = _scale_pad_vf(width=width, height=height)
-    drift = video_dur - duration_sec
-
-    if abs(drift) <= 0.08:
-        vf = scale
-    elif drift > 0:
-        vf = f"{scale},trim=0:{duration_sec:.3f},setpts=PTS-STARTPTS"
-    else:
-        pad = duration_sec - video_dur
-        vf = f"{scale},tpad=stop_mode=clone:stop_duration={pad:.3f}"
+    vf = _fit_vf_chain(video_dur, duration_sec, width=width, height=height)
 
     run_ffmpeg(
         [
