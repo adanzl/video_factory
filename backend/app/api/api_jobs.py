@@ -72,6 +72,31 @@ def run_script_route():
     )
 
 
+@bp.post("/script/previewPrompts")
+def preview_script_prompts_route():
+    data = get_json_body()
+    job_id = parse_id(data)
+    title = parse_optional_str(data, "title")
+    segment_target_sec = parse_optional_float(data, "segment_target_sec", minimum=0.0, maximum=60.0)
+    max_title_length = parse_optional_int(data, "max_title_length", minimum=8, maximum=48)
+    narration_target_words = parse_optional_int(data, "narration_target_words", minimum=200, maximum=3000)
+    skip_title_optimize = parse_bool(data, "skip_title_optimize", default=False)
+    use_saved_script = parse_bool(data, "use_saved_script", default=False)
+    try:
+        prompts = job_mgr.preview_script_prompts(
+            job_id,
+            title=title,
+            segment_target_sec=segment_target_sec,
+            max_title_length=max_title_length,
+            narration_target_words=narration_target_words,
+            skip_title_optimize=skip_title_optimize,
+            use_saved_script=use_saved_script,
+        )
+    except ValueError as exc:
+        raise APIError(str(exc)) from exc
+    return json_ok({"prompts": prompts})
+
+
 def _parse_intro_body() -> tuple[int, bool, float | None, str | None]:
     data = get_json_body()
     return (

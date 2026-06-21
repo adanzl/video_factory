@@ -47,11 +47,12 @@
           <el-form-item label="口播字数" class="!mb-0">
             <el-input-number
               v-model="narrationTargetWords"
-              :min="200"
-              :max="3000"
+              :min="NARRATION_WORDS_MIN"
+              :max="NARRATION_WORDS_MAX"
               :step="50"
               controls-position="right"
               class="w-32!"
+              @change="narrationWordsTouched = true"
             />
           </el-form-item>
           <el-form-item label="标题优化" class="!mb-0">
@@ -73,11 +74,12 @@
             <div class="flex flex-col gap-1">
               <el-input-number
                 v-model="narrationTargetWords"
-                :min="200"
-                :max="3000"
+                :min="NARRATION_WORDS_MIN"
+                :max="NARRATION_WORDS_MAX"
                 :step="50"
                 controls-position="right"
                 class="w-32!"
+                @change="narrationWordsTouched = true"
               />
               <span v-if="baseDurationHint" class="text-xs text-gray-400">{{ baseDurationHint }}</span>
             </div>
@@ -87,6 +89,52 @@
           </el-form-item>
         </div>
       </el-form>
+    </div>
+
+    <div class="mb-4 rounded-lg border border-gray-200 p-3">
+      <el-collapse v-model="promptPanelOpen">
+        <el-collapse-item name="prompts">
+          <template #title>
+            <span class="text-sm font-medium text-gray-700">大模型提示词</span>
+          </template>
+          <div class="mb-3 flex flex-wrap items-center gap-3">
+            <el-radio-group v-model="promptSource" size="small" @change="loadLlmPrompts">
+              <el-radio-button value="preview">当前参数预览</el-radio-button>
+              <el-radio-button value="saved" :disabled="!hasSavedPrompts">上次生成</el-radio-button>
+            </el-radio-group>
+            <el-button size="small" :loading="promptsLoading" @click="loadLlmPrompts">刷新</el-button>
+          </div>
+          <div v-if="promptsLoading" class="py-6 text-center text-sm text-gray-400">加载中…</div>
+          <div v-else-if="llmPrompts.length" class="space-y-3">
+            <el-collapse accordion>
+              <el-collapse-item
+                v-for="item in llmPrompts"
+                :key="item.step"
+                :title="item.label"
+                :name="item.step"
+              >
+                <div class="space-y-3">
+                  <div>
+                    <div class="mb-1 text-xs font-medium text-gray-500">System</div>
+                    <pre
+                      class="m-0 max-h-64 overflow-auto rounded bg-gray-50 p-3 text-xs leading-relaxed break-words whitespace-pre-wrap"
+                    >{{ item.system }}</pre>
+                  </div>
+                  <div>
+                    <div class="mb-1 text-xs font-medium text-gray-500">User</div>
+                    <pre
+                      class="m-0 max-h-64 overflow-auto rounded bg-gray-50 p-3 text-xs leading-relaxed break-words whitespace-pre-wrap"
+                    >{{ item.user }}</pre>
+                  </div>
+                </div>
+              </el-collapse-item>
+            </el-collapse>
+          </div>
+          <div v-else class="py-6 text-center text-sm text-gray-400">
+            {{ sourceTitle.trim() ? "暂无提示词" : "请先填写原标题" }}
+          </div>
+        </el-collapse-item>
+      </el-collapse>
     </div>
 
     <div v-if="script">
@@ -213,8 +261,8 @@
 import { computed, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { getMediaDuration } from "@/api/api-media";
-import { runJobStageAction } from "@/api/api-jobs";
-import type { JobDetail, JobLog, ScriptJson } from "@/types/jobs";
+import { previewScriptPrompts, runJobStageAction } from "@/api/api-jobs";
+import type { JobDetail, JobLog, LlmPromptStep, ScriptJson } from "@/types/jobs";
 import type { RunStageActionPayload } from "@/types/jobs/stageAction";
 import { isMaterialJob as checkMaterialJob } from "@/constants/jobStages";
 import { formatDateTime } from "@/utils/date";
@@ -225,6 +273,8 @@ const DEFAULT_SEGMENT_TARGET_SEC = 12;
 const DEFAULT_MAX_TITLE_LENGTH = 24;
 const DEFAULT_NARRATION_TARGET_WORDS = 1050;
 const DEFAULT_MATERIAL_NARRATION_TARGET_WORDS = 800;
+const NARRATION_WORDS_MIN = 200;
+const NARRATION_WORDS_MAX = 3000;
 
 const props = defineProps<{
   job: JobDetail;
@@ -243,6 +293,11 @@ const maxTitleLength = ref(DEFAULT_MAX_TITLE_LENGTH);
 const narrationTargetWords = ref(DEFAULT_NARRATION_TARGET_WORDS);
 const skipTitleOptimize = ref(false);
 const baseDurationSec = ref<number | null>(null);
+const narrationWordsTouched = ref(false);
+const promptPanelOpen = ref<string[]>([]);
+const promptSource = ref<"preview" | "saved">("preview");
+const promptsLoading = ref(false);
+const llmPrompts = ref<LlmPromptStep[]>([]);
 
 const actionDisabled = computed(() => props.job.status === "running");
 const isMaterialJob = computed(() => checkMaterialJob(props.job));
@@ -256,6 +311,11 @@ const script = computed<ScriptJson | null>(() => {
     return null;
   }
   return value as ScriptJson;
+});
+
+const hasSavedPrompts = computed(() => {
+  const saved = script.value?.llm_prompts;
+  return Array.isArray(saved) && saved.length > 0;
 });
 
 const rawJson = computed(() => JSON.stringify(props.job.script_json, null, 2));
@@ -419,17 +479,54 @@ const baseDurationHint = computed(() => {
 });
 
 const loadBaseDuration = async () => {
-  if (!isMaterialJob.value || !props.job.base_path) {
+  if (!isMaterialJob.value) {
     baseDurationSec.value = null;
-    narrationTargetWords.value = DEFAULT_MATERIAL_NARRATION_TARGET_WORDS;
+    return;
+  }
+  if (!props.job.base_path) {
+    baseDurationSec.value = null;
+    if (!narrationWordsTouched.value) {
+      narrationTargetWords.value = DEFAULT_MATERIAL_NARRATION_TARGET_WORDS;
+    }
     return;
   }
   const duration = await getMediaDuration(props.job.base_path);
   baseDurationSec.value = duration;
+  if (narrationWordsTouched.value) {
+    return;
+  }
   if (duration !== null && duration > 0) {
     narrationTargetWords.value = estimateNarrationTargetWords(duration);
   } else {
     narrationTargetWords.value = DEFAULT_MATERIAL_NARRATION_TARGET_WORDS;
+  }
+};
+
+const loadLlmPrompts = async () => {
+  const trimmedTitle = sourceTitle.value.trim();
+  if (!trimmedTitle) {
+    llmPrompts.value = [];
+    return;
+  }
+  if (promptSource.value === "saved" && hasSavedPrompts.value) {
+    llmPrompts.value = script.value!.llm_prompts!;
+    return;
+  }
+  promptsLoading.value = true;
+  try {
+    llmPrompts.value = await previewScriptPrompts({
+      id: props.job.id,
+      title: trimmedTitle,
+      segment_target_sec: segmentTargetSec.value,
+      max_title_length: maxTitleLength.value,
+      narration_target_words: Math.round(narrationTargetWords.value),
+      skip_title_optimize: skipTitleOptimize.value,
+      use_saved_script: promptSource.value === "saved",
+    });
+  } catch (error) {
+    handleError(error, "加载提示词失败");
+  } finally {
+    promptsLoading.value = false;
   }
 };
 
@@ -438,6 +535,11 @@ const handleRun = async (toEnd: boolean) => {
   const trimmedTitle = sourceTitle.value.trim();
   if (!trimmedTitle) {
     ElMessage.warning("请输入原标题");
+    return;
+  }
+  const words = narrationTargetWords.value;
+  if (!Number.isFinite(words) || words < NARRATION_WORDS_MIN || words > NARRATION_WORDS_MAX) {
+    ElMessage.warning(`口播字数需在 ${NARRATION_WORDS_MIN}–${NARRATION_WORDS_MAX} 之间`);
     return;
   }
   try {
@@ -463,9 +565,7 @@ const handleRun = async (toEnd: boolean) => {
     if (Number.isFinite(maxTitleLength.value)) {
       payload.max_title_length = maxTitleLength.value;
     }
-    if (Number.isFinite(narrationTargetWords.value)) {
-      payload.narration_target_words = narrationTargetWords.value;
-    }
+    payload.narration_target_words = Math.round(words);
     if (skipTitleOptimize.value) {
       payload.skip_title_optimize = true;
     }
@@ -485,6 +585,34 @@ watch(
     sourceTitle.value = value;
   },
   { immediate: true }
+);
+
+watch(
+  () => props.job.id,
+  () => {
+    narrationWordsTouched.value = false;
+    narrationTargetWords.value = isMaterialJob.value
+      ? DEFAULT_MATERIAL_NARRATION_TARGET_WORDS
+      : DEFAULT_NARRATION_TARGET_WORDS;
+    promptSource.value = "preview";
+    llmPrompts.value = [];
+    promptPanelOpen.value = [];
+  }
+);
+
+watch(promptPanelOpen, names => {
+  if (names.includes("prompts")) {
+    void loadLlmPrompts();
+  }
+});
+
+watch(
+  () => script.value?.llm_prompts,
+  saved => {
+    if (promptSource.value === "saved" && Array.isArray(saved) && saved.length) {
+      llmPrompts.value = saved;
+    }
+  }
 );
 
 watch(

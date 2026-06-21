@@ -39,4 +39,14 @@ export interface RunStageActionPayload {
   skip_title_optimize?: boolean;
 }
 
+export interface PreviewScriptPromptsPayload {
+  id: number;
+  title?: string;
+  segment_target_sec?: number;
+  max_title_length?: number;
+  narration_target_words?: number;
+  skip_title_optimize?: boolean;
+  use_saved_script?: boolean;
+}
+
 export type StageParamValues = Record<string, string | boolean | number | number[]>;

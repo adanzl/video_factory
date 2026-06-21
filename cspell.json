@@ -1,6 +1,14 @@
 {
     "words": [
         "debugpy",
-        "LANCZOS"
+        "embedder",
+        "faststart",
+        "LANCZOS",
+        "movflags",
+        "nokey",
+        "transnet",
+        "transnetv",
+        "vcodec",
+        "veryfast"
     ]
 }
