@@ -172,6 +172,17 @@ class MaterialScriptStage(StageExecutor):
             stage_name=self.name,
         )
 
+        from app.services.llm.llm_script_prompts import attach_llm_prompts_to_script
+
+        attach_llm_prompts_to_script(
+            script,
+            ctx.job,
+            title,
+            narration_target_words=narration_target_words,
+            max_title_length=max_title_length,
+            skip_title_optimize=bool(ctx.script_skip_title_optimize),
+        )
+
         script.pop("pending_narration", None)
         script["word_count"] = _narration_chars(script.get("narration", ""))
         script["cost_time"] = round(time.perf_counter() - started, 1)

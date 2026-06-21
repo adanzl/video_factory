@@ -3,7 +3,8 @@
  */
 import { api } from "./config";
 import type { JobDetail, JobListItem, JobLog, JobSegment, ListJobsParams } from "@/types/jobs";
-import type { RunStageActionPayload } from "@/types/jobs/stageAction";
+import type { RunStageActionPayload, PreviewScriptPromptsPayload } from "@/types/jobs/stageAction";
+import type { LlmPromptStep } from "@/types/jobs/script";
 
 export async function listJobs(params: ListJobsParams = {}): Promise<JobListItem[]> {
   const response = await api.get<JobListItem[]>("/v_factory/api/jobs/list", { params });
@@ -39,6 +40,16 @@ export async function runJobStageAction(
 ): Promise<JobDetail> {
   const response = await api.post<JobDetail>(`/v_factory/api/jobs/${endpoint}`, payload);
   return response.data;
+}
+
+export async function previewScriptPrompts(
+  payload: PreviewScriptPromptsPayload
+): Promise<LlmPromptStep[]> {
+  const response = await api.post<{ prompts: LlmPromptStep[] }>(
+    "/v_factory/api/jobs/script/previewPrompts",
+    payload
+  );
+  return Array.isArray(response.data.prompts) ? response.data.prompts : [];
 }
 
 export async function cleanJob(jobId: number): Promise<{

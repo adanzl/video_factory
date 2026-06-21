@@ -7,6 +7,13 @@ export interface ScriptSegment {
   visual_mode?: string;
 }
 
+export interface LlmPromptStep {
+  step: string;
+  label: string;
+  system: string;
+  user: string;
+}
+
 export interface ScriptJson {
   title?: string;
   draft_title?: string;
@@ -16,4 +23,5 @@ export interface ScriptJson {
   visual_style?: string;
   script_mode?: "ai" | "manual";
   segments?: ScriptSegment[];
+  llm_prompts?: LlmPromptStep[];
 }

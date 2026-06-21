@@ -9,7 +9,7 @@ from app.quality.gate import apply_quality_checks
 from app.repositories import job_log_repo, job_repo, segment_repo
 from app.repositories.connection import connection
 from app.services.llm.llm_mgr import llm_mgr
-from app.services.llm.llm_deepseek import MIN_IMAGE_PROMPT_CHARS
+from app.services.llm.llm_script_prompts import MIN_IMAGE_PROMPT_CHARS
 from worker.context import JobContext
 from worker.stages.base import StageExecutor
 
@@ -253,6 +253,18 @@ class ScriptStage(StageExecutor):
             skip_optimize=bool(ctx.script_skip_title_optimize),
             job_id=ctx.job["id"],
             stage_name=self.name,
+        )
+
+        from app.services.llm.llm_script_prompts import attach_llm_prompts_to_script
+
+        attach_llm_prompts_to_script(
+            script,
+            ctx.job,
+            title,
+            segment_target_sec=segment_target_sec,
+            max_title_length=max_title_length,
+            narration_target_words=narration_target_words,
+            skip_title_optimize=bool(ctx.script_skip_title_optimize),
         )
 
         script["word_count"] = _narration_chars(script.get("narration", ""))

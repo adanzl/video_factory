@@ -233,6 +233,36 @@ class JobMgr:
             ),
         )
 
+    def preview_script_prompts(
+        self,
+        job_id: int,
+        *,
+        title: str | None = None,
+        segment_target_sec: float | None = None,
+        max_title_length: int | None = None,
+        narration_target_words: int | None = None,
+        skip_title_optimize: bool = False,
+        use_saved_script: bool = False,
+    ) -> list[dict[str, str]]:
+        from app.services.llm.llm_script_prompts import collect_script_prompts
+
+        job = self.get_job(job_id)
+        source_title = (title or job["title"] or "").strip()
+        if not source_title:
+            raise ValueError("title is empty")
+        script = job.get("script_json") if use_saved_script else None
+        if script is not None and not isinstance(script, dict):
+            script = None
+        return collect_script_prompts(
+            job,
+            source_title,
+            segment_target_sec=segment_target_sec,
+            max_title_length=max_title_length,
+            narration_target_words=narration_target_words,
+            script=script if use_saved_script else None,
+            skip_title_optimize=skip_title_optimize,
+        )
+
     def run_intro(
         self,
         job_id: int,
