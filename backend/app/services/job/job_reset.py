@@ -17,6 +17,9 @@ from app.repositories.connection import connection
 
 __all__ = ["prepare_for_action", "prepare_job_rerun", "reset_job_from_stage"]
 
+# 重跑这些 stage 时只刷新自身产物，不影响下游（封面/发布不导致成片或配音失效）
+_STAGES_SKIP_DOWNSTREAM_CLEAR = frozenset({"cover", "publish"})
+
 
 def _material_script_reset_seed(job: dict) -> dict | None:
     script_json = job.get("script_json")
@@ -141,6 +144,8 @@ def _clear_partial_segment_media(
 
 def _clear_downstream(conn, job_id: int, stage: str, media_dir: Path, job: dict) -> None:
     """清空 stage 之后各阶段的产物（不含 stage 自身）。"""
+    if stage in _STAGES_SKIP_DOWNSTREAM_CLEAR:
+        return
     if not media_dir.exists():
         return
 
