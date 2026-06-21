@@ -214,7 +214,7 @@ class MediaMgr:
         base_w, base_h = probe_video_size(base_video_path)
         if flat_cues:
             logger.info(
-                "merge_material: burning %s subtitle cues via ass on %sx%s",
+                "merge_material: burning %s subtitle cues via ass on %sx%s (libx264 cpu)",
                 len(flat_cues),
                 base_w,
                 base_h,

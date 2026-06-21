@@ -60,12 +60,13 @@ def vaapi_enabled() -> bool:
     return get_settings().ffmpeg_hwaccel == "vaapi"
 
 
-def ffmpeg_cmd_start(*, hide_banner: bool = False) -> list[str]:
-    """ffmpeg 命令前缀；VAAPI 时注入 -vaapi_device。"""
+def ffmpeg_cmd_start(*, hide_banner: bool = False, hwaccel: bool | None = None) -> list[str]:
+    """ffmpeg 命令前缀；VAAPI 时注入 -vaapi_device。hwaccel=False 可显式禁用。"""
     cmd = ["ffmpeg", "-y"]
     if hide_banner:
         cmd.append("-hide_banner")
-    if vaapi_enabled():
+    use_hw = vaapi_enabled() if hwaccel is None else hwaccel
+    if use_hw:
         cmd.extend(["-vaapi_device", get_settings().ffmpeg_vaapi_device])
     return cmd
 
@@ -99,11 +100,14 @@ def _crf_to_vaapi_qp(crf: int) -> int:
     return max(18, min(40, crf + 4))
 
 
-def libx264_encode_args(*, subtitle: bool = False) -> list[str]:
-    """统一视频编码参数；VAAPI 时用 h264_vaapi + qp，否则 libx264 + crf。"""
+def libx264_encode_args(*, subtitle: bool = False, force_cpu: bool = False) -> list[str]:
+    """统一视频编码参数；VAAPI 时用 h264_vaapi + qp，否则 libx264 + crf。
+
+    force_cpu=True 时强制 libx264（用于 libass/subtitles 等只能走 CPU 滤镜链的场景）。
+    """
     settings = get_settings()
     crf = settings.ffmpeg_subtitle_crf if subtitle else settings.ffmpeg_crf
-    if vaapi_enabled():
+    if vaapi_enabled() and not force_cpu:
         return [
             "-c:v",
             settings.ffmpeg_vaapi_codec,
@@ -789,8 +793,10 @@ def _ass_escape_dialogue(text: str) -> str:
 
 def escape_ffmpeg_filter_path(path: Path) -> str:
     """FFmpeg filter 参数中的绝对路径转义（libass subtitles / fontsdir）。"""
-    normalized = path.resolve().as_posix()
-    return normalized.replace("\\", "/").replace(":", r"\:").replace("'", r"'\''")
+    normalized = path.resolve().as_posix().replace("\\", "/")
+    if ":" in normalized[1:]:
+        normalized = normalized.replace(":", r"\:")
+    return normalized.replace("'", r"\'")
 
 
 def build_ass_from_phrase_cues(

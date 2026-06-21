@@ -281,18 +281,18 @@ def fit_video_with_ass_subtitles(
     base_vf = _fit_vf_chain(video_dur, duration_sec, width=width, height=height)
     ass_esc = escape_ffmpeg_filter_path(ass_path)
     fonts_esc = escape_ffmpeg_filter_path(fonts_dir)
-    vf = f"{base_vf},subtitles={ass_esc}:fontsdir={fonts_esc}"
-
+    vf = f"{base_vf},subtitles={ass_esc}:fontsdir={fonts_esc},format={_PIX_FMT}"
+    # libass 仅 CPU；长片经 hwupload→VAAPI 在 AMD 上易触发 context lost，此处强制软编。
     run_ffmpeg(
         [
-            *ffmpeg_cmd_start(),
+            *ffmpeg_cmd_start(hwaccel=False),
             "-i",
             str(video_path),
             "-vf",
-            vf_for_encode(vf),
+            vf,
             "-t",
             f"{duration_sec:.3f}",
-            *libx264_encode_args(subtitle=True),
+            *libx264_encode_args(subtitle=True, force_cpu=True),
             str(output_path),
         ]
     )
