@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from app.config import get_settings
+from app.services.media.subtitle_style import subtitle_style_for_canvas
 from app.utils.async_util import run_subprocess_safe
 
 # cSpell: disable
@@ -804,16 +805,25 @@ def build_ass_from_phrase_cues(
     *,
     width: int,
     height: int,
-    font_name: str = "Source Han Sans CN",
+    font_name: str = "Source Han Sans CN Medium",
 ) -> str:
-    """生成可读 ASS 字幕（底居中白字黑边），按句级 duration 顺序排轴。"""
-    font_size = max(28, int(height * 0.048))
-    margin_v = max(24, int(height * 0.06))
+    """生成 ASS 字幕，样式与 subtitle_overlay PNG 一致，按句级 duration 顺序排轴。"""
+    style_cfg = subtitle_style_for_canvas(width, height)
+    font_size = int(style_cfg["font_size"])
+    margin_l = int(style_cfg["margin_l"])
+    margin_r = int(style_cfg["margin_r"])
+    margin_v = int(style_cfg["margin_v"])
+    outline = int(style_cfg["outline"])
+    shadow = int(style_cfg["shadow"])
+    primary = str(style_cfg["primary_colour"])
+    outline_colour = str(style_cfg["outline_colour"])
+    back_colour = str(style_cfg["back_colour"])
+    # Alignment=2 底居中；BorderStyle=1 描边+阴影；Bold=0
     style = (
         f"Style: Default,{font_name},{font_size},"
-        "&H00FFFFFF,&H000000FF,&H00000000,&H80000000,"
-        "0,0,0,0,100,100,0,0,1,2,1,2,10,10,"
-        f"{margin_v},1"
+        f"{primary},{outline_colour},{outline_colour},{back_colour},"
+        "0,0,0,0,100,100,0,0,1,"
+        f"{outline},{shadow},2,{margin_l},{margin_r},{margin_v},1"
     )
     header = (
         "[Script Info]\n"
