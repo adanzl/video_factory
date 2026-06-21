@@ -770,4 +770,76 @@ def build_srt_from_cues(cues: list) -> str:
     return "\n".join(lines)
 
 
+def _fmt_ass_time(sec: float) -> str:
+    sec = max(0.0, sec)
+    hours = int(sec // 3600)
+    minutes = int((sec % 3600) // 60)
+    seconds = sec % 60
+    return f"{hours}:{minutes:02d}:{seconds:05.2f}"
+
+
+def _ass_escape_dialogue(text: str) -> str:
+    return (
+        text.replace("\\", r"\\")
+        .replace("{", r"\{")
+        .replace("}", r"\}")
+        .replace("\n", r"\N")
+    )
+
+
+def escape_ffmpeg_filter_path(path: Path) -> str:
+    """FFmpeg filter 参数中的绝对路径转义（libass subtitles / fontsdir）。"""
+    normalized = path.resolve().as_posix()
+    return normalized.replace("\\", "/").replace(":", r"\:").replace("'", r"'\''")
+
+
+def build_ass_from_phrase_cues(
+    cues: list[tuple[str, float]],
+    *,
+    width: int,
+    height: int,
+    font_name: str = "Source Han Sans CN",
+) -> str:
+    """生成可读 ASS 字幕（底居中白字黑边），按句级 duration 顺序排轴。"""
+    font_size = max(28, int(height * 0.048))
+    margin_v = max(24, int(height * 0.06))
+    style = (
+        f"Style: Default,{font_name},{font_size},"
+        "&H00FFFFFF,&H000000FF,&H00000000,&H80000000,"
+        "0,0,0,0,100,100,0,0,1,2,1,2,10,10,"
+        f"{margin_v},1"
+    )
+    header = (
+        "[Script Info]\n"
+        "ScriptType: v4.00+\n"
+        "WrapStyle: 0\n"
+        "ScaledBorderAndShadow: yes\n"
+        f"PlayResX: {width}\n"
+        f"PlayResY: {height}\n"
+        "\n"
+        "[V4+ Styles]\n"
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, "
+        "OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, "
+        "ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
+        "Alignment, MarginL, MarginR, MarginV, Encoding\n"
+        f"{style}\n"
+        "\n"
+        "[Events]\n"
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+    )
+    lines = [header]
+    cursor = 0.0
+    for text, duration in cues:
+        if duration <= 0 or not text.strip():
+            continue
+        start = cursor
+        end = cursor + duration
+        cursor = end
+        body = _ass_escape_dialogue(text.strip())
+        lines.append(
+            f"Dialogue: 0,{_fmt_ass_time(start)},{_fmt_ass_time(end)},Default,,0,0,0,,{body}\n"
+        )
+    return "".join(lines)
+
+
 # cSpell: enable

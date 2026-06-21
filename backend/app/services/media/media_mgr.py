@@ -10,7 +10,8 @@ from pathlib import Path
 
 from app.config import get_settings
 from app.services.media.clip.mgr import clip_mgr
-from app.services.media.clip.render import fit_video_duration, video_to_clip_timed_overlays
+from app.services.media.clip.render import fit_video_with_ass_subtitles
+from app.services.media.ffmpeg_utils import build_ass_from_phrase_cues
 from app.services.media.ffmpeg_utils import (
     concat_clips,
     ffmpeg_hwaccel_config_summary,
@@ -208,45 +209,40 @@ class MediaMgr:
 
         work_dir = media_dir / "merge_work"
         work_dir.mkdir(parents=True, exist_ok=True)
-        overlay_paths: list[Path] = []
 
         body_path = media_dir / "body.mp4"
-        try:
-            fitted = work_dir / "base_fitted.mp4"
-            base_w, base_h = probe_video_size(base_video_path)
-            fit_video_duration(
+        base_w, base_h = probe_video_size(base_video_path)
+        if flat_cues:
+            logger.info(
+                "merge_material: burning %s subtitle cues via ass on %sx%s",
+                len(flat_cues),
+                base_w,
+                base_h,
+            )
+            ass_path = work_dir / "subtitles.ass"
+            ass_path.write_text(
+                build_ass_from_phrase_cues(flat_cues, width=base_w, height=base_h),
+                encoding="utf-8",
+            )
+            fit_video_with_ass_subtitles(
                 base_video_path,
-                fitted,
+                ass_path,
+                body_path,
                 output_dur,
                 width=base_w,
                 height=base_h,
             )
-            video_w, video_h = probe_video_size(fitted)
-            if flat_cues:
-                logger.info(
-                    "merge_material: burning %s subtitle cues on %sx%s",
-                    len(flat_cues),
-                    video_w,
-                    video_h,
-                )
-                _, overlay_windows, overlay_paths = clip_mgr.prepare_subtitle_overlays(
-                    subtitle_cues=flat_cues,
-                    work_dir=work_dir,
-                    segment_index=0,
-                    width=video_w,
-                    height=video_h,
-                )
-                video_to_clip_timed_overlays(
-                    fitted,
-                    overlay_windows,
-                    body_path,
-                    output_dur,
-                )
-            else:
-                logger.warning("merge_material: no subtitle cues with duration, skipping burn")
-                shutil.copy2(fitted, body_path)
-        finally:
-            clip_mgr.cleanup_overlay_paths(overlay_paths)
+        else:
+            logger.warning("merge_material: no subtitle cues with duration, skipping burn")
+            from app.services.media.clip.render import fit_video_duration
+
+            fit_video_duration(
+                base_video_path,
+                body_path,
+                output_dur,
+                width=base_w,
+                height=base_h,
+            )
 
         logger.info("merge_material: body.mp4 done")
 
