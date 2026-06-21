@@ -40,8 +40,13 @@ def _accept_stage(job_id: int, submit) -> tuple:
     return json_accepted(job)
 
 
-def _parse_script_body() -> tuple[int, bool, str | None, float | None, int | None, int | None, bool]:
+def _parse_script_body() -> tuple[
+    int, bool, str | None, float | None, int | None, int | None, bool, str | None
+]:
     data = get_json_body()
+    supplementary = parse_optional_str(data, "supplementary_info")
+    if supplementary and len(supplementary) > 2000:
+        raise APIError("supplementary_info too long (max 2000 chars)")
     return (
         parse_id(data),
         parse_bool(data, "to_end", default=False),
@@ -50,12 +55,13 @@ def _parse_script_body() -> tuple[int, bool, str | None, float | None, int | Non
         parse_optional_int(data, "max_title_length", minimum=8, maximum=48),
         parse_optional_int(data, "narration_target_words", minimum=200, maximum=3000),
         parse_bool(data, "skip_title_optimize", default=False),
+        supplementary,
     )
 
 
 @bp.post("/script")
 def run_script_route():
-    job_id, to_end, title, segment_target_sec, max_title_length, narration_target_words, skip_title_optimize = (
+    job_id, to_end, title, segment_target_sec, max_title_length, narration_target_words, skip_title_optimize, supplementary_info = (
         _parse_script_body()
     )
     return _accept_stage(
@@ -68,6 +74,7 @@ def run_script_route():
             max_title_length=max_title_length,
             narration_target_words=narration_target_words,
             skip_title_optimize=skip_title_optimize,
+            supplementary_info=supplementary_info,
         ),
     )
 
@@ -82,6 +89,9 @@ def preview_script_prompts_route():
     narration_target_words = parse_optional_int(data, "narration_target_words", minimum=200, maximum=3000)
     skip_title_optimize = parse_bool(data, "skip_title_optimize", default=False)
     use_saved_script = parse_bool(data, "use_saved_script", default=False)
+    supplementary_info = parse_optional_str(data, "supplementary_info")
+    if supplementary_info and len(supplementary_info) > 2000:
+        raise APIError("supplementary_info too long (max 2000 chars)")
     try:
         prompts = job_mgr.preview_script_prompts(
             job_id,
@@ -90,6 +100,7 @@ def preview_script_prompts_route():
             max_title_length=max_title_length,
             narration_target_words=narration_target_words,
             skip_title_optimize=skip_title_optimize,
+            supplementary_info=supplementary_info,
             use_saved_script=use_saved_script,
         )
     except ValueError as exc:

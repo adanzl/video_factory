@@ -7,7 +7,7 @@ import type {
   ListMaterialsParams,
   MaterialRecord,
   UploadMaterialParams,
-  ReplaceMaterialParams,
+  EditMaterialParams,
 } from "@/types/material";
 import type { JobDetail } from "@/types/jobs";
 
@@ -38,11 +38,15 @@ export async function uploadMaterial(params: UploadMaterialParams): Promise<Mate
   return response.data;
 }
 
-export async function replaceMaterial(params: ReplaceMaterialParams): Promise<MaterialRecord> {
+export async function editMaterial(params: EditMaterialParams): Promise<MaterialRecord> {
   const form = new FormData();
   form.append("id", String(params.id));
-  form.append("file", params.file);
-  const response = await api.post<MaterialRecord>("/v_factory/api/materials/replace", form, {
+  form.append("name", params.name);
+  form.append("note", params.note ?? "");
+  if (params.file) {
+    form.append("file", params.file);
+  }
+  const response = await api.post<MaterialRecord>("/v_factory/api/materials/edit", form, {
     headers: { "Content-Type": "multipart/form-data" },
   });
   return response.data;

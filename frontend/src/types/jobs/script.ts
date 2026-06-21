@@ -24,4 +24,5 @@ export interface ScriptJson {
   script_mode?: "ai" | "manual";
   segments?: ScriptSegment[];
   llm_prompts?: LlmPromptStep[];
+  supplementary_info?: string;
 }

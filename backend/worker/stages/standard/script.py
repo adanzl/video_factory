@@ -205,6 +205,11 @@ class ScriptStage(StageExecutor):
         segment_target_sec = ctx.script_segment_target_sec
         max_title_length = ctx.script_max_title_length
         narration_target_words = ctx.script_narration_target_words
+        supplementary_info = (
+            ctx.script_supplementary_info.strip()
+            if ctx.script_supplementary_info and ctx.script_supplementary_info.strip()
+            else None
+        )
         min_narration_chars = _min_narration_chars(narration_target_words)
         last_exc: Exception | None = None
         script: dict | None = None
@@ -217,6 +222,7 @@ class ScriptStage(StageExecutor):
                 segment_target_sec=segment_target_sec,
                 max_title_length=max_title_length,
                 narration_target_words=narration_target_words,
+                supplementary_info=supplementary_info,
             )
             try:
                 accept_warnings = _validate_script(
@@ -264,8 +270,14 @@ class ScriptStage(StageExecutor):
             segment_target_sec=segment_target_sec,
             max_title_length=max_title_length,
             narration_target_words=narration_target_words,
+            supplementary_info=supplementary_info,
             skip_title_optimize=bool(ctx.script_skip_title_optimize),
         )
+
+        if supplementary_info:
+            script["supplementary_info"] = supplementary_info
+        else:
+            script.pop("supplementary_info", None)
 
         script["word_count"] = _narration_chars(script.get("narration", ""))
         script["cost_time"] = round(time.perf_counter() - started, 1)

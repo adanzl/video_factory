@@ -142,20 +142,39 @@ class MaterialMgr:
             self._rollback_upload(material_id, material_dir)
             raise
 
-    def replace_material_file(self, material_id: int, file: FileStorage) -> dict:
-        """替换素材库中已有条目的视频文件，保留 ID 与元数据字段（name/note/job_id）。"""
-        original, ext = self._validate_upload_file(file)
+    def edit_material(
+        self,
+        material_id: int,
+        *,
+        name: str,
+        note: str | None = None,
+        file: FileStorage | None = None,
+    ) -> dict:
+        """编辑素材：名称、备注；可选更换视频文件。"""
+        cleaned_name = name.strip()
+        if not cleaned_name:
+            raise ValueError("name is empty")
+        note_text = note.strip() if note else None
 
         settings = get_settings()
         with connection() as conn:
             material_repo.get_material(conn, material_id)
 
-        material_dir = settings.material_data_dir / str(material_id)
-        dest = self._write_material_video(material_dir, file, ext)
-        meta = self._finalize_material_video(material_dir, dest)
+        meta: dict[str, object] = {}
+        if file and file.filename:
+            _, ext = self._validate_upload_file(file)
+            material_dir = settings.material_data_dir / str(material_id)
+            dest = self._write_material_video(material_dir, file, ext)
+            meta = self._finalize_material_video(material_dir, dest)
 
         with connection() as conn:
-            return material_repo.update_material(conn, material_id, **meta)
+            return material_repo.update_material(
+                conn,
+                material_id,
+                name=cleaned_name,
+                note=note_text,
+                **meta,
+            )
 
     def create_job_from_material(
         self,

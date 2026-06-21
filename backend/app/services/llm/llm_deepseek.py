@@ -61,6 +61,7 @@ class DeepSeekClient(LLMClient):
         segment_target_sec: float | None = None,
         max_title_length: int | None = None,
         narration_target_words: int | None = None,
+        supplementary_info: str | None = None,
     ) -> dict[str, Any]:
         prompts = build_storyboard_prompts(
             title,
@@ -68,6 +69,7 @@ class DeepSeekClient(LLMClient):
             segment_target_sec=segment_target_sec,
             max_title_length=max_title_length,
             narration_target_words=narration_target_words,
+            supplementary_info=supplementary_info,
         )
         data = json.loads(self._chat(prompts["system"], prompts["user"]))
         if "segments" not in data:
@@ -81,8 +83,13 @@ class DeepSeekClient(LLMClient):
         script: dict[str, Any],
         *,
         feedback: str | None = None,
+        supplementary_info: str | None = None,
     ) -> dict[str, Any]:
-        prompts = build_image_prompts_prompts(script, feedback=feedback)
+        prompts = build_image_prompts_prompts(
+            script,
+            feedback=feedback,
+            supplementary_info=supplementary_info,
+        )
         raw = json.loads(self._chat(prompts["system"], prompts["user"]))
         if isinstance(raw, list):
             prompt_items = raw
@@ -120,6 +127,7 @@ class DeepSeekClient(LLMClient):
         segment_target_sec: float | None = None,
         max_title_length: int | None = None,
         narration_target_words: int | None = None,
+        supplementary_info: str | None = None,
     ) -> dict[str, Any]:
         data = self._generate_storyboard(
             title,
@@ -127,11 +135,16 @@ class DeepSeekClient(LLMClient):
             segment_target_sec=segment_target_sec,
             max_title_length=max_title_length,
             narration_target_words=narration_target_words,
+            supplementary_info=supplementary_info,
         )
 
         prompt_feedback: str | None = None
         for attempt in range(4):
-            prompt_data = self._generate_image_prompts(data, feedback=prompt_feedback)
+            prompt_data = self._generate_image_prompts(
+                data,
+                feedback=prompt_feedback,
+                supplementary_info=supplementary_info,
+            )
             self._merge_image_prompts(data, prompt_data["image_prompts"])
             short = [
                 (seg["segment_index"], len(seg["image_prompt"]))
@@ -154,12 +167,14 @@ class DeepSeekClient(LLMClient):
         feedback: str | None = None,
         max_title_length: int | None = None,
         narration_target_words: int | None = None,
+        supplementary_info: str | None = None,
     ) -> dict[str, Any]:
         prompts = build_material_script_prompts(
             title,
             feedback=feedback,
             max_title_length=max_title_length,
             narration_target_words=narration_target_words,
+            supplementary_info=supplementary_info,
         )
         data = json.loads(self._chat(prompts["system"], prompts["user"]))
         if "segments" not in data:

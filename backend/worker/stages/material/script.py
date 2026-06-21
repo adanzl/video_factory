@@ -89,6 +89,11 @@ class MaterialScriptStage(StageExecutor):
         title = ctx.job["title"]
         max_title_length = ctx.script_max_title_length
         narration_target_words = ctx.script_narration_target_words
+        supplementary_info = (
+            ctx.script_supplementary_info.strip()
+            if ctx.script_supplementary_info and ctx.script_supplementary_info.strip()
+            else None
+        )
         if narration_target_words is None:
             duration = base_video_duration_sec(job=ctx.job, media_dir=ctx.media_dir)
             if duration:
@@ -134,6 +139,7 @@ class MaterialScriptStage(StageExecutor):
                     feedback=feedback,
                     max_title_length=max_title_length,
                     narration_target_words=narration_target_words,
+                    supplementary_info=supplementary_info,
                 )
                 try:
                     accept_warnings = _validate_material_script(
@@ -180,8 +186,14 @@ class MaterialScriptStage(StageExecutor):
             title,
             narration_target_words=narration_target_words,
             max_title_length=max_title_length,
+            supplementary_info=supplementary_info,
             skip_title_optimize=bool(ctx.script_skip_title_optimize),
         )
+
+        if supplementary_info:
+            script["supplementary_info"] = supplementary_info
+        else:
+            script.pop("supplementary_info", None)
 
         script.pop("pending_narration", None)
         script["word_count"] = _narration_chars(script.get("narration", ""))

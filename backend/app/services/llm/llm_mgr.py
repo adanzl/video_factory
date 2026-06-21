@@ -22,6 +22,7 @@ class LLMClient:
         segment_target_sec: float | None = None,
         max_title_length: int | None = None,
         narration_target_words: int | None = None,
+        supplementary_info: str | None = None,
     ) -> dict[str, Any]:
         raise NotImplementedError
 
@@ -51,6 +52,7 @@ class LLMClient:
         feedback: str | None = None,
         max_title_length: int | None = None,
         narration_target_words: int | None = None,
+        supplementary_info: str | None = None,
     ) -> dict[str, Any]:
         raise NotImplementedError
 
@@ -74,6 +76,7 @@ class LLMMgr:
         segment_target_sec: float | None = None,
         max_title_length: int | None = None,
         narration_target_words: int | None = None,
+        supplementary_info: str | None = None,
     ) -> dict[str, Any]:
         return self._get_client().generate_script(
             title,
@@ -81,6 +84,7 @@ class LLMMgr:
             segment_target_sec=segment_target_sec,
             max_title_length=max_title_length,
             narration_target_words=narration_target_words,
+            supplementary_info=supplementary_info,
         )
 
     def generate_topics(
@@ -161,12 +165,14 @@ class LLMMgr:
         feedback: str | None = None,
         max_title_length: int | None = None,
         narration_target_words: int | None = None,
+        supplementary_info: str | None = None,
     ) -> dict[str, Any]:
         return self._get_client().generate_material_script(
             title,
             feedback=feedback,
             max_title_length=max_title_length,
             narration_target_words=narration_target_words,
+            supplementary_info=supplementary_info,
         )
 
 
