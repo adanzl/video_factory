@@ -13,6 +13,8 @@ from app.services.media.clip.mgr import clip_mgr
 from app.services.media.clip.render import fit_video_duration, video_to_clip_timed_overlays
 from app.services.media.ffmpeg_utils import (
     concat_clips,
+    ffmpeg_hwaccel_config_summary,
+    log_ffmpeg_hwaccel_config,
     merge_audio_video,
     prepend_intro,
     probe_duration,
@@ -121,6 +123,8 @@ class MediaMgr:
         intro_path: Path | None,
     ) -> MergeResult:
         t0 = time.time()
+        log_ffmpeg_hwaccel_config(context="merge")
+        logger.info("merge: %s", ffmpeg_hwaccel_config_summary())
         clips_dir = media_dir / "segments"
         clip_paths: list[Path] = []
         for seg in sorted(segments, key=lambda s: s["segment_index"]):
@@ -169,6 +173,8 @@ class MediaMgr:
     ) -> MergeResult:
         """素材流水线：基底视频 + 字幕烧录 + TTS + 片头。"""
         t0 = time.time()
+        log_ffmpeg_hwaccel_config(context="merge_material")
+        logger.info("merge_material: %s", ffmpeg_hwaccel_config_summary())
         subtitle_cues = tts_mgr.load_subtitle_cues(
             tts_mgr.subtitle_cues_path_for(audio_path.parent)
         )
@@ -178,6 +184,22 @@ class MediaMgr:
             )
 
         audio_dur = probe_duration(audio_path)
+        base_dur = probe_duration(base_video_path)
+        tail_tol = 0.08
+        silent_tail = base_dur > audio_dur + tail_tol
+        output_dur = base_dur if silent_tail else audio_dur
+        if silent_tail:
+            logger.info(
+                "merge_material: base %.2fs > audio %.2fs, keep full video with silent tail",
+                base_dur,
+                audio_dur,
+            )
+        else:
+            logger.info(
+                "merge_material: output duration %.2fs (audio-driven)",
+                output_dur,
+            )
+
         flat_cues = [
             (cue.text, cue.duration_sec)
             for cue in subtitle_cues
@@ -195,7 +217,7 @@ class MediaMgr:
             fit_video_duration(
                 base_video_path,
                 fitted,
-                audio_dur,
+                output_dur,
                 width=base_w,
                 height=base_h,
             )
@@ -218,7 +240,7 @@ class MediaMgr:
                     fitted,
                     overlay_windows,
                     body_path,
-                    audio_dur,
+                    output_dur,
                 )
             else:
                 logger.warning("merge_material: no subtitle cues with duration, skipping burn")
@@ -229,7 +251,13 @@ class MediaMgr:
         logger.info("merge_material: body.mp4 done")
 
         body_with_audio = media_dir / "body_with_audio.mp4"
-        merge_audio_video(body_path, audio_path, body_with_audio, subtitle_path=None)
+        merge_audio_video(
+            body_path,
+            audio_path,
+            body_with_audio,
+            subtitle_path=None,
+            silent_tail_when_video_longer=silent_tail,
+        )
         logger.info("merge_material: audio merged")
 
         final_path = media_dir / "final.mp4"
