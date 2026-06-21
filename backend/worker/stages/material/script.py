@@ -46,12 +46,22 @@ def _split_manual_narration(narration: str) -> list[dict]:
     return segments
 
 
+def _timeline_length_mode(attempt: int) -> str:
+    """重试越多校验越松，避免 LLM 略超字数死循环。"""
+    if attempt >= 5:
+        return "warn_only"
+    if attempt >= 3:
+        return "relaxed"
+    return "strict"
+
+
 def _validate_material_script(
     script: dict,
     *,
     max_title_length: int | None = None,
     min_narration_chars: int | None = None,
     video_timeline_raw: str | None = None,
+    timeline_length_mode: str = "strict",
 ) -> list[str]:
     settings = get_settings()
     max_len = settings.max_title_length if max_title_length is None else max_title_length
@@ -81,7 +91,12 @@ def _validate_material_script(
 
     timeline = parse_video_timeline(video_timeline_raw)
     if timeline:
-        timeline_error = validate_timeline_script(script, timeline)
+        timeline_error, timeline_warnings = validate_timeline_script(
+            script,
+            timeline,
+            length_mode=timeline_length_mode,
+        )
+        warnings.extend(timeline_warnings)
         if timeline_error:
             raise ScriptValidationError(timeline_error, retryable=True)
     return warnings
@@ -145,9 +160,11 @@ class MaterialScriptStage(StageExecutor):
         else:
             last_exc: Exception | None = None
             script = None
+            last_script: dict | None = None
             feedback: str | None = None
             accept_warnings: list[str] = []
             for attempt in range(6):
+                length_mode = _timeline_length_mode(attempt)
                 script = llm_mgr.generate_material_script(
                     title,
                     feedback=feedback,
@@ -156,12 +173,14 @@ class MaterialScriptStage(StageExecutor):
                     supplementary_info=supplementary_info,
                     video_timeline=video_timeline,
                 )
+                last_script = script
                 try:
                     accept_warnings = _validate_material_script(
                         script,
                         max_title_length=max_title_length,
                         min_narration_chars=min_narration_chars,
                         video_timeline_raw=video_timeline,
+                        timeline_length_mode=length_mode,
                     )
                     break
                 except ScriptValidationError as exc:
@@ -172,9 +191,32 @@ class MaterialScriptStage(StageExecutor):
                             conn,
                             ctx.job["id"],
                             self.name,
-                            f"script rejected (attempt {attempt + 1}): {exc}",
+                            (
+                                f"script rejected (attempt {attempt + 1}, "
+                                f"timeline_check={length_mode}): {exc}"
+                            ),
                             level="warning",
                         )
+                    script = None
+            if script is None and last_script is not None:
+                try:
+                    accept_warnings = _validate_material_script(
+                        last_script,
+                        max_title_length=max_title_length,
+                        min_narration_chars=min_narration_chars,
+                        video_timeline_raw=video_timeline,
+                        timeline_length_mode="warn_only",
+                    )
+                    script = last_script
+                    with connection() as conn:
+                        job_log_repo.append_log(
+                            conn,
+                            ctx.job["id"],
+                            self.name,
+                            "timeline length checks exhausted; accepted last draft (warn_only)",
+                            level="warning",
+                        )
+                except ScriptValidationError:
                     script = None
             if script is None:
                 raise last_exc or RuntimeError("material script generation failed")

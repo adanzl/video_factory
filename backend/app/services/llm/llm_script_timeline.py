@@ -8,8 +8,13 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-# 实测 TTS rate≈1.15 时中文口播约 4.5–5 字/秒，留余量避免拖镜
-TIMELINE_TTS_CHARS_PER_SEC = 5.0
+# 提示词目标语速；校验另设 hard_max 容差，避免 LLM 略超就反复打回
+TIMELINE_TTS_CHARS_PER_SEC = 5.5
+# 校验 hard 上限 = target + max(ABS, target * RATIO)
+TIMELINE_HARD_MAX_ABS = 5
+TIMELINE_HARD_MAX_RATIO = 0.3
+# 重试若干次后仍略超长时，只要不超过 relaxed 倍数则放行
+TIMELINE_RELAXED_MAX_RATIO = 1.5
 
 _TIMELINE_ITEM_KEYS = ("balls", "segments", "items", "entries", "scenes", "shots")
 
@@ -101,7 +106,19 @@ def _timeline_items(data: dict[str, Any]) -> list[dict[str, Any]] | None:
 
 
 def _max_chars_for_duration(duration_sec: float) -> int:
-    return max(8, int(math.floor(duration_sec * TIMELINE_TTS_CHARS_PER_SEC)))
+    return max(10, int(math.floor(duration_sec * TIMELINE_TTS_CHARS_PER_SEC)))
+
+
+def hard_max_chars(target: int) -> int:
+    return target + max(TIMELINE_HARD_MAX_ABS, int(math.ceil(target * TIMELINE_HARD_MAX_RATIO)))
+
+
+def relaxed_max_chars(target: int) -> int:
+    return max(hard_max_chars(target), int(math.ceil(target * TIMELINE_RELAXED_MAX_RATIO)))
+
+
+def _segment_char_count(text: str) -> int:
+    return len(re.sub(r"\s+", "", text))
 
 
 def parse_video_timeline(raw: str | None) -> VideoTimeline | None:
@@ -185,7 +202,8 @@ def timeline_system_clause(timeline: VideoTimeline) -> str:
         "第 i 段 text 只讲第 i 段画面，禁止提前讲后续画面、禁止滞后讲上一段、禁止合并多段。"
         "禁止开场钩子、悬念反问（如「你知道吗」）、全片总起、结尾长篇回顾或清单式连读多届/多段。"
         "narration 第一句必须从第 1 段画面内容直接讲起（视频 0 秒即进入该段主题）。"
-        f"每段 text 字数不得超过对应 max_chars（全片合计约 {total_max} 字），宁可短勿超；"
+        f"每段 text 宜控制在对应字数上限以内（全片合计约 {total_max} 字），略短更好；"
+        "若届别+球名较长，优先写年份与球名，细节从简。"
         "各段 text 按顺序拼接须与 narration 完全一致。"
         "有补充信息时不得与时间表矛盾；时间表优先决定分段与讲什么。"
     )
@@ -209,34 +227,97 @@ def narration_range_for_timeline(timeline: VideoTimeline) -> tuple[int, int]:
     return lo, hi
 
 
-def validate_timeline_script(script: dict[str, Any], timeline: VideoTimeline) -> str | None:
+def validate_timeline_script(
+    script: dict[str, Any],
+    timeline: VideoTimeline,
+    *,
+    length_mode: str = "strict",
+) -> tuple[str | None, list[str]]:
+    """校验口播与时间表对齐。返回 (致命错误, 警告列表)。"""
     segments = script.get("segments") or []
     expected = len(timeline.slots)
     if len(segments) != expected:
         return (
-            f"segments 数量须等于时间表条目数 {expected}，当前 {len(segments)}；"
-            "请按时间表逐段输出，每段一条 segment，禁止合并或拆分。"
+            (
+                f"segments 数量须等于时间表条目数 {expected}，当前 {len(segments)}；"
+                "请按时间表逐段输出，每段一条 segment，禁止合并或拆分。"
+            ),
+            [],
         )
 
-    over_limit: list[str] = []
+    over_target: list[str] = []
+    over_hard: list[str] = []
     for seg, slot in zip(segments, timeline.slots, strict=False):
         seg_index = seg.get("segment_index")
         if seg_index != slot.index:
             return (
-                f"segment_index 须与时间表一致：第 {slot.index} 段应为 segment_index={slot.index}，"
-                f"当前为 {seg_index!r}。"
+                (
+                    f"segment_index 须与时间表一致：第 {slot.index} 段应为 segment_index={slot.index}，"
+                    f"当前为 {seg_index!r}。"
+                ),
+                [],
             )
-        text = str(seg.get("text") or "")
-        chars = len(re.sub(r"\s+", "", text))
+        chars = _segment_char_count(str(seg.get("text") or ""))
+        hard_cap = hard_max_chars(slot.max_chars)
         if chars > slot.max_chars:
-            over_limit.append(
-                f"第{slot.index}段({slot.scene}) {chars}字>{slot.max_chars}字"
-            )
+            detail = f"第{slot.index}段({slot.scene}) {chars}字>{slot.max_chars}字"
+            over_target.append(detail)
+            if chars > hard_cap:
+                over_hard.append(f"{detail}(硬上限{hard_cap}字)")
 
-    if over_limit:
-        return (
-            "以下段落超长，请压缩 wording 后重写："
-            + "；".join(over_limit)
-            + f"。按约 {TIMELINE_TTS_CHARS_PER_SEC} 字/秒控字数。"
+    warnings: list[str] = []
+    if over_target and not over_hard:
+        warnings.append(
+            "部分段落略超目标字数但可接受："
+            + "；".join(over_target)
         )
-    return None
+
+    if length_mode == "warn_only":
+        if over_hard:
+            warnings.append(
+                "部分段落明显超长，已放宽校验放行："
+                + "；".join(over_hard)
+            )
+        return None, warnings
+
+    if length_mode == "relaxed":
+        still_bad = []
+        for seg, slot in zip(segments, timeline.slots, strict=False):
+            chars = _segment_char_count(str(seg.get("text") or ""))
+            cap = relaxed_max_chars(slot.max_chars)
+            if chars > cap:
+                still_bad.append(
+                    f"第{slot.index}段({slot.scene}) {chars}字>{cap}字"
+                )
+        if still_bad:
+            return (
+                (
+                    "以下段落仍过长，请大幅压缩："
+                    + "；".join(still_bad)
+                    + f"。目标约 {TIMELINE_TTS_CHARS_PER_SEC} 字/秒。"
+                ),
+                warnings,
+            )
+        if over_target:
+            warnings.append(
+                "部分段落略超目标字数："
+                + "；".join(over_target)
+            )
+        return None, warnings
+
+    if over_hard:
+        return (
+            (
+                "以下段落过长，请压缩后重写："
+                + "；".join(over_hard)
+                + f"。目标约 {TIMELINE_TTS_CHARS_PER_SEC} 字/秒，"
+                "可删形容词、合并同义，届别+球名必留。"
+            ),
+            warnings,
+        )
+    if over_target:
+        warnings.append(
+            "部分段落略超目标字数："
+            + "；".join(over_target)
+        )
+    return None, warnings
