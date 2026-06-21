@@ -56,7 +56,7 @@
       <el-table-column label="创建时间" width="170">
         <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="220" fixed="right">
+      <el-table-column label="操作" width="280" fixed="right">
         <template #default="{ row }">
           <div class="flex items-center gap-1 whitespace-nowrap">
             <el-button
@@ -67,6 +67,9 @@
               @click="openPlayDialog(row)"
             >
               播放
+            </el-button>
+            <el-button type="warning" link size="small" @click="openReplaceDialog(row)">
+              替换
             </el-button>
             <el-button type="success" link size="small" @click="openCreateJobDialog(row)">
               发起任务
@@ -112,6 +115,31 @@
         <el-button @click="showUploadDialog = false">取消</el-button>
         <el-button type="primary" :loading="uploading" :disabled="!uploadFile" @click="handleUpload">
           上传
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="showReplaceDialog" title="替换视频素材" width="480px" destroy-on-close>
+      <el-form label-width="90px">
+        <el-form-item label="素材">
+          <span>{{ replaceMaterialRow?.name }} (#{{ replaceMaterialRow?.id }})</span>
+        </el-form-item>
+        <el-form-item label="新视频" required>
+          <input
+            ref="replaceFileInputRef"
+            type="file"
+            accept="video/*,.mp4,.mov,.webm,.mkv"
+            @change="onReplaceFileChange"
+          />
+        </el-form-item>
+        <p class="text-xs text-gray-500">
+          保留素材 ID 与名称，仅替换视频文件；已关联的任务需重新执行「基底准备」才会更新成片基底。
+        </p>
+      </el-form>
+      <template #footer>
+        <el-button @click="showReplaceDialog = false">取消</el-button>
+        <el-button type="primary" :loading="replacing" :disabled="!replaceFile" @click="handleReplace">
+          确认替换
         </el-button>
       </template>
     </el-dialog>
@@ -188,6 +216,7 @@ import {
   createJobFromMaterial,
   deleteMaterial,
   listMaterials,
+  replaceMaterial,
   uploadMaterial,
 } from "@/api/api-materials";
 import type { MaterialJobRunMode, MaterialRecord } from "@/types/material";
@@ -202,6 +231,7 @@ const materials = ref<MaterialRecord[]>([]);
 const loading = ref(false);
 const deleting = ref(false);
 const uploading = ref(false);
+const replacing = ref(false);
 const creatingJob = ref(false);
 const selectedIds = ref<number[]>([]);
 const page = ref(1);
@@ -213,6 +243,11 @@ const uploadFile = ref<File | null>(null);
 const uploadName = ref("");
 const uploadNote = ref("");
 const fileInputRef = ref<HTMLInputElement | null>(null);
+
+const showReplaceDialog = ref(false);
+const replaceMaterialRow = ref<MaterialRecord | null>(null);
+const replaceFile = ref<File | null>(null);
+const replaceFileInputRef = ref<HTMLInputElement | null>(null);
 
 const showCreateJobDialog = ref(false);
 const createJobMaterial = ref<MaterialRecord | null>(null);
@@ -366,6 +401,38 @@ const handleUpload = async () => {
     handleError(error, "上传失败");
   } finally {
     uploading.value = false;
+  }
+};
+
+const openReplaceDialog = (row: MaterialRecord) => {
+  replaceMaterialRow.value = row;
+  replaceFile.value = null;
+  showReplaceDialog.value = true;
+};
+
+const onReplaceFileChange = (event: Event) => {
+  const input = event.target as HTMLInputElement;
+  replaceFile.value = input.files?.[0] ?? null;
+};
+
+const handleReplace = async () => {
+  if (!replaceMaterialRow.value || !replaceFile.value) {
+    return;
+  }
+  replacing.value = true;
+  try {
+    await replaceMaterial({ id: replaceMaterialRow.value.id, file: replaceFile.value });
+    ElMessage.success("素材已替换");
+    showReplaceDialog.value = false;
+    replaceFile.value = null;
+    if (replaceFileInputRef.value) {
+      replaceFileInputRef.value.value = "";
+    }
+    await fetchMaterials();
+  } catch (error) {
+    handleError(error, "替换失败");
+  } finally {
+    replacing.value = false;
   }
 };
 

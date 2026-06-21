@@ -62,6 +62,42 @@ class MaterialMgr:
             except KeyError:
                 pass
 
+    def _validate_upload_file(self, file: FileStorage) -> tuple[str, str]:
+        if not file or not file.filename:
+            raise ValueError("file is required")
+        original = Path(file.filename).name
+        ext = Path(original).suffix.lower()
+        if ext not in _ALLOWED_EXTENSIONS:
+            raise ValueError(f"unsupported file type: {ext or '(none)'}")
+        file.stream.seek(0, 2)
+        size = file.stream.tell()
+        file.stream.seek(0)
+        if size > _MAX_UPLOAD_BYTES:
+            raise ValueError(f"file too large: {size} bytes (max {_MAX_UPLOAD_BYTES})")
+        return original, ext
+
+    def _write_material_video(self, material_dir: Path, file: FileStorage, ext: str) -> Path:
+        material_dir.mkdir(parents=True, exist_ok=True)
+        for old in material_dir.glob("source.*"):
+            old.unlink(missing_ok=True)
+        dest = material_dir / f"source{ext}"
+        file.save(dest)
+        return dest
+
+    def _finalize_material_video(self, material_dir: Path, dest: Path) -> dict[str, object]:
+        duration = probe_duration(dest)
+        width, height = probe_video_size(dest)
+        thumb = material_dir / "thumb.jpg"
+        extract_first_frame(dest, thumb)
+        return {
+            "file_path": str(dest),
+            "duration_sec": duration,
+            "width": width,
+            "height": height,
+            "size_bytes": dest.stat().st_size,
+            "thumbnail_path": str(thumb),
+        }
+
     def upload_material(
         self,
         file: FileStorage,
@@ -69,13 +105,7 @@ class MaterialMgr:
         name: str | None = None,
         note: str | None = None,
     ) -> dict:
-        if not file or not file.filename:
-            raise ValueError("file is required")
-
-        original = Path(file.filename).name
-        ext = Path(original).suffix.lower()
-        if ext not in _ALLOWED_EXTENSIONS:
-            raise ValueError(f"unsupported file type: {ext or '(none)'}")
+        original, ext = self._validate_upload_file(file)
 
         settings = get_settings()
         materials_root = settings.material_data_dir
@@ -97,38 +127,35 @@ class MaterialMgr:
                 material_id = material["id"]
 
             material_dir = materials_root / str(material_id)
-            material_dir.mkdir(parents=True, exist_ok=True)
-            dest = material_dir / f"source{ext}"
-
-            file.stream.seek(0, 2)
-            size = file.stream.tell()
-            file.stream.seek(0)
-            if size > _MAX_UPLOAD_BYTES:
-                raise ValueError(f"file too large: {size} bytes (max {_MAX_UPLOAD_BYTES})")
-
-            file.save(dest)
-
-            duration = probe_duration(dest)
-            width, height = probe_video_size(dest)
-            thumb = material_dir / "thumb.jpg"
-            extract_first_frame(dest, thumb)
+            dest = self._write_material_video(material_dir, file, ext)
+            meta = self._finalize_material_video(material_dir, dest)
 
             with connection() as conn:
                 return material_repo.update_material(
                     conn,
                     material_id,
                     name=display_name,
-                    file_path=str(dest),
-                    duration_sec=duration,
-                    width=width,
-                    height=height,
-                    size_bytes=dest.stat().st_size,
-                    thumbnail_path=str(thumb),
                     note=note_text,
+                    **meta,
                 )
         except Exception:
             self._rollback_upload(material_id, material_dir)
             raise
+
+    def replace_material_file(self, material_id: int, file: FileStorage) -> dict:
+        """替换素材库中已有条目的视频文件，保留 ID 与元数据字段（name/note/job_id）。"""
+        original, ext = self._validate_upload_file(file)
+
+        settings = get_settings()
+        with connection() as conn:
+            material_repo.get_material(conn, material_id)
+
+        material_dir = settings.material_data_dir / str(material_id)
+        dest = self._write_material_video(material_dir, file, ext)
+        meta = self._finalize_material_video(material_dir, dest)
+
+        with connection() as conn:
+            return material_repo.update_material(conn, material_id, **meta)
 
     def create_job_from_material(
         self,

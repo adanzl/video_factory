@@ -68,6 +68,29 @@ def delete_material_route():
     return json_ok({"id": material_id, "deleted": True})
 
 
+@bp.post("/replace")
+def replace_material_route():
+    if "file" not in request.files:
+        raise APIError("file is required")
+    raw_id = request.form.get("id")
+    if raw_id is None:
+        raise APIError("id is required")
+    try:
+        material_id = int(raw_id)
+    except (TypeError, ValueError) as exc:
+        raise APIError("id must be an integer") from exc
+    if material_id <= 0:
+        raise APIError("id must be positive")
+    file = request.files["file"]
+    try:
+        material = material_mgr.replace_material_file(material_id, file)
+    except ValueError as exc:
+        raise APIError(str(exc), status_code=400) from exc
+    except KeyError as exc:
+        raise APIError(str(exc), status_code=404) from exc
+    return json_ok(material)
+
+
 @bp.post("/jobs/create")
 def create_job_from_material_route():
     data = get_json_body()
