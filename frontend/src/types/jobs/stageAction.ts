@@ -38,6 +38,7 @@ export interface RunStageActionPayload {
   narration_target_words?: number;
   skip_title_optimize?: boolean;
   supplementary_info?: string;
+  video_timeline?: string;
 }
 
 export interface PreviewScriptPromptsPayload {
@@ -48,6 +49,7 @@ export interface PreviewScriptPromptsPayload {
   narration_target_words?: number;
   skip_title_optimize?: boolean;
   supplementary_info?: string;
+  video_timeline?: string;
   use_saved_script?: boolean;
 }
 

@@ -209,6 +209,7 @@ class JobMgr:
         narration_target_words: int | None = None,
         skip_title_optimize: bool = False,
         supplementary_info: str | None = None,
+        video_timeline: str | None = None,
     ) -> dict:
         """生成文案。实现：worker/loop.run_script → worker/stages/*/script.py"""
         from worker.loop import run_script
@@ -232,6 +233,7 @@ class JobMgr:
                 narration_target_words=narration_target_words,
                 skip_title_optimize=skip_title_optimize,
                 supplementary_info=supplementary_info,
+                video_timeline=video_timeline,
             ),
         )
 
@@ -245,6 +247,7 @@ class JobMgr:
         narration_target_words: int | None = None,
         skip_title_optimize: bool = False,
         supplementary_info: str | None = None,
+        video_timeline: str | None = None,
         use_saved_script: bool = False,
     ) -> list[dict[str, str]]:
         from app.services.llm.llm_script_prompts import collect_script_prompts
@@ -263,6 +266,7 @@ class JobMgr:
             max_title_length=max_title_length,
             narration_target_words=narration_target_words,
             supplementary_info=supplementary_info,
+            video_timeline=video_timeline,
             script=script if use_saved_script else None,
             skip_title_optimize=skip_title_optimize,
         )

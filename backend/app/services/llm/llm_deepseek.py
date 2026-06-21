@@ -168,6 +168,7 @@ class DeepSeekClient(LLMClient):
         max_title_length: int | None = None,
         narration_target_words: int | None = None,
         supplementary_info: str | None = None,
+        video_timeline: str | None = None,
     ) -> dict[str, Any]:
         prompts = build_material_script_prompts(
             title,
@@ -175,6 +176,7 @@ class DeepSeekClient(LLMClient):
             max_title_length=max_title_length,
             narration_target_words=narration_target_words,
             supplementary_info=supplementary_info,
+            video_timeline=video_timeline,
         )
         data = json.loads(self._chat(prompts["system"], prompts["user"]))
         if "segments" not in data:
