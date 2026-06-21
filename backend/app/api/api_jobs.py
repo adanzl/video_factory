@@ -45,8 +45,6 @@ def _parse_script_body() -> tuple[
 ]:
     data = get_json_body()
     supplementary = parse_optional_str(data, "supplementary_info")
-    if supplementary and len(supplementary) > 2000:
-        raise APIError("supplementary_info too long (max 2000 chars)")
     return (
         parse_id(data),
         parse_bool(data, "to_end", default=False),
@@ -90,8 +88,6 @@ def preview_script_prompts_route():
     skip_title_optimize = parse_bool(data, "skip_title_optimize", default=False)
     use_saved_script = parse_bool(data, "use_saved_script", default=False)
     supplementary_info = parse_optional_str(data, "supplementary_info")
-    if supplementary_info and len(supplementary_info) > 2000:
-        raise APIError("supplementary_info too long (max 2000 chars)")
     try:
         prompts = job_mgr.preview_script_prompts(
             job_id,
