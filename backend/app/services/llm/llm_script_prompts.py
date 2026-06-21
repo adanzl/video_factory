@@ -69,6 +69,25 @@ def _narration_word_range(target: int) -> tuple[int, int]:
     return max(200, target - margin), target + margin
 
 
+def _append_supplementary_to_user(user: str, supplementary_info: str | None) -> str:
+    extra = (supplementary_info or "").strip()
+    if not extra:
+        return user
+    return (
+        f"{user}\n\n"
+        "用户补充信息（须合理融入口播与分镜，勿编造与补充信息矛盾的内容；"
+        "若与科普常识冲突，以科学事实为准）：\n"
+        f"{extra}"
+    )
+
+
+def _supplementary_system_clause(supplementary_info: str | None) -> str:
+    extra = (supplementary_info or "").strip()
+    if not extra:
+        return ""
+    return "用户会提供补充信息，须在输出中合理体现。"
+
+
 def _title_rule(title: str, max_title: int) -> tuple[str, str]:
     cleaned = re.sub(r"\s+", "", title.strip())
     if len(cleaned) <= max_title:
@@ -112,6 +131,7 @@ def build_storyboard_prompts(
     segment_target_sec: float | None = None,
     max_title_length: int | None = None,
     narration_target_words: int | None = None,
+    supplementary_info: str | None = None,
 ) -> dict[str, str]:
     settings = get_settings()
     target = settings.segment_target_sec if segment_target_sec is None else segment_target_sec
@@ -131,15 +151,19 @@ def build_storyboard_prompts(
         "各段text须与narration口吻一致。"
         "word_count必须等于narration实际字数，不得虚报。"
         "本步只写口播与画面描述visual_brief，不写image_prompt。"
+        f"{_supplementary_system_clause(supplementary_info)}"
     )
     if target > 0:
         sec = _format_segment_target_sec(target)
         split_hint = f"并按单镜口播上限{sec}秒动态切分分镜"
     else:
         split_hint = "并按口播内容逻辑动态切分分镜"
-    user = (
-        f"{title_user_prefix}、visual_style 与分镜，{split_hint}。"
-        "每段 visual_brief 写清该镜画面主旨与对比关系，便于下一步扩写文生图提示词。"
+    user = _append_supplementary_to_user(
+        (
+            f"{title_user_prefix}、visual_style 与分镜，{split_hint}。"
+            "每段 visual_brief 写清该镜画面主旨与对比关系，便于下一步扩写文生图提示词。"
+        ),
+        supplementary_info,
     )
     if feedback:
         user += f"\n\n上次不合格：{feedback}。请按要求重写。"
@@ -150,6 +174,7 @@ def build_image_prompts_prompts(
     script: dict[str, Any],
     *,
     feedback: str | None = None,
+    supplementary_info: str | None = None,
 ) -> dict[str, str]:
     segments = script.get("segments") or []
     lines = [
@@ -163,12 +188,15 @@ def build_image_prompts_prompts(
         f"{_IMAGE_PROMPT_RULE}"
         "image_prompts须覆盖输入的每一段，segment_index一一对应，不得遗漏。"
     )
-    user = (
-        f"视频标题：{script.get('title', '')}\n"
-        f"全片画风定调 visual_style：{script.get('visual_style', '')}\n\n"
-        "各分镜口播与画面描述：\n"
-        + "\n".join(lines)
-        + "\n\n请为每段扩写 image_prompt 与 motion_prompt，确保 image_prompt 满足字数与六层结构要求。"
+    user = _append_supplementary_to_user(
+        (
+            f"视频标题：{script.get('title', '')}\n"
+            f"全片画风定调 visual_style：{script.get('visual_style', '')}\n\n"
+            "各分镜口播与画面描述：\n"
+            + "\n".join(lines)
+            + "\n\n请为每段扩写 image_prompt 与 motion_prompt，确保 image_prompt 满足字数与六层结构要求。"
+        ),
+        supplementary_info or script.get("supplementary_info"),
     )
     if feedback:
         user += f"\n\n上次不合格：{feedback}。请按要求重写。"
@@ -181,6 +209,7 @@ def build_material_script_prompts(
     feedback: str | None = None,
     max_title_length: int | None = None,
     narration_target_words: int | None = None,
+    supplementary_info: str | None = None,
 ) -> dict[str, str]:
     settings = get_settings()
     max_title = settings.max_title_length if max_title_length is None else max_title_length
@@ -197,8 +226,12 @@ def build_material_script_prompts(
         "各段 text 按顺序拼接须与 narration 完全一致，口吻同样保持童趣；"
         "按自然断句切分，无需 visual 字段。"
         "word_count 必须等于 narration 实际字数。"
+        f"{_supplementary_system_clause(supplementary_info)}"
     )
-    user = f"{title_user_prefix} narration 与分句 segments。"
+    user = _append_supplementary_to_user(
+        f"{title_user_prefix} narration 与分句 segments。",
+        supplementary_info,
+    )
     if feedback:
         user += f"\n\n上次不合格：{feedback}。请按要求重写。"
     return _prompt_step("material_script", system, user)
@@ -232,10 +265,16 @@ def collect_script_prompts(
     segment_target_sec: float | None = None,
     max_title_length: int | None = None,
     narration_target_words: int | None = None,
+    supplementary_info: str | None = None,
     script: dict | None = None,
     skip_title_optimize: bool = False,
 ) -> list[dict[str, str]]:
     """收集脚本阶段 LLM 提示词；script 为空时仅返回可预览的首步。"""
+    extra = (supplementary_info or "").strip() or None
+    if extra is None and script:
+        saved = script.get("supplementary_info")
+        if isinstance(saved, str) and saved.strip():
+            extra = saved.strip()
     prompts: list[dict[str, str]] = []
     if _is_material_job(job):
         prompts.append(
@@ -243,6 +282,7 @@ def collect_script_prompts(
                 title,
                 max_title_length=max_title_length,
                 narration_target_words=narration_target_words,
+                supplementary_info=extra,
             )
         )
     else:
@@ -252,10 +292,11 @@ def collect_script_prompts(
                 segment_target_sec=segment_target_sec,
                 max_title_length=max_title_length,
                 narration_target_words=narration_target_words,
+                supplementary_info=extra,
             )
         )
         if script and script.get("segments"):
-            prompts.append(build_image_prompts_prompts(script))
+            prompts.append(build_image_prompts_prompts(script, supplementary_info=extra))
 
     if (
         script
@@ -283,6 +324,7 @@ def attach_llm_prompts_to_script(
     segment_target_sec: float | None = None,
     max_title_length: int | None = None,
     narration_target_words: int | None = None,
+    supplementary_info: str | None = None,
     skip_title_optimize: bool = False,
 ) -> None:
     script["llm_prompts"] = collect_script_prompts(
@@ -291,6 +333,7 @@ def attach_llm_prompts_to_script(
         segment_target_sec=segment_target_sec,
         max_title_length=max_title_length,
         narration_target_words=narration_target_words,
+        supplementary_info=supplementary_info,
         script=script,
         skip_title_optimize=skip_title_optimize,
     )

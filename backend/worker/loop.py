@@ -75,6 +75,7 @@ def _run_one_stage(
     script_max_title_length: int | None = None,
     script_narration_target_words: int | None = None,
     script_skip_title_optimize: bool = False,
+    script_supplementary_info: str | None = None,
     material_narration: str | None = None,
 ) -> dict:
     job = _reload_job(job_id)
@@ -90,6 +91,7 @@ def _run_one_stage(
         script_max_title_length=script_max_title_length,
         script_narration_target_words=script_narration_target_words,
         script_skip_title_optimize=script_skip_title_optimize,
+        script_supplementary_info=script_supplementary_info,
         material_narration=material_narration,
     )
     _execute_stage(job_id, stage_cls, ctx)
@@ -125,6 +127,7 @@ def _run_from(
     script_max_title_length: int | None = None,
     script_narration_target_words: int | None = None,
     script_skip_title_optimize: bool = False,
+    script_supplementary_info: str | None = None,
     material_narration: str | None = None,
 ) -> dict:
     job_mgr.mark_running(job_id)
@@ -149,6 +152,9 @@ def _run_from(
             ),
             script_skip_title_optimize=(
                 script_skip_title_optimize if stage_cls.name == "script" else False
+            ),
+            script_supplementary_info=(
+                script_supplementary_info if stage_cls.name == "script" else None
             ),
             material_narration=material_narration if stage_cls.name == "script" else None,
         )
@@ -208,6 +214,7 @@ def run_script(
     max_title_length: int | None = None,
     narration_target_words: int | None = None,
     skip_title_optimize: bool = False,
+    supplementary_info: str | None = None,
     material_narration: str | None = None,
 ) -> dict:
     job = _reload_job(job_id)
@@ -220,6 +227,7 @@ def run_script(
             script_max_title_length=max_title_length,
             script_narration_target_words=narration_target_words,
             script_skip_title_optimize=skip_title_optimize,
+            script_supplementary_info=supplementary_info,
             material_narration=material_narration,
         )
     return _run_one_stage(
@@ -230,6 +238,7 @@ def run_script(
         script_max_title_length=max_title_length,
         script_narration_target_words=narration_target_words,
         script_skip_title_optimize=skip_title_optimize,
+        script_supplementary_info=supplementary_info,
         material_narration=material_narration,
     )
 

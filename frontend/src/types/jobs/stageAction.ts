@@ -37,6 +37,7 @@ export interface RunStageActionPayload {
   max_title_length?: number;
   narration_target_words?: number;
   skip_title_optimize?: boolean;
+  supplementary_info?: string;
 }
 
 export interface PreviewScriptPromptsPayload {
@@ -46,6 +47,7 @@ export interface PreviewScriptPromptsPayload {
   max_title_length?: number;
   narration_target_words?: number;
   skip_title_optimize?: boolean;
+  supplementary_info?: string;
   use_saved_script?: boolean;
 }
 

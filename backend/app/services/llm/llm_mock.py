@@ -16,8 +16,9 @@ class MockLLMClient(LLMClient):
         segment_target_sec: float | None = None,
         max_title_length: int | None = None,
         narration_target_words: int | None = None,
+        supplementary_info: str | None = None,
     ) -> dict[str, Any]:
-        _ = feedback
+        _ = feedback, supplementary_info
         settings = get_settings()
         display_title = re.sub(r"\s+", "", title.strip())
         max_len = settings.max_title_length if max_title_length is None else max_title_length
@@ -95,8 +96,9 @@ class MockLLMClient(LLMClient):
         feedback: str | None = None,
         max_title_length: int | None = None,
         narration_target_words: int | None = None,
+        supplementary_info: str | None = None,
     ) -> dict[str, Any]:
-        _ = feedback, narration_target_words
+        _ = feedback, narration_target_words, supplementary_info
         base = self.generate_script(
             title,
             segment_target_sec=0,

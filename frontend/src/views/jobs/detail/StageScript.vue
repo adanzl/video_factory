@@ -88,6 +88,17 @@
             <el-checkbox v-model="skipTitleOptimize">跳过</el-checkbox>
           </el-form-item>
         </div>
+        <el-form-item label="补充信息" class="!mb-0">
+          <el-input
+            v-model="supplementaryInfo"
+            type="textarea"
+            :rows="3"
+            placeholder="可选：背景知识、必讲要点、禁忌表述等，将写入大模型提示词"
+            maxlength="2000"
+            show-word-limit
+            clearable
+          />
+        </el-form-item>
       </el-form>
     </div>
 
@@ -155,6 +166,9 @@
         </el-descriptions-item>
         <el-descriptions-item v-if="isMaterialJob && script.script_mode" label="文案模式">
           {{ script.script_mode === "manual" ? "手动" : "AI" }}
+        </el-descriptions-item>
+        <el-descriptions-item v-if="script.supplementary_info" label="补充信息" :span="3">
+          <div class="leading-relaxed break-words whitespace-pre-wrap">{{ script.supplementary_info }}</div>
         </el-descriptions-item>
       </el-descriptions>
 
@@ -292,6 +306,7 @@ const segmentTargetSec = ref(DEFAULT_SEGMENT_TARGET_SEC);
 const maxTitleLength = ref(DEFAULT_MAX_TITLE_LENGTH);
 const narrationTargetWords = ref(DEFAULT_NARRATION_TARGET_WORDS);
 const skipTitleOptimize = ref(false);
+const supplementaryInfo = ref("");
 const baseDurationSec = ref<number | null>(null);
 const narrationWordsTouched = ref(false);
 const promptPanelOpen = ref<string[]>([]);
@@ -502,6 +517,13 @@ const loadBaseDuration = async () => {
   }
 };
 
+const normalizeSupplementary = (value: unknown) =>
+  typeof value === "string" ? value : "";
+
+const loadSupplementaryFromScript = () => {
+  supplementaryInfo.value = normalizeSupplementary(script.value?.supplementary_info);
+};
+
 const loadLlmPrompts = async () => {
   const trimmedTitle = sourceTitle.value.trim();
   if (!trimmedTitle) {
@@ -521,6 +543,7 @@ const loadLlmPrompts = async () => {
       max_title_length: maxTitleLength.value,
       narration_target_words: Math.round(narrationTargetWords.value),
       skip_title_optimize: skipTitleOptimize.value,
+      supplementary_info: supplementaryInfo.value.trim() || undefined,
       use_saved_script: promptSource.value === "saved",
     });
   } catch (error) {
@@ -569,6 +592,10 @@ const handleRun = async (toEnd: boolean) => {
     if (skipTitleOptimize.value) {
       payload.skip_title_optimize = true;
     }
+    const extra = supplementaryInfo.value.trim();
+    if (extra) {
+      payload.supplementary_info = extra;
+    }
     await runJobStageAction("script", payload);
     ElMessage.success(`已提交${actionLabel}，任务已开始执行`);
     emit("refresh");
@@ -597,7 +624,16 @@ watch(
     promptSource.value = "preview";
     llmPrompts.value = [];
     promptPanelOpen.value = [];
+    supplementaryInfo.value = "";
   }
+);
+
+watch(
+  () => script.value?.supplementary_info,
+  () => {
+    loadSupplementaryFromScript();
+  },
+  { immediate: true }
 );
 
 watch(promptPanelOpen, names => {

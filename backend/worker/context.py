@@ -21,6 +21,7 @@ class JobContext:
     script_max_title_length: int | None = None
     script_narration_target_words: int | None = None
     script_skip_title_optimize: bool = False
+    script_supplementary_info: str | None = None
     material_narration: str | None = None
 
     @classmethod
@@ -38,6 +39,7 @@ class JobContext:
         script_max_title_length: int | None = None,
         script_narration_target_words: int | None = None,
         script_skip_title_optimize: bool = False,
+        script_supplementary_info: str | None = None,
         material_narration: str | None = None,
     ) -> "JobContext":
         settings = get_settings()
@@ -57,6 +59,7 @@ class JobContext:
             script_max_title_length=script_max_title_length,
             script_narration_target_words=script_narration_target_words,
             script_skip_title_optimize=script_skip_title_optimize,
+            script_supplementary_info=script_supplementary_info,
             material_narration=material_narration,
         )
 
