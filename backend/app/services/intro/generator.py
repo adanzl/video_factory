@@ -15,12 +15,11 @@ from app.services.intro.title_layout import render_feed_title
 from app.services.intro.themes import get_intro_theme
 from app.services.media.ffmpeg_utils import mux_video_audio, probe_duration, sequence_to_video
 from app.services.visual.text_render import load_cjk_font
-from app.services.visual.title_render import STROKE_WIDTH, compose_hstack, render_text_rgba
+from app.services.visual.title_render import STROKE_WIDTH, render_text_rgba
 
 _FPS = 25
 _ENTER_SEC = 0.32
 _HOLD_TAIL_SEC = 0.35
-_BADGE_FONT_SIZE = 30
 
 
 @dataclass(frozen=True)
@@ -29,7 +28,7 @@ class _IntroLayout:
 
     landscape: bool
     brand_top_ratio: float
-    badge_margin_x_ratio: float
+    badge_margin_x_ratio: float  # 竖屏：相对画布左缘；横屏：相对 4:3 安全区左缘
     title_circle_width_ratio: float
     title_moon_scale: float
     title_center_x_ratio: float
@@ -257,18 +256,19 @@ def _load_host_sprite(settings, *, width: int, height: int, layout: _IntroLayout
     )
 
 
-def _render_badge(theme) -> Image.Image:
-    font = load_cjk_font(_BADGE_FONT_SIZE)
-    probe = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
-    bbox = probe.textbbox((0, 0), theme.badge_text, font=font)
-    pad_x, pad_y = 18, 10
-    box_w = bbox[2] - bbox[0] + pad_x * 2
-    box_h = bbox[3] - bbox[1] + pad_y * 2
-    canvas = Image.new("RGBA", (box_w, box_h), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(canvas)
-    draw.rounded_rectangle([0, 0, box_w, box_h], radius=12, fill=theme.badge_bg)
-    draw.text((pad_x - bbox[0], pad_y - bbox[1]), theme.badge_text, font=font, fill=theme.badge_fg)
-    return canvas
+def _central_43_left_x(width: int, height: int) -> int:
+    """16:9 画布内居中 4:3 区域的左边界 x。"""
+    crop_w = height * 4 / 3
+    return int(round((width - crop_w) / 2))
+
+
+def _brand_header_x(width: int, height: int, layout: _IntroLayout, header_w: int) -> int:
+    if layout.landscape:
+        left = _central_43_left_x(width, height)
+        crop_w = height * 4 / 3
+        center_x = left + crop_w / 2
+        return int(round(center_x - header_w / 2))
+    return (width - header_w) // 2
 
 
 def _render_brand_mark(theme, brand: str) -> Image.Image:
@@ -286,10 +286,8 @@ def _render_brand_mark(theme, brand: str) -> Image.Image:
 
 
 def _render_brand_header(theme, brand: str) -> Image.Image:
-    """顶栏：百科标 + 昭墨百科，横向排列。"""
-    badge = _render_badge(theme)
-    mark = _render_brand_mark(theme, brand)
-    return compose_hstack([badge, mark], gap=16, align="center")
+    """顶栏品牌字标（昭墨百科）。"""
+    return _render_brand_mark(theme, brand)
 
 
 def _build_title_layers(
@@ -425,7 +423,7 @@ def _compose_frame(layers: dict, t: float) -> Image.Image:
     frame.alpha_composite(host_frame, (host_x, host_y))
 
     header: Image.Image = layers["brand_header"]
-    header_x = int(width * layout.badge_margin_x_ratio)
+    header_x = _brand_header_x(width, height, layout, header.size[0])
     header_y = int(height * layout.brand_top_ratio)
     frame.alpha_composite(_with_opacity(header, opacity), (header_x, header_y))
 
