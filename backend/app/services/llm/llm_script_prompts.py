@@ -52,6 +52,13 @@ _STEP_LABELS = {
     "title_optimize": "标题优化",
 }
 
+_NARRATION_VOICE_RULE = (
+    "口播口吻须像一个小孩子在讲给同伴听：略带稚嫩、天真，有一点童趣；"
+    "可用「哇」「你看」「原来是这样呀」等儿童感感叹，句子偏短、好懂；"
+    "偶尔用拟声词或简单比喻（像积木、像气球那样），但不要装婴儿语、不要刻意错别字；"
+    "科普事实须准确，童趣服务于理解，不牺牲科学内容。"
+)
+
 
 def _format_segment_target_sec(target: float) -> str | float:
     return int(target) if target == int(target) else target
@@ -114,13 +121,14 @@ def build_storyboard_prompts(
     narr_lo, narr_hi = _narration_word_range(narr_target)
     title_rule, title_user_prefix = _title_rule(title, max_title)
     system = (
-        "你是科普视频编剧。输出JSON，字段：title, narration, word_count, "
+        "你是给小朋友讲科普的视频编剧。输出JSON，字段：title, narration, word_count, "
         "visual_style, segments。"
         f"{title_rule}"
         f"{seg_rule}"
-        f"narration为完整口播，总字数{narr_lo}-{narr_hi}（不含空格换行），口语化，结构完整有开头结尾；"
-        "选题撑不满时可略短，但须结构完整。"
+        f"narration为完整口播，总字数{narr_lo}-{narr_hi}（不含空格换行），{_NARRATION_VOICE_RULE}"
+        "结构完整有开头结尾；选题撑不满时可略短，但须结构完整。"
         "禁止口播开头自我介绍或人设铺垫；第一句直接进入主题或抛出问题。"
+        "各段text须与narration口吻一致。"
         "word_count必须等于narration实际字数，不得虚报。"
         "本步只写口播与画面描述visual_brief，不写image_prompt。"
     )
@@ -180,13 +188,14 @@ def build_material_script_prompts(
     narr_lo, narr_hi = _narration_word_range(narr_target)
     title_rule, title_user_prefix = _title_rule(title, max_title)
     system = (
-        "你是科普视频口播编剧。视频画面已由用户上传的基底视频提供，无需描述画面。"
+        "你是给小朋友讲科普的视频口播编剧。视频画面已由用户上传的基底视频提供，无需描述画面。"
         "输出 JSON，字段：title, narration, word_count, segments。"
         f"{title_rule}"
-        f"narration 为完整口播，总字数 {narr_lo}-{narr_hi}（不含空格换行），口语化；"
+        f"narration 为完整口播，总字数 {narr_lo}-{narr_hi}（不含空格换行），{_NARRATION_VOICE_RULE}"
         "禁止开头自我介绍；第一句直接进入主题。"
         "segments 为分句数组，每项含 segment_index 与 text；"
-        "各段 text 按顺序拼接须与 narration 完全一致；按自然断句切分，无需 visual 字段。"
+        "各段 text 按顺序拼接须与 narration 完全一致，口吻同样保持童趣；"
+        "按自然断句切分，无需 visual 字段。"
         "word_count 必须等于 narration 实际字数。"
     )
     user = f"{title_user_prefix} narration 与分句 segments。"
