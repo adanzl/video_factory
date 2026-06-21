@@ -37,3 +37,8 @@ export interface UploadMaterialParams {
   name?: string;
   note?: string;
 }
+
+export interface ReplaceMaterialParams {
+  id: number;
+  file: File;
+}
