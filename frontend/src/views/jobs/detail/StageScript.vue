@@ -94,8 +94,6 @@
             type="textarea"
             :rows="3"
             placeholder="可选：背景知识、必讲要点、禁忌表述等，将写入大模型提示词"
-            maxlength="2000"
-            show-word-limit
             clearable
           />
         </el-form-item>
