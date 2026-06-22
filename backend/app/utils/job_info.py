@@ -9,8 +9,11 @@ ORIENTATION_AUTO = "auto"
 ORIENTATION_PORTRAIT = "portrait"
 ORIENTATION_LANDSCAPE = "landscape"
 
-_VALID_ORIENTATIONS = frozenset(
-    {ORIENTATION_AUTO, ORIENTATION_PORTRAIT, ORIENTATION_LANDSCAPE}
+CONTENT_STYLE_SCIENCE_CHILD = "science_child"
+CONTENT_STYLE_LIFE_EXPERIENCE = "life_experience"
+
+_VALID_CONTENT_STYLES = frozenset(
+    {CONTENT_STYLE_SCIENCE_CHILD, CONTENT_STYLE_LIFE_EXPERIENCE}
 )
 
 
@@ -66,6 +69,43 @@ def default_orientation_for_pipeline(pipeline: str | None) -> str:
     if (pipeline or "standard").strip() == "material":
         return ORIENTATION_AUTO
     return ORIENTATION_PORTRAIT
+
+
+def normalize_content_style(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip().lower()
+    aliases = {
+        "science": CONTENT_STYLE_SCIENCE_CHILD,
+        "科普": CONTENT_STYLE_SCIENCE_CHILD,
+        "童趣科普": CONTENT_STYLE_SCIENCE_CHILD,
+        "life": CONTENT_STYLE_LIFE_EXPERIENCE,
+        "生活": CONTENT_STYLE_LIFE_EXPERIENCE,
+        "生活经验": CONTENT_STYLE_LIFE_EXPERIENCE,
+        "vlog": CONTENT_STYLE_LIFE_EXPERIENCE,
+    }
+    if normalized in aliases:
+        return aliases[normalized]
+    if normalized in _VALID_CONTENT_STYLES:
+        return normalized
+    return None
+
+
+def content_style_from_job(job: dict) -> str:
+    raw = parse_job_info(job.get("info")).get("content_style")
+    if isinstance(raw, str):
+        normalized = normalize_content_style(raw)
+        if normalized:
+            return normalized
+    return CONTENT_STYLE_SCIENCE_CHILD
+
+
+def is_landscape_job(job: dict) -> bool:
+    return orientation_for_resolve(job) == ORIENTATION_LANDSCAPE
+
+
+def default_content_style_for_pipeline(pipeline: str | None) -> str:
+    return CONTENT_STYLE_SCIENCE_CHILD
 
 
 def merge_job_info(existing: str | dict | None, **updates: Any) -> dict[str, Any]:

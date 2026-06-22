@@ -7,6 +7,7 @@ export interface FinalAsset {
 
 export interface JobInfo {
   orientation?: "auto" | "portrait" | "landscape";
+  content_style?: "science_child" | "life_experience";
 }
 
 export interface JobListItem {

@@ -98,6 +98,17 @@ export function defaultNarrationTargetWords(
   return estimateNarrationTargetWords(body);
 }
 
+/** 按成片分钟数估算口播字数（生活经验横屏，约 4 字/秒） */
+export function narrationTargetForMinutes(
+  minutes: number,
+  charsPerSec = 4.0,
+  introBudgetSec = INTRO_DURATION_BUDGET_SEC
+): number {
+  const body = Math.max(30, minutes * 60 - introBudgetSec);
+  const target = Math.floor(body * charsPerSec * NARRATION_FILL_RATIO);
+  return Math.max(NARRATION_MIN_CHARS, Math.min(NARRATION_MAX_CHARS, target));
+}
+
 /** 格式化媒体时长（秒 → mm:ss） */
 export function formatMediaDuration(seconds?: number | null): string {
   if (seconds === null || seconds === undefined || Number.isNaN(seconds)) {

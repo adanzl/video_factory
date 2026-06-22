@@ -50,6 +50,24 @@ def default_narration_target_words(settings: Config | None = None) -> int:
     return estimate_narration_target_words(body)
 
 
+def min_narration_chars_for_target(narration_target_words: int | None = None) -> int:
+    """口播字数校验下限（与 standard script 阶段一致）。"""
+    target = max(NARRATION_MIN_CHARS, narration_target_words or default_narration_target_words())
+    return max(NARRATION_MIN_CHARS, int(target * 0.67))
+
+
+def narration_target_for_minutes(
+    minutes: float,
+    *,
+    chars_per_sec: float = 4.0,
+    intro_budget_sec: float = 2.0,
+) -> int:
+    """按成片分钟数估算口播目标字数（生活经验等横屏长稿常用）。"""
+    body = max(30.0, minutes * 60.0 - intro_budget_sec)
+    target = int(body * chars_per_sec * NARRATION_FILL_RATIO)
+    return max(NARRATION_MIN_CHARS, min(NARRATION_MAX_CHARS, target))
+
+
 def _read_base_meta(media_dir: Path) -> dict:
     meta_path = media_dir / "base_meta.json"
     if not meta_path.is_file():
