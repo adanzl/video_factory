@@ -5,7 +5,9 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from app.config import get_settings
 from app.services.llm.llm_script_prompts import IMAGE_PROMPT_TARGET_CHARS, MIN_IMAGE_PROMPT_CHARS
+from app.utils.media import segment_text_char_cap
 from app.quality.models import QualityReport
 from app.services.media.audio_analysis import LoudnessStats, SilenceStats, analyze_loudness, analyze_silence
 from app.services.media.ffmpeg_utils import probe_duration
