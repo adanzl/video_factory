@@ -10,7 +10,7 @@ from app.repositories import job_log_repo, job_repo, segment_repo
 from app.repositories.connection import connection
 from app.services.llm.llm_mgr import llm_mgr
 from app.services.llm.llm_script_prompts import MIN_IMAGE_PROMPT_CHARS
-from app.utils.media import default_narration_target_words, segment_text_char_cap
+from app.utils.media import default_narration_target_words, min_narration_chars_for_target, segment_text_char_cap
 from worker.context import JobContext
 from worker.stages.base import StageExecutor
 
@@ -19,8 +19,7 @@ MIN_ACCEPT_NARRATION_CHARS = 200
 
 
 def _min_narration_chars(narration_target_words: int | None) -> int:
-    target = max(MIN_ACCEPT_NARRATION_CHARS, narration_target_words or default_narration_target_words())
-    return max(MIN_ACCEPT_NARRATION_CHARS, int(target * 0.67))
+    return min_narration_chars_for_target(narration_target_words)
 
 
 def _narration_retry_min_chars(narration_target_words: int) -> int:
@@ -120,6 +119,19 @@ def _apply_video_description(
                 f"video description failed: {exc}",
                 level="warning",
             )
+
+
+def _narration_short_feedback(exc: ScriptValidationError, *, min_chars: int) -> str:
+    msg = str(exc)
+    if "narration too short" not in msg:
+        return msg
+    return (
+        f"{msg}。"
+        f"请扩写 narration 至至少 {min_chars} 字（不含空格换行）："
+        "各段 text 用「童趣感叹+准确科普点+比喻/拟声/生活联想」三层写法；"
+        "先逐段写满 segments，再原样拼接为 narration，最后统计 word_count；"
+        "禁止整段仅一句短感叹，禁止先输出短稿再指望后处理。"
+    )
 
 
 def _narration_short_retryable(chars: int, *, narration_target_words: int) -> bool:
@@ -257,6 +269,7 @@ class ScriptStage(StageExecutor):
                 max_title_length=max_title_length,
                 narration_target_words=narration_target_words,
                 supplementary_info=supplementary_info,
+                job=ctx.job,
             )
             try:
                 accept_warnings = _validate_script(
@@ -268,7 +281,7 @@ class ScriptStage(StageExecutor):
                 break
             except ScriptValidationError as exc:
                 last_exc = exc
-                feedback = str(exc)
+                feedback = _narration_short_feedback(exc, min_chars=min_narration_chars)
                 with connection() as conn:
                     job_log_repo.append_log(
                         conn,

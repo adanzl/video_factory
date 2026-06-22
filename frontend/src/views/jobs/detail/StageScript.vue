@@ -24,6 +24,23 @@
           </div>
         </el-form-item>
         <div v-if="!isMaterialJob" class="flex w-full flex-wrap items-start gap-x-4">
+          <el-form-item label="画面方向" :label-width="FORM_LABEL_WIDTH" class="mb-0!">
+            <el-radio-group v-model="jobOrientation" size="small">
+              <el-radio-button value="portrait">竖屏</el-radio-button>
+              <el-radio-button value="landscape">横屏</el-radio-button>
+            </el-radio-group>
+          </el-form-item>
+          <el-form-item label="内容类型" :label-width="FORM_LABEL_WIDTH" class="mb-0!">
+            <el-radio-group v-model="contentStyle" size="small">
+              <el-radio-button value="science_child">童趣科普</el-radio-button>
+              <el-radio-button value="life_experience">生活经验</el-radio-button>
+            </el-radio-group>
+          </el-form-item>
+          <el-form-item label="快捷预设" :label-width="FORM_LABEL_WIDTH" class="mb-0!">
+            <el-button size="small" @click="applyLandscapeLifePreset">横屏生活 6 分钟</el-button>
+          </el-form-item>
+        </div>
+        <div v-if="!isMaterialJob" class="flex w-full flex-wrap items-start gap-x-4">
           <el-form-item label="单镜(秒)" :label-width="FORM_LABEL_WIDTH" class="mb-0!">
             <el-input-number
               v-model="segmentTargetSec"
@@ -355,7 +372,7 @@ import type { JobDetail, JobLog, LlmPromptStep, ScriptJson } from "@/types/jobs"
 import type { RunStageActionPayload } from "@/types/jobs/stageAction";
 import { isMaterialJob as checkMaterialJob } from "@/constants/jobStages";
 import { formatDateTime } from "@/utils/date";
-import { estimateNarrationTargetWords, formatCostTime, formatMediaDuration, defaultNarrationTargetWords } from "@/utils/media";
+import { estimateNarrationTargetWords, formatCostTime, formatMediaDuration, defaultNarrationTargetWords, narrationTargetForMinutes } from "@/utils/media";
 import { useErrorHandler } from "@/composables/useErrorHandler";
 import { copyText } from "@/utils/utils";
 
@@ -377,9 +394,14 @@ const emit = defineEmits<{
 }>();
 
 const { handleError } = useErrorHandler();
+const DEFAULT_LANDSCAPE_LIFE_SEGMENT_SEC = 28;
+const DEFAULT_LANDSCAPE_LIFE_MINUTES = 6;
+
 const submitting = ref(false);
 const regeneratingDescription = ref(false);
 const sourceTitle = ref("");
+const jobOrientation = ref<"portrait" | "landscape">("portrait");
+const contentStyle = ref<"science_child" | "life_experience">("science_child");
 const segmentTargetSec = ref(DEFAULT_SEGMENT_TARGET_SEC);
 const maxTitleLength = ref(DEFAULT_MAX_TITLE_LENGTH);
 const narrationTargetWords = ref(DEFAULT_NARRATION_TARGET_WORDS);
@@ -599,6 +621,24 @@ const loadBaseDuration = async () => {
 const normalizeSupplementary = (value: unknown) =>
   typeof value === "string" ? value : "";
 
+function initJobProfileFromInfo() {
+  const info = props.job.info;
+  if (info?.orientation === "landscape" || info?.orientation === "portrait") {
+    jobOrientation.value = info.orientation;
+  }
+  if (info?.content_style === "life_experience" || info?.content_style === "science_child") {
+    contentStyle.value = info.content_style;
+  }
+}
+
+const applyLandscapeLifePreset = () => {
+  jobOrientation.value = "landscape";
+  contentStyle.value = "life_experience";
+  segmentTargetSec.value = DEFAULT_LANDSCAPE_LIFE_SEGMENT_SEC;
+  narrationTargetWords.value = narrationTargetForMinutes(DEFAULT_LANDSCAPE_LIFE_MINUTES);
+  narrationWordsTouched.value = true;
+};
+
 const loadSupplementaryFromScript = () => {
   supplementaryInfo.value = normalizeSupplementary(script.value?.supplementary_info);
   videoTimeline.value = normalizeSupplementary(script.value?.video_timeline);
@@ -626,6 +666,8 @@ const loadLlmPrompts = async () => {
       supplementary_info: supplementaryInfo.value.trim() || undefined,
       video_timeline: videoTimeline.value.trim() || undefined,
       use_saved_script: promptSource.value === "saved",
+      orientation: jobOrientation.value,
+      content_style: contentStyle.value,
     });
   } catch (error) {
     handleError(error, "加载提示词失败");
@@ -696,6 +738,10 @@ const handleRun = async (toEnd: boolean) => {
       payload.max_title_length = maxTitleLength.value;
     }
     payload.narration_target_words = Math.round(words);
+    if (!isMaterialJob.value) {
+      payload.orientation = jobOrientation.value;
+      payload.content_style = contentStyle.value;
+    }
     if (skipTitleOptimize.value) {
       payload.skip_title_optimize = true;
     }
@@ -732,12 +778,24 @@ watch(
     narrationTargetWords.value = isMaterialJob.value
       ? DEFAULT_MATERIAL_NARRATION_TARGET_WORDS
       : DEFAULT_NARRATION_TARGET_WORDS;
+    jobOrientation.value = "portrait";
+    contentStyle.value = "science_child";
+    segmentTargetSec.value = DEFAULT_SEGMENT_TARGET_SEC;
+    initJobProfileFromInfo();
     promptSource.value = "preview";
     llmPrompts.value = [];
     promptPanelOpen.value = [];
     supplementaryInfo.value = "";
     videoTimeline.value = "";
   }
+);
+
+watch(
+  () => props.job.info,
+  () => {
+    initJobProfileFromInfo();
+  },
+  { immediate: true, deep: true }
 );
 
 watch(

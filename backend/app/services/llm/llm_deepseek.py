@@ -64,6 +64,7 @@ class DeepSeekClient(LLMClient):
         max_title_length: int | None = None,
         narration_target_words: int | None = None,
         supplementary_info: str | None = None,
+        job: dict | None = None,
     ) -> dict[str, Any]:
         prompts = build_storyboard_prompts(
             title,
@@ -72,6 +73,7 @@ class DeepSeekClient(LLMClient):
             max_title_length=max_title_length,
             narration_target_words=narration_target_words,
             supplementary_info=supplementary_info,
+            job=job,
         )
         data = json.loads(self._chat(prompts["system"], prompts["user"]))
         if "segments" not in data:
@@ -86,11 +88,13 @@ class DeepSeekClient(LLMClient):
         *,
         feedback: str | None = None,
         supplementary_info: str | None = None,
+        job: dict | None = None,
     ) -> dict[str, Any]:
         prompts = build_image_prompts_prompts(
             script,
             feedback=feedback,
             supplementary_info=supplementary_info,
+            job=job,
         )
         raw = json.loads(self._chat(prompts["system"], prompts["user"]))
         if isinstance(raw, list):
@@ -130,6 +134,7 @@ class DeepSeekClient(LLMClient):
         max_title_length: int | None = None,
         narration_target_words: int | None = None,
         supplementary_info: str | None = None,
+        job: dict | None = None,
     ) -> dict[str, Any]:
         data = self._generate_storyboard(
             title,
@@ -138,6 +143,7 @@ class DeepSeekClient(LLMClient):
             max_title_length=max_title_length,
             narration_target_words=narration_target_words,
             supplementary_info=supplementary_info,
+            job=job,
         )
 
         prompt_feedback: str | None = None
@@ -146,6 +152,7 @@ class DeepSeekClient(LLMClient):
                 data,
                 feedback=prompt_feedback,
                 supplementary_info=supplementary_info,
+                job=job,
             )
             self._merge_image_prompts(data, prompt_data["image_prompts"])
             short = [

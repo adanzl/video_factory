@@ -214,9 +214,25 @@ class JobMgr:
         skip_title_optimize: bool = False,
         supplementary_info: str | None = None,
         video_timeline: str | None = None,
+        orientation: str | None = None,
+        content_style: str | None = None,
     ) -> dict:
         """生成文案。实现：worker/loop.run_script → worker/stages/*/script.py"""
         from worker.loop import run_script
+
+        info_patch: dict[str, str] = {}
+        if orientation is not None:
+            info_patch["orientation"] = orientation
+        if content_style is not None:
+            info_patch["content_style"] = content_style
+        if info_patch:
+            with connection() as conn:
+                job = job_repo.get_job(conn, job_id)
+                job_repo.update_job(
+                    conn,
+                    job_id,
+                    info=merge_job_info(job.get("info"), **info_patch),
+                )
 
         if title is not None:
             cleaned = title.strip()
@@ -253,10 +269,20 @@ class JobMgr:
         supplementary_info: str | None = None,
         video_timeline: str | None = None,
         use_saved_script: bool = False,
+        orientation: str | None = None,
+        content_style: str | None = None,
     ) -> list[dict[str, str]]:
         from app.services.llm.llm_script_prompts import collect_script_prompts
 
         job = self.get_job(job_id)
+        if orientation is not None or content_style is not None:
+            job = dict(job)
+            patch: dict[str, str] = {}
+            if orientation is not None:
+                patch["orientation"] = orientation
+            if content_style is not None:
+                patch["content_style"] = content_style
+            job["info"] = merge_job_info(job.get("info"), **patch)
         source_title = (title or job["title"] or "").strip()
         if not source_title:
             raise ValueError("title is empty")

@@ -39,6 +39,7 @@ export interface RunStageActionPayload {
   skip_title_optimize?: boolean;
   supplementary_info?: string;
   video_timeline?: string;
+  content_style?: "science_child" | "life_experience";
 }
 
 export interface PreviewScriptPromptsPayload {
@@ -51,6 +52,8 @@ export interface PreviewScriptPromptsPayload {
   supplementary_info?: string;
   video_timeline?: string;
   use_saved_script?: boolean;
+  orientation?: "portrait" | "landscape";
+  content_style?: "science_child" | "life_experience";
 }
 
 export type StageParamValues = Record<string, string | boolean | number | number[]>;

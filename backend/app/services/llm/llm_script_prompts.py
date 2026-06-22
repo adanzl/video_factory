@@ -6,7 +6,19 @@ import re
 from typing import Any
 
 from app.config import get_settings
-from app.utils.media import NARRATION_CHARS_PER_SEC, default_narration_target_words
+from app.utils.job_info import (
+    CONTENT_STYLE_LIFE_EXPERIENCE,
+    CONTENT_STYLE_SCIENCE_CHILD,
+    ORIENTATION_LANDSCAPE,
+    ORIENTATION_PORTRAIT,
+    content_style_from_job,
+    orientation_for_resolve,
+)
+from app.utils.media import (
+    NARRATION_CHARS_PER_SEC,
+    default_narration_target_words,
+    min_narration_chars_for_target,
+)
 from app.services.llm.llm_script_timeline import (
     VideoTimeline,
     append_timeline_to_user,
@@ -33,9 +45,7 @@ _VISUAL_BRIEF_RULE = (
     "另须输出visual_style：全片画风定调一句话（画风+主色调+跨镜统一元素如道具造型）。"
 )
 
-_IMAGE_PROMPT_RULE = (
-    "根据每段口播text、visual_brief与全片visual_style，扩写为文生图用的image_prompt"
-    "和video用的motion_prompt。"
+_IMAGE_PROMPT_RULE_SCIENCE_PORTRAIT = (
     "image_prompt须严格遵循visual_style画风定调，全片统一：电影级写实科普视觉，布光考究、"
     "景深自然、材质细节真实可辨，色彩明快有层次，适配9:16竖屏构图。"
     f"每段image_prompt须350-550字（任何一段不得低于{MIN_IMAGE_PROMPT_CHARS}字），"
@@ -46,14 +56,45 @@ _IMAGE_PROMPT_RULE = (
     "④光影材质（主光与辅光方向、高光反光、主体与道具材质质感）；"
     "⑤色彩氛围（主辅色、冷暖对比、情绪基调，须有暖色点缀，忌整体发灰）；"
     "⑥语义边界（仅表达本段text与visual_brief，禁止提前画后续段落内容）。"
+)
+
+_IMAGE_PROMPT_RULE_LIFE_LANDSCAPE = (
+    "image_prompt须严格遵循visual_style画风定调，全片统一：生活Vlog质感写实画面，"
+    "自然光或室内暖光、浅景深、色彩真实不过度滤镜，适配16:9横屏构图。"
+    f"每段image_prompt须350-550字（任何一段不得低于{MIN_IMAGE_PROMPT_CHARS}字），"
+    "须按以下六层逐层展开："
+    "①构图景别（横屏主体位置、环境留白、生活场景真实感）；"
+    "②人物/物品动作（具体在做什么、与口播步骤对应）；"
+    "③场景环境（家居/办公/户外等可识别生活空间）；"
+    "④光影材质（自然窗光、桌面材质、屏幕/文档等细节）；"
+    "⑤色彩氛围（温暖日常、不过度饱和）；"
+    "⑥语义边界（仅表达本段text与visual_brief，禁止可读大段文字/水印/品牌Logo）。"
+)
+
+_IMAGE_PROMPT_MOTION_TAIL = (
     "围绕一个视觉焦点展开，避免要素平铺罗列。"
-    "若口播涉及对比（A/B、前后变化），画面须并排展示两种状态，"
-    "用箭头、流向线、对勾/叉号等视觉编码辅助说明，禁用可读文字/数字/化学式/水印。"
-    "每段motion_prompt须30-80字，描述画面如何运动，如镜头运动（推近/环绕/平移）、"
-    "主体运动（旋转/流动/吸附/弹开）、指示动画（箭头延伸/对勾出现/光晕脉动）、"
-    "原理可视化（电流流动/板块挤压/细胞分裂），要求自然流畅不突兀。"
+    "每段motion_prompt须30-80字，描述画面如何运动，如镜头运动（推近/平移/跟拍）、"
+    "人物动作（操作、展示、对比前后状态），要求自然流畅。"
     "若无明显运动，写'静态画面，轻微镜头呼吸感'。"
 )
+
+
+def _image_prompt_rule(*, orientation: str, content_style: str) -> str:
+    head = (
+        "根据每段口播text、visual_brief与全片visual_style，扩写为文生图用的image_prompt"
+        "和video用的motion_prompt。"
+    )
+    if content_style == CONTENT_STYLE_LIFE_EXPERIENCE:
+        body = _IMAGE_PROMPT_RULE_LIFE_LANDSCAPE
+    elif orientation == ORIENTATION_LANDSCAPE:
+        body = _IMAGE_PROMPT_RULE_LIFE_LANDSCAPE.replace(
+            "生活Vlog质感写实画面",
+            "电影级写实视觉",
+        )
+    else:
+        body = _IMAGE_PROMPT_RULE_SCIENCE_PORTRAIT
+    return head + body + _IMAGE_PROMPT_MOTION_TAIL
+
 
 _STEP_LABELS = {
     "storyboard": "口播分镜",
@@ -78,6 +119,28 @@ _MATERIAL_NARRATION_LENGTH_RULE = (
     "若未达字数下限，须当场扩写后再输出 JSON，禁止先输出再指望后处理。"
 )
 
+_LIFE_NARRATION_VOICE_RULE = (
+    "口播口吻须像B站生活区UP主分享真实经验：第一人称、口语化、有具体场景与细节；"
+    "可用「我当时」「后来发现」「踩过的坑是」等表达，语气真诚不做作；"
+    "讲步骤时具体到「怎么做」，讲感悟时给可复制的结论，避免空泛鸡汤。"
+)
+
+_LIFE_NARRATION_LENGTH_RULE = (
+    "【撑满字数的写法】每段口播须含三层——"
+    "①具体场景或亲身经历；②遇到的问题/转折；③做法、结果或可复制建议。"
+    "禁止整段仅一句空泛感叹。"
+    "【生成顺序】先逐段写满 segments，再原样拼接为 narration，最后统计 word_count；"
+    "若未达字数下限，须当场扩写后再输出 JSON，禁止先输出再指望后处理。"
+)
+
+_LIFE_EXPERIENCE_STRUCTURE_RULE = (
+    "本片为5～8分钟横屏生活经验分享：只围绕一个明确主题（避坑/流程/工具/选择），"
+    "禁止多点罗列成「十条技巧」清单。"
+    "开头30秒内点明「谁、遇到什么痛点、这条视频能帮什么」，禁止空泛「大家好我是XX」。"
+    "正文按「背景→具体问题→解决步骤或心路历程→可复制结论」展开，允许1～2个具体案例。"
+    "结尾给1条可行动建议 + 轻量互动（如「你平时怎么做？评论区聊聊」），禁止长篇回顾。"
+)
+
 _SHORT_FORM_STRUCTURE_RULE = (
     "本片为1～2分钟竖屏短科普：只讲一个核心知识点，禁止多点罗列、章节式串讲或「第一第二第三」清单。"
     "第一句须在3秒内抛出反常识疑问、具体现象或悬念（禁止「大家好」「今天我们来聊」类开场）。"
@@ -91,9 +154,49 @@ def _format_segment_target_sec(target: float) -> str | float:
     return int(target) if target == int(target) else target
 
 
+def _resolve_script_profile(
+    job: dict | None,
+    *,
+    orientation: str | None = None,
+    content_style: str | None = None,
+) -> tuple[str, str]:
+    resolved_orientation = orientation or (
+        orientation_for_resolve(job) if job else None
+    ) or ORIENTATION_PORTRAIT
+    resolved_style = content_style or (
+        content_style_from_job(job) if job else CONTENT_STYLE_SCIENCE_CHILD
+    )
+    return resolved_orientation, resolved_style
+
+
+def _narration_voice_rule(content_style: str) -> str:
+    if content_style == CONTENT_STYLE_LIFE_EXPERIENCE:
+        return _LIFE_NARRATION_VOICE_RULE
+    return _NARRATION_VOICE_RULE
+
+
+def _narration_length_rule(content_style: str) -> str:
+    if content_style == CONTENT_STYLE_LIFE_EXPERIENCE:
+        return _LIFE_NARRATION_LENGTH_RULE
+    return _MATERIAL_NARRATION_LENGTH_RULE
+
+
+def _structure_rule(*, orientation: str, content_style: str) -> str:
+    if content_style == CONTENT_STYLE_LIFE_EXPERIENCE:
+        return _LIFE_EXPERIENCE_STRUCTURE_RULE
+    return _SHORT_FORM_STRUCTURE_RULE
+
+
+def _storyboard_role(content_style: str) -> str:
+    if content_style == CONTENT_STYLE_LIFE_EXPERIENCE:
+        return "你是B站生活经验区UP主的内容编剧。"
+    return "你是给小朋友讲科普的视频编剧。"
+
+
 def _narration_word_range(target: int) -> tuple[int, int]:
     margin = max(50, int(target * 0.1))
-    return max(200, target - margin), target + margin
+    floor = min_narration_chars_for_target(target)
+    return max(floor, target - margin), target + margin
 
 
 def _append_supplementary_to_user(user: str, supplementary_info: str | None) -> str:
@@ -175,8 +278,16 @@ def build_storyboard_prompts(
     max_title_length: int | None = None,
     narration_target_words: int | None = None,
     supplementary_info: str | None = None,
+    job: dict | None = None,
+    orientation: str | None = None,
+    content_style: str | None = None,
 ) -> dict[str, str]:
     settings = get_settings()
+    profile_orientation, profile_style = _resolve_script_profile(
+        job,
+        orientation=orientation,
+        content_style=content_style,
+    )
     target = settings.segment_target_sec if segment_target_sec is None else segment_target_sec
     seg_rule = _storyboard_segment_rule(target)
     max_title = settings.max_title_length if max_title_length is None else max_title_length
@@ -186,16 +297,28 @@ def build_storyboard_prompts(
         else default_narration_target_words(settings)
     )
     narration_word_min, narration_word_max = _narration_word_range(narration_word_target)
+    narration_hard_min = min_narration_chars_for_target(narration_word_target)
     title_rule, title_user_prefix = _title_rule(title, max_title)
+    length_rule = (
+        f"narration 总字数硬性 {narration_word_min}-{narration_word_max} 字（不含空格换行），"
+        f"低于 {narration_hard_min} 字视为不合格；"
+        f"{_narration_length_rule(profile_style)}"
+    )
+    seg_layers = (
+        "各段用「场景+问题+做法/感悟」三层写法撑满字数。"
+        if profile_style == CONTENT_STYLE_LIFE_EXPERIENCE
+        else "各段用「感叹+科普点+比喻」三层写法撑满字数。"
+    )
     system = (
-        "你是给小朋友讲科普的视频编剧。输出JSON，字段：title, narration, word_count, "
+        f"{_storyboard_role(profile_style)}输出JSON，字段：title, narration, word_count, "
         "visual_style, segments。"
         f"{title_rule}"
         f"{seg_rule}"
-        f"narration为完整口播，总字数{narration_word_min}-{narration_word_max}（不含空格换行），{_NARRATION_VOICE_RULE}"
-        f"{_SHORT_FORM_STRUCTURE_RULE}"
-        "结构完整有开头结尾；选题撑不满时可略短，但须结构完整。"
-        "禁止口播开头自我介绍或人设铺垫。"
+        f"{length_rule}"
+        f"narration口吻：{_narration_voice_rule(profile_style)}"
+        f"{_structure_rule(orientation=profile_orientation, content_style=profile_style)}"
+        "结构完整有开头结尾。"
+        "禁止口播开头空泛自我介绍或冗长人设铺垫。"
         "各段text须与narration口吻一致。"
         "word_count必须等于narration实际字数，不得虚报。"
         "本步只写口播与画面描述visual_brief，不写image_prompt。"
@@ -206,10 +329,14 @@ def build_storyboard_prompts(
         split_hint = f"并按单镜口播上限{sec}秒动态切分分镜"
     else:
         split_hint = "并按口播内容逻辑动态切分分镜"
+    seg_hint_count = max(4, narration_word_min // (35 if profile_style == CONTENT_STYLE_LIFE_EXPERIENCE else 45))
+    per_seg_min = max(25, narration_word_min // seg_hint_count)
     user = _append_supplementary_to_user(
         (
             f"{title_user_prefix}、visual_style 与分镜，{split_hint}。"
-            "每段 visual_brief 写清该镜画面主旨与对比关系，便于下一步扩写文生图提示词。"
+            f"口播总字数须在 {narration_word_min}-{narration_word_max} 字之间，至少 {narration_hard_min} 字。"
+            f"建议切分约 {seg_hint_count} 段，每段至少 {per_seg_min} 字，{seg_layers}"
+            "每段 visual_brief 写清该镜画面主旨，便于下一步扩写文生图提示词。"
         ),
         supplementary_info,
     )
@@ -223,7 +350,15 @@ def build_image_prompts_prompts(
     *,
     feedback: str | None = None,
     supplementary_info: str | None = None,
+    job: dict | None = None,
+    orientation: str | None = None,
+    content_style: str | None = None,
 ) -> dict[str, str]:
+    profile_orientation, profile_style = _resolve_script_profile(
+        job,
+        orientation=orientation,
+        content_style=content_style,
+    )
     segments = script.get("segments") or []
     lines = [
         f"segment {seg['segment_index']}: "
@@ -233,7 +368,7 @@ def build_image_prompts_prompts(
     system = (
         "你是科普视频文生图与运动提示词专家。输出JSON，字段：image_prompts。"
         "image_prompts为数组，每项含segment_index、image_prompt与motion_prompt。"
-        f"{_IMAGE_PROMPT_RULE}"
+        f"{_image_prompt_rule(orientation=profile_orientation, content_style=profile_style)}"
         "image_prompts须覆盖输入的每一段，segment_index一一对应，不得遗漏。"
     )
     user = _append_supplementary_to_user(
@@ -398,10 +533,13 @@ def collect_script_prompts(
                 max_title_length=max_title_length,
                 narration_target_words=narration_target_words,
                 supplementary_info=extra,
+                job=job,
             )
         )
         if script and script.get("segments"):
-            prompts.append(build_image_prompts_prompts(script, supplementary_info=extra))
+            prompts.append(
+                build_image_prompts_prompts(script, supplementary_info=extra, job=job)
+            )
 
     if script:
         narration = str(script.get("narration") or "")

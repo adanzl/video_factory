@@ -20,7 +20,7 @@ from app.api.utils import (
 )
 from app.services.intro.size import parse_intro_orientation
 from app.services.job.job_mgr import JobBusyError, job_mgr
-from app.utils.job_info import normalize_orientation
+from app.utils.job_info import merge_job_info, normalize_content_style, normalize_orientation
 
 bp = Blueprint("api_jobs", __name__, url_prefix="/v_factory/api/jobs")
 
@@ -42,11 +42,37 @@ def _accept_stage(job_id: int, submit) -> tuple:
 
 
 def _parse_script_body() -> tuple[
-    int, bool, str | None, float | None, int | None, int | None, bool, str | None, str | None
+    int,
+    bool,
+    str | None,
+    float | None,
+    int | None,
+    int | None,
+    bool,
+    str | None,
+    str | None,
+    str | None,
+    str | None,
 ]:
     data = get_json_body()
     supplementary = parse_optional_str(data, "supplementary_info")
     video_timeline = parse_optional_str(data, "video_timeline")
+    orientation = None
+    if "orientation" in data:
+        orientation = normalize_orientation(parse_optional_str(data, "orientation"))
+        if orientation not in {"portrait", "landscape"}:
+            raise APIError(
+                "orientation must be portrait or landscape",
+                status_code=400,
+            )
+    content_style = None
+    if "content_style" in data:
+        content_style = normalize_content_style(parse_optional_str(data, "content_style"))
+        if content_style is None:
+            raise APIError(
+                "content_style must be science_child or life_experience",
+                status_code=400,
+            )
     return (
         parse_id(data),
         parse_bool(data, "to_end", default=False),
@@ -57,14 +83,26 @@ def _parse_script_body() -> tuple[
         parse_bool(data, "skip_title_optimize", default=False),
         supplementary,
         video_timeline,
+        orientation,
+        content_style,
     )
 
 
 @bp.post("/script")
 def run_script_route():
-    job_id, to_end, title, segment_target_sec, max_title_length, narration_target_words, skip_title_optimize, supplementary_info, video_timeline = (
-        _parse_script_body()
-    )
+    (
+        job_id,
+        to_end,
+        title,
+        segment_target_sec,
+        max_title_length,
+        narration_target_words,
+        skip_title_optimize,
+        supplementary_info,
+        video_timeline,
+        orientation,
+        content_style,
+    ) = _parse_script_body()
     return _accept_stage(
         job_id,
         lambda: job_mgr.run_script(
@@ -77,6 +115,8 @@ def run_script_route():
             skip_title_optimize=skip_title_optimize,
             supplementary_info=supplementary_info,
             video_timeline=video_timeline,
+            orientation=orientation,
+            content_style=content_style,
         ),
     )
 
@@ -93,6 +133,10 @@ def preview_script_prompts_route():
     use_saved_script = parse_bool(data, "use_saved_script", default=False)
     supplementary_info = parse_optional_str(data, "supplementary_info")
     video_timeline = parse_optional_str(data, "video_timeline")
+    orientation = None
+    if "orientation" in data:
+        orientation = normalize_orientation(parse_optional_str(data, "orientation"))
+    content_style = normalize_content_style(parse_optional_str(data, "content_style"))
     try:
         prompts = job_mgr.preview_script_prompts(
             job_id,
@@ -104,6 +148,8 @@ def preview_script_prompts_route():
             supplementary_info=supplementary_info,
             video_timeline=video_timeline,
             use_saved_script=use_saved_script,
+            orientation=orientation,
+            content_style=content_style,
         )
     except ValueError as exc:
         raise APIError(str(exc)) from exc
