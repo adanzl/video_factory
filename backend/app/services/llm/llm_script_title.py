@@ -41,6 +41,7 @@ def build_title_optimize_system_prompt(*, max_title_len: int) -> str:
         f"{_TITLE_SELF_CHECK}"
         "不得改变口播主题方向，不得引入口播未涉及的新概念或虚假夸张。"
         "硬性禁止：医疗养生、理财股市、时政情感、热点新闻、真人出镜、无法核验的争议。"
+        'JSON 输出样例：{"title": "优化后标题"}'
     )
 
 

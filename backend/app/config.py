@@ -164,7 +164,7 @@ class Config:
     deepseek_api_key: str | None = _DEEPSEEK_KEY
     deepseek_base_url: str = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
     deepseek_model: str = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
-    deepseek_max_tokens: int = int(os.getenv("DEEPSEEK_MAX_TOKENS", "16384"))
+    deepseek_max_tokens: int = int(os.getenv("DEEPSEEK_MAX_TOKENS", "32768"))
 
     # ========== TTS / CosyVoice ==========
     dashscope_api_key: str | None = _DASHSCOPE_KEY

@@ -30,6 +30,18 @@ def segment_text_char_cap(segment_target_sec: float) -> int:
     return max(20, int(segment_target_sec * NARRATION_CHARS_PER_SEC))
 
 
+def storyboard_compact_output(
+    narration_target: int,
+    segment_target_sec: float,
+) -> bool:
+    """长稿分镜是否用紧凑 JSON（省略 narration/word_count，后端拼接）。"""
+    if segment_target_sec <= 0:
+        return narration_target >= 900
+    cap = segment_text_char_cap(segment_target_sec)
+    seg_count = max(5, (narration_target + cap - 1) // cap)
+    return narration_target >= 900 or seg_count >= 10
+
+
 def body_duration_for_target_final(
     target_final_sec: float,
     *,

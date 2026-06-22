@@ -52,5 +52,8 @@ def chat_json(system: str, user: str, *, max_tokens: int = 4096) -> Any:
         timeout=180,
     )
     resp.raise_for_status()
-    content = resp.json()["choices"][0]["message"]["content"]
+    choice = resp.json()["choices"][0]
+    content = choice.get("message", {}).get("content") or ""
+    if not content.strip():
+        raise ValueError("LLM returned empty response")
     return json.loads(content)
