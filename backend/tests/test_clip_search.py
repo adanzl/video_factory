@@ -86,10 +86,16 @@ def test_search_pexels_parses_response(monkeypatch):
                 {
                     "id": 99,
                     "duration": 8,
-                    "url": "https://www.pexels.com/video/99/",
+                    "url": "https://www.pexels.com/video/discover-authentic-chinese-street-culture-36382074/",
                     "image": "https://images.pexels.com/videos/99/preview.jpg",
                     "video_files": [
-                        {"width": 1280, "height": 720, "link": "https://cdn.example/99-hd.mp4", "quality": "hd"}
+                        {
+                            "width": 1280,
+                            "height": 720,
+                            "link": "https://player.vimeo.com/external/342571552.hd.mp4?s=abc",
+                            "quality": "hd",
+                            "file_type": "video/mp4",
+                        }
                     ],
                     "user": {"name": "Alice"},
                 }
@@ -100,7 +106,9 @@ def test_search_pexels_parses_response(monkeypatch):
     clips = search_pexels("test", api_key="k", per_page=5, orientation=None, timeout=5)
     assert len(clips) == 1
     assert clips[0].id == "pexels:99"
-    assert clips[0].video_url.endswith("99-hd.mp4")
+    assert clips[0].title == "discover authentic chinese street culture"
+    assert clips[0].video_url.startswith("https://player.vimeo.com")
+    assert clips[0].page_url.endswith("36382074/")
     assert clips[0].author == "Alice"
 
 
@@ -150,6 +158,11 @@ def test_validate_preview_url():
 
     ok = validate_preview_url("https://videos.pexels.com/video-files/abc/abc.mp4")
     assert ok.startswith("https://videos.pexels.com")
+
+    vimeo = validate_preview_url(
+        "https://player.vimeo.com/external/342571552.sd.mp4?s=abc&profile_id=165"
+    )
+    assert vimeo.startswith("https://player.vimeo.com")
 
     with pytest.raises(ValueError, match="not allowed"):
         validate_preview_url("https://evil.example/video.mp4")

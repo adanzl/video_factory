@@ -12,7 +12,9 @@ logger = logging.getLogger(__name__)
 
 _ALLOWED_HOST_SUFFIXES = (
     "videos.pexels.com",
+    "static-videos.pexels.com",
     "images.pexels.com",
+    "player.vimeo.com",
     "cdn.pixabay.com",
     "pixabay.com",
     "images-assets.nasa.gov",
