@@ -325,6 +325,13 @@ def update_job_route():
     return json_ok(job_mgr.update_job(job_id, **updates))
 
 
+@bp.post("/reset")
+def reset_job_route():
+    data = get_json_body()
+    job_id = parse_id(data)
+    return json_ok(job_mgr.reset_job(job_id))
+
+
 @bp.post("/delete")
 def delete_job_route():
     data = get_json_body()

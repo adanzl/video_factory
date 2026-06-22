@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from app.config import get_settings
@@ -14,14 +15,46 @@ from app.services.llm.llm_script_prompts import (
     build_title_optimize_prompts,
     build_video_description_prompts,
 )
+from app.services.llm.llm_script_timeline import narration_range_for_timeline, parse_video_timeline
 from app.services.llm.llm_script_title import parse_title_optimize_payload
 from app.services.llm.llm_topics import (
     build_topic_system_prompt,
     build_topic_user_prompt,
     parse_topics_payload,
 )
+from app.utils.media import default_narration_target_words, min_narration_chars_for_target
 
 __all__ = ["DeepSeekClient", "MIN_IMAGE_PROMPT_CHARS"]
+
+_NARRATION_LENGTH_RETRY_ATTEMPTS = 3
+
+
+def _narration_char_count(text: str) -> int:
+    return len(re.sub(r"\s+", "", text or ""))
+
+
+def _narration_length_feedback(chars: int, min_chars: int, *, prefix: str | None = None) -> str:
+    msg = (
+        f"narration 仅 {chars} 字，硬性下限 {min_chars} 字。"
+        "请增加 segments 段数并扩写每段 text（三层写法撑满），"
+        "先写 segments 再拼接 narration，核对 word_count 后再输出 JSON。"
+    )
+    if prefix:
+        return f"{prefix}\n{msg}"
+    return msg
+
+
+def _min_narration_chars_for_script(
+    *,
+    narration_target_words: int | None,
+    video_timeline: str | None = None,
+) -> int:
+    timeline = parse_video_timeline(video_timeline)
+    if timeline:
+        lo, _ = narration_range_for_timeline(timeline)
+        return lo
+    target = narration_target_words or default_narration_target_words()
+    return min_narration_chars_for_target(target)
 
 
 class DeepSeekClient(LLMClient):
@@ -66,20 +99,34 @@ class DeepSeekClient(LLMClient):
         supplementary_info: str | None = None,
         job: dict | None = None,
     ) -> dict[str, Any]:
-        prompts = build_storyboard_prompts(
-            title,
-            feedback=feedback,
-            segment_target_sec=segment_target_sec,
-            max_title_length=max_title_length,
+        min_chars = _min_narration_chars_for_script(
             narration_target_words=narration_target_words,
-            supplementary_info=supplementary_info,
-            job=job,
         )
-        data = json.loads(self._chat(prompts["system"], prompts["user"]))
-        if "segments" not in data:
-            raise ValueError("LLM storyboard response missing segments")
-        if not data.get("visual_style"):
-            raise ValueError("LLM storyboard response missing visual_style")
+        length_feedback: str | None = feedback
+        data: dict[str, Any] | None = None
+        for attempt in range(_NARRATION_LENGTH_RETRY_ATTEMPTS):
+            prompts = build_storyboard_prompts(
+                title,
+                feedback=length_feedback,
+                segment_target_sec=segment_target_sec,
+                max_title_length=max_title_length,
+                narration_target_words=narration_target_words,
+                supplementary_info=supplementary_info,
+                job=job,
+            )
+            data = json.loads(self._chat(prompts["system"], prompts["user"]))
+            if "segments" not in data:
+                raise ValueError("LLM storyboard response missing segments")
+            if not data.get("visual_style"):
+                raise ValueError("LLM storyboard response missing visual_style")
+            chars = _narration_char_count(str(data.get("narration") or ""))
+            if chars >= min_chars:
+                return data
+            length_feedback = _narration_length_feedback(
+                chars,
+                min_chars,
+                prefix=feedback if attempt == 0 and feedback else None,
+            )
         return data
 
     def _generate_image_prompts(
@@ -179,19 +226,34 @@ class DeepSeekClient(LLMClient):
         supplementary_info: str | None = None,
         video_timeline: str | None = None,
     ) -> dict[str, Any]:
-        prompts = build_material_script_prompts(
-            title,
-            feedback=feedback,
-            max_title_length=max_title_length,
+        min_chars = _min_narration_chars_for_script(
             narration_target_words=narration_target_words,
-            supplementary_info=supplementary_info,
             video_timeline=video_timeline,
         )
-        data = json.loads(self._chat(prompts["system"], prompts["user"]))
-        if "segments" not in data:
-            raise ValueError("LLM material script response missing segments")
-        for seg in data["segments"]:
-            seg.setdefault("visual_mode", "material")
+        length_feedback: str | None = feedback
+        data: dict[str, Any] | None = None
+        for attempt in range(_NARRATION_LENGTH_RETRY_ATTEMPTS):
+            prompts = build_material_script_prompts(
+                title,
+                feedback=length_feedback,
+                max_title_length=max_title_length,
+                narration_target_words=narration_target_words,
+                supplementary_info=supplementary_info,
+                video_timeline=video_timeline,
+            )
+            data = json.loads(self._chat(prompts["system"], prompts["user"]))
+            if "segments" not in data:
+                raise ValueError("LLM material script response missing segments")
+            for seg in data["segments"]:
+                seg.setdefault("visual_mode", "material")
+            chars = _narration_char_count(str(data.get("narration") or ""))
+            if chars >= min_chars:
+                return data
+            length_feedback = _narration_length_feedback(
+                chars,
+                min_chars,
+                prefix=feedback if attempt == 0 and feedback else None,
+            )
         return data
 
     def optimize_script_title(

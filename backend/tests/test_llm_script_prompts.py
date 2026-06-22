@@ -1,0 +1,42 @@
+"""口播提示词字数预算测试。"""
+
+from __future__ import annotations
+
+from app.services.llm.llm_script_prompts import (
+    _narration_word_range,
+    _storyboard_length_budget,
+    build_storyboard_prompts,
+)
+from app.utils.job_info import CONTENT_STYLE_LIFE_EXPERIENCE
+from app.utils.media import min_narration_chars_for_target
+
+
+def test_narration_word_range_aligns_min_with_validation():
+    target = 1318
+    lo, hi = _narration_word_range(target)
+    assert lo == min_narration_chars_for_target(target)
+    assert hi == target + max(50, int(target * 0.1))
+
+
+def test_storyboard_length_budget_requires_enough_segments():
+    target = 1318
+    budget = _storyboard_length_budget(
+        narration_target=target,
+        segment_target_sec=16.0,
+        content_style=CONTENT_STYLE_LIFE_EXPERIENCE,
+    )
+    hard_min = min_narration_chars_for_target(target)
+    assert str(hard_min) in budget
+    assert "segments" in budget
+    assert "字数预算" in budget
+
+
+def test_build_storyboard_prompts_includes_length_budget():
+    prompts = build_storyboard_prompts(
+        "测试标题",
+        narration_target_words=1318,
+        segment_target_sec=16.0,
+        job={"pipeline": "standard", "content_style": CONTENT_STYLE_LIFE_EXPERIENCE},
+    )
+    assert "字数预算" in prompts["user"]
+    assert "882" in prompts["user"] or str(min_narration_chars_for_target(1318)) in prompts["user"]
