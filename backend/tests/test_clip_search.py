@@ -153,6 +153,50 @@ def test_search_pexels_prefers_sd_over_uhd(monkeypatch):
     assert clips[0].video_url.endswith("1-sd.mp4")
 
 
+def test_search_pexels_prefers_vimeo_sd_over_pexels_uhd(monkeypatch):
+    def fake_get_json(url, **kwargs):
+        return {
+            "videos": [
+                {
+                    "id": 36382074,
+                    "duration": 10,
+                    "url": "https://www.pexels.com/video/discover-authentic-chinese-street-culture-36382074/",
+                    "image": "https://images.pexels.com/videos/36382074/preview.jpg",
+                    "video_files": [
+                        {
+                            "width": 3840,
+                            "height": 2160,
+                            "link": "https://videos.pexels.com/video-files/36382074/15429717_3840_2160_25fps.mp4",
+                            "quality": "uhd",
+                            "file_type": "video/mp4",
+                        },
+                        {
+                            "width": 1280,
+                            "height": 720,
+                            "link": "https://player.vimeo.com/external/123.sd.mp4?s=abc",
+                            "quality": "sd",
+                            "file_type": "video/mp4",
+                        },
+                    ],
+                }
+            ]
+        }
+
+    monkeypatch.setattr("app.services.clip_search.providers.pexels.get_json", fake_get_json)
+    clips = search_pexels("test", api_key="k", per_page=5, orientation=None, timeout=5)
+    assert clips[0].video_url.startswith("https://player.vimeo.com")
+
+
+def test_preview_redirects_to_cdn():
+    from app.services.clip_search.preview_proxy import proxy_clip_preview
+
+    response = proxy_clip_preview(
+        "https://videos.pexels.com/video-files/36382074/15429717_3840_2160_25fps.mp4"
+    )
+    assert response.status_code == 302
+    assert response.location.startswith("https://videos.pexels.com/")
+
+
 def test_validate_preview_url():
     from app.services.clip_search.preview_proxy import validate_preview_url
 

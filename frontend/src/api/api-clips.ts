@@ -33,11 +33,26 @@ export const CLIP_PROVIDER_LABELS: Record<ClipProviderName, string> = {
   nasa: "NASA",
 };
 
-/** 经后端代理的外部视频预览 URL，避免浏览器跨域与编码问题 */
+/** 经后端校验后播放；Pexels/Pixabay 等 CDN 直连，避免 gevent 代理大文件 */
+const DIRECT_PLAY_HOSTS = [
+  "videos.pexels.com",
+  "player.vimeo.com",
+  "cdn.pixabay.com",
+  "images-assets.nasa.gov",
+];
+
 export function clipPreviewUrl(remoteUrl: string): string {
   const trimmed = remoteUrl?.trim();
   if (!trimmed) {
     return "";
+  }
+  try {
+    const host = new URL(trimmed).hostname.toLowerCase();
+    if (DIRECT_PLAY_HOSTS.some(h => host === h || host.endsWith(`.${h}`))) {
+      return trimmed;
+    }
+  } catch {
+    // 非法 URL 仍走代理校验
   }
   const base = getApiUrl();
   return `${base}/v_factory/api/clips/preview?url=${encodeURIComponent(trimmed)}`;

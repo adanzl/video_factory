@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import re
+from urllib.parse import urlparse
+
 from app.services.clip_search.models import StockClip
 from app.services.clip_search.providers._http import get_json
 
 _PEXELS_SEARCH = "https://api.pexels.com/videos/search"
+_PREVIEW_MAX_WIDTH = 1920
 
 
 def _is_browser_mp4(file: dict) -> bool:
@@ -21,27 +25,54 @@ def _is_browser_mp4(file: dict) -> bool:
     return True
 
 
+def _effective_width(file: dict) -> int:
+    width = int(file.get("width") or 0)
+    if width:
+        return width
+    link = str(file.get("link") or "")
+    match = re.search(r"_(\d+)_(\d+)_", link)
+    if match:
+        return int(match.group(1))
+    return 0
+
+
+def _host_rank(link: str) -> int:
+    host = (urlparse(link).hostname or "").lower()
+    if host == "player.vimeo.com":
+        return 3
+    if "videos.pexels.com" in host:
+        return 1
+    return 2
+
+
 def _pick_video_file(files: list[dict]) -> dict | None:
     candidates = [f for f in files if isinstance(f, dict) and _is_browser_mp4(f)]
     if not candidates:
         return None
-    # sd/hd 比 uhd 更易在浏览器中解码；同档优先较高分辨率
-    quality_rank = {"sd": 3, "hd": 2, "uhd": 1}
-    candidates.sort(
-        key=lambda f: (
-            quality_rank.get(str(f.get("quality", "")).lower(), 0),
-            int(f.get("width") or 0),
-        ),
-        reverse=True,
-    )
-    return candidates[0]
+
+    quality_rank = {"sd": 4, "hd": 3, "uhd": 1}
+
+    def score(file: dict) -> tuple[int, int, int, int]:
+        link = str(file.get("link") or "")
+        quality = str(file.get("quality") or "").lower()
+        width = _effective_width(file)
+        qr = quality_rank.get(quality, 2)
+        if width > _PREVIEW_MAX_WIDTH:
+            qr -= 2
+        width_bonus = 0
+        if width and width <= 1280:
+            width_bonus = 2
+        elif width and width <= _PREVIEW_MAX_WIDTH:
+            width_bonus = 1
+        return (_host_rank(link), qr, width_bonus, -width)
+
+    return max(candidates, key=score)
 
 
 def _pexels_title(item: dict, video_id: object) -> str:
     url = str(item.get("url") or "").rstrip("/")
     if url:
         slug = url.rsplit("/", 1)[-1]
-        # 如 discover-authentic-chinese-street-culture-36382074 → 可读标题
         if slug and not slug.isdigit():
             parts = slug.rsplit("-", 1)
             text = parts[0] if len(parts) == 2 and parts[1].isdigit() else slug

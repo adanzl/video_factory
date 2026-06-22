@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import logging
+import re
 from urllib.parse import urlparse
 
-import requests
-from flask import Response, request, stream_with_context
+from flask import redirect
 
 logger = logging.getLogger(__name__)
 
@@ -19,32 +19,6 @@ _ALLOWED_HOST_SUFFIXES = (
     "pixabay.com",
     "images-assets.nasa.gov",
 )
-
-_FORWARD_HEADERS = frozenset(
-    {
-        "range",
-        "if-range",
-        "if-modified-since",
-        "if-none-match",
-    }
-)
-
-_EXCLUDE_RESPONSE_HEADERS = frozenset(
-    {
-        "content-encoding",
-        "transfer-encoding",
-        "connection",
-        "keep-alive",
-        "proxy-authenticate",
-        "proxy-authorization",
-        "te",
-        "trailers",
-        "upgrade",
-    }
-)
-
-_PREVIEW_TIMEOUT_SEC = 60.0
-_PREVIEW_USER_AGENT = "VideoFactory/1.0 (+clip-preview)"
 
 
 def _host_allowed(hostname: str) -> bool:
@@ -68,40 +42,8 @@ def validate_preview_url(url: str) -> str:
     return cleaned
 
 
-def proxy_clip_preview(url: str) -> Response:
+def proxy_clip_preview(url: str):
+    """校验后 302 到 CDN，由浏览器直连拉流（支持 Range，避免 gevent 代理大文件）。"""
     validated = validate_preview_url(url)
-    forward: dict[str, str] = {"User-Agent": _PREVIEW_USER_AGENT}
-    for name in _FORWARD_HEADERS:
-        value = request.headers.get(name)
-        if value:
-            forward[name] = value
-
-    try:
-        upstream = requests.get(
-            validated,
-            headers=forward,
-            stream=True,
-            timeout=_PREVIEW_TIMEOUT_SEC,
-            allow_redirects=True,
-        )
-    except requests.RequestException as exc:
-        logger.warning("clip preview proxy failed: %s %s", validated, exc)
-        raise ValueError(f"cannot fetch preview: {exc}") from exc
-
-    if upstream.status_code >= 400:
-        upstream.close()
-        raise ValueError(f"upstream returned {upstream.status_code}")
-
-    response_headers = {
-        name: value
-        for name, value in upstream.headers.items()
-        if name.lower() not in _EXCLUDE_RESPONSE_HEADERS
-    }
-    if "Content-Type" not in response_headers:
-        response_headers["Content-Type"] = "video/mp4"
-
-    return Response(
-        stream_with_context(upstream.iter_content(chunk_size=65536)),
-        status=upstream.status_code,
-        headers=response_headers,
-    )
+    logger.debug("[CLIP] preview redirect -> %s", validated)
+    return redirect(validated, code=302)
