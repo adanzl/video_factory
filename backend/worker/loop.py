@@ -263,13 +263,12 @@ def run_script(
 
 def run_script_image_prompts(job_id: int) -> dict:
     """为已有脚本补全文生图提示词（不重置脚本阶段）。"""
+    from app.quality.checkers import check_image_prompts
+    from app.quality.gate import apply_quality_checks
     from app.repositories import job_log_repo, job_repo, segment_repo
     from app.services.llm.llm_mgr import llm_mgr
-    from app.services.llm.llm_script_prompts import (
-        MIN_IMAGE_PROMPT_CHARS,
-        build_image_prompts_prompts,
-    )
-    from worker.stages.standard.script import ScriptValidationError, _log_llm_timing
+    from app.services.llm.llm_script_prompts import build_image_prompts_prompts
+    from worker.stages.standard.script import _log_llm_timing
 
     job = _reload_job(job_id)
     script = job.get("script_json")
@@ -292,15 +291,6 @@ def run_script_image_prompts(job_id: int) -> dict:
     )
     _log_llm_timing(job_id, "script", updated)
 
-    for seg in updated.get("segments") or []:
-        prompt_len = len(str(seg.get("image_prompt") or ""))
-        if prompt_len < MIN_IMAGE_PROMPT_CHARS:
-            raise ScriptValidationError(
-                f"segment {seg.get('segment_index')} image_prompt too short: "
-                f"{prompt_len} chars (need >= {MIN_IMAGE_PROMPT_CHARS})",
-                retryable=True,
-            )
-
     prompts = list(updated.get("llm_prompts") or [])
     img_prompt = build_image_prompts_prompts(
         updated,
@@ -310,9 +300,17 @@ def run_script_image_prompts(job_id: int) -> dict:
     prompts = [item for item in prompts if item.get("step") != "image_prompts"]
     prompts.append(img_prompt)
     updated["llm_prompts"] = prompts
+    updated["generate_image_prompts"] = True
     updated.pop("_llm_timing", None)
 
     with connection() as conn:
+        apply_quality_checks(
+            conn,
+            job_id,
+            "script",
+            {"image_prompts": check_image_prompts(updated)},
+            existing_report=job.get("quality_report"),
+        )
         job_repo.update_job(conn, job_id, script_json=updated)
         segment_repo.insert_segments(conn, job_id, updated["segments"])
         job_log_repo.append_log(conn, job_id, "script", "image prompts generated")

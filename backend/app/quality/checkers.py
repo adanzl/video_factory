@@ -5,8 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from app.config import get_settings
-from app.utils.media import segment_text_char_cap
+from app.services.llm.llm_script_prompts import IMAGE_PROMPT_TARGET_CHARS, MIN_IMAGE_PROMPT_CHARS
 from app.quality.models import QualityReport
 from app.services.media.audio_analysis import LoudnessStats, SilenceStats, analyze_loudness, analyze_silence
 from app.services.media.ffmpeg_utils import probe_duration
@@ -17,6 +16,8 @@ __all__ = [
     "check_final",
     "check_segment_clips",
     "check_storyboard",
+    "check_image_prompts",
+    "skipped_image_prompts_check",
     "check_tts_audio",
     "check_visual",
 ]
@@ -49,9 +50,28 @@ def check_copy(script: dict) -> QualityReport:
     return QualityReport(level="pass", step="copy", details={"word_count": word_count})
 
 
-def check_storyboard(script: dict) -> QualityReport:
+def check_storyboard(
+    script: dict,
+    *,
+    segment_target_sec: float | None = None,
+    max_title_length: int | None = None,
+) -> QualityReport:
     """剧本：标题、分镜数量与字段完整性。"""
     settings = get_settings()
+    if segment_target_sec is None:
+        saved_seg = script.get("segment_target_sec")
+        seg_target = (
+            float(saved_seg) if saved_seg is not None else settings.segment_target_sec
+        )
+    else:
+        seg_target = segment_target_sec
+
+    if max_title_length is None:
+        saved_max = script.get("max_title_length")
+        max_len = int(saved_max) if saved_max is not None else settings.max_title_length
+    else:
+        max_len = max_title_length
+
     title = re.sub(r"\s+", "", (script.get("title") or "").strip())
     if not title:
         return QualityReport(
@@ -60,7 +80,7 @@ def check_storyboard(script: dict) -> QualityReport:
             fail_stage="script",
             details={"reason": "title is empty"},
         )
-    if len(title) > settings.max_title_length:
+    if len(title) > max_len:
         return QualityReport(
             level="major",
             step="storyboard",
@@ -68,14 +88,14 @@ def check_storyboard(script: dict) -> QualityReport:
             details={
                 "reason": "title too long",
                 "title_length": len(title),
-                "max_length": settings.max_title_length,
+                "max_length": max_len,
             },
         )
 
     segments = script.get("segments") or []
-    if settings.segment_target_sec > 0:
+    if seg_target > 0:
         narration_chars = _narration_chars(script.get("narration", ""))
-        cap = segment_text_char_cap(settings.segment_target_sec)
+        cap = segment_text_char_cap(seg_target)
         needed = max(1, (narration_chars + cap - 1) // cap)
         if len(segments) < needed:
             return QualityReport(
@@ -86,7 +106,7 @@ def check_storyboard(script: dict) -> QualityReport:
                     "reason": "too few segments",
                     "segment_count": len(segments),
                     "min_expected": needed,
-                    "segment_target_sec": settings.segment_target_sec,
+                    "segment_target_sec": seg_target,
                 },
             )
         hard_cap = int(cap * 1.15)
@@ -109,7 +129,7 @@ def check_storyboard(script: dict) -> QualityReport:
                 details={
                     "reason": "segment text too long",
                     "segments": long_segments,
-                    "segment_target_sec": settings.segment_target_sec,
+                    "segment_target_sec": seg_target,
                 },
             )
 
@@ -128,6 +148,71 @@ def check_storyboard(script: dict) -> QualityReport:
         level="pass",
         step="storyboard",
         details={"segment_count": len(segments), "title_length": len(title)},
+    )
+
+
+def check_image_prompts(script: dict) -> QualityReport:
+    """文生图提示词：各段 image_prompt 长度。"""
+    segments = script.get("segments") or []
+    if not segments:
+        return QualityReport(
+            level="major",
+            step="image_prompts",
+            fail_stage="script",
+            details={"reason": "no segments"},
+        )
+
+    too_short: list[dict] = []
+    slightly_short: list[dict] = []
+    for seg in segments:
+        idx = seg.get("segment_index")
+        prompt_len = len(str(seg.get("image_prompt") or ""))
+        if prompt_len < MIN_IMAGE_PROMPT_CHARS:
+            too_short.append(
+                {
+                    "segment_index": idx,
+                    "chars": prompt_len,
+                    "min_chars": MIN_IMAGE_PROMPT_CHARS,
+                }
+            )
+        elif prompt_len < IMAGE_PROMPT_TARGET_CHARS:
+            slightly_short.append(
+                {
+                    "segment_index": idx,
+                    "chars": prompt_len,
+                    "target_chars": IMAGE_PROMPT_TARGET_CHARS,
+                }
+            )
+
+    if too_short:
+        return QualityReport(
+            level="major",
+            step="image_prompts",
+            fail_stage="script",
+            details={"reason": "image_prompt too short", "segments": too_short},
+        )
+    if slightly_short:
+        return QualityReport(
+            level="minor",
+            step="image_prompts",
+            details={
+                "reason": "image_prompt slightly short",
+                "segments": slightly_short,
+            },
+        )
+    return QualityReport(
+        level="pass",
+        step="image_prompts",
+        details={"segment_count": len(segments)},
+    )
+
+
+def skipped_image_prompts_check() -> QualityReport:
+    """未勾选生成文生图提示词时，跳过相关质检。"""
+    return QualityReport(
+        level="pass",
+        step="image_prompts",
+        details={"reason": "skipped", "generate_image_prompts": False},
     )
 
 

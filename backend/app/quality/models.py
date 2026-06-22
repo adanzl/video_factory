@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Literal
 
-QualityStep = Literal["copy", "storyboard", "tts", "visual", "clip", "final"]
+QualityStep = Literal["copy", "storyboard", "image_prompts", "tts", "visual", "clip", "final"]
 
 
 @dataclass

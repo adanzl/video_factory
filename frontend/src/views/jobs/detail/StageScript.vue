@@ -482,6 +482,7 @@ const rawJson = computed(() => JSON.stringify(props.job.script_json, null, 2));
 const QUALITY_STEP_LABELS: Record<string, string> = {
   copy: "文案",
   storyboard: "分镜",
+  image_prompts: "文生图提示词",
   tts: "配音",
   visual: "画面",
   clip: "片段",
