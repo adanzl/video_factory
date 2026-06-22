@@ -16,7 +16,6 @@ from app.utils.job_info import (
     orientation_for_resolve,
 )
 from app.utils.media import (
-    NARRATION_CHARS_PER_SEC,
     default_narration_target_words,
     min_narration_chars_for_target,
     segment_text_char_cap,
@@ -225,18 +224,22 @@ def _storyboard_length_budget(
             "【生成顺序】先按预算写满各段 segments，再拼接 narration，最后核对 word_count。"
         )
     cap = segment_text_char_cap(segment_target_sec)
-    seg_count = max(5, (hard_min + cap - 1) // cap)
-    per_min = max(25, (hard_min + seg_count - 1) // seg_count)
-    per_target = min(cap, max(per_min, int(cap * 0.8)))
+    hard_cap = int(cap * 1.15)
+    seg_count = max(5, (narration_target + cap - 1) // cap)
+    per_min = max(20, min(cap - 5, (hard_min + seg_count - 1) // seg_count))
+    per_target_lo = max(20, int(cap * 0.65))
+    per_target_hi = cap
     sum_floor = per_min * seg_count
     sec = int(segment_target_sec) if segment_target_sec == int(segment_target_sec) else segment_target_sec
     return (
         f"【字数预算】口播理想约 {narration_target} 字，硬性下限 {hard_min} 字（低于即不合格）。\n"
-        f"单镜上限 {sec}s，每段 text 上限约 {cap} 字。\n"
-        f"须至少 {seg_count} 个 segments，每段至少 {per_min} 字、建议 {per_target}-{cap} 字；"
+        f"单镜上限 {sec}s，每段 text 上限 {cap} 字（绝对不得超过 {hard_cap} 字，超限即不合格）。\n"
+        f"须至少 {seg_count} 个 segments（{narration_target} 字 ÷ {cap} 字/段），"
+        f"每段 {per_target_lo}-{per_target_hi} 字、下限 {per_min} 字；"
         f"各段下限之和约 {sum_floor} 字（须达到硬性下限 {hard_min}）。\n"
+        f"禁止用 3～5 个长段堆叠口播，必须按单镜上限拆段。\n"
         f"每段用「{layers}」三层写法撑满，禁止整段一句带过。\n"
-        "【生成顺序】先按预算写满各段 segments，再拼接 narration，最后核对 word_count。"
+        "【生成顺序】先规划段数与每段字数，再写满 segments，再拼接 narration，最后核对 word_count。"
     )
 
 
@@ -293,12 +296,13 @@ def _storyboard_segment_rule(target: float) -> str:
     if target <= 0:
         return common + "不约束单镜时长，按口播内容逻辑切分，段数由内容决定。"
     sec = _format_segment_target_sec(target)
-    lo = max(15, int(target * NARRATION_CHARS_PER_SEC * 0.65))
-    hi = max(20, int(target * NARRATION_CHARS_PER_SEC))
+    cap = segment_text_char_cap(target)
+    hard_cap = int(cap * 1.15)
+    lo = max(15, int(cap * 0.65))
     return (
         common
-        + f"单镜口播上限{sec}秒；每段text约{lo}-{hi}字，单段禁止超过{hi}字；"
-        "段数由口播总长与该上限动态决定，按自然断句切分。"
+        + f"单镜口播上限{sec}秒；每段text约{lo}-{cap}字，单段绝对不得超过{hard_cap}字；"
+        "段数=口播总字数÷单段上限（向上取整），按自然断句切分，禁止少数长段堆叠。"
     )
 
 

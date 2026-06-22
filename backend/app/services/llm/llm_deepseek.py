@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any
 
@@ -26,6 +27,8 @@ from app.services.llm.llm_topics import (
 from app.utils.media import default_narration_target_words, min_narration_chars_for_target
 
 __all__ = ["DeepSeekClient", "MIN_IMAGE_PROMPT_CHARS"]
+
+logger = logging.getLogger(__name__)
 
 _NARRATION_LENGTH_RETRY_ATTEMPTS = 5
 _NARRATION_EXPAND_ATTEMPTS = 2
@@ -81,6 +84,23 @@ def _min_narration_chars_for_script(
     return min_narration_chars_for_target(target)
 
 
+def _storyboard_max_tokens(narration_target_words: int | None) -> int:
+    """分镜 JSON 输出 token 预算（受 DEEPSEEK_MAX_TOKENS 上限约束）。"""
+    settings = get_settings()
+    target = narration_target_words or default_narration_target_words()
+    # 粗估：每字口播约 7 output token（narration + 段内 text + visual_brief + JSON 键名）
+    estimated = int(target * 7 + 2048)
+    ceiling = settings.deepseek_max_tokens
+    if estimated > ceiling:
+        logger.warning(
+            "storyboard may need ~%d output tokens but DEEPSEEK_MAX_TOKENS=%d; "
+            "raise env if your API/model allows a higher output limit",
+            estimated,
+            ceiling,
+        )
+    return min(ceiling, max(4096, estimated))
+
+
 class DeepSeekClient(LLMClient):
     def __init__(self) -> None:
         import requests
@@ -91,7 +111,9 @@ class DeepSeekClient(LLMClient):
         self._base_url = settings.deepseek_base_url.rstrip("/")
         self._model = settings.deepseek_model
 
-    def _chat(self, system: str, user: str) -> str:
+    def _chat(self, system: str, user: str, *, max_tokens: int | None = None) -> str:
+        settings = get_settings()
+        limit = settings.deepseek_max_tokens if max_tokens is None else max_tokens
         resp = self._requests.post(
             f"{self._base_url}/chat/completions",
             headers={
@@ -105,12 +127,20 @@ class DeepSeekClient(LLMClient):
                     {"role": "user", "content": user},
                 ],
                 "response_format": {"type": "json_object"},
-                "max_tokens": 8192,
+                "max_tokens": limit,
             },
             timeout=180,
         )
         resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"]
+        choice = resp.json()["choices"][0]
+        finish = choice.get("finish_reason")
+        if finish == "length":
+            logger.warning(
+                "LLM response truncated (finish_reason=length), max_tokens=%d model=%s",
+                limit,
+                self._model,
+            )
+        return choice["message"]["content"]
 
     def _expand_narration_if_needed(
         self,
@@ -158,6 +188,7 @@ class DeepSeekClient(LLMClient):
         min_chars = _min_narration_chars_for_script(
             narration_target_words=narration_target_words,
         )
+        max_tokens = _storyboard_max_tokens(narration_target_words)
         length_feedback: str | None = feedback
         data: dict[str, Any] | None = None
         for attempt in range(_NARRATION_LENGTH_RETRY_ATTEMPTS):
@@ -170,7 +201,9 @@ class DeepSeekClient(LLMClient):
                 supplementary_info=supplementary_info,
                 job=job,
             )
-            data = json.loads(self._chat(prompts["system"], prompts["user"]))
+            data = json.loads(
+                self._chat(prompts["system"], prompts["user"], max_tokens=max_tokens)
+            )
             if "segments" not in data:
                 raise ValueError("LLM storyboard response missing segments")
             if not data.get("visual_style"):

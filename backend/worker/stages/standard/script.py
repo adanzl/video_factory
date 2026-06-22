@@ -10,6 +10,7 @@ from app.repositories import job_log_repo, job_repo, segment_repo
 from app.repositories.connection import connection
 from app.services.llm.llm_mgr import llm_mgr
 from app.services.llm.llm_script_prompts import MIN_IMAGE_PROMPT_CHARS
+from app.utils.job_info import content_style_from_job
 from app.utils.media import (
     default_narration_target_words,
     min_narration_chars_for_target,
@@ -139,6 +140,32 @@ def _narration_short_feedback(exc: ScriptValidationError, *, min_chars: int) -> 
     )
 
 
+def _validation_feedback(
+    exc: ScriptValidationError,
+    *,
+    min_chars: int,
+    segment_target_sec: float | None,
+    narration_target_words: int,
+    content_style: str,
+) -> str:
+    msg = str(exc)
+    if "narration too short" in msg:
+        return _narration_short_feedback(exc, min_chars=min_chars)
+    if segment_target_sec and segment_target_sec > 0:
+        if "segment text exceeds" in msg or "too few segments" in msg:
+            cap = segment_text_char_cap(segment_target_sec)
+            hard_cap = int(cap * 1.15)
+            needed = max(1, (narration_target_words + cap - 1) // cap)
+            return (
+                f"{msg}。"
+                f"单镜上限 {segment_target_sec}s，每段 text 不得超过 {cap} 字（硬上限 {hard_cap} 字）。"
+                f"口播目标 {narration_target_words} 字须至少拆成 {needed} 段；"
+                "超长段必须按自然断句拆成多段，禁止 3～5 个长段堆叠。"
+                "先规划段数与每段字数，再写 segments，最后拼接 narration。"
+            )
+    return msg
+
+
 def _narration_short_retryable(chars: int, *, narration_target_words: int) -> bool:
     return chars >= _narration_retry_min_chars(narration_target_words)
 
@@ -159,6 +186,7 @@ def _validate_script(
     segment_target_sec: float | None = None,
     max_title_length: int | None = None,
     min_narration_chars: int | None = None,
+    content_style: str | None = None,
 ) -> list[str]:
     settings = get_settings()
     seg_target = (
@@ -268,6 +296,7 @@ class ScriptStage(StageExecutor):
                     f"(from target_final={get_settings().target_final_duration_sec}s)",
                 )
         min_narration_chars = _min_narration_chars(narration_target_words)
+        content_style = content_style_from_job(ctx.job)
         last_exc: Exception | None = None
         script: dict | None = None
         feedback: str | None = None
@@ -288,11 +317,18 @@ class ScriptStage(StageExecutor):
                     segment_target_sec=segment_target_sec,
                     max_title_length=max_title_length,
                     min_narration_chars=min_narration_chars,
+                    content_style=content_style,
                 )
                 break
             except ScriptValidationError as exc:
                 last_exc = exc
-                feedback = _narration_short_feedback(exc, min_chars=min_narration_chars)
+                feedback = _validation_feedback(
+                    exc,
+                    min_chars=min_narration_chars,
+                    segment_target_sec=segment_target_sec,
+                    narration_target_words=narration_target_words,
+                    content_style=content_style,
+                )
                 with connection() as conn:
                     job_log_repo.append_log(
                         conn,

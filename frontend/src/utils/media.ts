@@ -98,10 +98,10 @@ export function defaultNarrationTargetWords(
   return estimateNarrationTargetWords(body);
 }
 
-/** 按成片分钟数估算口播字数（生活经验横屏，约 4 字/秒） */
+/** 按成片分钟数估算口播字数（5 字/秒，与后端对齐） */
 export function narrationTargetForMinutes(
   minutes: number,
-  charsPerSec = 4.0,
+  charsPerSec = NARRATION_CHARS_PER_SEC,
   introBudgetSec = INTRO_DURATION_BUDGET_SEC
 ): number {
   const body = Math.max(30, minutes * 60 - introBudgetSec);

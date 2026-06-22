@@ -26,7 +26,7 @@ def estimate_narration_target_words(duration_sec: float) -> int:
 
 
 def segment_text_char_cap(segment_target_sec: float) -> int:
-    """单镜口播 text 字数上限（与 segment_target_sec 对应）。"""
+    """单镜口播 text 字数上限（5 字/秒 × segment_target_sec）。"""
     return max(20, int(segment_target_sec * NARRATION_CHARS_PER_SEC))
 
 
@@ -66,10 +66,10 @@ def narration_soft_min_chars(required_chars: int) -> int:
 def narration_target_for_minutes(
     minutes: float,
     *,
-    chars_per_sec: float = 4.0,
+    chars_per_sec: float = NARRATION_CHARS_PER_SEC,
     intro_budget_sec: float = 2.0,
 ) -> int:
-    """按成片分钟数估算口播目标字数（生活经验等横屏长稿常用）。"""
+    """按成片分钟数估算口播目标字数（5 字/秒）。"""
     body = max(30.0, minutes * 60.0 - intro_budget_sec)
     target = int(body * chars_per_sec * NARRATION_FILL_RATIO)
     return max(NARRATION_MIN_CHARS, min(NARRATION_MAX_CHARS, target))
