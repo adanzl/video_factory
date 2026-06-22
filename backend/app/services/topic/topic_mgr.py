@@ -10,6 +10,12 @@ from app.repositories.connection import connection
 from app.services.job.job_mgr import job_mgr
 from app.services.llm.llm_mgr import llm_mgr
 from app.services.llm.llm_topics import normalize_title
+from app.services.topic.hot_pipeline import (
+    HOT_SOURCE,
+    HotPipelineOptions,
+    persist_scored_hot_topics,
+    run_hot_pipeline,
+)
 from app.services.topic.title_scorer import score_title, status_from_score
 
 logger = logging.getLogger(__name__)
@@ -174,6 +180,46 @@ class TopicMgr:
             [job["id"] for job in jobs],
         )
         return {"jobs": jobs, "count": len(jobs), "run_mode": run_mode}
+
+    def import_from_hot_search(
+        self,
+        *,
+        limit: int = 50,
+        l1_rules: bool = False,
+        count_per_theme: int = 3,
+        use_theme_llm: bool = True,
+        min_score: int = 70,
+    ) -> dict:
+        logger.info(
+            "[TOPIC] hot import start limit=%d l1_rules=%s count_per_theme=%d min_score=%d",
+            limit,
+            l1_rules,
+            count_per_theme,
+            min_score,
+        )
+        payload = run_hot_pipeline(
+            HotPipelineOptions(
+                limit=limit,
+                l1_rules=l1_rules,
+                count_per_theme=count_per_theme,
+                use_theme_llm=use_theme_llm,
+                convert_themes=True,
+                generate_titles=True,
+            )
+        )
+        topics = payload.get("topics") or []
+        save_result = persist_scored_hot_topics(topics, min_score=min_score)
+        result = {
+            **payload,
+            **save_result,
+        }
+        logger.info(
+            "[TOPIC] hot import done added=%d skipped=%d themes=%d",
+            save_result["count"],
+            save_result["skipped"],
+            payload.get("summary", {}).get("themes", 0),
+        )
+        return result
 
 
 topic_mgr = TopicMgr()

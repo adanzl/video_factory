@@ -6,6 +6,7 @@ import re
 from typing import Any
 
 from app.config import get_settings
+from app.utils.media import NARRATION_CHARS_PER_SEC, default_narration_target_words
 from app.services.llm.llm_script_timeline import (
     VideoTimeline,
     append_timeline_to_user,
@@ -22,8 +23,6 @@ from app.services.llm.llm_script_title import (
     build_title_optimize_user_prompt,
 )
 
-# 中文口播约 7.5 字/秒（12s ≈ 90 字）
-_CHARS_PER_SEC = 7.5
 MIN_IMAGE_PROMPT_CHARS = 300
 
 _VISUAL_BRIEF_RULE = (
@@ -69,6 +68,14 @@ _NARRATION_VOICE_RULE = (
     "可用「哇」「你看」「原来是这样呀」等儿童感感叹，句子偏短、好懂；"
     "偶尔用拟声词或简单比喻（像积木、像气球那样），但不要装婴儿语、不要刻意错别字；"
     "科普事实须准确，童趣服务于理解，不牺牲科学内容。"
+)
+
+_SHORT_FORM_STRUCTURE_RULE = (
+    "本片为1～2分钟竖屏短科普：只讲一个核心知识点，禁止多点罗列、章节式串讲或「第一第二第三」清单。"
+    "第一句须在3秒内抛出反常识疑问、具体现象或悬念（禁止「大家好」「今天我们来聊」类开场）。"
+    "正文只展开一层因果或一个机制，不贪多。"
+    "结尾用1～2句收束总结；最后一句可轻量引导互动（如「觉得有用就点个赞，我们下期见」），"
+    "禁止长篇回顾、禁止清单式连读多届/多段。"
 )
 
 
@@ -134,8 +141,8 @@ def _storyboard_segment_rule(target: float) -> str:
     if target <= 0:
         return common + "不约束单镜时长，按口播内容逻辑切分，段数由内容决定。"
     sec = _format_segment_target_sec(target)
-    lo = max(15, int(target * _CHARS_PER_SEC * 0.65))
-    hi = max(20, int(target * _CHARS_PER_SEC))
+    lo = max(15, int(target * NARRATION_CHARS_PER_SEC * 0.65))
+    hi = max(20, int(target * NARRATION_CHARS_PER_SEC))
     return (
         common
         + f"单镜口播上限{sec}秒；每段text约{lo}-{hi}字，单段禁止超过{hi}字；"
@@ -166,7 +173,9 @@ def build_storyboard_prompts(
     seg_rule = _storyboard_segment_rule(target)
     max_title = settings.max_title_length if max_title_length is None else max_title_length
     narration_word_target = (
-        narration_target_words if narration_target_words is not None else 1050
+        narration_target_words
+        if narration_target_words is not None
+        else default_narration_target_words(settings)
     )
     narration_word_min, narration_word_max = _narration_word_range(narration_word_target)
     title_rule, title_user_prefix = _title_rule(title, max_title)
@@ -176,8 +185,9 @@ def build_storyboard_prompts(
         f"{title_rule}"
         f"{seg_rule}"
         f"narration为完整口播，总字数{narration_word_min}-{narration_word_max}（不含空格换行），{_NARRATION_VOICE_RULE}"
+        f"{_SHORT_FORM_STRUCTURE_RULE}"
         "结构完整有开头结尾；选题撑不满时可略短，但须结构完整。"
-        "禁止口播开头自我介绍或人设铺垫；第一句直接进入主题或抛出问题。"
+        "禁止口播开头自我介绍或人设铺垫。"
         "各段text须与narration口吻一致。"
         "word_count必须等于narration实际字数，不得虚报。"
         "本步只写口播与画面描述visual_brief，不写image_prompt。"

@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from app.services.media.ffmpeg_utils import probe_duration, probe_video_size
 
-# 中文口播约 7.5 字/秒（12s ≈ 90 字）
-NARRATION_CHARS_PER_SEC = 7.5
+if TYPE_CHECKING:
+    from app.config import Config
+
+# 中文口播约 5 字/秒（16s ≈ 80 字；与 CosyVoice 实际语速对齐）
+NARRATION_CHARS_PER_SEC = 5.0
 NARRATION_FILL_RATIO = 0.92
 NARRATION_MIN_CHARS = 200
 NARRATION_MAX_CHARS = 3000
@@ -17,6 +21,33 @@ NARRATION_MAX_CHARS = 3000
 def estimate_narration_target_words(duration_sec: float) -> int:
     target = int(duration_sec * NARRATION_CHARS_PER_SEC * NARRATION_FILL_RATIO)
     return max(NARRATION_MIN_CHARS, min(NARRATION_MAX_CHARS, target))
+
+
+def segment_text_char_cap(segment_target_sec: float) -> int:
+    """单镜口播 text 字数上限（与 segment_target_sec 对应）。"""
+    return max(20, int(segment_target_sec * NARRATION_CHARS_PER_SEC))
+
+
+def body_duration_for_target_final(
+    target_final_sec: float,
+    *,
+    intro_budget_sec: float,
+) -> float:
+    """成片目标时长扣除片头预算后的正文秒数。"""
+    return max(30.0, target_final_sec - intro_budget_sec)
+
+
+def default_narration_target_words(settings: Config | None = None) -> int:
+    """standard 线默认口播目标字数（由 TARGET_FINAL_DURATION_SEC 推导）。"""
+    if settings is None:
+        from app.config import get_settings
+
+        settings = get_settings()
+    body = body_duration_for_target_final(
+        settings.target_final_duration_sec,
+        intro_budget_sec=settings.intro_duration_budget_sec,
+    )
+    return estimate_narration_target_words(body)
 
 
 def _read_base_meta(media_dir: Path) -> dict:

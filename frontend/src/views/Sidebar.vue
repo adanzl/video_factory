@@ -14,6 +14,10 @@
           <el-icon><VideoCamera /></el-icon>
           <template #title>视频素材</template>
         </el-menu-item>
+        <el-menu-item index="/clips">
+          <el-icon><Search /></el-icon>
+          <template #title>片段搜索</template>
+        </el-menu-item>
         <el-menu-item index="/topic">
           <el-icon><Document /></el-icon>
           <template #title>选题库</template>
@@ -34,7 +38,7 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import { useRoute } from "vue-router";
-import { HomeFilled, List, Document, Setting, Expand, Fold, VideoCamera } from "@element-plus/icons-vue";
+import { HomeFilled, List, Document, Setting, Expand, Fold, VideoCamera, Search } from "@element-plus/icons-vue";
 
 const emit = defineEmits<{
   collapseChange: [collapsed: boolean];

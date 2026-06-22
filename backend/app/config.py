@@ -135,12 +135,17 @@ class Config:
     wan_i2v_poll_max_attempts: int = int(os.getenv("WAN_I2V_POLL_MAX_ATTEMPTS", "60"))
     wan_t2i_poll_max_attempts: int = int(os.getenv("WAN_T2I_POLL_MAX_ATTEMPTS", "45"))
     max_title_length: int = int(os.getenv("MAX_TITLE_LENGTH", "24"))
-    segment_target_sec: float = float(os.getenv("SEGMENT_TARGET_SEC", "12"))
+    # 竖屏短科普：单镜口播上限（秒）；16s 约 5～6 镜/90s 正文
+    segment_target_sec: float = float(os.getenv("SEGMENT_TARGET_SEC", "16"))
+    # 目标成片总长（秒），用于 standard 线口播字数估算；默认 90s ≈ 1.5 分钟
+    target_final_duration_sec: float = float(os.getenv("TARGET_FINAL_DURATION_SEC", "90"))
+    # 口播字数估算时从成片时长中扣除的片头预算（秒）
+    intro_duration_budget_sec: float = float(os.getenv("INTRO_DURATION_BUDGET_SEC", "2"))
     final_min_duration_sec: float = float(
-        os.getenv("FINAL_MIN_DURATION_SEC", str(260 if _FINAL_STRICT else 30))
+        os.getenv("FINAL_MIN_DURATION_SEC", str(55 if _FINAL_STRICT else 55))
     )
     final_max_duration_sec: float = float(
-        os.getenv("FINAL_MAX_DURATION_SEC", str(320 if _FINAL_STRICT else 900))
+        os.getenv("FINAL_MAX_DURATION_SEC", str(130 if _FINAL_STRICT else 900))
     )
 
     # ========== 图像生成 ==========
@@ -197,6 +202,11 @@ class Config:
     bili_client_id: str | None = _opt("BILI_CLIENT_ID")
     bili_client_secret: str | None = _opt("BILI_CLIENT_SECRET")
     bili_access_token: str | None = _opt("BILI_ACCESS_TOKEN")
+
+    # ========== 素材片段搜索（聚合 Pexels / Pixabay / NASA）==========
+    pexels_api_key: str | None = _opt("PEXELS_API_KEY")
+    pixabay_api_key: str | None = _opt("PIXABAY_API_KEY")
+    clip_search_timeout_sec: float = float(os.getenv("CLIP_SEARCH_TIMEOUT_SEC", "12"))
 
     def video_size(self) -> str:
         return _size_str(self.video_width, self.video_height)

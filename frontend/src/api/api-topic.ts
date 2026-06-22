@@ -3,12 +3,13 @@
  */
 import { api } from "./config";
 import type {
-  EnqueueRunMode,
   EnqueueTopicsParams,
   EnqueueTopicsResult,
   GenerateAndSaveResult,
   GenerateTopicsParams,
   GenerateTopicsResult,
+  ImportHotTopicsParams,
+  ImportHotTopicsResult,
   ListTitlesParams,
   ScoreTopicsResult,
   TitleRecord,
@@ -28,6 +29,13 @@ export async function generateTopics(
     "/v_factory/api/topic/gen",
     params
   );
+  return response.data;
+}
+
+export async function importHotTopics(
+  params: ImportHotTopicsParams = {}
+): Promise<ImportHotTopicsResult> {
+  const response = await api.post<ImportHotTopicsResult>("/v_factory/api/topic/hot", params);
   return response.data;
 }
 

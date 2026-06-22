@@ -5,6 +5,9 @@
         <el-icon><Refresh /></el-icon>
       </el-button>
       <el-button type="primary" @click="showGenerateDialog = true">AI 生成</el-button>
+      <el-button type="primary" :loading="importingHot" @click="handleImportHot">
+        热搜选题
+      </el-button>
       <el-button
         :disabled="!selectedIds.length"
         :loading="scoring"
@@ -176,6 +179,7 @@ import {
   deleteTopics,
   enqueueTopics,
   generateTopics,
+  importHotTopics,
   listTitles,
   scoreTopics,
 } from "@/api/api-topic";
@@ -197,6 +201,7 @@ const scoring = ref(false);
 const enqueuing = ref(false);
 const deleting = ref(false);
 const generating = ref(false);
+const importingHot = ref(false);
 const scoringId = ref<number>();
 
 const showGenerateDialog = ref(false);
@@ -242,6 +247,8 @@ const sourceLabel = (source?: string) => {
   switch (source) {
     case "llm":
       return "AI";
+    case "热搜":
+      return "热搜";
     default:
       return "手动";
   }
@@ -423,6 +430,36 @@ const handleGenerate = async () => {
     handleError(error, "生成选题失败");
   } finally {
     generating.value = false;
+  }
+};
+
+const handleImportHot = async () => {
+  try {
+    await ElMessageBox.confirm(
+      "将拉取 B 站热搜，经 AI 筛选后生成标题并入库（来源：热搜）。耗时约 30～60 秒，是否继续？",
+      "热搜选题",
+      { type: "info", confirmButtonText: "开始", cancelButtonText: "取消" }
+    );
+  } catch {
+    return;
+  }
+
+  importingHot.value = true;
+  try {
+    const result = await importHotTopics({
+      limit: 50,
+      count_per_theme: 3,
+      min_score: 70,
+    });
+    const s = result.summary;
+    ElMessage.success(
+      `热搜 ${s.fetched} 条 → 保留 ${s.kept} 条 → 入库 ${result.count} 条（跳过 ${result.skipped} 条）`
+    );
+    await fetchTitles();
+  } catch (error) {
+    handleError(error, "热搜选题失败");
+  } finally {
+    importingHot.value = false;
   }
 };
 

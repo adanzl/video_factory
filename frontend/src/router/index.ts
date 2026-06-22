@@ -1,4 +1,4 @@
-import { setupChunkReloadGuard } from "@/utils/chunk-reload";
+import { setupChunkReloadGuard } from "@/utils/utils";
 import { createRouter, createWebHashHistory, type RouteRecordRaw } from "vue-router";
 
 const routes: RouteRecordRaw[] = [
@@ -20,6 +20,11 @@ const routes: RouteRecordRaw[] = [
     path: "/materials",
     name: "Materials",
     component: () => import("@/views/material/PageMaterial.vue"),
+  },
+  {
+    path: "/clips",
+    name: "ClipSearch",
+    component: () => import("@/views/clips/PageClipSearch.vue"),
   },
   {
     path: "/topic",
