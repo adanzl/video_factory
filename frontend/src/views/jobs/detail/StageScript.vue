@@ -23,59 +23,64 @@
             <span v-if="actionDisabledReason" class="shrink-0 text-xs text-gray-400">{{ actionDisabledReason }}</span>
           </div>
         </el-form-item>
-        <div v-if="!isMaterialJob" class="flex w-full flex-wrap items-start gap-x-4">
-          <el-form-item label="画面方向" :label-width="FORM_LABEL_WIDTH" class="mb-0!">
-            <el-radio-group v-model="jobOrientation" size="small">
-              <el-radio-button value="portrait">竖屏</el-radio-button>
-              <el-radio-button value="landscape">横屏</el-radio-button>
-            </el-radio-group>
+        <template v-if="!isMaterialJob">
+          <el-form-item label="内容配置">
+            <div class="flex w-full min-w-0 flex-nowrap items-center gap-2 overflow-x-auto pb-0.5">
+              <span class="shrink-0 text-xs leading-tight whitespace-nowrap text-gray-500">方向</span>
+              <el-radio-group v-model="jobOrientation" size="small" class="shrink-0">
+                <el-radio-button value="portrait">竖屏</el-radio-button>
+                <el-radio-button value="landscape">横屏</el-radio-button>
+              </el-radio-group>
+              <span class="mx-1 h-5 w-px shrink-0 bg-gray-200" aria-hidden="true" />
+              <span class="shrink-0 text-xs leading-tight whitespace-nowrap text-gray-500">类型</span>
+              <el-radio-group v-model="contentStyle" size="small" class="shrink-0">
+                <el-radio-button value="science_child">童趣科普</el-radio-button>
+                <el-radio-button value="life_experience">生活经验</el-radio-button>
+              </el-radio-group>
+              <span class="mx-1 h-5 w-px shrink-0 bg-gray-200" aria-hidden="true" />
+              <el-button size="small" plain class="shrink-0" @click="applyLandscapeLifePreset">
+                横屏生活 · 6 分钟
+              </el-button>
+            </div>
           </el-form-item>
-          <el-form-item label="内容类型" :label-width="FORM_LABEL_WIDTH" class="mb-0!">
-            <el-radio-group v-model="contentStyle" size="small">
-              <el-radio-button value="science_child">童趣科普</el-radio-button>
-              <el-radio-button value="life_experience">生活经验</el-radio-button>
-            </el-radio-group>
+          <el-form-item label="生成参数">
+            <div class="flex w-full min-w-0 flex-nowrap items-center gap-2 overflow-x-auto pb-0.5">
+              <span class="shrink-0 text-xs leading-tight whitespace-nowrap text-gray-500">单镜 (秒)</span>
+              <el-input-number
+                v-model="segmentTargetSec"
+                :min="0"
+                :max="60"
+                :step="1"
+                controls-position="right"
+                class="w-28! shrink-0"
+              />
+              <span class="mx-1 h-5 w-px shrink-0 bg-gray-200" aria-hidden="true" />
+              <span class="shrink-0 text-xs leading-tight whitespace-nowrap text-gray-500">标题上限</span>
+              <el-input-number
+                v-model="maxTitleLength"
+                :min="8"
+                :max="48"
+                :step="1"
+                controls-position="right"
+                class="w-28! shrink-0"
+              />
+              <span class="mx-1 h-5 w-px shrink-0 bg-gray-200" aria-hidden="true" />
+              <span class="shrink-0 text-xs leading-tight whitespace-nowrap text-gray-500">口播字数</span>
+              <el-input-number
+                v-model="narrationTargetWords"
+                :min="NARRATION_WORDS_MIN"
+                :max="NARRATION_WORDS_MAX"
+                :step="50"
+                controls-position="right"
+                class="w-36! shrink-0"
+                @change="narrationWordsTouched = true"
+              />
+              <span class="mx-1 h-5 w-px shrink-0 bg-gray-200" aria-hidden="true" />
+              <span class="shrink-0 text-xs leading-tight whitespace-nowrap text-gray-500">标题优化</span>
+              <el-checkbox v-model="skipTitleOptimize" class="shrink-0">跳过</el-checkbox>
+            </div>
           </el-form-item>
-          <el-form-item label="快捷预设" :label-width="FORM_LABEL_WIDTH" class="mb-0!">
-            <el-button size="small" @click="applyLandscapeLifePreset">横屏生活 6 分钟</el-button>
-          </el-form-item>
-        </div>
-        <div v-if="!isMaterialJob" class="flex w-full flex-wrap items-start gap-x-4">
-          <el-form-item label="单镜(秒)" :label-width="FORM_LABEL_WIDTH" class="mb-0!">
-            <el-input-number
-              v-model="segmentTargetSec"
-              :min="0"
-              :max="60"
-              :step="1"
-              controls-position="right"
-              class="w-28!"
-            />
-          </el-form-item>
-          <el-form-item label="标题上限" :label-width="FORM_LABEL_WIDTH" class="mb-0!">
-            <el-input-number
-              v-model="maxTitleLength"
-              :min="8"
-              :max="48"
-              :step="1"
-              controls-position="right"
-              class="w-28!"
-            />
-          </el-form-item>
-          <el-form-item label="口播字数" :label-width="FORM_LABEL_WIDTH" class="mb-0!">
-            <el-input-number
-              v-model="narrationTargetWords"
-              :min="NARRATION_WORDS_MIN"
-              :max="NARRATION_WORDS_MAX"
-              :step="50"
-              controls-position="right"
-              class="w-32!"
-              @change="narrationWordsTouched = true"
-            />
-          </el-form-item>
-          <el-form-item label="标题优化" :label-width="FORM_LABEL_WIDTH" class="mb-0!">
-            <el-checkbox v-model="skipTitleOptimize">跳过</el-checkbox>
-          </el-form-item>
-        </div>
+        </template>
         <div v-else class="flex flex-wrap items-start gap-x-4">
           <el-form-item label="标题上限" :label-width="FORM_LABEL_WIDTH" class="mb-0!">
             <el-input-number

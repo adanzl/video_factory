@@ -18,6 +18,7 @@ from app.utils.media import (
     NARRATION_CHARS_PER_SEC,
     default_narration_target_words,
     min_narration_chars_for_target,
+    segment_text_char_cap,
 )
 from app.services.llm.llm_script_timeline import (
     VideoTimeline,
@@ -194,9 +195,48 @@ def _storyboard_role(content_style: str) -> str:
 
 
 def _narration_word_range(target: int) -> tuple[int, int]:
+    """口播字数区间：下限与校验一致，上限为理想目标 + 余量。"""
     margin = max(50, int(target * 0.1))
-    floor = min_narration_chars_for_target(target)
-    return max(floor, target - margin), target + margin
+    hard_min = min_narration_chars_for_target(target)
+    return hard_min, target + margin
+
+
+def _storyboard_length_budget(
+    *,
+    narration_target: int,
+    segment_target_sec: float,
+    content_style: str,
+) -> str:
+    hard_min = min_narration_chars_for_target(narration_target)
+    layers = (
+        "场景+问题+做法/感悟"
+        if content_style == CONTENT_STYLE_LIFE_EXPERIENCE
+        else "感叹+科普点+比喻/拟声"
+    )
+    if segment_target_sec <= 0:
+        seg_count = max(6, (hard_min + 39) // 40)
+        per_min = max(30, (hard_min + seg_count - 1) // seg_count)
+        return (
+            f"【字数预算】口播理想约 {narration_target} 字，硬性下限 {hard_min} 字（低于即不合格）。\n"
+            f"建议至少 {seg_count} 个 segments，每段至少 {per_min} 字；"
+            f"各段 text 字数之和须 ≥ {hard_min}。\n"
+            f"每段用「{layers}」三层写法撑满，禁止整段一句带过。\n"
+            "【生成顺序】先按预算写满各段 segments，再拼接 narration，最后核对 word_count。"
+        )
+    cap = segment_text_char_cap(segment_target_sec)
+    seg_count = max(5, (hard_min + cap - 1) // cap)
+    per_min = max(25, (hard_min + seg_count - 1) // seg_count)
+    per_target = min(cap, max(per_min, int(cap * 0.8)))
+    sum_floor = per_min * seg_count
+    sec = int(segment_target_sec) if segment_target_sec == int(segment_target_sec) else segment_target_sec
+    return (
+        f"【字数预算】口播理想约 {narration_target} 字，硬性下限 {hard_min} 字（低于即不合格）。\n"
+        f"单镜上限 {sec}s，每段 text 上限约 {cap} 字。\n"
+        f"须至少 {seg_count} 个 segments，每段至少 {per_min} 字、建议 {per_target}-{cap} 字；"
+        f"各段下限之和约 {sum_floor} 字（须达到硬性下限 {hard_min}）。\n"
+        f"每段用「{layers}」三层写法撑满，禁止整段一句带过。\n"
+        "【生成顺序】先按预算写满各段 segments，再拼接 narration，最后核对 word_count。"
+    )
 
 
 def _append_supplementary_to_user(user: str, supplementary_info: str | None) -> str:
@@ -300,14 +340,9 @@ def build_storyboard_prompts(
     narration_hard_min = min_narration_chars_for_target(narration_word_target)
     title_rule, title_user_prefix = _title_rule(title, max_title)
     length_rule = (
-        f"narration 总字数硬性 {narration_word_min}-{narration_word_max} 字（不含空格换行），"
-        f"低于 {narration_hard_min} 字视为不合格；"
+        f"narration 理想约 {narration_word_target} 字，硬性下限 {narration_hard_min} 字、"
+        f"上限 {narration_word_max} 字（不含空格换行），低于 {narration_hard_min} 字视为不合格；"
         f"{_narration_length_rule(profile_style)}"
-    )
-    seg_layers = (
-        "各段用「场景+问题+做法/感悟」三层写法撑满字数。"
-        if profile_style == CONTENT_STYLE_LIFE_EXPERIENCE
-        else "各段用「感叹+科普点+比喻」三层写法撑满字数。"
     )
     system = (
         f"{_storyboard_role(profile_style)}输出JSON，字段：title, narration, word_count, "
@@ -329,13 +364,15 @@ def build_storyboard_prompts(
         split_hint = f"并按单镜口播上限{sec}秒动态切分分镜"
     else:
         split_hint = "并按口播内容逻辑动态切分分镜"
-    seg_hint_count = max(4, narration_word_min // (35 if profile_style == CONTENT_STYLE_LIFE_EXPERIENCE else 45))
-    per_seg_min = max(25, narration_word_min // seg_hint_count)
+    length_budget = _storyboard_length_budget(
+        narration_target=narration_word_target,
+        segment_target_sec=target,
+        content_style=profile_style,
+    )
     user = _append_supplementary_to_user(
         (
-            f"{title_user_prefix}、visual_style 与分镜，{split_hint}。"
-            f"口播总字数须在 {narration_word_min}-{narration_word_max} 字之间，至少 {narration_hard_min} 字。"
-            f"建议切分约 {seg_hint_count} 段，每段至少 {per_seg_min} 字，{seg_layers}"
+            f"{title_user_prefix}、visual_style 与分镜，{split_hint}。\n\n"
+            f"{length_budget}\n\n"
             "每段 visual_brief 写清该镜画面主旨，便于下一步扩写文生图提示词。"
         ),
         supplementary_info,
@@ -401,11 +438,14 @@ def build_material_script_prompts(
     timeline = _resolve_video_timeline(video_timeline, script=script)
     if timeline:
         narration_word_min, narration_word_max = narration_range_for_timeline(timeline)
+        narration_hard_min = narration_word_min
+        narration_word_target = (narration_word_min + narration_word_max) // 2
     else:
         narration_word_target = (
             narration_target_words if narration_target_words is not None else 800
         )
         narration_word_min, narration_word_max = _narration_word_range(narration_word_target)
+        narration_hard_min = min_narration_chars_for_target(narration_word_target)
     title_rule, title_user_prefix = _title_rule(title, max_title)
     segment_rule = (
         f"segments 必须恰好 {len(timeline.slots)} 条，与画面时间表逐段一一对应；"
@@ -425,8 +465,8 @@ def build_material_script_prompts(
         else "禁止开头自我介绍；第一句直接进入主题。"
     )
     length_rule = (
-        f"narration 总字数硬性 {narration_word_min}-{narration_word_max} 字（不含空格换行），"
-        f"低于 {narration_word_min} 字视为不合格；"
+        f"narration 理想约 {narration_word_target} 字，硬性下限 {narration_hard_min} 字、"
+        f"上限 {narration_word_max} 字（不含空格换行），低于 {narration_hard_min} 字视为不合格；"
         f"{_MATERIAL_NARRATION_LENGTH_RULE}"
     )
     system = (
@@ -443,16 +483,16 @@ def build_material_script_prompts(
     )
     user_parts = [
         f"{title_user_prefix} narration 与分句 segments。",
-        f"口播总字数须在 {narration_word_min}-{narration_word_max} 字之间，至少 {narration_word_min} 字。",
     ]
     if not timeline:
-        seg_hint = max(4, narration_word_min // 45)
-        per_seg_min = max(25, narration_word_min // seg_hint)
         user_parts.append(
-            f"建议切分约 {seg_hint} 段，每段至少 {per_seg_min} 字，"
-            f"各段用「感叹+科普点+比喻」三层写法撑满字数。"
+            _storyboard_length_budget(
+                narration_target=narration_word_target,
+                segment_target_sec=0,
+                content_style=CONTENT_STYLE_SCIENCE_CHILD,
+            )
         )
-    user = _append_supplementary_to_user("\n".join(user_parts), supplementary_info)
+    user = _append_supplementary_to_user("\n\n".join(user_parts), supplementary_info)
     if timeline:
         user = append_timeline_to_user(user, timeline)
     if feedback:

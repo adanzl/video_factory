@@ -114,6 +114,20 @@ class JobMgr:
             job_log_repo.append_log(conn, job_id, "api", f"updated fields: {', '.join(updates)}")
             return job
 
+    def reset_job(self, job_id: int) -> dict:
+        """强制将任务状态重置为 pending（不清除 stage 与产物）。"""
+        with connection() as conn:
+            job_repo.get_job(conn, job_id)
+            job = job_repo.update_job(
+                conn,
+                job_id,
+                status="pending",
+                fail_stage=None,
+                error_message=None,
+            )
+            job_log_repo.append_log(conn, job_id, "api", "job status reset to pending")
+            return job
+
     def delete_job(self, job_id: int) -> None:
         with connection() as conn:
             job_repo.delete_job(conn, job_id)
