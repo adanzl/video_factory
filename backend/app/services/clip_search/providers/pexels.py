@@ -37,6 +37,18 @@ def _pick_video_file(files: list[dict]) -> dict | None:
     return candidates[0]
 
 
+def _pexels_title(item: dict, video_id: object) -> str:
+    url = str(item.get("url") or "").rstrip("/")
+    if url:
+        slug = url.rsplit("/", 1)[-1]
+        # 如 discover-authentic-chinese-street-culture-36382074 → 可读标题
+        if slug and not slug.isdigit():
+            parts = slug.rsplit("-", 1)
+            text = parts[0] if len(parts) == 2 and parts[1].isdigit() else slug
+            return text.replace("-", " ").strip() or f"Pexels #{video_id}"
+    return f"Pexels #{video_id}"
+
+
 def search_pexels(
     query: str,
     *,
@@ -70,7 +82,7 @@ def search_pexels(
             StockClip(
                 id=f"pexels:{video_id}",
                 provider="pexels",
-                title=str(item.get("url") or f"Pexels #{video_id}"),
+                title=_pexels_title(item, video_id),
                 preview_url=str(item.get("image") or picked["link"]),
                 video_url=str(picked["link"]),
                 page_url=str(item.get("url") or "https://www.pexels.com"),
