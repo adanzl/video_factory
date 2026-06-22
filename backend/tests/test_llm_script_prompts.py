@@ -8,7 +8,7 @@ from app.services.llm.llm_script_prompts import (
     build_storyboard_prompts,
 )
 from app.utils.job_info import CONTENT_STYLE_LIFE_EXPERIENCE
-from app.utils.media import min_narration_chars_for_target
+from app.utils.media import min_narration_chars_for_target, narration_target_for_minutes
 
 
 def test_narration_word_range_aligns_min_with_validation():
@@ -29,6 +29,19 @@ def test_storyboard_length_budget_requires_enough_segments():
     assert str(hard_min) in budget
     assert "segments" in budget
     assert "字数预算" in budget
+
+
+def test_storyboard_length_budget_life_28s_needs_many_segments():
+    target = narration_target_for_minutes(6.0)
+    assert target == 1646
+    budget = _storyboard_length_budget(
+        narration_target=target,
+        segment_target_sec=28.0,
+        content_style=CONTENT_STYLE_LIFE_EXPERIENCE,
+    )
+    assert "12 个 segments" in budget
+    assert "140" in budget
+    assert "禁止用 3～5 个长段" in budget
 
 
 def test_build_storyboard_prompts_includes_length_budget():
