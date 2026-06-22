@@ -2,6 +2,7 @@ from app.utils.media import (
     body_duration_for_target_final,
     default_narration_target_words,
     estimate_narration_target_words,
+    narration_accept_min_chars,
     narration_target_for_minutes,
     segment_text_char_cap,
 )
@@ -31,6 +32,11 @@ def test_segment_text_char_cap():
 def test_narration_target_for_minutes_uses_five_chars_per_sec():
     # 6 分钟成片：358s 正文 × 5 × 0.92 = 1646
     assert narration_target_for_minutes(6.0) == 1646
+
+
+def test_narration_accept_min_chars():
+    assert narration_accept_min_chars(1646) == 1399
+    assert narration_accept_min_chars(404) == 343
 
 
 def test_estimate_narration_target_words_clamps():

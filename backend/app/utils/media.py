@@ -16,7 +16,11 @@ NARRATION_CHARS_PER_SEC = 5.0
 NARRATION_FILL_RATIO = 0.92
 NARRATION_MIN_CHARS = 200
 NARRATION_MAX_CHARS = 3000
-# 略低于硬性下限时放行（与 LLM 实际产出对齐，避免 90% 附近反复打回）
+# 口播验收下限：目标字数的 85%（LLM 重试与 script 校验对齐）
+NARRATION_ACCEPT_RATIO = 0.85
+# 绝对硬底：目标字数的 67%（主题实在撑不满时带警告放行）
+NARRATION_HARD_MIN_RATIO = 0.67
+# 略低于绝对硬底时放行（避免 90% 硬底附近反复打回）
 NARRATION_SOFT_MIN_RATIO = 0.90
 
 
@@ -65,9 +69,15 @@ def default_narration_target_words(settings: Config | None = None) -> int:
 
 
 def min_narration_chars_for_target(narration_target_words: int | None = None) -> int:
-    """口播字数校验下限（与 standard script 阶段一致）。"""
+    """口播绝对硬底（主题撑不满时最低可接受，带警告）。"""
     target = max(NARRATION_MIN_CHARS, narration_target_words or default_narration_target_words())
-    return max(NARRATION_MIN_CHARS, int(target * 0.67))
+    return max(NARRATION_MIN_CHARS, int(target * NARRATION_HARD_MIN_RATIO))
+
+
+def narration_accept_min_chars(narration_target_words: int | None = None) -> int:
+    """口播验收下限（LLM 须达到；与 standard script 阶段重试阈值一致）。"""
+    target = max(NARRATION_MIN_CHARS, narration_target_words or default_narration_target_words())
+    return max(NARRATION_MIN_CHARS, int(target * NARRATION_ACCEPT_RATIO))
 
 
 def narration_soft_min_chars(required_chars: int) -> int:

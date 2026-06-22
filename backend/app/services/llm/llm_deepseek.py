@@ -31,6 +31,7 @@ from app.services.llm.llm_topics import (
 from app.utils.media import (
     default_narration_target_words,
     min_narration_chars_for_target,
+    narration_accept_min_chars,
     storyboard_compact_output,
 )
 
@@ -90,7 +91,7 @@ def _min_narration_chars_for_script(
         lo, _ = narration_range_for_timeline(timeline)
         return lo
     target = narration_target_words or default_narration_target_words()
-    return min_narration_chars_for_target(target)
+    return narration_accept_min_chars(target)
 
 
 def _storyboard_max_tokens(

@@ -19,6 +19,7 @@ from app.utils.job_info import content_style_from_job
 from app.utils.media import (
     default_narration_target_words,
     min_narration_chars_for_target,
+    narration_accept_min_chars,
     narration_soft_min_chars,
     segment_text_char_cap,
 )
@@ -31,6 +32,10 @@ MIN_ACCEPT_NARRATION_CHARS = 200
 
 def _min_narration_chars(narration_target_words: int | None) -> int:
     return min_narration_chars_for_target(narration_target_words)
+
+
+def _accept_narration_chars(narration_target_words: int) -> int:
+    return narration_accept_min_chars(narration_target_words)
 
 
 def _narration_retry_min_chars(narration_target_words: int) -> int:
@@ -194,13 +199,14 @@ def _validation_feedback(
     exc: ScriptValidationError,
     *,
     min_chars: int,
+    accept_chars: int,
     segment_target_sec: float | None,
     narration_target_words: int,
     content_style: str,
 ) -> str:
     msg = str(exc)
     if "narration too short" in msg:
-        return _narration_short_feedback(exc, min_chars=min_chars)
+        return _narration_short_feedback(exc, min_chars=accept_chars)
     if segment_target_sec and segment_target_sec > 0:
         if "segment text exceeds" in msg or "too few segments" in msg:
             cap = segment_text_char_cap(segment_target_sec)
@@ -236,41 +242,52 @@ def _validate_script(
     segment_target_sec: float | None = None,
     max_title_length: int | None = None,
     min_narration_chars: int | None = None,
+    accept_narration_chars: int | None = None,
+    narration_target_words: int | None = None,
     content_style: str | None = None,
     require_image_prompt: bool = True,
+    check_narration: bool = True,
 ) -> list[str]:
     settings = get_settings()
     seg_target = (
         settings.segment_target_sec if segment_target_sec is None else segment_target_sec
     )
     max_len = settings.max_title_length if max_title_length is None else max_title_length
-    required_narration_chars = (
+    hard_floor = (
         _min_narration_chars(None) if min_narration_chars is None else min_narration_chars
     )
+    accept_min = accept_narration_chars if accept_narration_chars is not None else hard_floor
     narration = script.get("narration", "")
     segments = script.get("segments") or []
     warnings: list[str] = []
     chars = _narration_chars(narration)
-    if chars < required_narration_chars:
-        soft_min = narration_soft_min_chars(required_narration_chars)
-        retry_min = max(MIN_ACCEPT_NARRATION_CHARS, int(required_narration_chars * 0.8))
-        if chars >= soft_min:
-            warnings.append(
-                f"narration slightly short ({chars} < {required_narration_chars}), continuing"
-            )
-        elif chars >= retry_min:
+    if check_narration:
+        if chars >= accept_min:
+            pass
+        elif narration_target_words is not None and chars >= _narration_retry_min_chars(
+            narration_target_words
+        ):
             raise ScriptValidationError(
-                f"narration too short: {chars} chars (need >= {required_narration_chars})",
+                f"narration too short: {chars} chars (need >= {accept_min})",
                 retryable=True,
+            )
+        elif narration_target_words is None and chars >= int(hard_floor * 0.8):
+            raise ScriptValidationError(
+                f"narration too short: {chars} chars (need >= {accept_min})",
+                retryable=True,
+            )
+        elif chars >= narration_soft_min_chars(hard_floor):
+            warnings.append(
+                f"narration below target ({chars} < {accept_min}), continuing"
+            )
+        elif chars >= MIN_ACCEPT_NARRATION_CHARS:
+            warnings.append(
+                f"cannot reach {accept_min} chars ({chars} got), continuing with shorter copy"
             )
         elif chars < MIN_ACCEPT_NARRATION_CHARS:
             raise ScriptValidationError(
                 f"narration too short: {chars} chars (need >= {MIN_ACCEPT_NARRATION_CHARS})",
                 retryable=False,
-            )
-        else:
-            warnings.append(
-                f"cannot reach {required_narration_chars} chars ({chars} got), continuing with shorter copy"
             )
     if not segments:
         raise ScriptValidationError("no segments", retryable=False)
@@ -310,11 +327,11 @@ def _validate_script(
                 f"{overflow}",
                 retryable=True,
             )
-        needed = max(1, (chars + cap - 1) // cap)
+        needed = max(1, (narration_target_words + cap - 1) // cap) if narration_target_words else max(1, (chars + cap - 1) // cap)
         if len(segments) < needed:
             raise ScriptValidationError(
                 f"too few segments: {len(segments)} (need >= {needed} for "
-                f"{seg_target}s/segment cap, {chars} chars narration)",
+                f"{seg_target}s/segment cap, target {narration_target_words or chars} chars narration)",
                 retryable=True,
             )
     title = _title_chars(script.get("title") or "")
@@ -360,6 +377,7 @@ class ScriptStage(StageExecutor):
                     f"(from target_final={get_settings().target_final_duration_sec}s)",
                 )
         min_narration_chars = _min_narration_chars(narration_target_words)
+        accept_narration_chars = _accept_narration_chars(narration_target_words)
         content_style = content_style_from_job(ctx.job)
         last_exc: Exception | None = None
         script: dict | None = None
@@ -378,7 +396,7 @@ class ScriptStage(StageExecutor):
                 job=ctx.job,
                 existing_script=script,
                 retry_scope=retry_scope,
-                generate_image_prompts=generate_image_prompts,
+                generate_image_prompts=False,
             )
             _log_llm_timing(ctx.job["id"], self.name, script)
             try:
@@ -387,25 +405,24 @@ class ScriptStage(StageExecutor):
                     segment_target_sec=segment_target_sec,
                     max_title_length=max_title_length,
                     min_narration_chars=min_narration_chars,
+                    accept_narration_chars=accept_narration_chars,
+                    narration_target_words=narration_target_words,
                     content_style=content_style,
-                    require_image_prompt=generate_image_prompts,
+                    require_image_prompt=False,
                 )
                 break
             except ScriptValidationError as exc:
                 last_exc = exc
                 retry_scope = _validation_retry_scope(exc)
-                if retry_scope == "image_prompts":
-                    feedback = str(exc)
-                else:
-                    feedback = _validation_feedback(
-                        exc,
-                        min_chars=min_narration_chars,
-                        segment_target_sec=segment_target_sec,
-                        narration_target_words=narration_target_words,
-                        content_style=content_style,
-                    )
-                    if retry_scope == "storyboard":
-                        script = None
+                feedback = _validation_feedback(
+                    exc,
+                    min_chars=min_narration_chars,
+                    accept_chars=accept_narration_chars,
+                    segment_target_sec=segment_target_sec,
+                    narration_target_words=narration_target_words,
+                    content_style=content_style,
+                )
+                script = None
                 with connection() as conn:
                     job_log_repo.append_log(
                         conn,
@@ -416,6 +433,54 @@ class ScriptStage(StageExecutor):
                     )
         if script is None:
             raise last_exc or RuntimeError("script generation failed")
+
+        if generate_image_prompts:
+            prompt_feedback: str | None = None
+            for attempt in range(4):
+                try:
+                    if attempt == 0:
+                        llm_mgr.fill_image_prompts(
+                            script,
+                            supplementary_info=supplementary_info,
+                            job=ctx.job,
+                        )
+                    else:
+                        llm_mgr.generate_script(
+                            title,
+                            feedback=prompt_feedback,
+                            supplementary_info=supplementary_info,
+                            job=ctx.job,
+                            existing_script=script,
+                            retry_scope="image_prompts",
+                            generate_image_prompts=True,
+                        )
+                    _validate_script(
+                        script,
+                        segment_target_sec=segment_target_sec,
+                        max_title_length=max_title_length,
+                        min_narration_chars=min_narration_chars,
+                        accept_narration_chars=accept_narration_chars,
+                        narration_target_words=narration_target_words,
+                        content_style=content_style,
+                        require_image_prompt=True,
+                        check_narration=False,
+                    )
+                    break
+                except ScriptValidationError as exc:
+                    last_exc = exc
+                    if "image_prompt" not in str(exc):
+                        raise
+                    prompt_feedback = str(exc)
+                    with connection() as conn:
+                        job_log_repo.append_log(
+                            conn,
+                            ctx.job["id"],
+                            self.name,
+                            f"image_prompt rejected (attempt {attempt + 1}): {exc}",
+                            level="warning",
+                        )
+            else:
+                raise last_exc or RuntimeError("image prompt generation failed")
 
         max_len = (
             max_title_length
@@ -455,6 +520,7 @@ class ScriptStage(StageExecutor):
             script.pop("supplementary_info", None)
 
         script["word_count"] = _narration_chars(script.get("narration", ""))
+        script["narration_target_words"] = narration_target_words
         resolved_seg_target = (
             segment_target_sec
             if segment_target_sec is not None
