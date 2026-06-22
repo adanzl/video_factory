@@ -8,6 +8,13 @@ from app.services.clip_search.providers._http import get_json
 _PIXABAY_SEARCH = "https://pixabay.com/api/videos/"
 
 
+def _preview_url(item: dict) -> str:
+    picture_id = item.get("picture_id")
+    if picture_id:
+        return f"https://i.vimeocdn.com/video/{picture_id}_640x360.jpg"
+    return ""
+
+
 def _pick_video_variant(videos: dict) -> dict | None:
     for key in ("medium", "small", "large", "tiny"):
         row = videos.get(key)
@@ -51,7 +58,7 @@ def search_pixabay(
                 id=f"pixabay:{video_id}",
                 provider="pixabay",
                 title=title,
-                preview_url=str(picked["url"]),
+                preview_url=_preview_url(item),
                 video_url=str(picked["url"]),
                 page_url=str(item.get("pageURL") or "https://pixabay.com"),
                 license="Pixabay License",
