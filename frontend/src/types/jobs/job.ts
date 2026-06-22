@@ -5,6 +5,10 @@ export interface FinalAsset {
   cost_time?: number | null;
 }
 
+export interface JobInfo {
+  orientation?: "auto" | "portrait" | "landscape";
+}
+
 export interface JobListItem {
   id: number;
   title: string;
@@ -21,6 +25,7 @@ export interface JobDetail extends JobListItem {
   fail_stage?: string | null;
   retry_count?: number;
   skip_publish?: boolean;
+  info?: JobInfo | null;
   script_json?: unknown;
   quality_report?: unknown;
   cover_path?: string | null;

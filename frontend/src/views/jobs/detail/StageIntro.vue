@@ -122,8 +122,17 @@ const PREVIEW_MAX_WIDTH_PX = 420;
 
 const submitting = ref(false);
 const holdTailSec = ref(0.35);
+
+function defaultIntroOrientation(job: JobDetail): "auto" | "portrait" | "landscape" {
+  const saved = job.info?.orientation;
+  if (saved === "auto" || saved === "portrait" || saved === "landscape") {
+    return saved;
+  }
+  return job.pipeline === "material" ? "auto" : "portrait";
+}
+
 const introOrientation = ref<"auto" | "portrait" | "landscape">(
-  props.job.pipeline === "material" ? "auto" : "portrait"
+  defaultIntroOrientation(props.job)
 );
 const actualDuration = ref<number | null>(null);
 const loadError = ref("");
@@ -219,16 +228,14 @@ const handleRun = async (toEnd: boolean) => {
       id: number;
       to_end: boolean;
       hold_tail_sec?: number;
-      orientation?: "portrait" | "landscape";
+      orientation: "auto" | "portrait" | "landscape";
     } = {
       id: props.job.id,
       to_end: toEnd,
+      orientation: introOrientation.value,
     };
     if (Number.isFinite(holdTailSec.value) && holdTailSec.value >= 0) {
       payload.hold_tail_sec = holdTailSec.value;
-    }
-    if (introOrientation.value !== "auto") {
-      payload.orientation = introOrientation.value;
     }
     await runJobStageAction("intro", payload);
     ElMessage.success(`已提交${actionLabel}，任务已开始执行`);
@@ -239,6 +246,15 @@ const handleRun = async (toEnd: boolean) => {
     submitting.value = false;
   }
 };
+
+watch(
+  () => props.job.info?.orientation,
+  (orientation) => {
+    if (orientation === "auto" || orientation === "portrait" || orientation === "landscape") {
+      introOrientation.value = orientation;
+    }
+  }
+);
 
 watch(
   () => props.job.intro_path,

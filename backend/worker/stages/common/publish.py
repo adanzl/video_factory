@@ -1,35 +1,21 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from app.repositories import job_log_repo
 from app.repositories.connection import connection
-from app.services.publish.publish_mgr import publish_mgr
-from app.utils.final_asset import resolve_final_path_file
 from worker.context import JobContext
 from worker.stages.base import StageExecutor
 
 
 class PublishStage(StageExecutor):
+    """发布阶段：不再调用平台 API，仅标记任务完成（素材在发布页手动下载/复制）。"""
+
     name = "publish"
 
     def run(self, ctx: JobContext) -> None:
-        if ctx.job.get("skip_publish"):
-            with connection() as conn:
-                job_log_repo.append_log(conn, ctx.job["id"], self.name, "skipped (skip_publish)")
-            return
-        video_file = resolve_final_path_file(ctx.job.get("final_path"))
-        video_path = Path(video_file or ctx.rel("final.mp4"))
-        cover_path = Path(ctx.job["cover_path"]) if ctx.job.get("cover_path") else None
-        result = publish_mgr.publish(
-            title=ctx.job["title"],
-            video_path=video_path,
-            cover_path=cover_path,
-        )
         with connection() as conn:
             job_log_repo.append_log(
                 conn,
                 ctx.job["id"],
                 self.name,
-                f"publish result: {result.get('status')}",
+                "manual publish: copy description and download cover/final from publish page",
             )

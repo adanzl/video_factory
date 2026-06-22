@@ -20,6 +20,7 @@ from app.api.utils import (
 )
 from app.services.intro.size import parse_intro_orientation
 from app.services.job.job_mgr import JobBusyError, job_mgr
+from app.utils.job_info import normalize_orientation
 
 bp = Blueprint("api_jobs", __name__, url_prefix="/v_factory/api/jobs")
 
@@ -120,19 +121,30 @@ def regenerate_video_description_route():
     return json_ok(result)
 
 
-def _parse_intro_body() -> tuple[int, bool, float | None, str | None]:
+def _parse_intro_body() -> tuple[int, bool, float | None, str | None, str | None]:
     data = get_json_body()
+    raw_orientation = parse_optional_str(data, "orientation")
+    orientation_preference = None
+    if "orientation" in data:
+        normalized = normalize_orientation(raw_orientation)
+        if normalized is None:
+            raise APIError(
+                "orientation must be auto, portrait, or landscape",
+                status_code=400,
+            )
+        orientation_preference = normalized
     return (
         parse_id(data),
         parse_bool(data, "to_end", default=False),
         parse_optional_float(data, "hold_tail_sec", minimum=0.0, maximum=5.0),
-        parse_intro_orientation(parse_optional_str(data, "orientation")),
+        parse_intro_orientation(raw_orientation),
+        orientation_preference,
     )
 
 
 @bp.post("/intro")
 def run_intro_route():
-    job_id, to_end, hold_tail_sec, orientation = _parse_intro_body()
+    job_id, to_end, hold_tail_sec, orientation, orientation_preference = _parse_intro_body()
     return _accept_stage(
         job_id,
         lambda: job_mgr.run_intro(
@@ -140,6 +152,7 @@ def run_intro_route():
             to_end=to_end,
             hold_tail_sec=hold_tail_sec,
             orientation=orientation,
+            orientation_preference=orientation_preference,
         ),
     )
 

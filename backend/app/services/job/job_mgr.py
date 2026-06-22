@@ -12,7 +12,7 @@ from pathlib import Path
 from app.services.job.job_reset import prepare_for_action, prepare_job_rerun
 from app.repositories import job_log_repo, job_repo, segment_repo
 from app.repositories.connection import connection
-from app.utils.async_util import run_in_background
+from app.utils.job_info import default_orientation_for_pipeline, merge_job_info
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +80,10 @@ class JobMgr:
                 stage="script",
                 status="pending",
                 pipeline="standard",
+                info=merge_job_info(
+                    None,
+                    orientation=default_orientation_for_pipeline("standard"),
+                ),
             )
             job_log_repo.append_log(conn, job["id"], "title", f"created job: {cleaned}")
             return job
@@ -308,9 +312,19 @@ class JobMgr:
         to_end: bool = False,
         hold_tail_sec: float | None = None,
         orientation: str | None = None,
+        orientation_preference: str | None = None,
     ) -> dict:
         """生成片头。实现：worker/loop.run_intro → worker/stages/common/intro.py"""
         from worker.loop import run_intro
+
+        if orientation_preference is not None:
+            with connection() as conn:
+                job = job_repo.get_job(conn, job_id)
+                job_repo.update_job(
+                    conn,
+                    job_id,
+                    info=merge_job_info(job.get("info"), orientation=orientation_preference),
+                )
 
         return self._run_in_background(
             job_id,
