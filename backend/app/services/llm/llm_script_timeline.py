@@ -180,29 +180,59 @@ def _format_sec(value: float) -> str:
     return f"{value:.1f}"
 
 
+def slot_min_chars(max_chars: int) -> int:
+    return max(8, int(max_chars * 0.7))
+
+
+def slot_target_chars(max_chars: int) -> int:
+    return max(slot_min_chars(max_chars), int(max_chars * 0.85))
+
+
 def timeline_table_for_prompt(timeline: VideoTimeline) -> str:
     lines = [
-        "序号 | 起止(秒) | 时长 | 画面内容 | 本段字数上限",
-        "--- | --- | --- | --- | ---",
+        "序号 | 起止(秒) | 时长 | 画面内容 | 字数下限 | 建议字数 | 字数上限",
+        "--- | --- | --- | --- | --- | --- | ---",
     ]
     for slot in timeline.slots:
+        min_c = slot_min_chars(slot.max_chars)
+        target_c = slot_target_chars(slot.max_chars)
         lines.append(
             f"{slot.index} | {_format_sec(slot.start_sec)}-{_format_sec(slot.end_sec)} | "
-            f"{_format_sec(slot.duration_sec)}s | {slot.scene} | {slot.max_chars}"
+            f"{_format_sec(slot.duration_sec)}s | {slot.scene} | {min_c} | "
+            f"{target_c}-{slot.max_chars} | {slot.max_chars}"
         )
+    return "\n".join(lines)
+
+
+def timeline_length_budget_for_prompt(timeline: VideoTimeline) -> str:
+    lo, hi = narration_range_for_timeline(timeline)
+    total_max = sum(slot.max_chars for slot in timeline.slots)
+    sum_min = sum(slot_min_chars(slot.max_chars) for slot in timeline.slots)
+    lines = [
+        f"【字数预算】全片 narration 硬性 {lo}-{hi} 字（各段上限合计约 {total_max} 字）。",
+        f"各段字数下限之和为 {sum_min} 字；写作时每段须达到「字数下限」列，建议落在「建议字数」区间。",
+        "【每段三层写法，撑满该段时长】",
+        "① 童趣感叹或「你看」式互动，点名本段画面；",
+        "② 讲 1 个准确科普点（机制/原因/对比）；",
+        "③ 加一句比喻、拟声或生活联想（像积木、像气球那样）。",
+        "禁止整段只有一句短感叹（如「哇，好厉害呀」），禁止为省字合并多段画面。",
+        "【生成顺序】先按时间表逐段写满 segments（每段对照字数下限），"
+        "再原样拼接为 narration，最后统计 word_count；不足则当场扩写再输出。",
+    ]
     return "\n".join(lines)
 
 
 def timeline_system_clause(timeline: VideoTimeline) -> str:
     count = len(timeline.slots)
-    total_max = sum(slot.max_chars for slot in timeline.slots)
+    lo, hi = narration_range_for_timeline(timeline)
     return (
         f"用户提供了基底视频画面时间表（共{count}段），口播须与画面逐段严格对齐。"
         f"segments 必须恰好 {count} 条，segment_index 从 1 到 {count}，与时间表顺序一一对应；"
         "第 i 段 text 只讲第 i 段画面，禁止提前讲后续画面、禁止滞后讲上一段、禁止合并多段。"
         "禁止开场钩子、悬念反问（如「你知道吗」）、全片总起、结尾长篇回顾或清单式连读多届/多段。"
         "narration 第一句必须从第 1 段画面内容直接讲起（视频 0 秒即进入该段主题）。"
-        f"每段 text 宜控制在对应字数上限以内（全片合计约 {total_max} 字），略短更好；"
+        f"全片 narration 总字数硬性 {lo}-{hi} 字；每段须对照时间表「字数下限」列写满，"
+        "用「感叹+科普点+比喻/拟声」三层撑满该段时长，禁止敷衍短句。"
         "若届别+球名较长，优先写年份与球名，细节从简。"
         "各段 text 按顺序拼接须与 narration 完全一致。"
         "有补充信息时不得与时间表矛盾；时间表优先决定分段与讲什么。"
@@ -212,6 +242,7 @@ def timeline_system_clause(timeline: VideoTimeline) -> str:
 def append_timeline_to_user(user: str, timeline: VideoTimeline) -> str:
     return (
         f"{user}\n\n"
+        f"{timeline_length_budget_for_prompt(timeline)}\n\n"
         "基底视频画面时间表（segments 须与此表逐段对齐；JSON 为权威来源）：\n"
         f"{timeline_table_for_prompt(timeline)}\n\n"
         "时间表 JSON：\n"
@@ -221,10 +252,19 @@ def append_timeline_to_user(user: str, timeline: VideoTimeline) -> str:
 
 def narration_range_for_timeline(timeline: VideoTimeline) -> tuple[int, int]:
     total = sum(slot.max_chars for slot in timeline.slots)
-    margin = max(30, int(total * 0.08))
-    lo = max(100, total - margin)
-    hi = total + max(20, int(margin * 0.5))
+    margin_lo = min(max(20, int(total * 0.05)), max(8, int(total * 0.3)))
+    margin_hi = max(10, int(total * 0.12))
+    lo = max(8, total - margin_lo)
+    hi = total + margin_hi
     return lo, hi
+
+
+def _script_narration_chars(script: dict[str, Any]) -> int:
+    narration = str(script.get("narration") or "").strip()
+    if narration:
+        return _segment_char_count(narration)
+    segments = script.get("segments") or []
+    return _segment_char_count("".join(str(seg.get("text") or "") for seg in segments))
 
 
 def validate_timeline_script(
@@ -247,6 +287,7 @@ def validate_timeline_script(
 
     over_target: list[str] = []
     over_hard: list[str] = []
+    under_target: list[str] = []
     for seg, slot in zip(segments, timeline.slots, strict=False):
         seg_index = seg.get("segment_index")
         if seg_index != slot.index:
@@ -258,6 +299,11 @@ def validate_timeline_script(
                 [],
             )
         chars = _segment_char_count(str(seg.get("text") or ""))
+        min_chars = slot_min_chars(slot.max_chars)
+        if chars < min_chars:
+            under_target.append(
+                f"第{slot.index}段({slot.scene}) 仅{chars}字，宜至少{min_chars}字以铺满画面"
+            )
         hard_cap = hard_max_chars(slot.max_chars)
         if chars > slot.max_chars:
             detail = f"第{slot.index}段({slot.scene}) {chars}字>{slot.max_chars}字"
@@ -266,6 +312,8 @@ def validate_timeline_script(
                 over_hard.append(f"{detail}(硬上限{hard_cap}字)")
 
     warnings: list[str] = []
+    if under_target:
+        warnings.append("部分段落过短：" + "；".join(under_target))
     if over_target and not over_hard:
         warnings.append(
             "部分段落略超目标字数但可接受："
@@ -278,7 +326,24 @@ def validate_timeline_script(
                 "部分段落明显超长，已放宽校验放行："
                 + "；".join(over_hard)
             )
+        total_chars = _script_narration_chars(script)
+        lo, _ = narration_range_for_timeline(timeline)
+        if total_chars < lo:
+            warnings.append(
+                f"narration 总字数不足：当前 {total_chars} 字，目标至少 {lo} 字（已放宽放行）"
+            )
         return None, warnings
+
+    total_chars = _script_narration_chars(script)
+    lo, hi = narration_range_for_timeline(timeline)
+    if total_chars < lo:
+        return (
+            (
+                f"narration 总字数不足：当前 {total_chars} 字，需要 {lo}-{hi} 字以铺满基底视频；"
+                "请扩写每段口播，补充科普细节、童趣比喻或过渡句，禁止敷衍短稿。"
+            ),
+            warnings,
+        )
 
     if length_mode == "relaxed":
         still_bad = []

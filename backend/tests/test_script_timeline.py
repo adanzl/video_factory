@@ -4,6 +4,7 @@ import json
 
 from app.services.llm.llm_script_timeline import (
     hard_max_chars,
+    narration_range_for_timeline,
     parse_video_timeline,
     validate_timeline_script,
 )
@@ -88,3 +89,19 @@ def test_validate_timeline_script_warn_only_accepts():
     err, warnings = validate_timeline_script(script, timeline, length_mode="warn_only")
     assert err is None
     assert warnings
+
+
+def test_validate_timeline_script_rejects_total_too_short():
+    raw = json.dumps({"items": [{"start_sec": 0, "end_sec": 8, "label": "雪崩"}]})
+    timeline = parse_video_timeline(raw)
+    assert timeline is not None
+    lo, _ = narration_range_for_timeline(timeline)
+    short = "哇，雪崩好厉害呀。"
+    script = {
+        "narration": short,
+        "segments": [{"segment_index": 1, "text": short}],
+    }
+    err, _ = validate_timeline_script(script, timeline, length_mode="strict")
+    assert err is not None
+    assert "总字数不足" in err
+    assert str(lo) in err
