@@ -33,6 +33,18 @@ export const CLIP_PROVIDER_LABELS: Record<ClipProviderName, string> = {
   nasa: "NASA",
 };
 
+/** poster 必须是图片；若后端误传 mp4 则忽略 */
+export function clipPosterUrl(previewUrl?: string): string | undefined {
+  const trimmed = previewUrl?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  if (/\.(mp4|webm|m3u8)(\?|#|$)/i.test(trimmed)) {
+    return undefined;
+  }
+  return trimmed;
+}
+
 /** 经后端校验后播放；Pexels/Pixabay 等 CDN 直连，避免 gevent 代理大文件 */
 const DIRECT_PLAY_HOSTS = [
   "videos.pexels.com",

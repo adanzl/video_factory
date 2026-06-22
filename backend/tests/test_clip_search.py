@@ -220,6 +220,7 @@ def test_search_pixabay_parses_response(monkeypatch):
                     "id": 7,
                     "tags": "water, drop",
                     "duration": 11,
+                    "picture_id": "529927645",
                     "pageURL": "https://pixabay.com/videos/id-7/",
                     "user": "bob",
                     "videos": {
@@ -238,3 +239,5 @@ def test_search_pixabay_parses_response(monkeypatch):
     assert len(clips) == 1
     assert clips[0].title == "water"
     assert clips[0].provider == "pixabay"
+    assert clips[0].video_url.endswith("7.mp4")
+    assert clips[0].preview_url == "https://i.vimeocdn.com/video/529927645_640x360.jpg"
