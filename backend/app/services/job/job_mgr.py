@@ -12,6 +12,7 @@ from pathlib import Path
 from app.services.job.job_reset import prepare_for_action, prepare_job_rerun
 from app.repositories import job_log_repo, job_repo, segment_repo
 from app.repositories.connection import connection
+from app.utils.async_util import run_in_background
 from app.utils.job_info import default_orientation_for_pipeline, merge_job_info
 
 logger = logging.getLogger(__name__)
