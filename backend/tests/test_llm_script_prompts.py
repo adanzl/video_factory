@@ -8,7 +8,11 @@ from app.services.llm.llm_script_prompts import (
     build_storyboard_prompts,
 )
 from app.utils.job_info import CONTENT_STYLE_LIFE_EXPERIENCE
-from app.utils.media import min_narration_chars_for_target, narration_target_for_minutes
+from app.utils.media import (
+    min_narration_chars_for_target,
+    narration_target_for_minutes,
+    storyboard_compact_output,
+)
 
 
 def test_narration_word_range_aligns_min_with_validation():
@@ -53,3 +57,21 @@ def test_build_storyboard_prompts_includes_length_budget():
     )
     assert "字数预算" in prompts["user"]
     assert "882" in prompts["user"] or str(min_narration_chars_for_target(1318)) in prompts["user"]
+
+
+def test_storyboard_compact_output_for_landscape_life_preset():
+    target = narration_target_for_minutes(6.0)
+    assert storyboard_compact_output(target, 28.0) is True
+
+
+def test_build_storyboard_prompts_compact_omits_narration_field():
+    prompts = build_storyboard_prompts(
+        "测试标题",
+        narration_target_words=1646,
+        segment_target_sec=28.0,
+        compact_output=True,
+    )
+    assert "不要输出 narration" in prompts["system"]
+    assert "narration, word_count, visual_style" not in prompts["system"]
+    assert "JSON 输出样例" in prompts["system"]
+    assert "segment_index" in prompts["system"]

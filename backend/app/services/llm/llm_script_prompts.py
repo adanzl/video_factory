@@ -38,6 +38,64 @@ from app.services.llm.llm_script_title import (
 
 MIN_IMAGE_PROMPT_CHARS = 300
 
+# DeepSeek JSON Output 要求 prompt 含 json 字样并给出样例：
+# https://api-docs.deepseek.com/zh-cn/guides/json_mode
+_STORYBOARD_JSON_EXAMPLE = """{
+  "title": "标题示例",
+  "narration": "第一段口播第二段口播",
+  "word_count": 12,
+  "visual_style": "画风定调一句话",
+  "segments": [
+    {
+      "segment_index": 1,
+      "text": "第一段口播",
+      "visual_brief": "画面主旨描述",
+      "visual_mode": "static_motion"
+    }
+  ]
+}"""
+
+_STORYBOARD_JSON_EXAMPLE_COMPACT = """{
+  "title": "标题示例",
+  "visual_style": "画风定调一句话",
+  "segments": [
+    {
+      "segment_index": 1,
+      "text": "第一段口播",
+      "visual_brief": "画面主旨",
+      "visual_mode": "static_motion"
+    }
+  ]
+}"""
+
+_IMAGE_PROMPTS_JSON_EXAMPLE = """{
+  "image_prompts": [
+    {
+      "segment_index": 1,
+      "image_prompt": "六层结构扩写...",
+      "motion_prompt": "轻微镜头推进"
+    }
+  ]
+}"""
+
+_MATERIAL_SCRIPT_JSON_EXAMPLE = """{
+  "title": "标题示例",
+  "narration": "完整口播全文",
+  "word_count": 8,
+  "segments": [
+    {"segment_index": 1, "text": "第一句口播"},
+    {"segment_index": 2, "text": "第二句口播"}
+  ]
+}"""
+
+
+def _json_output_clause(example: str) -> str:
+    return (
+        "请仅输出合法 JSON 对象（不要 markdown 代码块，不要解释文字）。"
+        "JSON 输出样例（字段名须一致，内容为示意）：\n"
+        f"{example}\n"
+    )
+
 _VISUAL_BRIEF_RULE = (
     "各段含segment_index,text,visual_brief,visual_mode=static_motion；"
     "各段text按顺序拼接须与narration全文一致。"
@@ -326,6 +384,7 @@ def build_storyboard_prompts(
     job: dict | None = None,
     orientation: str | None = None,
     content_style: str | None = None,
+    compact_output: bool = False,
 ) -> dict[str, str]:
     settings = get_settings()
     profile_orientation, profile_style = _resolve_script_profile(
@@ -345,24 +404,36 @@ def build_storyboard_prompts(
     narration_hard_min = min_narration_chars_for_target(narration_word_target)
     title_rule, title_user_prefix = _title_rule(title, max_title)
     length_rule = (
-        f"narration 理想约 {narration_word_target} 字，硬性下限 {narration_hard_min} 字、"
+        f"口播理想约 {narration_word_target} 字，硬性下限 {narration_hard_min} 字、"
         f"上限 {narration_word_max} 字（不含空格换行），低于 {narration_hard_min} 字视为不合格；"
         f"{_narration_length_rule(profile_style)}"
     )
+    if compact_output:
+        json_fields = "title, visual_style, segments"
+        narration_clause = (
+            "【紧凑输出】不要输出 narration 与 word_count 字段，各段 text 写全即可，后端会自动拼接。"
+            "每段 visual_brief 控制在 30-50 字，只写画面主旨，禁止冗长描写。"
+        )
+        word_count_clause = ""
+    else:
+        json_fields = "title, narration, word_count, visual_style, segments"
+        narration_clause = ""
+        word_count_clause = "word_count必须等于narration实际字数，不得虚报。"
     system = (
-        f"{_storyboard_role(profile_style)}输出JSON，字段：title, narration, word_count, "
-        "visual_style, segments。"
+        f"{_storyboard_role(profile_style)}输出JSON，字段：{json_fields}。"
         f"{title_rule}"
         f"{seg_rule}"
         f"{length_rule}"
+        f"{narration_clause}"
         f"narration口吻：{_narration_voice_rule(profile_style)}"
         f"{_structure_rule(orientation=profile_orientation, content_style=profile_style)}"
         "结构完整有开头结尾。"
         "禁止口播开头空泛自我介绍或冗长人设铺垫。"
         "各段text须与narration口吻一致。"
-        "word_count必须等于narration实际字数，不得虚报。"
+        f"{word_count_clause}"
         "本步只写口播与画面描述visual_brief，不写image_prompt。"
         f"{_supplementary_system_clause(supplementary_info)}"
+        f"{_json_output_clause(_STORYBOARD_JSON_EXAMPLE_COMPACT if compact_output else _STORYBOARD_JSON_EXAMPLE)}"
     )
     if target > 0:
         sec = _format_segment_target_sec(target)
@@ -378,7 +449,11 @@ def build_storyboard_prompts(
         (
             f"{title_user_prefix}、visual_style 与分镜，{split_hint}。\n\n"
             f"{length_budget}\n\n"
-            "每段 visual_brief 写清该镜画面主旨，便于下一步扩写文生图提示词。"
+            + (
+                "每段 visual_brief 30-50 字，写清画面主旨即可。"
+                if compact_output
+                else "每段 visual_brief 写清该镜画面主旨，便于下一步扩写文生图提示词。"
+            )
         ),
         supplementary_info,
     )
@@ -412,6 +487,7 @@ def build_image_prompts_prompts(
         "image_prompts为数组，每项含segment_index、image_prompt与motion_prompt。"
         f"{_image_prompt_rule(orientation=profile_orientation, content_style=profile_style)}"
         "image_prompts须覆盖输入的每一段，segment_index一一对应，不得遗漏。"
+        f"{_json_output_clause(_IMAGE_PROMPTS_JSON_EXAMPLE)}"
     )
     user = _append_supplementary_to_user(
         (
@@ -485,6 +561,7 @@ def build_material_script_prompts(
         "word_count 必须等于 narration 实际字数，禁止虚报。"
         f"{timeline_system_clause(timeline) if timeline else ''}"
         f"{_supplementary_system_clause(supplementary_info)}"
+        f"{_json_output_clause(_MATERIAL_SCRIPT_JSON_EXAMPLE)}"
     )
     user_parts = [
         f"{title_user_prefix} narration 与分句 segments。",
@@ -530,6 +607,9 @@ def build_narration_expand_prompts(
             "须保留 visual_style 与各段 visual_brief，仅扩写 text；"
             "禁止删除 visual_brief 或改成空字符串。"
         )
+        system += _json_output_clause(_STORYBOARD_JSON_EXAMPLE)
+    else:
+        system += _json_output_clause(_MATERIAL_SCRIPT_JSON_EXAMPLE)
     draft = {
         "title": script.get("title"),
         "narration": script.get("narration"),

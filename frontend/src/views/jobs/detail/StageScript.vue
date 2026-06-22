@@ -383,7 +383,7 @@ import { useErrorHandler } from "@/composables/useErrorHandler";
 import { copyText } from "@/utils/utils";
 
 const FORM_LABEL_WIDTH = "88px";
-const DEFAULT_SEGMENT_TARGET_SEC = 16;
+const DEFAULT_SEGMENT_TARGET_SEC = 28;
 const DEFAULT_MAX_TITLE_LENGTH = 24;
 const DEFAULT_NARRATION_TARGET_WORDS = defaultNarrationTargetWords();
 const DEFAULT_MATERIAL_NARRATION_TARGET_WORDS = 800;

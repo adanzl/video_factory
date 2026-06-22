@@ -24,7 +24,11 @@ from app.services.llm.llm_topics import (
     build_topic_user_prompt,
     parse_topics_payload,
 )
-from app.utils.media import default_narration_target_words, min_narration_chars_for_target
+from app.utils.media import (
+    default_narration_target_words,
+    min_narration_chars_for_target,
+    storyboard_compact_output,
+)
 
 __all__ = ["DeepSeekClient", "MIN_IMAGE_PROMPT_CHARS"]
 
@@ -32,6 +36,7 @@ logger = logging.getLogger(__name__)
 
 _NARRATION_LENGTH_RETRY_ATTEMPTS = 5
 _NARRATION_EXPAND_ATTEMPTS = 2
+_TRUNCATION_RETRY_ATTEMPTS = 3
 
 
 def _narration_char_count(text: str) -> int:
@@ -84,21 +89,67 @@ def _min_narration_chars_for_script(
     return min_narration_chars_for_target(target)
 
 
-def _storyboard_max_tokens(narration_target_words: int | None) -> int:
+def _storyboard_max_tokens(
+    narration_target_words: int | None,
+    *,
+    compact: bool,
+) -> int:
     """分镜 JSON 输出 token 预算（受 DEEPSEEK_MAX_TOKENS 上限约束）。"""
     settings = get_settings()
     target = narration_target_words or default_narration_target_words()
-    # 粗估：每字口播约 7 output token（narration + 段内 text + visual_brief + JSON 键名）
-    estimated = int(target * 7 + 2048)
     ceiling = settings.deepseek_max_tokens
-    if estimated > ceiling:
-        logger.warning(
-            "storyboard may need ~%d output tokens but DEEPSEEK_MAX_TOKENS=%d; "
-            "raise env if your API/model allows a higher output limit",
-            estimated,
-            ceiling,
-        )
+    if compact or target >= 900:
+        return ceiling
+    # 含 narration 重复字段时约 10 token/字
+    estimated = int(target * 10 + 2500)
     return min(ceiling, max(4096, estimated))
+
+
+def _assemble_storyboard_narration(data: dict[str, Any]) -> dict[str, Any]:
+    narration = str(data.get("narration") or "").strip()
+    segments = data.get("segments") or []
+    if not narration and segments:
+        ordered = sorted(
+            segments,
+            key=lambda seg: int(seg.get("segment_index") or seg.get("index") or 0),
+        )
+        narration = "".join(str(seg.get("text") or "") for seg in ordered)
+        data["narration"] = narration
+    data["word_count"] = _narration_char_count(str(data.get("narration") or ""))
+    return data
+
+
+def _truncation_feedback(*, compact: bool) -> str:
+    if compact:
+        return (
+            "上次 JSON 输出被截断（token 用尽）。"
+            "务必省略 narration/word_count，只输出 title、visual_style、segments；"
+            "每段 visual_brief 严格 30-50 字，确保 JSON 完整闭合。"
+        )
+    return (
+        "上次 JSON 输出被截断（token 用尽）。"
+        "请省略 narration/word_count 字段，只写 segments 内 text 与 visual_brief（每段 brief≤50字），"
+        "后端会自动拼接 narration。"
+    )
+
+
+def _empty_json_feedback() -> str:
+    return (
+        "上次 JSON Output 返回了空 content（DeepSeek 已知偶发问题，见官方 JSON Output 文档）。"
+        "请严格按 system 中的 JSON 样例输出完整对象，不要 markdown 代码块或解释文字。"
+    )
+
+
+def _parse_failure_feedback(exc: ValueError, *, compact: bool) -> str:
+    msg = str(exc)
+    if "empty response" in msg:
+        return _empty_json_feedback()
+    if "invalid JSON" in msg:
+        return (
+            "上次返回的不是合法 JSON。"
+            "请严格按 JSON 样例输出，确保括号闭合，不要 markdown 代码块。"
+        )
+    return _truncation_feedback(compact=compact)
 
 
 class DeepSeekClient(LLMClient):
@@ -111,7 +162,7 @@ class DeepSeekClient(LLMClient):
         self._base_url = settings.deepseek_base_url.rstrip("/")
         self._model = settings.deepseek_model
 
-    def _chat(self, system: str, user: str, *, max_tokens: int | None = None) -> str:
+    def _chat(self, system: str, user: str, *, max_tokens: int | None = None) -> tuple[str, str | None]:
         settings = get_settings()
         limit = settings.deepseek_max_tokens if max_tokens is None else max_tokens
         resp = self._requests.post(
@@ -134,13 +185,32 @@ class DeepSeekClient(LLMClient):
         resp.raise_for_status()
         choice = resp.json()["choices"][0]
         finish = choice.get("finish_reason")
+        content = choice.get("message", {}).get("content") or ""
         if finish == "length":
             logger.warning(
                 "LLM response truncated (finish_reason=length), max_tokens=%d model=%s",
                 limit,
                 self._model,
             )
-        return choice["message"]["content"]
+        return content, finish
+
+    def _chat_json(
+        self,
+        system: str,
+        user: str,
+        *,
+        max_tokens: int | None = None,
+    ) -> tuple[dict[str, Any], str | None]:
+        content, finish = self._chat(system, user, max_tokens=max_tokens)
+        if not content.strip():
+            raise ValueError("LLM returned empty response")
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"LLM returned invalid JSON: {exc}") from exc
+        if not isinstance(parsed, dict):
+            raise ValueError("LLM JSON response must be an object")
+        return parsed, finish
 
     def _expand_narration_if_needed(
         self,
@@ -157,7 +227,7 @@ class DeepSeekClient(LLMClient):
         default_mode = segments[0].get("visual_mode", "static_motion") if segments else "static_motion"
         for _ in range(_NARRATION_EXPAND_ATTEMPTS):
             prompts = build_narration_expand_prompts(current, min_chars=min_chars, mode=mode)
-            expanded = json.loads(self._chat(prompts["system"], prompts["user"]))
+            expanded, _ = self._chat_json(prompts["system"], prompts["user"])
             if "segments" not in expanded:
                 break
             if mode == "storyboard":
@@ -188,9 +258,17 @@ class DeepSeekClient(LLMClient):
         min_chars = _min_narration_chars_for_script(
             narration_target_words=narration_target_words,
         )
-        max_tokens = _storyboard_max_tokens(narration_target_words)
+        seg_target = (
+            get_settings().segment_target_sec
+            if segment_target_sec is None
+            else segment_target_sec
+        )
+        target_words = narration_target_words or default_narration_target_words()
+        compact = storyboard_compact_output(target_words, seg_target)
+        max_tokens = _storyboard_max_tokens(narration_target_words, compact=compact)
         length_feedback: str | None = feedback
         data: dict[str, Any] | None = None
+        truncation_attempts = 0
         for attempt in range(_NARRATION_LENGTH_RETRY_ATTEMPTS):
             prompts = build_storyboard_prompts(
                 title,
@@ -200,10 +278,37 @@ class DeepSeekClient(LLMClient):
                 narration_target_words=narration_target_words,
                 supplementary_info=supplementary_info,
                 job=job,
+                compact_output=compact,
             )
-            data = json.loads(
-                self._chat(prompts["system"], prompts["user"], max_tokens=max_tokens)
-            )
+            try:
+                data, finish = self._chat_json(
+                    prompts["system"],
+                    prompts["user"],
+                    max_tokens=max_tokens,
+                )
+            except ValueError as exc:
+                truncation_attempts += 1
+                if truncation_attempts > _TRUNCATION_RETRY_ATTEMPTS:
+                    raise
+                compact = True
+                max_tokens = get_settings().deepseek_max_tokens
+                length_feedback = _parse_failure_feedback(exc, compact=compact)
+                if feedback and truncation_attempts == 1:
+                    length_feedback = f"{feedback}\n{length_feedback}"
+                logger.warning("storyboard parse failed (attempt %d): %s", truncation_attempts, exc)
+                continue
+            if finish == "length":
+                truncation_attempts += 1
+                if truncation_attempts > _TRUNCATION_RETRY_ATTEMPTS:
+                    raise ValueError("LLM storyboard response truncated after retries")
+                compact = True
+                max_tokens = get_settings().deepseek_max_tokens
+                length_feedback = _truncation_feedback(compact=True)
+                if feedback and truncation_attempts == 1:
+                    length_feedback = f"{feedback}\n{length_feedback}"
+                data = None
+                continue
+            data = _assemble_storyboard_narration(data)
             if "segments" not in data:
                 raise ValueError("LLM storyboard response missing segments")
             if not data.get("visual_style"):
@@ -217,7 +322,9 @@ class DeepSeekClient(LLMClient):
                 prefix=feedback if attempt == 0 and feedback else None,
             )
         if data is not None:
+            data = _assemble_storyboard_narration(data)
             data = self._expand_narration_if_needed(data, min_chars=min_chars, mode="storyboard")
+            data = _assemble_storyboard_narration(data)
         return data
 
     def _generate_image_prompts(
@@ -234,7 +341,7 @@ class DeepSeekClient(LLMClient):
             supplementary_info=supplementary_info,
             job=job,
         )
-        raw = json.loads(self._chat(prompts["system"], prompts["user"]))
+        raw, _ = self._chat_json(prompts["system"], prompts["user"])
         if isinstance(raw, list):
             prompt_items = raw
         elif isinstance(raw, dict):
@@ -332,7 +439,7 @@ class DeepSeekClient(LLMClient):
                 supplementary_info=supplementary_info,
                 video_timeline=video_timeline,
             )
-            data = json.loads(self._chat(prompts["system"], prompts["user"]))
+            data, _ = self._chat_json(prompts["system"], prompts["user"])
             if "segments" not in data:
                 raise ValueError("LLM material script response missing segments")
             for seg in data["segments"]:
@@ -361,7 +468,7 @@ class DeepSeekClient(LLMClient):
             narration,
             max_title_length=max_title_length,
         )
-        raw = json.loads(self._chat(prompts["system"], prompts["user"]))
+        raw, _ = self._chat_json(prompts["system"], prompts["user"])
         settings = get_settings()
         max_len = settings.max_title_length if max_title_length is None else max_title_length
         return parse_title_optimize_payload(raw, max_title_len=max_len)
@@ -372,7 +479,7 @@ class DeepSeekClient(LLMClient):
         narration: str,
     ) -> str:
         prompts = build_video_description_prompts(title, narration)
-        raw = json.loads(self._chat(prompts["system"], prompts["user"]))
+        raw, _ = self._chat_json(prompts["system"], prompts["user"])
         return parse_video_description_payload(raw)
 
     def generate_topics(
@@ -387,6 +494,6 @@ class DeepSeekClient(LLMClient):
         count = max(1, min(count, 20))
         system = system_prompt or build_topic_system_prompt(max_title_len=settings.max_title_length)
         user = user_prompt.strip() if user_prompt else build_topic_user_prompt(theme=theme, count=count)
-        raw = json.loads(self._chat(system, user))
+        raw, _ = self._chat_json(system, user)
         topics = parse_topics_payload(raw, max_title_len=settings.max_title_length)
         return topics[:count]
