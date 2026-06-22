@@ -51,7 +51,6 @@ export interface PreviewScriptPromptsPayload {
   skip_title_optimize?: boolean;
   supplementary_info?: string;
   video_timeline?: string;
-  use_saved_script?: boolean;
   orientation?: "portrait" | "landscape";
   content_style?: "science_child" | "life_experience";
 }

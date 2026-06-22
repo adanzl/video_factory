@@ -130,7 +130,6 @@ def preview_script_prompts_route():
     max_title_length = parse_optional_int(data, "max_title_length", minimum=8, maximum=48)
     narration_target_words = parse_optional_int(data, "narration_target_words", minimum=200, maximum=3000)
     skip_title_optimize = parse_bool(data, "skip_title_optimize", default=False)
-    use_saved_script = parse_bool(data, "use_saved_script", default=False)
     supplementary_info = parse_optional_str(data, "supplementary_info")
     video_timeline = parse_optional_str(data, "video_timeline")
     orientation = None
@@ -147,7 +146,6 @@ def preview_script_prompts_route():
             skip_title_optimize=skip_title_optimize,
             supplementary_info=supplementary_info,
             video_timeline=video_timeline,
-            use_saved_script=use_saved_script,
             orientation=orientation,
             content_style=content_style,
         )

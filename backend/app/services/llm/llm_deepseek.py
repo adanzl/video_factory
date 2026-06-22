@@ -11,6 +11,7 @@ from app.services.llm.llm_script_prompts import (
     MIN_IMAGE_PROMPT_CHARS,
     build_image_prompts_prompts,
     build_material_script_prompts,
+    build_narration_expand_prompts,
     build_storyboard_prompts,
     build_title_optimize_prompts,
     build_video_description_prompts,
@@ -26,7 +27,8 @@ from app.utils.media import default_narration_target_words, min_narration_chars_
 
 __all__ = ["DeepSeekClient", "MIN_IMAGE_PROMPT_CHARS"]
 
-_NARRATION_LENGTH_RETRY_ATTEMPTS = 3
+_NARRATION_LENGTH_RETRY_ATTEMPTS = 5
+_NARRATION_EXPAND_ATTEMPTS = 2
 
 
 def _narration_char_count(text: str) -> int:
@@ -34,14 +36,36 @@ def _narration_char_count(text: str) -> int:
 
 
 def _narration_length_feedback(chars: int, min_chars: int, *, prefix: str | None = None) -> str:
+    deficit = max(1, min_chars - chars)
     msg = (
-        f"narration 仅 {chars} 字，硬性下限 {min_chars} 字。"
-        "请增加 segments 段数并扩写每段 text（三层写法撑满），"
+        f"narration 仅 {chars} 字，硬性下限 {min_chars} 字，还差 {deficit} 字。"
+        "请增加 segments 段数并扩写每段 text（每层补具体细节/案例/步骤），"
         "先写 segments 再拼接 narration，核对 word_count 后再输出 JSON。"
     )
     if prefix:
         return f"{prefix}\n{msg}"
     return msg
+
+
+def _merge_expanded_storyboard(original: dict[str, Any], expanded: dict[str, Any]) -> dict[str, Any]:
+    if not expanded.get("visual_style"):
+        expanded["visual_style"] = original.get("visual_style")
+    orig_by_index = {
+        int(seg["segment_index"]): seg
+        for seg in original.get("segments") or []
+        if seg.get("segment_index") is not None
+    }
+    for seg in expanded.get("segments") or []:
+        idx = seg.get("segment_index")
+        if idx is None:
+            continue
+        orig = orig_by_index.get(int(idx))
+        if not orig:
+            continue
+        for key in ("visual_brief", "visual_mode", "image_prompt", "motion_prompt"):
+            if not (seg.get(key) or "").strip() and (orig.get(key) or "").strip():
+                seg[key] = orig[key]
+    return expanded
 
 
 def _min_narration_chars_for_script(
@@ -88,6 +112,38 @@ class DeepSeekClient(LLMClient):
         resp.raise_for_status()
         return resp.json()["choices"][0]["message"]["content"]
 
+    def _expand_narration_if_needed(
+        self,
+        data: dict[str, Any],
+        *,
+        min_chars: int,
+        mode: str,
+    ) -> dict[str, Any]:
+        chars = _narration_char_count(str(data.get("narration") or ""))
+        if chars >= min_chars or chars < int(min_chars * 0.5):
+            return data
+        current = data
+        segments = current.get("segments") or []
+        default_mode = segments[0].get("visual_mode", "static_motion") if segments else "static_motion"
+        for _ in range(_NARRATION_EXPAND_ATTEMPTS):
+            prompts = build_narration_expand_prompts(current, min_chars=min_chars, mode=mode)
+            expanded = json.loads(self._chat(prompts["system"], prompts["user"]))
+            if "segments" not in expanded:
+                break
+            if mode == "storyboard":
+                expanded = _merge_expanded_storyboard(current, expanded)
+                if not expanded.get("visual_style"):
+                    break
+            for seg in expanded.get("segments") or []:
+                seg.setdefault("visual_mode", default_mode)
+            new_chars = _narration_char_count(str(expanded.get("narration") or ""))
+            if new_chars > chars:
+                current = expanded
+                chars = new_chars
+            if chars >= min_chars:
+                break
+        return current
+
     def _generate_storyboard(
         self,
         title: str,
@@ -127,6 +183,8 @@ class DeepSeekClient(LLMClient):
                 min_chars,
                 prefix=feedback if attempt == 0 and feedback else None,
             )
+        if data is not None:
+            data = self._expand_narration_if_needed(data, min_chars=min_chars, mode="storyboard")
         return data
 
     def _generate_image_prompts(
@@ -254,6 +312,8 @@ class DeepSeekClient(LLMClient):
                 min_chars,
                 prefix=feedback if attempt == 0 and feedback else None,
             )
+        if data is not None:
+            data = self._expand_narration_if_needed(data, min_chars=min_chars, mode="material")
         return data
 
     def optimize_script_title(

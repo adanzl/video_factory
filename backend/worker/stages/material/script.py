@@ -10,7 +10,7 @@ from app.repositories import job_log_repo, job_repo, segment_repo
 from app.repositories.connection import connection
 from app.services.llm.llm_mgr import llm_mgr
 from app.services.llm.llm_script_timeline import parse_video_timeline, validate_timeline_script
-from app.utils.media import base_video_duration_sec, estimate_narration_target_words
+from app.utils.media import base_video_duration_sec, estimate_narration_target_words, narration_soft_min_chars
 from worker.context import JobContext
 from worker.stages.base import StageExecutor
 from worker.stages.standard.script import (
@@ -72,20 +72,26 @@ def _validate_material_script(
     warnings: list[str] = []
     chars = _narration_chars(narration)
     if chars < required_narration_chars:
+        soft_min = narration_soft_min_chars(required_narration_chars)
         retry_min = max(MIN_ACCEPT_NARRATION_CHARS, int(required_narration_chars * 0.8))
-        if chars >= retry_min:
+        if chars >= soft_min:
+            warnings.append(
+                f"narration slightly short ({chars} < {required_narration_chars}), continuing"
+            )
+        elif chars >= retry_min:
             raise ScriptValidationError(
                 f"narration too short: {chars} chars (need >= {required_narration_chars})",
                 retryable=True,
             )
-        if chars < MIN_ACCEPT_NARRATION_CHARS:
+        elif chars < MIN_ACCEPT_NARRATION_CHARS:
             raise ScriptValidationError(
                 f"narration too short: {chars} chars (need >= {MIN_ACCEPT_NARRATION_CHARS})",
                 retryable=True,
             )
-        warnings.append(
-            f"narration shorter than target ({chars} < {required_narration_chars}), continuing"
-        )
+        else:
+            warnings.append(
+                f"narration shorter than target ({chars} < {required_narration_chars}), continuing"
+            )
     if not segments:
         raise ScriptValidationError("no segments", retryable=False)
     title = _title_chars(script.get("title") or "")

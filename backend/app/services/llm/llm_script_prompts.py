@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
@@ -500,6 +501,51 @@ def build_material_script_prompts(
     return _prompt_step("material_script", system, user)
 
 
+def build_narration_expand_prompts(
+    script: dict[str, Any],
+    *,
+    min_chars: int,
+    mode: str = "storyboard",
+) -> dict[str, str]:
+    """在初稿字数不足时专用扩写（保留分段与画面字段）。"""
+    current = _narration_char_count_for_prompt(str(script.get("narration") or ""))
+    deficit = max(1, min_chars - current)
+    keep_visual = mode == "storyboard"
+    system = (
+        "你是口播扩写编辑。用户在初稿字数不足，须在保持主题与分段结构的前提下扩写。"
+        "输出 JSON，字段与输入一致（title, narration, word_count, segments"
+        + (", visual_style" if keep_visual else "")
+        + "）。"
+        f"扩写后 narration 须至少 {min_chars} 字（不含空格换行），当前仅 {current} 字，还差约 {deficit} 字。"
+        "规则：segments 段数与 segment_index 不得减少、不得合并；"
+        "每段 text 只能扩写（补具体细节、案例、步骤或感悟），禁止删减已有核心信息；"
+        "narration 为各段 text 按顺序原样拼接；word_count 等于 narration 实际字数。"
+    )
+    if keep_visual:
+        system += (
+            "须保留 visual_style 与各段 visual_brief，仅扩写 text；"
+            "禁止删除 visual_brief 或改成空字符串。"
+        )
+    draft = {
+        "title": script.get("title"),
+        "narration": script.get("narration"),
+        "word_count": script.get("word_count"),
+        "segments": script.get("segments"),
+    }
+    if keep_visual:
+        draft["visual_style"] = script.get("visual_style")
+    user = (
+        "当前稿件（字数不足，请扩写）：\n"
+        f"{json.dumps(draft, ensure_ascii=False)}\n\n"
+        f"请扩写至至少 {min_chars} 字后输出完整 JSON。"
+    )
+    return _prompt_step(f"expand_{mode}", system, user)
+
+
+def _narration_char_count_for_prompt(text: str) -> int:
+    return len(re.sub(r"\s+", "", text))
+
+
 def build_title_optimize_prompts(
     draft_title: str,
     narration: str,
@@ -541,6 +587,7 @@ def collect_script_prompts(
     video_timeline: str | None = None,
     script: dict | None = None,
     skip_title_optimize: bool = False,
+    preview_followups: bool = False,
 ) -> list[dict[str, str]]:
     """收集脚本阶段 LLM 提示词；script 为空时仅返回可预览的首步。"""
     extra = (supplementary_info or "").strip() or None
@@ -581,24 +628,31 @@ def collect_script_prompts(
                 build_image_prompts_prompts(script, supplementary_info=extra, job=job)
             )
 
-    if script:
-        narration = str(script.get("narration") or "")
-        if (
-            not skip_title_optimize
-            and (script.get("draft_title") or narration)
-        ):
-            draft = str(script.get("draft_title") or script.get("title") or "")
-            if draft and narration:
-                prompts.append(
-                    build_title_optimize_prompts(
-                        draft,
-                        narration,
-                        max_title_length=max_title_length,
-                    )
-                )
-        title_for_desc = str(script.get("title") or title or "")
-        if title_for_desc and narration:
-            prompts.append(build_video_description_prompts(title_for_desc, narration))
+    narration = ""
+    draft_title = re.sub(r"\s+", "", title.strip())
+    title_for_desc = draft_title
+    if script and isinstance(script, dict):
+        narration = str(script.get("narration") or "").strip()
+        draft_title = re.sub(
+            r"\s+",
+            "",
+            str(script.get("draft_title") or script.get("title") or draft_title).strip(),
+        )
+        title_for_desc = str(script.get("title") or title or "").strip()
+
+    if preview_followups and not narration:
+        narration = "（口播分镜生成后将填入实际 narration，此处仅预览提示词结构）"
+
+    if narration and not skip_title_optimize and draft_title:
+        prompts.append(
+            build_title_optimize_prompts(
+                draft_title,
+                narration,
+                max_title_length=max_title_length,
+            )
+        )
+    if narration and title_for_desc:
+        prompts.append(build_video_description_prompts(title_for_desc, narration))
     return prompts
 
 
