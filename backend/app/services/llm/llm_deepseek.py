@@ -10,6 +10,7 @@ from app.services.llm.llm_mgr import LLMClient
 from app.services.llm.llm_script_description import parse_video_description_payload
 from app.services.llm.llm_script_prompts import (
     MIN_IMAGE_PROMPT_CHARS,
+    IMAGE_PROMPT_TARGET_CHARS,
     build_image_prompts_prompts,
     build_material_script_prompts,
     build_narration_expand_prompts,
@@ -403,13 +404,13 @@ class DeepSeekClient(LLMClient):
             short = [
                 (seg["segment_index"], len(seg["image_prompt"]))
                 for seg in data["segments"]
-                if len(seg["image_prompt"]) < MIN_IMAGE_PROMPT_CHARS
+                if len(seg["image_prompt"]) < IMAGE_PROMPT_TARGET_CHARS
             ]
             if not short:
                 break
             prompt_feedback = (
                 f"image_prompt too short: {short}; "
-                f"need >={MIN_IMAGE_PROMPT_CHARS} chars each; "
+                f"need >={IMAGE_PROMPT_TARGET_CHARS} chars each; "
                 "expand all six layers (composition, subject, environment, lighting, color, scope)"
             )
         return data

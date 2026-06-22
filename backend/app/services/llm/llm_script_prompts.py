@@ -36,7 +36,8 @@ from app.services.llm.llm_script_title import (
     build_title_optimize_user_prompt,
 )
 
-MIN_IMAGE_PROMPT_CHARS = 300
+MIN_IMAGE_PROMPT_CHARS = 200
+IMAGE_PROMPT_TARGET_CHARS = 300
 
 # DeepSeek JSON Output 要求 prompt 含 json 字样并给出样例：
 # https://api-docs.deepseek.com/zh-cn/guides/json_mode
@@ -107,7 +108,7 @@ _VISUAL_BRIEF_RULE = (
 _IMAGE_PROMPT_RULE_SCIENCE_PORTRAIT = (
     "image_prompt须严格遵循visual_style画风定调，全片统一：电影级写实科普视觉，布光考究、"
     "景深自然、材质细节真实可辨，色彩明快有层次，适配9:16竖屏构图。"
-    f"每段image_prompt须350-550字（任何一段不得低于{MIN_IMAGE_PROMPT_CHARS}字），"
+    f"每段image_prompt建议350-550字（任何一段不得低于{MIN_IMAGE_PROMPT_CHARS}字），"
     "须按以下六层逐层展开，每层写具体可见细节，禁止一句话带过或空泛形容词："
     "①构图景别（竖屏主体位置与占比、留白、单一视觉焦点）；"
     "②主体动作（主体是谁/何物、姿态、关键互动，或A/B对比并排）；"
@@ -120,7 +121,7 @@ _IMAGE_PROMPT_RULE_SCIENCE_PORTRAIT = (
 _IMAGE_PROMPT_RULE_LIFE_LANDSCAPE = (
     "image_prompt须严格遵循visual_style画风定调，全片统一：生活Vlog质感写实画面，"
     "自然光或室内暖光、浅景深、色彩真实不过度滤镜，适配16:9横屏构图。"
-    f"每段image_prompt须350-550字（任何一段不得低于{MIN_IMAGE_PROMPT_CHARS}字），"
+    f"每段image_prompt建议350-550字（任何一段不得低于{MIN_IMAGE_PROMPT_CHARS}字），"
     "须按以下六层逐层展开："
     "①构图景别（横屏主体位置、环境留白、生活场景真实感）；"
     "②人物/物品动作（具体在做什么、与口播步骤对应）；"

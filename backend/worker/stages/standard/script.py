@@ -9,7 +9,7 @@ from app.quality.gate import apply_quality_checks
 from app.repositories import job_log_repo, job_repo, segment_repo
 from app.repositories.connection import connection
 from app.services.llm.llm_mgr import llm_mgr
-from app.services.llm.llm_script_prompts import MIN_IMAGE_PROMPT_CHARS
+from app.services.llm.llm_script_prompts import IMAGE_PROMPT_TARGET_CHARS, MIN_IMAGE_PROMPT_CHARS
 from app.utils.job_info import content_style_from_job
 from app.utils.media import (
     default_narration_target_words,
@@ -232,11 +232,17 @@ def _validate_script(
                 retryable=True,
             )
         prompt = seg.get("image_prompt") or ""
-        if len(prompt) < MIN_IMAGE_PROMPT_CHARS:
+        prompt_len = len(prompt)
+        if prompt_len < MIN_IMAGE_PROMPT_CHARS:
             raise ScriptValidationError(
                 f"segment {seg.get('segment_index')} image_prompt too short: "
-                f"{len(prompt)} chars (need >= {MIN_IMAGE_PROMPT_CHARS})",
+                f"{prompt_len} chars (need >= {MIN_IMAGE_PROMPT_CHARS})",
                 retryable=True,
+            )
+        if prompt_len < IMAGE_PROMPT_TARGET_CHARS:
+            warnings.append(
+                f"segment {seg.get('segment_index')} image_prompt slightly short "
+                f"({prompt_len} < {IMAGE_PROMPT_TARGET_CHARS}), continuing"
             )
     if seg_target > 0:
         cap = segment_text_char_cap(seg_target)
