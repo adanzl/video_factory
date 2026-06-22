@@ -21,6 +21,48 @@ _API_UPDATABLE = frozenset({"title", "skip_publish", "status"})
 _VALID_STATUSES = frozenset({"pending", "running", "done", "failed"})
 
 
+def _script_action_detail(
+    *,
+    job: dict,
+    to_end: bool,
+    title: str | None,
+    segment_target_sec: float | None,
+    max_title_length: int | None,
+    narration_target_words: int | None,
+    skip_title_optimize: bool,
+    supplementary_info: str | None,
+    video_timeline: str | None,
+    orientation: str | None,
+    content_style: str | None,
+) -> str:
+    from app.utils.job_info import content_style_from_job, orientation_for_resolve
+
+    effective_title = (title or job.get("title") or "").strip()
+    parts = [
+        f"to_end={to_end}",
+        f"title={effective_title!r}",
+    ]
+    if segment_target_sec is not None:
+        parts.append(f"segment_target_sec={segment_target_sec}")
+    if max_title_length is not None:
+        parts.append(f"max_title_length={max_title_length}")
+    if narration_target_words is not None:
+        parts.append(f"narration_target_words={narration_target_words}")
+    if skip_title_optimize:
+        parts.append("skip_title_optimize=True")
+    orient = orientation or orientation_for_resolve(job) or "portrait"
+    style = content_style or content_style_from_job(job)
+    parts.append(f"orientation={orient}")
+    parts.append(f"content_style={style}")
+    extra = (supplementary_info or "").strip()
+    if extra:
+        parts.append(f"supplementary_info={len(extra)}chars")
+    timeline = (video_timeline or "").strip()
+    if timeline:
+        parts.append(f"video_timeline={len(timeline)}chars")
+    return ", ".join(parts)
+
+
 class JobBusyError(Exception):
     """Job 正在执行，拒绝并发动作。"""
 
@@ -187,6 +229,7 @@ class JobMgr:
         run: Callable[[], None],
         *,
         segment_indices: list[int] | None = None,
+        action_detail: str | None = None,
     ) -> dict:
         lock = self._job_lock(job_id)
         if not lock.acquire(blocking=False):
@@ -203,7 +246,19 @@ class JobMgr:
             fail_stage = action.split("/")[0]
 
             def _worker() -> None:
-                logger.info("job %s action [%s] started in background thread", job_id, action)
+                if action_detail:
+                    logger.info(
+                        "job %s action [%s] started in background thread: %s",
+                        job_id,
+                        action,
+                        action_detail,
+                    )
+                else:
+                    logger.info(
+                        "job %s action [%s] started in background thread",
+                        job_id,
+                        action,
+                    )
                 try:
                     run()
                 except Exception as exc:
@@ -257,6 +312,20 @@ class JobMgr:
             if cleaned != job["title"]:
                 self.update_job(job_id, title=cleaned)
 
+        job = self.get_job(job_id)
+        detail = _script_action_detail(
+            job=job,
+            to_end=to_end,
+            title=title,
+            segment_target_sec=segment_target_sec,
+            max_title_length=max_title_length,
+            narration_target_words=narration_target_words,
+            skip_title_optimize=skip_title_optimize,
+            supplementary_info=supplementary_info,
+            video_timeline=video_timeline,
+            orientation=orientation,
+            content_style=content_style,
+        )
         return self._run_in_background(
             job_id,
             "script",
@@ -270,6 +339,7 @@ class JobMgr:
                 supplementary_info=supplementary_info,
                 video_timeline=video_timeline,
             ),
+            action_detail=detail,
         )
 
     def preview_script_prompts(
