@@ -6,6 +6,7 @@ import json
 from typing import Any
 
 from app.config import get_settings
+from app.services.llm.deepseek_request import build_deepseek_chat_payload
 
 
 def extract_items_array(raw: Any, *, field: str = "items") -> list[dict[str, Any]]:
@@ -40,15 +41,13 @@ def chat_json(system: str, user: str, *, max_tokens: int = 4096) -> Any:
             "Authorization": f"Bearer {settings.deepseek_api_key}",
             "Content-Type": "application/json",
         },
-        json={
-            "model": settings.deepseek_model,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            "response_format": {"type": "json_object"},
-            "max_tokens": max_tokens,
-        },
+        json=build_deepseek_chat_payload(
+            model=settings.deepseek_model,
+            system=system,
+            user=user,
+            max_tokens=max_tokens,
+            thinking_enabled=settings.deepseek_thinking_enabled,
+        ),
         timeout=180,
     )
     resp.raise_for_status()

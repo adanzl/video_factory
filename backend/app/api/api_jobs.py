@@ -49,6 +49,7 @@ def _parse_script_body() -> tuple[
     int | None,
     int | None,
     bool,
+    bool,
     str | None,
     str | None,
     str | None,
@@ -81,6 +82,7 @@ def _parse_script_body() -> tuple[
         parse_optional_int(data, "max_title_length", minimum=8, maximum=48),
         parse_optional_int(data, "narration_target_words", minimum=200, maximum=3000),
         parse_bool(data, "skip_title_optimize", default=False),
+        parse_bool(data, "generate_image_prompts", default=False),
         supplementary,
         video_timeline,
         orientation,
@@ -98,6 +100,7 @@ def run_script_route():
         max_title_length,
         narration_target_words,
         skip_title_optimize,
+        generate_image_prompts,
         supplementary_info,
         video_timeline,
         orientation,
@@ -113,6 +116,7 @@ def run_script_route():
             max_title_length=max_title_length,
             narration_target_words=narration_target_words,
             skip_title_optimize=skip_title_optimize,
+            generate_image_prompts=generate_image_prompts,
             supplementary_info=supplementary_info,
             video_timeline=video_timeline,
             orientation=orientation,
@@ -152,6 +156,13 @@ def preview_script_prompts_route():
     except ValueError as exc:
         raise APIError(str(exc)) from exc
     return json_ok({"prompts": prompts})
+
+
+@bp.post("/script/imagePrompts")
+def generate_image_prompts_route():
+    data = get_json_body()
+    job_id = parse_id(data)
+    return _accept_stage(job_id, lambda: job_mgr.generate_image_prompts(job_id))
 
 
 @bp.post("/script/description")

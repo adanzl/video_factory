@@ -30,6 +30,7 @@ def _script_action_detail(
     max_title_length: int | None,
     narration_target_words: int | None,
     skip_title_optimize: bool,
+    generate_image_prompts: bool,
     supplementary_info: str | None,
     video_timeline: str | None,
     orientation: str | None,
@@ -50,6 +51,8 @@ def _script_action_detail(
         parts.append(f"narration_target_words={narration_target_words}")
     if skip_title_optimize:
         parts.append("skip_title_optimize=True")
+    if generate_image_prompts:
+        parts.append("generate_image_prompts=True")
     orient = orientation or orientation_for_resolve(job) or "portrait"
     style = content_style or content_style_from_job(job)
     parts.append(f"orientation={orient}")
@@ -282,6 +285,7 @@ class JobMgr:
         max_title_length: int | None = None,
         narration_target_words: int | None = None,
         skip_title_optimize: bool = False,
+        generate_image_prompts: bool = False,
         supplementary_info: str | None = None,
         video_timeline: str | None = None,
         orientation: str | None = None,
@@ -321,6 +325,7 @@ class JobMgr:
             max_title_length=max_title_length,
             narration_target_words=narration_target_words,
             skip_title_optimize=skip_title_optimize,
+            generate_image_prompts=generate_image_prompts,
             supplementary_info=supplementary_info,
             video_timeline=video_timeline,
             orientation=orientation,
@@ -336,10 +341,21 @@ class JobMgr:
                 max_title_length=max_title_length,
                 narration_target_words=narration_target_words,
                 skip_title_optimize=skip_title_optimize,
+                generate_image_prompts=generate_image_prompts,
                 supplementary_info=supplementary_info,
                 video_timeline=video_timeline,
             ),
             action_detail=detail,
+        )
+
+    def generate_image_prompts(self, job_id: int) -> dict:
+        """为已有脚本补全文生图提示词。实现：worker/loop.run_script_image_prompts"""
+        from worker.loop import run_script_image_prompts
+
+        return self._run_in_background(
+            job_id,
+            "script/imagePrompts",
+            lambda: run_script_image_prompts(job_id),
         )
 
     def preview_script_prompts(

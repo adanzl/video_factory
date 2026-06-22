@@ -471,6 +471,7 @@ def build_image_prompts_prompts(
     job: dict | None = None,
     orientation: str | None = None,
     content_style: str | None = None,
+    segment_indices: list[int] | None = None,
 ) -> dict[str, str]:
     profile_orientation, profile_style = _resolve_script_profile(
         job,
@@ -478,6 +479,9 @@ def build_image_prompts_prompts(
         content_style=content_style,
     )
     segments = script.get("segments") or []
+    if segment_indices is not None:
+        wanted = {int(idx) for idx in segment_indices}
+        segments = [seg for seg in segments if int(seg.get("segment_index", -1)) in wanted]
     lines = [
         f"segment {seg['segment_index']}: "
         f"text={seg.get('text', '')!r}; visual_brief={seg.get('visual_brief', '')!r}"

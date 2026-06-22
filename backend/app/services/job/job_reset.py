@@ -293,6 +293,22 @@ def prepare_for_action(
     elif action == "segment/all":
         stage = "segment"
         segment_scope = None
+    elif action == "script/imagePrompts":
+        with connection() as conn:
+            job = job_repo.get_job(conn, job_id)
+            script = job.get("script_json")
+            if not isinstance(script, dict):
+                raise ValueError("script not ready")
+            if not (script.get("segments") or []):
+                raise ValueError("no segments")
+            job_log_repo.append_log(conn, job_id, "script", f"action={action}")
+            return job_repo.update_job(
+                conn,
+                job_id,
+                status="pending",
+                fail_stage=None,
+                error_message=None,
+            )
     else:
         stage = action
         segment_scope = None

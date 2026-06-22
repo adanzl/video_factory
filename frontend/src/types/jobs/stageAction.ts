@@ -37,6 +37,7 @@ export interface RunStageActionPayload {
   max_title_length?: number;
   narration_target_words?: number;
   skip_title_optimize?: boolean;
+  generate_image_prompts?: boolean;
   supplementary_info?: string;
   video_timeline?: string;
   content_style?: "science_child" | "life_experience";

@@ -21,6 +21,7 @@ class JobContext:
     script_max_title_length: int | None = None
     script_narration_target_words: int | None = None
     script_skip_title_optimize: bool = False
+    script_generate_image_prompts: bool = False
     script_supplementary_info: str | None = None
     script_video_timeline: str | None = None
     material_narration: str | None = None
@@ -40,6 +41,7 @@ class JobContext:
         script_max_title_length: int | None = None,
         script_narration_target_words: int | None = None,
         script_skip_title_optimize: bool = False,
+        script_generate_image_prompts: bool = False,
         script_supplementary_info: str | None = None,
         script_video_timeline: str | None = None,
         material_narration: str | None = None,
@@ -61,6 +63,7 @@ class JobContext:
             script_max_title_length=script_max_title_length,
             script_narration_target_words=script_narration_target_words,
             script_skip_title_optimize=script_skip_title_optimize,
+            script_generate_image_prompts=script_generate_image_prompts,
             script_supplementary_info=script_supplementary_info,
             script_video_timeline=script_video_timeline,
             material_narration=material_narration,

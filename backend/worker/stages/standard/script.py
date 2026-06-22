@@ -140,6 +140,51 @@ def _narration_short_feedback(exc: ScriptValidationError, *, min_chars: int) -> 
     )
 
 
+def _validation_retry_scope(exc: ScriptValidationError) -> str:
+    msg = str(exc)
+    if "image_prompt too short" in msg:
+        return "image_prompts"
+    if any(
+        key in msg
+        for key in (
+            "narration too short",
+            "segment text exceeds",
+            "too few segments",
+            "missing visual_brief",
+            "visual_style is empty",
+            "no segments",
+        )
+    ):
+        return "storyboard"
+    return "full"
+
+
+def _log_llm_timing(job_id: int, stage_name: str, script: dict) -> None:
+    timing = script.get("_llm_timing")
+    if not isinstance(timing, dict):
+        return
+    parts = []
+    if "storyboard_sec" in timing:
+        parts.append(f"storyboard={timing['storyboard_sec']}s")
+    if "image_prompts_sec" in timing:
+        batches = timing.get("image_prompt_batches")
+        if batches:
+            parts.append(
+                f"image_prompts={timing['image_prompts_sec']}s({batches} batches)"
+            )
+        else:
+            parts.append(f"image_prompts={timing['image_prompts_sec']}s")
+    if not parts:
+        return
+    with connection() as conn:
+        job_log_repo.append_log(
+            conn,
+            job_id,
+            stage_name,
+            "llm timing: " + ", ".join(parts),
+        )
+
+
 def _validation_feedback(
     exc: ScriptValidationError,
     *,
@@ -187,6 +232,7 @@ def _validate_script(
     max_title_length: int | None = None,
     min_narration_chars: int | None = None,
     content_style: str | None = None,
+    require_image_prompt: bool = True,
 ) -> list[str]:
     settings = get_settings()
     seg_target = (
@@ -231,19 +277,20 @@ def _validate_script(
                 f"segment {seg.get('segment_index')} missing visual_brief",
                 retryable=True,
             )
-        prompt = seg.get("image_prompt") or ""
-        prompt_len = len(prompt)
-        if prompt_len < MIN_IMAGE_PROMPT_CHARS:
-            raise ScriptValidationError(
-                f"segment {seg.get('segment_index')} image_prompt too short: "
-                f"{prompt_len} chars (need >= {MIN_IMAGE_PROMPT_CHARS})",
-                retryable=True,
-            )
-        if prompt_len < IMAGE_PROMPT_TARGET_CHARS:
-            warnings.append(
-                f"segment {seg.get('segment_index')} image_prompt slightly short "
-                f"({prompt_len} < {IMAGE_PROMPT_TARGET_CHARS}), continuing"
-            )
+        if require_image_prompt:
+            prompt = seg.get("image_prompt") or ""
+            prompt_len = len(prompt)
+            if prompt_len < MIN_IMAGE_PROMPT_CHARS:
+                raise ScriptValidationError(
+                    f"segment {seg.get('segment_index')} image_prompt too short: "
+                    f"{prompt_len} chars (need >= {MIN_IMAGE_PROMPT_CHARS})",
+                    retryable=True,
+                )
+            if prompt_len < IMAGE_PROMPT_TARGET_CHARS:
+                warnings.append(
+                    f"segment {seg.get('segment_index')} image_prompt slightly short "
+                    f"({prompt_len} < {IMAGE_PROMPT_TARGET_CHARS}), continuing"
+                )
     if seg_target > 0:
         cap = segment_text_char_cap(seg_target)
         hard_cap = int(cap * 1.15)
@@ -306,7 +353,9 @@ class ScriptStage(StageExecutor):
         last_exc: Exception | None = None
         script: dict | None = None
         feedback: str | None = None
+        retry_scope: str | None = None
         accept_warnings: list[str] = []
+        generate_image_prompts = bool(ctx.script_generate_image_prompts)
         for attempt in range(6):
             script = llm_mgr.generate_script(
                 title,
@@ -316,7 +365,11 @@ class ScriptStage(StageExecutor):
                 narration_target_words=narration_target_words,
                 supplementary_info=supplementary_info,
                 job=ctx.job,
+                existing_script=script,
+                retry_scope=retry_scope,
+                generate_image_prompts=generate_image_prompts,
             )
+            _log_llm_timing(ctx.job["id"], self.name, script)
             try:
                 accept_warnings = _validate_script(
                     script,
@@ -324,26 +377,32 @@ class ScriptStage(StageExecutor):
                     max_title_length=max_title_length,
                     min_narration_chars=min_narration_chars,
                     content_style=content_style,
+                    require_image_prompt=generate_image_prompts,
                 )
                 break
             except ScriptValidationError as exc:
                 last_exc = exc
-                feedback = _validation_feedback(
-                    exc,
-                    min_chars=min_narration_chars,
-                    segment_target_sec=segment_target_sec,
-                    narration_target_words=narration_target_words,
-                    content_style=content_style,
-                )
+                retry_scope = _validation_retry_scope(exc)
+                if retry_scope == "image_prompts":
+                    feedback = str(exc)
+                else:
+                    feedback = _validation_feedback(
+                        exc,
+                        min_chars=min_narration_chars,
+                        segment_target_sec=segment_target_sec,
+                        narration_target_words=narration_target_words,
+                        content_style=content_style,
+                    )
+                    if retry_scope == "storyboard":
+                        script = None
                 with connection() as conn:
                     job_log_repo.append_log(
                         conn,
                         ctx.job["id"],
                         self.name,
-                        f"script rejected (attempt {attempt + 1}): {exc}",
+                        f"script rejected (attempt {attempt + 1}, retry={retry_scope}): {exc}",
                         level="warning",
                     )
-                script = None
         if script is None:
             raise last_exc or RuntimeError("script generation failed")
 
@@ -385,6 +444,7 @@ class ScriptStage(StageExecutor):
             script.pop("supplementary_info", None)
 
         script["word_count"] = _narration_chars(script.get("narration", ""))
+        script.pop("_llm_timing", None)
         script["cost_time"] = round(time.perf_counter() - started, 1)
         display_title = script["title"]
         with connection() as conn:

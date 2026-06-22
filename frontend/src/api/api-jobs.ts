@@ -68,6 +68,13 @@ export async function generateVideoDescription(jobId: number): Promise<{
   return response.data;
 }
 
+export async function generateImagePrompts(jobId: number): Promise<JobDetail> {
+  const response = await api.post<JobDetail>("/v_factory/api/jobs/script/imagePrompts", {
+    id: jobId,
+  });
+  return response.data;
+}
+
 export async function cleanJob(jobId: number): Promise<{
   id: number;
   cleaned: boolean;
