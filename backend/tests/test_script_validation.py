@@ -65,6 +65,25 @@ def test_validate_script_rejects_segment_over_cap(monkeypatch):
     assert "exceeds" in str(exc_info.value)
 
 
+def test_validate_script_accepts_slightly_short_image_prompt(monkeypatch):
+    monkeypatch.setattr(
+        "worker.stages.standard.script.get_settings",
+        lambda: type("S", (), {"segment_target_sec": 0, "max_title_length": 20})(),
+    )
+    script = _valid_script(
+        segments=[
+            {
+                "segment_index": 1,
+                "text": "x" * _DEFAULT_TARGET,
+                "visual_brief": _VISUAL_BRIEF,
+                "image_prompt": "x" * 274,
+            }
+        ],
+    )
+    warnings = _validate_script(script, min_narration_chars=_DEFAULT_MIN)
+    assert any("image_prompt slightly short" in w for w in warnings)
+
+
 def test_validate_script_rejects_too_few_segments_for_cap(monkeypatch):
     monkeypatch.setattr(
         "worker.stages.standard.script.get_settings",
