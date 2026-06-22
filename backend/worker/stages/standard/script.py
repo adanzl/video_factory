@@ -4,7 +4,12 @@ import re
 import time
 
 from app.config import get_settings
-from app.quality.checkers import check_copy, check_storyboard
+from app.quality.checkers import (
+    check_copy,
+    check_image_prompts,
+    check_storyboard,
+    skipped_image_prompts_check,
+)
 from app.quality.gate import apply_quality_checks
 from app.repositories import job_log_repo, job_repo, segment_repo
 from app.repositories.connection import connection
@@ -324,6 +329,12 @@ def _validate_script(
     return warnings
 
 
+def _strip_image_prompt_fields(script: dict) -> None:
+    for seg in script.get("segments") or []:
+        seg.pop("image_prompt", None)
+        seg.pop("motion_prompt", None)
+
+
 class ScriptStage(StageExecutor):
     name = "script"
 
@@ -444,6 +455,16 @@ class ScriptStage(StageExecutor):
             script.pop("supplementary_info", None)
 
         script["word_count"] = _narration_chars(script.get("narration", ""))
+        resolved_seg_target = (
+            segment_target_sec
+            if segment_target_sec is not None
+            else get_settings().segment_target_sec
+        )
+        script["segment_target_sec"] = resolved_seg_target
+        script["max_title_length"] = max_len
+        script["generate_image_prompts"] = generate_image_prompts
+        if not generate_image_prompts:
+            _strip_image_prompt_fields(script)
         script.pop("_llm_timing", None)
         script["cost_time"] = round(time.perf_counter() - started, 1)
         display_title = script["title"]
@@ -478,7 +499,16 @@ class ScriptStage(StageExecutor):
                 self.name,
                 {
                     "copy": check_copy(script),
-                    "storyboard": check_storyboard(script),
+                    "storyboard": check_storyboard(
+                        script,
+                        segment_target_sec=segment_target_sec,
+                        max_title_length=max_len,
+                    ),
+                    "image_prompts": (
+                        check_image_prompts(script)
+                        if generate_image_prompts
+                        else skipped_image_prompts_check()
+                    ),
                 },
                 existing_report=ctx.job.get("quality_report"),
             )
