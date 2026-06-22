@@ -118,7 +118,7 @@
       v-model:current-page="page"
       v-model:page-size="pageSize"
       :total="total"
-      :page-sizes="[20, 50]"
+      :page-sizes="[15, 20, 50]"
       layout="sizes, prev, pager, next"
       class="mt-4 justify-start"
       @current-change="fetchTitles"
@@ -189,7 +189,7 @@ const titles = ref<TitleRecord[]>([]);
 const loading = ref(false);
 const statusFilter = ref<string>();
 const page = ref(1);
-const pageSize = ref(20);
+const pageSize = ref(15);
 const total = ref(0);
 const selectedIds = ref<number[]>([]);
 

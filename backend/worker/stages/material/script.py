@@ -16,6 +16,7 @@ from worker.stages.base import StageExecutor
 from worker.stages.standard.script import (
     ScriptValidationError,
     _apply_script_title,
+    _apply_video_description,
     _min_narration_chars,
     _normalize_segments,
     _narration_chars,
@@ -232,6 +233,11 @@ class MaterialScriptStage(StageExecutor):
             source_title=title,
             max_len=max_len,
             skip_optimize=bool(ctx.script_skip_title_optimize),
+            job_id=ctx.job["id"],
+            stage_name=self.name,
+        )
+        _apply_video_description(
+            script,
             job_id=ctx.job["id"],
             stage_name=self.name,
         )

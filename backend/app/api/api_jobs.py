@@ -109,6 +109,17 @@ def preview_script_prompts_route():
     return json_ok({"prompts": prompts})
 
 
+@bp.post("/script/description")
+def regenerate_video_description_route():
+    data = get_json_body()
+    job_id = parse_id(data)
+    try:
+        result = job_mgr.generate_video_description(job_id)
+    except ValueError as exc:
+        raise APIError(str(exc)) from exc
+    return json_ok(result)
+
+
 def _parse_intro_body() -> tuple[int, bool, float | None, str | None]:
     data = get_json_body()
     return (

@@ -19,7 +19,13 @@
       </el-select>
     </div>
 
-    <el-table :data="jobs" stripe class="w-full" v-loading="loading">
+    <el-table
+      :data="jobs"
+      stripe
+      class="w-full"
+      v-loading="loading"
+      @row-dblclick="handleRowDblClick"
+    >
       <el-table-column prop="id" label="ID" width="80" />
       <el-table-column prop="title" label="标题" min-width="200" show-overflow-tooltip />
       <el-table-column label="类型" width="80">
@@ -61,7 +67,7 @@
       v-model:current-page="page"
       v-model:page-size="pageSize"
       :total="total"
-      :page-sizes="[20, 50]"
+      :page-sizes="[15, 20]"
       layout="sizes, prev, pager, next"
       class="mt-4 justify-start"
       @current-change="fetchJobs"
@@ -90,7 +96,7 @@ const jobs = ref<JobListItem[]>([]);
 const loading = ref(false);
 const statusFilter = ref<string>();
 const page = ref(1);
-const pageSize = ref(20);
+const pageSize = ref(15);
 const total = ref(0);
 const deletingId = ref<number>();
 
@@ -163,6 +169,10 @@ const onPageSizeChange = () => {
 
 const handleViewDetail = (jobId: number) => {
   emit("viewDetail", jobId);
+};
+
+const handleRowDblClick = (row: JobListItem) => {
+  handleViewDetail(row.id);
 };
 
 const handleDelete = async (row: JobListItem) => {

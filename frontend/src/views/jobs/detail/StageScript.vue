@@ -24,7 +24,7 @@
           </div>
         </el-form-item>
         <div v-if="!isMaterialJob" class="flex w-full flex-wrap items-start gap-x-4">
-          <el-form-item label="单镜(秒)" :label-width="FORM_LABEL_WIDTH" class="!mb-0">
+          <el-form-item label="单镜(秒)" :label-width="FORM_LABEL_WIDTH" class="mb-0!">
             <el-input-number
               v-model="segmentTargetSec"
               :min="0"
@@ -34,7 +34,7 @@
               class="w-28!"
             />
           </el-form-item>
-          <el-form-item label="标题上限" :label-width="FORM_LABEL_WIDTH" class="!mb-0">
+          <el-form-item label="标题上限" :label-width="FORM_LABEL_WIDTH" class="mb-0!">
             <el-input-number
               v-model="maxTitleLength"
               :min="8"
@@ -44,7 +44,7 @@
               class="w-28!"
             />
           </el-form-item>
-          <el-form-item label="口播字数" :label-width="FORM_LABEL_WIDTH" class="!mb-0">
+          <el-form-item label="口播字数" :label-width="FORM_LABEL_WIDTH" class="mb-0!">
             <el-input-number
               v-model="narrationTargetWords"
               :min="NARRATION_WORDS_MIN"
@@ -55,12 +55,12 @@
               @change="narrationWordsTouched = true"
             />
           </el-form-item>
-          <el-form-item label="标题优化" :label-width="FORM_LABEL_WIDTH" class="!mb-0">
+          <el-form-item label="标题优化" :label-width="FORM_LABEL_WIDTH" class="mb-0!">
             <el-checkbox v-model="skipTitleOptimize">跳过</el-checkbox>
           </el-form-item>
         </div>
         <div v-else class="flex flex-wrap items-start gap-x-4">
-          <el-form-item label="标题上限" :label-width="FORM_LABEL_WIDTH" class="!mb-0">
+          <el-form-item label="标题上限" :label-width="FORM_LABEL_WIDTH" class="mb-0!">
             <el-input-number
               v-model="maxTitleLength"
               :min="8"
@@ -70,7 +70,7 @@
               class="w-28!"
             />
           </el-form-item>
-          <el-form-item label="口播字数" :label-width="FORM_LABEL_WIDTH" class="!mb-0">
+          <el-form-item label="口播字数" :label-width="FORM_LABEL_WIDTH" class="mb-0!">
             <div class="flex flex-col gap-1">
               <el-input-number
                 v-model="narrationTargetWords"
@@ -84,11 +84,11 @@
               <span v-if="baseDurationHint" class="text-xs text-gray-400">{{ baseDurationHint }}</span>
             </div>
           </el-form-item>
-          <el-form-item label="标题优化" :label-width="FORM_LABEL_WIDTH" class="!mb-0">
+          <el-form-item label="标题优化" :label-width="FORM_LABEL_WIDTH" class="mb-0!">
             <el-checkbox v-model="skipTitleOptimize">跳过</el-checkbox>
           </el-form-item>
         </div>
-        <el-form-item v-if="isMaterialJob" label="时间表" class="!mb-2">
+        <el-form-item v-if="isMaterialJob" label="时间表" class="mb-2!">
           <el-input
             v-model="videoTimeline"
             type="textarea"
@@ -97,7 +97,7 @@
             clearable
           />
         </el-form-item>
-        <el-form-item label="补充信息" class="!mb-0">
+        <el-form-item label="补充信息" class="mb-0!">
           <el-input
             v-model="supplementaryInfo"
             type="textarea"
@@ -135,13 +135,13 @@
                   <div>
                     <div class="mb-1 text-xs font-medium text-gray-500">System</div>
                     <pre
-                      class="m-0 max-h-64 overflow-auto rounded bg-gray-50 p-3 text-xs leading-relaxed break-words whitespace-pre-wrap"
+                      class="m-0 max-h-64 overflow-auto rounded bg-gray-50 p-3 text-xs leading-relaxed wrap-break-word whitespace-pre-wrap"
                     >{{ item.system }}</pre>
                   </div>
                   <div>
                     <div class="mb-1 text-xs font-medium text-gray-500">User</div>
                     <pre
-                      class="m-0 max-h-64 overflow-auto rounded bg-gray-50 p-3 text-xs leading-relaxed break-words whitespace-pre-wrap"
+                      class="m-0 max-h-64 overflow-auto rounded bg-gray-50 p-3 text-xs leading-relaxed wrap-break-word whitespace-pre-wrap"
                     >{{ item.user }}</pre>
                   </div>
                 </div>
@@ -179,7 +179,7 @@
           <el-tooltip placement="top-start" :show-after="300">
             <template #content>
               <div
-                class="max-h-96 max-w-2xl overflow-auto whitespace-pre-wrap break-words font-mono text-xs leading-relaxed"
+                class="max-h-96 max-w-2xl overflow-auto whitespace-pre-wrap wrap-break-word font-mono text-xs leading-relaxed"
               >
                 {{ script.video_timeline }}
               </div>
@@ -193,12 +193,12 @@
           <el-tooltip placement="top-start" :show-after="300">
             <template #content>
               <div
-                class="max-h-96 max-w-2xl overflow-auto whitespace-pre-wrap break-words text-sm leading-relaxed"
+                class="max-h-96 max-w-2xl overflow-auto whitespace-pre-wrap wrap-break-word text-sm leading-relaxed"
               >
                 {{ script.supplementary_info }}
               </div>
             </template>
-            <div class="line-clamp-2 cursor-default text-sm leading-relaxed break-words text-gray-600">
+            <div class="line-clamp-2 cursor-default text-sm leading-relaxed wrap-break-word text-gray-600">
               {{ script.supplementary_info }}
             </div>
           </el-tooltip>
@@ -220,11 +220,32 @@
         <div class="mb-2 text-sm font-medium text-gray-700">完整口播</div>
         <div
           v-if="script.narration"
-          class="rounded bg-gray-50 px-4 py-3 leading-relaxed break-words whitespace-pre-wrap"
+          class="rounded bg-gray-50 px-4 py-3 leading-relaxed wrap-break-word whitespace-pre-wrap"
         >
           {{ script.narration }}
         </div>
         <div v-else class="py-8 text-center text-sm text-gray-400">暂无口播文案</div>
+      </div>
+
+      <div v-if="script.narration" class="mb-5">
+        <div class="mb-2 flex flex-wrap items-center gap-2">
+          <span class="text-sm font-medium text-gray-700">视频介绍</span>
+          <el-button
+            size="small"
+            :loading="regeneratingDescription"
+            :disabled="actionDisabled"
+            @click="handleRegenerateDescription"
+          >
+            重新生成
+          </el-button>
+        </div>
+        <div
+          v-if="script.video_description"
+          class="rounded bg-gray-50 px-4 py-3 leading-relaxed wrap-break-word whitespace-pre-wrap"
+        >
+          {{ script.video_description }}
+        </div>
+        <div v-else class="py-4 text-center text-sm text-gray-400">暂无视频介绍</div>
       </div>
 
       <div class="mb-5">
@@ -233,26 +254,26 @@
           <el-table-column prop="segment_index" label="#" width="60" />
           <el-table-column prop="text" label="口播文案" min-width="150">
             <template #default="{ row }">
-              <div class="leading-relaxed break-words whitespace-pre-wrap">{{ row.text }}</div>
+              <div class="leading-relaxed wrap-break-word whitespace-pre-wrap">{{ row.text }}</div>
             </template>
           </el-table-column>
           <template v-if="!isMaterialJob">
             <el-table-column prop="visual_brief" label="画面描述" min-width="150">
               <template #default="{ row }">
-                <div class="leading-relaxed break-words whitespace-pre-wrap">{{ row.visual_brief || "-" }}</div>
+                <div class="leading-relaxed wrap-break-word whitespace-pre-wrap">{{ row.visual_brief || "-" }}</div>
               </template>
             </el-table-column>
             <el-table-column prop="visual_mode" label="模式" width="120" />
             <el-table-column prop="image_prompt" label="文生图提示词" min-width="240">
               <template #default="{ row }">
-                <div class="text-xs leading-relaxed break-words whitespace-pre-wrap text-gray-500">
+                <div class="text-xs leading-relaxed wrap-break-word whitespace-pre-wrap text-gray-500">
                   {{ row.image_prompt || "-" }}
                 </div>
               </template>
             </el-table-column>
             <el-table-column prop="motion_prompt" label="运动提示词" min-width="100">
               <template #default="{ row }">
-                <div class="text-xs leading-relaxed break-words whitespace-pre-wrap text-gray-500">
+                <div class="text-xs leading-relaxed wrap-break-word whitespace-pre-wrap text-gray-500">
                   {{ row.motion_prompt || "-" }}
                 </div>
               </template>
@@ -292,7 +313,7 @@
               :label="qualityDetailLabel(key)"
               :span="detailFieldSpan(key, value)"
             >
-              <div class="break-words whitespace-pre-wrap text-sm">{{ value }}</div>
+              <div class="wrap-break-word whitespace-pre-wrap text-sm">{{ value }}</div>
             </el-descriptions-item>
           </template>
           <el-descriptions-item v-else label="详情" :span="3">-</el-descriptions-item>
@@ -319,7 +340,7 @@
 import { computed, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { getMediaDuration } from "@/api/api-media";
-import { previewScriptPrompts, runJobStageAction } from "@/api/api-jobs";
+import { previewScriptPrompts, generateVideoDescription, runJobStageAction } from "@/api/api-jobs";
 import type { JobDetail, JobLog, LlmPromptStep, ScriptJson } from "@/types/jobs";
 import type { RunStageActionPayload } from "@/types/jobs/stageAction";
 import { isMaterialJob as checkMaterialJob } from "@/constants/jobStages";
@@ -346,6 +367,7 @@ const emit = defineEmits<{
 
 const { handleError } = useErrorHandler();
 const submitting = ref(false);
+const regeneratingDescription = ref(false);
 const sourceTitle = ref("");
 const segmentTargetSec = ref(DEFAULT_SEGMENT_TARGET_SEC);
 const maxTitleLength = ref(DEFAULT_MAX_TITLE_LENGTH);
@@ -598,6 +620,23 @@ const loadLlmPrompts = async () => {
     handleError(error, "加载提示词失败");
   } finally {
     promptsLoading.value = false;
+  }
+};
+
+const handleRegenerateDescription = async () => {
+  if (!script.value?.narration?.trim()) {
+    ElMessage.warning("请先生成口播文案");
+    return;
+  }
+  regeneratingDescription.value = true;
+  try {
+    await generateVideoDescription(props.job.id);
+    ElMessage.success("视频介绍已重新生成");
+    emit("refresh");
+  } catch (error) {
+    handleError(error, "重新生成视频介绍失败");
+  } finally {
+    regeneratingDescription.value = false;
   }
 };
 

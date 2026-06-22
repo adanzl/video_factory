@@ -26,4 +26,5 @@ export interface ScriptJson {
   llm_prompts?: LlmPromptStep[];
   supplementary_info?: string;
   video_timeline?: string;
+  video_description?: string;
 }

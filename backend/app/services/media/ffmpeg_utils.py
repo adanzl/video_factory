@@ -488,6 +488,8 @@ def mux_video_audio(video_path: Path, audio_path: Path, output_path: Path) -> Pa
             "copy",
             "-c:a",
             "aac",
+            "-movflags",
+            "+faststart",
             "-map",
             "0:v:0",
             "-map",

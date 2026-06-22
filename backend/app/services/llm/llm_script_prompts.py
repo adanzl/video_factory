@@ -13,6 +13,10 @@ from app.services.llm.llm_script_timeline import (
     parse_video_timeline,
     timeline_system_clause,
 )
+from app.services.llm.llm_script_description import (
+    build_video_description_system_prompt,
+    build_video_description_user_prompt,
+)
 from app.services.llm.llm_script_title import (
     build_title_optimize_system_prompt,
     build_title_optimize_user_prompt,
@@ -57,6 +61,7 @@ _STEP_LABELS = {
     "image_prompts": "文生图提示词",
     "material_script": "口播文案",
     "title_optimize": "标题优化",
+    "video_description": "视频介绍",
 }
 
 _NARRATION_VOICE_RULE = (
@@ -160,15 +165,17 @@ def build_storyboard_prompts(
     target = settings.segment_target_sec if segment_target_sec is None else segment_target_sec
     seg_rule = _storyboard_segment_rule(target)
     max_title = settings.max_title_length if max_title_length is None else max_title_length
-    narr_target = narration_target_words if narration_target_words is not None else 1050
-    narr_lo, narr_hi = _narration_word_range(narr_target)
+    narration_word_target = (
+        narration_target_words if narration_target_words is not None else 1050
+    )
+    narration_word_min, narration_word_max = _narration_word_range(narration_word_target)
     title_rule, title_user_prefix = _title_rule(title, max_title)
     system = (
         "你是给小朋友讲科普的视频编剧。输出JSON，字段：title, narration, word_count, "
         "visual_style, segments。"
         f"{title_rule}"
         f"{seg_rule}"
-        f"narration为完整口播，总字数{narr_lo}-{narr_hi}（不含空格换行），{_NARRATION_VOICE_RULE}"
+        f"narration为完整口播，总字数{narration_word_min}-{narration_word_max}（不含空格换行），{_NARRATION_VOICE_RULE}"
         "结构完整有开头结尾；选题撑不满时可略短，但须结构完整。"
         "禁止口播开头自我介绍或人设铺垫；第一句直接进入主题或抛出问题。"
         "各段text须与narration口吻一致。"
@@ -240,10 +247,12 @@ def build_material_script_prompts(
     max_title = settings.max_title_length if max_title_length is None else max_title_length
     timeline = _resolve_video_timeline(video_timeline, script=script)
     if timeline:
-        narr_lo, narr_hi = narration_range_for_timeline(timeline)
+        narration_word_min, narration_word_max = narration_range_for_timeline(timeline)
     else:
-        narr_target = narration_target_words if narration_target_words is not None else 800
-        narr_lo, narr_hi = _narration_word_range(narr_target)
+        narration_word_target = (
+            narration_target_words if narration_target_words is not None else 800
+        )
+        narration_word_min, narration_word_max = _narration_word_range(narration_word_target)
     title_rule, title_user_prefix = _title_rule(title, max_title)
     segment_rule = (
         f"segments 必须恰好 {len(timeline.slots)} 条，与画面时间表逐段一一对应；"
@@ -266,7 +275,7 @@ def build_material_script_prompts(
         "你是给小朋友讲科普的视频口播编剧。视频画面已由用户上传的基底视频提供，无需描述画面。"
         "输出 JSON，字段：title, narration, word_count, segments。"
         f"{title_rule}"
-        f"narration 为完整口播，总字数 {narr_lo}-{narr_hi}（不含空格换行），{_NARRATION_VOICE_RULE}"
+        f"narration 为完整口播，总字数 {narration_word_min}-{narration_word_max}（不含空格换行），{_NARRATION_VOICE_RULE}"
         f"{opening_rule}"
         f"{segment_rule}"
         "word_count 必须等于 narration 实际字数。"
@@ -299,6 +308,15 @@ def build_title_optimize_prompts(
         max_title_len=max_len,
     )
     return _prompt_step("title_optimize", system, user)
+
+
+def build_video_description_prompts(
+    title: str,
+    narration: str,
+) -> dict[str, str]:
+    system = build_video_description_system_prompt()
+    user = build_video_description_user_prompt(title=title, narration=narration)
+    return _prompt_step("video_description", system, user)
 
 
 def _is_material_job(job: dict) -> bool:
@@ -353,21 +371,24 @@ def collect_script_prompts(
         if script and script.get("segments"):
             prompts.append(build_image_prompts_prompts(script, supplementary_info=extra))
 
-    if (
-        script
-        and not skip_title_optimize
-        and (script.get("draft_title") or script.get("narration"))
-    ):
-        draft = str(script.get("draft_title") or script.get("title") or "")
+    if script:
         narration = str(script.get("narration") or "")
-        if draft and narration:
-            prompts.append(
-                build_title_optimize_prompts(
-                    draft,
-                    narration,
-                    max_title_length=max_title_length,
+        if (
+            not skip_title_optimize
+            and (script.get("draft_title") or narration)
+        ):
+            draft = str(script.get("draft_title") or script.get("title") or "")
+            if draft and narration:
+                prompts.append(
+                    build_title_optimize_prompts(
+                        draft,
+                        narration,
+                        max_title_length=max_title_length,
+                    )
                 )
-            )
+        title_for_desc = str(script.get("title") or title or "")
+        if title_for_desc and narration:
+            prompts.append(build_video_description_prompts(title_for_desc, narration))
     return prompts
 
 
