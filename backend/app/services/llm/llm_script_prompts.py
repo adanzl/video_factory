@@ -70,6 +70,14 @@ _NARRATION_VOICE_RULE = (
     "科普事实须准确，童趣服务于理解，不牺牲科学内容。"
 )
 
+_MATERIAL_NARRATION_LENGTH_RULE = (
+    "【撑满字数的写法】每段口播须含三层——"
+    "①童趣感叹或「你看」式互动；②一个准确科普点；③比喻/拟声/生活联想。"
+    "禁止整段仅一句短感叹（如「哇，好厉害呀」）。"
+    "【生成顺序】先逐段写满 segments，再原样拼接为 narration，最后统计 word_count；"
+    "若未达字数下限，须当场扩写后再输出 JSON，禁止先输出再指望后处理。"
+)
+
 _SHORT_FORM_STRUCTURE_RULE = (
     "本片为1～2分钟竖屏短科普：只讲一个核心知识点，禁止多点罗列、章节式串讲或「第一第二第三」清单。"
     "第一句须在3秒内抛出反常识疑问、具体现象或悬念（禁止「大家好」「今天我们来聊」类开场）。"
@@ -281,21 +289,35 @@ def build_material_script_prompts(
         if timeline
         else "禁止开头自我介绍；第一句直接进入主题。"
     )
+    length_rule = (
+        f"narration 总字数硬性 {narration_word_min}-{narration_word_max} 字（不含空格换行），"
+        f"低于 {narration_word_min} 字视为不合格；"
+        f"{_MATERIAL_NARRATION_LENGTH_RULE}"
+    )
     system = (
         "你是给小朋友讲科普的视频口播编剧。视频画面已由用户上传的基底视频提供，无需描述画面。"
         "输出 JSON，字段：title, narration, word_count, segments。"
         f"{title_rule}"
-        f"narration 为完整口播，总字数 {narration_word_min}-{narration_word_max}（不含空格换行），{_NARRATION_VOICE_RULE}"
+        f"{length_rule}"
+        f"{_NARRATION_VOICE_RULE}"
         f"{opening_rule}"
         f"{segment_rule}"
-        "word_count 必须等于 narration 实际字数。"
+        "word_count 必须等于 narration 实际字数，禁止虚报。"
         f"{timeline_system_clause(timeline) if timeline else ''}"
         f"{_supplementary_system_clause(supplementary_info)}"
     )
-    user = _append_supplementary_to_user(
+    user_parts = [
         f"{title_user_prefix} narration 与分句 segments。",
-        supplementary_info,
-    )
+        f"口播总字数须在 {narration_word_min}-{narration_word_max} 字之间，至少 {narration_word_min} 字。",
+    ]
+    if not timeline:
+        seg_hint = max(4, narration_word_min // 45)
+        per_seg_min = max(25, narration_word_min // seg_hint)
+        user_parts.append(
+            f"建议切分约 {seg_hint} 段，每段至少 {per_seg_min} 字，"
+            f"各段用「感叹+科普点+比喻」三层写法撑满字数。"
+        )
+    user = _append_supplementary_to_user("\n".join(user_parts), supplementary_info)
     if timeline:
         user = append_timeline_to_user(user, timeline)
     if feedback:

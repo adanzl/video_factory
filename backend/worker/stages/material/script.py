@@ -71,12 +71,18 @@ def _validate_material_script(
     segments = script.get("segments") or []
     warnings: list[str] = []
     chars = _narration_chars(narration)
-    if chars < MIN_ACCEPT_NARRATION_CHARS:
-        raise ScriptValidationError(
-            f"narration too short: {chars} chars (need >= {MIN_ACCEPT_NARRATION_CHARS})",
-            retryable=False,
-        )
     if chars < required_narration_chars:
+        retry_min = max(MIN_ACCEPT_NARRATION_CHARS, int(required_narration_chars * 0.8))
+        if chars >= retry_min:
+            raise ScriptValidationError(
+                f"narration too short: {chars} chars (need >= {required_narration_chars})",
+                retryable=True,
+            )
+        if chars < MIN_ACCEPT_NARRATION_CHARS:
+            raise ScriptValidationError(
+                f"narration too short: {chars} chars (need >= {MIN_ACCEPT_NARRATION_CHARS})",
+                retryable=True,
+            )
         warnings.append(
             f"narration shorter than target ({chars} < {required_narration_chars}), continuing"
         )
