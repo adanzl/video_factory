@@ -9,10 +9,10 @@ import type {
   GenerateTopicsParams,
   GenerateTopicsResult,
   ImportHotTopicsParams,
-  ImportHotTopicsResult,
   ListTitlesParams,
   ScoreTopicsResult,
   TitleRecord,
+  TopicTaskResponse,
 } from "@/types/topic";
 
 export type { TopicItem } from "@/types/topic";
@@ -34,8 +34,8 @@ export async function generateTopics(
 
 export async function importHotTopics(
   params: ImportHotTopicsParams = {}
-): Promise<ImportHotTopicsResult> {
-  const response = await api.post<ImportHotTopicsResult>("/v_factory/api/topic/hot", params);
+): Promise<TopicTaskResponse> {
+  const response = await api.post<TopicTaskResponse>("/v_factory/api/topic/hot", params);
   return response.data;
 }
 

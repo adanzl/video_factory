@@ -63,12 +63,13 @@
       >
         <div class="relative aspect-video bg-black">
           <video
-            :src="clip.video_url"
+            :src="clipPreviewUrl(clip.video_url)"
             :poster="clip.preview_url"
             class="h-full w-full object-contain"
             controls
             preload="metadata"
             playsinline
+            crossorigin="anonymous"
           />
         </div>
         <div class="space-y-2 p-3">
@@ -110,7 +111,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
 import { ElMessage } from "element-plus";
-import { CLIP_PROVIDER_LABELS, listClipSources, searchClips } from "@/api/api-clips";
+import { CLIP_PROVIDER_LABELS, clipPreviewUrl, listClipSources, searchClips } from "@/api/api-clips";
 import type {
   ClipProviderName,
   ClipProviderSearchMeta,

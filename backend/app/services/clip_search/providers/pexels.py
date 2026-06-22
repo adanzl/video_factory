@@ -8,13 +8,33 @@ from app.services.clip_search.providers._http import get_json
 _PEXELS_SEARCH = "https://api.pexels.com/videos/search"
 
 
+def _is_browser_mp4(file: dict) -> bool:
+    link = str(file.get("link") or "")
+    file_type = str(file.get("file_type") or "").lower()
+    quality = str(file.get("quality") or "").lower()
+    if not link:
+        return False
+    if quality == "hls" or ".m3u8" in link.lower():
+        return False
+    if file_type and "mp4" not in file_type:
+        return False
+    return True
+
+
 def _pick_video_file(files: list[dict]) -> dict | None:
-    if not files:
+    candidates = [f for f in files if isinstance(f, dict) and _is_browser_mp4(f)]
+    if not candidates:
         return None
-    hd = [f for f in files if str(f.get("quality", "")).lower() == "hd"]
-    pool = hd or files
-    pool = sorted(pool, key=lambda f: int(f.get("width") or 0), reverse=True)
-    return pool[0] if pool else None
+    # sd/hd 比 uhd 更易在浏览器中解码；同档优先较高分辨率
+    quality_rank = {"sd": 3, "hd": 2, "uhd": 1}
+    candidates.sort(
+        key=lambda f: (
+            quality_rank.get(str(f.get("quality", "")).lower(), 0),
+            int(f.get("width") or 0),
+        ),
+        reverse=True,
+    )
+    return candidates[0]
 
 
 def search_pexels(
