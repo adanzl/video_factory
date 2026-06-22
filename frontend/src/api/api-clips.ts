@@ -1,7 +1,7 @@
 /**
  * 素材片段聚合搜索 API（不入库）
  */
-import { api } from "./config";
+import { api, getApiUrl } from "./config";
 import type {
   ClipProviderStatus,
   ClipSearchResult,
@@ -32,3 +32,13 @@ export const CLIP_PROVIDER_LABELS: Record<ClipProviderName, string> = {
   pixabay: "Pixabay",
   nasa: "NASA",
 };
+
+/** 经后端代理的外部视频预览 URL，避免浏览器跨域与编码问题 */
+export function clipPreviewUrl(remoteUrl: string): string {
+  const trimmed = remoteUrl?.trim();
+  if (!trimmed) {
+    return "";
+  }
+  const base = getApiUrl();
+  return `${base}/v_factory/api/clips/preview?url=${encodeURIComponent(trimmed)}`;
+}

@@ -436,7 +436,7 @@ const handleGenerate = async () => {
 const handleImportHot = async () => {
   try {
     await ElMessageBox.confirm(
-      "将拉取 B 站热搜，经 AI 筛选后生成标题并入库（来源：热搜）。耗时约 30～60 秒，是否继续？",
+      "将拉取 B 站热搜，经 AI 筛选后生成标题并入库（来源：热搜）。后台执行，约 30～60 秒完成，是否继续？",
       "热搜选题",
       { type: "info", confirmButtonText: "开始", cancelButtonText: "取消" }
     );
@@ -446,16 +446,12 @@ const handleImportHot = async () => {
 
   importingHot.value = true;
   try {
-    const result = await importHotTopics({
+    await importHotTopics({
       limit: 50,
       count_per_theme: 3,
       min_score: 70,
     });
-    const s = result.summary;
-    ElMessage.success(
-      `热搜 ${s.fetched} 条 → 保留 ${s.kept} 条 → 入库 ${result.count} 条（跳过 ${result.skipped} 条）`
-    );
-    await fetchTitles();
+    ElMessage.success("已提交热搜选题，后台处理中，约 30～60 秒后刷新列表查看");
   } catch (error) {
     handleError(error, "热搜选题失败");
   } finally {

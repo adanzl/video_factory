@@ -104,6 +104,16 @@ export interface ImportHotTopicsResult {
   }[];
 }
 
+export type TopicTaskStatus = "running" | "done" | "failed";
+
+export interface TopicTaskResponse {
+  task_id: string;
+  kind: string;
+  status: TopicTaskStatus;
+  result?: ImportHotTopicsResult;
+  error?: string;
+}
+
 export interface EnqueueTopicsResult {
   jobs: { id: number; title: string }[];
   count: number;

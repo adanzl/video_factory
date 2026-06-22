@@ -104,6 +104,57 @@ def test_search_pexels_parses_response(monkeypatch):
     assert clips[0].author == "Alice"
 
 
+def test_search_pexels_prefers_sd_over_uhd(monkeypatch):
+    def fake_get_json(url, **kwargs):
+        return {
+            "videos": [
+                {
+                    "id": 1,
+                    "duration": 5,
+                    "url": "https://www.pexels.com/video/1/",
+                    "image": "https://images.pexels.com/videos/1/preview.jpg",
+                    "video_files": [
+                        {
+                            "width": 3840,
+                            "height": 2160,
+                            "link": "https://cdn.example/1-uhd.mp4",
+                            "quality": "uhd",
+                            "file_type": "video/mp4",
+                        },
+                        {
+                            "width": 1280,
+                            "height": 720,
+                            "link": "https://cdn.example/1-hd.mp4",
+                            "quality": "hd",
+                            "file_type": "video/mp4",
+                        },
+                        {
+                            "width": 640,
+                            "height": 360,
+                            "link": "https://cdn.example/1-sd.mp4",
+                            "quality": "sd",
+                            "file_type": "video/mp4",
+                        },
+                    ],
+                }
+            ]
+        }
+
+    monkeypatch.setattr("app.services.clip_search.providers.pexels.get_json", fake_get_json)
+    clips = search_pexels("test", api_key="k", per_page=5, orientation=None, timeout=5)
+    assert clips[0].video_url.endswith("1-sd.mp4")
+
+
+def test_validate_preview_url():
+    from app.services.clip_search.preview_proxy import validate_preview_url
+
+    ok = validate_preview_url("https://videos.pexels.com/video-files/abc/abc.mp4")
+    assert ok.startswith("https://videos.pexels.com")
+
+    with pytest.raises(ValueError, match="not allowed"):
+        validate_preview_url("https://evil.example/video.mp4")
+
+
 def test_search_pixabay_parses_response(monkeypatch):
     def fake_get_json(url, **kwargs):
         return {
