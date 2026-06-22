@@ -1,14 +1,22 @@
 {
     "words": [
+        "dataclass",
         "debugpy",
         "embedder",
         "faststart",
+        "HOTWORD",
+        "KHTML",
         "LANCZOS",
         "movflags",
         "nokey",
+        "pexels",
+        "pixabay",
+        "Referer",
+        "Silero",
         "transnet",
         "transnetv",
         "vcodec",
+        "venv",
         "veryfast"
     ]
 }

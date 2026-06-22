@@ -241,9 +241,18 @@
         </div>
         <div
           v-if="script.video_description"
-          class="rounded bg-gray-50 px-4 py-3 leading-relaxed wrap-break-word whitespace-pre-wrap"
+          class="relative rounded bg-gray-50 px-4 py-3 pr-10 leading-relaxed wrap-break-word whitespace-pre-wrap"
         >
           {{ script.video_description }}
+          <el-tooltip content="复制" placement="top">
+            <el-button
+              class="absolute! top-2 right-2"
+              link
+              type="primary"
+              :icon="DocumentCopy"
+              @click="copyVideoDescription(script.video_description)"
+            />
+          </el-tooltip>
         </div>
         <div v-else class="py-4 text-center text-sm text-gray-400">暂无视频介绍</div>
       </div>
@@ -338,6 +347,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
+import { DocumentCopy } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { getMediaDuration } from "@/api/api-media";
 import { previewScriptPrompts, generateVideoDescription, runJobStageAction } from "@/api/api-jobs";
@@ -345,13 +355,14 @@ import type { JobDetail, JobLog, LlmPromptStep, ScriptJson } from "@/types/jobs"
 import type { RunStageActionPayload } from "@/types/jobs/stageAction";
 import { isMaterialJob as checkMaterialJob } from "@/constants/jobStages";
 import { formatDateTime } from "@/utils/date";
-import { estimateNarrationTargetWords, formatCostTime, formatMediaDuration } from "@/utils/media";
+import { estimateNarrationTargetWords, formatCostTime, formatMediaDuration, defaultNarrationTargetWords } from "@/utils/media";
 import { useErrorHandler } from "@/composables/useErrorHandler";
+import { copyText } from "@/utils/utils";
 
 const FORM_LABEL_WIDTH = "88px";
-const DEFAULT_SEGMENT_TARGET_SEC = 12;
+const DEFAULT_SEGMENT_TARGET_SEC = 16;
 const DEFAULT_MAX_TITLE_LENGTH = 24;
-const DEFAULT_NARRATION_TARGET_WORDS = 1050;
+const DEFAULT_NARRATION_TARGET_WORDS = defaultNarrationTargetWords();
 const DEFAULT_MATERIAL_NARRATION_TARGET_WORDS = 800;
 const NARRATION_WORDS_MIN = 200;
 const NARRATION_WORDS_MAX = 3000;
@@ -637,6 +648,15 @@ const handleRegenerateDescription = async () => {
     handleError(error, "重新生成视频介绍失败");
   } finally {
     regeneratingDescription.value = false;
+  }
+};
+
+const copyVideoDescription = async (text: string) => {
+  try {
+    await copyText(text);
+    ElMessage.success("已复制");
+  } catch (error) {
+    handleError(error, "复制失败");
   }
 };
 

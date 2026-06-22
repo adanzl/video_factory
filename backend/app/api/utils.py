@@ -11,6 +11,57 @@ from app.api.errors import APIError
 JsonDict = dict[str, Any]
 
 
+def _as_int(raw: Any, field: str) -> int:
+    try:
+        return int(raw)
+    except (TypeError, ValueError) as exc:
+        raise APIError(f"{field} must be integer") from exc
+
+
+def _as_float(raw: Any, field: str) -> float:
+    try:
+        return float(raw)
+    except (TypeError, ValueError) as exc:
+        raise APIError(f"{field} must be a number") from exc
+
+
+def _check_bounds(
+    value: int | float,
+    field: str,
+    *,
+    minimum: int | float | None = None,
+    maximum: int | float | None = None,
+) -> None:
+    if minimum is not None and value < minimum:
+        raise APIError(f"{field} must be >= {minimum}")
+    if maximum is not None and value > maximum:
+        raise APIError(f"{field} must be <= {maximum}")
+
+
+def _parse_int_value(
+    raw: Any,
+    field: str,
+    *,
+    minimum: int | None = None,
+    maximum: int | None = None,
+) -> int:
+    value = _as_int(raw, field)
+    _check_bounds(value, field, minimum=minimum, maximum=maximum)
+    return value
+
+
+def _parse_float_value(
+    raw: Any,
+    field: str,
+    *,
+    minimum: float,
+    maximum: float,
+) -> float:
+    value = _as_float(raw, field)
+    _check_bounds(value, field, minimum=minimum, maximum=maximum)
+    return value
+
+
 def get_json_body(*, required: bool = True) -> JsonDict:
     """安全获取 JSON body。"""
     data = request.get_json(silent=True)
@@ -34,10 +85,7 @@ def parse_query_int(
         value = int(raw)
     except (TypeError, ValueError) as exc:
         raise APIError(f"invalid {name}") from exc
-    if value < minimum:
-        raise APIError(f"{name} must be >= {minimum}")
-    if maximum is not None and value > maximum:
-        raise APIError(f"{name} must be <= {maximum}")
+    _check_bounds(value, name, minimum=minimum, maximum=maximum)
     return value
 
 
@@ -48,8 +96,8 @@ def parse_id(data: JsonDict | None = None, *, field: str = "id") -> int:
     else:
         raw = request.args.get(field)
     try:
-        value = int(raw)
-    except (TypeError, ValueError) as exc:
+        value = _as_int(raw, field)
+    except APIError as exc:
         raise APIError(f"{field} is required") from exc
     if value <= 0:
         raise APIError(f"{field} must be positive")
@@ -78,6 +126,20 @@ def parse_bool(data: JsonDict, field: str, *, default: bool = False) -> bool:
     return value
 
 
+def parse_int(
+    data: JsonDict,
+    field: str,
+    default: int,
+    *,
+    minimum: int | None = None,
+    maximum: int | None = None,
+) -> int:
+    """解析 JSON body 整数字段；缺失时返回 default。"""
+    if field not in data:
+        return default
+    return _parse_int_value(data[field], field, minimum=minimum, maximum=maximum)
+
+
 def parse_optional_int(
     data: JsonDict,
     field: str,
@@ -88,16 +150,7 @@ def parse_optional_int(
     """解析可选整数字段；缺失时返回 None。"""
     if field not in data:
         return None
-    raw = data[field]
-    try:
-        value = int(raw)
-    except (TypeError, ValueError) as exc:
-        raise APIError(f"{field} must be an integer") from exc
-    if value < minimum:
-        raise APIError(f"{field} must be >= {minimum}")
-    if maximum is not None and value > maximum:
-        raise APIError(f"{field} must be <= {maximum}")
-    return value
+    return _parse_int_value(data[field], field, minimum=minimum, maximum=maximum)
 
 
 def parse_optional_float(
@@ -110,16 +163,7 @@ def parse_optional_float(
     """解析可选浮点字段；缺失时返回 None。"""
     if field not in data:
         return None
-    raw = data[field]
-    try:
-        value = float(raw)
-    except (TypeError, ValueError) as exc:
-        raise APIError(f"{field} must be a number") from exc
-    if value < minimum:
-        raise APIError(f"{field} must be >= {minimum}")
-    if value > maximum:
-        raise APIError(f"{field} must be <= {maximum}")
-    return value
+    return _parse_float_value(data[field], field, minimum=minimum, maximum=maximum)
 
 
 def parse_int_list(

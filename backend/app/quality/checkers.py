@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 
 from app.config import get_settings
+from app.utils.media import segment_text_char_cap
 from app.quality.models import QualityReport
 from app.services.media.audio_analysis import LoudnessStats, SilenceStats, analyze_loudness, analyze_silence
 from app.services.media.ffmpeg_utils import probe_duration
@@ -74,7 +75,7 @@ def check_storyboard(script: dict) -> QualityReport:
     segments = script.get("segments") or []
     if settings.segment_target_sec > 0:
         narration_chars = _narration_chars(script.get("narration", ""))
-        cap = max(20, int(settings.segment_target_sec * 7.5))
+        cap = segment_text_char_cap(settings.segment_target_sec)
         needed = max(1, (narration_chars + cap - 1) // cap)
         if len(segments) < needed:
             return QualityReport(

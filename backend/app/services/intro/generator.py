@@ -19,7 +19,7 @@ from app.services.visual.title_render import STROKE_WIDTH, render_text_rgba
 
 _FPS = 25
 _ENTER_SEC = 0.32
-_HOLD_TAIL_SEC = 0.35
+_HOLD_TAIL_SEC = 0.15
 
 
 @dataclass(frozen=True)

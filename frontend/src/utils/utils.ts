@@ -3,6 +3,10 @@ import type { Router } from "vue-router";
 const CHUNK_ERROR_RE =
   /Failed to fetch dynamically imported module|Loading chunk|Importing a module script failed/;
 
+export async function copyText(text: string): Promise<void> {
+  await navigator.clipboard.writeText(text);
+}
+
 export function setupChunkReloadGuard(router: Router): void {
   router.onError((error, to) => {
     const msg = String((error as Error)?.message ?? error);

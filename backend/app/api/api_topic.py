@@ -10,6 +10,7 @@ from app.api.utils import (
     get_query,
     json_ok,
     parse_bool,
+    parse_int,
     parse_int_list,
     parse_query_int,
     parse_str,
@@ -20,17 +21,6 @@ from app.services.topic.topic_mgr import topic_mgr
 bp = Blueprint("api_topic", __name__, url_prefix="/v_factory/api/topic")
 
 logger = logging.getLogger(__name__)
-
-
-def _parse_count(data: dict, *, default: int = 10) -> int:
-    raw = data.get("count", default)
-    try:
-        value = int(raw)
-    except (TypeError, ValueError) as exc:
-        raise APIError("count must be integer") from exc
-    if value < 1 or value > 20:
-        raise APIError("count must be between 1 and 20")
-    return value
 
 
 @bp.get("/list")
@@ -46,13 +36,13 @@ def generate_topic_route():
     """生成选题标题列表，支持自定义 system / user 提示词。"""
     data = get_json_body()
     theme = parse_str(data, "theme", required=False)
-    system_prompt = parse_str(data, "system_prompt", required=False)
     user_prompt = parse_str(data, "user_prompt", required=False)
-    save = parse_bool(data, "save", default=False)
-    count = _parse_count(data)
-
     if not theme and not user_prompt:
         raise APIError("theme or user_prompt is required")
+
+    count = parse_int(data, "count", 10, minimum=1, maximum=20)
+    save = parse_bool(data, "save", default=False)
+    system_prompt = parse_str(data, "system_prompt", required=False)
 
     logger.info(
         "[TOPIC] api /gen theme=%r count=%d save=%s custom_prompt=%s",
@@ -63,13 +53,14 @@ def generate_topic_route():
     )
 
     if save:
-        result = topic_mgr.generate_and_save(
-            theme or "",
-            count=count,
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
+        return json_ok(
+            topic_mgr.generate_and_save(
+                theme or "",
+                count=count,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+            )
         )
-        return json_ok(result)
 
     topics = llm_mgr.generate_topics(
         theme or "",
@@ -87,6 +78,39 @@ def generate_topic_route():
     )
 
 
+@bp.post("/hot")
+def import_hot_topics_route():
+    """从 B 站热搜采集、筛选、生成标题并写入选题库（source=热搜）。"""
+    data = get_json_body(required=False)
+    limit = parse_int(data, "limit", 50, minimum=1, maximum=50)
+    count_per_theme = parse_int(data, "count_per_theme", 3, minimum=1, maximum=20)
+    l1_rules = parse_bool(data, "l1_rules", default=False)
+    use_theme_llm = parse_bool(data, "use_theme_llm", default=True)
+    if "min_score" in data:
+        min_score = parse_int(data, "min_score", 70, minimum=0, maximum=100)
+    elif data.get("only_queued") is False:
+        min_score = 0
+    else:
+        min_score = 70
+
+    logger.info(
+        "[TOPIC] api /hot limit=%d count_per_theme=%d l1_rules=%s min_score=%d",
+        limit,
+        count_per_theme,
+        l1_rules,
+        min_score,
+    )
+    return json_ok(
+        topic_mgr.import_from_hot_search(
+            limit=limit,
+            l1_rules=l1_rules,
+            count_per_theme=count_per_theme,
+            use_theme_llm=use_theme_llm,
+            min_score=min_score,
+        )
+    )
+
+
 @bp.post("/score")
 def score_topics_route():
     data = get_json_body(required=False)
@@ -94,22 +118,14 @@ def score_topics_route():
     return json_ok(topic_mgr.score_titles(ids))
 
 
-_RUN_MODES = frozenset({"none", "script", "full"})
-
-
-def _parse_run_mode(data: dict) -> str:
-    raw = data.get("run_mode", "script")
-    if not isinstance(raw, str) or raw not in _RUN_MODES:
-        raise APIError("run_mode must be none, script, or full")
-    return raw
-
-
 @bp.post("/enqueue")
 def enqueue_topics_route():
     data = get_json_body(required=False)
-    ids = parse_int_list(data or {}, "ids", allow_empty=True)
-    skip_publish = parse_bool(data or {}, "skip_publish", default=True)
-    run_mode = _parse_run_mode(data or {})
+    ids = parse_int_list(data, "ids", allow_empty=True)
+    skip_publish = parse_bool(data, "skip_publish", default=True)
+    run_mode = data.get("run_mode", "script")
+    if not isinstance(run_mode, str) or run_mode not in {"none", "script", "full"}:
+        raise APIError("run_mode must be none, script, or full")
     return json_ok(
         topic_mgr.enqueue_titles(ids, skip_publish=skip_publish, run_mode=run_mode)
     )

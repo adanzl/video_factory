@@ -72,6 +72,38 @@ export interface EnqueueTopicsParams {
   run_mode?: EnqueueRunMode;
 }
 
+export interface ImportHotTopicsParams {
+  limit?: number;
+  count_per_theme?: number;
+  l1_rules?: boolean;
+  min_score?: number;
+  use_theme_llm?: boolean;
+}
+
+export interface ImportHotTopicsResult {
+  summary: {
+    fetched: number;
+    kept: number;
+    rejected: number;
+    themes?: number;
+    topics?: number;
+    queued?: number;
+    l1_rules?: boolean;
+  };
+  added: TitleRecord[];
+  skipped: number;
+  count: number;
+  source: string;
+  themes?: { keyword: string; theme: string; track: string; reason: string }[];
+  topics?: {
+    title: string;
+    theme: string;
+    keyword: string;
+    total: number;
+    status: TitleStatus;
+  }[];
+}
+
 export interface EnqueueTopicsResult {
   jobs: { id: number; title: string }[];
   count: number;

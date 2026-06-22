@@ -10,20 +10,21 @@ from app.repositories import job_log_repo, job_repo, segment_repo
 from app.repositories.connection import connection
 from app.services.llm.llm_mgr import llm_mgr
 from app.services.llm.llm_script_prompts import MIN_IMAGE_PROMPT_CHARS
+from app.utils.media import default_narration_target_words, segment_text_char_cap
 from worker.context import JobContext
 from worker.stages.base import StageExecutor
 
-MIN_NARRATION_CHARS = 700
 # 低于此比例视为「主题撑不满」，不再重试，直接沿用当前文案继续。
-NARRATION_RETRY_MIN_CHARS = int(MIN_NARRATION_CHARS * 0.8)
 MIN_ACCEPT_NARRATION_CHARS = 200
 
 
 def _min_narration_chars(narration_target_words: int | None) -> int:
-    if narration_target_words is None:
-        return MIN_NARRATION_CHARS
-    target = max(MIN_ACCEPT_NARRATION_CHARS, narration_target_words)
+    target = max(MIN_ACCEPT_NARRATION_CHARS, narration_target_words or default_narration_target_words())
     return max(MIN_ACCEPT_NARRATION_CHARS, int(target * 0.67))
+
+
+def _narration_retry_min_chars(narration_target_words: int) -> int:
+    return int(_min_narration_chars(narration_target_words) * 0.8)
 
 
 class ScriptValidationError(ValueError):
@@ -121,8 +122,8 @@ def _apply_video_description(
             )
 
 
-def _narration_short_retryable(chars: int) -> bool:
-    return chars >= NARRATION_RETRY_MIN_CHARS
+def _narration_short_retryable(chars: int, *, narration_target_words: int) -> bool:
+    return chars >= _narration_retry_min_chars(narration_target_words)
 
 
 def _normalize_segments(segments: list[dict]) -> list[dict]:
@@ -148,7 +149,7 @@ def _validate_script(
     )
     max_len = settings.max_title_length if max_title_length is None else max_title_length
     required_narration_chars = (
-        MIN_NARRATION_CHARS if min_narration_chars is None else min_narration_chars
+        _min_narration_chars(None) if min_narration_chars is None else min_narration_chars
     )
     narration = script.get("narration", "")
     segments = script.get("segments") or []
@@ -187,7 +188,7 @@ def _validate_script(
                 retryable=True,
             )
     if seg_target > 0:
-        cap = max(20, int(seg_target * 7.5))
+        cap = segment_text_char_cap(seg_target)
         hard_cap = int(cap * 1.15)
         overflow: list[tuple[int, int]] = []
         for seg in segments:
@@ -233,6 +234,16 @@ class ScriptStage(StageExecutor):
             if ctx.script_supplementary_info and ctx.script_supplementary_info.strip()
             else None
         )
+        if narration_target_words is None:
+            narration_target_words = default_narration_target_words()
+            with connection() as conn:
+                job_log_repo.append_log(
+                    conn,
+                    ctx.job["id"],
+                    self.name,
+                    f"auto narration target: {narration_target_words} chars "
+                    f"(from target_final={get_settings().target_final_duration_sec}s)",
+                )
         min_narration_chars = _min_narration_chars(narration_target_words)
         last_exc: Exception | None = None
         script: dict | None = None
