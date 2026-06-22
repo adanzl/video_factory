@@ -136,8 +136,10 @@ def test_validate_script_narration_slightly_short_is_retryable(monkeypatch):
         "worker.stages.standard.script.get_settings",
         lambda: type("S", (), {"segment_target_sec": 0, "max_title_length": 20})(),
     )
+    required = 882
+    soft = int(required * 0.89)
     script = _valid_script(
-        narration="x" * (_DEFAULT_MIN - 10),
+        narration="x" * (soft - 20),
         segments=[
             {
                 "segment_index": 1,
@@ -148,5 +150,27 @@ def test_validate_script_narration_slightly_short_is_retryable(monkeypatch):
         ],
     )
     with pytest.raises(ScriptValidationError) as exc_info:
-        _validate_script(script, min_narration_chars=_DEFAULT_MIN)
+        _validate_script(script, min_narration_chars=required)
     assert exc_info.value.retryable is True
+
+
+def test_validate_script_narration_soft_zone_accepts_with_warning(monkeypatch):
+    monkeypatch.setattr(
+        "worker.stages.standard.script.get_settings",
+        lambda: type("S", (), {"segment_target_sec": 0, "max_title_length": 20})(),
+    )
+    required = 882
+    script = _valid_script(
+        narration="x" * 789,
+        segments=[
+            {
+                "segment_index": 1,
+                "text": "x" * 789,
+                "visual_brief": _VISUAL_BRIEF,
+                "image_prompt": _IMAGE_PROMPT,
+            }
+        ],
+    )
+    warnings = _validate_script(script, min_narration_chars=required)
+    assert warnings
+    assert "789" in warnings[0]

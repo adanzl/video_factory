@@ -131,51 +131,52 @@
       </el-form>
     </div>
 
-    <div class="mb-4 rounded-lg border border-gray-200 p-3">
-      <el-collapse v-model="promptPanelOpen">
-        <el-collapse-item name="prompts">
-          <template #title>
+    <el-collapse v-model="promptPanelOpen" class="mb-4 script-prompt-collapse">
+      <el-collapse-item name="prompts">
+        <template #title>
+          <div class="flex w-full items-center justify-between gap-3 pr-2">
             <span class="text-sm font-medium text-gray-700">大模型提示词</span>
-          </template>
-          <div class="mb-3 flex flex-wrap items-center gap-3">
-            <el-radio-group v-model="promptSource" size="small" @change="loadLlmPrompts">
-              <el-radio-button value="preview">当前参数预览</el-radio-button>
-              <el-radio-button value="saved" :disabled="!hasSavedPrompts">上次生成</el-radio-button>
-            </el-radio-group>
-            <el-button size="small" :loading="promptsLoading" @click="loadLlmPrompts">刷新</el-button>
+            <el-button
+              v-if="promptPanelOpen.includes('prompts')"
+              size="small"
+              :loading="promptsLoading"
+              @click.stop="loadLlmPrompts"
+            >
+              刷新
+            </el-button>
           </div>
-          <div v-if="promptsLoading" class="py-6 text-center text-sm text-gray-400">加载中…</div>
-          <div v-else-if="llmPrompts.length" class="space-y-3">
-            <el-collapse accordion>
-              <el-collapse-item
-                v-for="item in llmPrompts"
-                :key="item.step"
-                :title="item.label"
-                :name="item.step"
-              >
-                <div class="space-y-3">
-                  <div>
-                    <div class="mb-1 text-xs font-medium text-gray-500">System</div>
-                    <pre
-                      class="m-0 max-h-64 overflow-auto rounded bg-gray-50 p-3 text-xs leading-relaxed wrap-break-word whitespace-pre-wrap"
-                    >{{ item.system }}</pre>
-                  </div>
-                  <div>
-                    <div class="mb-1 text-xs font-medium text-gray-500">User</div>
-                    <pre
-                      class="m-0 max-h-64 overflow-auto rounded bg-gray-50 p-3 text-xs leading-relaxed wrap-break-word whitespace-pre-wrap"
-                    >{{ item.user }}</pre>
-                  </div>
+        </template>
+        <div v-if="promptsLoading" class="py-6 text-center text-sm text-gray-400">加载中…</div>
+        <template v-else-if="displayPrompts.length">
+          <el-tabs v-model="activePromptTab" class="script-prompt-tabs">
+            <el-tab-pane
+              v-for="item in displayPrompts"
+              :key="item.step"
+              :label="promptTabLabel(item.step)"
+              :name="item.step"
+            >
+              <div class="space-y-3 pt-1">
+                <div>
+                  <div class="mb-1 text-xs font-medium text-gray-500">System</div>
+                  <pre
+                    class="m-0 max-h-72 overflow-auto rounded bg-gray-50 p-3 text-xs leading-relaxed wrap-break-word whitespace-pre-wrap"
+                  >{{ item.system }}</pre>
                 </div>
-              </el-collapse-item>
-            </el-collapse>
-          </div>
-          <div v-else class="py-6 text-center text-sm text-gray-400">
-            {{ sourceTitle.trim() ? "暂无提示词" : "请先填写原标题" }}
-          </div>
-        </el-collapse-item>
-      </el-collapse>
-    </div>
+                <div>
+                  <div class="mb-1 text-xs font-medium text-gray-500">User</div>
+                  <pre
+                    class="m-0 max-h-72 overflow-auto rounded bg-gray-50 p-3 text-xs leading-relaxed wrap-break-word whitespace-pre-wrap"
+                  >{{ item.user }}</pre>
+                </div>
+              </div>
+            </el-tab-pane>
+          </el-tabs>
+        </template>
+        <div v-else class="py-6 text-center text-sm text-gray-400">
+          {{ sourceTitle.trim() ? "暂无提示词" : "请先填写原标题" }}
+        </div>
+      </el-collapse-item>
+    </el-collapse>
 
     <div v-if="script">
       <el-descriptions
@@ -416,9 +417,35 @@ const videoTimeline = ref("");
 const baseDurationSec = ref<number | null>(null);
 const narrationWordsTouched = ref(false);
 const promptPanelOpen = ref<string[]>([]);
-const promptSource = ref<"preview" | "saved">("preview");
 const promptsLoading = ref(false);
 const llmPrompts = ref<LlmPromptStep[]>([]);
+const activePromptTab = ref("");
+
+const PROMPT_TAB_ORDER = [
+  "storyboard",
+  "material_script",
+  "title_optimize",
+  "video_description",
+] as const;
+
+const PROMPT_TAB_LABELS: Record<string, string> = {
+  storyboard: "分镜",
+  material_script: "口播",
+  title_optimize: "标题",
+  video_description: "介绍",
+};
+
+const promptTabLabel = (step: string) => PROMPT_TAB_LABELS[step] ?? step;
+
+const displayPrompts = computed(() =>
+  llmPrompts.value
+    .filter(item => (PROMPT_TAB_ORDER as readonly string[]).includes(item.step))
+    .sort(
+      (a, b) =>
+        (PROMPT_TAB_ORDER as readonly string[]).indexOf(a.step) -
+        (PROMPT_TAB_ORDER as readonly string[]).indexOf(b.step)
+    )
+);
 
 const actionDisabled = computed(() => props.job.status === "running");
 const isMaterialJob = computed(() => checkMaterialJob(props.job));
@@ -432,11 +459,6 @@ const script = computed<ScriptJson | null>(() => {
     return null;
   }
   return value as ScriptJson;
-});
-
-const hasSavedPrompts = computed(() => {
-  const saved = script.value?.llm_prompts;
-  return Array.isArray(saved) && saved.length > 0;
 });
 
 const rawJson = computed(() => JSON.stringify(props.job.script_json, null, 2));
@@ -653,10 +675,7 @@ const loadLlmPrompts = async () => {
   const trimmedTitle = sourceTitle.value.trim();
   if (!trimmedTitle) {
     llmPrompts.value = [];
-    return;
-  }
-  if (promptSource.value === "saved" && hasSavedPrompts.value) {
-    llmPrompts.value = script.value!.llm_prompts!;
+    activePromptTab.value = "";
     return;
   }
   promptsLoading.value = true;
@@ -670,10 +689,13 @@ const loadLlmPrompts = async () => {
       skip_title_optimize: skipTitleOptimize.value,
       supplementary_info: supplementaryInfo.value.trim() || undefined,
       video_timeline: videoTimeline.value.trim() || undefined,
-      use_saved_script: promptSource.value === "saved",
       orientation: jobOrientation.value,
       content_style: contentStyle.value,
     });
+    const first = displayPrompts.value[0];
+    if (first && !displayPrompts.value.some(item => item.step === activePromptTab.value)) {
+      activePromptTab.value = first.step;
+    }
   } catch (error) {
     handleError(error, "加载提示词失败");
   } finally {
@@ -787,9 +809,9 @@ watch(
     contentStyle.value = "science_child";
     segmentTargetSec.value = DEFAULT_SEGMENT_TARGET_SEC;
     initJobProfileFromInfo();
-    promptSource.value = "preview";
-    llmPrompts.value = [];
     promptPanelOpen.value = [];
+    llmPrompts.value = [];
+    activePromptTab.value = "";
     supplementaryInfo.value = "";
     videoTimeline.value = "";
   }
@@ -811,20 +833,30 @@ watch(
   { immediate: true }
 );
 
+watch(
+  () => [
+    sourceTitle.value,
+    segmentTargetSec.value,
+    maxTitleLength.value,
+    narrationTargetWords.value,
+    skipTitleOptimize.value,
+    supplementaryInfo.value,
+    videoTimeline.value,
+    jobOrientation.value,
+    contentStyle.value,
+  ],
+  () => {
+    if (promptPanelOpen.value.includes("prompts")) {
+      void loadLlmPrompts();
+    }
+  }
+);
+
 watch(promptPanelOpen, names => {
   if (names.includes("prompts")) {
     void loadLlmPrompts();
   }
 });
-
-watch(
-  () => script.value?.llm_prompts,
-  saved => {
-    if (promptSource.value === "saved" && Array.isArray(saved) && saved.length) {
-      llmPrompts.value = saved;
-    }
-  }
-);
 
 watch(
   () => [props.job.base_path, isMaterialJob.value] as const,
@@ -847,5 +879,25 @@ watch(
   width: v-bind(FORM_LABEL_WIDTH) !important;
   min-width: v-bind(FORM_LABEL_WIDTH) !important;
   max-width: v-bind(FORM_LABEL_WIDTH) !important;
+}
+
+.script-prompt-collapse {
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.script-prompt-collapse :deep(.el-collapse-item__header) {
+  padding: 0 12px;
+  height: 44px;
+  border-bottom: none;
+}
+
+.script-prompt-collapse :deep(.el-collapse-item__wrap) {
+  border-top: 1px solid var(--el-border-color-lighter);
+}
+
+.script-prompt-collapse :deep(.el-collapse-item__content) {
+  padding: 12px;
 }
 </style>

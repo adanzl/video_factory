@@ -283,7 +283,6 @@ class JobMgr:
         skip_title_optimize: bool = False,
         supplementary_info: str | None = None,
         video_timeline: str | None = None,
-        use_saved_script: bool = False,
         orientation: str | None = None,
         content_style: str | None = None,
     ) -> list[dict[str, str]]:
@@ -301,7 +300,7 @@ class JobMgr:
         source_title = (title or job["title"] or "").strip()
         if not source_title:
             raise ValueError("title is empty")
-        script = job.get("script_json") if use_saved_script else None
+        script = job.get("script_json")
         if script is not None and not isinstance(script, dict):
             script = None
         return collect_script_prompts(
@@ -312,8 +311,9 @@ class JobMgr:
             narration_target_words=narration_target_words,
             supplementary_info=supplementary_info,
             video_timeline=video_timeline,
-            script=script if use_saved_script else None,
+            script=script,
             skip_title_optimize=skip_title_optimize,
+            preview_followups=True,
         )
 
     def generate_video_description(self, job_id: int) -> dict:

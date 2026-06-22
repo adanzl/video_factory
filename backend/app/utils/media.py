@@ -16,6 +16,8 @@ NARRATION_CHARS_PER_SEC = 5.0
 NARRATION_FILL_RATIO = 0.92
 NARRATION_MIN_CHARS = 200
 NARRATION_MAX_CHARS = 3000
+# 略低于硬性下限时放行（与 LLM 实际产出对齐，避免 90% 附近反复打回）
+NARRATION_SOFT_MIN_RATIO = 0.90
 
 
 def estimate_narration_target_words(duration_sec: float) -> int:
@@ -54,6 +56,11 @@ def min_narration_chars_for_target(narration_target_words: int | None = None) ->
     """口播字数校验下限（与 standard script 阶段一致）。"""
     target = max(NARRATION_MIN_CHARS, narration_target_words or default_narration_target_words())
     return max(NARRATION_MIN_CHARS, int(target * 0.67))
+
+
+def narration_soft_min_chars(required_chars: int) -> int:
+    """略低于硬性下限时仍放行（带警告）。"""
+    return max(NARRATION_MIN_CHARS, int(required_chars * NARRATION_SOFT_MIN_RATIO))
 
 
 def narration_target_for_minutes(

@@ -10,7 +10,12 @@ from app.repositories import job_log_repo, job_repo, segment_repo
 from app.repositories.connection import connection
 from app.services.llm.llm_mgr import llm_mgr
 from app.services.llm.llm_script_prompts import MIN_IMAGE_PROMPT_CHARS
-from app.utils.media import default_narration_target_words, min_narration_chars_for_target, segment_text_char_cap
+from app.utils.media import (
+    default_narration_target_words,
+    min_narration_chars_for_target,
+    narration_soft_min_chars,
+    segment_text_char_cap,
+)
 from worker.context import JobContext
 from worker.stages.base import StageExecutor
 
@@ -168,20 +173,26 @@ def _validate_script(
     warnings: list[str] = []
     chars = _narration_chars(narration)
     if chars < required_narration_chars:
+        soft_min = narration_soft_min_chars(required_narration_chars)
         retry_min = max(MIN_ACCEPT_NARRATION_CHARS, int(required_narration_chars * 0.8))
-        if chars >= retry_min:
+        if chars >= soft_min:
+            warnings.append(
+                f"narration slightly short ({chars} < {required_narration_chars}), continuing"
+            )
+        elif chars >= retry_min:
             raise ScriptValidationError(
                 f"narration too short: {chars} chars (need >= {required_narration_chars})",
                 retryable=True,
             )
-        if chars < MIN_ACCEPT_NARRATION_CHARS:
+        elif chars < MIN_ACCEPT_NARRATION_CHARS:
             raise ScriptValidationError(
                 f"narration too short: {chars} chars (need >= {MIN_ACCEPT_NARRATION_CHARS})",
                 retryable=False,
             )
-        warnings.append(
-            f"cannot reach {required_narration_chars} chars ({chars} got), continuing with shorter copy"
-        )
+        else:
+            warnings.append(
+                f"cannot reach {required_narration_chars} chars ({chars} got), continuing with shorter copy"
+            )
     if not segments:
         raise ScriptValidationError("no segments", retryable=False)
     if not (script.get("visual_style") or "").strip():
