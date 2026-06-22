@@ -18,6 +18,7 @@ from app.utils.job_info import (
 from app.utils.media import (
     default_narration_target_words,
     min_narration_chars_for_target,
+    narration_accept_min_chars,
     segment_text_char_cap,
 )
 from app.services.llm.llm_script_timeline import (
@@ -254,10 +255,10 @@ def _storyboard_role(content_style: str) -> str:
 
 
 def _narration_word_range(target: int) -> tuple[int, int]:
-    """口播字数区间：下限与校验一致，上限为理想目标 + 余量。"""
+    """口播字数区间：下限与验收阈值一致，上限为理想目标 + 余量。"""
     margin = max(50, int(target * 0.1))
-    hard_min = min_narration_chars_for_target(target)
-    return hard_min, target + margin
+    accept_min = narration_accept_min_chars(target)
+    return accept_min, target + margin
 
 
 def _storyboard_length_budget(
@@ -266,7 +267,7 @@ def _storyboard_length_budget(
     segment_target_sec: float,
     content_style: str,
 ) -> str:
-    hard_min = min_narration_chars_for_target(narration_target)
+    hard_min = narration_accept_min_chars(narration_target)
     layers = (
         "场景+问题+做法/感悟"
         if content_style == CONTENT_STYLE_LIFE_EXPERIENCE
@@ -402,7 +403,7 @@ def build_storyboard_prompts(
         else default_narration_target_words(settings)
     )
     narration_word_min, narration_word_max = _narration_word_range(narration_word_target)
-    narration_hard_min = min_narration_chars_for_target(narration_word_target)
+    narration_hard_min = narration_word_min
     title_rule, title_user_prefix = _title_rule(title, max_title)
     length_rule = (
         f"口播理想约 {narration_word_target} 字，硬性下限 {narration_hard_min} 字、"
@@ -531,7 +532,7 @@ def build_material_script_prompts(
             narration_target_words if narration_target_words is not None else 800
         )
         narration_word_min, narration_word_max = _narration_word_range(narration_word_target)
-        narration_hard_min = min_narration_chars_for_target(narration_word_target)
+        narration_hard_min = narration_word_min
     title_rule, title_user_prefix = _title_rule(title, max_title)
     segment_rule = (
         f"segments 必须恰好 {len(timeline.slots)} 条，与画面时间表逐段一一对应；"
