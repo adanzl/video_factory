@@ -6,6 +6,11 @@ from app.repositories import job_log_repo, job_repo
 from app.repositories.connection import connection
 from app.services.intro import generate_intro
 from app.services.intro.size import is_material_job, resolve_intro_size
+from app.utils.job_info import (
+    ORIENTATION_AUTO,
+    ORIENTATION_PORTRAIT,
+    orientation_for_resolve,
+)
 from worker.context import JobContext
 from worker.stages.base import StageExecutor
 
@@ -34,13 +39,23 @@ class IntroStage(StageExecutor):
 
         intro_path = ctx.rel("intro.mp4")
         title = _resolve_intro_title(job)
+        effective_orientation = ctx.intro_orientation
+        if effective_orientation is None:
+            effective_orientation = orientation_for_resolve(job)
         width, height = resolve_intro_size(
             settings=ctx.settings,
-            orientation=ctx.intro_orientation,
+            orientation=effective_orientation,
             job=job,
             media_dir=ctx.media_dir,
         )
-        orient_label = ctx.intro_orientation or ("auto" if is_material_job(job) else "portrait(default)")
+        if ctx.intro_orientation:
+            orient_label = ctx.intro_orientation
+        elif effective_orientation:
+            orient_label = effective_orientation
+        elif is_material_job(job):
+            orient_label = ORIENTATION_AUTO
+        else:
+            orient_label = f"{ORIENTATION_PORTRAIT}(default)"
 
         generate_intro(
             title,

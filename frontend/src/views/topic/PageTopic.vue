@@ -81,9 +81,18 @@
           {{ formatDateTime(row.created_at) }}
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="180" fixed="right">
+      <el-table-column label="操作" width="220" fixed="right">
         <template #default="{ row }">
           <div class="flex items-center gap-2 whitespace-nowrap">
+            <el-button
+              v-if="row.job_id"
+              type="warning"
+              link
+              size="small"
+              @click="goToJob(row.job_id!)"
+            >
+              任务详情
+            </el-button>
             <el-button
               v-if="row.status !== 'enqueued'"
               type="primary"
@@ -173,6 +182,7 @@
 
 <script setup lang="ts">
 import { onMounted, reactive, ref } from "vue";
+import { useRouter } from "vue-router";
 import { Refresh } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import {
@@ -188,6 +198,7 @@ import { useErrorHandler } from "@/composables/useErrorHandler";
 import { formatDateTime } from "@/utils/date";
 
 const { handleError } = useErrorHandler();
+const router = useRouter();
 
 const titles = ref<TitleRecord[]>([]);
 const loading = ref(false);
@@ -291,6 +302,10 @@ const onPageSizeChange = () => {
 
 const onSelectionChange = (rows: TitleRecord[]) => {
   selectedIds.value = rows.map(row => row.id);
+};
+
+const goToJob = (jobId: number) => {
+  void router.push({ path: "/jobs", query: { id: String(jobId) } });
 };
 
 const handleScoreSelected = async () => {

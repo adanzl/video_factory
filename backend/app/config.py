@@ -176,7 +176,7 @@ class Config:
     tts_voice: str = _first("TTS_VOICE", "COSYVOICE_VOICE", default=_DEFAULT_TTS_VOICE)  # cSpell: disable-line
     tts_model: str | None = _first("TTS_MODEL", "COSYVOICE_MODEL") or None
     tts_speech_rate: float = float(
-        _first("TTS_SPEECH_RATE", "COSYVOICE_SPEECH_RATE", default="1.1")
+        _first("TTS_SPEECH_RATE", "COSYVOICE_SPEECH_RATE", default="1.15")
     )
     tts_volume: int = int(_first("TTS_VOLUME", "COSYVOICE_VOLUME", default="50"))
     tts_instruction: str | None = _opt("TTS_INSTRUCTION")

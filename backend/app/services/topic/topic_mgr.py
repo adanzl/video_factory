@@ -8,6 +8,7 @@ from app.config import get_settings
 from app.repositories import job_repo, title_repo
 from app.repositories.connection import connection
 from app.services.job.job_mgr import job_mgr
+from app.utils.job_info import default_orientation_for_pipeline, merge_job_info
 from app.services.llm.llm_mgr import llm_mgr
 from app.services.llm.llm_topics import normalize_title
 from app.services.topic.hot_pipeline import (
@@ -158,6 +159,10 @@ class TopicMgr:
                     skip_publish=skip_publish,
                     stage="script",
                     status="idle",
+                    info=merge_job_info(
+                        None,
+                        orientation=default_orientation_for_pipeline("standard"),
+                    ),
                 )
                 title_repo.update_title(
                     conn,

@@ -1,57 +1,149 @@
 <template>
   <div>
-    <div class="mb-4 rounded-lg border border-gray-200 p-4">
-      <div class="mb-3 flex flex-wrap items-center gap-2">
-        <el-button type="primary" :loading="submitting" :disabled="actionDisabled" @click="handleRun(false)">
-          重新生成
-        </el-button>
-        <el-button type="success" :loading="submitting" :disabled="actionDisabled" @click="handleRun(true)">
-          从此成片
-        </el-button>
-        <span v-if="actionDisabledReason" class="text-sm text-gray-400">{{ actionDisabledReason }}</span>
-      </div>
-      <el-form label-width="96px">
-        <el-form-item label="跳过发布">
-          <el-switch v-model="skipPublish" />
-        </el-form-item>
-      </el-form>
-    </div>
+    <el-alert
+      type="info"
+      title="请手动投稿：复制标题与视频介绍，下载封面与成片后上传到平台。"
+      :closable="false"
+      class="mb-4"
+    />
 
-    <el-descriptions :column="1" border class="mb-4">
-      <el-descriptions-item label="跳过发布">{{ job.skip_publish ? "是" : "否" }}</el-descriptions-item>
-      <el-descriptions-item label="成片路径">{{ resolveFinalPath(job.final_path) || "-" }}</el-descriptions-item>
-      <el-descriptions-item label="视频介绍">
-        <div class="space-y-2">
-          <div
-            v-if="videoDescription"
-            class="relative rounded bg-gray-50 px-4 py-3 pr-10 leading-relaxed wrap-break-word whitespace-pre-wrap"
-          >
-            {{ videoDescription }}
-            <el-tooltip content="复制" placement="top">
-              <el-button
-                class="absolute! top-2 right-2"
-                link
-                type="primary"
-                :icon="DocumentCopy"
-                @click="copyVideoDescription(videoDescription)"
-              />
-            </el-tooltip>
-          </div>
-          <div v-else class="text-sm text-gray-400">暂无视频介绍</div>
+    <div class="space-y-4">
+      <!-- 标题 -->
+      <section class="rounded-lg border border-gray-200 p-4">
+        <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div class="text-sm font-medium text-gray-700">标题</div>
           <el-button
-            v-if="canRegenerateDescription"
+            v-if="publishTitle"
             size="small"
-            :loading="regeneratingDescription"
-            :disabled="actionDisabled"
-            @click="handleRegenerateDescription"
+            type="primary"
+            :icon="DocumentCopy"
+            @click="copyPublishTitle"
           >
-            重新生成介绍
+            复制
           </el-button>
         </div>
-      </el-descriptions-item>
-    </el-descriptions>
+        <div
+          v-if="publishTitle"
+          class="rounded bg-gray-50 px-4 py-3 text-base leading-relaxed wrap-break-word"
+        >
+          {{ publishTitle }}
+        </div>
+        <div v-else class="py-6 text-center text-sm text-gray-400">暂无标题</div>
+      </section>
 
-    <el-alert v-if="job.skip_publish" type="info" title="该任务配置为跳过发布" :closable="false" />
+      <!-- 视频介绍 -->
+      <section class="rounded-lg border border-gray-200 p-4">
+        <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div class="text-sm font-medium text-gray-700">视频介绍</div>
+          <div class="flex flex-wrap items-center gap-2">
+            <el-button
+              v-if="videoDescription"
+              size="small"
+              type="primary"
+              :icon="DocumentCopy"
+              @click="copyVideoDescription"
+            >
+              复制
+            </el-button>
+            <el-button
+              v-if="canRegenerateDescription"
+              size="small"
+              :loading="regeneratingDescription"
+              :disabled="actionDisabled"
+              @click="handleRegenerateDescription"
+            >
+              重新生成
+            </el-button>
+          </div>
+        </div>
+        <div
+          v-if="videoDescription"
+          class="rounded bg-gray-50 px-4 py-3 leading-relaxed wrap-break-word whitespace-pre-wrap"
+        >
+          {{ videoDescription }}
+        </div>
+        <div v-else class="py-6 text-center text-sm text-gray-400">
+          暂无视频介绍
+          <span v-if="canRegenerateDescription">，可点击「重新生成」</span>
+        </div>
+      </section>
+
+      <!-- 封面 -->
+      <section class="rounded-lg border border-gray-200 p-4">
+        <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div class="text-sm font-medium text-gray-700">封面</div>
+          <el-button
+            v-if="coverPath"
+            size="small"
+            :loading="downloadingCover"
+            @click="handleDownloadCover"
+          >
+            下载
+          </el-button>
+        </div>
+        <div
+          v-if="coverUrl"
+          class="mx-auto flex h-[280px] max-w-md items-center justify-center overflow-hidden rounded-lg border border-gray-200 bg-gray-50"
+        >
+          <el-image
+            :key="coverUrl"
+            :src="coverUrl"
+            :preview-src-list="[coverUrl]"
+            fit="contain"
+            class="block h-full w-full [&_.el-image__inner]:h-full [&_.el-image__inner]:w-full [&_.el-image__inner]:object-contain"
+            @error="coverLoadError = true"
+          />
+        </div>
+        <div v-else class="py-6 text-center text-sm text-gray-400">暂无封面，请先在「封面」阶段生成</div>
+        <el-alert
+          v-if="coverLoadError && coverPath"
+          type="warning"
+          title="封面加载失败"
+          :closable="false"
+          class="mt-2"
+        />
+      </section>
+
+      <!-- 成片 -->
+      <section class="rounded-lg border border-gray-200 p-4">
+        <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div class="text-sm font-medium text-gray-700">成片</div>
+          <el-button
+            v-if="finalFilePath"
+            size="small"
+            :loading="downloadingFinal"
+            @click="handleDownloadFinal"
+          >
+            下载
+          </el-button>
+        </div>
+        <div v-if="videoUrl" class="flex justify-center">
+          <div
+            class="overflow-hidden rounded-lg border border-gray-200 bg-black"
+            :style="previewBoxStyle"
+          >
+            <video
+              :key="videoUrl"
+              class="block h-full w-full bg-black object-contain"
+              :src="videoUrl"
+              controls
+              playsinline
+              preload="metadata"
+              @error="finalLoadError = true"
+              @loadedmetadata="onVideoMetadata"
+            />
+          </div>
+        </div>
+        <div v-else class="py-6 text-center text-sm text-gray-400">暂无成片，请先在「合成」阶段生成</div>
+        <el-alert
+          v-if="finalLoadError && finalFilePath"
+          type="warning"
+          title="成片加载失败"
+          :closable="false"
+          class="mt-2"
+        />
+      </section>
+    </div>
 
     <div class="mt-6">
       <div class="mb-2 text-sm font-medium text-gray-600">阶段日志</div>
@@ -70,8 +162,9 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { DocumentCopy } from "@element-plus/icons-vue";
-import { ElMessage, ElMessageBox } from "element-plus";
-import { generateVideoDescription, runJobStageAction, updateJob } from "@/api/api-jobs";
+import { ElMessage } from "element-plus";
+import { generateVideoDescription } from "@/api/api-jobs";
+import { downloadMediaFile, getMediaFileUrl } from "@/api/api-media";
 import type { JobDetail, JobLog } from "@/types/jobs";
 import type { ScriptJson } from "@/types/jobs/script";
 import { formatDateTime } from "@/utils/date";
@@ -90,24 +183,96 @@ const emit = defineEmits<{
 
 const { handleError } = useErrorHandler();
 
-const submitting = ref(false);
 const regeneratingDescription = ref(false);
-const skipPublish = ref(false);
+const downloadingCover = ref(false);
+const downloadingFinal = ref(false);
+const coverLoadError = ref(false);
+const finalLoadError = ref(false);
+const videoMeta = ref<{ width: number; height: number } | null>(null);
 
 const actionDisabled = computed(() => props.job.status === "running");
-const actionDisabledReason = computed(() =>
-  props.job.status === "running" ? "任务运行中，请稍后再试" : ""
-);
 
-const videoDescription = computed(() => {
-  const script = props.job.script_json as ScriptJson | null | undefined;
-  return script?.video_description?.trim() || "";
+const script = computed(() => {
+  const value = props.job.script_json;
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  return value as ScriptJson;
 });
 
-const canRegenerateDescription = computed(() => {
-  const script = props.job.script_json as ScriptJson | null | undefined;
-  return Boolean(script?.narration?.trim());
+const publishTitle = computed(() => {
+  const fromScript = script.value?.title?.trim();
+  if (fromScript) {
+    return fromScript;
+  }
+  return props.job.title?.trim() || "";
 });
+
+const videoDescription = computed(() => script.value?.video_description?.trim() || "");
+
+const canRegenerateDescription = computed(() => Boolean(script.value?.narration?.trim()));
+
+const coverPath = computed(() => props.job.cover_path?.trim() || "");
+const coverUrl = computed(() => getMediaFileUrl(coverPath.value));
+
+const finalFilePath = computed(() => resolveFinalPath(props.job.final_path));
+const videoUrl = computed(() => getMediaFileUrl(finalFilePath.value));
+
+const previewBoxStyle = computed(() => {
+  const meta = videoMeta.value;
+  if (meta?.width && meta?.height) {
+    const maxW = 480;
+    const maxH = 360;
+    const scale = Math.min(maxW / meta.width, maxH / meta.height, 1);
+    return {
+      width: `${Math.round(meta.width * scale)}px`,
+      height: `${Math.round(meta.height * scale)}px`,
+    };
+  }
+  return { width: "480px", height: "270px" };
+});
+
+const coverDownloadName = computed(() => {
+  const fromPath = coverPath.value.split("/").pop();
+  return fromPath || `job-${props.job.id}-cover.jpg`;
+});
+
+const finalDownloadName = computed(() => {
+  const fromPath = finalFilePath.value.split("/").pop();
+  return fromPath || `job-${props.job.id}-final.mp4`;
+});
+
+const onVideoMetadata = (event: Event) => {
+  const video = event.target as HTMLVideoElement;
+  if (!video.videoWidth || !video.videoHeight) {
+    return;
+  }
+  videoMeta.value = { width: video.videoWidth, height: video.videoHeight };
+};
+
+const copyPublishTitle = async () => {
+  if (!publishTitle.value) {
+    return;
+  }
+  try {
+    await copyText(publishTitle.value);
+    ElMessage.success("已复制标题");
+  } catch (error) {
+    handleError(error, "复制失败");
+  }
+};
+
+const copyVideoDescription = async () => {
+  if (!videoDescription.value) {
+    return;
+  }
+  try {
+    await copyText(videoDescription.value);
+    ElMessage.success("已复制视频介绍");
+  } catch (error) {
+    handleError(error, "复制失败");
+  }
+};
 
 const handleRegenerateDescription = async () => {
   regeneratingDescription.value = true;
@@ -122,47 +287,42 @@ const handleRegenerateDescription = async () => {
   }
 };
 
-const copyVideoDescription = async (text: string) => {
-  try {
-    await copyText(text);
-    ElMessage.success("已复制");
-  } catch (error) {
-    handleError(error, "复制失败");
-  }
-};
-
-const handleRun = async (toEnd: boolean) => {
-  const actionLabel = toEnd ? "从此成片" : "重新生成";
-  try {
-    await ElMessageBox.confirm(`确定对「发布」阶段执行「${actionLabel}」吗？`, "确认执行", {
-      type: "warning",
-      confirmButtonText: "执行",
-      cancelButtonText: "取消",
-    });
-  } catch {
+const handleDownloadCover = async () => {
+  if (!coverPath.value) {
     return;
   }
-
-  submitting.value = true;
+  downloadingCover.value = true;
   try {
-    if (skipPublish.value !== props.job.skip_publish) {
-      await updateJob(props.job.id, { skip_publish: skipPublish.value });
-    }
-    await runJobStageAction("publish", { id: props.job.id, to_end: toEnd });
-    ElMessage.success(`已提交${actionLabel}，任务已开始执行`);
-    emit("refresh");
+    await downloadMediaFile(coverPath.value, coverDownloadName.value);
+    ElMessage.success("已开始下载封面");
   } catch (error) {
-    handleError(error, `${actionLabel}失败`);
+    handleError(error, "下载封面失败");
   } finally {
-    submitting.value = false;
+    downloadingCover.value = false;
   }
 };
 
-watch(
-  () => props.job.skip_publish,
-  value => {
-    skipPublish.value = value ?? false;
-  },
-  { immediate: true }
-);
+const handleDownloadFinal = async () => {
+  if (!finalFilePath.value) {
+    return;
+  }
+  downloadingFinal.value = true;
+  try {
+    await downloadMediaFile(finalFilePath.value, finalDownloadName.value);
+    ElMessage.success("已开始下载成片");
+  } catch (error) {
+    handleError(error, "下载成片失败");
+  } finally {
+    downloadingFinal.value = false;
+  }
+};
+
+watch(coverPath, () => {
+  coverLoadError.value = false;
+});
+
+watch(finalFilePath, () => {
+  finalLoadError.value = false;
+  videoMeta.value = null;
+});
 </script>
