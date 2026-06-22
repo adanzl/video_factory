@@ -69,7 +69,6 @@
             controls
             preload="metadata"
             playsinline
-            crossorigin="anonymous"
           />
         </div>
         <div class="space-y-2 p-3">
