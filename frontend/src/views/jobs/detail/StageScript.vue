@@ -78,6 +78,9 @@
               <span class="mx-1 h-5 w-px shrink-0 bg-gray-200" aria-hidden="true" />
               <span class="shrink-0 text-xs leading-tight whitespace-nowrap text-gray-500">标题优化</span>
               <el-checkbox v-model="skipTitleOptimize" class="shrink-0">跳过</el-checkbox>
+              <span class="mx-1 h-5 w-px shrink-0 bg-gray-200" aria-hidden="true" />
+              <span class="shrink-0 text-xs leading-tight whitespace-nowrap text-gray-500">文生图提示词</span>
+              <el-checkbox v-model="includeImagePrompts" class="shrink-0">生成</el-checkbox>
             </div>
           </el-form-item>
         </template>
@@ -281,7 +284,18 @@
       </div>
 
       <div class="mb-5">
-        <div class="mb-2 text-sm font-medium text-gray-700">分镜列表</div>
+        <div class="mb-2 flex flex-wrap items-center gap-2">
+          <span class="text-sm font-medium text-gray-700">分镜列表</span>
+          <el-button
+            v-if="!isMaterialJob"
+            size="small"
+            :loading="generatingImagePrompts"
+            :disabled="actionDisabled || !script.segments?.length"
+            @click="handleGenerateImagePrompts"
+          >
+            文生图提示词
+          </el-button>
+        </div>
         <el-table v-if="script.segments?.length" :data="script.segments" stripe class="w-full">
           <el-table-column prop="segment_index" label="#" width="60" />
           <el-table-column prop="text" label="口播文案" min-width="150">
@@ -373,7 +387,7 @@ import { computed, ref, watch } from "vue";
 import { DocumentCopy } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { getMediaDuration } from "@/api/api-media";
-import { previewScriptPrompts, generateVideoDescription, runJobStageAction } from "@/api/api-jobs";
+import { previewScriptPrompts, generateVideoDescription, generateImagePrompts, runJobStageAction } from "@/api/api-jobs";
 import type { JobDetail, JobLog, LlmPromptStep, ScriptJson } from "@/types/jobs";
 import type { RunStageActionPayload } from "@/types/jobs/stageAction";
 import { isMaterialJob as checkMaterialJob } from "@/constants/jobStages";
@@ -405,6 +419,7 @@ const DEFAULT_LANDSCAPE_LIFE_MINUTES = 6;
 
 const submitting = ref(false);
 const regeneratingDescription = ref(false);
+const generatingImagePrompts = ref(false);
 const sourceTitle = ref("");
 const jobOrientation = ref<"portrait" | "landscape">("portrait");
 const contentStyle = ref<"science_child" | "life_experience">("science_child");
@@ -412,6 +427,7 @@ const segmentTargetSec = ref(DEFAULT_SEGMENT_TARGET_SEC);
 const maxTitleLength = ref(DEFAULT_MAX_TITLE_LENGTH);
 const narrationTargetWords = ref(DEFAULT_NARRATION_TARGET_WORDS);
 const skipTitleOptimize = ref(false);
+const includeImagePrompts = ref(false);
 const supplementaryInfo = ref("");
 const videoTimeline = ref("");
 const baseDurationSec = ref<number | null>(null);
@@ -720,6 +736,32 @@ const handleRegenerateDescription = async () => {
   }
 };
 
+const handleGenerateImagePrompts = async () => {
+  if (!script.value?.segments?.length) {
+    ElMessage.warning("请先生成分镜");
+    return;
+  }
+  try {
+    await ElMessageBox.confirm("确定为当前脚本生成文生图提示词吗？", "确认执行", {
+      type: "warning",
+      confirmButtonText: "执行",
+      cancelButtonText: "取消",
+    });
+  } catch {
+    return;
+  }
+  generatingImagePrompts.value = true;
+  try {
+    await generateImagePrompts(props.job.id);
+    ElMessage.success("已提交文生图提示词生成，任务已开始执行");
+    emit("refresh");
+  } catch (error) {
+    handleError(error, "生成文生图提示词失败");
+  } finally {
+    generatingImagePrompts.value = false;
+  }
+};
+
 const copyVideoDescription = async (text: string) => {
   try {
     await copyText(text);
@@ -771,6 +813,9 @@ const handleRun = async (toEnd: boolean) => {
     }
     if (skipTitleOptimize.value) {
       payload.skip_title_optimize = true;
+    }
+    if (includeImagePrompts.value) {
+      payload.generate_image_prompts = true;
     }
     const extra = supplementaryInfo.value.trim();
     if (extra) {

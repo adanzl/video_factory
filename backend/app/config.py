@@ -165,6 +165,8 @@ class Config:
     deepseek_base_url: str = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
     deepseek_model: str = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
     deepseek_max_tokens: int = int(os.getenv("DEEPSEEK_MAX_TOKENS", "32768"))
+    deepseek_thinking_enabled: bool = _bool("DEEPSEEK_THINKING", default=False)
+    llm_image_prompt_batch_size: int = int(os.getenv("LLM_IMAGE_PROMPT_BATCH_SIZE", "4"))
 
     # ========== TTS / CosyVoice ==========
     dashscope_api_key: str | None = _DASHSCOPE_KEY

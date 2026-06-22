@@ -3,9 +3,12 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 from app.config import get_settings
+from app.services.llm.deepseek_request import build_deepseek_chat_payload
 from app.services.llm.llm_mgr import LLMClient
 from app.services.llm.llm_script_description import parse_video_description_payload
 from app.services.llm.llm_script_prompts import (
@@ -153,6 +156,20 @@ def _parse_failure_feedback(exc: ValueError, *, compact: bool) -> str:
     return _truncation_feedback(compact=compact)
 
 
+def _chunk_indices(indices: list[int], batch_size: int) -> list[list[int]]:
+    size = max(1, batch_size)
+    ordered = sorted({int(idx) for idx in indices})
+    return [ordered[i : i + size] for i in range(0, len(ordered), size)]
+
+
+def _short_image_prompt_indices(script: dict[str, Any]) -> list[int]:
+    return [
+        int(seg["segment_index"])
+        for seg in script.get("segments") or []
+        if len(str(seg.get("image_prompt") or "")) < IMAGE_PROMPT_TARGET_CHARS
+    ]
+
+
 class DeepSeekClient(LLMClient):
     def __init__(self) -> None:
         import requests
@@ -172,15 +189,13 @@ class DeepSeekClient(LLMClient):
                 "Authorization": f"Bearer {self._api_key}",
                 "Content-Type": "application/json",
             },
-            json={
-                "model": self._model,
-                "messages": [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-                "response_format": {"type": "json_object"},
-                "max_tokens": limit,
-            },
+            json=build_deepseek_chat_payload(
+                model=self._model,
+                system=system,
+                user=user,
+                max_tokens=limit,
+                thinking_enabled=settings.deepseek_thinking_enabled,
+            ),
             timeout=180,
         )
         resp.raise_for_status()
@@ -335,12 +350,14 @@ class DeepSeekClient(LLMClient):
         feedback: str | None = None,
         supplementary_info: str | None = None,
         job: dict | None = None,
+        segment_indices: list[int] | None = None,
     ) -> dict[str, Any]:
         prompts = build_image_prompts_prompts(
             script,
             feedback=feedback,
             supplementary_info=supplementary_info,
             job=job,
+            segment_indices=segment_indices,
         )
         raw, _ = self._chat_json(prompts["system"], prompts["user"])
         if isinstance(raw, list):
@@ -353,23 +370,147 @@ class DeepSeekClient(LLMClient):
             raise ValueError("LLM image prompt response missing image_prompts")
         return {"image_prompts": prompt_items}
 
-    def _merge_image_prompts(self, script: dict[str, Any], prompts: list[dict]) -> None:
+    def _merge_image_prompts(
+        self,
+        script: dict[str, Any],
+        prompts: list[dict],
+        *,
+        required_indices: list[int] | None = None,
+    ) -> None:
         by_index: dict[int, dict] = {
             int(item["segment_index"]): item
             for item in prompts
             if item.get("image_prompt")
         }
-        missing = [
-            seg["segment_index"]
-            for seg in script["segments"]
-            if seg["segment_index"] not in by_index
+        required = required_indices or [
+            int(seg["segment_index"]) for seg in script.get("segments") or []
         ]
+        missing = [idx for idx in required if idx not in by_index]
         if missing:
             raise ValueError(f"image_prompts missing segments: {missing}")
+        index_set = set(required)
         for seg in script["segments"]:
-            item = by_index[seg["segment_index"]]
+            idx = int(seg["segment_index"])
+            if idx not in index_set:
+                continue
+            item = by_index[idx]
             seg["image_prompt"] = item["image_prompt"]
             seg["motion_prompt"] = item.get("motion_prompt", "")
+
+    def fill_image_prompts(
+        self,
+        script: dict[str, Any],
+        *,
+        feedback: str | None = None,
+        supplementary_info: str | None = None,
+        job: dict | None = None,
+        segment_indices: list[int] | None = None,
+    ) -> dict[str, Any]:
+        settings = get_settings()
+        segments = script.get("segments") or []
+        if not segments:
+            raise ValueError("script has no segments")
+        all_indices = segment_indices or [int(seg["segment_index"]) for seg in segments]
+        batches = _chunk_indices(all_indices, settings.llm_image_prompt_batch_size)
+        started = time.perf_counter()
+
+        def _run_batch(batch_indices: list[int]) -> list[dict]:
+            result = self._generate_image_prompts(
+                script,
+                feedback=feedback,
+                supplementary_info=supplementary_info,
+                job=job,
+                segment_indices=batch_indices,
+            )
+            return result["image_prompts"]
+
+        prompt_items: list[dict] = []
+        if len(batches) <= 1:
+            prompt_items = _run_batch(batches[0])
+        else:
+            with ThreadPoolExecutor(max_workers=len(batches)) as pool:
+                futures = {pool.submit(_run_batch, batch): batch for batch in batches}
+                for future in as_completed(futures):
+                    prompt_items.extend(future.result())
+
+        self._merge_image_prompts(script, prompt_items, required_indices=all_indices)
+        elapsed = time.perf_counter() - started
+        logger.info(
+            "[SCRIPT] image_prompts done segments=%d batches=%d elapsed=%.1fs",
+            len(all_indices),
+            len(batches),
+            elapsed,
+        )
+        timing = script.setdefault("_llm_timing", {})
+        timing["image_prompts_sec"] = round(elapsed, 1)
+        timing["image_prompt_batches"] = len(batches)
+        return script
+
+    def _fill_image_prompts_with_retries(
+        self,
+        script: dict[str, Any],
+        *,
+        supplementary_info: str | None = None,
+        job: dict | None = None,
+        segment_indices: list[int] | None = None,
+        feedback: str | None = None,
+    ) -> dict[str, Any]:
+        prompt_feedback = feedback
+        target_indices = segment_indices
+        for attempt in range(4):
+            self.fill_image_prompts(
+                script,
+                feedback=prompt_feedback,
+                supplementary_info=supplementary_info,
+                job=job,
+                segment_indices=target_indices,
+            )
+            short = _short_image_prompt_indices(script)
+            if not short:
+                return script
+            target_indices = short
+            prompt_feedback = (
+                f"image_prompt too short: {short}; "
+                f"need >={IMAGE_PROMPT_TARGET_CHARS} chars each; "
+                "expand all six layers (composition, subject, environment, lighting, color, scope)"
+            )
+            logger.warning(
+                "[SCRIPT] image_prompt retry attempt=%d short=%s",
+                attempt + 1,
+                short,
+            )
+        return script
+
+    def generate_storyboard(
+        self,
+        title: str,
+        *,
+        feedback: str | None = None,
+        segment_target_sec: float | None = None,
+        max_title_length: int | None = None,
+        narration_target_words: int | None = None,
+        supplementary_info: str | None = None,
+        job: dict | None = None,
+    ) -> dict[str, Any]:
+        started = time.perf_counter()
+        data = self._generate_storyboard(
+            title,
+            feedback=feedback,
+            segment_target_sec=segment_target_sec,
+            max_title_length=max_title_length,
+            narration_target_words=narration_target_words,
+            supplementary_info=supplementary_info,
+            job=job,
+        )
+        elapsed = time.perf_counter() - started
+        logger.info(
+            "[SCRIPT] storyboard done segments=%d words=%d elapsed=%.1fs",
+            len(data.get("segments") or []),
+            _narration_char_count(str(data.get("narration") or "")),
+            elapsed,
+        )
+        data["_llm_timing"] = {"storyboard_sec": round(elapsed, 1)}
+        return data
 
     def generate_script(
         self,
@@ -381,8 +522,21 @@ class DeepSeekClient(LLMClient):
         narration_target_words: int | None = None,
         supplementary_info: str | None = None,
         job: dict | None = None,
+        existing_script: dict[str, Any] | None = None,
+        retry_scope: str | None = None,
+        generate_image_prompts: bool = True,
     ) -> dict[str, Any]:
-        data = self._generate_storyboard(
+        if retry_scope == "image_prompts" and existing_script is not None:
+            data = existing_script
+            self._fill_image_prompts_with_retries(
+                data,
+                supplementary_info=supplementary_info,
+                job=job,
+                feedback=feedback,
+            )
+            return data
+
+        data = self.generate_storyboard(
             title,
             feedback=feedback,
             segment_target_sec=segment_target_sec,
@@ -391,27 +545,11 @@ class DeepSeekClient(LLMClient):
             supplementary_info=supplementary_info,
             job=job,
         )
-
-        prompt_feedback: str | None = None
-        for attempt in range(4):
-            prompt_data = self._generate_image_prompts(
+        if generate_image_prompts:
+            self._fill_image_prompts_with_retries(
                 data,
-                feedback=prompt_feedback,
                 supplementary_info=supplementary_info,
                 job=job,
-            )
-            self._merge_image_prompts(data, prompt_data["image_prompts"])
-            short = [
-                (seg["segment_index"], len(seg["image_prompt"]))
-                for seg in data["segments"]
-                if len(seg["image_prompt"]) < IMAGE_PROMPT_TARGET_CHARS
-            ]
-            if not short:
-                break
-            prompt_feedback = (
-                f"image_prompt too short: {short}; "
-                f"need >={IMAGE_PROMPT_TARGET_CHARS} chars each; "
-                "expand all six layers (composition, subject, environment, lighting, color, scope)"
             )
         return data
 
