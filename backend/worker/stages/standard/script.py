@@ -98,6 +98,29 @@ def _apply_script_title(
             )
 
 
+def _apply_video_description(
+    script: dict,
+    *,
+    job_id: int,
+    stage_name: str,
+) -> None:
+    title = str(script.get("title") or "").strip()
+    narration = str(script.get("narration") or "").strip()
+    if not title or not narration:
+        return
+    try:
+        script["video_description"] = llm_mgr.generate_video_description(title, narration)
+    except Exception as exc:
+        with connection() as conn:
+            job_log_repo.append_log(
+                conn,
+                job_id,
+                stage_name,
+                f"video description failed: {exc}",
+                level="warning",
+            )
+
+
 def _narration_short_retryable(chars: int) -> bool:
     return chars >= NARRATION_RETRY_MIN_CHARS
 
@@ -257,6 +280,11 @@ class ScriptStage(StageExecutor):
             source_title=title,
             max_len=max_len,
             skip_optimize=bool(ctx.script_skip_title_optimize),
+            job_id=ctx.job["id"],
+            stage_name=self.name,
+        )
+        _apply_video_description(
+            script,
             job_id=ctx.job["id"],
             stage_name=self.name,
         )

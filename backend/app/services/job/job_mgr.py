@@ -271,6 +271,36 @@ class JobMgr:
             skip_title_optimize=skip_title_optimize,
         )
 
+    def generate_video_description(self, job_id: int) -> dict:
+        from app.services.llm.llm_mgr import llm_mgr
+        from app.services.llm.llm_script_prompts import build_video_description_prompts
+
+        with connection() as conn:
+            job = job_repo.get_job(conn, job_id)
+            script = job.get("script_json")
+            if not isinstance(script, dict):
+                raise ValueError("script not ready")
+            title = str(script.get("title") or job.get("title") or "").strip()
+            narration = str(script.get("narration") or "").strip()
+            if not title:
+                raise ValueError("title is empty")
+            if not narration:
+                raise ValueError("narration is empty")
+
+            description = llm_mgr.generate_video_description(title, narration)
+            updated_script = dict(script)
+            updated_script["video_description"] = description
+
+            prompts = list(updated_script.get("llm_prompts") or [])
+            desc_prompt = build_video_description_prompts(title, narration)
+            prompts = [item for item in prompts if item.get("step") != "video_description"]
+            prompts.append(desc_prompt)
+            updated_script["llm_prompts"] = prompts
+
+            job = job_repo.update_job(conn, job_id, script_json=updated_script)
+            job_log_repo.append_log(conn, job_id, "script", "video description regenerated")
+            return {"video_description": description, "job": job}
+
     def run_intro(
         self,
         job_id: int,

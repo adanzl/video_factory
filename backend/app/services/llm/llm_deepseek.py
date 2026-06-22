@@ -5,12 +5,14 @@ from typing import Any
 
 from app.config import get_settings
 from app.services.llm.llm_mgr import LLMClient
+from app.services.llm.llm_script_description import parse_video_description_payload
 from app.services.llm.llm_script_prompts import (
     MIN_IMAGE_PROMPT_CHARS,
     build_image_prompts_prompts,
     build_material_script_prompts,
     build_storyboard_prompts,
     build_title_optimize_prompts,
+    build_video_description_prompts,
 )
 from app.services.llm.llm_script_title import parse_title_optimize_payload
 from app.services.llm.llm_topics import (
@@ -201,6 +203,15 @@ class DeepSeekClient(LLMClient):
         settings = get_settings()
         max_len = settings.max_title_length if max_title_length is None else max_title_length
         return parse_title_optimize_payload(raw, max_title_len=max_len)
+
+    def generate_video_description(
+        self,
+        title: str,
+        narration: str,
+    ) -> str:
+        prompts = build_video_description_prompts(title, narration)
+        raw = json.loads(self._chat(prompts["system"], prompts["user"]))
+        return parse_video_description_payload(raw)
 
     def generate_topics(
         self,

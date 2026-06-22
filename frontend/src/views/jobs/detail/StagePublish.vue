@@ -20,6 +20,26 @@
     <el-descriptions :column="1" border class="mb-4">
       <el-descriptions-item label="跳过发布">{{ job.skip_publish ? "是" : "否" }}</el-descriptions-item>
       <el-descriptions-item label="成片路径">{{ resolveFinalPath(job.final_path) || "-" }}</el-descriptions-item>
+      <el-descriptions-item label="视频介绍">
+        <div class="space-y-2">
+          <div
+            v-if="videoDescription"
+            class="leading-relaxed wrap-break-word whitespace-pre-wrap"
+          >
+            {{ videoDescription }}
+          </div>
+          <div v-else class="text-sm text-gray-400">暂无视频介绍</div>
+          <el-button
+            v-if="canRegenerateDescription"
+            size="small"
+            :loading="regeneratingDescription"
+            :disabled="actionDisabled"
+            @click="handleRegenerateDescription"
+          >
+            重新生成介绍
+          </el-button>
+        </div>
+      </el-descriptions-item>
     </el-descriptions>
 
     <el-alert v-if="job.skip_publish" type="info" title="该任务配置为跳过发布" :closable="false" />
@@ -41,8 +61,9 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { runJobStageAction, updateJob } from "@/api/api-jobs";
+import { generateVideoDescription, runJobStageAction, updateJob } from "@/api/api-jobs";
 import type { JobDetail, JobLog } from "@/types/jobs";
+import type { ScriptJson } from "@/types/jobs/script";
 import { formatDateTime } from "@/utils/date";
 import { resolveFinalPath } from "@/utils/media";
 import { useErrorHandler } from "@/composables/useErrorHandler";
@@ -59,12 +80,36 @@ const emit = defineEmits<{
 const { handleError } = useErrorHandler();
 
 const submitting = ref(false);
+const regeneratingDescription = ref(false);
 const skipPublish = ref(false);
 
 const actionDisabled = computed(() => props.job.status === "running");
 const actionDisabledReason = computed(() =>
   props.job.status === "running" ? "任务运行中，请稍后再试" : ""
 );
+
+const videoDescription = computed(() => {
+  const script = props.job.script_json as ScriptJson | null | undefined;
+  return script?.video_description?.trim() || "";
+});
+
+const canRegenerateDescription = computed(() => {
+  const script = props.job.script_json as ScriptJson | null | undefined;
+  return Boolean(script?.narration?.trim());
+});
+
+const handleRegenerateDescription = async () => {
+  regeneratingDescription.value = true;
+  try {
+    await generateVideoDescription(props.job.id);
+    ElMessage.success("视频介绍已重新生成");
+    emit("refresh");
+  } catch (error) {
+    handleError(error, "重新生成视频介绍失败");
+  } finally {
+    regeneratingDescription.value = false;
+  }
+};
 
 const handleRun = async (toEnd: boolean) => {
   const actionLabel = toEnd ? "从此成片" : "重新生成";

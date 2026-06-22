@@ -52,6 +52,17 @@ export async function previewScriptPrompts(
   return Array.isArray(response.data.prompts) ? response.data.prompts : [];
 }
 
+export async function generateVideoDescription(jobId: number): Promise<{
+  video_description: string;
+  job: JobDetail;
+}> {
+  const response = await api.post<{ video_description: string; job: JobDetail }>(
+    "/v_factory/api/jobs/script/description",
+    { id: jobId }
+  );
+  return response.data;
+}
+
 export async function cleanJob(jobId: number): Promise<{
   id: number;
   cleaned: boolean;

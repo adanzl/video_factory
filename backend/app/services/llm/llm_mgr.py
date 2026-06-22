@@ -45,6 +45,13 @@ class LLMClient:
     ) -> str:
         raise NotImplementedError
 
+    def generate_video_description(
+        self,
+        title: str,
+        narration: str,
+    ) -> str:
+        raise NotImplementedError
+
     def generate_material_script(
         self,
         title: str,
@@ -158,6 +165,27 @@ class LLMMgr:
             elapsed,
         )
         return title
+
+    def generate_video_description(
+        self,
+        title: str,
+        narration: str,
+    ) -> str:
+        logger.info("[SCRIPT] generate video description start title=%r", title)
+        started = time.perf_counter()
+        try:
+            description = self._get_client().generate_video_description(title, narration)
+        except Exception:
+            logger.exception("[SCRIPT] generate video description failed title=%r", title)
+            raise
+        elapsed = time.perf_counter() - started
+        logger.info(
+            "[SCRIPT] generate video description done title=%r chars=%d elapsed=%.1fs",
+            title,
+            len(description),
+            elapsed,
+        )
+        return description
 
     def generate_material_script(
         self,

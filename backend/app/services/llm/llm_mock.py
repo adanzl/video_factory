@@ -142,6 +142,19 @@ class MockLLMClient(LLMClient):
             optimized = f"{cleaned}，多数人不知道？"
         return normalize_title(optimized, max_len=max_len)
 
+    def generate_video_description(
+        self,
+        title: str,
+        narration: str,
+    ) -> str:
+        _ = narration
+        cleaned = re.sub(r"\s+", "", title.strip()) or "科普"
+        return (
+            f"你以为自己懂{cleaned}？很多人第一反应都错了。\n"
+            f"一分钟讲清核心原理，帮你看懂常见误区。\n"
+            f"#科普 #{cleaned}"
+        )
+
     def generate_topics(
         self,
         theme: str,

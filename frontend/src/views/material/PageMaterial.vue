@@ -92,7 +92,7 @@
       v-model:current-page="page"
       v-model:page-size="pageSize"
       :total="total"
-      :page-sizes="[20, 50]"
+      :page-sizes="[10, 15]"
       layout="sizes, prev, pager, next"
       class="mt-4 justify-start"
       @current-change="fetchMaterials"
@@ -241,7 +241,7 @@ const editing = ref(false);
 const creatingJob = ref(false);
 const selectedIds = ref<number[]>([]);
 const page = ref(1);
-const pageSize = ref(20);
+const pageSize = ref(10);
 const total = ref(0);
 
 const showUploadDialog = ref(false);
