@@ -9,6 +9,7 @@ from pathlib import Path
 
 from app.services.media.media_mgr import SegmentClipsResult, media_mgr
 from app.services.visual.visual_mgr import visual_mgr
+from app.utils.job_info import resolve_segment_image_size
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,7 @@ class SegmentMgr:
         audio_path: Path | None = None,
         only_segment_indices: set[int] | None = None,
         scope: str = "all",
+        job: dict | None = None,
     ) -> SegmentProduceResult:
         if scope not in {"all", "images", "clips"}:
             raise ValueError(f"invalid segment scope: {scope}")
@@ -74,11 +76,8 @@ class SegmentMgr:
                 index = seg["segment_index"]
                 if only_segment_indices is not None and index not in only_segment_indices:
                     existing = self._existing_image_path(seg, images_dir)
-                    if existing is None:
-                        # 部分重跑静图时，未选中但尚未出图的段落自动补全，避免阻断首次出图
-                        image_targets.append(seg)
-                        continue
-                    path_by_id[seg["id"]] = existing
+                    if existing is not None:
+                        path_by_id[seg["id"]] = existing
                     continue
 
                 if only_segment_indices is None and scope == "all":
@@ -89,14 +88,16 @@ class SegmentMgr:
 
                 image_targets.append(seg)
 
+        image_size = resolve_segment_image_size(job)
         logger.info(
-            "produce_segments: scope=%s, %s images to generate, %s cached",
+            "produce_segments: scope=%s, %s images to generate, %s cached, size=%s",
             scope,
             len(image_targets),
             len(path_by_id),
+            image_size,
         )
         generated = (
-            visual_mgr.generate_segment_images(image_targets, images_dir)
+            visual_mgr.generate_segment_images(image_targets, images_dir, size=image_size)
             if image_targets
             else []
         )
@@ -104,7 +105,13 @@ class SegmentMgr:
             path_by_id[seg_id] = path
 
         segments_with_images = [
-            {**seg, "image_path": str(path_by_id[seg["id"]])} for seg in segments
+            {
+                **seg,
+                "image_path": str(path)
+                if (path := path_by_id.get(seg["id"]))
+                else seg.get("image_path"),
+            }
+            for seg in segments
         ]
         if scope == "images" or audio_path is None:
             if scope != "images" and audio_path is None:

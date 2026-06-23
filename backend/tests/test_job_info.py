@@ -53,3 +53,31 @@ def test_script_params_from_info_migrates_flat_legacy_keys():
 
     assert params["segment_target_sec"] == 30.0
     assert "orientation" not in params
+
+
+def test_resolve_segment_image_size_landscape():
+    from types import SimpleNamespace
+
+    from app.utils.job_info import resolve_segment_image_size
+
+    settings = SimpleNamespace(
+        image_provider="wan_t2i",
+        wan_image_size="720*1280",
+        z_image_size="720*1280",
+    )
+    job = {"info": {"orientation": "landscape"}}
+    assert resolve_segment_image_size(job, settings=settings) == "1280*720"
+
+
+def test_resolve_segment_image_size_portrait():
+    from types import SimpleNamespace
+
+    from app.utils.job_info import resolve_segment_image_size
+
+    settings = SimpleNamespace(
+        image_provider="wan_t2i",
+        wan_image_size="720*1280",
+        z_image_size="720*1280",
+    )
+    job = {"info": {"orientation": "portrait"}}
+    assert resolve_segment_image_size(job, settings=settings) == "720*1280"

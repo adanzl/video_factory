@@ -29,6 +29,7 @@ class SegmentStage(StageExecutor):
             audio_path=audio_path,
             only_segment_indices=ctx.segment_indices_set(),
             scope=produce_scope,
+            job=job,
         )
 
         image_by_id = dict(result.image_paths)

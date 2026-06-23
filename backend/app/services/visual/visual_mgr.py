@@ -50,6 +50,8 @@ class VisualMgr:
         self,
         segments: list[dict],
         images_dir: Path,
+        *,
+        size: str | None = None,
     ) -> list[tuple[int, Path]]:
         images_dir.mkdir(parents=True, exist_ok=True)
         provider = self._get_image_provider()
@@ -58,7 +60,7 @@ class VisualMgr:
         total = len(segments)
         done = 0
         start = time.time()
-        params_desc = provider.describe_params()
+        params_desc = provider.describe_params(size=size)
         logger.info(
             "image batch start: count=%s, workers=%s, %s",
             total,
@@ -80,7 +82,7 @@ class VisualMgr:
                 params_desc,
                 len(prompt),
             )
-            provider.generate(prompt, out)
+            provider.generate(prompt, out, size=size)
             elapsed = time.time() - t0
             logger.info(
                 "image %s/%s done segment %s in %.1fs | %s",
