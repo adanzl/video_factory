@@ -19,10 +19,11 @@ export async function searchClips(params: SearchClipsParams): Promise<ClipSearch
   const response = await api.get<ClipSearchResult>("/v_factory/api/clips/search", {
     params: {
       q: params.q,
-      per_page: params.per_page ?? 24,
+      per_page: params.per_page ?? 60,
       providers: params.providers?.length ? params.providers.join(",") : undefined,
       orientation: params.orientation,
       language: params.language || undefined,
+      search_mode: params.search_mode ?? "original",
     },
     timeout: 60000,
   });

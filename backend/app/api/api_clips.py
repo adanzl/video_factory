@@ -69,7 +69,7 @@ def preview_clip_route():
 @bp.get("/search")
 def search_clips_route():
     query = _parse_query_str("q", required=True, max_length=120)
-    per_page = parse_query_int("per_page", 24, minimum=1, maximum=60)
+    per_page = parse_query_int("per_page", 60, minimum=1, maximum=90)
     providers = _parse_providers(_parse_query_str("providers", required=False))
     orientation_raw = _parse_query_str("orientation", required=False)
     orientation = None
@@ -82,6 +82,12 @@ def search_clips_route():
         language = normalize_search_language(language_raw)
     except ValueError as exc:
         raise APIError(str(exc), status_code=400) from exc
+    search_mode_raw = _parse_query_str("search_mode", required=False, max_length=16)
+    search_mode = "original"
+    if search_mode_raw:
+        search_mode = search_mode_raw.strip().lower()
+        if search_mode not in {"original", "ai"}:
+            raise APIError("search_mode must be original or ai")
     try:
         result = clip_search_mgr.search(
             query,
@@ -89,6 +95,7 @@ def search_clips_route():
             providers=providers,
             orientation=orientation,
             language=language,
+            search_mode=search_mode,
         )
     except ValueError as exc:
         raise APIError(str(exc), status_code=400) from exc
