@@ -104,6 +104,29 @@ def is_landscape_job(job: dict) -> bool:
     return orientation_for_resolve(job) == ORIENTATION_LANDSCAPE
 
 
+def resolve_segment_image_size(job: dict | None = None, *, settings: Any | None = None) -> str:
+    """按 job orientation 解析分镜静图尺寸（Wan/Z-Image 格式 width*height）。"""
+    from app.config import get_settings
+
+    cfg = settings or get_settings()
+    default = (
+        cfg.z_image_size
+        if cfg.image_provider == "z_image_t2i"
+        else cfg.wan_image_size
+    )
+    normalized = default.strip().lower().replace("x", "*")
+    w_str, h_str = normalized.split("*", 1)
+    width, height = int(w_str.strip()), int(h_str.strip())
+
+    orient = orientation_for_resolve(job or {})
+    if orient == ORIENTATION_LANDSCAPE:
+        if width < height:
+            width, height = height, width
+    elif width > height:
+        width, height = height, width
+    return f"{width}*{height}"
+
+
 def default_content_style_for_pipeline(pipeline: str | None) -> str:
     return CONTENT_STYLE_SCIENCE_CHILD
 
