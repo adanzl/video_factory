@@ -127,6 +127,18 @@ def resolve_segment_image_size(job: dict | None = None, *, settings: Any | None 
     return f"{width}*{height}"
 
 
+def resolve_segment_video_size(job: dict | None = None, *, settings: Any | None = None) -> tuple[int, int]:
+    """按 job orientation 解析分镜 clip 输出尺寸（width, height）。"""
+    from app.config import get_settings
+    from app.services.intro.size import landscape_size, portrait_size
+
+    cfg = settings or get_settings()
+    orient = orientation_for_resolve(job or {})
+    if orient == ORIENTATION_LANDSCAPE:
+        return landscape_size(cfg)
+    return portrait_size(cfg)
+
+
 def default_content_style_for_pipeline(pipeline: str | None) -> str:
     return CONTENT_STYLE_SCIENCE_CHILD
 

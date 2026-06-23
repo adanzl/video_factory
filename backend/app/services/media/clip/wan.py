@@ -214,6 +214,8 @@ class WanClipProvider(ClipProvider):
         work_dir: Path,
         segment_index: int,
         motion_prompt: str | None = None,
+        width: int | None = None,
+        height: int | None = None,
     ) -> Path:
         _ = motion_preset
         t0 = time.time()
@@ -221,6 +223,8 @@ class WanClipProvider(ClipProvider):
             subtitle_cues=subtitle_cues,
             work_dir=work_dir,
             segment_index=segment_index,
+            width=width,
+            height=height,
         )
         if total_duration <= 0:
             raise ValueError(f"segment {segment_index} has zero duration")
@@ -240,7 +244,13 @@ class WanClipProvider(ClipProvider):
                 duration=api_duration,
             )
             logger.info("clip %s: raw done, fitting to %.1fs", segment_index, total_duration)
-            fit_video_duration(raw_path, fitted_path, total_duration)
+            fit_video_duration(
+                raw_path,
+                fitted_path,
+                total_duration,
+                width=width,
+                height=height,
+            )
             logger.info("clip %s: overlaying %s subtitles", segment_index, len(overlay_windows))
             if overlay_windows:
                 video_to_clip_timed_overlays(
@@ -248,6 +258,8 @@ class WanClipProvider(ClipProvider):
                     overlay_windows,
                     output_path,
                     total_duration,
+                    width=width,
+                    height=height,
                 )
             else:
                 fitted_path.replace(output_path)

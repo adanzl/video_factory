@@ -147,6 +147,7 @@ class SegmentMgr:
                 segments=segments_with_images,
                 audio_path=audio_path,
                 only_segment_indices=only_segment_indices,
+                job=job,
             )
         elapsed = time.time() - t0
         logger.info(
