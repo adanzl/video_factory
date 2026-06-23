@@ -64,8 +64,8 @@ class SegmentStage(StageExecutor):
             )
             clip_note = (
                 f"clips={len(result.clips.segment_clip_paths)}"
-                if audio_path is not None
-                else "clips=skipped(no tts)"
+                if result.clips.segment_clip_paths
+                else "clips=0"
             )
             model = (
                 settings.z_image_model
@@ -94,7 +94,9 @@ class SegmentStage(StageExecutor):
                         seg for seg in segments_for_qc if seg["segment_index"] in rerun_indices
                     ]
                 qc_checks["visual"] = check_visual(visual_qc)
-            if produce_scope in {"all", "clips"} and audio_path is not None:
+            if produce_scope in {"all", "clips"} and (
+                produce_scope == "clips" or audio_path is not None
+            ):
                 clip_qc = segments_for_qc
                 if rerun_indices is not None:
                     clip_qc = [

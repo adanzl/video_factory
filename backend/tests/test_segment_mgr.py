@@ -61,6 +61,8 @@ def test_produce_clips_partial_skips_unselected_without_image(tmp_path: Path) ->
             "segment_index": 1,
             "visual_mode": "wan_i2v",
             "image_path": str(image_path),
+            "duration_sec": 5.0,
+            "text": "测试口播",
         },
         {"id": 103, "segment_index": 3, "visual_mode": "wan_i2v"},
     ]
@@ -70,7 +72,7 @@ def test_produce_clips_partial_skips_unselected_without_image(tmp_path: Path) ->
         result = segment_mgr.produce_segments(
             segments=segments,
             media_dir=media_dir,
-            audio_path=media_dir / "tts" / "audio.mp3",
+            audio_path=None,
             only_segment_indices={1},
             scope="clips",
         )

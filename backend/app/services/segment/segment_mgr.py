@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from app.services.media.media_mgr import SegmentClipsResult, media_mgr
+from app.services.tts.tts_mgr import tts_mgr
 from app.services.visual.visual_mgr import visual_mgr
 from app.utils.job_info import resolve_segment_image_size
 
@@ -35,6 +36,11 @@ class SegmentMgr:
         if fallback.exists():
             return fallback
         return None
+
+    @staticmethod
+    def _has_clip_timing(media_dir: Path) -> bool:
+        cues_path = tts_mgr.subtitle_cues_path_for(media_dir / "audio")
+        return cues_path.exists()
 
     def produce_segments(
         self,
@@ -123,15 +129,17 @@ class SegmentMgr:
             }
             for seg in segments
         ]
-        if scope == "images" or audio_path is None:
-            if scope != "images" and audio_path is None:
-                logger.info("produce_segments: no audio, skipping clips")
-            else:
-                logger.info("produce_segments: images only, skipping clips")
+        if scope == "images":
+            logger.info("produce_segments: images only, skipping clips")
+            clips = SegmentClipsResult(segment_clip_paths=[])
+        elif scope == "all" and audio_path is None and not self._has_clip_timing(media_dir):
+            logger.info(
+                "produce_segments: no tts timing, skipping clips (run tts first or use segment/clips)"
+            )
             clips = SegmentClipsResult(segment_clip_paths=[])
         else:
             logger.info(
-                "produce_segments: building clips (audio available, targets=%s)...",
+                "produce_segments: building clips (targets=%s)...",
                 sorted(only_segment_indices) if only_segment_indices is not None else "all",
             )
             clips = media_mgr.build_segment_clips(
