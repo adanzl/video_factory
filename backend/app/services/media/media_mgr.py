@@ -65,25 +65,44 @@ class MediaMgr:
             return f"provider=ffmpeg, motion_preset={motion_preset}"
         return f"provider={provider}, motion_preset={motion_preset}"
 
+    @staticmethod
+    def _load_subtitle_cues(media_dir: Path) -> list:
+        cues_path = tts_mgr.subtitle_cues_path_for(media_dir / "audio")
+        return tts_mgr.load_subtitle_cues(cues_path)
+
+    @staticmethod
+    def _cues_for_segment(seg: dict, subtitle_cues: list) -> list[tuple[str, float]]:
+        index = seg["segment_index"]
+        seg_cues = tts_mgr.cues_for_segment(subtitle_cues, index)
+        if seg_cues:
+            return seg_cues
+        duration = seg.get("duration_sec")
+        text = (seg.get("text") or "").strip()
+        if duration is not None and float(duration) > 0:
+            return [(text or f"segment {index}", float(duration))]
+        return []
+
     def build_segment_clips(
         self,
         *,
         media_dir: Path,
         segments: list[dict],
-        audio_path: Path,
+        audio_path: Path | None = None,
         only_segment_indices: set[int] | None = None,
     ) -> SegmentClipsResult:
         settings = get_settings()
         clips_dir = media_dir / "segments"
         clips_dir.mkdir(parents=True, exist_ok=True)
 
-        subtitle_cues = tts_mgr.load_subtitle_cues(
-            tts_mgr.subtitle_cues_path_for(audio_path.parent)
-        )
+        subtitle_cues = self._load_subtitle_cues(media_dir)
+        cues_path = tts_mgr.subtitle_cues_path_for(media_dir / "audio")
         if not subtitle_cues:
-            raise FileNotFoundError(
-                f"缺少 {tts_mgr.subtitle_cues_path_for(audio_path.parent)}，请从 tts 阶段重跑"
+            logger.warning(
+                "clip batch: missing %s, will fallback to segment duration_sec where available",
+                cues_path,
             )
+        elif audio_path is None:
+            logger.info("clip batch: loaded subtitle cues from %s", cues_path)
 
         segment_clips: list[tuple[int, Path]] = []
         targets = (
@@ -113,9 +132,17 @@ class MediaMgr:
                     f"segment {index} visual_mode=kling_std 需 VideoProvider，尚未接入"
                 )
 
-            seg_cues = tts_mgr.cues_for_segment(subtitle_cues, index)
+            seg_cues = self._cues_for_segment(seg, subtitle_cues)
             if not seg_cues:
-                raise ValueError(f"segment {index} 无句级字幕时间轴")
+                raise ValueError(
+                    f"segment {index} 无句级字幕时间轴，请先执行 tts，或确保分镜有 duration_sec"
+                )
+            if not tts_mgr.cues_for_segment(subtitle_cues, index):
+                logger.info(
+                    "clip segment %s: using duration_sec fallback (%.2fs)",
+                    index,
+                    sum(duration for _, duration in seg_cues),
+                )
             motion_prompt = seg.get("motion_prompt") or seg.get("visual_brief") or ""
             logger.info(
                 "clip %s/%s building segment %s | %s | motion_chars=%s",
