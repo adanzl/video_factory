@@ -241,3 +241,52 @@ def test_search_pixabay_parses_response(monkeypatch):
     assert clips[0].provider == "pixabay"
     assert clips[0].video_url.endswith("7.mp4")
     assert clips[0].preview_url == "https://i.vimeocdn.com/video/529927645_640x360.jpg"
+
+
+def test_download_stock_clip_to_segment(tmp_path, monkeypatch):
+    from app.services.clip_search.download import download_stock_clip_to_segment
+
+    media_dir = tmp_path / "42"
+    segment = {"segment_index": 3, "duration_sec": 5.0}
+    job = {"id": 42, "pipeline": "standard", "info": '{"orientation":"portrait"}'}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def iter_content(self, chunk_size=0):
+            _ = chunk_size
+            yield b"fake-video"
+
+    monkeypatch.setattr(
+        "app.services.clip_search.download.requests.get",
+        lambda *args, **kwargs: FakeResponse(),
+    )
+    monkeypatch.setattr(
+        "app.services.clip_search.download.probe_duration",
+        lambda path: 8.0,
+    )
+
+    captured: dict[str, object] = {}
+
+    def fake_fit(src, dst, duration, *, width, height):
+        captured["duration"] = duration
+        captured["size"] = (width, height)
+        dst.write_bytes(b"normalized")
+        return dst
+
+    monkeypatch.setattr(
+        "app.services.clip_search.download.fit_video_duration",
+        fake_fit,
+    )
+
+    output = download_stock_clip_to_segment(
+        job=job,
+        media_dir=media_dir,
+        segment=segment,
+        video_url="https://videos.pexels.com/video-files/abc/abc.mp4",
+    )
+
+    assert output == media_dir / "segments" / "3.mp4"
+    assert output.is_file()
+    assert captured["duration"] == 5.0
