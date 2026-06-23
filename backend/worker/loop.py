@@ -284,7 +284,7 @@ def run_script_image_prompts(job_id: int) -> dict:
     ) or None
 
     updated = dict(script)
-    llm_mgr.fill_image_prompts(
+    llm_mgr.fill_image_prompts_with_retries(
         updated,
         supplementary_info=supplementary_info,
         job=job,
