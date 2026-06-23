@@ -192,8 +192,9 @@ import { runJobStageAction } from "@/api/api-jobs";
 import { getMediaFileUrl } from "@/api/api-media";
 import type { JobDetail, JobInfo, JobLog, JobSegment, ScriptJson } from "@/types/jobs";
 import { formatDateTime } from "@/utils/date";
+import { buildSegmentClipSearchKeyword, type ClipOrientation } from "@/utils/clipSearch";
 import { useErrorHandler } from "@/composables/useErrorHandler";
-import SegmentClipSearchDialog from "./SegmentClipSearchDialog.vue";
+import SegmentClipSearchDialog from "@/views/clips/SegmentClipSearchDialog.vue";
 
 const props = defineProps<{
   job: JobDetail;
@@ -213,7 +214,7 @@ const selectedSegments = ref<number[]>([]);
 const clipSearchOpen = ref(false);
 const clipSearchSegmentIndex = ref(1);
 const clipSearchKeyword = ref("");
-const clipSearchOrientation = ref<"" | "portrait" | "landscape" | "square">("");
+const clipSearchOrientation = ref<ClipOrientation>("");
 
 const actionDisabled = computed(() => props.job.status === "running");
 const actionDisabledReason = computed(() =>
@@ -274,7 +275,7 @@ const formatDuration = (value?: number | null) => {
   return value.toFixed(2);
 };
 
-const resolveClipSearchOrientation = (): "" | "portrait" | "landscape" | "square" => {
+const resolveClipSearchOrientation = (): ClipOrientation => {
   const orientation = (props.job.info as JobInfo | null | undefined)?.orientation;
   if (orientation === "portrait" || orientation === "landscape") {
     return orientation;
@@ -282,20 +283,9 @@ const resolveClipSearchOrientation = (): "" | "portrait" | "landscape" | "square
   return "";
 };
 
-const buildClipSearchKeyword = (segment: JobSegment & { visual_brief?: string | null }) => {
-  const candidates = [segment.motion_prompt, segment.visual_brief, segment.image_prompt, segment.text];
-  for (const value of candidates) {
-    const normalized = value?.replace(/\s+/g, " ").trim();
-    if (normalized) {
-      return normalized.length > 80 ? `${normalized.slice(0, 80)}…` : normalized;
-    }
-  }
-  return "";
-};
-
 const openClipSearch = (segment: JobSegment & { visual_brief?: string | null }) => {
   clipSearchSegmentIndex.value = segment.segment_index;
-  clipSearchKeyword.value = buildClipSearchKeyword(segment);
+  clipSearchKeyword.value = buildSegmentClipSearchKeyword(segment);
   clipSearchOrientation.value = resolveClipSearchOrientation();
   clipSearchOpen.value = true;
 };

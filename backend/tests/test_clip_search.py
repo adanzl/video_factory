@@ -187,14 +187,60 @@ def test_search_pexels_prefers_vimeo_sd_over_pexels_uhd(monkeypatch):
     assert clips[0].video_url.startswith("https://player.vimeo.com")
 
 
-def test_preview_redirects_to_cdn():
+def test_preview_streams_video(monkeypatch):
     from app.services.clip_search.preview_proxy import proxy_clip_preview
 
-    response = proxy_clip_preview(
-        "https://videos.pexels.com/video-files/36382074/15429717_3840_2160_25fps.mp4"
+    class FakeUpstream:
+        status_code = 200
+        headers = {"Content-Type": "video/mp4", "Content-Length": "5", "Accept-Ranges": "bytes"}
+
+        def iter_content(self, chunk_size=0):
+            _ = chunk_size
+            yield b"12345"
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(
+        "app.services.clip_search.preview_proxy.requests.get",
+        lambda *args, **kwargs: FakeUpstream(),
     )
-    assert response.status_code == 302
-    assert response.location.startswith("https://videos.pexels.com/")
+
+    from flask import Flask
+
+    app = Flask(__name__)
+    with app.test_request_context("/preview"):
+        response = proxy_clip_preview(
+            "https://videos.pexels.com/video-files/36382074/15429717_3840_2160_25fps.mp4"
+        )
+        assert response.status_code == 200
+        assert b"".join(response.response) == b"12345"
+        assert response.headers["Content-Type"] == "video/mp4"
+
+
+def test_preview_upstream_error(monkeypatch):
+    from app.services.clip_search.preview_proxy import proxy_clip_preview
+
+    class FakeUpstream:
+        status_code = 403
+        headers = {}
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(
+        "app.services.clip_search.preview_proxy.requests.get",
+        lambda *args, **kwargs: FakeUpstream(),
+    )
+
+    from flask import Flask
+
+    app = Flask(__name__)
+    with app.test_request_context("/preview"):
+        with pytest.raises(ValueError, match="403"):
+            proxy_clip_preview(
+                "https://videos.pexels.com/video-files/36382074/15429717_3840_2160_25fps.mp4"
+            )
 
 
 def test_validate_preview_url():

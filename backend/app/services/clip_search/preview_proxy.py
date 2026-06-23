@@ -1,12 +1,12 @@
-"""代理外部素材视频预览，解决浏览器跨域与编码兼容问题。"""
+"""代理外部素材视频预览，解决浏览器跨域与 MIME 识别问题。"""
 
 from __future__ import annotations
 
 import logging
-import re
 from urllib.parse import urlparse
 
-from flask import redirect
+import requests
+from flask import Response, request
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +18,19 @@ _ALLOWED_HOST_SUFFIXES = (
     "cdn.pixabay.com",
     "pixabay.com",
     "images-assets.nasa.gov",
+)
+
+_SKIP_RESPONSE_HEADERS = frozenset(
+    {
+        "connection",
+        "keep-alive",
+        "proxy-authenticate",
+        "proxy-authorization",
+        "te",
+        "trailers",
+        "transfer-encoding",
+        "upgrade",
+    }
 )
 
 
@@ -43,7 +56,46 @@ def validate_preview_url(url: str) -> str:
 
 
 def proxy_clip_preview(url: str):
-    """校验后 302 到 CDN，由浏览器直连拉流（支持 Range，避免 gevent 代理大文件）。"""
+    """校验后流式转发 CDN 视频，支持 Range 供浏览器播放。"""
     validated = validate_preview_url(url)
-    logger.debug("[CLIP] preview redirect -> %s", validated)
-    return redirect(validated, code=302)
+    forward_headers: dict[str, str] = {}
+    range_header = request.headers.get("Range")
+    if range_header:
+        forward_headers["Range"] = range_header
+
+    try:
+        upstream = requests.get(
+            validated,
+            headers=forward_headers,
+            stream=True,
+            timeout=(10, 120),
+        )
+    except requests.RequestException as exc:
+        logger.warning("clip preview upstream request failed: %s %s", validated, exc)
+        raise ValueError(f"upstream request failed: {exc}") from exc
+
+    if upstream.status_code >= 400:
+        upstream.close()
+        raise ValueError(f"upstream returned {upstream.status_code}")
+
+    headers = [
+        (name, value)
+        for name, value in upstream.headers.items()
+        if name.lower() not in _SKIP_RESPONSE_HEADERS
+    ]
+    if not any(name.lower() == "content-type" for name, _ in headers):
+        headers.append(("Content-Type", "video/mp4"))
+    if not any(name.lower() == "accept-ranges" for name, _ in headers):
+        headers.append(("Accept-Ranges", "bytes"))
+
+    logger.debug("[CLIP] preview stream -> %s status=%s", validated, upstream.status_code)
+
+    def generate():
+        try:
+            for chunk in upstream.iter_content(chunk_size=65536):
+                if chunk:
+                    yield chunk
+        finally:
+            upstream.close()
+
+    return Response(generate(), status=upstream.status_code, headers=headers)

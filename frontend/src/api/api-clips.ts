@@ -1,7 +1,8 @@
 /**
- * 素材片段聚合搜索 API（不入库）
+ * 素材片段聚合搜索 API
  */
 import { api, getApiUrl } from "./config";
+import type { JobSegment } from "@/types/jobs";
 import type {
   ClipProviderStatus,
   ClipSearchResult,
@@ -45,27 +46,25 @@ export function clipPosterUrl(previewUrl?: string): string | undefined {
   return trimmed;
 }
 
-/** 经后端校验后播放；Pexels/Pixabay 等 CDN 直连，避免 gevent 代理大文件 */
-const DIRECT_PLAY_HOSTS = [
-  "videos.pexels.com",
-  "player.vimeo.com",
-  "cdn.pixabay.com",
-  "images-assets.nasa.gov",
-];
-
+/** 经后端同源代理播放，避免跨域 CDN 在 Firefox 等浏览器报 MIME 错误 */
 export function clipPreviewUrl(remoteUrl: string): string {
   const trimmed = remoteUrl?.trim();
   if (!trimmed) {
     return "";
   }
-  try {
-    const host = new URL(trimmed).hostname.toLowerCase();
-    if (DIRECT_PLAY_HOSTS.some(h => host === h || host.endsWith(`.${h}`))) {
-      return trimmed;
-    }
-  } catch {
-    // 非法 URL 仍走代理校验
-  }
   const base = getApiUrl();
   return `${base}/v_factory/api/clips/preview?url=${encodeURIComponent(trimmed)}`;
+}
+
+export async function importClipToSegment(payload: {
+  jobId: number;
+  segmentIndex: number;
+  videoUrl: string;
+}): Promise<JobSegment> {
+  const response = await api.post<JobSegment>("/v_factory/api/clips/import-segment", {
+    id: payload.jobId,
+    segment_index: payload.segmentIndex,
+    video_url: payload.videoUrl,
+  });
+  return response.data;
 }
