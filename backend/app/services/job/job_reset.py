@@ -13,6 +13,7 @@ from app.core.pipelines import (
     stages_for,
 )
 from app.utils.stage_names import normalize_stage
+from app.repositories import job_log_repo, job_repo, segment_repo
 from app.repositories.connection import connection
 
 __all__ = ["prepare_for_action", "prepare_job_rerun", "reset_job_from_stage"]
