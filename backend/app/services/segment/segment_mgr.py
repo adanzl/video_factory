@@ -59,11 +59,8 @@ class SegmentMgr:
                 index = seg["segment_index"]
                 if only_segment_indices is not None and index not in only_segment_indices:
                     existing = self._existing_image_path(seg, images_dir)
-                    if existing is None:
-                        raise FileNotFoundError(
-                            f"segment {index} 缺少 image_path，请先执行 segment/images"
-                        )
-                    path_by_id[seg["id"]] = existing
+                    if existing is not None:
+                        path_by_id[seg["id"]] = existing
                     continue
                 existing = self._existing_image_path(seg, images_dir)
                 if existing is None:
@@ -88,19 +85,32 @@ class SegmentMgr:
 
                 image_targets.append(seg)
 
-        image_size = resolve_segment_image_size(job)
-        logger.info(
-            "produce_segments: scope=%s, %s images to generate, %s cached, size=%s",
-            scope,
-            len(image_targets),
-            len(path_by_id),
-            image_size,
-        )
-        generated = (
-            visual_mgr.generate_segment_images(image_targets, images_dir, size=image_size)
-            if image_targets
-            else []
-        )
+        if scope == "clips":
+            clip_target_indices = (
+                sorted(only_segment_indices)
+                if only_segment_indices is not None
+                else [seg["segment_index"] for seg in segments]
+            )
+            logger.info(
+                "produce_segments: scope=clips, %s clips to generate, segments=%s",
+                len(clip_target_indices),
+                clip_target_indices,
+            )
+        elif image_targets:
+            image_size = resolve_segment_image_size(job)
+            logger.info(
+                "produce_segments: scope=%s, %s images to generate, %s cached, size=%s",
+                scope,
+                len(image_targets),
+                len(path_by_id),
+                image_size,
+            )
+        generated = []
+        if scope != "clips" and image_targets:
+            image_size = resolve_segment_image_size(job)
+            generated = visual_mgr.generate_segment_images(
+                image_targets, images_dir, size=image_size
+            )
         for seg_id, path in generated:
             path_by_id[seg_id] = path
 
@@ -120,14 +130,9 @@ class SegmentMgr:
                 logger.info("produce_segments: images only, skipping clips")
             clips = SegmentClipsResult(segment_clip_paths=[])
         else:
-            clip_targets = (
-                len(only_segment_indices)
-                if only_segment_indices is not None
-                else len(segments)
-            )
             logger.info(
                 "produce_segments: building clips (audio available, targets=%s)...",
-                clip_targets,
+                sorted(only_segment_indices) if only_segment_indices is not None else "all",
             )
             clips = media_mgr.build_segment_clips(
                 media_dir=media_dir,
