@@ -474,14 +474,8 @@ class JobMgr:
         )
 
     def run_cover(self, job_id: int, *, to_end: bool = False) -> dict:
-        """生成封面。实现：worker/loop.run_cover → worker/stages/common/cover.py"""
-        from worker.loop import run_cover
-
-        return self._run_in_background(
-            job_id,
-            "cover",
-            lambda: run_cover(job_id, to_end=to_end),
-        )
+        """兼容旧 API：封面已并入 intro 阶段。"""
+        return self.run_intro(job_id, to_end=to_end)
 
     def run_tts(
         self,

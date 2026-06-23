@@ -4,6 +4,7 @@ import json
 import sqlite3
 from typing import Any
 
+from app.utils.stage_names import normalize_stage
 from app.utils.final_asset import parse_final_asset
 
 
@@ -19,6 +20,8 @@ def _row_to_dict(row: sqlite3.Row) -> dict:
         data["info"] = json.loads(data["info"])
     if data.get("final_path"):
         data["final_path"] = parse_final_asset(data["final_path"])
+    if data.get("stage"):
+        data["stage"] = normalize_stage(data["stage"])
     data["skip_publish"] = bool(data.get("skip_publish"))
     return data
 

@@ -344,11 +344,8 @@ def run_intro(
 
 
 def run_cover(job_id: int, *, to_end: bool = False) -> dict:
-    job = _reload_job(job_id)
-    cover_cls = stage_class_for("cover", job)
-    if to_end:
-        return _run_from(job_id, cover_cls)
-    return _run_one_stage(job_id, cover_cls, hold=True)
+    """兼容旧 API：封面已并入 intro 阶段。"""
+    return run_intro(job_id, to_end=to_end)
 
 
 def run_tts(

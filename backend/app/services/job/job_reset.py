@@ -12,13 +12,13 @@ from app.core.pipelines import (
     stage_index,
     stages_for,
 )
-from app.repositories import job_log_repo, job_repo, segment_repo
+from app.utils.stage_names import normalize_stage
 from app.repositories.connection import connection
 
 __all__ = ["prepare_for_action", "prepare_job_rerun", "reset_job_from_stage"]
 
-# 重跑这些 stage 时只刷新自身产物，不影响下游（封面/发布不导致成片或配音失效）
-_STAGES_SKIP_DOWNSTREAM_CLEAR = frozenset({"cover", "publish"})
+# 重跑 publish 时只刷新自身产物，不影响下游
+_STAGES_SKIP_DOWNSTREAM_CLEAR = frozenset({"publish"})
 
 
 def _material_script_reset_seed(job: dict) -> dict | None:
@@ -152,7 +152,7 @@ def _clear_downstream(conn, job_id: int, stage: str, media_dir: Path, job: dict)
     pipe = resolve_pipeline(job)
     idx = stage_index(stage, job)
 
-    if idx < stage_index("cover", job):
+    if idx < stage_index("intro", job):
         job_repo.update_job(conn, job_id, cover_path=None)
         _delete_files([media_dir / "cover.jpg"])
 
@@ -244,13 +244,9 @@ def _clear_stage_self(
     if stage == "intro":
         job_repo.update_job(conn, job_id, intro_path=None, cover_path=None)
         if media_dir.exists():
-            _delete_files([media_dir / "intro.mp4", media_dir / "intro.png"])
-        return
-
-    if stage == "cover":
-        job_repo.update_job(conn, job_id, cover_path=None)
-        if media_dir.exists():
-            _delete_files([media_dir / "cover.jpg"])
+            _delete_files(
+                [media_dir / "intro.mp4", media_dir / "intro.png", media_dir / "cover.jpg"]
+            )
         return
 
     if stage == "tts" and media_dir.exists():
@@ -310,7 +306,7 @@ def prepare_for_action(
                 error_message=None,
             )
     else:
-        stage = action
+        stage = normalize_stage(action)
         segment_scope = None
 
     if segment_indices is not None:

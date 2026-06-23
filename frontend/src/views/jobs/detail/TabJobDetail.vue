@@ -37,7 +37,7 @@
             :is="STAGE_PANELS[stage.name]"
             :job="job"
             :segments="segments"
-            :logs="logsByStage[stage.name] || []"
+            :logs="logsForStage(stage.name)"
             @refresh="fetchDetail"
           />
         </el-tab-pane>
@@ -58,7 +58,6 @@ import { JOB_STATUS_RUNNING } from "@/constants/job";
 import { pipelineLabel, stageNamesForJob, stagesForJob } from "@/constants/jobStages";
 import type { JobDetail, JobLog, JobSegment } from "@/types/jobs";
 import { useErrorHandler } from "@/composables/useErrorHandler";
-import StageCover from "./StageCover.vue";
 import StageHost from "./StageHost.vue";
 import StageIntro from "./StageIntro.vue";
 import StageMerge from "./StageMerge.vue";
@@ -74,7 +73,6 @@ const STAGE_PANELS: Record<string, Component> = {
   prepare: StagePrepare,
   script: StageScript,
   intro: StageIntro,
-  cover: StageCover,
   tts: StageTts,
   segment: StageSegment,
   host: StageHost,
@@ -119,6 +117,15 @@ const logsByStage = computed(() => {
   }
   return grouped;
 });
+
+const introLogs = computed(() => {
+  const intro = logsByStage.value.intro ?? [];
+  const cover = logsByStage.value.cover ?? [];
+  return [...intro, ...cover].sort(compareLogTimeDesc);
+});
+
+const logsForStage = (stageName: string) =>
+  stageName === "intro" ? introLogs.value : logsByStage.value[stageName] ?? [];
 
 const statusTagType = (status: string) => {
   switch (status) {
