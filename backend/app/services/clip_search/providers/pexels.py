@@ -86,11 +86,14 @@ def search_pexels(
     api_key: str,
     per_page: int,
     orientation: str | None,
+    locale: str | None = None,
     timeout: float,
 ) -> list[StockClip]:
     params: dict[str, str | int] = {"query": query, "per_page": per_page}
     if orientation in {"portrait", "landscape", "square"}:
         params["orientation"] = orientation
+    if locale:
+        params["locale"] = locale
     data = get_json(
         _PEXELS_SEARCH,
         headers={"Authorization": api_key},

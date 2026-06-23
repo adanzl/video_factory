@@ -1,13 +1,14 @@
 import { ref, toValue, type MaybeRefOrGetter } from "vue";
 import { ElMessage } from "element-plus";
 import { listClipSources, searchClips } from "@/api/api-clips";
-import type { ClipProviderName, ClipProviderSearchMeta, ClipProviderStatus, StockClip } from "@/types/clipSearch";
+import type { ClipProviderName, ClipProviderSearchMeta, ClipProviderStatus, ClipSearchLanguage, StockClip } from "@/types/clipSearch";
 import type { ClipOrientation } from "@/utils/clipSearch";
 import { useErrorHandler } from "@/composables/useErrorHandler";
 
 export interface UseClipSearchOptions {
   initialKeyword?: MaybeRefOrGetter<string>;
   initialOrientation?: MaybeRefOrGetter<ClipOrientation>;
+  initialLanguage?: MaybeRefOrGetter<ClipSearchLanguage>;
   autoSearch?: boolean;
 }
 
@@ -16,6 +17,7 @@ export function useClipSearch(options: UseClipSearchOptions = {}) {
 
   const keyword = ref("");
   const orientation = ref<ClipOrientation>("");
+  const language = ref<ClipSearchLanguage>("");
   const sources = ref<ClipProviderStatus[]>([]);
   const selectedProviders = ref<ClipProviderName[]>(["pexels", "pixabay", "nasa"]);
   const clips = ref<StockClip[]>([]);
@@ -27,6 +29,7 @@ export function useClipSearch(options: UseClipSearchOptions = {}) {
   const applyInitialValues = () => {
     keyword.value = toValue(options.initialKeyword)?.trim() ?? "";
     orientation.value = toValue(options.initialOrientation) ?? "";
+    language.value = toValue(options.initialLanguage) ?? "";
   };
 
   const resetResults = () => {
@@ -72,6 +75,7 @@ export function useClipSearch(options: UseClipSearchOptions = {}) {
         per_page: 24,
         providers: selectedProviders.value,
         orientation: orientation.value || undefined,
+        language: language.value || undefined,
       });
       lastQuery.value = result.query;
       clips.value = result.clips ?? [];
@@ -94,6 +98,7 @@ export function useClipSearch(options: UseClipSearchOptions = {}) {
   return {
     keyword,
     orientation,
+    language,
     sources,
     selectedProviders,
     clips,

@@ -22,6 +22,7 @@ export async function searchClips(params: SearchClipsParams): Promise<ClipSearch
       per_page: params.per_page ?? 24,
       providers: params.providers?.length ? params.providers.join(",") : undefined,
       orientation: params.orientation,
+      language: params.language || undefined,
     },
     timeout: 60000,
   });

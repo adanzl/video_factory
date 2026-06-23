@@ -336,3 +336,54 @@ def test_download_stock_clip_to_segment(tmp_path, monkeypatch):
     assert output == media_dir / "segments" / "3.mp4"
     assert output.is_file()
     assert captured["duration"] == 5.0
+
+
+def test_normalize_search_language():
+    from app.services.clip_search.language import (
+        normalize_search_language,
+        pexels_locale,
+        pixabay_lang,
+    )
+
+    assert normalize_search_language(None) is None
+    assert normalize_search_language("") is None
+    assert normalize_search_language("zh") == "zh"
+    assert normalize_search_language("中文") == "zh"
+    assert normalize_search_language("en") == "en"
+    assert normalize_search_language("英文") == "en"
+    assert pexels_locale("zh") == "zh-CN"
+    assert pexels_locale("en") == "en-US"
+    assert pexels_locale(None) is None
+    assert pixabay_lang("zh") == "zh"
+    assert pixabay_lang("en") == "en"
+
+
+def test_search_pexels_passes_locale(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def fake_get_json(url, **kwargs):
+        captured["params"] = kwargs.get("params")
+        return {"videos": []}
+
+    monkeypatch.setattr("app.services.clip_search.providers.pexels.get_json", fake_get_json)
+    search_pexels(
+        "磁铁",
+        api_key="k",
+        per_page=5,
+        orientation=None,
+        locale="zh-CN",
+        timeout=5,
+    )
+    assert captured["params"]["locale"] == "zh-CN"
+
+
+def test_search_pixabay_passes_lang(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def fake_get_json(url, **kwargs):
+        captured["params"] = kwargs.get("params")
+        return {"hits": []}
+
+    monkeypatch.setattr("app.services.clip_search.providers.pixabay.get_json", fake_get_json)
+    search_pixabay("magnet", api_key="k", per_page=5, lang="en", timeout=5)
+    assert captured["params"]["lang"] == "en"
