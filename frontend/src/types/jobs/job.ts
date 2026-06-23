@@ -5,9 +5,20 @@ export interface FinalAsset {
   cost_time?: number | null;
 }
 
+export interface JobScriptParams {
+  segment_target_sec?: number;
+  max_title_length?: number;
+  narration_target_words?: number;
+  skip_title_optimize?: boolean;
+  generate_image_prompts?: boolean;
+  supplementary_info?: string;
+  video_timeline?: string;
+}
+
 export interface JobInfo {
   orientation?: "auto" | "portrait" | "landscape";
   content_style?: "science_child" | "life_experience";
+  script?: JobScriptParams;
 }
 
 export interface JobListItem {
