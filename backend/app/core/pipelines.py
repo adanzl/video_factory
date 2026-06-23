@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from worker.stages.base import StageExecutor
-from worker.stages.common.cover import CoverStage
 from worker.stages.common.intro import IntroStage
 from worker.stages.common.publish import PublishStage
 from worker.stages.common.tts import TTSStage
@@ -16,11 +15,12 @@ from worker.stages.standard.title import TitleStage
 PIPELINE_STANDARD = "standard"
 PIPELINE_MATERIAL = "material"
 
+from app.utils.stage_names import normalize_stage
+
 STANDARD_CHAIN: tuple[type[StageExecutor], ...] = (
     TitleStage,
     ScriptStage,
     IntroStage,
-    CoverStage,
     TTSStage,
     SegmentStage,
     HostStage,
@@ -38,7 +38,6 @@ def _material_chain() -> tuple[type[StageExecutor], ...]:
         MaterialPrepareStage,
         MaterialScriptStage,
         IntroStage,
-        CoverStage,
         TTSStage,
         MaterialMergeStage,
         PublishStage,
@@ -94,7 +93,7 @@ def stages_for(job: dict | None = None, *, pipeline: str | None = None) -> tuple
 
 
 def stage_index(stage: str, job: dict | None = None, *, pipeline: str | None = None) -> int:
-    return stages_for(job, pipeline=pipeline).index(stage)
+    return stages_for(job, pipeline=pipeline).index(normalize_stage(stage))
 
 
 def stage_class_for(
@@ -104,7 +103,7 @@ def stage_class_for(
     pipeline: str | None = None,
 ) -> type[StageExecutor]:
     pipe = pipeline or (resolve_pipeline(job) if job is not None else PIPELINE_STANDARD)
-    key = (pipe, stage_name)
+    key = (pipe, normalize_stage(stage_name))
     try:
         return STAGE_CLASS_BY_KEY[key]
     except KeyError as exc:
@@ -118,7 +117,7 @@ def executor_for_stage(
     pipeline: str | None = None,
 ) -> StageExecutor:
     pipe = pipeline or (resolve_pipeline(job) if job is not None else PIPELINE_STANDARD)
-    key = (pipe, stage_name)
+    key = (pipe, normalize_stage(stage_name))
     try:
         return EXECUTORS[key]
     except KeyError as exc:
@@ -165,6 +164,7 @@ __all__ = [
     "first_stage_class",
     "is_material_job",
     "next_stage_class",
+    "normalize_stage",
     "resolve_pipeline",
     "stage_class_for",
     "stage_index",

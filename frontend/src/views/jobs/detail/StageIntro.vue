@@ -41,16 +41,19 @@
             <el-form-item label="片头路径">
               <span class="break-all text-gray-600">{{ job.intro_path || "-" }}</span>
             </el-form-item>
+            <el-form-item label="封面路径">
+              <span class="break-all text-gray-600">{{ job.cover_path || "-" }}</span>
+            </el-form-item>
           </el-form>
           <p class="mt-1 text-xs leading-normal text-gray-400">
-            总时长 = 品牌喊声时长 + 尾部停留。「自动」时素材任务跟随基底视频分辨率。
+            总时长 = 品牌喊声时长 + 尾部停留；封面由片头预览帧自动生成。「自动」时素材任务跟随基底视频分辨率。
           </p>
         </div>
       </div>
 
       <div class="min-w-[280px] flex-1 basis-[360px]">
         <div class="rounded-lg border border-gray-200 p-4">
-          <div class="mb-3 text-sm font-medium text-gray-700">视频预览</div>
+          <div class="mb-3 text-sm font-medium text-gray-700">片头预览</div>
           <div v-if="videoUrl" class="flex justify-center">
             <div
               class="overflow-hidden rounded-lg border border-gray-200 bg-black"
@@ -76,6 +79,33 @@
             v-else-if="loadError"
             type="warning"
             :title="loadError"
+            :closable="false"
+            class="mt-2"
+          />
+        </div>
+
+        <div class="mt-4 rounded-lg border border-gray-200 p-4">
+          <div class="mb-3 text-sm font-medium text-gray-700">封面预览</div>
+          <div
+            v-if="coverUrl"
+            class="flex max-h-[405px] w-full items-center justify-center overflow-hidden rounded-lg border border-gray-200 bg-gray-50"
+          >
+            <el-image
+              :key="coverUrl"
+              :src="coverUrl"
+              :preview-src-list="[coverUrl]"
+              fit="contain"
+              class="block h-full w-full [&_.el-image__inner]:h-full [&_.el-image__inner]:w-full [&_.el-image__inner]:object-contain"
+              @error="onCoverError"
+            />
+          </div>
+          <div v-else-if="!job.cover_path" class="py-8 text-center text-sm text-gray-400">
+            暂无封面，生成片头后自动产出
+          </div>
+          <el-alert
+            v-else-if="coverLoadError"
+            type="warning"
+            :title="coverLoadError"
             :closable="false"
             class="mt-2"
           />
@@ -136,6 +166,7 @@ const introOrientation = ref<"auto" | "portrait" | "landscape">(
 );
 const actualDuration = ref<number | null>(null);
 const loadError = ref("");
+const coverLoadError = ref("");
 const videoMeta = ref<{ width: number; height: number } | null>(null);
 
 const actionDisabled = computed(() => props.job.status === "running");
@@ -151,6 +182,8 @@ const actualDurationText = computed(() => {
 });
 
 const videoUrl = computed(() => getMediaFileUrl(props.job.intro_path ?? ""));
+
+const coverUrl = computed(() => getMediaFileUrl(props.job.cover_path ?? ""));
 
 const posterUrl = computed(() => {
   const videoPath = props.job.intro_path?.trim();
@@ -203,6 +236,10 @@ const onVideoError = () => {
   loadError.value = "视频加载失败，请确认文件已生成且服务可访问";
 };
 
+const onCoverError = () => {
+  coverLoadError.value = "封面加载失败，请确认文件已生成且服务可访问";
+};
+
 const onVideoMetadata = (event: Event) => {
   const video = event.target as HTMLVideoElement;
   if (video.videoWidth > 0 && video.videoHeight > 0) {
@@ -213,7 +250,7 @@ const onVideoMetadata = (event: Event) => {
 const handleRun = async (toEnd: boolean) => {
   const actionLabel = toEnd ? "从此成片" : "重新生成";
   try {
-    await ElMessageBox.confirm(`确定对「片头」阶段执行「${actionLabel}」吗？`, "确认执行", {
+    await ElMessageBox.confirm(`确定对「片头/封面」阶段执行「${actionLabel}」吗？`, "确认执行", {
       type: "warning",
       confirmButtonText: "执行",
       cancelButtonText: "取消",
@@ -253,6 +290,13 @@ watch(
     if (orientation === "auto" || orientation === "portrait" || orientation === "landscape") {
       introOrientation.value = orientation;
     }
+  }
+);
+
+watch(
+  () => props.job.cover_path,
+  () => {
+    coverLoadError.value = "";
   }
 );
 

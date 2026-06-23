@@ -10,8 +10,7 @@ export const PIPELINE_MATERIAL = "material";
 export const STANDARD_JOB_STAGES: JobStageDef[] = [
   { name: "title", label: "标题" },
   { name: "script", label: "脚本" },
-  { name: "intro", label: "片头" },
-  { name: "cover", label: "封面" },
+  { name: "intro", label: "片头/封面" },
   { name: "tts", label: "配音" },
   { name: "segment", label: "分段" },
   { name: "host", label: "讲解人" },
@@ -23,8 +22,7 @@ export const STANDARD_JOB_STAGES: JobStageDef[] = [
 export const MATERIAL_JOB_STAGES: JobStageDef[] = [
   { name: "prepare", label: "基底" },
   { name: "script", label: "脚本" },
-  { name: "intro", label: "片头" },
-  { name: "cover", label: "封面" },
+  { name: "intro", label: "片头/封面" },
   { name: "tts", label: "配音" },
   { name: "merge", label: "合成" },
   { name: "publish", label: "发布" },
