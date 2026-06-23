@@ -75,9 +75,9 @@ class SegmentMgr:
                 if only_segment_indices is not None and index not in only_segment_indices:
                     existing = self._existing_image_path(seg, images_dir)
                     if existing is None:
-                        raise FileNotFoundError(
-                            f"segment {index} 缺少 image_path，请全量重跑 segment"
-                        )
+                        # 部分重跑静图时，未选中但尚未出图的段落自动补全，避免阻断首次出图
+                        image_targets.append(seg)
+                        continue
                     path_by_id[seg["id"]] = existing
                     continue
 
