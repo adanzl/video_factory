@@ -13,7 +13,11 @@ from app.services.job.job_reset import prepare_for_action, prepare_job_rerun
 from app.repositories import job_log_repo, job_repo, segment_repo
 from app.repositories.connection import connection
 from app.utils.async_util import run_in_background
-from app.utils.job_info import default_orientation_for_pipeline, merge_job_info
+from app.utils.job_info import (
+    default_orientation_for_pipeline,
+    merge_job_info,
+    merge_job_script_params,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -294,19 +298,24 @@ class JobMgr:
         """生成文案。实现：worker/loop.run_script → worker/stages/*/script.py"""
         from worker.loop import run_script
 
-        info_patch: dict[str, str] = {}
-        if orientation is not None:
-            info_patch["orientation"] = orientation
-        if content_style is not None:
-            info_patch["content_style"] = content_style
-        if info_patch:
-            with connection() as conn:
-                job = job_repo.get_job(conn, job_id)
-                job_repo.update_job(
-                    conn,
-                    job_id,
-                    info=merge_job_info(job.get("info"), **info_patch),
-                )
+        with connection() as conn:
+            job = job_repo.get_job(conn, job_id)
+            job_repo.update_job(
+                conn,
+                job_id,
+                info=merge_job_script_params(
+                    job.get("info"),
+                    segment_target_sec=segment_target_sec,
+                    max_title_length=max_title_length,
+                    narration_target_words=narration_target_words,
+                    skip_title_optimize=skip_title_optimize,
+                    generate_image_prompts=generate_image_prompts,
+                    supplementary_info=supplementary_info,
+                    video_timeline=video_timeline,
+                    orientation=orientation,
+                    content_style=content_style,
+                ),
+            )
 
         if title is not None:
             cleaned = title.strip()

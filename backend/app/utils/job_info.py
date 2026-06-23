@@ -116,3 +116,106 @@ def merge_job_info(existing: str | dict | None, **updates: Any) -> dict[str, Any
         else:
             merged[key] = value
     return merged
+
+
+_SCRIPT_PARAM_KEYS = (
+    "segment_target_sec",
+    "max_title_length",
+    "narration_target_words",
+    "skip_title_optimize",
+    "generate_image_prompts",
+    "supplementary_info",
+    "video_timeline",
+)
+
+
+def _migrate_flat_script_params(info: dict[str, Any]) -> None:
+    """将旧版平铺在 info 顶层的 script 参数迁入 info.script。"""
+    script = info.get("script")
+    script_node = dict(script) if isinstance(script, dict) else {}
+    migrated = False
+    for key in _SCRIPT_PARAM_KEYS:
+        if key in info:
+            script_node.setdefault(key, info.pop(key))
+            migrated = True
+    if migrated or script_node:
+        info["script"] = script_node
+
+
+def script_params_from_info(raw: str | dict | None) -> dict[str, Any]:
+    info = parse_job_info(raw)
+    _migrate_flat_script_params(info)
+    script = info.get("script")
+    return dict(script) if isinstance(script, dict) else {}
+
+
+def build_script_params(
+    *,
+    segment_target_sec: float | None = None,
+    max_title_length: int | None = None,
+    narration_target_words: int | None = None,
+    skip_title_optimize: bool = False,
+    generate_image_prompts: bool = False,
+    supplementary_info: str | None = None,
+    video_timeline: str | None = None,
+) -> dict[str, Any]:
+    """组装脚本生成参数（info.script 子节点内容）。"""
+    params: dict[str, Any] = {
+        "skip_title_optimize": skip_title_optimize,
+        "generate_image_prompts": generate_image_prompts,
+    }
+    if segment_target_sec is not None:
+        params["segment_target_sec"] = segment_target_sec
+    if max_title_length is not None:
+        params["max_title_length"] = max_title_length
+    if narration_target_words is not None:
+        params["narration_target_words"] = narration_target_words
+    if supplementary_info is not None:
+        stripped = supplementary_info.strip()
+        params["supplementary_info"] = stripped or None
+    if video_timeline is not None:
+        stripped = video_timeline.strip()
+        params["video_timeline"] = stripped or None
+    return params
+
+
+def merge_job_script_params(
+    existing: str | dict | None,
+    *,
+    segment_target_sec: float | None = None,
+    max_title_length: int | None = None,
+    narration_target_words: int | None = None,
+    skip_title_optimize: bool = False,
+    generate_image_prompts: bool = False,
+    supplementary_info: str | None = None,
+    video_timeline: str | None = None,
+    orientation: str | None = None,
+    content_style: str | None = None,
+) -> dict[str, Any]:
+    """合并脚本生成参数到 info.script，并更新 job 级 orientation/content_style。"""
+    merged = parse_job_info(existing)
+    _migrate_flat_script_params(merged)
+    script_node = dict(merged.get("script") or {})
+    updates = build_script_params(
+        segment_target_sec=segment_target_sec,
+        max_title_length=max_title_length,
+        narration_target_words=narration_target_words,
+        skip_title_optimize=skip_title_optimize,
+        generate_image_prompts=generate_image_prompts,
+        supplementary_info=supplementary_info,
+        video_timeline=video_timeline,
+    )
+    for key, value in updates.items():
+        if value is None:
+            script_node.pop(key, None)
+        else:
+            script_node[key] = value
+    if script_node:
+        merged["script"] = script_node
+    else:
+        merged.pop("script", None)
+    if orientation is not None:
+        merged["orientation"] = orientation
+    if content_style is not None:
+        merged["content_style"] = content_style
+    return merged

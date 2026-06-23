@@ -675,6 +675,58 @@ function initJobProfileFromInfo() {
   }
 }
 
+function resolveScriptParams(info: JobDetail["info"]) {
+  if (!info || typeof info !== "object") {
+    return null;
+  }
+  const nested = info.script;
+  if (nested && typeof nested === "object") {
+    return nested;
+  }
+  const legacy = info as Record<string, unknown>;
+  const params: Record<string, unknown> = {};
+  for (const key of [
+    "segment_target_sec",
+    "max_title_length",
+    "narration_target_words",
+    "skip_title_optimize",
+    "generate_image_prompts",
+    "supplementary_info",
+    "video_timeline",
+  ] as const) {
+    if (key in legacy) {
+      params[key] = legacy[key];
+    }
+  }
+  return Object.keys(params).length ? params : null;
+}
+
+function initScriptParamsFromInfo() {
+  const scriptParams = resolveScriptParams(props.job.info);
+  if (!scriptParams) {
+    return;
+  }
+  if (typeof scriptParams.segment_target_sec === "number" && Number.isFinite(scriptParams.segment_target_sec)) {
+    segmentTargetSec.value = scriptParams.segment_target_sec;
+  }
+  if (typeof scriptParams.max_title_length === "number" && Number.isFinite(scriptParams.max_title_length)) {
+    maxTitleLength.value = scriptParams.max_title_length;
+  }
+  if (
+    typeof scriptParams.narration_target_words === "number" &&
+    Number.isFinite(scriptParams.narration_target_words)
+  ) {
+    narrationTargetWords.value = scriptParams.narration_target_words;
+    narrationWordsTouched.value = true;
+  }
+  if (typeof scriptParams.skip_title_optimize === "boolean") {
+    skipTitleOptimize.value = scriptParams.skip_title_optimize;
+  }
+  if (typeof scriptParams.generate_image_prompts === "boolean") {
+    includeImagePrompts.value = scriptParams.generate_image_prompts;
+  }
+}
+
 const applyLandscapeLifePreset = () => {
   jobOrientation.value = "landscape";
   contentStyle.value = "life_experience";
@@ -683,9 +735,18 @@ const applyLandscapeLifePreset = () => {
   narrationWordsTouched.value = true;
 };
 
-const loadSupplementaryFromScript = () => {
-  supplementaryInfo.value = normalizeSupplementary(script.value?.supplementary_info);
-  videoTimeline.value = normalizeSupplementary(script.value?.video_timeline);
+const loadSupplementaryFields = () => {
+  const scriptParams = resolveScriptParams(props.job.info);
+  if (typeof scriptParams?.supplementary_info === "string") {
+    supplementaryInfo.value = scriptParams.supplementary_info;
+  } else {
+    supplementaryInfo.value = normalizeSupplementary(script.value?.supplementary_info);
+  }
+  if (typeof scriptParams?.video_timeline === "string") {
+    videoTimeline.value = scriptParams.video_timeline;
+  } else {
+    videoTimeline.value = normalizeSupplementary(script.value?.video_timeline);
+  }
 };
 
 const loadLlmPrompts = async () => {
@@ -855,6 +916,7 @@ watch(
     contentStyle.value = "science_child";
     segmentTargetSec.value = DEFAULT_SEGMENT_TARGET_SEC;
     initJobProfileFromInfo();
+    initScriptParamsFromInfo();
     promptPanelOpen.value = [];
     llmPrompts.value = [];
     activePromptTab.value = "";
@@ -867,6 +929,8 @@ watch(
   () => props.job.info,
   () => {
     initJobProfileFromInfo();
+    initScriptParamsFromInfo();
+    loadSupplementaryFields();
   },
   { immediate: true, deep: true }
 );
@@ -874,7 +938,7 @@ watch(
 watch(
   () => [script.value?.supplementary_info, script.value?.video_timeline] as const,
   () => {
-    loadSupplementaryFromScript();
+    loadSupplementaryFields();
   },
   { immediate: true }
 );
