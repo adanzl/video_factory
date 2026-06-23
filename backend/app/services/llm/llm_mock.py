@@ -17,8 +17,40 @@ class MockLLMClient(LLMClient):
         max_title_length: int | None = None,
         narration_target_words: int | None = None,
         supplementary_info: str | None = None,
+        job: dict | None = None,
+        existing_script: dict | None = None,
+        retry_scope: str | None = None,
+        generate_image_prompts: bool = True,
     ) -> dict[str, Any]:
-        _ = feedback, supplementary_info
+        _ = feedback, supplementary_info, job, narration_target_words
+        if retry_scope == "image_prompts" and existing_script is not None:
+            if generate_image_prompts:
+                return self.fill_image_prompts(existing_script)
+            return existing_script
+        data = self.generate_storyboard(
+            title,
+            segment_target_sec=segment_target_sec,
+            max_title_length=max_title_length,
+        )
+        if generate_image_prompts:
+            return self.fill_image_prompts(data)
+        for seg in data.get("segments") or []:
+            seg.pop("image_prompt", None)
+            seg.pop("motion_prompt", None)
+        return data
+
+    def generate_storyboard(
+        self,
+        title: str,
+        *,
+        feedback: str | None = None,
+        segment_target_sec: float | None = None,
+        max_title_length: int | None = None,
+        narration_target_words: int | None = None,
+        supplementary_info: str | None = None,
+        job: dict | None = None,
+    ) -> dict[str, Any]:
+        _ = feedback, supplementary_info, job, narration_target_words
         settings = get_settings()
         display_title = re.sub(r"\s+", "", title.strip())
         max_len = settings.max_title_length if max_title_length is None else max_title_length
@@ -88,6 +120,18 @@ class MockLLMClient(LLMClient):
             "visual_style": visual_style,
             "segments": segments,
         }
+
+    def fill_image_prompts(
+        self,
+        script: dict[str, Any],
+        *,
+        feedback: str | None = None,
+        supplementary_info: str | None = None,
+        job: dict | None = None,
+        segment_indices: list[int] | None = None,
+    ) -> dict[str, Any]:
+        _ = feedback, supplementary_info, job, segment_indices
+        return script
 
     def generate_material_script(
         self,

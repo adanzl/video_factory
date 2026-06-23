@@ -81,9 +81,18 @@
           {{ formatDateTime(row.created_at) }}
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="180" fixed="right">
+      <el-table-column label="操作" width="220" fixed="right">
         <template #default="{ row }">
           <div class="flex items-center gap-2 whitespace-nowrap">
+            <el-button
+              v-if="row.job_id"
+              type="warning"
+              link
+              size="small"
+              @click="goToJob(row.job_id!)"
+            >
+              任务详情
+            </el-button>
             <el-button
               v-if="row.status !== 'enqueued'"
               type="primary"
@@ -173,6 +182,7 @@
 
 <script setup lang="ts">
 import { onMounted, reactive, ref } from "vue";
+import { useRouter } from "vue-router";
 import { Refresh } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import {
@@ -188,6 +198,7 @@ import { useErrorHandler } from "@/composables/useErrorHandler";
 import { formatDateTime } from "@/utils/date";
 
 const { handleError } = useErrorHandler();
+const router = useRouter();
 
 const titles = ref<TitleRecord[]>([]);
 const loading = ref(false);
@@ -291,6 +302,10 @@ const onPageSizeChange = () => {
 
 const onSelectionChange = (rows: TitleRecord[]) => {
   selectedIds.value = rows.map(row => row.id);
+};
+
+const goToJob = (jobId: number) => {
+  void router.push({ path: "/jobs", query: { id: String(jobId) } });
 };
 
 const handleScoreSelected = async () => {
@@ -436,7 +451,7 @@ const handleGenerate = async () => {
 const handleImportHot = async () => {
   try {
     await ElMessageBox.confirm(
-      "将拉取 B 站热搜，经 AI 筛选后生成标题并入库（来源：热搜）。耗时约 30～60 秒，是否继续？",
+      "将拉取 B 站热搜，经 AI 筛选后生成标题并入库（来源：热搜）。后台执行，约 30～60 秒完成，是否继续？",
       "热搜选题",
       { type: "info", confirmButtonText: "开始", cancelButtonText: "取消" }
     );
@@ -446,16 +461,12 @@ const handleImportHot = async () => {
 
   importingHot.value = true;
   try {
-    const result = await importHotTopics({
+    await importHotTopics({
       limit: 50,
       count_per_theme: 3,
       min_score: 70,
     });
-    const s = result.summary;
-    ElMessage.success(
-      `热搜 ${s.fetched} 条 → 保留 ${s.kept} 条 → 入库 ${result.count} 条（跳过 ${result.skipped} 条）`
-    );
-    await fetchTitles();
+    ElMessage.success("已提交热搜选题，后台处理中，约 30～60 秒后刷新列表查看");
   } catch (error) {
     handleError(error, "热搜选题失败");
   } finally {

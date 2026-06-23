@@ -3,6 +3,8 @@ from app.quality.checkers import (
     check_final,
     check_segment_clips,
     check_storyboard,
+    check_image_prompts,
+    skipped_image_prompts_check,
     check_tts_audio,
     check_visual,
 )
@@ -17,6 +19,8 @@ __all__ = [
     "check_final",
     "check_segment_clips",
     "check_storyboard",
+    "check_image_prompts",
+    "skipped_image_prompts_check",
     "check_tts_audio",
     "check_visual",
     "merge_quality_report",

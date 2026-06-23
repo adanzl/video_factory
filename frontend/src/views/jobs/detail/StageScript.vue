@@ -23,42 +23,67 @@
             <span v-if="actionDisabledReason" class="shrink-0 text-xs text-gray-400">{{ actionDisabledReason }}</span>
           </div>
         </el-form-item>
-        <div v-if="!isMaterialJob" class="flex w-full flex-wrap items-start gap-x-4">
-          <el-form-item label="单镜(秒)" :label-width="FORM_LABEL_WIDTH" class="mb-0!">
-            <el-input-number
-              v-model="segmentTargetSec"
-              :min="0"
-              :max="60"
-              :step="1"
-              controls-position="right"
-              class="w-28!"
-            />
+        <template v-if="!isMaterialJob">
+          <el-form-item label="内容配置">
+            <div class="flex w-full min-w-0 flex-nowrap items-center gap-2 overflow-x-auto pb-0.5">
+              <span class="shrink-0 text-xs leading-tight whitespace-nowrap text-gray-500">方向</span>
+              <el-radio-group v-model="jobOrientation" size="small" class="shrink-0">
+                <el-radio-button value="portrait">竖屏</el-radio-button>
+                <el-radio-button value="landscape">横屏</el-radio-button>
+              </el-radio-group>
+              <span class="mx-1 h-5 w-px shrink-0 bg-gray-200" aria-hidden="true" />
+              <span class="shrink-0 text-xs leading-tight whitespace-nowrap text-gray-500">类型</span>
+              <el-radio-group v-model="contentStyle" size="small" class="shrink-0">
+                <el-radio-button value="science_child">童趣科普</el-radio-button>
+                <el-radio-button value="life_experience">生活经验</el-radio-button>
+              </el-radio-group>
+              <span class="mx-1 h-5 w-px shrink-0 bg-gray-200" aria-hidden="true" />
+              <el-button size="small" plain class="shrink-0" @click="applyLandscapeLifePreset">
+                横屏生活 · 6 分钟
+              </el-button>
+            </div>
           </el-form-item>
-          <el-form-item label="标题上限" :label-width="FORM_LABEL_WIDTH" class="mb-0!">
-            <el-input-number
-              v-model="maxTitleLength"
-              :min="8"
-              :max="48"
-              :step="1"
-              controls-position="right"
-              class="w-28!"
-            />
+          <el-form-item label="生成参数">
+            <div class="flex w-full min-w-0 flex-nowrap items-center gap-2 overflow-x-auto pb-0.5">
+              <span class="shrink-0 text-xs leading-tight whitespace-nowrap text-gray-500">单镜 (秒)</span>
+              <el-input-number
+                v-model="segmentTargetSec"
+                :min="0"
+                :max="60"
+                :step="1"
+                controls-position="right"
+                class="w-28! shrink-0"
+              />
+              <span class="mx-1 h-5 w-px shrink-0 bg-gray-200" aria-hidden="true" />
+              <span class="shrink-0 text-xs leading-tight whitespace-nowrap text-gray-500">标题上限</span>
+              <el-input-number
+                v-model="maxTitleLength"
+                :min="8"
+                :max="48"
+                :step="1"
+                controls-position="right"
+                class="w-28! shrink-0"
+              />
+              <span class="mx-1 h-5 w-px shrink-0 bg-gray-200" aria-hidden="true" />
+              <span class="shrink-0 text-xs leading-tight whitespace-nowrap text-gray-500">口播字数</span>
+              <el-input-number
+                v-model="narrationTargetWords"
+                :min="NARRATION_WORDS_MIN"
+                :max="NARRATION_WORDS_MAX"
+                :step="50"
+                controls-position="right"
+                class="w-36! shrink-0"
+                @change="narrationWordsTouched = true"
+              />
+              <span class="mx-1 h-5 w-px shrink-0 bg-gray-200" aria-hidden="true" />
+              <span class="shrink-0 text-xs leading-tight whitespace-nowrap text-gray-500">标题优化</span>
+              <el-checkbox v-model="skipTitleOptimize" class="shrink-0">跳过</el-checkbox>
+              <span class="mx-1 h-5 w-px shrink-0 bg-gray-200" aria-hidden="true" />
+              <span class="shrink-0 text-xs leading-tight whitespace-nowrap text-gray-500">文生图提示词</span>
+              <el-checkbox v-model="includeImagePrompts" class="shrink-0">生成</el-checkbox>
+            </div>
           </el-form-item>
-          <el-form-item label="口播字数" :label-width="FORM_LABEL_WIDTH" class="mb-0!">
-            <el-input-number
-              v-model="narrationTargetWords"
-              :min="NARRATION_WORDS_MIN"
-              :max="NARRATION_WORDS_MAX"
-              :step="50"
-              controls-position="right"
-              class="w-32!"
-              @change="narrationWordsTouched = true"
-            />
-          </el-form-item>
-          <el-form-item label="标题优化" :label-width="FORM_LABEL_WIDTH" class="mb-0!">
-            <el-checkbox v-model="skipTitleOptimize">跳过</el-checkbox>
-          </el-form-item>
-        </div>
+        </template>
         <div v-else class="flex flex-wrap items-start gap-x-4">
           <el-form-item label="标题上限" :label-width="FORM_LABEL_WIDTH" class="mb-0!">
             <el-input-number
@@ -109,51 +134,52 @@
       </el-form>
     </div>
 
-    <div class="mb-4 rounded-lg border border-gray-200 p-3">
-      <el-collapse v-model="promptPanelOpen">
-        <el-collapse-item name="prompts">
-          <template #title>
+    <el-collapse v-model="promptPanelOpen" class="mb-4 script-prompt-collapse">
+      <el-collapse-item name="prompts">
+        <template #title>
+          <div class="flex w-full items-center justify-between gap-3 pr-2">
             <span class="text-sm font-medium text-gray-700">大模型提示词</span>
-          </template>
-          <div class="mb-3 flex flex-wrap items-center gap-3">
-            <el-radio-group v-model="promptSource" size="small" @change="loadLlmPrompts">
-              <el-radio-button value="preview">当前参数预览</el-radio-button>
-              <el-radio-button value="saved" :disabled="!hasSavedPrompts">上次生成</el-radio-button>
-            </el-radio-group>
-            <el-button size="small" :loading="promptsLoading" @click="loadLlmPrompts">刷新</el-button>
+            <el-button
+              v-if="promptPanelOpen.includes('prompts')"
+              size="small"
+              :loading="promptsLoading"
+              @click.stop="loadLlmPrompts"
+            >
+              刷新
+            </el-button>
           </div>
-          <div v-if="promptsLoading" class="py-6 text-center text-sm text-gray-400">加载中…</div>
-          <div v-else-if="llmPrompts.length" class="space-y-3">
-            <el-collapse accordion>
-              <el-collapse-item
-                v-for="item in llmPrompts"
-                :key="item.step"
-                :title="item.label"
-                :name="item.step"
-              >
-                <div class="space-y-3">
-                  <div>
-                    <div class="mb-1 text-xs font-medium text-gray-500">System</div>
-                    <pre
-                      class="m-0 max-h-64 overflow-auto rounded bg-gray-50 p-3 text-xs leading-relaxed wrap-break-word whitespace-pre-wrap"
-                    >{{ item.system }}</pre>
-                  </div>
-                  <div>
-                    <div class="mb-1 text-xs font-medium text-gray-500">User</div>
-                    <pre
-                      class="m-0 max-h-64 overflow-auto rounded bg-gray-50 p-3 text-xs leading-relaxed wrap-break-word whitespace-pre-wrap"
-                    >{{ item.user }}</pre>
-                  </div>
+        </template>
+        <div v-if="promptsLoading" class="py-6 text-center text-sm text-gray-400">加载中…</div>
+        <template v-else-if="displayPrompts.length">
+          <el-tabs v-model="activePromptTab" class="script-prompt-tabs">
+            <el-tab-pane
+              v-for="item in displayPrompts"
+              :key="item.step"
+              :label="promptTabLabel(item.step)"
+              :name="item.step"
+            >
+              <div class="space-y-3 pt-1">
+                <div>
+                  <div class="mb-1 text-xs font-medium text-gray-500">System</div>
+                  <pre
+                    class="m-0 max-h-72 overflow-auto rounded bg-gray-50 p-3 text-xs leading-relaxed wrap-break-word whitespace-pre-wrap"
+                  >{{ item.system }}</pre>
                 </div>
-              </el-collapse-item>
-            </el-collapse>
-          </div>
-          <div v-else class="py-6 text-center text-sm text-gray-400">
-            {{ sourceTitle.trim() ? "暂无提示词" : "请先填写原标题" }}
-          </div>
-        </el-collapse-item>
-      </el-collapse>
-    </div>
+                <div>
+                  <div class="mb-1 text-xs font-medium text-gray-500">User</div>
+                  <pre
+                    class="m-0 max-h-72 overflow-auto rounded bg-gray-50 p-3 text-xs leading-relaxed wrap-break-word whitespace-pre-wrap"
+                  >{{ item.user }}</pre>
+                </div>
+              </div>
+            </el-tab-pane>
+          </el-tabs>
+        </template>
+        <div v-else class="py-6 text-center text-sm text-gray-400">
+          {{ sourceTitle.trim() ? "暂无提示词" : "请先填写原标题" }}
+        </div>
+      </el-collapse-item>
+    </el-collapse>
 
     <div v-if="script">
       <el-descriptions
@@ -258,7 +284,18 @@
       </div>
 
       <div class="mb-5">
-        <div class="mb-2 text-sm font-medium text-gray-700">分镜列表</div>
+        <div class="mb-2 flex flex-wrap items-center gap-2">
+          <span class="text-sm font-medium text-gray-700">分镜列表</span>
+          <el-button
+            v-if="!isMaterialJob"
+            size="small"
+            :loading="generatingImagePrompts"
+            :disabled="actionDisabled || !script.segments?.length"
+            @click="handleGenerateImagePrompts"
+          >
+            文生图提示词
+          </el-button>
+        </div>
         <el-table v-if="script.segments?.length" :data="script.segments" stripe class="w-full">
           <el-table-column prop="segment_index" label="#" width="60" />
           <el-table-column prop="text" label="口播文案" min-width="150">
@@ -350,17 +387,17 @@ import { computed, ref, watch } from "vue";
 import { DocumentCopy } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { getMediaDuration } from "@/api/api-media";
-import { previewScriptPrompts, generateVideoDescription, runJobStageAction } from "@/api/api-jobs";
+import { previewScriptPrompts, generateVideoDescription, generateImagePrompts, runJobStageAction } from "@/api/api-jobs";
 import type { JobDetail, JobLog, LlmPromptStep, ScriptJson } from "@/types/jobs";
 import type { RunStageActionPayload } from "@/types/jobs/stageAction";
 import { isMaterialJob as checkMaterialJob } from "@/constants/jobStages";
 import { formatDateTime } from "@/utils/date";
-import { estimateNarrationTargetWords, formatCostTime, formatMediaDuration, defaultNarrationTargetWords } from "@/utils/media";
+import { estimateNarrationTargetWords, formatCostTime, formatMediaDuration, defaultNarrationTargetWords, narrationTargetForMinutes } from "@/utils/media";
 import { useErrorHandler } from "@/composables/useErrorHandler";
 import { copyText } from "@/utils/utils";
 
 const FORM_LABEL_WIDTH = "88px";
-const DEFAULT_SEGMENT_TARGET_SEC = 16;
+const DEFAULT_SEGMENT_TARGET_SEC = 28;
 const DEFAULT_MAX_TITLE_LENGTH = 24;
 const DEFAULT_NARRATION_TARGET_WORDS = defaultNarrationTargetWords();
 const DEFAULT_MATERIAL_NARRATION_TARGET_WORDS = 800;
@@ -377,21 +414,54 @@ const emit = defineEmits<{
 }>();
 
 const { handleError } = useErrorHandler();
+const DEFAULT_LANDSCAPE_LIFE_SEGMENT_SEC = 28;
+const DEFAULT_LANDSCAPE_LIFE_MINUTES = 6;
+
 const submitting = ref(false);
 const regeneratingDescription = ref(false);
+const generatingImagePrompts = ref(false);
 const sourceTitle = ref("");
+const jobOrientation = ref<"portrait" | "landscape">("portrait");
+const contentStyle = ref<"science_child" | "life_experience">("science_child");
 const segmentTargetSec = ref(DEFAULT_SEGMENT_TARGET_SEC);
 const maxTitleLength = ref(DEFAULT_MAX_TITLE_LENGTH);
 const narrationTargetWords = ref(DEFAULT_NARRATION_TARGET_WORDS);
 const skipTitleOptimize = ref(false);
+const includeImagePrompts = ref(false);
 const supplementaryInfo = ref("");
 const videoTimeline = ref("");
 const baseDurationSec = ref<number | null>(null);
 const narrationWordsTouched = ref(false);
 const promptPanelOpen = ref<string[]>([]);
-const promptSource = ref<"preview" | "saved">("preview");
 const promptsLoading = ref(false);
 const llmPrompts = ref<LlmPromptStep[]>([]);
+const activePromptTab = ref("");
+
+const PROMPT_TAB_ORDER = [
+  "storyboard",
+  "material_script",
+  "title_optimize",
+  "video_description",
+] as const;
+
+const PROMPT_TAB_LABELS: Record<string, string> = {
+  storyboard: "分镜",
+  material_script: "口播",
+  title_optimize: "标题",
+  video_description: "介绍",
+};
+
+const promptTabLabel = (step: string) => PROMPT_TAB_LABELS[step] ?? step;
+
+const displayPrompts = computed(() =>
+  llmPrompts.value
+    .filter(item => (PROMPT_TAB_ORDER as readonly string[]).includes(item.step))
+    .sort(
+      (a, b) =>
+        (PROMPT_TAB_ORDER as readonly string[]).indexOf(a.step) -
+        (PROMPT_TAB_ORDER as readonly string[]).indexOf(b.step)
+    )
+);
 
 const actionDisabled = computed(() => props.job.status === "running");
 const isMaterialJob = computed(() => checkMaterialJob(props.job));
@@ -407,16 +477,12 @@ const script = computed<ScriptJson | null>(() => {
   return value as ScriptJson;
 });
 
-const hasSavedPrompts = computed(() => {
-  const saved = script.value?.llm_prompts;
-  return Array.isArray(saved) && saved.length > 0;
-});
-
 const rawJson = computed(() => JSON.stringify(props.job.script_json, null, 2));
 
 const QUALITY_STEP_LABELS: Record<string, string> = {
   copy: "文案",
   storyboard: "分镜",
+  image_prompts: "文生图提示词",
   tts: "配音",
   visual: "画面",
   clip: "片段",
@@ -599,6 +665,24 @@ const loadBaseDuration = async () => {
 const normalizeSupplementary = (value: unknown) =>
   typeof value === "string" ? value : "";
 
+function initJobProfileFromInfo() {
+  const info = props.job.info;
+  if (info?.orientation === "landscape" || info?.orientation === "portrait") {
+    jobOrientation.value = info.orientation;
+  }
+  if (info?.content_style === "life_experience" || info?.content_style === "science_child") {
+    contentStyle.value = info.content_style;
+  }
+}
+
+const applyLandscapeLifePreset = () => {
+  jobOrientation.value = "landscape";
+  contentStyle.value = "life_experience";
+  segmentTargetSec.value = DEFAULT_LANDSCAPE_LIFE_SEGMENT_SEC;
+  narrationTargetWords.value = narrationTargetForMinutes(DEFAULT_LANDSCAPE_LIFE_MINUTES);
+  narrationWordsTouched.value = true;
+};
+
 const loadSupplementaryFromScript = () => {
   supplementaryInfo.value = normalizeSupplementary(script.value?.supplementary_info);
   videoTimeline.value = normalizeSupplementary(script.value?.video_timeline);
@@ -608,10 +692,7 @@ const loadLlmPrompts = async () => {
   const trimmedTitle = sourceTitle.value.trim();
   if (!trimmedTitle) {
     llmPrompts.value = [];
-    return;
-  }
-  if (promptSource.value === "saved" && hasSavedPrompts.value) {
-    llmPrompts.value = script.value!.llm_prompts!;
+    activePromptTab.value = "";
     return;
   }
   promptsLoading.value = true;
@@ -625,8 +706,13 @@ const loadLlmPrompts = async () => {
       skip_title_optimize: skipTitleOptimize.value,
       supplementary_info: supplementaryInfo.value.trim() || undefined,
       video_timeline: videoTimeline.value.trim() || undefined,
-      use_saved_script: promptSource.value === "saved",
+      orientation: jobOrientation.value,
+      content_style: contentStyle.value,
     });
+    const first = displayPrompts.value[0];
+    if (first && !displayPrompts.value.some(item => item.step === activePromptTab.value)) {
+      activePromptTab.value = first.step;
+    }
   } catch (error) {
     handleError(error, "加载提示词失败");
   } finally {
@@ -648,6 +734,32 @@ const handleRegenerateDescription = async () => {
     handleError(error, "重新生成视频介绍失败");
   } finally {
     regeneratingDescription.value = false;
+  }
+};
+
+const handleGenerateImagePrompts = async () => {
+  if (!script.value?.segments?.length) {
+    ElMessage.warning("请先生成分镜");
+    return;
+  }
+  try {
+    await ElMessageBox.confirm("确定为当前脚本生成文生图提示词吗？", "确认执行", {
+      type: "warning",
+      confirmButtonText: "执行",
+      cancelButtonText: "取消",
+    });
+  } catch {
+    return;
+  }
+  generatingImagePrompts.value = true;
+  try {
+    await generateImagePrompts(props.job.id);
+    ElMessage.success("已提交文生图提示词生成，任务已开始执行");
+    emit("refresh");
+  } catch (error) {
+    handleError(error, "生成文生图提示词失败");
+  } finally {
+    generatingImagePrompts.value = false;
   }
 };
 
@@ -696,8 +808,15 @@ const handleRun = async (toEnd: boolean) => {
       payload.max_title_length = maxTitleLength.value;
     }
     payload.narration_target_words = Math.round(words);
+    if (!isMaterialJob.value) {
+      payload.orientation = jobOrientation.value;
+      payload.content_style = contentStyle.value;
+    }
     if (skipTitleOptimize.value) {
       payload.skip_title_optimize = true;
+    }
+    if (includeImagePrompts.value) {
+      payload.generate_image_prompts = true;
     }
     const extra = supplementaryInfo.value.trim();
     if (extra) {
@@ -732,12 +851,24 @@ watch(
     narrationTargetWords.value = isMaterialJob.value
       ? DEFAULT_MATERIAL_NARRATION_TARGET_WORDS
       : DEFAULT_NARRATION_TARGET_WORDS;
-    promptSource.value = "preview";
-    llmPrompts.value = [];
+    jobOrientation.value = "portrait";
+    contentStyle.value = "science_child";
+    segmentTargetSec.value = DEFAULT_SEGMENT_TARGET_SEC;
+    initJobProfileFromInfo();
     promptPanelOpen.value = [];
+    llmPrompts.value = [];
+    activePromptTab.value = "";
     supplementaryInfo.value = "";
     videoTimeline.value = "";
   }
+);
+
+watch(
+  () => props.job.info,
+  () => {
+    initJobProfileFromInfo();
+  },
+  { immediate: true, deep: true }
 );
 
 watch(
@@ -748,20 +879,30 @@ watch(
   { immediate: true }
 );
 
+watch(
+  () => [
+    sourceTitle.value,
+    segmentTargetSec.value,
+    maxTitleLength.value,
+    narrationTargetWords.value,
+    skipTitleOptimize.value,
+    supplementaryInfo.value,
+    videoTimeline.value,
+    jobOrientation.value,
+    contentStyle.value,
+  ],
+  () => {
+    if (promptPanelOpen.value.includes("prompts")) {
+      void loadLlmPrompts();
+    }
+  }
+);
+
 watch(promptPanelOpen, names => {
   if (names.includes("prompts")) {
     void loadLlmPrompts();
   }
 });
-
-watch(
-  () => script.value?.llm_prompts,
-  saved => {
-    if (promptSource.value === "saved" && Array.isArray(saved) && saved.length) {
-      llmPrompts.value = saved;
-    }
-  }
-);
 
 watch(
   () => [props.job.base_path, isMaterialJob.value] as const,
@@ -784,5 +925,25 @@ watch(
   width: v-bind(FORM_LABEL_WIDTH) !important;
   min-width: v-bind(FORM_LABEL_WIDTH) !important;
   max-width: v-bind(FORM_LABEL_WIDTH) !important;
+}
+
+.script-prompt-collapse {
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.script-prompt-collapse :deep(.el-collapse-item__header) {
+  padding: 0 12px;
+  height: 44px;
+  border-bottom: none;
+}
+
+.script-prompt-collapse :deep(.el-collapse-item__wrap) {
+  border-top: 1px solid var(--el-border-color-lighter);
+}
+
+.script-prompt-collapse :deep(.el-collapse-item__content) {
+  padding: 12px;
 }
 </style>

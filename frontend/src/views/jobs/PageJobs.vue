@@ -2,7 +2,7 @@
   <div>
     <el-tabs v-model="activeTab">
       <el-tab-pane label="任务列表" name="jobs">
-        <TabJobs @view-detail="openJobDetail" />
+        <TabJobs ref="jobsTabRef" @view-detail="openJobDetail" />
       </el-tab-pane>
       <el-tab-pane label="任务详情" name="detail">
         <TabJobDetail :job-id="selectedJobId" />
@@ -25,6 +25,7 @@ const route = useRoute();
 
 const activeTab = ref("jobs");
 const selectedJobId = ref<number>();
+const jobsTabRef = ref<InstanceType<typeof TabJobs> | null>(null);
 
 const openJobDetail = (jobId: number) => {
   selectedJobId.value = jobId;
@@ -41,4 +42,10 @@ const applyJobFromQuery = () => {
 
 onMounted(applyJobFromQuery);
 watch(() => route.query.id, applyJobFromQuery);
+
+watch(activeTab, tab => {
+  if (tab === "jobs") {
+    jobsTabRef.value?.refresh();
+  }
+});
 </script>

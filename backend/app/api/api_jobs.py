@@ -20,6 +20,7 @@ from app.api.utils import (
 )
 from app.services.intro.size import parse_intro_orientation
 from app.services.job.job_mgr import JobBusyError, job_mgr
+from app.utils.job_info import merge_job_info, normalize_content_style, normalize_orientation
 
 bp = Blueprint("api_jobs", __name__, url_prefix="/v_factory/api/jobs")
 
@@ -41,11 +42,38 @@ def _accept_stage(job_id: int, submit) -> tuple:
 
 
 def _parse_script_body() -> tuple[
-    int, bool, str | None, float | None, int | None, int | None, bool, str | None, str | None
+    int,
+    bool,
+    str | None,
+    float | None,
+    int | None,
+    int | None,
+    bool,
+    bool,
+    str | None,
+    str | None,
+    str | None,
+    str | None,
 ]:
     data = get_json_body()
     supplementary = parse_optional_str(data, "supplementary_info")
     video_timeline = parse_optional_str(data, "video_timeline")
+    orientation = None
+    if "orientation" in data:
+        orientation = normalize_orientation(parse_optional_str(data, "orientation"))
+        if orientation not in {"portrait", "landscape"}:
+            raise APIError(
+                "orientation must be portrait or landscape",
+                status_code=400,
+            )
+    content_style = None
+    if "content_style" in data:
+        content_style = normalize_content_style(parse_optional_str(data, "content_style"))
+        if content_style is None:
+            raise APIError(
+                "content_style must be science_child or life_experience",
+                status_code=400,
+            )
     return (
         parse_id(data),
         parse_bool(data, "to_end", default=False),
@@ -54,16 +82,30 @@ def _parse_script_body() -> tuple[
         parse_optional_int(data, "max_title_length", minimum=8, maximum=48),
         parse_optional_int(data, "narration_target_words", minimum=200, maximum=3000),
         parse_bool(data, "skip_title_optimize", default=False),
+        parse_bool(data, "generate_image_prompts", default=False),
         supplementary,
         video_timeline,
+        orientation,
+        content_style,
     )
 
 
 @bp.post("/script")
 def run_script_route():
-    job_id, to_end, title, segment_target_sec, max_title_length, narration_target_words, skip_title_optimize, supplementary_info, video_timeline = (
-        _parse_script_body()
-    )
+    (
+        job_id,
+        to_end,
+        title,
+        segment_target_sec,
+        max_title_length,
+        narration_target_words,
+        skip_title_optimize,
+        generate_image_prompts,
+        supplementary_info,
+        video_timeline,
+        orientation,
+        content_style,
+    ) = _parse_script_body()
     return _accept_stage(
         job_id,
         lambda: job_mgr.run_script(
@@ -74,8 +116,11 @@ def run_script_route():
             max_title_length=max_title_length,
             narration_target_words=narration_target_words,
             skip_title_optimize=skip_title_optimize,
+            generate_image_prompts=generate_image_prompts,
             supplementary_info=supplementary_info,
             video_timeline=video_timeline,
+            orientation=orientation,
+            content_style=content_style,
         ),
     )
 
@@ -89,9 +134,12 @@ def preview_script_prompts_route():
     max_title_length = parse_optional_int(data, "max_title_length", minimum=8, maximum=48)
     narration_target_words = parse_optional_int(data, "narration_target_words", minimum=200, maximum=3000)
     skip_title_optimize = parse_bool(data, "skip_title_optimize", default=False)
-    use_saved_script = parse_bool(data, "use_saved_script", default=False)
     supplementary_info = parse_optional_str(data, "supplementary_info")
     video_timeline = parse_optional_str(data, "video_timeline")
+    orientation = None
+    if "orientation" in data:
+        orientation = normalize_orientation(parse_optional_str(data, "orientation"))
+    content_style = normalize_content_style(parse_optional_str(data, "content_style"))
     try:
         prompts = job_mgr.preview_script_prompts(
             job_id,
@@ -102,11 +150,19 @@ def preview_script_prompts_route():
             skip_title_optimize=skip_title_optimize,
             supplementary_info=supplementary_info,
             video_timeline=video_timeline,
-            use_saved_script=use_saved_script,
+            orientation=orientation,
+            content_style=content_style,
         )
     except ValueError as exc:
         raise APIError(str(exc)) from exc
     return json_ok({"prompts": prompts})
+
+
+@bp.post("/script/imagePrompts")
+def generate_image_prompts_route():
+    data = get_json_body()
+    job_id = parse_id(data)
+    return _accept_stage(job_id, lambda: job_mgr.generate_image_prompts(job_id))
 
 
 @bp.post("/script/description")
@@ -120,19 +176,30 @@ def regenerate_video_description_route():
     return json_ok(result)
 
 
-def _parse_intro_body() -> tuple[int, bool, float | None, str | None]:
+def _parse_intro_body() -> tuple[int, bool, float | None, str | None, str | None]:
     data = get_json_body()
+    raw_orientation = parse_optional_str(data, "orientation")
+    orientation_preference = None
+    if "orientation" in data:
+        normalized = normalize_orientation(raw_orientation)
+        if normalized is None:
+            raise APIError(
+                "orientation must be auto, portrait, or landscape",
+                status_code=400,
+            )
+        orientation_preference = normalized
     return (
         parse_id(data),
         parse_bool(data, "to_end", default=False),
         parse_optional_float(data, "hold_tail_sec", minimum=0.0, maximum=5.0),
-        parse_intro_orientation(parse_optional_str(data, "orientation")),
+        parse_intro_orientation(raw_orientation),
+        orientation_preference,
     )
 
 
 @bp.post("/intro")
 def run_intro_route():
-    job_id, to_end, hold_tail_sec, orientation = _parse_intro_body()
+    job_id, to_end, hold_tail_sec, orientation, orientation_preference = _parse_intro_body()
     return _accept_stage(
         job_id,
         lambda: job_mgr.run_intro(
@@ -140,6 +207,7 @@ def run_intro_route():
             to_end=to_end,
             hold_tail_sec=hold_tail_sec,
             orientation=orientation,
+            orientation_preference=orientation_preference,
         ),
     )
 
@@ -264,6 +332,13 @@ def update_job_route():
     if not updates:
         raise APIError(f"at least one field required: {', '.join(sorted(_UPDATABLE_FIELDS))}")
     return json_ok(job_mgr.update_job(job_id, **updates))
+
+
+@bp.post("/reset")
+def reset_job_route():
+    data = get_json_body()
+    job_id = parse_id(data)
+    return json_ok(job_mgr.reset_job(job_id))
 
 
 @bp.post("/delete")

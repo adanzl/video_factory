@@ -15,6 +15,8 @@ def _row_to_dict(row: sqlite3.Row) -> dict:
         data["quality_report"] = json.loads(data["quality_report"])
     if data.get("tts_usage_json"):
         data["tts_usage_json"] = json.loads(data["tts_usage_json"])
+    if data.get("info"):
+        data["info"] = json.loads(data["info"])
     if data.get("final_path"):
         data["final_path"] = parse_final_asset(data["final_path"])
     data["skip_publish"] = bool(data.get("skip_publish"))
@@ -38,16 +40,20 @@ def create_job(
     pipeline: str = "standard",
     material_id: int | None = None,
     script_json: dict | None = None,
+    info: dict | None = None,
 ) -> dict:
     script_payload = None
     if script_json is not None:
         script_payload = json.dumps(script_json, ensure_ascii=False)
+    info_payload = None
+    if info is not None:
+        info_payload = json.dumps(info, ensure_ascii=False)
     cur = conn.execute(
         """
         INSERT INTO video_job (
-            title, stage, status, skip_publish, pipeline, material_id, script_json
+            title, stage, status, skip_publish, pipeline, material_id, script_json, info
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             title,
@@ -57,6 +63,7 @@ def create_job(
             pipeline,
             material_id,
             script_payload,
+            info_payload,
         ),
     )
     job_id = cur.lastrowid
@@ -125,6 +132,7 @@ def update_job(conn: sqlite3.Connection, job_id: int, **fields: Any) -> dict:
         "audio_path",
         "subtitle_path",
         "tts_usage_json",
+        "info",
         "error_message",
     }
     parts: list[str] = ["updated_at = datetime('now')"]
@@ -132,7 +140,7 @@ def update_job(conn: sqlite3.Connection, job_id: int, **fields: Any) -> dict:
     for key, value in fields.items():
         if key not in allowed:
             continue
-        if key in {"script_json", "quality_report", "tts_usage_json"} and value is not None:
+        if key in {"script_json", "quality_report", "tts_usage_json", "info"} and value is not None:
             value = json.dumps(value, ensure_ascii=False)
         if key == "final_path" and isinstance(value, dict):
             value = json.dumps(value, ensure_ascii=False)

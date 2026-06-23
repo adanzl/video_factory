@@ -75,6 +75,7 @@ def _run_one_stage(
     script_max_title_length: int | None = None,
     script_narration_target_words: int | None = None,
     script_skip_title_optimize: bool = False,
+    script_generate_image_prompts: bool = False,
     script_supplementary_info: str | None = None,
     script_video_timeline: str | None = None,
     material_narration: str | None = None,
@@ -92,6 +93,7 @@ def _run_one_stage(
         script_max_title_length=script_max_title_length,
         script_narration_target_words=script_narration_target_words,
         script_skip_title_optimize=script_skip_title_optimize,
+        script_generate_image_prompts=script_generate_image_prompts,
         script_supplementary_info=script_supplementary_info,
         script_video_timeline=script_video_timeline,
         material_narration=material_narration,
@@ -129,6 +131,7 @@ def _run_from(
     script_max_title_length: int | None = None,
     script_narration_target_words: int | None = None,
     script_skip_title_optimize: bool = False,
+    script_generate_image_prompts: bool = False,
     script_supplementary_info: str | None = None,
     script_video_timeline: str | None = None,
     material_narration: str | None = None,
@@ -155,6 +158,9 @@ def _run_from(
             ),
             script_skip_title_optimize=(
                 script_skip_title_optimize if stage_cls.name == "script" else False
+            ),
+            script_generate_image_prompts=(
+                script_generate_image_prompts if stage_cls.name == "script" else False
             ),
             script_supplementary_info=(
                 script_supplementary_info if stage_cls.name == "script" else None
@@ -220,6 +226,7 @@ def run_script(
     max_title_length: int | None = None,
     narration_target_words: int | None = None,
     skip_title_optimize: bool = False,
+    generate_image_prompts: bool = False,
     supplementary_info: str | None = None,
     video_timeline: str | None = None,
     material_narration: str | None = None,
@@ -234,6 +241,7 @@ def run_script(
             script_max_title_length=max_title_length,
             script_narration_target_words=narration_target_words,
             script_skip_title_optimize=skip_title_optimize,
+            script_generate_image_prompts=generate_image_prompts,
             script_supplementary_info=supplementary_info,
             script_video_timeline=video_timeline,
             material_narration=material_narration,
@@ -246,10 +254,68 @@ def run_script(
         script_max_title_length=max_title_length,
         script_narration_target_words=narration_target_words,
         script_skip_title_optimize=skip_title_optimize,
+        script_generate_image_prompts=generate_image_prompts,
         script_supplementary_info=supplementary_info,
         script_video_timeline=video_timeline,
         material_narration=material_narration,
     )
+
+
+def run_script_image_prompts(job_id: int) -> dict:
+    """为已有脚本补全文生图提示词（不重置脚本阶段）。"""
+    from app.quality.checkers import check_image_prompts
+    from app.quality.gate import apply_quality_checks
+    from app.repositories import job_log_repo, job_repo, segment_repo
+    from app.services.llm.llm_mgr import llm_mgr
+    from app.services.llm.llm_script_prompts import build_image_prompts_prompts
+    from worker.stages.standard.script import _log_llm_timing
+
+    job = _reload_job(job_id)
+    script = job.get("script_json")
+    if not isinstance(script, dict):
+        raise ValueError("script not ready")
+    segments = script.get("segments") or []
+    if not segments:
+        raise ValueError("no segments")
+
+    supplementary_raw = script.get("supplementary_info")
+    supplementary_info = (
+        str(supplementary_raw).strip() if supplementary_raw else None
+    ) or None
+
+    updated = dict(script)
+    llm_mgr.fill_image_prompts(
+        updated,
+        supplementary_info=supplementary_info,
+        job=job,
+    )
+    _log_llm_timing(job_id, "script", updated)
+
+    prompts = list(updated.get("llm_prompts") or [])
+    img_prompt = build_image_prompts_prompts(
+        updated,
+        supplementary_info=supplementary_info,
+        job=job,
+    )
+    prompts = [item for item in prompts if item.get("step") != "image_prompts"]
+    prompts.append(img_prompt)
+    updated["llm_prompts"] = prompts
+    updated["generate_image_prompts"] = True
+    updated.pop("_llm_timing", None)
+
+    with connection() as conn:
+        apply_quality_checks(
+            conn,
+            job_id,
+            "script",
+            {"image_prompts": check_image_prompts(updated)},
+            existing_report=job.get("quality_report"),
+        )
+        job_repo.update_job(conn, job_id, script_json=updated)
+        segment_repo.insert_segments(conn, job_id, updated["segments"])
+        job_log_repo.append_log(conn, job_id, "script", "image prompts generated")
+        job_repo.update_job(conn, job_id, status="idle")
+    return _reload_job(job_id)
 
 
 def run_intro(

@@ -80,7 +80,7 @@ const NARRATION_MIN_CHARS = 200;
 const NARRATION_MAX_CHARS = 3000;
 
 /** 默认目标成片时长（秒），与 TARGET_FINAL_DURATION_SEC 对齐 */
-export const DEFAULT_TARGET_FINAL_DURATION_SEC = 90;
+export const DEFAULT_TARGET_FINAL_DURATION_SEC = 360;
 /** 口播字数估算时扣除的片头预算（秒） */
 export const INTRO_DURATION_BUDGET_SEC = 2;
 
@@ -96,6 +96,17 @@ export function defaultNarrationTargetWords(
 ): number {
   const body = Math.max(30, targetFinalSec - INTRO_DURATION_BUDGET_SEC);
   return estimateNarrationTargetWords(body);
+}
+
+/** 按成片分钟数估算口播字数（5 字/秒，与后端对齐） */
+export function narrationTargetForMinutes(
+  minutes: number,
+  charsPerSec = NARRATION_CHARS_PER_SEC,
+  introBudgetSec = INTRO_DURATION_BUDGET_SEC
+): number {
+  const body = Math.max(30, minutes * 60 - introBudgetSec);
+  const target = Math.floor(body * charsPerSec * NARRATION_FILL_RATIO);
+  return Math.max(NARRATION_MIN_CHARS, Math.min(NARRATION_MAX_CHARS, target));
 }
 
 /** 格式化媒体时长（秒 → mm:ss） */

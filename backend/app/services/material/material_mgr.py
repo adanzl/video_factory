@@ -14,6 +14,7 @@ from app.repositories import job_log_repo, job_repo, material_repo
 from app.repositories.connection import connection
 from app.services.job.job_mgr import job_mgr
 from app.services.media.ffmpeg_utils import extract_first_frame, probe_duration, probe_video_size
+from app.utils.job_info import default_orientation_for_pipeline, merge_job_info
 
 _ALLOWED_EXTENSIONS = {".mp4", ".mov", ".webm", ".mkv"}
 _RUN_MODES = frozenset({"none", "prepare", "full"})
@@ -217,6 +218,10 @@ class MaterialMgr:
                 pipeline=PIPELINE_MATERIAL,
                 material_id=material_id,
                 script_json=script_json,
+                info=merge_job_info(
+                    None,
+                    orientation=default_orientation_for_pipeline(PIPELINE_MATERIAL),
+                ),
             )
             job_log_repo.append_log(
                 conn,
