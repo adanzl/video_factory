@@ -4,6 +4,7 @@ from app.utils.media import (
     estimate_narration_target_words,
     narration_accept_min_chars,
     narration_target_for_minutes,
+    narration_writing_target_chars,
     segment_text_char_cap,
 )
 
@@ -37,6 +38,11 @@ def test_narration_target_for_minutes_uses_five_chars_per_sec():
 def test_narration_accept_min_chars():
     assert narration_accept_min_chars(1646) == 1399
     assert narration_accept_min_chars(404) == 343
+
+
+def test_narration_writing_target_chars_is_ninety_five_percent():
+    assert narration_writing_target_chars(404) == 383
+    assert narration_writing_target_chars(1646) == 1563
 
 
 def test_estimate_narration_target_words_clamps():

@@ -32,6 +32,7 @@ from app.utils.media import (
     default_narration_target_words,
     min_narration_chars_for_target,
     narration_accept_min_chars,
+    narration_writing_plan,
     storyboard_compact_output,
 )
 
@@ -48,13 +49,30 @@ def _narration_char_count(text: str) -> int:
     return len(re.sub(r"\s+", "", text or ""))
 
 
-def _narration_length_feedback(chars: int, min_chars: int, *, prefix: str | None = None) -> str:
+def _narration_length_feedback(
+    chars: int,
+    min_chars: int,
+    *,
+    prefix: str | None = None,
+    plan: dict[str, int] | None = None,
+    seg_count: int | None = None,
+) -> str:
     deficit = max(1, min_chars - chars)
-    msg = (
-        f"narration 仅 {chars} 字，硬性下限 {min_chars} 字，还差 {deficit} 字。"
+    parts = [
+        f"narration 仅 {chars} 字，验收下限 {min_chars} 字，还差 {deficit} 字。",
+    ]
+    if plan and seg_count is not None and seg_count < plan["seg_count_min"]:
+        need = plan["seg_count_min"] - seg_count
+        parts.insert(
+            0,
+            f"segments 仅 {seg_count} 段，须至少 {plan['seg_count_min']} 段（还差 {need} 段）；"
+            f"每段 text 至少 {plan['per_seg_min']} 字。",
+        )
+    parts.append(
         "请增加 segments 段数并扩写每段 text（每层补具体细节/案例/步骤），"
         "先写 segments 再拼接 narration，核对 word_count 后再输出 JSON。"
     )
+    msg = "".join(parts)
     if prefix:
         return f"{prefix}\n{msg}"
     return msg
@@ -330,13 +348,17 @@ class DeepSeekClient(LLMClient):
                 raise ValueError("LLM storyboard response missing segments")
             if not data.get("visual_style"):
                 raise ValueError("LLM storyboard response missing visual_style")
+            plan = narration_writing_plan(target_words, seg_target)
+            seg_count = len(data.get("segments") or [])
             chars = _narration_char_count(str(data.get("narration") or ""))
-            if chars >= min_chars:
+            if chars >= min_chars and seg_count >= plan["seg_count_min"]:
                 return data
             length_feedback = _narration_length_feedback(
                 chars,
                 min_chars,
                 prefix=feedback if attempt == 0 and feedback else None,
+                plan=plan,
+                seg_count=seg_count,
             )
         if data is not None:
             data = _assemble_storyboard_narration(data)
@@ -585,12 +607,20 @@ class DeepSeekClient(LLMClient):
             for seg in data["segments"]:
                 seg.setdefault("visual_mode", "material")
             chars = _narration_char_count(str(data.get("narration") or ""))
-            if chars >= min_chars:
+            seg_count = len(data.get("segments") or [])
+            plan: dict[str, int] | None = None
+            if not video_timeline:
+                target = narration_target_words or 800
+                plan = narration_writing_plan(target, 0)
+            seg_ok = plan is None or seg_count >= plan["seg_count_min"]
+            if chars >= min_chars and seg_ok:
                 return data
             length_feedback = _narration_length_feedback(
                 chars,
                 min_chars,
                 prefix=feedback if attempt == 0 and feedback else None,
+                plan=plan,
+                seg_count=seg_count,
             )
         if data is not None:
             data = self._expand_narration_if_needed(data, min_chars=min_chars, mode="material")

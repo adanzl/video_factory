@@ -57,7 +57,22 @@ def test_build_storyboard_prompts_includes_length_budget():
         job={"pipeline": "standard", "content_style": CONTENT_STYLE_LIFE_EXPERIENCE},
     )
     assert "字数预算" in prompts["user"]
+    assert "95%" in prompts["user"] or "95％" in prompts["user"]
+    assert "输出前自检" in prompts["user"]
+    assert "segments 数组长度必须" in prompts["system"]
     assert "1120" in prompts["user"] or str(narration_accept_min_chars(1318)) in prompts["user"]
+
+
+def test_build_storyboard_life_experience_bans_memoir_style():
+    prompts = build_storyboard_prompts(
+        "瓦斯来了湿毛巾捂嘴对吗",
+        narration_target_words=800,
+        segment_target_sec=16.0,
+        job={"pipeline": "standard", "info": {"content_style": "life_experience"}},
+    )
+    assert "禁止伪亲历体" in prompts["system"]
+    assert "我当" in prompts["system"]
+    assert "误区+原因+正确做法" in prompts["user"]
 
 
 def test_storyboard_compact_output_for_landscape_life_preset():

@@ -29,9 +29,35 @@ def _narration_chars(narration: str) -> int:
     return len(re.sub(r"\s+", "", narration))
 
 
+_MEMOIR_BANNED_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"我当.{0,10}(时|的时候)"), "伪亲历开场「我当…时」"),
+    (re.compile(r"我在.{0,12}(干活|工作|下井|上班|采掘|值班)"), "编造一线从业场景"),
+    (re.compile(r"老.{0,4}教(我|过)"), "老XX教我类传闻亲历"),
+    (re.compile(r"我(条件反射|还不理解|后来才知道|后来查资料才知道|一生都忘不了)"), "第一人称亲历叙事"),
+    (re.compile(r"班长(却|大声|拉|喊)"), "编造班长/同事现场故事"),
+    (re.compile(r"评论区聊聊"), "抖音式评论区互动话术"),
+)
+
+
+def detect_memoir_narration(narration: str) -> str | None:
+    """检测口播是否含伪亲历/角色扮演表述，命中则返回原因。"""
+    for pattern, label in _MEMOIR_BANNED_PATTERNS:
+        if pattern.search(narration):
+            return label
+    return None
+
+
 def check_copy(script: dict) -> QualityReport:
     """文案：口播稿长度、违禁表述。"""
     narration = script.get("narration", "")
+    memoir_issue = detect_memoir_narration(narration)
+    if memoir_issue:
+        return QualityReport(
+            level="major",
+            step="copy",
+            fail_stage="script",
+            details={"reason": f"memoir style narration: {memoir_issue}"},
+        )
     word_count = _narration_chars(narration)
     if word_count < 200:
         return QualityReport(

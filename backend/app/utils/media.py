@@ -18,6 +18,8 @@ NARRATION_MIN_CHARS = 200
 NARRATION_MAX_CHARS = 3000
 # 口播验收下限：目标字数的 85%（LLM 重试与 script 校验对齐）
 NARRATION_ACCEPT_RATIO = 0.85
+# LLM prompt 写作目标：目标字数的 95%（高于验收下限，提高一次写满概率）
+NARRATION_WRITING_TARGET_RATIO = 0.95
 # 绝对硬底：目标字数的 67%（主题实在撑不满时带警告放行）
 NARRATION_HARD_MIN_RATIO = 0.67
 # 略低于绝对硬底时放行（避免 90% 硬底附近反复打回）
@@ -32,6 +34,43 @@ def estimate_narration_target_words(duration_sec: float) -> int:
 def segment_text_char_cap(segment_target_sec: float) -> int:
     """单镜口播 text 字数上限（5 字/秒 × segment_target_sec）。"""
     return max(20, int(segment_target_sec * NARRATION_CHARS_PER_SEC))
+
+
+def narration_writing_target_chars(narration_target_words: int | None = None) -> int:
+    """LLM prompt 要求的写作目标字数（目标字数的 95%）。"""
+    target = max(NARRATION_MIN_CHARS, narration_target_words or default_narration_target_words())
+    return max(NARRATION_MIN_CHARS, int(target * NARRATION_WRITING_TARGET_RATIO))
+
+
+def narration_writing_plan(
+    narration_target: int,
+    segment_target_sec: float = 0,
+) -> dict[str, int]:
+    """口播分段写作计划（prompt 字数预算与 LLM 校验共用）。"""
+    hard_min = narration_accept_min_chars(narration_target)
+    writing_target = narration_writing_target_chars(narration_target)
+    if segment_target_sec <= 0:
+        seg_count = max(6, (writing_target + 39) // 40)
+        cap = 0
+        per_min = max(30, (writing_target + seg_count - 1) // seg_count)
+        per_lo = per_min
+        per_hi = max(per_min + 10, 40)
+    else:
+        cap = segment_text_char_cap(segment_target_sec)
+        seg_count = max(5, (writing_target + cap - 1) // cap)
+        per_min = max(20, min(cap - 5, (writing_target + seg_count - 1) // seg_count))
+        per_lo = max(20, int(cap * 0.65))
+        per_hi = cap
+    return {
+        "target": narration_target,
+        "writing_target": writing_target,
+        "hard_min": hard_min,
+        "seg_count_min": seg_count,
+        "per_seg_min": per_min,
+        "per_seg_lo": per_lo,
+        "per_seg_hi": per_hi,
+        "segment_cap": cap,
+    }
 
 
 def storyboard_compact_output(
