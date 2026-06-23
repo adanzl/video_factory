@@ -41,12 +41,10 @@ def _motion_progress(frames: int) -> str:
     return f"min(1,{eased})"
 
 
-def _prep_filter(*, headroom: float) -> str:
+def _prep_filter(*, headroom: float, width: int, height: int) -> str:
     """放大画布，给平移/缩放留出余量（避免先裁死再 zoompan）。"""
-    s = get_settings()
-    w, h = s.video_width, s.video_height
-    pw = int(w * headroom)
-    ph = int(h * headroom)
+    pw = int(width * headroom)
+    ph = int(height * headroom)
     return f"scale={pw}:{ph}:force_original_aspect_ratio=increase"
 
 
@@ -56,10 +54,15 @@ def _motion_zoom_max(preset: str) -> float:
     return 1.16
 
 
-def _motion_vf(duration_sec: float, *, preset: str, segment_index: int) -> str:
+def _motion_vf(
+    duration_sec: float,
+    *,
+    preset: str,
+    segment_index: int,
+    width: int,
+    height: int,
+) -> str:
     """连续 Ken Burns：ease-in-out，按分镜序号轮换推/拉/平移。"""
-    settings = get_settings()
-    w, h = settings.video_width, settings.video_height
     frames = max(int(duration_sec * CLIP_FPS), 1)
     zoom_max = _motion_zoom_max(preset)
     delta = zoom_max - 1.0
@@ -83,11 +86,22 @@ def _motion_vf(duration_sec: float, *, preset: str, segment_index: int) -> str:
         x_expr = "iw/2-(iw/zoom/2)"
         y_expr = "ih/2-(ih/zoom/2)"
 
-    prep = _prep_filter(headroom=headroom)
+    prep = _prep_filter(headroom=headroom, width=width, height=height)
     return (
         f"{prep},"
         f"zoompan=z='{z_expr}':x='{x_expr}':y='{y_expr}':"
-        f"d={frames}:s={w}x{h}:fps={CLIP_FPS}{_pix_fmt_filter_suffix()}"
+        f"d={frames}:s={width}x{height}:fps={CLIP_FPS}{_pix_fmt_filter_suffix()}"
+    )
+
+
+def _resolve_clip_canvas(
+    width: int | None,
+    height: int | None,
+) -> tuple[int, int]:
+    settings = get_settings()
+    return (
+        width if width is not None else settings.video_width,
+        height if height is not None else settings.video_height,
     )
 
 
@@ -98,9 +112,18 @@ def image_to_clip(
     *,
     preset: str = "ken_burns_slow",
     segment_index: int = 0,
+    width: int | None = None,
+    height: int | None = None,
 ) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    vf = _motion_vf(duration_sec, preset=preset, segment_index=segment_index)
+    canvas_w, canvas_h = _resolve_clip_canvas(width, height)
+    vf = _motion_vf(
+        duration_sec,
+        preset=preset,
+        segment_index=segment_index,
+        width=canvas_w,
+        height=canvas_h,
+    )
     run_ffmpeg(
         [
             *ffmpeg_cmd_start(),
@@ -127,10 +150,19 @@ def image_to_clip_with_overlay(
     *,
     preset: str = "ken_burns_slow",
     segment_index: int = 0,
+    width: int | None = None,
+    height: int | None = None,
 ) -> Path:
     """Ken Burns 动效 + 单张字幕 overlay，单次编码。"""
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    motion = _motion_vf(duration_sec, preset=preset, segment_index=segment_index).removesuffix(
+    canvas_w, canvas_h = _resolve_clip_canvas(width, height)
+    motion = _motion_vf(
+        duration_sec,
+        preset=preset,
+        segment_index=segment_index,
+        width=canvas_w,
+        height=canvas_h,
+    ).removesuffix(
         _pix_fmt_filter_suffix()
     )
     filter_parts = [
@@ -172,6 +204,8 @@ def image_to_clip_timed_overlays(
     *,
     preset: str = "ken_burns_slow",
     segment_index: int = 0,
+    width: int | None = None,
+    height: int | None = None,
 ) -> Path:
     """连续 Ken Burns + 多段字幕按时间轴切换，单次编码。"""
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -182,9 +216,18 @@ def image_to_clip_timed_overlays(
             duration_sec,
             preset=preset,
             segment_index=segment_index,
+            width=width,
+            height=height,
         )
 
-    motion = _motion_vf(duration_sec, preset=preset, segment_index=segment_index).removesuffix(
+    canvas_w, canvas_h = _resolve_clip_canvas(width, height)
+    motion = _motion_vf(
+        duration_sec,
+        preset=preset,
+        segment_index=segment_index,
+        width=canvas_w,
+        height=canvas_h,
+    ).removesuffix(
         _pix_fmt_filter_suffix()
     )
     parts = [f"[0:v]{motion}{_pix_fmt_filter_suffix()}[bg]"]
@@ -337,15 +380,27 @@ def video_to_clip_timed_overlays(
     overlay_windows: list[tuple[Path, float, float]],
     output_path: Path,
     duration_sec: float,
+    *,
+    width: int | None = None,
+    height: int | None = None,
 ) -> Path:
     """已有视频 + 多段字幕按时间轴切换，单次编码。"""
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    canvas_w, canvas_h = _resolve_clip_canvas(width, height)
     if not overlay_windows:
-        fit_video_duration(video_path, output_path, duration_sec)
+        fit_video_duration(
+            video_path,
+            output_path,
+            duration_sec,
+            width=canvas_w,
+            height=canvas_h,
+        )
         return output_path
 
-    video_w, video_h = probe_video_size(video_path)
-    parts = [f"[0:v]format={_PIX_FMT}[bg]"]
+    video_w, video_h = canvas_w, canvas_h
+    parts = [
+        f"[0:v]{_scale_pad_vf(width=canvas_w, height=canvas_h)},format={_PIX_FMT}[bg]"
+    ]
     for idx, (overlay_path, _, _) in enumerate(overlay_windows):
         _ = overlay_path
         parts.append(f"[{idx + 1}:v]format=rgba,scale={video_w}:{video_h}[s{idx}]")

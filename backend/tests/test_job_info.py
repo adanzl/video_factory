@@ -81,3 +81,13 @@ def test_resolve_segment_image_size_portrait():
     )
     job = {"info": {"orientation": "portrait"}}
     assert resolve_segment_image_size(job, settings=settings) == "720*1280"
+
+
+def test_resolve_segment_video_size_landscape():
+    from types import SimpleNamespace
+
+    from app.utils.job_info import resolve_segment_video_size
+
+    settings = SimpleNamespace(video_width=1080, video_height=1920)
+    job = {"info": {"orientation": "landscape"}}
+    assert resolve_segment_video_size(job, settings=settings) == (1920, 1080)

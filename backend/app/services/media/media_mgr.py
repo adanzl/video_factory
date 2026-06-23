@@ -53,17 +53,25 @@ class MediaMgr:
             return settings.clip_provider
         return settings.clip_provider
 
-    def _describe_clip_provider(self, provider: str, *, motion_preset: str) -> str:
+    def _describe_clip_provider(
+        self,
+        provider: str,
+        *,
+        motion_preset: str,
+        width: int,
+        height: int,
+    ) -> str:
         settings = get_settings()
         if provider == "wan_i2v":
             return (
                 f"provider=wan_i2v, model={settings.wan_i2v_model}, "
                 f"resolution={settings.wan_i2v_resolution}, "
-                f"prompt_extend={settings.wan_i2v_prompt_extend}"
+                f"prompt_extend={settings.wan_i2v_prompt_extend}, "
+                f"size={width}x{height}"
             )
         if provider == "ffmpeg":
-            return f"provider=ffmpeg, motion_preset={motion_preset}"
-        return f"provider={provider}, motion_preset={motion_preset}"
+            return f"provider=ffmpeg, motion_preset={motion_preset}, size={width}x{height}"
+        return f"provider={provider}, motion_preset={motion_preset}, size={width}x{height}"
 
     @staticmethod
     def _load_subtitle_cues(media_dir: Path) -> list:
@@ -89,8 +97,12 @@ class MediaMgr:
         segments: list[dict],
         audio_path: Path | None = None,
         only_segment_indices: set[int] | None = None,
+        job: dict | None = None,
     ) -> SegmentClipsResult:
         settings = get_settings()
+        from app.utils.job_info import resolve_segment_video_size
+
+        clip_width, clip_height = resolve_segment_video_size(job, settings=settings)
         clips_dir = media_dir / "segments"
         clips_dir.mkdir(parents=True, exist_ok=True)
 
@@ -114,9 +126,11 @@ class MediaMgr:
         t_start = time.time()
         target_indices = [seg["segment_index"] for seg in targets]
         logger.info(
-            "clip batch start: count=%s, segments=%s",
+            "clip batch start: count=%s, segments=%s, size=%sx%s",
             total,
             target_indices,
+            clip_width,
+            clip_height,
         )
         for i, seg in enumerate(targets, 1):
             index = seg["segment_index"]
@@ -125,7 +139,10 @@ class MediaMgr:
             visual_mode = seg.get("visual_mode") or "static_motion"
             provider = self._resolve_clip_provider(visual_mode=visual_mode)
             params_desc = self._describe_clip_provider(
-                provider, motion_preset=settings.motion_preset
+                provider,
+                motion_preset=settings.motion_preset,
+                width=clip_width,
+                height=clip_height,
             )
             if provider == "kling_std":
                 raise NotImplementedError(
@@ -161,6 +178,8 @@ class MediaMgr:
                 work_dir=clips_dir,
                 segment_index=index,
                 motion_prompt=motion_prompt,
+                width=clip_width,
+                height=clip_height,
             )
             segment_clips.append((seg["id"], clip_path))
             logger.info(

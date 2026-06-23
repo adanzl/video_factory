@@ -27,6 +27,8 @@ class ClipProvider(ABC):
         work_dir: Path,
         segment_index: int,
         motion_prompt: str | None = None,
+        width: int | None = None,
+        height: int | None = None,
     ) -> Path:
         ...
 
@@ -97,6 +99,8 @@ class ClipMgr:
         work_dir: Path,
         segment_index: int,
         motion_prompt: str | None = None,
+        width: int | None = None,
+        height: int | None = None,
     ) -> Path:
         if not subtitle_cues:
             raise ValueError(f"segment {segment_index} has no subtitle cues")
@@ -109,6 +113,8 @@ class ClipMgr:
             work_dir=work_dir,
             segment_index=segment_index,
             motion_prompt=motion_prompt,
+            width=width,
+            height=height,
         )
 
 

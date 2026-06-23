@@ -19,12 +19,16 @@ class FfmpegClipProvider(ClipProvider):
         work_dir: Path,
         segment_index: int,
         motion_prompt: str | None = None,
+        width: int | None = None,
+        height: int | None = None,
     ) -> Path:
         _ = motion_prompt
         total_duration, overlay_windows, overlay_paths = clip_mgr.prepare_subtitle_overlays(
             subtitle_cues=subtitle_cues,
             work_dir=work_dir,
             segment_index=segment_index,
+            width=width,
+            height=height,
         )
         if total_duration <= 0:
             raise ValueError(f"segment {segment_index} has zero duration")
@@ -39,6 +43,8 @@ class FfmpegClipProvider(ClipProvider):
                     total_duration,
                     preset=motion_preset,
                     segment_index=segment_index,
+                    width=width,
+                    height=height,
                 )
             else:
                 image_to_clip(
@@ -47,6 +53,8 @@ class FfmpegClipProvider(ClipProvider):
                     total_duration,
                     preset=motion_preset,
                     segment_index=segment_index,
+                    width=width,
+                    height=height,
                 )
         finally:
             clip_mgr.cleanup_overlay_paths(overlay_paths)
