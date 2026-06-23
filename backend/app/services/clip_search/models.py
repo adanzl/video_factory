@@ -48,11 +48,15 @@ class ClipSearchResponse:
     query: str
     clips: tuple[StockClip, ...]
     providers: tuple[ProviderSearchResult, ...]
+    pixabay_query: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "query": self.query,
             "total": len(self.clips),
             "clips": [clip.to_dict() for clip in self.clips],
             "providers": [row.to_dict() for row in self.providers],
         }
+        if self.pixabay_query and self.pixabay_query != self.query:
+            payload["pixabay_query"] = self.pixabay_query
+        return payload

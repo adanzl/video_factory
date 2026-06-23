@@ -92,6 +92,14 @@ class LLMClient:
     ) -> dict[str, Any]:
         raise NotImplementedError
 
+    def rewrite_pixabay_query(
+        self,
+        query: str,
+        *,
+        language: str | None = None,
+    ) -> str:
+        raise NotImplementedError
+
 
 class LLMMgr:
     """LLM 管理器。"""
@@ -279,6 +287,28 @@ class LLMMgr:
             supplementary_info=supplementary_info,
             video_timeline=video_timeline,
         )
+
+    def rewrite_pixabay_query(
+        self,
+        query: str,
+        *,
+        language: str | None = None,
+    ) -> str:
+        logger.info("[CLIP] rewrite pixabay query start query=%r language=%s", query[:80], language)
+        started = time.perf_counter()
+        try:
+            rewritten = self._get_client().rewrite_pixabay_query(query, language=language)
+        except Exception:
+            logger.exception("[CLIP] rewrite pixabay query failed query=%r", query[:80])
+            raise
+        elapsed = time.perf_counter() - started
+        logger.info(
+            "[CLIP] rewrite pixabay query done query=%r rewritten=%r elapsed=%.1fs",
+            query[:80],
+            rewritten[:80],
+            elapsed,
+        )
+        return rewritten
 
 
 llm_mgr = LLMMgr()

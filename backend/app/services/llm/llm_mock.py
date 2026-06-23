@@ -199,6 +199,22 @@ class MockLLMClient(LLMClient):
             f"#科普 #{cleaned}"
         )
 
+    def rewrite_pixabay_query(
+        self,
+        query: str,
+        *,
+        language: str | None = None,
+    ) -> str:
+        _ = language
+        cleaned = query.strip()
+        if re.search(r"[\u3400-\u9fff]", cleaned):
+            if "磁" in cleaned:
+                return "magnet experiment"
+            if "水" in cleaned or "海" in cleaned:
+                return "water ocean"
+            return "science experiment"
+        return cleaned.lower()
+
     def generate_topics(
         self,
         theme: str,

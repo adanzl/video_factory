@@ -9,6 +9,7 @@ from app.config import Config, get_settings
 from app.services.clip_search.language import pexels_locale, pixabay_lang
 from app.services.clip_search.models import ClipSearchResponse, ProviderSearchResult, StockClip
 from app.services.clip_search.providers import search_nasa, search_pexels, search_pixabay
+from app.services.clip_search.query_rewrite import rewrite_pixabay_search_query
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +61,7 @@ def _search_one(
     per_provider: int,
     orientation: str | None,
     language: str | None,
+    pixabay_query: str | None = None,
 ) -> ProviderSearchResult:
     timeout = settings.clip_search_timeout_sec
     if provider == "pexels":
@@ -95,7 +97,7 @@ def _search_one(
         try:
             clips = tuple(
                 search_pixabay(
-                    query,
+                    pixabay_query or query,
                     api_key=settings.pixabay_api_key,
                     per_page=per_provider,
                     lang=pixabay_lang(language),
@@ -170,6 +172,14 @@ def search_clips(
     per_provider = max(3, min(20, (per_page + len(selected) - 1) // len(selected)))
     provider_results: list[ProviderSearchResult] = []
 
+    pixabay_query: str | None = None
+    if "pixabay" in selected:
+        try:
+            pixabay_query = rewrite_pixabay_search_query(cleaned, language=language)
+        except Exception as exc:
+            logger.warning("pixabay query rewrite failed, using original: %s", exc)
+            pixabay_query = cleaned
+
     with ThreadPoolExecutor(max_workers=len(selected)) as pool:
         futures = {
             pool.submit(
@@ -180,6 +190,7 @@ def search_clips(
                 per_provider=per_provider,
                 orientation=orientation,
                 language=language,
+                pixabay_query=pixabay_query,
             ): name
             for name in selected
         }
@@ -198,4 +209,5 @@ def search_clips(
         query=cleaned,
         clips=tuple(merged),
         providers=tuple(provider_results),
+        pixabay_query=pixabay_query,
     )

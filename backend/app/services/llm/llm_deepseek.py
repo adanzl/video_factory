@@ -719,6 +719,23 @@ class DeepSeekClient(LLMClient):
         raw, _ = self._chat_json(prompts["system"], prompts["user"])
         return parse_video_description_payload(raw)
 
+    def rewrite_pixabay_query(
+        self,
+        query: str,
+        *,
+        language: str | None = None,
+    ) -> str:
+        from app.services.clip_search.query_rewrite_prompts import (
+            build_pixabay_query_system_prompt,
+            build_pixabay_query_user_prompt,
+            parse_pixabay_query_payload,
+        )
+
+        prompts_system = build_pixabay_query_system_prompt()
+        prompts_user = build_pixabay_query_user_prompt(query=query, language=language)
+        raw, _ = self._chat_json(prompts_system, prompts_user, max_tokens=256)
+        return parse_pixabay_query_payload(raw)
+
     def generate_topics(
         self,
         theme: str,

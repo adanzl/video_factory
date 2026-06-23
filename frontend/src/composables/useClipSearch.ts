@@ -17,25 +17,27 @@ export function useClipSearch(options: UseClipSearchOptions = {}) {
 
   const keyword = ref("");
   const orientation = ref<ClipOrientation>("");
-  const language = ref<ClipSearchLanguage>("");
+  const language = ref<ClipSearchLanguage>("zh");
   const sources = ref<ClipProviderStatus[]>([]);
   const selectedProviders = ref<ClipProviderName[]>(["pexels", "pixabay", "nasa"]);
   const clips = ref<StockClip[]>([]);
   const providerMeta = ref<ClipProviderSearchMeta[]>([]);
   const lastQuery = ref("");
+  const pixabayQuery = ref("");
   const searching = ref(false);
   const searched = ref(false);
 
   const applyInitialValues = () => {
     keyword.value = toValue(options.initialKeyword)?.trim() ?? "";
     orientation.value = toValue(options.initialOrientation) ?? "";
-    language.value = toValue(options.initialLanguage) ?? "";
+    language.value = toValue(options.initialLanguage) ?? "zh";
   };
 
   const resetResults = () => {
     clips.value = [];
     providerMeta.value = [];
     lastQuery.value = "";
+    pixabayQuery.value = "";
     searched.value = false;
   };
 
@@ -78,6 +80,7 @@ export function useClipSearch(options: UseClipSearchOptions = {}) {
         language: language.value || undefined,
       });
       lastQuery.value = result.query;
+      pixabayQuery.value = result.pixabay_query?.trim() ?? "";
       clips.value = result.clips ?? [];
       providerMeta.value = result.providers ?? [];
     } catch (error) {
@@ -104,6 +107,7 @@ export function useClipSearch(options: UseClipSearchOptions = {}) {
     clips,
     providerMeta,
     lastQuery,
+    pixabayQuery,
     searching,
     searched,
     reset,
