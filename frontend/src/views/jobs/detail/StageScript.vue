@@ -298,6 +298,11 @@
         </div>
         <el-table v-if="script.segments?.length" :data="script.segments" stripe class="w-full">
           <el-table-column prop="segment_index" label="#" width="60" />
+          <el-table-column label="时间" width="120">
+            <template #default="{ row }">
+              {{ formatSegmentTimeRange(row.start_sec, row.end_sec) }}
+            </template>
+          </el-table-column>
           <el-table-column prop="text" label="口播文案" min-width="150">
             <template #default="{ row }">
               <div class="leading-relaxed wrap-break-word whitespace-pre-wrap">{{ row.text }}</div>
@@ -664,6 +669,13 @@ const loadBaseDuration = async () => {
 
 const normalizeSupplementary = (value: unknown) =>
   typeof value === "string" ? value : "";
+
+const formatSegmentTimeRange = (start?: number | null, end?: number | null) => {
+  if (start == null || end == null || Number.isNaN(start) || Number.isNaN(end)) {
+    return "-";
+  }
+  return `${formatMediaDuration(start)}-${formatMediaDuration(end)}`;
+};
 
 function initJobProfileFromInfo() {
   const info = props.job.info;
