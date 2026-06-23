@@ -28,16 +28,20 @@ def search_pixabay(
     *,
     api_key: str,
     per_page: int,
+    lang: str | None = None,
     timeout: float,
 ) -> list[StockClip]:
+    params: dict[str, str | int] = {
+        "key": api_key,
+        "q": query,
+        "per_page": per_page,
+        "video_type": "film",
+    }
+    if lang:
+        params["lang"] = lang
     data = get_json(
         _PIXABAY_SEARCH,
-        params={
-            "key": api_key,
-            "q": query,
-            "per_page": per_page,
-            "video_type": "film",
-        },
+        params=params,
         timeout=timeout,
     )
     clips: list[StockClip] = []

@@ -5,11 +5,18 @@
         <el-form-item label="关键词">
           <el-input
             v-model="keyword"
-            placeholder="英文关键词效果更好，如 magnet experiment"
+            :placeholder="clipSearchKeywordPlaceholder(language)"
             clearable
             :class="keywordInputClass"
             @keyup.enter="handleSearch"
           />
+        </el-form-item>
+        <el-form-item label="语言">
+          <el-select v-model="language" class="w-28!">
+            <el-option label="不限" value="" />
+            <el-option label="中文" value="zh" />
+            <el-option label="英文" value="en" />
+          </el-select>
         </el-form-item>
         <el-form-item label="画幅">
           <el-select v-model="orientation" clearable placeholder="不限" class="w-28!">
@@ -112,12 +119,14 @@ import { onMounted } from "vue";
 import { clipPosterUrl, clipPreviewUrl } from "@/api/api-clips";
 import { useClipSearch } from "@/composables/useClipSearch";
 import type { ClipOrientation } from "@/utils/clipSearch";
-import { formatClipDuration, providerLabel, providerMetaTagType } from "@/utils/clipSearch";
+import type { ClipSearchLanguage } from "@/types/clipSearch";
+import { clipSearchKeywordPlaceholder, formatClipDuration, providerLabel, providerMetaTagType } from "@/utils/clipSearch";
 
 const props = withDefaults(
   defineProps<{
     initialKeyword?: string;
     initialOrientation?: ClipOrientation;
+    initialLanguage?: ClipSearchLanguage;
     keywordInputClass?: string;
     gridClass?: string;
     resultsWrapperClass?: string;
@@ -129,6 +138,7 @@ const props = withDefaults(
   {
     initialKeyword: "",
     initialOrientation: "",
+    initialLanguage: "",
     keywordInputClass: "w-72!",
     gridClass: "grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3",
     resultsWrapperClass: "",
@@ -142,6 +152,7 @@ const props = withDefaults(
 const {
   keyword,
   orientation,
+  language,
   sources,
   selectedProviders,
   clips,
@@ -154,6 +165,7 @@ const {
 } = useClipSearch({
   initialKeyword: () => props.initialKeyword,
   initialOrientation: () => props.initialOrientation,
+  initialLanguage: () => props.initialLanguage,
   autoSearch: props.autoSearch,
 });
 

@@ -8,6 +8,7 @@ from flask import Blueprint
 from app.api.errors import APIError
 from app.api.utils import get_json_body, get_query, json_ok, parse_id, parse_optional_int, parse_query_int, parse_str
 from app.services.clip_search.clip_search_mgr import clip_search_mgr
+from app.services.clip_search.language import normalize_search_language
 from app.services.clip_search.preview_proxy import proxy_clip_preview
 from app.services.job.job_mgr import JobBusyError, job_mgr
 
@@ -76,12 +77,18 @@ def search_clips_route():
         orientation = orientation_raw.strip().lower()
         if orientation not in _VALID_ORIENTATIONS:
             raise APIError(f"orientation must be one of: {', '.join(sorted(_VALID_ORIENTATIONS))}")
+    language_raw = _parse_query_str("language", required=False, max_length=16)
+    try:
+        language = normalize_search_language(language_raw)
+    except ValueError as exc:
+        raise APIError(str(exc), status_code=400) from exc
     try:
         result = clip_search_mgr.search(
             query,
             per_page=per_page,
             providers=providers,
             orientation=orientation,
+            language=language,
         )
     except ValueError as exc:
         raise APIError(str(exc), status_code=400) from exc

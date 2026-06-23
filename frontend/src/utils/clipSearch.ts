@@ -1,9 +1,19 @@
 /** 片段搜索 UI 工具函数 */
 
 import { CLIP_PROVIDER_LABELS } from "@/api/api-clips";
-import type { ClipProviderName, ClipProviderSearchMeta } from "@/types/clipSearch";
+import type { ClipProviderName, ClipProviderSearchMeta, ClipSearchLanguage } from "@/types/clipSearch";
 
 export type ClipOrientation = "" | "portrait" | "landscape" | "square";
+
+export const clipSearchKeywordPlaceholder = (language: ClipSearchLanguage) => {
+  if (language === "zh") {
+    return "中文关键词，如 磁铁实验";
+  }
+  if (language === "en") {
+    return "英文关键词，如 magnet experiment";
+  }
+  return "关键词，英文或中文均可";
+};
 
 export const providerLabel = (name: ClipProviderName) => CLIP_PROVIDER_LABELS[name] ?? name;
 

@@ -2,6 +2,8 @@
 
 export type ClipProviderName = "pexels" | "pixabay" | "nasa";
 
+export type ClipSearchLanguage = "" | "zh" | "en";
+
 export interface ClipProviderStatus {
   provider: ClipProviderName;
   available: boolean;
@@ -42,4 +44,5 @@ export interface SearchClipsParams {
   per_page?: number;
   providers?: ClipProviderName[];
   orientation?: "portrait" | "landscape" | "square";
+  language?: ClipSearchLanguage;
 }

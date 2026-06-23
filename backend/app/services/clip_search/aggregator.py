@@ -6,6 +6,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from app.config import Config, get_settings
+from app.services.clip_search.language import pexels_locale, pixabay_lang
 from app.services.clip_search.models import ClipSearchResponse, ProviderSearchResult, StockClip
 from app.services.clip_search.providers import search_nasa, search_pexels, search_pixabay
 
@@ -58,6 +59,7 @@ def _search_one(
     settings: Config,
     per_provider: int,
     orientation: str | None,
+    language: str | None,
 ) -> ProviderSearchResult:
     timeout = settings.clip_search_timeout_sec
     if provider == "pexels":
@@ -74,6 +76,7 @@ def _search_one(
                     api_key=settings.pexels_api_key,
                     per_page=per_provider,
                     orientation=orientation,
+                    locale=pexels_locale(language),
                     timeout=timeout,
                 )
             )
@@ -95,6 +98,7 @@ def _search_one(
                     query,
                     api_key=settings.pixabay_api_key,
                     per_page=per_provider,
+                    lang=pixabay_lang(language),
                     timeout=timeout,
                 )
             )
@@ -150,6 +154,7 @@ def search_clips(
     per_page: int = 24,
     providers: tuple[str, ...] | None = None,
     orientation: str | None = None,
+    language: str | None = None,
     settings: Config | None = None,
 ) -> ClipSearchResponse:
     settings = settings or get_settings()
@@ -174,6 +179,7 @@ def search_clips(
                 settings=settings,
                 per_provider=per_provider,
                 orientation=orientation,
+                language=language,
             ): name
             for name in selected
         }
