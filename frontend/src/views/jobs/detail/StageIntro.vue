@@ -86,18 +86,21 @@
 
         <div class="mt-4 rounded-lg border border-gray-200 p-4">
           <div class="mb-3 text-sm font-medium text-gray-700">封面预览</div>
-          <div
-            v-if="coverUrl"
-            class="flex max-h-[405px] w-full items-center justify-center overflow-hidden rounded-lg border border-gray-200 bg-gray-50"
-          >
-            <el-image
-              :key="coverUrl"
-              :src="coverUrl"
-              :preview-src-list="[coverUrl]"
-              fit="contain"
-              class="block h-full w-full [&_.el-image__inner]:h-full [&_.el-image__inner]:w-full [&_.el-image__inner]:object-contain"
-              @error="onCoverError"
-            />
+          <div v-if="coverUrl" class="flex justify-center">
+            <div
+              class="flex items-center justify-center overflow-hidden rounded-lg border border-gray-200 bg-gray-50"
+              :style="coverBoxStyle"
+            >
+              <el-image
+                :key="coverUrl"
+                :src="coverUrl"
+                :preview-src-list="[coverUrl]"
+                fit="contain"
+                class="block h-full w-full [&_.el-image__inner]:block [&_.el-image__inner]:h-full [&_.el-image__inner]:w-full [&_.el-image__inner]:object-contain"
+                @load="onCoverLoad"
+                @error="onCoverError"
+              />
+            </div>
           </div>
           <div v-else-if="!job.cover_path" class="py-8 text-center text-sm text-gray-400">
             暂无封面，生成片头后自动产出
@@ -168,6 +171,7 @@ const actualDuration = ref<number | null>(null);
 const loadError = ref("");
 const coverLoadError = ref("");
 const videoMeta = ref<{ width: number; height: number } | null>(null);
+const coverMeta = ref<{ width: number; height: number } | null>(null);
 
 const actionDisabled = computed(() => props.job.status === "running");
 const actionDisabledReason = computed(() =>
@@ -224,6 +228,13 @@ const previewBoxStyle = computed(() =>
   buildPreviewBoxStyle(videoMeta.value?.width, videoMeta.value?.height)
 );
 
+const coverBoxStyle = computed(() =>
+  buildPreviewBoxStyle(
+    coverMeta.value?.width ?? videoMeta.value?.width,
+    coverMeta.value?.height ?? videoMeta.value?.height
+  )
+);
+
 const loadDuration = async () => {
   if (!props.job.intro_path) {
     actualDuration.value = null;
@@ -238,6 +249,13 @@ const onVideoError = () => {
 
 const onCoverError = () => {
   coverLoadError.value = "封面加载失败，请确认文件已生成且服务可访问";
+};
+
+const onCoverLoad = (event: Event) => {
+  const img = (event.target as HTMLImageElement | null) ?? null;
+  if (img && img.naturalWidth > 0 && img.naturalHeight > 0) {
+    coverMeta.value = { width: img.naturalWidth, height: img.naturalHeight };
+  }
 };
 
 const onVideoMetadata = (event: Event) => {
@@ -297,6 +315,7 @@ watch(
   () => props.job.cover_path,
   () => {
     coverLoadError.value = "";
+    coverMeta.value = null;
   }
 );
 

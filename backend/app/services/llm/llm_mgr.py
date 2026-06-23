@@ -177,6 +177,56 @@ class LLMMgr:
             segment_indices=segment_indices,
         )
 
+    def fill_image_prompts_with_retries(
+        self,
+        script: dict[str, Any],
+        *,
+        supplementary_info: str | None = None,
+        job: dict | None = None,
+        segment_indices: list[int] | None = None,
+        max_attempts: int = 4,
+    ) -> dict[str, Any]:
+        """补全文生图提示词，过短时带 feedback 重试（与 script 阶段逻辑对齐）。"""
+        from app.quality.checkers import check_image_prompts
+        from app.services.llm.llm_script_prompts import (
+            IMAGE_PROMPT_TARGET_CHARS,
+            MIN_IMAGE_PROMPT_CHARS,
+        )
+
+        feedback: str | None = None
+        target_indices = segment_indices
+        for attempt in range(max_attempts):
+            self.fill_image_prompts(
+                script,
+                feedback=feedback,
+                supplementary_info=supplementary_info,
+                job=job,
+                segment_indices=target_indices,
+            )
+            report = check_image_prompts(script)
+            if report.level != "major":
+                return script
+            too_short = report.details.get("segments") or []
+            target_indices = [
+                int(item["segment_index"])
+                for item in too_short
+                if item.get("segment_index") is not None
+            ]
+            if not target_indices:
+                break
+            feedback = (
+                f"image_prompt too short: {target_indices}; "
+                f"need >={MIN_IMAGE_PROMPT_CHARS} chars each "
+                f"(target {IMAGE_PROMPT_TARGET_CHARS}); "
+                "expand all six layers (composition, subject, environment, lighting, color, scope)"
+            )
+            logger.warning(
+                "[SCRIPT] image_prompt retry attempt=%d short=%s",
+                attempt + 1,
+                target_indices,
+            )
+        return script
+
     def generate_topics(
         self,
         theme: str,

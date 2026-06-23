@@ -5,6 +5,26 @@ from typing import Any
 
 from app.config import get_settings
 from app.services.llm.llm_mgr import LLMClient
+from app.services.llm.llm_script_prompts import MIN_IMAGE_PROMPT_CHARS
+
+
+def _mock_image_prompt(visual_style: str, display_title: str, idx: int) -> str:
+    return (
+        f"采用中景竖屏构图的3D卡通渲染科普插画，严格遵循画风：{visual_style}。"
+        f"本镜对应口播主题，场景序号{idx}，主体居中略偏上，留出下方字幕安全区，"
+        f"单一视觉焦点落在核心道具或对比物上，明亮温馨不压抑。"
+        f"前景浅木色台面有轻微景深虚化，中景主体道具造型统一、边缘高光清晰，"
+        f"背景为虚化家居轮廓与暖色墙面，左上方暖黄窗光为主光，右侧冷白补光勾边，"
+        f"材质区分木质纹理、金属反光与塑料哑光，主色银白暖木辅以少量红色点缀，"
+        f"若本镜含对比则左右并排两状态并用箭头连接，辅色点缀提升层次，"
+        f"整体氛围清晰易懂、适合竖屏短视频科普表达，画面无文字无水印，"
+        f"仅表达当前分镜内容，不提前展示后续情节。"
+        f"主题围绕「{display_title}」展开。"
+    )
+
+
+def _mock_motion_prompt() -> str:
+    return "镜头缓慢推近主体，指示箭头轻微延伸，整体保持轻微呼吸感。"
 
 
 class MockLLMClient(LLMClient):
@@ -91,24 +111,14 @@ class MockLLMClient(LLMClient):
         for idx, text in enumerate(templates, start=1):
             narration_parts.append(text)
             brief = f"第{idx}镜：围绕「{display_title}」展示一个生活化科普场景与关键对比。"
-            image_prompt = (
-                f"采用中景竖屏构图的3D卡通渲染科普插画，严格遵循画风：{visual_style}。"
-                f"本镜对应口播主题，场景序号{idx}，主体居中略偏上，留出下方字幕安全区，"
-                f"单一视觉焦点落在核心道具或对比物上，明亮温馨不压抑。"
-                f"前景浅木色台面有轻微景深虚化，中景主体道具造型统一、边缘高光清晰，"
-                f"背景为虚化家居轮廓与暖色墙面，左上方暖黄窗光为主光，右侧冷白补光勾边，"
-                f"材质区分木质纹理、金属反光与塑料哑光，主色银白暖木辅以少量红色点缀，"
-                f"若本镜含对比则左右并排两状态并用箭头连接，辅色点缀提升层次，"
-                f"整体氛围清晰易懂、适合竖屏短视频科普表达，画面无文字无水印，"
-                f"仅表达当前分镜内容，不提前展示后续情节。"
-            )
+            image_prompt = _mock_image_prompt(visual_style, display_title, idx)
             segments.append(
                 {
                     "segment_index": idx,
                     "text": text,
                     "visual_brief": brief,
                     "image_prompt": image_prompt,
-                    "motion_prompt": "镜头缓慢推近主体，指示箭头轻微延伸，整体保持轻微呼吸感。",
+                    "motion_prompt": _mock_motion_prompt(),
                     "visual_mode": "static_motion",
                 }
             )
@@ -130,7 +140,24 @@ class MockLLMClient(LLMClient):
         job: dict | None = None,
         segment_indices: list[int] | None = None,
     ) -> dict[str, Any]:
-        _ = feedback, supplementary_info, job, segment_indices
+        _ = feedback, supplementary_info, job
+        visual_style = script.get("visual_style") or (
+            "3D卡通渲染科普插画，暖黄侧光，浅木色场景，银红条形磁铁统一造型"
+        )
+        display_title = re.sub(r"\s+", "", str(script.get("title") or "科普").strip()) or "科普"
+        allowed = {int(i) for i in segment_indices} if segment_indices else None
+        for seg in script.get("segments") or []:
+            idx = int(seg["segment_index"])
+            if allowed is not None and idx not in allowed:
+                continue
+            if len(str(seg.get("image_prompt") or "")) >= MIN_IMAGE_PROMPT_CHARS:
+                continue
+            seg.setdefault(
+                "visual_brief",
+                f"第{idx}镜：围绕「{display_title}」展示一个生活化科普场景与关键对比。",
+            )
+            seg["image_prompt"] = _mock_image_prompt(visual_style, display_title, idx)
+            seg.setdefault("motion_prompt", _mock_motion_prompt())
         return script
 
     def generate_material_script(
