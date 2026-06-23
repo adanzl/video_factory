@@ -10,7 +10,12 @@ from app.repositories import job_log_repo, job_repo, segment_repo
 from app.repositories.connection import connection
 from app.services.llm.llm_mgr import llm_mgr
 from app.services.llm.llm_script_timeline import parse_video_timeline, validate_timeline_script
-from app.utils.media import base_video_duration_sec, estimate_narration_target_words, narration_soft_min_chars
+from app.utils.media import (
+    assign_segment_timings,
+    base_video_duration_sec,
+    estimate_narration_target_words,
+    narration_soft_min_chars,
+)
 from worker.context import JobContext
 from worker.stages.base import StageExecutor
 from worker.stages.standard.script import (
@@ -278,6 +283,10 @@ class MaterialScriptStage(StageExecutor):
 
         script.pop("pending_narration", None)
         script["word_count"] = _narration_chars(script.get("narration", ""))
+        assign_segment_timings(
+            script,
+            video_timeline=parse_video_timeline(video_timeline) if video_timeline else None,
+        )
         script["cost_time"] = round(time.perf_counter() - started, 1)
 
         with connection() as conn:

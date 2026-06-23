@@ -17,6 +17,7 @@ from app.services.llm.llm_mgr import llm_mgr
 from app.services.llm.llm_script_prompts import IMAGE_PROMPT_TARGET_CHARS, MIN_IMAGE_PROMPT_CHARS
 from app.utils.job_info import content_style_from_job
 from app.utils.media import (
+    assign_segment_timings,
     default_narration_target_words,
     min_narration_chars_for_target,
     narration_accept_min_chars,
@@ -514,6 +515,15 @@ class ScriptStage(StageExecutor):
             skip_title_optimize=bool(ctx.script_skip_title_optimize),
         )
 
+        resolved_seg_target = (
+            segment_target_sec
+            if segment_target_sec is not None
+            else get_settings().segment_target_sec
+        )
+        from app.utils.media import assign_segment_timings
+
+        assign_segment_timings(script, segment_target_sec=resolved_seg_target)
+
         if supplementary_info:
             script["supplementary_info"] = supplementary_info
         else:
@@ -521,14 +531,10 @@ class ScriptStage(StageExecutor):
 
         script["word_count"] = _narration_chars(script.get("narration", ""))
         script["narration_target_words"] = narration_target_words
-        resolved_seg_target = (
-            segment_target_sec
-            if segment_target_sec is not None
-            else get_settings().segment_target_sec
-        )
         script["segment_target_sec"] = resolved_seg_target
         script["max_title_length"] = max_len
         script["generate_image_prompts"] = generate_image_prompts
+        assign_segment_timings(script, segment_target_sec=resolved_seg_target)
         if not generate_image_prompts:
             _strip_image_prompt_fields(script)
         script.pop("_llm_timing", None)

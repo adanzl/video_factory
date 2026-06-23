@@ -58,9 +58,9 @@
             <div class="text-xs font-medium text-gray-600">文案</div>
             <el-tooltip placement="top" :show-after="300" :disabled="!segment.text">
               <template #content>
-                <div class="max-w-sm whitespace-pre-wrap break-words text-sm">{{ segment.text }}</div>
+                <div class="max-w-sm whitespace-pre-wrap wrap-break-word text-sm">{{ segment.text }}</div>
               </template>
-              <div class="line-clamp-3 min-h-[3lh] cursor-default text-sm leading-relaxed break-words">
+              <div class="line-clamp-3 min-h-[3lh] cursor-default text-sm leading-relaxed wrap-break-word">
                 {{ segment.text }}
               </div>
             </el-tooltip>
@@ -70,9 +70,9 @@
             <div class="text-xs font-medium text-gray-600">画面描述</div>
             <el-tooltip placement="top" :show-after="300" :disabled="!segment.visual_brief">
               <template #content>
-                <div class="max-w-sm whitespace-pre-wrap break-words text-sm">{{ segment.visual_brief }}</div>
+                <div class="max-w-sm whitespace-pre-wrap wrap-break-word text-sm">{{ segment.visual_brief }}</div>
               </template>
-              <div class="line-clamp-4 min-h-[4lh] cursor-default text-sm leading-relaxed break-words">
+              <div class="line-clamp-4 min-h-[4lh] cursor-default text-sm leading-relaxed wrap-break-word">
                 {{ segment.visual_brief || "-" }}
               </div>
             </el-tooltip>
@@ -82,9 +82,9 @@
             <div class="text-xs font-medium text-gray-600">文生图提示词</div>
             <el-tooltip placement="top" :show-after="300" :disabled="!segment.image_prompt">
               <template #content>
-                <div class="max-w-sm whitespace-pre-wrap break-words text-xs">{{ segment.image_prompt }}</div>
+                <div class="max-w-sm whitespace-pre-wrap wrap-break-word text-xs">{{ segment.image_prompt }}</div>
               </template>
-              <div class="line-clamp-2 min-h-[2lh] cursor-default text-xs leading-relaxed break-words text-gray-500">
+              <div class="line-clamp-2 min-h-[2lh] cursor-default text-xs leading-relaxed wrap-break-word text-gray-500">
                 {{ segment.image_prompt || "-" }}
               </div>
             </el-tooltip>
@@ -94,9 +94,9 @@
             <div class="text-xs font-medium text-gray-600">运动提示词</div>
             <el-tooltip placement="top" :show-after="300" :disabled="!segment.motion_prompt">
               <template #content>
-                <div class="max-w-sm whitespace-pre-wrap break-words text-xs">{{ segment.motion_prompt }}</div>
+                <div class="max-w-sm whitespace-pre-wrap wrap-break-word text-xs">{{ segment.motion_prompt }}</div>
               </template>
-              <div class="line-clamp-3 min-h-[3lh] cursor-default text-xs leading-relaxed break-words text-gray-500">
+              <div class="line-clamp-3 min-h-[3lh] cursor-default text-xs leading-relaxed wrap-break-word text-gray-500">
                 {{ segment.motion_prompt || "-" }}
               </div>
             </el-tooltip>
@@ -108,27 +108,30 @@
               v-if="segment.imageUrl"
               :src="segment.imageUrl"
               fit="cover"
-              class="aspect-[9/16] w-full rounded border border-gray-100"
+              class="w-full rounded border border-gray-100"
+              :style="mediaPreviewStyle"
               :preview-src-list="[segment.imageUrl]"
               preview-teleported
             />
             <div
               v-else
-              class="flex aspect-[9/16] w-full items-center justify-center rounded border border-dashed border-gray-200 bg-gray-50 text-xs text-gray-400"
+              class="flex w-full items-center justify-center rounded border border-dashed border-gray-200 bg-gray-50 text-xs text-gray-400"
+              :style="mediaPreviewStyle"
             >
               暂无图片
             </div>
           </section>
 
           <section class="flex flex-col gap-1">
-            <div class="text-xs font-medium text-gray-600">视频预览</div>
+            <div class="text-xs font-medium text-gray-600">视频片段</div>
             <div
               v-if="segment.clipUrl"
               class="w-full overflow-hidden rounded border border-gray-200 bg-black"
             >
               <video
                 :key="segment.clipUrl"
-                class="block aspect-[9/16] w-full bg-black"
+                class="block w-full bg-black"
+                :style="mediaPreviewStyle"
                 :src="segment.clipUrl"
                 controls
                 playsinline
@@ -137,7 +140,8 @@
             </div>
             <div
               v-else
-              class="flex aspect-[9/16] w-full items-center justify-center rounded border border-dashed border-gray-200 bg-gray-50 text-xs text-gray-400"
+              class="flex w-full items-center justify-center rounded border border-dashed border-gray-200 bg-gray-50 text-xs text-gray-400"
+              :style="mediaPreviewStyle"
             >
               暂无视频
             </div>
@@ -190,6 +194,10 @@ const actionDisabled = computed(() => props.job.status === "running");
 const actionDisabledReason = computed(() =>
   props.job.status === "running" ? "任务运行中，请稍后再试" : ""
 );
+
+const mediaPreviewStyle = computed(() => ({
+  aspectRatio: props.job.info?.orientation === "landscape" ? "16 / 9" : "9 / 16",
+}));
 
 const visualBriefByIndex = computed(() => {
   const script = props.job.script_json as ScriptJson | null;

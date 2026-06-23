@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from app.services.media.ffmpeg_utils import probe_duration, probe_video_size
 
 if TYPE_CHECKING:
     from app.config import Config
+    from app.services.llm.llm_script_timeline import VideoTimeline
 
 # 中文口播约 5 字/秒（16s ≈ 80 字；与 CosyVoice 实际语速对齐）
 NARRATION_CHARS_PER_SEC = 5.0
@@ -34,6 +36,68 @@ def estimate_narration_target_words(duration_sec: float) -> int:
 def segment_text_char_cap(segment_target_sec: float) -> int:
     """单镜口播 text 字数上限（5 字/秒 × segment_target_sec）。"""
     return max(20, int(segment_target_sec * NARRATION_CHARS_PER_SEC))
+
+
+def segment_narration_chars(text: str) -> int:
+    return len(re.sub(r"\s+", "", text or ""))
+
+
+def estimate_segment_duration_sec(
+    text: str,
+    *,
+    segment_target_sec: float | None = None,
+) -> float:
+    """按口播字数估算单镜时长（秒）。"""
+    chars = segment_narration_chars(text)
+    duration = chars / NARRATION_CHARS_PER_SEC if chars else 0.0
+    if segment_target_sec and segment_target_sec > 0:
+        duration = min(duration, float(segment_target_sec))
+    return round(max(0.1, duration), 3)
+
+
+def assign_segment_timings(
+    script: dict[str, Any],
+    *,
+    segment_target_sec: float | None = None,
+    video_timeline: VideoTimeline | None = None,
+) -> dict[str, Any]:
+    """为 script.segments 填充 start_sec / end_sec / duration_sec。"""
+    segments = script.get("segments")
+    if not isinstance(segments, list) or not segments:
+        return script
+
+    slots_by_index: dict[int, object] = {}
+    if video_timeline is not None:
+        for slot in video_timeline.slots:
+            slots_by_index[int(slot.index)] = slot
+
+    cursor = 0.0
+    ordered = sorted(segments, key=lambda seg: int(seg.get("segment_index") or 0))
+    for seg in ordered:
+        if not isinstance(seg, dict):
+            continue
+        idx = int(seg.get("segment_index") or 0)
+        slot = slots_by_index.get(idx)
+        if slot is not None:
+            start = round(float(slot.start_sec), 3)
+            end = round(float(slot.end_sec), 3)
+            duration = round(float(slot.duration_sec), 3)
+        else:
+            duration = estimate_segment_duration_sec(
+                str(seg.get("text") or ""),
+                segment_target_sec=segment_target_sec,
+            )
+            start = round(cursor, 3)
+            end = round(start + duration, 3)
+            cursor = end
+        seg["start_sec"] = start
+        seg["end_sec"] = end
+        seg["duration_sec"] = duration
+
+    script["segments"] = ordered
+    if ordered and isinstance(ordered[-1], dict):
+        script["total_duration_sec"] = float(ordered[-1].get("end_sec") or 0.0)
+    return script
 
 
 def narration_writing_target_chars(narration_target_words: int | None = None) -> int:

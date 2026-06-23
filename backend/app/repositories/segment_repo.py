@@ -17,8 +17,8 @@ def insert_segments(
         conn.execute(
             """
             INSERT INTO video_segment (
-                job_id, segment_index, text, image_prompt, motion_prompt, visual_mode, status
-            ) VALUES (?, ?, ?, ?, ?, ?, 'pending')
+                job_id, segment_index, text, image_prompt, motion_prompt, visual_mode, duration_sec, status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')
             """,
             (
                 job_id,
@@ -27,6 +27,7 @@ def insert_segments(
                 seg.get("image_prompt"),
                 seg.get("motion_prompt"),
                 seg.get("visual_mode", "static_motion"),
+                seg.get("duration_sec"),
             ),
         )
 

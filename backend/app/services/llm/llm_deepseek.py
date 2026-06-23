@@ -128,6 +128,75 @@ def _storyboard_max_tokens(
     return min(ceiling, max(4096, estimated))
 
 
+def _strip_markdown_json_fence(content: str) -> str:
+    text = content.strip()
+    if not text.startswith("```"):
+        return text
+    text = re.sub(r"^```(?:json)?\s*", "", text, count=1, flags=re.IGNORECASE)
+    text = re.sub(r"\s*```$", "", text.rstrip())
+    return text.strip()
+
+
+def _extract_json_object(text: str) -> str:
+    start = text.find("{")
+    end = text.rfind("}")
+    if start >= 0 and end > start:
+        return text[start : end + 1]
+    return text
+
+
+def _escape_control_chars_in_json_strings(raw: str) -> str:
+    """将 JSON 字符串字面量内未转义的控制字符转为 \\n / \\uXXXX。"""
+    result: list[str] = []
+    in_string = False
+    escaped = False
+    for ch in raw:
+        if escaped:
+            result.append(ch)
+            escaped = False
+            continue
+        if ch == "\\":
+            result.append(ch)
+            escaped = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            result.append(ch)
+            continue
+        if in_string and ord(ch) < 0x20:
+            if ch == "\n":
+                result.append("\\n")
+            elif ch == "\r":
+                result.append("\\r")
+            elif ch == "\t":
+                result.append("\\t")
+            else:
+                result.append(f"\\u{ord(ch):04x}")
+            continue
+        result.append(ch)
+    return "".join(result)
+
+
+def _loads_llm_json(content: str) -> dict[str, Any]:
+    text = _strip_markdown_json_fence(content)
+    candidates = [text]
+    extracted = _extract_json_object(text)
+    if extracted != text:
+        candidates.append(extracted)
+
+    last_exc: json.JSONDecodeError | None = None
+    for candidate in candidates:
+        for variant in (candidate, _escape_control_chars_in_json_strings(candidate)):
+            try:
+                parsed = json.loads(variant)
+            except json.JSONDecodeError as exc:
+                last_exc = exc
+                continue
+            if isinstance(parsed, dict):
+                return parsed
+    raise ValueError(f"LLM returned invalid JSON: {last_exc}") from last_exc
+
+
 def _assemble_storyboard_narration(data: dict[str, Any]) -> dict[str, Any]:
     narration = str(data.get("narration") or "").strip()
     segments = data.get("segments") or []
@@ -240,11 +309,9 @@ class DeepSeekClient(LLMClient):
         if not content.strip():
             raise ValueError("LLM returned empty response")
         try:
-            parsed = json.loads(content)
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"LLM returned invalid JSON: {exc}") from exc
-        if not isinstance(parsed, dict):
-            raise ValueError("LLM JSON response must be an object")
+            parsed = _loads_llm_json(content)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
         return parsed, finish
 
     def _expand_narration_if_needed(

@@ -1,7 +1,9 @@
 from app.utils.media import (
+    assign_segment_timings,
     body_duration_for_target_final,
     default_narration_target_words,
     estimate_narration_target_words,
+    estimate_segment_duration_sec,
     narration_accept_min_chars,
     narration_target_for_minutes,
     narration_writing_target_chars,
@@ -48,3 +50,57 @@ def test_narration_writing_target_chars_is_ninety_five_percent():
 def test_estimate_narration_target_words_clamps():
     assert estimate_narration_target_words(5) == 200
     assert estimate_narration_target_words(700) == 3000
+
+
+def test_assign_segment_timings_from_narration_chars():
+    script = {
+        "segments": [
+            {"segment_index": 1, "text": "一二三四五"},  # 5 chars -> 1.0s
+            {"segment_index": 2, "text": "一二三四五六七八九十"},  # 10 chars -> 2.0s
+        ]
+    }
+    assign_segment_timings(script, segment_target_sec=28.0)
+    assert script["segments"][0]["start_sec"] == 0.0
+    assert script["segments"][0]["end_sec"] == 1.0
+    assert script["segments"][1]["start_sec"] == 1.0
+    assert script["segments"][1]["end_sec"] == 3.0
+    assert script["total_duration_sec"] == 3.0
+
+
+def test_assign_segment_timings_from_video_timeline():
+    from app.services.llm.llm_script_timeline import TimelineSlot, VideoTimeline
+
+    timeline = VideoTimeline(
+        duration_sec=14.0,
+        slots=(
+            TimelineSlot(
+                index=1,
+                start_sec=0.0,
+                end_sec=8.0,
+                duration_sec=8.0,
+                scene="A",
+                max_chars=44,
+            ),
+            TimelineSlot(
+                index=2,
+                start_sec=8.0,
+                end_sec=14.0,
+                duration_sec=6.0,
+                scene="B",
+                max_chars=33,
+            ),
+        ),
+        raw="{}",
+    )
+    script = {
+        "segments": [
+            {"segment_index": 1, "text": "第一段"},
+            {"segment_index": 2, "text": "第二段"},
+        ]
+    }
+    assign_segment_timings(script, video_timeline=timeline)
+    assert script["segments"][0]["start_sec"] == 0.0
+    assert script["segments"][0]["end_sec"] == 8.0
+    assert script["segments"][1]["start_sec"] == 8.0
+    assert script["segments"][1]["end_sec"] == 14.0
+

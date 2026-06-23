@@ -5,6 +5,9 @@ export interface ScriptSegment {
   image_prompt?: string;
   motion_prompt?: string;
   visual_mode?: string;
+  start_sec?: number;
+  end_sec?: number;
+  duration_sec?: number;
 }
 
 export interface LlmPromptStep {
