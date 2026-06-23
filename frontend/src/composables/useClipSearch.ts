@@ -1,7 +1,14 @@
 import { ref, toValue, type MaybeRefOrGetter } from "vue";
 import { ElMessage } from "element-plus";
 import { listClipSources, searchClips } from "@/api/api-clips";
-import type { ClipProviderName, ClipProviderSearchMeta, ClipProviderStatus, ClipSearchLanguage, StockClip } from "@/types/clipSearch";
+import type {
+  ClipProviderName,
+  ClipProviderSearchMeta,
+  ClipProviderStatus,
+  ClipSearchLanguage,
+  ClipSearchMode,
+  StockClip,
+} from "@/types/clipSearch";
 import type { ClipOrientation } from "@/utils/clipSearch";
 import { useErrorHandler } from "@/composables/useErrorHandler";
 
@@ -10,6 +17,7 @@ export interface UseClipSearchOptions {
   initialOrientation?: MaybeRefOrGetter<ClipOrientation>;
   initialLanguage?: MaybeRefOrGetter<ClipSearchLanguage>;
   autoSearch?: boolean;
+  autoSearchMode?: ClipSearchMode;
 }
 
 export function useClipSearch(options: UseClipSearchOptions = {}) {
@@ -18,12 +26,14 @@ export function useClipSearch(options: UseClipSearchOptions = {}) {
   const keyword = ref("");
   const orientation = ref<ClipOrientation>("");
   const language = ref<ClipSearchLanguage>("zh");
+  const CLIP_SEARCH_PER_PAGE = 60;
   const sources = ref<ClipProviderStatus[]>([]);
   const selectedProviders = ref<ClipProviderName[]>(["pexels", "pixabay", "nasa"]);
   const clips = ref<StockClip[]>([]);
   const providerMeta = ref<ClipProviderSearchMeta[]>([]);
   const lastQuery = ref("");
-  const pixabayQuery = ref("");
+  const lastSearchMode = ref<ClipSearchMode>("original");
+  const resolvedQuery = ref("");
   const searching = ref(false);
   const searched = ref(false);
 
@@ -37,7 +47,8 @@ export function useClipSearch(options: UseClipSearchOptions = {}) {
     clips.value = [];
     providerMeta.value = [];
     lastQuery.value = "";
-    pixabayQuery.value = "";
+    lastSearchMode.value = "original";
+    resolvedQuery.value = "";
     searched.value = false;
   };
 
@@ -58,7 +69,7 @@ export function useClipSearch(options: UseClipSearchOptions = {}) {
     }
   };
 
-  const handleSearch = async () => {
+  const handleSearch = async (searchMode: ClipSearchMode = "original") => {
     const q = keyword.value.trim();
     if (!q) {
       ElMessage.warning("请输入搜索关键词");
@@ -74,13 +85,15 @@ export function useClipSearch(options: UseClipSearchOptions = {}) {
     try {
       const result = await searchClips({
         q,
-        per_page: 24,
+        per_page: CLIP_SEARCH_PER_PAGE,
         providers: selectedProviders.value,
         orientation: orientation.value || undefined,
-        language: language.value || undefined,
+        language: searchMode === "original" ? language.value || undefined : undefined,
+        search_mode: searchMode,
       });
       lastQuery.value = result.query;
-      pixabayQuery.value = result.pixabay_query?.trim() ?? "";
+      lastSearchMode.value = result.search_mode ?? searchMode;
+      resolvedQuery.value = result.resolved_query?.trim() ?? "";
       clips.value = result.clips ?? [];
       providerMeta.value = result.providers ?? [];
     } catch (error) {
@@ -94,7 +107,7 @@ export function useClipSearch(options: UseClipSearchOptions = {}) {
     reset();
     await loadSources();
     if (options.autoSearch && keyword.value.trim()) {
-      await handleSearch();
+      await handleSearch(options.autoSearchMode ?? "original");
     }
   };
 
@@ -107,7 +120,8 @@ export function useClipSearch(options: UseClipSearchOptions = {}) {
     clips,
     providerMeta,
     lastQuery,
-    pixabayQuery,
+    lastSearchMode,
+    resolvedQuery,
     searching,
     searched,
     reset,

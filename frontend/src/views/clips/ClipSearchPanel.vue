@@ -1,14 +1,14 @@
 <template>
   <div>
     <div class="mb-4 rounded-lg border border-gray-200 bg-gray-50 p-4">
-      <el-form inline @submit.prevent="handleSearch">
+      <el-form inline @submit.prevent="handleSearch('original')">
         <el-form-item label="关键词">
           <el-input
             v-model="keyword"
             :placeholder="clipSearchKeywordPlaceholder(language)"
             clearable
             :class="keywordInputClass"
-            @keyup.enter="handleSearch"
+            @keyup.enter="handleSearch('original')"
           />
         </el-form-item>
         <el-form-item label="语言">
@@ -30,7 +30,7 @@
             <el-checkbox
               v-for="source in sources"
               :key="source.provider"
-              :label="source.provider"
+              :value="source.provider"
               :disabled="!source.available"
             >
               {{ providerLabel(source.provider) }}
@@ -38,7 +38,8 @@
           </el-checkbox-group>
         </el-form-item>
         <el-form-item>
-          <el-button type="primary" :loading="searching" @click="handleSearch">搜索</el-button>
+          <el-button :loading="searching" @click="handleSearch('original')">原文搜索</el-button>
+          <el-button type="primary" :loading="searching" @click="handleSearch('ai')">AI 搜索</el-button>
         </el-form-item>
       </el-form>
       <div v-if="sources.length" class="text-xs text-gray-500">
@@ -52,8 +53,8 @@
 
     <div v-if="lastQuery" class="mb-3 flex flex-wrap items-center gap-2 text-sm text-gray-600">
       <span>「{{ lastQuery }}」共 {{ clips.length }} 条</span>
-      <span v-if="pixabayQuery && pixabayQuery !== lastQuery" class="text-xs text-gray-500">
-        Pixabay 搜索词：{{ pixabayQuery }}
+      <span v-if="resolvedQuery && resolvedQuery !== lastQuery" class="text-xs text-gray-500">
+        AI 搜索词：{{ resolvedQuery }}
       </span>
       <el-tag
         v-for="meta in providerMeta"
@@ -143,7 +144,7 @@ const props = withDefaults(
     initialOrientation: "",
     initialLanguage: "zh",
     keywordInputClass: "w-72!",
-    gridClass: "grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3",
+    gridClass: "grid grid-cols-3 gap-4",
     resultsWrapperClass: "",
     emptyClass: "py-16 text-center text-sm text-gray-400",
     showMeta: true,
@@ -161,7 +162,7 @@ const {
   clips,
   providerMeta,
   lastQuery,
-  pixabayQuery,
+  resolvedQuery,
   searching,
   searched,
   handleSearch,

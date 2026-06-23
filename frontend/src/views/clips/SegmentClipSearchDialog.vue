@@ -2,7 +2,7 @@
   <el-dialog
     v-model="visible"
     :title="dialogTitle"
-    width="920px"
+    width="1100px"
     destroy-on-close
     append-to-body
   >
@@ -12,7 +12,6 @@
       :initial-keyword="defaultKeyword"
       :initial-orientation="defaultOrientation"
       keyword-input-class="w-64!"
-      grid-class="grid grid-cols-1 gap-4 md:grid-cols-2"
       results-wrapper-class="max-h-[60vh] overflow-y-auto"
       empty-class="py-12 text-center text-sm text-gray-400"
       :show-meta="false"

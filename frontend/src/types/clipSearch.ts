@@ -4,6 +4,8 @@ export type ClipProviderName = "pexels" | "pixabay" | "nasa";
 
 export type ClipSearchLanguage = "" | "zh" | "en";
 
+export type ClipSearchMode = "original" | "ai";
+
 export interface ClipProviderStatus {
   provider: ClipProviderName;
   available: boolean;
@@ -34,10 +36,11 @@ export interface ClipProviderSearchMeta {
 
 export interface ClipSearchResult {
   query: string;
+  search_mode?: ClipSearchMode;
   total: number;
   clips: StockClip[];
   providers: ClipProviderSearchMeta[];
-  pixabay_query?: string | null;
+  resolved_query?: string | null;
 }
 
 export interface SearchClipsParams {
@@ -46,4 +49,5 @@ export interface SearchClipsParams {
   providers?: ClipProviderName[];
   orientation?: "portrait" | "landscape" | "square";
   language?: ClipSearchLanguage;
+  search_mode?: ClipSearchMode;
 }
