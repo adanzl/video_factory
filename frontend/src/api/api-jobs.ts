@@ -88,16 +88,3 @@ export async function deleteJob(jobId: number): Promise<{ id: number; deleted: b
   const response = await api.post("/v_factory/api/jobs/delete", { id: jobId });
   return response.data;
 }
-
-export async function importSegmentClip(payload: {
-  jobId: number;
-  segmentIndex: number;
-  videoUrl: string;
-}): Promise<JobSegment> {
-  const response = await api.post<JobSegment>("/v_factory/api/jobs/segment/import-clip", {
-    id: payload.jobId,
-    segment_index: payload.segmentIndex,
-    video_url: payload.videoUrl,
-  });
-  return response.data;
-}

@@ -1,13 +1,15 @@
-"""视频片段聚合搜索 API（不入库）。"""
+"""视频片段聚合搜索 API。"""
 
 from __future__ import annotations
 
+import requests
 from flask import Blueprint
 
 from app.api.errors import APIError
-from app.api.utils import get_query, json_ok, parse_query_int
+from app.api.utils import get_json_body, get_query, json_ok, parse_id, parse_optional_int, parse_query_int, parse_str
 from app.services.clip_search.clip_search_mgr import clip_search_mgr
 from app.services.clip_search.preview_proxy import proxy_clip_preview
+from app.services.job.job_mgr import JobBusyError, job_mgr
 
 bp = Blueprint("api_clips", __name__, url_prefix="/v_factory/api/clips")
 
@@ -84,3 +86,28 @@ def search_clips_route():
     except ValueError as exc:
         raise APIError(str(exc), status_code=400) from exc
     return json_ok(result.to_dict())
+
+
+@bp.post("/import-segment")
+def import_segment_clip_route():
+    """下载素材库视频并写入任务分段。"""
+    data = get_json_body()
+    job_id = parse_id(data)
+    segment_index = parse_optional_int(data, "segment_index", minimum=1)
+    if segment_index is None:
+        raise APIError("segment_index is required")
+    video_url = parse_str(data, "video_url", required=True)
+    if len(video_url) > 2048:
+        raise APIError("video_url too long (max 2048)")
+    job_mgr.get_job(job_id)
+    try:
+        segment = clip_search_mgr.import_to_segment(job_id, segment_index, video_url)
+    except JobBusyError as exc:
+        raise APIError(str(exc), status_code=409, code="job_busy") from exc
+    except KeyError as exc:
+        raise APIError(str(exc), status_code=404) from exc
+    except ValueError as exc:
+        raise APIError(str(exc), status_code=400) from exc
+    except requests.RequestException as exc:
+        raise APIError(f"download failed: {exc}", status_code=502) from exc
+    return json_ok(segment)

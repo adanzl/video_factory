@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import requests
 from flask import Blueprint
 
 from app.api.errors import APIError
@@ -283,30 +282,6 @@ def run_segment_clips_route():
             segment_indices=segment_indices,
         ),
     )
-
-
-@bp.post("/segment/import-clip")
-def import_segment_clip_route():
-    data = get_json_body()
-    job_id = parse_id(data)
-    segment_index = parse_optional_int(data, "segment_index", minimum=1)
-    if segment_index is None:
-        raise APIError("segment_index is required")
-    video_url = parse_str(data, "video_url", required=True)
-    if len(video_url) > 2048:
-        raise APIError("video_url too long (max 2048)")
-    job_mgr.get_job(job_id)
-    try:
-        segment = job_mgr.import_segment_clip(job_id, segment_index, video_url)
-    except JobBusyError as exc:
-        raise APIError(str(exc), status_code=409, code="job_busy") from exc
-    except KeyError as exc:
-        raise APIError(str(exc), status_code=404) from exc
-    except ValueError as exc:
-        raise APIError(str(exc), status_code=400) from exc
-    except requests.RequestException as exc:
-        raise APIError(f"download failed: {exc}", status_code=502) from exc
-    return json_ok(segment)
 
 
 @bp.post("/prepare")
