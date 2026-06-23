@@ -19,22 +19,25 @@
           </el-radio-group>
         </el-form-item>
         <el-form-item label="分段序号">
-          <el-select
-            v-model="selectedSegments"
-            multiple
-            clearable
-            collapse-tags
-            collapse-tags-tooltip
-            placeholder="留空表示全部"
-            class="max-w-xl!"
-          >
-            <el-option
-              v-for="segment in segments"
-              :key="segment.segment_index"
-              :label="`#${segment.segment_index} ${truncate(segment.text, 24)}`"
-              :value="segment.segment_index"
-            />
-          </el-select>
+          <div class="flex flex-nowrap items-center gap-2">
+            <el-select
+              v-model="selectedSegments"
+              multiple
+              clearable
+              collapse-tags
+              collapse-tags-tooltip
+              placeholder="留空表示全部"
+              class="min-w-0 max-w-xl! flex-1"
+            >
+              <el-option
+                v-for="segment in segments"
+                :key="segment.segment_index"
+                :label="`#${segment.segment_index} ${truncate(segment.text, 24)}`"
+                :value="segment.segment_index"
+              />
+            </el-select>
+            <span class="shrink-0 whitespace-nowrap text-sm text-gray-500">共 {{ segments.length }} 分镜</span>
+          </div>
         </el-form-item>
       </el-form>
     </div>
