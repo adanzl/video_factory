@@ -123,7 +123,18 @@
           </section>
 
           <section class="flex flex-col gap-1">
-            <div class="text-xs font-medium text-gray-600">视频片段</div>
+            <div class="flex items-center justify-between gap-2">
+              <div class="text-xs font-medium text-gray-600">视频片段</div>
+              <el-button
+                size="small"
+                link
+                type="primary"
+                :disabled="actionDisabled"
+                @click="openClipSearch(segment)"
+              >
+                片段搜索
+              </el-button>
+            </div>
             <div
               v-if="segment.clipUrl"
               class="w-full overflow-hidden rounded border border-gray-200 bg-black"
@@ -151,6 +162,15 @@
     </div>
     <div v-else class="py-8 text-center text-sm text-gray-400">暂无分段数据</div>
 
+    <SegmentClipSearchDialog
+      v-model="clipSearchOpen"
+      :job-id="job.id"
+      :segment-index="clipSearchSegmentIndex"
+      :default-keyword="clipSearchKeyword"
+      :default-orientation="clipSearchOrientation"
+      @imported="emit('refresh')"
+    />
+
     <div class="mt-6">
       <div class="mb-2 text-sm font-medium text-gray-600">阶段日志</div>
       <el-table v-if="logs.length" :data="logs" stripe size="small" class="w-full">
@@ -170,9 +190,10 @@ import { computed, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { runJobStageAction } from "@/api/api-jobs";
 import { getMediaFileUrl } from "@/api/api-media";
-import type { JobDetail, JobLog, JobSegment, ScriptJson } from "@/types/jobs";
+import type { JobDetail, JobInfo, JobLog, JobSegment, ScriptJson } from "@/types/jobs";
 import { formatDateTime } from "@/utils/date";
 import { useErrorHandler } from "@/composables/useErrorHandler";
+import SegmentClipSearchDialog from "./SegmentClipSearchDialog.vue";
 
 const props = defineProps<{
   job: JobDetail;
@@ -189,6 +210,10 @@ const { handleError } = useErrorHandler();
 const submitting = ref(false);
 const segmentScope = ref("segment/images");
 const selectedSegments = ref<number[]>([]);
+const clipSearchOpen = ref(false);
+const clipSearchSegmentIndex = ref(1);
+const clipSearchKeyword = ref("");
+const clipSearchOrientation = ref<"" | "portrait" | "landscape" | "square">("");
 
 const actionDisabled = computed(() => props.job.status === "running");
 const actionDisabledReason = computed(() =>
@@ -247,6 +272,32 @@ const formatDuration = (value?: number | null) => {
     return "-";
   }
   return value.toFixed(2);
+};
+
+const resolveClipSearchOrientation = (): "" | "portrait" | "landscape" | "square" => {
+  const orientation = (props.job.info as JobInfo | null | undefined)?.orientation;
+  if (orientation === "portrait" || orientation === "landscape") {
+    return orientation;
+  }
+  return "";
+};
+
+const buildClipSearchKeyword = (segment: JobSegment & { visual_brief?: string | null }) => {
+  const candidates = [segment.motion_prompt, segment.visual_brief, segment.image_prompt, segment.text];
+  for (const value of candidates) {
+    const normalized = value?.replace(/\s+/g, " ").trim();
+    if (normalized) {
+      return normalized.length > 80 ? `${normalized.slice(0, 80)}…` : normalized;
+    }
+  }
+  return "";
+};
+
+const openClipSearch = (segment: JobSegment & { visual_brief?: string | null }) => {
+  clipSearchSegmentIndex.value = segment.segment_index;
+  clipSearchKeyword.value = buildClipSearchKeyword(segment);
+  clipSearchOrientation.value = resolveClipSearchOrientation();
+  clipSearchOpen.value = true;
 };
 
 const handleRun = async (toEnd: boolean) => {

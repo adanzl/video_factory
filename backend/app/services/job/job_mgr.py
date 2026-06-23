@@ -598,6 +598,57 @@ class JobMgr:
             lambda: run_publish(job_id, to_end=to_end),
         )
 
+    def import_segment_clip(
+        self,
+        job_id: int,
+        segment_index: int,
+        video_url: str,
+    ) -> dict:
+        """从素材库下载视频并写入指定分段。"""
+        from app.config import get_settings
+        from app.services.clip_search.download import download_stock_clip_to_segment
+
+        with self._job_lock(job_id):
+            with connection() as conn:
+                job = job_repo.get_job(conn, job_id)
+                if job["status"] == "running":
+                    raise JobBusyError("任务运行中，请稍后再试")
+
+                segments = segment_repo.list_segments(conn, job_id)
+                segment = next(
+                    (row for row in segments if int(row["segment_index"]) == segment_index),
+                    None,
+                )
+                if segment is None:
+                    raise KeyError(f"segment {segment_index} not found")
+
+                settings = get_settings()
+                media_dir = settings.video_data_dir / str(job_id)
+                clip_path = download_stock_clip_to_segment(
+                    job=job,
+                    media_dir=media_dir,
+                    segment=segment,
+                    video_url=video_url,
+                )
+                segment_repo.update_segment(
+                    conn,
+                    int(segment["id"]),
+                    clip_path=str(clip_path),
+                    status="done",
+                )
+                job_log_repo.append_log(
+                    conn,
+                    job_id,
+                    "segment",
+                    f"imported stock clip for segment #{segment_index}",
+                )
+                updated = next(
+                    row
+                    for row in segment_repo.list_segments(conn, job_id)
+                    if int(row["segment_index"]) == segment_index
+                )
+                return updated
+
     def prepare_rerun(
         self,
         job_id: int,
