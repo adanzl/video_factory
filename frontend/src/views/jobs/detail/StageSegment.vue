@@ -10,7 +10,10 @@
         </el-button>
         <span v-if="actionDisabledReason" class="text-sm text-gray-400">{{ actionDisabledReason }}</span>
       </div>
-      <el-form label-width="96px">
+      <el-form
+        label-width="96px"
+        class="[&_.el-form-item__content]:min-w-0 [&_.el-form-item__content]:flex-1"
+      >
         <el-form-item label="重跑模式">
           <el-radio-group v-model="segmentScope">
             <el-radio value="segment/all">全部</el-radio>
@@ -19,7 +22,7 @@
           </el-radio-group>
         </el-form-item>
         <el-form-item label="分段序号">
-          <div class="flex flex-nowrap items-center gap-2">
+          <div class="flex w-full max-w-3xl flex-nowrap items-center gap-3">
             <el-select
               v-model="selectedSegments"
               multiple
@@ -27,7 +30,7 @@
               collapse-tags
               collapse-tags-tooltip
               placeholder="留空表示全部"
-              class="min-w-0 max-w-xl! flex-1"
+              class="min-w-0 flex-1!"
             >
               <el-option
                 v-for="segment in segments"
@@ -106,7 +109,19 @@
           </section>
 
           <section class="flex flex-col gap-1">
-            <div class="text-xs font-medium text-gray-600">分段图片</div>
+            <div class="flex items-center justify-between gap-2">
+              <div class="text-xs font-medium text-gray-600">分段图片</div>
+              <el-button
+                size="small"
+                link
+                type="primary"
+                :loading="regeneratingImageIndex === segment.segment_index"
+                :disabled="isSegmentImageActionDisabled(segment.segment_index)"
+                @click="handleRegenerateImage(segment.segment_index)"
+              >
+                重新生成
+              </el-button>
+            </div>
             <el-image
               v-if="segment.imageUrl"
               :src="segment.imageUrl"
@@ -128,15 +143,27 @@
           <section class="flex flex-col gap-1">
             <div class="flex items-center justify-between gap-2">
               <div class="text-xs font-medium text-gray-600">视频片段</div>
-              <el-button
-                size="small"
-                link
-                type="primary"
-                :disabled="actionDisabled"
-                @click="openClipSearch(segment)"
-              >
-                片段搜索
-              </el-button>
+              <div class="flex items-center gap-1">
+                <el-button
+                  size="small"
+                  link
+                  type="primary"
+                  :loading="generatingClipIndex === segment.segment_index"
+                  :disabled="isSegmentClipActionDisabled(segment)"
+                  @click="handleGenerateClip(segment.segment_index)"
+                >
+                  生成
+                </el-button>
+                <el-button
+                  size="small"
+                  link
+                  type="primary"
+                  :disabled="actionDisabled || generatingClipIndex !== null"
+                  @click="openClipSearch(segment)"
+                >
+                  片段搜索
+                </el-button>
+              </div>
             </div>
             <div
               v-if="segment.clipUrl"
@@ -212,6 +239,8 @@ const emit = defineEmits<{
 const { handleError } = useErrorHandler();
 
 const submitting = ref(false);
+const regeneratingImageIndex = ref<number | null>(null);
+const generatingClipIndex = ref<number | null>(null);
 const segmentScope = ref("segment/images");
 const selectedSegments = ref<number[]>([]);
 const clipSearchOpen = ref(false);
@@ -223,6 +252,19 @@ const actionDisabled = computed(() => props.job.status === "running");
 const actionDisabledReason = computed(() =>
   props.job.status === "running" ? "任务运行中，请稍后再试" : ""
 );
+
+const isSegmentImageActionDisabled = (segmentIndex: number) =>
+  actionDisabled.value ||
+  submitting.value ||
+  generatingClipIndex.value !== null ||
+  (regeneratingImageIndex.value !== null && regeneratingImageIndex.value !== segmentIndex);
+
+const isSegmentClipActionDisabled = (segment: { segment_index: number; imageUrl: string }) =>
+  actionDisabled.value ||
+  submitting.value ||
+  regeneratingImageIndex.value !== null ||
+  !segment.imageUrl ||
+  (generatingClipIndex.value !== null && generatingClipIndex.value !== segment.segment_index);
 
 const mediaPreviewStyle = computed(() => ({
   aspectRatio: props.job.info?.orientation === "landscape" ? "16 / 9" : "9 / 16",
@@ -239,29 +281,17 @@ const visualBriefByIndex = computed(() => {
   return map;
 });
 
-const resolveSegmentClipPath = (segment: JobSegment): string => {
-  const clipPath = segment.clip_path?.trim();
-  if (clipPath) {
-    return clipPath;
-  }
-  const imagePath = segment.image_path?.trim();
-  if (!imagePath) {
-    return "";
-  }
-  return imagePath.replace(/\/images\/(\d+)\.png$/i, "/segments/$1.mp4");
-};
-
 const toMediaUrl = getMediaFileUrl;
 
 const displaySegments = computed(() =>
   props.segments.map(segment => {
     const imagePath = segment.image_path?.trim() ?? "";
-    const clipPath = resolveSegmentClipPath(segment);
+    const clipPath = segment.clip_path?.trim() ?? "";
     return {
       ...segment,
       visual_brief: visualBriefByIndex.value.get(segment.segment_index) ?? null,
       imageUrl: toMediaUrl(imagePath),
-      clipUrl: toMediaUrl(clipPath),
+      clipUrl: clipPath ? toMediaUrl(clipPath) : "",
     };
   })
 );
@@ -291,6 +321,60 @@ const openClipSearch = (segment: JobSegment & { visual_brief?: string | null }) 
   clipSearchKeyword.value = buildSegmentClipSearchKeyword(segment);
   clipSearchOrientation.value = resolveClipSearchOrientation();
   clipSearchOpen.value = true;
+};
+
+const handleRegenerateImage = async (segmentIndex: number) => {
+  try {
+    await ElMessageBox.confirm(`确定重新生成分镜 #${segmentIndex} 的静图吗？`, "确认执行", {
+      type: "warning",
+      confirmButtonText: "执行",
+      cancelButtonText: "取消",
+    });
+  } catch {
+    return;
+  }
+
+  regeneratingImageIndex.value = segmentIndex;
+  try {
+    await runJobStageAction("segment/images", {
+      id: props.job.id,
+      to_end: false,
+      segments: [segmentIndex],
+    });
+    ElMessage.success(`已提交分镜 #${segmentIndex} 静图重新生成`);
+    emit("refresh");
+  } catch (error) {
+    handleError(error, "静图重新生成失败");
+  } finally {
+    regeneratingImageIndex.value = null;
+  }
+};
+
+const handleGenerateClip = async (segmentIndex: number) => {
+  try {
+    await ElMessageBox.confirm(`确定对分镜 #${segmentIndex} 发起图生视频吗？`, "确认执行", {
+      type: "warning",
+      confirmButtonText: "执行",
+      cancelButtonText: "取消",
+    });
+  } catch {
+    return;
+  }
+
+  generatingClipIndex.value = segmentIndex;
+  try {
+    await runJobStageAction("segment/clips", {
+      id: props.job.id,
+      to_end: false,
+      segments: [segmentIndex],
+    });
+    ElMessage.success(`已提交分镜 #${segmentIndex} 图生视频`);
+    emit("refresh");
+  } catch (error) {
+    handleError(error, "图生视频失败");
+  } finally {
+    generatingClipIndex.value = null;
+  }
 };
 
 const handleRun = async (toEnd: boolean) => {

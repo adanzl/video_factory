@@ -53,6 +53,18 @@ class MediaMgr:
             return settings.clip_provider
         return settings.clip_provider
 
+    def _describe_clip_provider(self, provider: str, *, motion_preset: str) -> str:
+        settings = get_settings()
+        if provider == "wan_i2v":
+            return (
+                f"provider=wan_i2v, model={settings.wan_i2v_model}, "
+                f"resolution={settings.wan_i2v_resolution}, "
+                f"prompt_extend={settings.wan_i2v_prompt_extend}"
+            )
+        if provider == "ffmpeg":
+            return f"provider=ffmpeg, motion_preset={motion_preset}"
+        return f"provider={provider}, motion_preset={motion_preset}"
+
     def build_segment_clips(
         self,
         *,
@@ -81,12 +93,21 @@ class MediaMgr:
         )
         total = len(targets)
         t_start = time.time()
+        target_indices = [seg["segment_index"] for seg in targets]
+        logger.info(
+            "clip batch start: count=%s, segments=%s",
+            total,
+            target_indices,
+        )
         for i, seg in enumerate(targets, 1):
             index = seg["segment_index"]
             clip_path = clips_dir / f"{index}.mp4"
 
             visual_mode = seg.get("visual_mode") or "static_motion"
             provider = self._resolve_clip_provider(visual_mode=visual_mode)
+            params_desc = self._describe_clip_provider(
+                provider, motion_preset=settings.motion_preset
+            )
             if provider == "kling_std":
                 raise NotImplementedError(
                     f"segment {index} visual_mode=kling_std 需 VideoProvider，尚未接入"
@@ -96,7 +117,14 @@ class MediaMgr:
             if not seg_cues:
                 raise ValueError(f"segment {index} 无句级字幕时间轴")
             motion_prompt = seg.get("motion_prompt") or seg.get("visual_brief") or ""
-            logger.info("clip %s/%s building (provider=%s)...", i, total, provider)
+            logger.info(
+                "clip %s/%s building segment %s | %s | motion_chars=%s",
+                i,
+                total,
+                index,
+                params_desc,
+                len(motion_prompt),
+            )
             clip_mgr.build_segment_clip(
                 clip_provider=provider,
                 image_path=Path(seg["image_path"]),
@@ -108,10 +136,22 @@ class MediaMgr:
                 motion_prompt=motion_prompt,
             )
             segment_clips.append((seg["id"], clip_path))
-            logger.info("clip %s/%s done (segment %s)", i, total, index)
+            logger.info(
+                "clip %s/%s done segment %s | %s",
+                i,
+                total,
+                index,
+                params_desc,
+            )
 
         elapsed = time.time() - t_start
-        logger.info("clip total: %s/%s built in %.1fs", len(segment_clips), total, elapsed)
+        logger.info(
+            "clip batch done: %s/%s in %.1fs, segments=%s",
+            len(segment_clips),
+            total,
+            elapsed,
+            target_indices,
+        )
         return SegmentClipsResult(segment_clip_paths=segment_clips)
 
     def merge_final(
