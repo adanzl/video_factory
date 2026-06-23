@@ -37,6 +37,7 @@ export interface ClipSearchResult {
   total: number;
   clips: StockClip[];
   providers: ClipProviderSearchMeta[];
+  pixabay_query?: string | null;
 }
 
 export interface SearchClipsParams {

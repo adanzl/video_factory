@@ -358,6 +358,91 @@ def test_normalize_search_language():
     assert pixabay_lang("en") == "en"
 
 
+def test_parse_pixabay_query_payload():
+    from app.services.clip_search.query_rewrite_prompts import parse_pixabay_query_payload
+
+    assert parse_pixabay_query_payload({"search_query": "magnet experiment"}) == "magnet experiment"
+    with pytest.raises(ValueError, match="missing"):
+        parse_pixabay_query_payload({})
+
+
+def test_rewrite_pixabay_search_query_uses_llm(monkeypatch):
+    from app.services.clip_search.query_rewrite import rewrite_pixabay_search_query
+
+    monkeypatch.setattr(
+        "app.services.clip_search.query_rewrite.llm_mgr.rewrite_pixabay_query",
+        lambda query, *, language=None: "magnet experiment",
+    )
+    assert rewrite_pixabay_search_query("磁铁实验", language="zh") == "magnet experiment"
+
+
+def test_rewrite_pixabay_skips_english(monkeypatch):
+    from app.services.clip_search.query_rewrite import rewrite_pixabay_search_query
+
+    def fail(*args, **kwargs):
+        raise AssertionError("LLM should not be called")
+
+    monkeypatch.setattr(
+        "app.services.clip_search.query_rewrite.llm_mgr.rewrite_pixabay_query",
+        fail,
+    )
+    assert rewrite_pixabay_search_query("magnet experiment", language="en") == "magnet experiment"
+
+
+def test_search_clips_rewrites_pixabay_query(monkeypatch, settings):
+    captured: dict[str, str] = {}
+
+    def fake_rewrite(query, *, language=None):
+        captured["query"] = query
+        return "rewritten query"
+
+    def fake_pexels(query, **kwargs):
+        from app.services.clip_search.models import StockClip
+
+        captured["pexels"] = query
+        return [
+            StockClip(
+                id="pexels:1",
+                provider="pexels",
+                title="p",
+                preview_url="https://example.com/p.jpg",
+                video_url="https://example.com/p.mp4",
+                page_url="https://pexels.com/v/1",
+                license="Pexels License",
+            )
+        ]
+
+    def fake_pixabay(query, **kwargs):
+        from app.services.clip_search.models import StockClip
+
+        captured["pixabay"] = query
+        return [
+            StockClip(
+                id="pixabay:2",
+                provider="pixabay",
+                title="x",
+                preview_url="https://example.com/x.jpg",
+                video_url="https://example.com/x.mp4",
+                page_url="https://pixabay.com/v/2",
+                license="Pixabay License",
+            )
+        ]
+
+    monkeypatch.setattr(
+        "app.services.clip_search.aggregator.rewrite_pixabay_search_query",
+        fake_rewrite,
+    )
+    monkeypatch.setattr("app.services.clip_search.aggregator.search_pexels", fake_pexels)
+    monkeypatch.setattr("app.services.clip_search.aggregator.search_pixabay", fake_pixabay)
+    monkeypatch.setattr("app.services.clip_search.aggregator.search_nasa", lambda *a, **k: [])
+
+    result = search_clips("磁铁", language="zh", per_page=10, settings=settings)
+    assert captured["query"] == "磁铁"
+    assert captured["pexels"] == "磁铁"
+    assert captured["pixabay"] == "rewritten query"
+    assert result.pixabay_query == "rewritten query"
+
+
 def test_search_pexels_passes_locale(monkeypatch):
     captured: dict[str, object] = {}
 

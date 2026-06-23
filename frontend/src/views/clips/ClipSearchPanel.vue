@@ -52,6 +52,9 @@
 
     <div v-if="lastQuery" class="mb-3 flex flex-wrap items-center gap-2 text-sm text-gray-600">
       <span>「{{ lastQuery }}」共 {{ clips.length }} 条</span>
+      <span v-if="pixabayQuery && pixabayQuery !== lastQuery" class="text-xs text-gray-500">
+        Pixabay 搜索词：{{ pixabayQuery }}
+      </span>
       <el-tag
         v-for="meta in providerMeta"
         :key="meta.provider"
@@ -138,7 +141,7 @@ const props = withDefaults(
   {
     initialKeyword: "",
     initialOrientation: "",
-    initialLanguage: "",
+    initialLanguage: "zh",
     keywordInputClass: "w-72!",
     gridClass: "grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3",
     resultsWrapperClass: "",
@@ -158,6 +161,7 @@ const {
   clips,
   providerMeta,
   lastQuery,
+  pixabayQuery,
   searching,
   searched,
   handleSearch,
