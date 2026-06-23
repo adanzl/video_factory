@@ -16,9 +16,12 @@ from app.utils.job_info import (
     orientation_for_resolve,
 )
 from app.utils.media import (
+    NARRATION_WRITING_TARGET_RATIO,
     default_narration_target_words,
     min_narration_chars_for_target,
     narration_accept_min_chars,
+    narration_writing_plan,
+    narration_writing_target_chars,
     segment_text_char_cap,
 )
 from app.services.llm.llm_script_timeline import (
@@ -44,13 +47,19 @@ IMAGE_PROMPT_TARGET_CHARS = 300
 # https://api-docs.deepseek.com/zh-cn/guides/json_mode
 _STORYBOARD_JSON_EXAMPLE = """{
   "title": "标题示例",
-  "narration": "第一段口播第二段口播",
-  "word_count": 12,
+  "narration": "第一段口播正文写满本镜预算，用具体细节撑开，禁止一句带过。第二段口播同样写满本镜字数下限，补案例或步骤后再进入下一段。",
+  "word_count": 68,
   "visual_style": "画风定调一句话",
   "segments": [
     {
       "segment_index": 1,
-      "text": "第一段口播",
+      "text": "第一段口播正文写满本镜预算，用具体细节撑开，禁止一句带过。",
+      "visual_brief": "画面主旨描述",
+      "visual_mode": "static_motion"
+    },
+    {
+      "segment_index": 2,
+      "text": "第二段口播同样写满本镜字数下限，补案例或步骤后再进入下一段。",
       "visual_brief": "画面主旨描述",
       "visual_mode": "static_motion"
     }
@@ -63,7 +72,13 @@ _STORYBOARD_JSON_EXAMPLE_COMPACT = """{
   "segments": [
     {
       "segment_index": 1,
-      "text": "第一段口播",
+      "text": "第一段口播正文写满本镜预算，用具体细节撑开，禁止一句带过。",
+      "visual_brief": "画面主旨",
+      "visual_mode": "static_motion"
+    },
+    {
+      "segment_index": 2,
+      "text": "第二段口播同样写满本镜字数下限，补案例或步骤后再进入下一段。",
       "visual_brief": "画面主旨",
       "visual_mode": "static_motion"
     }
@@ -82,11 +97,11 @@ _IMAGE_PROMPTS_JSON_EXAMPLE = """{
 
 _MATERIAL_SCRIPT_JSON_EXAMPLE = """{
   "title": "标题示例",
-  "narration": "完整口播全文",
-  "word_count": 8,
+  "narration": "第一句口播写满本句预算，用具体细节撑开。第二句口播同样写满，补比喻或拟声后再接下一句。",
+  "word_count": 42,
   "segments": [
-    {"segment_index": 1, "text": "第一句口播"},
-    {"segment_index": 2, "text": "第二句口播"}
+    {"segment_index": 1, "text": "第一句口播写满本句预算，用具体细节撑开。"},
+    {"segment_index": 2, "text": "第二句口播同样写满，补比喻或拟声后再接下一句。"}
   ]
 }"""
 
@@ -181,25 +196,36 @@ _MATERIAL_NARRATION_LENGTH_RULE = (
 )
 
 _LIFE_NARRATION_VOICE_RULE = (
-    "口播口吻须像B站生活区UP主分享真实经验：第一人称、口语化、有具体场景与细节；"
-    "可用「我当时」「后来发现」「踩过的坑是」等表达，语气真诚不做作；"
-    "讲步骤时具体到「怎么做」，讲感悟时给可复制的结论，避免空泛鸡汤。"
+    "口播口吻须像B站生活避坑/经验科普讲解：客观、口语化、像在帮观众纠错；"
+    "优先用「很多人以为…其实…」「正确做法是…」「常见误区是…」；"
+    "禁止整篇伪装成某一职业的亲历者（矿工、医生、司机等），禁止编造「我当时在一线」类故事。"
 )
 
 _LIFE_NARRATION_LENGTH_RULE = (
     "【撑满字数的写法】每段口播须含三层——"
-    "①具体场景或亲身经历；②遇到的问题/转折；③做法、结果或可复制建议。"
-    "禁止整段仅一句空泛感叹。"
+    "①常见误区或错误做法；②原因/风险（为什么错）；③正确步骤或可操作结论。"
+    "禁止整段仅一句空泛感叹；禁止用长篇第一人称回忆录凑字数。"
     "【生成顺序】先逐段写满 segments，再原样拼接为 narration，最后统计 word_count；"
     "若未达字数下限，须当场扩写后再输出 JSON，禁止先输出再指望后处理。"
 )
 
 _LIFE_EXPERIENCE_STRUCTURE_RULE = (
-    "本片为5～8分钟横屏生活经验分享：只围绕一个明确主题（避坑/流程/工具/选择），"
-    "禁止多点罗列成「十条技巧」清单。"
-    "开头30秒内点明「谁、遇到什么痛点、这条视频能帮什么」，禁止空泛「大家好我是XX」。"
-    "正文按「背景→具体问题→解决步骤或心路历程→可复制结论」展开，允许1～2个具体案例。"
-    "结尾给1条可行动建议 + 轻量互动（如「你平时怎么做？评论区聊聊」），禁止长篇回顾。"
+    "本片为生活避坑/经验科普：只围绕一个明确主题（避坑/流程/工具/选择），"
+    "禁止多点罗列成「十条技巧」清单，禁止抖音式伪亲历回忆录。"
+    "开头30秒内点明「大家常踩的坑是什么、这条视频纠正什么误区」，"
+    "禁止「我当XX时」「跟班长在XX干活」等编造一线故事开场。"
+    "正文按「误区→为什么错→正确做法→注意事项」展开；"
+    "举例最多1句泛化案例（如「有人曾…差点…」），不得通篇第一人称扮演从业者。"
+    "结尾给1条可行动建议 + 轻量互动，禁止「我一生都忘不了」类煽情收束。"
+)
+
+# 全风格口播禁用：伪亲历/职业角色扮演（生活区误区视频高发）
+_NARRATION_ANTI_MEMOIR_RULE = (
+    "【禁止伪亲历体】不得出现：「我当…时」「我在…干活/下井/上班」「老XX教我」"
+    "「班长拉着我跑」「我条件反射」「我后来查资料才知道」「评论区聊聊你平时怎么做」"
+    "等编造第一人称从业经历或互动话术；"
+    "不得扮演矿工、医护、司机等具体职业身份；"
+    "用第三人称或泛化「很多人/有些老说法」讲清误区与正确步骤即可。"
 )
 
 _SHORT_FORM_STRUCTURE_RULE = (
@@ -250,15 +276,24 @@ def _structure_rule(*, orientation: str, content_style: str) -> str:
 
 def _storyboard_role(content_style: str) -> str:
     if content_style == CONTENT_STYLE_LIFE_EXPERIENCE:
-        return "你是B站生活经验区UP主的内容编剧。"
+        return "你是B站生活避坑/经验科普的内容编剧。"
     return "你是给小朋友讲科普的视频编剧。"
 
 
 def _narration_word_range(target: int) -> tuple[int, int]:
-    """口播字数区间：下限与验收阈值一致，上限为理想目标 + 余量。"""
+    """口播字数区间：下限与验收阈值一致，上限为目标 + 余量。"""
     margin = max(50, int(target * 0.1))
     accept_min = narration_accept_min_chars(target)
     return accept_min, target + margin
+
+
+def _writing_target_clause(narration_target: int) -> str:
+    writing_target = narration_writing_target_chars(narration_target)
+    pct = int(NARRATION_WRITING_TARGET_RATIO * 100)
+    return (
+        f"必须达到 {writing_target} 字（总目标 {narration_target} 字的 {pct}%），"
+        f"不要只按验收下限凑字数"
+    )
 
 
 def _storyboard_length_budget(
@@ -267,39 +302,74 @@ def _storyboard_length_budget(
     segment_target_sec: float,
     content_style: str,
 ) -> str:
-    hard_min = narration_accept_min_chars(narration_target)
+    plan = narration_writing_plan(narration_target, segment_target_sec)
+    hard_min = plan["hard_min"]
+    writing_target = plan["writing_target"]
+    seg_count = plan["seg_count_min"]
+    per_min = plan["per_seg_min"]
+    pct = int(NARRATION_WRITING_TARGET_RATIO * 100)
     layers = (
-        "场景+问题+做法/感悟"
+        "误区+原因+正确做法"
         if content_style == CONTENT_STYLE_LIFE_EXPERIENCE
         else "感叹+科普点+比喻/拟声"
     )
     if segment_target_sec <= 0:
-        seg_count = max(6, (hard_min + 39) // 40)
-        per_min = max(30, (hard_min + seg_count - 1) // seg_count)
         return (
-            f"【字数预算】口播理想约 {narration_target} 字，硬性下限 {hard_min} 字（低于即不合格）。\n"
-            f"建议至少 {seg_count} 个 segments，每段至少 {per_min} 字；"
-            f"各段 text 字数之和须 ≥ {hard_min}。\n"
+            f"【字数预算】总目标 {narration_target} 字；"
+            f"写作必须达到 {writing_target} 字（总目标的 {pct}%）；"
+            f"验收下限 {hard_min} 字（低于即不合格）。\n"
+            f"须至少 {seg_count} 个 segments，每段至少 {per_min} 字；"
+            f"各段 text 字数之和须 ≥ {writing_target}。\n"
             f"每段用「{layers}」三层写法撑满，禁止整段一句带过。\n"
-            "【生成顺序】先按预算写满各段 segments，再拼接 narration，最后核对 word_count。"
+            "【生成顺序】先按预算写满各段 segments，再拼接 narration，最后核对 word_count。\n"
+            f"【输出前自检】segments 数量 ≥ {seg_count}；各段 text 字数之和 ≥ {writing_target}；"
+            "word_count 等于 narration 实际字数。"
         )
-    cap = segment_text_char_cap(segment_target_sec)
+    cap = plan["segment_cap"]
     hard_cap = int(cap * 1.15)
-    seg_count = max(5, (narration_target + cap - 1) // cap)
-    per_min = max(20, min(cap - 5, (hard_min + seg_count - 1) // seg_count))
-    per_target_lo = max(20, int(cap * 0.65))
-    per_target_hi = cap
+    per_target_lo = plan["per_seg_lo"]
+    per_target_hi = plan["per_seg_hi"]
     sum_floor = per_min * seg_count
     sec = int(segment_target_sec) if segment_target_sec == int(segment_target_sec) else segment_target_sec
     return (
-        f"【字数预算】口播理想约 {narration_target} 字，硬性下限 {hard_min} 字（低于即不合格）。\n"
+        f"【字数预算】总目标 {narration_target} 字；"
+        f"写作必须达到 {writing_target} 字（总目标的 {pct}%）；"
+        f"验收下限 {hard_min} 字（低于即不合格）。\n"
         f"单镜上限 {sec}s，每段 text 上限 {cap} 字（绝对不得超过 {hard_cap} 字，超限即不合格）。\n"
-        f"须至少 {seg_count} 个 segments（{narration_target} 字 ÷ {cap} 字/段），"
+        f"须至少 {seg_count} 个 segments（{writing_target} 字 ÷ {cap} 字/段），"
         f"每段 {per_target_lo}-{per_target_hi} 字、下限 {per_min} 字；"
-        f"各段下限之和约 {sum_floor} 字（须达到硬性下限 {hard_min}）。\n"
+        f"各段下限之和约 {sum_floor} 字（须达到写作目标 {writing_target}）。\n"
         f"禁止用 3～5 个长段堆叠口播，必须按单镜上限拆段。\n"
         f"每段用「{layers}」三层写法撑满，禁止整段一句带过。\n"
-        "【生成顺序】先规划段数与每段字数，再写满 segments，再拼接 narration，最后核对 word_count。"
+        "【生成顺序】先规划段数与每段字数，再写满 segments，再拼接 narration，最后核对 word_count。\n"
+        f"【输出前自检】segments 数量 ≥ {seg_count}；各段 text 字数之和 ≥ {writing_target}；"
+        "word_count 等于 narration 实际字数。"
+    )
+
+
+def _storyboard_length_system_clause(
+    *,
+    narration_target: int,
+    segment_target_sec: float,
+    compact_output: bool,
+) -> str:
+    plan = narration_writing_plan(narration_target, segment_target_sec)
+    seg_count = plan["seg_count_min"]
+    hard_min = plan["hard_min"]
+    writing_target = plan["writing_target"]
+    per_min = plan["per_seg_min"]
+    pct = int(NARRATION_WRITING_TARGET_RATIO * 100)
+    if compact_output:
+        return (
+            f"segments 数组长度必须 ≥ {seg_count}；"
+            f"各段 text 须写满（每段至少 {per_min} 字），后端会拼接为 narration；"
+            f"拼接后总字数须 ≥ {writing_target} 字（总目标 {narration_target} 字的 {pct}%）。"
+        )
+    return (
+        f"segments 数组长度必须 ≥ {seg_count}；"
+        f"各段 text 按顺序拼接须与 narration 完全一致；"
+        f"narration 须达到 {writing_target} 字（总目标 {narration_target} 字的 {pct}%，"
+        f"验收下限 {hard_min} 字）。"
     )
 
 
@@ -406,14 +476,21 @@ def build_storyboard_prompts(
     narration_hard_min = narration_word_min
     title_rule, title_user_prefix = _title_rule(title, max_title)
     length_rule = (
-        f"口播理想约 {narration_word_target} 字，硬性下限 {narration_hard_min} 字、"
-        f"上限 {narration_word_max} 字（不含空格换行），低于 {narration_hard_min} 字视为不合格；"
+        f"口播总目标 {narration_word_target} 字；{_writing_target_clause(narration_word_target)}；"
+        f"验收下限 {narration_hard_min} 字、上限 {narration_word_max} 字（不含空格换行）；"
+        f"低于 {narration_hard_min} 字视为不合格；"
         f"{_narration_length_rule(profile_style)}"
+    )
+    length_system = _storyboard_length_system_clause(
+        narration_target=narration_word_target,
+        segment_target_sec=target,
+        compact_output=compact_output,
     )
     if compact_output:
         json_fields = "title, visual_style, segments"
         narration_clause = (
-            "【紧凑输出】不要输出 narration 与 word_count 字段，各段 text 写全即可，后端会自动拼接。"
+            "【紧凑输出】不要输出 narration 与 word_count 字段；"
+            "各段 text 须按字数预算写满，后端会自动拼接为 narration。"
             "每段 visual_brief 控制在 30-50 字，只写画面主旨，禁止冗长描写。"
         )
         word_count_clause = ""
@@ -426,8 +503,10 @@ def build_storyboard_prompts(
         f"{title_rule}"
         f"{seg_rule}"
         f"{length_rule}"
+        f"{length_system}"
         f"{narration_clause}"
         f"narration口吻：{_narration_voice_rule(profile_style)}"
+        f"{_NARRATION_ANTI_MEMOIR_RULE}"
         f"{_structure_rule(orientation=profile_orientation, content_style=profile_style)}"
         "结构完整有开头结尾。"
         "禁止口播开头空泛自我介绍或冗长人设铺垫。"
@@ -552,8 +631,9 @@ def build_material_script_prompts(
         else "禁止开头自我介绍；第一句直接进入主题。"
     )
     length_rule = (
-        f"narration 理想约 {narration_word_target} 字，硬性下限 {narration_hard_min} 字、"
-        f"上限 {narration_word_max} 字（不含空格换行），低于 {narration_hard_min} 字视为不合格；"
+        f"narration 总目标 {narration_word_target} 字；{_writing_target_clause(narration_word_target)}；"
+        f"验收下限 {narration_hard_min} 字、上限 {narration_word_max} 字（不含空格换行）；"
+        f"低于 {narration_hard_min} 字视为不合格；"
         f"{_MATERIAL_NARRATION_LENGTH_RULE}"
     )
     system = (
@@ -562,6 +642,7 @@ def build_material_script_prompts(
         f"{title_rule}"
         f"{length_rule}"
         f"{_NARRATION_VOICE_RULE}"
+        f"{_NARRATION_ANTI_MEMOIR_RULE}"
         f"{opening_rule}"
         f"{segment_rule}"
         "word_count 必须等于 narration 实际字数，禁止虚报。"
@@ -605,8 +686,9 @@ def build_narration_expand_prompts(
         + "）。"
         f"扩写后 narration 须至少 {min_chars} 字（不含空格换行），当前仅 {current} 字，还差约 {deficit} 字。"
         "规则：segments 段数与 segment_index 不得减少、不得合并；"
-        "每段 text 只能扩写（补具体细节、案例、步骤或感悟），禁止删减已有核心信息；"
+        "每段 text 只能扩写（补具体细节、案例、步骤或结论），禁止删减已有核心信息；"
         "narration 为各段 text 按顺序原样拼接；word_count 等于 narration 实际字数。"
+        f"{_NARRATION_ANTI_MEMOIR_RULE}"
     )
     if keep_visual:
         system += (
