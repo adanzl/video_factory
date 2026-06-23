@@ -8,6 +8,7 @@ from app.config import get_settings
 from app.repositories import job_repo, title_repo
 from app.repositories.connection import connection
 from app.services.job.job_mgr import job_mgr
+from app.utils.job_info import default_orientation_for_pipeline, merge_job_info
 from app.services.llm.llm_mgr import llm_mgr
 from app.services.llm.llm_topics import normalize_title
 from app.services.topic.hot_pipeline import (
@@ -17,6 +18,7 @@ from app.services.topic.hot_pipeline import (
     run_hot_pipeline,
 )
 from app.services.topic.title_scorer import score_title, status_from_score
+from app.services.topic.topic_task_mgr import topic_task_mgr
 
 logger = logging.getLogger(__name__)
 
@@ -157,6 +159,10 @@ class TopicMgr:
                     skip_publish=skip_publish,
                     stage="script",
                     status="idle",
+                    info=merge_job_info(
+                        None,
+                        orientation=default_orientation_for_pipeline("standard"),
+                    ),
                 )
                 title_repo.update_title(
                     conn,
@@ -220,6 +226,27 @@ class TopicMgr:
             payload.get("summary", {}).get("themes", 0),
         )
         return result
+
+    def start_import_from_hot_search(
+        self,
+        *,
+        limit: int = 50,
+        l1_rules: bool = False,
+        count_per_theme: int = 3,
+        use_theme_llm: bool = True,
+        min_score: int = 70,
+    ) -> dict:
+        task = topic_task_mgr.start(
+            "hot_import",
+            lambda: self.import_from_hot_search(
+                limit=limit,
+                l1_rules=l1_rules,
+                count_per_theme=count_per_theme,
+                use_theme_llm=use_theme_llm,
+                min_score=min_score,
+            ),
+        )
+        return task.to_dict()
 
 
 topic_mgr = TopicMgr()

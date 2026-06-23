@@ -163,7 +163,10 @@ class Config:
     # ========== LLM ==========
     deepseek_api_key: str | None = _DEEPSEEK_KEY
     deepseek_base_url: str = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
-    deepseek_model: str = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+    deepseek_model: str = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
+    deepseek_max_tokens: int = int(os.getenv("DEEPSEEK_MAX_TOKENS", "32768"))
+    deepseek_thinking_enabled: bool = _bool("DEEPSEEK_THINKING", default=False)
+    llm_image_prompt_batch_size: int = int(os.getenv("LLM_IMAGE_PROMPT_BATCH_SIZE", "4"))
 
     # ========== TTS / CosyVoice ==========
     dashscope_api_key: str | None = _DASHSCOPE_KEY
@@ -176,7 +179,7 @@ class Config:
     tts_voice: str = _first("TTS_VOICE", "COSYVOICE_VOICE", default=_DEFAULT_TTS_VOICE)  # cSpell: disable-line
     tts_model: str | None = _first("TTS_MODEL", "COSYVOICE_MODEL") or None
     tts_speech_rate: float = float(
-        _first("TTS_SPEECH_RATE", "COSYVOICE_SPEECH_RATE", default="1.1")
+        _first("TTS_SPEECH_RATE", "COSYVOICE_SPEECH_RATE", default="1.15")
     )
     tts_volume: int = int(_first("TTS_VOLUME", "COSYVOICE_VOLUME", default="50"))
     tts_instruction: str | None = _opt("TTS_INSTRUCTION")

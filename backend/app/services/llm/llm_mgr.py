@@ -23,6 +23,34 @@ class LLMClient:
         max_title_length: int | None = None,
         narration_target_words: int | None = None,
         supplementary_info: str | None = None,
+        job: dict | None = None,
+        existing_script: dict | None = None,
+        retry_scope: str | None = None,
+        generate_image_prompts: bool = True,
+    ) -> dict[str, Any]:
+        raise NotImplementedError
+
+    def generate_storyboard(
+        self,
+        title: str,
+        *,
+        feedback: str | None = None,
+        segment_target_sec: float | None = None,
+        max_title_length: int | None = None,
+        narration_target_words: int | None = None,
+        supplementary_info: str | None = None,
+        job: dict | None = None,
+    ) -> dict[str, Any]:
+        raise NotImplementedError
+
+    def fill_image_prompts(
+        self,
+        script: dict[str, Any],
+        *,
+        feedback: str | None = None,
+        supplementary_info: str | None = None,
+        job: dict | None = None,
+        segment_indices: list[int] | None = None,
     ) -> dict[str, Any]:
         raise NotImplementedError
 
@@ -85,6 +113,10 @@ class LLMMgr:
         max_title_length: int | None = None,
         narration_target_words: int | None = None,
         supplementary_info: str | None = None,
+        job: dict | None = None,
+        existing_script: dict | None = None,
+        retry_scope: str | None = None,
+        generate_image_prompts: bool = True,
     ) -> dict[str, Any]:
         return self._get_client().generate_script(
             title,
@@ -93,6 +125,48 @@ class LLMMgr:
             max_title_length=max_title_length,
             narration_target_words=narration_target_words,
             supplementary_info=supplementary_info,
+            job=job,
+            existing_script=existing_script,
+            retry_scope=retry_scope,
+            generate_image_prompts=generate_image_prompts,
+        )
+
+    def generate_storyboard(
+        self,
+        title: str,
+        *,
+        feedback: str | None = None,
+        segment_target_sec: float | None = None,
+        max_title_length: int | None = None,
+        narration_target_words: int | None = None,
+        supplementary_info: str | None = None,
+        job: dict | None = None,
+    ) -> dict[str, Any]:
+        return self._get_client().generate_storyboard(
+            title,
+            feedback=feedback,
+            segment_target_sec=segment_target_sec,
+            max_title_length=max_title_length,
+            narration_target_words=narration_target_words,
+            supplementary_info=supplementary_info,
+            job=job,
+        )
+
+    def fill_image_prompts(
+        self,
+        script: dict[str, Any],
+        *,
+        feedback: str | None = None,
+        supplementary_info: str | None = None,
+        job: dict | None = None,
+        segment_indices: list[int] | None = None,
+    ) -> dict[str, Any]:
+        return self._get_client().fill_image_prompts(
+            script,
+            feedback=feedback,
+            supplementary_info=supplementary_info,
+            job=job,
+            segment_indices=segment_indices,
         )
 
     def generate_topics(

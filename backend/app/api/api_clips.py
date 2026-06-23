@@ -7,6 +7,7 @@ from flask import Blueprint
 from app.api.errors import APIError
 from app.api.utils import get_query, json_ok, parse_query_int
 from app.services.clip_search.clip_search_mgr import clip_search_mgr
+from app.services.clip_search.preview_proxy import proxy_clip_preview
 
 bp = Blueprint("api_clips", __name__, url_prefix="/v_factory/api/clips")
 
@@ -50,6 +51,16 @@ def _parse_query_str(
 @bp.get("/sources")
 def list_sources_route():
     return json_ok(clip_search_mgr.list_providers())
+
+
+@bp.get("/preview")
+def preview_clip_route():
+    """代理外部素材视频，支持 Range 请求供浏览器播放。"""
+    url = _parse_query_str("url", required=True, max_length=2048)
+    try:
+        return proxy_clip_preview(url)
+    except ValueError as exc:
+        raise APIError(str(exc), status_code=400) from exc
 
 
 @bp.get("/search")

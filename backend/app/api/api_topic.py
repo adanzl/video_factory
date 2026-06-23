@@ -8,6 +8,7 @@ from app.api.errors import APIError
 from app.api.utils import (
     get_json_body,
     get_query,
+    json_accepted,
     json_ok,
     parse_bool,
     parse_int,
@@ -17,6 +18,7 @@ from app.api.utils import (
 )
 from app.services.llm.llm_mgr import llm_mgr
 from app.services.topic.topic_mgr import topic_mgr
+from app.services.topic.topic_task_mgr import topic_task_mgr
 
 bp = Blueprint("api_topic", __name__, url_prefix="/v_factory/api/topic")
 
@@ -80,7 +82,7 @@ def generate_topic_route():
 
 @bp.post("/hot")
 def import_hot_topics_route():
-    """从 B 站热搜采集、筛选、生成标题并写入选题库（source=热搜）。"""
+    """异步：从 B 站热搜采集、筛选、生成标题并写入选题库（source=热搜）。"""
     data = get_json_body(required=False)
     limit = parse_int(data, "limit", 50, minimum=1, maximum=50)
     count_per_theme = parse_int(data, "count_per_theme", 3, minimum=1, maximum=20)
@@ -94,14 +96,14 @@ def import_hot_topics_route():
         min_score = 70
 
     logger.info(
-        "[TOPIC] api /hot limit=%d count_per_theme=%d l1_rules=%s min_score=%d",
+        "[TOPIC] api /hot (async) limit=%d count_per_theme=%d l1_rules=%s min_score=%d",
         limit,
         count_per_theme,
         l1_rules,
         min_score,
     )
-    return json_ok(
-        topic_mgr.import_from_hot_search(
+    return json_accepted(
+        topic_mgr.start_import_from_hot_search(
             limit=limit,
             l1_rules=l1_rules,
             count_per_theme=count_per_theme,
@@ -109,6 +111,14 @@ def import_hot_topics_route():
             min_score=min_score,
         )
     )
+
+
+@bp.get("/hot/task/<task_id>")
+def get_hot_import_task_route(task_id: str):
+    task = topic_task_mgr.get(task_id)
+    if task is None or task.kind != "hot_import":
+        raise APIError("task not found", status_code=404)
+    return json_ok(task.to_dict())
 
 
 @bp.post("/score")

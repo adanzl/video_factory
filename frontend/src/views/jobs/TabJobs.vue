@@ -202,4 +202,6 @@ const handleDelete = async (row: JobListItem) => {
 };
 
 onMounted(fetchJobs);
+
+defineExpose({ refresh: fetchJobs });
 </script>

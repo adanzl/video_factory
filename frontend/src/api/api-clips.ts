@@ -1,7 +1,7 @@
 /**
  * 素材片段聚合搜索 API（不入库）
  */
-import { api } from "./config";
+import { api, getApiUrl } from "./config";
 import type {
   ClipProviderStatus,
   ClipSearchResult,
@@ -32,3 +32,40 @@ export const CLIP_PROVIDER_LABELS: Record<ClipProviderName, string> = {
   pixabay: "Pixabay",
   nasa: "NASA",
 };
+
+/** poster 必须是图片；若后端误传 mp4 则忽略 */
+export function clipPosterUrl(previewUrl?: string): string | undefined {
+  const trimmed = previewUrl?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  if (/\.(mp4|webm|m3u8)(\?|#|$)/i.test(trimmed)) {
+    return undefined;
+  }
+  return trimmed;
+}
+
+/** 经后端校验后播放；Pexels/Pixabay 等 CDN 直连，避免 gevent 代理大文件 */
+const DIRECT_PLAY_HOSTS = [
+  "videos.pexels.com",
+  "player.vimeo.com",
+  "cdn.pixabay.com",
+  "images-assets.nasa.gov",
+];
+
+export function clipPreviewUrl(remoteUrl: string): string {
+  const trimmed = remoteUrl?.trim();
+  if (!trimmed) {
+    return "";
+  }
+  try {
+    const host = new URL(trimmed).hostname.toLowerCase();
+    if (DIRECT_PLAY_HOSTS.some(h => host === h || host.endsWith(`.${h}`))) {
+      return trimmed;
+    }
+  } catch {
+    // 非法 URL 仍走代理校验
+  }
+  const base = getApiUrl();
+  return `${base}/v_factory/api/clips/preview?url=${encodeURIComponent(trimmed)}`;
+}

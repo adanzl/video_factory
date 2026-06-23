@@ -22,6 +22,7 @@ export interface ScriptJson {
   cost_time?: number;
   visual_style?: string;
   script_mode?: "ai" | "manual";
+  generate_image_prompts?: boolean;
   segments?: ScriptSegment[];
   llm_prompts?: LlmPromptStep[];
   supplementary_info?: string;

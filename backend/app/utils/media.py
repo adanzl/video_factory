@@ -16,6 +16,12 @@ NARRATION_CHARS_PER_SEC = 5.0
 NARRATION_FILL_RATIO = 0.92
 NARRATION_MIN_CHARS = 200
 NARRATION_MAX_CHARS = 3000
+# 口播验收下限：目标字数的 85%（LLM 重试与 script 校验对齐）
+NARRATION_ACCEPT_RATIO = 0.85
+# 绝对硬底：目标字数的 67%（主题实在撑不满时带警告放行）
+NARRATION_HARD_MIN_RATIO = 0.67
+# 略低于绝对硬底时放行（避免 90% 硬底附近反复打回）
+NARRATION_SOFT_MIN_RATIO = 0.90
 
 
 def estimate_narration_target_words(duration_sec: float) -> int:
@@ -24,8 +30,20 @@ def estimate_narration_target_words(duration_sec: float) -> int:
 
 
 def segment_text_char_cap(segment_target_sec: float) -> int:
-    """单镜口播 text 字数上限（与 segment_target_sec 对应）。"""
+    """单镜口播 text 字数上限（5 字/秒 × segment_target_sec）。"""
     return max(20, int(segment_target_sec * NARRATION_CHARS_PER_SEC))
+
+
+def storyboard_compact_output(
+    narration_target: int,
+    segment_target_sec: float,
+) -> bool:
+    """长稿分镜是否用紧凑 JSON（省略 narration/word_count，后端拼接）。"""
+    if segment_target_sec <= 0:
+        return narration_target >= 900
+    cap = segment_text_char_cap(segment_target_sec)
+    seg_count = max(5, (narration_target + cap - 1) // cap)
+    return narration_target >= 900 or seg_count >= 10
 
 
 def body_duration_for_target_final(
@@ -48,6 +66,35 @@ def default_narration_target_words(settings: Config | None = None) -> int:
         intro_budget_sec=settings.intro_duration_budget_sec,
     )
     return estimate_narration_target_words(body)
+
+
+def min_narration_chars_for_target(narration_target_words: int | None = None) -> int:
+    """口播绝对硬底（主题撑不满时最低可接受，带警告）。"""
+    target = max(NARRATION_MIN_CHARS, narration_target_words or default_narration_target_words())
+    return max(NARRATION_MIN_CHARS, int(target * NARRATION_HARD_MIN_RATIO))
+
+
+def narration_accept_min_chars(narration_target_words: int | None = None) -> int:
+    """口播验收下限（LLM 须达到；与 standard script 阶段重试阈值一致）。"""
+    target = max(NARRATION_MIN_CHARS, narration_target_words or default_narration_target_words())
+    return max(NARRATION_MIN_CHARS, int(target * NARRATION_ACCEPT_RATIO))
+
+
+def narration_soft_min_chars(required_chars: int) -> int:
+    """略低于硬性下限时仍放行（带警告）。"""
+    return max(NARRATION_MIN_CHARS, int(required_chars * NARRATION_SOFT_MIN_RATIO))
+
+
+def narration_target_for_minutes(
+    minutes: float,
+    *,
+    chars_per_sec: float = NARRATION_CHARS_PER_SEC,
+    intro_budget_sec: float = 2.0,
+) -> int:
+    """按成片分钟数估算口播目标字数（5 字/秒）。"""
+    body = max(30.0, minutes * 60.0 - intro_budget_sec)
+    target = int(body * chars_per_sec * NARRATION_FILL_RATIO)
+    return max(NARRATION_MIN_CHARS, min(NARRATION_MAX_CHARS, target))
 
 
 def _read_base_meta(media_dir: Path) -> dict:

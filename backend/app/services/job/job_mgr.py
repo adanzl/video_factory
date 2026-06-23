@@ -13,11 +13,57 @@ from app.services.job.job_reset import prepare_for_action, prepare_job_rerun
 from app.repositories import job_log_repo, job_repo, segment_repo
 from app.repositories.connection import connection
 from app.utils.async_util import run_in_background
+from app.utils.job_info import default_orientation_for_pipeline, merge_job_info
 
 logger = logging.getLogger(__name__)
 
 _API_UPDATABLE = frozenset({"title", "skip_publish", "status"})
 _VALID_STATUSES = frozenset({"pending", "running", "done", "failed"})
+
+
+def _script_action_detail(
+    *,
+    job: dict,
+    to_end: bool,
+    title: str | None,
+    segment_target_sec: float | None,
+    max_title_length: int | None,
+    narration_target_words: int | None,
+    skip_title_optimize: bool,
+    generate_image_prompts: bool,
+    supplementary_info: str | None,
+    video_timeline: str | None,
+    orientation: str | None,
+    content_style: str | None,
+) -> str:
+    from app.utils.job_info import content_style_from_job, orientation_for_resolve
+
+    effective_title = (title or job.get("title") or "").strip()
+    parts = [
+        f"to_end={to_end}",
+        f"title={effective_title!r}",
+    ]
+    if segment_target_sec is not None:
+        parts.append(f"segment_target_sec={segment_target_sec}")
+    if max_title_length is not None:
+        parts.append(f"max_title_length={max_title_length}")
+    if narration_target_words is not None:
+        parts.append(f"narration_target_words={narration_target_words}")
+    if skip_title_optimize:
+        parts.append("skip_title_optimize=True")
+    if generate_image_prompts:
+        parts.append("generate_image_prompts=True")
+    orient = orientation or orientation_for_resolve(job) or "portrait"
+    style = content_style or content_style_from_job(job)
+    parts.append(f"orientation={orient}")
+    parts.append(f"content_style={style}")
+    extra = (supplementary_info or "").strip()
+    if extra:
+        parts.append(f"supplementary_info={len(extra)}chars")
+    timeline = (video_timeline or "").strip()
+    if timeline:
+        parts.append(f"video_timeline={len(timeline)}chars")
+    return ", ".join(parts)
 
 
 class JobBusyError(Exception):
@@ -80,6 +126,10 @@ class JobMgr:
                 stage="script",
                 status="pending",
                 pipeline="standard",
+                info=merge_job_info(
+                    None,
+                    orientation=default_orientation_for_pipeline("standard"),
+                ),
             )
             job_log_repo.append_log(conn, job["id"], "title", f"created job: {cleaned}")
             return job
@@ -107,6 +157,20 @@ class JobMgr:
                     updates["script_json"] = synced
             job = job_repo.update_job(conn, job_id, **updates)
             job_log_repo.append_log(conn, job_id, "api", f"updated fields: {', '.join(updates)}")
+            return job
+
+    def reset_job(self, job_id: int) -> dict:
+        """强制将任务状态重置为 pending（不清除 stage 与产物）。"""
+        with connection() as conn:
+            job_repo.get_job(conn, job_id)
+            job = job_repo.update_job(
+                conn,
+                job_id,
+                status="pending",
+                fail_stage=None,
+                error_message=None,
+            )
+            job_log_repo.append_log(conn, job_id, "api", "job status reset to pending")
             return job
 
     def delete_job(self, job_id: int) -> None:
@@ -168,6 +232,7 @@ class JobMgr:
         run: Callable[[], None],
         *,
         segment_indices: list[int] | None = None,
+        action_detail: str | None = None,
     ) -> dict:
         lock = self._job_lock(job_id)
         if not lock.acquire(blocking=False):
@@ -184,7 +249,19 @@ class JobMgr:
             fail_stage = action.split("/")[0]
 
             def _worker() -> None:
-                logger.info("job %s action [%s] started in background thread", job_id, action)
+                if action_detail:
+                    logger.info(
+                        "job %s action [%s] started in background thread: %s",
+                        job_id,
+                        action,
+                        action_detail,
+                    )
+                else:
+                    logger.info(
+                        "job %s action [%s] started in background thread",
+                        job_id,
+                        action,
+                    )
                 try:
                     run()
                 except Exception as exc:
@@ -208,11 +285,28 @@ class JobMgr:
         max_title_length: int | None = None,
         narration_target_words: int | None = None,
         skip_title_optimize: bool = False,
+        generate_image_prompts: bool = False,
         supplementary_info: str | None = None,
         video_timeline: str | None = None,
+        orientation: str | None = None,
+        content_style: str | None = None,
     ) -> dict:
         """生成文案。实现：worker/loop.run_script → worker/stages/*/script.py"""
         from worker.loop import run_script
+
+        info_patch: dict[str, str] = {}
+        if orientation is not None:
+            info_patch["orientation"] = orientation
+        if content_style is not None:
+            info_patch["content_style"] = content_style
+        if info_patch:
+            with connection() as conn:
+                job = job_repo.get_job(conn, job_id)
+                job_repo.update_job(
+                    conn,
+                    job_id,
+                    info=merge_job_info(job.get("info"), **info_patch),
+                )
 
         if title is not None:
             cleaned = title.strip()
@@ -222,6 +316,21 @@ class JobMgr:
             if cleaned != job["title"]:
                 self.update_job(job_id, title=cleaned)
 
+        job = self.get_job(job_id)
+        detail = _script_action_detail(
+            job=job,
+            to_end=to_end,
+            title=title,
+            segment_target_sec=segment_target_sec,
+            max_title_length=max_title_length,
+            narration_target_words=narration_target_words,
+            skip_title_optimize=skip_title_optimize,
+            generate_image_prompts=generate_image_prompts,
+            supplementary_info=supplementary_info,
+            video_timeline=video_timeline,
+            orientation=orientation,
+            content_style=content_style,
+        )
         return self._run_in_background(
             job_id,
             "script",
@@ -232,9 +341,21 @@ class JobMgr:
                 max_title_length=max_title_length,
                 narration_target_words=narration_target_words,
                 skip_title_optimize=skip_title_optimize,
+                generate_image_prompts=generate_image_prompts,
                 supplementary_info=supplementary_info,
                 video_timeline=video_timeline,
             ),
+            action_detail=detail,
+        )
+
+    def generate_image_prompts(self, job_id: int) -> dict:
+        """为已有脚本补全文生图提示词。实现：worker/loop.run_script_image_prompts"""
+        from worker.loop import run_script_image_prompts
+
+        return self._run_in_background(
+            job_id,
+            "script/imagePrompts",
+            lambda: run_script_image_prompts(job_id),
         )
 
     def preview_script_prompts(
@@ -248,15 +369,24 @@ class JobMgr:
         skip_title_optimize: bool = False,
         supplementary_info: str | None = None,
         video_timeline: str | None = None,
-        use_saved_script: bool = False,
+        orientation: str | None = None,
+        content_style: str | None = None,
     ) -> list[dict[str, str]]:
         from app.services.llm.llm_script_prompts import collect_script_prompts
 
         job = self.get_job(job_id)
+        if orientation is not None or content_style is not None:
+            job = dict(job)
+            patch: dict[str, str] = {}
+            if orientation is not None:
+                patch["orientation"] = orientation
+            if content_style is not None:
+                patch["content_style"] = content_style
+            job["info"] = merge_job_info(job.get("info"), **patch)
         source_title = (title or job["title"] or "").strip()
         if not source_title:
             raise ValueError("title is empty")
-        script = job.get("script_json") if use_saved_script else None
+        script = job.get("script_json")
         if script is not None and not isinstance(script, dict):
             script = None
         return collect_script_prompts(
@@ -267,8 +397,9 @@ class JobMgr:
             narration_target_words=narration_target_words,
             supplementary_info=supplementary_info,
             video_timeline=video_timeline,
-            script=script if use_saved_script else None,
+            script=script,
             skip_title_optimize=skip_title_optimize,
+            preview_followups=True,
         )
 
     def generate_video_description(self, job_id: int) -> dict:
@@ -308,9 +439,19 @@ class JobMgr:
         to_end: bool = False,
         hold_tail_sec: float | None = None,
         orientation: str | None = None,
+        orientation_preference: str | None = None,
     ) -> dict:
         """生成片头。实现：worker/loop.run_intro → worker/stages/common/intro.py"""
         from worker.loop import run_intro
+
+        if orientation_preference is not None:
+            with connection() as conn:
+                job = job_repo.get_job(conn, job_id)
+                job_repo.update_job(
+                    conn,
+                    job_id,
+                    info=merge_job_info(job.get("info"), orientation=orientation_preference),
+                )
 
         return self._run_in_background(
             job_id,
