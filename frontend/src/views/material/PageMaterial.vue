@@ -165,7 +165,7 @@
           </el-radio-group>
         </el-form-item>
         <el-form-item v-if="createJobScriptMode === 'manual'" label="口播文案" required>
-          <el-input v-model="createJobNarration" type="textarea" :rows="6" placeholder="完整口播，至少 200 字" />
+          <el-input v-model="createJobNarration" type="textarea" :rows="6" placeholder="完整口播" />
         </el-form-item>
         <el-form-item label="跳过投稿">
           <el-switch v-model="createJobSkipPublish" />

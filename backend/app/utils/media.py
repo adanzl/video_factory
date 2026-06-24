@@ -16,8 +16,9 @@ if TYPE_CHECKING:
 # 中文口播约 5 字/秒（16s ≈ 80 字；与 CosyVoice 实际语速对齐）
 NARRATION_CHARS_PER_SEC = 5.0
 NARRATION_FILL_RATIO = 0.92
-NARRATION_MIN_CHARS = 200
 NARRATION_MAX_CHARS = 3000
+# 口播绝对硬底（仅用于「明显过短」校验，不参与时长估算）
+NARRATION_ABS_MIN_CHARS = 20
 # 口播验收下限：目标字数的 85%（LLM 重试与 script 校验对齐）
 NARRATION_ACCEPT_RATIO = 0.85
 # LLM prompt 写作目标：目标字数的 95%（高于验收下限，提高一次写满概率）
@@ -30,7 +31,7 @@ NARRATION_SOFT_MIN_RATIO = 0.90
 
 def estimate_narration_target_words(duration_sec: float) -> int:
     target = int(duration_sec * NARRATION_CHARS_PER_SEC * NARRATION_FILL_RATIO)
-    return max(NARRATION_MIN_CHARS, min(NARRATION_MAX_CHARS, target))
+    return max(1, min(NARRATION_MAX_CHARS, target))
 
 
 def segment_text_char_cap(segment_target_sec: float) -> int:
@@ -102,8 +103,8 @@ def assign_segment_timings(
 
 def narration_writing_target_chars(narration_target_words: int | None = None) -> int:
     """LLM prompt 要求的写作目标字数（目标字数的 95%）。"""
-    target = max(NARRATION_MIN_CHARS, narration_target_words or default_narration_target_words())
-    return max(NARRATION_MIN_CHARS, int(target * NARRATION_WRITING_TARGET_RATIO))
+    target = narration_target_words or default_narration_target_words()
+    return max(1, int(target * NARRATION_WRITING_TARGET_RATIO))
 
 
 def narration_writing_plan(
@@ -173,19 +174,19 @@ def default_narration_target_words(settings: Config | None = None) -> int:
 
 def min_narration_chars_for_target(narration_target_words: int | None = None) -> int:
     """口播绝对硬底（主题撑不满时最低可接受，带警告）。"""
-    target = max(NARRATION_MIN_CHARS, narration_target_words or default_narration_target_words())
-    return max(NARRATION_MIN_CHARS, int(target * NARRATION_HARD_MIN_RATIO))
+    target = narration_target_words or default_narration_target_words()
+    return max(1, int(target * NARRATION_HARD_MIN_RATIO))
 
 
 def narration_accept_min_chars(narration_target_words: int | None = None) -> int:
     """口播验收下限（LLM 须达到；与 standard script 阶段重试阈值一致）。"""
-    target = max(NARRATION_MIN_CHARS, narration_target_words or default_narration_target_words())
-    return max(NARRATION_MIN_CHARS, int(target * NARRATION_ACCEPT_RATIO))
+    target = narration_target_words or default_narration_target_words()
+    return max(1, int(target * NARRATION_ACCEPT_RATIO))
 
 
 def narration_soft_min_chars(required_chars: int) -> int:
     """略低于硬性下限时仍放行（带警告）。"""
-    return max(NARRATION_MIN_CHARS, int(required_chars * NARRATION_SOFT_MIN_RATIO))
+    return max(1, int(required_chars * NARRATION_SOFT_MIN_RATIO))
 
 
 def narration_target_for_minutes(
@@ -197,7 +198,7 @@ def narration_target_for_minutes(
     """按成片分钟数估算口播目标字数（5 字/秒）。"""
     body = max(30.0, minutes * 60.0 - intro_budget_sec)
     target = int(body * chars_per_sec * NARRATION_FILL_RATIO)
-    return max(NARRATION_MIN_CHARS, min(NARRATION_MAX_CHARS, target))
+    return max(1, min(NARRATION_MAX_CHARS, target))
 
 
 def _read_base_meta(media_dir: Path) -> dict:

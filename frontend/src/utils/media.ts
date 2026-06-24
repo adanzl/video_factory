@@ -76,7 +76,6 @@ export function formatCostTime(seconds?: number | null): string {
 /** 中文口播约 5 字/秒，与后端 app/utils/media 对齐 */
 const NARRATION_CHARS_PER_SEC = 5;
 const NARRATION_FILL_RATIO = 0.92;
-const NARRATION_MIN_CHARS = 200;
 const NARRATION_MAX_CHARS = 3000;
 
 /** 默认目标成片时长（秒），与 TARGET_FINAL_DURATION_SEC 对齐 */
@@ -87,7 +86,7 @@ export const INTRO_DURATION_BUDGET_SEC = 2;
 /** 按基底/目标视频时长估算推荐口播字数 */
 export function estimateNarrationTargetWords(durationSec: number): number {
   const target = Math.floor(durationSec * NARRATION_CHARS_PER_SEC * NARRATION_FILL_RATIO);
-  return Math.max(NARRATION_MIN_CHARS, Math.min(NARRATION_MAX_CHARS, target));
+  return Math.max(1, Math.min(NARRATION_MAX_CHARS, target));
 }
 
 /** standard 线默认口播目标字数 */
@@ -106,7 +105,7 @@ export function narrationTargetForMinutes(
 ): number {
   const body = Math.max(30, minutes * 60 - introBudgetSec);
   const target = Math.floor(body * charsPerSec * NARRATION_FILL_RATIO);
-  return Math.max(NARRATION_MIN_CHARS, Math.min(NARRATION_MAX_CHARS, target));
+  return Math.max(1, Math.min(NARRATION_MAX_CHARS, target));
 }
 
 /** 格式化媒体时长（秒 → mm:ss） */
