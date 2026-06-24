@@ -284,6 +284,8 @@ class MaterialScriptStage(StageExecutor):
 
         script.pop("pending_narration", None)
         script["word_count"] = _narration_chars(script.get("narration", ""))
+        if narration_target_words is not None:
+            script["narration_target_words"] = narration_target_words
         assign_segment_timings(
             script,
             video_timeline=parse_video_timeline(video_timeline) if video_timeline else None,

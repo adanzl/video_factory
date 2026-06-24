@@ -7,7 +7,13 @@ from pathlib import Path
 
 from app.config import get_settings
 from app.services.llm.llm_script_prompts import IMAGE_PROMPT_TARGET_CHARS, MIN_IMAGE_PROMPT_CHARS
-from app.utils.media import segment_text_char_cap
+from app.utils.media import (
+    NARRATION_ABS_MIN_CHARS,
+    default_narration_target_words,
+    estimate_narration_target_words,
+    narration_accept_min_chars,
+    segment_text_char_cap,
+)
 from app.quality.models import QualityReport
 from app.services.media.audio_analysis import LoudnessStats, SilenceStats, analyze_loudness, analyze_silence
 from app.services.media.ffmpeg_utils import probe_duration
@@ -27,6 +33,20 @@ __all__ = [
 
 def _narration_chars(narration: str) -> int:
     return len(re.sub(r"\s+", "", narration))
+
+
+def _resolve_narration_target(script: dict) -> int:
+    raw = script.get("narration_target_words")
+    if isinstance(raw, bool):
+        pass
+    elif isinstance(raw, int) and raw > 0:
+        return raw
+    elif isinstance(raw, float) and raw.is_integer() and raw > 0:
+        return int(raw)
+    duration = script.get("total_duration_sec")
+    if isinstance(duration, (int, float)) and duration > 0:
+        return estimate_narration_target_words(float(duration))
+    return default_narration_target_words()
 
 
 _MEMOIR_BANNED_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
@@ -59,12 +79,20 @@ def check_copy(script: dict) -> QualityReport:
             details={"reason": f"memoir style narration: {memoir_issue}"},
         )
     word_count = _narration_chars(narration)
-    if word_count < 200:
+    min_chars = max(
+        NARRATION_ABS_MIN_CHARS,
+        narration_accept_min_chars(_resolve_narration_target(script)),
+    )
+    if word_count < min_chars:
         return QualityReport(
             level="major",
             step="copy",
             fail_stage="script",
-            details={"reason": "narration too short", "word_count": word_count},
+            details={
+                "reason": "narration too short",
+                "word_count": word_count,
+                "min_expected": min_chars,
+            },
         )
     banned = ["包治百病", "稳赚不赔"]
     for word in banned:

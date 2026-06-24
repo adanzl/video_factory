@@ -26,3 +26,27 @@ def test_check_copy_rejects_memoir_style():
     report = check_copy({"narration": MINER_SAMPLE})
     assert report.level == "major"
     assert "memoir" in report.details.get("reason", "")
+
+
+def test_check_copy_accepts_short_material_narration():
+    narration = "x" * 130
+    report = check_copy(
+        {
+            "narration": narration,
+            "narration_target_words": 138,
+        }
+    )
+    assert report.level == "pass"
+    assert report.details.get("word_count") == 130
+
+
+def test_check_copy_rejects_below_target_accept_min():
+    report = check_copy(
+        {
+            "narration": "x" * 50,
+            "narration_target_words": 138,
+        }
+    )
+    assert report.level == "major"
+    assert report.details.get("reason") == "narration too short"
+    assert report.details.get("min_expected") == 117
