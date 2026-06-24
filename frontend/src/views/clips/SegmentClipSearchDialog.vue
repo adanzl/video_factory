@@ -3,31 +3,35 @@
     v-model="visible"
     :title="dialogTitle"
     width="1100px"
+    align-center
     destroy-on-close
     append-to-body
   >
-    <ClipSearchPanel
-      v-if="visible"
-      :key="segmentIndex"
-      :initial-keyword="defaultKeyword"
-      :initial-orientation="defaultOrientation"
-      keyword-input-class="w-64!"
-      results-wrapper-class="max-h-[60vh] overflow-y-auto"
-      empty-class="py-12 text-center text-sm text-gray-400"
-      :show-meta="false"
-    >
-      <template #actions="{ clip }">
-        <el-button
-          type="primary"
-          size="small"
-          :loading="importingClipId === clip.id"
-          :disabled="importingClipId !== null && importingClipId !== clip.id"
-          @click="handleImport(clip)"
-        >
-          使用此片段
-        </el-button>
-      </template>
-    </ClipSearchPanel>
+  <div class="min-h-[60vh]">
+  
+      <ClipSearchPanel
+        v-if="visible"
+        :key="segmentIndex"
+        :initial-keyword="defaultKeyword"
+        :initial-orientation="defaultOrientation"
+        keyword-input-class="w-118!"
+        results-wrapper-class="max-h-[60vh] overflow-y-auto"
+        empty-class="py-12 text-center text-sm text-gray-400"
+        :show-meta="false"
+      >
+        <template #actions="{ clip }">
+          <el-button
+            type="primary"
+            size="small"
+            :loading="importingClipId === clip.id"
+            :disabled="importingClipId !== null && importingClipId !== clip.id"
+            @click="handleImport(clip)"
+          >
+            使用此片段
+          </el-button>
+        </template>
+      </ClipSearchPanel>
+    </div>
   </el-dialog>
 </template>
 

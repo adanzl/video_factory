@@ -1,0 +1,14 @@
+[
+  {
+    "business": "life",
+    "lora": "Food_Photo",
+    "prompt": "home cooking, natural window light, realistic photo, clean table, depth of field",
+    "output": "food_01.png"
+  },
+  {
+    "business": "science",
+    "lora": "Textbook_Line_Art",
+    "prompt": "cell structure diagram, labeled parts, educational illustration",
+    "output": "diagram_01.png"
+  }
+]
