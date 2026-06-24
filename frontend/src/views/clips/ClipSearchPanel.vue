@@ -143,7 +143,7 @@ const props = withDefaults(
     initialKeyword: "",
     initialOrientation: "",
     initialLanguage: "zh",
-    keywordInputClass: "w-72!",
+    keywordInputClass: "w-96!",
     gridClass: "grid grid-cols-3 gap-4",
     resultsWrapperClass: "",
     emptyClass: "py-16 text-center text-sm text-gray-400",
