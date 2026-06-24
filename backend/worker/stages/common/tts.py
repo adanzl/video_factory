@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from app.config import get_settings
-from app.core.pipelines import is_material_job
 from app.quality.checkers import check_tts_audio
 from app.quality.gate import apply_quality_checks
 from app.repositories import job_log_repo, job_repo, segment_repo
@@ -40,7 +39,7 @@ class TTSStage(StageExecutor):
             noise_db=settings.audio_silence_noise_db,
         )
         min_audio_dur: float | None = None
-        if is_material_job(job):
+        if (job.get("pipeline") or "standard").strip() == "material":
             base_dur = base_video_duration_sec(job=job, media_dir=ctx.media_dir)
             min_audio_dur = material_min_audio_duration_sec(base_dur)
 
