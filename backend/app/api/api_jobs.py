@@ -20,7 +20,13 @@ from app.api.utils import (
 )
 from app.services.intro.size import parse_intro_orientation
 from app.services.job.job_mgr import JobBusyError, job_mgr
-from app.utils.job_info import merge_job_info, normalize_content_style, normalize_orientation
+from app.utils.job_info import (
+    merge_job_info,
+    normalize_content_style,
+    normalize_image_provider,
+    normalize_orientation,
+    normalize_video_provider,
+)
 
 bp = Blueprint("api_jobs", __name__, url_prefix="/v_factory/api/jobs")
 
@@ -236,50 +242,74 @@ def run_tts_route():
     )
 
 
+def _parse_segment_body() -> tuple[int, bool, list[int] | None, str | None, str | None]:
+    data = get_json_body()
+    image_provider = None
+    if "image_provider" in data:
+        raw = parse_optional_str(data, "image_provider")
+        image_provider = normalize_image_provider(raw)
+        if raw and image_provider is None:
+            raise APIError(
+                "image_provider must be z_image_t2i, wan_t2i, or sd15_t2i",
+                status_code=400,
+            )
+    video_provider = None
+    if "video_provider" in data:
+        raw = parse_optional_str(data, "video_provider")
+        video_provider = normalize_video_provider(raw)
+        if raw and video_provider is None:
+            raise APIError(
+                "video_provider must be ffmpeg or wan_i2v",
+                status_code=400,
+            )
+    return (
+        parse_id(data),
+        parse_bool(data, "to_end", default=False),
+        parse_int_list(data, "segments"),
+        image_provider,
+        video_provider,
+    )
+
+
 @bp.post("/segment/all")
 def run_segment_all_route():
-    data = get_json_body()
-    job_id = parse_id(data)
-    to_end = parse_bool(data, "to_end", default=False)
-    segment_indices = parse_int_list(data, "segments")
+    job_id, to_end, segment_indices, image_provider, video_provider = _parse_segment_body()
     return _accept_stage(
         job_id,
         lambda: job_mgr.run_segment_all(
             job_id,
             to_end=to_end,
             segment_indices=segment_indices,
+            image_provider=image_provider,
+            video_provider=video_provider,
         ),
     )
 
 
 @bp.post("/segment/images")
 def run_segment_images_route():
-    data = get_json_body()
-    job_id = parse_id(data)
-    to_end = parse_bool(data, "to_end", default=False)
-    segment_indices = parse_int_list(data, "segments")
+    job_id, to_end, segment_indices, image_provider, _video_provider = _parse_segment_body()
     return _accept_stage(
         job_id,
         lambda: job_mgr.run_segment_images(
             job_id,
             to_end=to_end,
             segment_indices=segment_indices,
+            image_provider=image_provider,
         ),
     )
 
 
 @bp.post("/segment/clips")
 def run_segment_clips_route():
-    data = get_json_body()
-    job_id = parse_id(data)
-    to_end = parse_bool(data, "to_end", default=False)
-    segment_indices = parse_int_list(data, "segments")
+    job_id, to_end, segment_indices, _image_provider, video_provider = _parse_segment_body()
     return _accept_stage(
         job_id,
         lambda: job_mgr.run_segment_clips(
             job_id,
             to_end=to_end,
             segment_indices=segment_indices,
+            video_provider=video_provider,
         ),
     )
 

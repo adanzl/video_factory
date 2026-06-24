@@ -279,6 +279,28 @@ class JobMgr:
         finally:
             lock.release()
 
+    def _persist_image_provider(self, job_id: int, image_provider: str | None) -> None:
+        if image_provider is None:
+            return
+        with connection() as conn:
+            job = job_repo.get_job(conn, job_id)
+            job_repo.update_job(
+                conn,
+                job_id,
+                info=merge_job_info(job.get("info"), image_provider=image_provider),
+            )
+
+    def _persist_video_provider(self, job_id: int, video_provider: str | None) -> None:
+        if video_provider is None:
+            return
+        with connection() as conn:
+            job = job_repo.get_job(conn, job_id)
+            job_repo.update_job(
+                conn,
+                job_id,
+                info=merge_job_info(job.get("info"), video_provider=video_provider),
+            )
+
     def run_script(
         self,
         job_id: int,
@@ -505,10 +527,14 @@ class JobMgr:
         *,
         to_end: bool = False,
         segment_indices: list[int] | None = None,
+        image_provider: str | None = None,
+        video_provider: str | None = None,
     ) -> dict:
         """重跑分镜静图与图生视频。实现：worker/loop.run_segment_all → worker/stages/standard/segment.py"""
         from worker.loop import run_segment_all
 
+        self._persist_image_provider(job_id, image_provider)
+        self._persist_video_provider(job_id, video_provider)
         return self._run_in_background(
             job_id,
             "segment/all",
@@ -526,10 +552,12 @@ class JobMgr:
         *,
         to_end: bool = False,
         segment_indices: list[int] | None = None,
+        image_provider: str | None = None,
     ) -> dict:
         """重出分镜静图。实现：worker/loop.run_segment_images → worker/stages/standard/segment.py"""
         from worker.loop import run_segment_images
 
+        self._persist_image_provider(job_id, image_provider)
         return self._run_in_background(
             job_id,
             "segment/images",
@@ -547,9 +575,12 @@ class JobMgr:
         *,
         to_end: bool = False,
         segment_indices: list[int] | None = None,
+        video_provider: str | None = None,
     ) -> dict:
         """重跑图生视频。实现：worker/loop.run_segment_clips → worker/stages/standard/segment.py"""
         from worker.loop import run_segment_clips
+
+        self._persist_video_provider(job_id, video_provider)
 
         return self._run_in_background(
             job_id,

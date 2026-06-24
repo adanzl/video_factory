@@ -32,7 +32,7 @@ class VideoProvider(Protocol):
 class VisualMgr:
     """画面生产管理器。"""
 
-    def _get_image_provider(self) -> ImageProvider:
+    def _get_image_provider(self, provider_name: str | None = None) -> ImageProvider:
         from app.services.visual.image_mock import MockImageProvider
         from app.services.visual.image_sd15 import Sd15ImageProvider
         from app.services.visual.image_wan import WanImageProvider
@@ -40,7 +40,7 @@ class VisualMgr:
 
         if get_settings().mock_mode:
             return MockImageProvider()
-        provider = get_settings().image_provider
+        provider = provider_name or get_settings().image_provider
         if provider == "z_image_t2i":
             return ZImageProvider()
         if provider == "wan_t2i":
@@ -55,9 +55,10 @@ class VisualMgr:
         images_dir: Path,
         *,
         size: str | None = None,
+        image_provider: str | None = None,
     ) -> list[tuple[int, Path]]:
         images_dir.mkdir(parents=True, exist_ok=True)
-        provider = self._get_image_provider()
+        provider = self._get_image_provider(image_provider)
         settings = get_settings()
         max_workers = 1 if settings.mock_mode else max(1, settings.image_max_workers)
         total = len(segments)

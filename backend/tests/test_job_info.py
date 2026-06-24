@@ -83,6 +83,25 @@ def test_resolve_segment_image_size_portrait():
     assert resolve_segment_image_size(job, settings=settings) == "720*1280"
 
 
+def test_resolve_image_provider_job_override():
+    from types import SimpleNamespace
+
+    from app.utils.job_info import resolve_image_provider
+
+    settings = SimpleNamespace(image_provider="z_image_t2i")
+    job = {"info": {"image_provider": "sd15_t2i"}}
+    assert resolve_image_provider(job, settings=settings) == "sd15_t2i"
+
+
+def test_resolve_image_provider_fallback():
+    from types import SimpleNamespace
+
+    from app.utils.job_info import resolve_image_provider
+
+    settings = SimpleNamespace(image_provider="wan_t2i")
+    assert resolve_image_provider(None, settings=settings) == "wan_t2i"
+
+
 def test_resolve_segment_image_size_sd15_portrait():
     from types import SimpleNamespace
 
@@ -112,6 +131,8 @@ def test_resolve_segment_image_size_sd15_landscape():
     job = {"info": {"orientation": "landscape"}}
     assert resolve_segment_image_size(job, settings=settings) == "640*360"
 
+
+def test_resolve_segment_video_size_landscape():
     from types import SimpleNamespace
 
     from app.utils.job_info import resolve_segment_video_size
@@ -119,3 +140,31 @@ def test_resolve_segment_image_size_sd15_landscape():
     settings = SimpleNamespace(video_width=1080, video_height=1920)
     job = {"info": {"orientation": "landscape"}}
     assert resolve_segment_video_size(job, settings=settings) == (1920, 1080)
+
+
+def test_resolve_video_provider_job_override():
+    from types import SimpleNamespace
+
+    from app.utils.job_info import resolve_video_provider
+
+    settings = SimpleNamespace(clip_provider="ffmpeg")
+    job = {"info": {"video_provider": "wan_i2v"}}
+    assert resolve_video_provider(job, visual_mode="static_motion", settings=settings) == "wan_i2v"
+
+
+def test_resolve_video_provider_visual_mode_fallback():
+    from types import SimpleNamespace
+
+    from app.utils.job_info import resolve_video_provider
+
+    settings = SimpleNamespace(clip_provider="ffmpeg")
+    assert resolve_video_provider(None, visual_mode="wan_i2v", settings=settings) == "wan_i2v"
+
+
+def test_resolve_video_provider_clip_provider_fallback():
+    from types import SimpleNamespace
+
+    from app.utils.job_info import resolve_video_provider
+
+    settings = SimpleNamespace(clip_provider="ffmpeg")
+    assert resolve_video_provider(None, visual_mode="static_motion", settings=settings) == "ffmpeg"
