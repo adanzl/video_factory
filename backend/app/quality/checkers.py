@@ -11,6 +11,7 @@ from app.utils.media import (
     NARRATION_ABS_MIN_CHARS,
     default_narration_target_words,
     estimate_narration_target_words,
+    min_segment_count_for_narration,
     narration_accept_min_chars,
     segment_text_char_cap,
 )
@@ -150,9 +151,17 @@ def check_storyboard(
 
     segments = script.get("segments") or []
     if seg_target > 0:
-        narration_chars = _narration_chars(script.get("narration", ""))
         cap = segment_text_char_cap(seg_target)
-        needed = max(1, (narration_chars + cap - 1) // cap)
+        target_words = script.get("narration_target_words")
+        if isinstance(target_words, float) and target_words.is_integer():
+            target_words = int(target_words)
+        if not isinstance(target_words, int):
+            target_words = None
+        needed = min_segment_count_for_narration(
+            str(script.get("narration") or ""),
+            seg_target,
+            narration_target_words=target_words,
+        )
         if len(segments) < needed:
             return QualityReport(
                 level="major",

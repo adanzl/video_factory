@@ -20,6 +20,7 @@ from app.utils.media import (
     assign_segment_timings,
     default_narration_target_words,
     min_narration_chars_for_target,
+    min_segment_count_for_narration,
     narration_accept_min_chars,
     NARRATION_ABS_MIN_CHARS,
     narration_soft_min_chars,
@@ -163,6 +164,7 @@ def _validation_retry_scope(exc: ScriptValidationError) -> str:
             "segment text exceeds",
             "too few segments",
             "missing visual_brief",
+            "text is empty",
             "visual_style is empty",
             "no segments",
         )
@@ -301,6 +303,11 @@ def _validate_script(
                 f"segment {seg.get('segment_index')} missing visual_brief",
                 retryable=True,
             )
+        if not (seg.get("text") or "").strip():
+            raise ScriptValidationError(
+                f"segment {seg.get('segment_index')} text is empty",
+                retryable=True,
+            )
         if require_image_prompt:
             prompt = seg.get("image_prompt") or ""
             prompt_len = len(prompt)
@@ -329,7 +336,11 @@ def _validate_script(
                 f"{overflow}",
                 retryable=True,
             )
-        needed = max(1, (narration_target_words + cap - 1) // cap) if narration_target_words else max(1, (chars + cap - 1) // cap)
+        needed = min_segment_count_for_narration(
+            narration,
+            seg_target,
+            narration_target_words=narration_target_words,
+        )
         if len(segments) < needed:
             raise ScriptValidationError(
                 f"too few segments: {len(segments)} (need >= {needed} for "

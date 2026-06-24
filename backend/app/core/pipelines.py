@@ -20,10 +20,10 @@ from app.utils.stage_names import normalize_stage
 STANDARD_CHAIN: tuple[type[StageExecutor], ...] = (
     TitleStage,
     ScriptStage,
-    IntroStage,
     TTSStage,
     SegmentStage,
     HostStage,
+    IntroStage,
     MergeStage,
     PublishStage,
 )
@@ -37,8 +37,8 @@ def _material_chain() -> tuple[type[StageExecutor], ...]:
     return (
         MaterialPrepareStage,
         MaterialScriptStage,
-        IntroStage,
         TTSStage,
+        IntroStage,
         MaterialMergeStage,
         PublishStage,
     )

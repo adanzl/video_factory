@@ -57,6 +57,32 @@ def segment_text_char_cap(segment_target_sec: float) -> int:
     return max(20, int(segment_target_sec * NARRATION_CHARS_PER_SEC))
 
 
+def narration_segment_basis_chars(
+    narration: str,
+    narration_target_words: int | None = None,
+) -> int:
+    """规划最少分镜数时用的口播字数（实际 narration 与目标取较大值）。"""
+    chars = len(re.sub(r"\s+", "", narration or ""))
+    if narration_target_words is None or isinstance(narration_target_words, bool):
+        return chars
+    target = int(narration_target_words)
+    if target <= 0:
+        return chars
+    return max(chars, target)
+
+
+def min_segment_count_for_narration(
+    narration: str,
+    segment_target_sec: float,
+    *,
+    narration_target_words: int | None = None,
+) -> int:
+    """按单镜字数上限估算 narration 至少应拆成的段数。"""
+    cap = segment_text_char_cap(segment_target_sec)
+    basis = narration_segment_basis_chars(narration, narration_target_words)
+    return max(1, (basis + cap - 1) // cap)
+
+
 def segment_narration_chars(text: str) -> int:
     return len(re.sub(r"\s+", "", text or ""))
 
