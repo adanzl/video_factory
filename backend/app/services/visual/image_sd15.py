@@ -22,8 +22,6 @@ logger = logging.getLogger(__name__)
 _BUSINESS_CONFIG = {
     "life": {
         "checkpoint": "RealisticVisionV51.safetensors",
-        "width": 640,
-        "height": 360,
         "steps": 20,
         "negative": (
             "cartoon, anime, illustration, painting, blurry, deformed, ugly, "
@@ -32,8 +30,6 @@ _BUSINESS_CONFIG = {
     },
     "science": {
         "checkpoint": "ToonYouBeta6.safetensors",
-        "width": 360,
-        "height": 640,
         "steps": 20,
         "negative": (
             "photo, realistic, 3d render, shadow, gradient background, cluttered, "
@@ -90,10 +86,10 @@ def _prepare_sd15_prompt(
                 business_override=business_override,
             )
             logger.info(
-                "sd15 prompt prep llm: business=%s lora=%s prompt_en_chars=%s",
+                "sd15 prompt prep llm: business=%s lora=%s prompt_en=%s",
                 result["business"],
                 result["lora"],
-                len(result["prompt_en"]),
+                result["prompt_en"],
             )
             return _Sd15PromptPrep(
                 prompt_en=result["prompt_en"],
@@ -107,10 +103,10 @@ def _prepare_sd15_prompt(
     prompt_en = _fallback_prompt_en(cleaned)
     business = _fallback_business(prompt=cleaned, business_override=business_override)
     logger.info(
-        "sd15 prompt prep fallback: business=%s lora=%s prompt_en_chars=%s",
+        "sd15 prompt prep fallback: business=%s lora=%s prompt_en=%s",
         business,
         lora,
-        len(prompt_en),
+        prompt_en,
     )
     return _Sd15PromptPrep(prompt_en=prompt_en, business=business, lora=lora)
 
@@ -134,12 +130,11 @@ class Sd15ImageProvider(ImageProvider):
         lora_hint = "llm_pick|" + "|".join(SD15_LORAS)
         cfg_life = _BUSINESS_CONFIG["life"]
         cfg_sci = _BUSINESS_CONFIG["science"]
+        resolved_size = size or self._default_size
         return (
             f"provider=sd15_t2i, api={self._api_url}, business={business}, "
             f"lora={lora_hint}, checkpoints=life:{cfg_life['checkpoint']}|"
-            f"science:{cfg_sci['checkpoint']}, "
-            f"size=life:{cfg_life['width']}*{cfg_life['height']}|"
-            f"science:{cfg_sci['width']}*{cfg_sci['height']}"
+            f"science:{cfg_sci['checkpoint']}, size={resolved_size}"
         )
 
     def _cfg_for_business(self, business: str) -> dict:
@@ -168,18 +163,20 @@ class Sd15ImageProvider(ImageProvider):
         )
         business = prep.business
         cfg = self._cfg_for_business(business)
-        api_width, api_height = cfg["width"], cfg["height"]
+        api_width, api_height = parse_image_size(size)
         lora = prep.lora
         weight = weight_for_lora(lora)
         full_prompt = f"<lora:{lora}:{weight}> {prep.prompt_en}"
 
         logger.info(
-            "sd15 request: business=%s lora=%s size=%s*%s prompt_en_chars=%s",
+            "sd15 request: business=%s lora=%s job_size=%s api=%s*%s prompt_en=%s full_prompt=%s",
             business,
             lora,
+            size,
             api_width,
             api_height,
-            len(prep.prompt_en),
+            prep.prompt_en,
+            full_prompt,
         )
         try:
             self._switch_checkpoint(cfg["checkpoint"])
