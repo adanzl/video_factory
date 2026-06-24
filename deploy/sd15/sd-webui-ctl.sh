@@ -6,17 +6,6 @@ SD_HOME="${SD_HOME:-/mnt/data/stable-diffusion/webui}"
 SD_PORT="${SD_PORT:-7860}"
 LOG_FILE="${LOG_FILE:-$HOME/sd-webui.log}"
 PID_FILE="${PID_FILE:-$HOME/sd-webui.pid}"
-CTL_DIR="$(cd "$(dirname "$0")" && pwd)"
-
-sync_gfx1103_fix() {
-  local src="$CTL_DIR/scripts/gfx1103_disable_miopen.py"
-  local dst="$SD_HOME/scripts/gfx1103_disable_miopen.py"
-  if [[ -f "$src" ]]; then
-    mkdir -p "$SD_HOME/scripts"
-    cp -f "$src" "$dst"
-    echo "Synced gfx1103 fix -> $dst"
-  fi
-}
 
 stop_webui() {
   local pid=""
@@ -30,7 +19,6 @@ stop_webui() {
     fi
     rm -f "$PID_FILE"
   fi
-  # webui.sh 会拉起 launch.py，一并清理
   pkill -f "$SD_HOME/launch.py" 2>/dev/null || true
   pkill -f "$SD_HOME/webui.sh" 2>/dev/null || true
   sleep 1
@@ -52,12 +40,12 @@ start_webui() {
     exit 1
   fi
   echo "Starting WebUI (SD_HOME=$SD_HOME, port=$SD_PORT) ..."
-  sync_gfx1103_fix
   cd "$SD_HOME"
   nohup bash webui.sh >>"$LOG_FILE" 2>&1 &
   echo $! >"$PID_FILE"
   sleep 5
-  if kill -0 "$(cat "$PID_FILE")" 2>/dev/null || ss -tlnp 2>/dev/null | grep -q ":${SD_PORT} "; then
+  if kill -0 "$(cat "$PID_FILE")" 2>/dev/null \
+    || ss -tlnp 2>/dev/null | grep -q ":${SD_PORT} "; then
     echo "Started. PID=$(cat "$PID_FILE" 2>/dev/null || echo '?')"
     echo "API:  http://127.0.0.1:${SD_PORT}/sdapi/v1/"
     echo "Logs: tail -f $LOG_FILE"
