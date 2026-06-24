@@ -22,11 +22,14 @@ BUSINESS_CONFIG = {
         "negative": "cartoon, anime, illustration, painting, blurry, deformed, ugly, watermark, text, logo, oversaturated",
     },
     "science": {
-        "checkpoint": "ToonYouBeta6.safetensors",
+        "checkpoint": "RealisticVisionV51.safetensors",
         "width": 360,
         "height": 640,
         "steps": 20,
-        "negative": "photo, realistic, 3d render, shadow, gradient background, cluttered, text, watermark, blurry",
+        "negative": (
+            "anime, cartoon, manga, chibi, girl, boy, face, portrait, "
+            "text, watermark, blurry, cluttered"
+        ),
     },
 }
 
