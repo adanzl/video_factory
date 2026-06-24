@@ -393,10 +393,10 @@ class LLMMgr:
             raise
         elapsed = time.perf_counter() - started
         logger.info(
-            "[SD15] prepare prompt done business=%s lora=%s prompt_en_chars=%s elapsed=%.1fs",
+            "[SD15] prepare prompt done business=%s lora=%s prompt_en=%s elapsed=%.1fs",
             result["business"],
             result["lora"],
-            len(result["prompt_en"]),
+            result["prompt_en"],
             elapsed,
         )
         return result
