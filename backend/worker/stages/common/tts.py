@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from app.config import get_settings
+from app.core.pipelines import is_material_job
 from app.quality.checkers import check_tts_audio
 from app.quality.gate import apply_quality_checks
 from app.repositories import job_log_repo, job_repo, segment_repo
 from app.repositories.connection import connection
 from app.services.media.audio_analysis import analyze_loudness, analyze_silence, normalize_loudness
 from app.services.tts.tts_mgr import tts_mgr
+from app.utils.media import base_video_duration_sec, material_min_audio_duration_sec
 from worker.context import JobContext
 from worker.stages.base import StageExecutor
 
@@ -37,6 +39,10 @@ class TTSStage(StageExecutor):
             result.audio_path,
             noise_db=settings.audio_silence_noise_db,
         )
+        min_audio_dur: float | None = None
+        if is_material_job(job):
+            base_dur = base_video_duration_sec(job=job, media_dir=ctx.media_dir)
+            min_audio_dur = material_min_audio_duration_sec(base_dur)
 
         with connection() as conn:
             for seg, duration in zip(segments, result.segment_durations):
@@ -74,6 +80,7 @@ class TTSStage(StageExecutor):
                         segments=segments,
                         loudness=loudness,
                         silence=silence,
+                        min_duration_sec=min_audio_dur,
                     ),
                 },
                 existing_report=job.get("quality_report"),

@@ -287,6 +287,7 @@ def check_tts_audio(
     segments: list[dict] | None = None,
     loudness: LoudnessStats | None = None,
     silence: SilenceStats | None = None,
+    min_duration_sec: float | None = None,
 ) -> QualityReport:
     """配音：文件、总时长、静音、响度、字幕时间轴对齐。"""
     settings = get_settings()
@@ -298,13 +299,17 @@ def check_tts_audio(
             details={"reason": "missing audio"},
         )
 
-    min_duration = 30.0
+    min_duration = 30.0 if min_duration_sec is None else min_duration_sec
     if duration_sec < min_duration:
         return QualityReport(
             level="major",
             step="tts",
             fail_stage="tts",
-            details={"reason": "audio too short", "duration_sec": duration_sec},
+            details={
+                "reason": "audio too short",
+                "duration_sec": duration_sec,
+                "min_duration_sec": min_duration,
+            },
         )
 
     if loudness is None:
@@ -416,6 +421,8 @@ def check_final(
     final_path: Path | None,
     *,
     loudness: LoudnessStats | None = None,
+    min_duration_sec: float | None = None,
+    max_duration_sec: float | None = None,
 ) -> QualityReport:
     """成片：文件、时长带、合成后响度。"""
     settings = get_settings()
@@ -429,8 +436,10 @@ def check_final(
 
     duration = probe_duration(final_path)
     details: dict = {"duration_sec": duration}
+    min_dur = settings.final_min_duration_sec if min_duration_sec is None else min_duration_sec
+    max_dur = settings.final_max_duration_sec if max_duration_sec is None else max_duration_sec
 
-    if duration < settings.final_min_duration_sec:
+    if duration < min_dur:
         return QualityReport(
             level="major",
             step="final",
@@ -438,10 +447,10 @@ def check_final(
             details={
                 **details,
                 "reason": "final too short",
-                "min_duration_sec": settings.final_min_duration_sec,
+                "min_duration_sec": min_dur,
             },
         )
-    if duration > settings.final_max_duration_sec:
+    if duration > max_dur:
         return QualityReport(
             level="major",
             step="final",
@@ -449,7 +458,7 @@ def check_final(
             details={
                 **details,
                 "reason": "final too long",
-                "max_duration_sec": settings.final_max_duration_sec,
+                "max_duration_sec": max_dur,
             },
         )
 
