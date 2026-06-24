@@ -83,7 +83,35 @@ def test_resolve_segment_image_size_portrait():
     assert resolve_segment_image_size(job, settings=settings) == "720*1280"
 
 
-def test_resolve_segment_video_size_landscape():
+def test_resolve_segment_image_size_sd15_portrait():
+    from types import SimpleNamespace
+
+    from app.utils.job_info import resolve_segment_image_size
+
+    settings = SimpleNamespace(
+        image_provider="sd15_t2i",
+        sd_image_size="576*768",
+        wan_image_size="720*1280",
+        z_image_size="720*1280",
+    )
+    job = {"info": {"orientation": "portrait"}}
+    assert resolve_segment_image_size(job, settings=settings) == "576*768"
+
+
+def test_resolve_segment_image_size_sd15_landscape():
+    from types import SimpleNamespace
+
+    from app.utils.job_info import resolve_segment_image_size
+
+    settings = SimpleNamespace(
+        image_provider="sd15_t2i",
+        sd_image_size="576*768",
+        wan_image_size="720*1280",
+        z_image_size="720*1280",
+    )
+    job = {"info": {"orientation": "landscape"}}
+    assert resolve_segment_image_size(job, settings=settings) == "768*576"
+
     from types import SimpleNamespace
 
     from app.utils.job_info import resolve_segment_video_size

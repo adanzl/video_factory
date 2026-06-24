@@ -10,7 +10,7 @@ from pathlib import Path
 
 import httpx
 
-SD_API_URL = os.environ.get("SD_API_URL", "http://127.0.0.1:7860").rstrip("/")
+SD_API_URL = os.environ.get("SD_API_URL", "http://127.0.0.1:9101").rstrip("/")
 OUTPUT_DIR = os.environ.get("SD_OUTPUT_DIR", "output")
 
 BUSINESS_CONFIG = {

@@ -112,6 +112,8 @@ def resolve_segment_image_size(job: dict | None = None, *, settings: Any | None 
     default = (
         cfg.z_image_size
         if cfg.image_provider == "z_image_t2i"
+        else cfg.sd_image_size
+        if cfg.image_provider == "sd15_t2i"
         else cfg.wan_image_size
     )
     normalized = default.strip().lower().replace("x", "*")

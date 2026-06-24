@@ -10,13 +10,13 @@ echo "=== SD1.5 deploy ==="
 echo "SD_HOME=$SD_HOME  MODELS_DIR=$MODELS_DIR"
 
 if [[ ! -d "$SD_HOME" ]]; then
-  echo "[1/4] Clone WebUI..."
+  echo "[1/5] Clone WebUI..."
   git clone https://github.com/AUTOMATIC1111/stable-diffusion-webui.git "$SD_HOME"
 else
-  echo "[1/4] WebUI exists"
+  echo "[1/5] WebUI exists"
 fi
 
-echo "[2/4] webui-user.sh + models symlink..."
+echo "[2/5] webui-user.sh + models symlink..."
 cp -f "$CTL_DIR/webui-user.example.sh" "$SD_HOME/webui-user.sh"
 chmod +x "$SD_HOME/webui-user.sh"
 mkdir -p "$MODELS_DIR/Stable-diffusion" "$MODELS_DIR/Lora"
@@ -26,12 +26,17 @@ if [[ ! -L "$SD_HOME/models" ]]; then
 fi
 
 if [[ ! -f "$SD_HOME/venv/bin/python" ]]; then
-  echo "[3/4] Install Python deps (first run, 10-30 min)..."
+  echo "[3/5] Install Python deps (first run, 10-30 min)..."
   cd "$SD_HOME"
   bash webui.sh --exit --skip-torch-cuda-test
 else
-  echo "[3/4] venv exists"
+  echo "[3/5] venv exists"
 fi
 
-echo "[4/4] Start API..."
-bash "$CTL_DIR/sd-webui-ctl.sh" start
+echo "[4/5] Install systemd unit..."
+sudo cp -f "$CTL_DIR/sd.service" /etc/systemd/system/sd.service
+sudo systemctl daemon-reload
+sudo systemctl enable sd
+
+echo "[5/5] Start API..."
+sudo systemctl start sd

@@ -242,6 +242,23 @@ class MockLLMClient(LLMClient):
             return "science experiment"
         return cleaned.lower()
 
+    def prepare_sd15_image_prompt(
+        self,
+        prompt: str,
+        *,
+        size_hint: str | None = None,
+        business_override: str | None = None,
+    ) -> dict[str, str]:
+        from app.services.llm.llm_sd15_prompt import business_for_lora, pick_lora_by_keywords
+
+        _ = size_hint
+        _ = business_override
+        cleaned = prompt.strip()
+        lora = pick_lora_by_keywords(cleaned)
+        business = business_for_lora(lora)
+        prompt_en = self.rewrite_pixabay_query(cleaned)
+        return {"prompt_en": prompt_en, "business": business, "lora": lora}
+
     def generate_topics(
         self,
         theme: str,

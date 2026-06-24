@@ -736,6 +736,34 @@ class DeepSeekClient(LLMClient):
         raw, _ = self._chat_json(prompts_system, prompts_user, max_tokens=256)
         return parse_pixabay_query_payload(raw)
 
+    def prepare_sd15_image_prompt(
+        self,
+        prompt: str,
+        *,
+        size_hint: str | None = None,
+        business_override: str | None = None,
+    ) -> dict[str, str]:
+        from app.services.llm.llm_sd15_prompt import (
+            build_sd15_prompt_system,
+            build_sd15_prompt_user,
+            parse_sd15_prompt_payload,
+        )
+        from app.services.visual.image_sd15 import parse_image_size
+
+        raw, _ = self._chat_json(
+            build_sd15_prompt_system(business_override=business_override),
+            build_sd15_prompt_user(
+                prompt=prompt,
+                size_hint=size_hint,
+                parse_size=parse_image_size,
+            ),
+            max_tokens=512,
+        )
+        return parse_sd15_prompt_payload(
+            raw,
+            business_override=business_override,
+        )
+
     def generate_topics(
         self,
         theme: str,
