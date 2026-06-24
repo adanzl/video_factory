@@ -113,9 +113,15 @@ class SegmentMgr:
             )
         generated = []
         if scope != "clips" and image_targets:
+            from app.utils.job_info import resolve_image_provider
+
             image_size = resolve_segment_image_size(job)
+            image_provider = resolve_image_provider(job)
             generated = visual_mgr.generate_segment_images(
-                image_targets, images_dir, size=image_size
+                image_targets,
+                images_dir,
+                size=image_size,
+                image_provider=image_provider,
             )
         for seg_id, path in generated:
             path_by_id[seg_id] = path

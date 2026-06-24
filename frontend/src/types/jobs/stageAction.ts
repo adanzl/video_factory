@@ -41,6 +41,8 @@ export interface RunStageActionPayload {
   supplementary_info?: string;
   video_timeline?: string;
   content_style?: "science_child" | "life_experience";
+  image_provider?: "z_image_t2i" | "wan_t2i" | "sd15_t2i";
+  video_provider?: "ffmpeg" | "wan_i2v";
 }
 
 export interface PreviewScriptPromptsPayload {

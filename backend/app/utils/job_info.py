@@ -16,6 +16,9 @@ _VALID_CONTENT_STYLES = frozenset(
     {CONTENT_STYLE_SCIENCE_CHILD, CONTENT_STYLE_LIFE_EXPERIENCE}
 )
 
+_VALID_IMAGE_PROVIDERS = frozenset({"z_image_t2i", "wan_t2i", "sd15_t2i"})
+_VALID_VIDEO_PROVIDERS = frozenset({"ffmpeg", "wan_i2v"})
+
 
 def parse_job_info(raw: str | dict | None) -> dict[str, Any]:
     if raw is None:
@@ -109,11 +112,12 @@ def resolve_segment_image_size(job: dict | None = None, *, settings: Any | None 
     from app.config import get_settings
 
     cfg = settings or get_settings()
+    provider = resolve_image_provider(job, settings=cfg)
     default = (
         cfg.z_image_size
-        if cfg.image_provider == "z_image_t2i"
+        if provider == "z_image_t2i"
         else cfg.sd_image_size
-        if cfg.image_provider == "sd15_t2i"
+        if provider == "sd15_t2i"
         else cfg.wan_image_size
     )
     normalized = default.strip().lower().replace("x", "*")
@@ -143,6 +147,53 @@ def resolve_segment_video_size(job: dict | None = None, *, settings: Any | None 
 
 def default_content_style_for_pipeline(pipeline: str | None) -> str:
     return CONTENT_STYLE_SCIENCE_CHILD
+
+
+def normalize_image_provider(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    if normalized in _VALID_IMAGE_PROVIDERS:
+        return normalized
+    return None
+
+
+def resolve_image_provider(job: dict | None = None, *, settings: Any | None = None) -> str:
+    """job.info.image_provider 优先，否则全局 IMAGE_PROVIDER。"""
+    from app.config import get_settings
+
+    cfg = settings or get_settings()
+    override = normalize_image_provider(parse_job_info((job or {}).get("info")).get("image_provider"))
+    if override:
+        return override
+    return cfg.image_provider
+
+
+def normalize_video_provider(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    if normalized in _VALID_VIDEO_PROVIDERS:
+        return normalized
+    return None
+
+
+def resolve_video_provider(
+    job: dict | None = None,
+    *,
+    visual_mode: str | None = None,
+    settings: Any | None = None,
+) -> str:
+    """job.info.video_provider 优先；否则按 visual_mode 与 CLIP_PROVIDER。"""
+    from app.config import get_settings
+
+    cfg = settings or get_settings()
+    override = normalize_video_provider(parse_job_info((job or {}).get("info")).get("video_provider"))
+    if override:
+        return override
+    if visual_mode == "wan_i2v":
+        return "wan_i2v"
+    return cfg.clip_provider
 
 
 def merge_job_info(existing: str | dict | None, **updates: Any) -> dict[str, Any]:

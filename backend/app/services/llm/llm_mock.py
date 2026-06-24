@@ -249,13 +249,15 @@ class MockLLMClient(LLMClient):
         size_hint: str | None = None,
         business_override: str | None = None,
     ) -> dict[str, str]:
-        from app.services.llm.llm_sd15_prompt import business_for_lora, pick_lora_by_keywords
+        from app.services.llm.llm_sd15_prompt import pick_business_by_keywords, pick_lora_by_keywords
 
         _ = size_hint
-        _ = business_override
         cleaned = prompt.strip()
         lora = pick_lora_by_keywords(cleaned)
-        business = business_for_lora(lora)
+        if business_override in {"life", "science"}:
+            business = business_override
+        else:
+            business = pick_business_by_keywords(cleaned)
         prompt_en = self.rewrite_pixabay_query(cleaned)
         return {"prompt_en": prompt_en, "business": business, "lora": lora}
 

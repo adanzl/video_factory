@@ -13,7 +13,7 @@ import requests
 
 from app.config import get_settings
 from app.services.llm.llm_mgr import llm_mgr
-from app.services.llm.llm_sd15_prompt import pick_lora_by_keywords, weight_for_lora
+from app.services.llm.llm_sd15_prompt import pick_business_by_keywords, pick_lora_by_keywords, weight_for_lora
 from app.services.visual.image_mock import MockImageProvider
 from app.services.visual.visual_mgr import ImageProvider
 
@@ -49,10 +49,6 @@ def parse_image_size(size: str) -> tuple[int, int]:
     return int(w_str.strip()), int(h_str.strip())
 
 
-def business_from_size(width: int, height: int) -> str:
-    return "science" if height > width else "life"
-
-
 @dataclass(frozen=True)
 class _Sd15PromptPrep:
     prompt_en: str
@@ -69,12 +65,10 @@ def _fallback_prompt_en(prompt: str) -> str:
     return "illustration, educational scene, soft lighting, clean composition"
 
 
-def _fallback_business(*, lora: str, business_override: str | None) -> str:
+def _fallback_business(*, prompt: str, business_override: str | None) -> str:
     if business_override in _BUSINESS_CONFIG:
         return business_override
-    from app.services.llm.llm_sd15_prompt import business_for_lora
-
-    return business_for_lora(lora)
+    return pick_business_by_keywords(prompt)
 
 
 def _prepare_sd15_prompt(
@@ -111,7 +105,7 @@ def _prepare_sd15_prompt(
 
     lora = pick_lora_by_keywords(cleaned)
     prompt_en = _fallback_prompt_en(cleaned)
-    business = _fallback_business(lora=lora, business_override=business_override)
+    business = _fallback_business(prompt=cleaned, business_override=business_override)
     logger.info(
         "sd15 prompt prep fallback: business=%s lora=%s prompt_en_chars=%s",
         business,
@@ -136,7 +130,7 @@ class Sd15ImageProvider(ImageProvider):
     def describe_params(self, *, size: str | None = None) -> str:
         from app.services.llm.llm_sd15_prompt import SD15_LORAS
 
-        business = self._business_override or "auto"
+        business = self._business_override or "prompt_infer"
         lora_hint = "llm_pick|" + "|".join(SD15_LORAS)
         cfg_life = _BUSINESS_CONFIG["life"]
         cfg_sci = _BUSINESS_CONFIG["science"]

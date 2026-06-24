@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from app.config import get_settings
+from app.utils.job_info import resolve_image_provider, resolve_video_provider
 from app.quality.checkers import check_segment_clips, check_visual
 from app.quality.gate import apply_quality_checks
 from app.repositories import job_log_repo, job_repo, segment_repo
@@ -20,6 +21,9 @@ class SegmentStage(StageExecutor):
         with connection() as conn:
             job = job_repo.get_job(conn, ctx.job["id"])
             segments = segment_repo.list_segments(conn, ctx.job["id"])
+
+        image_provider = resolve_image_provider(job)
+        video_provider = resolve_video_provider(job)
 
         audio_path = Path(job["audio_path"]) if job.get("audio_path") else None
         produce_scope = ctx.segment_scope or "all"
@@ -63,18 +67,19 @@ class SegmentStage(StageExecutor):
                 else "all"
             )
             clip_note = (
-                f"clips={len(result.clips.segment_clip_paths)}"
+                f"clips={len(result.clips.segment_clip_paths)} "
+                f"(provider={video_provider})"
                 if result.clips.segment_clip_paths
                 else "clips=0"
             )
             model = (
                 settings.z_image_model
-                if settings.image_provider == "z_image_t2i"
+                if image_provider == "z_image_t2i"
                 else settings.wan_model
-                if settings.image_provider == "wan_t2i"
+                if image_provider == "wan_t2i"
                 else f"sd15/{settings.sd_business or 'auto'}"
-                if settings.image_provider == "sd15_t2i"
-                else settings.image_provider
+                if image_provider == "sd15_t2i"
+                else image_provider
             )
             job_log_repo.append_log(
                 conn,
@@ -83,7 +88,7 @@ class SegmentStage(StageExecutor):
                 (
                     f"scope={log_scope}, "
                     f"images={len(result.image_paths)} "
-                    f"(provider={settings.image_provider}, model={model}), "
+                    f"(provider={image_provider}, model={model}), "
                     f"{clip_note}"
                 ),
             )

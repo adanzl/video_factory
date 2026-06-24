@@ -15,11 +15,28 @@
         class="[&_.el-form-item__content]:min-w-0 [&_.el-form-item__content]:flex-1"
       >
         <el-form-item label="重跑模式">
-          <el-radio-group v-model="segmentScope">
-            <el-radio value="segment/all">全部</el-radio>
-            <el-radio value="segment/images">分镜静图</el-radio>
-            <el-radio value="segment/clips">图生视频</el-radio>
-          </el-radio-group>
+            <div class="flex flex-wrap items-center gap-x-6 gap-y-2">
+            <el-radio-group v-model="segmentScope">
+              <el-radio value="segment/all">全部</el-radio>
+              <el-radio value="segment/images">分镜静图</el-radio>
+              <el-radio value="segment/clips">图生视频</el-radio>
+            </el-radio-group>
+            <div class="flex items-center gap-2">
+              <span class="text-sm text-gray-500">静图</span>
+              <el-radio-group v-model="imageProvider" size="small" :disabled="segmentScope === 'segment/clips'">
+                <el-radio-button value="z_image_t2i">Z-Image</el-radio-button>
+                <el-radio-button value="wan_t2i">万相</el-radio-button>
+                <el-radio-button value="sd15_t2i">本地 SD</el-radio-button>
+              </el-radio-group>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="text-sm text-gray-500">视频</span>
+              <el-radio-group v-model="videoProvider" size="small" :disabled="segmentScope === 'segment/images'">
+                <el-radio-button value="ffmpeg">Ken Burns</el-radio-button>
+                <el-radio-button value="wan_i2v">万相 I2V</el-radio-button>
+              </el-radio-group>
+            </div>
+          </div>
         </el-form-item>
         <el-form-item label="分段序号">
           <div class="flex w-full max-w-3xl flex-nowrap items-center gap-3">
@@ -216,7 +233,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { runJobStageAction } from "@/api/api-jobs";
 import { getMediaFileUrl } from "@/api/api-media";
@@ -242,6 +259,31 @@ const submitting = ref(false);
 const regeneratingImageIndex = ref<number | null>(null);
 const generatingClipIndex = ref<number | null>(null);
 const segmentScope = ref("segment/images");
+const imageProvider = ref(
+  props.job.info?.image_provider ?? "z_image_t2i"
+);
+const videoProvider = ref(
+  props.job.info?.video_provider ?? "ffmpeg"
+);
+
+watch(
+  () => props.job.info?.image_provider,
+  value => {
+    if (value) {
+      imageProvider.value = value;
+    }
+  }
+);
+
+watch(
+  () => props.job.info?.video_provider,
+  value => {
+    if (value) {
+      videoProvider.value = value;
+    }
+  }
+);
+
 const selectedSegments = ref<number[]>([]);
 const clipSearchOpen = ref(false);
 const clipSearchSegmentIndex = ref(1);
@@ -340,6 +382,7 @@ const handleRegenerateImage = async (segmentIndex: number) => {
       id: props.job.id,
       to_end: false,
       segments: [segmentIndex],
+      image_provider: imageProvider.value,
     });
     ElMessage.success(`已提交分镜 #${segmentIndex} 静图重新生成`);
     emit("refresh");
@@ -367,6 +410,7 @@ const handleGenerateClip = async (segmentIndex: number) => {
       id: props.job.id,
       to_end: false,
       segments: [segmentIndex],
+      video_provider: videoProvider.value,
     });
     ElMessage.success(`已提交分镜 #${segmentIndex} 图生视频`);
     emit("refresh");
@@ -391,12 +435,24 @@ const handleRun = async (toEnd: boolean) => {
 
   submitting.value = true;
   try {
-    const payload: { id: number; to_end: boolean; segments?: number[] } = {
+    const payload: {
+      id: number;
+      to_end: boolean;
+      segments?: number[];
+      image_provider?: string;
+      video_provider?: string;
+    } = {
       id: props.job.id,
       to_end: toEnd,
     };
     if (selectedSegments.value.length > 0) {
       payload.segments = selectedSegments.value.map(value => Number(value));
+    }
+    if (segmentScope.value !== "segment/clips") {
+      payload.image_provider = imageProvider.value;
+    }
+    if (segmentScope.value !== "segment/images") {
+      payload.video_provider = videoProvider.value;
     }
     await runJobStageAction(segmentScope.value, payload);
     ElMessage.success(`已提交${actionLabel}，任务已开始执行`);

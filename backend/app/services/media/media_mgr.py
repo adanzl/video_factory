@@ -43,15 +43,13 @@ class MergeResult:
 class MediaMgr:
     """媒体合成管理器。"""
 
-    def _resolve_clip_provider(self, *, visual_mode: str) -> str:
+    def _resolve_clip_provider(self, *, visual_mode: str, job: dict | None = None) -> str:
         settings = get_settings()
         if visual_mode == "kling_std" and settings.kling_upgrade_enabled:
             return "kling_std"
-        if visual_mode == "wan_i2v":
-            return "wan_i2v"
-        if visual_mode == "static_motion":
-            return settings.clip_provider
-        return settings.clip_provider
+        from app.utils.job_info import resolve_video_provider
+
+        return resolve_video_provider(job, visual_mode=visual_mode, settings=settings)
 
     def _describe_clip_provider(
         self,
@@ -137,7 +135,7 @@ class MediaMgr:
             clip_path = clips_dir / f"{index}.mp4"
 
             visual_mode = seg.get("visual_mode") or "static_motion"
-            provider = self._resolve_clip_provider(visual_mode=visual_mode)
+            provider = self._resolve_clip_provider(visual_mode=visual_mode, job=job)
             params_desc = self._describe_clip_provider(
                 provider,
                 motion_preset=settings.motion_preset,
