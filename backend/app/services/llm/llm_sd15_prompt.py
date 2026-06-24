@@ -36,14 +36,14 @@ SD15_LORAS: dict[str, dict[str, Any]] = {
         ),
     },
     "Textbook_Line_Art": {
-        "weight": 0.7,
+        "weight": 0.55,
         "keywords": (
             "线稿", "结构", "解剖", "标注", "教科书", "白底", "讲解", "细胞", "器官",
             "line art", "diagram", "labeled", "textbook", "structure", "cross section",
         ),
     },
     "Simple_Diagram": {
-        "weight": 0.65,
+        "weight": 0.55,
         "keywords": (
             "信息图", "流程图", "示意图", "对比图", "扁平", "科普图", "箭头", "步骤",
             "infographic", "flowchart", "chart", "schematic", "comparison", "steps",
@@ -69,6 +69,104 @@ SD15_BUSINESS_KEYWORDS: dict[str, tuple[str, ...]] = {
 _VALID_BUSINESS = frozenset({"life", "science"})
 _DEFAULT_LORA = "Casual_Life"
 _DEFAULT_BUSINESS = "science"
+_PROMPT_EN_MAX_WORDS = 55
+
+_SCIENCE_SUFFIX = "white background, line art, clean composition, no text"
+_LIFE_SUFFIX = "natural light, realistic photo"
+
+_SCIENCE_LORAS = frozenset({"Textbook_Line_Art", "Simple_Diagram"})
+
+_SCIENCE_FORBIDDEN = re.compile(
+    r"\b("
+    r"hyper[- ]?realistic|ultra[- ]?realistic|photorealistic|photo[- ]?realistic|"
+    r"3d render(?:ing)?|cgi render|realistic medical illustration|medical photography|"
+    r"realistic photography|dslr|octane render|unreal engine"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_LORA_STYLE_ANCHORS: dict[str, str] = {}
+
+_SCIENCE_SUBJECT_STRIP = re.compile(
+    r"\b("
+    r"white background|line art|clean composition|no text|"
+    r"dark gray background|black background|gradient background"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def _word_count(text: str) -> int:
+    return len(re.findall(r"[A-Za-z0-9']+", text))
+
+
+def _truncate_prompt_en(text: str, max_words: int = _PROMPT_EN_MAX_WORDS) -> str:
+    parts = [part.strip() for part in text.split(",") if part.strip()]
+    if not parts:
+        return text.strip()
+    kept: list[str] = []
+    count = 0
+    for part in parts:
+        part_words = _word_count(part)
+        if count + part_words > max_words and kept:
+            break
+        kept.append(part)
+        count += part_words
+    return ", ".join(kept)
+
+
+def _strip_science_forbidden(text: str) -> str:
+    cleaned = _SCIENCE_FORBIDDEN.sub("", text)
+    cleaned = _SCIENCE_SUBJECT_STRIP.sub("", cleaned)
+    cleaned = re.sub(r",\s*,+", ", ", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" ,")
+    return cleaned
+
+
+_SCIENCE_CHARACTER = re.compile(
+    r"\b("
+    r"person|people|human|man|woman|girl|boy|child|character|portrait|face|head|"
+    r"hair|eyes|glowing|superhero|anime|dizziness|hypoxia"
+    r")\b[^,]*",
+    re.IGNORECASE,
+)
+
+
+def normalize_sd15_prompt_en(prompt_en: str, *, business: str, lora: str) -> str:
+    """按 business / LoRA 约束清洗并截断英文 subject（不含 LoRA 标签与固定后缀）。"""
+    cleaned = re.sub(r"\s+", " ", prompt_en.strip()).strip("\"'`")
+    if not cleaned:
+        raise ValueError("prompt_en is empty")
+    if business == "science":
+        cleaned = _strip_science_forbidden(cleaned)
+        cleaned = _SCIENCE_CHARACTER.sub("", cleaned)
+        cleaned = re.sub(r",\s*,+", ", ", cleaned)
+        cleaned = re.sub(r"\s+", " ", cleaned).strip(" ,")
+    cleaned = _truncate_prompt_en(cleaned)
+    if not cleaned:
+        raise ValueError("prompt_en is empty after normalization")
+    return cleaned
+
+
+def build_sd15_full_prompt(*, subject: str, business: str, lora: str) -> str:
+    """按 SD15 部署约定拼接 LoRA 标签与 business 固定后缀。"""
+    weight = weight_for_lora(lora)
+    cleaned = normalize_sd15_prompt_en(subject, business=business, lora=lora)
+    if business == "science":
+        return f"<lora:{lora}:{weight}> {cleaned}, {_SCIENCE_SUFFIX}"
+    return f"<lora:{lora}:{weight}> {cleaned}, {_LIFE_SUFFIX}"
+
+
+_ANIME_KEYWORDS = (
+    "动漫", "二次元", "卡通风格", "日系动漫", "anime", "manga", "chibi", "toon style",
+    "cartoon style", "anime style",
+)
+
+
+def science_wants_anime(prompt: str) -> bool:
+    """仅当原文明确要求动漫风时 science 才用 ToonYou。"""
+    text = prompt.casefold()
+    return any(kw.casefold() in text for kw in _ANIME_KEYWORDS)
 
 
 def sd15_lora_names() -> list[str]:
@@ -132,21 +230,25 @@ def build_sd15_prompt_system(*, business_override: str | None = None) -> str:
         override_note = f"\n\n固定 business={business_override}，lora 仍按画面关键词独立选择。"
     return (
         "你是 Stable Diffusion 1.5 文生图提示词专家。"
-        "输入多为中文长篇画面描述，需转为英文 SD 正向提示词，"
-        "并独立推理 business 与 lora。\n\n"
+        "输入常为 200～500 字中文 image_prompt（为云端大模型撰写），"
+        "你必须提炼为 SD1.5 在 640×360 低分辨率下可画的单一画面。\n\n"
         "输出 JSON 字段：\n"
-        "1. prompt_en：英文 SD 提示词，逗号分隔的具象描述，50～120 英文词；"
-        "保留主体/动作/场景/光影/构图；去掉字幕、口播、品牌、水印、可读文字；"
-        "若输入已是英文则精炼后保留；不要写 lora 标签。\n"
-        "2. business：根据画面内容推理出图管线，"
-        "life=写实摄影风（生活/美食/家居/人物/产品等），"
-        "science=科普插画风（线稿/示意图/信息图/结构讲解等）；"
-        "禁止根据所选 lora 反推 business。\n"
-        "3. lora：根据画面描述中的主体/场景/动作关键词，与下列 LoRA 关键词表匹配，"
-        "选最贴切的 1 个（文件名，含下划线；性能限制禁止多 LoRA）；"
-        "禁止根据 business 反推 lora：\n"
+        "1. prompt_en：仅写 subject 主体描述（英文、逗号分隔），25～55 词；"
+        "不写 lora 标签，不写 white background / line art / no text（系统会自动追加）。"
+        "禁止逐句翻译长文；禁止左右分屏多场景堆砌；最多 2 个可视化主体。"
+        "science 时禁止 person/head/face/human/hair/eyes 等人物词，"
+        "改用 molecule/icon/cross-section/diagram 等无人物示意。\n"
+        "2. business：life=写实摄影；science=科普插画示意（默认非动漫底模）。\n"
+        "3. lora：按关键词独立选择；左右对比/流程/多概念优先 Simple_Diagram，"
+        "单一结构解剖优先 Textbook_Line_Art。\n"
         f"{_lora_catalog_text()}\n\n"
-        '示例：{"prompt_en": "home cooking, natural window light", '
+        "science 禁词：hyper-realistic, photorealistic, 3d render, photo, "
+        "person, human, face, head, glowing eyes。\n"
+        "life 禁词：line art, cartoon, diagram。\n\n"
+        'science 示例：{"prompt_en": "comparison diagram, red CO molecule passing '
+        'blue wet cloth mesh on left, lung alveoli cross-section icon on right", '
+        '"business": "science", "lora": "Simple_Diagram"}\n'
+        'life 示例：{"prompt_en": "home cooking scene, steaming pot, window light", '
         '"business": "life", "lora": "Food_Photo"}'
         f"{override_note}"
     )
@@ -167,8 +269,11 @@ def build_sd15_prompt_user(
         orient = "portrait" if h > w else "landscape" if w > h else "square"
     lines = [f"画面描述：\n{trimmed}"]
     if orient:
-        lines.append(f"画幅参考（非决定性）：{orient}")
-    lines.append("请输出 prompt_en、business 与 lora（均基于画面描述独立推理）。")
+        lines.append(f"画幅：{orient}，分辨率低，务必简化为单一示意画面。")
+    lines.append(
+        "请输出 prompt_en（25～55 词 subject）、business、lora。"
+        "science 勿写人物；对比/流程场景优先 Simple_Diagram。"
+    )
     return "\n\n".join(lines)
 
 
@@ -180,11 +285,6 @@ def parse_sd15_prompt_payload(
     prompt_en = raw.get("prompt_en")
     if not isinstance(prompt_en, str) or not prompt_en.strip():
         raise ValueError("LLM response missing prompt_en")
-    cleaned = re.sub(r"\s+", " ", prompt_en.strip()).strip("\"'`")
-    if not cleaned:
-        raise ValueError("prompt_en is empty")
-    if len(cleaned) > 800:
-        cleaned = cleaned[:800].rsplit(",", 1)[0] or cleaned[:800]
 
     lora = raw.get("lora")
     if not isinstance(lora, str) or lora not in SD15_LORAS:
@@ -197,4 +297,5 @@ def parse_sd15_prompt_payload(
         if not isinstance(business, str) or business not in _VALID_BUSINESS:
             raise ValueError(f"LLM response invalid business: {business!r}")
 
+    cleaned = normalize_sd15_prompt_en(prompt_en, business=business, lora=lora)
     return {"prompt_en": cleaned, "business": business, "lora": lora}

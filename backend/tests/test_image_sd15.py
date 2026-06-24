@@ -64,6 +64,19 @@ def test_prepare_sd15_prompt_uses_llm(monkeypatch):
     assert prep.prompt_en == "lab bench, microscope, soft light"
 
 
+def test_resolve_checkpoint_defaults_to_realistic_vision():
+    from app.services.visual.image_sd15 import _resolve_checkpoint
+
+    assert (
+        _resolve_checkpoint(business="science", prompt="写实科普插画，细胞结构示意图")
+        == "RealisticVisionV51.safetensors"
+    )
+    assert (
+        _resolve_checkpoint(business="science", prompt="日系动漫风格科普")
+        == "ToonYouBeta6.safetensors"
+    )
+
+
 def test_generate_uses_job_size_not_business(monkeypatch, tmp_path):
     from app.services.visual.image_sd15 import Sd15ImageProvider
 
@@ -79,6 +92,13 @@ def test_generate_uses_job_size_not_business(monkeypatch, tmp_path):
     captured: dict = {}
 
     def fake_post(url, json=None, timeout=None):
+        if url.endswith("/sdapi/v1/options"):
+            captured["checkpoint"] = json.get("sd_model_checkpoint")
+            class Resp:
+                def raise_for_status(self):
+                    return None
+
+            return Resp()
         if url.endswith("/sdapi/v1/txt2img"):
             captured["payload"] = json
             class Resp:
@@ -111,4 +131,6 @@ def test_generate_uses_job_size_not_business(monkeypatch, tmp_path):
 
     assert captured["payload"]["width"] == 640
     assert captured["payload"]["height"] == 360
+    assert captured["checkpoint"] == "RealisticVisionV51.safetensors"
+    assert "white background, line art" in captured["payload"]["prompt"]
     assert out.exists()

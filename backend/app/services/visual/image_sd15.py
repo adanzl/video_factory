@@ -13,15 +13,23 @@ import requests
 
 from app.config import get_settings
 from app.services.llm.llm_mgr import llm_mgr
-from app.services.llm.llm_sd15_prompt import pick_business_by_keywords, pick_lora_by_keywords, weight_for_lora
+from app.services.llm.llm_sd15_prompt import (
+    build_sd15_full_prompt,
+    pick_business_by_keywords,
+    pick_lora_by_keywords,
+    science_wants_anime,
+)
 from app.services.visual.image_mock import MockImageProvider
 from app.services.visual.visual_mgr import ImageProvider
 
 logger = logging.getLogger(__name__)
 
+_ANIME_CHECKPOINT = "ToonYouBeta6.safetensors"
+_DEFAULT_CHECKPOINT = "RealisticVisionV51.safetensors"
+
 _BUSINESS_CONFIG = {
     "life": {
-        "checkpoint": "RealisticVisionV51.safetensors",
+        "checkpoint": _DEFAULT_CHECKPOINT,
         "steps": 20,
         "negative": (
             "cartoon, anime, illustration, painting, blurry, deformed, ugly, "
@@ -29,14 +37,21 @@ _BUSINESS_CONFIG = {
         ),
     },
     "science": {
-        "checkpoint": "ToonYouBeta6.safetensors",
+        "checkpoint": _DEFAULT_CHECKPOINT,
         "steps": 20,
         "negative": (
-            "photo, realistic, 3d render, shadow, gradient background, cluttered, "
-            "text, watermark, blurry"
+            "anime, cartoon, manga, chibi, girl, boy, woman, man, face, portrait, "
+            "hair, eyes, glowing eyes, superhero, deformed, ugly, watermark, text, "
+            "logo, blurry, cluttered"
         ),
     },
 }
+
+
+def _resolve_checkpoint(*, business: str, prompt: str) -> str:
+    if business == "science" and science_wants_anime(prompt):
+        return _ANIME_CHECKPOINT
+    return _BUSINESS_CONFIG[business]["checkpoint"]
 
 
 def parse_image_size(size: str) -> tuple[int, int]:
@@ -100,8 +115,14 @@ def _prepare_sd15_prompt(
             logger.warning("sd15 prompt prep llm failed, using fallback: %s", exc)
 
     lora = pick_lora_by_keywords(cleaned)
-    prompt_en = _fallback_prompt_en(cleaned)
     business = _fallback_business(prompt=cleaned, business_override=business_override)
+    from app.services.llm.llm_sd15_prompt import normalize_sd15_prompt_en
+
+    prompt_en = normalize_sd15_prompt_en(
+        _fallback_prompt_en(cleaned),
+        business=business,
+        lora=lora,
+    )
     logger.info(
         "sd15 prompt prep fallback: business=%s lora=%s prompt_en=%s",
         business,
@@ -128,13 +149,11 @@ class Sd15ImageProvider(ImageProvider):
 
         business = self._business_override or "prompt_infer"
         lora_hint = "llm_pick|" + "|".join(SD15_LORAS)
-        cfg_life = _BUSINESS_CONFIG["life"]
-        cfg_sci = _BUSINESS_CONFIG["science"]
         resolved_size = size or self._default_size
         return (
             f"provider=sd15_t2i, api={self._api_url}, business={business}, "
-            f"lora={lora_hint}, checkpoints=life:{cfg_life['checkpoint']}|"
-            f"science:{cfg_sci['checkpoint']}, size={resolved_size}"
+            f"lora={lora_hint}, checkpoints=life:{_DEFAULT_CHECKPOINT}|"
+            f"science:{_DEFAULT_CHECKPOINT}|anime:{_ANIME_CHECKPOINT}, size={resolved_size}"
         )
 
     def _cfg_for_business(self, business: str) -> dict:
@@ -163,14 +182,20 @@ class Sd15ImageProvider(ImageProvider):
         )
         business = prep.business
         cfg = self._cfg_for_business(business)
+        checkpoint = _resolve_checkpoint(business=business, prompt=prompt)
         api_width, api_height = parse_image_size(size)
         lora = prep.lora
-        weight = weight_for_lora(lora)
-        full_prompt = f"<lora:{lora}:{weight}> {prep.prompt_en}"
+        full_prompt = build_sd15_full_prompt(
+            subject=prep.prompt_en,
+            business=business,
+            lora=lora,
+        )
 
         logger.info(
-            "sd15 request: business=%s lora=%s job_size=%s api=%s*%s prompt_en=%s full_prompt=%s",
+            "sd15 request: business=%s checkpoint=%s lora=%s job_size=%s api=%s*%s "
+            "prompt_en=%s full_prompt=%s",
             business,
+            checkpoint,
             lora,
             size,
             api_width,
@@ -179,12 +204,12 @@ class Sd15ImageProvider(ImageProvider):
             full_prompt,
         )
         try:
-            self._switch_checkpoint(cfg["checkpoint"])
+            self._switch_checkpoint(checkpoint)
             payload = {
                 "prompt": full_prompt,
                 "negative_prompt": cfg["negative"],
                 "steps": cfg["steps"],
-                "cfg_scale": 7,
+                "cfg_scale": 6 if business == "science" else 7,
                 "width": api_width,
                 "height": api_height,
                 "sampler_name": "DPM++ 2M Karras",

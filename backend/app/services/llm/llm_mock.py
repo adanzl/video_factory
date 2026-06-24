@@ -249,7 +249,11 @@ class MockLLMClient(LLMClient):
         size_hint: str | None = None,
         business_override: str | None = None,
     ) -> dict[str, str]:
-        from app.services.llm.llm_sd15_prompt import pick_business_by_keywords, pick_lora_by_keywords
+        from app.services.llm.llm_sd15_prompt import (
+            normalize_sd15_prompt_en,
+            pick_business_by_keywords,
+            pick_lora_by_keywords,
+        )
 
         _ = size_hint
         cleaned = prompt.strip()
@@ -258,7 +262,11 @@ class MockLLMClient(LLMClient):
             business = business_override
         else:
             business = pick_business_by_keywords(cleaned)
-        prompt_en = self.rewrite_pixabay_query(cleaned)
+        prompt_en = normalize_sd15_prompt_en(
+            self.rewrite_pixabay_query(cleaned),
+            business=business,
+            lora=lora,
+        )
         return {"prompt_en": prompt_en, "business": business, "lora": lora}
 
     def generate_topics(
