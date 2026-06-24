@@ -90,12 +90,12 @@ def test_resolve_segment_image_size_sd15_portrait():
 
     settings = SimpleNamespace(
         image_provider="sd15_t2i",
-        sd_image_size="576*768",
+        sd_image_size="360*640",
         wan_image_size="720*1280",
         z_image_size="720*1280",
     )
     job = {"info": {"orientation": "portrait"}}
-    assert resolve_segment_image_size(job, settings=settings) == "576*768"
+    assert resolve_segment_image_size(job, settings=settings) == "360*640"
 
 
 def test_resolve_segment_image_size_sd15_landscape():
@@ -105,12 +105,12 @@ def test_resolve_segment_image_size_sd15_landscape():
 
     settings = SimpleNamespace(
         image_provider="sd15_t2i",
-        sd_image_size="576*768",
+        sd_image_size="360*640",
         wan_image_size="720*1280",
         z_image_size="720*1280",
     )
     job = {"info": {"orientation": "landscape"}}
-    assert resolve_segment_image_size(job, settings=settings) == "768*576"
+    assert resolve_segment_image_size(job, settings=settings) == "640*360"
 
     from types import SimpleNamespace
 

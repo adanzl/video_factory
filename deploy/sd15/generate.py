@@ -16,16 +16,16 @@ OUTPUT_DIR = os.environ.get("SD_OUTPUT_DIR", "output")
 BUSINESS_CONFIG = {
     "life": {
         "checkpoint": "RealisticVisionV51.safetensors",
-        "width": 768,
-        "height": 576,
+        "width": 640,
+        "height": 360,
         "steps": 20,
         "negative": "cartoon, anime, illustration, painting, blurry, deformed, ugly, watermark, text, logo, oversaturated",
     },
     "science": {
         "checkpoint": "ToonYouBeta6.safetensors",
-        "width": 576,
-        "height": 768,
-        "steps": 22,
+        "width": 360,
+        "height": 640,
+        "steps": 20,
         "negative": "photo, realistic, 3d render, shadow, gradient background, cluttered, text, watermark, blurry",
     },
 }
