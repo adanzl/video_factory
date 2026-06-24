@@ -161,7 +161,7 @@ class Config:
     z_image_prompt_extend: bool = _bool("Z_IMAGE_PROMPT_EXTEND")
     sd_api_url: str = os.getenv("SD_API_URL", "http://127.0.0.1:9101").rstrip("/")
     sd_business: str | None = _opt("SD_BUSINESS")  # life | science；空则 LLM 推断
-    sd_image_size: str = os.getenv("SD_IMAGE_SIZE", "576*768")
+    sd_image_size: str = os.getenv("SD_IMAGE_SIZE", "360*640")
     sd_timeout_sec: float = float(os.getenv("SD_TIMEOUT_SEC", "600"))
 
     # ========== LLM ==========

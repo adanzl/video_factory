@@ -53,7 +53,7 @@ def test_prepare_sd15_prompt_uses_llm(monkeypatch):
             "lora": "Textbook_Line_Art",
         },
     ):
-        prep = _prepare_sd15_prompt("实验室显微镜特写，柔和顶光", size_hint="576*768")
+        prep = _prepare_sd15_prompt("实验室显微镜特写，柔和顶光", size_hint="360*640")
 
     assert prep.business == "science"
     assert prep.lora == "Textbook_Line_Art"
