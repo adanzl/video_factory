@@ -11,6 +11,7 @@ from app.services.media.audio_analysis import analyze_loudness
 from app.services.media.ffmpeg_utils import ffmpeg_hwaccel_config_summary, probe_duration
 from app.services.media.media_mgr import media_mgr
 from app.utils.final_asset import build_final_asset
+from app.utils.media import material_final_min_duration_sec
 from worker.context import JobContext
 from worker.stages.base import StageExecutor
 
@@ -62,6 +63,12 @@ class MaterialMergeStage(StageExecutor):
         loudness = analyze_loudness(result.final_path)
         duration = probe_duration(result.final_path)
         cost_time = time.perf_counter() - started
+        base_dur = probe_duration(base_path)
+        intro_dur = probe_duration(intro_path) if intro_path and intro_path.is_file() else 0.0
+        final_min_dur = material_final_min_duration_sec(
+            base_dur,
+            intro_duration_sec=intro_dur,
+        )
 
         with connection() as conn:
             updates: dict = {
@@ -89,6 +96,12 @@ class MaterialMergeStage(StageExecutor):
                 conn,
                 ctx.job["id"],
                 self.name,
-                {"final": check_final(result.final_path, loudness=loudness)},
+                {
+                    "final": check_final(
+                        result.final_path,
+                        loudness=loudness,
+                        min_duration_sec=final_min_dur,
+                    ),
+                },
                 existing_report=job.get("quality_report"),
             )

@@ -34,6 +34,24 @@ def estimate_narration_target_words(duration_sec: float) -> int:
     return max(1, min(NARRATION_MAX_CHARS, target))
 
 
+def material_min_audio_duration_sec(base_duration_sec: float | None) -> float:
+    """素材线配音最短时长：随基底视频缩放，避免短素材被 30s 硬门槛误杀。"""
+    if base_duration_sec is None or base_duration_sec <= 0:
+        return 5.0
+    return max(5.0, base_duration_sec * 0.70)
+
+
+def material_final_min_duration_sec(
+    base_duration_sec: float,
+    *,
+    intro_duration_sec: float = 0.0,
+) -> float:
+    """素材线成片最短时长：基底 + 片头，留约 15% 容差。"""
+    expected = max(0.0, base_duration_sec) + max(0.0, intro_duration_sec)
+    slack = max(2.0, expected * 0.15)
+    return max(5.0, expected - slack)
+
+
 def segment_text_char_cap(segment_target_sec: float) -> int:
     """单镜口播 text 字数上限（5 字/秒 × segment_target_sec）。"""
     return max(20, int(segment_target_sec * NARRATION_CHARS_PER_SEC))

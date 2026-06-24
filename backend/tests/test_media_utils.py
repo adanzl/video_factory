@@ -4,6 +4,8 @@ from app.utils.media import (
     default_narration_target_words,
     estimate_narration_target_words,
     estimate_segment_duration_sec,
+    material_final_min_duration_sec,
+    material_min_audio_duration_sec,
     narration_accept_min_chars,
     narration_target_for_minutes,
     narration_writing_target_chars,
@@ -51,6 +53,12 @@ def test_estimate_narration_target_words_clamps():
     assert estimate_narration_target_words(5) == 23
     assert estimate_narration_target_words(30) == 138
     assert estimate_narration_target_words(700) == 3000
+
+
+def test_material_duration_bounds_for_short_base():
+    assert material_min_audio_duration_sec(30) == 21.0
+    assert material_final_min_duration_sec(30) == 25.5
+    assert material_final_min_duration_sec(30, intro_duration_sec=3) == 28.05
 
 
 def test_assign_segment_timings_from_narration_chars():
