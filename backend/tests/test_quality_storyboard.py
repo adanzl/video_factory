@@ -33,3 +33,23 @@ def test_check_storyboard_reads_segment_target_from_script_json():
     script["segment_target_sec"] = 28.0
     report = check_storyboard(script)
     assert report.level == "pass"
+
+
+def test_check_storyboard_matches_validation_when_narration_exceeds_target():
+    """口播实际字数高于 narration_target_words 时，质检与 validate 段数一致。"""
+    text = "字" * 550
+    script = {
+        "title": "测试标题",
+        "narration": text,
+        "narration_target_words": 404,
+        "segment_target_sec": 28.0,
+        "segments": [
+            {"segment_index": i + 1, "text": "字" * 138} for i in range(4)
+        ],
+    }
+    report = check_storyboard(script, segment_target_sec=28.0)
+    assert report.level == "pass"
+    script["segments"] = script["segments"][:3]
+    report = check_storyboard(script, segment_target_sec=28.0)
+    assert report.level == "major"
+    assert report.details["reason"] == "too few segments"

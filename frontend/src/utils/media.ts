@@ -108,6 +108,27 @@ export function narrationTargetForMinutes(
   return Math.max(1, Math.min(NARRATION_MAX_CHARS, target));
 }
 
+/** 由口播目标字数反推预计成片时长（分钟，含片头预算） */
+export function estimatedMinutesFromNarrationWords(
+  words: number,
+  introBudgetSec = INTRO_DURATION_BUDGET_SEC
+): number {
+  if (!Number.isFinite(words) || words <= 0) {
+    return 1;
+  }
+  const bodySec = words / (NARRATION_CHARS_PER_SEC * NARRATION_FILL_RATIO);
+  const totalSec = Math.max(30, bodySec) + introBudgetSec;
+  return Math.round((totalSec / 60) * 10) / 10;
+}
+
+/** 由预计成片时长（分钟）反推口播目标字数 */
+export function narrationTargetFromEstimatedMinutes(
+  minutes: number,
+  introBudgetSec = INTRO_DURATION_BUDGET_SEC
+): number {
+  return narrationTargetForMinutes(minutes, NARRATION_CHARS_PER_SEC, introBudgetSec);
+}
+
 /** 格式化媒体时长（秒 → mm:ss） */
 export function formatMediaDuration(seconds?: number | null): string {
   if (seconds === null || seconds === undefined || Number.isNaN(seconds)) {

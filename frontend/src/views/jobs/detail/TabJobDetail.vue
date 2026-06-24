@@ -26,7 +26,12 @@
       />
 
       <el-tabs v-model="activeStage" type="border-card">
-        <el-tab-pane v-for="stage in jobStages" :key="stage.name" :name="stage.name">
+        <el-tab-pane
+          v-for="stage in jobStages"
+          :key="stage.name"
+          :name="stage.name"
+          :disabled="stage.disabled"
+        >
           <template #label>
             <span>{{ stage.label }}</span>
             <el-tag v-if="job.stage === stage.name" size="small" type="warning" class="ml-1">
@@ -55,7 +60,7 @@ import { Refresh } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { getJob, getJobLogs, getJobSegments, resetJob } from "@/api/api-jobs";
 import { JOB_STATUS_RUNNING } from "@/constants/job";
-import { pipelineLabel, stageNamesForJob, stagesForJob } from "@/constants/jobStages";
+import { pipelineLabel, resolveActiveStageTab, stagesForJob } from "@/constants/jobStages";
 import type { JobDetail, JobLog, JobSegment } from "@/types/jobs";
 import { useErrorHandler } from "@/composables/useErrorHandler";
 import StageHost from "./StageHost.vue";
@@ -141,12 +146,7 @@ const statusTagType = (status: string) => {
 };
 
 const syncActiveStage = (detail: JobDetail) => {
-  const names = stageNamesForJob(detail);
-  if (detail.stage && names.has(detail.stage)) {
-    activeStage.value = detail.stage;
-  } else {
-    activeStage.value = stagesForJob(detail)[0]?.name ?? "script";
-  }
+  activeStage.value = resolveActiveStageTab(detail, detail.stage);
 };
 
 const fetchDetail = async (options: { silent?: boolean } = {}) => {
