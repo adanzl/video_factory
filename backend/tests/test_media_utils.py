@@ -48,7 +48,8 @@ def test_narration_writing_target_chars_is_ninety_five_percent():
 
 
 def test_estimate_narration_target_words_clamps():
-    assert estimate_narration_target_words(5) == 200
+    assert estimate_narration_target_words(5) == 23
+    assert estimate_narration_target_words(30) == 138
     assert estimate_narration_target_words(700) == 3000
 
 

@@ -14,6 +14,7 @@ from app.utils.media import (
     assign_segment_timings,
     base_video_duration_sec,
     estimate_narration_target_words,
+    NARRATION_ABS_MIN_CHARS,
     narration_soft_min_chars,
 )
 from worker.context import JobContext
@@ -28,7 +29,7 @@ from worker.stages.standard.script import (
     _title_chars,
 )
 
-MIN_ACCEPT_NARRATION_CHARS = 200
+MIN_ACCEPT_NARRATION_CHARS = NARRATION_ABS_MIN_CHARS
 
 
 def _split_manual_narration(narration: str) -> list[dict]:

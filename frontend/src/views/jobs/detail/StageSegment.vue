@@ -10,36 +10,37 @@
         </el-button>
         <span v-if="actionDisabledReason" class="text-sm text-gray-400">{{ actionDisabledReason }}</span>
       </div>
-      <el-form
-        label-width="96px"
-        class="[&_.el-form-item__content]:min-w-0 [&_.el-form-item__content]:flex-1"
-      >
-        <el-form-item label="重跑模式">
-            <div class="flex flex-wrap items-center gap-x-6 gap-y-2">
-            <el-radio-group v-model="segmentScope">
-              <el-radio value="segment/all">全部</el-radio>
-              <el-radio value="segment/images">分镜静图</el-radio>
-              <el-radio value="segment/clips">图生视频</el-radio>
-            </el-radio-group>
-            <div class="flex items-center gap-2">
-              <span class="text-sm text-gray-500">静图</span>
-              <el-radio-group v-model="imageProvider" size="small" :disabled="segmentScope === 'segment/clips'">
-                <el-radio-button value="z_image_t2i">Z-Image</el-radio-button>
-                <el-radio-button value="wan_t2i">万相</el-radio-button>
-                <el-radio-button value="sd15_t2i">本地 SD</el-radio-button>
-              </el-radio-group>
-            </div>
-            <div class="flex items-center gap-2">
-              <span class="text-sm text-gray-500">视频</span>
-              <el-radio-group v-model="videoProvider" size="small" :disabled="segmentScope === 'segment/images'">
-                <el-radio-button value="ffmpeg">Ken Burns</el-radio-button>
-                <el-radio-button value="wan_i2v">万相 I2V</el-radio-button>
-              </el-radio-group>
-            </div>
-          </div>
-        </el-form-item>
-        <el-form-item label="分段序号">
-          <div class="flex w-full max-w-3xl flex-nowrap items-center gap-3">
+      <el-descriptions :column="3" border label-width="100px" class="w-full">
+        <el-descriptions-item label="重跑模式">
+          <el-radio-group v-model="segmentScope" size="small">
+            <el-radio value="segment/all">全部</el-radio>
+            <el-radio value="segment/images">分镜静图</el-radio>
+            <el-radio value="segment/clips">图生视频</el-radio>
+          </el-radio-group>
+        </el-descriptions-item>
+        <el-descriptions-item label="静图">
+          <el-radio-group
+            v-model="imageProvider"
+            size="small"
+            :disabled="segmentScope === 'segment/clips'"
+          >
+            <el-radio-button value="z_image_t2i">Z-Image</el-radio-button>
+            <el-radio-button value="wan_t2i">万相</el-radio-button>
+            <el-radio-button value="sd15_t2i">本地 SD</el-radio-button>
+          </el-radio-group>
+        </el-descriptions-item>
+        <el-descriptions-item label="视频">
+          <el-radio-group
+            v-model="videoProvider"
+            size="small"
+            :disabled="segmentScope === 'segment/images'"
+          >
+            <el-radio-button value="ffmpeg">Ken Burns</el-radio-button>
+            <el-radio-button value="wan_i2v">万相 I2V</el-radio-button>
+          </el-radio-group>
+        </el-descriptions-item>
+        <el-descriptions-item label="分段序号" :span="3">
+          <div class="flex w-full flex-nowrap items-center gap-3">
             <el-select
               v-model="selectedSegments"
               multiple
@@ -56,10 +57,12 @@
                 :value="segment.segment_index"
               />
             </el-select>
-            <span class="shrink-0 whitespace-nowrap text-sm text-gray-500">共 {{ segments.length }} 分镜</span>
+            <span class="shrink-0 whitespace-nowrap text-sm text-gray-500">
+              共 {{ segments.length }} 分镜
+            </span>
           </div>
-        </el-form-item>
-      </el-form>
+        </el-descriptions-item>
+      </el-descriptions>
     </div>
 
     <div v-if="displaySegments.length" class="overflow-x-auto pb-2">
@@ -238,6 +241,7 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import { runJobStageAction } from "@/api/api-jobs";
 import { getMediaFileUrl } from "@/api/api-media";
 import type { JobDetail, JobInfo, JobLog, JobSegment, ScriptJson } from "@/types/jobs";
+import type { RunStageActionPayload } from "@/types/jobs/stageAction";
 import { formatDateTime } from "@/utils/date";
 import { buildSegmentClipSearchKeyword, type ClipOrientation } from "@/utils/clipSearch";
 import { useErrorHandler } from "@/composables/useErrorHandler";
@@ -259,10 +263,10 @@ const submitting = ref(false);
 const regeneratingImageIndex = ref<number | null>(null);
 const generatingClipIndex = ref<number | null>(null);
 const segmentScope = ref("segment/images");
-const imageProvider = ref(
+const imageProvider = ref<NonNullable<RunStageActionPayload["image_provider"]>>(
   props.job.info?.image_provider ?? "z_image_t2i"
 );
-const videoProvider = ref(
+const videoProvider = ref<NonNullable<RunStageActionPayload["video_provider"]>>(
   props.job.info?.video_provider ?? "ffmpeg"
 );
 
@@ -435,13 +439,7 @@ const handleRun = async (toEnd: boolean) => {
 
   submitting.value = true;
   try {
-    const payload: {
-      id: number;
-      to_end: boolean;
-      segments?: number[];
-      image_provider?: string;
-      video_provider?: string;
-    } = {
+    const payload: RunStageActionPayload = {
       id: props.job.id,
       to_end: toEnd,
     };

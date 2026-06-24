@@ -21,14 +21,15 @@ from app.utils.media import (
     default_narration_target_words,
     min_narration_chars_for_target,
     narration_accept_min_chars,
+    NARRATION_ABS_MIN_CHARS,
     narration_soft_min_chars,
     segment_text_char_cap,
 )
 from worker.context import JobContext
 from worker.stages.base import StageExecutor
 
-# 低于此比例视为「主题撑不满」，不再重试，直接沿用当前文案继续。
-MIN_ACCEPT_NARRATION_CHARS = 200
+# 低于此字数视为明显过短，不再重试，直接沿用当前文案继续。
+MIN_ACCEPT_NARRATION_CHARS = NARRATION_ABS_MIN_CHARS
 
 
 def _min_narration_chars(narration_target_words: int | None) -> int:

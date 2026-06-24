@@ -86,7 +86,7 @@ def _parse_script_body() -> tuple[
         parse_optional_str(data, "title"),
         parse_optional_float(data, "segment_target_sec", minimum=0.0, maximum=60.0),
         parse_optional_int(data, "max_title_length", minimum=8, maximum=48),
-        parse_optional_int(data, "narration_target_words", minimum=200, maximum=3000),
+        parse_optional_int(data, "narration_target_words", minimum=1, maximum=3000),
         parse_bool(data, "skip_title_optimize", default=False),
         parse_bool(data, "generate_image_prompts", default=False),
         supplementary,
@@ -138,7 +138,7 @@ def preview_script_prompts_route():
     title = parse_optional_str(data, "title")
     segment_target_sec = parse_optional_float(data, "segment_target_sec", minimum=0.0, maximum=60.0)
     max_title_length = parse_optional_int(data, "max_title_length", minimum=8, maximum=48)
-    narration_target_words = parse_optional_int(data, "narration_target_words", minimum=200, maximum=3000)
+    narration_target_words = parse_optional_int(data, "narration_target_words", minimum=1, maximum=3000)
     skip_title_optimize = parse_bool(data, "skip_title_optimize", default=False)
     supplementary_info = parse_optional_str(data, "supplementary_info")
     video_timeline = parse_optional_str(data, "video_timeline")

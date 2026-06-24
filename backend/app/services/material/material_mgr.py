@@ -15,6 +15,7 @@ from app.repositories.connection import connection
 from app.services.job.job_mgr import job_mgr
 from app.services.media.ffmpeg_utils import extract_first_frame, probe_duration, probe_video_size
 from app.utils.job_info import default_orientation_for_pipeline, merge_job_info
+from app.utils.media import NARRATION_ABS_MIN_CHARS
 
 _ALLOWED_EXTENSIONS = {".mp4", ".mov", ".webm", ".mkv"}
 _RUN_MODES = frozenset({"none", "prepare", "full"})
@@ -196,8 +197,10 @@ class MaterialMgr:
         if mode == "manual":
             if not narration or not narration.strip():
                 raise ValueError("narration is required for manual script_mode")
-            if len(re.sub(r"\s+", "", narration)) < 200:
-                raise ValueError("narration too short (need >= 200 chars)")
+            if len(re.sub(r"\s+", "", narration)) < NARRATION_ABS_MIN_CHARS:
+                raise ValueError(
+                    f"narration too short (need >= {NARRATION_ABS_MIN_CHARS} chars)"
+                )
         run = run_mode.strip().lower()
         if run not in _RUN_MODES:
             raise ValueError(f"run_mode must be one of {sorted(_RUN_MODES)}")
