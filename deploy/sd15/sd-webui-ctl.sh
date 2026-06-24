@@ -6,6 +6,17 @@ SD_HOME="${SD_HOME:-/mnt/data/stable-diffusion/webui}"
 SD_PORT="${SD_PORT:-7860}"
 LOG_FILE="${LOG_FILE:-$HOME/sd-webui.log}"
 PID_FILE="${PID_FILE:-$HOME/sd-webui.pid}"
+CTL_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+sync_gfx1103_fix() {
+  local src="$CTL_DIR/scripts/gfx1103_disable_miopen.py"
+  local dst="$SD_HOME/scripts/gfx1103_disable_miopen.py"
+  if [[ -f "$src" ]]; then
+    mkdir -p "$SD_HOME/scripts"
+    cp -f "$src" "$dst"
+    echo "Synced gfx1103 fix -> $dst"
+  fi
+}
 
 stop_webui() {
   local pid=""
@@ -41,6 +52,7 @@ start_webui() {
     exit 1
   fi
   echo "Starting WebUI (SD_HOME=$SD_HOME, port=$SD_PORT) ..."
+  sync_gfx1103_fix
   cd "$SD_HOME"
   nohup bash webui.sh >>"$LOG_FILE" 2>&1 &
   echo $! >"$PID_FILE"
