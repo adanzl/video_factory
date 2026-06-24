@@ -42,6 +42,7 @@ LORA_WEIGHTS = {
     "Scientific_Equipment": 0.7,
     "Textbook_Line_Art": 0.7,
     "Simple_Diagram": 0.65,
+    "Science_DNA_Style": 0.7,
 }
 
 

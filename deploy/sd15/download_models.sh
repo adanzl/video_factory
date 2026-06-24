@@ -52,6 +52,8 @@ cp -f "$LORA/Textbook_Line_Art.safetensors" "$LORA/Laboratory_Scene.safetensors"
 cp -f "$LORA/Textbook_Line_Art.safetensors" "$LORA/Scientific_Equipment.safetensors"
 dl "$HF/Miracle-2001/diagram-lora/resolve/main/pytorch_lora_weights.safetensors" \
   "$LORA/Simple_Diagram.safetensors"
+dl "$HF/mnemic/ScienceDNAStyle-SD1.5-LoRA/resolve/main/ScienceDNAStyle.safetensors" \
+  "$LORA/Science_DNA_Style.safetensors"
 
 echo "=== Done ==="
 ls -lh "$CKPT"/*.safetensors "$LORA"/*.safetensors 2>/dev/null || ls -lh "$CKPT" "$LORA"

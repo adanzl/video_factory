@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-# 与 docs/SD15部署.md §LoRA 与提示词 一致；单次仅 1 个 LoRA
+# LoRA 目录；分图左半在分子场景可叠 Science_DNA_Style（最多 2 个）
 SD15_LORAS: dict[str, dict[str, Any]] = {
     "Food_Photo": {
         "weight": 0.6,
@@ -43,10 +43,19 @@ SD15_LORAS: dict[str, dict[str, Any]] = {
         ),
     },
     "Simple_Diagram": {
-        "weight": 0.55,
+        "weight": 0.65,
         "keywords": (
             "信息图", "流程图", "示意图", "对比图", "扁平", "科普图", "箭头", "步骤",
             "infographic", "flowchart", "chart", "schematic", "comparison", "steps",
+        ),
+    },
+    "Science_DNA_Style": {
+        "weight": 0.7,
+        "trigger": "ScienceDNAStyle",
+        "keywords": (
+            "分子", "一氧化碳", "蛋白", "DNA", "RNA", "微观", "发光", "科学感",
+            "molecule", "molecules", "carbon monoxide", "protein", "proteins",
+            "wireframe", "glowing", "science", "microscopic", "sci-fi",
         ),
     },
 }
@@ -72,9 +81,27 @@ _DEFAULT_BUSINESS = "science"
 _PROMPT_EN_MAX_WORDS = 55
 
 _SCIENCE_SUFFIX = "white background, line art, clean composition, no text"
+_SCIENCE_DIAGRAM_SUFFIX = "dark gray background, clean composition, no text"
+_SCIENCE_SPLIT_SUFFIX = "dark gray background, no text"
 _LIFE_SUFFIX = "natural light, realistic photo"
 
-_SCIENCE_LORAS = frozenset({"Textbook_Line_Art", "Simple_Diagram"})
+_SCIENCE_LORAS = frozenset({"Textbook_Line_Art", "Simple_Diagram", "Science_DNA_Style"})
+
+_SCIENCE_DNA_KEYWORDS = SD15_LORAS["Science_DNA_Style"]["keywords"]
+
+_SPLIT_KEYWORDS = (
+    "对比", "左右", "上下", "一侧", "另一侧", "左边", "右边", "上边", "下边", "上方", "下方",
+    "左半", "右半", "上半", "下半", "分屏", "双场景",
+    "comparison", "left side", "right side", "top", "bottom", "above", "below",
+    "on the left", "on the right", "split",
+)
+
+_SCIENCE_LEFT_STRIP = re.compile(
+    r"\b("
+    r"lung|lungs|alveoli|anatomy|organ|organs|blood cell|hemoglobin|tissue cross[- ]section"
+    r")\b[^,]*",
+    re.IGNORECASE,
+)
 
 _SCIENCE_FORBIDDEN = re.compile(
     r"\b("
@@ -125,7 +152,23 @@ def _strip_science_forbidden(text: str) -> str:
 
 _SCIENCE_CHARACTER = re.compile(
     r"\b("
-    r"person|people|human|man|woman|girl|boy|child|character|portrait|face|head|"
+    r"person|people|character|portrait|face|head|"
+    r"hair|eyes|glowing|superhero|anime|dizziness|hypoxia"
+    r")\b[^,]*",
+    re.IGNORECASE,
+)
+
+_SCIENCE_LEFT_CHARACTER = re.compile(
+    r"\b("
+    r"person|people|character|portrait|face|head|"
+    r"hair|eyes|superhero|anime|dizziness|hypoxia"
+    r")\b[^,]*",
+    re.IGNORECASE,
+)
+
+_SCIENCE_RIGHT_CHARACTER = re.compile(
+    r"\b("
+    r"person|people|character|portrait|face|head|"
     r"hair|eyes|glowing|superhero|anime|dizziness|hypoxia"
     r")\b[^,]*",
     re.IGNORECASE,
@@ -134,12 +177,41 @@ _SCIENCE_CHARACTER = re.compile(
 
 def normalize_sd15_prompt_en(prompt_en: str, *, business: str, lora: str) -> str:
     """按 business / LoRA 约束清洗并截断英文 subject（不含 LoRA 标签与固定后缀）。"""
+    return normalize_sd15_panel_prompt_en(
+        prompt_en,
+        panel="single",
+        business=business,
+        lora=lora,
+    )
+
+
+def normalize_sd15_panel_prompt_en(
+    prompt_en: str,
+    *,
+    panel: str,
+    business: str,
+    lora: str,
+) -> str:
+    """按 panel（single / left / right）清洗英文 subject。"""
     cleaned = re.sub(r"\s+", " ", prompt_en.strip()).strip("\"'`")
     if not cleaned:
         raise ValueError("prompt_en is empty")
     if business == "science":
-        cleaned = _strip_science_forbidden(cleaned)
-        cleaned = _SCIENCE_CHARACTER.sub("", cleaned)
+        if panel == "left":
+            cleaned = _strip_science_forbidden(cleaned)
+            cleaned = _SCIENCE_LEFT_STRIP.sub("", cleaned)
+            cleaned = _SCIENCE_LEFT_CHARACTER.sub("", cleaned)
+        elif panel == "right":
+            cleaned = _SCIENCE_FORBIDDEN.sub("", cleaned)
+            cleaned = _SCIENCE_SUBJECT_STRIP.sub("", cleaned)
+            cleaned = _SCIENCE_RIGHT_CHARACTER.sub("", cleaned)
+        elif lora == "Science_DNA_Style":
+            cleaned = _SCIENCE_FORBIDDEN.sub("", cleaned)
+            cleaned = _SCIENCE_SUBJECT_STRIP.sub("", cleaned)
+            cleaned = _SCIENCE_LEFT_CHARACTER.sub("", cleaned)
+        else:
+            cleaned = _strip_science_forbidden(cleaned)
+            cleaned = _SCIENCE_CHARACTER.sub("", cleaned)
         cleaned = re.sub(r",\s*,+", ", ", cleaned)
         cleaned = re.sub(r"\s+", " ", cleaned).strip(" ,")
     cleaned = _truncate_prompt_en(cleaned)
@@ -148,13 +220,191 @@ def normalize_sd15_prompt_en(prompt_en: str, *, business: str, lora: str) -> str
     return cleaned
 
 
-def build_sd15_full_prompt(*, subject: str, business: str, lora: str) -> str:
+def _science_style_suffix(*, lora: str, layout: str) -> str:
+    if layout == "split":
+        return _SCIENCE_SPLIT_SUFFIX
+    if lora == "Textbook_Line_Art":
+        return _SCIENCE_SUFFIX
+    return _SCIENCE_DIAGRAM_SUFFIX
+
+
+def wants_science_dna_lora(*, prompt: str, subject: str = "") -> bool:
+    """分子/科学微观语义时叠加 Science_DNA_Style。"""
+    text = f"{prompt} {subject}".casefold()
+    return any(kw.casefold() in text for kw in _SCIENCE_DNA_KEYWORDS)
+
+
+def resolve_extra_loras(
+    *,
+    lora: str,
+    layout: str,
+    panel: str,
+    subject: str,
+    source_prompt: str,
+) -> tuple[str, ...]:
+    """分图左半在分子场景叠加 Science_DNA_Style（与主 LoRA 并用）。"""
+    if layout != "split" or panel != "left":
+        return ()
+    if lora == "Science_DNA_Style":
+        return ()
+    if wants_science_dna_lora(prompt=source_prompt, subject=subject):
+        return ("Science_DNA_Style",)
+    return ()
+
+
+def lora_trigger_for(name: str) -> str:
+    meta = SD15_LORAS.get(name, {})
+    trigger = meta.get("trigger")
+    return str(trigger) if trigger else ""
+
+
+def build_lora_prefix(lora: str, extra_loras: tuple[str, ...] = ()) -> str:
+    tags: list[str] = []
+    triggers: list[str] = []
+    seen: set[str] = set()
+    for name in (lora, *extra_loras):
+        if name in seen or name not in SD15_LORAS:
+            continue
+        seen.add(name)
+        tags.append(f"<lora:{name}:{weight_for_lora(name)}>")
+        trigger = lora_trigger_for(name)
+        if trigger:
+            triggers.append(trigger)
+    if not tags:
+        return ""
+    prefix = " ".join(tags)
+    if triggers:
+        return f"{prefix} {', '.join(triggers)},"
+    return prefix
+
+
+def build_sd15_full_prompt(
+    *,
+    subject: str,
+    business: str,
+    lora: str,
+    layout: str = "single",
+    panel: str = "single",
+    extra_loras: tuple[str, ...] = (),
+    source_prompt: str = "",
+) -> str:
     """按 SD15 部署约定拼接 LoRA 标签与 business 固定后缀。"""
-    weight = weight_for_lora(lora)
-    cleaned = normalize_sd15_prompt_en(subject, business=business, lora=lora)
+    if not extra_loras and source_prompt:
+        extra_loras = resolve_extra_loras(
+            lora=lora,
+            layout=layout,
+            panel=panel,
+            subject=subject,
+            source_prompt=source_prompt,
+        )
+    cleaned = normalize_sd15_panel_prompt_en(
+        subject,
+        panel=panel if layout == "split" else "single",
+        business=business,
+        lora=lora,
+    )
+    lora_prefix = build_lora_prefix(lora, extra_loras)
     if business == "science":
-        return f"<lora:{lora}:{weight}> {cleaned}, {_SCIENCE_SUFFIX}"
-    return f"<lora:{lora}:{weight}> {cleaned}, {_LIFE_SUFFIX}"
+        if layout == "split" and panel == "left":
+            style = "macro scientific illustration"
+        elif layout == "split" and panel == "right":
+            style = "medical cross-section illustration"
+        else:
+            style = None
+        suffix = _science_style_suffix(lora=lora, layout=layout)
+        if style:
+            return f"{lora_prefix} {style}, {cleaned}, {suffix}"
+        return f"{lora_prefix} {cleaned}, {suffix}"
+    return f"{lora_prefix} {cleaned}, {_LIFE_SUFFIX}"
+
+
+def has_comparison_semantics(prompt: str) -> bool:
+    """原文是否含对比 / 双场景 / 方位语义。"""
+    text = prompt.casefold()
+    return any(kw.casefold() in text for kw in _SPLIT_KEYWORDS)
+
+
+def resolve_split_axis(
+    *,
+    prompt: str,
+    width: int,
+    height: int,
+    business: str,
+    llm_wants_split: bool = False,
+) -> str | None:
+    """science 分图轴向：横屏/方形默认左右拼；竖屏仅对比语义（或 LLM 指定 split）时上下拼。"""
+    if business != "science" or width <= 0 or height <= 0:
+        return None
+    if width >= height:
+        return "horizontal"
+    if has_comparison_semantics(prompt) or llm_wants_split:
+        return "vertical"
+    return None
+
+
+def resolve_split_layout(
+    *,
+    result: dict[str, str] | None,
+    prompt: str,
+    business: str,
+    width: int,
+    height: int,
+) -> tuple[str, str]:
+    """返回 (layout, split_axis)。split_axis 为 horizontal | vertical。"""
+    llm_split = bool(result and result.get("layout") == "split")
+    axis = resolve_split_axis(
+        prompt=prompt,
+        width=width,
+        height=height,
+        business=business,
+        llm_wants_split=llm_split,
+    )
+    if axis:
+        return "split", axis
+    return "single", "horizontal"
+
+
+def wants_split_panel(
+    *,
+    prompt: str,
+    width: int,
+    height: int,
+    business: str,
+) -> bool:
+    """是否走分图拼接（兼容旧调用）。"""
+    return (
+        resolve_split_axis(
+            prompt=prompt,
+            width=width,
+            height=height,
+            business=business,
+        )
+        is not None
+    )
+
+
+def fallback_split_panel_prompts(prompt: str) -> tuple[str, str]:
+    """LLM 不可用时的左右分图 subject 兜底（英文）。"""
+    text = prompt.casefold()
+    left = (
+        "macro scientific illustration, abstract mesh or fiber structure, "
+        "small highlighted molecules passing through gaps"
+    )
+    right = (
+        "medical cross-section illustration, internal organ tissue structure, "
+        "air sacs and cells diagram"
+    )
+    if any(kw in text for kw in ("co", "一氧化碳", "carbon monoxide", "分子")):
+        left = (
+            "red glowing carbon monoxide molecules passing through blue wet fabric mesh, "
+            "molecules, science, semi-transparent cloth weave"
+        )
+    if any(kw in text for kw in ("肺", "lung", "alveoli", "血", "blood", "血红蛋白")):
+        right = (
+            "medical cross-section illustration, lung alveoli air sacs, "
+            "red blood cells turning dark, moist tissue"
+        )
+    return left, right
 
 
 _ANIME_KEYWORDS = (
@@ -231,24 +481,33 @@ def build_sd15_prompt_system(*, business_override: str | None = None) -> str:
     return (
         "你是 Stable Diffusion 1.5 文生图提示词专家。"
         "输入常为 200～500 字中文 image_prompt（为云端大模型撰写），"
-        "你必须提炼为 SD1.5 在 640×360 低分辨率下可画的单一画面。\n\n"
+        "你必须提炼为 SD1.5 在 640×360 低分辨率下可画的画面。\n\n"
         "输出 JSON 字段：\n"
-        "1. prompt_en：仅写 subject 主体描述（英文、逗号分隔），25～55 词；"
-        "不写 lora 标签，不写 white background / line art / no text（系统会自动追加）。"
-        "禁止逐句翻译长文；禁止左右分屏多场景堆砌；最多 2 个可视化主体。"
-        "science 时禁止 person/head/face/human/hair/eyes 等人物词，"
-        "改用 molecule/icon/cross-section/diagram 等无人物示意。\n"
-        "2. business：life=写实摄影；science=科普插画示意（默认非动漫底模）。\n"
-        "3. lora：按关键词独立选择；左右对比/流程/多概念优先 Simple_Diagram，"
+        "1. layout：science 默认 split（系统按画幅拼接）；life 用 single。"
+        "split 时写 left_en、right_en——横屏对应左/右半，竖屏对应上/下半；"
+        "竖屏无对比/双场景语义时可 single。\n"
+        "2. 当 layout=single：prompt_en 为 subject（英文、逗号分隔，25～55 词）；"
+        "不写 lora 标签，不写背景后缀（系统会自动追加）。"
+        "science 时禁止 person/face/head 等人物词。\n"
+        "3. 当 layout=split：left_en、right_en 各 15～35 词 subject。"
+        "left_en 侧重宏观/分子/介质（如湿布纤维、分子穿过，可用 molecules/glowing/science）；"
+        "right_en 侧重医学截面/器官/细胞（如肺泡、血红蛋白）；"
+        "均禁止文字、人物肖像；不要写 left/right/top/bottom 等方位词。\n"
+        "4. business：life=写实摄影；science=科普插画示意（默认非动漫底模）。\n"
+        "5. lora：分子/微观/CO 优先 Science_DNA_Style；"
+        "对比/流程/多概念优先 Simple_Diagram（分图左半可与 Science_DNA_Style 叠加）；"
         "单一结构解剖优先 Textbook_Line_Art。\n"
         f"{_lora_catalog_text()}\n\n"
         "science 禁词：hyper-realistic, photorealistic, 3d render, photo, "
-        "person, human, face, head, glowing eyes。\n"
+        "person, portrait, face, head, glowing eyes。\n"
         "life 禁词：line art, cartoon, diagram。\n\n"
-        'science 示例：{"prompt_en": "comparison diagram, red CO molecule passing '
-        'blue wet cloth mesh on left, lung alveoli cross-section icon on right", '
+        'split 示例：{"layout": "split", '
+        '"left_en": "blue wet fabric fiber mesh, red CO molecules passing through gaps", '
+        '"right_en": "lung alveoli air sacs, red blood cells turning dark, moist tissue", '
         '"business": "science", "lora": "Simple_Diagram"}\n'
-        'life 示例：{"prompt_en": "home cooking scene, steaming pot, window light", '
+        'single 示例：{"layout": "single", "prompt_en": "labeled cell diagram, nucleus and membrane", '
+        '"business": "science", "lora": "Textbook_Line_Art"}\n'
+        'life 示例：{"layout": "single", "prompt_en": "home cooking scene, steaming pot, window light", '
         '"business": "life", "lora": "Food_Photo"}'
         f"{override_note}"
     )
@@ -269,10 +528,13 @@ def build_sd15_prompt_user(
         orient = "portrait" if h > w else "landscape" if w > h else "square"
     lines = [f"画面描述：\n{trimmed}"]
     if orient:
-        lines.append(f"画幅：{orient}，分辨率低，务必简化为单一示意画面。")
+        lines.append(
+            f"画幅：{orient}。"
+            "science 横屏默认 split（左右拼）；竖屏有对比/双场景语义时用 split（上下拼）。"
+        )
     lines.append(
-        "请输出 prompt_en（25～55 词 subject）、business、lora。"
-        "science 勿写人物；对比/流程场景优先 Simple_Diagram。"
+        "请输出 layout、prompt_en 或 left_en+right_en、business、lora。"
+        "science 优先 split；竖屏单主体可 single。"
     )
     return "\n\n".join(lines)
 
@@ -282,10 +544,6 @@ def parse_sd15_prompt_payload(
     *,
     business_override: str | None = None,
 ) -> dict[str, str]:
-    prompt_en = raw.get("prompt_en")
-    if not isinstance(prompt_en, str) or not prompt_en.strip():
-        raise ValueError("LLM response missing prompt_en")
-
     lora = raw.get("lora")
     if not isinstance(lora, str) or lora not in SD15_LORAS:
         raise ValueError(f"LLM response invalid lora: {lora!r}")
@@ -297,5 +555,35 @@ def parse_sd15_prompt_payload(
         if not isinstance(business, str) or business not in _VALID_BUSINESS:
             raise ValueError(f"LLM response invalid business: {business!r}")
 
-    cleaned = normalize_sd15_prompt_en(prompt_en, business=business, lora=lora)
-    return {"prompt_en": cleaned, "business": business, "lora": lora}
+    layout = raw.get("layout", "single")
+    if layout == "split":
+        left_en = raw.get("left_en")
+        right_en = raw.get("right_en")
+        if not isinstance(left_en, str) or not left_en.strip():
+            raise ValueError("LLM response missing left_en")
+        if not isinstance(right_en, str) or not right_en.strip():
+            raise ValueError("LLM response missing right_en")
+        return {
+            "layout": "split",
+            "left_en": normalize_sd15_panel_prompt_en(
+                left_en, panel="left", business=business, lora=lora
+            ),
+            "right_en": normalize_sd15_panel_prompt_en(
+                right_en, panel="right", business=business, lora=lora
+            ),
+            "business": business,
+            "lora": lora,
+        }
+
+    prompt_en = raw.get("prompt_en")
+    if not isinstance(prompt_en, str) or not prompt_en.strip():
+        raise ValueError("LLM response missing prompt_en")
+    cleaned = normalize_sd15_panel_prompt_en(
+        prompt_en, panel="single", business=business, lora=lora
+    )
+    return {
+        "layout": "single",
+        "prompt_en": cleaned,
+        "business": business,
+        "lora": lora,
+    }

@@ -267,7 +267,30 @@ class MockLLMClient(LLMClient):
             business=business,
             lora=lora,
         )
-        return {"prompt_en": prompt_en, "business": business, "lora": lora}
+        from app.services.llm.llm_sd15_prompt import resolve_split_layout
+        from app.services.visual.image_sd15 import parse_image_size
+
+        width, height = parse_image_size(size_hint) if size_hint else (0, 0)
+        layout, split_axis = resolve_split_layout(
+            result=None,
+            prompt=cleaned,
+            business=business,
+            width=width,
+            height=height,
+        )
+        if layout == "split":
+            from app.services.llm.llm_sd15_prompt import fallback_split_panel_prompts
+
+            left_en, right_en = fallback_split_panel_prompts(cleaned)
+            return {
+                "layout": "split",
+                "split_axis": split_axis,
+                "left_en": left_en,
+                "right_en": right_en,
+                "business": business,
+                "lora": lora,
+            }
+        return {"layout": "single", "prompt_en": prompt_en, "business": business, "lora": lora}
 
     def generate_topics(
         self,
