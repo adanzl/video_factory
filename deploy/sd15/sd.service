@@ -1,0 +1,26 @@
+# cp /etc/systemd/system/
+# 开启 systemctl start sd
+# 开机启动 systemctl enable sd
+[Unit]
+Description=Stable Diffusion WebUI API (A1111)
+Documentation=file:///mnt/data/project/video_factory/docs/SD15部署.md
+After=network.target
+
+[Service]
+Type=simple
+User=leo
+Group=leo
+SupplementaryGroups=render video
+WorkingDirectory=/mnt/data/stable-diffusion/webui
+# webui.sh 会 source 同目录 webui-user.sh（见 deploy/sd15/webui-user.example.sh）
+# 默认 --api --listen --port 9101；video_factory 侧 SD_API_URL=http://127.0.0.1:9101
+ExecStart=/bin/bash /mnt/data/stable-diffusion/webui/webui.sh
+Restart=on-failure
+RestartSec=30
+TimeoutStartSec=600
+StandardOutput=journal
+StandardError=journal
+Environment="HF_ENDPOINT=https://hf-mirror.com"
+
+[Install]
+WantedBy=multi-user.target

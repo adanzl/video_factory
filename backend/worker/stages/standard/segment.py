@@ -72,6 +72,8 @@ class SegmentStage(StageExecutor):
                 if settings.image_provider == "z_image_t2i"
                 else settings.wan_model
                 if settings.image_provider == "wan_t2i"
+                else f"sd15/{settings.sd_business or 'auto'}"
+                if settings.image_provider == "sd15_t2i"
                 else settings.image_provider
             )
             job_log_repo.append_log(

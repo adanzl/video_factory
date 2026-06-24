@@ -100,6 +100,15 @@ class LLMClient:
     ) -> str:
         raise NotImplementedError
 
+    def prepare_sd15_image_prompt(
+        self,
+        prompt: str,
+        *,
+        size_hint: str | None = None,
+        business_override: str | None = None,
+    ) -> dict[str, str]:
+        raise NotImplementedError
+
 
 class LLMMgr:
     """LLM 管理器。"""
@@ -359,6 +368,38 @@ class LLMMgr:
             elapsed,
         )
         return rewritten
+
+    def prepare_sd15_image_prompt(
+        self,
+        prompt: str,
+        *,
+        size_hint: str | None = None,
+        business_override: str | None = None,
+    ) -> dict[str, str]:
+        logger.info(
+            "[SD15] prepare prompt start chars=%s business_override=%s",
+            len(prompt),
+            business_override,
+        )
+        started = time.perf_counter()
+        try:
+            result = self._get_client().prepare_sd15_image_prompt(
+                prompt,
+                size_hint=size_hint,
+                business_override=business_override,
+            )
+        except Exception:
+            logger.exception("[SD15] prepare prompt failed chars=%s", len(prompt))
+            raise
+        elapsed = time.perf_counter() - started
+        logger.info(
+            "[SD15] prepare prompt done business=%s lora=%s prompt_en_chars=%s elapsed=%.1fs",
+            result["business"],
+            result["lora"],
+            len(result["prompt_en"]),
+            elapsed,
+        )
+        return result
 
 
 llm_mgr = LLMMgr()

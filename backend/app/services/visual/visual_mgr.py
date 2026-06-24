@@ -34,6 +34,7 @@ class VisualMgr:
 
     def _get_image_provider(self) -> ImageProvider:
         from app.services.visual.image_mock import MockImageProvider
+        from app.services.visual.image_sd15 import Sd15ImageProvider
         from app.services.visual.image_wan import WanImageProvider
         from app.services.visual.image_zimage import ZImageProvider
 
@@ -44,6 +45,8 @@ class VisualMgr:
             return ZImageProvider()
         if provider == "wan_t2i":
             return WanImageProvider()
+        if provider == "sd15_t2i":
+            return Sd15ImageProvider()
         raise ValueError(f"unknown IMAGE_PROVIDER: {provider}")
 
     def generate_segment_images(
