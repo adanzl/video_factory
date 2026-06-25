@@ -168,11 +168,20 @@ _IMAGE_PROMPT_MOTION_TAIL = (
 )
 
 
-def _image_prompt_rule(*, orientation: str, content_style: str) -> str:
+_IMAGE_PROMPT_RULE_SD15_SHORT = (
+    "image_prompt为该镜画面的简短中文描述（80-120字）："
+    "写清主体是什么、在做什么、场景类型，供质检和前端展示用；"
+    "无需六层扩写，禁止堆砌光影材质细节。"
+)
+
+
+def _image_prompt_rule(*, orientation: str, content_style: str, sd15_mode: bool = False) -> str:
     head = (
         "根据每段口播text、visual_brief与全片visual_style，扩写为文生图用的image_prompt"
         "和video用的motion_prompt。"
     )
+    if sd15_mode:
+        return head + _IMAGE_PROMPT_RULE_SD15_SHORT + _IMAGE_PROMPT_MOTION_TAIL
     if content_style == CONTENT_STYLE_LIFE_EXPERIENCE:
         body = _IMAGE_PROMPT_RULE_LIFE_LANDSCAPE
     elif orientation == ORIENTATION_LANDSCAPE:
@@ -604,7 +613,7 @@ def build_image_prompts_prompts(
     system = (
         f"你是科普视频文生图与运动提示词专家。输出JSON，字段：image_prompts。"
         f"image_prompts为数组，每项含segment_index{sd15_fields}。"
-        f"{_image_prompt_rule(orientation=profile_orientation, content_style=profile_style)}"
+        f"{_image_prompt_rule(orientation=profile_orientation, content_style=profile_style, sd15_mode=include_sd15_prompt)}"
         f"{sd15_rule}"
         "image_prompts须覆盖输入的每一段，segment_index一一对应，不得遗漏。"
         f"{_json_output_clause(json_example)}"

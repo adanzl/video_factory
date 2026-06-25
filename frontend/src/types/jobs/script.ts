@@ -4,6 +4,7 @@ export interface ScriptSegment {
   visual_brief?: string;
   image_prompt?: string;
   motion_prompt?: string;
+  sd15_prompt_en?: string;
   visual_mode?: string;
   start_sec?: number;
   end_sec?: number;

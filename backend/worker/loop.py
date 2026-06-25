@@ -268,6 +268,7 @@ def run_script_image_prompts(job_id: int) -> dict:
     from app.repositories import job_log_repo, job_repo, segment_repo
     from app.services.llm.llm_mgr import llm_mgr
     from app.services.llm.llm_script_prompts import build_image_prompts_prompts
+    from app.utils.job_info import resolve_image_provider, resolve_include_sd15_prompt
     from worker.stages.standard.script import _log_llm_timing
 
     job = _reload_job(job_id)
@@ -277,6 +278,16 @@ def run_script_image_prompts(job_id: int) -> dict:
     segments = script.get("segments") or []
     if not segments:
         raise ValueError("no segments")
+
+    image_provider = resolve_image_provider(job)
+    include_sd15_prompt = resolve_include_sd15_prompt(job)
+    logger.info(
+        "job %s script/imagePrompts: segments=%d image_provider=%s include_sd15_prompt=%s",
+        job_id,
+        len(segments),
+        image_provider,
+        include_sd15_prompt,
+    )
 
     supplementary_raw = script.get("supplementary_info")
     supplementary_info = (
@@ -288,6 +299,7 @@ def run_script_image_prompts(job_id: int) -> dict:
         updated,
         supplementary_info=supplementary_info,
         job=job,
+        include_sd15_prompt=include_sd15_prompt,
     )
     _log_llm_timing(job_id, "script", updated)
 
@@ -296,6 +308,7 @@ def run_script_image_prompts(job_id: int) -> dict:
         updated,
         supplementary_info=supplementary_info,
         job=job,
+        include_sd15_prompt=include_sd15_prompt,
     )
     prompts = [item for item in prompts if item.get("step") != "image_prompts"]
     prompts.append(img_prompt)
@@ -313,7 +326,13 @@ def run_script_image_prompts(job_id: int) -> dict:
         )
         job_repo.update_job(conn, job_id, script_json=updated)
         segment_repo.insert_segments(conn, job_id, updated["segments"])
-        job_log_repo.append_log(conn, job_id, "script", "image prompts generated")
+        job_log_repo.append_log(
+            conn,
+            job_id,
+            "script",
+            f"image prompts generated: segments={len(updated['segments'])}, "
+            f"image_provider={image_provider}, include_sd15_prompt={include_sd15_prompt}",
+        )
         job_repo.update_job(conn, job_id, status="idle")
     return _reload_job(job_id)
 
