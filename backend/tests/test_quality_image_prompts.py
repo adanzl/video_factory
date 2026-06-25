@@ -103,7 +103,7 @@ def test_check_image_prompts_sd15_mode_image_prompt_too_short():
         "segments": [
             {
                 "segment_index": 1,
-                "image_prompt": "x" * 50,
+                "image_prompt": "x" * 20,
                 "sd15_prompt_en": "stainless steel pot on stove, close-up surface detail, kitchen counter",
             },
         ],

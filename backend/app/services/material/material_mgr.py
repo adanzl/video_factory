@@ -199,7 +199,7 @@ class MaterialMgr:
                 raise ValueError("narration is required for manual script_mode")
             if len(re.sub(r"\s+", "", narration)) < NARRATION_ABS_MIN_CHARS:
                 raise ValueError(
-                    f"narration too short (need >= {NARRATION_ABS_MIN_CHARS} chars)"
+                    f"narration too short (need >= {NARRATION_ABS_MIN_CHARS} )"
                 )
         run = run_mode.strip().lower()
         if run not in _RUN_MODES:
