@@ -77,6 +77,29 @@ _SCIENCE_LORA_CFG: dict[str, dict] = {
             "blurry, deformed, low quality, cluttered, out of frame"
         ),
     },
+    "blueprint_xianyu": {
+        "checkpoint": _SCIENCE_ILLUSTRATION_CHECKPOINT,
+        "cfg_scale": 7,
+        "negative": (
+            "anime, cartoon, person, face, portrait, landscape, "
+            "photorealistic, 3d render, watermark, text, blurry"
+        ),
+    },
+    "picture_book_illustration": {
+        "checkpoint": _SCIENCE_ILLUSTRATION_CHECKPOINT,
+        "cfg_scale": 6.5,
+        "negative": (
+            "photorealistic, hyper-realistic, 3d render, watermark, text, "
+            "blurry, deformed, ugly, scary, dark, gloomy"
+        ),
+    },
+    "vintage_old_shanghai": {
+        "cfg_scale": 7,
+        "negative": (
+            "modern, digital art, 3d render, cartoon, anime, "
+            "watermark, text, logo, oversaturated, hdr"
+        ),
+    },
 }
 
 _SCIENCE_SPLIT_PANELS = {
@@ -358,7 +381,7 @@ class Sd15ImageProvider(ImageProvider):
         if business not in _BUSINESS_CONFIG:
             raise ValueError(f"unknown sd15 business: {business}")
         base = dict(_BUSINESS_CONFIG[business])
-        if business == "science" and lora in _SCIENCE_LORA_CFG:
+        if lora in _SCIENCE_LORA_CFG:
             override = _SCIENCE_LORA_CFG[lora]
             base.update({k: v for k, v in override.items() if v is not None})
         return base
