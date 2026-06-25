@@ -39,8 +39,9 @@ _BUSINESS_CONFIG = {
     "life": {
         "checkpoint": _LIFE_CHECKPOINT,
         "steps": 20,
-        "cfg_scale": 7,
+        "cfg_scale": 7.5,
         "negative": (
+            "(worst quality:1.4), (low quality:1.4), lowres, bad anatomy, bad hands, "
             "cartoon, anime, illustration, painting, blurry, deformed, ugly, "
             "watermark, text, logo, oversaturated, "
             "jpeg artifacts, compression artifacts, duplicate, extra fingers, mutated hands"
@@ -49,8 +50,9 @@ _BUSINESS_CONFIG = {
     "science": {
         "checkpoint": _SCIENCE_ILLUSTRATION_CHECKPOINT,
         "steps": 25,
-        "cfg_scale": 7.5,
+        "cfg_scale": 8,
         "negative": (
+            "(worst quality:1.4), (low quality:1.4), lowres, "
             "anime, cartoon, manga, chibi, girl, boy, woman, man, face, portrait, "
             "hair, eyes, glowing eyes, superhero, deformed, ugly, watermark, text, "
             "logo, blurry, cluttered, busy background, cluttered background, "
@@ -62,39 +64,44 @@ _BUSINESS_CONFIG = {
 _SCIENCE_LORA_CFG: dict[str, dict] = {
     "Anatomica_Scientifica": {
         "checkpoint": _SCIENCE_MEDICAL_CHECKPOINT,
-        "cfg_scale": 8,
+        "cfg_scale": 8.5,
         "negative": (
+            "(worst quality:1.4), (low quality:1.4), lowres, "
             "text, words, letters, watermark, caption, typography, "
-            "landscape, low quality, blurry, deformed, anime, cartoon, "
+            "landscape, blurry, deformed, anime, cartoon, "
             "busy background, out of frame, oversaturated"
         ),
     },
     "Science_DNA_Style": {
-        "cfg_scale": 8,
+        "cfg_scale": 8.5,
         "negative": (
+            "(worst quality:1.4), (low quality:1.4), lowres, "
             "person, face, portrait, landscape, watermark, text, logo, "
-            "blurry, deformed, low quality, cluttered, out of frame"
+            "blurry, deformed, cluttered, out of frame"
         ),
     },
     "blueprint_xianyu": {
         "checkpoint": _SCIENCE_ILLUSTRATION_CHECKPOINT,
-        "cfg_scale": 7,
+        "cfg_scale": 7.5,
         "negative": (
+            "(worst quality:1.4), (low quality:1.4), lowres, "
             "anime, cartoon, person, face, portrait, landscape, "
             "photorealistic, 3d render, watermark, text, blurry"
         ),
     },
     "picture_book_illustration": {
         "checkpoint": _SCIENCE_ILLUSTRATION_CHECKPOINT,
-        "cfg_scale": 6.5,
+        "cfg_scale": 7,
         "negative": (
+            "(worst quality:1.4), (low quality:1.4), lowres, "
             "photorealistic, hyper-realistic, 3d render, watermark, text, "
             "blurry, deformed, ugly, scary, dark, gloomy"
         ),
     },
     "vintage_old_shanghai": {
-        "cfg_scale": 7,
+        "cfg_scale": 7.5,
         "negative": (
+            "(worst quality:1.4), (low quality:1.4), lowres, "
             "modern, digital art, 3d render, cartoon, anime, "
             "watermark, text, logo, oversaturated, hdr"
         ),
@@ -105,16 +112,18 @@ _SCIENCE_SPLIT_PANELS = {
     "left": {
         "checkpoint": _SCIENCE_ILLUSTRATION_CHECKPOINT,
         "negative": (
+            "(worst quality:1.4), (low quality:1.4), lowres, "
             "text, words, letters, lung, anatomy, organ, person, face, portrait, "
-            "landscape, low quality, blurry, watermark, deformed, "
+            "landscape, blurry, watermark, deformed, "
             "busy background, out of frame"
         ),
     },
     "right": {
         "checkpoint": _SCIENCE_MEDICAL_CHECKPOINT,
         "negative": (
+            "(worst quality:1.4), (low quality:1.4), lowres, "
             "text, words, letters, watermark, caption, typography, cloth, fabric, "
-            "landscape, low quality, blurry, deformed, anime, cartoon, "
+            "landscape, blurry, deformed, anime, cartoon, "
             "busy background, out of frame, oversaturated"
         ),
     },
