@@ -394,7 +394,7 @@ def scale_pad_filter(*, width: int, height: int, fps: int = _OUTPUT_FPS) -> str:
     """等比缩放至目标画布内，不足处留黑边，并统一输出帧率。"""
     return (
         f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
-        f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,color=black,setsar=1,"
+        f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,"
         f"format=yuv420p,fps={fps}"
     )
 
