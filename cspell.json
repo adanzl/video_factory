@@ -33,6 +33,7 @@
         "libxext",
         "libxrender",
         "LORAS",
+        "lowres",
         "lowvram",
         "matmul",
         "medvram",
