@@ -42,6 +42,26 @@ from app.services.llm.llm_script_title import (
 
 MIN_IMAGE_PROMPT_CHARS = 200
 IMAGE_PROMPT_TARGET_CHARS = 300
+MIN_IMAGE_PROMPT_CHARS_SD15 = 80
+IMAGE_PROMPT_TARGET_CHARS_SD15 = 120
+MIN_SD15_PROMPT_EN_WORDS = 15
+
+
+def image_prompt_min_chars(*, sd15_mode: bool = False) -> int:
+    return MIN_IMAGE_PROMPT_CHARS_SD15 if sd15_mode else MIN_IMAGE_PROMPT_CHARS
+
+
+def image_prompt_target_chars(*, sd15_mode: bool = False) -> int:
+    return IMAGE_PROMPT_TARGET_CHARS_SD15 if sd15_mode else IMAGE_PROMPT_TARGET_CHARS
+
+
+def sd15_prompt_en_ok(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    text = value.strip()
+    if not text:
+        return False
+    return len(text.split()) >= MIN_SD15_PROMPT_EN_WORDS
 
 # DeepSeek JSON Output 要求 prompt 含 json 字样并给出样例：
 # https://api-docs.deepseek.com/zh-cn/guides/json_mode

@@ -6,7 +6,11 @@ import re
 from pathlib import Path
 
 from app.config import get_settings
-from app.services.llm.llm_script_prompts import IMAGE_PROMPT_TARGET_CHARS, MIN_IMAGE_PROMPT_CHARS
+from app.services.llm.llm_script_prompts import (
+    image_prompt_min_chars,
+    image_prompt_target_chars,
+    sd15_prompt_en_ok,
+)
 from app.utils.media import (
     NARRATION_ABS_MIN_CHARS,
     default_narration_target_words,
@@ -216,8 +220,12 @@ def check_storyboard(
     )
 
 
-def check_image_prompts(script: dict) -> QualityReport:
-    """文生图提示词：各段 image_prompt 长度。"""
+def check_image_prompts(script: dict, *, sd15_mode: bool | None = None) -> QualityReport:
+    """文生图提示词：各段 image_prompt 长度；SD15 模式另校验 sd15_prompt_en。"""
+    if sd15_mode is None:
+        sd15_mode = bool(script.get("include_sd15_prompt"))
+    min_chars = image_prompt_min_chars(sd15_mode=sd15_mode)
+    target_chars = image_prompt_target_chars(sd15_mode=sd15_mode)
     segments = script.get("segments") or []
     if not segments:
         return QualityReport(
@@ -229,26 +237,39 @@ def check_image_prompts(script: dict) -> QualityReport:
 
     too_short: list[dict] = []
     slightly_short: list[dict] = []
+    missing_sd15: list[dict] = []
     for seg in segments:
         idx = seg.get("segment_index")
         prompt_len = len(str(seg.get("image_prompt") or ""))
-        if prompt_len < MIN_IMAGE_PROMPT_CHARS:
+        if prompt_len < min_chars:
             too_short.append(
                 {
                     "segment_index": idx,
                     "chars": prompt_len,
-                    "min_chars": MIN_IMAGE_PROMPT_CHARS,
+                    "min_chars": min_chars,
                 }
             )
-        elif prompt_len < IMAGE_PROMPT_TARGET_CHARS:
+        elif prompt_len < target_chars:
             slightly_short.append(
                 {
                     "segment_index": idx,
                     "chars": prompt_len,
-                    "target_chars": IMAGE_PROMPT_TARGET_CHARS,
+                    "target_chars": target_chars,
                 }
             )
+        if sd15_mode and not sd15_prompt_en_ok(seg.get("sd15_prompt_en")):
+            missing_sd15.append({"segment_index": idx})
 
+    if missing_sd15:
+        return QualityReport(
+            level="major",
+            step="image_prompts",
+            fail_stage="script",
+            details={
+                "reason": "sd15_prompt_en missing or too short",
+                "segments": missing_sd15,
+            },
+        )
     if too_short:
         return QualityReport(
             level="major",

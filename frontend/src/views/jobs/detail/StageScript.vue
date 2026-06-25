@@ -390,6 +390,7 @@
           :column="3"
           border
           size="small"
+          label-width="100px"
         >
           <el-descriptions-item label="结果">
             <el-tag :type="qualityLevelTagType(row.level)" size="small">{{ row.levelLabel }}</el-tag>

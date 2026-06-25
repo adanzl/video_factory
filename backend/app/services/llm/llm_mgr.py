@@ -203,12 +203,14 @@ class LLMMgr:
         """补全文生图提示词，过短时带 feedback 重试（与 script 阶段逻辑对齐）。"""
         from app.quality.checkers import check_image_prompts
         from app.services.llm.llm_script_prompts import (
-            IMAGE_PROMPT_TARGET_CHARS,
-            MIN_IMAGE_PROMPT_CHARS,
+            image_prompt_min_chars,
+            image_prompt_target_chars,
         )
 
         feedback: str | None = None
         target_indices = segment_indices
+        min_chars = image_prompt_min_chars(sd15_mode=include_sd15_prompt)
+        target_chars = image_prompt_target_chars(sd15_mode=include_sd15_prompt)
         for attempt in range(max_attempts):
             self.fill_image_prompts(
                 script,
@@ -218,7 +220,7 @@ class LLMMgr:
                 segment_indices=target_indices,
                 include_sd15_prompt=include_sd15_prompt,
             )
-            report = check_image_prompts(script)
+            report = check_image_prompts(script, sd15_mode=include_sd15_prompt)
             if report.level != "major":
                 return script
             too_short = report.details.get("segments") or []
@@ -229,12 +231,15 @@ class LLMMgr:
             ]
             if not target_indices:
                 break
+            reason = report.details.get("reason", "image_prompt too short")
             feedback = (
-                f"image_prompt too short: {target_indices}; "
-                f"need >={MIN_IMAGE_PROMPT_CHARS} chars each "
-                f"(target {IMAGE_PROMPT_TARGET_CHARS}); "
-                "expand all six layers (composition, subject, environment, lighting, color, scope)"
+                f"{reason}: {target_indices}; "
+                f"need image_prompt >={min_chars} chars each (target {target_chars})"
             )
+            if include_sd15_prompt:
+                feedback += "; ensure each segment has sd15_prompt_en (20-40 English words)"
+            else:
+                feedback += "; expand all six layers (composition, subject, environment, lighting, color, scope)"
             logger.warning(
                 "[SCRIPT] image_prompt retry attempt=%d short=%s",
                 attempt + 1,

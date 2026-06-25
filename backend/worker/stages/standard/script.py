@@ -14,7 +14,11 @@ from app.quality.gate import apply_quality_checks
 from app.repositories import job_log_repo, job_repo, segment_repo
 from app.repositories.connection import connection
 from app.services.llm.llm_mgr import llm_mgr
-from app.services.llm.llm_script_prompts import IMAGE_PROMPT_TARGET_CHARS, MIN_IMAGE_PROMPT_CHARS
+from app.services.llm.llm_script_prompts import (
+    image_prompt_min_chars,
+    image_prompt_target_chars,
+    sd15_prompt_en_ok,
+)
 from app.utils.job_info import content_style_from_job
 from app.utils.media import (
     assign_segment_timings,
@@ -309,18 +313,26 @@ def _validate_script(
                 retryable=True,
             )
         if require_image_prompt:
+            sd15_mode = bool(script.get("include_sd15_prompt"))
+            min_prompt_chars = image_prompt_min_chars(sd15_mode=sd15_mode)
+            target_prompt_chars = image_prompt_target_chars(sd15_mode=sd15_mode)
             prompt = seg.get("image_prompt") or ""
             prompt_len = len(prompt)
-            if prompt_len < MIN_IMAGE_PROMPT_CHARS:
+            if prompt_len < min_prompt_chars:
                 raise ScriptValidationError(
                     f"segment {seg.get('segment_index')} image_prompt too short: "
-                    f"{prompt_len} chars (need >= {MIN_IMAGE_PROMPT_CHARS})",
+                    f"{prompt_len} chars (need >= {min_prompt_chars})",
                     retryable=True,
                 )
-            if prompt_len < IMAGE_PROMPT_TARGET_CHARS:
+            if prompt_len < target_prompt_chars:
                 warnings.append(
                     f"segment {seg.get('segment_index')} image_prompt slightly short "
-                    f"({prompt_len} < {IMAGE_PROMPT_TARGET_CHARS}), continuing"
+                    f"({prompt_len} < {target_prompt_chars}), continuing"
+                )
+            if sd15_mode and not sd15_prompt_en_ok(seg.get("sd15_prompt_en")):
+                raise ScriptValidationError(
+                    f"segment {seg.get('segment_index')} sd15_prompt_en missing or too short",
+                    retryable=True,
                 )
     if seg_target > 0:
         cap = segment_text_char_cap(seg_target)
@@ -451,6 +463,7 @@ class ScriptStage(StageExecutor):
             from app.utils.job_info import resolve_include_sd15_prompt
 
             use_sd15 = resolve_include_sd15_prompt(ctx.job)
+            script["include_sd15_prompt"] = use_sd15
             prompt_feedback: str | None = None
             for attempt in range(4):
                 try:

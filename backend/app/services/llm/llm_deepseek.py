@@ -18,6 +18,8 @@ from app.services.llm.llm_script_prompts import (
     build_material_script_prompts,
     build_narration_expand_prompts,
     build_storyboard_prompts,
+    image_prompt_min_chars,
+    image_prompt_target_chars,
     build_title_optimize_prompts,
     build_video_description_prompts,
 )
@@ -250,11 +252,16 @@ def _chunk_indices(indices: list[int], batch_size: int) -> list[list[int]]:
     return [ordered[i : i + size] for i in range(0, len(ordered), size)]
 
 
-def _short_image_prompt_indices(script: dict[str, Any]) -> list[int]:
+def _short_image_prompt_indices(
+    script: dict[str, Any],
+    *,
+    sd15_mode: bool = False,
+) -> list[int]:
+    target = image_prompt_target_chars(sd15_mode=sd15_mode)
     return [
         int(seg["segment_index"])
         for seg in script.get("segments") or []
-        if len(str(seg.get("image_prompt") or "")) < IMAGE_PROMPT_TARGET_CHARS
+        if len(str(seg.get("image_prompt") or "")) < target
     ]
 
 
@@ -565,15 +572,24 @@ class DeepSeekClient(LLMClient):
                 segment_indices=target_indices,
                 include_sd15_prompt=include_sd15_prompt,
             )
-            short = _short_image_prompt_indices(script)
+            short = _short_image_prompt_indices(script, sd15_mode=include_sd15_prompt)
             if not short:
                 return script
             target_indices = short
-            prompt_feedback = (
-                f"image_prompt too short: {short}; "
-                f"need >={IMAGE_PROMPT_TARGET_CHARS} chars each; "
-                "expand all six layers (composition, subject, environment, lighting, color, scope)"
-            )
+            min_chars = image_prompt_min_chars(sd15_mode=include_sd15_prompt)
+            target_chars = image_prompt_target_chars(sd15_mode=include_sd15_prompt)
+            if include_sd15_prompt:
+                prompt_feedback = (
+                    f"image_prompt too short: {short}; "
+                    f"need >={min_chars} chars each (target {target_chars}); "
+                    "ensure sd15_prompt_en is 20-40 English words"
+                )
+            else:
+                prompt_feedback = (
+                    f"image_prompt too short: {short}; "
+                    f"need >={min_chars} chars each (target {target_chars}); "
+                    "expand all six layers (composition, subject, environment, lighting, color, scope)"
+                )
             logger.warning(
                 "[SCRIPT] image_prompt retry attempt=%d short=%s",
                 attempt + 1,
