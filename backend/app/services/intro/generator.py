@@ -528,10 +528,23 @@ def generate_intro(
     frame_count = _render_frames(layers, frames_dir, duration=duration, fps=_FPS)
 
     silent_video = work / "video.mp4"
-    sequence_to_video(frames_dir, silent_video, fps=_FPS, frame_count=frame_count)
+    sequence_to_video(
+        frames_dir,
+        silent_video,
+        fps=_FPS,
+        frame_count=frame_count,
+        subtitle=True,
+        force_cpu=True,
+    )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    mux_video_audio(silent_video, audio_path, output_path)
+    mux_video_audio(
+        silent_video,
+        audio_path,
+        output_path,
+        sample_rate=22050,
+        channels=1,
+    )
 
     preview = output_path.with_suffix(".png")
     _compose_frame(layers, duration * 0.45).convert("RGB").save(preview, compress_level=1)

@@ -36,6 +36,24 @@ def _combined_output(result: _CmdResult) -> str:
     return f"{result.stderr or ''}\n{result.stdout or ''}"
 
 
+def _ffmpeg_error_message(detail: str, *, limit: int = 800) -> str:
+    """从 ffmpeg 冗长 stderr 里抽出关键错误行，避免整段 Input/Metadata 进日志。"""
+    lines = [line.strip() for line in detail.splitlines() if line.strip()]
+    markers = (
+        "Error",
+        "error",
+        "Invalid",
+        "failed",
+        "No such file",
+        "not found",
+        "filtergraph",
+        "[vf",
+    )
+    key_lines = [line for line in lines if any(m in line for m in markers)]
+    compact = "\n".join((key_lines or lines)[-8:])
+    return compact[:limit]
+
+
 def _run_cmd(
     args: list[str],
     *,
@@ -46,7 +64,7 @@ def _run_cmd(
     result = _CmdResult(args=args, returncode=returncode, stdout=stdout, stderr=stderr)
     if check and returncode != 0:
         detail = _combined_output(result).strip()
-        raise RuntimeError(f"command failed: {detail[-2000:]}")
+        raise RuntimeError(f"command failed: {_ffmpeg_error_message(detail)}")
     return result
 
 
@@ -58,7 +76,7 @@ def run_ffmpeg(
     result = _run_cmd(args, check=False)
     if check and result.returncode != 0:
         detail = _combined_output(result).strip()
-        raise RuntimeError(f"ffmpeg failed: {detail[-2000:]}")
+        raise RuntimeError(f"ffmpeg failed: {_ffmpeg_error_message(detail)}")
     return result
 
 
@@ -82,9 +100,9 @@ def cpu_pix_fmt_suffix() -> str:
     return f",format={_PIX_FMT}"
 
 
-def vf_for_encode(base_vf: str) -> str:
-    """-vf 链末尾：VAAPI 时 hwupload，否则 yuv420p。"""
-    if vaapi_enabled():
+def vf_for_encode(base_vf: str, *, force_cpu: bool = False) -> str:
+    """-vf 链末尾：VAAPI 时 hwupload，否则 yuv420p。force_cpu 时禁止 hwupload。"""
+    if not force_cpu and vaapi_enabled():
         return f"{base_vf},{_VAAPI_HWUPLOAD}"
     if f"format={_PIX_FMT}" in base_vf:
         return base_vf
@@ -518,30 +536,39 @@ def sequence_to_video(
     return output_path
 
 
-def mux_video_audio(video_path: Path, audio_path: Path, output_path: Path) -> Path:
+def mux_video_audio(
+    video_path: Path,
+    audio_path: Path,
+    output_path: Path,
+    *,
+    sample_rate: int | None = None,
+    channels: int | None = None,
+) -> Path:
     """合并视频与音频，以视频时长为准。"""
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    _run_cmd(
-        [
-            "ffmpeg",
-            "-y",
-            "-i",
-            str(video_path),
-            "-i",
-            str(audio_path),
-            "-c:v",
-            "copy",
-            "-c:a",
-            "aac",
-            "-movflags",
-            "+faststart",
-            "-map",
-            "0:v:0",
-            "-map",
-            "1:a:0",
-            str(output_path),
-        ],
-    )
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(video_path),
+        "-i",
+        str(audio_path),
+        "-c:v",
+        "copy",
+        *_AAC_128K,
+        "-movflags",
+        "+faststart",
+        "-map",
+        "0:v:0",
+        "-map",
+        "1:a:0",
+    ]
+    if sample_rate is not None:
+        cmd.extend(["-ar", str(sample_rate)])
+    if channels is not None:
+        cmd.extend(["-ac", str(channels)])
+    cmd.append(str(output_path))
+    _run_cmd(cmd)
     return output_path
 
 
@@ -718,6 +745,32 @@ def _can_concat_demuxer_copy(intro_path: Path, body_path: Path) -> bool:
     )
 
 
+def _prepend_stream_mismatch(intro_path: Path, body_path: Path) -> dict[str, dict]:
+    """仅返回片头/正文不一致的流字段，便于日志阅读。"""
+    intro_v, body_v = _probe_video_stream(intro_path), _probe_video_stream(body_path)
+    intro_a, body_a = _probe_audio_stream(intro_path), _probe_audio_stream(body_path)
+    diff: dict[str, dict] = {}
+    if intro_v and body_v:
+        for key in (
+            "codec",
+            "codec_tag",
+            "width",
+            "height",
+            "pix_fmt",
+            "fps",
+            "profile",
+            "level",
+            "sar_square",
+        ):
+            if intro_v.get(key) != body_v.get(key):
+                diff[f"v.{key}"] = {"intro": intro_v.get(key), "body": body_v.get(key)}
+    if intro_a and body_a:
+        for key in ("codec", "sample_rate", "channels"):
+            if intro_a.get(key) != body_a.get(key):
+                diff[f"a.{key}"] = {"intro": intro_a.get(key), "body": body_a.get(key)}
+    return diff
+
+
 def _concat_norm_vf(width: int, height: int, fps: float) -> str:
     return (
         f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
@@ -769,11 +822,14 @@ def _align_intro_to_body(intro_path: Path, body_path: Path, output_path: Path) -
     body_a = _probe_audio_stream(body_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     cmd: list[str] = [
-        *ffmpeg_cmd_start(hide_banner=True),
+        *ffmpeg_cmd_start(hide_banner=True, hwaccel=False),
         "-i",
         str(intro_path),
         "-vf",
-        vf_for_encode(scale_pad_filter(width=body_v["width"], height=body_v["height"], fps=fps)),
+        vf_for_encode(
+            scale_pad_filter(width=body_v["width"], height=body_v["height"], fps=fps),
+            force_cpu=True,
+        ),
         "-map",
         "0:v:0",
         "-map",
@@ -831,9 +887,8 @@ def prepend_intro(intro_path: Path, body_path: Path, output_path: Path) -> Path:
         return concat_clips([intro_path, body_path], output_path)
 
     _logger.info(
-        "prepend_intro: stream diff intro=%s body=%s",
-        _probe_video_stream(intro_path),
-        _probe_video_stream(body_path),
+        "prepend_intro: mismatch %s",
+        _prepend_stream_mismatch(intro_path, body_path) or "probe unavailable",
     )
     work_dir = output_path.parent / "prepend_work"
     work_dir.mkdir(parents=True, exist_ok=True)

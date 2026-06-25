@@ -52,6 +52,7 @@ def test_prepend_intro_aligns_intro_then_concat(tmp_path: Path) -> None:
             side_effect=[False, True],
         ),
         patch("app.services.media.ffmpeg_utils._probe_video_stream", return_value=_COMPAT_VIDEO),
+        patch("app.services.media.ffmpeg_utils._prepend_stream_mismatch", return_value={"v.fps": {"intro": 25.0, "body": 30.0}}),
         patch("app.services.media.ffmpeg_utils._align_intro_to_body", return_value=intro) as mock_align,
         patch("app.services.media.ffmpeg_utils.concat_clips", return_value=out) as mock_concat,
         patch("app.services.media.ffmpeg_utils._run_cmd") as mock_run,
@@ -77,6 +78,7 @@ def test_prepend_intro_reencodes_when_align_insufficient(tmp_path: Path) -> None
     with (
         patch("app.services.media.ffmpeg_utils._can_concat_demuxer_copy", return_value=False),
         patch("app.services.media.ffmpeg_utils._align_intro_to_body", return_value=intro),
+        patch("app.services.media.ffmpeg_utils._prepend_stream_mismatch", return_value={"v.profile": {"intro": "High", "body": "Main"}}),
         patch("app.services.media.ffmpeg_utils._probe_video_stream", return_value=body_video),
         patch("app.services.media.ffmpeg_utils._probe_audio_sample_rate", return_value=44100),
         patch("app.services.media.ffmpeg_utils.probe_duration", return_value=2.0),
