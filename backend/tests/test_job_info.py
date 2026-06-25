@@ -102,6 +102,16 @@ def test_resolve_image_provider_fallback():
     assert resolve_image_provider(None, settings=settings) == "wan_t2i"
 
 
+def test_resolve_include_sd15_prompt():
+    from types import SimpleNamespace
+
+    from app.utils.job_info import resolve_include_sd15_prompt
+
+    settings = SimpleNamespace(image_provider="z_image_t2i")
+    assert resolve_include_sd15_prompt({"info": {"image_provider": "sd15_t2i"}}, settings=settings)
+    assert not resolve_include_sd15_prompt(None, settings=settings)
+
+
 def test_resolve_segment_image_size_sd15_portrait():
     from types import SimpleNamespace
 

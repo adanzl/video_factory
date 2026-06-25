@@ -197,6 +197,7 @@ class LLMMgr:
         supplementary_info: str | None = None,
         job: dict | None = None,
         segment_indices: list[int] | None = None,
+        include_sd15_prompt: bool = False,
         max_attempts: int = 4,
     ) -> dict[str, Any]:
         """补全文生图提示词，过短时带 feedback 重试（与 script 阶段逻辑对齐）。"""
@@ -215,6 +216,7 @@ class LLMMgr:
                 supplementary_info=supplementary_info,
                 job=job,
                 segment_indices=target_indices,
+                include_sd15_prompt=include_sd15_prompt,
             )
             report = check_image_prompts(script)
             if report.level != "major":

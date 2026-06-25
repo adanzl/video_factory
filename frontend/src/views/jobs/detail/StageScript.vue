@@ -28,7 +28,7 @@
           :column="4"
           border
           :label-width="SCRIPT_CONFIG_LABEL_WIDTH"
-          class="w-full [&_.el-descriptions__label]:!w-[120px] [&_.el-descriptions__label]:!min-w-[120px] [&_.el-descriptions__label]:!max-w-[120px] [&_.el-descriptions__content]:min-w-0"
+          class="w-full [&_.el-descriptions__label]:w-[120px]! [&_.el-descriptions__label]:min-w-[120px]! [&_.el-descriptions__label]:max-w-[120px]! [&_.el-descriptions__content]:min-w-0"
         >
           <template v-if="!isMaterialJob">
             <el-descriptions-item label="方向">
@@ -218,7 +218,7 @@
         :column="1"
         border
         :label-width="FORM_LABEL_WIDTH"
-        class="mb-2 w-full [&_.el-descriptions__label]:!w-[100px] [&_.el-descriptions__label]:!min-w-[100px] [&_.el-descriptions__label]:!max-w-[100px]"
+        class="mb-2 w-full [&_.el-descriptions__label]:w-[100px]! [&_.el-descriptions__label]:min-w-[100px]! [&_.el-descriptions__label]:max-w-[100px]!"
       >
         <el-descriptions-item label="脚本标题">{{ script.title || "-" }}</el-descriptions-item>
         <el-descriptions-item
@@ -267,7 +267,7 @@
         :column="3"
         border
         :label-width="FORM_LABEL_WIDTH"
-        class="mb-4 w-full [&_.el-descriptions__label]:!w-[100px] [&_.el-descriptions__label]:!min-w-[100px] [&_.el-descriptions__label]:!max-w-[100px]"
+        class="mb-4 w-full [&_.el-descriptions__label]:w-[100px]! [&_.el-descriptions__label]:min-w-[100px]! [&_.el-descriptions__label]:max-w-[100px]!"
       >
         <el-descriptions-item label="生成耗时">{{ formatCostTime(script.cost_time) }}</el-descriptions-item>
         <el-descriptions-item label="字数">{{ script.word_count ?? "-" }}</el-descriptions-item>
@@ -330,7 +330,7 @@
         </div>
         <el-table v-if="script.segments?.length" :data="script.segments" stripe class="w-full">
           <el-table-column prop="segment_index" label="#" width="60" />
-          <el-table-column label="时间" width="120">
+          <el-table-column label="时间" width="100">
             <template #default="{ row }">
               {{ formatSegmentTimeRange(row.start_sec, row.end_sec) }}
             </template>
@@ -346,18 +346,24 @@
                 <div class="leading-relaxed wrap-break-word whitespace-pre-wrap">{{ row.visual_brief || "-" }}</div>
               </template>
             </el-table-column>
-            <el-table-column prop="visual_mode" label="模式" width="120" />
-            <el-table-column prop="image_prompt" label="文生图提示词" min-width="240">
+            <el-table-column prop="image_prompt" label="文生图提示词" min-width="150">
               <template #default="{ row }">
                 <div class="text-xs leading-relaxed wrap-break-word whitespace-pre-wrap text-gray-500">
                   {{ row.image_prompt || "-" }}
                 </div>
               </template>
             </el-table-column>
-            <el-table-column prop="motion_prompt" label="运动提示词" min-width="100">
+            <el-table-column prop="motion_prompt" label="运动提示词" min-width="120">
               <template #default="{ row }">
                 <div class="text-xs leading-relaxed wrap-break-word whitespace-pre-wrap text-gray-500">
                   {{ row.motion_prompt || "-" }}
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column prop="sd15_prompt_en" label="SD15 英文提示词" min-width="120">
+              <template #default="{ row }">
+                <div class="text-xs leading-relaxed wrap-break-word whitespace-pre-wrap text-gray-500">
+                  {{ row.sd15_prompt_en || "-" }}
                 </div>
               </template>
             </el-table-column>

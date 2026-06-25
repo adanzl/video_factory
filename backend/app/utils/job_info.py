@@ -169,6 +169,11 @@ def resolve_image_provider(job: dict | None = None, *, settings: Any | None = No
     return cfg.image_provider
 
 
+def resolve_include_sd15_prompt(job: dict | None = None, *, settings: Any | None = None) -> bool:
+    """脚本/补全文生图提示词时是否一并生成 sd15_prompt_en。"""
+    return resolve_image_provider(job, settings=settings) == "sd15_t2i"
+
+
 def normalize_video_provider(value: str | None) -> str | None:
     if value is None:
         return None

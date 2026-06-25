@@ -17,6 +17,8 @@ from app.utils.job_info import (
     default_orientation_for_pipeline,
     merge_job_info,
     merge_job_script_params,
+    resolve_image_provider,
+    resolve_include_sd15_prompt,
 )
 
 logger = logging.getLogger(__name__)
@@ -57,6 +59,9 @@ def _script_action_detail(
         parts.append("skip_title_optimize=True")
     if generate_image_prompts:
         parts.append("generate_image_prompts=True")
+        provider = resolve_image_provider(job)
+        parts.append(f"image_provider={provider}")
+        parts.append(f"include_sd15_prompt={resolve_include_sd15_prompt(job)}")
     orient = orientation or orientation_for_resolve(job) or "portrait"
     style = content_style or content_style_from_job(job)
     parts.append(f"orientation={orient}")
@@ -68,6 +73,17 @@ def _script_action_detail(
     if timeline:
         parts.append(f"video_timeline={len(timeline)}chars")
     return ", ".join(parts)
+
+
+def _image_prompts_action_detail(job: dict) -> str:
+    script = job.get("script_json") or {}
+    segments = script.get("segments") or []
+    provider = resolve_image_provider(job)
+    return (
+        f"segments={len(segments)}, "
+        f"image_provider={provider}, "
+        f"include_sd15_prompt={resolve_include_sd15_prompt(job)}"
+    )
 
 
 class JobBusyError(Exception):
@@ -383,10 +399,12 @@ class JobMgr:
         """为已有脚本补全文生图提示词。实现：worker/loop.run_script_image_prompts"""
         from worker.loop import run_script_image_prompts
 
+        job = self.get_job(job_id)
         return self._run_in_background(
             job_id,
             "script/imagePrompts",
             lambda: run_script_image_prompts(job_id),
+            action_detail=_image_prompts_action_detail(job),
         )
 
     def preview_script_prompts(

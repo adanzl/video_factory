@@ -4,6 +4,7 @@ export interface JobSegment {
   text: string;
   image_prompt?: string | null;
   motion_prompt?: string | null;
+  sd15_prompt_en?: string | null;
   visual_mode: string;
   image_path?: string | null;
   clip_path?: string | null;
