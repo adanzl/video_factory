@@ -35,17 +35,66 @@ def test_check_image_prompts_sd15_mode_accepts_short_image_prompt():
         ],
     }
     report = check_image_prompts(script)
+    assert report.level == "minor"
+    assert report.details["reason"] == "sd15_prompt_en slightly short"
+
+
+def test_check_image_prompts_sd15_mode_accepts_min_sd15_words():
+    script = {
+        "include_sd15_prompt": True,
+        "segments": [
+            {
+                "segment_index": 1,
+                "image_prompt": "x" * 90,
+                "sd15_prompt_en": "one two three four five six seven eight",
+            },
+        ],
+    }
+    report = check_image_prompts(script)
+    assert report.level == "minor"
+
+
+def test_check_image_prompts_sd15_mode_pass_when_sd15_long_enough():
+    script = {
+        "include_sd15_prompt": True,
+        "segments": [
+            {
+                "segment_index": 1,
+                "image_prompt": "x" * 120,
+                "sd15_prompt_en": (
+                    "stainless steel pot on stove boiling water steam rising warm kitchen light"
+                ),
+            },
+        ],
+    }
+    report = check_image_prompts(script)
     assert report.level == "pass"
 
 
-def test_check_image_prompts_sd15_mode_requires_sd15_prompt_en():
+def test_check_image_prompts_sd15_mode_missing_sd15_is_minor():
     script = {
         "include_sd15_prompt": True,
         "segments": [{"segment_index": 1, "image_prompt": "x" * 90}],
     }
     report = check_image_prompts(script)
+    assert report.level == "minor"
+    assert report.details["reason"] == "sd15_prompt_en missing, fallback at image gen"
+
+
+def test_check_image_prompts_sd15_mode_bad_sd15_is_major():
+    script = {
+        "include_sd15_prompt": True,
+        "segments": [
+            {
+                "segment_index": 1,
+                "image_prompt": "x" * 90,
+                "sd15_prompt_en": "too few words",
+            },
+        ],
+    }
+    report = check_image_prompts(script)
     assert report.level == "major"
-    assert report.details["reason"] == "sd15_prompt_en missing or too short"
+    assert report.details["reason"] == "sd15_prompt_en too short"
 
 
 def test_check_image_prompts_sd15_mode_image_prompt_too_short():

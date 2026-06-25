@@ -15,9 +15,11 @@ from app.repositories import job_log_repo, job_repo, segment_repo
 from app.repositories.connection import connection
 from app.services.llm.llm_mgr import llm_mgr
 from app.services.llm.llm_script_prompts import (
+    MIN_SD15_PROMPT_EN_WORDS,
     image_prompt_min_chars,
     image_prompt_target_chars,
     sd15_prompt_en_ok,
+    sd15_prompt_en_word_count,
 )
 from app.utils.job_info import content_style_from_job
 from app.utils.media import (
@@ -330,10 +332,13 @@ def _validate_script(
                     f"({prompt_len} < {target_prompt_chars}), continuing"
                 )
             if sd15_mode and not sd15_prompt_en_ok(seg.get("sd15_prompt_en")):
-                raise ScriptValidationError(
-                    f"segment {seg.get('segment_index')} sd15_prompt_en missing or too short",
-                    retryable=True,
-                )
+                words = sd15_prompt_en_word_count(seg.get("sd15_prompt_en"))
+                if words > 0:
+                    raise ScriptValidationError(
+                        f"segment {seg.get('segment_index')} sd15_prompt_en too short "
+                        f"({words} words, need >= {MIN_SD15_PROMPT_EN_WORDS})",
+                        retryable=True,
+                    )
     if seg_target > 0:
         cap = segment_text_char_cap(seg_target)
         hard_cap = int(cap * 1.15)
