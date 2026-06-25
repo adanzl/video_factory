@@ -13,7 +13,12 @@ from PIL import Image, ImageChops, ImageDraw
 from app.config import get_settings
 from app.services.intro.title_layout import render_feed_title
 from app.services.intro.themes import get_intro_theme
-from app.services.media.ffmpeg_utils import mux_video_audio, probe_duration, sequence_to_video
+from app.services.media.ffmpeg_utils import (
+    OUTPUT_AUDIO_SAMPLE_RATE,
+    mux_video_audio,
+    probe_duration,
+    sequence_to_video,
+)
 from app.services.visual.text_render import load_cjk_font
 from app.services.visual.title_render import STROKE_WIDTH, render_text_rgba
 
@@ -542,7 +547,7 @@ def generate_intro(
         silent_video,
         audio_path,
         output_path,
-        sample_rate=22050,
+        sample_rate=OUTPUT_AUDIO_SAMPLE_RATE,
         channels=1,
     )
 

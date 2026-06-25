@@ -19,6 +19,7 @@ _PROBE_TIMEOUT = 60.0
 _PIX_FMT = "yuv420p"
 _VAAPI_HWUPLOAD = "format=nv12,hwupload"
 _OUTPUT_FPS = 25
+OUTPUT_AUDIO_SAMPLE_RATE = 48000
 _AAC_128K = ("-c:a", "aac", "-b:a", "128k")
 _COPY_FASTSTART = ("-c", "copy", "-movflags", "+faststart")
 _VIDEO_COMPARE_KEYS = ("width", "height", "pix_fmt", "profile", "level", "codec_tag")
