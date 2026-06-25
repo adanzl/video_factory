@@ -448,7 +448,8 @@ class ScriptStage(StageExecutor):
             raise last_exc or RuntimeError("script generation failed")
 
         if generate_image_prompts:
-            use_sd15 = get_settings().image_provider == "sd15_t2i"
+            from app.utils.job_info import resolve_image_provider
+            use_sd15 = resolve_image_provider(ctx.job) == "sd15_t2i"
             prompt_feedback: str | None = None
             for attempt in range(4):
                 try:
