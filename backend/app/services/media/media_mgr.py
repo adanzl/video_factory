@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import shutil
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -96,6 +97,7 @@ class MediaMgr:
         audio_path: Path | None = None,
         only_segment_indices: set[int] | None = None,
         job: dict | None = None,
+        on_clip_done: Callable[[int, Path], None] | None = None,
     ) -> SegmentClipsResult:
         settings = get_settings()
         from app.utils.job_info import resolve_segment_video_size
@@ -180,6 +182,8 @@ class MediaMgr:
                 height=clip_height,
             )
             segment_clips.append((seg["id"], clip_path))
+            if on_clip_done is not None:
+                on_clip_done(seg["id"], clip_path)
             logger.info(
                 "clip %s/%s done segment %s | %s",
                 i,

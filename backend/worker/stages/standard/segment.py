@@ -37,7 +37,16 @@ class SegmentStage(StageExecutor):
                     status="done",
                 )
 
+        def persist_segment_clip(seg_id: int, path: Path) -> None:
+            with connection() as conn:
+                segment_repo.update_segment(
+                    conn,
+                    seg_id,
+                    clip_path=str(path),
+                )
+
         on_image_done = persist_segment_image if produce_scope in {"all", "images"} else None
+        on_clip_done = persist_segment_clip if produce_scope in {"all", "clips"} else None
         result = segment_mgr.produce_segments(
             segments=segments,
             media_dir=ctx.media_dir,
@@ -46,6 +55,7 @@ class SegmentStage(StageExecutor):
             scope=produce_scope,
             job=job,
             on_image_done=on_image_done,
+            on_clip_done=on_clip_done,
         )
 
         image_by_id = dict(result.image_paths)
@@ -63,9 +73,6 @@ class SegmentStage(StageExecutor):
             )
 
         with connection() as conn:
-            for seg_id, clip_path in result.clips.segment_clip_paths:
-                segment_repo.update_segment(conn, seg_id, clip_path=str(clip_path))
-
             log_scope = (
                 f"segments={list(ctx.rerun_segment_indices)}"
                 if ctx.rerun_segment_indices

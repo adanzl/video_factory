@@ -53,6 +53,7 @@ class SegmentMgr:
         scope: str = "all",
         job: dict | None = None,
         on_image_done: Callable[[int, Path], None] | None = None,
+        on_clip_done: Callable[[int, Path], None] | None = None,
     ) -> SegmentProduceResult:
         if scope not in {"all", "images", "clips"}:
             raise ValueError(f"invalid segment scope: {scope}")
@@ -157,6 +158,7 @@ class SegmentMgr:
                 audio_path=audio_path,
                 only_segment_indices=only_segment_indices,
                 job=job,
+                on_clip_done=on_clip_done,
             )
         elapsed = time.time() - t0
         logger.info(

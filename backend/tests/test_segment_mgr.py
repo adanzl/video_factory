@@ -124,3 +124,71 @@ def test_produce_clips_partial_skips_unselected_without_image(tmp_path: Path) ->
     mock_build.assert_called_once()
     assert mock_build.call_args.kwargs["only_segment_indices"] == {1}
     assert result.clips.segment_clip_paths == fake_clips.segment_clip_paths
+
+
+def test_produce_clips_persists_each_clip_via_callback(tmp_path: Path) -> None:
+    """图生视频时每段完成后立即回调，不必等整批结束。"""
+    from app.services.media.media_mgr import media_mgr
+
+    media_dir = tmp_path / "17"
+    images_dir = media_dir / "images"
+    images_dir.mkdir(parents=True)
+    image_path = images_dir / "1.png"
+    image_path.write_bytes(b"png")
+    clips_dir = media_dir / "segments"
+    clips_dir.mkdir(parents=True)
+
+    segments = [
+        {
+            "id": 101,
+            "segment_index": 1,
+            "visual_mode": "wan_i2v",
+            "image_path": str(image_path),
+            "duration_sec": 5.0,
+            "text": "测试口播一",
+        },
+        {
+            "id": 102,
+            "segment_index": 2,
+            "visual_mode": "wan_i2v",
+            "image_path": str(image_path),
+            "duration_sec": 4.0,
+            "text": "测试口播二",
+        },
+    ]
+    persisted: list[tuple[int, Path]] = []
+
+    def _fake_build(
+        *,
+        media_dir: Path,
+        segments: list[dict],
+        audio_path=None,
+        only_segment_indices=None,
+        job=None,
+        on_clip_done=None,
+    ):
+        assert on_clip_done is not None
+        results = []
+        for seg in segments:
+            path = media_dir / "segments" / f"{seg['segment_index']}.mp4"
+            path.write_bytes(b"mp4")
+            on_clip_done(seg["id"], path)
+            results.append((seg["id"], path))
+        from app.services.media.media_mgr import SegmentClipsResult
+
+        return SegmentClipsResult(segment_clip_paths=results)
+
+    with patch.object(media_mgr, "build_segment_clips", side_effect=_fake_build):
+        result = segment_mgr.produce_segments(
+            segments=segments,
+            media_dir=media_dir,
+            audio_path=None,
+            scope="clips",
+            on_clip_done=lambda seg_id, path: persisted.append((seg_id, path)),
+        )
+
+    assert persisted == [
+        (101, clips_dir / "1.mp4"),
+        (102, clips_dir / "2.mp4"),
+    ]
+    assert result.clips.segment_clip_paths == persisted
