@@ -29,7 +29,7 @@ from app.services.visual.visual_mgr import ImageProvider
 logger = logging.getLogger(__name__)
 
 _ANIME_CHECKPOINT = "ToonYouBeta6.safetensors"
-_LIFE_CHECKPOINT = "RealisticVisionV51.safetensors"
+_LIFE_CHECKPOINT = "DreamShaper_8.safetensors"
 # Deliberate v6 SFW：对科普插画/线稿/示意图 LoRA 亲和性比 DreamShaper 好，背景更干净
 # 下载：hf-mirror.com/XpucT/Deliberate → Deliberate_v6 (SFW).safetensors
 _SCIENCE_ILLUSTRATION_CHECKPOINT = "Deliberate_v6_SFW.safetensors"
@@ -50,12 +50,31 @@ _BUSINESS_CONFIG = {
     "science": {
         "checkpoint": _SCIENCE_ILLUSTRATION_CHECKPOINT,
         "steps": 25,
-        "cfg_scale": 8.5,
+        "cfg_scale": 7.5,
         "negative": (
             "anime, cartoon, manga, chibi, girl, boy, woman, man, face, portrait, "
             "hair, eyes, glowing eyes, superhero, deformed, ugly, watermark, text, "
             "logo, blurry, cluttered, busy background, cluttered background, "
             "low contrast, out of frame, cropped, bad anatomy, landscape"
+        ),
+    },
+}
+
+_SCIENCE_LORA_CFG: dict[str, dict] = {
+    "Anatomica_Scientifica": {
+        "checkpoint": _SCIENCE_MEDICAL_CHECKPOINT,
+        "cfg_scale": 8,
+        "negative": (
+            "text, words, letters, watermark, caption, typography, "
+            "landscape, low quality, blurry, deformed, anime, cartoon, "
+            "busy background, out of frame, oversaturated"
+        ),
+    },
+    "Science_DNA_Style": {
+        "cfg_scale": 8,
+        "negative": (
+            "person, face, portrait, landscape, watermark, text, logo, "
+            "blurry, deformed, low quality, cluttered, out of frame"
         ),
     },
 }
@@ -80,13 +99,17 @@ _SCIENCE_SPLIT_PANELS = {
 }
 
 
-def _resolve_checkpoint(*, business: str, prompt: str, panel: str = "single") -> str:
+def _resolve_checkpoint(*, business: str, prompt: str, lora: str = "", panel: str = "single") -> str:
+    if business == "life":
+        return _LIFE_CHECKPOINT
     if business == "science" and science_wants_anime(prompt):
         return _ANIME_CHECKPOINT
     if panel == "right":
         return _SCIENCE_SPLIT_PANELS["right"]["checkpoint"]
     if panel == "left":
         return _SCIENCE_SPLIT_PANELS["left"]["checkpoint"]
+    if lora in _SCIENCE_LORA_CFG and "checkpoint" in _SCIENCE_LORA_CFG[lora]:
+        return _SCIENCE_LORA_CFG[lora]["checkpoint"]
     return _BUSINESS_CONFIG[business]["checkpoint"]
 
 
@@ -327,14 +350,18 @@ class Sd15ImageProvider(ImageProvider):
             f"provider=sd15_t2i, api={self._api_url}, business={business}, "
             f"lora={lora_hint}, checkpoints=life:{_LIFE_CHECKPOINT}|"
             f"science:{_SCIENCE_ILLUSTRATION_CHECKPOINT}|"
-            f"science_medical:{_SCIENCE_MEDICAL_CHECKPOINT}|anime:{_ANIME_CHECKPOINT}, "
+            f"anatomy:{_SCIENCE_MEDICAL_CHECKPOINT}|anime:{_ANIME_CHECKPOINT}, "
             f"layout=split_science, size={resolved_size}"
         )
 
-    def _cfg_for_business(self, business: str) -> dict:
+    def _cfg_for_business(self, business: str, lora: str = "") -> dict:
         if business not in _BUSINESS_CONFIG:
             raise ValueError(f"unknown sd15 business: {business}")
-        return _BUSINESS_CONFIG[business]
+        base = dict(_BUSINESS_CONFIG[business])
+        if business == "science" and lora in _SCIENCE_LORA_CFG:
+            override = _SCIENCE_LORA_CFG[lora]
+            base.update({k: v for k, v in override.items() if v is not None})
+        return base
 
     def _switch_checkpoint(self, checkpoint: str) -> None:
         with self._checkpoint_lock:
@@ -412,10 +439,14 @@ class Sd15ImageProvider(ImageProvider):
         first_cfg = _SCIENCE_SPLIT_PANELS["left"]
         second_cfg = _SCIENCE_SPLIT_PANELS["right"]
         vertical = prep.split_axis == "vertical"
+
+        min_panel = 512
         if vertical:
-            panel_w, panel_h = width, height // 2
+            panel_w = max(width, min_panel)
+            panel_h = max(height // 2, min_panel)
         else:
-            panel_w, panel_h = width // 2, height
+            panel_w = max(width // 2, min_panel)
+            panel_h = max(height, min_panel)
 
         logger.info(
             "sd15 split request: axis=%s lora=%s panel=%s*%s "
@@ -432,7 +463,7 @@ class Sd15ImageProvider(ImageProvider):
         first_bytes = self._txt2img(
             full_prompt=first_prompt,
             negative_prompt=first_cfg["negative"],
-            checkpoint=_resolve_checkpoint(business=prep.business, prompt=prompt, panel="left"),
+            checkpoint=_resolve_checkpoint(business=prep.business, prompt=prompt, lora=prep.lora, panel="left"),
             width=panel_w,
             height=panel_h,
             steps=cfg["steps"],
@@ -442,7 +473,7 @@ class Sd15ImageProvider(ImageProvider):
         second_bytes = self._txt2img(
             full_prompt=second_prompt,
             negative_prompt=second_cfg["negative"],
-            checkpoint=_resolve_checkpoint(business=prep.business, prompt=prompt, panel="right"),
+            checkpoint=_resolve_checkpoint(business=prep.business, prompt=prompt, lora=prep.lora, panel="right"),
             width=panel_w,
             height=panel_h,
             steps=cfg["steps"],
@@ -450,8 +481,14 @@ class Sd15ImageProvider(ImageProvider):
             seed=99,
         )
         if vertical:
-            return _stitch_vertical(first_bytes, second_bytes)
-        return _stitch_horizontal(first_bytes, second_bytes)
+            result = _stitch_vertical(first_bytes, second_bytes)
+        else:
+            result = _stitch_horizontal(first_bytes, second_bytes)
+        img = Image.open(io.BytesIO(result))
+        img = img.resize((width, height), Image.LANCZOS)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue()
 
     def generate(self, prompt: str, output_path: Path, *, size: str | None = None) -> Path:
         size = size or self._default_size
@@ -461,15 +498,18 @@ class Sd15ImageProvider(ImageProvider):
             business_override=self._business_override,
         )
         business = prep.business
-        cfg = self._cfg_for_business(business)
+        lora = prep.lora
+        cfg = self._cfg_for_business(business, lora=lora)
         api_width, api_height = parse_image_size(size)
 
         logger.info(
-            "sd15 request: layout=%s axis=%s business=%s lora=%s job_size=%s api=%s*%s",
+            "sd15 request: layout=%s axis=%s business=%s lora=%s checkpoint=%s cfg_scale=%s job_size=%s api=%s*%s",
             prep.layout,
             prep.split_axis,
             business,
-            prep.lora,
+            lora,
+            cfg.get("checkpoint", "?"),
+            cfg["cfg_scale"],
             size,
             api_width,
             api_height,
@@ -484,16 +524,17 @@ class Sd15ImageProvider(ImageProvider):
                     prompt=prompt,
                 )
             else:
-                checkpoint = _resolve_checkpoint(business=business, prompt=prompt)
+                checkpoint = _resolve_checkpoint(business=business, prompt=prompt, lora=lora)
                 full_prompt = build_sd15_full_prompt(
                     subject=prep.prompt_en,
                     business=business,
-                    lora=prep.lora,
+                    lora=lora,
                     source_prompt=prompt,
                 )
                 logger.info(
-                    "sd15 single request: checkpoint=%s prompt_en=%s full_prompt=%s",
+                    "sd15 single request: checkpoint=%s lora=%s prompt_en=%s full_prompt=%s",
                     checkpoint,
+                    lora,
                     prep.prompt_en,
                     full_prompt,
                 )

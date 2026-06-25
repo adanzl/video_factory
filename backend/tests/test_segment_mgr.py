@@ -26,6 +26,7 @@ def test_produce_images_partial_only_selected(tmp_path: Path) -> None:
         *,
         size: str | None = None,
         image_provider: str | None = None,
+        on_image_done=None,
     ) -> list[tuple[int, Path]]:
         assert size is not None
         return [
@@ -44,6 +45,48 @@ def test_produce_images_partial_only_selected(tmp_path: Path) -> None:
 
     generated_ids = {seg_id for seg_id, _ in result.image_paths}
     assert generated_ids == {102}
+
+
+def test_produce_images_persists_each_image_via_callback(tmp_path: Path) -> None:
+    """出图时每张完成后立即回调，不必等整批结束。"""
+    media_dir = tmp_path / "17"
+    images_dir = media_dir / "images"
+    images_dir.mkdir(parents=True)
+
+    segments = [
+        {"id": 101, "segment_index": 1, "image_prompt": "prompt one " * 40},
+        {"id": 102, "segment_index": 2, "image_prompt": "prompt two " * 40},
+    ]
+    persisted: list[tuple[int, Path]] = []
+
+    def _fake_generate(
+        targets: list[dict],
+        out_dir: Path,
+        *,
+        size: str | None = None,
+        image_provider: str | None = None,
+        on_image_done=None,
+    ) -> list[tuple[int, Path]]:
+        assert on_image_done is not None
+        results = []
+        for seg in targets:
+            path = out_dir / f"{seg['segment_index']}.png"
+            path.write_bytes(b"png")
+            on_image_done(seg["id"], path)
+            results.append((seg["id"], path))
+        return results
+
+    with patch.object(visual_mgr, "generate_segment_images", side_effect=_fake_generate):
+        result = segment_mgr.produce_segments(
+            segments=segments,
+            media_dir=media_dir,
+            scope="images",
+            job={"info": {"orientation": "landscape"}},
+            on_image_done=lambda seg_id, path: persisted.append((seg_id, path)),
+        )
+
+    assert persisted == [(101, images_dir / "1.png"), (102, images_dir / "2.png")]
+    assert result.image_paths == persisted
 
 
 def test_produce_clips_partial_skips_unselected_without_image(tmp_path: Path) -> None:

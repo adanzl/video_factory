@@ -58,6 +58,30 @@ SD15_LORAS: dict[str, dict[str, Any]] = {
             "wireframe", "glowing", "science", "microscopic", "sci-fi",
         ),
     },
+    "Anatomica_Scientifica": {
+        "weight": 0.7,
+        "keywords": (
+            "解剖", "医学截面", "器官", "组织", "病理", "肺", "心脏", "肾脏",
+            "细胞截面", "血管", "anatomy", "medical", "cross-section", "tissue",
+            "microscope", "organ", "liver", "kidney", "pathology", "histology",
+        ),
+    },
+    "Laboratory_Scene": {
+        "weight": 0.65,
+        "keywords": (
+            "实验室", "实验台", "试管", "烧杯", "科研", "化学", "生物实验",
+            "lab", "laboratory", "experiment", "chemistry", "beaker",
+            "test tube", "research",
+        ),
+    },
+    "Scientific_Equipment": {
+        "weight": 0.6,
+        "keywords": (
+            "仪器", "设备", "装置", "机械", "器材", "工具", "检测", "测量",
+            "equipment", "instrument", "device", "apparatus", "machine",
+            "measurement", "detector", "sensor",
+        ),
+    },
 }
 
 SD15_BUSINESS_KEYWORDS: dict[str, tuple[str, ...]] = {
@@ -85,7 +109,10 @@ _SCIENCE_DIAGRAM_SUFFIX = "dark gray background, clean composition, no text"
 _SCIENCE_SPLIT_SUFFIX = "dark gray background, no text"
 _LIFE_SUFFIX = "natural light, realistic photo"
 
-_SCIENCE_LORAS = frozenset({"Textbook_Line_Art", "Simple_Diagram", "Science_DNA_Style"})
+_SCIENCE_LORAS = frozenset({
+    "Textbook_Line_Art", "Simple_Diagram", "Science_DNA_Style",
+    "Anatomica_Scientifica", "Laboratory_Scene", "Scientific_Equipment",
+})
 
 _SCIENCE_DNA_KEYWORDS = SD15_LORAS["Science_DNA_Style"]["keywords"]
 
@@ -242,13 +269,14 @@ def resolve_extra_loras(
     subject: str,
     source_prompt: str,
 ) -> tuple[str, ...]:
-    """分图左半在分子场景叠加 Science_DNA_Style（与主 LoRA 并用）。"""
-    if layout != "split" or panel != "left":
-        return ()
+    """分子/科学微观场景叠加 Science_DNA_Style（单图或分图左半均可）。"""
     if lora == "Science_DNA_Style":
         return ()
     if wants_science_dna_lora(prompt=source_prompt, subject=subject):
-        return ("Science_DNA_Style",)
+        if layout == "single":
+            return ("Science_DNA_Style",)
+        if layout == "split" and panel == "left":
+            return ("Science_DNA_Style",)
     return ()
 
 
@@ -484,12 +512,15 @@ def build_sd15_prompt_system(*, business_override: str | None = None) -> str:
         "你必须提炼为 SD1.5 在低分辨率下能准确呈现的画面。\n\n"
         "【第一步：锚定核心主体】\n"
         "先在内心回答（不输出）：「这张图的核心主体是什么？」\n"
-        "常见类型参考（五选一）：\n"
+        "常见类型参考（八选一）：\n"
         "  A. 写实场景——有具体物体/人物/空间的真实画面（如厨房操作、户外环境）\n"
         "  B. 结构示意图——单一物体内部结构/流程步骤（如细胞分裂、电路图）\n"
         "  C. 对比图——两个事物/状态并排（如正确 vs 错误、前 vs 后）\n"
         "  D. 线稿解剖图——医学/教科书白底标注线稿（如器官截面、骨骼）\n"
         "  E. 微观分子图——分子/细胞/微观粒子发光科学感（如 CO 分子、蛋白质）\n"
+        "  F. 医学截面图——器官/组织解剖横截（如肺气泡、血管截面）\n"
+        "  G. 实验室场景——实验台、仪器、科研环境\n"
+        "  H. 设备特写——机械装置、仪器特写、检测器材\n"
         "锚定主体类型后，再决定 layout/lora——不要先选风格再凑主体。\n\n"
         "【第二步：输出 JSON 字段】\n"
         "1. layout：C/E 类型默认 split；A/B/D 类型用 single；"
@@ -504,8 +535,11 @@ def build_sd15_prompt_system(*, business_override: str | None = None) -> str:
         "left_en 侧重宏观/分子/介质；right_en 侧重医学截面/器官/细胞；"
         "均禁止文字、人物肖像，不写方位词。\n"
         "4. business：life=写实摄影；science=科普插画示意（默认非动漫底模）。\n"
-        "5. lora：E 类优先 Science_DNA_Style；C 类优先 Simple_Diagram；"
-        "D 类优先 Textbook_Line_Art；B 类视内容选 Simple_Diagram 或 Textbook_Line_Art。\n"
+        "5. lora：A 类按主体选 Food_Photo/Home_Interior/Casual_Life/Product_Shot；\n"
+        "B 类视内容选 Simple_Diagram 或 Textbook_Line_Art；\n"
+        "C 类优先 Simple_Diagram；D 类优先 Textbook_Line_Art；\n"
+        "E 类优先 Science_DNA_Style；F 类优先 Anatomica_Scientifica；\n"
+        "G 类优先 Laboratory_Scene；H 类优先 Scientific_Equipment。\n"
         f"{_lora_catalog_text()}\n\n"
         "science 禁词：hyper-realistic, photorealistic, 3d render, photo, "
         "person, portrait, face, head, glowing eyes。\n"
@@ -526,7 +560,13 @@ def build_sd15_prompt_system(*, business_override: str | None = None) -> str:
         'single 示例：{"layout": "single", "prompt_en": "labeled cell diagram, nucleus and membrane, white background", '
         '"business": "science", "lora": "Textbook_Line_Art"}\n'
         'life 示例：{"layout": "single", "prompt_en": "home cooking scene, steaming pot on stove, warm window light", '
-        '"business": "life", "lora": "Food_Photo"}'
+        '"business": "life", "lora": "Food_Photo"}\n'
+        'anatomy 示例：{"layout": "single", "prompt_en": "lung alveoli cross-section, thin tissue walls, capillary network", '
+        '"business": "science", "lora": "Anatomica_Scientifica"}\n'
+        'lab 示例：{"layout": "single", "prompt_en": "scientific laboratory bench, glass beakers and test tubes, bright white light", '
+        '"business": "science", "lora": "Laboratory_Scene"}\n'
+        'equipment 示例：{"layout": "single", "prompt_en": "precision measurement instrument close-up, metallic dial, lab setting", '
+        '"business": "science", "lora": "Scientific_Equipment"}'
         f"{override_note}"
     )
 
