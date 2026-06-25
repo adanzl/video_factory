@@ -318,11 +318,18 @@ def run_script_image_prompts(job_id: int) -> dict:
     updated.pop("_llm_timing", None)
 
     with connection() as conn:
+        quality_report = check_image_prompts(updated, sd15_mode=include_sd15_prompt)
+        if quality_report.level == "major":
+            logger.error(
+                "job %s script/imagePrompts quality major: %s",
+                job_id,
+                quality_report.details,
+            )
         apply_quality_checks(
             conn,
             job_id,
             "script",
-            {"image_prompts": check_image_prompts(updated)},
+            {"image_prompts": quality_report},
             existing_report=job.get("quality_report"),
         )
         job_repo.update_job(conn, job_id, script_json=updated)

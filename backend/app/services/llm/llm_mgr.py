@@ -203,6 +203,9 @@ class LLMMgr:
         """补全文生图提示词，过短时带 feedback 重试（与 script 阶段逻辑对齐）。"""
         from app.quality.checkers import check_image_prompts
         from app.services.llm.llm_script_prompts import (
+            MIN_SD15_PROMPT_EN_WORDS,
+            TARGET_SD15_PROMPT_EN_WORDS,
+            format_image_prompt_retry_warning,
             image_prompt_min_chars,
             image_prompt_target_chars,
         )
@@ -237,13 +240,20 @@ class LLMMgr:
                 f"need image_prompt >={min_chars} chars each (target {target_chars})"
             )
             if include_sd15_prompt:
-                feedback += "; ensure each segment has sd15_prompt_en (20-40 English words)"
+                feedback += (
+                    f"; ensure each segment has sd15_prompt_en "
+                    f"(>={MIN_SD15_PROMPT_EN_WORDS} English words, target {TARGET_SD15_PROMPT_EN_WORDS})"
+                )
             else:
                 feedback += "; expand all six layers (composition, subject, environment, lighting, color, scope)"
             logger.warning(
-                "[SCRIPT] image_prompt retry attempt=%d short=%s",
-                attempt + 1,
-                target_indices,
+                "%s",
+                format_image_prompt_retry_warning(
+                    attempt=attempt + 1,
+                    reason=reason,
+                    segments=too_short,
+                    sd15_mode=include_sd15_prompt,
+                ),
             )
         return script
 

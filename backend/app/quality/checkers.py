@@ -7,9 +7,11 @@ from pathlib import Path
 
 from app.config import get_settings
 from app.services.llm.llm_script_prompts import (
+    MIN_SD15_PROMPT_EN_WORDS,
+    TARGET_SD15_PROMPT_EN_WORDS,
     image_prompt_min_chars,
     image_prompt_target_chars,
-    sd15_prompt_en_ok,
+    sd15_prompt_en_word_count,
 )
 from app.utils.media import (
     NARRATION_ABS_MIN_CHARS,
@@ -238,6 +240,8 @@ def check_image_prompts(script: dict, *, sd15_mode: bool | None = None) -> Quali
     too_short: list[dict] = []
     slightly_short: list[dict] = []
     missing_sd15: list[dict] = []
+    bad_sd15: list[dict] = []
+    weak_sd15: list[dict] = []
     for seg in segments:
         idx = seg.get("segment_index")
         prompt_len = len(str(seg.get("image_prompt") or ""))
@@ -257,17 +261,23 @@ def check_image_prompts(script: dict, *, sd15_mode: bool | None = None) -> Quali
                     "target_chars": target_chars,
                 }
             )
-        if sd15_mode and not sd15_prompt_en_ok(seg.get("sd15_prompt_en")):
-            missing_sd15.append({"segment_index": idx})
+        if sd15_mode:
+            words = sd15_prompt_en_word_count(seg.get("sd15_prompt_en"))
+            if words == 0:
+                missing_sd15.append({"segment_index": idx, "words": 0})
+            elif words < MIN_SD15_PROMPT_EN_WORDS:
+                bad_sd15.append({"segment_index": idx, "words": words})
+            elif words < TARGET_SD15_PROMPT_EN_WORDS:
+                weak_sd15.append({"segment_index": idx, "words": words})
 
-    if missing_sd15:
+    if bad_sd15:
         return QualityReport(
             level="major",
             step="image_prompts",
             fail_stage="script",
             details={
-                "reason": "sd15_prompt_en missing or too short",
-                "segments": missing_sd15,
+                "reason": "sd15_prompt_en too short",
+                "segments": bad_sd15,
             },
         )
     if too_short:
@@ -276,6 +286,25 @@ def check_image_prompts(script: dict, *, sd15_mode: bool | None = None) -> Quali
             step="image_prompts",
             fail_stage="script",
             details={"reason": "image_prompt too short", "segments": too_short},
+        )
+    if missing_sd15:
+        return QualityReport(
+            level="minor",
+            step="image_prompts",
+            details={
+                "reason": "sd15_prompt_en missing, fallback at image gen",
+                "segments": missing_sd15,
+            },
+        )
+    if weak_sd15:
+        return QualityReport(
+            level="minor",
+            step="image_prompts",
+            details={
+                "reason": "sd15_prompt_en slightly short",
+                "segments": weak_sd15,
+                "target_words": TARGET_SD15_PROMPT_EN_WORDS,
+            },
         )
     if slightly_short:
         return QualityReport(
