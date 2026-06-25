@@ -77,7 +77,13 @@ class VisualMgr:
             index = seg["segment_index"]
             t0 = time.time()
             out = images_dir / f"{index}.png"
-            prompt = seg.get("image_prompt") or seg["text"]
+            # SD15 provider 优先使用预生成的短英文 prompt（sd15_prompt_en），
+            # 避免出图时再次 LLM 翻译导致语义二次漂移；
+            # 其他 provider（ZImage/WAN）继续使用完整中文 image_prompt
+            if type(provider).__name__ == "Sd15ImageProvider":
+                prompt = seg.get("sd15_prompt_en") or seg.get("image_prompt") or seg["text"]
+            else:
+                prompt = seg.get("image_prompt") or seg["text"]
             logger.info(
                 "image %s/%s generating segment %s | %s | prompt_chars=%s",
                 done + 1,

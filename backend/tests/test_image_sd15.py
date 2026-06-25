@@ -122,7 +122,7 @@ def test_resolve_checkpoint_defaults():
 
     assert (
         _resolve_checkpoint(business="science", prompt="写实科普插画，细胞结构示意图")
-        == "DreamShaper_8.safetensors"
+        == "Deliberate_v6_SFW.safetensors"
     )
     assert (
         _resolve_checkpoint(business="science", prompt="写实科普插画", panel="right")
@@ -207,9 +207,9 @@ def test_generate_single_uses_job_size(monkeypatch, tmp_path):
     payload = captured["payloads"][0]
     assert payload["width"] == 360
     assert payload["height"] == 640
-    assert captured["checkpoints"][0] == "DreamShaper_8.safetensors"
+    assert captured["checkpoints"][0] == "Deliberate_v6_SFW.safetensors"
     assert "white background, line art" in payload["prompt"]
-    assert payload["steps"] == 30
+    assert payload["steps"] == 25
     assert out.exists()
 
 
@@ -371,7 +371,7 @@ def test_generate_split_stitches_panels(monkeypatch, tmp_path):
     assert captured["payloads"][0]["width"] == 320
     assert captured["payloads"][1]["width"] == 320
     assert captured["checkpoints"] == [
-        "DreamShaper_8.safetensors",
+        "Deliberate_v6_SFW.safetensors",
         "RealisticVisionV51.safetensors",
     ]
     assert "macro scientific illustration" in captured["payloads"][0]["prompt"]

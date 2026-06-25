@@ -448,6 +448,7 @@ class ScriptStage(StageExecutor):
             raise last_exc or RuntimeError("script generation failed")
 
         if generate_image_prompts:
+            use_sd15 = get_settings().image_provider == "sd15_t2i"
             prompt_feedback: str | None = None
             for attempt in range(4):
                 try:
@@ -456,6 +457,7 @@ class ScriptStage(StageExecutor):
                             script,
                             supplementary_info=supplementary_info,
                             job=ctx.job,
+                            include_sd15_prompt=use_sd15,
                         )
                     else:
                         llm_mgr.generate_script(
@@ -466,6 +468,7 @@ class ScriptStage(StageExecutor):
                             existing_script=script,
                             retry_scope="image_prompts",
                             generate_image_prompts=True,
+                            include_sd15_prompt=use_sd15,
                         )
                     _validate_script(
                         script,

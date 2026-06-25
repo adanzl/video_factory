@@ -25,6 +25,7 @@ def test_produce_images_partial_only_selected(tmp_path: Path) -> None:
         out_dir: Path,
         *,
         size: str | None = None,
+        image_provider: str | None = None,
     ) -> list[tuple[int, Path]]:
         assert size is not None
         return [

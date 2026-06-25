@@ -30,7 +30,10 @@ logger = logging.getLogger(__name__)
 
 _ANIME_CHECKPOINT = "ToonYouBeta6.safetensors"
 _LIFE_CHECKPOINT = "RealisticVisionV51.safetensors"
-_SCIENCE_ILLUSTRATION_CHECKPOINT = "DreamShaper_8.safetensors"
+# Deliberate v6 SFW：对科普插画/线稿/示意图 LoRA 亲和性比 DreamShaper 好，背景更干净
+# 下载：hf-mirror.com/XpucT/Deliberate → Deliberate_v6 (SFW).safetensors
+_SCIENCE_ILLUSTRATION_CHECKPOINT = "Deliberate_v6_SFW.safetensors"
+# 分镜右半（医学截面）继续用 RealisticVision，写实解剖效果更好
 _SCIENCE_MEDICAL_CHECKPOINT = "RealisticVisionV51.safetensors"
 
 _BUSINESS_CONFIG = {
@@ -40,17 +43,19 @@ _BUSINESS_CONFIG = {
         "cfg_scale": 7,
         "negative": (
             "cartoon, anime, illustration, painting, blurry, deformed, ugly, "
-            "watermark, text, logo, oversaturated"
+            "watermark, text, logo, oversaturated, "
+            "jpeg artifacts, compression artifacts, duplicate, extra fingers, mutated hands"
         ),
     },
     "science": {
         "checkpoint": _SCIENCE_ILLUSTRATION_CHECKPOINT,
-        "steps": 30,
-        "cfg_scale": 7.5,
+        "steps": 25,
+        "cfg_scale": 8.5,
         "negative": (
             "anime, cartoon, manga, chibi, girl, boy, woman, man, face, portrait, "
             "hair, eyes, glowing eyes, superhero, deformed, ugly, watermark, text, "
-            "logo, blurry, cluttered, landscape"
+            "logo, blurry, cluttered, busy background, cluttered background, "
+            "low contrast, out of frame, cropped, bad anatomy, landscape"
         ),
     },
 }
@@ -59,15 +64,17 @@ _SCIENCE_SPLIT_PANELS = {
     "left": {
         "checkpoint": _SCIENCE_ILLUSTRATION_CHECKPOINT,
         "negative": (
-            "text, words, letters, lung, anatomy, person, landscape, low quality, "
-            "blurry, watermark, deformed"
+            "text, words, letters, lung, anatomy, organ, person, face, portrait, "
+            "landscape, low quality, blurry, watermark, deformed, "
+            "busy background, out of frame"
         ),
     },
     "right": {
         "checkpoint": _SCIENCE_MEDICAL_CHECKPOINT,
         "negative": (
             "text, words, letters, watermark, caption, typography, cloth, fabric, "
-            "landscape, low quality, blurry, deformed, anime, cartoon"
+            "landscape, low quality, blurry, deformed, anime, cartoon, "
+            "busy background, out of frame, oversaturated"
         ),
     },
 }
@@ -115,6 +122,16 @@ def _fallback_business(*, prompt: str, business_override: str | None) -> str:
     return pick_business_by_keywords(prompt)
 
 
+def _is_sd15_ready_prompt(text: str) -> bool:
+    """判断是否为预处理过的英文短 prompt（无中文、词数 ≤ 60）。
+    此类 prompt 来自 sd15_prompt_en 字段，已在脚本阶段由 LLM 生成，可跳过二次翻译。
+    """
+    if re.search(r"[㐀-鿿一-鿿]", text):
+        return False
+    word_count = len(text.split())
+    return 0 < word_count <= 60
+
+
 def _resolve_layout(
     *,
     result: dict[str, str] | None,
@@ -144,6 +161,26 @@ def _prepare_sd15_prompt(
 
     width, height = parse_image_size(size_hint) if size_hint else (0, 0)
     settings = get_settings()
+
+    # ── 快速通道：传入已是英文短 prompt（来自 sd15_prompt_en），跳过 LLM 翻译 ──
+    if _is_sd15_ready_prompt(cleaned):
+        business = _fallback_business(prompt=cleaned, business_override=business_override)
+        lora = pick_lora_by_keywords(cleaned)
+        from app.services.llm.llm_sd15_prompt import normalize_sd15_prompt_en
+        prompt_en = normalize_sd15_prompt_en(cleaned, business=business, lora=lora)
+        logger.info(
+            "sd15 prompt prep fast-path (sd15_prompt_en): business=%s lora=%s prompt_en=%s",
+            business,
+            lora,
+            prompt_en,
+        )
+        return _Sd15PromptPrep(
+            business=business,
+            lora=lora,
+            layout="single",
+            prompt_en=prompt_en,
+        )
+
     llm_result: dict[str, str] | None = None
 
     if settings.deepseek_api_key:

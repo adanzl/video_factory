@@ -441,6 +441,7 @@ class DeepSeekClient(LLMClient):
         supplementary_info: str | None = None,
         job: dict | None = None,
         segment_indices: list[int] | None = None,
+        include_sd15_prompt: bool = False,
     ) -> dict[str, Any]:
         prompts = build_image_prompts_prompts(
             script,
@@ -448,6 +449,7 @@ class DeepSeekClient(LLMClient):
             supplementary_info=supplementary_info,
             job=job,
             segment_indices=segment_indices,
+            include_sd15_prompt=include_sd15_prompt,
         )
         raw, _ = self._chat_json(prompts["system"], prompts["user"])
         if isinstance(raw, list):
@@ -486,6 +488,10 @@ class DeepSeekClient(LLMClient):
             item = by_index[idx]
             seg["image_prompt"] = item["image_prompt"]
             seg["motion_prompt"] = item.get("motion_prompt", "")
+            # 存储 SD15 专用英文 prompt（仅当 LLM 输出了该字段时）
+            sd15_en = item.get("sd15_prompt_en")
+            if sd15_en and isinstance(sd15_en, str) and sd15_en.strip():
+                seg["sd15_prompt_en"] = sd15_en.strip()
 
     def fill_image_prompts(
         self,
@@ -495,6 +501,7 @@ class DeepSeekClient(LLMClient):
         supplementary_info: str | None = None,
         job: dict | None = None,
         segment_indices: list[int] | None = None,
+        include_sd15_prompt: bool = False,
     ) -> dict[str, Any]:
         settings = get_settings()
         segments = script.get("segments") or []
@@ -511,6 +518,7 @@ class DeepSeekClient(LLMClient):
                 supplementary_info=supplementary_info,
                 job=job,
                 segment_indices=batch_indices,
+                include_sd15_prompt=include_sd15_prompt,
             )
             return result["image_prompts"]
 
@@ -544,6 +552,7 @@ class DeepSeekClient(LLMClient):
         job: dict | None = None,
         segment_indices: list[int] | None = None,
         feedback: str | None = None,
+        include_sd15_prompt: bool = False,
     ) -> dict[str, Any]:
         prompt_feedback = feedback
         target_indices = segment_indices
@@ -554,6 +563,7 @@ class DeepSeekClient(LLMClient):
                 supplementary_info=supplementary_info,
                 job=job,
                 segment_indices=target_indices,
+                include_sd15_prompt=include_sd15_prompt,
             )
             short = _short_image_prompt_indices(script)
             if not short:
@@ -615,6 +625,7 @@ class DeepSeekClient(LLMClient):
         existing_script: dict[str, Any] | None = None,
         retry_scope: str | None = None,
         generate_image_prompts: bool = True,
+        include_sd15_prompt: bool = False,
     ) -> dict[str, Any]:
         if retry_scope == "image_prompts" and existing_script is not None:
             data = existing_script
@@ -623,6 +634,7 @@ class DeepSeekClient(LLMClient):
                 supplementary_info=supplementary_info,
                 job=job,
                 feedback=feedback,
+                include_sd15_prompt=include_sd15_prompt,
             )
             return data
 
@@ -640,6 +652,7 @@ class DeepSeekClient(LLMClient):
                 data,
                 supplementary_info=supplementary_info,
                 job=job,
+                include_sd15_prompt=include_sd15_prompt,
             )
         return data
 
@@ -757,7 +770,7 @@ class DeepSeekClient(LLMClient):
                 size_hint=size_hint,
                 parse_size=parse_image_size,
             ),
-            max_tokens=512,
+            max_tokens=900,
         )
         return parse_sd15_prompt_payload(
             raw,
