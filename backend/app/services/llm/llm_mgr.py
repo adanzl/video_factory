@@ -134,6 +134,7 @@ class LLMMgr:
         existing_script: dict | None = None,
         retry_scope: str | None = None,
         generate_image_prompts: bool = True,
+        include_sd15_prompt: bool = False,
     ) -> dict[str, Any]:
         return self._get_client().generate_script(
             title,
@@ -146,6 +147,7 @@ class LLMMgr:
             existing_script=existing_script,
             retry_scope=retry_scope,
             generate_image_prompts=generate_image_prompts,
+            include_sd15_prompt=include_sd15_prompt,
         )
 
     def generate_storyboard(
@@ -177,6 +179,7 @@ class LLMMgr:
         supplementary_info: str | None = None,
         job: dict | None = None,
         segment_indices: list[int] | None = None,
+        include_sd15_prompt: bool = False,
     ) -> dict[str, Any]:
         return self._get_client().fill_image_prompts(
             script,
@@ -184,6 +187,7 @@ class LLMMgr:
             supplementary_info=supplementary_info,
             job=job,
             segment_indices=segment_indices,
+            include_sd15_prompt=include_sd15_prompt,
         )
 
     def fill_image_prompts_with_retries(

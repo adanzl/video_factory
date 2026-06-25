@@ -90,6 +90,17 @@ _IMAGE_PROMPTS_JSON_EXAMPLE = """{
     {
       "segment_index": 1,
       "image_prompt": "六层结构扩写...",
+      "motion_prompt": "轻微镜头推进",
+      "sd15_prompt_en": "cross-section diagram of lung alveoli, air sacs highlighted, medical illustration"
+    }
+  ]
+}"""
+
+_IMAGE_PROMPTS_JSON_EXAMPLE_NO_SD15 = """{
+  "image_prompts": [
+    {
+      "segment_index": 1,
+      "image_prompt": "六层结构扩写...",
       "motion_prompt": "轻微镜头推进"
     }
   ]
@@ -116,8 +127,10 @@ def _json_output_clause(example: str) -> str:
 _VISUAL_BRIEF_RULE = (
     "各段含segment_index,text,visual_brief,visual_mode=static_motion；"
     "各段text按顺序拼接须与narration全文一致。"
-    "visual_brief为该镜画面描述（60-120字）：写清视觉主旨、关键动作或对比关系、"
+    "visual_brief为该镜画面描述（80-150字）：写清视觉主旨、关键动作或对比关系、"
     "场景类型与情绪，帮助后续扩写文生图提示词；不写镜头焦距、光线方向、材质参数等细节。"
+    "visual_brief末尾须用括号标注SD15画面类型（五选一）："
+    "（写实场景）/（结构示意图）/（对比图）/（线稿解剖图）/（微观分子图）。"
     "另须输出visual_style：全片画风定调一句话（画风+主色调+跨镜统一元素如道具造型）。"
 )
 
@@ -491,7 +504,8 @@ def build_storyboard_prompts(
         narration_clause = (
             "【紧凑输出】不要输出 narration 与 word_count 字段；"
             "各段 text 须按字数预算写满，后端会自动拼接为 narration。"
-            "每段 visual_brief 控制在 30-50 字，只写画面主旨，禁止冗长描写。"
+            "每段 visual_brief 控制在 30-60 字，只写画面主旨，末尾用括号注明画面类型"
+            "（写实场景）/（结构示意图）/（对比图）/（线稿解剖图）/（微观分子图），禁止冗长描写。"
         )
         word_count_clause = ""
     else:
@@ -531,9 +545,9 @@ def build_storyboard_prompts(
             f"{title_user_prefix}、visual_style 与分镜，{split_hint}。\n\n"
             f"{length_budget}\n\n"
             + (
-                "每段 visual_brief 30-50 字，写清画面主旨即可。"
+                "每段 visual_brief 30-60 字，写清画面主旨，末尾用括号注明画面类型（写实场景/结构示意图/对比图/线稿解剖图/微观分子图）。"
                 if compact_output
-                else "每段 visual_brief 写清该镜画面主旨，便于下一步扩写文生图提示词。"
+                else "每段 visual_brief 写清该镜画面主旨并在末尾注明画面类型（写实场景/结构示意图/对比图/线稿解剖图/微观分子图），便于下一步扩写文生图提示词。"
             )
         ),
         supplementary_info,
@@ -541,6 +555,22 @@ def build_storyboard_prompts(
     if feedback:
         user += f"\n\n上次不合格：{feedback}。请按要求重写。"
     return _prompt_step("storyboard", system, user)
+
+
+_SD15_PROMPT_EN_RULE = (
+    "同时为每段输出 sd15_prompt_en：专为 Stable Diffusion 1.5 优化的英文提示词（20～40 词），"
+    "格式为「[核心主体] [动作/状态], [场景类型], [一个关键视觉特征]」；"
+    "先读 visual_brief 末尾的画面类型标签确定主体方向，再提炼主体；"
+    "只写一个核心主体，禁止并列堆砌多个名词；"
+    "禁止写 lora 标签、style 词和背景后缀（系统自动追加）；"
+    "science 类禁止 person/face/head 等人物词。\n"
+    "sd15_prompt_en 正确示例：\n"
+    "  写实场景：\"stainless steel pot on stove, close-up surface detail, kitchen counter\"\n"
+    "  结构示意图：\"cross-section diagram of battery cell, labeled anode cathode layers\"\n"
+    "  对比图：\"healthy lung tissue vs damaged lung, side by side, medical illustration\"\n"
+    "  线稿解剖图：\"line art diagram of human lung anatomy, labeled air sacs, white background\"\n"
+    "  微观分子图：\"carbon monoxide molecules passing through wet fabric mesh, glowing science\"\n"
+)
 
 
 def build_image_prompts_prompts(
@@ -552,6 +582,7 @@ def build_image_prompts_prompts(
     orientation: str | None = None,
     content_style: str | None = None,
     segment_indices: list[int] | None = None,
+    include_sd15_prompt: bool = False,
 ) -> dict[str, str]:
     profile_orientation, profile_style = _resolve_script_profile(
         job,
@@ -567,12 +598,16 @@ def build_image_prompts_prompts(
         f"text={seg.get('text', '')!r}; visual_brief={seg.get('visual_brief', '')!r}"
         for seg in segments
     ]
+    json_example = _IMAGE_PROMPTS_JSON_EXAMPLE if include_sd15_prompt else _IMAGE_PROMPTS_JSON_EXAMPLE_NO_SD15
+    sd15_rule = _SD15_PROMPT_EN_RULE if include_sd15_prompt else ""
+    sd15_fields = "、image_prompt、motion_prompt 与 sd15_prompt_en" if include_sd15_prompt else "、image_prompt 与 motion_prompt"
     system = (
-        "你是科普视频文生图与运动提示词专家。输出JSON，字段：image_prompts。"
-        "image_prompts为数组，每项含segment_index、image_prompt与motion_prompt。"
+        f"你是科普视频文生图与运动提示词专家。输出JSON，字段：image_prompts。"
+        f"image_prompts为数组，每项含segment_index{sd15_fields}。"
         f"{_image_prompt_rule(orientation=profile_orientation, content_style=profile_style)}"
+        f"{sd15_rule}"
         "image_prompts须覆盖输入的每一段，segment_index一一对应，不得遗漏。"
-        f"{_json_output_clause(_IMAGE_PROMPTS_JSON_EXAMPLE)}"
+        f"{_json_output_clause(json_example)}"
     )
     user = _append_supplementary_to_user(
         (
@@ -581,6 +616,7 @@ def build_image_prompts_prompts(
             "各分镜口播与画面描述：\n"
             + "\n".join(lines)
             + "\n\n请为每段扩写 image_prompt 与 motion_prompt，确保 image_prompt 满足字数与六层结构要求。"
+            + ("同时为每段输出准确的 sd15_prompt_en。" if include_sd15_prompt else "")
         ),
         supplementary_info or script.get("supplementary_info"),
     )
