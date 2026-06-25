@@ -314,6 +314,7 @@ def run_script_image_prompts(job_id: int) -> dict:
     prompts.append(img_prompt)
     updated["llm_prompts"] = prompts
     updated["generate_image_prompts"] = True
+    updated["include_sd15_prompt"] = include_sd15_prompt
     updated.pop("_llm_timing", None)
 
     with connection() as conn:
