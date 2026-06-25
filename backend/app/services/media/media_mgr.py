@@ -10,7 +10,7 @@ from pathlib import Path
 
 from app.config import get_settings
 from app.services.media.clip.mgr import clip_mgr
-from app.services.media.clip.render import fit_video_with_ass_subtitles
+from app.services.media.subtitle_style import subtitle_style_for_canvas
 from app.services.media.ffmpeg_utils import build_ass_from_phrase_cues
 from app.services.media.ffmpeg_utils import (
     concat_clips,
@@ -294,14 +294,22 @@ class MediaMgr:
         work_dir = media_dir / "merge_work"
         work_dir.mkdir(parents=True, exist_ok=True)
 
+        from app.services.media.clip.render import (
+            fit_video_duration,
+            fit_video_with_ass_subtitles,
+        )
+
         body_path = media_dir / "body.mp4"
         base_w, base_h = probe_video_size(base_video_path)
         if flat_cues:
+            subtitle_style = subtitle_style_for_canvas(base_w, base_h)
             logger.info(
-                "merge_material: burning %s subtitle cues via ass on %sx%s (libx264 cpu)",
+                "merge_material: burning %s subtitle cues via ass on %sx%s "
+                "font_size=%s (libx264 cpu)",
                 len(flat_cues),
                 base_w,
                 base_h,
+                subtitle_style["font_size"],
             )
             ass_path = work_dir / "subtitles.ass"
             ass_path.write_text(
@@ -318,8 +326,6 @@ class MediaMgr:
             )
         else:
             logger.warning("merge_material: no subtitle cues with duration, skipping burn")
-            from app.services.media.clip.render import fit_video_duration
-
             fit_video_duration(
                 base_video_path,
                 body_path,
