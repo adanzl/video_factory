@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -17,6 +18,10 @@ _FFMPEG_TIMEOUT = 600.0
 _PROBE_TIMEOUT = 60.0
 _PIX_FMT = "yuv420p"
 _VAAPI_HWUPLOAD = "format=nv12,hwupload"
+_OUTPUT_FPS = 25
+_AAC_128K = ("-c:a", "aac", "-b:a", "128k")
+_COPY_FASTSTART = ("-c", "copy", "-movflags", "+faststart")
+_VIDEO_COMPARE_KEYS = ("width", "height", "pix_fmt", "profile", "level", "codec_tag")
 
 
 @dataclass(frozen=True)
@@ -151,23 +156,55 @@ def log_ffmpeg_hwaccel_config(*, context: str = "encode") -> None:
     _logger.info("[FFMPEG] %s: %s", context, ffmpeg_hwaccel_config_summary())
 
 
+def _ffprobe_json(
+    path: Path,
+    entries: str,
+    *,
+    select: str | None = None,
+    check: bool = True,
+) -> dict:
+    cmd = ["ffprobe", "-v", "error"]
+    if select:
+        cmd.extend(["-select_streams", select])
+    cmd.extend(["-show_entries", entries, "-of", "json", str(path)])
+    out = _run_cmd(cmd, check=check, timeout=_PROBE_TIMEOUT)
+    return json.loads(out.stdout)
+
+
+def _parse_frame_rate(raw: str | None) -> float | None:
+    if not raw:
+        return None
+    if "/" in raw:
+        num, den = raw.split("/", 1)
+        den_f = float(den)
+        if den_f == 0:
+            return None
+        return float(num) / den_f
+    try:
+        return float(raw)
+    except ValueError:
+        return None
+
+
+def _sar_is_square(sar: str | None) -> bool:
+    if not sar or sar in {"0:1", "N/A"}:
+        return True
+    if sar == "1:1":
+        return True
+    parts = sar.split(":")
+    if len(parts) == 2 and parts[0] and parts[1]:
+        return int(parts[0]) == int(parts[1])
+    return False
+
+
 def _probe_video_stream(path: Path) -> dict | None:
-    out = _run_cmd(
-        [
-            "ffprobe",
-            "-v",
-            "error",
-            "-select_streams",
-            "v:0",
-            "-show_entries",
-            "stream=codec_name,width,height,pix_fmt",
-            "-of",
-            "json",
-            str(path),
-        ],
-        timeout=_PROBE_TIMEOUT,
+    data = _ffprobe_json(
+        path,
+        "stream=codec_name,codec_tag_string,width,height,pix_fmt,"
+        "r_frame_rate,profile,level,sample_aspect_ratio",
+        select="v:0",
     )
-    streams = json.loads(out.stdout).get("streams") or []
+    streams = data.get("streams") or []
     if not streams:
         return None
     stream = streams[0]
@@ -177,10 +214,42 @@ def _probe_video_stream(path: Path) -> dict | None:
         return None
     return {
         "codec": stream.get("codec_name"),
+        "codec_tag": stream.get("codec_tag_string"),
         "width": int(width),
         "height": int(height),
         "pix_fmt": stream.get("pix_fmt"),
+        "fps": _parse_frame_rate(stream.get("r_frame_rate")),
+        "profile": stream.get("profile"),
+        "level": stream.get("level"),
+        "sar_square": _sar_is_square(stream.get("sample_aspect_ratio")),
     }
+
+
+def _probe_audio_stream(path: Path) -> dict | None:
+    data = _ffprobe_json(
+        path,
+        "stream=codec_name,sample_rate,channels",
+        select="a:0",
+        check=False,
+    )
+    streams = data.get("streams") or []
+    if not streams:
+        return None
+    stream = streams[0]
+    rate = stream.get("sample_rate")
+    channels = stream.get("channels")
+    if rate is None or channels is None:
+        return None
+    return {
+        "codec": stream.get("codec_name"),
+        "sample_rate": int(rate),
+        "channels": int(channels),
+    }
+
+
+def _probe_audio_sample_rate(path: Path) -> int | None:
+    audio = _probe_audio_stream(path)
+    return audio["sample_rate"] if audio else None
 
 
 def _null_sink_output(input_path: Path, *, af: str | None = None) -> str:
@@ -303,11 +372,12 @@ def probe_video_size(path: Path) -> tuple[int, int]:
     return int(width), int(height)
 
 
-def scale_pad_filter(*, width: int, height: int) -> str:
-    """等比缩放至目标画布内，不足处留黑边。"""
+def scale_pad_filter(*, width: int, height: int, fps: int = _OUTPUT_FPS) -> str:
+    """等比缩放至目标画布内，不足处留黑边，并统一输出帧率。"""
     return (
         f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
-        f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,format=yuv420p"
+        f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,color=black,setsar=1,"
+        f"format=yuv420p,fps={fps}"
     )
 
 
@@ -349,18 +419,7 @@ def concat_clips(clips: list[Path], output_path: Path) -> Path:
         raise ValueError("no clips to concat")
     if len(clips) == 1:
         _run_cmd(
-            [
-                "ffmpeg",
-                "-y",
-                "-hide_banner",
-                "-i",
-                str(clips[0]),
-                "-c",
-                "copy",
-                "-movflags",
-                "+faststart",
-                str(output_path),
-            ],
+            ["ffmpeg", "-y", "-hide_banner", "-i", str(clips[0]), *_COPY_FASTSTART, str(output_path)],
         )
         return output_path
 
@@ -373,19 +432,7 @@ def concat_clips(clips: list[Path], output_path: Path) -> Path:
         encoding="utf-8",
     )
     _run_cmd(
-        [
-            "ffmpeg",
-            "-y",
-            "-f",
-            "concat",
-            "-safe",
-            "0",
-            "-i",
-            str(list_file),
-            "-c",
-            "copy",
-            str(output_path),
-        ],
+        ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(list_file), *_COPY_FASTSTART, str(output_path)],
     )
     list_file.unlink(missing_ok=True)
     return output_path
@@ -422,10 +469,6 @@ def _concat_audio_reencode(clips: list[Path], output_path: Path) -> Path:
     return output_path
 
 
-def concat_videos(clips: list[Path], output_path: Path) -> Path:
-    return concat_clips(clips, output_path)
-
-
 def generate_silent_mp3(output_path: Path, duration_sec: float) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     _run_cmd(
@@ -452,6 +495,8 @@ def sequence_to_video(
     *,
     fps: int = 25,
     frame_count: int | None = None,
+    subtitle: bool = False,
+    force_cpu: bool = False,
 ) -> Path:
     """将 frame_0000.png 序列编码为 H.264 视频（无音轨）。"""
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -463,9 +508,9 @@ def sequence_to_video(
         "-i",
         str(pattern),
     ]
-    if vaapi_enabled():
+    if vaapi_enabled() and not force_cpu:
         cmd.extend(["-vf", _VAAPI_HWUPLOAD])
-    cmd.extend(libx264_encode_args())
+    cmd.extend(libx264_encode_args(subtitle=subtitle, force_cpu=force_cpu))
     if frame_count is not None:
         cmd.extend(["-frames:v", str(frame_count)])
     cmd.append(str(output_path))
@@ -584,10 +629,7 @@ def merge_audio_video(
                 "[aout]",
                 "-c:v",
                 "copy",
-                "-c:a",
-                "aac",
-                "-b:a",
-                "128k",
+                *_AAC_128K,
                 "-t",
                 f"{video_dur:.3f}",
                 "-movflags",
@@ -612,10 +654,7 @@ def merge_audio_video(
                 "1:a:0",
                 "-c:v",
                 "copy",
-                "-c:a",
-                "aac",
-                "-b:a",
-                "128k",
+                *_AAC_128K,
                 "-t",
                 f"{audio_dur:.3f}",
                 "-movflags",
@@ -644,10 +683,7 @@ def merge_audio_video(
             "-map",
             "1:a:0",
             *libx264_encode_args(),
-            "-c:a",
-            "aac",
-            "-b:a",
-            "128k",
+            *_AAC_128K,
             "-t",
             f"{audio_dur:.3f}",
             str(output_path),
@@ -656,84 +692,118 @@ def merge_audio_video(
     return output_path
 
 
-def _probe_audio_sample_rate(path: Path) -> int | None:
-    out = _run_cmd(
-        [
-            "ffprobe",
-            "-v",
-            "error",
-            "-select_streams",
-            "a:0",
-            "-show_entries",
-            "stream=sample_rate",
-            "-of",
-            "default=noprint_wrappers=1:nokey=1",  # cSpell: disable-line
-            str(path),
-        ],
-        check=False,
-        timeout=_PROBE_TIMEOUT,
-    )
-    rate = out.stdout.strip()
-    if not rate:
-        return None
-    return int(rate)
-
-
 def _can_concat_demuxer_copy(intro_path: Path, body_path: Path) -> bool:
-    """片头与正文分辨率/编码一致且音轨采样率相同，可 concat demuxer -c copy。"""
-    intro_v = _probe_video_stream(intro_path)
-    body_v = _probe_video_stream(body_path)
+    """片头与正文流参数完全一致时才 concat -c copy。"""
+    intro_v, body_v = _probe_video_stream(intro_path), _probe_video_stream(body_path)
     if not intro_v or not body_v:
         return False
-    if intro_v["codec"] != "h264" or intro_v != body_v:
+    if intro_v["codec"] != "h264" or body_v["codec"] != "h264":
         return False
-    intro_rate = _probe_audio_sample_rate(intro_path)
-    body_rate = _probe_audio_sample_rate(body_path)
-    if intro_rate is None or body_rate is None:
+    if any(intro_v.get(k) != body_v.get(k) for k in _VIDEO_COMPARE_KEYS):
         return False
-    return intro_rate == body_rate
+    if not intro_v.get("sar_square") or not body_v.get("sar_square"):
+        return False
+    intro_fps, body_fps = intro_v.get("fps"), body_v.get("fps")
+    if intro_fps is None or body_fps is None or abs(intro_fps - body_fps) > 0.05:
+        return False
+
+    intro_a, body_a = _probe_audio_stream(intro_path), _probe_audio_stream(body_path)
+    if not intro_a or not body_a:
+        return False
+    return (
+        intro_a["codec"] == "aac"
+        and body_a["codec"] == "aac"
+        and intro_a["sample_rate"] == body_a["sample_rate"]
+        and intro_a["channels"] == body_a["channels"]
+    )
 
 
-def prepend_intro(intro_path: Path, body_path: Path,
-                  output_path: Path) -> Path:
-    """片头接正文；参数兼容时 -c copy，否则 filter 重编码。"""
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+def _concat_norm_vf(width: int, height: int, fps: float) -> str:
+    return (
+        f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
+        f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1,"
+        f"format={_PIX_FMT},fps={fps:g},setpts=PTS-STARTPTS"
+    )
 
-    if _can_concat_demuxer_copy(intro_path, body_path):
-        return concat_clips([intro_path, body_path], output_path)
 
-    body_rate = _probe_audio_sample_rate(body_path)
-    intro_rate = _probe_audio_sample_rate(intro_path)
-    intro_dur = probe_duration(intro_path)
+def _finalize_filter_vout(filter_complex: str, raw: str = "vraw", out: str = "vout") -> tuple[str, str]:
+    if vaapi_enabled():
+        return f"{filter_complex};[{raw}]{_VAAPI_HWUPLOAD}[{out}]", f"[{out}]"
+    return filter_complex.replace(f"[{raw}]", f"[{out}]"), f"[{out}]"
 
+
+def _prepend_audio_graph(
+    video_graph: str,
+    *,
+    body_rate: int | None,
+    intro_rate: int | None,
+    intro_dur: float,
+) -> tuple[str, list[str], list[str]]:
     if body_rate is None:
-        return concat_clips([intro_path, body_path], output_path)
-
+        return video_graph, [], []
     if intro_rate is not None:
-        filter_complex = (
-            "[0:v]setpts=PTS-STARTPTS[v0];"
-            "[1:v]setpts=PTS-STARTPTS[v1];"
-            "[v0][v1]concat=n=2:v=1:a=0[vraw];"
-            "[0:a]aformat=sample_rates={}:channel_layouts=mono,asetpts=PTS-STARTPTS[a0];"
+        audio = (
+            f"[0:a]aformat=sample_rates={body_rate}:channel_layouts=mono,asetpts=PTS-STARTPTS[a0];"
             "[1:a]asetpts=PTS-STARTPTS[a1];"
             "[a0][a1]concat=n=2:v=0:a=1[aout]"
-        ).format(body_rate)
+        )
     else:
-        filter_complex = (
-            "[0:v]setpts=PTS-STARTPTS[v0];"
-            "[1:v]setpts=PTS-STARTPTS[v1];"
-            "[v0][v1]concat=n=2:v=1:a=0[vraw];"
+        audio = (
             f"anullsrc=r={body_rate}:cl=mono,atrim=0:{intro_dur},asetpts=PTS-STARTPTS[asilent];"
             "[1:a]asetpts=PTS-STARTPTS[a1];"
             "[asilent][a1]concat=n=2:v=0:a=1[aout]"
         )
+    return video_graph + ";" + audio, ["-map", "[aout]"], list(_AAC_128K)
 
-    if vaapi_enabled():
-        filter_complex += f";[vraw]{_VAAPI_HWUPLOAD}[vout]"
-    else:
-        filter_complex = filter_complex.replace("[vraw]", "[vout]")
 
-    _run_cmd(
+def _align_intro_to_body(intro_path: Path, body_path: Path, output_path: Path) -> Path:
+    """片头约 2s，按正文流参数重编码，便于 concat copy。"""
+    body_v = _probe_video_stream(body_path)
+    if not body_v:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(intro_path, output_path)
+        return output_path
+
+    body_fps = body_v.get("fps")
+    fps = int(body_fps) if body_fps and abs(body_fps - round(body_fps)) < 0.01 else _OUTPUT_FPS
+    body_a = _probe_audio_stream(body_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    cmd: list[str] = [
+        *ffmpeg_cmd_start(hide_banner=True),
+        "-i",
+        str(intro_path),
+        "-vf",
+        vf_for_encode(scale_pad_filter(width=body_v["width"], height=body_v["height"], fps=fps)),
+        "-map",
+        "0:v:0",
+        "-map",
+        "0:a:0?",
+        *libx264_encode_args(subtitle=True, force_cpu=True),
+        *_AAC_128K,
+    ]
+    if body_a:
+        cmd.extend(["-ar", str(body_a["sample_rate"]), "-ac", str(body_a["channels"])])
+    cmd.append(str(output_path))
+    run_ffmpeg(cmd)
+    return output_path
+
+
+def _prepend_intro_reencode(intro_path: Path, body_path: Path, output_path: Path) -> Path:
+    settings = get_settings()
+    body_v = _probe_video_stream(body_path)
+    w = body_v["width"] if body_v else settings.video_width
+    h = body_v["height"] if body_v else settings.video_height
+    fps = (body_v or {}).get("fps") or _OUTPUT_FPS
+    norm_v = _concat_norm_vf(w, h, fps)
+    video_graph = f"[0:v]{norm_v}[v0];[1:v]{norm_v}[v1];[v0][v1]concat=n=2:v=1:a=0[vraw]"
+    filter_complex, audio_maps, audio_encode = _prepend_audio_graph(
+        video_graph,
+        body_rate=_probe_audio_sample_rate(body_path),
+        intro_rate=_probe_audio_sample_rate(intro_path),
+        intro_dur=probe_duration(intro_path),
+    )
+    filter_complex, video_map = _finalize_filter_vout(filter_complex)
+    run_ffmpeg(
         [
             *ffmpeg_cmd_start(),
             "-i",
@@ -743,16 +813,38 @@ def prepend_intro(intro_path: Path, body_path: Path,
             "-filter_complex",
             filter_complex,
             "-map",
-            "[vout]",
-            "-map",
-            "[aout]",
+            video_map,
+            *audio_maps,
             *libx264_encode_args(),
-            "-c:a",
-            "aac",
+            *audio_encode,
             str(output_path),
-        ],
+        ]
     )
     return output_path
+
+
+def prepend_intro(intro_path: Path, body_path: Path, output_path: Path) -> Path:
+    """片头接正文；兼容 concat copy，否则对齐片头再 copy，最后整段重编码。"""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    if _can_concat_demuxer_copy(intro_path, body_path):
+        _logger.info("prepend_intro: concat copy (compatible streams)")
+        return concat_clips([intro_path, body_path], output_path)
+
+    _logger.info(
+        "prepend_intro: stream diff intro=%s body=%s",
+        _probe_video_stream(intro_path),
+        _probe_video_stream(body_path),
+    )
+    work_dir = output_path.parent / "prepend_work"
+    work_dir.mkdir(parents=True, exist_ok=True)
+    aligned = work_dir / "intro_aligned.mp4"
+    _align_intro_to_body(intro_path, body_path, aligned)
+    if _can_concat_demuxer_copy(aligned, body_path):
+        _logger.info("prepend_intro: concat copy (intro aligned to body)")
+        return concat_clips([aligned, body_path], output_path)
+
+    _logger.info("prepend_intro: filter re-encode (intro align insufficient)")
+    return _prepend_intro_reencode(intro_path, body_path, output_path)
 
 
 def _fmt_srt(sec: float) -> str:
