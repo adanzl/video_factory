@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -51,6 +52,7 @@ class SegmentMgr:
         only_segment_indices: set[int] | None = None,
         scope: str = "all",
         job: dict | None = None,
+        on_image_done: Callable[[int, Path], None] | None = None,
     ) -> SegmentProduceResult:
         if scope not in {"all", "images", "clips"}:
             raise ValueError(f"invalid segment scope: {scope}")
@@ -122,6 +124,7 @@ class SegmentMgr:
                 images_dir,
                 size=image_size,
                 image_provider=image_provider,
+                on_image_done=on_image_done,
             )
         for seg_id, path in generated:
             path_by_id[seg_id] = path

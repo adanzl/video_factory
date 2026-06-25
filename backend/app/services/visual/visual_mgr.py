@@ -6,6 +6,7 @@ import logging
 import time
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from collections.abc import Callable
 from pathlib import Path
 from typing import Protocol
 
@@ -56,6 +57,7 @@ class VisualMgr:
         *,
         size: str | None = None,
         image_provider: str | None = None,
+        on_image_done: Callable[[int, Path], None] | None = None,
     ) -> list[tuple[int, Path]]:
         images_dir.mkdir(parents=True, exist_ok=True)
         provider = self._get_image_provider(image_provider)
@@ -105,11 +107,18 @@ class VisualMgr:
             return seg["id"], out
 
         results: list[tuple[int, Path]] = []
-        with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            futures = {pool.submit(render, seg): seg for seg in segments}
-            for fut in as_completed(futures):
-                results.append(fut.result())
+        if on_image_done is not None:
+            for seg in segments:
+                seg_id, path = render(seg)
+                results.append((seg_id, path))
+                on_image_done(seg_id, path)
                 done += 1
+        else:
+            with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                futures = {pool.submit(render, seg): seg for seg in segments}
+                for fut in as_completed(futures):
+                    results.append(fut.result())
+                    done += 1
         elapsed = time.time() - start
         logger.info("image batch done: %s/%s in %.1fs | %s", done, total, elapsed, params_desc)
         return results

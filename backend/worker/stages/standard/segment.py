@@ -27,6 +27,17 @@ class SegmentStage(StageExecutor):
 
         audio_path = Path(job["audio_path"]) if job.get("audio_path") else None
         produce_scope = ctx.segment_scope or "all"
+
+        def persist_segment_image(seg_id: int, path: Path) -> None:
+            with connection() as conn:
+                segment_repo.update_segment(
+                    conn,
+                    seg_id,
+                    image_path=str(path),
+                    status="done",
+                )
+
+        on_image_done = persist_segment_image if produce_scope in {"all", "images"} else None
         result = segment_mgr.produce_segments(
             segments=segments,
             media_dir=ctx.media_dir,
@@ -34,6 +45,7 @@ class SegmentStage(StageExecutor):
             only_segment_indices=ctx.segment_indices_set(),
             scope=produce_scope,
             job=job,
+            on_image_done=on_image_done,
         )
 
         image_by_id = dict(result.image_paths)
@@ -51,13 +63,6 @@ class SegmentStage(StageExecutor):
             )
 
         with connection() as conn:
-            for seg_id, path in result.image_paths:
-                segment_repo.update_segment(
-                    conn,
-                    seg_id,
-                    image_path=str(path),
-                    status="done",
-                )
             for seg_id, clip_path in result.clips.segment_clip_paths:
                 segment_repo.update_segment(conn, seg_id, clip_path=str(clip_path))
 
