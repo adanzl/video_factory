@@ -45,6 +45,7 @@
         "pexels",
         "pixabay",
         "pkill",
+        "Radeon",
         "Referer",
         "rocm",
         "rocminfo",
@@ -73,6 +74,7 @@
         "vcodec",
         "venv",
         "veryfast",
-        "webui"
+        "webui",
+        "xianyu"
     ]
 }

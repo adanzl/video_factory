@@ -31,7 +31,6 @@ logger = logging.getLogger(__name__)
 _ANIME_CHECKPOINT = "ToonYouBeta6.safetensors"
 _LIFE_CHECKPOINT = "DreamShaper_8.safetensors"
 # Deliberate v6 SFW：对科普插画/线稿/示意图 LoRA 亲和性比 DreamShaper 好，背景更干净
-# 下载：hf-mirror.com/XpucT/Deliberate → Deliberate_v6 (SFW).safetensors
 _SCIENCE_ILLUSTRATION_CHECKPOINT = "Deliberate_v6_SFW.safetensors"
 # 分镜右半（医学截面）继续用 RealisticVision，写实解剖效果更好
 _SCIENCE_MEDICAL_CHECKPOINT = "RealisticVisionV51.safetensors"
