@@ -82,6 +82,38 @@ SD15_LORAS: dict[str, dict[str, Any]] = {
             "measurement", "detector", "sensor",
         ),
     },
+    "detail_tweaker": {
+        "weight": 0.5,
+        "keywords": (
+            "细节", "画质增强", "高清", "清晰", "精细",
+            "detail", "enhance", "quality", "crisp", "sharp", "clarity",
+            "high definition", "HD",
+        ),
+    },
+    "picture_book_illustration": {
+        "weight": 0.7,
+        "keywords": (
+            "绘本", "儿童画", "童话", "手绘温馨", "幼儿", "卡通",
+            "children", "storybook", "illustration", "cartoon",
+            "fairy tale", "cute", "picture book",
+        ),
+    },
+    "blueprint_xianyu": {
+        "weight": 0.65,
+        "keywords": (
+            "图纸", "蓝图", "工程图", "结构图", "分解图", "机械图",
+            "blueprint", "blue print", "technical drawing", "schematic",
+            "disassembly", "exploded view", "engineering",
+        ),
+    },
+    "vintage_old_shanghai": {
+        "weight": 0.65,
+        "keywords": (
+            "复古", "老照片", "历史", "民国", "怀旧", "旧时代",
+            "vintage", "old photo", "historical", "retro", "antique",
+            "nostalgic", "old fashioned",
+        ),
+    },
 }
 
 SD15_BUSINESS_KEYWORDS: dict[str, tuple[str, ...]] = {
@@ -112,6 +144,7 @@ _LIFE_SUFFIX = "natural light, realistic photo"
 _SCIENCE_LORAS = frozenset({
     "Textbook_Line_Art", "Simple_Diagram", "Science_DNA_Style",
     "Anatomica_Scientifica", "Laboratory_Scene", "Scientific_Equipment",
+    "blueprint_xianyu",
 })
 
 _SCIENCE_DNA_KEYWORDS = SD15_LORAS["Science_DNA_Style"]["keywords"]
@@ -512,7 +545,7 @@ def build_sd15_prompt_system(*, business_override: str | None = None) -> str:
         "你必须提炼为 SD1.5 在低分辨率下能准确呈现的画面。\n\n"
         "【第一步：锚定核心主体】\n"
         "先在内心回答（不输出）：「这张图的核心主体是什么？」\n"
-        "常见类型参考（八选一）：\n"
+        "常见类型参考（十一选一）：\n"
         "  A. 写实场景——有具体物体/人物/空间的真实画面（如厨房操作、户外环境）\n"
         "  B. 结构示意图——单一物体内部结构/流程步骤（如细胞分裂、电路图）\n"
         "  C. 对比图——两个事物/状态并排（如正确 vs 错误、前 vs 后）\n"
@@ -521,6 +554,9 @@ def build_sd15_prompt_system(*, business_override: str | None = None) -> str:
         "  F. 医学截面图——器官/组织解剖横截（如肺气泡、血管截面）\n"
         "  G. 实验室场景——实验台、仪器、科研环境\n"
         "  H. 设备特写——机械装置、仪器特写、检测器材\n"
+        "  I. 蓝图工程图——机械分解图、工程结构图、技术图纸\n"
+        "  J. 儿童绘本风——温馨手绘、童话卡通、幼儿科普画面\n"
+        "  K. 老照片复古——历史场景、旧时代画面、怀旧纪实\n"
         "锚定主体类型后，再决定 layout/lora——不要先选风格再凑主体。\n\n"
         "【第二步：输出 JSON 字段】\n"
         "1. layout：C/E 类型默认 split；A/B/D 类型用 single；"
@@ -539,7 +575,9 @@ def build_sd15_prompt_system(*, business_override: str | None = None) -> str:
         "B 类视内容选 Simple_Diagram 或 Textbook_Line_Art；\n"
         "C 类优先 Simple_Diagram；D 类优先 Textbook_Line_Art；\n"
         "E 类优先 Science_DNA_Style；F 类优先 Anatomica_Scientifica；\n"
-        "G 类优先 Laboratory_Scene；H 类优先 Scientific_Equipment。\n"
+        "G 类优先 Laboratory_Scene；H 类优先 Scientific_Equipment；\n"
+        "I 类优先 blueprint_xianyu；J 类优先 picture_book_illustration；\n"
+        "K 类优先 vintage_old_shanghai。\n"
         f"{_lora_catalog_text()}\n\n"
         "science 禁词：hyper-realistic, photorealistic, 3d render, photo, "
         "person, portrait, face, head, glowing eyes。\n"
@@ -566,7 +604,13 @@ def build_sd15_prompt_system(*, business_override: str | None = None) -> str:
         'lab 示例：{"layout": "single", "prompt_en": "scientific laboratory bench, glass beakers and test tubes, bright white light", '
         '"business": "science", "lora": "Laboratory_Scene"}\n'
         'equipment 示例：{"layout": "single", "prompt_en": "precision measurement instrument close-up, metallic dial, lab setting", '
-        '"business": "science", "lora": "Scientific_Equipment"}'
+        '"business": "science", "lora": "Scientific_Equipment"}\n'
+        'blueprint 示例：{"layout": "single", "prompt_en": "exploded view diagram of engine cylinder, mechanical parts labeled, white background", '
+        '"business": "science", "lora": "blueprint_xianyu"}\n'
+        'picturebook 示例：{"layout": "single", "prompt_en": "cute cartoon illustration of a magnet attracting iron nails, bright happy colors, simple shapes", '
+        '"business": "science", "lora": "picture_book_illustration"}\n'
+        'vintage 示例：{"layout": "single", "prompt_en": "old black and white photograph of 1920s street scene, vintage grain, historical documentary style", '
+        '"business": "life", "lora": "vintage_old_shanghai"}'
         f"{override_note}"
     )
 
