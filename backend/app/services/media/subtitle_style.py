@@ -9,9 +9,9 @@ SIDE_MARGIN = 48
 SUBTITLE_Y_RATIO = 0.75
 MAX_LINES = 2
 
-# 样式（与片头黄条同色）；基准竖屏 1080×1920
-SUBTITLE_FONT_SIZE = 82
-SUBTITLE_FONT_MIN = 76
+# 样式（与片头黄条同色）；基准短边 1080（横竖屏同字号）
+SUBTITLE_FONT_SIZE = 88
+SUBTITLE_FONT_MIN = 72
 SUBTITLE_COLOR_RGB = (255, 214, 64)
 # ASS PrimaryColour：BGR 
 SUBTITLE_ASS_PRIMARY_COLOUR = "&H0040D6FF"
@@ -20,17 +20,20 @@ SUBTITLE_SHADOW_BLUR = 2
 
 
 def layout_for_canvas(width: int, height: int) -> dict[str, int]:
-    """按画布尺寸缩放边距与字号（以竖屏 1080×1920 为基准）。"""
+    """按画布短边缩放边距与字号（1080p 短边为基准，横竖屏一致）。"""
     settings = get_settings()
     ref_w, ref_h = settings.video_width, settings.video_height
     if ref_w > ref_h:
         ref_w, ref_h = ref_h, ref_w
-    h_scale = height / ref_h
-    w_scale = width / ref_w
-    font_max = max(SUBTITLE_FONT_MIN, int(SUBTITLE_FONT_SIZE * h_scale))
-    font_min = max(28, int(SUBTITLE_FONT_MIN * h_scale))
+    ref_min = min(ref_w, ref_h)
+    canvas_min = min(width, height)
+    scale = canvas_min / ref_min
+    # font_max 为目标字号；font_min 仅供长句缩排，勿用作 font_max 下限
+    font_max = max(28, int(SUBTITLE_FONT_SIZE * scale))
+    font_min = max(28, int(SUBTITLE_FONT_MIN * scale))
     if font_min > font_max:
         font_min = font_max
+    w_scale = width / ref_w
     return {
         "width": width,
         "height": height,

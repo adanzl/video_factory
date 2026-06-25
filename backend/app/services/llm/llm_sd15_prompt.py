@@ -213,7 +213,7 @@ def _strip_science_forbidden(text: str) -> str:
 _SCIENCE_CHARACTER = re.compile(
     r"\b("
     r"person|people|character|portrait|face|head|"
-    r"hair|eyes|glowing|superhero|anime|dizziness|hypoxia"
+    r"hair|eyes|superhero|anime|dizziness|hypoxia"
     r")\b[^,]*",
     re.IGNORECASE,
 )
@@ -374,9 +374,9 @@ def build_sd15_full_prompt(
             style = None
         suffix = _science_style_suffix(lora=lora, layout=layout)
         if style:
-            return f"{lora_prefix} {style}, {cleaned}, {suffix}"
-        return f"{lora_prefix} {cleaned}, {suffix}"
-    return f"{lora_prefix} {cleaned}, {_LIFE_SUFFIX}"
+            return f"{lora_prefix} masterpiece, best quality, {style}, {cleaned}, {suffix}"
+        return f"{lora_prefix} masterpiece, best quality, {cleaned}, {suffix}"
+    return f"{lora_prefix} masterpiece, best quality, {cleaned}, {_LIFE_SUFFIX}"
 
 
 def has_comparison_semantics(prompt: str) -> bool:
