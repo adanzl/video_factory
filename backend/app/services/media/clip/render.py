@@ -42,10 +42,14 @@ def _motion_progress(frames: int) -> str:
 
 
 def _prep_filter(*, headroom: float, width: int, height: int) -> str:
-    """放大画布，给平移/缩放留出余量（避免先裁死再 zoompan）。"""
+    """放大画布到整数尺寸并居中 pad，消除 zoompan 亚像素抖动。"""
     pw = int(width * headroom)
     ph = int(height * headroom)
-    return f"scale={pw}:{ph}:force_original_aspect_ratio=increase"
+    return (
+        f"scale={pw}:{ph}:force_original_aspect_ratio=decrease:flags=lanczos,"
+        f"pad={pw}:{ph}:(ow-iw)/2:(oh-ih)/2:black,"
+        "setsar=1"
+    )
 
 
 def _motion_zoom_max(preset: str) -> float:
