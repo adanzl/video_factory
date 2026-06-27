@@ -63,7 +63,7 @@ def _motion_zoom_max(preset: str) -> float:
 
 
 def _center_xy() -> tuple[str, str]:
-    """zoompan 取整坐标，避免亚像素平移抖动。"""
+    """居中缩放时取整坐标，减轻 zoompan 亚像素抖动。"""
     return "floor(iw/2-(iw/zoom/2))", "floor(ih/2-(ih/zoom/2))"
 
 
@@ -75,7 +75,7 @@ def _motion_vf(
     width: int,
     height: int,
 ) -> str:
-    """连续 Ken Burns：4 种动效轮换，放大权重最高。"""
+    """连续 Ken Burns：4 种动效轮换（放大 / 缩小 / 右移 / 左移）。"""
     frames = max(int(duration_sec * CLIP_FPS), 1)
     zoom_max = _motion_zoom_max(preset)
     delta = zoom_max - 1.0
@@ -94,18 +94,18 @@ def _motion_vf(
         z_expr = f"{zoom_max:.4f}-{delta:.4f}*({progress})"
         x_expr, y_expr = x_center, y_center
     elif mode == 2:
-        # 缓慢右移（幅度减小）
+        # 缓慢右移：x 保持亚像素精度，不用 floor（floor 会导致逐像素跳跃卡顿）
         pan_zoom = max(zoom_max, 1.06)
-        headroom = max(pan_zoom + 0.06, 1.16)
+        headroom = max(pan_zoom + 0.10, 1.22)
         z_expr = f"{pan_zoom:.4f}"
-        x_expr = f"floor((iw-iw/zoom)*({progress}))"
+        x_expr = f"(iw-iw/zoom)*({progress})"
         y_expr = y_center
     else:
         # 缓慢左移
         pan_zoom = max(zoom_max, 1.06)
-        headroom = max(pan_zoom + 0.06, 1.16)
+        headroom = max(pan_zoom + 0.10, 1.22)
         z_expr = f"{pan_zoom:.4f}"
-        x_expr = f"floor((iw-iw/zoom)*(1-{progress}))"
+        x_expr = f"(iw-iw/zoom)*(1-{progress})"
         y_expr = y_center
 
     prep = _prep_filter(headroom=headroom, width=width, height=height)

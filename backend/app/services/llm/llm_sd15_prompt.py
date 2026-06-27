@@ -675,7 +675,9 @@ def build_sd15_prompt_user(
     lines.append(
         "请先（在 JSON 外）用一句话说明核心画面主体是什么，列出原文中需要保留的视觉元素清单，"
         "再输出 JSON，字段：layout、prompt_en 或 left_en+right_en、business、lora。\n"
-        "prompt_en 包含清单中所有视觉元素（30～55 词），不堆砌修饰词；"
+        "prompt_en 包含清单中所有视觉元素（30～55 词）；\n"
+        "最显眼的物体或特征放在句子最前面（如 wet cloth over mouth 比 face 更显著则先写 cloth）；\n"
+        "不堆砌修饰词；"
         "science 优先 split（对比/分子类），竖屏单主体可 single。"
     )
     return "\n\n".join(lines)
