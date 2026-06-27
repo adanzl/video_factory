@@ -80,6 +80,22 @@ _SCIENCE_LORA_CFG: dict[str, dict] = {
             "blurry, deformed, cluttered, out of frame"
         ),
     },
+    "Simple_Diagram": {
+        "cfg_scale": 7.5,
+        "negative": (
+            "(worst quality:1.4), (low quality:1.4), lowres, "
+            "anime, cartoon, photorealistic, 3d render, "
+            "watermark, blurry, deformed, cluttered, out of frame"
+        ),
+    },
+    "Textbook_Line_Art": {
+        "cfg_scale": 7.5,
+        "negative": (
+            "(worst quality:1.4), (low quality:1.4), lowres, "
+            "anime, cartoon, photorealistic, 3d render, "
+            "watermark, blurry, deformed, cluttered, out of frame"
+        ),
+    },
     "blueprint_xianyu": {
         "checkpoint": _SCIENCE_ILLUSTRATION_CHECKPOINT,
         "cfg_scale": 7.5,
@@ -203,6 +219,15 @@ def _resolve_layout(
     )
 
 
+def _try_parse_split_prompt(cleaned: str) -> tuple[str, str, bool]:
+    """从已缓存的 sd15_prompt_en 中检测 left:/ right: 分图标记并解析。"""
+    import re as _re
+    m = _re.match(r'(?i)left\s*[:：]\s*(.+?)\s*,?\s*right\s*[:：]\s*(.+)', cleaned)
+    if m:
+        return m.group(1).strip(), m.group(2).strip(), True
+    return "", "", False
+
+
 def _prepare_sd15_prompt(
     prompt: str,
     *,
@@ -221,6 +246,27 @@ def _prepare_sd15_prompt(
         business = _fallback_business(prompt=cleaned, business_override=business_override)
         lora = pick_lora_by_keywords(cleaned)
         from app.services.llm.llm_sd15_prompt import normalize_sd15_prompt_en
+
+        left_en, right_en, is_split = _try_parse_split_prompt(cleaned)
+        if is_split:
+            from app.services.llm.llm_sd15_prompt import normalize_sd15_panel_prompt_en
+            left_en = normalize_sd15_panel_prompt_en(left_en, panel="left", business=business, lora=lora)
+            right_en = normalize_sd15_panel_prompt_en(right_en, panel="right", business=business, lora=lora)
+            layout, split_axis = _resolve_layout(
+                result={"layout": "split", "left_en": left_en, "right_en": right_en},
+                prompt=cleaned,
+                business=business,
+                width=width,
+                height=height,
+            )
+            logger.info(
+                "sd15 prompt prep fast-path split: business=%s lora=%s left=%s right=%s",
+                business, lora, left_en, right_en,
+            )
+            return _Sd15PromptPrep(
+                business=business, lora=lora, layout=layout,
+                split_axis=split_axis, left_en=left_en, right_en=right_en,
+            )
         prompt_en = normalize_sd15_prompt_en(cleaned, business=business, lora=lora)
         logger.info(
             "sd15 prompt prep fast-path (sd15_prompt_en): business=%s lora=%s prompt_en=%s",

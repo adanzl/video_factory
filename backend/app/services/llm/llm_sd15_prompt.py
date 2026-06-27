@@ -124,8 +124,16 @@ SD15_LORAS: dict[str, dict[str, Any]] = {
         ),
     },
     "LowRA": {
-        "weight": 0.4,
+        "weight": 0.3,
         "keywords": (),  # 仅自动叠加，不作为主 LoRA 被选中
+    },
+    "bold_flat_color": {
+        "weight": 0.6,
+        "keywords": (
+            "扁平", "色块", "清亮", "简约", "明亮", "干净",
+            "flat", "bold color", "clean", "bright", "minimal",
+            "vector", "geometric",
+        ),
     },
 }
 
@@ -154,8 +162,8 @@ _DEFAULT_BUSINESS = "science"
 _PROMPT_EN_MAX_WORDS = 55
 
 _SCIENCE_SUFFIX = "white background, line art, clean composition, no text"
-_SCIENCE_DIAGRAM_SUFFIX = "dark gray background, clean composition, no text"
-_SCIENCE_SPLIT_SUFFIX = "dark gray background, no text"
+_SCIENCE_DIAGRAM_SUFFIX = "clean light background, educational illustration, no text"
+_SCIENCE_SPLIT_SUFFIX = "clean background, no text"
 _LIFE_SUFFIX = "natural light, realistic photo"
 _LIFE_DIM_SUFFIX = "realistic photo, low-key lighting"
 _LIFE_DARK_SUFFIX = "realistic photo, dimly lit, atmospheric"
@@ -614,10 +622,14 @@ def build_sd15_prompt_system(*, business_override: str | None = None) -> str:
         "I 类优先 blueprint_xianyu；J 类优先 picture_book_illustration；\n"
         "K 类优先 vintage_old_shanghai。\n"
         "如果画面主体和任何 LoRA 都不明显匹配，life 默认 Casual_Life，science 默认 Simple_Diagram。\n"
+        "所有 science 示意图可选叠 bold_flat_color（扁平清亮风格），让画面更干净明亮。\n"
         f"{_lora_catalog_text()}\n\n"
         "science 禁词：hyper-realistic, photorealistic, 3d render, photo, "
         "person, portrait, face, head, glowing eyes。\n"
         "life 禁词：line art, cartoon, diagram。\n\n"
+        "【SD1.5 画不出来的东西——必须避开】\n"
+        "任何包含具体数字、文字、百分比、仪表读数、数码屏幕、UI 界面、表格的数据可视化；\n"
+        "需渲染为无文字、无数字的纯视觉画面，用颜色/大小/位置代替数据。\n\n"
         "【正确 vs 错误示例】\n"
         "❌ 错误（主体堆砌）：\"stainless steel pot, magnet, kitchen counter, "
         "sunlight, reflection, rust, science concept, comparison\"\n"
