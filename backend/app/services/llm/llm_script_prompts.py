@@ -787,12 +787,12 @@ def build_narration_expand_prompts(
     min_chars: int,
     mode: str = "storyboard",
 ) -> dict[str, str]:
-    """在初稿字数不足时专用扩写（保留分段与画面字段）。"""
+    """在初稿字数不足时专用扩写（保留分镜与画面字段）。"""
     current = _narration_char_count_for_prompt(str(script.get("narration") or ""))
     deficit = max(1, min_chars - current)
     keep_visual = mode == "storyboard"
     system = (
-        "你是口播扩写编辑。用户在初稿字数不足，须在保持主题与分段结构的前提下扩写。"
+        "你是口播扩写编辑。用户在初稿字数不足，须在保持主题与分镜结构的前提下扩写。"
         "输出 JSON，字段与输入一致（title, narration, word_count, segments"
         + (", visual_style" if keep_visual else "")
         + "）。"

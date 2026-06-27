@@ -8,7 +8,7 @@ from app.services.visual import visual_mgr
 
 
 def test_produce_images_partial_only_selected(tmp_path: Path) -> None:
-    """部分重跑静图时，仅生成选中的分段。"""
+    """部分重跑静图时，仅生成选中的分镜。"""
     media_dir = tmp_path / "17"
     images_dir = media_dir / "images"
     images_dir.mkdir(parents=True)

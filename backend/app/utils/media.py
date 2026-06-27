@@ -155,7 +155,7 @@ def narration_writing_plan(
     narration_target: int,
     segment_target_sec: float = 0,
 ) -> dict[str, int]:
-    """口播分段写作计划（prompt 字数预算与 LLM 校验共用）。"""
+    """口播分镜写作计划（prompt 字数预算与 LLM 校验共用）。"""
     hard_min = narration_accept_min_chars(narration_target)
     writing_target = narration_writing_target_chars(narration_target)
     if segment_target_sec <= 0:

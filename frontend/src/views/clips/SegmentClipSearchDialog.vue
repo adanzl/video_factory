@@ -75,7 +75,7 @@ const handleImport = async (clip: StockClip) => {
       segmentIndex: props.segmentIndex,
       videoUrl: clip.video_url,
     });
-    ElMessage.success(`分段 #${props.segmentIndex} 已导入素材视频`);
+    ElMessage.success(`分镜 #${props.segmentIndex} 已导入素材视频`);
     visible.value = false;
     emit("imported");
   } catch (error) {
