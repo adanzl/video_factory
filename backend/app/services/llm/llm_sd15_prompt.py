@@ -12,6 +12,7 @@ SD15_LORAS: dict[str, dict[str, Any]] = {
         "keywords": (
             "美食", "餐饮", "厨房", "烹饪", "料理", "餐桌", "食物", "饭菜", "小吃",
             "food", "cook", "cooking", "kitchen", "meal", "dish", "restaurant",
+            "dining", "cuisine", "chef", "baking", "stove", "recipe",
         ),
     },
     "Home_Interior": {
@@ -19,6 +20,7 @@ SD15_LORAS: dict[str, dict[str, Any]] = {
         "keywords": (
             "家居", "室内", "客厅", "卧室", "家装", "房间", "沙发", "窗户",
             "interior", "home", "living room", "bedroom", "furniture", "house",
+            "indoor", "decoration", "decor", "curtain", "wall",
         ),
     },
     "Casual_Life": {
@@ -27,6 +29,7 @@ SD15_LORAS: dict[str, dict[str, Any]] = {
             "日常", "生活", "人物", "街景", "户外", "散步", "纪实", "vlog",
             "daily", "street", "people", "casual", "lifestyle", "walk",
             "close-up", "portrait", "portrait photography",
+            "outdoor", "person", "documentary", "candid", "snapshot",
         ),
     },
     "Product_Shot": {
@@ -34,6 +37,7 @@ SD15_LORAS: dict[str, dict[str, Any]] = {
         "keywords": (
             "产品", "商品", "包装", "静物", "物件", "桌面", "展示",
             "product", "package", "still life", "object", "merchandise",
+            "display", "showcase", "commercial", "advertising",
         ),
     },
     "Textbook_Line_Art": {
@@ -41,6 +45,7 @@ SD15_LORAS: dict[str, dict[str, Any]] = {
         "keywords": (
             "线稿", "结构", "解剖", "标注", "教科书", "白底", "讲解", "细胞", "器官",
             "line art", "diagram", "labeled", "textbook", "structure", "cross section",
+            "white background", "scientific illustration", "educational",
         ),
     },
     "Simple_Diagram": {
@@ -48,6 +53,7 @@ SD15_LORAS: dict[str, dict[str, Any]] = {
         "keywords": (
             "信息图", "流程图", "示意图", "对比图", "扁平", "科普图", "箭头", "步骤",
             "infographic", "flowchart", "chart", "schematic", "comparison", "steps",
+            "arrow", "simple", "flat design", "visualization",
         ),
     },
     "Science_DNA_Style": {
@@ -64,15 +70,16 @@ SD15_LORAS: dict[str, dict[str, Any]] = {
         "keywords": (
             "解剖", "医学截面", "器官", "组织", "病理", "肺", "心脏", "肾脏",
             "细胞截面", "血管", "anatomy", "medical", "cross-section", "tissue",
-            "microscope", "organ", "liver", "kidney", "pathology", "histology",
+            "organ", "liver", "kidney", "pathology", "histology",
+            "blood vessel", "artery", "lung", "heart", "cellular",
         ),
     },
     "Laboratory_Scene": {
         "weight": 0.65,
         "keywords": (
-            "实验室", "实验台", "试管", "烧杯", "科研", "化学", "生物实验",
+            "实验室", "实验台", "试管", "烧杯", "科研", "化学", "生物实验", "显微镜",
             "lab", "laboratory", "experiment", "chemistry", "beaker",
-            "test tube", "research",
+            "test tube", "research", "scientist", "microscope",
         ),
     },
     "Scientific_Equipment": {
@@ -80,7 +87,7 @@ SD15_LORAS: dict[str, dict[str, Any]] = {
         "keywords": (
             "仪器", "设备", "装置", "机械", "器材", "工具", "检测", "测量",
             "equipment", "instrument", "device", "apparatus", "machine",
-            "measurement", "detector", "sensor",
+            "measurement", "detector", "sensor", "tool",
         ),
     },
     "detail_tweaker": {
@@ -97,6 +104,7 @@ SD15_LORAS: dict[str, dict[str, Any]] = {
             "绘本", "儿童画", "童话", "手绘温馨", "幼儿", "卡通",
             "children", "storybook", "illustration", "cartoon",
             "fairy tale", "cute", "picture book",
+            "child", "kid", "drawing", "hand-drawn", "sketch",
         ),
     },
     "blueprint_xianyu": {
@@ -127,12 +135,16 @@ SD15_BUSINESS_KEYWORDS: dict[str, tuple[str, ...]] = {
         "美食", "餐饮", "厨房", "烹饪", "家居", "室内", "客厅", "产品", "商品",
         "realistic", "photo", "photography", "lifestyle", "street", "cooking",
         "interior", "product", "daily", "people",
+        "close-up", "portrait", "expression", "face", "lighting",
+        "scene", "atmosphere", "mood", "person",
     ),
     "science": (
         "科普", "原理", "讲解", "教科书", "教育", "细胞", "器官", "结构", "解剖",
         "线稿", "白底", "标注", "信息图", "流程图", "示意图", "对比图", "扁平",
         "diagram", "textbook", "infographic", "flowchart", "schematic",
         "educational", "labeled", "science", "chart",
+        "cross-section", "mechanism", "principle", "white background",
+        "molecule", "molecules", "molecular",
     ),
 }
 
