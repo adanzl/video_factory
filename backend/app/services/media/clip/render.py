@@ -58,8 +58,13 @@ def _prep_filter(*, headroom: float, width: int, height: int) -> str:
 
 def _motion_zoom_max(preset: str) -> float:
     if preset == "ken_burns_slow":
-        return 1.10
-    return 1.16
+        return 1.08
+    return 1.12
+
+
+def _center_xy() -> tuple[str, str]:
+    """zoompan 取整坐标，避免亚像素平移抖动。"""
+    return "floor(iw/2-(iw/zoom/2))", "floor(ih/2-(ih/zoom/2))"
 
 
 def _motion_vf(
@@ -75,34 +80,33 @@ def _motion_vf(
     zoom_max = _motion_zoom_max(preset)
     delta = zoom_max - 1.0
     progress = _motion_progress(frames)
+    x_center, y_center = _center_xy()
 
-    mode = segment_index % 8
-    if mode < 4:
-        # 居中放大（50%）：1.0 → zoom_max
+    mode = segment_index % 4
+    if mode == 0:
+        # 居中放大
         headroom = zoom_max + 0.04
         z_expr = f"1+{delta:.4f}*({progress})"
-        x_expr = "iw/2-(iw/zoom/2)"
-        y_expr = "ih/2-(ih/zoom/2)"
-    elif mode in (4, 5):
-        # 右移（25%）：从左向右扫
-        pan_zoom = max(zoom_max, 1.14)
-        headroom = max(pan_zoom + 0.08, 1.28)
-        z_expr = f"{pan_zoom:.4f}"
-        x_expr = f"(iw-iw/zoom)*({progress})"
-        y_expr = "ih/2-(ih/zoom/2)"
-    elif mode == 6:
-        # 居中缩小（12.5%）：zoom_max → 1.0
+        x_expr, y_expr = x_center, y_center
+    elif mode == 1:
+        # 居中缩小
         headroom = zoom_max + 0.04
         z_expr = f"{zoom_max:.4f}-{delta:.4f}*({progress})"
-        x_expr = "iw/2-(iw/zoom/2)"
-        y_expr = "ih/2-(ih/zoom/2)"
-    else:
-        # 左移（12.5%）：从右向左扫
-        pan_zoom = max(zoom_max, 1.14)
-        headroom = max(pan_zoom + 0.08, 1.28)
+        x_expr, y_expr = x_center, y_center
+    elif mode == 2:
+        # 缓慢右移（幅度减小）
+        pan_zoom = max(zoom_max, 1.06)
+        headroom = max(pan_zoom + 0.06, 1.16)
         z_expr = f"{pan_zoom:.4f}"
-        x_expr = f"(iw-iw/zoom)*(1-{progress})"
-        y_expr = "ih/2-(ih/zoom/2)"
+        x_expr = f"floor((iw-iw/zoom)*({progress}))"
+        y_expr = y_center
+    else:
+        # 缓慢左移
+        pan_zoom = max(zoom_max, 1.06)
+        headroom = max(pan_zoom + 0.06, 1.16)
+        z_expr = f"{pan_zoom:.4f}"
+        x_expr = f"floor((iw-iw/zoom)*(1-{progress}))"
+        y_expr = y_center
 
     prep = _prep_filter(headroom=headroom, width=width, height=height)
     return (
@@ -299,9 +303,14 @@ def image_to_clip_timed_overlays(
 
 def _scale_pad_vf(*, width: int, height: int) -> str:
     return (
-        f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
-        f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1"
+        f"scale={width}:{height}:force_original_aspect_ratio=decrease:flags=lanczos,"
+        f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1"
     )
+
+
+def _temporal_smooth_vf() -> str:
+    """轻量时域混合，减轻 I2V 帧间闪烁。"""
+    return f"fps={CLIP_FPS},format={_PIX_FMT},tmix=frames=3:weights='1 2 1'"
 
 
 def _fit_vf_chain(
@@ -310,8 +319,11 @@ def _fit_vf_chain(
     *,
     width: int,
     height: int,
+    temporal_smooth: bool = False,
 ) -> str:
     scale = _scale_pad_vf(width=width, height=height)
+    if temporal_smooth:
+        scale = f"{scale},{_temporal_smooth_vf()}"
     drift = video_dur - duration_sec
     if abs(drift) <= 0.08:
         return scale
@@ -367,29 +379,41 @@ def fit_video_duration(
     *,
     width: int | None = None,
     height: int | None = None,
+    temporal_smooth: bool = False,
+    stream_loop: int = 0,
 ) -> Path:
     """缩放至成片尺寸，并按目标时长裁切或末帧定格。"""
     settings = get_settings()
-    width = width if width is not None else settings.video_width
-    height = height if height is not None else settings.video_height
+    canvas_w, canvas_h = _resolve_clip_canvas(width, height)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     video_dur = probe_duration(video_path)
-    vf = _fit_vf_chain(video_dur, duration_sec, width=width, height=height)
-
-    run_ffmpeg(
-        [
-            *ffmpeg_cmd_start(),
-            "-i",
-            str(video_path),
-            "-vf",
-            vf_for_encode(vf),
-            "-t",
-            f"{duration_sec:.3f}",
-            *libx264_encode_args(),
-            str(output_path),
-        ]
+    looped_dur = video_dur * (stream_loop + 1) if stream_loop > 0 else video_dur
+    vf = _fit_vf_chain(
+        looped_dur,
+        duration_sec,
+        width=canvas_w,
+        height=canvas_h,
+        temporal_smooth=temporal_smooth,
     )
+
+    cmd = [
+        *ffmpeg_cmd_start(hwaccel=False if temporal_smooth else None),
+        *(
+            ["-stream_loop", str(stream_loop)]
+            if stream_loop > 0
+            else []
+        ),
+        "-i",
+        str(video_path),
+        "-vf",
+        vf_for_encode(vf, force_cpu=temporal_smooth),
+        "-t",
+        f"{duration_sec:.3f}",
+        *libx264_encode_args(force_cpu=temporal_smooth),
+        str(output_path),
+    ]
+    run_ffmpeg(cmd)
     return output_path
 
 
@@ -401,6 +425,7 @@ def video_to_clip_timed_overlays(
     *,
     width: int | None = None,
     height: int | None = None,
+    force_cpu: bool = False,
 ) -> Path:
     """已有视频 + 多段字幕按时间轴切换，单次编码。"""
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -431,9 +456,9 @@ def video_to_clip_timed_overlays(
         )
         current = nxt
 
-    parts = finalize_filter_complex(parts)
+    parts = finalize_filter_complex(parts, force_cpu=force_cpu)
     cmd = [
-        *ffmpeg_cmd_start(),
+        *ffmpeg_cmd_start(hwaccel=False if force_cpu else None),
         "-i",
         str(video_path),
     ]
@@ -456,7 +481,7 @@ def video_to_clip_timed_overlays(
             "[out]",
             "-t",
             str(duration_sec),
-            *libx264_encode_args(subtitle=True),
+            *libx264_encode_args(subtitle=True, force_cpu=force_cpu),
             "-sws_flags",
             "lanczos+accurate_rnd+full_chroma_int",  # cSpell: disable-line
             str(output_path),

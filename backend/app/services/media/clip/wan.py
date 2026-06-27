@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import math
 import mimetypes
 import threading
 import time
@@ -14,12 +15,25 @@ import requests
 from app.config import get_settings
 from app.services.media.clip.mgr import ClipProvider, clip_mgr
 from app.services.media.clip.render import fit_video_duration, video_to_clip_timed_overlays
+from app.services.media.ffmpeg_utils import probe_duration
 
 logger = logging.getLogger(__name__)
 
 _SUBMIT_URL = "https://dashscope.aliyuncs.com/api/v1/services/aigc/video-generation/video-synthesis"
 _RETRYABLE = {429, 500, 502, 503, 504}
-_DEFAULT_MOTION_PROMPT = "轻微镜头运动，画面自然流畅，科普讲解风格"
+_DEFAULT_MOTION_PROMPT = (
+    "镜头固定或极轻微缓慢推进，主体清晰稳定，画面平滑无抖动，科普讲解风格"
+)
+_STABILITY_HINT = "画面稳定，无抖动，无快速运镜"
+
+
+def _stabilize_motion_prompt(prompt: str) -> str:
+    text = prompt.strip()
+    if not text:
+        return _DEFAULT_MOTION_PROMPT
+    if _STABILITY_HINT in text:
+        return text
+    return f"{text}，{_STABILITY_HINT}"
 
 
 class WanClipProvider(ClipProvider):
@@ -229,7 +243,7 @@ class WanClipProvider(ClipProvider):
         if total_duration <= 0:
             raise ValueError(f"segment {segment_index} has zero duration")
 
-        prompt = (motion_prompt or "").strip() or _DEFAULT_MOTION_PROMPT
+        prompt = _stabilize_motion_prompt(motion_prompt or "")
         api_duration = self._pick_api_duration(total_duration)
         raw_path = work_dir / f"{segment_index}.wan_raw.mp4"
         fitted_path = work_dir / f"{segment_index}.wan_fit.mp4"
@@ -244,12 +258,18 @@ class WanClipProvider(ClipProvider):
                 duration=api_duration,
             )
             logger.info("clip %s: raw done, fitting to %.1fs", segment_index, total_duration)
+            raw_dur = probe_duration(raw_path)
+            stream_loop = 0
+            if raw_dur > 0 and total_duration > raw_dur * 1.15:
+                stream_loop = max(0, math.ceil(total_duration / raw_dur) - 1)
             fit_video_duration(
                 raw_path,
                 fitted_path,
                 total_duration,
                 width=width,
                 height=height,
+                temporal_smooth=True,
+                stream_loop=stream_loop,
             )
             logger.info("clip %s: overlaying %s subtitles", segment_index, len(overlay_windows))
             if overlay_windows:
@@ -260,6 +280,7 @@ class WanClipProvider(ClipProvider):
                     total_duration,
                     width=width,
                     height=height,
+                    force_cpu=True,
                 )
             else:
                 fitted_path.replace(output_path)
