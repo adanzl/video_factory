@@ -527,13 +527,15 @@ class Sd15ImageProvider(ImageProvider):
         second_cfg = _SCIENCE_SPLIT_PANELS["right"]
         vertical = prep.split_axis == "vertical"
 
-        min_panel = 512
         if vertical:
-            panel_w = max(width, min_panel)
-            panel_h = max(height // 2, min_panel)
+            panel_w, panel_h = width, height // 2
         else:
-            panel_w = max(width // 2, min_panel)
-            panel_h = max(height, min_panel)
+            panel_w, panel_h = width // 2, height
+        max_dim = max(panel_w, panel_h)
+        if max_dim < 512:
+            scale = 512 / max_dim
+            panel_w = int(panel_w * scale)
+            panel_h = int(panel_h * scale)
 
         logger.info(
             "sd15 split request: axis=%s lora=%s panel=%s*%s "
