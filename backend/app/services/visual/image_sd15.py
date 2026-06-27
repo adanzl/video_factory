@@ -220,8 +220,17 @@ def _resolve_layout(
 
 
 def _try_parse_split_prompt(cleaned: str) -> tuple[str, str, bool]:
-    """从已缓存的 sd15_prompt_en 中检测 left:/ right: 分图标记并解析。"""
+    """从已缓存的 sd15_prompt_en 中检测分图标记并解析。"""
     import re as _re
+    # comparison: xxx, yyy → 按逗号拆两半
+    for prefix in ("comparison", "vs", "compare"):
+        m = _re.match(rf'(?i){prefix}\s*[:：]\s*(.+)', cleaned)
+        if m:
+            tail = m.group(1)
+            comma = tail.find(",")
+            if comma > 0 and comma < len(tail) - 3:
+                return tail[:comma].strip(), tail[comma + 1:].strip(), True
+    # left: xxx, right: yyy
     m = _re.match(r'(?i)left\s*[:：]\s*(.+?)\s*,?\s*right\s*[:：]\s*(.+)', cleaned)
     if m:
         return m.group(1).strip(), m.group(2).strip(), True
