@@ -63,15 +63,15 @@ import { JOB_STATUS_RUNNING } from "@/constants/job";
 import { pipelineLabel, resolveActiveStageTab, stagesForJob } from "@/constants/jobStages";
 import type { JobDetail, JobLog, JobSegment } from "@/types/jobs";
 import { useErrorHandler } from "@/composables/useErrorHandler";
-import StageHost from "./StageHost.vue";
-import StageIntro from "./StageIntro.vue";
-import StageMerge from "./StageMerge.vue";
-import StagePrepare from "./StagePrepare.vue";
-import StagePublish from "./StagePublish.vue";
-import StageScript from "./StageScript.vue";
-import StageSegment from "./StageSegment.vue";
-import StageTitle from "./StageTitle.vue";
-import StageTts from "./StageTts.vue";
+import StageHost from "./detail/StageHost.vue";
+import StageIntro from "./detail/StageIntro.vue";
+import StageMerge from "./detail/StageMerge.vue";
+import StagePrepare from "./detail/StagePrepare.vue";
+import StagePublish from "./detail/StagePublish.vue";
+import StageScript from "./detail/StageScript.vue";
+import StageSegment from "./detail/StageSegment.vue";
+import StageTitle from "./detail/StageTitle.vue";
+import StageTts from "./detail/StageTts.vue";
 
 const STAGE_PANELS: Record<string, Component> = {
   title: StageTitle,

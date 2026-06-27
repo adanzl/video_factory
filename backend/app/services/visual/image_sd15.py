@@ -28,7 +28,7 @@ from app.services.visual.visual_mgr import ImageProvider
 
 logger = logging.getLogger(__name__)
 
-_ANIME_CHECKPOINT = "ToonYouBeta6.safetensors"
+_ANIME_CHECKPOINT = "Counterfeit-V3.0.safetensors"
 _LIFE_CHECKPOINT = "DreamShaper_8.safetensors"
 # Deliberate v6 SFW：对科普插画/线稿/示意图 LoRA 亲和性比 DreamShaper 好，背景更干净
 _SCIENCE_ILLUSTRATION_CHECKPOINT = "Deliberate_v6_SFW.safetensors"
@@ -417,9 +417,11 @@ class Sd15ImageProvider(ImageProvider):
         steps: int,
         cfg_scale: float,
         seed: int = -1,
+        enable_hr: bool = False,
     ) -> bytes:
         self._switch_checkpoint(checkpoint)
-        payload = {
+        hires_fix = enable_hr and max(width, height) > 512
+        payload: dict = {
             "prompt": full_prompt,
             "negative_prompt": negative_prompt,
             "steps": steps,
@@ -431,8 +433,17 @@ class Sd15ImageProvider(ImageProvider):
             "batch_size": 1,
             "n_iter": 1,
             "seed": seed,
-            "enable_hr": False,
+            "enable_hr": hires_fix,
+            "override_settings": {"CLIP_stop_at_last_layers": 2},
         }
+        if hires_fix:
+            payload.update({
+                "hr_upscaler": "Latent",
+                "hr_second_pass_steps": max(8, steps // 3),
+                "denoising_strength": 0.5,
+                "firstphase_width": min(512, width),
+                "firstphase_height": min(512, height),
+            })
         resp = requests.post(
             f"{self._api_url}/sdapi/v1/txt2img",
             json=payload,
@@ -500,6 +511,7 @@ class Sd15ImageProvider(ImageProvider):
             steps=cfg["steps"],
             cfg_scale=cfg["cfg_scale"],
             seed=42,
+            enable_hr=True,
         )
         second_bytes = self._txt2img(
             full_prompt=second_prompt,
@@ -510,6 +522,7 @@ class Sd15ImageProvider(ImageProvider):
             steps=cfg["steps"],
             cfg_scale=cfg["cfg_scale"],
             seed=99,
+            enable_hr=True,
         )
         if vertical:
             result = _stitch_vertical(first_bytes, second_bytes)
@@ -577,6 +590,7 @@ class Sd15ImageProvider(ImageProvider):
                     height=api_height,
                     steps=cfg["steps"],
                     cfg_scale=cfg["cfg_scale"],
+                    enable_hr=True,
                 )
             output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.write_bytes(img_bytes)

@@ -28,15 +28,20 @@
     >
       <el-table-column prop="id" label="ID" width="80" />
       <el-table-column prop="title" label="标题" min-width="200" show-overflow-tooltip />
-      <el-table-column label="类型" width="80">
+      <el-table-column label="类型" width="80" align="center">
         <template #default="{ row }">
           <el-tag size="small" type="info">{{ pipelineLabel(row.pipeline) }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="stage" label="阶段" width="120" />
-      <el-table-column label="状态" width="100">
+      <el-table-column prop="stage" label="阶段" width="120" align="center" />
+      <el-table-column label="状态" width="100" align="center">
         <template #default="{ row }">
           <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="时长" width="90" align="center">
+        <template #default="{ row }">
+          {{ formatJobDuration(row) }}
         </template>
       </el-table-column>
       <el-table-column label="更新时间" width="180">
@@ -44,7 +49,7 @@
           {{ formatDateTime(row.updated_at) }}
         </template>
       </el-table-column>
-      <el-table-column prop="error_message" label="错误信息" min-width="200" show-overflow-tooltip />
+      <el-table-column prop="error_message" label="错误信息" width="100" show-overflow-tooltip />
       <el-table-column label="操作" width="120">
         <template #default="{ row }">
           <el-button type="primary" link size="small" @click="handleViewDetail(row.id)">
@@ -85,6 +90,7 @@ import { pipelineLabel } from "@/constants/jobStages";
 import type { JobListItem } from "@/types/jobs";
 import { useErrorHandler } from "@/composables/useErrorHandler";
 import { formatDateTime } from "@/utils/date";
+import { formatMediaDuration, resolveFinalDuration } from "@/utils/media";
 
 const emit = defineEmits<{
   viewDetail: [jobId: number];
@@ -130,6 +136,11 @@ const statusLabel = (status: string) => {
     default:
       return status;
   }
+};
+
+const formatJobDuration = (row: JobListItem) => {
+  const duration = resolveFinalDuration(row.final_path);
+  return duration != null ? formatMediaDuration(duration) : "-";
 };
 
 const updateTotal = (count: number) => {
