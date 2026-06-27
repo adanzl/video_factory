@@ -157,6 +157,13 @@ _SCIENCE_SUFFIX = "white background, line art, clean composition, no text"
 _SCIENCE_DIAGRAM_SUFFIX = "dark gray background, clean composition, no text"
 _SCIENCE_SPLIT_SUFFIX = "dark gray background, no text"
 _LIFE_SUFFIX = "natural light, realistic photo"
+_LIFE_DIM_SUFFIX = "realistic photo, low-key lighting"
+_LIFE_DARK_SUFFIX = "realistic photo, dimly lit, atmospheric"
+
+_DIM_KEYWORDS = (
+    "dim", "dark", "underground", "dungeon", "night",
+    "shadow", "shadows", "dimly", "darkness",
+)
 
 _SCIENCE_LORAS = frozenset({
     "Textbook_Line_Art", "Simple_Diagram", "Science_DNA_Style",
@@ -396,7 +403,14 @@ def build_sd15_full_prompt(
         if style:
             return f"{lora_prefix} masterpiece, best quality, {style}, {cleaned}, {suffix}"
         return f"{lora_prefix} masterpiece, best quality, {cleaned}, {suffix}"
-    return f"{lora_prefix} masterpiece, best quality, {cleaned}, {_LIFE_SUFFIX}"
+    return f"{lora_prefix} masterpiece, best quality, {cleaned}, {_resolve_life_suffix(cleaned)}"
+
+
+def _resolve_life_suffix(subject: str) -> str:
+    lower = subject.casefold()
+    if any(kw.casefold() in lower for kw in _DIM_KEYWORDS):
+        return _LIFE_DIM_SUFFIX
+    return _LIFE_SUFFIX
 
 
 def has_comparison_semantics(prompt: str) -> bool:
