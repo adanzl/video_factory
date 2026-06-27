@@ -26,6 +26,7 @@ SD15_LORAS: dict[str, dict[str, Any]] = {
         "keywords": (
             "日常", "生活", "人物", "街景", "户外", "散步", "纪实", "vlog",
             "daily", "street", "people", "casual", "lifestyle", "walk",
+            "close-up", "portrait", "portrait photography",
         ),
     },
     "Product_Shot": {
@@ -570,9 +571,10 @@ def build_sd15_prompt_system(*, business_override: str | None = None) -> str:
         "life 内容始终 single。"
         "split 时写 left_en、right_en——横屏对应左/右半，竖屏对应上/下半；"
         "竖屏单主体无对比语义用 single。\n"
-        "2. 当 layout=single：prompt_en 为 subject（英文、逗号分隔，20～40 词）；"
-        "专注一个核心主体，禁止并列堆砌多个名词；"
-        "不写 lora 标签，不写背景后缀（系统自动追加）。"
+        "2. 当 layout=single：prompt_en 为 subject（英文、逗号分隔，30～55 词）；\n"
+        "必须忠实保留原文中每个可画出的视觉元素——人物动作、物体状态、光影颜色；\n"
+        "抽象情绪（痛苦/压抑）要翻译成具体视觉词（frowning/fogged/purple/bluish）；\n"
+        "不堆砌修饰词，不写 lora 标签，不写背景后缀（系统自动追加）。\n"
         "science 时禁止 person/face/head 等人物词。\n"
         "3. 当 layout=split：left_en、right_en 各 15～30 词，各自聚焦单一主体；"
         "left_en 侧重宏观/分子/介质；right_en 侧重医学截面/器官/细胞；"
@@ -585,6 +587,7 @@ def build_sd15_prompt_system(*, business_override: str | None = None) -> str:
         "G 类优先 Laboratory_Scene；H 类优先 Scientific_Equipment；\n"
         "I 类优先 blueprint_xianyu；J 类优先 picture_book_illustration；\n"
         "K 类优先 vintage_old_shanghai。\n"
+        "如果画面主体和任何 LoRA 都不明显匹配，life 默认 Casual_Life，science 默认 Simple_Diagram。\n"
         f"{_lora_catalog_text()}\n\n"
         "science 禁词：hyper-realistic, photorealistic, 3d render, photo, "
         "person, portrait, face, head, glowing eyes。\n"
@@ -617,7 +620,9 @@ def build_sd15_prompt_system(*, business_override: str | None = None) -> str:
         'picturebook 示例：{"layout": "single", "prompt_en": "cute cartoon illustration of a magnet attracting iron nails, bright happy colors, simple shapes", '
         '"business": "science", "lora": "picture_book_illustration"}\n'
         'vintage 示例：{"layout": "single", "prompt_en": "old black and white photograph of 1920s street scene, vintage grain, historical documentary style", '
-        '"business": "life", "lora": "vintage_old_shanghai"}'
+        '"business": "life", "lora": "vintage_old_shanghai"}\n'
+        'portrait 示例：{"layout": "single", "prompt_en": "close-up portrait, coal miner face smudged with dust, wet cloth covering mouth and nose, fogged glasses, purple lips, pained expression, dim claustrophobic lighting", '
+        '"business": "life", "lora": "Casual_Life"}'
         f"{override_note}"
     )
 
@@ -642,9 +647,9 @@ def build_sd15_prompt_user(
             "science 横屏默认 split（左右拼）；竖屏有对比/双场景语义时用 split（上下拼）。"
         )
     lines.append(
-        "请先（在 JSON 外）用一句话说明核心画面主体是什么（如「核心主体：锅中沸腾的水」），"
+        "请先（在 JSON 外）用一句话说明核心画面主体是什么，列出原文中需要保留的视觉元素清单，"
         "再输出 JSON，字段：layout、prompt_en 或 left_en+right_en、business、lora。\n"
-        "prompt_en 专注该核心主体（20～40 词），不堆砌修饰词；"
+        "prompt_en 包含清单中所有视觉元素（30～55 词），不堆砌修饰词；"
         "science 优先 split（对比/分子类），竖屏单主体可 single。"
     )
     return "\n\n".join(lines)
