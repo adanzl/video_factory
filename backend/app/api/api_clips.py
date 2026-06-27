@@ -104,7 +104,7 @@ def search_clips_route():
 
 @bp.post("/import-segment")
 def import_segment_clip_route():
-    """下载素材库视频并写入任务分段。"""
+    """下载素材库视频并写入任务分镜。"""
     data = get_json_body()
     job_id = parse_id(data)
     segment_index = parse_optional_int(data, "segment_index", minimum=1)

@@ -39,7 +39,7 @@
             <el-radio-button value="wan_i2v">万相 I2V</el-radio-button>
           </el-radio-group>
         </el-descriptions-item>
-        <el-descriptions-item label="分段序号" :span="3">
+        <el-descriptions-item label="分镜序号" :span="3">
           <div class="flex w-full flex-nowrap items-center gap-3">
             <el-select
               v-model="selectedSegments"
@@ -142,7 +142,7 @@
 
           <section class="flex flex-col gap-1">
             <div class="flex items-center justify-between gap-2">
-              <div class="text-xs font-medium text-gray-600">分段图片</div>
+              <div class="text-xs font-medium text-gray-600">分镜图片</div>
               <el-button
                 size="small"
                 link
@@ -222,7 +222,7 @@
         </article>
       </div>
     </div>
-    <div v-else class="py-8 text-center text-sm text-gray-400">暂无分段数据</div>
+    <div v-else class="py-8 text-center text-sm text-gray-400">暂无分镜数据</div>
 
     <SegmentClipSearchDialog
       v-model="clipSearchOpen"
@@ -440,7 +440,7 @@ const handleGenerateClip = async (segmentIndex: number) => {
 const handleRun = async (toEnd: boolean) => {
   const actionLabel = toEnd ? "从此成片" : "重新生成";
   try {
-    await ElMessageBox.confirm(`确定对「分段」阶段执行「${actionLabel}」吗？`, "确认执行", {
+    await ElMessageBox.confirm(`确定对「分镜」阶段执行「${actionLabel}」吗？`, "确认执行", {
       type: "warning",
       confirmButtonText: "执行",
       cancelButtonText: "取消",

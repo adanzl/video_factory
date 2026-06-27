@@ -1,4 +1,4 @@
-"""下载素材库视频并写入任务分段。"""
+"""下载素材库视频并写入任务分镜。"""
 
 from __future__ import annotations
 

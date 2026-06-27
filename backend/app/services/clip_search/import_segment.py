@@ -1,4 +1,4 @@
-"""将素材库视频导入任务分段。"""
+"""将素材库视频导入任务分镜。"""
 
 from __future__ import annotations
 

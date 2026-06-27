@@ -116,10 +116,7 @@ SD15_LORAS: dict[str, dict[str, Any]] = {
     },
     "LowRA": {
         "weight": 0.4,
-        "keywords": (
-            "暗部", "暗光", "低光", "阴影细节",
-            "low light", "dark", "shadow", "dim",
-        ),
+        "keywords": (),  # 仅自动叠加，不作为主 LoRA 被选中
     },
 }
 
