@@ -13,11 +13,7 @@ from app.config import get_settings
 from app.repositories import segment_repo
 from app.repositories.connection import connection
 from app.services.media.subtitle_overlay import build_segment_clip, burn_subtitled_clip
-from app.services.tts.tts_mgr import (
-    cues_for_segment,
-    load_subtitle_cues,
-    subtitle_cues_path_for,
-)
+from app.services.tts.tts_mgr import tts_mgr
 
 
 def rebuild_segment_subtitles(
@@ -38,8 +34,8 @@ def rebuild_segment_subtitles(
     if seg is None:
         raise ValueError(f"job {job_id} 无 segment {segment_index}")
 
-    cues_path = subtitle_cues_path_for(media_dir / "audio")
-    seg_cues = cues_for_segment(load_subtitle_cues(cues_path), segment_index)
+    cues_path = tts_mgr.subtitle_cues_path_for(media_dir / "audio")
+    seg_cues = tts_mgr.cues_for_segment(tts_mgr.load_subtitle_cues(cues_path), segment_index)
     if not seg_cues:
         raise ValueError(f"segment {segment_index} 无字幕时间轴")
 

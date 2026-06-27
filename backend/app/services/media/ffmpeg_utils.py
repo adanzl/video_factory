@@ -110,9 +110,9 @@ def vf_for_encode(base_vf: str, *, force_cpu: bool = False) -> str:
     return f"{base_vf},format={_PIX_FMT}"
 
 
-def finalize_filter_complex(parts: list[str], *, out_label: str = "out") -> list[str]:
+def finalize_filter_complex(parts: list[str], *, out_label: str = "out", force_cpu: bool = False) -> list[str]:
     """filter_complex 末尾：VAAPI 时在输出标签前插入 hwupload。"""
-    if not vaapi_enabled() or not parts:
+    if force_cpu or not vaapi_enabled() or not parts:
         return parts
     updated = list(parts)
     last = updated[-1]

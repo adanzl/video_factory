@@ -41,13 +41,17 @@ def _motion_progress(frames: int) -> str:
     return f"min(1,{eased})"
 
 
+def _even_dim(value: int) -> int:
+    """yuv420p / zoompan 要求宽高为偶数。"""
+    return value if value % 2 == 0 else value + 1
+
+
 def _prep_filter(*, headroom: float, width: int, height: int) -> str:
-    """放大画布到整数尺寸并居中 pad，消除 zoompan 亚像素抖动。"""
-    pw = int(width * headroom)
-    ph = int(height * headroom)
+    """放大画布，给平移/缩放留出余量。lanczos 插值减少 zoompan 亚像素抖动。"""
+    pw = _even_dim(int(width * headroom))
+    ph = _even_dim(int(height * headroom))
     return (
-        f"scale={pw}:{ph}:force_original_aspect_ratio=decrease:flags=lanczos,"
-        f"pad={pw}:{ph}:(ow-iw)/2:(oh-ih)/2:black,"
+        f"scale={pw}:{ph}:force_original_aspect_ratio=increase:flags=lanczos,"
         "setsar=1"
     )
 
@@ -113,10 +117,9 @@ def _resolve_clip_canvas(
     height: int | None,
 ) -> tuple[int, int]:
     settings = get_settings()
-    return (
-        width if width is not None else settings.video_width,
-        height if height is not None else settings.video_height,
-    )
+    canvas_w = width if width is not None else settings.video_width
+    canvas_h = height if height is not None else settings.video_height
+    return _even_dim(canvas_w), _even_dim(canvas_h)
 
 
 def image_to_clip(
@@ -140,16 +143,16 @@ def image_to_clip(
     )
     run_ffmpeg(
         [
-            *ffmpeg_cmd_start(),
+            *ffmpeg_cmd_start(hwaccel=False),
             "-loop",
             "1",
             "-i",
             str(image_path),
             "-vf",
-            vf_for_encode(vf),
+            vf_for_encode(vf, force_cpu=True),
             "-t",
             str(duration_sec),
-            *libx264_encode_args(),
+            *libx264_encode_args(force_cpu=True),
             str(output_path),
         ]
     )
@@ -181,14 +184,14 @@ def image_to_clip_with_overlay(
     )
     filter_parts = [
         f"[0:v]{motion}{_pix_fmt_filter_suffix()}[bg]",
-        "[1:v]format=rgba[fg]",
+        f"[1:v]format=rgba,scale={canvas_w}:{canvas_h}[fg]",
         f"[bg][fg]overlay=0:0:format=auto{_pix_fmt_filter_suffix()}[out]",
     ]
-    filter_complex = ";".join(finalize_filter_complex(filter_parts))
+    filter_complex = ";".join(finalize_filter_complex(filter_parts, force_cpu=True))
 
     run_ffmpeg(
         [
-            *ffmpeg_cmd_start(),
+            *ffmpeg_cmd_start(hwaccel=False),
             "-loop",
             "1",
             "-i",
@@ -201,7 +204,7 @@ def image_to_clip_with_overlay(
             "[out]",
             "-t",
             str(duration_sec),
-            *libx264_encode_args(subtitle=True),
+            *libx264_encode_args(subtitle=True, force_cpu=True),
             "-sws_flags",
             "lanczos+accurate_rnd+full_chroma_int",  # cSpell: disable-line
             str(output_path),
@@ -246,7 +249,8 @@ def image_to_clip_timed_overlays(
     )
     parts = [f"[0:v]{motion}{_pix_fmt_filter_suffix()}[bg]"]
     for idx, (overlay_path, _, _) in enumerate(overlay_windows):
-        parts.append(f"[{idx + 1}:v]format=rgba[s{idx}]")
+        _ = overlay_path
+        parts.append(f"[{idx + 1}:v]format=rgba,scale={canvas_w}:{canvas_h}[s{idx}]")
 
     current = "bg"
     for idx, (_, start, end) in enumerate(overlay_windows):
@@ -256,9 +260,9 @@ def image_to_clip_timed_overlays(
         )
         current = nxt
 
-    parts = finalize_filter_complex(parts)
+    parts = finalize_filter_complex(parts, force_cpu=True)
     cmd = [
-        *ffmpeg_cmd_start(),
+        *ffmpeg_cmd_start(hwaccel=False),
         "-loop",
         "1",
         "-i",
@@ -283,7 +287,7 @@ def image_to_clip_timed_overlays(
             "[out]",
             "-t",
             str(duration_sec),
-            *libx264_encode_args(subtitle=True),
+            *libx264_encode_args(subtitle=True, force_cpu=True),
             "-sws_flags",
             "lanczos+accurate_rnd+full_chroma_int",  # cSpell: disable-line
             str(output_path),
