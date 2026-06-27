@@ -27,7 +27,14 @@ def test_motion_vf_segment6_landscape_uses_even_prep_scale() -> None:
     assert match is not None
     assert int(match.group(2)) % 2 == 0
     assert "s=1920x1080" in vf
-    assert "floor(" in vf
+    # #6 → mode 2 右移，x 亚像素不平移取整
+    assert "(iw-iw/zoom)*(" in vf
+    assert "floor((iw-iw/zoom)" not in vf
+
+
+def test_motion_vf_segment1_uses_center_floor() -> None:
+    vf = _motion_vf(10.0, preset="ken_burns_slow", segment_index=1, width=1920, height=1080)
+    assert "floor(iw/2-(iw/zoom/2))" in vf
 
 
 def test_motion_vf_uses_reduced_ken_burns_zoom() -> None:
