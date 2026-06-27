@@ -102,6 +102,7 @@ import {
   formatFileSize,
   formatMediaDuration,
   getMediaFileUrl,
+  resolveFinalDuration,
   resolveFinalPath,
 } from "@/utils/media";
 import { useErrorHandler } from "@/composables/useErrorHandler";
@@ -184,15 +185,8 @@ const finalFilePath = computed(() => resolveFinalPath(props.job.final_path));
 const videoUrl = computed(() => getMediaFileUrl(finalFilePath.value));
 
 const durationText = computed(() => {
-  if (!finalAsset.value) {
-    return "-";
-  }
-  const duration =
-    typeof finalAsset.value === "object" ? finalAsset.value.duration : null;
-  if (duration === null || duration === undefined) {
-    return "-";
-  }
-  return formatMediaDuration(duration);
+  const duration = resolveFinalDuration(props.job.final_path);
+  return duration != null ? formatMediaDuration(duration) : "-";
 });
 
 const sizeText = computed(() => {

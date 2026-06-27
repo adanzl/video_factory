@@ -60,9 +60,40 @@ export function resolveFinalPath(finalPath?: FinalAsset | string | null): string
     return "";
   }
   if (typeof finalPath === "string") {
-    return finalPath.trim();
+    const trimmed = finalPath.trim();
+    if (trimmed.startsWith("{")) {
+      try {
+        const data = JSON.parse(trimmed) as FinalAsset;
+        return data.path?.trim() ?? "";
+      } catch {
+        return trimmed;
+      }
+    }
+    return trimmed;
   }
   return finalPath.path?.trim() ?? "";
+}
+
+/** 从 final_path 字段解析成片时长（秒，兼容旧字符串） */
+export function resolveFinalDuration(finalPath?: FinalAsset | string | null): number | null {
+  if (!finalPath) {
+    return null;
+  }
+  if (typeof finalPath === "string") {
+    const trimmed = finalPath.trim();
+    if (!trimmed.startsWith("{")) {
+      return null;
+    }
+    try {
+      const data = JSON.parse(trimmed) as FinalAsset;
+      const duration = data?.duration;
+      return typeof duration === "number" && !Number.isNaN(duration) ? duration : null;
+    } catch {
+      return null;
+    }
+  }
+  const duration = finalPath.duration;
+  return typeof duration === "number" && !Number.isNaN(duration) ? duration : null;
 }
 
 /** 格式化处理耗时（秒） */

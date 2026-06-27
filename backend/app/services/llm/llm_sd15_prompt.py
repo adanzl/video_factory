@@ -114,6 +114,13 @@ SD15_LORAS: dict[str, dict[str, Any]] = {
             "nostalgic", "old fashioned",
         ),
     },
+    "LowRA": {
+        "weight": 0.4,
+        "keywords": (
+            "暗部", "暗光", "低光", "阴影细节",
+            "low light", "dark", "shadow", "dim",
+        ),
+    },
 }
 
 SD15_BUSINESS_KEYWORDS: dict[str, tuple[str, ...]] = {
@@ -301,16 +308,18 @@ def resolve_extra_loras(
     panel: str,
     subject: str,
     source_prompt: str,
+    business: str = "",
 ) -> tuple[str, ...]:
-    """分子/科学微观场景叠加 Science_DNA_Style（单图或分图左半均可）。"""
-    if lora == "Science_DNA_Style":
-        return ()
-    if wants_science_dna_lora(prompt=source_prompt, subject=subject):
+    """分子/科学微观场景叠加 Science_DNA_Style；science 暗色背景自动叠 LowRA。"""
+    extra: list[str] = []
+    if lora != "Science_DNA_Style" and wants_science_dna_lora(prompt=source_prompt, subject=subject):
         if layout == "single":
-            return ("Science_DNA_Style",)
-        if layout == "split" and panel == "left":
-            return ("Science_DNA_Style",)
-    return ()
+            extra.append("Science_DNA_Style")
+        elif layout == "split" and panel == "left":
+            extra.append("Science_DNA_Style")
+    if business == "science" and lora != "LowRA":
+        extra.append("LowRA")
+    return tuple(extra)
 
 
 def lora_trigger_for(name: str) -> str:
@@ -357,6 +366,7 @@ def build_sd15_full_prompt(
             panel=panel,
             subject=subject,
             source_prompt=source_prompt,
+            business=business,
         )
     cleaned = normalize_sd15_panel_prompt_en(
         subject,

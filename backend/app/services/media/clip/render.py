@@ -19,7 +19,7 @@ from app.services.media.ffmpeg_utils import (
 )
 
 CLIP_FPS = 25
-_MOTION_FINISH_RATIO = 0.42  # 动效在前 42% 时长内完成，之后保持
+_MOTION_FINISH_RATIO = 0.85  # 动效在前 85% 时长内完成，之后保持
 _PIX_FMT = "yuv420p"  # 浏览器兼容；避免 yuv444p (High 4:4:4)
 
 
@@ -62,28 +62,38 @@ def _motion_vf(
     width: int,
     height: int,
 ) -> str:
-    """连续 Ken Burns：ease-in-out，按分镜序号轮换推/拉/平移。"""
+    """连续 Ken Burns：4 种动效轮换，放大权重最高。"""
     frames = max(int(duration_sec * CLIP_FPS), 1)
     zoom_max = _motion_zoom_max(preset)
     delta = zoom_max - 1.0
     progress = _motion_progress(frames)
 
-    mode = segment_index % 3
-    if mode == 1:
-        pan_zoom = max(zoom_max, 1.22)
-        headroom = max(pan_zoom + 0.10, 1.30)
+    mode = segment_index % 8
+    if mode < 4:
+        # 居中放大（50%）：1.0 → zoom_max
+        headroom = zoom_max + 0.04
+        z_expr = f"1+{delta:.4f}*({progress})"
+        x_expr = "iw/2-(iw/zoom/2)"
+        y_expr = "ih/2-(ih/zoom/2)"
+    elif mode in (4, 5):
+        # 右移（25%）：从左向右扫
+        pan_zoom = max(zoom_max, 1.14)
+        headroom = max(pan_zoom + 0.08, 1.28)
         z_expr = f"{pan_zoom:.4f}"
         x_expr = f"(iw-iw/zoom)*({progress})"
         y_expr = "ih/2-(ih/zoom/2)"
-    elif mode == 2:
+    elif mode == 6:
+        # 居中缩小（12.5%）：zoom_max → 1.0
         headroom = zoom_max + 0.04
         z_expr = f"{zoom_max:.4f}-{delta:.4f}*({progress})"
         x_expr = "iw/2-(iw/zoom/2)"
         y_expr = "ih/2-(ih/zoom/2)"
     else:
-        headroom = zoom_max + 0.04
-        z_expr = f"1+{delta:.4f}*({progress})"
-        x_expr = "iw/2-(iw/zoom/2)"
+        # 左移（12.5%）：从右向左扫
+        pan_zoom = max(zoom_max, 1.14)
+        headroom = max(pan_zoom + 0.08, 1.28)
+        z_expr = f"{pan_zoom:.4f}"
+        x_expr = f"(iw-iw/zoom)*(1-{progress})"
         y_expr = "ih/2-(ih/zoom/2)"
 
     prep = _prep_filter(headroom=headroom, width=width, height=height)
