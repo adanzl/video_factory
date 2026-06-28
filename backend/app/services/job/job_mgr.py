@@ -538,17 +538,28 @@ class JobMgr:
         hold_tail_sec: float | None = None,
         orientation: str | None = None,
         orientation_preference: str | None = None,
+        intro_category: str | None = None,
     ) -> dict:
         """生成片头。实现：worker/loop.run_intro → worker/stages/intro/"""
         from worker.loop import run_intro
 
+        info_patch: dict = {}
         if orientation_preference is not None:
+            info_patch["orientation"] = orientation_preference
+        if intro_category is not None:
+            from app.utils.job_info import normalize_intro_category
+
+            normalized = normalize_intro_category(intro_category)
+            if normalized is None:
+                raise ValueError("intro_category must be 百科 or 历史悬案")
+            info_patch["intro_category"] = normalized
+        if info_patch:
             with connection() as conn:
                 job = job_repo.get_job(conn, job_id)
                 job_repo.update_job(
                     conn,
                     job_id,
-                    info=merge_job_info(job.get("info"), orientation=orientation_preference),
+                    info=merge_job_info(job.get("info"), **info_patch),
                 )
 
         return self._run_in_background(

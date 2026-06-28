@@ -145,6 +145,13 @@ def is_history_intro_category(category: str) -> bool:
     return category == INTRO_CATEGORY_HISTORY
 
 
+def intro_generate_category(job: dict) -> str | None:
+    """传给 generate_intro 的 category；None 表示百科默认主题。"""
+    if intro_category_from_job(job) == INTRO_CATEGORY_HISTORY:
+        return INTRO_CATEGORY_HISTORY
+    return None
+
+
 def is_landscape_job(job: dict) -> bool:
     return orientation_for_resolve(job) == ORIENTATION_LANDSCAPE
 

@@ -324,10 +324,12 @@ const handleRun = async (toEnd: boolean) => {
       to_end: boolean;
       hold_tail_sec?: number;
       orientation: "auto" | "portrait" | "landscape";
+      intro_category: IntroCategory;
     } = {
       id: props.job.id,
       to_end: toEnd,
       orientation: introOrientation.value,
+      intro_category: introCategory.value,
     };
     if (Number.isFinite(holdTailSec.value) && holdTailSec.value >= 0) {
       payload.hold_tail_sec = holdTailSec.value;
