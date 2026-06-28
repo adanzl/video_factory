@@ -183,7 +183,6 @@ class Config:
     agnes_video_submit_max_retries: int = int(
         os.getenv("AGNES_VIDEO_SUBMIT_MAX_RETRIES", "2")
     )
-    agnes_i2v_mirror_upload: bool = _bool("AGNES_I2V_MIRROR_UPLOAD", default=True)
     media_public_base_url: str | None = _opt("MEDIA_PUBLIC_BASE_URL")
     sd_api_url: str = os.getenv("SD_API_URL", "http://127.0.0.1:9101").rstrip("/")
     sd_business: str | None = _opt("SD_BUSINESS")  # life | science；空则 LLM 推断

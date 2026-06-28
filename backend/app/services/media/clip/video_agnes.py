@@ -1,4 +1,4 @@
-"""Agnes AI 图生视频 ClipProvider（agnes-video-v2.0）。"""
+"""Agnes AI 文生视频 ClipProvider（agnes-video-v2.0）。"""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import math
 import threading
 import time
 from pathlib import Path
-from urllib.parse import quote, urlencode
+from urllib.parse import urlencode
 
 import requests
 
@@ -15,7 +15,6 @@ from app.config import get_settings
 from app.services.media.clip.mgr import ClipProvider, clip_mgr
 from app.services.media.clip.render import fit_video_duration, video_to_clip_timed_overlays
 from app.services.media.ffmpeg_utils import probe_duration
-from app.utils.media_path import resolve_media_public_base_url, to_media_url_path
 
 logger = logging.getLogger(__name__)
 
@@ -48,18 +47,6 @@ _DEFAULT_MOTION_PROMPT = (
 )
 _STABILITY_HINT = "画面稳定，无抖动，无快速运镜"
 _FRAME_CANDIDATES = (81, 121, 161, 241, 441)
-_AGNES_TRUSTED_IMAGE_HOST_MARKERS = (
-    "storage.googleapis.com",
-    "agnes-aigc",
-)
-_REVERSE_PROXY_HOST_MARKERS = (
-    "natapp",
-    "ngrok",
-    "frp.",
-    "cpolar",
-    "localtunnel",
-    "serveo.net",
-)
 
 
 def _stabilize_motion_prompt(prompt: str) -> str:
@@ -71,159 +58,25 @@ def _stabilize_motion_prompt(prompt: str) -> str:
     return f"{text}，{_STABILITY_HINT}"
 
 
+def _merge_t2v_prompt(image_prompt: str | None, motion_prompt: str | None) -> str:
+    """合并文生图提示词与运动提示词，供 Agnes 文生视频 prompt 使用。"""
+    visual = (image_prompt or "").strip()
+    motion = (motion_prompt or "").strip()
+    if visual and motion:
+        merged = f"{visual}；{motion}"
+    elif visual:
+        merged = visual
+    else:
+        merged = motion
+    return _stabilize_motion_prompt(merged)
+
+
 def _pick_num_frames(target_sec: float, frame_rate: int) -> int:
     need = max(81, int(math.ceil(target_sec * frame_rate)))
     for frames in _FRAME_CANDIDATES:
         if frames >= need:
             return frames
     return 441
-
-
-def _to_public_media_url(local_path: Path) -> str:
-    base = resolve_media_public_base_url()
-    url_path = to_media_url_path(str(local_path))
-    encoded = "/".join(quote(part, safe="") for part in url_path.split("/"))
-    return f"{base.rstrip('/')}/v_factory/api/media/files/{encoded}"
-
-
-def _read_agnes_source_url(image_path: Path) -> str | None:
-    """文生图若由 Agnes 返回 CDN URL，侧车文件供图生视频直接引用（无需 natapp）。"""
-    sidecar = image_path.with_name(image_path.name + ".agnes_source_url")
-    if not sidecar.is_file():
-        return None
-    url = sidecar.read_text(encoding="utf-8").strip()
-    if url.startswith("http://") or url.startswith("https://"):
-        return url
-    return None
-
-
-def _url_reachable(url: str, *, timeout: float = 12.0) -> bool:
-    try:
-        resp = requests.head(url, timeout=timeout, allow_redirects=True)
-        if resp.status_code in {405, 501}:
-            resp = requests.get(url, timeout=timeout, stream=True)
-            resp.close()
-        return resp.status_code < 400
-    except requests.RequestException:
-        return False
-
-
-def _is_agnes_trusted_image_url(url: str) -> bool:
-    lowered = url.lower()
-    return any(marker in lowered for marker in _AGNES_TRUSTED_IMAGE_HOST_MARKERS)
-
-
-def _is_reverse_proxy_public_url(url: str) -> bool:
-    """内网穿透域名：本机 HEAD 可达不代表 Agnes 云端能拉取。"""
-    lowered = url.lower()
-    return any(marker in lowered for marker in _REVERSE_PROXY_HOST_MARKERS)
-
-
-def _image_mime(image_path: Path) -> str:
-    if image_path.suffix.lower() in {".jpg", ".jpeg"}:
-        return "image/jpeg"
-    if image_path.suffix.lower() == ".webp":
-        return "image/webp"
-    return "image/png"
-
-
-def _mirror_tmpfiles(image_path: Path, mime: str, *, timeout: float) -> str:
-    with image_path.open("rb") as handle:
-        resp = requests.post(
-            "https://tmpfiles.org/api/v1/upload",
-            files={"file": (image_path.name, handle, mime)},
-            timeout=(15.0, timeout),
-        )
-    resp.raise_for_status()
-    body = resp.json()
-    data = body.get("data") if isinstance(body, dict) else None
-    page_url = data.get("url") if isinstance(data, dict) else None
-    if not isinstance(page_url, str) or not page_url.strip():
-        raise RuntimeError(f"tmpfiles upload missing url: {body}")
-    page_url = page_url.strip()
-    if "/dl/" not in page_url and "tmpfiles.org/" in page_url:
-        page_url = page_url.replace("tmpfiles.org/", "tmpfiles.org/dl/", 1)
-    return page_url
-
-
-def _mirror_litterbox(image_path: Path, mime: str, *, timeout: float) -> str:
-    with image_path.open("rb") as handle:
-        resp = requests.post(
-            "https://litterbox.catbox.moe/resources/internals/api.php",
-            data={"reqtype": "fileupload", "time": "1h"},
-            files={"fileToUpload": (image_path.name, handle, mime)},
-            timeout=(15.0, timeout),
-        )
-    resp.raise_for_status()
-    url = resp.text.strip()
-    if url.startswith("http://") or url.startswith("https://"):
-        return url
-    raise RuntimeError(f"litterbox upload missing url: {resp.text[:200]}")
-
-
-def _mirror_image_public_url(image_path: Path, *, timeout: float = 120.0) -> str:
-    """将静图上传到公网临时托管（Agnes 文档要求 image 为公网 URL）。"""
-    mime = _image_mime(image_path)
-    errors: list[str] = []
-    for name, upload in (
-        ("tmpfiles", _mirror_tmpfiles),
-        ("litterbox", _mirror_litterbox),
-    ):
-        try:
-            url = upload(image_path, mime, timeout=timeout)
-            logger.info("agnes i2v mirror upload ok via %s: %s", name, url[:96])
-            return url
-        except requests.RequestException as exc:
-            errors.append(f"{name}: {exc}")
-        except RuntimeError as exc:
-            errors.append(f"{name}: {exc}")
-    raise RuntimeError(
-        "agnes i2v mirror upload failed: " + "; ".join(errors)
-    )
-
-
-def _resolve_i2v_image_url(image_path: Path) -> str:
-    settings = get_settings()
-    source_url = _read_agnes_source_url(image_path)
-    if source_url:
-        logger.info(
-            "agnes i2v image: using Agnes CDN URL from sidecar (%s)",
-            source_url[:80],
-        )
-        return source_url
-
-    public_url = _to_public_media_url(image_path)
-
-    if _is_agnes_trusted_image_url(public_url):
-        logger.info("agnes i2v image: using trusted CDN URL")
-        return public_url
-
-    # natapp 等穿透：worker 自检可达，但 Agnes 云端往往拉不到或极慢
-    if settings.agnes_i2v_mirror_upload and _is_reverse_proxy_public_url(public_url):
-        logger.info(
-            "agnes i2v: reverse-proxy media URL (%s), mirroring for Agnes",
-            public_url[:80],
-        )
-        return _mirror_image_public_url(image_path)
-
-    if _url_reachable(public_url):
-        logger.info("agnes i2v image: using MEDIA_PUBLIC media URL")
-        return public_url
-
-    if settings.agnes_i2v_mirror_upload:
-        logger.warning(
-            "agnes i2v: media URL not reachable locally (%s), "
-            "uploading mirror for Agnes to fetch",
-            public_url[:80],
-        )
-        return _mirror_image_public_url(image_path)
-
-    logger.warning(
-        "agnes i2v: media URL may be unreachable by Agnes (%s). "
-        "创建任务时服务端会拉取 image，natapp 不可达会导致 POST 长时间无响应",
-        public_url,
-    )
-    return public_url
 
 
 def _agnes_api_root(base_url: str) -> str:
@@ -322,10 +175,7 @@ class AgnesClipProvider(ClipProvider):
                 )
                 hint = ""
                 if label == "submit":
-                    hint = (
-                        "（异步 API 提交应秒级返回 video_id；"
-                        "若持续超时，多为 Agnes 拉取 image 公网 URL 失败或 natapp 不可达）"
-                    )
+                    hint = "（异步 API 提交应秒级返回 video_id）"
                 logger.warning(
                     "agnes %s %s %s read timeout%s: %s, retry %s/%s in %ss",
                     label,
@@ -371,37 +221,37 @@ class AgnesClipProvider(ClipProvider):
 
     def _generate_raw(
         self,
-        image_path: Path,
         prompt: str,
         output_path: Path,
         *,
+        width: int,
+        height: int,
         num_frames: int,
     ) -> Path:
         if not self._api_key:
-            raise RuntimeError("AGNES_API_KEY 未配置，无法调用 Agnes 图生视频")
+            raise RuntimeError("AGNES_API_KEY 未配置，无法调用 Agnes 文生视频")
 
-        image_url = _resolve_i2v_image_url(image_path)
         headers = {
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
             "Connection": "close",
         }
-        # 文档 I2V 示例：model + prompt + image + num_frames + frame_rate；
-        # mode=ti2vid 标明图生视频（与纯文生视频区分）。
         payload = {
             "model": self._model,
             "prompt": prompt,
-            "image": image_url,
-            "mode": "ti2vid",
+            "width": width,
+            "height": height,
             "num_frames": num_frames,
             "frame_rate": self._frame_rate,
         }
         logger.info(
-            "agnes i2v submit: model=%s frames=%s fps=%s image=%s...",
+            "agnes t2v submit: model=%s frames=%s fps=%s size=%sx%s prompt_chars=%s",
             self._model,
             num_frames,
             self._frame_rate,
-            image_url[:96],
+            width,
+            height,
+            len(prompt),
         )
         self._throttle_submit()
         last_exc: Exception | None = None
@@ -570,10 +420,12 @@ class AgnesClipProvider(ClipProvider):
         work_dir: Path,
         segment_index: int,
         motion_prompt: str | None = None,
+        image_prompt: str | None = None,
         width: int | None = None,
         height: int | None = None,
     ) -> Path:
         _ = motion_preset
+        _ = image_path
         t0 = time.time()
         total_duration, overlay_windows, overlay_paths = clip_mgr.prepare_subtitle_overlays(
             subtitle_cues=subtitle_cues,
@@ -587,24 +439,25 @@ class AgnesClipProvider(ClipProvider):
 
         clip_width = width or get_settings().video_width
         clip_height = height or get_settings().video_height
-        prompt = _stabilize_motion_prompt(motion_prompt or "")
+        prompt = _merge_t2v_prompt(image_prompt, motion_prompt)
         num_frames = _pick_num_frames(total_duration, self._frame_rate)
         raw_path = work_dir / f"{segment_index}.agnes_raw.mp4"
         fitted_path = work_dir / f"{segment_index}.agnes_fit.mp4"
 
         logger.info(
-            "clip %s: submitting agnes i2v (frames=%s, fps=%s, motion=%s...)",
+            "clip %s: submitting agnes t2v (frames=%s, fps=%s, prompt=%s...)",
             segment_index,
             num_frames,
             self._frame_rate,
-            prompt[:60],
+            prompt[:80],
         )
         output_path.parent.mkdir(parents=True, exist_ok=True)
         try:
             self._generate_raw(
-                image_path,
                 prompt,
                 raw_path,
+                width=clip_width,
+                height=clip_height,
                 num_frames=num_frames,
             )
             logger.info("clip %s: raw done, fitting to %.1fs", segment_index, total_duration)
