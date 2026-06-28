@@ -155,6 +155,8 @@ def main() -> None:
 
     host = _load_host_sprite(settings, width=args.width, height=args.height, layout=layout)
     moon_tint_yellow = settings.intro_moon_tint in {"yellow", "tint", "gold", "1", "true"}
+    if HISTORY_CATEGORY == "历史悬案":
+        moon_tint_yellow = True
     layers = _build_layers(
         args.title,
         settings.brand_name,
