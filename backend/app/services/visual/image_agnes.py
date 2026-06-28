@@ -162,6 +162,8 @@ class AgnesImageProvider(ImageProvider):
             img = requests.get(image_url, timeout=120)
             img.raise_for_status()
             output_path.write_bytes(img.content)
+            sidecar = output_path.with_name(output_path.name + ".agnes_source_url")
+            sidecar.write_text(image_url.strip(), encoding="utf-8")
             return output_path
         except Exception as exc:
             logger.error("agnes generate failed: %s", exc)

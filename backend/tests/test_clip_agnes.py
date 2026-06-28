@@ -73,6 +73,7 @@ def test_agnes_clip_provider_submits_image_url(tmp_path: Path) -> None:
             "app.services.media.clip.video_agnes.resolve_media_public_base_url",
             return_value="https://example.com",
         ),
+        patch("app.services.media.clip.video_agnes._url_reachable", return_value=True),
         patch.object(provider, "_request", side_effect=[create_resp, poll_resp]) as mock_request,
         patch("app.services.media.clip.video_agnes.requests.get", return_value=video_resp),
         patch("app.services.media.clip.video_agnes.probe_duration", return_value=5.0),
@@ -98,5 +99,8 @@ def test_agnes_clip_provider_submits_image_url(tmp_path: Path) -> None:
     create_call = mock_request.call_args_list[0]
     payload = create_call.kwargs["json"]
     assert payload["model"] == provider._model  # noqa: SLF001
+    assert payload["mode"] == "ti2vid"
     assert payload["image"].startswith("https://example.com/v_factory/api/media/files/")
+    assert "width" not in payload
+    assert "height" not in payload
     assert payload["num_frames"] == 121
