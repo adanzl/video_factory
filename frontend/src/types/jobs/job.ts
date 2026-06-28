@@ -17,7 +17,7 @@ export interface JobScriptParams {
 
 export interface JobInfo {
   orientation?: "auto" | "portrait" | "landscape";
-  content_style?: "science_child" | "life_experience";
+  content_style?: "science_child" | "life_experience" | "history_mystery";
   image_provider?: "z_image_t2i" | "wan_t2i" | "sd15_t2i" | "agnes_t2i";
   video_provider?: "ffmpeg" | "wan_i2v";
   script?: JobScriptParams;

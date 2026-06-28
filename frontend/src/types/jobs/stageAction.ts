@@ -40,7 +40,7 @@ export interface RunStageActionPayload {
   generate_image_prompts?: boolean;
   supplementary_info?: string;
   video_timeline?: string;
-  content_style?: "science_child" | "life_experience";
+  content_style?: "science_child" | "life_experience" | "history_mystery";
   image_provider?: "z_image_t2i" | "wan_t2i" | "sd15_t2i" | "agnes_t2i";
   video_provider?: "ffmpeg" | "wan_i2v";
 }
@@ -55,7 +55,7 @@ export interface PreviewScriptPromptsPayload {
   supplementary_info?: string;
   video_timeline?: string;
   orientation?: "portrait" | "landscape";
-  content_style?: "science_child" | "life_experience";
+  content_style?: "science_child" | "life_experience" | "history_mystery";
 }
 
 export type StageParamValues = Record<string, string | boolean | number | number[]>;

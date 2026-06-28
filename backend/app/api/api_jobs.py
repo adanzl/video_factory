@@ -77,7 +77,7 @@ def _parse_script_body() -> tuple[
         content_style = normalize_content_style(parse_optional_str(data, "content_style"))
         if content_style is None:
             raise APIError(
-                "content_style must be science_child or life_experience",
+                "content_style must be science_child, life_experience or history_mystery",
                 status_code=400,
             )
     return (
