@@ -18,7 +18,7 @@ _VALID_CONTENT_STYLES = frozenset(
 )
 
 _VALID_IMAGE_PROVIDERS = frozenset({"z_image_t2i", "wan_t2i", "sd15_t2i", "agnes_t2i"})
-_VALID_VIDEO_PROVIDERS = frozenset({"ffmpeg", "wan_i2v"})
+_VALID_VIDEO_PROVIDERS = frozenset({"ffmpeg", "wan_i2v", "agnes_i2v"})
 
 
 def parse_job_info(raw: str | dict | None) -> dict[str, Any]:
@@ -205,6 +205,8 @@ def resolve_video_provider(
         return override
     if visual_mode == "wan_i2v":
         return "wan_i2v"
+    if visual_mode == "agnes_i2v":
+        return "agnes_i2v"
     return cfg.clip_provider
 
 

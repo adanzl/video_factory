@@ -259,7 +259,7 @@ def _parse_segment_body() -> tuple[int, bool, list[int] | None, str | None, str 
         video_provider = normalize_video_provider(raw)
         if raw and video_provider is None:
             raise APIError(
-                "video_provider must be ffmpeg or wan_i2v",
+                "video_provider must be ffmpeg, wan_i2v, or agnes_i2v",
                 status_code=400,
             )
     return (

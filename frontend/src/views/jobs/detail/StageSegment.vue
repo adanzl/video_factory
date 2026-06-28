@@ -38,6 +38,7 @@
           >
             <el-radio-button value="ffmpeg">Ken Burns</el-radio-button>
             <el-radio-button value="wan_i2v">万相 I2V</el-radio-button>
+            <el-radio-button value="agnes_i2v">Agnes I2V</el-radio-button>
           </el-radio-group>
         </el-descriptions-item>
         <el-descriptions-item label="分镜序号" :span="3">
