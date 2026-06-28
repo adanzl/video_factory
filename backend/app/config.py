@@ -159,6 +159,11 @@ class Config:
     z_image_model: str = os.getenv("Z_IMAGE_MODEL", "z-image-turbo")
     z_image_size: str = os.getenv("Z_IMAGE_SIZE", _WAN_IMAGE_SIZE)
     z_image_prompt_extend: bool = _bool("Z_IMAGE_PROMPT_EXTEND")
+    agnes_api_key: str | None = _opt("AGNES_API_KEY")
+    agnes_api_base_url: str = os.getenv("AGNES_API_BASE_URL", "https://apihub.agnes-ai.com/v1")
+    agnes_image_model: str = os.getenv("AGNES_IMAGE_MODEL", "agnes-image-2.1-flash")
+    agnes_image_size: str = os.getenv("AGNES_IMAGE_SIZE", _WAN_IMAGE_SIZE)
+    agnes_http_max_retries: int = int(os.getenv("AGNES_HTTP_MAX_RETRIES", "2"))
     sd_api_url: str = os.getenv("SD_API_URL", "http://127.0.0.1:9101").rstrip("/")
     sd_business: str | None = _opt("SD_BUSINESS")  # life | science；空则 LLM 推断
     sd_image_size: str = os.getenv("SD_IMAGE_SIZE", "360*640")

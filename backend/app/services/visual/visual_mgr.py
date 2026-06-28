@@ -34,6 +34,7 @@ class VisualMgr:
     """画面生产管理器。"""
 
     def _get_image_provider(self, provider_name: str | None = None) -> ImageProvider:
+        from app.services.visual.image_agnes import AgnesImageProvider
         from app.services.visual.image_mock import MockImageProvider
         from app.services.visual.image_sd15 import Sd15ImageProvider
         from app.services.visual.image_wan import WanImageProvider
@@ -48,6 +49,8 @@ class VisualMgr:
             return WanImageProvider()
         if provider == "sd15_t2i":
             return Sd15ImageProvider()
+        if provider == "agnes_t2i":
+            return AgnesImageProvider()
         raise ValueError(f"unknown IMAGE_PROVIDER: {provider}")
 
     def generate_segment_images(

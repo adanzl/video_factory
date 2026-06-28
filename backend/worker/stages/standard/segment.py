@@ -89,6 +89,8 @@ class SegmentStage(StageExecutor):
                 if image_provider == "z_image_t2i"
                 else settings.wan_model
                 if image_provider == "wan_t2i"
+                else settings.agnes_image_model
+                if image_provider == "agnes_t2i"
                 else f"sd15/{settings.sd_business or 'auto'}"
                 if image_provider == "sd15_t2i"
                 else image_provider
