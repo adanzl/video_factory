@@ -8,6 +8,7 @@ from typing import Any
 
 from app.config import get_settings
 from app.utils.job_info import (
+    CONTENT_STYLE_HISTORICAL_MYSTERY,
     CONTENT_STYLE_LIFE_EXPERIENCE,
     CONTENT_STYLE_SCIENCE_CHILD,
     ORIENTATION_LANDSCAPE,

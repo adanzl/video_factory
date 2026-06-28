@@ -58,3 +58,11 @@ export interface ListJobsParams {
   limit?: number;
   offset?: number;
 }
+
+export type CreateJobRunMode = "none" | "script" | "full";
+
+export interface CreateJobParams {
+  title: string;
+  skip_publish?: boolean;
+  run_mode?: CreateJobRunMode;
+}

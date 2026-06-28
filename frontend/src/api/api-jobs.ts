@@ -2,13 +2,35 @@
  * 任务 API
  */
 import { api } from "./config";
-import type { JobDetail, JobListItem, JobLog, JobSegment, ListJobsParams } from "@/types/jobs";
+import type {
+  CreateJobParams,
+  JobDetail,
+  JobListItem,
+  JobLog,
+  JobSegment,
+  ListJobsParams,
+} from "@/types/jobs";
 import type { RunStageActionPayload, PreviewScriptPromptsPayload } from "@/types/jobs/stageAction";
 import type { LlmPromptStep } from "@/types/jobs/script";
 
 export async function listJobs(params: ListJobsParams = {}): Promise<JobListItem[]> {
   const response = await api.get<JobListItem[]>("/v_factory/api/jobs/list", { params });
   return Array.isArray(response.data) ? response.data : [];
+}
+
+export async function createJob(params: CreateJobParams): Promise<JobDetail> {
+  const response = await api.post<JobDetail>("/v_factory/api/jobs/add", {
+    title: params.title,
+    skip_publish: params.skip_publish ?? true,
+  });
+  const job = response.data;
+  const runMode = params.run_mode ?? "none";
+  if (runMode === "script") {
+    await runJobStageAction("script", { id: job.id, to_end: false });
+  } else if (runMode === "full") {
+    await runJobStageAction("script", { id: job.id, to_end: true });
+  }
+  return job;
 }
 
 export async function getJob(jobId: number): Promise<JobDetail> {
