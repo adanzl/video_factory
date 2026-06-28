@@ -72,6 +72,10 @@ class AgnesClipProvider(ClipProvider):
         self._frame_rate = settings.agnes_video_frame_rate
         self._submit_interval = settings.clip_submit_interval_sec
         self._http_max_retries = settings.agnes_http_max_retries
+        self._connect_timeout = settings.agnes_http_connect_timeout_sec
+        self._submit_read_timeout = settings.agnes_http_submit_read_timeout_sec
+        self._poll_read_timeout = settings.agnes_http_poll_read_timeout_sec
+        self._download_timeout = settings.agnes_video_download_timeout_sec
         self._task_max_retries = settings.agnes_video_task_max_retries
         self._poll_max_attempts = settings.agnes_video_poll_max_attempts
         self._poll_interval_sec = settings.agnes_video_poll_interval_sec
@@ -91,18 +95,31 @@ class AgnesClipProvider(ClipProvider):
         headers: dict | None = None,
         json: dict | None = None,
         max_retries: int | None = None,
-        timeout: int = 120,
+        timeout: float | tuple[float, float] | None = None,
+        label: str = "request",
     ) -> requests.Response:
         retries = max_retries if max_retries is not None else self._http_max_retries
         h = headers or {}
+        if timeout is None:
+            read_timeout = (
+                self._submit_read_timeout
+                if label == "submit"
+                else self._poll_read_timeout
+            )
+            req_timeout = (self._connect_timeout, read_timeout)
+        else:
+            req_timeout = timeout
         last_exc: Exception | None = None
         for attempt in range(retries):
             try:
-                resp = requests.request(method, url, headers=h, json=json, timeout=timeout)
+                resp = requests.request(
+                    method, url, headers=h, json=json, timeout=req_timeout
+                )
                 if resp.status_code in _RETRYABLE:
                     wait = min(2**attempt * 2, 60)
                     logger.warning(
-                        "agnes %s %s, retry %s/%s in %ss",
+                        "agnes %s %s %s, retry %s/%s in %ss",
+                        label,
                         resp.status_code,
                         url,
                         attempt + 1,
@@ -116,7 +133,16 @@ class AgnesClipProvider(ClipProvider):
             except requests.RequestException as exc:
                 last_exc = exc
                 wait = min(2**attempt * 2, 60)
-                logger.warning("agnes request error: %s, retry in %ss", exc, wait)
+                logger.warning(
+                    "agnes %s %s %s error: %s, retry %s/%s in %ss",
+                    label,
+                    method,
+                    url,
+                    exc,
+                    attempt + 1,
+                    retries,
+                    wait,
+                )
                 time.sleep(wait)
         if last_exc:
             raise last_exc
@@ -190,6 +216,102 @@ class AgnesClipProvider(ClipProvider):
             raise last_exc
         raise RuntimeError("agnes i2v failed without exception")
 
+    def _submit_task(self, *, headers: dict, payload: dict) -> tuple[str | None, str | None, str, dict]:
+        """异步提交：仅创建任务，立即返回 video_id / task_id。"""
+        resp = self._request(
+            "POST", self._create_url, headers=headers, json=payload, label="submit"
+        )
+        body = resp.json()
+        if body.get("error"):
+            err = body["error"]
+            if isinstance(err, dict):
+                raise RuntimeError(
+                    f"agnes i2v submit error: {err.get('code')} - {err.get('message')}"
+                )
+            raise RuntimeError(f"agnes i2v submit error: {err}")
+
+        video_id = body.get("video_id")
+        if isinstance(video_id, str):
+            video_id = video_id.strip() or None
+        else:
+            video_id = None
+        task_id = body.get("task_id") or body.get("id")
+        if isinstance(task_id, str):
+            task_id = task_id.strip() or None
+        else:
+            task_id = None
+        if not video_id and not task_id:
+            raise RuntimeError(f"agnes i2v submit missing task id: {body}")
+
+        state = str(body.get("status") or "queued")
+        logger.info(
+            "agnes i2v task queued (async): video_id=%s task_id=%s status=%s",
+            video_id or "-",
+            task_id or "-",
+            state,
+        )
+        return video_id, task_id, state, body
+
+    def _download_video(self, poll: dict, output_path: Path, task_label: str) -> Path:
+        video_url = self._extract_video_url(poll)
+        if not video_url:
+            raise RuntimeError(f"agnes i2v task {task_label} completed but missing video url")
+        video = requests.get(
+            video_url,
+            timeout=(self._connect_timeout, self._download_timeout),
+        )
+        video.raise_for_status()
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(video.content)
+        return output_path
+
+    def _poll_task(
+        self,
+        *,
+        headers: dict,
+        video_id: str | None,
+        task_id: str | None,
+        output_path: Path,
+    ) -> Path:
+        """轮询异步任务，直到 completed / failed 或超时。"""
+        task_label = video_id or task_id or "unknown"
+        state = "queued"
+        for poll_idx in range(self._poll_max_attempts):
+            time.sleep(self._poll_interval_sec)
+            if video_id:
+                poll_url = (
+                    f"{self._poll_root}/agnesapi"
+                    f"?video_id={video_id}&model_name={self._model}"
+                )
+            else:
+                poll_url = f"{self._create_url}/{task_id}"
+            poll_resp = self._request("GET", poll_url, headers=headers, label="poll")
+            poll = poll_resp.json()
+            if poll.get("error"):
+                err = poll["error"]
+                if isinstance(err, dict):
+                    raise RuntimeError(
+                        f"agnes i2v poll error: {err.get('code')} - {err.get('message')}"
+                    )
+                raise RuntimeError(f"agnes i2v poll error: {err}")
+
+            state = str(poll.get("status") or "unknown")
+            if poll_idx % 6 == 0 and state not in {"completed", "failed"}:
+                logger.info(
+                    "agnes i2v task %s polling... state=%s (~%ss)",
+                    task_label,
+                    state,
+                    int((poll_idx + 1) * self._poll_interval_sec),
+                )
+            if state == "completed":
+                return self._download_video(poll, output_path, task_label)
+            if state == "failed":
+                err = poll.get("error")
+                detail = err if isinstance(err, str) else repr(err)
+                raise RuntimeError(f"agnes i2v task {task_label} failed: {detail}")
+
+        raise RuntimeError(f"agnes i2v task {task_label} timeout, last state={state}")
+
     def _submit_and_poll(
         self,
         *,
@@ -197,58 +319,19 @@ class AgnesClipProvider(ClipProvider):
         payload: dict,
         output_path: Path,
     ) -> Path:
-        resp = self._request("POST", self._create_url, headers=headers, json=payload)
-        body = resp.json()
-        if body.get("error"):
-            err = body["error"]
-            if isinstance(err, dict):
-                raise RuntimeError(f"agnes i2v submit error: {err.get('code')} - {err.get('message')}")
-            raise RuntimeError(f"agnes i2v submit error: {err}")
-
-        video_id = body.get("video_id") or body.get("id") or body.get("task_id")
-        task_id = body.get("task_id") or body.get("id")
-        if not video_id and not task_id:
-            raise RuntimeError(f"agnes i2v submit missing task id: {body}")
-
-        state = str(body.get("status") or "queued")
-        for poll_idx in range(self._poll_max_attempts):
-            if video_id:
-                poll_url = f"{self._poll_root}/agnesapi?video_id={video_id}&model_name={self._model}"
-            else:
-                poll_url = f"{self._create_url}/{task_id}"
-            poll_resp = self._request("GET", poll_url, headers=headers)
-            poll = poll_resp.json()
-            if poll.get("error"):
-                err = poll["error"]
-                if isinstance(err, dict):
-                    raise RuntimeError(f"agnes i2v poll error: {err.get('code')} - {err.get('message')}")
-                raise RuntimeError(f"agnes i2v poll error: {err}")
-
-            state = str(poll.get("status") or "unknown")
-            if poll_idx % 6 == 0 and state not in {"completed", "failed"}:
-                logger.info(
-                    "agnes i2v task %s polling... state=%s (~%ss)",
-                    video_id or task_id,
-                    state,
-                    int(poll_idx * self._poll_interval_sec),
-                )
-            if state == "completed":
-                video_url = self._extract_video_url(poll)
-                if not video_url:
-                    raise RuntimeError(
-                        f"agnes i2v task {video_id or task_id} completed but missing video url"
-                    )
-                video = requests.get(video_url, timeout=120)
-                video.raise_for_status()
-                output_path.parent.mkdir(parents=True, exist_ok=True)
-                output_path.write_bytes(video.content)
-                return output_path
-            if state == "failed":
-                err = poll.get("error")
-                detail = err if isinstance(err, str) else repr(err)
-                raise RuntimeError(f"agnes i2v task {video_id or task_id} failed: {detail}")
-            time.sleep(self._poll_interval_sec)
-        raise RuntimeError(f"agnes i2v task {video_id or task_id} timeout, last state={state}")
+        video_id, task_id, state, body = self._submit_task(headers=headers, payload=payload)
+        if state == "completed":
+            return self._download_video(
+                body,
+                output_path,
+                video_id or task_id or "unknown",
+            )
+        return self._poll_task(
+            headers=headers,
+            video_id=video_id,
+            task_id=task_id,
+            output_path=output_path,
+        )
 
     def build_segment_clip(
         self,
