@@ -19,10 +19,12 @@ class FfmpegClipProvider(ClipProvider):
         work_dir: Path,
         segment_index: int,
         motion_prompt: str | None = None,
+        image_prompt: str | None = None,
         width: int | None = None,
         height: int | None = None,
     ) -> Path:
         _ = motion_prompt
+        _ = image_prompt
         total_duration, overlay_windows, overlay_paths = clip_mgr.prepare_subtitle_overlays(
             subtitle_cues=subtitle_cues,
             work_dir=work_dir,

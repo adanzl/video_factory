@@ -4,7 +4,13 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from app.services.media.clip.video_agnes import AgnesClipProvider, _backoff_seconds, _pick_num_frames
+from app.services.media.clip.video_agnes import (
+    AgnesClipProvider,
+    _backoff_seconds,
+    _merge_t2v_prompt,
+    _pick_num_frames,
+    _STABILITY_HINT,
+)
 from app.utils.job_info import normalize_video_provider, resolve_video_provider
 from app.utils.media_path import resolve_media_public_base_url
 
@@ -42,7 +48,20 @@ def test_resolve_media_public_base_url_from_cors() -> None:
     assert resolve_media_public_base_url(settings) == "https://example.com"
 
 
-def test_agnes_clip_provider_submits_image_url(tmp_path: Path) -> None:
+def test_merge_t2v_prompt() -> None:
+    merged = _merge_t2v_prompt("画面描述很长", "镜头缓慢推进")
+    assert "画面描述很长" in merged
+    assert "镜头缓慢推进" in merged
+    assert _STABILITY_HINT in merged or "画面稳定" in merged
+
+
+def test_merge_t2v_prompt_image_only() -> None:
+    merged = _merge_t2v_prompt("仅画面描述", None)
+    assert merged.startswith("仅画面描述")
+    assert _STABILITY_HINT in merged
+
+
+def test_agnes_clip_provider_submits_t2v_prompt(tmp_path: Path) -> None:
     provider = AgnesClipProvider()
     provider._api_key = "test-key"  # noqa: SLF001
     image_path = tmp_path / "1.png"
@@ -69,11 +88,6 @@ def test_agnes_clip_provider_submits_image_url(tmp_path: Path) -> None:
     video_resp.raise_for_status = MagicMock()
 
     with (
-        patch(
-            "app.services.media.clip.video_agnes.resolve_media_public_base_url",
-            return_value="https://example.com",
-        ),
-        patch("app.services.media.clip.video_agnes._url_reachable", return_value=True),
         patch.object(provider, "_request", side_effect=[create_resp, poll_resp]) as mock_request,
         patch("app.services.media.clip.video_agnes.requests.get", return_value=video_resp),
         patch("app.services.media.clip.video_agnes.probe_duration", return_value=5.0),
@@ -92,6 +106,7 @@ def test_agnes_clip_provider_submits_image_url(tmp_path: Path) -> None:
             work_dir=tmp_path / "work",
             segment_index=1,
             motion_prompt="slow zoom",
+            image_prompt="画面主体是宇宙飞船",
             width=720,
             height=1280,
         )
@@ -99,8 +114,9 @@ def test_agnes_clip_provider_submits_image_url(tmp_path: Path) -> None:
     create_call = mock_request.call_args_list[0]
     payload = create_call.kwargs["json"]
     assert payload["model"] == provider._model  # noqa: SLF001
-    assert payload["mode"] == "ti2vid"
-    assert payload["image"].startswith("https://example.com/v_factory/api/media/files/")
-    assert "width" not in payload
-    assert "height" not in payload
+    assert "image" not in payload
+    assert payload["width"] == 720
+    assert payload["height"] == 1280
     assert payload["num_frames"] == 121
+    assert "宇宙飞船" in payload["prompt"]
+    assert "slow zoom" in payload["prompt"]

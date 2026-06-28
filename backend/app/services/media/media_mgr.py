@@ -70,7 +70,7 @@ class MediaMgr:
             )
         if provider == "agnes_i2v":
             return (
-                f"provider=agnes_i2v, model={settings.agnes_video_model}, "
+                f"provider=agnes_t2v, model={settings.agnes_video_model}, "
                 f"frame_rate={settings.agnes_video_frame_rate}, "
                 f"size={width}x{height}"
             )
@@ -167,12 +167,14 @@ class MediaMgr:
                     sum(duration for _, duration in seg_cues),
                 )
             motion_prompt = seg.get("motion_prompt") or seg.get("visual_brief") or ""
+            image_prompt = seg.get("image_prompt") or ""
             logger.info(
-                "clip %s/%s building segment %s | %s | motion_chars=%s",
+                "clip %s/%s building segment %s | %s | image_chars=%s motion_chars=%s",
                 i,
                 total,
                 index,
                 params_desc,
+                len(image_prompt),
                 len(motion_prompt),
             )
             clip_mgr.build_segment_clip(
@@ -184,6 +186,7 @@ class MediaMgr:
                 work_dir=clips_dir,
                 segment_index=index,
                 motion_prompt=motion_prompt,
+                image_prompt=image_prompt or None,
                 width=clip_width,
                 height=clip_height,
             )
