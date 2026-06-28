@@ -127,6 +127,8 @@ def _normalize_title(text: str) -> str:
     for char in text:
         if char in "？?":
             parts.append("？")
+        elif char in "：:":
+            parts.append("：")
         elif char.isspace():
             continue
         elif _is_han(char) or (char.isascii() and char.isalnum()):
