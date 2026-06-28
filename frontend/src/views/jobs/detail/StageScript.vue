@@ -41,6 +41,7 @@
               <el-radio-group v-model="contentStyle" size="small">
                 <el-radio-button value="science_child">童趣科普</el-radio-button>
                 <el-radio-button value="life_experience">生活经验</el-radio-button>
+                <el-radio-button value="history_mystery">历史谜案</el-radio-button>
               </el-radio-group>
             </el-descriptions-item>
             <el-descriptions-item label="预计时间">
@@ -472,7 +473,7 @@ const regeneratingDescription = ref(false);
 const generatingImagePrompts = ref(false);
 const sourceTitle = ref("");
 const jobOrientation = ref<"portrait" | "landscape">("portrait");
-const contentStyle = ref<"science_child" | "life_experience">("science_child");
+const contentStyle = ref<"science_child" | "life_experience" | "history_mystery">("science_child");
 const segmentTargetSec = ref(DEFAULT_SEGMENT_TARGET_SEC);
 const maxTitleLength = ref(DEFAULT_MAX_TITLE_LENGTH);
 const narrationTargetWords = ref(DEFAULT_NARRATION_TARGET_WORDS);
@@ -759,7 +760,11 @@ function initJobProfileFromInfo() {
   if (info?.orientation === "landscape" || info?.orientation === "portrait") {
     jobOrientation.value = info.orientation;
   }
-  if (info?.content_style === "life_experience" || info?.content_style === "science_child") {
+  if (
+    info?.content_style === "life_experience" ||
+    info?.content_style === "science_child" ||
+    info?.content_style === "history_mystery"
+  ) {
     contentStyle.value = info.content_style;
   }
 }
