@@ -48,6 +48,18 @@ _DEFAULT_MOTION_PROMPT = (
 )
 _STABILITY_HINT = "画面稳定，无抖动，无快速运镜"
 _FRAME_CANDIDATES = (81, 121, 161, 241, 441)
+_AGNES_TRUSTED_IMAGE_HOST_MARKERS = (
+    "storage.googleapis.com",
+    "agnes-aigc",
+)
+_REVERSE_PROXY_HOST_MARKERS = (
+    "natapp",
+    "ngrok",
+    "frp.",
+    "cpolar",
+    "localtunnel",
+    "serveo.net",
+)
 
 
 def _stabilize_motion_prompt(prompt: str) -> str:
@@ -96,13 +108,26 @@ def _url_reachable(url: str, *, timeout: float = 12.0) -> bool:
         return False
 
 
-def _mirror_image_public_url(image_path: Path, *, timeout: float = 120.0) -> str:
-    """natapp 不可达时，将静图上传到公网临时托管（Agnes 文档要求 image 为公网 URL）。"""
-    mime = "image/png"
+def _is_agnes_trusted_image_url(url: str) -> bool:
+    lowered = url.lower()
+    return any(marker in lowered for marker in _AGNES_TRUSTED_IMAGE_HOST_MARKERS)
+
+
+def _is_reverse_proxy_public_url(url: str) -> bool:
+    """内网穿透域名：本机 HEAD 可达不代表 Agnes 云端能拉取。"""
+    lowered = url.lower()
+    return any(marker in lowered for marker in _REVERSE_PROXY_HOST_MARKERS)
+
+
+def _image_mime(image_path: Path) -> str:
     if image_path.suffix.lower() in {".jpg", ".jpeg"}:
-        mime = "image/jpeg"
-    elif image_path.suffix.lower() == ".webp":
-        mime = "image/webp"
+        return "image/jpeg"
+    if image_path.suffix.lower() == ".webp":
+        return "image/webp"
+    return "image/png"
+
+
+def _mirror_tmpfiles(image_path: Path, mime: str, *, timeout: float) -> str:
     with image_path.open("rb") as handle:
         resp = requests.post(
             "https://tmpfiles.org/api/v1/upload",
@@ -121,6 +146,42 @@ def _mirror_image_public_url(image_path: Path, *, timeout: float = 120.0) -> str
     return page_url
 
 
+def _mirror_litterbox(image_path: Path, mime: str, *, timeout: float) -> str:
+    with image_path.open("rb") as handle:
+        resp = requests.post(
+            "https://litterbox.catbox.moe/resources/internals/api.php",
+            data={"reqtype": "fileupload", "time": "1h"},
+            files={"fileToUpload": (image_path.name, handle, mime)},
+            timeout=(15.0, timeout),
+        )
+    resp.raise_for_status()
+    url = resp.text.strip()
+    if url.startswith("http://") or url.startswith("https://"):
+        return url
+    raise RuntimeError(f"litterbox upload missing url: {resp.text[:200]}")
+
+
+def _mirror_image_public_url(image_path: Path, *, timeout: float = 120.0) -> str:
+    """将静图上传到公网临时托管（Agnes 文档要求 image 为公网 URL）。"""
+    mime = _image_mime(image_path)
+    errors: list[str] = []
+    for name, upload in (
+        ("tmpfiles", _mirror_tmpfiles),
+        ("litterbox", _mirror_litterbox),
+    ):
+        try:
+            url = upload(image_path, mime, timeout=timeout)
+            logger.info("agnes i2v mirror upload ok via %s: %s", name, url[:96])
+            return url
+        except requests.RequestException as exc:
+            errors.append(f"{name}: {exc}")
+        except RuntimeError as exc:
+            errors.append(f"{name}: {exc}")
+    raise RuntimeError(
+        "agnes i2v mirror upload failed: " + "; ".join(errors)
+    )
+
+
 def _resolve_i2v_image_url(image_path: Path) -> str:
     settings = get_settings()
     source_url = _read_agnes_source_url(image_path)
@@ -132,6 +193,19 @@ def _resolve_i2v_image_url(image_path: Path) -> str:
         return source_url
 
     public_url = _to_public_media_url(image_path)
+
+    if _is_agnes_trusted_image_url(public_url):
+        logger.info("agnes i2v image: using trusted CDN URL")
+        return public_url
+
+    # natapp 等穿透：worker 自检可达，但 Agnes 云端往往拉不到或极慢
+    if settings.agnes_i2v_mirror_upload and _is_reverse_proxy_public_url(public_url):
+        logger.info(
+            "agnes i2v: reverse-proxy media URL (%s), mirroring for Agnes",
+            public_url[:80],
+        )
+        return _mirror_image_public_url(image_path)
+
     if _url_reachable(public_url):
         logger.info("agnes i2v image: using MEDIA_PUBLIC media URL")
         return public_url
