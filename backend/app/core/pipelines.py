@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from worker.stages.base import StageExecutor
-from worker.stages.common.intro import IntroStage
+from worker.stages.intro import IntroStage
 from worker.stages.common.publish import PublishStage
 from worker.stages.common.tts import TTSStage
 from worker.stages.standard.host import HostStage

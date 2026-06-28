@@ -160,8 +160,13 @@ class JobMgr:
         *,
         orientation: str | None = None,
         content_style: str | None = None,
+        intro_category: str | None = None,
     ) -> dict:
-        from app.utils.job_info import normalize_content_style, normalize_orientation
+        from app.utils.job_info import (
+            normalize_content_style,
+            normalize_intro_category,
+            normalize_orientation,
+        )
 
         patch: dict[str, str] = {}
         if orientation is not None:
@@ -176,6 +181,11 @@ class JobMgr:
                     "content_style must be science_child, life_experience or history_mystery"
                 )
             patch["content_style"] = normalized
+        if intro_category is not None:
+            normalized = normalize_intro_category(intro_category)
+            if normalized is None:
+                raise ValueError("intro_category must be 百科 or 历史悬案")
+            patch["intro_category"] = normalized
         if not patch:
             raise ValueError("no updatable info fields provided")
         with connection() as conn:
@@ -529,7 +539,7 @@ class JobMgr:
         orientation: str | None = None,
         orientation_preference: str | None = None,
     ) -> dict:
-        """生成片头。实现：worker/loop.run_intro → worker/stages/common/intro.py"""
+        """生成片头。实现：worker/loop.run_intro → worker/stages/intro/"""
         from worker.loop import run_intro
 
         if orientation_preference is not None:

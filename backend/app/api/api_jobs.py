@@ -24,6 +24,7 @@ from app.utils.job_info import (
     merge_job_info,
     normalize_content_style,
     normalize_image_provider,
+    normalize_intro_category,
     normalize_orientation,
     normalize_video_provider,
 )
@@ -374,13 +375,17 @@ def update_job_info_route():
     content_style = None
     if "content_style" in data:
         content_style = normalize_content_style(parse_optional_str(data, "content_style"))
-    if orientation is None and content_style is None:
-        raise APIError("at least one field required: orientation, content_style")
+    intro_category = None
+    if "intro_category" in data:
+        intro_category = normalize_intro_category(parse_optional_str(data, "intro_category"))
+    if orientation is None and content_style is None and intro_category is None:
+        raise APIError("at least one field required: orientation, content_style, intro_category")
     try:
         job = job_mgr.update_job_info(
             job_id,
             orientation=orientation,
             content_style=content_style,
+            intro_category=intro_category,
         )
     except ValueError as exc:
         raise APIError(str(exc)) from exc

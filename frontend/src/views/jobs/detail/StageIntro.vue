@@ -16,6 +16,17 @@
             label-width="96px"
             class="[&_.el-form-item]:mb-3 [&_.el-form-item__content]:min-w-0 [&_.el-form-item__content]:flex-1"
           >
+            <el-form-item label="片头风格">
+              <el-radio-group
+                v-model="introCategory"
+                class="intro-orientation-group"
+                :disabled="savingIntroCategory || actionDisabled"
+                @change="handleIntroCategoryChange"
+              >
+                <el-radio value="百科">童趣百科</el-radio>
+                <el-radio value="历史悬案">历史悬案</el-radio>
+              </el-radio-group>
+            </el-form-item>
             <el-form-item label="画面方向">
               <el-radio-group v-model="introOrientation" class="intro-orientation-group">
                 <el-radio value="auto">自动</el-radio>
@@ -133,9 +144,9 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { runJobStageAction } from "@/api/api-jobs";
+import { runJobStageAction, updateJobInfo } from "@/api/api-jobs";
 import { getMediaDuration, getMediaFileUrl } from "@/api/api-media";
-import type { JobDetail, JobLog } from "@/types/jobs";
+import type { IntroCategory, JobDetail, JobLog } from "@/types/jobs";
 import { formatDateTime } from "@/utils/date";
 import { useErrorHandler } from "@/composables/useErrorHandler";
 
@@ -164,6 +175,19 @@ function defaultIntroOrientation(job: JobDetail): "auto" | "portrait" | "landsca
   return job.pipeline === "material" ? "auto" : "portrait";
 }
 
+function defaultIntroCategory(job: JobDetail): IntroCategory {
+  const saved = job.info?.intro_category;
+  if (saved === "百科" || saved === "历史悬案") {
+    return saved;
+  }
+  if (job.info?.content_style === "history_mystery") {
+    return "历史悬案";
+  }
+  return "百科";
+}
+
+const introCategory = ref<IntroCategory>(defaultIntroCategory(props.job));
+const savingIntroCategory = ref(false);
 const introOrientation = ref<"auto" | "portrait" | "landscape">(
   defaultIntroOrientation(props.job)
 );
@@ -265,6 +289,22 @@ const onVideoMetadata = (event: Event) => {
   }
 };
 
+const handleIntroCategoryChange = (value: IntroCategory) => {
+  if (actionDisabled.value) {
+    return;
+  }
+  savingIntroCategory.value = true;
+  void updateJobInfo(props.job.id, { intro_category: value })
+    .then(() => emit("refresh"))
+    .catch(error => {
+      introCategory.value = defaultIntroCategory(props.job);
+      handleError(error, "更新片头风格失败");
+    })
+    .finally(() => {
+      savingIntroCategory.value = false;
+    });
+};
+
 const handleRun = async (toEnd: boolean) => {
   const actionLabel = toEnd ? "从此成片" : "重新生成";
   try {
@@ -301,6 +341,24 @@ const handleRun = async (toEnd: boolean) => {
     submitting.value = false;
   }
 };
+
+watch(
+  () => props.job.info?.intro_category,
+  (category) => {
+    if (category === "百科" || category === "历史悬案") {
+      introCategory.value = category;
+    }
+  }
+);
+
+watch(
+  () => props.job.info?.content_style,
+  () => {
+    if (!props.job.info?.intro_category) {
+      introCategory.value = defaultIntroCategory(props.job);
+    }
+  }
+);
 
 watch(
   () => props.job.info?.orientation,
