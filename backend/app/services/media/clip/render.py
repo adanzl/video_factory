@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+import math
+import subprocess
 from pathlib import Path
+
+import numpy as np
+from PIL import Image
 
 from app.config import get_settings
 from app.services.media.ffmpeg_utils import (
@@ -75,31 +80,8 @@ def _motion_vf(
     width: int,
     height: int,
 ) -> str:
-    """Ken Burns：用 scale + crop 替代 zoompan，消除帧间插值抖动。"""
-    frames = max(int(duration_sec * CLIP_FPS), 1)
-    zoom_max = _motion_zoom_max(preset)
-    delta = zoom_max - 1.0
-    mf = max(int(frames * _MOTION_FINISH_RATIO), 1)
-    ease = f"0.5-0.5*cos(PI*n/{mf})"
-    prog = f"min(1,{ease})"
-    w, h = width, height
-
-    prep = _prep_filter(headroom=zoom_max + 0.04, width=w, height=h)
-    prep_pan = _prep_filter(headroom=max(max(zoom_max, 1.06) + 0.10, 1.22), width=w, height=h)
-
-    mode = segment_index % 4
-    if mode == 0:
-        z = f"1+{delta:.4f}*({prog})"
-        return f"{prep},scale=iw*({z}):ih*({z}):flags=lanczos:eval=frame,crop={w}:{h}:(iw*({z})-{w})/2:(ih*({z})-{h})/2{_pix_fmt_filter_suffix()}"
-    elif mode == 1:
-        z = f"{zoom_max:.4f}-{delta:.4f}*({prog})"
-        return f"{prep},scale=iw*({z}):ih*({z}):flags=lanczos:eval=frame,crop={w}:{h}:(iw*({z})-{w})/2:(ih*({z})-{h})/2{_pix_fmt_filter_suffix()}"
-    elif mode == 2:
-        x = f"(iw-{w})*({prog})"
-        return f"{prep_pan},crop={w}:{h}:{x}:(ih-{h})/2,scale={w}:{h}:flags=lanczos{_pix_fmt_filter_suffix()}"
-    else:
-        x = f"(iw-{w})*(1-{prog})"
-        return f"{prep_pan},crop={w}:{h}:{x}:(ih-{h})/2,scale={w}:{h}:flags=lanczos{_pix_fmt_filter_suffix()}"
+    """已废弃——改为 PIL 逐帧渲染。返回 scale+pad（无动效）用于字幕 overlay 基底。"""
+    return _scale_pad_vf(width=width, height=height)
 
 
 def _resolve_clip_canvas(
@@ -160,47 +142,30 @@ def image_to_clip_with_overlay(
     width: int | None = None,
     height: int | None = None,
 ) -> Path:
-    """Ken Burns 动效 + 单张字幕 overlay，单次编码。"""
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    """Ken Burns + 单张字幕 overlay，numpy 管道编码。"""
     canvas_w, canvas_h = _resolve_clip_canvas(width, height)
-    motion = _motion_vf(
-        duration_sec,
-        preset=preset,
-        segment_index=segment_index,
-        width=canvas_w,
-        height=canvas_h,
-    ).removesuffix(
-        _pix_fmt_filter_suffix()
+    overlay_img = np.array(Image.open(overlay_path).convert("RGBA"))
+    fps = CLIP_FPS
+    total_frames = max(int(duration_sec * fps), 1)
+    base_gen = _render_ken_burns_frames_np(
+        image_path, total_sec=duration_sec,
+        preset=preset, segment_index=segment_index,
+        width=canvas_w, height=canvas_h,
     )
-    filter_parts = [
-        f"[0:v]{motion}{_pix_fmt_filter_suffix()}[bg]",
-        f"[1:v]format=rgba,scale={canvas_w}:{canvas_h}[fg]",
-        f"[bg][fg]overlay=0:0:format=auto{_pix_fmt_filter_suffix()}[out]",
-    ]
-    filter_complex = ";".join(finalize_filter_complex(filter_parts, force_cpu=True))
 
-    run_ffmpeg(
-        [
-            *ffmpeg_cmd_start(hwaccel=False),
-            "-loop",
-            "1",
-            "-i",
-            str(image_path),
-            "-i",
-            str(overlay_path),
-            "-filter_complex",
-            filter_complex,
-            "-map",
-            "[out]",
-            "-t",
-            str(duration_sec),
-            *libx264_encode_args(subtitle=True, force_cpu=True),
-            "-sws_flags",
-            "lanczos+accurate_rnd+full_chroma_int",  # cSpell: disable-line
-            str(output_path),
-        ]
+    def composite_gen():
+        for frame_data in base_gen:
+            frame = np.frombuffer(frame_data, dtype=np.uint8).reshape((canvas_h, canvas_w, 3))
+            rgba = np.dstack([frame, np.full((canvas_h, canvas_w), 255, dtype=np.uint8)])
+            alpha = overlay_img[:, :, 3:4] / 255.0
+            blended = (rgba * (1 - alpha) + overlay_img * alpha).astype(np.uint8)[:, :, :3]
+            yield blended.tobytes()
+
+    return _encode_frames(
+        composite_gen(), output_path,
+        total_frames=total_frames, fps=fps,
+        width=canvas_w, height=canvas_h,
     )
-    return output_path
 
 
 def image_to_clip_timed_overlays(
@@ -214,80 +179,161 @@ def image_to_clip_timed_overlays(
     width: int | None = None,
     height: int | None = None,
 ) -> Path:
-    """连续 Ken Burns + 多段字幕按时间轴切换，单次编码。"""
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    if not overlay_windows:
-        return image_to_clip(
-            image_path,
-            output_path,
-            duration_sec,
-            preset=preset,
-            segment_index=segment_index,
-            width=width,
-            height=height,
-        )
-
+    """连续 Ken Burns + 多段字幕按时间轴切换，numpy 管道编码。"""
     canvas_w, canvas_h = _resolve_clip_canvas(width, height)
-    motion = _motion_vf(
-        duration_sec,
-        preset=preset,
-        segment_index=segment_index,
-        width=canvas_w,
-        height=canvas_h,
-    ).removesuffix(
-        _pix_fmt_filter_suffix()
+    fps = CLIP_FPS
+    total_frames = max(int(duration_sec * fps), 1)
+    base_gen = _render_ken_burns_frames_np(
+        image_path, total_sec=duration_sec,
+        preset=preset, segment_index=segment_index,
+        width=canvas_w, height=canvas_h,
     )
-    parts = [f"[0:v]{motion}{_pix_fmt_filter_suffix()}[bg]"]
-    for idx, (overlay_path, _, _) in enumerate(overlay_windows):
-        _ = overlay_path
-        parts.append(f"[{idx + 1}:v]format=rgba,scale={canvas_w}:{canvas_h}[s{idx}]")
 
-    current = "bg"
-    for idx, (_, start, end) in enumerate(overlay_windows):
-        nxt = "out" if idx == len(overlay_windows) - 1 else f"v{idx}"
-        parts.append(
-            f"[{current}][s{idx}]overlay=0:0:format=auto:enable='between(t,{start:.3f},{end:.3f})'[{nxt}]"
+    if not overlay_windows:
+        return _encode_frames(
+            base_gen, output_path,
+            total_frames=total_frames, fps=fps,
+            width=canvas_w, height=canvas_h,
         )
-        current = nxt
 
-    parts = finalize_filter_complex(parts, force_cpu=True)
+    overlays = [(np.array(Image.open(p).convert("RGBA")), s, e) for p, s, e in overlay_windows]
+
+    def composite_gen():
+        for fn, frame_data in enumerate(base_gen):
+            t = fn / fps
+            frame = np.frombuffer(frame_data, dtype=np.uint8).reshape((canvas_h, canvas_w, 3))
+            rgba = np.dstack([frame, np.full((canvas_h, canvas_w), 255, dtype=np.uint8)])
+            for ov_img, start, end in overlays:
+                if start <= t < end:
+                    alpha = ov_img[:, :, 3:4] / 255.0
+                    blended = (rgba * (1 - alpha) + ov_img * alpha).astype(np.uint8)[:, :, :3]
+                    yield blended.tobytes()
+                    break
+            else:
+                yield frame_data
+
+    return _encode_frames(
+        composite_gen(), output_path,
+        total_frames=total_frames, fps=fps,
+        width=canvas_w, height=canvas_h,
+    )
+
+
+def _image_to_clip_fallback(
+    image_path: Path,
+    output_path: Path,
+    duration_sec: float,
+    *,
+    preset: str = "ken_burns_slow",
+    segment_index: int = 0,
+    width: int | None = None,
+    height: int | None = None,
+) -> Path:
+    canvas_w, canvas_h = _resolve_clip_canvas(width, height)
+    fps = CLIP_FPS
+    total_frames = max(int(duration_sec * fps), 1)
+    return _encode_frames(
+        _render_ken_burns_frames_np(
+            image_path, total_sec=duration_sec,
+            preset=preset, segment_index=segment_index,
+            width=canvas_w, height=canvas_h,
+        ),
+        output_path,
+        total_frames=total_frames, fps=fps,
+        width=canvas_w, height=canvas_h,
+    )
+
+
+def _encode_frames(
+    frame_gen,
+    output_path: Path,
+    *,
+    total_frames: int,
+    fps: int,
+    width: int,
+    height: int,
+) -> Path:
+    """将帧生成器的 RGB bytes 管道传给 FFmpeg 编码。"""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
-        *ffmpeg_cmd_start(hwaccel=False),
-        "-loop",
-        "1",
-        "-i",
-        str(image_path),
+        "ffmpeg", "-y", "-hide_banner",
+        "-f", "rawvideo",
+        "-pixel_format", "rgb24",
+        "-video_size", f"{width}x{height}",
+        "-framerate", str(fps),
+        "-i", "-",
+        "-c:v", "libx264",
+        "-crf", str(get_settings().ffmpeg_crf),
+        "-pix_fmt", "yuv420p",
+        "-movflags", "+faststart",
+        str(output_path),
     ]
-    for overlay_path, _, _ in overlay_windows:
-        cmd.extend(
-            [
-                "-loop",
-                "1",
-                "-framerate",
-                str(CLIP_FPS),
-                "-i",
-                str(overlay_path),
-            ]
-        )
-    cmd.extend(
-        [
-            "-filter_complex",
-            ";".join(parts),
-            "-map",
-            "[out]",
-            "-t",
-            str(duration_sec),
-            *libx264_encode_args(subtitle=True, force_cpu=True),
-            "-sws_flags",
-            "lanczos+accurate_rnd+full_chroma_int",  # cSpell: disable-line
-            str(output_path),
-        ]
-    )
-    run_ffmpeg(cmd)
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    total_bytes = 0
+    for i, frame_data in enumerate(frame_gen):
+        if frame_data is None:
+            break
+        proc.stdin.write(frame_data)
+        total_bytes += len(frame_data)
+    proc.stdin.close()
+    _, stderr = proc.communicate()
+    if proc.returncode != 0:
+        raise RuntimeError(f"ffmpeg encode failed: {stderr[-500:]}")
     return output_path
 
 
-def _scale_pad_vf(*, width: int, height: int) -> str:
+def _render_ken_burns_frames_np(
+    image_path: Path,
+    *,
+    total_sec: float,
+    preset: str,
+    segment_index: int,
+    width: int,
+    height: int,
+):
+    """Ken Burns 帧生成器（numpy array），逐帧 yield RGB bytes。"""
+    fps = CLIP_FPS
+    total_frames = max(int(total_sec * fps), 1)
+    zoom_max = _motion_zoom_max(preset)
+    delta = zoom_max - 1.0
+    motion_frames = max(int(total_frames * _MOTION_FINISH_RATIO), 1)
+    pw = int(width * 1.20)
+    ph = int(height * 1.20)
+
+    src = Image.open(image_path).convert("RGB")
+    prepped = np.array(src.resize((pw, ph), Image.LANCZOS))
+
+    mode = segment_index % 4
+    for fn in range(total_frames):
+        progress = min(1.0, 0.5 - 0.5 * math.cos(math.pi * fn / motion_frames)) if motion_frames > 0 else 1.0
+        if mode == 0:
+            zoom = 1.0 + delta * progress
+            crop_w = int(width / zoom)
+            crop_h = int(height / zoom)
+            cx = (pw - crop_w) // 2
+            cy = (ph - crop_h) // 2
+            chunk = prepped[cy:cy + crop_h, cx:cx + crop_w]
+            frame = Image.fromarray(chunk).resize((width, height), Image.LANCZOS)
+            yield np.array(frame).tobytes()
+        elif mode == 1:
+            zoom = zoom_max - delta * progress
+            crop_w = max(1, int(width / zoom))
+            crop_h = max(1, int(height / zoom))
+            cx = (pw - crop_w) // 2
+            cy = (ph - crop_h) // 2
+            chunk = prepped[cy:cy + crop_h, cx:cx + crop_w]
+            frame = Image.fromarray(chunk).resize((width, height), Image.LANCZOS)
+            yield np.array(frame).tobytes()
+        elif mode == 2:
+            pan_x = int((pw - width) * progress)
+            cy = (ph - height) // 2
+            raw = prepped[cy:cy + height, pan_x:pan_x + width]
+            yield raw.tobytes()
+        else:
+            pan_x = int((pw - width) * (1.0 - progress))
+            cy = (ph - height) // 2
+            raw = prepped[cy:cy + height, pan_x:pan_x + width]
+            yield raw.tobytes()
     return (
         f"scale={width}:{height}:force_original_aspect_ratio=decrease:flags=lanczos,"
         f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1"
