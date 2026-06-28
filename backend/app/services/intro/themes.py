@@ -40,7 +40,21 @@ THEMES: dict[str, IntroTheme] = {
         accent=(255, 214, 64, 255),
         particle=(255, 255, 255, 40),
     ),
-    # 预留：生活 / 历史 / 科技 …
+    "历史悬案": IntroTheme(
+        bg_top=(15, 8, 5),
+        bg_bottom=(50, 30, 20),
+        title_fill=(220, 170, 100, 255),
+        title_stroke=(60, 30, 15, 255),
+        brand_fill=(180, 120, 60, 255),
+        brand_stroke=(255, 200, 120, 180),
+        title_circle_top=(80, 40, 20, 255),
+        title_circle_bottom=(20, 10, 5, 40),
+        badge_text="谜案",
+        badge_bg=(40, 20, 10, 220),
+        badge_fg=(220, 170, 100, 255),
+        accent=(180, 100, 40, 255),
+        particle=(200, 150, 80, 30),
+    ),
 }
 
 

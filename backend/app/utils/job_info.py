@@ -19,6 +19,9 @@ _VALID_CONTENT_STYLES = frozenset(
 
 _VALID_IMAGE_PROVIDERS = frozenset({"z_image_t2i", "wan_t2i", "sd15_t2i", "agnes_t2i"})
 _VALID_VIDEO_PROVIDERS = frozenset({"ffmpeg", "wan_i2v", "agnes_i2v"})
+INTRO_CATEGORY_SCIENCE = "百科"
+INTRO_CATEGORY_HISTORY = "历史悬案"
+_VALID_INTRO_CATEGORIES = frozenset({INTRO_CATEGORY_SCIENCE, INTRO_CATEGORY_HISTORY})
 
 
 def parse_job_info(raw: str | dict | None) -> dict[str, Any]:
@@ -106,6 +109,40 @@ def content_style_from_job(job: dict) -> str:
         if normalized:
             return normalized
     return CONTENT_STYLE_SCIENCE_CHILD
+
+
+def normalize_intro_category(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    if normalized in _VALID_INTRO_CATEGORIES:
+        return normalized
+    aliases = {
+        "science": INTRO_CATEGORY_SCIENCE,
+        "science_child": INTRO_CATEGORY_SCIENCE,
+        "history_mystery": INTRO_CATEGORY_HISTORY,
+        "mystery": INTRO_CATEGORY_HISTORY,
+    }
+    return aliases.get(normalized.lower())
+
+
+def default_intro_category_for_content_style(content_style: str) -> str:
+    if content_style == CONTENT_STYLE_HISTORICAL_MYSTERY:
+        return INTRO_CATEGORY_HISTORY
+    return INTRO_CATEGORY_SCIENCE
+
+
+def intro_category_from_job(job: dict) -> str:
+    raw = parse_job_info(job.get("info")).get("intro_category")
+    if isinstance(raw, str):
+        normalized = normalize_intro_category(raw)
+        if normalized:
+            return normalized
+    return default_intro_category_for_content_style(content_style_from_job(job))
+
+
+def is_history_intro_category(category: str) -> bool:
+    return category == INTRO_CATEGORY_HISTORY
 
 
 def is_landscape_job(job: dict) -> bool:
