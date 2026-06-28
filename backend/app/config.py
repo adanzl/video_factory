@@ -127,6 +127,7 @@ class Config:
     clip_submit_interval_sec: float = float(
         os.getenv("CLIP_SUBMIT_INTERVAL_SEC", os.getenv("IMAGE_SUBMIT_INTERVAL_SEC", "3"))
     )
+    agnes_submit_interval_sec: float = float(os.getenv("AGNES_SUBMIT_INTERVAL_SEC", "12"))
     wan_i2v_model: str = os.getenv("WAN_I2V_MODEL", "wanx2.1-i2v-turbo")  # cSpell: disable-line
     wan_i2v_resolution: str = os.getenv("WAN_I2V_RESOLUTION", "720P")
     wan_i2v_prompt_extend: bool = _bool("WAN_I2V_PROMPT_EXTEND", True)
@@ -163,10 +164,10 @@ class Config:
     agnes_api_base_url: str = os.getenv("AGNES_API_BASE_URL", "https://apihub.agnes-ai.com/v1")
     agnes_image_model: str = os.getenv("AGNES_IMAGE_MODEL", "agnes-image-2.1-flash")
     agnes_image_size: str = os.getenv("AGNES_IMAGE_SIZE", _WAN_IMAGE_SIZE)
-    agnes_http_max_retries: int = int(os.getenv("AGNES_HTTP_MAX_RETRIES", "3"))
+    agnes_http_max_retries: int = int(os.getenv("AGNES_HTTP_MAX_RETRIES", "5"))
     agnes_http_connect_timeout_sec: float = float(os.getenv("AGNES_HTTP_CONNECT_TIMEOUT_SEC", "15"))
     agnes_http_submit_read_timeout_sec: float = float(
-        os.getenv("AGNES_HTTP_SUBMIT_READ_TIMEOUT_SEC", "30")
+        os.getenv("AGNES_HTTP_SUBMIT_READ_TIMEOUT_SEC", "60")
     )
     agnes_http_poll_read_timeout_sec: float = float(
         os.getenv("AGNES_HTTP_POLL_READ_TIMEOUT_SEC", "30")

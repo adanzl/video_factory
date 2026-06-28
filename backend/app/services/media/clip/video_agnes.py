@@ -20,6 +20,29 @@ from app.utils.media_path import resolve_media_public_base_url, to_media_url_pat
 logger = logging.getLogger(__name__)
 
 _RETRYABLE = {429, 500, 502, 503, 504}
+
+
+def _backoff_seconds(
+    attempt: int,
+    *,
+    status_code: int | None = None,
+    response: requests.Response | None = None,
+    label: str = "request",
+    is_timeout: bool = False,
+) -> float:
+    """429 / 提交读超时用更长退避，避免连续重投触发限流。"""
+    if status_code == 429:
+        if response is not None:
+            raw = response.headers.get("Retry-After")
+            if raw:
+                try:
+                    return max(float(raw), 30.0)
+                except ValueError:
+                    pass
+        return min(30.0 + attempt * 20.0, 120.0)
+    if label == "submit" and is_timeout:
+        return min(45.0 + attempt * 30.0, 180.0)
+    return min(2**attempt * 2, 60.0)
 _DEFAULT_MOTION_PROMPT = (
     "镜头固定或极轻微缓慢推进，主体清晰稳定，画面平滑无抖动，科普讲解风格"
 )
@@ -70,7 +93,7 @@ class AgnesClipProvider(ClipProvider):
         self._poll_root = _agnes_api_root(base)
         self._model = settings.agnes_video_model
         self._frame_rate = settings.agnes_video_frame_rate
-        self._submit_interval = settings.clip_submit_interval_sec
+        self._submit_interval = settings.agnes_submit_interval_sec
         self._http_max_retries = settings.agnes_http_max_retries
         self._connect_timeout = settings.agnes_http_connect_timeout_sec
         self._submit_read_timeout = settings.agnes_http_submit_read_timeout_sec
@@ -116,7 +139,12 @@ class AgnesClipProvider(ClipProvider):
                     method, url, headers=h, json=json, timeout=req_timeout
                 )
                 if resp.status_code in _RETRYABLE:
-                    wait = min(2**attempt * 2, 60)
+                    wait = _backoff_seconds(
+                        attempt,
+                        status_code=resp.status_code,
+                        response=resp,
+                        label=label,
+                    )
                     logger.warning(
                         "agnes %s %s %s, retry %s/%s in %ss",
                         label,
@@ -130,9 +158,28 @@ class AgnesClipProvider(ClipProvider):
                     continue
                 resp.raise_for_status()
                 return resp
+            except requests.Timeout as exc:
+                last_exc = exc
+                wait = _backoff_seconds(
+                    attempt,
+                    label=label,
+                    is_timeout=True,
+                )
+                logger.warning(
+                    "agnes %s %s %s read timeout (async API 未等成片，多为网关/网络慢): %s, "
+                    "retry %s/%s in %ss",
+                    label,
+                    method,
+                    url,
+                    exc,
+                    attempt + 1,
+                    retries,
+                    wait,
+                )
+                time.sleep(wait)
             except requests.RequestException as exc:
                 last_exc = exc
-                wait = min(2**attempt * 2, 60)
+                wait = _backoff_seconds(attempt, label=label)
                 logger.warning(
                     "agnes %s %s %s error: %s, retry %s/%s in %ss",
                     label,
@@ -201,7 +248,16 @@ class AgnesClipProvider(ClipProvider):
             except RuntimeError as exc:
                 last_exc = exc
                 msg = str(exc)
-                if attempt >= max_attempts - 1 or "failed" not in msg.lower() and "timeout" not in msg.lower():
+                if attempt >= max_attempts - 1 or not any(
+                    token in msg.lower()
+                    for token in (
+                        "failed",
+                        "timeout",
+                        "429",
+                        "rate limit",
+                        "too many",
+                    )
+                ):
                     raise
                 wait = 10 * (attempt + 1)
                 logger.warning(
