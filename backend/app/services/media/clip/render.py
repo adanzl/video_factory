@@ -82,44 +82,24 @@ def _motion_vf(
     mf = max(int(frames * _MOTION_FINISH_RATIO), 1)
     ease = f"0.5-0.5*cos(PI*n/{mf})"
     prog = f"min(1,{ease})"
+    w, h = width, height
+
+    prep = _prep_filter(headroom=zoom_max + 0.04, width=w, height=h)
+    prep_pan = _prep_filter(headroom=max(max(zoom_max, 1.06) + 0.10, 1.22), width=w, height=h)
 
     mode = segment_index % 4
     if mode == 0:
-        # 居中放大：crop 逐渐缩小，scale 放大回目标
-        headroom = zoom_max + 0.04
-        cw = f"ow/(1+{delta:.4f}*({prog}))"
-        ch = f"oh/(1+{delta:.4f}*({prog}))"
-        x = f"(iw-({cw}))/2"
-        y = f"(ih-({ch}))/2"
-        prep = _prep_filter(headroom=headroom, width=width, height=height)
-        return f"{prep},crop={cw}:{ch}:{x}:{y},scale={width}:{height}:flags=lanczos{_pix_fmt_filter_suffix()}"
+        z = f"1+{delta:.4f}*({prog})"
+        return f"{prep},scale=iw*({z}):ih*({z}):flags=lanczos:eval=frame,crop={w}:{h}:(iw*({z})-{w})/2:(ih*({z})-{h})/2{_pix_fmt_filter_suffix()}"
     elif mode == 1:
-        # 居中缩小：crop 从缩小状态放大回目标
-        headroom = zoom_max + 0.04
-        cw = f"ow/({zoom_max:.4f}-{delta:.4f}*({prog}))"
-        ch = f"oh/({zoom_max:.4f}-{delta:.4f}*({prog}))"
-        x = f"(iw-({cw}))/2"
-        y = f"(ih-({ch}))/2"
-        prep = _prep_filter(headroom=headroom, width=width, height=height)
-        return f"{prep},crop={cw}:{ch}:{x}:{y},scale={width}:{height}:flags=lanczos{_pix_fmt_filter_suffix()}"
+        z = f"{zoom_max:.4f}-{delta:.4f}*({prog})"
+        return f"{prep},scale=iw*({z}):ih*({z}):flags=lanczos:eval=frame,crop={w}:{h}:(iw*({z})-{w})/2:(ih*({z})-{h})/2{_pix_fmt_filter_suffix()}"
     elif mode == 2:
-        # 右移：crop 窗口从左向右平移
-        pan_zoom = max(zoom_max, 1.06)
-        headroom = max(pan_zoom + 0.10, 1.22)
-        cw, ch = width, height
-        x = f"(iw-{cw})*({prog})"
-        y = f"(ih-{ch})/2"
-        prep = _prep_filter(headroom=headroom, width=width, height=height)
-        return f"{prep},crop={cw}:{ch}:{x}:{y},scale={width}:{height}:flags=lanczos{_pix_fmt_filter_suffix()}"
+        x = f"(iw-{w})*({prog})"
+        return f"{prep_pan},crop={w}:{h}:{x}:(ih-{h})/2,scale={w}:{h}:flags=lanczos{_pix_fmt_filter_suffix()}"
     else:
-        # 左移：crop 窗口从右向左平移
-        pan_zoom = max(zoom_max, 1.06)
-        headroom = max(pan_zoom + 0.10, 1.22)
-        cw, ch = width, height
-        x = f"(iw-{cw})*(1-{prog})"
-        y = f"(ih-{ch})/2"
-        prep = _prep_filter(headroom=headroom, width=width, height=height)
-        return f"{prep},crop={cw}:{ch}:{x}:{y},scale={width}:{height}:flags=lanczos{_pix_fmt_filter_suffix()}"
+        x = f"(iw-{w})*(1-{prog})"
+        return f"{prep_pan},crop={w}:{h}:{x}:(ih-{h})/2,scale={w}:{h}:flags=lanczos{_pix_fmt_filter_suffix()}"
 
 
 def _resolve_clip_canvas(
