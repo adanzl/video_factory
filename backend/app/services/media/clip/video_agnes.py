@@ -7,7 +7,7 @@ import math
 import threading
 import time
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 import requests
 
@@ -74,6 +74,84 @@ def _to_public_media_url(local_path: Path) -> str:
     return f"{base.rstrip('/')}/v_factory/api/media/files/{encoded}"
 
 
+def _read_agnes_source_url(image_path: Path) -> str | None:
+    """文生图若由 Agnes 返回 CDN URL，侧车文件供图生视频直接引用（无需 natapp）。"""
+    sidecar = image_path.with_name(image_path.name + ".agnes_source_url")
+    if not sidecar.is_file():
+        return None
+    url = sidecar.read_text(encoding="utf-8").strip()
+    if url.startswith("http://") or url.startswith("https://"):
+        return url
+    return None
+
+
+def _url_reachable(url: str, *, timeout: float = 12.0) -> bool:
+    try:
+        resp = requests.head(url, timeout=timeout, allow_redirects=True)
+        if resp.status_code in {405, 501}:
+            resp = requests.get(url, timeout=timeout, stream=True)
+            resp.close()
+        return resp.status_code < 400
+    except requests.RequestException:
+        return False
+
+
+def _mirror_image_public_url(image_path: Path, *, timeout: float = 120.0) -> str:
+    """natapp 不可达时，将静图上传到公网临时托管（Agnes 文档要求 image 为公网 URL）。"""
+    mime = "image/png"
+    if image_path.suffix.lower() in {".jpg", ".jpeg"}:
+        mime = "image/jpeg"
+    elif image_path.suffix.lower() == ".webp":
+        mime = "image/webp"
+    with image_path.open("rb") as handle:
+        resp = requests.post(
+            "https://tmpfiles.org/api/v1/upload",
+            files={"file": (image_path.name, handle, mime)},
+            timeout=(15.0, timeout),
+        )
+    resp.raise_for_status()
+    body = resp.json()
+    data = body.get("data") if isinstance(body, dict) else None
+    page_url = data.get("url") if isinstance(data, dict) else None
+    if not isinstance(page_url, str) or not page_url.strip():
+        raise RuntimeError(f"tmpfiles upload missing url: {body}")
+    page_url = page_url.strip()
+    if "/dl/" not in page_url and "tmpfiles.org/" in page_url:
+        page_url = page_url.replace("tmpfiles.org/", "tmpfiles.org/dl/", 1)
+    return page_url
+
+
+def _resolve_i2v_image_url(image_path: Path) -> str:
+    settings = get_settings()
+    source_url = _read_agnes_source_url(image_path)
+    if source_url:
+        logger.info(
+            "agnes i2v image: using Agnes CDN URL from sidecar (%s)",
+            source_url[:80],
+        )
+        return source_url
+
+    public_url = _to_public_media_url(image_path)
+    if _url_reachable(public_url):
+        logger.info("agnes i2v image: using MEDIA_PUBLIC media URL")
+        return public_url
+
+    if settings.agnes_i2v_mirror_upload:
+        logger.warning(
+            "agnes i2v: media URL not reachable locally (%s), "
+            "uploading mirror for Agnes to fetch",
+            public_url[:80],
+        )
+        return _mirror_image_public_url(image_path)
+
+    logger.warning(
+        "agnes i2v: media URL may be unreachable by Agnes (%s). "
+        "创建任务时服务端会拉取 image，natapp 不可达会导致 POST 长时间无响应",
+        public_url,
+    )
+    return public_url
+
+
 def _agnes_api_root(base_url: str) -> str:
     cleaned = base_url.rstrip("/")
     if cleaned.endswith("/v1"):
@@ -100,6 +178,7 @@ class AgnesClipProvider(ClipProvider):
         self._poll_read_timeout = settings.agnes_http_poll_read_timeout_sec
         self._download_timeout = settings.agnes_video_download_timeout_sec
         self._task_max_retries = settings.agnes_video_task_max_retries
+        self._submit_max_retries = settings.agnes_video_submit_max_retries
         self._poll_max_attempts = settings.agnes_video_poll_max_attempts
         self._poll_interval_sec = settings.agnes_video_poll_interval_sec
 
@@ -122,6 +201,8 @@ class AgnesClipProvider(ClipProvider):
         label: str = "request",
     ) -> requests.Response:
         retries = max_retries if max_retries is not None else self._http_max_retries
+        if label == "submit" and max_retries is None:
+            retries = self._submit_max_retries
         h = headers or {}
         if timeout is None:
             read_timeout = (
@@ -165,12 +246,18 @@ class AgnesClipProvider(ClipProvider):
                     label=label,
                     is_timeout=True,
                 )
+                hint = ""
+                if label == "submit":
+                    hint = (
+                        "（异步 API 提交应秒级返回 video_id；"
+                        "若持续超时，多为 Agnes 拉取 image 公网 URL 失败或 natapp 不可达）"
+                    )
                 logger.warning(
-                    "agnes %s %s %s read timeout (async API 未等成片，多为网关/网络慢): %s, "
-                    "retry %s/%s in %ss",
+                    "agnes %s %s %s read timeout%s: %s, retry %s/%s in %ss",
                     label,
                     method,
                     url,
+                    hint,
                     exc,
                     attempt + 1,
                     retries,
@@ -214,27 +301,34 @@ class AgnesClipProvider(ClipProvider):
         prompt: str,
         output_path: Path,
         *,
-        width: int,
-        height: int,
         num_frames: int,
     ) -> Path:
         if not self._api_key:
             raise RuntimeError("AGNES_API_KEY 未配置，无法调用 Agnes 图生视频")
 
-        image_url = _to_public_media_url(image_path)
+        image_url = _resolve_i2v_image_url(image_path)
         headers = {
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
+            "Connection": "close",
         }
+        # 文档 I2V 示例：model + prompt + image + num_frames + frame_rate；
+        # mode=ti2vid 标明图生视频（与纯文生视频区分）。
         payload = {
             "model": self._model,
             "prompt": prompt,
             "image": image_url,
-            "width": width,
-            "height": height,
+            "mode": "ti2vid",
             "num_frames": num_frames,
             "frame_rate": self._frame_rate,
         }
+        logger.info(
+            "agnes i2v submit: model=%s frames=%s fps=%s image=%s...",
+            self._model,
+            num_frames,
+            self._frame_rate,
+            image_url[:96],
+        )
         self._throttle_submit()
         last_exc: Exception | None = None
         max_attempts = max(1, self._task_max_retries)
@@ -335,13 +429,16 @@ class AgnesClipProvider(ClipProvider):
         for poll_idx in range(self._poll_max_attempts):
             time.sleep(self._poll_interval_sec)
             if video_id:
-                poll_url = (
-                    f"{self._poll_root}/agnesapi"
-                    f"?video_id={video_id}&model_name={self._model}"
-                )
+                query = urlencode({"video_id": video_id})
+                poll_url = f"{self._poll_root}/agnesapi?{query}"
             else:
                 poll_url = f"{self._create_url}/{task_id}"
-            poll_resp = self._request("GET", poll_url, headers=headers, label="poll")
+            poll_resp = self._request(
+                "GET",
+                poll_url,
+                headers={**headers, "Connection": "close"},
+                label="poll",
+            )
             poll = poll_resp.json()
             if poll.get("error"):
                 err = poll["error"]
@@ -434,8 +531,6 @@ class AgnesClipProvider(ClipProvider):
                 image_path,
                 prompt,
                 raw_path,
-                width=clip_width,
-                height=clip_height,
                 num_frames=num_frames,
             )
             logger.info("clip %s: raw done, fitting to %.1fs", segment_index, total_duration)
