@@ -32,13 +32,23 @@
         >
           <template v-if="!isMaterialJob">
             <el-descriptions-item label="方向">
-              <el-radio-group v-model="jobOrientation" size="small">
+              <el-radio-group
+                v-model="jobOrientation"
+                size="small"
+                :disabled="savingProfile || actionDisabled"
+                @change="handleOrientationChange"
+              >
                 <el-radio-button value="portrait">竖屏</el-radio-button>
                 <el-radio-button value="landscape">横屏</el-radio-button>
               </el-radio-group>
             </el-descriptions-item>
             <el-descriptions-item label="类型">
-              <el-radio-group v-model="contentStyle" size="small">
+              <el-radio-group
+                v-model="contentStyle"
+                size="small"
+                :disabled="savingProfile || actionDisabled"
+                @change="handleContentStyleChange"
+              >
                 <el-radio-button value="science_child">童趣科普</el-radio-button>
                 <el-radio-button value="life_experience">生活经验</el-radio-button>
                 <el-radio-button value="history_mystery">历史谜案</el-radio-button>
@@ -432,8 +442,14 @@ import { computed, ref, watch } from "vue";
 import { DocumentCopy } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { getMediaDuration } from "@/api/api-media";
-import { previewScriptPrompts, generateVideoDescription, generateImagePrompts, runJobStageAction } from "@/api/api-jobs";
-import type { JobDetail, JobLog, LlmPromptStep, ScriptJson } from "@/types/jobs";
+import {
+  previewScriptPrompts,
+  generateVideoDescription,
+  generateImagePrompts,
+  runJobStageAction,
+  updateJobInfo,
+} from "@/api/api-jobs";
+import type { JobDetail, JobLog, LlmPromptStep, ScriptJson, UpdateJobInfoParams } from "@/types/jobs";
 import type { RunStageActionPayload } from "@/types/jobs/stageAction";
 import { isMaterialJob as checkMaterialJob } from "@/constants/jobStages";
 import { formatDateTime } from "@/utils/date";
@@ -484,6 +500,7 @@ const supplementaryInfo = ref("");
 const videoTimeline = ref("");
 const baseDurationSec = ref<number | null>(null);
 const narrationWordsTouched = ref(false);
+const savingProfile = ref(false);
 let syncingEstimateWords = false;
 const promptPanelOpen = ref<string[]>([]);
 const promptsLoading = ref(false);
@@ -768,6 +785,32 @@ function initJobProfileFromInfo() {
     contentStyle.value = info.content_style;
   }
 }
+
+const persistJobProfile = async (patch: UpdateJobInfoParams) => {
+  if (actionDisabled.value) {
+    return;
+  }
+  savingProfile.value = true;
+  try {
+    await updateJobInfo(props.job.id, patch);
+    emit("refresh");
+  } catch (error) {
+    initJobProfileFromInfo();
+    handleError(error, "更新配置失败");
+  } finally {
+    savingProfile.value = false;
+  }
+};
+
+const handleOrientationChange = (value: "portrait" | "landscape") => {
+  void persistJobProfile({ orientation: value });
+};
+
+const handleContentStyleChange = (
+  value: "science_child" | "life_experience" | "history_mystery"
+) => {
+  void persistJobProfile({ content_style: value });
+};
 
 function resolveScriptParams(info: JobDetail["info"]) {
   if (!info || typeof info !== "object") {

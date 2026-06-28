@@ -258,6 +258,7 @@ def build_script_params(
     generate_image_prompts: bool = False,
     supplementary_info: str | None = None,
     video_timeline: str | None = None,
+    content_style: str | None = None,
 ) -> dict[str, Any]:
     """组装脚本生成参数（info.script 子节点内容）。"""
     params: dict[str, Any] = {
@@ -266,10 +267,14 @@ def build_script_params(
     }
     if segment_target_sec is not None:
         params["segment_target_sec"] = segment_target_sec
+    elif content_style == CONTENT_STYLE_HISTORICAL_MYSTERY:
+        params["segment_target_sec"] = 8
     if max_title_length is not None:
         params["max_title_length"] = max_title_length
     if narration_target_words is not None:
         params["narration_target_words"] = narration_target_words
+    elif content_style == CONTENT_STYLE_HISTORICAL_MYSTERY:
+        params["narration_target_words"] = 1800
     if supplementary_info is not None:
         stripped = supplementary_info.strip()
         params["supplementary_info"] = stripped or None
@@ -304,6 +309,7 @@ def merge_job_script_params(
         generate_image_prompts=generate_image_prompts,
         supplementary_info=supplementary_info,
         video_timeline=video_timeline,
+        content_style=content_style,
     )
     for key, value in updates.items():
         if value is None:
@@ -316,6 +322,8 @@ def merge_job_script_params(
         merged.pop("script", None)
     if orientation is not None:
         merged["orientation"] = orientation
+    elif content_style == CONTENT_STYLE_HISTORICAL_MYSTERY:
+        merged.setdefault("orientation", ORIENTATION_LANDSCAPE)
     if content_style is not None:
         merged["content_style"] = content_style
     return merged

@@ -66,3 +66,8 @@ export interface CreateJobParams {
   skip_publish?: boolean;
   run_mode?: CreateJobRunMode;
 }
+
+export interface UpdateJobInfoParams {
+  orientation?: "portrait" | "landscape";
+  content_style?: "science_child" | "life_experience" | "history_mystery";
+}
