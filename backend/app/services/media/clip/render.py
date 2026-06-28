@@ -72,27 +72,31 @@ def _motion_vf(
     prog_z = f"min(1,0.5-0.5*cos(PI*n/{mf}))"
     prog_p = f"min(1,0.5-0.5*cos(PI*on/{mf}))"
 
-    mode = segment_index % 4
-    if mode == 0:
+    mode = (segment_index * 7 + 3) % 10
+    if mode < 5:
+        # 放大 50%
         headroom = zoom_max + 0.04
         prep = _prep_filter(headroom=headroom, width=width, height=height)
         z = f"1+{delta:.4f}*({prog_z})"
         return f"{prep},scale='iw*({z})':'ih*({z})':flags=bilinear:eval=frame,crop={width}:{height}:(iw-{width})/2:(ih-{height})/2{_pix_fmt_filter_suffix()}"
-    elif mode == 1:
-        headroom = zoom_max + 0.04
-        prep = _prep_filter(headroom=headroom, width=width, height=height)
-        z = f"{zoom_max:.4f}-{delta:.4f}*({prog_z})"
-        return f"{prep},scale='iw*({z})':'ih*({z})':flags=bilinear:eval=frame,crop={width}:{height}:(iw-{width})/2:(ih-{height})/2{_pix_fmt_filter_suffix()}"
-    elif mode == 2:
+    elif mode < 7:
+        # 右移 20%
         pan_zoom = max(zoom_max, 1.06)
         headroom = max(pan_zoom + 0.10, 1.22)
         prep = _prep_filter(headroom=headroom, width=width, height=height)
         return f"{prep},zoompan=z='{pan_zoom:.4f}':x='(iw-iw/zoom)*({prog_p})':y='ih/2-(ih/zoom/2)':d={frames}:s={width}x{height}:fps={CLIP_FPS}{_pix_fmt_filter_suffix()}"
-    else:
+    elif mode < 9:
+        # 左移 20%
         pan_zoom = max(zoom_max, 1.06)
         headroom = max(pan_zoom + 0.10, 1.22)
         prep = _prep_filter(headroom=headroom, width=width, height=height)
         return f"{prep},zoompan=z='{pan_zoom:.4f}':x='(iw-iw/zoom)*(1-{prog_p})':y='ih/2-(ih/zoom/2)':d={frames}:s={width}x{height}:fps={CLIP_FPS}{_pix_fmt_filter_suffix()}"
+    else:
+        # 缩小 10%
+        headroom = zoom_max + 0.04
+        prep = _prep_filter(headroom=headroom, width=width, height=height)
+        z = f"{zoom_max:.4f}-{delta:.4f}*({prog_z})"
+        return f"{prep},scale='iw*({z})':'ih*({z})':flags=bilinear:eval=frame,crop={width}:{height}:(iw-{width})/2:(ih-{height})/2{_pix_fmt_filter_suffix()}"
 
 
 def _resolve_clip_canvas(
