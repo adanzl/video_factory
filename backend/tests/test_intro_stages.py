@@ -2,8 +2,14 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+from app.services.intro.generator import _normalize_title
 from app.utils.job_info import CONTENT_STYLE_HISTORICAL_MYSTERY, CONTENT_STYLE_SCIENCE_CHILD
 from worker.stages.intro import IntroStage
+
+
+def test_intro_title_normalize_keeps_colon() -> None:
+    assert _normalize_title("秦陵：未解之谜") == "秦陵：未解之谜"
+    assert _normalize_title("秦陵:未解之谜") == "秦陵：未解之谜"
 
 
 def test_intro_stage_routes_history_mystery() -> None:
