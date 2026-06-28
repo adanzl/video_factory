@@ -364,6 +364,29 @@ def update_job_route():
     return json_ok(job_mgr.update_job(job_id, **updates))
 
 
+@bp.post("/updateInfo")
+def update_job_info_route():
+    data = get_json_body()
+    job_id = parse_id(data)
+    orientation = None
+    if "orientation" in data:
+        orientation = normalize_orientation(parse_optional_str(data, "orientation"))
+    content_style = None
+    if "content_style" in data:
+        content_style = normalize_content_style(parse_optional_str(data, "content_style"))
+    if orientation is None and content_style is None:
+        raise APIError("at least one field required: orientation, content_style")
+    try:
+        job = job_mgr.update_job_info(
+            job_id,
+            orientation=orientation,
+            content_style=content_style,
+        )
+    except ValueError as exc:
+        raise APIError(str(exc)) from exc
+    return json_ok(job)
+
+
 @bp.post("/reset")
 def reset_job_route():
     data = get_json_body()

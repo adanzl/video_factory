@@ -9,6 +9,7 @@ import type {
   JobLog,
   JobSegment,
   ListJobsParams,
+  UpdateJobInfoParams,
 } from "@/types/jobs";
 import type { RunStageActionPayload, PreviewScriptPromptsPayload } from "@/types/jobs/stageAction";
 import type { LlmPromptStep } from "@/types/jobs/script";
@@ -53,6 +54,17 @@ export async function updateJob(
   data: Partial<Pick<JobDetail, "title" | "skip_publish" | "status">>
 ): Promise<JobDetail> {
   const response = await api.post<JobDetail>("/v_factory/api/jobs/update", { id: jobId, ...data });
+  return response.data;
+}
+
+export async function updateJobInfo(
+  jobId: number,
+  data: UpdateJobInfoParams
+): Promise<JobDetail> {
+  const response = await api.post<JobDetail>("/v_factory/api/jobs/updateInfo", {
+    id: jobId,
+    ...data,
+  });
   return response.data;
 }
 

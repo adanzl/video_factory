@@ -154,6 +154,45 @@ class JobMgr:
             job_log_repo.append_log(conn, job["id"], "title", f"created job: {cleaned}")
             return job
 
+    def update_job_info(
+        self,
+        job_id: int,
+        *,
+        orientation: str | None = None,
+        content_style: str | None = None,
+    ) -> dict:
+        from app.utils.job_info import normalize_content_style, normalize_orientation
+
+        patch: dict[str, str] = {}
+        if orientation is not None:
+            normalized = normalize_orientation(orientation)
+            if normalized not in {"portrait", "landscape"}:
+                raise ValueError("orientation must be portrait or landscape")
+            patch["orientation"] = normalized
+        if content_style is not None:
+            normalized = normalize_content_style(content_style)
+            if normalized is None:
+                raise ValueError(
+                    "content_style must be science_child, life_experience or history_mystery"
+                )
+            patch["content_style"] = normalized
+        if not patch:
+            raise ValueError("no updatable info fields provided")
+        with connection() as conn:
+            job = job_repo.get_job(conn, job_id)
+            job = job_repo.update_job(
+                conn,
+                job_id,
+                info=merge_job_info(job.get("info"), **patch),
+            )
+            job_log_repo.append_log(
+                conn,
+                job_id,
+                "api",
+                f"updated info: {', '.join(f'{k}={v!r}' for k, v in patch.items())}",
+            )
+            return job
+
     def update_job(self, job_id: int, **fields: object) -> dict:
         updates = {k: v for k, v in fields.items() if k in _API_UPDATABLE}
         if not updates:
