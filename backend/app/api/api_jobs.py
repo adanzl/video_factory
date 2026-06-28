@@ -250,7 +250,7 @@ def _parse_segment_body() -> tuple[int, bool, list[int] | None, str | None, str 
         image_provider = normalize_image_provider(raw)
         if raw and image_provider is None:
             raise APIError(
-                "image_provider must be z_image_t2i, wan_t2i, or sd15_t2i",
+                "image_provider must be z_image_t2i, wan_t2i, sd15_t2i, or agnes_t2i",
                 status_code=400,
             )
     video_provider = None

@@ -16,7 +16,7 @@ _VALID_CONTENT_STYLES = frozenset(
     {CONTENT_STYLE_SCIENCE_CHILD, CONTENT_STYLE_LIFE_EXPERIENCE}
 )
 
-_VALID_IMAGE_PROVIDERS = frozenset({"z_image_t2i", "wan_t2i", "sd15_t2i"})
+_VALID_IMAGE_PROVIDERS = frozenset({"z_image_t2i", "wan_t2i", "sd15_t2i", "agnes_t2i"})
 _VALID_VIDEO_PROVIDERS = frozenset({"ffmpeg", "wan_i2v"})
 
 
@@ -118,6 +118,8 @@ def resolve_segment_image_size(job: dict | None = None, *, settings: Any | None 
         if provider == "z_image_t2i"
         else cfg.sd_image_size
         if provider == "sd15_t2i"
+        else cfg.agnes_image_size
+        if provider == "agnes_t2i"
         else cfg.wan_image_size
     )
     normalized = default.strip().lower().replace("x", "*")

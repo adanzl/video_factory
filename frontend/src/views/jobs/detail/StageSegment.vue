@@ -27,6 +27,7 @@
             <el-radio-button value="z_image_t2i">Z-Image</el-radio-button>
             <el-radio-button value="wan_t2i">万相</el-radio-button>
             <el-radio-button value="sd15_t2i">本地 SD</el-radio-button>
+            <el-radio-button value="agnes_t2i">Agnes</el-radio-button>
           </el-radio-group>
         </el-descriptions-item>
         <el-descriptions-item label="视频">
