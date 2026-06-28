@@ -383,6 +383,7 @@ def _build_layers(
         "brand_header": brand_header,
         "host": host_scaled,
         "layout": layout,
+        "theme": theme,
         "width": width,
         "height": height,
     }
@@ -439,11 +440,12 @@ def _compose_frame(layers: dict, t: float) -> Image.Image:
         accent_w = int(width * layout.accent_width_ratio)
         accent_x = (width - accent_w) // 2
         accent_y = height - 24
+        accent = layers["theme"].accent
         draw = ImageDraw.Draw(frame)
         draw.rounded_rectangle(
             [accent_x, accent_y, accent_x + accent_w, accent_y + 6],
             radius=3,
-            fill=(255, 214, 64, int(220 * opacity)),
+            fill=(accent[0], accent[1], accent[2], int(accent[3] * opacity * 220 / 255)),
         )
 
     return frame
@@ -518,6 +520,8 @@ def generate_intro(
     duration = audio_dur + tail
 
     moon_tint_yellow = settings.intro_moon_tint in {"yellow", "tint", "gold", "1", "true"}
+    if category == "历史悬案":
+        moon_tint_yellow = True
     layers = _build_layers(
         title,
         settings.brand_name,
