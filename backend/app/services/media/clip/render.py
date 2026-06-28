@@ -47,10 +47,7 @@ def _motion_progress(frames: int) -> str:
 def _prep_filter(*, headroom: float, width: int, height: int) -> str:
     pw = int(width * headroom)
     ph = int(height * headroom)
-    return (
-        f"scale={pw}:{ph}:force_original_aspect_ratio=increase:flags=lanczos,"
-        "setsar=1"
-    )
+    return f"scale={pw}:{ph}:force_original_aspect_ratio=increase:flags=lanczos"
 
 
 def _motion_zoom_max(preset: str) -> float:
@@ -67,42 +64,32 @@ def _motion_vf(
     width: int,
     height: int,
 ) -> str:
-    """连续 Ken Burns zoompan。不做 floor() 取整，避免帧间跳跃。"""
+    """Ken Burns 动效。"""
     frames = max(int(duration_sec * CLIP_FPS), 1)
     zoom_max = _motion_zoom_max(preset)
     delta = zoom_max - 1.0
-    progress = _motion_progress(frames)
+    mf = max(int(frames * _MOTION_FINISH_RATIO), 1)
+    prog = f"min(1,0.5-0.5*cos(PI*on/{mf}))"
 
     mode = segment_index % 4
     if mode == 0:
         headroom = zoom_max + 0.04
-        z_expr = f"1+{delta:.4f}*({progress})"
-        x_expr = "iw/2-(iw/zoom/2)"
-        y_expr = "ih/2-(ih/zoom/2)"
+        prep = _prep_filter(headroom=headroom, width=width, height=height)
+        return f"{prep},zoompan=z='1+{delta:.4f}*({prog})':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={frames}:s={width}x{height}:fps={CLIP_FPS}{_pix_fmt_filter_suffix()}"
     elif mode == 1:
         headroom = zoom_max + 0.04
-        z_expr = f"{zoom_max:.4f}-{delta:.4f}*({progress})"
-        x_expr = "iw/2-(iw/zoom/2)"
-        y_expr = "ih/2-(ih/zoom/2)"
+        prep = _prep_filter(headroom=headroom, width=width, height=height)
+        return f"{prep},zoompan=z='{zoom_max:.4f}-{delta:.4f}*({prog})':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={frames}:s={width}x{height}:fps={CLIP_FPS}{_pix_fmt_filter_suffix()}"
     elif mode == 2:
         pan_zoom = max(zoom_max, 1.06)
         headroom = max(pan_zoom + 0.10, 1.22)
-        z_expr = f"{pan_zoom:.4f}"
-        x_expr = f"(iw-iw/zoom)*({progress})"
-        y_expr = "ih/2-(ih/zoom/2)"
+        prep = _prep_filter(headroom=headroom, width=width, height=height)
+        return f"{prep},zoompan=z='{pan_zoom:.4f}':x='(iw-iw/zoom)*({prog})':y='ih/2-(ih/zoom/2)':d={frames}:s={width}x{height}:fps={CLIP_FPS}{_pix_fmt_filter_suffix()}"
     else:
         pan_zoom = max(zoom_max, 1.06)
         headroom = max(pan_zoom + 0.10, 1.22)
-        z_expr = f"{pan_zoom:.4f}"
-        x_expr = f"(iw-iw/zoom)*(1-{progress})"
-        y_expr = "ih/2-(ih/zoom/2)"
-
-    prep = _prep_filter(headroom=headroom, width=width, height=height)
-    return (
-        f"{prep},"
-        f"zoompan=z='{z_expr}':x='{x_expr}':y='{y_expr}':"
-        f"d={frames}:s={width}x{height}:fps={CLIP_FPS}{_pix_fmt_filter_suffix()}"
-    )
+        prep = _prep_filter(headroom=headroom, width=width, height=height)
+        return f"{prep},zoompan=z='{pan_zoom:.4f}':x='(iw-iw/zoom)*(1-{prog})':y='ih/2-(ih/zoom/2)':d={frames}:s={width}x{height}:fps={CLIP_FPS}{_pix_fmt_filter_suffix()}"
 
 
 def _resolve_clip_canvas(
