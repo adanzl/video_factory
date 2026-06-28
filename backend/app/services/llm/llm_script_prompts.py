@@ -241,6 +241,19 @@ _IMAGE_PROMPT_RULE_SD15_SHORT = (
     "无需六层扩写，禁止堆砌光影材质细节。"
 )
 
+_IMAGE_PROMPT_RULE_MYSTERY = (
+    "每段image_prompt须严格遵循visual_style画风定调，全片统一：电影级写实历史再现，"
+    "光影考究、暗部有层次、低饱和古风色调，适配9:16竖屏构图。"
+    f"每段image_prompt建议350-550字（任何一段不得低于{MIN_IMAGE_PROMPT_CHARS}字），"
+    "须按以下六层逐层展开："
+    "①构图景别（竖屏单一视觉焦点、主体占比，如大殿中孤独的背影或深夜庭院一隅）；"
+    "②主体动作（谁在做或承受什么、姿态、身体语言）；"
+    "③场景环境（时代特征——服饰、器物、建筑、宫廷或市井细节）；"
+    "④光影材质（月光、烛光、灯笼——用光源制造悬疑感，暗部有层次）；"
+    "⑤色彩氛围（低饱和冷调、暗红或琥珀暖光点缀、历史厚重感）；"
+    "⑥语义边界（仅表达本段画面，禁止写文字、奏折、诏书等可读文字）。"
+)
+
 
 def _image_prompt_rule(*, orientation: str, content_style: str, sd15_mode: bool = False) -> str:
     head = (
@@ -249,6 +262,8 @@ def _image_prompt_rule(*, orientation: str, content_style: str, sd15_mode: bool 
     )
     if sd15_mode:
         return head + _IMAGE_PROMPT_RULE_SD15_SHORT + _IMAGE_PROMPT_MOTION_TAIL
+    if content_style == CONTENT_STYLE_HISTORICAL_MYSTERY:
+        return head + _IMAGE_PROMPT_RULE_MYSTERY + _IMAGE_PROMPT_MOTION_TAIL
     if content_style == CONTENT_STYLE_LIFE_EXPERIENCE:
         body = _IMAGE_PROMPT_RULE_LIFE_LANDSCAPE
     elif orientation == ORIENTATION_LANDSCAPE:
@@ -282,6 +297,31 @@ _MATERIAL_NARRATION_LENGTH_RULE = (
     "禁止整段仅一句短感叹（如「哇，好厉害呀」）。"
     "【生成顺序】先逐段写满 segments，再原样拼接为 narration，最后统计 word_count；"
     "若未达字数下限，须当场扩写后再输出 JSON，禁止先输出再指望后处理。"
+)
+
+_MYSTERY_NARRATION_VOICE_RULE = (
+    "口播口吻须沉稳、有磁性，像一个深夜讲述历史秘闻的说书人。"
+    "语速偏慢，句与句之间有空气感。"
+    "开头几句要有钩子感，能立刻抓住注意力。"
+    "中间不时抛出反问——「但真的这么简单吗？」「那他为什么要这么做？」——引导观众跟着思考。"
+    "语气克制，不煽情不夸张，用陈述事实的方式讲悬疑感。"
+)
+
+_MYSTERY_NARRATION_LENGTH_RULE = (
+    "【撑满字数的写法】每段口播须含三层——"
+    "①一个历史事实或背景细节；②一个「但」字转折（矛盾/疑点/反常）；③一个反问或悬念收尾。"
+    "禁止整段仅一句概括。"
+    "【生成顺序】先逐段写满 segments，再原样拼接为 narration，最后统计 word_count；"
+    "若未达字数下限，须当场扩写后再输出 JSON，禁止先输出再指望后处理。"
+)
+
+_MYSTERY_STRUCTURE_RULE = (
+    "【结构规范】须依次包含以下四部分：\n"
+    "1. 开场钩子（一段话抓住好奇心，直接抛出核心谜案）\n"
+    "2. 背景铺陈（人物关系、时间线、历史背景）\n"
+    "3. 谜案核心（关键细节、冲突点、反常之处）\n"
+    "4. 推理与悬停（多角度分析，不出确定的结论，留悬念）\n"
+    "禁止用倒叙手法。讲完一个完整故事，但最后一句话留给观众自己去琢磨。"
 )
 
 _LIFE_NARRATION_VOICE_RULE = (
@@ -348,24 +388,32 @@ def _resolve_script_profile(
 def _narration_voice_rule(content_style: str) -> str:
     if content_style == CONTENT_STYLE_LIFE_EXPERIENCE:
         return _LIFE_NARRATION_VOICE_RULE
+    if content_style == CONTENT_STYLE_HISTORICAL_MYSTERY:
+        return _MYSTERY_NARRATION_VOICE_RULE
     return _NARRATION_VOICE_RULE
 
 
 def _narration_length_rule(content_style: str) -> str:
     if content_style == CONTENT_STYLE_LIFE_EXPERIENCE:
         return _LIFE_NARRATION_LENGTH_RULE
+    if content_style == CONTENT_STYLE_HISTORICAL_MYSTERY:
+        return _MYSTERY_NARRATION_LENGTH_RULE
     return _MATERIAL_NARRATION_LENGTH_RULE
 
 
 def _structure_rule(*, orientation: str, content_style: str) -> str:
     if content_style == CONTENT_STYLE_LIFE_EXPERIENCE:
         return _LIFE_EXPERIENCE_STRUCTURE_RULE
+    if content_style == CONTENT_STYLE_HISTORICAL_MYSTERY:
+        return _MYSTERY_STRUCTURE_RULE
     return _SHORT_FORM_STRUCTURE_RULE
 
 
 def _storyboard_role(content_style: str) -> str:
     if content_style == CONTENT_STYLE_LIFE_EXPERIENCE:
         return "你是B站生活避坑/经验科普的内容编剧。"
+    if content_style == CONTENT_STYLE_HISTORICAL_MYSTERY:
+        return "你是B站历史悬案视频的编剧兼讲述者，擅长把历史谜案用悬疑节奏讲出来。"
     return "你是给小朋友讲科普的视频编剧。"
 
 
@@ -385,6 +433,12 @@ def _writing_target_clause(narration_target: int) -> str:
     )
 
 
+def _visual_brief_types(profile_style: str) -> str:
+    if profile_style == CONTENT_STYLE_HISTORICAL_MYSTERY:
+        return "（历史场景再现）/（人物肖像）/（关键物件特写）/（空间环境）"
+    return "（写实场景）/（结构示意图）/（对比图）/（线稿解剖图）/（微观分子图）"
+
+
 def _storyboard_length_budget(
     *,
     narration_target: int,
@@ -400,6 +454,8 @@ def _storyboard_length_budget(
     layers = (
         "误区+原因+正确做法"
         if content_style == CONTENT_STYLE_LIFE_EXPERIENCE
+        else "事实+转折+反问"
+        if content_style == CONTENT_STYLE_HISTORICAL_MYSTERY
         else "感叹+科普点+比喻/拟声"
     )
     if segment_target_sec <= 0:
@@ -510,8 +566,17 @@ def _title_rule(title: str, max_title: int) -> tuple[str, str]:
     )
 
 
-def _storyboard_segment_rule(target: float) -> str:
-    common = f"segments为分镜数组；{_VISUAL_BRIEF_RULE}"
+def _storyboard_segment_rule(target: float, profile_style: str = "") -> str:
+    types = _visual_brief_types(profile_style) if profile_style else "（写实场景）/（结构示意图）/（对比图）/（线稿解剖图）/（微观分子图）"
+    common = (
+        "segments为分镜数组；"
+        "各段含segment_index,text,visual_brief,visual_mode=static_motion；"
+        "各段text按顺序拼接须与narration全文一致。"
+        "visual_brief为该镜画面描述（80-150字）：写清视觉主旨、关键动作或对比关系、"
+        "场景类型与情绪，帮助后续扩写文生图提示词；不写镜头焦距、光线方向、材质参数等细节。"
+        f"visual_brief末尾须用括号标注画面类型{types}。"
+        "另须输出visual_style：全片画风定调一句话（画风+主色调+跨镜统一元素如道具造型）。"
+    )
     if target <= 0:
         return common + "不约束单镜时长，按口播内容逻辑切分，段数由内容决定。"
     sec = _format_segment_target_sec(target)
@@ -554,7 +619,7 @@ def build_storyboard_prompts(
         content_style=content_style,
     )
     target = settings.segment_target_sec if segment_target_sec is None else segment_target_sec
-    seg_rule = _storyboard_segment_rule(target)
+    seg_rule = _storyboard_segment_rule(target, profile_style=profile_style)
     max_title = settings.max_title_length if max_title_length is None else max_title_length
     narration_word_target = (
         narration_target_words
@@ -616,14 +681,15 @@ def build_storyboard_prompts(
         segment_target_sec=target,
         content_style=profile_style,
     )
+    types = _visual_brief_types(profile_style)
     user = _append_supplementary_to_user(
         (
             f"{title_user_prefix}、visual_style 与分镜，{split_hint}。\n\n"
             f"{length_budget}\n\n"
             + (
-                "每段 visual_brief 30-60 字，写清画面主旨，末尾用括号注明画面类型（写实场景/结构示意图/对比图/线稿解剖图/微观分子图）。"
+                f"每段 visual_brief 30-60 字，写清画面主旨，末尾用括号注明画面类型{types}。"
                 if compact_output
-                else "每段 visual_brief 写清该镜画面主旨并在末尾注明画面类型（写实场景/结构示意图/对比图/线稿解剖图/微观分子图），便于下一步扩写文生图提示词。"
+                else f"每段 visual_brief 写清该镜画面主旨并在末尾注明画面类型{types}，便于下一步扩写文生图提示词。"
             )
         ),
         supplementary_info,
@@ -677,8 +743,13 @@ def build_image_prompts_prompts(
     json_example = _IMAGE_PROMPTS_JSON_EXAMPLE if include_sd15_prompt else _IMAGE_PROMPTS_JSON_EXAMPLE_NO_SD15
     sd15_rule = _SD15_PROMPT_EN_RULE if include_sd15_prompt else ""
     sd15_fields = "、image_prompt、motion_prompt 与 sd15_prompt_en" if include_sd15_prompt else "、image_prompt 与 motion_prompt"
+    role = (
+        "你是历史悬案视频文生图与运动提示词专家。"
+        if profile_style == CONTENT_STYLE_HISTORICAL_MYSTERY
+        else "你是科普视频文生图与运动提示词专家。"
+    )
     system = (
-        f"你是科普视频文生图与运动提示词专家。输出JSON，字段：image_prompts。"
+        f"{role}输出JSON，字段：image_prompts。"
         f"image_prompts为数组，每项含segment_index{sd15_fields}。"
         f"{_image_prompt_rule(orientation=profile_orientation, content_style=profile_style, sd15_mode=include_sd15_prompt)}"
         f"{sd15_rule}"
