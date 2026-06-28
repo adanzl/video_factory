@@ -111,29 +111,30 @@ def _moon_diameter(layout: _IntroLayout, width: int, height: int) -> int:
 
 _BRAND_FONT_SIZE = 72
 
-
-def _is_han(char: str) -> bool:
-    code = ord(char)
-    return (
-        0x4E00 <= code <= 0x9FFF
-        or 0x3400 <= code <= 0x4DBF
-        or 0xF900 <= code <= 0xFAFF
-        or 0x20000 <= code <= 0x2A6DF
-    )
+# 常见冒号变体（Word / 竖排标点等）统一为全角冒号
+_COLON_CHARS = frozenset(":\uFF1A\uFE55\uFE30\uFE13\u0589\uA789")
+_HALF_TO_FULL = str.maketrans(
+    {
+        ":": "：",
+        "?": "？",
+        "!": "！",
+        ",": "，",
+        ";": "；",
+    }
+)
 
 
 def _normalize_title(text: str) -> str:
+    """片头标题：去空白，半角/变体标点归一，其余字符保留。"""
     parts: list[str] = []
     for char in text:
-        if char in "？?":
-            parts.append("？")
-        elif char in "：:":
-            parts.append("：")
-        elif char.isspace():
+        if char.isspace():
             continue
-        elif _is_han(char) or (char.isascii() and char.isalnum()):
+        if char in _COLON_CHARS:
+            parts.append("：")
+        else:
             parts.append(char)
-    return "".join(parts)
+    return "".join(parts).translate(_HALF_TO_FULL)
 
 
 def _ease_out_back(t: float, s: float = 1.4) -> float:

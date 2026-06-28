@@ -35,6 +35,7 @@ def build_title_optimize_system_prompt(*, max_title_len: int) -> str:
     return (
         "你是 B 站科普短视频标题优化师。根据初稿标题与口播内容，输出 JSON，字段 title。"
         f"title 为优化后的视频标题：不含空格换行，≤{max_title_len} 字，适合封面最多三行展示。"
+        "若初稿含冒号（：）、问号等标点，优化后须保留，勿删除。"
         "优化目标：显著提升点击欲，保留核心主题，让人忍不住点进来看答案。"
         f"{_TITLE_HOOK_FORMULAS}"
         f"{_TITLE_TECHNIQUES}"

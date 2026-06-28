@@ -32,6 +32,7 @@ from app.utils.media import (
     narration_soft_min_chars,
     segment_text_char_cap,
 )
+from app.utils.title_text import prefer_source_punctuation
 from worker.context import JobContext
 from worker.stages.base import StageExecutor
 
@@ -107,7 +108,10 @@ def _apply_script_title(
             max_title_length=max_len,
         )
         script["draft_title"] = script["title"]
-        script["title"] = _title_chars(optimized_title)
+        script["title"] = prefer_source_punctuation(
+            script["draft_title"],
+            _title_chars(optimized_title),
+        )
         if len(script["title"]) > max_len:
             raise ScriptValidationError(
                 f"optimized title too long: {len(script['title'])} chars (need <= {max_len})"
