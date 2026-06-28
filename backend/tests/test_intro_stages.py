@@ -3,7 +3,11 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 from app.services.intro.generator import _normalize_title
-from app.utils.job_info import CONTENT_STYLE_HISTORICAL_MYSTERY, CONTENT_STYLE_SCIENCE_CHILD
+from app.utils.job_info import (
+    CONTENT_STYLE_HISTORICAL_MYSTERY,
+    CONTENT_STYLE_SCIENCE_CHILD,
+    intro_generate_category,
+)
 from worker.stages.intro import IntroStage
 from worker.stages.intro.base import resolve_intro_title
 
@@ -31,7 +35,26 @@ def test_resolve_intro_title_uses_draft_when_only_punct_diff() -> None:
     assert resolve_intro_title(job) == "秦陵：未解之谜"
 
 
-def test_intro_stage_routes_history_mystery() -> None:
+def test_intro_generate_category_from_job() -> None:
+    history_job = {
+        "info": {
+            "intro_category": "历史悬案",
+            "content_style": CONTENT_STYLE_SCIENCE_CHILD,
+        }
+    }
+    science_job = {
+        "info": {
+            "intro_category": "百科",
+            "content_style": CONTENT_STYLE_HISTORICAL_MYSTERY,
+        }
+    }
+    fallback_job = {"info": {"content_style": CONTENT_STYLE_HISTORICAL_MYSTERY}}
+    assert intro_generate_category(history_job) == "历史悬案"
+    assert intro_generate_category(science_job) is None
+    assert intro_generate_category(fallback_job) == "历史悬案"
+
+
+def test_intro_stage_uses_history_theme_from_job() -> None:
     stage = IntroStage()
     ctx = MagicMock()
     ctx.job = {"id": 1}
@@ -40,36 +63,15 @@ def test_intro_stage_routes_history_mystery() -> None:
     with (
         patch("worker.stages.intro.connection") as mock_conn,
         patch("worker.stages.intro.job_repo.get_job", return_value=job),
-        patch("worker.stages.intro.HistoryMysteryIntroStage.run") as mock_history,
-        patch("worker.stages.intro.ScienceIntroStage.run") as mock_science,
+        patch("worker.stages.intro.run_intro_for_category") as mock_run,
     ):
         mock_conn.return_value.__enter__.return_value = MagicMock()
         stage.run(ctx)
 
-    mock_history.assert_called_once_with(ctx)
-    mock_science.assert_not_called()
+    mock_run.assert_called_once_with(ctx, job, stage=stage)
 
 
-def test_intro_stage_routes_science_by_content_style_fallback() -> None:
-    stage = IntroStage()
-    ctx = MagicMock()
-    ctx.job = {"id": 2}
-    job = {"id": 2, "info": {"content_style": CONTENT_STYLE_SCIENCE_CHILD}}
-
-    with (
-        patch("worker.stages.intro.connection") as mock_conn,
-        patch("worker.stages.intro.job_repo.get_job", return_value=job),
-        patch("worker.stages.intro.HistoryMysteryIntroStage.run") as mock_history,
-        patch("worker.stages.intro.ScienceIntroStage.run") as mock_science,
-    ):
-        mock_conn.return_value.__enter__.return_value = MagicMock()
-        stage.run(ctx)
-
-    mock_science.assert_called_once_with(ctx)
-    mock_history.assert_not_called()
-
-
-def test_intro_stage_intro_category_overrides_content_style() -> None:
+def test_intro_stage_uses_science_theme_when_intro_category_百科() -> None:
     stage = IntroStage()
     ctx = MagicMock()
     ctx.job = {"id": 3}
@@ -84,11 +86,9 @@ def test_intro_stage_intro_category_overrides_content_style() -> None:
     with (
         patch("worker.stages.intro.connection") as mock_conn,
         patch("worker.stages.intro.job_repo.get_job", return_value=job),
-        patch("worker.stages.intro.HistoryMysteryIntroStage.run") as mock_history,
-        patch("worker.stages.intro.ScienceIntroStage.run") as mock_science,
+        patch("worker.stages.intro.run_intro_for_category") as mock_run,
     ):
         mock_conn.return_value.__enter__.return_value = MagicMock()
         stage.run(ctx)
 
-    mock_science.assert_called_once_with(ctx)
-    mock_history.assert_not_called()
+    mock_run.assert_called_once_with(ctx, job, stage=stage)

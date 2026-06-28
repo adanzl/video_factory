@@ -8,7 +8,13 @@ from app.repositories import job_log_repo, job_repo
 from app.repositories.connection import connection
 from app.services.intro import generate_intro
 from app.services.intro.size import is_material_job, resolve_intro_size
-from app.utils.job_info import ORIENTATION_AUTO, ORIENTATION_PORTRAIT, orientation_for_resolve
+from app.utils.job_info import (
+    ORIENTATION_AUTO,
+    ORIENTATION_PORTRAIT,
+    intro_category_from_job,
+    intro_generate_category,
+    orientation_for_resolve,
+)
 from app.utils.title_text import prefer_source_punctuation
 from worker.context import JobContext
 from worker.stages.base import StageExecutor
@@ -51,11 +57,12 @@ def run_intro_for_category(
     ctx: JobContext,
     job: dict,
     *,
-    category: str | None,
     stage: StageExecutor,
 ) -> None:
     intro_path = ctx.rel("intro.mp4")
     title = resolve_intro_title(job)
+    category_label = intro_category_from_job(job)
+    gen_category = intro_generate_category(job)
     effective_orientation = ctx.intro_orientation
     if effective_orientation is None:
         effective_orientation = orientation_for_resolve(job)
@@ -74,7 +81,7 @@ def run_intro_for_category(
     generate_intro(
         title,
         intro_path,
-        category=category,
+        category=gen_category,
         hold_tail_sec=ctx.intro_hold_tail_sec,
         width=width,
         height=height,
@@ -96,7 +103,7 @@ def run_intro_for_category(
         job_repo.update_job(conn, ctx.job["id"], **updates)
         detail = (
             f"intro at {intro_path}, cover at {cover_path}, title={title}, "
-            f"size={width}x{height}, orientation={orient_label}, category={category or '百科'}"
+            f"size={width}x{height}, orientation={orient_label}, category={category_label}"
         )
         if ctx.intro_hold_tail_sec is not None:
             detail += f", hold_tail_sec={ctx.intro_hold_tail_sec:.2f}"

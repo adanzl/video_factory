@@ -183,7 +183,7 @@ def regenerate_video_description_route():
     return json_ok(result)
 
 
-def _parse_intro_body() -> tuple[int, bool, float | None, str | None, str | None]:
+def _parse_intro_body() -> tuple[int, bool, float | None, str | None, str | None, str | None]:
     data = get_json_body()
     raw_orientation = parse_optional_str(data, "orientation")
     orientation_preference = None
@@ -195,18 +195,26 @@ def _parse_intro_body() -> tuple[int, bool, float | None, str | None, str | None
                 status_code=400,
             )
         orientation_preference = normalized
+    intro_category = None
+    if "intro_category" in data:
+        intro_category = normalize_intro_category(parse_optional_str(data, "intro_category"))
+        if intro_category is None:
+            raise APIError("intro_category must be 百科 or 历史悬案", status_code=400)
     return (
         parse_id(data),
         parse_bool(data, "to_end", default=False),
         parse_optional_float(data, "hold_tail_sec", minimum=0.0, maximum=5.0),
         parse_intro_orientation(raw_orientation),
         orientation_preference,
+        intro_category,
     )
 
 
 @bp.post("/intro")
 def run_intro_route():
-    job_id, to_end, hold_tail_sec, orientation, orientation_preference = _parse_intro_body()
+    job_id, to_end, hold_tail_sec, orientation, orientation_preference, intro_category = (
+        _parse_intro_body()
+    )
     return _accept_stage(
         job_id,
         lambda: job_mgr.run_intro(
@@ -215,6 +223,7 @@ def run_intro_route():
             hold_tail_sec=hold_tail_sec,
             orientation=orientation,
             orientation_preference=orientation_preference,
+            intro_category=intro_category,
         ),
     )
 
