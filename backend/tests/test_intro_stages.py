@@ -5,11 +5,30 @@ from unittest.mock import MagicMock, patch
 from app.services.intro.generator import _normalize_title
 from app.utils.job_info import CONTENT_STYLE_HISTORICAL_MYSTERY, CONTENT_STYLE_SCIENCE_CHILD
 from worker.stages.intro import IntroStage
+from worker.stages.intro.base import resolve_intro_title
 
 
 def test_intro_title_normalize_keeps_colon() -> None:
     assert _normalize_title("秦陵：未解之谜") == "秦陵：未解之谜"
     assert _normalize_title("秦陵:未解之谜") == "秦陵：未解之谜"
+    assert _normalize_title("秦陵﹕未解之谜") == "秦陵：未解之谜"
+    assert _normalize_title("秦陵︰未解之谜") == "秦陵：未解之谜"
+
+
+def test_intro_title_normalize_keeps_other_punctuation() -> None:
+    assert _normalize_title("《秦陵》·未解") == "《秦陵》·未解"
+    assert _normalize_title("秦陵,未解?") == "秦陵，未解？"
+
+
+def test_resolve_intro_title_uses_draft_when_only_punct_diff() -> None:
+    job = {
+        "title": "秦陵未解之谜",
+        "script_json": {
+            "title": "秦陵未解之谜",
+            "draft_title": "秦陵：未解之谜",
+        },
+    }
+    assert resolve_intro_title(job) == "秦陵：未解之谜"
 
 
 def test_intro_stage_routes_history_mystery() -> None:

@@ -9,6 +9,7 @@ from app.repositories.connection import connection
 from app.services.intro import generate_intro
 from app.services.intro.size import is_material_job, resolve_intro_size
 from app.utils.job_info import ORIENTATION_AUTO, ORIENTATION_PORTRAIT, orientation_for_resolve
+from app.utils.title_text import prefer_source_punctuation
 from worker.context import JobContext
 from worker.stages.base import StageExecutor
 
@@ -18,11 +19,14 @@ def _normalize_title(title: str) -> str:
 
 
 def resolve_intro_title(job: dict) -> str:
-    """优先 script_json 定稿标题，否则 job.title。"""
+    """优先 script_json 定稿标题；若优化仅去掉标点则用 draft_title。"""
     script = job.get("script_json")
     if isinstance(script, dict):
         script_title = _normalize_title(str(script.get("title") or ""))
+        draft_title = _normalize_title(str(script.get("draft_title") or ""))
         if script_title:
+            if draft_title:
+                return prefer_source_punctuation(draft_title, script_title)
             return script_title
     job_title = _normalize_title(str(job.get("title") or ""))
     return job_title or "未命名"
