@@ -4,9 +4,18 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from app.services.media.clip.video_agnes import AgnesClipProvider, _pick_num_frames
+from app.services.media.clip.video_agnes import AgnesClipProvider, _backoff_seconds, _pick_num_frames
 from app.utils.job_info import normalize_video_provider, resolve_video_provider
 from app.utils.media_path import resolve_media_public_base_url
+
+
+def test_backoff_seconds_429() -> None:
+    assert _backoff_seconds(0, status_code=429) >= 30.0
+    assert _backoff_seconds(2, status_code=429) >= 70.0
+
+
+def test_backoff_seconds_submit_timeout() -> None:
+    assert _backoff_seconds(0, label="submit", is_timeout=True) >= 45.0
 
 
 def test_pick_num_frames() -> None:
