@@ -65,7 +65,11 @@ class AgnesImageProvider(ImageProvider):
         last_exc: Exception | None = None
         for attempt in range(retries):
             try:
-                resp = requests.request(method, url, headers=h, json=json, timeout=timeout)
+                resp = requests.request(method,
+                                        url,
+                                        headers=h,
+                                        json=json,
+                                        timeout=timeout)
                 if resp.status_code in _RETRYABLE:
                     wait = min(2**attempt * 2, 60)
                     logger.warning(
@@ -83,11 +87,13 @@ class AgnesImageProvider(ImageProvider):
             except requests.RequestException as exc:
                 last_exc = exc
                 wait = min(2**attempt * 2, 60)
-                logger.warning("agnes request error: %s, retry in %ss", exc, wait)
+                logger.warning("agnes request error: %s, retry in %ss", exc,
+                               wait)
                 time.sleep(wait)
         if last_exc:
             raise last_exc
-        raise RuntimeError(f"agnes request failed after {retries} retries: {url}")
+        raise RuntimeError(
+            f"agnes request failed after {retries} retries: {url}")
 
     @staticmethod
     def _extract_image(body: dict) -> tuple[str | None, bytes | None]:
@@ -110,7 +116,11 @@ class AgnesImageProvider(ImageProvider):
             return None, base64.b64decode(b64)
         return None, None
 
-    def generate(self, prompt: str, output_path: Path, *, size: str | None = None) -> Path:
+    def generate(self,
+                 prompt: str,
+                 output_path: Path,
+                 *,
+                 size: str | None = None) -> Path:
         size = size or self._default_size
         agnes_size = _to_agnes_size(size)
         if not self._api_key:
@@ -124,12 +134,15 @@ class AgnesImageProvider(ImageProvider):
             "model": self._model,
             "prompt": prompt,
             "size": agnes_size,
-            "extra_body": {"response_format": "url"},
+            "extra_body": {
+                "response_format": "url"
+            },
         }
         logger.info(
-            "agnes request: %s, prompt_chars=%s",
+            "agnes request: %s, prompt_chars=%s, %s",
             self.describe_params(size=size),
             len(prompt),
+            prompt,
         )
         try:
             resp = self._request(
@@ -144,7 +157,8 @@ class AgnesImageProvider(ImageProvider):
                 output_path.write_bytes(image_bytes)
                 return output_path
             if not image_url:
-                raise RuntimeError("agnes response missing image url or b64_json")
+                raise RuntimeError(
+                    "agnes response missing image url or b64_json")
             img = requests.get(image_url, timeout=120)
             img.raise_for_status()
             output_path.write_bytes(img.content)
