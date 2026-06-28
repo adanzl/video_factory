@@ -164,6 +164,12 @@ class Config:
     agnes_image_model: str = os.getenv("AGNES_IMAGE_MODEL", "agnes-image-2.1-flash")
     agnes_image_size: str = os.getenv("AGNES_IMAGE_SIZE", _WAN_IMAGE_SIZE)
     agnes_http_max_retries: int = int(os.getenv("AGNES_HTTP_MAX_RETRIES", "2"))
+    agnes_video_model: str = os.getenv("AGNES_VIDEO_MODEL", "agnes-video-v2.0")
+    agnes_video_frame_rate: int = int(os.getenv("AGNES_VIDEO_FRAME_RATE", "24"))
+    agnes_video_poll_interval_sec: float = float(os.getenv("AGNES_VIDEO_POLL_INTERVAL_SEC", "5"))
+    agnes_video_poll_max_attempts: int = int(os.getenv("AGNES_VIDEO_POLL_MAX_ATTEMPTS", "120"))
+    agnes_video_task_max_retries: int = int(os.getenv("AGNES_VIDEO_TASK_MAX_RETRIES", "1"))
+    media_public_base_url: str | None = _opt("MEDIA_PUBLIC_BASE_URL")
     sd_api_url: str = os.getenv("SD_API_URL", "http://127.0.0.1:9101").rstrip("/")
     sd_business: str | None = _opt("SD_BUSINESS")  # life | science；空则 LLM 推断
     sd_image_size: str = os.getenv("SD_IMAGE_SIZE", "360*640")

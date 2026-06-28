@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 import stat
+from typing import Any
 from urllib.parse import unquote
 
 _WINDOWS_ABS_RE = re.compile(r"^[A-Za-z]:[/\\]")
@@ -34,6 +35,27 @@ def to_media_url_path(local_path: str) -> str:
     if cleaned.startswith("/"):
         return cleaned[1:]
     return cleaned
+
+
+def resolve_media_public_base_url(settings: Any | None = None) -> str:
+    """解析 Agnes 图生视频所需的公网媒体基址。"""
+    from app.config import get_settings
+
+    cfg = settings or get_settings()
+    explicit = (getattr(cfg, "media_public_base_url", None) or "").strip()
+    if explicit:
+        return explicit.rstrip("/")
+    for origin in cfg.get_cors_origins():
+        cleaned = origin.strip().rstrip("/")
+        if (
+            cleaned.startswith("https://")
+            and "localhost" not in cleaned
+            and "127.0.0.1" not in cleaned
+        ):
+            return cleaned
+    raise RuntimeError(
+        "MEDIA_PUBLIC_BASE_URL 未配置，Agnes 图生视频需要公网可访问的图片 URL"
+    )
 
 
 def path_under_allowed_roots(file_path: str, roots: list[str]) -> bool:

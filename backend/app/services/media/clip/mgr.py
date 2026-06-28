@@ -77,13 +77,18 @@ class ClipMgr:
             path.unlink(missing_ok=True)
 
     def get_clip_provider(self, name: str) -> ClipProvider:
-        from app.services.media.clip.ffmpeg import FfmpegClipProvider
-        from app.services.media.clip.wan import WanClipProvider
+        from app.services.media.clip.video_ffmpeg import FfmpegClipProvider
+        from app.services.media.clip.video_wan import WanClipProvider
+        from app.services.media.clip.video_agnes import AgnesClipProvider
 
         if name == "wan_i2v":
             if get_settings().mock_mode:
                 return FfmpegClipProvider()
             return WanClipProvider()
+        if name == "agnes_i2v":
+            if get_settings().mock_mode:
+                return FfmpegClipProvider()
+            return AgnesClipProvider()
         if name == "ffmpeg":
             return FfmpegClipProvider()
         raise ValueError(f"unknown clip provider: {name}")

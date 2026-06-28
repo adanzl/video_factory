@@ -68,6 +68,12 @@ class MediaMgr:
                 f"prompt_extend={settings.wan_i2v_prompt_extend}, "
                 f"size={width}x{height}"
             )
+        if provider == "agnes_i2v":
+            return (
+                f"provider=agnes_i2v, model={settings.agnes_video_model}, "
+                f"frame_rate={settings.agnes_video_frame_rate}, "
+                f"size={width}x{height}"
+            )
         if provider == "ffmpeg":
             return f"provider=ffmpeg, motion_preset={motion_preset}, size={width}x{height}"
         return f"provider={provider}, motion_preset={motion_preset}, size={width}x{height}"
