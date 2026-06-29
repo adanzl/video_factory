@@ -15,7 +15,7 @@ import requests
 from app.config import get_settings
 from app.services.media.clip.mgr import ClipProvider, clip_mgr
 from app.services.media.clip.render import fit_video_duration, video_to_clip_timed_overlays
-from app.services.media.ffmpeg_utils import probe_duration
+from app.services.media.ffmpeg_utils import ffmpeg_cmd_start, probe_duration, run_ffmpeg
 
 logger = logging.getLogger(__name__)
 
@@ -261,17 +261,23 @@ class WanClipProvider(ClipProvider):
             )
             logger.info("clip %s: raw done, fitting to %.1fs", segment_index, total_duration)
             raw_dur = probe_duration(raw_path)
-            stream_loop = 0
             if raw_dur > 0 and total_duration > raw_dur * 1.15:
-                stream_loop = max(0, math.ceil(total_duration / raw_dur) - 1)
+                loop = math.ceil(total_duration / raw_dur) - 1
+                looped = work_dir / f"{segment_index}.wan_loop.mp4"
+                run_ffmpeg([
+                    *ffmpeg_cmd_start(hwaccel=False),
+                    "-stream_loop", str(loop),
+                    "-i", str(raw_path),
+                    "-c", "copy",
+                    "-y", str(looped),
+                ])
+                raw_path = looped
             fit_video_duration(
                 raw_path,
                 fitted_path,
                 total_duration,
                 width=width,
                 height=height,
-                temporal_smooth=True,
-                stream_loop=stream_loop,
             )
             logger.info("clip %s: overlaying %s subtitles", segment_index, len(overlay_windows))
             if overlay_windows:
@@ -282,7 +288,6 @@ class WanClipProvider(ClipProvider):
                     total_duration,
                     width=width,
                     height=height,
-                    force_cpu=True,
                 )
             else:
                 fitted_path.replace(output_path)

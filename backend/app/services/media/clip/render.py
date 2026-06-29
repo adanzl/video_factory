@@ -4,18 +4,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PIL import Image
-
 from app.config import get_settings
 from app.services.media.ffmpeg_utils import (
-    build_ass_from_phrase_cues,
     cpu_pix_fmt_suffix,
     escape_ffmpeg_filter_path,
     ffmpeg_cmd_start,
     finalize_filter_complex,
     libx264_encode_args,
     probe_duration,
-    probe_video_size,
     run_ffmpeg,
     vf_for_encode,
 )
@@ -31,17 +27,12 @@ def _pix_fmt_filter_suffix() -> str:
 
 __all__ = [
     "fit_video_duration",
+    "fit_video_with_ass_subtitles",
     "image_to_clip",
     "image_to_clip_timed_overlays",
     "image_to_clip_with_overlay",
     "video_to_clip_timed_overlays",
 ]
-
-
-def _motion_progress(frames: int) -> str:
-    motion_frames = max(int(frames * _MOTION_FINISH_RATIO), 1)
-    eased = f"0.5-0.5*cos(PI*on/{motion_frames})"
-    return f"min(1,{eased})"
 
 
 def _prep_filter(*, headroom: float, width: int, height: int) -> str:
@@ -178,12 +169,14 @@ def image_to_clip_timed_overlays(
     """连续 Ken Burns + 多段字幕按时间轴切换，单次编码。"""
     output_path.parent.mkdir(parents=True, exist_ok=True)
     if not overlay_windows:
-        return image_to_clip_with_overlay(
-            image_path, overlay_windows[0][0], output_path, duration_sec,
-            preset=preset, segment_index=segment_index, width=width, height=height,
-        ) if overlay_windows else image_to_clip(
-            image_path, output_path, duration_sec,
-            preset=preset, segment_index=segment_index, width=width, height=height,
+        return image_to_clip(
+            image_path,
+            output_path,
+            duration_sec,
+            preset=preset,
+            segment_index=segment_index,
+            width=width,
+            height=height,
         )
 
     canvas_w, canvas_h = _resolve_clip_canvas(width, height)
@@ -253,6 +246,60 @@ def _scale_pad_vf(*, width: int, height: int) -> str:
     )
 
 
+def _fit_vf_chain(
+    video_dur: float,
+    duration_sec: float,
+    *,
+    width: int,
+    height: int,
+) -> str:
+    scale = _scale_pad_vf(width=width, height=height)
+    drift = video_dur - duration_sec
+    if abs(drift) <= 0.08:
+        return scale
+    if drift > 0:
+        return f"{scale},trim=0:{duration_sec:.3f},setpts=PTS-STARTPTS"
+    pad = duration_sec - video_dur
+    return f"{scale},tpad=stop_mode=clone:stop_duration={pad:.3f}"
+
+
+def fit_video_with_ass_subtitles(
+    video_path: Path,
+    ass_path: Path,
+    output_path: Path,
+    duration_sec: float,
+    *,
+    width: int | None = None,
+    height: int | None = None,
+    fonts_dir: Path | None = None,
+) -> Path:
+    """缩放/对齐时长 + ASS 烧字幕，单次编码（素材 merge 用）。"""
+    settings = get_settings()
+    canvas_w, canvas_h = _resolve_clip_canvas(width, height)
+    fonts_dir = fonts_dir if fonts_dir is not None else settings.font_path.parent
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    video_dur = probe_duration(video_path)
+    base_vf = _fit_vf_chain(video_dur, duration_sec, width=canvas_w, height=canvas_h)
+    ass_esc = escape_ffmpeg_filter_path(ass_path)
+    fonts_esc = escape_ffmpeg_filter_path(fonts_dir)
+    vf = f"{base_vf},subtitles={ass_esc}:fontsdir={fonts_esc},format={_PIX_FMT}"
+    run_ffmpeg(
+        [
+            *ffmpeg_cmd_start(hwaccel=False),
+            "-i",
+            str(video_path),
+            "-vf",
+            vf,
+            "-t",
+            f"{duration_sec:.3f}",
+            *libx264_encode_args(subtitle=True, force_cpu=True),
+            str(output_path),
+        ]
+    )
+    return output_path
+
+
 def fit_video_duration(
     input_path: Path,
     output_path: Path,
@@ -260,11 +307,13 @@ def fit_video_duration(
     *,
     width: int | None = None,
     height: int | None = None,
-    preset: str = "ken_burns_slow",
 ) -> Path:
-    _ = preset
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    vf = _scale_pad_vf(width=width, height=height) if width and height else f"fps={CLIP_FPS},format={_PIX_FMT}"
+    if width and height:
+        video_dur = probe_duration(input_path)
+        vf = _fit_vf_chain(video_dur, target_sec, width=width, height=height)
+    else:
+        vf = f"fps={CLIP_FPS},format={_PIX_FMT}"
     run_ffmpeg(
         [
             *ffmpeg_cmd_start(hwaccel=False),
@@ -338,20 +387,13 @@ def video_to_clip_timed_overlays(
 ) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     canvas_w, canvas_h = _resolve_clip_canvas(width, height)
-    showinfo = "showinfo" if output_path.name == "overlay_debug.mp4" else "null"
 
-    streams = (
-        f"[0:v]scale={canvas_w}:{canvas_h}:flags=lanczos,{showinfo}[v0]"
-        if showinfo != "null"
-        else f"[0:v]scale={canvas_w}:{canvas_h}:flags=lanczos,format=rgba[v0]"
-    )
-
-    overlays_chain = f"[0:v]scale={canvas_w}:{canvas_h}:flags=lanczos,{showinfo}[v0]" if False else ""
-    streams_parts = [streams]
+    streams_parts = [
+        f"[0:v]scale={canvas_w}:{canvas_h}:flags=lanczos,format=rgba[v0]",
+    ]
     for idx, (ov_path, _, _) in enumerate(overlay_windows):
+        _ = ov_path
         streams_parts.append(f"[{idx + 1}:v]format=rgba,scale={canvas_w}:{canvas_h}[o{idx}]")
-    if showinfo != "null":
-        streams_parts.append(f"[0:a]anull[aout]")
 
     current = "v0"
     for idx, (_, seg_start, seg_end) in enumerate(overlay_windows):
@@ -381,7 +423,5 @@ def video_to_clip_timed_overlays(
             str(output_path),
         ]
     )
-    if showinfo != "null":
-        cmd.extend(["-map", "[aout]", "-c:a", "copy"])
     run_ffmpeg(cmd)
     return output_path
