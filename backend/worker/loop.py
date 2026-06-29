@@ -348,7 +348,11 @@ def run_script_image_prompts(
     )
 
     with connection() as conn:
-        quality_report = check_image_prompts(updated, sd15_mode=include_sd15_prompt)
+        quality_report = check_image_prompts(
+            updated,
+            sd15_mode=include_sd15_prompt,
+            segment_indices=segment_indices,
+        )
         if quality_report.level == "major":
             logger.error(
                 "job %s script/imagePrompts quality major: %s",

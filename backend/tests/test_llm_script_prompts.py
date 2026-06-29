@@ -36,7 +36,7 @@ def test_storyboard_length_budget_requires_enough_segments():
     assert "字数预算" in budget
 
 
-def test_storyboard_length_budget_life_28s_needs_many_segments():
+def test_storyboard_length_budget_life_28s_per_segment_cap():
     target = narration_target_for_minutes(6.0)
     assert target == 1646
     budget = _storyboard_length_budget(
@@ -44,9 +44,9 @@ def test_storyboard_length_budget_life_28s_needs_many_segments():
         segment_target_sec=28.0,
         content_style=CONTENT_STYLE_LIFE_EXPERIENCE,
     )
-    assert "12 个 segments" in budget
     assert "140" in budget
-    assert "禁止用 3～5 个长段" in budget
+    assert "段数由内容与单镜上限共同决定" in budget
+    assert "输出前自检" in budget
 
 
 def test_build_storyboard_prompts_includes_length_budget():
@@ -59,7 +59,7 @@ def test_build_storyboard_prompts_includes_length_budget():
     assert "字数预算" in prompts["user"]
     assert "95%" in prompts["user"] or "95％" in prompts["user"]
     assert "输出前自检" in prompts["user"]
-    assert "segments 数组长度必须" in prompts["system"]
+    assert "输出前须自检" in prompts["system"]
     assert "1120" in prompts["user"] or str(narration_accept_min_chars(1318)) in prompts["user"]
 
 
@@ -73,6 +73,20 @@ def test_build_storyboard_life_experience_bans_memoir_style():
     assert "禁止伪亲历体" in prompts["system"]
     assert "我当" in prompts["system"]
     assert "误区+原因+正确做法" in prompts["user"]
+
+
+def test_build_storyboard_science_child_uses_four_part_structure_and_self_check():
+    prompts = build_storyboard_prompts(
+        "光刻胶是什么",
+        narration_target_words=800,
+        segment_target_sec=10.0,
+        job={"pipeline": "standard", "content_style": "science_child"},
+    )
+    assert "【结构规范】" in prompts["system"]
+    assert "开场钩子" in prompts["system"]
+    assert "机制拆解" in prompts["system"]
+    assert "输出前自检" in prompts["system"]
+    assert "感叹+科普点+比喻/拟声" in prompts["user"]
 
 
 def test_storyboard_compact_output_for_landscape_life_preset():
