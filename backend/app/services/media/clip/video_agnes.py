@@ -13,13 +13,8 @@ import requests
 
 from app.config import get_settings
 from app.services.media.clip.mgr import ClipProvider, clip_mgr
-from app.services.media.clip.render import (
-    ffmpeg_cmd_start,
-    fit_video_duration,
-    run_ffmpeg,
-    video_to_clip_timed_overlays,
-)
-from app.services.media.ffmpeg_utils import probe_duration
+from app.services.media.clip.render import fit_video_duration, video_to_clip_timed_overlays
+from app.services.media.ffmpeg_utils import ffmpeg_cmd_start, probe_duration, run_ffmpeg
 from app.services.visual.agnes_api import (
     AgnesApiKey,
     AgnesQuotaExceeded,
@@ -303,7 +298,7 @@ class AgnesClipProvider(ClipProvider):
                     raise
                 wait = 10 * (attempt + 1)
                 logger.warning(
-                    "agnes i2v attempt %s/%s failed, retry in %ss: %s",
+                    "agnes t2v attempt %s/%s failed, retry in %ss: %s",
                     attempt + 1,
                     max_attempts,
                     wait,
@@ -312,7 +307,7 @@ class AgnesClipProvider(ClipProvider):
                 time.sleep(wait)
         if last_exc:
             raise last_exc
-        raise RuntimeError("agnes i2v failed without exception")
+        raise RuntimeError("agnes t2v failed without exception")
 
     def _generate_raw(
         self,
@@ -359,7 +354,7 @@ class AgnesClipProvider(ClipProvider):
 
         if last_exc:
             raise last_exc
-        raise RuntimeError("agnes i2v failed without exception")
+        raise RuntimeError("agnes t2v failed without exception")
 
     def _submit_task(self, *, headers: dict, payload: dict) -> tuple[str | None, str | None, str, dict]:
         """异步提交：仅创建任务，立即返回 video_id / task_id。"""
@@ -372,9 +367,9 @@ class AgnesClipProvider(ClipProvider):
             raise_if_agnes_quota(body=body, message=str(err))
             if isinstance(err, dict):
                 raise RuntimeError(
-                    f"agnes i2v submit error: {err.get('code')} - {err.get('message')}"
+                    f"agnes t2v submit error: {err.get('code')} - {err.get('message')}"
                 )
-            raise RuntimeError(f"agnes i2v submit error: {err}")
+            raise RuntimeError(f"agnes t2v submit error: {err}")
 
         video_id = body.get("video_id")
         if isinstance(video_id, str):
@@ -387,11 +382,11 @@ class AgnesClipProvider(ClipProvider):
         else:
             task_id = None
         if not video_id and not task_id:
-            raise RuntimeError(f"agnes i2v submit missing task id: {body}")
+            raise RuntimeError(f"agnes t2v submit missing task id: {body}")
 
         state = str(body.get("status") or "queued")
         logger.info(
-            "agnes i2v task queued (async): video_id=%s task_id=%s status=%s",
+            "agnes t2v task queued (async): video_id=%s task_id=%s status=%s",
             video_id or "-",
             task_id or "-",
             state,
@@ -401,7 +396,7 @@ class AgnesClipProvider(ClipProvider):
     def _download_video(self, poll: dict, output_path: Path, task_label: str) -> Path:
         video_url = self._extract_video_url(poll)
         if not video_url:
-            raise RuntimeError(f"agnes i2v task {task_label} completed but missing video url")
+            raise RuntimeError(f"agnes t2v task {task_label} completed but missing video url")
         video = requests.get(
             video_url,
             timeout=(self._connect_timeout, self._download_timeout),
@@ -444,14 +439,14 @@ class AgnesClipProvider(ClipProvider):
                 raise_if_agnes_quota(body=poll, message=str(err))
                 if isinstance(err, dict):
                     raise RuntimeError(
-                        f"agnes i2v poll error: {err.get('code')} - {err.get('message')}"
+                        f"agnes t2v poll error: {err.get('code')} - {err.get('message')}"
                     )
-                raise RuntimeError(f"agnes i2v poll error: {err}")
+                raise RuntimeError(f"agnes t2v poll error: {err}")
 
             state = str(poll.get("status") or "unknown")
             if poll_idx % 6 == 0 and state not in {"completed", "failed"}:
                 logger.info(
-                    "agnes i2v task %s polling... state=%s (~%ss)",
+                    "agnes t2v task %s polling... state=%s (~%ss)",
                     task_label,
                     state,
                     int((poll_idx + 1) * self._poll_interval_sec),
@@ -461,9 +456,9 @@ class AgnesClipProvider(ClipProvider):
             if state == "failed":
                 err = poll.get("error")
                 detail = err if isinstance(err, str) else repr(err)
-                raise RuntimeError(f"agnes i2v task {task_label} failed: {detail}")
+                raise RuntimeError(f"agnes t2v task {task_label} failed: {detail}")
 
-        raise RuntimeError(f"agnes i2v task {task_label} timeout, last state={state}")
+        raise RuntimeError(f"agnes t2v task {task_label} timeout, last state={state}")
 
     def _submit_and_poll(
         self,
@@ -567,7 +562,6 @@ class AgnesClipProvider(ClipProvider):
                     total_duration,
                     width=clip_width,
                     height=clip_height,
-                    force_cpu=True,
                 )
             else:
                 fitted_path.replace(output_path)
