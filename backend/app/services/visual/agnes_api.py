@@ -1,4 +1,4 @@
-"""Agnes AI API 公共逻辑：主/备 API Key 与配额超限检测。"""
+"""Agnes AI API 公共逻辑：免费/付费 API Key 与配额超限检测。"""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ _QUOTA_KEYWORDS = (
 
 
 class AgnesQuotaExceeded(RuntimeError):
-    """主 Key 配额/限流耗尽，可切换备用 Key。"""
+    """当前 Key 配额/限流耗尽，可切换备用 Key。"""
 
 
 @dataclass(frozen=True)
@@ -41,13 +41,15 @@ class AgnesApiKey:
 
 
 def agnes_api_keys(settings: Settings | None = None) -> list[AgnesApiKey]:
+    """返回 Agnes Key 列表：优先 AGNES_FREE_API_KEY，限流后切换 AGNES_API_KEY。"""
     cfg = settings or get_settings()
     keys: list[AgnesApiKey] = []
-    if cfg.agnes_api_key:
-        keys.append(AgnesApiKey("primary", cfg.agnes_api_key))
     free = cfg.agnes_free_api_key
-    if free and free != cfg.agnes_api_key:
+    if free:
         keys.append(AgnesApiKey("free", free))
+    primary = cfg.agnes_api_key
+    if primary and primary != free:
+        keys.append(AgnesApiKey("primary", primary))
     return keys
 
 

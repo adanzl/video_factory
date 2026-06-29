@@ -40,7 +40,6 @@ def _backoff_seconds(
 _DEFAULT_MOTION_PROMPT = (
     "镜头固定或极轻微缓慢推进，主体清晰稳定，画面平滑无抖动，科普讲解风格"
 )
-_STABILITY_HINT = "画面稳定，无抖动，无快速运镜"
 _MAX_FRAMES = 441
 _MIN_FRAMES = 81
 
@@ -50,26 +49,10 @@ def _pick_num_frames(target_sec: float, frame_rate: int) -> int:
     return min(_MAX_FRAMES, 8 * math.ceil((need - 1) / 8) + 1)
 
 
-def _stabilize_motion_prompt(prompt: str) -> str:
-    text = prompt.strip()
-    if not text:
-        return _DEFAULT_MOTION_PROMPT
-    if _STABILITY_HINT in text:
-        return text
-    return f"{text}，{_STABILITY_HINT}"
-
-
 def _merge_t2v_prompt(image_prompt: str | None, motion_prompt: str | None) -> str:
-    """合并文生图提示词与运动提示词，供 Agnes 文生视频 prompt 使用。"""
-    visual = (image_prompt or "").strip()
-    motion = (motion_prompt or "").strip()
-    if visual and motion:
-        merged = f"{visual}；{motion}"
-    elif visual:
-        merged = visual
-    else:
-        merged = motion
-    return _stabilize_motion_prompt(merged)
+    """按 [场景]+[动效/运镜]+[风格] 结构合成一段连贯的 t2v prompt。"""
+    parts = [p for p in [image_prompt, motion_prompt] if p and p.strip()]
+    return "，".join(parts) if parts else _DEFAULT_MOTION_PROMPT
 
 
 def _agnes_api_root(base_url: str) -> str:
@@ -255,6 +238,7 @@ class AgnesClipProvider(ClipProvider):
             "prompt": prompt,
             "width": width,
             "height": height,
+            "size": f"{width}x{height}",
             "num_frames": num_frames,
             "frame_rate": self._frame_rate,
         }
@@ -320,7 +304,7 @@ class AgnesClipProvider(ClipProvider):
     ) -> Path:
         keys = agnes_api_keys()
         if not keys:
-            raise RuntimeError("AGNES_API_KEY 未配置，无法调用 Agnes 文生视频")
+            raise RuntimeError("AGNES_FREE_API_KEY / AGNES_API_KEY 未配置，无法调用 Agnes 文生视频")
 
         last_exc: Exception | None = None
         for idx, key in enumerate(keys):
