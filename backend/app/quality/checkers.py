@@ -325,6 +325,22 @@ def skipped_image_prompts_check() -> QualityReport:
     )
 
 
+def skipped_copy_check() -> QualityReport:
+    return QualityReport(
+        level="pass",
+        step="copy",
+        details={"reason": "skipped"},
+    )
+
+
+def skipped_storyboard_check() -> QualityReport:
+    return QualityReport(
+        level="pass",
+        step="storyboard",
+        details={"reason": "skipped"},
+    )
+
+
 def _cue_totals(cues: list[SubtitleCue]) -> dict[int, float]:
     totals: dict[int, float] = {}
     for cue in cues:

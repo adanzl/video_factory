@@ -102,6 +102,8 @@ class Config:
     redis_url: str | None = _opt("REDIS_URL")
     mock_mode: bool = _bool("MOCK_MODE") or not (_DEEPSEEK_KEY and _DASHSCOPE_KEY and _TTS_KEY)
     skip_publish_default: bool = _bool("SKIP_PUBLISH_DEFAULT", True)
+    # 脚本阶段 copy/storyboard/image_prompts 质检（调 prompt 时可关）
+    skip_script_quality_check: bool = _bool("SKIP_SCRIPT_QUALITY_CHECK", False)
     host_enabled: bool = _bool("HOST_ENABLED")
     kling_upgrade_enabled: bool = _bool("KLING_UPGRADE_ENABLED")
     enable_scheduler: bool = _bool("ENABLE_SCHEDULER")

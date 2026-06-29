@@ -297,6 +297,13 @@ _NARRATION_VOICE_RULE = (
     "科普事实须准确，童趣服务于理解，不牺牲科学内容。"
 )
 
+_TECH_SCIENCE_VOICE_RULE = (
+    "口播口吻须像B站硬核科技UP主：客观、冷静、信息密度高；"
+    "优先用「你可能不知道」「很多人以为…但…」「关键在这个数据…」等分析式表达；"
+    "句子偏简洁，每句都有信息量，不废话不卖萌；"
+    "技术概念须准确，用比喻简化但不失真。"
+)
+
 _MATERIAL_NARRATION_LENGTH_RULE = (
     "【撑满字数的写法】每段口播须含三层——"
     "①童趣感叹或「你看」式互动；②一个准确科普点；③比喻/拟声/生活联想。"
@@ -363,8 +370,8 @@ _NARRATION_ANTI_MEMOIR_RULE = (
     "【禁止伪亲历体】不得出现：「我当…时」「我在…干活/下井/上班」「老XX教我」"
     "「班长拉着我跑」「我条件反射」「我后来查资料才知道」「评论区聊聊你平时怎么做」"
     "等编造第一人称从业经历或互动话术；"
-    "不得扮演矿工、医护、司机等具体职业身份；"
-    "用第三人称或泛化「很多人/有些老说法」讲清误区与正确步骤即可。"
+    "不得扮演矿工、医护、司机等具体职业身份，不得写成暗访/卧底/一线亲历报道；"
+    "产业、科技类须客观第三人称科普，用「很多人/业内/数据显示」表述即可。"
 )
 
 _SCIENCE_STRUCTURE_RULE = (
@@ -373,7 +380,7 @@ _SCIENCE_STRUCTURE_RULE = (
     "2. 背景铺垫（是什么、在哪里、和我们有什么关系，用孩子能懂的话讲清）\n"
     "3. 机制拆解（核心原理、因果链条、关键对比或简单实验，只讲一层不贪多）\n"
     "4. 收束与回味（一句童趣总结，可留轻量思考，禁止清单式连读多知识点）\n"
-    "只讲一个核心知识点，禁止多点罗列、章节式串讲或「第一第二第三」清单。"
+    "如果字数预算大，可以按字数分为多个 segments，每个 segment 讲一个独立的小知识点或同一个话题的不同侧面。"
     "禁止倒叙；讲完一个完整因果，最后一句可轻量引导互动。"
 )
 
@@ -461,6 +468,7 @@ def _storyboard_length_budget(
     hard_min = plan["hard_min"]
     writing_target = plan["writing_target"]
     per_min = plan["per_seg_min"]
+    seg_count_min = plan["seg_count_min"]
     pct = int(NARRATION_WRITING_TARGET_RATIO * 100)
     layers = (
         "误区+原因+正确做法"
@@ -470,10 +478,13 @@ def _storyboard_length_budget(
         else "感叹+科普点+比喻/拟声"
     )
     self_check = (
-        "【输出前自检】逐段核对：每段 text 非空且含三层写法；"
-        f"各段 text 字数之和 ≥ {writing_target}；"
-        "word_count 等于 narration 实际字数；"
-        "narration 与 segments 按序拼接完全一致。"
+        "【输出前硬性自检，任一项不满足须当场重写后再输出 JSON】"
+        f"①segments 数量 ≥ {seg_count_min}；"
+        f"②逐段统计 text 字数，任一超过单段上限须拆段；"
+        f"③各段 text 字数之和 ≥ {writing_target}；"
+        "④word_count 等于 narration 实际字数；"
+        "⑤narration 与 segments 按序拼接完全一致；"
+        "⑥口播无伪亲历/第一人称从业叙事。"
     )
     if segment_target_sec <= 0:
         return (
@@ -495,11 +506,12 @@ def _storyboard_length_budget(
         f"【字数预算】总目标 {narration_target} 字；"
         f"写作必须达到 {writing_target} 字（总目标的 {pct}%）；"
         f"验收下限 {hard_min} 字（低于即不合格）。\n"
-        f"单镜上限 {sec}s，每段 text 上限 {cap} 字（绝对不得超过 {hard_cap} 字，超限即不合格）。\n"
+        f"单镜上限 {sec}s，每段 text 上限 {cap} 字（绝对不得超过 {hard_cap} 字，超限必须拆段）。\n"
+        f"须至少 {seg_count_min} 个 segments（{writing_target} 字 ÷ {cap} 字/段）；"
         f"每段建议 {per_target_lo}-{per_target_hi} 字、下限 {per_min} 字；"
-        f"段数由内容与单镜上限共同决定，各段 text 字数之和须 ≥ {writing_target}。\n"
+        f"各段 text 字数之和须 ≥ {writing_target}。\n"
         f"每段用「{layers}」三层写法撑满，禁止整段一句带过。\n"
-        "【生成顺序】先写满各段 segments，再拼接 narration，最后核对 word_count。\n"
+        "【生成顺序】先按段数预算写满各段 segments，再拼接 narration，最后核对 word_count。\n"
         f"{self_check}"
     )
 
@@ -514,18 +526,21 @@ def _storyboard_length_system_clause(
     hard_min = plan["hard_min"]
     writing_target = plan["writing_target"]
     per_min = plan["per_seg_min"]
+    seg_count_min = plan["seg_count_min"]
     pct = int(NARRATION_WRITING_TARGET_RATIO * 100)
     if compact_output:
         return (
             f"各段 text 须写满（每段至少 {per_min} 字），后端会拼接为 narration；"
+            f"须至少 {seg_count_min} 个 segments；"
             f"拼接后总字数须 ≥ {writing_target} 字（总目标 {narration_target} 字的 {pct}%）。"
-            "输出前须自检：各段非空、字数之和达标、segments 与 narration 拼接一致。"
+            "输出前须自检：段数达标、各段非空且不超单段上限、字数之和达标、segments 与 narration 拼接一致。"
         )
     return (
         f"各段 text 按顺序拼接须与 narration 完全一致；"
+        f"须至少 {seg_count_min} 个 segments；"
         f"narration 须达到 {writing_target} 字（总目标 {narration_target} 字的 {pct}%，"
         f"验收下限 {hard_min} 字）。"
-        "输出前须自检：各段非空、字数之和达标、word_count 等于 narration 实际字数。"
+        "输出前须自检：段数达标、各段非空且不超单段上限、字数之和达标、word_count 等于 narration 实际字数。"
     )
 
 
@@ -596,8 +611,9 @@ def _storyboard_segment_rule(target: float, profile_style: str = "") -> str:
     lo = max(15, int(cap * 0.65))
     return (
         common
-        + f"单镜口播上限{sec}秒；每段text约{lo}-{cap}字，单段绝对不得超过{hard_cap}字；"
-        "按自然断句与口播节奏切分，段数由内容决定，禁止少数超长段堆叠。"
+        + f"单镜口播上限{sec}秒；每段text建议{lo}-{cap}字，单段绝对不得超过{hard_cap}字；"
+        "任一 segment 的 text 超过单段上限必须拆成多段，禁止合并成长段；"
+        "按自然断句与口播节奏切分，段数宁多勿少。"
     )
 
 

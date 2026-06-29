@@ -8,9 +8,11 @@ from app.quality.checkers import (
     check_copy,
     check_image_prompts,
     check_storyboard,
+    skipped_copy_check,
     skipped_image_prompts_check,
+    skipped_storyboard_check,
 )
-from app.quality.gate import apply_quality_checks
+from app.quality.gate import apply_quality_checks, merge_quality_report
 from app.repositories import job_log_repo, job_repo, segment_repo
 from app.repositories.connection import connection
 from app.services.llm.llm_mgr import llm_mgr
@@ -591,22 +593,43 @@ class ScriptStage(StageExecutor):
                 f"title={script['title']}, "
                 f"cost_time={script['cost_time']}s",
             )
-            apply_quality_checks(
-                conn,
-                ctx.job["id"],
-                self.name,
-                {
-                    "copy": check_copy(script),
-                    "storyboard": check_storyboard(
-                        script,
-                        segment_target_sec=segment_target_sec,
-                        max_title_length=max_len,
-                    ),
-                    "image_prompts": (
-                        check_image_prompts(script)
-                        if generate_image_prompts
-                        else skipped_image_prompts_check()
-                    ),
-                },
-                existing_report=ctx.job.get("quality_report"),
-            )
+            if get_settings().skip_script_quality_check:
+                merged = merge_quality_report(
+                    ctx.job.get("quality_report"),
+                    "copy",
+                    skipped_copy_check(),
+                )
+                merged = merge_quality_report(merged, "storyboard", skipped_storyboard_check())
+                merged = merge_quality_report(
+                    merged,
+                    "image_prompts",
+                    skipped_image_prompts_check(),
+                )
+                job_log_repo.append_log(
+                    conn,
+                    ctx.job["id"],
+                    self.name,
+                    "script quality checks skipped (SKIP_SCRIPT_QUALITY_CHECK)",
+                    level="warning",
+                )
+                job_repo.update_job(conn, ctx.job["id"], quality_report=merged)
+            else:
+                apply_quality_checks(
+                    conn,
+                    ctx.job["id"],
+                    self.name,
+                    {
+                        "copy": check_copy(script),
+                        "storyboard": check_storyboard(
+                            script,
+                            segment_target_sec=segment_target_sec,
+                            max_title_length=max_len,
+                        ),
+                        "image_prompts": (
+                            check_image_prompts(script)
+                            if generate_image_prompts
+                            else skipped_image_prompts_check()
+                        ),
+                    },
+                    existing_report=ctx.job.get("quality_report"),
+                )
