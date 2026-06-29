@@ -220,6 +220,7 @@ class TopicMgr:
                     continue
                 if row.get("job_id"):
                     continue
+                is_history = row.get("track") == "历史悬案"
                 job = job_repo.create_job(
                     conn,
                     row["title"],
@@ -231,9 +232,11 @@ class TopicMgr:
                         orientation=default_orientation_for_pipeline("standard"),
                         content_style=(
                             CONTENT_STYLE_HISTORICAL_MYSTERY
-                            if row.get("track") == "历史悬案"
+                            if is_history
                             else None
                         ),
+                        narration_target_words=1800 if is_history else None,
+                        segment_target_sec=8 if is_history else None,
                     ),
                 )
                 title_repo.update_title(
