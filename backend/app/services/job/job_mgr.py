@@ -120,9 +120,28 @@ class JobMgr:
             return job_repo.get_job(conn, job_id)
 
     def get_segments(self, job_id: int) -> list[dict]:
+        from app.utils.media import resolve_segment_duration_sec
+
         with connection() as conn:
-            job_repo.get_job(conn, job_id)
-            return segment_repo.list_segments(conn, job_id)
+            job = job_repo.get_job(conn, job_id)
+            segments = segment_repo.list_segments(conn, job_id)
+
+        script = job.get("script_json") or {}
+        script_by_index: dict[int, dict] = {}
+        for item in script.get("segments") or []:
+            if isinstance(item, dict) and item.get("segment_index") is not None:
+                script_by_index[int(item["segment_index"])] = item
+
+        for segment in segments:
+            if segment.get("duration_sec") is not None:
+                continue
+            resolved = resolve_segment_duration_sec(
+                segment,
+                script_seg=script_by_index.get(int(segment["segment_index"])),
+            )
+            if resolved is not None:
+                segment["duration_sec"] = resolved
+        return segments
 
     def get_logs(self, job_id: int) -> list[dict]:
         with connection() as conn:

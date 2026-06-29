@@ -113,7 +113,7 @@
               <el-table-column prop="time" label="时间" width="210" show-overflow-tooltip />
               <el-table-column prop="text" label="文案" min-width="160">
                 <template #default="{ row }">
-                  <div class="leading-relaxed break-words whitespace-pre-wrap">{{ row.text }}</div>
+                  <div class="leading-relaxed wrap-break-word whitespace-pre-wrap">{{ row.text }}</div>
                 </template>
               </el-table-column>
             </el-table>
