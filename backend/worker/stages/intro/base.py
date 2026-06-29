@@ -82,13 +82,13 @@ def _generate_cover(job: dict, cover_path: Path, width: int, height: int) -> Non
         img = Image.open(tmp_path).convert("RGBA")
         draw = ImageDraw.Draw(img)
         font_path = str(get_settings().font_path)
-        font_size = max(24, min(cw, ch) // 20)
+        font_size = max(48, min(cw, ch) // 8)
         font = ImageFont.truetype(font_path, font_size)
         lines = _wrap_text(title, font, cw - 80)
-        line_h = font_size * 3 // 2
-        text_h = len(lines) * line_h + 20
-        bar_y = ch - text_h - 40
-        bar = Image.new("RGBA", (cw, text_h + 40), (0, 0, 0, 160))
+        line_h = font_size + 12
+        text_h = len(lines) * line_h + 32
+        bar_y = ch - text_h - 32
+        bar = Image.new("RGBA", (cw, text_h + 32), (0, 0, 0, 160))
         img.paste(bar, (0, bar_y), bar)
         draw = ImageDraw.Draw(img)
         for i, line in enumerate(lines):
@@ -118,7 +118,7 @@ def _wrap_text(text: str, font, max_width: int) -> list[str]:
 
 
 def _draw_stroke(draw, x: float, y: float, text: str, font) -> None:
-    stroke_ranges = [(0, 0), (2, 0), (-2, 0), (0, 2), (0, -2)]
+    stroke_ranges = [(0, 0), (3, 0), (-3, 0), (0, 3), (0, -3), (3, 3), (-3, 3), (3, -3), (-3, -3)]
     for dx, dy in stroke_ranges:
         draw.text((x + dx, y + dy), text, font=font, fill="black")
     draw.text((x, y), text, font=font, fill="white")
