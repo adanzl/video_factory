@@ -168,7 +168,7 @@ class Config:
     agnes_http_max_retries: int = int(os.getenv("AGNES_HTTP_MAX_RETRIES", "5"))
     agnes_http_connect_timeout_sec: float = float(os.getenv("AGNES_HTTP_CONNECT_TIMEOUT_SEC", "15"))
     agnes_http_submit_read_timeout_sec: float = float(
-        os.getenv("AGNES_HTTP_SUBMIT_READ_TIMEOUT_SEC", "60")
+        os.getenv("AGNES_HTTP_SUBMIT_READ_TIMEOUT_SEC", "120")
     )
     agnes_http_poll_read_timeout_sec: float = float(
         os.getenv("AGNES_HTTP_POLL_READ_TIMEOUT_SEC", "30")

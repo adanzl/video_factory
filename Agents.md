@@ -2,7 +2,7 @@
 
 ## SSH
 
-主机名 mini
+主机名：局域网 mini 或者 (57c42474b0ea.ofalias.net 端口 58186)
 用户名 leo
 密码 见.env 里的 SSH_PASSWORD
 
