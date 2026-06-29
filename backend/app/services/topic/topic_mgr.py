@@ -9,7 +9,11 @@ from app.config import get_settings
 from app.repositories import job_repo, title_repo
 from app.repositories.connection import connection
 from app.services.job.job_mgr import job_mgr
-from app.utils.job_info import default_orientation_for_pipeline, merge_job_info
+from app.utils.job_info import (
+    CONTENT_STYLE_HISTORICAL_MYSTERY,
+    default_orientation_for_pipeline,
+    merge_job_info,
+)
 from app.services.llm.llm_mgr import llm_mgr
 from app.services.llm.llm_topics import normalize_title
 from app.services.topic.hot_pipeline import (
@@ -225,6 +229,11 @@ class TopicMgr:
                     info=merge_job_info(
                         None,
                         orientation=default_orientation_for_pipeline("standard"),
+                        content_style=(
+                            CONTENT_STYLE_HISTORICAL_MYSTERY
+                            if row.get("track") == "历史悬案"
+                            else None
+                        ),
                     ),
                 )
                 title_repo.update_title(
