@@ -96,11 +96,11 @@ _SENTENCE_END = frozenset("。！？!?；;")
 
 
 _SUBTITLE_STRIP_PUNCT = re.compile(
-    r'[。！？；，,.!?;"]+'
+    r'[。！？；：，,.!?;:"]+'
 )
 # 分条断点：顿号、书名号《》〈〉、各类括号不分割，保留在句内
 _SUBTITLE_SPLIT_PUNCT = re.compile(
-    r'[。！？；，,.!?;"]+'
+    r'[。！？；：，,.!?;:"]+'
 )
 
 
@@ -124,8 +124,15 @@ def balance_title_lines(text: str, max_lines: int) -> list[str]:
     return lines
 
 
+_OPEN_BRACKETS = frozenset('『「（([{《〈【“‘')
+_CLOSE_BRACKETS = frozenset('』」）)]}》〉】”’')
+_BRACKET_PAIRS = {'『': '』', '「': '」', '（': '）', '(': ')', '[': ']', '{': '}',
+                  '《': '》', '〈': '〉', '【': '】', '“': '”', '‘': '’'}
+_TOGGLE_QUOTES = frozenset('"\'')
+
+
 def split_phrase_chunks(text: str) -> list[tuple[str, str]]:
-    """按标点分条，返回 (TTS 文本含标点, 字幕文本：去句读标点，保留书名号/括号/顿号)。"""
+    """按标点分条，引号/括号内的内容不拆分。"""
     text = text.strip()
     if not text:
         return []
@@ -136,21 +143,39 @@ def split_phrase_chunks(text: str) -> list[tuple[str, str]]:
     )
     chunks: list[tuple[str, str]] = []
     buf = ""
+    bracket_depth = 0
+    in_double_quote = False
+    in_single_quote = False
+
     for token in tokens:
         if not token:
             continue
-        if _SUBTITLE_SPLIT_PUNCT.fullmatch(token):
-            buf += token
+        for ch in token:
+            if ch in _OPEN_BRACKETS:
+                bracket_depth += 1
+                matched_close = _BRACKET_PAIRS.get(ch)
+            elif ch in _CLOSE_BRACKETS:
+                bracket_depth = max(0, bracket_depth - 1)
+            elif ch == '"':
+                in_double_quote = not in_double_quote
+            elif ch == "'":
+                in_single_quote = not in_single_quote
+            buf += ch
+
+        has_punct = _SUBTITLE_SPLIT_PUNCT.fullmatch(token)
+        if has_punct and bracket_depth == 0 and not in_double_quote and not in_single_quote:
             display = _SUBTITLE_STRIP_PUNCT.sub("", buf).strip()
             if display:
                 chunks.append((buf.strip(), display))
             buf = ""
-        else:
-            buf += token
+
     if buf.strip():
         display = _SUBTITLE_STRIP_PUNCT.sub("", buf).strip()
         if display:
             chunks.append((buf.strip(), display))
+        elif chunks:
+            prev_text, prev_display = chunks[-1]
+            chunks[-1] = (prev_text + buf, prev_display)
     return chunks
 
 
