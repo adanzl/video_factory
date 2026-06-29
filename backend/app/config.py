@@ -216,6 +216,7 @@ class Config:
     tts_volume: int = int(_first("TTS_VOLUME", "COSYVOICE_VOLUME", default="50"))
     tts_instruction: str | None = _opt("TTS_INSTRUCTION")
     tts_instruct_preset: str | None = _opt("TTS_INSTRUCT_PRESET")
+    tts_max_workers: int = int(os.getenv("TTS_MAX_WORKERS", "3"))
 
     # ========== 音频质检 / 归一化 ==========
     audio_target_lufs: float = float(os.getenv("AUDIO_TARGET_LUFS", "-16"))
