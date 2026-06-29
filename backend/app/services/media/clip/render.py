@@ -271,7 +271,7 @@ def fit_video_duration(
             "-i",
             str(input_path),
             "-vf",
-            vf_for_encode(vf),
+            vf_for_encode(vf, force_cpu=True),
             "-c:v",
             "libx264",
             "-crf",
