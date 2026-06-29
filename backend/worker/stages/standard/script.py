@@ -93,13 +93,14 @@ def _apply_script_title(
     skip_optimize: bool,
     job_id: int,
     stage_name: str,
+    content_style: str = "",
 ) -> None:
     script["title"] = _resolve_script_title(
         source_title=source_title,
         llm_title=str(script.get("title") or ""),
         max_len=max_len,
     )
-    if skip_optimize:
+    if skip_optimize or content_style == "history_mystery":
         return
     try:
         optimized_title = llm_mgr.optimize_script_title(
@@ -534,6 +535,7 @@ class ScriptStage(StageExecutor):
             skip_optimize=bool(ctx.script_skip_title_optimize),
             job_id=ctx.job["id"],
             stage_name=self.name,
+            content_style=content_style_from_job(ctx.job),
         )
         _apply_video_description(
             script,
