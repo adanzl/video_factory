@@ -11,17 +11,13 @@ from app.services.media.clip.video_agnes import (
     _pick_num_frames,
     _STABILITY_HINT,
 )
+from app.services.visual.agnes_api import AgnesApiKey
 from app.utils.job_info import normalize_video_provider, resolve_video_provider
 from app.utils.media_path import resolve_media_public_base_url
 
 
-def test_backoff_seconds_429() -> None:
-    assert _backoff_seconds(0, status_code=429) >= 30.0
-    assert _backoff_seconds(2, status_code=429) >= 70.0
-
-
-def test_backoff_seconds_submit_timeout() -> None:
-    assert _backoff_seconds(0, label="submit", is_timeout=True) >= 45.0
+def test_backoff_seconds_timeout() -> None:
+    assert _backoff_seconds(0, is_timeout=True) >= 45.0
 
 
 def test_pick_num_frames() -> None:
@@ -63,7 +59,6 @@ def test_merge_t2v_prompt_image_only() -> None:
 
 def test_agnes_clip_provider_submits_t2v_prompt(tmp_path: Path) -> None:
     provider = AgnesClipProvider()
-    provider._api_key = "test-key"  # noqa: SLF001
     image_path = tmp_path / "1.png"
     image_path.write_bytes(b"png")
     output_path = tmp_path / "clip.mp4"
@@ -88,6 +83,10 @@ def test_agnes_clip_provider_submits_t2v_prompt(tmp_path: Path) -> None:
     video_resp.raise_for_status = MagicMock()
 
     with (
+        patch(
+            "app.services.media.clip.video_agnes.agnes_api_keys",
+            return_value=[AgnesApiKey("primary", "test-key")],
+        ),
         patch.object(provider, "_request", side_effect=[create_resp, poll_resp]) as mock_request,
         patch("app.services.media.clip.video_agnes.requests.get", return_value=video_resp),
         patch("app.services.media.clip.video_agnes.probe_duration", return_value=5.0),

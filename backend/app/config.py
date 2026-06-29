@@ -161,6 +161,7 @@ class Config:
     z_image_size: str = os.getenv("Z_IMAGE_SIZE", _WAN_IMAGE_SIZE)
     z_image_prompt_extend: bool = _bool("Z_IMAGE_PROMPT_EXTEND")
     agnes_api_key: str | None = _opt("AGNES_API_KEY")
+    agnes_free_api_key: str | None = _opt("AGNES_FREE_API_KEY")
     agnes_api_base_url: str = os.getenv("AGNES_API_BASE_URL", "https://apihub.agnes-ai.com/v1")
     agnes_image_model: str = os.getenv("AGNES_IMAGE_MODEL", "agnes-image-2.1-flash")
     agnes_image_size: str = os.getenv("AGNES_IMAGE_SIZE", _WAN_IMAGE_SIZE)
