@@ -11,6 +11,7 @@ from app.repositories.connection import connection
 from app.services.job.job_mgr import job_mgr
 from app.utils.job_info import (
     CONTENT_STYLE_HISTORICAL_MYSTERY,
+    ORIENTATION_LANDSCAPE,
     default_orientation_for_pipeline,
     merge_job_info,
 )
@@ -229,14 +230,14 @@ class TopicMgr:
                     status="idle",
                     info=merge_job_info(
                         None,
-                        orientation=default_orientation_for_pipeline("standard"),
+                        orientation=ORIENTATION_LANDSCAPE,
                         content_style=(
                             CONTENT_STYLE_HISTORICAL_MYSTERY
                             if is_history
                             else None
                         ),
                         narration_target_words=1800 if is_history else None,
-                        segment_target_sec=8 if is_history else None,
+                        segment_target_sec=10 if is_history else None,
                     ),
                 )
                 title_repo.update_title(
