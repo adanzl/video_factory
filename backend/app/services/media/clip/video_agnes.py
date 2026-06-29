@@ -97,6 +97,8 @@ class AgnesClipProvider(ClipProvider):
         self._create_url = f"{base}/videos"
         self._poll_root = _agnes_api_root(base)
         self._model = settings.agnes_video_model
+        self._video_width = settings.agnes_video_width
+        self._video_height = settings.agnes_video_height
         self._frame_rate = settings.agnes_video_frame_rate
         self._submit_interval = settings.agnes_submit_interval_sec
         self._http_max_retries = settings.agnes_http_max_retries
@@ -191,16 +193,33 @@ class AgnesClipProvider(ClipProvider):
             except requests.RequestException as exc:
                 last_exc = exc
                 wait = _backoff_seconds(attempt, label=label)
-                logger.warning(
-                    "agnes %s %s %s error: %s, retry %s/%s in %ss",
-                    label,
-                    method,
-                    url,
-                    exc,
-                    attempt + 1,
-                    retries,
-                    wait,
-                )
+                if isinstance(exc, requests.HTTPError) and exc.response is not None:
+                    try:
+                        body = exc.response.text[:500]
+                    except Exception:
+                        body = "<unreadable>"
+                    logger.warning(
+                        "agnes %s %s %s error: %s body=%s, retry %s/%s in %ss",
+                        label,
+                        method,
+                        url,
+                        exc,
+                        body,
+                        attempt + 1,
+                        retries,
+                        wait,
+                    )
+                else:
+                    logger.warning(
+                        "agnes %s %s %s error: %s, retry %s/%s in %ss",
+                        label,
+                        method,
+                        url,
+                        exc,
+                        attempt + 1,
+                        retries,
+                        wait,
+                    )
                 time.sleep(wait)
         if last_exc:
             raise last_exc
@@ -439,18 +458,21 @@ class AgnesClipProvider(ClipProvider):
         if total_duration <= 0:
             raise ValueError(f"segment {segment_index} has zero duration")
 
+        settings = get_settings()
         clip_width = width or get_settings().video_width
         clip_height = height or get_settings().video_height
         prompt = _merge_t2v_prompt(image_prompt, motion_prompt)
+        logger.info("segment %s: total_duration=%.2fs n_cues=%s", segment_index, total_duration, len(subtitle_cues))
         num_frames = _pick_num_frames(total_duration, self._frame_rate)
         raw_path = work_dir / f"{segment_index}.agnes_raw.mp4"
         fitted_path = work_dir / f"{segment_index}.agnes_fit.mp4"
 
         logger.info(
-            "clip %s: submitting agnes t2v (frames=%s, fps=%s, prompt=%s...)",
+            "clip %s: submitting agnes t2v (frames=%s, fps=%s, dur_target=%.1fs, prompt=%s...)",
             segment_index,
             num_frames,
             self._frame_rate,
+            total_duration,
             prompt[:80],
         )
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -458,8 +480,8 @@ class AgnesClipProvider(ClipProvider):
             self._generate_raw(
                 prompt,
                 raw_path,
-                width=clip_width,
-                height=clip_height,
+                width=self._video_width,
+                height=self._video_height,
                 num_frames=num_frames,
             )
             logger.info("clip %s: raw done, fitting to %.1fs", segment_index, total_duration)

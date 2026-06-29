@@ -317,6 +317,22 @@ def run_script_image_prompts(job_id: int) -> dict:
     updated["include_sd15_prompt"] = include_sd15_prompt
     updated.pop("_llm_timing", None)
 
+    from app.config import get_settings
+    from app.services.llm.llm_script_timeline import parse_video_timeline
+    from app.utils.media import assign_segment_timings
+
+    segment_target_sec = updated.get("segment_target_sec")
+    if segment_target_sec is None:
+        segment_target_sec = get_settings().segment_target_sec
+    video_timeline_raw = updated.get("video_timeline")
+    assign_segment_timings(
+        updated,
+        segment_target_sec=float(segment_target_sec) if segment_target_sec else None,
+        video_timeline=parse_video_timeline(video_timeline_raw)
+        if video_timeline_raw
+        else None,
+    )
+
     with connection() as conn:
         quality_report = check_image_prompts(updated, sd15_mode=include_sd15_prompt)
         if quality_report.level == "major":

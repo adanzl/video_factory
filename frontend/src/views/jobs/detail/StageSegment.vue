@@ -81,7 +81,7 @@
             <el-tag size="small">{{ segment.status }}</el-tag>
           </div>
           <div class="text-xs text-gray-400">
-            {{ segment.visual_mode }} · {{ formatDuration(segment.duration_sec) }}s
+            {{ segment.visual_mode }} · {{ formatSegmentDuration(segment.duration_sec) }}
           </div>
 
           <section class="flex flex-col gap-1">
@@ -385,14 +385,31 @@ const visualBriefByIndex = computed(() => {
   return map;
 });
 
+const scriptDurationByIndex = computed(() => {
+  const script = props.job.script_json as ScriptJson | null;
+  const map = new Map<number, number>();
+  for (const seg of script?.segments ?? []) {
+    const duration =
+      seg.duration_sec ??
+      (seg.start_sec != null && seg.end_sec != null ? seg.end_sec - seg.start_sec : undefined);
+    if (duration != null && Number.isFinite(duration)) {
+      map.set(seg.segment_index, duration);
+    }
+  }
+  return map;
+});
+
 const toMediaUrl = getMediaFileUrl;
 
 const displaySegments = computed(() =>
   props.segments.map(segment => {
     const imagePath = segment.image_path?.trim() ?? "";
     const clipPath = segment.clip_path?.trim() ?? "";
+    const duration_sec =
+      segment.duration_sec ?? scriptDurationByIndex.value.get(segment.segment_index) ?? null;
     return {
       ...segment,
+      duration_sec,
       visual_brief: visualBriefByIndex.value.get(segment.segment_index) ?? null,
       imageUrl: toMediaUrl(imagePath),
       clipUrl: clipPath ? toMediaUrl(clipPath) : "",
@@ -405,11 +422,11 @@ const truncate = (text: string, max: number) => {
   return normalized.length > max ? `${normalized.slice(0, max)}…` : normalized;
 };
 
-const formatDuration = (value?: number | null) => {
-  if (value === null || value === undefined) {
+const formatSegmentDuration = (value?: number | null) => {
+  if (value === null || value === undefined || Number.isNaN(value)) {
     return "-";
   }
-  return value.toFixed(2);
+  return `${value.toFixed(2)}s`;
 };
 
 const resolveClipSearchOrientation = (): ClipOrientation => {

@@ -100,6 +100,38 @@ def estimate_segment_duration_sec(
     return round(max(0.1, duration), 3)
 
 
+def script_segment_duration_sec(script_seg: dict[str, Any] | None) -> float | None:
+    """从 script_json 单段读取 duration_sec（或由 start/end 推算）。"""
+    if not isinstance(script_seg, dict):
+        return None
+    duration = script_seg.get("duration_sec")
+    if duration is not None:
+        return float(duration)
+    start = script_seg.get("start_sec")
+    end = script_seg.get("end_sec")
+    if start is not None and end is not None:
+        return round(float(end) - float(start), 3)
+    return None
+
+
+def resolve_segment_duration_sec(
+    segment: dict[str, Any],
+    *,
+    script_seg: dict[str, Any] | None = None,
+) -> float | None:
+    """分镜时长：DB duration_sec 优先，否则回退 script_json，再按文案估算。"""
+    duration = segment.get("duration_sec")
+    if duration is not None:
+        return float(duration)
+    resolved = script_segment_duration_sec(script_seg)
+    if resolved is not None:
+        return resolved
+    text = str(segment.get("text") or script_seg.get("text") if script_seg else "")
+    if text.strip():
+        return estimate_segment_duration_sec(text)
+    return None
+
+
 def assign_segment_timings(
     script: dict[str, Any],
     *,

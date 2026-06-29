@@ -115,8 +115,8 @@ def test_agnes_clip_provider_submits_t2v_prompt(tmp_path: Path) -> None:
     payload = create_call.kwargs["json"]
     assert payload["model"] == provider._model  # noqa: SLF001
     assert "image" not in payload
-    assert payload["width"] == 720
-    assert payload["height"] == 1280
+    assert payload["width"] == provider._video_width  # noqa: SLF001
+    assert payload["height"] == provider._video_height  # noqa: SLF001
     assert payload["num_frames"] == 121
     assert "宇宙飞船" in payload["prompt"]
     assert "slow zoom" in payload["prompt"]

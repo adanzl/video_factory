@@ -176,6 +176,8 @@ class Config:
         os.getenv("AGNES_VIDEO_DOWNLOAD_TIMEOUT_SEC", "300")
     )
     agnes_video_model: str = os.getenv("AGNES_VIDEO_MODEL", "agnes-video-v2.0")
+    agnes_video_width: int = int(os.getenv("AGNES_VIDEO_WIDTH", "1280"))
+    agnes_video_height: int = int(os.getenv("AGNES_VIDEO_HEIGHT", "720"))
     agnes_video_frame_rate: int = int(os.getenv("AGNES_VIDEO_FRAME_RATE", "24"))
     agnes_video_poll_interval_sec: float = float(os.getenv("AGNES_VIDEO_POLL_INTERVAL_SEC", "5"))
     agnes_video_poll_max_attempts: int = int(os.getenv("AGNES_VIDEO_POLL_MAX_ATTEMPTS", "120"))
