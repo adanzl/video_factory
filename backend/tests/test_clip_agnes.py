@@ -9,7 +9,6 @@ from app.services.media.clip.video_agnes import (
     _backoff_seconds,
     _merge_t2v_prompt,
     _pick_num_frames,
-    _STABILITY_HINT,
 )
 from app.services.visual.agnes_api import AgnesApiKey
 from app.utils.job_info import normalize_video_provider, resolve_video_provider
@@ -46,15 +45,12 @@ def test_resolve_media_public_base_url_from_cors() -> None:
 
 def test_merge_t2v_prompt() -> None:
     merged = _merge_t2v_prompt("画面描述很长", "镜头缓慢推进")
-    assert "画面描述很长" in merged
-    assert "镜头缓慢推进" in merged
-    assert _STABILITY_HINT in merged or "画面稳定" in merged
+    assert merged == "画面描述很长，镜头缓慢推进"
 
 
 def test_merge_t2v_prompt_image_only() -> None:
     merged = _merge_t2v_prompt("仅画面描述", None)
-    assert merged.startswith("仅画面描述")
-    assert _STABILITY_HINT in merged
+    assert merged == "仅画面描述"
 
 
 def test_agnes_clip_provider_submits_t2v_prompt(tmp_path: Path) -> None:

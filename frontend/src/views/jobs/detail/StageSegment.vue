@@ -39,7 +39,7 @@
             @change="handleVideoProviderChange"
           >
             <el-radio-button value="ffmpeg">Ken Burns</el-radio-button>
-            <el-radio-button value="wan_i2v">万相 I2V</el-radio-button>
+            <el-radio-button value="wan_i2v" disabled>万相 I2V</el-radio-button>
             <el-radio-button value="agnes_i2v">Agnes I2V</el-radio-button>
           </el-radio-group>
         </el-descriptions-item>
@@ -290,8 +290,10 @@ type VideoProvider = NonNullable<RunStageActionPayload["video_provider"]>;
 const defaultImageProvider = (job: JobDetail): ImageProvider =>
   job.info?.image_provider ?? "z_image_t2i";
 
-const defaultVideoProvider = (job: JobDetail): VideoProvider =>
-  job.info?.video_provider ?? "ffmpeg";
+const defaultVideoProvider = (job: JobDetail): VideoProvider => {
+  const provider = job.info?.video_provider ?? "ffmpeg";
+  return provider === "wan_i2v" ? "ffmpeg" : provider;
+};
 
 const imageProvider = ref<ImageProvider>(defaultImageProvider(props.job));
 const videoProvider = ref<VideoProvider>(defaultVideoProvider(props.job));
@@ -309,7 +311,7 @@ watch(
   () => props.job.info?.video_provider,
   value => {
     if (value) {
-      videoProvider.value = value;
+      videoProvider.value = value === "wan_i2v" ? "ffmpeg" : value;
     }
   }
 );
