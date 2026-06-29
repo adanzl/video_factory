@@ -12,23 +12,43 @@ def insert_segments(
     job_id: int,
     segments: list[dict],
 ) -> None:
+    existing_by_index = {
+        int(row["segment_index"]): row for row in list_segments(conn, job_id)
+    }
     delete_segments(conn, job_id)
     for seg in segments:
+        index = int(seg["segment_index"])
+        prev = existing_by_index.get(index)
+        image_path = seg.get("image_path")
+        if image_path is None and prev is not None:
+            image_path = prev.get("image_path")
+        clip_path = seg.get("clip_path")
+        if clip_path is None and prev is not None:
+            clip_path = prev.get("clip_path")
+        status = seg.get("status")
+        if not status and prev is not None:
+            status = prev.get("status")
+        if not status:
+            status = "pending"
         conn.execute(
             """
             INSERT INTO video_segment (
-                job_id, segment_index, text, image_prompt, motion_prompt, visual_mode, duration_sec, sd15_prompt_en, status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+                job_id, segment_index, text, image_prompt, motion_prompt, visual_mode,
+                duration_sec, sd15_prompt_en, image_path, clip_path, status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 job_id,
-                seg["segment_index"],
+                index,
                 seg["text"],
                 seg.get("image_prompt"),
                 seg.get("motion_prompt"),
                 seg.get("visual_mode", "static_motion"),
                 seg.get("duration_sec"),
                 seg.get("sd15_prompt_en"),
+                image_path,
+                clip_path,
+                status,
             ),
         )
 
