@@ -7,6 +7,7 @@ import logging
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -61,6 +62,15 @@ class _SynthesisResult:
     audio: bytes
     words: list[dict]
     usage: dict | None = None
+
+
+@dataclass(frozen=True)
+class _SegmentSynthResult:
+    seg_index: int
+    clip_path: Path
+    subtitle_cues: list[SubtitleCue]
+    segment_duration: float
+    usage_task: TTSUsageTask | None
 
 
 def _pick_usage(payload: dict) -> dict | None:
@@ -230,6 +240,80 @@ def _run_tts_task(
     return _SynthesisResult(audio=audio, words=raw_words, usage=latest_usage)
 
 
+def _synthesize_segment(
+    seg: dict,
+    clips_dir: Path,
+    *,
+    effective_voice: str,
+    effective_rate: float,
+) -> _SegmentSynthResult:
+    seg_index = seg["segment_index"]
+    phrases = tts_mgr.phrase_chunks_for_segment(seg)
+    segment_text = build_segment_tts_text(phrases)
+    logger.info(
+        "tts segment %s start phrases=%s text_chars=%s",
+        seg_index,
+        len(phrases),
+        len(segment_text),
+    )
+
+    result = _run_tts_task(
+        segment_text,
+        word_timestamps=True,
+        timeout=_segment_timeout(segment_text),
+        rate=effective_rate,
+        voice=effective_voice,
+    )
+    segment_mp3 = clips_dir / f"{seg_index}.mp3"
+    segment_mp3.write_bytes(result.audio)
+
+    segment_duration = probe_duration(segment_mp3)
+    words = normalize_word_timestamps(result.words)
+    phrase_durations = phrase_durations_from_words(
+        phrases,
+        words,
+        segment_duration_sec=segment_duration,
+    )
+    if not words:
+        logger.warning(
+            "tts segment %s: no word timestamps, proportional subtitle timing",
+            seg_index,
+        )
+
+    subtitle_cues = [
+        SubtitleCue(
+            segment_index=seg_index,
+            text=subtitle_text,
+            duration_sec=duration,
+        )
+        for (_, subtitle_text), duration in zip(phrases, phrase_durations, strict=False)
+    ]
+
+    usage_task: TTSUsageTask | None = None
+    usage_chars = None
+    if result.usage:
+        usage_task = TTSUsageTask(
+            segment_index=seg_index,
+            usage=result.usage,
+        )
+        usage_chars = result.usage.get("characters")
+    logger.info(
+        "tts segment %s done duration=%.2fs cues=%s billing_chars=%s",
+        seg_index,
+        segment_duration,
+        len(phrases),
+        usage_chars,
+    )
+
+    return _SegmentSynthResult(
+        seg_index=seg_index,
+        clip_path=segment_mp3,
+        subtitle_cues=subtitle_cues,
+        segment_duration=segment_duration,
+        usage_task=usage_task,
+    )
+
+
 def synthesize_utterance(
     text: str,
     output_path: Path,
@@ -273,80 +357,41 @@ class AliTTSClient(TTSClient):
         effective_voice = voice or settings.tts_voice
         effective_rate = speech_rate if speech_rate is not None else settings.tts_speech_rate
 
-        clip_paths: list[Path] = []
-        subtitle_cues: list[SubtitleCue] = []
-        segment_durations: list[float] = []
-        usage_tasks: list[TTSUsageTask] = []
+        max_workers = min(len(segments), max(1, settings.tts_max_workers))
 
         logger.info(
-            "tts start segments=%s voice=%s model=%s rate=%s",
+            "tts start segments=%s voice=%s model=%s rate=%s max_workers=%s",
             len(segments),
             effective_voice,
             VOICE_MODEL_MAP.get(effective_voice) or settings.tts_model or DEFAULT_MODEL,
             effective_rate,
+            max_workers,
         )
 
-        for seg in segments:
-            seg_index = seg["segment_index"]
-            phrases = tts_mgr.phrase_chunks_for_segment(seg)
-            segment_text = build_segment_tts_text(phrases)
-            logger.info(
-                "tts segment %s start phrases=%s text_chars=%s",
-                seg_index,
-                len(phrases),
-                len(segment_text),
+        def _run(seg: dict) -> _SegmentSynthResult:
+            return _synthesize_segment(
+                seg,
+                clips_dir,
+                effective_voice=effective_voice,
+                effective_rate=effective_rate,
             )
 
-            result = _run_tts_task(
-                segment_text,
-                word_timestamps=True,
-                timeout=_segment_timeout(segment_text),
-                rate=effective_rate,
-                voice=effective_voice,
-            )
-            segment_mp3 = clips_dir / f"{seg_index}.mp3"
-            segment_mp3.write_bytes(result.audio)
+        segment_results: list[_SegmentSynthResult] = []
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = [pool.submit(_run, seg) for seg in segments]
+            for fut in as_completed(futures):
+                segment_results.append(fut.result())
 
-            segment_duration = probe_duration(segment_mp3)
-            words = normalize_word_timestamps(result.words)
-            phrase_durations = phrase_durations_from_words(
-                phrases,
-                words,
-                segment_duration_sec=segment_duration,
-            )
-            if not words:
-                logger.warning(
-                    "tts segment %s: no word timestamps, proportional subtitle timing",
-                    seg_index,
-                )
+        segment_results.sort(key=lambda item: item.seg_index)
 
-            clip_paths.append(segment_mp3)
-            for (_, subtitle_text), duration in zip(phrases, phrase_durations, strict=False):
-                subtitle_cues.append(
-                    SubtitleCue(
-                        segment_index=seg_index,
-                        text=subtitle_text,
-                        duration_sec=duration,
-                    )
-                )
-            segment_durations.append(segment_duration)
-
-            usage_chars = None
-            if result.usage:
-                usage_tasks.append(
-                    TTSUsageTask(
-                        segment_index=seg_index,
-                        usage=result.usage,
-                    )
-                )
-                usage_chars = result.usage.get("characters")
-            logger.info(
-                "tts segment %s done duration=%.2fs cues=%s billing_chars=%s",
-                seg_index,
-                segment_duration,
-                len(phrases),
-                usage_chars,
-            )
+        clip_paths = [item.clip_path for item in segment_results]
+        subtitle_cues = [
+            cue for item in segment_results for cue in item.subtitle_cues
+        ]
+        segment_durations = [item.segment_duration for item in segment_results]
+        usage_tasks = [
+            item.usage_task for item in segment_results if item.usage_task is not None
+        ]
 
         audio_path = output_dir / "narration.mp3"
         concat_clips(clip_paths, audio_path)
