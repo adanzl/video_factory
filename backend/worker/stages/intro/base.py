@@ -55,7 +55,11 @@ def _orientation_label(
 def _generate_cover(job: dict, cover_path: Path, width: int, height: int) -> None:
     import tempfile
     from PIL import Image
+    from app.config import get_settings
+    from app.services.intro.title_layout import render_feed_title
     from app.services.visual.image_agnes import AgnesImageProvider
+    from app.services.visual.text_render import load_cjk_font
+    from app.services.visual.title_render import render_text_rgba
 
     script = job.get("script_json") or {}
     title = resolve_intro_title(job)
@@ -67,18 +71,45 @@ def _generate_cover(job: dict, cover_path: Path, width: int, height: int) -> Non
         if ip:
             first_prompt = ip
             break
+
     cw = min(width, 1280)
     ch = min(height, 720)
+    is_landscape = cw > ch
+    host_visible = 0.58 if is_landscape else 1.0
+
     cover_prompt = (
         f"视频封面，{cw}x{ch}，标题文字区域留白于下方三分之一区域。"
         f"画面内容与视频一致：{first_prompt or visual_style or title}"
     )
-    size = f"{cw}x{ch}"
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
         tmp_path = Path(tmp.name)
     try:
-        AgnesImageProvider().generate(cover_prompt, tmp_path, size=size)
-        Image.open(tmp_path).convert("RGB").save(cover_path, quality=92)
+        AgnesImageProvider().generate(cover_prompt, tmp_path, size=f"{cw}x{ch}")
+        img = Image.open(tmp_path).convert("RGBA")
+
+        settings = get_settings()
+        host = Image.open(settings.host_intro_path).convert("RGBA")
+        max_w = int(cw * (0.72 if is_landscape else 0.94))
+        max_h = int(ch * (0.88 if is_landscape else 0.42))
+        shrink = min(1.0, max_w / host.size[0], max_h / host.size[1])
+        host = host.resize((int(host.size[0]*shrink), int(host.size[1]*shrink)), Image.Resampling.LANCZOS)
+        hx = (cw - host.size[0]) // 2
+        hy = ch - int(host.size[1] * host_visible) if host_visible < 1.0 else ch - host.size[1]
+        img.paste(host, (hx, hy), host)
+
+        brand_font = load_cjk_font(max(24, int(72 * ch / 1080)))
+        brand = render_text_rgba(settings.brand_name, brand_font, fill=(255,255,255,255), stroke_width=3, stroke_fill=(60,30,15,255))
+        img.paste(brand, ((cw - brand.size[0]) // 2, int(ch * 0.04)), brand)
+
+        class _CoverTheme:
+            title_fill = (255, 210, 50, 255)
+            title_stroke = (60, 30, 15, 255)
+        text_block = render_feed_title(title, _CoverTheme(), int(cw * 0.85), max_size=100, min_size=48, max_lines=3, max_height=int(ch * 0.45))
+        tx = (cw - text_block.size[0]) // 2
+        ty = int(ch * 0.28) - text_block.size[1] // 2
+        img.paste(text_block, (tx, ty), text_block)
+
+        img.convert("RGB").save(cover_path, quality=92)
     finally:
         tmp_path.unlink(missing_ok=True)
 
