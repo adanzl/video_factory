@@ -56,7 +56,6 @@ def _generate_cover(job: dict, cover_path: Path, width: int, height: int) -> Non
     import tempfile
     from PIL import Image
     from app.config import get_settings
-    from app.services.intro.title_layout import render_feed_title
     from app.services.visual.image_agnes import AgnesImageProvider
     from app.services.visual.text_render import load_cjk_font
     from app.services.visual.title_render import render_text_rgba
@@ -103,10 +102,15 @@ def _generate_cover(job: dict, cover_path: Path, width: int, height: int) -> Non
         brand = render_text_rgba(settings.brand_name, brand_font, fill=(255,255,255,255), stroke_width=3, stroke_fill=(60,30,15,255))
         img.paste(brand, ((cw - brand.size[0]) // 2, int(ch * 0.04)), brand)
 
-        class _CoverTheme:
-            title_fill = (255, 210, 50, 255)
-            title_stroke = (60, 30, 15, 255)
-        text_block = render_feed_title(title, _CoverTheme(), int(cw * 0.75), max_size=170, min_size=80, max_lines=3, max_height=int(ch * 0.45))
+        from app.services.visual.title_render import compose_vstack, render_text_rgba, STROKE_WIDTH
+        mid = len(title) // 2
+        line1, line2 = title[:mid], title[mid:]
+        font = load_cjk_font(155)
+        rendered = [
+            render_text_rgba(line1, font, fill=(255,210,50,255), stroke_width=STROKE_WIDTH+2, stroke_fill=(60,30,15,255), with_shadow=True, shadow_blur=10),
+            render_text_rgba(line2, font, fill=(255,210,50,255), stroke_width=STROKE_WIDTH+2, stroke_fill=(60,30,15,255), with_shadow=True, shadow_blur=10),
+        ]
+        text_block = compose_vstack(rendered, gap=12, align="center")
         tx = (cw - text_block.size[0]) // 2
         ty = int(ch * 0.36) - text_block.size[1] // 2
         img.paste(text_block, (tx, ty), text_block)
