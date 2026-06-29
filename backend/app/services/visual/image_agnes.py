@@ -33,7 +33,14 @@ def _to_agnes_size(size: str) -> str:
 
 
 class AgnesImageProvider(ImageProvider):
-    _submit_lock = threading.Lock()
+    """Agnes 文生图：IMAGE_MAX_WORKERS 路并发 + IMAGE_SUBMIT_INTERVAL_SEC 错峰发起。"""
+
+    _concurrency_lock = threading.Lock()
+    _schedule_lock = threading.Lock()
+    _inflight: threading.Semaphore | None = None
+    _max_concurrent: int = 1
+    _stagger_sec: float = 3.0
+    _next_submit_at: float = 0.0
 
     def __init__(self) -> None:
         settings = get_settings()
@@ -41,21 +48,51 @@ class AgnesImageProvider(ImageProvider):
         self._generation_url = f"{base}/images/generations"
         self._model = settings.agnes_image_model
         self._default_size = settings.agnes_image_size
-        self._submit_interval = settings.image_submit_interval_sec
         self._fallback = MockImageProvider()
-        self._last_submit_at = 0.0
         self._http_max_retries = settings.agnes_http_max_retries
+        self._ensure_concurrency()
+
+    @classmethod
+    def _ensure_concurrency(cls) -> None:
+        settings = get_settings()
+        max_concurrent = max(1, settings.image_max_workers)
+        stagger_sec = max(0.0, settings.image_submit_interval_sec)
+        with cls._concurrency_lock:
+            if (
+                cls._inflight is None
+                or cls._max_concurrent != max_concurrent
+                or cls._stagger_sec != stagger_sec
+            ):
+                cls._max_concurrent = max_concurrent
+                cls._stagger_sec = stagger_sec
+                cls._inflight = threading.Semaphore(max_concurrent)
+                cls._next_submit_at = 0.0
 
     def describe_params(self, *, size: str | None = None) -> str:
         size = size or self._default_size
-        return f"provider=agnes_t2i, model={self._model}, size={size}"
+        return (
+            f"provider=agnes_t2i, model={self._model}, size={size}, "
+            f"workers={self._max_concurrent}, stagger={self._stagger_sec}s"
+        )
 
-    def _throttle_submit(self) -> None:
-        with self._submit_lock:
-            elapsed = time.monotonic() - self._last_submit_at
-            if elapsed < self._submit_interval:
-                time.sleep(self._submit_interval - elapsed)
-            self._last_submit_at = time.monotonic()
+    def _acquire_submit_slot(self) -> None:
+        self._ensure_concurrency()
+        assert self._inflight is not None
+        self._inflight.acquire()
+        try:
+            with self._schedule_lock:
+                now = time.monotonic()
+                wait = max(0.0, self._next_submit_at - now)
+                self._next_submit_at = max(now, self._next_submit_at) + self._stagger_sec
+            if wait:
+                time.sleep(wait)
+        except Exception:
+            self._inflight.release()
+            raise
+
+    def _release_submit_slot(self) -> None:
+        if self._inflight is not None:
+            self._inflight.release()
 
     def _request(
         self,
@@ -151,41 +188,44 @@ class AgnesImageProvider(ImageProvider):
         size: str,
     ) -> Path:
         agnes_size = _to_agnes_size(size)
-        self._throttle_submit()
-        payload = {
-            "model": self._model,
-            "prompt": prompt,
-            "size": agnes_size,
-            "extra_body": {
-                "response_format": "url"
-            },
-        }
-        logger.info(
-            "agnes request (%s key): %s, prompt_chars=%s, %s",
-            api_key.label,
-            self.describe_params(size=size),
-            len(prompt),
-            prompt,
-        )
-        resp = self._request(
-            "POST",
-            self._generation_url,
-            api_key=api_key.value,
-            json=payload,
-        )
-        image_url, image_bytes = self._extract_image(resp.json())
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        if image_bytes is not None:
-            output_path.write_bytes(image_bytes)
+        self._acquire_submit_slot()
+        try:
+            payload = {
+                "model": self._model,
+                "prompt": prompt,
+                "size": agnes_size,
+                "extra_body": {
+                    "response_format": "url"
+                },
+            }
+            logger.info(
+                "agnes request (%s key): %s, prompt_chars=%s, %s",
+                api_key.label,
+                self.describe_params(size=size),
+                len(prompt),
+                prompt,
+            )
+            resp = self._request(
+                "POST",
+                self._generation_url,
+                api_key=api_key.value,
+                json=payload,
+            )
+            image_url, image_bytes = self._extract_image(resp.json())
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            if image_bytes is not None:
+                output_path.write_bytes(image_bytes)
+                return output_path
+            if not image_url:
+                raise RuntimeError("agnes response missing image url or b64_json")
+            img = requests.get(image_url, timeout=120)
+            img.raise_for_status()
+            output_path.write_bytes(img.content)
+            sidecar = output_path.with_name(output_path.name + ".agnes_source_url")
+            sidecar.write_text(image_url.strip(), encoding="utf-8")
             return output_path
-        if not image_url:
-            raise RuntimeError("agnes response missing image url or b64_json")
-        img = requests.get(image_url, timeout=120)
-        img.raise_for_status()
-        output_path.write_bytes(img.content)
-        sidecar = output_path.with_name(output_path.name + ".agnes_source_url")
-        sidecar.write_text(image_url.strip(), encoding="utf-8")
-        return output_path
+        finally:
+            self._release_submit_slot()
 
     def generate(
         self,
