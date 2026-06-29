@@ -222,6 +222,7 @@ class TopicMgr:
                 if row.get("job_id"):
                     continue
                 is_history = row.get("track") == "历史悬案"
+                seg_sec = 15 if not is_history else 10
                 job = job_repo.create_job(
                     conn,
                     row["title"],
@@ -237,7 +238,7 @@ class TopicMgr:
                             else None
                         ),
                         narration_target_words=1800 if is_history else None,
-                        segment_target_sec=10 if is_history else None,
+                        segment_target_sec=seg_sec,
                     ),
                 )
                 title_repo.update_title(
