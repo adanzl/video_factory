@@ -23,6 +23,7 @@ from app.services.llm.llm_script_prompts import (
     sd15_prompt_en_ok,
     sd15_prompt_en_word_count,
 )
+from app.utils.job_cancel import job_cancel
 from app.utils.job_info import content_style_from_job
 from app.utils.media import (
     assign_segment_timings,
@@ -407,7 +408,9 @@ class ScriptStage(StageExecutor):
         retry_scope: str | None = None
         accept_warnings: list[str] = []
         generate_image_prompts = bool(ctx.script_generate_image_prompts)
+        job_id = ctx.job["id"]
         for attempt in range(6):
+            job_cancel.raise_if_cancelled(job_id)
             script = llm_mgr.generate_script(
                 title,
                 feedback=feedback,
@@ -420,6 +423,7 @@ class ScriptStage(StageExecutor):
                 retry_scope=retry_scope,
                 generate_image_prompts=False,
             )
+            job_cancel.raise_if_cancelled(job_id)
             _log_llm_timing(ctx.job["id"], self.name, script)
             try:
                 accept_warnings = _validate_script(
@@ -463,6 +467,7 @@ class ScriptStage(StageExecutor):
             script["include_sd15_prompt"] = use_sd15
             prompt_feedback: str | None = None
             for attempt in range(4):
+                job_cancel.raise_if_cancelled(job_id)
                 try:
                     if attempt == 0:
                         llm_mgr.fill_image_prompts(
@@ -568,6 +573,7 @@ class ScriptStage(StageExecutor):
         script.pop("_llm_timing", None)
         script["cost_time"] = round(time.perf_counter() - started, 1)
         display_title = script["title"]
+        job_cancel.raise_if_cancelled(job_id)
         with connection() as conn:
             for warning in accept_warnings:
                 job_log_repo.append_log(

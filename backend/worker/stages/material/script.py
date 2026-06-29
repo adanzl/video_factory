@@ -10,6 +10,7 @@ from app.repositories import job_log_repo, job_repo, segment_repo
 from app.repositories.connection import connection
 from app.services.llm.llm_mgr import llm_mgr
 from app.services.llm.llm_script_timeline import parse_video_timeline, validate_timeline_script
+from app.utils.job_cancel import job_cancel
 from app.utils.media import (
     assign_segment_timings,
     base_video_duration_sec,
@@ -183,6 +184,7 @@ class MaterialScriptStage(StageExecutor):
             feedback: str | None = None
             accept_warnings: list[str] = []
             for attempt in range(6):
+                job_cancel.raise_if_cancelled(ctx.job["id"])
                 length_mode = _timeline_length_mode(attempt)
                 script = llm_mgr.generate_material_script(
                     title,
@@ -191,7 +193,9 @@ class MaterialScriptStage(StageExecutor):
                     narration_target_words=narration_target_words,
                     supplementary_info=supplementary_info,
                     video_timeline=video_timeline,
+                    job=ctx.job,
                 )
+                job_cancel.raise_if_cancelled(ctx.job["id"])
                 last_script = script
                 try:
                     accept_warnings = _validate_material_script(
@@ -292,6 +296,7 @@ class MaterialScriptStage(StageExecutor):
         )
         script["cost_time"] = round(time.perf_counter() - started, 1)
 
+        job_cancel.raise_if_cancelled(ctx.job["id"])
         with connection() as conn:
             for warning in accept_warnings:
                 job_log_repo.append_log(

@@ -169,8 +169,9 @@ class MockLLMClient(LLMClient):
         narration_target_words: int | None = None,
         supplementary_info: str | None = None,
         video_timeline: str | None = None,
+        job: dict | None = None,
     ) -> dict[str, Any]:
-        _ = feedback, narration_target_words, supplementary_info, video_timeline
+        _ = feedback, narration_target_words, supplementary_info, video_timeline, job
         base = self.generate_script(
             title,
             segment_target_sec=0,

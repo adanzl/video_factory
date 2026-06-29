@@ -53,8 +53,8 @@ def material_final_min_duration_sec(
 
 
 def segment_text_char_cap(segment_target_sec: float) -> int:
-    """单镜口播 text 字数上限（5 字/秒 × segment_target_sec）。"""
-    return max(20, int(segment_target_sec * NARRATION_CHARS_PER_SEC))
+    """单镜口播 text 字数上限（8 字/秒 × segment_target_sec）。"""
+    return max(40, int(segment_target_sec * 8))
 
 
 def narration_segment_basis_chars(
