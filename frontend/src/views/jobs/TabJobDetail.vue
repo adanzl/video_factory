@@ -9,9 +9,7 @@
         <el-button type="primary" :disabled="loading" @click="() => fetchDetail()">
           <el-icon><Refresh /></el-icon>
         </el-button>
-        <el-button :loading="resetting" :disabled="loading" @click="handleReset">重置</el-button>
         <el-button
-          v-if="job.status === JOB_STATUS_RUNNING"
           type="danger"
           :loading="aborting"
           :disabled="loading"
@@ -68,7 +66,7 @@ import { computed, onUnmounted, ref, watch } from "vue";
 import type { Component } from "vue";
 import { Refresh } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { getJob, getJobLogs, getJobSegments, resetJob, abortJob } from "@/api/api-jobs";
+import { getJob, getJobLogs, getJobSegments, abortJob } from "@/api/api-jobs";
 import { JOB_STATUS_RUNNING } from "@/constants/job";
 import { pipelineLabel, resolveActiveStageTab, stagesForJob } from "@/constants/jobStages";
 import type { JobDetail, JobLog, JobSegment } from "@/types/jobs";
@@ -105,7 +103,6 @@ const job = ref<JobDetail>();
 const segments = ref<JobSegment[]>([]);
 const logs = ref<JobLog[]>([]);
 const loading = ref(false);
-const resetting = ref(false);
 const aborting = ref(false);
 const activeStage = ref("script");
 
@@ -195,44 +192,16 @@ const fetchDetail = async (options: { silent?: boolean } = {}) => {
   }
 };
 
-const handleReset = async () => {
-  if (!job.value) {
-    return;
-  }
-  try {
-    await ElMessageBox.confirm(
-      "将把任务状态强制设为 pending，并清除失败信息。不会删除已生成的文件或重置 stage。",
-      "重置任务",
-      {
-        type: "warning",
-        confirmButtonText: "重置",
-        cancelButtonText: "取消",
-      }
-    );
-  } catch {
-    return;
-  }
-
-  resetting.value = true;
-  try {
-    job.value = await resetJob(job.value.id);
-    ElMessage.success("任务已重置为 pending");
-    stopRunningPoll();
-    await fetchDetail({ silent: true });
-  } catch (error) {
-    handleError(error, "重置任务失败");
-  } finally {
-    resetting.value = false;
-  }
-};
-
 const handleAbort = async () => {
   if (!job.value) {
     return;
   }
+  const isRunning = job.value.status === JOB_STATUS_RUNNING;
   try {
     await ElMessageBox.confirm(
-      "将请求中止当前正在执行的任务。已完成的步骤会保留，未完成的步骤会在当前操作结束后停止。",
+      isRunning
+        ? "将中止当前正在执行的任务。已完成的步骤会保留，未完成的步骤会在当前操作结束后停止。"
+        : "将把任务状态设为 pending，并清除失败信息。不会删除已生成的文件或重置 stage。",
       "中止任务",
       {
         type: "warning",
@@ -247,7 +216,10 @@ const handleAbort = async () => {
   aborting.value = true;
   try {
     job.value = await abortJob(job.value.id);
-    ElMessage.success("已发送中止请求");
+    ElMessage.success(isRunning ? "已发送中止请求" : "任务已中止");
+    if (!isRunning) {
+      stopRunningPoll();
+    }
     await fetchDetail({ silent: true });
   } catch (error) {
     handleError(error, "中止任务失败");

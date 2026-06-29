@@ -265,10 +265,19 @@ class JobMgr:
             return job
 
     def reset_job(self, job_id: int) -> dict:
-        """强制将任务状态重置为 pending（不清除 stage 与产物）。"""
+        """兼容旧调用：与 abort_job 相同。"""
+        return self.abort_job(job_id)
+
+    def abort_job(self, job_id: int) -> dict:
+        job = self.get_job(job_id)
+        if job["status"] == "running":
+            job_cancel.request(job_id)
+            with connection() as conn:
+                job_log_repo.append_log(conn, job_id, "api", "abort requested")
+            return self.get_job(job_id)
+
         job_cancel.clear(job_id)
         with connection() as conn:
-            job_repo.get_job(conn, job_id)
             job = job_repo.update_job(
                 conn,
                 job_id,
@@ -276,7 +285,7 @@ class JobMgr:
                 fail_stage=None,
                 error_message=None,
             )
-            job_log_repo.append_log(conn, job_id, "api", "job status reset to pending")
+            job_log_repo.append_log(conn, job_id, "api", "job aborted to pending")
             return job
 
     def delete_job(self, job_id: int) -> None:
@@ -342,15 +351,6 @@ class JobMgr:
                 level="warning",
             )
             return job_repo.update_job(conn, job_id, status="pending")
-
-    def abort_job(self, job_id: int) -> dict:
-        job = self.get_job(job_id)
-        if job["status"] != "running":
-            raise ValueError(f"job {job_id} is not running")
-        job_cancel.request(job_id)
-        with connection() as conn:
-            job_log_repo.append_log(conn, job_id, "api", "abort requested")
-        return self.get_job(job_id)
 
     def _run_in_background(
         self,
