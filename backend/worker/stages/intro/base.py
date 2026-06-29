@@ -6,6 +6,11 @@ from pathlib import Path
 from app.repositories import job_log_repo, job_repo
 from app.repositories.connection import connection
 from app.services.intro import generate_intro
+from app.services.intro.cover_layout import (
+    build_cover_image_prompt,
+    compose_cover_image,
+    cover_canvas_size,
+)
 from app.services.intro.size import is_material_job, resolve_intro_size
 from app.utils.job_info import (
     ORIENTATION_AUTO,
@@ -52,71 +57,45 @@ def _orientation_label(
     return f"{ORIENTATION_PORTRAIT}(default)"
 
 
-def _generate_cover(job: dict, cover_path: Path, width: int, height: int) -> None:
-    import tempfile
-    from PIL import Image
-    from app.config import get_settings
-    from app.services.visual.image_agnes import AgnesImageProvider
-    from app.services.visual.text_render import load_cjk_font
-    from app.services.visual.title_render import render_text_rgba
-
+def _cover_subject_from_job(job: dict) -> str:
+    """封面底图画面描述：首镜 image_prompt > visual_style > 标题。"""
     script = job.get("script_json") or {}
     title = resolve_intro_title(job)
     visual_style = (script.get("visual_style") or "").strip()
-    segments = script.get("segments") or []
-    first_prompt = ""
-    for seg in segments:
+    for seg in script.get("segments") or []:
         ip = (seg.get("image_prompt") or "").strip()
         if ip:
-            first_prompt = ip
-            break
+            return ip
+    return visual_style or title
 
-    if width > height:
-        cw, ch = 1280, 720
-    else:
-        cw, ch = 720, 1280
-    is_landscape = cw > ch
-    host_visible = 0.58 if is_landscape else 1.0
 
-    cover_prompt = (
-        f"视频封面，{cw}x{ch}，标题文字区域留白于下方三分之一区域。"
-        f"画面内容与视频一致：{first_prompt or visual_style or title}"
-    )
+def _generate_cover(job: dict, cover_path: Path, width: int, height: int) -> None:
+    """intro 阶段：Agnes 出底图 + compose_cover_image 叠字，写入 cover.jpg。"""
+    import tempfile
+
+    from PIL import Image
+
+    from app.config import get_settings
+    from app.services.visual.image_agnes import AgnesImageProvider
+
+    settings = get_settings()
+    title = resolve_intro_title(job)
+    cw, ch, _ = cover_canvas_size(width, height)
+    subject = _cover_subject_from_job(job)
+    cover_prompt = build_cover_image_prompt(cw=cw, ch=ch, subject=subject)
+
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
         tmp_path = Path(tmp.name)
     try:
         AgnesImageProvider().generate(cover_prompt, tmp_path, size=f"{cw}x{ch}")
-        img = Image.open(tmp_path).convert("RGBA")
-
-        settings = get_settings()
-        host = Image.open(settings.host_intro_path).convert("RGBA")
-        max_w = int(cw * (0.72 if is_landscape else 0.94))
-        max_h = int(ch * (0.88 if is_landscape else 0.42))
-        shrink = min(1.0, max_w / host.size[0], max_h / host.size[1])
-        host = host.resize((int(host.size[0]*shrink), int(host.size[1]*shrink)), Image.Resampling.LANCZOS)
-        hx = (cw - host.size[0]) // 2
-        hy = ch - int(host.size[1] * host_visible) if host_visible < 1.0 else ch - host.size[1]
-        img.paste(host, (hx, hy), host)
-
-        brand_font = load_cjk_font(max(24, int(72 * ch / 1080)))
-        brand = render_text_rgba(settings.brand_name, brand_font, fill=(255,255,255,255), stroke_width=3, stroke_fill=(60,30,15,255))
-        img.paste(brand, ((cw - brand.size[0]) // 2, int(ch * 0.04)), brand)
-
-        from app.services.visual.title_render import compose_vstack, render_text_rgba, STROKE_WIDTH
-        display = title.replace("：", " ").replace(":", " ")
-        parts = display.split(" ", 1)
-        line1, line2 = parts if len(parts) > 1 else (display, "")
-        font = load_cjk_font(135)
-        rendered = [
-            render_text_rgba(line1, font, fill=(255,210,50,255), stroke_width=STROKE_WIDTH+2, stroke_fill=(60,30,15,255), with_shadow=True, shadow_blur=10),
-            render_text_rgba(line2, font, fill=(255,210,50,255), stroke_width=STROKE_WIDTH+2, stroke_fill=(60,30,15,255), with_shadow=True, shadow_blur=10),
-        ]
-        text_block = compose_vstack(rendered, gap=12, align="center")
-        tx = (cw - text_block.size[0]) // 2
-        ty = int(ch * 0.36) - text_block.size[1] // 2
-        img.paste(text_block, (tx, ty), text_block)
-
-        img.convert("RGB").save(cover_path, quality=92)
+        img = Image.open(tmp_path)
+        composed = compose_cover_image(
+            img,
+            title,
+            brand_name=settings.brand_name,
+            host_intro_path=settings.host_intro_path,
+        )
+        composed.convert("RGB").save(cover_path, quality=92)
     finally:
         tmp_path.unlink(missing_ok=True)
 
@@ -156,6 +135,7 @@ def run_intro_for_category(
     )
 
     cover_path = ctx.rel("cover.jpg")
+    # 与片头同尺寸；合成逻辑见 cover_layout.compose_cover_image
     _generate_cover(job, cover_path, width, height)
 
     with connection() as conn:
