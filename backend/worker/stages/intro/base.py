@@ -72,8 +72,10 @@ def _generate_cover(job: dict, cover_path: Path, width: int, height: int) -> Non
             first_prompt = ip
             break
 
-    cw = min(width, 1280)
-    ch = min(height, 720)
+    if width > height:
+        cw, ch = 1280, 720
+    else:
+        cw, ch = 720, 1280
     is_landscape = cw > ch
     host_visible = 0.58 if is_landscape else 1.0
 
