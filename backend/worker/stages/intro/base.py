@@ -68,11 +68,13 @@ def _generate_cover(job: dict, cover_path: Path, width: int, height: int) -> Non
         if ip:
             first_prompt = ip
             break
+    cw = min(width, 1280)
+    ch = min(height, 720)
     cover_prompt = (
-        f"视频封面，{width}x{height}，标题文字区域留白于下方三分之一区域。"
+        f"视频封面，{cw}x{ch}，标题文字区域留白于下方三分之一区域。"
         f"画面内容与视频一致：{first_prompt or visual_style or title}"
     )
-    size = f"{width}x{height}"
+    size = f"{cw}x{ch}"
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
         tmp_path = Path(tmp.name)
     try:
@@ -80,13 +82,13 @@ def _generate_cover(job: dict, cover_path: Path, width: int, height: int) -> Non
         img = Image.open(tmp_path).convert("RGBA")
         draw = ImageDraw.Draw(img)
         font_path = str(get_settings().font_path)
-        font_size = max(24, min(width, height) // 20)
+        font_size = max(24, min(cw, ch) // 20)
         font = ImageFont.truetype(font_path, font_size)
-        lines = _wrap_text(title, font, width - 80)
-        line_h = font_size * 1.5
+        lines = _wrap_text(title, font, cw - 80)
+        line_h = font_size * 3 // 2
         text_h = len(lines) * line_h + 20
-        bar_y = height - text_h - 40
-        bar = Image.new("RGBA", (width, text_h + 40), (0, 0, 0, 160))
+        bar_y = ch - text_h - 40
+        bar = Image.new("RGBA", (cw, text_h + 40), (0, 0, 0, 160))
         img.paste(bar, (0, bar_y), bar)
         draw = ImageDraw.Draw(img)
         for i, line in enumerate(lines):
