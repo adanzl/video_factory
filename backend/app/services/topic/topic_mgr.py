@@ -133,6 +133,9 @@ class TopicMgr:
             user_prompt=user_prompt,
         )
         result = self.add_topics(topics, source="llm", dedup_keyword=True)
+        if result["added"]:
+            new_ids = [row["id"] for row in result["added"]]
+            self.score_titles(title_ids=new_ids)
         logger.info(
             "[TOPIC] save done theme=%r generated=%d added=%d skipped=%d",
             theme,
