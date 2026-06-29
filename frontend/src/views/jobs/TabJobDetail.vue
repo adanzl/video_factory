@@ -10,6 +10,15 @@
           <el-icon><Refresh /></el-icon>
         </el-button>
         <el-button :loading="resetting" :disabled="loading" @click="handleReset">重置</el-button>
+        <el-button
+          v-if="job.status === JOB_STATUS_RUNNING"
+          type="danger"
+          :loading="aborting"
+          :disabled="loading"
+          @click="handleAbort"
+        >
+          中止
+        </el-button>
         <span class="font-medium">{{ job.title }}</span>
         <span class="text-gray-500">#{{ job.id }}</span>
         <el-tag size="small" type="info">{{ pipelineLabel(job.pipeline) }}</el-tag>
@@ -59,7 +68,7 @@ import { computed, onUnmounted, ref, watch } from "vue";
 import type { Component } from "vue";
 import { Refresh } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { getJob, getJobLogs, getJobSegments, resetJob } from "@/api/api-jobs";
+import { getJob, getJobLogs, getJobSegments, resetJob, abortJob } from "@/api/api-jobs";
 import { JOB_STATUS_RUNNING } from "@/constants/job";
 import { pipelineLabel, resolveActiveStageTab, stagesForJob } from "@/constants/jobStages";
 import type { JobDetail, JobLog, JobSegment } from "@/types/jobs";
@@ -97,6 +106,7 @@ const segments = ref<JobSegment[]>([]);
 const logs = ref<JobLog[]>([]);
 const loading = ref(false);
 const resetting = ref(false);
+const aborting = ref(false);
 const activeStage = ref("script");
 
 const jobStages = computed(() => (job.value ? stagesForJob(job.value) : []));
@@ -213,6 +223,36 @@ const handleReset = async () => {
     handleError(error, "重置任务失败");
   } finally {
     resetting.value = false;
+  }
+};
+
+const handleAbort = async () => {
+  if (!job.value) {
+    return;
+  }
+  try {
+    await ElMessageBox.confirm(
+      "将请求中止当前正在执行的任务。已完成的步骤会保留，未完成的步骤会在当前操作结束后停止。",
+      "中止任务",
+      {
+        type: "warning",
+        confirmButtonText: "中止",
+        cancelButtonText: "取消",
+      }
+    );
+  } catch {
+    return;
+  }
+
+  aborting.value = true;
+  try {
+    job.value = await abortJob(job.value.id);
+    ElMessage.success("已发送中止请求");
+    await fetchDetail({ silent: true });
+  } catch (error) {
+    handleError(error, "中止任务失败");
+  } finally {
+    aborting.value = false;
   }
 };
 

@@ -10,6 +10,7 @@ from app.core.pipelines import (
     next_stage_class,
     stage_class_for,
 )
+from app.services.job.job_cancel import JobCancelledError, job_cancel
 from app.services.job.job_mgr import job_mgr
 from app.repositories import job_log_repo, job_repo
 from app.repositories.connection import connection
@@ -25,6 +26,7 @@ def _reload_job(job_id: int) -> dict:
 
 
 def _execute_stage(job_id: int, stage_cls: type[StageExecutor], ctx: JobContext) -> None:
+    job_cancel.raise_if_cancelled(job_id)
     job = ctx.job
     executor = executor_for_stage(stage_cls.name, job)
     stage_name = stage_cls.name
@@ -36,6 +38,8 @@ def _execute_stage(job_id: int, stage_cls: type[StageExecutor], ctx: JobContext)
     t0 = time.time()
     try:
         executor.run(ctx)
+    except JobCancelledError:
+        raise
     except Exception as exc:
         logger.error("=== %s failed after %.1fs: %s ===", stage_cls.__name__, time.time() - t0, exc)
         job_mgr.mark_failed(job_id, stage_name, str(exc))
@@ -142,6 +146,7 @@ def _run_from(
     scope = segment_scope
 
     while stage_cls is not None:
+        job_cancel.raise_if_cancelled(job_id)
         job = _reload_job(job_id)
         ctx = JobContext.from_job(
             job,
@@ -172,6 +177,7 @@ def _run_from(
         )
         _execute_stage(job_id, stage_cls, ctx)
 
+        job_cancel.raise_if_cancelled(job_id)
         done = _advance_after_stage(job_id, stage_cls, status="running")
         if done is not None:
             return done

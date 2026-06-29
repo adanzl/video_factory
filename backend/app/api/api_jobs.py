@@ -425,6 +425,17 @@ def reset_job_route():
     return json_ok(job_mgr.reset_job(job_id))
 
 
+@bp.post("/abort")
+def abort_job_route():
+    data = get_json_body()
+    job_id = parse_id(data)
+    try:
+        job = job_mgr.abort_job(job_id)
+    except ValueError as exc:
+        raise APIError(str(exc), status_code=409, code="job_not_running") from exc
+    return json_ok(job)
+
+
 @bp.post("/delete")
 def delete_job_route():
     data = get_json_body()
