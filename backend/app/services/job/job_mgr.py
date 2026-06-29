@@ -264,19 +264,13 @@ class JobMgr:
             job_log_repo.append_log(conn, job_id, "api", f"updated fields: {', '.join(updates)}")
             return job
 
-    def reset_job(self, job_id: int) -> dict:
-        """兼容旧调用：与 abort_job 相同。"""
-        return self.abort_job(job_id)
-
     def abort_job(self, job_id: int) -> dict:
         job = self.get_job(job_id)
-        if job["status"] == "running":
+        was_running = job["status"] == "running"
+        if was_running:
             job_cancel.request(job_id)
-            with connection() as conn:
-                job_log_repo.append_log(conn, job_id, "api", "abort requested")
-            return self.get_job(job_id)
-
-        job_cancel.clear(job_id)
+        else:
+            job_cancel.clear(job_id)
         with connection() as conn:
             job = job_repo.update_job(
                 conn,
@@ -285,8 +279,65 @@ class JobMgr:
                 fail_stage=None,
                 error_message=None,
             )
-            job_log_repo.append_log(conn, job_id, "api", "job aborted to pending")
+            job_log_repo.append_log(
+                conn,
+                job_id,
+                "api",
+                "abort requested" if was_running else "job aborted to pending",
+            )
             return job
+
+    def _skip_if_aborted(self, job_id: int) -> dict | None:
+        if job_cancel.is_cancelled(job_id):
+            return self.get_job(job_id)
+        return None
+
+    def mark_running(self, job_id: int) -> dict:
+        skipped = self._skip_if_aborted(job_id)
+        if skipped is not None:
+            return skipped
+        with connection() as conn:
+            return job_repo.update_job(conn, job_id, status="running")
+
+    def mark_done(self, job_id: int) -> dict:
+        skipped = self._skip_if_aborted(job_id)
+        if skipped is not None:
+            job_cancel.clear(job_id)
+            return skipped
+        with connection() as conn:
+            return job_repo.update_job(conn, job_id, stage="done", status="done")
+
+    def mark_failed(self, job_id: int, stage: str, message: str) -> dict:
+        skipped = self._skip_if_aborted(job_id)
+        if skipped is not None:
+            job_cancel.clear(job_id)
+            return skipped
+        with connection() as conn:
+            job_log_repo.append_log(conn, job_id, stage, message, level="error")
+            return job_repo.update_job(
+                conn,
+                job_id,
+                status="failed",
+                error_message=message,
+            )
+
+    def mark_aborted(self, job_id: int, stage: str) -> dict:
+        job_cancel.clear(job_id)
+        with connection() as conn:
+            job_log_repo.append_log(
+                conn,
+                job_id,
+                stage,
+                "任务已中止",
+                level="warning",
+            )
+            return job_repo.update_job(
+                conn,
+                job_id,
+                status="pending",
+                fail_stage=None,
+                error_message=None,
+            )
 
     def delete_job(self, job_id: int) -> None:
         with connection() as conn:
@@ -321,36 +372,6 @@ class JobMgr:
             }
         finally:
             lock.release()
-
-    def mark_running(self, job_id: int) -> dict:
-        with connection() as conn:
-            return job_repo.update_job(conn, job_id, status="running")
-
-    def mark_done(self, job_id: int) -> dict:
-        with connection() as conn:
-            return job_repo.update_job(conn, job_id, stage="done", status="done")
-
-    def mark_failed(self, job_id: int, stage: str, message: str) -> dict:
-        with connection() as conn:
-            job_log_repo.append_log(conn, job_id, stage, message, level="error")
-            return job_repo.update_job(
-                conn,
-                job_id,
-                status="failed",
-                error_message=message,
-            )
-
-    def mark_aborted(self, job_id: int, stage: str) -> dict:
-        job_cancel.clear(job_id)
-        with connection() as conn:
-            job_log_repo.append_log(
-                conn,
-                job_id,
-                stage,
-                "任务已中止",
-                level="warning",
-            )
-            return job_repo.update_job(conn, job_id, status="pending")
 
     def _run_in_background(
         self,
@@ -394,6 +415,7 @@ class JobMgr:
                     run()
                 except JobCancelledError:
                     logger.info("job %s action %s aborted", job_id, action)
+                    job_cancel.clear(job_id)
                     job = self.get_job(job_id)
                     if job["status"] == "running":
                         self.mark_aborted(job_id, fail_stage)

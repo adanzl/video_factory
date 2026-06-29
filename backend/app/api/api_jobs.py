@@ -425,14 +425,6 @@ def abort_job_route():
     return json_ok(job_mgr.abort_job(job_id))
 
 
-@bp.post("/reset")
-def reset_job_route():
-    """兼容旧客户端：转发至 abort。"""
-    data = get_json_body()
-    job_id = parse_id(data)
-    return json_ok(job_mgr.abort_job(job_id))
-
-
 @bp.post("/delete")
 def delete_job_route():
     data = get_json_body()

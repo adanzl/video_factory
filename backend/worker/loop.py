@@ -48,6 +48,7 @@ def _execute_stage(job_id: int, stage_cls: type[StageExecutor], ctx: JobContext)
 
 
 def _advance_after_stage(job_id: int, stage_cls: type[StageExecutor], *, status: str) -> dict | None:
+    job_cancel.raise_if_cancelled(job_id)
     job = _reload_job(job_id)
     next_cls = next_stage_class(stage_cls, job)
     if next_cls is not None and next_cls.name == "publish" and pipeline.should_stop_before_publish(job):
@@ -105,6 +106,7 @@ def _run_one_stage(
     _execute_stage(job_id, stage_cls, ctx)
 
     if not advance:
+        job_cancel.raise_if_cancelled(job_id)
         stage_name = stage_cls.name
         with connection() as conn:
             job_repo.update_job(conn, job_id, stage=stage_name, status="pending")
