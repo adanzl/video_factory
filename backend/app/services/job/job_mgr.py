@@ -76,12 +76,21 @@ def _script_action_detail(
     return ", ".join(parts)
 
 
-def _image_prompts_action_detail(job: dict) -> str:
+def _image_prompts_action_detail(
+    job: dict,
+    *,
+    segment_indices: list[int] | None = None,
+) -> str:
     script = job.get("script_json") or {}
     segments = script.get("segments") or []
     provider = resolve_image_provider(job)
+    scope = (
+        f"segment_indices={segment_indices}"
+        if segment_indices
+        else f"segments={len(segments)}"
+    )
     return (
-        f"segments={len(segments)}, "
+        f"{scope}, "
         f"image_provider={provider}, "
         f"include_sd15_prompt={resolve_include_sd15_prompt(job)}"
     )
@@ -530,7 +539,12 @@ class JobMgr:
             action_detail=detail,
         )
 
-    def generate_image_prompts(self, job_id: int) -> dict:
+    def generate_image_prompts(
+        self,
+        job_id: int,
+        *,
+        segment_indices: list[int] | None = None,
+    ) -> dict:
         """为已有脚本补全文生图提示词。实现：worker/loop.run_script_image_prompts"""
         from worker.loop import run_script_image_prompts
 
@@ -538,8 +552,8 @@ class JobMgr:
         return self._run_in_background(
             job_id,
             "script/imagePrompts",
-            lambda: run_script_image_prompts(job_id),
-            action_detail=_image_prompts_action_detail(job),
+            lambda: run_script_image_prompts(job_id, segment_indices=segment_indices),
+            action_detail=_image_prompts_action_detail(job, segment_indices=segment_indices),
         )
 
     def preview_script_prompts(
