@@ -54,8 +54,7 @@ def _orientation_label(
 
 def _generate_cover(job: dict, cover_path: Path, width: int, height: int) -> None:
     import tempfile
-    from PIL import Image, ImageDraw, ImageFont
-    from app.config import get_settings
+    from PIL import Image
     from app.services.visual.image_agnes import AgnesImageProvider
 
     script = job.get("script_json") or {}
@@ -79,49 +78,9 @@ def _generate_cover(job: dict, cover_path: Path, width: int, height: int) -> Non
         tmp_path = Path(tmp.name)
     try:
         AgnesImageProvider().generate(cover_prompt, tmp_path, size=size)
-        img = Image.open(tmp_path).convert("RGBA")
-        draw = ImageDraw.Draw(img)
-        font_path = str(get_settings().font_path)
-        font_size = max(48, min(cw, ch) // 8)
-        font = ImageFont.truetype(font_path, font_size)
-        lines = _wrap_text(title, font, cw - 80)
-        line_h = font_size + 12
-        text_h = len(lines) * line_h + 32
-        bar_y = ch - text_h - 32
-        bar = Image.new("RGBA", (cw, text_h + 32), (0, 0, 0, 160))
-        img.paste(bar, (0, bar_y), bar)
-        draw = ImageDraw.Draw(img)
-        for i, line in enumerate(lines):
-            _, _, tw, _ = draw.textbbox((0, 0), line, font=font)
-            x = (width - tw) / 2
-            y = bar_y + 20 + i * line_h
-            _draw_stroke(draw, x, y, line, font)
-        img.convert("RGB").save(cover_path, quality=92)
+        Image.open(tmp_path).convert("RGB").save(cover_path, quality=92)
     finally:
         tmp_path.unlink(missing_ok=True)
-
-
-def _wrap_text(text: str, font, max_width: int) -> list[str]:
-    lines: list[str] = []
-    for seg in text.split("\n"):
-        buf = ""
-        for ch in seg:
-            test = buf + ch
-            if font.getlength(test) > max_width and buf:
-                lines.append(buf)
-                buf = ch
-            else:
-                buf = test
-        if buf:
-            lines.append(buf)
-    return lines
-
-
-def _draw_stroke(draw, x: float, y: float, text: str, font) -> None:
-    stroke_ranges = [(0, 0), (3, 0), (-3, 0), (0, 3), (0, -3), (3, 3), (-3, 3), (3, -3), (-3, -3)]
-    for dx, dy in stroke_ranges:
-        draw.text((x + dx, y + dy), text, font=font, fill="black")
-    draw.text((x, y), text, font=font, fill="white")
 
 
 def run_intro_for_category(
