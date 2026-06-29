@@ -115,31 +115,27 @@ def format_image_prompt_retry_warning(
 # https://api-docs.deepseek.com/zh-cn/guides/json_mode
 _STORYBOARD_JSON_EXAMPLE = """{
   "title": "标题示例",
-  "narration": "正文第一段口播，写满本镜字数下限，用具体细节或例子撑开。第二段口播讲一个新角度，同样写满字数。后续段落照此格式继续。",
-  "word_count": 300,
+  "narration": "第一段。第二段。第三段。（以此类推，按字数预算写满）",
+  "word_count": 80,
   "visual_style": "画风定调一句话",
   "segments": [
-    {"segment_index": 1, "text": "正文第一段口播，写满本镜字数下限，用具体细节或例子撑开。", "visual_brief": "画面主旨", "visual_mode": "static_motion"},
-    {"segment_index": 2, "text": "第二段口播讲一个新角度，同样写满字数。", "visual_brief": "画面主旨", "visual_mode": "static_motion"},
-    {"segment_index": 3, "text": "第三段继续，每段都要写满不要凑字数。", "visual_brief": "画面主旨", "visual_mode": "static_motion"},
-    {"segment_index": 4, "text": "第四段同样。", "visual_brief": "画面主旨", "visual_mode": "static_motion"},
-    {"segment_index": 5, "text": "第五段。", "visual_brief": "画面主旨", "visual_mode": "static_motion"}
+    {"segment_index": 1, "text": "第一段。", "visual_brief": "画面主旨", "visual_mode": "static_motion"},
+    {"segment_index": 2, "text": "第二段。", "visual_brief": "画面主旨", "visual_mode": "static_motion"}
   ]
 }
 
-注意：以上示例仅展示字段格式，实际 segment 数量和 word_count 须按【字数预算】执行，远比示例多。"""
+注意：以上为格式示例，实际输出段落数量和 word_count 须按上方【字数预算】要求执行。"""
 
 _STORYBOARD_JSON_EXAMPLE_COMPACT = """{
   "title": "标题示例",
   "visual_style": "画风定调一句话",
   "segments": [
-    {"segment_index": 1, "text": "第一段口播文字", "visual_brief": "画面主旨", "visual_mode": "static_motion"},
-    {"segment_index": 2, "text": "第二段口播文字", "visual_brief": "画面主旨", "visual_mode": "static_motion"},
-    {"segment_index": 3, "text": "第三段口播文字", "visual_brief": "画面主旨", "visual_mode": "static_motion"}
+    {"segment_index": 1, "text": "第一段", "visual_brief": "画面主旨", "visual_mode": "static_motion"},
+    {"segment_index": 2, "text": "第二段", "visual_brief": "画面主旨", "visual_mode": "static_motion"}
   ]
 }
 
-注意：以上示例仅展示字段格式，实际 segment 数量和字数按预算执行。"""
+注意：以上为格式示例，实际段落数量按字数预算执行。"""
 
 _IMAGE_PROMPTS_JSON_EXAMPLE = """{
   "image_prompts": [
