@@ -103,12 +103,10 @@ def _generate_cover(job: dict, cover_path: Path, width: int, height: int) -> Non
         brand = render_text_rgba(settings.brand_name, brand_font, fill=(255,255,255,255), stroke_width=3, stroke_fill=(60,30,15,255))
         img.paste(brand, ((cw - brand.size[0]) // 2, int(ch * 0.04)), brand)
 
-        moon_diameter = int(min(cw, ch) * 0.52)
-        text_max_w = int(moon_diameter * 1.28)
         class _CoverTheme:
             title_fill = (255, 210, 50, 255)
             title_stroke = (60, 30, 15, 255)
-        text_block = render_feed_title(title, _CoverTheme(), text_max_w, max_size=200, min_size=90, max_lines=3, max_height=int(ch * 0.45))
+        text_block = render_feed_title(title, _CoverTheme(), int(cw * 0.75), max_size=200, min_size=90, max_lines=3, max_height=int(ch * 0.45))
         tx = (cw - text_block.size[0]) // 2
         ty = int(ch * 0.36) - text_block.size[1] // 2
         img.paste(text_block, (tx, ty), text_block)
