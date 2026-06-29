@@ -15,13 +15,17 @@ _HARD_REJECT_PATTERNS = (
     r"真人出镜|真人拍摄|实拍|采访",
 )
 
-_CURIOSITY_PATTERNS = (
-    r"[?？]",
-    r"为什么|怎么|如何|居然|竟然|真相|误区|多数人|不知道|暗藏|猫腻",
+_HISTORY_VISUAL = (
+    r"尸|墓|棺|陵|夜|血|火|刀|毒|失踪|消失|烧|埋|挖|盗|杀|死|逃|藏|封",
 )
 
-_VISUAL_POSITIVE = (
+_SCIENCE_VISUAL = (
     r"水|电|温度|气压|化学|光|磁|电池|网线|宽带|路由器|不锈钢|玻璃|塑料",
+)
+
+_CURIOSITY_PATTERNS = (
+    r"[?？]",
+    r"为什么|怎么|如何|居然|竟然|真相|误区|多数人|不知道|暗藏|猫腻|之谜|下落|去了哪|无人|不敢|惊魂|诡异|反常|到底",
 )
 
 _TIMELY_PATTERNS = (
@@ -78,21 +82,38 @@ def score_title(
                 rejected_reason=f"命中硬性约束：{pattern}",
             )
 
+    is_history = track == "历史悬案"
+
     visual = 70.0
-    if _has_pattern(text, _VISUAL_POSITIVE):
-        visual += 15
+    if is_history:
+        if _has_pattern(text, _HISTORY_VISUAL):
+            visual += 20
+        if "：" in text or ":" in text:
+            visual += 10
+    else:
+        if _has_pattern(text, _SCIENCE_VISUAL):
+            visual += 15
     if len(text) > 28:
         visual -= 10
 
     fact = 65.0
-    if track in {"日常科学原理", "生活避坑实用常识", "数码小白避坑"}:
+    if is_history:
+        fact += 10
+        if any(kw in text for kw in ("墓", "尸", "失踪", "消失", "真相", "之谜")):
+            fact += 10
+    elif track in {"日常科学原理", "生活避坑实用常识", "数码小白避坑"}:
         fact += 15
-    if template in {"误区反问式", "实操避坑式"}:
-        fact += 5
+        if template in {"误区反问式", "实操避坑式"}:
+            fact += 5
 
     curiosity = 50.0
     if _has_pattern(text, _CURIOSITY_PATTERNS):
         curiosity += 30
+    if is_history:
+        if "：" in text or ":" in text:
+            curiosity += 10
+        if any(kw in text for kw in ("无人", "不敢", "消失", "失踪", "惊魂", "诡异", "反常", "到底")):
+            curiosity += 10
     if template == "反差好奇式":
         curiosity += 10
     if hook and len(hook) >= 10:

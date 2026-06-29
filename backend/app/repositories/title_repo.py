@@ -73,13 +73,14 @@ def insert_title(
     template: str | None = None,
     hook: str | None = None,
     source: str = "manual",
+    keyword: str | None = None,
 ) -> dict | None:
     cur = conn.execute(
         """
-        INSERT OR IGNORE INTO title (title, track, template, hook, source)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT OR IGNORE INTO title (title, track, template, hook, source, keyword)
+        VALUES (?, ?, ?, ?, ?, ?)
         """,
-        (title, track, template, hook, source),
+        (title, track, template, hook, source, keyword),
     )
     if cur.rowcount == 0:
         return None
@@ -148,6 +149,34 @@ def list_pending_score(conn: sqlite3.Connection, *, limit: int = 200) -> list[di
         (max(1, min(limit, 500)),),
     ).fetchall()
     return [_row_to_dict(row) for row in rows]
+
+
+def list_ids_below_score(
+    conn: sqlite3.Connection,
+    max_score: int,
+    *,
+    exclude_enqueued: bool = True,
+) -> list[int]:
+    """返回 score 已存在且严格低于 max_score 的选题 id。"""
+    if exclude_enqueued:
+        rows = conn.execute(
+            """
+            SELECT id FROM title
+            WHERE score IS NOT NULL AND score < ? AND status != 'enqueued'
+            ORDER BY id
+            """,
+            (max_score,),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """
+            SELECT id FROM title
+            WHERE score IS NOT NULL AND score < ?
+            ORDER BY id
+            """,
+            (max_score,),
+        ).fetchall()
+    return [row["id"] for row in rows]
 
 
 def list_queued(conn: sqlite3.Connection, *, limit: int = 200) -> list[dict]:
