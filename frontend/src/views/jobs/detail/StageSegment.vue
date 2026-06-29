@@ -10,7 +10,7 @@
         </el-button>
         <span v-if="actionDisabledReason" class="text-sm text-gray-400">
           {{ actionDisabledReason }}
-          <template v-if="props.job.status === 'running'">，可在页面上方点击「中止」</template>
+          <template v-if="props.job.status === 'running'">，可在页面上方中止</template>
         </span>
       </div>
       <el-descriptions :column="3" border label-width="100px" class="w-full">

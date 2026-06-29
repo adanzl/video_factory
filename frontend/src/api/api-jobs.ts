@@ -68,11 +68,6 @@ export async function updateJobInfo(
   return response.data;
 }
 
-export async function resetJob(jobId: number): Promise<JobDetail> {
-  const response = await api.post<JobDetail>("/v_factory/api/jobs/reset", { id: jobId });
-  return response.data;
-}
-
 export async function abortJob(jobId: number): Promise<JobDetail> {
   const response = await api.post<JobDetail>("/v_factory/api/jobs/abort", { id: jobId });
   return response.data;
