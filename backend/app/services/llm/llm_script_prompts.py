@@ -115,55 +115,31 @@ def format_image_prompt_retry_warning(
 # https://api-docs.deepseek.com/zh-cn/guides/json_mode
 _STORYBOARD_JSON_EXAMPLE = """{
   "title": "标题示例",
-  "narration": "第一段口播正文，用具体细节或例子撑开，有开头有结尾。第二段口播也是完整段落，讲一个新角度或新知识。第三段继续讲，每段都有实质内容不凑字数。",
-  "word_count": 150,
+  "narration": "正文第一段口播，写满本镜字数下限，用具体细节或例子撑开。第二段口播讲一个新角度，同样写满字数。后续段落照此格式继续。",
+  "word_count": 300,
   "visual_style": "画风定调一句话",
   "segments": [
-    {
-      "segment_index": 1,
-      "text": "第一段口播正文，用具体细节或例子撑开，有开头有结尾。",
-      "visual_brief": "画面主旨描述",
-      "visual_mode": "static_motion"
-    },
-    {
-      "segment_index": 2,
-      "text": "第二段口播也是完整段落，讲一个新角度或新知识。",
-      "visual_brief": "画面主旨描述",
-      "visual_mode": "static_motion"
-    },
-    {
-      "segment_index": 3,
-      "text": "第三段继续讲，每段都有实质内容不凑字数。",
-      "visual_brief": "画面主旨描述",
-      "visual_mode": "static_motion"
-    }
+    {"segment_index": 1, "text": "正文第一段口播，写满本镜字数下限，用具体细节或例子撑开。", "visual_brief": "画面主旨", "visual_mode": "static_motion"},
+    {"segment_index": 2, "text": "第二段口播讲一个新角度，同样写满字数。", "visual_brief": "画面主旨", "visual_mode": "static_motion"},
+    {"segment_index": 3, "text": "第三段继续，每段都要写满不要凑字数。", "visual_brief": "画面主旨", "visual_mode": "static_motion"},
+    {"segment_index": 4, "text": "第四段同样。", "visual_brief": "画面主旨", "visual_mode": "static_motion"},
+    {"segment_index": 5, "text": "第五段。", "visual_brief": "画面主旨", "visual_mode": "static_motion"}
   ]
-}"""
+}
+
+注意：以上示例仅展示字段格式，实际 segment 数量和 word_count 须按【字数预算】执行，远比示例多。"""
 
 _STORYBOARD_JSON_EXAMPLE_COMPACT = """{
   "title": "标题示例",
   "visual_style": "画风定调一句话",
   "segments": [
-    {
-      "segment_index": 1,
-      "text": "第一段口播正文，用具体细节撑开。",
-      "visual_brief": "画面主旨",
-      "visual_mode": "static_motion"
-    },
-    {
-      "segment_index": 2,
-      "text": "第二段口播讲新角度。",
-      "visual_brief": "画面主旨",
-      "visual_mode": "static_motion"
-    },
-    {
-      "segment_index": 3,
-      "text": "第三段收尾。",
-      "visual_brief": "画面主旨",
-      "visual_mode": "static_motion"
-    }
+    {"segment_index": 1, "text": "第一段口播文字", "visual_brief": "画面主旨", "visual_mode": "static_motion"},
+    {"segment_index": 2, "text": "第二段口播文字", "visual_brief": "画面主旨", "visual_mode": "static_motion"},
+    {"segment_index": 3, "text": "第三段口播文字", "visual_brief": "画面主旨", "visual_mode": "static_motion"}
   ]
-}"""
+}
+
+注意：以上示例仅展示字段格式，实际 segment 数量和字数按预算执行。"""
 
 _IMAGE_PROMPTS_JSON_EXAMPLE = """{
   "image_prompts": [
