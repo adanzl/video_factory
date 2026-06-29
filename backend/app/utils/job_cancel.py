@@ -31,6 +31,15 @@ class JobCancelRegistry:
             raise JobCancelledError(f"job {job_id} aborted")
 
 
+def raise_if_job_cancelled(job: dict | None) -> None:
+    """从 job 字典读取 id 并检查中止信号（LLM 长调用返回后用）。"""
+    if not job:
+        return
+    job_id = job.get("id")
+    if job_id is not None:
+        job_cancel.raise_if_cancelled(int(job_id))
+
+
 job_cancel = JobCancelRegistry()
 
-__all__ = ["JobCancelledError", "JobCancelRegistry", "job_cancel"]
+__all__ = ["JobCancelledError", "JobCancelRegistry", "job_cancel", "raise_if_job_cancelled"]

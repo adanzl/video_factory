@@ -28,6 +28,7 @@ from app.services.llm.llm_topics import (
     build_topic_user_prompt,
     parse_topics_payload,
 )
+from app.utils.job_cancel import raise_if_job_cancelled
 from app.utils.media import (
     default_narration_target_words,
     min_narration_chars_for_target,
@@ -299,6 +300,7 @@ class DeepSeekClient(LLMClient):
         *,
         min_chars: int,
         mode: str,
+        job: dict | None = None,
     ) -> dict[str, Any]:
         chars = _narration_char_count(str(data.get("narration") or ""))
         if chars >= min_chars or chars < int(min_chars * 0.5):
@@ -307,8 +309,10 @@ class DeepSeekClient(LLMClient):
         segments = current.get("segments") or []
         default_mode = segments[0].get("visual_mode", "static_motion") if segments else "static_motion"
         for _ in range(_NARRATION_EXPAND_ATTEMPTS):
+            raise_if_job_cancelled(job)
             prompts = build_narration_expand_prompts(current, min_chars=min_chars, mode=mode)
             expanded, _ = self._chat_json(prompts["system"], prompts["user"])
+            raise_if_job_cancelled(job)
             if "segments" not in expanded:
                 break
             if mode == "storyboard":
@@ -351,6 +355,7 @@ class DeepSeekClient(LLMClient):
         data: dict[str, Any] | None = None
         truncation_attempts = 0
         for attempt in range(_NARRATION_LENGTH_RETRY_ATTEMPTS):
+            raise_if_job_cancelled(job)
             prompts = build_storyboard_prompts(
                 title,
                 feedback=length_feedback,
@@ -367,6 +372,7 @@ class DeepSeekClient(LLMClient):
                     prompts["user"],
                     max_tokens=max_tokens,
                 )
+                raise_if_job_cancelled(job)
             except ValueError as exc:
                 truncation_attempts += 1
                 if truncation_attempts > _TRUNCATION_RETRY_ATTEMPTS:
@@ -396,6 +402,7 @@ class DeepSeekClient(LLMClient):
                 raise ValueError("LLM storyboard response missing visual_style")
             chars = _narration_char_count(str(data.get("narration") or ""))
             if chars >= min_chars:
+                raise_if_job_cancelled(job)
                 return data
             length_feedback = _narration_length_feedback(
                 chars,
@@ -404,8 +411,11 @@ class DeepSeekClient(LLMClient):
             )
         if data is not None:
             data = _assemble_storyboard_narration(data)
-            data = self._expand_narration_if_needed(data, min_chars=min_chars, mode="storyboard")
+            data = self._expand_narration_if_needed(
+                data, min_chars=min_chars, mode="storyboard", job=job
+            )
             data = _assemble_storyboard_narration(data)
+        raise_if_job_cancelled(job)
         return data
 
     def _generate_image_prompts(
@@ -427,6 +437,7 @@ class DeepSeekClient(LLMClient):
             include_sd15_prompt=include_sd15_prompt,
         )
         raw, _ = self._chat_json(prompts["system"], prompts["user"])
+        raise_if_job_cancelled(job)
         if isinstance(raw, list):
             prompt_items = raw
         elif isinstance(raw, dict):
@@ -505,8 +516,10 @@ class DeepSeekClient(LLMClient):
                 futures = {pool.submit(_run_batch, batch): batch for batch in batches}
                 for future in as_completed(futures):
                     prompt_items.extend(future.result())
+                    raise_if_job_cancelled(job)
 
         self._merge_image_prompts(script, prompt_items, required_indices=all_indices)
+        raise_if_job_cancelled(job)
         elapsed = time.perf_counter() - started
         logger.info(
             "[SCRIPT] image_prompts done segments=%d batches=%d elapsed=%.1fs",
@@ -560,6 +573,7 @@ class DeepSeekClient(LLMClient):
             supplementary_info=supplementary_info,
             job=job,
         )
+        raise_if_job_cancelled(job)
         elapsed = time.perf_counter() - started
         logger.info(
             "[SCRIPT] storyboard done segments=%d words=%d elapsed=%.1fs",
@@ -623,6 +637,7 @@ class DeepSeekClient(LLMClient):
         narration_target_words: int | None = None,
         supplementary_info: str | None = None,
         video_timeline: str | None = None,
+        job: dict | None = None,
     ) -> dict[str, Any]:
         min_chars = _min_narration_chars_for_script(
             narration_target_words=narration_target_words,
@@ -631,6 +646,7 @@ class DeepSeekClient(LLMClient):
         length_feedback: str | None = feedback
         data: dict[str, Any] | None = None
         for attempt in range(_NARRATION_LENGTH_RETRY_ATTEMPTS):
+            raise_if_job_cancelled(job)
             prompts = build_material_script_prompts(
                 title,
                 feedback=length_feedback,
@@ -640,6 +656,7 @@ class DeepSeekClient(LLMClient):
                 video_timeline=video_timeline,
             )
             data, _ = self._chat_json(prompts["system"], prompts["user"])
+            raise_if_job_cancelled(job)
             if "segments" not in data:
                 raise ValueError("LLM material script response missing segments")
             for seg in data["segments"]:
@@ -653,7 +670,10 @@ class DeepSeekClient(LLMClient):
                 prefix=feedback if attempt == 0 and feedback else None,
             )
         if data is not None:
-            data = self._expand_narration_if_needed(data, min_chars=min_chars, mode="material")
+            data = self._expand_narration_if_needed(
+                data, min_chars=min_chars, mode="material", job=job
+            )
+        raise_if_job_cancelled(job)
         return data
 
     def optimize_script_title(

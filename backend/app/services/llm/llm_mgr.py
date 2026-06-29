@@ -89,6 +89,7 @@ class LLMClient:
         narration_target_words: int | None = None,
         supplementary_info: str | None = None,
         video_timeline: str | None = None,
+        job: dict | None = None,
     ) -> dict[str, Any]:
         raise NotImplementedError
 
@@ -210,11 +211,14 @@ class LLMMgr:
             image_prompt_target_chars,
         )
 
+        from app.utils.job_cancel import raise_if_job_cancelled
+
         feedback: str | None = None
         target_indices = segment_indices
         min_chars = image_prompt_min_chars(sd15_mode=include_sd15_prompt)
         target_chars = image_prompt_target_chars(sd15_mode=include_sd15_prompt)
         for attempt in range(max_attempts):
+            raise_if_job_cancelled(job)
             self.fill_image_prompts(
                 script,
                 feedback=feedback,
@@ -367,6 +371,7 @@ class LLMMgr:
         narration_target_words: int | None = None,
         supplementary_info: str | None = None,
         video_timeline: str | None = None,
+        job: dict | None = None,
     ) -> dict[str, Any]:
         return self._get_client().generate_material_script(
             title,
@@ -375,6 +380,7 @@ class LLMMgr:
             narration_target_words=narration_target_words,
             supplementary_info=supplementary_info,
             video_timeline=video_timeline,
+            job=job,
         )
 
     def rewrite_pixabay_query(
