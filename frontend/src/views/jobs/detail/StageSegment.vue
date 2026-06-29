@@ -22,7 +22,8 @@
           <el-radio-group
             v-model="imageProvider"
             size="small"
-            :disabled="segmentScope === 'segment/clips'"
+            :disabled="segmentScope === 'segment/clips' || actionDisabled || savingImageProvider"
+            @change="handleImageProviderChange"
           >
             <el-radio-button value="z_image_t2i">Z-Image</el-radio-button>
             <el-radio-button value="wan_t2i">万相</el-radio-button>
@@ -34,7 +35,8 @@
           <el-radio-group
             v-model="videoProvider"
             size="small"
-            :disabled="segmentScope === 'segment/images'"
+            :disabled="segmentScope === 'segment/images' || actionDisabled || savingVideoProvider"
+            @change="handleVideoProviderChange"
           >
             <el-radio-button value="ffmpeg">Ken Burns</el-radio-button>
             <el-radio-button value="wan_i2v">万相 I2V</el-radio-button>
@@ -208,6 +210,7 @@
                 class="block w-full bg-black"
                 :style="mediaPreviewStyle"
                 :src="segment.clipUrl"
+                :crossorigin="MEDIA_CROSS_ORIGIN"
                 controls
                 playsinline
                 preload="metadata"
@@ -252,12 +255,13 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { runJobStageAction } from "@/api/api-jobs";
+import { runJobStageAction, updateJobInfo } from "@/api/api-jobs";
 import { getMediaFileUrl } from "@/api/api-media";
 import type { JobDetail, JobInfo, JobLog, JobSegment, ScriptJson } from "@/types/jobs";
 import type { RunStageActionPayload } from "@/types/jobs/stageAction";
 import { formatDateTime } from "@/utils/date";
 import { buildSegmentClipSearchKeyword, type ClipOrientation } from "@/utils/clipSearch";
+import { MEDIA_CROSS_ORIGIN } from "@/utils/media";
 import { useErrorHandler } from "@/composables/useErrorHandler";
 import SegmentClipSearchDialog from "@/views/clips/SegmentClipSearchDialog.vue";
 
@@ -274,15 +278,23 @@ const emit = defineEmits<{
 const { handleError } = useErrorHandler();
 
 const submitting = ref(false);
+const savingImageProvider = ref(false);
+const savingVideoProvider = ref(false);
 const regeneratingImageIndex = ref<number | null>(null);
 const generatingClipIndex = ref<number | null>(null);
 const segmentScope = ref("segment/images");
-const imageProvider = ref<NonNullable<RunStageActionPayload["image_provider"]>>(
-  props.job.info?.image_provider ?? "z_image_t2i"
-);
-const videoProvider = ref<NonNullable<RunStageActionPayload["video_provider"]>>(
-  props.job.info?.video_provider ?? "ffmpeg"
-);
+
+type ImageProvider = NonNullable<RunStageActionPayload["image_provider"]>;
+type VideoProvider = NonNullable<RunStageActionPayload["video_provider"]>;
+
+const defaultImageProvider = (job: JobDetail): ImageProvider =>
+  job.info?.image_provider ?? "z_image_t2i";
+
+const defaultVideoProvider = (job: JobDetail): VideoProvider =>
+  job.info?.video_provider ?? "ffmpeg";
+
+const imageProvider = ref<ImageProvider>(defaultImageProvider(props.job));
+const videoProvider = ref<VideoProvider>(defaultVideoProvider(props.job));
 
 watch(
   () => props.job.info?.image_provider,
@@ -301,6 +313,38 @@ watch(
     }
   }
 );
+
+const handleImageProviderChange = (value: ImageProvider) => {
+  if (actionDisabled.value) {
+    return;
+  }
+  savingImageProvider.value = true;
+  void updateJobInfo(props.job.id, { image_provider: value })
+    .then(() => emit("refresh"))
+    .catch(error => {
+      imageProvider.value = defaultImageProvider(props.job);
+      handleError(error, "更新静图模式失败");
+    })
+    .finally(() => {
+      savingImageProvider.value = false;
+    });
+};
+
+const handleVideoProviderChange = (value: VideoProvider) => {
+  if (actionDisabled.value) {
+    return;
+  }
+  savingVideoProvider.value = true;
+  void updateJobInfo(props.job.id, { video_provider: value })
+    .then(() => emit("refresh"))
+    .catch(error => {
+      videoProvider.value = defaultVideoProvider(props.job);
+      handleError(error, "更新视频模式失败");
+    })
+    .finally(() => {
+      savingVideoProvider.value = false;
+    });
+};
 
 const selectedSegments = ref<number[]>([]);
 const clipSearchOpen = ref(false);

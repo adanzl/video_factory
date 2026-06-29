@@ -387,14 +387,31 @@ def update_job_info_route():
     intro_category = None
     if "intro_category" in data:
         intro_category = normalize_intro_category(parse_optional_str(data, "intro_category"))
-    if orientation is None and content_style is None and intro_category is None:
-        raise APIError("at least one field required: orientation, content_style, intro_category")
+    image_provider = None
+    if "image_provider" in data:
+        image_provider = normalize_image_provider(parse_optional_str(data, "image_provider"))
+    video_provider = None
+    if "video_provider" in data:
+        video_provider = normalize_video_provider(parse_optional_str(data, "video_provider"))
+    if (
+        orientation is None
+        and content_style is None
+        and intro_category is None
+        and image_provider is None
+        and video_provider is None
+    ):
+        raise APIError(
+            "at least one field required: orientation, content_style, intro_category, "
+            "image_provider, video_provider"
+        )
     try:
         job = job_mgr.update_job_info(
             job_id,
             orientation=orientation,
             content_style=content_style,
             intro_category=intro_category,
+            image_provider=image_provider,
+            video_provider=video_provider,
         )
     except ValueError as exc:
         raise APIError(str(exc)) from exc

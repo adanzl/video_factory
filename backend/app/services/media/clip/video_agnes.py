@@ -355,8 +355,10 @@ class AgnesClipProvider(ClipProvider):
             if video_id:
                 query = urlencode({"video_id": video_id})
                 poll_url = f"{self._poll_root}/agnesapi?{query}"
-            else:
+            elif task_id:
                 poll_url = f"{self._create_url}/{task_id}"
+            else:
+                raise RuntimeError("agnes poll missing both video_id and task_id")
             poll_resp = self._request(
                 "GET",
                 poll_url,

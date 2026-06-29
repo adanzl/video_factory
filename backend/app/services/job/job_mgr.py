@@ -161,11 +161,15 @@ class JobMgr:
         orientation: str | None = None,
         content_style: str | None = None,
         intro_category: str | None = None,
+        image_provider: str | None = None,
+        video_provider: str | None = None,
     ) -> dict:
         from app.utils.job_info import (
             normalize_content_style,
+            normalize_image_provider,
             normalize_intro_category,
             normalize_orientation,
+            normalize_video_provider,
         )
 
         patch: dict[str, str] = {}
@@ -186,6 +190,18 @@ class JobMgr:
             if normalized is None:
                 raise ValueError("intro_category must be 百科 or 历史悬案")
             patch["intro_category"] = normalized
+        if image_provider is not None:
+            normalized = normalize_image_provider(image_provider)
+            if normalized is None:
+                raise ValueError(
+                    "image_provider must be z_image_t2i, wan_t2i, sd15_t2i, or agnes_t2i"
+                )
+            patch["image_provider"] = normalized
+        if video_provider is not None:
+            normalized = normalize_video_provider(video_provider)
+            if normalized is None:
+                raise ValueError("video_provider must be ffmpeg, wan_i2v, or agnes_i2v")
+            patch["video_provider"] = normalized
         if not patch:
             raise ValueError("no updatable info fields provided")
         with connection() as conn:

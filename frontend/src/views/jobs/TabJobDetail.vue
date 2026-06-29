@@ -25,7 +25,7 @@
         class="mb-4"
       />
 
-      <el-tabs v-model="activeStage" type="border-card">
+      <el-tabs v-model="activeStage" type="border-card" lazy>
         <el-tab-pane
           v-for="stage in jobStages"
           :key="stage.name"
@@ -43,6 +43,7 @@
             :job="job"
             :segments="segments"
             :logs="logsForStage(stage.name)"
+            :stage-active="activeStage === stage.name"
             @refresh="fetchDetail"
           />
         </el-tab-pane>

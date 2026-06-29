@@ -50,6 +50,7 @@
                 :key="videoUrl"
                 class="block h-full w-full bg-black object-contain"
                 :src="videoUrl"
+                :crossorigin="MEDIA_CROSS_ORIGIN"
                 controls
                 playsinline
                 preload="metadata"
@@ -98,10 +99,13 @@ import { downloadMediaFile } from "@/api/api-media";
 import type { JobDetail, JobLog } from "@/types/jobs";
 import { formatDateTime } from "@/utils/date";
 import {
+  buildMediaPreviewBoxStyle,
   formatCostTime,
   formatFileSize,
   formatMediaDuration,
+  formatVideoResolution,
   getMediaFileUrl,
+  MEDIA_CROSS_ORIGIN,
   resolveFinalDuration,
   resolveFinalPath,
 } from "@/utils/media";
@@ -122,58 +126,18 @@ const downloading = ref(false);
 const loadError = ref("");
 const videoMeta = ref<{ width: number; height: number } | null>(null);
 
-const PREVIEW_MAX_VIEWPORT_RATIO = 0.7;
-const PREVIEW_MAX_WIDTH_PX = 420;
-
-const buildPreviewBoxStyle = (width?: number | null, height?: number | null) => {
-  if (width && height && width > 0 && height > 0) {
-    const ratio = width / height;
-    const maxH =
-      (typeof window !== "undefined" ? window.innerHeight : 800) * PREVIEW_MAX_VIEWPORT_RATIO;
-    const maxW = Math.min(
-      PREVIEW_MAX_WIDTH_PX,
-      typeof window !== "undefined" ? window.innerWidth * 0.9 : PREVIEW_MAX_WIDTH_PX
-    );
-
-    let boxW: number;
-    let boxH: number;
-    if (ratio >= 1) {
-      boxW = Math.min(maxW, maxH * ratio);
-      boxH = boxW / ratio;
-    } else {
-      boxH = Math.min(maxH, maxW / ratio);
-      boxW = boxH * ratio;
-    }
-
-    return {
-      width: `${Math.round(boxW)}px`,
-      height: `${Math.round(boxH)}px`,
-    };
-  }
-
-  return {
-    width: "100%",
-    maxWidth: `${PREVIEW_MAX_WIDTH_PX}px`,
-    aspectRatio: "16 / 9",
-  };
-};
-
 const previewBoxStyle = computed(() =>
-  buildPreviewBoxStyle(videoMeta.value?.width, videoMeta.value?.height)
+  buildMediaPreviewBoxStyle(videoMeta.value?.width, videoMeta.value?.height)
 );
 
 const previewPlaceholderStyle = computed(() => ({
-  ...buildPreviewBoxStyle(null, null),
+  ...buildMediaPreviewBoxStyle(null, null),
   minHeight: "120px",
 }));
 
-const resolutionText = computed(() => {
-  const meta = videoMeta.value;
-  if (meta?.width && meta?.height) {
-    return `${meta.width}×${meta.height}`;
-  }
-  return "-";
-});
+const resolutionText = computed(() =>
+  formatVideoResolution(videoMeta.value?.width, videoMeta.value?.height)
+);
 
 const actionDisabled = computed(() => props.job.status === "running");
 const actionDisabledReason = computed(() =>
