@@ -4,10 +4,7 @@
       <el-button type="primary" :disabled="loading" @click="fetchTitles">
         <el-icon><Refresh /></el-icon>
       </el-button>
-      <el-button type="primary" @click="showGenerateDialog = true">AI 生成</el-button>
-      <el-button type="primary" :loading="importingHot" @click="handleImportHot">
-        热搜选题
-      </el-button>
+      <el-button type="primary" @click="showGenerateDialog = true">AI 生成选题</el-button>
       <el-button
         :disabled="!selectedIds.length"
         :loading="scoring"
@@ -139,10 +136,19 @@
 
     <el-dialog v-model="showGenerateDialog" title="AI 生成选题" width="480px" destroy-on-close>
       <el-form label-width="80px">
+        <el-form-item label="类型">
+          <el-select v-model="generateMode" @change="onGenerateModeChange">
+            <el-option label="热搜选题" value="hot" />
+            <el-option label="历史悬案" value="history_mystery" />
+            <el-option label="科学原理" value="science" />
+            <el-option label="自定义" value="custom" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="主题">
           <el-input
             v-model="generateForm.theme"
-            placeholder="如：日常用水用电小常识"
+            :disabled="generateMode !== 'custom'"
+            :placeholder="generateMode === 'custom' ? '如：日常用水用电小常识' : '自动填充，无需输入'"
             maxlength="100"
           />
         </el-form-item>
@@ -219,12 +225,28 @@ const showGenerateDialog = ref(false);
 const showEnqueueDialog = ref(false);
 const pendingEnqueueIds = ref<number[]>([]);
 const enqueueRunMode = ref<EnqueueRunMode>("script");
+const generateMode = ref("history_mystery");
 
 const generateForm = reactive({
-  theme: "",
+  theme: "中国历史悬案",
   count: 10,
   save: true,
 });
+
+const onGenerateModeChange = (mode: string) => {
+  if (mode === "hot") {
+    generateForm.theme = "";
+    generateForm.count = 10;
+  } else if (mode === "history_mystery") {
+    generateForm.theme = "中国历史悬案";
+    generateForm.count = 10;
+  } else if (mode === "science") {
+    generateForm.theme = "日常科学冷知识";
+    generateForm.count = 10;
+  } else {
+    generateForm.theme = "";
+  }
+};
 
 const statusLabel = (status: TitleStatus) => {
   switch (status) {
@@ -421,6 +443,21 @@ const handleDeleteOne = async (row: TitleRecord) => {
 };
 
 const handleGenerate = async () => {
+  if (generateMode.value === "hot") {
+    generating.value = true;
+    try {
+      const result = await importHotTopics();
+      ElMessage.success(`已导入 ${result.count} 条热搜选题`);
+      showGenerateDialog.value = false;
+      await fetchTitles();
+    } catch (error) {
+      handleError(error, "导入热搜失败");
+    } finally {
+      generating.value = false;
+    }
+    return;
+  }
+
   if (!generateForm.theme.trim()) {
     ElMessage.warning("请填写主题方向");
     return;
