@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from app.services.intro.generator import _normalize_title
+from app.services.intro.generator import _normalize_title, central_43_bounds
 from app.utils.job_info import (
     CONTENT_STYLE_HISTORICAL_MYSTERY,
     CONTENT_STYLE_SCIENCE_CHILD,
@@ -10,6 +10,21 @@ from app.utils.job_info import (
 )
 from worker.stages.intro import IntroStage
 from worker.stages.intro.base import resolve_intro_title
+
+
+def test_central_43_bounds_landscape() -> None:
+    left, top, right, bottom = central_43_bounds(1280, 720)
+    assert left == 160
+    assert top == 0
+    assert right == 1120
+    assert bottom == 720
+
+
+def test_central_43_bounds_portrait() -> None:
+    left, top, right, bottom = central_43_bounds(720, 1280)
+    assert left == 0
+    assert right == 720
+    assert bottom - top == 540
 
 
 def test_intro_title_normalize_keeps_colon() -> None:

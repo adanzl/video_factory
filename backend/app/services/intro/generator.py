@@ -264,10 +264,24 @@ def _load_host_sprite(settings, *, width: int, height: int, layout: _IntroLayout
     )
 
 
+def central_43_bounds(width: int, height: int) -> tuple[int, int, int, int]:
+    """画布内居中 4:3 安全区 (left, top, right, bottom)。
+
+    横屏 16:9 裁左右（1280×720 → x=160~1120）；竖屏 9:16 裁上下。
+    片头与投稿封面共用此区域约束品牌/标题位置。
+    """
+    if width >= height:
+        crop_w = height * 4 / 3
+        left = int(round((width - crop_w) / 2))
+        return left, 0, left + int(crop_w), height
+    crop_h = width * 3 / 4
+    top = int(round((height - crop_h) / 2))
+    return 0, top, width, top + int(crop_h)
+
+
 def _central_43_left_x(width: int, height: int) -> int:
     """16:9 画布内居中 4:3 区域的左边界 x。"""
-    crop_w = height * 4 / 3
-    return int(round((width - crop_w) / 2))
+    return central_43_bounds(width, height)[0]
 
 
 def _brand_header_x(width: int, height: int, layout: _IntroLayout, header_w: int) -> int:
