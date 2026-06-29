@@ -108,7 +108,7 @@ def _generate_cover(job: dict, cover_path: Path, width: int, height: int) -> Non
         class _CoverTheme:
             title_fill = (255, 210, 50, 255)
             title_stroke = (60, 30, 15, 255)
-        text_block = render_feed_title(title, _CoverTheme(), text_max_w, max_size=130, min_size=70, max_lines=3, max_height=int(ch * 0.45))
+        text_block = render_feed_title(title, _CoverTheme(), text_max_w, max_size=200, min_size=90, max_lines=3, max_height=int(ch * 0.45))
         tx = (cw - text_block.size[0]) // 2
         ty = int(ch * 0.36) - text_block.size[1] // 2
         img.paste(text_block, (tx, ty), text_block)
