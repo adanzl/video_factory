@@ -76,3 +76,42 @@ def test_generate_switches_to_backup_key_on_quota(tmp_path: Path) -> None:
     assert mock_generate.call_count == 2
     assert mock_generate.call_args_list[0].args[0].value == "free-key"
     assert mock_generate.call_args_list[1].args[0].value == "main-key"
+
+
+def test_concurrent_submit_staggered() -> None:
+    import threading
+    import time
+
+    from app.config import get_settings
+
+    settings = get_settings()
+    workers = max(2, settings.image_max_workers)
+    stagger = max(0.5, settings.image_submit_interval_sec)
+
+    AgnesImageProvider._inflight = None  # noqa: SLF001
+    with (
+        patch.object(get_settings(), "image_max_workers", workers),
+        patch.object(get_settings(), "image_submit_interval_sec", stagger),
+    ):
+        provider = AgnesImageProvider()
+        starts: list[float] = []
+        gate = threading.Barrier(workers)
+
+        def worker() -> None:
+            gate.wait()
+            provider._acquire_submit_slot()  # noqa: SLF001
+            starts.append(time.monotonic())
+            time.sleep(0.05)
+            provider._release_submit_slot()  # noqa: SLF001
+
+        threads = [threading.Thread(target=worker) for _ in range(workers)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10)
+
+    assert len(starts) == workers
+    starts.sort()
+    for i in range(1, workers):
+        gap = starts[i] - starts[i - 1]
+        assert gap >= stagger * 0.8, f"expected stagger ~{stagger}s, got {gap:.2f}s"
