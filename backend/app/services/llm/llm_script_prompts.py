@@ -366,12 +366,16 @@ _NARRATION_ANTI_MEMOIR_RULE = (
     "用第三人称或泛化「很多人/有些老说法」讲清误区与正确步骤即可。"
 )
 
-_SHORT_FORM_STRUCTURE_RULE = (
+_SHORT_FORM_STRUCTURE_RULE_PORTRAIT = (
     "本片为1～2分钟竖屏短科普：只讲一个核心知识点，禁止多点罗列、章节式串讲或「第一第二第三」清单。"
     "第一句须在3秒内抛出反常识疑问、具体现象或悬念（禁止「大家好」「今天我们来聊」类开场）。"
     "正文只展开一层因果或一个机制，不贪多。"
     "结尾用1～2句收束总结；最后一句可轻量引导互动（如「觉得有用就点个赞，我们下期见」），"
     "禁止长篇回顾、禁止清单式连读多届/多段。"
+)
+
+_SHORT_FORM_STRUCTURE_RULE_LANDSCAPE = _SHORT_FORM_STRUCTURE_RULE_PORTRAIT.replace(
+    "竖屏短科普", "横屏短科普"
 )
 
 
@@ -415,7 +419,9 @@ def _structure_rule(*, orientation: str, content_style: str) -> str:
         return _LIFE_EXPERIENCE_STRUCTURE_RULE
     if content_style == CONTENT_STYLE_HISTORICAL_MYSTERY:
         return _MYSTERY_STRUCTURE_RULE
-    return _SHORT_FORM_STRUCTURE_RULE
+    if orientation == ORIENTATION_LANDSCAPE:
+        return _SHORT_FORM_STRUCTURE_RULE_LANDSCAPE
+    return _SHORT_FORM_STRUCTURE_RULE_PORTRAIT
 
 
 def _storyboard_role(content_style: str) -> str:
