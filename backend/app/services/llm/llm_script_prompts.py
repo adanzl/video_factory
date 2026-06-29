@@ -41,10 +41,10 @@ from app.services.llm.llm_script_title import (
     build_title_optimize_user_prompt,
 )
 
-MIN_IMAGE_PROMPT_CHARS = 200
-IMAGE_PROMPT_TARGET_CHARS = 300
-MIN_IMAGE_PROMPT_CHARS_SD15 = 30
-IMAGE_PROMPT_TARGET_CHARS_SD15 = 80
+MIN_IMAGE_PROMPT_CHARS = 50
+IMAGE_PROMPT_TARGET_CHARS = 200
+MIN_IMAGE_PROMPT_CHARS_SD15 = 20
+IMAGE_PROMPT_TARGET_CHARS_SD15 = 60
 MIN_SD15_PROMPT_EN_WORDS = 8
 TARGET_SD15_PROMPT_EN_WORDS = 12
 
@@ -157,7 +157,7 @@ _IMAGE_PROMPTS_JSON_EXAMPLE = """{
   "image_prompts": [
     {
       "segment_index": 1,
-      "image_prompt": "六层结构扩写...",
+      "image_prompt": "主体+场景+风格+光照+构图+质量要求...",
       "motion_prompt": "轻微镜头推进",
       "sd15_prompt_en": "cross-section diagram of lung alveoli, air sacs highlighted, medical illustration"
     }
@@ -168,7 +168,7 @@ _IMAGE_PROMPTS_JSON_EXAMPLE_NO_SD15 = """{
   "image_prompts": [
     {
       "segment_index": 1,
-      "image_prompt": "六层结构扩写...",
+      "image_prompt": "主体+场景+风格+光照+构图+质量要求...",
       "motion_prompt": "轻微镜头推进"
     }
   ]
@@ -202,30 +202,38 @@ _VISUAL_BRIEF_RULE = (
     "另须输出visual_style：全片画风定调一句话（画风+主色调+跨镜统一元素如道具造型）。"
 )
 
+_IMAGE_PROMPT_DIMENSIONS_FULL = (
+    "篇幅按画面复杂度充分展开，不凑字数，结构为"
+    "主体+场景/环境+风格+光照+构图+质量要求，须逐层写清可见细节，禁止空泛形容词："
+    "①主体（主要主体、姿态、关键动作或互动）；"
+    "②场景/环境（前景/中景/背景、空间纵深）；"
+    "③视觉风格（严格遵循 visual_style 全片定调）；"
+    "④光照（主光与辅光方向、明暗氛围）；"
+    "⑤构图（景别、主体位置与占比、相机角度、留白）；"
+    "⑥质量要求（细节级别、清晰度、信息密度）；"
+    "另遵守语义边界：仅表达本段 text 与 visual_brief，禁止提前画后续段落内容。"
+)
+
+_IMAGE_PROMPT_DIMENSIONS_COMPACT = (
+    "篇幅精简、能说明白即可，但须逐点覆盖六维："
+    "①主体；②场景/环境；③视觉风格；④光照；⑤构图；⑥质量要求；"
+    "并遵守语义边界（仅本段内容）。"
+    "实际 SD1.5 出图以 sd15_prompt_en 为准。"
+)
+
 _IMAGE_PROMPT_RULE_SCIENCE_PORTRAIT = (
     "image_prompt须严格遵循visual_style画风定调，全片统一：电影级写实科普视觉，布光考究、"
     "景深自然、材质细节真实可辨，色彩明快有层次，适配9:16竖屏构图。"
-    f"每段image_prompt建议350-550字（任何一段不得低于{MIN_IMAGE_PROMPT_CHARS}字），"
-    "须按以下六层逐层展开，每层写具体可见细节，禁止一句话带过或空泛形容词："
-    "①构图景别（竖屏主体位置与占比、留白、单一视觉焦点）；"
-    "②主体动作（主体是谁/何物、姿态、关键互动，或A/B对比并排）；"
-    "③场景环境（前景/中景/背景元素、空间纵深、虚化程度）；"
-    "④光影材质（主光与辅光方向、高光反光、主体与道具材质质感）；"
-    "⑤色彩氛围（主辅色、冷暖对比、情绪基调，须有暖色点缀，忌整体发灰）；"
-    "⑥语义边界（仅表达本段text与visual_brief，禁止提前画后续段落内容）。"
+    + _IMAGE_PROMPT_DIMENSIONS_FULL
 )
 
 _IMAGE_PROMPT_RULE_LIFE_LANDSCAPE = (
     "image_prompt须严格遵循visual_style画风定调，全片统一：生活Vlog质感写实画面，"
     "自然光或室内暖光、浅景深、色彩真实不过度滤镜，适配16:9横屏构图。"
-    f"每段image_prompt建议350-550字（任何一段不得低于{MIN_IMAGE_PROMPT_CHARS}字），"
-    "须按以下六层逐层展开："
-    "①构图景别（横屏主体位置、环境留白、生活场景真实感）；"
-    "②人物/物品动作（具体在做什么、与口播步骤对应）；"
-    "③场景环境（家居/办公/户外等可识别生活空间）；"
-    "④光影材质（自然窗光、桌面材质、屏幕/文档等细节）；"
-    "⑤色彩氛围（温暖日常、不过度饱和）；"
-    "⑥语义边界（仅表达本段text与visual_brief，禁止可读大段文字/水印/品牌Logo）。"
+    + _IMAGE_PROMPT_DIMENSIONS_FULL.replace(
+        "禁止提前画后续段落内容。",
+        "禁止可读大段文字/水印/品牌Logo。",
+    )
 )
 
 _IMAGE_PROMPT_MOTION_TAIL = (
@@ -236,30 +244,19 @@ _IMAGE_PROMPT_MOTION_TAIL = (
 )
 
 
-_IMAGE_PROMPT_RULE_SD15_SHORT = (
-    "image_prompt为该镜画面的简短中文描述（80-120字）："
-    "写清主体是什么、在做什么、场景类型，供质检和前端展示用；"
-    "无需六层扩写，禁止堆砌光影材质细节。"
-)
+_IMAGE_PROMPT_RULE_SD15 = _IMAGE_PROMPT_DIMENSIONS_COMPACT
 
 _IMAGE_PROMPT_RULE_MYSTERY_PORTRAIT = (
     "每段image_prompt须严格遵循visual_style画风定调，全片统一：电影级写实历史再现，"
     "光影考究、暗部有层次、低饱和古风色调，适配9:16竖屏构图。"
-    f"每段image_prompt建议350-550字（任何一段不得低于{MIN_IMAGE_PROMPT_CHARS}字），"
-    "须按以下六层逐层展开："
-    "①构图景别（竖屏单一视觉焦点、主体占比，如大殿中孤独的背影或深夜庭院一隅）；"
-    "②主体动作（谁在做或承受什么、姿态、身体语言）；"
-    "③场景环境（时代特征——服饰、器物、建筑、宫廷或市井细节）；"
-    "④光影材质（月光、烛光、灯笼——用光源制造悬疑感，暗部有层次）；"
-    "⑤色彩氛围（低饱和冷调、暗红或琥珀暖光点缀、历史厚重感）；"
-    "⑥语义边界（仅表达本段画面，禁止写文字、奏折、诏书等可读文字）。"
+    + _IMAGE_PROMPT_DIMENSIONS_FULL.replace(
+        "禁止提前画后续段落内容。",
+        "禁止可读文字、奏折、诏书等文字元素。",
+    )
 )
 
 _IMAGE_PROMPT_RULE_MYSTERY_LANDSCAPE = _IMAGE_PROMPT_RULE_MYSTERY_PORTRAIT.replace(
     "适配9:16竖屏构图", "适配16:9横屏构图"
-).replace(
-    "竖屏单一视觉焦点、主体占比，如大殿中孤独的背影或深夜庭院一隅",
-    "横屏主体位置与环境留白，如大殿中的孤独背影置于画面一侧利用空间营造悬疑感",
 )
 
 
@@ -269,7 +266,7 @@ def _image_prompt_rule(*, orientation: str, content_style: str, sd15_mode: bool 
         "和video用的motion_prompt。"
     )
     if sd15_mode:
-        return head + _IMAGE_PROMPT_RULE_SD15_SHORT + _IMAGE_PROMPT_MOTION_TAIL
+        return head + _IMAGE_PROMPT_RULE_SD15 + _IMAGE_PROMPT_MOTION_TAIL
     if content_style == CONTENT_STYLE_HISTORICAL_MYSTERY:
         body = _IMAGE_PROMPT_RULE_MYSTERY_LANDSCAPE if orientation == ORIENTATION_LANDSCAPE else _IMAGE_PROMPT_RULE_MYSTERY_PORTRAIT
         return head + body + _IMAGE_PROMPT_MOTION_TAIL
@@ -306,6 +303,10 @@ _MATERIAL_NARRATION_LENGTH_RULE = (
     "禁止整段仅一句短感叹（如「哇，好厉害呀」）。"
     "【生成顺序】先逐段写满 segments，再原样拼接为 narration，最后统计 word_count；"
     "若未达字数下限，须当场扩写后再输出 JSON，禁止先输出再指望后处理。"
+    "【输出前自检】逐段核对：每段 text 是否含三层、是否非空；"
+    "各段 text 字数之和是否达到写作目标；"
+    "word_count 是否等于 narration 实际字数（不含空格换行）；"
+    "narration 与 segments 按序拼接是否完全一致，不一致须重写。"
 )
 
 _MYSTERY_NARRATION_VOICE_RULE = (
@@ -366,16 +367,14 @@ _NARRATION_ANTI_MEMOIR_RULE = (
     "用第三人称或泛化「很多人/有些老说法」讲清误区与正确步骤即可。"
 )
 
-_SHORT_FORM_STRUCTURE_RULE_PORTRAIT = (
-    "本片为1～2分钟竖屏短科普：只讲一个核心知识点，禁止多点罗列、章节式串讲或「第一第二第三」清单。"
-    "第一句须在3秒内抛出反常识疑问、具体现象或悬念（禁止「大家好」「今天我们来聊」类开场）。"
-    "正文只展开一层因果或一个机制，不贪多。"
-    "结尾用1～2句收束总结；最后一句可轻量引导互动（如「觉得有用就点个赞，我们下期见」），"
-    "禁止长篇回顾、禁止清单式连读多届/多段。"
-)
-
-_SHORT_FORM_STRUCTURE_RULE_LANDSCAPE = _SHORT_FORM_STRUCTURE_RULE_PORTRAIT.replace(
-    "竖屏短科普", "横屏短科普"
+_SCIENCE_STRUCTURE_RULE = (
+    "【结构规范】须依次包含以下四部分：\n"
+    "1. 开场钩子（3 秒内抛出反常识现象或「咦，这是怎么回事呀？」式疑问，禁止「大家好」开场）\n"
+    "2. 背景铺垫（是什么、在哪里、和我们有什么关系，用孩子能懂的话讲清）\n"
+    "3. 机制拆解（核心原理、因果链条、关键对比或简单实验，只讲一层不贪多）\n"
+    "4. 收束与回味（一句童趣总结，可留轻量思考，禁止清单式连读多知识点）\n"
+    "只讲一个核心知识点，禁止多点罗列、章节式串讲或「第一第二第三」清单。"
+    "禁止倒叙；讲完一个完整因果，最后一句可轻量引导互动。"
 )
 
 
@@ -419,9 +418,7 @@ def _structure_rule(*, orientation: str, content_style: str) -> str:
         return _LIFE_EXPERIENCE_STRUCTURE_RULE
     if content_style == CONTENT_STYLE_HISTORICAL_MYSTERY:
         return _MYSTERY_STRUCTURE_RULE
-    if orientation == ORIENTATION_LANDSCAPE:
-        return _SHORT_FORM_STRUCTURE_RULE_LANDSCAPE
-    return _SHORT_FORM_STRUCTURE_RULE_PORTRAIT
+    return _SCIENCE_STRUCTURE_RULE
 
 
 def _storyboard_role(content_style: str) -> str:
@@ -463,7 +460,6 @@ def _storyboard_length_budget(
     plan = narration_writing_plan(narration_target, segment_target_sec)
     hard_min = plan["hard_min"]
     writing_target = plan["writing_target"]
-    seg_count = plan["seg_count_min"]
     per_min = plan["per_seg_min"]
     pct = int(NARRATION_WRITING_TARGET_RATIO * 100)
     layers = (
@@ -473,37 +469,38 @@ def _storyboard_length_budget(
         if content_style == CONTENT_STYLE_HISTORICAL_MYSTERY
         else "感叹+科普点+比喻/拟声"
     )
+    self_check = (
+        "【输出前自检】逐段核对：每段 text 非空且含三层写法；"
+        f"各段 text 字数之和 ≥ {writing_target}；"
+        "word_count 等于 narration 实际字数；"
+        "narration 与 segments 按序拼接完全一致。"
+    )
     if segment_target_sec <= 0:
         return (
             f"【字数预算】总目标 {narration_target} 字；"
             f"写作必须达到 {writing_target} 字（总目标的 {pct}%）；"
             f"验收下限 {hard_min} 字（低于即不合格）。\n"
-            f"须至少 {seg_count} 个 segments，每段至少 {per_min} 字；"
+            f"每段至少 {per_min} 字，段数由口播内容逻辑决定；"
             f"各段 text 字数之和须 ≥ {writing_target}。\n"
             f"每段用「{layers}」三层写法撑满，禁止整段一句带过。\n"
             "【生成顺序】先按预算写满各段 segments，再拼接 narration，最后核对 word_count。\n"
-            f"【输出前自检】segments 数量 ≥ {seg_count}；各段 text 字数之和 ≥ {writing_target}；"
-            "word_count 等于 narration 实际字数。"
+            f"{self_check}"
         )
     cap = plan["segment_cap"]
     hard_cap = int(cap * 1.15)
     per_target_lo = plan["per_seg_lo"]
     per_target_hi = plan["per_seg_hi"]
-    sum_floor = per_min * seg_count
     sec = int(segment_target_sec) if segment_target_sec == int(segment_target_sec) else segment_target_sec
     return (
         f"【字数预算】总目标 {narration_target} 字；"
         f"写作必须达到 {writing_target} 字（总目标的 {pct}%）；"
         f"验收下限 {hard_min} 字（低于即不合格）。\n"
         f"单镜上限 {sec}s，每段 text 上限 {cap} 字（绝对不得超过 {hard_cap} 字，超限即不合格）。\n"
-        f"须至少 {seg_count} 个 segments（{writing_target} 字 ÷ {cap} 字/段），"
-        f"每段 {per_target_lo}-{per_target_hi} 字、下限 {per_min} 字；"
-        f"各段下限之和约 {sum_floor} 字（须达到写作目标 {writing_target}）。\n"
-        f"禁止用 3～5 个长段堆叠口播，必须按单镜上限拆段。\n"
+        f"每段建议 {per_target_lo}-{per_target_hi} 字、下限 {per_min} 字；"
+        f"段数由内容与单镜上限共同决定，各段 text 字数之和须 ≥ {writing_target}。\n"
         f"每段用「{layers}」三层写法撑满，禁止整段一句带过。\n"
-        "【生成顺序】先规划段数与每段字数，再写满 segments，再拼接 narration，最后核对 word_count。\n"
-        f"【输出前自检】segments 数量 ≥ {seg_count}；各段 text 字数之和 ≥ {writing_target}；"
-        "word_count 等于 narration 实际字数。"
+        "【生成顺序】先写满各段 segments，再拼接 narration，最后核对 word_count。\n"
+        f"{self_check}"
     )
 
 
@@ -514,22 +511,21 @@ def _storyboard_length_system_clause(
     compact_output: bool,
 ) -> str:
     plan = narration_writing_plan(narration_target, segment_target_sec)
-    seg_count = plan["seg_count_min"]
     hard_min = plan["hard_min"]
     writing_target = plan["writing_target"]
     per_min = plan["per_seg_min"]
     pct = int(NARRATION_WRITING_TARGET_RATIO * 100)
     if compact_output:
         return (
-            f"segments 数组长度必须 ≥ {seg_count}；"
             f"各段 text 须写满（每段至少 {per_min} 字），后端会拼接为 narration；"
             f"拼接后总字数须 ≥ {writing_target} 字（总目标 {narration_target} 字的 {pct}%）。"
+            "输出前须自检：各段非空、字数之和达标、segments 与 narration 拼接一致。"
         )
     return (
-        f"segments 数组长度必须 ≥ {seg_count}；"
         f"各段 text 按顺序拼接须与 narration 完全一致；"
         f"narration 须达到 {writing_target} 字（总目标 {narration_target} 字的 {pct}%，"
         f"验收下限 {hard_min} 字）。"
+        "输出前须自检：各段非空、字数之和达标、word_count 等于 narration 实际字数。"
     )
 
 
@@ -601,7 +597,7 @@ def _storyboard_segment_rule(target: float, profile_style: str = "") -> str:
     return (
         common
         + f"单镜口播上限{sec}秒；每段text约{lo}-{cap}字，单段绝对不得超过{hard_cap}字；"
-        "段数=口播总字数÷单段上限（向上取整），按自然断句切分，禁止少数长段堆叠。"
+        "按自然断句与口播节奏切分，段数由内容决定，禁止少数超长段堆叠。"
     )
 
 
@@ -771,14 +767,25 @@ def build_image_prompts_prompts(
         "image_prompts须覆盖输入的每一段，segment_index一一对应，不得遗漏。"
         f"{_json_output_clause(json_example)}"
     )
+    if include_sd15_prompt:
+        user_tail = (
+            "\n\n请为每段编写 image_prompt 与 motion_prompt。"
+            "image_prompt 按六维（主体/场景/风格/光照/构图/质量）精简写清。"
+            "同时为每段输出准确的 sd15_prompt_en。"
+        )
+    else:
+        user_tail = (
+            "\n\n请为每段扩写 image_prompt 与 motion_prompt，"
+            "按推荐结构（主体+场景/环境+风格+光照+构图+质量要求）"
+            "逐层展开，篇幅按画面复杂度充分写，不凑字数。"
+        )
     user = _append_supplementary_to_user(
         (
             f"视频标题：{script.get('title', '')}\n"
             f"全片画风定调 visual_style：{script.get('visual_style', '')}\n\n"
             "各分镜口播与画面描述：\n"
             + "\n".join(lines)
-            + "\n\n请为每段扩写 image_prompt 与 motion_prompt，确保 image_prompt 满足字数与六层结构要求。"
-            + ("同时为每段输出准确的 sd15_prompt_en。" if include_sd15_prompt else "")
+            + user_tail
         ),
         supplementary_info or script.get("supplementary_info"),
     )

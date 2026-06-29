@@ -21,11 +21,12 @@ def test_check_storyboard_uses_run_segment_target_not_settings_default():
     assert report.level == "pass"
 
 
-def test_check_storyboard_fails_when_segments_insufficient_for_target():
-    script = _script_with_segments(15, chars_per_segment=110)
+def test_check_storyboard_passes_with_fewer_segments_than_word_budget():
+    """段数少于字数÷单镜上限估算值时仍可通过（不再强制最少分镜数）。"""
+    cap = 80  # 16s × 5字/秒
+    script = _script_with_segments(8, chars_per_segment=cap)
     report = check_storyboard(script, segment_target_sec=16.0)
-    assert report.level == "major"
-    assert report.details["reason"] == "too few segments"
+    assert report.level == "pass"
 
 
 def test_check_storyboard_reads_segment_target_from_script_json():
@@ -35,8 +36,8 @@ def test_check_storyboard_reads_segment_target_from_script_json():
     assert report.level == "pass"
 
 
-def test_check_storyboard_matches_validation_when_narration_exceeds_target():
-    """口播实际字数高于 narration_target_words 时，质检与 validate 段数一致。"""
+def test_check_storyboard_passes_when_narration_exceeds_target_with_few_segments():
+    """口播实际字数高于 narration_target_words 时，段数少也不判失败。"""
     text = "字" * 550
     script = {
         "title": "测试标题",
@@ -44,12 +45,8 @@ def test_check_storyboard_matches_validation_when_narration_exceeds_target():
         "narration_target_words": 404,
         "segment_target_sec": 28.0,
         "segments": [
-            {"segment_index": i + 1, "text": "字" * 138} for i in range(4)
+            {"segment_index": i + 1, "text": "字" * 138} for i in range(3)
         ],
     }
     report = check_storyboard(script, segment_target_sec=28.0)
     assert report.level == "pass"
-    script["segments"] = script["segments"][:3]
-    report = check_storyboard(script, segment_target_sec=28.0)
-    assert report.level == "major"
-    assert report.details["reason"] == "too few segments"

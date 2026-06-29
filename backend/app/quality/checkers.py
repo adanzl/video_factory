@@ -17,7 +17,6 @@ from app.utils.media import (
     NARRATION_ABS_MIN_CHARS,
     default_narration_target_words,
     estimate_narration_target_words,
-    min_segment_count_for_narration,
     narration_accept_min_chars,
     segment_text_char_cap,
 )
@@ -163,23 +162,6 @@ def check_storyboard(
             target_words = int(target_words)
         if not isinstance(target_words, int):
             target_words = None
-        needed = min_segment_count_for_narration(
-            str(script.get("narration") or ""),
-            seg_target,
-            narration_target_words=target_words,
-        )
-        if len(segments) < needed:
-            return QualityReport(
-                level="major",
-                step="storyboard",
-                fail_stage="script",
-                details={
-                    "reason": "too few segments",
-                    "segment_count": len(segments),
-                    "min_expected": needed,
-                    "segment_target_sec": seg_target,
-                },
-            )
         hard_cap = int(cap * 1.15)
         long_segments: list[dict] = []
         for seg in segments:
@@ -222,13 +204,25 @@ def check_storyboard(
     )
 
 
-def check_image_prompts(script: dict, *, sd15_mode: bool | None = None) -> QualityReport:
+def check_image_prompts(
+    script: dict,
+    *,
+    sd15_mode: bool | None = None,
+    segment_indices: list[int] | None = None,
+) -> QualityReport:
     """文生图提示词：各段 image_prompt 长度；SD15 模式另校验 sd15_prompt_en。"""
     if sd15_mode is None:
         sd15_mode = bool(script.get("include_sd15_prompt"))
     min_chars = image_prompt_min_chars(sd15_mode=sd15_mode)
     target_chars = image_prompt_target_chars(sd15_mode=sd15_mode)
     segments = script.get("segments") or []
+    if segment_indices is not None:
+        wanted = {int(idx) for idx in segment_indices}
+        segments = [
+            seg
+            for seg in segments
+            if int(seg.get("segment_index", -1)) in wanted
+        ]
     if not segments:
         return QualityReport(
             level="major",

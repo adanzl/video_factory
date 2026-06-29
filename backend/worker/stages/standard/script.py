@@ -26,7 +26,6 @@ from app.utils.media import (
     assign_segment_timings,
     default_narration_target_words,
     min_narration_chars_for_target,
-    min_segment_count_for_narration,
     narration_accept_min_chars,
     NARRATION_ABS_MIN_CHARS,
     narration_soft_min_chars,
@@ -173,7 +172,6 @@ def _validation_retry_scope(exc: ScriptValidationError) -> str:
         for key in (
             "narration too short",
             "segment text exceeds",
-            "too few segments",
             "missing visual_brief",
             "text is empty",
             "visual_style is empty",
@@ -223,16 +221,14 @@ def _validation_feedback(
     if "narration too short" in msg:
         return _narration_short_feedback(exc, min_chars=accept_chars)
     if segment_target_sec and segment_target_sec > 0:
-        if "segment text exceeds" in msg or "too few segments" in msg:
+        if "segment text exceeds" in msg:
             cap = segment_text_char_cap(segment_target_sec)
             hard_cap = int(cap * 1.15)
-            needed = max(1, (narration_target_words + cap - 1) // cap)
             return (
                 f"{msg}。"
                 f"单镜上限 {segment_target_sec}s，每段 text 不得超过 {cap} 字（硬上限 {hard_cap} 字）。"
-                f"口播目标 {narration_target_words} 字须至少拆成 {needed} 段；"
-                "超长段必须按自然断句拆成多段，禁止 3～5 个长段堆叠。"
-                "先规划段数与每段字数，再写 segments，最后拼接 narration。"
+                "超长段须按自然断句拆成多段，禁止少数超长段堆叠。"
+                "先写 segments 再拼接 narration，输出前逐段核对字数。"
             )
     return msg
 
@@ -356,17 +352,6 @@ def _validate_script(
             raise ScriptValidationError(
                 f"segment text exceeds {seg_target}s cap (~{cap} chars): "
                 f"{overflow}",
-                retryable=True,
-            )
-        needed = min_segment_count_for_narration(
-            narration,
-            seg_target,
-            narration_target_words=narration_target_words,
-        )
-        if len(segments) < needed:
-            raise ScriptValidationError(
-                f"too few segments: {len(segments)} (need >= {needed} for "
-                f"{seg_target}s/segment cap, target {narration_target_words or chars} chars narration)",
                 retryable=True,
             )
     title = _title_chars(script.get("title") or "")

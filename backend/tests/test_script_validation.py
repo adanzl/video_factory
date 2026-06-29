@@ -78,7 +78,7 @@ def test_validate_script_accepts_slightly_short_image_prompt(monkeypatch):
                 "segment_index": 1,
                 "text": "x" * _DEFAULT_TARGET,
                 "visual_brief": _VISUAL_BRIEF,
-                "image_prompt": "x" * 274,
+                "image_prompt": "x" * 120,
             }
         ],
     )
@@ -86,7 +86,7 @@ def test_validate_script_accepts_slightly_short_image_prompt(monkeypatch):
     assert any("image_prompt slightly short" in w for w in warnings)
 
 
-def test_validate_script_rejects_too_few_segments_for_target(monkeypatch):
+def test_validate_script_accepts_fewer_segments_than_word_budget(monkeypatch):
     monkeypatch.setattr(
         "worker.stages.standard.script.get_settings",
         lambda: type("S", (), {"segment_target_sec": 28, "max_title_length": 20})(),
@@ -106,16 +106,13 @@ def test_validate_script_rejects_too_few_segments_for_target(monkeypatch):
             for i in range(1, needed)
         ],
     )
-    with pytest.raises(ScriptValidationError) as exc_info:
-        _validate_script(
-            script,
-            min_narration_chars=_min_narration_chars(target),
-            accept_narration_chars=narration_accept_min_chars(target),
-            narration_target_words=target,
-            segment_target_sec=28,
-        )
-    assert exc_info.value.retryable is True
-    assert "too few segments" in str(exc_info.value)
+    _validate_script(
+        script,
+        min_narration_chars=_min_narration_chars(target),
+        accept_narration_chars=narration_accept_min_chars(target),
+        narration_target_words=target,
+        segment_target_sec=28,
+    )
 
 
 def test_validate_script_narration_gap_too_large_accepts_with_warning(monkeypatch):

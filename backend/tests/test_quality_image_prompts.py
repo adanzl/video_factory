@@ -18,7 +18,7 @@ def test_check_image_prompts_pass():
 
 
 def test_check_image_prompts_major_when_too_short():
-    report = check_image_prompts(_script(100))
+    report = check_image_prompts(_script(30))
     assert report.level == "major"
     assert report.details["reason"] == "image_prompt too short"
 
@@ -87,7 +87,7 @@ def test_check_image_prompts_sd15_mode_bad_sd15_is_major():
         "segments": [
             {
                 "segment_index": 1,
-                "image_prompt": "x" * 90,
+                "image_prompt": "x" * 120,
                 "sd15_prompt_en": "too few words",
             },
         ],
@@ -103,7 +103,7 @@ def test_check_image_prompts_sd15_mode_image_prompt_too_short():
         "segments": [
             {
                 "segment_index": 1,
-                "image_prompt": "x" * 20,
+                "image_prompt": "x" * 15,
                 "sd15_prompt_en": "stainless steel pot on stove, close-up surface detail, kitchen counter",
             },
         ],
@@ -112,6 +112,17 @@ def test_check_image_prompts_sd15_mode_image_prompt_too_short():
     assert report.level == "major"
     assert report.details["reason"] == "image_prompt too short"
     assert report.details["segments"][0]["min_chars"] == image_prompt_min_chars(sd15_mode=True)
+
+
+def test_check_image_prompts_scoped_to_segment_indices():
+    script = {
+        "segments": [
+            {"segment_index": 1, "image_prompt": "x" * 50},
+            {"segment_index": 2, "image_prompt": "x" * 300},
+        ],
+    }
+    report = check_image_prompts(script, segment_indices=[2])
+    assert report.level == "pass"
 
 
 def test_skipped_image_prompts_check():

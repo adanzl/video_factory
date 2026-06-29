@@ -223,7 +223,11 @@ class LLMMgr:
                 segment_indices=target_indices,
                 include_sd15_prompt=include_sd15_prompt,
             )
-            report = check_image_prompts(script, sd15_mode=include_sd15_prompt)
+            report = check_image_prompts(
+                script,
+                sd15_mode=include_sd15_prompt,
+                segment_indices=segment_indices,
+            )
             if report.level != "major":
                 return script
             too_short = report.details.get("segments") or []
@@ -242,10 +246,15 @@ class LLMMgr:
             if include_sd15_prompt:
                 feedback += (
                     f"; ensure each segment has sd15_prompt_en "
-                    f"(>={MIN_SD15_PROMPT_EN_WORDS} English words, target {TARGET_SD15_PROMPT_EN_WORDS})"
+                    f"(>={MIN_SD15_PROMPT_EN_WORDS} English words, target {TARGET_SD15_PROMPT_EN_WORDS}); "
+                    "image_prompt must cover six dimensions concisely "
+                    "(subject, scene, style, lighting, composition, quality)"
                 )
             else:
-                feedback += "; expand all six layers (composition, subject, environment, lighting, color, scope)"
+                feedback += (
+                    "; expand prompt dimensions (subject, scene/environment, "
+                    "style, lighting, composition, quality) with concrete visible details"
+                )
             logger.warning(
                 "%s",
                 format_image_prompt_retry_warning(

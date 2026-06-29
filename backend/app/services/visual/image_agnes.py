@@ -39,7 +39,7 @@ class AgnesImageProvider(ImageProvider):
     _schedule_lock = threading.Lock()
     _inflight: threading.Semaphore | None = None
     _max_concurrent: int = 1
-    _stagger_sec: float = 3.0
+    _stagger_sec: float = 20.0
     _next_submit_at: float = 0.0
 
     def __init__(self) -> None:

@@ -12,7 +12,7 @@ def test_chunk_indices():
 
 
 def test_validation_retry_scope_image_prompt():
-    exc = ScriptValidationError("segment 2 image_prompt too short: 274 chars (need >= 200)")
+    exc = ScriptValidationError("segment 2 image_prompt too short: 10 chars (need >= 50)")
     assert _validation_retry_scope(exc) == "image_prompts"
 
 
