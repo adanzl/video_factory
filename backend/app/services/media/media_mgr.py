@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from app.config import get_settings
-from app.services.job.job_cancel import job_cancel
+from app.utils.job_cancel import job_cancel
 from app.services.media.clip.mgr import clip_mgr
 from app.services.media.subtitle_style import subtitle_style_for_canvas
 from app.services.media.ffmpeg_utils import build_ass_from_phrase_cues
