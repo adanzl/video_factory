@@ -13,33 +13,33 @@ import requests
 
 from app.config import get_settings
 from app.services.media.clip.mgr import ClipProvider, clip_mgr
-from app.services.media.clip.render import fit_video_duration, video_to_clip_timed_overlays
+from app.services.media.clip.render import (
+    ffmpeg_cmd_start,
+    fit_video_duration,
+    run_ffmpeg,
+    video_to_clip_timed_overlays,
+)
 from app.services.media.ffmpeg_utils import probe_duration
+from app.services.visual.agnes_api import (
+    AgnesApiKey,
+    AgnesQuotaExceeded,
+    agnes_api_keys,
+    agnes_auth_header,
+    agnes_quota_exceeded_from_exception,
+    raise_if_agnes_quota,
+)
 
 logger = logging.getLogger(__name__)
 
-_RETRYABLE = {429, 500, 502, 503, 504}
+_RETRYABLE = {500, 502, 503, 504}
 
 
 def _backoff_seconds(
     attempt: int,
     *,
-    status_code: int | None = None,
-    response: requests.Response | None = None,
-    label: str = "request",
     is_timeout: bool = False,
 ) -> float:
-    """429 / 提交读超时用更长退避，避免连续重投触发限流。"""
-    if status_code == 429:
-        if response is not None:
-            raw = response.headers.get("Retry-After")
-            if raw:
-                try:
-                    return max(float(raw), 30.0)
-                except ValueError:
-                    pass
-        return min(30.0 + attempt * 20.0, 120.0)
-    if label == "submit" and is_timeout:
+    if is_timeout:
         return min(45.0 + attempt * 30.0, 180.0)
     return min(2**attempt * 2, 60.0)
 _DEFAULT_MOTION_PROMPT = (
@@ -90,7 +90,6 @@ class AgnesClipProvider(ClipProvider):
 
     def __init__(self) -> None:
         settings = get_settings()
-        self._api_key = settings.agnes_api_key
         base = settings.agnes_api_base_url.rstrip("/")
         self._create_url = f"{base}/videos"
         self._poll_root = _agnes_api_root(base)
@@ -147,12 +146,7 @@ class AgnesClipProvider(ClipProvider):
                     method, url, headers=h, json=json, timeout=req_timeout
                 )
                 if resp.status_code in _RETRYABLE:
-                    wait = _backoff_seconds(
-                        attempt,
-                        status_code=resp.status_code,
-                        response=resp,
-                        label=label,
-                    )
+                    wait = _backoff_seconds(attempt)
                     logger.warning(
                         "agnes %s %s %s, retry %s/%s in %ss",
                         label,
@@ -164,15 +158,27 @@ class AgnesClipProvider(ClipProvider):
                     )
                     time.sleep(wait)
                     continue
+                if resp.status_code == 429:
+                    body: dict | str | None = None
+                    try:
+                        body = resp.json()
+                    except Exception:
+                        body = resp.text[:500]
+                    raise_if_agnes_quota(status_code=resp.status_code, body=body)
+                if not resp.ok:
+                    body = None
+                    try:
+                        body = resp.json()
+                    except Exception:
+                        body = resp.text[:500]
+                    raise_if_agnes_quota(status_code=resp.status_code, body=body)
                 resp.raise_for_status()
                 return resp
+            except AgnesQuotaExceeded:
+                raise
             except requests.Timeout as exc:
                 last_exc = exc
-                wait = _backoff_seconds(
-                    attempt,
-                    label=label,
-                    is_timeout=True,
-                )
+                wait = _backoff_seconds(attempt, is_timeout=True)
                 hint = ""
                 if label == "submit":
                     hint = "（异步 API 提交应秒级返回 video_id）"
@@ -190,7 +196,9 @@ class AgnesClipProvider(ClipProvider):
                 time.sleep(wait)
             except requests.RequestException as exc:
                 last_exc = exc
-                wait = _backoff_seconds(attempt, label=label)
+                if agnes_quota_exceeded_from_exception(exc):
+                    raise AgnesQuotaExceeded(str(exc)) from exc
+                wait = _backoff_seconds(attempt)
                 if isinstance(exc, requests.HTTPError) and exc.response is not None:
                     try:
                         body = exc.response.text[:500]
@@ -236,8 +244,9 @@ class AgnesClipProvider(ClipProvider):
                     return value.strip()
         return None
 
-    def _generate_raw(
+    def _generate_raw_with_key(
         self,
+        api_key: AgnesApiKey,
         prompt: str,
         output_path: Path,
         *,
@@ -245,14 +254,7 @@ class AgnesClipProvider(ClipProvider):
         height: int,
         num_frames: int,
     ) -> Path:
-        if not self._api_key:
-            raise RuntimeError("AGNES_API_KEY 未配置，无法调用 Agnes 文生视频")
-
-        headers = {
-            "Authorization": f"Bearer {self._api_key}",
-            "Content-Type": "application/json",
-            "Connection": "close",
-        }
+        headers = agnes_auth_header(api_key.value, extra={"Connection": "close"})
         payload = {
             "model": self._model,
             "prompt": prompt,
@@ -262,7 +264,8 @@ class AgnesClipProvider(ClipProvider):
             "frame_rate": self._frame_rate,
         }
         logger.info(
-            "agnes t2v submit: model=%s frames=%s fps=%s size=%sx%s prompt_chars=%s",
+            "agnes t2v submit (%s key): model=%s frames=%s fps=%s size=%sx%s prompt_chars=%s",
+            api_key.label,
             self._model,
             num_frames,
             self._frame_rate,
@@ -280,9 +283,13 @@ class AgnesClipProvider(ClipProvider):
                     payload=payload,
                     output_path=output_path,
                 )
+            except AgnesQuotaExceeded:
+                raise
             except RuntimeError as exc:
                 last_exc = exc
                 msg = str(exc)
+                if agnes_quota_exceeded_from_exception(exc):
+                    raise AgnesQuotaExceeded(msg) from exc
                 if attempt >= max_attempts - 1 or not any(
                     token in msg.lower()
                     for token in (
@@ -307,6 +314,53 @@ class AgnesClipProvider(ClipProvider):
             raise last_exc
         raise RuntimeError("agnes i2v failed without exception")
 
+    def _generate_raw(
+        self,
+        prompt: str,
+        output_path: Path,
+        *,
+        width: int,
+        height: int,
+        num_frames: int,
+    ) -> Path:
+        keys = agnes_api_keys()
+        if not keys:
+            raise RuntimeError("AGNES_API_KEY 未配置，无法调用 Agnes 文生视频")
+
+        last_exc: Exception | None = None
+        for idx, key in enumerate(keys):
+            try:
+                return self._generate_raw_with_key(
+                    key,
+                    prompt,
+                    output_path,
+                    width=width,
+                    height=height,
+                    num_frames=num_frames,
+                )
+            except AgnesQuotaExceeded as exc:
+                last_exc = exc
+                if idx < len(keys) - 1:
+                    logger.warning(
+                        "agnes %s key quota/rate limit exceeded, switching to backup",
+                        key.label,
+                    )
+                    continue
+                raise
+            except RuntimeError as exc:
+                if agnes_quota_exceeded_from_exception(exc) and idx < len(keys) - 1:
+                    logger.warning(
+                        "agnes %s key quota/rate limit exceeded, switching to backup",
+                        key.label,
+                    )
+                    last_exc = exc
+                    continue
+                raise
+
+        if last_exc:
+            raise last_exc
+        raise RuntimeError("agnes i2v failed without exception")
+
     def _submit_task(self, *, headers: dict, payload: dict) -> tuple[str | None, str | None, str, dict]:
         """异步提交：仅创建任务，立即返回 video_id / task_id。"""
         resp = self._request(
@@ -315,6 +369,7 @@ class AgnesClipProvider(ClipProvider):
         body = resp.json()
         if body.get("error"):
             err = body["error"]
+            raise_if_agnes_quota(body=body, message=str(err))
             if isinstance(err, dict):
                 raise RuntimeError(
                     f"agnes i2v submit error: {err.get('code')} - {err.get('message')}"
@@ -371,6 +426,7 @@ class AgnesClipProvider(ClipProvider):
             time.sleep(self._poll_interval_sec)
             if video_id:
                 query = urlencode({"video_id": video_id})
+                # cSpell: disable-next-line
                 poll_url = f"{self._poll_root}/agnesapi?{query}"
             elif task_id:
                 poll_url = f"{self._create_url}/{task_id}"
@@ -385,6 +441,7 @@ class AgnesClipProvider(ClipProvider):
             poll = poll_resp.json()
             if poll.get("error"):
                 err = poll["error"]
+                raise_if_agnes_quota(body=poll, message=str(err))
                 if isinstance(err, dict):
                     raise RuntimeError(
                         f"agnes i2v poll error: {err.get('code')} - {err.get('message')}"
@@ -456,7 +513,6 @@ class AgnesClipProvider(ClipProvider):
         if total_duration <= 0:
             raise ValueError(f"segment {segment_index} has zero duration")
 
-        settings = get_settings()
         clip_width = width or get_settings().video_width
         clip_height = height or get_settings().video_height
         prompt = _merge_t2v_prompt(image_prompt, motion_prompt)
@@ -484,17 +540,23 @@ class AgnesClipProvider(ClipProvider):
             )
             logger.info("clip %s: raw done, fitting to %.1fs", segment_index, total_duration)
             raw_dur = probe_duration(raw_path)
-            stream_loop = 0
             if raw_dur > 0 and total_duration > raw_dur * 1.15:
-                stream_loop = max(0, math.ceil(total_duration / raw_dur) - 1)
+                loop = math.ceil(total_duration / raw_dur) - 1
+                looped = work_dir / f"{segment_index}.agnes_loop.mp4"
+                run_ffmpeg([
+                    *ffmpeg_cmd_start(hwaccel=False),
+                    "-stream_loop", str(loop),
+                    "-i", str(raw_path),
+                    "-c", "copy",
+                    "-y", str(looped),
+                ])
+                raw_path = looped
             fit_video_duration(
                 raw_path,
                 fitted_path,
                 total_duration,
                 width=clip_width,
                 height=clip_height,
-                temporal_smooth=True,
-                stream_loop=stream_loop,
             )
             logger.info("clip %s: overlaying %s subtitles", segment_index, len(overlay_windows))
             if overlay_windows:

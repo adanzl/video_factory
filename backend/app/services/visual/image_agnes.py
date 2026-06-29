@@ -11,12 +11,20 @@ from pathlib import Path
 import requests
 
 from app.config import get_settings
+from app.services.visual.agnes_api import (
+    AgnesApiKey,
+    AgnesQuotaExceeded,
+    agnes_api_keys,
+    agnes_auth_header,
+    agnes_quota_exceeded_from_exception,
+    raise_if_agnes_quota,
+)
 from app.services.visual.image_mock import MockImageProvider
 from app.services.visual.visual_mgr import ImageProvider
 
 logger = logging.getLogger(__name__)
 
-_RETRYABLE = {429, 500, 502, 503, 504}
+_RETRYABLE = {500, 502, 503, 504}
 
 
 def _to_agnes_size(size: str) -> str:
@@ -29,7 +37,6 @@ class AgnesImageProvider(ImageProvider):
 
     def __init__(self) -> None:
         settings = get_settings()
-        self._api_key = settings.agnes_api_key
         base = settings.agnes_api_base_url.rstrip("/")
         self._generation_url = f"{base}/images/generations"
         self._model = settings.agnes_image_model
@@ -55,21 +62,23 @@ class AgnesImageProvider(ImageProvider):
         method: str,
         url: str,
         *,
-        headers: dict | None = None,
+        api_key: str,
         json: dict | None = None,
         max_retries: int | None = None,
         timeout: int = 120,
     ) -> requests.Response:
         retries = max_retries if max_retries is not None else self._http_max_retries
-        h = headers or {}
+        headers = agnes_auth_header(api_key)
         last_exc: Exception | None = None
         for attempt in range(retries):
             try:
-                resp = requests.request(method,
-                                        url,
-                                        headers=h,
-                                        json=json,
-                                        timeout=timeout)
+                resp = requests.request(
+                    method,
+                    url,
+                    headers=headers,
+                    json=json,
+                    timeout=timeout,
+                )
                 if resp.status_code in _RETRYABLE:
                     wait = min(2**attempt * 2, 60)
                     logger.warning(
@@ -82,23 +91,40 @@ class AgnesImageProvider(ImageProvider):
                     )
                     time.sleep(wait)
                     continue
+                if resp.status_code == 429:
+                    body: dict | str | None = None
+                    try:
+                        body = resp.json()
+                    except Exception:
+                        body = resp.text[:500]
+                    raise_if_agnes_quota(status_code=resp.status_code, body=body)
+                if not resp.ok:
+                    body = None
+                    try:
+                        body = resp.json()
+                    except Exception:
+                        body = resp.text[:500]
+                    raise_if_agnes_quota(status_code=resp.status_code, body=body)
                 resp.raise_for_status()
                 return resp
+            except AgnesQuotaExceeded:
+                raise
             except requests.RequestException as exc:
                 last_exc = exc
+                if agnes_quota_exceeded_from_exception(exc):
+                    raise AgnesQuotaExceeded(str(exc)) from exc
                 wait = min(2**attempt * 2, 60)
-                logger.warning("agnes request error: %s, retry in %ss", exc,
-                               wait)
+                logger.warning("agnes request error: %s, retry in %ss", exc, wait)
                 time.sleep(wait)
         if last_exc:
             raise last_exc
-        raise RuntimeError(
-            f"agnes request failed after {retries} retries: {url}")
+        raise RuntimeError(f"agnes request failed after {retries} retries: {url}")
 
     @staticmethod
     def _extract_image(body: dict) -> tuple[str | None, bytes | None]:
         if body.get("error"):
             err = body["error"]
+            raise_if_agnes_quota(body=body if isinstance(body, dict) else None, message=str(err))
             if isinstance(err, dict):
                 raise RuntimeError(
                     f"agnes api error: {err.get('code')} - {err.get('message')}"
@@ -116,20 +142,16 @@ class AgnesImageProvider(ImageProvider):
             return None, base64.b64decode(b64)
         return None, None
 
-    def generate(self,
-                 prompt: str,
-                 output_path: Path,
-                 *,
-                 size: str | None = None) -> Path:
-        size = size or self._default_size
+    def _generate_with_key(
+        self,
+        api_key: AgnesApiKey,
+        prompt: str,
+        output_path: Path,
+        *,
+        size: str,
+    ) -> Path:
         agnes_size = _to_agnes_size(size)
-        if not self._api_key:
-            return self._fallback.generate(prompt, output_path, size=size)
         self._throttle_submit()
-        headers = {
-            "Authorization": f"Bearer {self._api_key}",
-            "Content-Type": "application/json",
-        }
         payload = {
             "model": self._model,
             "prompt": prompt,
@@ -139,34 +161,70 @@ class AgnesImageProvider(ImageProvider):
             },
         }
         logger.info(
-            "agnes request: %s, prompt_chars=%s, %s",
+            "agnes request (%s key): %s, prompt_chars=%s, %s",
+            api_key.label,
             self.describe_params(size=size),
             len(prompt),
             prompt,
         )
-        try:
-            resp = self._request(
-                "POST",
-                self._generation_url,
-                headers=headers,
-                json=payload,
-            )
-            image_url, image_bytes = self._extract_image(resp.json())
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            if image_bytes is not None:
-                output_path.write_bytes(image_bytes)
-                return output_path
-            if not image_url:
-                raise RuntimeError(
-                    "agnes response missing image url or b64_json")
-            img = requests.get(image_url, timeout=120)
-            img.raise_for_status()
-            output_path.write_bytes(img.content)
-            sidecar = output_path.with_name(output_path.name + ".agnes_source_url")
-            sidecar.write_text(image_url.strip(), encoding="utf-8")
+        resp = self._request(
+            "POST",
+            self._generation_url,
+            api_key=api_key.value,
+            json=payload,
+        )
+        image_url, image_bytes = self._extract_image(resp.json())
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        if image_bytes is not None:
+            output_path.write_bytes(image_bytes)
             return output_path
-        except Exception as exc:
-            logger.error("agnes generate failed: %s", exc)
-            if get_settings().mock_mode:
-                return self._fallback.generate(prompt, output_path, size=size)
-            raise
+        if not image_url:
+            raise RuntimeError("agnes response missing image url or b64_json")
+        img = requests.get(image_url, timeout=120)
+        img.raise_for_status()
+        output_path.write_bytes(img.content)
+        sidecar = output_path.with_name(output_path.name + ".agnes_source_url")
+        sidecar.write_text(image_url.strip(), encoding="utf-8")
+        return output_path
+
+    def generate(
+        self,
+        prompt: str,
+        output_path: Path,
+        *,
+        size: str | None = None,
+    ) -> Path:
+        size = size or self._default_size
+        keys = agnes_api_keys()
+        if not keys:
+            return self._fallback.generate(prompt, output_path, size=size)
+
+        last_exc: Exception | None = None
+        for idx, key in enumerate(keys):
+            try:
+                return self._generate_with_key(key, prompt, output_path, size=size)
+            except AgnesQuotaExceeded as exc:
+                last_exc = exc
+                if idx < len(keys) - 1:
+                    logger.warning(
+                        "agnes %s key quota/rate limit exceeded, switching to backup",
+                        key.label,
+                    )
+                    continue
+                raise
+            except Exception as exc:
+                if agnes_quota_exceeded_from_exception(exc) and idx < len(keys) - 1:
+                    logger.warning(
+                        "agnes %s key quota/rate limit exceeded, switching to backup",
+                        key.label,
+                    )
+                    last_exc = exc
+                    continue
+                logger.error("agnes generate failed (%s key): %s", key.label, exc)
+                if get_settings().mock_mode:
+                    return self._fallback.generate(prompt, output_path, size=size)
+                raise
+
+        if last_exc:
+            raise last_exc
+        raise RuntimeError("agnes generate failed without exception")
