@@ -14,15 +14,10 @@ from app.services.llm.llm_script_description import parse_video_description_payl
 from app.services.llm.llm_script_prompts import (
     MIN_IMAGE_PROMPT_CHARS,
     IMAGE_PROMPT_TARGET_CHARS,
-    MIN_SD15_PROMPT_EN_WORDS,
-    TARGET_SD15_PROMPT_EN_WORDS,
     build_image_prompts_prompts,
     build_material_script_prompts,
     build_narration_expand_prompts,
     build_storyboard_prompts,
-    format_image_prompt_retry_warning,
-    image_prompt_min_chars,
-    image_prompt_target_chars,
     build_title_optimize_prompts,
     build_video_description_prompts,
 )
@@ -253,19 +248,6 @@ def _chunk_indices(indices: list[int], batch_size: int) -> list[list[int]]:
     size = max(1, batch_size)
     ordered = sorted({int(idx) for idx in indices})
     return [ordered[i : i + size] for i in range(0, len(ordered), size)]
-
-
-def _short_image_prompt_indices(
-    script: dict[str, Any],
-    *,
-    sd15_mode: bool = False,
-) -> list[int]:
-    target = image_prompt_target_chars(sd15_mode=sd15_mode)
-    return [
-        int(seg["segment_index"])
-        for seg in script.get("segments") or []
-        if len(str(seg.get("image_prompt") or "")) < target
-    ]
 
 
 class DeepSeekClient(LLMClient):
@@ -564,53 +546,14 @@ class DeepSeekClient(LLMClient):
         feedback: str | None = None,
         include_sd15_prompt: bool = False,
     ) -> dict[str, Any]:
-        prompt_feedback = feedback
-        target_indices = segment_indices
-        for attempt in range(4):
-            self.fill_image_prompts(
-                script,
-                feedback=prompt_feedback,
-                supplementary_info=supplementary_info,
-                job=job,
-                segment_indices=target_indices,
-                include_sd15_prompt=include_sd15_prompt,
-            )
-            short = _short_image_prompt_indices(script, sd15_mode=include_sd15_prompt)
-            if not short:
-                return script
-            target_indices = short
-            min_chars = image_prompt_min_chars(sd15_mode=include_sd15_prompt)
-            target_chars = image_prompt_target_chars(sd15_mode=include_sd15_prompt)
-            prompt_by_index = {
-                int(seg["segment_index"]): str(seg.get("image_prompt") or "")
-                for seg in script.get("segments") or []
-            }
-            short_details = [
-                {"segment_index": idx, "chars": len(prompt_by_index.get(idx, ""))}
-                for idx in short
-            ]
-            if include_sd15_prompt:
-                prompt_feedback = (
-                    f"image_prompt too short: {short}; "
-                    f"need >={min_chars} chars each (target {target_chars}); "
-                    f"ensure sd15_prompt_en has >={MIN_SD15_PROMPT_EN_WORDS} English words "
-                    f"(target {TARGET_SD15_PROMPT_EN_WORDS})"
-                )
-            else:
-                prompt_feedback = (
-                    f"image_prompt too short: {short}; "
-                    f"need >={min_chars} chars each (target {target_chars}); "
-                    "expand all six layers (composition, subject, environment, lighting, color, scope)"
-                )
-            logger.warning(
-                "%s",
-                format_image_prompt_retry_warning(
-                    attempt=attempt + 1,
-                    reason="image_prompt too short",
-                    segments=short_details,
-                    sd15_mode=include_sd15_prompt,
-                ),
-            )
+        self.fill_image_prompts(
+            script,
+            feedback=feedback,
+            supplementary_info=supplementary_info,
+            job=job,
+            segment_indices=segment_indices,
+            include_sd15_prompt=include_sd15_prompt,
+        )
         return script
 
     def generate_storyboard(
