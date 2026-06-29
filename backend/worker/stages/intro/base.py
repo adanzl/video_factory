@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import re
-
-from PIL import Image
+from pathlib import Path
 
 from app.repositories import job_log_repo, job_repo
 from app.repositories.connection import connection
@@ -53,6 +52,26 @@ def _orientation_label(
     return f"{ORIENTATION_PORTRAIT}(default)"
 
 
+def _generate_cover(job: dict, cover_path: Path, width: int, height: int) -> None:
+    from app.services.visual.visual_mgr import visual_mgr
+
+    script = job.get("script_json") or {}
+    title = resolve_intro_title(job)
+    visual_style = (script.get("visual_style") or "").strip()
+    segments = script.get("segments") or []
+    first_prompt = ""
+    for seg in segments:
+        ip = (seg.get("image_prompt") or "").strip()
+        if ip:
+            first_prompt = ip
+            break
+    cover_prompt = (
+        f"视频封面，{width}x{height}，标题文字区域留白于下方三分之一区域。"
+        f"画面内容与视频一致：{first_prompt or visual_style or title}"
+    )
+    visual_mgr.generate_cover(title, cover_path, base_prompt=cover_prompt)
+
+
 def run_intro_for_category(
     ctx: JobContext,
     job: dict,
@@ -88,10 +107,7 @@ def run_intro_for_category(
     )
 
     cover_path = ctx.rel("cover.jpg")
-    intro_png = ctx.rel("intro.png")
-    if not intro_png.exists():
-        raise ValueError(f"intro.png 未生成: {intro_png}")
-    Image.open(intro_png).convert("RGB").save(cover_path, quality=92)
+    _generate_cover(job, cover_path, width, height)
 
     with connection() as conn:
         updates: dict = {
