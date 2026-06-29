@@ -53,7 +53,9 @@ def _orientation_label(
 
 
 def _generate_cover(job: dict, cover_path: Path, width: int, height: int) -> None:
-    from app.services.visual.visual_mgr import visual_mgr
+    import tempfile
+    from PIL import Image
+    from app.services.visual.image_agnes import AgnesImageProvider
 
     script = job.get("script_json") or {}
     title = resolve_intro_title(job)
@@ -69,7 +71,14 @@ def _generate_cover(job: dict, cover_path: Path, width: int, height: int) -> Non
         f"视频封面，{width}x{height}，标题文字区域留白于下方三分之一区域。"
         f"画面内容与视频一致：{first_prompt or visual_style or title}"
     )
-    visual_mgr.generate_cover(title, cover_path, base_prompt=cover_prompt)
+    size = f"{width}x{height}"
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+        tmp_path = Path(tmp.name)
+    try:
+        AgnesImageProvider().generate(cover_prompt, tmp_path, size=size)
+        Image.open(tmp_path).convert("RGB").save(cover_path, quality=92)
+    finally:
+        tmp_path.unlink(missing_ok=True)
 
 
 def run_intro_for_category(
