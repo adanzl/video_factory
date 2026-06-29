@@ -10,11 +10,17 @@ ORIENTATION_PORTRAIT = "portrait"
 ORIENTATION_LANDSCAPE = "landscape"
 
 CONTENT_STYLE_SCIENCE_CHILD = "science_child"
+CONTENT_STYLE_TECH_SCIENCE = "tech_science"
 CONTENT_STYLE_LIFE_EXPERIENCE = "life_experience"
 CONTENT_STYLE_HISTORICAL_MYSTERY = "history_mystery"
 
 _VALID_CONTENT_STYLES = frozenset(
-    {CONTENT_STYLE_SCIENCE_CHILD, CONTENT_STYLE_LIFE_EXPERIENCE, CONTENT_STYLE_HISTORICAL_MYSTERY}
+    {
+        CONTENT_STYLE_SCIENCE_CHILD,
+        CONTENT_STYLE_TECH_SCIENCE,
+        CONTENT_STYLE_LIFE_EXPERIENCE,
+        CONTENT_STYLE_HISTORICAL_MYSTERY,
+    }
 )
 
 _VALID_IMAGE_PROVIDERS = frozenset({"z_image_t2i", "wan_t2i", "sd15_t2i", "agnes_t2i"})
@@ -94,6 +100,10 @@ def normalize_content_style(value: str | None) -> str | None:
         "历史悬案": CONTENT_STYLE_HISTORICAL_MYSTERY,
         "history": CONTENT_STYLE_HISTORICAL_MYSTERY,
         "historical": CONTENT_STYLE_HISTORICAL_MYSTERY,
+        "tech": CONTENT_STYLE_TECH_SCIENCE,
+        "科技": CONTENT_STYLE_TECH_SCIENCE,
+        "数码": CONTENT_STYLE_TECH_SCIENCE,
+        "产业": CONTENT_STYLE_TECH_SCIENCE,
     }
     if normalized in aliases:
         return aliases[normalized]
