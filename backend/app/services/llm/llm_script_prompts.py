@@ -242,7 +242,7 @@ _IMAGE_PROMPT_RULE_SD15_SHORT = (
     "无需六层扩写，禁止堆砌光影材质细节。"
 )
 
-_IMAGE_PROMPT_RULE_MYSTERY = (
+_IMAGE_PROMPT_RULE_MYSTERY_PORTRAIT = (
     "每段image_prompt须严格遵循visual_style画风定调，全片统一：电影级写实历史再现，"
     "光影考究、暗部有层次、低饱和古风色调，适配9:16竖屏构图。"
     f"每段image_prompt建议350-550字（任何一段不得低于{MIN_IMAGE_PROMPT_CHARS}字），"
@@ -255,6 +255,13 @@ _IMAGE_PROMPT_RULE_MYSTERY = (
     "⑥语义边界（仅表达本段画面，禁止写文字、奏折、诏书等可读文字）。"
 )
 
+_IMAGE_PROMPT_RULE_MYSTERY_LANDSCAPE = _IMAGE_PROMPT_RULE_MYSTERY_PORTRAIT.replace(
+    "适配9:16竖屏构图", "适配16:9横屏构图"
+).replace(
+    "竖屏单一视觉焦点、主体占比，如大殿中孤独的背影或深夜庭院一隅",
+    "横屏主体位置与环境留白，如大殿中的孤独背影置于画面一侧利用空间营造悬疑感",
+)
+
 
 def _image_prompt_rule(*, orientation: str, content_style: str, sd15_mode: bool = False) -> str:
     head = (
@@ -264,7 +271,8 @@ def _image_prompt_rule(*, orientation: str, content_style: str, sd15_mode: bool 
     if sd15_mode:
         return head + _IMAGE_PROMPT_RULE_SD15_SHORT + _IMAGE_PROMPT_MOTION_TAIL
     if content_style == CONTENT_STYLE_HISTORICAL_MYSTERY:
-        return head + _IMAGE_PROMPT_RULE_MYSTERY + _IMAGE_PROMPT_MOTION_TAIL
+        body = _IMAGE_PROMPT_RULE_MYSTERY_LANDSCAPE if orientation == ORIENTATION_LANDSCAPE else _IMAGE_PROMPT_RULE_MYSTERY_PORTRAIT
+        return head + body + _IMAGE_PROMPT_MOTION_TAIL
     if content_style == CONTENT_STYLE_LIFE_EXPERIENCE:
         body = _IMAGE_PROMPT_RULE_LIFE_LANDSCAPE
     elif orientation == ORIENTATION_LANDSCAPE:
