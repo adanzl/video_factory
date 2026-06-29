@@ -148,3 +148,10 @@ def delete_topics_route():
     if not ids:
         raise APIError("ids is required")
     return json_ok(topic_mgr.delete_titles(ids))
+
+
+@bp.post("/delete-low")
+def delete_low_score_topics_route():
+    data = get_json_body(required=False)
+    max_score = parse_int(data or {}, "max_score", 75, minimum=0, maximum=100)
+    return json_ok(topic_mgr.delete_low_score_titles(max_score))

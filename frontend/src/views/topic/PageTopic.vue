@@ -28,6 +28,13 @@
       >
         删除
       </el-button>
+      <el-button
+        type="warning"
+        :loading="cleaningLow"
+        @click="showCleanLowDialog = true"
+      >
+        清理低分
+      </el-button>
       <el-select
         v-model="statusFilter"
         placeholder="全部状态"
@@ -183,6 +190,23 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="showCleanLowDialog" title="清理低分选题" width="480px" destroy-on-close>
+      <p class="mb-4 text-sm text-gray-500">
+        将删除分数低于标准的选题（不含已入队、未打分）。
+      </p>
+      <el-form label-width="100px">
+        <el-form-item label="低分标准">
+          <el-input-number v-model="cleanLowMaxScore" :min="0" :max="100" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showCleanLowDialog = false">取消</el-button>
+        <el-button type="warning" :loading="cleaningLow" @click="confirmCleanLow">
+          确认清理
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -192,6 +216,7 @@ import { useRouter } from "vue-router";
 import { Refresh } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import {
+  deleteLowScoreTopics,
   deleteTopics,
   enqueueTopics,
   generateTopics,
@@ -210,19 +235,21 @@ const titles = ref<TitleRecord[]>([]);
 const loading = ref(false);
 const statusFilter = ref<string>();
 const page = ref(1);
-const pageSize = ref(15);
+const pageSize = ref(parseInt(localStorage.getItem("topicPageSize") || "15", 10));
 const total = ref(0);
 const selectedIds = ref<number[]>([]);
 
 const scoring = ref(false);
 const enqueuing = ref(false);
 const deleting = ref(false);
+const cleaningLow = ref(false);
 const generating = ref(false);
-const importingHot = ref(false);
 const scoringId = ref<number>();
 
 const showGenerateDialog = ref(false);
 const showEnqueueDialog = ref(false);
+const showCleanLowDialog = ref(false);
+const cleanLowMaxScore = ref(75);
 const pendingEnqueueIds = ref<number[]>([]);
 const enqueueRunMode = ref<EnqueueRunMode>("script");
 const generateMode = ref("history_mystery");
@@ -319,6 +346,7 @@ const onFilterChange = () => {
 
 const onPageSizeChange = () => {
   page.value = 1;
+  localStorage.setItem("topicPageSize", String(pageSize.value));
   fetchTitles();
 };
 
@@ -442,14 +470,39 @@ const handleDeleteOne = async (row: TitleRecord) => {
   }
 };
 
+const confirmCleanLow = async () => {
+  cleaningLow.value = true;
+  try {
+    const result = await deleteLowScoreTopics(cleanLowMaxScore.value);
+    if (result.deleted === 0) {
+      ElMessage.info(`没有分数低于 ${result.max_score} 的选题`);
+    } else {
+      ElMessage.success(`已清理 ${result.deleted} 条低分选题`);
+    }
+    showCleanLowDialog.value = false;
+    if (titles.value.length <= result.deleted && page.value > 1) {
+      page.value -= 1;
+    }
+    await fetchTitles();
+  } catch (error) {
+    handleError(error, "清理低分失败");
+  } finally {
+    cleaningLow.value = false;
+  }
+};
+
 const handleGenerate = async () => {
   if (generateMode.value === "hot") {
     generating.value = true;
     try {
-      const result = await importHotTopics();
-      ElMessage.success(`已导入 ${result.count} 条热搜选题`);
+      await importHotTopics({
+        limit: 50,
+        count_per_theme: generateForm.count,
+        min_score: 70,
+      });
+      ElMessage.success("已提交热搜选题，后台处理中，约 30～60 秒后刷新列表查看");
       showGenerateDialog.value = false;
-      await fetchTitles();
+      onGenerateModeChange(generateMode.value);
     } catch (error) {
       handleError(error, "导入热搜失败");
     } finally {
@@ -476,7 +529,7 @@ const handleGenerate = async () => {
       ElMessage.success(`已生成 ${result.count} 条（未入库）`);
     }
     showGenerateDialog.value = false;
-    generateForm.theme = "";
+    onGenerateModeChange(generateMode.value);
     await fetchTitles();
   } catch (error) {
     handleError(error, "生成选题失败");
@@ -485,31 +538,6 @@ const handleGenerate = async () => {
   }
 };
 
-const handleImportHot = async () => {
-  try {
-    await ElMessageBox.confirm(
-      "将拉取 B 站热搜，经 AI 筛选后生成标题并入库（来源：热搜）。后台执行，约 30～60 秒完成，是否继续？",
-      "热搜选题",
-      { type: "info", confirmButtonText: "开始", cancelButtonText: "取消" }
-    );
-  } catch {
-    return;
-  }
-
-  importingHot.value = true;
-  try {
-    await importHotTopics({
-      limit: 50,
-      count_per_theme: 3,
-      min_score: 70,
-    });
-    ElMessage.success("已提交热搜选题，后台处理中，约 30～60 秒后刷新列表查看");
-  } catch (error) {
-    handleError(error, "热搜选题失败");
-  } finally {
-    importingHot.value = false;
-  }
-};
 
 onMounted(fetchTitles);
 </script>

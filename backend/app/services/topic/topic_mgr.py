@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 
 from app.config import get_settings
 from app.repositories import job_repo, title_repo
@@ -25,6 +26,33 @@ logger = logging.getLogger(__name__)
 _RUN_MODES = frozenset({"none", "script", "full"})
 
 
+def _extract_keyword(title: str) -> str:
+    """从标题提取核心关键词（人名/地名/事件名），用于去重。"""
+    text = re.sub(r"[？?！!，,。.、\s\"\'“”]", "", title)
+    if not text:
+        return text
+    # 按常用虚词/介词拆段，取第一段（通常是实体名）
+    parts = re.split(r"[的与和被在让将给从以于对把到用打上出]", text, maxsplit=1)
+    head = parts[0].strip()
+    if 2 <= len(head) <= 8:
+        return head
+    if len(head) > 8 and head.endswith(("啦", "了", "的")):
+        head = head[:-1]
+    return head[:6]
+
+
+def _existing_keywords(conn) -> set[str]:
+    rows = conn.execute("SELECT keyword FROM title WHERE keyword IS NOT NULL").fetchall()
+    result: set[str] = set()
+    for row in rows:
+        raw = row["keyword"] or ""
+        for kw in raw.split(","):
+            k = kw.strip()
+            if k:
+                result.add(k)
+    return result
+
+
 class TopicMgr:
     def list_titles(
         self,
@@ -43,18 +71,37 @@ class TopicMgr:
         items: list[dict],
         *,
         source: str = "manual",
+        dedup_keyword: bool = False,
     ) -> dict:
         settings = get_settings()
         max_len = settings.max_title_length
         added: list[dict] = []
         skipped = 0
+        seen_keywords: set[str] = set()
         with connection() as conn:
+            if dedup_keyword:
+                seen_keywords = _existing_keywords(conn)
             for item in items:
                 raw_title = str(item.get("title") or "").strip()
                 if not raw_title:
                     skipped += 1
                     continue
                 title = normalize_title(raw_title, max_len=max_len)
+                if dedup_keyword:
+                    raw_kw = item.get("keyword") or ""
+                    keywords = [k.strip() for k in raw_kw.split(",") if k.strip()]
+                    if not keywords:
+                        kw = None
+                    else:
+                        hit = any(k in seen_keywords for k in keywords)
+                        if hit:
+                            skipped += 1
+                            continue
+                        kw = raw_kw
+                        for k in keywords:
+                            seen_keywords.add(k)
+                else:
+                    kw = None
                 row = title_repo.insert_title(
                     conn,
                     title=title,
@@ -62,6 +109,7 @@ class TopicMgr:
                     template=item.get("template"),
                     hook=item.get("hook"),
                     source=source,
+                    keyword=kw if dedup_keyword else None,
                 )
                 if row is None:
                     skipped += 1
@@ -84,7 +132,7 @@ class TopicMgr:
             system_prompt=system_prompt,
             user_prompt=user_prompt,
         )
-        result = self.add_topics(topics, source="llm")
+        result = self.add_topics(topics, source="llm", dedup_keyword=True)
         logger.info(
             "[TOPIC] save done theme=%r generated=%d added=%d skipped=%d",
             theme,
@@ -130,6 +178,18 @@ class TopicMgr:
         with connection() as conn:
             deleted = title_repo.delete_titles(conn, title_ids)
         return {"deleted": deleted, "ids": title_ids}
+
+    def delete_low_score_titles(self, max_score: int) -> dict:
+        with connection() as conn:
+            ids = title_repo.list_ids_below_score(conn, max_score)
+            deleted = title_repo.delete_titles(conn, ids)
+        logger.info(
+            "[TOPIC] delete low score max_score=%d deleted=%d ids=%s",
+            max_score,
+            deleted,
+            ids,
+        )
+        return {"deleted": deleted, "ids": ids, "max_score": max_score}
 
     def enqueue_titles(
         self,

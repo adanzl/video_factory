@@ -3,6 +3,7 @@
  */
 import { api } from "./config";
 import type {
+  DeleteLowScoreTopicsResult,
   EnqueueTopicsParams,
   EnqueueTopicsResult,
   GenerateAndSaveResult,
@@ -59,5 +60,15 @@ export async function enqueueTopics(
 
 export async function deleteTopics(ids: number[]): Promise<{ deleted: number; ids: number[] }> {
   const response = await api.post("/v_factory/api/topic/delete", { ids });
+  return response.data;
+}
+
+export async function deleteLowScoreTopics(
+  maxScore = 75
+): Promise<DeleteLowScoreTopicsResult> {
+  const response = await api.post<DeleteLowScoreTopicsResult>(
+    "/v_factory/api/topic/delete-low",
+    { max_score: maxScore }
+  );
   return response.data;
 }

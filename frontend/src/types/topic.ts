@@ -119,3 +119,9 @@ export interface EnqueueTopicsResult {
   count: number;
   run_mode: EnqueueRunMode;
 }
+
+export interface DeleteLowScoreTopicsResult {
+  deleted: number;
+  ids: number[];
+  max_score: number;
+}
