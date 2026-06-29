@@ -169,7 +169,11 @@ def preview_script_prompts_route():
 def generate_image_prompts_route():
     data = get_json_body()
     job_id = parse_id(data)
-    return _accept_stage(job_id, lambda: job_mgr.generate_image_prompts(job_id))
+    segment_indices = parse_int_list(data, "segments")
+    return _accept_stage(
+        job_id,
+        lambda: job_mgr.generate_image_prompts(job_id, segment_indices=segment_indices),
+    )
 
 
 @bp.post("/script/description")

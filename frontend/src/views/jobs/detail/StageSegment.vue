@@ -112,7 +112,19 @@
           </section>
 
           <section class="flex flex-col gap-1">
-            <div class="text-xs font-medium text-gray-600">文生图提示词</div>
+            <div class="flex items-center justify-between gap-2">
+              <div class="text-xs font-medium text-gray-600">文生图提示词</div>
+              <el-button
+                size="small"
+                link
+                type="primary"
+                :loading="generatingImagePromptIndex === segment.segment_index"
+                :disabled="isSegmentImagePromptActionDisabled(segment.segment_index)"
+                @click="handleGenerateImagePrompt(segment.segment_index)"
+              >
+                生成
+              </el-button>
+            </div>
             <el-tooltip placement="top" :show-after="300" :disabled="!segment.image_prompt">
               <template #content>
                 <div class="max-w-sm whitespace-pre-wrap wrap-break-word text-xs">{{ segment.image_prompt }}</div>
@@ -258,7 +270,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { runJobStageAction, updateJobInfo } from "@/api/api-jobs";
+import { generateImagePrompts, runJobStageAction, updateJobInfo } from "@/api/api-jobs";
 import { getMediaFileUrl } from "@/api/api-media";
 import type { JobDetail, JobInfo, JobLog, JobSegment, ScriptJson } from "@/types/jobs";
 import type { RunStageActionPayload } from "@/types/jobs/stageAction";
@@ -284,6 +296,7 @@ const submitting = ref(false);
 const savingImageProvider = ref(false);
 const savingVideoProvider = ref(false);
 const regeneratingImageIndex = ref<number | null>(null);
+const generatingImagePromptIndex = ref<number | null>(null);
 const generatingClipIndex = ref<number | null>(null);
 const segmentScope = ref("segment/images");
 
@@ -365,13 +378,23 @@ const actionDisabledReason = computed(() =>
 const isSegmentImageActionDisabled = (segmentIndex: number) =>
   actionDisabled.value ||
   submitting.value ||
+  generatingImagePromptIndex.value !== null ||
   generatingClipIndex.value !== null ||
   (regeneratingImageIndex.value !== null && regeneratingImageIndex.value !== segmentIndex);
+
+const isSegmentImagePromptActionDisabled = (segmentIndex: number) =>
+  actionDisabled.value ||
+  submitting.value ||
+  regeneratingImageIndex.value !== null ||
+  generatingClipIndex.value !== null ||
+  (generatingImagePromptIndex.value !== null &&
+    generatingImagePromptIndex.value !== segmentIndex);
 
 const isSegmentClipActionDisabled = (segment: { segment_index: number; imageUrl: string }) =>
   actionDisabled.value ||
   submitting.value ||
   regeneratingImageIndex.value !== null ||
+  generatingImagePromptIndex.value !== null ||
   !segment.imageUrl ||
   (generatingClipIndex.value !== null && generatingClipIndex.value !== segment.segment_index);
 
@@ -447,6 +470,29 @@ const openClipSearch = (segment: JobSegment & { visual_brief?: string | null }) 
   clipSearchKeyword.value = buildSegmentClipSearchKeyword(segment);
   clipSearchOrientation.value = resolveClipSearchOrientation();
   clipSearchOpen.value = true;
+};
+
+const handleGenerateImagePrompt = async (segmentIndex: number) => {
+  try {
+    await ElMessageBox.confirm(`确定重新生成分镜 #${segmentIndex} 的文生图提示词吗？`, "确认执行", {
+      type: "warning",
+      confirmButtonText: "执行",
+      cancelButtonText: "取消",
+    });
+  } catch {
+    return;
+  }
+
+  generatingImagePromptIndex.value = segmentIndex;
+  try {
+    await generateImagePrompts(props.job.id, { segments: [segmentIndex] });
+    ElMessage.success(`已提交分镜 #${segmentIndex} 文生图提示词生成`);
+    emit("refresh");
+  } catch (error) {
+    handleError(error, "文生图提示词生成失败");
+  } finally {
+    generatingImagePromptIndex.value = null;
+  }
 };
 
 const handleRegenerateImage = async (segmentIndex: number) => {

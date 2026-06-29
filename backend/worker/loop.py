@@ -269,7 +269,11 @@ def run_script(
     )
 
 
-def run_script_image_prompts(job_id: int) -> dict:
+def run_script_image_prompts(
+    job_id: int,
+    *,
+    segment_indices: list[int] | None = None,
+) -> dict:
     """为已有脚本补全文生图提示词（不重置脚本阶段）。"""
     from app.quality.checkers import check_image_prompts
     from app.quality.gate import apply_quality_checks
@@ -290,9 +294,9 @@ def run_script_image_prompts(job_id: int) -> dict:
     image_provider = resolve_image_provider(job)
     include_sd15_prompt = resolve_include_sd15_prompt(job)
     logger.info(
-        "job %s script/imagePrompts: segments=%d image_provider=%s include_sd15_prompt=%s",
+        "job %s script/imagePrompts: %s image_provider=%s include_sd15_prompt=%s",
         job_id,
-        len(segments),
+        f"segment_indices={segment_indices}" if segment_indices else f"segments={len(segments)}",
         image_provider,
         include_sd15_prompt,
     )
@@ -307,6 +311,7 @@ def run_script_image_prompts(job_id: int) -> dict:
         updated,
         supplementary_info=supplementary_info,
         job=job,
+        segment_indices=segment_indices,
         include_sd15_prompt=include_sd15_prompt,
     )
     _log_llm_timing(job_id, "script", updated)
@@ -316,6 +321,7 @@ def run_script_image_prompts(job_id: int) -> dict:
         updated,
         supplementary_info=supplementary_info,
         job=job,
+        segment_indices=segment_indices,
         include_sd15_prompt=include_sd15_prompt,
     )
     prompts = [item for item in prompts if item.get("step") != "image_prompts"]
@@ -362,8 +368,13 @@ def run_script_image_prompts(job_id: int) -> dict:
             conn,
             job_id,
             "script",
-            f"image prompts generated: segments={len(updated['segments'])}, "
-            f"image_provider={image_provider}, include_sd15_prompt={include_sd15_prompt}",
+            (
+                f"image prompts generated: segment_indices={segment_indices}, "
+                f"image_provider={image_provider}, include_sd15_prompt={include_sd15_prompt}"
+                if segment_indices
+                else f"image prompts generated: segments={len(updated['segments'])}, "
+                f"image_provider={image_provider}, include_sd15_prompt={include_sd15_prompt}"
+            ),
         )
         job_repo.update_job(conn, job_id, status="idle")
     return _reload_job(job_id)

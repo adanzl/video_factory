@@ -102,10 +102,15 @@ export async function generateVideoDescription(jobId: number): Promise<{
   return response.data;
 }
 
-export async function generateImagePrompts(jobId: number): Promise<JobDetail> {
-  const response = await api.post<JobDetail>("/v_factory/api/jobs/script/imagePrompts", {
-    id: jobId,
-  });
+export async function generateImagePrompts(
+  jobId: number,
+  options: { segments?: number[] } = {}
+): Promise<JobDetail> {
+  const payload: { id: number; segments?: number[] } = { id: jobId };
+  if (options.segments?.length) {
+    payload.segments = options.segments;
+  }
+  const response = await api.post<JobDetail>("/v_factory/api/jobs/script/imagePrompts", payload);
   return response.data;
 }
 
