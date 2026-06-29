@@ -103,9 +103,10 @@ def _generate_cover(job: dict, cover_path: Path, width: int, height: int) -> Non
         img.paste(brand, ((cw - brand.size[0]) // 2, int(ch * 0.04)), brand)
 
         from app.services.visual.title_render import compose_vstack, render_text_rgba, STROKE_WIDTH
-        mid = len(title) // 2
-        line1, line2 = title[:mid], title[mid:]
-        font = load_cjk_font(155)
+        display = title.replace("：", " ").replace(":", " ")
+        parts = display.split(" ", 1)
+        line1, line2 = parts if len(parts) > 1 else (display, "")
+        font = load_cjk_font(135)
         rendered = [
             render_text_rgba(line1, font, fill=(255,210,50,255), stroke_width=STROKE_WIDTH+2, stroke_fill=(60,30,15,255), with_shadow=True, shadow_blur=10),
             render_text_rgba(line2, font, fill=(255,210,50,255), stroke_width=STROKE_WIDTH+2, stroke_fill=(60,30,15,255), with_shadow=True, shadow_blur=10),
