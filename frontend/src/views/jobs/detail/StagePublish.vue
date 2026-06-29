@@ -89,6 +89,7 @@
             :key="coverUrl"
             :src="coverUrl"
             :preview-src-list="[coverUrl]"
+            :crossorigin="MEDIA_CROSS_ORIGIN"
             fit="contain"
             class="block h-full w-full [&_.el-image__inner]:h-full [&_.el-image__inner]:w-full [&_.el-image__inner]:object-contain"
             @error="coverLoadError = true"
@@ -126,6 +127,7 @@
               :key="videoUrl"
               class="block h-full w-full bg-black object-contain"
               :src="videoUrl"
+              :crossorigin="MEDIA_CROSS_ORIGIN"
               controls
               playsinline
               preload="metadata"
@@ -168,7 +170,7 @@ import { downloadMediaFile, getMediaFileUrl } from "@/api/api-media";
 import type { JobDetail, JobLog } from "@/types/jobs";
 import type { ScriptJson } from "@/types/jobs/script";
 import { formatDateTime } from "@/utils/date";
-import { resolveFinalPath } from "@/utils/media";
+import { resolveFinalPath, MEDIA_CROSS_ORIGIN } from "@/utils/media";
 import { useErrorHandler } from "@/composables/useErrorHandler";
 import { copyText } from "@/utils/utils";
 

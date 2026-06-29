@@ -74,4 +74,6 @@ export interface UpdateJobInfoParams {
   orientation?: "portrait" | "landscape";
   content_style?: "science_child" | "life_experience" | "history_mystery";
   intro_category?: IntroCategory;
+  image_provider?: JobInfo["image_provider"];
+  video_provider?: JobInfo["video_provider"];
 }

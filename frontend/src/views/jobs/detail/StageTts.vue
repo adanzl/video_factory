@@ -81,6 +81,7 @@
               :key="audioUrl"
               class="block w-full"
               :src="audioUrl"
+              :crossorigin="MEDIA_CROSS_ORIGIN"
               controls
               preload="metadata"
               @error="onAudioError"
@@ -160,6 +161,7 @@ import { getMediaFileUrl, getMediaText } from "@/api/api-media";
 import { DEFAULT_TTS_VOICE, TTS_VOICE_OPTIONS } from "@/constants/tts-voices";
 import type { JobDetail, JobLog } from "@/types/jobs";
 import { formatDateTime } from "@/utils/date";
+import { MEDIA_CROSS_ORIGIN } from "@/utils/media";
 import { useErrorHandler } from "@/composables/useErrorHandler";
 
 const AUDIO_PLAYBACK_SPEED_OPTIONS = Array.from({ length: 8 }, (_, index) =>

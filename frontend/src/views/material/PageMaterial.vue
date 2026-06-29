@@ -29,6 +29,7 @@
             v-if="thumbUrl(row)"
             :src="thumbUrl(row)"
             :preview-src-list="[thumbUrl(row)]"
+            :crossorigin="MEDIA_CROSS_ORIGIN"
             fit="contain"
             preview-teleported
             class="block size-16 cursor-pointer overflow-hidden rounded border border-gray-200 bg-black [&_.el-image__inner]:h-full [&_.el-image__inner]:w-full [&_.el-image__inner]:object-contain"
@@ -200,6 +201,7 @@
             :key="playVideoUrl"
             class="block h-full w-full object-contain bg-black"
             :src="playVideoUrl"
+            :crossorigin="MEDIA_CROSS_ORIGIN"
             controls
             autoplay
             playsinline
@@ -228,7 +230,7 @@ import {
 import type { MaterialJobRunMode, MaterialRecord } from "@/types/material";
 import { useErrorHandler } from "@/composables/useErrorHandler";
 import { formatDateTime } from "@/utils/date";
-import { formatFileSize, formatMediaDuration, getMediaFileUrl } from "@/utils/media";
+import { formatFileSize, formatMediaDuration, getMediaFileUrl, MEDIA_CROSS_ORIGIN } from "@/utils/media";
 
 const router = useRouter();
 const { handleError } = useErrorHandler();

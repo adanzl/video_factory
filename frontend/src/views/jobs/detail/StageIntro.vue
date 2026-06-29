@@ -64,21 +64,27 @@
 
       <div class="min-w-[280px] flex-1 basis-[360px]">
         <div class="rounded-lg border border-gray-200 p-4">
-          <div class="mb-3 text-sm font-medium text-gray-700">片头预览</div>
+          <div class="mb-3 flex items-baseline justify-between gap-2">
+            <span class="text-sm font-medium text-gray-700">片头预览</span>
+            <span class="text-xs text-gray-400">{{ introResolutionText }}</span>
+          </div>
           <div v-if="videoUrl" class="flex justify-center">
             <div
-              class="overflow-hidden rounded-lg border border-gray-200 bg-black"
+              class="relative overflow-hidden rounded-lg border border-gray-200 bg-black"
               :style="previewBoxStyle"
             >
               <video
+                ref="videoRef"
                 :key="videoUrl"
-                class="block h-full w-full bg-black object-contain"
+                class="absolute inset-0 size-full bg-black object-contain"
                 :src="videoUrl"
                 :poster="posterUrl || undefined"
+                :crossorigin="MEDIA_CROSS_ORIGIN"
                 controls
                 playsinline
-                preload="metadata"
+                preload="auto"
                 @error="onVideoError"
+                @loadeddata="onVideoMetadata"
                 @loadedmetadata="onVideoMetadata"
               />
             </div>
@@ -96,7 +102,10 @@
         </div>
 
         <div class="mt-4 rounded-lg border border-gray-200 p-4">
-          <div class="mb-3 text-sm font-medium text-gray-700">封面预览</div>
+          <div class="mb-3 flex items-baseline justify-between gap-2">
+            <span class="text-sm font-medium text-gray-700">封面预览</span>
+            <span class="text-xs text-gray-400">{{ coverResolutionText }}</span>
+          </div>
           <div v-if="coverUrl" class="flex justify-center">
             <div
               class="flex items-center justify-center overflow-hidden rounded-lg border border-gray-200 bg-gray-50"
@@ -106,6 +115,7 @@
                 :key="coverUrl"
                 :src="coverUrl"
                 :preview-src-list="[coverUrl]"
+                :crossorigin="MEDIA_CROSS_ORIGIN"
                 fit="contain"
                 class="block h-full w-full [&_.el-image__inner]:block [&_.el-image__inner]:h-full [&_.el-image__inner]:w-full [&_.el-image__inner]:object-contain"
                 @load="onCoverLoad"
@@ -142,17 +152,25 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { runJobStageAction, updateJobInfo } from "@/api/api-jobs";
 import { getMediaDuration, getMediaFileUrl } from "@/api/api-media";
 import type { IntroCategory, JobDetail, JobLog } from "@/types/jobs";
 import { formatDateTime } from "@/utils/date";
+import {
+  buildMediaPreviewBoxStyle,
+  formatVideoResolution,
+  guessIntroPreviewAspectRatio,
+  MEDIA_CROSS_ORIGIN,
+  readImageNaturalSize,
+} from "@/utils/media";
 import { useErrorHandler } from "@/composables/useErrorHandler";
 
 const props = defineProps<{
   job: JobDetail;
   logs: JobLog[];
+  stageActive?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -160,9 +178,6 @@ const emit = defineEmits<{
 }>();
 
 const { handleError } = useErrorHandler();
-
-const PREVIEW_MAX_VIEWPORT_RATIO = 0.7;
-const PREVIEW_MAX_WIDTH_PX = 420;
 
 const submitting = ref(false);
 const holdTailSec = ref(0.35);
@@ -194,8 +209,19 @@ const introOrientation = ref<"auto" | "portrait" | "landscape">(
 const actualDuration = ref<number | null>(null);
 const loadError = ref("");
 const coverLoadError = ref("");
+const videoRef = ref<HTMLVideoElement | null>(null);
 const videoMeta = ref<{ width: number; height: number } | null>(null);
 const coverMeta = ref<{ width: number; height: number } | null>(null);
+
+const reloadVideoPreview = () => {
+  void nextTick(() => {
+    const video = videoRef.value;
+    if (!video || !videoUrl.value) {
+      return;
+    }
+    video.load();
+  });
+};
 
 const actionDisabled = computed(() => props.job.status === "running");
 const actionDisabledReason = computed(() =>
@@ -221,39 +247,32 @@ const posterUrl = computed(() => {
   return getMediaFileUrl(videoPath.replace(/\.mp4$/i, ".png"));
 });
 
-const buildPreviewBoxStyle = (width?: number | null, height?: number | null) => {
-  if (width && height && width > 0 && height > 0) {
-    const ratio = width / height;
-    const maxH =
-      (typeof window !== "undefined" ? window.innerHeight : 800) * PREVIEW_MAX_VIEWPORT_RATIO;
-    const maxW = Math.min(
-      PREVIEW_MAX_WIDTH_PX,
-      typeof window !== "undefined" ? window.innerWidth * 0.9 : PREVIEW_MAX_WIDTH_PX
-    );
-    let boxW = maxW;
-    let boxH = boxW / ratio;
-    if (boxH > maxH) {
-      boxH = Math.min(maxH, maxW / ratio);
-      boxW = boxH * ratio;
-    }
-    return {
-      width: `${Math.round(boxW)}px`,
-      height: `${Math.round(boxH)}px`,
-    };
-  }
-  return {
-    width: "100%",
-    maxWidth: `${PREVIEW_MAX_WIDTH_PX}px`,
-    aspectRatio: "9 / 16",
-  };
-};
+const previewFallbackAspectRatio = computed(() =>
+  guessIntroPreviewAspectRatio(introOrientation.value, props.job.pipeline)
+);
 
 const previewBoxStyle = computed(() =>
-  buildPreviewBoxStyle(videoMeta.value?.width, videoMeta.value?.height)
+  buildMediaPreviewBoxStyle(
+    videoMeta.value?.width,
+    videoMeta.value?.height,
+    previewFallbackAspectRatio.value
+  )
 );
 
 const coverBoxStyle = computed(() =>
-  buildPreviewBoxStyle(
+  buildMediaPreviewBoxStyle(
+    coverMeta.value?.width ?? videoMeta.value?.width,
+    coverMeta.value?.height ?? videoMeta.value?.height,
+    previewFallbackAspectRatio.value
+  )
+);
+
+const introResolutionText = computed(() =>
+  formatVideoResolution(videoMeta.value?.width, videoMeta.value?.height)
+);
+
+const coverResolutionText = computed(() =>
+  formatVideoResolution(
     coverMeta.value?.width ?? videoMeta.value?.width,
     coverMeta.value?.height ?? videoMeta.value?.height
   )
@@ -276,9 +295,9 @@ const onCoverError = () => {
 };
 
 const onCoverLoad = (event: Event) => {
-  const img = (event.target as HTMLImageElement | null) ?? null;
-  if (img && img.naturalWidth > 0 && img.naturalHeight > 0) {
-    coverMeta.value = { width: img.naturalWidth, height: img.naturalHeight };
+  const size = readImageNaturalSize(event);
+  if (size) {
+    coverMeta.value = size;
   }
 };
 
@@ -388,6 +407,22 @@ watch(
   },
   { immediate: true }
 );
+
+watch(
+  () => props.stageActive,
+  active => {
+    if (active) {
+      reloadVideoPreview();
+    }
+  },
+  { immediate: true }
+);
+
+watch(videoUrl, () => {
+  if (props.stageActive !== false) {
+    reloadVideoPreview();
+  }
+});
 </script>
 
 <style scoped>

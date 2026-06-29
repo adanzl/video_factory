@@ -160,6 +160,103 @@ export function narrationTargetFromEstimatedMinutes(
   return narrationTargetForMinutes(minutes, NARRATION_CHARS_PER_SEC, introBudgetSec);
 }
 
+export const MEDIA_PREVIEW_MAX_VIEWPORT_RATIO = 0.7;
+export const MEDIA_PREVIEW_MAX_WIDTH_PX = 420;
+/** 跨域媒体预览需 CORS；避免 Chrome ORB 拦截 */
+export const MEDIA_CROSS_ORIGIN = "anonymous";
+
+export type CssSizeStyle = Record<string, string>;
+
+function parseAspectRatio(ratio: string): number {
+  const [width, height] = ratio.split("/").map(part => Number.parseFloat(part.trim()));
+  if (!width || !height) {
+    return 16 / 9;
+  }
+  return width / height;
+}
+
+/** 按视频/图片 intrinsic 尺寸计算预览容器样式（横竖屏均不裁切） */
+export function buildMediaPreviewBoxStyle(
+  width?: number | null,
+  height?: number | null,
+  fallbackAspectRatio = "16 / 9"
+): CssSizeStyle {
+  if (width && height && width > 0 && height > 0) {
+    const ratio = width / height;
+    const maxH =
+      (typeof window !== "undefined" ? window.innerHeight : 800) *
+      MEDIA_PREVIEW_MAX_VIEWPORT_RATIO;
+    const maxW = Math.min(
+      MEDIA_PREVIEW_MAX_WIDTH_PX,
+      typeof window !== "undefined" ? window.innerWidth * 0.9 : MEDIA_PREVIEW_MAX_WIDTH_PX
+    );
+
+    let boxW: number;
+    let boxH: number;
+    if (ratio >= 1) {
+      boxW = Math.min(maxW, maxH * ratio);
+      boxH = boxW / ratio;
+    } else {
+      boxH = Math.min(maxH, maxW / ratio);
+      boxW = boxH * ratio;
+    }
+
+    return {
+      width: `${Math.round(boxW)}px`,
+      height: `${Math.round(boxH)}px`,
+    };
+  }
+
+  const ratio = parseAspectRatio(fallbackAspectRatio);
+  const minHeight = Math.round(MEDIA_PREVIEW_MAX_WIDTH_PX / ratio);
+
+  return {
+    width: "100%",
+    maxWidth: `${MEDIA_PREVIEW_MAX_WIDTH_PX}px`,
+    aspectRatio: fallbackAspectRatio,
+    minHeight: `${minHeight}px`,
+  };
+}
+
+/** 片头预览在 metadata 未就绪时的占位比例 */
+export function guessIntroPreviewAspectRatio(
+  orientation: "auto" | "portrait" | "landscape",
+  pipeline?: string | null
+): string {
+  if (orientation === "landscape") {
+    return "16 / 9";
+  }
+  if (orientation === "portrait") {
+    return "9 / 16";
+  }
+  return pipeline === "material" ? "16 / 9" : "9 / 16";
+}
+
+export function formatVideoResolution(
+  width?: number | null,
+  height?: number | null
+): string {
+  if (width && height && width > 0 && height > 0) {
+    return `${width}×${height}`;
+  }
+  return "-";
+}
+
+/** 从 img / el-image 的 load 事件读取原始分辨率 */
+export function readImageNaturalSize(event: Event): { width: number; height: number } | null {
+  const target = event.target;
+  const img =
+    target instanceof HTMLImageElement
+      ? target
+      : event.currentTarget instanceof HTMLElement
+        ? event.currentTarget.querySelector("img")
+        : null;
+  if (img instanceof HTMLImageElement && img.naturalWidth > 0 && img.naturalHeight > 0) {
+    return { width: img.naturalWidth, height: img.naturalHeight };
+  }
+  return null;
+}
+
 /** 格式化媒体时长（秒 → mm:ss） */
 export function formatMediaDuration(seconds?: number | null): string {
   if (seconds === null || seconds === undefined || Number.isNaN(seconds)) {
