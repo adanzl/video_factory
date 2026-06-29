@@ -73,6 +73,11 @@ export async function resetJob(jobId: number): Promise<JobDetail> {
   return response.data;
 }
 
+export async function abortJob(jobId: number): Promise<JobDetail> {
+  const response = await api.post<JobDetail>("/v_factory/api/jobs/abort", { id: jobId });
+  return response.data;
+}
+
 export async function runJobStageAction(
   endpoint: string,
   payload: RunStageActionPayload

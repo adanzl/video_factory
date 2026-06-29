@@ -8,6 +8,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from app.services.job.job_cancel import job_cancel
 from app.services.media.media_mgr import SegmentClipsResult, media_mgr
 from app.services.tts.tts_mgr import tts_mgr
 from app.services.visual.visual_mgr import visual_mgr
@@ -57,6 +58,14 @@ class SegmentMgr:
     ) -> SegmentProduceResult:
         if scope not in {"all", "images", "clips"}:
             raise ValueError(f"invalid segment scope: {scope}")
+
+        job_id = job.get("id") if job else None
+
+        def _check_cancelled() -> None:
+            if job_id is not None:
+                job_cancel.raise_if_cancelled(job_id)
+
+        _check_cancelled()
 
         t0 = time.time()
         images_dir = media_dir / "images"
@@ -116,6 +125,7 @@ class SegmentMgr:
             )
         generated = []
         if scope != "clips" and image_targets:
+            _check_cancelled()
             from app.utils.job_info import resolve_image_provider
 
             image_size = resolve_segment_image_size(job)
@@ -126,6 +136,7 @@ class SegmentMgr:
                 size=image_size,
                 image_provider=image_provider,
                 on_image_done=on_image_done,
+                job_id=job_id,
             )
         for seg_id, path in generated:
             path_by_id[seg_id] = path
@@ -148,6 +159,7 @@ class SegmentMgr:
             )
             clips = SegmentClipsResult(segment_clip_paths=[])
         else:
+            _check_cancelled()
             logger.info(
                 "produce_segments: building clips (targets=%s)...",
                 sorted(only_segment_indices) if only_segment_indices is not None else "all",

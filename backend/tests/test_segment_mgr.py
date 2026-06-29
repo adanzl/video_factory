@@ -27,6 +27,7 @@ def test_produce_images_partial_only_selected(tmp_path: Path) -> None:
         size: str | None = None,
         image_provider: str | None = None,
         on_image_done=None,
+        job_id: int | None = None,
     ) -> list[tuple[int, Path]]:
         assert size is not None
         return [
@@ -66,6 +67,7 @@ def test_produce_images_persists_each_image_via_callback(tmp_path: Path) -> None
         size: str | None = None,
         image_provider: str | None = None,
         on_image_done=None,
+        job_id: int | None = None,
     ) -> list[tuple[int, Path]]:
         assert on_image_done is not None
         results = []

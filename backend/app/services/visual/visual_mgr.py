@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Protocol
 
 from app.config import get_settings
+from app.services.job.job_cancel import job_cancel
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +62,7 @@ class VisualMgr:
         size: str | None = None,
         image_provider: str | None = None,
         on_image_done: Callable[[int, Path], None] | None = None,
+        job_id: int | None = None,
     ) -> list[tuple[int, Path]]:
         images_dir.mkdir(parents=True, exist_ok=True)
         provider = self._get_image_provider(image_provider)
@@ -112,6 +114,8 @@ class VisualMgr:
         results: list[tuple[int, Path]] = []
         if on_image_done is not None:
             for seg in segments:
+                if job_id is not None:
+                    job_cancel.raise_if_cancelled(job_id)
                 seg_id, path = render(seg)
                 results.append((seg_id, path))
                 on_image_done(seg_id, path)
@@ -120,6 +124,8 @@ class VisualMgr:
             with ThreadPoolExecutor(max_workers=max_workers) as pool:
                 futures = {pool.submit(render, seg): seg for seg in segments}
                 for fut in as_completed(futures):
+                    if job_id is not None:
+                        job_cancel.raise_if_cancelled(job_id)
                     results.append(fut.result())
                     done += 1
         elapsed = time.time() - start

@@ -9,6 +9,7 @@ import threading
 from collections.abc import Callable
 from pathlib import Path
 
+from app.services.job.job_cancel import JobCancelledError, job_cancel
 from app.services.job.job_reset import prepare_for_action, prepare_job_rerun
 from app.repositories import job_log_repo, job_repo, segment_repo
 from app.repositories.connection import connection
@@ -265,6 +266,7 @@ class JobMgr:
 
     def reset_job(self, job_id: int) -> dict:
         """强制将任务状态重置为 pending（不清除 stage 与产物）。"""
+        job_cancel.clear(job_id)
         with connection() as conn:
             job_repo.get_job(conn, job_id)
             job = job_repo.update_job(
@@ -329,6 +331,27 @@ class JobMgr:
                 error_message=message,
             )
 
+    def mark_aborted(self, job_id: int, stage: str) -> dict:
+        job_cancel.clear(job_id)
+        with connection() as conn:
+            job_log_repo.append_log(
+                conn,
+                job_id,
+                stage,
+                "任务已中止",
+                level="warning",
+            )
+            return job_repo.update_job(conn, job_id, status="pending")
+
+    def abort_job(self, job_id: int) -> dict:
+        job = self.get_job(job_id)
+        if job["status"] != "running":
+            raise ValueError(f"job {job_id} is not running")
+        job_cancel.request(job_id)
+        with connection() as conn:
+            job_log_repo.append_log(conn, job_id, "api", "abort requested")
+        return self.get_job(job_id)
+
     def _run_in_background(
         self,
         job_id: int,
@@ -348,6 +371,7 @@ class JobMgr:
                 raise JobBusyError(f"job {job_id} is running")
 
             prepare_for_action(job_id, action, segment_indices=segment_indices)
+            job_cancel.clear(job_id)
             self.mark_running(job_id)
 
             fail_stage = action.split("/")[0]
@@ -368,6 +392,11 @@ class JobMgr:
                     )
                 try:
                     run()
+                except JobCancelledError:
+                    logger.info("job %s action %s aborted", job_id, action)
+                    job = self.get_job(job_id)
+                    if job["status"] == "running":
+                        self.mark_aborted(job_id, fail_stage)
                 except Exception as exc:
                     logger.exception("job %s action %s failed: %s", job_id, action, exc)
                     job = self.get_job(job_id)
@@ -754,4 +783,4 @@ class JobMgr:
 
 job_mgr = JobMgr()
 
-__all__ = ["JobBusyError", "JobMgr", "job_mgr"]
+__all__ = ["JobBusyError", "JobCancelledError", "JobMgr", "job_mgr"]

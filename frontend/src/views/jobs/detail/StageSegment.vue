@@ -8,7 +8,10 @@
         <el-button type="success" :loading="submitting" :disabled="actionDisabled" @click="handleRun(true)">
           从此成片
         </el-button>
-        <span v-if="actionDisabledReason" class="text-sm text-gray-400">{{ actionDisabledReason }}</span>
+        <span v-if="actionDisabledReason" class="text-sm text-gray-400">
+          {{ actionDisabledReason }}
+          <template v-if="props.job.status === 'running'">，可在页面上方点击「中止」</template>
+        </span>
       </div>
       <el-descriptions :column="3" border label-width="100px" class="w-full">
         <el-descriptions-item label="重跑模式">
