@@ -46,7 +46,13 @@ _DEFAULT_MOTION_PROMPT = (
     "镜头固定或极轻微缓慢推进，主体清晰稳定，画面平滑无抖动，科普讲解风格"
 )
 _STABILITY_HINT = "画面稳定，无抖动，无快速运镜"
-_FRAME_CANDIDATES = (81, 121, 161, 241, 441)
+_MAX_FRAMES = 441
+_MIN_FRAMES = 81
+
+
+def _pick_num_frames(target_sec: float, frame_rate: int) -> int:
+    need = max(_MIN_FRAMES, int(math.ceil(target_sec * frame_rate)))
+    return min(_MAX_FRAMES, 8 * math.ceil((need - 1) / 8) + 1)
 
 
 def _stabilize_motion_prompt(prompt: str) -> str:
@@ -69,14 +75,6 @@ def _merge_t2v_prompt(image_prompt: str | None, motion_prompt: str | None) -> st
     else:
         merged = motion
     return _stabilize_motion_prompt(merged)
-
-
-def _pick_num_frames(target_sec: float, frame_rate: int) -> int:
-    need = max(81, int(math.ceil(target_sec * frame_rate)))
-    for frames in _FRAME_CANDIDATES:
-        if frames >= need:
-            return frames
-    return 441
 
 
 def _agnes_api_root(base_url: str) -> str:
