@@ -115,19 +115,25 @@ def format_image_prompt_retry_warning(
 # https://api-docs.deepseek.com/zh-cn/guides/json_mode
 _STORYBOARD_JSON_EXAMPLE = """{
   "title": "标题示例",
-  "narration": "第一段口播正文写满本镜预算，用具体细节撑开，禁止一句带过。第二段口播同样写满本镜字数下限，补案例或步骤后再进入下一段。",
-  "word_count": 68,
+  "narration": "第一段口播正文，用具体细节或例子撑开，有开头有结尾。第二段口播也是完整段落，讲一个新角度或新知识。第三段继续讲，每段都有实质内容不凑字数。",
+  "word_count": 150,
   "visual_style": "画风定调一句话",
   "segments": [
     {
       "segment_index": 1,
-      "text": "第一段口播正文写满本镜预算，用具体细节撑开，禁止一句带过。",
+      "text": "第一段口播正文，用具体细节或例子撑开，有开头有结尾。",
       "visual_brief": "画面主旨描述",
       "visual_mode": "static_motion"
     },
     {
       "segment_index": 2,
-      "text": "第二段口播同样写满本镜字数下限，补案例或步骤后再进入下一段。",
+      "text": "第二段口播也是完整段落，讲一个新角度或新知识。",
+      "visual_brief": "画面主旨描述",
+      "visual_mode": "static_motion"
+    },
+    {
+      "segment_index": 3,
+      "text": "第三段继续讲，每段都有实质内容不凑字数。",
       "visual_brief": "画面主旨描述",
       "visual_mode": "static_motion"
     }
@@ -140,13 +146,19 @@ _STORYBOARD_JSON_EXAMPLE_COMPACT = """{
   "segments": [
     {
       "segment_index": 1,
-      "text": "第一段口播正文写满本镜预算，用具体细节撑开，禁止一句带过。",
+      "text": "第一段口播正文，用具体细节撑开。",
       "visual_brief": "画面主旨",
       "visual_mode": "static_motion"
     },
     {
       "segment_index": 2,
-      "text": "第二段口播同样写满本镜字数下限，补案例或步骤后再进入下一段。",
+      "text": "第二段口播讲新角度。",
+      "visual_brief": "画面主旨",
+      "visual_mode": "static_motion"
+    },
+    {
+      "segment_index": 3,
+      "text": "第三段收尾。",
       "visual_brief": "画面主旨",
       "visual_mode": "static_motion"
     }
