@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Protocol
 
 from app.config import get_settings
-from app.services.job.job_cancel import job_cancel
+from app.utils.job_cancel import job_cancel
 
 logger = logging.getLogger(__name__)
 

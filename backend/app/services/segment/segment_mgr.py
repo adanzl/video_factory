@@ -8,7 +8,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from app.services.job.job_cancel import job_cancel
+from app.utils.job_cancel import job_cancel
 from app.services.media.media_mgr import SegmentClipsResult, media_mgr
 from app.services.tts.tts_mgr import tts_mgr
 from app.services.visual.visual_mgr import visual_mgr

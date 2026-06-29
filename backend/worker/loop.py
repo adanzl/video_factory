@@ -10,7 +10,7 @@ from app.core.pipelines import (
     next_stage_class,
     stage_class_for,
 )
-from app.services.job.job_cancel import JobCancelledError, job_cancel
+from app.utils.job_cancel import JobCancelledError, job_cancel
 from app.services.job.job_mgr import job_mgr
 from app.repositories import job_log_repo, job_repo
 from app.repositories.connection import connection

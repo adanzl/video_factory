@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.services.job.job_cancel import JobCancelledError, job_cancel
+from app.utils.job_cancel import JobCancelledError, job_cancel
 
 
 def test_request_and_clear():

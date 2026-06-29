@@ -9,7 +9,7 @@ import threading
 from collections.abc import Callable
 from pathlib import Path
 
-from app.services.job.job_cancel import JobCancelledError, job_cancel
+from app.utils.job_cancel import JobCancelledError, job_cancel
 from app.services.job.job_reset import prepare_for_action, prepare_job_rerun
 from app.repositories import job_log_repo, job_repo, segment_repo
 from app.repositories.connection import connection
