@@ -754,10 +754,11 @@ class DeepSeekClient(LLMClient):
         count: int = 10,
         system_prompt: str | None = None,
         user_prompt: str | None = None,
+        track: str | None = None,
     ) -> list[dict[str, str]]:
         settings = get_settings()
         count = max(1, min(count, 20))
-        system = system_prompt or build_topic_system_prompt(max_title_len=settings.max_title_length)
+        system = system_prompt or build_topic_system_prompt(max_title_len=settings.max_title_length, track=track)
         user = user_prompt.strip() if user_prompt else build_topic_user_prompt(theme=theme, count=count)
         raw, _ = self._chat_json(system, user)
         topics = parse_topics_payload(raw, max_title_len=settings.max_title_length)

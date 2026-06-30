@@ -129,13 +129,15 @@ class TopicMgr:
         count: int = 10,
         system_prompt: str | None = None,
         user_prompt: str | None = None,
+        track: str | None = None,
     ) -> dict:
-        logger.info("[TOPIC] save start theme=%r count=%d", theme, count)
+        logger.info("[TOPIC] save start theme=%r count=%d track=%s", theme, count, track)
         topics = llm_mgr.generate_topics(
             theme,
             count=count,
             system_prompt=system_prompt,
             user_prompt=user_prompt,
+            track=track,
         )
         result = self.add_topics(topics, source="llm", dedup_keyword=True)
         if result["added"]:

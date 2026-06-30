@@ -277,6 +277,7 @@ class LLMMgr:
         count: int = 10,
         system_prompt: str | None = None,
         user_prompt: str | None = None,
+        track: str | None = None,
     ) -> list[dict[str, str]]:
         count = max(1, min(count, 20))
         custom_prompt = bool(system_prompt or user_prompt)
@@ -294,6 +295,7 @@ class LLMMgr:
                 count=count,
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
+                track=track,
             )
         except Exception:
             logger.exception(
