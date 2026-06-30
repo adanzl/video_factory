@@ -257,13 +257,22 @@ def _synthesize_segment(
         len(segment_text),
     )
 
-    result = _run_tts_task(
-        segment_text,
-        word_timestamps=True,
-        timeout=_segment_timeout(segment_text),
-        rate=effective_rate,
-        voice=effective_voice,
-    )
+    for attempt in (1, 2):
+        try:
+            result = _run_tts_task(
+                segment_text,
+                word_timestamps=True,
+                timeout=_segment_timeout(segment_text),
+                rate=effective_rate,
+                voice=effective_voice,
+            )
+            break
+        except TimeoutError:
+            if attempt == 2:
+                raise
+            logger.warning("tts segment %s task-started 超时，重试第 %s 次", seg_index, attempt)
+            time.sleep(3)
+            continue
     segment_mp3 = clips_dir / f"{seg_index}.mp3"
     segment_mp3.write_bytes(result.audio)
 
