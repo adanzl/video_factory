@@ -111,8 +111,6 @@ def score_title(
     if _has_pattern(text, _CURIOSITY_PATTERNS):
         curiosity += 30
     if is_history:
-        if "：" in text or ":" in text:
-            curiosity += 10
         if any(kw in text for kw in ("无人", "不敢", "消失", "失踪", "惊魂", "诡异", "反常", "到底")):
             curiosity += 10
     elif "?" in text or "？" in text:
