@@ -64,10 +64,20 @@
 
       <!-- 封面 / 成片 -->
       <div :class="STAGE_TWO_COL_CLASS">
-        <div class="min-w-[280px] max-w-full flex-[1.45] basis-[460px]">
+        <div class="min-w-[280px] max-w-full shrink-0 basis-[520px]">
           <section :class="STAGE_PANEL_CLASS">
             <div :class="STAGE_PANEL_HEADER_CLASS">
-              <div :class="STAGE_PANEL_TITLE_TEXT_CLASS">封面</div>
+              <div class="flex items-center gap-2">
+                <div :class="STAGE_PANEL_TITLE_TEXT_CLASS">封面</div>
+                <el-button
+                  v-if="coverUrl"
+                  size="small"
+                  :type="showCover43Guide ? 'primary' : 'default'"
+                  @click="showCover43Guide = !showCover43Guide"
+                >
+                  4:3
+                </el-button>
+              </div>
               <el-button
                 v-if="coverPath"
                 size="small"
@@ -79,7 +89,7 @@
             </div>
             <div v-if="coverUrl" class="flex justify-center">
               <div
-                class="flex items-center justify-center overflow-hidden rounded-lg border border-gray-200 bg-gray-50"
+                class="relative flex items-center justify-center overflow-hidden rounded-lg border border-gray-200 bg-gray-50"
                 :style="coverBoxStyle"
               >
                 <el-image
@@ -92,6 +102,28 @@
                   @load="onCoverLoad"
                   @error="coverLoadError = true"
                 />
+                <div v-if="showCover43Guide" class="pointer-events-none absolute inset-0 z-10">
+                  <template v-if="cover43Guide.mode === 'horizontal'">
+                    <div
+                      class="absolute inset-x-0 border-t-2 border-amber-400/90"
+                      :style="{ top: `${cover43Guide.startPct}%` }"
+                    />
+                    <div
+                      class="absolute inset-x-0 border-t-2 border-amber-400/90"
+                      :style="{ top: `${cover43Guide.startPct + cover43Guide.spanPct}%` }"
+                    />
+                  </template>
+                  <template v-else>
+                    <div
+                      class="absolute inset-y-0 border-l-2 border-amber-400/90"
+                      :style="{ left: `${cover43Guide.startPct}%` }"
+                    />
+                    <div
+                      class="absolute inset-y-0 border-l-2 border-amber-400/90"
+                      :style="{ left: `${cover43Guide.startPct + cover43Guide.spanPct}%` }"
+                    />
+                  </template>
+                </div>
               </div>
             </div>
             <div v-else :class="STAGE_EMPTY_CLASS">暂无封面，请先在「封面」阶段生成</div>
@@ -105,7 +137,7 @@
           </section>
         </div>
 
-        <div class="min-w-[280px] flex-1 basis-[300px]">
+        <div :class="STAGE_COL_RIGHT_CLASS">
           <section :class="STAGE_PANEL_CLASS">
             <div :class="STAGE_PANEL_HEADER_CLASS">
               <div :class="STAGE_PANEL_TITLE_TEXT_CLASS">成片</div>
@@ -163,6 +195,7 @@ import type { JobDetail, JobLog } from "@/types/jobs";
 import type { ScriptJson } from "@/types/jobs/script";
 import {
   buildMediaPreviewBoxStyle,
+  computeCentered43GuideLines,
   readImageNaturalSize,
   resolveFinalPath,
   MEDIA_CROSS_ORIGIN,
@@ -171,6 +204,7 @@ import { useErrorHandler } from "@/composables/useErrorHandler";
 import { copyText } from "@/utils/utils";
 import StageLogsSection from "./StageLogsSection.vue";
 import {
+  STAGE_COL_RIGHT_CLASS,
   STAGE_EMPTY_CLASS,
   STAGE_PANEL_CLASS,
   STAGE_PANEL_HEADER_CLASS,
@@ -196,15 +230,16 @@ const coverLoadError = ref(false);
 const finalLoadError = ref(false);
 const coverMeta = ref<{ width: number; height: number } | null>(null);
 const videoMeta = ref<{ width: number; height: number } | null>(null);
+const showCover43Guide = ref(false);
 
 const COVER_PREVIEW_OPTIONS = {
   maxWidthPx: 560,
-  maxViewportRatio: 0.85,
+  maxViewportRatio: 0.9,
 } as const;
 
 const PUBLISH_PREVIEW_OPTIONS = {
-  maxWidthPx: 480,
-  maxViewportRatio: 0.75,
+  maxWidthPx: 560,
+  maxViewportRatio: 0.85,
 } as const;
 
 const actionDisabled = computed(() => props.job.status === "running");
@@ -250,6 +285,13 @@ const coverBoxStyle = computed(() =>
     coverMeta.value?.height ?? videoMeta.value?.height,
     "9 / 16",
     COVER_PREVIEW_OPTIONS
+  )
+);
+
+const cover43Guide = computed(() =>
+  computeCentered43GuideLines(
+    coverMeta.value?.width ?? videoMeta.value?.width,
+    coverMeta.value?.height ?? videoMeta.value?.height
   )
 );
 
@@ -348,6 +390,7 @@ const handleDownloadFinal = async () => {
 watch(coverPath, () => {
   coverLoadError.value = false;
   coverMeta.value = null;
+  showCover43Guide.value = false;
 });
 
 watch(finalFilePath, () => {

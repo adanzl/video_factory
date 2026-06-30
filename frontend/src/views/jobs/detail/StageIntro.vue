@@ -8,56 +8,120 @@
       @to-end="handleRun(true)"
     />
 
-    <div :class="STAGE_TWO_COL_CLASS">
-      <div :class="STAGE_COL_LEFT_CLASS">
-        <div :class="STAGE_PANEL_CLASS">
-          <el-form
-            :label-width="STAGE_FORM_LABEL_WIDTH"
-            :class="STAGE_FORM_CLASS"
+    <div :class="STAGE_BLOCK_COMPACT_CLASS">
+      <el-descriptions :column="3" border label-width="96px" class="w-full">
+        <el-descriptions-item label="片头风格">
+          <el-radio-group
+            v-model="introCategory"
+            class="intro-orientation-group"
+            :disabled="savingIntroCategory || actionDisabled"
+            @change="handleIntroCategoryChange"
           >
-            <el-form-item label="片头风格">
-              <el-radio-group
-                v-model="introCategory"
-                class="intro-orientation-group"
-                :disabled="savingIntroCategory || actionDisabled"
-                @change="handleIntroCategoryChange"
+            <el-radio value="百科">童趣百科</el-radio>
+            <el-radio value="历史悬案">历史悬案</el-radio>
+          </el-radio-group>
+        </el-descriptions-item>
+        <el-descriptions-item label="画面方向">
+          <el-radio-group v-model="introOrientation" class="intro-orientation-group">
+            <el-radio value="auto">自动</el-radio>
+            <el-radio value="portrait">竖屏 9:16</el-radio>
+            <el-radio value="landscape">横屏 16:9</el-radio>
+          </el-radio-group>
+        </el-descriptions-item>
+        <el-descriptions-item label="尾部停留">
+          <el-input-number
+            v-model="holdTailSec"
+            :min="0"
+            :max="5"
+            :step="0.05"
+            placeholder="秒"
+            controls-position="right"
+            size="small"
+            class="w-32!"
+          />
+          <span class="ml-1 text-xs text-gray-500">秒</span>
+        </el-descriptions-item>
+        <el-descriptions-item label="成片时长">
+          <span class="text-sm text-gray-700">{{ actualDurationText }}</span>
+        </el-descriptions-item>
+        <el-descriptions-item label="片头路径" :span="2">
+          <span class="break-all text-sm text-gray-600">{{ job.intro_path || "-" }}</span>
+        </el-descriptions-item>
+        <el-descriptions-item label="封面路径" :span="3">
+          <span class="break-all text-sm text-gray-600">{{ job.cover_path || "-" }}</span>
+        </el-descriptions-item>
+      </el-descriptions>
+      <p class="mt-1.5 text-xs leading-snug text-gray-400">
+        总时长 = 品牌喊声时长 + 尾部停留；封面由片头预览帧自动生成。「自动」时素材任务跟随基底视频分辨率。
+      </p>
+    </div>
+
+    <div :class="STAGE_TWO_COL_CLASS">
+      <div class="min-w-[280px] max-w-full shrink-0 basis-[520px]">
+        <div :class="STAGE_PANEL_CLASS">
+          <div :class="STAGE_PANEL_HEADER_CLASS">
+            <span :class="STAGE_PANEL_TITLE_TEXT_CLASS">封面预览</span>
+            <div class="flex items-center gap-2">
+              <el-button
+                v-if="coverUrl"
+                size="small"
+                :type="showCover43Guide ? 'primary' : 'default'"
+                @click="showCover43Guide = !showCover43Guide"
               >
-                <el-radio value="百科">童趣百科</el-radio>
-                <el-radio value="历史悬案">历史悬案</el-radio>
-              </el-radio-group>
-            </el-form-item>
-            <el-form-item label="画面方向">
-              <el-radio-group v-model="introOrientation" class="intro-orientation-group">
-                <el-radio value="auto">自动</el-radio>
-                <el-radio value="portrait">竖屏 9:16</el-radio>
-                <el-radio value="landscape">横屏 16:9</el-radio>
-              </el-radio-group>
-            </el-form-item>
-            <el-form-item label="尾部停留">
-              <el-input-number
-                v-model="holdTailSec"
-                :min="0"
-                :max="5"
-                :step="0.05"
-                placeholder="秒"
-                controls-position="right"
-                class="w-40!"
+                4:3
+              </el-button>
+              <span class="text-xs text-gray-400">{{ coverResolutionText }}</span>
+            </div>
+          </div>
+          <div v-if="coverUrl" class="flex justify-center">
+            <div
+              class="relative flex items-center justify-center overflow-hidden rounded-lg border border-gray-200 bg-gray-50"
+              :style="coverBoxStyle"
+            >
+              <el-image
+                :key="coverUrl"
+                :src="coverUrl"
+                :preview-src-list="[coverUrl]"
+                :crossorigin="MEDIA_CROSS_ORIGIN"
+                fit="contain"
+                class="block h-full w-full [&_.el-image__inner]:block [&_.el-image__inner]:h-full [&_.el-image__inner]:w-full [&_.el-image__inner]:object-contain"
+                @load="onCoverLoad"
+                @error="onCoverError"
               />
-              <span class="ml-2 text-sm text-gray-500">秒</span>
-            </el-form-item>
-            <el-form-item label="成片时长">
-              <span class="text-gray-700">{{ actualDurationText }}</span>
-            </el-form-item>
-            <el-form-item label="片头路径">
-              <span class="break-all text-gray-600">{{ job.intro_path || "-" }}</span>
-            </el-form-item>
-            <el-form-item label="封面路径">
-              <span class="break-all text-gray-600">{{ job.cover_path || "-" }}</span>
-            </el-form-item>
-          </el-form>
-          <p class="mt-1 text-xs leading-normal text-gray-400">
-            总时长 = 品牌喊声时长 + 尾部停留；封面由片头预览帧自动生成。「自动」时素材任务跟随基底视频分辨率。
-          </p>
+              <div v-if="showCover43Guide" class="pointer-events-none absolute inset-0 z-10">
+                <template v-if="cover43Guide.mode === 'horizontal'">
+                  <div
+                    class="absolute inset-x-0 border-t-2 border-amber-400/90"
+                    :style="{ top: `${cover43Guide.startPct}%` }"
+                  />
+                  <div
+                    class="absolute inset-x-0 border-t-2 border-amber-400/90"
+                    :style="{ top: `${cover43Guide.startPct + cover43Guide.spanPct}%` }"
+                  />
+                </template>
+                <template v-else>
+                  <div
+                    class="absolute inset-y-0 border-l-2 border-amber-400/90"
+                    :style="{ left: `${cover43Guide.startPct}%` }"
+                  />
+                  <div
+                    class="absolute inset-y-0 border-l-2 border-amber-400/90"
+                    :style="{ left: `${cover43Guide.startPct + cover43Guide.spanPct}%` }"
+                  />
+                </template>
+              </div>
+            </div>
+          </div>
+          <div v-else-if="!job.cover_path" :class="STAGE_EMPTY_CLASS">
+            暂无封面，生成片头后自动产出
+          </div>
+          <el-alert
+            v-else-if="coverLoadError"
+            type="warning"
+            :title="coverLoadError"
+            :closable="false"
+            class="mt-2"
+          />
         </div>
       </div>
 
@@ -99,40 +163,6 @@
             class="mt-2"
           />
         </div>
-
-        <div :class="[STAGE_PANEL_CLASS, STAGE_SUBSECTION_CLASS]">
-          <div :class="STAGE_PANEL_HEADER_CLASS">
-            <span :class="STAGE_PANEL_TITLE_TEXT_CLASS">封面预览</span>
-            <span class="text-xs text-gray-400">{{ coverResolutionText }}</span>
-          </div>
-          <div v-if="coverUrl" class="flex justify-center">
-            <div
-              class="flex items-center justify-center overflow-hidden rounded-lg border border-gray-200 bg-gray-50"
-              :style="coverBoxStyle"
-            >
-              <el-image
-                :key="coverUrl"
-                :src="coverUrl"
-                :preview-src-list="[coverUrl]"
-                :crossorigin="MEDIA_CROSS_ORIGIN"
-                fit="contain"
-                class="block h-full w-full [&_.el-image__inner]:block [&_.el-image__inner]:h-full [&_.el-image__inner]:w-full [&_.el-image__inner]:object-contain"
-                @load="onCoverLoad"
-                @error="onCoverError"
-              />
-            </div>
-          </div>
-          <div v-else-if="!job.cover_path" :class="STAGE_EMPTY_CLASS">
-            暂无封面，生成片头后自动产出
-          </div>
-          <el-alert
-            v-else-if="coverLoadError"
-            type="warning"
-            :title="coverLoadError"
-            :closable="false"
-            class="mt-2"
-          />
-        </div>
       </div>
     </div>
 
@@ -149,19 +179,17 @@ import type { IntroCategory, JobDetail, JobLog } from "@/types/jobs";
 import StageActionBar from "./StageActionBar.vue";
 import StageLogsSection from "./StageLogsSection.vue";
 import {
-  STAGE_COL_LEFT_CLASS,
+  STAGE_BLOCK_COMPACT_CLASS,
   STAGE_COL_RIGHT_CLASS,
   STAGE_EMPTY_CLASS,
-  STAGE_FORM_CLASS,
-  STAGE_FORM_LABEL_WIDTH,
   STAGE_PANEL_CLASS,
   STAGE_PANEL_HEADER_CLASS,
   STAGE_PANEL_TITLE_TEXT_CLASS,
-  STAGE_SUBSECTION_CLASS,
   STAGE_TWO_COL_CLASS,
 } from "./stageLayout";
 import {
   buildMediaPreviewBoxStyle,
+  computeCentered43GuideLines,
   formatVideoResolution,
   guessIntroPreviewAspectRatio,
   MEDIA_CROSS_ORIGIN,
@@ -214,6 +242,7 @@ const coverLoadError = ref("");
 const videoRef = ref<HTMLVideoElement | null>(null);
 const videoMeta = ref<{ width: number; height: number } | null>(null);
 const coverMeta = ref<{ width: number; height: number } | null>(null);
+const showCover43Guide = ref(false);
 
 const reloadVideoPreview = () => {
   void nextTick(() => {
@@ -253,11 +282,32 @@ const previewFallbackAspectRatio = computed(() =>
   guessIntroPreviewAspectRatio(introOrientation.value, props.job.pipeline)
 );
 
+const introCoverFallbackRatio = computed(() => {
+  const [width, height] = previewFallbackAspectRatio.value
+    .split("/")
+    .map(part => Number.parseFloat(part.trim()));
+  if (!width || !height) {
+    return 9 / 16;
+  }
+  return width / height;
+});
+
+const INTRO_VIDEO_PREVIEW_OPTIONS = {
+  maxWidthPx: 560,
+  maxViewportRatio: 0.85,
+} as const;
+
+const COVER_PREVIEW_OPTIONS = {
+  maxWidthPx: 560,
+  maxViewportRatio: 0.9,
+} as const;
+
 const previewBoxStyle = computed(() =>
   buildMediaPreviewBoxStyle(
     videoMeta.value?.width,
     videoMeta.value?.height,
-    previewFallbackAspectRatio.value
+    previewFallbackAspectRatio.value,
+    INTRO_VIDEO_PREVIEW_OPTIONS
   )
 );
 
@@ -265,7 +315,16 @@ const coverBoxStyle = computed(() =>
   buildMediaPreviewBoxStyle(
     coverMeta.value?.width ?? videoMeta.value?.width,
     coverMeta.value?.height ?? videoMeta.value?.height,
-    previewFallbackAspectRatio.value
+    previewFallbackAspectRatio.value,
+    COVER_PREVIEW_OPTIONS
+  )
+);
+
+const cover43Guide = computed(() =>
+  computeCentered43GuideLines(
+    coverMeta.value?.width ?? videoMeta.value?.width,
+    coverMeta.value?.height ?? videoMeta.value?.height,
+    introCoverFallbackRatio.value
   )
 );
 
@@ -397,6 +456,7 @@ watch(
   () => {
     coverLoadError.value = "";
     coverMeta.value = null;
+    showCover43Guide.value = false;
   }
 );
 
@@ -432,11 +492,11 @@ watch(videoUrl, () => {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px 20px;
+  gap: 4px 16px;
 }
 
 .intro-orientation-group :deep(.el-radio) {
   margin-right: 0;
-  height: 32px;
+  height: 28px;
 }
 </style>
