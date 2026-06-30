@@ -123,14 +123,23 @@ const downloading = ref(false);
 const loadError = ref("");
 const videoMeta = ref<{ width: number; height: number } | null>(null);
 
+const MERGE_PREVIEW_OPTIONS = {
+  maxWidthPx: 560,
+  maxViewportRatio: 0.85,
+} as const;
+
 const previewBoxStyle = computed(() =>
-  buildMediaPreviewBoxStyle(videoMeta.value?.width, videoMeta.value?.height)
+  buildMediaPreviewBoxStyle(
+    videoMeta.value?.width,
+    videoMeta.value?.height,
+    "16 / 9",
+    MERGE_PREVIEW_OPTIONS
+  )
 );
 
-const previewPlaceholderStyle = computed(() => ({
-  ...buildMediaPreviewBoxStyle(null, null),
-  minHeight: "120px",
-}));
+const previewPlaceholderStyle = computed(() =>
+  buildMediaPreviewBoxStyle(null, null, "16 / 9", MERGE_PREVIEW_OPTIONS)
+);
 
 const resolutionText = computed(() =>
   formatVideoResolution(videoMeta.value?.width, videoMeta.value?.height)

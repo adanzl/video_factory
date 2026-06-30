@@ -1,11 +1,5 @@
 <template>
   <div>
-    <el-alert
-      type="info"
-      title="请手动投稿：复制标题与视频介绍，下载封面与成片后上传到平台。"
-      :closable="false"
-      class="mb-4"
-    />
 
     <div class="space-y-4">
       <!-- 标题 -->
@@ -68,83 +62,91 @@
         </div>
       </section>
 
-      <!-- 封面 -->
-      <section :class="STAGE_PANEL_CLASS">
-        <div :class="STAGE_PANEL_HEADER_CLASS">
-          <div :class="STAGE_PANEL_TITLE_TEXT_CLASS">封面</div>
-          <el-button
-            v-if="coverPath"
-            size="small"
-            :loading="downloadingCover"
-            @click="handleDownloadCover"
-          >
-            下载
-          </el-button>
-        </div>
-        <div
-          v-if="coverUrl"
-          class="mx-auto flex h-[280px] max-w-md items-center justify-center overflow-hidden rounded-lg border border-gray-200 bg-gray-50"
-        >
-          <el-image
-            :key="coverUrl"
-            :src="coverUrl"
-            :preview-src-list="[coverUrl]"
-            :crossorigin="MEDIA_CROSS_ORIGIN"
-            fit="contain"
-            class="block h-full w-full [&_.el-image__inner]:h-full [&_.el-image__inner]:w-full [&_.el-image__inner]:object-contain"
-            @error="coverLoadError = true"
-          />
-        </div>
-        <div v-else :class="STAGE_EMPTY_CLASS">暂无封面，请先在「封面」阶段生成</div>
-        <el-alert
-          v-if="coverLoadError && coverPath"
-          type="warning"
-          title="封面加载失败"
-          :closable="false"
-          class="mt-2"
-        />
-      </section>
-
-      <!-- 成片 -->
-      <section :class="STAGE_PANEL_CLASS">
-        <div :class="STAGE_PANEL_HEADER_CLASS">
-          <div :class="STAGE_PANEL_TITLE_TEXT_CLASS">成片</div>
-          <el-button
-            v-if="finalFilePath"
-            size="small"
-            :loading="downloadingFinal"
-            @click="handleDownloadFinal"
-          >
-            下载
-          </el-button>
-        </div>
-        <div v-if="videoUrl" class="flex justify-center">
-          <div
-            class="overflow-hidden rounded-lg border border-gray-200 bg-black"
-            :style="previewBoxStyle"
-          >
-            <video
-              :key="videoUrl"
-              class="block h-full w-full bg-black object-contain"
-              :src="videoUrl"
-              :crossorigin="MEDIA_CROSS_ORIGIN"
-              controls
-              playsinline
-              preload="metadata"
-              @error="finalLoadError = true"
-              @loadedmetadata="onVideoMetadata"
+      <!-- 封面 / 成片 -->
+      <div :class="STAGE_TWO_COL_CLASS">
+        <div class="min-w-[280px] max-w-full flex-[1.45] basis-[460px]">
+          <section :class="STAGE_PANEL_CLASS">
+            <div :class="STAGE_PANEL_HEADER_CLASS">
+              <div :class="STAGE_PANEL_TITLE_TEXT_CLASS">封面</div>
+              <el-button
+                v-if="coverPath"
+                size="small"
+                :loading="downloadingCover"
+                @click="handleDownloadCover"
+              >
+                下载
+              </el-button>
+            </div>
+            <div v-if="coverUrl" class="flex justify-center">
+              <div
+                class="flex items-center justify-center overflow-hidden rounded-lg border border-gray-200 bg-gray-50"
+                :style="coverBoxStyle"
+              >
+                <el-image
+                  :key="coverUrl"
+                  :src="coverUrl"
+                  :preview-src-list="[coverUrl]"
+                  :crossorigin="MEDIA_CROSS_ORIGIN"
+                  fit="contain"
+                  class="block h-full w-full [&_.el-image__inner]:block [&_.el-image__inner]:h-full [&_.el-image__inner]:w-full [&_.el-image__inner]:object-contain"
+                  @load="onCoverLoad"
+                  @error="coverLoadError = true"
+                />
+              </div>
+            </div>
+            <div v-else :class="STAGE_EMPTY_CLASS">暂无封面，请先在「封面」阶段生成</div>
+            <el-alert
+              v-if="coverLoadError && coverPath"
+              type="warning"
+              title="封面加载失败"
+              :closable="false"
+              class="mt-2"
             />
-          </div>
+          </section>
         </div>
-        <div v-else :class="STAGE_EMPTY_CLASS">暂无成片，请先在「合成」阶段生成</div>
-        <el-alert
-          v-if="finalLoadError && finalFilePath"
-          type="warning"
-          title="成片加载失败"
-          :closable="false"
-          class="mt-2"
-        />
-      </section>
+
+        <div class="min-w-[280px] flex-1 basis-[300px]">
+          <section :class="STAGE_PANEL_CLASS">
+            <div :class="STAGE_PANEL_HEADER_CLASS">
+              <div :class="STAGE_PANEL_TITLE_TEXT_CLASS">成片</div>
+              <el-button
+                v-if="finalFilePath"
+                size="small"
+                :loading="downloadingFinal"
+                @click="handleDownloadFinal"
+              >
+                下载
+              </el-button>
+            </div>
+            <div v-if="videoUrl" class="flex justify-center">
+              <div
+                class="overflow-hidden rounded-lg border border-gray-200 bg-black"
+                :style="previewBoxStyle"
+              >
+                <video
+                  :key="videoUrl"
+                  class="block h-full w-full bg-black object-contain"
+                  :src="videoUrl"
+                  :crossorigin="MEDIA_CROSS_ORIGIN"
+                  controls
+                  playsinline
+                  preload="metadata"
+                  @error="finalLoadError = true"
+                  @loadedmetadata="onVideoMetadata"
+                />
+              </div>
+            </div>
+            <div v-else :class="STAGE_EMPTY_CLASS">暂无成片，请先在「合成」阶段生成</div>
+            <el-alert
+              v-if="finalLoadError && finalFilePath"
+              type="warning"
+              title="成片加载失败"
+              :closable="false"
+              class="mt-2"
+            />
+          </section>
+        </div>
+      </div>
     </div>
 
     <StageLogsSection :logs="logs" />
@@ -159,7 +161,12 @@ import { generateVideoDescription } from "@/api/api-jobs";
 import { downloadMediaFile, getMediaFileUrl } from "@/api/api-media";
 import type { JobDetail, JobLog } from "@/types/jobs";
 import type { ScriptJson } from "@/types/jobs/script";
-import { resolveFinalPath, MEDIA_CROSS_ORIGIN } from "@/utils/media";
+import {
+  buildMediaPreviewBoxStyle,
+  readImageNaturalSize,
+  resolveFinalPath,
+  MEDIA_CROSS_ORIGIN,
+} from "@/utils/media";
 import { useErrorHandler } from "@/composables/useErrorHandler";
 import { copyText } from "@/utils/utils";
 import StageLogsSection from "./StageLogsSection.vue";
@@ -168,6 +175,7 @@ import {
   STAGE_PANEL_CLASS,
   STAGE_PANEL_HEADER_CLASS,
   STAGE_PANEL_TITLE_TEXT_CLASS,
+  STAGE_TWO_COL_CLASS,
 } from "./stageLayout";
 
 const props = defineProps<{
@@ -186,7 +194,18 @@ const downloadingCover = ref(false);
 const downloadingFinal = ref(false);
 const coverLoadError = ref(false);
 const finalLoadError = ref(false);
+const coverMeta = ref<{ width: number; height: number } | null>(null);
 const videoMeta = ref<{ width: number; height: number } | null>(null);
+
+const COVER_PREVIEW_OPTIONS = {
+  maxWidthPx: 560,
+  maxViewportRatio: 0.85,
+} as const;
+
+const PUBLISH_PREVIEW_OPTIONS = {
+  maxWidthPx: 480,
+  maxViewportRatio: 0.75,
+} as const;
 
 const actionDisabled = computed(() => props.job.status === "running");
 
@@ -216,19 +235,23 @@ const coverUrl = computed(() => getMediaFileUrl(coverPath.value));
 const finalFilePath = computed(() => resolveFinalPath(props.job.final_path));
 const videoUrl = computed(() => getMediaFileUrl(finalFilePath.value));
 
-const previewBoxStyle = computed(() => {
-  const meta = videoMeta.value;
-  if (meta?.width && meta?.height) {
-    const maxW = 480;
-    const maxH = 360;
-    const scale = Math.min(maxW / meta.width, maxH / meta.height, 1);
-    return {
-      width: `${Math.round(meta.width * scale)}px`,
-      height: `${Math.round(meta.height * scale)}px`,
-    };
-  }
-  return { width: "480px", height: "270px" };
-});
+const previewBoxStyle = computed(() =>
+  buildMediaPreviewBoxStyle(
+    videoMeta.value?.width,
+    videoMeta.value?.height,
+    "16 / 9",
+    PUBLISH_PREVIEW_OPTIONS
+  )
+);
+
+const coverBoxStyle = computed(() =>
+  buildMediaPreviewBoxStyle(
+    coverMeta.value?.width ?? videoMeta.value?.width,
+    coverMeta.value?.height ?? videoMeta.value?.height,
+    "9 / 16",
+    COVER_PREVIEW_OPTIONS
+  )
+);
 
 const coverDownloadName = computed(() => {
   const fromPath = coverPath.value.split("/").pop();
@@ -239,6 +262,13 @@ const finalDownloadName = computed(() => {
   const fromPath = finalFilePath.value.split("/").pop();
   return fromPath || `job-${props.job.id}-final.mp4`;
 });
+
+const onCoverLoad = (event: Event) => {
+  const size = readImageNaturalSize(event);
+  if (size) {
+    coverMeta.value = size;
+  }
+};
 
 const onVideoMetadata = (event: Event) => {
   const video = event.target as HTMLVideoElement;
@@ -317,6 +347,7 @@ const handleDownloadFinal = async () => {
 
 watch(coverPath, () => {
   coverLoadError.value = false;
+  coverMeta.value = null;
 });
 
 watch(finalFilePath, () => {
