@@ -115,6 +115,11 @@ def score_title(
             curiosity += 10
         if any(kw in text for kw in ("无人", "不敢", "消失", "失踪", "惊魂", "诡异", "反常", "到底")):
             curiosity += 10
+    elif "?" in text or "？" in text:
+        # 科技类对话反转式标题：问号加好奇心
+        curiosity += 8
+        if any(kw in text for kw in ("明明", "真以为", "就这", "天真", "慌了", "堆成山")):
+            curiosity += 7
     if template == "反差好奇式":
         curiosity += 10
     if hook and len(hook) >= 10:
