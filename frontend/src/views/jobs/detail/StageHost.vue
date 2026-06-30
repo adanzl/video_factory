@@ -1,16 +1,12 @@
 <template>
   <div>
-    <div class="mb-4 rounded-lg border border-gray-200 p-4">
-      <div class="flex flex-wrap items-center gap-2">
-        <el-button type="primary" :loading="submitting" :disabled="actionDisabled" @click="handleRun(false)">
-          重新生成
-        </el-button>
-        <el-button type="success" :loading="submitting" :disabled="actionDisabled" @click="handleRun(true)">
-          从此成片
-        </el-button>
-        <span v-if="actionDisabledReason" class="text-sm text-gray-400">{{ actionDisabledReason }}</span>
-      </div>
-    </div>
+    <StageActionBar
+      :loading="submitting"
+      :disabled="actionDisabled"
+      :disabled-reason="actionDisabledReason"
+      @primary="handleRun(false)"
+      @to-end="handleRun(true)"
+    />
 
     <div class="py-8 text-center text-sm text-gray-400">讲解人叠图阶段；具体产出见下方日志</div>
 
@@ -32,6 +28,7 @@
 import { computed, ref } from "vue";
 import type { JobDetail, JobLog } from "@/types/jobs";
 import { formatDateTime } from "@/utils/date";
+import StageActionBar from "./StageActionBar.vue";
 
 defineProps<{
   job: JobDetail;

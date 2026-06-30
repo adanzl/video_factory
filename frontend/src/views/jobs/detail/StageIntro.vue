@@ -1,17 +1,16 @@
 <template>
   <div>
+    <StageActionBar
+      :loading="submitting"
+      :disabled="actionDisabled"
+      :disabled-reason="actionDisabledReason"
+      @primary="handleRun(false)"
+      @to-end="handleRun(true)"
+    />
+
     <div class="flex flex-wrap items-start gap-4">
       <div class="min-w-[280px] max-w-full shrink-0 basis-80">
         <div class="rounded-lg border border-gray-200 p-4">
-          <div class="mb-3 flex flex-wrap items-center gap-2">
-            <el-button type="primary" :loading="submitting" :disabled="actionDisabled" @click="handleRun(false)">
-              重新生成
-            </el-button>
-            <el-button type="success" :loading="submitting" :disabled="actionDisabled" @click="handleRun(true)">
-              从此成片
-            </el-button>
-            <span v-if="actionDisabledReason" class="text-sm text-gray-400">{{ actionDisabledReason }}</span>
-          </div>
           <el-form
             label-width="96px"
             class="[&_.el-form-item]:mb-3 [&_.el-form-item__content]:min-w-0 [&_.el-form-item__content]:flex-1"
@@ -158,6 +157,7 @@ import { runJobStageAction, updateJobInfo } from "@/api/api-jobs";
 import { getMediaDuration, getMediaFileUrl } from "@/api/api-media";
 import type { IntroCategory, JobDetail, JobLog } from "@/types/jobs";
 import { formatDateTime } from "@/utils/date";
+import StageActionBar from "./StageActionBar.vue";
 import {
   buildMediaPreviewBoxStyle,
   formatVideoResolution,

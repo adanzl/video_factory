@@ -1,5 +1,13 @@
 <template>
   <div>
+    <StageActionBar
+      :loading="submitting"
+      :disabled="actionDisabled"
+      :disabled-reason="actionDisabledReason"
+      @primary="handleRun(false)"
+      @to-end="handleRun(true)"
+    />
+
     <div class="mb-4 rounded-lg border border-gray-200 p-3">
       <el-form
         :label-width="FORM_LABEL_WIDTH"
@@ -7,20 +15,19 @@
       >
         <el-form-item label="原标题">
           <div class="flex w-full min-w-0 items-center gap-2">
-            <div class="min-w-0 flex-1">
-              <el-input
-                v-model="sourceTitle"
-                placeholder="脚本生成输入标题"
-                clearable
-              />
-            </div>
-            <el-button type="primary" :loading="submitting" :disabled="actionDisabled" @click="handleRun(false)">
-              重新生成
+            <el-input
+              v-model="sourceTitle"
+              placeholder="脚本生成输入标题"
+              clearable
+              class="min-w-0 flex-1!"
+            />
+            <el-button
+              :loading="savingSourceTitle"
+              :disabled="actionDisabled || !sourceTitle.trim() || sourceTitleUnchanged"
+              @click="handleUpdateSourceTitle"
+            >
+              更新
             </el-button>
-            <el-button type="success" :loading="submitting" :disabled="actionDisabled" @click="handleRun(true)">
-              从此成片
-            </el-button>
-            <span v-if="actionDisabledReason" class="shrink-0 text-xs text-gray-400">{{ actionDisabledReason }}</span>
           </div>
         </el-form-item>
 
@@ -447,6 +454,7 @@ import {
   generateVideoDescription,
   generateImagePrompts,
   runJobStageAction,
+  updateJob,
   updateJobInfo,
 } from "@/api/api-jobs";
 import type { JobDetail, JobLog, LlmPromptStep, ScriptJson, UpdateJobInfoParams } from "@/types/jobs";
@@ -463,6 +471,7 @@ import {
 } from "@/utils/media";
 import { useErrorHandler } from "@/composables/useErrorHandler";
 import { copyText } from "@/utils/utils";
+import StageActionBar from "./StageActionBar.vue";
 
 const FORM_LABEL_WIDTH = "100px";
 const SCRIPT_CONFIG_LABEL_WIDTH = "120px";
@@ -485,6 +494,7 @@ const emit = defineEmits<{
 const { handleError } = useErrorHandler();
 
 const submitting = ref(false);
+const savingSourceTitle = ref(false);
 const regeneratingDescription = ref(false);
 const generatingImagePrompts = ref(false);
 const sourceTitle = ref("");
@@ -540,6 +550,9 @@ const materialDurationLocked = computed(
 );
 const actionDisabledReason = computed(() =>
   props.job.status === "running" ? "任务运行中，请稍后再试" : ""
+);
+const sourceTitleUnchanged = computed(
+  () => sourceTitle.value.trim() === (props.job.title || "").trim()
 );
 
 const script = computed<ScriptJson | null>(() => {
@@ -799,6 +812,27 @@ const persistJobProfile = async (patch: UpdateJobInfoParams) => {
     handleError(error, "更新配置失败");
   } finally {
     savingProfile.value = false;
+  }
+};
+
+const handleUpdateSourceTitle = async () => {
+  const trimmedTitle = sourceTitle.value.trim();
+  if (!trimmedTitle) {
+    ElMessage.warning("请输入原标题");
+    return;
+  }
+  if (trimmedTitle === props.job.title) {
+    return;
+  }
+  savingSourceTitle.value = true;
+  try {
+    await updateJob(props.job.id, { title: trimmedTitle });
+    ElMessage.success("原标题已更新");
+    emit("refresh");
+  } catch (error) {
+    handleError(error, "更新原标题失败");
+  } finally {
+    savingSourceTitle.value = false;
   }
 };
 

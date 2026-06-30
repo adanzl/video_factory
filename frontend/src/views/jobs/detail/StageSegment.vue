@@ -1,21 +1,21 @@
 <template>
   <div>
+    <StageActionBar
+      :loading="submitting"
+      :disabled="actionDisabled"
+      @primary="handleRun(false)"
+      @to-end="handleRun(true)"
+    >
+      <span v-if="actionDisabledReason" class="text-sm text-gray-400">
+        {{ actionDisabledReason }}
+        <template v-if="props.job.status === 'running'">，可在页面上方中止</template>
+      </span>
+    </StageActionBar>
+
     <div class="mb-4 rounded-lg border border-gray-200 p-4">
-      <div class="mb-3 flex flex-wrap items-center gap-2">
-        <el-button type="primary" :loading="submitting" :disabled="actionDisabled" @click="handleRun(false)">
-          重新生成
-        </el-button>
-        <el-button type="success" :loading="submitting" :disabled="actionDisabled" @click="handleRun(true)">
-          从此成片
-        </el-button>
-        <span v-if="actionDisabledReason" class="text-sm text-gray-400">
-          {{ actionDisabledReason }}
-          <template v-if="props.job.status === 'running'">，可在页面上方中止</template>
-        </span>
-      </div>
       <el-descriptions :column="3" border label-width="100px" class="w-full">
         <el-descriptions-item label="重跑模式">
-          <el-radio-group v-model="segmentScope" size="small">
+          <el-radio-group v-model="segmentScope">
             <el-radio value="segment/all">全部</el-radio>
             <el-radio value="segment/images">分镜静图</el-radio>
             <el-radio value="segment/clips">图生视频</el-radio>
@@ -279,6 +279,7 @@ import { buildSegmentClipSearchKeyword, type ClipOrientation } from "@/utils/cli
 import { MEDIA_CROSS_ORIGIN } from "@/utils/media";
 import { useErrorHandler } from "@/composables/useErrorHandler";
 import SegmentClipSearchDialog from "@/views/clips/SegmentClipSearchDialog.vue";
+import StageActionBar from "./StageActionBar.vue";
 
 const props = defineProps<{
   job: JobDetail;

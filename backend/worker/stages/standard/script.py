@@ -105,6 +105,10 @@ def _apply_script_title(
     )
     if skip_optimize or content_style == "history_mystery":
         return
+    # 如果标题已是「事件？嘲讽回应」格式，跳过优化避免改写后半句
+    if "？" in script["title"] or "?" in script["title"]:
+        if any(kw in script["title"] for kw in ("堆", "等", "笑", "慌", "满", "怕", "够", "管")):
+            return
     try:
         optimized_title = llm_mgr.optimize_script_title(
             script["title"],
