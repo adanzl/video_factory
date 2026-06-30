@@ -137,7 +137,7 @@ class Config:
     wan_i2v_task_max_retries: int = int(os.getenv("WAN_I2V_TASK_MAX_RETRIES", "1"))
     wan_i2v_poll_max_attempts: int = int(os.getenv("WAN_I2V_POLL_MAX_ATTEMPTS", "60"))
     wan_t2i_poll_max_attempts: int = int(os.getenv("WAN_T2I_POLL_MAX_ATTEMPTS", "45"))
-    max_title_length: int = int(os.getenv("MAX_TITLE_LENGTH", "18"))  # 脚本标题与封面折行上限
+    max_title_length: int = int(os.getenv("MAX_TITLE_LENGTH", "16"))  # 脚本标题与封面折行上限
     # 竖屏短科普：单镜口播上限（秒）；16s 约 5～6 镜/90s 正文
     segment_target_sec: float = float(os.getenv("SEGMENT_TARGET_SEC", "16"))
     # 目标成片总长（秒），用于 standard 线口播字数估算；默认 90s ≈ 1.5 分钟
