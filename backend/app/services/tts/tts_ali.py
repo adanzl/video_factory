@@ -410,6 +410,11 @@ class AliTTSClient(TTSClient):
 
         subtitle_path = output_dir / "subtitles.srt"
         subtitle_path.write_text(build_srt_from_cues(subtitle_cues), encoding="utf-8")
+        logger.info(
+            "srt written cues=%s path=%s",
+            len(subtitle_cues),
+            subtitle_path,
+        )
 
         total_chars = sum(int(t.usage.get("characters") or 0) for t in usage_tasks)
         logger.info(
