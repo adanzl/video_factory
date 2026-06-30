@@ -1,5 +1,5 @@
 <template>
-  <div class="mb-4 flex flex-wrap items-center gap-2 border-b border-gray-200 pb-4">
+  <div :class="STAGE_ACTION_BAR_CLASS">
     <el-button
       v-if="showPrimary"
       type="primary"
@@ -25,6 +25,8 @@
 </template>
 
 <script setup lang="ts">
+import { STAGE_ACTION_BAR_CLASS } from "./stageLayout";
+
 withDefaults(
   defineProps<{
     loading?: boolean;

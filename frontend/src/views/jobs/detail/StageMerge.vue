@@ -8,9 +8,10 @@
       @to-end="handleRun(true)"
     />
 
-    <div class="flex flex-wrap items-start gap-4">
-      <div class="min-w-[280px] max-w-full shrink-0 basis-80">
-        <el-descriptions :column="1" border label-width="70px">
+    <div :class="STAGE_TWO_COL_CLASS">
+      <div :class="STAGE_COL_LEFT_CLASS">
+        <div :class="STAGE_PANEL_CLASS">
+          <el-descriptions :column="1" border label-width="70px">
           <el-descriptions-item label="分辨率">{{ resolutionText }}</el-descriptions-item>
           <el-descriptions-item label="时长">{{ durationText }}</el-descriptions-item>
           <el-descriptions-item label="大小">{{ sizeText }}</el-descriptions-item>
@@ -27,12 +28,13 @@
           :closable="false"
           class="mt-4"
         />
+        </div>
       </div>
 
-      <div class="min-w-[280px] flex-1 basis-[360px]">
-        <div class="rounded border border-gray-200 p-4">
-          <div class="mb-3 flex items-center justify-between gap-2">
-            <div class="text-sm font-medium text-gray-700">成片预览</div>
+      <div :class="STAGE_COL_RIGHT_CLASS">
+        <div :class="STAGE_PANEL_CLASS">
+          <div :class="STAGE_PANEL_HEADER_CLASS">
+            <div :class="STAGE_PANEL_TITLE_TEXT_CLASS">成片预览</div>
             <el-button v-if="videoUrl" size="small" :loading="downloading" @click="handleDownload">
               下载
             </el-button>
@@ -73,17 +75,7 @@
       </div>
     </div>
 
-    <div class="mt-6">
-      <div class="mb-2 text-sm font-medium text-gray-600">阶段日志</div>
-      <el-table v-if="logs.length" :data="logs" stripe size="small" class="w-full">
-        <el-table-column label="时间" width="180">
-          <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
-        </el-table-column>
-        <el-table-column prop="level" label="级别" width="80" />
-        <el-table-column prop="message" label="消息" min-width="240" show-overflow-tooltip />
-      </el-table>
-      <div v-else class="py-8 text-center text-sm text-gray-400">暂无日志</div>
-    </div>
+    <StageLogsSection :logs="logs" />
   </div>
 </template>
 
@@ -93,7 +85,6 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import { runJobStageAction } from "@/api/api-jobs";
 import { downloadMediaFile } from "@/api/api-media";
 import type { JobDetail, JobLog } from "@/types/jobs";
-import { formatDateTime } from "@/utils/date";
 import {
   buildMediaPreviewBoxStyle,
   formatCostTime,
@@ -107,6 +98,15 @@ import {
 } from "@/utils/media";
 import { useErrorHandler } from "@/composables/useErrorHandler";
 import StageActionBar from "./StageActionBar.vue";
+import StageLogsSection from "./StageLogsSection.vue";
+import {
+  STAGE_COL_LEFT_CLASS,
+  STAGE_COL_RIGHT_CLASS,
+  STAGE_PANEL_CLASS,
+  STAGE_PANEL_HEADER_CLASS,
+  STAGE_PANEL_TITLE_TEXT_CLASS,
+  STAGE_TWO_COL_CLASS,
+} from "./stageLayout";
 
 const props = defineProps<{
   job: JobDetail;

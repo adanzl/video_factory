@@ -8,12 +8,12 @@
       @to-end="handleRun(true)"
     />
 
-    <div class="flex flex-wrap items-start gap-4">
-      <div class="min-w-[280px] max-w-full shrink-0 basis-80">
-        <div class="rounded-lg border border-gray-200 p-4">
+    <div :class="STAGE_TWO_COL_CLASS">
+      <div :class="STAGE_COL_LEFT_CLASS">
+        <div :class="STAGE_PANEL_CLASS">
           <el-form
-            label-width="96px"
-            class="[&_.el-form-item]:mb-3 [&_.el-form-item__content]:min-w-0 [&_.el-form-item__content]:flex-1"
+            :label-width="STAGE_FORM_LABEL_WIDTH"
+            :class="STAGE_FORM_CLASS"
           >
             <el-form-item label="片头风格">
               <el-radio-group
@@ -61,10 +61,10 @@
         </div>
       </div>
 
-      <div class="min-w-[280px] flex-1 basis-[360px]">
-        <div class="rounded-lg border border-gray-200 p-4">
-          <div class="mb-3 flex items-baseline justify-between gap-2">
-            <span class="text-sm font-medium text-gray-700">片头预览</span>
+      <div :class="STAGE_COL_RIGHT_CLASS">
+        <div :class="STAGE_PANEL_CLASS">
+          <div :class="STAGE_PANEL_HEADER_CLASS">
+            <span :class="STAGE_PANEL_TITLE_TEXT_CLASS">片头预览</span>
             <span class="text-xs text-gray-400">{{ introResolutionText }}</span>
           </div>
           <div v-if="videoUrl" class="flex justify-center">
@@ -88,7 +88,7 @@
               />
             </div>
           </div>
-          <div v-else-if="!job.intro_path" class="py-8 text-center text-sm text-gray-400">
+          <div v-else-if="!job.intro_path" :class="STAGE_EMPTY_CLASS">
             暂无片头视频，请先生成
           </div>
           <el-alert
@@ -100,9 +100,9 @@
           />
         </div>
 
-        <div class="mt-4 rounded-lg border border-gray-200 p-4">
-          <div class="mb-3 flex items-baseline justify-between gap-2">
-            <span class="text-sm font-medium text-gray-700">封面预览</span>
+        <div :class="[STAGE_PANEL_CLASS, STAGE_SUBSECTION_CLASS]">
+          <div :class="STAGE_PANEL_HEADER_CLASS">
+            <span :class="STAGE_PANEL_TITLE_TEXT_CLASS">封面预览</span>
             <span class="text-xs text-gray-400">{{ coverResolutionText }}</span>
           </div>
           <div v-if="coverUrl" class="flex justify-center">
@@ -122,7 +122,7 @@
               />
             </div>
           </div>
-          <div v-else-if="!job.cover_path" class="py-8 text-center text-sm text-gray-400">
+          <div v-else-if="!job.cover_path" :class="STAGE_EMPTY_CLASS">
             暂无封面，生成片头后自动产出
           </div>
           <el-alert
@@ -136,17 +136,7 @@
       </div>
     </div>
 
-    <div class="mt-6">
-      <div class="mb-2 text-sm font-medium text-gray-600">阶段日志</div>
-      <el-table v-if="logs.length" :data="logs" stripe size="small" class="w-full">
-        <el-table-column label="时间" width="180">
-          <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
-        </el-table-column>
-        <el-table-column prop="level" label="级别" width="80" />
-        <el-table-column prop="message" label="消息" min-width="240" show-overflow-tooltip />
-      </el-table>
-      <div v-else class="py-8 text-center text-sm text-gray-400">暂无日志</div>
-    </div>
+    <StageLogsSection :logs="logs" />
   </div>
 </template>
 
@@ -156,8 +146,20 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import { runJobStageAction, updateJobInfo } from "@/api/api-jobs";
 import { getMediaDuration, getMediaFileUrl } from "@/api/api-media";
 import type { IntroCategory, JobDetail, JobLog } from "@/types/jobs";
-import { formatDateTime } from "@/utils/date";
 import StageActionBar from "./StageActionBar.vue";
+import StageLogsSection from "./StageLogsSection.vue";
+import {
+  STAGE_COL_LEFT_CLASS,
+  STAGE_COL_RIGHT_CLASS,
+  STAGE_EMPTY_CLASS,
+  STAGE_FORM_CLASS,
+  STAGE_FORM_LABEL_WIDTH,
+  STAGE_PANEL_CLASS,
+  STAGE_PANEL_HEADER_CLASS,
+  STAGE_PANEL_TITLE_TEXT_CLASS,
+  STAGE_SUBSECTION_CLASS,
+  STAGE_TWO_COL_CLASS,
+} from "./stageLayout";
 import {
   buildMediaPreviewBoxStyle,
   formatVideoResolution,

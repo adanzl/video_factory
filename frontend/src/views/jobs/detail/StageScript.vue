@@ -8,7 +8,7 @@
       @to-end="handleRun(true)"
     />
 
-    <div class="mb-4 rounded-lg border border-gray-200 p-3">
+    <div :class="STAGE_BLOCK_CLASS">
       <el-form
         :label-width="FORM_LABEL_WIDTH"
         class="[&_.el-form-item]:mb-2 [&_.el-form-item__content]:min-w-0 [&_.el-form-item__content]:flex-1 [&_.el-form-item__label]:w-[100px] [&_.el-form-item__label]:min-w-[100px] [&_.el-form-item__label]:shrink-0 [&_.el-form-item__label]:justify-end"
@@ -183,7 +183,7 @@
 
     <el-collapse
       v-model="promptPanelOpen"
-      class="mb-4 overflow-hidden rounded-lg border border-gray-200 [&_.el-collapse-item__content]:p-3 [&_.el-collapse-item__header]:h-11 [&_.el-collapse-item__header]:border-b-0 [&_.el-collapse-item__header]:px-3 [&_.el-collapse-item__wrap]:border-t [&_.el-collapse-item__wrap]:border-gray-200"
+      class="mb-4 overflow-hidden rounded-lg border border-gray-200 [&_.el-collapse-item__content]:p-4 [&_.el-collapse-item__header]:h-11 [&_.el-collapse-item__header]:border-b-0 [&_.el-collapse-item__header]:px-4 [&_.el-collapse-item__wrap]:border-t [&_.el-collapse-item__wrap]:border-gray-200"
     >
       <el-collapse-item name="prompts">
         <template #title>
@@ -300,7 +300,7 @@
         >
           {{ script.narration }}
         </div>
-        <div v-else class="py-8 text-center text-sm text-gray-400">暂无口播文案</div>
+        <div v-else :class="STAGE_EMPTY_CLASS">暂无口播文案</div>
       </div>
 
       <div v-if="script.narration" class="mb-5">
@@ -387,7 +387,7 @@
             </el-table-column>
           </template>
         </el-table>
-        <div v-else class="py-8 text-center text-sm text-gray-400">暂无分镜</div>
+        <div v-else :class="STAGE_EMPTY_CLASS">暂无分镜</div>
       </div>
 
       <el-collapse class="mt-4">
@@ -396,10 +396,10 @@
         </el-collapse-item>
       </el-collapse>
     </div>
-    <div v-else class="py-8 text-center text-sm text-gray-400">暂无脚本数据</div>
+    <div v-else :class="STAGE_EMPTY_CLASS">暂无脚本数据</div>
 
-    <div class="mt-4">
-      <div class="mb-2 text-sm font-medium text-gray-600">质量报告</div>
+    <div :class="STAGE_SUBSECTION_CLASS">
+      <div :class="STAGE_SECTION_TITLE_CLASS">质量报告</div>
       <div v-if="qualityReportRows.length" class="space-y-4">
         <el-descriptions
           v-for="row in qualityReportRows"
@@ -427,20 +427,10 @@
           <el-descriptions-item v-else label="详情" :span="3">-</el-descriptions-item>
         </el-descriptions>
       </div>
-      <div v-else class="py-8 text-center text-sm text-gray-400">暂无数据</div>
+      <div v-else :class="STAGE_EMPTY_CLASS">暂无数据</div>
     </div>
 
-    <div class="mt-6">
-      <div class="mb-2 text-sm font-medium text-gray-600">阶段日志</div>
-      <el-table v-if="logs.length" :data="logs" stripe size="small" class="w-full">
-        <el-table-column label="时间" width="180">
-          <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
-        </el-table-column>
-        <el-table-column prop="level" label="级别" width="80" />
-        <el-table-column prop="message" label="消息" min-width="240" show-overflow-tooltip />
-      </el-table>
-      <div v-else class="py-8 text-center text-sm text-gray-400">暂无日志</div>
-    </div>
+    <StageLogsSection :logs="logs" />
   </div>
 </template>
 
@@ -472,6 +462,8 @@ import {
 import { useErrorHandler } from "@/composables/useErrorHandler";
 import { copyText } from "@/utils/utils";
 import StageActionBar from "./StageActionBar.vue";
+import StageLogsSection from "./StageLogsSection.vue";
+import { STAGE_BLOCK_CLASS, STAGE_EMPTY_CLASS, STAGE_SECTION_TITLE_CLASS, STAGE_SUBSECTION_CLASS } from "./stageLayout";
 
 const FORM_LABEL_WIDTH = "100px";
 const SCRIPT_CONFIG_LABEL_WIDTH = "120px";

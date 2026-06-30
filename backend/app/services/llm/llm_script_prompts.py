@@ -203,6 +203,7 @@ _IMAGE_PROMPT_DIMENSIONS_COMPACT = (
     "①主体；②场景/环境；③视觉风格；④光照；⑤构图；⑥质量要求；"
     "并遵守语义边界（仅本段内容）。"
     "实际 SD1.5 出图以 sd15_prompt_en 为准。"
+    "image_prompt 和 sd15_prompt_en 都必须使用中文和英文分别写，禁止 image_prompt 出现英文。"
 )
 
 _IMAGE_PROMPT_RULE_SCIENCE_PORTRAIT = (

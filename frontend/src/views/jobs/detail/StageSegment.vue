@@ -12,7 +12,7 @@
       </span>
     </StageActionBar>
 
-    <div class="mb-4 rounded-lg border border-gray-200 p-4">
+    <div :class="STAGE_BLOCK_CLASS">
       <el-descriptions :column="3" border label-width="100px" class="w-full">
         <el-descriptions-item label="重跑模式">
           <el-radio-group v-model="segmentScope">
@@ -77,7 +77,7 @@
         <article
           v-for="segment in displaySegments"
           :key="segment.segment_index"
-          class="flex w-72 shrink-0 flex-col gap-3 rounded-lg border border-gray-200 bg-white p-3"
+          class="flex w-72 shrink-0 flex-col gap-3 rounded-lg border border-gray-200 bg-white p-4"
         >
           <div class="flex items-center justify-between gap-2">
             <span class="text-sm font-medium text-gray-800">#{{ segment.segment_index }}</span>
@@ -242,7 +242,7 @@
         </article>
       </div>
     </div>
-    <div v-else class="py-8 text-center text-sm text-gray-400">暂无分镜数据</div>
+    <div v-else :class="STAGE_EMPTY_CLASS">暂无分镜数据</div>
 
     <SegmentClipSearchDialog
       v-model="clipSearchOpen"
@@ -253,17 +253,7 @@
       @imported="emit('refresh')"
     />
 
-    <div class="mt-6">
-      <div class="mb-2 text-sm font-medium text-gray-600">阶段日志</div>
-      <el-table v-if="logs.length" :data="logs" stripe size="small" class="w-full">
-        <el-table-column label="时间" width="180">
-          <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
-        </el-table-column>
-        <el-table-column prop="level" label="级别" width="80" />
-        <el-table-column prop="message" label="消息" min-width="240" show-overflow-tooltip />
-      </el-table>
-      <div v-else class="py-8 text-center text-sm text-gray-400">暂无日志</div>
-    </div>
+    <StageLogsSection :logs="logs" />
   </div>
 </template>
 
@@ -274,12 +264,13 @@ import { generateImagePrompts, runJobStageAction, updateJobInfo } from "@/api/ap
 import { getMediaFileUrl } from "@/api/api-media";
 import type { JobDetail, JobInfo, JobLog, JobSegment, ScriptJson } from "@/types/jobs";
 import type { RunStageActionPayload } from "@/types/jobs/stageAction";
-import { formatDateTime } from "@/utils/date";
 import { buildSegmentClipSearchKeyword, type ClipOrientation } from "@/utils/clipSearch";
 import { MEDIA_CROSS_ORIGIN } from "@/utils/media";
 import { useErrorHandler } from "@/composables/useErrorHandler";
 import SegmentClipSearchDialog from "@/views/clips/SegmentClipSearchDialog.vue";
 import StageActionBar from "./StageActionBar.vue";
+import StageLogsSection from "./StageLogsSection.vue";
+import { STAGE_BLOCK_CLASS, STAGE_EMPTY_CLASS } from "./stageLayout";
 
 const props = defineProps<{
   job: JobDetail;

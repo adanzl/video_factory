@@ -8,15 +8,16 @@
       @to-end="handleRun(true)"
     />
 
-    <div class="mb-4 rounded-lg border border-gray-200 p-4">
-      <el-form label-width="96px">
+    <div :class="STAGE_BLOCK_CLASS">
+      <el-form :label-width="STAGE_FORM_LABEL_WIDTH">
         <el-form-item label="标题">
           <el-input v-model="title" placeholder="任务标题" clearable class="max-w-xl!" />
         </el-form-item>
       </el-form>
     </div>
 
-    <el-descriptions :column="2" border>
+    <div :class="STAGE_PANEL_CLASS">
+      <el-descriptions :column="2" border>
       <el-descriptions-item label="任务 ID">{{ job.id }}</el-descriptions-item>
       <el-descriptions-item label="标题">{{ job.title }}</el-descriptions-item>
       <el-descriptions-item label="状态">
@@ -25,19 +26,10 @@
       <el-descriptions-item label="重试次数">{{ job.retry_count ?? 0 }}</el-descriptions-item>
       <el-descriptions-item label="创建时间">{{ formatDateTime(job.created_at) }}</el-descriptions-item>
       <el-descriptions-item label="更新时间">{{ formatDateTime(job.updated_at) }}</el-descriptions-item>
-    </el-descriptions>
-
-    <div class="mt-6">
-      <div class="mb-2 text-sm font-medium text-gray-600">阶段日志</div>
-      <el-table v-if="logs.length" :data="logs" stripe size="small" class="w-full">
-        <el-table-column label="时间" width="180">
-          <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
-        </el-table-column>
-        <el-table-column prop="level" label="级别" width="80" />
-        <el-table-column prop="message" label="消息" min-width="240" show-overflow-tooltip />
-      </el-table>
-      <div v-else class="py-8 text-center text-sm text-gray-400">暂无日志</div>
+      </el-descriptions>
     </div>
+
+    <StageLogsSection :logs="logs" />
   </div>
 </template>
 
@@ -48,6 +40,8 @@ import { updateJob } from "@/api/api-jobs";
 import type { JobDetail, JobLog } from "@/types/jobs";
 import { formatDateTime } from "@/utils/date";
 import StageActionBar from "./StageActionBar.vue";
+import StageLogsSection from "./StageLogsSection.vue";
+import { STAGE_BLOCK_CLASS, STAGE_FORM_LABEL_WIDTH, STAGE_PANEL_CLASS } from "./stageLayout";
 
 const props = defineProps<{
   job: JobDetail;
