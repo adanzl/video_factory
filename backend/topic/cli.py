@@ -38,7 +38,8 @@ def main(argv: list[str] | None = None) -> int:
     count = max(1, min(args.count, 20))
     logger.info("[TOPIC] cli generate theme=%r count=%d", args.theme, count)
     try:
-        topics = llm_mgr.generate_topics(args.theme, count=count)
+        track = "历史悬案" if "悬案" in args.theme else None
+        topics = llm_mgr.generate_topics(args.theme, count=count, track=track)
     except Exception as exc:
         logger.exception("[TOPIC] cli generate failed theme=%r", args.theme)
         print(f"选题生成失败: {exc}", file=sys.stderr)
