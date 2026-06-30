@@ -137,11 +137,19 @@ _STORYBOARD_JSON_EXAMPLE_COMPACT = """{
 
 注意：以上为格式示例，实际段落数量按字数预算执行。"""
 
+_IMAGE_PROMPT_JSON_EXAMPLE_TEXT = (
+    "古老的青铜丹炉占据画面左侧，炉内青绿色火焰与绿烟向上弥漫，炉壁锈迹与烟熏清晰；"
+    "前景散落赤色丹药与药渣，背景昏暗炼丹房内木质药柜虚化。"
+    "清宫写实风格，暗调青灰主色，炉口底光为主、侧面炭火余烬为辅。"
+    "极近景特写，丹炉占左侧三分之二，右侧丹药清晰，略低角度。"
+    "金属、火焰与烟雾质感真实，细节层次清楚。"
+)
+
 _IMAGE_PROMPTS_JSON_EXAMPLE = """{
   "image_prompts": [
     {
       "segment_index": 1,
-      "image_prompt": "主体+场景+风格+光照+构图+质量要求...",
+      "image_prompt": \"""" + _IMAGE_PROMPT_JSON_EXAMPLE_TEXT + """\",
       "motion_prompt": "轻微镜头推进",
       "sd15_prompt_en": "cross-section diagram of lung alveoli, air sacs highlighted, medical illustration"
     }
@@ -152,7 +160,7 @@ _IMAGE_PROMPTS_JSON_EXAMPLE_NO_SD15 = """{
   "image_prompts": [
     {
       "segment_index": 1,
-      "image_prompt": "主体+场景+风格+光照+构图+质量要求...",
+      "image_prompt": \"""" + _IMAGE_PROMPT_JSON_EXAMPLE_TEXT + """\",
       "motion_prompt": "轻微镜头推进"
     }
   ]
@@ -186,24 +194,39 @@ _VISUAL_BRIEF_RULE = (
     "另须输出visual_style：全片画风定调一句话（画风+主色调+跨镜统一元素如道具造型）。"
 )
 
+_IMAGE_PROMPT_QUALITY_RULE = (
+    "⑥质量要求：写可见的材质、纹理、光影过渡与层次是否清楚，画面信息是否充实（如「高视觉密度」「细节层次清楚」）；"
+    "禁止写4K/8K/分辨率/像素/超高清等规格套话（出图尺寸由系统控制）；"
+    "「电影级写实」仅可在③风格维使用，勿在⑥重复堆砌；"
+    "禁止空话凑字数（如「极致细节」「大师之作」）。"
+)
+
+_IMAGE_PROMPT_FORMAT_RULE = (
+    "输出为一段连贯中文，不要用「主体：」「场景/环境：」等维度标签；"
+    "六维按自然语序融入，围绕一个视觉焦点展开。"
+)
+
 _IMAGE_PROMPT_DIMENSIONS_FULL = (
-    "篇幅按画面复杂度充分展开，不凑字数，结构为"
-    "主体+场景/环境+风格+光照+构图+质量要求，须逐层写清可见细节，禁止空泛形容词："
-    "①主体（主要主体、姿态、关键动作或互动）；"
-    "②场景/环境（前景/中景/背景、空间纵深）；"
-    "③视觉风格（严格遵循 visual_style 全片定调）；"
-    "④光照（主光与辅光方向、明暗氛围）；"
-    "⑤构图（景别、主体位置与占比、相机角度、留白）；"
-    "⑥质量要求（细节级别、清晰度、信息密度）；"
-    "另遵守语义边界：仅表达本段 text 与 visual_brief，禁止提前画后续段落内容。"
+    "篇幅按画面复杂度充分展开（通常150-280字），不凑字数。"
+    + _IMAGE_PROMPT_FORMAT_RULE
+    + "须逐层写清可见细节，禁止空泛形容词："
+    + "①主体（主要主体、姿态、关键动作或互动）；"
+    + "②场景/环境（前景/中景/背景、空间纵深）；"
+    + "③视觉风格（严格遵循 visual_style 全片定调）；"
+    + "④光照（主光与辅光方向、明暗氛围）；"
+    + "⑤构图（景别、主体位置与占比、相机角度、留白）；"
+    + _IMAGE_PROMPT_QUALITY_RULE
+    + "另遵守语义边界：仅表达本段 text 与 visual_brief，禁止提前画后续段落内容。"
 )
 
 _IMAGE_PROMPT_DIMENSIONS_COMPACT = (
     "篇幅精简、能说明白即可，但须逐点覆盖六维："
-    "①主体；②场景/环境；③视觉风格；④光照；⑤构图；⑥质量要求；"
-    "并遵守语义边界（仅本段内容）。"
-    "实际 SD1.5 出图以 sd15_prompt_en 为准。"
-    "image_prompt 和 sd15_prompt_en 都必须使用中文和英文分别写，禁止 image_prompt 出现英文。"
+    + "①主体；②场景/环境；③视觉风格；④光照；⑤构图；⑥质量要求；"
+    + _IMAGE_PROMPT_FORMAT_RULE
+    + _IMAGE_PROMPT_QUALITY_RULE
+    + "并遵守语义边界（仅本段内容）。"
+    + "实际 SD1.5 出图以 sd15_prompt_en 为准。"
+    + "image_prompt 和 sd15_prompt_en 都必须使用中文和英文分别写，禁止 image_prompt 出现英文。"
 )
 
 _IMAGE_PROMPT_RULE_SCIENCE_PORTRAIT = (
@@ -772,14 +795,14 @@ def build_image_prompts_prompts(
     if include_sd15_prompt:
         user_tail = (
             "\n\n请为每段编写 image_prompt 与 motion_prompt。"
-            "image_prompt 按六维（主体/场景/风格/光照/构图/质量）精简写清。"
+            "image_prompt 按六维思路写成一段连贯中文，勿用维度标签，不写分辨率套话。"
             "同时为每段输出准确的 sd15_prompt_en。"
         )
     else:
         user_tail = (
-            "\n\n请为每段扩写 image_prompt 与 motion_prompt，"
-            "按推荐结构（主体+场景/环境+风格+光照+构图+质量要求）"
-            "逐层展开，篇幅按画面复杂度充分写，不凑字数。"
+            "\n\n请为每段扩写 image_prompt 与 motion_prompt。"
+            "image_prompt 按六维思路写成一段连贯中文（勿用「主体：」等标签），"
+            "篇幅按画面复杂度充分写，不凑字数、不写4K/8K/分辨率等规格套话。"
         )
     user = _append_supplementary_to_user(
         (
