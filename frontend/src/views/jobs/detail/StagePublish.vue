@@ -9,9 +9,9 @@
 
     <div class="space-y-4">
       <!-- 标题 -->
-      <section class="rounded-lg border border-gray-200 p-4">
-        <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <div class="text-sm font-medium text-gray-700">标题</div>
+      <section :class="STAGE_PANEL_CLASS">
+        <div :class="STAGE_PANEL_HEADER_CLASS">
+          <div :class="STAGE_PANEL_TITLE_TEXT_CLASS">标题</div>
           <el-button
             v-if="publishTitle"
             size="small"
@@ -28,13 +28,13 @@
         >
           {{ publishTitle }}
         </div>
-        <div v-else class="py-6 text-center text-sm text-gray-400">暂无标题</div>
+        <div v-else :class="STAGE_EMPTY_CLASS">暂无标题</div>
       </section>
 
       <!-- 视频介绍 -->
-      <section class="rounded-lg border border-gray-200 p-4">
-        <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <div class="text-sm font-medium text-gray-700">视频介绍</div>
+      <section :class="STAGE_PANEL_CLASS">
+        <div :class="STAGE_PANEL_HEADER_CLASS">
+          <div :class="STAGE_PANEL_TITLE_TEXT_CLASS">视频介绍</div>
           <div class="flex flex-wrap items-center gap-2">
             <el-button
               v-if="videoDescription"
@@ -62,16 +62,16 @@
         >
           {{ videoDescription }}
         </div>
-        <div v-else class="py-6 text-center text-sm text-gray-400">
+        <div v-else :class="STAGE_EMPTY_CLASS">
           暂无视频介绍
           <span v-if="canRegenerateDescription">，可点击「重新生成」</span>
         </div>
       </section>
 
       <!-- 封面 -->
-      <section class="rounded-lg border border-gray-200 p-4">
-        <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <div class="text-sm font-medium text-gray-700">封面</div>
+      <section :class="STAGE_PANEL_CLASS">
+        <div :class="STAGE_PANEL_HEADER_CLASS">
+          <div :class="STAGE_PANEL_TITLE_TEXT_CLASS">封面</div>
           <el-button
             v-if="coverPath"
             size="small"
@@ -95,7 +95,7 @@
             @error="coverLoadError = true"
           />
         </div>
-        <div v-else class="py-6 text-center text-sm text-gray-400">暂无封面，请先在「封面」阶段生成</div>
+        <div v-else :class="STAGE_EMPTY_CLASS">暂无封面，请先在「封面」阶段生成</div>
         <el-alert
           v-if="coverLoadError && coverPath"
           type="warning"
@@ -106,9 +106,9 @@
       </section>
 
       <!-- 成片 -->
-      <section class="rounded-lg border border-gray-200 p-4">
-        <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <div class="text-sm font-medium text-gray-700">成片</div>
+      <section :class="STAGE_PANEL_CLASS">
+        <div :class="STAGE_PANEL_HEADER_CLASS">
+          <div :class="STAGE_PANEL_TITLE_TEXT_CLASS">成片</div>
           <el-button
             v-if="finalFilePath"
             size="small"
@@ -136,7 +136,7 @@
             />
           </div>
         </div>
-        <div v-else class="py-6 text-center text-sm text-gray-400">暂无成片，请先在「合成」阶段生成</div>
+        <div v-else :class="STAGE_EMPTY_CLASS">暂无成片，请先在「合成」阶段生成</div>
         <el-alert
           v-if="finalLoadError && finalFilePath"
           type="warning"
@@ -147,17 +147,7 @@
       </section>
     </div>
 
-    <div class="mt-6">
-      <div class="mb-2 text-sm font-medium text-gray-600">阶段日志</div>
-      <el-table v-if="logs.length" :data="logs" stripe size="small" class="w-full">
-        <el-table-column label="时间" width="180">
-          <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
-        </el-table-column>
-        <el-table-column prop="level" label="级别" width="80" />
-        <el-table-column prop="message" label="消息" min-width="240" show-overflow-tooltip />
-      </el-table>
-      <div v-else class="py-8 text-center text-sm text-gray-400">暂无日志</div>
-    </div>
+    <StageLogsSection :logs="logs" />
   </div>
 </template>
 
@@ -169,10 +159,16 @@ import { generateVideoDescription } from "@/api/api-jobs";
 import { downloadMediaFile, getMediaFileUrl } from "@/api/api-media";
 import type { JobDetail, JobLog } from "@/types/jobs";
 import type { ScriptJson } from "@/types/jobs/script";
-import { formatDateTime } from "@/utils/date";
 import { resolveFinalPath, MEDIA_CROSS_ORIGIN } from "@/utils/media";
 import { useErrorHandler } from "@/composables/useErrorHandler";
 import { copyText } from "@/utils/utils";
+import StageLogsSection from "./StageLogsSection.vue";
+import {
+  STAGE_EMPTY_CLASS,
+  STAGE_PANEL_CLASS,
+  STAGE_PANEL_HEADER_CLASS,
+  STAGE_PANEL_TITLE_TEXT_CLASS,
+} from "./stageLayout";
 
 const props = defineProps<{
   job: JobDetail;

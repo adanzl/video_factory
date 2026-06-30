@@ -8,12 +8,11 @@
       @to-end="handleRun(true)"
     />
 
-    <div class="flex flex-wrap items-start gap-4">
-      <div class="min-w-[280px] max-w-full shrink-0 basis-80">
-        <div class="rounded border border-gray-200 p-4">
-          <div class="mb-3 text-sm font-medium text-gray-700">参数配置</div>
-          <div>
-            <el-form label-width="96px">
+    <div :class="STAGE_TWO_COL_CLASS">
+      <div :class="STAGE_COL_LEFT_CLASS">
+        <div :class="STAGE_PANEL_CLASS">
+          <div :class="STAGE_PANEL_TITLE_CLASS">参数配置</div>
+          <el-form :label-width="STAGE_FORM_LABEL_WIDTH" :class="STAGE_FORM_CLASS">
               <el-form-item label="语速">
                 <el-input-number
                   v-model="speechRate"
@@ -43,9 +42,8 @@
                   </el-button>
                 </div>
               </el-form-item>
-            </el-form>
-          </div>
-          <el-form label-width="96px" class="[&_.el-form-item]:mb-2">
+          </el-form>
+          <el-form :label-width="STAGE_FORM_LABEL_WIDTH" class="[&_.el-form-item]:mb-2">
             <el-form-item label="音频路径">
               <span class="break-all text-gray-600">{{ job.audio_path || "-" }}</span>
             </el-form-item>
@@ -59,9 +57,9 @@
         </div>
       </div>
 
-      <div class="min-w-[280px] flex-1 basis-[360px]">
-        <div class="rounded border border-gray-200 p-4">
-          <div class="mb-3 text-sm font-medium text-gray-700">音频预览</div>
+      <div :class="STAGE_COL_RIGHT_CLASS">
+        <div :class="STAGE_PANEL_CLASS">
+          <div :class="STAGE_PANEL_TITLE_CLASS">音频预览</div>
           <div v-if="audioUrl" class="w-full overflow-hidden rounded-lg border border-gray-200 bg-gray-50 p-4">
             <div class="mb-3">
               <div class="mb-2 text-sm text-gray-600">倍速</div>
@@ -87,7 +85,7 @@
               @loadedmetadata="applyPlaybackSpeed"
             />
           </div>
-          <div v-else-if="!job.audio_path" class="py-8 text-center text-sm text-gray-400">
+          <div v-else-if="!job.audio_path" :class="STAGE_EMPTY_CLASS">
             暂无配音音频，请先生成
           </div>
           <el-alert
@@ -98,8 +96,8 @@
             class="mt-2"
           />
 
-          <div class="mt-4">
-            <div class="mb-3 text-sm font-medium text-gray-700">字幕预览</div>
+          <div :class="STAGE_SUBSECTION_CLASS">
+            <div :class="STAGE_PANEL_TITLE_CLASS">字幕预览</div>
             <el-table
               v-if="srtCues.length"
               :data="srtCues"
@@ -116,8 +114,8 @@
                 </template>
               </el-table-column>
             </el-table>
-            <div v-else-if="srtLoading" class="py-8 text-center text-sm text-gray-400">加载中…</div>
-            <div v-else-if="!job.subtitle_path" class="py-8 text-center text-sm text-gray-400">暂无字幕，请先生成</div>
+            <div v-else-if="srtLoading" :class="STAGE_EMPTY_CLASS">加载中…</div>
+            <div v-else-if="!job.subtitle_path" :class="STAGE_EMPTY_CLASS">暂无字幕，请先生成</div>
             <el-alert
               v-else-if="srtLoadError"
               type="warning"
@@ -129,17 +127,7 @@
       </div>
     </div>
 
-    <div class="mt-6">
-      <div class="mb-2 text-sm font-medium text-gray-600">阶段日志</div>
-      <el-table v-if="logs.length" :data="logs" stripe size="small" class="w-full">
-        <el-table-column label="时间" width="180">
-          <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
-        </el-table-column>
-        <el-table-column prop="level" label="级别" width="80" />
-        <el-table-column prop="message" label="消息" min-width="240" show-overflow-tooltip />
-      </el-table>
-      <div v-else class="py-8 text-center text-sm text-gray-400">暂无日志</div>
-    </div>
+    <StageLogsSection :logs="logs" />
 
     <audio
       ref="voicePreviewRef"
@@ -159,10 +147,21 @@ import { runJobStageAction } from "@/api/api-jobs";
 import { getMediaFileUrl, getMediaText } from "@/api/api-media";
 import { DEFAULT_TTS_VOICE, TTS_VOICE_OPTIONS } from "@/constants/tts-voices";
 import type { JobDetail, JobLog } from "@/types/jobs";
-import { formatDateTime } from "@/utils/date";
 import { MEDIA_CROSS_ORIGIN } from "@/utils/media";
 import { useErrorHandler } from "@/composables/useErrorHandler";
 import StageActionBar from "./StageActionBar.vue";
+import StageLogsSection from "./StageLogsSection.vue";
+import {
+  STAGE_COL_LEFT_CLASS,
+  STAGE_COL_RIGHT_CLASS,
+  STAGE_EMPTY_CLASS,
+  STAGE_FORM_CLASS,
+  STAGE_FORM_LABEL_WIDTH,
+  STAGE_PANEL_CLASS,
+  STAGE_PANEL_TITLE_CLASS,
+  STAGE_SUBSECTION_CLASS,
+  STAGE_TWO_COL_CLASS,
+} from "./stageLayout";
 
 const AUDIO_PLAYBACK_SPEED_OPTIONS = Array.from({ length: 8 }, (_, index) =>
   Math.round((0.8 + index * 0.1) * 10) / 10
