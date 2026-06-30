@@ -241,6 +241,7 @@ class TopicMgr:
                         ),
                         narration_target_words=1800 if is_history else None,
                         segment_target_sec=seg_sec,
+                        skip_title_optimize=True,
                     ),
                 )
                 title_repo.update_title(
