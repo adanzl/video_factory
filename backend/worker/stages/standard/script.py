@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import time
 
@@ -597,7 +598,13 @@ class ScriptStage(StageExecutor):
                 f"script ready, segments={len(script['segments'])}, "
                 f"words={script['word_count']}, "
                 f"title={script['title']}, "
-                f"cost_time={script['cost_time']}s",
+                f"cost_time={int(time.time() - t0)}s",
+            )
+            job_log_repo.append_log(
+                conn,
+                ctx.job["id"],
+                self.name,
+                f"script_json={json.dumps(script, ensure_ascii=False, default=str)}",
             )
             if get_settings().skip_script_quality_check:
                 merged = merge_quality_report(
