@@ -1,15 +1,14 @@
 <template>
   <div>
+    <StageActionBar
+      :loading="submitting"
+      :disabled="actionDisabled"
+      :disabled-reason="actionDisabledReason"
+      @primary="handleRun(false)"
+      @to-end="handleRun(true)"
+    />
+
     <div class="mb-4 rounded-lg border border-gray-200 p-4">
-      <div class="mb-3 flex flex-wrap items-center gap-2">
-        <el-button type="primary" :loading="submitting" :disabled="actionDisabled" @click="handleRun(false)">
-          重新生成
-        </el-button>
-        <el-button type="success" :loading="submitting" :disabled="actionDisabled" @click="handleRun(true)">
-          从此成片
-        </el-button>
-        <span v-if="actionDisabledReason" class="text-sm text-gray-400">{{ actionDisabledReason }}</span>
-      </div>
       <el-form label-width="96px">
         <el-form-item label="标题">
           <el-input v-model="title" placeholder="任务标题" clearable class="max-w-xl!" />
@@ -48,6 +47,7 @@ import { ElMessage } from "element-plus";
 import { updateJob } from "@/api/api-jobs";
 import type { JobDetail, JobLog } from "@/types/jobs";
 import { formatDateTime } from "@/utils/date";
+import StageActionBar from "./StageActionBar.vue";
 
 const props = defineProps<{
   job: JobDetail;

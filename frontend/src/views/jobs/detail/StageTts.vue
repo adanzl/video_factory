@@ -1,19 +1,18 @@
 <template>
   <div>
+    <StageActionBar
+      :loading="submitting"
+      :disabled="actionDisabled"
+      :disabled-reason="actionDisabledReason"
+      @primary="handleRun(false)"
+      @to-end="handleRun(true)"
+    />
+
     <div class="flex flex-wrap items-start gap-4">
       <div class="min-w-[280px] max-w-full shrink-0 basis-80">
         <div class="rounded border border-gray-200 p-4">
           <div class="mb-3 text-sm font-medium text-gray-700">参数配置</div>
           <div>
-            <div class="mb-3 flex flex-wrap items-center gap-2">
-              <el-button type="primary" :loading="submitting" :disabled="actionDisabled" @click="handleRun(false)">
-                重新生成
-              </el-button>
-              <el-button type="success" :loading="submitting" :disabled="actionDisabled" @click="handleRun(true)">
-                从此成片
-              </el-button>
-              <span v-if="actionDisabledReason" class="text-sm text-gray-400">{{ actionDisabledReason }}</span>
-            </div>
             <el-form label-width="96px">
               <el-form-item label="语速">
                 <el-input-number
@@ -163,6 +162,7 @@ import type { JobDetail, JobLog } from "@/types/jobs";
 import { formatDateTime } from "@/utils/date";
 import { MEDIA_CROSS_ORIGIN } from "@/utils/media";
 import { useErrorHandler } from "@/composables/useErrorHandler";
+import StageActionBar from "./StageActionBar.vue";
 
 const AUDIO_PLAYBACK_SPEED_OPTIONS = Array.from({ length: 8 }, (_, index) =>
   Math.round((0.8 + index * 0.1) * 10) / 10

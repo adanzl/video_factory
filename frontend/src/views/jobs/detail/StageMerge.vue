@@ -1,19 +1,15 @@
 <template>
   <div>
+    <StageActionBar
+      :loading="submitting"
+      :disabled="actionDisabled"
+      :disabled-reason="actionDisabledReason"
+      @primary="handleRun(false)"
+      @to-end="handleRun(true)"
+    />
+
     <div class="flex flex-wrap items-start gap-4">
       <div class="min-w-[280px] max-w-full shrink-0 basis-80">
-        <div class="mb-4 rounded-lg border border-gray-200 p-4">
-          <div class="flex flex-wrap items-center gap-2">
-            <el-button type="primary" :loading="submitting" :disabled="actionDisabled" @click="handleRun(false)">
-              重新生成
-            </el-button>
-            <el-button type="success" :loading="submitting" :disabled="actionDisabled" @click="handleRun(true)">
-              从此成片
-            </el-button>
-            <span v-if="actionDisabledReason" class="text-sm text-gray-400">{{ actionDisabledReason }}</span>
-          </div>
-        </div>
-
         <el-descriptions :column="1" border label-width="70px">
           <el-descriptions-item label="分辨率">{{ resolutionText }}</el-descriptions-item>
           <el-descriptions-item label="时长">{{ durationText }}</el-descriptions-item>
@@ -110,6 +106,7 @@ import {
   resolveFinalPath,
 } from "@/utils/media";
 import { useErrorHandler } from "@/composables/useErrorHandler";
+import StageActionBar from "./StageActionBar.vue";
 
 const props = defineProps<{
   job: JobDetail;

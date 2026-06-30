@@ -1,19 +1,17 @@
 <template>
   <div>
+    <StageActionBar
+      :loading="submitting"
+      :disabled="actionDisabled"
+      :disabled-reason="actionDisabledReason"
+      primary-label="重新复制"
+      to-end-label="从此继续"
+      @primary="handleRun(false)"
+      @to-end="handleRun(true)"
+    />
+
     <div class="flex flex-wrap items-start gap-4">
       <div class="min-w-[280px] max-w-full shrink-0 basis-80">
-        <div class="mb-4 rounded-lg border border-gray-200 p-4">
-          <div class="flex flex-wrap items-center gap-2">
-            <el-button type="primary" :loading="submitting" :disabled="actionDisabled" @click="handleRun(false)">
-              重新复制
-            </el-button>
-            <el-button type="success" :loading="submitting" :disabled="actionDisabled" @click="handleRun(true)">
-              从此继续
-            </el-button>
-            <span v-if="actionDisabledReason" class="text-sm text-gray-400">{{ actionDisabledReason }}</span>
-          </div>
-        </div>
-
         <el-descriptions :column="1" border label-width="80px">
           <el-descriptions-item label="素材 ID">{{ job.material_id ?? "-" }}</el-descriptions-item>
           <el-descriptions-item label="分辨率">{{ resolutionText }}</el-descriptions-item>
@@ -91,6 +89,7 @@ import {
   MEDIA_CROSS_ORIGIN,
 } from "@/utils/media";
 import { useErrorHandler } from "@/composables/useErrorHandler";
+import StageActionBar from "./StageActionBar.vue";
 
 const props = defineProps<{
   job: JobDetail;
