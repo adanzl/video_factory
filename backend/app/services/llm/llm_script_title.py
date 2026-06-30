@@ -32,6 +32,12 @@ _TITLE_SELF_CHECK = (
     "③ 是否未超出字数、未编造口播未提及的事实。"
 )
 
+# 对于已是对话反转式风格（含？和嘲讽语气）的初稿，保留其风格，仅优化字数
+_DIALOGUE_RETENTION_NOTE = (
+    "注意：如果初稿已经是「事件？嘲讽回应」格式（如「日本断供光刻胶？仓库堆成山了」），"
+    "说明初稿已有对话反转风格，优化时保留此风格，只优化字数和措辞的精准度，不要改成其他格式。"
+)
+
 
 def build_title_optimize_system_prompt(*, max_title_len: int) -> str:
     return (
@@ -42,6 +48,7 @@ def build_title_optimize_system_prompt(*, max_title_len: int) -> str:
         f"{_TITLE_HOOK_FORMULAS}"
         f"{_TITLE_TECHNIQUES}"
         f"{_TITLE_SELF_CHECK}"
+        f"{_DIALOGUE_RETENTION_NOTE}"
         "不得改变口播主题方向，不得引入口播未涉及的新概念或虚假夸张。"
         "硬性禁止：医疗养生、理财股市、时政情感、热点新闻、真人出镜、无法核验的争议。"
         'JSON 输出样例：{"title": "优化后标题"}'
