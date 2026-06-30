@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-_SCORE_THRESHOLD = 65
+_SCORE_THRESHOLD = 85
 
 _HARD_REJECT_PATTERNS = (
     r"医疗|养生|保健|药品|治病|手术|癌症|肿瘤",
@@ -20,12 +20,13 @@ _HISTORY_VISUAL = (
 )
 
 _SCIENCE_VISUAL = (
-    r"水|电|温度|气压|化学|光|磁|电池|网线|宽带|路由器|不锈钢|玻璃|塑料",
+    r"水|电|温度|气压|化学|光|磁|电池|网线|宽带|路由器|不锈钢|玻璃|塑料|芯片|光刻|半导体|产能|仓库|产线|工厂|胶|禁运|限芯|禁令|断供",
 )
 
 _CURIOSITY_PATTERNS = (
     r"[?？]",
     r"为什么|怎么|如何|居然|竟然|真相|误区|多数人|不知道|暗藏|猫腻|之谜|下落|去了哪|无人|不敢|惊魂|诡异|反常|到底",
+    r"等你呢|笑而不语|就这|慌了|顶得住|备好了|悄悄|就位|后路|慌了神|怕什么",
 )
 
 _TIMELY_PATTERNS = (
