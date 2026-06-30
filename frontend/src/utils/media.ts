@@ -167,6 +167,11 @@ export const MEDIA_CROSS_ORIGIN = "anonymous";
 
 export type CssSizeStyle = Record<string, string>;
 
+export type MediaPreviewBoxOptions = {
+  maxWidthPx?: number;
+  maxViewportRatio?: number;
+};
+
 function parseAspectRatio(ratio: string): number {
   const [width, height] = ratio.split("/").map(part => Number.parseFloat(part.trim()));
   if (!width || !height) {
@@ -179,16 +184,19 @@ function parseAspectRatio(ratio: string): number {
 export function buildMediaPreviewBoxStyle(
   width?: number | null,
   height?: number | null,
-  fallbackAspectRatio = "16 / 9"
+  fallbackAspectRatio = "16 / 9",
+  options?: MediaPreviewBoxOptions
 ): CssSizeStyle {
+  const maxWidthPx = options?.maxWidthPx ?? MEDIA_PREVIEW_MAX_WIDTH_PX;
+  const maxViewportRatio = options?.maxViewportRatio ?? MEDIA_PREVIEW_MAX_VIEWPORT_RATIO;
+
   if (width && height && width > 0 && height > 0) {
     const ratio = width / height;
     const maxH =
-      (typeof window !== "undefined" ? window.innerHeight : 800) *
-      MEDIA_PREVIEW_MAX_VIEWPORT_RATIO;
+      (typeof window !== "undefined" ? window.innerHeight : 800) * maxViewportRatio;
     const maxW = Math.min(
-      MEDIA_PREVIEW_MAX_WIDTH_PX,
-      typeof window !== "undefined" ? window.innerWidth * 0.9 : MEDIA_PREVIEW_MAX_WIDTH_PX
+      maxWidthPx,
+      typeof window !== "undefined" ? window.innerWidth * 0.9 : maxWidthPx
     );
 
     let boxW: number;
@@ -208,11 +216,11 @@ export function buildMediaPreviewBoxStyle(
   }
 
   const ratio = parseAspectRatio(fallbackAspectRatio);
-  const minHeight = Math.round(MEDIA_PREVIEW_MAX_WIDTH_PX / ratio);
+  const minHeight = Math.round(maxWidthPx / ratio);
 
   return {
     width: "100%",
-    maxWidth: `${MEDIA_PREVIEW_MAX_WIDTH_PX}px`,
+    maxWidth: `${maxWidthPx}px`,
     aspectRatio: fallbackAspectRatio,
     minHeight: `${minHeight}px`,
   };
