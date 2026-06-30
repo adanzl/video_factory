@@ -72,10 +72,7 @@ def build_topic_user_prompt(*, theme: str, count: int) -> str:
 
 def normalize_title(title: str, *, max_len: int, track: str = "") -> str:
     cleaned = re.sub(r"\s+", "", title.strip())
-    if track == "历史悬案":
-        cap = 18
-    else:
-        cap = max_len
+    cap = max_len
     if len(cleaned) <= cap:
         return cleaned
     # 截断到最后一个完整逗号或句号前，避免硬截断
