@@ -265,6 +265,25 @@ export function readImageNaturalSize(event: Event): { width: number; height: num
   return null;
 }
 
+/** 封面居中 4:3 区域参考线（两条边，百分比定位） */
+export function computeCentered43GuideLines(
+  width?: number | null,
+  height?: number | null,
+  fallbackRatio = 9 / 16
+): { mode: "horizontal" | "vertical"; startPct: number; spanPct: number } {
+  const ratio =
+    width && height && width > 0 && height > 0 ? width / height : fallbackRatio;
+  const target = 4 / 3;
+
+  if (ratio <= target) {
+    const spanPct = ratio * (3 / 4) * 100;
+    return { mode: "horizontal", startPct: (100 - spanPct) / 2, spanPct };
+  }
+
+  const spanPct = (target / ratio) * 100;
+  return { mode: "vertical", startPct: (100 - spanPct) / 2, spanPct };
+}
+
 /** 格式化媒体时长（秒 → mm:ss） */
 export function formatMediaDuration(seconds?: number | null): string {
   if (seconds === null || seconds === undefined || Number.isNaN(seconds)) {

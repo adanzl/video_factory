@@ -602,7 +602,7 @@ class ScriptStage(StageExecutor):
                 f"script ready, segments={len(script['segments'])}, "
                 f"words={script['word_count']}, "
                 f"title={script['title']}, "
-                f"cost_time={int(time.time() - t0)}s",
+                f"cost_time={script['cost_time']}s",
             )
             job_log_repo.append_log(
                 conn,

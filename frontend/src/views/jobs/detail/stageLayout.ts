@@ -9,6 +9,10 @@ export const STAGE_PANEL_CLASS = "rounded-lg border border-gray-200 p-4";
 /** 操作区下方独立配置块（含下边距） */
 export const STAGE_BLOCK_CLASS = "mb-4 rounded-lg border border-gray-200 p-4";
 
+/** 紧凑参数块（较小内边距） */
+export const STAGE_BLOCK_COMPACT_CLASS =
+  "mb-4 rounded-lg border border-gray-200 px-3 py-2";
+
 export const STAGE_TWO_COL_CLASS = "flex flex-wrap items-start gap-4";
 
 export const STAGE_COL_LEFT_CLASS = "min-w-[280px] max-w-full shrink-0 basis-80";
@@ -38,3 +42,6 @@ export const STAGE_FORM_LABEL_WIDTH = "96px";
 
 export const STAGE_FORM_CLASS =
   "[&_.el-form-item]:mb-3 [&_.el-form-item__content]:min-w-0 [&_.el-form-item__content]:flex-1";
+
+export const STAGE_FORM_COMPACT_CLASS =
+  "[&_.el-form-item]:mb-0 [&_.el-form-item__content]:min-w-0 [&_.el-form-item__content]:flex-1 [&_.el-form-item__label]:h-auto! [&_.el-form-item__label]:leading-snug";
