@@ -28,10 +28,11 @@ CPU: AMD Ryzen 9 7940HS w/ Radeon 780M Graphics
 
 ## 软件环境
 
-python使用conda env: flask_env
+python相关调用使用 **conda**，env: flask_env
 
 ## 注意
 
-重跑任务需要我明确提出了才进行，如果你想重跑需要我二次确认
-创建的临时文件记得删除
-重启服务要找我确认
+- 重跑任务需要我明确提出了才进行，如果你想重跑需要我二次确认
+- 创建的临时文件记得删除
+- 重启服务要找我确认
+- 变量定义注意拼写，避免cSpell告警
