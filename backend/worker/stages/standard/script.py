@@ -5,6 +5,7 @@ import re
 import time
 
 from app.config import get_settings
+from app.exceptions import JobStageFailureError
 from app.quality.checkers import (
     check_copy,
     check_image_prompts,
@@ -30,7 +31,9 @@ from app.utils.media import (
     assign_segment_timings,
     default_narration_target_words,
     min_narration_chars_for_target,
+    narration_accept_max_chars,
     narration_accept_min_chars,
+    narration_word_range,
     NARRATION_ABS_MIN_CHARS,
     narration_soft_min_chars,
     segment_text_char_cap,
@@ -51,11 +54,15 @@ def _accept_narration_chars(narration_target_words: int) -> int:
     return narration_accept_min_chars(narration_target_words)
 
 
+def _accept_narration_max_chars(narration_target_words: int) -> int:
+    return narration_accept_max_chars(narration_target_words)
+
+
 def _narration_retry_min_chars(narration_target_words: int) -> int:
     return int(_min_narration_chars(narration_target_words) * 0.8)
 
 
-class ScriptValidationError(ValueError):
+class ScriptValidationError(ValueError, JobStageFailureError):
     def __init__(self, message: str, *, retryable: bool = True) -> None:
         super().__init__(message)
         self.retryable = retryable
@@ -171,6 +178,23 @@ def _narration_short_feedback(exc: ScriptValidationError, *, min_chars: int) -> 
     )
 
 
+def _narration_long_feedback(
+    exc: ScriptValidationError,
+    *,
+    narration_target_words: int,
+) -> str:
+    msg = str(exc)
+    if "narration too long" not in msg:
+        return msg
+    lo, hi = narration_word_range(narration_target_words)
+    return (
+        f"{msg}。"
+        f"请删繁就简，将总字数控制在 {lo}-{hi} 字之间（不要整稿推翻重写）："
+        "保留核心科普点，删重复比喻与次要展开；"
+        "单段仍须遵守单镜字数上限，靠删字与合并同类句降压，禁止堆砌新内容。"
+    )
+
+
 def _validation_retry_scope(exc: ScriptValidationError) -> str:
     msg = str(exc)
     if "image_prompt too short" in msg:
@@ -179,6 +203,7 @@ def _validation_retry_scope(exc: ScriptValidationError) -> str:
         key in msg
         for key in (
             "narration too short",
+            "narration too long",
             "segment text exceeds",
             "missing visual_brief",
             "text is empty",
@@ -228,14 +253,18 @@ def _validation_feedback(
     msg = str(exc)
     if "narration too short" in msg:
         return _narration_short_feedback(exc, min_chars=accept_chars)
+    if "narration too long" in msg:
+        return _narration_long_feedback(exc, narration_target_words=narration_target_words)
     if segment_target_sec and segment_target_sec > 0:
         if "segment text exceeds" in msg:
             cap = segment_text_char_cap(segment_target_sec)
             hard_cap = int(cap * 1.15)
+            lo, hi = narration_word_range(narration_target_words)
             return (
                 f"{msg}。"
                 f"单镜上限 {segment_target_sec}s，每段 text 不得超过 {cap} 字（硬上限 {hard_cap} 字）。"
-                "超长段须按自然断句拆成多段，禁止少数超长段堆叠。"
+                f"超长段须按自然断句拆成多段；总字数须控制在 {lo}-{hi} 字之间，"
+                "拆段时删繁就简，禁止为凑段数堆砌新内容。"
                 "先写 segments 再拼接 narration，输出前逐段核对字数。"
             )
     return msg
@@ -276,11 +305,19 @@ def _validate_script(
         _min_narration_chars(None) if min_narration_chars is None else min_narration_chars
     )
     accept_min = accept_narration_chars if accept_narration_chars is not None else hard_floor
+    accept_max: int | None = None
+    if narration_target_words is not None:
+        accept_max = _accept_narration_max_chars(narration_target_words)
     narration = script.get("narration", "")
     segments = script.get("segments") or []
     warnings: list[str] = []
     chars = _narration_chars(narration)
     if check_narration:
+        if accept_max is not None and chars > accept_max:
+            raise ScriptValidationError(
+                f"narration too long: {chars} chars (need <= {accept_max})",
+                retryable=True,
+            )
         if chars >= accept_min:
             pass
         elif narration_target_words is not None and chars >= _narration_retry_min_chars(

@@ -275,6 +275,20 @@ def narration_accept_min_chars(narration_target_words: int | None = None) -> int
     return max(1, int(target * NARRATION_ACCEPT_RATIO))
 
 
+def narration_accept_max_chars(narration_target_words: int | None = None) -> int:
+    """口播验收上限（目标 + 10% 或至少 50 字余量；与 prompt 区间一致）。"""
+    target = narration_target_words or default_narration_target_words()
+    margin = max(50, int(target * 0.1))
+    return max(1, min(NARRATION_MAX_CHARS, target + margin))
+
+
+def narration_word_range(narration_target_words: int | None = None) -> tuple[int, int]:
+    """口播验收字数区间：(下限, 上限)。"""
+    lo = narration_accept_min_chars(narration_target_words)
+    hi = narration_accept_max_chars(narration_target_words)
+    return lo, hi
+
+
 def narration_soft_min_chars(required_chars: int) -> int:
     """略低于硬性下限时仍放行（带警告）。"""
     return max(1, int(required_chars * NARRATION_SOFT_MIN_RATIO))

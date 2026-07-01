@@ -21,6 +21,8 @@ from app.utils.media import (
     default_narration_target_words,
     min_narration_chars_for_target,
     narration_accept_min_chars,
+    narration_accept_max_chars,
+    narration_word_range,
     narration_writing_plan,
     narration_writing_target_chars,
     segment_comfort_chars,
@@ -457,17 +459,16 @@ def _storyboard_role(content_style: str) -> str:
 
 def _narration_word_range(target: int) -> tuple[int, int]:
     """口播字数区间：下限与验收阈值一致，上限为目标 + 余量。"""
-    margin = max(50, int(target * 0.1))
-    accept_min = narration_accept_min_chars(target)
-    return accept_min, target + margin
+    return narration_word_range(target)
 
 
 def _writing_target_clause(narration_target: int) -> str:
     writing_target = narration_writing_target_chars(narration_target)
+    lo, hi = narration_word_range(narration_target)
     pct = int(NARRATION_WRITING_TARGET_RATIO * 100)
     return (
-        f"必须达到 {writing_target} 字（总目标 {narration_target} 字的 {pct}%），"
-        f"不要只按验收下限凑字数"
+        f"写作目标约 {writing_target} 字（总目标 {narration_target} 字的 {pct}%），"
+        f"验收区间 {lo}-{hi} 字，不要低于下限凑字也不要超标"
     )
 
 
@@ -495,6 +496,7 @@ def _storyboard_execution_headline(
     plan = narration_writing_plan(narration_target, segment_target_sec)
     writing_target = plan["writing_target"]
     hard_min = plan["hard_min"]
+    hard_max = narration_accept_max_chars(narration_target)
     seg_count = plan["seg_count_min"]
     per_min = plan["per_seg_min"]
     per_lo = plan["per_seg_lo"]
@@ -509,16 +511,16 @@ def _storyboard_execution_headline(
             f"【单段上限·优先】单镜 {sec}s，每段 text 目标 ≤ {per_hi} 字、绝对不得超过 {cap} 字"
             f"（硬上限 {hard_cap} 字，超限整稿无效）。"
             f"「{layers}」三层各一句短话，禁止把多句堆进同一段；超长须拆段。"
-            f"【总字数】须 ≥ {writing_target} 字（验收下限 {hard_min} 字），至少 {seg_count} 段；"
+            f"【总字数】须在 {hard_min}-{hard_max} 字之间（写作目标约 {writing_target} 字），至少 {seg_count} 段；"
             f"每段建议 {per_lo}-{per_hi} 字。"
-            "总字数不足时增加 segments 段数，禁止加长单段。"
-            f"（{seg_count}×{per_min}={seg_floor} 字仅为段数底限，须继续扩写至 {writing_target} 字）。"
+            "总字数不足时增加 segments 段数，总字数超标时删繁就简，禁止加长单段或堆砌重复。"
+            f"（{seg_count}×{per_min}={seg_floor} 字仅为段数底限，总字数须落在 {hard_min}-{hard_max} 字区间内）。"
             "输出前逐段统计 text 字数，任一超限须拆段后再提交。"
         )
     return (
-        f"【首要任务】一次性写满口播：总字数须 ≥ {writing_target} 字（验收下限 {hard_min} 字）。"
+        f"【首要任务】一次性写满口播：总字数须在 {hard_min}-{hard_max} 字之间（写作目标约 {writing_target} 字）。"
         f"至少 {seg_count} 段 segments，每段 text 建议 {per_lo}-{per_hi} 字、单段下限 {per_min} 字"
-        f"（{seg_count}×{per_min}={seg_floor} 字仅为段数底限，须继续扩写至 {writing_target} 字）。"
+        f"（{seg_count}×{per_min}={seg_floor} 字仅为段数底限，总字数须落在 {hard_min}-{hard_max} 字区间内）。"
         f"每段用「{layers}」三层写法，每层一句短话。"
         "常见失误：只写 3～4 段短句导致总字数不足；须按段数预算写满后再输出 JSON。"
         "禁止照抄 JSON 样例短句；字数不足须当场扩写，不要提交短稿。"
@@ -534,6 +536,7 @@ def _storyboard_length_budget(
     plan = narration_writing_plan(narration_target, segment_target_sec)
     hard_min = plan["hard_min"]
     writing_target = plan["writing_target"]
+    hard_max = narration_accept_max_chars(narration_target)
     per_min = plan["per_seg_min"]
     seg_count_min = plan["seg_count_min"]
     pct = int(NARRATION_WRITING_TARGET_RATIO * 100)
@@ -551,7 +554,7 @@ def _storyboard_length_budget(
         "【输出前硬性自检，任一项不满足须当场重写后再输出 JSON】"
         f"①segments 数量 ≥ {seg_count_min}；"
         f"{cap_clause}"
-        f"③各段 text 字数之和 ≥ {writing_target}；"
+        f"③各段 text 字数之和在 {hard_min}-{hard_max} 字之间（目标约 {writing_target} 字）；"
         "④word_count 等于 narration 实际字数；"
         "⑤narration 与 segments 按序拼接完全一致；"
         "⑥口播无伪亲历/第一人称从业叙事。"
@@ -559,10 +562,10 @@ def _storyboard_length_budget(
     if segment_target_sec <= 0:
         return (
             f"【字数预算】总目标 {narration_target} 字；"
-            f"写作必须达到 {writing_target} 字（总目标的 {pct}%）；"
-            f"验收下限 {hard_min} 字（低于即不合格）。\n"
+            f"写作目标约 {writing_target} 字（总目标 {narration_target} 字的 {pct}%）；"
+            f"验收区间 {hard_min}-{hard_max} 字（超出即不合格）。\n"
             f"每段至少 {per_min} 字，段数由口播内容逻辑决定；"
-            f"各段 text 字数之和须 ≥ {writing_target}。\n"
+            f"各段 text 字数之和须在 {hard_min}-{hard_max} 字之间。\n"
             f"每段用「{layers}」三层写法，每层一句短话，禁止整段一句带过。\n"
             "【生成顺序】先按预算写满各段 segments，再拼接 narration，最后核对 word_count。\n"
             f"{self_check}"
@@ -574,13 +577,13 @@ def _storyboard_length_budget(
     sec = int(segment_target_sec) if segment_target_sec == int(segment_target_sec) else segment_target_sec
     return (
         f"【字数预算】总目标 {narration_target} 字；"
-        f"写作必须达到 {writing_target} 字（总目标的 {pct}%）；"
-        f"验收下限 {hard_min} 字（低于即不合格）。\n"
+        f"写作目标约 {writing_target} 字（总目标的 {pct}%）；"
+        f"验收区间 {hard_min}-{hard_max} 字（超出或不足均不合格）。\n"
         f"单镜上限 {sec}s，每段 text 目标 ≤ {per_target_hi} 字、绝对不得超过 {cap} 字"
         f"（硬上限 {hard_cap} 字，超限必须拆段）。\n"
         f"须至少 {seg_count_min} 个 segments（按 {writing_target} 字与单段 {per_target_hi} 字估算）；"
         f"每段建议 {per_target_lo}-{per_target_hi} 字、下限 {per_min} 字；"
-        f"各段 text 字数之和须 ≥ {writing_target}。\n"
+        f"各段 text 字数之和须在 {hard_min}-{hard_max} 字之间。\n"
         f"每段用「{layers}」三层写法，每层一句短话；总字数靠加段，禁止加长单段。\n"
         "【生成顺序】先按段数预算写满各段 segments，再拼接 narration，最后核对 word_count。\n"
         f"{self_check}"
@@ -599,19 +602,19 @@ def _storyboard_length_system_clause(
     per_min = plan["per_seg_min"]
     seg_count_min = plan["seg_count_min"]
     pct = int(NARRATION_WRITING_TARGET_RATIO * 100)
+    hard_max = narration_accept_max_chars(narration_target)
     if compact_output:
         return (
             f"各段 text 须写满（每段至少 {per_min} 字），后端会拼接为 narration；"
             f"须至少 {seg_count_min} 个 segments；"
-            f"拼接后总字数须 ≥ {writing_target} 字（总目标 {narration_target} 字的 {pct}%）。"
-            "输出前须自检：段数达标、各段非空且不超单段上限、字数之和达标、segments 与 narration 拼接一致。"
+            f"拼接后总字数须在 {hard_min}-{hard_max} 字之间（目标约 {writing_target} 字）。"
+            "输出前须自检：段数达标、各段非空且不超单段上限、字数在区间内、segments 与 narration 拼接一致。"
         )
     return (
         f"各段 text 按顺序拼接须与 narration 完全一致；"
         f"须至少 {seg_count_min} 个 segments；"
-        f"narration 须达到 {writing_target} 字（总目标 {narration_target} 字的 {pct}%，"
-        f"验收下限 {hard_min} 字）。"
-        "输出前须自检：段数达标、各段非空且不超单段上限、字数之和达标、word_count 等于 narration 实际字数。"
+        f"narration 须在 {hard_min}-{hard_max} 字之间（目标约 {writing_target} 字）。"
+        "输出前须自检：段数达标、各段非空且不超单段上限、字数在区间内、word_count 等于 narration 实际字数。"
     )
 
 
@@ -731,8 +734,8 @@ def build_storyboard_prompts(
     title_rule, title_user_prefix = _title_rule(title, max_title)
     length_rule = (
         f"口播总目标 {narration_word_target} 字；{_writing_target_clause(narration_word_target)}；"
-        f"验收下限 {narration_hard_min} 字、上限 {narration_word_max} 字（不含空格换行）；"
-        f"低于 {narration_hard_min} 字视为不合格；"
+        f"验收区间 {narration_hard_min}-{narration_word_max} 字（不含空格换行）；"
+        f"低于 {narration_hard_min} 字或高于 {narration_word_max} 字视为不合格；"
         f"{_narration_length_rule(profile_style)}"
     )
     length_system = _storyboard_length_system_clause(
@@ -934,8 +937,8 @@ def build_material_script_prompts(
     )
     length_rule = (
         f"narration 总目标 {narration_word_target} 字；{_writing_target_clause(narration_word_target)}；"
-        f"验收下限 {narration_hard_min} 字、上限 {narration_word_max} 字（不含空格换行）；"
-        f"低于 {narration_hard_min} 字视为不合格；"
+        f"验收区间 {narration_hard_min}-{narration_word_max} 字（不含空格换行）；"
+        f"低于 {narration_hard_min} 字或高于 {narration_word_max} 字视为不合格；"
         f"{_MATERIAL_NARRATION_LENGTH_RULE}"
     )
     system = (
