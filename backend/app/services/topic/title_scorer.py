@@ -23,6 +23,10 @@ _SCIENCE_VISUAL = (
     r"水|电|温度|气压|化学|光|磁|电池|网线|宽带|路由器|不锈钢|玻璃|塑料|芯片|光刻|半导体|产能|仓库|产线|工厂|胶|禁运|限芯|禁令|断供",
 )
 
+_LIFE_VISUAL = (
+    r"空调|暖气|制冷|凉快|省电|电费|电表|家居|厨房|洗衣机|冰箱|热水器|WiFi|网速",
+)
+
 _CURIOSITY_PATTERNS = (
     r"[?？]",
     r"为什么|怎么|如何|居然|竟然|真相|误区|多数人|不知道|暗藏|猫腻|之谜|下落|去了哪|无人|不敢|惊魂|诡异|反常|到底",
@@ -92,8 +96,15 @@ def score_title(
         if "：" in text or ":" in text:
             visual += 10
     else:
+        visual_bonus = 0
         if _has_pattern(text, _SCIENCE_VISUAL):
-            visual += 15
+            visual_bonus = max(visual_bonus, 15)
+        if _has_pattern(text, _LIFE_VISUAL):
+            visual_bonus = max(visual_bonus, 15)
+        # 生活体感类科普（热/冷/暑）画面易用示意动画表达
+        if re.search(r"热|冷|暑|寒", text):
+            visual_bonus = max(visual_bonus, 12)
+        visual += visual_bonus
     if len(text) > 28:
         visual -= 10
 
