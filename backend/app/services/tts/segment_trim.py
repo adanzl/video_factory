@@ -1,0 +1,157 @@
+"""TTS 段音频首尾裁切：按 CosyVoice 字级时间戳对齐，去掉段首段尾空白。"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+from pathlib import Path
+
+from app.services.media.ffmpeg_utils import probe_duration, run_ffmpeg
+from app.services.tts.phrase_timing import TimedWord
+
+logger = logging.getLogger(__name__)
+
+__all__ = [
+    "TrimPlan",
+    "apply_tts_segment_trim",
+    "plan_tts_segment_trim",
+    "shift_word_timestamps",
+]
+
+
+@dataclass(frozen=True)
+class TrimPlan:
+    leading_ms: int
+    trailing_ms: int
+
+    @property
+    def total_ms(self) -> int:
+        return self.leading_ms + self.trailing_ms
+
+
+def shift_word_timestamps(words: list[TimedWord], delta_ms: int) -> list[TimedWord]:
+    if delta_ms <= 0:
+        return list(words)
+    shifted: list[TimedWord] = []
+    for word in words:
+        begin = max(0, word.begin_time_ms - delta_ms)
+        end = max(begin, word.end_time_ms - delta_ms)
+        shifted.append(
+            TimedWord(
+                text=word.text,
+                begin_time_ms=begin,
+                end_time_ms=end,
+                begin_index=word.begin_index,
+                end_index=word.end_index,
+            )
+        )
+    return shifted
+
+
+def plan_tts_segment_trim(
+    words: list[TimedWord],
+    *,
+    duration_ms: int,
+    head_pad_ms: int = 0,
+    tail_pad_ms: int = 20,
+    min_leading_ms: int = 20,
+    min_trailing_ms: int = 50,
+) -> TrimPlan:
+    """仅依据字级时间戳计算裁切：首字 begin 之前、末字 end 之后。"""
+    if not words or duration_ms <= 0:
+        return TrimPlan(leading_ms=0, trailing_ms=0)
+
+    leading_ms = 0
+    first_begin = words[0].begin_time_ms
+    if first_begin >= min_leading_ms:
+        leading_ms = max(0, first_begin - head_pad_ms)
+
+    trailing_ms = 0
+    tail_gap = duration_ms - words[-1].end_time_ms
+    if tail_gap >= min_trailing_ms:
+        trailing_ms = max(0, tail_gap - tail_pad_ms)
+
+    keep_ms = 120
+    max_trim = max(0, duration_ms - keep_ms)
+    leading_ms = min(leading_ms, max_trim)
+    trailing_ms = min(trailing_ms, max(0, max_trim - leading_ms))
+    return TrimPlan(leading_ms=leading_ms, trailing_ms=trailing_ms)
+
+
+def _trim_audio(path: Path, plan: TrimPlan) -> None:
+    if plan.total_ms <= 0:
+        return
+    start_sec = plan.leading_ms / 1000.0
+    tmp = path.with_name(f"{path.stem}.trim{path.suffix}")
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-hide_banner",
+        "-i",
+        str(path),
+        "-ss",
+        f"{start_sec:.3f}",
+    ]
+    if plan.trailing_ms > 0:
+        duration_sec = probe_duration(path) - start_sec - plan.trailing_ms / 1000.0
+        if duration_sec > 0.05:
+            cmd.extend(["-t", f"{duration_sec:.3f}"])
+    if path.suffix.lower() == ".wav":
+        cmd.extend(["-acodec", "pcm_s16le", str(tmp)])
+    else:
+        tmp_wav = path.with_name(f"{path.stem}.trim.wav")
+        cmd.extend(["-acodec", "pcm_s16le", str(tmp_wav)])
+        run_ffmpeg(cmd)
+        try:
+            run_ffmpeg(
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-hide_banner",
+                    "-i",
+                    str(tmp_wav),
+                    "-c:a",
+                    "libmp3lame",
+                    "-q:a",
+                    "2",
+                    str(tmp),
+                ]
+            )
+            tmp.replace(path)
+        finally:
+            tmp_wav.unlink(missing_ok=True)
+            tmp.unlink(missing_ok=True)
+        return
+    run_ffmpeg(cmd)
+    tmp.replace(path)
+
+
+def apply_tts_segment_trim(
+    path: Path,
+    words: list[TimedWord],
+    *,
+    head_pad_ms: int = 0,
+    tail_pad_ms: int = 20,
+) -> list[TimedWord]:
+    """就地裁切段音频，并按首字 begin 平移字级时间戳。"""
+    duration_ms = int(round(probe_duration(path) * 1000))
+    plan = plan_tts_segment_trim(
+        words,
+        duration_ms=duration_ms,
+        head_pad_ms=head_pad_ms,
+        tail_pad_ms=tail_pad_ms,
+    )
+    if plan.total_ms <= 0:
+        return words
+
+    _trim_audio(path, plan)
+    shifted = shift_word_timestamps(words, plan.leading_ms)
+    logger.info(
+        "tts segment trim %s leading=%sms trailing=%sms duration %.2fs -> %.2fs",
+        path.name,
+        plan.leading_ms,
+        plan.trailing_ms,
+        duration_ms / 1000.0,
+        probe_duration(path),
+    )
+    return shifted

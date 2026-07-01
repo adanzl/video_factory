@@ -464,6 +464,10 @@ def _concat_audio_reencode(clips: list[Path], output_path: Path) -> Path:
         inputs.extend(["-i", str(clip.resolve())])
     chains = "".join(f"[{i}:a]" for i in range(n))
     filter_graph = f"{chains}concat=n={n}:v=0:a=1[outa]"
+    if output_path.suffix.lower() == ".wav":
+        codec_args = ["-c:a", "pcm_s16le"]
+    else:
+        codec_args = ["-c:a", "libmp3lame", "-q:a", "2"]
     _run_cmd(
         [
             "ffmpeg",
@@ -478,10 +482,7 @@ def _concat_audio_reencode(clips: list[Path], output_path: Path) -> Path:
             "22050",
             "-ac",
             "1",
-            "-c:a",
-            "libmp3lame",
-            "-q:a",
-            "2",
+            *codec_args,
             str(output_path),
         ],
     )

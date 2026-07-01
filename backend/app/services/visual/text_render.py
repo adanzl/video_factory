@@ -95,8 +95,8 @@ def wrap_text(
 _SENTENCE_END = frozenset("。！？!?；;")
 
 
-_SUBTITLE_STRIP_PUNCT = re.compile(
-    r'[。！？；：，,.!?;:"]+'
+_EDGE_STRIP_PUNCT = re.compile(
+    r'^[。！？；：，,.!?;:"]+|[。！？；：，,.!?;:"]+$'
 )
 # 分条断点：顿号、书名号《》〈〉、各类括号不分割，保留在句内
 _SUBTITLE_SPLIT_PUNCT = re.compile(
@@ -129,6 +129,66 @@ _CLOSE_BRACKETS = frozenset('』」）)]}》〉】”’')
 _BRACKET_PAIRS = {'『': '』', '「': '」', '（': '）', '(': ')', '[': ']', '{': '}',
                   '《': '》', '〈': '〉', '【': '】', '“': '”', '‘': '’'}
 _TOGGLE_QUOTES = frozenset('"\'')
+_PHRASE_MERGE_SENTENCE_END = frozenset("。！？!?")
+MIN_PHRASE_DISPLAY_LEN = 6
+
+
+def phrase_display_text(tts_text: str) -> str:
+    """字幕展示：仅去掉首尾句读标点，中间逗号/冒号等保留。"""
+    text = tts_text.strip()
+    return _EDGE_STRIP_PUNCT.sub("", text).strip()
+
+
+def _merge_phrase_pair(
+    left: tuple[str, str],
+    right: tuple[str, str],
+) -> tuple[str, str]:
+    tts = left[0] + right[0]
+    return (tts, phrase_display_text(tts))
+
+
+def _phrase_merge_complete(tts: str, display: str) -> bool:
+    """短句已到自然语气边界（如「哇，你知道吗？」）则不再向后合并。"""
+    stripped = tts.rstrip()
+    return (
+        bool(stripped)
+        and stripped[-1] in _PHRASE_MERGE_SENTENCE_END
+        and len(display) >= 5
+    )
+
+
+def merge_short_phrase_chunks(
+    chunks: list[tuple[str, str]],
+    *,
+    min_display_len: int = MIN_PHRASE_DISPLAY_LEN,
+) -> list[tuple[str, str]]:
+    """过短字幕条与相邻条合并，避免「哇」「你看」等单独成条。"""
+    if len(chunks) <= 1:
+        return chunks
+
+    result = list(chunks)
+    changed = True
+    while changed:
+        changed = False
+        index = 0
+        while index < len(result):
+            tts, display = result[index]
+            if len(display) >= min_display_len or _phrase_merge_complete(tts, display):
+                index += 1
+                continue
+            if index + 1 < len(result):
+                result[index] = _merge_phrase_pair(result[index], result[index + 1])
+                del result[index + 1]
+                changed = True
+                continue
+            if index > 0:
+                result[index - 1] = _merge_phrase_pair(result[index - 1], result[index])
+                del result[index]
+                changed = True
+                index -= 1
+                continue
+            index += 1
+    return result
 
 
 def split_phrase_chunks(text: str) -> list[tuple[str, str]]:
@@ -164,23 +224,26 @@ def split_phrase_chunks(text: str) -> list[tuple[str, str]]:
 
         has_punct = _SUBTITLE_SPLIT_PUNCT.fullmatch(token)
         if has_punct and bracket_depth == 0 and not in_double_quote and not in_single_quote:
-            display = _SUBTITLE_STRIP_PUNCT.sub("", buf).strip()
+            tts = buf.strip()
+            display = phrase_display_text(tts)
             if display:
-                chunks.append((buf.strip(), display))
+                chunks.append((tts, display))
             buf = ""
 
     if buf.strip():
-        display = _SUBTITLE_STRIP_PUNCT.sub("", buf).strip()
+        tts = buf.strip()
+        display = phrase_display_text(tts)
         if display:
-            chunks.append((buf.strip(), display))
+            chunks.append((tts, display))
         elif chunks:
-            prev_text, prev_display = chunks[-1]
-            chunks[-1] = (prev_text + buf, prev_display)
-    return chunks
+            prev_text, _ = chunks[-1]
+            merged_tts = prev_text + buf
+            chunks[-1] = (merged_tts, phrase_display_text(merged_tts))
+    return merge_short_phrase_chunks(chunks)
 
 
 def split_subtitle_phrases(text: str) -> list[str]:
-    """按标点分条，字幕展示用（句读标点去掉，书名号/括号/顿号保留）。"""
+    """按标点分条，字幕展示用（仅去首尾句读标点，中间保留）。"""
     return [display for _, display in split_phrase_chunks(text)]
 
 
