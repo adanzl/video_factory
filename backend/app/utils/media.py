@@ -57,6 +57,16 @@ def segment_text_char_cap(segment_target_sec: float) -> int:
     return max(20, int(segment_target_sec * NARRATION_CHARS_PER_SEC))
 
 
+def segment_text_hard_cap(segment_target_sec: float) -> int:
+    """校验用硬上限（cap × 1.15）。"""
+    return int(segment_text_char_cap(segment_target_sec) * 1.15)
+
+
+def segment_comfort_chars(cap: int) -> int:
+    """prompt 用单段建议上限（低于 cap，降低 LLM 略超 cap 的概率）。"""
+    return max(15, int(cap * 0.80))
+
+
 def narration_segment_basis_chars(
     narration: str,
     narration_target_words: int | None = None,
@@ -198,10 +208,13 @@ def narration_writing_plan(
         per_hi = max(per_min + 10, 40)
     else:
         cap = segment_text_char_cap(segment_target_sec)
-        seg_count = max(5, (writing_target + cap - 1) // cap)
-        per_min = max(20, min(cap - 5, (writing_target + seg_count - 1) // seg_count))
-        per_lo = max(20, int(cap * 0.65))
-        per_hi = cap
+        comfort = segment_comfort_chars(cap)
+        seg_count_cap = max(5, (writing_target + cap - 1) // cap)
+        seg_count_avg = max(5, (writing_target + comfort - 1) // comfort)
+        seg_count = max(seg_count_cap, seg_count_avg)
+        per_hi = comfort
+        per_lo = max(12, int(cap * 0.45))
+        per_min = max(per_lo, min(per_hi, (writing_target + seg_count - 1) // seg_count))
     return {
         "target": narration_target,
         "writing_target": writing_target,

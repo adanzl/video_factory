@@ -8,7 +8,9 @@ from app.utils.media import (
     material_min_audio_duration_sec,
     narration_accept_min_chars,
     narration_target_for_minutes,
+    narration_writing_plan,
     narration_writing_target_chars,
+    segment_comfort_chars,
     segment_text_char_cap,
 )
 
@@ -47,6 +49,15 @@ def test_narration_accept_min_chars():
 def test_narration_writing_target_chars_is_ninety_five_percent():
     assert narration_writing_target_chars(404) == 383
     assert narration_writing_target_chars(1646) == 1563
+
+
+def test_narration_writing_plan_15s_prefers_more_segments():
+    """15s 单镜下按舒适段长估算，段数应多于仅用 cap 整除。"""
+    plan = narration_writing_plan(404, 15.0)
+    assert plan["segment_cap"] == 75
+    assert plan["per_seg_hi"] == segment_comfort_chars(75)
+    assert plan["seg_count_min"] >= 7
+    assert plan["per_seg_min"] <= plan["per_seg_hi"]
 
 
 def test_estimate_narration_target_words_clamps():
