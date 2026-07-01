@@ -26,7 +26,7 @@ CPU: AMD Ryzen 9 7940HS w/ Radeon 780M Graphics
 网络 无法连接 Civitai
 可以访问 liblib.art
 
-## 软件环境
+## Python 环境
 
 python相关调用使用 **conda**，env: flask_env
 

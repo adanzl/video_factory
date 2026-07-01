@@ -14,13 +14,13 @@ from pathlib import Path
 import websocket
 
 from app.config import get_settings
-from app.services.tts.breath_cue import prepare_ssml_text
+from app.services.tts.breath_cue import build_phrase_breath_cues
 from app.services.tts.instruct import resolve_instruction
 from app.services.tts.phrase_timing import (
     build_segment_tts_text,
     normalize_word_timestamps,
-    phrase_durations_from_words,
 )
+from app.services.tts.segment_trim import apply_tts_segment_trim
 from app.services.media.ffmpeg_utils import build_srt_from_cues, concat_clips, probe_duration
 from app.services.tts.tts_mgr import (
     SubtitleCue,
@@ -85,6 +85,12 @@ def _segment_timeout(text: str) -> float:
     return max(120.0, len(text) * 0.35 + 45.0)
 
 
+def _audio_extension(fmt: str | None = None) -> str:
+    settings = get_settings()
+    ext = (fmt or settings.tts_audio_format or "mp3").strip().lower().lstrip(".")
+    return f".{ext}"
+
+
 def _run_tts_task(
     text: str,
     *,
@@ -93,7 +99,7 @@ def _run_tts_task(
     rate: float | None = None,
     pitch: float | None = None,
     voice: str | None = None,
-    enable_ssml: bool = False,
+    audio_format: str | None = None,
 ) -> _SynthesisResult:
     settings = get_settings()
     api_key = settings.dashscope_api_key or settings.tts_api_key or ""
@@ -109,8 +115,7 @@ def _run_tts_task(
         explicit=settings.tts_instruction,
         preset=settings.tts_instruct_preset,
     )
-    if enable_ssml:
-        instruction = None
+    fmt = (audio_format or settings.tts_audio_format or "mp3").strip().lower()
     task_id = str(uuid.uuid4())
     audio_chunks: list[bytes] = []
     raw_words: list[dict] = []
@@ -135,12 +140,11 @@ def _run_tts_task(
                     "parameters": {
                         "text_type": "PlainText",
                         "voice": voice,
-                        "format": "mp3",
+                        "format": fmt,
                         "sample_rate": 22050,
                         "volume": settings.tts_volume,
                         "rate": rate if rate is not None else settings.tts_speech_rate,
                         "pitch": pitch if pitch is not None else 1,
-                        "enable_ssml": enable_ssml,  # cSpell: disable-line
                         "word_timestamp_enabled": word_timestamps,
                         **({"instruction": instruction} if instruction else {}),
                     },
@@ -255,27 +259,21 @@ def _synthesize_segment(
     phrases = tts_mgr.phrase_chunks_for_segment(seg)
     segment_text = build_segment_tts_text(phrases)
     settings = get_settings()
-    tts_text = segment_text
-    use_ssml = False
-    if settings.tts_breath_cue_enabled:
-        tts_text, use_ssml = prepare_ssml_text(segment_text)
     logger.info(
-        "tts segment %s start phrases=%s text_chars=%s ssml=%s",
+        "tts segment %s start phrases=%s text_chars=%s transport=websocket",
         seg_index,
         len(phrases),
         len(segment_text),
-        use_ssml,
     )
 
     for attempt in (1, 2):
         try:
             result = _run_tts_task(
-                tts_text,
+                segment_text,
                 word_timestamps=True,
                 timeout=_segment_timeout(segment_text),
                 rate=effective_rate,
                 voice=effective_voice,
-                enable_ssml=use_ssml,
             )
             break
         except TimeoutError:
@@ -284,21 +282,44 @@ def _synthesize_segment(
             logger.warning("tts segment %s task-started 超时，重试第 %s 次", seg_index, attempt)
             time.sleep(3)
             continue
-    segment_mp3 = clips_dir / f"{seg_index}.mp3"
-    segment_mp3.write_bytes(result.audio)
+    segment_clip = clips_dir / f"{seg_index}{_audio_extension()}"
+    segment_clip.write_bytes(result.audio)
 
-    segment_duration = probe_duration(segment_mp3)
     words = normalize_word_timestamps(result.words)
-    phrase_durations = phrase_durations_from_words(
+    if settings.tts_trim_edges:
+        if words:
+            words = apply_tts_segment_trim(segment_clip, words)
+        else:
+            logger.warning(
+                "tts segment %s: no word timestamps, skip edge trim",
+                seg_index,
+            )
+    segment_duration = probe_duration(segment_clip)
+    breath_cues = build_phrase_breath_cues(
         phrases,
         words,
         segment_duration_sec=segment_duration,
     )
+    phrase_durations = [cue.duration_sec for cue in breath_cues]
     if not words:
         logger.warning(
             "tts segment %s: no word timestamps, proportional subtitle timing",
             seg_index,
         )
+    elif len(breath_cues) > 1:
+        pauses_ms = [
+            pause
+            for pause in (cue.pause_after_ms for cue in breath_cues)
+            if pause is not None
+        ]
+        if pauses_ms:
+            logger.info(
+                "tts segment %s breath_cue_pauses_ms count=%s sum=%s avg=%.0f",
+                seg_index,
+                len(pauses_ms),
+                sum(pauses_ms),
+                sum(pauses_ms) / len(pauses_ms),
+            )
 
     subtitle_cues = [
         SubtitleCue(
@@ -327,7 +348,7 @@ def _synthesize_segment(
 
     return _SegmentSynthResult(
         seg_index=seg_index,
-        clip_path=segment_mp3,
+        clip_path=segment_clip,
         subtitle_cues=subtitle_cues,
         segment_duration=segment_duration,
         usage_task=usage_task,
@@ -342,9 +363,12 @@ def synthesize_utterance(
     pitch: float | None = None,
 ) -> Path:
     """单句 MP3（片头喊声等）。"""
+    settings = get_settings()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     result = _run_tts_task(text, rate=rate, pitch=pitch)
     output_path.write_bytes(result.audio)
+    if settings.tts_trim_edges:
+        apply_tts_segment_trim(output_path, normalize_word_timestamps(result.words))
     if result.usage:
         logger.info(
             "tts utterance done chars=%s bytes=%s",
@@ -355,7 +379,7 @@ def synthesize_utterance(
 
 
 class AliTTSClient(TTSClient):
-    """按分镜整段合成（每 segment 一次 WebSocket），字幕仍用 phrase_chunks 断句。"""
+    """按分镜整段合成（每 segment 一次 TTS 请求），字幕仍用 phrase_chunks 断句。"""
 
     def synthesize(
         self,
@@ -380,13 +404,12 @@ class AliTTSClient(TTSClient):
         max_workers = min(len(segments), max(1, settings.tts_max_workers))
 
         logger.info(
-            "tts start segments=%s voice=%s model=%s rate=%s max_workers=%s breath_cue=%s",
+            "tts start segments=%s voice=%s model=%s rate=%s max_workers=%s transport=websocket",
             len(segments),
             effective_voice,
             VOICE_MODEL_MAP.get(effective_voice) or settings.tts_model or DEFAULT_MODEL,
             effective_rate,
             max_workers,
-            settings.tts_breath_cue_enabled,
         )
 
         def _run(seg: dict) -> _SegmentSynthResult:
@@ -414,7 +437,7 @@ class AliTTSClient(TTSClient):
             item.usage_task for item in segment_results if item.usage_task is not None
         ]
 
-        audio_path = output_dir / "narration.mp3"
+        audio_path = output_dir / f"narration{_audio_extension()}"
         concat_clips(clip_paths, audio_path)
 
         cues_path = tts_mgr.subtitle_cues_path_for(output_dir)

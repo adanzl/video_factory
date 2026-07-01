@@ -221,7 +221,8 @@ class Config:
     tts_instruction: str | None = _opt("TTS_INSTRUCTION")
     tts_instruct_preset: str | None = _opt("TTS_INSTRUCT_PRESET")
     tts_max_workers: int = int(os.getenv("TTS_MAX_WORKERS", "5"))
-    tts_breath_cue_enabled: bool = _bool("TTS_BREATH_CUE_ENABLED", default=True)
+    tts_trim_edges: bool = _bool("TTS_TRIM_EDGES", default=True)
+    tts_audio_format: str = os.getenv("TTS_AUDIO_FORMAT", "mp3").strip().lower()
 
     # ========== 音频质检 / 归一化 ==========
     audio_target_lufs: float = float(os.getenv("AUDIO_TARGET_LUFS", "-16"))
