@@ -14,6 +14,7 @@ from pathlib import Path
 import websocket
 
 from app.config import get_settings
+from app.services.tts.breath_cue import prepare_ssml_text
 from app.services.tts.instruct import resolve_instruction
 from app.services.tts.phrase_timing import (
     build_segment_tts_text,
@@ -92,6 +93,7 @@ def _run_tts_task(
     rate: float | None = None,
     pitch: float | None = None,
     voice: str | None = None,
+    enable_ssml: bool = False,
 ) -> _SynthesisResult:
     settings = get_settings()
     api_key = settings.dashscope_api_key or settings.tts_api_key or ""
@@ -107,6 +109,8 @@ def _run_tts_task(
         explicit=settings.tts_instruction,
         preset=settings.tts_instruct_preset,
     )
+    if enable_ssml:
+        instruction = None
     task_id = str(uuid.uuid4())
     audio_chunks: list[bytes] = []
     raw_words: list[dict] = []
@@ -136,7 +140,7 @@ def _run_tts_task(
                         "volume": settings.tts_volume,
                         "rate": rate if rate is not None else settings.tts_speech_rate,
                         "pitch": pitch if pitch is not None else 1,
-                        "enable_ssml": False,  # cSpell: disable-line
+                        "enable_ssml": enable_ssml,  # cSpell: disable-line
                         "word_timestamp_enabled": word_timestamps,
                         **({"instruction": instruction} if instruction else {}),
                     },
@@ -250,21 +254,28 @@ def _synthesize_segment(
     seg_index = seg["segment_index"]
     phrases = tts_mgr.phrase_chunks_for_segment(seg)
     segment_text = build_segment_tts_text(phrases)
+    settings = get_settings()
+    tts_text = segment_text
+    use_ssml = False
+    if settings.tts_breath_cue_enabled:
+        tts_text, use_ssml = prepare_ssml_text(segment_text)
     logger.info(
-        "tts segment %s start phrases=%s text_chars=%s",
+        "tts segment %s start phrases=%s text_chars=%s ssml=%s",
         seg_index,
         len(phrases),
         len(segment_text),
+        use_ssml,
     )
 
     for attempt in (1, 2):
         try:
             result = _run_tts_task(
-                segment_text,
+                tts_text,
                 word_timestamps=True,
                 timeout=_segment_timeout(segment_text),
                 rate=effective_rate,
                 voice=effective_voice,
+                enable_ssml=use_ssml,
             )
             break
         except TimeoutError:
@@ -369,13 +380,13 @@ class AliTTSClient(TTSClient):
         max_workers = min(len(segments), max(1, settings.tts_max_workers))
 
         logger.info(
-            "tts start segments=%s voice=%s model=%s rate=%s max_workers=%s instruction=%s",
+            "tts start segments=%s voice=%s model=%s rate=%s max_workers=%s breath_cue=%s",
             len(segments),
             effective_voice,
             VOICE_MODEL_MAP.get(effective_voice) or settings.tts_model or DEFAULT_MODEL,
             effective_rate,
             max_workers,
-            resolve_instruction(effective_voice, explicit=settings.tts_instruction, preset=settings.tts_instruct_preset),
+            settings.tts_breath_cue_enabled,
         )
 
         def _run(seg: dict) -> _SegmentSynthResult:
