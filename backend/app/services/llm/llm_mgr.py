@@ -199,7 +199,7 @@ class LLMMgr:
         job: dict | None = None,
         segment_indices: list[int] | None = None,
         include_sd15_prompt: bool = False,
-        max_attempts: int = 4,
+        max_attempts: int | None = None,
     ) -> dict[str, Any]:
         """补全文生图提示词，过短时带 feedback 重试（与 script 阶段逻辑对齐）。"""
         from app.quality.checkers import check_image_prompts
@@ -217,7 +217,8 @@ class LLMMgr:
         target_indices = segment_indices
         min_chars = image_prompt_min_chars(sd15_mode=include_sd15_prompt)
         target_chars = image_prompt_target_chars(sd15_mode=include_sd15_prompt)
-        for attempt in range(max_attempts):
+        attempts = max_attempts if max_attempts is not None else get_settings().script_qa_max_attempts
+        for attempt in range(attempts):
             raise_if_job_cancelled(job)
             self.fill_image_prompts(
                 script,
