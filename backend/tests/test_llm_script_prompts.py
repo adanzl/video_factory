@@ -45,8 +45,8 @@ def test_storyboard_length_budget_life_28s_per_segment_cap():
         content_style=CONTENT_STYLE_LIFE_EXPERIENCE,
     )
     assert "140" in budget
-    assert "段数由内容与单镜上限共同决定" in budget
-    assert "输出前自检" in budget
+    assert "须至少" in budget
+    assert "输出前硬性自检" in budget
 
 
 def test_build_storyboard_prompts_includes_length_budget():
@@ -56,11 +56,19 @@ def test_build_storyboard_prompts_includes_length_budget():
         segment_target_sec=16.0,
         job={"pipeline": "standard", "content_style": CONTENT_STYLE_LIFE_EXPERIENCE},
     )
+    assert "【首要任务】" in prompts["user"]
     assert "字数预算" in prompts["user"]
     assert "95%" in prompts["user"] or "95％" in prompts["user"]
-    assert "输出前自检" in prompts["user"]
-    assert "输出前须自检" in prompts["system"]
-    assert "1120" in prompts["user"] or str(narration_accept_min_chars(1318)) in prompts["user"]
+    assert "输出前硬性自检" in prompts["user"]
+    assert "禁止照抄样例短句" in prompts["system"]
+    assert str(narration_accept_min_chars(1318)) in prompts["user"]
+
+
+def test_storyboard_compact_output_default_standard():
+    from app.utils.media import default_narration_target_words
+
+    target = default_narration_target_words()
+    assert storyboard_compact_output(target, 16.0) is True
 
 
 def test_build_storyboard_life_experience_bans_memoir_style():
@@ -85,8 +93,9 @@ def test_build_storyboard_science_child_uses_four_part_structure_and_self_check(
     assert "【结构规范】" in prompts["system"]
     assert "开场钩子" in prompts["system"]
     assert "机制拆解" in prompts["system"]
-    assert "输出前自检" in prompts["system"]
+    assert "输出前须自检" in prompts["system"]
     assert "感叹+科普点+比喻/拟声" in prompts["user"]
+    assert "【首要任务】" in prompts["user"]
 
 
 def test_storyboard_compact_output_for_landscape_life_preset():

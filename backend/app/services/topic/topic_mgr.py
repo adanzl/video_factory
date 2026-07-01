@@ -12,8 +12,7 @@ from app.services.job.job_mgr import job_mgr
 from app.utils.job_info import (
     CONTENT_STYLE_HISTORICAL_MYSTERY,
     ORIENTATION_LANDSCAPE,
-    default_orientation_for_pipeline,
-    merge_job_info,
+    merge_job_script_params,
 )
 from app.services.llm.llm_mgr import llm_mgr
 from app.services.llm.llm_topics import (
@@ -304,7 +303,7 @@ class TopicMgr:
                     skip_publish=skip_publish,
                     stage="script",
                     status="idle",
-                    info=merge_job_info(
+                    info=merge_job_script_params(
                         None,
                         orientation=ORIENTATION_LANDSCAPE,
                         content_style=(
@@ -315,6 +314,7 @@ class TopicMgr:
                         narration_target_words=1800 if is_history else None,
                         segment_target_sec=seg_sec,
                         skip_title_optimize=True,
+                        generate_image_prompts=True,
                     ),
                 )
                 title_repo.update_title(
@@ -325,12 +325,16 @@ class TopicMgr:
                 )
                 jobs.append(job)
 
+        script_kwargs = {
+            "skip_title_optimize": True,
+            "generate_image_prompts": True,
+        }
         if run_mode == "script":
             for job in jobs:
-                job_mgr.run_script(job["id"], to_end=False)
+                job_mgr.run_script(job["id"], to_end=False, **script_kwargs)
         elif run_mode == "full":
             for job in jobs:
-                job_mgr.run_script(job["id"], to_end=True)
+                job_mgr.run_script(job["id"], to_end=True, **script_kwargs)
 
         logger.info(
             "[TOPIC] enqueue done count=%d run_mode=%s job_ids=%s",
