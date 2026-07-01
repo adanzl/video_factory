@@ -221,7 +221,7 @@ def _run_tts_task(
     thread = threading.Thread(target=ws_app.run_forever, daemon=True)
     thread.start()
 
-    if not started.wait(timeout=15):
+    if not started.wait(timeout=30):
         ws_app.close()
         raise TimeoutError("TTS task-started 超时")
 
