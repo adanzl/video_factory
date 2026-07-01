@@ -62,6 +62,15 @@ def segment_text_hard_cap(segment_target_sec: float) -> int:
     return int(segment_text_char_cap(segment_target_sec) * 1.15)
 
 
+# 超出硬上限但在该余量内：走分镜缩字，不整稿重试
+SEGMENT_SHRINK_OVERFLOW_CHARS = 25
+
+
+def segment_text_shrink_max(segment_target_sec: float) -> int:
+    """略超限分镜可走缩字放行的字数上限（硬上限 + 固定余量）。"""
+    return segment_text_hard_cap(segment_target_sec) + SEGMENT_SHRINK_OVERFLOW_CHARS
+
+
 def segment_comfort_chars(cap: int) -> int:
     """prompt 用单段建议上限（低于 cap，降低 LLM 略超 cap 的概率）。"""
     return max(15, int(cap * 0.80))

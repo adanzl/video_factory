@@ -6,6 +6,7 @@ from typing import Any
 from app.config import get_settings
 from app.services.llm.llm_mgr import LLMClient
 from app.services.llm.llm_script_prompts import MIN_IMAGE_PROMPT_CHARS
+from app.utils.media import segment_text_char_cap
 
 
 def _mock_image_prompt(visual_style: str, display_title: str, idx: int) -> str:
@@ -158,6 +159,35 @@ class MockLLMClient(LLMClient):
             )
             seg["image_prompt"] = _mock_image_prompt(visual_style, display_title, idx)
             seg.setdefault("motion_prompt", _mock_motion_prompt())
+        return script
+
+    def shrink_segment_texts(
+        self,
+        script: dict[str, Any],
+        *,
+        segment_indices: list[int],
+        segment_target_sec: float,
+        job: dict | None = None,
+    ) -> dict[str, Any]:
+        _ = job
+        cap = segment_text_char_cap(segment_target_sec)
+        allowed = {int(i) for i in segment_indices}
+        for seg in script.get("segments") or []:
+            idx = int(seg["segment_index"])
+            if idx not in allowed:
+                continue
+            text = str(seg.get("text") or "")
+            compact = re.sub(r"\s+", "", text)
+            if len(compact) <= cap:
+                continue
+            seg["text"] = compact[:cap]
+        ordered = sorted(
+            script.get("segments") or [],
+            key=lambda s: int(s.get("segment_index") or 0),
+        )
+        narration = "".join(str(seg.get("text") or "") for seg in ordered)
+        script["narration"] = narration
+        script["word_count"] = len(re.sub(r"\s+", "", narration))
         return script
 
     def generate_material_script(

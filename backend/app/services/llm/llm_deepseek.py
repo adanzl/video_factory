@@ -17,6 +17,7 @@ from app.services.llm.llm_script_prompts import (
     build_image_prompts_prompts,
     build_material_script_prompts,
     build_narration_expand_prompts,
+    build_segment_shrink_prompts,
     build_storyboard_prompts,
     build_title_optimize_prompts,
     build_video_description_prompts,
@@ -33,6 +34,7 @@ from app.utils.media import (
     default_narration_target_words,
     min_narration_chars_for_target,
     narration_accept_min_chars,
+    segment_text_char_cap,
     storyboard_compact_output,
 )
 
@@ -331,6 +333,59 @@ class DeepSeekClient(LLMClient):
             if chars >= min_chars:
                 break
         return current
+
+    def shrink_segment_texts(
+        self,
+        script: dict[str, Any],
+        *,
+        segment_indices: list[int],
+        segment_target_sec: float,
+        job: dict | None = None,
+    ) -> dict[str, Any]:
+        if not segment_indices:
+            return script
+        cap = segment_text_char_cap(segment_target_sec)
+        started = time.perf_counter()
+        prompts = build_segment_shrink_prompts(
+            script,
+            segment_indices=segment_indices,
+            cap=cap,
+            segment_target_sec=segment_target_sec,
+            job=job,
+        )
+        raw, _ = self._chat_json(prompts["system"], prompts["user"], max_tokens=4096)
+        raise_if_job_cancelled(job)
+        items = raw.get("segments") if isinstance(raw, dict) else raw
+        if not isinstance(items, list) or not items:
+            raise ValueError("LLM segment shrink response missing segments")
+        by_idx: dict[int, str] = {}
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            idx = item.get("segment_index")
+            text = item.get("text")
+            if idx is None or not isinstance(text, str) or not text.strip():
+                continue
+            by_idx[int(idx)] = text.strip()
+        missing = [idx for idx in segment_indices if idx not in by_idx]
+        if missing:
+            raise ValueError(f"segment shrink missing indices: {missing}")
+        for seg in script.get("segments") or []:
+            idx = int(seg.get("segment_index", -1))
+            if idx in by_idx:
+                seg["text"] = by_idx[idx]
+        elapsed = time.perf_counter() - started
+        logger.info(
+            "[SCRIPT] segment_shrink done indices=%s cap=%d elapsed=%.1fs",
+            segment_indices,
+            cap,
+            elapsed,
+        )
+        timing = script.setdefault("_llm_timing", {})
+        timing["segment_shrink_sec"] = round(
+            float(timing.get("segment_shrink_sec") or 0) + elapsed, 1
+        )
+        return _assemble_storyboard_narration(script)
 
     def _generate_storyboard(
         self,

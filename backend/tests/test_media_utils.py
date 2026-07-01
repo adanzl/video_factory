@@ -7,7 +7,7 @@ from app.utils.media import (
     material_final_min_duration_sec,
     material_min_audio_duration_sec,
     narration_accept_min_chars,
-    narration_accept_max_chars,
+    segment_text_shrink_max,
     narration_target_for_minutes,
     narration_writing_plan,
     narration_writing_target_chars,
@@ -47,9 +47,8 @@ def test_narration_accept_min_chars():
     assert narration_accept_min_chars(404) == 343
 
 
-def test_narration_accept_max_chars():
-    assert narration_accept_max_chars(1646) == 1810
-    assert narration_accept_max_chars(404) == 454
+def test_segment_text_shrink_max():
+    assert segment_text_shrink_max(15.0) == 111  # hard_cap 86 + 25
 
 
 def test_narration_writing_target_chars_is_ninety_five_percent():

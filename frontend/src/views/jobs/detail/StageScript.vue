@@ -35,7 +35,7 @@
           :column="4"
           border
           :label-width="SCRIPT_CONFIG_LABEL_WIDTH"
-          class="w-full [&_.el-descriptions__label]:w-[120px]! [&_.el-descriptions__label]:min-w-[120px]! [&_.el-descriptions__label]:max-w-[120px]! [&_.el-descriptions__content]:min-w-0"
+          :class="SCRIPT_CONFIG_DESC_CLASS"
         >
           <template v-if="!isMaterialJob">
             <el-descriptions-item label="方向">
@@ -71,7 +71,7 @@
                   :precision="1"
                   controls-position="right"
                   class="w-28!"
-                  @change="handleEstimatedDurationChange"
+                  @change="syncNarrationFromEstimatedDuration"
                 />
                 <span class="text-xs text-gray-400">分</span>
               </div>
@@ -85,30 +85,6 @@
                 controls-position="right"
                 class="w-28!"
               />
-            </el-descriptions-item>
-            <el-descriptions-item label="标题上限">
-              <el-input-number
-                v-model="maxTitleLength"
-                :min="8"
-                :max="48"
-                :step="1"
-                controls-position="right"
-                class="w-28!"
-              />
-            </el-descriptions-item>
-            <el-descriptions-item label="口播字数">
-              <el-input-number
-                v-model="narrationTargetWords"
-                :min="NARRATION_WORDS_MIN"
-                :max="NARRATION_WORDS_MAX"
-                :step="50"
-                controls-position="right"
-                class="w-32!"
-                @change="handleNarrationWordsChange"
-              />
-            </el-descriptions-item>
-            <el-descriptions-item label="标题优化">
-              <el-checkbox v-model="skipTitleOptimize">跳过</el-checkbox>
             </el-descriptions-item>
             <el-descriptions-item label="文生图提示词">
               <el-checkbox v-model="includeImagePrompts">生成</el-checkbox>
@@ -127,38 +103,38 @@
                     :disabled="materialDurationLocked"
                     controls-position="right"
                     class="w-32!"
-                    @change="handleEstimatedDurationChange"
+                    @change="syncNarrationFromEstimatedDuration"
                   />
                   <span class="text-xs text-gray-400">分</span>
                 </div>
                 <span v-if="baseDurationHint" class="text-xs text-gray-400">{{ baseDurationHint }}</span>
               </div>
             </el-descriptions-item>
-            <el-descriptions-item label="标题上限">
-              <el-input-number
-                v-model="maxTitleLength"
-                :min="8"
-                :max="48"
-                :step="1"
-                controls-position="right"
-                class="w-28!"
-              />
-            </el-descriptions-item>
-            <el-descriptions-item label="口播字数">
-              <el-input-number
-                v-model="narrationTargetWords"
-                :min="NARRATION_WORDS_MIN"
-                :max="NARRATION_WORDS_MAX"
-                :step="50"
-                controls-position="right"
-                class="w-32!"
-                @change="handleNarrationWordsChange"
-              />
-            </el-descriptions-item>
-            <el-descriptions-item label="标题优化">
-              <el-checkbox v-model="skipTitleOptimize">跳过</el-checkbox>
-            </el-descriptions-item>
           </template>
+          <el-descriptions-item label="标题上限">
+            <el-input-number
+              v-model="maxTitleLength"
+              :min="8"
+              :max="48"
+              :step="1"
+              controls-position="right"
+              class="w-28!"
+            />
+          </el-descriptions-item>
+          <el-descriptions-item label="口播字数">
+            <el-input-number
+              v-model="narrationTargetWords"
+              :min="NARRATION_WORDS_MIN"
+              :max="NARRATION_WORDS_MAX"
+              :step="50"
+              controls-position="right"
+              class="w-32!"
+              @change="handleNarrationWordsChange"
+            />
+          </el-descriptions-item>
+          <el-descriptions-item label="标题优化">
+            <el-checkbox v-model="skipTitleOptimize">跳过</el-checkbox>
+          </el-descriptions-item>
           <el-descriptions-item v-if="isMaterialJob" label="时间表" :span="3">
             <el-input
               v-model="videoTimeline"
@@ -187,7 +163,7 @@
     >
       <el-collapse-item name="prompts">
         <template #title>
-          <div class="flex w-full items-center justify-between gap-3 pr-2">
+          <div class="flex w-full items-center justify-between gap-3 p-2">
             <span class="text-sm font-medium text-gray-700">大模型提示词</span>
             <el-button
               v-if="promptPanelOpen.includes('prompts')"
@@ -201,25 +177,17 @@
         </template>
         <div v-if="promptsLoading" class="py-6 text-center text-sm text-gray-400">加载中…</div>
         <template v-else-if="displayPrompts.length">
-          <el-tabs v-model="activePromptTab" class="script-prompt-tabs">
+          <el-tabs v-model="activePromptTab" class="px-4">
             <el-tab-pane
               v-for="item in displayPrompts"
               :key="item.step"
               :label="promptTabLabel(item.step)"
               :name="item.step"
             >
-              <div class="space-y-3 pt-1">
-                <div>
-                  <div class="mb-1 text-xs font-medium text-gray-500">System</div>
-                  <pre
-                    class="m-0 max-h-72 overflow-auto rounded bg-gray-50 p-3 text-xs leading-relaxed wrap-break-word whitespace-pre-wrap"
-                  >{{ item.system }}</pre>
-                </div>
-                <div>
-                  <div class="mb-1 text-xs font-medium text-gray-500">User</div>
-                  <pre
-                    class="m-0 max-h-72 overflow-auto rounded bg-gray-50 p-3 text-xs leading-relaxed wrap-break-word whitespace-pre-wrap"
-                  >{{ item.user }}</pre>
+              <div class="space-y-3 p-1">
+                <div v-for="block in PROMPT_BLOCKS" :key="block.key">
+                  <div class="mb-1 text-xs font-medium text-gray-500">{{ block.label }}</div>
+                  <pre :class="PROMPT_PRE_CLASS">{{ item[block.key] }}</pre>
                 </div>
               </div>
             </el-tab-pane>
@@ -236,7 +204,7 @@
         :column="1"
         border
         :label-width="FORM_LABEL_WIDTH"
-        class="mb-2 w-full [&_.el-descriptions__label]:w-[100px]! [&_.el-descriptions__label]:min-w-[100px]! [&_.el-descriptions__label]:max-w-[100px]!"
+        :class="SCRIPT_RESULT_DESC_CLASS"
       >
         <el-descriptions-item label="脚本标题">{{ script.title || "-" }}</el-descriptions-item>
         <el-descriptions-item
@@ -251,31 +219,25 @@
         <el-descriptions-item v-if="isMaterialJob && script.script_mode" label="文案模式">
           {{ script.script_mode === "manual" ? "手动" : "AI" }}
         </el-descriptions-item>
-        <el-descriptions-item v-if="isMaterialJob && script.video_timeline" label="时间表">
+        <el-descriptions-item
+          v-for="field in scriptClampFields"
+          :key="field.label"
+          :label="field.label"
+        >
           <el-tooltip placement="top-start" :show-after="300">
             <template #content>
               <div
-                class="max-h-96 max-w-2xl overflow-auto whitespace-pre-wrap wrap-break-word font-mono text-xs leading-relaxed"
+                class="max-h-96 max-w-2xl overflow-auto whitespace-pre-wrap wrap-break-word leading-relaxed"
+                :class="field.mono ? 'font-mono text-xs' : 'text-sm'"
               >
-                {{ script.video_timeline }}
+                {{ field.text }}
               </div>
             </template>
-            <div class="line-clamp-2 cursor-default font-mono text-xs leading-relaxed break-all text-gray-600">
-              {{ script.video_timeline }}
-            </div>
-          </el-tooltip>
-        </el-descriptions-item>
-        <el-descriptions-item v-if="script.supplementary_info" label="补充信息">
-          <el-tooltip placement="top-start" :show-after="300">
-            <template #content>
-              <div
-                class="max-h-96 max-w-2xl overflow-auto whitespace-pre-wrap wrap-break-word text-sm leading-relaxed"
-              >
-                {{ script.supplementary_info }}
-              </div>
-            </template>
-            <div class="line-clamp-2 cursor-default text-sm leading-relaxed wrap-break-word text-gray-600">
-              {{ script.supplementary_info }}
+            <div
+              class="line-clamp-2 cursor-default leading-relaxed wrap-break-word text-gray-600"
+              :class="field.mono ? 'break-all font-mono text-xs' : 'text-sm'"
+            >
+              {{ field.text }}
             </div>
           </el-tooltip>
         </el-descriptions-item>
@@ -285,7 +247,7 @@
         :column="3"
         border
         :label-width="FORM_LABEL_WIDTH"
-        class="mb-4 w-full [&_.el-descriptions__label]:w-[100px]! [&_.el-descriptions__label]:min-w-[100px]! [&_.el-descriptions__label]:max-w-[100px]!"
+        :class="[SCRIPT_RESULT_DESC_CLASS, 'mb-4']"
       >
         <el-descriptions-item label="生成耗时">{{ formatCostTime(script.cost_time) }}</el-descriptions-item>
         <el-descriptions-item label="字数">{{ script.word_count ?? "-" }}</el-descriptions-item>
@@ -359,29 +321,19 @@
             </template>
           </el-table-column>
           <template v-if="!isMaterialJob">
-            <el-table-column prop="visual_brief" label="画面描述" min-width="150">
+            <el-table-column
+              v-for="col in SEGMENT_EXTRA_COLUMNS"
+              :key="col.prop"
+              :prop="col.prop"
+              :label="col.label"
+              :min-width="col.minWidth"
+            >
               <template #default="{ row }">
-                <div class="leading-relaxed wrap-break-word whitespace-pre-wrap">{{ row.visual_brief || "-" }}</div>
-              </template>
-            </el-table-column>
-            <el-table-column prop="image_prompt" label="文生图提示词" min-width="150">
-              <template #default="{ row }">
-                <div class="text-xs leading-relaxed wrap-break-word whitespace-pre-wrap text-gray-500">
-                  {{ row.image_prompt || "-" }}
-                </div>
-              </template>
-            </el-table-column>
-            <el-table-column prop="motion_prompt" label="运动提示词" min-width="120">
-              <template #default="{ row }">
-                <div class="text-xs leading-relaxed wrap-break-word whitespace-pre-wrap text-gray-500">
-                  {{ row.motion_prompt || "-" }}
-                </div>
-              </template>
-            </el-table-column>
-            <el-table-column prop="sd15_prompt_en" label="SD15 英文提示词" min-width="120">
-              <template #default="{ row }">
-                <div class="text-xs leading-relaxed wrap-break-word whitespace-pre-wrap text-gray-500">
-                  {{ row.sd15_prompt_en || "-" }}
+                <div
+                  class="leading-relaxed wrap-break-word whitespace-pre-wrap"
+                  :class="col.muted ? 'text-xs text-gray-500' : ''"
+                >
+                  {{ row[col.prop] || "-" }}
                 </div>
               </template>
             </el-table-column>
@@ -447,10 +399,9 @@ import {
   updateJob,
   updateJobInfo,
 } from "@/api/api-jobs";
-import type { JobDetail, JobLog, LlmPromptStep, ScriptJson, UpdateJobInfoParams } from "@/types/jobs";
+import type { JobDetail, JobLog, JobScriptParams, LlmPromptStep, ScriptJson, UpdateJobInfoParams } from "@/types/jobs";
 import type { RunStageActionPayload } from "@/types/jobs/stageAction";
 import { isMaterialJob as checkMaterialJob } from "@/constants/jobStages";
-import { formatDateTime } from "@/utils/date";
 import {
   estimateNarrationTargetWords,
   estimatedMinutesFromNarrationWords,
@@ -467,12 +418,40 @@ import { STAGE_BLOCK_CLASS, STAGE_EMPTY_CLASS, STAGE_SECTION_TITLE_CLASS, STAGE_
 
 const FORM_LABEL_WIDTH = "100px";
 const SCRIPT_CONFIG_LABEL_WIDTH = "120px";
+const SCRIPT_CONFIG_DESC_CLASS =
+  "w-full [&_.el-descriptions__label]:w-[120px]! [&_.el-descriptions__label]:min-w-[120px]! [&_.el-descriptions__label]:max-w-[120px]! [&_.el-descriptions__content]:min-w-0";
+const SCRIPT_RESULT_DESC_CLASS =
+  "mb-2 w-full [&_.el-descriptions__label]:w-[100px]! [&_.el-descriptions__label]:min-w-[100px]! [&_.el-descriptions__label]:max-w-[100px]!";
+const PROMPT_PRE_CLASS =
+  "m-0 max-h-72 overflow-auto rounded bg-gray-50 p-3 text-xs leading-relaxed wrap-break-word whitespace-pre-wrap";
 const DEFAULT_SEGMENT_TARGET_SEC = 28;
 const DEFAULT_MAX_TITLE_LENGTH = 16;
 const DEFAULT_NARRATION_TARGET_WORDS = defaultNarrationTargetWords();
 const DEFAULT_MATERIAL_NARRATION_TARGET_WORDS = 800;
 const NARRATION_WORDS_MIN = 1;
 const NARRATION_WORDS_MAX = 3000;
+
+const PROMPT_BLOCKS = [
+  { key: "system" as const, label: "System" },
+  { key: "user" as const, label: "User" },
+];
+
+const SEGMENT_EXTRA_COLUMNS = [
+  { prop: "visual_brief", label: "画面描述", minWidth: 150, muted: false },
+  { prop: "image_prompt", label: "文生图提示词", minWidth: 150, muted: true },
+  { prop: "motion_prompt", label: "运动提示词", minWidth: 120, muted: true },
+  { prop: "sd15_prompt_en", label: "SD15 英文提示词", minWidth: 120, muted: true },
+] as const;
+
+const SCRIPT_PARAM_KEYS = [
+  "segment_target_sec",
+  "max_title_length",
+  "narration_target_words",
+  "skip_title_optimize",
+  "generate_image_prompts",
+  "supplementary_info",
+  "video_timeline",
+] as const satisfies readonly (keyof JobScriptParams)[];
 
 const props = defineProps<{
   job: JobDetail;
@@ -516,6 +495,10 @@ const PROMPT_TAB_ORDER = [
   "video_description",
 ] as const;
 
+const PROMPT_TAB_ORDER_INDEX = Object.fromEntries(
+  PROMPT_TAB_ORDER.map((step, index) => [step, index])
+) as Record<(typeof PROMPT_TAB_ORDER)[number], number>;
+
 const PROMPT_TAB_LABELS: Record<string, string> = {
   storyboard: "分镜",
   material_script: "口播",
@@ -527,12 +510,9 @@ const promptTabLabel = (step: string) => PROMPT_TAB_LABELS[step] ?? step;
 
 const displayPrompts = computed(() =>
   llmPrompts.value
-    .filter(item => (PROMPT_TAB_ORDER as readonly string[]).includes(item.step))
-    .sort(
-      (a, b) =>
-        (PROMPT_TAB_ORDER as readonly string[]).indexOf(a.step) -
-        (PROMPT_TAB_ORDER as readonly string[]).indexOf(b.step)
-    )
+    .filter(item => item.step in PROMPT_TAB_ORDER_INDEX)
+    .sort((a, b) => PROMPT_TAB_ORDER_INDEX[a.step as keyof typeof PROMPT_TAB_ORDER_INDEX]
+      - PROMPT_TAB_ORDER_INDEX[b.step as keyof typeof PROMPT_TAB_ORDER_INDEX])
 );
 
 const actionDisabled = computed(() => props.job.status === "running");
@@ -556,6 +536,21 @@ const script = computed<ScriptJson | null>(() => {
 });
 
 const rawJson = computed(() => JSON.stringify(props.job.script_json, null, 2));
+
+const scriptClampFields = computed(() => {
+  const value = script.value;
+  if (!value) {
+    return [] as { label: string; text: string; mono?: boolean }[];
+  }
+  const fields: { label: string; text: string; mono?: boolean }[] = [];
+  if (isMaterialJob.value && value.video_timeline) {
+    fields.push({ label: "时间表", text: value.video_timeline, mono: true });
+  }
+  if (value.supplementary_info) {
+    fields.push({ label: "补充信息", text: value.supplementary_info });
+  }
+  return fields;
+});
 
 const QUALITY_STEP_LABELS: Record<string, string> = {
   copy: "文案",
@@ -716,6 +711,21 @@ const baseDurationHint = computed(() => {
   return `基底 ${durationLabel}，推荐约 ${estimated} 字（已同步口播字数）`;
 });
 
+const pickString = (...values: unknown[]) => {
+  for (const value of values) {
+    if (typeof value === "string") {
+      return value;
+    }
+  }
+  return "";
+};
+
+const applyFiniteNumber = (value: unknown, apply: (next: number) => void) => {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    apply(value);
+  }
+};
+
 const syncNarrationFromEstimatedDuration = (minutes: number | undefined) => {
   if (minutes == null || !Number.isFinite(minutes) || minutes <= 0) {
     return;
@@ -724,10 +734,6 @@ const syncNarrationFromEstimatedDuration = (minutes: number | undefined) => {
   narrationTargetWords.value = narrationTargetFromEstimatedMinutes(minutes);
   narrationWordsTouched.value = true;
   syncingEstimateWords = false;
-};
-
-const handleEstimatedDurationChange = (value: number | undefined) => {
-  syncNarrationFromEstimatedDuration(value);
 };
 
 const handleNarrationWordsChange = () => {
@@ -766,9 +772,6 @@ const loadBaseDuration = async () => {
     );
   }
 };
-
-const normalizeSupplementary = (value: unknown) =>
-  typeof value === "string" ? value : "";
 
 const formatSegmentTimeRange = (start?: number | null, end?: number | null) => {
   if (start == null || end == null || Number.isNaN(start) || Number.isNaN(end)) {
@@ -838,27 +841,18 @@ const handleContentStyleChange = (
   void persistJobProfile({ content_style: value });
 };
 
-function resolveScriptParams(info: JobDetail["info"]) {
+function resolveScriptParams(info: JobDetail["info"]): JobScriptParams | null {
   if (!info || typeof info !== "object") {
     return null;
   }
-  const nested = info.script;
-  if (nested && typeof nested === "object") {
-    return nested;
+  if (info.script && typeof info.script === "object") {
+    return info.script;
   }
   const legacy = info as Record<string, unknown>;
-  const params: Record<string, unknown> = {};
-  for (const key of [
-    "segment_target_sec",
-    "max_title_length",
-    "narration_target_words",
-    "skip_title_optimize",
-    "generate_image_prompts",
-    "supplementary_info",
-    "video_timeline",
-  ] as const) {
+  const params: JobScriptParams = {};
+  for (const key of SCRIPT_PARAM_KEYS) {
     if (key in legacy) {
-      params[key] = legacy[key];
+      params[key] = legacy[key] as never;
     }
   }
   return Object.keys(params).length ? params : null;
@@ -869,20 +863,17 @@ function initScriptParamsFromInfo() {
   if (!scriptParams) {
     return;
   }
-  if (typeof scriptParams.segment_target_sec === "number" && Number.isFinite(scriptParams.segment_target_sec)) {
-    segmentTargetSec.value = scriptParams.segment_target_sec;
-  }
-  if (typeof scriptParams.max_title_length === "number" && Number.isFinite(scriptParams.max_title_length)) {
-    maxTitleLength.value = scriptParams.max_title_length;
-  }
-  if (
-    typeof scriptParams.narration_target_words === "number" &&
-    Number.isFinite(scriptParams.narration_target_words)
-  ) {
-    narrationTargetWords.value = scriptParams.narration_target_words;
-    estimatedDurationMin.value = estimatedMinutesFromNarrationWords(scriptParams.narration_target_words);
+  applyFiniteNumber(scriptParams.segment_target_sec, value => {
+    segmentTargetSec.value = value;
+  });
+  applyFiniteNumber(scriptParams.max_title_length, value => {
+    maxTitleLength.value = value;
+  });
+  applyFiniteNumber(scriptParams.narration_target_words, value => {
+    narrationTargetWords.value = value;
+    estimatedDurationMin.value = estimatedMinutesFromNarrationWords(value);
     narrationWordsTouched.value = true;
-  }
+  });
   if (typeof scriptParams.skip_title_optimize === "boolean") {
     skipTitleOptimize.value = scriptParams.skip_title_optimize;
   }
@@ -893,16 +884,55 @@ function initScriptParamsFromInfo() {
 
 const loadSupplementaryFields = () => {
   const scriptParams = resolveScriptParams(props.job.info);
-  if (typeof scriptParams?.supplementary_info === "string") {
-    supplementaryInfo.value = scriptParams.supplementary_info;
-  } else {
-    supplementaryInfo.value = normalizeSupplementary(script.value?.supplementary_info);
+  supplementaryInfo.value = pickString(scriptParams?.supplementary_info, script.value?.supplementary_info);
+  videoTimeline.value = pickString(scriptParams?.video_timeline, script.value?.video_timeline);
+};
+
+const buildScriptPreviewParams = (title: string) => ({
+  id: props.job.id,
+  title,
+  segment_target_sec: segmentTargetSec.value,
+  max_title_length: maxTitleLength.value,
+  narration_target_words: Math.round(narrationTargetWords.value),
+  skip_title_optimize: skipTitleOptimize.value,
+  supplementary_info: supplementaryInfo.value.trim() || undefined,
+  video_timeline: videoTimeline.value.trim() || undefined,
+  orientation: jobOrientation.value,
+  content_style: contentStyle.value,
+});
+
+const buildRunPayload = (toEnd: boolean, trimmedTitle: string, words: number): RunStageActionPayload => {
+  const payload: RunStageActionPayload = {
+    id: props.job.id,
+    to_end: toEnd,
+    title: trimmedTitle,
+    narration_target_words: Math.round(words),
+  };
+  if (Number.isFinite(segmentTargetSec.value)) {
+    payload.segment_target_sec = segmentTargetSec.value;
   }
-  if (typeof scriptParams?.video_timeline === "string") {
-    videoTimeline.value = scriptParams.video_timeline;
-  } else {
-    videoTimeline.value = normalizeSupplementary(script.value?.video_timeline);
+  if (Number.isFinite(maxTitleLength.value)) {
+    payload.max_title_length = maxTitleLength.value;
   }
+  if (!isMaterialJob.value) {
+    payload.orientation = jobOrientation.value;
+    payload.content_style = contentStyle.value;
+  }
+  if (skipTitleOptimize.value) {
+    payload.skip_title_optimize = true;
+  }
+  if (includeImagePrompts.value) {
+    payload.generate_image_prompts = true;
+  }
+  const extra = supplementaryInfo.value.trim();
+  if (extra) {
+    payload.supplementary_info = extra;
+  }
+  const timeline = videoTimeline.value.trim();
+  if (timeline) {
+    payload.video_timeline = timeline;
+  }
+  return payload;
 };
 
 const loadLlmPrompts = async () => {
@@ -914,18 +944,7 @@ const loadLlmPrompts = async () => {
   }
   promptsLoading.value = true;
   try {
-    llmPrompts.value = await previewScriptPrompts({
-      id: props.job.id,
-      title: trimmedTitle,
-      segment_target_sec: segmentTargetSec.value,
-      max_title_length: maxTitleLength.value,
-      narration_target_words: Math.round(narrationTargetWords.value),
-      skip_title_optimize: skipTitleOptimize.value,
-      supplementary_info: supplementaryInfo.value.trim() || undefined,
-      video_timeline: videoTimeline.value.trim() || undefined,
-      orientation: jobOrientation.value,
-      content_style: contentStyle.value,
-    });
+    llmPrompts.value = await previewScriptPrompts(buildScriptPreviewParams(trimmedTitle));
     const first = displayPrompts.value[0];
     if (first && !displayPrompts.value.some(item => item.step === activePromptTab.value)) {
       activePromptTab.value = first.step;
@@ -1013,37 +1032,7 @@ const handleRun = async (toEnd: boolean) => {
 
   submitting.value = true;
   try {
-    const payload: RunStageActionPayload = {
-      id: props.job.id,
-      to_end: toEnd,
-      title: trimmedTitle,
-    };
-    if (Number.isFinite(segmentTargetSec.value)) {
-      payload.segment_target_sec = segmentTargetSec.value;
-    }
-    if (Number.isFinite(maxTitleLength.value)) {
-      payload.max_title_length = maxTitleLength.value;
-    }
-    payload.narration_target_words = Math.round(words);
-    if (!isMaterialJob.value) {
-      payload.orientation = jobOrientation.value;
-      payload.content_style = contentStyle.value;
-    }
-    if (skipTitleOptimize.value) {
-      payload.skip_title_optimize = true;
-    }
-    if (includeImagePrompts.value) {
-      payload.generate_image_prompts = true;
-    }
-    const extra = supplementaryInfo.value.trim();
-    if (extra) {
-      payload.supplementary_info = extra;
-    }
-    const timeline = videoTimeline.value.trim();
-    if (timeline) {
-      payload.video_timeline = timeline;
-    }
-    await runJobStageAction("script", payload);
+    await runJobStageAction("script", buildRunPayload(toEnd, trimmedTitle, words));
     ElMessage.success(`已提交${actionLabel}，任务已开始执行`);
     emit("refresh");
   } catch (error) {
@@ -1061,26 +1050,31 @@ watch(
   { immediate: true }
 );
 
+function resetJobLocalState() {
+  narrationWordsTouched.value = false;
+  narrationTargetWords.value = isMaterialJob.value
+    ? DEFAULT_MATERIAL_NARRATION_TARGET_WORDS
+    : DEFAULT_NARRATION_TARGET_WORDS;
+  estimatedDurationMin.value = estimatedMinutesFromNarrationWords(narrationTargetWords.value);
+  jobOrientation.value = "portrait";
+  contentStyle.value = "science_child";
+  segmentTargetSec.value = DEFAULT_SEGMENT_TARGET_SEC;
+  maxTitleLength.value = DEFAULT_MAX_TITLE_LENGTH;
+  skipTitleOptimize.value = false;
+  includeImagePrompts.value = false;
+  promptPanelOpen.value = [];
+  llmPrompts.value = [];
+  activePromptTab.value = "";
+  supplementaryInfo.value = "";
+  videoTimeline.value = "";
+  initJobProfileFromInfo();
+  initScriptParamsFromInfo();
+}
+
 watch(
   () => props.job.id,
   () => {
-    narrationWordsTouched.value = false;
-    narrationTargetWords.value = isMaterialJob.value
-      ? DEFAULT_MATERIAL_NARRATION_TARGET_WORDS
-      : DEFAULT_NARRATION_TARGET_WORDS;
-    estimatedDurationMin.value = estimatedMinutesFromNarrationWords(
-      isMaterialJob.value ? DEFAULT_MATERIAL_NARRATION_TARGET_WORDS : DEFAULT_NARRATION_TARGET_WORDS
-    );
-    jobOrientation.value = "portrait";
-    contentStyle.value = "science_child";
-    segmentTargetSec.value = DEFAULT_SEGMENT_TARGET_SEC;
-    initJobProfileFromInfo();
-    initScriptParamsFromInfo();
-    promptPanelOpen.value = [];
-    llmPrompts.value = [];
-    activePromptTab.value = "";
-    supplementaryInfo.value = "";
-    videoTimeline.value = "";
+    resetJobLocalState();
   }
 );
 
@@ -1103,16 +1097,17 @@ watch(
 );
 
 watch(
-  () => [
-    sourceTitle.value,
-    segmentTargetSec.value,
-    maxTitleLength.value,
-    narrationTargetWords.value,
-    skipTitleOptimize.value,
-    supplementaryInfo.value,
-    videoTimeline.value,
-    jobOrientation.value,
-    contentStyle.value,
+  [
+    promptPanelOpen,
+    () => sourceTitle.value,
+    () => segmentTargetSec.value,
+    () => maxTitleLength.value,
+    () => narrationTargetWords.value,
+    () => skipTitleOptimize.value,
+    () => supplementaryInfo.value,
+    () => videoTimeline.value,
+    () => jobOrientation.value,
+    () => contentStyle.value,
   ],
   () => {
     if (promptPanelOpen.value.includes("prompts")) {
@@ -1120,12 +1115,6 @@ watch(
     }
   }
 );
-
-watch(promptPanelOpen, names => {
-  if (names.includes("prompts")) {
-    void loadLlmPrompts();
-  }
-});
 
 watch(
   () => [props.job.base_path, isMaterialJob.value] as const,

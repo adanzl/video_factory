@@ -1019,6 +1019,57 @@ def build_narration_expand_prompts(
     return _prompt_step(f"expand_{mode}", system, user)
 
 
+def build_segment_shrink_prompts(
+    script: dict[str, Any],
+    *,
+    segment_indices: list[int],
+    cap: int,
+    segment_target_sec: float,
+    job: dict | None = None,
+    content_style: str | None = None,
+) -> dict[str, str]:
+    """略超限分镜专用缩字（只改 text，保留 visual_brief 等字段）。"""
+    _, profile_style = _resolve_script_profile(job, content_style=content_style)
+    voice_rule = _narration_voice_rule(profile_style)
+    by_idx = {
+        int(seg["segment_index"]): seg
+        for seg in script.get("segments") or []
+        if seg.get("segment_index") is not None
+    }
+    targets: list[dict[str, Any]] = []
+    for idx in segment_indices:
+        seg = by_idx.get(idx)
+        if not seg:
+            continue
+        text = str(seg.get("text") or "")
+        targets.append(
+            {
+                "segment_index": idx,
+                "text": text,
+                "chars": _narration_char_count_for_prompt(text),
+                "max_chars": cap,
+            }
+        )
+    sec = int(segment_target_sec) if segment_target_sec == int(segment_target_sec) else segment_target_sec
+    system = (
+        "你是口播缩字编辑。指定分镜口播略超单镜时长上限，只做删字瘦身，禁止改写文风。"
+        '输出 JSON：{"segments": [{"segment_index": 序号, "text": "缩短后的口播"}, ...]}。'
+        f"每段 text 不得超过 {cap} 字（不含空格换行）。"
+        "【文风·最高优先级】必须完整保留原句的语气、节奏、人称、童趣/悬疑/生活化口吻与修辞习惯；"
+        "禁止把口语改成书面语、禁止换成另一种叙述风格、禁止增删感叹/拟声/比喻的类型。"
+        f"当前口吻要求：{voice_rule}"
+        "只允许删重复比喻、次要形容词和冗余连接词；禁止改变科学事实与核心信息；"
+        "禁止增删 segment_index；不要输出 narration、visual_brief 等其他字段。"
+        f"{_NARRATION_ANTI_MEMOIR_RULE}"
+    )
+    user = (
+        f"单镜口播上限 {sec}s（每段 text 最多 {cap} 字）。"
+        "在完全保持原文风与口吻的前提下缩短以下分镜 text，并输出 JSON：\n"
+        f"{json.dumps(targets, ensure_ascii=False)}"
+    )
+    return _prompt_step("segment_shrink", system, user)
+
+
 def _narration_char_count_for_prompt(text: str) -> int:
     return len(re.sub(r"\s+", "", text))
 

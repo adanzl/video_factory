@@ -172,7 +172,7 @@ export type MediaPreviewBoxOptions = {
   maxViewportRatio?: number;
 };
 
-function parseAspectRatio(ratio: string): number {
+export function parseAspectRatio(ratio: string): number {
   const [width, height] = ratio.split("/").map(part => Number.parseFloat(part.trim()));
   if (!width || !height) {
     return 16 / 9;
@@ -282,6 +282,21 @@ export function computeCentered43GuideLines(
 
   const spanPct = (target / ratio) * 100;
   return { mode: "vertical", startPct: (100 - spanPct) / 2, spanPct };
+}
+
+export type Cover43Guide = ReturnType<typeof computeCentered43GuideLines>;
+
+/** 封面 4:3 参考线 DOM 属性（两条边） */
+export function buildCover43GuideLineStyles(guide: Cover43Guide) {
+  const horizontal = guide.mode === "horizontal";
+  const edgeClass = horizontal
+    ? "absolute inset-x-0 border-t-2 border-amber-400/90"
+    : "absolute inset-y-0 border-l-2 border-amber-400/90";
+  const prop = horizontal ? "top" : "left";
+  return [
+    { class: edgeClass, style: { [prop]: `${guide.startPct}%` } },
+    { class: edgeClass, style: { [prop]: `${guide.startPct + guide.spanPct}%` } },
+  ] as const;
 }
 
 /** 格式化媒体时长（秒 → mm:ss） */

@@ -5,6 +5,7 @@ from __future__ import annotations
 from app.services.llm.llm_script_prompts import (
     _narration_word_range,
     _storyboard_length_budget,
+    build_segment_shrink_prompts,
     build_storyboard_prompts,
 )
 from app.utils.job_info import CONTENT_STYLE_LIFE_EXPERIENCE
@@ -114,3 +115,20 @@ def test_build_storyboard_prompts_compact_omits_narration_field():
     assert "narration, word_count, visual_style" not in prompts["system"]
     assert "JSON 输出样例" in prompts["system"]
     assert "segment_index" in prompts["system"]
+
+
+def test_segment_shrink_prompts_preserve_voice():
+    script = {
+        "segments": [
+            {"segment_index": 1, "text": "哇，空调居然这么神奇！" + "x" * 80},
+        ]
+    }
+    prompts = build_segment_shrink_prompts(
+        script,
+        segment_indices=[1],
+        cap=75,
+        segment_target_sec=15.0,
+    )
+    assert "文风" in prompts["system"]
+    assert "口吻" in prompts["system"]
+    assert "保持原文风" in prompts["user"]

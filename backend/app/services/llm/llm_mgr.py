@@ -51,6 +51,17 @@ class LLMClient:
         supplementary_info: str | None = None,
         job: dict | None = None,
         segment_indices: list[int] | None = None,
+        include_sd15_prompt: bool = False,
+    ) -> dict[str, Any]:
+        raise NotImplementedError
+
+    def shrink_segment_texts(
+        self,
+        script: dict[str, Any],
+        *,
+        segment_indices: list[int],
+        segment_target_sec: float,
+        job: dict | None = None,
     ) -> dict[str, Any]:
         raise NotImplementedError
 
@@ -189,6 +200,21 @@ class LLMMgr:
             job=job,
             segment_indices=segment_indices,
             include_sd15_prompt=include_sd15_prompt,
+        )
+
+    def shrink_segment_texts(
+        self,
+        script: dict[str, Any],
+        *,
+        segment_indices: list[int],
+        segment_target_sec: float,
+        job: dict | None = None,
+    ) -> dict[str, Any]:
+        return self._get_client().shrink_segment_texts(
+            script,
+            segment_indices=segment_indices,
+            segment_target_sec=segment_target_sec,
+            job=job,
         )
 
     def fill_image_prompts_with_retries(
