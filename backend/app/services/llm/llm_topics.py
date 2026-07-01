@@ -67,15 +67,14 @@ def build_topic_user_prompt(*, theme: str, count: int) -> str:
 
 def normalize_title(title: str, *, max_len: int, track: str = "") -> str:
     cleaned = re.sub(r"\s+", "", title.strip())
-    cap = max_len
-    if len(cleaned) <= cap:
+    if len(cleaned) <= max_len + 2:
         return cleaned
-    # 截断到最后一个完整逗号或句号前，避免硬截断
-    truncated = cleaned[:cap]
-    last_break = max(truncated.rfind("，"), truncated.rfind("。"), truncated.rfind("——"))
-    if last_break > cap // 2:
-        return truncated[:last_break]
-    return truncated
+    truncated = cleaned[:max_len]
+    for p in ("。", "！", "？", "，", "——"):
+        idx = truncated.rfind(p)
+        if idx >= max_len // 2:
+            return truncated[:idx]
+    return cleaned[:max_len]
 
 
 def parse_topics_payload(raw: dict[str, Any], *, max_title_len: int) -> list[dict[str, str]]:
