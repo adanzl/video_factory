@@ -115,27 +115,27 @@ def format_image_prompt_retry_warning(
 # https://api-docs.deepseek.com/zh-cn/guides/json_mode
 _STORYBOARD_JSON_EXAMPLE = """{
   "title": "标题示例",
-  "narration": "第一段。第二段。第三段。（以此类推，按字数预算写满）",
-  "word_count": 80,
+  "narration": "（各段 text 按序拼接的全文，须达到【字数预算】写作目标）",
+  "word_count": 1252,
   "visual_style": "画风定调一句话",
   "segments": [
-    {"segment_index": 1, "text": "第一段。", "visual_brief": "画面主旨", "visual_mode": "static_motion"},
-    {"segment_index": 2, "text": "第二段。", "visual_brief": "画面主旨", "visual_mode": "static_motion"}
+    {"segment_index": 1, "text": "（本段口播，须写满该段字数下限，勿照抄此短句）", "visual_brief": "画面主旨", "visual_mode": "static_motion"},
+    {"segment_index": 2, "text": "（第二段同样写满预算）", "visual_brief": "画面主旨", "visual_mode": "static_motion"}
   ]
 }
 
-注意：以上为格式示例，实际输出段落数量和 word_count 须按上方【字数预算】要求执行。"""
+注意：样例仅 2 段且 word_count 仅为字段示意；实际段数须 ≥【字数预算】段数下限，word_count 须为 narration 真实字数且 ≥ 写作目标，禁止照抄样例短句长度。"""
 
 _STORYBOARD_JSON_EXAMPLE_COMPACT = """{
   "title": "标题示例",
   "visual_style": "画风定调一句话",
   "segments": [
-    {"segment_index": 1, "text": "第一段", "visual_brief": "画面主旨", "visual_mode": "static_motion"},
-    {"segment_index": 2, "text": "第二段", "visual_brief": "画面主旨", "visual_mode": "static_motion"}
+    {"segment_index": 1, "text": "（本段口播，须写满该段字数下限）", "visual_brief": "画面主旨", "visual_mode": "static_motion"},
+    {"segment_index": 2, "text": "（第二段同样写满预算）", "visual_brief": "画面主旨", "visual_mode": "static_motion"}
   ]
 }
 
-注意：以上为格式示例，实际段落数量按字数预算执行。"""
+注意：样例仅 2 段示意字段结构；实际段数须 ≥【字数预算】段数下限，各段 text 须写满，禁止照抄样例短句。"""
 
 _IMAGE_PROMPT_JSON_EXAMPLE_TEXT = (
     "古老的青铜丹炉占据画面左侧，炉内青绿色火焰与绿烟向上弥漫，炉壁锈迹与烟熏清晰；"
@@ -168,11 +168,11 @@ _IMAGE_PROMPTS_JSON_EXAMPLE_NO_SD15 = """{
 
 _MATERIAL_SCRIPT_JSON_EXAMPLE = """{
   "title": "标题示例",
-  "narration": "第一句口播写满本句预算，用具体细节撑开。第二句口播同样写满，补比喻或拟声后再接下一句。",
-  "word_count": 42,
+  "narration": "（各段 text 按序拼接的全文，须达到【字数预算】写作目标）",
+  "word_count": 800,
   "segments": [
-    {"segment_index": 1, "text": "第一句口播写满本句预算，用具体细节撑开。"},
-    {"segment_index": 2, "text": "第二句口播同样写满，补比喻或拟声后再接下一句。"}
+    {"segment_index": 1, "text": "（本段口播，须写满该段字数下限，用具体细节撑开）"},
+    {"segment_index": 2, "text": "（第二段同样写满预算，补比喻或步骤后再接下一段）"}
   ]
 }"""
 
@@ -467,6 +467,40 @@ def _visual_brief_types(profile_style: str) -> str:
     return "（写实场景）/（结构示意图）/（对比图）/（线稿解剖图）/（微观分子图）"
 
 
+def _storyboard_layer_style(content_style: str) -> str:
+    if content_style == CONTENT_STYLE_LIFE_EXPERIENCE:
+        return "误区+原因+正确做法"
+    if content_style == CONTENT_STYLE_HISTORICAL_MYSTERY:
+        return "事实+转折+反问"
+    return "感叹+科普点+比喻/拟声"
+
+
+def _storyboard_execution_headline(
+    *,
+    narration_target: int,
+    segment_target_sec: float,
+    content_style: str,
+) -> str:
+    """user 首行：用具体数字强调一次写满，避免模型照抄 JSON 短样例。"""
+    plan = narration_writing_plan(narration_target, segment_target_sec)
+    writing_target = plan["writing_target"]
+    hard_min = plan["hard_min"]
+    seg_count = plan["seg_count_min"]
+    per_min = plan["per_seg_min"]
+    per_lo = plan["per_seg_lo"]
+    per_hi = plan["per_seg_hi"]
+    layers = _storyboard_layer_style(content_style)
+    seg_floor = seg_count * per_min
+    return (
+        f"【首要任务】一次性写满口播：总字数须 ≥ {writing_target} 字（验收下限 {hard_min} 字）。"
+        f"至少 {seg_count} 段 segments，每段 text 建议 {per_lo}-{per_hi} 字、单段下限 {per_min} 字"
+        f"（{seg_count}×{per_min}={seg_floor} 字仅为段数底限，须继续扩写至 {writing_target} 字）。"
+        f"每段用「{layers}」三层写法撑满，禁止整段一句带过。"
+        "常见失误：只写 3～4 段短句导致总字数不足；须按段数预算写满后再输出 JSON。"
+        "禁止照抄 JSON 样例短句；字数不足须当场扩写，不要提交短稿。"
+    )
+
+
 def _storyboard_length_budget(
     *,
     narration_target: int,
@@ -479,13 +513,7 @@ def _storyboard_length_budget(
     per_min = plan["per_seg_min"]
     seg_count_min = plan["seg_count_min"]
     pct = int(NARRATION_WRITING_TARGET_RATIO * 100)
-    layers = (
-        "误区+原因+正确做法"
-        if content_style == CONTENT_STYLE_LIFE_EXPERIENCE
-        else "事实+转折+反问"
-        if content_style == CONTENT_STYLE_HISTORICAL_MYSTERY
-        else "感叹+科普点+比喻/拟声"
-    )
+    layers = _storyboard_layer_style(content_style)
     self_check = (
         "【输出前硬性自检，任一项不满足须当场重写后再输出 JSON】"
         f"①segments 数量 ≥ {seg_count_min}；"
@@ -691,6 +719,7 @@ def build_storyboard_prompts(
         word_count_clause = "word_count必须等于narration实际字数，不得虚报。"
     system = (
         f"{_storyboard_role(profile_style)}输出JSON，字段：{json_fields}。"
+        "字数未达标则整稿无效；JSON 样例仅示字段结构，不代表篇幅，禁止照抄样例短句。"
         f"{title_rule}"
         f"{seg_rule}"
         f"{length_rule}"
@@ -717,11 +746,17 @@ def build_storyboard_prompts(
         segment_target_sec=target,
         content_style=profile_style,
     )
+    execution_headline = _storyboard_execution_headline(
+        narration_target=narration_word_target,
+        segment_target_sec=target,
+        content_style=profile_style,
+    )
     types = _visual_brief_types(profile_style)
     user = _append_supplementary_to_user(
         (
-            f"{title_user_prefix}、visual_style 与分镜，{split_hint}。\n\n"
+            f"{execution_headline}\n\n"
             f"{length_budget}\n\n"
+            f"{title_user_prefix}、visual_style 与分镜，{split_hint}。\n\n"
             + (
                 f"每段 visual_brief 30-60 字，写清画面主旨，末尾用括号注明画面类型{types}。"
                 if compact_output

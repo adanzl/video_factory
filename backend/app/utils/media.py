@@ -219,11 +219,13 @@ def storyboard_compact_output(
     segment_target_sec: float,
 ) -> bool:
     """长稿分镜是否用紧凑 JSON（省略 narration/word_count，后端拼接）。"""
+    # 默认 standard 线约 400 字 / 5 段即启用，省出输出 token 给各段 text
     if segment_target_sec <= 0:
-        return narration_target >= 900
+        return narration_target >= 400
     cap = segment_text_char_cap(segment_target_sec)
-    seg_count = max(5, (narration_target + cap - 1) // cap)
-    return narration_target >= 900 or seg_count >= 10
+    writing_target = narration_writing_target_chars(narration_target)
+    seg_count = max(5, (writing_target + cap - 1) // cap)
+    return narration_target >= 400 or seg_count >= 5
 
 
 def body_duration_for_target_final(
