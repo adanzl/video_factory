@@ -369,13 +369,13 @@ class AliTTSClient(TTSClient):
         max_workers = min(len(segments), max(1, settings.tts_max_workers))
 
         logger.info(
-            "tts start INSTRUCTIONS segments=总分镜数 voice=音色ID model=语音模型 rate=语速倍率 max_workers=并发合成数 | "
-            "segments=%s voice=%s model=%s rate=%s max_workers=%s",
+            "tts start segments=%s voice=%s model=%s rate=%s max_workers=%s instruction=%s",
             len(segments),
             effective_voice,
             VOICE_MODEL_MAP.get(effective_voice) or settings.tts_model or DEFAULT_MODEL,
             effective_rate,
             max_workers,
+            resolve_instruction(effective_voice, explicit=settings.tts_instruction, preset=settings.tts_instruct_preset),
         )
 
         def _run(seg: dict) -> _SegmentSynthResult:
