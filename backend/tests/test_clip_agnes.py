@@ -7,8 +7,11 @@ from unittest.mock import MagicMock, patch
 from app.services.media.clip.video_agnes import (
     AgnesClipProvider,
     _backoff_seconds,
-    _merge_t2v_prompt,
+    _encode_image_data_uri,
     _pick_num_frames,
+    _read_agnes_source_url,
+    _resolve_i2v_image,
+    _stabilize_motion_prompt,
 )
 from app.services.visual.agnes_api import AgnesApiKey
 from app.utils.job_info import normalize_video_provider, resolve_video_provider
@@ -43,17 +46,44 @@ def test_resolve_media_public_base_url_from_cors() -> None:
     assert resolve_media_public_base_url(settings) == "https://example.com"
 
 
-def test_merge_t2v_prompt() -> None:
-    merged = _merge_t2v_prompt("画面描述很长", "镜头缓慢推进")
-    assert merged == "画面描述很长，镜头缓慢推进"
+def test_stabilize_motion_prompt() -> None:
+    assert "slow zoom" in _stabilize_motion_prompt("slow zoom")
+    assert "画面稳定" in _stabilize_motion_prompt("slow zoom")
 
 
-def test_merge_t2v_prompt_image_only() -> None:
-    merged = _merge_t2v_prompt("仅画面描述", None)
-    assert merged == "仅画面描述"
+def test_encode_image_data_uri(tmp_path: Path) -> None:
+    image = tmp_path / "frame.png"
+    image.write_bytes(b"png-bytes")
+    uri = _encode_image_data_uri(image)
+    assert uri.startswith("data:image/png;base64,")
 
 
-def test_agnes_clip_provider_submits_t2v_prompt(tmp_path: Path) -> None:
+def test_read_agnes_source_url_sidecar(tmp_path: Path) -> None:
+    image = tmp_path / "1.png"
+    image.write_bytes(b"png")
+    sidecar = image.with_name(image.name + ".agnes_source_url")
+    cdn = "https://storage.googleapis.com/agnes-aigc/test.png"
+    sidecar.write_text(cdn, encoding="utf-8")
+    assert _read_agnes_source_url(image) == cdn
+
+
+def test_resolve_i2v_image_prefers_sidecar(tmp_path: Path) -> None:
+    image = tmp_path / "1.png"
+    image.write_bytes(b"png")
+    sidecar = image.with_name(image.name + ".agnes_source_url")
+    cdn = "https://storage.googleapis.com/agnes-aigc/aigc/images/test.png"
+    sidecar.write_text(cdn, encoding="utf-8")
+    assert _resolve_i2v_image(image) == cdn
+
+
+def test_resolve_i2v_image_uses_data_uri(tmp_path: Path) -> None:
+    image = tmp_path / "1.png"
+    image.write_bytes(b"png")
+    ref = _resolve_i2v_image(image)
+    assert ref.startswith("data:image/png;base64,")
+
+
+def test_agnes_clip_provider_submits_i2v_payload(tmp_path: Path) -> None:
     provider = AgnesClipProvider()
     image_path = tmp_path / "1.png"
     image_path.write_bytes(b"png")
@@ -109,9 +139,8 @@ def test_agnes_clip_provider_submits_t2v_prompt(tmp_path: Path) -> None:
     create_call = mock_request.call_args_list[0]
     payload = create_call.kwargs["json"]
     assert payload["model"] == provider._model  # noqa: SLF001
-    assert "image" not in payload
-    assert payload["width"] == provider._video_width  # noqa: SLF001
-    assert payload["height"] == provider._video_height  # noqa: SLF001
+    assert payload["mode"] == "ti2vid"
+    assert payload["image"].startswith("data:image/png;base64,")
     assert payload["num_frames"] == 121
-    assert "宇宙飞船" in payload["prompt"]
     assert "slow zoom" in payload["prompt"]
+    assert "宇宙飞船" not in payload["prompt"]

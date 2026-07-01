@@ -71,7 +71,7 @@ class MediaMgr:
             )
         if provider == "agnes_i2v":
             return (
-                f"provider=agnes_t2v, model={settings.agnes_video_model}, "
+                f"provider=agnes_i2v, model={settings.agnes_video_model}, "
                 f"frame_rate={settings.agnes_video_frame_rate}, "
                 f"size={width}x{height}"
             )
