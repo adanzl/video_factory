@@ -368,6 +368,7 @@ class AliTTSClient(TTSClient):
 
         max_workers = min(len(segments), max(1, settings.tts_max_workers))
 
+        # INSTRUCTIONS: segments=该任务总分镜数 voice=音色ID model=语音模型 rate=语速倍率 max_workers=并发合成数
         logger.info(
             "tts start segments=%s voice=%s model=%s rate=%s max_workers=%s",
             len(segments),
