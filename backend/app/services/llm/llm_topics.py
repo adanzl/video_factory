@@ -65,6 +65,28 @@ def build_topic_user_prompt(*, theme: str, count: int) -> str:
     )
 
 
+def build_topic_optimize_user_prompt(
+    *,
+    title: str,
+    track: str | None = None,
+    template: str | None = None,
+    hook: str | None = None,
+) -> str:
+    lines = [
+        "请对以下选题进行优化重写，输出 1 个新版本（topics 数组仅 1 项）。",
+        "要求：保持同一主题方向与赛道，标题与钩子更有悬念与点击欲，与原版明显不同。",
+        "",
+        f"原标题：{title.strip()}",
+    ]
+    if track:
+        lines.append(f"原赛道：{track.strip()}")
+    if template:
+        lines.append(f"原模板：{template.strip()}")
+    if hook:
+        lines.append(f"原钩子：{hook.strip()}")
+    return "\n".join(lines)
+
+
 def normalize_title(title: str, *, max_len: int, track: str = "") -> str:
     cleaned = re.sub(r"\s+", "", title.strip())
     if len(cleaned) <= max_len + 2:

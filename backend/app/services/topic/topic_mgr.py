@@ -16,7 +16,7 @@ from app.utils.job_info import (
     merge_job_info,
 )
 from app.services.llm.llm_mgr import llm_mgr
-from app.services.llm.llm_topics import normalize_title
+from app.services.llm.llm_topics import build_topic_optimize_user_prompt, normalize_title
 from app.services.topic.hot_pipeline import (
     HOT_SOURCE,
     HotPipelineOptions,
@@ -155,6 +155,64 @@ class TopicMgr:
             "generated": len(topics),
             **result,
         }
+
+    def optimize_title(self, title_id: int) -> dict:
+        with connection() as conn:
+            row = title_repo.get_title(conn, title_id)
+
+        if row["status"] == "enqueued":
+            raise ValueError("enqueued title cannot be optimized")
+
+        settings = get_settings()
+        user_prompt = build_topic_optimize_user_prompt(
+            title=row["title"],
+            track=row.get("track"),
+            template=row.get("template"),
+            hook=row.get("hook"),
+        )
+        logger.info("[TOPIC] optimize start id=%d title=%r", title_id, row["title"])
+        topics = llm_mgr.generate_topics(
+            row["title"],
+            count=1,
+            user_prompt=user_prompt,
+            track=row.get("track"),
+        )
+        item = topics[0]
+        new_title = normalize_title(
+            item["title"],
+            max_len=settings.max_title_length,
+            track=item.get("track", ""),
+        )
+        if not new_title:
+            raise ValueError("LLM returned empty title")
+
+        with connection() as conn:
+            if new_title != row["title"]:
+                existing = title_repo.find_by_titles(conn, [new_title])
+                if new_title in existing:
+                    raise ValueError(f"title already exists: {new_title}")
+            updated = title_repo.update_title(
+                conn,
+                title_id,
+                title=new_title,
+                track=item.get("track"),
+                template=item.get("template"),
+                hook=item.get("hook"),
+                score=None,
+                score_detail=None,
+                status="pending",
+            )
+
+        score_result = self.score_titles([title_id])
+        scored = score_result["scored"][0] if score_result["scored"] else updated
+        logger.info(
+            "[TOPIC] optimize done id=%d old=%r new=%r score=%s",
+            title_id,
+            row["title"],
+            scored["title"],
+            scored.get("score"),
+        )
+        return {"title": scored, "previous": row}
 
     def score_titles(self, title_ids: list[int] | None = None) -> dict:
         with connection() as conn:

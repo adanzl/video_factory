@@ -11,6 +11,7 @@ from app.api.utils import (
     json_accepted,
     json_ok,
     parse_bool,
+    parse_id,
     parse_int,
     parse_int_list,
     parse_query_int,
@@ -119,6 +120,15 @@ def get_hot_import_task_route(task_id: str):
     if task is None or task.kind != "hot_import":
         raise APIError("task not found", status_code=404)
     return json_ok(task.to_dict())
+
+
+@bp.post("/optimize")
+def optimize_topic_route():
+    """对单条选题 LLM 优化重写并重新打分。"""
+    data = get_json_body()
+    title_id = parse_id(data)
+    logger.info("[TOPIC] api /optimize id=%d", title_id)
+    return json_ok(topic_mgr.optimize_title(title_id))
 
 
 @bp.post("/score")
