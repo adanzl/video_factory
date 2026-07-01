@@ -11,6 +11,7 @@ import type {
   GenerateTopicsResult,
   ImportHotTopicsParams,
   ListTitlesParams,
+  OptimizeTopicResult,
   ScoreTopicsResult,
   TitleRecord,
   TopicTaskResponse,
@@ -37,6 +38,11 @@ export async function importHotTopics(
   params: ImportHotTopicsParams = {}
 ): Promise<TopicTaskResponse> {
   const response = await api.post<TopicTaskResponse>("/v_factory/api/topic/hot", params);
+  return response.data;
+}
+
+export async function optimizeTopic(id: number): Promise<OptimizeTopicResult> {
+  const response = await api.post<OptimizeTopicResult>("/v_factory/api/topic/optimize", { id });
   return response.data;
 }
 

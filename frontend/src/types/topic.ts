@@ -125,3 +125,8 @@ export interface DeleteLowScoreTopicsResult {
   ids: number[];
   max_score: number;
 }
+
+export interface OptimizeTopicResult {
+  title: TitleRecord;
+  previous: TitleRecord;
+}

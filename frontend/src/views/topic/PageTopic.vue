@@ -85,7 +85,7 @@
           {{ formatDateTime(row.created_at) }}
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="220" fixed="right">
+      <el-table-column label="操作" width="260" fixed="right">
         <template #default="{ row }">
           <div class="flex items-center gap-2 whitespace-nowrap">
             <el-button
@@ -96,6 +96,16 @@
               @click="goToJob(row.job_id!)"
             >
               任务详情
+            </el-button>
+            <el-button
+              v-if="row.status !== 'enqueued'"
+              type="warning"
+              link
+              size="small"
+              :loading="optimizingId === row.id"
+              @click="handleOptimizeOne(row)"
+            >
+              优化
             </el-button>
             <el-button
               v-if="row.status !== 'enqueued'"
@@ -222,6 +232,7 @@ import {
   generateTopics,
   importHotTopics,
   listTitles,
+  optimizeTopic,
   scoreTopics,
 } from "@/api/api-topic";
 import type { EnqueueRunMode, TitleRecord, TitleStatus } from "@/types/topic";
@@ -245,6 +256,7 @@ const deleting = ref(false);
 const cleaningLow = ref(false);
 const generating = ref(false);
 const scoringId = ref<number>();
+const optimizingId = ref<number>();
 
 const showGenerateDialog = ref(false);
 const showEnqueueDialog = ref(false);
@@ -368,6 +380,19 @@ const handleScoreSelected = async () => {
     handleError(error, "打分失败");
   } finally {
     scoring.value = false;
+  }
+};
+
+const handleOptimizeOne = async (row: TitleRecord) => {
+  optimizingId.value = row.id;
+  try {
+    const result = await optimizeTopic(row.id);
+    ElMessage.success(`已优化：${result.title.title}`);
+    await fetchTitles();
+  } catch (error) {
+    handleError(error, "优化失败");
+  } finally {
+    optimizingId.value = undefined;
   }
 };
 
