@@ -1,6 +1,11 @@
 import pytest
 
-from app.utils.media import default_narration_target_words, narration_accept_min_chars, segment_text_char_cap
+from app.utils.media import (
+    default_narration_target_words,
+    narration_accept_max_chars,
+    narration_accept_min_chars,
+    segment_text_char_cap,
+)
 from worker.stages.standard.script import (
     MIN_ACCEPT_NARRATION_CHARS,
     ScriptValidationError,
@@ -238,3 +243,34 @@ def test_validate_script_narration_soft_zone_accepts_with_warning(monkeypatch):
     )
     assert warnings
     assert str(chars) in warnings[0]
+
+
+def test_validate_script_rejects_narration_too_long(monkeypatch):
+    monkeypatch.setattr(
+        "worker.stages.standard.script.get_settings",
+        lambda: type("S", (), {"segment_target_sec": 0, "max_title_length": 20})(),
+    )
+    target = 1646
+    accept_max = narration_accept_max_chars(target)
+    chars = accept_max + 100
+    script = _valid_script(
+        narration="x" * chars,
+        segments=[
+            {
+                "segment_index": 1,
+                "text": "x" * chars,
+                "visual_brief": _VISUAL_BRIEF,
+                "image_prompt": _IMAGE_PROMPT,
+            }
+        ],
+    )
+    with pytest.raises(ScriptValidationError) as exc_info:
+        _validate_script(
+            script,
+            min_narration_chars=_min_narration_chars(target),
+            accept_narration_chars=narration_accept_min_chars(target),
+            narration_target_words=target,
+        )
+    assert exc_info.value.retryable is True
+    assert "narration too long" in str(exc_info.value)
+    assert str(accept_max) in str(exc_info.value)

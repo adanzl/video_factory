@@ -9,6 +9,7 @@ import threading
 from collections.abc import Callable
 from pathlib import Path
 
+from app.exceptions import is_expected_job_failure
 from app.utils.job_cancel import JobCancelledError, job_cancel
 from app.services.job.job_reset import prepare_for_action, prepare_job_rerun
 from app.repositories import job_log_repo, job_repo, segment_repo
@@ -429,7 +430,14 @@ class JobMgr:
                     if job["status"] == "running":
                         self.mark_aborted(job_id, fail_stage)
                 except Exception as exc:
-                    logger.exception("job %s action %s failed: %s", job_id, action, exc)
+                    if is_expected_job_failure(exc):
+                        logger.error(
+                            "job %s action %s failed: %s", job_id, action, exc
+                        )
+                    else:
+                        logger.exception(
+                            "job %s action %s failed: %s", job_id, action, exc
+                        )
                     job = self.get_job(job_id)
                     if job["status"] == "running":
                         self.mark_failed(job_id, fail_stage, str(exc))

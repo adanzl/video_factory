@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from app.exceptions import JobStageFailureError
 from app.quality.models import QualityReport, QualityStep
 from app.repositories import job_log_repo, job_repo
 
@@ -40,7 +41,7 @@ def apply_quality_checks(
         )
         if report.level == "major" and report.fail_stage:
             job_repo.update_job(conn, job_id, quality_report=merged, fail_stage=report.fail_stage)
-            raise RuntimeError(
+            raise JobStageFailureError(
                 f"quality[{step}] major, rollback to {report.fail_stage}"
             )
     job_repo.update_job(conn, job_id, quality_report=merged)
