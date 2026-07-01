@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 # 文档：https://help.aliyun.com/zh/model-studio/cosyvoice-voice-list
+# 系统音色 preset（固定句式，见音色列表文档）
 VOICE_INSTRUCT_PRESETS: dict[str, dict[str, str]] = {
     "science_adult": {
         "longanhuan": "你正在进行科普知识推广，你说话的情感是neutral。",  # cSpell: disable-line
@@ -14,6 +15,14 @@ VOICE_INSTRUCT_PRESETS: dict[str, dict[str, str]] = {
     },
 }
 
+# 复刻 / 自定义 voice ID → 自然语言 instruction（v3.5-flash 复刻音色适用）
+# 新增复刻音色时在此追加；任务页选中的 voice 会优先匹配本表
+VOICE_INSTRUCTIONS: dict[str, str] = {
+    "cosyvoice-v3.5-flash-leo-60621bdce780434ab0734555e5196d7d": (
+        "语速适中，吐字清晰，语气亲切，适合儿童科普短视频。"
+    ),  # cSpell: disable-line cancan
+}
+
 
 def resolve_instruction(
     voice: str,
@@ -21,11 +30,15 @@ def resolve_instruction(
     explicit: str | None = None,
     preset: str | None = None,
 ) -> str | None:
+    """解析 instruction，优先级：TTS_INSTRUCTION > VOICE_INSTRUCTIONS > preset。"""
     if explicit and explicit.strip():
         return explicit.strip()
+    by_voice = VOICE_INSTRUCTIONS.get(voice)
+    if by_voice:
+        return by_voice
     if not preset:
         return None
-    by_voice = VOICE_INSTRUCT_PRESETS.get(preset.strip().lower())
-    if not by_voice:
+    by_preset = VOICE_INSTRUCT_PRESETS.get(preset.strip().lower())
+    if not by_preset:
         return None
-    return by_voice.get(voice)
+    return by_preset.get(voice)
