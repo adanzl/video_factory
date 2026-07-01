@@ -13,7 +13,7 @@
         <el-descriptions-item label="片头风格">
           <el-radio-group
             v-model="introCategory"
-            class="intro-orientation-group"
+            :class="STAGE_RADIO_INLINE_CLASS"
             :disabled="savingIntroCategory || actionDisabled"
             @change="handleIntroCategoryChange"
           >
@@ -22,7 +22,7 @@
           </el-radio-group>
         </el-descriptions-item>
         <el-descriptions-item label="画面方向">
-          <el-radio-group v-model="introOrientation" class="intro-orientation-group">
+          <el-radio-group v-model="introOrientation" :class="STAGE_RADIO_INLINE_CLASS">
             <el-radio value="auto">自动</el-radio>
             <el-radio value="portrait">竖屏 9:16</el-radio>
             <el-radio value="landscape">横屏 16:9</el-radio>
@@ -57,7 +57,7 @@
     </div>
 
     <div :class="STAGE_TWO_COL_CLASS">
-      <div class="min-w-[280px] max-w-full shrink-0 basis-[520px]">
+      <div :class="STAGE_COL_WIDE_LEFT_CLASS">
         <div :class="STAGE_PANEL_CLASS">
           <div :class="STAGE_PANEL_HEADER_CLASS">
             <span :class="STAGE_PANEL_TITLE_TEXT_CLASS">封面预览</span>
@@ -84,31 +84,17 @@
                 :preview-src-list="[coverUrl]"
                 :crossorigin="MEDIA_CROSS_ORIGIN"
                 fit="contain"
-                class="block h-full w-full [&_.el-image__inner]:block [&_.el-image__inner]:h-full [&_.el-image__inner]:w-full [&_.el-image__inner]:object-contain"
+                class="block size-full [&_.el-image__inner]:block [&_.el-image__inner]:size-full [&_.el-image__inner]:object-contain"
                 @load="onCoverLoad"
                 @error="onCoverError"
               />
               <div v-if="showCover43Guide" class="pointer-events-none absolute inset-0 z-10">
-                <template v-if="cover43Guide.mode === 'horizontal'">
-                  <div
-                    class="absolute inset-x-0 border-t-2 border-amber-400/90"
-                    :style="{ top: `${cover43Guide.startPct}%` }"
-                  />
-                  <div
-                    class="absolute inset-x-0 border-t-2 border-amber-400/90"
-                    :style="{ top: `${cover43Guide.startPct + cover43Guide.spanPct}%` }"
-                  />
-                </template>
-                <template v-else>
-                  <div
-                    class="absolute inset-y-0 border-l-2 border-amber-400/90"
-                    :style="{ left: `${cover43Guide.startPct}%` }"
-                  />
-                  <div
-                    class="absolute inset-y-0 border-l-2 border-amber-400/90"
-                    :style="{ left: `${cover43Guide.startPct + cover43Guide.spanPct}%` }"
-                  />
-                </template>
+                <div
+                  v-for="(line, index) in cover43GuideLines"
+                  :key="index"
+                  :class="line.class"
+                  :style="line.style"
+                />
               </div>
             </div>
           </div>
@@ -147,7 +133,6 @@
                 playsinline
                 preload="auto"
                 @error="onVideoError"
-                @loadeddata="onVideoMetadata"
                 @loadedmetadata="onVideoMetadata"
               />
             </div>
@@ -181,18 +166,22 @@ import StageLogsSection from "./StageLogsSection.vue";
 import {
   STAGE_BLOCK_COMPACT_CLASS,
   STAGE_COL_RIGHT_CLASS,
+  STAGE_COL_WIDE_LEFT_CLASS,
   STAGE_EMPTY_CLASS,
   STAGE_PANEL_CLASS,
   STAGE_PANEL_HEADER_CLASS,
   STAGE_PANEL_TITLE_TEXT_CLASS,
+  STAGE_RADIO_INLINE_CLASS,
   STAGE_TWO_COL_CLASS,
 } from "./stageLayout";
 import {
+  buildCover43GuideLineStyles,
   buildMediaPreviewBoxStyle,
   computeCentered43GuideLines,
   formatVideoResolution,
   guessIntroPreviewAspectRatio,
   MEDIA_CROSS_ORIGIN,
+  parseAspectRatio,
   readImageNaturalSize,
 } from "@/utils/media";
 import { useErrorHandler } from "@/composables/useErrorHandler";
@@ -211,6 +200,21 @@ const { handleError } = useErrorHandler();
 
 const submitting = ref(false);
 const holdTailSec = ref(0.35);
+const introCategory = ref<IntroCategory>(defaultIntroCategory(props.job));
+const savingIntroCategory = ref(false);
+const introOrientation = ref<"auto" | "portrait" | "landscape">(
+  defaultIntroOrientation(props.job)
+);
+const actualDuration = ref<number | null>(null);
+const loadError = ref("");
+const coverLoadError = ref("");
+const videoRef = ref<HTMLVideoElement | null>(null);
+const videoMeta = ref<{ width: number; height: number } | null>(null);
+const coverMeta = ref<{ width: number; height: number } | null>(null);
+const showCover43Guide = ref(false);
+
+const PREVIEW_OPTIONS = { maxWidthPx: 560, maxViewportRatio: 0.85 } as const;
+const COVER_PREVIEW_OPTIONS = { maxWidthPx: 560, maxViewportRatio: 0.9 } as const;
 
 function defaultIntroOrientation(job: JobDetail): "auto" | "portrait" | "landscape" {
   const saved = job.info?.orientation;
@@ -231,100 +235,60 @@ function defaultIntroCategory(job: JobDetail): IntroCategory {
   return "百科";
 }
 
-const introCategory = ref<IntroCategory>(defaultIntroCategory(props.job));
-const savingIntroCategory = ref(false);
-const introOrientation = ref<"auto" | "portrait" | "landscape">(
-  defaultIntroOrientation(props.job)
-);
-const actualDuration = ref<number | null>(null);
-const loadError = ref("");
-const coverLoadError = ref("");
-const videoRef = ref<HTMLVideoElement | null>(null);
-const videoMeta = ref<{ width: number; height: number } | null>(null);
-const coverMeta = ref<{ width: number; height: number } | null>(null);
-const showCover43Guide = ref(false);
-
-const reloadVideoPreview = () => {
-  void nextTick(() => {
-    const video = videoRef.value;
-    if (!video || !videoUrl.value) {
-      return;
-    }
-    video.load();
-  });
-};
-
 const actionDisabled = computed(() => props.job.status === "running");
 const actionDisabledReason = computed(() =>
   props.job.status === "running" ? "任务运行中，请稍后再试" : ""
 );
 
-const actualDurationText = computed(() => {
-  if (actualDuration.value === null) {
-    return props.job.intro_path ? "加载中…" : "-";
-  }
-  return `${actualDuration.value.toFixed(2)} 秒`;
-});
-
-const videoUrl = computed(() => getMediaFileUrl(props.job.intro_path ?? ""));
-
-const coverUrl = computed(() => getMediaFileUrl(props.job.cover_path ?? ""));
-
-const posterUrl = computed(() => {
-  const videoPath = props.job.intro_path?.trim();
-  if (!videoPath) {
-    return "";
-  }
-  return getMediaFileUrl(videoPath.replace(/\.mp4$/i, ".png"));
-});
-
 const previewFallbackAspectRatio = computed(() =>
   guessIntroPreviewAspectRatio(introOrientation.value, props.job.pipeline)
 );
 
-const introCoverFallbackRatio = computed(() => {
-  const [width, height] = previewFallbackAspectRatio.value
-    .split("/")
-    .map(part => Number.parseFloat(part.trim()));
-  if (!width || !height) {
-    return 9 / 16;
-  }
-  return width / height;
+const coverDimensions = computed(() => ({
+  width: coverMeta.value?.width ?? videoMeta.value?.width,
+  height: coverMeta.value?.height ?? videoMeta.value?.height,
+}));
+
+const videoUrl = computed(() => getMediaFileUrl(props.job.intro_path ?? ""));
+const coverUrl = computed(() => getMediaFileUrl(props.job.cover_path ?? ""));
+
+const posterUrl = computed(() => {
+  const videoPath = props.job.intro_path?.trim();
+  return videoPath ? getMediaFileUrl(videoPath.replace(/\.mp4$/i, ".png")) : "";
 });
 
-const INTRO_VIDEO_PREVIEW_OPTIONS = {
-  maxWidthPx: 560,
-  maxViewportRatio: 0.85,
-} as const;
-
-const COVER_PREVIEW_OPTIONS = {
-  maxWidthPx: 560,
-  maxViewportRatio: 0.9,
-} as const;
+const actualDurationText = computed(() => {
+  if (actualDuration.value !== null) {
+    return `${actualDuration.value.toFixed(2)} 秒`;
+  }
+  return props.job.intro_path ? "加载中…" : "-";
+});
 
 const previewBoxStyle = computed(() =>
   buildMediaPreviewBoxStyle(
     videoMeta.value?.width,
     videoMeta.value?.height,
     previewFallbackAspectRatio.value,
-    INTRO_VIDEO_PREVIEW_OPTIONS
+    PREVIEW_OPTIONS
   )
 );
 
 const coverBoxStyle = computed(() =>
   buildMediaPreviewBoxStyle(
-    coverMeta.value?.width ?? videoMeta.value?.width,
-    coverMeta.value?.height ?? videoMeta.value?.height,
+    coverDimensions.value.width,
+    coverDimensions.value.height,
     previewFallbackAspectRatio.value,
     COVER_PREVIEW_OPTIONS
   )
 );
 
-const cover43Guide = computed(() =>
-  computeCentered43GuideLines(
-    coverMeta.value?.width ?? videoMeta.value?.width,
-    coverMeta.value?.height ?? videoMeta.value?.height,
-    introCoverFallbackRatio.value
+const cover43GuideLines = computed(() =>
+  buildCover43GuideLineStyles(
+    computeCentered43GuideLines(
+      coverDimensions.value.width,
+      coverDimensions.value.height,
+      parseAspectRatio(previewFallbackAspectRatio.value)
+    )
   )
 );
 
@@ -333,11 +297,12 @@ const introResolutionText = computed(() =>
 );
 
 const coverResolutionText = computed(() =>
-  formatVideoResolution(
-    coverMeta.value?.width ?? videoMeta.value?.width,
-    coverMeta.value?.height ?? videoMeta.value?.height
-  )
+  formatVideoResolution(coverDimensions.value.width, coverDimensions.value.height)
 );
+
+const reloadVideoPreview = () => {
+  void nextTick(() => videoRef.value?.load());
+};
 
 const loadDuration = async () => {
   if (!props.job.intro_path) {
@@ -425,18 +390,11 @@ const handleRun = async (toEnd: boolean) => {
 };
 
 watch(
-  () => props.job.info?.intro_category,
-  (category) => {
+  () => [props.job.info?.intro_category, props.job.info?.content_style] as const,
+  ([category]) => {
     if (category === "百科" || category === "历史悬案") {
       introCategory.value = category;
-    }
-  }
-);
-
-watch(
-  () => props.job.info?.content_style,
-  () => {
-    if (!props.job.info?.intro_category) {
+    } else if (!props.job.info?.intro_category) {
       introCategory.value = defaultIntroCategory(props.job);
     }
   }
@@ -444,7 +402,7 @@ watch(
 
 watch(
   () => props.job.info?.orientation,
-  (orientation) => {
+  orientation => {
     if (orientation === "auto" || orientation === "portrait" || orientation === "landscape") {
       introOrientation.value = orientation;
     }
@@ -486,17 +444,3 @@ watch(videoUrl, () => {
   }
 });
 </script>
-
-<style scoped>
-.intro-orientation-group {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 16px;
-}
-
-.intro-orientation-group :deep(.el-radio) {
-  margin-right: 0;
-  height: 28px;
-}
-</style>

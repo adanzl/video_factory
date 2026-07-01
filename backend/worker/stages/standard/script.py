@@ -31,12 +31,12 @@ from app.utils.media import (
     assign_segment_timings,
     default_narration_target_words,
     min_narration_chars_for_target,
-    narration_accept_max_chars,
     narration_accept_min_chars,
-    narration_word_range,
     NARRATION_ABS_MIN_CHARS,
     narration_soft_min_chars,
     segment_text_char_cap,
+    segment_text_hard_cap,
+    segment_text_shrink_max,
 )
 from app.utils.title_text import prefer_source_punctuation
 from worker.context import JobContext
@@ -54,8 +54,7 @@ def _accept_narration_chars(narration_target_words: int) -> int:
     return narration_accept_min_chars(narration_target_words)
 
 
-def _accept_narration_max_chars(narration_target_words: int) -> int:
-    return narration_accept_max_chars(narration_target_words)
+_SEGMENT_SHRINK_MAX_ROUNDS = 2
 
 
 def _narration_retry_min_chars(narration_target_words: int) -> int:
@@ -178,23 +177,6 @@ def _narration_short_feedback(exc: ScriptValidationError, *, min_chars: int) -> 
     )
 
 
-def _narration_long_feedback(
-    exc: ScriptValidationError,
-    *,
-    narration_target_words: int,
-) -> str:
-    msg = str(exc)
-    if "narration too long" not in msg:
-        return msg
-    lo, hi = narration_word_range(narration_target_words)
-    return (
-        f"{msg}。"
-        f"请删繁就简，将总字数控制在 {lo}-{hi} 字之间（不要整稿推翻重写）："
-        "保留核心科普点，删重复比喻与次要展开；"
-        "单段仍须遵守单镜字数上限，靠删字与合并同类句降压，禁止堆砌新内容。"
-    )
-
-
 def _validation_retry_scope(exc: ScriptValidationError) -> str:
     msg = str(exc)
     if "image_prompt too short" in msg:
@@ -203,7 +185,6 @@ def _validation_retry_scope(exc: ScriptValidationError) -> str:
         key in msg
         for key in (
             "narration too short",
-            "narration too long",
             "segment text exceeds",
             "missing visual_brief",
             "text is empty",
@@ -222,6 +203,8 @@ def _log_llm_timing(job_id: int, stage_name: str, script: dict) -> None:
     parts = []
     if "storyboard_sec" in timing:
         parts.append(f"storyboard={timing['storyboard_sec']}s")
+    if "segment_shrink_sec" in timing:
+        parts.append(f"segment_shrink={timing['segment_shrink_sec']}s")
     if "image_prompts_sec" in timing:
         batches = timing.get("image_prompt_batches")
         if batches:
@@ -253,18 +236,16 @@ def _validation_feedback(
     msg = str(exc)
     if "narration too short" in msg:
         return _narration_short_feedback(exc, min_chars=accept_chars)
-    if "narration too long" in msg:
-        return _narration_long_feedback(exc, narration_target_words=narration_target_words)
     if segment_target_sec and segment_target_sec > 0:
         if "segment text exceeds" in msg:
             cap = segment_text_char_cap(segment_target_sec)
-            hard_cap = int(cap * 1.15)
-            lo, hi = narration_word_range(narration_target_words)
+            hard_cap = segment_text_hard_cap(segment_target_sec)
+            shrink_max = segment_text_shrink_max(segment_target_sec)
             return (
                 f"{msg}。"
-                f"单镜上限 {segment_target_sec}s，每段 text 不得超过 {cap} 字（硬上限 {hard_cap} 字）。"
-                f"超长段须按自然断句拆成多段；总字数须控制在 {lo}-{hi} 字之间，"
-                "拆段时删繁就简，禁止为凑段数堆砌新内容。"
+                f"单镜上限 {segment_target_sec}s，每段 text 不得超过 {cap} 字（硬上限 {hard_cap} 字，"
+                f"缩字可处理至 {shrink_max} 字）。"
+                "超长段须按自然断句拆成多段，禁止少数超长段堆叠。"
                 "先写 segments 再拼接 narration，输出前逐段核对字数。"
             )
     return msg
@@ -282,6 +263,82 @@ def _normalize_segments(segments: list[dict]) -> list[dict]:
             row["segment_index"] = row.get("index", i)
         out.append(row)
     return out
+
+
+def _sync_narration_from_segments(script: dict) -> None:
+    ordered = sorted(
+        script.get("segments") or [],
+        key=lambda seg: int(seg.get("segment_index") or seg.get("index") or 0),
+    )
+    script["narration"] = "".join(str(seg.get("text") or "") for seg in ordered)
+    script["word_count"] = _narration_chars(script["narration"])
+
+
+def _classify_segment_overflow(
+    segments: list[dict],
+    segment_target_sec: float,
+) -> tuple[list[int], list[tuple[int, int]]]:
+    """返回 (可缩字分镜序号, 严重超长列表)。"""
+    hard_cap = segment_text_hard_cap(segment_target_sec)
+    shrink_max = segment_text_shrink_max(segment_target_sec)
+    shrinkable: list[int] = []
+    severe: list[tuple[int, int]] = []
+    for seg in segments:
+        chars = _narration_chars(seg.get("text") or "")
+        if chars <= hard_cap:
+            continue
+        idx = int(seg.get("segment_index", -1))
+        if chars <= shrink_max:
+            shrinkable.append(idx)
+        else:
+            severe.append((idx, chars))
+    return shrinkable, severe
+
+
+def _repair_segment_overflow_via_shrink(
+    script: dict,
+    *,
+    segment_target_sec: float | None,
+    job_id: int,
+    stage_name: str,
+    job: dict | None,
+) -> bool:
+    if not segment_target_sec or segment_target_sec <= 0:
+        return False
+    repaired = False
+    cap = segment_text_char_cap(segment_target_sec)
+    for _ in range(_SEGMENT_SHRINK_MAX_ROUNDS):
+        shrinkable, severe = _classify_segment_overflow(
+            script.get("segments") or [],
+            segment_target_sec,
+        )
+        if severe or not shrinkable:
+            break
+        llm_mgr.shrink_segment_texts(
+            script,
+            segment_indices=shrinkable,
+            segment_target_sec=segment_target_sec,
+            job=job,
+        )
+        _sync_narration_from_segments(script)
+        repaired = True
+        with connection() as conn:
+            job_log_repo.append_log(
+                conn,
+                job_id,
+                stage_name,
+                f"segment shrink: indices={shrinkable}, target<={cap} chars",
+                level="info",
+            )
+        shrinkable_after, severe_after = _classify_segment_overflow(
+            script.get("segments") or [],
+            segment_target_sec,
+        )
+        if not shrinkable_after and not severe_after:
+            break
+        if severe_after:
+            break
+    return repaired
 
 
 def _validate_script(
@@ -305,19 +362,11 @@ def _validate_script(
         _min_narration_chars(None) if min_narration_chars is None else min_narration_chars
     )
     accept_min = accept_narration_chars if accept_narration_chars is not None else hard_floor
-    accept_max: int | None = None
-    if narration_target_words is not None:
-        accept_max = _accept_narration_max_chars(narration_target_words)
     narration = script.get("narration", "")
     segments = script.get("segments") or []
     warnings: list[str] = []
     chars = _narration_chars(narration)
     if check_narration:
-        if accept_max is not None and chars > accept_max:
-            raise ScriptValidationError(
-                f"narration too long: {chars} chars (need <= {accept_max})",
-                retryable=True,
-            )
         if chars >= accept_min:
             pass
         elif narration_target_words is not None and chars >= _narration_retry_min_chars(
@@ -387,7 +436,8 @@ def _validate_script(
                     )
     if seg_target > 0:
         cap = segment_text_char_cap(seg_target)
-        hard_cap = int(cap * 1.15)
+        hard_cap = segment_text_hard_cap(seg_target)
+        shrink_max = segment_text_shrink_max(seg_target)
         overflow: list[tuple[int, int]] = []
         for seg in segments:
             seg_chars = _narration_chars(seg.get("text") or "")
@@ -395,8 +445,8 @@ def _validate_script(
                 overflow.append((seg.get("segment_index", -1), seg_chars))
         if overflow:
             raise ScriptValidationError(
-                f"segment text exceeds {seg_target}s cap (~{cap} chars): "
-                f"{overflow}",
+                f"segment text exceeds {seg_target}s cap (~{cap} chars, "
+                f"shrink up to {shrink_max}): {overflow}",
                 retryable=True,
             )
     title = _title_chars(script.get("title") or "")
@@ -468,6 +518,13 @@ class ScriptStage(StageExecutor):
             )
             job_cancel.raise_if_cancelled(job_id)
             _log_llm_timing(ctx.job["id"], self.name, script)
+            _repair_segment_overflow_via_shrink(
+                script,
+                segment_target_sec=segment_target_sec,
+                job_id=job_id,
+                stage_name=self.name,
+                job=ctx.job,
+            )
             try:
                 accept_warnings = _validate_script(
                     script,

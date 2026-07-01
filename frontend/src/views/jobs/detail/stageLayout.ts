@@ -17,7 +17,15 @@ export const STAGE_TWO_COL_CLASS = "flex flex-wrap items-start gap-4";
 
 export const STAGE_COL_LEFT_CLASS = "min-w-[280px] max-w-full shrink-0 basis-80";
 
+/** 封面等宽预览列（520px 基准） */
+export const STAGE_COL_WIDE_LEFT_CLASS =
+  "min-w-[280px] max-w-full shrink-0 basis-[520px]";
+
 export const STAGE_COL_RIGHT_CLASS = "min-w-[280px] flex-1 basis-[360px]";
+
+/** 行内单选组（紧凑、可换行） */
+export const STAGE_RADIO_INLINE_CLASS =
+  "flex flex-wrap items-center gap-x-4 gap-y-1 [&_.el-radio]:mr-0 [&_.el-radio]:h-7";
 
 /** 区块标题（日志、质量报告等） */
 export const STAGE_SECTION_TITLE_CLASS = "mb-2 text-sm font-medium text-gray-600";

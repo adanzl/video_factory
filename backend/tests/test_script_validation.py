@@ -2,17 +2,20 @@ import pytest
 
 from app.utils.media import (
     default_narration_target_words,
-    narration_accept_max_chars,
     narration_accept_min_chars,
     segment_text_char_cap,
+    segment_text_hard_cap,
+    segment_text_shrink_max,
 )
 from worker.stages.standard.script import (
     MIN_ACCEPT_NARRATION_CHARS,
     ScriptValidationError,
     _accept_narration_chars,
+    _classify_segment_overflow,
     _min_narration_chars,
     _narration_retry_min_chars,
     _narration_short_retryable,
+    _repair_segment_overflow_via_shrink,
     _validate_script,
 )
 
@@ -245,32 +248,60 @@ def test_validate_script_narration_soft_zone_accepts_with_warning(monkeypatch):
     assert str(chars) in warnings[0]
 
 
-def test_validate_script_rejects_narration_too_long(monkeypatch):
-    monkeypatch.setattr(
-        "worker.stages.standard.script.get_settings",
-        lambda: type("S", (), {"segment_target_sec": 0, "max_title_length": 20})(),
-    )
-    target = 1646
-    accept_max = narration_accept_max_chars(target)
-    chars = accept_max + 100
-    script = _valid_script(
-        narration="x" * chars,
-        segments=[
+def test_classify_segment_overflow_mild_vs_severe():
+    cap = segment_text_char_cap(15.0)
+    hard_cap = segment_text_hard_cap(15.0)
+    shrink_max = segment_text_shrink_max(15.0)
+    segments = [
+        {"segment_index": 1, "text": "x" * (hard_cap + 5)},
+        {"segment_index": 2, "text": "x" * (shrink_max + 1)},
+        {"segment_index": 3, "text": "x" * cap},
+    ]
+    shrinkable, severe = _classify_segment_overflow(segments, 15.0)
+    assert shrinkable == [1]
+    assert severe == [(2, shrink_max + 1)]
+
+
+def test_repair_segment_overflow_via_shrink_mock(monkeypatch):
+    monkeypatch.setattr("worker.stages.standard.script.get_settings", lambda: type("S", (), {"segment_target_sec": 15, "max_title_length": 20})())
+    hard_cap = segment_text_hard_cap(15.0)
+    long_text = "y" * (hard_cap + 8)
+    script = {
+        "title": "短标题",
+        "narration": long_text,
+        "word_count": len(long_text),
+        "visual_style": "测试画风",
+        "segments": [
             {
                 "segment_index": 1,
-                "text": "x" * chars,
+                "text": long_text,
                 "visual_brief": _VISUAL_BRIEF,
-                "image_prompt": _IMAGE_PROMPT,
             }
         ],
+    }
+
+    def _fake_shrink(s, *, segment_indices, segment_target_sec, job=None):
+        cap = segment_text_char_cap(segment_target_sec)
+        for seg in s["segments"]:
+            if int(seg["segment_index"]) in segment_indices:
+                seg["text"] = "z" * cap
+        s["narration"] = "z" * cap
+        s["word_count"] = cap
+        return s
+
+    monkeypatch.setattr("worker.stages.standard.script.llm_mgr.shrink_segment_texts", _fake_shrink)
+    assert _repair_segment_overflow_via_shrink(
+        script,
+        segment_target_sec=15.0,
+        job_id=1,
+        stage_name="script",
+        job=None,
     )
-    with pytest.raises(ScriptValidationError) as exc_info:
-        _validate_script(
-            script,
-            min_narration_chars=_min_narration_chars(target),
-            accept_narration_chars=narration_accept_min_chars(target),
-            narration_target_words=target,
-        )
-    assert exc_info.value.retryable is True
-    assert "narration too long" in str(exc_info.value)
-    assert str(accept_max) in str(exc_info.value)
+    warnings = _validate_script(
+        script,
+        segment_target_sec=15.0,
+        min_narration_chars=1,
+        accept_narration_chars=1,
+        require_image_prompt=False,
+    )
+    assert warnings == []

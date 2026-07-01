@@ -4,8 +4,8 @@
       :loading="submitting"
       :disabled="actionDisabled"
       :disabled-reason="actionDisabledReason"
-      @primary="handleRun(false)"
-      @to-end="handleRun(true)"
+      @primary="handleRun()"
+      @to-end="handleRun()"
     />
 
     <div :class="STAGE_PANEL_CLASS">
