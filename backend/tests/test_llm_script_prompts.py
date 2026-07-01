@@ -56,11 +56,11 @@ def test_build_storyboard_prompts_includes_length_budget():
         segment_target_sec=16.0,
         job={"pipeline": "standard", "content_style": CONTENT_STYLE_LIFE_EXPERIENCE},
     )
-    assert "【首要任务】" in prompts["user"]
+    assert "【单段上限·优先】" in prompts["user"]
     assert "字数预算" in prompts["user"]
     assert "95%" in prompts["user"] or "95％" in prompts["user"]
     assert "输出前硬性自检" in prompts["user"]
-    assert "禁止照抄样例短句" in prompts["system"]
+    assert "禁止把多句堆进同一段" in prompts["system"] or "禁止把多句堆进同一段" in prompts["user"]
     assert str(narration_accept_min_chars(1318)) in prompts["user"]
 
 
@@ -95,7 +95,7 @@ def test_build_storyboard_science_child_uses_four_part_structure_and_self_check(
     assert "机制拆解" in prompts["system"]
     assert "输出前须自检" in prompts["system"]
     assert "感叹+科普点+比喻/拟声" in prompts["user"]
-    assert "【首要任务】" in prompts["user"]
+    assert "【单段上限·优先】" in prompts["user"]
 
 
 def test_storyboard_compact_output_for_landscape_life_preset():

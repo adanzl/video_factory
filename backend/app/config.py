@@ -152,7 +152,7 @@ class Config:
     )
 
     # ========== 图像生成 ==========
-    image_provider: str = os.getenv("IMAGE_PROVIDER", "z_image_t2i")
+    image_provider: str = os.getenv("IMAGE_PROVIDER", "agnes_t2i")
     image_max_workers: int = int(os.getenv("IMAGE_MAX_WORKERS", "3"))
     image_submit_interval_sec: float = float(os.getenv("IMAGE_SUBMIT_INTERVAL_SEC", "20"))
     wan_model: str = os.getenv("WAN_MODEL", "wanx2.1-t2i-turbo")  # cSpell: disable-line

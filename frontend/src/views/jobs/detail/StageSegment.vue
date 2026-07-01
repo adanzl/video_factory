@@ -296,7 +296,7 @@ type ImageProvider = NonNullable<RunStageActionPayload["image_provider"]>;
 type VideoProvider = NonNullable<RunStageActionPayload["video_provider"]>;
 
 const defaultImageProvider = (job: JobDetail): ImageProvider =>
-  job.info?.image_provider ?? "z_image_t2i";
+  job.info?.image_provider ?? "agnes_t2i";
 
 const defaultVideoProvider = (job: JobDetail): VideoProvider => {
   const provider = job.info?.video_provider ?? "ffmpeg";

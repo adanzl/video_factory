@@ -23,7 +23,9 @@ from app.utils.media import (
     narration_accept_min_chars,
     narration_writing_plan,
     narration_writing_target_chars,
+    segment_comfort_chars,
     segment_text_char_cap,
+    segment_text_hard_cap,
 )
 from app.services.llm.llm_script_timeline import (
     VideoTimeline,
@@ -312,13 +314,19 @@ _TECH_SCIENCE_VOICE_RULE = (
     "技术概念须准确，用比喻简化但不失真。"
 )
 
+_SEGMENT_LAYER_HINT = (
+    "三层每层只用一句短话（各 10～25 字），单段总长须遵守单镜字数上限；"
+    "总字数不足时增加 segments 段数，禁止把多句堆进同一段。"
+)
+
 _MATERIAL_NARRATION_LENGTH_RULE = (
     "【撑满字数的写法】每段口播须含三层——"
     "①童趣感叹或「你看」式互动；②一个准确科普点；③比喻/拟声/生活联想。"
     "禁止整段仅一句短感叹（如「哇，好厉害呀」）。"
+    f"{_SEGMENT_LAYER_HINT}"
     "【生成顺序】先逐段写满 segments，再原样拼接为 narration，最后统计 word_count；"
     "若未达字数下限，须当场扩写后再输出 JSON，禁止先输出再指望后处理。"
-    "【输出前自检】逐段核对：每段 text 是否含三层、是否非空；"
+    "【输出前自检】逐段核对：每段 text 是否含三层、是否非空、是否未超单镜上限；"
     "各段 text 字数之和是否达到写作目标；"
     "word_count 是否等于 narration 实际字数（不含空格换行）；"
     "narration 与 segments 按序拼接是否完全一致，不一致须重写。"
@@ -336,6 +344,7 @@ _MYSTERY_NARRATION_LENGTH_RULE = (
     "【撑满字数的写法】每段口播须含三层——"
     "①一个历史事实或背景细节；②一个「但」字转折（矛盾/疑点/反常）；③一个反问或悬念收尾。"
     "禁止整段仅一句概括。"
+    f"{_SEGMENT_LAYER_HINT}"
     "【生成顺序】先逐段写满 segments，再原样拼接为 narration，最后统计 word_count；"
     "若未达字数下限，须当场扩写后再输出 JSON，禁止先输出再指望后处理。"
 )
@@ -360,6 +369,7 @@ _LIFE_NARRATION_LENGTH_RULE = (
     "【撑满字数的写法】每段口播须含三层——"
     "①常见误区或错误做法；②原因/风险（为什么错）；③正确步骤或可操作结论。"
     "禁止整段仅一句空泛感叹；禁止用长篇第一人称回忆录凑字数。"
+    f"{_SEGMENT_LAYER_HINT}"
     "【生成顺序】先逐段写满 segments，再原样拼接为 narration，最后统计 word_count；"
     "若未达字数下限，须当场扩写后再输出 JSON，禁止先输出再指望后处理。"
 )
@@ -491,11 +501,25 @@ def _storyboard_execution_headline(
     per_hi = plan["per_seg_hi"]
     layers = _storyboard_layer_style(content_style)
     seg_floor = seg_count * per_min
+    if segment_target_sec > 0:
+        cap = plan["segment_cap"]
+        hard_cap = segment_text_hard_cap(segment_target_sec)
+        sec = _format_segment_target_sec(segment_target_sec)
+        return (
+            f"【单段上限·优先】单镜 {sec}s，每段 text 目标 ≤ {per_hi} 字、绝对不得超过 {cap} 字"
+            f"（硬上限 {hard_cap} 字，超限整稿无效）。"
+            f"「{layers}」三层各一句短话，禁止把多句堆进同一段；超长须拆段。"
+            f"【总字数】须 ≥ {writing_target} 字（验收下限 {hard_min} 字），至少 {seg_count} 段；"
+            f"每段建议 {per_lo}-{per_hi} 字。"
+            "总字数不足时增加 segments 段数，禁止加长单段。"
+            f"（{seg_count}×{per_min}={seg_floor} 字仅为段数底限，须继续扩写至 {writing_target} 字）。"
+            "输出前逐段统计 text 字数，任一超限须拆段后再提交。"
+        )
     return (
         f"【首要任务】一次性写满口播：总字数须 ≥ {writing_target} 字（验收下限 {hard_min} 字）。"
         f"至少 {seg_count} 段 segments，每段 text 建议 {per_lo}-{per_hi} 字、单段下限 {per_min} 字"
         f"（{seg_count}×{per_min}={seg_floor} 字仅为段数底限，须继续扩写至 {writing_target} 字）。"
-        f"每段用「{layers}」三层写法撑满，禁止整段一句带过。"
+        f"每段用「{layers}」三层写法，每层一句短话。"
         "常见失误：只写 3～4 段短句导致总字数不足；须按段数预算写满后再输出 JSON。"
         "禁止照抄 JSON 样例短句；字数不足须当场扩写，不要提交短稿。"
     )
@@ -514,10 +538,19 @@ def _storyboard_length_budget(
     seg_count_min = plan["seg_count_min"]
     pct = int(NARRATION_WRITING_TARGET_RATIO * 100)
     layers = _storyboard_layer_style(content_style)
+    cap_clause = ""
+    if segment_target_sec > 0:
+        cap = plan["segment_cap"]
+        hard_cap = segment_text_hard_cap(segment_target_sec)
+        cap_clause = (
+            f"②逐段 text ≤ {cap} 字（硬上限 {hard_cap} 字，任一超限须拆段）；"
+        )
+    else:
+        cap_clause = "②逐段统计 text 字数，任一超过单段上限须拆段；"
     self_check = (
         "【输出前硬性自检，任一项不满足须当场重写后再输出 JSON】"
         f"①segments 数量 ≥ {seg_count_min}；"
-        f"②逐段统计 text 字数，任一超过单段上限须拆段；"
+        f"{cap_clause}"
         f"③各段 text 字数之和 ≥ {writing_target}；"
         "④word_count 等于 narration 实际字数；"
         "⑤narration 与 segments 按序拼接完全一致；"
@@ -530,12 +563,12 @@ def _storyboard_length_budget(
             f"验收下限 {hard_min} 字（低于即不合格）。\n"
             f"每段至少 {per_min} 字，段数由口播内容逻辑决定；"
             f"各段 text 字数之和须 ≥ {writing_target}。\n"
-            f"每段用「{layers}」三层写法撑满，禁止整段一句带过。\n"
+            f"每段用「{layers}」三层写法，每层一句短话，禁止整段一句带过。\n"
             "【生成顺序】先按预算写满各段 segments，再拼接 narration，最后核对 word_count。\n"
             f"{self_check}"
         )
     cap = plan["segment_cap"]
-    hard_cap = int(cap * 1.15)
+    hard_cap = segment_text_hard_cap(segment_target_sec)
     per_target_lo = plan["per_seg_lo"]
     per_target_hi = plan["per_seg_hi"]
     sec = int(segment_target_sec) if segment_target_sec == int(segment_target_sec) else segment_target_sec
@@ -543,11 +576,12 @@ def _storyboard_length_budget(
         f"【字数预算】总目标 {narration_target} 字；"
         f"写作必须达到 {writing_target} 字（总目标的 {pct}%）；"
         f"验收下限 {hard_min} 字（低于即不合格）。\n"
-        f"单镜上限 {sec}s，每段 text 上限 {cap} 字（绝对不得超过 {hard_cap} 字，超限必须拆段）。\n"
-        f"须至少 {seg_count_min} 个 segments（{writing_target} 字 ÷ {cap} 字/段）；"
+        f"单镜上限 {sec}s，每段 text 目标 ≤ {per_target_hi} 字、绝对不得超过 {cap} 字"
+        f"（硬上限 {hard_cap} 字，超限必须拆段）。\n"
+        f"须至少 {seg_count_min} 个 segments（按 {writing_target} 字与单段 {per_target_hi} 字估算）；"
         f"每段建议 {per_target_lo}-{per_target_hi} 字、下限 {per_min} 字；"
         f"各段 text 字数之和须 ≥ {writing_target}。\n"
-        f"每段用「{layers}」三层写法撑满，禁止整段一句带过。\n"
+        f"每段用「{layers}」三层写法，每层一句短话；总字数靠加段，禁止加长单段。\n"
         "【生成顺序】先按段数预算写满各段 segments，再拼接 narration，最后核对 word_count。\n"
         f"{self_check}"
     )
@@ -644,12 +678,14 @@ def _storyboard_segment_rule(target: float, profile_style: str = "") -> str:
         return common + "不约束单镜时长，按口播内容逻辑切分，段数由内容决定。"
     sec = _format_segment_target_sec(target)
     cap = segment_text_char_cap(target)
-    hard_cap = int(cap * 1.15)
-    lo = max(15, int(cap * 0.65))
+    hard_cap = segment_text_hard_cap(target)
+    comfort = segment_comfort_chars(cap)
+    lo = max(12, int(cap * 0.45))
     return (
         common
-        + f"单镜口播上限{sec}秒；每段text建议{lo}-{cap}字，单段绝对不得超过{hard_cap}字；"
+        + f"单镜口播上限{sec}秒；每段text建议{lo}-{comfort}字，绝对不得超过{cap}字（硬上限{hard_cap}字）；"
         "任一 segment 的 text 超过单段上限必须拆成多段，禁止合并成长段；"
+        "三层写法每层只用一句短话，禁止把多句堆进同一段；"
         "按自然断句与口播节奏切分，段数宁多勿少。"
     )
 
@@ -720,6 +756,7 @@ def build_storyboard_prompts(
     system = (
         f"{_storyboard_role(profile_style)}输出JSON，字段：{json_fields}。"
         "字数未达标则整稿无效；JSON 样例仅示字段结构，不代表篇幅，禁止照抄样例短句。"
+        "任一段 text 超过单镜字数上限则整稿无效，须拆段而非加长单段。"
         f"{title_rule}"
         f"{seg_rule}"
         f"{length_rule}"
