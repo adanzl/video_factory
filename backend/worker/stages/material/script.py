@@ -183,7 +183,8 @@ class MaterialScriptStage(StageExecutor):
             last_script: dict | None = None
             feedback: str | None = None
             accept_warnings: list[str] = []
-            for attempt in range(6):
+            max_attempts = get_settings().script_qa_max_attempts
+            for attempt in range(max_attempts):
                 job_cancel.raise_if_cancelled(ctx.job["id"])
                 length_mode = _timeline_length_mode(attempt)
                 script = llm_mgr.generate_material_script(

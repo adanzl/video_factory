@@ -414,7 +414,8 @@ class ScriptStage(StageExecutor):
         accept_warnings: list[str] = []
         generate_image_prompts = bool(ctx.script_generate_image_prompts)
         job_id = ctx.job["id"]
-        for attempt in range(6):
+        max_attempts = get_settings().script_qa_max_attempts
+        for attempt in range(max_attempts):
             job_cancel.raise_if_cancelled(job_id)
             script = llm_mgr.generate_script(
                 title,
@@ -471,7 +472,8 @@ class ScriptStage(StageExecutor):
             use_sd15 = resolve_include_sd15_prompt(ctx.job)
             script["include_sd15_prompt"] = use_sd15
             prompt_feedback: str | None = None
-            for attempt in range(4):
+            prompt_max_attempts = get_settings().script_qa_max_attempts
+            for attempt in range(prompt_max_attempts):
                 job_cancel.raise_if_cancelled(job_id)
                 try:
                     if attempt == 0:

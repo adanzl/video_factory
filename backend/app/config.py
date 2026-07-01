@@ -104,6 +104,8 @@ class Config:
     skip_publish_default: bool = _bool("SKIP_PUBLISH_DEFAULT", True)
     # 脚本阶段 copy/storyboard/image_prompts 质检（调 prompt 时可关）
     skip_script_quality_check: bool = _bool("SKIP_SCRIPT_QUALITY_CHECK", False)
+    # 校验/质检不通过时最多尝试次数（2=仅重试 1 次）
+    script_qa_max_attempts: int = int(os.getenv("SCRIPT_QA_MAX_ATTEMPTS", "2"))
     host_enabled: bool = _bool("HOST_ENABLED")
     kling_upgrade_enabled: bool = _bool("KLING_UPGRADE_ENABLED")
     enable_scheduler: bool = _bool("ENABLE_SCHEDULER")

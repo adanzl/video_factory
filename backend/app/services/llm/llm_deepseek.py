@@ -40,9 +40,12 @@ __all__ = ["DeepSeekClient", "MIN_IMAGE_PROMPT_CHARS"]
 
 logger = logging.getLogger(__name__)
 
-_NARRATION_LENGTH_RETRY_ATTEMPTS = 5
 _NARRATION_EXPAND_ATTEMPTS = 2
 _TRUNCATION_RETRY_ATTEMPTS = 3
+
+
+def _storyboard_length_max_attempts() -> int:
+    return get_settings().script_qa_max_attempts
 
 
 def _narration_char_count(text: str) -> int:
@@ -354,7 +357,7 @@ class DeepSeekClient(LLMClient):
         length_feedback: str | None = feedback
         data: dict[str, Any] | None = None
         truncation_attempts = 0
-        for attempt in range(_NARRATION_LENGTH_RETRY_ATTEMPTS):
+        for attempt in range(_storyboard_length_max_attempts()):
             raise_if_job_cancelled(job)
             prompts = build_storyboard_prompts(
                 title,
@@ -645,7 +648,7 @@ class DeepSeekClient(LLMClient):
         )
         length_feedback: str | None = feedback
         data: dict[str, Any] | None = None
-        for attempt in range(_NARRATION_LENGTH_RETRY_ATTEMPTS):
+        for attempt in range(_storyboard_length_max_attempts()):
             raise_if_job_cancelled(job)
             prompts = build_material_script_prompts(
                 title,
