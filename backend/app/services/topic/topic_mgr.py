@@ -16,7 +16,11 @@ from app.utils.job_info import (
     merge_job_info,
 )
 from app.services.llm.llm_mgr import llm_mgr
-from app.services.llm.llm_topics import build_topic_optimize_user_prompt, normalize_title
+from app.services.llm.llm_topics import (
+    build_topic_optimize_system_prompt,
+    build_topic_optimize_user_prompt,
+    normalize_title,
+)
 from app.services.topic.hot_pipeline import (
     HOT_SOURCE,
     HotPipelineOptions,
@@ -76,7 +80,7 @@ class TopicMgr:
         items: list[dict],
         *,
         source: str = "manual",
-        dedup_keyword: bool = False,
+        deduplicate_keyword: bool = False,
     ) -> dict:
         settings = get_settings()
         max_len = settings.max_title_length
@@ -84,7 +88,7 @@ class TopicMgr:
         skipped = 0
         seen_keywords: set[str] = set()
         with connection() as conn:
-            if dedup_keyword:
+            if deduplicate_keyword:
                 seen_keywords = _existing_keywords(conn)
             for item in items:
                 raw_title = str(item.get("title") or "").strip()
@@ -92,7 +96,7 @@ class TopicMgr:
                     skipped += 1
                     continue
                 title = normalize_title(raw_title, max_len=max_len)
-                if dedup_keyword:
+                if deduplicate_keyword:
                     raw_kw = item.get("keyword") or ""
                     keywords = [k.strip() for k in raw_kw.split(",") if k.strip()]
                     if not keywords:
@@ -114,7 +118,7 @@ class TopicMgr:
                     template=item.get("template"),
                     hook=item.get("hook"),
                     source=source,
-                    keyword=kw if dedup_keyword else None,
+                    keyword=kw if deduplicate_keyword else None,
                 )
                 if row is None:
                     skipped += 1
@@ -139,7 +143,7 @@ class TopicMgr:
             user_prompt=user_prompt,
             track=track,
         )
-        result = self.add_topics(topics, source="llm", dedup_keyword=True)
+        result = self.add_topics(topics, source="llm", deduplicate_keyword=True)
         if result["added"]:
             new_ids = [row["id"] for row in result["added"]]
             self.score_titles(title_ids=new_ids)
@@ -164,20 +168,31 @@ class TopicMgr:
             raise ValueError("enqueued title cannot be optimized")
 
         settings = get_settings()
+        track = row.get("track")
+        template = row.get("template")
+        system_prompt = build_topic_optimize_system_prompt(
+            max_title_len=settings.max_title_length,
+            track=track,
+        )
         user_prompt = build_topic_optimize_user_prompt(
             title=row["title"],
-            track=row.get("track"),
-            template=row.get("template"),
+            track=track,
+            template=template,
             hook=row.get("hook"),
         )
-        logger.info("[TOPIC] optimize start id=%d title=%r", title_id, row["title"])
+        logger.info("[TOPIC] optimize start id=%d title=%r track=%r", title_id, row["title"], track)
         topics = llm_mgr.generate_topics(
-            row["title"],
+            "",
             count=1,
+            system_prompt=system_prompt,
             user_prompt=user_prompt,
-            track=row.get("track"),
+            track=track,
         )
         item = topics[0]
+        if track:
+            item["track"] = track
+        if template:
+            item["template"] = template
         new_title = normalize_title(
             item["title"],
             max_len=settings.max_title_length,
