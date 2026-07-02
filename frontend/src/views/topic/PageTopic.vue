@@ -59,23 +59,23 @@
       <el-table-column type="selection" width="48" />
       <el-table-column prop="id" label="ID" width="70" />
       <el-table-column prop="title" label="标题" min-width="220" show-overflow-tooltip />
-      <el-table-column prop="category" label="分类" width="140" show-overflow-tooltip />
+      <el-table-column prop="category" label="分类" width="90" show-overflow-tooltip />
       <el-table-column prop="template" label="模板" width="110" />
       <el-table-column prop="hook" label="钩子" min-width="160" show-overflow-tooltip />
-      <el-table-column label="分数" width="80">
+      <el-table-column label="分数" width="60" align="center">
         <template #default="{ row }">
           <span v-if="row.score != null">{{ row.score }}</span>
           <span v-else class="text-gray-400">-</span>
         </template>
       </el-table-column>
-      <el-table-column label="状态" width="90">
+      <el-table-column label="状态" width="90" align="center">
         <template #default="{ row }">
           <el-tag :type="statusTagType(row.status)" size="small">
             {{ statusLabel(row.status) }}
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="来源" width="80">
+      <el-table-column label="来源" width="60" align="center">
         <template #default="{ row }">
           {{ sourceLabel(row.source) }}
         </template>
@@ -144,7 +144,7 @@
       v-model:current-page="page"
       v-model:page-size="pageSize"
       :total="total"
-      :page-sizes="[15, 20, 50]"
+      :page-sizes="[15, 25, 50]"
       layout="sizes, prev, pager, next"
       class="mt-4 justify-start"
       @current-change="fetchTitles"
