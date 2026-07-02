@@ -5,13 +5,15 @@ from __future__ import annotations
 from app.quality.models import QualityReport
 
 MIN_IMAGE_PROMPT_CHARS = 50
-IMAGE_PROMPT_TARGET_CHARS = 200
+IMAGE_PROMPT_PASS_CHARS = 150
+IMAGE_PROMPT_TARGET_CHARS = 180
 MIN_IMAGE_PROMPT_CHARS_SD15 = 20
 IMAGE_PROMPT_TARGET_CHARS_SD15 = 60
 MIN_SD15_PROMPT_EN_WORDS = 8
 TARGET_SD15_PROMPT_EN_WORDS = 12
 
 __all__ = [
+    "IMAGE_PROMPT_PASS_CHARS",
     "IMAGE_PROMPT_TARGET_CHARS",
     "MIN_IMAGE_PROMPT_CHARS",
     "MIN_SD15_PROMPT_EN_WORDS",
@@ -19,6 +21,7 @@ __all__ = [
     "check_image_prompt",
     "format_image_prompt_retry_warning",
     "image_prompt_min_chars",
+    "image_prompt_pass_chars",
     "image_prompt_target_chars",
     "sd15_prompt_en_ok",
     "sd15_prompt_en_word_count",
@@ -32,6 +35,10 @@ def image_prompt_min_chars(*, sd15_mode: bool = False) -> int:
 
 def image_prompt_target_chars(*, sd15_mode: bool = False) -> int:
     return IMAGE_PROMPT_TARGET_CHARS_SD15 if sd15_mode else IMAGE_PROMPT_TARGET_CHARS
+
+
+def image_prompt_pass_chars(*, sd15_mode: bool = False) -> int:
+    return IMAGE_PROMPT_TARGET_CHARS_SD15 if sd15_mode else IMAGE_PROMPT_PASS_CHARS
 
 
 def sd15_prompt_en_word_count(value: object) -> int:
@@ -49,8 +56,9 @@ def sd15_prompt_en_ok(value: object) -> bool:
 
 def _image_prompt_threshold_label(*, sd15_mode: bool = False) -> str:
     min_chars = image_prompt_min_chars(sd15_mode=sd15_mode)
+    pass_chars = image_prompt_pass_chars(sd15_mode=sd15_mode)
     target_chars = image_prompt_target_chars(sd15_mode=sd15_mode)
-    label = f"image_prompt>={min_chars}chars(target{target_chars})"
+    label = f"image_prompt>={min_chars}chars(pass{pass_chars},target{target_chars})"
     if sd15_mode:
         label += (
             f" sd15_prompt_en>={MIN_SD15_PROMPT_EN_WORDS}words"
@@ -99,6 +107,7 @@ def check_image_prompt(
     if sd15_mode is None:
         sd15_mode = bool(script.get("include_sd15_prompt"))
     min_chars = image_prompt_min_chars(sd15_mode=sd15_mode)
+    pass_chars = image_prompt_pass_chars(sd15_mode=sd15_mode)
     target_chars = image_prompt_target_chars(sd15_mode=sd15_mode)
     segments = script.get("segments") or []
     if segment_indices is not None:
@@ -132,11 +141,12 @@ def check_image_prompt(
                     "min_chars": min_chars,
                 }
             )
-        elif prompt_len < target_chars:
+        elif prompt_len < pass_chars:
             slightly_short.append(
                 {
                     "segment_index": idx,
                     "chars": prompt_len,
+                    "pass_chars": pass_chars,
                     "target_chars": target_chars,
                 }
             )

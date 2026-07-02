@@ -162,7 +162,7 @@ _IMAGE_PROMPT_FORMAT_RULE = (
 )
 
 _IMAGE_PROMPT_DIMENSIONS_FULL = (
-    "篇幅按画面复杂度充分展开（通常150-280字），不凑字数。"
+    "篇幅按画面复杂度充分展开（目标约180字，至少150字），不凑字数。"
     + _IMAGE_PROMPT_FORMAT_RULE
     + "须逐层写清可见细节，禁止空泛形容词："
     + "①主体（主要主体、姿态、关键动作或互动）；"

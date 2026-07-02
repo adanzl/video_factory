@@ -130,6 +130,7 @@ class QualityMgr:
     check_image_prompt = staticmethod(image_prompt.check_image_prompt)
     skip_image_prompt_check = staticmethod(image_prompt.skip_image_prompt_check)
     image_prompt_min_chars = staticmethod(image_prompt.image_prompt_min_chars)
+    image_prompt_pass_chars = staticmethod(image_prompt.image_prompt_pass_chars)
     image_prompt_target_chars = staticmethod(image_prompt.image_prompt_target_chars)
     sd15_prompt_en_word_count = staticmethod(image_prompt.sd15_prompt_en_word_count)
     sd15_prompt_en_ok = staticmethod(image_prompt.sd15_prompt_en_ok)
