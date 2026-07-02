@@ -280,7 +280,7 @@ class MockLLMClient(LLMClient):
         size_hint: str | None = None,
         business_override: str | None = None,
     ) -> dict[str, str]:
-        from app.services.visual.image_sd15 import (
+        from app.services.segment.image.image_sd15 import (
             fallback_split_panel_prompts,
             normalize_sd15_prompt_en,
             parse_image_size,

@@ -23,7 +23,7 @@ from app.services.tts.phrase_timing import (
 from app.services.tts.segment_trim import apply_tts_segment_trim
 from app.services.tts.tts_ali import _run_tts_task
 from app.services.tts.tts_mgr import SubtitleCue, tts_mgr
-from app.services.visual.text_render import split_phrase_chunks
+from app.services.render.text_render import split_phrase_chunks
 
 TEXT = (
     "哇，你知道吗？欧洲好多房子都没空调，夏天热得像烤炉！"

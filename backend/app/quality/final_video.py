@@ -6,7 +6,7 @@ from pathlib import Path
 
 from app.config import get_settings
 from app.quality.models import QualityReport
-from app.services.media.audio_analysis import LoudnessStats, analyze_loudness
+from app.services.tts.audio_analysis import LoudnessStats, analyze_loudness
 from app.services.media.ffmpeg_utils import probe_duration
 
 __all__ = ["check_merged_video"]

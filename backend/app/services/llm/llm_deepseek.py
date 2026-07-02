@@ -810,7 +810,7 @@ class DeepSeekClient(LLMClient):
         size_hint: str | None = None,
         business_override: str | None = None,
     ) -> dict[str, str]:
-        from app.services.visual.image_sd15 import (
+        from app.services.segment.image.image_sd15 import (
             build_sd15_prompt_system,
             build_sd15_prompt_user,
             parse_image_size,

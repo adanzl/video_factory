@@ -76,7 +76,7 @@ def _generate_cover(job: dict, cover_path: Path, width: int, height: int) -> Non
     from PIL import Image
 
     from app.config import get_settings
-    from app.services.visual.image_agnes import AgnesImageProvider
+    from app.services.segment.image.image_agnes import AgnesImageProvider
 
     settings = get_settings()
     title = resolve_intro_title(job)

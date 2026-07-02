@@ -46,7 +46,7 @@ class ClipMgr:
         width: int | None = None,
         height: int | None = None,
     ) -> tuple[float, list[tuple[Path, float, float]], list[Path]]:
-        from app.services.media.subtitle_overlay import render_subtitle_overlay
+        from app.services.segment.clip.subtitle_overlay import render_subtitle_overlay
 
         total_duration = sum(duration for _, duration in subtitle_cues if duration > 0)
         overlay_windows: list[tuple[Path, float, float]] = []
@@ -78,9 +78,9 @@ class ClipMgr:
             path.unlink(missing_ok=True)
 
     def get_clip_provider(self, name: str) -> ClipProvider:
-        from app.services.media.clip.video_ffmpeg import FfmpegClipProvider
-        from app.services.media.clip.video_wan import WanClipProvider
-        from app.services.media.clip.video_agnes import AgnesClipProvider
+        from app.services.segment.clip.video_ffmpeg import FfmpegClipProvider
+        from app.services.segment.clip.video_wan import WanClipProvider
+        from app.services.segment.clip.video_agnes import AgnesClipProvider
 
         if name == "wan_i2v":
             if get_settings().mock_mode:

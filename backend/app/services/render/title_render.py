@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
-from app.services.visual.text_render import balance_title_lines
+from app.services.render.text_render import balance_title_lines
 
 # 描边 / 阴影
 STROKE_WIDTH = 1

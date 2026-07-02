@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from app.services.llm.llm_agnes import AgnesApiKey
-from app.services.visual.image_agnes import AgnesImageProvider, _to_agnes_size
+from app.services.segment.image.image_agnes import AgnesImageProvider, _to_agnes_size
 
 
 def test_to_agnes_size() -> None:
@@ -26,11 +26,11 @@ def test_generate_downloads_url(tmp_path: Path) -> None:
 
     with (
         patch(
-            "app.services.visual.image_agnes.agnes_api_keys",
+            "app.services.segment.image.image_agnes.agnes_api_keys",
             return_value=[AgnesApiKey("primary", "test-key")],
         ),
         patch.object(provider, "_request", return_value=mock_post) as mock_request,
-        patch("app.services.visual.image_agnes.requests.get", return_value=mock_img),
+        patch("app.services.segment.image.image_agnes.requests.get", return_value=mock_img),
     ):
         provider.generate("测试 prompt", output, size="720*1280")
 
@@ -59,7 +59,7 @@ def test_generate_switches_to_backup_key_on_quota(tmp_path: Path) -> None:
 
     with (
         patch(
-            "app.services.visual.image_agnes.agnes_api_keys",
+            "app.services.segment.image.image_agnes.agnes_api_keys",
             return_value=[
                 AgnesApiKey("free", "free-key"),
                 AgnesApiKey("primary", "main-key"),

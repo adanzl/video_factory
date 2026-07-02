@@ -5,8 +5,8 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 
 from app.config import get_settings
-from app.services.visual.text_render import load_cjk_font
-from app.services.visual.visual_mgr import ImageProvider
+from app.services.render.text_render import load_cjk_font
+from app.services.segment.image.image_mgr import ImageProvider
 
 
 class MockImageProvider(ImageProvider):

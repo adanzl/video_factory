@@ -8,8 +8,8 @@ from pathlib import Path
 import requests
 
 from app.config import get_settings
-from app.services.visual.image_mock import MockImageProvider
-from app.services.visual.visual_mgr import ImageProvider
+from app.services.segment.image.image_mock import MockImageProvider
+from app.services.segment.image.image_mgr import ImageProvider
 
 logger = logging.getLogger(__name__)
 

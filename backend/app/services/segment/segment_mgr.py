@@ -11,7 +11,7 @@ from pathlib import Path
 from app.utils.job_cancel import job_cancel
 from app.services.media.media_mgr import SegmentClipsResult, media_mgr
 from app.services.tts.tts_mgr import tts_mgr
-from app.services.visual.visual_mgr import visual_mgr
+from app.services.segment.image.image_mgr import image_mgr
 from app.utils.job_info import resolve_segment_image_size
 
 logger = logging.getLogger(__name__)
@@ -130,7 +130,7 @@ class SegmentMgr:
 
             image_size = resolve_segment_image_size(job)
             image_provider = resolve_image_provider(job)
-            generated = visual_mgr.generate_segment_images(
+            generated = image_mgr.generate_segment_images(
                 image_targets,
                 images_dir,
                 size=image_size,

@@ -6,7 +6,7 @@ from pathlib import Path
 
 from app.config import get_settings
 from app.quality.models import QualityReport
-from app.services.media.audio_analysis import LoudnessStats, SilenceStats, analyze_loudness, analyze_silence
+from app.services.tts.audio_analysis import LoudnessStats, SilenceStats, analyze_loudness, analyze_silence
 from app.services.tts.tts_mgr import SubtitleCue
 
 __all__ = ["check_tts_audio"]

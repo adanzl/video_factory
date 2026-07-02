@@ -19,8 +19,8 @@ from app.services.llm.llm_agnes import (
     agnes_quota_exceeded_from_exception,
     raise_if_agnes_quota,
 )
-from app.services.visual.image_mock import MockImageProvider
-from app.services.visual.visual_mgr import ImageProvider
+from app.services.segment.image.image_mock import MockImageProvider
+from app.services.segment.image.image_mgr import ImageProvider
 
 logger = logging.getLogger(__name__)
 

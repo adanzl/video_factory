@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from app.config import get_settings
-from app.services.visual.text_render import split_phrase_chunks
+from app.services.render.text_render import split_phrase_chunks
 
 __all__ = [
     "SubtitleCue",

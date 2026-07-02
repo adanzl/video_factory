@@ -15,8 +15,8 @@ from urllib.parse import urlencode
 import requests
 
 from app.config import get_settings
-from app.services.media.clip.mgr import ClipProvider, clip_mgr
-from app.services.media.clip.render import fit_video_duration, video_to_clip_timed_overlays
+from app.services.segment.clip.clip_mgr import ClipProvider, clip_mgr
+from app.services.segment.clip.clip_render import fit_video_duration, video_to_clip_timed_overlays
 from app.services.media.ffmpeg_utils import ffmpeg_cmd_start, probe_duration, run_ffmpeg
 from app.services.llm.llm_agnes import (
     AgnesApiKey,
