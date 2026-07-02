@@ -18,6 +18,7 @@ from app.services.topic.prompts.common import (
     CONVERSATIONAL_TITLE_RULE,
     CURRENT_THEME_ANCHOR_RULE,
     FORBIDDEN_FAQ_TITLE_RULE,
+    HOOK_MOTIVATION_RULE,
     VISUAL_ANCHOR_RULE,
 )
 from app.services.topic.prompts.format import optimize_json_format, topic_json_format
@@ -124,6 +125,7 @@ def build_topic_system_prompt(
         f"{topic_json_format(max_title_len=max_title_len, category_value=resolved)}"
         f"{COMMON_PRODUCTION_RULE}"
         f"{COMMON_COMPLIANCE_RULE}"
+        f"{HOOK_MOTIVATION_RULE}"
         f"{_category_rules(resolved)}"
         f"template 从分类模板中选取：{', '.join(spec.template_names)}。"
         f"{_template_instruction(resolved, templates)}"
@@ -197,6 +199,7 @@ def build_topic_optimize_system_prompt(
             + f"{CONVERSATIONAL_TITLE_RULE}"
             + f"{FORBIDDEN_FAQ_TITLE_RULE}"
             + f"{VISUAL_ANCHOR_RULE}"
+            + f"{HOOK_MOTIVATION_RULE}"
             + "科学/时事类：优化后 title 必须含中文问号「？」，无问号陈述句一律不合格。"
             + "标题仍须剥离具体时效与人名。"
         )
@@ -205,6 +208,7 @@ def build_topic_optimize_system_prompt(
         + f"{CONVERSATIONAL_TITLE_RULE}"
         + f"{FORBIDDEN_FAQ_TITLE_RULE}"
         + f"{VISUAL_ANCHOR_RULE}"
+        + f"{HOOK_MOTIVATION_RULE}"
         + "科学/时事类：优化后 title 必须含中文问号「？」，无问号陈述句一律不合格。"
         + "若原标题含问号对话体，优化后仍须一步直达、同一话题。"
         + "category、template 须与用户原值一致。"
@@ -231,6 +235,10 @@ def build_topic_optimize_user_prompt(
         lines.append(f"原模板：{template.strip()}（优化后 template 必须相同）")
     if hook:
         lines.append(f"原钩子：{hook.strip()}")
+        lines.append(
+            "若原 hook 说教、平淡或与 title 重复，须重写 hook："
+            "用反差/追问/具体画面，遵守 hook 规则，禁止「别小看」「足够你」类表述。"
+        )
     if resolved == CATEGORY_HISTORY:
         lines.append("须保持同一历史人物或悬案，标题仍为「代号：悬念」格式。")
     elif resolved in {CATEGORY_SCIENCE, CATEGORY_CURRENT}:

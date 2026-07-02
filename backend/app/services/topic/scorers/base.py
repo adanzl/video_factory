@@ -67,6 +67,27 @@ def rebuttal_text(title: str) -> str:
     return text[mark_idx + 1 :].strip()
 
 
+BLAND_HOOK_PATTERNS = (
+    r"别小看|足够你|够你冲出|够你跑出|够你躲|应该注意|要注意|记得要|别忘了|"
+    r"标准做法|规范动作|躲桌下|趴地上",
+)
+
+
+def hook_curiosity_adjustment(hook: str | None) -> float:
+    """hook：奖励好奇表达，压低说教与复述标题口吻。"""
+    text = (hook or "").strip()
+    if not text:
+        return 0.0
+    delta = 0.0
+    if has_pattern(text, CURIOSITY_PATTERNS):
+        delta += 8.0
+    if has_pattern(text, BLAND_HOOK_PATTERNS):
+        delta -= 15.0
+    if has_pattern(text, BLAND_REBUTTAL_PATTERNS):
+        delta -= 12.0
+    return delta
+
+
 def rebuttal_tone_curiosity_adjustment(title: str) -> float:
     """反驳半句：奖励口语趣味，压低说教式建议。"""
     response = rebuttal_text(title)

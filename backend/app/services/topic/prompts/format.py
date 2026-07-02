@@ -8,7 +8,7 @@ def topic_json_format(*, max_title_len: int, category_value: str) -> str:
         f"title 不含空格换行，≤{max_title_len} 字。"
         f"category 固定为「{category_value}」。"
         "template 须与分配模板一致。"
-        "hook 为 15-30 字点击动机。"
+        "hook 为 15-30 字点击动机（反差/追问/画面，禁止说教、禁止复述 title）。"
         "keywords 为 2-6 字核心实体数组（1-3 项）。"
         f'样例：{{"topics": [{{"title": "标题", "keywords": ["关键词"], '
         f'"category": "{category_value}", "template": "误区反问式", "hook": "一句话钩子"}}]}}'
