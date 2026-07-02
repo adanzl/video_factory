@@ -5,7 +5,7 @@ from typing import Any
 
 from app.config import get_settings
 from app.services.llm.llm_mgr import LLMClient
-from app.quality.image_prompt_rules import MIN_IMAGE_PROMPT_CHARS
+from app.quality.image_prompt import MIN_IMAGE_PROMPT_CHARS
 from app.utils.media import segment_text_char_cap
 
 

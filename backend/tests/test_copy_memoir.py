@@ -1,6 +1,6 @@
 """口播伪亲历体检测。"""
 
-from app.quality.checkers import check_copy, detect_memoir_narration
+from app.quality.quality_mgr import check_narration, detect_memoir_narration
 
 
 MINER_SAMPLE = (
@@ -22,15 +22,15 @@ def test_detect_memoir_narration_knowledge_style_ok():
     assert detect_memoir_narration(text) is None
 
 
-def test_check_copy_rejects_memoir_style():
-    report = check_copy({"narration": MINER_SAMPLE})
+def test_check_narration_rejects_memoir_style():
+    report = check_narration({"narration": MINER_SAMPLE})
     assert report.level == "major"
     assert "memoir" in report.details.get("reason", "")
 
 
-def test_check_copy_accepts_short_material_narration():
+def test_check_narration_accepts_short_material_narration():
     narration = "x" * 130
-    report = check_copy(
+    report = check_narration(
         {
             "narration": narration,
             "narration_target_words": 138,
@@ -40,8 +40,8 @@ def test_check_copy_accepts_short_material_narration():
     assert report.details.get("word_count") == 130
 
 
-def test_check_copy_rejects_below_target_accept_min():
-    report = check_copy(
+def test_check_narration_rejects_below_target_accept_min():
+    report = check_narration(
         {
             "narration": "x" * 50,
             "narration_target_words": 138,

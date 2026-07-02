@@ -1,6 +1,6 @@
 import sqlite3
 
-from app.repositories import title_repo
+from app.repositories import repo_title
 
 
 def _conn() -> sqlite3.Connection:
@@ -39,5 +39,5 @@ def test_list_ids_below_score_excludes_enqueued_and_null():
             ("已入队低分", 50, "enqueued"),
         ],
     )
-    ids = title_repo.list_ids_below_score(conn, 75)
+    ids = repo_title.list_ids_below_score(conn, 75)
     assert ids == [1]

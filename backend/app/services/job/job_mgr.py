@@ -12,7 +12,7 @@ from pathlib import Path
 from app.exceptions import is_expected_job_failure
 from app.utils.job_cancel import JobCancelledError, job_cancel
 from app.services.job.job_reset import prepare_for_action, prepare_job_rerun
-from app.repositories import job_log_repo, job_repo, segment_repo
+from app.repositories import repo_job_log, repo_job, repo_segment
 from app.repositories.connection import connection
 from app.utils.async_util import run_in_background
 from app.utils.job_info import (
@@ -124,18 +124,18 @@ class JobMgr:
         offset: int = 0,
     ) -> list[dict]:
         with connection() as conn:
-            return job_repo.list_jobs(conn, status=status, limit=limit, offset=offset)
+            return repo_job.list_jobs(conn, status=status, limit=limit, offset=offset)
 
     def get_job(self, job_id: int) -> dict:
         with connection() as conn:
-            return job_repo.get_job(conn, job_id)
+            return repo_job.get_job(conn, job_id)
 
     def get_segments(self, job_id: int) -> list[dict]:
         from app.utils.media import resolve_segment_duration_sec
 
         with connection() as conn:
-            job = job_repo.get_job(conn, job_id)
-            segments = segment_repo.list_segments(conn, job_id)
+            job = repo_job.get_job(conn, job_id)
+            segments = repo_segment.list_segments(conn, job_id)
 
         script = job.get("script_json") or {}
         script_by_index: dict[int, dict] = {}
@@ -156,8 +156,8 @@ class JobMgr:
 
     def get_logs(self, job_id: int) -> list[dict]:
         with connection() as conn:
-            job_repo.get_job(conn, job_id)
-            return job_log_repo.list_logs(conn, job_id)
+            repo_job.get_job(conn, job_id)
+            return repo_job_log.list_logs(conn, job_id)
 
     def create_from_title(
         self,
@@ -169,7 +169,7 @@ class JobMgr:
         if not cleaned:
             raise ValueError("title is empty")
         with connection() as conn:
-            job = job_repo.create_job(
+            job = repo_job.create_job(
                 conn,
                 cleaned,
                 skip_publish=skip_publish,
@@ -181,7 +181,7 @@ class JobMgr:
                     orientation=default_orientation_for_pipeline("standard"),
                 ),
             )
-            job_log_repo.append_log(conn, job["id"], "title", f"created job: {cleaned}")
+            repo_job_log.append_log(conn, job["id"], "title", f"created job: {cleaned}")
             return job
 
     def update_job_info(
@@ -235,13 +235,13 @@ class JobMgr:
         if not patch:
             raise ValueError("no updatable info fields provided")
         with connection() as conn:
-            job = job_repo.get_job(conn, job_id)
-            job = job_repo.update_job(
+            job = repo_job.get_job(conn, job_id)
+            job = repo_job.update_job(
                 conn,
                 job_id,
                 info=merge_job_info(job.get("info"), **patch),
             )
-            job_log_repo.append_log(
+            repo_job_log.append_log(
                 conn,
                 job_id,
                 "api",
@@ -263,15 +263,15 @@ class JobMgr:
         if "status" in updates and updates["status"] not in _VALID_STATUSES:
             raise ValueError(f"status must be one of: {', '.join(sorted(_VALID_STATUSES))}")
         with connection() as conn:
-            job = job_repo.get_job(conn, job_id)
+            job = repo_job.get_job(conn, job_id)
             if "title" in updates:
                 script = job.get("script_json")
                 if isinstance(script, dict):
                     synced = dict(script)
                     synced["title"] = re.sub(r"\s+", "", updates["title"].strip())
                     updates["script_json"] = synced
-            job = job_repo.update_job(conn, job_id, **updates)
-            job_log_repo.append_log(conn, job_id, "api", f"updated fields: {', '.join(updates)}")
+            job = repo_job.update_job(conn, job_id, **updates)
+            repo_job_log.append_log(conn, job_id, "api", f"updated fields: {', '.join(updates)}")
             return job
 
     def abort_job(self, job_id: int) -> dict:
@@ -282,14 +282,14 @@ class JobMgr:
         else:
             job_cancel.clear(job_id)
         with connection() as conn:
-            job = job_repo.update_job(
+            job = repo_job.update_job(
                 conn,
                 job_id,
                 status="pending",
                 fail_stage=None,
                 error_message=None,
             )
-            job_log_repo.append_log(
+            repo_job_log.append_log(
                 conn,
                 job_id,
                 "api",
@@ -307,7 +307,7 @@ class JobMgr:
         if skipped is not None:
             return skipped
         with connection() as conn:
-            return job_repo.update_job(conn, job_id, status="running")
+            return repo_job.update_job(conn, job_id, status="running")
 
     def mark_done(self, job_id: int) -> dict:
         skipped = self._skip_if_aborted(job_id)
@@ -315,7 +315,7 @@ class JobMgr:
             job_cancel.clear(job_id)
             return skipped
         with connection() as conn:
-            return job_repo.update_job(conn, job_id, stage="done", status="done")
+            return repo_job.update_job(conn, job_id, stage="done", status="done")
 
     def mark_failed(self, job_id: int, stage: str, message: str) -> dict:
         skipped = self._skip_if_aborted(job_id)
@@ -323,8 +323,8 @@ class JobMgr:
             job_cancel.clear(job_id)
             return skipped
         with connection() as conn:
-            job_log_repo.append_log(conn, job_id, stage, message, level="error")
-            return job_repo.update_job(
+            repo_job_log.append_log(conn, job_id, stage, message, level="error")
+            return repo_job.update_job(
                 conn,
                 job_id,
                 status="failed",
@@ -334,14 +334,14 @@ class JobMgr:
     def mark_aborted(self, job_id: int, stage: str) -> dict:
         job_cancel.clear(job_id)
         with connection() as conn:
-            job_log_repo.append_log(
+            repo_job_log.append_log(
                 conn,
                 job_id,
                 stage,
                 "任务已中止",
                 level="warning",
             )
-            return job_repo.update_job(
+            return repo_job.update_job(
                 conn,
                 job_id,
                 status="pending",
@@ -351,7 +351,7 @@ class JobMgr:
 
     def delete_job(self, job_id: int) -> None:
         with connection() as conn:
-            job_repo.delete_job(conn, job_id)
+            repo_job.delete_job(conn, job_id)
 
     def clean_job_files(self, job_id: int) -> dict:
         """删除任务本地媒体文件，保留数据库记录。"""
@@ -373,7 +373,7 @@ class JobMgr:
                 cleaned = True
 
             with connection() as conn:
-                job_log_repo.append_log(conn, job_id, "api", "cleaned local media files")
+                repo_job_log.append_log(conn, job_id, "api", "cleaned local media files")
 
             return {
                 "id": job_id,
@@ -451,8 +451,8 @@ class JobMgr:
         if image_provider is None:
             return
         with connection() as conn:
-            job = job_repo.get_job(conn, job_id)
-            job_repo.update_job(
+            job = repo_job.get_job(conn, job_id)
+            repo_job.update_job(
                 conn,
                 job_id,
                 info=merge_job_info(job.get("info"), image_provider=image_provider),
@@ -462,8 +462,8 @@ class JobMgr:
         if video_provider is None:
             return
         with connection() as conn:
-            job = job_repo.get_job(conn, job_id)
-            job_repo.update_job(
+            job = repo_job.get_job(conn, job_id)
+            repo_job.update_job(
                 conn,
                 job_id,
                 info=merge_job_info(job.get("info"), video_provider=video_provider),
@@ -489,8 +489,8 @@ class JobMgr:
         from worker.loop import run_script
 
         with connection() as conn:
-            job = job_repo.get_job(conn, job_id)
-            job_repo.update_job(
+            job = repo_job.get_job(conn, job_id)
+            repo_job.update_job(
                 conn,
                 job_id,
                 info=merge_job_script_params(
@@ -613,7 +613,7 @@ class JobMgr:
         from app.services.script.description import build_video_description_prompts
 
         with connection() as conn:
-            job = job_repo.get_job(conn, job_id)
+            job = repo_job.get_job(conn, job_id)
             script = job.get("script_json")
             if not isinstance(script, dict):
                 raise ValueError("script not ready")
@@ -634,8 +634,8 @@ class JobMgr:
             prompts.append(desc_prompt)
             updated_script["llm_prompts"] = prompts
 
-            job = job_repo.update_job(conn, job_id, script_json=updated_script)
-            job_log_repo.append_log(conn, job_id, "script", "video description regenerated")
+            job = repo_job.update_job(conn, job_id, script_json=updated_script)
+            repo_job_log.append_log(conn, job_id, "script", "video description regenerated")
             return {"video_description": description, "job": job}
 
     def run_intro(
@@ -663,8 +663,8 @@ class JobMgr:
             info_patch["intro_category"] = normalized
         if info_patch:
             with connection() as conn:
-                job = job_repo.get_job(conn, job_id)
-                job_repo.update_job(
+                job = repo_job.get_job(conn, job_id)
+                repo_job.update_job(
                     conn,
                     job_id,
                     info=merge_job_info(job.get("info"), **info_patch),

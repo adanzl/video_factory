@@ -6,7 +6,7 @@ import logging
 import re
 
 from app.config import get_settings
-from app.repositories import job_repo, title_repo
+from app.repositories import repo_job, repo_title
 from app.repositories.connection import connection
 from app.services.job.job_mgr import job_mgr
 from app.utils.job_info import (
@@ -71,7 +71,7 @@ class TopicMgr:
         offset: int = 0,
     ) -> list[dict]:
         with connection() as conn:
-            return title_repo.list_titles(
+            return repo_title.list_titles(
                 conn, status=status, limit=limit, offset=offset
             )
 
@@ -111,7 +111,7 @@ class TopicMgr:
                             seen_keywords.add(k)
                 else:
                     kw = None
-                row = title_repo.insert_title(
+                row = repo_title.insert_title(
                     conn,
                     title=title,
                     category=item.get("category"),
@@ -190,7 +190,7 @@ class TopicMgr:
 
     def optimize_title(self, title_id: int) -> dict:
         with connection() as conn:
-            row = title_repo.get_title(conn, title_id)
+            row = repo_title.get_title(conn, title_id)
 
         if row["status"] == "enqueued":
             raise ValueError("enqueued title cannot be optimized")
@@ -234,10 +234,10 @@ class TopicMgr:
 
         with connection() as conn:
             if new_title != row["title"]:
-                existing = title_repo.find_by_titles(conn, [new_title])
+                existing = repo_title.find_by_titles(conn, [new_title])
                 if new_title in existing:
                     raise ValueError(f"title already exists: {new_title}")
-            updated = title_repo.update_title(
+            updated = repo_title.update_title(
                 conn,
                 title_id,
                 title=new_title,
@@ -263,9 +263,9 @@ class TopicMgr:
     def score_titles(self, title_ids: list[int] | None = None) -> dict:
         with connection() as conn:
             if title_ids:
-                rows = title_repo.list_by_ids(conn, title_ids)
+                rows = repo_title.list_by_ids(conn, title_ids)
             else:
-                rows = title_repo.list_pending_score(conn)
+                rows = repo_title.list_pending_score(conn)
 
             scored: list[dict] = []
             for row in rows:
@@ -278,7 +278,7 @@ class TopicMgr:
                     hook=row.get("hook"),
                 )
                 status = status_from_score(result)
-                updated = title_repo.update_title(
+                updated = repo_title.update_title(
                     conn,
                     row["id"],
                     score=result.total,
@@ -290,13 +290,13 @@ class TopicMgr:
 
     def delete_titles(self, title_ids: list[int]) -> dict:
         with connection() as conn:
-            deleted = title_repo.delete_titles(conn, title_ids)
+            deleted = repo_title.delete_titles(conn, title_ids)
         return {"deleted": deleted, "ids": title_ids}
 
     def delete_low_score_titles(self, max_score: int) -> dict:
         with connection() as conn:
-            ids = title_repo.list_ids_below_score(conn, max_score)
-            deleted = title_repo.delete_titles(conn, ids)
+            ids = repo_title.list_ids_below_score(conn, max_score)
+            deleted = repo_title.delete_titles(conn, ids)
         logger.info(
             "[TOPIC] delete low score max_score=%d deleted=%d ids=%s",
             max_score,
@@ -317,9 +317,9 @@ class TopicMgr:
 
         with connection() as conn:
             if title_ids:
-                rows = title_repo.list_by_ids(conn, title_ids)
+                rows = repo_title.list_by_ids(conn, title_ids)
             else:
-                rows = title_repo.list_queued(conn)
+                rows = repo_title.list_queued(conn)
 
             jobs: list[dict] = []
             for row in rows:
@@ -329,7 +329,7 @@ class TopicMgr:
                     continue
                 is_history = normalize_category(row.get("category")) == CATEGORY_HISTORY
                 seg_sec = 15 if not is_history else 10
-                job = job_repo.create_job(
+                job = repo_job.create_job(
                     conn,
                     row["title"],
                     skip_publish=skip_publish,
@@ -349,7 +349,7 @@ class TopicMgr:
                         generate_image_prompts=True,
                     ),
                 )
-                title_repo.update_title(
+                repo_title.update_title(
                     conn,
                     row["id"],
                     status="enqueued",

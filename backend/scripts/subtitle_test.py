@@ -10,7 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from app.config import get_settings
-from app.repositories import segment_repo
+from app.repositories import repo_segment
 from app.repositories.connection import connection
 from app.services.media.subtitle_overlay import build_segment_clip, burn_subtitled_clip
 from app.services.tts.tts_mgr import tts_mgr
@@ -28,7 +28,7 @@ def rebuild_segment_subtitles(
     clips_dir.mkdir(parents=True, exist_ok=True)
 
     with connection() as conn:
-        segments = segment_repo.list_segments(conn, job_id)
+        segments = repo_segment.list_segments(conn, job_id)
 
     seg = next((s for s in segments if s["segment_index"] == segment_index), None)
     if seg is None:

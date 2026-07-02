@@ -6,19 +6,20 @@ import time
 
 from app.config import get_settings
 from app.exceptions import JobStageFailureError
-from app.quality.checkers import (
-    check_copy,
-    check_image_prompts,
-    check_storyboard,
-    skipped_copy_check,
-    skipped_image_prompts_check,
-    skipped_storyboard_check,
+from app.quality.quality_mgr import (
+    apply_quality_checks,
+    check_board,
+    check_image_prompt,
+    check_narration,
+    merge_quality_report,
+    skip_board_check,
+    skip_image_prompt_check,
+    skip_narration_check,
 )
-from app.quality.gate import apply_quality_checks, merge_quality_report
-from app.repositories import job_log_repo, job_repo, segment_repo
+from app.quality.image_prompt import MIN_SD15_PROMPT_EN_WORDS
+from app.repositories import repo_job_log, repo_job, repo_segment
 from app.repositories.connection import connection
 from app.services.llm.llm_mgr import llm_mgr
-from app.quality.image_prompt_rules import MIN_SD15_PROMPT_EN_WORDS
 from app.services.script.script_mgr import script_mgr
 from app.utils.job_cancel import job_cancel
 from app.utils.job_info import content_style_from_job
@@ -127,7 +128,7 @@ def _apply_script_title(
             )
     except Exception as exc:
         with connection() as conn:
-            job_log_repo.append_log(
+            repo_job_log.append_log(
                 conn,
                 job_id,
                 stage_name,
@@ -150,7 +151,7 @@ def _apply_video_description(
         script["video_description"] = llm_mgr.generate_video_description(title, narration)
     except Exception as exc:
         with connection() as conn:
-            job_log_repo.append_log(
+            repo_job_log.append_log(
                 conn,
                 job_id,
                 stage_name,
@@ -211,7 +212,7 @@ def _log_llm_timing(job_id: int, stage_name: str, script: dict) -> None:
     if not parts:
         return
     with connection() as conn:
-        job_log_repo.append_log(
+        repo_job_log.append_log(
             conn,
             job_id,
             stage_name,
@@ -318,7 +319,7 @@ def _repair_segment_overflow_via_shrink(
         _sync_narration_from_segments(script)
         repaired = True
         with connection() as conn:
-            job_log_repo.append_log(
+            repo_job_log.append_log(
                 conn,
                 job_id,
                 stage_name,
@@ -479,7 +480,7 @@ class ScriptStage(StageExecutor):
         if narration_target_words is None:
             narration_target_words = default_narration_target_words()
             with connection() as conn:
-                job_log_repo.append_log(
+                repo_job_log.append_log(
                     conn,
                     ctx.job["id"],
                     self.name,
@@ -545,7 +546,7 @@ class ScriptStage(StageExecutor):
                 )
                 script = None
                 with connection() as conn:
-                    job_log_repo.append_log(
+                    repo_job_log.append_log(
                         conn,
                         ctx.job["id"],
                         self.name,
@@ -601,7 +602,7 @@ class ScriptStage(StageExecutor):
                         raise
                     prompt_feedback = str(exc)
                     with connection() as conn:
-                        job_log_repo.append_log(
+                        repo_job_log.append_log(
                             conn,
                             ctx.job["id"],
                             self.name,
@@ -670,21 +671,21 @@ class ScriptStage(StageExecutor):
         job_cancel.raise_if_cancelled(job_id)
         with connection() as conn:
             for warning in accept_warnings:
-                job_log_repo.append_log(
+                repo_job_log.append_log(
                     conn,
                     ctx.job["id"],
                     self.name,
                     warning,
                     level="warning",
                 )
-            job_repo.update_job(
+            repo_job.update_job(
                 conn,
                 ctx.job["id"],
                 title=display_title,
                 script_json=script,
             )
-            segment_repo.insert_segments(conn, ctx.job["id"], script["segments"])
-            job_log_repo.append_log(
+            repo_segment.insert_segments(conn, ctx.job["id"], script["segments"])
+            repo_job_log.append_log(
                 conn,
                 ctx.job["id"],
                 self.name,
@@ -693,7 +694,7 @@ class ScriptStage(StageExecutor):
                 f"title={script['title']}, "
                 f"cost_time={script['cost_time']}s",
             )
-            job_log_repo.append_log(
+            repo_job_log.append_log(
                 conn,
                 ctx.job["id"],
                 self.name,
@@ -703,38 +704,38 @@ class ScriptStage(StageExecutor):
                 merged = merge_quality_report(
                     ctx.job.get("quality_report"),
                     "copy",
-                    skipped_copy_check(),
+                    skip_narration_check(),
                 )
-                merged = merge_quality_report(merged, "storyboard", skipped_storyboard_check())
+                merged = merge_quality_report(merged, "storyboard", skip_board_check())
                 merged = merge_quality_report(
                     merged,
                     "image_prompts",
-                    skipped_image_prompts_check(),
+                    skip_image_prompt_check(),
                 )
-                job_log_repo.append_log(
+                repo_job_log.append_log(
                     conn,
                     ctx.job["id"],
                     self.name,
                     "script quality checks skipped (SKIP_SCRIPT_QUALITY_CHECK)",
                     level="warning",
                 )
-                job_repo.update_job(conn, ctx.job["id"], quality_report=merged)
+                repo_job.update_job(conn, ctx.job["id"], quality_report=merged)
             else:
                 apply_quality_checks(
                     conn,
                     ctx.job["id"],
                     self.name,
                     {
-                        "copy": check_copy(script),
-                        "storyboard": check_storyboard(
+                        "copy": check_narration(script),
+                        "storyboard": check_board(
                             script,
                             segment_target_sec=segment_target_sec,
                             max_title_length=max_len,
                         ),
                         "image_prompts": (
-                            check_image_prompts(script)
+                            check_image_prompt(script)
                             if generate_image_prompts
-                            else skipped_image_prompts_check()
+                            else skip_image_prompt_check()
                         ),
                     },
                     existing_report=ctx.job.get("quality_report"),

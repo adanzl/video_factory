@@ -12,7 +12,7 @@ from app.core.pipelines import (
 )
 from app.utils.job_cancel import JobCancelledError, job_cancel
 from app.services.job.job_mgr import job_mgr
-from app.repositories import job_log_repo, job_repo
+from app.repositories import repo_job_log, repo_job
 from app.repositories.connection import connection
 from worker.context import JobContext
 from worker.stages.base import StageExecutor
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 def _reload_job(job_id: int) -> dict:
     with connection() as conn:
-        return job_repo.get_job(conn, job_id)
+        return repo_job.get_job(conn, job_id)
 
 
 def _execute_stage(job_id: int, stage_cls: type[StageExecutor], ctx: JobContext) -> None:
@@ -32,7 +32,7 @@ def _execute_stage(job_id: int, stage_cls: type[StageExecutor], ctx: JobContext)
     stage_name = stage_cls.name
 
     with connection() as conn:
-        job_log_repo.append_log(conn, job_id, stage_name, "stage started")
+        repo_job_log.append_log(conn, job_id, stage_name, "stage started")
 
     logger.info("=== %s started (pipeline=%s) ===", stage_cls.__name__, job.get("pipeline"))
     t0 = time.time()
@@ -59,8 +59,8 @@ def _advance_after_stage(job_id: int, stage_cls: type[StageExecutor], *, status:
 
     next_name = next_cls.name
     with connection() as conn:
-        job_repo.update_job(conn, job_id, stage=next_name, status=status)
-        job_log_repo.append_log(conn, job_id, stage_cls.name, f"stage done, next={next_name}")
+        repo_job.update_job(conn, job_id, stage=next_name, status=status)
+        repo_job_log.append_log(conn, job_id, stage_cls.name, f"stage done, next={next_name}")
     return None
 
 
@@ -109,8 +109,8 @@ def _run_one_stage(
         job_cancel.raise_if_cancelled(job_id)
         stage_name = stage_cls.name
         with connection() as conn:
-            job_repo.update_job(conn, job_id, stage=stage_name, status="pending")
-            job_log_repo.append_log(conn, job_id, stage_name, "partial stage done")
+            repo_job.update_job(conn, job_id, stage=stage_name, status="pending")
+            repo_job_log.append_log(conn, job_id, stage_name, "partial stage done")
         return _reload_job(job_id)
 
     done = _advance_after_stage(
@@ -275,9 +275,8 @@ def run_script_image_prompts(
     segment_indices: list[int] | None = None,
 ) -> dict:
     """为已有脚本补全文生图提示词（不重置脚本阶段）。"""
-    from app.quality.checkers import check_image_prompts
-    from app.quality.gate import apply_quality_checks
-    from app.repositories import job_log_repo, job_repo, segment_repo
+    from app.quality.quality_mgr import apply_quality_checks, check_image_prompt
+    from app.repositories import repo_job_log, repo_job, repo_segment
     from app.services.llm.llm_mgr import llm_mgr
     from app.services.script.script_mgr import script_mgr
     from app.utils.job_info import resolve_image_provider, resolve_include_sd15_prompt
@@ -348,7 +347,7 @@ def run_script_image_prompts(
     )
 
     with connection() as conn:
-        quality_report = check_image_prompts(
+        quality_report = check_image_prompt(
             updated,
             sd15_mode=include_sd15_prompt,
             segment_indices=segment_indices,
@@ -366,9 +365,9 @@ def run_script_image_prompts(
             {"image_prompts": quality_report},
             existing_report=job.get("quality_report"),
         )
-        job_repo.update_job(conn, job_id, script_json=updated)
-        segment_repo.insert_segments(conn, job_id, updated["segments"])
-        job_log_repo.append_log(
+        repo_job.update_job(conn, job_id, script_json=updated)
+        repo_segment.insert_segments(conn, job_id, updated["segments"])
+        repo_job_log.append_log(
             conn,
             job_id,
             "script",
@@ -380,7 +379,7 @@ def run_script_image_prompts(
                 f"image_provider={image_provider}, include_sd15_prompt={include_sd15_prompt}"
             ),
         )
-        job_repo.update_job(conn, job_id, status="idle")
+        repo_job.update_job(conn, job_id, status="idle")
     return _reload_job(job_id)
 
 
@@ -542,7 +541,7 @@ def drain_pending() -> int:
     count = 0
     while True:
         with connection() as conn:
-            job = job_repo.claim_next_pending(conn)
+            job = repo_job.claim_next_pending(conn)
         if job is None:
             break
         run_job(job["id"])

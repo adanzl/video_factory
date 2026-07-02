@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 from app.config import get_settings
-from app.quality.checkers import check_tts_audio
-from app.quality.gate import apply_quality_checks
-from app.repositories import job_log_repo, job_repo, segment_repo
+from app.quality.quality_mgr import apply_quality_checks, check_tts_audio
+from app.repositories import repo_job_log, repo_job, repo_segment
 from app.repositories.connection import connection
 from app.services.media.audio_analysis import analyze_loudness, analyze_silence, normalize_loudness
 from app.services.tts.tts_mgr import tts_mgr
@@ -18,8 +17,8 @@ class TTSStage(StageExecutor):
     def run(self, ctx: JobContext) -> None:
         settings = get_settings()
         with connection() as conn:
-            job = job_repo.get_job(conn, ctx.job["id"])
-            segments = segment_repo.list_segments(conn, ctx.job["id"])
+            job = repo_job.get_job(conn, ctx.job["id"])
+            segments = repo_segment.list_segments(conn, ctx.job["id"])
         script = job.get("script_json") or {}
         result = tts_mgr.synthesize(
             script.get("narration", ""),
@@ -45,16 +44,16 @@ class TTSStage(StageExecutor):
 
         with connection() as conn:
             for seg, duration in zip(segments, result.segment_durations):
-                segment_repo.update_segment(conn, seg["id"], duration_sec=duration)
+                repo_segment.update_segment(conn, seg["id"], duration_sec=duration)
                 seg["duration_sec"] = duration
-            job_repo.update_job(
+            repo_job.update_job(
                 conn,
                 ctx.job["id"],
                 audio_path=str(result.audio_path.resolve()),
                 subtitle_path=str(result.subtitle_path.resolve()),
                 tts_usage_json=result.usage_summary(),
             )
-            job_log_repo.append_log(
+            repo_job_log.append_log(
                 conn,
                 ctx.job["id"],
                 self.name,

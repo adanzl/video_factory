@@ -3,9 +3,8 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from app.quality.checkers import check_final
-from app.quality.gate import apply_quality_checks
-from app.repositories import job_log_repo, job_repo, segment_repo
+from app.quality.quality_mgr import apply_quality_checks, check_merged_video
+from app.repositories import repo_job_log, repo_job, repo_segment
 from app.repositories.connection import connection
 from app.services.media.audio_analysis import analyze_loudness
 from app.services.media.ffmpeg_utils import ffmpeg_hwaccel_config_summary, probe_duration
@@ -21,9 +20,9 @@ class MergeStage(StageExecutor):
     def run(self, ctx: JobContext) -> None:
         started = time.perf_counter()
         with connection() as conn:
-            job = job_repo.get_job(conn, ctx.job["id"])
-            segments = segment_repo.list_segments(conn, ctx.job["id"])
-            job_log_repo.append_log(
+            job = repo_job.get_job(conn, ctx.job["id"])
+            segments = repo_segment.list_segments(conn, ctx.job["id"])
+            repo_job_log.append_log(
                 conn,
                 ctx.job["id"],
                 self.name,
@@ -59,8 +58,8 @@ class MergeStage(StageExecutor):
             }
             if intro_path and not job.get("intro_path"):
                 updates["intro_path"] = str(intro_path.resolve())
-            job_repo.update_job(conn, ctx.job["id"], **updates)
-            job_log_repo.append_log(
+            repo_job.update_job(conn, ctx.job["id"], **updates)
+            repo_job_log.append_log(
                 conn,
                 ctx.job["id"],
                 self.name,
@@ -75,7 +74,7 @@ class MergeStage(StageExecutor):
                 ctx.job["id"],
                 self.name,
                 {
-                    "final": check_final(result.final_path, loudness=loudness),
+                    "final": check_merged_video(result.final_path, loudness=loudness),
                 },
                 existing_report=job.get("quality_report"),
             )

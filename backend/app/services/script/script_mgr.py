@@ -17,7 +17,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.services.llm.llm_mgr import llm_mgr
-from app.quality import image_prompt_rules
+from app.quality import image_prompt
 from app.services.script import board as script_board
 from app.services.script import description as script_description
 from app.services.script import compose as script_compose
@@ -39,12 +39,12 @@ class ScriptMgr:
 
     # --- image_prompt：文生图提示词 ---
     build_image_prompts = staticmethod(script_board.build_image_prompts_prompts)
-    image_prompt_min_chars = staticmethod(image_prompt_rules.image_prompt_min_chars)
-    image_prompt_target_chars = staticmethod(image_prompt_rules.image_prompt_target_chars)
-    sd15_prompt_en_word_count = staticmethod(image_prompt_rules.sd15_prompt_en_word_count)
-    sd15_prompt_en_ok = staticmethod(image_prompt_rules.sd15_prompt_en_ok)
+    image_prompt_min_chars = staticmethod(image_prompt.image_prompt_min_chars)
+    image_prompt_target_chars = staticmethod(image_prompt.image_prompt_target_chars)
+    sd15_prompt_en_word_count = staticmethod(image_prompt.sd15_prompt_en_word_count)
+    sd15_prompt_en_ok = staticmethod(image_prompt.sd15_prompt_en_ok)
     format_image_prompt_retry_warning = staticmethod(
-        image_prompt_rules.format_image_prompt_retry_warning
+        image_prompt.format_image_prompt_retry_warning
     )
 
     # --- title / description ---
