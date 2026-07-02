@@ -23,6 +23,7 @@ def collect_prompts(
     segment_target_sec: float | None = None,
     max_title_length: int | None = None,
     narration_target_words: int | None = None,
+    speech_chars_per_sec: float | None = None,
     supplementary_info: str | None = None,
     video_timeline: str | None = None,
     script: dict | None = None,
