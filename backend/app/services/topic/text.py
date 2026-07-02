@@ -22,6 +22,11 @@ def open_faq_title_issue(title: str, *, category: str | None = None) -> str | No
     text = title.strip()
     if not text:
         return None
+    # 问句含 FAQ 关键词但已有完整反驳半句时允许（如「能提前多久？明明只有几十秒」）
+    if incomplete_conversational_issue(text) is None:
+        mark_idx = max(text.rfind("？"), text.rfind("?"))
+        if mark_idx >= 0 and text[mark_idx + 1 :].strip():
+            return None
     if _OPEN_FAQ_PATTERNS.search(text):
         return "百科式中性提问：缺少误区反驳或反差结构"
     return None

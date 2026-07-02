@@ -18,6 +18,13 @@ def test_open_faq_title_issue_allows_misconception_rebuttal():
     ) is None
 
 
+def test_open_faq_title_issue_allows_faq_keyword_with_rebuttal():
+    assert open_faq_title_issue(
+        "地震预警能提前多久？明明只有几十秒窗口",
+        category="科学原理",
+    ) is None
+
+
 def test_parse_topics_payload_filters_open_faq_titles():
     raw = {
         "topics": [
