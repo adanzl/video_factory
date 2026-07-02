@@ -9,7 +9,8 @@ from app.quality.gate import apply_quality_checks, merge_quality_report
 from app.repositories import job_log_repo, job_repo, segment_repo
 from app.repositories.connection import connection
 from app.services.llm.llm_mgr import llm_mgr
-from app.services.script.timeline import parse_video_timeline, validate_timeline_script
+from app.services.script.script_mgr import script_mgr
+from app.services.script.timeline import parse_video_timeline
 from app.utils.job_cancel import job_cancel
 from app.utils.media import (
     assign_segment_timings,
@@ -109,9 +110,9 @@ def _validate_material_script(
     script["title"] = title
     script["segments"] = _normalize_segments(segments)
 
-    timeline = parse_video_timeline(video_timeline_raw)
+    timeline = script_mgr.parse_timeline(video_timeline_raw)
     if timeline:
-        timeline_error, timeline_warnings = validate_timeline_script(
+        timeline_error, timeline_warnings = script_mgr.validate_timeline(
             script,
             timeline,
             length_mode=timeline_length_mode,
@@ -265,9 +266,7 @@ class MaterialScriptStage(StageExecutor):
             stage_name=self.name,
         )
 
-        from app.services.script.prompts import attach_llm_prompts_to_script
-
-        attach_llm_prompts_to_script(
+        script_mgr.attach_prompts(
             script,
             ctx.job,
             title,
@@ -293,7 +292,7 @@ class MaterialScriptStage(StageExecutor):
             script["narration_target_words"] = narration_target_words
         assign_segment_timings(
             script,
-            video_timeline=parse_video_timeline(video_timeline) if video_timeline else None,
+            video_timeline=script_mgr.parse_timeline(video_timeline) if video_timeline else None,
         )
         script["cost_time"] = round(time.perf_counter() - started, 1)
 

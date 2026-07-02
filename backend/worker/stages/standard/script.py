@@ -18,13 +18,8 @@ from app.quality.gate import apply_quality_checks, merge_quality_report
 from app.repositories import job_log_repo, job_repo, segment_repo
 from app.repositories.connection import connection
 from app.services.llm.llm_mgr import llm_mgr
-from app.services.script.prompts import (
-    MIN_SD15_PROMPT_EN_WORDS,
-    image_prompt_min_chars,
-    image_prompt_target_chars,
-    sd15_prompt_en_ok,
-    sd15_prompt_en_word_count,
-)
+from app.quality.image_prompt_rules import MIN_SD15_PROMPT_EN_WORDS
+from app.services.script.script_mgr import script_mgr
 from app.utils.job_cancel import job_cancel
 from app.utils.job_info import content_style_from_job
 from app.utils.media import (
@@ -411,7 +406,7 @@ def _validate_script(
             )
         if require_image_prompt:
             sd15_mode = bool(script.get("include_sd15_prompt"))
-            min_prompt_chars = image_prompt_min_chars(sd15_mode=sd15_mode)
+            min_prompt_chars = script_mgr.image_prompt_min_chars(sd15_mode=sd15_mode)
             target_prompt_chars = image_prompt_target_chars(sd15_mode=sd15_mode)
             prompt = seg.get("image_prompt") or ""
             prompt_len = len(prompt)
@@ -426,8 +421,8 @@ def _validate_script(
                     f"segment {seg.get('segment_index')} image_prompt slightly short "
                     f"({prompt_len} < {target_prompt_chars}), continuing"
                 )
-            if sd15_mode and not sd15_prompt_en_ok(seg.get("sd15_prompt_en")):
-                words = sd15_prompt_en_word_count(seg.get("sd15_prompt_en"))
+            if sd15_mode and not script_mgr.sd15_prompt_en_ok(seg.get("sd15_prompt_en")):
+                words = script_mgr.sd15_prompt_en_word_count(seg.get("sd15_prompt_en"))
                 if words > 0:
                     raise ScriptValidationError(
                         f"segment {seg.get('segment_index')} sd15_prompt_en too short "
@@ -636,9 +631,7 @@ class ScriptStage(StageExecutor):
             stage_name=self.name,
         )
 
-        from app.services.script.prompts import attach_llm_prompts_to_script
-
-        attach_llm_prompts_to_script(
+        script_mgr.attach_prompts(
             script,
             ctx.job,
             title,

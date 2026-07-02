@@ -1,9 +1,10 @@
-"""脚本标题优化：在成稿后强化吸引力并满足字数约束。"""
+"""标题优化：提示词、LLM 响应解析与步骤组装。"""
 
 from __future__ import annotations
 
 from typing import Any
 
+from app.config import get_settings
 from app.services.topic.text import normalize_title
 
 _TITLE_HOOK_FORMULAS = (
@@ -32,7 +33,6 @@ _TITLE_SELF_CHECK = (
     "③ 是否未超出字数、未编造口播未提及的事实。"
 )
 
-# 对于已是对话反转式风格（含？和嘲讽语气）的初稿，保留其风格，仅优化字数
 _DIALOGUE_RETENTION_NOTE = (
     "注意：如果初稿已经是「事件？嘲讽回应」格式（如「日本断供光刻胶？仓库堆成山了」），"
     "优化时后半句只删字不换字，保持原意和态度不变。超过字数就删末尾字，不要改写。"
@@ -78,3 +78,23 @@ def parse_title_optimize_payload(raw: dict[str, Any], *, max_title_len: int) -> 
     if not isinstance(title, str) or not title.strip():
         raise ValueError("LLM title optimize response missing title")
     return normalize_title(title, max_len=max_title_len)
+
+
+def build_title_optimize_prompts(
+    draft_title: str,
+    narration: str,
+    *,
+    max_title_length: int | None = None,
+) -> dict[str, str]:
+    settings = get_settings()
+    max_len = settings.max_title_length if max_title_length is None else max_title_length
+    return {
+        "step": "title_optimize",
+        "label": "标题优化",
+        "system": build_title_optimize_system_prompt(max_title_len=max_len),
+        "user": build_title_optimize_user_prompt(
+            draft_title=draft_title,
+            narration=narration,
+            max_title_len=max_len,
+        ),
+    }

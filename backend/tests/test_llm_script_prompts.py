@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from app.services.script.prompts import (
+from app.services.script.board import (
     _narration_word_range,
     _storyboard_length_budget,
+    build_board_prompts,
     build_segment_shrink_prompts,
     build_storyboard_prompts,
 )
