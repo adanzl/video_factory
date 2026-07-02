@@ -70,7 +70,7 @@
       </el-table-column>
       <el-table-column label="状态" width="90" align="center">
         <template #default="{ row }">
-          <el-tag :type="statusTagType(row.status)" size="small">
+          <el-tag :type="statusTagType(row.status)" size="small" effect="dark">
             {{ statusLabel(row.status) }}
           </el-tag>
         </template>
@@ -205,7 +205,10 @@
       <p class="mb-4 text-sm text-gray-500">
         将创建 {{ pendingEnqueueIds.length }} 个生产任务，请选择执行方式：
       </p>
-      <el-radio-group v-model="enqueueRunMode" class="enqueue-run-mode">
+      <el-radio-group
+        v-model="enqueueRunMode"
+        class="flex w-full flex-col items-start gap-3 [&_.el-radio]:mr-0 [&_.el-radio]:h-auto"
+      >
         <el-radio value="script">仅文案（默认，第一步）</el-radio>
         <el-radio value="none">仅创建任务，暂不执行</el-radio>
         <el-radio value="full">全流程（文案 → 成片）</el-radio>
@@ -369,11 +372,11 @@ const statusLabel = (status: TitleStatus) => {
 const statusTagType = (status: TitleStatus) => {
   switch (status) {
     case "queued":
-      return "success";
+      return "warning";
     case "rejected":
       return "danger";
     case "enqueued":
-      return "warning";
+      return "primary";
     default:
       return "info";
   }
@@ -620,18 +623,3 @@ onMounted(() => {
   fetchTitles();
 });
 </script>
-
-<style scoped>
-.enqueue-run-mode {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 12px;
-  width: 100%;
-}
-
-.enqueue-run-mode :deep(.el-radio) {
-  margin-right: 0;
-  height: auto;
-}
-</style>
