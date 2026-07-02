@@ -59,7 +59,7 @@
       <el-table-column type="selection" width="48" />
       <el-table-column prop="id" label="ID" width="70" />
       <el-table-column prop="title" label="标题" min-width="220" show-overflow-tooltip />
-      <el-table-column prop="category" label="分类" width="90" show-overflow-tooltip />
+      <el-table-column prop="category" label="分类" width="110" show-overflow-tooltip />
       <el-table-column prop="template" label="模板" width="110" />
       <el-table-column prop="hook" label="钩子" min-width="160" show-overflow-tooltip />
       <el-table-column label="分数" width="60" align="center">
@@ -212,18 +212,19 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="showEnqueueDialog" title="入队生产" width="480px" destroy-on-close>
-      <p class="mb-4 text-sm text-gray-500">
-        将创建 {{ pendingEnqueueIds.length }} 个生产任务，请选择执行方式：
-      </p>
-      <el-radio-group
-        v-model="enqueueRunMode"
-        class="flex w-full flex-col items-start gap-3 [&_.el-radio]:mr-0 [&_.el-radio]:h-auto"
-      >
-        <el-radio value="script">仅文案（默认，第一步）</el-radio>
-        <el-radio value="none">仅创建任务，暂不执行</el-radio>
-        <el-radio value="full">全流程（文案 → 成片）</el-radio>
-      </el-radio-group>
+    <el-dialog v-model="showEnqueueDialog" title="入队生产" width="520px" destroy-on-close>
+      <el-form label-width="88px">
+        <el-form-item label="选题数量">
+          <span class="text-sm text-gray-600">{{ pendingEnqueueIds.length }} 条</span>
+        </el-form-item>
+        <el-form-item label="执行方式">
+          <el-radio-group v-model="enqueueRunMode" class="create-job-run-mode">
+            <el-radio value="script">仅文案（默认，第一步）</el-radio>
+            <el-radio value="none">仅创建任务，暂不执行</el-radio>
+            <el-radio value="full">全流程（文案 → 成片）</el-radio>
+          </el-radio-group>
+        </el-form-item>
+      </el-form>
       <template #footer>
         <el-button @click="showEnqueueDialog = false">取消</el-button>
         <el-button type="primary" :loading="enqueuing" @click="confirmEnqueue">

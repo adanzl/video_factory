@@ -865,7 +865,7 @@ class DeepSeekClient(LLMClient):
         )
         user_base = user
         last_exc: ValueError | None = None
-        max_attempts = 3
+        max_attempts = 2
         for attempt in range(max_attempts):
             raw, _ = self._chat_json(system, user)
             try:
@@ -888,7 +888,7 @@ class DeepSeekClient(LLMClient):
                         "禁止再次输出无问号的陈述句。"
                     )
                 logger.warning(
-                    "[TOPIC] all entries filtered attempt=%d/%d",
+                    "[TOPIC] llm retry all entries filtered attempt=%d/%d",
                     attempt + 1,
                     max_attempts,
                 )

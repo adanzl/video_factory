@@ -14,7 +14,7 @@ from app.utils.job_info import (
     ORIENTATION_LANDSCAPE,
     merge_job_script_params,
 )
-from app.services.llm.llm_mgr import llm_mgr
+from app.services.llm.llm_mgr import TopicLlmOperation, llm_mgr
 from app.services.topic.catalog import (
     CATEGORY_HISTORY,
     normalize_category,
@@ -142,6 +142,7 @@ class TopicMgr:
         keywords: str | list[str] | None = None,
         system_prompt: str | None = None,
         user_prompt: str | None = None,
+        operation: TopicLlmOperation = "generate",
     ) -> list[dict[str, str]]:
         return llm_mgr.generate_topics(
             theme,
@@ -150,6 +151,7 @@ class TopicMgr:
             keywords=keywords,
             system_prompt=system_prompt,
             user_prompt=user_prompt,
+            operation=operation,
         )
 
     def generate_and_save(
@@ -176,6 +178,7 @@ class TopicMgr:
             keywords=keywords,
             system_prompt=system_prompt,
             user_prompt=user_prompt,
+            operation="save",
         )
         result = self.add_topics(topics, source="llm", deduplicate_keyword=True)
         if result["added"]:
@@ -227,6 +230,7 @@ class TopicMgr:
             category=category,
             system_prompt=system_prompt,
             user_prompt=user_prompt,
+            operation="optimize",
         )
         item = topics[0]
         item["category"] = category
