@@ -15,14 +15,12 @@ CLONED_VOICE = "cosyvoice-v3.5-flash-leo-60621bdce780434ab0734555e5196d7d"
 # cSpell: enable
 
 DEFAULT_LEAD_IN = "那，"
-_WEAK_START_CHARS = frozenset("可但而然因")
+_LEAD_IN_PAD_MS = 15
 
 
 def prepare_lead_in(text: str, *, voice: str, lead_in: str = DEFAULT_LEAD_IN) -> tuple[str, str | None]:
-    """句首易吞字时返回 (带引导词的 TTS 文本, 引导词)；字幕仍用原文。"""
+    """复刻音色每段合成前加短引导词，再裁掉；字幕仍用原文。"""
     if voice != CLONED_VOICE or not text.strip() or not lead_in:
-        return text, None
-    if text[0] not in _WEAK_START_CHARS:
         return text, None
     return f"{lead_in}{text}", lead_in
 
@@ -34,10 +32,8 @@ def strip_tts_lead_in(path: Path, words: list[TimedWord], lead_in: str) -> list[
 
     expected = list(lead_in)
     matched = 0
-    cut_ms = 0
     for word in words:
         if matched < len(expected) and word.text == expected[matched]:
-            cut_ms = word.end_time_ms
             matched += 1
         else:
             break
@@ -52,9 +48,10 @@ def strip_tts_lead_in(path: Path, words: list[TimedWord], lead_in: str) -> list[
         return words
 
     remaining = words[matched:]
-    if cut_ms <= 0 or not remaining:
+    if not remaining:
         return remaining
 
+    cut_ms = max(0, remaining[0].begin_time_ms - _LEAD_IN_PAD_MS)
     _trim_audio(path, TrimPlan(leading_ms=cut_ms, trailing_ms=0))
     shifted = shift_word_timestamps(remaining, cut_ms)
     logger.info(
