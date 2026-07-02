@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from app.services.media.clip.render import _motion_vf, _prep_filter, _resolve_clip_canvas
+from app.services.segment.clip.clip_render import _motion_vf, _prep_filter, _resolve_clip_canvas
 
 
 def test_prep_filter_scale_dimensions_are_even() -> None:

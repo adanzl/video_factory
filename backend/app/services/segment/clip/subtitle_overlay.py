@@ -11,8 +11,8 @@ from pathlib import Path
 from PIL import Image
 
 from app.config import get_settings
-from app.services.media.clip.render import image_to_clip_with_overlay
-from app.services.media.subtitle_style import (
+from app.services.segment.clip.clip_render import image_to_clip_with_overlay
+from app.services.render.subtitle_style import (
     MAX_LINES,
     SUBTITLE_ASS_PRIMARY_COLOUR,
     SUBTITLE_COLOR_RGB,
@@ -24,8 +24,8 @@ from app.services.media.subtitle_style import (
     layout_for_canvas,
     subtitle_style_for_canvas,
 )
-from app.services.visual.text_render import load_cjk_font, wrap_text
-from app.services.visual.title_render import (
+from app.services.render.text_render import load_cjk_font, wrap_text
+from app.services.render.title_render import (
     SHADOW_OFFSET_X,
     SHADOW_OFFSET_Y,
     fit_font_and_lines,
@@ -168,7 +168,7 @@ def build_segment_clip(
     motion_prompt: str | None = None,
 ) -> Path:
     """分镜内连续动效 + 句级字幕按时间轴切换。"""
-    from app.services.media.clip.mgr import clip_mgr
+    from app.services.segment.clip.clip_mgr import clip_mgr
 
     provider = clip_provider or get_settings().clip_provider
     return clip_mgr.build_segment_clip(

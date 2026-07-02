@@ -4,7 +4,7 @@ from app.config import get_settings
 from app.quality.quality_mgr import apply_quality_checks, check_tts_audio
 from app.repositories import repo_job_log, repo_job, repo_segment
 from app.repositories.connection import connection
-from app.services.media.audio_analysis import analyze_loudness, analyze_silence, normalize_loudness
+from app.services.tts.audio_analysis import analyze_loudness, analyze_silence, normalize_loudness
 from app.services.tts.tts_mgr import tts_mgr
 from app.utils.media import base_video_duration_sec, material_min_audio_duration_sec
 from worker.context import JobContext

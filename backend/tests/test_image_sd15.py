@@ -1,13 +1,13 @@
 from unittest.mock import patch
 
-from app.services.visual.image_sd15 import (
+from app.services.segment.image.image_sd15 import (
     _fallback_business,
     _fallback_prompt_en,
     _prepare_sd15_prompt,
     _stitch_horizontal,
     parse_image_size,
 )
-from app.services.visual.image_sd15 import pick_business_by_keywords, pick_lora_by_keywords
+from app.services.segment.image.image_sd15 import pick_business_by_keywords, pick_lora_by_keywords
 
 
 def test_parse_image_size():
@@ -51,7 +51,7 @@ def test_prepare_sd15_prompt_uses_llm(monkeypatch):
     monkeypatch.setattr(config, "mock_mode", False, raising=False)
 
     with patch(
-        "app.services.visual.image_sd15.llm_mgr.prepare_sd15_image_prompt",
+        "app.services.segment.image.image_sd15.llm_mgr.prepare_sd15_image_prompt",
         return_value={
             "layout": "single",
             "prompt_en": "lab bench, microscope, soft light",
@@ -77,7 +77,7 @@ def test_prepare_sd15_prompt_landscape_science_forces_split(monkeypatch):
     monkeypatch.setattr(config, "mock_mode", False, raising=False)
 
     with patch(
-        "app.services.visual.image_sd15.llm_mgr.prepare_sd15_image_prompt",
+        "app.services.segment.image.image_sd15.llm_mgr.prepare_sd15_image_prompt",
         return_value={
             "layout": "single",
             "prompt_en": "lab bench, microscope, soft light",
@@ -101,7 +101,7 @@ def test_prepare_sd15_prompt_split_from_llm(monkeypatch):
     monkeypatch.setattr(config, "mock_mode", False, raising=False)
 
     with patch(
-        "app.services.visual.image_sd15.llm_mgr.prepare_sd15_image_prompt",
+        "app.services.segment.image.image_sd15.llm_mgr.prepare_sd15_image_prompt",
         return_value={
             "layout": "split",
             "left_en": "wet cloth fiber mesh, CO molecules",
@@ -118,7 +118,7 @@ def test_prepare_sd15_prompt_split_from_llm(monkeypatch):
 
 
 def test_resolve_checkpoint_defaults():
-    from app.services.visual.image_sd15 import _resolve_checkpoint
+    from app.services.segment.image.image_sd15 import _resolve_checkpoint
 
     assert (
         _resolve_checkpoint(business="science", prompt="写实科普插画，细胞结构示意图")
@@ -152,7 +152,7 @@ def test_stitch_horizontal():
 
 
 def test_generate_single_uses_job_size(monkeypatch, tmp_path):
-    from app.services.visual.image_sd15 import Sd15ImageProvider
+    from app.services.segment.image.image_sd15 import Sd15ImageProvider
 
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
     monkeypatch.delenv("MOCK_MODE", raising=False)
@@ -192,14 +192,14 @@ def test_generate_single_uses_job_size(monkeypatch, tmp_path):
         return Resp()
 
     with patch(
-        "app.services.visual.image_sd15.llm_mgr.prepare_sd15_image_prompt",
+        "app.services.segment.image.image_sd15.llm_mgr.prepare_sd15_image_prompt",
         return_value={
             "layout": "single",
             "prompt_en": "cell diagram",
             "business": "science",
             "lora": "Textbook_Line_Art",
         },
-    ), patch("app.services.visual.image_sd15.requests.post", side_effect=fake_post):
+    ), patch("app.services.segment.image.image_sd15.requests.post", side_effect=fake_post):
         provider = Sd15ImageProvider()
         out = tmp_path / "seg.png"
         provider.generate("细胞结构示意图", out, size="360*640")
@@ -217,7 +217,7 @@ def test_stitch_vertical():
     from PIL import Image
     import io
 
-    from app.services.visual.image_sd15 import _stitch_vertical
+    from app.services.segment.image.image_sd15 import _stitch_vertical
 
     top = Image.new("RGB", (360, 320), color=(255, 0, 0))
     bottom = Image.new("RGB", (360, 320), color=(0, 0, 255))
@@ -233,7 +233,7 @@ def test_stitch_vertical():
 
 
 def test_generate_split_stitches_panels_vertical(monkeypatch, tmp_path):
-    from app.services.visual.image_sd15 import Sd15ImageProvider
+    from app.services.segment.image.image_sd15 import Sd15ImageProvider
 
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
     monkeypatch.delenv("MOCK_MODE", raising=False)
@@ -281,7 +281,7 @@ def test_generate_split_stitches_panels_vertical(monkeypatch, tmp_path):
         return Resp()
 
     with patch(
-        "app.services.visual.image_sd15.llm_mgr.prepare_sd15_image_prompt",
+        "app.services.segment.image.image_sd15.llm_mgr.prepare_sd15_image_prompt",
         return_value={
             "layout": "split",
             "left_en": "wet cloth fiber mesh, CO molecules",
@@ -289,7 +289,7 @@ def test_generate_split_stitches_panels_vertical(monkeypatch, tmp_path):
             "business": "science",
             "lora": "Simple_Diagram",
         },
-    ), patch("app.services.visual.image_sd15.requests.post", side_effect=fake_post):
+    ), patch("app.services.segment.image.image_sd15.requests.post", side_effect=fake_post):
         provider = Sd15ImageProvider()
         out = tmp_path / "seg.png"
         provider.generate("上方湿布下方肺泡，上下对比", out, size="360*640")
@@ -306,7 +306,7 @@ def test_generate_split_stitches_panels_vertical(monkeypatch, tmp_path):
 
 
 def test_generate_split_stitches_panels(monkeypatch, tmp_path):
-    from app.services.visual.image_sd15 import Sd15ImageProvider
+    from app.services.segment.image.image_sd15 import Sd15ImageProvider
 
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
     monkeypatch.delenv("MOCK_MODE", raising=False)
@@ -354,7 +354,7 @@ def test_generate_split_stitches_panels(monkeypatch, tmp_path):
         return Resp()
 
     with patch(
-        "app.services.visual.image_sd15.llm_mgr.prepare_sd15_image_prompt",
+        "app.services.segment.image.image_sd15.llm_mgr.prepare_sd15_image_prompt",
         return_value={
             "layout": "split",
             "left_en": "wet cloth fiber mesh, CO molecules",
@@ -362,7 +362,7 @@ def test_generate_split_stitches_panels(monkeypatch, tmp_path):
             "business": "science",
             "lora": "Simple_Diagram",
         },
-    ), patch("app.services.visual.image_sd15.requests.post", side_effect=fake_post):
+    ), patch("app.services.segment.image.image_sd15.requests.post", side_effect=fake_post):
         provider = Sd15ImageProvider()
         out = tmp_path / "seg.png"
         provider.generate("左侧湿布右侧肺泡对比", out, size="640*360")

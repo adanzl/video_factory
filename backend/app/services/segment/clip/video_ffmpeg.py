@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from app.services.media.clip.mgr import ClipProvider, clip_mgr
-from app.services.media.clip.render import image_to_clip, image_to_clip_timed_overlays
+from app.services.segment.clip.clip_mgr import ClipProvider, clip_mgr
+from app.services.segment.clip.clip_render import image_to_clip, image_to_clip_timed_overlays
 
 
 class FfmpegClipProvider(ClipProvider):

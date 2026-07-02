@@ -12,7 +12,7 @@ from pathlib import Path
 from app.config import get_settings
 from app.repositories import repo_segment
 from app.repositories.connection import connection
-from app.services.media.subtitle_overlay import build_segment_clip, burn_subtitled_clip
+from app.services.segment.clip.subtitle_overlay import build_segment_clip, burn_subtitled_clip
 from app.services.tts.tts_mgr import tts_mgr
 
 

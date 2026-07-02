@@ -1,4 +1,4 @@
-"""画面模块总入口：出图、封面。"""
+"""分镜出图总入口：ImageProvider 工厂与批量出图。"""
 
 from __future__ import annotations
 
@@ -8,14 +8,13 @@ from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections.abc import Callable
 from pathlib import Path
-from typing import Protocol
 
 from app.config import get_settings
 from app.utils.job_cancel import job_cancel
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["ImageProvider", "VideoProvider", "VisualMgr", "visual_mgr"]
+__all__ = ["ImageMgr", "ImageProvider", "image_mgr"]
 
 
 class ImageProvider(ABC):
@@ -27,19 +26,15 @@ class ImageProvider(ABC):
         return "provider=unknown"
 
 
-class VideoProvider(Protocol):
-    def generate(self, prompt: str, output_path: Path, *, duration: int = 5) -> Path: ...
-
-
-class VisualMgr:
-    """画面生产管理器。"""
+class ImageMgr:
+    """分镜出图管理器。"""
 
     def _get_image_provider(self, provider_name: str | None = None) -> ImageProvider:
-        from app.services.visual.image_agnes import AgnesImageProvider
-        from app.services.visual.image_mock import MockImageProvider
-        from app.services.visual.image_sd15 import Sd15ImageProvider
-        from app.services.visual.image_wan import WanImageProvider
-        from app.services.visual.image_zimage import ZImageProvider
+        from app.services.segment.image.image_agnes import AgnesImageProvider
+        from app.services.segment.image.image_mock import MockImageProvider
+        from app.services.segment.image.image_sd15 import Sd15ImageProvider
+        from app.services.segment.image.image_wan import WanImageProvider
+        from app.services.segment.image.image_zimage import ZImageProvider
 
         if get_settings().mock_mode:
             return MockImageProvider()
@@ -149,4 +144,4 @@ class VisualMgr:
         )
 
 
-visual_mgr = VisualMgr()
+image_mgr = ImageMgr()

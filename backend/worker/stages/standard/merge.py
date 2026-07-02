@@ -6,7 +6,7 @@ from pathlib import Path
 from app.quality.quality_mgr import apply_quality_checks, check_merged_video
 from app.repositories import repo_job_log, repo_job, repo_segment
 from app.repositories.connection import connection
-from app.services.media.audio_analysis import analyze_loudness
+from app.services.tts.audio_analysis import analyze_loudness
 from app.services.media.ffmpeg_utils import ffmpeg_hwaccel_config_summary, probe_duration
 from app.services.media.media_mgr import media_mgr
 from app.utils.final_asset import build_final_asset

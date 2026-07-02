@@ -19,8 +19,8 @@ from app.services.media.ffmpeg_utils import (
     probe_duration,
     sequence_to_video,
 )
-from app.services.visual.text_render import load_cjk_font
-from app.services.visual.title_render import STROKE_WIDTH, render_text_rgba
+from app.services.render.text_render import load_cjk_font
+from app.services.render.title_render import STROKE_WIDTH, render_text_rgba
 
 _FPS = 25
 _ENTER_SEC = 0.32
