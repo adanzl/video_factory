@@ -38,7 +38,7 @@ from app.quality.image_prompt_rules import (
     sd15_prompt_en_ok,
     sd15_prompt_en_word_count,
 )
-from app.services.script.timeline import (
+from app.services.script.board_timeline import (
     VideoTimeline,
     append_timeline_to_user,
     narration_range_for_timeline,

@@ -11,7 +11,7 @@ from app.services.media.ffmpeg_utils import probe_duration, probe_video_size
 
 if TYPE_CHECKING:
     from app.config import Config
-    from app.services.script.timeline import VideoTimeline
+    from app.services.script.board_timeline import VideoTimeline
 
 # 中文口播约 5 字/秒（16s ≈ 80 字；与 CosyVoice 实际语速对齐）
 NARRATION_CHARS_PER_SEC = 5.0

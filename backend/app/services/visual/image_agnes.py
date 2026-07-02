@@ -11,7 +11,7 @@ from pathlib import Path
 import requests
 
 from app.config import get_settings
-from app.services.visual.agnes_api import (
+from app.services.llm.llm_agnes import (
     AgnesApiKey,
     AgnesQuotaExceeded,
     agnes_api_keys,

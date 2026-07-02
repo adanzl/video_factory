@@ -8,7 +8,7 @@
 各子模块职责：
 - ``board`` 口播分镜、素材口播、扩写/缩字、文生图提示词构建
 - ``optimize_title`` / ``description`` 标题与简介
-- ``timeline`` 素材基底视频时间表
+- ``board_timeline`` 素材管线分镜时间线约束
 - ``compose`` 各子步骤 LLM 提示词组装
 """
 
@@ -21,7 +21,7 @@ from app.quality import image_prompt_rules
 from app.services.script import board as script_board
 from app.services.script import description as script_description
 from app.services.script import compose as script_compose
-from app.services.script import timeline as script_timeline
+from app.services.script import board_timeline as script_board_timeline
 from app.services.script import optimize_title as script_optimize_title
 
 __all__ = ["ScriptMgr", "script_mgr"]
@@ -53,10 +53,10 @@ class ScriptMgr:
     build_description_prompts = staticmethod(script_description.build_video_description_prompts)
     parse_description = staticmethod(script_description.parse_video_description_payload)
 
-    # --- timeline ---
-    parse_timeline = staticmethod(script_timeline.parse_video_timeline)
-    validate_timeline = staticmethod(script_timeline.validate_timeline_script)
-    narration_range_for_timeline = staticmethod(script_timeline.narration_range_for_timeline)
+    # --- board_timeline ---
+    parse_timeline = staticmethod(script_board_timeline.parse_video_timeline)
+    validate_timeline = staticmethod(script_board_timeline.validate_timeline_script)
+    narration_range_for_timeline = staticmethod(script_board_timeline.narration_range_for_timeline)
 
     # --- compose：提示词组装 ---
     collect_prompts = staticmethod(script_compose.collect_prompts)

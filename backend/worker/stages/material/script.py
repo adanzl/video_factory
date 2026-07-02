@@ -10,7 +10,7 @@ from app.repositories import job_log_repo, job_repo, segment_repo
 from app.repositories.connection import connection
 from app.services.llm.llm_mgr import llm_mgr
 from app.services.script.script_mgr import script_mgr
-from app.services.script.timeline import parse_video_timeline
+from app.services.script.board_timeline import parse_video_timeline
 from app.utils.job_cancel import job_cancel
 from app.utils.media import (
     assign_segment_timings,

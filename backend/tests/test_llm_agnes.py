@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.services.llm.llm_agnes import _build_chat_payload, _chat_with_key_fallback
-from app.services.visual.agnes_api import AgnesApiKey, AgnesQuotaExceeded
+from app.services.llm.llm_agnes import AgnesApiKey, AgnesQuotaExceeded
 
 
 def test_build_chat_payload_json_mode() -> None:

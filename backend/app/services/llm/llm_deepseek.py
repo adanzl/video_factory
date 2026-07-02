@@ -25,7 +25,7 @@ from app.services.script.optimize_title import (
     build_title_optimize_prompts,
     parse_title_optimize_payload,
 )
-from app.services.script.timeline import narration_range_for_timeline, parse_video_timeline
+from app.services.script.board_timeline import narration_range_for_timeline, parse_video_timeline
 from app.services.topic.parsers import parse_topics_payload
 from app.services.topic.prompts.builder import (
     build_topic_system_prompt,
@@ -810,12 +810,12 @@ class DeepSeekClient(LLMClient):
         size_hint: str | None = None,
         business_override: str | None = None,
     ) -> dict[str, str]:
-        from app.services.visual.sd15 import (
+        from app.services.visual.image_sd15 import (
             build_sd15_prompt_system,
             build_sd15_prompt_user,
+            parse_image_size,
             parse_sd15_prompt_payload,
         )
-        from app.services.visual.image_sd15 import parse_image_size
 
         raw, _ = self._chat_json(
             build_sd15_prompt_system(business_override=business_override),
