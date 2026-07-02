@@ -1,12 +1,12 @@
 """选题 prompt 拼装测试。"""
 
-from app.services.topic.catalog import CATEGORY_HISTORY, CATEGORY_SCIENCE
+from app.services.topic.catalog import CATEGORY_CURRENT, CATEGORY_HISTORY, CATEGORY_SCIENCE
 from app.services.topic.prompts.builder import (
     build_topic_optimize_system_prompt,
     build_topic_optimize_user_prompt,
     build_topic_system_prompt,
 )
-from app.services.topic.prompts.common import CONVERSATIONAL_TITLE_RULE, FORBIDDEN_FAQ_TITLE_RULE
+from app.services.topic.prompts.common import CONVERSATIONAL_TITLE_RULE, FORBIDDEN_FAQ_TITLE_RULE, HOOK_MOTIVATION_RULE
 from app.services.topic.text import conversational_rewrite_example
 
 
@@ -116,6 +116,28 @@ def test_optimize_user_prompt_incomplete_conversational_requires_rebuttal():
     assert example in user
     assert "够你跑路" not in example
     assert "地震波" in example or "砸钱" in example
+
+
+def test_optimize_user_prompt_weak_hook_requires_rewrite():
+    user = build_topic_optimize_user_prompt(
+        title="地震预警只有几十秒？明明够你跑出楼",
+        category=CATEGORY_SCIENCE,
+        hook="委内瑞拉地震时预警只有几十秒，别小看它够你冲出楼外",
+    )
+    assert "原钩子" in user
+    assert "别小看" in user
+    assert HOOK_MOTIVATION_RULE[:8] in build_topic_optimize_system_prompt(
+        max_title_len=24,
+        category=CATEGORY_SCIENCE,
+    ) or "hook 规则" in user
+
+
+def test_hook_curiosity_adjustment_penalizes_preachy_hook():
+    from app.services.topic.scorers.base import hook_curiosity_adjustment
+
+    bland = hook_curiosity_adjustment("委内瑞拉地震时别小看它，足够你冲出楼外")
+    curious = hook_curiosity_adjustment("委内瑞拉 7 级强震前，告警响起时震波还在半路")
+    assert bland < curious
 
 
 def test_conversational_rewrite_example_money_vs_duration():

@@ -14,6 +14,7 @@ from app.services.topic.scorers.base import (
     check_open_faq_title,
     finalize_score,
     has_pattern,
+    hook_curiosity_adjustment,
     rebuttal_tone_curiosity_adjustment,
 )
 
@@ -71,6 +72,7 @@ def score_current_affairs(
     if hook and len(hook) >= 10:
         curiosity += 5
     curiosity += rebuttal_tone_curiosity_adjustment(text)
+    curiosity += hook_curiosity_adjustment(hook)
 
     compliance = 78.0
     if has_pattern(text, TIMELY_PATTERNS):

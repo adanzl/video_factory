@@ -39,7 +39,7 @@ def test_build_user_prompt_current_theme_requires_anchor():
 
 
 def test_build_system_prompt_current_includes_theme_anchor_rule():
-    from app.services.topic.prompts.common import CURRENT_THEME_ANCHOR_RULE
+    from app.services.topic.prompts.common import CURRENT_THEME_ANCHOR_RULE, HOOK_MOTIVATION_RULE
 
     system = build_topic_system_prompt(
         max_title_len=24,
@@ -47,6 +47,8 @@ def test_build_system_prompt_current_includes_theme_anchor_rule():
         count=1,
     )
     assert CURRENT_THEME_ANCHOR_RULE[:12] in system
+    assert HOOK_MOTIVATION_RULE[:8] in system
+    assert "别小看" in system
     assert "evergreen" in system or "无关" in system
 
 
