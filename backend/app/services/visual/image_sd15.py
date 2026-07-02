@@ -15,7 +15,7 @@ from PIL import Image
 
 from app.config import get_settings
 from app.services.llm.llm_mgr import llm_mgr
-from app.services.llm.llm_sd15_prompt import (
+from app.services.script.sd15 import (
     build_sd15_full_prompt,
     fallback_split_panel_prompts,
     pick_business_by_keywords,
@@ -254,11 +254,11 @@ def _prepare_sd15_prompt(
     if _is_sd15_ready_prompt(cleaned):
         business = _fallback_business(prompt=cleaned, business_override=business_override)
         lora = pick_lora_by_keywords(cleaned)
-        from app.services.llm.llm_sd15_prompt import normalize_sd15_prompt_en
+        from app.services.script.sd15 import normalize_sd15_prompt_en
 
         left_en, right_en, is_split = _try_parse_split_prompt(cleaned)
         if is_split:
-            from app.services.llm.llm_sd15_prompt import normalize_sd15_panel_prompt_en
+            from app.services.script.sd15 import normalize_sd15_panel_prompt_en
             left_en = normalize_sd15_panel_prompt_en(left_en, panel="left", business=business, lora=lora)
             right_en = normalize_sd15_panel_prompt_en(right_en, panel="right", business=business, lora=lora)
             layout, split_axis = _resolve_layout(
@@ -367,7 +367,7 @@ def _prepare_sd15_prompt(
             right_en=right_en,
         )
 
-    from app.services.llm.llm_sd15_prompt import normalize_sd15_prompt_en
+    from app.services.script.sd15 import normalize_sd15_prompt_en
 
     prompt_en = normalize_sd15_prompt_en(
         _fallback_prompt_en(cleaned),
@@ -427,7 +427,7 @@ class Sd15ImageProvider(ImageProvider):
         self._current_checkpoint: str | None = None
 
     def describe_params(self, *, size: str | None = None) -> str:
-        from app.services.llm.llm_sd15_prompt import SD15_LORAS
+        from app.services.script.sd15 import SD15_LORAS
 
         business = self._business_override or "prompt_infer"
         lora_hint = "llm_pick|" + "|".join(SD15_LORAS)

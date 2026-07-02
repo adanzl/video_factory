@@ -1,13 +1,13 @@
 """选题标题打分测试。"""
 
-from app.services.topic.title_scorer import score_title, status_from_score
+from app.services.topic.topic_mgr import score_title, status_from_score
 
 
 def test_conversational_ac_title_scores_above_threshold():
     """生活向对话反转标题应能过线（空调/热等须计入画面可生成度）。"""
     result = score_title(
         "欧洲人不装空调就这？明明热到掉渣",
-        track="生活避坑实用常识",
+        category="生活避坑实用常识",
         template="误区反问式",
         hook="欧洲人夏天很少装空调的真实原因",
     )
@@ -17,10 +17,10 @@ def test_conversational_ac_title_scores_above_threshold():
 
 
 def test_science_conversational_title_still_scores_well():
-  result = score_title(
-      "日本断供光刻胶？明明仓库都堆成山了",
-      track="日常科学原理",
-      template="误区反问式",
-  )
-  assert result.total >= 85
-  assert status_from_score(result) == "queued"
+    result = score_title(
+        "日本断供光刻胶？明明仓库都堆成山了",
+        category="日常科学原理",
+        template="误区反问式",
+    )
+    assert result.total >= 85
+    assert status_from_score(result) == "queued"

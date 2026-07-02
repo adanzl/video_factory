@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.services.llm.llm_script_title import (
+from app.services.script.title import (
     build_title_optimize_system_prompt,
     build_title_optimize_user_prompt,
     parse_title_optimize_payload,

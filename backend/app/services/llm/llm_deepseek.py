@@ -8,10 +8,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 from app.config import get_settings
-from app.services.llm.deepseek_request import build_deepseek_chat_payload
 from app.services.llm.llm_mgr import LLMClient
-from app.services.llm.llm_script_description import parse_video_description_payload
-from app.services.llm.llm_script_prompts import (
+from app.services.script.description import parse_video_description_payload
+from app.services.script.prompts import (
     MIN_IMAGE_PROMPT_CHARS,
     IMAGE_PROMPT_TARGET_CHARS,
     build_image_prompts_prompts,
@@ -22,12 +21,12 @@ from app.services.llm.llm_script_prompts import (
     build_title_optimize_prompts,
     build_video_description_prompts,
 )
-from app.services.llm.llm_script_timeline import narration_range_for_timeline, parse_video_timeline
-from app.services.llm.llm_script_title import parse_title_optimize_payload
-from app.services.llm.llm_topics import (
+from app.services.script.timeline import narration_range_for_timeline, parse_video_timeline
+from app.services.script.title import parse_title_optimize_payload
+from app.services.topic.parsers import parse_topics_payload
+from app.services.topic.prompts.builder import (
     build_topic_system_prompt,
     build_topic_user_prompt,
-    parse_topics_payload,
 )
 from app.utils.job_cancel import raise_if_job_cancelled
 from app.utils.media import (
@@ -44,6 +43,30 @@ logger = logging.getLogger(__name__)
 
 _NARRATION_EXPAND_ATTEMPTS = 2
 _TRUNCATION_RETRY_ATTEMPTS = 3
+
+
+def _build_deepseek_chat_payload(
+    *,
+    model: str,
+    system: str,
+    user: str,
+    max_tokens: int,
+    thinking_enabled: bool,
+    json_mode: bool = True,
+) -> dict[str, Any]:
+    """构建 chat/completions JSON；V4 默认 thinking=enabled，结构化输出须显式关闭。"""
+    payload: dict[str, Any] = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        "max_tokens": max_tokens,
+        "thinking": {"type": "enabled" if thinking_enabled else "disabled"},
+    }
+    if json_mode:
+        payload["response_format"] = {"type": "json_object"}
+    return payload
 
 
 def _storyboard_length_max_attempts() -> int:
@@ -262,7 +285,7 @@ class DeepSeekClient(LLMClient):
                 "Authorization": f"Bearer {self._api_key}",
                 "Content-Type": "application/json",
             },
-            json=build_deepseek_chat_payload(
+            json=_build_deepseek_chat_payload(
                 model=self._model,
                 system=system,
                 user=user,
@@ -784,7 +807,7 @@ class DeepSeekClient(LLMClient):
         size_hint: str | None = None,
         business_override: str | None = None,
     ) -> dict[str, str]:
-        from app.services.llm.llm_sd15_prompt import (
+        from app.services.script.sd15 import (
             build_sd15_prompt_system,
             build_sd15_prompt_user,
             parse_sd15_prompt_payload,
@@ -812,12 +835,27 @@ class DeepSeekClient(LLMClient):
         count: int = 10,
         system_prompt: str | None = None,
         user_prompt: str | None = None,
-        track: str | None = None,
+        category: str | None = None,
+        keywords: str | list[str] | None = None,
     ) -> list[dict[str, str]]:
         settings = get_settings()
         count = max(1, min(count, 20))
-        system = system_prompt or build_topic_system_prompt(max_title_len=settings.max_title_length, track=track)
-        user = user_prompt.strip() if user_prompt else build_topic_user_prompt(theme=theme, count=count)
+        system = system_prompt or build_topic_system_prompt(
+            max_title_len=settings.max_title_length,
+            category=category,
+            keywords=keywords,
+            count=count,
+        )
+        user = (
+            user_prompt.strip()
+            if user_prompt
+            else build_topic_user_prompt(
+                category=category,
+                theme=theme,
+                count=count,
+                keywords=keywords,
+            )
+        )
         raw, _ = self._chat_json(system, user)
         topics = parse_topics_payload(raw, max_title_len=settings.max_title_length)
         return topics[:count]

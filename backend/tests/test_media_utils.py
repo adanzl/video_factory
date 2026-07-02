@@ -93,7 +93,7 @@ def test_assign_segment_timings_from_narration_chars():
 
 
 def test_assign_segment_timings_from_video_timeline():
-    from app.services.llm.llm_script_timeline import TimelineSlot, VideoTimeline
+    from app.services.script.timeline import TimelineSlot, VideoTimeline
 
     timeline = VideoTimeline(
         duration_sec=14.0,

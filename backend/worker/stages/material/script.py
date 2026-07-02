@@ -9,7 +9,7 @@ from app.quality.gate import apply_quality_checks, merge_quality_report
 from app.repositories import job_log_repo, job_repo, segment_repo
 from app.repositories.connection import connection
 from app.services.llm.llm_mgr import llm_mgr
-from app.services.llm.llm_script_timeline import parse_video_timeline, validate_timeline_script
+from app.services.script.timeline import parse_video_timeline, validate_timeline_script
 from app.utils.job_cancel import job_cancel
 from app.utils.media import (
     assign_segment_timings,
@@ -265,7 +265,7 @@ class MaterialScriptStage(StageExecutor):
             stage_name=self.name,
         )
 
-        from app.services.llm.llm_script_prompts import attach_llm_prompts_to_script
+        from app.services.script.prompts import attach_llm_prompts_to_script
 
         attach_llm_prompts_to_script(
             script,

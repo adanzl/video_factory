@@ -72,6 +72,8 @@ class LLMClient:
         count: int = 10,
         system_prompt: str | None = None,
         user_prompt: str | None = None,
+        category: str | None = None,
+        keywords: str | list[str] | None = None,
     ) -> list[dict[str, str]]:
         raise NotImplementedError
 
@@ -126,11 +128,19 @@ class LLMMgr:
     """LLM 管理器。"""
 
     def _get_client(self) -> LLMClient:
-        from app.services.llm.llm_deepseek import DeepSeekClient
         from app.services.llm.llm_mock import MockLLMClient
 
         if get_settings().mock_mode:
             return MockLLMClient()
+        provider = get_settings().llm_provider
+        if provider == "agnes":
+            from app.services.llm.llm_agnes import AgnesClient
+
+            return AgnesClient()
+        if provider != "deepseek":
+            raise ValueError(f"unsupported LLM_PROVIDER: {provider!r} (use deepseek or agnes)")
+        from app.services.llm.llm_deepseek import DeepSeekClient
+
         return DeepSeekClient()
 
     def generate_script(
@@ -229,7 +239,7 @@ class LLMMgr:
     ) -> dict[str, Any]:
         """补全文生图提示词，过短时带 feedback 重试（与 script 阶段逻辑对齐）。"""
         from app.quality.checkers import check_image_prompts
-        from app.services.llm.llm_script_prompts import (
+        from app.services.script.prompts import (
             MIN_SD15_PROMPT_EN_WORDS,
             TARGET_SD15_PROMPT_EN_WORDS,
             format_image_prompt_retry_warning,
@@ -304,13 +314,15 @@ class LLMMgr:
         count: int = 10,
         system_prompt: str | None = None,
         user_prompt: str | None = None,
-        track: str | None = None,
+        category: str | None = None,
+        keywords: str | list[str] | None = None,
     ) -> list[dict[str, str]]:
         count = max(1, min(count, 20))
         custom_prompt = bool(system_prompt or user_prompt)
         logger.info(
-            "[TOPIC] generate start theme=%r count=%d custom_prompt=%s mock=%s",
+            "[TOPIC] generate start theme=%r category=%r count=%d custom_prompt=%s mock=%s",
             theme,
+            category,
             count,
             custom_prompt,
             get_settings().mock_mode,
@@ -322,7 +334,8 @@ class LLMMgr:
                 count=count,
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
-                track=track,
+                category=category,
+                keywords=keywords,
             )
         except Exception:
             logger.exception(

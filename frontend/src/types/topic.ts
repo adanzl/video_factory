@@ -3,9 +3,27 @@
  */
 export interface TopicItem {
   title: string;
-  track?: string;
+  category?: string;
   template?: string;
   hook?: string;
+}
+
+export interface TopicCategoryTemplate {
+  name: string;
+  weight: number;
+  hint: string;
+}
+
+export interface TopicCategory {
+  id: string;
+  label: string;
+  default_theme: string;
+  keywords_hint: string;
+  templates: TopicCategoryTemplate[];
+}
+
+export interface TopicCatalogResult {
+  categories: TopicCategory[];
 }
 
 export interface TitleRecord extends TopicItem {
@@ -37,7 +55,9 @@ export interface ListTitlesParams {
 }
 
 export interface GenerateTopicsParams {
+  category?: string;
   theme?: string;
+  keywords?: string;
   count?: number;
   system_prompt?: string;
   user_prompt?: string;
@@ -70,48 +90,6 @@ export interface EnqueueTopicsParams {
   ids?: number[];
   skip_publish?: boolean;
   run_mode?: EnqueueRunMode;
-}
-
-export interface ImportHotTopicsParams {
-  limit?: number;
-  count_per_theme?: number;
-  l1_rules?: boolean;
-  min_score?: number;
-  use_theme_llm?: boolean;
-}
-
-export interface ImportHotTopicsResult {
-  summary: {
-    fetched: number;
-    kept: number;
-    rejected: number;
-    themes?: number;
-    topics?: number;
-    queued?: number;
-    l1_rules?: boolean;
-  };
-  added: TitleRecord[];
-  skipped: number;
-  count: number;
-  source: string;
-  themes?: { keyword: string; theme: string; track: string; reason: string }[];
-  topics?: {
-    title: string;
-    theme: string;
-    keyword: string;
-    total: number;
-    status: TitleStatus;
-  }[];
-}
-
-export type TopicTaskStatus = "running" | "done" | "failed";
-
-export interface TopicTaskResponse {
-  task_id: string;
-  kind: string;
-  status: TopicTaskStatus;
-  result?: ImportHotTopicsResult;
-  error?: string;
 }
 
 export interface EnqueueTopicsResult {

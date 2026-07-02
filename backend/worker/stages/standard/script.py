@@ -18,7 +18,7 @@ from app.quality.gate import apply_quality_checks, merge_quality_report
 from app.repositories import job_log_repo, job_repo, segment_repo
 from app.repositories.connection import connection
 from app.services.llm.llm_mgr import llm_mgr
-from app.services.llm.llm_script_prompts import (
+from app.services.script.prompts import (
     MIN_SD15_PROMPT_EN_WORDS,
     image_prompt_min_chars,
     image_prompt_target_chars,
@@ -636,7 +636,7 @@ class ScriptStage(StageExecutor):
             stage_name=self.name,
         )
 
-        from app.services.llm.llm_script_prompts import attach_llm_prompts_to_script
+        from app.services.script.prompts import attach_llm_prompts_to_script
 
         attach_llm_prompts_to_script(
             script,

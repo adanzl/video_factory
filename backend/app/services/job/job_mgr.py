@@ -578,7 +578,7 @@ class JobMgr:
         orientation: str | None = None,
         content_style: str | None = None,
     ) -> list[dict[str, str]]:
-        from app.services.llm.llm_script_prompts import collect_script_prompts
+        from app.services.script.prompts import collect_script_prompts
 
         job = self.get_job(job_id)
         if orientation is not None or content_style is not None:
@@ -610,7 +610,7 @@ class JobMgr:
 
     def generate_video_description(self, job_id: int) -> dict:
         from app.services.llm.llm_mgr import llm_mgr
-        from app.services.llm.llm_script_prompts import build_video_description_prompts
+        from app.services.script.prompts import build_video_description_prompts
 
         with connection() as conn:
             job = job_repo.get_job(conn, job_id)

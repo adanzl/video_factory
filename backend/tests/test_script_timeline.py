@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from app.services.llm.llm_script_timeline import (
+from app.services.script.timeline import (
     hard_max_chars,
     narration_range_for_timeline,
     parse_video_timeline,
