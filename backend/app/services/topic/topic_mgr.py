@@ -232,6 +232,17 @@ class TopicMgr:
         if not new_title:
             raise ValueError("LLM returned empty title")
 
+        resolved_template = template or item.get("template")
+        preview = score_title(
+            new_title,
+            category=category,
+            template=resolved_template,
+            hook=item.get("hook"),
+        )
+        if preview.total < SCORE_THRESHOLD:
+            reason = preview.rejected_reason or f"总分 {preview.total} 低于阈值 {SCORE_THRESHOLD}"
+            raise ValueError(f"optimized title rejected: {reason}")
+
         with connection() as conn:
             if new_title != row["title"]:
                 existing = repo_title.find_by_titles(conn, [new_title])

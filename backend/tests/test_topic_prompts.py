@@ -57,3 +57,25 @@ def test_optimize_user_prompt_conversational_requires_direct_link():
     )
     assert "一步直达" in user
     assert "多跳推理链" in user
+
+
+def test_optimize_user_prompt_faq_title_requires_conversational_rewrite():
+    user = build_topic_optimize_user_prompt(
+        title="地震预警能提前多久",
+        category=CATEGORY_SCIENCE,
+        template="误区反问式",
+    )
+    assert "完整对话反转句式" in user
+    assert "禁止半句问法" in user
+    assert "地震预警能救命" not in user
+
+
+def test_optimize_user_prompt_incomplete_conversational_requires_rebuttal():
+    user = build_topic_optimize_user_prompt(
+        title="日本地震预警靠钱堆？",
+        category=CATEGORY_SCIENCE,
+        template="误区反问式",
+    )
+    assert "完整对话反转句式" in user
+    assert "问号后必须有回应" in user
+    assert "日本预警快只靠砸钱" in user

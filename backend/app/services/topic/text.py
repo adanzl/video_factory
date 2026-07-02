@@ -27,6 +27,54 @@ def open_faq_title_issue(title: str, *, category: str | None = None) -> str | No
     return None
 
 
+def misconception_template_issue(
+    title: str,
+    *,
+    category: str | None = None,
+    template: str | None = None,
+) -> str | None:
+    """误区反问式须为问号对话体，禁止纯陈述句。"""
+    if resolve_category(category) == CATEGORY_HISTORY:
+        return None
+    if template != "误区反问式":
+        return None
+    text = title.strip()
+    if not text:
+        return None
+    if "?" not in text and "？" not in text:
+        return "误区反问式：须为问号对话体且含实质反驳"
+    return None
+
+
+def incomplete_conversational_issue(title: str) -> str | None:
+    """对话反转式禁止半句问法（问号后无回应）。"""
+    text = title.strip()
+    mark_idx = max(text.rfind("？"), text.rfind("?"))
+    if mark_idx < 0:
+        return None
+    if not text[mark_idx + 1 :].strip():
+        return "对话反转式：问号后缺少回应"
+    return None
+
+
+def needs_conversational_rewrite(
+    title: str,
+    *,
+    category: str | None = None,
+    template: str | None = None,
+) -> bool:
+    """科学/时事类标题是否须改成完整对话反转句式。"""
+    if resolve_category(category) == CATEGORY_HISTORY:
+        return False
+    if open_faq_title_issue(title, category=category):
+        return True
+    if misconception_template_issue(title, category=category, template=template):
+        return True
+    if incomplete_conversational_issue(title):
+        return True
+    return False
+
+
 def normalize_title(title: str, *, max_len: int) -> str:
     cleaned = re.sub(r"\s+", "", title.strip())
     if len(cleaned) <= max_len + 2:

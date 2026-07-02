@@ -64,3 +64,47 @@ def test_scorer_rejects_open_faq_title():
     assert result.rejected_reason is not None
     assert "百科式" in result.rejected_reason
     assert status_from_score(result) == "rejected"
+
+
+def test_scorer_rejects_plain_statement_for_misconception_template():
+    result = score_title(
+        "地震预警只有几十秒",
+        category="科学原理",
+        template="误区反问式",
+    )
+    assert result.total == 0
+    assert result.rejected_reason is not None
+    assert "问号对话体" in result.rejected_reason
+    assert status_from_score(result) == "rejected"
+
+
+def test_scorer_rejects_incomplete_conversational_title():
+    result = score_title(
+        "日本预警快只因为有钱？",
+        category="科学原理",
+        template="误区反问式",
+    )
+    assert result.total == 0
+    assert result.rejected_reason is not None
+    assert "问号后缺少回应" in result.rejected_reason
+    assert status_from_score(result) == "rejected"
+
+
+def test_parse_topics_payload_filters_incomplete_conversational():
+    raw = {
+        "topics": [
+            {
+                "title": "日本地震预警靠钱堆？",
+                "category": "科学原理",
+                "template": "误区反问式",
+            },
+            {
+                "title": "日本预警快只靠砸钱？明明秒级靠的是地震波",
+                "category": "科学原理",
+                "template": "误区反问式",
+            },
+        ]
+    }
+    topics = parse_topics_payload(raw, max_title_len=24)
+    assert len(topics) == 1
+    assert "明明秒级靠的是地震波" in topics[0]["title"]
