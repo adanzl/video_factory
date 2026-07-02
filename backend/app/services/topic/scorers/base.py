@@ -25,6 +25,15 @@ CURIOSITY_PATTERNS = (
     r"等你呢|笑而不语|就这|慌了|顶得住|备好了|悄悄|就位|后路|慌了神|怕什么|明明|真以为|天真|堆成山|管够|满仓",
 )
 
+WITTY_REBUTTAL_PATTERNS = (
+    r"跑路|跑不掉|掉渣|堆成|管够|满仓|慌什么|怕什么|顶得住|没那么|哪有那么|早就|辟谣|"
+    r"够你跑|笑死|离谱|玄学|扯淡|哪回事",
+)
+
+BLAND_REBUTTAL_PATTERNS = (
+    r"足够你|够你躲|建议你|应该注意|要注意|记得要|别忘了|标准做法|规范动作|躲桌下|趴地上",
+)
+
 
 @dataclass(frozen=True)
 class ScoreResult:
@@ -48,6 +57,27 @@ class ScoreResult:
 
 def has_pattern(text: str, patterns: tuple[str, ...]) -> bool:
     return any(re.search(p, text) for p in patterns)
+
+
+def rebuttal_text(title: str) -> str:
+    text = title.strip()
+    mark_idx = max(text.rfind("？"), text.rfind("?"))
+    if mark_idx < 0:
+        return ""
+    return text[mark_idx + 1 :].strip()
+
+
+def rebuttal_tone_curiosity_adjustment(title: str) -> float:
+    """反驳半句：奖励口语趣味，压低说教式建议。"""
+    response = rebuttal_text(title)
+    if not response:
+        return 0.0
+    delta = 0.0
+    if has_pattern(response, WITTY_REBUTTAL_PATTERNS):
+        delta += 12.0
+    if has_pattern(response, BLAND_REBUTTAL_PATTERNS):
+        delta -= 18.0
+    return delta
 
 
 def clamp(value: float) -> int:

@@ -110,6 +110,20 @@ def topic_title_issue(
     return None
 
 
+def conversational_rewrite_example(title: str) -> str:
+    """为无问号标题生成对话反转改写示例（仅用于提示词）。"""
+    base = re.sub(r"\s+", "", title.strip())
+    base = re.sub(r"[？?！!。…]+$", "", base)
+    base = re.sub(r"(吗|呢|吧|啊|嘛)$", "", base)
+    if not base:
+        return "误区问句？明明没那么玄乎"
+    if re.search(r"动物", base):
+        return f"{base}？明明监测数据对不上"
+    if re.search(r"预警|地震|几秒|几十秒|倒计时", base):
+        return f"{base}？明明够你跑路的"
+    return f"{base}？明明没那么玄乎"
+
+
 def needs_conversational_rewrite(
     title: str,
     *,

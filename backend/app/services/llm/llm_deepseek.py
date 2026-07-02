@@ -881,6 +881,12 @@ class DeepSeekClient(LLMClient):
                     raw,
                     max_title_len=settings.max_title_length,
                 )
+                retry_extra = ""
+                if "问号对话体" in feedback or "问号后" in feedback:
+                    retry_extra = (
+                        "\n【特别强调】title 必须包含中文问号「？」并写完整反驳半句；"
+                        "禁止再次输出无问号的陈述句。"
+                    )
                 logger.warning(
                     "[TOPIC] all entries filtered attempt=%d/%d",
                     attempt + 1,
@@ -891,7 +897,7 @@ class DeepSeekClient(LLMClient):
                     "【重试】上一轮输出的标题均未通过规则，请严格按对话反转式重写："
                     "「误区问句？明明/真以为+一步反驳」，"
                     "禁止百科式提问、半句问法、仅语气词收尾。\n"
-                    f"{feedback}"
+                    f"{feedback}{retry_extra}"
                 )
         assert last_exc is not None
         raise last_exc
