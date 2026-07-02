@@ -349,6 +349,15 @@ def narration_accept_max_chars(narration_target_words: int | None = None) -> int
     return max(1, min(NARRATION_MAX_CHARS, target + margin))
 
 
+# 总口播略超验收上限时可走缩字/软放行的余量（与单镜 SEGMENT_SHRINK_OVERFLOW_CHARS 对齐）
+NARRATION_SHRINK_OVERFLOW_CHARS = 50
+
+
+def narration_shrink_max_chars(narration_target_words: int | None = None) -> int:
+    """口播可走缩字或软放行的总字数上限（accept_max + 固定余量）。"""
+    return narration_accept_max_chars(narration_target_words) + NARRATION_SHRINK_OVERFLOW_CHARS
+
+
 def narration_word_range(narration_target_words: int | None = None) -> tuple[int, int]:
     """口播验收字数区间：(下限, 上限)。"""
     lo = narration_accept_min_chars(narration_target_words)
