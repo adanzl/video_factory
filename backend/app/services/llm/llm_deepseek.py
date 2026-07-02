@@ -26,7 +26,11 @@ from app.services.script.optimize_title import (
     parse_title_optimize_payload,
 )
 from app.services.script.board_timeline import narration_range_for_timeline, parse_video_timeline
-from app.services.topic.parsers import parse_topics_payload
+from app.services.topic.parsers import (
+    format_topic_parse_feedback,
+    is_topic_parse_retryable,
+    parse_topics_payload,
+)
 from app.services.topic.prompts.builder import (
     build_topic_system_prompt,
     build_topic_user_prompt,
@@ -859,6 +863,35 @@ class DeepSeekClient(LLMClient):
                 keywords=keywords,
             )
         )
-        raw, _ = self._chat_json(system, user)
-        topics = parse_topics_payload(raw, max_title_len=settings.max_title_length)
-        return topics[:count]
+        user_base = user
+        last_exc: ValueError | None = None
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            raw, _ = self._chat_json(system, user)
+            try:
+                topics = parse_topics_payload(raw, max_title_len=settings.max_title_length)
+                return topics[:count]
+            except ValueError as exc:
+                if not is_topic_parse_retryable(exc):
+                    raise
+                last_exc = exc
+                if attempt + 1 >= max_attempts:
+                    break
+                feedback = format_topic_parse_feedback(
+                    raw,
+                    max_title_len=settings.max_title_length,
+                )
+                logger.warning(
+                    "[TOPIC] all entries filtered attempt=%d/%d",
+                    attempt + 1,
+                    max_attempts,
+                )
+                user = (
+                    f"{user_base}\n\n"
+                    "【重试】上一轮输出的标题均未通过规则，请严格按对话反转式重写："
+                    "「误区问句？明明/真以为+一步反驳」，"
+                    "禁止百科式提问、半句问法、仅语气词收尾。\n"
+                    f"{feedback}"
+                )
+        assert last_exc is not None
+        raise last_exc
