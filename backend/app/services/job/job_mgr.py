@@ -649,7 +649,6 @@ class JobMgr:
 
     def generate_video_description(self, job_id: int) -> dict:
         from app.services.llm.llm_mgr import llm_mgr
-        from app.services.script.description import build_video_description_prompts
 
         with connection() as conn:
             job = repo_job.get_job(conn, job_id)
@@ -666,12 +665,6 @@ class JobMgr:
             description = llm_mgr.generate_video_description(title, narration)
             updated_script = dict(script)
             updated_script["video_description"] = description
-
-            prompts = list(updated_script.get("llm_prompts") or [])
-            desc_prompt = build_video_description_prompts(title, narration)
-            prompts = [item for item in prompts if item.get("step") != "video_description"]
-            prompts.append(desc_prompt)
-            updated_script["llm_prompts"] = prompts
 
             job = repo_job.update_job(conn, job_id, script_json=updated_script)
             repo_job_log.append_log(conn, job_id, "script", "video description regenerated")
