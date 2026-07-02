@@ -62,7 +62,7 @@
       <el-table-column prop="track" label="赛道" width="140" show-overflow-tooltip />
       <el-table-column prop="template" label="模板" width="110" />
       <el-table-column prop="hook" label="钩子" min-width="160" show-overflow-tooltip />
-      <el-table-column label="分数" width="80">
+      <el-table-column label="分数" width="80" align="center">
         <template #default="{ row }">
           <span v-if="row.score != null">{{ row.score }}</span>
           <span v-else class="text-gray-400">-</span>
