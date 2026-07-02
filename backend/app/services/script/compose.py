@@ -73,7 +73,6 @@ def collect_prompts(
 
     narration = ""
     draft_title = re.sub(r"\s+", "", title.strip())
-    title_for_desc = draft_title
     if script and isinstance(script, dict):
         narration = str(script.get("narration") or "").strip()
         draft_title = re.sub(
@@ -81,7 +80,6 @@ def collect_prompts(
             "",
             str(script.get("draft_title") or script.get("title") or draft_title).strip(),
         )
-        title_for_desc = str(script.get("title") or title or "").strip()
 
     if preview_followups and not narration:
         narration = "（口播分镜生成后将填入实际 narration，此处仅预览提示词结构）"
@@ -96,10 +94,6 @@ def collect_prompts(
                 max_title_length=max_title_length,
             )
         )
-    if narration and title_for_desc:
-        from app.services.script.description import build_video_description_prompts
-
-        prompts.append(build_video_description_prompts(title_for_desc, narration))
     return prompts
 
 

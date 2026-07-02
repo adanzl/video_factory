@@ -195,7 +195,7 @@
             <el-tab-pane
               v-for="item in displayPrompts"
               :key="item.step"
-              :label="promptTabLabel(item.step)"
+              :label="promptTabLabel(item)"
               :name="item.step"
             >
               <div class="space-y-3 p-1">
@@ -512,30 +512,37 @@ const llmPrompts = ref<LlmPromptStep[]>([]);
 const activePromptTab = ref("");
 
 const PROMPT_TAB_ORDER = [
+  "narration",
+  "visual_brief",
+  "image_prompts",
+  "title_optimize",
   "storyboard",
   "material_script",
-  "title_optimize",
-  "video_description",
 ] as const;
 
 const PROMPT_TAB_ORDER_INDEX = Object.fromEntries(
   PROMPT_TAB_ORDER.map((step, index) => [step, index])
-) as Record<(typeof PROMPT_TAB_ORDER)[number], number>;
+) as Record<string, number>;
 
 const PROMPT_TAB_LABELS: Record<string, string> = {
-  storyboard: "分镜",
-  material_script: "口播",
+  narration: "口播",
+  visual_brief: "画面",
+  image_prompts: "文生图",
   title_optimize: "标题",
-  video_description: "介绍",
+  storyboard: "分镜(旧)",
+  material_script: "口播(素材)",
 };
 
-const promptTabLabel = (step: string) => PROMPT_TAB_LABELS[step] ?? step;
+const promptTabLabel = (item: LlmPromptStep) =>
+  item.label?.trim() || PROMPT_TAB_LABELS[item.step] || item.step;
 
 const displayPrompts = computed(() =>
   llmPrompts.value
-    .filter(item => item.step in PROMPT_TAB_ORDER_INDEX)
-    .sort((a, b) => PROMPT_TAB_ORDER_INDEX[a.step as keyof typeof PROMPT_TAB_ORDER_INDEX]
-      - PROMPT_TAB_ORDER_INDEX[b.step as keyof typeof PROMPT_TAB_ORDER_INDEX])
+    .filter(item => item.step !== "video_description")
+    .sort(
+      (a, b) =>
+        (PROMPT_TAB_ORDER_INDEX[a.step] ?? 999) - (PROMPT_TAB_ORDER_INDEX[b.step] ?? 999)
+    )
 );
 
 const actionDisabled = computed(() => props.job.status === "running");

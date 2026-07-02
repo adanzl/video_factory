@@ -128,3 +128,16 @@ def test_collect_prompts_accepts_speech_chars_per_sec():
         preview_followups=True,
     )
     assert prompts[0]["step"] == "narration"
+    assert all(item["step"] != "video_description" for item in prompts)
+
+
+def test_collect_prompts_includes_followup_steps_when_script_ready():
+    job = {"pipeline": "standard", "info": {}}
+    script = {
+        "title": "测试标题",
+        "narration": "x" * 200,
+        "segments": [{"segment_index": 1, "text": "x" * 50, "visual_brief": "画面"}],
+    }
+    prompts = collect_prompts(job, "测试标题", script=script)
+    steps = [item["step"] for item in prompts]
+    assert steps == ["narration", "visual_brief", "image_prompts", "title_optimize"]
