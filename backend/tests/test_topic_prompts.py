@@ -7,6 +7,7 @@ from app.services.topic.prompts.builder import (
     build_topic_system_prompt,
 )
 from app.services.topic.prompts.common import CONVERSATIONAL_TITLE_RULE, FORBIDDEN_FAQ_TITLE_RULE
+from app.services.topic.text import conversational_rewrite_example
 
 
 def test_general_topic_prompt_forbids_indirect_reasoning_chain():
@@ -61,33 +62,36 @@ def test_optimize_user_prompt_conversational_requires_direct_link():
 
 
 def test_optimize_user_prompt_faq_title_requires_conversational_rewrite():
+    title = "地震预警能提前多久"
     user = build_topic_optimize_user_prompt(
-        title="地震预警能提前多久",
+        title=title,
         category=CATEGORY_SCIENCE,
         template="误区反问式",
     )
     assert "硬性格式" in user
     assert "必须含中文问号" in user
-    assert "地震预警能提前多久？明明够你跑路的" in user
+    assert conversational_rewrite_example(title) in user
 
 
 def test_optimize_user_prompt_statement_without_question_mark():
+    title = "动物真能预报地震"
     user = build_topic_optimize_user_prompt(
-        title="动物真能预报地震",
+        title=title,
         category=CATEGORY_SCIENCE,
         template="误区反问式",
     )
     assert "硬性格式" in user
-    assert "动物真能预报地震？明明监测数据对不上" in user
+    assert conversational_rewrite_example(title) in user
 
 
 def test_optimize_user_prompt_statement_without_template_still_rewrites():
+    title = "动物真能预报地震"
     user = build_topic_optimize_user_prompt(
-        title="动物真能预报地震",
+        title=title,
         category=CATEGORY_SCIENCE,
     )
     assert "硬性格式" in user
-    assert "动物真能预报地震？明明监测数据对不上" in user
+    assert conversational_rewrite_example(title) in user
 
 
 def test_optimize_system_prompt_requires_question_mark():
@@ -96,15 +100,39 @@ def test_optimize_system_prompt_requires_question_mark():
         category=CATEGORY_SCIENCE,
     )
     assert "必须含中文问号" in system
-    assert "动物真能预报地震？明明监测数据对不上" in system
+    assert "监测数据压根对不上" in system
 
 
 def test_optimize_user_prompt_incomplete_conversational_requires_rebuttal():
+    title = "日本地震预警靠钱堆？"
     user = build_topic_optimize_user_prompt(
-        title="日本地震预警靠钱堆？",
+        title=title,
         category=CATEGORY_SCIENCE,
         template="误区反问式",
     )
     assert "硬性格式" in user
     assert "必须含中文问号" in user
-    assert "日本地震预警靠钱堆？明明够你跑路的" in user
+    example = conversational_rewrite_example(title)
+    assert example in user
+    assert "够你跑路" not in example
+    assert "地震波" in example or "砸钱" in example
+
+
+def test_conversational_rewrite_example_money_vs_duration():
+    money = conversational_rewrite_example("日本地震预警靠钱堆？")
+    duration = conversational_rewrite_example("地震预警只有几十秒")
+    assert "够你跑路" not in money
+    assert "地震波" in money or "砸钱" in money
+    assert "够你跑路" in duration or "够躲" in duration
+
+
+def test_conversational_rewrite_example_uses_varied_rebuttal_openers():
+    samples = [
+        conversational_rewrite_example("地震预警能提前多久"),
+        conversational_rewrite_example("动物真能预报地震"),
+        conversational_rewrite_example("看云能预报地震"),
+        conversational_rewrite_example("日本断供光刻胶"),
+    ]
+    assert all("？" in s for s in samples)
+    responses = [s.split("？", 1)[1] for s in samples]
+    assert not all(response.startswith("明明") for response in responses)

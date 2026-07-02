@@ -112,16 +112,70 @@ def topic_title_issue(
 
 def conversational_rewrite_example(title: str) -> str:
     """为无问号标题生成对话反转改写示例（仅用于提示词）。"""
+    base = _rewrite_base(title)
+    if not base:
+        return "误区挺大？压根不是那么回事"
+
+    rules: list[tuple[str, list[str]]] = [
+        (
+            r"动物",
+            [
+                "{base}？监测数据压根对不上",
+                "真以为动物能预警？压根没科学依据",
+            ],
+        ),
+        (
+            r"云",
+            [
+                "{base}？气象局早辟谣了",
+                "真以为看云就行？压根没依据",
+            ],
+        ),
+        (
+            r"钱|砸钱|靠钱|堆钱|有钱",
+            [
+                "{base}？秒级靠的是地震波",
+                "真以为靠砸钱就行？差的是地震波那几秒",
+            ],
+        ),
+        (
+            r"几十秒|几秒|秒|提前多久|来得及|来不及|多久",
+            [
+                "{base}？够你跑路的",
+                "真以为来不及？几十秒够躲",
+            ],
+        ),
+        (
+            r"预警|地震",
+            [
+                "{base}？靠的是监测网不是玄学",
+                "真以为预警没用？秒级差在地震波",
+            ],
+        ),
+        (
+            r"光刻|芯片|断供|仓库",
+            [
+                "{base}？仓库都堆成山了",
+                "真以为会断供？产线根本管够",
+            ],
+        ),
+    ]
+    for pattern, templates in rules:
+        if re.search(pattern, base):
+            return templates[hash(base) % len(templates)].format(base=base)
+
+    defaults = [
+        f"{base}？压根没那么玄乎",
+        f"真以为{base}？哪有那么夸张",
+        f"{base}？根本站不住",
+    ]
+    return defaults[hash(base) % len(defaults)]
+
+
+def _rewrite_base(title: str) -> str:
     base = re.sub(r"\s+", "", title.strip())
     base = re.sub(r"[？?！!。…]+$", "", base)
-    base = re.sub(r"(吗|呢|吧|啊|嘛)$", "", base)
-    if not base:
-        return "误区问句？明明没那么玄乎"
-    if re.search(r"动物", base):
-        return f"{base}？明明监测数据对不上"
-    if re.search(r"预警|地震|几秒|几十秒|倒计时", base):
-        return f"{base}？明明够你跑路的"
-    return f"{base}？明明没那么玄乎"
+    return re.sub(r"(吗|呢|吧|啊|嘛)$", "", base)
 
 
 def needs_conversational_rewrite(
