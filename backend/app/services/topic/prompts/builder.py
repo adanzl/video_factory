@@ -20,6 +20,7 @@ from app.services.topic.prompts.common import (
     VISUAL_ANCHOR_RULE,
 )
 from app.services.topic.prompts.format import optimize_json_format, topic_json_format
+from app.services.topic.text import needs_conversational_rewrite
 
 _CONVERSATIONAL_TITLE_RE = re.compile(r"[？?]")
 
@@ -186,13 +187,22 @@ def build_topic_optimize_user_prompt(
         lines.append(f"原模板：{template.strip()}（优化后 template 必须相同）")
     if hook:
         lines.append(f"原钩子：{hook.strip()}")
-    if _CONVERSATIONAL_TITLE_RE.search(title):
-        lines.append(
-            "原标题为对话反转式：优化后问句与回应须一步直达、同一话题，"
-            "禁止多跳推理链。"
-        )
     if resolved == CATEGORY_HISTORY:
         lines.append("须保持同一历史人物或悬案，标题仍为「代号：悬念」格式。")
     elif resolved in {CATEGORY_SCIENCE, CATEGORY_CURRENT}:
         lines.append("优化后 title 仍须含可示意图解的画面锚点名词。")
+        if needs_conversational_rewrite(
+            title.strip(), category=resolved, template=template
+        ):
+            lines.append(
+                "原标题不符合完整对话反转句式：优化后须写成"
+                "「误区问句？明明/真以为+一步反驳」一整句，"
+                "问号后必须有回应，禁止半句问法或纯陈述句。"
+                "例：日本预警快只靠砸钱？明明秒级靠的是地震波。"
+            )
+        elif _CONVERSATIONAL_TITLE_RE.search(title):
+            lines.append(
+                "原标题为完整对话反转式：优化后仍须保留问号与回应两半句，"
+                "问句与回应一步直达、同一话题，禁止多跳推理链。"
+            )
     return "\n".join(lines)

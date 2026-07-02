@@ -10,6 +10,7 @@ from app.services.topic.scorers.base import (
     ScoreResult,
     check_conversational_rebuttal,
     check_hard_reject,
+    check_misconception_template,
     check_open_faq_title,
     finalize_score,
     has_pattern,
@@ -34,6 +35,11 @@ def score_current_affairs(
     if rejected:
         return rejected
     rejected = check_open_faq_title(text, category=category)
+    if rejected:
+        return rejected
+    rejected = check_misconception_template(
+        text, category=category, template=template
+    )
     if rejected:
         return rejected
     rejected = check_conversational_rebuttal(text)

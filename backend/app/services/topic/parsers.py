@@ -9,7 +9,13 @@ from app.services.topic.catalog import (
     CATEGORY_SCIENCE,
     normalize_category,
 )
-from app.services.topic.text import normalize_title, open_faq_title_issue
+from app.services.topic.text import (
+    incomplete_conversational_issue,
+    misconception_template_issue,
+    needs_conversational_rewrite,
+    normalize_title,
+    open_faq_title_issue,
+)
 
 
 def parse_topics_payload(raw: dict[str, Any], *, max_title_len: int) -> list[dict[str, str]]:
@@ -40,15 +46,19 @@ def parse_topics_payload(raw: dict[str, Any], *, max_title_len: int) -> list[dic
         category = normalize_category(raw_category or None)
         if open_faq_title_issue(title, category=category):
             continue
+        template = str(item.get("template") or "").strip()
+        if template not in ALL_TOPIC_TEMPLATES:
+            template = "误区反问式"
+        if misconception_template_issue(title, category=category, template=template):
+            continue
+        if incomplete_conversational_issue(title):
+            continue
         raw_kws = item.get("keywords") or item.get("keyword") or ""
         if isinstance(raw_kws, list):
             kw_str = ",".join(str(k).strip()[:6] for k in raw_kws if str(k).strip())
         else:
             kw_str = str(raw_kws).strip()[:24]
-        template = str(item.get("template") or "").strip()
         hook = str(item.get("hook") or "").strip()
-        if template not in ALL_TOPIC_TEMPLATES:
-            template = "误区反问式"
         seen.add(title)
         out.append(
             {

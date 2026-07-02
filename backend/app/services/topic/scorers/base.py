@@ -103,6 +103,27 @@ def check_conversational_rebuttal(title: str) -> ScoreResult | None:
     return None
 
 
+def check_misconception_template(
+    title: str,
+    *,
+    category: str | None = None,
+    template: str | None = None,
+) -> ScoreResult | None:
+    from app.services.topic.text import misconception_template_issue
+
+    reason = misconception_template_issue(title, category=category, template=template)
+    if not reason:
+        return None
+    return ScoreResult(
+        visual=0,
+        fact=0,
+        curiosity=0,
+        compliance=0,
+        total=0,
+        rejected_reason=reason,
+    )
+
+
 def check_open_faq_title(title: str, *, category: str | None = None) -> ScoreResult | None:
     from app.services.topic.text import open_faq_title_issue
 
