@@ -403,6 +403,11 @@ def _validate_script(
                 f"narration too short: {chars} chars (need >= {accept_min})",
                 retryable=True,
             )
+        elif narration_target_words is not None:
+            raise ScriptValidationError(
+                f"narration too short: {chars} chars (need >= {accept_min})",
+                retryable=chars >= MIN_ACCEPT_NARRATION_CHARS,
+            )
         elif narration_target_words is None and chars >= int(hard_floor * 0.8):
             raise ScriptValidationError(
                 f"narration too short: {chars} chars (need >= {accept_min})",
