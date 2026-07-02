@@ -280,8 +280,8 @@ class LLMMgr:
         max_attempts: int | None = None,
     ) -> dict[str, Any]:
         """补全文生图提示词，过短时带 feedback 重试（与 script 阶段逻辑对齐）。"""
-        from app.quality.checkers import check_image_prompts
-        from app.quality.image_prompt_rules import (
+        from app.quality.quality_mgr import check_image_prompt
+        from app.quality.image_prompt import (
             MIN_SD15_PROMPT_EN_WORDS,
             TARGET_SD15_PROMPT_EN_WORDS,
             format_image_prompt_retry_warning,
@@ -306,7 +306,7 @@ class LLMMgr:
                 segment_indices=target_indices,
                 include_sd15_prompt=include_sd15_prompt,
             )
-            report = check_image_prompts(
+            report = check_image_prompt(
                 script,
                 sd15_mode=include_sd15_prompt,
                 segment_indices=segment_indices,

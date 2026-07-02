@@ -10,7 +10,7 @@ from werkzeug.datastructures import FileStorage
 
 from app.config import get_settings
 from app.core.pipelines import PIPELINE_MATERIAL
-from app.repositories import job_log_repo, job_repo, material_repo
+from app.repositories import repo_job_log, repo_job, repo_material
 from app.repositories.connection import connection
 from app.services.job.job_mgr import job_mgr
 from app.services.media.ffmpeg_utils import extract_first_frame, probe_duration, probe_video_size
@@ -26,11 +26,11 @@ _PLACEHOLDER_PATH = "pending"
 class MaterialMgr:
     def list_materials(self, *, limit: int = 50, offset: int = 0) -> list[dict]:
         with connection() as conn:
-            return material_repo.list_materials(conn, limit=limit, offset=offset)
+            return repo_material.list_materials(conn, limit=limit, offset=offset)
 
     def get_material(self, material_id: int) -> dict:
         with connection() as conn:
-            return material_repo.get_material(conn, material_id)
+            return repo_material.get_material(conn, material_id)
 
     def update_material(self, material_id: int, **fields: object) -> dict:
         updates = {k: v for k, v in fields.items() if k in {"name", "note"}}
@@ -42,13 +42,13 @@ class MaterialMgr:
                 raise ValueError("name is empty")
             updates["name"] = name.strip()
         with connection() as conn:
-            return material_repo.update_material(conn, material_id, **updates)
+            return repo_material.update_material(conn, material_id, **updates)
 
     def delete_material(self, material_id: int) -> None:
         settings = get_settings()
         with connection() as conn:
-            material_repo.get_material(conn, material_id)
-            material_repo.soft_delete_material(conn, material_id)
+            repo_material.get_material(conn, material_id)
+            repo_material.soft_delete_material(conn, material_id)
         material_dir = settings.material_data_dir / str(material_id)
         if material_dir.exists():
             shutil.rmtree(material_dir, ignore_errors=True)
@@ -60,7 +60,7 @@ class MaterialMgr:
             return
         with connection() as conn:
             try:
-                material_repo.soft_delete_material(conn, material_id)
+                repo_material.soft_delete_material(conn, material_id)
             except KeyError:
                 pass
 
@@ -120,7 +120,7 @@ class MaterialMgr:
         material_dir: Path | None = None
         try:
             with connection() as conn:
-                material = material_repo.create_material(
+                material = repo_material.create_material(
                     conn,
                     name=display_name,
                     file_path=_PLACEHOLDER_PATH,
@@ -133,7 +133,7 @@ class MaterialMgr:
             meta = self._finalize_material_video(material_dir, dest)
 
             with connection() as conn:
-                return material_repo.update_material(
+                return repo_material.update_material(
                     conn,
                     material_id,
                     name=display_name,
@@ -160,7 +160,7 @@ class MaterialMgr:
 
         settings = get_settings()
         with connection() as conn:
-            material_repo.get_material(conn, material_id)
+            repo_material.get_material(conn, material_id)
 
         meta: dict[str, object] = {}
         if file and file.filename:
@@ -170,7 +170,7 @@ class MaterialMgr:
             meta = self._finalize_material_video(material_dir, dest)
 
         with connection() as conn:
-            return material_repo.update_material(
+            return repo_material.update_material(
                 conn,
                 material_id,
                 name=cleaned_name,
@@ -206,13 +206,13 @@ class MaterialMgr:
             raise ValueError(f"run_mode must be one of {sorted(_RUN_MODES)}")
 
         with connection() as conn:
-            material_repo.get_material(conn, material_id)
+            repo_material.get_material(conn, material_id)
             script_json = (
                 {"pending_narration": narration.strip(), "script_mode": "manual"}
                 if mode == "manual"
                 else None
             )
-            job = job_repo.create_job(
+            job = repo_job.create_job(
                 conn,
                 cleaned_title,
                 skip_publish=skip_publish,
@@ -226,14 +226,14 @@ class MaterialMgr:
                     orientation=default_orientation_for_pipeline(PIPELINE_MATERIAL),
                 ),
             )
-            job_log_repo.append_log(
+            repo_job_log.append_log(
                 conn,
                 job["id"],
                 "prepare",
                 f"created material job from material #{material_id}, "
                 f"script_mode={mode}, run_mode={run}",
             )
-            material_repo.update_material(conn, material_id, job_id=job["id"])
+            repo_material.update_material(conn, material_id, job_id=job["id"])
 
         if run == "prepare":
             job_mgr.run_prepare(job["id"], to_end=False)

@@ -13,7 +13,7 @@ from app.services.script.description import (
     build_video_description_prompts,
     parse_video_description_payload,
 )
-from app.quality.image_prompt_rules import MIN_IMAGE_PROMPT_CHARS, IMAGE_PROMPT_TARGET_CHARS
+from app.quality.image_prompt import MIN_IMAGE_PROMPT_CHARS, IMAGE_PROMPT_TARGET_CHARS
 from app.services.script.board import (
     build_board_prompts,
     build_image_prompts_prompts,

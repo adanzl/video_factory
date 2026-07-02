@@ -4,9 +4,13 @@ import re
 import time
 
 from app.config import get_settings
-from app.quality.checkers import check_copy, skipped_copy_check
-from app.quality.gate import apply_quality_checks, merge_quality_report
-from app.repositories import job_log_repo, job_repo, segment_repo
+from app.quality.quality_mgr import (
+    apply_quality_checks,
+    check_narration,
+    merge_quality_report,
+    skip_narration_check,
+)
+from app.repositories import repo_job_log, repo_job, repo_segment
 from app.repositories.connection import connection
 from app.services.llm.llm_mgr import llm_mgr
 from app.services.script.script_mgr import script_mgr
@@ -148,7 +152,7 @@ class MaterialScriptStage(StageExecutor):
             if duration:
                 narration_target_words = estimate_narration_target_words(duration)
                 with connection() as conn:
-                    job_log_repo.append_log(
+                    repo_job_log.append_log(
                         conn,
                         ctx.job["id"],
                         self.name,
@@ -212,7 +216,7 @@ class MaterialScriptStage(StageExecutor):
                     last_exc = exc
                     feedback = str(exc)
                     with connection() as conn:
-                        job_log_repo.append_log(
+                        repo_job_log.append_log(
                             conn,
                             ctx.job["id"],
                             self.name,
@@ -234,7 +238,7 @@ class MaterialScriptStage(StageExecutor):
                     )
                     script = last_script
                     with connection() as conn:
-                        job_log_repo.append_log(
+                        repo_job_log.append_log(
                             conn,
                             ctx.job["id"],
                             self.name,
@@ -299,21 +303,21 @@ class MaterialScriptStage(StageExecutor):
         job_cancel.raise_if_cancelled(ctx.job["id"])
         with connection() as conn:
             for warning in accept_warnings:
-                job_log_repo.append_log(
+                repo_job_log.append_log(
                     conn,
                     ctx.job["id"],
                     self.name,
                     warning,
                     level="warning",
                 )
-            job_repo.update_job(
+            repo_job.update_job(
                 conn,
                 ctx.job["id"],
                 title=script["title"],
                 script_json=script,
             )
-            segment_repo.insert_segments(conn, ctx.job["id"], script["segments"])
-            job_log_repo.append_log(
+            repo_segment.insert_segments(conn, ctx.job["id"], script["segments"])
+            repo_job_log.append_log(
                 conn,
                 ctx.job["id"],
                 self.name,
@@ -328,21 +332,21 @@ class MaterialScriptStage(StageExecutor):
                 merged = merge_quality_report(
                     ctx.job.get("quality_report"),
                     "copy",
-                    skipped_copy_check(),
+                    skip_narration_check(),
                 )
-                job_log_repo.append_log(
+                repo_job_log.append_log(
                     conn,
                     ctx.job["id"],
                     self.name,
                     "script quality checks skipped (SKIP_SCRIPT_QUALITY_CHECK)",
                     level="warning",
                 )
-                job_repo.update_job(conn, ctx.job["id"], quality_report=merged)
+                repo_job.update_job(conn, ctx.job["id"], quality_report=merged)
             else:
                 apply_quality_checks(
                     conn,
                     ctx.job["id"],
                     self.name,
-                    {"copy": check_copy(script)},
+                    {"copy": check_narration(script)},
                     existing_report=ctx.job.get("quality_report"),
                 )

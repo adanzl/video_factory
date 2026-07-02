@@ -3,9 +3,8 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from app.quality.checkers import check_final
-from app.quality.gate import apply_quality_checks
-from app.repositories import job_log_repo, job_repo
+from app.quality.quality_mgr import apply_quality_checks, check_merged_video
+from app.repositories import repo_job_log, repo_job
 from app.repositories.connection import connection
 from app.services.media.audio_analysis import analyze_loudness
 from app.services.media.ffmpeg_utils import ffmpeg_hwaccel_config_summary, probe_duration
@@ -31,8 +30,8 @@ class MaterialMergeStage(StageExecutor):
     def run(self, ctx: JobContext) -> None:
         started = time.perf_counter()
         with connection() as conn:
-            job = job_repo.get_job(conn, ctx.job["id"])
-            job_log_repo.append_log(
+            job = repo_job.get_job(conn, ctx.job["id"])
+            repo_job_log.append_log(
                 conn,
                 ctx.job["id"],
                 self.name,
@@ -80,8 +79,8 @@ class MaterialMergeStage(StageExecutor):
             }
             if intro_path and not job.get("intro_path"):
                 updates["intro_path"] = str(intro_path.resolve())
-            job_repo.update_job(conn, ctx.job["id"], **updates)
-            job_log_repo.append_log(
+            repo_job.update_job(conn, ctx.job["id"], **updates)
+            repo_job_log.append_log(
                 conn,
                 ctx.job["id"],
                 self.name,
@@ -97,7 +96,7 @@ class MaterialMergeStage(StageExecutor):
                 ctx.job["id"],
                 self.name,
                 {
-                    "final": check_final(
+                    "final": check_merged_video(
                         result.final_path,
                         loudness=loudness,
                         min_duration_sec=final_min_dur,

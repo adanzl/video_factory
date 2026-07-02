@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 
 from app.config import Settings
-from app.repositories import material_repo
+from app.repositories import repo_material
 from app.repositories.connection import connection
 from app.services.media.ffmpeg_utils import probe_video_size
 from app.utils.media import _coerce_positive_int, base_video_size
@@ -69,7 +69,7 @@ def _material_record_size(job: dict) -> tuple[int, int] | None:
         return None
     try:
         with connection() as conn:
-            material = material_repo.get_material(conn, int(material_id))
+            material = repo_material.get_material(conn, int(material_id))
     except (KeyError, TypeError, ValueError):
         return None
 

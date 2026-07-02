@@ -18,7 +18,7 @@ WORKER_LOG = setup_logging(
 
 from app.core import pipeline
 from app.services.job import job_mgr
-from app.repositories import job_repo
+from app.repositories import repo_job
 from app.repositories.connection import connection
 from worker.loop import drain_pending, run_job
 from scripts.subtitle_test import rebuild_segment_subtitles
@@ -119,7 +119,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             )
         elif args.publish or args.skip_publish is not None:
             with connection() as conn:
-                job_repo.update_job(conn, job_id, skip_publish=skip_publish)
+                repo_job.update_job(conn, job_id, skip_publish=skip_publish)
     else:
         print("either --title or --job-id is required", file=sys.stderr)
         return 2

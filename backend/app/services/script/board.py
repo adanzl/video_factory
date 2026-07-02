@@ -29,7 +29,7 @@ from app.utils.media import (
     segment_text_char_cap,
     segment_text_hard_cap,
 )
-from app.quality.image_prompt_rules import (
+from app.quality.image_prompt import (
     MIN_SD15_PROMPT_EN_WORDS,
     TARGET_SD15_PROMPT_EN_WORDS,
     format_image_prompt_retry_warning,
