@@ -29,6 +29,7 @@ __all__ = [
     "check_tts_audio",
     "detect_memoir_narration",
     "detect_narration_repetition",
+    "format_quality_log_message",
     "merge_quality_report",
     "quality_mgr",
     "skip_board_check",
@@ -64,6 +65,28 @@ def merge_quality_report(existing: dict | None, step: QualityStep, report: Quali
     return merged
 
 
+def format_quality_log_message(step: str, report: QualityReport) -> str:
+    """job_log 用质检一行摘要（含 reason / 关键 details）。"""
+    parts = [f"quality[{step}]={report.level}"]
+    details = report.details or {}
+    reason = details.get("reason")
+    if isinstance(reason, str) and reason.strip():
+        parts.append(f"reason={reason.strip()}")
+    elif report.level == "pass" and step == "copy":
+        word_count = details.get("word_count")
+        if word_count is not None:
+            parts.append(f"word_count={word_count}")
+    elif details and report.level != "pass":
+        extras = ", ".join(
+            f"{key}={value}"
+            for key, value in details.items()
+            if key != "reason" and value not in (None, "", [], {})
+        )
+        if extras:
+            parts.append(extras)
+    return ", ".join(parts)
+
+
 def apply_quality_checks(
     conn,
     job_id: int,
@@ -80,8 +103,8 @@ def apply_quality_checks(
             conn,
             job_id,
             log_stage,
-            f"quality[{step}]={report.level}",
-            level="warning" if report.level == "minor" else "info",
+            format_quality_log_message(step, report),
+            level="warning" if report.level in ("minor", "major") else "info",
         )
         if report.level == "major" and report.fail_stage:
             repo_job.update_job(conn, job_id, quality_report=merged, fail_stage=report.fail_stage)
@@ -123,6 +146,7 @@ class QualityMgr:
     # --- report ---
     apply_quality_checks = staticmethod(apply_quality_checks)
     merge_quality_report = staticmethod(merge_quality_report)
+    format_quality_log_message = staticmethod(format_quality_log_message)
 
 
 quality_mgr = QualityMgr()

@@ -34,6 +34,7 @@ from app.utils.media import (
     min_narration_chars_for_target,
     narration_accept_max_chars,
     narration_accept_min_chars,
+    narration_shrink_max_chars,
     NARRATION_ABS_MIN_CHARS,
     narration_soft_min_chars,
     segment_text_char_cap,
@@ -57,6 +58,8 @@ def _accept_narration_chars(narration_target_words: int) -> int:
 
 
 _SEGMENT_SHRINK_MAX_ROUNDS = 2
+_NARRATION_SHRINK_MAX_ROUNDS = 2
+_NARRATION_SHRINK_TOP_SEGMENTS = 3
 
 
 def _narration_retry_min_chars(narration_target_words: int) -> int:
@@ -211,6 +214,34 @@ def _validation_retry_scope(exc: ScriptValidationError) -> str:
     ):
         return "storyboard"
     return "full"
+
+
+def _validation_quality_step(exc: ScriptValidationError) -> str | None:
+    """生成阶段 inline 校验对应的 quality step（用于 job_log）。"""
+    msg = str(exc)
+    if any(
+        key in msg
+        for key in (
+            "narration too short",
+            "narration too long",
+            "narration repetition",
+        )
+    ):
+        return "copy"
+    if "image_prompt" in msg:
+        return "image_prompts"
+    if any(
+        key in msg
+        for key in (
+            "segment text exceeds",
+            "missing visual_brief",
+            "text is empty",
+            "visual_style is empty",
+            "no segments",
+        )
+    ):
+        return "storyboard"
+    return None
 
 
 def _log_llm_timing(job_id: int, stage_name: str, script: dict) -> None:
@@ -387,6 +418,64 @@ def _repair_segment_overflow_via_shrink(
     return repaired
 
 
+def _longest_segment_indices(script: dict, *, limit: int) -> list[int]:
+    rows: list[tuple[int, int]] = []
+    for seg in script.get("segments") or []:
+        text = str(seg.get("text") or "")
+        chars = _narration_chars(text)
+        if chars <= 0:
+            continue
+        idx = int(seg.get("segment_index") or seg.get("index") or 0)
+        rows.append((chars, idx))
+    rows.sort(reverse=True)
+    return [idx for _, idx in rows[:limit]]
+
+
+def _repair_narration_overflow_via_shrink(
+    script: dict,
+    *,
+    narration_target_words: int,
+    segment_target_sec: float | None,
+    job_id: int,
+    stage_name: str,
+    job: dict | None,
+) -> bool:
+    """总口播略超上限时，对最长几段做缩字（避免整稿重跑）。"""
+    accept_max = narration_accept_max_chars(narration_target_words)
+    shrink_max = narration_shrink_max_chars(narration_target_words)
+    chars = _narration_chars(script.get("narration", ""))
+    if chars <= accept_max or chars > shrink_max:
+        return False
+    if not segment_target_sec or segment_target_sec <= 0:
+        return False
+    repaired = False
+    for _ in range(_NARRATION_SHRINK_MAX_ROUNDS):
+        chars = _narration_chars(script.get("narration", ""))
+        if chars <= accept_max:
+            break
+        indices = _longest_segment_indices(script, limit=_NARRATION_SHRINK_TOP_SEGMENTS)
+        if not indices:
+            break
+        llm_mgr.shrink_segment_texts(
+            script,
+            segment_indices=indices,
+            segment_target_sec=segment_target_sec,
+            job=job,
+        )
+        _sync_narration_from_segments(script)
+        repaired = True
+        with connection() as conn:
+            repo_job_log.append_log(
+                conn,
+                job_id,
+                stage_name,
+                f"narration shrink: indices={indices}, target<={accept_max} chars "
+                f"(was {chars})",
+                level="info",
+            )
+    return repaired
+
+
 def _validate_script(
     script: dict,
     *,
@@ -416,10 +505,16 @@ def _validate_script(
     if check_narration:
         if narration_target_words is not None:
             accept_max = narration_accept_max_chars(narration_target_words)
-            if chars > accept_max:
+            shrink_max = narration_shrink_max_chars(narration_target_words)
+            if chars > shrink_max:
                 raise ScriptValidationError(
-                    f"narration too long: {chars} chars (need <= {accept_max})",
+                    f"narration too long: {chars} chars (need <= {accept_max}, "
+                    f"shrink up to {shrink_max})",
                     retryable=True,
+                )
+            if chars > accept_max:
+                warnings.append(
+                    f"narration slightly over target ({chars} > {accept_max}), continuing"
                 )
         if chars >= accept_min:
             pass
@@ -603,6 +698,15 @@ class ScriptStage(StageExecutor):
                 stage_name=self.name,
                 job=ctx.job,
             )
+            if narration_target_words is not None:
+                _repair_narration_overflow_via_shrink(
+                    script,
+                    narration_target_words=narration_target_words,
+                    segment_target_sec=segment_target_sec,
+                    job_id=job_id,
+                    stage_name=self.name,
+                    job=ctx.job,
+                )
             try:
                 accept_warnings = _validate_script(
                     script,
@@ -630,11 +734,20 @@ class ScriptStage(StageExecutor):
                 )
                 script = None
                 with connection() as conn:
+                    qa_step = _validation_quality_step(exc)
+                    if qa_step:
+                        repo_job_log.append_log(
+                            conn,
+                            ctx.job["id"],
+                            self.name,
+                            f"quality[{qa_step}]=major reason={exc}",
+                            level="warning",
+                        )
                     repo_job_log.append_log(
                         conn,
                         ctx.job["id"],
                         self.name,
-                        f"script rejected (attempt {attempt + 1}, retry={retry_scope}): {exc}",
+                        f"script qa rejected (attempt {attempt + 1}, retry={retry_scope}): {exc}",
                         level="warning",
                     )
         if script is None:
