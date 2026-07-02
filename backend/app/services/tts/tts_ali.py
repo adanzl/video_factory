@@ -21,6 +21,7 @@ from app.services.tts.phrase_timing import (
     normalize_word_timestamps,
 )
 from app.services.tts.segment_trim import apply_tts_segment_trim
+from app.services.tts.tts_leadin import prepare_lead_in, strip_tts_lead_in
 from app.services.media.ffmpeg_utils import build_srt_from_cues, concat_clips, probe_duration
 from app.services.tts.tts_mgr import (
     SubtitleCue,
@@ -258,20 +259,22 @@ def _synthesize_segment(
     seg_index = seg["segment_index"]
     phrases = tts_mgr.phrase_chunks_for_segment(seg)
     segment_text = build_segment_tts_text(phrases)
+    tts_text, lead_in = prepare_lead_in(segment_text, voice=effective_voice)
     settings = get_settings()
     logger.info(
-        "tts segment %s start phrases=%s text_chars=%s transport=websocket",
+        "tts segment %s start phrases=%s text_chars=%s lead_in=%s transport=websocket",
         seg_index,
         len(phrases),
         len(segment_text),
+        lead_in or "-",
     )
 
     for attempt in (1, 2):
         try:
             result = _run_tts_task(
-                segment_text,
+                tts_text,
                 word_timestamps=True,
-                timeout=_segment_timeout(segment_text),
+                timeout=_segment_timeout(tts_text),
                 rate=effective_rate,
                 voice=effective_voice,
             )
@@ -286,6 +289,8 @@ def _synthesize_segment(
     segment_clip.write_bytes(result.audio)
 
     words = normalize_word_timestamps(result.words)
+    if lead_in:
+        words = strip_tts_lead_in(segment_clip, words, lead_in)
     if settings.tts_trim_edges:
         if words:
             words = apply_tts_segment_trim(segment_clip, words)
