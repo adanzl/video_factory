@@ -1,27 +1,40 @@
-from app.quality.checkers import (
-    check_copy,
-    check_final,
+"""质检模块。
+
+统一入口：``from app.quality.quality_mgr import quality_mgr``
+"""
+
+from app.quality import image_prompt
+from app.quality.quality_mgr import (
+    QualityMgr,
+    QualityReport,
+    QualityStep,
+    apply_quality_checks,
+    check_board,
+    check_image_prompt,
+    check_merged_video,
+    check_narration,
     check_segment_clips,
-    check_storyboard,
-    check_image_prompts,
-    skipped_image_prompts_check,
+    check_segment_images,
     check_tts_audio,
-    check_visual,
+    merge_quality_report,
+    quality_mgr,
+    skip_image_prompt_check,
 )
-from app.quality.gate import apply_quality_checks, merge_quality_report
-from app.quality.models import QualityReport, QualityStep
 
 __all__ = [
+    "QualityMgr",
     "QualityReport",
     "QualityStep",
     "apply_quality_checks",
-    "check_copy",
-    "check_final",
+    "check_board",
+    "check_image_prompt",
+    "check_merged_video",
+    "check_narration",
     "check_segment_clips",
-    "check_storyboard",
-    "check_image_prompts",
-    "skipped_image_prompts_check",
+    "check_segment_images",
     "check_tts_audio",
-    "check_visual",
+    "image_prompt",
     "merge_quality_report",
+    "quality_mgr",
+    "skip_image_prompt_check",
 ]

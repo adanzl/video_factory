@@ -11,8 +11,8 @@ from pathlib import Path
 
 from app.config import get_settings
 from app.utils.job_cancel import job_cancel
-from app.services.media.clip.mgr import clip_mgr
-from app.services.media.subtitle_style import subtitle_style_for_canvas
+from app.services.segment.clip.clip_mgr import clip_mgr
+from app.services.render.subtitle_style import subtitle_style_for_canvas
 from app.services.media.ffmpeg_utils import build_ass_from_phrase_cues
 from app.services.media.ffmpeg_utils import (
     concat_clips,
@@ -310,7 +310,7 @@ class MediaMgr:
         work_dir = media_dir / "merge_work"
         work_dir.mkdir(parents=True, exist_ok=True)
 
-        from app.services.media.clip.render import (
+        from app.services.segment.clip.clip_render import (
             fit_video_duration,
             fit_video_with_ass_subtitles,
         )

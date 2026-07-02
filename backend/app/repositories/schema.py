@@ -6,7 +6,7 @@ _TITLE_DDL = """
 CREATE TABLE IF NOT EXISTS title (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     title TEXT NOT NULL UNIQUE,
-    track TEXT,
+    category TEXT,
     template TEXT,
     hook TEXT,
     score INTEGER,
@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS title (
     status TEXT NOT NULL DEFAULT 'pending',
     job_id INTEGER,
     source TEXT NOT NULL DEFAULT 'manual',
+    keyword TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (job_id) REFERENCES video_job(id)
@@ -63,7 +64,7 @@ def _ensure_journal_mode_delete(conn: sqlite3.Connection) -> None:
 def apply_title_schema(conn: sqlite3.Connection) -> None:
     """创建选题库 title 表（幂等，可单独对已有库执行）。"""
     conn.executescript(_TITLE_DDL)
-
+    _ensure_column(conn, "title", "keyword", "TEXT")
 
 def apply_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(_MATERIAL_DDL)

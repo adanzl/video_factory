@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.repositories import job_repo
+from app.repositories import repo_job
 from app.repositories.connection import connection
 from app.utils.job_info import intro_category_from_job, intro_generate_category
 from worker.context import JobContext
@@ -17,7 +17,7 @@ class IntroStage(StageExecutor):
 
     def run(self, ctx: JobContext) -> None:
         with connection() as conn:
-            job = job_repo.get_job(conn, ctx.job["id"])
+            job = repo_job.get_job(conn, ctx.job["id"])
         run_intro_for_category(ctx, job, stage=self)
 
 

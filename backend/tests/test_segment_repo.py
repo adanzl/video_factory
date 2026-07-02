@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from app.repositories import job_repo, segment_repo
+from app.repositories import repo_job, repo_segment
 from app.repositories.schema import apply_schema
 
 
@@ -10,9 +10,9 @@ def test_insert_segments_preserves_media_paths() -> None:
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     apply_schema(conn)
-    job = job_repo.create_job(conn, "test preserve media")
+    job = repo_job.create_job(conn, "test preserve media")
     job_id = job["id"]
-    segment_repo.insert_segments(
+    repo_segment.insert_segments(
         conn,
         job_id,
         [
@@ -32,22 +32,22 @@ def test_insert_segments_preserves_media_paths() -> None:
             },
         ],
     )
-    rows = segment_repo.list_segments(conn, job_id)
-    segment_repo.update_segment(
+    rows = repo_segment.list_segments(conn, job_id)
+    repo_segment.update_segment(
         conn,
         rows[0]["id"],
         image_path="/data/1.png",
         clip_path="/data/1.mp4",
         status="done",
     )
-    segment_repo.update_segment(
+    repo_segment.update_segment(
         conn,
         rows[1]["id"],
         image_path="/data/2.png",
         status="done",
     )
 
-    segment_repo.insert_segments(
+    repo_segment.insert_segments(
         conn,
         job_id,
         [
@@ -68,7 +68,7 @@ def test_insert_segments_preserves_media_paths() -> None:
         ],
     )
 
-    updated = segment_repo.list_segments(conn, job_id)
+    updated = repo_segment.list_segments(conn, job_id)
     by_index = {row["segment_index"]: row for row in updated}
     assert by_index[1]["image_prompt"] == "new prompt"
     assert by_index[1]["image_path"] == "/data/1.png"

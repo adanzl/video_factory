@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.services.media.subtitle_style import (
+from app.services.render.subtitle_style import (
     SUBTITLE_FONT_SIZE,
     layout_for_canvas,
     subtitle_style_for_canvas,

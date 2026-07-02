@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app.services.segment.segment_mgr import segment_mgr
-from app.services.visual import visual_mgr
+from app.services.segment.image import image_mgr
 
 
 def test_produce_images_partial_only_selected(tmp_path: Path) -> None:
@@ -35,7 +35,7 @@ def test_produce_images_partial_only_selected(tmp_path: Path) -> None:
             for seg in targets
         ]
 
-    with patch.object(visual_mgr, "generate_segment_images", side_effect=_fake_generate):
+    with patch.object(image_mgr, "generate_segment_images", side_effect=_fake_generate):
         result = segment_mgr.produce_segments(
             segments=segments,
             media_dir=media_dir,
@@ -78,7 +78,7 @@ def test_produce_images_persists_each_image_via_callback(tmp_path: Path) -> None
             results.append((seg["id"], path))
         return results
 
-    with patch.object(visual_mgr, "generate_segment_images", side_effect=_fake_generate):
+    with patch.object(image_mgr, "generate_segment_images", side_effect=_fake_generate):
         result = segment_mgr.produce_segments(
             segments=segments,
             media_dir=media_dir,

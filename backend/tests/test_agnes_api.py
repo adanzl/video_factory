@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 import requests
 
-from app.services.visual.agnes_api import (
+from app.services.llm.llm_agnes import (
     AgnesApiKey,
     AgnesQuotaExceeded,
     agnes_api_keys,

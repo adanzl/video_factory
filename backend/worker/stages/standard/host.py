@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.repositories import job_log_repo
+from app.repositories import repo_job_log
 from app.repositories.connection import connection
 from worker.context import JobContext
 from worker.stages.base import StageExecutor
@@ -14,14 +14,14 @@ class HostStage(StageExecutor):
     def run(self, ctx: JobContext) -> None:
         with connection() as conn:
             if not ctx.settings.host_enabled:
-                job_log_repo.append_log(
+                repo_job_log.append_log(
                     conn,
                     ctx.job["id"],
                     self.name,
                     "HOST_ENABLED=false，跳过讲解人叠图",
                 )
                 return
-            job_log_repo.append_log(
+            repo_job_log.append_log(
                 conn,
                 ctx.job["id"],
                 self.name,

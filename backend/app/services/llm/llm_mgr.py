@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any
+from typing import Any, Literal
+
+TopicLlmOperation = Literal["generate", "save", "optimize"]
 
 from app.config import get_settings
+from app.services.topic.parsers import is_topic_parse_retryable
 
-__all__ = ["LLMClient", "LLMMgr", "llm_mgr"]
+__all__ = ["LLMClient", "LLMMgr", "TopicLlmOperation", "llm_mgr"]
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +46,27 @@ class LLMClient:
     ) -> dict[str, Any]:
         raise NotImplementedError
 
+    def generate_board(
+        self,
+        title: str,
+        *,
+        feedback: str | None = None,
+        segment_target_sec: float | None = None,
+        max_title_length: int | None = None,
+        narration_target_words: int | None = None,
+        supplementary_info: str | None = None,
+        job: dict | None = None,
+    ) -> dict[str, Any]:
+        return self.generate_storyboard(
+            title,
+            feedback=feedback,
+            segment_target_sec=segment_target_sec,
+            max_title_length=max_title_length,
+            narration_target_words=narration_target_words,
+            supplementary_info=supplementary_info,
+            job=job,
+        )
+
     def fill_image_prompts(
         self,
         script: dict[str, Any],
@@ -72,6 +96,8 @@ class LLMClient:
         count: int = 10,
         system_prompt: str | None = None,
         user_prompt: str | None = None,
+        category: str | None = None,
+        keywords: str | list[str] | None = None,
     ) -> list[dict[str, str]]:
         raise NotImplementedError
 
@@ -126,12 +152,20 @@ class LLMMgr:
     """LLM 管理器。"""
 
     def _get_client(self) -> LLMClient:
-        from app.services.llm.llm_deepseek import DeepSeekClient
         from app.services.llm.llm_mock import MockLLMClient
 
         if get_settings().mock_mode:
             return MockLLMClient()
-        return DeepSeekClient()
+        provider = get_settings().llm_provider
+        if provider == "deepseek":
+            from app.services.llm.llm_deepseek import DeepSeekClient
+
+            return DeepSeekClient()
+        if provider == "agnes":
+            from app.services.llm.llm_agnes import AgnesClient
+
+            return AgnesClient()
+        raise ValueError(f"unsupported LLM_PROVIDER: {provider!r} (use deepseek or agnes)")
 
     def generate_script(
         self,
@@ -174,6 +208,27 @@ class LLMMgr:
         job: dict | None = None,
     ) -> dict[str, Any]:
         return self._get_client().generate_storyboard(
+            title,
+            feedback=feedback,
+            segment_target_sec=segment_target_sec,
+            max_title_length=max_title_length,
+            narration_target_words=narration_target_words,
+            supplementary_info=supplementary_info,
+            job=job,
+        )
+
+    def generate_board(
+        self,
+        title: str,
+        *,
+        feedback: str | None = None,
+        segment_target_sec: float | None = None,
+        max_title_length: int | None = None,
+        narration_target_words: int | None = None,
+        supplementary_info: str | None = None,
+        job: dict | None = None,
+    ) -> dict[str, Any]:
+        return self.generate_storyboard(
             title,
             feedback=feedback,
             segment_target_sec=segment_target_sec,
@@ -228,8 +283,8 @@ class LLMMgr:
         max_attempts: int | None = None,
     ) -> dict[str, Any]:
         """补全文生图提示词，过短时带 feedback 重试（与 script 阶段逻辑对齐）。"""
-        from app.quality.checkers import check_image_prompts
-        from app.services.llm.llm_script_prompts import (
+        from app.quality.quality_mgr import check_image_prompt
+        from app.quality.image_prompt import (
             MIN_SD15_PROMPT_EN_WORDS,
             TARGET_SD15_PROMPT_EN_WORDS,
             format_image_prompt_retry_warning,
@@ -254,7 +309,7 @@ class LLMMgr:
                 segment_indices=target_indices,
                 include_sd15_prompt=include_sd15_prompt,
             )
-            report = check_image_prompts(
+            report = check_image_prompt(
                 script,
                 sd15_mode=include_sd15_prompt,
                 segment_indices=segment_indices,
@@ -304,13 +359,18 @@ class LLMMgr:
         count: int = 10,
         system_prompt: str | None = None,
         user_prompt: str | None = None,
-        track: str | None = None,
+        category: str | None = None,
+        keywords: str | list[str] | None = None,
+        operation: TopicLlmOperation = "generate",
     ) -> list[dict[str, str]]:
         count = max(1, min(count, 20))
         custom_prompt = bool(system_prompt or user_prompt)
+        theme_suffix = f" theme={theme!r}" if theme else ""
         logger.info(
-            "[TOPIC] generate start theme=%r count=%d custom_prompt=%s mock=%s",
-            theme,
+            "[TOPIC] llm start operation=%s%s category=%r count=%d custom_prompt=%s mock=%s",
+            operation,
+            theme_suffix,
+            category,
             count,
             custom_prompt,
             get_settings().mock_mode,
@@ -322,19 +382,39 @@ class LLMMgr:
                 count=count,
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
-                track=track,
+                category=category,
+                keywords=keywords,
             )
+        except ValueError as exc:
+            if is_topic_parse_retryable(exc):
+                logger.warning(
+                    "[TOPIC] llm rejected operation=%s%s count=%d reason=%s",
+                    operation,
+                    theme_suffix,
+                    count,
+                    exc,
+                )
+            else:
+                logger.exception(
+                    "[TOPIC] llm failed operation=%s%s count=%d",
+                    operation,
+                    theme_suffix,
+                    count,
+                )
+            raise
         except Exception:
             logger.exception(
-                "[TOPIC] generate failed theme=%r count=%d",
-                theme,
+                "[TOPIC] llm failed operation=%s%s count=%d",
+                operation,
+                theme_suffix,
                 count,
             )
             raise
         elapsed = time.perf_counter() - started
         titles = [item["title"] for item in topics]
         logger.info(
-            "[TOPIC] generate done count=%d elapsed=%.1fs titles=%s",
+            "[TOPIC] llm done operation=%s count=%d elapsed=%.1fs titles=%s",
+            operation,
             len(topics),
             elapsed,
             titles,

@@ -1,4 +1,4 @@
-from app.services.visual.text_render import split_phrase_chunks
+from app.services.render.text_render import split_phrase_chunks
 
 
 def test_short_opener_merges_into_question():

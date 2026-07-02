@@ -12,7 +12,7 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from app.config import get_settings
-from app.services.media.clip.video_wan import WanClipProvider
+from app.services.segment.clip.video_wan import WanClipProvider
 from app.services.media.ffmpeg_utils import probe_duration
 
 DEFAULT_IMAGE = Path(__file__).resolve().parents[2] / "data/media/2/images/1.png"

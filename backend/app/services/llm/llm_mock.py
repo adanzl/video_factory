@@ -5,7 +5,7 @@ from typing import Any
 
 from app.config import get_settings
 from app.services.llm.llm_mgr import LLMClient
-from app.services.llm.llm_script_prompts import MIN_IMAGE_PROMPT_CHARS
+from app.quality.image_prompt import MIN_IMAGE_PROMPT_CHARS
 from app.utils.media import segment_text_char_cap
 
 
@@ -231,7 +231,7 @@ class MockLLMClient(LLMClient):
         max_title_length: int | None = None,
     ) -> str:
         _ = narration
-        from app.services.llm.llm_topics import normalize_title
+        from app.services.topic.text import normalize_title
 
         settings = get_settings()
         max_len = settings.max_title_length if max_title_length is None else max_title_length
@@ -280,10 +280,13 @@ class MockLLMClient(LLMClient):
         size_hint: str | None = None,
         business_override: str | None = None,
     ) -> dict[str, str]:
-        from app.services.llm.llm_sd15_prompt import (
+        from app.services.segment.image.image_sd15 import (
+            fallback_split_panel_prompts,
             normalize_sd15_prompt_en,
+            parse_image_size,
             pick_business_by_keywords,
             pick_lora_by_keywords,
+            resolve_split_layout,
         )
 
         _ = size_hint
@@ -298,8 +301,6 @@ class MockLLMClient(LLMClient):
             business=business,
             lora=lora,
         )
-        from app.services.llm.llm_sd15_prompt import resolve_split_layout
-        from app.services.visual.image_sd15 import parse_image_size
 
         width, height = parse_image_size(size_hint) if size_hint else (0, 0)
         layout, split_axis = resolve_split_layout(
@@ -310,8 +311,6 @@ class MockLLMClient(LLMClient):
             height=height,
         )
         if layout == "split":
-            from app.services.llm.llm_sd15_prompt import fallback_split_panel_prompts
-
             left_en, right_en = fallback_split_panel_prompts(cleaned)
             return {
                 "layout": "split",
@@ -330,41 +329,53 @@ class MockLLMClient(LLMClient):
         count: int = 10,
         system_prompt: str | None = None,
         user_prompt: str | None = None,
+        category: str | None = None,
+        keywords: str | list[str] | None = None,
     ) -> list[dict[str, str]]:
-        _ = system_prompt
+        _ = (system_prompt, keywords)
+        from app.services.topic.catalog import (
+            CATEGORY_HISTORY,
+            CATEGORY_SCIENCE,
+            get_category_spec,
+            resolve_category,
+        )
+
         settings = get_settings()
         count = max(1, min(count, 20))
         theme = re.sub(r"\s+", "", theme.strip()) or "科普"
         if user_prompt:
             theme = re.sub(r"\s+", "", user_prompt.strip()) or theme
         max_len = settings.max_title_length
-        patterns = [
-            ("误区反问式", "日常科学原理", f"{theme}里最常见的误区，你中招了吗？"),
-            ("误区反问式", "生活避坑实用常识", f"关于{theme}，多数人第一步就错了？"),
-            ("反差好奇式", "日常科学原理", f"同样是{theme}，为什么结果差这么多？"),
-            ("误区反问式", "数码小白避坑", f"{theme}越贵越好？真相可能相反"),
-            ("实操避坑式", "生活避坑实用常识", f"{theme}暗藏陷阱？三招快速辨别"),
-            ("误区反问式", "古代冷门生活史", f"古人没有现代工具，怎么解决{theme}？"),
-            ("反差好奇式", "日常科学原理", f"看起来一样的{theme}，原理完全不同？"),
-            ("误区反问式", "生活避坑实用常识", f"{theme}这样做，反而更危险？"),
-            ("误区反问式", "数码小白避坑", f"买{theme}只看参数？最容易踩的坑"),
-            ("实操避坑式", "日常科学原理", f"一文搞懂{theme}：别被直觉骗了"),
-        ]
-        tracks_hooks = {
-            "日常科学原理": "反常识原理最容易引发好奇点击",
-            "生活避坑实用常识": "生活误区是稳定长尾搜索流量",
-            "数码小白避坑": "参数误区对小白用户转化高",
-            "古代冷门生活史": "古今对比制造新鲜感和完播",
-        }
+        resolved = resolve_category(category)
+        spec = get_category_spec(resolved)
+
+        if resolved == CATEGORY_HISTORY:
+            patterns = [
+                ("悬念钩子式", CATEGORY_HISTORY, "烛影斧声：宋太祖半夜暴毙"),
+                ("未解之谜式", CATEGORY_HISTORY, "建文帝下落：紫禁城大火后消失"),
+                ("误区反问式", CATEGORY_HISTORY, "和珅贪亿两白银？嘉庆抄家才懂"),
+                ("反差好奇式", CATEGORY_HISTORY, "雍正勤政猝死：圆明园咯血无人敢近"),
+            ]
+            hooks = {CATEGORY_HISTORY: "知名历史人物悬案最容易引发点击"}
+        else:
+            patterns = [
+                ("误区反问式", CATEGORY_SCIENCE, f"{theme}里最常见的误区，你中招了吗？"),
+                ("误区反问式", CATEGORY_SCIENCE, f"关于{theme}，多数人第一步就错了？"),
+                ("反差好奇式", CATEGORY_SCIENCE, f"同样是{theme}，为什么结果差这么多？"),
+                ("实操避坑式", CATEGORY_SCIENCE, f"{theme}暗藏陷阱？三招快速辨别"),
+                ("误区反问式", CATEGORY_SCIENCE, f"看起来一样的{theme}，原理完全不同？"),
+            ]
+            hooks = {CATEGORY_SCIENCE: "反常识原理最容易引发好奇点击"}
+
         out: list[dict[str, str]] = []
-        for template, track, title in patterns[:count]:
+        for tpl, cat, title in patterns[:count]:
             display = title[:max_len]
             out.append(
                 {
                     "title": display,
-                    "track": track,
-                    "template": template,
-                    "hook": tracks_hooks[track],
+                    "category": cat,
+                    "template": tpl,
+                    "hook": hooks.get(cat, spec.default_theme),
                 }
             )
         return out

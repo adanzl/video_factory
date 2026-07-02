@@ -8,31 +8,38 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 from app.config import get_settings
-from app.services.llm.deepseek_request import build_deepseek_chat_payload
 from app.services.llm.llm_mgr import LLMClient
-from app.services.llm.llm_script_description import parse_video_description_payload
-from app.services.llm.llm_script_prompts import (
-    MIN_IMAGE_PROMPT_CHARS,
-    IMAGE_PROMPT_TARGET_CHARS,
+from app.services.script.description import (
+    build_video_description_prompts,
+    parse_video_description_payload,
+)
+from app.quality.image_prompt import MIN_IMAGE_PROMPT_CHARS, IMAGE_PROMPT_TARGET_CHARS
+from app.services.script.board import (
+    build_board_prompts,
     build_image_prompts_prompts,
     build_material_script_prompts,
     build_narration_expand_prompts,
     build_segment_shrink_prompts,
-    build_storyboard_prompts,
-    build_title_optimize_prompts,
-    build_video_description_prompts,
 )
-from app.services.llm.llm_script_timeline import narration_range_for_timeline, parse_video_timeline
-from app.services.llm.llm_script_title import parse_title_optimize_payload
-from app.services.llm.llm_topics import (
+from app.services.script.optimize_title import (
+    build_title_optimize_prompts,
+    parse_title_optimize_payload,
+)
+from app.services.script.board_timeline import narration_range_for_timeline, parse_video_timeline
+from app.services.topic.parsers import (
+    format_topic_parse_feedback,
+    is_topic_parse_retryable,
+    parse_topics_payload,
+)
+from app.services.topic.prompts.builder import (
     build_topic_system_prompt,
     build_topic_user_prompt,
-    parse_topics_payload,
 )
 from app.utils.job_cancel import raise_if_job_cancelled
 from app.utils.media import (
     default_narration_target_words,
     min_narration_chars_for_target,
+    narration_accept_max_chars,
     narration_accept_min_chars,
     segment_text_char_cap,
     storyboard_compact_output,
@@ -44,6 +51,30 @@ logger = logging.getLogger(__name__)
 
 _NARRATION_EXPAND_ATTEMPTS = 2
 _TRUNCATION_RETRY_ATTEMPTS = 3
+
+
+def _build_deepseek_chat_payload(
+    *,
+    model: str,
+    system: str,
+    user: str,
+    max_tokens: int,
+    thinking_enabled: bool,
+    json_mode: bool = True,
+) -> dict[str, Any]:
+    """构建 chat/completions JSON；V4 默认 thinking=enabled，结构化输出须显式关闭。"""
+    payload: dict[str, Any] = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        "max_tokens": max_tokens,
+        "thinking": {"type": "enabled" if thinking_enabled else "disabled"},
+    }
+    if json_mode:
+        payload["response_format"] = {"type": "json_object"}
+    return payload
 
 
 def _storyboard_length_max_attempts() -> int:
@@ -65,6 +96,24 @@ def _narration_length_feedback(
         f"narration 仅 {chars} 字，验收下限 {min_chars} 字，还差 {deficit} 字。"
         "请扩写各段 text（每层补具体细节/案例/步骤），"
         "先写 segments 再拼接 narration，输出前核对 word_count 与拼接一致性后再输出 JSON。"
+    )
+    if prefix:
+        return f"{prefix}\n{msg}"
+    return msg
+
+
+def _narration_too_long_feedback(
+    chars: int,
+    max_chars: int,
+    *,
+    prefix: str | None = None,
+) -> str:
+    excess = max(1, chars - max_chars)
+    msg = (
+        f"narration 达 {chars} 字，超过验收上限 {max_chars} 字（超出 {excess} 字）。"
+        "请删繁就简：删重复例子、合并并列知识点、缩短每层句子；"
+        "总字数靠删内容不靠堆段，禁止加长单段或新增话题；"
+        "先写 segments 再拼接 narration，输出前逐段核对字数与总和后再输出 JSON。"
     )
     if prefix:
         return f"{prefix}\n{msg}"
@@ -262,7 +311,7 @@ class DeepSeekClient(LLMClient):
                 "Authorization": f"Bearer {self._api_key}",
                 "Content-Type": "application/json",
             },
-            json=build_deepseek_chat_payload(
+            json=_build_deepseek_chat_payload(
                 model=self._model,
                 system=system,
                 user=user,
@@ -401,6 +450,7 @@ class DeepSeekClient(LLMClient):
         min_chars = _min_narration_chars_for_script(
             narration_target_words=narration_target_words,
         )
+        max_chars = narration_accept_max_chars(narration_target_words)
         seg_target = (
             get_settings().segment_target_sec
             if segment_target_sec is None
@@ -414,7 +464,7 @@ class DeepSeekClient(LLMClient):
         truncation_attempts = 0
         for attempt in range(_storyboard_length_max_attempts()):
             raise_if_job_cancelled(job)
-            prompts = build_storyboard_prompts(
+            prompts = build_board_prompts(
                 title,
                 feedback=length_feedback,
                 segment_target_sec=segment_target_sec,
@@ -459,6 +509,19 @@ class DeepSeekClient(LLMClient):
             if not data.get("visual_style"):
                 raise ValueError("LLM storyboard response missing visual_style")
             chars = _narration_char_count(str(data.get("narration") or ""))
+            if chars > max_chars:
+                length_feedback = _narration_too_long_feedback(
+                    chars,
+                    max_chars,
+                    prefix=feedback if attempt == 0 and feedback else None,
+                )
+                logger.warning(
+                    "storyboard narration too long (attempt %d): %d > %d",
+                    attempt + 1,
+                    chars,
+                    max_chars,
+                )
+                continue
             if chars >= min_chars:
                 raise_if_job_cancelled(job)
                 return data
@@ -469,10 +532,12 @@ class DeepSeekClient(LLMClient):
             )
         if data is not None:
             data = _assemble_storyboard_narration(data)
-            data = self._expand_narration_if_needed(
-                data, min_chars=min_chars, mode="storyboard", job=job
-            )
-            data = _assemble_storyboard_narration(data)
+            chars = _narration_char_count(str(data.get("narration") or ""))
+            if chars <= max_chars:
+                data = self._expand_narration_if_needed(
+                    data, min_chars=min_chars, mode="storyboard", job=job
+                )
+                data = _assemble_storyboard_narration(data)
         raise_if_job_cancelled(job)
         return data
 
@@ -701,6 +766,7 @@ class DeepSeekClient(LLMClient):
             narration_target_words=narration_target_words,
             video_timeline=video_timeline,
         )
+        max_chars = narration_accept_max_chars(narration_target_words)
         length_feedback: str | None = feedback
         data: dict[str, Any] | None = None
         for attempt in range(_storyboard_length_max_attempts()):
@@ -720,6 +786,19 @@ class DeepSeekClient(LLMClient):
             for seg in data["segments"]:
                 seg.setdefault("visual_mode", "material")
             chars = _narration_char_count(str(data.get("narration") or ""))
+            if chars > max_chars:
+                length_feedback = _narration_too_long_feedback(
+                    chars,
+                    max_chars,
+                    prefix=feedback if attempt == 0 and feedback else None,
+                )
+                logger.warning(
+                    "material script narration too long (attempt %d): %d > %d",
+                    attempt + 1,
+                    chars,
+                    max_chars,
+                )
+                continue
             if chars >= min_chars:
                 return data
             length_feedback = _narration_length_feedback(
@@ -728,9 +807,11 @@ class DeepSeekClient(LLMClient):
                 prefix=feedback if attempt == 0 and feedback else None,
             )
         if data is not None:
-            data = self._expand_narration_if_needed(
-                data, min_chars=min_chars, mode="material", job=job
-            )
+            chars = _narration_char_count(str(data.get("narration") or ""))
+            if chars <= max_chars:
+                data = self._expand_narration_if_needed(
+                    data, min_chars=min_chars, mode="material", job=job
+                )
         raise_if_job_cancelled(job)
         return data
 
@@ -784,12 +865,12 @@ class DeepSeekClient(LLMClient):
         size_hint: str | None = None,
         business_override: str | None = None,
     ) -> dict[str, str]:
-        from app.services.llm.llm_sd15_prompt import (
+        from app.services.segment.image.image_sd15 import (
             build_sd15_prompt_system,
             build_sd15_prompt_user,
+            parse_image_size,
             parse_sd15_prompt_payload,
         )
-        from app.services.visual.image_sd15 import parse_image_size
 
         raw, _ = self._chat_json(
             build_sd15_prompt_system(business_override=business_override),
@@ -812,12 +893,62 @@ class DeepSeekClient(LLMClient):
         count: int = 10,
         system_prompt: str | None = None,
         user_prompt: str | None = None,
-        track: str | None = None,
+        category: str | None = None,
+        keywords: str | list[str] | None = None,
     ) -> list[dict[str, str]]:
         settings = get_settings()
         count = max(1, min(count, 20))
-        system = system_prompt or build_topic_system_prompt(max_title_len=settings.max_title_length, track=track)
-        user = user_prompt.strip() if user_prompt else build_topic_user_prompt(theme=theme, count=count)
-        raw, _ = self._chat_json(system, user)
-        topics = parse_topics_payload(raw, max_title_len=settings.max_title_length)
-        return topics[:count]
+        system = system_prompt or build_topic_system_prompt(
+            max_title_len=settings.max_title_length,
+            category=category,
+            keywords=keywords,
+            count=count,
+        )
+        user = (
+            user_prompt.strip()
+            if user_prompt
+            else build_topic_user_prompt(
+                category=category,
+                theme=theme,
+                count=count,
+                keywords=keywords,
+            )
+        )
+        user_base = user
+        last_exc: ValueError | None = None
+        max_attempts = 2
+        for attempt in range(max_attempts):
+            raw, _ = self._chat_json(system, user)
+            try:
+                topics = parse_topics_payload(raw, max_title_len=settings.max_title_length)
+                return topics[:count]
+            except ValueError as exc:
+                if not is_topic_parse_retryable(exc):
+                    raise
+                last_exc = exc
+                if attempt + 1 >= max_attempts:
+                    break
+                feedback = format_topic_parse_feedback(
+                    raw,
+                    max_title_len=settings.max_title_length,
+                )
+                retry_extra = ""
+                if "问号对话体" in feedback or "问号后" in feedback:
+                    retry_extra = (
+                        "\n【特别强调】title 必须包含中文问号「？」并写完整反驳半句；"
+                        "禁止再次输出无问号的陈述句。"
+                    )
+                logger.warning(
+                    "[TOPIC] llm retry all entries filtered attempt=%d/%d",
+                    attempt + 1,
+                    max_attempts,
+                )
+                user = (
+                    f"{user_base}\n\n"
+                    "【重试】上一轮输出的标题均未通过规则，请严格按对话反转式重写："
+                    "「误区问句？+一步反驳（够你跑路、真以为、压根等，勿句句明明开头）」，"
+                    "禁止百科式提问、半句问法、仅语气词收尾。\n"
+                    f"{feedback}{retry_extra}"
+                )
+        assert last_exc is not None
+        raise last_exc

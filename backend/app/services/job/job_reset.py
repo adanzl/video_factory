@@ -13,7 +13,7 @@ from app.core.pipelines import (
     stages_for,
 )
 from app.utils.stage_names import normalize_stage
-from app.repositories import job_log_repo, job_repo, segment_repo
+from app.repositories import repo_job_log, repo_job, repo_segment
 from app.repositories.connection import connection
 
 __all__ = ["prepare_for_action", "prepare_job_rerun", "reset_job_from_stage"]
@@ -94,8 +94,8 @@ def _clear_merge_artifacts(media_dir: Path) -> None:
 
 
 def _clear_tts_artifacts(conn, job_id: int, media_dir: Path) -> None:
-    segment_repo.clear_segment_durations(conn, job_id)
-    job_repo.update_job(conn, job_id, audio_path=None, subtitle_path=None, tts_usage_json=None)
+    repo_segment.clear_segment_durations(conn, job_id)
+    repo_job.update_job(conn, job_id, audio_path=None, subtitle_path=None, tts_usage_json=None)
     audio_dir = media_dir / "audio"
     for name in ("narration.mp3", "subtitles.srt", "subtitle_cues.json"):
         _delete_files([audio_dir / name])
@@ -109,8 +109,8 @@ def _clear_tts_artifacts(conn, job_id: int, media_dir: Path) -> None:
 def _clear_segment_clips(conn, job_id: int, media_dir: Path) -> None:
     """TTS 变更后：clip 依赖字幕时间轴，静图可保留。"""
     _archive_wan_clips(media_dir)
-    segment_repo.clear_segment_clips(conn, job_id, None)
-    segment_repo.clear_segment_durations(conn, job_id)
+    repo_segment.clear_segment_clips(conn, job_id, None)
+    repo_segment.clear_segment_durations(conn, job_id)
     clips_dir = media_dir / "segments"
     if clips_dir.exists():
         for clip in clips_dir.glob("*.mp4"):
@@ -119,7 +119,7 @@ def _clear_segment_clips(conn, job_id: int, media_dir: Path) -> None:
 
 def _clear_all_segment_media(conn, job_id: int, media_dir: Path) -> None:
     _archive_wan_clips(media_dir)
-    segment_repo.clear_segment_media(conn, job_id, None)
+    repo_segment.clear_segment_media(conn, job_id, None)
     images_dir = media_dir / "images"
     if images_dir.exists():
         for img in images_dir.glob("*.png"):
@@ -136,7 +136,7 @@ def _clear_partial_segment_media(
     media_dir: Path,
     segment_indices: list[int],
 ) -> None:
-    segment_repo.clear_segment_clips_only(conn, job_id, segment_indices)
+    repo_segment.clear_segment_clips_only(conn, job_id, segment_indices)
     clip_names = [f"{index}.mp4" for index in segment_indices]
     _archive_wan_clips(media_dir, clip_names=clip_names)
     for index in segment_indices:
@@ -154,12 +154,12 @@ def _clear_downstream(conn, job_id: int, stage: str, media_dir: Path, job: dict)
     idx = stage_index(stage, job)
 
     if idx < stage_index("intro", job):
-        job_repo.update_job(conn, job_id, cover_path=None)
+        repo_job.update_job(conn, job_id, cover_path=None)
         _delete_files([media_dir / "cover.jpg"])
 
     if pipe == PIPELINE_MATERIAL:
         if idx < stage_index("merge", job):
-            job_repo.update_job(conn, job_id, final_path=None)
+            repo_job.update_job(conn, job_id, final_path=None)
             _clear_merge_artifacts(media_dir)
         return
 
@@ -167,7 +167,7 @@ def _clear_downstream(conn, job_id: int, stage: str, media_dir: Path, job: dict)
         _clear_segment_clips(conn, job_id, media_dir)
 
     if idx < stage_index("merge", job):
-        job_repo.update_job(conn, job_id, final_path=None)
+        repo_job.update_job(conn, job_id, final_path=None)
         _clear_merge_artifacts(media_dir)
 
 
@@ -177,7 +177,7 @@ def _clear_segment_images(
     media_dir: Path,
     segment_indices: list[int] | None,
 ) -> None:
-    segment_repo.clear_segment_media(conn, job_id, segment_indices)
+    repo_segment.clear_segment_media(conn, job_id, segment_indices)
     if segment_indices:
         for index in segment_indices:
             _delete_files([media_dir / "images" / f"{index}.png"])
@@ -209,7 +209,7 @@ def _clear_stage_self(
 
     if stage == "prepare":
         _delete_files([media_dir / "base.mp4", media_dir / "base_meta.json"])
-        job_repo.update_job(conn, job_id, base_path=None)
+        repo_job.update_job(conn, job_id, base_path=None)
         return
 
     if stage in {"title", "script"}:
@@ -217,8 +217,8 @@ def _clear_stage_self(
         reset_script_json = None
         if preserve_base:
             reset_script_json = _material_script_reset_seed(job)
-        segment_repo.delete_segments(conn, job_id)
-        job_repo.update_job(
+        repo_segment.delete_segments(conn, job_id)
+        repo_job.update_job(
             conn,
             job_id,
             script_json=reset_script_json,
@@ -243,7 +243,7 @@ def _clear_stage_self(
         return
 
     if stage == "intro":
-        job_repo.update_job(conn, job_id, intro_path=None, cover_path=None)
+        repo_job.update_job(conn, job_id, intro_path=None, cover_path=None)
         if media_dir.exists():
             _delete_files(
                 [media_dir / "intro.mp4", media_dir / "intro.png", media_dir / "cover.jpg"]
@@ -269,7 +269,7 @@ def _clear_stage_self(
         return
 
     if stage == "merge":
-        job_repo.update_job(conn, job_id, final_path=None)
+        repo_job.update_job(conn, job_id, final_path=None)
         if media_dir.exists():
             _clear_merge_artifacts(media_dir)
 
@@ -292,14 +292,14 @@ def prepare_for_action(
         segment_scope = None
     elif action == "script/imagePrompts":
         with connection() as conn:
-            job = job_repo.get_job(conn, job_id)
+            job = repo_job.get_job(conn, job_id)
             script = job.get("script_json")
             if not isinstance(script, dict):
                 raise ValueError("script not ready")
             if not (script.get("segments") or []):
                 raise ValueError("no segments")
-            job_log_repo.append_log(conn, job_id, "script", f"action={action}")
-            return job_repo.update_job(
+            repo_job_log.append_log(conn, job_id, "script", f"action={action}")
+            return repo_job.update_job(
                 conn,
                 job_id,
                 status="pending",
@@ -322,7 +322,7 @@ def prepare_for_action(
     media_dir = settings.video_data_dir / str(job_id)
 
     with connection() as conn:
-        job = job_repo.get_job(conn, job_id)
+        job = repo_job.get_job(conn, job_id)
         if stage not in stages_for(job) or stage == "done":
             raise ValueError(f"invalid action: {action}")
         if is_material_job(job) and action.startswith("segment/"):
@@ -338,7 +338,7 @@ def prepare_for_action(
         )
         _clear_downstream(conn, job_id, stage, media_dir, job)
 
-        job = job_repo.update_job(
+        job = repo_job.update_job(
             conn,
             job_id,
             stage=stage,
@@ -349,7 +349,7 @@ def prepare_for_action(
         detail = f"action={action}"
         if segment_indices:
             detail += f", segments={segment_indices}"
-        job_log_repo.append_log(conn, job_id, stage, detail)
+        repo_job_log.append_log(conn, job_id, stage, detail)
         return job
 
 
@@ -375,7 +375,7 @@ def prepare_job_rerun(
     media_dir = settings.video_data_dir / str(job_id)
 
     with connection() as conn:
-        job = job_repo.get_job(conn, job_id)
+        job = repo_job.get_job(conn, job_id)
         if stage not in stages_for(job) or stage == "done":
             raise ValueError(f"invalid stage: {stage}")
         _clear_stage_self(
@@ -389,7 +389,7 @@ def prepare_job_rerun(
         )
         _clear_downstream(conn, job_id, stage, media_dir, job)
 
-        job = job_repo.update_job(
+        job = repo_job.update_job(
             conn,
             job_id,
             stage=stage,
@@ -400,7 +400,7 @@ def prepare_job_rerun(
         detail = f"rerun [{mode}] stage={stage}"
         if segment_indices:
             detail += f", segments={segment_indices}"
-        job_log_repo.append_log(conn, job_id, stage, detail)
+        repo_job_log.append_log(conn, job_id, stage, detail)
         return job
 
 
