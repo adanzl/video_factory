@@ -1,4 +1,7 @@
-"""TTS 段音频首尾裁切：按 CosyVoice 字级时间戳对齐，去掉段首段尾空白。"""
+"""TTS 段音频尾裁切：按 CosyVoice 字级时间戳去掉段尾空白。
+
+段首不裁：首字 begin 常远滞后于真实发音起点，裁段首易切掉句首（如「可是」）。
+"""
 
 from __future__ import annotations
 
@@ -57,17 +60,15 @@ def plan_tts_segment_trim(
     min_leading_ms: int = 80,
     min_trailing_ms: int = 50,
 ) -> TrimPlan:
-    """仅依据字级时间戳计算裁切：首字 begin 之前、末字 end 之后。
+    """计算裁切计划：仅裁段尾，段首 leading_ms 恒为 0。
 
-    CosyVoice 首字 begin 常滞后于真实发音起点，head_pad_ms 保留段首缓冲，避免切掉句首。
+    head_pad_ms / min_leading_ms 保留参数兼容，段首不再使用。
     """
+    _ = head_pad_ms, min_leading_ms
     if not words or duration_ms <= 0:
         return TrimPlan(leading_ms=0, trailing_ms=0)
 
     leading_ms = 0
-    first_begin = words[0].begin_time_ms
-    if first_begin >= min_leading_ms:
-        leading_ms = max(0, first_begin - head_pad_ms)
 
     trailing_ms = 0
     tail_gap = duration_ms - words[-1].end_time_ms
@@ -76,8 +77,7 @@ def plan_tts_segment_trim(
 
     keep_ms = 120
     max_trim = max(0, duration_ms - keep_ms)
-    leading_ms = min(leading_ms, max_trim)
-    trailing_ms = min(trailing_ms, max(0, max_trim - leading_ms))
+    trailing_ms = min(trailing_ms, max_trim)
     return TrimPlan(leading_ms=leading_ms, trailing_ms=trailing_ms)
 
 
@@ -136,7 +136,7 @@ def apply_tts_segment_trim(
     head_pad_ms: int = 150,
     tail_pad_ms: int = 20,
 ) -> list[TimedWord]:
-    """就地裁切段音频，并按首字 begin 平移字级时间戳。"""
+    """就地裁切段尾静音；字级时间戳仅在裁过段首时平移（当前段首不裁）。"""
     duration_ms = int(round(probe_duration(path) * 1000))
     plan = plan_tts_segment_trim(
         words,
@@ -148,7 +148,11 @@ def apply_tts_segment_trim(
         return words
 
     _trim_audio(path, plan)
-    shifted = shift_word_timestamps(words, plan.leading_ms)
+    result = (
+        words
+        if plan.leading_ms <= 0
+        else shift_word_timestamps(words, plan.leading_ms)
+    )
     logger.info(
         "tts segment trim %s leading=%sms trailing=%sms duration %.2fs -> %.2fs",
         path.name,
@@ -157,4 +161,4 @@ def apply_tts_segment_trim(
         duration_ms / 1000.0,
         probe_duration(path),
     )
-    return shifted
+    return result
