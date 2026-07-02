@@ -22,9 +22,10 @@ def test_prepare_lead_in_skips_other_voices():
     assert text == "可是"
 
 
-def test_prepare_lead_in_skips_non_weak_start():
-    text, lead = prepare_lead_in("首先，开始", voice=CLONED_VOICE)
-    assert lead is None
+def test_prepare_lead_in_for_any_cloned_segment():
+    text, lead = prepare_lead_in("其实呀，地震发生时", voice=CLONED_VOICE)
+    assert lead == "那，"
+    assert text == "那，其实呀，地震发生时"
 
 
 def test_strip_tts_lead_in_shifts_words_without_file(tmp_path):
@@ -38,7 +39,7 @@ def test_strip_tts_lead_in_shifts_words_without_file(tmp_path):
     ]
 
     def fake_trim(_path, plan):
-        assert plan.leading_ms == 900
+        assert plan.leading_ms == 885
         assert plan.trailing_ms == 0
 
     import app.services.tts.tts_leadin as leadin_mod
@@ -51,5 +52,5 @@ def test_strip_tts_lead_in_shifts_words_without_file(tmp_path):
         leadin_mod._trim_audio = orig
 
     assert [w.text for w in out] == ["可", "是"]
-    assert out[0].begin_time_ms == 0
-    assert out[1].begin_time_ms == 200
+    assert out[0].begin_time_ms == 15
+    assert out[1].begin_time_ms == 215
