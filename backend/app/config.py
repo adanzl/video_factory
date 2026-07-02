@@ -142,8 +142,6 @@ class Config:
         self.wan_t2i_poll_max_attempts: int = int(os.getenv("WAN_T2I_POLL_MAX_ATTEMPTS", "45"))
         self.max_title_length: int = int(os.getenv("MAX_TITLE_LENGTH", "16"))
         self.segment_target_sec: float = float(os.getenv("SEGMENT_TARGET_SEC", "16"))
-        self.target_final_duration_sec: float = float(os.getenv("TARGET_FINAL_DURATION_SEC", "90"))
-        self.intro_duration_budget_sec: float = float(os.getenv("INTRO_DURATION_BUDGET_SEC", "2"))
         self.final_min_duration_sec: float = float(
             os.getenv("FINAL_MIN_DURATION_SEC", str(55 if final_strict else 55))
         )

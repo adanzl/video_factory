@@ -35,6 +35,7 @@ export interface RunStageActionPayload {
   title?: string;
   segment_target_sec?: number;
   max_title_length?: number;
+  estimated_duration_min?: number;
   narration_target_words?: number;
   skip_title_optimize?: boolean;
   generate_image_prompts?: boolean;
@@ -51,6 +52,7 @@ export interface PreviewScriptPromptsPayload {
   title?: string;
   segment_target_sec?: number;
   max_title_length?: number;
+  estimated_duration_min?: number;
   narration_target_words?: number;
   skip_title_optimize?: boolean;
   supplementary_info?: string;

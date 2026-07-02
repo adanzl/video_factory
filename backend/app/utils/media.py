@@ -241,7 +241,7 @@ def storyboard_compact_output(
     segment_target_sec: float,
 ) -> bool:
     """长稿分镜是否用紧凑 JSON（省略 narration/word_count，后端拼接）。"""
-    # 默认 standard 线约 400 字 / 5 段即启用，省出输出 token 给各段 text
+    # 约 400 字 / 5 段即启用，省出输出 token 给各段 text
     if segment_target_sec <= 0:
         return narration_target >= 400
     cap = segment_text_char_cap(segment_target_sec)
@@ -250,26 +250,45 @@ def storyboard_compact_output(
     return narration_target >= 400 or seg_count >= 5
 
 
-def body_duration_for_target_final(
-    target_final_sec: float,
+def narration_target_for_minutes(
+    minutes: float,
     *,
-    intro_budget_sec: float,
+    chars_per_sec: float = NARRATION_CHARS_PER_SEC,
+    intro_budget_sec: float = 2.0,
+) -> int:
+    """按成片分钟数估算口播目标字数（5 字/秒）。"""
+    body = max(30.0, minutes * 60.0 - intro_budget_sec)
+    target = int(body * chars_per_sec * NARRATION_FILL_RATIO)
+    return max(1, min(NARRATION_MAX_CHARS, target))
+
+
+def estimated_minutes_from_narration_words(
+    words: int,
+    *,
+    intro_budget_sec: float = 2.0,
 ) -> float:
-    """成片目标时长扣除片头预算后的正文秒数。"""
-    return max(30.0, target_final_sec - intro_budget_sec)
+    """由口播目标字数反推预计成片时长（分钟，含片头预算）。"""
+    if words <= 0:
+        return 1.0
+    body_sec = float(words) / (NARRATION_CHARS_PER_SEC * NARRATION_FILL_RATIO)
+    total_sec = max(30.0, body_sec) + intro_budget_sec
+    return round(total_sec / 60.0, 1)
 
 
-def default_narration_target_words(settings: Config | None = None) -> int:
-    """standard 线默认口播目标字数（由 TARGET_FINAL_DURATION_SEC 推导）。"""
-    if settings is None:
-        from app.config import get_settings
+DEFAULT_STANDARD_VIDEO_MINUTES = 6.0
+DEFAULT_HISTORY_NARRATION_WORDS = 1800
+DEFAULT_HISTORY_VIDEO_MINUTES = estimated_minutes_from_narration_words(
+    DEFAULT_HISTORY_NARRATION_WORDS
+)
 
-        settings = get_settings()
-    body = body_duration_for_target_final(
-        settings.target_final_duration_sec,
-        intro_budget_sec=settings.intro_duration_budget_sec,
-    )
-    return estimate_narration_target_words(body)
+
+def default_narration_target_words(settings: object | None = None) -> int:
+    """standard 线默认口播目标字数（约 6 分钟成片）。"""
+    _ = settings
+    return narration_target_for_minutes(DEFAULT_STANDARD_VIDEO_MINUTES)
+
+
+DEFAULT_NARRATION_TARGET_WORDS = default_narration_target_words()
 
 
 def min_narration_chars_for_target(narration_target_words: int | None = None) -> int:
@@ -301,18 +320,6 @@ def narration_word_range(narration_target_words: int | None = None) -> tuple[int
 def narration_soft_min_chars(required_chars: int) -> int:
     """略低于硬性下限时仍放行（带警告）。"""
     return max(1, int(required_chars * NARRATION_SOFT_MIN_RATIO))
-
-
-def narration_target_for_minutes(
-    minutes: float,
-    *,
-    chars_per_sec: float = NARRATION_CHARS_PER_SEC,
-    intro_budget_sec: float = 2.0,
-) -> int:
-    """按成片分钟数估算口播目标字数（5 字/秒）。"""
-    body = max(30.0, minutes * 60.0 - intro_budget_sec)
-    target = int(body * chars_per_sec * NARRATION_FILL_RATIO)
-    return max(1, min(NARRATION_MAX_CHARS, target))
 
 
 def _read_base_meta(media_dir: Path) -> dict:

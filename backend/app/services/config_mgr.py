@@ -117,8 +117,6 @@ CONFIG_GROUPS: tuple[ConfigGroupDef, ...] = (
             _f("brand_name", "BRAND_NAME", "品牌名"),
             _f("max_title_length", "MAX_TITLE_LENGTH", "标题最大字数", "number", min_value=8, max_value=40),
             _f("segment_target_sec", "SEGMENT_TARGET_SEC", "单镜口播上限 (秒)", "number", min_value=0, max_value=60),
-            _f("target_final_duration_sec", "TARGET_FINAL_DURATION_SEC", "目标成片时长 (秒)", "number", min_value=30, max_value=900),
-            _f("intro_duration_budget_sec", "INTRO_DURATION_BUDGET_SEC", "片头时长预算 (秒)", "number", min_value=0, max_value=10),
             _f("final_min_duration_sec", "FINAL_MIN_DURATION_SEC", "成片最短 (秒)", "number", min_value=10, max_value=300),
             _f("final_max_duration_sec", "FINAL_MAX_DURATION_SEC", "成片最长 (秒)", "number", min_value=60, max_value=1800),
         ),

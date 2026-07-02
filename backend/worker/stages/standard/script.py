@@ -16,16 +16,20 @@ from app.quality.quality_mgr import (
     skip_image_prompt_check,
     skip_narration_check,
 )
-from app.quality.image_prompt import MIN_SD15_PROMPT_EN_WORDS
+from app.quality.image_prompt import MIN_SD15_PROMPT_EN_WORDS, image_prompt_target_chars
 from app.repositories import repo_job_log, repo_job, repo_segment
 from app.repositories.connection import connection
 from app.services.llm.llm_mgr import llm_mgr
 from app.services.script.script_mgr import script_mgr
 from app.utils.job_cancel import job_cancel
-from app.utils.job_info import content_style_from_job
+from app.utils.job_info import (
+    content_style_from_job,
+    resolve_estimated_duration_min,
+    resolve_narration_target_words,
+    script_params_from_info,
+)
 from app.utils.media import (
     assign_segment_timings,
-    default_narration_target_words,
     min_narration_chars_for_target,
     narration_accept_min_chars,
     NARRATION_ABS_MIN_CHARS,
@@ -477,19 +481,27 @@ class ScriptStage(StageExecutor):
             if ctx.script_supplementary_info and ctx.script_supplementary_info.strip()
             else None
         )
+        saved_script = script_params_from_info(ctx.job.get("info"))
+        content_style = content_style_from_job(ctx.job)
         if narration_target_words is None:
-            narration_target_words = default_narration_target_words()
+            narration_target_words = resolve_narration_target_words(
+                saved_script,
+                content_style=content_style,
+            )
+            estimated_min = resolve_estimated_duration_min(
+                saved_script,
+                content_style=content_style,
+            )
             with connection() as conn:
                 repo_job_log.append_log(
                     conn,
                     ctx.job["id"],
                     self.name,
                     f"auto narration target: {narration_target_words} chars "
-                    f"(from target_final={get_settings().target_final_duration_sec}s)",
+                    f"(estimated_duration_min={estimated_min})",
                 )
         min_narration_chars = _min_narration_chars(narration_target_words)
         accept_narration_chars = _accept_narration_chars(narration_target_words)
-        content_style = content_style_from_job(ctx.job)
         last_exc: Exception | None = None
         script: dict | None = None
         feedback: str | None = None

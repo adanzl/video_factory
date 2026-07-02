@@ -446,6 +446,7 @@ const SEGMENT_EXTRA_COLUMNS = [
 const SCRIPT_PARAM_KEYS = [
   "segment_target_sec",
   "max_title_length",
+  "estimated_duration_min",
   "narration_target_words",
   "skip_title_optimize",
   "generate_image_prompts",
@@ -869,11 +870,18 @@ function initScriptParamsFromInfo() {
   applyFiniteNumber(scriptParams.max_title_length, value => {
     maxTitleLength.value = value;
   });
-  applyFiniteNumber(scriptParams.narration_target_words, value => {
-    narrationTargetWords.value = value;
-    estimatedDurationMin.value = estimatedMinutesFromNarrationWords(value);
+  applyFiniteNumber(scriptParams.estimated_duration_min, value => {
+    estimatedDurationMin.value = value;
+    narrationTargetWords.value = narrationTargetFromEstimatedMinutes(value);
     narrationWordsTouched.value = true;
   });
+  if (scriptParams.estimated_duration_min == null) {
+    applyFiniteNumber(scriptParams.narration_target_words, value => {
+      narrationTargetWords.value = value;
+      estimatedDurationMin.value = estimatedMinutesFromNarrationWords(value);
+      narrationWordsTouched.value = true;
+    });
+  }
   if (typeof scriptParams.skip_title_optimize === "boolean") {
     skipTitleOptimize.value = scriptParams.skip_title_optimize;
   }
@@ -893,6 +901,7 @@ const buildScriptPreviewParams = (title: string) => ({
   title,
   segment_target_sec: segmentTargetSec.value,
   max_title_length: maxTitleLength.value,
+  estimated_duration_min: estimatedDurationMin.value,
   narration_target_words: Math.round(narrationTargetWords.value),
   skip_title_optimize: skipTitleOptimize.value,
   supplementary_info: supplementaryInfo.value.trim() || undefined,
@@ -906,6 +915,7 @@ const buildRunPayload = (toEnd: boolean, trimmedTitle: string, words: number): R
     id: props.job.id,
     to_end: toEnd,
     title: trimmedTitle,
+    estimated_duration_min: estimatedDurationMin.value,
     narration_target_words: Math.round(words),
   };
   if (Number.isFinite(segmentTargetSec.value)) {

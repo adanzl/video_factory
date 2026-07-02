@@ -5,6 +5,13 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from app.utils.media import (
+    DEFAULT_HISTORY_VIDEO_MINUTES,
+    DEFAULT_STANDARD_VIDEO_MINUTES,
+    default_narration_target_words,
+    narration_target_for_minutes,
+)
+
 ORIENTATION_AUTO = "auto"
 ORIENTATION_PORTRAIT = "portrait"
 ORIENTATION_LANDSCAPE = "landscape"
@@ -277,12 +284,71 @@ def merge_job_info(existing: str | dict | None, **updates: Any) -> dict[str, Any
 _SCRIPT_PARAM_KEYS = (
     "segment_target_sec",
     "max_title_length",
+    "estimated_duration_min",
     "narration_target_words",
     "skip_title_optimize",
     "generate_image_prompts",
     "supplementary_info",
     "video_timeline",
 )
+
+
+def _optional_positive_float(value: object) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        parsed = float(value)
+        return parsed if parsed > 0 else None
+    return None
+
+
+def _optional_positive_int(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value > 0 else None
+    if isinstance(value, float) and value.is_integer():
+        parsed = int(value)
+        return parsed if parsed > 0 else None
+    return None
+
+
+def resolve_estimated_duration_min(
+    script: dict[str, Any],
+    *,
+    content_style: str | None = None,
+) -> float:
+    """从 script 参数解析预计成片时长（分钟）。"""
+    raw_min = _optional_positive_float(script.get("estimated_duration_min"))
+    if raw_min is not None:
+        return raw_min
+    raw_words = _optional_positive_int(script.get("narration_target_words"))
+    if raw_words is not None:
+        from app.utils.media import estimated_minutes_from_narration_words
+
+        return estimated_minutes_from_narration_words(raw_words)
+    if content_style == CONTENT_STYLE_HISTORICAL_MYSTERY:
+        return DEFAULT_HISTORY_VIDEO_MINUTES
+    return DEFAULT_STANDARD_VIDEO_MINUTES
+
+
+def resolve_narration_target_words(
+    script: dict[str, Any],
+    *,
+    content_style: str | None = None,
+) -> int:
+    """由预计时长或显式口播目标解析口播字数。"""
+    raw_min = _optional_positive_float(script.get("estimated_duration_min"))
+    if raw_min is not None:
+        return narration_target_for_minutes(raw_min)
+    raw_words = _optional_positive_int(script.get("narration_target_words"))
+    if raw_words is not None:
+        return raw_words
+    if content_style == CONTENT_STYLE_HISTORICAL_MYSTERY:
+        from app.utils.media import DEFAULT_HISTORY_NARRATION_WORDS
+
+        return DEFAULT_HISTORY_NARRATION_WORDS
+    return default_narration_target_words()
 
 
 def _migrate_flat_script_params(info: dict[str, Any]) -> None:
@@ -309,6 +375,7 @@ def build_script_params(
     *,
     segment_target_sec: float | None = None,
     max_title_length: int | None = None,
+    estimated_duration_min: float | None = None,
     narration_target_words: int | None = None,
     skip_title_optimize: bool = False,
     generate_image_prompts: bool = False,
@@ -327,10 +394,12 @@ def build_script_params(
         params["segment_target_sec"] = 8
     if max_title_length is not None:
         params["max_title_length"] = max_title_length
+    if estimated_duration_min is not None:
+        params["estimated_duration_min"] = estimated_duration_min
+    elif content_style == CONTENT_STYLE_HISTORICAL_MYSTERY:
+        params["estimated_duration_min"] = DEFAULT_HISTORY_VIDEO_MINUTES
     if narration_target_words is not None:
         params["narration_target_words"] = narration_target_words
-    elif content_style == CONTENT_STYLE_HISTORICAL_MYSTERY:
-        params["narration_target_words"] = 1800
     if supplementary_info is not None:
         stripped = supplementary_info.strip()
         params["supplementary_info"] = stripped or None
@@ -345,6 +414,7 @@ def merge_job_script_params(
     *,
     segment_target_sec: float | None = None,
     max_title_length: int | None = None,
+    estimated_duration_min: float | None = None,
     narration_target_words: int | None = None,
     skip_title_optimize: bool = False,
     generate_image_prompts: bool = False,
@@ -360,6 +430,7 @@ def merge_job_script_params(
     updates = build_script_params(
         segment_target_sec=segment_target_sec,
         max_title_length=max_title_length,
+        estimated_duration_min=estimated_duration_min,
         narration_target_words=narration_target_words,
         skip_title_optimize=skip_title_optimize,
         generate_image_prompts=generate_image_prompts,

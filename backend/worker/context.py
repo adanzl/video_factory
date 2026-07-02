@@ -46,7 +46,7 @@ class JobContext:
         script_video_timeline: str | None = None,
         material_narration: str | None = None,
     ) -> "JobContext":
-        from app.utils.job_info import script_params_from_info
+        from app.utils.job_info import script_params_from_info, content_style_from_job, resolve_narration_target_words
 
         settings = get_settings()
         media_dir = settings.video_data_dir / str(job["id"])
@@ -56,6 +56,58 @@ class JobContext:
             saved_extra = saved_script.get("supplementary_info")
             if saved_extra and str(saved_extra).strip():
                 script_supplementary_info = str(saved_extra).strip()
+
+        def _saved_float(key: str) -> float | None:
+            raw = saved_script.get(key)
+            if isinstance(raw, bool) or raw is None:
+                return None
+            if isinstance(raw, (int, float)):
+                value = float(raw)
+                return value if value > 0 else None
+            return None
+
+        def _saved_int(key: str) -> int | None:
+            raw = saved_script.get(key)
+            if isinstance(raw, bool) or raw is None:
+                return None
+            if isinstance(raw, int):
+                return raw if raw > 0 else None
+            if isinstance(raw, float) and raw.is_integer():
+                parsed = int(raw)
+                return parsed if parsed > 0 else None
+            return None
+
+        resolved_segment_target_sec = (
+            script_segment_target_sec
+            if script_segment_target_sec is not None
+            else _saved_float("segment_target_sec")
+        )
+        resolved_max_title_length = (
+            script_max_title_length
+            if script_max_title_length is not None
+            else _saved_int("max_title_length")
+        )
+        resolved_narration_target_words = (
+            script_narration_target_words
+            if script_narration_target_words is not None
+            else resolve_narration_target_words(
+                saved_script,
+                content_style=content_style_from_job(job),
+            )
+        )
+        if script_skip_title_optimize is False:
+            saved_skip = saved_script.get("skip_title_optimize")
+            if isinstance(saved_skip, bool):
+                script_skip_title_optimize = saved_skip
+        if script_generate_image_prompts is False:
+            saved_generate = saved_script.get("generate_image_prompts")
+            if isinstance(saved_generate, bool):
+                script_generate_image_prompts = saved_generate
+        if not script_video_timeline or not str(script_video_timeline).strip():
+            saved_timeline = saved_script.get("video_timeline")
+            if saved_timeline and str(saved_timeline).strip():
+                script_video_timeline = str(saved_timeline).strip()
+
         return cls(
             job=job,
             settings=settings,
@@ -66,9 +118,9 @@ class JobContext:
             intro_orientation=intro_orientation,
             tts_speech_rate=tts_speech_rate,
             tts_voice_id=tts_voice_id,
-            script_segment_target_sec=script_segment_target_sec,
-            script_max_title_length=script_max_title_length,
-            script_narration_target_words=script_narration_target_words,
+            script_segment_target_sec=resolved_segment_target_sec,
+            script_max_title_length=resolved_max_title_length,
+            script_narration_target_words=resolved_narration_target_words,
             script_skip_title_optimize=script_skip_title_optimize,
             script_generate_image_prompts=script_generate_image_prompts,
             script_supplementary_info=script_supplementary_info,

@@ -36,6 +36,7 @@ def _script_action_detail(
     title: str | None,
     segment_target_sec: float | None,
     max_title_length: int | None,
+    estimated_duration_min: float | None,
     narration_target_words: int | None,
     skip_title_optimize: bool,
     generate_image_prompts: bool,
@@ -55,6 +56,8 @@ def _script_action_detail(
         parts.append(f"segment_target_sec={segment_target_sec}")
     if max_title_length is not None:
         parts.append(f"max_title_length={max_title_length}")
+    if estimated_duration_min is not None:
+        parts.append(f"estimated_duration_min={estimated_duration_min}")
     if narration_target_words is not None:
         parts.append(f"narration_target_words={narration_target_words}")
     if skip_title_optimize:
@@ -477,6 +480,7 @@ class JobMgr:
         title: str | None = None,
         segment_target_sec: float | None = None,
         max_title_length: int | None = None,
+        estimated_duration_min: float | None = None,
         narration_target_words: int | None = None,
         skip_title_optimize: bool = False,
         generate_image_prompts: bool = False,
@@ -497,6 +501,7 @@ class JobMgr:
                     job.get("info"),
                     segment_target_sec=segment_target_sec,
                     max_title_length=max_title_length,
+                    estimated_duration_min=estimated_duration_min,
                     narration_target_words=narration_target_words,
                     skip_title_optimize=skip_title_optimize,
                     generate_image_prompts=generate_image_prompts,
@@ -522,6 +527,7 @@ class JobMgr:
             title=title,
             segment_target_sec=segment_target_sec,
             max_title_length=max_title_length,
+            estimated_duration_min=estimated_duration_min,
             narration_target_words=narration_target_words,
             skip_title_optimize=skip_title_optimize,
             generate_image_prompts=generate_image_prompts,
@@ -571,6 +577,7 @@ class JobMgr:
         title: str | None = None,
         segment_target_sec: float | None = None,
         max_title_length: int | None = None,
+        estimated_duration_min: float | None = None,
         narration_target_words: int | None = None,
         skip_title_optimize: bool = False,
         supplementary_info: str | None = None,
