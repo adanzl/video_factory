@@ -28,6 +28,7 @@ __all__ = [
     "check_segment_images",
     "check_tts_audio",
     "detect_memoir_narration",
+    "detect_narration_repetition",
     "merge_quality_report",
     "quality_mgr",
     "skip_board_check",
@@ -37,6 +38,7 @@ __all__ = [
 
 check_narration = script.check_narration
 detect_memoir_narration = script.detect_memoir_narration
+detect_narration_repetition = script.detect_narration_repetition
 skip_narration_check = script.skip_narration_check
 check_board = script.check_board
 skip_board_check = script.skip_board_check
@@ -96,6 +98,7 @@ class QualityMgr:
     # --- script ---
     check_narration = staticmethod(script.check_narration)
     detect_memoir_narration = staticmethod(script.detect_memoir_narration)
+    detect_narration_repetition = staticmethod(script.detect_narration_repetition)
     skip_narration_check = staticmethod(script.skip_narration_check)
     check_board = staticmethod(script.check_board)
     skip_board_check = staticmethod(script.skip_board_check)

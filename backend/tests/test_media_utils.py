@@ -24,7 +24,14 @@ def test_default_narration_target_words_is_six_minutes():
 def test_segment_text_char_cap():
     assert segment_text_char_cap(16) == 65
     assert segment_text_char_cap(5) == 20
-    assert segment_text_char_cap(28) == 114
+    assert segment_text_char_cap(28) == 65  # 口播硬顶 16s
+
+
+def test_effective_segment_narration_sec_caps_at_sixteen():
+    from app.utils.media import MAX_SEGMENT_NARRATION_SEC, effective_segment_narration_sec
+
+    assert effective_segment_narration_sec(28) == MAX_SEGMENT_NARRATION_SEC
+    assert effective_segment_narration_sec(10) == 10
 
 
 def test_narration_target_for_minutes_uses_default_speech_rate():

@@ -47,9 +47,19 @@ def test_storyboard_length_budget_life_28s_per_segment_cap():
         segment_target_sec=28.0,
         content_style=CONTENT_STYLE_LIFE_EXPERIENCE,
     )
-    assert "114" in budget
+    assert "65" in budget
     assert "须至少" in budget
     assert "输出前硬性自检" in budget
+
+
+def test_build_storyboard_prompts_includes_anti_repetition_rule():
+    prompts = build_storyboard_prompts(
+        "地震预警的秘密",
+        narration_target_words=800,
+        segment_target_sec=16.0,
+        job={"pipeline": "standard", "content_style": "science_child"},
+    )
+    assert "禁止复读" in prompts["system"]
 
 
 def test_build_storyboard_prompts_includes_length_budget():

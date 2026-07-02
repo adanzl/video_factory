@@ -57,13 +57,25 @@ def material_final_min_duration_sec(
     return max(5.0, expected - slack)
 
 
+# 单镜口播时长硬顶（秒）；超过则须缩字或拆段
+MAX_SEGMENT_NARRATION_SEC = 16.0
+
+
+def effective_segment_narration_sec(segment_target_sec: float) -> float:
+    """单镜口播时长上限：配置值与 MAX_SEGMENT_NARRATION_SEC 取较小者。"""
+    if segment_target_sec <= 0:
+        return MAX_SEGMENT_NARRATION_SEC
+    return min(float(segment_target_sec), MAX_SEGMENT_NARRATION_SEC)
+
+
 def segment_text_char_cap(
     segment_target_sec: float,
     *,
     chars_per_sec: float = DEFAULT_SPEECH_CHARS_PER_SEC,
 ) -> int:
-    """单镜口播 text 字数上限（chars_per_sec × segment_target_sec）。"""
-    return max(20, int(segment_target_sec * chars_per_sec))
+    """单镜口播 text 字数上限（chars_per_sec × 有效口播秒数）。"""
+    sec = effective_segment_narration_sec(segment_target_sec)
+    return max(20, int(sec * chars_per_sec))
 
 
 def segment_text_hard_cap(
@@ -134,7 +146,10 @@ def estimate_segment_duration_sec(
     chars = segment_narration_chars(text)
     duration = chars / chars_per_sec if chars else 0.0
     if segment_target_sec and segment_target_sec > 0:
-        duration = min(duration, float(segment_target_sec))
+        cap_sec = effective_segment_narration_sec(float(segment_target_sec))
+    else:
+        cap_sec = MAX_SEGMENT_NARRATION_SEC
+    duration = min(duration, cap_sec)
     return round(max(0.1, duration), 3)
 
 

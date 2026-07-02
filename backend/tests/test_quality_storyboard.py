@@ -16,21 +16,21 @@ def _script_with_segments(count: int, *, chars_per_segment: int = 80) -> dict:
 
 def test_check_board_uses_run_segment_target_not_settings_default():
     """28s 单镜下 12 段足够；若误用默认 16s 会误判段数不足。"""
-    script = _script_with_segments(12, chars_per_segment=114)
+    script = _script_with_segments(12, chars_per_segment=60)
     report = check_board(script, segment_target_sec=28.0)
     assert report.level == "pass"
 
 
 def test_check_board_passes_with_fewer_segments_than_word_budget():
     """段数少于字数÷单镜上限估算值时仍可通过（不再强制最少分镜数）。"""
-    cap = 65  # 16s × 4.1字/秒
+    cap = 65  # 16s × 4.1字/秒（口播硬顶 16s，与 segment_target_sec=28 无关）
     script = _script_with_segments(8, chars_per_segment=cap)
     report = check_board(script, segment_target_sec=16.0)
     assert report.level == "pass"
 
 
 def test_check_board_reads_segment_target_from_script_json():
-    script = _script_with_segments(12, chars_per_segment=114)
+    script = _script_with_segments(12, chars_per_segment=60)
     script["segment_target_sec"] = 28.0
     report = check_board(script)
     assert report.level == "pass"
@@ -45,7 +45,7 @@ def test_check_board_passes_when_narration_exceeds_target_with_few_segments():
         "narration_target_words": 404,
         "segment_target_sec": 28.0,
         "segments": [
-            {"segment_index": i + 1, "text": "字" * 114} for i in range(3)
+            {"segment_index": i + 1, "text": "字" * 60} for i in range(3)
         ],
     }
     report = check_board(script, segment_target_sec=28.0)

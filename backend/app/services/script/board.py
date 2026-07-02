@@ -19,6 +19,7 @@ from app.utils.job_info import (
 from app.utils.media import (
     NARRATION_WRITING_TARGET_RATIO,
     default_narration_target_words,
+    effective_segment_narration_sec,
     min_narration_chars_for_target,
     narration_accept_min_chars,
     narration_accept_max_chars,
@@ -326,6 +327,14 @@ _NARRATION_ANTI_MEMOIR_RULE = (
     "产业、科技类须客观第三人称科普，用「很多人/业内/数据显示」表述即可。"
 )
 
+_NARRATION_ANTI_REPETITION_RULE = (
+    "【禁止复读】同一比喻/类比、同一组数字对比、同一操作步骤全文只讲一次；"
+    "相邻两段不得复述刚讲过的句子或意象；"
+    "「你看」全文最多 3～4 次，禁止连续两段都以「你看」起句；"
+    "段数多时后段换用「其实呀」「关键是」「想一想」等不同引子，"
+    "禁止每段机械套用相同三层模板。"
+)
+
 _SCIENCE_STRUCTURE_RULE = (
     "【结构规范】须依次包含以下四部分：\n"
     "1. 开场钩子（3 秒内抛出反常识现象或「咦，这是怎么回事呀？」式疑问，禁止「大家好」开场）\n"
@@ -333,7 +342,8 @@ _SCIENCE_STRUCTURE_RULE = (
     "3. 机制拆解（核心原理、因果链条、关键对比或简单实验，只讲一层不贪多）\n"
     "4. 收束与回味（一句童趣总结，可留轻量思考，禁止清单式连读多知识点）\n"
     "长稿须在同一主题下加深细节与比喻，禁止为凑时长新增并列知识点或换题；"
-    "段数多时每段只推进一小步，不要每段开一个全新话题。"
+    "段数多时每段只推进一小步，不要每段开一个全新话题；"
+    "禁止用不同措辞重复讲同一机制（如电波与地震波速度对比只讲一次）。"
     "禁止倒叙；讲完一个完整因果，最后一句可轻量引导互动。"
 )
 
@@ -438,7 +448,7 @@ def _storyboard_execution_headline(
     if segment_target_sec > 0:
         cap = plan["segment_cap"]
         hard_cap = segment_text_hard_cap(segment_target_sec)
-        sec = _format_segment_target_sec(segment_target_sec)
+        sec = _format_segment_target_sec(effective_segment_narration_sec(segment_target_sec))
         return (
             f"【总字数·硬上限】须在 {hard_min}-{hard_max} 字之间（写作目标约 {writing_target} 字），"
             f"超过 {hard_max} 字整稿作废，优先删例子/删并列知识点，禁止加长单段。"
@@ -637,7 +647,8 @@ def _storyboard_segment_rule(target: float, profile_style: str = "") -> str:
     )
     if target <= 0:
         return common + "不约束单镜时长，按口播内容逻辑切分，段数由内容决定。"
-    sec = _format_segment_target_sec(target)
+    narration_sec = effective_segment_narration_sec(target)
+    sec = _format_segment_target_sec(narration_sec)
     cap = segment_text_char_cap(target)
     hard_cap = segment_text_hard_cap(target)
     comfort = segment_comfort_chars(cap)
@@ -725,6 +736,7 @@ def build_board_prompts(
         f"{narration_clause}"
         f"narration口吻：{_narration_voice_rule(profile_style)}"
         f"{_NARRATION_ANTI_MEMOIR_RULE}"
+        f"{_NARRATION_ANTI_REPETITION_RULE}"
         f"{_structure_rule(orientation=profile_orientation, content_style=profile_style)}"
         "结构完整有开头结尾。"
         "禁止口播开头空泛自我介绍或冗长人设铺垫。"
@@ -735,7 +747,7 @@ def build_board_prompts(
         f"{_json_output_clause(_STORYBOARD_JSON_EXAMPLE_COMPACT if compact_output else _STORYBOARD_JSON_EXAMPLE)}"
     )
     if target > 0:
-        sec = _format_segment_target_sec(target)
+        sec = _format_segment_target_sec(effective_segment_narration_sec(target))
         split_hint = f"并按单镜口播上限{sec}秒动态切分分镜"
     else:
         split_hint = "并按口播内容逻辑动态切分分镜"
@@ -1022,7 +1034,8 @@ def build_segment_shrink_prompts(
                 "max_chars": cap,
             }
         )
-    sec = int(segment_target_sec) if segment_target_sec == int(segment_target_sec) else segment_target_sec
+    narration_sec = effective_segment_narration_sec(segment_target_sec)
+    sec = int(narration_sec) if narration_sec == int(narration_sec) else narration_sec
     system = (
         "你是口播缩字编辑。指定分镜口播略超单镜时长上限，只做删字瘦身，禁止改写文风。"
         '输出 JSON：{"segments": [{"segment_index": 序号, "text": "缩短后的口播"}, ...]}。'

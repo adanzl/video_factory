@@ -11,6 +11,7 @@ from app.quality.quality_mgr import (
     check_board,
     check_image_prompt,
     check_narration,
+    detect_narration_repetition,
     merge_quality_report,
     skip_board_check,
     skip_image_prompt_check,
@@ -200,6 +201,7 @@ def _validation_retry_scope(exc: ScriptValidationError) -> str:
         for key in (
             "narration too short",
             "narration too long",
+            "narration repetition",
             "segment text exceeds",
             "missing visual_brief",
             "text is empty",
@@ -257,6 +259,14 @@ def _validation_feedback(
             exc,
             max_chars=narration_accept_max_chars(narration_target_words),
         )
+    if "narration repetition" in msg:
+        return (
+            f"{msg}。"
+            "请删去重复比喻、重复数字对比与重复避震步骤；"
+            "相邻两段不得复述同一句或同一意象；"
+            "「你看」全文最多 3～4 次，后段换用「其实呀」「关键是」等不同引子；"
+            "同一科普点只讲一次，段数多时每段只推进一小步。"
+        )
     if segment_target_sec and segment_target_sec > 0:
         if "segment text exceeds" in msg:
             cap = segment_text_char_cap(
@@ -308,7 +318,7 @@ def _classify_segment_overflow(
     speech_chars_per_sec: float,
 ) -> tuple[list[int], list[tuple[int, int]]]:
     """返回 (可缩字分镜序号, 严重超长列表)。"""
-    hard_cap = segment_text_hard_cap(
+    cap = segment_text_char_cap(
         segment_target_sec, chars_per_sec=speech_chars_per_sec
     )
     shrink_max = segment_text_shrink_max(
@@ -318,7 +328,7 @@ def _classify_segment_overflow(
     severe: list[tuple[int, int]] = []
     for seg in segments:
         chars = _narration_chars(seg.get("text") or "")
-        if chars <= hard_cap:
+        if chars <= cap:
             continue
         idx = int(seg.get("segment_index", -1))
         if chars <= shrink_max:
@@ -442,6 +452,12 @@ def _validate_script(
             raise ScriptValidationError(
                 f"narration too short: {chars} chars (need >= {MIN_ACCEPT_NARRATION_CHARS})",
                 retryable=False,
+            )
+        repeat_issue = detect_narration_repetition(narration, segments)
+        if repeat_issue:
+            raise ScriptValidationError(
+                f"narration repetition: {repeat_issue}",
+                retryable=True,
             )
     if not segments:
         raise ScriptValidationError("no segments", retryable=False)
