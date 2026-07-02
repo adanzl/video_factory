@@ -31,6 +31,7 @@ from app.utils.job_info import (
 from app.utils.media import (
     assign_segment_timings,
     min_narration_chars_for_target,
+    narration_accept_max_chars,
     narration_accept_min_chars,
     NARRATION_ABS_MIN_CHARS,
     narration_soft_min_chars,
@@ -177,6 +178,19 @@ def _narration_short_feedback(exc: ScriptValidationError, *, min_chars: int) -> 
     )
 
 
+def _narration_long_feedback(exc: ScriptValidationError, *, max_chars: int) -> str:
+    msg = str(exc)
+    if "narration too long" not in msg:
+        return msg
+    return (
+        f"{msg}。"
+        f"请删繁就简，将总字数压至 ≤ {max_chars} 字（不含空格换行）："
+        "删重复例子、合并并列知识点、缩短每层句子；"
+        "总字数靠删内容不靠堆段，禁止加长单段或新增话题；"
+        "先写 segments 再拼接 narration，输出前逐段核对字数。"
+    )
+
+
 def _validation_retry_scope(exc: ScriptValidationError) -> str:
     msg = str(exc)
     if "image_prompt too short" in msg:
@@ -185,6 +199,7 @@ def _validation_retry_scope(exc: ScriptValidationError) -> str:
         key in msg
         for key in (
             "narration too short",
+            "narration too long",
             "segment text exceeds",
             "missing visual_brief",
             "text is empty",
@@ -236,6 +251,11 @@ def _validation_feedback(
     msg = str(exc)
     if "narration too short" in msg:
         return _narration_short_feedback(exc, min_chars=accept_chars)
+    if "narration too long" in msg:
+        return _narration_long_feedback(
+            exc,
+            max_chars=narration_accept_max_chars(narration_target_words),
+        )
     if segment_target_sec and segment_target_sec > 0:
         if "segment text exceeds" in msg:
             cap = segment_text_char_cap(segment_target_sec)
@@ -367,6 +387,13 @@ def _validate_script(
     warnings: list[str] = []
     chars = _narration_chars(narration)
     if check_narration:
+        if narration_target_words is not None:
+            accept_max = narration_accept_max_chars(narration_target_words)
+            if chars > accept_max:
+                raise ScriptValidationError(
+                    f"narration too long: {chars} chars (need <= {accept_max})",
+                    retryable=True,
+                )
         if chars >= accept_min:
             pass
         elif narration_target_words is not None and chars >= _narration_retry_min_chars(

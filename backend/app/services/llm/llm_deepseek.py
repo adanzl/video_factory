@@ -39,6 +39,7 @@ from app.utils.job_cancel import raise_if_job_cancelled
 from app.utils.media import (
     default_narration_target_words,
     min_narration_chars_for_target,
+    narration_accept_max_chars,
     narration_accept_min_chars,
     segment_text_char_cap,
     storyboard_compact_output,
@@ -95,6 +96,24 @@ def _narration_length_feedback(
         f"narration 仅 {chars} 字，验收下限 {min_chars} 字，还差 {deficit} 字。"
         "请扩写各段 text（每层补具体细节/案例/步骤），"
         "先写 segments 再拼接 narration，输出前核对 word_count 与拼接一致性后再输出 JSON。"
+    )
+    if prefix:
+        return f"{prefix}\n{msg}"
+    return msg
+
+
+def _narration_too_long_feedback(
+    chars: int,
+    max_chars: int,
+    *,
+    prefix: str | None = None,
+) -> str:
+    excess = max(1, chars - max_chars)
+    msg = (
+        f"narration 达 {chars} 字，超过验收上限 {max_chars} 字（超出 {excess} 字）。"
+        "请删繁就简：删重复例子、合并并列知识点、缩短每层句子；"
+        "总字数靠删内容不靠堆段，禁止加长单段或新增话题；"
+        "先写 segments 再拼接 narration，输出前逐段核对字数与总和后再输出 JSON。"
     )
     if prefix:
         return f"{prefix}\n{msg}"
@@ -431,6 +450,7 @@ class DeepSeekClient(LLMClient):
         min_chars = _min_narration_chars_for_script(
             narration_target_words=narration_target_words,
         )
+        max_chars = narration_accept_max_chars(narration_target_words)
         seg_target = (
             get_settings().segment_target_sec
             if segment_target_sec is None
@@ -489,6 +509,19 @@ class DeepSeekClient(LLMClient):
             if not data.get("visual_style"):
                 raise ValueError("LLM storyboard response missing visual_style")
             chars = _narration_char_count(str(data.get("narration") or ""))
+            if chars > max_chars:
+                length_feedback = _narration_too_long_feedback(
+                    chars,
+                    max_chars,
+                    prefix=feedback if attempt == 0 and feedback else None,
+                )
+                logger.warning(
+                    "storyboard narration too long (attempt %d): %d > %d",
+                    attempt + 1,
+                    chars,
+                    max_chars,
+                )
+                continue
             if chars >= min_chars:
                 raise_if_job_cancelled(job)
                 return data
@@ -499,10 +532,12 @@ class DeepSeekClient(LLMClient):
             )
         if data is not None:
             data = _assemble_storyboard_narration(data)
-            data = self._expand_narration_if_needed(
-                data, min_chars=min_chars, mode="storyboard", job=job
-            )
-            data = _assemble_storyboard_narration(data)
+            chars = _narration_char_count(str(data.get("narration") or ""))
+            if chars <= max_chars:
+                data = self._expand_narration_if_needed(
+                    data, min_chars=min_chars, mode="storyboard", job=job
+                )
+                data = _assemble_storyboard_narration(data)
         raise_if_job_cancelled(job)
         return data
 
@@ -731,6 +766,7 @@ class DeepSeekClient(LLMClient):
             narration_target_words=narration_target_words,
             video_timeline=video_timeline,
         )
+        max_chars = narration_accept_max_chars(narration_target_words)
         length_feedback: str | None = feedback
         data: dict[str, Any] | None = None
         for attempt in range(_storyboard_length_max_attempts()):
@@ -750,6 +786,19 @@ class DeepSeekClient(LLMClient):
             for seg in data["segments"]:
                 seg.setdefault("visual_mode", "material")
             chars = _narration_char_count(str(data.get("narration") or ""))
+            if chars > max_chars:
+                length_feedback = _narration_too_long_feedback(
+                    chars,
+                    max_chars,
+                    prefix=feedback if attempt == 0 and feedback else None,
+                )
+                logger.warning(
+                    "material script narration too long (attempt %d): %d > %d",
+                    attempt + 1,
+                    chars,
+                    max_chars,
+                )
+                continue
             if chars >= min_chars:
                 return data
             length_feedback = _narration_length_feedback(
@@ -758,9 +807,11 @@ class DeepSeekClient(LLMClient):
                 prefix=feedback if attempt == 0 and feedback else None,
             )
         if data is not None:
-            data = self._expand_narration_if_needed(
-                data, min_chars=min_chars, mode="material", job=job
-            )
+            chars = _narration_char_count(str(data.get("narration") or ""))
+            if chars <= max_chars:
+                data = self._expand_narration_if_needed(
+                    data, min_chars=min_chars, mode="material", job=job
+                )
         raise_if_job_cancelled(job)
         return data
 

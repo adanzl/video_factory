@@ -2,6 +2,7 @@ import pytest
 
 from app.utils.media import (
     default_narration_target_words,
+    narration_accept_max_chars,
     narration_accept_min_chars,
     segment_text_char_cap,
     segment_text_hard_cap,
@@ -246,6 +247,36 @@ def test_validate_script_narration_soft_zone_accepts_with_warning(monkeypatch):
     )
     assert warnings
     assert str(chars) in warnings[0]
+
+
+def test_validate_script_narration_too_long_retries(monkeypatch):
+    monkeypatch.setattr(
+        "worker.stages.standard.script.get_settings",
+        lambda: type("S", (), {"segment_target_sec": 0, "max_title_length": 20})(),
+    )
+    target = 1646
+    accept_max = narration_accept_max_chars(target)
+    script = _valid_script(
+        narration="x" * (accept_max + 200),
+        segments=[
+            {
+                "segment_index": 1,
+                "text": "x" * (accept_max + 200),
+                "visual_brief": _VISUAL_BRIEF,
+                "image_prompt": _IMAGE_PROMPT,
+            }
+        ],
+    )
+    with pytest.raises(ScriptValidationError) as exc_info:
+        _validate_script(
+            script,
+            min_narration_chars=_min_narration_chars(target),
+            accept_narration_chars=narration_accept_min_chars(target),
+            narration_target_words=target,
+        )
+    assert exc_info.value.retryable is True
+    assert "narration too long" in str(exc_info.value)
+    assert str(accept_max) in str(exc_info.value)
 
 
 def test_classify_segment_overflow_mild_vs_severe():

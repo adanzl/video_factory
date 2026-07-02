@@ -9,6 +9,7 @@ from app.quality.models import QualityReport
 from app.utils.job_info import resolve_narration_target_words
 from app.utils.media import (
     NARRATION_ABS_MIN_CHARS,
+    narration_accept_max_chars,
     narration_accept_min_chars,
     segment_text_char_cap,
 )
@@ -60,10 +61,23 @@ def check_narration(script: dict) -> QualityReport:
             details={"reason": f"memoir style narration: {memoir_issue}"},
         )
     word_count = _narration_chars(narration)
+    target = _resolve_narration_target(script)
     min_chars = max(
         NARRATION_ABS_MIN_CHARS,
-        narration_accept_min_chars(_resolve_narration_target(script)),
+        narration_accept_min_chars(target),
     )
+    max_chars = narration_accept_max_chars(target)
+    if word_count > max_chars:
+        return QualityReport(
+            level="major",
+            step="copy",
+            fail_stage="script",
+            details={
+                "reason": "narration too long",
+                "word_count": word_count,
+                "max_expected": max_chars,
+            },
+        )
     if word_count < min_chars:
         return QualityReport(
             level="major",
