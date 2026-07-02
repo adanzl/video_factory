@@ -279,7 +279,7 @@ def run_script_image_prompts(
     from app.quality.gate import apply_quality_checks
     from app.repositories import job_log_repo, job_repo, segment_repo
     from app.services.llm.llm_mgr import llm_mgr
-    from app.services.llm.llm_script_prompts import build_image_prompts_prompts
+    from app.services.script.prompts import build_image_prompts_prompts
     from app.utils.job_info import resolve_image_provider, resolve_include_sd15_prompt
     from worker.stages.standard.script import _log_llm_timing
 
@@ -332,7 +332,7 @@ def run_script_image_prompts(
     updated.pop("_llm_timing", None)
 
     from app.config import get_settings
-    from app.services.llm.llm_script_timeline import parse_video_timeline
+    from app.services.script.timeline import parse_video_timeline
     from app.utils.media import assign_segment_timings
 
     segment_target_sec = updated.get("segment_target_sec")

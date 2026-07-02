@@ -29,18 +29,18 @@ from app.utils.media import (
     segment_text_char_cap,
     segment_text_hard_cap,
 )
-from app.services.llm.llm_script_timeline import (
+from app.services.script.description import (
+    build_video_description_system_prompt,
+    build_video_description_user_prompt,
+)
+from app.services.script.timeline import (
     VideoTimeline,
     append_timeline_to_user,
     narration_range_for_timeline,
     parse_video_timeline,
     timeline_system_clause,
 )
-from app.services.llm.llm_script_description import (
-    build_video_description_system_prompt,
-    build_video_description_user_prompt,
-)
-from app.services.llm.llm_script_title import (
+from app.services.script.title import (
     build_title_optimize_system_prompt,
     build_title_optimize_user_prompt,
 )

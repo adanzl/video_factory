@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.services.llm.llm_topics import normalize_title
+from app.services.topic.text import normalize_title
 
 _TITLE_HOOK_FORMULAS = (
     "【高点击标题模板】择最适合口播内容的一种强化（可组合，总字数仍须≤上限）："

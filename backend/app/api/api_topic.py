@@ -8,7 +8,6 @@ from app.api.errors import APIError
 from app.api.utils import (
     get_json_body,
     get_query,
-    json_accepted,
     json_ok,
     parse_bool,
     parse_id,
@@ -17,13 +16,18 @@ from app.api.utils import (
     parse_query_int,
     parse_str,
 )
-from app.services.llm.llm_mgr import llm_mgr
+from app.services.topic.catalog import TOPIC_CATEGORIES, catalog_for_api
 from app.services.topic.topic_mgr import topic_mgr
-from app.services.topic.topic_task_mgr import topic_task_mgr
 
 bp = Blueprint("api_topic", __name__, url_prefix="/v_factory/api/topic")
 
 logger = logging.getLogger(__name__)
+
+
+@bp.get("/catalog")
+def topic_catalog_route():
+    """选题大分类、模板与提示配置。"""
+    return json_ok({"categories": catalog_for_api()})
 
 
 @bp.get("/list")
@@ -36,23 +40,33 @@ def list_titles_route():
 
 @bp.post("/gen")
 def generate_topic_route():
-    """生成选题标题列表，支持自定义 system / user 提示词。"""
+    """生成选题标题列表，支持大分类 + 关键词，或自定义 prompt。"""
     data = get_json_body()
     theme = parse_str(data, "theme", required=False)
     user_prompt = parse_str(data, "user_prompt", required=False)
-    if not theme and not user_prompt:
-        raise APIError("theme or user_prompt is required")
+    system_prompt = parse_str(data, "system_prompt", required=False)
+    category = parse_str(data, "category", required=False)
+    keywords = parse_str(data, "keywords", required=False)
+
+    custom_prompt = bool(system_prompt or user_prompt)
+    if not custom_prompt:
+        if not category:
+            raise APIError("category is required unless using custom prompts")
+        if category not in TOPIC_CATEGORIES:
+            raise APIError(f"category must be one of: {', '.join(sorted(TOPIC_CATEGORIES))}")
+        if not theme and not keywords:
+            raise APIError("theme or keywords is required for structured generation")
 
     count = parse_int(data, "count", 10, minimum=1, maximum=20)
     save = parse_bool(data, "save", default=False)
-    system_prompt = parse_str(data, "system_prompt", required=False)
 
     logger.info(
-        "[TOPIC] api /gen theme=%r count=%d save=%s custom_prompt=%s",
+        "[TOPIC] api /gen category=%r theme=%r count=%d save=%s custom_prompt=%s",
+        category or "",
         theme or "",
         count,
         save,
-        bool(system_prompt or user_prompt),
+        custom_prompt,
     )
 
     if save:
@@ -62,64 +76,28 @@ def generate_topic_route():
                 count=count,
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
+                category=category,
+                keywords=keywords or None,
             )
         )
 
-    topics = llm_mgr.generate_topics(
+    topics = topic_mgr.generate_topics(
         theme or "",
         count=count,
         system_prompt=system_prompt,
         user_prompt=user_prompt,
+        category=category,
+        keywords=keywords or None,
     )
     return json_ok(
         {
+            "category": category or "",
             "theme": theme or "",
             "count": len(topics),
             "topics": topics,
             "titles": [item["title"] for item in topics],
         }
     )
-
-
-@bp.post("/hot")
-def import_hot_topics_route():
-    """异步：从 B 站热搜采集、筛选、生成标题并写入选题库（source=热搜）。"""
-    data = get_json_body(required=False)
-    limit = parse_int(data, "limit", 50, minimum=1, maximum=50)
-    count_per_theme = parse_int(data, "count_per_theme", 3, minimum=1, maximum=20)
-    l1_rules = parse_bool(data, "l1_rules", default=False)
-    use_theme_llm = parse_bool(data, "use_theme_llm", default=True)
-    if "min_score" in data:
-        min_score = parse_int(data, "min_score", 70, minimum=0, maximum=100)
-    elif data.get("only_queued") is False:
-        min_score = 0
-    else:
-        min_score = 70
-
-    logger.info(
-        "[TOPIC] api /hot (async) limit=%d count_per_theme=%d l1_rules=%s min_score=%d",
-        limit,
-        count_per_theme,
-        l1_rules,
-        min_score,
-    )
-    return json_accepted(
-        topic_mgr.start_import_from_hot_search(
-            limit=limit,
-            l1_rules=l1_rules,
-            count_per_theme=count_per_theme,
-            use_theme_llm=use_theme_llm,
-            min_score=min_score,
-        )
-    )
-
-
-@bp.get("/hot/task/<task_id>")
-def get_hot_import_task_route(task_id: str):
-    task = topic_task_mgr.get(task_id)
-    if task is None or task.kind != "hot_import":
-        raise APIError("task not found", status_code=404)
-    return json_ok(task.to_dict())
 
 
 @bp.post("/optimize")

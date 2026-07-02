@@ -7,7 +7,7 @@ from app.services.visual.image_sd15 import (
     _stitch_horizontal,
     parse_image_size,
 )
-from app.services.llm.llm_sd15_prompt import pick_business_by_keywords, pick_lora_by_keywords
+from app.services.script.sd15 import pick_business_by_keywords, pick_lora_by_keywords
 
 
 def test_parse_image_size():

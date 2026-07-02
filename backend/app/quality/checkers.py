@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 
 from app.config import get_settings
-from app.services.llm.llm_script_prompts import (
+from app.services.script.prompts import (
     MIN_SD15_PROMPT_EN_WORDS,
     TARGET_SD15_PROMPT_EN_WORDS,
     image_prompt_min_chars,

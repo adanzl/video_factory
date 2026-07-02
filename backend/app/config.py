@@ -197,11 +197,14 @@ class Config:
     sd_timeout_sec: float = float(os.getenv("SD_TIMEOUT_SEC", "600"))
 
     # ========== LLM ==========
+    llm_provider: str = os.getenv("LLM_PROVIDER", "deepseek").strip().lower()
     deepseek_api_key: str | None = _DEEPSEEK_KEY
     deepseek_base_url: str = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
     deepseek_model: str = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
     deepseek_max_tokens: int = int(os.getenv("DEEPSEEK_MAX_TOKENS", "32768"))
     deepseek_thinking_enabled: bool = _bool("DEEPSEEK_THINKING", default=False)
+    agnes_llm_model: str = os.getenv("AGNES_LLM_MODEL", "agnes-2.0-flash")
+    agnes_llm_max_tokens: int = int(os.getenv("AGNES_LLM_MAX_TOKENS", "32768"))
     llm_image_prompt_batch_size: int = int(os.getenv("LLM_IMAGE_PROMPT_BATCH_SIZE", "4"))
 
     # ========== TTS / CosyVoice ==========

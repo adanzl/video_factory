@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.services.llm.llm_script_prompts import (
+from app.services.script.prompts import (
     _narration_word_range,
     _storyboard_length_budget,
     build_segment_shrink_prompts,

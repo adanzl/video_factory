@@ -11,7 +11,7 @@ def _conn() -> sqlite3.Connection:
         CREATE TABLE title (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL,
-            track TEXT,
+            category TEXT,
             template TEXT,
             hook TEXT,
             score INTEGER,

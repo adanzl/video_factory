@@ -15,19 +15,21 @@ from app.utils.job_info import (
     merge_job_script_params,
 )
 from app.services.llm.llm_mgr import llm_mgr
-from app.services.llm.llm_topics import (
+from app.services.topic.catalog import (
+    CATEGORY_HISTORY,
+    normalize_category,
+)
+from app.services.topic.prompts.builder import (
     build_topic_optimize_system_prompt,
     build_topic_optimize_user_prompt,
-    normalize_title,
 )
-from app.services.topic.hot_pipeline import (
-    HOT_SOURCE,
-    HotPipelineOptions,
-    persist_scored_hot_topics,
-    run_hot_pipeline,
+from app.services.topic.text import normalize_title
+from app.services.topic.scorers import (
+    SCORE_THRESHOLD,
+    ScoreResult,
+    score_title,
+    status_from_score,
 )
-from app.services.topic.title_scorer import score_title, status_from_score
-from app.services.topic.topic_task_mgr import topic_task_mgr
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +41,6 @@ def _extract_keyword(title: str) -> str:
     text = re.sub(r"[？?！!，,。.、\s\"\'“”]", "", title)
     if not text:
         return text
-    # 按常用虚词/介词拆段，取第一段（通常是实体名）
     parts = re.split(r"[的与和被在让将给从以于对把到用打上出]", text, maxsplit=1)
     head = parts[0].strip()
     if 2 <= len(head) <= 8:
@@ -113,7 +114,7 @@ class TopicMgr:
                 row = title_repo.insert_title(
                     conn,
                     title=title,
-                    track=item.get("track"),
+                    category=item.get("category"),
                     template=item.get("template"),
                     hook=item.get("hook"),
                     source=source,
@@ -125,22 +126,49 @@ class TopicMgr:
                     added.append(row)
         return {"added": added, "skipped": skipped, "count": len(added)}
 
+    def generate_topics(
+        self,
+        theme: str,
+        *,
+        count: int = 10,
+        category: str | None = None,
+        keywords: str | list[str] | None = None,
+        system_prompt: str | None = None,
+        user_prompt: str | None = None,
+    ) -> list[dict[str, str]]:
+        return llm_mgr.generate_topics(
+            theme,
+            count=count,
+            category=category,
+            keywords=keywords,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+        )
+
     def generate_and_save(
         self,
         theme: str,
         *,
         count: int = 10,
+        category: str | None = None,
+        keywords: str | list[str] | None = None,
         system_prompt: str | None = None,
         user_prompt: str | None = None,
-        track: str | None = None,
     ) -> dict:
-        logger.info("[TOPIC] save start theme=%r count=%d track=%s", theme, count, track)
-        topics = llm_mgr.generate_topics(
+        resolved = normalize_category(category)
+        logger.info(
+            "[TOPIC] save start theme=%r category=%s count=%d",
+            theme,
+            resolved,
+            count,
+        )
+        topics = self.generate_topics(
             theme,
             count=count,
+            category=resolved,
+            keywords=keywords,
             system_prompt=system_prompt,
             user_prompt=user_prompt,
-            track=track,
         )
         result = self.add_topics(topics, source="llm", deduplicate_keyword=True)
         if result["added"]:
@@ -154,6 +182,7 @@ class TopicMgr:
             result["skipped"],
         )
         return {
+            "category": resolved,
             "theme": theme,
             "generated": len(topics),
             **result,
@@ -167,35 +196,38 @@ class TopicMgr:
             raise ValueError("enqueued title cannot be optimized")
 
         settings = get_settings()
-        track = row.get("track")
         template = row.get("template")
+        category = normalize_category(row.get("category"))
         system_prompt = build_topic_optimize_system_prompt(
             max_title_len=settings.max_title_length,
-            track=track,
+            category=category,
         )
         user_prompt = build_topic_optimize_user_prompt(
             title=row["title"],
-            track=track,
+            category=category,
             template=template,
             hook=row.get("hook"),
         )
-        logger.info("[TOPIC] optimize start id=%d title=%r track=%r", title_id, row["title"], track)
-        topics = llm_mgr.generate_topics(
+        logger.info(
+            "[TOPIC] optimize start id=%d title=%r category=%r",
+            title_id,
+            row["title"],
+            category,
+        )
+        topics = self.generate_topics(
             "",
             count=1,
+            category=category,
             system_prompt=system_prompt,
             user_prompt=user_prompt,
-            track=track,
         )
         item = topics[0]
-        if track:
-            item["track"] = track
+        item["category"] = category
         if template:
             item["template"] = template
         new_title = normalize_title(
             item["title"],
             max_len=settings.max_title_length,
-            track=item.get("track", ""),
         )
         if not new_title:
             raise ValueError("LLM returned empty title")
@@ -209,7 +241,7 @@ class TopicMgr:
                 conn,
                 title_id,
                 title=new_title,
-                track=item.get("track"),
+                category=item.get("category"),
                 template=item.get("template"),
                 hook=item.get("hook"),
                 score=None,
@@ -241,7 +273,7 @@ class TopicMgr:
                     continue
                 result = score_title(
                     row["title"],
-                    track=row.get("track"),
+                    category=row.get("category"),
                     template=row.get("template"),
                     hook=row.get("hook"),
                 )
@@ -295,7 +327,7 @@ class TopicMgr:
                     continue
                 if row.get("job_id"):
                     continue
-                is_history = row.get("track") == "历史悬案"
+                is_history = normalize_category(row.get("category")) == CATEGORY_HISTORY
                 seg_sec = 15 if not is_history else 10
                 job = job_repo.create_job(
                     conn,
@@ -344,66 +376,14 @@ class TopicMgr:
         )
         return {"jobs": jobs, "count": len(jobs), "run_mode": run_mode}
 
-    def import_from_hot_search(
-        self,
-        *,
-        limit: int = 50,
-        l1_rules: bool = False,
-        count_per_theme: int = 3,
-        use_theme_llm: bool = True,
-        min_score: int = 70,
-    ) -> dict:
-        logger.info(
-            "[TOPIC] hot import start limit=%d l1_rules=%s count_per_theme=%d min_score=%d",
-            limit,
-            l1_rules,
-            count_per_theme,
-            min_score,
-        )
-        payload = run_hot_pipeline(
-            HotPipelineOptions(
-                limit=limit,
-                l1_rules=l1_rules,
-                count_per_theme=count_per_theme,
-                use_theme_llm=use_theme_llm,
-                convert_themes=True,
-                generate_titles=True,
-            )
-        )
-        topics = payload.get("topics") or []
-        save_result = persist_scored_hot_topics(topics, min_score=min_score)
-        result = {
-            **payload,
-            **save_result,
-        }
-        logger.info(
-            "[TOPIC] hot import done added=%d skipped=%d themes=%d",
-            save_result["count"],
-            save_result["skipped"],
-            payload.get("summary", {}).get("themes", 0),
-        )
-        return result
-
-    def start_import_from_hot_search(
-        self,
-        *,
-        limit: int = 50,
-        l1_rules: bool = False,
-        count_per_theme: int = 3,
-        use_theme_llm: bool = True,
-        min_score: int = 70,
-    ) -> dict:
-        task = topic_task_mgr.start(
-            "hot_import",
-            lambda: self.import_from_hot_search(
-                limit=limit,
-                l1_rules=l1_rules,
-                count_per_theme=count_per_theme,
-                use_theme_llm=use_theme_llm,
-                min_score=min_score,
-            ),
-        )
-        return task.to_dict()
-
 
 topic_mgr = TopicMgr()
+
+__all__ = [
+    "SCORE_THRESHOLD",
+    "ScoreResult",
+    "TopicMgr",
+    "score_title",
+    "status_from_score",
+    "topic_mgr",
+]

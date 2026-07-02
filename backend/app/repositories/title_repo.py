@@ -24,8 +24,8 @@ def list_titles(
     if status:
         rows = conn.execute(
             """
-            SELECT id, title, track, template, hook, score, score_detail,
-                   status, job_id, source, created_at, updated_at
+            SELECT id, title, category, template, hook, score, score_detail,
+                   status, job_id, source, keyword, created_at, updated_at
             FROM title
             WHERE status = ?
             ORDER BY id DESC
@@ -36,8 +36,8 @@ def list_titles(
     else:
         rows = conn.execute(
             """
-            SELECT id, title, track, template, hook, score, score_detail,
-                   status, job_id, source, created_at, updated_at
+            SELECT id, title, category, template, hook, score, score_detail,
+                   status, job_id, source, keyword, created_at, updated_at
             FROM title
             ORDER BY id DESC
             LIMIT ? OFFSET ?
@@ -69,7 +69,7 @@ def insert_title(
     conn: sqlite3.Connection,
     *,
     title: str,
-    track: str | None = None,
+    category: str | None = None,
     template: str | None = None,
     hook: str | None = None,
     source: str = "manual",
@@ -77,10 +77,10 @@ def insert_title(
 ) -> dict | None:
     cur = conn.execute(
         """
-        INSERT OR IGNORE INTO title (title, track, template, hook, source, keyword)
+        INSERT OR IGNORE INTO title (title, category, template, hook, source, keyword)
         VALUES (?, ?, ?, ?, ?, ?)
         """,
-        (title, track, template, hook, source, keyword),
+        (title, category, template, hook, source, keyword),
     )
     if cur.rowcount == 0:
         return None
@@ -90,7 +90,7 @@ def insert_title(
 def update_title(conn: sqlite3.Connection, title_id: int, **fields: Any) -> dict:
     allowed = {
         "title",
-        "track",
+        "category",
         "template",
         "hook",
         "score",
@@ -98,6 +98,7 @@ def update_title(conn: sqlite3.Connection, title_id: int, **fields: Any) -> dict
         "status",
         "job_id",
         "source",
+        "keyword",
     }
     parts: list[str] = ["updated_at = datetime('now')"]
     values: list[Any] = []

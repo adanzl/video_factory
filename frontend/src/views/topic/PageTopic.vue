@@ -59,7 +59,7 @@
       <el-table-column type="selection" width="48" />
       <el-table-column prop="id" label="ID" width="70" />
       <el-table-column prop="title" label="标题" min-width="220" show-overflow-tooltip />
-      <el-table-column prop="track" label="赛道" width="140" show-overflow-tooltip />
+      <el-table-column prop="category" label="分类" width="140" show-overflow-tooltip />
       <el-table-column prop="template" label="模板" width="110" />
       <el-table-column prop="hook" label="钩子" min-width="160" show-overflow-tooltip />
       <el-table-column label="分数" width="80">
@@ -151,22 +151,39 @@
       @size-change="onPageSizeChange"
     />
 
-    <el-dialog v-model="showGenerateDialog" title="AI 生成选题" width="480px" destroy-on-close>
+    <el-dialog v-model="showGenerateDialog" title="AI 生成选题" width="520px" destroy-on-close>
       <el-form label-width="80px">
         <el-form-item label="类型">
           <el-select v-model="generateMode" @change="onGenerateModeChange">
-            <el-option label="热搜选题" value="hot" />
             <el-option label="历史悬案" value="history_mystery" />
             <el-option label="科学原理" value="science" />
+            <el-option label="时事科普" value="current_affairs" />
             <el-option label="自定义" value="custom" />
+          </el-select>
+        </el-form-item>
+        <el-form-item v-if="generateMode === 'custom'" label="大分类">
+          <el-select v-model="generateForm.category">
+            <el-option
+              v-for="cat in topicCatalog"
+              :key="cat.id"
+              :label="cat.label"
+              :value="cat.id"
+            />
           </el-select>
         </el-form-item>
         <el-form-item label="主题">
           <el-input
             v-model="generateForm.theme"
-            :disabled="generateMode !== 'custom'"
-            :placeholder="generateMode === 'custom' ? '如：日常用水用电小常识' : '自动填充，无需输入'"
+            :placeholder="themePlaceholder"
             maxlength="100"
+          />
+        </el-form-item>
+        <el-form-item label="关键词">
+          <el-input
+            v-model="generateForm.keywords"
+            :placeholder="keywordsPlaceholder"
+            maxlength="100"
+            clearable
           />
         </el-form-item>
         <el-form-item label="数量">
@@ -221,7 +238,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref } from "vue";
 import { useRouter } from "vue-router";
 import { Refresh } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
@@ -229,13 +246,18 @@ import {
   deleteLowScoreTopics,
   deleteTopics,
   enqueueTopics,
+  fetchTopicCatalog,
   generateTopics,
-  importHotTopics,
   listTitles,
   optimizeTopic,
   scoreTopics,
 } from "@/api/api-topic";
-import type { EnqueueRunMode, TitleRecord, TitleStatus } from "@/types/topic";
+import type {
+  EnqueueRunMode,
+  TitleRecord,
+  TitleStatus,
+  TopicCategory,
+} from "@/types/topic";
 import { useErrorHandler } from "@/composables/useErrorHandler";
 import { formatDateTime } from "@/utils/date";
 
@@ -265,25 +287,67 @@ const cleanLowMaxScore = ref(75);
 const pendingEnqueueIds = ref<number[]>([]);
 const enqueueRunMode = ref<EnqueueRunMode>("script");
 const generateMode = ref("history_mystery");
+const topicCatalog = ref<TopicCategory[]>([]);
+
+const MODE_CATEGORY: Record<string, string> = {
+  history_mystery: "历史悬案",
+  science: "科学原理",
+  current_affairs: "时事相关科普",
+};
 
 const generateForm = reactive({
+  category: "科学原理",
   theme: "中国历史悬案",
+  keywords: "",
   count: 10,
   save: true,
 });
 
+const activeCategoryId = computed(() => {
+  if (generateMode.value === "custom") {
+    return generateForm.category;
+  }
+  return MODE_CATEGORY[generateMode.value] ?? "";
+});
+
+const activeCategory = computed(() =>
+  topicCatalog.value.find((item) => item.id === activeCategoryId.value)
+);
+
+const themePlaceholder = computed(() => {
+  if (generateMode.value === "custom") {
+    return "如：日常用水用电小常识";
+  }
+  return activeCategory.value?.default_theme || "可选，留空用分类默认";
+});
+
+const keywordsPlaceholder = computed(
+  () => activeCategory.value?.keywords_hint || "可选，逗号分隔"
+);
+
 const onGenerateModeChange = (mode: string) => {
-  if (mode === "hot") {
-    generateForm.theme = "";
-    generateForm.count = 10;
-  } else if (mode === "history_mystery") {
+  generateForm.keywords = "";
+  if (mode === "history_mystery") {
     generateForm.theme = "中国历史悬案";
     generateForm.count = 10;
   } else if (mode === "science") {
     generateForm.theme = "日常科学冷知识";
     generateForm.count = 10;
+  } else if (mode === "current_affairs") {
+    generateForm.theme = "";
+    generateForm.count = 10;
   } else {
     generateForm.theme = "";
+    generateForm.category = "科学原理";
+  }
+};
+
+const loadTopicCatalog = async () => {
+  try {
+    const result = await fetchTopicCatalog();
+    topicCatalog.value = result.categories ?? [];
+  } catch (error) {
+    handleError(error, "加载选题分类失败");
   }
 };
 
@@ -319,8 +383,6 @@ const sourceLabel = (source?: string) => {
   switch (source) {
     case "llm":
       return "AI";
-    case "热搜":
-      return "热搜";
     default:
       return "手动";
   }
@@ -517,34 +579,23 @@ const confirmCleanLow = async () => {
 };
 
 const handleGenerate = async () => {
-  if (generateMode.value === "hot") {
-    generating.value = true;
-    try {
-      await importHotTopics({
-        limit: 50,
-        count_per_theme: generateForm.count,
-        min_score: 70,
-      });
-      ElMessage.success("已提交热搜选题，后台处理中，约 30～60 秒后刷新列表查看");
-      showGenerateDialog.value = false;
-      onGenerateModeChange(generateMode.value);
-    } catch (error) {
-      handleError(error, "导入热搜失败");
-    } finally {
-      generating.value = false;
-    }
+  if (!generateForm.theme.trim() && !generateForm.keywords.trim()) {
+    ElMessage.warning("请填写主题或关键词");
     return;
   }
 
-  if (!generateForm.theme.trim()) {
-    ElMessage.warning("请填写主题方向");
+  const category = activeCategoryId.value;
+  if (!category) {
+    ElMessage.warning("请选择大分类");
     return;
   }
 
   generating.value = true;
   try {
     const result = await generateTopics({
-      theme: generateForm.theme.trim(),
+      category,
+      theme: generateForm.theme.trim() || undefined,
+      keywords: generateForm.keywords.trim() || undefined,
       count: generateForm.count,
       save: generateForm.save,
     });
@@ -564,7 +615,10 @@ const handleGenerate = async () => {
 };
 
 
-onMounted(fetchTitles);
+onMounted(() => {
+  loadTopicCatalog();
+  fetchTitles();
+});
 </script>
 
 <style scoped>

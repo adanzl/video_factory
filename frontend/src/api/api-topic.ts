@@ -6,15 +6,14 @@ import type {
   DeleteLowScoreTopicsResult,
   EnqueueTopicsParams,
   EnqueueTopicsResult,
+  TopicCatalogResult,
   GenerateAndSaveResult,
   GenerateTopicsParams,
   GenerateTopicsResult,
-  ImportHotTopicsParams,
   ListTitlesParams,
   OptimizeTopicResult,
   ScoreTopicsResult,
   TitleRecord,
-  TopicTaskResponse,
 } from "@/types/topic";
 
 export type { TopicItem } from "@/types/topic";
@@ -24,6 +23,11 @@ export async function listTitles(params: ListTitlesParams = {}): Promise<TitleRe
   return Array.isArray(response.data) ? response.data : [];
 }
 
+export async function fetchTopicCatalog(): Promise<TopicCatalogResult> {
+  const response = await api.get<TopicCatalogResult>("/v_factory/api/topic/catalog");
+  return response.data;
+}
+
 export async function generateTopics(
   params: GenerateTopicsParams
 ): Promise<GenerateTopicsResult | GenerateAndSaveResult> {
@@ -31,13 +35,6 @@ export async function generateTopics(
     "/v_factory/api/topic/gen",
     params
   );
-  return response.data;
-}
-
-export async function importHotTopics(
-  params: ImportHotTopicsParams = {}
-): Promise<TopicTaskResponse> {
-  const response = await api.post<TopicTaskResponse>("/v_factory/api/topic/hot", params);
   return response.data;
 }
 
