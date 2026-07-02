@@ -249,18 +249,18 @@ _TECH_SCIENCE_VOICE_RULE = (
 
 _SEGMENT_LAYER_HINT = (
     "三层每层只用一句短话（各 10～25 字），单段总长须遵守单镜字数上限；"
-    "总字数不足时增加 segments 段数，禁止把多句堆进同一段。"
+    "总字数不足时增加 segments 段数，总字数超标时删例子/删并列知识点，禁止把多句堆进同一段。"
 )
 
 _MATERIAL_NARRATION_LENGTH_RULE = (
-    "【撑满字数的写法】每段口播须含三层——"
+    "【口播字数】每段口播须含三层——"
     "①童趣感叹或「你看」式互动；②一个准确科普点；③比喻/拟声/生活联想。"
     "禁止整段仅一句短感叹（如「哇，好厉害呀」）。"
     f"{_SEGMENT_LAYER_HINT}"
-    "【生成顺序】先逐段写满 segments，再原样拼接为 narration，最后统计 word_count；"
-    "若未达字数下限，须当场扩写后再输出 JSON，禁止先输出再指望后处理。"
+    "【生成顺序】先逐段写 segments，再原样拼接为 narration，最后统计 word_count；"
+    "不足下限可当场扩写，超过上限须当场删繁就简，禁止先输出再指望后处理。"
     "【输出前自检】逐段核对：每段 text 是否含三层、是否非空、是否未超单镜上限；"
-    "各段 text 字数之和是否达到写作目标；"
+    "各段 text 字数之和是否落在验收区间内（超标与不足均不合格）；"
     "word_count 是否等于 narration 实际字数（不含空格换行）；"
     "narration 与 segments 按序拼接是否完全一致，不一致须重写。"
 )
@@ -274,12 +274,12 @@ _MYSTERY_NARRATION_VOICE_RULE = (
 )
 
 _MYSTERY_NARRATION_LENGTH_RULE = (
-    "【撑满字数的写法】每段口播须含三层——"
+    "【口播字数】每段口播须含三层——"
     "①一个历史事实或背景细节；②一个「但」字转折（矛盾/疑点/反常）；③一个反问或悬念收尾。"
     "禁止整段仅一句概括。"
     f"{_SEGMENT_LAYER_HINT}"
-    "【生成顺序】先逐段写满 segments，再原样拼接为 narration，最后统计 word_count；"
-    "若未达字数下限，须当场扩写后再输出 JSON，禁止先输出再指望后处理。"
+    "【生成顺序】先逐段写 segments，再原样拼接为 narration，最后统计 word_count；"
+    "不足下限可当场扩写，超过上限须当场删繁就简，禁止先输出再指望后处理。"
 )
 
 _MYSTERY_STRUCTURE_RULE = (
@@ -299,12 +299,12 @@ _LIFE_NARRATION_VOICE_RULE = (
 )
 
 _LIFE_NARRATION_LENGTH_RULE = (
-    "【撑满字数的写法】每段口播须含三层——"
+    "【口播字数】每段口播须含三层——"
     "①常见误区或错误做法；②原因/风险（为什么错）；③正确步骤或可操作结论。"
     "禁止整段仅一句空泛感叹；禁止用长篇第一人称回忆录凑字数。"
     f"{_SEGMENT_LAYER_HINT}"
-    "【生成顺序】先逐段写满 segments，再原样拼接为 narration，最后统计 word_count；"
-    "若未达字数下限，须当场扩写后再输出 JSON，禁止先输出再指望后处理。"
+    "【生成顺序】先逐段写 segments，再原样拼接为 narration，最后统计 word_count；"
+    "不足下限可当场扩写，超过上限须当场删繁就简，禁止先输出再指望后处理。"
 )
 
 _LIFE_EXPERIENCE_STRUCTURE_RULE = (
@@ -332,7 +332,8 @@ _SCIENCE_STRUCTURE_RULE = (
     "2. 背景铺垫（是什么、在哪里、和我们有什么关系，用孩子能懂的话讲清）\n"
     "3. 机制拆解（核心原理、因果链条、关键对比或简单实验，只讲一层不贪多）\n"
     "4. 收束与回味（一句童趣总结，可留轻量思考，禁止清单式连读多知识点）\n"
-    "如果字数预算大，可以按字数分为多个 segments，每个 segment 讲一个独立的小知识点或同一个话题的不同侧面。"
+    "长稿须在同一主题下加深细节与比喻，禁止为凑时长新增并列知识点或换题；"
+    "段数多时每段只推进一小步，不要每段开一个全新话题。"
     "禁止倒叙；讲完一个完整因果，最后一句可轻量引导互动。"
 )
 
@@ -399,7 +400,7 @@ def _writing_target_clause(narration_target: int) -> str:
     pct = int(NARRATION_WRITING_TARGET_RATIO * 100)
     return (
         f"写作目标约 {writing_target} 字（总目标 {narration_target} 字的 {pct}%），"
-        f"验收区间 {lo}-{hi} 字，不要低于下限凑字也不要超标"
+        f"验收硬区间 {lo}-{hi} 字：低于下限可补细节，超过上限须删繁就简，超标与不足均作废"
     )
 
 
@@ -439,22 +440,24 @@ def _storyboard_execution_headline(
         hard_cap = segment_text_hard_cap(segment_target_sec)
         sec = _format_segment_target_sec(segment_target_sec)
         return (
+            f"【总字数·硬上限】须在 {hard_min}-{hard_max} 字之间（写作目标约 {writing_target} 字），"
+            f"超过 {hard_max} 字整稿作废，优先删例子/删并列知识点，禁止加长单段。"
             f"【单段上限·优先】单镜 {sec}s，每段 text 目标 ≤ {per_hi} 字、绝对不得超过 {cap} 字"
             f"（硬上限 {hard_cap} 字，超限整稿无效）。"
             f"「{layers}」三层各一句短话，禁止把多句堆进同一段；超长须拆段。"
-            f"【总字数】须在 {hard_min}-{hard_max} 字之间（写作目标约 {writing_target} 字），至少 {seg_count} 段；"
-            f"每段建议 {per_lo}-{per_hi} 字。"
-            "总字数不足时增加 segments 段数，总字数超标时删繁就简，禁止加长单段或堆砌重复。"
+            f"至少 {seg_count} 段；每段建议 {per_lo}-{per_hi} 字。"
+            "总字数不足时增加 segments 段数，总字数超标时删内容而非堆段。"
             f"（{seg_count}×{per_min}={seg_floor} 字仅为段数底限，总字数须落在 {hard_min}-{hard_max} 字区间内）。"
-            "输出前逐段统计 text 字数，任一超限须拆段后再提交。"
+            "输出前逐段统计 text 字数并核对总和，任一单段超限或总和超标须重写后再提交。"
         )
     return (
-        f"【首要任务】一次性写满口播：总字数须在 {hard_min}-{hard_max} 字之间（写作目标约 {writing_target} 字）。"
+        f"【首要任务】口播总字数须落在 {hard_min}-{hard_max} 字硬区间内（写作目标约 {writing_target} 字），"
+        f"超过 {hard_max} 字整稿作废。"
         f"至少 {seg_count} 段 segments，每段 text 建议 {per_lo}-{per_hi} 字、单段下限 {per_min} 字"
         f"（{seg_count}×{per_min}={seg_floor} 字仅为段数底限，总字数须落在 {hard_min}-{hard_max} 字区间内）。"
         f"每段用「{layers}」三层写法，每层一句短话。"
-        "常见失误：只写 3～4 段短句导致总字数不足；须按段数预算写满后再输出 JSON。"
-        "禁止照抄 JSON 样例短句；字数不足须当场扩写，不要提交短稿。"
+        "常见失误：只写 3～4 段短句导致总字数不足；或堆叠并列知识点导致总字数超标。"
+        "不足可扩写细节，超标须删繁就简，禁止照抄 JSON 样例短句。"
     )
 
 
@@ -485,7 +488,8 @@ def _storyboard_length_budget(
         "【输出前硬性自检，任一项不满足须当场重写后再输出 JSON】"
         f"①segments 数量 ≥ {seg_count_min}；"
         f"{cap_clause}"
-        f"③各段 text 字数之和在 {hard_min}-{hard_max} 字之间（目标约 {writing_target} 字）；"
+        f"③各段 text 字数之和在 {hard_min}-{hard_max} 字之间（目标约 {writing_target} 字，"
+        f"超过 {hard_max} 字须删内容后重写）；"
         "④word_count 等于 narration 实际字数；"
         "⑤narration 与 segments 按序拼接完全一致；"
         "⑥口播无伪亲历/第一人称从业叙事。"
@@ -515,9 +519,27 @@ def _storyboard_length_budget(
         f"须至少 {seg_count_min} 个 segments（按 {writing_target} 字与单段 {per_target_hi} 字估算）；"
         f"每段建议 {per_target_lo}-{per_target_hi} 字、下限 {per_min} 字；"
         f"各段 text 字数之和须在 {hard_min}-{hard_max} 字之间。\n"
-        f"每段用「{layers}」三层写法，每层一句短话；总字数靠加段，禁止加长单段。\n"
+        f"每段用「{layers}」三层写法，每层一句短话；总字数靠加段补不足，靠删内容防超标。\n"
         "【生成顺序】先按段数预算写满各段 segments，再拼接 narration，最后核对 word_count。\n"
         f"{self_check}"
+    )
+
+
+def _storyboard_compact_segment_budget(
+    *,
+    narration_target: int,
+    segment_target_sec: float,
+) -> str:
+    """compact 模式 user 段数预算表，帮助模型心算总字数。"""
+    plan = narration_writing_plan(narration_target, segment_target_sec)
+    hard_max = narration_accept_max_chars(narration_target)
+    seg_min = plan["seg_count_min"]
+    per_hi = plan["per_seg_hi"]
+    seg_max = max(seg_min, (hard_max + per_hi - 1) // per_hi)
+    per_lo = plan["per_seg_lo"]
+    return (
+        f"【段数预算】须约 {seg_min}-{seg_max} 段，每段 {per_lo}-{per_hi} 字，"
+        f"各段 text 之和不得超过 {hard_max} 字；超标须删例子/删并列点，禁止加长单段。"
     )
 
 
@@ -535,11 +557,16 @@ def _storyboard_length_system_clause(
     pct = int(NARRATION_WRITING_TARGET_RATIO * 100)
     hard_max = narration_accept_max_chars(narration_target)
     if compact_output:
+        budget_line = _storyboard_compact_segment_budget(
+            narration_target=narration_target,
+            segment_target_sec=segment_target_sec,
+        )
         return (
-            f"各段 text 须写满（每段至少 {per_min} 字），后端会拼接为 narration；"
+            f"{budget_line}"
+            f"各段 text 须落在单段上限内（每段至少 {per_min} 字），后端会拼接为 narration；"
             f"须至少 {seg_count_min} 个 segments；"
             f"拼接后总字数须在 {hard_min}-{hard_max} 字之间（目标约 {writing_target} 字）。"
-            "输出前须自检：段数达标、各段非空且不超单段上限、字数在区间内、segments 与 narration 拼接一致。"
+            "输出前须自检：段数达标、各段非空且不超单段上限、总和在区间内、segments 与 narration 拼接一致。"
         )
     return (
         f"各段 text 按顺序拼接须与 narration 完全一致；"
@@ -678,7 +705,7 @@ def build_board_prompts(
         json_fields = "title, visual_style, segments"
         narration_clause = (
             "【紧凑输出】不要输出 narration 与 word_count 字段；"
-            "各段 text 须按字数预算写满，后端会自动拼接为 narration。"
+            "各段 text 须按字数预算落在验收区间内，后端会自动拼接为 narration。"
             "每段 visual_brief 控制在 30-60 字，只写画面主旨，末尾用括号注明画面类型"
             "（写实场景）/（结构示意图）/（对比图）/（线稿解剖图）/（微观分子图），禁止冗长描写。"
         )
@@ -689,7 +716,7 @@ def build_board_prompts(
         word_count_clause = "word_count必须等于narration实际字数，不得虚报。"
     system = (
         f"{_storyboard_role(profile_style)}输出JSON，字段：{json_fields}。"
-        "字数未达标则整稿无效；JSON 样例仅示字段结构，不代表篇幅，禁止照抄样例短句。"
+        "口播总字数未落在验收硬区间内则整稿无效；JSON 样例仅示字段结构，不代表篇幅，禁止照抄样例短句。"
         "任一段 text 超过单镜字数上限则整稿无效，须拆段而非加长单段。"
         f"{title_rule}"
         f"{seg_rule}"
@@ -722,10 +749,20 @@ def build_board_prompts(
         segment_target_sec=target,
         content_style=profile_style,
     )
+    compact_budget = ""
+    if compact_output and target > 0:
+        compact_budget = (
+            _storyboard_compact_segment_budget(
+                narration_target=narration_word_target,
+                segment_target_sec=target,
+            )
+            + "\n\n"
+        )
     types = _visual_brief_types(profile_style)
     user = _append_supplementary_to_user(
         (
             f"{execution_headline}\n\n"
+            f"{compact_budget}"
             f"{length_budget}\n\n"
             f"{title_user_prefix}、visual_style 与分镜，{split_hint}。\n\n"
             + (
