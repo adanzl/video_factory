@@ -5,7 +5,7 @@ from typing import Any
 
 from app.config import get_settings
 from app.services.llm.llm_mgr import LLMClient
-from app.services.script.prompts import MIN_IMAGE_PROMPT_CHARS
+from app.quality.image_prompt_rules import MIN_IMAGE_PROMPT_CHARS
 from app.utils.media import segment_text_char_cap
 
 
@@ -280,7 +280,7 @@ class MockLLMClient(LLMClient):
         size_hint: str | None = None,
         business_override: str | None = None,
     ) -> dict[str, str]:
-        from app.services.script.sd15 import (
+        from app.services.visual.sd15 import (
             normalize_sd15_prompt_en,
             pick_business_by_keywords,
             pick_lora_by_keywords,
@@ -298,7 +298,7 @@ class MockLLMClient(LLMClient):
             business=business,
             lora=lora,
         )
-        from app.services.script.sd15 import resolve_split_layout
+        from app.services.visual.sd15 import resolve_split_layout
         from app.services.visual.image_sd15 import parse_image_size
 
         width, height = parse_image_size(size_hint) if size_hint else (0, 0)
@@ -310,7 +310,7 @@ class MockLLMClient(LLMClient):
             height=height,
         )
         if layout == "split":
-            from app.services.script.sd15 import fallback_split_panel_prompts
+            from app.services.visual.sd15 import fallback_split_panel_prompts
 
             left_en, right_en = fallback_split_panel_prompts(cleaned)
             return {

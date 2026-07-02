@@ -2,7 +2,7 @@ from app.quality.checkers import (
     check_image_prompts,
     skipped_image_prompts_check,
 )
-from app.services.script.prompts import image_prompt_min_chars
+from app.quality.image_prompt_rules import image_prompt_min_chars
 
 
 def _script(chars: int) -> dict:

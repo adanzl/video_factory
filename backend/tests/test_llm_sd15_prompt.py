@@ -1,4 +1,4 @@
-from app.services.script.sd15 import (
+from app.services.visual.sd15 import (
     build_sd15_full_prompt,
     fallback_split_panel_prompts,
     normalize_sd15_prompt_en,
@@ -182,7 +182,7 @@ def test_fallback_split_panel_prompts_co():
 
 
 def test_normalize_left_panel_keeps_glowing():
-    from app.services.script.sd15 import normalize_sd15_panel_prompt_en
+    from app.services.visual.sd15 import normalize_sd15_panel_prompt_en
 
     cleaned = normalize_sd15_panel_prompt_en(
         "red glowing carbon monoxide molecules, blue mesh",
@@ -230,7 +230,7 @@ def test_normalize_sd15_prompt_en_truncates_long_prompt():
 
 
 def test_science_wants_anime():
-    from app.services.script.sd15 import science_wants_anime
+    from app.services.visual.sd15 import science_wants_anime
 
     assert science_wants_anime("日系动漫风格科普插图") is True
     assert science_wants_anime("写实科普插画，一氧化碳分子示意图") is False

@@ -9,20 +9,23 @@ from typing import Any
 
 from app.config import get_settings
 from app.services.llm.llm_mgr import LLMClient
-from app.services.script.description import parse_video_description_payload
-from app.services.script.prompts import (
-    MIN_IMAGE_PROMPT_CHARS,
-    IMAGE_PROMPT_TARGET_CHARS,
+from app.services.script.description import (
+    build_video_description_prompts,
+    parse_video_description_payload,
+)
+from app.quality.image_prompt_rules import MIN_IMAGE_PROMPT_CHARS, IMAGE_PROMPT_TARGET_CHARS
+from app.services.script.board import (
+    build_board_prompts,
     build_image_prompts_prompts,
     build_material_script_prompts,
     build_narration_expand_prompts,
     build_segment_shrink_prompts,
-    build_storyboard_prompts,
+)
+from app.services.script.optimize_title import (
     build_title_optimize_prompts,
-    build_video_description_prompts,
+    parse_title_optimize_payload,
 )
 from app.services.script.timeline import narration_range_for_timeline, parse_video_timeline
-from app.services.script.title import parse_title_optimize_payload
 from app.services.topic.parsers import parse_topics_payload
 from app.services.topic.prompts.builder import (
     build_topic_system_prompt,
@@ -437,7 +440,7 @@ class DeepSeekClient(LLMClient):
         truncation_attempts = 0
         for attempt in range(_storyboard_length_max_attempts()):
             raise_if_job_cancelled(job)
-            prompts = build_storyboard_prompts(
+            prompts = build_board_prompts(
                 title,
                 feedback=length_feedback,
                 segment_target_sec=segment_target_sec,
@@ -807,7 +810,7 @@ class DeepSeekClient(LLMClient):
         size_hint: str | None = None,
         business_override: str | None = None,
     ) -> dict[str, str]:
-        from app.services.script.sd15 import (
+        from app.services.visual.sd15 import (
             build_sd15_prompt_system,
             build_sd15_prompt_user,
             parse_sd15_prompt_payload,

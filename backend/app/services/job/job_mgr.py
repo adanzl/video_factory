@@ -578,7 +578,7 @@ class JobMgr:
         orientation: str | None = None,
         content_style: str | None = None,
     ) -> list[dict[str, str]]:
-        from app.services.script.prompts import collect_script_prompts
+        from app.services.script.script_mgr import script_mgr
 
         job = self.get_job(job_id)
         if orientation is not None or content_style is not None:
@@ -595,7 +595,7 @@ class JobMgr:
         script = job.get("script_json")
         if script is not None and not isinstance(script, dict):
             script = None
-        return collect_script_prompts(
+        return script_mgr.collect_prompts(
             job,
             source_title,
             segment_target_sec=segment_target_sec,
@@ -610,7 +610,7 @@ class JobMgr:
 
     def generate_video_description(self, job_id: int) -> dict:
         from app.services.llm.llm_mgr import llm_mgr
-        from app.services.script.prompts import build_video_description_prompts
+        from app.services.script.description import build_video_description_prompts
 
         with connection() as conn:
             job = job_repo.get_job(conn, job_id)

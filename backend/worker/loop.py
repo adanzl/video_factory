@@ -279,7 +279,7 @@ def run_script_image_prompts(
     from app.quality.gate import apply_quality_checks
     from app.repositories import job_log_repo, job_repo, segment_repo
     from app.services.llm.llm_mgr import llm_mgr
-    from app.services.script.prompts import build_image_prompts_prompts
+    from app.services.script.script_mgr import script_mgr
     from app.utils.job_info import resolve_image_provider, resolve_include_sd15_prompt
     from worker.stages.standard.script import _log_llm_timing
 
@@ -317,7 +317,7 @@ def run_script_image_prompts(
     _log_llm_timing(job_id, "script", updated)
 
     prompts = list(updated.get("llm_prompts") or [])
-    img_prompt = build_image_prompts_prompts(
+    img_prompt = script_mgr.build_image_prompts(
         updated,
         supplementary_info=supplementary_info,
         job=job,

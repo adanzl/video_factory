@@ -43,6 +43,27 @@ class LLMClient:
     ) -> dict[str, Any]:
         raise NotImplementedError
 
+    def generate_board(
+        self,
+        title: str,
+        *,
+        feedback: str | None = None,
+        segment_target_sec: float | None = None,
+        max_title_length: int | None = None,
+        narration_target_words: int | None = None,
+        supplementary_info: str | None = None,
+        job: dict | None = None,
+    ) -> dict[str, Any]:
+        return self.generate_storyboard(
+            title,
+            feedback=feedback,
+            segment_target_sec=segment_target_sec,
+            max_title_length=max_title_length,
+            narration_target_words=narration_target_words,
+            supplementary_info=supplementary_info,
+            job=job,
+        )
+
     def fill_image_prompts(
         self,
         script: dict[str, Any],
@@ -133,15 +154,15 @@ class LLMMgr:
         if get_settings().mock_mode:
             return MockLLMClient()
         provider = get_settings().llm_provider
+        if provider == "deepseek":
+            from app.services.llm.llm_deepseek import DeepSeekClient
+
+            return DeepSeekClient()
         if provider == "agnes":
             from app.services.llm.llm_agnes import AgnesClient
 
             return AgnesClient()
-        if provider != "deepseek":
-            raise ValueError(f"unsupported LLM_PROVIDER: {provider!r} (use deepseek or agnes)")
-        from app.services.llm.llm_deepseek import DeepSeekClient
-
-        return DeepSeekClient()
+        raise ValueError(f"unsupported LLM_PROVIDER: {provider!r} (use deepseek or agnes)")
 
     def generate_script(
         self,
@@ -184,6 +205,27 @@ class LLMMgr:
         job: dict | None = None,
     ) -> dict[str, Any]:
         return self._get_client().generate_storyboard(
+            title,
+            feedback=feedback,
+            segment_target_sec=segment_target_sec,
+            max_title_length=max_title_length,
+            narration_target_words=narration_target_words,
+            supplementary_info=supplementary_info,
+            job=job,
+        )
+
+    def generate_board(
+        self,
+        title: str,
+        *,
+        feedback: str | None = None,
+        segment_target_sec: float | None = None,
+        max_title_length: int | None = None,
+        narration_target_words: int | None = None,
+        supplementary_info: str | None = None,
+        job: dict | None = None,
+    ) -> dict[str, Any]:
+        return self.generate_storyboard(
             title,
             feedback=feedback,
             segment_target_sec=segment_target_sec,
@@ -239,7 +281,7 @@ class LLMMgr:
     ) -> dict[str, Any]:
         """补全文生图提示词，过短时带 feedback 重试（与 script 阶段逻辑对齐）。"""
         from app.quality.checkers import check_image_prompts
-        from app.services.script.prompts import (
+        from app.quality.image_prompt_rules import (
             MIN_SD15_PROMPT_EN_WORDS,
             TARGET_SD15_PROMPT_EN_WORDS,
             format_image_prompt_retry_warning,

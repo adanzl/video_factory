@@ -1,4 +1,4 @@
-"""脚本阶段 LLM 提示词构建（生成与预览共用）。"""
+"""口播分镜（board）、素材口播、扩写缩字等提示词构建。"""
 
 from __future__ import annotations
 
@@ -29,9 +29,14 @@ from app.utils.media import (
     segment_text_char_cap,
     segment_text_hard_cap,
 )
-from app.services.script.description import (
-    build_video_description_system_prompt,
-    build_video_description_user_prompt,
+from app.quality.image_prompt_rules import (
+    MIN_SD15_PROMPT_EN_WORDS,
+    TARGET_SD15_PROMPT_EN_WORDS,
+    format_image_prompt_retry_warning,
+    image_prompt_min_chars,
+    image_prompt_target_chars,
+    sd15_prompt_en_ok,
+    sd15_prompt_en_word_count,
 )
 from app.services.script.timeline import (
     VideoTimeline,
@@ -40,80 +45,6 @@ from app.services.script.timeline import (
     parse_video_timeline,
     timeline_system_clause,
 )
-from app.services.script.title import (
-    build_title_optimize_system_prompt,
-    build_title_optimize_user_prompt,
-)
-
-MIN_IMAGE_PROMPT_CHARS = 50
-IMAGE_PROMPT_TARGET_CHARS = 200
-MIN_IMAGE_PROMPT_CHARS_SD15 = 20
-IMAGE_PROMPT_TARGET_CHARS_SD15 = 60
-MIN_SD15_PROMPT_EN_WORDS = 8
-TARGET_SD15_PROMPT_EN_WORDS = 12
-
-
-def image_prompt_min_chars(*, sd15_mode: bool = False) -> int:
-    return MIN_IMAGE_PROMPT_CHARS_SD15 if sd15_mode else MIN_IMAGE_PROMPT_CHARS
-
-
-def image_prompt_target_chars(*, sd15_mode: bool = False) -> int:
-    return IMAGE_PROMPT_TARGET_CHARS_SD15 if sd15_mode else IMAGE_PROMPT_TARGET_CHARS
-
-
-def sd15_prompt_en_word_count(value: object) -> int:
-    if not isinstance(value, str):
-        return 0
-    text = value.strip()
-    if not text:
-        return 0
-    return len(text.split())
-
-
-def sd15_prompt_en_ok(value: object) -> bool:
-    return sd15_prompt_en_word_count(value) >= MIN_SD15_PROMPT_EN_WORDS
-
-
-def image_prompt_threshold_label(*, sd15_mode: bool = False) -> str:
-    min_chars = image_prompt_min_chars(sd15_mode=sd15_mode)
-    target_chars = image_prompt_target_chars(sd15_mode=sd15_mode)
-    label = f"image_prompt>={min_chars}chars(target{target_chars})"
-    if sd15_mode:
-        label += (
-            f" sd15_prompt_en>={MIN_SD15_PROMPT_EN_WORDS}words"
-            f"(target{TARGET_SD15_PROMPT_EN_WORDS})"
-        )
-    return label
-
-
-def format_image_prompt_retry_segments(segments: list[dict]) -> str:
-    parts: list[str] = []
-    for item in segments:
-        idx = item.get("segment_index")
-        metrics: list[str] = []
-        if "chars" in item:
-            metrics.append(f"{item['chars']}chars")
-        if "words" in item:
-            metrics.append(f"{item['words']}words")
-        if metrics:
-            parts.append(f"#{idx}({','.join(metrics)})")
-        else:
-            parts.append(f"#{idx}")
-    return ", ".join(parts)
-
-
-def format_image_prompt_retry_warning(
-    *,
-    attempt: int,
-    reason: str,
-    segments: list[dict],
-    sd15_mode: bool = False,
-) -> str:
-    return (
-        f"[SCRIPT] image_prompt retry attempt={attempt} reason={reason} "
-        f"threshold={image_prompt_threshold_label(sd15_mode=sd15_mode)} "
-        f"segments=[{format_image_prompt_retry_segments(segments)}]"
-    )
 
 # DeepSeek JSON Output 要求 prompt 含 json 字样并给出样例：
 # https://api-docs.deepseek.com/zh-cn/guides/json_mode
@@ -702,7 +633,7 @@ def _prompt_step(step: str, system: str, user: str) -> dict[str, str]:
     }
 
 
-def build_storyboard_prompts(
+def build_board_prompts(
     title: str,
     *,
     feedback: str | None = None,
@@ -808,6 +739,10 @@ def build_storyboard_prompts(
     if feedback:
         user += f"\n\n上次不合格：{feedback}。请按要求重写。"
     return _prompt_step("storyboard", system, user)
+
+
+# 兼容旧名
+build_storyboard_prompts = build_board_prompts
 
 
 _SD15_PROMPT_EN_RULE = (
@@ -1072,138 +1007,3 @@ def build_segment_shrink_prompts(
 
 def _narration_char_count_for_prompt(text: str) -> int:
     return len(re.sub(r"\s+", "", text))
-
-
-def build_title_optimize_prompts(
-    draft_title: str,
-    narration: str,
-    *,
-    max_title_length: int | None = None,
-) -> dict[str, str]:
-    settings = get_settings()
-    max_len = settings.max_title_length if max_title_length is None else max_title_length
-    system = build_title_optimize_system_prompt(max_title_len=max_len)
-    user = build_title_optimize_user_prompt(
-        draft_title=draft_title,
-        narration=narration,
-        max_title_len=max_len,
-    )
-    return _prompt_step("title_optimize", system, user)
-
-
-def build_video_description_prompts(
-    title: str,
-    narration: str,
-) -> dict[str, str]:
-    system = build_video_description_system_prompt()
-    user = build_video_description_user_prompt(title=title, narration=narration)
-    return _prompt_step("video_description", system, user)
-
-
-def _is_material_job(job: dict) -> bool:
-    return job.get("pipeline") == "material"
-
-
-def collect_script_prompts(
-    job: dict,
-    title: str,
-    *,
-    segment_target_sec: float | None = None,
-    max_title_length: int | None = None,
-    narration_target_words: int | None = None,
-    supplementary_info: str | None = None,
-    video_timeline: str | None = None,
-    script: dict | None = None,
-    skip_title_optimize: bool = False,
-    preview_followups: bool = False,
-) -> list[dict[str, str]]:
-    """收集脚本阶段 LLM 提示词；script 为空时仅返回可预览的首步。"""
-    extra = (supplementary_info or "").strip() or None
-    if extra is None and script:
-        saved = script.get("supplementary_info")
-        if isinstance(saved, str) and saved.strip():
-            extra = saved.strip()
-    timeline_raw = (video_timeline or "").strip() or None
-    if timeline_raw is None and script:
-        saved_timeline = script.get("video_timeline")
-        if isinstance(saved_timeline, str) and saved_timeline.strip():
-            timeline_raw = saved_timeline.strip()
-    prompts: list[dict[str, str]] = []
-    if _is_material_job(job):
-        prompts.append(
-            build_material_script_prompts(
-                title,
-                max_title_length=max_title_length,
-                narration_target_words=narration_target_words,
-                supplementary_info=extra,
-                video_timeline=timeline_raw,
-                script=script,
-            )
-        )
-    else:
-        prompts.append(
-            build_storyboard_prompts(
-                title,
-                segment_target_sec=segment_target_sec,
-                max_title_length=max_title_length,
-                narration_target_words=narration_target_words,
-                supplementary_info=extra,
-                job=job,
-            )
-        )
-        if script and script.get("segments"):
-            prompts.append(
-                build_image_prompts_prompts(script, supplementary_info=extra, job=job)
-            )
-
-    narration = ""
-    draft_title = re.sub(r"\s+", "", title.strip())
-    title_for_desc = draft_title
-    if script and isinstance(script, dict):
-        narration = str(script.get("narration") or "").strip()
-        draft_title = re.sub(
-            r"\s+",
-            "",
-            str(script.get("draft_title") or script.get("title") or draft_title).strip(),
-        )
-        title_for_desc = str(script.get("title") or title or "").strip()
-
-    if preview_followups and not narration:
-        narration = "（口播分镜生成后将填入实际 narration，此处仅预览提示词结构）"
-
-    if narration and not skip_title_optimize and draft_title:
-        prompts.append(
-            build_title_optimize_prompts(
-                draft_title,
-                narration,
-                max_title_length=max_title_length,
-            )
-        )
-    if narration and title_for_desc:
-        prompts.append(build_video_description_prompts(title_for_desc, narration))
-    return prompts
-
-
-def attach_llm_prompts_to_script(
-    script: dict,
-    job: dict,
-    title: str,
-    *,
-    segment_target_sec: float | None = None,
-    max_title_length: int | None = None,
-    narration_target_words: int | None = None,
-    supplementary_info: str | None = None,
-    video_timeline: str | None = None,
-    skip_title_optimize: bool = False,
-) -> None:
-    script["llm_prompts"] = collect_script_prompts(
-        job,
-        title,
-        segment_target_sec=segment_target_sec,
-        max_title_length=max_title_length,
-        narration_target_words=narration_target_words,
-        supplementary_info=supplementary_info,
-        video_timeline=video_timeline,
-        script=script,
-        skip_title_optimize=skip_title_optimize,
-    )

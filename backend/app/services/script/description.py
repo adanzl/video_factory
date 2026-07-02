@@ -1,4 +1,4 @@
-"""B 站视频简介生成：在成稿后根据标题与口播写出有吸引力的投稿介绍。"""
+"""视频简介：提示词、LLM 响应解析与步骤组装。"""
 
 from __future__ import annotations
 
@@ -35,3 +35,12 @@ def parse_video_description_payload(raw: dict[str, Any]) -> str:
     if not isinstance(desc, str) or not desc.strip():
         raise ValueError("LLM video description response missing video_description")
     return desc.strip()
+
+
+def build_video_description_prompts(title: str, narration: str) -> dict[str, str]:
+    return {
+        "step": "video_description",
+        "label": "视频介绍",
+        "system": build_video_description_system_prompt(),
+        "user": build_video_description_user_prompt(title=title, narration=narration),
+    }
