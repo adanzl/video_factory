@@ -15,11 +15,12 @@ from app.services.script.description import (
 )
 from app.quality.image_prompt import MIN_IMAGE_PROMPT_CHARS, IMAGE_PROMPT_TARGET_CHARS
 from app.services.script.board import (
-    build_board_prompts,
     build_image_prompts_prompts,
     build_material_script_prompts,
     build_narration_expand_prompts,
+    build_narration_prompts,
     build_segment_shrink_prompts,
+    build_visual_brief_prompts,
 )
 from app.services.script.optimize_title import (
     build_title_optimize_prompts,
@@ -42,7 +43,7 @@ from app.utils.media import (
     narration_accept_max_chars,
     narration_accept_min_chars,
     segment_text_char_cap,
-    storyboard_compact_output,
+    split_narration_to_segments,
 )
 
 __all__ = ["DeepSeekClient", "MIN_IMAGE_PROMPT_CHARS"]
@@ -90,13 +91,21 @@ def _narration_length_feedback(
     min_chars: int,
     *,
     prefix: str | None = None,
+    narration_only: bool = False,
 ) -> str:
     deficit = max(1, min_chars - chars)
-    msg = (
-        f"narration 仅 {chars} 字，验收下限 {min_chars} 字，还差 {deficit} 字。"
-        "请扩写各段 text（每层补具体细节/案例/步骤），"
-        "先写 segments 再拼接 narration，输出前核对 word_count 与拼接一致性后再输出 JSON。"
-    )
+    if narration_only:
+        msg = (
+            f"narration 仅 {chars} 字，验收下限 {min_chars} 字，还差 {deficit} 字。"
+            "请扩写 narration（补具体细节/案例/步骤/比喻），"
+            "输出前核对 word_count 后再输出 JSON。"
+        )
+    else:
+        msg = (
+            f"narration 仅 {chars} 字，验收下限 {min_chars} 字，还差 {deficit} 字。"
+            "请扩写各段 text（每层补具体细节/案例/步骤），"
+            "先写 segments 再拼接 narration，输出前核对 word_count 与拼接一致性后再输出 JSON。"
+        )
     if prefix:
         return f"{prefix}\n{msg}"
     return msg
@@ -107,14 +116,22 @@ def _narration_too_long_feedback(
     max_chars: int,
     *,
     prefix: str | None = None,
+    narration_only: bool = False,
 ) -> str:
     excess = max(1, chars - max_chars)
-    msg = (
-        f"narration 达 {chars} 字，超过验收上限 {max_chars} 字（超出 {excess} 字）。"
-        "请删繁就简：删重复例子、合并并列知识点、缩短每层句子；"
-        "总字数靠删内容不靠堆段，禁止加长单段或新增话题；"
-        "先写 segments 再拼接 narration，输出前逐段核对字数与总和后再输出 JSON。"
-    )
+    if narration_only:
+        msg = (
+            f"narration 达 {chars} 字，超过验收上限 {max_chars} 字（超出 {excess} 字）。"
+            "请删繁就简：删重复例子、合并并列知识点、缩短句子；"
+            "输出前核对 word_count 后再输出 JSON。"
+        )
+    else:
+        msg = (
+            f"narration 达 {chars} 字，超过验收上限 {max_chars} 字（超出 {excess} 字）。"
+            "请删繁就简：删重复例子、合并并列知识点、缩短每层句子；"
+            "总字数靠删内容不靠堆段，禁止加长单段或新增话题；"
+            "先写 segments 再拼接 narration，输出前逐段核对字数与总和后再输出 JSON。"
+        )
     if prefix:
         return f"{prefix}\n{msg}"
     return msg
@@ -159,7 +176,6 @@ def _storyboard_max_tokens(
     *,
     compact: bool,
 ) -> int:
-    """分镜 JSON 输出 token 预算（受 DEEPSEEK_MAX_TOKENS 上限约束）。"""
     settings = get_settings()
     target = narration_target_words or default_narration_target_words()
     ceiling = settings.deepseek_max_tokens
@@ -167,6 +183,15 @@ def _storyboard_max_tokens(
         return ceiling
     # 含 narration 重复字段时约 10 token/字
     estimated = int(target * 10 + 2500)
+    return min(ceiling, max(4096, estimated))
+
+
+def _narration_max_tokens(narration_target_words: int | None) -> int:
+    """口播-only JSON 输出 token 预算。"""
+    settings = get_settings()
+    target = narration_target_words or default_narration_target_words()
+    ceiling = settings.deepseek_max_tokens
+    estimated = int(target * 3 + 1500)
     return min(ceiling, max(4096, estimated))
 
 
@@ -251,6 +276,51 @@ def _assemble_storyboard_narration(data: dict[str, Any]) -> dict[str, Any]:
         data["narration"] = narration
     data["word_count"] = _narration_char_count(str(data.get("narration") or ""))
     return data
+
+
+def _apply_segments_from_narration(
+    data: dict[str, Any],
+    *,
+    segment_target_sec: float,
+    chars_per_sec: float | None = None,
+) -> dict[str, Any]:
+    from app.utils.media import DEFAULT_SPEECH_CHARS_PER_SEC
+
+    narration = str(data.get("narration") or "").strip()
+    if not narration:
+        raise ValueError("LLM narration response missing narration")
+    rate = chars_per_sec or DEFAULT_SPEECH_CHARS_PER_SEC
+    data["segments"] = split_narration_to_segments(
+        narration,
+        segment_target_sec,
+        chars_per_sec=rate,
+    )
+    if not data["segments"]:
+        raise ValueError("narration split produced no segments")
+    return _assemble_storyboard_narration(data)
+
+
+def _merge_visual_briefs(script: dict[str, Any], payload: dict[str, Any]) -> None:
+    style = str(payload.get("visual_style") or "").strip()
+    if style:
+        script["visual_style"] = style
+    by_index = {
+        int(item["segment_index"]): item
+        for item in payload.get("segments") or []
+        if item.get("segment_index") is not None
+    }
+    required = [int(seg["segment_index"]) for seg in script.get("segments") or []]
+    missing = [idx for idx in required if idx not in by_index]
+    if missing:
+        raise ValueError(f"visual_brief response missing segments: {missing}")
+    for seg in script.get("segments") or []:
+        idx = int(seg["segment_index"])
+        item = by_index[idx]
+        brief = str(item.get("visual_brief") or "").strip()
+        if not brief:
+            raise ValueError(f"visual_brief empty for segment {idx}")
+        seg["visual_brief"] = brief
+        seg["visual_mode"] = item.get("visual_mode") or seg.get("visual_mode") or "static_motion"
 
 
 def _truncation_feedback(*, compact: bool) -> str:
@@ -367,14 +437,22 @@ class DeepSeekClient(LLMClient):
             prompts = build_narration_expand_prompts(current, min_chars=min_chars, mode=mode)
             expanded, _ = self._chat_json(prompts["system"], prompts["user"])
             raise_if_job_cancelled(job)
-            if "segments" not in expanded:
-                break
-            if mode == "storyboard":
-                expanded = _merge_expanded_storyboard(current, expanded)
-                if not expanded.get("visual_style"):
+            if mode == "narration_only":
+                if not str(expanded.get("narration") or "").strip():
                     break
-            for seg in expanded.get("segments") or []:
-                seg.setdefault("visual_mode", default_mode)
+                if not expanded.get("visual_style"):
+                    expanded["visual_style"] = current.get("visual_style")
+                if not expanded.get("title"):
+                    expanded["title"] = current.get("title")
+            elif "segments" not in expanded:
+                break
+            else:
+                if mode == "storyboard":
+                    expanded = _merge_expanded_storyboard(current, expanded)
+                    if not expanded.get("visual_style"):
+                        break
+                for seg in expanded.get("segments") or []:
+                    seg.setdefault("visual_mode", default_mode)
             new_chars = _narration_char_count(str(expanded.get("narration") or ""))
             if new_chars > chars:
                 current = expanded
@@ -436,6 +514,121 @@ class DeepSeekClient(LLMClient):
         )
         return _assemble_storyboard_narration(script)
 
+    def _generate_narration_only(
+        self,
+        title: str,
+        *,
+        feedback: str | None = None,
+        max_title_length: int | None = None,
+        narration_target_words: int | None = None,
+        supplementary_info: str | None = None,
+        job: dict | None = None,
+    ) -> dict[str, Any]:
+        min_chars = _min_narration_chars_for_script(
+            narration_target_words=narration_target_words,
+        )
+        max_chars = narration_accept_max_chars(narration_target_words)
+        length_feedback: str | None = feedback
+        data: dict[str, Any] | None = None
+        max_tokens = _narration_max_tokens(narration_target_words)
+        for attempt in range(_storyboard_length_max_attempts()):
+            raise_if_job_cancelled(job)
+            prompts = build_narration_prompts(
+                title,
+                feedback=length_feedback,
+                max_title_length=max_title_length,
+                narration_target_words=narration_target_words,
+                supplementary_info=supplementary_info,
+                job=job,
+            )
+            data, finish = self._chat_json(
+                prompts["system"],
+                prompts["user"],
+                max_tokens=max_tokens,
+            )
+            raise_if_job_cancelled(job)
+            if finish == "length":
+                max_tokens = get_settings().deepseek_max_tokens
+                length_feedback = _truncation_feedback(compact=False)
+                if feedback and attempt == 0:
+                    length_feedback = f"{feedback}\n{length_feedback}"
+                data = None
+                continue
+            narration = str(data.get("narration") or "").strip()
+            if not narration:
+                raise ValueError("LLM narration response missing narration")
+            if not data.get("visual_style"):
+                raise ValueError("LLM narration response missing visual_style")
+            chars = _narration_char_count(narration)
+            data["narration"] = narration
+            data["word_count"] = chars
+            if chars > max_chars:
+                length_feedback = _narration_too_long_feedback(
+                    chars,
+                    max_chars,
+                    prefix=feedback if attempt == 0 and feedback else None,
+                    narration_only=True,
+                )
+                continue
+            if chars >= min_chars:
+                return data
+            length_feedback = _narration_length_feedback(
+                chars,
+                min_chars,
+                prefix=feedback if attempt == 0 and feedback else None,
+                narration_only=True,
+            )
+        if data is not None:
+            chars = _narration_char_count(str(data.get("narration") or ""))
+            if chars <= max_chars:
+                data = self._expand_narration_if_needed(
+                    data,
+                    min_chars=min_chars,
+                    mode="narration_only",
+                    job=job,
+                )
+                data["word_count"] = _narration_char_count(str(data.get("narration") or ""))
+        if data is None:
+            raise ValueError("LLM narration generation failed")
+        raise_if_job_cancelled(job)
+        return data
+
+    def _fill_visual_briefs(
+        self,
+        script: dict[str, Any],
+        *,
+        feedback: str | None = None,
+        supplementary_info: str | None = None,
+        job: dict | None = None,
+    ) -> dict[str, Any]:
+        if not script.get("segments"):
+            raise ValueError("script has no segments for visual_brief")
+        started = time.perf_counter()
+        prompts = build_visual_brief_prompts(
+            script,
+            feedback=feedback,
+            supplementary_info=supplementary_info,
+            job=job,
+        )
+        payload, finish = self._chat_json(
+            prompts["system"],
+            prompts["user"],
+            max_tokens=get_settings().deepseek_max_tokens,
+        )
+        raise_if_job_cancelled(job)
+        if finish == "length":
+            raise ValueError("LLM visual_brief response truncated")
+        _merge_visual_briefs(script, payload)
+        elapsed = time.perf_counter() - started
+        logger.info(
+            "[SCRIPT] visual_brief done segments=%d elapsed=%.1fs",
+            len(script.get("segments") or []),
+            elapsed,
+        )
+        timing = script.setdefault("_llm_timing", {})
+        timing["visual_brief_sec"] = round(elapsed, 1)
+        return script
+
     def _generate_storyboard(
         self,
         title: str,
@@ -447,97 +640,33 @@ class DeepSeekClient(LLMClient):
         supplementary_info: str | None = None,
         job: dict | None = None,
     ) -> dict[str, Any]:
-        min_chars = _min_narration_chars_for_script(
-            narration_target_words=narration_target_words,
-        )
-        max_chars = narration_accept_max_chars(narration_target_words)
         seg_target = (
             get_settings().segment_target_sec
             if segment_target_sec is None
             else segment_target_sec
         )
-        target_words = narration_target_words or default_narration_target_words()
-        compact = storyboard_compact_output(target_words, seg_target)
-        max_tokens = _storyboard_max_tokens(narration_target_words, compact=compact)
-        length_feedback: str | None = feedback
-        data: dict[str, Any] | None = None
-        truncation_attempts = 0
-        for attempt in range(_storyboard_length_max_attempts()):
-            raise_if_job_cancelled(job)
-            prompts = build_board_prompts(
-                title,
-                feedback=length_feedback,
-                segment_target_sec=segment_target_sec,
-                max_title_length=max_title_length,
-                narration_target_words=narration_target_words,
-                supplementary_info=supplementary_info,
-                job=job,
-                compact_output=compact,
-            )
-            try:
-                data, finish = self._chat_json(
-                    prompts["system"],
-                    prompts["user"],
-                    max_tokens=max_tokens,
-                )
-                raise_if_job_cancelled(job)
-            except ValueError as exc:
-                truncation_attempts += 1
-                if truncation_attempts > _TRUNCATION_RETRY_ATTEMPTS:
-                    raise
-                compact = True
-                max_tokens = get_settings().deepseek_max_tokens
-                length_feedback = _parse_failure_feedback(exc, compact=compact)
-                if feedback and truncation_attempts == 1:
-                    length_feedback = f"{feedback}\n{length_feedback}"
-                logger.warning("storyboard parse failed (attempt %d): %s", truncation_attempts, exc)
-                continue
-            if finish == "length":
-                truncation_attempts += 1
-                if truncation_attempts > _TRUNCATION_RETRY_ATTEMPTS:
-                    raise ValueError("LLM storyboard response truncated after retries")
-                compact = True
-                max_tokens = get_settings().deepseek_max_tokens
-                length_feedback = _truncation_feedback(compact=True)
-                if feedback and truncation_attempts == 1:
-                    length_feedback = f"{feedback}\n{length_feedback}"
-                data = None
-                continue
-            data = _assemble_storyboard_narration(data)
-            if "segments" not in data:
-                raise ValueError("LLM storyboard response missing segments")
-            if not data.get("visual_style"):
-                raise ValueError("LLM storyboard response missing visual_style")
-            chars = _narration_char_count(str(data.get("narration") or ""))
-            if chars > max_chars:
-                length_feedback = _narration_too_long_feedback(
-                    chars,
-                    max_chars,
-                    prefix=feedback if attempt == 0 and feedback else None,
-                )
-                logger.warning(
-                    "storyboard narration too long (attempt %d): %d > %d",
-                    attempt + 1,
-                    chars,
-                    max_chars,
-                )
-                continue
-            if chars >= min_chars:
-                raise_if_job_cancelled(job)
-                return data
-            length_feedback = _narration_length_feedback(
-                chars,
-                min_chars,
-                prefix=feedback if attempt == 0 and feedback else None,
-            )
-        if data is not None:
-            data = _assemble_storyboard_narration(data)
-            chars = _narration_char_count(str(data.get("narration") or ""))
-            if chars <= max_chars:
-                data = self._expand_narration_if_needed(
-                    data, min_chars=min_chars, mode="storyboard", job=job
-                )
-                data = _assemble_storyboard_narration(data)
+        narration_started = time.perf_counter()
+        data = self._generate_narration_only(
+            title,
+            feedback=feedback,
+            max_title_length=max_title_length,
+            narration_target_words=narration_target_words,
+            supplementary_info=supplementary_info,
+            job=job,
+        )
+        narration_elapsed = time.perf_counter() - narration_started
+        data = _apply_segments_from_narration(data, segment_target_sec=seg_target)
+        data = self._fill_visual_briefs(
+            data,
+            supplementary_info=supplementary_info,
+            job=job,
+        )
+        timing = data.setdefault("_llm_timing", {})
+        timing["narration_sec"] = round(narration_elapsed, 1)
+        timing["storyboard_sec"] = round(
+            narration_elapsed + float(timing.get("visual_brief_sec") or 0),
+            1,
+        )
         raise_if_job_cancelled(job)
         return data
 
@@ -730,6 +859,16 @@ class DeepSeekClient(LLMClient):
                 job=job,
                 feedback=feedback,
                 include_sd15_prompt=include_sd15_prompt,
+            )
+            return data
+
+        if retry_scope == "visual_brief" and existing_script is not None:
+            data = existing_script
+            self._fill_visual_briefs(
+                data,
+                feedback=feedback,
+                supplementary_info=supplementary_info,
+                job=job,
             )
             return data
 

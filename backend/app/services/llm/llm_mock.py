@@ -6,7 +6,7 @@ from typing import Any
 from app.config import get_settings
 from app.services.llm.llm_mgr import LLMClient
 from app.quality.image_prompt import MIN_IMAGE_PROMPT_CHARS
-from app.utils.media import segment_text_char_cap
+from app.utils.media import segment_text_char_cap, split_narration_to_segments
 
 
 def _mock_image_prompt(visual_style: str, display_title: str, idx: int) -> str:
@@ -47,6 +47,17 @@ class MockLLMClient(LLMClient):
         if retry_scope == "image_prompts" and existing_script is not None:
             if generate_image_prompts:
                 return self.fill_image_prompts(existing_script)
+            return existing_script
+        if retry_scope == "visual_brief" and existing_script is not None:
+            for idx, seg in enumerate(existing_script.get("segments") or [], start=1):
+                display_title = re.sub(
+                    r"\s+",
+                    "",
+                    str(existing_script.get("title") or "科普").strip(),
+                ) or "科普"
+                seg["visual_brief"] = (
+                    f"第{idx}镜：围绕「{display_title}」展示一个生活化科普场景与关键对比。（写实场景）"
+                )
             return existing_script
         data = self.generate_storyboard(
             title,
@@ -107,23 +118,15 @@ class MockLLMClient(LLMClient):
                 "记住：科普不是站队，而是把复杂问题讲清楚，让你下次能自己判断。",
             ]
         visual_style = "3D卡通渲染科普插画，暖黄侧光，浅木色场景，银红条形磁铁统一造型"
-        segments = []
-        narration_parts: list[str] = []
-        for idx, text in enumerate(templates, start=1):
-            narration_parts.append(text)
-            brief = f"第{idx}镜：围绕「{display_title}」展示一个生活化科普场景与关键对比。"
-            image_prompt = _mock_image_prompt(visual_style, display_title, idx)
-            segments.append(
-                {
-                    "segment_index": idx,
-                    "text": text,
-                    "visual_brief": brief,
-                    "image_prompt": image_prompt,
-                    "motion_prompt": _mock_motion_prompt(),
-                    "visual_mode": "static_motion",
-                }
+        narration = "".join(templates)
+        segments = split_narration_to_segments(narration, seg_target)
+        for idx, seg in enumerate(segments, start=1):
+            seg["segment_index"] = idx
+            seg["visual_brief"] = (
+                f"第{idx}镜：围绕「{display_title}」展示一个生活化科普场景与关键对比。（写实场景）"
             )
-        narration = "\n".join(narration_parts)
+            seg["image_prompt"] = _mock_image_prompt(visual_style, display_title, idx)
+            seg["motion_prompt"] = _mock_motion_prompt()
         return {
             "title": display_title,
             "narration": narration,

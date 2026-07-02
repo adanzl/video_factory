@@ -33,6 +33,8 @@ class ScriptMgr:
     # --- board：口播分镜 ---
     build_board_prompts = staticmethod(script_board.build_board_prompts)
     build_storyboard_prompts = staticmethod(script_board.build_storyboard_prompts)
+    build_narration_prompts = staticmethod(script_board.build_narration_prompts)
+    build_visual_brief_prompts = staticmethod(script_board.build_visual_brief_prompts)
     build_material_prompts = staticmethod(script_board.build_material_script_prompts)
     build_narration_expand_prompts = staticmethod(script_board.build_narration_expand_prompts)
     build_segment_shrink_prompts = staticmethod(script_board.build_segment_shrink_prompts)
