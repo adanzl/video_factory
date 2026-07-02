@@ -41,13 +41,13 @@ def test_storyboard_length_budget_requires_enough_segments():
 
 def test_storyboard_length_budget_life_28s_per_segment_cap():
     target = narration_target_for_minutes(6.0)
-    assert target == 1646
+    assert target == 1350
     budget = _storyboard_length_budget(
         narration_target=target,
         segment_target_sec=28.0,
         content_style=CONTENT_STYLE_LIFE_EXPERIENCE,
     )
-    assert "140" in budget
+    assert "114" in budget
     assert "须至少" in budget
     assert "输出前硬性自检" in budget
 
@@ -109,7 +109,7 @@ def test_storyboard_compact_output_for_landscape_life_preset():
 def test_build_storyboard_prompts_compact_omits_narration_field():
     prompts = build_storyboard_prompts(
         "测试标题",
-        narration_target_words=1646,
+        narration_target_words=1350,
         segment_target_sec=28.0,
         compact_output=True,
     )

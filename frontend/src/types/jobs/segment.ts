@@ -8,7 +8,12 @@ export interface JobSegment {
   visual_mode: string;
   image_path?: string | null;
   clip_path?: string | null;
+  /** 有效时长：DB / TTS 实际 / 脚本预估 */
   duration_sec?: number | null;
+  /** TTS 合成后按字幕 cue 汇总的实际口播时长（秒） */
+  tts_duration_sec?: number | null;
+  /** 脚本阶段预估的单镜时长（秒） */
+  script_duration_sec?: number | null;
   status: string;
 }
 

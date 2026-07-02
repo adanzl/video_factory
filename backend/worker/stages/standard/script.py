@@ -247,6 +247,7 @@ def _validation_feedback(
     segment_target_sec: float | None,
     narration_target_words: int,
     content_style: str,
+    speech_chars_per_sec: float,
 ) -> str:
     msg = str(exc)
     if "narration too short" in msg:
@@ -258,9 +259,15 @@ def _validation_feedback(
         )
     if segment_target_sec and segment_target_sec > 0:
         if "segment text exceeds" in msg:
-            cap = segment_text_char_cap(segment_target_sec)
-            hard_cap = segment_text_hard_cap(segment_target_sec)
-            shrink_max = segment_text_shrink_max(segment_target_sec)
+            cap = segment_text_char_cap(
+                segment_target_sec, chars_per_sec=speech_chars_per_sec
+            )
+            hard_cap = segment_text_hard_cap(
+                segment_target_sec, chars_per_sec=speech_chars_per_sec
+            )
+            shrink_max = segment_text_shrink_max(
+                segment_target_sec, chars_per_sec=speech_chars_per_sec
+            )
             return (
                 f"{msg}。"
                 f"单镜上限 {segment_target_sec}s，每段 text 不得超过 {cap} 字（硬上限 {hard_cap} 字，"
@@ -297,10 +304,16 @@ def _sync_narration_from_segments(script: dict) -> None:
 def _classify_segment_overflow(
     segments: list[dict],
     segment_target_sec: float,
+    *,
+    speech_chars_per_sec: float,
 ) -> tuple[list[int], list[tuple[int, int]]]:
     """返回 (可缩字分镜序号, 严重超长列表)。"""
-    hard_cap = segment_text_hard_cap(segment_target_sec)
-    shrink_max = segment_text_shrink_max(segment_target_sec)
+    hard_cap = segment_text_hard_cap(
+        segment_target_sec, chars_per_sec=speech_chars_per_sec
+    )
+    shrink_max = segment_text_shrink_max(
+        segment_target_sec, chars_per_sec=speech_chars_per_sec
+    )
     shrinkable: list[int] = []
     severe: list[tuple[int, int]] = []
     for seg in segments:
@@ -319,6 +332,7 @@ def _repair_segment_overflow_via_shrink(
     script: dict,
     *,
     segment_target_sec: float | None,
+    speech_chars_per_sec: float,
     job_id: int,
     stage_name: str,
     job: dict | None,
@@ -326,11 +340,12 @@ def _repair_segment_overflow_via_shrink(
     if not segment_target_sec or segment_target_sec <= 0:
         return False
     repaired = False
-    cap = segment_text_char_cap(segment_target_sec)
+    cap = segment_text_char_cap(segment_target_sec, chars_per_sec=speech_chars_per_sec)
     for _ in range(_SEGMENT_SHRINK_MAX_ROUNDS):
         shrinkable, severe = _classify_segment_overflow(
             script.get("segments") or [],
             segment_target_sec,
+            speech_chars_per_sec=speech_chars_per_sec,
         )
         if severe or not shrinkable:
             break
@@ -353,6 +368,7 @@ def _repair_segment_overflow_via_shrink(
         shrinkable_after, severe_after = _classify_segment_overflow(
             script.get("segments") or [],
             segment_target_sec,
+            speech_chars_per_sec=speech_chars_per_sec,
         )
         if not shrinkable_after and not severe_after:
             break
@@ -369,6 +385,7 @@ def _validate_script(
     min_narration_chars: int | None = None,
     accept_narration_chars: int | None = None,
     narration_target_words: int | None = None,
+    speech_chars_per_sec: float | None = None,
     content_style: str | None = None,
     require_image_prompt: bool = True,
     check_narration: bool = True,
@@ -467,9 +484,12 @@ def _validate_script(
                         retryable=True,
                     )
     if seg_target > 0:
-        cap = segment_text_char_cap(seg_target)
-        hard_cap = segment_text_hard_cap(seg_target)
-        shrink_max = segment_text_shrink_max(seg_target)
+        from app.utils.media import DEFAULT_SPEECH_CHARS_PER_SEC
+
+        rate = speech_chars_per_sec or DEFAULT_SPEECH_CHARS_PER_SEC
+        cap = segment_text_char_cap(seg_target, chars_per_sec=rate)
+        hard_cap = segment_text_hard_cap(seg_target, chars_per_sec=rate)
+        shrink_max = segment_text_shrink_max(seg_target, chars_per_sec=rate)
         overflow: list[tuple[int, int]] = []
         for seg in segments:
             seg_chars = _narration_chars(seg.get("text") or "")
@@ -508,6 +528,7 @@ class ScriptStage(StageExecutor):
         segment_target_sec = ctx.script_segment_target_sec
         max_title_length = ctx.script_max_title_length
         narration_target_words = ctx.script_narration_target_words
+        speech_chars_per_sec = ctx.script_speech_chars_per_sec
         supplementary_info = (
             ctx.script_supplementary_info.strip()
             if ctx.script_supplementary_info and ctx.script_supplementary_info.strip()
@@ -561,6 +582,7 @@ class ScriptStage(StageExecutor):
             _repair_segment_overflow_via_shrink(
                 script,
                 segment_target_sec=segment_target_sec,
+                speech_chars_per_sec=speech_chars_per_sec,
                 job_id=job_id,
                 stage_name=self.name,
                 job=ctx.job,
@@ -573,6 +595,7 @@ class ScriptStage(StageExecutor):
                     min_narration_chars=min_narration_chars,
                     accept_narration_chars=accept_narration_chars,
                     narration_target_words=narration_target_words,
+                    speech_chars_per_sec=speech_chars_per_sec,
                     content_style=content_style,
                     require_image_prompt=False,
                 )
@@ -587,6 +610,7 @@ class ScriptStage(StageExecutor):
                     segment_target_sec=segment_target_sec,
                     narration_target_words=narration_target_words,
                     content_style=content_style,
+                    speech_chars_per_sec=speech_chars_per_sec,
                 )
                 script = None
                 with connection() as conn:
@@ -635,6 +659,7 @@ class ScriptStage(StageExecutor):
                         min_narration_chars=min_narration_chars,
                         accept_narration_chars=accept_narration_chars,
                         narration_target_words=narration_target_words,
+                        speech_chars_per_sec=speech_chars_per_sec,
                         content_style=content_style,
                         require_image_prompt=True,
                         check_narration=False,
@@ -694,7 +719,11 @@ class ScriptStage(StageExecutor):
         )
         from app.utils.media import assign_segment_timings
 
-        assign_segment_timings(script, segment_target_sec=resolved_seg_target)
+        assign_segment_timings(
+            script,
+            segment_target_sec=resolved_seg_target,
+            chars_per_sec=speech_chars_per_sec,
+        )
 
         if supplementary_info:
             script["supplementary_info"] = supplementary_info
@@ -703,10 +732,15 @@ class ScriptStage(StageExecutor):
 
         script["word_count"] = _narration_chars(script.get("narration", ""))
         script["narration_target_words"] = narration_target_words
+        script["speech_chars_per_sec"] = speech_chars_per_sec
         script["segment_target_sec"] = resolved_seg_target
         script["max_title_length"] = max_len
         script["generate_image_prompts"] = generate_image_prompts
-        assign_segment_timings(script, segment_target_sec=resolved_seg_target)
+        assign_segment_timings(
+            script,
+            segment_target_sec=resolved_seg_target,
+            chars_per_sec=speech_chars_per_sec,
+        )
         if not generate_image_prompts:
             _strip_image_prompt_fields(script)
         script.pop("_llm_timing", None)

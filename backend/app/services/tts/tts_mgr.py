@@ -125,6 +125,14 @@ class TTSMgr:
     ) -> list[tuple[str, float]]:
         return [(c.text, c.duration_sec) for c in cues if c.segment_index == segment_index]
 
+    @staticmethod
+    def segment_durations_from_cues(cues: list[SubtitleCue]) -> dict[int, float]:
+        """按 segment_index 汇总 TTS 字幕 cue 时长（秒）。"""
+        totals: dict[int, float] = {}
+        for cue in cues:
+            totals[cue.segment_index] = totals.get(cue.segment_index, 0.0) + cue.duration_sec
+        return {index: round(total, 3) for index, total in totals.items()}
+
     def _get_client(self) -> TTSClient:
         from app.services.tts.tts_ali import AliTTSClient
         from app.services.tts.tts_mock import MockTTSClient

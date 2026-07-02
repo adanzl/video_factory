@@ -38,6 +38,7 @@ def _script_action_detail(
     max_title_length: int | None,
     estimated_duration_min: float | None,
     narration_target_words: int | None,
+    speech_chars_per_sec: float | None,
     skip_title_optimize: bool,
     generate_image_prompts: bool,
     supplementary_info: str | None,
@@ -60,6 +61,8 @@ def _script_action_detail(
         parts.append(f"estimated_duration_min={estimated_duration_min}")
     if narration_target_words is not None:
         parts.append(f"narration_target_words={narration_target_words}")
+    if speech_chars_per_sec is not None:
+        parts.append(f"speech_chars_per_sec={speech_chars_per_sec}")
     if skip_title_optimize:
         parts.append("skip_title_optimize=True")
     if generate_image_prompts:
@@ -134,7 +137,10 @@ class JobMgr:
             return repo_job.get_job(conn, job_id)
 
     def get_segments(self, job_id: int) -> list[dict]:
-        from app.utils.media import resolve_segment_duration_sec
+        from pathlib import Path
+
+        from app.services.tts.tts_mgr import tts_mgr
+        from app.utils.media import resolve_segment_duration_sec, script_segment_duration_sec
 
         with connection() as conn:
             job = repo_job.get_job(conn, job_id)
@@ -146,13 +152,33 @@ class JobMgr:
             if isinstance(item, dict) and item.get("segment_index") is not None:
                 script_by_index[int(item["segment_index"])] = item
 
+        tts_by_index: dict[int, float] = {}
+        audio_path = job.get("audio_path")
+        if audio_path:
+            cues_path = tts_mgr.subtitle_cues_path_for(Path(audio_path).parent)
+            if cues_path.is_file():
+                tts_by_index = tts_mgr.segment_durations_from_cues(
+                    tts_mgr.load_subtitle_cues(cues_path)
+                )
+
         for segment in segments:
-            if segment.get("duration_sec") is not None:
+            index = int(segment["segment_index"])
+            script_seg = script_by_index.get(index)
+            script_dur = script_segment_duration_sec(script_seg)
+            if script_dur is not None:
+                segment["script_duration_sec"] = script_dur
+
+            tts_dur = tts_by_index.get(index)
+            if tts_dur is not None:
+                segment["tts_duration_sec"] = tts_dur
+
+            db_dur = segment.get("duration_sec")
+            if db_dur is not None and float(db_dur) > 0:
                 continue
-            resolved = resolve_segment_duration_sec(
-                segment,
-                script_seg=script_by_index.get(int(segment["segment_index"])),
-            )
+            if tts_dur is not None:
+                segment["duration_sec"] = tts_dur
+                continue
+            resolved = resolve_segment_duration_sec(segment, script_seg=script_seg)
             if resolved is not None:
                 segment["duration_sec"] = resolved
         return segments
@@ -482,6 +508,7 @@ class JobMgr:
         max_title_length: int | None = None,
         estimated_duration_min: float | None = None,
         narration_target_words: int | None = None,
+        speech_chars_per_sec: float | None = None,
         skip_title_optimize: bool = False,
         generate_image_prompts: bool = False,
         supplementary_info: str | None = None,
@@ -503,6 +530,7 @@ class JobMgr:
                     max_title_length=max_title_length,
                     estimated_duration_min=estimated_duration_min,
                     narration_target_words=narration_target_words,
+                    speech_chars_per_sec=speech_chars_per_sec,
                     skip_title_optimize=skip_title_optimize,
                     generate_image_prompts=generate_image_prompts,
                     supplementary_info=supplementary_info,
@@ -529,6 +557,7 @@ class JobMgr:
             max_title_length=max_title_length,
             estimated_duration_min=estimated_duration_min,
             narration_target_words=narration_target_words,
+            speech_chars_per_sec=speech_chars_per_sec,
             skip_title_optimize=skip_title_optimize,
             generate_image_prompts=generate_image_prompts,
             supplementary_info=supplementary_info,
@@ -545,6 +574,7 @@ class JobMgr:
                 segment_target_sec=segment_target_sec,
                 max_title_length=max_title_length,
                 narration_target_words=narration_target_words,
+                speech_chars_per_sec=speech_chars_per_sec,
                 skip_title_optimize=skip_title_optimize,
                 generate_image_prompts=generate_image_prompts,
                 supplementary_info=supplementary_info,
@@ -579,6 +609,7 @@ class JobMgr:
         max_title_length: int | None = None,
         estimated_duration_min: float | None = None,
         narration_target_words: int | None = None,
+        speech_chars_per_sec: float | None = None,
         skip_title_optimize: bool = False,
         supplementary_info: str | None = None,
         video_timeline: str | None = None,
@@ -608,6 +639,7 @@ class JobMgr:
             segment_target_sec=segment_target_sec,
             max_title_length=max_title_length,
             narration_target_words=narration_target_words,
+            speech_chars_per_sec=speech_chars_per_sec,
             supplementary_info=supplementary_info,
             video_timeline=video_timeline,
             script=script,

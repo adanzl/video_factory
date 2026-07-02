@@ -23,6 +23,7 @@ export interface ScriptJson {
   draft_title?: string;
   narration?: string;
   word_count?: number;
+  speech_chars_per_sec?: number;
   cost_time?: number;
   visual_style?: string;
   script_mode?: "ai" | "manual";

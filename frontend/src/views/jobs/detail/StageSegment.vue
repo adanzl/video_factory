@@ -84,7 +84,8 @@
             <el-tag size="small">{{ segment.status }}</el-tag>
           </div>
           <div class="text-xs text-gray-400">
-            {{ segment.visual_mode }} · {{ formatSegmentDuration(segment.duration_sec) }}
+            {{ segment.visual_mode }}
+            · {{ formatSegmentDurationLabel(segment) }}
           </div>
 
           <section class="flex flex-col gap-1">
@@ -425,11 +426,8 @@ const displaySegments = computed(() =>
   props.segments.map(segment => {
     const imagePath = segment.image_path?.trim() ?? "";
     const clipPath = segment.clip_path?.trim() ?? "";
-    const duration_sec =
-      segment.duration_sec ?? scriptDurationByIndex.value.get(segment.segment_index) ?? null;
     return {
       ...segment,
-      duration_sec,
       visual_brief: visualBriefByIndex.value.get(segment.segment_index) ?? null,
       imageUrl: toMediaUrl(imagePath),
       clipUrl: clipPath ? toMediaUrl(clipPath) : "",
@@ -447,6 +445,22 @@ const formatSegmentDuration = (value?: number | null) => {
     return "-";
   }
   return `${value.toFixed(2)}s`;
+};
+
+const formatSegmentDurationLabel = (segment: JobSegment) => {
+  const tts = segment.tts_duration_sec;
+  const script =
+    segment.script_duration_sec ?? scriptDurationByIndex.value.get(segment.segment_index) ?? null;
+  if (tts != null && Number.isFinite(tts)) {
+    if (script != null && Number.isFinite(script) && Math.abs(tts - script) >= 0.05) {
+      return `TTS ${formatSegmentDuration(tts)} · 预估 ${formatSegmentDuration(script)}`;
+    }
+    return `TTS ${formatSegmentDuration(tts)}`;
+  }
+  if (script != null && Number.isFinite(script)) {
+    return `预估 ${formatSegmentDuration(script)}`;
+  }
+  return formatSegmentDuration(segment.duration_sec);
 };
 
 const resolveClipSearchOrientation = (): ClipOrientation => {

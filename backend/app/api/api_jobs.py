@@ -90,6 +90,7 @@ def _parse_script_body() -> tuple[
         parse_optional_int(data, "max_title_length", minimum=8, maximum=48),
         parse_optional_float(data, "estimated_duration_min", minimum=0.1, maximum=15.0),
         parse_optional_int(data, "narration_target_words", minimum=1, maximum=3000),
+        parse_optional_float(data, "speech_chars_per_sec", minimum=1.0, maximum=10.0),
         parse_bool(data, "skip_title_optimize", default=False),
         parse_bool(data, "generate_image_prompts", default=False),
         supplementary,
@@ -109,6 +110,7 @@ def run_script_route():
         max_title_length,
         estimated_duration_min,
         narration_target_words,
+        speech_chars_per_sec,
         skip_title_optimize,
         generate_image_prompts,
         supplementary_info,
@@ -126,6 +128,7 @@ def run_script_route():
             max_title_length=max_title_length,
             estimated_duration_min=estimated_duration_min,
             narration_target_words=narration_target_words,
+            speech_chars_per_sec=speech_chars_per_sec,
             skip_title_optimize=skip_title_optimize,
             generate_image_prompts=generate_image_prompts,
             supplementary_info=supplementary_info,
@@ -144,6 +147,7 @@ def preview_script_prompts_route():
     segment_target_sec = parse_optional_float(data, "segment_target_sec", minimum=0.0, maximum=60.0)
     max_title_length = parse_optional_int(data, "max_title_length", minimum=8, maximum=48)
     narration_target_words = parse_optional_int(data, "narration_target_words", minimum=1, maximum=3000)
+    speech_chars_per_sec = parse_optional_float(data, "speech_chars_per_sec", minimum=1.0, maximum=10.0)
     skip_title_optimize = parse_bool(data, "skip_title_optimize", default=False)
     supplementary_info = parse_optional_str(data, "supplementary_info")
     video_timeline = parse_optional_str(data, "video_timeline")
@@ -158,6 +162,7 @@ def preview_script_prompts_route():
             segment_target_sec=segment_target_sec,
             max_title_length=max_title_length,
             narration_target_words=narration_target_words,
+            speech_chars_per_sec=speech_chars_per_sec,
             skip_title_optimize=skip_title_optimize,
             supplementary_info=supplementary_info,
             video_timeline=video_timeline,

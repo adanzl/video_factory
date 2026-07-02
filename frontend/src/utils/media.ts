@@ -104,8 +104,8 @@ export function formatCostTime(seconds?: number | null): string {
   return `${seconds.toFixed(1)} 秒`;
 }
 
-/** 中文口播约 5 字/秒，与后端 app/utils/media 对齐 */
-const NARRATION_CHARS_PER_SEC = 5;
+/** 与后端 DEFAULT_SPEECH_CHARS_PER_SEC 对齐；仅作表单初始值 / info 未加载时的兜底 */
+export const DEFAULT_SPEECH_CHARS_PER_SEC = 4.1;
 const NARRATION_FILL_RATIO = 0.92;
 const NARRATION_MAX_CHARS = 3000;
 
@@ -115,23 +115,27 @@ export const DEFAULT_TARGET_FINAL_DURATION_SEC = 360;
 export const INTRO_DURATION_BUDGET_SEC = 2;
 
 /** 按基底/目标视频时长估算推荐口播字数 */
-export function estimateNarrationTargetWords(durationSec: number): number {
-  const target = Math.floor(durationSec * NARRATION_CHARS_PER_SEC * NARRATION_FILL_RATIO);
+export function estimateNarrationTargetWords(
+  durationSec: number,
+  charsPerSec = DEFAULT_SPEECH_CHARS_PER_SEC
+): number {
+  const target = Math.floor(durationSec * charsPerSec * NARRATION_FILL_RATIO);
   return Math.max(1, Math.min(NARRATION_MAX_CHARS, target));
 }
 
 /** standard 线默认口播目标字数 */
 export function defaultNarrationTargetWords(
-  targetFinalSec = DEFAULT_TARGET_FINAL_DURATION_SEC
+  targetFinalSec = DEFAULT_TARGET_FINAL_DURATION_SEC,
+  charsPerSec = DEFAULT_SPEECH_CHARS_PER_SEC
 ): number {
   const body = Math.max(30, targetFinalSec - INTRO_DURATION_BUDGET_SEC);
-  return estimateNarrationTargetWords(body);
+  return estimateNarrationTargetWords(body, charsPerSec);
 }
 
-/** 按成片分钟数估算口播字数（5 字/秒，与后端对齐） */
+/** 按成片分钟数估算口播字数（默认 4.1 字/秒，与后端对齐） */
 export function narrationTargetForMinutes(
   minutes: number,
-  charsPerSec = NARRATION_CHARS_PER_SEC,
+  charsPerSec = DEFAULT_SPEECH_CHARS_PER_SEC,
   introBudgetSec = INTRO_DURATION_BUDGET_SEC
 ): number {
   const body = Math.max(30, minutes * 60 - introBudgetSec);
@@ -142,12 +146,13 @@ export function narrationTargetForMinutes(
 /** 由口播目标字数反推预计成片时长（分钟，含片头预算） */
 export function estimatedMinutesFromNarrationWords(
   words: number,
-  introBudgetSec = INTRO_DURATION_BUDGET_SEC
+  introBudgetSec = INTRO_DURATION_BUDGET_SEC,
+  charsPerSec = DEFAULT_SPEECH_CHARS_PER_SEC
 ): number {
   if (!Number.isFinite(words) || words <= 0) {
     return 1;
   }
-  const bodySec = words / (NARRATION_CHARS_PER_SEC * NARRATION_FILL_RATIO);
+  const bodySec = words / (charsPerSec * NARRATION_FILL_RATIO);
   const totalSec = Math.max(30, bodySec) + introBudgetSec;
   return Math.round((totalSec / 60) * 10) / 10;
 }
@@ -155,9 +160,10 @@ export function estimatedMinutesFromNarrationWords(
 /** 由预计成片时长（分钟）反推口播目标字数 */
 export function narrationTargetFromEstimatedMinutes(
   minutes: number,
-  introBudgetSec = INTRO_DURATION_BUDGET_SEC
+  introBudgetSec = INTRO_DURATION_BUDGET_SEC,
+  charsPerSec = DEFAULT_SPEECH_CHARS_PER_SEC
 ): number {
-  return narrationTargetForMinutes(minutes, NARRATION_CHARS_PER_SEC, introBudgetSec);
+  return narrationTargetForMinutes(minutes, charsPerSec, introBudgetSec);
 }
 
 export const MEDIA_PREVIEW_MAX_VIEWPORT_RATIO = 0.7;

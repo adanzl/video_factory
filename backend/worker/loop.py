@@ -79,6 +79,7 @@ def _run_one_stage(
     script_segment_target_sec: float | None = None,
     script_max_title_length: int | None = None,
     script_narration_target_words: int | None = None,
+    script_speech_chars_per_sec: float | None = None,
     script_skip_title_optimize: bool = False,
     script_generate_image_prompts: bool = False,
     script_supplementary_info: str | None = None,
@@ -97,6 +98,7 @@ def _run_one_stage(
         script_segment_target_sec=script_segment_target_sec,
         script_max_title_length=script_max_title_length,
         script_narration_target_words=script_narration_target_words,
+        script_speech_chars_per_sec=script_speech_chars_per_sec,
         script_skip_title_optimize=script_skip_title_optimize,
         script_generate_image_prompts=script_generate_image_prompts,
         script_supplementary_info=script_supplementary_info,
@@ -136,6 +138,7 @@ def _run_from(
     script_segment_target_sec: float | None = None,
     script_max_title_length: int | None = None,
     script_narration_target_words: int | None = None,
+    script_speech_chars_per_sec: float | None = None,
     script_skip_title_optimize: bool = False,
     script_generate_image_prompts: bool = False,
     script_supplementary_info: str | None = None,
@@ -162,6 +165,9 @@ def _run_from(
             script_max_title_length=script_max_title_length if stage_cls.name == "script" else None,
             script_narration_target_words=(
                 script_narration_target_words if stage_cls.name == "script" else None
+            ),
+            script_speech_chars_per_sec=(
+                script_speech_chars_per_sec if stage_cls.name == "script" else None
             ),
             script_skip_title_optimize=(
                 script_skip_title_optimize if stage_cls.name == "script" else False
@@ -233,6 +239,7 @@ def run_script(
     segment_target_sec: float | None = None,
     max_title_length: int | None = None,
     narration_target_words: int | None = None,
+    speech_chars_per_sec: float | None = None,
     skip_title_optimize: bool = False,
     generate_image_prompts: bool = False,
     supplementary_info: str | None = None,
@@ -248,6 +255,7 @@ def run_script(
             script_segment_target_sec=segment_target_sec,
             script_max_title_length=max_title_length,
             script_narration_target_words=narration_target_words,
+            script_speech_chars_per_sec=speech_chars_per_sec,
             script_skip_title_optimize=skip_title_optimize,
             script_generate_image_prompts=generate_image_prompts,
             script_supplementary_info=supplementary_info,
@@ -261,6 +269,7 @@ def run_script(
         script_segment_target_sec=segment_target_sec,
         script_max_title_length=max_title_length,
         script_narration_target_words=narration_target_words,
+        script_speech_chars_per_sec=speech_chars_per_sec,
         script_skip_title_optimize=skip_title_optimize,
         script_generate_image_prompts=generate_image_prompts,
         script_supplementary_info=supplementary_info,
