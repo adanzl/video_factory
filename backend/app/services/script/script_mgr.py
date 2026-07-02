@@ -42,6 +42,7 @@ class ScriptMgr:
     # --- image_prompt：文生图提示词 ---
     build_image_prompts = staticmethod(script_board.build_image_prompts_prompts)
     image_prompt_min_chars = staticmethod(image_prompt.image_prompt_min_chars)
+    image_prompt_pass_chars = staticmethod(image_prompt.image_prompt_pass_chars)
     image_prompt_target_chars = staticmethod(image_prompt.image_prompt_target_chars)
     sd15_prompt_en_word_count = staticmethod(image_prompt.sd15_prompt_en_word_count)
     sd15_prompt_en_ok = staticmethod(image_prompt.sd15_prompt_en_ok)

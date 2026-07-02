@@ -17,6 +17,17 @@ def test_check_image_prompt_pass():
     assert report.step == "image_prompts"
 
 
+def test_check_image_prompt_pass_at_pass_threshold():
+    report = check_image_prompt(_script(150))
+    assert report.level == "pass"
+
+
+def test_check_image_prompt_minor_when_below_pass_threshold():
+    report = check_image_prompt(_script(120))
+    assert report.level == "minor"
+    assert report.details["reason"] == "image_prompt slightly short"
+
+
 def test_check_image_prompt_major_when_too_short():
     report = check_image_prompt(_script(30))
     assert report.level == "major"

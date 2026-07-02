@@ -17,7 +17,11 @@ from app.quality.quality_mgr import (
     skip_image_prompt_check,
     skip_narration_check,
 )
-from app.quality.image_prompt import MIN_SD15_PROMPT_EN_WORDS, image_prompt_target_chars
+from app.quality.image_prompt import (
+    MIN_SD15_PROMPT_EN_WORDS,
+    image_prompt_pass_chars,
+    image_prompt_target_chars,
+)
 from app.repositories import repo_job_log, repo_job, repo_segment
 from app.repositories.connection import connection
 from app.services.llm.llm_mgr import llm_mgr
@@ -576,6 +580,7 @@ def _validate_script(
         if require_image_prompt:
             sd15_mode = bool(script.get("include_sd15_prompt"))
             min_prompt_chars = script_mgr.image_prompt_min_chars(sd15_mode=sd15_mode)
+            pass_prompt_chars = image_prompt_pass_chars(sd15_mode=sd15_mode)
             target_prompt_chars = image_prompt_target_chars(sd15_mode=sd15_mode)
             prompt = seg.get("image_prompt") or ""
             prompt_len = len(prompt)
@@ -585,10 +590,11 @@ def _validate_script(
                     f"{prompt_len} chars (need >= {min_prompt_chars})",
                     retryable=True,
                 )
-            if prompt_len < target_prompt_chars:
+            if prompt_len < pass_prompt_chars:
                 warnings.append(
                     f"segment {seg.get('segment_index')} image_prompt slightly short "
-                    f"({prompt_len} < {target_prompt_chars}), continuing"
+                    f"({prompt_len} < {pass_prompt_chars}, target {target_prompt_chars}), "
+                    "continuing"
                 )
             if sd15_mode and not script_mgr.sd15_prompt_en_ok(seg.get("sd15_prompt_en")):
                 words = script_mgr.sd15_prompt_en_word_count(seg.get("sd15_prompt_en"))

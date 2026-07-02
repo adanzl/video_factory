@@ -98,6 +98,25 @@ def test_validate_script_accepts_slightly_short_image_prompt(monkeypatch):
     assert any("image_prompt slightly short" in w for w in warnings)
 
 
+def test_validate_script_passes_image_prompt_at_pass_threshold(monkeypatch):
+    monkeypatch.setattr(
+        "worker.stages.standard.script.get_settings",
+        lambda: type("S", (), {"segment_target_sec": 0, "max_title_length": 20})(),
+    )
+    script = _valid_script(
+        segments=[
+            {
+                "segment_index": 1,
+                "text": "x" * _DEFAULT_TARGET,
+                "visual_brief": _VISUAL_BRIEF,
+                "image_prompt": "x" * 160,
+            }
+        ],
+    )
+    warnings = _validate_script(script, min_narration_chars=_DEFAULT_MIN)
+    assert not any("image_prompt slightly short" in w for w in warnings)
+
+
 def test_validate_script_accepts_fewer_segments_than_word_budget(monkeypatch):
     monkeypatch.setattr(
         "worker.stages.standard.script.get_settings",
