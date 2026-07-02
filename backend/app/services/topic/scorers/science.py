@@ -7,7 +7,9 @@ import re
 from app.services.topic.scorers.base import (
     CURIOSITY_PATTERNS,
     ScoreResult,
+    check_conversational_rebuttal,
     check_hard_reject,
+    check_open_faq_title,
     finalize_score,
     has_pattern,
 )
@@ -25,12 +27,19 @@ LIFE_VISUAL = (
 def score_science(
     title: str,
     *,
+    category: str | None = None,
     template: str | None = None,
     hook: str | None = None,
 ) -> ScoreResult:
     text = title.strip()
     combined = f"{text} {hook or ''}"
     rejected = check_hard_reject(combined)
+    if rejected:
+        return rejected
+    rejected = check_open_faq_title(text, category=category)
+    if rejected:
+        return rejected
+    rejected = check_conversational_rebuttal(text)
     if rejected:
         return rejected
 
@@ -55,7 +64,7 @@ def score_science(
         curiosity += 30
     if "?" in text or "？" in text:
         curiosity += 8
-        if any(kw in text for kw in ("明明", "真以为", "就这", "天真", "慌了", "堆成山")):
+        if any(kw in text for kw in ("明明", "真以为", "天真", "慌了", "堆成山")):
             curiosity += 7
     if template == "反差好奇式":
         curiosity += 10

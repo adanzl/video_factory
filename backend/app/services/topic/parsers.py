@@ -9,7 +9,7 @@ from app.services.topic.catalog import (
     CATEGORY_SCIENCE,
     normalize_category,
 )
-from app.services.topic.text import normalize_title
+from app.services.topic.text import normalize_title, open_faq_title_issue
 
 
 def parse_topics_payload(raw: dict[str, Any], *, max_title_len: int) -> list[dict[str, str]]:
@@ -37,6 +37,9 @@ def parse_topics_payload(raw: dict[str, Any], *, max_title_len: int) -> list[dic
         title = normalize_title(str(item.get("title") or ""), max_len=max_title_len)
         if not title or title in seen:
             continue
+        category = normalize_category(raw_category or None)
+        if open_faq_title_issue(title, category=category):
+            continue
         raw_kws = item.get("keywords") or item.get("keyword") or ""
         if isinstance(raw_kws, list):
             kw_str = ",".join(str(k).strip()[:6] for k in raw_kws if str(k).strip())
@@ -44,7 +47,6 @@ def parse_topics_payload(raw: dict[str, Any], *, max_title_len: int) -> list[dic
             kw_str = str(raw_kws).strip()[:24]
         template = str(item.get("template") or "").strip()
         hook = str(item.get("hook") or "").strip()
-        category = normalize_category(raw_category or None)
         if template not in ALL_TOPIC_TEMPLATES:
             template = "误区反问式"
         seen.add(title)
@@ -68,6 +70,8 @@ def _topics_from_titles(titles: list[str], *, max_title_len: int) -> list[dict[s
     for raw in titles:
         title = normalize_title(raw, max_len=max_title_len)
         if not title or title in seen:
+            continue
+        if open_faq_title_issue(title, category=CATEGORY_SCIENCE):
             continue
         seen.add(title)
         out.append(

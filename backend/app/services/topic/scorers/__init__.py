@@ -24,8 +24,10 @@ def score_title(
     if resolved == CATEGORY_HISTORY:
         return score_history(title, template=template, hook=hook)
     if resolved == CATEGORY_CURRENT:
-        return score_current_affairs(title, template=template, hook=hook)
-    return score_science(title, template=template, hook=hook)
+        return score_current_affairs(
+            title, category=resolved, template=template, hook=hook
+        )
+    return score_science(title, category=resolved, template=template, hook=hook)
 
 
 def status_from_score(result: ScoreResult) -> str:
