@@ -94,6 +94,7 @@ class TopicMgr:
                 raw_title = str(item.get("title") or "").strip()
                 if not raw_title:
                     skipped += 1
+                    logger.warning("[TOPIC] skip add: empty title")
                     continue
                 title = normalize_title(raw_title, max_len=max_len)
                 if deduplicate_keyword:
@@ -105,6 +106,11 @@ class TopicMgr:
                         hit = any(k in seen_keywords for k in keywords)
                         if hit:
                             skipped += 1
+                            logger.warning(
+                                "[TOPIC] skip add: keyword conflict title=%r keywords=%s",
+                                title,
+                                keywords,
+                            )
                             continue
                         kw = raw_kw
                         for k in keywords:
@@ -122,6 +128,7 @@ class TopicMgr:
                 )
                 if row is None:
                     skipped += 1
+                    logger.warning("[TOPIC] skip add: duplicate title=%r", title)
                 else:
                     added.append(row)
         return {"added": added, "skipped": skipped, "count": len(added)}
@@ -333,6 +340,7 @@ class TopicMgr:
                 rows = repo_title.list_queued(conn)
 
             jobs: list[dict] = []
+            job_hooks: list[str | None] = []
             for row in rows:
                 if row["status"] != "queued":
                     continue
@@ -340,6 +348,7 @@ class TopicMgr:
                     continue
                 is_history = normalize_category(row.get("category")) == CATEGORY_HISTORY
                 seg_sec = 15 if not is_history else 10
+                hook = (row.get("hook") or "").strip() or None
                 job = repo_job.create_job(
                     conn,
                     row["title"],
@@ -358,6 +367,7 @@ class TopicMgr:
                         segment_target_sec=seg_sec,
                         skip_title_optimize=True,
                         generate_image_prompts=True,
+                        supplementary_info=hook,
                     ),
                 )
                 repo_title.update_title(
@@ -367,17 +377,28 @@ class TopicMgr:
                     job_id=job["id"],
                 )
                 jobs.append(job)
+                job_hooks.append(hook)
 
         script_kwargs = {
             "skip_title_optimize": True,
             "generate_image_prompts": True,
         }
         if run_mode == "script":
-            for job in jobs:
-                job_mgr.run_script(job["id"], to_end=False, **script_kwargs)
+            for job, hook in zip(jobs, job_hooks):
+                job_mgr.run_script(
+                    job["id"],
+                    to_end=False,
+                    supplementary_info=hook,
+                    **script_kwargs,
+                )
         elif run_mode == "full":
-            for job in jobs:
-                job_mgr.run_script(job["id"], to_end=True, **script_kwargs)
+            for job, hook in zip(jobs, job_hooks):
+                job_mgr.run_script(
+                    job["id"],
+                    to_end=True,
+                    supplementary_info=hook,
+                    **script_kwargs,
+                )
 
         logger.info(
             "[TOPIC] enqueue done count=%d run_mode=%s job_ids=%s",

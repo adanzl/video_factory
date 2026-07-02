@@ -46,9 +46,16 @@ class JobContext:
         script_video_timeline: str | None = None,
         material_narration: str | None = None,
     ) -> "JobContext":
+        from app.utils.job_info import script_params_from_info
+
         settings = get_settings()
         media_dir = settings.video_data_dir / str(job["id"])
         media_dir.mkdir(parents=True, exist_ok=True)
+        saved_script = script_params_from_info(job.get("info"))
+        if not script_supplementary_info or not str(script_supplementary_info).strip():
+            saved_extra = saved_script.get("supplementary_info")
+            if saved_extra and str(saved_extra).strip():
+                script_supplementary_info = str(saved_extra).strip()
         return cls(
             job=job,
             settings=settings,

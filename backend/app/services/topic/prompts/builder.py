@@ -16,6 +16,7 @@ from app.services.topic.prompts.common import (
     COMMON_COMPLIANCE_RULE,
     COMMON_PRODUCTION_RULE,
     CONVERSATIONAL_TITLE_RULE,
+    CURRENT_THEME_ANCHOR_RULE,
     FORBIDDEN_FAQ_TITLE_RULE,
     VISUAL_ANCHOR_RULE,
 )
@@ -49,6 +50,7 @@ def _category_rules(category: str) -> str:
     if category == CATEGORY_CURRENT:
         return (
             "从时事/热议现象抽出长尾科普角度，标题不写具体日期、人名、赛果、官宣。"
+            f"{CURRENT_THEME_ANCHOR_RULE}"
             f"{CONVERSATIONAL_TITLE_RULE}"
             f"{FORBIDDEN_FAQ_TITLE_RULE}"
             f"{VISUAL_ANCHOR_RULE}"
@@ -142,12 +144,22 @@ def build_topic_user_prompt(
     parsed_kw = _parse_keywords(keywords)
 
     lines: list[str] = [f"大分类：{spec.label}"]
-    if theme.strip():
-        lines.append(f"主题方向：{theme.strip()}")
+    theme_text = theme.strip()
+    if theme_text:
+        lines.append(f"主题方向：{theme_text}")
+        if resolved == CATEGORY_CURRENT:
+            lines.append(
+                f"硬性：须紧扣主题「{theme_text}」抽科普角度，"
+                "禁止换成无关泛科普；title 不写国名/日期，hook 须点明时事锚点。"
+            )
+        else:
+            lines.append(f"硬性：标题须紧扣主题方向「{theme_text}」。")
     elif spec.default_theme:
         lines.append(f"主题方向：{spec.default_theme}")
     if parsed_kw:
         lines.append(f"关键词：{', '.join(parsed_kw)}")
+    elif theme_text:
+        lines.append("关键词：无（须从上述主题方向提炼，勿擅自换成其他话题）")
     else:
         lines.append(f"关键词：无（可围绕{spec.keywords_hint}自由发挥）")
     lines.append(f"请生成 {count} 个互不重复、适合 AI 全自动成片的中文视频标题。")
@@ -181,6 +193,7 @@ def build_topic_optimize_system_prompt(
     if resolved == CATEGORY_CURRENT:
         return (
             base
+            + f"{CURRENT_THEME_ANCHOR_RULE}"
             + f"{CONVERSATIONAL_TITLE_RULE}"
             + f"{FORBIDDEN_FAQ_TITLE_RULE}"
             + f"{VISUAL_ANCHOR_RULE}"
