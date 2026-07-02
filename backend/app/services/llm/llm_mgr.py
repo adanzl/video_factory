@@ -7,6 +7,7 @@ import time
 from typing import Any
 
 from app.config import get_settings
+from app.services.topic.parsers import is_topic_parse_retryable
 
 __all__ = ["LLMClient", "LLMMgr", "llm_mgr"]
 
@@ -379,6 +380,21 @@ class LLMMgr:
                 category=category,
                 keywords=keywords,
             )
+        except ValueError as exc:
+            if is_topic_parse_retryable(exc):
+                logger.warning(
+                    "[TOPIC] generate rejected theme=%r count=%d reason=%s",
+                    theme,
+                    count,
+                    exc,
+                )
+            else:
+                logger.exception(
+                    "[TOPIC] generate failed theme=%r count=%d",
+                    theme,
+                    count,
+                )
+            raise
         except Exception:
             logger.exception(
                 "[TOPIC] generate failed theme=%r count=%d",

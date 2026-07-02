@@ -54,53 +54,25 @@ def clamp(value: float) -> int:
     return max(0, min(100, round(value)))
 
 
-_ATTITUDE_ONLY_RESPONSE = re.compile(
-    r"^(就这|真就这|就那样|就这些?|笑而不语|等你呢|慌了神?|顶得住|天真了?)"
-    r"([吗嘛啊呢吧！？?…]*)$"
-)
-
-_REBUTTAL_CUES = re.compile(
-    r"明明|根本|并非|不是|没有|从未|辟谣|谣言|误区|误会|科学依据|站不住|对不上|"
-    r"监测|气象局|形态|形状|证据|仓库|堆成|产线|电表|温度|气压|地震波"
-)
-
-
 def check_conversational_rebuttal(title: str) -> ScoreResult | None:
     """对话反转式：问号后须有实质反驳，禁止单独用语气词收尾。"""
+    from app.services.topic.text import (
+        conversational_rebuttal_issue,
+        incomplete_conversational_issue,
+    )
+
     text = title.strip()
-    mark_idx = max(text.rfind("？"), text.rfind("?"))
-    if mark_idx < 0:
+    issue = incomplete_conversational_issue(text) or conversational_rebuttal_issue(text)
+    if not issue:
         return None
-    response = text[mark_idx + 1 :].strip()
-    if not response:
-        return ScoreResult(
-            visual=0,
-            fact=0,
-            curiosity=0,
-            compliance=0,
-            total=0,
-            rejected_reason="对话反转式：问号后缺少回应",
-        )
-    core = re.sub(r"[！!？?。，,、…\s]+$", "", response)
-    if _ATTITUDE_ONLY_RESPONSE.fullmatch(core):
-        return ScoreResult(
-            visual=0,
-            fact=0,
-            curiosity=0,
-            compliance=0,
-            total=0,
-            rejected_reason="对话反转式：问号后仅有语气词，缺少实质反驳",
-        )
-    if len(core) <= 4 and not _REBUTTAL_CUES.search(core):
-        return ScoreResult(
-            visual=0,
-            fact=0,
-            curiosity=0,
-            compliance=0,
-            total=0,
-            rejected_reason="对话反转式：问号后过短且缺少反驳信息",
-        )
-    return None
+    return ScoreResult(
+        visual=0,
+        fact=0,
+        curiosity=0,
+        compliance=0,
+        total=0,
+        rejected_reason=issue,
+    )
 
 
 def check_misconception_template(

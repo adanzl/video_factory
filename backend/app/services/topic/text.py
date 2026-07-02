@@ -14,6 +14,16 @@ _OPEN_FAQ_PATTERNS = re.compile(
     r"是多少|有多少|几[秒分天时]钟|多长时间"
 )
 
+_ATTITUDE_ONLY_RESPONSE = re.compile(
+    r"^(就这|真就这|就那样|就这些?|笑而不语|等你呢|慌了神?|顶得住|天真了?)"
+    r"([吗嘛啊呢吧！？?…]*)$"
+)
+
+_REBUTTAL_CUES = re.compile(
+    r"明明|根本|并非|不是|没有|从未|辟谣|谣言|误区|误会|科学依据|站不住|对不上|"
+    r"监测|气象局|形态|形状|证据|仓库|堆成|产线|电表|温度|气压|地震波"
+)
+
 
 def open_faq_title_issue(title: str, *, category: str | None = None) -> str | None:
     """科学/时事类禁止百科式中性提问（无误区、无反驳落点）。"""
@@ -62,6 +72,44 @@ def incomplete_conversational_issue(title: str) -> str | None:
     return None
 
 
+def conversational_rebuttal_issue(title: str) -> str | None:
+    """对话反转式：问号后须有实质反驳，禁止单独用语气词收尾。"""
+    text = title.strip()
+    mark_idx = max(text.rfind("？"), text.rfind("?"))
+    if mark_idx < 0:
+        return None
+    response = text[mark_idx + 1 :].strip()
+    if not response:
+        return None
+    core = re.sub(r"[！!？?。，,、…\s]+$", "", response)
+    if _ATTITUDE_ONLY_RESPONSE.fullmatch(core):
+        return "对话反转式：问号后仅有语气词，缺少实质反驳"
+    if len(core) <= 4 and not _REBUTTAL_CUES.search(core):
+        return "对话反转式：问号后过短且缺少反驳信息"
+    return None
+
+
+def topic_title_issue(
+    title: str,
+    *,
+    category: str | None = None,
+    template: str | None = None,
+) -> str | None:
+    """汇总选题标题在解析阶段的全部拒绝原因。"""
+    text = title.strip()
+    if not text:
+        return "标题为空"
+    for issue in (
+        open_faq_title_issue(text, category=category),
+        misconception_template_issue(text, category=category, template=template),
+        incomplete_conversational_issue(text),
+        conversational_rebuttal_issue(text),
+    ):
+        if issue:
+            return issue
+    return None
+
+
 def needs_conversational_rewrite(
     title: str,
     *,
@@ -76,6 +124,8 @@ def needs_conversational_rewrite(
     if misconception_template_issue(title, category=category, template=template):
         return True
     if incomplete_conversational_issue(title):
+        return True
+    if conversational_rebuttal_issue(title):
         return True
     return False
 
