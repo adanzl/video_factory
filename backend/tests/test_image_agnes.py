@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from app.services.visual.agnes_api import AgnesApiKey
+from app.services.llm.llm_agnes import AgnesApiKey
 from app.services.visual.image_agnes import AgnesImageProvider, _to_agnes_size
 
 
@@ -55,7 +55,7 @@ def test_generate_switches_to_backup_key_on_quota(tmp_path: Path) -> None:
     mock_img.content = b"png-bytes"
     mock_img.raise_for_status = MagicMock()
 
-    from app.services.visual.agnes_api import AgnesQuotaExceeded
+    from app.services.llm.llm_agnes import AgnesQuotaExceeded
 
     with (
         patch(

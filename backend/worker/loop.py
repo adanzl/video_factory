@@ -332,7 +332,7 @@ def run_script_image_prompts(
     updated.pop("_llm_timing", None)
 
     from app.config import get_settings
-    from app.services.script.timeline import parse_video_timeline
+    from app.services.script.board_timeline import parse_video_timeline
     from app.utils.media import assign_segment_timings
 
     segment_target_sec = updated.get("segment_target_sec")

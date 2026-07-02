@@ -13,7 +13,7 @@ from app.services.media.clip.video_agnes import (
     _resolve_i2v_image,
     _stabilize_motion_prompt,
 )
-from app.services.visual.agnes_api import AgnesApiKey
+from app.services.llm.llm_agnes import AgnesApiKey
 from app.utils.job_info import normalize_video_provider, resolve_video_provider
 from app.utils.media_path import resolve_media_public_base_url
 
