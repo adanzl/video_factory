@@ -1,0 +1,198 @@
+"""选题打分：共用类型与工具。"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+
+SCORE_THRESHOLD = 85
+
+HARD_REJECT_PATTERNS = (
+    r"医疗|养生|保健|药品|治病|手术|癌症|肿瘤",
+    r"理财|股票|股市|基金|投资|赚钱|暴富",
+    r"情感|离婚|出轨|明星八卦",
+    r"热搜|今日|昨天|刚刚|突发",
+    r"真人出镜|真人拍摄|实拍|采访",
+)
+
+TIMELY_PATTERNS = (
+    r"\d{4}年|今年|去年|春节|国庆|高考季|双十一",
+)
+
+CURIOSITY_PATTERNS = (
+    r"[?？]",
+    r"为什么|怎么|如何|居然|竟然|真相|误区|多数人|不知道|暗藏|猫腻|之谜|下落|去了哪|无人|不敢|惊魂|诡异|反常|到底",
+    r"等你呢|笑而不语|就这|慌了|顶得住|备好了|悄悄|就位|后路|慌了神|怕什么|明明|真以为|天真|堆成山|管够|满仓",
+)
+
+WITTY_REBUTTAL_PATTERNS = (
+    r"跑路|跑不掉|掉渣|堆成|管够|满仓|慌什么|怕什么|顶得住|没那么|哪有那么|早就|辟谣|"
+    r"够你跑|笑死|离谱|玄学|扯淡|哪回事",
+)
+
+BLAND_REBUTTAL_PATTERNS = (
+    r"足够你|够你躲|建议你|应该注意|要注意|记得要|别忘了|标准做法|规范动作|躲桌下|趴地上",
+)
+
+
+@dataclass(frozen=True)
+class ScoreResult:
+    visual: int
+    fact: int
+    curiosity: int
+    compliance: int
+    total: int
+    rejected_reason: str | None
+
+    def to_dict(self) -> dict:
+        return {
+            "visual": self.visual,
+            "fact": self.fact,
+            "curiosity": self.curiosity,
+            "compliance": self.compliance,
+            "total": self.total,
+            "rejected_reason": self.rejected_reason,
+        }
+
+
+def has_pattern(text: str, patterns: tuple[str, ...]) -> bool:
+    return any(re.search(p, text) for p in patterns)
+
+
+def rebuttal_text(title: str) -> str:
+    text = title.strip()
+    mark_idx = max(text.rfind("？"), text.rfind("?"))
+    if mark_idx < 0:
+        return ""
+    return text[mark_idx + 1 :].strip()
+
+
+BLAND_HOOK_PATTERNS = (
+    r"别小看|足够你|够你冲出|够你跑出|够你躲|应该注意|要注意|记得要|别忘了|"
+    r"标准做法|规范动作|躲桌下|趴地上",
+)
+
+
+def hook_curiosity_adjustment(hook: str | None) -> float:
+    """hook：奖励好奇表达，压低说教与复述标题口吻。"""
+    text = (hook or "").strip()
+    if not text:
+        return 0.0
+    delta = 0.0
+    if has_pattern(text, CURIOSITY_PATTERNS):
+        delta += 8.0
+    if has_pattern(text, BLAND_HOOK_PATTERNS):
+        delta -= 15.0
+    if has_pattern(text, BLAND_REBUTTAL_PATTERNS):
+        delta -= 12.0
+    return delta
+
+
+def rebuttal_tone_curiosity_adjustment(title: str) -> float:
+    """反驳半句：奖励口语趣味，压低说教式建议。"""
+    response = rebuttal_text(title)
+    if not response:
+        return 0.0
+    delta = 0.0
+    if has_pattern(response, WITTY_REBUTTAL_PATTERNS):
+        delta += 12.0
+    if has_pattern(response, BLAND_REBUTTAL_PATTERNS):
+        delta -= 18.0
+    return delta
+
+
+def clamp(value: float) -> int:
+    return max(0, min(100, round(value)))
+
+
+def check_conversational_rebuttal(title: str) -> ScoreResult | None:
+    """对话反转式：问号后须有实质反驳，禁止单独用语气词收尾。"""
+    from app.services.topic.text import (
+        conversational_rebuttal_issue,
+        incomplete_conversational_issue,
+    )
+
+    text = title.strip()
+    issue = incomplete_conversational_issue(text) or conversational_rebuttal_issue(text)
+    if not issue:
+        return None
+    return ScoreResult(
+        visual=0,
+        fact=0,
+        curiosity=0,
+        compliance=0,
+        total=0,
+        rejected_reason=issue,
+    )
+
+
+def check_misconception_template(
+    title: str,
+    *,
+    category: str | None = None,
+    template: str | None = None,
+) -> ScoreResult | None:
+    from app.services.topic.text import misconception_template_issue
+
+    reason = misconception_template_issue(title, category=category, template=template)
+    if not reason:
+        return None
+    return ScoreResult(
+        visual=0,
+        fact=0,
+        curiosity=0,
+        compliance=0,
+        total=0,
+        rejected_reason=reason,
+    )
+
+
+def check_open_faq_title(title: str, *, category: str | None = None) -> ScoreResult | None:
+    from app.services.topic.text import open_faq_title_issue
+
+    reason = open_faq_title_issue(title, category=category)
+    if not reason:
+        return None
+    return ScoreResult(
+        visual=0,
+        fact=0,
+        curiosity=0,
+        compliance=0,
+        total=0,
+        rejected_reason=reason,
+    )
+
+
+def check_hard_reject(combined: str) -> ScoreResult | None:
+    for pattern in HARD_REJECT_PATTERNS:
+        if re.search(pattern, combined):
+            return ScoreResult(
+                visual=0,
+                fact=0,
+                curiosity=0,
+                compliance=0,
+                total=0,
+                rejected_reason=f"命中硬性约束：{pattern}",
+            )
+    return None
+
+
+def finalize_score(
+    *,
+    visual: float,
+    fact: float,
+    curiosity: float,
+    compliance: float,
+) -> ScoreResult:
+    total = clamp(visual * 0.3 + fact * 0.3 + curiosity * 0.2 + compliance * 0.2)
+    rejected_reason = None
+    if total < SCORE_THRESHOLD:
+        rejected_reason = f"总分 {total} 低于阈值 {SCORE_THRESHOLD}"
+    return ScoreResult(
+        visual=clamp(visual),
+        fact=clamp(fact),
+        curiosity=clamp(curiosity),
+        compliance=clamp(compliance),
+        total=total,
+        rejected_reason=rejected_reason,
+    )

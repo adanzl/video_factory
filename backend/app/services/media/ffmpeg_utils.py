@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from app.config import get_settings
-from app.services.media.subtitle_style import subtitle_style_for_canvas
+from app.services.render.subtitle_style import subtitle_style_for_canvas
 from app.utils.async_util import run_subprocess_safe
 
 # cSpell: disable

@@ -10,7 +10,7 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from app.config import get_settings
-from app.services.visual.image_wan import WanImageProvider
+from app.services.segment.image.image_wan import WanImageProvider
 
 TEST_PROMPTS = [
     # 科普：人体细胞

@@ -4,9 +4,8 @@ from pathlib import Path
 
 from app.config import get_settings
 from app.utils.job_info import resolve_image_provider, resolve_video_provider
-from app.quality.checkers import check_segment_clips, check_visual
-from app.quality.gate import apply_quality_checks
-from app.repositories import job_log_repo, job_repo, segment_repo
+from app.quality.quality_mgr import apply_quality_checks, check_segment_clips, check_segment_images
+from app.repositories import repo_job_log, repo_job, repo_segment
 from app.repositories.connection import connection
 from app.services.segment.segment_mgr import segment_mgr
 from worker.context import JobContext
@@ -19,8 +18,8 @@ class SegmentStage(StageExecutor):
     def run(self, ctx: JobContext) -> None:
         settings = get_settings()
         with connection() as conn:
-            job = job_repo.get_job(conn, ctx.job["id"])
-            segments = segment_repo.list_segments(conn, ctx.job["id"])
+            job = repo_job.get_job(conn, ctx.job["id"])
+            segments = repo_segment.list_segments(conn, ctx.job["id"])
 
         image_provider = resolve_image_provider(job)
         video_provider = resolve_video_provider(job)
@@ -30,7 +29,7 @@ class SegmentStage(StageExecutor):
 
         def persist_segment_image(seg_id: int, path: Path) -> None:
             with connection() as conn:
-                segment_repo.update_segment(
+                repo_segment.update_segment(
                     conn,
                     seg_id,
                     image_path=str(path),
@@ -39,7 +38,7 @@ class SegmentStage(StageExecutor):
 
         def persist_segment_clip(seg_id: int, path: Path) -> None:
             with connection() as conn:
-                segment_repo.update_segment(
+                repo_segment.update_segment(
                     conn,
                     seg_id,
                     clip_path=str(path),
@@ -95,7 +94,7 @@ class SegmentStage(StageExecutor):
                 if image_provider == "sd15_t2i"
                 else image_provider
             )
-            job_log_repo.append_log(
+            repo_job_log.append_log(
                 conn,
                 ctx.job["id"],
                 self.name,
@@ -114,7 +113,7 @@ class SegmentStage(StageExecutor):
                     visual_qc = [
                         seg for seg in segments_for_qc if seg["segment_index"] in rerun_indices
                     ]
-                qc_checks["visual"] = check_visual(visual_qc)
+                qc_checks["visual"] = check_segment_images(visual_qc)
             if produce_scope in {"all", "clips"} and (
                 produce_scope == "clips" or audio_path is not None
             ):

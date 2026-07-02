@@ -11,8 +11,8 @@ from pathlib import Path
 from PIL import Image
 
 from app.services.intro.generator import central_43_bounds
-from app.services.visual.text_render import balance_title_lines, load_cjk_font
-from app.services.visual.title_render import (
+from app.services.render.text_render import balance_title_lines, load_cjk_font
+from app.services.render.title_render import (
     STROKE_WIDTH,
     compose_vstack,
     render_text_rgba,

@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
-from app.services.llm.llm_script_prompts import (
+from app.services.script.board import (
     _narration_word_range,
     _storyboard_length_budget,
+    build_board_prompts,
     build_segment_shrink_prompts,
     build_storyboard_prompts,
 )
 from app.utils.job_info import CONTENT_STYLE_LIFE_EXPERIENCE
 from app.utils.media import (
     min_narration_chars_for_target,
+    narration_accept_max_chars,
     narration_accept_min_chars,
     narration_target_for_minutes,
     storyboard_compact_output,
@@ -115,6 +117,23 @@ def test_build_storyboard_prompts_compact_omits_narration_field():
     assert "narration, word_count, visual_style" not in prompts["system"]
     assert "JSON 输出样例" in prompts["system"]
     assert "segment_index" in prompts["system"]
+
+
+def test_build_storyboard_prompts_emphasizes_narration_max():
+    target = narration_target_for_minutes(6.0)
+    accept_max = narration_accept_max_chars(target)
+    prompts = build_storyboard_prompts(
+        "地震预警只有几十秒",
+        narration_target_words=target,
+        segment_target_sec=15.0,
+        compact_output=True,
+        job={"pipeline": "standard", "content_style": "science_child"},
+    )
+    assert "【总字数·硬上限】" in prompts["user"] or "硬上限" in prompts["user"]
+    assert str(accept_max) in prompts["user"]
+    assert "【段数预算】" in prompts["user"]
+    assert "超标" in prompts["system"] or "超标" in prompts["user"]
+    assert "独立的小知识点" not in prompts["system"]
 
 
 def test_segment_shrink_prompts_preserve_voice():

@@ -1,5 +1,5 @@
-"""媒体服务包。对外请使用 media_mgr；分镜 clip 见 media.clip。"""
+"""媒体合成包：ffmpeg 工具与成片拼接。
 
-from app.services.media.media_mgr import MediaMgr, media_mgr
-
-__all__ = ["MediaMgr", "media_mgr"]
+统一入口：``from app.services.media.media_mgr import media_mgr``
+分镜 clip：``from app.services.segment.clip.clip_mgr import clip_mgr``
+"""

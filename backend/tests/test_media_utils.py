@@ -1,7 +1,7 @@
 from app.utils.media import (
     assign_segment_timings,
-    body_duration_for_target_final,
     default_narration_target_words,
+    DEFAULT_NARRATION_TARGET_WORDS,
     estimate_narration_target_words,
     estimate_segment_duration_sec,
     material_final_min_duration_sec,
@@ -16,19 +16,9 @@ from app.utils.media import (
 )
 
 
-def test_body_duration_for_target_final():
-    assert body_duration_for_target_final(90, intro_budget_sec=2) == 88.0
-    assert body_duration_for_target_final(20, intro_budget_sec=5) == 30.0
-
-
-def test_default_narration_target_words_uses_config(monkeypatch):
-    fake = type(
-        "S",
-        (),
-        {"target_final_duration_sec": 90.0, "intro_duration_budget_sec": 2.0},
-    )()
-    # 88 * 5 * 0.92 = 404.8 -> 404
-    assert default_narration_target_words(fake) == 404
+def test_default_narration_target_words_is_six_minutes():
+    assert default_narration_target_words() == DEFAULT_NARRATION_TARGET_WORDS
+    assert DEFAULT_NARRATION_TARGET_WORDS == narration_target_for_minutes(6.0)
 
 
 def test_segment_text_char_cap():
@@ -93,7 +83,7 @@ def test_assign_segment_timings_from_narration_chars():
 
 
 def test_assign_segment_timings_from_video_timeline():
-    from app.services.llm.llm_script_timeline import TimelineSlot, VideoTimeline
+    from app.services.script.board_timeline import TimelineSlot, VideoTimeline
 
     timeline = VideoTimeline(
         duration_sec=14.0,

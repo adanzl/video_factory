@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from app.repositories import job_log_repo, job_repo
+from app.repositories import repo_job_log, repo_job
 from app.repositories.connection import connection
 from app.services.intro import generate_intro
 from app.services.intro.cover_layout import (
@@ -76,7 +76,7 @@ def _generate_cover(job: dict, cover_path: Path, width: int, height: int) -> Non
     from PIL import Image
 
     from app.config import get_settings
-    from app.services.visual.image_agnes import AgnesImageProvider
+    from app.services.segment.image.image_agnes import AgnesImageProvider
 
     settings = get_settings()
     title = resolve_intro_title(job)
@@ -145,11 +145,11 @@ def run_intro_for_category(
         }
         if _normalize_title(str(job.get("title") or "")) != title:
             updates["title"] = title
-        job_repo.update_job(conn, ctx.job["id"], **updates)
+        repo_job.update_job(conn, ctx.job["id"], **updates)
         detail = (
             f"intro at {intro_path}, cover at {cover_path}, title={title}, "
             f"size={width}x{height}, orientation={orient_label}, category={category_label}"
         )
         if ctx.intro_hold_tail_sec is not None:
             detail += f", hold_tail_sec={ctx.intro_hold_tail_sec:.2f}"
-        job_log_repo.append_log(conn, ctx.job["id"], stage.name, detail)
+        repo_job_log.append_log(conn, ctx.job["id"], stage.name, detail)

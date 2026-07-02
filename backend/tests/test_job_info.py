@@ -1,4 +1,42 @@
-from app.utils.job_info import merge_job_script_params, script_params_from_info
+from app.utils.job_info import (
+    CONTENT_STYLE_HISTORICAL_MYSTERY,
+    merge_job_script_params,
+    resolve_estimated_duration_min,
+    resolve_narration_target_words,
+    script_params_from_info,
+)
+from app.utils.media import DEFAULT_HISTORY_VIDEO_MINUTES, narration_target_for_minutes
+
+
+def test_resolve_narration_target_words_from_estimated_duration():
+    script = {"estimated_duration_min": 6.0}
+    assert resolve_narration_target_words(script) == narration_target_for_minutes(6.0)
+
+
+def test_resolve_narration_target_words_prefers_estimated_duration():
+    script = {
+        "estimated_duration_min": 6.0,
+        "narration_target_words": 400,
+    }
+    assert resolve_narration_target_words(script) == narration_target_for_minutes(6.0)
+
+
+def test_resolve_estimated_duration_min_from_legacy_words():
+    script = {"narration_target_words": 1800}
+    assert resolve_estimated_duration_min(script) == DEFAULT_HISTORY_VIDEO_MINUTES
+
+
+def test_merge_job_script_params_stores_explicit_estimated_duration():
+    merged = merge_job_script_params(None, estimated_duration_min=5.5)
+    assert merged["script"]["estimated_duration_min"] == 5.5
+
+
+def test_merge_job_script_params_history_default_estimated_duration():
+    merged = merge_job_script_params(
+        None,
+        content_style=CONTENT_STYLE_HISTORICAL_MYSTERY,
+    )
+    assert merged["script"]["estimated_duration_min"] == DEFAULT_HISTORY_VIDEO_MINUTES
 
 
 def test_merge_job_script_params_nests_under_script():

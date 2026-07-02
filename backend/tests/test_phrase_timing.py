@@ -5,7 +5,7 @@ from app.services.tts.phrase_timing import (
     phrase_durations_from_words,
     TimedWord,
 )
-from app.services.visual.text_render import split_phrase_chunks
+from app.services.render.text_render import split_phrase_chunks
 
 
 def test_build_segment_tts_text_matches_source():

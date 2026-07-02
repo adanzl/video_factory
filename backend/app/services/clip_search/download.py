@@ -11,7 +11,7 @@ import requests
 from app.config import get_settings
 from app.services.clip_search.preview_proxy import validate_preview_url
 from app.services.intro.size import resolve_intro_size
-from app.services.media.clip.render import fit_video_duration
+from app.services.segment.clip.clip_render import fit_video_duration
 from app.services.media.ffmpeg_utils import probe_duration
 from app.utils.job_info import orientation_for_resolve
 

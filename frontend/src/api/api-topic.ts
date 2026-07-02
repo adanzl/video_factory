@@ -1,27 +1,31 @@
-/**
- * 选题 API
- */
 import { api } from "./config";
 import type {
   DeleteLowScoreTopicsResult,
   EnqueueTopicsParams,
   EnqueueTopicsResult,
+  TopicCatalogResult,
   GenerateAndSaveResult,
   GenerateTopicsParams,
   GenerateTopicsResult,
-  ImportHotTopicsParams,
   ListTitlesParams,
   OptimizeTopicResult,
   ScoreTopicsResult,
   TitleRecord,
-  TopicTaskResponse,
 } from "@/types/topic";
 
 export type { TopicItem } from "@/types/topic";
 
+/** 选题生成/优化走 LLM，偶发 >30s，与后端 DeepSeek timeout 对齐留余量 */
+const TOPIC_LLM_TIMEOUT_MS = 120_000;
+
 export async function listTitles(params: ListTitlesParams = {}): Promise<TitleRecord[]> {
   const response = await api.get<TitleRecord[]>("/v_factory/api/topic/list", { params });
   return Array.isArray(response.data) ? response.data : [];
+}
+
+export async function fetchTopicCatalog(): Promise<TopicCatalogResult> {
+  const response = await api.get<TopicCatalogResult>("/v_factory/api/topic/catalog");
+  return response.data;
 }
 
 export async function generateTopics(
@@ -29,20 +33,18 @@ export async function generateTopics(
 ): Promise<GenerateTopicsResult | GenerateAndSaveResult> {
   const response = await api.post<GenerateTopicsResult | GenerateAndSaveResult>(
     "/v_factory/api/topic/gen",
-    params
+    params,
+    { timeout: TOPIC_LLM_TIMEOUT_MS }
   );
   return response.data;
 }
 
-export async function importHotTopics(
-  params: ImportHotTopicsParams = {}
-): Promise<TopicTaskResponse> {
-  const response = await api.post<TopicTaskResponse>("/v_factory/api/topic/hot", params);
-  return response.data;
-}
-
 export async function optimizeTopic(id: number): Promise<OptimizeTopicResult> {
-  const response = await api.post<OptimizeTopicResult>("/v_factory/api/topic/optimize", { id });
+  const response = await api.post<OptimizeTopicResult>(
+    "/v_factory/api/topic/optimize",
+    { id },
+    { timeout: TOPIC_LLM_TIMEOUT_MS }
+  );
   return response.data;
 }
 

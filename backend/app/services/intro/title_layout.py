@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from PIL import Image
 
-from app.services.visual.text_render import load_cjk_font, wrap_text
-from app.services.visual.title_render import (
+from app.services.render.text_render import load_cjk_font, wrap_text
+from app.services.render.title_render import (
     STROKE_WIDTH,
     compose_vstack,
     fit_font_and_lines,

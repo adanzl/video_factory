@@ -4,7 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from app.services.media.clip.video_agnes import (
+from app.services.segment.clip.video_agnes import (
     AgnesClipProvider,
     _backoff_seconds,
     _encode_image_data_uri,
@@ -13,7 +13,7 @@ from app.services.media.clip.video_agnes import (
     _resolve_i2v_image,
     _stabilize_motion_prompt,
 )
-from app.services.visual.agnes_api import AgnesApiKey
+from app.services.llm.llm_agnes import AgnesApiKey
 from app.utils.job_info import normalize_video_provider, resolve_video_provider
 from app.utils.media_path import resolve_media_public_base_url
 
@@ -110,16 +110,16 @@ def test_agnes_clip_provider_submits_i2v_payload(tmp_path: Path) -> None:
 
     with (
         patch(
-            "app.services.media.clip.video_agnes.agnes_api_keys",
+            "app.services.segment.clip.video_agnes.agnes_api_keys",
             return_value=[AgnesApiKey("primary", "test-key")],
         ),
         patch.object(provider, "_request", side_effect=[create_resp, poll_resp]) as mock_request,
-        patch("app.services.media.clip.video_agnes.requests.get", return_value=video_resp),
-        patch("app.services.media.clip.video_agnes.probe_duration", return_value=5.0),
-        patch("app.services.media.clip.video_agnes.fit_video_duration") as mock_fit,
-        patch("app.services.media.clip.video_agnes.video_to_clip_timed_overlays"),
-        patch("app.services.media.clip.video_agnes.clip_mgr.prepare_subtitle_overlays") as mock_overlays,
-        patch("app.services.media.clip.video_agnes.clip_mgr.cleanup_overlay_paths"),
+        patch("app.services.segment.clip.video_agnes.requests.get", return_value=video_resp),
+        patch("app.services.segment.clip.video_agnes.probe_duration", return_value=5.0),
+        patch("app.services.segment.clip.video_agnes.fit_video_duration") as mock_fit,
+        patch("app.services.segment.clip.video_agnes.video_to_clip_timed_overlays"),
+        patch("app.services.segment.clip.video_agnes.clip_mgr.prepare_subtitle_overlays") as mock_overlays,
+        patch("app.services.segment.clip.video_agnes.clip_mgr.cleanup_overlay_paths"),
     ):
         mock_overlays.return_value = (5.0, [], [])
         mock_fit.side_effect = lambda src, dst, *_args, **_kwargs: dst.write_bytes(b"fit")
