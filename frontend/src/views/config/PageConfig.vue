@@ -36,6 +36,7 @@
               v-for="item in activeGroup.items"
               :key="item.attr"
               :label="item.label"
+              class=""
             >
               <template v-if="item.readonly">
                 <span class="text-gray-500">{{ formatValue(item, draft[item.attr]) }}</span>
@@ -71,11 +72,11 @@
                   class="max-w-md!"
                 />
               </template>
-              <div v-if="item.description" class="mt-1 text-xs text-gray-400">
+              <div v-if="item.description" class="mt-1 text-xs text-gray-400 ml-2">
                 {{ item.description }}
               </div>
-              <div class="mt-0.5 font-mono text-xs text-gray-300">
-                {{ item.attr }} · {{ item.env_key }}
+              <div class="mt-0.5 font-mono text-xs text-gray-300 ml-2">
+                {{ item.env_key }}
               </div>
             </el-form-item>
           </el-form>

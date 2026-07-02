@@ -251,15 +251,6 @@ CONFIG_GROUPS: tuple[ConfigGroupDef, ...] = (
         ),
     ),
     ConfigGroupDef(
-        id="bili",
-        label="B 站投稿",
-        items=(
-            _f("bili_client_id", "BILI_CLIENT_ID", "Client ID", "secret"),
-            _f("bili_client_secret", "BILI_CLIENT_SECRET", "Client Secret", "secret"),
-            _f("bili_access_token", "BILI_ACCESS_TOKEN", "Access Token", "secret"),
-        ),
-    ),
-    ConfigGroupDef(
         id="clips",
         label="素材片段搜索",
         items=(
