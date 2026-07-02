@@ -52,12 +52,15 @@ def plan_tts_segment_trim(
     words: list[TimedWord],
     *,
     duration_ms: int,
-    head_pad_ms: int = 0,
+    head_pad_ms: int = 150,
     tail_pad_ms: int = 20,
-    min_leading_ms: int = 20,
+    min_leading_ms: int = 80,
     min_trailing_ms: int = 50,
 ) -> TrimPlan:
-    """仅依据字级时间戳计算裁切：首字 begin 之前、末字 end 之后。"""
+    """仅依据字级时间戳计算裁切：首字 begin 之前、末字 end 之后。
+
+    CosyVoice 首字 begin 常滞后于真实发音起点，head_pad_ms 保留段首缓冲，避免切掉句首。
+    """
     if not words or duration_ms <= 0:
         return TrimPlan(leading_ms=0, trailing_ms=0)
 
@@ -130,7 +133,7 @@ def apply_tts_segment_trim(
     path: Path,
     words: list[TimedWord],
     *,
-    head_pad_ms: int = 0,
+    head_pad_ms: int = 150,
     tail_pad_ms: int = 20,
 ) -> list[TimedWord]:
     """就地裁切段音频，并按首字 begin 平移字级时间戳。"""

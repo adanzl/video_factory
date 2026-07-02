@@ -16,6 +16,30 @@ def _is_material_job(job: dict) -> bool:
     return job.get("pipeline") == "material"
 
 
+def _preview_script_stub(
+    title: str,
+    *,
+    narration: str,
+    draft_title: str,
+) -> dict:
+    """无分镜时预览 visual_brief / image_prompts 用的占位 script。"""
+    return {
+        "title": draft_title or title,
+        "narration": narration,
+        "visual_style": "（口播生成后将填入全片 visual_style）",
+        "segments": [
+            {
+                "segment_index": 1,
+                "text": "（示例：第一段口播，由后端按单镜时长切分后填入）",
+            },
+            {
+                "segment_index": 2,
+                "text": "（示例：第二段口播）",
+            },
+        ],
+    }
+
+
 def collect_prompts(
     job: dict,
     title: str,
@@ -30,7 +54,7 @@ def collect_prompts(
     skip_title_optimize: bool = False,
     preview_followups: bool = False,
 ) -> list[dict[str, str]]:
-    """组装脚本阶段各步 LLM 提示词；script 为空时仅返回首步。"""
+    """组装脚本阶段各步 LLM 提示词；预览模式返回完整四步。"""
     extra = (supplementary_info or "").strip() or None
     if extra is None and script:
         saved = script.get("supplementary_info")
@@ -63,13 +87,6 @@ def collect_prompts(
                 job=job,
             )
         )
-        if script and script.get("segments"):
-            prompts.append(
-                build_visual_brief_prompts(script, supplementary_info=extra, job=job)
-            )
-            prompts.append(
-                build_image_prompts_prompts(script, supplementary_info=extra, job=job)
-            )
 
     narration = ""
     draft_title = re.sub(r"\s+", "", title.strip())
@@ -84,7 +101,27 @@ def collect_prompts(
     if preview_followups and not narration:
         narration = "（口播分镜生成后将填入实际 narration，此处仅预览提示词结构）"
 
-    if narration and not skip_title_optimize and draft_title:
+    if not _is_material_job(job):
+        followup_script = script if isinstance(script, dict) else None
+        has_segments = bool(followup_script and followup_script.get("segments"))
+        if preview_followups and not has_segments:
+            followup_script = _preview_script_stub(
+                title,
+                narration=narration,
+                draft_title=draft_title,
+            )
+        if followup_script and (has_segments or preview_followups):
+            prompts.append(
+                build_visual_brief_prompts(followup_script, supplementary_info=extra, job=job)
+            )
+            prompts.append(
+                build_image_prompts_prompts(followup_script, supplementary_info=extra, job=job)
+            )
+
+    show_title_optimize = bool(narration and draft_title) and (
+        preview_followups or not skip_title_optimize
+    )
+    if show_title_optimize:
         from app.services.script.optimize_title import build_title_optimize_prompts
 
         prompts.append(
