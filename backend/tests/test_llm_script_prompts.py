@@ -8,6 +8,7 @@ from app.services.script.board import (
     build_segment_shrink_prompts,
     build_visual_brief_prompts,
 )
+from app.services.script.compose import collect_prompts
 from app.utils.job_info import CONTENT_STYLE_LIFE_EXPERIENCE
 from app.utils.media import (
     min_narration_chars_for_target,
@@ -116,3 +117,14 @@ def test_segment_shrink_prompts_preserve_voice():
     )
     assert "segment_index" in prompts["system"]
     assert "不要输出 narration" in prompts["system"]
+
+
+def test_collect_prompts_accepts_speech_chars_per_sec():
+    job = {"pipeline": "standard", "info": {}}
+    prompts = collect_prompts(
+        job,
+        "测试标题",
+        speech_chars_per_sec=4.1,
+        preview_followups=True,
+    )
+    assert prompts[0]["step"] == "narration"
