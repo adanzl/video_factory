@@ -46,3 +46,20 @@ def test_conversational_title_accepts_substantive_rebuttal():
     )
     assert result.total >= 85
     assert status_from_score(result) == "queued"
+
+
+def test_conversational_title_witty_rebuttal_scores_above_bland():
+    witty = score_title(
+        "地震预警只有几十秒？明明够你跑路的",
+        category="日常科学原理",
+        template="误区反问式",
+    )
+    bland = score_title(
+        "地震预警只有几十秒？明明足够你躲桌下",
+        category="日常科学原理",
+        template="误区反问式",
+    )
+    assert witty.total >= 85
+    assert status_from_score(witty) == "queued"
+    assert bland.total < witty.total
+    assert status_from_score(bland) == "rejected"

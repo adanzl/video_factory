@@ -37,3 +37,8 @@ python相关调用使用 **conda**，env: flask_env
 - 重启服务要找我确认
 - 变量定义注意拼写，避免cSpell告警
 - 新建独立文件要找我二次确认，没必要不要做
+- 使用Tailwind
+
+## 快捷命令
+
+- push 表示执行提交git 并执行push

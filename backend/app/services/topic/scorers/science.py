@@ -13,6 +13,7 @@ from app.services.topic.scorers.base import (
     check_open_faq_title,
     finalize_score,
     has_pattern,
+    rebuttal_tone_curiosity_adjustment,
 )
 
 SCIENCE_VISUAL = (
@@ -76,6 +77,7 @@ def score_science(
         curiosity += 10
     if hook and len(hook) >= 10:
         curiosity += 5
+    curiosity += rebuttal_tone_curiosity_adjustment(text)
 
     compliance = 80.0
     return finalize_score(visual=visual, fact=fact, curiosity=curiosity, compliance=compliance)

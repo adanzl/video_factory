@@ -20,7 +20,10 @@ from app.services.topic.prompts.common import (
     VISUAL_ANCHOR_RULE,
 )
 from app.services.topic.prompts.format import optimize_json_format, topic_json_format
-from app.services.topic.text import needs_conversational_rewrite
+from app.services.topic.text import (
+    conversational_rewrite_example,
+    needs_conversational_rewrite,
+)
 
 _CONVERSATIONAL_TITLE_RE = re.compile(r"[？?]")
 
@@ -71,6 +74,30 @@ def _template_instruction(category: str, templates: list[str]) -> str:
         hint = next((t.hint for t in spec.templates if t.name == name), "")
         lines.append(f"{idx}. template={name}" + (f"（{hint}）" if hint else ""))
     return "\n".join(lines)
+
+
+def _needs_optimize_conversational_rewrite(
+    title: str,
+    *,
+    category: str,
+    template: str | None,
+) -> bool:
+    if needs_conversational_rewrite(title, category=category, template=template):
+        return True
+    if category in {CATEGORY_SCIENCE, CATEGORY_CURRENT}:
+        return "?" not in title and "？" not in title
+    return False
+
+
+def _conversational_rewrite_instruction(title: str) -> str:
+    example = conversational_rewrite_example(title)
+    return (
+        "【硬性格式】优化后 title 必须含中文问号「？」，"
+        "且写成一整句「误区问句？明明/真以为/根本没有+一步反驳」。"
+        "反驳半句要有口语趣味（如够你跑路、热到掉渣），忌说教建议（足够你躲桌下）。"
+        "禁止输出无问号的陈述句、半句问法，或仅语气词收尾。"
+        f"同一主题参考：{example}"
+    )
 
 
 def build_topic_system_prompt(
@@ -155,6 +182,7 @@ def build_topic_optimize_system_prompt(
             + f"{CONVERSATIONAL_TITLE_RULE}"
             + f"{FORBIDDEN_FAQ_TITLE_RULE}"
             + f"{VISUAL_ANCHOR_RULE}"
+            + "科学/时事类：优化后 title 必须含中文问号「？」，无问号陈述句一律不合格。"
             + "标题仍须剥离具体时效与人名。"
         )
     return (
@@ -162,6 +190,7 @@ def build_topic_optimize_system_prompt(
         + f"{CONVERSATIONAL_TITLE_RULE}"
         + f"{FORBIDDEN_FAQ_TITLE_RULE}"
         + f"{VISUAL_ANCHOR_RULE}"
+        + "科学/时事类：优化后 title 必须含中文问号「？」，无问号陈述句一律不合格。"
         + "若原标题含问号对话体，优化后仍须一步直达、同一话题。"
         + "category、template 须与用户原值一致。"
     )
@@ -191,15 +220,12 @@ def build_topic_optimize_user_prompt(
         lines.append("须保持同一历史人物或悬案，标题仍为「代号：悬念」格式。")
     elif resolved in {CATEGORY_SCIENCE, CATEGORY_CURRENT}:
         lines.append("优化后 title 仍须含可示意图解的画面锚点名词。")
-        if needs_conversational_rewrite(
-            title.strip(), category=resolved, template=template
+        if _needs_optimize_conversational_rewrite(
+            title.strip(),
+            category=resolved,
+            template=template,
         ):
-            lines.append(
-                "原标题不符合完整对话反转句式：优化后须写成"
-                "「误区问句？明明/真以为+一步反驳」一整句，"
-                "问号后必须有回应，禁止半句问法或纯陈述句。"
-                "例：日本预警快只靠砸钱？明明秒级靠的是地震波。"
-            )
+            lines.append(_conversational_rewrite_instruction(title.strip()))
         elif _CONVERSATIONAL_TITLE_RE.search(title):
             lines.append(
                 "原标题为完整对话反转式：优化后仍须保留问号与回应两半句，"

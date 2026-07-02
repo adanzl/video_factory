@@ -19,8 +19,8 @@ def optimize_json_format(*, max_title_len: int, category_value: str) -> str:
     return (
         "输出 JSON，topics 数组仅 1 项。"
         "每项含 title、keywords、category、template、hook。"
-        f"title ≤{max_title_len} 字，不含空格换行。"
+        f"title ≤{max_title_len} 字，不含空格换行，须含中文问号「？」。"
         f"category 固定为「{category_value}」，template 与用户原值一致。"
-        f'样例：{{"topics": [{{"title": "标题", "keywords": ["关键词"], '
+        f'样例：{{"topics": [{{"title": "动物真能预报地震？明明监测数据对不上", "keywords": ["地震", "动物"], '
         f'"category": "{category_value}", "template": "误区反问式", "hook": "一句话钩子"}}]}}'
     )
