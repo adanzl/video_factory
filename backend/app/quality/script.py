@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections import Counter
 
 from app.config import get_settings
 from app.quality.models import QualityReport
@@ -18,9 +19,15 @@ __all__ = [
     "check_board",
     "check_narration",
     "detect_memoir_narration",
+    "detect_narration_repetition",
     "skip_board_check",
     "skip_narration_check",
 ]
+
+_REPEAT_PHRASE_MIN_LEN = 10
+_REPEAT_PHRASE_MIN_COUNT = 3
+_ADJACENT_OVERLAP_MIN_LEN = 10
+_NIKAN_MAX_COUNT = 4
 
 
 def _narration_chars(narration: str) -> int:
@@ -46,6 +53,77 @@ def detect_memoir_narration(narration: str) -> str | None:
     for pattern, label in _MEMOIR_BANNED_PATTERNS:
         if pattern.search(narration):
             return label
+    return None
+
+
+def _normalize_narration_text(text: str) -> str:
+    return re.sub(r"\s+", "", text or "")
+
+
+def _adjacent_shared_fragment(left: str, right: str, *, min_len: int) -> str | None:
+    a = _normalize_narration_text(left)
+    b = _normalize_narration_text(right)
+    if not a or not b:
+        return None
+    upper = min(len(a), len(b))
+    for size in range(upper, min_len - 1, -1):
+        for start in range(len(a) - size + 1):
+            frag = a[start : start + size]
+            if frag in b:
+                return frag
+    return None
+
+
+def detect_narration_repetition(
+    narration: str,
+    segments: list[dict] | None = None,
+) -> str | None:
+    """检测口播复读（重复短语、相邻段复述、完全相同分镜）。"""
+    normalized = _normalize_narration_text(narration)
+    if not normalized:
+        return None
+
+    if normalized.count("你看") > _NIKAN_MAX_COUNT:
+        return "「你看」出现过多（全文最多 3～4 次）"
+
+    grams: Counter[str] = Counter()
+    for size in range(_REPEAT_PHRASE_MIN_LEN, _REPEAT_PHRASE_MIN_LEN + 5):
+        if len(normalized) < size:
+            continue
+        for start in range(len(normalized) - size + 1):
+            frag = normalized[start : start + size]
+            if len(set(frag)) < 3:
+                continue
+            grams[frag] += 1
+    repeated = [(frag, count) for frag, count in grams.items() if count >= _REPEAT_PHRASE_MIN_COUNT]
+    if repeated:
+        frag, count = max(repeated, key=lambda item: (len(item[0]), item[1]))
+        preview = frag if len(frag) <= 20 else f"{frag[:20]}…"
+        return f"短语「{preview}」重复 {count} 次"
+
+    if not segments:
+        return None
+
+    ordered = sorted(
+        segments,
+        key=lambda seg: int(seg.get("segment_index") or seg.get("index") or 0),
+    )
+    texts = [str(seg.get("text") or "") for seg in ordered]
+    dup = Counter(_normalize_narration_text(text) for text in texts if text.strip())
+    for text, count in dup.items():
+        if count > 1 and len(text) >= 15:
+            return f"有 {count} 段口播文案完全相同"
+
+    for index in range(len(texts) - 1):
+        frag = _adjacent_shared_fragment(
+            texts[index],
+            texts[index + 1],
+            min_len=_ADJACENT_OVERLAP_MIN_LEN,
+        )
+        if frag:
+            seg_idx = ordered[index].get("segment_index", index + 1)
+            preview = frag if len(frag) <= 24 else f"{frag[:24]}…"
+            return f"分镜 {seg_idx} 与下一段复述「{preview}」"
     return None
 
 
@@ -98,6 +176,17 @@ def check_narration(script: dict) -> QualityReport:
                 fail_stage="script",
                 details={"reason": f"banned phrase: {word}"},
             )
+    repeat_issue = detect_narration_repetition(
+        narration,
+        script.get("segments") if isinstance(script.get("segments"), list) else None,
+    )
+    if repeat_issue:
+        return QualityReport(
+            level="major",
+            step="copy",
+            fail_stage="script",
+            details={"reason": f"narration repetition: {repeat_issue}"},
+        )
     return QualityReport(level="pass", step="copy", details={"word_count": word_count})
 
 

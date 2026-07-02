@@ -100,7 +100,7 @@ def test_validate_script_accepts_fewer_segments_than_word_budget(monkeypatch):
         "worker.stages.standard.script.get_settings",
         lambda: type("S", (), {"segment_target_sec": 28, "max_title_length": 20})(),
     )
-    target = 1646
+    target = 1350
     cap = segment_text_char_cap(28)
     needed = max(1, (target + cap - 1) // cap)
     script = _valid_script(
@@ -108,7 +108,7 @@ def test_validate_script_accepts_fewer_segments_than_word_budget(monkeypatch):
         segments=[
             {
                 "segment_index": i,
-                "text": "x" * 98,
+                "text": "x" * 60,
                 "visual_brief": _VISUAL_BRIEF,
                 "image_prompt": _IMAGE_PROMPT,
             }
