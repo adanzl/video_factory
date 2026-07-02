@@ -5,9 +5,10 @@ from __future__ import annotations
 import re
 
 from app.services.script.board import (
-    build_board_prompts,
     build_image_prompts_prompts,
     build_material_script_prompts,
+    build_narration_prompts,
+    build_visual_brief_prompts,
 )
 
 
@@ -53,9 +54,8 @@ def collect_prompts(
         )
     else:
         prompts.append(
-            build_board_prompts(
+            build_narration_prompts(
                 title,
-                segment_target_sec=segment_target_sec,
                 max_title_length=max_title_length,
                 narration_target_words=narration_target_words,
                 supplementary_info=extra,
@@ -63,6 +63,9 @@ def collect_prompts(
             )
         )
         if script and script.get("segments"):
+            prompts.append(
+                build_visual_brief_prompts(script, supplementary_info=extra, job=job)
+            )
             prompts.append(
                 build_image_prompts_prompts(script, supplementary_info=extra, job=job)
             )

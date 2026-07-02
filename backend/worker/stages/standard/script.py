@@ -199,6 +199,8 @@ def _validation_retry_scope(exc: ScriptValidationError) -> str:
     msg = str(exc)
     if "image_prompt too short" in msg:
         return "image_prompts"
+    if "missing visual_brief" in msg or "visual_style is empty" in msg:
+        return "visual_brief"
     if any(
         key in msg
         for key in (
@@ -206,9 +208,7 @@ def _validation_retry_scope(exc: ScriptValidationError) -> str:
             "narration too long",
             "narration repetition",
             "segment text exceeds",
-            "missing visual_brief",
             "text is empty",
-            "visual_style is empty",
             "no segments",
         )
     ):
@@ -249,6 +249,10 @@ def _log_llm_timing(job_id: int, stage_name: str, script: dict) -> None:
     if not isinstance(timing, dict):
         return
     parts = []
+    if "narration_sec" in timing:
+        parts.append(f"narration={timing['narration_sec']}s")
+    if "visual_brief_sec" in timing:
+        parts.append(f"visual_brief={timing['visual_brief_sec']}s")
     if "storyboard_sec" in timing:
         parts.append(f"storyboard={timing['storyboard_sec']}s")
     if "segment_shrink_sec" in timing:
@@ -690,14 +694,6 @@ class ScriptStage(StageExecutor):
             )
             job_cancel.raise_if_cancelled(job_id)
             _log_llm_timing(ctx.job["id"], self.name, script)
-            _repair_segment_overflow_via_shrink(
-                script,
-                segment_target_sec=segment_target_sec,
-                speech_chars_per_sec=speech_chars_per_sec,
-                job_id=job_id,
-                stage_name=self.name,
-                job=ctx.job,
-            )
             if narration_target_words is not None:
                 _repair_narration_overflow_via_shrink(
                     script,
@@ -732,7 +728,8 @@ class ScriptStage(StageExecutor):
                     content_style=content_style,
                     speech_chars_per_sec=speech_chars_per_sec,
                 )
-                script = None
+                if retry_scope != "visual_brief":
+                    script = None
                 with connection() as conn:
                     qa_step = _validation_quality_step(exc)
                     if qa_step:

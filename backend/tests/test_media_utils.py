@@ -7,12 +7,14 @@ from app.utils.media import (
     material_final_min_duration_sec,
     material_min_audio_duration_sec,
     narration_accept_min_chars,
+    segment_narration_chars,
     segment_text_shrink_max,
     narration_target_for_minutes,
     narration_writing_plan,
     narration_writing_target_chars,
     segment_comfort_chars,
     segment_text_char_cap,
+    split_narration_to_segments,
 )
 
 
@@ -91,6 +93,33 @@ def test_assign_segment_timings_from_narration_chars():
 
 def test_estimate_segment_duration_sec():
     assert estimate_segment_duration_sec("一二三四五") == 1.22
+
+
+def test_split_narration_to_segments_by_sentence_when_no_duration_cap():
+    narration = "第一句。第二句！第三句？"
+    segments = split_narration_to_segments(narration, 0)
+    assert len(segments) == 3
+    assert "".join(seg["text"] for seg in segments) == narration
+
+
+def test_split_narration_to_segments_respects_duration_cap():
+    cap = segment_text_char_cap(15.0)
+    sentence = "一" * (cap + 10)
+    narration = f"{sentence}。短句。"
+    segments = split_narration_to_segments(narration, 15.0)
+    assert all(segment_narration_chars(seg["text"]) <= cap for seg in segments)
+    joined = "".join(seg["text"] for seg in segments)
+    assert segment_narration_chars(joined) == segment_narration_chars(narration)
+
+
+def test_split_narration_to_segments_long_1350_chars():
+    cap = segment_text_char_cap(15.0)
+    parts = [f"科普点{i}：" + "字" * 18 + "。" for i in range(60)]
+    narration = "".join(parts)
+    segments = split_narration_to_segments(narration, 15.0)
+    assert len(segments) >= 20
+    assert all(segment_narration_chars(seg["text"]) <= cap for seg in segments)
+    assert "".join(seg["text"] for seg in segments) == narration
 
 
 def test_assign_segment_timings_from_video_timeline():

@@ -2,7 +2,21 @@
 
 from __future__ import annotations
 
-from app.services.llm.llm_deepseek import _assemble_storyboard_narration, _loads_llm_json
+from app.services.llm.llm_deepseek import (
+    _apply_segments_from_narration,
+    _assemble_storyboard_narration,
+    _loads_llm_json,
+)
+from app.utils.media import segment_text_char_cap
+
+
+def test_apply_segments_from_narration_respects_cap():
+    narration = "第一句。" + "字" * 70 + "。第二句。"
+    data = {"narration": narration, "visual_style": "写实", "title": "测试"}
+    out = _apply_segments_from_narration(data, segment_target_sec=15.0)
+    cap = segment_text_char_cap(15.0)
+    assert all(len(seg["text"].replace(" ", "")) <= cap for seg in out["segments"])
+    assert out["narration"] == narration
 
 
 def test_assemble_storyboard_narration_from_segments():

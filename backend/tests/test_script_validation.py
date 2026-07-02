@@ -15,6 +15,7 @@ from worker.stages.standard.script import (
     _accept_narration_chars,
     _classify_segment_overflow,
     _min_narration_chars,
+    _narration_chars,
     _narration_retry_min_chars,
     _narration_short_retryable,
     _repair_narration_overflow_via_shrink,
@@ -104,19 +105,21 @@ def test_validate_script_accepts_fewer_segments_than_word_budget(monkeypatch):
     )
     target = 1350
     cap = segment_text_char_cap(28)
-    needed = max(1, (target + cap - 1) // cap)
-    script = _valid_script(
-        narration="x" * narration_accept_min_chars(target),
-        segments=[
-            {
-                "segment_index": i,
-                "text": "x" * 60,
-                "visual_brief": _VISUAL_BRIEF,
-                "image_prompt": _IMAGE_PROMPT,
-            }
-            for i in range(1, needed)
-        ],
-    )
+    min_chars = narration_accept_min_chars(target)
+    seg_count = 20
+    per = min(cap - 2, (min_chars + seg_count - 1) // seg_count)
+    segments = [
+        {
+            "segment_index": i,
+            "text": chr(0x4e00 + i) * per,
+            "visual_brief": _VISUAL_BRIEF,
+            "image_prompt": _IMAGE_PROMPT,
+        }
+        for i in range(1, seg_count + 1)
+    ]
+    narration = "".join(seg["text"] for seg in segments)
+    assert _narration_chars(narration) >= min_chars
+    script = _valid_script(narration=narration, segments=segments)
     _validate_script(
         script,
         min_narration_chars=_min_narration_chars(target),

@@ -73,6 +73,25 @@ _STORYBOARD_JSON_EXAMPLE_COMPACT = """{
 
 注意：样例仅 2 段示意字段结构；实际段数须 ≥【字数预算】段数下限，各段 text 须写满，禁止照抄样例短句。"""
 
+_NARRATION_ONLY_JSON_EXAMPLE = """{
+  "title": "标题示例",
+  "narration": "（连贯口播全文，须达到【字数预算】写作目标，用句号自然断句）",
+  "word_count": 1282,
+  "visual_style": "画风定调一句话（画风+主色调+跨镜统一元素）"
+}
+
+注意：不要输出 segments 字段；word_count 须为 narration 真实字数且 ≥ 写作目标。"""
+
+_VISUAL_BRIEF_JSON_EXAMPLE = """{
+  "visual_style": "画风定调一句话（可与输入一致或微调）",
+  "segments": [
+    {"segment_index": 1, "visual_brief": "画面主旨与关键视觉（80-150字）（写实场景）", "visual_mode": "static_motion"},
+    {"segment_index": 2, "visual_brief": "画面主旨（结构示意图）", "visual_mode": "static_motion"}
+  ]
+}
+
+注意：segments 须覆盖输入的每一段，segment_index 一一对应；不要修改各段 text。"""
+
 _IMAGE_PROMPT_JSON_EXAMPLE_TEXT = (
     "古老的青铜丹炉占据画面左侧，炉内青绿色火焰与绿烟向上弥漫，炉壁锈迹与烟熏清晰；"
     "前景散落赤色丹药与药渣，背景昏暗炼丹房内木质药柜虚化。"
@@ -228,6 +247,8 @@ def _image_prompt_rule(*, orientation: str, content_style: str, sd15_mode: bool 
 
 _STEP_LABELS = {
     "storyboard": "口播分镜",
+    "narration": "口播文案",
+    "visual_brief": "分镜画面概述",
     "image_prompts": "文生图提示词",
     "material_script": "口播文案",
     "title_optimize": "标题优化",
@@ -671,6 +692,181 @@ def _prompt_step(step: str, system: str, user: str) -> dict[str, str]:
     }
 
 
+def _narration_only_length_rule(content_style: str) -> str:
+    layers = _storyboard_layer_style(content_style)
+    return (
+        f"【口播写法】全文连贯书写，按「{layers}」思路展开，用句号/问号/感叹号自然断句；"
+        "不要输出 segments，后端会按单镜时长自动切分。"
+        "word_count 必须等于 narration 实际字数（不含空格换行），禁止虚报。"
+    )
+
+
+def _narration_execution_headline(
+    *,
+    narration_target: int,
+    content_style: str,
+) -> str:
+    hard_min = narration_accept_min_chars(narration_target)
+    writing_target = narration_writing_target_chars(narration_target)
+    hard_max = narration_accept_max_chars(narration_target)
+    layers = _storyboard_layer_style(content_style)
+    return (
+        f"【首要任务】口播总字数须落在 {hard_min}-{hard_max} 字硬区间内（写作目标约 {writing_target} 字），"
+        f"超过 {hard_max} 字整稿作废，优先删例子/删并列知识点。"
+        f"全文用连贯口播书写，按「{layers}」思路展开，用句号自然断句；"
+        "不要输出 segments 字段，分镜由后端按单镜时长自动切分。"
+        "输出前统计 narration 字数并核对 word_count。"
+    )
+
+
+def _narration_only_length_budget(
+    *,
+    narration_target: int,
+    content_style: str,
+) -> str:
+    hard_min = narration_accept_min_chars(narration_target)
+    writing_target = narration_writing_target_chars(narration_target)
+    hard_max = narration_accept_max_chars(narration_target)
+    pct = int(NARRATION_WRITING_TARGET_RATIO * 100)
+    layers = _storyboard_layer_style(content_style)
+    return (
+        f"【字数预算】总目标 {narration_target} 字；"
+        f"写作目标约 {writing_target} 字（总目标 {narration_target} 字的 {pct}%）；"
+        f"验收区间 {hard_min}-{hard_max} 字（超出或不足均不合格）。\n"
+        f"全文用「{layers}」写法连贯展开，不足可补细节，超标须删繁就简。\n"
+        "【生成顺序】只写 narration 与 word_count，不要写 segments。\n"
+        "【输出前硬性自检】①narration 字数在验收区间内；"
+        "②word_count 等于 narration 实际字数；"
+        "③口播无伪亲历/第一人称从业叙事。"
+    )
+
+
+def build_narration_prompts(
+    title: str,
+    *,
+    feedback: str | None = None,
+    max_title_length: int | None = None,
+    narration_target_words: int | None = None,
+    supplementary_info: str | None = None,
+    job: dict | None = None,
+    orientation: str | None = None,
+    content_style: str | None = None,
+) -> dict[str, str]:
+    """第一步：只生成口播全文与 visual_style（不含 segments）。"""
+    settings = get_settings()
+    profile_orientation, profile_style = _resolve_script_profile(
+        job,
+        orientation=orientation,
+        content_style=content_style,
+    )
+    max_title = settings.max_title_length if max_title_length is None else max_title_length
+    narration_word_target = (
+        narration_target_words
+        if narration_target_words is not None
+        else default_narration_target_words(settings)
+    )
+    narration_word_min, narration_word_max = _narration_word_range(narration_word_target)
+    title_rule, title_user_prefix = _title_rule(title, max_title)
+    length_rule = (
+        f"口播总目标 {narration_word_target} 字；{_writing_target_clause(narration_word_target)}；"
+        f"验收区间 {narration_word_min}-{narration_word_max} 字（不含空格换行）；"
+        f"低于 {narration_word_min} 字或高于 {narration_word_max} 字视为不合格；"
+        f"{_narration_only_length_rule(profile_style)}"
+    )
+    system = (
+        f"{_storyboard_role(profile_style)}输出 JSON，字段：title, narration, word_count, visual_style。"
+        "口播总字数未落在验收硬区间内则整稿无效；禁止输出 segments 字段。"
+        f"{title_rule}"
+        f"{length_rule}"
+        f"narration口吻：{_narration_voice_rule(profile_style)}"
+        f"{_NARRATION_ANTI_MEMOIR_RULE}"
+        f"{_NARRATION_ANTI_REPETITION_RULE}"
+        f"{_structure_rule(orientation=profile_orientation, content_style=profile_style)}"
+        "结构完整有开头结尾。"
+        "禁止口播开头空泛自我介绍或冗长人设铺垫。"
+        "visual_style 为全片画风定调一句话（画风+主色调+跨镜统一元素如道具造型）。"
+        "本步只写口播与 visual_style，不写分镜与 image_prompt。"
+        f"{_supplementary_system_clause(supplementary_info)}"
+        f"{_json_output_clause(_NARRATION_ONLY_JSON_EXAMPLE)}"
+    )
+    user = _append_supplementary_to_user(
+        (
+            f"{_narration_execution_headline(narration_target=narration_word_target, content_style=profile_style)}\n\n"
+            f"{_narration_only_length_budget(narration_target=narration_word_target, content_style=profile_style)}\n\n"
+            f"{title_user_prefix}、visual_style 与完整口播 narration。"
+        ),
+        supplementary_info,
+    )
+    if feedback:
+        user += f"\n\n上次不合格：{feedback}。请按要求重写。"
+    return _prompt_step("narration", system, user)
+
+
+def _format_visual_brief_segments_for_prompt(segments: list[dict]) -> str:
+    ordered = sorted(
+        segments,
+        key=lambda seg: int(seg.get("segment_index") or seg.get("index") or 0),
+    )
+    lines: list[str] = []
+    for seg in ordered:
+        idx = seg.get("segment_index")
+        text = str(seg.get("text") or "")
+        lines.append(f"segment {idx}: text={text!r}")
+    return "\n".join(lines)
+
+
+def build_visual_brief_prompts(
+    script: dict[str, Any],
+    *,
+    feedback: str | None = None,
+    supplementary_info: str | None = None,
+    job: dict | None = None,
+    orientation: str | None = None,
+    content_style: str | None = None,
+) -> dict[str, str]:
+    """第二步：基于已切分的 segments 与全文 narration 生成 visual_brief。"""
+    profile_orientation, profile_style = _resolve_script_profile(
+        job,
+        orientation=orientation,
+        content_style=content_style,
+    )
+    segments = script.get("segments") or []
+    narration = str(script.get("narration") or "").strip()
+    visual_style = str(script.get("visual_style") or "").strip()
+    title = str(script.get("title") or "").strip()
+    types = _visual_brief_types(profile_style)
+    seg_rule = (
+        "segments 为分镜数组，须与输入逐段一一对应；"
+        "各段含 segment_index, visual_brief, visual_mode=static_motion；"
+        "不要输出或修改各段 text。"
+        f"visual_brief 为该镜画面描述（80-150 字）：写清视觉主旨、关键动作或对比关系、"
+        f"场景类型与情绪；末尾须用括号标注画面类型{types}。"
+        "须通读全文 narration，保证相邻分镜画面衔接自然、叙事节奏连贯，"
+        "避免前后镜主体/场景毫无关联的跳跃；"
+        "同时每镜 visual_brief 只表达本段 text 内容，禁止提前画后续段落情节。"
+    )
+    system = (
+        f"{_storyboard_role(profile_style)}输出 JSON，字段：visual_style, segments。"
+        f"{seg_rule}"
+        "visual_style 可与输入一致，或在保持全片统一的前提下微调措辞。"
+        f"{_supplementary_system_clause(supplementary_info)}"
+        f"{_json_output_clause(_VISUAL_BRIEF_JSON_EXAMPLE)}"
+    )
+    user = _append_supplementary_to_user(
+        (
+            f"标题：{title}\n"
+            f"全片 visual_style：{visual_style or '（待你输出）'}\n\n"
+            f"【口播全文 narration】（供把握画面节奏与连贯性，勿改写）：\n{narration}\n\n"
+            f"【各分镜口播 text】（已固定，须逐段生成 visual_brief）：\n"
+            f"{_format_visual_brief_segments_for_prompt(segments)}"
+        ),
+        supplementary_info,
+    )
+    if feedback:
+        user += f"\n\n上次不合格：{feedback}。请按要求重写。"
+    return _prompt_step("visual_brief", system, user)
+
+
 def build_board_prompts(
     title: str,
     *,
@@ -967,6 +1163,27 @@ def build_narration_expand_prompts(
     """在初稿字数不足时专用扩写（保留分镜与画面字段）。"""
     current = _narration_char_count_for_prompt(str(script.get("narration") or ""))
     deficit = max(1, min_chars - current)
+    if mode == "narration_only":
+        system = (
+            "你是口播扩写编辑。用户在初稿字数不足，须在保持主题与结构的前提下扩写。"
+            "输出 JSON，字段：title, narration, word_count, visual_style。"
+            f"扩写后 narration 须至少 {min_chars} 字（不含空格换行），当前仅 {current} 字，还差约 {deficit} 字。"
+            "规则：只扩写 narration，补具体细节、案例、步骤或结论，禁止删减已有核心信息；"
+            "不要输出 segments；word_count 等于 narration 实际字数。"
+            f"{_NARRATION_ANTI_MEMOIR_RULE}"
+            f"{_json_output_clause(_NARRATION_ONLY_JSON_EXAMPLE)}"
+        )
+        draft = {
+            "title": script.get("title"),
+            "narration": script.get("narration"),
+            "word_count": script.get("word_count"),
+            "visual_style": script.get("visual_style"),
+        }
+        user = (
+            "当前稿件（字数不足，请扩写 narration）：\n"
+            f"{json.dumps(draft, ensure_ascii=False, indent=2)}"
+        )
+        return _prompt_step("narration_expand", system, user)
     keep_visual = mode == "storyboard"
     system = (
         "你是口播扩写编辑。用户在初稿字数不足，须在保持主题与分镜结构的前提下扩写。"

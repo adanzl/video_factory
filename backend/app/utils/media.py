@@ -136,6 +136,92 @@ def segment_narration_chars(text: str) -> int:
     return len(re.sub(r"\s+", "", text or ""))
 
 
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[。！？；\n])")
+_CLAUSE_SPLIT_RE = re.compile(r"(?<=[，、：])")
+
+
+def _split_narration_units(narration: str) -> list[str]:
+    text = (narration or "").strip()
+    if not text:
+        return []
+    parts = [part for part in _SENTENCE_SPLIT_RE.split(text) if part.strip()]
+    return parts if parts else [text]
+
+
+def _hard_chunk_text(text: str, cap: int) -> list[str]:
+    normalized = re.sub(r"\s+", "", text)
+    if not normalized:
+        return []
+    return [normalized[index : index + cap] for index in range(0, len(normalized), cap)]
+
+
+def _split_long_narration_unit(text: str, cap: int) -> list[str]:
+    trimmed = text.strip()
+    if segment_narration_chars(trimmed) <= cap:
+        return [trimmed]
+    clauses = [part for part in _CLAUSE_SPLIT_RE.split(trimmed) if part.strip()]
+    if len(clauses) > 1:
+        return _accumulate_narration_units(clauses, cap)
+    return _hard_chunk_text(trimmed, cap)
+
+
+def _accumulate_narration_units(units: list[str], cap: int) -> list[str]:
+    chunks: list[str] = []
+    current = ""
+    for unit in units:
+        piece = unit.strip()
+        if not piece:
+            continue
+        if segment_narration_chars(piece) > cap:
+            if current:
+                chunks.append(current)
+                current = ""
+            chunks.extend(_split_long_narration_unit(piece, cap))
+            continue
+        combined = current + piece
+        if segment_narration_chars(combined) <= cap:
+            current = combined
+        else:
+            if current:
+                chunks.append(current)
+            current = piece
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def split_narration_to_segments(
+    narration: str,
+    segment_target_sec: float = 0,
+    *,
+    chars_per_sec: float = DEFAULT_SPEECH_CHARS_PER_SEC,
+) -> list[dict[str, Any]]:
+    """将口播全文切分为分镜 segments（text 由代码按时长预算拼接，保证单段不超限）。"""
+    units = _split_narration_units(narration)
+    if not units:
+        return []
+    if segment_target_sec <= 0:
+        return [
+            {
+                "segment_index": index,
+                "text": text.strip(),
+                "visual_mode": "static_motion",
+            }
+            for index, text in enumerate(units, start=1)
+            if text.strip()
+        ]
+    cap = segment_text_char_cap(segment_target_sec, chars_per_sec=chars_per_sec)
+    texts = _accumulate_narration_units(units, cap)
+    return [
+        {
+            "segment_index": index,
+            "text": text,
+            "visual_mode": "static_motion",
+        }
+        for index, text in enumerate(texts, start=1)
+    ]
+
+
 def estimate_segment_duration_sec(
     text: str,
     *,
