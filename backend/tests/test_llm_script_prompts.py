@@ -127,8 +127,36 @@ def test_collect_prompts_accepts_speech_chars_per_sec():
         speech_chars_per_sec=4.1,
         preview_followups=True,
     )
-    assert prompts[0]["step"] == "narration"
+    steps = [item["step"] for item in prompts]
+    assert steps == ["narration", "visual_brief", "image_prompts", "title_optimize"]
     assert all(item["step"] != "video_description" for item in prompts)
+
+
+def test_collect_prompts_preview_includes_title_optimize_when_skipped_at_runtime():
+    job = {"pipeline": "standard", "info": {}}
+    prompts = collect_prompts(
+        job,
+        "测试标题",
+        skip_title_optimize=True,
+        preview_followups=True,
+    )
+    assert "title_optimize" in [item["step"] for item in prompts]
+
+
+def test_collect_prompts_omits_title_optimize_when_skipped_without_preview():
+    job = {"pipeline": "standard", "info": {}}
+    script = {
+        "title": "测试标题",
+        "narration": "x" * 200,
+        "segments": [{"segment_index": 1, "text": "x" * 50, "visual_brief": "画面"}],
+    }
+    prompts = collect_prompts(
+        job,
+        "测试标题",
+        script=script,
+        skip_title_optimize=True,
+    )
+    assert "title_optimize" not in [item["step"] for item in prompts]
 
 
 def test_collect_prompts_includes_followup_steps_when_script_ready():
