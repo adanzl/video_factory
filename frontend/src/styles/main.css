@@ -36,3 +36,11 @@
 .scrollbar-overlay::-webkit-scrollbar-thumb:hover {
   background-color: rgb(156 163 175 / 0.7);
 }
+
+.create-job-run-mode {
+  @apply flex w-full flex-col items-start gap-3;
+}
+
+.create-job-run-mode .el-radio {
+  @apply mr-0 h-auto;
+}

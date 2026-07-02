@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any
+from typing import Any, Literal
+
+TopicLlmOperation = Literal["generate", "save", "optimize"]
 
 from app.config import get_settings
 from app.services.topic.parsers import is_topic_parse_retryable
 
-__all__ = ["LLMClient", "LLMMgr", "llm_mgr"]
+__all__ = ["LLMClient", "LLMMgr", "TopicLlmOperation", "llm_mgr"]
 
 logger = logging.getLogger(__name__)
 
@@ -359,12 +361,15 @@ class LLMMgr:
         user_prompt: str | None = None,
         category: str | None = None,
         keywords: str | list[str] | None = None,
+        operation: TopicLlmOperation = "generate",
     ) -> list[dict[str, str]]:
         count = max(1, min(count, 20))
         custom_prompt = bool(system_prompt or user_prompt)
+        theme_suffix = f" theme={theme!r}" if theme else ""
         logger.info(
-            "[TOPIC] generate start theme=%r category=%r count=%d custom_prompt=%s mock=%s",
-            theme,
+            "[TOPIC] llm start operation=%s%s category=%r count=%d custom_prompt=%s mock=%s",
+            operation,
+            theme_suffix,
             category,
             count,
             custom_prompt,
@@ -383,29 +388,33 @@ class LLMMgr:
         except ValueError as exc:
             if is_topic_parse_retryable(exc):
                 logger.warning(
-                    "[TOPIC] generate rejected theme=%r count=%d reason=%s",
-                    theme,
+                    "[TOPIC] llm rejected operation=%s%s count=%d reason=%s",
+                    operation,
+                    theme_suffix,
                     count,
                     exc,
                 )
             else:
                 logger.exception(
-                    "[TOPIC] generate failed theme=%r count=%d",
-                    theme,
+                    "[TOPIC] llm failed operation=%s%s count=%d",
+                    operation,
+                    theme_suffix,
                     count,
                 )
             raise
         except Exception:
             logger.exception(
-                "[TOPIC] generate failed theme=%r count=%d",
-                theme,
+                "[TOPIC] llm failed operation=%s%s count=%d",
+                operation,
+                theme_suffix,
                 count,
             )
             raise
         elapsed = time.perf_counter() - started
         titles = [item["title"] for item in topics]
         logger.info(
-            "[TOPIC] generate done count=%d elapsed=%.1fs titles=%s",
+            "[TOPIC] llm done operation=%s count=%d elapsed=%.1fs titles=%s",
+            operation,
             len(topics),
             elapsed,
             titles,
