@@ -10,6 +10,7 @@ def register_api(app: Flask) -> None:
     from app.api.api_materials import bp as materials_bp
     from app.api.api_media import bp as media_bp
     from app.api.api_topic import bp as topic_bp
+    from app.api.api_config import bp as config_bp
 
     register_error_handlers(app)
     app.register_blueprint(jobs_bp)
@@ -17,3 +18,4 @@ def register_api(app: Flask) -> None:
     app.register_blueprint(materials_bp)
     app.register_blueprint(media_bp)
     app.register_blueprint(topic_bp)
+    app.register_blueprint(config_bp)
