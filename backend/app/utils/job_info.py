@@ -7,6 +7,7 @@ from typing import Any
 
 from app.utils.media import (
     DEFAULT_HISTORY_VIDEO_MINUTES,
+    DEFAULT_SPEECH_CHARS_PER_SEC,
     DEFAULT_STANDARD_VIDEO_MINUTES,
     default_narration_target_words,
     narration_target_for_minutes,
@@ -286,11 +287,21 @@ _SCRIPT_PARAM_KEYS = (
     "max_title_length",
     "estimated_duration_min",
     "narration_target_words",
+    "speech_chars_per_sec",
     "skip_title_optimize",
     "generate_image_prompts",
     "supplementary_info",
     "video_timeline",
 )
+
+
+def resolve_speech_chars_per_sec(script: dict[str, Any] | None = None) -> float:
+    """info.script.speech_chars_per_sec；默认 DEFAULT_SPEECH_CHARS_PER_SEC。"""
+    if isinstance(script, dict):
+        rate = _optional_positive_float(script.get("speech_chars_per_sec"))
+        if rate is not None:
+            return rate
+    return DEFAULT_SPEECH_CHARS_PER_SEC
 
 
 def _optional_positive_float(value: object) -> float | None:
@@ -326,7 +337,10 @@ def resolve_estimated_duration_min(
     if raw_words is not None:
         from app.utils.media import estimated_minutes_from_narration_words
 
-        return estimated_minutes_from_narration_words(raw_words)
+        return estimated_minutes_from_narration_words(
+            raw_words,
+            chars_per_sec=resolve_speech_chars_per_sec(script),
+        )
     if content_style == CONTENT_STYLE_HISTORICAL_MYSTERY:
         return DEFAULT_HISTORY_VIDEO_MINUTES
     return DEFAULT_STANDARD_VIDEO_MINUTES
@@ -340,7 +354,10 @@ def resolve_narration_target_words(
     """由预计时长或显式口播目标解析口播字数。"""
     raw_min = _optional_positive_float(script.get("estimated_duration_min"))
     if raw_min is not None:
-        return narration_target_for_minutes(raw_min)
+        return narration_target_for_minutes(
+            raw_min,
+            chars_per_sec=resolve_speech_chars_per_sec(script),
+        )
     raw_words = _optional_positive_int(script.get("narration_target_words"))
     if raw_words is not None:
         return raw_words
@@ -377,6 +394,7 @@ def build_script_params(
     max_title_length: int | None = None,
     estimated_duration_min: float | None = None,
     narration_target_words: int | None = None,
+    speech_chars_per_sec: float | None = None,
     skip_title_optimize: bool = False,
     generate_image_prompts: bool = False,
     supplementary_info: str | None = None,
@@ -400,6 +418,8 @@ def build_script_params(
         params["estimated_duration_min"] = DEFAULT_HISTORY_VIDEO_MINUTES
     if narration_target_words is not None:
         params["narration_target_words"] = narration_target_words
+    if speech_chars_per_sec is not None:
+        params["speech_chars_per_sec"] = round(float(speech_chars_per_sec), 2)
     if supplementary_info is not None:
         stripped = supplementary_info.strip()
         params["supplementary_info"] = stripped or None
@@ -416,6 +436,7 @@ def merge_job_script_params(
     max_title_length: int | None = None,
     estimated_duration_min: float | None = None,
     narration_target_words: int | None = None,
+    speech_chars_per_sec: float | None = None,
     skip_title_optimize: bool = False,
     generate_image_prompts: bool = False,
     supplementary_info: str | None = None,
@@ -432,6 +453,7 @@ def merge_job_script_params(
         max_title_length=max_title_length,
         estimated_duration_min=estimated_duration_min,
         narration_target_words=narration_target_words,
+        speech_chars_per_sec=speech_chars_per_sec,
         skip_title_optimize=skip_title_optimize,
         generate_image_prompts=generate_image_prompts,
         supplementary_info=supplementary_info,

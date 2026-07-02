@@ -121,6 +121,20 @@
               class="w-28!"
             />
           </el-descriptions-item>
+          <el-descriptions-item label="预估语速">
+            <div class="flex items-center gap-1">
+              <el-input-number
+                v-model="speechCharsPerSec"
+                :min="SPEECH_CHARS_PER_SEC_MIN"
+                :max="SPEECH_CHARS_PER_SEC_MAX"
+                :step="0.1"
+                :precision="1"
+                controls-position="right"
+                class="w-28!"
+              />
+              <span class="text-xs text-gray-400">字/秒</span>
+            </div>
+          </el-descriptions-item>
           <el-descriptions-item label="口播字数">
             <el-input-number
               v-model="narrationTargetWords"
@@ -244,7 +258,7 @@
       </el-descriptions>
 
       <el-descriptions
-        :column="3"
+        :column="4"
         border
         :label-width="FORM_LABEL_WIDTH"
         :class="[SCRIPT_RESULT_DESC_CLASS, 'mb-4']"
@@ -252,6 +266,7 @@
         <el-descriptions-item label="生成耗时">{{ formatCostTime(script.cost_time) }}</el-descriptions-item>
         <el-descriptions-item label="字数">{{ script.word_count ?? "-" }}</el-descriptions-item>
         <el-descriptions-item label="分镜数">{{ script.segments?.length ?? 0 }}</el-descriptions-item>
+        <el-descriptions-item label="预计时长">{{ formatCostTime(scriptEstimatedDurationSec) }}</el-descriptions-item>
       </el-descriptions>
 
       <div class="mb-5">
@@ -408,6 +423,7 @@ import {
   formatCostTime,
   formatMediaDuration,
   defaultNarrationTargetWords,
+  DEFAULT_SPEECH_CHARS_PER_SEC,
   narrationTargetFromEstimatedMinutes,
 } from "@/utils/media";
 import { useErrorHandler } from "@/composables/useErrorHandler";
@@ -428,6 +444,8 @@ const DEFAULT_SEGMENT_TARGET_SEC = 28;
 const DEFAULT_MAX_TITLE_LENGTH = 16;
 const DEFAULT_NARRATION_TARGET_WORDS = defaultNarrationTargetWords();
 const DEFAULT_MATERIAL_NARRATION_TARGET_WORDS = 800;
+const SPEECH_CHARS_PER_SEC_MIN = 1;
+const SPEECH_CHARS_PER_SEC_MAX = 10;
 const NARRATION_WORDS_MIN = 1;
 const NARRATION_WORDS_MAX = 3000;
 
@@ -448,6 +466,7 @@ const SCRIPT_PARAM_KEYS = [
   "max_title_length",
   "estimated_duration_min",
   "narration_target_words",
+  "speech_chars_per_sec",
   "skip_title_optimize",
   "generate_image_prompts",
   "supplementary_info",
@@ -474,8 +493,11 @@ const jobOrientation = ref<"portrait" | "landscape">("portrait");
 const contentStyle = ref<"science_child" | "life_experience" | "history_mystery">("science_child");
 const segmentTargetSec = ref(DEFAULT_SEGMENT_TARGET_SEC);
 const maxTitleLength = ref(DEFAULT_MAX_TITLE_LENGTH);
+const speechCharsPerSec = ref(DEFAULT_SPEECH_CHARS_PER_SEC);
 const narrationTargetWords = ref(DEFAULT_NARRATION_TARGET_WORDS);
-const estimatedDurationMin = ref(estimatedMinutesFromNarrationWords(DEFAULT_NARRATION_TARGET_WORDS));
+const estimatedDurationMin = ref(
+  estimatedMinutesFromNarrationWords(DEFAULT_NARRATION_TARGET_WORDS, undefined, DEFAULT_SPEECH_CHARS_PER_SEC)
+);
 const skipTitleOptimize = ref(false);
 const includeImagePrompts = ref(false);
 const supplementaryInfo = ref("");
@@ -534,6 +556,23 @@ const script = computed<ScriptJson | null>(() => {
     return null;
   }
   return value as ScriptJson;
+});
+
+/** 口播预计时长（秒）= 实际字数 / 预估语速 */
+const scriptEstimatedDurationSec = computed(() => {
+  const words = script.value?.word_count;
+  if (words == null || !Number.isFinite(words) || words <= 0) {
+    return null;
+  }
+  const params = resolveScriptParams(props.job.info);
+  const rate =
+    script.value?.speech_chars_per_sec ??
+    params?.speech_chars_per_sec ??
+    DEFAULT_SPEECH_CHARS_PER_SEC;
+  if (!Number.isFinite(rate) || rate <= 0) {
+    return null;
+  }
+  return Math.round((words / rate) * 10) / 10;
 });
 
 const rawJson = computed(() => JSON.stringify(props.job.script_json, null, 2));
@@ -732,7 +771,11 @@ const syncNarrationFromEstimatedDuration = (minutes: number | undefined) => {
     return;
   }
   syncingEstimateWords = true;
-  narrationTargetWords.value = narrationTargetFromEstimatedMinutes(minutes);
+  narrationTargetWords.value = narrationTargetFromEstimatedMinutes(
+    minutes,
+    undefined,
+    speechCharsPerSec.value
+  );
   narrationWordsTouched.value = true;
   syncingEstimateWords = false;
 };
@@ -751,7 +794,9 @@ const loadBaseDuration = async () => {
     if (!narrationWordsTouched.value) {
       narrationTargetWords.value = DEFAULT_MATERIAL_NARRATION_TARGET_WORDS;
       estimatedDurationMin.value = estimatedMinutesFromNarrationWords(
-        DEFAULT_MATERIAL_NARRATION_TARGET_WORDS
+        DEFAULT_MATERIAL_NARRATION_TARGET_WORDS,
+        undefined,
+        speechCharsPerSec.value
       );
     }
     return;
@@ -765,7 +810,7 @@ const loadBaseDuration = async () => {
     return;
   }
   if (duration !== null && duration > 0) {
-    narrationTargetWords.value = estimateNarrationTargetWords(duration);
+    narrationTargetWords.value = estimateNarrationTargetWords(duration, speechCharsPerSec.value);
   } else {
     narrationTargetWords.value = DEFAULT_MATERIAL_NARRATION_TARGET_WORDS;
     estimatedDurationMin.value = estimatedMinutesFromNarrationWords(
@@ -870,15 +915,26 @@ function initScriptParamsFromInfo() {
   applyFiniteNumber(scriptParams.max_title_length, value => {
     maxTitleLength.value = value;
   });
+  applyFiniteNumber(scriptParams.speech_chars_per_sec, value => {
+    speechCharsPerSec.value = value;
+  });
   applyFiniteNumber(scriptParams.estimated_duration_min, value => {
     estimatedDurationMin.value = value;
-    narrationTargetWords.value = narrationTargetFromEstimatedMinutes(value);
+    narrationTargetWords.value = narrationTargetFromEstimatedMinutes(
+      value,
+      undefined,
+      speechCharsPerSec.value
+    );
     narrationWordsTouched.value = true;
   });
   if (scriptParams.estimated_duration_min == null) {
     applyFiniteNumber(scriptParams.narration_target_words, value => {
       narrationTargetWords.value = value;
-      estimatedDurationMin.value = estimatedMinutesFromNarrationWords(value);
+      estimatedDurationMin.value = estimatedMinutesFromNarrationWords(
+        value,
+        undefined,
+        speechCharsPerSec.value
+      );
       narrationWordsTouched.value = true;
     });
   }
@@ -903,6 +959,7 @@ const buildScriptPreviewParams = (title: string) => ({
   max_title_length: maxTitleLength.value,
   estimated_duration_min: estimatedDurationMin.value,
   narration_target_words: Math.round(narrationTargetWords.value),
+  speech_chars_per_sec: speechCharsPerSec.value,
   skip_title_optimize: skipTitleOptimize.value,
   supplementary_info: supplementaryInfo.value.trim() || undefined,
   video_timeline: videoTimeline.value.trim() || undefined,
@@ -917,6 +974,7 @@ const buildRunPayload = (toEnd: boolean, trimmedTitle: string, words: number): R
     title: trimmedTitle,
     estimated_duration_min: estimatedDurationMin.value,
     narration_target_words: Math.round(words),
+    speech_chars_per_sec: speechCharsPerSec.value,
   };
   if (Number.isFinite(segmentTargetSec.value)) {
     payload.segment_target_sec = segmentTargetSec.value;
@@ -1062,10 +1120,15 @@ watch(
 
 function resetJobLocalState() {
   narrationWordsTouched.value = false;
+  speechCharsPerSec.value = DEFAULT_SPEECH_CHARS_PER_SEC;
   narrationTargetWords.value = isMaterialJob.value
     ? DEFAULT_MATERIAL_NARRATION_TARGET_WORDS
     : DEFAULT_NARRATION_TARGET_WORDS;
-  estimatedDurationMin.value = estimatedMinutesFromNarrationWords(narrationTargetWords.value);
+  estimatedDurationMin.value = estimatedMinutesFromNarrationWords(
+    narrationTargetWords.value,
+    undefined,
+    speechCharsPerSec.value
+  );
   jobOrientation.value = "portrait";
   contentStyle.value = "science_child";
   segmentTargetSec.value = DEFAULT_SEGMENT_TARGET_SEC;
@@ -1112,6 +1175,7 @@ watch(
     () => sourceTitle.value,
     () => segmentTargetSec.value,
     () => maxTitleLength.value,
+    () => speechCharsPerSec.value,
     () => narrationTargetWords.value,
     () => skipTitleOptimize.value,
     () => supplementaryInfo.value,
@@ -1138,6 +1202,17 @@ watch(narrationTargetWords, words => {
   if (syncingEstimateWords || !Number.isFinite(words) || words <= 0) {
     return;
   }
-  estimatedDurationMin.value = estimatedMinutesFromNarrationWords(words);
+  estimatedDurationMin.value = estimatedMinutesFromNarrationWords(
+    words,
+    undefined,
+    speechCharsPerSec.value
+  );
+});
+
+watch(speechCharsPerSec, rate => {
+  if (!Number.isFinite(rate) || rate <= 0) {
+    return;
+  }
+  syncNarrationFromEstimatedDuration(estimatedDurationMin.value);
 });
 </script>

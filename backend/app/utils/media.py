@@ -13,8 +13,9 @@ if TYPE_CHECKING:
     from app.config import Config
     from app.services.script.board_timeline import VideoTimeline
 
-# 中文口播约 5 字/秒（16s ≈ 80 字；与 CosyVoice 实际语速对齐）
-NARRATION_CHARS_PER_SEC = 5.0
+# 预估口播语速（字/秒）；与 CosyVoice 实际语速对齐，可通过 info.script.speech_chars_per_sec 覆盖
+DEFAULT_SPEECH_CHARS_PER_SEC = 4.1
+NARRATION_CHARS_PER_SEC = DEFAULT_SPEECH_CHARS_PER_SEC
 NARRATION_FILL_RATIO = 0.92
 NARRATION_MAX_CHARS = 3000
 # 口播绝对硬底（仅用于「明显过短」校验，不参与时长估算）
@@ -29,8 +30,12 @@ NARRATION_HARD_MIN_RATIO = 0.67
 NARRATION_SOFT_MIN_RATIO = 0.90
 
 
-def estimate_narration_target_words(duration_sec: float) -> int:
-    target = int(duration_sec * NARRATION_CHARS_PER_SEC * NARRATION_FILL_RATIO)
+def estimate_narration_target_words(
+    duration_sec: float,
+    *,
+    chars_per_sec: float = DEFAULT_SPEECH_CHARS_PER_SEC,
+) -> int:
+    target = int(duration_sec * chars_per_sec * NARRATION_FILL_RATIO)
     return max(1, min(NARRATION_MAX_CHARS, target))
 
 
@@ -52,23 +57,35 @@ def material_final_min_duration_sec(
     return max(5.0, expected - slack)
 
 
-def segment_text_char_cap(segment_target_sec: float) -> int:
-    """单镜口播 text 字数上限（5 字/秒 × segment_target_sec）。"""
-    return max(20, int(segment_target_sec * NARRATION_CHARS_PER_SEC))
+def segment_text_char_cap(
+    segment_target_sec: float,
+    *,
+    chars_per_sec: float = DEFAULT_SPEECH_CHARS_PER_SEC,
+) -> int:
+    """单镜口播 text 字数上限（chars_per_sec × segment_target_sec）。"""
+    return max(20, int(segment_target_sec * chars_per_sec))
 
 
-def segment_text_hard_cap(segment_target_sec: float) -> int:
+def segment_text_hard_cap(
+    segment_target_sec: float,
+    *,
+    chars_per_sec: float = DEFAULT_SPEECH_CHARS_PER_SEC,
+) -> int:
     """校验用硬上限（cap × 1.15）。"""
-    return int(segment_text_char_cap(segment_target_sec) * 1.15)
+    return int(segment_text_char_cap(segment_target_sec, chars_per_sec=chars_per_sec) * 1.15)
 
 
 # 超出硬上限但在该余量内：走分镜缩字，不整稿重试
 SEGMENT_SHRINK_OVERFLOW_CHARS = 25
 
 
-def segment_text_shrink_max(segment_target_sec: float) -> int:
+def segment_text_shrink_max(
+    segment_target_sec: float,
+    *,
+    chars_per_sec: float = DEFAULT_SPEECH_CHARS_PER_SEC,
+) -> int:
     """略超限分镜可走缩字放行的字数上限（硬上限 + 固定余量）。"""
-    return segment_text_hard_cap(segment_target_sec) + SEGMENT_SHRINK_OVERFLOW_CHARS
+    return segment_text_hard_cap(segment_target_sec, chars_per_sec=chars_per_sec) + SEGMENT_SHRINK_OVERFLOW_CHARS
 
 
 def segment_comfort_chars(cap: int) -> int:
@@ -95,9 +112,10 @@ def min_segment_count_for_narration(
     segment_target_sec: float,
     *,
     narration_target_words: int | None = None,
+    chars_per_sec: float = DEFAULT_SPEECH_CHARS_PER_SEC,
 ) -> int:
     """按单镜字数上限估算 narration 至少应拆成的段数。"""
-    cap = segment_text_char_cap(segment_target_sec)
+    cap = segment_text_char_cap(segment_target_sec, chars_per_sec=chars_per_sec)
     basis = narration_segment_basis_chars(narration, narration_target_words)
     return max(1, (basis + cap - 1) // cap)
 
@@ -110,10 +128,11 @@ def estimate_segment_duration_sec(
     text: str,
     *,
     segment_target_sec: float | None = None,
+    chars_per_sec: float = DEFAULT_SPEECH_CHARS_PER_SEC,
 ) -> float:
     """按口播字数估算单镜时长（秒）。"""
     chars = segment_narration_chars(text)
-    duration = chars / NARRATION_CHARS_PER_SEC if chars else 0.0
+    duration = chars / chars_per_sec if chars else 0.0
     if segment_target_sec and segment_target_sec > 0:
         duration = min(duration, float(segment_target_sec))
     return round(max(0.1, duration), 3)
@@ -156,6 +175,7 @@ def assign_segment_timings(
     *,
     segment_target_sec: float | None = None,
     video_timeline: VideoTimeline | None = None,
+    chars_per_sec: float = DEFAULT_SPEECH_CHARS_PER_SEC,
 ) -> dict[str, Any]:
     """为 script.segments 填充 start_sec / end_sec / duration_sec。"""
     segments = script.get("segments")
@@ -182,6 +202,7 @@ def assign_segment_timings(
             duration = estimate_segment_duration_sec(
                 str(seg.get("text") or ""),
                 segment_target_sec=segment_target_sec,
+                chars_per_sec=chars_per_sec,
             )
             start = round(cursor, 3)
             end = round(start + duration, 3)
@@ -205,6 +226,8 @@ def narration_writing_target_chars(narration_target_words: int | None = None) ->
 def narration_writing_plan(
     narration_target: int,
     segment_target_sec: float = 0,
+    *,
+    chars_per_sec: float = DEFAULT_SPEECH_CHARS_PER_SEC,
 ) -> dict[str, int]:
     """口播分镜写作计划（prompt 字数预算与 LLM 校验共用）。"""
     hard_min = narration_accept_min_chars(narration_target)
@@ -216,7 +239,7 @@ def narration_writing_plan(
         per_lo = per_min
         per_hi = max(per_min + 10, 40)
     else:
-        cap = segment_text_char_cap(segment_target_sec)
+        cap = segment_text_char_cap(segment_target_sec, chars_per_sec=chars_per_sec)
         comfort = segment_comfort_chars(cap)
         seg_count_cap = max(5, (writing_target + cap - 1) // cap)
         seg_count_avg = max(5, (writing_target + comfort - 1) // comfort)
@@ -253,10 +276,10 @@ def storyboard_compact_output(
 def narration_target_for_minutes(
     minutes: float,
     *,
-    chars_per_sec: float = NARRATION_CHARS_PER_SEC,
+    chars_per_sec: float = DEFAULT_SPEECH_CHARS_PER_SEC,
     intro_budget_sec: float = 2.0,
 ) -> int:
-    """按成片分钟数估算口播目标字数（5 字/秒）。"""
+    """按成片分钟数估算口播目标字数。"""
     body = max(30.0, minutes * 60.0 - intro_budget_sec)
     target = int(body * chars_per_sec * NARRATION_FILL_RATIO)
     return max(1, min(NARRATION_MAX_CHARS, target))
@@ -265,12 +288,13 @@ def narration_target_for_minutes(
 def estimated_minutes_from_narration_words(
     words: int,
     *,
+    chars_per_sec: float = DEFAULT_SPEECH_CHARS_PER_SEC,
     intro_budget_sec: float = 2.0,
 ) -> float:
     """由口播目标字数反推预计成片时长（分钟，含片头预算）。"""
     if words <= 0:
         return 1.0
-    body_sec = float(words) / (NARRATION_CHARS_PER_SEC * NARRATION_FILL_RATIO)
+    body_sec = float(words) / (chars_per_sec * NARRATION_FILL_RATIO)
     total_sec = max(30.0, body_sec) + intro_budget_sec
     return round(total_sec / 60.0, 1)
 

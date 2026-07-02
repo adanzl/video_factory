@@ -25,7 +25,8 @@ def test_backoff_seconds_timeout() -> None:
 def test_pick_num_frames() -> None:
     assert _pick_num_frames(2.5, 24) == 81
     assert _pick_num_frames(5.0, 24) == 121
-    assert _pick_num_frames(20.0, 24) == 441
+    assert _pick_num_frames(20.0, 24) == 409
+    assert _pick_num_frames(17.1, 24) == 409
 
 
 def test_normalize_video_provider_agnes() -> None:

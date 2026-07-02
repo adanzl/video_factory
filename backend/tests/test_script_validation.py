@@ -288,7 +288,9 @@ def test_classify_segment_overflow_mild_vs_severe():
         {"segment_index": 2, "text": "x" * (shrink_max + 1)},
         {"segment_index": 3, "text": "x" * cap},
     ]
-    shrinkable, severe = _classify_segment_overflow(segments, 15.0)
+    shrinkable, severe = _classify_segment_overflow(
+        segments, 15.0, speech_chars_per_sec=4.1
+    )
     assert shrinkable == [1]
     assert severe == [(2, shrink_max + 1)]
 
@@ -324,6 +326,7 @@ def test_repair_segment_overflow_via_shrink_mock(monkeypatch):
     assert _repair_segment_overflow_via_shrink(
         script,
         segment_target_sec=15.0,
+        speech_chars_per_sec=4.1,
         job_id=1,
         stage_name="script",
         job=None,

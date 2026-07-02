@@ -3,14 +3,34 @@ from app.utils.job_info import (
     merge_job_script_params,
     resolve_estimated_duration_min,
     resolve_narration_target_words,
+    resolve_speech_chars_per_sec,
     script_params_from_info,
 )
-from app.utils.media import DEFAULT_HISTORY_VIDEO_MINUTES, narration_target_for_minutes
+from app.utils.media import (
+    DEFAULT_HISTORY_VIDEO_MINUTES,
+    DEFAULT_SPEECH_CHARS_PER_SEC,
+    narration_target_for_minutes,
+)
 
 
 def test_resolve_narration_target_words_from_estimated_duration():
     script = {"estimated_duration_min": 6.0}
     assert resolve_narration_target_words(script) == narration_target_for_minutes(6.0)
+
+
+def test_resolve_speech_chars_per_sec_default():
+    assert resolve_speech_chars_per_sec(None) == DEFAULT_SPEECH_CHARS_PER_SEC
+    assert resolve_speech_chars_per_sec({}) == DEFAULT_SPEECH_CHARS_PER_SEC
+
+
+def test_resolve_narration_target_words_uses_custom_speech_rate():
+    script = {"estimated_duration_min": 6.0, "speech_chars_per_sec": 5.0}
+    assert resolve_narration_target_words(script) == narration_target_for_minutes(6.0, chars_per_sec=5.0)
+
+
+def test_merge_job_script_params_stores_speech_chars_per_sec():
+    merged = merge_job_script_params(None, speech_chars_per_sec=4.5)
+    assert merged["script"]["speech_chars_per_sec"] == 4.5
 
 
 def test_resolve_narration_target_words_prefers_estimated_duration():

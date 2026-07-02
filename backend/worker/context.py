@@ -20,6 +20,7 @@ class JobContext:
     script_segment_target_sec: float | None = None
     script_max_title_length: int | None = None
     script_narration_target_words: int | None = None
+    script_speech_chars_per_sec: float | None = None
     script_skip_title_optimize: bool = False
     script_generate_image_prompts: bool = False
     script_supplementary_info: str | None = None
@@ -40,13 +41,19 @@ class JobContext:
         script_segment_target_sec: float | None = None,
         script_max_title_length: int | None = None,
         script_narration_target_words: int | None = None,
+        script_speech_chars_per_sec: float | None = None,
         script_skip_title_optimize: bool = False,
         script_generate_image_prompts: bool = False,
         script_supplementary_info: str | None = None,
         script_video_timeline: str | None = None,
         material_narration: str | None = None,
     ) -> "JobContext":
-        from app.utils.job_info import script_params_from_info, content_style_from_job, resolve_narration_target_words
+        from app.utils.job_info import (
+            content_style_from_job,
+            resolve_narration_target_words,
+            resolve_speech_chars_per_sec,
+            script_params_from_info,
+        )
 
         settings = get_settings()
         media_dir = settings.video_data_dir / str(job["id"])
@@ -95,6 +102,11 @@ class JobContext:
                 content_style=content_style_from_job(job),
             )
         )
+        resolved_speech_chars_per_sec = (
+            script_speech_chars_per_sec
+            if script_speech_chars_per_sec is not None
+            else resolve_speech_chars_per_sec(saved_script)
+        )
         if script_skip_title_optimize is False:
             saved_skip = saved_script.get("skip_title_optimize")
             if isinstance(saved_skip, bool):
@@ -121,6 +133,7 @@ class JobContext:
             script_segment_target_sec=resolved_segment_target_sec,
             script_max_title_length=resolved_max_title_length,
             script_narration_target_words=resolved_narration_target_words,
+            script_speech_chars_per_sec=resolved_speech_chars_per_sec,
             script_skip_title_optimize=script_skip_title_optimize,
             script_generate_image_prompts=script_generate_image_prompts,
             script_supplementary_info=script_supplementary_info,

@@ -37,7 +37,8 @@ _DEFAULT_MOTION_PROMPT = (
     "镜头固定或极轻微缓慢推进，主体清晰稳定，画面平滑无抖动，科普讲解风格"
 )
 _STABILITY_HINT = "画面稳定，无抖动，无快速运镜"
-_MAX_FRAMES = 441
+# Agnes 720p 各比例上限均为 409 帧（1080p 仅 169 帧，更长分镜靠 loop + fit 补齐）
+_MAX_FRAMES = 409
 _MIN_FRAMES = 81
 
 

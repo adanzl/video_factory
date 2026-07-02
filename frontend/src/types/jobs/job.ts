@@ -10,6 +10,7 @@ export interface JobScriptParams {
   max_title_length?: number;
   estimated_duration_min?: number;
   narration_target_words?: number;
+  speech_chars_per_sec?: number;
   skip_title_optimize?: boolean;
   generate_image_prompts?: boolean;
   supplementary_info?: string;
