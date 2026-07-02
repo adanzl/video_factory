@@ -187,7 +187,18 @@
           />
         </el-form-item>
         <el-form-item label="数量">
-          <el-input-number v-model="generateForm.count" :min="1" :max="20" />
+          <div class="flex items-center gap-2">
+            <el-input-number v-model="generateForm.count" :min="1" :max="20" />
+            <el-button
+              v-for="n in quickGenerateCounts"
+              :key="n"
+              size="small"
+              :type="generateForm.count === n ? 'primary' : 'default'"
+              @click="generateForm.count = n"
+            >
+              {{ n }}
+            </el-button>
+          </div>
         </el-form-item>
         <el-form-item label="入库">
           <el-switch v-model="generateForm.save" active-text="生成后保存" />
@@ -286,7 +297,7 @@ const optimizingId = ref<number>();
 const showGenerateDialog = ref(false);
 const showEnqueueDialog = ref(false);
 const showCleanLowDialog = ref(false);
-const cleanLowMaxScore = ref(75);
+const cleanLowMaxScore = ref(85);
 const pendingEnqueueIds = ref<number[]>([]);
 const enqueueRunMode = ref<EnqueueRunMode>("script");
 const generateMode = ref("history_mystery");
@@ -298,11 +309,13 @@ const MODE_CATEGORY: Record<string, string> = {
   current_affairs: "时事相关科普",
 };
 
+const quickGenerateCounts = [1, 5, 10] as const;
+
 const generateForm = reactive({
   category: "科学原理",
   theme: "中国历史悬案",
   keywords: "",
-  count: 10,
+  count: 5,
   save: true,
 });
 
@@ -332,13 +345,13 @@ const onGenerateModeChange = (mode: string) => {
   generateForm.keywords = "";
   if (mode === "history_mystery") {
     generateForm.theme = "中国历史悬案";
-    generateForm.count = 10;
+    generateForm.count = 5;
   } else if (mode === "science") {
     generateForm.theme = "日常科学冷知识";
-    generateForm.count = 10;
+    generateForm.count = 5;
   } else if (mode === "current_affairs") {
     generateForm.theme = "";
-    generateForm.count = 10;
+    generateForm.count = 5;
   } else {
     generateForm.theme = "";
     generateForm.category = "科学原理";
