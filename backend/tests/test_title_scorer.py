@@ -24,3 +24,25 @@ def test_science_conversational_title_still_scores_well():
     )
     assert result.total >= 85
     assert status_from_score(result) == "queued"
+
+
+def test_conversational_title_rejects_attitude_only_response():
+    result = score_title(
+        "地震云预报地震？就这",
+        category="日常科学原理",
+        template="误区反问式",
+    )
+    assert result.total == 0
+    assert result.rejected_reason is not None
+    assert "语气词" in result.rejected_reason
+    assert status_from_score(result) == "rejected"
+
+
+def test_conversational_title_accepts_substantive_rebuttal():
+    result = score_title(
+        "地震云能预报地震？明明气象局早就辟谣了",
+        category="日常科学原理",
+        template="误区反问式",
+    )
+    assert result.total >= 85
+    assert status_from_score(result) == "queued"

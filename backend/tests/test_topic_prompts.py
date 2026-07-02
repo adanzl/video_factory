@@ -6,7 +6,7 @@ from app.services.topic.prompts.builder import (
     build_topic_optimize_user_prompt,
     build_topic_system_prompt,
 )
-from app.services.topic.prompts.common import CONVERSATIONAL_TITLE_RULE
+from app.services.topic.prompts.common import CONVERSATIONAL_TITLE_RULE, FORBIDDEN_FAQ_TITLE_RULE
 
 
 def test_general_topic_prompt_forbids_indirect_reasoning_chain():
@@ -17,6 +17,10 @@ def test_general_topic_prompt_forbids_indirect_reasoning_chain():
     )
     assert "西班牙人怕热" in CONVERSATIONAL_TITLE_RULE
     assert "链条太长" in system
+    assert "地震云能预报地震？就这" in CONVERSATIONAL_TITLE_RULE
+    assert "仅有语气词" in system
+    assert "地震预警能提前多久" in FORBIDDEN_FAQ_TITLE_RULE
+    assert "百科式中性提问" in system
 
 
 def test_optimize_system_prompt_history_track():

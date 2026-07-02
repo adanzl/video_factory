@@ -16,6 +16,7 @@ from app.services.topic.prompts.common import (
     COMMON_COMPLIANCE_RULE,
     COMMON_PRODUCTION_RULE,
     CONVERSATIONAL_TITLE_RULE,
+    FORBIDDEN_FAQ_TITLE_RULE,
     VISUAL_ANCHOR_RULE,
 )
 from app.services.topic.prompts.format import optimize_json_format, topic_json_format
@@ -45,11 +46,13 @@ def _category_rules(category: str) -> str:
         return (
             "从时事/热议现象抽出长尾科普角度，标题不写具体日期、人名、赛果、官宣。"
             f"{CONVERSATIONAL_TITLE_RULE}"
+            f"{FORBIDDEN_FAQ_TITLE_RULE}"
             f"{VISUAL_ANCHOR_RULE}"
             "剥离时效后讲清原理、规则或误区，适合长期搜索。"
         )
     return (
         f"{CONVERSATIONAL_TITLE_RULE}"
+        f"{FORBIDDEN_FAQ_TITLE_RULE}"
         f"{VISUAL_ANCHOR_RULE}"
         "字不够可以略写，态度要够。"
     )
@@ -149,12 +152,14 @@ def build_topic_optimize_system_prompt(
         return (
             base
             + f"{CONVERSATIONAL_TITLE_RULE}"
+            + f"{FORBIDDEN_FAQ_TITLE_RULE}"
             + f"{VISUAL_ANCHOR_RULE}"
             + "标题仍须剥离具体时效与人名。"
         )
     return (
         base
         + f"{CONVERSATIONAL_TITLE_RULE}"
+        + f"{FORBIDDEN_FAQ_TITLE_RULE}"
         + f"{VISUAL_ANCHOR_RULE}"
         + "若原标题含问号对话体，优化后仍须一步直达、同一话题。"
         + "category、template 须与用户原值一致。"
