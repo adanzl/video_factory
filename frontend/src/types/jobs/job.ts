@@ -8,6 +8,7 @@ export interface FinalAsset {
 export interface JobScriptParams {
   segment_target_sec?: number;
   max_title_length?: number;
+  estimated_duration_min?: number;
   narration_target_words?: number;
   skip_title_optimize?: boolean;
   generate_image_prompts?: boolean;

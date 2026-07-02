@@ -109,7 +109,7 @@ const NARRATION_CHARS_PER_SEC = 5;
 const NARRATION_FILL_RATIO = 0.92;
 const NARRATION_MAX_CHARS = 3000;
 
-/** 默认目标成片时长（秒），与 TARGET_FINAL_DURATION_SEC 对齐 */
+/** standard 线默认口播目标：约 6 分钟成片 */
 export const DEFAULT_TARGET_FINAL_DURATION_SEC = 360;
 /** 口播字数估算时扣除的片头预算（秒） */
 export const INTRO_DURATION_BUDGET_SEC = 2;

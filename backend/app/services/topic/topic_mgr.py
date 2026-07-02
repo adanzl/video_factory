@@ -15,6 +15,7 @@ from app.utils.job_info import (
     merge_job_script_params,
 )
 from app.services.llm.llm_mgr import TopicLlmOperation, llm_mgr
+from app.utils.media import DEFAULT_HISTORY_VIDEO_MINUTES, DEFAULT_STANDARD_VIDEO_MINUTES
 from app.services.topic.catalog import (
     CATEGORY_HISTORY,
     normalize_category,
@@ -367,7 +368,11 @@ class TopicMgr:
                             if is_history
                             else None
                         ),
-                        narration_target_words=1800 if is_history else None,
+                        estimated_duration_min=(
+                            DEFAULT_HISTORY_VIDEO_MINUTES
+                            if is_history
+                            else DEFAULT_STANDARD_VIDEO_MINUTES
+                        ),
                         segment_target_sec=seg_sec,
                         skip_title_optimize=True,
                         generate_image_prompts=True,

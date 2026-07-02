@@ -6,10 +6,9 @@ import re
 
 from app.config import get_settings
 from app.quality.models import QualityReport
+from app.utils.job_info import resolve_narration_target_words
 from app.utils.media import (
     NARRATION_ABS_MIN_CHARS,
-    default_narration_target_words,
-    estimate_narration_target_words,
     narration_accept_min_chars,
     segment_text_char_cap,
 )
@@ -28,17 +27,7 @@ def _narration_chars(narration: str) -> int:
 
 
 def _resolve_narration_target(script: dict) -> int:
-    raw = script.get("narration_target_words")
-    if isinstance(raw, bool):
-        pass
-    elif isinstance(raw, int) and raw > 0:
-        return raw
-    elif isinstance(raw, float) and raw.is_integer() and raw > 0:
-        return int(raw)
-    duration = script.get("total_duration_sec")
-    if isinstance(duration, (int, float)) and duration > 0:
-        return estimate_narration_target_words(float(duration))
-    return default_narration_target_words()
+    return resolve_narration_target_words(script)
 
 
 _MEMOIR_BANNED_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
