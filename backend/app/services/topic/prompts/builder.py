@@ -17,6 +17,7 @@ from app.services.topic.prompts.common import (
     COMMON_PRODUCTION_RULE,
     CONVERSATIONAL_TITLE_RULE,
     CURRENT_THEME_ANCHOR_RULE,
+    CURRENT_VISUAL_ANCHOR_RULE,
     FORBIDDEN_FAQ_TITLE_RULE,
     HOOK_MOTIVATION_RULE,
     VISUAL_ANCHOR_RULE,
@@ -55,6 +56,7 @@ def _category_rules(category: str) -> str:
             f"{CONVERSATIONAL_TITLE_RULE}"
             f"{FORBIDDEN_FAQ_TITLE_RULE}"
             f"{VISUAL_ANCHOR_RULE}"
+            f"{CURRENT_VISUAL_ANCHOR_RULE}"
             "剥离时效后讲清原理、规则或误区，适合长期搜索。"
         )
     return (
@@ -102,6 +104,13 @@ def _conversational_rewrite_instruction(title: str) -> str:
         "反驳半句须承接问句同一命题，禁止答非所问（如问砸钱却答够你跑路）。"
         "禁止输出无问号的陈述句、半句问法，或仅语气词收尾。"
         f"同一主题参考：{example}"
+    )
+
+
+def _visual_anchor_instruction() -> str:
+    return (
+        "【画面锚点】从本题主题提炼可见载体写进 title，配合图解词（规则、能量、表…），"
+        "禁止抽象比喻（油路、命脉、博弈）；须能据此想象分镜首帧。"
     )
 
 
@@ -154,6 +163,10 @@ def build_topic_user_prompt(
                 f"硬性：须紧扣主题「{theme_text}」抽科普角度，"
                 "禁止换成无关泛科普；title 不写国名/日期，hook 须点明时事锚点。"
             )
+            lines.append(
+                "硬性：title 的可画名词须从本题科普角度提炼，"
+                "配合图解词（规则、能量、表…），禁止抽象比喻或套无关固定词。"
+            )
         else:
             lines.append(f"硬性：标题须紧扣主题方向「{theme_text}」。")
     elif spec.default_theme:
@@ -199,9 +212,11 @@ def build_topic_optimize_system_prompt(
             + f"{CONVERSATIONAL_TITLE_RULE}"
             + f"{FORBIDDEN_FAQ_TITLE_RULE}"
             + f"{VISUAL_ANCHOR_RULE}"
+            + f"{CURRENT_VISUAL_ANCHOR_RULE}"
             + f"{HOOK_MOTIVATION_RULE}"
             + "科学/时事类：优化后 title 必须含中文问号「？」，无问号陈述句一律不合格。"
             + "标题仍须剥离具体时效与人名。"
+            + _visual_anchor_instruction()
         )
     return (
         base
@@ -242,7 +257,7 @@ def build_topic_optimize_user_prompt(
     if resolved == CATEGORY_HISTORY:
         lines.append("须保持同一历史人物或悬案，标题仍为「代号：悬念」格式。")
     elif resolved in {CATEGORY_SCIENCE, CATEGORY_CURRENT}:
-        lines.append("优化后 title 仍须含可示意图解的画面锚点名词。")
+        lines.append(_visual_anchor_instruction())
         if _needs_optimize_conversational_rewrite(
             title.strip(),
             category=resolved,

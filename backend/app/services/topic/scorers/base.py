@@ -59,6 +59,18 @@ def has_pattern(text: str, patterns: tuple[str, ...]) -> bool:
     return any(re.search(p, text) for p in patterns)
 
 
+# 选题解析与打分共用的画面锚点词表（科学 + 时事）
+VISUAL_ANCHOR_PATTERNS: tuple[str, ...] = (
+    r"水|电|温度|气压|化学|光|磁|电池|地震波|能量|刻度|表|规则|分数|志愿|"
+    r"震|地震|烈度|震级|空调|路由器|宽带|网线|芯片|冰箱|热水器|WiFi|网速|"
+    r"玻璃|塑料|胶|产线|工厂|仓库|不锈钢|油轮|货轮|海峡|航线|航道|管道",
+)
+
+
+def has_visual_anchor(text: str) -> bool:
+    return has_pattern(text, VISUAL_ANCHOR_PATTERNS)
+
+
 def rebuttal_text(title: str) -> str:
     text = title.strip()
     mark_idx = max(text.rfind("？"), text.rfind("?"))

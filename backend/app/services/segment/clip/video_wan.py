@@ -21,10 +21,8 @@ logger = logging.getLogger(__name__)
 
 _SUBMIT_URL = "https://dashscope.aliyuncs.com/api/v1/services/aigc/video-generation/video-synthesis"
 _RETRYABLE = {429, 500, 502, 503, 504}
-_DEFAULT_MOTION_PROMPT = (
-    "镜头固定或极轻微缓慢推进，主体清晰稳定，画面平滑无抖动，科普讲解风格"
-)
-_STABILITY_HINT = "画面稳定，无抖动，无快速运镜"
+_DEFAULT_MOTION_PROMPT = "画面元素轻微自然晃动，镜头极缓推进"
+_STABILITY_HINT = "画面稳定，无快速运镜"
 
 
 def _stabilize_motion_prompt(prompt: str) -> str:
@@ -32,6 +30,8 @@ def _stabilize_motion_prompt(prompt: str) -> str:
     if not text:
         return _DEFAULT_MOTION_PROMPT
     if _STABILITY_HINT in text:
+        return text
+    if any(word in text for word in ("稳定", "平滑", "无抖动", "极缓", "缓慢")):
         return text
     return f"{text}，{_STABILITY_HINT}"
 

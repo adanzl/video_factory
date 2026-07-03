@@ -140,6 +140,28 @@ def test_scorer_rejects_incomplete_conversational_title():
     assert status_from_score(result) == "rejected"
 
 
+def test_parse_topics_payload_filters_missing_visual_anchor():
+    raw = {
+        "topics": [
+            {
+                "title": "霍尔木兹卡住油路？真有几条备用道",
+                "category": "时事相关科普",
+                "template": "误区反问式",
+                "hook": "伊朗军演示威牵动油价",
+            },
+            {
+                "title": "油轮必经霍尔木兹海峡？备用航线靠规则分流",
+                "category": "时事相关科普",
+                "template": "误区反问式",
+                "hook": "军演示威牵动全球油价",
+            },
+        ]
+    }
+    topics = parse_topics_payload(raw, max_title_len=24)
+    assert len(topics) == 1
+    assert "油轮" in topics[0]["title"]
+
+
 def test_parse_topics_payload_filters_incomplete_conversational():
     raw = {
         "topics": [

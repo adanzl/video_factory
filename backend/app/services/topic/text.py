@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 
 from app.services.topic.catalog import CATEGORY_HISTORY, resolve_category
+from app.services.topic.scorers.base import has_visual_anchor
 
 _OPEN_FAQ_PATTERNS = re.compile(
     r"能提前多久|提前多久|能预警多久|预警能.{0,4}多久|"
@@ -89,6 +90,15 @@ def conversational_rebuttal_issue(title: str) -> str | None:
     return None
 
 
+def visual_anchor_issue(title: str, *, category: str | None = None) -> str | None:
+    """科学/时事类须含可画画面锚点。"""
+    if resolve_category(category) == CATEGORY_HISTORY:
+        return None
+    if has_visual_anchor(title):
+        return None
+    return "缺少画面锚点：须含可画具体名词（从本题角度提炼，如规则、能量、地震波…）"
+
+
 def topic_title_issue(
     title: str,
     *,
@@ -104,6 +114,7 @@ def topic_title_issue(
         misconception_template_issue(text, category=category, template=template),
         incomplete_conversational_issue(text),
         conversational_rebuttal_issue(text),
+        visual_anchor_issue(text, category=category),
     ):
         if issue:
             return issue
@@ -117,6 +128,13 @@ def conversational_rewrite_example(title: str) -> str:
         return "误区挺大？压根不是那么回事"
 
     rules: list[tuple[str, list[str]]] = [
+        (
+            r"霍尔木兹|油路|海峡|油轮|航运|原油|航道",
+            [
+                "油轮必经霍尔木兹海峡？备用航线靠规则分流",
+                "霍尔木兹海峡卡住油轮？备用航道其实有规则",
+            ],
+        ),
         (
             r"动物",
             [

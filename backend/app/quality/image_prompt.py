@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from app.quality.models import QualityReport
 
 MIN_IMAGE_PROMPT_CHARS = 50
@@ -19,7 +21,9 @@ __all__ = [
     "MIN_SD15_PROMPT_EN_WORDS",
     "TARGET_SD15_PROMPT_EN_WORDS",
     "check_image_prompt",
+    "collect_motion_prompt_issues",
     "format_image_prompt_retry_warning",
+    "generic_motion_prompt_issue",
     "image_prompt_min_chars",
     "image_prompt_pass_chars",
     "image_prompt_target_chars",
@@ -27,6 +31,11 @@ __all__ = [
     "sd15_prompt_en_word_count",
     "skip_image_prompt_check",
 ]
+
+_GENERIC_MOTION_FILLER_RE = re.compile(
+    r"^(?:镜头固定[，,、]?)?主体稳定[，,、]?画面平滑[。．.]?$|"
+    r"^镜头固定(?:或极?[轻缓]?慢?(?:推进|拉远|平移))?[，,、]?主体(?:清晰)?稳定[，,、]?画面平滑[。．.]?$"
+)
 
 
 def image_prompt_min_chars(*, sd15_mode: bool = False) -> int:
@@ -52,6 +61,40 @@ def sd15_prompt_en_word_count(value: object) -> int:
 
 def sd15_prompt_en_ok(value: object) -> bool:
     return sd15_prompt_en_word_count(value) >= MIN_SD15_PROMPT_EN_WORDS
+
+
+def generic_motion_prompt_issue(prompt: object) -> str | None:
+    """检测 motion_prompt 是否为无信息套话。"""
+    if not isinstance(prompt, str):
+        return "motion_prompt missing"
+    text = prompt.strip()
+    if not text:
+        return "motion_prompt empty"
+    if _GENERIC_MOTION_FILLER_RE.match(text):
+        return "套话填空，须描述画面内具体微动"
+    stability = ("镜头固定", "主体稳定", "画面平滑")
+    if all(word in text for word in stability) and len(text) <= 28:
+        return "套话填空，须描述画面内具体微动"
+    return None
+
+
+def collect_motion_prompt_issues(segments: list[dict]) -> list[str]:
+    """汇总各段 motion_prompt 套话与雷同问题。"""
+    issues: list[str] = []
+    by_motion: dict[str, list[object]] = {}
+    for seg in segments:
+        idx = seg.get("segment_index")
+        motion = str(seg.get("motion_prompt") or "").strip()
+        issue = generic_motion_prompt_issue(motion)
+        if issue:
+            issues.append(f"segment {idx}: {issue}")
+        if motion:
+            by_motion.setdefault(motion, []).append(idx)
+    for motion, indices in by_motion.items():
+        if len(indices) >= 3:
+            joined = ",".join(str(i) for i in indices)
+            issues.append(f"segments [{joined}] motion_prompt 完全相同，须按画面差异化")
+    return issues
 
 
 def _image_prompt_threshold_label(*, sd15_mode: bool = False) -> str:
