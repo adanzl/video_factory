@@ -56,11 +56,6 @@ def score_current_affairs(
         visual += 12
     if len(text) > 28:
         visual -= 10
-    # 反差好奇式 + 态度强 → 补视觉分（抽象但有力）
-    if template == "反差好奇式" and has_pattern(text, (
-        r"都说|以为|都说|别信|谁说|表面|并非|不是",
-    )):
-        visual += 10
 
     fact = 65.0 + 12
     if template in {"误区反问式", "反差好奇式"}:
@@ -69,10 +64,14 @@ def score_current_affairs(
     curiosity = 50.0
     if has_pattern(text, CURIOSITY_PATTERNS):
         curiosity += 30
+    if "?" in text or "？" in text:
+        curiosity += 8
+        if any(kw in text for kw in ("明明", "真以为", "天真", "慌了", "堆成山")):
+            curiosity += 7
     if template == "反差好奇式":
         curiosity += 10
     if hook and len(hook) >= 10:
-        curiosity += 8
+        curiosity += 5
     curiosity += rebuttal_tone_curiosity_adjustment(text)
     curiosity += hook_curiosity_adjustment(hook)
 
