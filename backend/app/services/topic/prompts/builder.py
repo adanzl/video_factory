@@ -89,8 +89,8 @@ def _needs_optimize_conversational_rewrite(
 ) -> bool:
     if needs_conversational_rewrite(title, category=category, template=template):
         return True
-    # 都说X反而Y 反差结构不强制加问号
-    if re.search(r"都说.*反[而正]", title):
+    # 都说X反而Y/以为X其实Y 等反差结构不强制加问号
+    if re.search(r"都[说怕认].*[反早]", title):
         return False
     if category in {CATEGORY_SCIENCE, CATEGORY_CURRENT}:
         return "?" not in title and "？" not in title
@@ -100,20 +100,16 @@ def _needs_optimize_conversational_rewrite(
 def _conversational_rewrite_instruction(title: str) -> str:
     example = conversational_rewrite_example(title)
     return (
-        "优化后 title 须有「常见认知 + 意外反转」结构。"
-        "句式不限：问句反驳、都说X反而Y、以为X其实Y 等皆可。"
-        "后半句须有口语态度和可核验反证，禁止无态度陈述句、半句问法、仅语气词收尾。"
-        "态度可用：够你跑路、反而不慌、压根对不上、仓库堆成山；"
-        "忌说教建议（足够你躲桌下）。"
+        "优化后 title 须有「认知+反转」结构。句式不限：问句反驳、都说X反而Y、以为X其实Y等。"
+        "后半句必须有口语态度（了、明明、压根、反而…），禁止说教或说明文式陈述。"
         f"同一主题合格示例：{example}"
     )
 
 
 def _optimize_system_conversational_block() -> str:
     return (
-        "优化后 title 须有「常见认知 + 意外反转」结构。"
-        "句式不限（问句反驳、都说X反而Y、以为X其实Y 等），但须有口语态度。"
-        "无反转结构的陈述句一律不合格。"
+        "优化后 title 须有「认知+反转」结构。句式不限。"
+        "后半句必须有口语态度（了、明明、压根、反而…），禁止说明书式陈述。"
         "在保持该结构前提下改进画面锚点与 hook；禁止换题或蹭热点。"
     )
 
@@ -255,7 +251,7 @@ def build_topic_optimize_user_prompt(
         lines.extend(
             [
                 _conversational_rewrite_instruction(title.strip()),
-                "JSON 的 title 字段须有「认知+反转」结构，禁止无态度陈述句。",
+                "JSON 的 title 字段必须是一整句含中文问号「？」的字符串，禁止陈述句。",
                 f"合格 title 示例（须换措辞但结构相同）：{example}",
             ]
         )
@@ -282,6 +278,6 @@ def build_topic_optimize_user_prompt(
         lines.append(
             "在保持上述「认知+反转」结构不变的前提下改进画面锚点："
             "从本题主题提炼可见载体，配合图解词（规则、能量、表…），"
-            "禁止抽象比喻（油路、命脉、博弈）。"
+            "慎用抽象比喻。后半句必须有态度，禁止说事实（如「靠规则分流」）。"
         )
     return "\n".join(lines)

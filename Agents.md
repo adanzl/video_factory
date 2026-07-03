@@ -2,7 +2,11 @@
 
 ## SSH
 
-主机名：局域网 mini 或者 (57c42474b0ea.ofalias.net 端口 58186)
+主机名：
+
+- 局域网 mini  
+- 57c42474b0ea.ofalias.net 端口 58186
+- vip.bj.frp.one 端口 40384
 用户名 leo
 密码 见.env 里的 SSH_PASSWORD
 

@@ -82,4 +82,4 @@ def score_science(
     curiosity += hook_curiosity_adjustment(hook)
 
     compliance = 80.0
-    return finalize_score(visual=visual, fact=fact, curiosity=curiosity, compliance=compliance)
+    return finalize_score(visual=visual, fact=fact, curiosity=curiosity, compliance=compliance, title=text)

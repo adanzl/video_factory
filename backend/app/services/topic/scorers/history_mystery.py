@@ -52,4 +52,4 @@ def score_history(
         curiosity += 5
 
     compliance = 80.0
-    return finalize_score(visual=visual, fact=fact, curiosity=curiosity, compliance=compliance)
+    return finalize_score(visual=visual, fact=fact, curiosity=curiosity, compliance=compliance, title=text)

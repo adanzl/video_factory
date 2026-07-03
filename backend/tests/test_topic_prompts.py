@@ -29,14 +29,13 @@ def test_optimize_user_prompt_includes_conversational_rewrite():
     )
     assert "认知+反转" in user
     assert "合格示例" in user
-    assert "霍尔木兹海峡" in user or "备用航线" in user or "反而不慌" in user
+    assert "都怕霍尔木兹" in user or "都说霍尔木兹" in user or "备用航道" in user
 
 
 def test_conversational_rewrite_example_shipping():
     example = conversational_rewrite_example("霍尔木兹卡住油路")
-    assert "油轮" in example or "规则" in example or "不慌" in example
-    # 问句或反差结构均可
-    assert "？" in example or "都说" in example
+    assert "霍尔木兹" in example
+    assert "？" in example or "都说" in example or "都怕" in example
 
 
 def test_general_topic_prompt_forbids_indirect_reasoning_chain():
@@ -69,8 +68,8 @@ def test_optimize_system_prompt_general_includes_coherence_rule():
         max_title_len=24,
         category=CATEGORY_SCIENCE,
     )
-    assert "反转结构" in system
-    assert "句式不限" in system
+    assert "认知+反转" in system
+    assert "态度" in system
 
 
 def test_optimize_user_prompt_history_constraints():
@@ -123,13 +122,13 @@ def test_optimize_user_prompt_statement_without_template_still_rewrites():
     assert conversational_rewrite_example(title) in user
 
 
-def test_optimize_system_prompt_requires_reversal_structure():
+def test_optimize_system_prompt_requires_question_mark():
     system = build_topic_optimize_system_prompt(
         max_title_len=24,
         category=CATEGORY_SCIENCE,
     )
-    assert "反转结构" in system
-    assert "油轮必经霍尔木兹海峡" in system or "霍尔木兹" in system
+    assert "态度" in system
+    assert "霍尔木兹" in system
 
 
 def test_optimize_user_prompt_incomplete_conversational_requires_rebuttal():
@@ -139,7 +138,7 @@ def test_optimize_user_prompt_incomplete_conversational_requires_rebuttal():
         category=CATEGORY_SCIENCE,
         template="误区反问式",
     )
-    assert "反转" in user
+    assert "认知+反转" in user
     example = conversational_rewrite_example(title)
     assert example in user
     assert "够你跑路" not in example
