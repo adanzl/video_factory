@@ -163,6 +163,7 @@ def test_parse_topics_payload_filters_missing_visual_anchor():
 
 
 from app.services.topic.scorers import score_title
+from app.services.topic.topic_mgr import _optimize_fallback_title
 
 def test_optimize_preview_score_uses_original_hook_when_candidate_empty():
     title = "霍尔木兹封死油轮？备用航道其实有规则"
@@ -181,6 +182,24 @@ def test_optimize_preview_score_uses_original_hook_when_candidate_empty():
     )
     assert without.total < 85
     assert with_hook.total >= 85
+
+
+def test_optimize_fallback_title_for_hormuz():
+    row = {
+        "title": "霍尔木兹卡住油路？真有几条备用道",
+        "hook": "伊朗军演示威时，全球三分之一原油真只有这一条路？",
+    }
+    result = _optimize_fallback_title(
+        row,
+        max_title_len=24,
+        category="时事相关科普",
+        template="误区反问式",
+    )
+    assert result is not None
+    title, hook, item = result
+    assert "？" in title
+    assert hook
+    assert item["title"] == title
 
 
 def test_parse_topics_payload_filters_incomplete_conversational():

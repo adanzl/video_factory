@@ -24,7 +24,7 @@ from app.services.topic.prompts.builder import (
     build_topic_optimize_system_prompt,
     build_topic_optimize_user_prompt,
 )
-from app.services.topic.text import normalize_title
+from app.services.topic.text import conversational_rewrite_example, normalize_title, topic_title_issue
 from app.services.topic.scorers import (
     SCORE_THRESHOLD,
     ScoreResult,
@@ -74,6 +74,50 @@ def _merge_optimize_hook(
         return hook
     orig = str(original_hook or "").strip()
     return orig or None
+
+
+def _optimize_fallback_title(
+    row: dict,
+    *,
+    max_title_len: int,
+    category: str,
+    template: str | None,
+) -> tuple[str, str | None, dict] | None:
+    """LLM 优化失败时，用规则改写示例作为兜底标题。"""
+    if normalize_category(category) == CATEGORY_HISTORY:
+        return None
+    candidate = normalize_title(
+        conversational_rewrite_example(str(row.get("title") or "")),
+        max_len=max_title_len,
+    )
+    if not candidate:
+        return None
+    resolved_template = template or "误区反问式"
+    if topic_title_issue(
+        candidate,
+        category=category,
+        template=resolved_template,
+    ):
+        return None
+    hook = _merge_optimize_hook(
+        candidate_hook=None,
+        original_hook=row.get("hook"),
+    )
+    preview = score_title(
+        candidate,
+        category=category,
+        template=resolved_template,
+        hook=hook,
+    )
+    if preview.total < SCORE_THRESHOLD:
+        return None
+    item = {
+        "title": candidate,
+        "category": category,
+        "template": resolved_template,
+        "hook": hook,
+    }
+    return candidate, hook, item
 
 
 class TopicMgr:
@@ -242,17 +286,38 @@ class TopicMgr:
         item: dict | None = None
         new_title = ""
         resolved_hook: str | None = None
-        last_score_exc: ValueError | None = None
+        last_exc: Exception | None = None
+        llm_ok = False
         max_attempts = 3
         for attempt in range(max_attempts):
-            topics = self.generate_topics(
-                "",
-                count=1,
-                category=category,
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                operation="optimize",
-            )
+            try:
+                topics = self.generate_topics(
+                    "",
+                    count=1,
+                    category=category,
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    operation="optimize",
+                )
+            except ValueError as exc:
+                last_exc = exc
+                if attempt + 1 >= max_attempts:
+                    break
+                logger.warning(
+                    "[TOPIC] optimize parse rejected id=%d attempt=%d/%d reason=%s",
+                    title_id,
+                    attempt + 1,
+                    max_attempts,
+                    exc,
+                )
+                user_prompt = (
+                    f"{user_prompt_base}\n\n"
+                    "【重试】上一轮 title 未通过校验，须输出一整句「问句？反驳」，"
+                    "禁止陈述句。JSON 的 title 字段必须含中文问号「？」。"
+                    f"\n{exc}"
+                )
+                continue
+
             item = topics[0]
             item["category"] = category
             if template:
@@ -262,7 +327,8 @@ class TopicMgr:
                 max_len=settings.max_title_length,
             )
             if not new_title:
-                raise ValueError("LLM returned empty title")
+                last_exc = ValueError("LLM returned empty title")
+                continue
 
             resolved_template = template or item.get("template")
             resolved_hook = _merge_optimize_hook(
@@ -276,11 +342,12 @@ class TopicMgr:
                 hook=resolved_hook,
             )
             if preview.total >= SCORE_THRESHOLD:
+                llm_ok = True
                 break
             reason = preview.rejected_reason or f"总分 {preview.total} 低于阈值 {SCORE_THRESHOLD}"
-            last_score_exc = ValueError(f"optimized title rejected: {reason}")
+            last_exc = ValueError(f"optimized title rejected: {reason}")
             if attempt + 1 >= max_attempts:
-                raise last_score_exc
+                break
             logger.warning(
                 "[TOPIC] optimize score rejected id=%d attempt=%d/%d title=%r score=%d",
                 title_id,
@@ -296,6 +363,25 @@ class TopicMgr:
                 "须保持「问句？反驳」一整句；title 含可见载体与图解词（如油轮、规则）；"
                 "若 hook 为空须输出 15-30 字点击动机。"
             )
+
+        if not llm_ok:
+            fallback = _optimize_fallback_title(
+                row,
+                max_title_len=settings.max_title_length,
+                category=category,
+                template=template,
+            )
+            if fallback:
+                new_title, resolved_hook, item = fallback
+                logger.info(
+                    "[TOPIC] optimize fallback id=%d title=%r",
+                    title_id,
+                    new_title,
+                )
+            elif last_exc is not None:
+                raise last_exc
+            else:
+                raise ValueError("optimize failed")
 
         assert item is not None
         item["hook"] = resolved_hook

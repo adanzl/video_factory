@@ -128,6 +128,7 @@ def test_optimize_system_prompt_requires_question_mark():
         category=CATEGORY_SCIENCE,
     )
     assert "中文问号" in system
+    assert "油轮必经霍尔木兹海峡" in system
 
 
 def test_optimize_user_prompt_incomplete_conversational_requires_rebuttal():
