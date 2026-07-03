@@ -80,8 +80,8 @@
             >
               <el-image
                 :key="coverUrl"
-                :src="coverUrl"
-                :preview-src-list="[coverUrl]"
+                :src="lazyCoverUrl"
+                :preview-src-list="lazyCoverPreviewList"
                 :crossorigin="MEDIA_CROSS_ORIGIN"
                 fit="contain"
                 class="block size-full [&_.el-image__inner]:block [&_.el-image__inner]:size-full [&_.el-image__inner]:object-contain"
@@ -123,15 +123,14 @@
               :style="previewBoxStyle"
             >
               <video
-                ref="videoRef"
                 :key="videoUrl"
                 class="absolute inset-0 size-full bg-black object-contain"
-                :src="videoUrl"
-                :poster="posterUrl || undefined"
+                :src="lazyVideoUrl"
+                :poster="lazyPosterUrl || undefined"
                 :crossorigin="MEDIA_CROSS_ORIGIN"
                 controls
                 playsinline
-                preload="auto"
+                preload="metadata"
                 @error="onVideoError"
                 @loadedmetadata="onVideoMetadata"
               />
@@ -156,7 +155,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { runJobStageAction, updateJobInfo } from "@/api/api-jobs";
 import { getMediaDuration, getMediaFileUrl } from "@/api/api-media";
@@ -180,6 +179,7 @@ import {
   computeCentered43GuideLines,
   formatVideoResolution,
   guessIntroPreviewAspectRatio,
+  lazyMediaSrc,
   MEDIA_CROSS_ORIGIN,
   parseAspectRatio,
   readImageNaturalSize,
@@ -208,7 +208,6 @@ const introOrientation = ref<"auto" | "portrait" | "landscape">(
 const actualDuration = ref<number | null>(null);
 const loadError = ref("");
 const coverLoadError = ref("");
-const videoRef = ref<HTMLVideoElement | null>(null);
 const videoMeta = ref<{ width: number; height: number } | null>(null);
 const coverMeta = ref<{ width: number; height: number } | null>(null);
 const showCover43Guide = ref(false);
@@ -257,6 +256,11 @@ const posterUrl = computed(() => {
   return videoPath ? getMediaFileUrl(videoPath.replace(/\.mp4$/i, ".png")) : "";
 });
 
+const lazyVideoUrl = computed(() => lazyMediaSrc(videoUrl.value, props.stageActive));
+const lazyCoverUrl = computed(() => lazyMediaSrc(coverUrl.value, props.stageActive));
+const lazyPosterUrl = computed(() => lazyMediaSrc(posterUrl.value, props.stageActive));
+const lazyCoverPreviewList = computed(() => (lazyCoverUrl.value ? [lazyCoverUrl.value] : []));
+
 const actualDurationText = computed(() => {
   if (actualDuration.value !== null) {
     return `${actualDuration.value.toFixed(2)} 秒`;
@@ -299,10 +303,6 @@ const introResolutionText = computed(() =>
 const coverResolutionText = computed(() =>
   formatVideoResolution(coverDimensions.value.width, coverDimensions.value.height)
 );
-
-const reloadVideoPreview = () => {
-  void nextTick(() => videoRef.value?.load());
-};
 
 const loadDuration = async () => {
   if (!props.job.intro_path) {
@@ -419,28 +419,18 @@ watch(
 );
 
 watch(
-  () => props.job.intro_path,
-  () => {
+  () => [props.job.intro_path, props.stageActive] as const,
+  ([path, active]) => {
     loadError.value = "";
     videoMeta.value = null;
+    if (active === false || !path) {
+      if (!path) {
+        actualDuration.value = null;
+      }
+      return;
+    }
     void loadDuration();
   },
   { immediate: true }
 );
-
-watch(
-  () => props.stageActive,
-  active => {
-    if (active) {
-      reloadVideoPreview();
-    }
-  },
-  { immediate: true }
-);
-
-watch(videoUrl, () => {
-  if (props.stageActive !== false) {
-    reloadVideoPreview();
-  }
-});
 </script>

@@ -47,7 +47,7 @@
               <video
                 :key="videoUrl"
                 class="block h-full w-full bg-black object-contain"
-                :src="videoUrl"
+                :src="lazyVideoUrl"
                 :crossorigin="MEDIA_CROSS_ORIGIN"
                 controls
                 playsinline
@@ -92,6 +92,7 @@ import {
   formatMediaDuration,
   formatVideoResolution,
   getMediaFileUrl,
+  lazyMediaSrc,
   MEDIA_CROSS_ORIGIN,
   resolveFinalDuration,
   resolveFinalPath,
@@ -111,6 +112,7 @@ import {
 const props = defineProps<{
   job: JobDetail;
   logs: JobLog[];
+  stageActive?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -153,6 +155,7 @@ const actionDisabledReason = computed(() =>
 const finalAsset = computed(() => props.job.final_path);
 const finalFilePath = computed(() => resolveFinalPath(props.job.final_path));
 const videoUrl = computed(() => getMediaFileUrl(finalFilePath.value));
+const lazyVideoUrl = computed(() => lazyMediaSrc(videoUrl.value, props.stageActive));
 
 const durationText = computed(() => {
   const duration = resolveFinalDuration(props.job.final_path);

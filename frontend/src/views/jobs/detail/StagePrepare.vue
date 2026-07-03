@@ -35,7 +35,7 @@
               <video
                 :key="videoUrl"
                 class="block h-full w-full bg-black object-contain"
-                :src="videoUrl"
+                :src="lazyVideoUrl"
                 :crossorigin="MEDIA_CROSS_ORIGIN"
                 controls
                 playsinline
@@ -77,6 +77,7 @@ import {
   buildMediaPreviewBoxStyle,
   formatMediaDuration,
   formatVideoResolution,
+  lazyMediaSrc,
   MEDIA_CROSS_ORIGIN,
 } from "@/utils/media";
 import { useErrorHandler } from "@/composables/useErrorHandler";
@@ -93,6 +94,7 @@ import {
 const props = defineProps<{
   job: JobDetail;
   logs: JobLog[];
+  stageActive?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -111,6 +113,7 @@ const actionDisabledReason = computed(() =>
 );
 
 const videoUrl = computed(() => getMediaFileUrl(props.job.base_path ?? ""));
+const lazyVideoUrl = computed(() => lazyMediaSrc(videoUrl.value, props.stageActive));
 
 const previewBoxStyle = computed(() =>
   buildMediaPreviewBoxStyle(videoMeta.value?.width, videoMeta.value?.height)
@@ -181,10 +184,16 @@ const handleRun = async (toEnd: boolean) => {
 };
 
 watch(
-  () => props.job.base_path,
-  () => {
+  () => [props.job.base_path, props.stageActive] as const,
+  ([path, active]) => {
     loadError.value = "";
     videoMeta.value = null;
+    if (active === false || !path) {
+      if (!path) {
+        actualDuration.value = null;
+      }
+      return;
+    }
     void loadDuration();
   },
   { immediate: true }

@@ -94,8 +94,8 @@
               >
                 <el-image
                   :key="coverUrl"
-                  :src="coverUrl"
-                  :preview-src-list="[coverUrl]"
+                  :src="lazyCoverUrl"
+                  :preview-src-list="lazyCoverPreviewList"
                   :crossorigin="MEDIA_CROSS_ORIGIN"
                   fit="contain"
                   class="block h-full w-full [&_.el-image__inner]:block [&_.el-image__inner]:h-full [&_.el-image__inner]:w-full [&_.el-image__inner]:object-contain"
@@ -158,7 +158,7 @@
                 <video
                   :key="videoUrl"
                   class="block h-full w-full bg-black object-contain"
-                  :src="videoUrl"
+                  :src="lazyVideoUrl"
                   :crossorigin="MEDIA_CROSS_ORIGIN"
                   controls
                   playsinline
@@ -196,6 +196,7 @@ import type { ScriptJson } from "@/types/jobs/script";
 import {
   buildMediaPreviewBoxStyle,
   computeCentered43GuideLines,
+  lazyMediaSrc,
   readImageNaturalSize,
   resolveFinalPath,
   MEDIA_CROSS_ORIGIN,
@@ -215,6 +216,7 @@ import {
 const props = defineProps<{
   job: JobDetail;
   logs: JobLog[];
+  stageActive?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -269,6 +271,9 @@ const coverUrl = computed(() => getMediaFileUrl(coverPath.value));
 
 const finalFilePath = computed(() => resolveFinalPath(props.job.final_path));
 const videoUrl = computed(() => getMediaFileUrl(finalFilePath.value));
+const lazyCoverUrl = computed(() => lazyMediaSrc(coverUrl.value, props.stageActive));
+const lazyCoverPreviewList = computed(() => (lazyCoverUrl.value ? [lazyCoverUrl.value] : []));
+const lazyVideoUrl = computed(() => lazyMediaSrc(videoUrl.value, props.stageActive));
 
 const previewBoxStyle = computed(() =>
   buildMediaPreviewBoxStyle(
