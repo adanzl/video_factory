@@ -20,7 +20,7 @@ from app.services.render.title_render import (
 )
 
 # 与 MAX_TITLE_LENGTH 一致；封面渲染时超长会截断到此长度
-COVER_TITLE_MAX_CHARS = 16
+COVER_TITLE_MAX_CHARS = 18
 _COVER_TITLE_FILL = (255, 210, 50, 255)
 _COVER_TITLE_STROKE = (60, 30, 15, 255)
 # 无空格时单行上限；超过则 balance_title_lines 均分两行
@@ -86,9 +86,9 @@ def render_cover_title_block(
 
     title_max_w = int(safe_w * 0.92)
     title_max_h = int(safe_h * 0.34) if is_landscape else int(safe_h * 0.24)
-    # 横屏投稿封面实测：最大 135px，放不下时逐步缩小至 112px
+    # 横屏投稿封面实测：最大 135px，放不下时逐步缩小至 100px
     title_max_size = 135 if is_landscape else 120
-    title_min_size = 112 if is_landscape else 96
+    title_min_size = 100 if is_landscape else 96
     line_gap = 10
     font = load_cjk_font(title_min_size)
     font_size = title_min_size
