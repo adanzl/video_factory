@@ -77,7 +77,7 @@
               ref="audioRef"
               :key="audioUrl"
               class="block w-full"
-              :src="audioUrl"
+              :src="lazyAudioUrl"
               :crossorigin="MEDIA_CROSS_ORIGIN"
               controls
               preload="metadata"
@@ -147,7 +147,7 @@ import { runJobStageAction } from "@/api/api-jobs";
 import { getMediaFileUrl, getMediaText } from "@/api/api-media";
 import { DEFAULT_TTS_VOICE, TTS_VOICE_OPTIONS } from "@/constants/tts-voices";
 import type { JobDetail, JobLog } from "@/types/jobs";
-import { MEDIA_CROSS_ORIGIN } from "@/utils/media";
+import { MEDIA_CROSS_ORIGIN, lazyMediaSrc } from "@/utils/media";
 import { useErrorHandler } from "@/composables/useErrorHandler";
 import StageActionBar from "./StageActionBar.vue";
 import StageLogsSection from "./StageLogsSection.vue";
@@ -194,6 +194,7 @@ const parseSrt = (raw: string): SrtCueRow[] => {
 const props = defineProps<{
   job: JobDetail;
   logs: JobLog[];
+  stageActive?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -221,6 +222,7 @@ const actionDisabledReason = computed(() =>
 );
 
 const audioUrl = computed(() => getMediaFileUrl(props.job.audio_path ?? ""));
+const lazyAudioUrl = computed(() => lazyMediaSrc(audioUrl.value, props.stageActive));
 
 const selectedVoicePreviewUrl = computed(
   () => TTS_VOICE_OPTIONS.find(voice => voice.value === voiceId.value)?.previewUrl ?? ""
@@ -376,8 +378,16 @@ watch(voiceId, () => {
 });
 
 watch(
-  () => props.job.subtitle_path,
-  () => {
+  () => [props.job.subtitle_path, props.stageActive] as const,
+  ([path, active]) => {
+    if (active === false || !path) {
+      if (!path) {
+        srtCues.value = [];
+        srtLoadError.value = "";
+        srtLoading.value = false;
+      }
+      return;
+    }
     void loadSrtPreview();
   },
   { immediate: true }

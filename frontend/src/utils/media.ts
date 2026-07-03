@@ -37,6 +37,14 @@ export function getMediaFileUrl(filePath: string): string {
   }
 }
 
+/** 页签未激活时不返回 URL，避免后台预加载图片/视频/音频 */
+export function lazyMediaSrc(url: string, stageActive: boolean | undefined): string {
+  if (!url || stageActive === false) {
+    return "";
+  }
+  return url;
+}
+
 /** 格式化文件大小 */
 export function formatFileSize(bytes?: number | null): string {
   if (bytes === null || bytes === undefined || Number.isNaN(bytes) || bytes < 0) {

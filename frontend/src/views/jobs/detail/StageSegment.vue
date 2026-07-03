@@ -175,12 +175,14 @@
               </el-button>
             </div>
             <el-image
-              v-if="segment.imageUrl"
-              :src="segment.imageUrl"
+              v-if="segment.image_path"
+              :src="lazyMediaSrc(segment.imageUrl, stageActive)"
               fit="cover"
               class="w-full rounded border border-gray-100"
               :style="mediaPreviewStyle"
-              :preview-src-list="[segment.imageUrl]"
+              :preview-src-list="
+                stageActive !== false && segment.imageUrl ? [segment.imageUrl] : []
+              "
               preview-teleported
             />
             <div
@@ -218,14 +220,14 @@
               </div>
             </div>
             <div
-              v-if="segment.clipUrl"
+              v-if="segment.clip_path"
               class="w-full overflow-hidden rounded border border-gray-200 bg-black"
             >
               <video
                 :key="segment.clipUrl"
                 class="block w-full bg-black"
                 :style="mediaPreviewStyle"
-                :src="segment.clipUrl"
+                :src="lazyMediaSrc(segment.clipUrl, stageActive)"
                 :crossorigin="MEDIA_CROSS_ORIGIN"
                 controls
                 playsinline
@@ -266,7 +268,7 @@ import { getMediaFileUrl } from "@/api/api-media";
 import type { JobDetail, JobInfo, JobLog, JobSegment, ScriptJson } from "@/types/jobs";
 import type { RunStageActionPayload } from "@/types/jobs/stageAction";
 import { buildSegmentClipSearchKeyword, type ClipOrientation } from "@/utils/clipSearch";
-import { MEDIA_CROSS_ORIGIN } from "@/utils/media";
+import { lazyMediaSrc, MEDIA_CROSS_ORIGIN } from "@/utils/media";
 import { useErrorHandler } from "@/composables/useErrorHandler";
 import SegmentClipSearchDialog from "@/views/clips/SegmentClipSearchDialog.vue";
 import StageActionBar from "./StageActionBar.vue";
@@ -277,6 +279,7 @@ const props = defineProps<{
   job: JobDetail;
   segments: JobSegment[];
   logs: JobLog[];
+  stageActive?: boolean;
 }>();
 
 const emit = defineEmits<{
