@@ -128,6 +128,14 @@
               入队
             </el-button>
             <el-button
+              type="default"
+              link
+              size="small"
+              @click="openEditDialog(row)"
+            >
+              编辑
+            </el-button>
+            <el-button
               type="danger"
               link
               size="small"
@@ -233,6 +241,37 @@
       </template>
     </el-dialog>
 
+    <el-dialog v-model="showEditDialog" title="编辑选题" width="520px" destroy-on-close>
+      <el-form label-width="70px">
+        <el-form-item label="标题">
+          <el-input v-model="editForm.title" type="textarea" :rows="2" maxlength="60" />
+        </el-form-item>
+        <el-form-item label="分类">
+          <el-select v-model="editForm.category" class="w-full!">
+            <el-option label="历史悬案" value="历史悬案" />
+            <el-option label="科学原理" value="科学原理" />
+            <el-option label="时事相关科普" value="时事相关科普" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="模板">
+          <el-select v-model="editForm.template" class="w-full!">
+            <el-option label="误区反问式" value="误区反问式" />
+            <el-option label="反差好奇式" value="反差好奇式" />
+            <el-option label="悬念钩子式" value="悬念钩子式" />
+            <el-option label="未解之谜式" value="未解之谜式" />
+            <el-option label="实操避坑式" value="实操避坑式" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="钩子">
+          <el-input v-model="editForm.hook" type="textarea" :rows="2" maxlength="200" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showEditDialog = false">取消</el-button>
+        <el-button type="primary" :loading="editing" @click="confirmEdit">保存</el-button>
+      </template>
+    </el-dialog>
+
     <el-dialog v-model="showCleanLowDialog" title="清理低分选题" width="480px" destroy-on-close>
       <p class="mb-4 text-sm text-gray-500">
         将删除分数低于标准的选题（不含已入队、未打分）。
@@ -266,6 +305,7 @@ import {
   listTitles,
   optimizeTopic,
   scoreTopics,
+  updateTopic,
 } from "@/api/api-topic";
 import type {
   EnqueueRunMode,
@@ -294,6 +334,15 @@ const cleaningLow = ref(false);
 const generating = ref(false);
 const scoringId = ref<number>();
 const optimizingId = ref<number>();
+const editing = ref(false);
+const showEditDialog = ref(false);
+const editForm = reactive({
+  id: 0,
+  title: "",
+  category: "",
+  template: "",
+  hook: "",
+});
 
 const showGenerateDialog = ref(false);
 const showEnqueueDialog = ref(false);
@@ -592,6 +641,33 @@ const confirmCleanLow = async () => {
     handleError(error, "清理低分失败");
   } finally {
     cleaningLow.value = false;
+  }
+};
+
+const openEditDialog = (row: TitleRecord) => {
+  editForm.id = row.id;
+  editForm.title = row.title;
+  editForm.category = row.category || "";
+  editForm.template = row.template || "";
+  editForm.hook = row.hook || "";
+  showEditDialog.value = true;
+};
+
+const confirmEdit = async () => {
+  if (!editForm.title.trim()) {
+    ElMessage.warning("标题不能为空");
+    return;
+  }
+  editing.value = true;
+  try {
+    await updateTopic({ id: editForm.id, title: editForm.title, category: editForm.category || undefined, template: editForm.template || undefined, hook: editForm.hook || undefined });
+    ElMessage.success("已保存");
+    showEditDialog.value = false;
+    await fetchTitles();
+  } catch (error) {
+    handleError(error, "保存失败");
+  } finally {
+    editing.value = false;
   }
 };
 

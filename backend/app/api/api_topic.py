@@ -129,6 +129,29 @@ def enqueue_topics_route():
     )
 
 
+@bp.post("/update")
+def update_topic_route():
+    """手动修改选题标题/分类/模板/钩子。"""
+    data = get_json_body()
+    title_id = parse_id(data)
+    title = parse_str(data, "title", required=False) or None
+    category = parse_str(data, "category", required=False) or None
+    template = parse_str(data, "template", required=False) or None
+    hook = parse_str(data, "hook", required=False) or None
+    if category and category not in TOPIC_CATEGORIES:
+        raise APIError(f"category must be one of: {', '.join(sorted(TOPIC_CATEGORIES))}")
+    result = topic_mgr.update_title(
+        title_id,
+        title=title,
+        category=category,
+        template=template,
+        hook=hook,
+    )
+    if result is None:
+        raise APIError("标题不存在")
+    return json_ok({"title": result})
+
+
 @bp.post("/delete")
 def delete_topics_route():
     data = get_json_body()

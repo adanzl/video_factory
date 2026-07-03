@@ -11,6 +11,7 @@ import type {
   OptimizeTopicResult,
   ScoreTopicsResult,
   TitleRecord,
+  UpdateTitleParams,
 } from "@/types/topic";
 
 export type { TopicItem } from "@/types/topic";
@@ -63,6 +64,11 @@ export async function enqueueTopics(
     skip_publish: params.skip_publish ?? true,
     run_mode: params.run_mode ?? "script",
   });
+  return response.data;
+}
+
+export async function updateTopic(params: UpdateTitleParams): Promise<{ title: TitleRecord }> {
+  const response = await api.post<{ title: TitleRecord }>("/v_factory/api/topic/update", params);
   return response.data;
 }
 
