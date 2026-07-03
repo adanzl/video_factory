@@ -714,8 +714,68 @@ class JobMgr:
         )
 
     def run_cover(self, job_id: int, *, to_end: bool = False) -> dict:
-        """兼容旧 API：封面已并入 intro 阶段。"""
-        return self.run_intro(job_id, to_end=to_end)
+        """仅重新生成封面，不动片头视频。"""
+        import tempfile
+
+        from PIL import Image
+
+        from app.config import get_settings
+        from app.services.intro.cover_layout import (
+            build_cover_image_prompt,
+            compose_cover_image,
+            cover_canvas_size,
+        )
+        from app.services.media.ffmpeg_utils import probe_video_size
+        from app.services.segment.image.image_agnes import AgnesImageProvider
+        from worker.stages.intro.base import _cover_subject_from_job, resolve_intro_title
+
+        def _generate() -> None:
+            with connection() as conn:
+                job = repo_job.get_job(conn, job_id)
+            settings = get_settings()
+            title = resolve_intro_title(job)
+
+            intro_path = job.get("intro_path")
+            if intro_path:
+                try:
+                    width, height = probe_video_size(Path(intro_path))
+                except Exception:
+                    width, height = settings.video_width, settings.video_height
+            else:
+                if settings.video_width > settings.video_height:
+                    width, height = settings.video_width, settings.video_height
+                else:
+                    width, height = settings.video_height, settings.video_width
+
+            cw, ch, _ = cover_canvas_size(width, height)
+            subject = _cover_subject_from_job(job)
+            cover_prompt = build_cover_image_prompt(cw=cw, ch=ch, subject=subject)
+
+            media_dir = settings.video_data_dir / str(job_id)
+            cover_path = media_dir / "cover.jpg"
+
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+                tmp_path = Path(tmp.name)
+            try:
+                AgnesImageProvider().generate(cover_prompt, tmp_path, size=f"{cw}x{ch}")
+                img = Image.open(tmp_path)
+                composed = compose_cover_image(
+                    img,
+                    title,
+                    brand_name=settings.brand_name,
+                    host_intro_path=settings.host_intro_path,
+                )
+                composed.convert("RGB").save(cover_path, quality=92)
+            finally:
+                tmp_path.unlink(missing_ok=True)
+
+            with connection() as conn:
+                repo_job.update_job(conn, job_id, cover_path=str(cover_path.resolve()))
+                repo_job_log.append_log(
+                    conn, job_id, "cover", f"cover regenerated: {cover_path} ({cw}x{ch})"
+                )
+
+        return self._run_in_background(job_id, "cover", _generate)
 
     def run_tts(
         self,

@@ -70,6 +70,14 @@
               >
                 4:3
               </el-button>
+              <el-button
+                v-if="coverUrl"
+                size="small"
+                :loading="regeneratingCover"
+                @click="handleRegenCover"
+              >
+                重新生成
+              </el-button>
               <span class="text-xs text-gray-400">{{ coverResolutionText }}</span>
             </div>
           </div>
@@ -211,6 +219,7 @@ const coverLoadError = ref("");
 const videoMeta = ref<{ width: number; height: number } | null>(null);
 const coverMeta = ref<{ width: number; height: number } | null>(null);
 const showCover43Guide = ref(false);
+const regeneratingCover = ref(false);
 
 const PREVIEW_OPTIONS = { maxWidthPx: 560, maxViewportRatio: 0.85 } as const;
 const COVER_PREVIEW_OPTIONS = { maxWidthPx: 560, maxViewportRatio: 0.9 } as const;
@@ -386,6 +395,28 @@ const handleRun = async (toEnd: boolean) => {
     handleError(error, `${actionLabel}失败`);
   } finally {
     submitting.value = false;
+  }
+};
+
+const handleRegenCover = async () => {
+  try {
+    await ElMessageBox.confirm("确定重新生成封面吗？", "确认", {
+      type: "warning",
+      confirmButtonText: "确定",
+      cancelButtonText: "取消",
+    });
+  } catch {
+    return;
+  }
+  regeneratingCover.value = true;
+  try {
+    await runJobStageAction("cover", { id: props.job.id, to_end: false });
+    ElMessage.success("封面已重新生成");
+    emit("refresh");
+  } catch (error) {
+    handleError(error, "重新生成封面失败");
+  } finally {
+    regeneratingCover.value = false;
   }
 };
 
