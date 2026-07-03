@@ -162,6 +162,27 @@ def test_parse_topics_payload_filters_missing_visual_anchor():
     assert "油轮" in topics[0]["title"]
 
 
+from app.services.topic.scorers import score_title
+
+def test_optimize_preview_score_uses_original_hook_when_candidate_empty():
+    title = "霍尔木兹封死油轮？备用航道其实有规则"
+    hook = "伊朗军演示威时，全球三分之一原油真只有这一条路？"
+    without = score_title(
+        title,
+        category="时事相关科普",
+        template="误区反问式",
+        hook=None,
+    )
+    with_hook = score_title(
+        title,
+        category="时事相关科普",
+        template="误区反问式",
+        hook=hook,
+    )
+    assert without.total < 85
+    assert with_hook.total >= 85
+
+
 def test_parse_topics_payload_filters_incomplete_conversational():
     raw = {
         "topics": [

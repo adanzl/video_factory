@@ -63,6 +63,19 @@ def _existing_keywords(conn) -> set[str]:
     return result
 
 
+def _merge_optimize_hook(
+    *,
+    candidate_hook: str | None,
+    original_hook: str | None,
+) -> str | None:
+    """优化结果 hook 为空时保留原 hook，避免 preview 打分偏低。"""
+    hook = str(candidate_hook or "").strip()
+    if hook:
+        return hook
+    orig = str(original_hook or "").strip()
+    return orig or None
+
+
 class TopicMgr:
     def list_titles(
         self,
@@ -213,48 +226,79 @@ class TopicMgr:
             max_title_len=settings.max_title_length,
             category=category,
         )
-        user_prompt = build_topic_optimize_user_prompt(
+        user_prompt_base = build_topic_optimize_user_prompt(
             title=row["title"],
             category=category,
             template=template,
             hook=row.get("hook"),
         )
+        user_prompt = user_prompt_base
         logger.info(
             "[TOPIC] optimize start id=%d title=%r category=%r",
             title_id,
             row["title"],
             category,
         )
-        topics = self.generate_topics(
-            "",
-            count=1,
-            category=category,
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            operation="optimize",
-        )
-        item = topics[0]
-        item["category"] = category
-        if template:
-            item["template"] = template
-        new_title = normalize_title(
-            item["title"],
-            max_len=settings.max_title_length,
-        )
-        if not new_title:
-            raise ValueError("LLM returned empty title")
+        item: dict | None = None
+        new_title = ""
+        resolved_hook: str | None = None
+        last_score_exc: ValueError | None = None
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            topics = self.generate_topics(
+                "",
+                count=1,
+                category=category,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                operation="optimize",
+            )
+            item = topics[0]
+            item["category"] = category
+            if template:
+                item["template"] = template
+            new_title = normalize_title(
+                item["title"],
+                max_len=settings.max_title_length,
+            )
+            if not new_title:
+                raise ValueError("LLM returned empty title")
 
-        resolved_template = template or item.get("template")
-        preview = score_title(
-            new_title,
-            category=category,
-            template=resolved_template,
-            hook=item.get("hook"),
-        )
-        if preview.total < SCORE_THRESHOLD:
+            resolved_template = template or item.get("template")
+            resolved_hook = _merge_optimize_hook(
+                candidate_hook=item.get("hook"),
+                original_hook=row.get("hook"),
+            )
+            preview = score_title(
+                new_title,
+                category=category,
+                template=resolved_template,
+                hook=resolved_hook,
+            )
+            if preview.total >= SCORE_THRESHOLD:
+                break
             reason = preview.rejected_reason or f"总分 {preview.total} 低于阈值 {SCORE_THRESHOLD}"
-            raise ValueError(f"optimized title rejected: {reason}")
+            last_score_exc = ValueError(f"optimized title rejected: {reason}")
+            if attempt + 1 >= max_attempts:
+                raise last_score_exc
+            logger.warning(
+                "[TOPIC] optimize score rejected id=%d attempt=%d/%d title=%r score=%d",
+                title_id,
+                attempt + 1,
+                max_attempts,
+                new_title,
+                preview.total,
+            )
+            user_prompt = (
+                f"{user_prompt_base}\n\n"
+                f"【重试】标题「{new_title}」得分 {preview.total}，须≥{SCORE_THRESHOLD}。"
+                f"{reason} "
+                "须保持「问句？反驳」一整句；title 含可见载体与图解词（如油轮、规则）；"
+                "若 hook 为空须输出 15-30 字点击动机。"
+            )
 
+        assert item is not None
+        item["hook"] = resolved_hook
         with connection() as conn:
             if new_title != row["title"]:
                 existing = repo_title.find_by_titles(conn, [new_title])
@@ -266,7 +310,7 @@ class TopicMgr:
                 title=new_title,
                 category=item.get("category"),
                 template=item.get("template"),
-                hook=item.get("hook"),
+                hook=resolved_hook,
                 score=None,
                 score_detail=None,
                 status="pending",
