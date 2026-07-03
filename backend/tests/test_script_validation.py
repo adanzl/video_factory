@@ -434,3 +434,19 @@ def test_repair_segment_overflow_via_shrink_mock(monkeypatch):
         require_image_prompt=False,
     )
     assert warnings == []
+
+
+def test_validate_script_rejects_generic_motion_prompt():
+    script = _valid_script(
+        segments=[
+            {
+                "segment_index": 1,
+                "text": "x" * 120,
+                "visual_brief": _VISUAL_BRIEF,
+                "image_prompt": _IMAGE_PROMPT,
+                "motion_prompt": "镜头固定，主体稳定，画面平滑",
+            }
+        ],
+    )
+    with pytest.raises(ScriptValidationError, match="motion_prompt rejected"):
+        _validate_script(script, min_narration_chars=_DEFAULT_MIN)

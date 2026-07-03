@@ -2,7 +2,11 @@ from app.quality.quality_mgr import (
     check_image_prompt,
     skip_image_prompt_check,
 )
-from app.quality.image_prompt import image_prompt_min_chars
+from app.quality.image_prompt import (
+    collect_motion_prompt_issues,
+    generic_motion_prompt_issue,
+    image_prompt_min_chars,
+)
 
 
 def _script(chars: int) -> dict:
@@ -140,3 +144,18 @@ def test_skip_image_prompt_check():
     report = skip_image_prompt_check()
     assert report.level == "pass"
     assert report.details["reason"] == "skipped"
+
+
+def test_generic_motion_prompt_issue_rejects_filler():
+    assert generic_motion_prompt_issue("镜头固定，主体稳定，画面平滑") is not None
+    assert generic_motion_prompt_issue("炉口青烟缓缓上升，镜头极缓推进") is None
+
+
+def test_collect_motion_prompt_issues_flags_duplicates():
+    segments = [
+        {"segment_index": 1, "motion_prompt": "炉口青烟缓缓上升，镜头极缓推进"},
+        {"segment_index": 2, "motion_prompt": "炉口青烟缓缓上升，镜头极缓推进"},
+        {"segment_index": 3, "motion_prompt": "炉口青烟缓缓上升，镜头极缓推进"},
+    ]
+    issues = collect_motion_prompt_issues(segments)
+    assert any("完全相同" in item for item in issues)

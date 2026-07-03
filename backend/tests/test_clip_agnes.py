@@ -50,6 +50,9 @@ def test_resolve_media_public_base_url_from_cors() -> None:
 def test_stabilize_motion_prompt() -> None:
     assert "slow zoom" in _stabilize_motion_prompt("slow zoom")
     assert "画面稳定" in _stabilize_motion_prompt("slow zoom")
+    assert _stabilize_motion_prompt("炉口青烟缓缓上升，镜头极缓推进") == (
+        "炉口青烟缓缓上升，镜头极缓推进"
+    )
 
 
 def test_encode_image_data_uri(tmp_path: Path) -> None:

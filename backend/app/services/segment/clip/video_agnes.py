@@ -33,10 +33,8 @@ _RETRYABLE_HTTP = frozenset({500, 502, 503, 504})
 _TASK_RETRY_TOKENS = ("failed", "timeout", "429", "rate limit", "too many")
 _TERMINAL_POLL_STATES = frozenset({"completed", "failed"})
 _I2V_MODE = "ti2vid"
-_DEFAULT_MOTION_PROMPT = (
-    "镜头固定或极轻微缓慢推进，主体清晰稳定，画面平滑无抖动，科普讲解风格"
-)
-_STABILITY_HINT = "画面稳定，无抖动，无快速运镜"
+_DEFAULT_MOTION_PROMPT = "画面元素轻微自然晃动，镜头极缓推进"
+_STABILITY_HINT = "画面稳定，无快速运镜"
 # Agnes 720p 各比例上限均为 409 帧（1080p 仅 169 帧，更长分镜靠 loop + fit 补齐）
 _MAX_FRAMES = 409
 _MIN_FRAMES = 81
@@ -53,6 +51,8 @@ def _stabilize_motion_prompt(prompt: str) -> str:
     if not text:
         return _DEFAULT_MOTION_PROMPT
     if _STABILITY_HINT in text:
+        return text
+    if any(word in text for word in ("稳定", "平滑", "无抖动", "极缓", "缓慢")):
         return text
     return f"{text}，{_STABILITY_HINT}"
 

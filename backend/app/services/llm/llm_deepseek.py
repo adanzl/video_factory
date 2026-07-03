@@ -1077,6 +1077,14 @@ class DeepSeekClient(LLMClient):
                         "\n【特别强调】title 必须包含中文问号「？」并写完整反驳半句；"
                         "禁止再次输出无问号的陈述句。"
                     )
+                elif "画面锚点" in feedback:
+                    retry_extra = (
+                        "\n【特别强调】title 须从本题主题提炼可见载体，"
+                        "配合图解词（规则、能量、表…）；"
+                        "禁止油路、备用道、命脉等抽象比喻。"
+                    )
+                else:
+                    retry_extra = ""
                 logger.warning(
                     "[TOPIC] llm retry all entries filtered attempt=%d/%d",
                     attempt + 1,

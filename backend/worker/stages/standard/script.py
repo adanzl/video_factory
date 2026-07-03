@@ -19,6 +19,7 @@ from app.quality.quality_mgr import (
 )
 from app.quality.image_prompt import (
     MIN_SD15_PROMPT_EN_WORDS,
+    collect_motion_prompt_issues,
     image_prompt_pass_chars,
     image_prompt_target_chars,
 )
@@ -604,6 +605,13 @@ def _validate_script(
                         f"({words} words, need >= {MIN_SD15_PROMPT_EN_WORDS})",
                         retryable=True,
                     )
+        if require_image_prompt and any("motion_prompt" in seg for seg in segments):
+            motion_issues = collect_motion_prompt_issues(segments)
+            if motion_issues:
+                raise ScriptValidationError(
+                    f"motion_prompt rejected: {'; '.join(motion_issues[:3])}",
+                    retryable=True,
+                )
     if seg_target > 0:
         from app.utils.media import DEFAULT_SPEECH_CHARS_PER_SEC
 
@@ -799,7 +807,7 @@ class ScriptStage(StageExecutor):
                     break
                 except ScriptValidationError as exc:
                     last_exc = exc
-                    if "image_prompt" not in str(exc):
+                    if "image_prompt" not in str(exc) and "motion_prompt" not in str(exc):
                         raise
                     prompt_feedback = str(exc)
                     with connection() as conn:

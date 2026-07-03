@@ -105,7 +105,7 @@ _IMAGE_PROMPTS_JSON_EXAMPLE = """{
     {
       "segment_index": 1,
       "image_prompt": \"""" + _IMAGE_PROMPT_JSON_EXAMPLE_TEXT + """\",
-      "motion_prompt": "轻微镜头推进",
+      "motion_prompt": "炉口青烟缓缓上升，火光轻闪，镜头极缓推进",
       "sd15_prompt_en": "cross-section diagram of lung alveoli, air sacs highlighted, medical illustration"
     }
   ]
@@ -116,7 +116,7 @@ _IMAGE_PROMPTS_JSON_EXAMPLE_NO_SD15 = """{
     {
       "segment_index": 1,
       "image_prompt": \"""" + _IMAGE_PROMPT_JSON_EXAMPLE_TEXT + """\",
-      "motion_prompt": "轻微镜头推进"
+      "motion_prompt": "炉口青烟缓缓上升，火光轻闪，镜头极缓推进"
     }
   ]
 }"""
@@ -200,10 +200,16 @@ _IMAGE_PROMPT_RULE_LIFE_LANDSCAPE = (
 )
 
 _IMAGE_PROMPT_MOTION_TAIL = (
-    "围绕一个视觉焦点展开，避免要素平铺罗列。"
-    "每段motion_prompt须30-80字，描述画面如何运动；优先「镜头固定」或「极轻微缓慢推进/拉远」，"
-    "禁止快速运镜、跟拍、环绕、甩镜等易产生抖动的描述。"
-    "若无明显运动，写「镜头固定，主体稳定，画面平滑」。"
+    "motion_prompt 描述本镜画面内元素的轻微动态与极微运镜（15-50字），"
+    "须依据该段 image_prompt / visual_brief 具体化，各段不得雷同。"
+    "优先写可见微动：烟雾升腾、水流/液体流动、火焰摇曳、指针/刻度偏转、"
+    "云层缓移、光影渐变、尘埃漂浮、示意箭头延伸等；"
+    "镜头仅可极缓推近/拉远/平移，幅度很小。"
+    "禁止：快速运镜、跟拍、环绕、甩镜；"
+    "禁止套话「镜头固定，主体稳定，画面平滑」及同义填空。"
+    "正例：剖面图内液体缓慢流动，标注线微微亮起。"
+    "正例：炉口青烟上升，炭火明暗轻闪，镜头极缓推进。"
+    "反例：镜头固定，主体稳定，画面平滑。"
 )
 
 
@@ -1051,6 +1057,7 @@ def build_image_prompts_prompts(
         user_tail = (
             "\n\n请为每段编写 image_prompt 与 motion_prompt。"
             "image_prompt 按六维思路写成一段连贯中文，勿用维度标签，不写分辨率套话。"
+            "motion_prompt 须写画面内具体微动，各段互不重复，禁止套话「镜头固定，主体稳定，画面平滑」。"
             "同时为每段输出准确的 sd15_prompt_en。"
         )
     else:
@@ -1058,6 +1065,7 @@ def build_image_prompts_prompts(
             "\n\n请为每段扩写 image_prompt 与 motion_prompt。"
             "image_prompt 按六维思路写成一段连贯中文（勿用「主体：」等标签），"
             "篇幅按画面复杂度充分写，不凑字数、不写4K/8K/分辨率等规格套话。"
+            "motion_prompt 须写画面内具体微动，各段互不重复，禁止套话「镜头固定，主体稳定，画面平滑」。"
         )
     user = _append_supplementary_to_user(
         (

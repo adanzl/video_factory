@@ -80,7 +80,7 @@ CATEGORY_SPECS: dict[str, CategorySpec] = {
         label="时事相关科普",
         role="B 站时事衍生科普选题策划",
         default_theme="",
-        keywords_hint="时事锚点词，如：地震、降温、高考志愿",
+        keywords_hint="具象载体与图解词，如：地震波、规则、温度",
         templates=(
             TemplateSpec("误区反问式", 60, "剥离时效后讲清原理/规则/误区"),
             TemplateSpec("反差好奇式", 40, "公众认知 vs 科学/规则真相"),

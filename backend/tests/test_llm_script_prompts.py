@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from app.services.script.board import (
     _narration_word_range,
+    build_image_prompts_prompts,
     build_narration_prompts,
     build_segment_shrink_prompts,
     build_visual_brief_prompts,
@@ -23,6 +24,28 @@ def test_narration_word_range_aligns_min_with_validation():
     lo, hi = _narration_word_range(target)
     assert lo == narration_accept_min_chars(target)
     assert hi == target + max(50, int(target * 0.1))
+
+
+def test_build_image_prompts_prompts_discourages_generic_motion():
+    script = {
+        "title": "测试标题",
+        "visual_style": "3D卡通科普",
+        "segments": [
+            {
+                "segment_index": 1,
+                "text": "第一段口播。",
+                "visual_brief": "展示地震波传播示意。（结构示意图）",
+                "visual_mode": "static_motion",
+            },
+        ],
+    }
+    prompts = build_image_prompts_prompts(
+        script,
+        job={"pipeline": "standard", "content_style": "science_child"},
+    )
+    assert "禁止套话「镜头固定，主体稳定，画面平滑」" in prompts["system"]
+    assert "各段互不重复" in prompts["user"]
+    assert "炉口青烟缓缓上升" in prompts["system"]
 
 
 def test_build_narration_prompts_focuses_on_total_length():

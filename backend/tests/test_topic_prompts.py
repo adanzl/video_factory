@@ -6,8 +6,35 @@ from app.services.topic.prompts.builder import (
     build_topic_optimize_user_prompt,
     build_topic_system_prompt,
 )
-from app.services.topic.prompts.common import CONVERSATIONAL_TITLE_RULE, FORBIDDEN_FAQ_TITLE_RULE, HOOK_MOTIVATION_RULE
+from app.services.topic.prompts.common import CONVERSATIONAL_TITLE_RULE, CURRENT_VISUAL_ANCHOR_RULE, FORBIDDEN_FAQ_TITLE_RULE, HOOK_MOTIVATION_RULE
 from app.services.topic.text import conversational_rewrite_example
+
+
+def test_current_topic_prompt_includes_visual_anchor_principles():
+    system = build_topic_system_prompt(
+        max_title_len=24,
+        category=CATEGORY_CURRENT,
+        count=1,
+    )
+    assert "不要套与主题无关的固定词表" in system or "禁止套用与主题无关" in system
+    assert "霍尔木兹卡住油路" in system
+    assert CURRENT_VISUAL_ANCHOR_RULE[:8] in system
+
+
+def test_optimize_user_prompt_includes_visual_anchor_instruction():
+    user = build_topic_optimize_user_prompt(
+        title="霍尔木兹卡住油路？真有几条备用道",
+        category=CATEGORY_CURRENT,
+        template="误区反问式",
+    )
+    assert "画面锚点" in user
+    assert "从本题主题提炼" in user
+
+
+def test_conversational_rewrite_example_shipping():
+    example = conversational_rewrite_example("霍尔木兹卡住油路")
+    assert "油轮" in example or "规则" in example
+    assert "？" in example
 
 
 def test_general_topic_prompt_forbids_indirect_reasoning_chain():
