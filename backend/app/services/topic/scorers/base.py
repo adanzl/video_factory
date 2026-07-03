@@ -23,7 +23,6 @@ CURIOSITY_PATTERNS = (
     r"[?？]",
     r"为什么|怎么|如何|居然|竟然|真相|误区|多数人|不知道|暗藏|猫腻|之谜|下落|去了哪|无人|不敢|惊魂|诡异|反常|到底",
     r"等你呢|笑而不语|就这|慌了|顶得住|备好了|悄悄|就位|后路|慌了神|怕什么|明明|真以为|天真|堆成山|管够|满仓",
-    r"反而不|哪用慌|慌什么|早分流|后手|早备好",
 )
 
 WITTY_REBUTTAL_PATTERNS = (
@@ -190,13 +189,33 @@ def check_hard_reject(combined: str) -> ScoreResult | None:
     return None
 
 
+def _repetition_penalty(title: str) -> float:
+    """同一 2/3 字词在标题中重复出现，扣好奇分。"""
+    text = re.sub(r"[？?，。！…、]", "", title)
+    # 3 字及以上重复，明显冗余
+    for i in range(len(text) - 2):
+        chunk = text[i : i + 3]
+        if text.count(chunk) > 1:
+            return -15.0
+    # 2 字重复，轻扣
+    for i in range(len(text) - 1):
+        chunk = text[i : i + 2]
+        if len(chunk) < 2:
+            continue
+        if text.count(chunk) > 1:
+            return -8.0
+    return 0.0
+
+
 def finalize_score(
     *,
     visual: float,
     fact: float,
     curiosity: float,
     compliance: float,
+    title: str = "",
 ) -> ScoreResult:
+    curiosity += _repetition_penalty(title)
     total = clamp(visual * 0.3 + fact * 0.3 + curiosity * 0.2 + compliance * 0.2)
     rejected_reason = None
     if total < SCORE_THRESHOLD:

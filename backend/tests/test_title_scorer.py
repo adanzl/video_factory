@@ -40,7 +40,7 @@ def test_conversational_title_rejects_attitude_only_response():
 
 def test_conversational_title_accepts_substantive_rebuttal():
     result = score_title(
-        "地震云能预报地震？明明气象局早就辟谣了",
+        "看云就能报地震？明明气象局早就辟谣了",
         category="日常科学原理",
         template="误区反问式",
     )
