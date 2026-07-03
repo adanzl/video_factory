@@ -89,6 +89,9 @@ def _needs_optimize_conversational_rewrite(
 ) -> bool:
     if needs_conversational_rewrite(title, category=category, template=template):
         return True
+    # 都说X反而Y 反差结构不强制加问号
+    if re.search(r"都说.*反[而正]", title):
+        return False
     if category in {CATEGORY_SCIENCE, CATEGORY_CURRENT}:
         return "?" not in title and "？" not in title
     return False
@@ -97,21 +100,21 @@ def _needs_optimize_conversational_rewrite(
 def _conversational_rewrite_instruction(title: str) -> str:
     example = conversational_rewrite_example(title)
     return (
-        "【格式最优先】优化后 title 必须含中文问号「？」，"
-        "且写成一整句「误区问句？一步反驳」。"
-        "禁止输出无问号陈述句（如「霍尔木兹只有一条航道」）、半句问法、仅语气词收尾。"
-        "反驳可用：够你跑路、真以为、压根、根本不是、哪有那么…，"
-        "勿句句以「明明」开头，也忌说教建议（足够你躲桌下）。"
-        "反驳半句须承接问句同一命题；问句与回应措辞须与原标题不同，但结构必须是「？+反驳」。"
+        "优化后 title 须有「常见认知 + 意外反转」结构。"
+        "句式不限：问句反驳、都说X反而Y、以为X其实Y 等皆可。"
+        "后半句须有口语态度和可核验反证，禁止无态度陈述句、半句问法、仅语气词收尾。"
+        "态度可用：够你跑路、反而不慌、压根对不上、仓库堆成山；"
+        "忌说教建议（足够你躲桌下）。"
         f"同一主题合格示例：{example}"
     )
 
 
 def _optimize_system_conversational_block() -> str:
     return (
-        "【格式最优先】优化后 title 必须是一整句「误区问句？一步反驳」，"
-        "无中文问号「？」的陈述句一律不合格。"
-        "在保持该结构前提下，再改进画面锚点与 hook；禁止换题或蹭热点。"
+        "优化后 title 须有「常见认知 + 意外反转」结构。"
+        "句式不限（问句反驳、都说X反而Y、以为X其实Y 等），但须有口语态度。"
+        "无反转结构的陈述句一律不合格。"
+        "在保持该结构前提下改进画面锚点与 hook；禁止换题或蹭热点。"
     )
 
 
@@ -252,7 +255,7 @@ def build_topic_optimize_user_prompt(
         lines.extend(
             [
                 _conversational_rewrite_instruction(title.strip()),
-                "JSON 的 title 字段必须是一整句含中文问号「？」的字符串，禁止陈述句。",
+                "JSON 的 title 字段须有「认知+反转」结构，禁止无态度陈述句。",
                 f"合格 title 示例（须换措辞但结构相同）：{example}",
             ]
         )
@@ -277,7 +280,7 @@ def build_topic_optimize_user_prompt(
         lines.append("须保持同一历史人物或悬案，标题仍为「代号：悬念」格式。")
     elif resolved in {CATEGORY_SCIENCE, CATEGORY_CURRENT}:
         lines.append(
-            "在保持上述「问句？反驳」结构不变的前提下改进画面锚点："
+            "在保持上述「认知+反转」结构不变的前提下改进画面锚点："
             "从本题主题提炼可见载体，配合图解词（规则、能量、表…），"
             "禁止抽象比喻（油路、命脉、博弈）。"
         )

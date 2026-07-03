@@ -133,6 +133,7 @@ def conversational_rewrite_example(title: str) -> str:
             [
                 "油轮必经霍尔木兹海峡？备用航线靠规则分流",
                 "霍尔木兹海峡卡住油轮？备用航道其实有规则",
+                "都说霍尔木兹险，堵了反而不慌",
             ],
         ),
         (

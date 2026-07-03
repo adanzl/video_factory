@@ -312,8 +312,8 @@ class TopicMgr:
                 )
                 user_prompt = (
                     f"{user_prompt_base}\n\n"
-                    "【重试】上一轮 title 未通过校验，须输出一整句「问句？反驳」，"
-                    "禁止陈述句。JSON 的 title 字段必须含中文问号「？」。"
+                 "【重试】上一轮 title 未通过校验，须有「常见认知+意外反转」结构，"
+                "禁止陈述句。JSON 的 title 字段必须含反转态度。"
                     f"\n{exc}"
                 )
                 continue
@@ -360,7 +360,7 @@ class TopicMgr:
                 f"{user_prompt_base}\n\n"
                 f"【重试】标题「{new_title}」得分 {preview.total}，须≥{SCORE_THRESHOLD}。"
                 f"{reason} "
-                "须保持「问句？反驳」一整句；title 含可见载体与图解词（如油轮、规则）；"
+                "须保持「认知+反转」结构；title 含可见载体与图解词（如油轮、规则）；"
                 "若 hook 为空须输出 15-30 字点击动机。"
             )
 

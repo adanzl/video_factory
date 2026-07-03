@@ -19,7 +19,7 @@ def optimize_json_format(*, max_title_len: int, category_value: str) -> str:
     return (
         "输出 JSON，topics 数组仅 1 项。"
         "每项含 title、keywords、category、template、hook。"
-        f"title ≤{max_title_len} 字，不含空格换行，须含中文问号「？」。"
+        f"title ≤{max_title_len} 字，不含空格换行，须有「认知+反转」结构（句式不限：问句反驳、都说X反而Y、以为X其实Y等）。"
         f"category 固定为「{category_value}」，template 与用户原值一致。"
         f'样例：{{"topics": [{{"title": "油轮必经霍尔木兹海峡？备用航线靠规则分流", "keywords": ["油轮", "霍尔木兹"], '
         f'"category": "{category_value}", "template": "误区反问式", "hook": "一句话钩子"}}]}}'

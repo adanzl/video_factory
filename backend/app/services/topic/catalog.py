@@ -83,7 +83,7 @@ CATEGORY_SPECS: dict[str, CategorySpec] = {
         keywords_hint="具象载体与图解词，如：地震波、规则、温度",
         templates=(
             TemplateSpec("误区反问式", 60, "剥离时效后讲清原理/规则/误区"),
-            TemplateSpec("反差好奇式", 40, "公众认知 vs 科学/规则真相"),
+            TemplateSpec("反差好奇式", 40, "公众认知 vs 科学/规则真相，如：都说霍尔木兹险，堵了反而不慌"),
         ),
     ),
 }
