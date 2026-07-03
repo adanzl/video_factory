@@ -97,13 +97,21 @@ def _needs_optimize_conversational_rewrite(
 def _conversational_rewrite_instruction(title: str) -> str:
     example = conversational_rewrite_example(title)
     return (
-        "【硬性格式】优化后 title 必须含中文问号「？」，"
+        "【格式最优先】优化后 title 必须含中文问号「？」，"
         "且写成一整句「误区问句？一步反驳」。"
+        "禁止输出无问号陈述句（如「霍尔木兹只有一条航道」）、半句问法、仅语气词收尾。"
         "反驳可用：够你跑路、真以为、压根、根本不是、哪有那么…，"
         "勿句句以「明明」开头，也忌说教建议（足够你躲桌下）。"
-        "反驳半句须承接问句同一命题，禁止答非所问（如问砸钱却答够你跑路）。"
-        "禁止输出无问号的陈述句、半句问法，或仅语气词收尾。"
-        f"同一主题参考：{example}"
+        "反驳半句须承接问句同一命题；问句与回应措辞须与原标题不同，但结构必须是「？+反驳」。"
+        f"同一主题合格示例：{example}"
+    )
+
+
+def _optimize_system_conversational_block() -> str:
+    return (
+        "【格式最优先】优化后 title 必须是一整句「误区问句？一步反驳」，"
+        "无中文问号「？」的陈述句一律不合格。"
+        "在保持该结构前提下，再改进画面锚点与 hook；禁止换题或蹭热点。"
     )
 
 
@@ -208,24 +216,20 @@ def build_topic_optimize_system_prompt(
     if resolved == CATEGORY_CURRENT:
         return (
             base
-            + f"{CURRENT_THEME_ANCHOR_RULE}"
-            + f"{CONVERSATIONAL_TITLE_RULE}"
+            + _optimize_system_conversational_block()
             + f"{FORBIDDEN_FAQ_TITLE_RULE}"
             + f"{VISUAL_ANCHOR_RULE}"
             + f"{CURRENT_VISUAL_ANCHOR_RULE}"
+            + f"{CURRENT_THEME_ANCHOR_RULE}"
             + f"{HOOK_MOTIVATION_RULE}"
-            + "科学/时事类：优化后 title 必须含中文问号「？」，无问号陈述句一律不合格。"
             + "标题仍须剥离具体时效与人名。"
-            + _visual_anchor_instruction()
         )
     return (
         base
-        + f"{CONVERSATIONAL_TITLE_RULE}"
+        + _optimize_system_conversational_block()
         + f"{FORBIDDEN_FAQ_TITLE_RULE}"
         + f"{VISUAL_ANCHOR_RULE}"
         + f"{HOOK_MOTIVATION_RULE}"
-        + "科学/时事类：优化后 title 必须含中文问号「？」，无问号陈述句一律不合格。"
-        + "若原标题含问号对话体，优化后仍须一步直达、同一话题。"
         + "category、template 须与用户原值一致。"
     )
 
@@ -241,7 +245,7 @@ def build_topic_optimize_user_prompt(
     lines = [
         "请优化以下选题，输出 1 个新版本（topics 数组仅 1 项）。",
         "硬性要求：同一题材、同一核心知识点或事件，只润色标题与 hook，不得另起新题。",
-        "标题须与原版表达不同，但读者应一眼看出是同一主题。",
+        "标题表述须与原版不同，但读者应一眼看出是同一主题。",
         "",
         f"原标题：{title.strip()}",
         f"大分类：{resolved}",
@@ -257,16 +261,10 @@ def build_topic_optimize_user_prompt(
     if resolved == CATEGORY_HISTORY:
         lines.append("须保持同一历史人物或悬案，标题仍为「代号：悬念」格式。")
     elif resolved in {CATEGORY_SCIENCE, CATEGORY_CURRENT}:
-        lines.append(_visual_anchor_instruction())
-        if _needs_optimize_conversational_rewrite(
-            title.strip(),
-            category=resolved,
-            template=template,
-        ):
-            lines.append(_conversational_rewrite_instruction(title.strip()))
-        elif _CONVERSATIONAL_TITLE_RE.search(title):
-            lines.append(
-                "原标题为完整对话反转式：优化后仍须保留问号与回应两半句，"
-                "问句与回应一步直达、同一话题，禁止多跳推理链。"
-            )
+        lines.append(_conversational_rewrite_instruction(title.strip()))
+        lines.append(
+            "在保持上述「问句？反驳」结构不变的前提下改进画面锚点："
+            "从本题主题提炼可见载体，配合图解词（规则、能量、表…），"
+            "禁止抽象比喻（油路、命脉、博弈）。"
+        )
     return "\n".join(lines)

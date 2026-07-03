@@ -27,8 +27,9 @@ def test_optimize_user_prompt_includes_visual_anchor_instruction():
         category=CATEGORY_CURRENT,
         template="误区反问式",
     )
-    assert "画面锚点" in user
-    assert "从本题主题提炼" in user
+    assert "格式最优先" in user
+    assert "合格示例" in user
+    assert "霍尔木兹海峡卡住油轮" in user or "备用航线靠规则" in user
 
 
 def test_conversational_rewrite_example_shipping():
@@ -67,7 +68,8 @@ def test_optimize_system_prompt_general_includes_coherence_rule():
         max_title_len=24,
         category=CATEGORY_SCIENCE,
     )
-    assert CONVERSATIONAL_TITLE_RULE[:20] in system
+    assert "格式最优先" in system
+    assert "误区问句" in system
 
 
 def test_optimize_user_prompt_history_constraints():
@@ -84,8 +86,8 @@ def test_optimize_user_prompt_conversational_requires_direct_link():
         title="日本断供光刻胶？明明仓库都堆成山了",
         category=CATEGORY_SCIENCE,
     )
-    assert "一步直达" in user
-    assert "多跳推理链" in user
+    assert "格式最优先" in user
+    assert "合格示例" in user
 
 
 def test_optimize_user_prompt_faq_title_requires_conversational_rewrite():
@@ -95,8 +97,7 @@ def test_optimize_user_prompt_faq_title_requires_conversational_rewrite():
         category=CATEGORY_SCIENCE,
         template="误区反问式",
     )
-    assert "硬性格式" in user
-    assert "必须含中文问号" in user
+    assert "格式最优先" in user
     assert conversational_rewrite_example(title) in user
 
 
@@ -107,7 +108,7 @@ def test_optimize_user_prompt_statement_without_question_mark():
         category=CATEGORY_SCIENCE,
         template="误区反问式",
     )
-    assert "硬性格式" in user
+    assert "格式最优先" in user
     assert conversational_rewrite_example(title) in user
 
 
@@ -117,7 +118,7 @@ def test_optimize_user_prompt_statement_without_template_still_rewrites():
         title=title,
         category=CATEGORY_SCIENCE,
     )
-    assert "硬性格式" in user
+    assert "格式最优先" in user
     assert conversational_rewrite_example(title) in user
 
 
@@ -126,8 +127,7 @@ def test_optimize_system_prompt_requires_question_mark():
         max_title_len=24,
         category=CATEGORY_SCIENCE,
     )
-    assert "必须含中文问号" in system
-    assert "监测数据压根对不上" in system
+    assert "中文问号" in system
 
 
 def test_optimize_user_prompt_incomplete_conversational_requires_rebuttal():
@@ -137,8 +137,7 @@ def test_optimize_user_prompt_incomplete_conversational_requires_rebuttal():
         category=CATEGORY_SCIENCE,
         template="误区反问式",
     )
-    assert "硬性格式" in user
-    assert "必须含中文问号" in user
+    assert "格式最优先" in user
     example = conversational_rewrite_example(title)
     assert example in user
     assert "够你跑路" not in example

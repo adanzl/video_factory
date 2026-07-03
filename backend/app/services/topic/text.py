@@ -192,6 +192,11 @@ def conversational_rewrite_example(title: str) -> str:
 
 def _rewrite_base(title: str) -> str:
     base = re.sub(r"\s+", "", title.strip())
+    q_idx = base.find("？")
+    if q_idx < 0:
+        q_idx = base.find("?")
+    if q_idx >= 0:
+        base = base[:q_idx]
     base = re.sub(r"[？?！!。…]+$", "", base)
     return re.sub(r"(吗|呢|吧|啊|嘛)$", "", base)
 
