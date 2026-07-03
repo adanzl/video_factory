@@ -46,6 +46,50 @@ def test_build_image_prompts_prompts_discourages_generic_motion():
     assert "禁止套话「镜头固定，主体稳定，画面平滑」" in prompts["system"]
     assert "各段互不重复" in prompts["user"]
     assert "炉口青烟缓缓上升" in prompts["system"]
+    assert "卡通科普插画风" in prompts["system"]
+    assert "明快蓝橙主色调" in prompts["system"]
+
+
+def test_build_narration_prompts_science_child_cartoon_visual_style():
+    prompts = build_narration_prompts(
+        "地震预警只有几十秒",
+        narration_target_words=800,
+        job={"pipeline": "standard", "content_style": "science_child"},
+    )
+    assert "卡通科普插画风" in prompts["system"]
+    assert "明快蓝橙主色调" in prompts["system"]
+    assert "禁止绘本水彩风" in prompts["system"]
+
+
+def test_build_narration_prompts_history_mystery_forbids_cartoon():
+    prompts = build_narration_prompts(
+        "雍正暴毙之谜",
+        narration_target_words=800,
+        job={"pipeline": "standard", "info": {"content_style": "history_mystery"}},
+    )
+    assert "电影级写实历史再现" in prompts["system"]
+    assert "禁止卡通/绘本/扁平插画风" in prompts["system"]
+    assert "你是B站历史悬案视频的编剧" in prompts["system"]
+
+
+def test_build_image_prompts_history_mystery_forbids_cartoon():
+    script = {
+        "title": "测试",
+        "visual_style": "电影级写实历史再现，低饱和古风",
+        "segments": [
+            {
+                "segment_index": 1,
+                "text": "口播",
+                "visual_brief": "宫廷内景。（历史场景再现）",
+            },
+        ],
+    }
+    prompts = build_image_prompts_prompts(
+        script,
+        job={"pipeline": "standard", "info": {"content_style": "history_mystery"}},
+    )
+    assert "禁止卡通/绘本/扁平插画风" in prompts["system"]
+    assert "你是历史悬案视频文生图" in prompts["system"]
 
 
 def test_build_narration_prompts_focuses_on_total_length():

@@ -11,6 +11,7 @@ from app.utils.job_info import (
     CONTENT_STYLE_HISTORICAL_MYSTERY,
     CONTENT_STYLE_LIFE_EXPERIENCE,
     CONTENT_STYLE_SCIENCE_CHILD,
+    CONTENT_STYLE_TECH_SCIENCE,
     ORIENTATION_LANDSCAPE,
     ORIENTATION_PORTRAIT,
     content_style_from_job,
@@ -152,7 +153,7 @@ _VISUAL_BRIEF_RULE = (
 _IMAGE_PROMPT_QUALITY_RULE = (
     "⑥质量要求：写可见的材质、纹理、光影过渡与层次是否清楚，画面信息是否充实（如「高视觉密度」「细节层次清楚」）；"
     "禁止写4K/8K/分辨率/像素/超高清等规格套话（出图尺寸由系统控制）；"
-    "「电影级写实」仅可在③风格维使用，勿在⑥重复堆砌；"
+    "风格形容词仅可在③风格维使用，勿在⑥重复堆砌；"
     "禁止空话凑字数（如「极致细节」「大师之作」）。"
 )
 
@@ -185,7 +186,18 @@ _IMAGE_PROMPT_DIMENSIONS_COMPACT = (
 )
 
 _IMAGE_PROMPT_RULE_SCIENCE_PORTRAIT = (
-    "image_prompt须严格遵循visual_style画风定调，全片统一：电影级写实科普视觉，布光考究、"
+    "image_prompt须严格遵循visual_style画风定调，全片统一：卡通科普插画风，"
+    "明快蓝橙主色调，轮廓清晰、色块分明，偏科普示意图质感；"
+    "非绘本水彩、非电影级写实摄影，适配9:16竖屏构图。"
+    + _IMAGE_PROMPT_DIMENSIONS_FULL
+)
+
+_IMAGE_PROMPT_RULE_SCIENCE_LANDSCAPE = _IMAGE_PROMPT_RULE_SCIENCE_PORTRAIT.replace(
+    "适配9:16竖屏构图", "适配16:9横屏构图"
+)
+
+_IMAGE_PROMPT_RULE_REALISTIC_PORTRAIT = (
+    "image_prompt须严格遵循visual_style画风定调，全片统一：电影级写实视觉，布光考究、"
     "景深自然、材质细节真实可辨，色彩明快有层次，适配9:16竖屏构图。"
     + _IMAGE_PROMPT_DIMENSIONS_FULL
 )
@@ -217,7 +229,8 @@ _IMAGE_PROMPT_RULE_SD15 = _IMAGE_PROMPT_DIMENSIONS_COMPACT
 
 _IMAGE_PROMPT_RULE_MYSTERY_PORTRAIT = (
     "每段image_prompt须严格遵循visual_style画风定调，全片统一：电影级写实历史再现，"
-    "光影考究、暗部有层次、低饱和古风色调，适配9:16竖屏构图。"
+    "光影考究、暗部有层次、低饱和古风色调，适配9:16竖屏构图；"
+    "禁止卡通/绘本/扁平插画风。"
     + _IMAGE_PROMPT_DIMENSIONS_FULL.replace(
         "禁止提前画后续段落内容。",
         "禁止可读文字、奏折、诏书等文字元素。",
@@ -241,13 +254,19 @@ def _image_prompt_rule(*, orientation: str, content_style: str, sd15_mode: bool 
         return head + body + _IMAGE_PROMPT_MOTION_TAIL
     if content_style == CONTENT_STYLE_LIFE_EXPERIENCE:
         body = _IMAGE_PROMPT_RULE_LIFE_LANDSCAPE
+    elif content_style == CONTENT_STYLE_SCIENCE_CHILD:
+        body = (
+            _IMAGE_PROMPT_RULE_SCIENCE_LANDSCAPE
+            if orientation == ORIENTATION_LANDSCAPE
+            else _IMAGE_PROMPT_RULE_SCIENCE_PORTRAIT
+        )
     elif orientation == ORIENTATION_LANDSCAPE:
         body = _IMAGE_PROMPT_RULE_LIFE_LANDSCAPE.replace(
             "生活Vlog质感写实画面",
             "电影级写实视觉",
         )
     else:
-        body = _IMAGE_PROMPT_RULE_SCIENCE_PORTRAIT
+        body = _IMAGE_PROMPT_RULE_REALISTIC_PORTRAIT
     return head + body + _IMAGE_PROMPT_MOTION_TAIL
 
 
@@ -392,6 +411,31 @@ def _resolve_script_profile(
         content_style_from_job(job) if job else CONTENT_STYLE_SCIENCE_CHILD
     )
     return resolved_orientation, resolved_style
+
+
+def _visual_style_guide(content_style: str) -> str:
+    """按 content_style 约束 visual_style 定调（科学原理/时事科普 vs 历史悬案等）。"""
+    if content_style == CONTENT_STYLE_HISTORICAL_MYSTERY:
+        return (
+            "visual_style 须定为电影级写实历史再现：光影考究、暗部有层次、低饱和古风色调；"
+            "禁止卡通/绘本/扁平插画风。"
+        )
+    if content_style == CONTENT_STYLE_LIFE_EXPERIENCE:
+        return (
+            "visual_style 须定为生活Vlog质感写实画面：自然光或室内暖光、色彩真实不过度滤镜；"
+            "禁止卡通/绘本插画风。"
+        )
+    if content_style == CONTENT_STYLE_TECH_SCIENCE:
+        return (
+            "visual_style 须定为电影级写实科技视觉：布光考究、材质细节真实、信息感强；"
+            "禁止卡通/绘本插画风。"
+        )
+    if content_style == CONTENT_STYLE_SCIENCE_CHILD:
+        return (
+            "visual_style 须定为卡通科普插画风：明快蓝橙主色调，轮廓清晰、色块分明，"
+            "偏科普示意图质感；禁止绘本水彩风、禁止电影级写实摄影风。"
+        )
+    return "visual_style 为全片画风定调一句话（画风+主色调+跨镜统一元素如道具造型）。"
 
 
 def _narration_voice_rule(content_style: str) -> str:
@@ -670,7 +714,7 @@ def _storyboard_segment_rule(target: float, profile_style: str = "") -> str:
         "visual_brief为该镜画面描述（80-150字）：写清视觉主旨、关键动作或对比关系、"
         "场景类型与情绪，帮助后续扩写文生图提示词；不写镜头焦距、光线方向、材质参数等细节。"
         f"visual_brief末尾须用括号标注画面类型{types}。"
-        "另须输出visual_style：全片画风定调一句话（画风+主色调+跨镜统一元素如道具造型）。"
+        f"另须输出 visual_style：{_visual_style_guide(profile_style)}"
     )
     if target <= 0:
         return common + "不约束单镜时长，按口播内容逻辑切分，段数由内容决定。"
@@ -790,7 +834,7 @@ def build_narration_prompts(
         f"{_structure_rule(orientation=profile_orientation, content_style=profile_style)}"
         "结构完整有开头结尾。"
         "禁止口播开头空泛自我介绍或冗长人设铺垫。"
-        "visual_style 为全片画风定调一句话（画风+主色调+跨镜统一元素如道具造型）。"
+        f"{_visual_style_guide(profile_style)}"
         "本步只写口播与 visual_style，不写分镜与 image_prompt。"
         f"{_supplementary_system_clause(supplementary_info)}"
         f"{_json_output_clause(_NARRATION_ONLY_JSON_EXAMPLE)}"
@@ -854,6 +898,7 @@ def build_visual_brief_prompts(
     system = (
         f"{_storyboard_role(profile_style)}输出 JSON，字段：visual_style, segments。"
         f"{seg_rule}"
+        f"{_visual_style_guide(profile_style)}"
         "visual_style 可与输入一致，或在保持全片统一的前提下微调措辞。"
         f"{_supplementary_system_clause(supplementary_info)}"
         f"{_json_output_clause(_VISUAL_BRIEF_JSON_EXAMPLE)}"
@@ -944,6 +989,7 @@ def build_board_prompts(
         "禁止口播开头空泛自我介绍或冗长人设铺垫。"
         "各段text须与narration口吻一致。"
         f"{word_count_clause}"
+        f"{_visual_style_guide(profile_style)}"
         "本步只写口播与画面描述visual_brief，不写image_prompt。"
         f"{_supplementary_system_clause(supplementary_info)}"
         f"{_json_output_clause(_STORYBOARD_JSON_EXAMPLE_COMPACT if compact_output else _STORYBOARD_JSON_EXAMPLE)}"
