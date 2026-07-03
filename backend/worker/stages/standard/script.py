@@ -114,12 +114,15 @@ def _apply_script_title(
     stage_name: str,
     content_style: str = "",
 ) -> None:
+    if skip_optimize:
+        script["title"] = _title_chars(source_title)
+        return
     script["title"] = _resolve_script_title(
         source_title=source_title,
         llm_title=str(script.get("title") or ""),
         max_len=max_len,
     )
-    if skip_optimize or content_style == "history_mystery":
+    if content_style == "history_mystery":
         return
     # 如果标题已是「事件？嘲讽回应」格式，跳过优化避免改写后半句
     if "？" in script["title"] or "?" in script["title"]:
