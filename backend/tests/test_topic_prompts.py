@@ -44,12 +44,11 @@ def test_general_topic_prompt_forbids_indirect_reasoning_chain():
         category=CATEGORY_SCIENCE,
         count=3,
     )
-    assert "西班牙人怕热" in CONVERSATIONAL_TITLE_RULE
-    assert "链条太长" in system
-    assert "地震云能预报地震？就这" in CONVERSATIONAL_TITLE_RULE
-    assert "仅有语气词" in system
-    assert "够你跑路" in CONVERSATIONAL_TITLE_RULE
-    assert "足够你躲桌下" in CONVERSATIONAL_TITLE_RULE
+    assert "说教" in CONVERSATIONAL_TITLE_RULE
+    assert "禁止" in system
+    assert "反例" in CONVERSATIONAL_TITLE_RULE
+    assert "够你跑路的" in CONVERSATIONAL_TITLE_RULE
+    assert "说明文" in CONVERSATIONAL_TITLE_RULE
     assert "百科式中性提问" in system
 
 
