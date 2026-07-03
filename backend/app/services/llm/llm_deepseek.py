@@ -1055,7 +1055,7 @@ class DeepSeekClient(LLMClient):
         )
         user_base = user
         last_exc: ValueError | None = None
-        max_attempts = 2
+        max_attempts = 3 if user_prompt else 2
         for attempt in range(max_attempts):
             raw, _ = self._chat_json(system, user)
             try:
@@ -1071,20 +1071,23 @@ class DeepSeekClient(LLMClient):
                     raw,
                     max_title_len=settings.max_title_length,
                 )
-                retry_extra = ""
-                if "问号对话体" in feedback or "问号后" in feedback:
-                    retry_extra = (
-                        "\n【特别强调】title 必须包含中文问号「？」并写完整反驳半句；"
+                retry_extra_parts: list[str] = []
+                if any(
+                    token in feedback
+                    for token in ("问号对话体", "问号后", "须为问号", "半句问法")
+                ):
+                    retry_extra_parts.append(
+                        "【特别强调】title 必须包含中文问号「？」并写完整反驳半句；"
                         "禁止再次输出无问号的陈述句。"
                     )
-                elif "画面锚点" in feedback:
-                    retry_extra = (
-                        "\n【特别强调】title 须从本题主题提炼可见载体，"
+                if "画面锚点" in feedback:
+                    retry_extra_parts.append(
+                        "【特别强调】title 须从本题主题提炼可见载体，"
                         "配合图解词（规则、能量、表…）；"
                         "禁止油路、备用道、命脉等抽象比喻。"
+                        "但仍须保持「问句？反驳」一整句结构。"
                     )
-                else:
-                    retry_extra = ""
+                retry_extra = "\n".join(retry_extra_parts)
                 logger.warning(
                     "[TOPIC] llm retry all entries filtered attempt=%d/%d",
                     attempt + 1,
@@ -1095,7 +1098,8 @@ class DeepSeekClient(LLMClient):
                     "【重试】上一轮输出的标题均未通过规则，请严格按对话反转式重写："
                     "「误区问句？+一步反驳（够你跑路、真以为、压根等，勿句句明明开头）」，"
                     "禁止百科式提问、半句问法、仅语气词收尾。\n"
-                    f"{feedback}{retry_extra}"
+                    f"{feedback}"
+                    + (f"\n{retry_extra}" if retry_extra else "")
                 )
         assert last_exc is not None
         raise last_exc
