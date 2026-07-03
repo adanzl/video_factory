@@ -242,14 +242,29 @@ def build_topic_optimize_user_prompt(
     hook: str | None = None,
 ) -> str:
     resolved = resolve_category(category)
+    example = ""
+    if resolved in {CATEGORY_SCIENCE, CATEGORY_CURRENT}:
+        example = conversational_rewrite_example(title.strip())
     lines = [
         "请优化以下选题，输出 1 个新版本（topics 数组仅 1 项）。",
-        "硬性要求：同一题材、同一核心知识点或事件，只润色标题与 hook，不得另起新题。",
-        "标题表述须与原版不同，但读者应一眼看出是同一主题。",
-        "",
-        f"原标题：{title.strip()}",
-        f"大分类：{resolved}",
     ]
+    if example:
+        lines.extend(
+            [
+                _conversational_rewrite_instruction(title.strip()),
+                "JSON 的 title 字段必须是一整句含中文问号「？」的字符串，禁止陈述句。",
+                f"合格 title 示例（须换措辞但结构相同）：{example}",
+            ]
+        )
+    lines.extend(
+        [
+            "硬性要求：同一题材、同一核心知识点或事件，只润色标题与 hook，不得另起新题。",
+            "标题表述须与原版不同，但读者应一眼看出是同一主题。",
+            "",
+            f"原标题：{title.strip()}",
+            f"大分类：{resolved}",
+        ]
+    )
     if template:
         lines.append(f"原模板：{template.strip()}（优化后 template 必须相同）")
     if hook:
@@ -261,7 +276,6 @@ def build_topic_optimize_user_prompt(
     if resolved == CATEGORY_HISTORY:
         lines.append("须保持同一历史人物或悬案，标题仍为「代号：悬念」格式。")
     elif resolved in {CATEGORY_SCIENCE, CATEGORY_CURRENT}:
-        lines.append(_conversational_rewrite_instruction(title.strip()))
         lines.append(
             "在保持上述「问句？反驳」结构不变的前提下改进画面锚点："
             "从本题主题提炼可见载体，配合图解词（规则、能量、表…），"
