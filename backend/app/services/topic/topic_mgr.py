@@ -136,6 +136,27 @@ class TopicMgr:
                 conn, status=status, limit=limit, offset=offset
             )
 
+    def update_title(
+        self,
+        title_id: int,
+        *,
+        title: str | None = None,
+        category: str | None = None,
+        template: str | None = None,
+        hook: str | None = None,
+    ) -> dict:
+        fields: dict[str, str] = {}
+        if title is not None:
+            fields["title"] = title
+        if category is not None:
+            fields["category"] = category
+        if template is not None:
+            fields["template"] = template
+        if hook is not None:
+            fields["hook"] = hook
+        with connection() as conn:
+            return repo_title.update_title(conn, title_id, **fields)
+
     def add_topics(
         self,
         items: list[dict],

@@ -104,6 +104,14 @@ export interface DeleteLowScoreTopicsResult {
   max_score: number;
 }
 
+export interface UpdateTitleParams {
+  id: number;
+  title?: string;
+  category?: string;
+  template?: string;
+  hook?: string;
+}
+
 export interface OptimizeTopicResult {
   title: TitleRecord;
   previous: TitleRecord;
