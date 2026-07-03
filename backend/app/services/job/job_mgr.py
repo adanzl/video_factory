@@ -775,6 +775,8 @@ class JobMgr:
                     conn, job_id, "cover", f"cover regenerated: {cover_path} ({cw}x{ch})"
                 )
 
+            self.mark_done(job_id)
+
         return self._run_in_background(job_id, "cover", _generate)
 
     def run_tts(
