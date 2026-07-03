@@ -31,7 +31,7 @@ DEFAULT_HOST_SCALE = 0.75
 DEFAULT_TITLE = "昭墨学数学 （一）"
 DEFAULT_BRAND = "昭墨百科"
 
-TITLE_MAX_CHARS = 16
+TITLE_MAX_CHARS = 18
 TITLE_SINGLE_LINE_MAX = 8
 TITLE_FILL = (255, 210, 50, 255)
 TITLE_STROKE = (60, 30, 15, 255)
@@ -241,7 +241,7 @@ def _render_title_block(
     title_max_w = int(safe_w * 0.92)
     title_max_h = int(safe_h * 0.34) if is_landscape else int(safe_h * 0.24)
     title_max_size = 135 if is_landscape else 120
-    title_min_size = 112 if is_landscape else 96
+    title_min_size = 100 if is_landscape else 96
     line_gap = 10
     font = _load_font(title_min_size)
     font_size = title_min_size
