@@ -74,14 +74,10 @@ def score_science(
     curiosity = 50.0
     if has_pattern(text, CURIOSITY_PATTERNS):
         curiosity += 30
-    if "?" in text or "？" in text:
-        curiosity += 8
-        if any(kw in text for kw in ("明明", "真以为", "天真", "慌了", "堆成山")):
-            curiosity += 7
     if template == "反差好奇式":
         curiosity += 10
     if hook and len(hook) >= 10:
-        curiosity += 5
+        curiosity += 8
     curiosity += rebuttal_tone_curiosity_adjustment(text)
     curiosity += hook_curiosity_adjustment(hook)
 
