@@ -62,6 +62,10 @@ def score_science(
     visual += visual_bonus
     if len(text) > 28:
         visual -= 10
+    if template == "反差好奇式" and has_pattern(text, (
+        r"都说|以为|都说|别信|谁说|表面|并非|不是",
+    )):
+        visual += 10
 
     fact = 65.0 + 15
     if template in {"误区反问式", "实操避坑式"}:

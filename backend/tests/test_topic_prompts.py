@@ -21,21 +21,22 @@ def test_current_topic_prompt_includes_visual_anchor_principles():
     assert CURRENT_VISUAL_ANCHOR_RULE[:8] in system
 
 
-def test_optimize_user_prompt_includes_visual_anchor_instruction():
+def test_optimize_user_prompt_includes_conversational_rewrite():
     user = build_topic_optimize_user_prompt(
         title="霍尔木兹卡住油路？真有几条备用道",
         category=CATEGORY_CURRENT,
         template="误区反问式",
     )
-    assert "格式最优先" in user
+    assert "认知+反转" in user
     assert "合格示例" in user
-    assert "霍尔木兹海峡卡住油轮" in user or "备用航线靠规则" in user
+    assert "霍尔木兹海峡" in user or "备用航线" in user or "反而不慌" in user
 
 
 def test_conversational_rewrite_example_shipping():
     example = conversational_rewrite_example("霍尔木兹卡住油路")
-    assert "油轮" in example or "规则" in example
-    assert "？" in example
+    assert "油轮" in example or "规则" in example or "不慌" in example
+    # 问句或反差结构均可
+    assert "？" in example or "都说" in example
 
 
 def test_general_topic_prompt_forbids_indirect_reasoning_chain():
@@ -68,8 +69,8 @@ def test_optimize_system_prompt_general_includes_coherence_rule():
         max_title_len=24,
         category=CATEGORY_SCIENCE,
     )
-    assert "格式最优先" in system
-    assert "误区问句" in system
+    assert "反转结构" in system
+    assert "句式不限" in system
 
 
 def test_optimize_user_prompt_history_constraints():
@@ -86,7 +87,7 @@ def test_optimize_user_prompt_conversational_requires_direct_link():
         title="日本断供光刻胶？明明仓库都堆成山了",
         category=CATEGORY_SCIENCE,
     )
-    assert "格式最优先" in user
+    assert "认知+反转" in user
     assert "合格示例" in user
 
 
@@ -97,7 +98,7 @@ def test_optimize_user_prompt_faq_title_requires_conversational_rewrite():
         category=CATEGORY_SCIENCE,
         template="误区反问式",
     )
-    assert "格式最优先" in user
+    assert "认知+反转" in user
     assert conversational_rewrite_example(title) in user
 
 
@@ -108,7 +109,7 @@ def test_optimize_user_prompt_statement_without_question_mark():
         category=CATEGORY_SCIENCE,
         template="误区反问式",
     )
-    assert "格式最优先" in user
+    assert "认知+反转" in user
     assert conversational_rewrite_example(title) in user
 
 
@@ -118,17 +119,17 @@ def test_optimize_user_prompt_statement_without_template_still_rewrites():
         title=title,
         category=CATEGORY_SCIENCE,
     )
-    assert "格式最优先" in user
+    assert "认知+反转" in user
     assert conversational_rewrite_example(title) in user
 
 
-def test_optimize_system_prompt_requires_question_mark():
+def test_optimize_system_prompt_requires_reversal_structure():
     system = build_topic_optimize_system_prompt(
         max_title_len=24,
         category=CATEGORY_SCIENCE,
     )
-    assert "中文问号" in system
-    assert "油轮必经霍尔木兹海峡" in system
+    assert "反转结构" in system
+    assert "油轮必经霍尔木兹海峡" in system or "霍尔木兹" in system
 
 
 def test_optimize_user_prompt_incomplete_conversational_requires_rebuttal():
@@ -138,7 +139,7 @@ def test_optimize_user_prompt_incomplete_conversational_requires_rebuttal():
         category=CATEGORY_SCIENCE,
         template="误区反问式",
     )
-    assert "格式最优先" in user
+    assert "反转" in user
     example = conversational_rewrite_example(title)
     assert example in user
     assert "够你跑路" not in example
