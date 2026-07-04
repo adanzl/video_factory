@@ -163,16 +163,27 @@
           <section class="flex flex-col gap-1">
             <div class="flex items-center justify-between gap-2">
               <div class="text-xs font-medium text-gray-600">分镜图片</div>
-              <el-button
-                size="small"
-                link
-                type="primary"
-                :loading="regeneratingImageIndex === segment.segment_index"
-                :disabled="isSegmentImageActionDisabled(segment.segment_index)"
-                @click="handleRegenerateImage(segment.segment_index)"
-              >
-                重新生成
-              </el-button>
+              <div class="flex items-center gap-1">
+                <el-button
+                  size="small"
+                  link
+                  type="primary"
+                  :disabled="isSegmentImageRefreshDisabled(segment)"
+                  @click="handleRefreshImage(segment.segment_index)"
+                >
+                  刷新
+                </el-button>
+                <el-button
+                  size="small"
+                  link
+                  type="primary"
+                  :loading="regeneratingImageIndex === segment.segment_index"
+                  :disabled="isSegmentImageActionDisabled(segment.segment_index)"
+                  @click="handleRegenerateImage(segment.segment_index)"
+                >
+                  重新生成
+                </el-button>
+              </div>
             </div>
             <el-image
               v-if="segment.image_path"
@@ -294,6 +305,7 @@ const savingVideoProvider = ref(false);
 const regeneratingImageIndex = ref<number | null>(null);
 const generatingImagePromptIndex = ref<number | null>(null);
 const generatingClipIndex = ref<number | null>(null);
+const imageRefreshKeys = ref<Record<number, number>>({});
 const segmentScope = ref("segment/images");
 
 type ImageProvider = NonNullable<RunStageActionPayload["image_provider"]>;
@@ -394,6 +406,9 @@ const isSegmentClipActionDisabled = (segment: { segment_index: number; imageUrl:
   !segment.imageUrl ||
   (generatingClipIndex.value !== null && generatingClipIndex.value !== segment.segment_index);
 
+const isSegmentImageRefreshDisabled = (segment: { image_path?: string | null }) =>
+  !segment.image_path?.trim();
+
 const mediaPreviewStyle = computed(() => ({
   aspectRatio: props.job.info?.orientation === "landscape" ? "16 / 9" : "9 / 16",
 }));
@@ -429,10 +444,15 @@ const displaySegments = computed(() =>
   props.segments.map(segment => {
     const imagePath = segment.image_path?.trim() ?? "";
     const clipPath = segment.clip_path?.trim() ?? "";
+    let imageUrl = toMediaUrl(imagePath);
+    const ts = imageRefreshKeys.value[segment.segment_index];
+    if (imageUrl && ts) {
+      imageUrl += (imageUrl.includes("?") ? "&" : "?") + `t=${ts}`;
+    }
     return {
       ...segment,
       visual_brief: visualBriefByIndex.value.get(segment.segment_index) ?? null,
-      imageUrl: toMediaUrl(imagePath),
+      imageUrl,
       clipUrl: clipPath ? toMediaUrl(clipPath) : "",
     };
   })
@@ -530,6 +550,13 @@ const handleRegenerateImage = async (segmentIndex: number) => {
   } finally {
     regeneratingImageIndex.value = null;
   }
+};
+
+const handleRefreshImage = (segmentIndex: number) => {
+  imageRefreshKeys.value = {
+    ...imageRefreshKeys.value,
+    [segmentIndex]: Date.now(),
+  };
 };
 
 const handleGenerateClip = async (segmentIndex: number) => {
