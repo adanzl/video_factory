@@ -230,6 +230,8 @@ const videoMeta = ref<{ width: number; height: number } | null>(null);
 const coverMeta = ref<{ width: number; height: number } | null>(null);
 const showCover43Guide = ref(false);
 const regeneratingCover = ref(false);
+const coverCacheVer = ref(0);
+const introCacheVer = ref(0);
 
 const PREVIEW_OPTIONS = { maxWidthPx: 560, maxViewportRatio: 0.85 } as const;
 const COVER_PREVIEW_OPTIONS = { maxWidthPx: 560, maxViewportRatio: 0.9 } as const;
@@ -267,12 +269,19 @@ const coverDimensions = computed(() => ({
   height: coverMeta.value?.height ?? videoMeta.value?.height,
 }));
 
-const videoUrl = computed(() => getMediaFileUrl(props.job.intro_path ?? ""));
-const coverUrl = computed(() => getMediaFileUrl(props.job.cover_path ?? ""));
+const videoUrl = computed(() => {
+  const base = getMediaFileUrl(props.job.intro_path ?? "");
+  return base ? `${base}?v=${introCacheVer.value}` : "";
+});
+const coverUrl = computed(() => {
+  const base = getMediaFileUrl(props.job.cover_path ?? "");
+  return base ? `${base}?v=${coverCacheVer.value}` : "";
+});
 
 const posterUrl = computed(() => {
   const videoPath = props.job.intro_path?.trim();
-  return videoPath ? getMediaFileUrl(videoPath.replace(/\.mp4$/i, ".png")) : "";
+  const base = videoPath ? getMediaFileUrl(videoPath.replace(/\.mp4$/i, ".png")) : "";
+  return base ? `${base}?v=${introCacheVer.value}` : "";
 });
 
 const lazyVideoUrl = computed(() => lazyMediaSrc(videoUrl.value, props.stageActive));
@@ -350,6 +359,7 @@ const onVideoMetadata = (event: Event) => {
   const video = event.target as HTMLVideoElement;
   if (video.videoWidth > 0 && video.videoHeight > 0) {
     videoMeta.value = { width: video.videoWidth, height: video.videoHeight };
+    loadError.value = "";
   }
 };
 
@@ -399,6 +409,7 @@ const handleRun = async (toEnd: boolean) => {
       payload.hold_tail_sec = holdTailSec.value;
     }
     await runJobStageAction("intro", payload);
+    introCacheVer.value++;
     ElMessage.success(`已提交${actionLabel}，任务已开始执行`);
     emit("refresh");
   } catch (error) {
@@ -421,6 +432,7 @@ const handleRegenCover = async () => {
   regeneratingCover.value = true;
   try {
     await runJobStageAction("cover", { id: props.job.id, to_end: false });
+    coverCacheVer.value++;
     ElMessage.success("封面已重新生成");
     emit("refresh");
   } catch (error) {

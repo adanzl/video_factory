@@ -186,6 +186,7 @@ const onVideoMetadata = (event: Event) => {
     return;
   }
   videoMeta.value = { width: video.videoWidth, height: video.videoHeight };
+  loadError.value = "";
 };
 
 const downloadFilename = computed(() => {
