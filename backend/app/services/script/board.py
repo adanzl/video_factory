@@ -1097,6 +1097,8 @@ def build_image_prompts_prompts(
         f"{_image_prompt_rule(orientation=profile_orientation, content_style=profile_style, sd15_mode=include_sd15_prompt)}"
         f"{sd15_rule}"
         "image_prompts须覆盖输入的每一段，segment_index一一对应，不得遗漏。"
+        "【地图合规】若描述世界地图/地图场景，不得包含中国领土（含藏南、阿克赛钦），"
+        "构图须避开东亚大陆，可通过局部地图（如仅显示中东/非洲/欧洲）实现。"
         f"{_json_output_clause(json_example)}"
     )
     if include_sd15_prompt:
