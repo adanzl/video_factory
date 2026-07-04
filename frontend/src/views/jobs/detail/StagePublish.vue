@@ -323,6 +323,7 @@ const onVideoMetadata = (event: Event) => {
     return;
   }
   videoMeta.value = { width: video.videoWidth, height: video.videoHeight };
+  finalLoadError.value = false;
 };
 
 const copyPublishTitle = async () => {

@@ -47,26 +47,26 @@
           </el-radio-group>
         </el-descriptions-item>
         <el-descriptions-item label="分镜序号" :span="3">
-          <div class="flex w-full flex-nowrap items-center gap-3">
-            <el-select
-              v-model="selectedSegments"
-              multiple
-              clearable
-              collapse-tags
-              collapse-tags-tooltip
-              placeholder="留空表示全部"
-              class="min-w-0 flex-1!"
-            >
-              <el-option
+          <div class="flex flex-col gap-2">
+            <div class="flex items-center gap-3">
+              <el-checkbox
+                :model-value="allSelected"
+                @change="toggleSelectAll"
+              >
+                全选
+              </el-checkbox>
+              <span class="text-sm text-gray-500">共 {{ segments.length }} 分镜，留空表示全部</span>
+            </div>
+            <el-checkbox-group v-model="selectedSegments" class="flex flex-wrap gap-x-4 gap-y-1">
+              <el-checkbox
                 v-for="segment in segments"
                 :key="segment.segment_index"
-                :label="`#${segment.segment_index} ${truncate(segment.text, 24)}`"
-                :value="segment.segment_index"
-              />
-            </el-select>
-            <span class="shrink-0 whitespace-nowrap text-sm text-gray-500">
-              共 {{ segments.length }} 分镜
-            </span>
+                :label="segment.segment_index"
+                class="segment-check"
+              >
+                #{{ segment.segment_index }}
+              </el-checkbox>
+            </el-checkbox-group>
           </div>
         </el-descriptions-item>
       </el-descriptions>
@@ -305,7 +305,8 @@ const savingVideoProvider = ref(false);
 const regeneratingImageIndex = ref<number | null>(null);
 const generatingImagePromptIndex = ref<number | null>(null);
 const generatingClipIndex = ref<number | null>(null);
-const imageRefreshKeys = ref<Record<number, number>>({});
+const imageCacheVers = ref<Record<number, number>>({});
+const clipCacheVers = ref<Record<number, number>>({});
 const segmentScope = ref("segment/images");
 
 type ImageProvider = NonNullable<RunStageActionPayload["image_provider"]>;
@@ -373,6 +374,14 @@ const handleVideoProviderChange = (value: VideoProvider) => {
 };
 
 const selectedSegments = ref<number[]>([]);
+
+const allSelected = computed(
+  () => props.segments.length > 0 && selectedSegments.value.length === props.segments.length
+);
+
+const toggleSelectAll = (checked: boolean) => {
+  selectedSegments.value = checked ? props.segments.map(s => s.segment_index) : [];
+};
 const clipSearchOpen = ref(false);
 const clipSearchSegmentIndex = ref(1);
 const clipSearchKeyword = ref("");
@@ -445,15 +454,23 @@ const displaySegments = computed(() =>
     const imagePath = segment.image_path?.trim() ?? "";
     const clipPath = segment.clip_path?.trim() ?? "";
     let imageUrl = toMediaUrl(imagePath);
-    const ts = imageRefreshKeys.value[segment.segment_index];
-    if (imageUrl && ts) {
-      imageUrl += (imageUrl.includes("?") ? "&" : "?") + `t=${ts}`;
+    const imageVer = imageCacheVers.value[segment.segment_index];
+    if (imageUrl && imageVer !== undefined) {
+      imageUrl += `?v=${imageVer}`;
+    }
+    let clipUrl = "";
+    if (clipPath) {
+      clipUrl = toMediaUrl(clipPath);
+      const clipVer = clipCacheVers.value[segment.segment_index];
+      if (clipUrl && clipVer !== undefined) {
+        clipUrl += `?v=${clipVer}`;
+      }
     }
     return {
       ...segment,
       visual_brief: visualBriefByIndex.value.get(segment.segment_index) ?? null,
       imageUrl,
-      clipUrl: clipPath ? toMediaUrl(clipPath) : "",
+      clipUrl,
     };
   })
 );
@@ -543,6 +560,7 @@ const handleRegenerateImage = async (segmentIndex: number) => {
       segments: [segmentIndex],
       image_provider: imageProvider.value,
     });
+    bumpImageVer(segmentIndex);
     ElMessage.success(`已提交分镜 #${segmentIndex} 静图重新生成`);
     emit("refresh");
   } catch (error) {
@@ -552,11 +570,21 @@ const handleRegenerateImage = async (segmentIndex: number) => {
   }
 };
 
-const handleRefreshImage = (segmentIndex: number) => {
-  imageRefreshKeys.value = {
-    ...imageRefreshKeys.value,
-    [segmentIndex]: Date.now(),
+const bumpImageVer = (index: number) => {
+  imageCacheVers.value = {
+    ...imageCacheVers.value,
+    [index]: (imageCacheVers.value[index] ?? -1) + 1,
   };
+};
+const bumpClipVer = (index: number) => {
+  clipCacheVers.value = {
+    ...clipCacheVers.value,
+    [index]: (clipCacheVers.value[index] ?? -1) + 1,
+  };
+};
+
+const handleRefreshImage = (segmentIndex: number) => {
+  bumpImageVer(segmentIndex);
 };
 
 const handleGenerateClip = async (segmentIndex: number) => {
@@ -578,6 +606,7 @@ const handleGenerateClip = async (segmentIndex: number) => {
       segments: [segmentIndex],
       video_provider: videoProvider.value,
     });
+    bumpClipVer(segmentIndex);
     ElMessage.success(`已提交分镜 #${segmentIndex} 图生视频`);
     emit("refresh");
   } catch (error) {
@@ -615,6 +644,16 @@ const handleRun = async (toEnd: boolean) => {
       payload.video_provider = videoProvider.value;
     }
     await runJobStageAction(segmentScope.value, payload);
+    const targetIndices =
+      selectedSegments.value.length > 0
+        ? selectedSegments.value
+        : props.segments.map(s => s.segment_index);
+    if (segmentScope.value !== "segment/clips") {
+      targetIndices.forEach(i => bumpImageVer(i));
+    }
+    if (segmentScope.value !== "segment/images") {
+      targetIndices.forEach(i => bumpClipVer(i));
+    }
     ElMessage.success(`已提交${actionLabel}，任务已开始执行`);
     emit("refresh");
   } catch (error) {
@@ -624,3 +663,11 @@ const handleRun = async (toEnd: boolean) => {
   }
 };
 </script>
+
+<style scoped>
+.segment-check :deep(.el-checkbox__label) {
+  display: inline-block;
+  min-width: 2.5em;
+  text-align: right;
+}
+</style>
