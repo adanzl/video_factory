@@ -315,6 +315,7 @@ const onCoverLoad = (event: Event) => {
   if (size) {
     coverMeta.value = size;
   }
+  coverLoadError.value = false;
 };
 
 const onVideoMetadata = (event: Event) => {
