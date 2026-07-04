@@ -71,6 +71,16 @@
                 4:3
               </el-button>
               <el-button
+                v-if="!coverUrl"
+                size="small"
+                type="primary"
+                :loading="regeneratingCover"
+                :disabled="actionDisabled"
+                @click="handleRegenCover"
+              >
+                生成
+              </el-button>
+              <el-button
                 v-if="coverUrl"
                 size="small"
                 :loading="regeneratingCover"

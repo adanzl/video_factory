@@ -153,7 +153,7 @@ def _clear_downstream(conn, job_id: int, stage: str, media_dir: Path, job: dict)
     pipe = resolve_pipeline(job)
     idx = stage_index(stage, job)
 
-    if idx < stage_index("intro", job):
+    if stage == "script":
         repo_job.update_job(conn, job_id, cover_path=None)
         _delete_files([media_dir / "cover.jpg"])
 
