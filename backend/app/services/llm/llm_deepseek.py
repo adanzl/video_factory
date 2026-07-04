@@ -372,7 +372,7 @@ class DeepSeekClient(LLMClient):
         self._base_url = settings.deepseek_base_url.rstrip("/")
         self._model = settings.deepseek_model
 
-    def _chat(self, system: str, user: str, *, max_tokens: int | None = None) -> tuple[str, str | None]:
+    def _chat(self, system: str, user: str, *, max_tokens: int | None = None, json_mode: bool = True) -> tuple[str, str | None]:
         settings = get_settings()
         limit = settings.deepseek_max_tokens if max_tokens is None else max_tokens
         resp = self._requests.post(
@@ -387,6 +387,7 @@ class DeepSeekClient(LLMClient):
                 user=user,
                 max_tokens=limit,
                 thinking_enabled=settings.deepseek_thinking_enabled,
+                json_mode=json_mode,
             ),
             timeout=180,
         )
