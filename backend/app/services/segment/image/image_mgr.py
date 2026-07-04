@@ -86,6 +86,12 @@ class ImageMgr:
                 prompt = seg.get("sd15_prompt_en") or seg.get("image_prompt") or seg["text"]
             else:
                 prompt = seg.get("image_prompt") or seg["text"]
+            # 所有文生图统一添加地图合规约束
+            prompt = (
+                f"若包含世界地图，不得显示中国部分。"
+                f"任何地图不得出现中国领土、藏南地区、阿克赛钦地区。"
+                f"{prompt}"
+            )
             logger.info(
                 "image %s/%s generating segment %s | %s | prompt_chars=%s",
                 done + 1,
