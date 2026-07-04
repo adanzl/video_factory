@@ -34,7 +34,7 @@ def cover_canvas_size(width: int, height: int) -> tuple[int, int, bool]:
     return 720, 1280, False
 
 
-_COVER_MAP_KEYWORDS = ("世界地图", "地球仪", "中国地图")
+_COVER_MAP_KEYWORDS = ("世界地图", "地球仪")
 
 
 def _resolve_cover_subject(subject: str) -> str:
@@ -83,7 +83,7 @@ def build_cover_image_prompt(*, cw: int, ch: int, subject: str) -> str:
     resolved = _resolve_cover_subject(subject)
     return (
         f"视频封面，{cw}x{ch}，"
-        f"不得出现世界地图和中国地图。若涉及地图，不得出现中国领土、藏南地区、阿克赛钦地区的边界线或标识。"
+        f"若包含世界地图，不得显示中国部分。任何地图不得出现中国领土、藏南地区、阿克赛钦地区。"
         f"画面内容与视频一致：{resolved}"
     )
 
