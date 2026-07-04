@@ -34,17 +34,56 @@ def cover_canvas_size(width: int, height: int) -> tuple[int, int, bool]:
     return 720, 1280, False
 
 
+_COVER_MAP_KEYWORDS = ("世界地图", "地球仪")
+
+
+def _resolve_cover_subject(subject: str) -> str:
+    """若 subject 含地图关键词（如"世界地图"）则通过 LLM 改写，
+    避免在"不得出现世界地图"的同时出现"世界地图背景上"的矛盾。"""
+    if not any(kw in subject for kw in _COVER_MAP_KEYWORDS):
+        return subject
+
+    import logging
+
+    from app.config import get_settings
+    from app.services.llm.llm_deepseek import DeepSeekClient
+
+    logger = logging.getLogger(__name__)
+    settings = get_settings()
+    if not settings.deepseek_api_key:
+        logger.warning("cover subject contains '%s' but no LLM key, using as-is", subject[:60])
+        return subject
+
+    system = (
+        "你是一个封面提示词优化器。将输入中的'世界地图'或'地球仪'替换为视觉上等效但不出现完整地图的描述："
+        "使用'深色地理示意图背景'、'区域插画背景'、'抽象地标背景'等替代方案，"
+        "同时保留原句的地理位置、颜色、风格等所有其他细节。"
+        "仅输出改写后的文本，不要额外解释。"
+    )
+    try:
+        client = DeepSeekClient()
+        rewritten, _ = client._chat(system, subject, max_tokens=600)
+        result = rewritten.strip()
+        if result and len(result) >= len(subject) * 0.3:
+            logger.info("cover subject rewritten: '%s' -> '%s'", subject[:80], result[:80])
+            return result
+    except Exception as exc:
+        logger.warning("cover subject rewrite failed: %s", exc)
+    return subject
+
+
 def build_cover_image_prompt(*, cw: int, ch: int, subject: str) -> str:
     """Agnes 文生图 prompt：主体居中 4:3，上方留白供后期叠标题。
 
     注意：若有地图内容，不得出现藏南地区、阿克赛钦地区的边界线或标注，
     以规避平台审核风险。
     """
+    resolved = _resolve_cover_subject(subject)
     return (
         f"视频封面，{cw}x{ch}，画面主体居中于4:3安全区，"
         f"中间无文字无水印，4:3区域上方留白给标题。"
         f"不得出现世界地图。若涉及地图，不得出现藏南地区、阿克赛钦地区的边界线或标识。"
-        f"画面内容与视频一致：{subject}"
+        f"画面内容与视频一致：{resolved}"
     )
 
 
