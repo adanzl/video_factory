@@ -134,9 +134,12 @@ class ImageMgr:
         *,
         base_prompt: str | None = None,
     ) -> Path:
+        from app.services.intro.cover_layout import _resolve_cover_subject
+
+        resolved_title = _resolve_cover_subject(title)
         prompt = base_prompt or (
             f"B站科普视频封面，16:9，信息图风格，标题文字区域留白，"
-            f"不得出现世界地图。若涉及地图，不得出现藏南地区、阿克赛钦地区的边界线或标识，主题：{title}"
+            f"不得出现世界地图。若涉及地图，不得出现藏南地区、阿克赛钦地区的边界线或标识，主题：{resolved_title}"
         )
         return self._get_image_provider().generate(
             prompt,
