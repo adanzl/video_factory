@@ -72,11 +72,27 @@
       </el-descriptions>
     </div>
 
+    <div
+      v-if="segments.length"
+      class="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1"
+    >
+      <span class="text-xs text-gray-400">快速定位：</span>
+      <button
+        v-for="segment in segments"
+        :key="segment.segment_index"
+        class="cursor-pointer rounded px-1.5 py-0.5 text-xs transition-colors hover:bg-blue-50 hover:text-blue-600"
+        @click="scrollToSegment(segment.segment_index)"
+      >
+        #{{ segment.segment_index }}
+      </button>
+    </div>
+
     <div v-if="displaySegments.length" class="overflow-x-auto pb-2">
       <div class="flex w-max min-w-full gap-4">
         <article
           v-for="segment in displaySegments"
           :key="segment.segment_index"
+          :ref="(el: any) => setSegmentRef(segment.segment_index, el)"
           class="flex w-72 shrink-0 flex-col gap-3 rounded-lg border border-gray-200 bg-white p-4"
         >
           <div class="flex items-center justify-between gap-2">
@@ -381,6 +397,23 @@ const allSelected = computed(
 
 const toggleSelectAll = (checked: boolean) => {
   selectedSegments.value = checked ? props.segments.map(s => s.segment_index) : [];
+};
+
+const segmentRefs = new Map<number, HTMLElement>();
+
+const setSegmentRef = (index: number, el: any) => {
+  if (el) {
+    segmentRefs.set(index, el);
+  } else {
+    segmentRefs.delete(index);
+  }
+};
+
+const scrollToSegment = (index: number) => {
+  const el = segmentRefs.get(index);
+  if (el) {
+    el.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+  }
 };
 const clipSearchOpen = ref(false);
 const clipSearchSegmentIndex = ref(1);
