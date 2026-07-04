@@ -35,10 +35,15 @@ def cover_canvas_size(width: int, height: int) -> tuple[int, int, bool]:
 
 
 def build_cover_image_prompt(*, cw: int, ch: int, subject: str) -> str:
-    """Agnes 文生图 prompt：主体居中 4:3，上方留白供后期叠标题。"""
+    """Agnes 文生图 prompt：主体居中 4:3，上方留白供后期叠标题。
+
+    注意：若有地图内容，不得出现藏南地区、阿克赛钦地区的边界线或标注，
+    以规避平台审核风险。
+    """
     return (
         f"视频封面，{cw}x{ch}，画面主体居中于4:3安全区，"
         f"中间无文字无水印，4:3区域上方留白给标题。"
+        f"若涉及地图，不得出现藏南地区、阿克赛钦地区的边界线或标识。"
         f"画面内容与视频一致：{subject}"
     )
 
