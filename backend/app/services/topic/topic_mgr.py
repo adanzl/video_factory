@@ -446,8 +446,6 @@ class TopicMgr:
 
             scored: list[dict] = []
             for row in rows:
-                if row["status"] == "enqueued":
-                    continue
                 result = score_title(
                     row["title"],
                     category=row.get("category"),
