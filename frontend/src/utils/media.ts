@@ -127,7 +127,7 @@ export function estimateNarrationTargetWords(
   durationSec: number,
   charsPerSec = DEFAULT_SPEECH_CHARS_PER_SEC
 ): number {
-  const target = Math.floor(durationSec * charsPerSec * NARRATION_FILL_RATIO);
+  const target = Math.floor(durationSec * charsPerSec * NARRATION_FILL_RATIO * 1.1);
   return Math.max(1, Math.min(NARRATION_MAX_CHARS, target));
 }
 
@@ -147,7 +147,7 @@ export function narrationTargetForMinutes(
   introBudgetSec = INTRO_DURATION_BUDGET_SEC
 ): number {
   const body = Math.max(30, minutes * 60 - introBudgetSec);
-  const target = Math.floor(body * charsPerSec * NARRATION_FILL_RATIO);
+  const target = Math.floor(body * charsPerSec * NARRATION_FILL_RATIO * 1.1);
   return Math.max(1, Math.min(NARRATION_MAX_CHARS, target));
 }
 
