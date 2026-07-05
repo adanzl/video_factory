@@ -372,9 +372,10 @@ class DeepSeekClient(LLMClient):
         self._base_url = settings.deepseek_base_url.rstrip("/")
         self._model = settings.deepseek_model
 
-    def _chat(self, system: str, user: str, *, max_tokens: int | None = None, json_mode: bool = True) -> tuple[str, str | None]:
+    def _chat(self, system: str, user: str, *, max_tokens: int | None = None, json_mode: bool = True, thinking_enabled: bool | None = None) -> tuple[str, str | None]:
         settings = get_settings()
         limit = settings.deepseek_max_tokens if max_tokens is None else max_tokens
+        use_thinking = settings.deepseek_thinking_enabled if thinking_enabled is None else thinking_enabled
         resp = self._requests.post(
             f"{self._base_url}/chat/completions",
             headers={
@@ -386,7 +387,7 @@ class DeepSeekClient(LLMClient):
                 system=system,
                 user=user,
                 max_tokens=limit,
-                thinking_enabled=settings.deepseek_thinking_enabled,
+                thinking_enabled=use_thinking,
                 json_mode=json_mode,
             ),
             timeout=180,
@@ -409,8 +410,9 @@ class DeepSeekClient(LLMClient):
         user: str,
         *,
         max_tokens: int | None = None,
+        thinking_enabled: bool | None = None,
     ) -> tuple[dict[str, Any], str | None]:
-        content, finish = self._chat(system, user, max_tokens=max_tokens)
+        content, finish = self._chat(system, user, max_tokens=max_tokens, thinking_enabled=thinking_enabled)
         if not content.strip():
             raise ValueError("LLM returned empty response")
         try:
@@ -436,7 +438,7 @@ class DeepSeekClient(LLMClient):
         for _ in range(_NARRATION_EXPAND_ATTEMPTS):
             raise_if_job_cancelled(job)
             prompts = build_narration_expand_prompts(current, min_chars=min_chars, mode=mode)
-            expanded, _ = self._chat_json(prompts["system"], prompts["user"])
+            expanded, _ = self._chat_json(prompts["system"], prompts["user"], thinking_enabled=False)
             raise_if_job_cancelled(job)
             if mode == "narration_only":
                 if not str(expanded.get("narration") or "").strip():
@@ -481,7 +483,7 @@ class DeepSeekClient(LLMClient):
             segment_target_sec=segment_target_sec,
             job=job,
         )
-        raw, _ = self._chat_json(prompts["system"], prompts["user"], max_tokens=4096)
+        raw, _ = self._chat_json(prompts["system"], prompts["user"], max_tokens=4096, thinking_enabled=False)
         raise_if_job_cancelled(job)
         items = raw.get("segments") if isinstance(raw, dict) else raw
         if not isinstance(items, list) or not items:
@@ -615,6 +617,7 @@ class DeepSeekClient(LLMClient):
             prompts["system"],
             prompts["user"],
             max_tokens=get_settings().deepseek_max_tokens,
+            thinking_enabled=False,
         )
         raise_if_job_cancelled(job)
         if finish == "length":
@@ -689,7 +692,7 @@ class DeepSeekClient(LLMClient):
             segment_indices=segment_indices,
             include_sd15_prompt=include_sd15_prompt,
         )
-        raw, _ = self._chat_json(prompts["system"], prompts["user"])
+        raw, _ = self._chat_json(prompts["system"], prompts["user"], thinking_enabled=False)
         raise_if_job_cancelled(job)
         if isinstance(raw, list):
             prompt_items = raw
@@ -978,7 +981,7 @@ class DeepSeekClient(LLMClient):
         narration: str,
     ) -> str:
         prompts = build_video_description_prompts(title, narration)
-        raw, _ = self._chat_json(prompts["system"], prompts["user"])
+        raw, _ = self._chat_json(prompts["system"], prompts["user"], thinking_enabled=False)
         return parse_video_description_payload(raw)
 
     def rewrite_pixabay_query(
@@ -995,7 +998,7 @@ class DeepSeekClient(LLMClient):
 
         prompts_system = build_pixabay_query_system_prompt()
         prompts_user = build_pixabay_query_user_prompt(query=query, language=language)
-        raw, _ = self._chat_json(prompts_system, prompts_user, max_tokens=256)
+        raw, _ = self._chat_json(prompts_system, prompts_user, max_tokens=256, thinking_enabled=False)
         return parse_pixabay_query_payload(raw)
 
     def prepare_sd15_image_prompt(
@@ -1020,6 +1023,7 @@ class DeepSeekClient(LLMClient):
                 parse_size=parse_image_size,
             ),
             max_tokens=900,
+            thinking_enabled=False,
         )
         return parse_sd15_prompt_payload(
             raw,

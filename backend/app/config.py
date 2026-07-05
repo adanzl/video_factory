@@ -200,7 +200,7 @@ class Config:
         self.deepseek_base_url: str = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
         self.deepseek_model: str = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
         self.deepseek_max_tokens: int = int(os.getenv("DEEPSEEK_MAX_TOKENS", "32768"))
-        self.deepseek_thinking_enabled: bool = _bool("DEEPSEEK_THINKING", default=False)
+        self.deepseek_thinking_enabled: bool = _bool("DEEPSEEK_THINKING", default=True)
         self.agnes_llm_model: str = os.getenv("AGNES_LLM_MODEL", "agnes-2.0-flash")
         self.agnes_llm_max_tokens: int = int(os.getenv("AGNES_LLM_MAX_TOKENS", "32768"))
         self.llm_image_prompt_batch_size: int = int(os.getenv("LLM_IMAGE_PROMPT_BATCH_SIZE", "4"))
