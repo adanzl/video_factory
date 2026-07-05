@@ -6,7 +6,7 @@ import re
 
 from app.services.topic.scorers.base import (
     CURIOSITY_PATTERNS,
-    TIMELY_PATTERNS,
+    SCORE_THRESHOLD,
     ScoreResult,
     check_conversational_rebuttal,
     check_hard_reject,
@@ -21,7 +21,8 @@ from app.services.topic.scorers.base import (
 CURRENT_VISUAL = (
     r"水|电|温度|气压|化学|光|磁|电池|地震波|能量|刻度|表|规则|分数|志愿|"
     r"震|地震|烈度|震级|空调|路由器|宽带|网线|芯片|"
-    r"油轮|货轮|海峡|航线|航道|管道",
+    r"油轮|货轮|海峡|航线|航道|管道|"
+    r"凉席|风扇|冰丝|降温|消暑|",
 )
 
 
@@ -57,7 +58,7 @@ def score_current_affairs(
     if len(text) > 28:
         visual -= 10
 
-    fact = 65.0 + 12
+    fact = float(SCORE_THRESHOLD)
     if template in {"误区反问式", "反差好奇式"}:
         fact += 5
 
@@ -75,10 +76,6 @@ def score_current_affairs(
     curiosity += rebuttal_tone_curiosity_adjustment(text)
     curiosity += hook_curiosity_adjustment(hook)
 
-    compliance = 78.0
-    if has_pattern(text, TIMELY_PATTERNS):
-        compliance -= 35
-    if has_pattern(combined, TIMELY_PATTERNS):
-        compliance -= 10
+    compliance = float(SCORE_THRESHOLD)
 
     return finalize_score(visual=visual, fact=fact, curiosity=curiosity, compliance=compliance)
