@@ -10,10 +10,14 @@
 
 from __future__ import annotations
 
+import logging
+
 from app.exceptions import JobStageFailureError
 from app.quality import final_video, image_prompt, script, segment, tts_audio
 from app.quality.models import QualityReport, QualityStep
 from app.repositories import repo_job_log, repo_job
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "QualityMgr",
@@ -108,6 +112,8 @@ def apply_quality_checks(
         )
         if report.level == "major" and report.fail_stage:
             repo_job.update_job(conn, job_id, quality_report=merged, fail_stage=report.fail_stage)
+            msg = format_quality_log_message(step, report)
+            logger.warning("quality check failed: %s", msg)
             raise JobStageFailureError(
                 f"quality[{step}] major, rollback to {report.fail_stage}"
             )

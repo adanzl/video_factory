@@ -767,35 +767,34 @@ class ScriptStage(StageExecutor):
         if script is None:
             raise last_exc or RuntimeError("script generation failed")
 
-        if generate_image_prompts:
-            from app.utils.job_info import resolve_include_sd15_prompt
-
-            use_sd15 = resolve_include_sd15_prompt(ctx.job)
-            script["include_sd15_prompt"] = use_sd15
-            prompt_feedback: str | None = None
-            prompt_max_attempts = get_settings().script_qa_max_attempts
-            for attempt in range(prompt_max_attempts):
+        # --- Quality failure retry loop: regenerate storyboard when quality fails ---
+        for _ in range(max_attempts):
+            if script is None:
+                script = llm_mgr.generate_script(
+                    title,
+                    feedback=feedback,
+                    segment_target_sec=segment_target_sec,
+                    max_title_length=max_title_length,
+                    narration_target_words=narration_target_words,
+                    supplementary_info=supplementary_info,
+                    job=ctx.job,
+                    existing_script=None,
+                    retry_scope=None,
+                    generate_image_prompts=False,
+                )
                 job_cancel.raise_if_cancelled(job_id)
+                _log_llm_timing(ctx.job["id"], self.name, script)
+                if narration_target_words is not None:
+                    _repair_narration_overflow_via_shrink(
+                        script,
+                        narration_target_words=narration_target_words,
+                        segment_target_sec=segment_target_sec,
+                        job_id=job_id,
+                        stage_name=self.name,
+                        job=ctx.job,
+                    )
                 try:
-                    if attempt == 0:
-                        llm_mgr.fill_image_prompts(
-                            script,
-                            supplementary_info=supplementary_info,
-                            job=ctx.job,
-                            include_sd15_prompt=use_sd15,
-                        )
-                    else:
-                        llm_mgr.generate_script(
-                            title,
-                            feedback=prompt_feedback,
-                            supplementary_info=supplementary_info,
-                            job=ctx.job,
-                            existing_script=script,
-                            retry_scope="image_prompts",
-                            generate_image_prompts=True,
-                            include_sd15_prompt=use_sd15,
-                        )
-                    _validate_script(
+                    accept_warnings = _validate_script(
                         script,
                         segment_target_sec=segment_target_sec,
                         max_title_length=max_title_length,
@@ -804,92 +803,223 @@ class ScriptStage(StageExecutor):
                         narration_target_words=narration_target_words,
                         speech_chars_per_sec=speech_chars_per_sec,
                         content_style=content_style,
-                        require_image_prompt=True,
-                        check_narration=False,
+                        require_image_prompt=False,
                     )
-                    break
                 except ScriptValidationError as exc:
                     last_exc = exc
-                    if "image_prompt" not in str(exc) and "motion_prompt" not in str(exc):
-                        raise
-                    prompt_feedback = str(exc)
+                    retry_scope = _validation_retry_scope(exc)
+                    feedback = _validation_feedback(
+                        exc,
+                        min_chars=min_narration_chars,
+                        accept_chars=accept_narration_chars,
+                        segment_target_sec=segment_target_sec,
+                        narration_target_words=narration_target_words,
+                        content_style=content_style,
+                        speech_chars_per_sec=speech_chars_per_sec,
+                    )
+                    if retry_scope != "visual_brief":
+                        script = None
                     with connection() as conn:
+                        qa_step = _validation_quality_step(exc)
+                        if qa_step:
+                            repo_job_log.append_log(
+                                conn,
+                                ctx.job["id"],
+                                self.name,
+                                f"quality[{qa_step}]=major reason={exc}",
+                                level="warning",
+                            )
                         repo_job_log.append_log(
                             conn,
                             ctx.job["id"],
                             self.name,
-                            f"image_prompt rejected (attempt {attempt + 1}): {exc}",
+                            f"script qa rejected (quality retry attempt, retry={retry_scope}): {exc}",
                             level="warning",
                         )
+                    continue
             else:
-                raise last_exc or RuntimeError("image prompt generation failed")
+                script.pop("_llm_timing", None)
 
-        max_len = (
-            max_title_length
-            if max_title_length is not None
-            else get_settings().max_title_length
-        )
-        _apply_script_title(
-            script,
-            source_title=title,
-            max_len=max_len,
-            skip_optimize=bool(ctx.script_skip_title_optimize),
-            job_id=ctx.job["id"],
-            stage_name=self.name,
-            content_style=content_style_from_job(ctx.job),
-        )
-        _apply_video_description(
-            script,
-            job_id=ctx.job["id"],
-            stage_name=self.name,
-        )
+            if generate_image_prompts:
+                from app.utils.job_info import resolve_include_sd15_prompt
 
-        script_mgr.attach_prompts(
-            script,
-            ctx.job,
-            title,
-            segment_target_sec=segment_target_sec,
-            max_title_length=max_title_length,
-            narration_target_words=narration_target_words,
-            supplementary_info=supplementary_info,
-            skip_title_optimize=bool(ctx.script_skip_title_optimize),
-        )
+                use_sd15 = resolve_include_sd15_prompt(ctx.job)
+                script["include_sd15_prompt"] = use_sd15
+                prompt_feedback: str | None = None
+                prompt_max_attempts = get_settings().script_qa_max_attempts
+                for attempt in range(prompt_max_attempts):
+                    job_cancel.raise_if_cancelled(job_id)
+                    try:
+                        if attempt == 0:
+                            llm_mgr.fill_image_prompts(
+                                script,
+                                supplementary_info=supplementary_info,
+                                job=ctx.job,
+                                include_sd15_prompt=use_sd15,
+                            )
+                        else:
+                            llm_mgr.generate_script(
+                                title,
+                                feedback=prompt_feedback,
+                                supplementary_info=supplementary_info,
+                                job=ctx.job,
+                                existing_script=script,
+                                retry_scope="image_prompts",
+                                generate_image_prompts=True,
+                                include_sd15_prompt=use_sd15,
+                            )
+                        _validate_script(
+                            script,
+                            segment_target_sec=segment_target_sec,
+                            max_title_length=max_title_length,
+                            min_narration_chars=min_narration_chars,
+                            accept_narration_chars=accept_narration_chars,
+                            narration_target_words=narration_target_words,
+                            speech_chars_per_sec=speech_chars_per_sec,
+                            content_style=content_style,
+                            require_image_prompt=True,
+                            check_narration=False,
+                        )
+                        break
+                    except ScriptValidationError as exc:
+                        last_exc = exc
+                        if "image_prompt" not in str(exc) and "motion_prompt" not in str(exc):
+                            raise
+                        prompt_feedback = str(exc)
+                        with connection() as conn:
+                            repo_job_log.append_log(
+                                conn,
+                                ctx.job["id"],
+                                self.name,
+                                f"image_prompt rejected (attempt {attempt + 1}): {exc}",
+                                level="warning",
+                            )
+                else:
+                    raise last_exc or RuntimeError("image prompt generation failed")
 
-        resolved_seg_target = (
-            segment_target_sec
-            if segment_target_sec is not None
-            else get_settings().segment_target_sec
-        )
-        from app.utils.media import assign_segment_timings
+            max_len = (
+                max_title_length
+                if max_title_length is not None
+                else get_settings().max_title_length
+            )
+            _apply_script_title(
+                script,
+                source_title=title,
+                max_len=max_len,
+                skip_optimize=bool(ctx.script_skip_title_optimize),
+                job_id=ctx.job["id"],
+                stage_name=self.name,
+                content_style=content_style_from_job(ctx.job),
+            )
+            _apply_video_description(
+                script,
+                job_id=ctx.job["id"],
+                stage_name=self.name,
+            )
 
-        assign_segment_timings(
-            script,
-            segment_target_sec=resolved_seg_target,
-            chars_per_sec=speech_chars_per_sec,
-        )
+            script_mgr.attach_prompts(
+                script,
+                ctx.job,
+                title,
+                segment_target_sec=segment_target_sec,
+                max_title_length=max_title_length,
+                narration_target_words=narration_target_words,
+                supplementary_info=supplementary_info,
+                skip_title_optimize=bool(ctx.script_skip_title_optimize),
+            )
 
-        if supplementary_info:
-            script["supplementary_info"] = supplementary_info
-        else:
-            script.pop("supplementary_info", None)
+            resolved_seg_target = (
+                segment_target_sec
+                if segment_target_sec is not None
+                else get_settings().segment_target_sec
+            )
+            from app.utils.media import assign_segment_timings
 
-        script["word_count"] = _narration_chars(script.get("narration", ""))
-        script["narration_target_words"] = narration_target_words
-        script["speech_chars_per_sec"] = speech_chars_per_sec
-        script["segment_target_sec"] = resolved_seg_target
-        script["max_title_length"] = max_len
-        script["generate_image_prompts"] = generate_image_prompts
-        assign_segment_timings(
-            script,
-            segment_target_sec=resolved_seg_target,
-            chars_per_sec=speech_chars_per_sec,
-        )
-        if not generate_image_prompts:
-            _strip_image_prompt_fields(script)
-        script.pop("_llm_timing", None)
-        script["cost_time"] = round(time.perf_counter() - started, 1)
-        display_title = script["title"]
-        job_cancel.raise_if_cancelled(job_id)
+            assign_segment_timings(
+                script,
+                segment_target_sec=resolved_seg_target,
+                chars_per_sec=speech_chars_per_sec,
+            )
+
+            if supplementary_info:
+                script["supplementary_info"] = supplementary_info
+            else:
+                script.pop("supplementary_info", None)
+
+            script["word_count"] = _narration_chars(script.get("narration", ""))
+            script["narration_target_words"] = narration_target_words
+            script["speech_chars_per_sec"] = speech_chars_per_sec
+            script["segment_target_sec"] = resolved_seg_target
+            script["max_title_length"] = max_len
+            script["generate_image_prompts"] = generate_image_prompts
+            assign_segment_timings(
+                script,
+                segment_target_sec=resolved_seg_target,
+                chars_per_sec=speech_chars_per_sec,
+            )
+            if not generate_image_prompts:
+                _strip_image_prompt_fields(script)
+
+            script["cost_time"] = round(time.perf_counter() - started, 1)
+            display_title = script["title"]
+            job_cancel.raise_if_cancelled(job_id)
+
+            # --- Quality check (inline, retryable) ---
+            try:
+                with connection() as conn:
+                    if get_settings().skip_script_quality_check:
+                        merged = merge_quality_report(
+                            ctx.job.get("quality_report"),
+                            "copy",
+                            skip_narration_check(),
+                        )
+                        merged = merge_quality_report(merged, "storyboard", skip_board_check())
+                        merged = merge_quality_report(
+                            merged,
+                            "image_prompts",
+                            skip_image_prompt_check(),
+                        )
+                        repo_job_log.append_log(
+                            conn,
+                            ctx.job["id"],
+                            self.name,
+                            "script quality checks skipped (SKIP_SCRIPT_QUALITY_CHECK)",
+                            level="warning",
+                        )
+                        repo_job.update_job(conn, ctx.job["id"], quality_report=merged)
+                    else:
+                        apply_quality_checks(
+                            conn,
+                            ctx.job["id"],
+                            self.name,
+                            {
+                                "copy": check_narration(script),
+                                "storyboard": check_board(
+                                    script,
+                                    segment_target_sec=segment_target_sec,
+                                    max_title_length=max_len,
+                                ),
+                                "image_prompts": (
+                                    check_image_prompt(script)
+                                    if generate_image_prompts
+                                    else skip_image_prompt_check()
+                                ),
+                            },
+                            existing_report=ctx.job.get("quality_report"),
+                        )
+            except JobStageFailureError as exc:
+                last_exc = exc
+                feedback = str(exc)
+                script = None
+                continue
+
+            # --- All checks passed ---
+            break
+
+        if script is None:
+            raise last_exc or RuntimeError("script generation failed")
+
+        # --- DB operations (only when all checks pass) ---
         with connection() as conn:
             for warning in accept_warnings:
                 repo_job_log.append_log(
@@ -921,43 +1051,4 @@ class ScriptStage(StageExecutor):
                 self.name,
                 f"script_json={json.dumps(script, ensure_ascii=False, default=str)}",
             )
-            if get_settings().skip_script_quality_check:
-                merged = merge_quality_report(
-                    ctx.job.get("quality_report"),
-                    "copy",
-                    skip_narration_check(),
-                )
-                merged = merge_quality_report(merged, "storyboard", skip_board_check())
-                merged = merge_quality_report(
-                    merged,
-                    "image_prompts",
-                    skip_image_prompt_check(),
-                )
-                repo_job_log.append_log(
-                    conn,
-                    ctx.job["id"],
-                    self.name,
-                    "script quality checks skipped (SKIP_SCRIPT_QUALITY_CHECK)",
-                    level="warning",
-                )
-                repo_job.update_job(conn, ctx.job["id"], quality_report=merged)
-            else:
-                apply_quality_checks(
-                    conn,
-                    ctx.job["id"],
-                    self.name,
-                    {
-                        "copy": check_narration(script),
-                        "storyboard": check_board(
-                            script,
-                            segment_target_sec=segment_target_sec,
-                            max_title_length=max_len,
-                        ),
-                        "image_prompts": (
-                            check_image_prompt(script)
-                            if generate_image_prompts
-                            else skip_image_prompt_check()
-                        ),
-                    },
-                    existing_report=ctx.job.get("quality_report"),
-                )
+
