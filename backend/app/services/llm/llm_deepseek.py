@@ -186,15 +186,6 @@ def _storyboard_max_tokens(
     return min(ceiling, max(4096, estimated))
 
 
-def _narration_max_tokens(narration_target_words: int | None) -> int:
-    """口播-only JSON 输出 token 预算。"""
-    settings = get_settings()
-    target = narration_target_words or default_narration_target_words()
-    ceiling = settings.deepseek_max_tokens
-    estimated = int(target * 3 + 1500)
-    return min(ceiling, max(4096, estimated))
-
-
 def _strip_markdown_json_fence(content: str) -> str:
     text = content.strip()
     if not text.startswith("```"):
@@ -337,25 +328,6 @@ def _truncation_feedback(*, compact: bool) -> str:
     )
 
 
-def _empty_json_feedback() -> str:
-    return (
-        "上次 JSON Output 返回了空 content（DeepSeek 已知偶发问题，见官方 JSON Output 文档）。"
-        "请严格按 system 中的 JSON 样例输出完整对象，不要 markdown 代码块或解释文字。"
-    )
-
-
-def _parse_failure_feedback(exc: ValueError, *, compact: bool) -> str:
-    msg = str(exc)
-    if "empty response" in msg:
-        return _empty_json_feedback()
-    if "invalid JSON" in msg:
-        return (
-            "上次返回的不是合法 JSON。"
-            "请严格按 JSON 样例输出，确保括号闭合，不要 markdown 代码块。"
-        )
-    return _truncation_feedback(compact=compact)
-
-
 def _chunk_indices(indices: list[int], batch_size: int) -> list[list[int]]:
     size = max(1, batch_size)
     ordered = sorted({int(idx) for idx in indices})
@@ -412,9 +384,18 @@ class DeepSeekClient(LLMClient):
         max_tokens: int | None = None,
         thinking_enabled: bool | None = None,
     ) -> tuple[dict[str, Any], str | None]:
-        content, finish = self._chat(system, user, max_tokens=max_tokens, thinking_enabled=thinking_enabled)
-        if not content.strip():
-            raise ValueError("LLM returned empty response")
+        _EMPTY_RETRIES = 3
+        for _ in range(_EMPTY_RETRIES):
+            content, finish = self._chat(system, user, max_tokens=max_tokens, thinking_enabled=thinking_enabled)
+            if content.strip():
+                break
+            logger.warning(
+                "LLM returned empty response, retrying (max=%d)",
+                _EMPTY_RETRIES,
+            )
+            time.sleep(1)
+        else:
+            raise ValueError("LLM returned empty response after %d retries" % _EMPTY_RETRIES)
         try:
             parsed = _loads_llm_json(content)
         except ValueError as exc:
@@ -533,7 +514,6 @@ class DeepSeekClient(LLMClient):
         max_chars = narration_accept_max_chars(narration_target_words)
         length_feedback: str | None = feedback
         data: dict[str, Any] | None = None
-        max_tokens = _narration_max_tokens(narration_target_words)
         for attempt in range(_storyboard_length_max_attempts()):
             raise_if_job_cancelled(job)
             prompts = build_narration_prompts(
@@ -547,11 +527,10 @@ class DeepSeekClient(LLMClient):
             data, finish = self._chat_json(
                 prompts["system"],
                 prompts["user"],
-                max_tokens=max_tokens,
+                max_tokens=get_settings().deepseek_max_tokens,
             )
             raise_if_job_cancelled(job)
             if finish == "length":
-                max_tokens = get_settings().deepseek_max_tokens
                 length_feedback = _truncation_feedback(compact=False)
                 if feedback and attempt == 0:
                     length_feedback = f"{feedback}\n{length_feedback}"
