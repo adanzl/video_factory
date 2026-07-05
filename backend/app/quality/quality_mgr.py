@@ -114,9 +114,7 @@ def apply_quality_checks(
             repo_job.update_job(conn, job_id, quality_report=merged, fail_stage=report.fail_stage)
             msg = format_quality_log_message(step, report)
             logger.warning("quality check failed: %s", msg)
-            raise JobStageFailureError(
-                f"quality[{step}] major, rollback to {report.fail_stage}"
-            )
+            raise JobStageFailureError(msg)
     repo_job.update_job(conn, job_id, quality_report=merged)
     return merged
 
