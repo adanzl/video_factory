@@ -266,7 +266,12 @@
         <el-descriptions-item label="生成耗时">{{ formatCostTime(script.cost_time) }}</el-descriptions-item>
         <el-descriptions-item label="字数">{{ script.word_count ?? "-" }}</el-descriptions-item>
         <el-descriptions-item label="分镜数">{{ script.segments?.length ?? 0 }}</el-descriptions-item>
-        <el-descriptions-item label="预计时长">{{ formatCostTime(scriptEstimatedDurationSec) }}</el-descriptions-item>
+        <el-descriptions-item label="预计时长">
+                        <template v-if="scriptEstimatedDurationSec != null">
+                          {{ Math.floor(scriptEstimatedDurationSec / 60) }}:{{ String(Math.floor(scriptEstimatedDurationSec % 60)).padStart(2, '0') }} ({{ Math.round(scriptEstimatedDurationSec) }}s)
+                        </template>
+                        <template v-else>-</template>
+                      </el-descriptions-item>
       </el-descriptions>
 
       <div class="mb-5">

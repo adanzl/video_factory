@@ -100,8 +100,7 @@
             <el-tag size="small">{{ segment.status }}</el-tag>
           </div>
           <div class="text-xs text-gray-400">
-            {{ segment.visual_mode }}
-            · {{ formatSegmentDurationLabel(segment) }}
+            {{ formatSegmentDurationLabel(segment) }}
           </div>
 
           <section class="flex flex-col gap-1">

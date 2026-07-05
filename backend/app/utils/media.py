@@ -35,7 +35,7 @@ def estimate_narration_target_words(
     *,
     chars_per_sec: float = DEFAULT_SPEECH_CHARS_PER_SEC,
 ) -> int:
-    target = int(duration_sec * chars_per_sec * NARRATION_FILL_RATIO)
+    target = int(duration_sec * chars_per_sec * NARRATION_FILL_RATIO * 1.1)
     return max(1, min(NARRATION_MAX_CHARS, target))
 
 
@@ -382,7 +382,7 @@ def narration_target_for_minutes(
 ) -> int:
     """按成片分钟数估算口播目标字数。"""
     body = max(30.0, minutes * 60.0 - intro_budget_sec)
-    target = int(body * chars_per_sec * NARRATION_FILL_RATIO)
+    target = int(body * chars_per_sec * NARRATION_FILL_RATIO * 1.1)
     return max(1, min(NARRATION_MAX_CHARS, target))
 
 
