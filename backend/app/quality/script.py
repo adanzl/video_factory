@@ -220,22 +220,23 @@ def check_board(
     else:
         max_len = max_title_length
 
-    title = re.sub(r"\s+", "", (script.get("title") or "").strip())
-    if not title:
+    title = (script.get("title") or "").strip()
+    title_clean = re.sub(r"[^\w]", "", re.sub(r"\s+", "", title))
+    if not title_clean:
         return QualityReport(
             level="major",
             step="storyboard",
             fail_stage="script",
             details={"reason": "title is empty"},
         )
-    if len(title) > max_len:
+    if len(title_clean) > max_len:
         return QualityReport(
             level="major",
             step="storyboard",
             fail_stage="script",
             details={
                 "reason": "title too long",
-                "title_length": len(title),
+                "title_length": len(title_clean),
                 "max_length": max_len,
             },
         )

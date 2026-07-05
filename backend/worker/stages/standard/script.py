@@ -82,7 +82,9 @@ def _narration_chars(narration: str) -> int:
 
 
 def _title_chars(title: str) -> str:
-    return re.sub(r"\s+", "", title.strip())
+    """去空格 + 去标点符号，只计汉字/字母/数字。"""
+    stripped = re.sub(r"\s+", "", title.strip())
+    return re.sub(r"[^\w]", "", stripped)
 
 
 def _resolve_script_title(*, source_title: str, llm_title: str, max_len: int) -> str:
