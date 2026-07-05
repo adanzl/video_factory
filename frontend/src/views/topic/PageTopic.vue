@@ -108,7 +108,6 @@
               优化
             </el-button>
             <el-button
-              v-if="row.status !== 'enqueued'"
               type="primary"
               link
               size="small"
@@ -244,7 +243,7 @@
     <el-dialog v-model="showEditDialog" title="编辑选题" width="520px" destroy-on-close>
       <el-form label-width="70px">
         <el-form-item label="标题">
-          <el-input v-model="editForm.title" type="textarea" :rows="2" maxlength="60" />
+          <el-input v-model="editForm.title" type="textarea" :rows="2" maxlength="60" show-word-limit />
         </el-form-item>
         <el-form-item label="分类">
           <el-select v-model="editForm.category" class="w-full!">
