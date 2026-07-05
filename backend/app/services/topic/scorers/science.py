@@ -6,6 +6,7 @@ import re
 
 from app.services.topic.scorers.base import (
     CURIOSITY_PATTERNS,
+    SCORE_THRESHOLD,
     ScoreResult,
     check_conversational_rebuttal,
     check_hard_reject,
@@ -23,7 +24,8 @@ SCIENCE_VISUAL = (
 )
 
 LIFE_VISUAL = (
-    r"空调|暖气|制冷|凉快|省电|电费|电表|家居|厨房|洗衣机|冰箱|热水器|WiFi|网速",
+    r"空调|暖气|制冷|凉快|省电|电费|电表|家居|厨房|洗衣机|冰箱|热水器|WiFi|网速|"
+    r"凉席|风扇|冰丝|降温|消暑|",
 )
 
 
@@ -67,7 +69,7 @@ def score_science(
     )):
         visual += 10
 
-    fact = 65.0 + 15
+    fact = float(SCORE_THRESHOLD)
     if template in {"误区反问式", "实操避坑式"}:
         fact += 5
 
@@ -81,5 +83,5 @@ def score_science(
     curiosity += rebuttal_tone_curiosity_adjustment(text)
     curiosity += hook_curiosity_adjustment(hook)
 
-    compliance = 80.0
+    compliance = float(SCORE_THRESHOLD)
     return finalize_score(visual=visual, fact=fact, curiosity=curiosity, compliance=compliance, title=text)

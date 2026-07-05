@@ -6,6 +6,7 @@ import re
 
 from app.services.topic.scorers.base import (
     CURIOSITY_PATTERNS,
+    SCORE_THRESHOLD,
     ScoreResult,
     check_hard_reject,
     finalize_score,
@@ -37,7 +38,7 @@ def score_history(
     if len(text) > 28:
         visual -= 10
 
-    fact = 65.0 + 10
+    fact = float(SCORE_THRESHOLD)
     if any(kw in text for kw in ("墓", "尸", "失踪", "消失", "真相", "之谜")):
         fact += 10
 
@@ -51,5 +52,5 @@ def score_history(
     if hook and len(hook) >= 10:
         curiosity += 5
 
-    compliance = 80.0
+    compliance = float(SCORE_THRESHOLD)
     return finalize_score(visual=visual, fact=fact, curiosity=curiosity, compliance=compliance, title=text)
