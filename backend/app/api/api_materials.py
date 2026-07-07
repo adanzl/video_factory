@@ -129,7 +129,7 @@ def create_job_from_material_route():
 @bp.post("/analyze")
 def analyze_material_route():
     data = get_json_body()
-    material_id = parse_id(data)
+    material_id = parse_id(data, field="material_id")
     try:
         result = material_mgr.analyze_material(material_id)
     except ValueError as exc:
