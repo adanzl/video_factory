@@ -247,7 +247,7 @@ def material_timeline_system_clause(timeline: VideoTimeline, *, need_opening: bo
         "第 i 段 text 只讲第 i 段画面，禁止提前讲后续画面、禁止滞后讲上一段、禁止合并多段。"
         f"{opening}"
         "每段按时间表「字数下限」「字数上限」列写满该段时长。"
-        "若届别+球名较长，优先写年份与球名，细节从简。"
+        "若对象名称较长，优先写核心标识（如年份、名称），细节从简。"
         "有补充信息时不得与时间表矛盾；时间表优先决定分镜与讲什么。"
     )
 
@@ -291,7 +291,7 @@ def timeline_system_clause(timeline: VideoTimeline) -> str:
         "narration 第一句必须从第 1 段画面内容直接讲起（视频 0 秒即进入该段主题）。"
         f"全片 narration 总字数硬性 {lo}-{hi} 字；每段须对照时间表「字数下限」列写满，"
         "用「感叹+科普点+比喻/拟声」三层撑满该段时长，禁止敷衍短句。"
-        "若届别+球名较长，优先写年份与球名，细节从简。"
+        "若对象名称较长，优先写核心标识（如年份、名称），细节从简。"
         "各段 text 按顺序拼接须与 narration 完全一致。"
         "有补充信息时不得与时间表矛盾；时间表优先决定分镜与讲什么。"
     )
@@ -434,7 +434,7 @@ def validate_timeline_script(
                 "以下段落过长，请压缩后重写："
                 + "；".join(over_hard)
                 + f"。目标约 {DEFAULT_SPEECH_CHARS_PER_SEC} 字/秒，"
-                "可删形容词、合并同义，届别+球名必留。"
+                "可删形容词、合并同义，保留核心名称与关键信息。"
             ),
             warnings,
         )
