@@ -13,6 +13,7 @@ from app.core.pipelines import PIPELINE_MATERIAL
 from app.repositories import repo_job_log, repo_job, repo_material
 from app.repositories.connection import connection
 from app.services.job.job_mgr import job_mgr
+from app.services.material.video_analyzer import VideoAnalyzer
 from app.services.media.ffmpeg_utils import extract_first_frame, probe_duration, probe_video_size
 from app.utils.job_info import default_orientation_for_pipeline, merge_job_info
 from app.utils.media import NARRATION_ABS_MIN_CHARS
@@ -177,6 +178,20 @@ class MaterialMgr:
                 note=note_text,
                 **meta,
             )
+
+    def analyze_material(self, material_id: int) -> dict:
+        """分析素材视频，生成时间表 JSON，写入 note 字段。"""
+        material = self.get_material(material_id)
+        video_path = Path(material["file_path"])
+        duration = material.get("duration_sec")
+
+        analyzer = VideoAnalyzer(video_path, duration=duration)
+        note_text = analyzer.analyze()
+
+        with connection() as conn:
+            repo_material.update_material(conn, material_id, note=note_text)
+
+        return {"material_id": material_id, "note": note_text}
 
     def create_job_from_material(
         self,

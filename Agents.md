@@ -5,7 +5,7 @@
 主机名：
 
 - 局域网 主机: mini  
-- 广域网 主机：vip.xa.frp.one:19367
+- 广域网 主机：vip.bj.frp.one:19367
 - 广域网 主机：57c42474b0ea.ofalias.net:58186
 用户名 leo
 密码 见.env 里的 SSH_PASSWORD
