@@ -185,12 +185,18 @@ class MaterialMgr:
 
     def analyze_material(self, material_id: int) -> dict:
         """异步分析素材视频，立即返回。后台线程完成后写入 note。"""
-        material = self.get_material(material_id)
+        with connection() as conn:
+            row = conn.execute(
+                "SELECT id, file_path, duration_sec FROM video_material WHERE id=?",
+                (material_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"material {material_id} not found")
+            material = dict(row)
+            repo_material.update_material(conn, material_id, status="analyzing")
+
         video_path = Path(material["file_path"])
         duration = material.get("duration_sec")
-
-        with connection() as conn:
-            repo_material.update_material(conn, material_id, status="analyzing")
 
         t = threading.Thread(
             target=self._run_analysis,
