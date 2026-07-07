@@ -1203,7 +1203,7 @@ def build_material_script_prompts(
         f"{opening_rule}"
         f"{segment_rule}"
         "word_count 必须等于 narration 实际字数，禁止虚报。"
-        f"{material_timeline_system_clause(timeline) if timeline else ''}"
+        f"{material_timeline_system_clause(timeline, need_opening=bool(need_opening)) if timeline else ''}"
         f"{_supplementary_system_clause(supplementary_info)}"
         f"{_json_output_clause(_MATERIAL_SCRIPT_JSON_EXAMPLE)}"
     )

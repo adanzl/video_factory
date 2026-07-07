@@ -226,7 +226,7 @@ def _material_timeline_table(timeline: VideoTimeline, *, chars_per_sec: float = 
         max_c = _mc(slot.duration_sec)
         min_c = slot_min_chars(max_c)
         target_c = slot_target_chars(max_c)
-        desc = slot.description[:60] + "..." if len(slot.description) > 60 else slot.description
+        desc = slot.description
         lines.append(
             f"{slot.index} | {_format_sec(slot.duration_sec)}s | {desc} | "
             f"{min_c} | {target_c}-{max_c} | {max_c}"
@@ -234,15 +234,18 @@ def _material_timeline_table(timeline: VideoTimeline, *, chars_per_sec: float = 
     return "\n".join(lines)
 
 
-def material_timeline_system_clause(timeline: VideoTimeline) -> str:
+def material_timeline_system_clause(timeline: VideoTimeline, *, need_opening: bool = False) -> str:
     """素材脚本专用：时间表对齐要求，不含三层、验收区间、joined约束。"""
     count = len(timeline.slots)
+    opening = "" if need_opening else (
+        "禁止开场钩子、悬念反问（如「你知道吗」）、全片总起、结尾长篇回顾或清单式连读多届/多段。"
+        "narration 第一句必须从第 1 段画面内容直接讲起（视频 0 秒即进入该段主题）。"
+    )
     return (
         f"用户提供了基底视频画面时间表（共{count}段），口播须与画面逐段严格对齐。"
         f"segments 必须恰好 {count} 条，segment_index 从 1 到 {count}，与时间表顺序一一对应；"
         "第 i 段 text 只讲第 i 段画面，禁止提前讲后续画面、禁止滞后讲上一段、禁止合并多段。"
-        "禁止开场钩子、悬念反问（如「你知道吗」）、全片总起、结尾长篇回顾或清单式连读多届/多段。"
-        "narration 第一句必须从第 1 段画面内容直接讲起（视频 0 秒即进入该段主题）。"
+        f"{opening}"
         "每段按时间表「字数下限」「字数上限」列写满该段时长。"
         "若届别+球名较长，优先写年份与球名，细节从简。"
         "有补充信息时不得与时间表矛盾；时间表优先决定分镜与讲什么。"
