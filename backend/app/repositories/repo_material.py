@@ -66,7 +66,7 @@ def list_materials(
                size_bytes, thumbnail_path, note, status, job_id,
                created_at, updated_at
         FROM video_material
-        WHERE status = 'active'
+        WHERE status != 'deleted'
         ORDER BY id DESC
         LIMIT ? OFFSET ?
         """,
