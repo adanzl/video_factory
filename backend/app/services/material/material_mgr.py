@@ -193,7 +193,11 @@ class MaterialMgr:
             if row is None:
                 raise KeyError(f"material {material_id} not found")
             material = dict(row)
-            repo_material.update_material(conn, material_id, status="analyzing")
+            # 直接用 SQL 更新 status，避免 update_material 内 get_material 过滤 status
+            conn.execute(
+                "UPDATE video_material SET status=?, updated_at=datetime('now') WHERE id=?",
+                ("analyzing", material_id),
+            )
 
         video_path = Path(material["file_path"])
         duration = material.get("duration_sec")
@@ -221,7 +225,10 @@ class MaterialMgr:
         except Exception:
             logger.exception("material %s analysis failed", material_id)
             with connection() as conn:
-                repo_material.update_material(conn, material_id, status="analyze_failed")
+                conn.execute(
+                    "UPDATE video_material SET status=?, updated_at=datetime('now') WHERE id=?",
+                    ("analyze_failed", material_id),
+                )
 
     def create_job_from_material(
         self,
