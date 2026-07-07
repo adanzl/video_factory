@@ -1143,6 +1143,7 @@ def build_material_script_prompts(
     video_timeline: str | None = None,
     script: dict | None = None,
     chars_per_sec: float | None = None,
+    need_opening: bool | None = None,
 ) -> dict[str, str]:
     settings = get_settings()
     max_title = settings.max_title_length if max_title_length is None else max_title_length
@@ -1164,10 +1165,16 @@ def build_material_script_prompts(
             "每项含 segment_index 与 text，第 i 段只讲第 i 段画面；"
             "口吻保持童趣。"
         )
-        opening_rule = (
-            "禁止开场钩子、悬念反问、自我介绍或全片总起；"
-            "narration 第一句必须从时间表第 1 段画面内容直接讲起。"
-        )
+        if need_opening:
+            opening_rule = (
+                "开头用一句惊讶感叹或反常识直接吸引观众，如「哇，快看天上！」；"
+                "迅速接入时间表第 1 段画面内容。"
+            )
+        else:
+            opening_rule = (
+                "禁止开场钩子、悬念反问、自我介绍或全片总起；"
+                "narration 第一句必须从时间表第 1 段画面内容直接讲起。"
+            )
         length_rule = "每段按时间表字数预算写满（见下）。"
     else:
         segment_rule = (
@@ -1175,7 +1182,11 @@ def build_material_script_prompts(
             "各段 text 按顺序拼接须与 narration 完全一致，口吻同样保持童趣；"
             "按自然断句切分，无需 visual 字段。"
         )
-        opening_rule = "禁止开头自我介绍；第一句直接进入主题。"
+        opening_rule = (
+            "开头用一句惊讶感叹或反常识吸引观众，迅速进入主题。"
+            if need_opening
+            else "禁止开头自我介绍；第一句直接进入主题。"
+        )
         length_rule = (
             f"narration 总目标 {narration_word_target} 字；{_writing_target_clause(narration_word_target)}；"
             f"验收区间 {narration_hard_min}-{narration_word_max} 字（不含空格换行）；"

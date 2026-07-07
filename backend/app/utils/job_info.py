@@ -292,6 +292,7 @@ _SCRIPT_PARAM_KEYS = (
     "generate_image_prompts",
     "supplementary_info",
     "video_timeline",
+    "need_opening",
 )
 
 

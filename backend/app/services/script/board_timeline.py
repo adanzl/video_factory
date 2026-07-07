@@ -209,11 +209,7 @@ def timeline_table_for_prompt(timeline: VideoTimeline) -> str:
 
 def material_timeline_length_budget(timeline: VideoTimeline, *, chars_per_sec: float = 5.5) -> str:
     """素材脚本专用：按时间表每段时长分配字数预算，不含三层和验收区间。"""
-    def _mc(d): return _max_chars_for_duration(d, chars_per_sec)
-    total_max = sum(_mc(s.duration_sec) for s in timeline.slots)
-    sum_min = sum(slot_min_chars(_mc(s.duration_sec)) for s in timeline.slots)
     return (
-        f"语速约 {chars_per_sec} 字/秒。各段字数下限之和为 {sum_min} 字，各段上限合计约 {total_max} 字。"
         "【生成顺序】先按时间表逐段写满 segments（每段对照字数下限），"
         "再原样拼接为 narration，最后统计 word_count。"
     )
@@ -259,9 +255,7 @@ def append_material_timeline_to_user(user: str, timeline: VideoTimeline, *, char
         f"{user}\n\n"
         f"{material_timeline_length_budget(timeline, chars_per_sec=chars_per_sec)}\n\n"
         "基底视频画面时间表（segments 须与此表逐段对齐）：\n"
-        f"{_material_timeline_table(timeline, chars_per_sec=chars_per_sec)}\n\n"
-        "时间表 JSON：\n"
-        f"{timeline.raw}"
+        f"{_material_timeline_table(timeline, chars_per_sec=chars_per_sec)}"
     )
 
 
