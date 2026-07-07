@@ -18,6 +18,7 @@ from app.utils.job_info import (
     orientation_for_resolve,
 )
 from app.utils.media import (
+    DEFAULT_SPEECH_CHARS_PER_SEC,
     NARRATION_WRITING_TARGET_RATIO,
     default_narration_target_words,
     effective_segment_narration_sec,
@@ -42,13 +43,10 @@ from app.quality.image_prompt import (
 )
 from app.services.script.board_timeline import (
     VideoTimeline,
-    TIMELINE_TTS_CHARS_PER_SEC,
     append_material_timeline_to_user,
-    append_timeline_to_user,
     material_timeline_system_clause,
     narration_range_for_timeline,
     parse_video_timeline,
-    timeline_system_clause,
 )
 
 # DeepSeek JSON Output 要求 prompt 含 json 字样并给出样例：
@@ -685,13 +683,14 @@ def _resolve_video_timeline(
     video_timeline: str | None,
     *,
     script: dict | None = None,
+    chars_per_sec: float | None = None,
 ) -> VideoTimeline | None:
     raw = (video_timeline or "").strip()
     if not raw and script:
         saved = script.get("video_timeline")
         if isinstance(saved, str) and saved.strip():
             raw = saved.strip()
-    return parse_video_timeline(raw) if raw else None
+    return parse_video_timeline(raw, chars_per_sec=chars_per_sec) if raw else None
 
 
 def _title_rule(title: str, max_title: int) -> tuple[str, str]:
@@ -1146,7 +1145,7 @@ def build_material_script_prompts(
 ) -> dict[str, str]:
     settings = get_settings()
     max_title = settings.max_title_length if max_title_length is None else max_title_length
-    timeline = _resolve_video_timeline(video_timeline, script=script)
+    timeline = _resolve_video_timeline(video_timeline, script=script, chars_per_sec=chars_per_sec)
     if timeline:
         narration_word_min, narration_word_max = narration_range_for_timeline(timeline)
         narration_hard_min = narration_word_min
@@ -1218,7 +1217,7 @@ def build_material_script_prompts(
         )
     user = _append_supplementary_to_user("\n\n".join(user_parts), supplementary_info)
     if timeline:
-        cps = chars_per_sec if chars_per_sec is not None else TIMELINE_TTS_CHARS_PER_SEC
+        cps = chars_per_sec if chars_per_sec is not None else DEFAULT_SPEECH_CHARS_PER_SEC
         user = append_material_timeline_to_user(user, timeline, chars_per_sec=cps)
     if feedback:
         user += f"\n\n上次不合格：{feedback}。请按要求重写。"

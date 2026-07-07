@@ -41,8 +41,8 @@ def test_parse_video_timeline_balls():
     assert timeline is not None
     assert len(timeline.slots) == 2
     assert timeline.slots[0].scene == "1930年 乌拉圭 T-model"
-    assert timeline.slots[0].max_chars == 44
-    assert timeline.slots[1].max_chars == 33
+    assert timeline.slots[0].max_chars == 32
+    assert timeline.slots[1].max_chars == 24
 
 
 def test_validate_timeline_script_rejects_wrong_count():

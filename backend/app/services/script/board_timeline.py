@@ -8,8 +8,8 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-# 提示词目标语速；校验另设 hard_max 容差，避免 LLM 略超就反复打回
-TIMELINE_TTS_CHARS_PER_SEC = 5.5
+from app.utils.media import DEFAULT_SPEECH_CHARS_PER_SEC
+
 # 校验 hard 上限 = target + max(ABS, target * RATIO)
 TIMELINE_HARD_MAX_ABS = 5
 TIMELINE_HARD_MAX_RATIO = 0.3
@@ -107,7 +107,7 @@ def _timeline_items(data: dict[str, Any]) -> list[dict[str, Any]] | None:
 
 
 def _max_chars_for_duration(duration_sec: float, chars_per_sec: float | None = None) -> int:
-    return max(10, int(math.floor(duration_sec * (chars_per_sec or TIMELINE_TTS_CHARS_PER_SEC))))
+    return max(10, int(math.floor(duration_sec * (chars_per_sec or DEFAULT_SPEECH_CHARS_PER_SEC))))
 
 
 def hard_max_chars(target: int) -> int:
@@ -207,7 +207,7 @@ def timeline_table_for_prompt(timeline: VideoTimeline) -> str:
     return "\n".join(lines)
 
 
-def material_timeline_length_budget(timeline: VideoTimeline, *, chars_per_sec: float = 5.5) -> str:
+def material_timeline_length_budget(timeline: VideoTimeline, *, chars_per_sec: float | None = None) -> str:
     """素材脚本专用：按时间表每段时长分配字数预算，不含三层和验收区间。"""
     return (
         "【生成顺序】先按时间表逐段写满 segments（每段对照字数下限），"
@@ -215,7 +215,7 @@ def material_timeline_length_budget(timeline: VideoTimeline, *, chars_per_sec: f
     )
 
 
-def _material_timeline_table(timeline: VideoTimeline, *, chars_per_sec: float = 5.5) -> str:
+def _material_timeline_table(timeline: VideoTimeline, *, chars_per_sec: float | None = None) -> str:
     """时间表表格，含画面内容描述。"""
     def _mc(d): return _max_chars_for_duration(d, chars_per_sec)
     lines = [
@@ -252,7 +252,7 @@ def material_timeline_system_clause(timeline: VideoTimeline, *, need_opening: bo
     )
 
 
-def append_material_timeline_to_user(user: str, timeline: VideoTimeline, *, chars_per_sec: float = 5.5) -> str:
+def append_material_timeline_to_user(user: str, timeline: VideoTimeline, *, chars_per_sec: float | None = None) -> str:
     """素材脚本专用：附加时间表信息，含画面描述。"""
     return (
         f"{user}\n\n"
@@ -417,7 +417,7 @@ def validate_timeline_script(
                 (
                     "以下段落仍过长，请大幅压缩："
                     + "；".join(still_bad)
-                    + f"。目标约 {TIMELINE_TTS_CHARS_PER_SEC} 字/秒。"
+                    + f"。目标约 {DEFAULT_SPEECH_CHARS_PER_SEC} 字/秒。"
                 ),
                 warnings,
             )
@@ -433,7 +433,7 @@ def validate_timeline_script(
             (
                 "以下段落过长，请压缩后重写："
                 + "；".join(over_hard)
-                + f"。目标约 {TIMELINE_TTS_CHARS_PER_SEC} 字/秒，"
+                + f"。目标约 {DEFAULT_SPEECH_CHARS_PER_SEC} 字/秒，"
                 "可删形容词、合并同义，届别+球名必留。"
             ),
             warnings,
