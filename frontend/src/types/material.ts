@@ -44,3 +44,12 @@ export interface EditMaterialParams {
   note?: string;
   file?: File;
 }
+
+export interface AnalyzeMaterialParams {
+  material_id: number;
+}
+
+export interface AnalyzeMaterialResult {
+  material_id: number;
+  note: string;
+}

@@ -3,6 +3,8 @@
  */
 import { api } from "./config";
 import type {
+  AnalyzeMaterialParams,
+  AnalyzeMaterialResult,
   CreateJobFromMaterialParams,
   ListMaterialsParams,
   MaterialRecord,
@@ -72,5 +74,12 @@ export async function createJobFromMaterial(
   params: CreateJobFromMaterialParams
 ): Promise<JobDetail> {
   const response = await api.post<JobDetail>("/v_factory/api/materials/jobs/create", params);
+  return response.data;
+}
+
+export async function analyzeMaterial(
+  params: AnalyzeMaterialParams
+): Promise<AnalyzeMaterialResult> {
+  const response = await api.post<AnalyzeMaterialResult>("/v_factory/api/materials/analyze", params);
   return response.data;
 }
