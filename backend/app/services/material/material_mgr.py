@@ -189,9 +189,8 @@ class MaterialMgr:
         video_path = Path(material["file_path"])
         duration = material.get("duration_sec")
 
-        # 写 analyzing 标记，前端据此轮询
         with connection() as conn:
-            repo_material.update_material(conn, material_id, note="analyzing")
+            repo_material.update_material(conn, material_id, status="analyzing")
 
         t = threading.Thread(
             target=self._run_analysis,
@@ -201,7 +200,7 @@ class MaterialMgr:
         t.start()
         logger.info("material %s analysis thread started", material_id)
 
-        return {"material_id": material_id, "status": "analyzing"}
+        return {"material_id": material_id, "analyze_status": "analyzing"}
 
     def _run_analysis(
         self, material_id: int, video_path: Path, duration: float | None
@@ -211,10 +210,12 @@ class MaterialMgr:
             analyzer = VideoAnalyzer(video_path, duration=duration)
             note_text = analyzer.analyze()
             with connection() as conn:
-                repo_material.update_material(conn, material_id, note=note_text)
+                repo_material.update_material(conn, material_id, note=note_text, status="active")
             logger.info("material %s analysis complete", material_id)
         except Exception:
             logger.exception("material %s analysis failed", material_id)
+            with connection() as conn:
+                repo_material.update_material(conn, material_id, status="analyze_failed")
 
     def create_job_from_material(
         self,
