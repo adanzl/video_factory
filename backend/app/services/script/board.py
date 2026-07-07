@@ -128,7 +128,6 @@ _IMAGE_PROMPTS_JSON_EXAMPLE_NO_SD15 = """{
 _MATERIAL_SCRIPT_JSON_EXAMPLE = """{
   "title": "标题示例",
   "narration": "（各段 text 按序拼接的全文，须达到【字数预算】写作目标）",
-  "word_count": 800,
   "segments": [
     {"segment_index": 1, "text": "（本段口播，须写满该段字数下限，用具体细节撑开）"},
     {"segment_index": 2, "text": "（第二段同样写满预算，补比喻或步骤后再接下一段）"}
@@ -1195,14 +1194,13 @@ def build_material_script_prompts(
         )
     system = (
         "你是给小朋友讲科普的视频口播编剧。视频画面已由用户上传的基底视频提供，无需描述画面。"
-        "输出 JSON，字段：title, narration, word_count, segments。"
+        "输出 JSON，字段：title, narration, segments。"
         f"{title_rule}"
         f"{length_rule}"
         f"{_NARRATION_VOICE_RULE}"
         f"{_NARRATION_ANTI_MEMOIR_RULE}"
         f"{opening_rule}"
         f"{segment_rule}"
-        "word_count 必须等于 narration 实际字数，禁止虚报。"
         f"{material_timeline_system_clause(timeline, need_opening=bool(need_opening)) if timeline else ''}"
         f"{_supplementary_system_clause(supplementary_info)}"
         f"{_json_output_clause(_MATERIAL_SCRIPT_JSON_EXAMPLE)}"

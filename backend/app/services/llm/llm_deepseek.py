@@ -873,6 +873,43 @@ class DeepSeekClient(LLMClient):
             )
         return data
 
+    def _fix_material_segments(
+        self,
+        data: dict[str, Any],
+        segments: list[dict],
+        mode: str,
+        timeline: Any,
+        chars_per_sec: float,
+    ) -> None:
+        """对超长/不足的 segments 逐段调 LLM 缩句或扩句，原地修改 data。"""
+        from app.services.script.board_timeline import _max_chars_for_duration, slot_min_chars
+        for seg in segments:
+            idx = int(seg.get("segment_index", 0))
+            slot = next((s for s in timeline.slots if s.index == idx), None)
+            if not slot:
+                continue
+            mc = _max_chars_for_duration(slot.duration_sec, chars_per_sec)
+            mn = slot_min_chars(mc)
+            text = str(seg.get("text") or "")
+            if mode == "shrink":
+                system = (
+                    "将以下口播段落精简缩短，保留核心科普信息与童趣口吻，"
+                    f"字数控制在 {mn}-{mc} 字之间（当前 {_narration_char_count(text)} 字）。直输出精简后的段落文本，不要 JSON。"
+                )
+            else:
+                system = (
+                    "将以下口播段落扩充写长，补充更多科普细节、比喻或互动感叹，"
+                    f"字数达到 {mn}-{mc} 字之间（当前 {_narration_char_count(text)} 字）。直输出扩充后的段落文本，不要 JSON。"
+                )
+            user = f"口播段落：{text}\n\n该段对应画面：{slot.scene}，{slot.description}"
+            try:
+                content, _ = self._chat(system, user, max_tokens=1024, thinking_enabled=False)
+                fixed = content.strip()
+                if fixed:
+                    seg["text"] = fixed
+            except Exception as exc:
+                logger.warning("material segment %s failed for seg %s: %s", mode, idx, exc)
+
     def generate_material_script(
         self,
         title: str,
@@ -914,7 +951,11 @@ class DeepSeekClient(LLMClient):
                 raise ValueError("LLM material script response missing segments")
             for seg in data["segments"]:
                 seg.setdefault("visual_mode", "material")
-            chars = _narration_char_count(str(data.get("narration") or ""))
+            # 重新拼接 narration 并计算 word_count
+            seg_texts = [str(s.get("text") or "") for s in data["segments"]]
+            data["narration"] = "".join(seg_texts)
+            data["word_count"] = _narration_char_count(data["narration"])
+            chars = data["word_count"]
             if chars > max_chars:
                 length_feedback = _narration_too_long_feedback(
                     chars,
@@ -936,11 +977,48 @@ class DeepSeekClient(LLMClient):
                 prefix=feedback if attempt == 0 and feedback else None,
             )
         if data is not None:
-            chars = _narration_char_count(str(data.get("narration") or ""))
+            # 重新拼接 narration 并计算 word_count
+            seg_texts = [str(s.get("text") or "") for s in (data.get("segments") or [])]
+            data["narration"] = "".join(seg_texts)
+            data["word_count"] = _narration_char_count(data["narration"])
+            chars = data["word_count"]
             if chars <= max_chars:
                 data = self._expand_narration_if_needed(
                     data, min_chars=min_chars, mode="material", job=job
                 )
+            # 有时间表时，逐段校验预算并扩/缩句
+            if video_timeline and data.get("segments"):
+                from app.services.script.board_timeline import parse_video_timeline, _max_chars_for_duration, slot_min_chars
+                tl = parse_video_timeline(video_timeline)
+                if tl and tl.slots:
+                    cps = _cps or DEFAULT_SPEECH_CHARS_PER_SEC
+                    expand_seg_lst: list[dict] = []
+                    shrink_seg_lst: list[dict] = []
+                    seg_idx_map: dict[int, dict] = {}
+                    for seg in data["segments"]:
+                        seg_idx_map[int(seg.get("segment_index", 0))] = seg
+                    for slot in tl.slots:
+                        seg = seg_idx_map.get(slot.index)
+                        if not seg:
+                            continue
+                        mc = _max_chars_for_duration(slot.duration_sec, cps)
+                        mn = slot_min_chars(mc)
+                        text = str(seg.get("text") or "")
+                        chars_seg = _narration_char_count(text)
+                        if chars_seg < mn:
+                            expand_seg_lst.append(seg)
+                        elif chars_seg > mc:
+                            shrink_seg_lst.append(seg)
+                    # 缩句（超长段）
+                    if shrink_seg_lst:
+                        self._fix_material_segments(data, shrink_seg_lst, "shrink", tl, cps)
+                    # 扩句（不足段）
+                    if expand_seg_lst:
+                        self._fix_material_segments(data, expand_seg_lst, "expand", tl, cps)
+                    if shrink_seg_lst or expand_seg_lst:
+                        seg_texts = [str(s.get("text") or "") for s in (data.get("segments") or [])]
+                        data["narration"] = "".join(seg_texts)
+                        data["word_count"] = _narration_char_count(data["narration"])
         raise_if_job_cancelled(job)
         return data
 
