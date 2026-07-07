@@ -5,11 +5,11 @@
 主机名：
 
 - 局域网 主机: mini  
-- 广域网 主机：57c42474b0ea.ofalias.net 端口 58186
-- 广域网 主机：vip.bj.frp.one 端口 40384
+- 广域网 主机：vip.xa.frp.one:19367
+- 广域网 主机：57c42474b0ea.ofalias.net:58186
 用户名 leo
 密码 见.env 里的 SSH_PASSWORD
-优先使用局域网
+优先级从上到下
 
 StableDiffusion 目录 /mnt/data/stable-diffusion/webui
 sd日志查询 journalctl -u sd.service -f
