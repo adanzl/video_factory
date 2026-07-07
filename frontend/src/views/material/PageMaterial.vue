@@ -59,7 +59,7 @@
       </el-table-column>
       <el-table-column label="操作" width="280" fixed="right">
         <template #default="{ row }">
-          <div class="flex items-center gap-1 whitespace-nowrap">
+          <div class="flex items-center gap-x-1 whitespace-nowrap">
             <el-button
               type="primary"
               link
@@ -69,7 +69,7 @@
             >
               播放
             </el-button>
-            <el-button type="primary" link size="small" @click="openEditDialog(row)">
+            <el-button type="primary" link size="small" @click="editMaterialRow = row; showEditDialog = true">
               编辑
             </el-button>
             <el-button
@@ -82,6 +82,8 @@
             >
               分析
             </el-button>
+          </div>
+          <div class="flex items-center gap-x-1 whitespace-nowrap mt-1">
             <el-button type="success" link size="small" @click="openCreateJobDialog(row)">
               发起任务
             </el-button>
@@ -130,36 +132,7 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="showEditDialog" title="编辑素材" width="480px" destroy-on-close>
-      <el-form label-width="90px">
-        <el-form-item label="素材 ID">
-          <span>{{ editMaterialRow?.id }}</span>
-        </el-form-item>
-        <el-form-item label="名称" required>
-          <el-input v-model="editName" placeholder="素材名称" clearable />
-        </el-form-item>
-        <el-form-item label="备注">
-          <el-input v-model="editNote" type="textarea" :rows="2" placeholder="可选" />
-        </el-form-item>
-        <el-form-item label="视频文件">
-          <input
-            ref="editFileInputRef"
-            type="file"
-            accept="video/*,.mp4,.mov,.webm,.mkv"
-            @change="onEditFileChange"
-          />
-          <p v-if="editMaterialRow?.file_path" class="mt-1 text-xs text-gray-500">
-            不选文件则保留当前视频；更换后已关联任务需重新执行「基底准备」才会更新成片基底。
-          </p>
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="showEditDialog = false">取消</el-button>
-        <el-button type="primary" :loading="editing" :disabled="!editName.trim()" @click="handleEdit">
-          保存
-        </el-button>
-      </template>
-    </el-dialog>
+    <EditMaterialDialog v-model="showEditDialog" :material="editMaterialRow" @saved="fetchMaterials" />
 
     <el-dialog v-model="showCreateJobDialog" title="从素材发起任务" width="520px" destroy-on-close>
       <el-form label-width="88px">
@@ -233,13 +206,13 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import {
   createJobFromMaterial,
   deleteMaterial,
-  editMaterial,
   getMaterial,
   listMaterials,
   uploadMaterial,
   analyzeMaterial,
 } from "@/api/api-materials";
 import type { MaterialJobRunMode, MaterialRecord } from "@/types/material";
+import EditMaterialDialog from "./EditMaterialDialog.vue";
 import { useErrorHandler } from "@/composables/useErrorHandler";
 import { formatDateTime } from "@/utils/date";
 import { formatFileSize, formatMediaDuration, getMediaFileUrl, MEDIA_CROSS_ORIGIN } from "@/utils/media";
@@ -251,7 +224,6 @@ const materials = ref<MaterialRecord[]>([]);
 const loading = ref(false);
 const deleting = ref(false);
 const uploading = ref(false);
-const editing = ref(false);
 const creatingJob = ref(false);
 const analyzingIds = ref(new Set<number>());
 const selectedIds = ref<number[]>([]);
@@ -267,10 +239,6 @@ const fileInputRef = ref<HTMLInputElement | null>(null);
 
 const showEditDialog = ref(false);
 const editMaterialRow = ref<MaterialRecord | null>(null);
-const editName = ref("");
-const editNote = ref("");
-const editFile = ref<File | null>(null);
-const editFileInputRef = ref<HTMLInputElement | null>(null);
 
 const showCreateJobDialog = ref(false);
 const createJobMaterial = ref<MaterialRecord | null>(null);
@@ -424,50 +392,6 @@ const handleUpload = async () => {
     handleError(error, "上传失败");
   } finally {
     uploading.value = false;
-  }
-};
-
-const openEditDialog = (row: MaterialRecord) => {
-  editMaterialRow.value = row;
-  editName.value = row.name;
-  editNote.value = row.note ?? "";
-  editFile.value = null;
-  showEditDialog.value = true;
-};
-
-const onEditFileChange = (event: Event) => {
-  const input = event.target as HTMLInputElement;
-  editFile.value = input.files?.[0] ?? null;
-};
-
-const handleEdit = async () => {
-  if (!editMaterialRow.value) {
-    return;
-  }
-  const name = editName.value.trim();
-  if (!name) {
-    ElMessage.warning("请填写名称");
-    return;
-  }
-  editing.value = true;
-  try {
-    await editMaterial({
-      id: editMaterialRow.value.id,
-      name,
-      note: editNote.value,
-      file: editFile.value ?? undefined,
-    });
-    ElMessage.success("已保存");
-    showEditDialog.value = false;
-    editFile.value = null;
-    if (editFileInputRef.value) {
-      editFileInputRef.value.value = "";
-    }
-    await fetchMaterials();
-  } catch (error) {
-    handleError(error, "保存失败");
-  } finally {
-    editing.value = false;
   }
 };
 

@@ -42,7 +42,9 @@ from app.quality.image_prompt import (
 )
 from app.services.script.board_timeline import (
     VideoTimeline,
+    append_material_timeline_to_user,
     append_timeline_to_user,
+    material_timeline_system_clause,
     narration_range_for_timeline,
     parse_video_timeline,
     timeline_system_clause,
@@ -1154,29 +1156,34 @@ def build_material_script_prompts(
         narration_word_min, narration_word_max = _narration_word_range(narration_word_target)
         narration_hard_min = narration_word_min
     title_rule, title_user_prefix = _title_rule(title, max_title)
-    segment_rule = (
-        f"segments 必须恰好 {len(timeline.slots)} 条，与画面时间表逐段一一对应；"
-        "每项含 segment_index 与 text，第 i 段只讲第 i 段画面；"
-        "各段 text 按顺序拼接须与 narration 完全一致，口吻同样保持童趣。"
-        if timeline
-        else (
+    if timeline:
+        segment_rule = (
+            f"segments 必须恰好 {len(timeline.slots)} 条，与画面时间表逐段一一对应；"
+            "每项含 segment_index 与 text，第 i 段只讲第 i 段画面；"
+            "各段 text 按顺序拼接须与 narration 完全一致，口吻同样保持童趣。"
+        )
+        opening_rule = (
+            "禁止开场钩子、悬念反问、自我介绍或全片总起；"
+            "narration 第一句必须从时间表第 1 段画面内容直接讲起。"
+        )
+        length_rule = (
+            f"每段按时间表字数预算写满（见下），全片 narration 总目标约 {narration_word_target} 字；"
+            f"验收区间 {narration_hard_min}-{narration_word_max} 字（不含空格换行）；"
+            f"低于 {narration_hard_min} 字或高于 {narration_word_max} 字视为不合格。"
+        )
+    else:
+        segment_rule = (
             "segments 为分句数组，每项含 segment_index 与 text；"
             "各段 text 按顺序拼接须与 narration 完全一致，口吻同样保持童趣；"
             "按自然断句切分，无需 visual 字段。"
         )
-    )
-    opening_rule = (
-        "禁止开场钩子、悬念反问、自我介绍或全片总起；"
-        "narration 第一句必须从时间表第 1 段画面内容直接讲起。"
-        if timeline
-        else "禁止开头自我介绍；第一句直接进入主题。"
-    )
-    length_rule = (
-        f"narration 总目标 {narration_word_target} 字；{_writing_target_clause(narration_word_target)}；"
-        f"验收区间 {narration_hard_min}-{narration_word_max} 字（不含空格换行）；"
-        f"低于 {narration_hard_min} 字或高于 {narration_word_max} 字视为不合格；"
-        f"{_MATERIAL_NARRATION_LENGTH_RULE}"
-    )
+        opening_rule = "禁止开头自我介绍；第一句直接进入主题。"
+        length_rule = (
+            f"narration 总目标 {narration_word_target} 字；{_writing_target_clause(narration_word_target)}；"
+            f"验收区间 {narration_hard_min}-{narration_word_max} 字（不含空格换行）；"
+            f"低于 {narration_hard_min} 字或高于 {narration_word_max} 字视为不合格；"
+            f"{_MATERIAL_NARRATION_LENGTH_RULE}"
+        )
     system = (
         "你是给小朋友讲科普的视频口播编剧。视频画面已由用户上传的基底视频提供，无需描述画面。"
         "输出 JSON，字段：title, narration, word_count, segments。"
@@ -1187,7 +1194,7 @@ def build_material_script_prompts(
         f"{opening_rule}"
         f"{segment_rule}"
         "word_count 必须等于 narration 实际字数，禁止虚报。"
-        f"{timeline_system_clause(timeline) if timeline else ''}"
+        f"{material_timeline_system_clause(timeline) if timeline else ''}"
         f"{_supplementary_system_clause(supplementary_info)}"
         f"{_json_output_clause(_MATERIAL_SCRIPT_JSON_EXAMPLE)}"
     )
@@ -1204,7 +1211,7 @@ def build_material_script_prompts(
         )
     user = _append_supplementary_to_user("\n\n".join(user_parts), supplementary_info)
     if timeline:
-        user = append_timeline_to_user(user, timeline)
+        user = append_material_timeline_to_user(user, timeline)
     if feedback:
         user += f"\n\n上次不合格：{feedback}。请按要求重写。"
     return _prompt_step("material_script", system, user)
