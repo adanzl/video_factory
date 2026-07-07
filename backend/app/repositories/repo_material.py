@@ -44,7 +44,7 @@ def create_material(
 
 def get_material(conn: sqlite3.Connection, material_id: int) -> dict:
     row = conn.execute(
-        "SELECT * FROM video_material WHERE id = ? AND status = 'active'",
+        "SELECT * FROM video_material WHERE id = ? AND status IN ('active', 'analyzing')",
         (material_id,),
     ).fetchone()
     if row is None:
