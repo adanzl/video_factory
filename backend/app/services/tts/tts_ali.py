@@ -257,16 +257,20 @@ def _synthesize_segment(
     effective_rate: float,
 ) -> _SegmentSynthResult:
     seg_index = seg["segment_index"]
+    raw_text = (seg.get("text") or "").strip()
     phrases = tts_mgr.phrase_chunks_for_segment(seg)
     segment_text = build_segment_tts_text(phrases)
     tts_text, lead_in = prepare_lead_in(segment_text, voice=effective_voice)
     settings = get_settings()
     logger.info(
-        "tts segment %s start phrases=%s text_chars=%s lead_in=%s transport=websocket",
+        "tts segment %s raw_text=%s phrases=%s text_chars=%s lead_in=%s transport=websocket segment_text=%s tts_text=%s",
         seg_index,
+        raw_text,
         len(phrases),
         len(segment_text),
         lead_in or "-",
+        segment_text,
+        tts_text,
     )
 
     for attempt in (1, 2):
