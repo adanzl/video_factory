@@ -874,6 +874,60 @@ class DeepSeekClient(LLMClient):
             )
         return data
 
+    def _shrink_longest_segments_to_fit(
+        self,
+        data: dict[str, Any],
+        max_chars: int,
+    ) -> None:
+        """总口播超长时，按长度降序缩句最长的 segments，直到总字数 <= max_chars。"""
+        segments = data.get("segments") or []
+        if not segments:
+            return
+        seg_texts = [str(s.get("text") or "") for s in segments]
+        total = _narration_char_count("".join(seg_texts))
+        excess = total - max_chars
+        if excess <= 0:
+            return
+        # 按文本长度降序排列，优先缩最长的段
+        indexed = sorted(
+            enumerate(segments),
+            key=lambda pair: _narration_char_count(str(pair[1].get("text") or "")),
+            reverse=True,
+        )
+        for _orig_idx, seg in indexed:
+            if excess <= 0:
+                break
+            text = str(seg.get("text") or "")
+            cur_len = _narration_char_count(text)
+            if cur_len <= 10:
+                continue
+            # 目标：至少砍掉 excess，但不低于 10 字
+            target_len = max(10, cur_len - excess)
+            system = (
+                "将以下口播段落精简缩短，保留核心信息与自然口吻，"
+                f"字数控制在 {target_len} 字以内（当前 {cur_len} 字）。"
+                "直输出精简后的段落文本，不要 JSON、不要解释。"
+            )
+            user = f"口播段落：{text}"
+            try:
+                content, _ = self._chat(system, user, max_tokens=1024, thinking_enabled=False)
+                fixed = content.strip()
+                if fixed:
+                    old_len = cur_len
+                    seg["text"] = fixed
+                    new_len = _narration_char_count(fixed)
+                    excess -= (old_len - new_len)
+                    logger.info(
+                        "shrunk segment %s: %d -> %d chars (excess remaining: %d)",
+                        seg.get("segment_index", _orig_idx), old_len, new_len, excess,
+                    )
+            except Exception as exc:
+                logger.warning("shrink segment %s failed: %s", seg.get("segment_index", _orig_idx), exc)
+        # 重新拼接 narration
+        seg_texts = [str(s.get("text") or "") for s in segments]
+        data["narration"] = "".join(seg_texts)
+        data["word_count"] = _narration_char_count(data["narration"])
+
     def _fix_material_segments(
         self,
         data: dict[str, Any],
@@ -1021,6 +1075,14 @@ class DeepSeekClient(LLMClient):
                         seg_texts = [str(s.get("text") or "") for s in (data.get("segments") or [])]
                         data["narration"] = "".join(seg_texts)
                         data["word_count"] = _narration_char_count(data["narration"])
+            # 最终兜底：如果总口播仍超长，按长度降序缩句最长段落
+            final_chars = _narration_char_count(data.get("narration", ""))
+            if final_chars > max_chars:
+                logger.warning(
+                    "material script still too long after retries (%d > %d), shrinking longest segments",
+                    final_chars, max_chars,
+                )
+                self._shrink_longest_segments_to_fit(data, max_chars)
         raise_if_job_cancelled(job)
         return data
 
