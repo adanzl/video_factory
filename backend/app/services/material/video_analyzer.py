@@ -25,7 +25,6 @@ from app.services.media.ffmpeg_utils import extract_frames_interval, probe_durat
 logger = logging.getLogger(__name__)
 
 _RETRYABLE_HTTP = frozenset({500, 502, 503, 504})
-_MAX_ANALYSIS_FRAMES = 15
 
 
 class VideoAnalyzer:
@@ -55,13 +54,13 @@ class VideoAnalyzer:
     # ── frame extraction ────────────────────────────────────
 
     def _extract_frames(self) -> tuple[list[str], int]:
-        """抽帧并返回 (base64列表, 间隔秒数)。"""
-        interval = max(2, int(self._duration / _MAX_ANALYSIS_FRAMES))
+        """抽帧：3s间隔算帧数 → +1 → 重算间隔。"""
+        target = int(self._duration / 3) + 1
+        interval = max(2, round(self._duration / target))
         with tempfile.TemporaryDirectory() as tmpdir:
             frames = extract_frames_interval(self._video_path, Path(tmpdir), interval)
             if not frames:
                 raise ValueError("未能从视频中提取到帧")
-            frames = frames[:_MAX_ANALYSIS_FRAMES]
             return (
                 [base64.b64encode(f.read_bytes()).decode("ascii") for f in frames],
                 interval,
@@ -72,30 +71,34 @@ class VideoAnalyzer:
     def _build_prompts(self, images_b64: list[str], interval: int) -> tuple[str, str]:
         """构造 system / user prompt。"""
         system = (
-            "你是一个视频内容分析专家。请分析提供的视频帧序列，"
-            "识别出视频中各个段落/场景，输出结构化的时间表 JSON。"
+            "你是一个视频内容分析专家。视频中逐一展示了不同的物品/对象"
+            "（如历届世界杯用球、历代产品型号等），每个持续数秒。"
+            "请分析提供的帧序列，为每个不同的对象创建一个 segment，"
+            "输出完整的时间表 JSON。"
         )
         user = (
             f"视频时长约 {self._duration:.1f} 秒，共提供 {len(images_b64)} 帧样本"
-            f"（每 {interval} 秒一帧）。\n\n"
-            "请严格按以下 Schema 输出 JSON：\n"
+            f"（每约 {interval} 秒一帧）。\n\n"
+            "请严格按以下 Schema 输出 JSON，每个独立对象对应一个 segment：\n"
             '{\n'
             '  "title": "视频标题/主题",\n'
             '  "duration_sec": 140.0,\n'
             '  "segments": [\n'
             '    {\n'
             '      "index": 1,\n'
-            '      "name": "段落名称",\n'
-            '      "description": "内容简要描述",\n'
+            '      "name": "对象名称",\n'
+            '      "description": "简要描述（10-20字）",\n'
             '      "start_sec": 0.0,\n'
             '      "end_sec": 8.0,\n'
             '      "duration_sec": 8.0\n'
             '    }\n'
             '  ]\n'
             '}\n\n'
-            "注意：\n"
+            "关键要求：\n"
+            "- 每个不同的视觉对象（如不同年份的足球）单独一个 segment\n"
+            "- 充分利用提供的帧样本推断各个对象出现的起止时间\n"
             "- 时间戳精确到±1秒\n"
-            "- segments 按时间顺序覆盖整个视频\n"
+            "- segments 按时间顺序覆盖整个视频、无遗漏\n"
             "- 只输出 JSON，不要其他文本或 markdown 标记"
         )
         return system, user
