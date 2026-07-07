@@ -76,11 +76,8 @@ def format_quality_log_message(step: str, report: QualityReport) -> str:
     reason = details.get("reason")
     if isinstance(reason, str) and reason.strip():
         parts.append(f"reason={reason.strip()}")
-    elif report.level == "pass" and step == "copy":
-        word_count = details.get("word_count")
-        if word_count is not None:
-            parts.append(f"word_count={word_count}")
-    elif details and report.level != "pass":
+    # 非 pass 时额外追加 word_count / max_expected / min_expected 等关键数值
+    if report.level != "pass":
         extras = ", ".join(
             f"{key}={value}"
             for key, value in details.items()
@@ -88,6 +85,10 @@ def format_quality_log_message(step: str, report: QualityReport) -> str:
         )
         if extras:
             parts.append(extras)
+    elif step == "copy":
+        word_count = details.get("word_count")
+        if word_count is not None:
+            parts.append(f"word_count={word_count}")
     return ", ".join(parts)
 
 

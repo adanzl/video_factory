@@ -106,8 +106,8 @@ def _timeline_items(data: dict[str, Any]) -> list[dict[str, Any]] | None:
     return None
 
 
-def _max_chars_for_duration(duration_sec: float, chars_per_sec: float = 5.5) -> int:
-    return max(10, int(math.floor(duration_sec * chars_per_sec)))
+def _max_chars_for_duration(duration_sec: float, chars_per_sec: float | None = None) -> int:
+    return max(10, int(math.floor(duration_sec * (chars_per_sec or TIMELINE_TTS_CHARS_PER_SEC))))
 
 
 def hard_max_chars(target: int) -> int:
@@ -122,7 +122,7 @@ def _segment_char_count(text: str) -> int:
     return len(re.sub(r"\s+", "", text))
 
 
-def parse_video_timeline(raw: str | None) -> VideoTimeline | None:
+def parse_video_timeline(raw: str | None, *, chars_per_sec: float | None = None) -> VideoTimeline | None:
     text = (raw or "").strip()
     if not text:
         return None
@@ -168,7 +168,7 @@ def parse_video_timeline(raw: str | None) -> VideoTimeline | None:
                 duration_sec=duration,
                 scene=scene,
                 description=description,
-                max_chars=_max_chars_for_duration(duration),
+                max_chars=_max_chars_for_duration(duration, chars_per_sec),
             )
         )
 

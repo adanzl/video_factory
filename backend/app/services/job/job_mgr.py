@@ -76,10 +76,10 @@ def _script_action_detail(
     parts.append(f"content_style={style}")
     extra = (supplementary_info or "").strip()
     if extra:
-        parts.append(f"supplementary_info={len(extra)}chars")
+        parts.append(f"supplementary_info=[{len(extra)}]")
     timeline = (video_timeline or "").strip()
     if timeline:
-        parts.append(f"video_timeline={len(timeline)}chars")
+        parts.append(f"video_timeline=[{len(timeline)}]")
     return ", ".join(parts)
 
 
