@@ -168,11 +168,11 @@ class MaterialScriptStage(StageExecutor):
         if manual_narration is None and isinstance(pending, dict):
             manual_narration = pending.get("pending_narration")
 
+        script = None
         if manual_narration and str(manual_narration).strip():
             narration = str(manual_narration).strip()
             # 有时间表时，用AI按时间表分段生成，手动口播作为补充参考
             if video_timeline:
-                script = None
                 extra = supplementary_info or ""
                 extra += f"\n用户已提供口播素材（需融入或参考）：{narration}"
                 supplementary_info = extra.strip()
@@ -189,9 +189,9 @@ class MaterialScriptStage(StageExecutor):
                     min_narration_chars=min_narration_chars,
                     video_timeline_raw=video_timeline,
                 )
-        else:
+
+        if script is None:
             last_exc: Exception | None = None
-            script = None
             last_script: dict | None = None
             feedback: str | None = None
             accept_warnings: list[str] = []
