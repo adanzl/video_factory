@@ -75,6 +75,7 @@ def _validate_material_script(
     min_narration_chars: int | None = None,
     video_timeline_raw: str | None = None,
     timeline_length_mode: str = "strict",
+    chars_per_sec: float | None = None,
 ) -> list[str]:
     settings = get_settings()
     max_len = settings.max_title_length if max_title_length is None else max_title_length
@@ -114,7 +115,7 @@ def _validate_material_script(
     script["title"] = title
     script["segments"] = _normalize_segments(segments)
 
-    timeline = script_mgr.parse_timeline(video_timeline_raw)
+    timeline = script_mgr.parse_timeline(video_timeline_raw, chars_per_sec=chars_per_sec)
     if timeline:
         timeline_error, timeline_warnings = script_mgr.validate_timeline(
             script,
@@ -162,6 +163,7 @@ class MaterialScriptStage(StageExecutor):
                         ),
                     )
         min_narration_chars = _min_narration_chars(narration_target_words)
+        chars_per_sec = ctx.script_speech_chars_per_sec
 
         pending = ctx.job.get("script_json") or {}
         manual_narration = ctx.material_narration
@@ -188,6 +190,7 @@ class MaterialScriptStage(StageExecutor):
                     max_title_length=max_title_length,
                     min_narration_chars=min_narration_chars,
                     video_timeline_raw=video_timeline,
+                    chars_per_sec=chars_per_sec,
                 )
 
         if script is None:
@@ -217,6 +220,7 @@ class MaterialScriptStage(StageExecutor):
                         min_narration_chars=min_narration_chars,
                         video_timeline_raw=video_timeline,
                         timeline_length_mode=length_mode,
+                        chars_per_sec=chars_per_sec,
                     )
                     break
                 except ScriptValidationError as exc:
@@ -242,6 +246,7 @@ class MaterialScriptStage(StageExecutor):
                         min_narration_chars=min_narration_chars,
                         video_timeline_raw=video_timeline,
                         timeline_length_mode="warn_only",
+                        chars_per_sec=chars_per_sec,
                     )
                     script = last_script
                     with connection() as conn:
@@ -303,7 +308,11 @@ class MaterialScriptStage(StageExecutor):
             script["narration_target_words"] = narration_target_words
         assign_segment_timings(
             script,
-            video_timeline=script_mgr.parse_timeline(video_timeline) if video_timeline else None,
+            video_timeline=(
+                script_mgr.parse_timeline(video_timeline, chars_per_sec=chars_per_sec)
+                if video_timeline
+                else None
+            ),
         )
         script["cost_time"] = round(time.perf_counter() - started, 1)
 

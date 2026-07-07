@@ -162,8 +162,9 @@ def _min_narration_chars_for_script(
     *,
     narration_target_words: int | None,
     video_timeline: str | None = None,
+    chars_per_sec: float | None = None,
 ) -> int:
-    timeline = parse_video_timeline(video_timeline)
+    timeline = parse_video_timeline(video_timeline, chars_per_sec=chars_per_sec)
     if timeline:
         lo, _ = narration_range_for_timeline(timeline)
         return lo
@@ -929,6 +930,7 @@ class DeepSeekClient(LLMClient):
         min_chars = _min_narration_chars_for_script(
             narration_target_words=narration_target_words,
             video_timeline=video_timeline,
+            chars_per_sec=_cps,
         )
         max_chars = narration_accept_max_chars(narration_target_words)
         length_feedback: str | None = feedback
@@ -989,7 +991,7 @@ class DeepSeekClient(LLMClient):
             # 有时间表时，逐段校验预算并扩/缩句
             if video_timeline and data.get("segments"):
                 from app.services.script.board_timeline import parse_video_timeline, _max_chars_for_duration, slot_min_chars
-                tl = parse_video_timeline(video_timeline)
+                tl = parse_video_timeline(video_timeline, chars_per_sec=_cps)
                 if tl and tl.slots:
                     cps = _cps or DEFAULT_SPEECH_CHARS_PER_SEC
                     expand_seg_lst: list[dict] = []
