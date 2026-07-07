@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from flask import Blueprint, request
 
 from app.api.errors import APIError
@@ -14,6 +16,8 @@ from app.api.utils import (
     parse_str,
 )
 from app.services.material.material_mgr import material_mgr
+
+logger = logging.getLogger(__name__)
 
 bp = Blueprint("api_materials", __name__, url_prefix="/v_factory/api/materials")
 
@@ -130,6 +134,7 @@ def create_job_from_material_route():
 def analyze_material_route():
     data = get_json_body()
     material_id = parse_id(data, field="material_id")
+    logger.info("analyze material #%d", material_id)
     try:
         result = material_mgr.analyze_material(material_id)
     except ValueError as exc:

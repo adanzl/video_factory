@@ -203,6 +203,7 @@ class Config:
         self.deepseek_thinking_enabled: bool = _bool("DEEPSEEK_THINKING", default=True)
         self.agnes_llm_model: str = os.getenv("AGNES_LLM_MODEL", "agnes-2.0-flash")
         self.agnes_llm_max_tokens: int = int(os.getenv("AGNES_LLM_MAX_TOKENS", "32768"))
+        self.agnes_vl_model: str = os.getenv("AGNES_VL_MODEL", "gpt-4o-mini")
         self.llm_image_prompt_batch_size: int = int(os.getenv("LLM_IMAGE_PROMPT_BATCH_SIZE", "4"))
 
         self.dashscope_api_key: str | None = dashscope_key

@@ -199,6 +199,7 @@ class MaterialMgr:
             daemon=True,
         )
         t.start()
+        logger.info("material %s analysis thread started", material_id)
 
         return {"material_id": material_id, "status": "analyzing"}
 

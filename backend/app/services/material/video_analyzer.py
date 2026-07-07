@@ -25,7 +25,7 @@ from app.services.media.ffmpeg_utils import extract_frames_interval, probe_durat
 logger = logging.getLogger(__name__)
 
 _RETRYABLE_HTTP = frozenset({500, 502, 503, 504})
-_MAX_ANALYSIS_FRAMES = 30
+_MAX_ANALYSIS_FRAMES = 15
 
 
 class VideoAnalyzer:
@@ -124,13 +124,12 @@ class VideoAnalyzer:
             })
 
         payload: dict = {
-            "model": settings.agnes_llm_model,
+            "model": settings.agnes_vl_model,
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": content},
             ],
             "max_tokens": max_tokens,
-            "response_format": {"type": "json_object"},
         }
 
         url = f"{settings.agnes_api_base_url.rstrip('/')}/chat/completions"
