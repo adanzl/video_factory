@@ -47,6 +47,10 @@ class VideoAnalyzer:
             self._duration = probe_duration(self._video_path)
 
         images_b64, interval = self._extract_frames()
+        logger.info(
+            "analyzing material with %d frames (interval=%ds, duration=%.1fs)",
+            len(images_b64), interval, self._duration,
+        )
         system, user = self._build_prompts(images_b64, interval)
         raw = self._call_multimodal(system, user, images_b64)
         return self._validate(raw)

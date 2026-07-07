@@ -475,11 +475,10 @@ const handleAnalyze = async (row: MaterialRecord) => {
   try {
     await analyzeMaterial({ material_id: row.id });
 
-    // 轮询直到 note 不再是 analyzing
+    // 轮询直到 analyze_status 不再是 analyzing
     while (true) {
       const material = await getMaterial(row.id);
-      const note = material.note;
-      if (note && note !== "analyzing") {
+      if (material.status !== "analyzing") {
         ElMessage.success("分析完成");
         await fetchMaterials();
         return;
