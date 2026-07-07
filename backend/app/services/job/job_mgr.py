@@ -183,6 +183,43 @@ class JobMgr:
                 segment["duration_sec"] = resolved
         return segments
 
+    def update_segment_text(self, job_id: int, segment_index: int, text: str) -> dict:
+        """修改分镜文案，同步更新 video_segment 表与 script_json。"""
+        cleaned = text.strip()
+        if not cleaned:
+            raise ValueError("text is empty")
+        with connection() as conn:
+            job = repo_job.get_job(conn, job_id)
+            segments = repo_segment.list_segments(conn, job_id)
+            target = next(
+                (s for s in segments if int(s["segment_index"]) == segment_index), None
+            )
+            if target is None:
+                raise KeyError(f"segment {segment_index} not found")
+            repo_segment.update_segment(conn, int(target["id"]), text=cleaned)
+            # 同步 script_json
+            script = dict(job.get("script_json") or {})
+            script_segments = list(script.get("segments") or [])
+            narration_parts: list[str] = []
+            found = False
+            for seg in script_segments:
+                if int(seg.get("segment_index", 0)) == segment_index:
+                    seg = dict(seg)
+                    seg["text"] = cleaned
+                    found = True
+                narration_parts.append(str(seg.get("text") or ""))
+            if not found:
+                raise KeyError(f"segment {segment_index} not found in script_json")
+            script["segments"] = script_segments
+            script["narration"] = "".join(narration_parts)
+            script["word_count"] = sum(len(p) for p in narration_parts)
+            repo_job.update_job(conn, job_id, script_json=script)
+            repo_job_log.append_log(
+                conn, job_id, "segment",
+                f"segment #{segment_index} text updated ({len(cleaned)} chars)",
+            )
+            return repo_job.get_job(conn, job_id)
+
     def get_logs(self, job_id: int) -> list[dict]:
         with connection() as conn:
             repo_job.get_job(conn, job_id)

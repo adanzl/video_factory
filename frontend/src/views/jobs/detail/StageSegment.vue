@@ -97,7 +97,17 @@
         >
           <div class="flex items-center justify-between gap-2">
             <span class="text-sm font-medium text-gray-800">#{{ segment.segment_index }}</span>
-            <el-tag size="small">{{ segment.status }}</el-tag>
+            <div class="flex items-center gap-1">
+              <el-button
+                size="small"
+                link
+                type="primary"
+                @click="openEditDialog(segment)"
+              >
+                编辑
+              </el-button>
+              <el-tag size="small">{{ segment.status }}</el-tag>
+            </div>
           </div>
           <div class="text-xs text-gray-400">
             {{ formatSegmentDurationLabel(segment) }}
@@ -282,6 +292,24 @@
       @imported="emit('refresh')"
     />
 
+    <el-dialog v-model="editDialogOpen" title="编辑分镜文案" width="560px" destroy-on-close>
+      <div class="mb-2 text-sm text-gray-600">分镜 #{{ editSegmentIndex }}</div>
+      <el-input
+        v-model="editText"
+        type="textarea"
+        :rows="6"
+        placeholder="输入口播文案"
+        maxlength="500"
+        show-word-limit
+      />
+      <template #footer>
+        <el-button @click="editDialogOpen = false">取消</el-button>
+        <el-button type="primary" :loading="editSaving" :disabled="!editText.trim()" @click="handleSaveSegmentText">
+          保存
+        </el-button>
+      </template>
+    </el-dialog>
+
     <StageLogsSection :logs="logs" />
   </div>
 </template>
@@ -289,7 +317,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { generateImagePrompts, runJobStageAction, updateJobInfo } from "@/api/api-jobs";
+import { generateImagePrompts, runJobStageAction, updateJobInfo, updateSegmentText } from "@/api/api-jobs";
 import { getMediaFileUrl } from "@/api/api-media";
 import type { JobDetail, JobInfo, JobLog, JobSegment, ScriptJson } from "@/types/jobs";
 import type { RunStageActionPayload } from "@/types/jobs/stageAction";
@@ -418,6 +446,36 @@ const clipSearchOpen = ref(false);
 const clipSearchSegmentIndex = ref(1);
 const clipSearchKeyword = ref("");
 const clipSearchOrientation = ref<ClipOrientation>("");
+
+const editDialogOpen = ref(false);
+const editSegmentIndex = ref(1);
+const editText = ref("");
+const editSaving = ref(false);
+
+const openEditDialog = (segment: { segment_index: number; text: string }) => {
+  editSegmentIndex.value = segment.segment_index;
+  editText.value = segment.text || "";
+  editDialogOpen.value = true;
+};
+
+const handleSaveSegmentText = async () => {
+  const trimmed = editText.value.trim();
+  if (!trimmed) {
+    ElMessage.warning("文案不能为空");
+    return;
+  }
+  editSaving.value = true;
+  try {
+    await updateSegmentText(props.job.id, editSegmentIndex.value, trimmed);
+    ElMessage.success(`分镜 #${editSegmentIndex.value} 文案已更新`);
+    editDialogOpen.value = false;
+    emit("refresh");
+  } catch (error) {
+    handleError(error, "更新文案失败");
+  } finally {
+    editSaving.value = false;
+  }
+};
 
 const actionDisabled = computed(() => props.job.status === "running");
 const actionDisabledReason = computed(() =>

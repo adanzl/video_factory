@@ -1,61 +1,34 @@
 <template>
   <div>
-    <StageActionBar
-      :loading="submitting"
-      :disabled="actionDisabled"
-      :disabled-reason="actionDisabledReason"
-      @primary="handleRun(false)"
-      @to-end="handleRun(true)"
-    />
+    <StageActionBar :loading="submitting" :disabled="actionDisabled" :disabled-reason="actionDisabledReason"
+      @primary="handleRun(false)" @to-end="handleRun(true)" />
 
     <div :class="STAGE_BLOCK_CLASS">
-      <el-form
-        :label-width="FORM_LABEL_WIDTH"
-        class="[&_.el-form-item]:mb-2 [&_.el-form-item__content]:min-w-0 [&_.el-form-item__content]:flex-1 [&_.el-form-item__label]:w-[100px] [&_.el-form-item__label]:min-w-[100px] [&_.el-form-item__label]:shrink-0 [&_.el-form-item__label]:justify-end"
-      >
+      <el-form :label-width="FORM_LABEL_WIDTH"
+        class="[&_.el-form-item]:mb-2 [&_.el-form-item__content]:min-w-0 [&_.el-form-item__content]:flex-1 [&_.el-form-item__label]:w-[100px] [&_.el-form-item__label]:min-w-[100px] [&_.el-form-item__label]:shrink-0 [&_.el-form-item__label]:justify-end">
         <el-form-item label="原标题">
           <div class="flex w-full min-w-0 items-center gap-2">
-            <el-input
-              v-model="sourceTitle"
-              placeholder="脚本生成输入标题"
-              clearable
-              class="min-w-0 flex-1!"
-            />
-            <el-button
-              :loading="savingSourceTitle"
+            <el-input v-model="sourceTitle" placeholder="脚本生成输入标题" clearable class="min-w-0 flex-1!" />
+            <el-button :loading="savingSourceTitle"
               :disabled="actionDisabled || !sourceTitle.trim() || sourceTitleUnchanged"
-              @click="handleUpdateSourceTitle"
-            >
+              @click="handleUpdateSourceTitle">
               更新
             </el-button>
           </div>
         </el-form-item>
 
-        <el-descriptions
-          :column="4"
-          border
-          :label-width="SCRIPT_CONFIG_LABEL_WIDTH"
-          :class="SCRIPT_CONFIG_DESC_CLASS"
-        >
+        <el-descriptions :column="4" border :label-width="SCRIPT_CONFIG_LABEL_WIDTH" :class="SCRIPT_CONFIG_DESC_CLASS">
           <template v-if="!isMaterialJob">
             <el-descriptions-item label="方向">
-              <el-radio-group
-                v-model="jobOrientation"
-                size="small"
-                :disabled="savingProfile || actionDisabled"
-                @change="handleOrientationChange"
-              >
+              <el-radio-group v-model="jobOrientation" size="small" :disabled="savingProfile || actionDisabled"
+                @change="handleOrientationChange">
                 <el-radio-button value="portrait">竖屏</el-radio-button>
                 <el-radio-button value="landscape">横屏</el-radio-button>
               </el-radio-group>
             </el-descriptions-item>
             <el-descriptions-item label="类型">
-              <el-radio-group
-                v-model="contentStyle"
-                size="small"
-                :disabled="savingProfile || actionDisabled"
-                @change="handleContentStyleChange"
-              >
+              <el-radio-group v-model="contentStyle" size="small" :disabled="savingProfile || actionDisabled"
+                @change="handleContentStyleChange">
                 <el-radio-button value="science_child">童趣科普</el-radio-button>
                 <el-radio-button value="life_experience">生活经验</el-radio-button>
                 <el-radio-button value="history_mystery">历史谜案</el-radio-button>
@@ -63,28 +36,14 @@
             </el-descriptions-item>
             <el-descriptions-item label="预计时间">
               <div class="flex items-center gap-1">
-                <el-input-number
-                  v-model="estimatedDurationMin"
-                  :min="0.5"
-                  :max="15"
-                  :step="0.5"
-                  :precision="1"
-                  controls-position="right"
-                  class="w-28!"
-                  @change="syncNarrationFromEstimatedDuration"
-                />
+                <el-input-number v-model="estimatedDurationMin" :min="0.5" :max="15" :step="0.5" :precision="1"
+                  controls-position="right" class="w-28!" @change="syncNarrationFromEstimatedDuration" />
                 <span class="text-xs text-gray-400">分</span>
               </div>
             </el-descriptions-item>
             <el-descriptions-item label="单镜 (秒)">
-              <el-input-number
-                v-model="segmentTargetSec"
-                :min="0"
-                :max="60"
-                :step="1"
-                controls-position="right"
-                class="w-28!"
-              />
+              <el-input-number v-model="segmentTargetSec" :min="0" :max="60" :step="1" controls-position="right"
+                class="w-28!" />
             </el-descriptions-item>
             <el-descriptions-item label="文生图提示词">
               <el-checkbox v-model="includeImagePrompts">生成</el-checkbox>
@@ -94,17 +53,9 @@
             <el-descriptions-item label="预计时间">
               <div class="flex flex-col gap-1">
                 <div class="flex items-center gap-1">
-                  <el-input-number
-                    v-model="estimatedDurationMin"
-                    :min="0.1"
-                    :max="15"
-                    :step="0.1"
-                    :precision="1"
-                    :disabled="materialDurationLocked"
-                    controls-position="right"
-                    class="w-32!"
-                    @change="syncNarrationFromEstimatedDuration"
-                  />
+                  <el-input-number v-model="estimatedDurationMin" :min="0.1" :max="15" :step="0.1" :precision="1"
+                    :disabled="materialDurationLocked" controls-position="right" class="w-32!"
+                    @change="syncNarrationFromEstimatedDuration" />
                   <span class="text-xs text-gray-400">分</span>
                 </div>
                 <span v-if="baseDurationHint" class="text-xs text-gray-400">{{ baseDurationHint }}</span>
@@ -112,79 +63,60 @@
             </el-descriptions-item>
           </template>
           <el-descriptions-item label="标题上限">
-            <el-input-number
-              v-model="maxTitleLength"
-              :min="8"
-              :max="48"
-              :step="1"
-              controls-position="right"
-              class="w-28!"
-            />
+            <el-input-number v-model="maxTitleLength" :min="8" :max="48" :step="1" controls-position="right"
+              class="w-28!" />
           </el-descriptions-item>
           <el-descriptions-item label="预估语速">
             <div class="flex items-center gap-1">
-              <el-input-number
-                v-model="speechCharsPerSec"
-                :min="SPEECH_CHARS_PER_SEC_MIN"
-                :max="SPEECH_CHARS_PER_SEC_MAX"
-                :step="0.1"
-                :precision="1"
-                controls-position="right"
-                class="w-28!"
-              />
+              <el-input-number v-model="speechCharsPerSec" :min="SPEECH_CHARS_PER_SEC_MIN"
+                :max="SPEECH_CHARS_PER_SEC_MAX" :step="0.1" :precision="1" controls-position="right" class="w-28!" />
               <span class="text-xs text-gray-400">字/秒</span>
             </div>
           </el-descriptions-item>
           <el-descriptions-item label="口播字数">
-            <el-input-number
-              v-model="narrationTargetWords"
-              :min="NARRATION_WORDS_MIN"
-              :max="NARRATION_WORDS_MAX"
-              :step="50"
-              controls-position="right"
-              class="w-32!"
-              @change="handleNarrationWordsChange"
-            />
+            <el-input-number v-model="narrationTargetWords" :min="NARRATION_WORDS_MIN" :max="NARRATION_WORDS_MAX"
+              :step="50" controls-position="right" class="w-32!" @change="handleNarrationWordsChange" />
           </el-descriptions-item>
           <el-descriptions-item label="标题优化">
             <el-checkbox v-model="skipTitleOptimize">跳过</el-checkbox>
           </el-descriptions-item>
-          <el-descriptions-item v-if="isMaterialJob" label="时间表" :span="3">
-            <el-input
-              v-model="videoTimeline"
-              type="textarea"
-              :rows="5"
-              placeholder="可选：粘贴画面时间表 JSON（含 balls/segments/items 数组与 start_sec、end_sec），口播将逐段对齐"
-              clearable
-            />
-          </el-descriptions-item>
           <el-descriptions-item label="补充信息" :span="3">
-            <el-input
-              v-model="supplementaryInfo"
-              type="textarea"
-              :rows="3"
-              placeholder="可选：背景知识、必讲要点、表达风格、禁忌表述等（不含时间表 JSON）"
-              clearable
-            />
+            <el-input v-model="supplementaryInfo" type="textarea" :rows="3"
+              placeholder="可选：背景知识、必讲要点、表达风格、禁忌表述等（不含时间表 JSON）" clearable />
           </el-descriptions-item>
+          <el-descriptions-item v-if="isMaterialJob" label="时间表" :span="3">
+            <el-input v-model="videoTimeline" type="textarea" :rows="5"
+              placeholder="可选：粘贴画面时间表 JSON（含 balls/segments/items 数组与 start_sec、end_sec），口播将逐段对齐" clearable />
+            <div v-if="parsedTimeline" class="mt-2 w-full">
+              <el-table :data="parsedTimeline.segments ?? []" size="small" border max-height="360">
+                <el-table-column label="#" prop="index" width="48" align="center" />
+                <el-table-column label="名称" prop="name" min-width="100" show-overflow-tooltip />
+                <el-table-column label="开始" width="70" align="center">
+                  <template #default="{ row }">{{ fmtTimelineSec(row.start_sec) }}</template>
+                </el-table-column>
+                <el-table-column label="结束" width="70" align="center">
+                  <template #default="{ row }">{{ fmtTimelineSec(row.end_sec) }}</template>
+                </el-table-column>
+                <el-table-column label="时长" width="70" align="center">
+                  <template #default="{ row }">{{ fmtTimelineSec(row.duration_sec) }}</template>
+                </el-table-column>
+                <el-table-column label="描述" prop="description" min-width="120" show-overflow-tooltip />
+              </el-table>
+            </div>
+          </el-descriptions-item>
+
         </el-descriptions>
       </el-form>
     </div>
 
-    <el-collapse
-      v-model="promptPanelOpen"
-      class="mb-4 overflow-hidden rounded-lg border border-gray-200 [&_.el-collapse-item__content]:p-4 [&_.el-collapse-item__header]:h-11 [&_.el-collapse-item__header]:border-b-0 [&_.el-collapse-item__header]:px-4 [&_.el-collapse-item__wrap]:border-t [&_.el-collapse-item__wrap]:border-gray-200"
-    >
+    <el-collapse v-model="promptPanelOpen"
+      class="mb-4 overflow-hidden rounded-lg border border-gray-200 [&_.el-collapse-item__content]:p-4 [&_.el-collapse-item__header]:h-11 [&_.el-collapse-item__header]:border-b-0 [&_.el-collapse-item__header]:px-4 [&_.el-collapse-item__wrap]:border-t [&_.el-collapse-item__wrap]:border-gray-200">
       <el-collapse-item name="prompts">
         <template #title>
           <div class="flex w-full items-center justify-between gap-3 p-2">
             <span class="text-sm font-medium text-gray-700">大模型提示词</span>
-            <el-button
-              v-if="promptPanelOpen.includes('prompts')"
-              size="small"
-              :loading="promptsLoading"
-              @click.stop="loadLlmPrompts"
-            >
+            <el-button v-if="promptPanelOpen.includes('prompts')" size="small" :loading="promptsLoading"
+              @click.stop="loadLlmPrompts">
               刷新
             </el-button>
           </div>
@@ -192,12 +124,8 @@
         <div v-if="promptsLoading" class="py-6 text-center text-sm text-gray-400">加载中…</div>
         <template v-else-if="displayPrompts.length">
           <el-tabs v-model="activePromptTab" class="px-4">
-            <el-tab-pane
-              v-for="item in displayPrompts"
-              :key="item.step"
-              :label="promptTabLabel(item)"
-              :name="item.step"
-            >
+            <el-tab-pane v-for="item in displayPrompts" :key="item.step" :label="promptTabLabel(item)"
+              :name="item.step">
               <div class="space-y-3 p-1">
                 <div v-for="block in PROMPT_BLOCKS" :key="block.key">
                   <div class="mb-1 text-xs font-medium text-gray-500">{{ block.label }}</div>
@@ -214,17 +142,9 @@
     </el-collapse>
 
     <div v-if="script">
-      <el-descriptions
-        :column="1"
-        border
-        :label-width="FORM_LABEL_WIDTH"
-        :class="SCRIPT_RESULT_DESC_CLASS"
-      >
+      <el-descriptions :column="1" border :label-width="FORM_LABEL_WIDTH" :class="SCRIPT_RESULT_DESC_CLASS">
         <el-descriptions-item label="脚本标题">{{ script.title || "-" }}</el-descriptions-item>
-        <el-descriptions-item
-          v-if="script.draft_title && script.draft_title !== script.title"
-          label="初稿标题"
-        >
+        <el-descriptions-item v-if="script.draft_title && script.draft_title !== script.title" label="初稿标题">
           {{ script.draft_title }}
         </el-descriptions-item>
         <el-descriptions-item v-if="!isMaterialJob" label="画风定调">
@@ -233,53 +153,39 @@
         <el-descriptions-item v-if="isMaterialJob && script.script_mode" label="文案模式">
           {{ script.script_mode === "manual" ? "手动" : "AI" }}
         </el-descriptions-item>
-        <el-descriptions-item
-          v-for="field in scriptClampFields"
-          :key="field.label"
-          :label="field.label"
-        >
+        <el-descriptions-item v-for="field in scriptClampFields" :key="field.label" :label="field.label">
           <el-tooltip placement="top-start" :show-after="300">
             <template #content>
-              <div
-                class="max-h-96 max-w-2xl overflow-auto whitespace-pre-wrap wrap-break-word leading-relaxed"
-                :class="field.mono ? 'font-mono text-xs' : 'text-sm'"
-              >
+              <div class="max-h-96 max-w-2xl overflow-auto whitespace-pre-wrap wrap-break-word leading-relaxed"
+                :class="field.mono ? 'font-mono text-xs' : 'text-sm'">
                 {{ field.text }}
               </div>
             </template>
-            <div
-              class="line-clamp-2 cursor-default leading-relaxed wrap-break-word text-gray-600"
-              :class="field.mono ? 'break-all font-mono text-xs' : 'text-sm'"
-            >
+            <div class="line-clamp-2 cursor-default leading-relaxed wrap-break-word text-gray-600"
+              :class="field.mono ? 'break-all font-mono text-xs' : 'text-sm'">
               {{ field.text }}
             </div>
           </el-tooltip>
         </el-descriptions-item>
       </el-descriptions>
 
-      <el-descriptions
-        :column="4"
-        border
-        :label-width="FORM_LABEL_WIDTH"
-        :class="[SCRIPT_RESULT_DESC_CLASS, 'mb-4']"
-      >
+      <el-descriptions :column="4" border :label-width="FORM_LABEL_WIDTH" :class="[SCRIPT_RESULT_DESC_CLASS, 'mb-4']">
         <el-descriptions-item label="生成耗时">{{ formatCostTime(script.cost_time) }}</el-descriptions-item>
         <el-descriptions-item label="字数">{{ script.word_count ?? "-" }}</el-descriptions-item>
         <el-descriptions-item label="分镜数">{{ script.segments?.length ?? 0 }}</el-descriptions-item>
         <el-descriptions-item label="预计时长">
-                        <template v-if="scriptEstimatedDurationSec != null">
-                          {{ Math.floor(scriptEstimatedDurationSec / 60) }}:{{ String(Math.floor(scriptEstimatedDurationSec % 60)).padStart(2, '0') }} ({{ Math.round(scriptEstimatedDurationSec) }}s)
-                        </template>
-                        <template v-else>-</template>
-                      </el-descriptions-item>
+          <template v-if="scriptEstimatedDurationSec != null">
+            {{ Math.floor(scriptEstimatedDurationSec / 60) }}:{{ String(Math.floor(scriptEstimatedDurationSec %
+              60)).padStart(2, '0') }} ({{ Math.round(scriptEstimatedDurationSec) }}s)
+          </template>
+          <template v-else>-</template>
+        </el-descriptions-item>
       </el-descriptions>
 
       <div class="mb-5">
         <div class="mb-2 text-sm font-medium text-gray-700">完整口播</div>
-        <div
-          v-if="script.narration"
-          class="rounded bg-gray-50 px-4 py-3 leading-relaxed wrap-break-word whitespace-pre-wrap"
-        >
+        <div v-if="script.narration"
+          class="rounded bg-gray-50 px-4 py-3 leading-relaxed wrap-break-word whitespace-pre-wrap">
           {{ script.narration }}
         </div>
         <div v-else :class="STAGE_EMPTY_CLASS">暂无口播文案</div>
@@ -288,28 +194,17 @@
       <div v-if="script.narration" class="mb-5">
         <div class="mb-2 flex flex-wrap items-center gap-2">
           <span class="text-sm font-medium text-gray-700">视频介绍</span>
-          <el-button
-            size="small"
-            :loading="regeneratingDescription"
-            :disabled="actionDisabled"
-            @click="handleRegenerateDescription"
-          >
+          <el-button size="small" :loading="regeneratingDescription" :disabled="actionDisabled"
+            @click="handleRegenerateDescription">
             重新生成
           </el-button>
         </div>
-        <div
-          v-if="script.video_description"
-          class="relative rounded bg-gray-50 px-4 py-3 pr-10 leading-relaxed wrap-break-word whitespace-pre-wrap"
-        >
+        <div v-if="script.video_description"
+          class="relative rounded bg-gray-50 px-4 py-3 pr-10 leading-relaxed wrap-break-word whitespace-pre-wrap">
           {{ script.video_description }}
           <el-tooltip content="复制" placement="top">
-            <el-button
-              class="absolute! top-2 right-2"
-              link
-              type="primary"
-              :icon="DocumentCopy"
-              @click="copyVideoDescription(script.video_description)"
-            />
+            <el-button class="absolute! top-2 right-2" link type="primary" :icon="DocumentCopy"
+              @click="copyVideoDescription(script.video_description)" />
           </el-tooltip>
         </div>
         <div v-else class="py-4 text-center text-sm text-gray-400">暂无视频介绍</div>
@@ -318,13 +213,8 @@
       <div class="mb-5">
         <div class="mb-2 flex flex-wrap items-center gap-2">
           <span class="text-sm font-medium text-gray-700">分镜列表</span>
-          <el-button
-            v-if="!isMaterialJob"
-            size="small"
-            :loading="generatingImagePrompts"
-            :disabled="actionDisabled || !script.segments?.length"
-            @click="handleGenerateImagePrompts"
-          >
+          <el-button v-if="!isMaterialJob" size="small" :loading="generatingImagePrompts"
+            :disabled="actionDisabled || !script.segments?.length" @click="handleGenerateImagePrompts">
             文生图提示词
           </el-button>
         </div>
@@ -341,18 +231,11 @@
             </template>
           </el-table-column>
           <template v-if="!isMaterialJob">
-            <el-table-column
-              v-for="col in SEGMENT_EXTRA_COLUMNS"
-              :key="col.prop"
-              :prop="col.prop"
-              :label="col.label"
-              :min-width="col.minWidth"
-            >
+            <el-table-column v-for="col in SEGMENT_EXTRA_COLUMNS" :key="col.prop" :prop="col.prop" :label="col.label"
+              :min-width="col.minWidth">
               <template #default="{ row }">
-                <div
-                  class="leading-relaxed wrap-break-word whitespace-pre-wrap"
-                  :class="col.muted ? 'text-xs text-gray-500' : ''"
-                >
+                <div class="leading-relaxed wrap-break-word whitespace-pre-wrap"
+                  :class="col.muted ? 'text-xs text-gray-500' : ''">
                   {{ row[col.prop] || "-" }}
                 </div>
               </template>
@@ -364,7 +247,9 @@
 
       <el-collapse class="mt-4">
         <el-collapse-item title="原始 JSON" name="raw">
-          <pre class="m-0 max-h-[480px] overflow-auto rounded bg-gray-50 p-3 text-xs leading-normal break-all whitespace-pre-wrap">{{ rawJson }}</pre>
+          <pre
+            class="m-0 max-h-[480px] overflow-auto rounded bg-gray-50 p-3 text-xs leading-normal break-all whitespace-pre-wrap">
+        {{ rawJson }}</pre>
         </el-collapse-item>
       </el-collapse>
     </div>
@@ -373,26 +258,15 @@
     <div :class="STAGE_SUBSECTION_CLASS">
       <div :class="STAGE_SECTION_TITLE_CLASS">质量报告</div>
       <div v-if="qualityReportRows.length" class="space-y-4">
-        <el-descriptions
-          v-for="row in qualityReportRows"
-          :key="row.step"
-          :title="row.stepLabel"
-          :column="3"
-          border
-          size="small"
-          label-width="100px"
-        >
+        <el-descriptions v-for="row in qualityReportRows" :key="row.step" :title="row.stepLabel" :column="3" border
+          size="small" label-width="100px">
           <el-descriptions-item label="结果">
             <el-tag :type="qualityLevelTagType(row.level)" size="small">{{ row.levelLabel }}</el-tag>
           </el-descriptions-item>
           <el-descriptions-item label="失败阶段">{{ row.failStage || "-" }}</el-descriptions-item>
           <template v-if="qualityDetailEntries(row.detailFields).length">
-            <el-descriptions-item
-              v-for="[key, value] in qualityDetailEntries(row.detailFields)"
-              :key="key"
-              :label="qualityDetailLabel(key)"
-              :span="detailFieldSpan(key, value)"
-            >
+            <el-descriptions-item v-for="[key, value] in qualityDetailEntries(row.detailFields)" :key="key"
+              :label="qualityDetailLabel(key)" :span="detailFieldSpan(key, value)">
               <div class="wrap-break-word whitespace-pre-wrap text-sm">{{ value }}</div>
             </el-descriptions-item>
           </template>
@@ -552,6 +426,36 @@ const displayPrompts = computed(() =>
 
 const actionDisabled = computed(() => props.job.status === "running");
 const isMaterialJob = computed(() => checkMaterialJob(props.job));
+
+interface TimelineSegment {
+  index: number;
+  name: string;
+  description?: string;
+  start_sec: number;
+  end_sec: number;
+  duration_sec: number;
+}
+interface TimelineData {
+  title?: string;
+  segments?: TimelineSegment[];
+}
+const parsedTimeline = computed<TimelineData | null>(() => {
+  try {
+    const parsed = JSON.parse(videoTimeline.value);
+    if (parsed && Array.isArray(parsed.segments)) {
+      return parsed as TimelineData;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+});
+const fmtTimelineSec = (sec: number | undefined): string => {
+  if (sec == null) return "-";
+  const m = Math.floor(sec / 60);
+  const s = Math.round(sec % 60);
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+};
 const materialDurationLocked = computed(
   () => isMaterialJob.value && baseDurationSec.value !== null && baseDurationSec.value > 0
 );
