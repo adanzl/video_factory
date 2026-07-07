@@ -204,6 +204,48 @@ def timeline_table_for_prompt(timeline: VideoTimeline) -> str:
     return "\n".join(lines)
 
 
+def material_timeline_length_budget(timeline: VideoTimeline) -> str:
+    """素材脚本专用：按时间表每段时长分配字数预算，不含三层要求。"""
+    lo, hi = narration_range_for_timeline(timeline)
+    total_max = sum(slot.max_chars for slot in timeline.slots)
+    sum_min = sum(slot_min_chars(slot.max_chars) for slot in timeline.slots)
+    return (
+        f"【字数预算】全片 narration 硬性 {lo}-{hi} 字（各段上限合计约 {total_max} 字）。\n"
+        f"各段字数下限之和为 {sum_min} 字；写作时每段须达到「字数下限」列，建议落在「建议字数」区间。\n"
+        "【生成顺序】先按时间表逐段写满 segments（每段对照字数下限），"
+        "再原样拼接为 narration，最后统计 word_count；不足则当场扩写再输出。"
+    )
+
+
+def material_timeline_system_clause(timeline: VideoTimeline) -> str:
+    """素材脚本专用：时间表对齐要求，不含三层写法。"""
+    count = len(timeline.slots)
+    lo, hi = narration_range_for_timeline(timeline)
+    return (
+        f"用户提供了基底视频画面时间表（共{count}段），口播须与画面逐段严格对齐。"
+        f"segments 必须恰好 {count} 条，segment_index 从 1 到 {count}，与时间表顺序一一对应；"
+        "第 i 段 text 只讲第 i 段画面，禁止提前讲后续画面、禁止滞后讲上一段、禁止合并多段。"
+        "禁止开场钩子、悬念反问（如「你知道吗」）、全片总起、结尾长篇回顾或清单式连读多届/多段。"
+        "narration 第一句必须从第 1 段画面内容直接讲起（视频 0 秒即进入该段主题）。"
+        f"全片 narration 总字数硬性 {lo}-{hi} 字；每段须对照时间表「字数下限」列写满该段时长。"
+        "若届别+球名较长，优先写年份与球名，细节从简。"
+        "各段 text 按顺序拼接须与 narration 完全一致。"
+        "有补充信息时不得与时间表矛盾；时间表优先决定分镜与讲什么。"
+    )
+
+
+def append_material_timeline_to_user(user: str, timeline: VideoTimeline) -> str:
+    """素材脚本专用：附加时间表信息，不含三层写法要求。"""
+    return (
+        f"{user}\n\n"
+        f"{material_timeline_length_budget(timeline)}\n\n"
+        "基底视频画面时间表（segments 须与此表逐段对齐；JSON 为权威来源）：\n"
+        f"{timeline_table_for_prompt(timeline)}\n\n"
+        "时间表 JSON：\n"
+        f"{timeline.raw}"
+    )
+
+
 def timeline_length_budget_for_prompt(timeline: VideoTimeline) -> str:
     lo, hi = narration_range_for_timeline(timeline)
     total_max = sum(slot.max_chars for slot in timeline.slots)
