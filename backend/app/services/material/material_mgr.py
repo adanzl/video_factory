@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import shutil
+import threading
 from pathlib import Path
 
 from werkzeug.datastructures import FileStorage
@@ -17,6 +19,8 @@ from app.services.material.video_analyzer import VideoAnalyzer
 from app.services.media.ffmpeg_utils import extract_first_frame, probe_duration, probe_video_size
 from app.utils.job_info import default_orientation_for_pipeline, merge_job_info
 from app.utils.media import NARRATION_ABS_MIN_CHARS
+
+logger = logging.getLogger(__name__)
 
 _ALLOWED_EXTENSIONS = {".mp4", ".mov", ".webm", ".mkv"}
 _RUN_MODES = frozenset({"none", "prepare", "full"})
@@ -180,18 +184,36 @@ class MaterialMgr:
             )
 
     def analyze_material(self, material_id: int) -> dict:
-        """分析素材视频，生成时间表 JSON，写入 note 字段。"""
+        """异步分析素材视频，立即返回。后台线程完成后写入 note。"""
         material = self.get_material(material_id)
         video_path = Path(material["file_path"])
         duration = material.get("duration_sec")
 
-        analyzer = VideoAnalyzer(video_path, duration=duration)
-        note_text = analyzer.analyze()
-
+        # 写 analyzing 标记，前端据此轮询
         with connection() as conn:
-            repo_material.update_material(conn, material_id, note=note_text)
+            repo_material.update_material(conn, material_id, note="analyzing")
 
-        return {"material_id": material_id, "note": note_text}
+        t = threading.Thread(
+            target=self._run_analysis,
+            args=(material_id, video_path, duration),
+            daemon=True,
+        )
+        t.start()
+
+        return {"material_id": material_id, "status": "analyzing"}
+
+    def _run_analysis(
+        self, material_id: int, video_path: Path, duration: float | None
+    ) -> None:
+        """后台线程：执行分析并写 DB。"""
+        try:
+            analyzer = VideoAnalyzer(video_path, duration=duration)
+            note_text = analyzer.analyze()
+            with connection() as conn:
+                repo_material.update_material(conn, material_id, note=note_text)
+            logger.info("material %s analysis complete", material_id)
+        except Exception:
+            logger.exception("material %s analysis failed", material_id)
 
     def create_job_from_material(
         self,

@@ -72,6 +72,16 @@
             <el-button type="primary" link size="small" @click="openEditDialog(row)">
               编辑
             </el-button>
+            <el-button
+              type="warning"
+              link
+              size="small"
+              :loading="analyzingIds.has(row.id)"
+              :disabled="!row.duration_sec"
+              @click="handleAnalyze(row)"
+            >
+              分析
+            </el-button>
             <el-button type="success" link size="small" @click="openCreateJobDialog(row)">
               发起任务
             </el-button>
@@ -224,8 +234,10 @@ import {
   createJobFromMaterial,
   deleteMaterial,
   editMaterial,
+  getMaterial,
   listMaterials,
   uploadMaterial,
+  analyzeMaterial,
 } from "@/api/api-materials";
 import type { MaterialJobRunMode, MaterialRecord } from "@/types/material";
 import { useErrorHandler } from "@/composables/useErrorHandler";
@@ -241,6 +253,7 @@ const deleting = ref(false);
 const uploading = ref(false);
 const editing = ref(false);
 const creatingJob = ref(false);
+const analyzingIds = ref(new Set<number>());
 const selectedIds = ref<number[]>([]);
 const page = ref(1);
 const pageSize = ref(10);
@@ -528,6 +541,31 @@ const handleCreateJob = async () => {
     handleError(error, "创建任务失败");
   } finally {
     creatingJob.value = false;
+  }
+};
+
+const handleAnalyze = async (row: MaterialRecord) => {
+  analyzingIds.value.add(row.id);
+  const POLL_INTERVAL = 3000;
+
+  try {
+    await analyzeMaterial({ material_id: row.id });
+
+    // 轮询直到 note 不再是 analyzing
+    while (true) {
+      const material = await getMaterial(row.id);
+      const note = material.note;
+      if (note && note !== "analyzing") {
+        ElMessage.success("分析完成");
+        await fetchMaterials();
+        return;
+      }
+      await new Promise(r => setTimeout(r, POLL_INTERVAL));
+    }
+  } catch (error) {
+    handleError(error, "分析失败");
+  } finally {
+    analyzingIds.value.delete(row.id);
   }
 };
 
