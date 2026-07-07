@@ -553,6 +553,7 @@ class JobMgr:
         video_timeline: str | None = None,
         orientation: str | None = None,
         content_style: str | None = None,
+        segment_index: int | None = None,
     ) -> dict:
         """生成文案。实现：worker/loop.run_script → worker/stages/*/script.py"""
         from worker.loop import run_script
@@ -603,6 +604,8 @@ class JobMgr:
             orientation=orientation,
             content_style=content_style,
         )
+        if segment_index is not None:
+            detail += f", segment_index={segment_index}"
         return self._run_in_background(
             job_id,
             "script",
@@ -617,6 +620,7 @@ class JobMgr:
                 generate_image_prompts=generate_image_prompts,
                 supplementary_info=supplementary_info,
                 video_timeline=video_timeline,
+                segment_index=segment_index,
             ),
             action_detail=detail,
         )

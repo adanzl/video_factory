@@ -46,6 +46,7 @@ export interface RunStageActionPayload {
   intro_category?: "百科" | "历史悬案";
   image_provider?: "z_image_t2i" | "wan_t2i" | "sd15_t2i" | "agnes_t2i";
   video_provider?: "ffmpeg" | "wan_i2v" | "agnes_i2v";
+  segment_index?: number;
 }
 
 export interface PreviewScriptPromptsPayload {

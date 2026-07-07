@@ -84,6 +84,7 @@ def _run_one_stage(
     script_generate_image_prompts: bool = False,
     script_supplementary_info: str | None = None,
     script_video_timeline: str | None = None,
+    script_segment_index: int | None = None,
     material_narration: str | None = None,
 ) -> dict:
     job = _reload_job(job_id)
@@ -103,6 +104,7 @@ def _run_one_stage(
         script_generate_image_prompts=script_generate_image_prompts,
         script_supplementary_info=script_supplementary_info,
         script_video_timeline=script_video_timeline,
+        script_segment_index=script_segment_index,
         material_narration=material_narration,
     )
     _execute_stage(job_id, stage_cls, ctx)
@@ -143,6 +145,7 @@ def _run_from(
     script_generate_image_prompts: bool = False,
     script_supplementary_info: str | None = None,
     script_video_timeline: str | None = None,
+    script_segment_index: int | None = None,
     material_narration: str | None = None,
 ) -> dict:
     job_mgr.mark_running(job_id)
@@ -180,6 +183,9 @@ def _run_from(
             ),
             script_video_timeline=(
                 script_video_timeline if stage_cls.name == "script" else None
+            ),
+            script_segment_index=(
+                script_segment_index if stage_cls.name == "script" else None
             ),
             material_narration=material_narration if stage_cls.name == "script" else None,
         )
@@ -245,6 +251,7 @@ def run_script(
     supplementary_info: str | None = None,
     video_timeline: str | None = None,
     material_narration: str | None = None,
+    segment_index: int | None = None,
 ) -> dict:
     job = _reload_job(job_id)
     script_cls = stage_class_for("script", job)
@@ -260,6 +267,7 @@ def run_script(
             script_generate_image_prompts=generate_image_prompts,
             script_supplementary_info=supplementary_info,
             script_video_timeline=video_timeline,
+            script_segment_index=segment_index,
             material_narration=material_narration,
         )
     return _run_one_stage(
@@ -274,6 +282,7 @@ def run_script(
         script_generate_image_prompts=generate_image_prompts,
         script_supplementary_info=supplementary_info,
         script_video_timeline=video_timeline,
+        script_segment_index=segment_index,
         material_narration=material_narration,
     )
 

@@ -62,6 +62,7 @@ def _parse_script_body() -> tuple[
     str | None,
     str | None,
     str | None,
+    int | None,
 ]:
     data = get_json_body()
     supplementary = parse_optional_str(data, "supplementary_info")
@@ -82,6 +83,7 @@ def _parse_script_body() -> tuple[
                 "content_style must be science_child, life_experience or history_mystery",
                 status_code=400,
             )
+    segment_index = parse_optional_int(data, "segment_index", minimum=1)
     return (
         parse_id(data),
         parse_bool(data, "to_end", default=False),
@@ -97,6 +99,7 @@ def _parse_script_body() -> tuple[
         video_timeline,
         orientation,
         content_style,
+        segment_index,
     )
 
 
@@ -117,6 +120,7 @@ def run_script_route():
         video_timeline,
         orientation,
         content_style,
+        segment_index,
     ) = _parse_script_body()
     return _accept_stage(
         job_id,
@@ -135,6 +139,7 @@ def run_script_route():
             video_timeline=video_timeline,
             orientation=orientation,
             content_style=content_style,
+            segment_index=segment_index,
         ),
     )
 

@@ -18,6 +18,7 @@ from app.utils.media import (
 __all__ = [
     "check_board",
     "check_narration",
+    "detect_json_in_narration",
     "detect_memoir_narration",
     "detect_narration_repetition",
     "skip_board_check",
@@ -28,6 +29,20 @@ _REPEAT_PHRASE_MIN_LEN = 10
 _REPEAT_PHRASE_MIN_COUNT = 3
 _ADJACENT_OVERLAP_MIN_LEN = 10
 _NIKAN_MAX_COUNT = 4
+
+# narration 中不应出现 JSON 结构片段
+_JSON_FRAGMENT_RE = re.compile(r'\{\s*"[\w]+"\s*:')
+
+
+def detect_json_in_narration(narration: str) -> str | None:
+    """检测 narration 中是否混入了 JSON 结构片段。"""
+    m = _JSON_FRAGMENT_RE.search(narration)
+    if m:
+        start = max(0, m.start() - 10)
+        end = min(len(narration), m.end() + 30)
+        preview = narration[start:end]
+        return f"narration 含 JSON 片段: …{preview}…"
+    return None
 
 
 def _narration_chars(narration: str) -> int:
@@ -130,6 +145,14 @@ def detect_narration_repetition(
 def check_narration(script: dict) -> QualityReport:
     """口播稿长度、违禁表述。"""
     narration = script.get("narration", "")
+    json_issue = detect_json_in_narration(narration)
+    if json_issue:
+        return QualityReport(
+            level="major",
+            step="copy",
+            fail_stage="script",
+            details={"reason": json_issue},
+        )
     memoir_issue = detect_memoir_narration(narration)
     if memoir_issue:
         return QualityReport(
