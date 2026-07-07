@@ -57,8 +57,44 @@ def _orientation_label(
     return f"{ORIENTATION_PORTRAIT}(default)"
 
 
+def _generate_cover_subject_from_narration(title: str, narration: str) -> str:
+    """用 LLM 根据标题和口播内容生成封面画面描述。"""
+    import logging
+
+    from app.config import get_settings
+    from app.services.llm.llm_deepseek import DeepSeekClient
+
+    logger = logging.getLogger(__name__)
+    settings = get_settings()
+    if not settings.deepseek_api_key:
+        logger.warning("no deepseek_api_key, fallback to title for cover subject")
+        return title
+
+    system = (
+        "你是一个视频封面画面设计师。根据视频标题和口播内容，用一段话描述封面底图应该呈现的画面。\n"
+        "要求：\n"
+        "1. 描述具体的视觉场景：主体、环境、光照、色调、构图\n"
+        "2. 不要出现文字、标题、字幕等元素\n"
+        "3. 画面要有冲击力，适合作为视频封面吸引点击\n"
+        "4. 风格为写实插画或电影质感\n"
+        "5. 80-150字以内\n"
+        "仅输出画面描述，不要额外解释。"
+    )
+    user = f"标题：{title}\n口播内容：{narration}"
+    try:
+        client = DeepSeekClient()
+        result, _ = client._chat(system, user, max_tokens=400, json_mode=False)
+        desc = result.strip()
+        if desc and len(desc) >= 20:
+            logger.info("cover subject generated from narration: '%s'", desc[:80])
+            return desc
+    except Exception as exc:
+        logger.warning("cover subject generation failed: %s", exc)
+    return title
+
+
 def _cover_subject_from_job(job: dict) -> str:
-    """封面底图画面描述：首镜 image_prompt > visual_style > 标题。"""
+    """封面底图画面描述：首镜 image_prompt > visual_style > LLM 生成 > 标题。"""
     script = job.get("script_json") or {}
     title = resolve_intro_title(job)
     visual_style = (script.get("visual_style") or "").strip()
@@ -66,7 +102,18 @@ def _cover_subject_from_job(job: dict) -> str:
         ip = (seg.get("image_prompt") or "").strip()
         if ip:
             return ip
-    return visual_style or title
+    if visual_style:
+        return visual_style
+    # 无 image_prompt 和 visual_style（素材任务）：用 LLM 根据标题+口播生成画面描述
+    narration_parts = []
+    for seg in script.get("segments") or []:
+        text = (seg.get("text") or "").strip()
+        if text:
+            narration_parts.append(text)
+    narration = script.get("narration") or "\n".join(narration_parts)
+    if narration and narration.strip():
+        return _generate_cover_subject_from_narration(title, narration.strip())
+    return title
 
 
 def _generate_cover(job: dict, cover_path: Path, width: int, height: int) -> None:
