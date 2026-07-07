@@ -241,6 +241,13 @@
               </template>
             </el-table-column>
           </template>
+          <el-table-column label="操作" width="70" align="center">
+            <template #default="{ row }">
+              <el-button size="small" link type="primary" @click="openScriptEditDialog(row)">
+                编辑
+              </el-button>
+            </template>
+          </el-table-column>
         </el-table>
         <div v-else :class="STAGE_EMPTY_CLASS">暂无分镜</div>
       </div>
@@ -276,6 +283,24 @@
       <div v-else :class="STAGE_EMPTY_CLASS">暂无数据</div>
     </div>
 
+    <el-dialog v-model="scriptEditDialogOpen" title="编辑分镜文案" width="560px" destroy-on-close>
+      <div class="mb-2 text-sm text-gray-600">分镜 #{{ scriptEditSegmentIndex }}</div>
+      <el-input
+        v-model="scriptEditText"
+        type="textarea"
+        :rows="6"
+        placeholder="输入口播文案"
+        maxlength="500"
+        show-word-limit
+      />
+      <template #footer>
+        <el-button @click="scriptEditDialogOpen = false">取消</el-button>
+        <el-button type="primary" :loading="scriptEditSaving" :disabled="!scriptEditText.trim()" @click="handleSaveScriptSegmentText">
+          保存
+        </el-button>
+      </template>
+    </el-dialog>
+
     <StageLogsSection :logs="logs" />
   </div>
 </template>
@@ -292,6 +317,7 @@ import {
   runJobStageAction,
   updateJob,
   updateJobInfo,
+  updateSegmentText,
 } from "@/api/api-jobs";
 import type { JobDetail, JobLog, JobScriptParams, LlmPromptStep, ScriptJson, UpdateJobInfoParams } from "@/types/jobs";
 import type { RunStageActionPayload } from "@/types/jobs/stageAction";
@@ -455,6 +481,36 @@ const fmtTimelineSec = (sec: number | undefined): string => {
   const m = Math.floor(sec / 60);
   const s = Math.round(sec % 60);
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+};
+
+const scriptEditDialogOpen = ref(false);
+const scriptEditSegmentIndex = ref(1);
+const scriptEditText = ref("");
+const scriptEditSaving = ref(false);
+
+const openScriptEditDialog = (row: { segment_index: number; text: string }) => {
+  scriptEditSegmentIndex.value = row.segment_index;
+  scriptEditText.value = row.text || "";
+  scriptEditDialogOpen.value = true;
+};
+
+const handleSaveScriptSegmentText = async () => {
+  const trimmed = scriptEditText.value.trim();
+  if (!trimmed) {
+    ElMessage.warning("文案不能为空");
+    return;
+  }
+  scriptEditSaving.value = true;
+  try {
+    await updateSegmentText(props.job.id, scriptEditSegmentIndex.value, trimmed);
+    ElMessage.success(`分镜 #${scriptEditSegmentIndex.value} 文案已更新`);
+    scriptEditDialogOpen.value = false;
+    emit("refresh");
+  } catch (error) {
+    handleError(error, "更新文案失败");
+  } finally {
+    scriptEditSaving.value = false;
+  }
 };
 const materialDurationLocked = computed(
   () => isMaterialJob.value && baseDurationSec.value !== null && baseDurationSec.value > 0
