@@ -507,11 +507,6 @@ const displaySegments = computed(() =>
   })
 );
 
-const truncate = (text: string, max: number) => {
-  const normalized = text.replace(/\s+/g, " ").trim();
-  return normalized.length > max ? `${normalized.slice(0, max)}…` : normalized;
-};
-
 const formatSegmentDuration = (value?: number | null) => {
   if (value === null || value === undefined || Number.isNaN(value)) {
     return "-";
