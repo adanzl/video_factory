@@ -30,6 +30,14 @@ def strip_tts_lead_in(path: Path, words: list[TimedWord], lead_in: str) -> list[
     if not lead_in or not words:
         return words
 
+    # 打印TTS返回的所有字级时间戳，便于排查
+    logger.info(
+        "tts lead-in check: lead_in=%r words_count=%s first_10_words=%s",
+        lead_in,
+        len(words),
+        [(w.text, w.begin_time_ms) for w in words[:10]],
+    )
+
     expected = list(lead_in)
     matched = 0
     for word in words:
@@ -40,10 +48,11 @@ def strip_tts_lead_in(path: Path, words: list[TimedWord], lead_in: str) -> list[
 
     if matched < len(expected):
         logger.warning(
-            "tts lead-in partial match %r (%s/%s chars), skip strip",
+            "tts lead-in partial match %r (%s/%s chars), skip strip. words=%s",
             lead_in,
             matched,
             len(expected),
+            [(w.text, w.begin_time_ms) for w in words[:10]],
         )
         return words
 
@@ -55,10 +64,11 @@ def strip_tts_lead_in(path: Path, words: list[TimedWord], lead_in: str) -> list[
     _trim_audio(path, TrimPlan(leading_ms=cut_ms, trailing_ms=0))
     shifted = shift_word_timestamps(remaining, cut_ms)
     logger.info(
-        "tts lead-in stripped %r cut=%sms words %s -> %s",
+        "tts lead-in stripped %r cut=%sms words %s -> %s remaining_first_5=%s",
         lead_in,
         cut_ms,
         len(words),
         len(shifted),
+        [(w.text, w.begin_time_ms) for w in remaining[:5]],
     )
     return shifted
