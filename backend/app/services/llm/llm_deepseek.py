@@ -884,6 +884,10 @@ class DeepSeekClient(LLMClient):
         video_timeline: str | None = None,
         job: dict | None = None,
     ) -> dict[str, Any]:
+        from app.utils.job_info import resolve_speech_chars_per_sec
+
+        _cps = resolve_speech_chars_per_sec(job.get("script") if job else None) if job else None
+
         min_chars = _min_narration_chars_for_script(
             narration_target_words=narration_target_words,
             video_timeline=video_timeline,
@@ -900,6 +904,7 @@ class DeepSeekClient(LLMClient):
                 narration_target_words=narration_target_words,
                 supplementary_info=supplementary_info,
                 video_timeline=video_timeline,
+                chars_per_sec=_cps,
             )
             data, _ = self._chat_json(prompts["system"], prompts["user"])
             raise_if_job_cancelled(job)

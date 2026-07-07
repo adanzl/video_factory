@@ -42,6 +42,7 @@ from app.quality.image_prompt import (
 )
 from app.services.script.board_timeline import (
     VideoTimeline,
+    TIMELINE_TTS_CHARS_PER_SEC,
     append_material_timeline_to_user,
     append_timeline_to_user,
     material_timeline_system_clause,
@@ -1141,6 +1142,7 @@ def build_material_script_prompts(
     supplementary_info: str | None = None,
     video_timeline: str | None = None,
     script: dict | None = None,
+    chars_per_sec: float | None = None,
 ) -> dict[str, str]:
     settings = get_settings()
     max_title = settings.max_title_length if max_title_length is None else max_title_length
@@ -1160,17 +1162,13 @@ def build_material_script_prompts(
         segment_rule = (
             f"segments 必须恰好 {len(timeline.slots)} 条，与画面时间表逐段一一对应；"
             "每项含 segment_index 与 text，第 i 段只讲第 i 段画面；"
-            "各段 text 按顺序拼接须与 narration 完全一致，口吻同样保持童趣。"
+            "口吻保持童趣。"
         )
         opening_rule = (
             "禁止开场钩子、悬念反问、自我介绍或全片总起；"
             "narration 第一句必须从时间表第 1 段画面内容直接讲起。"
         )
-        length_rule = (
-            f"每段按时间表字数预算写满（见下），全片 narration 总目标约 {narration_word_target} 字；"
-            f"验收区间 {narration_hard_min}-{narration_word_max} 字（不含空格换行）；"
-            f"低于 {narration_hard_min} 字或高于 {narration_word_max} 字视为不合格。"
-        )
+        length_rule = "每段按时间表字数预算写满（见下）。"
     else:
         segment_rule = (
             "segments 为分句数组，每项含 segment_index 与 text；"
@@ -1211,7 +1209,8 @@ def build_material_script_prompts(
         )
     user = _append_supplementary_to_user("\n\n".join(user_parts), supplementary_info)
     if timeline:
-        user = append_material_timeline_to_user(user, timeline)
+        cps = chars_per_sec if chars_per_sec is not None else TIMELINE_TTS_CHARS_PER_SEC
+        user = append_material_timeline_to_user(user, timeline, chars_per_sec=cps)
     if feedback:
         user += f"\n\n上次不合格：{feedback}。请按要求重写。"
     return _prompt_step("material_script", system, user)

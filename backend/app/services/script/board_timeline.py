@@ -26,6 +26,7 @@ class TimelineSlot:
     end_sec: float
     duration_sec: float
     scene: str
+    description: str
     max_chars: int
 
 
@@ -105,8 +106,8 @@ def _timeline_items(data: dict[str, Any]) -> list[dict[str, Any]] | None:
     return None
 
 
-def _max_chars_for_duration(duration_sec: float) -> int:
-    return max(10, int(math.floor(duration_sec * TIMELINE_TTS_CHARS_PER_SEC)))
+def _max_chars_for_duration(duration_sec: float, chars_per_sec: float = 5.5) -> int:
+    return max(10, int(math.floor(duration_sec * chars_per_sec)))
 
 
 def hard_max_chars(target: int) -> int:
@@ -158,6 +159,7 @@ def parse_video_timeline(raw: str | None) -> VideoTimeline | None:
 
         slot_index = _coerce_int(item.get("index")) or idx
         scene = _slot_scene_label(item, fallback_index=slot_index)
+        description = (item.get("description") or "").strip() or scene
         slots.append(
             TimelineSlot(
                 index=slot_index,
@@ -165,6 +167,7 @@ def parse_video_timeline(raw: str | None) -> VideoTimeline | None:
                 end_sec=end,
                 duration_sec=duration,
                 scene=scene,
+                description=description,
                 max_chars=_max_chars_for_duration(duration),
             )
         )
@@ -204,43 +207,59 @@ def timeline_table_for_prompt(timeline: VideoTimeline) -> str:
     return "\n".join(lines)
 
 
-def material_timeline_length_budget(timeline: VideoTimeline) -> str:
-    """素材脚本专用：按时间表每段时长分配字数预算，不含三层要求。"""
-    lo, hi = narration_range_for_timeline(timeline)
-    total_max = sum(slot.max_chars for slot in timeline.slots)
-    sum_min = sum(slot_min_chars(slot.max_chars) for slot in timeline.slots)
+def material_timeline_length_budget(timeline: VideoTimeline, *, chars_per_sec: float = 5.5) -> str:
+    """素材脚本专用：按时间表每段时长分配字数预算，不含三层和验收区间。"""
+    def _mc(d): return _max_chars_for_duration(d, chars_per_sec)
+    total_max = sum(_mc(s.duration_sec) for s in timeline.slots)
+    sum_min = sum(slot_min_chars(_mc(s.duration_sec)) for s in timeline.slots)
     return (
-        f"【字数预算】全片 narration 硬性 {lo}-{hi} 字（各段上限合计约 {total_max} 字）。\n"
-        f"各段字数下限之和为 {sum_min} 字；写作时每段须达到「字数下限」列，建议落在「建议字数」区间。\n"
+        f"语速约 {chars_per_sec} 字/秒。各段字数下限之和为 {sum_min} 字，各段上限合计约 {total_max} 字。"
         "【生成顺序】先按时间表逐段写满 segments（每段对照字数下限），"
-        "再原样拼接为 narration，最后统计 word_count；不足则当场扩写再输出。"
+        "再原样拼接为 narration，最后统计 word_count。"
     )
 
 
+def _material_timeline_table(timeline: VideoTimeline, *, chars_per_sec: float = 5.5) -> str:
+    """时间表表格，含画面内容描述。"""
+    def _mc(d): return _max_chars_for_duration(d, chars_per_sec)
+    lines = [
+        "序号 | 时长 | 画面内容 | 字数下限 | 建议字数 | 字数上限",
+        "--- | --- | --- | --- | --- | ---",
+    ]
+    for slot in timeline.slots:
+        max_c = _mc(slot.duration_sec)
+        min_c = slot_min_chars(max_c)
+        target_c = slot_target_chars(max_c)
+        desc = slot.description[:60] + "..." if len(slot.description) > 60 else slot.description
+        lines.append(
+            f"{slot.index} | {_format_sec(slot.duration_sec)}s | {desc} | "
+            f"{min_c} | {target_c}-{max_c} | {max_c}"
+        )
+    return "\n".join(lines)
+
+
 def material_timeline_system_clause(timeline: VideoTimeline) -> str:
-    """素材脚本专用：时间表对齐要求，不含三层写法。"""
+    """素材脚本专用：时间表对齐要求，不含三层、验收区间、joined约束。"""
     count = len(timeline.slots)
-    lo, hi = narration_range_for_timeline(timeline)
     return (
         f"用户提供了基底视频画面时间表（共{count}段），口播须与画面逐段严格对齐。"
         f"segments 必须恰好 {count} 条，segment_index 从 1 到 {count}，与时间表顺序一一对应；"
         "第 i 段 text 只讲第 i 段画面，禁止提前讲后续画面、禁止滞后讲上一段、禁止合并多段。"
         "禁止开场钩子、悬念反问（如「你知道吗」）、全片总起、结尾长篇回顾或清单式连读多届/多段。"
         "narration 第一句必须从第 1 段画面内容直接讲起（视频 0 秒即进入该段主题）。"
-        f"全片 narration 总字数硬性 {lo}-{hi} 字；每段须对照时间表「字数下限」列写满该段时长。"
+        "每段按时间表「字数下限」「字数上限」列写满该段时长。"
         "若届别+球名较长，优先写年份与球名，细节从简。"
-        "各段 text 按顺序拼接须与 narration 完全一致。"
         "有补充信息时不得与时间表矛盾；时间表优先决定分镜与讲什么。"
     )
 
 
-def append_material_timeline_to_user(user: str, timeline: VideoTimeline) -> str:
-    """素材脚本专用：附加时间表信息，不含三层写法要求。"""
+def append_material_timeline_to_user(user: str, timeline: VideoTimeline, *, chars_per_sec: float = 5.5) -> str:
+    """素材脚本专用：附加时间表信息，含画面描述。"""
     return (
         f"{user}\n\n"
-        f"{material_timeline_length_budget(timeline)}\n\n"
-        "基底视频画面时间表（segments 须与此表逐段对齐；JSON 为权威来源）：\n"
-        f"{timeline_table_for_prompt(timeline)}\n\n"
+        f"{material_timeline_length_budget(timeline, chars_per_sec=chars_per_sec)}\n\n"
+        "基底视频画面时间表（segments 须与此表逐段对齐）：\n"
+        f"{_material_timeline_table(timeline, chars_per_sec=chars_per_sec)}\n\n"
         "时间表 JSON：\n"
         f"{timeline.raw}"
     )
