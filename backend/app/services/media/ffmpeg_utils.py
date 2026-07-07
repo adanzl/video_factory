@@ -351,6 +351,27 @@ def extract_first_frame(video_path: Path, output_path: Path) -> Path:
     return output_path
 
 
+def extract_frames_interval(video_path: Path, output_dir: Path, interval_sec: int) -> list[Path]:
+    """从视频每隔 interval_sec 秒提取一帧 JPEG，返回帧文件列表。"""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    pattern = str(output_dir / "frame_%04d.jpg")
+    _run_cmd(
+        [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(video_path),
+            "-vf",
+            f"fps=1/{interval_sec}",
+            "-q:v",
+            "3",
+            pattern,
+        ],
+    )
+    frames = sorted(output_dir.glob("frame_*.jpg"))
+    return frames
+
+
 def probe_duration(path: Path) -> float:
     out = _run_cmd(
         [

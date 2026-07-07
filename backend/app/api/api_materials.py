@@ -124,3 +124,18 @@ def create_job_from_material_route():
         raise APIError(str(exc), status_code=404) from exc
 
     return json_created(job)
+
+
+@bp.post("/analyze")
+def analyze_material_route():
+    data = get_json_body()
+    material_id = parse_id(data)
+    try:
+        result = material_mgr.analyze_material(material_id)
+    except ValueError as exc:
+        raise APIError(str(exc), status_code=400) from exc
+    except KeyError as exc:
+        raise APIError(str(exc), status_code=404) from exc
+    except RuntimeError as exc:
+        raise APIError(str(exc), status_code=502) from exc
+    return json_ok(result)
