@@ -202,10 +202,11 @@ class JobMgr:
             script_segments = list(script.get("segments") or [])
             narration_parts: list[str] = []
             found = False
-            for seg in script_segments:
+            for i, seg in enumerate(script_segments):
                 if int(seg.get("segment_index", 0)) == segment_index:
                     seg = dict(seg)
                     seg["text"] = cleaned
+                    script_segments[i] = seg
                     found = True
                 narration_parts.append(str(seg.get("text") or ""))
             if not found:
