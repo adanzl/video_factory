@@ -54,6 +54,24 @@
         <template #default="{ row }">{{ formatFileSize(row.size_bytes) }}</template>
       </el-table-column>
       <el-table-column prop="note" label="备注" min-width="120" show-overflow-tooltip />
+      <el-table-column label="状态" width="100">
+        <template #default="{ row }">
+          <span
+            v-if="row.status === 'analyze_failed'"
+            class="text-red-500"
+          >
+            分析失败
+          </span>
+          <span
+            v-else-if="row.status === 'analyzing'"
+            class="text-yellow-500"
+          >
+            分析中
+          </span>
+          <span v-else-if="row.status === 'active'" class="text-green-600">正常</span>
+          <span v-else class="text-gray-400">{{ row.status || "-" }}</span>
+        </template>
+      </el-table-column>
       <el-table-column label="创建时间" width="170">
         <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
       </el-table-column>
