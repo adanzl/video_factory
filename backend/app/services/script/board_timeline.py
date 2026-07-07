@@ -210,7 +210,7 @@ def timeline_table_for_prompt(timeline: VideoTimeline) -> str:
 def material_timeline_length_budget(timeline: VideoTimeline, *, chars_per_sec: float | None = None) -> str:
     """素材脚本专用：按时间表每段时长分配字数预算，不含三层和验收区间。"""
     return (
-        "【生成顺序】先按时间表逐段写满 segments（每段对照字数下限），"
+        "【生成顺序】先按时间表逐段写满 segments（每段严格遵守字数范围），"
         "再原样拼接为 narration，最后统计 word_count。"
     )
 
@@ -219,17 +219,16 @@ def _material_timeline_table(timeline: VideoTimeline, *, chars_per_sec: float | 
     """时间表表格，含画面内容描述。"""
     def _mc(d): return _max_chars_for_duration(d, chars_per_sec)
     lines = [
-        "序号 | 时长 | 画面内容 | 字数下限 | 建议字数 | 字数上限",
-        "--- | --- | --- | --- | --- | ---",
+        "序号 | 时长 | 画面内容 | 字数范围",
+        "--- | --- | --- | ---",
     ]
     for slot in timeline.slots:
         max_c = _mc(slot.duration_sec)
         min_c = slot_min_chars(max_c)
-        target_c = slot_target_chars(max_c)
         desc = slot.description
         lines.append(
             f"{slot.index} | {_format_sec(slot.duration_sec)}s | {desc} | "
-            f"{min_c} | {target_c}-{max_c} | {max_c}"
+            f"{min_c}-{max_c}"
         )
     return "\n".join(lines)
 
@@ -246,7 +245,7 @@ def material_timeline_system_clause(timeline: VideoTimeline, *, need_opening: bo
         f"segments 必须恰好 {count} 条，segment_index 从 1 到 {count}，与时间表顺序一一对应；"
         "第 i 段 text 只讲第 i 段画面，禁止提前讲后续画面、禁止滞后讲上一段、禁止合并多段。"
         f"{opening}"
-        "每段按时间表「字数下限」「字数上限」列写满该段时长。"
+        "每段按时间表「字数范围」列写满该段时长。"
         "若对象名称较长，优先写核心标识（如年份、名称），细节从简。"
         "有补充信息时不得与时间表矛盾；时间表优先决定分镜与讲什么。"
     )
