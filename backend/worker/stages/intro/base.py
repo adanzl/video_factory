@@ -83,13 +83,14 @@ def _generate_cover_subject_from_narration(title: str, narration: str) -> str:
     user = f"标题：{title}\n口播内容：{narration}"
     try:
         client = DeepSeekClient()
-        result, _ = client._chat(system, user, max_tokens=400, json_mode=False)
+        result, _ = client._chat(system, user, max_tokens=800, json_mode=False)
         desc = result.strip()
         if desc and len(desc) >= 20:
             logger.info("cover subject generated from narration: '%s'", desc[:80])
             return desc
     except Exception as exc:
         logger.warning("cover subject generation failed: %s", exc)
+    logger.warning("cover subject generation returned empty/short result, fallback to title")
     return title
 
 
