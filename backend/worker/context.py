@@ -25,6 +25,7 @@ class JobContext:
     script_generate_image_prompts: bool = False
     script_supplementary_info: str | None = None
     script_video_timeline: str | None = None
+    script_segment_index: int | None = None
     material_narration: str | None = None
 
     @classmethod
@@ -46,6 +47,7 @@ class JobContext:
         script_generate_image_prompts: bool = False,
         script_supplementary_info: str | None = None,
         script_video_timeline: str | None = None,
+        script_segment_index: int | None = None,
         material_narration: str | None = None,
     ) -> "JobContext":
         from app.utils.job_info import (
@@ -138,6 +140,7 @@ class JobContext:
             script_generate_image_prompts=script_generate_image_prompts,
             script_supplementary_info=script_supplementary_info,
             script_video_timeline=script_video_timeline,
+            script_segment_index=script_segment_index,
             material_narration=material_narration,
         )
 

@@ -373,6 +373,12 @@ _NARRATION_ANTI_MEMOIR_RULE = (
     "产业、科技类须客观第三人称科普，用「很多人/业内/数据显示」表述即可。"
 )
 
+_NARRATION_NO_JSON_RULE = (
+    "【禁止JSON混入】narration 必须是纯口播文本，禁止出现 JSON 花括号 {}、"
+    "禁止出现 {\"text\":...} 等结构化片段；"
+    "后端会按标点自动切分分镜，不要在口播里写分镜标签。"
+)
+
 _NARRATION_ANTI_REPETITION_RULE = (
     "【禁止复读】同一比喻/类比、同一组数字对比、同一操作步骤全文只讲一次；"
     "相邻两段不得复述刚讲过的句子或意象；"
@@ -832,6 +838,7 @@ def build_narration_prompts(
         f"narration口吻：{_narration_voice_rule(profile_style)}"
         f"{_NARRATION_ANTI_MEMOIR_RULE}"
         f"{_NARRATION_ANTI_REPETITION_RULE}"
+        f"{_NARRATION_NO_JSON_RULE}"
         f"{_structure_rule(orientation=profile_orientation, content_style=profile_style)}"
         "结构完整有开头结尾。"
         "禁止口播开头空泛自我介绍或冗长人设铺垫。"
@@ -985,6 +992,7 @@ def build_board_prompts(
         f"narration口吻：{_narration_voice_rule(profile_style)}"
         f"{_NARRATION_ANTI_MEMOIR_RULE}"
         f"{_NARRATION_ANTI_REPETITION_RULE}"
+        f"{_NARRATION_NO_JSON_RULE}"
         f"{_structure_rule(orientation=profile_orientation, content_style=profile_style)}"
         "结构完整有开头结尾。"
         "禁止口播开头空泛自我介绍或冗长人设铺垫。"
@@ -1198,6 +1206,7 @@ def build_material_script_prompts(
         f"{length_rule}"
         f"{_NARRATION_VOICE_RULE}"
         f"{_NARRATION_ANTI_MEMOIR_RULE}"
+        f"{_NARRATION_NO_JSON_RULE}"
         f"{opening_rule}"
         f"{segment_rule}"
         f"{material_timeline_system_clause(timeline, need_opening=bool(need_opening)) if timeline else ''}"

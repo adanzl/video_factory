@@ -241,8 +241,11 @@
               </template>
             </el-table-column>
           </template>
-          <el-table-column label="操作" width="70" align="center">
+          <el-table-column label="操作" width="100" align="center">
             <template #default="{ row }">
+              <el-button size="small" link type="primary" @click="handleGenerateSegmentNarration(row)">
+                生成
+              </el-button>
               <el-button size="small" link type="primary" @click="openScriptEditDialog(row)">
                 编辑
               </el-button>
@@ -1045,6 +1048,42 @@ const copyVideoDescription = async (text: string) => {
     ElMessage.success("已复制");
   } catch (error) {
     handleError(error, "复制失败");
+  }
+};
+
+const generatingSegmentNarration = ref(false);
+
+const handleGenerateSegmentNarration = async (row: { segment_index: number }) => {
+  const trimmedTitle = sourceTitle.value.trim();
+  if (!trimmedTitle) {
+    ElMessage.warning("请输入原标题");
+    return;
+  }
+  const words = narrationTargetWords.value;
+  if (!Number.isFinite(words) || words < NARRATION_WORDS_MIN || words > NARRATION_WORDS_MAX) {
+    ElMessage.warning(`口播字数需在 ${NARRATION_WORDS_MIN}–${NARRATION_WORDS_MAX} 之间`);
+    return;
+  }
+  try {
+    await ElMessageBox.confirm(
+      `确定为分镜 #${row.segment_index} 重新生成口播文案吗？`,
+      "确认执行",
+      { type: "warning", confirmButtonText: "执行", cancelButtonText: "取消" }
+    );
+  } catch {
+    return;
+  }
+  generatingSegmentNarration.value = true;
+  try {
+    const payload = buildRunPayload(false, trimmedTitle, words);
+    payload.segment_index = row.segment_index;
+    await runJobStageAction("script", payload);
+    ElMessage.success(`已提交分镜 #${row.segment_index} 口播生成`);
+    emit("refresh");
+  } catch (error) {
+    handleError(error, "生成分镜口播失败");
+  } finally {
+    generatingSegmentNarration.value = false;
   }
 };
 

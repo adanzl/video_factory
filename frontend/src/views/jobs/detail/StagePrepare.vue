@@ -116,7 +116,7 @@ const videoUrl = computed(() => getMediaFileUrl(props.job.base_path ?? ""));
 const lazyVideoUrl = computed(() => lazyMediaSrc(videoUrl.value, props.stageActive));
 
 const previewBoxStyle = computed(() =>
-  buildMediaPreviewBoxStyle(videoMeta.value?.width, videoMeta.value?.height)
+  buildMediaPreviewBoxStyle(videoMeta.value?.width, videoMeta.value?.height, "16 / 9", { maxWidthPx: 720 })
 );
 
 const previewPlaceholderStyle = computed(() => ({
