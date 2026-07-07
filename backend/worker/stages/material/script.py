@@ -170,18 +170,25 @@ class MaterialScriptStage(StageExecutor):
 
         if manual_narration and str(manual_narration).strip():
             narration = str(manual_narration).strip()
-            script = {
-                "title": _title_chars(title),
-                "narration": narration,
-                "segments": _split_manual_narration(narration),
-                "script_mode": "manual",
-            }
-            accept_warnings = _validate_material_script(
-                script,
-                max_title_length=max_title_length,
-                min_narration_chars=min_narration_chars,
-                video_timeline_raw=video_timeline,
-            )
+            # 有时间表时，用AI按时间表分段生成，手动口播作为补充参考
+            if video_timeline:
+                script = None
+                extra = supplementary_info or ""
+                extra += f"\n用户已提供口播素材（需融入或参考）：{narration}"
+                supplementary_info = extra.strip()
+            else:
+                script = {
+                    "title": _title_chars(title),
+                    "narration": narration,
+                    "segments": _split_manual_narration(narration),
+                    "script_mode": "manual",
+                }
+                accept_warnings = _validate_material_script(
+                    script,
+                    max_title_length=max_title_length,
+                    min_narration_chars=min_narration_chars,
+                    video_timeline_raw=video_timeline,
+                )
         else:
             last_exc: Exception | None = None
             script = None
