@@ -114,6 +114,19 @@ export async function generateImagePrompts(
   return response.data;
 }
 
+export async function updateSegmentText(
+  jobId: number,
+  segmentIndex: number,
+  text: string
+): Promise<JobDetail> {
+  const response = await api.post<JobDetail>("/v_factory/api/jobs/segment/updateText", {
+    id: jobId,
+    segment_index: segmentIndex,
+    text,
+  });
+  return response.data;
+}
+
 export async function cleanJob(jobId: number): Promise<{
   id: number;
   cleaned: boolean;

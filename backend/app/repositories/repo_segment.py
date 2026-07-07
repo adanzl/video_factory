@@ -73,6 +73,7 @@ def update_segment(
     **fields: object,
 ) -> None:
     allowed = {
+        "text",
         "image_path",
         "clip_path",
         "duration_sec",
