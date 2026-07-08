@@ -9,6 +9,7 @@
         <el-form-item label="原标题">
           <div class="flex w-full min-w-0 items-center gap-2">
             <el-input v-model="sourceTitle" placeholder="脚本生成输入标题" clearable class="min-w-0 flex-1!" />
+            <span class="text-xs text-gray-400 whitespace-nowrap">{{ sourceTitle.length }} 字</span>
             <el-button :loading="savingSourceTitle"
               :disabled="actionDisabled || !sourceTitle.trim() || sourceTitleUnchanged"
               @click="handleUpdateSourceTitle">

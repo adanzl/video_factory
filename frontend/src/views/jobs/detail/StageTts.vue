@@ -127,6 +127,31 @@
       </div>
     </div>
 
+    <div v-if="segmentClips.length" class="mt-4">
+      <div :class="STAGE_PANEL_CLASS">
+        <div :class="STAGE_PANEL_TITLE_CLASS">分镜音频</div>
+        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <div
+            v-for="item in segmentClips"
+            :key="item.segment_index"
+            class="rounded border border-gray-100 bg-gray-50 px-3 py-2"
+          >
+            <div class="mb-1 text-xs font-medium text-blue-700">
+              分镜 #{{ item.segment_index }}
+            </div>
+            <audio
+              v-if="item.clipUrl"
+              class="block w-full"
+              :src="item.clipUrl"
+              controls
+              preload="metadata"
+            />
+            <div v-else class="py-1 text-xs text-gray-400">音频不可用</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <StageLogsSection :logs="logs" />
 
     <audio
@@ -223,6 +248,28 @@ const actionDisabledReason = computed(() =>
 
 const audioUrl = computed(() => getMediaFileUrl(props.job.audio_path ?? ""));
 const lazyAudioUrl = computed(() => lazyMediaSrc(audioUrl.value, props.stageActive));
+
+interface SegmentClip {
+  segment_index: number;
+  clipUrl: string;
+}
+
+/** 直接从 job.tts_clips 解析，无需探测 */
+const segmentClips = computed<SegmentClip[]>(() => {
+  const clips = props.job.tts_clips;
+  if (!clips?.length) return [];
+  return clips
+    .map(clipPath => {
+      const fileName = clipPath.trim().replace(/\\/g, "/").split("/").pop() || "";
+      const index = parseInt(fileName.replace(/\.mp3$/i, ""), 10);
+      return {
+        segment_index: Number.isFinite(index) ? index : 0,
+        clipUrl: getMediaFileUrl(clipPath),
+      };
+    })
+    .filter(item => item.clipUrl)
+    .sort((a, b) => a.segment_index - b.segment_index);
+});
 
 const selectedVoicePreviewUrl = computed(
   () => TTS_VOICE_OPTIONS.find(voice => voice.value === voiceId.value)?.previewUrl ?? ""
