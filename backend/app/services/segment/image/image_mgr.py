@@ -86,12 +86,14 @@ class ImageMgr:
                 prompt = seg.get("sd15_prompt_en") or seg.get("image_prompt") or seg["text"]
             else:
                 prompt = seg.get("image_prompt") or seg["text"]
-            # 所有文生图统一添加地图合规约束
-            prompt = (
-                f"若包含世界地图，不得显示中国部分。"
-                f"任何地图不得出现中国领土、藏南地区、阿克赛钦地区。"
-                f"{prompt}"
-            )
+            # 仅当 prompt 含地图关键词时才注入地图合规约束，避免无关提示词被污染
+            from app.services.intro.cover_layout import _subject_has_map_keyword
+            if _subject_has_map_keyword(prompt):
+                prompt = (
+                    f"若包含世界地图，不得显示中国部分。"
+                    f"任何地图不得出现中国领土、藏南地区、阿克赛钦地区。"
+                    f"{prompt}"
+                )
             logger.info(
                 "image %s/%s generating segment %s | %s | prompt_chars=%s",
                 done + 1,
@@ -140,13 +142,16 @@ class ImageMgr:
         *,
         base_prompt: str | None = None,
     ) -> Path:
-        from app.services.intro.cover_layout import _resolve_cover_subject
+        from app.services.intro.cover_layout import _resolve_cover_subject, _subject_has_map_keyword
 
         resolved_title = _resolve_cover_subject(title)
-        prompt = base_prompt or (
-            f"B站科普视频封面，16:9，信息图风格，标题文字区域留白，"
-            f"若包含世界地图，不得显示中国部分。任何地图不得出现中国领土、藏南地区、阿克赛钦地区，主题：{resolved_title}"
-        )
+        if base_prompt:
+            prompt = base_prompt
+        else:
+            prompt = f"B站科普视频封面，16:9，信息图风格，标题文字区域留白，"
+            if _subject_has_map_keyword(title):
+                prompt += "若包含世界地图，不得显示中国部分。任何地图不得出现中国领土、藏南地区、阿克赛钦地区，"
+            prompt += f"主题：{resolved_title}"
         return self._get_image_provider().generate(
             prompt,
             output_path,

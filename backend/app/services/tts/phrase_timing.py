@@ -171,7 +171,6 @@ def phrase_durations_from_words(
     words: list[TimedWord],
     *,
     segment_duration_sec: float,
-    duration_drift_tolerance_sec: float = 0.15,
 ) -> list[float]:
     """按字级时间戳切分断句；句间自然停顿算进前一句时长。"""
     if not phrases:
@@ -220,8 +219,6 @@ def phrase_durations_from_words(
     if total <= 0.01:
         return _proportional_durations(phrases, segment_duration_sec)
 
-    if abs(total - segment_duration_sec) > duration_drift_tolerance_sec:
-        scale = segment_duration_sec / total
-        return [max(duration * scale, 0.05) for duration in durations]
-
-    return durations
+    # 始终缩放到精确匹配 segment_duration，避免多分镜累积偏差导致字幕错位
+    scale = segment_duration_sec / total
+    return [max(duration * scale, 0.05) for duration in durations]
