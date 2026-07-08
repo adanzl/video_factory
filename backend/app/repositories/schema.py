@@ -23,9 +23,8 @@ CREATE TABLE IF NOT EXISTS title (
 CREATE INDEX IF NOT EXISTS idx_title_status ON title(status);
 """
 
-
-_MATERIAL_DDL = """
-CREATE TABLE IF NOT EXISTS video_material (
+_MATERIAL_VIDEO_DDL = """
+CREATE TABLE IF NOT EXISTS material_video (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     file_path TEXT NOT NULL,
@@ -40,17 +39,49 @@ CREATE TABLE IF NOT EXISTS video_material (
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_video_material_status ON video_material(status);
+CREATE INDEX IF NOT EXISTS idx_material_video_status ON material_video(status);
+"""
+
+_MATERIAL_AUDIO_DDL = """
+CREATE TABLE IF NOT EXISTS material_audio (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    file_path TEXT NOT NULL,
+    duration_sec REAL,
+    size_bytes INTEGER,
+    note TEXT,
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_material_audio_status ON material_audio(status);
 """
 
 
-def apply_material_schema(conn: sqlite3.Connection) -> None:
+def _rename_table_if_exists(conn: sqlite3.Connection, old: str, new: str) -> None:
+    row = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (old,)
+    ).fetchone()
+    if row is not None:
+        conn.execute(f"ALTER TABLE {old} RENAME TO {new}")
+
+
+def apply_material_video_schema(conn: sqlite3.Connection) -> None:
     """创建视频素材库表，并为 video_job 增加 pipeline / material_id（幂等）。"""
-    conn.executescript(_MATERIAL_DDL)
+    _rename_table_if_exists(conn, "video_material", "material_video")
+    conn.executescript(_MATERIAL_VIDEO_DDL)
     _ensure_column(conn, "video_job", "pipeline", "TEXT NOT NULL DEFAULT 'standard'")
     _ensure_column(conn, "video_job", "material_id", "INTEGER")
-    _ensure_column(conn, "video_material", "job_id", "INTEGER")
+    _ensure_column(conn, "material_video", "job_id", "INTEGER")
     _ensure_column(conn, "video_job", "base_path", "TEXT")
+    _ensure_journal_mode_delete(conn)
+
+
+def apply_material_audio_schema(conn: sqlite3.Connection) -> None:
+    """创建音频素材表（幂等）。"""
+    _rename_table_if_exists(conn, "audio_material", "material_audio")
+    conn.executescript(_MATERIAL_AUDIO_DDL)
     _ensure_journal_mode_delete(conn)
 
 
@@ -67,7 +98,7 @@ def apply_title_schema(conn: sqlite3.Connection) -> None:
     _ensure_column(conn, "title", "keyword", "TEXT")
 
 def apply_schema(conn: sqlite3.Connection) -> None:
-    conn.executescript(_MATERIAL_DDL)
+    conn.executescript(_MATERIAL_VIDEO_DDL)
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS video_job (
@@ -124,7 +155,8 @@ def apply_schema(conn: sqlite3.Connection) -> None:
         """
     )
     apply_title_schema(conn)
-    apply_material_schema(conn)
+    apply_material_video_schema(conn)
+    apply_material_audio_schema(conn)
     conn.execute(
         "UPDATE video_job SET stage = 'segment' WHERE stage = 'ffmpeg'"
     )

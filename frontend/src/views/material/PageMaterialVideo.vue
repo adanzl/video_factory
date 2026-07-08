@@ -222,14 +222,14 @@ import { useRouter } from "vue-router";
 import { Refresh } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import {
-  createJobFromMaterial,
-  deleteMaterial,
-  getMaterial,
-  listMaterials,
-  uploadMaterial,
-  analyzeMaterial,
+  createJobFromMaterialVideo,
+  deleteMaterialVideo,
+  getMaterialVideo,
+  listMaterialVideos,
+  uploadMaterialVideo,
+  analyzeMaterialVideo,
 } from "@/api/api-materials";
-import type { MaterialJobRunMode, MaterialRecord } from "@/types/material";
+import type { MaterialVideoJobRunMode, MaterialVideoRecord } from "@/types/material-video";
 import EditMaterialDialog from "./EditMaterialDialog.vue";
 import { useErrorHandler } from "@/composables/useErrorHandler";
 import { formatDateTime } from "@/utils/date";
@@ -238,7 +238,7 @@ import { formatFileSize, formatMediaDuration, getMediaFileUrl, MEDIA_CROSS_ORIGI
 const router = useRouter();
 const { handleError } = useErrorHandler();
 
-const materials = ref<MaterialRecord[]>([]);
+const materials = ref<MaterialVideoRecord[]>([]);
 const loading = ref(false);
 const deleting = ref(false);
 const uploading = ref(false);
@@ -256,18 +256,18 @@ const uploadNote = ref("");
 const fileInputRef = ref<HTMLInputElement | null>(null);
 
 const showEditDialog = ref(false);
-const editMaterialRow = ref<MaterialRecord | null>(null);
+const editMaterialRow = ref<MaterialVideoRecord | null>(null);
 
 const showCreateJobDialog = ref(false);
-const createJobMaterial = ref<MaterialRecord | null>(null);
+const createJobMaterial = ref<MaterialVideoRecord | null>(null);
 const createJobTitle = ref("");
 const createJobScriptMode = ref<"ai" | "manual">("ai");
 const createJobNarration = ref("");
 const createJobSkipPublish = ref(true);
-const createJobRunMode = ref<MaterialJobRunMode>("prepare");
+const createJobRunMode = ref<MaterialVideoJobRunMode>("prepare");
 
 const showPlayDialog = ref(false);
-const playMaterial = ref<MaterialRecord | null>(null);
+const playMaterial = ref<MaterialVideoRecord | null>(null);
 const playVideoMeta = ref<{ width: number; height: number } | null>(null);
 
 const PLAY_MAX_VIEWPORT_RATIO = 0.7;
@@ -340,13 +340,13 @@ const onPlayDialogClosed = () => {
   playVideoMeta.value = null;
 };
 
-const thumbUrl = (row: MaterialRecord) =>
+const thumbUrl = (row: MaterialVideoRecord) =>
   row.thumbnail_path ? getMediaFileUrl(row.thumbnail_path) : "";
 
-const videoUrl = (row: MaterialRecord) =>
+const videoUrl = (row: MaterialVideoRecord) =>
   row.file_path ? getMediaFileUrl(row.file_path) : "";
 
-const openPlayDialog = (row: MaterialRecord) => {
+const openPlayDialog = (row: MaterialVideoRecord) => {
   if (!videoUrl(row)) {
     return;
   }
@@ -358,7 +358,7 @@ const goToJob = (jobId: number) => {
   void router.push({ path: "/jobs", query: { id: String(jobId) } });
 };
 
-const onSelectionChange = (rows: MaterialRecord[]) => {
+const onSelectionChange = (rows: MaterialVideoRecord[]) => {
   selectedIds.value = rows.map(row => row.id);
 };
 
@@ -366,7 +366,7 @@ const fetchMaterials = async () => {
   loading.value = true;
   try {
     const offset = (page.value - 1) * pageSize.value;
-    const rows = await listMaterials({ limit: pageSize.value, offset });
+    const rows = await listMaterialVideos({ limit: pageSize.value, offset });
     materials.value = rows;
     total.value = rows.length < pageSize.value ? offset + rows.length : offset + pageSize.value + 1;
   } catch (error) {
@@ -392,7 +392,7 @@ const handleUpload = async () => {
   }
   uploading.value = true;
   try {
-    await uploadMaterial({
+    await uploadMaterialVideo({
       file: uploadFile.value,
       name: uploadName.value || undefined,
       note: uploadNote.value || undefined,
@@ -427,7 +427,7 @@ const handleDeleteSelected = async () => {
   deleting.value = true;
   try {
     for (const id of selectedIds.value) {
-      await deleteMaterial(id);
+      await deleteMaterialVideo(id);
     }
     ElMessage.success("已删除");
     selectedIds.value = [];
@@ -439,7 +439,7 @@ const handleDeleteSelected = async () => {
   }
 };
 
-const openCreateJobDialog = (row: MaterialRecord) => {
+const openCreateJobDialog = (row: MaterialVideoRecord) => {
   createJobMaterial.value = row;
   createJobTitle.value = row.name;
   createJobScriptMode.value = "ai";
@@ -449,7 +449,7 @@ const openCreateJobDialog = (row: MaterialRecord) => {
   showCreateJobDialog.value = true;
 };
 
-const createJobRunModeLabel = (mode: MaterialJobRunMode) => {
+const createJobRunModeLabel = (mode: MaterialVideoJobRunMode) => {
   switch (mode) {
     case "prepare":
       return "已创建并开始基底准备";
@@ -468,7 +468,7 @@ const handleCreateJob = async () => {
   creatingJob.value = true;
   try {
     const runMode = createJobRunMode.value;
-    const job = await createJobFromMaterial({
+    const job = await createJobFromMaterialVideo({
       material_id: createJobMaterial.value.id,
       title: createJobTitle.value.trim(),
       script_mode: createJobScriptMode.value,
@@ -486,16 +486,16 @@ const handleCreateJob = async () => {
   }
 };
 
-const handleAnalyze = async (row: MaterialRecord) => {
+const handleAnalyze = async (row: MaterialVideoRecord) => {
   analyzingIds.value.add(row.id);
   const POLL_INTERVAL = 3000;
 
   try {
-    await analyzeMaterial({ material_id: row.id });
+    await analyzeMaterialVideo({ material_id: row.id });
 
     // 轮询直到 analyze_status 不再是 analyzing
     while (true) {
-      const material = await getMaterial(row.id);
+      const material = await getMaterialVideo(row.id);
       if (material.status !== "analyzing") {
         ElMessage.success("分析完成");
         await fetchMaterials();

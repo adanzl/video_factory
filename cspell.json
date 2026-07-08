@@ -18,6 +18,7 @@
         "embedder",
         "fallocate",
         "faststart",
+        "flac",
         "fontsdir",
         "fuser",
         "HOTWORD",

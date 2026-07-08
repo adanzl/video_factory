@@ -55,8 +55,8 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
-import { editMaterial } from "@/api/api-materials";
-import type { MaterialRecord } from "@/types/material";
+import { editMaterialVideo } from "@/api/api-materials";
+import type { MaterialVideoRecord } from "@/types/material-video";
 
 interface TimelineSegment {
   index: number;
@@ -74,7 +74,7 @@ interface TimelineData {
 
 const props = defineProps<{
     modelValue: boolean;
-    material: MaterialRecord | null;
+    material: MaterialVideoRecord | null;
 }>();
 
 const emit = defineEmits<{
@@ -152,7 +152,7 @@ const handleSave = async () => {
     }
     saving.value = true;
     try {
-        await editMaterial({
+        await editMaterialVideo({
             id: props.material.id,
             name,
             note: editNote.value,

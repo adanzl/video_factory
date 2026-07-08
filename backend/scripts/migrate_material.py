@@ -25,7 +25,7 @@ if str(BACKEND_DIR) not in sys.path:
 
 from app.config import get_settings
 from app.repositories.connection import connection
-from app.repositories.schema import apply_material_schema
+from app.repositories.schema import apply_material_video_schema
 
 _LOCK_HINT = (
     "database is locked：请先停止正在访问数据库的进程（Flask API、worker 等），"
@@ -37,7 +37,7 @@ def main() -> None:
     settings = get_settings()
     try:
         with connection() as conn:
-            apply_material_schema(conn)
+            apply_material_video_schema(conn)
     except sqlite3.OperationalError as exc:
         if "locked" in str(exc).lower():
             raise SystemExit(_LOCK_HINT) from exc

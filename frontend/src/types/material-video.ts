@@ -1,6 +1,6 @@
 export type JobPipeline = "standard" | "material";
 
-export interface MaterialRecord {
+export interface MaterialVideoRecord {
   id: number;
   name: string;
   file_path: string;
@@ -16,40 +16,40 @@ export interface MaterialRecord {
   updated_at?: string | null;
 }
 
-export interface ListMaterialsParams {
+export interface ListMaterialVideosParams {
   limit?: number;
   offset?: number;
 }
 
-export type MaterialJobRunMode = "none" | "prepare" | "full";
+export type MaterialVideoJobRunMode = "none" | "prepare" | "full";
 
-export interface CreateJobFromMaterialParams {
+export interface CreateJobFromMaterialVideoParams {
   material_id: number;
   title: string;
   script_mode?: "ai" | "manual";
   narration?: string;
   skip_publish?: boolean;
-  run_mode?: MaterialJobRunMode;
+  run_mode?: MaterialVideoJobRunMode;
 }
 
-export interface UploadMaterialParams {
+export interface UploadMaterialVideoParams {
   file: File;
   name?: string;
   note?: string;
 }
 
-export interface EditMaterialParams {
+export interface EditMaterialVideoParams {
   id: number;
   name: string;
   note?: string;
   file?: File;
 }
 
-export interface AnalyzeMaterialParams {
+export interface AnalyzeMaterialVideoParams {
   material_id: number;
 }
 
-export interface AnalyzeMaterialResult {
+export interface AnalyzeMaterialVideoResult {
   material_id: number;
   note: string;
 }

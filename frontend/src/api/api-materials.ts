@@ -1,31 +1,39 @@
 /**
- * 视频素材 API
+ * 素材 API（视频 + 音频）
  */
 import { api } from "./config";
 import type {
-  AnalyzeMaterialParams,
-  AnalyzeMaterialResult,
-  CreateJobFromMaterialParams,
-  ListMaterialsParams,
-  MaterialRecord,
-  UploadMaterialParams,
-  EditMaterialParams,
-} from "@/types/material";
+  AnalyzeMaterialVideoParams,
+  AnalyzeMaterialVideoResult,
+  CreateJobFromMaterialVideoParams,
+  ListMaterialVideosParams,
+  MaterialVideoRecord,
+  UploadMaterialVideoParams,
+  EditMaterialVideoParams,
+} from "@/types/material-video";
 import type { JobDetail } from "@/types/jobs";
+import type {
+  MaterialAudioRecord,
+  ListMaterialAudiosParams,
+  UploadMaterialAudioParams,
+  EditMaterialAudioParams,
+} from "@/types/material-audio";
 
-export async function listMaterials(params: ListMaterialsParams = {}): Promise<MaterialRecord[]> {
-  const response = await api.get<MaterialRecord[]>("/v_factory/api/materials/list", { params });
+// ── 视频素材 ──────────────────────────────────
+
+export async function listMaterialVideos(params: ListMaterialVideosParams = {}): Promise<MaterialVideoRecord[]> {
+  const response = await api.get<MaterialVideoRecord[]>("/v_factory/api/materials/video/list", { params });
   return Array.isArray(response.data) ? response.data : [];
 }
 
-export async function getMaterial(materialId: number): Promise<MaterialRecord> {
-  const response = await api.get<MaterialRecord>("/v_factory/api/materials/get", {
+export async function getMaterialVideo(materialId: number): Promise<MaterialVideoRecord> {
+  const response = await api.get<MaterialVideoRecord>("/v_factory/api/materials/video/get", {
     params: { id: materialId },
   });
   return response.data;
 }
 
-export async function uploadMaterial(params: UploadMaterialParams): Promise<MaterialRecord> {
+export async function uploadMaterialVideo(params: UploadMaterialVideoParams): Promise<MaterialVideoRecord> {
   const form = new FormData();
   form.append("file", params.file);
   if (params.name) {
@@ -34,13 +42,13 @@ export async function uploadMaterial(params: UploadMaterialParams): Promise<Mate
   if (params.note) {
     form.append("note", params.note);
   }
-  const response = await api.post<MaterialRecord>("/v_factory/api/materials/upload", form, {
+  const response = await api.post<MaterialVideoRecord>("/v_factory/api/materials/video/upload", form, {
     headers: { "Content-Type": "multipart/form-data" },
   });
   return response.data;
 }
 
-export async function editMaterial(params: EditMaterialParams): Promise<MaterialRecord> {
+export async function editMaterialVideo(params: EditMaterialVideoParams): Promise<MaterialVideoRecord> {
   const form = new FormData();
   form.append("id", String(params.id));
   form.append("name", params.name);
@@ -48,38 +56,97 @@ export async function editMaterial(params: EditMaterialParams): Promise<Material
   if (params.file) {
     form.append("file", params.file);
   }
-  const response = await api.post<MaterialRecord>("/v_factory/api/materials/edit", form, {
+  const response = await api.post<MaterialVideoRecord>("/v_factory/api/materials/video/edit", form, {
     headers: { "Content-Type": "multipart/form-data" },
   });
   return response.data;
 }
 
-export async function updateMaterial(
+export async function updateMaterialVideo(
   materialId: number,
-  data: Partial<Pick<MaterialRecord, "name" | "note">>
-): Promise<MaterialRecord> {
-  const response = await api.post<MaterialRecord>("/v_factory/api/materials/update", {
+  data: Partial<Pick<MaterialVideoRecord, "name" | "note">>
+): Promise<MaterialVideoRecord> {
+  const response = await api.post<MaterialVideoRecord>("/v_factory/api/materials/video/update", {
     id: materialId,
     ...data,
   });
   return response.data;
 }
 
-export async function deleteMaterial(materialId: number): Promise<{ id: number; deleted: boolean }> {
-  const response = await api.post("/v_factory/api/materials/delete", { id: materialId });
+export async function deleteMaterialVideo(materialId: number): Promise<{ id: number; deleted: boolean }> {
+  const response = await api.post("/v_factory/api/materials/video/delete", { id: materialId });
   return response.data;
 }
 
-export async function createJobFromMaterial(
-  params: CreateJobFromMaterialParams
+export async function createJobFromMaterialVideo(
+  params: CreateJobFromMaterialVideoParams
 ): Promise<JobDetail> {
-  const response = await api.post<JobDetail>("/v_factory/api/materials/jobs/create", params);
+  const response = await api.post<JobDetail>("/v_factory/api/materials/video/jobs/create", params);
   return response.data;
 }
 
-export async function analyzeMaterial(
-  params: AnalyzeMaterialParams
-): Promise<AnalyzeMaterialResult> {
-  const response = await api.post<AnalyzeMaterialResult>("/v_factory/api/materials/analyze", params);
+export async function analyzeMaterialVideo(
+  params: AnalyzeMaterialVideoParams
+): Promise<AnalyzeMaterialVideoResult> {
+  const response = await api.post<AnalyzeMaterialVideoResult>("/v_factory/api/materials/video/analyze", params);
+  return response.data;
+}
+
+// ── 音频素材 ──────────────────────────────────
+
+export async function listMaterialAudios(params: ListMaterialAudiosParams = {}): Promise<MaterialAudioRecord[]> {
+  const response = await api.get<MaterialAudioRecord[]>("/v_factory/api/materials/audio/list", { params });
+  return Array.isArray(response.data) ? response.data : [];
+}
+
+export async function getMaterialAudio(materialId: number): Promise<MaterialAudioRecord> {
+  const response = await api.get<MaterialAudioRecord>("/v_factory/api/materials/audio/get", {
+    params: { id: materialId },
+  });
+  return response.data;
+}
+
+export async function uploadMaterialAudio(params: UploadMaterialAudioParams): Promise<MaterialAudioRecord> {
+  const form = new FormData();
+  form.append("file", params.file);
+  if (params.name) {
+    form.append("name", params.name);
+  }
+  if (params.note) {
+    form.append("note", params.note);
+  }
+  const response = await api.post<MaterialAudioRecord>("/v_factory/api/materials/audio/upload", form, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+  return response.data;
+}
+
+export async function editMaterialAudio(params: EditMaterialAudioParams): Promise<MaterialAudioRecord> {
+  const form = new FormData();
+  form.append("id", String(params.id));
+  form.append("name", params.name);
+  form.append("note", params.note ?? "");
+  if (params.file) {
+    form.append("file", params.file);
+  }
+  const response = await api.post<MaterialAudioRecord>("/v_factory/api/materials/audio/edit", form, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+  return response.data;
+}
+
+export async function updateMaterialAudio(
+  materialId: number,
+  data: Partial<Pick<MaterialAudioRecord, "name" | "note">>
+): Promise<MaterialAudioRecord> {
+  const response = await api.post<MaterialAudioRecord>("/v_factory/api/materials/audio/update", {
+    id: materialId,
+    ...data,
+  });
+  return response.data;
+}
+
+export async function deleteMaterialAudio(materialId: number): Promise<{ id: number; deleted: boolean }> {
+  const response = await api.post("/v_factory/api/materials/audio/delete", { id: materialId });
   return response.data;
 }

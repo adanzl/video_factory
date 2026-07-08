@@ -12,7 +12,7 @@ from werkzeug.datastructures import FileStorage
 
 from app.config import get_settings
 from app.core.pipelines import PIPELINE_MATERIAL
-from app.repositories import repo_job_log, repo_job, repo_material
+from app.repositories import repo_job_log, repo_job, repo_material_video
 from app.repositories.connection import connection
 from app.services.job.job_mgr import job_mgr
 from app.services.material.video_analyzer import VideoAnalyzer
@@ -28,14 +28,14 @@ _MAX_UPLOAD_BYTES = 500 * 1024 * 1024
 _PLACEHOLDER_PATH = "pending"
 
 
-class MaterialMgr:
+class MaterialVideoMgr:
     def list_materials(self, *, limit: int = 50, offset: int = 0) -> list[dict]:
         with connection() as conn:
-            return repo_material.list_materials(conn, limit=limit, offset=offset)
+            return repo_material_video.list_material_videos(conn, limit=limit, offset=offset)
 
     def get_material(self, material_id: int) -> dict:
         with connection() as conn:
-            return repo_material.get_material(conn, material_id)
+            return repo_material_video.get_material_video(conn, material_id)
 
     def update_material(self, material_id: int, **fields: object) -> dict:
         updates = {k: v for k, v in fields.items() if k in {"name", "note"}}
@@ -47,13 +47,13 @@ class MaterialMgr:
                 raise ValueError("name is empty")
             updates["name"] = name.strip()
         with connection() as conn:
-            return repo_material.update_material(conn, material_id, **updates)
+            return repo_material_video.update_material_video(conn, material_id, **updates)
 
     def delete_material(self, material_id: int) -> None:
         settings = get_settings()
         with connection() as conn:
-            repo_material.get_material(conn, material_id)
-            repo_material.soft_delete_material(conn, material_id)
+            repo_material_video.get_material_video(conn, material_id)
+            repo_material_video.soft_delete_material_video(conn, material_id)
         material_dir = settings.material_data_dir / str(material_id)
         if material_dir.exists():
             shutil.rmtree(material_dir, ignore_errors=True)
@@ -65,7 +65,7 @@ class MaterialMgr:
             return
         with connection() as conn:
             try:
-                repo_material.soft_delete_material(conn, material_id)
+                repo_material_video.soft_delete_material_video(conn, material_id)
             except KeyError:
                 pass
 
@@ -125,7 +125,7 @@ class MaterialMgr:
         material_dir: Path | None = None
         try:
             with connection() as conn:
-                material = repo_material.create_material(
+                material = repo_material_video.create_material_video(
                     conn,
                     name=display_name,
                     file_path=_PLACEHOLDER_PATH,
@@ -138,7 +138,7 @@ class MaterialMgr:
             meta = self._finalize_material_video(material_dir, dest)
 
             with connection() as conn:
-                return repo_material.update_material(
+                return repo_material_video.update_material_video(
                     conn,
                     material_id,
                     name=display_name,
@@ -165,7 +165,7 @@ class MaterialMgr:
 
         settings = get_settings()
         with connection() as conn:
-            repo_material.get_material(conn, material_id)
+            repo_material_video.get_material_video(conn, material_id)
 
         meta: dict[str, object] = {}
         if file and file.filename:
@@ -175,7 +175,7 @@ class MaterialMgr:
             meta = self._finalize_material_video(material_dir, dest)
 
         with connection() as conn:
-            return repo_material.update_material(
+            return repo_material_video.update_material_video(
                 conn,
                 material_id,
                 name=cleaned_name,
@@ -187,15 +187,14 @@ class MaterialMgr:
         """异步分析素材视频，立即返回。后台线程完成后写入 note。"""
         with connection() as conn:
             row = conn.execute(
-                "SELECT id, file_path, duration_sec FROM video_material WHERE id=?",
+                "SELECT id, file_path, duration_sec FROM material_video WHERE id=?",
                 (material_id,),
             ).fetchone()
             if row is None:
                 raise KeyError(f"material {material_id} not found")
             material = dict(row)
-            # 直接用 SQL 更新 status，避免 update_material 内 get_material 过滤 status
             conn.execute(
-                "UPDATE video_material SET status=?, updated_at=datetime('now') WHERE id=?",
+                "UPDATE material_video SET status=?, updated_at=datetime('now') WHERE id=?",
                 ("analyzing", material_id),
             )
 
@@ -220,13 +219,13 @@ class MaterialMgr:
             analyzer = VideoAnalyzer(video_path, duration=duration)
             note_text = analyzer.analyze()
             with connection() as conn:
-                repo_material.update_material(conn, material_id, note=note_text, status="active")
+                repo_material_video.update_material_video(conn, material_id, note=note_text, status="active")
             logger.info("material %s analysis complete", material_id)
         except Exception:
             logger.exception("material %s analysis failed", material_id)
             with connection() as conn:
                 conn.execute(
-                    "UPDATE video_material SET status=?, updated_at=datetime('now') WHERE id=?",
+                    "UPDATE material_video SET status=?, updated_at=datetime('now') WHERE id=?",
                     ("analyze_failed", material_id),
                 )
 
@@ -258,7 +257,7 @@ class MaterialMgr:
             raise ValueError(f"run_mode must be one of {sorted(_RUN_MODES)}")
 
         with connection() as conn:
-            repo_material.get_material(conn, material_id)
+            repo_material_video.get_material_video(conn, material_id)
             script_json = (
                 {"pending_narration": narration.strip(), "script_mode": "manual"}
                 if mode == "manual"
@@ -285,7 +284,7 @@ class MaterialMgr:
                 f"created material job from material #{material_id}, "
                 f"script_mode={mode}, run_mode={run}",
             )
-            repo_material.update_material(conn, material_id, job_id=job["id"])
+            repo_material_video.update_material_video(conn, material_id, job_id=job["id"])
 
         if run == "prepare":
             job_mgr.run_prepare(job["id"], to_end=False)
@@ -295,6 +294,6 @@ class MaterialMgr:
         return job
 
 
-material_mgr = MaterialMgr()
+material_video_mgr = MaterialVideoMgr()
 
-__all__ = ["MaterialMgr", "material_mgr"]
+__all__ = ["MaterialVideoMgr", "material_video_mgr"]
