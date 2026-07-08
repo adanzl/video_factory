@@ -173,6 +173,7 @@ _IMAGE_PROMPT_DIMENSIONS_FULL = (
     + "⑤构图（景别、主体位置与占比、相机角度、留白）；"
     + _IMAGE_PROMPT_QUALITY_RULE
     + "另遵守语义边界：仅表达本段 text 与 visual_brief，禁止提前画后续段落内容。"
+    + "禁止生成世界地图、地球仪、任何包含国界线的地图元素。"
 )
 
 _IMAGE_PROMPT_DIMENSIONS_COMPACT = (
@@ -181,6 +182,7 @@ _IMAGE_PROMPT_DIMENSIONS_COMPACT = (
     + _IMAGE_PROMPT_FORMAT_RULE
     + _IMAGE_PROMPT_QUALITY_RULE
     + "并遵守语义边界（仅本段内容）。"
+    + "禁止生成世界地图、地球仪、任何包含国界线的地图元素。"
     + "实际 SD1.5 出图以 sd15_prompt_en 为准。"
     + "image_prompt 和 sd15_prompt_en 都必须使用中文和英文分别写，禁止 image_prompt 出现英文。"
 )
