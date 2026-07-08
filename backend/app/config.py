@@ -94,6 +94,7 @@ class Config:
         self.sqlite_path: Path = _path("SQLITE_PATH", ROOT_DIR / "data/data.db")
         self.video_data_dir: Path = _path("VIDEO_DATA_DIR", ROOT_DIR / "data/media")
         self.material_data_dir: Path = _path("MATERIAL_DATA_DIR", ROOT_DIR / "data/materials")
+        self.audio_data_dir: Path = _path("AUDIO_DATA_DIR", ROOT_DIR / "data/audio")
         self.allowed_dir: str = os.getenv("ALLOWED_DIR", "/mnt").strip()
         self.log_dir: Path = _path("LOG_DIR", ROOT_DIR / "logs")
         self.log_retention_days: int = int(os.getenv("LOG_RETENTION_DAYS", "3"))

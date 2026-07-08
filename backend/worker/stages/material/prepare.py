@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from app.repositories import repo_job_log, repo_job, repo_material
+from app.repositories import repo_job_log, repo_job, repo_material_video
 from app.repositories.connection import connection
 from app.services.intro.size import design_size_for_source
 from app.services.media.ffmpeg_utils import (
@@ -27,7 +27,7 @@ class MaterialPrepareStage(StageExecutor):
             raise ValueError("material_id is required for material pipeline")
 
         with connection() as conn:
-            material = repo_material.get_material(conn, int(material_id))
+            material = repo_material_video.get_material_video(conn, int(material_id))
 
         source = Path(material["file_path"])
         if not source.is_file():

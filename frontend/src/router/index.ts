@@ -17,9 +17,14 @@ const routes: RouteRecordRaw[] = [
     component: () => import("@/views/jobs/PageJobs.vue"),
   },
   {
-    path: "/materials",
-    name: "Materials",
-    component: () => import("@/views/material/PageMaterial.vue"),
+    path: "/materials/video",
+    name: "MaterialsVideo",
+    component: () => import("@/views/material/PageMaterialVideo.vue"),
+  },
+  {
+    path: "/materials/audio",
+    name: "MaterialsAudio",
+    component: () => import("@/views/material/PageMaterialAudio.vue"),
   },
   {
     path: "/clips",
