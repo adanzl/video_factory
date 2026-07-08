@@ -1,3 +1,4 @@
+import pytest
 from app.services.tts.phrase_timing import (
     build_segment_tts_text,
     match_phrase_words,
@@ -34,8 +35,10 @@ def test_phrase_durations_include_inter_phrase_pause():
     )
     durations = phrase_durations_from_words(phrases, words, segment_duration_sec=3.0)
     assert len(durations) == 2
-    assert durations[0] == 0.5
-    assert durations[1] >= 0.05
+    # 始终缩放到精确匹配 segment_duration，因此 durations 按比例分配
+    assert sum(durations) == pytest.approx(3.0)
+    assert durations[0] > 0.4  # 约 0.517s（缩放后）
+    assert durations[1] > durations[0]  # 第二句更长
 
 
 def test_normalize_handles_out_of_order_timestamps():

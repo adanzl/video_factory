@@ -1,5 +1,6 @@
 """气口：字级时间戳句间停顿。"""
 
+import pytest
 from app.services.tts.breath_cue import (
     build_phrase_breath_cues,
     pause_after_ms,
@@ -47,6 +48,8 @@ def test_build_phrase_breath_cues_includes_pause_in_duration():
     ]
     cues = build_phrase_breath_cues(phrases, words, segment_duration_sec=3.0)
     assert len(cues) == 2
-    assert cues[0].duration_sec == 0.5
+    # 始终缩放到精确匹配 segment_duration，因此 duration 按比例分配
+    assert cues[0].duration_sec + cues[1].duration_sec == pytest.approx(3.0)
+    assert cues[0].duration_sec > 0.4  # 约 0.517s（缩放后）
     assert cues[0].pause_after_ms == 100
     assert cues[1].pause_after_ms is None

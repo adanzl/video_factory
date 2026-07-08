@@ -34,7 +34,12 @@ def cover_canvas_size(width: int, height: int) -> tuple[int, int, bool]:
     return 720, 1280, False
 
 
-_COVER_MAP_KEYWORDS = ("世界地图", "地球仪")
+_COVER_MAP_KEYWORDS = ("世界地图", "地球仪", "地图背景", "国界线", "地球")
+
+
+def _subject_has_map_keyword(subject: str) -> bool:
+    """判断 subject 是否包含地图相关关键词。"""
+    return any(kw in subject for kw in _COVER_MAP_KEYWORDS)
 
 
 def _resolve_cover_subject(subject: str) -> str:
@@ -77,15 +82,14 @@ def _resolve_cover_subject(subject: str) -> str:
 def build_cover_image_prompt(*, cw: int, ch: int, subject: str) -> str:
     """Agnes 文生图 prompt：主体居中 4:3，上方留白供后期叠标题。
 
-    注意：若有地图内容，不得出现藏南地区、阿克赛钦地区的边界线或标注，
-    以规避平台审核风险。
+    注意：仅当 subject 含地图关键词时才注入地图合规约束，
+    避免对非地图类提示词引入无关地理概念导致模型误激活。
     """
     resolved = _resolve_cover_subject(subject)
-    return (
-        f"视频封面，{cw}x{ch}，"
-        f"若包含世界地图，不得显示中国部分。任何地图不得出现中国领土、藏南地区、阿克赛钦地区。"
-        f"画面内容与视频一致：{resolved}"
-    )
+    base = f"视频封面，{cw}x{ch}，"
+    if _subject_has_map_keyword(subject):
+        base += "若包含世界地图，不得显示中国部分。任何地图不得出现中国领土、藏南地区、阿克赛钦地区。"
+    return base + f"画面内容与视频一致：{resolved}"
 
 
 def split_cover_title_lines(title: str, *, max_lines: int = 2) -> list[str]:
