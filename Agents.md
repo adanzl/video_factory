@@ -14,6 +14,10 @@
 StableDiffusion 目录 /mnt/data/stable-diffusion/webui
 sd日志查询 journalctl -u sd.service -f
 
+## 项目
+- 目录：/mnt/data/project/video_factory
+- 服务 video-factory
+
 ## 服务器硬件
 
 ``` TEXT
