@@ -133,8 +133,25 @@ class JobMgr:
             return repo_job.list_jobs(conn, status=status, limit=limit, offset=offset)
 
     def get_job(self, job_id: int) -> dict:
+        from pathlib import Path
+
         with connection() as conn:
-            return repo_job.get_job(conn, job_id)
+            job = repo_job.get_job(conn, job_id)
+
+        audio_path = job.get("audio_path")
+        if audio_path:
+            clips_dir = Path(audio_path).parent / "clips"
+            if clips_dir.is_dir():
+                clips = sorted(
+                    (clips_dir / f).name
+                    for f in (p.name for p in clips_dir.glob("*.mp3"))
+                )
+                job["tts_clips"] = [str(clips_dir / name) for name in clips]
+            else:
+                job["tts_clips"] = []
+        else:
+            job["tts_clips"] = []
+        return job
 
     def get_segments(self, job_id: int) -> list[dict]:
         from pathlib import Path
