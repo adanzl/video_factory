@@ -130,14 +130,24 @@
     <div v-if="segmentClips.length" class="mt-4">
       <div :class="STAGE_PANEL_CLASS">
         <div :class="STAGE_PANEL_TITLE_CLASS">分镜音频</div>
-        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <div
             v-for="item in segmentClips"
             :key="item.segment_index"
             class="rounded border border-gray-100 bg-gray-50 px-3 py-2"
           >
-            <div class="mb-1 text-xs font-medium text-blue-700">
-              分镜 #{{ item.segment_index }}
+            <div class="mb-1 flex items-center gap-2">
+              <span class="shrink-0 rounded bg-blue-100 px-1.5 py-0.5 text-xs font-medium text-blue-700">
+                #{{ item.segment_index }}
+              </span>
+              <el-tooltip v-if="item.text" placement="top" :show-after="300">
+                <template #content>
+                  <div class="max-w-sm whitespace-pre-wrap wrap-break-word text-xs">{{ item.text }}</div>
+                </template>
+                <div class="line-clamp-2 min-h-[2lh] flex-1 cursor-default text-xs leading-relaxed wrap-break-word text-gray-600">
+                  {{ item.text }}
+                </div>
+              </el-tooltip>
             </div>
             <audio
               v-if="item.clipUrl"
@@ -172,6 +182,7 @@ import { runJobStageAction } from "@/api/api-jobs";
 import { getMediaFileUrl, getMediaText } from "@/api/api-media";
 import { DEFAULT_TTS_VOICE, TTS_VOICE_OPTIONS } from "@/constants/tts-voices";
 import type { JobDetail, JobLog } from "@/types/jobs";
+import type { ScriptJson } from "@/types/jobs/script";
 import { MEDIA_CROSS_ORIGIN, lazyMediaSrc } from "@/utils/media";
 import { useErrorHandler } from "@/composables/useErrorHandler";
 import StageActionBar from "./StageActionBar.vue";
@@ -251,19 +262,35 @@ const lazyAudioUrl = computed(() => lazyMediaSrc(audioUrl.value, props.stageActi
 
 interface SegmentClip {
   segment_index: number;
+  text: string;
   clipUrl: string;
 }
+
+/** script_json 中按 segment_index 索引的文案 */
+const scriptTextByIndex = computed<Record<number, string>>(() => {
+  const script = (props.job.script_json as ScriptJson | null | undefined) || {};
+  const map: Record<number, string> = {};
+  for (const seg of script.segments || []) {
+    if (seg.segment_index != null && seg.text) {
+      map[seg.segment_index] = seg.text;
+    }
+  }
+  return map;
+});
 
 /** 直接从 job.tts_clips 解析，无需探测 */
 const segmentClips = computed<SegmentClip[]>(() => {
   const clips = props.job.tts_clips;
   if (!clips?.length) return [];
+  const textMap = scriptTextByIndex.value;
   return clips
     .map(clipPath => {
       const fileName = clipPath.trim().replace(/\\/g, "/").split("/").pop() || "";
       const index = parseInt(fileName.replace(/\.mp3$/i, ""), 10);
+      const segIndex = Number.isFinite(index) ? index : 0;
       return {
-        segment_index: Number.isFinite(index) ? index : 0,
+        segment_index: segIndex,
+        text: textMap[segIndex] || "",
         clipUrl: getMediaFileUrl(clipPath),
       };
     })
