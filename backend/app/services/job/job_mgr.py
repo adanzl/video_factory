@@ -642,24 +642,62 @@ class JobMgr:
             action_detail=detail,
         )
 
-    def generate_script(
+    def generate_prompts(
         self,
         job_id: int,
         *,
         prompt_type: str = "image_prompt",
         segment_indices: list[int] | None = None,
     ) -> dict:
-        """生成指定类型的提示词（文案、画面描述、文生图等）。
-        实现：worker/loop.run_script_prompts"""
+        """生成指定类型的提示词（不重置脚本、不清除产物）。"""
         from worker.loop import run_script_prompts
 
         job = self.get_job(job_id)
-        return self._run_in_background(
-            job_id,
-            "script",
-            lambda: run_script_prompts(job_id, prompt_type=prompt_type, segment_indices=segment_indices),
-            action_detail=_image_prompts_action_detail(job, segment_indices=segment_indices),
-        )
+        lock = self._job_lock(job_id)
+        if not lock.acquire(blocking=False):
+            raise JobBusyError(f"job {job_id} is running")
+
+        try:
+            job = self.get_job(job_id)
+            if job["status"] == "running":
+                raise JobBusyError(f"job {job_id} is running")
+            job_cancel.clear(job_id)
+            self.mark_running(job_id)
+
+            fail_stage = "script"
+            detail = _image_prompts_action_detail(job, segment_indices=segment_indices)
+
+            def _worker() -> None:
+                if detail:
+                    logger.info(
+                        "job %s action [script/prompts/%s] started: %s",
+                        job_id, prompt_type, detail,
+                    )
+                else:
+                    logger.info(
+                        "job %s action [script/prompts/%s] started",
+                        job_id, prompt_type,
+                    )
+                try:
+                    run_script_prompts(job_id, prompt_type=prompt_type, segment_indices=segment_indices)
+                except JobCancelledError:
+                    logger.info("job %s cancelled during prompts generation", job_id)
+                    job = self.get_job(job_id)
+                    if job["status"] == "running":
+                        self.mark_aborted(job_id, fail_stage)
+                except Exception:
+                    logger.exception("job %s prompts generation failed", job_id)
+                    job = self.get_job(job_id)
+                    if job["status"] == "running":
+                        self.mark_failed(job_id, fail_stage, "failed")
+
+            thread = threading.Thread(target=_worker, daemon=True)
+            thread.start()
+            return self.get_job(job_id)
+        except Exception:
+            raise
+        finally:
+            lock.release()
 
     def preview_script_prompts(
         self,
