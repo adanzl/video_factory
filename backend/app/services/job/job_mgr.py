@@ -656,7 +656,7 @@ class JobMgr:
         job = self.get_job(job_id)
         return self._run_in_background(
             job_id,
-            f"script/prompts/{prompt_type}",
+            "script",
             lambda: run_script_prompts(job_id, prompt_type=prompt_type, segment_indices=segment_indices),
             action_detail=_image_prompts_action_detail(job, segment_indices=segment_indices),
         )
