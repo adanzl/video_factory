@@ -765,6 +765,11 @@ def concat_video_audio_pts_fixed(
     audio_dur = probe_duration(audio_path)
     total_intended = sum(clip_durations)
 
+    if any(d is None for d in clip_durations):
+        raise ValueError("clip_durations 包含 None")
+    if any(d <= 0 for d in clip_durations):
+        raise ValueError("clip_durations 含非正值")
+
     _logger.info(
         "concat_pts_fixed: %d clips, intended_total=%.3fs, audio=%.3fs",
         n, total_intended, audio_dur,

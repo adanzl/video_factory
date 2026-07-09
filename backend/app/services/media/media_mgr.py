@@ -241,6 +241,10 @@ class MediaMgr:
                         f"segment {index} 缺少 clip，请从 segment 阶段重跑"
                     )
                 clip_paths.append(fallback)
+            if seg["duration_sec"] is None:
+                raise ValueError(
+                    f"segment {index} 缺少 duration_sec，请从 tts 阶段重跑"
+                )
             clip_durations.append(seg["duration_sec"])
 
         logger.info("merge: concatenating %s clips with pts fix", len(clip_paths))
