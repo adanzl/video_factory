@@ -317,7 +317,7 @@ import { getMediaDuration } from "@/api/api-media";
 import {
   previewScriptPrompts,
   generateVideoDescription,
-  generateImagePrompts,
+  generatePrompts,
   runJobStageAction,
   updateJob,
   updateJobInfo,
@@ -1033,7 +1033,7 @@ const handleGenerateImagePrompts = async () => {
   }
   generatingImagePrompts.value = true;
   try {
-    await generateImagePrompts(props.job.id);
+    await generatePrompts(props.job.id);
     ElMessage.success("已提交文生图提示词生成，任务已开始执行");
     emit("refresh");
   } catch (error) {

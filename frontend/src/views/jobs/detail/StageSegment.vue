@@ -317,7 +317,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { generateImagePrompts, runJobStageAction, updateJobInfo, updateSegmentText } from "@/api/api-jobs";
+import { generatePrompts, runJobStageAction, updateJobInfo, updateSegmentText } from "@/api/api-jobs";
 import { getMediaFileUrl } from "@/api/api-media";
 import type { JobDetail, JobInfo, JobLog, JobSegment, ScriptJson } from "@/types/jobs";
 import type { RunStageActionPayload } from "@/types/jobs/stageAction";
@@ -616,7 +616,7 @@ const handleGenerateImagePrompt = async (segmentIndex: number) => {
 
   generatingImagePromptIndex.value = segmentIndex;
   try {
-    await generateImagePrompts(props.job.id, { segments: [segmentIndex] });
+    await generatePrompts(props.job.id, { segments: [segmentIndex] });
     ElMessage.success(`已提交分镜 #${segmentIndex} 文生图提示词生成`);
     emit("refresh");
   } catch (error) {
