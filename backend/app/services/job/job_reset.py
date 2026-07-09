@@ -19,7 +19,7 @@ from app.repositories.connection import connection
 __all__ = ["prepare_for_action", "prepare_job_rerun", "reset_job_from_stage"]
 
 # 重跑 publish 时只刷新自身产物，不影响下游
-_STAGES_SKIP_DOWNSTREAM_CLEAR = frozenset({"publish"})
+_STAGES_SKIP_DOWNSTREAM_CLEAR = frozenset({"publish", "tts"})
 
 
 def _material_script_reset_seed(job: dict) -> dict | None:
