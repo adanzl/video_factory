@@ -126,7 +126,19 @@
           </section>
 
           <section class="flex flex-col gap-1">
-            <div class="text-xs font-medium text-gray-600">画面描述</div>
+            <div class="flex items-center justify-between gap-2">
+              <div class="text-xs font-medium text-gray-600">画面描述</div>
+              <el-button
+                size="small"
+                link
+                type="primary"
+:loading="generatingVisualBriefIndex === segment.segment_index"
+:disabled="isSegmentVisualBriefActionDisabled(segment.segment_index)"
+@click="handleGenerateVisualBrief(segment.segment_index)"
+              >
+                生成
+              </el-button>
+            </div>
             <el-tooltip placement="top" :show-after="300" :disabled="!segment.visual_brief">
               <template #content>
                 <div class="max-w-sm whitespace-pre-wrap wrap-break-word text-sm">{{ segment.visual_brief }}</div>
@@ -162,7 +174,19 @@
           </section>
 
           <section class="flex flex-col gap-1">
-            <div class="text-xs font-medium text-gray-600">运动提示词</div>
+            <div class="flex items-center justify-between gap-2">
+              <div class="text-xs font-medium text-gray-600">运动提示词</div>
+              <el-button
+                size="small"
+                link
+                type="primary"
+                :loading="generatingMotionPromptIndex === segment.segment_index"
+                :disabled="isSegmentMotionPromptActionDisabled(segment.segment_index)"
+                @click="handleGenerateMotionPrompt(segment.segment_index)"
+              >
+                生成
+              </el-button>
+            </div>
             <el-tooltip placement="top" :show-after="300" :disabled="!segment.motion_prompt">
               <template #content>
                 <div class="max-w-sm whitespace-pre-wrap wrap-break-word text-xs">{{ segment.motion_prompt }}</div>
@@ -216,9 +240,8 @@
               fit="cover"
               class="w-full rounded border border-gray-100"
               :style="mediaPreviewStyle"
-              :preview-src-list="
-                stageActive !== false && segment.imageUrl ? [segment.imageUrl] : []
-              "
+              :preview-src-list="stageActive !== false && segment.imageUrl ? [segment.imageUrl] : []
+                "
               preview-teleported
             />
             <div
@@ -347,6 +370,8 @@ const savingImageProvider = ref(false);
 const savingVideoProvider = ref(false);
 const regeneratingImageIndex = ref<number | null>(null);
 const generatingImagePromptIndex = ref<number | null>(null);
+const generatingVisualBriefIndex = ref<number | null>(null);
+const generatingMotionPromptIndex = ref<number | null>(null);
 const generatingClipIndex = ref<number | null>(null);
 const imageCacheVers = ref<Record<number, number>>({});
 const clipCacheVers = ref<Record<number, number>>({});
@@ -487,6 +512,7 @@ const isSegmentImageActionDisabled = (segmentIndex: number) =>
   submitting.value ||
   generatingImagePromptIndex.value !== null ||
   generatingClipIndex.value !== null ||
+  generatingVisualBriefIndex.value !== null ||
   (regeneratingImageIndex.value !== null && regeneratingImageIndex.value !== segmentIndex);
 
 const isSegmentImagePromptActionDisabled = (segmentIndex: number) =>
@@ -494,14 +520,36 @@ const isSegmentImagePromptActionDisabled = (segmentIndex: number) =>
   submitting.value ||
   regeneratingImageIndex.value !== null ||
   generatingClipIndex.value !== null ||
+  generatingMotionPromptIndex.value !== null ||
+  generatingVisualBriefIndex.value !== null ||
   (generatingImagePromptIndex.value !== null &&
     generatingImagePromptIndex.value !== segmentIndex);
+
+const isSegmentMotionPromptActionDisabled = (segmentIndex: number) =>
+  actionDisabled.value ||
+  submitting.value ||
+  regeneratingImageIndex.value !== null ||
+  generatingClipIndex.value !== null ||
+  generatingImagePromptIndex.value !== null ||
+  (generatingMotionPromptIndex.value !== null &&
+    generatingMotionPromptIndex.value !== segmentIndex);
+
+const isSegmentVisualBriefActionDisabled = (segmentIndex: number) =>
+  actionDisabled.value ||
+  submitting.value ||
+  regeneratingImageIndex.value !== null ||
+  generatingImagePromptIndex.value !== null ||
+  generatingClipIndex.value !== null ||
+  (generatingVisualBriefIndex.value !== null &&
+    generatingVisualBriefIndex.value !== segmentIndex);
 
 const isSegmentClipActionDisabled = (segment: { segment_index: number; imageUrl: string }) =>
   actionDisabled.value ||
   submitting.value ||
   regeneratingImageIndex.value !== null ||
   generatingImagePromptIndex.value !== null ||
+  generatingMotionPromptIndex.value !== null ||
+  generatingVisualBriefIndex.value !== null ||
   !segment.imageUrl ||
   (generatingClipIndex.value !== null && generatingClipIndex.value !== segment.segment_index);
 
@@ -616,13 +664,59 @@ const handleGenerateImagePrompt = async (segmentIndex: number) => {
 
   generatingImagePromptIndex.value = segmentIndex;
   try {
-    await generatePrompts(props.job.id, { segments: [segmentIndex] });
+    await generatePrompts(props.job.id, { type: "image_prompt", segments: [segmentIndex] });
     ElMessage.success(`已提交分镜 #${segmentIndex} 文生图提示词生成`);
     emit("refresh");
   } catch (error) {
     handleError(error, "文生图提示词生成失败");
   } finally {
     generatingImagePromptIndex.value = null;
+  }
+};
+
+const handleGenerateMotionPrompt = async (segmentIndex: number) => {
+  try {
+    await ElMessageBox.confirm(`确定重新生成分镜 #${segmentIndex} 的运动提示词吗？`, "确认执行", {
+      type: "warning",
+      confirmButtonText: "执行",
+      cancelButtonText: "取消",
+    });
+  } catch {
+    return;
+  }
+
+  generatingMotionPromptIndex.value = segmentIndex;
+  try {
+    await generatePrompts(props.job.id, { type: "motion", segments: [segmentIndex] });
+    ElMessage.success(`已提交分镜 #${segmentIndex} 运动提示词生成`);
+    emit("refresh");
+  } catch (error) {
+    handleError(error, "运动提示词生成失败");
+  } finally {
+    generatingMotionPromptIndex.value = null;
+  }
+};
+
+const handleGenerateVisualBrief = async (segmentIndex: number) => {
+  try {
+    await ElMessageBox.confirm(`确定重新生成分镜 #${segmentIndex} 的画面描述吗？`, "确认执行", {
+      type: "warning",
+      confirmButtonText: "执行",
+      cancelButtonText: "取消",
+    });
+  } catch {
+    return;
+  }
+
+  generatingVisualBriefIndex.value = segmentIndex;
+  try {
+    await generatePrompts(props.job.id, { type: "visual_brief", segments: [segmentIndex] });
+    ElMessage.success(`已提交分镜 #${segmentIndex} 画面描述生成`);
+    emit("refresh");
+  } catch (error) {
+    handleError(error, "画面描述生成失败");
+  } finally {
+    generatingVisualBriefIndex.value = null;
   }
 };
 

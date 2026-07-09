@@ -305,6 +305,22 @@ def prepare_for_action(
                 fail_stage=None,
                 error_message=None,
             )
+    elif action.startswith("script/prompts/"):
+        with connection() as conn:
+            job = repo_job.get_job(conn, job_id)
+            script = job.get("script_json")
+            if not isinstance(script, dict):
+                raise ValueError("script not ready")
+            if not (script.get("segments") or []):
+                raise ValueError("no segments")
+            repo_job_log.append_log(conn, job_id, "script", f"action={action}")
+            return repo_job.update_job(
+                conn,
+                job_id,
+                status="pending",
+                fail_stage=None,
+                error_message=None,
+            )
     elif action == "cover":
         from app.config import get_settings
 
