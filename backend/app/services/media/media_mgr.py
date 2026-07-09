@@ -15,7 +15,7 @@ from app.services.segment.clip.clip_mgr import clip_mgr
 from app.services.render.subtitle_style import subtitle_style_for_canvas
 from app.services.media.ffmpeg_utils import build_ass_from_phrase_cues
 from app.services.media.ffmpeg_utils import (
-    concat_clips,
+    concat_video_audio_pts_fixed,
     ffmpeg_hwaccel_config_summary,
     log_ffmpeg_hwaccel_config,
     merge_audio_video,
@@ -227,8 +227,10 @@ class MediaMgr:
         log_ffmpeg_hwaccel_config(context="merge")
         logger.info("merge: %s", ffmpeg_hwaccel_config_summary())
         clips_dir = media_dir / "segments"
+        sorted_seg_lst = sorted(segments, key=lambda s: s["segment_index"])
         clip_paths: list[Path] = []
-        for seg in sorted(segments, key=lambda s: s["segment_index"]):
+        clip_durations: list[float] = []
+        for seg in sorted_seg_lst:
             index = seg["segment_index"]
             if seg.get("clip_path"):
                 clip_paths.append(Path(seg["clip_path"]))
@@ -239,15 +241,18 @@ class MediaMgr:
                         f"segment {index} 缺少 clip，请从 segment 阶段重跑"
                     )
                 clip_paths.append(fallback)
+            clip_durations.append(seg["duration_sec"])
 
-        logger.info("merge: concatenating %s clips", len(clip_paths))
+        logger.info("merge: concatenating %s clips with pts fix", len(clip_paths))
         body_path = media_dir / "body.mp4"
-        concat_clips(clip_paths, body_path)
-        logger.info("merge: body.mp4 done")
-
         body_with_audio = media_dir / "body_with_audio.mp4"
-        merge_audio_video(body_path, audio_path, body_with_audio, subtitle_path=subtitle_path)
-        logger.info("merge: audio+subtitles merged")
+        concat_video_audio_pts_fixed(
+            clip_paths,
+            audio_path,
+            body_with_audio,
+            clip_durations=clip_durations,
+        )
+        logger.info("merge: audio merged (pts corrected)")
 
         final_path = media_dir / "final.mp4"
         if intro_path and intro_path.exists():

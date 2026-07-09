@@ -56,7 +56,7 @@ def _motion_vf(
     height: int,
 ) -> str:
     """Ken Burns：zoom 用 scale:eval=frame（lanczos），pan 用 zoompan。"""
-    frames = max(int(duration_sec * CLIP_FPS), 1)
+    frames = max(1, round(duration_sec * CLIP_FPS))
     zoom_max = _motion_zoom_max(preset)
     delta = zoom_max - 1.0
     mf = max(int(frames * _MOTION_FINISH_RATIO), 1)
