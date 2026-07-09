@@ -110,7 +110,6 @@ def _clear_segment_clips(conn, job_id: int, media_dir: Path) -> None:
     """TTS 变更后：clip 依赖字幕时间轴，静图可保留。"""
     _archive_wan_clips(media_dir)
     repo_segment.clear_segment_clips(conn, job_id, None)
-    repo_segment.clear_segment_durations(conn, job_id)
     clips_dir = media_dir / "segments"
     if clips_dir.exists():
         for clip in clips_dir.glob("*.mp4"):
