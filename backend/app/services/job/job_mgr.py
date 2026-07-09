@@ -642,20 +642,22 @@ class JobMgr:
             action_detail=detail,
         )
 
-    def generate_image_prompts(
+    def generate_script(
         self,
         job_id: int,
         *,
+        prompt_type: str = "image_prompt",
         segment_indices: list[int] | None = None,
     ) -> dict:
-        """为已有脚本补全文生图提示词。实现：worker/loop.run_script_image_prompts"""
-        from worker.loop import run_script_image_prompts
+        """生成指定类型的提示词（文案、画面描述、文生图等）。
+        实现：worker/loop.run_script_prompts"""
+        from worker.loop import run_script_prompts
 
         job = self.get_job(job_id)
         return self._run_in_background(
             job_id,
-            "script/imagePrompts",
-            lambda: run_script_image_prompts(job_id, segment_indices=segment_indices),
+            f"script/prompts/{prompt_type}",
+            lambda: run_script_prompts(job_id, prompt_type=prompt_type, segment_indices=segment_indices),
             action_detail=_image_prompts_action_detail(job, segment_indices=segment_indices),
         )
 

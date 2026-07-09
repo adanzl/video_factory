@@ -179,14 +179,27 @@ def preview_script_prompts_route():
     return json_ok({"prompts": prompts})
 
 
-@bp.post("/script/imagePrompts")
-def generate_image_prompts_route():
+PROMPT_TYPES = frozenset({"narration", "visual_brief", "image_prompt", "motion", "sd15"})
+
+
+@bp.post("/script/generate")
+def generate_script_prompts_route():
     data = get_json_body()
     job_id = parse_id(data)
+    prompt_type = parse_optional_str(data, "type") or "image_prompt"
+    if prompt_type not in PROMPT_TYPES:
+        raise APIError(
+            f"invalid type {prompt_type!r}, must be one of: {', '.join(sorted(PROMPT_TYPES))}",
+            status_code=400,
+        )
     segment_indices = parse_int_list(data, "segments")
     return _accept_stage(
         job_id,
-        lambda: job_mgr.generate_image_prompts(job_id, segment_indices=segment_indices),
+        lambda: job_mgr.generate_script(
+            job_id,
+            prompt_type=prompt_type,
+            segment_indices=segment_indices,
+        ),
     )
 
 

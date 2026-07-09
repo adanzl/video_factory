@@ -287,12 +287,40 @@ def run_script(
     )
 
 
-def run_script_image_prompts(
+def run_script_prompts(
+    job_id: int,
+    *,
+    prompt_type: str = "image_prompt",
+    segment_indices: list[int] | None = None,
+) -> dict:
+    """为已有脚本生成指定类型的提示词（不重置脚本阶段）。
+    type 取值：narration, visual_brief, image_prompt, motion, sd15
+    """
+    from app.services.script.script_mgr import script_mgr
+
+    job = _reload_job(job_id)
+    script = job.get("script_json")
+    if not isinstance(script, dict):
+        raise ValueError("script not ready")
+    segments = script.get("segments") or []
+    if not segments:
+        raise ValueError("no segments")
+
+    if prompt_type in ("image_prompt", "motion", "sd15"):
+        return _run_image_prompts(job_id, segment_indices=segment_indices)
+    if prompt_type == "visual_brief":
+        return _run_visual_brief(job_id)
+    if prompt_type == "narration":
+        return _run_narration(job_id)
+    raise ValueError(f"unsupported prompt_type: {prompt_type}")
+
+
+def _run_image_prompts(
     job_id: int,
     *,
     segment_indices: list[int] | None = None,
 ) -> dict:
-    """为已有脚本补全文生图提示词（不重置脚本阶段）。"""
+    """为已有脚本补全文生图提示词（含 motion_prompt、sd15_prompt_en）。"""
     from app.quality.quality_mgr import apply_quality_checks, check_image_prompt
     from app.repositories import repo_job_log, repo_job, repo_segment
     from app.services.llm.llm_mgr import llm_mgr
@@ -398,6 +426,62 @@ def run_script_image_prompts(
             ),
         )
         repo_job.update_job(conn, job_id, status="idle")
+    return _reload_job(job_id)
+
+
+def _run_visual_brief(job_id: int) -> dict:
+    """为已有脚本重新生成画面描述（visual_brief）。"""
+    from app.repositories import repo_job_log, repo_job, repo_segment
+    from app.services.llm.llm_mgr import llm_mgr
+
+    job = _reload_job(job_id)
+    script = dict(job.get("script_json") or {})
+    if not script.get("segments"):
+        raise ValueError("script has no segments")
+
+    updated = llm_mgr.generate_script(
+        script.get("title") or job.get("title") or "",
+        existing_script=script,
+        retry_scope="visual_brief",
+        job=job,
+    )
+
+    with connection() as conn:
+        repo_job.update_job(conn, job_id, script_json=updated)
+        repo_segment.insert_segments(conn, job_id, updated.get("segments", []))
+        repo_job_log.append_log(
+            conn, job_id, "script", "visual_brief regenerated",
+        )
+        repo_job.update_job(conn, job_id, status="idle")
+    logger.info("job %s visual_brief regenerated", job_id)
+    return _reload_job(job_id)
+
+
+def _run_narration(job_id: int) -> dict:
+    """为已有脚本重新生成文案+分镜（narration + segments + visual_brief）。"""
+    from app.repositories import repo_job_log, repo_job, repo_segment
+
+    job = _reload_job(job_id)
+
+    from app.services.script.script_mgr import script_mgr
+
+    title = (job.get("title") or "").strip()
+    if not title:
+        raise ValueError("title is empty")
+
+    updated = script_mgr.generate_board(
+        title,
+        job=job,
+    )
+
+    with connection() as conn:
+        repo_job.update_job(conn, job_id, script_json=updated)
+        repo_segment.insert_segments(conn, job_id, updated.get("segments", []))
+        repo_job_log.append_log(
+            conn, job_id, "script", "narration regenerated",
+        )
+        repo_job.update_job(conn, job_id, status="idle")
+    logger.info("job %s narration regenerated", job_id)
     return _reload_job(job_id)
 
 
