@@ -742,6 +742,75 @@ def merge_audio_video(
     return output_path
 
 
+def concat_video_audio_pts_fixed(
+    clips: list[Path],
+    audio_path: Path,
+    output_path: Path,
+    *,
+    clip_durations: list[float],
+) -> Path:
+    """PTS 校正拼接 + 音频合并，单步编码。
+
+    探测每个 clip 实际时长，对比目标时长后通过 setpts 微调，
+    使拼接后总视频时长精确对齐音频，避免末尾字幕错位。
+    """
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    n = len(clips)
+    if n == 0:
+        raise ValueError("no clips to concat")
+    if len(clip_durations) != n:
+        raise ValueError(f"clip_durations ({len(clip_durations)}) != clips ({n})")
+
+    actual_durs = [probe_duration(c) for c in clips]
+    audio_dur = probe_duration(audio_path)
+    total_intended = sum(clip_durations)
+
+    _logger.info(
+        "concat_pts_fixed: %d clips, intended_total=%.3fs, audio=%.3fs",
+        n, total_intended, audio_dur,
+    )
+    for i in range(n):
+        _logger.debug(
+            "  clip %s: intended=%.3fs actual=%.3fs",
+            clips[i].name, clip_durations[i], actual_durs[i],
+        )
+
+    # 用音频时长作为总参考，按比例分配到每个 clip
+    scale = audio_dur / total_intended if total_intended > 0 else 1.0
+
+    filter_parts: list[str] = []
+    for i in range(n):
+        intended = clip_durations[i] * scale
+        actual = actual_durs[i]
+        factor = intended / actual if actual > 0 else 1.0
+        vf = f"setpts=PTS*{factor:.6f}"
+        filter_parts.append(f"[{i}:v]{vf}[v{i}]")
+
+    concat_inputs = "".join(f"[v{i}]" for i in range(n))
+    filter_parts.append(
+        f"{concat_inputs}concat=n={n}:v=1:a=0,fps={_OUTPUT_FPS}[vout]"
+    )
+    filter_complex = ";".join(filter_parts)
+
+    cmd: list[str] = [
+        *ffmpeg_cmd_start(hwaccel=False),
+    ]
+    for clip in clips:
+        cmd.extend(["-i", str(clip)])
+    cmd.extend([
+        "-i", str(audio_path),
+        "-filter_complex", filter_complex,
+        "-map", "[vout]",
+        "-map", f"{n}:a",
+        "-t", f"{audio_dur:.3f}",
+        *libx264_encode_args(subtitle=True, force_cpu=True),
+        *_AAC_128K,
+        str(output_path),
+    ])
+    run_ffmpeg(cmd)
+    return output_path
+
+
 def _can_concat_demuxer_copy(intro_path: Path, body_path: Path) -> bool:
     """片头与正文流参数完全一致时才 concat -c copy。"""
     intro_v, body_v = _probe_video_stream(intro_path), _probe_video_stream(body_path)

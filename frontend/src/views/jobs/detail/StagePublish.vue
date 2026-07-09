@@ -64,7 +64,7 @@
 
       <!-- 封面 / 成片 -->
       <div :class="STAGE_TWO_COL_CLASS">
-        <div class="min-w-[280px] max-w-full shrink-0 basis-[520px]">
+        <div class="min-w-70 max-w-full shrink-0 basis-130">
           <section :class="STAGE_PANEL_CLASS">
             <div :class="STAGE_PANEL_HEADER_CLASS">
               <div class="flex items-center gap-2">

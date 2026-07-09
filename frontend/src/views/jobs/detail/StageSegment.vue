@@ -61,7 +61,7 @@
               <el-checkbox
                 v-for="segment in segments"
                 :key="segment.segment_index"
-                :label="segment.segment_index"
+                :value="segment.segment_index"
                 class="segment-check"
               >
                 #{{ segment.segment_index }}
