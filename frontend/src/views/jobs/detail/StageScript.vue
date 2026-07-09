@@ -5,7 +5,7 @@
 
     <div :class="STAGE_BLOCK_CLASS">
       <el-form :label-width="FORM_LABEL_WIDTH"
-        class="[&_.el-form-item]:mb-2 [&_.el-form-item__content]:min-w-0 [&_.el-form-item__content]:flex-1 [&_.el-form-item__label]:w-[100px] [&_.el-form-item__label]:min-w-[100px] [&_.el-form-item__label]:shrink-0 [&_.el-form-item__label]:justify-end">
+        class="[&_.el-form-item]:mb-2 [&_.el-form-item__content]:min-w-0 [&_.el-form-item__content]:flex-1 [&_.el-form-item__label]:w-25 [&_.el-form-item__label]:min-w-25 [&_.el-form-item__label]:shrink-0 [&_.el-form-item__label]:justify-end">
         <el-form-item label="原标题">
           <div class="flex w-full min-w-0 items-center gap-2">
             <el-input v-model="sourceTitle" placeholder="脚本生成输入标题" clearable class="min-w-0 flex-1!" />
@@ -259,7 +259,7 @@
       <el-collapse class="mt-4">
         <el-collapse-item title="原始 JSON" name="raw">
           <pre
-            class="m-0 max-h-[480px] overflow-auto rounded bg-gray-50 p-3 text-xs leading-normal break-all whitespace-pre-wrap">
+            class="m-0 max-h-120 overflow-auto rounded bg-gray-50 p-3 text-xs leading-normal break-all whitespace-pre-wrap">
         {{ rawJson }}</pre>
         </el-collapse-item>
       </el-collapse>
