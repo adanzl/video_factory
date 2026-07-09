@@ -221,9 +221,6 @@ def _clear_stage_self(
             conn,
             job_id,
             script_json=reset_script_json,
-            audio_path=None,
-            subtitle_path=None,
-            tts_usage_json=None,
             intro_path=None,
             cover_path=None,
             final_path=None,
@@ -232,7 +229,6 @@ def _clear_stage_self(
         if media_dir.exists():
             if not preserve_base:
                 _delete_files([media_dir / "base.mp4", media_dir / "base_meta.json"])
-            _clear_tts_artifacts(conn, job_id, media_dir)
             if pipe != PIPELINE_MATERIAL:
                 _clear_all_segment_media(conn, job_id, media_dir)
             _clear_merge_artifacts(media_dir)
