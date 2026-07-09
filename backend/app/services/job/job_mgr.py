@@ -642,7 +642,7 @@ class JobMgr:
             action_detail=detail,
         )
 
-    def generate_prompts(
+    def generate_script(
         self,
         job_id: int,
         *,

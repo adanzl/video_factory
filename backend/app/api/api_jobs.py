@@ -195,7 +195,7 @@ def generate_script_prompts_route():
     segment_indices = parse_int_list(data, "segments")
     return _accept_stage(
         job_id,
-        lambda: job_mgr.generate_prompts(
+        lambda: job_mgr.generate_script(
             job_id,
             prompt_type=prompt_type,
             segment_indices=segment_indices,
