@@ -215,7 +215,7 @@ _IMAGE_PROMPT_RULE_LIFE_LANDSCAPE = (
 
 _IMAGE_PROMPT_MOTION_TAIL = (
     "【语言要求】motion_prompt 必须使用中文撰写，禁止英文或中英混合。"
-    "motion_prompt 用 15-50 字描述本镜画面中正在发生的具体动态，"
+    "motion_prompt 用 15-80 字描述本镜画面中正在发生的具体动态，"
     "必须紧扣 image_prompt 中已出现的主体与场景，写清楚「谁在做什么、环境发生了什么变化」。"
     "写法要点："
     "1) 先从 image_prompt 中找出画面主体（物体、场景元素），描述它在 10 秒内的具体动作或状态变化；"
