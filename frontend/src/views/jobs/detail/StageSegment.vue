@@ -25,7 +25,7 @@
           <el-radio-group
             v-model="imageProvider"
             size="small"
-            :disabled="segmentScope === 'segment/clips' || actionDisabled || savingImageProvider"
+            :disabled="actionDisabled || savingImageProvider"
             @change="handleImageProviderChange"
           >
             <el-radio-button value="z_image_t2i" disabled>Z-Image</el-radio-button>
@@ -38,7 +38,7 @@
           <el-radio-group
             v-model="videoProvider"
             size="small"
-            :disabled="segmentScope === 'segment/images' || actionDisabled || savingVideoProvider"
+            :disabled="actionDisabled || savingVideoProvider"
             @change="handleVideoProviderChange"
           >
             <el-radio-button value="ffmpeg">Ken Burns</el-radio-button>
@@ -384,7 +384,7 @@ const defaultImageProvider = (job: JobDetail): ImageProvider =>
   job.info?.image_provider ?? "agnes_t2i";
 
 const defaultVideoProvider = (job: JobDetail): VideoProvider => {
-  const provider = job.info?.video_provider ?? "ffmpeg";
+  const provider = job.info?.video_provider ?? "agnes_i2v";
   return provider === "wan_i2v" ? "ffmpeg" : provider;
 };
 
