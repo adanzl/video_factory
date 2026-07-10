@@ -37,6 +37,24 @@ _GENERIC_MOTION_FILLER_RE = re.compile(
     r"^镜头固定(?:或极?[轻缓]?慢?(?:推进|拉远|平移))?[，,、]?主体(?:清晰)?稳定[，,、]?画面平滑[。．.]?$"
 )
 
+# 检测 motion_prompt 中描述人物/主体主动作的模式
+# 身体部位 + 动作，或角色名词 + 动作
+_CHAR_ACTION_RE = re.compile(
+    r"(?:手指|手掌|手臂|脚|脚趾|腿|头部|眼睛|嘴巴|肩膀|手腕|"
+    r"小偷|人物|角色|少女|少年|老人|孩子|男子|女子|小孩|"
+    r"凶手|受害者|侦探|士兵|将军|皇帝|刺客|猎人|骑士)"
+    r".{0,6}"
+    r"(?:弯曲|伸直|转身|奔跑|抓握|拿起|放下|抬起|挥动|踢|"
+    r"走|跑|跳|站|坐|躺|爬|蹲|跪|闪躲|攻击|"
+    r"睁开|闭上|张开|握紧|捏|指|踩|踢)"
+)
+
+# 检测 motion_prompt 中使用抽象视觉特效词而非具体物体微动的模式
+_ABSTRACT_VFX_RE = re.compile(
+    r"(?:光效|光晕|图标|UI元素|ui元素|特效|粒子|能量|光圈|光环|"
+    r"脉动|辉光|光束扫射|光束扫过|光柱扫过|光柱扫射|呼吸感)"
+)
+
 
 def image_prompt_min_chars(*, sd15_mode: bool = False) -> int:
     return MIN_IMAGE_PROMPT_CHARS_SD15 if sd15_mode else MIN_IMAGE_PROMPT_CHARS
@@ -64,7 +82,7 @@ def sd15_prompt_en_ok(value: object) -> bool:
 
 
 def generic_motion_prompt_issue(prompt: object) -> str | None:
-    """检测 motion_prompt 是否为无信息套话。"""
+    """检测 motion_prompt 是否为无信息套话或包含人物主动作。"""
     if not isinstance(prompt, str):
         return "motion_prompt missing"
     text = prompt.strip()
@@ -75,6 +93,10 @@ def generic_motion_prompt_issue(prompt: object) -> str | None:
     stability = ("镜头固定", "主体稳定", "画面平滑")
     if all(word in text for word in stability) and len(text) <= 28:
         return "套话填空，须描述画面内具体微动"
+    if _CHAR_ACTION_RE.search(text):
+        return "禁止描述人物或主体的主动作，只写环境元素微动（如烟雾、光影、水流、尘埃等）"
+    if _ABSTRACT_VFX_RE.search(text):
+        return "禁止使用抽象视觉特效词（光效/光晕/图标/UI元素/粒子/能量等），须写画面中真实可见物体的物理微动"
     return None
 
 
