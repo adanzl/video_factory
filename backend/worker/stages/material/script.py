@@ -25,6 +25,7 @@ from app.utils.media import (
 )
 from worker.context import JobContext
 from worker.stages.base import StageExecutor
+from app.utils.title_text import collapse_title_whitespace
 from worker.stages.standard.script import (
     ScriptValidationError,
     _apply_script_title,
@@ -107,12 +108,13 @@ def _validate_material_script(
             )
     if not segments:
         raise ScriptValidationError("no segments", retryable=False)
-    title = _title_chars(script.get("title") or "")
-    if not title:
+    title = script.get("title") or ""
+    title_counted = _title_chars(title)
+    if not title_counted:
         raise ScriptValidationError("title is empty", retryable=False)
-    if len(title) > max_len:
-        raise ScriptValidationError(f"title too long: {len(title)} chars (need <= {max_len})")
-    script["title"] = title
+    if len(title_counted) > max_len:
+        raise ScriptValidationError(f"title too long: {len(title_counted)} chars (need <= {max_len})")
+    script["title"] = collapse_title_whitespace(title)
     script["segments"] = _normalize_segments(segments)
 
     timeline = script_mgr.parse_timeline(video_timeline_raw, chars_per_sec=chars_per_sec)
@@ -180,7 +182,7 @@ class MaterialScriptStage(StageExecutor):
                 supplementary_info = extra.strip()
             else:
                 script = {
-                    "title": _title_chars(title),
+                    "title": collapse_title_whitespace(title),
                     "narration": narration,
                     "segments": _split_manual_narration(narration),
                     "script_mode": "manual",

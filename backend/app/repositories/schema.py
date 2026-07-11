@@ -157,6 +157,7 @@ def apply_schema(conn: sqlite3.Connection) -> None:
     apply_title_schema(conn)
     apply_material_video_schema(conn)
     apply_material_audio_schema(conn)
+    apply_daily_story_schema(conn)
     conn.execute(
         "UPDATE video_job SET stage = 'segment' WHERE stage = 'ffmpeg'"
     )
@@ -176,6 +177,26 @@ def apply_schema(conn: sqlite3.Connection) -> None:
     _ensure_column(conn, "video_job", "info", "TEXT")
     _ensure_column(conn, "video_segment", "motion_prompt", "TEXT")
     _ensure_column(conn, "video_segment", "sd15_prompt_en", "TEXT")
+
+
+_DAILY_STORY_DDL = """
+CREATE TABLE IF NOT EXISTS daily_story (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    theme TEXT NOT NULL,
+    story_json TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_daily_story_status ON daily_story(status);
+"""
+
+
+def apply_daily_story_schema(conn: sqlite3.Connection) -> None:
+    """创建日常故事表（幂等）。"""
+    conn.executescript(_DAILY_STORY_DDL)
+    _ensure_journal_mode_delete(conn)
 
 
 def _ensure_column(

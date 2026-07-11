@@ -62,6 +62,7 @@ def _build_deepseek_chat_payload(
     max_tokens: int,
     thinking_enabled: bool,
     json_mode: bool = True,
+    temperature: float | None = None,
 ) -> dict[str, Any]:
     """构建 chat/completions JSON；V4 默认 thinking=enabled，结构化输出须显式关闭。"""
     payload: dict[str, Any] = {
@@ -75,6 +76,8 @@ def _build_deepseek_chat_payload(
     }
     if json_mode:
         payload["response_format"] = {"type": "json_object"}
+    if temperature is not None:
+        payload["temperature"] = temperature
     return payload
 
 
@@ -335,6 +338,59 @@ def _chunk_indices(indices: list[int], batch_size: int) -> list[list[int]]:
     return [ordered[i : i + size] for i in range(0, len(ordered), size)]
 
 
+DAILY_STORY_SYSTEM_PROMPT = """\
+你是一位儿童情景喜剧编剧，专门为5-8岁小学生设计日常对话短剧。
+
+【角色设定】
+- 昭昭：弟弟，男孩，7岁。好奇心强，喜欢追问，擅长用现实经验挑战抽象规则，经常把简单的事越问越复杂。天真且固执。
+- 灿灿：姐姐，女孩，9岁。比昭昭懂事一点，偶尔想模仿大人的语气管教弟弟，但自己的逻辑也经常掉进孩子的坑里。有时候会被昭昭带偏，嘴硬但心软。
+- 关系：亲姐弟，住在一起，经常一起上学、吃饭、做作业、被爸妈教育。
+
+【姐弟关系的特殊笑点来源】
+- 姐姐试图用“我是姐姐”来压弟弟，但被弟弟用孩子的逻辑反问到哑口无言。
+- 弟弟对姐姐的“权威”半信半疑，会追问到底。
+- 两人结盟对抗爸妈（或老师）的规则，结果一起翻车。
+- 姐姐嘴上嫌弃弟弟，行动上却忍不住帮他，最后被弟弟“反杀”。
+
+【绝对禁止】
+1. 禁止讲成人笑话、谐音梗、俏皮话、网络热梗。
+2. 禁止使用“因为……所以……”等复杂的书面连接词，全部用口语短句。
+3. 禁止写成叙事小说（禁止出现“他心想”“她无奈地”等心理描写和形容词），只写纯对话+极简场景说明。
+4. 禁止让姐姐真的“成熟懂事”——她也是孩子，可以偶尔模仿大人，但一定会露馅。
+
+【必须遵守的笑点公式】
+- 笑点 = 孩子的字面/现实逻辑 碰撞 成人的抽象/规则逻辑。
+- 孩子提出的每一个推论，必须基于他刚刚听到的字面意思或亲眼见过的生活经验，不能跳级。
+- 对话必须有至少 6-8 轮来回，通过层层追问把“误会”滚雪球般滚大，最后一句话让成人逻辑彻底沉默。
+
+【格式要求】
+严格输出以下JSON结构：
+{
+  "scene_title": "四字以内的场景标题（如：写检查）",
+  "setting": "一句话说明地点和初始动作（如：放学路上，姐弟俩边走边聊）",
+  "dialogue": [
+    {"speaker": "昭昭", "line": "台词"},
+    {"speaker": "灿灿", "line": "台词"}
+  ],
+  "punchline_explain": "一句话解释这场的反差逻辑（便于验证）"
+}
+"""
+
+DAILY_STORY_USER_TEMPLATE = """\
+请根据上述规则，生成一个昭昭和灿灿的日常对话场景。
+
+【本次场景主题（核心事件）】：{theme}
+
+【要求】：
+1. 从姐弟之间的日常小事切入，不要宏大叙事。
+2. 必须体现姐弟特有的互动——姐姐可能想管弟弟，弟弟可能不服，但最后两人的逻辑都跑偏。
+3. 对话至少8轮。
+4. 避免让姐姐真的“说教成功”，她的“大人腔”一定要被弟弟戳穿。
+
+请直接输出JSON。
+"""
+
+
 class DeepSeekClient(LLMClient):
     def __init__(self) -> None:
         import requests
@@ -345,7 +401,7 @@ class DeepSeekClient(LLMClient):
         self._base_url = settings.deepseek_base_url.rstrip("/")
         self._model = settings.deepseek_model
 
-    def _chat(self, system: str, user: str, *, max_tokens: int | None = None, json_mode: bool = True, thinking_enabled: bool | None = None) -> tuple[str, str | None]:
+    def _chat(self, system: str, user: str, *, max_tokens: int | None = None, json_mode: bool = True, thinking_enabled: bool | None = None, temperature: float | None = None) -> tuple[str, str | None]:
         settings = get_settings()
         limit = settings.deepseek_max_tokens if max_tokens is None else max_tokens
         use_thinking = settings.deepseek_thinking_enabled if thinking_enabled is None else thinking_enabled
@@ -362,6 +418,7 @@ class DeepSeekClient(LLMClient):
                 max_tokens=limit,
                 thinking_enabled=use_thinking,
                 json_mode=json_mode,
+                temperature=temperature,
             ),
             timeout=180,
         )
@@ -384,10 +441,11 @@ class DeepSeekClient(LLMClient):
         *,
         max_tokens: int | None = None,
         thinking_enabled: bool | None = None,
+        temperature: float | None = None,
     ) -> tuple[dict[str, Any], str | None]:
         _EMPTY_RETRIES = 3
         for _ in range(_EMPTY_RETRIES):
-            content, finish = self._chat(system, user, max_tokens=max_tokens, thinking_enabled=thinking_enabled)
+            content, finish = self._chat(system, user, max_tokens=max_tokens, thinking_enabled=thinking_enabled, temperature=temperature)
             if content.strip():
                 break
             logger.warning(
@@ -1257,3 +1315,12 @@ class DeepSeekClient(LLMClient):
                 )
         assert last_exc is not None
         raise last_exc
+
+    def generate_daily_story(
+        self,
+        theme: str,
+    ) -> dict[str, Any]:
+        system = DAILY_STORY_SYSTEM_PROMPT
+        user = DAILY_STORY_USER_TEMPLATE.format(theme=theme)
+        raw, _ = self._chat_json(system, user, max_tokens=4096, thinking_enabled=False, temperature=0.95)
+        return raw

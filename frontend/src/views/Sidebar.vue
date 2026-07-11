@@ -26,6 +26,10 @@
           <el-icon><Document /></el-icon>
           <template #title>选题库</template>
         </el-menu-item>
+        <el-menu-item index="/daily-story">
+          <el-icon><ChatDotRound /></el-icon>
+          <template #title>日常故事</template>
+        </el-menu-item>
         <el-menu-item index="/config">
           <el-icon><Setting /></el-icon>
           <template #title>配置</template>
@@ -42,7 +46,7 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import { useRoute } from "vue-router";
-import { HomeFilled, List, Document, Setting, Expand, Fold, VideoCamera, Search, Headset } from "@element-plus/icons-vue";
+import { HomeFilled, List, Document, Setting, Expand, Fold, VideoCamera, Search, Headset, ChatDotRound } from "@element-plus/icons-vue";
 
 const emit = defineEmits<{
   collapseChange: [collapsed: boolean];
