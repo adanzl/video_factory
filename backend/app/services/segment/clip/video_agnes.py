@@ -38,6 +38,16 @@ _STABILITY_HINT = "画面稳定，无快速运镜"
 # Agnes 720p 各比例上限均为 409 帧（1080p 仅 169 帧，更长分镜靠 loop + fit 补齐）
 _MAX_FRAMES = 409
 _MIN_FRAMES = 81
+# Agnes API 默认 1152×768 ≈ 884K 像素（720P 级别），超出会 400
+_API_TARGET_PIXELS = 921_600  # 1280×720
+
+
+def _resolve_api_dimensions(target_w: int, target_h: int) -> tuple[int, int]:
+    """将目标画布尺寸缩放到 Agnes API 支持的 ~720P 总像素范围内，保持比例。"""
+    scale = min(1.0, math.sqrt(_API_TARGET_PIXELS / (target_w * target_h)))
+    api_w = int(target_w * scale) // 2 * 2  # 保证偶数
+    api_h = int(target_h * scale) // 2 * 2
+    return max(api_w, 2), max(api_h, 2)
 
 
 def _backoff_seconds(attempt: int, *, is_timeout: bool = False) -> float:
@@ -558,6 +568,7 @@ class AgnesClipProvider(ClipProvider):
 
         clip_width = width or get_settings().video_width
         clip_height = height or get_settings().video_height
+        api_w, api_h = _resolve_api_dimensions(clip_width, clip_height)
         prompt = _stabilize_motion_prompt(motion_prompt or "")
         num_frames = _pick_num_frames(total_duration, self._frame_rate)
         raw_path = work_dir / f"{segment_index}.agnes_raw.mp4"
@@ -577,7 +588,8 @@ class AgnesClipProvider(ClipProvider):
         try:
             self._generate_raw(
                 image_path, prompt, raw_path,
-                num_frames=num_frames, width=clip_width, height=clip_height,
+                num_frames=num_frames,
+                width=api_w, height=api_h,
             )
             logger.info("clip %s: raw done, fitting to %.1fs", segment_index, total_duration)
             raw_path = _loop_video_to_duration(
