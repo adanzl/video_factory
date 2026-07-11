@@ -374,6 +374,7 @@ const generatingVisualBriefIndex = ref<number | null>(null);
 const generatingMotionPromptIndex = ref<number | null>(null);
 const generatingClipIndex = ref<number | null>(null);
 const imageCacheVers = ref<Record<number, number>>({});
+const imageRefreshTimestamps = ref<Record<number, number>>({});
 const clipCacheVers = ref<Record<number, number>>({});
 const segmentScope = ref("segment/images");
 
@@ -592,9 +593,14 @@ const displaySegments = computed(() =>
     const imagePath = segment.image_path?.trim() ?? "";
     const clipPath = segment.clip_path?.trim() ?? "";
     let imageUrl = toMediaUrl(imagePath);
+    const refreshTs = imageRefreshTimestamps.value[segment.segment_index];
     const imageVer = imageCacheVers.value[segment.segment_index];
-    if (imageUrl && imageVer !== undefined) {
-      imageUrl += `?v=${imageVer}`;
+    if (imageUrl) {
+      if (refreshTs !== undefined) {
+        imageUrl += `?_=${refreshTs}`;
+      } else if (imageVer !== undefined) {
+        imageUrl += `?${imageVer}`;
+      }
     }
     let clipUrl = "";
     if (clipPath) {
@@ -752,7 +758,7 @@ const handleRegenerateImage = async (segmentIndex: number) => {
 const bumpImageVer = (index: number) => {
   imageCacheVers.value = {
     ...imageCacheVers.value,
-    [index]: (imageCacheVers.value[index] ?? -1) + 1,
+    [index]: (imageCacheVers.value[index] ?? 0) + 1,
   };
 };
 const bumpClipVer = (index: number) => {
@@ -763,7 +769,10 @@ const bumpClipVer = (index: number) => {
 };
 
 const handleRefreshImage = (segmentIndex: number) => {
-  bumpImageVer(segmentIndex);
+  imageRefreshTimestamps.value = {
+    ...imageRefreshTimestamps.value,
+    [segmentIndex]: Date.now(),
+  };
 };
 
 const handleGenerateClip = async (segmentIndex: number) => {
