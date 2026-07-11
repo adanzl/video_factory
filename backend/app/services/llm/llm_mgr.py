@@ -153,6 +153,12 @@ class LLMClient:
     ) -> dict[str, Any]:
         raise NotImplementedError
 
+    def generate_daily_story_themes(
+        self,
+        count: int = 2,
+    ) -> list[str]:
+        raise NotImplementedError
+
 
 class LLMMgr:
     """LLM 管理器。"""
@@ -577,6 +583,21 @@ class LLMMgr:
         elapsed = time.perf_counter() - started
         logger.info("[DAILY_STORY] generate done theme=%r elapsed=%.1fs", theme, elapsed)
         return story
+
+    def generate_daily_story_themes(
+        self,
+        count: int = 2,
+    ) -> list[str]:
+        logger.info("[DAILY_STORY] generate themes start count=%d", count)
+        started = time.perf_counter()
+        try:
+            themes = self._get_client().generate_daily_story_themes(count)
+        except Exception:
+            logger.exception("[DAILY_STORY] generate themes failed")
+            raise
+        elapsed = time.perf_counter() - started
+        logger.info("[DAILY_STORY] generate themes done count=%d elapsed=%.1fs", len(themes), elapsed)
+        return themes
 
 
 llm_mgr = LLMMgr()
