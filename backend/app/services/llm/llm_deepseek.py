@@ -400,6 +400,22 @@ DAILY_STORY_USER_TEMPLATE = """\
 请直接输出JSON。
 """
 
+DAILY_STORY_THEME_SYSTEM_PROMPT = "你是一位儿童情景喜剧策划师。"
+
+DAILY_STORY_THEME_USER_TEMPLATE = """\
+请给出{count}个适合5-9岁姐弟（昭昭7岁弟弟，灿灿9岁姐姐）日常对话的场景主题。
+
+要求：
+1. 主题必须是一件具体的小事，比如：争最后一瓶酸奶、谁先洗澡、检查作业时发现错题。
+2. 不能是抽象概念（如“讨论友谊”“探讨公平”）。
+3. 主题要有“天然矛盾”——姐姐想管弟弟但管不住，或者两人想一起对付爸妈但翻车。
+4. 主题用15个字以内描述，直接输出。
+
+示例：“下雨只带了一把伞”
+
+请直接输出标题，每行一个，不要其他内容。
+"""
+
 
 class DeepSeekClient(LLMClient):
     def __init__(self) -> None:
@@ -1334,3 +1350,13 @@ class DeepSeekClient(LLMClient):
         user = DAILY_STORY_USER_TEMPLATE.format(theme=theme)
         raw, _ = self._chat_json(system, user, max_tokens=4096, thinking_enabled=False, temperature=0.95)
         return raw
+
+    def generate_daily_story_themes(
+        self,
+        count: int = 2,
+    ) -> list[str]:
+        system = DAILY_STORY_THEME_SYSTEM_PROMPT
+        user = DAILY_STORY_THEME_USER_TEMPLATE.format(count=count)
+        content, _ = self._chat(system, user, max_tokens=512, json_mode=False, thinking_enabled=False, temperature=0.95)
+        themes = [line.strip() for line in content.strip().split("\n") if line.strip()]
+        return themes[:count]

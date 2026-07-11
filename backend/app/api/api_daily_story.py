@@ -54,3 +54,11 @@ def delete_stories_route():
     if not ids:
         raise APIError("ids is required")
     return json_ok(daily_story_mgr.delete_stories(ids))
+
+
+@bp.post("/themes")
+def generate_themes_route():
+    data = get_json_body(required=False) or {}
+    count = parse_int(data, "count", 2, minimum=1, maximum=10)
+    logger.info("[DAILY_STORY] api /themes count=%d", count)
+    return json_ok(daily_story_mgr.generate_themes(count))

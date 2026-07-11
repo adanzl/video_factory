@@ -64,16 +64,30 @@
     <el-dialog v-model="showGenerateDialog" title="生成日常故事" width="480px">
       <el-form @submit.prevent="handleGenerate">
         <el-form-item label="场景主题">
-          <el-input
-            v-model="generateTheme"
-            placeholder="如：写检查、零花钱花完了、争最后一块饼干"
-            clearable
-          />
+          <div class="flex w-full gap-2">
+            <el-input
+              v-model="generateTheme"
+              placeholder="如：写检查、零花钱花完了、争最后一块饼干"
+              clearable
+              class="flex-1"
+            />
+            <el-button :loading="generatingThemes" @click="handleGenerateThemes">生成</el-button>
+          </div>
         </el-form-item>
+        <div v-if="generatedThemes.length" class="mt-2 flex flex-wrap gap-2">
+          <el-tag
+            v-for="(theme, idx) in generatedThemes"
+            :key="idx"
+            class="cursor-pointer"
+            @click="generateTheme = theme"
+          >
+            {{ theme }}
+          </el-tag>
+        </div>
       </el-form>
       <template #footer>
         <el-button @click="showGenerateDialog = false">取消</el-button>
-        <el-button type="primary" :loading="generating" @click="handleGenerate">生成</el-button>
+        <el-button type="primary" :loading="generating" @click="handleGenerate">生成故事</el-button>
       </template>
     </el-dialog>
 
@@ -116,6 +130,7 @@ import {
   listDailyStories,
   generateDailyStory,
   deleteDailyStories,
+  generateDailyStoryThemes,
   type DailyStoryRecord,
 } from "@/api/api-daily-story";
 
@@ -130,6 +145,8 @@ const showGenerateDialog = ref(false);
 const showDetailDialog = ref(false);
 const generateTheme = ref("");
 const currentStory = ref<DailyStoryRecord | null>(null);
+const generatingThemes = ref(false);
+const generatedThemes = ref<string[]>([]);
 
 async function fetchStories() {
   loading.value = true;
@@ -163,6 +180,17 @@ async function handleGenerate() {
     handleError(e, "生成故事失败");
   } finally {
     generating.value = false;
+  }
+}
+
+async function handleGenerateThemes() {
+  generatingThemes.value = true;
+  try {
+    generatedThemes.value = await generateDailyStoryThemes(2);
+  } catch (e) {
+    handleError(e, "生成主题失败");
+  } finally {
+    generatingThemes.value = false;
   }
 }
 
