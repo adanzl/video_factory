@@ -248,7 +248,7 @@ def _loads_llm_json(content: str) -> dict[str, Any]:
 
     last_exc: json.JSONDecodeError | None = None
     for candidate in candidates:
-        for variant in (candidate, _escape_control_chars_in_json_strings(candidate)):
+        for variant in (candidate, _escape_control_chars_in_json_strings(candidate), _fix_trailing_commas(candidate)):
             try:
                 parsed = json.loads(variant)
             except json.JSONDecodeError as exc:
@@ -257,6 +257,16 @@ def _loads_llm_json(content: str) -> dict[str, Any]:
             if isinstance(parsed, dict):
                 return parsed
     raise ValueError(f"LLM returned invalid JSON: {last_exc}") from last_exc
+
+
+def _fix_trailing_commas(text: str) -> str:
+    """移除 JSON 数组和对象中非法的尾部逗号。"""
+    import re
+    # 移除数组中 ] 前的尾部逗号
+    text = re.sub(r',\s*]', ']', text)
+    # 移除对象中 } 前的尾部逗号
+    text = re.sub(r',\s*}', '}', text)
+    return text
 
 
 def _assemble_storyboard_narration(data: dict[str, Any]) -> dict[str, Any]:
