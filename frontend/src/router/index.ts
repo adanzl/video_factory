@@ -37,6 +37,11 @@ const routes: RouteRecordRaw[] = [
     component: () => import("@/views/topic/PageTopic.vue"),
   },
   {
+    path: "/daily-story",
+    name: "DailyStory",
+    component: () => import("@/views/daily_story/PageDailyStory.vue"),
+  },
+  {
     path: "/config",
     name: "Config",
     component: () => import("@/views/config/PageConfig.vue"),

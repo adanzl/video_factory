@@ -46,7 +46,7 @@ from app.utils.media import (
     segment_text_hard_cap,
     segment_text_shrink_max,
 )
-from app.utils.title_text import prefer_source_punctuation
+from app.utils.title_text import collapse_title_whitespace, prefer_source_punctuation
 from worker.context import JobContext
 from worker.stages.base import StageExecutor
 
@@ -89,21 +89,21 @@ def _title_chars(title: str) -> str:
 
 def _resolve_script_title(*, source_title: str, llm_title: str, max_len: int) -> str:
     """原标题未超长则沿用；否则采用 LLM 精简结果。"""
-    source = _title_chars(source_title)
-    if len(source) <= max_len:
-        return source
-    candidate = _title_chars(llm_title)
-    if not candidate:
+    source_counted = _title_chars(source_title)
+    if len(source_counted) <= max_len:
+        return collapse_title_whitespace(source_title)
+    candidate_counted = _title_chars(llm_title)
+    if not candidate_counted:
         raise ScriptValidationError(
-            f"title too long: {len(source)} chars (need <= {max_len})",
+            f"title too long: {len(source_counted)} chars (need <= {max_len})",
             retryable=True,
         )
-    if len(candidate) > max_len:
+    if len(candidate_counted) > max_len:
         raise ScriptValidationError(
-            f"title too long: {len(candidate)} chars (need <= {max_len})",
+            f"title too long: {len(candidate_counted)} chars (need <= {max_len})",
             retryable=True,
         )
-    return candidate
+    return collapse_title_whitespace(llm_title)
 
 
 def _apply_script_title(
@@ -117,7 +117,7 @@ def _apply_script_title(
     content_style: str = "",
 ) -> None:
     if skip_optimize:
-        script["title"] = _title_chars(source_title)
+        script["title"] = collapse_title_whitespace(source_title)
         return
     script["title"] = _resolve_script_title(
         source_title=source_title,
@@ -634,14 +634,15 @@ def _validate_script(
                 f"shrink up to {shrink_max}): {overflow}",
                 retryable=True,
             )
-    title = _title_chars(script.get("title") or "")
-    if not title:
+    title = script.get("title") or ""
+    title_counted = _title_chars(title)
+    if not title_counted:
         raise ScriptValidationError("title is empty")
-    if len(title) > max_len:
+    if len(title_counted) > max_len:
         raise ScriptValidationError(
-            f"title too long: {len(title)} chars (need <= {max_len})"
+            f"title too long: {len(title_counted)} chars (need <= {max_len})"
         )
-    script["title"] = title
+    script["title"] = collapse_title_whitespace(title)
     script["segments"] = _normalize_segments(segments)
     return warnings
 

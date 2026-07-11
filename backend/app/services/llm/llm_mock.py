@@ -382,3 +382,20 @@ class MockLLMClient(LLMClient):
                 }
             )
         return out
+
+    def generate_daily_story(self, theme: str) -> dict[str, Any]:
+        return {
+            "scene_title": "测试场景",
+            "setting": f"家里客厅，姐弟俩围绕{theme}展开对话",
+            "dialogue": [
+                {"speaker": "昭昭", "line": f"姐，{theme}是怎么回事？"},
+                {"speaker": "灿灿", "line": "就是那样的呗。"},
+                {"speaker": "昭昭", "line": "那样是哪样？"},
+                {"speaker": "灿灿", "line": "你问我我问谁？"},
+                {"speaker": "昭昭", "line": "你不是姐姐吗？"},
+                {"speaker": "灿灿", "line": "姐姐也不是什么都知道！"},
+                {"speaker": "昭昭", "line": "那当姐姐有什么用？"},
+                {"speaker": "灿灿", "line": "可以管你！"},
+            ],
+            "punchline_explain": "弟弟用逻辑追问姐姐权威的本质，姐姐用孩子式特权收尾",
+        }
