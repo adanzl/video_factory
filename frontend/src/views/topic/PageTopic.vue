@@ -102,8 +102,7 @@
               type="warning"
               link
               size="small"
-              :loading="optimizingId === row.id"
-              @click="handleOptimizeOne(row)"
+              @click="openOptimizeDialog(row)"
             >
               优化
             </el-button>
@@ -287,6 +286,29 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="showOptimizeDialog" title="优化选题" width="480px" destroy-on-close>
+      <p class="mb-2 text-sm text-gray-500">
+        原标题：<span class="font-medium text-gray-700">{{ optimizeForm.title }}</span>
+      </p>
+      <el-form label-width="88px">
+        <el-form-item label="优化方向">
+          <el-input
+            v-model="optimizeForm.direction"
+            type="textarea"
+            :rows="3"
+            maxlength="200"
+            placeholder="可选，如：更口语化、加强悬念感、突出反差…"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showOptimizeDialog = false">取消</el-button>
+        <el-button type="warning" :loading="optimizingId !== undefined" @click="confirmOptimize">
+          开始优化
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -346,6 +368,12 @@ const editForm = reactive({
 const showGenerateDialog = ref(false);
 const showEnqueueDialog = ref(false);
 const showCleanLowDialog = ref(false);
+const showOptimizeDialog = ref(false);
+const optimizeForm = reactive({
+  id: 0,
+  title: "",
+  direction: "",
+});
 const cleanLowMaxScore = ref(85);
 const pendingEnqueueIds = ref<number[]>([]);
 const enqueueRunMode = ref<EnqueueRunMode>("script");
@@ -510,10 +538,20 @@ const handleScoreSelected = async () => {
   }
 };
 
-const handleOptimizeOne = async (row: TitleRecord) => {
-  optimizingId.value = row.id;
+const openOptimizeDialog = (row: TitleRecord) => {
+  optimizeForm.id = row.id;
+  optimizeForm.title = row.title;
+  optimizeForm.direction = "同一题材、同一核心知识点或事件，只润色标题与 hook，不得另起新题。标题表述须与原版不同，但读者应一眼看出是同一主题。";
+  showOptimizeDialog.value = true;
+};
+
+const confirmOptimize = async () => {
+  const id = optimizeForm.id;
+  const direction = optimizeForm.direction.trim() || undefined;
+  showOptimizeDialog.value = false;
+  optimizingId.value = id;
   try {
-    const result = await optimizeTopic(row.id);
+    const result = await optimizeTopic(id, direction);
     ElMessage.success(`已优化：${result.title.title}`);
     await fetchTitles();
   } catch (error) {

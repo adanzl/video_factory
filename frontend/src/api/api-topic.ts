@@ -40,10 +40,10 @@ export async function generateTopics(
   return response.data;
 }
 
-export async function optimizeTopic(id: number): Promise<OptimizeTopicResult> {
+export async function optimizeTopic(id: number, direction?: string): Promise<OptimizeTopicResult> {
   const response = await api.post<OptimizeTopicResult>(
     "/v_factory/api/topic/optimize",
-    { id },
+    { id, direction: direction || undefined },
     { timeout: TOPIC_LLM_TIMEOUT_MS }
   );
   return response.data;

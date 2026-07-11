@@ -280,7 +280,7 @@ class TopicMgr:
             **result,
         }
 
-    def optimize_title(self, title_id: int) -> dict:
+    def optimize_title(self, title_id: int, direction: str | None = None) -> dict:
         with connection() as conn:
             row = repo_title.get_title(conn, title_id)
 
@@ -299,6 +299,7 @@ class TopicMgr:
             category=category,
             template=template,
             hook=row.get("hook"),
+            direction=direction,
         )
         user_prompt = user_prompt_base
         logger.info(

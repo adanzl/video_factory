@@ -281,8 +281,21 @@ class LLMMgr:
         segment_indices: list[int] | None = None,
         include_sd15_prompt: bool = False,
         max_attempts: int | None = None,
+        skip_quality_check: bool = False,
     ) -> dict[str, Any]:
         """补全文生图提示词，过短时带 feedback 重试（与 script 阶段逻辑对齐）。"""
+        from app.utils.job_cancel import raise_if_job_cancelled
+
+        if skip_quality_check:
+            self.fill_image_prompts(
+                script,
+                supplementary_info=supplementary_info,
+                job=job,
+                segment_indices=segment_indices,
+                include_sd15_prompt=include_sd15_prompt,
+            )
+            return script
+
         from app.quality.quality_mgr import check_image_prompt
         from app.quality.image_prompt import (
             MIN_SD15_PROMPT_EN_WORDS,
@@ -291,8 +304,6 @@ class LLMMgr:
             image_prompt_min_chars,
             image_prompt_target_chars,
         )
-
-        from app.utils.job_cancel import raise_if_job_cancelled
 
         feedback: str | None = None
         target_indices = segment_indices
