@@ -242,6 +242,7 @@ def build_topic_optimize_user_prompt(
     category: str | None = None,
     template: str | None = None,
     hook: str | None = None,
+    direction: str | None = None,
 ) -> str:
     resolved = resolve_category(category)
     example = ""
@@ -258,10 +259,13 @@ def build_topic_optimize_user_prompt(
                 f"合格 title 示例（须换措辞但结构相同）：{example}",
             ]
         )
+    if not direction:
+        lines.append(
+            "硬性要求：同一题材、同一核心知识点或事件，只润色标题与 hook，不得另起新题。"
+        )
+        lines.append("标题表述须与原版不同，但读者应一眼看出是同一主题。")
     lines.extend(
         [
-            "硬性要求：同一题材、同一核心知识点或事件，只润色标题与 hook，不得另起新题。",
-            "标题表述须与原版不同，但读者应一眼看出是同一主题。",
             "",
             f"原标题：{title.strip()}",
             f"大分类：{resolved}",
@@ -275,6 +279,8 @@ def build_topic_optimize_user_prompt(
             "若原 hook 说教、平淡或与 title 重复，须重写 hook："
             "用反差/追问/具体画面，遵守 hook 规则，禁止「别小看」「足够你」类表述。"
         )
+    if direction:
+        lines.append(f"优化方向：{direction.strip()}")
     if resolved == CATEGORY_HISTORY:
         lines.append("须保持同一历史人物或悬案，标题仍为「代号：悬念」格式。")
     elif resolved in {CATEGORY_SCIENCE, CATEGORY_CURRENT}:

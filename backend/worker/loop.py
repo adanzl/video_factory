@@ -352,12 +352,15 @@ def _run_image_prompts(
     ) or None
 
     updated = dict(script)
+    from app.config import get_settings
+    skip_quality = get_settings().skip_script_quality_check
     llm_mgr.fill_image_prompts_with_retries(
         updated,
         supplementary_info=supplementary_info,
         job=job,
         segment_indices=segment_indices,
         include_sd15_prompt=include_sd15_prompt,
+        skip_quality_check=skip_quality,
     )
     _log_llm_timing(job_id, "script", updated)
 
@@ -376,7 +379,6 @@ def _run_image_prompts(
     updated["include_sd15_prompt"] = include_sd15_prompt
     updated.pop("_llm_timing", None)
 
-    from app.config import get_settings
     from app.services.script.board_timeline import parse_video_timeline
     from app.utils.media import assign_segment_timings
 
@@ -393,17 +395,25 @@ def _run_image_prompts(
     )
 
     with connection() as conn:
-        quality_report = check_image_prompt(
-            updated,
-            sd15_mode=include_sd15_prompt,
-            segment_indices=segment_indices,
-        )
-        if quality_report.level == "major":
-            logger.error(
-                "job %s script/imagePrompts quality major: %s",
+        if skip_quality:
+            from app.quality.image_prompt import skip_image_prompt_check
+            quality_report = skip_image_prompt_check()
+            logger.info(
+                "job %s script/imagePrompts quality skipped (SKIP_SCRIPT_QUALITY_CHECK)",
                 job_id,
-                quality_report.details,
             )
+        else:
+            quality_report = check_image_prompt(
+                updated,
+                sd15_mode=include_sd15_prompt,
+                segment_indices=segment_indices,
+            )
+            if quality_report.level == "major":
+                logger.error(
+                    "job %s script/imagePrompts quality major: %s",
+                    job_id,
+                    quality_report.details,
+                )
         apply_quality_checks(
             conn,
             job_id,

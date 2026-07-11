@@ -105,8 +105,9 @@ def optimize_topic_route():
     """对单条选题 LLM 优化重写并重新打分。"""
     data = get_json_body()
     title_id = parse_id(data)
-    logger.info("[TOPIC] api /optimize id=%d", title_id)
-    return json_ok(topic_mgr.optimize_title(title_id))
+    direction = (data.get("direction") or "").strip() or None
+    logger.info("[TOPIC] api /optimize id=%d direction=%r", title_id, direction)
+    return json_ok(topic_mgr.optimize_title(title_id, direction=direction))
 
 
 @bp.post("/score")

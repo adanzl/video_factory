@@ -672,8 +672,12 @@ class DeepSeekClient(LLMClient):
             segment_indices=segment_indices,
             include_sd15_prompt=include_sd15_prompt,
         )
-        raw, _ = self._chat_json(prompts["system"], prompts["user"], thinking_enabled=False)
+        raw, finish = self._chat_json(
+            prompts["system"], prompts["user"], thinking_enabled=False,
+        )
         raise_if_job_cancelled(job)
+        if finish == "length":
+            raise ValueError("LLM image_prompts 被截断 (finish_reason=length)")
         if isinstance(raw, list):
             prompt_items = raw
         elif isinstance(raw, dict):
@@ -730,7 +734,7 @@ class DeepSeekClient(LLMClient):
         if not segments:
             raise ValueError("script has no segments")
         all_indices = segment_indices or [int(seg["segment_index"]) for seg in segments]
-        batches = _chunk_indices(all_indices, settings.llm_image_prompt_batch_size)
+        batch_size = settings.llm_image_prompt_batch_size
         started = time.perf_counter()
 
         def _run_batch(batch_indices: list[int]) -> list[dict]:
@@ -744,15 +748,32 @@ class DeepSeekClient(LLMClient):
             )
             return result["image_prompts"]
 
-        prompt_items: list[dict] = []
-        if len(batches) <= 1:
-            prompt_items = _run_batch(batches[0])
-        else:
-            with ThreadPoolExecutor(max_workers=len(batches)) as pool:
-                futures = {pool.submit(_run_batch, batch): batch for batch in batches}
-                for future in as_completed(futures):
-                    prompt_items.extend(future.result())
-                    raise_if_job_cancelled(job)
+        def _run_all(batches: list[list[int]]) -> list[dict]:
+            items: list[dict] = []
+            if len(batches) <= 1:
+                items = _run_batch(batches[0])
+            else:
+                with ThreadPoolExecutor(max_workers=len(batches)) as pool:
+                    futures = {pool.submit(_run_batch, batch): batch for batch in batches}
+                    for future in as_completed(futures):
+                        items.extend(future.result())
+                        raise_if_job_cancelled(job)
+            return items
+
+        # 首次尝试
+        batches = _chunk_indices(all_indices, batch_size)
+        try:
+            prompt_items = _run_all(batches)
+        except ValueError as exc:
+            if "被截断" not in str(exc) or batch_size <= 1:
+                raise
+            # 截断时缩小批次（逐段生成）重试一次
+            logger.warning(
+                "image_prompts truncated with batch_size=%d, retrying with batch_size=1",
+                batch_size,
+            )
+            batches = _chunk_indices(all_indices, 1)
+            prompt_items = _run_all(batches)
 
         self._merge_image_prompts(script, prompt_items, required_indices=all_indices)
         raise_if_job_cancelled(job)
