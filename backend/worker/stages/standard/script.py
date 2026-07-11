@@ -613,9 +613,8 @@ def _validate_script(
         if require_image_prompt and any("motion_prompt" in seg for seg in segments):
             motion_issues = collect_motion_prompt_issues(segments)
             if motion_issues:
-                raise ScriptValidationError(
-                    f"motion_prompt rejected: {'; '.join(motion_issues[:3])}",
-                    retryable=True,
+                warnings.append(
+                    f"motion_prompt issues (non-blocking): {'; '.join(motion_issues[:3])}"
                 )
     if seg_target > 0:
         from app.utils.media import DEFAULT_SPEECH_CHARS_PER_SEC

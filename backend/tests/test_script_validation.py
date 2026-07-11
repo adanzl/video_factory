@@ -436,7 +436,7 @@ def test_repair_segment_overflow_via_shrink_mock(monkeypatch):
     assert warnings == []
 
 
-def test_validate_script_rejects_generic_motion_prompt():
+def test_validate_script_warns_on_generic_motion_prompt():
     script = _valid_script(
         segments=[
             {
@@ -448,5 +448,5 @@ def test_validate_script_rejects_generic_motion_prompt():
             }
         ],
     )
-    with pytest.raises(ScriptValidationError, match="motion_prompt rejected"):
-        _validate_script(script, min_narration_chars=_DEFAULT_MIN)
+    _, warnings = _validate_script(script, min_narration_chars=_DEFAULT_MIN)
+    assert any("motion_prompt issues" in w for w in warnings)

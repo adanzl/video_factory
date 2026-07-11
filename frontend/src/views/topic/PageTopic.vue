@@ -287,17 +287,19 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="showOptimizeDialog" title="优化选题" width="480px" destroy-on-close>
-      <p class="mb-2 text-sm text-gray-500">
-        原标题：<span class="font-medium text-gray-700">{{ optimizeForm.title }}</span>
-      </p>
+    <el-dialog v-model="showOptimizeDialog" title="优化选题" width="500px" destroy-on-close>
+      <div class="mb-4 rounded-lg bg-gray-50 px-4 py-3">
+        <div class="mb-1 text-xs text-gray-400">原标题</div>
+        <div class="text-sm font-medium text-gray-700">{{ optimizeForm.title }}</div>
+      </div>
       <el-form label-width="88px">
         <el-form-item label="优化方向">
           <el-input
             v-model="optimizeForm.direction"
             type="textarea"
-            :rows="3"
+            :rows="8"
             maxlength="200"
+            show-word-limit
             placeholder="可选，如：更口语化、加强悬念感、突出反差…"
           />
         </el-form-item>
