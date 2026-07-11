@@ -293,8 +293,11 @@ class AgnesClipProvider(ClipProvider):
                     return value.strip()
         return None
 
-    def _build_i2v_payload(self, *, prompt: str, image_ref: str, num_frames: int) -> dict:
-        return {
+    def _build_i2v_payload(
+        self, *, prompt: str, image_ref: str, num_frames: int,
+        width: int | None = None, height: int | None = None,
+    ) -> dict:
+        payload: dict = {
             "model": self._model,
             "prompt": prompt,
             "image": image_ref,
@@ -302,6 +305,11 @@ class AgnesClipProvider(ClipProvider):
             "num_frames": num_frames,
             "frame_rate": self._frame_rate,
         }
+        if width is not None:
+            payload["width"] = width
+        if height is not None:
+            payload["height"] = height
+        return payload
 
     def _with_api_key_fallback(self, operation: Callable[[AgnesApiKey], Path]) -> Path:
         keys = agnes_api_keys()
@@ -337,6 +345,8 @@ class AgnesClipProvider(ClipProvider):
         output_path: Path,
         *,
         num_frames: int,
+        width: int | None = None,
+        height: int | None = None,
     ) -> Path:
         image_ref = _resolve_i2v_image(image_path)
         headers = agnes_auth_header(api_key.value, extra={"Connection": "close"})
@@ -344,13 +354,17 @@ class AgnesClipProvider(ClipProvider):
             prompt=prompt,
             image_ref=image_ref,
             num_frames=num_frames,
+            width=width,
+            height=height,
         )
         logger.info(
-            "agnes i2v submit (%s key): model=%s frames=%s fps=%s image=%s prompt_chars=%s",
+            "agnes i2v submit (%s key): model=%s frames=%s fps=%s size=%sx%s image=%s prompt_chars=%s",
             api_key.label,
             self._model,
             num_frames,
             self._frame_rate,
+            width or "-",
+            height or "-",
             _format_image_ref_for_log(image_ref),
             len(prompt),
         )
@@ -395,6 +409,8 @@ class AgnesClipProvider(ClipProvider):
         output_path: Path,
         *,
         num_frames: int,
+        width: int | None = None,
+        height: int | None = None,
     ) -> Path:
         return self._with_api_key_fallback(
             lambda key: self._generate_raw_with_key(
@@ -403,6 +419,8 @@ class AgnesClipProvider(ClipProvider):
                 prompt,
                 output_path,
                 num_frames=num_frames,
+                width=width,
+                height=height,
             )
         )
 
@@ -557,7 +575,10 @@ class AgnesClipProvider(ClipProvider):
         )
         output_path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            self._generate_raw(image_path, prompt, raw_path, num_frames=num_frames)
+            self._generate_raw(
+                image_path, prompt, raw_path,
+                num_frames=num_frames, width=clip_width, height=clip_height,
+            )
             logger.info("clip %s: raw done, fitting to %.1fs", segment_index, total_duration)
             raw_path = _loop_video_to_duration(
                 raw_path,
