@@ -52,18 +52,26 @@ class DailyScriptStage(StageExecutor):
             if raw_lines and isinstance(raw_lines[0], dict):
                 # 新格式: [{"speaker": "昭昭", "text": "台词"}, ...]
                 segment_text = "".join(str(d.get("text") or d.get("line") or "") for d in raw_lines)
+                dialogue = [
+                    {"speaker": d.get("speaker", ""), "text": d.get("text") or d.get("line") or ""}
+                    for d in raw_lines
+                ]
             else:
                 # 兼容旧格式: ["台词1", "台词2", ...]
                 segment_text = "".join(str(l) for l in raw_lines)
+                dialogue = []
             narration_parts.append(segment_text)
 
-            segments.append({
+            seg: dict = {
                 "segment_index": i,
                 "text": segment_text,
                 "visual_brief": (scene.get("visual_description") or "").strip(),
                 "image_prompt": (scene.get("img2img_prompt") or "").strip(),
                 "duration_sec": scene.get("duration_seconds", 10),
-            })
+            }
+            if dialogue:
+                seg["dialogue"] = dialogue
+            segments.append(seg)
 
         narration = "".join(narration_parts)
         title = (story_content.get("scene_title") or ctx.job.get("title") or "").strip()
