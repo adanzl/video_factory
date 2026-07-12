@@ -70,6 +70,7 @@ class DailyStoryMgr:
                 "api",
                 f"created daily story job: story_id={story_id}, title={title!r}",
             )
+            repo_daily_story.set_job_id(conn, story_id, job["id"])
             return job
 
     def update_story(self, story_id: int, *, story: dict[str, Any]) -> dict:

@@ -27,7 +27,7 @@ def list_stories(
     if status:
         rows = conn.execute(
             """
-            SELECT id, theme, story_json, status, created_at, updated_at
+            SELECT id, theme, story_json, status, created_at, updated_at, job_id
             FROM daily_story
             WHERE status = ?
             ORDER BY id DESC
@@ -38,7 +38,7 @@ def list_stories(
     else:
         rows = conn.execute(
             """
-            SELECT id, theme, story_json, status, created_at, updated_at
+            SELECT id, theme, story_json, status, created_at, updated_at, job_id
             FROM daily_story
             ORDER BY id DESC
             LIMIT ? OFFSET ?
@@ -50,7 +50,7 @@ def list_stories(
 
 def get_story(conn: sqlite3.Connection, story_id: int) -> dict:
     row = conn.execute(
-        "SELECT id, theme, story_json, status, created_at, updated_at FROM daily_story WHERE id = ?",
+        "SELECT id, theme, story_json, status, created_at, updated_at, job_id FROM daily_story WHERE id = ?",
         (story_id,),
     ).fetchone()
     if row is None:
@@ -72,6 +72,14 @@ def insert_story(
         (theme, json.dumps(story, ensure_ascii=False)),
     )
     return cur.lastrowid  # type: ignore[return-value]
+
+
+def set_job_id(conn: sqlite3.Connection, story_id: int, job_id: int) -> None:
+    """回填 job_id 到 daily_story 表，建立强关联。"""
+    conn.execute(
+        "UPDATE daily_story SET job_id = ?, updated_at = datetime('now') WHERE id = ?",
+        (job_id, story_id),
+    )
 
 
 def delete_stories(conn: sqlite3.Connection, ids: list[int]) -> int:

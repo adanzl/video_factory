@@ -114,6 +114,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from "vue";
+import { useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import { Refresh, Edit } from "@element-plus/icons-vue";
 import type { DailyStoryRecord, StoryContent } from "@/api/api-daily-story";
@@ -189,6 +190,8 @@ async function handleCreateJob() {
   try {
     const job = await createDailyStoryJob(storyId);
     ElMessage.success(`任务已创建（ID: ${job.id}），即将开始处理`);
+    visible.value = false;
+    useRouter().push({ path: "/jobs", query: { id: String(job.id) } });
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.message || "创建任务失败");
   } finally {

@@ -16,6 +16,7 @@ export interface DailyStoryRecord {
   id: number;
   theme: string;
   story: StoryContent;
+  job_id: number | null;
   status: string;
   created_at: string;
   updated_at: string;

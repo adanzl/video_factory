@@ -52,9 +52,10 @@
           {{ formatDateTime(row.created_at) }}
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="140" fixed="right">
+      <el-table-column label="操作" width="220" fixed="right">
         <template #default="{ row }">
           <el-button type="primary" link size="small" @click="viewStory(row)">查看</el-button>
+          <el-button v-if="row.job_id" type="primary" link size="small" @click="gotoJob(row)">任务详情</el-button>
           <el-button type="danger" link size="small" @click="handleDeleteOne(row.id)">删除</el-button>
         </template>
       </el-table-column>
@@ -67,6 +68,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from "vue";
+import { useRouter } from "vue-router";
 import { Refresh } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { useErrorHandler } from "@/composables/useErrorHandler";
@@ -80,6 +82,7 @@ import {
 } from "@/api/api-daily-story";
 
 const { handleError } = useErrorHandler();
+const router = useRouter();
 
 const stories = ref<DailyStoryRecord[]>([]);
 const loading = ref(false);
@@ -108,6 +111,14 @@ function onSelectionChange(rows: DailyStoryRecord[]) {
 function viewStory(row: DailyStoryRecord) {
   currentStory.value = row;
   showDetailDialog.value = true;
+}
+
+async function gotoJob(row: DailyStoryRecord) {
+  if (!row.job_id) {
+    ElMessage.info("该故事还没有关联的任务");
+    return;
+  }
+  router.push({ path: "/jobs", query: { id: String(row.job_id) } });
 }
 
 async function handleDeleteOne(id: number) {
