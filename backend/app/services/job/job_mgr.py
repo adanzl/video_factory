@@ -716,8 +716,28 @@ class JobMgr:
         content_style: str | None = None,
     ) -> list[dict[str, str]]:
         from app.services.script.script_mgr import script_mgr
+        from app.utils.job_info import parse_job_info
 
         job = self.get_job(job_id)
+
+        # 从 DB 读取已保存的参数作为默认值
+        info = parse_job_info(job.get("info"))
+        sp = info.get("script") or {}
+        if segment_target_sec is None:
+            segment_target_sec = sp.get("segment_target_sec")
+        if max_title_length is None:
+            max_title_length = sp.get("max_title_length")
+        if narration_target_words is None:
+            narration_target_words = sp.get("narration_target_words")
+        if speech_chars_per_sec is None:
+            speech_chars_per_sec = sp.get("speech_chars_per_sec")
+        if not skip_title_optimize:
+            skip_title_optimize = sp.get("skip_title_optimize", False)
+        if supplementary_info is None:
+            supplementary_info = sp.get("supplementary_info")
+        if video_timeline is None:
+            video_timeline = sp.get("video_timeline")
+
         if orientation is not None or content_style is not None:
             job = dict(job)
             patch: dict[str, str] = {}
@@ -726,6 +746,21 @@ class JobMgr:
             if content_style is not None:
                 patch["content_style"] = content_style
             job["info"] = merge_job_info(job.get("info"), **patch)
+        else:
+            # 从 DB 读取 orientation/content_style
+            if orientation is None:
+                orientation = info.get("orientation")
+            if content_style is None:
+                content_style = info.get("content_style")
+            if orientation is not None or content_style is not None:
+                job = dict(job)
+                patch = {}
+                if orientation is not None:
+                    patch["orientation"] = orientation
+                if content_style is not None:
+                    patch["content_style"] = content_style
+                job["info"] = merge_job_info(job.get("info"), **patch)
+
         source_title = (title or job["title"] or "").strip()
         if not source_title:
             raise ValueError("title is empty")
@@ -762,6 +797,14 @@ class JobMgr:
             story = repo_daily_story.get_story(conn, daily_story_id)
 
         story_content = story["story"]
+        if not isinstance(story_content, dict):
+            raise ValueError("故事数据格式异常")
+        dialogue = story_content.get("dialogue")
+        if not isinstance(dialogue, list):
+            raise ValueError("故事数据中缺少 dialogue 字段或格式不正确")
+        for i, item in enumerate(dialogue):
+            if not isinstance(item, dict) or "speaker" not in item or "line" not in item:
+                raise ValueError(f"对话第 {i + 1} 条数据格式异常: {item}")
         system, user = build_daily_script_prompts(story_content)
         return [{"step": "daily_script", "system": system, "user": user}]
 

@@ -11,7 +11,7 @@ import type {
   ListJobsParams,
   UpdateJobInfoParams,
 } from "@/types/jobs";
-import type { RunStageActionPayload, PreviewScriptPromptsPayload } from "@/types/jobs/stageAction";
+import type { RunStageActionPayload } from "@/types/jobs/stageAction";
 import type { LlmPromptStep } from "@/types/jobs/script";
 
 export async function listJobs(params: ListJobsParams = {}): Promise<JobListItem[]> {
@@ -82,10 +82,15 @@ export async function runJobStageAction(
 }
 
 export async function previewScriptPrompts(
-  payload: PreviewScriptPromptsPayload
+  jobId: number,
+  overrides?: { title?: string; orientation?: string; content_style?: string }
 ): Promise<LlmPromptStep[]> {
+  const payload: Record<string, any> = { id: jobId };
+  if (overrides?.title) payload.title = overrides.title;
+  if (overrides?.orientation) payload.orientation = overrides.orientation;
+  if (overrides?.content_style) payload.content_style = overrides.content_style;
   const response = await api.post<{ prompts: LlmPromptStep[] }>(
-    "/v_factory/api/jobs/script/previewPrompts",
+    "/v_factory/api/jobs/script/prompts",
     payload
   );
   return Array.isArray(response.data.prompts) ? response.data.prompts : [];
@@ -93,7 +98,7 @@ export async function previewScriptPrompts(
 
 export async function previewDailyScriptPrompts(jobId: number): Promise<LlmPromptStep[]> {
   const response = await api.post<{ prompts: LlmPromptStep[] }>(
-    "/v_factory/api/jobs/dailyScriptPrompts",
+    "/v_factory/api/jobs/script/prompts",
     { id: jobId }
   );
   return Array.isArray(response.data.prompts) ? response.data.prompts : [];
