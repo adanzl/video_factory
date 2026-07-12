@@ -130,6 +130,7 @@ def _run_with_os_system(
     stdout_path: str | None = None
     stderr_path: str | None = None
     returncode_path: str | None = None
+    extra_cleanup: list[str | None] = []
 
     try:
         with tempfile.NamedTemporaryFile(mode="w+", delete=False, suffix=".stdout") as tmp_stdout:
@@ -147,8 +148,13 @@ def _run_with_os_system(
             stderr_path,
             returncode_path,
         )
+        # Windows 上 _build_shell_command 返回 .bat 文件路径，需一并清理
+        extra_cleanup: list[str | None] = []
+        if sys.platform == "win32" and shell_cmd.endswith(".bat"):
+            extra_cleanup.append(shell_cmd)
         returncode = _execute_with_timeout(shell_cmd, timeout_val, cmd_list, error_q)
         if returncode is None:
+            _cleanup_temp_files(extra_cleanup)
             return
 
         final_returncode = _read_returncode(returncode_path, returncode)
@@ -158,7 +164,7 @@ def _run_with_os_system(
     except BaseException as exc:
         error_q.put(exc)
     finally:
-        _cleanup_temp_files([stdout_path, stderr_path, returncode_path])
+        _cleanup_temp_files([stdout_path, stderr_path, returncode_path] + extra_cleanup)
 
 
 def _build_shell_command(
@@ -197,18 +203,19 @@ def _build_windows_command(
     stderr_path: str,
     returncode_path: str,
 ) -> str:
-    parts: list[str] = []
+    """Windows: 写临时 bat 文件执行，避免 cmd /c 嵌套引号导致 && 失效。"""
+    bat_path = tempfile.mktemp(suffix=".bat")
+    lines: list[str] = ["@echo off"]
     if cwd_path:
-        parts.append(f"cd /d {shlex.quote(cwd_path)}")
+        lines.append(f'cd /d "{cwd_path}"')
     if env_dict:
         for key, value in env_dict.items():
-            parts.append(f"set {key}={shlex.quote(value)}")
-    parts.append(f"{quoted_cmd} > {shlex.quote(stdout_path)} 2> {shlex.quote(stderr_path)}")
-    parts.append(
-        f"&& echo 0 > {shlex.quote(returncode_path)} "
-        f"|| echo %ERRORLEVEL% > {shlex.quote(returncode_path)}"
-    )
-    return f'cmd /c "{" && ".join(parts)}"'
+            lines.append(f'set {key}={value}')
+    lines.append(f'{quoted_cmd} > "{stdout_path}" 2> "{stderr_path}"')
+    lines.append(f'if %ERRORLEVEL% EQU 0 (echo 0 > "{returncode_path}") else (echo %ERRORLEVEL% > "{returncode_path}")')
+    with open(bat_path, "w", encoding="utf-8") as f:
+        f.write("\r\n".join(lines))
+    return bat_path
 
 
 def _build_unix_command(
