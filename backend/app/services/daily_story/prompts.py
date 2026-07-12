@@ -150,6 +150,8 @@ def build_daily_script_prompts(dialogue_script: dict) -> tuple[str, str]:
             [{"speaker": "昭昭", "line": "台词"}, ...] 格式
     """
     dialogue = dialogue_script.get("dialogue", [])
+    # 纠正常见 LLM 拼写错误（speaker 错拼）
+    _correct_dialogue_speaker(dialogue)
     dialogue_text = "\n".join(
         f"{d.get('speaker', '?')}：{d.get('line', '')}"
         for d in dialogue
@@ -157,6 +159,21 @@ def build_daily_script_prompts(dialogue_script: dict) -> tuple[str, str]:
     return DAILY_SCRIPT_SYSTEM_PROMPT, DAILY_SCRIPT_USER_TEMPLATE.format(
         dialogue_text=dialogue_text,
     )
+
+
+_KNOWN_SPEAKER_TYPOS = frozenset({"speayer", "speeker", "spaker"})
+
+
+def _correct_dialogue_speaker(dialogue: list) -> None:
+    """原地修正 dialogue 列表中 speaker 字段的常见 LLM 拼写错误。"""
+    for item in dialogue:
+        if not isinstance(item, dict):
+            continue
+        if "speaker" not in item:
+            for typo in _KNOWN_SPEAKER_TYPOS:
+                if typo in item:
+                    item["speaker"] = item.pop(typo)
+                    break
 
 
 def build_daily_story_theme_prompts(count: int) -> tuple[str, str]:
