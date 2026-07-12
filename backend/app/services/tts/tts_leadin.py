@@ -21,7 +21,7 @@ _LEAD_IN_PAD_MS = 15
 
 def prepare_lead_in(text: str, *, voice: str, lead_in: str = DEFAULT_LEAD_IN) -> tuple[str, str | None]:
     """复刻音色每段合成前加短引导词，再裁掉；字幕仍用原文。"""
-    if voice != CLONED_VOICE_CAN or not text.strip() or not lead_in:
+    if voice not in (CLONED_VOICE_CAN, CLONED_VOICE_ZHAO) or not text.strip() or not lead_in:
         return text, None
     return f"{lead_in}{text}", lead_in
 
@@ -32,7 +32,7 @@ def strip_tts_lead_in(path: Path, words: list[TimedWord], lead_in: str) -> list[
         return words
 
     # 打印TTS返回的所有字级时间戳，便于排查
-    logger.info(
+    logger.debug(
         "tts lead-in check: lead_in=%r words_count=%s first_10_words=%s",
         lead_in,
         len(words),
@@ -64,7 +64,7 @@ def strip_tts_lead_in(path: Path, words: list[TimedWord], lead_in: str) -> list[
     cut_ms = max(0, remaining[0].begin_time_ms - _LEAD_IN_PAD_MS)
     _trim_audio(path, TrimPlan(leading_ms=cut_ms, trailing_ms=0))
     shifted = shift_word_timestamps(remaining, cut_ms)
-    logger.info(
+    logger.debug(
         "tts lead-in stripped %r cut=%sms words %s -> %s remaining_first_5=%s",
         lead_in,
         cut_ms,

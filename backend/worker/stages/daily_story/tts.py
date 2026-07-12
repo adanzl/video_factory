@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,6 +27,8 @@ _DEFAULT_SPEAKER_CONFIGS: dict[str, dict] = {
     "灿灿": {"voice_id": "cosyvoice-v3.5-flash-leo-60621bdce780434ab0734555e5196d7d", "speech_rate": 1.0},
 }
 _DEFAULT_PHRASE_GAP_SEC = 0.3
+_TTS_MAX_RETRIES = 3
+_TTS_RETRY_BASE_DELAY = 2.0  # seconds
 
 
 @dataclass(frozen=True)
@@ -36,6 +39,31 @@ class _SegResult:
     cues: list[SubtitleCue]
     duration: float
     chars: int
+
+
+def _tts_with_retry(text: str, *, word_timestamps: bool, rate: float, voice: str):
+    """带重试的 TTS 调用，指数退避。"""
+    from app.services.tts.tts_ali import _run_tts_task
+
+    last_err: Exception | None = None
+    for attempt in range(1, _TTS_MAX_RETRIES + 1):
+        try:
+            return _run_tts_task(text, word_timestamps=word_timestamps, rate=rate, voice=voice)
+        except Exception as exc:
+            last_err = exc
+            if attempt < _TTS_MAX_RETRIES:
+                delay = _TTS_RETRY_BASE_DELAY * (2 ** (attempt - 1))
+                logger.warning(
+                    "tts attempt %d/%d failed (voice=%s): %s — retrying in %.1fs",
+                    attempt, _TTS_MAX_RETRIES, voice, exc, delay,
+                )
+                time.sleep(delay)
+            else:
+                logger.error(
+                    "tts all %d attempts failed (voice=%s): %s",
+                    _TTS_MAX_RETRIES, voice, exc,
+                )
+    raise last_err  # type: ignore[misc]
 
 
 def _synthesize_segment_dialogue(
@@ -82,10 +110,10 @@ def _synthesize_segment_dialogue(
             seg_index, line_idx, speaker, voice, rate, len(text), text,
         )
 
-        # 引导词：合成前加“那，”，合成后裁掉
+        # 引导词：合成前加"那，"，合成后裁掉
         tts_text, lead_in = prepare_lead_in(text, voice=voice)
-
-        result = _run_tts_task(tts_text, word_timestamps=True, rate=rate, voice=voice)
+        
+        result = _tts_with_retry(tts_text, word_timestamps=True, rate=rate, voice=voice)
         line_clip = clips_dir / f"{seg_index}_{line_idx}{ext}"
         line_clip.write_bytes(result.audio)
 
