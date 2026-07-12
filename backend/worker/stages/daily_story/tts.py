@@ -90,7 +90,7 @@ def _synthesize_segment_dialogue(
         seg_clip.write_bytes(b"")
         return _SegResult(seg_index=seg_index, clip_path=seg_clip, cues=[], duration=0.0, chars=0)
 
-    logger.info("tts segment %d start lines=%d", seg_index, len(dialogue))
+    # logger.info("tts segment %d start lines=%d", seg_index, len(dialogue))
 
     seg_clips: list[Path] = []
     seg_cues: list[SubtitleCue] = []
