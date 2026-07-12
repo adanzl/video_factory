@@ -402,6 +402,10 @@ class MockLLMClient(LLMClient):
             if start >= len(dialogue):
                 break
             lines = dialogue[start:end]
+            dialogue_data = [
+                {"speaker": d["speaker"], "text": d["line"]}
+                for d in lines
+            ]
             dialogue_text = [f"{d['speaker']}：{d['line']}" for d in lines]
             total_chars = sum(len(d['line']) for d in lines)
             duration = max(8, min(18, round(total_chars / 2.7)))
@@ -412,7 +416,7 @@ class MockLLMClient(LLMClient):
                 "duration_seconds": duration,
                 "shot_type": shot_types[i % 3],
                 "visual_description": f"场景{i+1}：昭昭和灿灿在{'客厅' if i % 2 == 0 else '厨房'}互动。",
-                "dialogue_lines": dialogue_text,
+                "dialogue": dialogue_data,
                 "img2img_prompt": (
                     "剪贴画风格，扁平插画，纸张纹理，明亮色彩，无阴影，几何图形简洁，"
                     f"{shot_types[i % 3]}，家庭场景，"

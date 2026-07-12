@@ -48,8 +48,13 @@ class DailyScriptStage(StageExecutor):
 
         for i, scene in enumerate(scenes, start=1):
             job_cancel.raise_if_cancelled(job_id)
-            lines = scene.get("dialogue_lines") or []
-            segment_text = "".join(str(l) for l in lines)
+            raw_lines = scene.get("dialogue") or scene.get("dialogue_lines") or []
+            if raw_lines and isinstance(raw_lines[0], dict):
+                # 新格式: [{"speaker": "昭昭", "text": "台词"}, ...]
+                segment_text = "".join(str(d.get("text") or d.get("line") or "") for d in raw_lines)
+            else:
+                # 兼容旧格式: ["台词1", "台词2", ...]
+                segment_text = "".join(str(l) for l in raw_lines)
             narration_parts.append(segment_text)
 
             segments.append({
