@@ -196,6 +196,7 @@ CREATE INDEX IF NOT EXISTS idx_daily_story_status ON daily_story(status);
 def apply_daily_story_schema(conn: sqlite3.Connection) -> None:
     """创建日常故事表（幂等）。"""
     conn.executescript(_DAILY_STORY_DDL)
+    _ensure_column(conn, "daily_story", "job_id", "INTEGER")
     _ensure_journal_mode_delete(conn)
 
 
