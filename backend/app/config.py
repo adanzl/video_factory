@@ -130,6 +130,7 @@ class Config:
         self.ffmpeg_hwaccel: str = os.getenv("FFMPEG_HWACCEL", "none").strip().lower()
         self.ffmpeg_vaapi_device: str = os.getenv("FFMPEG_VAAPI_DEVICE", "/dev/dri/renderD128")
         self.ffmpeg_vaapi_codec: str = os.getenv("FFMPEG_VAAPI_CODEC", "h264_vaapi")
+        self.video_max_workers: int = int(os.getenv("VIDEO_MAX_WORKERS", "1"))
         self.clip_submit_interval_sec: float = float(
             os.getenv("CLIP_SUBMIT_INTERVAL_SEC", os.getenv("IMAGE_SUBMIT_INTERVAL_SEC", "3"))
         )

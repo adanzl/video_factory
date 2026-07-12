@@ -147,6 +147,7 @@ CONFIG_GROUPS: tuple[ConfigGroupDef, ...] = (
             _f("wan_i2v_resolution", "WAN_I2V_RESOLUTION", "万相 I2V 分辨率"),
             _f("wan_i2v_prompt_extend", "WAN_I2V_PROMPT_EXTEND", "万相 I2V 扩写", "bool"),
             _f("clip_submit_interval_sec", "CLIP_SUBMIT_INTERVAL_SEC", "I2V 提交间隔 (秒)", "number", min_value=0, max_value=60),
+            _f("video_max_workers", "VIDEO_MAX_WORKERS", "I2V 并发数", "number", min_value=1, max_value=8),
             _f("agnes_submit_interval_sec", "AGNES_SUBMIT_INTERVAL_SEC", "Agnes 提交间隔 (秒)", "number", min_value=0, max_value=120),
             _f("dashscope_http_max_retries", "DASHSCOPE_HTTP_MAX_RETRIES", "百炼 HTTP 重试", "number", min_value=0, max_value=10),
             _f("wan_i2v_task_max_retries", "WAN_I2V_TASK_MAX_RETRIES", "I2V 任务重试", "number", min_value=0, max_value=5),

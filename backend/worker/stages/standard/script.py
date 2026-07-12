@@ -139,7 +139,7 @@ def _apply_script_title(
         script["draft_title"] = script["title"]
         script["title"] = prefer_source_punctuation(
             script["draft_title"],
-            _title_chars(optimized_title),
+            optimized_title,
         )
         if len(script["title"]) > max_len:
             raise ScriptValidationError(

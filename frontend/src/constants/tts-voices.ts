@@ -9,11 +9,17 @@ export interface TtsVoiceOption {
 // cSpell: disable
 export const DEFAULT_TTS_VOICE =
   "cosyvoice-v3.5-flash-leo-60621bdce780434ab0734555e5196d7d";
+export const TTS_VOICE_ZHAO = "灿灿";
+export const TTS_VOICE_CAN = DEFAULT_TTS_VOICE;
 
 const CLONED_VOICES: TtsVoiceOption[] = [
   {
-    label: "人声复刻 (cancan)",
-    value: DEFAULT_TTS_VOICE,
+    label: "人声复刻 (灿灿)",
+    value: TTS_VOICE_CAN,
+  },
+  {
+    label: "人声复刻 (昭昭)",
+    value: TTS_VOICE_ZHAO,
   },
 ];
 
