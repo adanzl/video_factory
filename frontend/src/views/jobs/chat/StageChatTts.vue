@@ -16,7 +16,7 @@
             <el-form-item v-for="spk in speakers" :key="spk.key" :label="spk.label">
               <div class="flex w-full flex-col gap-2">
                 <div class="flex items-center gap-2">
-                  <span class="shrink-0 text-xs text-gray-500 w-16">声音</span>
+                  <span class="shrink-0 text-xs text-gray-500 w-10">声音</span>
                   <el-select v-model="speakerConfigs[spk.key].voice_id" filterable class="min-w-0 flex-1!">
                     <el-option
                       v-for="voice in TTS_VOICE_OPTIONS"
@@ -27,7 +27,7 @@
                   </el-select>
                 </div>
                 <div class="flex items-center gap-2">
-                  <span class="shrink-0 text-xs text-gray-500 w-16">语速</span>
+                  <span class="shrink-0 text-xs text-gray-500 w-10">语速</span>
                   <el-input-number
                     v-model="speakerConfigs[spk.key].speech_rate"
                     :min="0.5"
