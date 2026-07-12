@@ -151,7 +151,7 @@ def build_daily_script_prompts(dialogue_script: dict) -> tuple[str, str]:
     """
     dialogue = dialogue_script.get("dialogue", [])
     dialogue_text = "\n".join(
-        f"{d['speaker']}：{d['line']}"
+        f"{d.get('speaker', '?')}：{d.get('line', '')}"
         for d in dialogue
     )
     return DAILY_SCRIPT_SYSTEM_PROMPT, DAILY_SCRIPT_USER_TEMPLATE.format(

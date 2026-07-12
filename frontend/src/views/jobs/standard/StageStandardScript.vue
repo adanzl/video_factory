@@ -988,7 +988,7 @@ const loadLlmPrompts = async () => {
   }
   promptsLoading.value = true;
   try {
-    llmPrompts.value = await previewScriptPrompts(buildScriptPreviewParams(trimmedTitle));
+    llmPrompts.value = await previewScriptPrompts(props.job.id, { title: trimmedTitle });
     const first = displayPrompts.value[0];
     if (first && !displayPrompts.value.some(item => item.step === activePromptTab.value)) {
       activePromptTab.value = first.step;

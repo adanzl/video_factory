@@ -144,18 +144,18 @@ def run_script_route():
     )
 
 
-@bp.post("/script/previewPrompts")
+@bp.post("/script/prompts")
 def preview_script_prompts_route():
     data = get_json_body()
     job_id = parse_id(data)
+
+    # chat 流水线走 daily_story 提示词构建
+    job = job_mgr.get_job(job_id)
+    if job.get("pipeline") == "chat":
+        prompts = job_mgr.preview_daily_script_prompts(job_id)
+        return json_ok({"prompts": prompts})
+
     title = parse_optional_str(data, "title")
-    segment_target_sec = parse_optional_float(data, "segment_target_sec", minimum=0.0, maximum=60.0)
-    max_title_length = parse_optional_int(data, "max_title_length", minimum=8, maximum=48)
-    narration_target_words = parse_optional_int(data, "narration_target_words", minimum=1, maximum=3000)
-    speech_chars_per_sec = parse_optional_float(data, "speech_chars_per_sec", minimum=1.0, maximum=10.0)
-    skip_title_optimize = parse_bool(data, "skip_title_optimize", default=False)
-    supplementary_info = parse_optional_str(data, "supplementary_info")
-    video_timeline = parse_optional_str(data, "video_timeline")
     orientation = None
     if "orientation" in data:
         orientation = normalize_orientation(parse_optional_str(data, "orientation"))
@@ -164,26 +164,11 @@ def preview_script_prompts_route():
         prompts = job_mgr.preview_script_prompts(
             job_id,
             title=title,
-            segment_target_sec=segment_target_sec,
-            max_title_length=max_title_length,
-            narration_target_words=narration_target_words,
-            speech_chars_per_sec=speech_chars_per_sec,
-            skip_title_optimize=skip_title_optimize,
-            supplementary_info=supplementary_info,
-            video_timeline=video_timeline,
             orientation=orientation,
             content_style=content_style,
         )
     except ValueError as exc:
         raise APIError(str(exc)) from exc
-    return json_ok({"prompts": prompts})
-
-
-@bp.post("/dailyScriptPrompts")
-def preview_daily_script_prompts_route():
-    data = get_json_body()
-    job_id = parse_id(data)
-    prompts = job_mgr.preview_daily_script_prompts(job_id)
     return json_ok({"prompts": prompts})
 
 
