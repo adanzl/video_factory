@@ -35,7 +35,7 @@ def _strip_lead_in_fallback(path: Path, lead_in: str, rate: float) -> list[Timed
     if not content_chars:
         return []
     est_ms = int(len(content_chars) * _LEAD_IN_MS_PER_CHAR / max(rate, 0.5))
-    cut_ms = est_ms + 200  # 估算 lead-in 时长 + 尾巴余量
+    cut_ms = est_ms + 200  # 估算 lead-in 实字时长 + 标点时长
     if cut_ms <= 0:
         return []
     logger.info(
@@ -120,7 +120,7 @@ def strip_tts_lead_in(
             )
             if content_count >= len(lead_content_chars):
                 remaining = words[i + 1:]
-                cut_ms = max(0, word.end_time_ms + 200)  # lead-in 结束后 +200ms 覆盖尾巴
+                cut_ms = max(0, word.end_time_ms + 200)  # lead-in 实字结束 + 标点时长
                 logger.warning(
                     "tts lead-in fallback strip %r cut=%sms (exact match failed) words=%s",
                     lead_in,
