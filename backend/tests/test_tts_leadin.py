@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from app.services.tts.phrase_timing import TimedWord
 from app.services.tts.tts_leadin import (
-    CLONED_VOICE,
+    CLONED_VOICE_CAN,
     prepare_lead_in,
     strip_tts_lead_in,
 )
 
 
 def test_prepare_lead_in_for_cloned_voice_weak_start():
-    text, lead = prepare_lead_in("可是，真相是", voice=CLONED_VOICE)
+    text, lead = prepare_lead_in("可是，真相是", voice=CLONED_VOICE_CAN)
     assert lead == "那，"
     assert text == "那，可是，真相是"
 
@@ -23,7 +23,7 @@ def test_prepare_lead_in_skips_other_voices():
 
 
 def test_prepare_lead_in_for_any_cloned_segment():
-    text, lead = prepare_lead_in("其实呀，地震发生时", voice=CLONED_VOICE)
+    text, lead = prepare_lead_in("其实呀，地震发生时", voice=CLONED_VOICE_CAN)
     assert lead == "那，"
     assert text == "那，其实呀，地震发生时"
 
