@@ -81,40 +81,55 @@ def _trim_audio(path: Path, plan: TrimPlan) -> None:
         "_trim_audio START %s: leading=%sms trailing=%sms pre_size=%d",
         path.name, plan.leading_ms, plan.trailing_ms, pre_size,
     )
-    cmd = [
-        "ffmpeg",
-        "-y",
-        "-hide_banner",
-        "-i",
-        str(path),
-        "-ss",
-        f"{start_sec:.3f}",
-    ]
+
+    # 构建 atrim 滤镜（样本级精确，避免 -ss 对 MP3 定位不准）
+    atrim_parts = []
+    if plan.leading_ms > 0:
+        atrim_parts.append(f"start={start_sec:.3f}")
     if plan.trailing_ms > 0:
-        duration_sec = probe_duration(path) - start_sec - plan.trailing_ms / 1000.0
-        if duration_sec > 0.05:
-            cmd.extend(["-t", f"{duration_sec:.3f}"])
+        dur = probe_duration(path) - start_sec - plan.trailing_ms / 1000.0
+        if dur > 0.05:
+            atrim_parts.append(f"end={start_sec + dur:.3f}")
+    af = ",".join(atrim_parts)
+    if af:
+        af = f"atrim={af},asetpts=PTS-STARTPTS"
+
     if path.suffix.lower() == ".wav":
-        cmd.extend(["-acodec", "pcm_s16le", str(tmp)])
+        cmd = [
+            "ffmpeg", "-y", "-hide_banner",
+            "-i", str(path),
+            "-af", af,
+            "-acodec", "pcm_s16le",
+            str(tmp),
+        ]
+        run_ffmpeg(cmd)
+        tmp.replace(path)
     else:
         tmp_wav = path.with_name(f"{path.stem}.trim.wav")
-        cmd.extend(["-acodec", "pcm_s16le", str(tmp_wav)])
-        run_ffmpeg(cmd)
+        # Step 1: MP3 完整转 WAV（不裁）
+        run_ffmpeg([
+            "ffmpeg", "-y", "-hide_banner",
+            "-i", str(path),
+            "-acodec", "pcm_s16le",
+            str(tmp_wav),
+        ])
         try:
-            run_ffmpeg(
-                [
-                    "ffmpeg",
-                    "-y",
-                    "-hide_banner",
-                    "-i",
-                    str(tmp_wav),
-                    "-c:a",
-                    "libmp3lame",
-                    "-q:a",
-                    "2",
-                    str(tmp),
-                ]
-            )
+            # Step 2: WAV 上用 atrim 精确裁剪
+            run_ffmpeg([
+                "ffmpeg", "-y", "-hide_banner",
+                "-i", str(tmp_wav),
+                "-af", af,
+                "-acodec", "pcm_s16le",
+                str(tmp_wav.with_suffix(".trimmed.wav")),
+            ])
+            # Step 3: 裁剪后 WAV 转 MP3
+            trimmed_wav = tmp_wav.with_suffix(".trimmed.wav")
+            run_ffmpeg([
+                "ffmpeg", "-y", "-hide_banner",
+                "-i", str(trimmed_wav),
+                "-c:a", "libmp3lame", "-q:a", "2",
+                str(tmp),
+            ])
             tmp_size = tmp.stat().st_size if tmp.exists() else -1
             tmp.replace(path)
             post_size = path.stat().st_size
@@ -124,10 +139,9 @@ def _trim_audio(path: Path, plan: TrimPlan) -> None:
             )
         finally:
             tmp_wav.unlink(missing_ok=True)
+            tmp_wav.with_suffix(".trimmed.wav").unlink(missing_ok=True)
             tmp.unlink(missing_ok=True)
         return
-    run_ffmpeg(cmd)
-    tmp.replace(path)
     logger.info(
         "_trim_audio DONE (wav) %s: post_size=%d (was %d)",
         path.name, path.stat().st_size, pre_size,
