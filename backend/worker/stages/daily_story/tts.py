@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from pathlib import Path
 
 from app.config import get_settings
@@ -24,6 +26,122 @@ _DEFAULT_SPEAKER_CONFIGS: dict[str, dict] = {
     "灿灿": {"voice_id": "cosyvoice-v3.5-flash-leo-60621bdce780434ab0734555e5196d7d", "speech_rate": 1.0},
 }
 _DEFAULT_PHRASE_GAP_SEC = 0.3
+
+
+@dataclass(frozen=True)
+class _SegResult:
+    """单个分镜的合成结果。"""
+    seg_index: int
+    clip_path: Path
+    cues: list[SubtitleCue]
+    duration: float
+    chars: int
+
+
+def _synthesize_segment_dialogue(
+    seg: dict,
+    clips_dir: Path,
+    ext: str,
+    speaker_configs: dict[str, dict],
+    phrase_gap_sec: float,
+) -> _SegResult:
+    """合成单个分镜的多角色对话，返回结果。可在线程池中并发执行。"""
+    from app.services.tts.tts_ali import _run_tts_task
+    from app.services.tts.phrase_timing import normalize_word_timestamps
+    from app.services.tts.segment_trim import apply_tts_segment_trim
+    from app.services.tts.tts_leadin import prepare_lead_in, strip_tts_lead_in
+
+    seg_index = seg["segment_index"]
+    dialogue = seg.get("dialogue") or []
+
+    if not dialogue:
+        # 空分镜，生成静音
+        seg_clip = clips_dir / f"{seg_index}{ext}"
+        seg_clip.write_bytes(b"")
+        return _SegResult(seg_index=seg_index, clip_path=seg_clip, cues=[], duration=0.0, chars=0)
+
+    logger.info("tts segment %d start lines=%d", seg_index, len(dialogue))
+
+    seg_clips: list[Path] = []
+    seg_cues: list[SubtitleCue] = []
+    gap_clips: list[Path] = []
+    total_chars = 0
+
+    for line_idx, line in enumerate(dialogue):
+        speaker = line.get("speaker", "")
+        text = (line.get("text") or "").strip()
+        if not text:
+            continue
+
+        config = speaker_configs.get(speaker, {})
+        voice = config.get("voice_id") or _DEFAULT_SPEAKER_CONFIGS.get(speaker, {}).get("voice_id", "")
+        rate = config.get("speech_rate", 1.0)
+
+        logger.info(
+            "tts segment %d line %d speaker=%s rate=%.2f text_chars=%d text=%s",
+            seg_index, line_idx, speaker, rate, len(text), text,
+        )
+
+        # 引导词：合成前加“那，”，合成后裁掉
+        tts_text, lead_in = prepare_lead_in(text, voice=voice)
+
+        result = _run_tts_task(tts_text, word_timestamps=True, rate=rate, voice=voice)
+        line_clip = clips_dir / f"{seg_index}_{line_idx}{ext}"
+        line_clip.write_bytes(result.audio)
+
+        words = normalize_word_timestamps(result.words)
+        if lead_in and words:
+            words = strip_tts_lead_in(line_clip, words, lead_in)
+        if words:
+            words = apply_tts_segment_trim(line_clip, words)
+
+        line_duration = probe_duration(line_clip)
+
+        seg_cues.append(SubtitleCue(
+            segment_index=seg_index,
+            text=text,
+            duration_sec=line_duration,
+        ))
+
+        # 非首句前插入句间停留静音
+        if seg_clips and phrase_gap_sec > 0:
+            gap_path = clips_dir / f"{seg_index}_gap_{line_idx}{ext}"
+            generate_silent_mp3(gap_path, phrase_gap_sec)
+            gap_clips.append(gap_path)
+
+        seg_clips.append(line_clip)
+
+        if result.usage:
+            total_chars += int(result.usage.get("characters") or 0)
+
+    # 拼接该分镜的所有角色音频（含句间停留）
+    seg_clip = clips_dir / f"{seg_index}{ext}"
+    interleaved: list[Path] = []
+    for i, clip in enumerate(seg_clips):
+        if i > 0 and gap_clips:
+            interleaved.append(gap_clips[i - 1])
+        interleaved.append(clip)
+    if len(interleaved) == 1:
+        interleaved[0].rename(seg_clip)
+    elif interleaved:
+        concat_clips(interleaved, seg_clip)
+    else:
+        seg_clip.write_bytes(b"")
+
+    seg_duration = probe_duration(seg_clip)
+
+    logger.info(
+        "tts segment %d done duration=%.2fs cues=%d",
+        seg_index, seg_duration, len(seg_cues),
+    )
+
+    return _SegResult(
+        seg_index=seg_index,
+        clip_path=seg_clip,
+        cues=seg_cues,
+        duration=seg_duration,
+        chars=total_chars,
+    )
 
 
 class DailyTtsStage(StageExecutor):
@@ -126,12 +244,8 @@ class DailyTtsStage(StageExecutor):
         speaker_configs: dict[str, dict],
         phrase_gap_sec: float = _DEFAULT_PHRASE_GAP_SEC,
     ) -> dict:
-        """按角色分别合成每个分镜的对话，然后拼接。"""
-        from app.services.tts.tts_ali import _run_tts_task, _audio_extension, VOICE_MODEL_MAP
-        from app.services.tts.breath_cue import build_phrase_breath_cues
-        from app.services.tts.phrase_timing import build_segment_tts_text, normalize_word_timestamps
-        from app.services.tts.segment_trim import apply_tts_segment_trim
-        from app.services.tts.tts_leadin import prepare_lead_in, strip_tts_lead_in
+        """按角色分别合成每个分镜的对话，分镜间并发，然后拼接。"""
+        from app.services.tts.tts_ali import _audio_extension
         from app.services.media.ffmpeg_utils import build_srt_from_cues
 
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -139,85 +253,44 @@ class DailyTtsStage(StageExecutor):
         clips_dir.mkdir(parents=True, exist_ok=True)
 
         ext = _audio_extension()
+
+        # 检查是否有 dialogue 结构
+        has_dialogue = any(seg.get("dialogue") for seg in segments)
+        if not has_dialogue:
+            return self._fallback_single_voice(segments[0], segments, output_dir, speaker_configs)
+
+        settings = get_settings()
+        max_workers = min(len(segments), max(1, settings.tts_max_workers))
+
+        logger.info(
+            "tts start: segments=%d phrase_gap=%.2fs speakers=%s max_workers=%d",
+            len(segments),
+            phrase_gap_sec,
+            list(speaker_configs.keys()),
+            max_workers,
+        )
+
+        def _run_seg(seg: dict) -> _SegResult:
+            return _synthesize_segment_dialogue(
+                seg, clips_dir, ext, speaker_configs, phrase_gap_sec,
+            )
+
+        seg_results: list[_SegResult] = []
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {pool.submit(_run_seg, seg): seg for seg in segments}
+            for fut in as_completed(futures):
+                seg_results.append(fut.result())
+
+        seg_results.sort(key=lambda r: r.seg_index)
+
+        clip_paths = [r.clip_path for r in seg_results]
         all_subtitle_cues: list[SubtitleCue] = []
         segment_durations: list[float] = []
-        clip_paths: list[Path] = []
         total_chars = 0
-
-        for seg in segments:
-            seg_index = seg["segment_index"]
-            dialogue = seg.get("dialogue") or []
-
-            if not dialogue:
-                # 无 dialogue 结构，回退到单角色合成
-                return self._fallback_single_voice(seg, segments, output_dir, speaker_configs)
-
-            # 为每个角色的台词分别合成
-            seg_clips: list[Path] = []
-            seg_cues: list[SubtitleCue] = []
-            time_offset = 0.0
-            gap_clips: list[Path] = []  # 句间停留静音片段
-
-            for line_idx, line in enumerate(dialogue):
-                speaker = line.get("speaker", "")
-                text = (line.get("text") or "").strip()
-                if not text:
-                    continue
-
-                config = speaker_configs.get(speaker, {})
-                voice = config.get("voice_id") or _DEFAULT_SPEAKER_CONFIGS.get(speaker, {}).get("voice_id", "")
-                rate = config.get("speech_rate", 1.0)
-
-                # 合成单句
-                result = _run_tts_task(text, word_timestamps=True, rate=rate, voice=voice)
-                line_clip = clips_dir / f"{seg_index}_{line_idx}{ext}"
-                line_clip.write_bytes(result.audio)
-
-                words = normalize_word_timestamps(result.words)
-                if words:
-                    words = apply_tts_segment_trim(line_clip, words)
-
-                line_duration = probe_duration(line_clip)
-
-                # 构建字幕 cue
-                seg_cues.append(SubtitleCue(
-                    segment_index=seg_index,
-                    text=text,
-                    duration_sec=line_duration,
-                ))
-
-                # 非首句前插入句间停留静音
-                if seg_clips and phrase_gap_sec > 0:
-                    gap_path = clips_dir / f"{seg_index}_gap_{line_idx}{ext}"
-                    generate_silent_mp3(gap_path, phrase_gap_sec)
-                    gap_clips.append(gap_path)
-                    time_offset += phrase_gap_sec
-
-                seg_clips.append(line_clip)
-                time_offset += line_duration
-
-                if result.usage:
-                    total_chars += int(result.usage.get("characters") or 0)
-
-            # 拼接该分镜的所有角色音频（含句间停留）
-            seg_clip = clips_dir / f"{seg_index}{ext}"
-            interleaved: list[Path] = []
-            for i, clip in enumerate(seg_clips):
-                if i > 0 and gap_clips:
-                    interleaved.append(gap_clips[i - 1])
-                interleaved.append(clip)
-            if len(interleaved) == 1:
-                interleaved[0].rename(seg_clip)
-            elif interleaved:
-                concat_clips(interleaved, seg_clip)
-            else:
-                # 空分镜，生成静音
-                seg_clip.write_bytes(b"")
-
-            seg_duration = probe_duration(seg_clip)
-            segment_durations.append(seg_duration)
-            clip_paths.append(seg_clip)
-            all_subtitle_cues.extend(seg_cues)
+        for r in seg_results:
+            all_subtitle_cues.extend(r.cues)
+            segment_durations.append(r.duration)
+            total_chars += r.chars
 
         # 拼接所有分镜
         audio_path = output_dir / f"narration{ext}"
