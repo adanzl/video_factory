@@ -144,6 +144,11 @@ def _synthesize_segment_dialogue(
         if result.usage:
             total_chars += int(result.usage.get("characters") or 0)
 
+    # SRT 时间校正：非末句的 cue 需包含后续 gap 时长，避免从第 2 句起时间偏移
+    if len(seg_cues) > 1 and phrase_gap_sec > 0:
+        for cue in seg_cues[:-1]:
+            cue.duration_sec += phrase_gap_sec
+
     # 拼接该分镜的所有角色音频（含句间停留）
     seg_clip = clips_dir / f"{seg_index}{ext}"
     interleaved: list[Path] = []
