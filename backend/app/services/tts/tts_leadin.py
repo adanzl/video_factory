@@ -17,7 +17,6 @@ CLONED_VOICE_ZHAO = "cosyvoice-v3.5-flash-leo-f9d115bfdf2346edbeb9d21ecd4f9ce9"
 # cSpell: enable
 
 DEFAULT_LEAD_IN = "那，"
-_LEAD_IN_PAD_MS = 15
 _LEAD_IN_MS_PER_CHAR = 300  # 每个实字约 300ms（rate=1.0 基准）
 _PUNCT_RE = re.compile(r"^[。！？；：，,.!?;:…—·~～'\"）】》〉）\]]+$")
 
@@ -35,7 +34,7 @@ def _strip_lead_in_fallback(path: Path, lead_in: str, rate: float) -> list[Timed
     if not content_chars:
         return []
     est_ms = int(len(content_chars) * _LEAD_IN_MS_PER_CHAR / max(rate, 0.5))
-    cut_ms = max(0, est_ms - _LEAD_IN_PAD_MS)
+    cut_ms = est_ms
     if cut_ms <= 0:
         return []
     logger.info(
@@ -53,7 +52,7 @@ def strip_tts_lead_in(
     if not lead_in:
         return words
 
-    logger.info(
+    logger.debug(
         "tts lead-in entry: words=%s lead_in=%r rate=%.2f path=%s",
         len(words), lead_in, rate, path.name,
     )
@@ -61,13 +60,6 @@ def strip_tts_lead_in(
     # words 为空时（TTS 未返回时间戳），按实字数+语速估算裁剪
     if not words:
         return _strip_lead_in_fallback(path, lead_in, rate)
-
-    logger.debug(
-        "tts lead-in check: lead_in=%r words_count=%s first_10_words=%s",
-        lead_in,
-        len(words),
-        [(w.text, w.begin_time_ms) for w in words[:10]],
-    )
 
     # 提取 lead_in 中的实字（非标点）
     lead_content_chars = [c for c in lead_in if not _PUNCT_RE.fullmatch(c)]
@@ -102,10 +94,10 @@ def strip_tts_lead_in(
         remaining = words[content_end_idx + 1:]
         if not remaining:
             return remaining
-        cut_ms = max(0, remaining[0].begin_time_ms - _LEAD_IN_PAD_MS)
+        cut_ms = words[content_end_idx].end_time_ms
         _trim_audio(path, TrimPlan(leading_ms=cut_ms, trailing_ms=0))
         shifted = shift_word_timestamps(remaining, cut_ms)
-        logger.info(
+        logger.debug(
             "tts lead-in stripped %r cut=%sms words %s -> %s remaining_first_5=%s",
             lead_in,
             cut_ms,
@@ -127,7 +119,7 @@ def strip_tts_lead_in(
             )
             if content_count >= len(lead_content_chars):
                 remaining = words[i + 1:]
-                cut_ms = max(0, word.end_time_ms - _LEAD_IN_PAD_MS)
+                cut_ms = word.end_time_ms
                 logger.warning(
                     "tts lead-in fallback strip %r cut=%sms (exact match failed) words=%s",
                     lead_in,
