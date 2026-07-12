@@ -40,6 +40,7 @@ from app.services.daily_story.prompts import (
     build_daily_script_prompts,
     build_daily_story_prompts,
     build_daily_story_theme_prompts,
+    validate_daily_story_json,
 )
 from app.utils.job_cancel import raise_if_job_cancelled
 from app.utils.media import (
@@ -1304,6 +1305,7 @@ class DeepSeekClient(LLMClient):
     ) -> dict[str, Any]:
         system, user = build_daily_story_prompts(theme)
         raw, _ = self._chat_json(system, user, max_tokens=4096, thinking_enabled=False, temperature=0.95)
+        validate_daily_story_json(raw)
         return raw
 
     def generate_daily_story_themes(

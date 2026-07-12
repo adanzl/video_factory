@@ -928,20 +928,6 @@ const loadSupplementaryFields = () => {
   videoTimeline.value = pickString(scriptParams?.video_timeline, script.value?.video_timeline);
 };
 
-const buildScriptPreviewParams = (title: string) => ({
-  id: props.job.id,
-  title,
-  segment_target_sec: segmentTargetSec.value,
-  max_title_length: maxTitleLength.value,
-  estimated_duration_min: estimatedDurationMin.value,
-  narration_target_words: Math.round(narrationTargetWords.value),
-  speech_chars_per_sec: speechCharsPerSec.value,
-  skip_title_optimize: skipTitleOptimize.value,
-  supplementary_info: supplementaryInfo.value.trim() || undefined,
-  video_timeline: videoTimeline.value.trim() || undefined,
-  orientation: jobOrientation.value,
-  content_style: contentStyle.value,
-});
 
 const buildRunPayload = (toEnd: boolean, trimmedTitle: string, words: number): RunStageActionPayload => {
   const payload: RunStageActionPayload = {
