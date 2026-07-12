@@ -60,7 +60,7 @@
       </el-table-column>
     </el-table>
 
-    <DailyStoryDetail v-model="showDetailDialog" :story="currentStory" />
+    <DailyStoryDetail v-model="showDetailDialog" :story="currentStory" @updated="fetchStories" />
     <CreateStory v-model="showGenerateDialog" @created="fetchStories" />
   </div>
 </template>

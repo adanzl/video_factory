@@ -83,3 +83,19 @@ def delete_stories(conn: sqlite3.Connection, ids: list[int]) -> int:
         ids,
     )
     return cur.rowcount
+
+
+def update_story(
+    conn: sqlite3.Connection,
+    story_id: int,
+    *,
+    story: dict[str, Any],
+) -> dict:
+    conn.execute(
+        """
+        UPDATE daily_story SET story_json = ?, updated_at = datetime('now')
+        WHERE id = ?
+        """,
+        (json.dumps(story, ensure_ascii=False), story_id),
+    )
+    return get_story(conn, story_id)

@@ -8,6 +8,7 @@ from typing import Any
 from app.repositories import repo_daily_story
 from app.repositories.connection import connection
 from app.services.llm.llm_mgr import llm_mgr
+from app.utils.job_info import merge_job_info
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,39 @@ class DailyStoryMgr:
 
     def generate_themes(self, count: int = 2) -> list[str]:
         return llm_mgr.generate_daily_story_themes(count)
+
+    def create_job(self, story_id: int, *, skip_publish: bool = False) -> dict:
+        """基于日常故事创建视频任务（pipeline=daily_story）。"""
+        from app.repositories import repo_job, repo_job_log
+
+        with connection() as conn:
+            story = repo_daily_story.get_story(conn, story_id)
+            story_content = story.get("story") or {}
+            title = (story_content.get("scene_title") or "").strip()
+            if not title:
+                title = story.get("theme", f"日常故事-{story_id}")
+
+            job = repo_job.create_job(
+                conn,
+                title,
+                skip_publish=skip_publish,
+                stage="script",
+                status="pending",
+                pipeline="daily_story",
+                info=merge_job_info(None, daily_story_id=story_id),
+            )
+            repo_job_log.append_log(
+                conn,
+                job["id"],
+                "api",
+                f"created daily story job: story_id={story_id}, title={title!r}",
+            )
+            return job
+
+    def update_story(self, story_id: int, *, story: dict[str, Any]) -> dict:
+        """更新日常故事内容。"""
+        with connection() as conn:
+            return repo_daily_story.update_story(conn, story_id, story=story)
 
 
 daily_story_mgr = DailyStoryMgr()

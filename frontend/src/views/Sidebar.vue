@@ -14,14 +14,6 @@
           <el-icon><VideoCamera /></el-icon>
           <template #title>视频素材</template>
         </el-menu-item>
-        <el-menu-item index="/materials/audio">
-          <el-icon><Headset /></el-icon>
-          <template #title>音频素材</template>
-        </el-menu-item>
-        <el-menu-item index="/clips">
-          <el-icon><Search /></el-icon>
-          <template #title>片段搜索</template>
-        </el-menu-item>
         <el-menu-item index="/topic">
           <el-icon><Document /></el-icon>
           <template #title>选题库</template>
@@ -29,6 +21,14 @@
         <el-menu-item index="/daily-story">
           <el-icon><ChatDotRound /></el-icon>
           <template #title>日常故事</template>
+        </el-menu-item>
+        <el-menu-item index="/materials/audio">
+          <el-icon><Headset /></el-icon>
+          <template #title>音频素材</template>
+        </el-menu-item>
+        <el-menu-item index="/clips">
+          <el-icon><Search /></el-icon>
+          <template #title>片段搜索</template>
         </el-menu-item>
         <el-menu-item index="/config">
           <el-icon><Setting /></el-icon>

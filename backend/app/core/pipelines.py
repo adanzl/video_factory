@@ -14,6 +14,7 @@ from worker.stages.standard.title import TitleStage
 
 PIPELINE_STANDARD = "standard"
 PIPELINE_MATERIAL = "material"
+PIPELINE_DAILY_STORY = "daily_story"
 
 from app.utils.stage_names import normalize_stage
 
@@ -44,9 +45,22 @@ def _material_chain() -> tuple[type[StageExecutor], ...]:
     )
 
 
+def _daily_story_chain() -> tuple[type[StageExecutor], ...]:
+    from worker.stages.daily_story.script import DailyScriptStage
+
+    return (
+        DailyScriptStage,
+        TTSStage,
+        SegmentStage,
+        MergeStage,
+        PublishStage,
+    )
+
+
 PIPELINES: dict[str, tuple[type[StageExecutor], ...]] = {
     PIPELINE_STANDARD: STANDARD_CHAIN,
     PIPELINE_MATERIAL: _material_chain(),
+    PIPELINE_DAILY_STORY: _daily_story_chain(),
 }
 
 STAGES_BY_PIPELINE: dict[str, tuple[str, ...]] = {}
@@ -153,6 +167,7 @@ def is_material_job(job: dict) -> bool:
 __all__ = [
     "EXECUTORS",
     "MATERIAL_CHAIN",
+    "PIPELINE_DAILY_STORY",
     "PIPELINE_MATERIAL",
     "PIPELINE_STANDARD",
     "PIPELINES",
