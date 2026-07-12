@@ -947,6 +947,7 @@ class JobMgr:
         to_end: bool = False,
         speech_rate: float | None = None,
         voice_id: str | None = None,
+        speaker_configs: dict | None = None,
     ) -> dict:
         """生成配音。实现：worker/loop.run_tts → worker/stages/common/tts.py"""
         from worker.loop import run_tts
@@ -959,6 +960,7 @@ class JobMgr:
                 to_end=to_end,
                 speech_rate=speech_rate,
                 voice_id=voice_id,
+                speaker_configs=speaker_configs,
             ),
         )
 
