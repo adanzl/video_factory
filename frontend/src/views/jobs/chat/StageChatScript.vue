@@ -134,7 +134,17 @@
 
           <div class="mb-2">
             <div class="mb-1 text-xs text-gray-400">台词</div>
-            <div class="rounded-md bg-gray-50 p-3 text-sm">{{ seg.text }}</div>
+            <div v-if="seg.dialogue && seg.dialogue.length" class="space-y-1">
+              <div
+                v-for="(dl, di) in seg.dialogue"
+                :key="di"
+                class="rounded px-2 py-1 text-sm"
+                :class="dl.speaker === '昭昭' ? 'bg-blue-50 text-blue-800' : 'bg-pink-50 text-pink-800'"
+              >
+                <span class="font-bold">{{ dl.speaker }}：</span>{{ dl.text }}
+              </div>
+            </div>
+            <div v-else class="rounded-md bg-gray-50 p-3 text-sm">{{ seg.text }}</div>
           </div>
 
           <div v-if="seg.visual_brief" class="mb-2">
@@ -161,7 +171,17 @@
 
           <div class="mb-2">
             <div class="mb-1 text-xs text-gray-400">台词</div>
-            <div class="rounded-md bg-gray-50 p-3 text-sm">{{ seg.text }}</div>
+            <div v-if="seg.dialogue && seg.dialogue.length" class="space-y-1">
+              <div
+                v-for="(dl, di) in seg.dialogue"
+                :key="di"
+                class="rounded px-2 py-1 text-sm"
+                :class="dl.speaker === '昭昭' ? 'bg-blue-50 text-blue-800' : 'bg-pink-50 text-pink-800'"
+              >
+                <span class="font-bold">{{ dl.speaker }}：</span>{{ dl.text }}
+              </div>
+            </div>
+            <div v-else class="rounded-md bg-gray-50 p-3 text-sm">{{ seg.text }}</div>
           </div>
 
           <div v-if="seg.visual_brief" class="mb-2">
@@ -207,9 +227,15 @@ const emit = defineEmits<{
   (e: "refresh"): void;
 }>();
 
+interface ChatDialogueLine {
+  speaker: string;
+  text: string;
+}
+
 interface ChatSegment {
   segment_index: number;
   text: string;
+  dialogue?: ChatDialogueLine[];
   visual_brief?: string;
   image_prompt?: string;
   duration_sec?: number;
