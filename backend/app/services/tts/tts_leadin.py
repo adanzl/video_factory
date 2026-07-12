@@ -33,7 +33,7 @@ def strip_tts_lead_in(path: Path, words: list[TimedWord], lead_in: str) -> list[
     if not lead_in or not words:
         return words
 
-    logger.debug(
+    logger.info(
         "tts lead-in check: lead_in=%r words_count=%s first_10_words=%s",
         lead_in,
         len(words),
@@ -76,7 +76,7 @@ def strip_tts_lead_in(path: Path, words: list[TimedWord], lead_in: str) -> list[
         cut_ms = max(0, remaining[0].begin_time_ms - _LEAD_IN_PAD_MS)
         _trim_audio(path, TrimPlan(leading_ms=cut_ms, trailing_ms=0))
         shifted = shift_word_timestamps(remaining, cut_ms)
-        logger.debug(
+        logger.info(
             "tts lead-in stripped %r cut=%sms words %s -> %s remaining_first_5=%s",
             lead_in,
             cut_ms,
