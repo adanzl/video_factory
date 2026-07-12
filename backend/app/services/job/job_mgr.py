@@ -142,9 +142,12 @@ class JobMgr:
         if audio_path:
             clips_dir = Path(audio_path).parent / "clips"
             if clips_dir.is_dir():
+                import re
+
                 clips = sorted(
-                    (clips_dir / f).name
-                    for f in (p.name for p in clips_dir.glob("*.mp3"))
+                    p.name
+                    for p in clips_dir.glob("*.mp3")
+                    if re.fullmatch(r"\d+", p.stem)
                 )
                 job["tts_clips"] = [str(clips_dir / name) for name in clips]
             else:
