@@ -161,6 +161,55 @@ def build_daily_script_prompts(dialogue_script: dict) -> tuple[str, str]:
     )
 
 
+def validate_daily_story_json(story: dict) -> None:
+    """校验日常故事 LLM 返回的 JSON 格式是否符合预期结构，失败抛 ValueError。"""
+    errors: list[str] = []
+
+    if not isinstance(story, dict):
+        raise ValueError(f"daily_story 返回数据不是字典: {type(story).__name__}")
+
+    _correct_dialogue_speaker(story.get("dialogue", []))
+
+    # 必需字段检查
+    for field in ("scene_title", "setting", "dialogue", "punchline_explain"):
+        if field not in story:
+            errors.append(f"缺少必需字段: {field}")
+
+    if errors:
+        raise ValueError("; ".join(errors))
+
+    # scene_title 类型
+    if not isinstance(story["scene_title"], str) or not story["scene_title"].strip():
+        errors.append("scene_title 必须是非空字符串")
+    if not isinstance(story["setting"], str) or not story["setting"].strip():
+        errors.append("setting 必须是非空字符串")
+    if not isinstance(story["punchline_explain"], str) or not story["punchline_explain"].strip():
+        errors.append("punchline_explain 必须是非空字符串")
+
+    # dialogue 校验
+    dialogue = story.get("dialogue", [])
+    if not isinstance(dialogue, list):
+        errors.append("dialogue 必须是数组")
+    elif not dialogue:
+        errors.append("dialogue 不能是空数组")
+    else:
+        for i, item in enumerate(dialogue):
+            if not isinstance(item, dict):
+                errors.append(f"dialogue[{i}] 不是字典")
+                continue
+            if "speaker" not in item:
+                errors.append(f"dialogue[{i}] 缺少 speaker")
+            elif not isinstance(item["speaker"], str) or not item["speaker"].strip():
+                errors.append(f"dialogue[{i}] speaker 必须是非空字符串")
+            if "line" not in item:
+                errors.append(f"dialogue[{i}] 缺少 line")
+            elif not isinstance(item["line"], str) or not item["line"].strip():
+                errors.append(f"dialogue[{i}] line 必须是非空字符串")
+
+    if errors:
+        raise ValueError("daily_story 校验失败: " + "; ".join(errors))
+
+
 _KNOWN_SPEAKER_TYPOS = frozenset({"speayer", "speeker", "spaker"})
 
 

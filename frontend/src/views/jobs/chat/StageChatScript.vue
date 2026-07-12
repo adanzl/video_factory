@@ -105,7 +105,7 @@
         </div>
 
         <!-- 右侧：对话 -->
-        <div class="flex-1 space-y-3 overflow-y-auto pl-2" style="border-left: 1px solid #e5e7eb;">
+        <div class="flex-1 space-y-3 overflow-y-auto pl-2 max-h-150" style="border-left: 1px solid #e5e7eb;">
           <div class="mb-2 text-xs text-gray-400">对话</div>
           <div
             v-for="(line, idx) in dailyStory.story.dialogue"
