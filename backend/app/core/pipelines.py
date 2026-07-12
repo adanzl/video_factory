@@ -43,11 +43,9 @@ def _material_chain() -> tuple[type[StageExecutor], ...]:
 
 
 def _daily_story_chain() -> tuple[type[StageExecutor], ...]:
-    from worker.stages.daily_story.dialogue import DialogueStage
     from worker.stages.daily_story.script import DailyScriptStage
 
     return (
-        DialogueStage,
         DailyScriptStage,
         TTSStage,
         SegmentStage,

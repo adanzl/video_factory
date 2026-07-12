@@ -91,6 +91,14 @@ export async function previewScriptPrompts(
   return Array.isArray(response.data.prompts) ? response.data.prompts : [];
 }
 
+export async function previewDailyScriptPrompts(jobId: number): Promise<LlmPromptStep[]> {
+  const response = await api.post<{ prompts: LlmPromptStep[] }>(
+    "/v_factory/api/jobs/dailyScriptPrompts",
+    { id: jobId }
+  );
+  return Array.isArray(response.data.prompts) ? response.data.prompts : [];
+}
+
 export async function generateVideoDescription(jobId: number): Promise<{
   video_description: string;
   job: JobDetail;

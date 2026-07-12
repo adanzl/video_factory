@@ -93,7 +93,7 @@ const STAGE_PANELS: Record<string, Component> = {
 };
 
 function stagePanelFor(stageName: string, pipeline?: string | null): Component {
-  if (pipeline === PIPELINE_CHAT && stageName === "dialogue") {
+  if (pipeline === PIPELINE_CHAT && stageName === "script") {
     return StageChatScript;
   }
   return STAGE_PANELS[stageName] ?? StageStandardScript;
