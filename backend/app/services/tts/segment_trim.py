@@ -77,11 +77,6 @@ def _trim_audio(path: Path, plan: TrimPlan) -> None:
         return
     start_sec = plan.leading_ms / 1000.0
     tmp = path.with_name(f"{path.stem}.trim{path.suffix}")
-    pre_size = path.stat().st_size
-    logger.info(
-        "_trim_audio START %s: leading=%sms trailing=%sms pre_size=%d",
-        path.name, plan.leading_ms, plan.trailing_ms, pre_size,
-    )
 
     cmd = ["ffmpeg", "-y", "-hide_banner"]
     if plan.leading_ms > 0:
@@ -95,10 +90,6 @@ def _trim_audio(path: Path, plan: TrimPlan) -> None:
 
     run_ffmpeg(cmd)
     tmp.replace(path)
-    logger.info(
-        "_trim_audio DONE %s: post_size=%d (was %d)",
-        path.name, path.stat().st_size, pre_size,
-    )
 
 
 def apply_tts_segment_trim(
