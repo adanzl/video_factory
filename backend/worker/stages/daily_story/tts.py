@@ -14,7 +14,7 @@ from app.repositories import repo_job_log, repo_job, repo_segment
 from app.repositories.connection import connection
 from app.services.tts.audio_analysis import analyze_loudness, analyze_silence, normalize_loudness
 from app.services.tts.tts_mgr import tts_mgr, SubtitleCue
-from app.services.media.ffmpeg_utils import concat_clips, generate_silent_mp3, probe_duration
+from app.services.media.ffmpeg_utils import concat_clips, generate_silent_mp3, probe_duration, run_ffmpeg
 from app.utils.job_info import parse_job_info
 from worker.context import JobContext
 from worker.stages.base import StageExecutor
@@ -116,22 +116,26 @@ def _synthesize_segment_dialogue(
         tts_text, lead_in = prepare_lead_in(text, voice=voice)
         
         result = _tts_with_retry(tts_text, word_timestamps=True, rate=rate, voice=voice)
-        line_clip = clips_dir / f"{seg_index}_{line_idx}{ext}"
-        line_clip.write_bytes(result.audio)
+
+        # 先存 WAV，裁剪后再转 MP3（WAV 上 -ss 是样本级精确）
+        wav_clip = clips_dir / f"{seg_index}_{line_idx}.wav"
+        wav_clip.write_bytes(result.audio)
 
         words = normalize_word_timestamps(result.words)
         if lead_in:
-            _pre_size = line_clip.stat().st_size
-            _pre_dur = probe_duration(line_clip)
-            words = strip_tts_lead_in(line_clip, words, lead_in, rate=rate)
-            _post_size = line_clip.stat().st_size
-            _post_dur = probe_duration(line_clip)
-            logger.info(
-                "tts lead-in file check %s: before size=%d dur=%.3fs after size=%d dur=%.3fs",
-                line_clip.name, _pre_size, _pre_dur, _post_size, _post_dur,
-            )
+            words = strip_tts_lead_in(wav_clip, words, lead_in, rate=rate)
         if words:
-            words = apply_tts_segment_trim(line_clip, words)
+            words = apply_tts_segment_trim(wav_clip, words)
+
+        # WAV → MP3
+        line_clip = clips_dir / f"{seg_index}_{line_idx}.mp3"
+        run_ffmpeg([
+            "ffmpeg", "-y", "-hide_banner",
+            "-i", str(wav_clip),
+            "-c:a", "libmp3lame", "-q:a", "2",
+            str(line_clip),
+        ])
+        wav_clip.unlink(missing_ok=True)
 
         line_duration = probe_duration(line_clip)
 

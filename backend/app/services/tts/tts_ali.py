@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 import time
 import uuid
@@ -22,7 +23,7 @@ from app.services.tts.phrase_timing import (
 )
 from app.services.tts.segment_trim import apply_tts_segment_trim
 from app.services.tts.tts_leadin import prepare_lead_in, strip_tts_lead_in
-from app.services.media.ffmpeg_utils import build_srt_from_cues, concat_clips, probe_duration
+from app.services.media.ffmpeg_utils import build_srt_from_cues, concat_clips, probe_duration, run_ffmpeg
 from app.services.tts.tts_mgr import (
     SubtitleCue,
     TTSClient,
@@ -286,6 +287,7 @@ def _synthesize_segment(
                 timeout=_segment_timeout(tts_text),
                 rate=effective_rate,
                 voice=effective_voice,
+                audio_format="wav",
             )
             break
         except TimeoutError:
@@ -294,20 +296,33 @@ def _synthesize_segment(
             logger.warning("tts segment %s task-started 超时，重试第 %s 次", seg_index, attempt)
             time.sleep(3)
             continue
-    segment_clip = clips_dir / f"{seg_index}{_audio_extension()}"
-    segment_clip.write_bytes(result.audio)
+
+    # 先存 WAV，裁剪后再转 MP3（WAV 上 -ss 是样本级精确）
+    wav_clip = clips_dir / f"{seg_index}.wav"
+    wav_clip.write_bytes(result.audio)
 
     words = normalize_word_timestamps(result.words)
     if lead_in:
-        words = strip_tts_lead_in(segment_clip, words, lead_in, rate=effective_rate)
+        words = strip_tts_lead_in(wav_clip, words, lead_in, rate=effective_rate)
     if settings.tts_trim_edges:
         if words:
-            words = apply_tts_segment_trim(segment_clip, words)
+            words = apply_tts_segment_trim(wav_clip, words)
         else:
             logger.warning(
                 "tts segment %s: no word timestamps, skip edge trim",
                 seg_index,
             )
+
+    # WAV → MP3
+    segment_clip = clips_dir / f"{seg_index}.mp3"
+    run_ffmpeg([
+        "ffmpeg", "-y", "-hide_banner",
+        "-i", str(wav_clip),
+        "-c:a", "libmp3lame", "-q:a", "2",
+        str(segment_clip),
+    ])
+    wav_clip.unlink(missing_ok=True)
+
     segment_duration = probe_duration(segment_clip)
     breath_cues = build_phrase_breath_cues(
         phrases,
@@ -379,10 +394,18 @@ def synthesize_utterance(
     """单句 MP3（片头喊声等）。"""
     settings = get_settings()
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    result = _run_tts_task(text, rate=rate, pitch=pitch)
-    output_path.write_bytes(result.audio)
+    result = _run_tts_task(text, rate=rate, pitch=pitch, audio_format="wav")
+    wav_path = output_path.with_suffix(".wav")
+    wav_path.write_bytes(result.audio)
     if settings.tts_trim_edges:
-        apply_tts_segment_trim(output_path, normalize_word_timestamps(result.words))
+        apply_tts_segment_trim(wav_path, normalize_word_timestamps(result.words))
+    run_ffmpeg([
+        "ffmpeg", "-y", "-hide_banner",
+        "-i", str(wav_path),
+        "-c:a", "libmp3lame", "-q:a", "2",
+        str(output_path),
+    ])
+    wav_path.unlink(missing_ok=True)
     if result.usage:
         logger.info(
             "tts utterance done chars=%s bytes=%s",
