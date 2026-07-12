@@ -16,7 +16,7 @@ CLONED_VOICE_CAN = "cosyvoice-v3.5-flash-leo-60621bdce780434ab0734555e5196d7d"
 CLONED_VOICE_ZHAO = "cosyvoice-v3.5-flash-leo-f9d115bfdf2346edbeb9d21ecd4f9ce9"
 # cSpell: enable
 
-DEFAULT_LEAD_IN = "那，"
+DEFAULT_LEAD_IN = "嗯，"
 _LEAD_IN_PAD_MS = 0  # 切到内容词开头，越小切得越多
 _LEAD_IN_MS_PER_CHAR = 300  # 每个实字约 300ms（rate=1.0 基准）
 _PUNCT_RE = re.compile(r"^[。！？；：，,.!?;:…—·~～'\"）】》〉）\]]+$")

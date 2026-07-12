@@ -112,7 +112,7 @@ def _synthesize_segment_dialogue(
             seg_index, line_idx, speaker, voice, rate, len(text), text,
         )
 
-        # 引导词：合成前加"那，"，合成后裁掉
+        # 引导词：合成前加"嗯，"，合成后裁掉
         tts_text, lead_in = prepare_lead_in(text, voice=voice)
         
         result = _tts_with_retry(tts_text, word_timestamps=True, rate=rate, voice=voice)
