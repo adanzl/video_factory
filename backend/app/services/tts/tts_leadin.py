@@ -11,7 +11,8 @@ from app.services.tts.segment_trim import TrimPlan, _trim_audio, shift_word_time
 logger = logging.getLogger(__name__)
 
 # cSpell: disable
-CLONED_VOICE = "cosyvoice-v3.5-flash-leo-60621bdce780434ab0734555e5196d7d"
+CLONED_VOICE_CAN = "cosyvoice-v3.5-flash-leo-60621bdce780434ab0734555e5196d7d"
+CLONED_VOICE_ZHAO = "cosyvoice-v3.5-flash-leo-f9d115bfdf2346edbeb9d21ecd4f9ce9"
 # cSpell: enable
 
 DEFAULT_LEAD_IN = "那，"
@@ -20,7 +21,7 @@ _LEAD_IN_PAD_MS = 15
 
 def prepare_lead_in(text: str, *, voice: str, lead_in: str = DEFAULT_LEAD_IN) -> tuple[str, str | None]:
     """复刻音色每段合成前加短引导词，再裁掉；字幕仍用原文。"""
-    if voice != CLONED_VOICE or not text.strip() or not lead_in:
+    if voice != CLONED_VOICE_CAN or not text.strip() or not lead_in:
         return text, None
     return f"{lead_in}{text}", lead_in
 

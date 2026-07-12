@@ -7,9 +7,8 @@ export interface TtsVoiceOption {
 }
 
 // cSpell: disable
-export const DEFAULT_TTS_VOICE =
-  "cosyvoice-v3.5-flash-leo-60621bdce780434ab0734555e5196d7d";
-export const TTS_VOICE_ZHAO = "灿灿";
+export const DEFAULT_TTS_VOICE ="cosyvoice-v3.5-flash-leo-60621bdce780434ab0734555e5196d7d";
+export const TTS_VOICE_ZHAO = "cosyvoice-v3.5-flash-leo-f9d115bfdf2346edbeb9d21ecd4f9ce9";
 export const TTS_VOICE_CAN = DEFAULT_TTS_VOICE;
 
 const CLONED_VOICES: TtsVoiceOption[] = [
