@@ -44,6 +44,18 @@ class SegmentMgr:
         cues_path = tts_mgr.subtitle_cues_path_for(media_dir / "audio")
         return cues_path.exists()
 
+    @staticmethod
+    def _existing_clip_path(seg: dict, clips_dir: Path) -> Path | None:
+        """检测分镜是否已有完成的可复用视频片段文件。"""
+        clip_path = clips_dir / f"{seg['segment_index']}.mp4"
+        if clip_path.exists():
+            return clip_path
+        if seg.get("clip_path"):
+            path = Path(seg["clip_path"])
+            if path.exists():
+                return path
+        return None
+
     def produce_segments(
         self,
         *,
@@ -160,18 +172,51 @@ class SegmentMgr:
             clips = SegmentClipsResult(segment_clip_paths=[])
         else:
             _check_cancelled()
-            logger.info(
-                "produce_segments: building clips (targets=%s)...",
-                sorted(only_segment_indices) if only_segment_indices is not None else "all",
-            )
-            clips = media_mgr.build_segment_clips(
-                media_dir=media_dir,
-                segments=segments_with_images,
-                audio_path=audio_path,
-                only_segment_indices=only_segment_indices,
-                job=job,
-                on_clip_done=on_clip_done,
-            )
+
+            # 收集已有 clip 的分镜（服务重启恢复时避免重新生成）
+            clips_dir = media_dir / "segments"
+            existing_clip_paths: list[tuple[int, Path]] = []
+            if only_segment_indices is None and clips_dir.exists():
+                remaining_segments: list[dict] = []
+                for seg in segments_with_images:
+                    existing = self._existing_clip_path(seg, clips_dir)
+                    if existing is not None:
+                        existing_clip_paths.append((seg["id"], existing))
+                        logger.info(
+                            "produce_segments: segment %s clip already exists, skipping",
+                            seg["segment_index"],
+                        )
+                    else:
+                        remaining_segments.append(seg)
+                if existing_clip_paths:
+                    logger.info(
+                        "produce_segments: %s/%s clips already exist, "
+                        "only %s need regeneration",
+                        len(existing_clip_paths),
+                        len(segments_with_images),
+                        len(remaining_segments),
+                    )
+                segments_with_images = remaining_segments
+
+            if not segments_with_images:
+                logger.info("produce_segments: all clips already exist, skipping clip generation")
+                clips = SegmentClipsResult(segment_clip_paths=existing_clip_paths)
+            else:
+                logger.info(
+                    "produce_segments: building clips (targets=%s)...",
+                    sorted(only_segment_indices) if only_segment_indices is not None else "all",
+                )
+                new_clips = media_mgr.build_segment_clips(
+                    media_dir=media_dir,
+                    segments=segments_with_images,
+                    audio_path=audio_path,
+                    only_segment_indices=only_segment_indices,
+                    job=job,
+                    on_clip_done=on_clip_done,
+                )
+                # 合并已有 clip（跳过生成的不在 new_clips 里）
+                all_paths = list(new_clips.segment_clip_paths) + existing_clip_paths
+                clips = SegmentClipsResult(segment_clip_paths=all_paths)
         elapsed = time.time() - t0
         logger.info(
             "produce_segments: done in %.1fs (images=%s, clips=%s)",
