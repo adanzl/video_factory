@@ -8,6 +8,7 @@ from app.api.errors import APIError
 from app.api.utils import (
     get_json_body,
     get_query,
+    json_created,
     json_ok,
     parse_id,
     parse_int,
@@ -62,3 +63,29 @@ def generate_themes_route():
     count = parse_int(data, "count", 2, minimum=1, maximum=10)
     logger.info("[DAILY_STORY] api /themes count=%d", count)
     return json_ok(daily_story_mgr.generate_themes(count))
+
+
+@bp.post("/create_job")
+def create_job_route():
+    data = get_json_body()
+    story_id = parse_id(data)
+    logger.info("[DAILY_STORY] api /create_job story_id=%d", story_id)
+    try:
+        job = daily_story_mgr.create_job(story_id)
+    except KeyError:
+        raise APIError("故事不存在")
+    return json_created(job)
+
+
+@bp.post("/update")
+def update_story_route():
+    data = get_json_body()
+    story_id = parse_id(data)
+    story = data.get("story")
+    if not isinstance(story, dict):
+        raise APIError("story is required", status_code=400)
+    logger.info("[DAILY_STORY] api /update story_id=%d", story_id)
+    try:
+        return json_ok(daily_story_mgr.update_story(story_id, story=story))
+    except KeyError:
+        raise APIError("故事不存在")

@@ -66,3 +66,19 @@ export async function generateDailyStoryThemes(count: number = 2): Promise<strin
   );
   return Array.isArray(response.data) ? response.data : [];
 }
+
+export async function createDailyStoryJob(storyId: number): Promise<any> {
+  const response = await api.post("/v_factory/api/daily_story/create_job", { id: storyId });
+  return response.data;
+}
+
+export async function updateDailyStory(
+  storyId: number,
+  story: StoryContent
+): Promise<DailyStoryRecord> {
+  const response = await api.post<DailyStoryRecord>("/v_factory/api/daily_story/update", {
+    id: storyId,
+    story,
+  });
+  return response.data;
+}
