@@ -17,6 +17,7 @@ class JobContext:
     intro_orientation: str | None = None
     tts_speech_rate: float | None = None
     tts_voice_id: str | None = None
+    tts_speaker_configs: dict | None = None
     script_segment_target_sec: float | None = None
     script_max_title_length: int | None = None
     script_narration_target_words: int | None = None
@@ -39,6 +40,7 @@ class JobContext:
         intro_orientation: str | None = None,
         tts_speech_rate: float | None = None,
         tts_voice_id: str | None = None,
+        tts_speaker_configs: dict | None = None,
         script_segment_target_sec: float | None = None,
         script_max_title_length: int | None = None,
         script_narration_target_words: int | None = None,
@@ -132,6 +134,7 @@ class JobContext:
             intro_orientation=intro_orientation,
             tts_speech_rate=tts_speech_rate,
             tts_voice_id=tts_voice_id,
+            tts_speaker_configs=tts_speaker_configs,
             script_segment_target_sec=resolved_segment_target_sec,
             script_max_title_length=resolved_max_title_length,
             script_narration_target_words=resolved_narration_target_words,

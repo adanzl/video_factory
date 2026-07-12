@@ -17,7 +17,7 @@
           </div>
         </el-descriptions-item>
         <el-descriptions-item label="预计时间">
-          <span class="text-sm text-gray-600">{{ estimatedDurationMin }} 分</span>
+          <span class="text-sm text-gray-600">{{ estimatedDuration }}</span>
         </el-descriptions-item>
         <el-descriptions-item label="标题上限">
           <el-input-number v-model="maxTitleLength" :min="8" :max="48" :step="1" controls-position="right"
@@ -28,6 +28,13 @@
             <el-input-number v-model="speechCharsPerSec" :min="1" :max="10" :step="0.1" :precision="1"
               controls-position="right" class="w-28!" />
             <span class="text-xs text-gray-400">字/秒</span>
+          </div>
+        </el-descriptions-item>
+        <el-descriptions-item label="句间停留">
+          <div class="flex items-center gap-1">
+            <el-input-number v-model="lineGap" :min="0" :max="3" :step="0.1" :precision="1"
+              controls-position="right" class="w-28!" />
+            <span class="text-xs text-gray-400">秒</span>
           </div>
         </el-descriptions-item>
         <el-descriptions-item label="标题优化">
@@ -73,48 +80,33 @@
     <template v-if="dailyStory">
       <div class="flex gap-4">
         <!-- 左侧：信息 -->
-        <div class="w-64 shrink-0 space-y-4 overflow-y-auto pr-2">
-          <div>
-            <div class="mb-1 text-xs text-gray-400">主题</div>
-            <div class="text-sm">{{ dailyStory.theme }}</div>
-          </div>
-          <div>
-            <div class="mb-1 text-xs text-gray-400">场景标题</div>
-            <div class="font-bold">{{ dailyStory.story.scene_title }}</div>
-          </div>
-          <div>
-            <div class="mb-1 text-xs text-gray-400">设定</div>
-            <div class="text-sm text-gray-600">{{ dailyStory.story.setting }}</div>
-          </div>
-          <div>
-            <div class="mb-1 text-xs text-gray-400">笑点解析</div>
-            <div class="rounded-lg bg-gray-50 p-3 text-sm text-gray-600">{{ dailyStory.story.punchline_explain }}</div>
-          </div>
-          <div>
-            <div class="mb-1 text-xs text-gray-400">总字数</div>
-            <div class="text-sm text-gray-600">{{ totalChars }} 字</div>
-          </div>
-          <div>
-            <div class="mb-1 text-xs text-gray-400">时长估算</div>
-            <div class="text-sm text-gray-600">{{ estimatedDuration }}</div>
-          </div>
-          <div v-if="script">
-            <div class="mb-1 text-xs text-gray-400">分镜数</div>
-            <div class="text-sm text-gray-600">{{ (script.segments || []).length }}</div>
-          </div>
+        <div class="w-128 shrink-0 overflow-y-auto pr-2">
+          <el-descriptions :column="1" border label-width="80px">
+            <el-descriptions-item label="主题">{{ dailyStory.theme }}</el-descriptions-item>
+            <el-descriptions-item label="场景标题">
+              <span class="font-bold">{{ dailyStory.story.scene_title }}</span>
+            </el-descriptions-item>
+            <el-descriptions-item label="设定">{{ dailyStory.story.setting }}</el-descriptions-item>
+            <el-descriptions-item label="笑点解析">
+              <div class="rounded-lg bg-gray-50 p-2 text-sm text-gray-600">{{ dailyStory.story.punchline_explain }}</div>
+            </el-descriptions-item>
+            <el-descriptions-item label="总字数">{{ totalChars }} 字</el-descriptions-item>
+            <el-descriptions-item label="时长估算">{{ estimatedDuration }}</el-descriptions-item>
+            <el-descriptions-item v-if="script" label="分镜数">{{ (script.segments || []).length }}</el-descriptions-item>
+          </el-descriptions>
         </div>
 
         <!-- 右侧：对话 -->
-        <div class="flex-1 space-y-3 overflow-y-auto pl-2 max-h-130" style="border-left: 1px solid #e5e7eb;">
+        <div class="flex-1 space-y-3 overflow-y-auto pl-2 max-h-100" style="border-left: 1px solid #e5e7eb;">
           <div class="mb-2 text-xs text-gray-400">对话</div>
           <div
             v-for="(line, idx) in dailyStory.story.dialogue"
             :key="idx"
-            class="rounded-lg p-3"
+            class="rounded-lg p-1 px-3 flex gap-4 items-center"
             :class="line.speaker === '昭昭' ? 'bg-blue-50' : 'bg-pink-50'"
           >
             <div
-              class="mb-1 text-xs font-bold"
+              class=" text-xs font-bold"
               :class="line.speaker === '昭昭' ? 'text-blue-600' : 'text-pink-600'"
             >
               {{ line.speaker }}
@@ -125,10 +117,10 @@
       </div>
 
       <!-- 分镜列表 -->
-      <div v-if="script" class="mt-4 space-y-4">
-        <div v-for="seg in script.segments || []" :key="seg.segment_index" class="rounded-lg border p-4">
+      <div v-if="script" class="mt-4 flex gap-2 overflow-x-auto pb-2">
+        <div v-for="seg in script.segments || []" :key="seg.segment_index" class="shrink-0 rounded-lg border p-4 w-80">
           <div class="mb-2 flex items-center gap-2">
-            <el-tag type="primary" size="small">第 {{ seg.segment_index }} 段</el-tag>
+            <el-tag type="primary" size="small"># {{ seg.segment_index }} </el-tag>
             <span class="text-xs text-gray-400">约 {{ seg.duration_sec }} 秒</span>
           </div>
 
@@ -200,26 +192,29 @@
     <div v-if="!script && !dailyStory && !storyLoading && !loading" class="py-12 text-center text-gray-400">
       剧本尚未生成，请执行此阶段
     </div>
+
+    <StageLogsSection :logs="logs" />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { ElMessage } from "element-plus";
+import { ElMessage, ElMessageBox } from "element-plus";
 import { runJobStageAction, updateJob, previewDailyScriptPrompts } from "@/api/api-jobs";
 import { getDailyStory } from "@/api/api-daily-story";
 import type { DailyStoryRecord } from "@/api/api-daily-story";
-import type { JobDetail, JobSegment } from "@/types/jobs";
+import type { JobDetail, JobLog, JobSegment } from "@/types/jobs";
 import type { RunStageActionPayload } from "@/types/jobs/stageAction";
 import type { LlmPromptStep } from "@/types/jobs/script";
 import { DEFAULT_SPEECH_CHARS_PER_SEC } from "@/utils/media";
 import { useErrorHandler } from "@/composables/useErrorHandler";
 import StageActionBar from "../detail/StageActionBar.vue";
+import StageLogsSection from "../detail/StageLogsSection.vue";
 
 const props = defineProps<{
   job: JobDetail;
   segments: JobSegment[];
-  logs: string[];
+  logs: JobLog[];
   stageActive: boolean;
 }>();
 
@@ -267,8 +262,6 @@ const promptPanelOpen = ref<string[]>([]);
 const promptsLoading = ref(false);
 const dailyPrompts = ref<LlmPromptStep | null>(null);
 
-/** 默认口播语速（字/秒） */
-const speechRate = ref(3.1);
 /** 句间停留（秒） */
 const lineGap = ref(0.3);
 
@@ -282,13 +275,13 @@ const estimatedDuration = computed(() => {
   const chars = totalChars.value;
   const dialogue = dailyStory.value?.story?.dialogue;
   if (chars <= 0 || !dialogue || dialogue.length === 0) return "-";
-  const speakSec = chars / speechRate.value;
+  const speakSec = chars / speechCharsPerSec.value;
   const gapSec = (dialogue.length - 1) * lineGap.value;
   const secs = Math.round(speakSec + gapSec);
-  if (secs < 60) return `约 ${secs} 秒`;
+  if (secs < 60) return ` ${secs} 秒`;
   const mins = Math.floor(secs / 60);
   const remain = secs % 60;
-  return remain > 0 ? `约 ${mins} 分 ${remain} 秒` : `约 ${mins} 分钟`;
+  return remain > 0 ? ` ${mins} 分 ${remain} 秒` : ` ${mins} 分钟`;
 });
 
 const sourceTitleUnchanged = computed(
@@ -418,6 +411,15 @@ async function handleUpdateSourceTitle() {
 }
 
 async function handleRun(toEnd: boolean) {
+  try {
+    await ElMessageBox.confirm("确认重新生成分镜脚本？已有结果将被覆盖。", "确认", {
+      confirmButtonText: "确认",
+      cancelButtonText: "取消",
+      type: "warning",
+    });
+  } catch {
+    return;
+  }
   submitting.value = true;
   try {
     const payload: RunStageActionPayload = {

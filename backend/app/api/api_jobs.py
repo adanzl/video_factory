@@ -265,6 +265,9 @@ def run_tts_route():
     to_end = parse_bool(data, "to_end", default=False)
     speech_rate = parse_optional_float(data, "speech_rate", minimum=0.5, maximum=2.0)
     voice_id = parse_optional_str(data, "voice_id")
+    speaker_configs = data.get("speaker_configs")
+    if speaker_configs is not None and not isinstance(speaker_configs, dict):
+        speaker_configs = None
     return _accept_stage(
         job_id,
         lambda: job_mgr.run_tts(
@@ -272,6 +275,7 @@ def run_tts_route():
             to_end=to_end,
             speech_rate=speech_rate,
             voice_id=voice_id,
+            speaker_configs=speaker_configs,
         ),
     )
 

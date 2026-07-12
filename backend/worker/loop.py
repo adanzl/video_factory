@@ -76,6 +76,7 @@ def _run_one_stage(
     intro_orientation: str | None = None,
     tts_speech_rate: float | None = None,
     tts_voice_id: str | None = None,
+    tts_speaker_configs: dict | None = None,
     script_segment_target_sec: float | None = None,
     script_max_title_length: int | None = None,
     script_narration_target_words: int | None = None,
@@ -96,6 +97,7 @@ def _run_one_stage(
         intro_orientation=intro_orientation,
         tts_speech_rate=tts_speech_rate,
         tts_voice_id=tts_voice_id,
+        tts_speaker_configs=tts_speaker_configs,
         script_segment_target_sec=script_segment_target_sec,
         script_max_title_length=script_max_title_length,
         script_narration_target_words=script_narration_target_words,
@@ -137,6 +139,7 @@ def _run_from(
     intro_orientation: str | None = None,
     tts_speech_rate: float | None = None,
     tts_voice_id: str | None = None,
+    tts_speaker_configs: dict | None = None,
     script_segment_target_sec: float | None = None,
     script_max_title_length: int | None = None,
     script_narration_target_words: int | None = None,
@@ -164,6 +167,7 @@ def _run_from(
             intro_orientation=intro_orientation if stage_cls.name == "intro" else None,
             tts_speech_rate=tts_speech_rate if stage_cls.name == "tts" else None,
             tts_voice_id=tts_voice_id if stage_cls.name == "tts" else None,
+            tts_speaker_configs=tts_speaker_configs if stage_cls.name == "tts" else None,
             script_segment_target_sec=script_segment_target_sec if stage_cls.name == "script" else None,
             script_max_title_length=script_max_title_length if stage_cls.name == "script" else None,
             script_narration_target_words=(
@@ -531,6 +535,7 @@ def run_tts(
     to_end: bool = False,
     speech_rate: float | None = None,
     voice_id: str | None = None,
+    speaker_configs: dict | None = None,
 ) -> dict:
     job = _reload_job(job_id)
     tts_cls = stage_class_for("tts", job)
@@ -540,6 +545,7 @@ def run_tts(
             tts_cls,
             tts_speech_rate=speech_rate,
             tts_voice_id=voice_id,
+            tts_speaker_configs=speaker_configs,
         )
     return _run_one_stage(
         job_id,
@@ -547,6 +553,7 @@ def run_tts(
         hold=True,
         tts_speech_rate=speech_rate,
         tts_voice_id=voice_id,
+        tts_speaker_configs=speaker_configs,
     )
 
 

@@ -80,6 +80,7 @@ import StageStandardScript from "./standard/StageStandardScript.vue";
 import StageSegment from "./detail/StageSegment.vue";
 import StageTts from "./detail/StageTts.vue";
 import StageChatScript from "./chat/StageChatScript.vue";
+import StageChatTts from "./chat/StageChatTts.vue";
 
 const STAGE_PANELS: Record<string, Component> = {
   prepare: StagePrepare,
@@ -93,8 +94,9 @@ const STAGE_PANELS: Record<string, Component> = {
 };
 
 function stagePanelFor(stageName: string, pipeline?: string | null): Component {
-  if (pipeline === PIPELINE_CHAT && stageName === "script") {
-    return StageChatScript;
+  if (pipeline === PIPELINE_CHAT) {
+    if (stageName === "script") return StageChatScript;
+    if (stageName === "tts") return StageChatTts;
   }
   return STAGE_PANELS[stageName] ?? StageStandardScript;
 }
