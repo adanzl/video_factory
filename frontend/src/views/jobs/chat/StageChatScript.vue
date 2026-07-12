@@ -40,6 +40,13 @@
         <el-descriptions-item label="标题优化">
           <el-checkbox v-model="skipTitleOptimize">跳过</el-checkbox>
         </el-descriptions-item>
+        <el-descriptions-item label="方向">
+          <el-radio-group v-model="jobOrientation" size="small" :disabled="savingProfile || actionDisabled"
+            @change="handleOrientationChange">
+            <el-radio-button value="portrait">竖屏</el-radio-button>
+            <el-radio-button value="landscape">横屏</el-radio-button>
+          </el-radio-group>
+        </el-descriptions-item>
       </el-descriptions>
     </div>
 
@@ -200,10 +207,11 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { runJobStageAction, updateJob, previewDailyScriptPrompts } from "@/api/api-jobs";
+import { runJobStageAction, updateJob, updateJobInfo, previewDailyScriptPrompts } from "@/api/api-jobs";
 import { getDailyStory } from "@/api/api-daily-story";
 import type { DailyStoryRecord } from "@/api/api-daily-story";
 import type { JobDetail, JobLog, JobSegment } from "@/types/jobs";
+import type { UpdateJobInfoParams } from "@/types/jobs/job";
 import type { RunStageActionPayload } from "@/types/jobs/stageAction";
 import type { LlmPromptStep } from "@/types/jobs/script";
 import { DEFAULT_SPEECH_CHARS_PER_SEC } from "@/utils/media";
@@ -257,6 +265,8 @@ const speechCharsPerSec = ref(DEFAULT_SPEECH_CHARS_PER_SEC);
 const skipTitleOptimize = ref(false);
 const sourceTitle = ref("");
 const savingSourceTitle = ref(false);
+const jobOrientation = ref<"portrait" | "landscape">("portrait");
+const savingProfile = ref(false);
 
 const promptPanelOpen = ref<string[]>([]);
 const promptsLoading = ref(false);
@@ -325,8 +335,16 @@ watch(
   { immediate: true }
 );
 
+function initJobProfileFromInfo() {
+  const info = props.job.info;
+  if (info?.orientation === "landscape" || info?.orientation === "portrait") {
+    jobOrientation.value = info.orientation;
+  }
+}
+
 function initScriptParamsFromInfo() {
   const info = props.job.info;
+  initJobProfileFromInfo();
   if (!info?.script) return;
   const p = info.script;
   if (typeof p.estimated_duration_min === "number" && Number.isFinite(p.estimated_duration_min)) {
@@ -409,6 +427,24 @@ async function handleUpdateSourceTitle() {
     savingSourceTitle.value = false;
   }
 }
+
+const persistJobProfile = async (patch: UpdateJobInfoParams) => {
+  if (actionDisabled.value) return;
+  savingProfile.value = true;
+  try {
+    await updateJobInfo(props.job.id, patch);
+    emit("refresh");
+  } catch (error) {
+    initJobProfileFromInfo();
+    handleError(error, "更新配置失败");
+  } finally {
+    savingProfile.value = false;
+  }
+};
+
+const handleOrientationChange = (value: "portrait" | "landscape") => {
+  void persistJobProfile({ orientation: value });
+};
 
 async function handleRun(toEnd: boolean) {
   try {
