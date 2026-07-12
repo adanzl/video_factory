@@ -36,6 +36,11 @@ from app.services.topic.prompts.builder import (
     build_topic_system_prompt,
     build_topic_user_prompt,
 )
+from app.services.daily_story.prompts import (
+    build_daily_script_prompts,
+    build_daily_story_prompts,
+    build_daily_story_theme_prompts,
+)
 from app.utils.job_cancel import raise_if_job_cancelled
 from app.utils.media import (
     default_narration_target_words,
@@ -346,75 +351,6 @@ def _chunk_indices(indices: list[int], batch_size: int) -> list[list[int]]:
     size = max(1, batch_size)
     ordered = sorted({int(idx) for idx in indices})
     return [ordered[i : i + size] for i in range(0, len(ordered), size)]
-
-
-DAILY_STORY_SYSTEM_PROMPT = """\
-你是一位儿童情景喜剧编剧，专门为5-8岁小学生设计日常对话短剧。
-
-【角色设定】
-- 昭昭：弟弟，男孩，7岁。好奇心强，喜欢追问，擅长用现实经验挑战抽象规则，经常把简单的事越问越复杂。天真且固执。
-- 灿灿：姐姐，女孩，9岁。比昭昭懂事一点，偶尔想模仿大人的语气管教弟弟，但自己的逻辑也经常掉进孩子的坑里。有时候会被昭昭带偏，嘴硬但心软。
-- 关系：亲姐弟，住在一起，经常一起上学、吃饭、做作业、被爸妈教育。
-
-【姐弟关系的特殊笑点来源】
-- 姐姐试图用“我是姐姐”来压弟弟，但被弟弟用孩子的逻辑反问到哑口无言。
-- 弟弟对姐姐的“权威”半信半疑，会追问到底。
-- 两人结盟对抗爸妈（或老师）的规则，结果一起翻车。
-- 姐姐嘴上嫌弃弟弟，行动上却忍不住帮他，最后被弟弟“反杀”。
-
-【绝对禁止】
-1. 禁止讲成人笑话、谐音梗、俏皮话、网络热梗。
-2. 禁止使用“因为……所以……”等复杂的书面连接词，全部用口语短句。
-3. 禁止写成叙事小说（禁止出现“他心想”“她无奈地”等心理描写和形容词），只写纯对话+极简场景说明。
-4. 禁止让姐姐真的“成熟懂事”——她也是孩子，可以偶尔模仿大人，但一定会露馅。
-
-【必须遵守的笑点公式】
-- 笑点 = 孩子的字面/现实逻辑 碰撞 成人的抽象/规则逻辑。
-- 孩子提出的每一个推论，必须基于他刚刚听到的字面意思或亲眼见过的生活经验，不能跳级。
-- 对话必须有至少 6-8 轮来回，通过层层追问把“误会”滚雪球般滚大，最后一句话让成人逻辑彻底沉默。
-
-【格式要求】
-严格输出以下JSON结构：
-{
-  "scene_title": "四字以内的场景标题（如：写检查）",
-  "setting": "一句话说明地点和初始动作（如：放学路上，姐弟俩边走边聊）",
-  "dialogue": [
-    {"speaker": "昭昭", "line": "台词"},
-    {"speaker": "灿灿", "line": "台词"}
-  ],
-  "punchline_explain": "一句话解释这场的反差逻辑（便于验证）"
-}
-"""
-
-DAILY_STORY_USER_TEMPLATE = """\
-请根据上述规则，生成一个昭昭和灿灿的日常对话场景。
-
-【本次场景主题（核心事件）】：{theme}
-
-【要求】：
-1. 从姐弟之间的日常小事切入，不要宏大叙事。
-2. 必须体现姐弟特有的互动——姐姐可能想管弟弟，弟弟可能不服，但最后两人的逻辑都跑偏。
-3. 对话至少8轮。
-4. 避免让姐姐真的“说教成功”，她的“大人腔”一定要被弟弟戳穿。
-
-请直接输出JSON。
-"""
-
-DAILY_STORY_THEME_SYSTEM_PROMPT = "你是一位儿童情景喜剧策划师。"
-
-DAILY_STORY_THEME_USER_TEMPLATE = """\
-请给出{count}个适合5-9岁姐弟（昭昭7岁弟弟，灿灿9岁姐姐）日常对话的场景主题。
-
-要求：
-1. 主题必须是一件具体的小事，比如：争最后一瓶酸奶、谁先洗澡、检查作业时发现错题。
-2. 不能是抽象概念（如“讨论友谊”“探讨公平”）。
-3. 主题要有“天然矛盾”——姐姐想管弟弟但管不住，或者两人想一起对付爸妈但翻车。
-4. 主题用15个字以内描述，直接输出。
-
-示例：“下雨只带了一把伞”
-
-请直接输出标题，每行一个，不要其他内容。
-"""
 
 
 class DeepSeekClient(LLMClient):
@@ -1342,12 +1278,31 @@ class DeepSeekClient(LLMClient):
         assert last_exc is not None
         raise last_exc
 
+    def generate_daily_script(
+        self,
+        dialogue_script: dict,
+        *,
+        job: dict | None = None,
+    ) -> dict[str, Any]:
+        started = time.perf_counter()
+        system, user = build_daily_script_prompts(dialogue_script)
+        raw, _ = self._chat_json(
+            system, user, max_tokens=4096, thinking_enabled=False, temperature=0.8,
+        )
+        raise_if_job_cancelled(job)
+        elapsed = time.perf_counter() - started
+        logger.info(
+            "[DAILY_STORY] script done scenes=%d elapsed=%.1fs",
+            len(raw.get("scenes") or []),
+            elapsed,
+        )
+        return raw
+
     def generate_daily_story(
         self,
         theme: str,
     ) -> dict[str, Any]:
-        system = DAILY_STORY_SYSTEM_PROMPT
-        user = DAILY_STORY_USER_TEMPLATE.format(theme=theme)
+        system, user = build_daily_story_prompts(theme)
         raw, _ = self._chat_json(system, user, max_tokens=4096, thinking_enabled=False, temperature=0.95)
         return raw
 
@@ -1355,8 +1310,7 @@ class DeepSeekClient(LLMClient):
         self,
         count: int = 5,
     ) -> list[str]:
-        system = DAILY_STORY_THEME_SYSTEM_PROMPT
-        user = DAILY_STORY_THEME_USER_TEMPLATE.format(count=count)
+        system, user = build_daily_story_theme_prompts(count)
         content, _ = self._chat(system, user, max_tokens=512, json_mode=False, thinking_enabled=False, temperature=0.95)
         themes = [line.strip() for line in content.strip().split("\n") if line.strip()]
         return themes[:count]

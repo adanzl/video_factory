@@ -159,6 +159,14 @@ class LLMClient:
     ) -> list[str]:
         raise NotImplementedError
 
+    def generate_daily_script(
+        self,
+        dialogue_script: dict,
+        *,
+        job: dict | None = None,
+    ) -> dict[str, Any]:
+        raise NotImplementedError
+
 
 class LLMMgr:
     """LLM 管理器。"""
@@ -598,6 +606,26 @@ class LLMMgr:
         elapsed = time.perf_counter() - started
         logger.info("[DAILY_STORY] generate themes done count=%d elapsed=%.1fs", len(themes), elapsed)
         return themes
+
+    def generate_daily_script(
+        self,
+        dialogue_script: dict,
+        *,
+        job: dict | None = None,
+    ) -> dict[str, Any]:
+        logger.info("[DAILY_STORY] generate script start")
+        started = time.perf_counter()
+        try:
+            result = self._get_client().generate_daily_script(
+                dialogue_script,
+                job=job,
+            )
+        except Exception:
+            logger.exception("[DAILY_STORY] generate script failed")
+            raise
+        elapsed = time.perf_counter() - started
+        logger.info("[DAILY_STORY] generate script done elapsed=%.1fs", elapsed)
+        return result
 
 
 llm_mgr = LLMMgr()

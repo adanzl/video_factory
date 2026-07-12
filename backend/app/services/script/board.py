@@ -22,7 +22,6 @@ from app.utils.media import (
     NARRATION_WRITING_TARGET_RATIO,
     default_narration_target_words,
     effective_segment_narration_sec,
-    min_narration_chars_for_target,
     narration_accept_min_chars,
     narration_accept_max_chars,
     narration_word_range,
@@ -32,15 +31,6 @@ from app.utils.media import (
     segment_text_char_cap,
     segment_text_hard_cap,
 )
-from app.quality.image_prompt import (
-    MIN_SD15_PROMPT_EN_WORDS,
-    TARGET_SD15_PROMPT_EN_WORDS,
-    format_image_prompt_retry_warning,
-    image_prompt_min_chars,
-    image_prompt_target_chars,
-    sd15_prompt_en_ok,
-    sd15_prompt_en_word_count,
-)
 from app.services.script.board_timeline import (
     VideoTimeline,
     append_material_timeline_to_user,
@@ -49,88 +39,38 @@ from app.services.script.board_timeline import (
     parse_video_timeline,
 )
 
-# DeepSeek JSON Output 要求 prompt 含 json 字样并给出样例：
-# https://api-docs.deepseek.com/zh-cn/guides/json_mode
-_STORYBOARD_JSON_EXAMPLE = """{
-  "title": "标题示例",
-  "narration": "（各段 text 按序拼接的全文，须达到【字数预算】写作目标）",
-  "word_count": 1252,
-  "visual_style": "画风定调一句话",
-  "segments": [
-    {"segment_index": 1, "text": "（本段口播，须写满该段字数下限，勿照抄此短句）", "visual_brief": "画面主旨", "visual_mode": "static_motion"},
-    {"segment_index": 2, "text": "（第二段同样写满预算）", "visual_brief": "画面主旨", "visual_mode": "static_motion"}
-  ]
-}
+# 文案常量集中在 prompt.py
+from .prompt import (
+    _STORYBOARD_JSON_EXAMPLE,
+    _STORYBOARD_JSON_EXAMPLE_COMPACT,
+    _NARRATION_ONLY_JSON_EXAMPLE,
+    _VISUAL_BRIEF_JSON_EXAMPLE,
+    _IMAGE_PROMPTS_JSON_EXAMPLE,
+    _IMAGE_PROMPTS_JSON_EXAMPLE_NO_SD15,
+    _MATERIAL_SCRIPT_JSON_EXAMPLE,
+    _IMAGE_PROMPT_RULE_SCIENCE_PORTRAIT,
+    _IMAGE_PROMPT_RULE_SCIENCE_LANDSCAPE,
+    _IMAGE_PROMPT_RULE_REALISTIC_PORTRAIT,
+    _IMAGE_PROMPT_RULE_LIFE_LANDSCAPE,
+    _IMAGE_PROMPT_MOTION_TAIL,
+    _IMAGE_PROMPT_RULE_SD15,
+    _IMAGE_PROMPT_RULE_MYSTERY_PORTRAIT,
+    _IMAGE_PROMPT_RULE_MYSTERY_LANDSCAPE,
 
-注意：样例仅 2 段且 word_count 仅为字段示意；实际段数须 ≥【字数预算】段数下限，word_count 须为 narration 真实字数且 ≥ 写作目标，禁止照抄样例短句长度。"""
-
-_STORYBOARD_JSON_EXAMPLE_COMPACT = """{
-  "title": "标题示例",
-  "visual_style": "画风定调一句话",
-  "segments": [
-    {"segment_index": 1, "text": "（本段口播，须写满该段字数下限）", "visual_brief": "画面主旨", "visual_mode": "static_motion"},
-    {"segment_index": 2, "text": "（第二段同样写满预算）", "visual_brief": "画面主旨", "visual_mode": "static_motion"}
-  ]
-}
-
-注意：样例仅 2 段示意字段结构；实际段数须 ≥【字数预算】段数下限，各段 text 须写满，禁止照抄样例短句。"""
-
-_NARRATION_ONLY_JSON_EXAMPLE = """{
-  "title": "标题示例",
-  "narration": "（连贯口播全文，须达到【字数预算】写作目标，用句号自然断句）",
-  "word_count": 1282,
-  "visual_style": "画风定调一句话（画风+主色调+跨镜统一元素）"
-}
-
-注意：不要输出 segments 字段；word_count 须为 narration 真实字数且 ≥ 写作目标。"""
-
-_VISUAL_BRIEF_JSON_EXAMPLE = """{
-  "visual_style": "画风定调一句话（可与输入一致或微调）",
-  "segments": [
-    {"segment_index": 1, "visual_brief": "画面主旨与关键视觉（80-150字）（写实场景）", "visual_mode": "static_motion"},
-    {"segment_index": 2, "visual_brief": "画面主旨（结构示意图）", "visual_mode": "static_motion"}
-  ]
-}
-
-注意：segments 须覆盖输入的每一段，segment_index 一一对应；不要修改各段 text。"""
-
-_IMAGE_PROMPT_JSON_EXAMPLE_TEXT = (
-    "古老的青铜丹炉占据画面左侧，炉内青绿色火焰与绿烟向上弥漫，炉壁锈迹与烟熏清晰；"
-    "前景散落赤色丹药与药渣，背景昏暗炼丹房内木质药柜虚化。"
-    "清宫写实风格，暗调青灰主色，炉口底光为主、侧面炭火余烬为辅。"
-    "极近景特写，丹炉占左侧三分之二，右侧丹药清晰，略低角度。"
-    "金属、火焰与烟雾质感真实，细节层次清楚。"
+    _NARRATION_VOICE_RULE,
+    _MATERIAL_NARRATION_LENGTH_RULE,
+    _MYSTERY_NARRATION_VOICE_RULE,
+    _MYSTERY_NARRATION_LENGTH_RULE,
+    _MYSTERY_STRUCTURE_RULE,
+    _LIFE_NARRATION_VOICE_RULE,
+    _LIFE_NARRATION_LENGTH_RULE,
+    _LIFE_EXPERIENCE_STRUCTURE_RULE,
+    _NARRATION_ANTI_MEMOIR_RULE,
+    _NARRATION_NO_JSON_RULE,
+    _NARRATION_ANTI_REPETITION_RULE,
+    _SCIENCE_STRUCTURE_RULE,
+    _SD15_PROMPT_EN_RULE,
 )
-
-_IMAGE_PROMPTS_JSON_EXAMPLE = """{
-  "image_prompts": [
-    {
-      "segment_index": 1,
-      "image_prompt": \"""" + _IMAGE_PROMPT_JSON_EXAMPLE_TEXT + """\",
-      "motion_prompt": "炉口青烟缓缓上升，火光轻闪，镜头极缓推进",
-      "sd15_prompt_en": "cross-section diagram of lung alveoli, air sacs highlighted, medical illustration"
-    }
-  ]
-}"""
-
-_IMAGE_PROMPTS_JSON_EXAMPLE_NO_SD15 = """{
-  "image_prompts": [
-    {
-      "segment_index": 1,
-      "image_prompt": \"""" + _IMAGE_PROMPT_JSON_EXAMPLE_TEXT + """\",
-      "motion_prompt": "炉口青烟缓缓上升，火光轻闪，镜头极缓推进"
-    }
-  ]
-}"""
-
-_MATERIAL_SCRIPT_JSON_EXAMPLE = """{
-  "title": "标题示例",
-  "narration": "（各段 text 按序拼接的全文，须达到【字数预算】写作目标）",
-  "segments": [
-    {"segment_index": 1, "text": "（本段口播，须写满该段字数下限，用具体细节撑开）"},
-    {"segment_index": 2, "text": "（第二段同样写满预算，补比喻或步骤后再接下一段）"}
-  ]
-}"""
 
 
 def _json_output_clause(example: str) -> str:
@@ -139,277 +79,6 @@ def _json_output_clause(example: str) -> str:
         "JSON 输出样例（字段名须一致，内容为示意）：\n"
         f"{example}\n"
     )
-
-_VISUAL_BRIEF_RULE = (
-    "各段含segment_index,text,visual_brief,visual_mode=static_motion；"
-    "各段text按顺序拼接须与narration全文一致。"
-    "visual_brief为该镜画面描述（80-150字）：写清视觉主旨、关键动作或对比关系、"
-    "场景类型与情绪，帮助后续扩写文生图提示词；不写镜头焦距、光线方向、材质参数等细节。"
-    "visual_brief末尾须用括号标注SD15画面类型（五选一）："
-    "（写实场景）/（结构示意图）/（对比图）/（线稿解剖图）/（微观分子图）。"
-    "另须输出visual_style：全片画风定调一句话（画风+主色调+跨镜统一元素如道具造型）。"
-)
-
-_IMAGE_PROMPT_QUALITY_RULE = (
-    "⑥质量要求：写可见的材质、纹理、光影过渡与层次是否清楚，画面信息是否充实（如「高视觉密度」「细节层次清楚」）；"
-    "禁止写4K/8K/分辨率/像素/超高清等规格套话（出图尺寸由系统控制）；"
-    "风格形容词仅可在③风格维使用，勿在⑥重复堆砌；"
-    "禁止空话凑字数（如「极致细节」「大师之作」）。"
-)
-
-_IMAGE_PROMPT_FORMAT_RULE = (
-    "输出为一段连贯中文，不要用「主体：」「场景/环境：」等维度标签；"
-    "六维按自然语序融入，围绕一个视觉焦点展开。"
-)
-
-_IMAGE_PROMPT_DIMENSIONS_FULL = (
-    "篇幅按画面复杂度充分展开（目标约180字，至少150字），不凑字数。"
-    + _IMAGE_PROMPT_FORMAT_RULE
-    + "须逐层写清可见细节，禁止空泛形容词："
-    + "①主体（主要主体、姿态、关键动作或互动）；"
-    + "②场景/环境（前景/中景/背景、空间纵深）；"
-    + "③视觉风格（严格遵循 visual_style 全片定调）；"
-    + "④光照（主光与辅光方向、明暗氛围）；"
-    + "⑤构图（景别、主体位置与占比、相机角度、留白）；"
-    + _IMAGE_PROMPT_QUALITY_RULE
-    + "另遵守语义边界：仅表达本段 text 与 visual_brief，禁止提前画后续段落内容。"
-    + "禁止生成世界地图、地球仪、任何包含国界线的地图元素。"
-)
-
-_IMAGE_PROMPT_DIMENSIONS_COMPACT = (
-    "篇幅精简、能说明白即可，但须逐点覆盖六维："
-    + "①主体；②场景/环境；③视觉风格；④光照；⑤构图；⑥质量要求；"
-    + _IMAGE_PROMPT_FORMAT_RULE
-    + _IMAGE_PROMPT_QUALITY_RULE
-    + "并遵守语义边界（仅本段内容）。"
-    + "禁止生成世界地图、地球仪、任何包含国界线的地图元素。"
-    + "实际 SD1.5 出图以 sd15_prompt_en 为准。"
-    + "image_prompt 和 sd15_prompt_en 都必须使用中文和英文分别写，禁止 image_prompt 出现英文。"
-)
-
-_IMAGE_PROMPT_RULE_SCIENCE_PORTRAIT = (
-    "image_prompt须严格遵循visual_style画风定调，全片统一：卡通科普插画风，"
-    "明快蓝橙主色调，轮廓清晰、色块分明，偏科普示意图质感；"
-    "非绘本水彩、非电影级写实摄影，适配9:16竖屏构图。"
-    + _IMAGE_PROMPT_DIMENSIONS_FULL
-)
-
-_IMAGE_PROMPT_RULE_SCIENCE_LANDSCAPE = _IMAGE_PROMPT_RULE_SCIENCE_PORTRAIT.replace(
-    "适配9:16竖屏构图", "适配16:9横屏构图"
-)
-
-_IMAGE_PROMPT_RULE_REALISTIC_PORTRAIT = (
-    "image_prompt须严格遵循visual_style画风定调，全片统一：电影级写实视觉，布光考究、"
-    "景深自然、材质细节真实可辨，色彩明快有层次，适配9:16竖屏构图。"
-    + _IMAGE_PROMPT_DIMENSIONS_FULL
-)
-
-_IMAGE_PROMPT_RULE_LIFE_LANDSCAPE = (
-    "image_prompt须严格遵循visual_style画风定调，全片统一：生活Vlog质感写实画面，"
-    "自然光或室内暖光、浅景深、色彩真实不过度滤镜，适配16:9横屏构图。"
-    + _IMAGE_PROMPT_DIMENSIONS_FULL.replace(
-        "禁止提前画后续段落内容。",
-        "禁止可读大段文字/水印/品牌Logo。",
-    )
-)
-
-_IMAGE_PROMPT_MOTION_TAIL = (
-    "【语言要求】motion_prompt 必须使用中文撰写，禁止英文或中英混合。"
-    "motion_prompt 用 15-80 字描述本镜画面中正在发生的具体动态，"
-    "必须紧扣 image_prompt 中已出现的主体与场景，写清楚「谁在做什么、环境发生了什么变化」。"
-    "写法要点："
-    "1) 先从 image_prompt 中找出画面主体（物体、场景元素），描述它在 10 秒内的具体动作或状态变化；"
-    "2) 若主体为人物或动物，须写情绪或神态变化（如神情从疑惑转为恍然、眼神中透出警觉）；"
-    "3) 可补充 1 个环境元素的联动变化（如主体运动带动的烟、水、光影反应）；"
-    "4) 动态须有方向、速度、幅度等可感知细节，不要只写「轻微晃动」这类模糊词；"
-    "5) 末尾须说明哪些元素保持稳定不变（如「画面主体位置不变」「人物面部与服装保持一致」），防止模型在动态中丢失一致性。"
-    "镜头仅可极缓推近/拉远/平移，幅度很小。"
-    "禁止：使用抽象特效词（光效、光晕、粒子、能量、光圈、脉动、闪电、闪烁、图标、UI元素等），必须写画面中真实可见物体的物理动态；"
-    "禁止：套话「镜头固定，主体稳定，画面平滑」及同义填空。"
-    "正例：丹炉炉盖被蒸汽顶起又落下，缝隙中白烟成股涌出向右飘散，丹炉整体位置与造型保持不变。"
-    "正例：烧杯中蓝色液体从底部开始冒泡，气泡逐渐密集并带动液面缓慢上涌，烧杯与桌面保持静止。"
-    "正例：古书书页被风从右向左逐页翻起，书角翘起后缓缓回落，书脊与桌面接触位置不变。"
-    "正例：沙盘上细沙从高处沿沟壑缓缓滑落，堆积的扇面逐渐扩大，沙盘边框固定不动。"
-    "正例：老者眉头微蹙，目光缓缓移向窗外，神情从沉思转为凝重，面部特征与服装保持一致。"
-    "反例：小偷手指微微弯曲。（描述人物肢体动作）"
-    "反例：镜头固定，主体稳定，画面平滑。（套话填空，未说明具体动态）"
-    "反例：图标轻微闪烁，能量光圈脉动。（抽象特效词）"
-)
-
-
-_IMAGE_PROMPT_RULE_SD15 = _IMAGE_PROMPT_DIMENSIONS_COMPACT
-
-_IMAGE_PROMPT_RULE_MYSTERY_PORTRAIT = (
-    "每段image_prompt须严格遵循visual_style画风定调，全片统一：电影级写实历史再现，"
-    "光影考究、暗部有层次、低饱和古风色调，适配9:16竖屏构图；"
-    "禁止卡通/绘本/扁平插画风。"
-    + _IMAGE_PROMPT_DIMENSIONS_FULL.replace(
-        "禁止提前画后续段落内容。",
-        "禁止可读文字、奏折、诏书等文字元素。",
-    )
-)
-
-_IMAGE_PROMPT_RULE_MYSTERY_LANDSCAPE = _IMAGE_PROMPT_RULE_MYSTERY_PORTRAIT.replace(
-    "适配9:16竖屏构图", "适配16:9横屏构图"
-)
-
-
-def _image_prompt_rule(*, orientation: str, content_style: str, sd15_mode: bool = False) -> str:
-    head = (
-        "根据每段口播text、visual_brief与全片visual_style，扩写为文生图用的image_prompt"
-        "和video用的motion_prompt。"
-    )
-    if sd15_mode:
-        return head + _IMAGE_PROMPT_RULE_SD15 + _IMAGE_PROMPT_MOTION_TAIL
-    if content_style == CONTENT_STYLE_HISTORICAL_MYSTERY:
-        body = _IMAGE_PROMPT_RULE_MYSTERY_LANDSCAPE if orientation == ORIENTATION_LANDSCAPE else _IMAGE_PROMPT_RULE_MYSTERY_PORTRAIT
-        return head + body + _IMAGE_PROMPT_MOTION_TAIL
-    if content_style == CONTENT_STYLE_LIFE_EXPERIENCE:
-        body = _IMAGE_PROMPT_RULE_LIFE_LANDSCAPE
-    elif content_style == CONTENT_STYLE_SCIENCE_CHILD:
-        body = (
-            _IMAGE_PROMPT_RULE_SCIENCE_LANDSCAPE
-            if orientation == ORIENTATION_LANDSCAPE
-            else _IMAGE_PROMPT_RULE_SCIENCE_PORTRAIT
-        )
-    elif orientation == ORIENTATION_LANDSCAPE:
-        body = _IMAGE_PROMPT_RULE_LIFE_LANDSCAPE.replace(
-            "生活Vlog质感写实画面",
-            "电影级写实视觉",
-        )
-    else:
-        body = _IMAGE_PROMPT_RULE_REALISTIC_PORTRAIT
-    return head + body + _IMAGE_PROMPT_MOTION_TAIL
-
-
-_STEP_LABELS = {
-    "storyboard": "口播分镜",
-    "narration": "口播文案",
-    "visual_brief": "分镜画面概述",
-    "image_prompts": "文生图提示词",
-    "material_script": "口播文案",
-    "title_optimize": "标题优化",
-    "video_description": "视频介绍",
-}
-
-_NARRATION_VOICE_RULE = (
-    "口播口吻须像一个小孩子在讲给同伴听：略带稚嫩、天真，有一点童趣；"
-    "可用「哇」「你看」「原来是这样呀」等儿童感感叹，句子偏短、好懂；"
-    "偶尔用拟声词或简单比喻（像积木、像气球那样），但不要装婴儿语、不要刻意错别字；"
-    "科普事实须准确，童趣服务于理解，不牺牲科学内容。"
-)
-
-_TECH_SCIENCE_VOICE_RULE = (
-    "口播口吻须像B站硬核科技UP主：客观、冷静、信息密度高；"
-    "优先用「你可能不知道」「很多人以为…但…」「关键在这个数据…」等分析式表达；"
-    "句子偏简洁，每句都有信息量，不废话不卖萌；"
-    "技术概念须准确，用比喻简化但不失真。"
-)
-
-_SEGMENT_LAYER_HINT = (
-    "三层每层只用一句短话（各 10～25 字），单段总长须遵守单镜字数上限；"
-    "总字数不足时增加 segments 段数，总字数超标时删例子/删并列知识点，禁止把多句堆进同一段。"
-)
-
-_MATERIAL_NARRATION_LENGTH_RULE = (
-    "【口播字数】每段口播须含三层——"
-    "①童趣感叹或「你看」式互动；②一个准确科普点；③比喻/拟声/生活联想。"
-    "禁止整段仅一句短感叹（如「哇，好厉害呀」）。"
-    f"{_SEGMENT_LAYER_HINT}"
-    "【生成顺序】先逐段写 segments，再原样拼接为 narration，最后统计 word_count；"
-    "不足下限可当场扩写，超过上限须当场删繁就简，禁止先输出再指望后处理。"
-    "【输出前自检】逐段核对：每段 text 是否含三层、是否非空、是否未超单镜上限；"
-    "各段 text 字数之和是否落在验收区间内（超标与不足均不合格）；"
-    "word_count 是否等于 narration 实际字数（不含空格换行）；"
-    "narration 与 segments 按序拼接是否完全一致，不一致须重写。"
-)
-
-_MYSTERY_NARRATION_VOICE_RULE = (
-    "口播口吻须沉稳、有磁性，像一个深夜讲述历史秘闻的说书人。"
-    "语速偏慢，句与句之间有空气感。"
-    "开头几句要有钩子感，能立刻抓住注意力。"
-    "中间不时抛出反问——「但真的这么简单吗？」「那他为什么要这么做？」——引导观众跟着思考。"
-    "语气克制，不煽情不夸张，用陈述事实的方式讲悬疑感。"
-)
-
-_MYSTERY_NARRATION_LENGTH_RULE = (
-    "【口播字数】每段口播须含三层——"
-    "①一个历史事实或背景细节；②一个「但」字转折（矛盾/疑点/反常）；③一个反问或悬念收尾。"
-    "禁止整段仅一句概括。"
-    f"{_SEGMENT_LAYER_HINT}"
-    "【生成顺序】先逐段写 segments，再原样拼接为 narration，最后统计 word_count；"
-    "不足下限可当场扩写，超过上限须当场删繁就简，禁止先输出再指望后处理。"
-)
-
-_MYSTERY_STRUCTURE_RULE = (
-    "【结构规范】须依次包含以下五部分：\n"
-    "1. 开场钩子（一段话抓住好奇心，直接抛出核心谜案）\n"
-    "2. 背景铺陈（人物关系、时间线、历史背景）\n"
-    "3. 谜案核心（关键细节、冲突点、反常之处）\n"
-    "4. 推理与分析（多角度列举各种可能，每段分析一个方向）\n"
-    "5. 收束与悬停（用一段话总结谜案的矛盾之处，然后留一句让观众去琢磨的话收尾，禁止以问句突然结束）\n"
-    "禁止用倒叙手法。讲完一个完整故事，最后必须有一段收束语，不能戛然而止。"
-)
-
-_LIFE_NARRATION_VOICE_RULE = (
-    "口播口吻须像B站生活避坑/经验科普讲解：客观、口语化、像在帮观众纠错；"
-    "优先用「很多人以为…其实…」「正确做法是…」「常见误区是…」；"
-    "禁止整篇伪装成某一职业的亲历者（矿工、医生、司机等），禁止编造「我当时在一线」类故事。"
-)
-
-_LIFE_NARRATION_LENGTH_RULE = (
-    "【口播字数】每段口播须含三层——"
-    "①常见误区或错误做法；②原因/风险（为什么错）；③正确步骤或可操作结论。"
-    "禁止整段仅一句空泛感叹；禁止用长篇第一人称回忆录凑字数。"
-    f"{_SEGMENT_LAYER_HINT}"
-    "【生成顺序】先逐段写 segments，再原样拼接为 narration，最后统计 word_count；"
-    "不足下限可当场扩写，超过上限须当场删繁就简，禁止先输出再指望后处理。"
-)
-
-_LIFE_EXPERIENCE_STRUCTURE_RULE = (
-    "本片为生活避坑/经验科普：只围绕一个明确主题（避坑/流程/工具/选择），"
-    "禁止多点罗列成「十条技巧」清单，禁止抖音式伪亲历回忆录。"
-    "开头30秒内点明「大家常踩的坑是什么、这条视频纠正什么误区」，"
-    "禁止「我当XX时」「跟班长在XX干活」等编造一线故事开场。"
-    "正文按「误区→为什么错→正确做法→注意事项」展开；"
-    "举例最多1句泛化案例（如「有人曾…差点…」），不得通篇第一人称扮演从业者。"
-    "结尾给1条可行动建议 + 轻量互动，禁止「我一生都忘不了」类煽情收束。"
-)
-
-# 全风格口播禁用：伪亲历/职业角色扮演（生活区误区视频高发）
-_NARRATION_ANTI_MEMOIR_RULE = (
-    "【禁止伪亲历体】不得出现：「我当…时」「我在…干活/下井/上班」「老XX教我」"
-    "「班长拉着我跑」「我条件反射」「我后来查资料才知道」「评论区聊聊你平时怎么做」"
-    "等编造第一人称从业经历或互动话术；"
-    "不得扮演矿工、医护、司机等具体职业身份，不得写成暗访/卧底/一线亲历报道；"
-    "产业、科技类须客观第三人称科普，用「很多人/业内/数据显示」表述即可。"
-)
-
-_NARRATION_NO_JSON_RULE = (
-    "【禁止JSON混入】narration 必须是纯口播文本，禁止出现 JSON 花括号 {}、"
-    "禁止出现 {\"text\":...} 等结构化片段；"
-    "后端会按标点自动切分分镜，不要在口播里写分镜标签。"
-)
-
-_NARRATION_ANTI_REPETITION_RULE = (
-    "【禁止复读】同一比喻/类比、同一组数字对比、同一操作步骤全文只讲一次；"
-    "相邻两段不得复述刚讲过的句子或意象；"
-    "「你看」全文最多 3～4 次，禁止连续两段都以「你看」起句；"
-    "段数多时后段换用「其实呀」「关键是」「想一想」等不同引子，"
-    "禁止每段机械套用相同三层模板。"
-)
-
-_SCIENCE_STRUCTURE_RULE = (
-    "【结构规范】须依次包含以下四部分：\n"
-    "1. 开场钩子（3 秒内抛出反常识现象或「咦，这是怎么回事呀？」式疑问，禁止「大家好」开场）\n"
-    "2. 背景铺垫（是什么、在哪里、和我们有什么关系，用孩子能懂的话讲清）\n"
-    "3. 机制拆解（核心原理、因果链条、关键对比或简单实验，只讲一层不贪多）\n"
-    "4. 收束与回味（一句童趣总结，可留轻量思考，禁止清单式连读多知识点）\n"
-    "长稿须在同一主题下加深细节与比喻，禁止为凑时长新增并列知识点或换题；"
-    "段数多时每段只推进一小步，不要每段开一个全新话题；"
-    "禁止用不同措辞重复讲同一机制（如电波与地震波速度对比只讲一次）。"
-    "禁止倒叙；讲完一个完整因果，最后一句可轻量引导互动。"
-)
 
 
 def _format_segment_target_sec(target: float) -> str | float:
@@ -724,8 +393,8 @@ def _title_rule(title: str, max_title: int) -> tuple[str, str]:
     )
 
 
-def _storyboard_segment_rule(target: float, profile_style: str = "") -> str:
-    types = _visual_brief_types(profile_style) if profile_style else "（写实场景）/（结构示意图）/（对比图）/（线稿解剖图）/（微观分子图）"
+def _storyboard_segment_rule(target: float, profile_style: str) -> str:
+    types = _visual_brief_types(profile_style)
     common = (
         "segments为分镜数组；"
         "各段含segment_index,text,visual_brief,visual_mode=static_motion；"
@@ -755,7 +424,15 @@ def _storyboard_segment_rule(target: float, profile_style: str = "") -> str:
 def _prompt_step(step: str, system: str, user: str) -> dict[str, str]:
     return {
         "step": step,
-        "label": _STEP_LABELS.get(step, step),
+        "label": {
+                "storyboard": "口播分镜",
+                "narration": "口播文案",
+                "visual_brief": "分镜画面概述",
+                "image_prompts": "文生图提示词",
+                "material_script": "口播文案",
+                "title_optimize": "标题优化",
+                "video_description": "视频介绍",
+            }.get(step, step),
         "system": system,
         "user": user,
     }
@@ -808,6 +485,47 @@ def _narration_only_length_budget(
         "②word_count 等于 narration 实际字数；"
         "③口播无伪亲历/第一人称从业叙事。"
     )
+
+
+def _image_prompt_rule(*, orientation: str, content_style: str, sd15_mode: bool = False) -> str:
+    head = (
+        "根据每段口播text、visual_brief与全片visual_style，扩写为文生图用的image_prompt"
+        "和video用的motion_prompt。"
+    )
+    if sd15_mode:
+        return head + _IMAGE_PROMPT_RULE_SD15 + _IMAGE_PROMPT_MOTION_TAIL
+    if content_style == CONTENT_STYLE_HISTORICAL_MYSTERY:
+        body = _IMAGE_PROMPT_RULE_MYSTERY_LANDSCAPE if orientation == ORIENTATION_LANDSCAPE else _IMAGE_PROMPT_RULE_MYSTERY_PORTRAIT
+        return head + body + _IMAGE_PROMPT_MOTION_TAIL
+    if content_style == CONTENT_STYLE_LIFE_EXPERIENCE:
+        body = _IMAGE_PROMPT_RULE_LIFE_LANDSCAPE
+    elif content_style == CONTENT_STYLE_SCIENCE_CHILD:
+        body = (
+            _IMAGE_PROMPT_RULE_SCIENCE_LANDSCAPE
+            if orientation == ORIENTATION_LANDSCAPE
+            else _IMAGE_PROMPT_RULE_SCIENCE_PORTRAIT
+        )
+    elif orientation == ORIENTATION_LANDSCAPE:
+        body = _IMAGE_PROMPT_RULE_LIFE_LANDSCAPE.replace(
+            "生活Vlog质感写实画面",
+            "电影级写实视觉",
+        )
+    else:
+        body = _IMAGE_PROMPT_RULE_REALISTIC_PORTRAIT
+    return head + body + _IMAGE_PROMPT_MOTION_TAIL
+
+
+def _format_visual_brief_segments_for_prompt(segments: list[dict]) -> str:
+    ordered = sorted(
+        segments,
+        key=lambda seg: int(seg.get("segment_index") or seg.get("index") or 0),
+    )
+    lines: list[str] = []
+    for seg in ordered:
+        idx = seg.get("segment_index")
+        text = str(seg.get("text") or "")
+        lines.append(f"segment {idx}: text={text!r}")
+    return "\n".join(lines)
 
 
 def build_narration_prompts(
@@ -870,19 +588,6 @@ def build_narration_prompts(
     if feedback:
         user += f"\n\n上次不合格：{feedback}。请按要求重写。"
     return _prompt_step("narration", system, user)
-
-
-def _format_visual_brief_segments_for_prompt(segments: list[dict]) -> str:
-    ordered = sorted(
-        segments,
-        key=lambda seg: int(seg.get("segment_index") or seg.get("index") or 0),
-    )
-    lines: list[str] = []
-    for seg in ordered:
-        idx = seg.get("segment_index")
-        text = str(seg.get("text") or "")
-        lines.append(f"segment {idx}: text={text!r}")
-    return "\n".join(lines)
 
 
 def build_visual_brief_prompts(
@@ -966,12 +671,11 @@ def build_board_prompts(
         else default_narration_target_words(settings)
     )
     narration_word_min, narration_word_max = _narration_word_range(narration_word_target)
-    narration_hard_min = narration_word_min
     title_rule, title_user_prefix = _title_rule(title, max_title)
     length_rule = (
         f"口播总目标 {narration_word_target} 字；{_writing_target_clause(narration_word_target)}；"
-        f"验收区间 {narration_hard_min}-{narration_word_max} 字（不含空格换行）；"
-        f"低于 {narration_hard_min} 字或高于 {narration_word_max} 字视为不合格；"
+        f"验收区间 {narration_word_min}-{narration_word_max} 字（不含空格换行）；"
+        f"低于 {narration_word_min} 字或高于 {narration_word_max} 字视为不合格；"
         f"{_narration_length_rule(profile_style)}"
     )
     length_system = _storyboard_length_system_clause(
@@ -1061,22 +765,6 @@ def build_board_prompts(
 
 # 兼容旧名
 build_storyboard_prompts = build_board_prompts
-
-
-_SD15_PROMPT_EN_RULE = (
-    "同时为每段输出 sd15_prompt_en：专为 Stable Diffusion 1.5 优化的英文提示词（20～40 词），"
-    "格式为「[核心主体] [动作/状态], [场景类型], [一个关键视觉特征]」；"
-    "先读 visual_brief 末尾的画面类型标签确定主体方向，再提炼主体；"
-    "只写一个核心主体，禁止并列堆砌多个名词；"
-    "禁止写 lora 标签、style 词和背景后缀（系统自动追加）；"
-    "science 类禁止 person/face/head 等人物词。\n"
-    "sd15_prompt_en 正确示例：\n"
-    "  写实场景：\"stainless steel pot on stove, close-up surface detail, kitchen counter\"\n"
-    "  结构示意图：\"cross-section diagram of battery cell, labeled anode cathode layers\"\n"
-    "  对比图：\"healthy lung tissue vs damaged lung, side by side, medical illustration\"\n"
-    "  线稿解剖图：\"line art diagram of human lung anatomy, labeled air sacs, white background\"\n"
-    "  微观分子图：\"carbon monoxide molecules passing through wet fabric mesh, glowing science\"\n"
-)
 
 
 def build_image_prompts_prompts(
@@ -1170,14 +858,12 @@ def build_material_script_prompts(
     timeline = _resolve_video_timeline(video_timeline, script=script, chars_per_sec=chars_per_sec)
     if timeline:
         narration_word_min, narration_word_max = narration_range_for_timeline(timeline)
-        narration_hard_min = narration_word_min
         narration_word_target = (narration_word_min + narration_word_max) // 2
     else:
         narration_word_target = (
             narration_target_words if narration_target_words is not None else 800
         )
         narration_word_min, narration_word_max = _narration_word_range(narration_word_target)
-        narration_hard_min = narration_word_min
     title_rule, title_user_prefix = _title_rule(title, max_title)
     if timeline:
         segment_rule = (
@@ -1209,8 +895,8 @@ def build_material_script_prompts(
         )
         length_rule = (
             f"narration 总目标 {narration_word_target} 字；{_writing_target_clause(narration_word_target)}；"
-            f"验收区间 {narration_hard_min}-{narration_word_max} 字（不含空格换行）；"
-            f"低于 {narration_hard_min} 字或高于 {narration_word_max} 字视为不合格；"
+            f"验收区间 {narration_word_min}-{narration_word_max} 字（不含空格换行）；"
+            f"低于 {narration_word_min} 字或高于 {narration_word_max} 字视为不合格；"
             f"{_MATERIAL_NARRATION_LENGTH_RULE}"
         )
     system = (

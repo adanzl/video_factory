@@ -42,11 +42,6 @@ const routes: RouteRecordRaw[] = [
     component: () => import("@/views/daily_story/PageDailyStory.vue"),
   },
   {
-    path: "/daily-story/generate",
-    name: "DailyStoryGenerate",
-    component: () => import("@/views/daily_story/PageDailyStoryGenerate.vue"),
-  },
-  {
     path: "/config",
     name: "Config",
     component: () => import("@/views/config/PageConfig.vue"),
