@@ -62,7 +62,7 @@ def strip_tts_lead_in(
     if not words:
         return _strip_lead_in_fallback(path, lead_in, rate)
 
-    logger.info(
+    logger.debug(
         "tts lead-in check: lead_in=%r words_count=%s first_10_words=%s",
         lead_in,
         len(words),
