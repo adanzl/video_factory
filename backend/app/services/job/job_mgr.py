@@ -804,7 +804,7 @@ class JobMgr:
             raise ValueError("故事数据中缺少 dialogue 字段或格式不正确")
         for i, item in enumerate(dialogue):
             if not isinstance(item, dict) or "speaker" not in item or "line" not in item:
-                raise ValueError(f"对话第 {i + 1} 条数据格式异常: {item}")
+                logger.warning("对话第 %d 条数据格式异常: %s", i + 1, item)
         system, user = build_daily_script_prompts(story_content)
         return [{"step": "daily_script", "system": system, "user": user}]
 
