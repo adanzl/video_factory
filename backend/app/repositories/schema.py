@@ -177,6 +177,7 @@ def apply_schema(conn: sqlite3.Connection) -> None:
     _ensure_column(conn, "video_job", "info", "TEXT")
     _ensure_column(conn, "video_segment", "motion_prompt", "TEXT")
     _ensure_column(conn, "video_segment", "sd15_prompt_en", "TEXT")
+    _ensure_column(conn, "video_segment", "dialogue", "TEXT")
 
 
 _DAILY_STORY_DDL = """
