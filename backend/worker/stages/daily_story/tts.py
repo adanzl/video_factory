@@ -72,6 +72,8 @@ def _synthesize_segment_dialogue(
     ext: str,
     speaker_configs: dict[str, dict],
     phrase_gap_sec: float,
+    *,
+    job_id: int | None = None,
 ) -> _SegResult:
     """合成单个分镜的多角色对话，返回结果。可在线程池中并发执行。"""
     from app.services.tts.tts_ali import _run_tts_task
@@ -179,6 +181,7 @@ class DailyTtsStage(StageExecutor):
     """
 
     name = "tts"
+    _job_id: int | None = None
 
     def run(self, ctx: JobContext) -> None:
         settings = get_settings()
@@ -197,6 +200,7 @@ class DailyTtsStage(StageExecutor):
         persist_configs = {**speaker_configs, "phrase_gap_sec": phrase_gap_sec}
         self._persist_speaker_configs(job["id"], persist_configs)
 
+        self._job_id = ctx.job["id"]
         result = self._synthesize_multi_speaker(
             segments,
             ctx.media_dir / "audio",
@@ -298,6 +302,7 @@ class DailyTtsStage(StageExecutor):
         def _run_seg(seg: dict) -> _SegResult:
             return _synthesize_segment_dialogue(
                 seg, clips_dir, ext, speaker_configs, phrase_gap_sec,
+                job_id=self._job_id,
             )
 
         seg_results: list[_SegResult] = []
