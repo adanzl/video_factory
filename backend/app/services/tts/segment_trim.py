@@ -68,17 +68,7 @@ def plan_tts_segment_trim(
     if not words or duration_ms <= 0:
         return TrimPlan(leading_ms=0, trailing_ms=0)
 
-    leading_ms = 0
-
-    trailing_ms = 0
-    tail_gap = duration_ms - words[-1].end_time_ms
-    if tail_gap >= min_trailing_ms:
-        trailing_ms = max(0, tail_gap - tail_pad_ms)
-
-    keep_ms = 120
-    max_trim = max(0, duration_ms - keep_ms)
-    trailing_ms = min(trailing_ms, max_trim)
-    return TrimPlan(leading_ms=leading_ms, trailing_ms=trailing_ms)
+    return TrimPlan(leading_ms=0, trailing_ms=0)
 
 
 def _trim_audio(path: Path, plan: TrimPlan) -> None:
