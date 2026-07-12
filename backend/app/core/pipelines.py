@@ -10,16 +10,13 @@ from worker.stages.standard.host import HostStage
 from worker.stages.standard.merge import MergeStage
 from worker.stages.standard.script import ScriptStage
 from worker.stages.standard.segment import SegmentStage
-from worker.stages.standard.title import TitleStage
-
 PIPELINE_STANDARD = "standard"
 PIPELINE_MATERIAL = "material"
-PIPELINE_DAILY_STORY = "daily_story"
+PIPELINE_DAILY_STORY = "chat"
 
 from app.utils.stage_names import normalize_stage
 
 STANDARD_CHAIN: tuple[type[StageExecutor], ...] = (
-    TitleStage,
     ScriptStage,
     TTSStage,
     SegmentStage,
@@ -46,9 +43,11 @@ def _material_chain() -> tuple[type[StageExecutor], ...]:
 
 
 def _daily_story_chain() -> tuple[type[StageExecutor], ...]:
+    from worker.stages.daily_story.dialogue import DialogueStage
     from worker.stages.daily_story.script import DailyScriptStage
 
     return (
+        DialogueStage,
         DailyScriptStage,
         TTSStage,
         SegmentStage,

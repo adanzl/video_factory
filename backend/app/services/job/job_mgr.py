@@ -992,6 +992,16 @@ class JobMgr:
             lambda: run_prepare(job_id, to_end=to_end),
         )
 
+    def run_dialogue(self, job_id: int, *, to_end: bool = False) -> dict:
+        """对话预览。实现：worker/loop.run_dialogue → worker/stages/daily_story/dialogue.py"""
+        from worker.loop import run_dialogue
+
+        return self._run_in_background(
+            job_id,
+            "dialogue",
+            lambda: run_dialogue(job_id, to_end=to_end),
+        )
+
     def run_publish(self, job_id: int, *, to_end: bool = False) -> dict:
         """发布。实现：worker/loop.run_publish → worker/stages/common/publish.py"""
         from worker.loop import run_publish

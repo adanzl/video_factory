@@ -59,9 +59,10 @@ class DailyStoryMgr:
                 conn,
                 title,
                 skip_publish=skip_publish,
-                stage="script",
-                status="pending",
-                pipeline="daily_story",
+                stage="dialogue",
+                status="idle",
+                pipeline="chat",
+                material_id=story_id,
                 info=merge_job_info(None, daily_story_id=story_id),
             )
             repo_job_log.append_log(
