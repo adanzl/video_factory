@@ -247,6 +247,10 @@ def _run_tts_task(
     audio = b"".join(audio_chunks)
     if not audio:
         raise RuntimeError("TTS 返回空音频")
+    logger.info(
+        "tts result: audio=%d bytes words=%d text_chars=%d voice=%s",
+        len(audio), len(raw_words), len(text), voice,
+    )
     return _SynthesisResult(audio=audio, words=raw_words, usage=latest_usage)
 
 
