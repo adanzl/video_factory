@@ -101,7 +101,10 @@ DAILY_SCRIPT_SYSTEM_PROMPT = """\
       "duration_seconds": 时长（秒）,
       "shot_type": "全景/中景/特写",
       "visual_description": "画面描述：场景背景+角色位置+关键动作+关键道具（200字以内）",
-      "dialogue_lines": ["台词1", "台词2", ...],
+      "dialogue": [
+        {"speaker": "昭昭", "text": "台词1"},
+        {"speaker": "灿灿", "text": "台词2"}
+      ],
       "img2img_prompt": "图生图提示词（中文，500字以内，必须包含角色外貌关键词和风格关键词）"
     }
   ]
@@ -122,6 +125,7 @@ DAILY_SCRIPT_SYSTEM_PROMPT = """\
 - visual_description只描述可看见的画面元素
 - 每个镜头的图生图提示词必须完整自洽，不依赖其他镜头的信息
 - 台词原文照抄，不要修改措辞
+- 每个镜头的 dialogue 须带上 speaker 角色名，text 为该镜头对应的原剧本台词，禁止修改措辞
 """
 
 DAILY_SCRIPT_USER_TEMPLATE = """\
