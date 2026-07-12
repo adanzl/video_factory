@@ -31,7 +31,7 @@
       <el-table-column prop="title" label="标题" min-width="200" show-overflow-tooltip />
       <el-table-column label="类型" width="80" align="center">
         <template #default="{ row }">
-          <el-tag size="small" :type="row.pipeline === 'material' ? 'warning' : 'primary'">{{ pipelineLabel(row.pipeline) }}</el-tag>
+          <el-tag size="small" :type="row.pipeline === PIPELINE_MATERIAL ? 'warning' : row.pipeline === PIPELINE_CHAT ? 'error' : row.pipeline === PIPELINE_STANDARD ? 'primary' : 'info'">{{ pipelineLabel(row.pipeline) }}</el-tag>
         </template>
       </el-table-column>
       <el-table-column prop="stage" label="阶段" width="120" align="center" />
@@ -110,6 +110,7 @@ import { Refresh } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { createJob, deleteJob, listJobs } from "@/api/api-jobs";
 import { pipelineLabel } from "@/constants/jobStages";
+import { PIPELINE_CHAT, PIPELINE_MATERIAL, PIPELINE_STANDARD } from "@/constants/jobStages";
 import type { CreateJobRunMode, JobListItem } from "@/types/jobs";
 import { useErrorHandler } from "@/composables/useErrorHandler";
 import { formatDateTime } from "@/utils/date";

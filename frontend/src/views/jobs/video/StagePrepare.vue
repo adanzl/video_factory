@@ -81,15 +81,15 @@ import {
   MEDIA_CROSS_ORIGIN,
 } from "@/utils/media";
 import { useErrorHandler } from "@/composables/useErrorHandler";
-import StageActionBar from "./StageActionBar.vue";
-import StageLogsSection from "./StageLogsSection.vue";
+import StageActionBar from "../detail/StageActionBar.vue";
+import StageLogsSection from "../detail/StageLogsSection.vue";
 import {
   STAGE_COL_LEFT_CLASS,
   STAGE_COL_RIGHT_CLASS,
   STAGE_PANEL_CLASS,
   STAGE_PANEL_TITLE_CLASS,
   STAGE_TWO_COL_CLASS,
-} from "./stageLayout";
+} from "../detail/stageLayout";
 
 const props = defineProps<{
   job: JobDetail;

@@ -361,6 +361,12 @@ def run_prepare_route():
     return _accept_stage(job_id, lambda: job_mgr.run_prepare(job_id, to_end=to_end))
 
 
+@bp.post("/dialogue")
+def run_dialogue_route():
+    job_id, to_end = _parse_stage_body()
+    return _accept_stage(job_id, lambda: job_mgr.run_dialogue(job_id, to_end=to_end))
+
+
 @bp.post("/merge")
 def run_merge_route():
     job_id, to_end = _parse_stage_body()

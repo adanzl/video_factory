@@ -46,7 +46,7 @@
             </el-tag>
           </template>
           <component
-            :is="STAGE_PANELS[stage.name]"
+            :is="stagePanelFor(stage.name, job.pipeline)"
             :job="job"
             :segments="segments"
             :logs="logsForStage(stage.name)"
@@ -68,23 +68,22 @@ import { Refresh } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { getJob, getJobLogs, getJobSegments, abortJob } from "@/api/api-jobs";
 import { JOB_STATUS_RUNNING } from "@/constants/job";
-import { pipelineLabel, resolveActiveStageTab, stagesForJob } from "@/constants/jobStages";
+import { pipelineLabel, resolveActiveStageTab, stagesForJob, PIPELINE_CHAT } from "@/constants/jobStages";
 import type { JobDetail, JobLog, JobSegment } from "@/types/jobs";
 import { useErrorHandler } from "@/composables/useErrorHandler";
-import StageHost from "./detail/StageHost.vue";
+import StageHost from "./standard/StageHost.vue";
 import StageIntro from "./detail/StageIntro.vue";
 import StageMerge from "./detail/StageMerge.vue";
-import StagePrepare from "./detail/StagePrepare.vue";
+import StagePrepare from "./video/StagePrepare.vue";
 import StagePublish from "./detail/StagePublish.vue";
-import StageScript from "./detail/StageScript.vue";
+import StageStandardScript from "./standard/StageStandardScript.vue";
 import StageSegment from "./detail/StageSegment.vue";
-import StageTitle from "./detail/StageTitle.vue";
 import StageTts from "./detail/StageTts.vue";
+import StageChatScript from "./chat/StageChatScript.vue";
 
 const STAGE_PANELS: Record<string, Component> = {
-  title: StageTitle,
   prepare: StagePrepare,
-  script: StageScript,
+  script: StageStandardScript,
   intro: StageIntro,
   tts: StageTts,
   segment: StageSegment,
@@ -92,6 +91,13 @@ const STAGE_PANELS: Record<string, Component> = {
   merge: StageMerge,
   publish: StagePublish,
 };
+
+function stagePanelFor(stageName: string, pipeline?: string | null): Component {
+  if (pipeline === PIPELINE_CHAT && stageName === "dialogue") {
+    return StageChatScript;
+  }
+  return STAGE_PANELS[stageName] ?? StageStandardScript;
+}
 
 const props = defineProps<{
   jobId?: number;

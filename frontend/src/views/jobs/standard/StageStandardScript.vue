@@ -337,9 +337,9 @@ import {
 } from "@/utils/media";
 import { useErrorHandler } from "@/composables/useErrorHandler";
 import { copyText } from "@/utils/utils";
-import StageActionBar from "./StageActionBar.vue";
-import StageLogsSection from "./StageLogsSection.vue";
-import { STAGE_BLOCK_CLASS, STAGE_EMPTY_CLASS, STAGE_SECTION_TITLE_CLASS, STAGE_SUBSECTION_CLASS } from "./stageLayout";
+import StageActionBar from "../detail/StageActionBar.vue";
+import StageLogsSection from "../detail/StageLogsSection.vue";
+import { STAGE_BLOCK_CLASS, STAGE_EMPTY_CLASS, STAGE_SECTION_TITLE_CLASS, STAGE_SUBSECTION_CLASS } from "../detail/stageLayout";
 
 const FORM_LABEL_WIDTH = "100px";
 const SCRIPT_CONFIG_LABEL_WIDTH = "120px";

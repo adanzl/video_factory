@@ -19,9 +19,9 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import type { JobDetail, JobLog } from "@/types/jobs";
-import StageActionBar from "./StageActionBar.vue";
-import StageLogsSection from "./StageLogsSection.vue";
-import { STAGE_EMPTY_CLASS, STAGE_PANEL_CLASS } from "./stageLayout";
+import StageActionBar from "../detail/StageActionBar.vue";
+import StageLogsSection from "../detail/StageLogsSection.vue";
+import { STAGE_EMPTY_CLASS, STAGE_PANEL_CLASS } from "../detail/stageLayout";
 
 defineProps<{
   job: JobDetail;
