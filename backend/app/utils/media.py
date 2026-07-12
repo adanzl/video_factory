@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from app.services.script.board_timeline import VideoTimeline
 
 # 预估口播语速（字/秒）；与 CosyVoice 实际语速对齐，可通过 info.script.speech_chars_per_sec 覆盖
-DEFAULT_SPEECH_CHARS_PER_SEC = 4.1
+DEFAULT_SPEECH_CHARS_PER_SEC = 3.0
 NARRATION_CHARS_PER_SEC = DEFAULT_SPEECH_CHARS_PER_SEC
 NARRATION_FILL_RATIO = 0.92
 NARRATION_MAX_CHARS = 3000

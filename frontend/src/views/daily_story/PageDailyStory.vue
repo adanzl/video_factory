@@ -4,7 +4,7 @@
       <el-button type="primary" :disabled="loading" @click="fetchStories">
         <el-icon><Refresh /></el-icon>
       </el-button>
-      <el-button type="primary" @click="router.push('/daily-story/generate')">生成故事</el-button>
+      <el-button type="primary" @click="showGenerateDialog = true">生成故事</el-button>
       <el-button
         type="danger"
         :disabled="!selectedIds.length"
@@ -60,49 +60,25 @@
       </el-table-column>
     </el-table>
 
-    <!-- 详情对话框 -->
-    <el-dialog v-model="showDetailDialog" title="故事详情" width="680px">
-      <div v-if="currentStory" class="space-y-4">
-        <div>
-          <span class="font-bold text-lg">{{ currentStory.story?.scene_title }}</span>
-          <span class="ml-3 text-gray-500">{{ currentStory.story?.setting }}</span>
-        </div>
-        <div class="rounded-lg bg-gray-50 p-4">
-          <div
-            v-for="(line, idx) in currentStory.story?.dialogue || []"
-            :key="idx"
-            class="mb-2"
-          >
-            <span
-              :class="line.speaker === '昭昭' ? 'text-blue-600 font-bold' : 'text-pink-600 font-bold'"
-            >
-              {{ line.speaker }}：
-            </span>
-            <span>{{ line.line }}</span>
-          </div>
-        </div>
-        <div class="text-sm text-gray-500">
-          <span class="font-bold">笑点解析：</span>{{ currentStory.story?.punchline_explain }}
-        </div>
-      </div>
-    </el-dialog>
+    <DailyStoryDetail v-model="showDetailDialog" :story="currentStory" />
+    <CreateStory v-model="showGenerateDialog" @created="fetchStories" />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted } from "vue";
-import { useRouter } from "vue-router";
 import { Refresh } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { useErrorHandler } from "@/composables/useErrorHandler";
 import { formatDateTime } from "@/utils/date";
+import DailyStoryDetail from "@/views/daily_story/dialogs/DailyStoryDetail.vue";
+import CreateStory from "@/views/daily_story/dialogs/CreateStory.vue";
 import {
   listDailyStories,
   deleteDailyStories,
   type DailyStoryRecord,
 } from "@/api/api-daily-story";
 
-const router = useRouter();
 const { handleError } = useErrorHandler();
 
 const stories = ref<DailyStoryRecord[]>([]);
@@ -111,6 +87,8 @@ const deleting = ref(false);
 const selectedIds = ref<number[]>([]);
 const showDetailDialog = ref(false);
 const currentStory = ref<DailyStoryRecord | null>(null);
+
+const showGenerateDialog = ref(false);
 
 async function fetchStories() {
   loading.value = true;
