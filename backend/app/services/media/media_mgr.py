@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import shutil
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -28,6 +29,23 @@ from app.services.tts.tts_mgr import tts_mgr
 logger = logging.getLogger(__name__)
 
 __all__ = ["MediaMgr", "MergeResult", "SegmentClipsResult", "media_mgr"]
+
+# I2V 并发控制（图生视频模块，限制跨任务同时生成的批次数）
+_i2v_semaphore: threading.Semaphore | None = None
+_i2v_max_workers: int = 1
+_i2v_semaphore_lock = threading.Lock()
+_I2V_PROVIDERS = frozenset({"wan_i2v", "agnes_i2v"})
+
+
+def _ensure_i2v_semaphore() -> threading.Semaphore:
+    global _i2v_semaphore, _i2v_max_workers
+    settings = get_settings()
+    max_workers = max(1, settings.video_max_workers)
+    with _i2v_semaphore_lock:
+        if _i2v_semaphore is None or _i2v_max_workers != max_workers:
+            _i2v_max_workers = max_workers
+            _i2v_semaphore = threading.Semaphore(max_workers)
+        return _i2v_semaphore
 
 
 @dataclass
@@ -132,77 +150,110 @@ class MediaMgr:
         total = len(targets)
         t_start = time.time()
         target_indices = [seg["segment_index"] for seg in targets]
+
+        # 检查是否使用 I2V 提供商，需要并发排队
+        uses_i2v = any(
+            self._resolve_clip_provider(
+                visual_mode=seg.get("visual_mode") or "static_motion", job=job
+            )
+            in _I2V_PROVIDERS
+            for seg in targets
+        )
+        if uses_i2v:
+            sem = _ensure_i2v_semaphore()
+            logger.info(
+                "clip batch (i2v): waiting for concurrency slot "
+                "(max_workers=%s, segments=%s)...",
+                _i2v_max_workers,
+                target_indices,
+            )
+            sem.acquire()
+            logger.info(
+                "clip batch (i2v): acquired slot, starting (segments=%s)",
+                target_indices,
+            )
+
         logger.info(
-            "clip batch start: count=%s, segments=%s, size=%sx%s",
+            "clip batch start: count=%s, segments=%s, size=%sx%s%s",
             total,
             target_indices,
             clip_width,
             clip_height,
+            " (i2v, queued)" if uses_i2v else "",
         )
-        for i, seg in enumerate(targets, 1):
-            if job is not None and job.get("id") is not None:
-                job_cancel.raise_if_cancelled(int(job["id"]))
-            index = seg["segment_index"]
-            clip_path = clips_dir / f"{index}.mp4"
+        try:
+            for i, seg in enumerate(targets, 1):
+                if job is not None and job.get("id") is not None:
+                    job_cancel.raise_if_cancelled(int(job["id"]))
+                index = seg["segment_index"]
+                clip_path = clips_dir / f"{index}.mp4"
 
-            visual_mode = seg.get("visual_mode") or "static_motion"
-            provider = self._resolve_clip_provider(visual_mode=visual_mode, job=job)
-            params_desc = self._describe_clip_provider(
-                provider,
-                motion_preset=settings.motion_preset,
-                width=clip_width,
-                height=clip_height,
-            )
-            if provider == "kling_std":
-                raise NotImplementedError(
-                    f"segment {index} visual_mode=kling_std 需 VideoProvider，尚未接入"
+                visual_mode = seg.get("visual_mode") or "static_motion"
+                provider = self._resolve_clip_provider(visual_mode=visual_mode, job=job)
+                params_desc = self._describe_clip_provider(
+                    provider,
+                    motion_preset=settings.motion_preset,
+                    width=clip_width,
+                    height=clip_height,
                 )
+                if provider == "kling_std":
+                    raise NotImplementedError(
+                        f"segment {index} visual_mode=kling_std 需 VideoProvider，尚未接入"
+                    )
 
-            seg_cues = self._cues_for_segment(seg, subtitle_cues)
-            if not seg_cues:
-                raise ValueError(
-                    f"segment {index} 无句级字幕时间轴，请先执行 tts，或确保分镜有 duration_sec"
-                )
-            if not tts_mgr.cues_for_segment(subtitle_cues, index):
+                seg_cues = self._cues_for_segment(seg, subtitle_cues)
+                if not seg_cues:
+                    raise ValueError(
+                        f"segment {index} 无句级字幕时间轴，请先执行 tts，或确保分镜有 duration_sec"
+                    )
+                if not tts_mgr.cues_for_segment(subtitle_cues, index):
+                    logger.info(
+                        "clip segment %s: using duration_sec fallback (%.2fs)",
+                        index,
+                        sum(duration for _, duration in seg_cues),
+                    )
+                motion_prompt = seg.get("motion_prompt") or seg.get("visual_brief") or ""
+                image_prompt = seg.get("image_prompt") or ""
                 logger.info(
-                    "clip segment %s: using duration_sec fallback (%.2fs)",
+                    "clip %s/%s building segment %s | %s | image_chars=%s motion_chars=%s",
+                    i,
+                    total,
                     index,
-                    sum(duration for _, duration in seg_cues),
+                    params_desc,
+                    len(image_prompt),
+                    len(motion_prompt),
                 )
-            motion_prompt = seg.get("motion_prompt") or seg.get("visual_brief") or ""
-            image_prompt = seg.get("image_prompt") or ""
-            logger.info(
-                "clip %s/%s building segment %s | %s | image_chars=%s motion_chars=%s",
-                i,
-                total,
-                index,
-                params_desc,
-                len(image_prompt),
-                len(motion_prompt),
-            )
-            clip_mgr.build_segment_clip(
-                clip_provider=provider,
-                image_path=Path(seg["image_path"]),
-                subtitle_cues=seg_cues,
-                output_path=clip_path,
-                motion_preset=settings.motion_preset,
-                work_dir=clips_dir,
-                segment_index=index,
-                motion_prompt=motion_prompt,
-                image_prompt=image_prompt or None,
-                width=clip_width,
-                height=clip_height,
-            )
-            segment_clips.append((seg["id"], clip_path))
-            if on_clip_done is not None:
-                on_clip_done(seg["id"], clip_path)
-            logger.info(
-                "clip %s/%s done segment %s | %s",
-                i,
-                total,
-                index,
-                params_desc,
-            )
+                clip_mgr.build_segment_clip(
+                    clip_provider=provider,
+                    image_path=Path(seg["image_path"]),
+                    subtitle_cues=seg_cues,
+                    output_path=clip_path,
+                    motion_preset=settings.motion_preset,
+                    work_dir=clips_dir,
+                    segment_index=index,
+                    motion_prompt=motion_prompt,
+                    image_prompt=image_prompt or None,
+                    width=clip_width,
+                    height=clip_height,
+                )
+                segment_clips.append((seg["id"], clip_path))
+                if on_clip_done is not None:
+                    on_clip_done(seg["id"], clip_path)
+                logger.info(
+                    "clip %s/%s done segment %s | %s",
+                    i,
+                    total,
+                    index,
+                    params_desc,
+                )
+        finally:
+            if uses_i2v:
+                sem.release()
+                logger.info(
+                    "clip batch (i2v): released slot (segments=%s, elapsed=%.1fs)",
+                    target_indices,
+                    time.time() - t_start,
+                )
 
         elapsed = time.time() - t_start
         logger.info(
