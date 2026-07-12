@@ -71,6 +71,11 @@ def setup_server_logging(*, log_dir: Path, is_production: bool) -> tuple[logging
     app_logger.setLevel(logging.INFO)
     app_logger.propagate = False
 
+    # worker 模块日志也写入 app.log
+    worker_logger = logging.getLogger("worker")
+    worker_logger.setLevel(logging.INFO)
+    worker_logger.propagate = False
+
     if not app_logger.handlers:
         console = logging.StreamHandler(sys.stderr)
         console.setFormatter(formatter)
@@ -79,6 +84,14 @@ def setup_server_logging(*, log_dir: Path, is_production: bool) -> tuple[logging
         file_handler = _rotating_file_handler(log_dir / "app.log", retention_days=3)
         app_logger.addHandler(file_handler)
         app_logger.info("Server log: %s (rotating daily)", log_dir / "app.log")
+
+    if not worker_logger.handlers:
+        console = logging.StreamHandler(sys.stderr)
+        console.setFormatter(formatter)
+        worker_logger.addHandler(console)
+
+        file_handler = _rotating_file_handler(log_dir / "app.log", retention_days=3)
+        worker_logger.addHandler(file_handler)
 
     gevent_access_logger = logging.getLogger("gevent.access")
     gevent_access_logger.setLevel(logging.INFO if is_production else logging.CRITICAL)
