@@ -67,6 +67,10 @@ def setup_server_logging(*, log_dir: Path, is_production: bool) -> tuple[logging
     log_dir.mkdir(parents=True, exist_ok=True)
 
     formatter = _formatter()
+    console = logging.StreamHandler(sys.stderr)
+    console.setFormatter(formatter)
+    file_handler = _rotating_file_handler(log_dir / "app.log", retention_days=3)
+
     app_logger = logging.getLogger("app")
     app_logger.setLevel(logging.INFO)
     app_logger.propagate = False
@@ -76,21 +80,17 @@ def setup_server_logging(*, log_dir: Path, is_production: bool) -> tuple[logging
     worker_logger.setLevel(logging.INFO)
     worker_logger.propagate = False
 
-    if not app_logger.handlers:
-        console = logging.StreamHandler(sys.stderr)
-        console.setFormatter(formatter)
-        app_logger.addHandler(console)
+    # root logger 也设 INFO，确保所有模块日志可输出
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
 
-        file_handler = _rotating_file_handler(log_dir / "app.log", retention_days=3)
+    if not app_logger.handlers:
+        app_logger.addHandler(console)
         app_logger.addHandler(file_handler)
         app_logger.info("Server log: %s (rotating daily)", log_dir / "app.log")
 
     if not worker_logger.handlers:
-        console = logging.StreamHandler(sys.stderr)
-        console.setFormatter(formatter)
         worker_logger.addHandler(console)
-
-        file_handler = _rotating_file_handler(log_dir / "app.log", retention_days=3)
         worker_logger.addHandler(file_handler)
 
     gevent_access_logger = logging.getLogger("gevent.access")
