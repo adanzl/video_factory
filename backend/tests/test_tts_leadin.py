@@ -12,8 +12,8 @@ from app.services.tts.tts_leadin import (
 
 def test_prepare_lead_in_for_cloned_voice_weak_start():
     text, lead = prepare_lead_in("可是，真相是", voice=CLONED_VOICE_CAN)
-    assert lead == "那，"
-    assert text == "那，可是，真相是"
+    assert lead == "嗯，"
+    assert text == "嗯，可是，真相是"
 
 
 def test_prepare_lead_in_skips_other_voices():
@@ -24,22 +24,22 @@ def test_prepare_lead_in_skips_other_voices():
 
 def test_prepare_lead_in_for_any_cloned_segment():
     text, lead = prepare_lead_in("其实呀，地震发生时", voice=CLONED_VOICE_CAN)
-    assert lead == "那，"
-    assert text == "那，其实呀，地震发生时"
+    assert lead == "嗯，"
+    assert text == "嗯，其实呀，地震发生时"
 
 
 def test_strip_tts_lead_in_shifts_words_without_file(tmp_path):
     path = tmp_path / "seg.mp3"
     path.write_bytes(b"fake")
     words = [
-        TimedWord("那", 500, 800),
+        TimedWord("嗯", 500, 800),
         TimedWord("，", 800, 900),
         TimedWord("可", 900, 1100),
         TimedWord("是", 1100, 1300),
     ]
 
     def fake_trim(_path, plan):
-        assert plan.leading_ms == 885
+        assert plan.leading_ms == 900
         assert plan.trailing_ms == 0
 
     import app.services.tts.tts_leadin as leadin_mod
@@ -47,10 +47,10 @@ def test_strip_tts_lead_in_shifts_words_without_file(tmp_path):
     orig = leadin_mod._trim_audio
     leadin_mod._trim_audio = fake_trim
     try:
-        out = strip_tts_lead_in(path, words, "那，")
+        out = strip_tts_lead_in(path, words, "嗯，")
     finally:
         leadin_mod._trim_audio = orig
 
     assert [w.text for w in out] == ["可", "是"]
-    assert out[0].begin_time_ms == 15
-    assert out[1].begin_time_ms == 215
+    assert out[0].begin_time_ms == 0
+    assert out[1].begin_time_ms == 200
