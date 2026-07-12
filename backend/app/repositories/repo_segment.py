@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 
 
@@ -34,8 +35,8 @@ def insert_segments(
             """
             INSERT INTO video_segment (
                 job_id, segment_index, text, image_prompt, motion_prompt, visual_mode,
-                duration_sec, sd15_prompt_en, image_path, clip_path, status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                duration_sec, sd15_prompt_en, image_path, clip_path, status, dialogue
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 job_id,
@@ -49,6 +50,7 @@ def insert_segments(
                 image_path,
                 clip_path,
                 status,
+                json.dumps(seg["dialogue"], ensure_ascii=False) if seg.get("dialogue") else None,
             ),
         )
 
@@ -57,14 +59,24 @@ def list_segments(conn: sqlite3.Connection, job_id: int) -> list[dict]:
     rows = conn.execute(
         """
         SELECT id, segment_index, text, image_prompt, motion_prompt, visual_mode,
-               image_path, clip_path, duration_sec, sd15_prompt_en, status
+               image_path, clip_path, duration_sec, sd15_prompt_en, status, dialogue
         FROM video_segment
         WHERE job_id = ?
         ORDER BY segment_index
         """,
         (job_id,),
     ).fetchall()
-    return [dict(row) for row in rows]
+    result = []
+    for row in rows:
+        d = dict(row)
+        raw = d.pop("dialogue", None)
+        if raw:
+            try:
+                d["dialogue"] = json.loads(raw)
+            except (json.JSONDecodeError, TypeError):
+                d["dialogue"] = None
+        result.append(d)
+    return result
 
 
 def update_segment(
@@ -82,12 +94,15 @@ def update_segment(
         "motion_prompt",
         "visual_mode",
         "sd15_prompt_en",
+        "dialogue",
     }
     parts: list[str] = []
     values: list[object] = []
     for key, value in fields.items():
         if key not in allowed:
             continue
+        if key == "dialogue" and value is not None and not isinstance(value, str):
+            value = json.dumps(value, ensure_ascii=False)
         parts.append(f"{key} = ?")
         values.append(value)
     if not parts:

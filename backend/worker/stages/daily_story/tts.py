@@ -78,8 +78,8 @@ def _synthesize_segment_dialogue(
         rate = config.get("speech_rate", 1.0)
 
         logger.info(
-            "tts segment %d line %d speaker=%s rate=%.2f text_chars=%d text=%s",
-            seg_index, line_idx, speaker, rate, len(text), text,
+            "tts segment %d line %d speaker=%s voice=%s rate=%.2f text_chars=%d text=%s",
+            seg_index, line_idx, speaker, voice, rate, len(text), text,
         )
 
         # 引导词：合成前加“那，”，合成后裁掉
@@ -158,7 +158,6 @@ class DailyTtsStage(StageExecutor):
             job = repo_job.get_job(conn, ctx.job["id"])
             segments = repo_segment.list_segments(conn, ctx.job["id"])
 
-        script = job.get("script_json") or {}
         info = parse_job_info(job.get("info"))
 
         # 从 context 或 job.info 读取角色配置
@@ -171,7 +170,6 @@ class DailyTtsStage(StageExecutor):
         self._persist_speaker_configs(job["id"], persist_configs)
 
         result = self._synthesize_multi_speaker(
-            script,
             segments,
             ctx.media_dir / "audio",
             speaker_configs,
@@ -238,7 +236,6 @@ class DailyTtsStage(StageExecutor):
 
     def _synthesize_multi_speaker(
         self,
-        script: dict,
         segments: list[dict],
         output_dir: Path,
         speaker_configs: dict[str, dict],
