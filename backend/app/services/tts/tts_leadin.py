@@ -63,7 +63,14 @@ def strip_tts_lead_in(path: Path, words: list[TimedWord], lead_in: str) -> list[
             break
 
     if matched_content >= len(lead_content_chars):
-        remaining = words[last_lead_word_idx + 1:]
+        # 匹配完实字后，继续跳过 lead-in 尾部的标点
+        content_end_idx = last_lead_word_idx
+        for j in range(last_lead_word_idx + 1, len(words)):
+            if _PUNCT_RE.fullmatch(words[j].text):
+                content_end_idx = j
+            else:
+                break
+        remaining = words[content_end_idx + 1:]
         if not remaining:
             return remaining
         cut_ms = max(0, remaining[0].begin_time_ms - _LEAD_IN_PAD_MS)
