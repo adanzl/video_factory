@@ -295,7 +295,7 @@ def _synthesize_segment(
 
     words = normalize_word_timestamps(result.words)
     if lead_in:
-        words = strip_tts_lead_in(segment_clip, words, lead_in)
+        words = strip_tts_lead_in(segment_clip, words, lead_in, rate=effective_rate)
     if settings.tts_trim_edges:
         if words:
             words = apply_tts_segment_trim(segment_clip, words)

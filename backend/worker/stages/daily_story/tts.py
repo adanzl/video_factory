@@ -120,8 +120,8 @@ def _synthesize_segment_dialogue(
         line_clip.write_bytes(result.audio)
 
         words = normalize_word_timestamps(result.words)
-        if lead_in and words:
-            words = strip_tts_lead_in(line_clip, words, lead_in)
+        if lead_in:
+            words = strip_tts_lead_in(line_clip, words, lead_in, rate=rate)
         if words:
             words = apply_tts_segment_trim(line_clip, words)
 
