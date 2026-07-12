@@ -32,7 +32,6 @@ export const MATERIAL_JOB_STAGES: JobStageDef[] = [
 
 /** 对话流水线，对齐 backend app/core/pipelines.py CHAT_CHAIN */
 export const CHAT_JOB_STAGES: JobStageDef[] = [
-  { name: "dialogue", label: "对话" },
   { name: "script", label: "脚本" },
   { name: "tts", label: "配音" },
   { name: "segment", label: "分镜" },

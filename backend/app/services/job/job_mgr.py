@@ -746,6 +746,25 @@ class JobMgr:
             preview_followups=True,
         )
 
+    def preview_daily_script_prompts(self, job_id: int) -> list[dict[str, str]]:
+        from app.repositories import repo_daily_story
+        from app.repositories.connection import connection
+        from app.services.daily_story.prompts import build_daily_script_prompts
+        from app.utils.job_info import parse_job_info
+
+        job = self.get_job(job_id)
+        info = parse_job_info(job.get("info"))
+        daily_story_id = info.get("daily_story_id") or job.get("material_id")
+        if not daily_story_id:
+            raise ValueError("daily_story_id not found in job info")
+
+        with connection() as conn:
+            story = repo_daily_story.get_story(conn, daily_story_id)
+
+        story_content = story["story"]
+        system, user = build_daily_script_prompts(story_content)
+        return [{"step": "daily_script", "system": system, "user": user}]
+
     def generate_video_description(self, job_id: int) -> dict:
         from app.services.llm.llm_mgr import llm_mgr
 
@@ -990,16 +1009,6 @@ class JobMgr:
             job_id,
             "prepare",
             lambda: run_prepare(job_id, to_end=to_end),
-        )
-
-    def run_dialogue(self, job_id: int, *, to_end: bool = False) -> dict:
-        """对话预览。实现：worker/loop.run_dialogue → worker/stages/daily_story/dialogue.py"""
-        from worker.loop import run_dialogue
-
-        return self._run_in_background(
-            job_id,
-            "dialogue",
-            lambda: run_dialogue(job_id, to_end=to_end),
         )
 
     def run_publish(self, job_id: int, *, to_end: bool = False) -> dict:

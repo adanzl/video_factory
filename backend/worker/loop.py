@@ -238,14 +238,6 @@ def run_prepare(job_id: int, *, to_end: bool = False) -> dict:
     return _run_one_stage(job_id, MaterialPrepareStage, hold=True)
 
 
-def run_dialogue(job_id: int, *, to_end: bool = False) -> dict:
-    from worker.stages.daily_story.dialogue import DialogueStage
-
-    if to_end:
-        return _run_from(job_id, DialogueStage)
-    return _run_one_stage(job_id, DialogueStage, hold=True)
-
-
 def run_script(
     job_id: int,
     *,

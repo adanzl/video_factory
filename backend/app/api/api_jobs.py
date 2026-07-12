@@ -179,6 +179,14 @@ def preview_script_prompts_route():
     return json_ok({"prompts": prompts})
 
 
+@bp.post("/dailyScriptPrompts")
+def preview_daily_script_prompts_route():
+    data = get_json_body()
+    job_id = parse_id(data)
+    prompts = job_mgr.preview_daily_script_prompts(job_id)
+    return json_ok({"prompts": prompts})
+
+
 PROMPT_TYPES = frozenset({"narration", "visual_brief", "image_prompt", "motion", "sd15"})
 
 
@@ -359,12 +367,6 @@ def run_segment_clips_route():
 def run_prepare_route():
     job_id, to_end = _parse_stage_body()
     return _accept_stage(job_id, lambda: job_mgr.run_prepare(job_id, to_end=to_end))
-
-
-@bp.post("/dialogue")
-def run_dialogue_route():
-    job_id, to_end = _parse_stage_body()
-    return _accept_stage(job_id, lambda: job_mgr.run_dialogue(job_id, to_end=to_end))
 
 
 @bp.post("/merge")
