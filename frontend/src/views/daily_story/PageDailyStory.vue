@@ -4,7 +4,7 @@
       <el-button type="primary" :disabled="loading" @click="fetchStories">
         <el-icon><Refresh /></el-icon>
       </el-button>
-      <el-button type="primary" @click="showGenerateDialog = true">生成故事</el-button>
+      <el-button type="primary" @click="router.push('/daily-story/generate')">生成故事</el-button>
       <el-button
         type="danger"
         :disabled="!selectedIds.length"
@@ -60,37 +60,6 @@
       </el-table-column>
     </el-table>
 
-    <!-- 生成对话框 -->
-    <el-dialog v-model="showGenerateDialog" title="生成日常故事" width="480px">
-      <el-form @submit.prevent="handleGenerate">
-        <el-form-item label="场景主题">
-          <div class="flex w-full gap-2">
-            <el-input
-              v-model="generateTheme"
-              placeholder="如：写检查、零花钱花完了、争最后一块饼干"
-              clearable
-              class="flex-1"
-            />
-            <el-button :loading="generatingThemes" @click="handleGenerateThemes">生成</el-button>
-          </div>
-        </el-form-item>
-        <div v-if="generatedThemes.length" class="mt-2 flex flex-wrap gap-2">
-          <el-tag
-            v-for="(theme, idx) in generatedThemes"
-            :key="idx"
-            class="cursor-pointer"
-            @click="generateTheme = theme"
-          >
-            {{ theme }}
-          </el-tag>
-        </div>
-      </el-form>
-      <template #footer>
-        <el-button @click="showGenerateDialog = false">取消</el-button>
-        <el-button type="primary" :loading="generating" @click="handleGenerate">生成故事</el-button>
-      </template>
-    </el-dialog>
-
     <!-- 详情对话框 -->
     <el-dialog v-model="showDetailDialog" title="故事详情" width="680px">
       <div v-if="currentStory" class="space-y-4">
@@ -122,31 +91,26 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from "vue";
+import { useRouter } from "vue-router";
 import { Refresh } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { useErrorHandler } from "@/composables/useErrorHandler";
 import { formatDateTime } from "@/utils/date";
 import {
   listDailyStories,
-  generateDailyStory,
   deleteDailyStories,
-  generateDailyStoryThemes,
   type DailyStoryRecord,
 } from "@/api/api-daily-story";
 
+const router = useRouter();
 const { handleError } = useErrorHandler();
 
 const stories = ref<DailyStoryRecord[]>([]);
 const loading = ref(false);
-const generating = ref(false);
 const deleting = ref(false);
 const selectedIds = ref<number[]>([]);
-const showGenerateDialog = ref(false);
 const showDetailDialog = ref(false);
-const generateTheme = ref("");
 const currentStory = ref<DailyStoryRecord | null>(null);
-const generatingThemes = ref(false);
-const generatedThemes = ref<string[]>([]);
 
 async function fetchStories() {
   loading.value = true;
@@ -161,37 +125,6 @@ async function fetchStories() {
 
 function onSelectionChange(rows: DailyStoryRecord[]) {
   selectedIds.value = rows.map((r) => r.id);
-}
-
-async function handleGenerate() {
-  const theme = generateTheme.value.trim();
-  if (!theme) {
-    ElMessage.warning("请输入场景主题");
-    return;
-  }
-  generating.value = true;
-  try {
-    await generateDailyStory(theme);
-    ElMessage.success("生成成功");
-    showGenerateDialog.value = false;
-    generateTheme.value = "";
-    await fetchStories();
-  } catch (e) {
-    handleError(e, "生成故事失败");
-  } finally {
-    generating.value = false;
-  }
-}
-
-async function handleGenerateThemes() {
-  generatingThemes.value = true;
-  try {
-    generatedThemes.value = await generateDailyStoryThemes(2);
-  } catch (e) {
-    handleError(e, "生成主题失败");
-  } finally {
-    generatingThemes.value = false;
-  }
 }
 
 function viewStory(row: DailyStoryRecord) {
