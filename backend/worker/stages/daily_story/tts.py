@@ -121,7 +121,15 @@ def _synthesize_segment_dialogue(
 
         words = normalize_word_timestamps(result.words)
         if lead_in:
+            _pre_size = line_clip.stat().st_size
+            _pre_dur = probe_duration(line_clip)
             words = strip_tts_lead_in(line_clip, words, lead_in, rate=rate)
+            _post_size = line_clip.stat().st_size
+            _post_dur = probe_duration(line_clip)
+            logger.info(
+                "tts lead-in file check %s: before size=%d dur=%.3fs after size=%d dur=%.3fs",
+                line_clip.name, _pre_size, _pre_dur, _post_size, _post_dur,
+            )
         if words:
             words = apply_tts_segment_trim(line_clip, words)
 
