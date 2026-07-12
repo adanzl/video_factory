@@ -1353,7 +1353,7 @@ class DeepSeekClient(LLMClient):
 
     def generate_daily_story_themes(
         self,
-        count: int = 2,
+        count: int = 5,
     ) -> list[str]:
         system = DAILY_STORY_THEME_SYSTEM_PROMPT
         user = DAILY_STORY_THEME_USER_TEMPLATE.format(count=count)
