@@ -18,6 +18,7 @@ CLONED_VOICE_ZHAO = "cosyvoice-v3.5-flash-leo-f9d115bfdf2346edbeb9d21ecd4f9ce9"
 
 DEFAULT_LEAD_IN = "那，"
 _LEAD_IN_PAD_MS = 15
+_LEAD_IN_MS_PER_CHAR = 300  # 每个实字约 300ms（rate=1.0 基准）
 _PUNCT_RE = re.compile(r"^[。！？；：，,.!?;:…—·~～'\"）】》〉）\]]+$")
 
 
@@ -28,10 +29,33 @@ def prepare_lead_in(text: str, *, voice: str, lead_in: str = DEFAULT_LEAD_IN) ->
     return f"{lead_in}{text}", lead_in
 
 
-def strip_tts_lead_in(path: Path, words: list[TimedWord], lead_in: str) -> list[TimedWord]:
+def _strip_lead_in_fallback(path: Path, lead_in: str, rate: float) -> list[TimedWord]:
+    """words 为空时，按 lead-in 实字数+语速估算时长，强制裁剪音频开头。"""
+    content_chars = [c for c in lead_in if not _PUNCT_RE.fullmatch(c)]
+    if not content_chars:
+        return []
+    est_ms = int(len(content_chars) * _LEAD_IN_MS_PER_CHAR / max(rate, 0.5))
+    cut_ms = max(0, est_ms - _LEAD_IN_PAD_MS)
+    if cut_ms <= 0:
+        return []
+    logger.info(
+        "tts lead-in fallback (no words) %r est=%sms cut=%sms rate=%.2f",
+        lead_in, est_ms, cut_ms, rate,
+    )
+    _trim_audio(path, TrimPlan(leading_ms=cut_ms, trailing_ms=0))
+    return []
+
+
+def strip_tts_lead_in(
+    path: Path, words: list[TimedWord], lead_in: str, *, rate: float = 1.0,
+) -> list[TimedWord]:
     """裁掉引导词对应音频，并平移剩余字级时间戳。"""
-    if not lead_in or not words:
+    if not lead_in:
         return words
+
+    # words 为空时（TTS 未返回时间戳），按实字数+语速估算裁剪
+    if not words:
+        return _strip_lead_in_fallback(path, lead_in, rate)
 
     logger.info(
         "tts lead-in check: lead_in=%r words_count=%s first_10_words=%s",
