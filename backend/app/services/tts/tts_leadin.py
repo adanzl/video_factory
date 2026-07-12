@@ -17,7 +17,7 @@ CLONED_VOICE_ZHAO = "cosyvoice-v3.5-flash-leo-f9d115bfdf2346edbeb9d21ecd4f9ce9"
 # cSpell: enable
 
 DEFAULT_LEAD_IN = "那，"
-_LEAD_IN_PAD_MS = 150  # 从内容词开头往回退，切掉 lead-in 声学尾巴
+_LEAD_IN_PAD_MS = 0  # 切到内容词开头，越小切得越多
 _LEAD_IN_MS_PER_CHAR = 300  # 每个实字约 300ms（rate=1.0 基准）
 _PUNCT_RE = re.compile(r"^[。！？；：，,.!?;:…—·~～'\"）】》〉）\]]+$")
 
@@ -35,7 +35,7 @@ def _strip_lead_in_fallback(path: Path, lead_in: str, rate: float) -> list[Timed
     if not content_chars:
         return []
     est_ms = int(len(content_chars) * _LEAD_IN_MS_PER_CHAR / max(rate, 0.5))
-    cut_ms = est_ms + _LEAD_IN_PAD_MS
+    cut_ms = est_ms + 200  # 估算 lead-in 时长 + 尾巴余量
     if cut_ms <= 0:
         return []
     logger.info(
@@ -120,7 +120,7 @@ def strip_tts_lead_in(
             )
             if content_count >= len(lead_content_chars):
                 remaining = words[i + 1:]
-                cut_ms = max(0, word.end_time_ms + _LEAD_IN_PAD_MS)
+                cut_ms = max(0, word.end_time_ms + 200)  # lead-in 结束后 +200ms 覆盖尾巴
                 logger.warning(
                     "tts lead-in fallback strip %r cut=%sms (exact match failed) words=%s",
                     lead_in,
