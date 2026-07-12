@@ -40,6 +40,20 @@
                 </div>
               </div>
             </el-form-item>
+            <el-form-item label="句间停留">
+              <div class="flex items-center gap-2">
+                <el-input-number
+                  v-model="phraseGapSec"
+                  :min="0"
+                  :max="3"
+                  :step="0.1"
+                  :precision="1"
+                  controls-position="right"
+                  class="w-32!"
+                />
+                <span class="text-xs text-gray-400">秒</span>
+              </div>
+            </el-form-item>
           </el-form>
           <el-form :label-width="STAGE_FORM_LABEL_WIDTH" class="[&_.el-form-item]:mb-2 mt-2">
             <el-form-item label="音频路径">
@@ -175,8 +189,8 @@ const speakers = [
 ];
 
 const defaultSpeakerConfigs: Record<string, SpeakerConfig> = {
-  昭昭: { voice_id: TTS_VOICE_ZHAO, speech_rate: 1.1 },
-  灿灿: { voice_id: DEFAULT_TTS_VOICE, speech_rate: 1.1 },
+  昭昭: { voice_id: TTS_VOICE_ZHAO, speech_rate: 0.7 },
+  灿灿: { voice_id: DEFAULT_TTS_VOICE, speech_rate: 0.76 },
 };
 
 const props = defineProps<{
@@ -199,6 +213,7 @@ const audioRef = ref<HTMLAudioElement | null>(null);
 const speakerConfigs = ref<Record<string, SpeakerConfig>>(
   JSON.parse(JSON.stringify(defaultSpeakerConfigs))
 );
+const phraseGapSec = ref(0.3);
 
 const actionDisabled = computed(() => props.job.status === "running");
 const actionDisabledReason = computed(() =>
@@ -283,7 +298,7 @@ const handleRun = async (toEnd: boolean) => {
     const payload: RunStageActionPayload = {
       id: props.job.id,
       to_end: toEnd,
-      speaker_configs: speakerConfigs.value,
+      speaker_configs: { ...speakerConfigs.value, phrase_gap_sec: phraseGapSec.value },
     };
     await runJobStageAction("tts", payload);
     ElMessage.success(`已提交${actionLabel}，任务已开始执行`);

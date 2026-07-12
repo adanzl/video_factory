@@ -11,7 +11,7 @@ from app.repositories import repo_job_log, repo_job, repo_segment
 from app.repositories.connection import connection
 from app.services.tts.audio_analysis import analyze_loudness, analyze_silence, normalize_loudness
 from app.services.tts.tts_mgr import tts_mgr, SubtitleCue
-from app.services.media.ffmpeg_utils import concat_clips, probe_duration
+from app.services.media.ffmpeg_utils import concat_clips, generate_silent_mp3, probe_duration
 from app.utils.job_info import parse_job_info
 from worker.context import JobContext
 from worker.stages.base import StageExecutor
@@ -20,9 +20,10 @@ logger = logging.getLogger(__name__)
 
 # 默认角色配置（昭昭/灿灿）
 _DEFAULT_SPEAKER_CONFIGS: dict[str, dict] = {
-    "昭昭": {"voice_id": "cosyvoice-v3.5-flash-leo-f9d115bfdf2346edbeb9d21ecd4f9ce9", "speech_rate": 1.1},
-    "灿灿": {"voice_id": "cosyvoice-v3.5-flash-leo-60621bdce780434ab0734555e5196d7d", "speech_rate": 1.1},
+    "昭昭": {"voice_id": "cosyvoice-v3.5-flash-leo-f9d115bfdf2346edbeb9d21ecd4f9ce9", "speech_rate": 1.0},
+    "灿灿": {"voice_id": "cosyvoice-v3.5-flash-leo-60621bdce780434ab0734555e5196d7d", "speech_rate": 1.0},
 }
+_DEFAULT_PHRASE_GAP_SEC = 0.3
 
 
 class DailyTtsStage(StageExecutor):
@@ -43,16 +44,20 @@ class DailyTtsStage(StageExecutor):
         info = parse_job_info(job.get("info"))
 
         # 从 context 或 job.info 读取角色配置
-        speaker_configs = ctx.tts_speaker_configs or info.get("tts", {}).get("speaker_configs") or _DEFAULT_SPEAKER_CONFIGS
+        raw_configs = ctx.tts_speaker_configs or info.get("tts", {}).get("speaker_configs") or _DEFAULT_SPEAKER_CONFIGS
+        phrase_gap_sec = raw_configs.get("phrase_gap_sec", _DEFAULT_PHRASE_GAP_SEC)
+        speaker_configs = {k: v for k, v in raw_configs.items() if k != "phrase_gap_sec"}
 
         # 持久化到 job.info 以便下次复用
-        self._persist_speaker_configs(job["id"], speaker_configs)
+        persist_configs = {**speaker_configs, "phrase_gap_sec": phrase_gap_sec}
+        self._persist_speaker_configs(job["id"], persist_configs)
 
         result = self._synthesize_multi_speaker(
             script,
             segments,
             ctx.media_dir / "audio",
             speaker_configs,
+            phrase_gap_sec,
         )
 
         normalize_loudness(
@@ -119,6 +124,7 @@ class DailyTtsStage(StageExecutor):
         segments: list[dict],
         output_dir: Path,
         speaker_configs: dict[str, dict],
+        phrase_gap_sec: float = _DEFAULT_PHRASE_GAP_SEC,
     ) -> dict:
         """按角色分别合成每个分镜的对话，然后拼接。"""
         from app.services.tts.tts_ali import _run_tts_task, _audio_extension, VOICE_MODEL_MAP
@@ -150,6 +156,7 @@ class DailyTtsStage(StageExecutor):
             seg_clips: list[Path] = []
             seg_cues: list[SubtitleCue] = []
             time_offset = 0.0
+            gap_clips: list[Path] = []  # 句间停留静音片段
 
             for line_idx, line in enumerate(dialogue):
                 speaker = line.get("speaker", "")
@@ -179,18 +186,30 @@ class DailyTtsStage(StageExecutor):
                     duration_sec=line_duration,
                 ))
 
+                # 非首句前插入句间停留静音
+                if seg_clips and phrase_gap_sec > 0:
+                    gap_path = clips_dir / f"{seg_index}_gap_{line_idx}{ext}"
+                    generate_silent_mp3(gap_path, phrase_gap_sec)
+                    gap_clips.append(gap_path)
+                    time_offset += phrase_gap_sec
+
                 seg_clips.append(line_clip)
                 time_offset += line_duration
 
                 if result.usage:
                     total_chars += int(result.usage.get("characters") or 0)
 
-            # 拼接该分镜的所有角色音频
+            # 拼接该分镜的所有角色音频（含句间停留）
             seg_clip = clips_dir / f"{seg_index}{ext}"
-            if len(seg_clips) == 1:
-                seg_clips[0].rename(seg_clip)
-            elif seg_clips:
-                concat_clips(seg_clips, seg_clip)
+            interleaved: list[Path] = []
+            for i, clip in enumerate(seg_clips):
+                if i > 0 and gap_clips:
+                    interleaved.append(gap_clips[i - 1])
+                interleaved.append(clip)
+            if len(interleaved) == 1:
+                interleaved[0].rename(seg_clip)
+            elif interleaved:
+                concat_clips(interleaved, seg_clip)
             else:
                 # 空分镜，生成静音
                 seg_clip.write_bytes(b"")
