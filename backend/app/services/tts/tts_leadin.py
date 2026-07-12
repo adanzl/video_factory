@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 
 from app.services.tts.phrase_timing import TimedWord
@@ -17,6 +18,7 @@ CLONED_VOICE_ZHAO = "cosyvoice-v3.5-flash-leo-f9d115bfdf2346edbeb9d21ecd4f9ce9"
 
 DEFAULT_LEAD_IN = "那，"
 _LEAD_IN_PAD_MS = 15
+_PUNCT_RE = re.compile(r"^[。！？；：，,.!?;:…—·~～'\"）】》〉）\]]+$")
 
 
 def prepare_lead_in(text: str, *, voice: str, lead_in: str = DEFAULT_LEAD_IN) -> tuple[str, str | None]:
@@ -31,7 +33,6 @@ def strip_tts_lead_in(path: Path, words: list[TimedWord], lead_in: str) -> list[
     if not lead_in or not words:
         return words
 
-    # 打印TTS返回的所有字级时间戳，便于排查
     logger.debug(
         "tts lead-in check: lead_in=%r words_count=%s first_10_words=%s",
         lead_in,
@@ -39,37 +40,71 @@ def strip_tts_lead_in(path: Path, words: list[TimedWord], lead_in: str) -> list[
         [(w.text, w.begin_time_ms) for w in words[:10]],
     )
 
-    expected = list(lead_in)
-    matched = 0
-    for word in words:
-        if matched < len(expected) and word.text == expected[matched]:
-            matched += 1
+    # 提取 lead_in 中的实字（非标点）
+    lead_content_chars = [c for c in lead_in if not _PUNCT_RE.fullmatch(c)]
+
+    # 在 TTS 返回的 words 中找到 lead-in 实字，跳过中间可能缺失的标点
+    matched_content = 0
+    last_lead_word_idx = -1  # lead-in 最后一个 word 的索引
+    for i, word in enumerate(words):
+        if matched_content >= len(lead_content_chars):
+            break
+        if word.text == lead_content_chars[matched_content]:
+            matched_content += 1
+            last_lead_word_idx = i
+        elif _PUNCT_RE.fullmatch(word.text):
+            # 标点：如果是 lead_in 期望的标点则消费，否则跳过
+            expected_idx = matched_content
+            if expected_idx < len(lead_in) and lead_in[expected_idx] == word.text:
+                last_lead_word_idx = i
+            # 非期望标点，跳过但不中断匹配
         else:
+            # 实字不匹配 → 停止
             break
 
-    if matched < len(expected):
-        logger.warning(
-            "tts lead-in partial match %r (%s/%s chars), skip strip. words=%s",
+    if matched_content >= len(lead_content_chars):
+        remaining = words[last_lead_word_idx + 1:]
+        if not remaining:
+            return remaining
+        cut_ms = max(0, remaining[0].begin_time_ms - _LEAD_IN_PAD_MS)
+        _trim_audio(path, TrimPlan(leading_ms=cut_ms, trailing_ms=0))
+        shifted = shift_word_timestamps(remaining, cut_ms)
+        logger.debug(
+            "tts lead-in stripped %r cut=%sms words %s -> %s remaining_first_5=%s",
             lead_in,
-            matched,
-            len(expected),
-            [(w.text, w.begin_time_ms) for w in words[:10]],
+            cut_ms,
+            len(words),
+            len(shifted),
+            [(w.text, w.begin_time_ms) for w in remaining[:5]],
         )
-        return words
+        return shifted
 
-    remaining = words[matched:]
-    if not remaining:
-        return remaining
+    # Fallback: 匹配失败，用第一个实字的时间戳强制裁剪
+    first_content_idx = None
+    for i, word in enumerate(words):
+        if not _PUNCT_RE.fullmatch(word.text):
+            if first_content_idx is None:
+                first_content_idx = i
+            # 跳过 lead_in 中的实字数量的实字
+            content_count = sum(
+                1 for w in words[: i + 1] if not _PUNCT_RE.fullmatch(w.text)
+            )
+            if content_count >= len(lead_content_chars):
+                remaining = words[i + 1:]
+                cut_ms = max(0, word.end_time_ms - _LEAD_IN_PAD_MS)
+                logger.warning(
+                    "tts lead-in fallback strip %r cut=%sms (exact match failed) words=%s",
+                    lead_in,
+                    cut_ms,
+                    [(w.text, w.begin_time_ms) for w in words[:10]],
+                )
+                _trim_audio(path, TrimPlan(leading_ms=cut_ms, trailing_ms=0))
+                shifted = shift_word_timestamps(remaining, cut_ms)
+                return shifted
 
-    cut_ms = max(0, remaining[0].begin_time_ms - _LEAD_IN_PAD_MS)
-    _trim_audio(path, TrimPlan(leading_ms=cut_ms, trailing_ms=0))
-    shifted = shift_word_timestamps(remaining, cut_ms)
-    logger.debug(
-        "tts lead-in stripped %r cut=%sms words %s -> %s remaining_first_5=%s",
+    logger.warning(
+        "tts lead-in could not strip %r, no content words found. words=%s",
         lead_in,
-        cut_ms,
-        len(words),
-        len(shifted),
-        [(w.text, w.begin_time_ms) for w in remaining[:5]],
+        [(w.text, w.begin_time_ms) for w in words[:10]],
     )
-    return shifted
+    return words
