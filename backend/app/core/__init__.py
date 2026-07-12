@@ -8,6 +8,7 @@ from flask_cors import CORS
 from app.api import register_api
 from app.config import config
 from app.core.log_config import setup_server_logging
+from worker.recovery import recover_stuck_jobs
 
 app_logger, gevent_access_logger = setup_server_logging(
     log_dir=config.log_dir,
@@ -16,8 +17,21 @@ app_logger, gevent_access_logger = setup_server_logging(
 log = app_logger
 
 
+# 服务启动时自动恢复卡住的视频生成任务
+def _recover_stuck_jobs() -> None:
+    try:
+        count = recover_stuck_jobs()
+        if count:
+            log.warning("startup recovery: %d job(s) were stuck and have been reset to pending", count)
+    except Exception:
+        log.exception("startup recovery failed, jobs may still be stuck")
+
+
 def create_app() -> Flask:
     app = Flask(__name__)
+
+    # 服务启动时自动恢复卡住的视频生成任务
+    _recover_stuck_jobs()
 
     cors_origins = config.get_cors_origins()
     if cors_origins == ["*"]:
