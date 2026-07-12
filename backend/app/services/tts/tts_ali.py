@@ -52,6 +52,7 @@ VOICE_MODEL_MAP = {
     "longxian_v3": "cosyvoice-v3-flash",
     "longjielidou_v3": "cosyvoice-v3-flash",
     "cosyvoice-v3.5-flash-leo-60621bdce780434ab0734555e5196d7d": "cosyvoice-v3.5-flash",
+    "cosyvoice-v3.5-flash-leo-f9d115bfdf2346edbeb9d21ecd4f9ce9": "cosyvoice-v3.5-flash",
 }
 DEFAULT_VOICE = "cosyvoice-v3.5-flash-leo-60621bdce780434ab0734555e5196d7d"  # cSpell: disable-line
 DEFAULT_MODEL = "cosyvoice-v3-flash"
