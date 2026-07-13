@@ -55,6 +55,16 @@ _IMAGE_PROMPT_RULE_LIFE_LANDSCAPE = (
     )
 )
 
+_IMAGE_PROMPT_RULE_DAILY_STORY = (
+    "image_prompt须严格遵循visual_style字段中已定义的全片画风定调，"
+    "不修改、不替换visual_style的内容，直接按其原文描述生成；"
+    "角色外貌须与visual_style中描述的主角形象一致；"
+    "适配{orientation}构图。"
+    + _IMAGE_PROMPT_DIMENSIONS_FULL.replace(
+        "禁止提前画后续段落内容。",
+    )
+)
+
 _IMAGE_PROMPT_MOTION_TAIL = (
     "【语言要求】motion_prompt 必须使用中文撰写，禁止英文或中英混合。"
     "motion_prompt 用 15-80 字描述本镜画面中正在发生的具体动态，"

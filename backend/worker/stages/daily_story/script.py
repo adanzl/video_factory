@@ -79,6 +79,7 @@ class DailyScriptStage(StageExecutor):
         # 从 story 计算总字数
         total_chars = sum(len(d.get("line", "")) for d in (story_content.get("dialogue") or []))
 
+        from app.services.llm.llm_deepseek import _VISUAL_STYLE_BY_CONTENT_STYLE
         script = {
             "title": title,
             "narration": narration,
@@ -88,7 +89,7 @@ class DailyScriptStage(StageExecutor):
             "daily_story_id": daily_story_id,
             "daily_story_theme": story.get("theme", ""),
             "total_chars": total_chars,
-            "visual_style": "儿童情绪涂鸦风格，彩铅和蜡笔混合笔触，用力不均的线条，主观夸张变形，高饱和色彩，涂色出界，横格笔记本纸背景，橡皮擦拭痕迹，手工感，孩子气的构图。"
+            "visual_style": _VISUAL_STYLE_BY_CONTENT_STYLE["daily_story"]
         }
         # 清除 LLM 原生 img2img_prompt / motion_prompt，走标准 fill_image_prompts 流程
         for seg in script["segments"]:

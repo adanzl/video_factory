@@ -8,6 +8,7 @@ from typing import Any
 
 from app.config import get_settings
 from app.utils.job_info import (
+    CONTENT_STYLE_DAILY_STORY,
     CONTENT_STYLE_HISTORICAL_MYSTERY,
     CONTENT_STYLE_LIFE_EXPERIENCE,
     CONTENT_STYLE_SCIENCE_CHILD,
@@ -48,6 +49,7 @@ from .prompt import (
     _IMAGE_PROMPTS_JSON_EXAMPLE,
     _IMAGE_PROMPTS_JSON_EXAMPLE_NO_SD15,
     _MATERIAL_SCRIPT_JSON_EXAMPLE,
+    _IMAGE_PROMPT_RULE_DAILY_STORY,
     _IMAGE_PROMPT_RULE_SCIENCE_PORTRAIT,
     _IMAGE_PROMPT_RULE_SCIENCE_LANDSCAPE,
     _IMAGE_PROMPT_RULE_REALISTIC_PORTRAIT,
@@ -97,38 +99,18 @@ def _resolve_script_profile(
     resolved_style = content_style or (
         content_style_from_job(job) if job else CONTENT_STYLE_SCIENCE_CHILD
     )
-    # chat pipeline 默认横屏 + 生活经验风格
+    # chat pipeline 默认横屏；非 daily_story 时使用生活经验风格
     if job and job.get("pipeline") == "chat":
         if not orientation:
             resolved_orientation = ORIENTATION_LANDSCAPE
-        if not content_style:
+        if not content_style and resolved_style != CONTENT_STYLE_DAILY_STORY:
             resolved_style = CONTENT_STYLE_LIFE_EXPERIENCE
     return resolved_orientation, resolved_style
 
 
 def _visual_style_guide(content_style: str) -> str:
-    """按 content_style 约束 visual_style 定调（科学原理/时事科普 vs 历史悬案等）。"""
-    if content_style == CONTENT_STYLE_HISTORICAL_MYSTERY:
-        return (
-            "visual_style 须定为电影级写实历史再现：光影考究、暗部有层次、低饱和古风色调；"
-            "禁止卡通/绘本/扁平插画风。"
-        )
-    if content_style == CONTENT_STYLE_LIFE_EXPERIENCE:
-        return (
-            "visual_style 须定为生活Vlog质感写实画面：自然光或室内暖光、色彩真实不过度滤镜；"
-            "禁止卡通/绘本插画风。"
-        )
-    if content_style == CONTENT_STYLE_TECH_SCIENCE:
-        return (
-            "visual_style 须定为电影级写实科技视觉：布光考究、材质细节真实、信息感强；"
-            "禁止卡通/绘本插画风。"
-        )
-    if content_style == CONTENT_STYLE_SCIENCE_CHILD:
-        return (
-            "visual_style 须定为卡通科普插画风：明快蓝橙主色调，轮廓清晰、色块分明，"
-            "偏科普示意图质感；禁止绘本水彩风、禁止电影级写实摄影风。"
-        )
-    return "visual_style 为全片画风定调一句话（画风+主色调+跨镜统一元素如道具造型）。"
+    """visual_style 已改为后端硬编码，LLM 不再生成。此函数保留供历史兼容。"""
+    return ""
 
 
 def _narration_voice_rule(content_style: str) -> str:
@@ -408,7 +390,6 @@ def _storyboard_segment_rule(target: float, profile_style: str) -> str:
         "visual_brief为该镜画面描述（80-150字）：写清视觉主旨、关键动作或对比关系、"
         "场景类型与情绪，帮助后续扩写文生图提示词；不写镜头焦距、光线方向、材质参数等细节。"
         f"visual_brief末尾须用括号标注画面类型{types}。"
-        f"另须输出 visual_style：{_visual_style_guide(profile_style)}"
     )
     if target <= 0:
         return common + "不约束单镜时长，按口播内容逻辑切分，段数由内容决定。"
@@ -500,6 +481,9 @@ def _image_prompt_rule(*, orientation: str, content_style: str, sd15_mode: bool 
     )
     if sd15_mode:
         return head + _IMAGE_PROMPT_RULE_SD15 + _IMAGE_PROMPT_MOTION_TAIL
+    if content_style == CONTENT_STYLE_DAILY_STORY:
+        orient_text = "16:9横屏" if orientation == ORIENTATION_LANDSCAPE else "9:16竖屏"
+        return head + _IMAGE_PROMPT_RULE_DAILY_STORY.format(orientation=orient_text) + _IMAGE_PROMPT_MOTION_TAIL
     if content_style == CONTENT_STYLE_HISTORICAL_MYSTERY:
         body = _IMAGE_PROMPT_RULE_MYSTERY_LANDSCAPE if orientation == ORIENTATION_LANDSCAPE else _IMAGE_PROMPT_RULE_MYSTERY_PORTRAIT
         return head + body + _IMAGE_PROMPT_MOTION_TAIL
@@ -545,7 +529,7 @@ def build_narration_prompts(
     orientation: str | None = None,
     content_style: str | None = None,
 ) -> dict[str, str]:
-    """第一步：只生成口播全文与 visual_style（不含 segments）。"""
+    """第一步：只生成口播全文（不含 segments，visual_style 已由后端硬编码）。"""
     settings = get_settings()
     profile_orientation, profile_style = _resolve_script_profile(
         job,
@@ -567,7 +551,7 @@ def build_narration_prompts(
         f"{_narration_only_length_rule(profile_style)}"
     )
     system = (
-        f"{_storyboard_role(profile_style)}输出 JSON，字段：title, narration, word_count, visual_style。"
+        f"{_storyboard_role(profile_style)}输出 JSON，字段：title, narration, word_count。"
         "口播总字数未落在验收硬区间内则整稿无效；禁止输出 segments 字段。"
         f"{title_rule}"
         f"{length_rule}"
@@ -579,7 +563,7 @@ def build_narration_prompts(
         "结构完整有开头结尾。"
         "禁止口播开头空泛自我介绍或冗长人设铺垫。"
         f"{_visual_style_guide(profile_style)}"
-        "本步只写口播与 visual_style，不写分镜与 image_prompt。"
+        "本步只写口播，不写分镜与 image_prompt。"
         f"{_supplementary_system_clause(supplementary_info)}"
         f"{_json_output_clause(_NARRATION_ONLY_JSON_EXAMPLE)}"
     )
@@ -587,7 +571,7 @@ def build_narration_prompts(
         (
             f"{_narration_execution_headline(narration_target=narration_word_target, content_style=profile_style)}\n\n"
             f"{_narration_only_length_budget(narration_target=narration_word_target, content_style=profile_style)}\n\n"
-            f"{title_user_prefix}、visual_style 与完整口播 narration。"
+            f"{title_user_prefix}与完整口播 narration。"
         ),
         supplementary_info,
     )
@@ -627,10 +611,8 @@ def build_visual_brief_prompts(
         "同时每镜 visual_brief 只表达本段 text 内容，禁止提前画后续段落情节。"
     )
     system = (
-        f"{_storyboard_role(profile_style)}输出 JSON，字段：visual_style, segments。"
+        f"{_storyboard_role(profile_style)}输出 JSON，字段：segments。"
         f"{seg_rule}"
-        f"{_visual_style_guide(profile_style)}"
-        "visual_style 可与输入一致，或在保持全片统一的前提下微调措辞。"
         f"{_supplementary_system_clause(supplementary_info)}"
         f"{_json_output_clause(_VISUAL_BRIEF_JSON_EXAMPLE)}"
     )
@@ -690,7 +672,7 @@ def build_board_prompts(
         compact_output=compact_output,
     )
     if compact_output:
-        json_fields = "title, visual_style, segments"
+        json_fields = "title, segments"
         narration_clause = (
             "【紧凑输出】不要输出 narration 与 word_count 字段；"
             "各段 text 须按字数预算落在验收区间内，后端会自动拼接为 narration。"
@@ -699,7 +681,7 @@ def build_board_prompts(
         )
         word_count_clause = ""
     else:
-        json_fields = "title, narration, word_count, visual_style, segments"
+        json_fields = "title, narration, word_count, segments"
         narration_clause = ""
         word_count_clause = "word_count必须等于narration实际字数，不得虚报。"
     system = (
@@ -755,7 +737,7 @@ def build_board_prompts(
             f"{execution_headline}\n\n"
             f"{compact_budget}"
             f"{length_budget}\n\n"
-            f"{title_user_prefix}、visual_style 与分镜，{split_hint}。\n\n"
+            f"{title_user_prefix}与分镜，{split_hint}。\n\n"
             + (
                 f"每段 visual_brief 30-60 字，写清画面主旨，末尾用括号注明画面类型{types}。"
                 if compact_output
@@ -951,7 +933,7 @@ def build_narration_expand_prompts(
     if mode == "narration_only":
         system = (
             "你是口播扩写编辑。用户在初稿字数不足，须在保持主题与结构的前提下扩写。"
-            "输出 JSON，字段：title, narration, word_count, visual_style。"
+            "输出 JSON，字段：title, narration, word_count。"
             f"扩写后 narration 须至少 {min_chars} 字（不含空格换行），当前仅 {current} 字，还差约 {deficit} 字。"
             "规则：只扩写 narration，补具体细节、案例、步骤或结论，禁止删减已有核心信息；"
             "不要输出 segments；word_count 等于 narration 实际字数。"
@@ -962,7 +944,6 @@ def build_narration_expand_prompts(
             "title": script.get("title"),
             "narration": script.get("narration"),
             "word_count": script.get("word_count"),
-            "visual_style": script.get("visual_style"),
         }
         user = (
             "当前稿件（字数不足，请扩写 narration）：\n"
@@ -972,9 +953,7 @@ def build_narration_expand_prompts(
     keep_visual = mode == "storyboard"
     system = (
         "你是口播扩写编辑。用户在初稿字数不足，须在保持主题与分镜结构的前提下扩写。"
-        "输出 JSON，字段与输入一致（title, narration, word_count, segments"
-        + (", visual_style" if keep_visual else "")
-        + "）。"
+        "输出 JSON，字段与输入一致（title, narration, word_count, segments）。"
         f"扩写后 narration 须至少 {min_chars} 字（不含空格换行），当前仅 {current} 字，还差约 {deficit} 字。"
         "规则：segments 段数与 segment_index 不得减少、不得合并；"
         "每段 text 只能扩写（补具体细节、案例、步骤或结论），禁止删减已有核心信息；"
@@ -983,7 +962,7 @@ def build_narration_expand_prompts(
     )
     if keep_visual:
         system += (
-            "须保留 visual_style 与各段 visual_brief，仅扩写 text；"
+            "须保留各段 visual_brief，仅扩写 text；"
             "禁止删除 visual_brief 或改成空字符串。"
         )
         system += _json_output_clause(_STORYBOARD_JSON_EXAMPLE)
@@ -995,8 +974,6 @@ def build_narration_expand_prompts(
         "word_count": script.get("word_count"),
         "segments": script.get("segments"),
     }
-    if keep_visual:
-        draft["visual_style"] = script.get("visual_style")
     user = (
         "当前稿件（字数不足，请扩写）：\n"
         f"{json.dumps(draft, ensure_ascii=False)}\n\n"
