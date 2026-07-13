@@ -130,6 +130,8 @@ const emit = defineEmits<{
   (e: "updated"): void;
 }>();
 
+const router = useRouter();
+
 const visible = computed({
   get: () => props.modelValue,
   set: (val: boolean) => emit("update:modelValue", val),
@@ -156,7 +158,7 @@ watch(
 );
 
 /** 默认口播语速（字/秒） */
-const speechRate = ref(3.1);
+const speechRate = ref(5.1);
 /** 句间停留（秒） */
 const lineGap = ref(0.3);
 
@@ -191,9 +193,9 @@ async function handleCreateJob() {
     const job = await createDailyStoryJob(storyId);
     ElMessage.success(`任务已创建（ID: ${job.id}），即将开始处理`);
     visible.value = false;
-    useRouter().push({ path: "/jobs", query: { id: String(job.id) } });
+    router.push({ path: "/jobs", query: { id: String(job.id) } });
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.message || "创建任务失败");
+    ElMessage.error(e?.response?.data?.error || "创建任务失败");
   } finally {
     submitting.value = false;
   }
