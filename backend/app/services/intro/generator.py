@@ -202,6 +202,7 @@ def _load_moon_backdrop(
     theme,
     *,
     tint_yellow: bool = False,
+    skip_fade: bool = False,
 ) -> Image.Image:
     if not path.exists():
         raise FileNotFoundError(f"片头月亮素材不存在: {path}")
@@ -210,13 +211,14 @@ def _load_moon_backdrop(
     moon = _key_black_to_alpha(moon)
     if tint_yellow:
         moon = _tint_image(moon, theme.title_fill[:3], strength=0.58)
-    fade = _draw_vertical_gradient_rgba(
-        diameter,
-        diameter,
-        (255, 255, 255, theme.title_circle_top[3]),
-        (255, 255, 255, theme.title_circle_bottom[3]),
-    )
-    moon.putalpha(ImageChops.multiply(moon.split()[3], fade.split()[3]))
+    if not skip_fade:
+        fade = _draw_vertical_gradient_rgba(
+            diameter,
+            diameter,
+            (255, 255, 255, theme.title_circle_top[3]),
+            (255, 255, 255, theme.title_circle_bottom[3]),
+        )
+        moon.putalpha(ImageChops.multiply(moon.split()[3], fade.split()[3]))
     return moon
 
 
@@ -321,6 +323,7 @@ def _build_title_layers(
     *,
     moon_path: Path,
     moon_tint_yellow: bool = False,
+    skip_moon_fade: bool = False,
 ) -> tuple[Image.Image, Image.Image]:
     """分别生成月亮层与标题文字层（全画布透明底）。"""
     diameter = _moon_diameter(layout, width, height)
@@ -350,6 +353,7 @@ def _build_title_layers(
         diameter,
         theme,
         tint_yellow=moon_tint_yellow,
+        skip_fade=skip_moon_fade,
     )
 
     moon_layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
@@ -385,6 +389,7 @@ def _build_layers(
         layout,
         moon_path=moon_path,
         moon_tint_yellow=moon_tint_yellow,
+        skip_moon_fade=bg_image_path is not None,
     )
 
     brand_header = _render_brand_header(theme, brand)
@@ -409,6 +414,7 @@ def _build_layers(
         "theme": theme,
         "width": width,
         "height": height,
+        "skip_moon_opacity": bg_image_path is not None,
     }
 
 
@@ -447,7 +453,10 @@ def _compose_frame(layers: dict, t: float) -> Image.Image:
     host_x, host_y = _host_position(layers, host_w, host_h, enter=enter)
 
     moon: Image.Image = layers["moon_layer"]
-    frame.alpha_composite(_with_opacity(moon, opacity), (0, 0))
+    if layers.get("skip_moon_opacity"):
+        frame.alpha_composite(moon, (0, 0))
+    else:
+        frame.alpha_composite(_with_opacity(moon, opacity), (0, 0))
 
     frame.alpha_composite(host_frame, (host_x, host_y))
 
@@ -547,9 +556,10 @@ def generate_intro(
     moon_tint_yellow = settings.intro_moon_tint in {"yellow", "tint", "gold", "1", "true"}
     if category == "历史悬案":
         moon_tint_yellow = True
+    brand = "昭墨日常" if pipeline == "chat" else settings.brand_name
     layers = _build_layers(
         title,
-        settings.brand_name,
+        brand,
         theme,
         video_w,
         video_h,
