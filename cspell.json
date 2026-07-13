@@ -72,6 +72,7 @@
         "torchvision",
         "transnet",
         "transnetv",
+        "tweaker",
         "unpickle",
         "usecase",
         "usermod",

@@ -186,17 +186,32 @@ class AgnesImageProvider(ImageProvider):
         output_path: Path,
         *,
         size: str,
+        ref_images: list[Path] | None = None,
     ) -> Path:
         agnes_size = _to_agnes_size(size)
         self._acquire_submit_slot()
         try:
+            extra_body: dict = {"response_format": "url"}
+            if ref_images:
+                ref_b64_list: list[str] = []
+                for ref_path in ref_images:
+                    if ref_path.exists():
+                        ref_b64 = base64.b64encode(ref_path.read_bytes()).decode("ascii")
+                        ref_b64_list.append(ref_b64)
+                        logger.info(
+                            "agnes ref_image: %s, size=%s bytes",
+                            ref_path.name,
+                            ref_path.stat().st_size,
+                        )
+                    else:
+                        logger.warning("agnes ref_image not found: %s", ref_path)
+                if ref_b64_list:
+                    extra_body["ref_images"] = ref_b64_list
             payload = {
                 "model": self._model,
                 "prompt": prompt,
                 "size": agnes_size,
-                "extra_body": {
-                    "response_format": "url"
-                },
+                "extra_body": extra_body,
             }
             logger.info(
                 "agnes request (%s key): %s, prompt_chars=%s, %s",
@@ -233,6 +248,7 @@ class AgnesImageProvider(ImageProvider):
         output_path: Path,
         *,
         size: str | None = None,
+        ref_images: list[Path] | None = None,
     ) -> Path:
         size = size or self._default_size
         keys = agnes_api_keys()
@@ -242,7 +258,9 @@ class AgnesImageProvider(ImageProvider):
         last_exc: Exception | None = None
         for idx, key in enumerate(keys):
             try:
-                return self._generate_with_key(key, prompt, output_path, size=size)
+                return self._generate_with_key(
+                    key, prompt, output_path, size=size, ref_images=ref_images
+                )
             except AgnesQuotaExceeded as exc:
                 last_exc = exc
                 if idx < len(keys) - 1:

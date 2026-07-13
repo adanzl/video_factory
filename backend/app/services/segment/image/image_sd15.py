@@ -671,7 +671,7 @@ def build_sd15_prompt_system(*, business_override: str | None = None) -> str:
         '"business": "science", "lora": "Scientific_Equipment"}\n'
         'blueprint 示例：{"layout": "single", "prompt_en": "exploded view diagram of engine cylinder, mechanical parts labeled, white background", '
         '"business": "science", "lora": "blueprint_xianyu"}\n'
-        'picturebook 示例：{"layout": "single", "prompt_en": "cute cartoon illustration of a magnet attracting iron nails, bright happy colors, simple shapes", '
+        'picture_book 示例：{"layout": "single", "prompt_en": "cute cartoon illustration of a magnet attracting iron nails, bright happy colors, simple shapes", '
         '"business": "science", "lora": "picture_book_illustration"}\n'
         'vintage 示例：{"layout": "single", "prompt_en": "old black and white photograph of 1920s street scene, vintage grain, historical documentary style", '
         '"business": "life", "lora": "vintage_old_shanghai"}\n'
@@ -1304,7 +1304,7 @@ class Sd15ImageProvider(ImageProvider):
         img.save(buf, format="PNG")
         return buf.getvalue()
 
-    def generate(self, prompt: str, output_path: Path, *, size: str | None = None) -> Path:
+    def generate(self, prompt: str, output_path: Path, *, size: str | None = None, ref_images: list[Path] | None = None) -> Path:
         size = size or self._default_size
         prep = _prepare_sd15_prompt(
             prompt,

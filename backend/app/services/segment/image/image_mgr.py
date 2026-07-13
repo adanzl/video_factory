@@ -19,7 +19,14 @@ __all__ = ["ImageMgr", "ImageProvider", "image_mgr"]
 
 class ImageProvider(ABC):
     @abstractmethod
-    def generate(self, prompt: str, output_path: Path, *, size: str | None = None) -> Path:
+    def generate(
+        self,
+        prompt: str,
+        output_path: Path,
+        *,
+        size: str | None = None,
+        ref_images: list[Path] | None = None,
+    ) -> Path:
         ...
 
     def describe_params(self, *, size: str | None = None) -> str:
@@ -58,6 +65,7 @@ class ImageMgr:
         image_provider: str | None = None,
         on_image_done: Callable[[int, Path], None] | None = None,
         job_id: int | None = None,
+        ref_images: list[Path] | None = None,
     ) -> list[tuple[int, Path]]:
         images_dir.mkdir(parents=True, exist_ok=True)
         provider = self._get_image_provider(image_provider)
@@ -102,7 +110,7 @@ class ImageMgr:
                 params_desc,
                 len(prompt),
             )
-            provider.generate(prompt, out, size=size)
+            provider.generate(prompt, out, size=size, ref_images=ref_images)
             elapsed = time.time() - t0
             logger.info(
                 "image %s/%s done segment %s in %.1fs | %s",

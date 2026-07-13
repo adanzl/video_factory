@@ -131,6 +131,8 @@ def _generate_cover(job: dict, cover_path: Path, width: int, height: int) -> Non
     cw, ch, _ = cover_canvas_size(width, height)
     subject = _cover_subject_from_job(job)
     cover_prompt = build_cover_image_prompt(cw=cw, ch=ch, subject=subject)
+    pipeline = job.get("pipeline")
+    host_intro_path = settings.get_host_intro_path(pipeline)
 
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
         tmp_path = Path(tmp.name)
@@ -141,7 +143,7 @@ def _generate_cover(job: dict, cover_path: Path, width: int, height: int) -> Non
             img,
             title,
             brand_name=settings.brand_name,
-            host_intro_path=settings.host_intro_path,
+            host_intro_path=host_intro_path,
         )
         composed.convert("RGB").save(cover_path, quality=92)
     finally:
@@ -180,6 +182,7 @@ def run_intro_for_category(
         hold_tail_sec=ctx.intro_hold_tail_sec,
         width=width,
         height=height,
+        pipeline=job.get("pipeline"),
     )
 
     cover_path = ctx.rel("cover.jpg")
