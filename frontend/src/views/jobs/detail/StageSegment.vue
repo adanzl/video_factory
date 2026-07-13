@@ -206,46 +206,6 @@
           <section class="flex flex-col gap-1">
             <div class="flex items-center justify-between gap-2">
               <div class="text-xs font-medium text-gray-600">运动提示词</div>
-              <div class="flex items-center gap-1">
-                <el-popover placement="bottom" :width="520" trigger="click" @show="handleMotionPromptPopoverShow(segment.segment_index)">
-                  <template #reference>
-                    <el-button
-                      size="small"
-                      link
-                      type="primary"
-                      :disabled="!segment.image_prompt && !segment.motion_prompt"
-                    >
-                      提示词
-                    </el-button>
-                  </template>
-                  <div v-if="motionPromptLoading" class="py-4 text-center text-xs text-gray-400">加载中…</div>
-                  <div v-else-if="motionPromptError" class="py-2 text-xs text-red-500">{{ motionPromptError }}</div>
-                  <div v-else class="space-y-3">
-                    <div>
-                      <div class="mb-1 text-xs font-medium text-gray-600">System</div>
-                      <div class="max-h-40 overflow-y-auto whitespace-pre-wrap rounded bg-gray-50 p-2 text-xs leading-relaxed wrap-break-word">
-                        {{ motionPromptSystem || "暂无" }}
-                      </div>
-                    </div>
-                    <div>
-                      <div class="mb-1 text-xs font-medium text-gray-600">User</div>
-                      <div class="max-h-40 overflow-y-auto whitespace-pre-wrap rounded bg-gray-50 p-2 text-xs leading-relaxed wrap-break-word">
-                        {{ motionPromptUser || "暂无" }}
-                      </div>
-                    </div>
-                  </div>
-                </el-popover>
-                <el-button
-                  size="small"
-                  link
-                  type="primary"
-                  :loading="generatingMotionPromptIndex === segment.segment_index"
-                  :disabled="isSegmentMotionPromptActionDisabled(segment.segment_index)"
-                  @click="handleGenerateMotionPrompt(segment.segment_index)"
-                >
-                  生成
-                </el-button>
-              </div>
             </div>
             <el-tooltip placement="top" :show-after="300" :disabled="!segment.motion_prompt">
               <template #content>
@@ -290,12 +250,13 @@
                   :disabled="isSegmentImageActionDisabled(segment.segment_index)"
                   @click="handleRegenerateImage(segment.segment_index)"
                 >
-                  重新生成
+                  生成
                 </el-button>
               </div>
             </div>
             <el-image
               v-if="segment.image_path"
+              :key="segment.imageUrl"
               :src="lazyMediaSrc(segment.imageUrl, stageActive)"
               fit="cover"
               class="w-full rounded border border-gray-100"
@@ -559,27 +520,6 @@ const handleImagePromptPopoverShow = async (segmentIndex: number) => {
   }
 };
 
-const motionPromptLoading = ref(false);
-const motionPromptError = ref("");
-const motionPromptSystem = ref("");
-const motionPromptUser = ref("");
-
-const handleMotionPromptPopoverShow = async (segmentIndex: number) => {
-  motionPromptLoading.value = true;
-  motionPromptError.value = "";
-  motionPromptSystem.value = "";
-  motionPromptUser.value = "";
-  try {
-    const result = await previewSegmentPrompts(props.job.id, segmentIndex, "motion_prompt");
-    motionPromptSystem.value = result.system;
-    motionPromptUser.value = result.user;
-  } catch (error) {
-    motionPromptError.value = error instanceof Error ? error.message : "加载失败";
-  } finally {
-    motionPromptLoading.value = false;
-  }
-};
-
 const openEditDialog = (segment: { segment_index: number; text: string }) => {
   editSegmentIndex.value = segment.segment_index;
   editText.value = segment.text || "";
@@ -627,15 +567,6 @@ const isSegmentImagePromptActionDisabled = (segmentIndex: number) =>
   generatingVisualBriefIndex.value !== null ||
   (generatingImagePromptIndex.value !== null &&
     generatingImagePromptIndex.value !== segmentIndex);
-
-const isSegmentMotionPromptActionDisabled = (segmentIndex: number) =>
-  actionDisabled.value ||
-  submitting.value ||
-  regeneratingImageIndex.value !== null ||
-  generatingClipIndex.value !== null ||
-  generatingImagePromptIndex.value !== null ||
-  (generatingMotionPromptIndex.value !== null &&
-    generatingMotionPromptIndex.value !== segmentIndex);
 
 const isSegmentVisualBriefActionDisabled = (segmentIndex: number) =>
   actionDisabled.value ||
@@ -698,6 +629,15 @@ const displaySegments = computed(() =>
     let clipUrl = "";
     if (clipPath) {
       clipUrl = toMediaUrl(clipPath);
+    }
+    // 追加缓存破坏参数
+    const refreshTs = imageRefreshTimestamps.value[segment.segment_index];
+    if (refreshTs && imageUrl) {
+      imageUrl += (imageUrl.includes("?") ? "&" : "?") + `_=${refreshTs}`;
+    }
+    const clipVer = clipCacheVers.value[segment.segment_index];
+    if (clipVer != null && clipVer >= 0 && clipUrl) {
+      clipUrl += (clipUrl.includes("?") ? "&" : "?") + `v=${clipVer}`;
     }
     return {
       ...segment,
@@ -766,29 +706,6 @@ const handleGenerateImagePrompt = async (segmentIndex: number) => {
     handleError(error, "文生图提示词生成失败");
   } finally {
     generatingImagePromptIndex.value = null;
-  }
-};
-
-const handleGenerateMotionPrompt = async (segmentIndex: number) => {
-  try {
-    await ElMessageBox.confirm(`确定重新生成分镜 #${segmentIndex} 的运动提示词吗？`, "确认执行", {
-      type: "warning",
-      confirmButtonText: "执行",
-      cancelButtonText: "取消",
-    });
-  } catch {
-    return;
-  }
-
-  generatingMotionPromptIndex.value = segmentIndex;
-  try {
-    await generatePrompts(props.job.id, { type: "motion", segments: [segmentIndex] });
-    ElMessage.success(`已提交分镜 #${segmentIndex} 运动提示词生成`);
-    emit("refresh");
-  } catch (error) {
-    handleError(error, "运动提示词生成失败");
-  } finally {
-    generatingMotionPromptIndex.value = null;
   }
 };
 
