@@ -666,6 +666,8 @@ class DeepSeekClient(LLMClient):
             supplementary_info=supplementary_info,
             job=job,
         )
+        # daily_story 任务强制使用儿童涂鸦画风，覆盖 LLM 生成的 visual_style
+        _apply_daily_story_visual_style(data, job=job)
         timing = data.setdefault("_llm_timing", {})
         timing["narration_sec"] = round(narration_elapsed, 1)
         timing["storyboard_sec"] = round(

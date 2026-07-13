@@ -593,22 +593,9 @@ const displaySegments = computed(() =>
     const imagePath = segment.image_path?.trim() ?? "";
     const clipPath = segment.clip_path?.trim() ?? "";
     let imageUrl = toMediaUrl(imagePath);
-    const refreshTs = imageRefreshTimestamps.value[segment.segment_index];
-    const imageVer = imageCacheVers.value[segment.segment_index];
-    if (imageUrl) {
-      if (refreshTs !== undefined) {
-        imageUrl += `?_=${refreshTs}`;
-      } else if (imageVer !== undefined) {
-        imageUrl += `?${imageVer}`;
-      }
-    }
     let clipUrl = "";
     if (clipPath) {
       clipUrl = toMediaUrl(clipPath);
-      const clipVer = clipCacheVers.value[segment.segment_index];
-      if (clipUrl && clipVer !== undefined) {
-        clipUrl += `?v=${clipVer}`;
-      }
     }
     return {
       ...segment,

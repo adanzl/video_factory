@@ -38,4 +38,4 @@ def serve_media_file(filepath: str):
         abort(400)
     except OSError:
         abort(500)
-    return send_file(data["path"], mimetype=data["mimetype"], conditional=True)
+    return send_file(data["path"], mimetype=data["mimetype"], conditional=True, max_age=604800)

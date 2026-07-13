@@ -25,7 +25,7 @@ export function getMediaFileUrl(filePath: string): string {
       .split("/")
       .map(part => encodeURIComponent(part))
       .join("/");
-    const mediaUrl = `${baseURL.replace(/\/$/, "")}/v_factory/api/media/files/${encodedPath}?_t=${Date.now()}`;
+    const mediaUrl = `${baseURL.replace(/\/$/, "")}/v_factory/api/media/files/${encodedPath}`;
 
     if (mediaUrl.includes("index.html") || mediaUrl.endsWith(".html")) {
       return "";
