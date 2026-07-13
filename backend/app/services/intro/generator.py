@@ -374,6 +374,7 @@ def _build_layers(
     *,
     moon_path: Path,
     moon_tint_yellow: bool = False,
+    bg_image_path: Path | None = None,
 ) -> dict:
     normalized = _normalize_title(title) or title.strip()
     moon_layer, text_layer = _build_title_layers(
@@ -388,8 +389,13 @@ def _build_layers(
 
     brand_header = _render_brand_header(theme, brand)
 
-    bg = _draw_gradient(width, height, theme.bg_top, theme.bg_bottom)
-    bg.alpha_composite(_draw_particles(width, height, theme.particle))
+    if bg_image_path and bg_image_path.exists():
+        bg_img = Image.open(bg_image_path).convert("RGBA")
+        bg_img = bg_img.resize((width, height), Image.Resampling.LANCZOS)
+        bg = bg_img
+    else:
+        bg = _draw_gradient(width, height, theme.bg_top, theme.bg_bottom)
+        bg.alpha_composite(_draw_particles(width, height, theme.particle))
 
     host_scaled = host
 
@@ -495,10 +501,10 @@ def _render_frames(
     return total
 
 
-def _brand_audio_path(work_dir: Path) -> Path:
+def _brand_audio_path(work_dir: Path, pipeline: str | None = None) -> Path:
     """优先使用 res 预置喊声；缺失时抛出明确错误。"""
     settings = get_settings()
-    src = settings.intro_shout_path
+    src = settings.get_intro_shout_path(pipeline)
     if not src.exists():
         raise FileNotFoundError(
             f"片头喊声音频不存在: {src}，请运行 scripts/prepare_intro_audio.py 生成"
@@ -533,7 +539,7 @@ def generate_intro(
         shutil.rmtree(work)
     work.mkdir(parents=True, exist_ok=True)
 
-    audio_path = _brand_audio_path(work)
+    audio_path = _brand_audio_path(work, pipeline)
     audio_dur = probe_duration(audio_path)
     tail = _HOLD_TAIL_SEC if hold_tail_sec is None else max(0.0, hold_tail_sec)
     duration = audio_dur + tail
@@ -549,8 +555,9 @@ def generate_intro(
         video_h,
         host,
         layout,
-        moon_path=settings.intro_moon_path,
+        moon_path=settings.get_moon_path(pipeline),
         moon_tint_yellow=moon_tint_yellow,
+        bg_image_path=settings.get_intro_bg_path(pipeline),
     )
     frames_dir = work / "frames"
     frame_count = _render_frames(layers, frames_dir, duration=duration, fps=_FPS)

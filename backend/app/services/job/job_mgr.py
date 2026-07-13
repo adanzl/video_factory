@@ -917,7 +917,9 @@ class JobMgr:
 
             media_dir = settings.video_data_dir / str(job_id)
             cover_path = media_dir / "cover.jpg"
-            host_intro_path = settings.get_host_intro_path(job.get("pipeline"))
+            pipeline = job.get("pipeline")
+            host_intro_path = settings.get_host_intro_path(pipeline)
+            brand = "昭墨日常" if pipeline == "chat" else settings.brand_name
 
             with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
                 tmp_path = Path(tmp.name)
@@ -927,7 +929,7 @@ class JobMgr:
                 composed = compose_cover_image(
                     img,
                     title,
-                    brand_name=settings.brand_name,
+                    brand_name=brand,
                     host_intro_path=host_intro_path,
                 )
                 composed.convert("RGB").save(cover_path, quality=92)

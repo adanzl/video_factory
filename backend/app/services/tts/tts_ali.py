@@ -390,11 +390,12 @@ def synthesize_utterance(
     *,
     rate: float | None = None,
     pitch: float | None = None,
+    voice: str | None = None,
 ) -> Path:
     """单句 MP3（片头喊声等）。"""
     settings = get_settings()
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    result = _run_tts_task(text, rate=rate, pitch=pitch, audio_format="wav")
+    result = _run_tts_task(text, rate=rate, pitch=pitch, voice=voice, audio_format="wav")
     wav_path = output_path.with_suffix(".wav")
     wav_path.write_bytes(result.audio)
     if settings.tts_trim_edges:
