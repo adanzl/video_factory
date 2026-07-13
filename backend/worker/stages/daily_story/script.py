@@ -88,11 +88,19 @@ class DailyScriptStage(StageExecutor):
             "daily_story_id": daily_story_id,
             "daily_story_theme": story.get("theme", ""),
             "total_chars": total_chars,
+            "visual_style": "儿童绘本插画风格，平涂上色，柔和明亮的色彩，轻微水彩纸纹理，简洁圆润线条",
         }
+        # 清除 LLM 原生 img2img_prompt / motion_prompt，走标准 fill_image_prompts 流程
+        for seg in script["segments"]:
+            seg.pop("image_prompt", None)
+            seg.pop("motion_prompt", None)
+
+        # 用标准流程生成文生图 + 运动提示词（含内部质量校验与重试）
+        llm_mgr.fill_image_prompts(script, job=ctx.job)
 
         with connection() as conn:
             repo_job.update_job(conn, job_id, script_json=script)
-            repo_segment.insert_segments(conn, job_id, segments)
+            repo_segment.insert_segments(conn, job_id, script["segments"])
             repo_job_log.append_log(
                 conn,
                 job_id,

@@ -51,7 +51,7 @@
             :segments="segments"
             :logs="logsForStage(stage.name)"
             :stage-active="activeStage === stage.name"
-            @refresh="fetchDetail"
+            @refresh="() => fetchDetail({ silent: true })"
           />
         </el-tab-pane>
       </el-tabs>
