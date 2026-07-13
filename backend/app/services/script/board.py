@@ -160,10 +160,15 @@ def _writing_target_clause(narration_target: int) -> str:
     )
 
 
+_VISUAL_BRIEF_TYPE_OPTIONS: dict[str, str] = {
+    CONTENT_STYLE_HISTORICAL_MYSTERY: "（历史场景再现）/（人物肖像）/（关键物件特写）/（空间环境）",
+    CONTENT_STYLE_DAILY_STORY: "（生活场景）",
+}
+_DEFAULT_VISUAL_BRIEF_TYPES = "（写实场景）/（结构示意图）/（对比图）/（线稿解剖图）/（微观分子图）"
+
+
 def _visual_brief_types(profile_style: str) -> str:
-    if profile_style == CONTENT_STYLE_HISTORICAL_MYSTERY:
-        return "（历史场景再现）/（人物肖像）/（关键物件特写）/（空间环境）"
-    return "（写实场景）/（结构示意图）/（对比图）/（线稿解剖图）/（微观分子图）"
+    return _VISUAL_BRIEF_TYPE_OPTIONS.get(profile_style, _DEFAULT_VISUAL_BRIEF_TYPES)
 
 
 def _storyboard_layer_style(content_style: str) -> str:

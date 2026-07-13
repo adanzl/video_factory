@@ -152,16 +152,46 @@
           <section class="flex flex-col gap-1">
             <div class="flex items-center justify-between gap-2">
               <div class="text-xs font-medium text-gray-600">文生图提示词</div>
-              <el-button
-                size="small"
-                link
-                type="primary"
-                :loading="generatingImagePromptIndex === segment.segment_index"
-                :disabled="isSegmentImagePromptActionDisabled(segment.segment_index)"
-                @click="handleGenerateImagePrompt(segment.segment_index)"
-              >
-                生成
-              </el-button>
+              <div class="flex items-center gap-1">
+                <el-popover placement="bottom" :width="520" trigger="click" @show="handleImagePromptPopoverShow(segment.segment_index)">
+                  <template #reference>
+                    <el-button
+                      size="small"
+                      link
+                      type="primary"
+                      :disabled="!segment.image_prompt && !segment.visual_brief"
+                    >
+                      提示词
+                    </el-button>
+                  </template>
+                  <div v-if="imagePromptLoading" class="py-4 text-center text-xs text-gray-400">加载中…</div>
+                  <div v-else-if="imagePromptError" class="py-2 text-xs text-red-500">{{ imagePromptError }}</div>
+                  <div v-else class="space-y-3">
+                    <div>
+                      <div class="mb-1 text-xs font-medium text-gray-600">System</div>
+                      <div class="max-h-40 overflow-y-auto whitespace-pre-wrap rounded bg-gray-50 p-2 text-xs leading-relaxed wrap-break-word">
+                        {{ imagePromptSystem || "暂无" }}
+                      </div>
+                    </div>
+                    <div>
+                      <div class="mb-1 text-xs font-medium text-gray-600">User</div>
+                      <div class="max-h-40 overflow-y-auto whitespace-pre-wrap rounded bg-gray-50 p-2 text-xs leading-relaxed wrap-break-word">
+                        {{ imagePromptUser || "暂无" }}
+                      </div>
+                    </div>
+                  </div>
+                </el-popover>
+                <el-button
+                  size="small"
+                  link
+                  type="primary"
+                  :loading="generatingImagePromptIndex === segment.segment_index"
+                  :disabled="isSegmentImagePromptActionDisabled(segment.segment_index)"
+                  @click="handleGenerateImagePrompt(segment.segment_index)"
+                >
+                  生成
+                </el-button>
+              </div>
             </div>
             <el-tooltip placement="top" :show-after="300" :disabled="!segment.image_prompt">
               <template #content>
@@ -176,16 +206,46 @@
           <section class="flex flex-col gap-1">
             <div class="flex items-center justify-between gap-2">
               <div class="text-xs font-medium text-gray-600">运动提示词</div>
-              <el-button
-                size="small"
-                link
-                type="primary"
-                :loading="generatingMotionPromptIndex === segment.segment_index"
-                :disabled="isSegmentMotionPromptActionDisabled(segment.segment_index)"
-                @click="handleGenerateMotionPrompt(segment.segment_index)"
-              >
-                生成
-              </el-button>
+              <div class="flex items-center gap-1">
+                <el-popover placement="bottom" :width="520" trigger="click" @show="handleMotionPromptPopoverShow(segment.segment_index)">
+                  <template #reference>
+                    <el-button
+                      size="small"
+                      link
+                      type="primary"
+                      :disabled="!segment.image_prompt && !segment.motion_prompt"
+                    >
+                      提示词
+                    </el-button>
+                  </template>
+                  <div v-if="motionPromptLoading" class="py-4 text-center text-xs text-gray-400">加载中…</div>
+                  <div v-else-if="motionPromptError" class="py-2 text-xs text-red-500">{{ motionPromptError }}</div>
+                  <div v-else class="space-y-3">
+                    <div>
+                      <div class="mb-1 text-xs font-medium text-gray-600">System</div>
+                      <div class="max-h-40 overflow-y-auto whitespace-pre-wrap rounded bg-gray-50 p-2 text-xs leading-relaxed wrap-break-word">
+                        {{ motionPromptSystem || "暂无" }}
+                      </div>
+                    </div>
+                    <div>
+                      <div class="mb-1 text-xs font-medium text-gray-600">User</div>
+                      <div class="max-h-40 overflow-y-auto whitespace-pre-wrap rounded bg-gray-50 p-2 text-xs leading-relaxed wrap-break-word">
+                        {{ motionPromptUser || "暂无" }}
+                      </div>
+                    </div>
+                  </div>
+                </el-popover>
+                <el-button
+                  size="small"
+                  link
+                  type="primary"
+                  :loading="generatingMotionPromptIndex === segment.segment_index"
+                  :disabled="isSegmentMotionPromptActionDisabled(segment.segment_index)"
+                  @click="handleGenerateMotionPrompt(segment.segment_index)"
+                >
+                  生成
+                </el-button>
+              </div>
             </div>
             <el-tooltip placement="top" :show-after="300" :disabled="!segment.motion_prompt">
               <template #content>
@@ -340,7 +400,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { generatePrompts, runJobStageAction, updateJobInfo, updateSegmentText } from "@/api/api-jobs";
+import { generatePrompts, previewSegmentPrompts, runJobStageAction, updateJobInfo, updateSegmentText } from "@/api/api-jobs";
 import { getMediaFileUrl } from "@/api/api-media";
 import type { JobDetail, JobInfo, JobLog, JobSegment, ScriptJson } from "@/types/jobs";
 import type { RunStageActionPayload } from "@/types/jobs/stageAction";
@@ -477,6 +537,48 @@ const editDialogOpen = ref(false);
 const editSegmentIndex = ref(1);
 const editText = ref("");
 const editSaving = ref(false);
+
+const imagePromptLoading = ref(false);
+const imagePromptError = ref("");
+const imagePromptSystem = ref("");
+const imagePromptUser = ref("");
+
+const handleImagePromptPopoverShow = async (segmentIndex: number) => {
+  imagePromptLoading.value = true;
+  imagePromptError.value = "";
+  imagePromptSystem.value = "";
+  imagePromptUser.value = "";
+  try {
+    const result = await previewSegmentPrompts(props.job.id, segmentIndex, "image_prompts");
+    imagePromptSystem.value = result.system;
+    imagePromptUser.value = result.user;
+  } catch (error) {
+    imagePromptError.value = error instanceof Error ? error.message : "加载失败";
+  } finally {
+    imagePromptLoading.value = false;
+  }
+};
+
+const motionPromptLoading = ref(false);
+const motionPromptError = ref("");
+const motionPromptSystem = ref("");
+const motionPromptUser = ref("");
+
+const handleMotionPromptPopoverShow = async (segmentIndex: number) => {
+  motionPromptLoading.value = true;
+  motionPromptError.value = "";
+  motionPromptSystem.value = "";
+  motionPromptUser.value = "";
+  try {
+    const result = await previewSegmentPrompts(props.job.id, segmentIndex, "motion_prompt");
+    motionPromptSystem.value = result.system;
+    motionPromptUser.value = result.user;
+  } catch (error) {
+    motionPromptError.value = error instanceof Error ? error.message : "加载失败";
+  } finally {
+    motionPromptLoading.value = false;
+  }
+};
 
 const openEditDialog = (segment: { segment_index: number; text: string }) => {
   editSegmentIndex.value = segment.segment_index;
