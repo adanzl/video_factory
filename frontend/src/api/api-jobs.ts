@@ -130,16 +130,18 @@ export async function generatePrompts(
   return response.data;
 }
 
-export async function generateImagePrompts(
+export async function previewSegmentPrompts(
   jobId: number,
-  options: { segments?: number[] } = {}
-): Promise<JobDetail> {
-  const payload: { id: number; segments?: number[] } = { id: jobId };
-  if (options.segments?.length) {
-    payload.segments = options.segments;
-  }
-  const response = await api.post<JobDetail>("/v_factory/api/jobs/script/imagePrompts", payload);
-  return response.data;
+  segmentIndex: number,
+  step: "image_prompts" | "motion_prompt" = "image_prompts"
+): Promise<{ system: string; user: string }> {
+  const response = await api.post<{ prompts: LlmPromptStep[] }>(
+    "/v_factory/api/jobs/script/prompts",
+    { id: jobId, step, segment_index: segmentIndex }
+  );
+  const steps = Array.isArray(response.data.prompts) ? response.data.prompts : [];
+  const matched = steps.find(s => s.step === step);
+  return { system: matched?.system ?? "", user: matched?.user ?? "" };
 }
 
 export async function updateSegmentText(

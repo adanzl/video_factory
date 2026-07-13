@@ -146,10 +146,42 @@ def run_script_route():
 
 @bp.post("/script/prompts")
 def preview_script_prompts_route():
+    """预览提示词。
+
+    参数:
+        id: 任务 ID（必填）
+        step: 提示词类型（可选）
+            - 缺省: 返回完整脚本阶段各步提示词
+            - image_prompts: 返回指定分镜的文生图提示词生成 prompt，需传 segment_index
+            - motion_prompt: 返回指定分镜的运动提示词生成 prompt（与 image_prompts 同源），需传 segment_index
+        segment_index: 分镜序号（step=image_prompts|motion_prompt 时必填）
+    """
     data = get_json_body()
     job_id = parse_id(data)
+    step = parse_optional_str(data, "step")
 
-    # chat 流水线走 daily_story 提示词构建
+    # ── 按类型分发：单分镜提示词预览 ──
+    if step in ("image_prompts", "motion_prompt"):
+        segment_index = parse_optional_int(data, "segment_index", minimum=1)
+        if segment_index is None:
+            raise APIError(f"segment_index is required when step={step}")
+        job = job_mgr.get_job(job_id)
+        script = job.get("script_json")
+        if not isinstance(script, dict):
+            raise APIError("script not ready", status_code=400)
+        from app.services.script.board import build_image_prompts_prompts
+        from app.utils.job_info import resolve_include_sd15_prompt
+        include_sd15 = resolve_include_sd15_prompt(job)
+        built = build_image_prompts_prompts(
+            script,
+            job=job,
+            segment_indices=[segment_index],
+            include_sd15_prompt=include_sd15,
+        )
+        label = "文生图提示词" if step == "image_prompts" else "运动提示词"
+        return json_ok({"prompts": [{"step": step, "label": label, **built}]})
+
+    # ── 默认：完整脚本阶段提示词 ──
     job = job_mgr.get_job(job_id)
     if job.get("pipeline") == "chat":
         prompts = job_mgr.preview_daily_script_prompts(job_id)
