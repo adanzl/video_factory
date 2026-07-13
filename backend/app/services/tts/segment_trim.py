@@ -1,17 +1,21 @@
 """TTS 段音频裁切：按 CosyVoice 字级时间戳去掉段首/段尾空白。
 
-段首：仅当首字 begin_time_ms 超过阈值时裁切，保留 head_pad_ms 余量防止切掉句首。
+段首：按首字时间戳强制裁切前置空白（含伪影），保留 head_pad_ms 余量防止切掉句首。
 段尾：当前禁用（返回 0）。
 """
 
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
 from app.services.media.ffmpeg_utils import probe_duration, run_ffmpeg
 from app.services.tts.phrase_timing import TimedWord
+
+# 标点字符集，用于跳过句首标点定位第一个实字
+_PUNCT_RE = re.compile(r"^[。！？；：，,.!?;:…—·~～'\"）】》〉）\]]+$")
 
 logger = logging.getLogger(__name__)
 
@@ -56,21 +60,28 @@ def plan_tts_segment_trim(
     words: list[TimedWord],
     *,
     duration_ms: int,
-    head_pad_ms: int = 150,
+    head_pad_ms: int = 50,
     tail_pad_ms: int = 20,
     min_leading_silence_ms: int = 500,
     min_trailing_ms: int = 50,
 ) -> TrimPlan:
-    """计算裁切计划：段首仅在首字前静音超过阈值时裁切，段尾当前禁用。"""
-    _ = tail_pad_ms, min_trailing_ms
+    """计算裁切计划：按首字时间戳强制裁切前置空白（含伪影），段尾当前禁用。"""
+    _ = tail_pad_ms, min_trailing_ms, min_leading_silence_ms
     if not words or duration_ms <= 0:
         return TrimPlan(leading_ms=0, trailing_ms=0)
 
-    first_begin = words[0].begin_time_ms
-    if first_begin > min_leading_silence_ms:
-        leading = max(0, first_begin - head_pad_ms)
+    # 跳过句首标点，找到第一个实字
+    first_real_idx = 0
+    for i, w in enumerate(words):
+        if w.text.strip() and not _PUNCT_RE.fullmatch(w.text.strip()):
+            first_real_idx = i
+            break
     else:
-        leading = 0
+        return TrimPlan(leading_ms=0, trailing_ms=0)
+
+    first_begin = words[first_real_idx].begin_time_ms
+    # 始终按首字位置裁切（去掉静音阈值），保留 head_pad_ms 防止切到发音
+    leading = max(0, first_begin - head_pad_ms)
 
     return TrimPlan(leading_ms=leading, trailing_ms=0)
 
@@ -100,7 +111,7 @@ def apply_tts_segment_trim(
     path: Path,
     words: list[TimedWord],
     *,
-    head_pad_ms: int = 150,
+    head_pad_ms: int = 50,
     tail_pad_ms: int = 20,
     min_leading_silence_ms: int = 500,
 ) -> list[TimedWord]:

@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 # 默认角色配置（昭昭/灿灿）
 _DEFAULT_SPEAKER_CONFIGS: dict[str, dict] = {
     "昭昭": {"voice_id": "cosyvoice-v3.5-flash-leo-f9d115bfdf2346edbeb9d21ecd4f9ce9", "speech_rate": 1.0},
-    "灿灿": {"voice_id": "cosyvoice-v3.5-flash-leo-60621bdce780434ab0734555e5196d7d", "speech_rate": 1.0},
+    "灿灿": {"voice_id": "cosyvoice-v3.5-flash-leo-40c4359c732f4b459a40f3408e1186ed", "speech_rate": 1.0},
 }
 _DEFAULT_PHRASE_GAP_SEC = 0.3
 _TTS_MAX_RETRIES = 3
