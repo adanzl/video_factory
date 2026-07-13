@@ -177,6 +177,17 @@ def _synthesize_segment_dialogue(
 
     seg_duration = probe_duration(seg_clip)
 
+    # 按实际拼接后时长等比缩放 cue，消除 MP3 编码帧填充导致的累积偏差
+    cue_total = sum(c.duration_sec for c in seg_cues)
+    if cue_total > 0 and abs(cue_total - seg_duration) > 0.01:
+        scale = seg_duration / cue_total
+        for cue in seg_cues:
+            cue.duration_sec *= scale
+        logger.debug(
+            "tts segment %d cue scale=%.6f (sum=%.3f -> actual=%.3f)",
+            seg_index, scale, cue_total, seg_duration,
+        )
+
     logger.info(
         "tts segment %d done duration=%.2fs cues=%d",
         seg_index, seg_duration, len(seg_cues),
