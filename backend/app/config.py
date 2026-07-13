@@ -242,7 +242,7 @@ class Config:
         self.audio_target_lufs: float = float(os.getenv("AUDIO_TARGET_LUFS", "-16"))
         self.audio_true_peak: float = float(os.getenv("AUDIO_TRUE_PEAK", "-1.5"))
         self.audio_silence_noise_db: float = float(os.getenv("AUDIO_SILENCE_NOISE_DB", "-40"))
-        self.audio_max_silence_gap_sec: float = float(os.getenv("AUDIO_MAX_SILENCE_GAP_SEC", "1.5"))
+        self.audio_max_silence_gap_sec: float = float(os.getenv("AUDIO_MAX_SILENCE_GAP_SEC", "2.0"))
         self.audio_max_edge_silence_sec: float = float(os.getenv("AUDIO_MAX_EDGE_SILENCE_SEC", "0.8"))
         self.tts_cue_duration_tolerance_sec: float = float(
             os.getenv("TTS_CUE_DURATION_TOLERANCE_SEC", "0.8")

@@ -1,6 +1,7 @@
-"""TTS 段音频尾裁切：按 CosyVoice 字级时间戳去掉段尾空白。
+"""TTS 段音频裁切：按 CosyVoice 字级时间戳去掉段首/段尾空白。
 
-段首不裁：首字 begin 常远滞后于真实发音起点，裁段首易切掉句首（如「可是」）。
+段首：仅当首字 begin_time_ms 超过阈值时裁切，保留 head_pad_ms 余量防止切掉句首。
+段尾：当前禁用（返回 0）。
 """
 
 from __future__ import annotations
@@ -57,18 +58,21 @@ def plan_tts_segment_trim(
     duration_ms: int,
     head_pad_ms: int = 150,
     tail_pad_ms: int = 20,
-    min_leading_ms: int = 80,
+    min_leading_silence_ms: int = 500,
     min_trailing_ms: int = 50,
 ) -> TrimPlan:
-    """计算裁切计划：仅裁段尾，段首 leading_ms 恒为 0。
-
-    head_pad_ms / min_leading_ms 保留参数兼容，段首不再使用。
-    """
-    _ = head_pad_ms, min_leading_ms
+    """计算裁切计划：段首仅在首字前静音超过阈值时裁切，段尾当前禁用。"""
+    _ = tail_pad_ms, min_trailing_ms
     if not words or duration_ms <= 0:
         return TrimPlan(leading_ms=0, trailing_ms=0)
 
-    return TrimPlan(leading_ms=0, trailing_ms=0)
+    first_begin = words[0].begin_time_ms
+    if first_begin > min_leading_silence_ms:
+        leading = max(0, first_begin - head_pad_ms)
+    else:
+        leading = 0
+
+    return TrimPlan(leading_ms=leading, trailing_ms=0)
 
 
 def _trim_audio(path: Path, plan: TrimPlan) -> None:
@@ -98,14 +102,16 @@ def apply_tts_segment_trim(
     *,
     head_pad_ms: int = 150,
     tail_pad_ms: int = 20,
+    min_leading_silence_ms: int = 500,
 ) -> list[TimedWord]:
-    """就地裁切段尾静音；字级时间戳仅在裁过段首时平移（当前段首不裁）。"""
+    """就地裁切段首/段尾静音；字级时间戳在裁过段首时平移。"""
     duration_ms = int(round(probe_duration(path) * 1000))
     plan = plan_tts_segment_trim(
         words,
         duration_ms=duration_ms,
         head_pad_ms=head_pad_ms,
         tail_pad_ms=tail_pad_ms,
+        min_leading_silence_ms=min_leading_silence_ms,
     )
     if plan.total_ms <= 0:
         return words
