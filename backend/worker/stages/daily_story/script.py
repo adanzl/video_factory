@@ -19,8 +19,9 @@ class DailyScriptStage(StageExecutor):
     """日常对话故事 → 标准分镜 script_json。
 
     从 job.info.daily_story_id 加载故事，调用 LLM 生成 storyboard
-    （scenes 含 dialogue_lines / visual_description / img2img_prompt），
-    转换为标准 script_json 格式供下游 TTS / Segment / Merge 使用。
+    （scenes 含 dialogue_lines / visual_description），
+    转换为标准 script_json 格式后走 fill_image_prompts 生成提示词，
+    供下游 TTS / Segment / Merge 使用。
     """
 
     name = "script"
@@ -66,7 +67,6 @@ class DailyScriptStage(StageExecutor):
                 "segment_index": i,
                 "text": segment_text,
                 "visual_brief": (scene.get("visual_description") or "").strip(),
-                "image_prompt": (scene.get("img2img_prompt") or "").strip(),
                 "duration_sec": scene.get("duration_seconds", 10),
             }
             if dialogue:
@@ -88,7 +88,7 @@ class DailyScriptStage(StageExecutor):
             "daily_story_id": daily_story_id,
             "daily_story_theme": story.get("theme", ""),
             "total_chars": total_chars,
-            "visual_style": "儿童绘本插画风格，平涂上色，柔和明亮的色彩，轻微水彩纸纹理，简洁圆润线条",
+            "visual_style": "儿童情绪涂鸦风格，彩铅和蜡笔混合笔触，用力不均的线条，主观夸张变形，高饱和色彩，涂色出界，横格笔记本纸背景，橡皮擦拭痕迹，手工感，孩子气的构图。"
         }
         # 清除 LLM 原生 img2img_prompt / motion_prompt，走标准 fill_image_prompts 流程
         for seg in script["segments"]:
