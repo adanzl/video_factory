@@ -5,13 +5,14 @@ from __future__ import annotations
 import json
 import logging
 import os
-import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 
+import gevent
+import gevent.event
 import websocket
 
 from app.config import get_settings
@@ -123,8 +124,8 @@ def _run_tts_task(
     audio_chunks: list[bytes] = []
     raw_words: list[dict] = []
     latest_usage: dict | None = None
-    started = threading.Event()
-    finished = threading.Event()
+    started = gevent.event.Event()
+    finished = gevent.event.Event()
     error: list[Exception] = []
 
     def on_open(ws) -> None:
@@ -229,19 +230,15 @@ def _run_tts_task(
         on_message=on_message,
         on_error=on_error,
     )
-    thread = threading.Thread(target=ws_app.run_forever, daemon=True)
-    thread.start()
+    gevent.spawn(ws_app.run_forever)
 
     if not started.wait(timeout=30):
         ws_app.close()
         raise TimeoutError("TTS task-started 超时")
 
-    deadline = time.time() + timeout
-    while not finished.is_set():
-        if time.time() > deadline:
-            ws_app.close()
-            raise TimeoutError(f"TTS 合成超时（>{timeout}s）")
-        time.sleep(0.05)
+    if not finished.wait(timeout=timeout):
+        ws_app.close()
+        raise TimeoutError(f"TTS 合成超时（>{timeout}s）")
 
     if error:
         raise error[0]
