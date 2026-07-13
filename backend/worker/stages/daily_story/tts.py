@@ -292,7 +292,7 @@ class DailyTtsStage(StageExecutor):
             job = repo_job.get_job(conn, job_id)
             info = parse_job_info(job.get("info"))
             info.setdefault("tts", {})["speaker_configs"] = configs
-            repo_job.update_job(conn, job_id, info_json=info)
+            repo_job.update_job(conn, job_id, info=info)
 
     def _synthesize_multi_speaker(
         self,
