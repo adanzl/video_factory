@@ -4,15 +4,14 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 
 import gevent
 import gevent.event
+import gevent.pool
 import websocket
 
 from app.config import get_settings
@@ -455,11 +454,10 @@ class AliTTSClient(TTSClient):
                 effective_rate=effective_rate,
             )
 
-        segment_results: list[_SegmentSynthResult] = []
-        with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            futures = [pool.submit(_run, seg) for seg in segments]
-            for fut in as_completed(futures):
-                segment_results.append(fut.result())
+        pool = gevent.pool.Pool(size=max_workers)
+        greenlets = [pool.spawn(_run, seg) for seg in segments]
+        gevent.joinall(greenlets, raise_error=True)
+        segment_results: list[_SegmentSynthResult] = [g.value for g in greenlets]
 
         segment_results.sort(key=lambda item: item.seg_index)
 
