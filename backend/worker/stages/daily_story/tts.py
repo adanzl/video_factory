@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import logging
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
+
+import gevent
+import gevent.pool
 
 from app.config import get_settings
 from app.quality.quality_mgr import apply_quality_checks, check_tts_audio
@@ -334,10 +336,10 @@ class DailyTtsStage(StageExecutor):
             )
 
         seg_results: list[_SegResult] = []
-        with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            futures = {pool.submit(_run_seg, seg): seg for seg in segments}
-            for fut in as_completed(futures):
-                seg_results.append(fut.result())
+        pool = gevent.pool.Pool(size=max_workers)
+        greenlets = [pool.spawn(_run_seg, seg) for seg in segments]
+        gevent.joinall(greenlets, raise_error=True)
+        seg_results = [g.value for g in greenlets]
 
         seg_results.sort(key=lambda r: r.seg_index)
 
