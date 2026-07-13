@@ -87,7 +87,7 @@
     <template v-if="dailyStory">
       <div class="flex gap-4">
         <!-- 左侧：信息 -->
-        <div class="w-128 shrink-0 overflow-y-auto pr-2">
+        <div class="w-lg shrink-0 overflow-y-auto pr-2">
           <el-descriptions :column="1" border label-width="80px">
             <el-descriptions-item label="主题">{{ dailyStory.theme }}</el-descriptions-item>
             <el-descriptions-item label="场景标题">

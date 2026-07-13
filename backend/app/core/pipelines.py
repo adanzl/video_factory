@@ -50,6 +50,7 @@ def _daily_story_chain() -> tuple[type[StageExecutor], ...]:
         DailyScriptStage,
         DailyTtsStage,
         SegmentStage,
+        IntroStage,
         MergeStage,
         PublishStage,
     )

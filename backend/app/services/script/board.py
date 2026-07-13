@@ -97,6 +97,12 @@ def _resolve_script_profile(
     resolved_style = content_style or (
         content_style_from_job(job) if job else CONTENT_STYLE_SCIENCE_CHILD
     )
+    # chat pipeline 默认横屏 + 生活经验风格
+    if job and job.get("pipeline") == "chat":
+        if not orientation:
+            resolved_orientation = ORIENTATION_LANDSCAPE
+        if not content_style:
+            resolved_style = CONTENT_STYLE_LIFE_EXPERIENCE
     return resolved_orientation, resolved_style
 
 

@@ -31,7 +31,7 @@
             :step="0.1"
             :precision="1"
             size="small"
-            class="!w-28"
+            class="w-28!"
           />
           <span class="ml-1 text-xs text-gray-400">字/秒</span>
         </div>
@@ -44,7 +44,7 @@
             :step="0.1"
             :precision="1"
             size="small"
-            class="!w-28"
+            class="w-28!"
           />
           <span class="ml-1 text-xs text-gray-400">秒</span>
         </div>
