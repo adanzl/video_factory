@@ -144,7 +144,12 @@ class DailyScriptStage(StageExecutor):
         llm_mgr.fill_image_prompts(script, job=ctx.job)
 
         with connection() as conn:
-            repo_job.update_job(conn, job_id, script_json=script)
+            repo_job.update_job(
+                conn,
+                job_id,
+                title=script["title"],
+                script_json=script,
+            )
             repo_segment.insert_segments(conn, job_id, script["segments"])
             repo_job_log.append_log(
                 conn,
