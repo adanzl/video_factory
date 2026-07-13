@@ -62,6 +62,7 @@ _IMAGE_PROMPT_RULE_DAILY_STORY = (
     "适配{orientation}构图。"
     + _IMAGE_PROMPT_DIMENSIONS_FULL.replace(
         "禁止提前画后续段落内容。",
+        "禁止写实摄影风格、禁止卡通以外的其他画风。",
     )
 )
 
