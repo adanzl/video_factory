@@ -21,8 +21,16 @@ from typing import Optional
 
 
 def run_in_background(func: Callable[[], None], *, daemon: bool = True) -> None:
-    """后台线程执行，不等待结果。"""
-    threading.Thread(target=func, daemon=daemon).start()
+    """后台 greenlet 执行，不等待结果。
+
+    使用 gevent.spawn 而非 threading.Thread，避免 OS 线程调用
+    gevent-patched socket 导致 hub 事件循环卡死。
+    """
+    try:
+        import gevent
+        gevent.spawn(func)
+    except ImportError:
+        threading.Thread(target=func, daemon=daemon).start()
 
 
 def _on_gevent_hub() -> bool:
