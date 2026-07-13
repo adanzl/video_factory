@@ -6,7 +6,6 @@ from worker.stages.base import StageExecutor
 from worker.stages.intro import IntroStage
 from worker.stages.common.publish import PublishStage
 from worker.stages.common.tts import TTSStage
-from worker.stages.standard.host import HostStage
 from worker.stages.standard.merge import MergeStage
 from worker.stages.standard.script import ScriptStage
 from worker.stages.standard.segment import SegmentStage
@@ -20,7 +19,6 @@ STANDARD_CHAIN: tuple[type[StageExecutor], ...] = (
     ScriptStage,
     TTSStage,
     SegmentStage,
-    HostStage,
     IntroStage,
     MergeStage,
     PublishStage,

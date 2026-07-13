@@ -71,7 +71,6 @@ import { JOB_STATUS_RUNNING } from "@/constants/job";
 import { pipelineLabel, resolveActiveStageTab, stagesForJob, PIPELINE_CHAT } from "@/constants/jobStages";
 import type { JobDetail, JobLog, JobSegment } from "@/types/jobs";
 import { useErrorHandler } from "@/composables/useErrorHandler";
-import StageHost from "./standard/StageHost.vue";
 import StageIntro from "./detail/StageIntro.vue";
 import StageMerge from "./detail/StageMerge.vue";
 import StagePrepare from "./video/StagePrepare.vue";
@@ -88,7 +87,6 @@ const STAGE_PANELS: Record<string, Component> = {
   intro: StageIntro,
   tts: StageTts,
   segment: StageSegment,
-  host: StageHost,
   merge: StageMerge,
   publish: StagePublish,
 };
