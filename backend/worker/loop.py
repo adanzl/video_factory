@@ -583,7 +583,6 @@ def run_segment_all(
     job = _reload_job(job_id)
     if is_material_job(job):
         raise ValueError("segment stage is not available for material pipeline jobs")
-    from worker.stages.standard.host import HostStage
 
     segment_cls = stage_class_for("segment", job)
     job_mgr.mark_running(job_id)
@@ -596,7 +595,7 @@ def run_segment_all(
     )
     if not to_end:
         return _reload_job(job_id)
-    return _run_from(job_id, HostStage)
+    return _run_from(job_id, next_stage_class(segment_cls, job))
 
 
 def run_segment_images(
@@ -608,7 +607,6 @@ def run_segment_images(
     job = _reload_job(job_id)
     if is_material_job(job):
         raise ValueError("segment stage is not available for material pipeline jobs")
-    from worker.stages.standard.host import HostStage
 
     segment_cls = stage_class_for("segment", job)
     job_mgr.mark_running(job_id)
@@ -629,7 +627,7 @@ def run_segment_images(
         segment_scope="clips",
         advance=True,
     )
-    return _run_from(job_id, HostStage)
+    return _run_from(job_id, next_stage_class(segment_cls, job))
 
 
 def run_segment_clips(
@@ -641,7 +639,6 @@ def run_segment_clips(
     job = _reload_job(job_id)
     if is_material_job(job):
         raise ValueError("segment stage is not available for material pipeline jobs")
-    from worker.stages.standard.host import HostStage
 
     segment_cls = stage_class_for("segment", job)
     job_mgr.mark_running(job_id)
@@ -654,7 +651,7 @@ def run_segment_clips(
     )
     if not to_end:
         return _reload_job(job_id)
-    return _run_from(job_id, HostStage)
+    return _run_from(job_id, next_stage_class(segment_cls, job))
 
 
 def drain_pending() -> int:

@@ -14,7 +14,6 @@ export const STANDARD_JOB_STAGES: JobStageDef[] = [
   { name: "script", label: "脚本" },
   { name: "tts", label: "配音" },
   { name: "segment", label: "分镜" },
-  { name: "host", label: "讲解人", disabled: true },
   { name: "intro", label: "片头/封面" },
   { name: "merge", label: "合成" },
   { name: "publish", label: "发布" },
