@@ -17,7 +17,7 @@ CLONED_VOICE_ZHAO = "cosyvoice-v3.5-flash-leo-f9d115bfdf2346edbeb9d21ecd4f9ce9"
 # cSpell: enable
 
 DEFAULT_LEAD_IN = "嗯，"
-_LEAD_IN_PAD_MS = -30  # 负值=多切，覆盖“嗯”的尾音
+_LEAD_IN_PAD_MS = -80  # 负值=多切，覆盖"嗯"的尾音及与正文间的过渡
 _LEAD_IN_MS_PER_CHAR = 300  # 每个实字约 300ms（rate=1.0 基准）
 _PUNCT_RE = re.compile(r"^[。！？；：，,.!?;:…—·~～'\"）】》〉）\]]+$")
 
