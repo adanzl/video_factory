@@ -23,7 +23,7 @@
 
         <el-alert
           v-if="job.fail_stage === 'merge' && job.error_message"
-          type="error"
+          type="danger"
           :title="job.error_message"
           :closable="false"
           class="mt-4"

@@ -47,8 +47,8 @@ _IMAGE_PROMPT_RULE_REALISTIC_PORTRAIT = (
 )
 
 _IMAGE_PROMPT_RULE_LIFE_LANDSCAPE = (
-    "image_prompt须严格遵循visual_style画风定调，全片统一：生活Vlog质感写实画面，"
-    "自然光或室内暖光、浅景深、色彩真实不过度滤镜，适配16:9横屏构图。"
+    "image_prompt须严格遵循 visual_style 字段中已定义的全片画风定调，"
+    "不修改、不替换 visual_style 的内容，直接按其原文描述生成，适配16:9横屏构图。"
     + _IMAGE_PROMPT_DIMENSIONS_FULL.replace(
         "禁止提前画后续段落内容。",
         "禁止可读大段文字/水印/品牌Logo。",
