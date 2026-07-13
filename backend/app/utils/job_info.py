@@ -21,6 +21,7 @@ CONTENT_STYLE_SCIENCE_CHILD = "science_child"
 CONTENT_STYLE_TECH_SCIENCE = "tech_science"
 CONTENT_STYLE_LIFE_EXPERIENCE = "life_experience"
 CONTENT_STYLE_HISTORICAL_MYSTERY = "history_mystery"
+CONTENT_STYLE_DAILY_STORY = "daily_story"
 
 _VALID_CONTENT_STYLES = frozenset(
     {
@@ -28,6 +29,7 @@ _VALID_CONTENT_STYLES = frozenset(
         CONTENT_STYLE_TECH_SCIENCE,
         CONTENT_STYLE_LIFE_EXPERIENCE,
         CONTENT_STYLE_HISTORICAL_MYSTERY,
+        CONTENT_STYLE_DAILY_STORY,
     }
 )
 
@@ -121,7 +123,11 @@ def normalize_content_style(value: str | None) -> str | None:
 
 
 def content_style_from_job(job: dict) -> str:
-    raw = parse_job_info(job.get("info")).get("content_style")
+    info = parse_job_info(job.get("info"))
+    # daily_story 任务优先使用 daily_story 画风
+    if info.get("daily_story_id"):
+        return CONTENT_STYLE_DAILY_STORY
+    raw = info.get("content_style")
     if isinstance(raw, str):
         normalized = normalize_content_style(raw)
         if normalized:

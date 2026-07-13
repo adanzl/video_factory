@@ -118,7 +118,6 @@ _STORYBOARD_JSON_EXAMPLE = """{
   "title": "标题示例",
   "narration": "（各段 text 按序拼接的全文，须达到【字数预算】写作目标）",
   "word_count": 1252,
-  "visual_style": "画风定调一句话",
   "segments": [
     {"segment_index": 1, "text": "（本段口播，须写满该段字数下限，勿照抄此短句）", "visual_brief": "画面主旨", "visual_mode": "static_motion"},
     {"segment_index": 2, "text": "（第二段同样写满预算）", "visual_brief": "画面主旨", "visual_mode": "static_motion"}
@@ -129,7 +128,6 @@ _STORYBOARD_JSON_EXAMPLE = """{
 
 _STORYBOARD_JSON_EXAMPLE_COMPACT = """{
   "title": "标题示例",
-  "visual_style": "画风定调一句话",
   "segments": [
     {"segment_index": 1, "text": "（本段口播，须写满该段字数下限）", "visual_brief": "画面主旨", "visual_mode": "static_motion"},
     {"segment_index": 2, "text": "（第二段同样写满预算）", "visual_brief": "画面主旨", "visual_mode": "static_motion"}
@@ -141,8 +139,7 @@ _STORYBOARD_JSON_EXAMPLE_COMPACT = """{
 _NARRATION_ONLY_JSON_EXAMPLE = """{
   "title": "标题示例",
   "narration": "（连贯口播全文，须达到【字数预算】写作目标，用句号自然断句）",
-  "word_count": 1282,
-  "visual_style": "画风定调一句话（画风+主色调+跨镜统一元素）"
+  "word_count": 1282
 }
 
 注意：不要输出 segments 字段；word_count 须为 narration 真实字数且 ≥ 写作目标。"""

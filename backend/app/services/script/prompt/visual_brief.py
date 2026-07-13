@@ -7,14 +7,12 @@ _VISUAL_BRIEF_RULE = (
     "场景类型与情绪，帮助后续扩写文生图提示词；不写镜头焦距、光线方向、材质参数等细节。"
     "visual_brief末尾须用括号标注SD15画面类型（五选一）："
     "（写实场景）/（结构示意图）/（对比图）/（线稿解剖图）/（微观分子图）。"
-    "另须输出visual_style：全片画风定调一句话（画风+主色调+跨镜统一元素如道具造型）。"
 )
 
 
 # ── JSON 样例 ─────────────────────────────────────────────────────
 
 _VISUAL_BRIEF_JSON_EXAMPLE = """{
-  "visual_style": "画风定调一句话（可与输入一致或微调）",
   "segments": [
     {"segment_index": 1, "visual_brief": "画面主旨与关键视觉（80-150字）（写实场景）", "visual_mode": "static_motion"},
     {"segment_index": 2, "visual_brief": "画面主旨（结构示意图）", "visual_mode": "static_motion"}

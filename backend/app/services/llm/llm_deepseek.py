@@ -37,6 +37,7 @@ from app.services.topic.prompts.builder import (
     build_topic_user_prompt,
 )
 from app.services.daily_story.prompts import (
+    DAILY_STORY_CHARACTERS,
     build_daily_script_prompts,
     build_daily_story_prompts,
     build_daily_story_theme_prompts,
@@ -89,6 +90,29 @@ def _build_deepseek_chat_payload(
 
 def _storyboard_length_max_attempts() -> int:
     return get_settings().script_qa_max_attempts
+
+
+_VISUAL_STYLE_BY_CONTENT_STYLE = {
+    "daily_story": (
+        "儿童情绪涂鸦风格，彩铅和蜡笔混合笔触，用力不均的线条，"
+        "主观夸张变形，高饱和色彩，涂色出界，横格笔记本纸背景，"
+        "橡皮擦拭痕迹，手工感，孩子气的构图。"
+        "主角：" + DAILY_STORY_CHARACTERS
+    ),
+    "life_experience": "生活 Vlog 质感写实画面：自然光或室内暖光，色彩真实不过度滤镜。",
+    "history_mystery": "电影级写实历史再现：光影考究、暗部有层次、低饱和古风色调。",
+    "tech_science": "电影级写实科技视觉：布光考究、材质细节真实、信息感强。",
+    "science_child": "卡通科普插画风：明快蓝橙主色调，轮廓清晰、色块分明，偏科普示意图质感。",
+}
+
+
+def _resolve_visual_style(job: dict | None) -> str:
+    """按 job 的 content_style 返回硬编码 visual_style。"""
+    from app.utils.job_info import content_style_from_job
+    style = content_style_from_job(job) if job else "science_child"
+    return _VISUAL_STYLE_BY_CONTENT_STYLE.get(
+        style, _VISUAL_STYLE_BY_CONTENT_STYLE["science_child"]
+    )
 
 
 def _narration_char_count(text: str) -> int:
@@ -312,9 +336,7 @@ def _apply_segments_from_narration(
 
 
 def _merge_visual_briefs(script: dict[str, Any], payload: dict[str, Any]) -> None:
-    style = str(payload.get("visual_style") or "").strip()
-    if style:
-        script["visual_style"] = style
+    # visual_style 已由 _generate_storyboard 硬编码设置，忽略 LLM 输出
     by_index = {
         int(item["segment_index"]): item
         for item in payload.get("segments") or []
@@ -338,7 +360,7 @@ def _truncation_feedback(*, compact: bool) -> str:
     if compact:
         return (
             "上次 JSON 输出被截断（token 用尽）。"
-            "务必省略 narration/word_count，只输出 title、visual_style、segments；"
+            "务必省略 narration/word_count，只输出 title、segments；"
             "每段 visual_brief 严格 30-50 字，确保 JSON 完整闭合。"
         )
     return (
@@ -561,8 +583,6 @@ class DeepSeekClient(LLMClient):
             narration = str(data.get("narration") or "").strip()
             if not narration:
                 raise ValueError("LLM narration response missing narration")
-            if not data.get("visual_style"):
-                raise ValueError("LLM narration response missing visual_style")
             chars = _narration_char_count(narration)
             data["narration"] = narration
             data["word_count"] = chars
@@ -666,8 +686,8 @@ class DeepSeekClient(LLMClient):
             supplementary_info=supplementary_info,
             job=job,
         )
-        # daily_story 任务强制使用儿童涂鸦画风，覆盖 LLM 生成的 visual_style
-        _apply_daily_story_visual_style(data, job=job)
+        # visual_style 始终走硬编码，不依赖 LLM 生成
+        data["visual_style"] = _resolve_visual_style(job)
         timing = data.setdefault("_llm_timing", {})
         timing["narration_sec"] = round(narration_elapsed, 1)
         timing["storyboard_sec"] = round(
