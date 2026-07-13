@@ -4,11 +4,17 @@ from __future__ import annotations
 
 import logging
 
+from app.config import get_settings
 from app.repositories import repo_daily_story, repo_job, repo_job_log, repo_segment
 from app.repositories.connection import connection
 from app.services.llm.llm_mgr import llm_mgr
+from app.services.script.optimize_title import (
+    build_chat_title_prompts,
+    parse_title_optimize_payload,
+)
 from app.utils.job_cancel import job_cancel
 from app.utils.job_info import parse_job_info
+from app.utils.title_text import collapse_title_whitespace
 from worker.context import JobContext
 from worker.stages.base import StageExecutor
 
@@ -91,6 +97,44 @@ class DailyScriptStage(StageExecutor):
             "total_chars": total_chars,
             "visual_style": _VISUAL_STYLE_BY_CONTENT_STYLE["daily_story"]
         }
+
+        # --- 标题优化（独立方案：chat 专用提示词，直调 _chat_json） ---
+        if not ctx.script_skip_title_optimize:
+            max_len = (
+                ctx.script_max_title_length
+                if ctx.script_max_title_length is not None
+                else get_settings().max_title_length
+            )
+            try:
+                prompts = build_chat_title_prompts(
+                    title,
+                    story_content,
+                    max_title_length=max_len,
+                )
+                client = llm_mgr._get_client()
+                raw, _ = client._chat_json(
+                    prompts["system"], prompts["user"], thinking_enabled=False
+                )
+                optimized = parse_title_optimize_payload(raw, max_title_len=max_len)
+                if optimized and optimized != title:
+                    script["draft_title"] = title
+                    script["title"] = collapse_title_whitespace(optimized)
+                    with connection() as conn:
+                        repo_job_log.append_log(
+                            conn,
+                            job_id,
+                            self.name,
+                            f"chat title optimized: {title!r} -> {script['title']!r}",
+                        )
+            except Exception as exc:
+                with connection() as conn:
+                    repo_job_log.append_log(
+                        conn,
+                        job_id,
+                        self.name,
+                        f"chat title optimize failed, keep draft: {exc}",
+                        level="warning",
+                    )
         # 清除 LLM 原生 img2img_prompt / motion_prompt，走标准 fill_image_prompts 流程
         for seg in script["segments"]:
             seg.pop("image_prompt", None)
