@@ -26,7 +26,7 @@
 
       <el-alert
         v-if="job.error_message"
-        type="error"
+        type="danger"
         :title="job.error_message"
         :closable="false"
         class="mb-4"
