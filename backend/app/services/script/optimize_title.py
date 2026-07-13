@@ -79,6 +79,77 @@ def parse_title_optimize_payload(raw: dict[str, Any], *, max_title_len: int) -> 
         raise ValueError("LLM title optimize response missing title")
     return normalize_title(title, max_len=max_title_len)
 
+# --------------- chat (daily_story) 标题优化 ---------------
+
+_CHAT_TITLE_MAX_LEN = 10
+
+
+def build_chat_title_system_prompt(*, max_title_len: int = _CHAT_TITLE_MAX_LEN) -> str:
+    """chat 流水线专用标题优化 system prompt：儿童对话故事，≤10字，提取孩子视角台词。"""
+    return (
+        "你是一个擅长为儿童对话故事取标题的编辑。根据剧本内容，输出 JSON，字段 title。"
+        f"title 为优化后的视频标题：≤{max_title_len} 字，不含空格换行。"
+        "\n【标题生成规则】"
+        "- 优先从以下来源提取：剧本中某句台词（尤其是结尾或冲突最高潮的那句）、孩子的视角看核心道具/动作"
+        "- 标题必须在10字以内"
+        "- 不使用描述性标题（如\"抢饼干\"\"姐弟吵架\"），使用孩子会说的那句话或孩子认知里的那个名词"
+        "- 好标题示例：\"老鼠会开柜子门吗\"\"就一块，别告状\"\"妈妈藏的饼干\""
+        "- 坏标题示例：\"姐弟偷吃饼干\"\"孩子的选择\"\"妈妈不在家时\""
+        "\n【标题要求】"
+        "请为这个剧本取一个10字以内的标题，优先从对话中提取孩子气的台词或视角。"
+        'JSON 输出样例：{"title": "优化后标题"}'
+    )
+
+
+def build_chat_title_user_prompt(
+    *,
+    draft_title: str,
+    story_content: dict,
+    max_title_len: int = _CHAT_TITLE_MAX_LEN,
+) -> str:
+    """根据故事内容构建 chat 标题优化的 user prompt。"""
+    setting = (story_content.get("setting") or "").strip()
+    dialogue_lines = story_content.get("dialogue") or []
+    dialogue_text = ""
+    if dialogue_lines and isinstance(dialogue_lines[0], dict):
+        parts = [f"{d.get('speaker', '')}：{d.get('line', '')}" for d in dialogue_lines]
+        dialogue_text = "\n".join(parts)
+    elif dialogue_lines:
+        dialogue_text = "\n".join(str(l) for l in dialogue_lines)
+    if len(dialogue_text) > 400:
+        dialogue_text = dialogue_text[:400] + "…"
+
+    context_parts = []
+    if setting:
+        context_parts.append(f"场景：{setting}")
+    context_parts.append(f"对话：\n{dialogue_text}")
+    context = "\n".join(context_parts)
+
+    return (
+        f"初稿标题：{draft_title}\n"
+        f"剧本内容：\n{context}\n\n"
+        f"请为这个剧本取一个 ≤{max_title_len} 字的标题。"
+    )
+
+
+def build_chat_title_prompts(
+    draft_title: str,
+    story_content: dict,
+    *,
+    max_title_length: int | None = None,
+) -> dict[str, str]:
+    max_len = max_title_length if max_title_length is not None else _CHAT_TITLE_MAX_LEN
+    return {
+        "step": "chat_title_optimize",
+        "label": "标题优化",
+        "system": build_chat_title_system_prompt(max_title_len=max_len),
+        "user": build_chat_title_user_prompt(
+            draft_title=draft_title,
+            story_content=story_content,
+            max_title_len=max_len,
+        ),
+    }
+
 
 def build_title_optimize_prompts(
     draft_title: str,
