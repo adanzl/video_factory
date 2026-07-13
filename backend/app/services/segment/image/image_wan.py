@@ -175,7 +175,7 @@ class WanImageProvider(ImageProvider):
             time.sleep(2)
         raise RuntimeError(f"wan async task {task_id} {state}")
 
-    def generate(self, prompt: str, output_path: Path, *, size: str | None = None) -> Path:
+    def generate(self, prompt: str, output_path: Path, *, size: str | None = None, ref_images: list[Path] | None = None) -> Path:
         size = size or self._default_size
         if not self._api_key:
             return self._fallback.generate(prompt, output_path, size=size)

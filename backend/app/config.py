@@ -98,11 +98,14 @@ class Config:
         self.allowed_dir: str = os.getenv("ALLOWED_DIR", "/mnt").strip()
         self.log_dir: Path = _path("LOG_DIR", ROOT_DIR / "logs")
         self.log_retention_days: int = int(os.getenv("LOG_RETENTION_DAYS", "3"))
-        self.host_intro_path: Path = _path("HOST_INTRO_PATH", res_dir / "host/intro.png")
-        self.host_boy_path: Path = _path("HOST_BOY_PATH", res_dir / "host/boy.png")
-        self.host_girl_path: Path = _path("HOST_GIRL_PATH", res_dir / "host/girl.png")
-        self.intro_moon_path: Path = _path("INTRO_MOON_PATH", res_dir / "host/moon.png")
+        self.host_intro_path: Path = _path("HOST_INTRO_PATH", res_dir / "host/default/intro.png")
+        self.host_boy_path: Path = _path("HOST_BOY_PATH", res_dir / "host/default/boy.png")
+        self.host_girl_path: Path = _path("HOST_GIRL_PATH", res_dir / "host/default/girl.png")
+        self.intro_moon_path: Path = _path("INTRO_MOON_PATH", res_dir / "host/default/moon.png")
         self.intro_shout_path: Path = _path("INTRO_SHOUT_PATH", res_dir / "audio/intro_shout.mp3")
+        self.host_intro_crayon_path: Path = _path(
+            "HOST_INTRO_CRAYON_PATH", res_dir / "host/crayon/intro.png"
+        )
 
         self.redis_url: str | None = _opt("REDIS_URL")
         self.mock_mode: bool = _bool("MOCK_MODE") or not (
@@ -248,6 +251,12 @@ class Config:
         self.pexels_api_key: str | None = _opt("PEXELS_API_KEY")
         self.pixabay_api_key: str | None = _opt("PIXABAY_API_KEY")
         self.clip_search_timeout_sec: float = float(os.getenv("CLIP_SEARCH_TIMEOUT_SEC", "12"))
+
+    def get_host_intro_path(self, pipeline: str | None = None) -> Path:
+        """根据 pipeline 返回对应的片头讲解人素材路径。chat 流程使用 crayon 风格。"""
+        if pipeline == "chat":
+            return self.host_intro_crayon_path
+        return self.host_intro_path
 
     def video_size(self) -> str:
         return _size_str(self.video_width, self.video_height)

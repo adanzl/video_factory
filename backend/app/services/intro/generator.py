@@ -247,9 +247,9 @@ def _draw_particles(width: int, height: int, color: tuple[int, int, int, int]) -
     return layer
 
 
-def _load_host_sprite(settings, *, width: int, height: int, layout: _IntroLayout) -> Image.Image:
+def _load_host_sprite(host_path: Path, *, width: int, height: int, layout: _IntroLayout) -> Image.Image:
     """加载片头双人图 intro.png，仅等比缩放，不裁剪。"""
-    path = settings.host_intro_path
+    path = host_path
     if not path.exists():
         raise FileNotFoundError(f"片头讲解人素材不存在: {path}")
     img = Image.open(path).convert("RGBA")
@@ -517,6 +517,7 @@ def generate_intro(
     hold_tail_sec: float | None = None,
     width: int | None = None,
     height: int | None = None,
+    pipeline: str | None = None,
 ) -> Path:
     """生成带品牌喊声的片头 MP4。width/height 缺省时使用全局 VIDEO 配置。"""
     settings = get_settings()
@@ -524,7 +525,8 @@ def generate_intro(
     video_w = width if width is not None else settings.video_width
     video_h = height if height is not None else settings.video_height
     layout = _layout_for(video_w, video_h)
-    host = _load_host_sprite(settings, width=video_w, height=video_h, layout=layout)
+    host_path = settings.get_host_intro_path(pipeline)
+    host = _load_host_sprite(host_path, width=video_w, height=video_h, layout=layout)
 
     work = work_dir or output_path.parent / "intro_work"
     if work.exists():

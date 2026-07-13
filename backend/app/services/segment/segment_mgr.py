@@ -8,6 +8,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from app.config import get_settings
 from app.utils.job_cancel import job_cancel
 from app.services.media.media_mgr import SegmentClipsResult, media_mgr
 from app.services.tts.tts_mgr import tts_mgr
@@ -23,6 +24,15 @@ __all__ = ["SegmentMgr", "SegmentProduceResult", "segment_mgr"]
 class SegmentProduceResult:
     image_paths: list[tuple[int, Path]]
     clips: SegmentClipsResult
+
+
+def _resolve_chat_ref_images() -> list[Path]:
+    """解析 chat 流水线角色参考图路径。"""
+    settings = get_settings()
+    return [
+        settings.res_dir / "host" / "crayon" / "zhao.png",
+        settings.res_dir / "host" / "crayon" / "can.png",
+    ]
 
 
 class SegmentMgr:
@@ -142,6 +152,16 @@ class SegmentMgr:
 
             image_size = resolve_segment_image_size(job)
             image_provider = resolve_image_provider(job)
+
+            # chat 流水线传入角色参考图
+            ref_images: list[Path] | None = None
+            if job and job.get("pipeline") == "chat":
+                ref_images = _resolve_chat_ref_images()
+                logger.info(
+                    "produce_segments: chat pipeline, ref_images=%s",
+                    [p.name for p in ref_images],
+                )
+
             generated = image_mgr.generate_segment_images(
                 image_targets,
                 images_dir,
@@ -149,6 +169,7 @@ class SegmentMgr:
                 image_provider=image_provider,
                 on_image_done=on_image_done,
                 job_id=job_id,
+                ref_images=ref_images,
             )
         for seg_id, path in generated:
             path_by_id[seg_id] = path
