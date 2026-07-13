@@ -356,6 +356,7 @@ def _run_image_prompts(
     ) or None
 
     updated = dict(script)
+
     from app.config import get_settings
     skip_quality = get_settings().skip_script_quality_check
     llm_mgr.fill_image_prompts_with_retries(
