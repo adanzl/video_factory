@@ -497,14 +497,14 @@ class JobMgr:
             def _worker() -> None:
                 if action_detail:
                     logger.info(
-                        "job %s action [%s] started in background thread: %s",
+                        "job %s action [%s] started in background greenlet: %s",
                         job_id,
                         action,
                         action_detail,
                     )
                 else:
                     logger.info(
-                        "job %s action [%s] started in background thread",
+                        "job %s action [%s] started in background greenlet",
                         job_id,
                         action,
                     )
@@ -694,8 +694,8 @@ class JobMgr:
                     if job["status"] == "running":
                         self.mark_failed(job_id, fail_stage, "failed")
 
-            thread = threading.Thread(target=_worker, daemon=True)
-            thread.start()
+            import gevent
+            gevent.spawn(_worker)
             return self.get_job(job_id)
         except Exception:
             raise
