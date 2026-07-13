@@ -139,10 +139,11 @@ def _generate_cover(job: dict, cover_path: Path, width: int, height: int) -> Non
     try:
         AgnesImageProvider().generate(cover_prompt, tmp_path, size=f"{cw}x{ch}")
         img = Image.open(tmp_path)
+        brand = "昭墨日常" if pipeline == "chat" else settings.brand_name
         composed = compose_cover_image(
             img,
             title,
-            brand_name=settings.brand_name,
+            brand_name=brand,
             host_intro_path=host_intro_path,
         )
         composed.convert("RGB").save(cover_path, quality=92)

@@ -103,8 +103,17 @@ class Config:
         self.host_girl_path: Path = _path("HOST_GIRL_PATH", res_dir / "host/default/girl.png")
         self.intro_moon_path: Path = _path("INTRO_MOON_PATH", res_dir / "host/default/moon.png")
         self.intro_shout_path: Path = _path("INTRO_SHOUT_PATH", res_dir / "audio/intro_shout.mp3")
+        self.intro_shout_daily_path: Path = _path(
+            "INTRO_SHOUT_DAILY_PATH", res_dir / "audio/intro_shout_daily.mp3"
+        )
         self.host_intro_crayon_path: Path = _path(
             "HOST_INTRO_CRAYON_PATH", res_dir / "host/crayon/intro.png"
+        )
+        self.intro_sun_crayon_path: Path = _path(
+            "INTRO_SUN_CRAYON_PATH", res_dir / "host/crayon/sun.png"
+        )
+        self.intro_crayon_bg_path: Path = _path(
+            "INTRO_CRAYON_BG_PATH", res_dir / "host/crayon/bg.jpg"
         )
 
         self.redis_url: str | None = _opt("REDIS_URL")
@@ -257,6 +266,24 @@ class Config:
         if pipeline == "chat":
             return self.host_intro_crayon_path
         return self.host_intro_path
+
+    def get_moon_path(self, pipeline: str | None = None) -> Path:
+        """chat 流程使用 crayon sun.png，其余使用 default moon.png。"""
+        if pipeline == "chat":
+            return self.intro_sun_crayon_path
+        return self.intro_moon_path
+
+    def get_intro_bg_path(self, pipeline: str | None = None) -> Path:
+        """chat 流程使用 crayon bg.jpg，其余使用全局 intro_bg_path。"""
+        if pipeline == "chat":
+            return self.intro_crayon_bg_path
+        return self.intro_bg_path
+
+    def get_intro_shout_path(self, pipeline: str | None = None) -> Path:
+        """chat 流程使用 intro_shout_daily.mp3，其余使用 intro_shout.mp3。"""
+        if pipeline == "chat":
+            return self.intro_shout_daily_path
+        return self.intro_shout_path
 
     def video_size(self) -> str:
         return _size_str(self.video_width, self.video_height)

@@ -36,7 +36,7 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / "sun_chat_style.png"
 
-    size = settings.agnes_image_size  # 使用配置的默认尺寸
+    size = "1280*720"  # 横版
 
     print(f"model: {settings.agnes_image_model}")
     print(f"size: {size}")

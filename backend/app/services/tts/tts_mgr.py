@@ -165,6 +165,7 @@ class TTSMgr:
         *,
         rate: float | None = None,
         pitch: float | None = None,
+        voice: str | None = None,
     ) -> Path:
         """合成单句 MP3（片头品牌喊声等）。有 TTS Key 时始终走真实合成，不受 MOCK_MODE 影响。"""
         settings = get_settings()
@@ -175,7 +176,7 @@ class TTSMgr:
             return _mock_utterance(text, output_path, rate=rate)
         from app.services.tts.tts_ali import synthesize_utterance as _ali_utterance
 
-        return _ali_utterance(text, output_path, rate=rate, pitch=pitch)
+        return _ali_utterance(text, output_path, rate=rate, pitch=pitch, voice=voice)
 
 
 tts_mgr = TTSMgr()

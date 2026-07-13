@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import queue
 import shlex
+import subprocess
 import sys
 import tempfile
 import threading
@@ -183,8 +184,9 @@ def _build_shell_command(
     stderr_path: str,
     returncode_path: str,
 ) -> str:
-    quoted_cmd = " ".join(shlex.quote(arg) for arg in cmd_list)
     if sys.platform == "win32":
+        # Windows cmd.exe 不识别单引号，需用双引号（list2cmdline）
+        quoted_cmd = subprocess.list2cmdline(cmd_list)
         return _build_windows_command(
             quoted_cmd,
             env_dict,
@@ -193,6 +195,7 @@ def _build_shell_command(
             stderr_path,
             returncode_path,
         )
+    quoted_cmd = " ".join(shlex.quote(arg) for arg in cmd_list)
     return _build_unix_command(
         quoted_cmd,
         env_dict,
