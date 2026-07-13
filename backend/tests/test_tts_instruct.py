@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from app.services.tts.instruct import resolve_instruction
 
-_CLONED_VOICE = "cosyvoice-v3.5-flash-leo-60621bdce780434ab0734555e5196d7d"  # cSpell: disable-line
+_CLONED_VOICE = "cosyvoice-v3.5-flash-leo-40c4359c732f4b459a40f3408e1186ed"  # cSpell: disable-line
 
 
 def test_resolve_instruction_explicit_only():

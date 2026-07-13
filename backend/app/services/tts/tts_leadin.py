@@ -12,7 +12,7 @@ from app.services.tts.segment_trim import TrimPlan, _trim_audio, shift_word_time
 logger = logging.getLogger(__name__)
 
 # cSpell: disable
-CLONED_VOICE_CAN = "cosyvoice-v3.5-flash-leo-60621bdce780434ab0734555e5196d7d"
+CLONED_VOICE_CAN = "cosyvoice-v3.5-flash-leo-40c4359c732f4b459a40f3408e1186ed"
 CLONED_VOICE_ZHAO = "cosyvoice-v3.5-flash-leo-f9d115bfdf2346edbeb9d21ecd4f9ce9"
 # cSpell: enable
 

@@ -55,7 +55,7 @@ def _size_str(width: int, height: int) -> str:
     return f"{width}*{height}"
 
 
-_DEFAULT_TTS_VOICE = "cosyvoice-v3.5-flash-leo-60621bdce780434ab0734555e5196d7d"  # cSpell: disable-line
+_DEFAULT_TTS_VOICE = "cosyvoice-v3.5-flash-leo-40c4359c732f4b459a40f3408e1186ed"  # cSpell: disable-line
 
 
 class Config:
