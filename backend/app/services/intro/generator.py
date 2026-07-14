@@ -158,17 +158,6 @@ def _draw_vertical_gradient_rgba(
     return image
 
 
-def _key_black_to_alpha(img: Image.Image, *, threshold: int = 35) -> Image.Image:
-    rgba = img.convert("RGBA")
-    pixels = rgba.load()
-    w, h = rgba.size
-    for y in range(h):
-        for x in range(w):
-            r, g, b, a = pixels[x, y]
-            if a == 0 or (r <= threshold and g <= threshold and b <= threshold):
-                pixels[x, y] = (0, 0, 0, 0)
-    return rgba
-
 
 def _tint_image(
     img: Image.Image,
@@ -208,7 +197,6 @@ def _load_moon_backdrop(
         raise FileNotFoundError(f"片头月亮素材不存在: {path}")
     moon = Image.open(path).convert("RGBA")
     moon = moon.resize((diameter, diameter), Image.Resampling.LANCZOS)
-    moon = _key_black_to_alpha(moon)
     if tint_yellow:
         moon = _tint_image(moon, theme.title_fill[:3], strength=0.58)
     if not skip_fade:
