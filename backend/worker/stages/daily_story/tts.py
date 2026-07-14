@@ -16,7 +16,7 @@ from app.repositories import repo_job_log, repo_job, repo_segment
 from app.repositories.connection import connection
 from app.services.tts.audio_analysis import analyze_loudness, analyze_silence, normalize_loudness
 from app.services.tts.tts_mgr import tts_mgr, SubtitleCue
-from app.services.media.ffmpeg_utils import concat_clips, generate_silent_mp3, probe_duration, run_ffmpeg
+from app.services.media.ffmpeg_utils import build_srt_from_cues, concat_clips, generate_silent_mp3, probe_duration, run_ffmpeg
 from app.utils.job_info import parse_job_info
 from worker.context import JobContext
 from worker.stages.base import StageExecutor
@@ -243,6 +243,24 @@ class DailyTtsStage(StageExecutor):
             target_lufs=settings.audio_target_lufs,
             true_peak=settings.audio_true_peak,
         )
+
+        # 响度归一化后重新探测音频时长，若与字幕总偏差 > 0.01s 则重缩放
+        final_duration = probe_duration(result["audio_path"])
+        cue_total = sum(c.duration_sec for c in result["subtitle_cues"])
+        if cue_total > 0 and abs(cue_total - final_duration) > 0.01:
+            scale = final_duration / cue_total
+            for cue in result["subtitle_cues"]:
+                cue.duration_sec *= scale
+            logger.info(
+                "tts post-norm cue scale=%.6f (%.3fs -> %.3fs)",
+                scale, cue_total, final_duration,
+            )
+            # 重写字幕
+            result["subtitle_path"].write_text(
+                build_srt_from_cues(result["subtitle_cues"]), encoding="utf-8"
+            )
+        result["duration_sec"] = final_duration
+
         loudness = analyze_loudness(result["audio_path"])
         silence = analyze_silence(
             result["audio_path"],
@@ -305,7 +323,6 @@ class DailyTtsStage(StageExecutor):
     ) -> dict:
         """按角色分别合成每个分镜的对话，分镜间并发，然后拼接。"""
         from app.services.tts.tts_ali import _audio_extension
-        from app.services.media.ffmpeg_utils import build_srt_from_cues
 
         output_dir.mkdir(parents=True, exist_ok=True)
         clips_dir = output_dir / "clips"
@@ -355,7 +372,18 @@ class DailyTtsStage(StageExecutor):
         # 拼接所有分镜
         audio_path = output_dir / f"narration{ext}"
         concat_clips(clip_paths, audio_path)
-        total_duration = sum(segment_durations)
+
+        # 探测实际音频总长，等比缩放全部 cue 以消除 MP3 重编码累积偏差
+        total_duration = probe_duration(audio_path)
+        cue_total = sum(c.duration_sec for c in all_subtitle_cues)
+        if cue_total > 0 and abs(cue_total - total_duration) > 0.01:
+            scale = total_duration / cue_total
+            for cue in all_subtitle_cues:
+                cue.duration_sec *= scale
+            logger.info(
+                "tts final cue scale=%.6f (%.3fs -> %.3fs)",
+                scale, cue_total, total_duration,
+            )
 
         # 写字幕
         cues_path = tts_mgr.subtitle_cues_path_for(output_dir)
