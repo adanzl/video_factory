@@ -147,39 +147,44 @@ def apply_tts_segment_trim(
 
 def trim_audio_trailing(
     path: Path,
-    words: list[TimedWord],
     *,
+    noise_db: float = -40.0,
     tail_pad_ms: int = 50,
     min_trailing_ms: int = 250,
 ) -> None:
-    """就地裁切 WAV 尾部静音。
+    """用 ffmpeg silencedetect 检测并裁切 WAV 尾部静音。
 
-    使用最后一个实字的 end_time 计算尾部空白，裁切多余静音。
-    仅在尾部静音超过 min_trailing_ms 时才执行裁切。
+    不依赖 word timestamps（其 end_time 往往早于实际发音结束），
+    而是通过 silencedetect 找到文件末尾真正的静音段来裁切。
+    仅在尾部静音超过 min_trailing_ms 时才执行。
     仅用于 WAV 文件（MP3 上精度不够）。
     """
-    if not words:
+    from app.services.media.ffmpeg_utils import silence_detect_log
+
+    output = silence_detect_log(path, noise_db=noise_db, min_duration_sec=0.35)
+    starts = [float(v) for v in re.findall(r"silence_start:\s*([0-9.]+)", output)]
+    durations = [float(v) for v in re.findall(r"silence_duration:\s*([0-9.]+)", output)]
+    if not starts or not durations:
         return
 
-    # 找到最后一个非标点实字
-    last_real_idx = len(words) - 1
-    for i in range(len(words) - 1, -1, -1):
-        if words[i].text.strip() and not _PUNCT_RE.fullmatch(words[i].text.strip()):
-            last_real_idx = i
-            break
-    else:
+    file_duration = probe_duration(path)
+    if file_duration <= 0:
         return
 
-    total_ms = int(round(probe_duration(path) * 1000))
-    last_word_end_ms = words[last_real_idx].end_time_ms
-    trailing = max(0, total_ms - last_word_end_ms - tail_pad_ms)
-    if trailing < min_trailing_ms:
+    # 确认最后一个静音段在文件末尾（结束位置距末尾 ≤ 0.15s）
+    last_end = starts[-1] + durations[-1]
+    if file_duration - last_end > 0.15:
+        return
+
+    trailing_ms = int(round(durations[-1] * 1000))
+    trim_ms = max(0, trailing_ms - tail_pad_ms)
+    if trim_ms < min_trailing_ms:
         return
 
     logger.info(
-        "trim trailing silence %s trailing=%sms tail_pad=%sms duration=%.2fs->%.2fs",
-        path.name, trailing, tail_pad_ms,
-        total_ms / 1000.0,
-        (total_ms - trailing) / 1000.0,
+        "trim trailing silence %s trailing=%sms trim=%sms tail_pad=%sms duration=%.2fs->%.2fs",
+        path.name, trailing_ms, trim_ms, tail_pad_ms,
+        file_duration,
+        file_duration - trim_ms / 1000.0,
     )
-    _trim_audio(path, TrimPlan(leading_ms=0, trailing_ms=trailing))
+    _trim_audio(path, TrimPlan(leading_ms=0, trailing_ms=trim_ms))
