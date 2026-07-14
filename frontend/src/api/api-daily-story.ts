@@ -71,8 +71,12 @@ export async function generateDailyStoryThemes(count: number = 2): Promise<strin
   return Array.isArray(response.data) ? response.data : [];
 }
 
-export async function createDailyStoryJob(storyId: number): Promise<any> {
-  const response = await api.post("/v_factory/api/daily_story/create_job", { id: storyId });
+export async function createDailyStoryJob(storyId: number, params?: { speechRate?: number; lineGap?: number }): Promise<any> {
+  const response = await api.post("/v_factory/api/daily_story/create_job", {
+    id: storyId,
+    speech_chars_per_sec: params?.speechRate,
+    phrase_gap_sec: params?.lineGap,
+  });
   return response.data;
 }
 

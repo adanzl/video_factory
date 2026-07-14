@@ -69,9 +69,18 @@ def generate_themes_route():
 def create_job_route():
     data = get_json_body()
     story_id = parse_id(data)
-    logger.info("[DAILY_STORY] api /create_job story_id=%d", story_id)
+    speech_chars_per_sec = data.get("speech_chars_per_sec")
+    phrase_gap_sec = data.get("phrase_gap_sec")
+    logger.info(
+        "[DAILY_STORY] api /create_job story_id=%d speech_rate=%s gap=%s",
+        story_id, speech_chars_per_sec, phrase_gap_sec,
+    )
     try:
-        job = daily_story_mgr.create_job(story_id)
+        job = daily_story_mgr.create_job(
+            story_id,
+            speech_chars_per_sec=speech_chars_per_sec,
+            phrase_gap_sec=phrase_gap_sec,
+        )
     except KeyError:
         raise APIError("故事不存在")
     return json_created(job)

@@ -192,7 +192,10 @@ async function handleCreateJob() {
   if (!storyId) return;
   submitting.value = true;
   try {
-    const job = await createDailyStoryJob(storyId);
+    const job = await createDailyStoryJob(storyId, {
+      speechRate: speechRate.value,
+      lineGap: lineGap.value,
+    });
     ElMessage.success(`任务已创建（ID: ${job.id}），即将开始处理`);
     visible.value = false;
     router.push({ path: "/jobs", query: { id: String(job.id) } });
