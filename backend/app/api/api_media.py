@@ -7,7 +7,7 @@ import logging
 from flask import Blueprint, abort, jsonify, request, send_file
 
 from app.api.errors import APIError
-from app.api.utils import get_query, json_ok, parse_int
+from app.api.utils import get_query, json_ok, parse_query_int
 from app.services.media.media_serve_mgr import media_serve_mgr
 
 log = logging.getLogger(__name__)
@@ -50,16 +50,8 @@ def serve_media_file(filepath: str):
 def pic_view(filepath: str):
     """按路径查看图片，支持 w、h 参数按比例缩放并缓存。"""
 
-    w_raw = request.args.get("w")
-    h_raw = request.args.get("h")
-
-    # 解析 w、h
-    w_val, h_val = None, None
-    if w_raw is not None or h_raw is not None:
-        w_val, err = parse_int(w_raw or "0", "w")
-        h_val, err = parse_int(h_raw or "0", "h")
-        if err or (w_val is not None and w_val <= 0) or (h_val is not None and h_val <= 0):
-            return jsonify({"error": "w 和 h 必须为正整数"}), 400
+    w_val = parse_query_int("w", 0, required=False, minimum=0) or None
+    h_val = parse_query_int("h", 0, required=False, minimum=0) or None
 
     try:
         path, mimetype = media_serve_mgr.get_pic_view_path(filepath, w_val, h_val)
