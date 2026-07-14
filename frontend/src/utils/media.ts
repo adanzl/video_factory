@@ -27,7 +27,7 @@ export function getMediaFileUrl(filePath: string, version?: number): string {
       .join("/");
     let mediaUrl = `${baseURL.replace(/\/$/, "")}/v_factory/api/media/files/${encodedPath}`;
 
-    if (version !== undefined && version > 0) {
+    if (version !== undefined) {
       mediaUrl += `?v=${version}`;
     }
 

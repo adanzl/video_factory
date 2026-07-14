@@ -283,7 +283,12 @@ const coverUrl = computed(() => getMediaPicViewUrl(coverPath.value, 640));
 const finalFilePath = computed(() => resolveFinalPath(props.job.final_path));
 const videoUrl = computed(() => getMediaFileUrl(finalFilePath.value));
 const lazyCoverUrl = computed(() => lazyMediaSrc(coverUrl.value, props.stageActive));
-const lazyCoverPreviewList = computed(() => (lazyCoverUrl.value ? [lazyCoverUrl.value] : []));
+const lazyCoverPreviewList = computed(() => {
+  if (!coverPath.value) return [];
+  const fullUrl = getMediaFileUrl(coverPath.value);
+  const lazyUrl = lazyMediaSrc(fullUrl, props.stageActive);
+  return lazyUrl ? [lazyUrl] : [];
+});
 const lazyVideoUrl = computed(() => lazyMediaSrc(videoUrl.value, props.stageActive));
 
 const previewBoxStyle = computed(() =>
