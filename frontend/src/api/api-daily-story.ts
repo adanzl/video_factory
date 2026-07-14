@@ -86,3 +86,12 @@ export async function updateDailyStory(
   });
   return response.data;
 }
+
+export async function regenerateDailyStory(storyId: number): Promise<DailyStoryRecord> {
+  const response = await api.post<DailyStoryRecord>(
+    "/v_factory/api/daily_story/regenerate",
+    { id: storyId },
+    { timeout: DAILY_STORY_LLM_TIMEOUT_MS }
+  );
+  return response.data;
+}
