@@ -7,7 +7,6 @@ __pycache__/
 *.db
 *.egg-info/
 *.py[cod]
-backend/res/host/crayon/*.png
 data/
 logs/*
 tmp/
