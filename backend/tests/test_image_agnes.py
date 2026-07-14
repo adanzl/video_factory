@@ -79,8 +79,9 @@ def test_generate_switches_to_backup_key_on_quota(tmp_path: Path) -> None:
 
 
 def test_concurrent_submit_staggered() -> None:
-    import threading
     import time
+
+    import gevent
 
     from app.config import get_settings
 
@@ -95,20 +96,15 @@ def test_concurrent_submit_staggered() -> None:
     ):
         provider = AgnesImageProvider()
         starts: list[float] = []
-        gate = threading.Barrier(workers)
 
         def worker() -> None:
-            gate.wait()
             provider._acquire_submit_slot()  # noqa: SLF001
             starts.append(time.monotonic())
-            time.sleep(0.05)
+            gevent.sleep(0.05)
             provider._release_submit_slot()  # noqa: SLF001
 
-        threads = [threading.Thread(target=worker) for _ in range(workers)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join(timeout=10)
+        green_lets = [gevent.spawn(worker) for _ in range(workers)]
+        gevent.joinall(green_lets)
 
     assert len(starts) == workers
     starts.sort()
