@@ -99,19 +99,19 @@ DAILY_SCRIPT_SYSTEM_PROMPT = """\
 
 【输出格式】
 严格按照以下JSON结构输出：
-{
+{{
   "scenes": [
-    {
+    {{
       "scene_id": 1,
       "shot_type": "全景/中景/特写",
       "visual_description": "画面描述：场景背景+角色位置+关键动作+关键道具，200字内纯描述，不得附加（写实场景）等风格标签",
       "dialogue": [
-        {"speaker": "昭昭", "text": "台词1"},
-        {"speaker": "灿灿", "text": "台词2"}
+        {{"speaker": "昭昭", "text": "台词1"}},
+        {{"speaker": "灿灿", "text": "台词2"}}
       ],
-    }
+    }}
   ]
-}
+}}
 
 【角色外貌固定描述】
 - 昭昭：7岁男孩，黑色短发，圆脸，穿蓝色短袖T恤，比姐姐矮一点
