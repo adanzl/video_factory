@@ -162,7 +162,7 @@ def _writing_target_clause(narration_target: int) -> str:
 
 _VISUAL_BRIEF_TYPE_OPTIONS: dict[str, str] = {
     CONTENT_STYLE_HISTORICAL_MYSTERY: "（历史场景再现）/（人物肖像）/（关键物件特写）/（空间环境）",
-    CONTENT_STYLE_DAILY_STORY: "（生活场景）",
+    CONTENT_STYLE_DAILY_STORY: "（日常场景）",
 }
 _DEFAULT_VISUAL_BRIEF_TYPES = "（写实场景）/（结构示意图）/（对比图）/（线稿解剖图）/（微观分子图）"
 
