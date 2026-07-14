@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import base64
 import logging
-import threading
 import time
 from pathlib import Path
+
+from gevent.lock import Lock, Semaphore
 
 import requests
 
@@ -35,9 +36,9 @@ def _to_agnes_size(size: str) -> str:
 class AgnesImageProvider(ImageProvider):
     """Agnes 文生图：IMAGE_MAX_WORKERS 路并发 + IMAGE_SUBMIT_INTERVAL_SEC 错峰发起。"""
 
-    _concurrency_lock = threading.Lock()
-    _schedule_lock = threading.Lock()
-    _inflight: threading.Semaphore | None = None
+    _concurrency_lock = Lock()
+    _schedule_lock = Lock()
+    _inflight: Semaphore | None = None
     _max_concurrent: int = 1
     _stagger_sec: float = 20.0
     _next_submit_at: float = 0.0
@@ -65,7 +66,7 @@ class AgnesImageProvider(ImageProvider):
             ):
                 cls._max_concurrent = max_concurrent
                 cls._stagger_sec = stagger_sec
-                cls._inflight = threading.Semaphore(max_concurrent)
+                cls._inflight = Semaphore(max_concurrent)
                 cls._next_submit_at = 0.0
 
     def describe_params(self, *, size: str | None = None) -> str:
