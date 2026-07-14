@@ -95,7 +95,7 @@ def _storyboard_length_max_attempts() -> int:
 _VISUAL_STYLE_BY_CONTENT_STYLE = {
     "daily_story": (
         "儿童情绪涂鸦风格，彩铅和蜡笔混合笔触，用力不均的线条，"
-        "主观夸张变形，高饱和色彩，涂色出界，横格笔记本纸底纹，"
+        "主观夸张变形，高饱和色彩，涂色出界，"
         "橡皮擦拭痕迹，手工感，孩子气的构图。"
         "主角：" + DAILY_STORY_CHARACTERS
     ),
