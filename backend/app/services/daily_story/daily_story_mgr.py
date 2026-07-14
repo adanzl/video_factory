@@ -20,11 +20,14 @@ class DailyStoryMgr:
         status: str | None = None,
         limit: int = 50,
         offset: int = 0,
-    ) -> list[dict]:
+    ) -> dict:
+        """返回 {items: [...], total: N}。"""
         with connection() as conn:
-            return repo_daily_story.list_stories(
+            items = repo_daily_story.list_stories(
                 conn, status=status, limit=limit, offset=offset
             )
+            total = repo_daily_story.count_stories(conn, status=status)
+            return {"items": items, "total": total}
 
     def get_story(self, story_id: int) -> dict:
         with connection() as conn:

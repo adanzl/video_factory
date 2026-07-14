@@ -106,6 +106,23 @@ def list_jobs(
     return [_normalize_list_row(row) for row in rows]
 
 
+def count_jobs(
+    conn: sqlite3.Connection,
+    *,
+    status: str | None = None,
+) -> int:
+    if status:
+        row = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM video_job WHERE status = ?",
+            (status,),
+        ).fetchone()
+    else:
+        row = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM video_job",
+        ).fetchone()
+    return row["cnt"] if row else 0
+
+
 def get_job(conn: sqlite3.Connection, job_id: int) -> dict:
     row = conn.execute(
         "SELECT * FROM video_job WHERE id = ?",

@@ -1,3 +1,5 @@
+import type { ListResponse } from "./api/api";
+
 /**
  * 选题类型
  */
@@ -47,6 +49,8 @@ export interface ScoreDetail {
   total: number;
   rejected_reason?: string | null;
 }
+
+export type ListTitlesResponse = ListResponse<TitleRecord>;
 
 export interface ListTitlesParams {
   status?: string;

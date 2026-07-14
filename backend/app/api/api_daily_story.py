@@ -26,8 +26,8 @@ logger = logging.getLogger(__name__)
 @bp.get("/list")
 def list_stories_route():
     status = get_query("status")
-    limit = parse_query_int("limit", 50, minimum=1, maximum=200)
-    offset = parse_query_int("offset", 0, minimum=0)
+    limit = parse_query_int("limit", 15, required=False, minimum=1, maximum=200)
+    offset = parse_query_int("offset", 0, required=False, minimum=0)
     return json_ok(daily_story_mgr.list_stories(status=status, limit=limit, offset=offset))
 
 

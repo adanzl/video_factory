@@ -9,14 +9,15 @@ import type {
   JobLog,
   JobSegment,
   ListJobsParams,
+  ListJobsResponse,
   UpdateJobInfoParams,
 } from "@/types/jobs";
 import type { RunStageActionPayload } from "@/types/jobs/stageAction";
 import type { LlmPromptStep } from "@/types/jobs/script";
 
-export async function listJobs(params: ListJobsParams = {}): Promise<JobListItem[]> {
-  const response = await api.get<JobListItem[]>("/v_factory/api/jobs/list", { params });
-  return Array.isArray(response.data) ? response.data : [];
+export async function listJobs(params: ListJobsParams = {}): Promise<ListJobsResponse> {
+  const response = await api.get<ListJobsResponse>("/v_factory/api/jobs/list", { params });
+  return response.data;
 }
 
 export async function createJob(params: CreateJobParams): Promise<JobDetail> {

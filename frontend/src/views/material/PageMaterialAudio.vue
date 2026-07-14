@@ -50,6 +50,17 @@
       </el-table-column>
     </el-table>
 
+    <el-pagination
+      v-model:current-page="page"
+      v-model:page-size="pageSize"
+      :total="total"
+      :page-sizes="[15, 20, 50]"
+      layout="sizes, prev, pager, next"
+      class="mt-4 justify-start"
+      @current-change="onPageChange"
+      @size-change="onPageSizeChange"
+    />
+
     <!-- 上传弹窗 -->
     <el-dialog v-model="showUploadDialog" title="上传音频" width="480">
       <el-form label-width="80">
@@ -123,6 +134,10 @@ const loading = ref(false);
 const deleting = ref(false);
 const selectedIds = ref<number[]>([]);
 
+const page = ref(1);
+const pageSize = ref(15);
+const total = ref(0);
+
 // upload
 const showUploadDialog = ref(false);
 const uploading = ref(false);
@@ -153,11 +168,26 @@ const onSelectionChange = (rows: MaterialAudioRecord[]) => {
   selectedIds.value = rows.map(row => row.id);
 };
 
+function onPageChange() {
+  selectedIds.value = [];
+  fetchMaterials();
+}
+
+function onPageSizeChange() {
+  page.value = 1;
+  selectedIds.value = [];
+  fetchMaterials();
+}
+
 const fetchMaterials = async () => {
   loading.value = true;
   try {
-    const rows = await listMaterialAudios();
-    materials.value = rows;
+    const res = await listMaterialAudios({
+      limit: pageSize.value,
+      offset: (page.value - 1) * pageSize.value,
+    });
+    materials.value = res.items;
+    total.value = res.total;
   } catch (error) {
     handleError(error, "加载音频素材失败");
   } finally {

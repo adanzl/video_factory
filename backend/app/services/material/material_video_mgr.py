@@ -29,9 +29,12 @@ _PLACEHOLDER_PATH = "pending"
 
 
 class MaterialVideoMgr:
-    def list_materials(self, *, limit: int = 50, offset: int = 0) -> list[dict]:
+    def list_materials(self, *, limit: int = 50, offset: int = 0) -> dict:
+        """返回 {items: [...], total: N}。"""
         with connection() as conn:
-            return repo_material_video.list_material_videos(conn, limit=limit, offset=offset)
+            items = repo_material_video.list_material_videos(conn, limit=limit, offset=offset)
+            total = repo_material_video.count_material_videos(conn)
+            return {"items": items, "total": total}
 
     def get_material(self, material_id: int) -> dict:
         with connection() as conn:

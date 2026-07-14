@@ -1,3 +1,5 @@
+import type { ListResponse } from "./api/api";
+
 export interface MaterialAudioRecord {
   id: number;
   name: string;
@@ -14,6 +16,8 @@ export interface ListMaterialAudiosParams {
   limit?: number;
   offset?: number;
 }
+
+export type ListMaterialAudiosResponse = ListResponse<MaterialAudioRecord>;
 
 export interface UploadMaterialAudioParams {
   file: File;

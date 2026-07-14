@@ -405,8 +405,8 @@ def run_publish_route():
 @bp.get("/list")
 def list_jobs_route():
     status = get_query("status")
-    limit = parse_query_int("limit", 50, minimum=1, maximum=200)
-    offset = parse_query_int("offset", 0, minimum=0)
+    limit = parse_query_int("limit", 50, required=False, minimum=1, maximum=200)
+    offset = parse_query_int("offset", 0, required=False, minimum=0)
     return json_ok(job_mgr.list_jobs(status=status, limit=limit, offset=offset))
 
 

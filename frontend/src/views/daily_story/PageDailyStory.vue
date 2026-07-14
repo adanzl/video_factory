@@ -61,6 +61,17 @@
       </el-table-column>
     </el-table>
 
+    <el-pagination
+      v-model:current-page="page"
+      v-model:page-size="pageSize"
+      :total="total"
+      :page-sizes="[15, 20, 50]"
+      layout="sizes, prev, pager, next"
+      class="mt-4 justify-start"
+      @current-change="onPageChange"
+      @size-change="onPageSizeChange"
+    />
+
     <DailyStoryDetail v-model="showDetailDialog" :story="currentStory" @updated="fetchStories" />
     <CreateStory v-model="showGenerateDialog" @created="fetchStories" />
   </div>
@@ -93,15 +104,35 @@ const currentStory = ref<DailyStoryRecord | null>(null);
 
 const showGenerateDialog = ref(false);
 
+const page = ref(1);
+const pageSize = ref(15);
+const total = ref(0);
+
 async function fetchStories() {
   loading.value = true;
   try {
-    stories.value = await listDailyStories();
+    const res = await listDailyStories({
+      limit: pageSize.value,
+      offset: (page.value - 1) * pageSize.value,
+    });
+    stories.value = res.items;
+    total.value = res.total;
   } catch (e) {
     handleError(e, "加载故事列表失败");
   } finally {
     loading.value = false;
   }
+}
+
+function onPageChange() {
+  selectedIds.value = [];
+  fetchStories();
+}
+
+function onPageSizeChange() {
+  page.value = 1;
+  selectedIds.value = [];
+  fetchStories();
 }
 
 function onSelectionChange(rows: DailyStoryRecord[]) {

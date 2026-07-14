@@ -1,3 +1,5 @@
+import type { ListResponse } from "../api/api";
+
 export interface FinalAsset {
   path: string;
   duration?: number | null;
@@ -64,6 +66,8 @@ export interface ListJobsParams {
   limit?: number;
   offset?: number;
 }
+
+export type ListJobsResponse = ListResponse<JobListItem>;
 
 export type CreateJobRunMode = "none" | "script" | "full";
 

@@ -172,24 +172,16 @@ const formatJobDuration = (row: JobListItem) => {
   return duration != null ? formatMediaDuration(duration) : "-";
 };
 
-const updateTotal = (count: number) => {
-  if (count < pageSize.value) {
-    total.value = (page.value - 1) * pageSize.value + count;
-  } else {
-    total.value = page.value * pageSize.value + 1;
-  }
-};
-
 const fetchJobs = async () => {
   loading.value = true;
   try {
-    const list = await listJobs({
+    const res = await listJobs({
       status: statusFilter.value || undefined,
       limit: pageSize.value,
       offset: (page.value - 1) * pageSize.value,
     });
-    jobs.value = list;
-    updateTotal(list.length);
+    jobs.value = res.items;
+    total.value = res.total;
   } catch (error) {
     handleError(error, "加载任务列表失败");
   } finally {

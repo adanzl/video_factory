@@ -15,6 +15,23 @@ def _row_to_dict(row: sqlite3.Row) -> dict:
     return data
 
 
+def count_stories(
+    conn: sqlite3.Connection,
+    *,
+    status: str | None = None,
+) -> int:
+    if status:
+        row = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM daily_story WHERE status = ?",
+            (status,),
+        ).fetchone()
+    else:
+        row = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM daily_story",
+        ).fetchone()
+    return row["cnt"] if row else 0
+
+
 def list_stories(
     conn: sqlite3.Connection,
     *,

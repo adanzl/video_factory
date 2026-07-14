@@ -128,9 +128,12 @@ class JobMgr:
         status: str | None = None,
         limit: int = 50,
         offset: int = 0,
-    ) -> list[dict]:
+    ) -> dict:
+        """返回 {items: [...], total: N}。"""
         with connection() as conn:
-            return repo_job.list_jobs(conn, status=status, limit=limit, offset=offset)
+            items = repo_job.list_jobs(conn, status=status, limit=limit, offset=offset)
+            total = repo_job.count_jobs(conn, status=status)
+            return {"items": items, "total": total}
 
     def get_job(self, job_id: int) -> dict:
         from pathlib import Path
