@@ -112,8 +112,10 @@ class MediaServeMgr:
         cache_dir = settings.root_dir / "data" / "pic_cache"
         cache_dir.mkdir(parents=True, exist_ok=True)
 
-        # 缓存 key：原路径 + 尺寸
-        key_str = f"{path}__{w_val or ''}x{h_val or ''}"
+        # 缓存 key：原路径 + 尺寸 + 源文件 mtime（源文件更新时自动重建缓存）
+        src_stat = os.stat(path)
+        src_mtime = int(src_stat.st_mtime)
+        key_str = f"{path}__{w_val or ''}x{h_val or ''}__{src_mtime}"
         key = hashlib.md5(key_str.encode()).hexdigest()
         cache_path = cache_dir / f"{key}{ext}"
 
