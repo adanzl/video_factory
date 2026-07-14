@@ -261,7 +261,7 @@
               fit="cover"
               class="w-full rounded border border-gray-100"
               :style="mediaPreviewStyle"
-              :preview-src-list="stageActive !== false && segment.imageUrl ? [segment.imageUrl] : []
+              :preview-src-list="stageActive !== false && segment.imageOriginUrl ? [segment.imageOriginUrl] : []
                 "
               preview-teleported
             />
@@ -362,7 +362,7 @@
 import { computed, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { generatePrompts, previewSegmentPrompts, runJobStageAction, updateJobInfo, updateSegmentText } from "@/api/api-jobs";
-import { getMediaFileUrl } from "@/api/api-media";
+import { getMediaFileUrl, getMediaPicViewUrl } from "@/api/api-media";
 import type { JobDetail, JobInfo, JobLog, JobSegment, ScriptJson } from "@/types/jobs";
 import type { RunStageActionPayload } from "@/types/jobs/stageAction";
 import { buildSegmentClipSearchKeyword, type ClipOrientation } from "@/utils/clipSearch";
@@ -619,21 +619,21 @@ const scriptDurationByIndex = computed(() => {
   return map;
 });
 
-const toMediaUrl = getMediaFileUrl;
-
 const displaySegments = computed(() =>
   props.segments.map(segment => {
     const imagePath = segment.image_path?.trim() ?? "";
     const clipPath = segment.clip_path?.trim() ?? "";
-    let imageUrl = toMediaUrl(imagePath);
+    const originUrl = getMediaFileUrl(imagePath);
+    let imageUrl = originUrl ? getMediaPicViewUrl(imagePath) : "";
     let clipUrl = "";
     if (clipPath) {
-      clipUrl = toMediaUrl(clipPath);
+      clipUrl = getMediaFileUrl(clipPath);
     }
     // 追加缓存破坏参数
     const refreshTs = imageRefreshTimestamps.value[segment.segment_index];
     if (refreshTs && imageUrl) {
-      imageUrl += (imageUrl.includes("?") ? "&" : "?") + `_=${refreshTs}`;
+      const qs = `_=${refreshTs}`;
+      imageUrl += (imageUrl.includes("?") ? "&" : "?") + qs;
     }
     const clipVer = clipCacheVers.value[segment.segment_index];
     if (clipVer != null && clipVer >= 0 && clipUrl) {
@@ -643,6 +643,7 @@ const displaySegments = computed(() =>
       ...segment,
       visual_brief: visualBriefByIndex.value.get(segment.segment_index) ?? null,
       imageUrl,
+      imageOriginUrl: originUrl,
       clipUrl,
     };
   })
