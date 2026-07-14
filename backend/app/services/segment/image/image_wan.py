@@ -4,7 +4,7 @@ import logging
 import time
 from pathlib import Path
 
-from gevent.lock import Lock
+from gevent.lock import Semaphore
 import requests
 
 from app.config import get_settings
@@ -23,7 +23,7 @@ _SYNC_MODELS = frozenset({"wan2.6-t2i", "wan2.5-t2i-preview", "wan2.2-t2i-plus",
 
 
 class WanImageProvider(ImageProvider):
-    _submit_lock = Lock()
+    _submit_lock = Semaphore(value=1)
 
     def __init__(self) -> None:
         settings = get_settings()

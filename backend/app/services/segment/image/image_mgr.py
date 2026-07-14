@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 import time
 from abc import ABC, abstractmethod
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections.abc import Callable
 from pathlib import Path
 
@@ -132,13 +131,15 @@ class ImageMgr:
                 on_image_done(seg_id, path)
                 done += 1
         else:
-            with ThreadPoolExecutor(max_workers=max_workers) as pool:
-                futures = {pool.submit(render, seg): seg for seg in segments}
-                for fut in as_completed(futures):
-                    if job_id is not None:
-                        job_cancel.raise_if_cancelled(job_id)
-                    results.append(fut.result())
-                    done += 1
+            from gevent.pool import Pool
+
+            pool = Pool(size=max_workers)
+            green_lets = [pool.spawn(render, seg) for seg in segments]
+            for g in green_lets:
+                if job_id is not None:
+                    job_cancel.raise_if_cancelled(job_id)
+                results.append(g.get())
+                done += 1
         elapsed = time.time() - start
         logger.info("image batch done: %s/%s in %.1fs | %s", done, total, elapsed, params_desc)
         return results

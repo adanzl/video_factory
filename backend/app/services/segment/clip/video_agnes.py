@@ -6,12 +6,12 @@ import base64
 import logging
 import math
 import mimetypes
-import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
 from urllib.parse import urlencode
 
+from gevent.lock import Semaphore
 import requests
 
 from app.config import get_settings
@@ -172,7 +172,7 @@ def _loop_video_to_duration(
 
 
 class AgnesClipProvider(ClipProvider):
-    _submit_lock = threading.Lock()
+    _submit_lock = Semaphore(value=1)
     _last_submit_at = 0.0
 
     def __init__(self) -> None:

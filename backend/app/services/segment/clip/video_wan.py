@@ -6,10 +6,10 @@ import base64
 import logging
 import math
 import mimetypes
-import threading
 import time
 from pathlib import Path
 
+from gevent.lock import Semaphore
 import requests
 
 from app.config import get_settings
@@ -37,7 +37,7 @@ def _stabilize_motion_prompt(prompt: str) -> str:
 
 
 class WanClipProvider(ClipProvider):
-    _submit_lock = threading.Lock()
+    _submit_lock = Semaphore(value=1)
 
     def __init__(self) -> None:
         settings = get_settings()

@@ -7,7 +7,7 @@ import logging
 import time
 from pathlib import Path
 
-from gevent.lock import Lock, Semaphore
+from gevent.lock import Semaphore
 
 import requests
 
@@ -36,8 +36,8 @@ def _to_agnes_size(size: str) -> str:
 class AgnesImageProvider(ImageProvider):
     """Agnes 文生图：IMAGE_MAX_WORKERS 路并发 + IMAGE_SUBMIT_INTERVAL_SEC 错峰发起。"""
 
-    _concurrency_lock = Lock()
-    _schedule_lock = Lock()
+    _concurrency_lock = Semaphore(value=1)
+    _schedule_lock = Semaphore(value=1)
     _inflight: Semaphore | None = None
     _max_concurrent: int = 1
     _stagger_sec: float = 20.0

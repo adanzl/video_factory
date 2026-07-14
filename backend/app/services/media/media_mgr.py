@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import logging
 import shutil
-import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+
+from gevent.lock import Semaphore
 
 from app.config import get_settings
 from app.utils.job_cancel import job_cancel
@@ -31,20 +32,20 @@ logger = logging.getLogger(__name__)
 __all__ = ["MediaMgr", "MergeResult", "SegmentClipsResult", "media_mgr"]
 
 # I2V 并发控制（图生视频模块，限制跨任务同时生成的批次数）
-_i2v_semaphore: threading.Semaphore | None = None
+_i2v_semaphore: Semaphore | None = None
 _i2v_max_workers: int = 1
-_i2v_semaphore_lock = threading.Lock()
+_i2v_semaphore_lock = Semaphore(value=1)
 _I2V_PROVIDERS = frozenset({"wan_i2v", "agnes_i2v"})
 
 
-def _ensure_i2v_semaphore() -> threading.Semaphore:
+def _ensure_i2v_semaphore() -> Semaphore:
     global _i2v_semaphore, _i2v_max_workers
     settings = get_settings()
     max_workers = max(1, settings.video_max_workers)
     with _i2v_semaphore_lock:
         if _i2v_semaphore is None or _i2v_max_workers != max_workers:
             _i2v_max_workers = max_workers
-            _i2v_semaphore = threading.Semaphore(max_workers)
+            _i2v_semaphore = Semaphore(max_workers)
         return _i2v_semaphore
 
 

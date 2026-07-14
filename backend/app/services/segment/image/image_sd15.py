@@ -6,11 +6,11 @@ import base64
 import io
 import logging
 import re
-import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from gevent.lock import Semaphore
 import requests
 from PIL import Image
 
@@ -1142,7 +1142,7 @@ def _stitch_horizontal(left_bytes: bytes, right_bytes: bytes) -> bytes:
 
 
 class Sd15ImageProvider(ImageProvider):
-    _checkpoint_lock = threading.Lock()
+    _checkpoint_lock = Semaphore(value=1)
 
     def __init__(self) -> None:
         settings = get_settings()
