@@ -366,9 +366,9 @@ const fetchMaterials = async () => {
   loading.value = true;
   try {
     const offset = (page.value - 1) * pageSize.value;
-    const rows = await listMaterialVideos({ limit: pageSize.value, offset });
-    materials.value = rows;
-    total.value = rows.length < pageSize.value ? offset + rows.length : offset + pageSize.value + 1;
+    const res = await listMaterialVideos({ limit: pageSize.value, offset });
+    materials.value = res.items;
+    total.value = res.total;
   } catch (error) {
     handleError(error, "加载素材失败");
   } finally {

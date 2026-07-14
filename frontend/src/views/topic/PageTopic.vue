@@ -483,24 +483,16 @@ const sourceLabel = (source?: string) => {
   }
 };
 
-const updateTotal = (count: number) => {
-  if (count < pageSize.value) {
-    total.value = (page.value - 1) * pageSize.value + count;
-  } else {
-    total.value = page.value * pageSize.value + 1;
-  }
-};
-
 const fetchTitles = async () => {
   loading.value = true;
   try {
-    const list = await listTitles({
+    const res = await listTitles({
       status: statusFilter.value || undefined,
       limit: pageSize.value,
       offset: (page.value - 1) * pageSize.value,
     });
-    titles.value = list;
-    updateTotal(list.length);
+    titles.value = res.items;
+    total.value = res.total;
   } catch (error) {
     handleError(error, "加载选题列表失败");
   } finally {

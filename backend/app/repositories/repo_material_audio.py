@@ -39,6 +39,15 @@ def get_material_audio(conn: sqlite3.Connection, material_id: int) -> dict:
     return _row_to_dict(row)
 
 
+def count_material_audios(
+    conn: sqlite3.Connection,
+) -> int:
+    row = conn.execute(
+        "SELECT COUNT(*) AS cnt FROM material_audio WHERE status != 'deleted'",
+    ).fetchone()
+    return row["cnt"] if row else 0
+
+
 def list_material_audios(
     conn: sqlite3.Connection,
     *,

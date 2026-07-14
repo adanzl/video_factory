@@ -1,4 +1,5 @@
 import { api } from "./config";
+import type { ListResponse } from "@/types";
 
 export interface DialogueLine {
   speaker: string;
@@ -22,17 +23,19 @@ export interface DailyStoryRecord {
   updated_at: string;
 }
 
+export type DailyStoryListResponse = ListResponse<DailyStoryRecord>;
+
 const DAILY_STORY_LLM_TIMEOUT_MS = 120_000;
 
 export async function listDailyStories(params: {
   status?: string;
   limit?: number;
   offset?: number;
-} = {}): Promise<DailyStoryRecord[]> {
-  const response = await api.get<DailyStoryRecord[]>("/v_factory/api/daily_story/list", {
+} = {}): Promise<DailyStoryListResponse> {
+  const response = await api.get<DailyStoryListResponse>("/v_factory/api/daily_story/list", {
     params,
   });
-  return Array.isArray(response.data) ? response.data : [];
+  return response.data;
 }
 
 export async function getDailyStory(id: number): Promise<DailyStoryRecord> {

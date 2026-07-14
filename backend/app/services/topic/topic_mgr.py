@@ -130,11 +130,14 @@ class TopicMgr:
         status: str | None = None,
         limit: int = 50,
         offset: int = 0,
-    ) -> list[dict]:
+    ) -> dict:
+        """返回 {items: [...], total: N}。"""
         with connection() as conn:
-            return repo_title.list_titles(
+            items = repo_title.list_titles(
                 conn, status=status, limit=limit, offset=offset
             )
+            total = repo_title.count_titles(conn, status=status)
+            return {"items": items, "total": total}
 
     def update_title(
         self,

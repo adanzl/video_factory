@@ -29,8 +29,8 @@ audio_bp = Blueprint("api_materials_audio", __name__, url_prefix="/v_factory/api
 
 @video_bp.get("/list")
 def list_materials_route():
-    limit = parse_query_int("limit", 50, minimum=1, maximum=200)
-    offset = parse_query_int("offset", 0, minimum=0)
+    limit = parse_query_int("limit", 50, required=False, minimum=1, maximum=200)
+    offset = parse_query_int("offset", 0, required=False, minimum=0)
     return json_ok(material_video_mgr.list_materials(limit=limit, offset=offset))
 
 
@@ -156,8 +156,8 @@ def analyze_material_route():
 
 @audio_bp.get("/list")
 def list_audio_materials_route():
-    limit = parse_query_int("limit", 50, minimum=1, maximum=200)
-    offset = parse_query_int("offset", 0, minimum=0)
+    limit = parse_query_int("limit", 50, required=False, minimum=1, maximum=200)
+    offset = parse_query_int("offset", 0, required=False, minimum=0)
     return json_ok(material_audio_mgr.list_materials(limit=limit, offset=offset))
 
 

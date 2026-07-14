@@ -7,6 +7,7 @@ import type {
   AnalyzeMaterialVideoResult,
   CreateJobFromMaterialVideoParams,
   ListMaterialVideosParams,
+  ListMaterialVideosResponse,
   MaterialVideoRecord,
   UploadMaterialVideoParams,
   EditMaterialVideoParams,
@@ -15,15 +16,16 @@ import type { JobDetail } from "@/types/jobs";
 import type {
   MaterialAudioRecord,
   ListMaterialAudiosParams,
+  ListMaterialAudiosResponse,
   UploadMaterialAudioParams,
   EditMaterialAudioParams,
 } from "@/types/material-audio";
 
 // ── 视频素材 ──────────────────────────────────
 
-export async function listMaterialVideos(params: ListMaterialVideosParams = {}): Promise<MaterialVideoRecord[]> {
-  const response = await api.get<MaterialVideoRecord[]>("/v_factory/api/materials/video/list", { params });
-  return Array.isArray(response.data) ? response.data : [];
+export async function listMaterialVideos(params: ListMaterialVideosParams = {}): Promise<ListMaterialVideosResponse> {
+  const response = await api.get<ListMaterialVideosResponse>("/v_factory/api/materials/video/list", { params });
+  return response.data;
 }
 
 export async function getMaterialVideo(materialId: number): Promise<MaterialVideoRecord> {
@@ -94,9 +96,9 @@ export async function analyzeMaterialVideo(
 
 // ── 音频素材 ──────────────────────────────────
 
-export async function listMaterialAudios(params: ListMaterialAudiosParams = {}): Promise<MaterialAudioRecord[]> {
-  const response = await api.get<MaterialAudioRecord[]>("/v_factory/api/materials/audio/list", { params });
-  return Array.isArray(response.data) ? response.data : [];
+export async function listMaterialAudios(params: ListMaterialAudiosParams = {}): Promise<ListMaterialAudiosResponse> {
+  const response = await api.get<ListMaterialAudiosResponse>("/v_factory/api/materials/audio/list", { params });
+  return response.data;
 }
 
 export async function getMaterialAudio(materialId: number): Promise<MaterialAudioRecord> {

@@ -3,11 +3,12 @@ import type {
   DeleteLowScoreTopicsResult,
   EnqueueTopicsParams,
   EnqueueTopicsResult,
+  ListTitlesParams,
+  ListTitlesResponse,
   TopicCatalogResult,
   GenerateAndSaveResult,
   GenerateTopicsParams,
   GenerateTopicsResult,
-  ListTitlesParams,
   OptimizeTopicResult,
   ScoreTopicsResult,
   TitleRecord,
@@ -19,9 +20,9 @@ export type { TopicItem } from "@/types/topic";
 /** 选题生成/优化走 LLM，偶发 >30s，与后端 DeepSeek timeout 对齐留余量 */
 const TOPIC_LLM_TIMEOUT_MS = 120_000;
 
-export async function listTitles(params: ListTitlesParams = {}): Promise<TitleRecord[]> {
-  const response = await api.get<TitleRecord[]>("/v_factory/api/topic/list", { params });
-  return Array.isArray(response.data) ? response.data : [];
+export async function listTitles(params: ListTitlesParams = {}): Promise<ListTitlesResponse> {
+  const response = await api.get<ListTitlesResponse>("/v_factory/api/topic/list", { params });
+  return response.data;
 }
 
 export async function fetchTopicCatalog(): Promise<TopicCatalogResult> {

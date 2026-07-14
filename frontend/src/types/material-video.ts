@@ -1,3 +1,5 @@
+import type { ListResponse } from "./api/api";
+
 export type JobPipeline = "standard" | "material";
 
 export interface MaterialVideoRecord {
@@ -20,6 +22,8 @@ export interface ListMaterialVideosParams {
   limit?: number;
   offset?: number;
 }
+
+export type ListMaterialVideosResponse = ListResponse<MaterialVideoRecord>;
 
 export type MaterialVideoJobRunMode = "none" | "prepare" | "full";
 

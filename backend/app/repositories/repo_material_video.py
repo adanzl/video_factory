@@ -52,6 +52,15 @@ def get_material_video(conn: sqlite3.Connection, material_id: int) -> dict:
     return _row_to_dict(row)
 
 
+def count_material_videos(
+    conn: sqlite3.Connection,
+) -> int:
+    row = conn.execute(
+        "SELECT COUNT(*) AS cnt FROM material_video WHERE status != 'deleted'",
+    ).fetchone()
+    return row["cnt"] if row else 0
+
+
 def list_material_videos(
     conn: sqlite3.Connection,
     *,
