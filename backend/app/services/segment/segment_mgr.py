@@ -29,15 +29,17 @@ class SegmentProduceResult:
 def _resolve_chat_ref_images() -> list[Path]:
     """解析 chat 流水线角色参考图路径。
 
-    分别发送昭昭和灿灿的独立参考图，避免合并图导致角色特征混淆。
+    昭昭与灿灿参考图已合并为一张并排图（combined.png），
+    避免分别发送多张参考图时模型混淆角色。
     """
     settings = get_settings()
-    refs = []
-    for name in ("zhao.png", "can.png"):
-        path = settings.res_dir / "host" / "crayon" / name
-        if path.exists():
-            refs.append(path)
-    return refs
+    combined = settings.res_dir / "host" / "crayon" / "hosts.png"
+    if combined.exists():
+        return [combined]
+    # fallback：无合并图时返回单张 zhao（兼容旧部署）
+    return [
+        settings.res_dir / "host" / "crayon" / "zhao.png",
+    ]
 
 
 class SegmentMgr:
