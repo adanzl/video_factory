@@ -291,7 +291,7 @@ const segmentClips = computed<SegmentClip[]>(() => {
       return {
         segment_index: segIndex,
         text: textMap[segIndex] || "",
-        clipUrl: getMediaFileUrl(clipPath),
+        clipUrl: getMediaFileUrl(clipPath, props.job.audio_version),
       };
     })
     .filter(item => item.clipUrl)
