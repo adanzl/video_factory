@@ -218,15 +218,16 @@
           </section>
 
           <section class="flex flex-col gap-1">
-            <div class="text-xs font-medium text-gray-600">SD15 英文提示词</div>
-            <el-tooltip placement="top" :show-after="300" :disabled="!segment.sd15_prompt_en">
-              <template #content>
-                <div class="max-w-sm whitespace-pre-wrap wrap-break-word text-xs">{{ segment.sd15_prompt_en }}</div>
-              </template>
-              <div class="line-clamp-2 min-h-[2lh] cursor-default text-xs leading-relaxed wrap-break-word text-gray-500">
-                {{ segment.sd15_prompt_en || "-" }}
-              </div>
-            </el-tooltip>
+            <el-collapse>
+              <el-collapse-item>
+                <template #title>
+                  <span class="text-xs font-medium text-gray-600">SD15 英文提示词</span>
+                </template>
+                <div class="whitespace-pre-wrap wrap-break-word text-xs leading-relaxed text-gray-500">
+                  {{ segment.sd15_prompt_en || "-" }}
+                </div>
+              </el-collapse-item>
+            </el-collapse>
           </section>
 
           <section class="flex flex-col gap-1">

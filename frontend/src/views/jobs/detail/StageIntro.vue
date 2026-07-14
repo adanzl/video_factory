@@ -288,7 +288,14 @@ const posterUrl = computed(() => {
 const lazyVideoUrl = computed(() => lazyMediaSrc(videoUrl.value, props.stageActive));
 const lazyCoverUrl = computed(() => lazyMediaSrc(coverUrl.value, props.stageActive));
 const lazyPosterUrl = computed(() => lazyMediaSrc(posterUrl.value, props.stageActive));
-const lazyCoverPreviewList = computed(() => (lazyCoverUrl.value ? [lazyCoverUrl.value] : []));
+/** 放大预览使用原图（非缩略图） */
+const coverPreviewFullUrl = computed(() => {
+  const path = props.job.cover_path ?? "";
+  if (!path.trim()) return "";
+  return getMediaFileUrl(path, coverCacheVer.value);
+});
+const lazyCoverPreviewFullUrl = computed(() => lazyMediaSrc(coverPreviewFullUrl.value, props.stageActive));
+const lazyCoverPreviewList = computed(() => (lazyCoverPreviewFullUrl.value ? [lazyCoverPreviewFullUrl.value] : []));
 
 const actualDurationText = computed(() => {
   if (actualDuration.value !== null) {
