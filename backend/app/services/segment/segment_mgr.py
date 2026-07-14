@@ -36,9 +36,9 @@ def _resolve_chat_ref_images() -> list[Path]:
     combined = settings.res_dir / "host" / "crayon" / "hosts.png"
     if combined.exists():
         return [combined]
-    # fallback：无合并图时返回单张 zhao（兼容旧部署）
     return [
         settings.res_dir / "host" / "crayon" / "zhao.png",
+        settings.res_dir / "host" / "crayon" / "can.png",
     ]
 
 
