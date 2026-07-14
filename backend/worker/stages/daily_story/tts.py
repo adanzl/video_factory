@@ -80,7 +80,7 @@ def _synthesize_segment_dialogue(
     """合成单个分镜的多角色对话，返回结果。可在线程池中并发执行。"""
     from app.services.tts.tts_ali import _run_tts_task
     from app.services.tts.phrase_timing import normalize_word_timestamps
-    from app.services.tts.segment_trim import apply_tts_segment_trim
+    from app.services.tts.segment_trim import apply_tts_segment_trim, trim_audio_trailing
     from app.services.tts.tts_leadin import prepare_lead_in, strip_tts_lead_in
 
     seg_index = seg["segment_index"]
@@ -128,6 +128,8 @@ def _synthesize_segment_dialogue(
             words = strip_tts_lead_in(wav_clip, words, lead_in, rate=rate)
         if words:
             words = apply_tts_segment_trim(wav_clip, words)
+            # 裁切尾部多余静音，避免拼接后间隙超过静音质检阈值
+            trim_audio_trailing(wav_clip, words)
 
         # WAV → MP3
         line_clip = clips_dir / f"{seg_index}_{line_idx}.mp3"
