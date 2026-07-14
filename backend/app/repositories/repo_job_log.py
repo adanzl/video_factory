@@ -19,6 +19,14 @@ def append_log(
     )
 
 
+def delete_logs(conn: sqlite3.Connection, job_id: int) -> int:
+    cursor = conn.execute(
+        "DELETE FROM job_log WHERE job_id = ?",
+        (job_id,),
+    )
+    return cursor.rowcount
+
+
 def list_logs(conn: sqlite3.Connection, job_id: int) -> list[dict]:
     rows = conn.execute(
         """

@@ -9,19 +9,31 @@
         <el-button type="primary" :disabled="loading" @click="() => fetchDetail()">
           <el-icon><Refresh /></el-icon>
         </el-button>
+        <span class="flex-1" >
+          <span class="font-medium">{{ job.title }}</span>
+          <span class="text-gray-500">#{{ job.id }}</span>
+          <el-tag size="small" type="info">{{ pipelineLabel(job.pipeline) }}</el-tag>
+          <el-tag :type="statusTagType(job.status)" size="small">{{ job.status }}</el-tag>
+          <el-tag v-if="job.fail_stage" type="danger" size="small">失败于 {{ job.fail_stage }}</el-tag>
+        </span>
         <el-button
           type="danger"
           :loading="aborting"
           :disabled="loading"
+          size="small"
           @click="handleAbort"
         >
           中止
         </el-button>
-        <span class="font-medium">{{ job.title }}</span>
-        <span class="text-gray-500">#{{ job.id }}</span>
-        <el-tag size="small" type="info">{{ pipelineLabel(job.pipeline) }}</el-tag>
-        <el-tag :type="statusTagType(job.status)" size="small">{{ job.status }}</el-tag>
-        <el-tag v-if="job.fail_stage" type="danger" size="small">失败于 {{ job.fail_stage }}</el-tag>
+        <el-button
+          :loading="clearingLogs"
+          :disabled="loading"
+          size="small"
+          type="success"
+          @click="handleClearLogs"
+        >
+          清日志
+        </el-button>
       </div>
 
       <el-alert
@@ -66,7 +78,7 @@ import { computed, onUnmounted, ref, watch } from "vue";
 import type { Component } from "vue";
 import { Refresh } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { getJob, getJobLogs, getJobSegments, abortJob } from "@/api/api-jobs";
+import { getJob, getJobLogs, getJobSegments, abortJob, clearJobLogs } from "@/api/api-jobs";
 import { JOB_STATUS_RUNNING } from "@/constants/job";
 import { pipelineLabel, resolveActiveStageTab, stagesForJob, PIPELINE_CHAT } from "@/constants/jobStages";
 import type { JobDetail, JobLog, JobSegment } from "@/types/jobs";
@@ -110,6 +122,7 @@ const segments = ref<JobSegment[]>([]);
 const logs = ref<JobLog[]>([]);
 const loading = ref(false);
 const aborting = ref(false);
+const clearingLogs = ref(false);
 const activeStage = ref("script");
 
 const jobStages = computed(() => (job.value ? stagesForJob(job.value) : []));
@@ -195,6 +208,36 @@ const fetchDetail = async (options: { silent?: boolean } = {}) => {
     if (!silent) {
       loading.value = false;
     }
+  }
+};
+
+const handleClearLogs = async () => {
+  if (!job.value) {
+    return;
+  }
+  try {
+    await ElMessageBox.confirm(
+      "将清空该任务的所有日志记录，此操作不可恢复。",
+      "清日志",
+      {
+        type: "warning",
+        confirmButtonText: "清日志",
+        cancelButtonText: "取消",
+      }
+    );
+  } catch {
+    return;
+  }
+
+  clearingLogs.value = true;
+  try {
+    const result = await clearJobLogs(job.value.id);
+    logs.value = [];
+    ElMessage.success(`已清空 ${result.deleted_count} 条日志`);
+  } catch (error) {
+    handleError(error, "清空日志失败");
+  } finally {
+    clearingLogs.value = false;
   }
 };
 

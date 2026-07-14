@@ -76,7 +76,7 @@
                 type="primary"
                 :loading="regeneratingCover"
                 :disabled="actionDisabled"
-                @click="handleRegenCover"
+                @click="handleReGenCover"
               >
                 生成
               </el-button>
@@ -84,7 +84,7 @@
                 v-if="coverUrl"
                 size="small"
                 :loading="regeneratingCover"
-                @click="handleRegenCover"
+                @click="handleReGenCover"
               >
                 重新生成
               </el-button>
@@ -176,7 +176,7 @@
 import { computed, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { runJobStageAction, updateJobInfo } from "@/api/api-jobs";
-import { getMediaDuration, getMediaFileUrl } from "@/api/api-media";
+import { getMediaDuration, getMediaFileUrl, getMediaPicViewUrl } from "@/api/api-media";
 import type { IntroCategory, JobDetail, JobLog } from "@/types/jobs";
 import StageActionBar from "./StageActionBar.vue";
 import StageLogsSection from "./StageLogsSection.vue";
@@ -274,8 +274,9 @@ const videoUrl = computed(() => {
   return base ? `${base}?v=${introCacheVer.value}` : "";
 });
 const coverUrl = computed(() => {
-  const base = getMediaFileUrl(props.job.cover_path ?? "");
-  return base ? `${base}?v=${coverCacheVer.value}` : "";
+  const path = props.job.cover_path ?? "";
+  if (!path.trim()) return "";
+  return getMediaPicViewUrl(path, 640) + (coverCacheVer.value ? `&v=${coverCacheVer.value}` : "");
 });
 
 const posterUrl = computed(() => {
@@ -420,7 +421,7 @@ const handleRun = async (toEnd: boolean) => {
   }
 };
 
-const handleRegenCover = async () => {
+const handleReGenCover = async () => {
   try {
     await ElMessageBox.confirm("确定重新生成封面吗？", "确认", {
       type: "warning",

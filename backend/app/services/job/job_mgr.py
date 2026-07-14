@@ -246,6 +246,11 @@ class JobMgr:
             repo_job.get_job(conn, job_id)
             return repo_job_log.list_logs(conn, job_id)
 
+    def clear_logs(self, job_id: int) -> dict:
+        with connection() as conn:
+            count = repo_job_log.delete_logs(conn, job_id)
+        return {"id": job_id, "cleared": True, "deleted_count": count}
+
     def create_from_title(
         self,
         title: str,
