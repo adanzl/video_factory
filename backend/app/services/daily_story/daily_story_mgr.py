@@ -47,7 +47,14 @@ class DailyStoryMgr:
     def generate_themes(self, count: int = 2) -> list[str]:
         return llm_mgr.generate_daily_story_themes(count)
 
-    def create_job(self, story_id: int, *, skip_publish: bool = False) -> dict:
+    def create_job(
+        self,
+        story_id: int,
+        *,
+        skip_publish: bool = False,
+        speech_chars_per_sec: float | None = None,
+        phrase_gap_sec: float | None = None,
+    ) -> dict:
         """基于日常故事创建视频任务（pipeline=daily_story）。"""
         from app.repositories import repo_job, repo_job_log
 
@@ -66,7 +73,13 @@ class DailyStoryMgr:
                 status="pending",
                 pipeline="chat",
                 material_id=story_id,
-                info=merge_job_info(None, daily_story_id=story_id),
+                info=merge_job_info(
+                    None,
+                    daily_story_id=story_id,
+                    orientation="landscape",
+                    speech_chars_per_sec=speech_chars_per_sec,
+                    phrase_gap_sec=phrase_gap_sec,
+                ),
             )
             repo_job_log.append_log(
                 conn,

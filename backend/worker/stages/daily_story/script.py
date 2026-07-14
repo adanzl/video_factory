@@ -39,6 +39,9 @@ class DailyScriptStage(StageExecutor):
         if not daily_story_id:
             raise RuntimeError("daily_story_id not found in job info")
 
+        # 从 job.info 读取语速，默认 3.0 字/秒（儿童故事音色）
+        chars_per_sec = float(info.get("speech_chars_per_sec") or 3.0)
+
         with connection() as conn:
             story = repo_daily_story.get_story(conn, daily_story_id)
         story_content = story["story"]  # {scene_title, setting, dialogue, punchline_explain}
@@ -69,9 +72,9 @@ class DailyScriptStage(StageExecutor):
                 dialogue = []
             narration_parts.append(segment_text)
 
-            # 按实际字数 ÷ 3.0字/秒 估算分镜时长，不依赖 LLM
+            # 按实际字数 ÷ 语速基准 估算分镜时长，不依赖 LLM
             seg_chars = len(segment_text)
-            duration_sec = round(seg_chars / 3.0, 1)
+            duration_sec = round(seg_chars / chars_per_sec, 1)
 
             seg: dict = {
                 "segment_index": i,
