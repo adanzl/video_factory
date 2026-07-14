@@ -129,7 +129,7 @@ def _synthesize_segment_dialogue(
         if words:
             words = apply_tts_segment_trim(wav_clip, words)
             # 裁切尾部多余静音，避免拼接后间隙超过静音质检阈值
-            trim_audio_trailing(wav_clip, words)
+            trim_audio_trailing(wav_clip)
 
         # WAV → MP3
         line_clip = clips_dir / f"{seg_index}_{line_idx}.mp3"
