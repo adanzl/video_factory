@@ -76,10 +76,13 @@ def parse_query_int(
     name: str,
     default: int,
     *,
+    required: bool = True,
     minimum: int = 0,
     maximum: int | None = None,
 ) -> int:
     """从 query string 解析整数。"""
+    if required and name not in request.args:
+        raise APIError(f"missing required parameter: {name}")
     raw = request.args.get(name, default)
     try:
         value = int(raw)
