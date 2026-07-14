@@ -395,7 +395,6 @@ class MockLLMClient(LLMClient):
         scene_count = min(10, max(8, (len(dialogue) + 2) // 3))
         per_scene = max(2, (len(dialogue) + scene_count - 1) // scene_count)
         scenes = []
-        total_duration = 0
         for i in range(scene_count):
             start = i * per_scene
             end = min(start + per_scene, len(dialogue))
@@ -406,14 +405,9 @@ class MockLLMClient(LLMClient):
                 {"speaker": d["speaker"], "text": d["line"]}
                 for d in lines
             ]
-            dialogue_text = [f"{d['speaker']}：{d['line']}" for d in lines]
-            total_chars = sum(len(d['line']) for d in lines)
-            duration = max(8, min(18, round(total_chars / 2.7)))
-            total_duration += duration
             shot_types = ["全景", "中景", "特写"]
             scenes.append({
                 "scene_id": i + 1,
-                "duration_seconds": duration,
                 "shot_type": shot_types[i % 3],
                 "visual_description": f"场景{i+1}：昭昭和灿灿在{'客厅' if i % 2 == 0 else '厨房'}互动。",
                 "dialogue": dialogue_data,
@@ -424,7 +418,6 @@ class MockLLMClient(LLMClient):
                 ),
             })
         return {
-            "total_duration_seconds": total_duration,
             "scenes": scenes,
         }
 

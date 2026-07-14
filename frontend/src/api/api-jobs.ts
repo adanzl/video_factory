@@ -5,7 +5,6 @@ import { api } from "./config";
 import type {
   CreateJobParams,
   JobDetail,
-  JobListItem,
   JobLog,
   JobSegment,
   ListJobsParams,

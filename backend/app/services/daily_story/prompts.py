@@ -93,19 +93,16 @@ DAILY_SCRIPT_SYSTEM_PROMPT = """\
 
 【分镜规则】
 1. 绝对禁止：一句台词一个镜头。必须按"场景组"合并，每个镜头承载2-4句对话，同一背景、同一情绪下多句台词合并为一个视觉场面。
-2. 总镜头数：控制在8-12个，每个镜头10-18秒。
-3. 语速基准：3.0字/秒，用于估算每个镜头的时长。
-4. 各镜头台词总字数尽量均匀分布，避免某个镜头过多（超过60字）而其他镜头过少（少于20字）。
-5. 景别切换：全景（交代环境）→ 中景（对话主体）→ 特写（情绪/关键道具）穿插使用。
+2. 各镜头台词总字数尽量均匀分布，避免某个镜头过多（超过60字）而其他镜头过少（少于20字）。
+3. 每个镜头不要超过25秒（语速基准{chars_per_sec}字/秒）。
+4. 景别切换：全景（交代环境）→ 中景（对话主体）→ 特写（情绪/关键道具）穿插使用。
 
 【输出格式】
 严格按照以下JSON结构输出：
 {
-  "total_duration_seconds": 总时长（秒）,
   "scenes": [
     {
       "scene_id": 1,
-      "duration_seconds": 时长（秒）,
       "shot_type": "全景/中景/特写",
       "visual_description": "画面描述：场景背景+角色位置+关键动作+关键道具，200字内纯描述，不得附加（写实场景）等风格标签",
       "dialogue": [
@@ -135,21 +132,24 @@ DAILY_SCRIPT_USER_TEMPLATE = """\
 
 【要求】
 1. 按照场景组拆分镜头（不是一句台词一个镜头）
-2. 总镜头数控制在8-10个
-3. 每个镜头承载2-4句台词
-4. 根据3.0字/秒的语速估算每个镜头时长
+2. 每个镜头承载2-4句台词
 
 请直接输出JSON。
 """
 
 
-def build_daily_script_prompts(dialogue_script: dict) -> tuple[str, str]:
+def build_daily_script_prompts(
+    dialogue_script: dict,
+    *,
+    chars_per_sec: float = 3.0,
+) -> tuple[str, str]:
     """构造日常故事分镜生成的 system + user 提示词。
 
     Args:
         dialogue_script: 日常故事对话剧本，格式同 generate_daily_story 输出
             （含 setting, dialogue 等字段），dialogue 为
             [{"speaker": "昭昭", "line": "台词"}, ...] 格式
+        chars_per_sec: 语速基准（字/秒），默认 3.0
     """
     dialogue = dialogue_script.get("dialogue", [])
     # 纠正常见 LLM 拼写错误（speaker 错拼）
@@ -158,7 +158,7 @@ def build_daily_script_prompts(dialogue_script: dict) -> tuple[str, str]:
         f"{d.get('speaker', '?')}：{d.get('line', '')}"
         for d in dialogue
     )
-    return DAILY_SCRIPT_SYSTEM_PROMPT, DAILY_SCRIPT_USER_TEMPLATE.format(
+    return DAILY_SCRIPT_SYSTEM_PROMPT.format(chars_per_sec=chars_per_sec), DAILY_SCRIPT_USER_TEMPLATE.format(
         dialogue_text=dialogue_text,
     )
 

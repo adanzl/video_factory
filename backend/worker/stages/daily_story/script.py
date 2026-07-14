@@ -69,11 +69,15 @@ class DailyScriptStage(StageExecutor):
                 dialogue = []
             narration_parts.append(segment_text)
 
+            # 按实际字数 ÷ 3.0字/秒 估算分镜时长，不依赖 LLM
+            seg_chars = len(segment_text)
+            duration_sec = round(seg_chars / 3.0, 1)
+
             seg: dict = {
                 "segment_index": i,
                 "text": segment_text,
                 "visual_brief": (scene.get("visual_description") or "").strip(),
-                "duration_sec": scene.get("duration_seconds", 10),
+                "duration_sec": duration_sec,
             }
             if dialogue:
                 seg["dialogue"] = dialogue
@@ -91,7 +95,7 @@ class DailyScriptStage(StageExecutor):
             "narration": narration,
             "word_count": len(narration),
             "segments": segments,
-            "total_duration_seconds": scenes_data.get("total_duration_seconds", 0),
+            "total_duration_seconds": sum(s["duration_sec"] for s in segments),
             "daily_story_id": daily_story_id,
             "daily_story_theme": story.get("theme", ""),
             "total_chars": total_chars,
@@ -156,5 +160,5 @@ class DailyScriptStage(StageExecutor):
                 job_id,
                 self.name,
                 f"daily story script ready: scenes={len(scenes)}, "
-                f"narration_chars={len(narration)}, total_chars={total_chars}",
+                f"narration_chars={len(narration)}, total_chars={total_chars}, total_duration={script['total_duration_seconds']:.1f}s",
             )
