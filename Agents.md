@@ -37,7 +37,7 @@ CPU: AMD Ryzen 9 7940HS w/ Radeon 780M Graphics
 
 ## Python 环境
 
-python相关调用使用 **conda**，env: flask_env
+使用 **conda**，env: flask_env，不要再说本地没python了
 
 ## 注意
 
