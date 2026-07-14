@@ -154,6 +154,7 @@ def update_job(conn: sqlite3.Connection, job_id: int, **fields: Any) -> dict:
         "tts_usage_json",
         "info",
         "error_message",
+        "audio_version",
     }
     parts: list[str] = ["updated_at = datetime('now')"]
     values: list[Any] = []

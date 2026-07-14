@@ -4,7 +4,7 @@ import type { FinalAsset } from "@/types/jobs";
 /**
  * 将本地媒体绝对路径转为可通过 HTTP 访问的 URL
  */
-export function getMediaFileUrl(filePath: string): string {
+export function getMediaFileUrl(filePath: string, version?: number): string {
   if (!filePath || typeof filePath !== "string" || filePath.trim() === "") {
     return "";
   }
@@ -25,7 +25,11 @@ export function getMediaFileUrl(filePath: string): string {
       .split("/")
       .map(part => encodeURIComponent(part))
       .join("/");
-    const mediaUrl = `${baseURL.replace(/\/$/, "")}/v_factory/api/media/files/${encodedPath}`;
+    let mediaUrl = `${baseURL.replace(/\/$/, "")}/v_factory/api/media/files/${encodedPath}`;
+
+    if (version !== undefined && version > 0) {
+      mediaUrl += `?v=${version}`;
+    }
 
     if (mediaUrl.includes("index.html") || mediaUrl.endsWith(".html")) {
       return "";

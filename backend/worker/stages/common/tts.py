@@ -46,12 +46,14 @@ class TTSStage(StageExecutor):
             for seg, duration in zip(segments, result.segment_durations):
                 repo_segment.update_segment(conn, seg["id"], duration_sec=duration)
                 seg["duration_sec"] = duration
+            audio_version = (job.get("audio_version") or 0) + 1
             repo_job.update_job(
                 conn,
                 ctx.job["id"],
                 audio_path=str(result.audio_path.resolve()),
                 subtitle_path=str(result.subtitle_path.resolve()),
                 tts_usage_json=result.usage_summary(),
+                audio_version=audio_version,
             )
             repo_job_log.append_log(
                 conn,
