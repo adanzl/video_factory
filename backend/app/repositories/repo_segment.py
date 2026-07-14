@@ -8,6 +8,7 @@ def delete_segments(conn: sqlite3.Connection, job_id: int) -> None:
     conn.execute("DELETE FROM video_segment WHERE job_id = ?", (job_id,))
 
 
+
 def insert_segments(
     conn: sqlite3.Connection,
     job_id: int,
@@ -31,12 +32,13 @@ def insert_segments(
             status = prev.get("status")
         if not status:
             status = "pending"
+        version = 0
         conn.execute(
             """
             INSERT INTO video_segment (
                 job_id, segment_index, text, image_prompt, motion_prompt, visual_mode,
-                duration_sec, sd15_prompt_en, image_path, clip_path, status, dialogue
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                duration_sec, sd15_prompt_en, image_path, clip_path, status, dialogue, version
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 job_id,
@@ -51,6 +53,7 @@ def insert_segments(
                 clip_path,
                 status,
                 json.dumps(seg["dialogue"], ensure_ascii=False) if seg.get("dialogue") else None,
+                version,
             ),
         )
 
@@ -59,7 +62,7 @@ def list_segments(conn: sqlite3.Connection, job_id: int) -> list[dict]:
     rows = conn.execute(
         """
         SELECT id, segment_index, text, image_prompt, motion_prompt, visual_mode,
-               image_path, clip_path, duration_sec, sd15_prompt_en, status, dialogue
+               image_path, clip_path, duration_sec, sd15_prompt_en, status, dialogue, version
         FROM video_segment
         WHERE job_id = ?
         ORDER BY segment_index
@@ -95,6 +98,7 @@ def update_segment(
         "visual_mode",
         "sd15_prompt_en",
         "dialogue",
+        "version",
     }
     parts: list[str] = []
     values: list[object] = []
@@ -111,6 +115,16 @@ def update_segment(
     conn.execute(
         f"UPDATE video_segment SET {', '.join(parts)} WHERE id = ?",
         values,
+    )
+
+
+def increase_version(
+    conn: sqlite3.Connection,
+    segment_id: int,
+) -> None:
+    conn.execute(
+        "UPDATE video_segment SET version = version + 1 WHERE id = ?",
+        (segment_id,),
     )
 
 

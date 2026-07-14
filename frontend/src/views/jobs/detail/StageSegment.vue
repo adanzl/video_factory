@@ -237,15 +237,6 @@
                   size="small"
                   link
                   type="primary"
-                  :disabled="isSegmentImageRefreshDisabled(segment)"
-                  @click="handleRefreshImage(segment.segment_index)"
-                >
-                  刷新
-                </el-button>
-                <el-button
-                  size="small"
-                  link
-                  type="primary"
                   :loading="regeneratingImageIndex === segment.segment_index"
                   :disabled="isSegmentImageActionDisabled(segment.segment_index)"
                   @click="handleRegenerateImage(segment.segment_index)"
@@ -394,9 +385,6 @@ const generatingImagePromptIndex = ref<number | null>(null);
 const generatingVisualBriefIndex = ref<number | null>(null);
 const generatingMotionPromptIndex = ref<number | null>(null);
 const generatingClipIndex = ref<number | null>(null);
-const imageCacheVers = ref<Record<number, number>>({});
-const imageRefreshTimestamps = ref<Record<number, number>>({});
-const clipCacheVers = ref<Record<number, number>>({});
 const segmentScope = ref("segment/images");
 
 type ImageProvider = NonNullable<RunStageActionPayload["image_provider"]>;
@@ -587,9 +575,6 @@ const isSegmentClipActionDisabled = (segment: { segment_index: number; imageUrl:
   !segment.imageUrl ||
   (generatingClipIndex.value !== null && generatingClipIndex.value !== segment.segment_index);
 
-const isSegmentImageRefreshDisabled = (segment: { image_path?: string | null }) =>
-  !segment.image_path?.trim();
-
 const mediaPreviewStyle = computed(() => ({
   aspectRatio: props.job.info?.orientation === "landscape" ? "16 / 9" : "9 / 16",
 }));
@@ -629,15 +614,13 @@ const displaySegments = computed(() =>
     if (clipPath) {
       clipUrl = getMediaFileUrl(clipPath);
     }
-    // 追加缓存破坏参数
-    const refreshTs = imageRefreshTimestamps.value[segment.segment_index];
-    if (refreshTs && imageUrl) {
-      const qs = `_=${refreshTs}`;
-      imageUrl += (imageUrl.includes("?") ? "&" : "?") + qs;
+    // 使用 DB 版本号作为缓存破坏参数
+    const ver = segment.version ?? 0;
+    if (imageUrl) {
+      imageUrl += (imageUrl.includes("?") ? "&" : "?") + `v=${ver}`;
     }
-    const clipVer = clipCacheVers.value[segment.segment_index];
-    if (clipVer != null && clipVer >= 0 && clipUrl) {
-      clipUrl += (clipUrl.includes("?") ? "&" : "?") + `v=${clipVer}`;
+    if (clipUrl) {
+      clipUrl += (clipUrl.includes("?") ? "&" : "?") + `v=${ver}`;
     }
     return {
       ...segment,
@@ -752,7 +735,6 @@ const handleRegenerateImage = async (segmentIndex: number) => {
       segments: [segmentIndex],
       image_provider: imageProvider.value,
     });
-    bumpImageVer(segmentIndex);
     ElMessage.success(`已提交分镜 #${segmentIndex} 静图重新生成`);
     emit("refresh");
   } catch (error) {
@@ -762,25 +744,8 @@ const handleRegenerateImage = async (segmentIndex: number) => {
   }
 };
 
-const bumpImageVer = (index: number) => {
-  imageCacheVers.value = {
-    ...imageCacheVers.value,
-    [index]: (imageCacheVers.value[index] ?? 0) + 1,
-  };
-};
-const bumpClipVer = (index: number) => {
-  clipCacheVers.value = {
-    ...clipCacheVers.value,
-    [index]: (clipCacheVers.value[index] ?? -1) + 1,
-  };
-};
 
-const handleRefreshImage = (segmentIndex: number) => {
-  imageRefreshTimestamps.value = {
-    ...imageRefreshTimestamps.value,
-    [segmentIndex]: Date.now(),
-  };
-};
+
 
 const handleGenerateClip = async (segmentIndex: number) => {
   try {
@@ -801,7 +766,6 @@ const handleGenerateClip = async (segmentIndex: number) => {
       segments: [segmentIndex],
       video_provider: videoProvider.value,
     });
-    bumpClipVer(segmentIndex);
     ElMessage.success(`已提交分镜 #${segmentIndex} 图生视频`);
     emit("refresh");
   } catch (error) {
@@ -839,16 +803,6 @@ const handleRun = async (toEnd: boolean) => {
       payload.video_provider = videoProvider.value;
     }
     await runJobStageAction(segmentScope.value, payload);
-    const targetIndices =
-      selectedSegments.value.length > 0
-        ? selectedSegments.value
-        : props.segments.map(s => s.segment_index);
-    if (segmentScope.value !== "segment/clips") {
-      targetIndices.forEach(i => bumpImageVer(i));
-    }
-    if (segmentScope.value !== "segment/images") {
-      targetIndices.forEach(i => bumpClipVer(i));
-    }
     ElMessage.success(`已提交${actionLabel}，任务已开始执行`);
     emit("refresh");
   } catch (error) {

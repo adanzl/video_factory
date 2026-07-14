@@ -53,6 +53,7 @@ export interface JobDetail extends JobListItem {
   intro_path?: string | null;
   base_path?: string | null;
   audio_path?: string | null;
+  audio_version?: number;
   subtitle_path?: string | null;
   tts_usage_json?: unknown;
   tts_clips?: string[];

@@ -15,6 +15,8 @@ export interface JobSegment {
   /** 脚本阶段预估的单镜时长（秒） */
   script_duration_sec?: number | null;
   status: string;
+  /** 图片/视频版本号，每次生成+1，用于 URL 缓存破坏 */
+  version?: number;
 }
 
 export interface JobLog {

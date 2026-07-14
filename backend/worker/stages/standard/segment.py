@@ -35,6 +35,7 @@ class SegmentStage(StageExecutor):
                     image_path=str(path),
                     status="done",
                 )
+                repo_segment.increase_version(conn, seg_id)
 
         def persist_segment_clip(seg_id: int, path: Path) -> None:
             with connection() as conn:
@@ -43,6 +44,7 @@ class SegmentStage(StageExecutor):
                     seg_id,
                     clip_path=str(path),
                 )
+                repo_segment.increase_version(conn, seg_id)
 
         on_image_done = persist_segment_image if produce_scope in {"all", "images"} else None
         on_clip_done = persist_segment_clip if produce_scope in {"all", "clips"} else None

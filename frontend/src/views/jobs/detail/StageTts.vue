@@ -257,7 +257,7 @@ const actionDisabledReason = computed(() =>
   props.job.status === "running" ? "任务运行中，请稍后再试" : ""
 );
 
-const audioUrl = computed(() => getMediaFileUrl(props.job.audio_path ?? ""));
+const audioUrl = computed(() => getMediaFileUrl(props.job.audio_path ?? "", props.job.audio_version));
 const lazyAudioUrl = computed(() => lazyMediaSrc(audioUrl.value, props.stageActive));
 
 interface SegmentClip {

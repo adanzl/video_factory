@@ -77,6 +77,7 @@ class DailyStoryMgr:
                     None,
                     daily_story_id=story_id,
                     orientation="landscape",
+                    video_provider="ffmpeg",
                     speech_chars_per_sec=speech_chars_per_sec,
                     phrase_gap_sec=phrase_gap_sec,
                 ),
