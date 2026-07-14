@@ -6,14 +6,22 @@
       <section :class="STAGE_PANEL_CLASS">
         <div :class="STAGE_PANEL_HEADER_CLASS">
           <div :class="STAGE_PANEL_TITLE_TEXT_CLASS">标题</div>
+          <span class="flex-1" />
+          <el-button
+            v-if="publishTitle"
+            size="small"
+            @click="openUploadPage"
+          >
+            B站上传
+          </el-button>
           <el-button
             v-if="publishTitle"
             size="small"
             type="primary"
+            plain
             :icon="DocumentCopy"
             @click="copyPublishTitle"
           >
-            复制
           </el-button>
         </div>
         <div
@@ -31,23 +39,26 @@
           <div :class="STAGE_PANEL_TITLE_TEXT_CLASS">视频介绍</div>
           <div class="flex flex-wrap items-center gap-2">
             <el-button
-              v-if="videoDescription"
-              size="small"
-              type="primary"
-              :icon="DocumentCopy"
-              @click="copyVideoDescription"
-            >
-              复制
-            </el-button>
-            <el-button
               v-if="canRegenerateDescription"
+              type="primary"
+              plain
               size="small"
               :loading="regeneratingDescription"
               :disabled="actionDisabled"
               @click="handleRegenerateDescription"
             >
-              重新生成
+              生成
             </el-button>
+            <el-button
+              v-if="videoDescription"
+              size="small"
+              type="primary"
+              :icon="DocumentCopy"
+              plain
+              @click="copyVideoDescription"
+            >
+            </el-button>
+
           </div>
         </div>
         <div
@@ -190,7 +201,7 @@ import { computed, ref, watch } from "vue";
 import { DocumentCopy } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
 import { generateVideoDescription } from "@/api/api-jobs";
-import { downloadMediaFile, getMediaFileUrl } from "@/api/api-media";
+import { downloadMediaFile, getMediaFileUrl, getMediaPicViewUrl } from "@/api/api-media";
 import type { JobDetail, JobLog } from "@/types/jobs";
 import type { ScriptJson } from "@/types/jobs/script";
 import {
@@ -267,7 +278,7 @@ const videoDescription = computed(() => script.value?.video_description?.trim() 
 const canRegenerateDescription = computed(() => Boolean(script.value?.narration?.trim()));
 
 const coverPath = computed(() => props.job.cover_path?.trim() || "");
-const coverUrl = computed(() => getMediaFileUrl(coverPath.value));
+const coverUrl = computed(() => getMediaPicViewUrl(coverPath.value, 640));
 
 const finalFilePath = computed(() => resolveFinalPath(props.job.final_path));
 const videoUrl = computed(() => getMediaFileUrl(finalFilePath.value));
@@ -337,6 +348,10 @@ const copyPublishTitle = async () => {
   } catch (error) {
     handleError(error, "复制失败");
   }
+};
+
+const openUploadPage = () => {
+  window.open("https://member.bilibili.com/platform/upload/video/frame", "_blank");
 };
 
 const copyVideoDescription = async () => {

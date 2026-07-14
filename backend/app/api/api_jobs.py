@@ -532,3 +532,10 @@ def update_segment_text_route():
 @bp.get("/<int:job_id>/logs")
 def get_job_logs_route(job_id: int):
     return json_ok(job_mgr.get_logs(job_id))
+
+
+@bp.post("/logs/clear")
+def clear_job_logs_route():
+    data = get_json_body()
+    job_id = parse_id(data)
+    return json_ok(job_mgr.clear_logs(job_id))

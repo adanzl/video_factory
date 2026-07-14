@@ -170,3 +170,8 @@ export async function deleteJob(jobId: number): Promise<{ id: number; deleted: b
   const response = await api.post("/v_factory/api/jobs/delete", { id: jobId });
   return response.data;
 }
+
+export async function clearJobLogs(jobId: number): Promise<{ id: number; cleared: boolean; deleted_count: number }> {
+  const response = await api.post("/v_factory/api/jobs/logs/clear", { id: jobId });
+  return response.data;
+}
