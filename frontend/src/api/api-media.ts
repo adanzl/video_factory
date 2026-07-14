@@ -47,4 +47,4 @@ export async function downloadMediaFile(filePath: string, filename?: string): Pr
   URL.revokeObjectURL(blobUrl);
 }
 
-export { getMediaFileUrl, MEDIA_CROSS_ORIGIN } from "@/utils/media";
+export { getMediaFileUrl, getMediaPicViewUrl, MEDIA_CROSS_ORIGIN } from "@/utils/media";

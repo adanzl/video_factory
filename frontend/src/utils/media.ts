@@ -37,6 +37,14 @@ export function getMediaFileUrl(filePath: string): string {
   }
 }
 
+/** 使用 /view/ 接口获取指定宽度的缩略图片 URL */
+export function getMediaPicViewUrl(filePath: string, width = 320): string {
+  const base = getMediaFileUrl(filePath);
+  if (!base) return "";
+  // /files/... → /view/...?w=width
+  return base.replace("/files/", "/view/") + `?w=${width}`;
+}
+
 /** 页签未激活时不返回 URL，避免后台预加载图片/视频/音频 */
 export function lazyMediaSrc(url: string, stageActive: boolean | undefined): string {
   if (!url || stageActive === false) {
