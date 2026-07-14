@@ -1310,7 +1310,7 @@ class DeepSeekClient(LLMClient):
         started = time.perf_counter()
         system, user = build_daily_script_prompts(dialogue_script)
         raw, _ = self._chat_json(
-            system, user, max_tokens=4096, thinking_enabled=False, temperature=0.8,
+            system, user, max_tokens=4096, thinking_enabled=True, temperature=0.8,
         )
         raise_if_job_cancelled(job)
         elapsed = time.perf_counter() - started
