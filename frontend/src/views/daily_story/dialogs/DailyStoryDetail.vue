@@ -75,12 +75,14 @@
               <i-mdi-floppy />
             </template>
           </el-button>
-          <el-button
-            :disabled="!localStory?.id || regenerating"
-            :loading="regenerating"
-            :icon="Refresh"
-            @click="handleRegenerate"
-          />
+          <el-tooltip content="重新生成" placement="top">
+            <el-button
+              :disabled="!localStory?.id || regenerating"
+              :loading="regenerating"
+              :icon="Refresh"
+              @click="handleRegenerate"
+            />
+          </el-tooltip>
         </div>
       </div>
 
@@ -118,7 +120,7 @@ import { useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import { Refresh, Edit } from "@element-plus/icons-vue";
 import type { DailyStoryRecord, StoryContent } from "@/api/api-daily-story";
-import { createDailyStoryJob, generateDailyStory, updateDailyStory } from "@/api/api-daily-story";
+import { createDailyStoryJob, regenerateDailyStory, updateDailyStory } from "@/api/api-daily-story";
 
 const props = defineProps<{
   modelValue: boolean;
@@ -127,7 +129,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: "update:modelValue", val: boolean): void;
-  (e: "updated"): void;
+  (e: "updated", story?: DailyStoryRecord): void;
 }>();
 
 const router = useRouter();
@@ -158,7 +160,7 @@ watch(
 );
 
 /** 默认口播语速（字/秒） */
-const speechRate = ref(5.1);
+const speechRate = ref(3.1);
 /** 句间停留（秒） */
 const lineGap = ref(0.3);
 
@@ -214,13 +216,13 @@ async function handleSave() {
 }
 
 async function handleRegenerate() {
-  const theme = props.story?.theme;
-  if (!theme) return;
+  const storyId = props.story?.id;
+  if (!storyId) return;
   regenerating.value = true;
   try {
-    await generateDailyStory(theme);
+    const newStory = await regenerateDailyStory(storyId);
     ElMessage.success("已重新生成");
-    emit("updated");
+    emit("updated", newStory);
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.message || "重新生成失败");
   } finally {

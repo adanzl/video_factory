@@ -82,5 +82,14 @@ class DailyStoryMgr:
         with connection() as conn:
             return repo_daily_story.update_story(conn, story_id, story=story)
 
+    def regenerate_story(self, story_id: int) -> dict:
+        """重新生成日常故事（替换内容，不创建新记录）。"""
+        with connection() as conn:
+            old = repo_daily_story.get_story(conn, story_id)
+            theme = old.get("theme", "")
+        new_story = llm_mgr.generate_daily_story(theme)
+        with connection() as conn:
+            return repo_daily_story.update_story(conn, story_id, story=new_story)
+
 
 daily_story_mgr = DailyStoryMgr()

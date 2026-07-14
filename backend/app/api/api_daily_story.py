@@ -89,3 +89,14 @@ def update_story_route():
         return json_ok(daily_story_mgr.update_story(story_id, story=story))
     except KeyError:
         raise APIError("故事不存在")
+
+
+@bp.post("/regenerate")
+def regenerate_story_route():
+    data = get_json_body()
+    story_id = parse_id(data)
+    logger.info("[DAILY_STORY] api /regenerate story_id=%d", story_id)
+    try:
+        return json_ok(daily_story_mgr.regenerate_story(story_id))
+    except KeyError:
+        raise APIError("故事不存在")
