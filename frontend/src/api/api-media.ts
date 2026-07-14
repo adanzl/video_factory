@@ -37,7 +37,10 @@ export async function downloadMediaFile(filePath: string, filename?: string): Pr
   if (!url) {
     throw new Error("path is empty");
   }
-  const response = await api.get<Blob>(url, { responseType: "blob" });
+  // 追加时间戳防止后端缓存
+  const separator = url.includes("?") ? "&" : "?";
+  const cacheUrl = `${url}${separator}_=${Date.now()}`;
+  const response = await api.get<Blob>(cacheUrl, { responseType: "blob" });
   const name = filename ?? filePath.trim().replace(/\\/g, "/").split("/").pop() ?? "download";
   const blobUrl = URL.createObjectURL(response.data);
   const anchor = document.createElement("a");
