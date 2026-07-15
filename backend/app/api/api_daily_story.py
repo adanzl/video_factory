@@ -100,6 +100,20 @@ def update_story_route():
         raise APIError("故事不存在")
 
 
+@bp.post("/sync_to_job")
+def sync_to_job_route():
+    data = get_json_body()
+    story_id = parse_id(data)
+    story = data.get("story")
+    logger.info("[DAILY_STORY] api /sync_to_job story_id=%d", story_id)
+    try:
+        return json_ok(daily_story_mgr.sync_to_job(story_id, story=story))
+    except ValueError as e:
+        raise APIError(str(e))
+    except KeyError:
+        raise APIError("故事不存在")
+
+
 @bp.post("/regenerate")
 def regenerate_story_route():
     data = get_json_body()

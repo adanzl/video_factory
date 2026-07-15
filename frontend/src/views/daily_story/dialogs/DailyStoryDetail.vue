@@ -56,10 +56,12 @@
           <div class="mb-1 text-xs text-gray-400">时长估算</div>
           <div class="text-sm text-gray-600">{{ estimatedDuration }}</div>
         </div>
-        <div class="mt-4 flex">
+        <div class="mt-4">
           <el-button
+            v-if="!localStory?.job_id"
             type="primary"
             class="flex-1"
+            size="small"
             :loading="submitting"
             :disabled="!localStory?.id"
             @click="handleCreateJob"
@@ -67,22 +69,42 @@
             发起任务
           </el-button>
           <el-button
+            v-if="localStory?.job_id"
+            type="primary"
+            size="small"
+            @click="handleViewJob"
+          >
+            任务详情
+          </el-button>
+          <el-button
+            v-if="localStory?.job_id"
+            type="warning"
+            size="small"
+            :loading="syncing"
+            @click="handleSyncToJob"
+          >
+            同步
+          </el-button>
+        </div>
+        <div class="mt-4">
+          <el-button
             :disabled="!localStory?.id || regenerating"
             type="success"
+            size="small"
             @click="handleSave"
           >
             <template #icon>
               <i-mdi-floppy />
             </template>
           </el-button>
-          <el-tooltip content="重新生成" placement="top">
-            <el-button
-              :disabled="!localStory?.id || regenerating"
-              :loading="regenerating"
-              :icon="Refresh"
-              @click="handleRegenerate"
-            />
-          </el-tooltip>
+          <el-button
+            :disabled="!localStory?.id || regenerating"
+            :loading="regenerating"
+            size="small"
+            @click="handleRegenerate"
+          >
+            重新生成
+          </el-button>
         </div>
       </div>
 
@@ -123,9 +145,9 @@
 import { ref, computed, watch } from "vue";
 import { useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
-import { Refresh, Edit } from "@element-plus/icons-vue";
+import { Edit } from "@element-plus/icons-vue";
 import type { DailyStoryRecord, StoryContent } from "@/api/api-daily-story";
-import { createDailyStoryJob, regenerateDailyStory, updateDailyStory } from "@/api/api-daily-story";
+import { createDailyStoryJob, regenerateDailyStory, updateDailyStory, syncDailyStoryToJob } from "@/api/api-daily-story";
 
 const props = defineProps<{
   modelValue: boolean;
@@ -191,6 +213,7 @@ const estimatedDuration = computed(() => {
 const editing = ref(false);
 const submitting = ref(false);
 const regenerating = ref(false);
+const syncing = ref(false);
 
 async function handleCreateJob() {
   const storyId = props.story?.id;
@@ -211,6 +234,13 @@ async function handleCreateJob() {
   }
 }
 
+function handleViewJob() {
+  const jobId = props.story?.job_id;
+  if (!jobId) return;
+  visible.value = false;
+  router.push({ path: "/jobs", query: { id: String(jobId) } });
+}
+
 async function handleSave() {
   const storyId = props.story?.id;
   if (!storyId) return;
@@ -220,6 +250,21 @@ async function handleSave() {
     emit("updated");
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.message || "保存失败");
+  }
+}
+
+async function handleSyncToJob() {
+  const storyId = props.story?.id;
+  if (!storyId) return;
+  syncing.value = true;
+  try {
+    await syncDailyStoryToJob(storyId, editStory.value);
+    ElMessage.success("已同步到任务，任务脚本阶段已重置");
+    emit("updated");
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.error || "同步失败");
+  } finally {
+    syncing.value = false;
   }
 }
 
