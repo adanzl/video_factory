@@ -64,6 +64,7 @@ export type Job = JobDetail;
 
 export interface ListJobsParams {
   status?: string;
+  pipeline?: string;
   limit?: number;
   offset?: number;
 }

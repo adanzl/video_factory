@@ -1,15 +1,21 @@
 <template>
   <div>
     <div class="mb-4 flex items-center gap-3">
-      <el-button type="primary" :disabled="loading" @click="fetchJobs">
-        <el-icon><Refresh /></el-icon>
-      </el-button>
-      <el-button type="primary" @click="openCreateJobDialog">创建任务</el-button>
+      <el-button type="primary" :disabled="loading" @click="fetchJobs" :icon="Refresh" size="small" />
+      <el-button type="primary" @click="openCreateJobDialog" size="small">创建任务</el-button>
+      <!-- 类型筛选 -->
+      <el-radio-group v-model="pipelineFilter" size="small" @change="onFilterChange">
+        <el-radio-button value="">全部</el-radio-button>
+        <el-radio-button :value="PIPELINE_STANDARD">标准</el-radio-button>
+        <el-radio-button :value="PIPELINE_MATERIAL">素材</el-radio-button>
+        <el-radio-button :value="PIPELINE_CHAT">对话</el-radio-button>
+      </el-radio-group>
       <el-select
         v-model="statusFilter"
         placeholder="全部状态"
         clearable
-        class="w-40!"
+        class="w-30!"
+        size="small"
         @change="onFilterChange"
       >
         <el-option label="待处理" value="pending" />
@@ -125,6 +131,7 @@ const { handleError } = useErrorHandler();
 const jobs = ref<JobListItem[]>([]);
 const loading = ref(false);
 const statusFilter = ref<string>();
+const pipelineFilter = ref("");
 const page = ref(1);
 const pageSize = ref(15);
 const total = ref(0);
@@ -177,6 +184,7 @@ const fetchJobs = async () => {
   try {
     const res = await listJobs({
       status: statusFilter.value || undefined,
+      pipeline: pipelineFilter.value || undefined,
       limit: pageSize.value,
       offset: (page.value - 1) * pageSize.value,
     });

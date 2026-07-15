@@ -21,6 +21,7 @@
       class="w-full"
       v-loading="loading"
       @selection-change="onSelectionChange"
+      @row-dblclick="viewStory"
     >
       <el-table-column type="selection" width="48" />
       <el-table-column prop="id" label="ID" width="70" />
@@ -35,16 +36,9 @@
           {{ row.story?.setting || "-" }}
         </template>
       </el-table-column>
-      <el-table-column label="对话轮数" width="90" align="center">
+      <el-table-column label="对话" width="90" align="center">
         <template #default="{ row }">
           {{ row.story?.dialogue?.length || 0 }}
-        </template>
-      </el-table-column>
-      <el-table-column prop="status" label="状态" width="80" align="center">
-        <template #default="{ row }">
-          <el-tag :type="row.status === 'active' ? 'success' : 'info'" size="small" effect="dark">
-            {{ row.status }}
-          </el-tag>
         </template>
       </el-table-column>
       <el-table-column label="创建时间" width="170">

@@ -404,10 +404,14 @@ def run_publish_route():
 
 @bp.get("/list")
 def list_jobs_route():
-    status = get_query("status")
+    condition: dict[str, str] = {}
+    for key in ("status", "pipeline"):
+        val = get_query(key)
+        if val:
+            condition[key] = val
     limit = parse_query_int("limit", 50, required=False, minimum=1, maximum=200)
     offset = parse_query_int("offset", 0, required=False, minimum=0)
-    return json_ok(job_mgr.list_jobs(status=status, limit=limit, offset=offset))
+    return json_ok(job_mgr.list_jobs(condition=condition or None, limit=limit, offset=offset))
 
 
 @bp.get("/get")
