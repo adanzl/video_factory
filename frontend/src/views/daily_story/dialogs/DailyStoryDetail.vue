@@ -56,7 +56,7 @@
           <div class="mb-1 text-xs text-gray-400">时长估算</div>
           <div class="text-sm text-gray-600">{{ estimatedDuration }}</div>
         </div>
-        <div class="mt-4 flex gap-2">
+        <div class="mt-4 flex">
           <el-button
             type="primary"
             class="flex-1"
@@ -89,26 +89,29 @@
       <!-- 右侧：对话 -->
       <div class="flex flex-1 flex-col pl-2" style="border-left: 1px solid #e5e7eb;">
         <div class="mb-2 flex shrink-0 items-center justify-between">
-          <span class="text-xs text-gray-400">对话 <el-tag size="small" type="info">{{ editStory.dialogue?.length ?? 0 }} 轮</el-tag></span>
+          <span class="text-xs text-gray-400">
+            对话 <el-tag size="small" type="info" class="ml-3">{{ editStory.dialogue?.length ?? 0 }} 轮</el-tag>
+          </span>
           <el-button size="small" :icon="Edit" @click="editing = !editing">
             编辑
           </el-button>
         </div>
-        <div class="flex-1 space-y-3 overflow-y-auto">
+        <div class="flex-1 space-y-3 overflow-y-auto px-2">
           <div
             v-for="(line, idx) in editStory.dialogue"
             :key="idx"
-            class="rounded-lg p-3"
+            class="rounded-lg p-3 flex items-center gap-2"
             :class="line.speaker === '昭昭' ? 'bg-blue-50' : 'bg-pink-50'"
           >
             <div
               :class="line.speaker === '昭昭' ? 'text-blue-600 font-bold' : 'text-pink-600 font-bold'"
-              class="mb-1 text-xs"
+              class="text-xs w-8"
             >
               {{ line.speaker }}
             </div>
-            <el-input v-if="editing" v-model="line.line" type="textarea" :rows="2" size="small" />
+            <el-input v-if="editing" v-model="line.line" type="text" size="small" />
             <div v-else class="text-sm">{{ line.line }}</div>
+            <div class="ml-auto shrink-0 text-xs text-gray-400">{{ line.line?.length || 0 }} </div>
           </div>
         </div>
       </div>

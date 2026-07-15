@@ -76,50 +76,57 @@ def create_job(
 def list_jobs(
     conn: sqlite3.Connection,
     *,
-    status: str | None = None,
+    condition: dict | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> list[dict]:
     limit = max(1, min(limit, 200))
     offset = max(0, offset)
-    if status:
-        rows = conn.execute(
-            """
-            SELECT id, title, stage, status, pipeline, final_path, updated_at, error_message
-            FROM video_job
-            WHERE status = ?
-            ORDER BY id DESC
-            LIMIT ? OFFSET ?
-            """,
-            (status, limit, offset),
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            """
-            SELECT id, title, stage, status, pipeline, final_path, updated_at, error_message
-            FROM video_job
-            ORDER BY id DESC
-            LIMIT ? OFFSET ?
-            """,
-            (limit, offset),
-        ).fetchall()
+
+    conditions: list[str] = []
+    params: list = []
+    if condition:
+        for col, val in condition.items():
+            conditions.append(f"{col} = ?")
+            params.append(val)
+
+    where_clause = ""
+    if conditions:
+        where_clause = "WHERE " + " AND ".join(conditions)
+
+    rows = conn.execute(
+        f"""
+        SELECT id, title, stage, status, pipeline, final_path, updated_at, error_message
+        FROM video_job
+        {where_clause}
+        ORDER BY id DESC
+        LIMIT ? OFFSET ?
+        """,
+        (*params, limit, offset),
+    ).fetchall()
     return [_normalize_list_row(row) for row in rows]
 
 
 def count_jobs(
     conn: sqlite3.Connection,
     *,
-    status: str | None = None,
+    condition: dict | None = None,
 ) -> int:
-    if status:
-        row = conn.execute(
-            "SELECT COUNT(*) AS cnt FROM video_job WHERE status = ?",
-            (status,),
-        ).fetchone()
-    else:
-        row = conn.execute(
-            "SELECT COUNT(*) AS cnt FROM video_job",
-        ).fetchone()
+    conditions: list[str] = []
+    params: list = []
+    if condition:
+        for col, val in condition.items():
+            conditions.append(f"{col} = ?")
+            params.append(val)
+
+    where_clause = ""
+    if conditions:
+        where_clause = "WHERE " + " AND ".join(conditions)
+
+    row = conn.execute(
+        f"SELECT COUNT(*) AS cnt FROM video_job {where_clause}",
+        params,
+    ).fetchone()
     return row["cnt"] if row else 0
 
 

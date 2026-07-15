@@ -125,14 +125,14 @@ class JobMgr:
     def list_jobs(
         self,
         *,
-        status: str | None = None,
+        condition: dict | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> dict:
         """返回 {items: [...], total: N}。"""
         with connection() as conn:
-            items = repo_job.list_jobs(conn, status=status, limit=limit, offset=offset)
-            total = repo_job.count_jobs(conn, status=status)
+            items = repo_job.list_jobs(conn, condition=condition, limit=limit, offset=offset)
+            total = repo_job.count_jobs(conn, condition=condition)
             return {"items": items, "total": total}
 
     def get_job(self, job_id: int) -> dict:

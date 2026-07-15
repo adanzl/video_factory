@@ -104,21 +104,26 @@
         </div>
 
         <!-- 右侧：对话 -->
-        <div class="flex-1 space-y-3 overflow-y-auto pl-2 max-h-100" style="border-left: 1px solid #e5e7eb;">
-          <div class="mb-2 text-xs text-gray-400">对话</div>
-          <div
-            v-for="(line, idx) in dailyStory.story.dialogue"
-            :key="idx"
-            class="rounded-lg p-1 px-3 flex gap-4 items-center"
-            :class="line.speaker === '昭昭' ? 'bg-blue-50' : 'bg-pink-50'"
-          >
+        <div class="flex flex-1 flex-col pl-2" style="border-left: 1px solid #e5e7eb;">
+          <div class="mb-2 shrink-0 text-xs text-gray-400">
+            对话
+            <span class="ml-3">{{ dailyStory.story.dialogue.length }} 轮</span>
+          </div>
+          <div class="flex-1 space-y-3 overflow-y-auto max-h-100">
             <div
-              class=" text-xs font-bold"
-              :class="line.speaker === '昭昭' ? 'text-blue-600' : 'text-pink-600'"
+              v-for="(line, idx) in dailyStory.story.dialogue"
+              :key="idx"
+              class="rounded-lg p-1 px-3 flex gap-4 items-center"
+              :class="line.speaker === '昭昭' ? 'bg-blue-50' : 'bg-pink-50'"
             >
-              {{ line.speaker }}
+              <div
+                class=" text-xs font-bold"
+                :class="line.speaker === '昭昭' ? 'text-blue-600' : 'text-pink-600'"
+              >
+                {{ line.speaker }}
+              </div>
+              <div class="text-sm">{{ line.line }}</div>
             </div>
-            <div class="text-sm">{{ line.line }}</div>
           </div>
         </div>
       </div>
@@ -214,7 +219,7 @@ import type { JobDetail, JobLog, JobSegment } from "@/types/jobs";
 import type { UpdateJobInfoParams } from "@/types/jobs/job";
 import type { RunStageActionPayload } from "@/types/jobs/stageAction";
 import type { LlmPromptStep } from "@/types/jobs/script";
-import { DEFAULT_SPEECH_CHARS_PER_SEC } from "@/utils/media";
+import { DEFAULT_CHAT_SPEECH_CHARS_PER_SEC } from "@/utils/media";
 import { useErrorHandler } from "@/composables/useErrorHandler";
 import StageActionBar from "../detail/StageActionBar.vue";
 import StageLogsSection from "../detail/StageLogsSection.vue";
@@ -261,7 +266,7 @@ const storyLoading = ref(false);
 
 const estimatedDurationMin = ref(2.0);
 const maxTitleLength = ref(16);
-const speechCharsPerSec = ref(DEFAULT_SPEECH_CHARS_PER_SEC);
+const speechCharsPerSec = ref(DEFAULT_CHAT_SPEECH_CHARS_PER_SEC);
 const skipTitleOptimize = ref(false);
 const sourceTitle = ref("");
 const savingSourceTitle = ref(false);
