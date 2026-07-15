@@ -1336,5 +1336,13 @@ class DeepSeekClient(LLMClient):
     ) -> list[str]:
         system, user = build_daily_story_theme_prompts(count)
         content, _ = self._chat(system, user, max_tokens=512, json_mode=False, thinking_enabled=False, temperature=0.95)
-        themes = [line.strip() for line in content.strip().split("\n") if line.strip()]
+        themes = []
+        for line in content.strip().split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            # 去掉序号前缀，如 "1. "、"1、"、"1. 主题名"
+            line = re.sub(r"^\d+[.、)\s]*", "", line).strip()
+            if line:
+                themes.append(line)
         return themes[:count]

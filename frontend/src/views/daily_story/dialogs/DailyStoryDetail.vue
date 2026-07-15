@@ -87,27 +87,29 @@
       </div>
 
       <!-- 右侧：对话 -->
-      <div class="flex-1 space-y-3 overflow-y-auto pl-2" style="border-left: 1px solid #e5e7eb;">
-        <div class="mb-2 flex items-center justify-between">
-          <span class="text-xs text-gray-400">对话</span>
+      <div class="flex flex-1 flex-col pl-2" style="border-left: 1px solid #e5e7eb;">
+        <div class="mb-2 flex shrink-0 items-center justify-between">
+          <span class="text-xs text-gray-400">对话 <el-tag size="small" type="info">{{ editStory.dialogue?.length ?? 0 }} 轮</el-tag></span>
           <el-button size="small" :icon="Edit" @click="editing = !editing">
             编辑
           </el-button>
         </div>
-        <div
-          v-for="(line, idx) in editStory.dialogue"
-          :key="idx"
-          class="rounded-lg p-3"
-          :class="line.speaker === '昭昭' ? 'bg-blue-50' : 'bg-pink-50'"
-        >
+        <div class="flex-1 space-y-3 overflow-y-auto">
           <div
-            :class="line.speaker === '昭昭' ? 'text-blue-600 font-bold' : 'text-pink-600 font-bold'"
-            class="mb-1 text-xs"
+            v-for="(line, idx) in editStory.dialogue"
+            :key="idx"
+            class="rounded-lg p-3"
+            :class="line.speaker === '昭昭' ? 'bg-blue-50' : 'bg-pink-50'"
           >
-            {{ line.speaker }}
+            <div
+              :class="line.speaker === '昭昭' ? 'text-blue-600 font-bold' : 'text-pink-600 font-bold'"
+              class="mb-1 text-xs"
+            >
+              {{ line.speaker }}
+            </div>
+            <el-input v-if="editing" v-model="line.line" type="textarea" :rows="2" size="small" />
+            <div v-else class="text-sm">{{ line.line }}</div>
           </div>
-          <el-input v-if="editing" v-model="line.line" type="textarea" :rows="2" size="small" />
-          <div v-else class="text-sm">{{ line.line }}</div>
         </div>
       </div>
     </div>
