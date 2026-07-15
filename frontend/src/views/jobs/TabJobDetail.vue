@@ -6,12 +6,10 @@
 
     <template v-else-if="job">
       <div class="mb-4 flex flex-wrap items-center gap-3">
-        <el-button type="primary" :disabled="loading" @click="() => fetchDetail()">
-          <el-icon><Refresh /></el-icon>
-        </el-button>
-        <span class="flex-1" >
-          <span class="font-medium">{{ job.title }}</span>
+        <el-button type="primary" :disabled="loading" @click="() => fetchDetail()" size="small" :icon="Refresh" />
+        <span class="flex-1 flex gap-2" >
           <span class="text-gray-500">#{{ job.id }}</span>
+          <span class="font-medium">{{ job.title }}</span>
           <el-tag size="small" type="info">{{ pipelineLabel(job.pipeline) }}</el-tag>
           <el-tag :type="statusTagType(job.status)" size="small">{{ job.status }}</el-tag>
           <el-tag v-if="job.fail_stage" type="danger" size="small">失败于 {{ job.fail_stage }}</el-tag>

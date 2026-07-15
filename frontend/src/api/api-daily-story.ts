@@ -99,3 +99,14 @@ export async function regenerateDailyStory(storyId: number): Promise<DailyStoryR
   );
   return response.data;
 }
+
+export async function syncDailyStoryToJob(
+  storyId: number,
+  story?: StoryContent
+): Promise<{ id: number }> {
+  const response = await api.post("/v_factory/api/daily_story/sync_to_job", {
+    id: storyId,
+    story,
+  });
+  return response.data;
+}

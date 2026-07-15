@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from app.repositories import repo_daily_story
+from app.repositories import repo_daily_story, repo_job, repo_job_log, repo_segment
 from app.repositories.connection import connection
 from app.services.llm.llm_mgr import llm_mgr
 from app.utils.job_info import merge_job_info
@@ -104,6 +104,40 @@ class DailyStoryMgr:
         new_story = llm_mgr.generate_daily_story(theme)
         with connection() as conn:
             return repo_daily_story.update_story(conn, story_id, story=new_story)
+
+
+    def sync_to_job(self, story_id: int, *, story: dict[str, Any] | None = None) -> dict:
+        """更新故事内容并同步到已有任务，重置脚本阶段使其重新生成。"""
+        with connection() as conn:
+            old = repo_daily_story.get_story(conn, story_id)
+            job_id = old.get("job_id")
+            if not job_id:
+                raise ValueError("该故事尚未创建任务，无法同步")
+
+            # 更新故事内容
+            if story:
+                repo_daily_story.update_story(conn, story_id, story=story)
+
+            # 重置任务脚本阶段
+            job = repo_job.get_job(conn, job_id)
+            title = (story or {}).get("scene_title", "") or old.get("story", {}).get("scene_title", "") or job["title"]
+            repo_job.update_job(
+                conn,
+                job_id,
+                title=title.strip(),
+                stage="script",
+                status="pending",
+                script_json=None,
+            )
+            repo_segment.delete_segments(conn, job_id)
+
+            repo_job_log.append_log(
+                conn,
+                job_id,
+                "api",
+                f"synced daily story #{story_id} to job #{job_id}, stage reset to script",
+            )
+            return repo_job.get_job(conn, job_id)
 
 
 daily_story_mgr = DailyStoryMgr()

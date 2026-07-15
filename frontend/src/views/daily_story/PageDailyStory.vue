@@ -41,6 +41,11 @@
           {{ row.story?.dialogue?.length || 0 }}
         </template>
       </el-table-column>
+      <el-table-column label="字数" width="70" align="center">
+        <template #default="{ row }">
+          {{ calcWordCount(row.story?.dialogue) }}
+        </template>
+      </el-table-column>
       <el-table-column label="创建时间" width="170">
         <template #default="{ row }">
           {{ formatDateTime(row.created_at) }}
@@ -84,6 +89,7 @@ import {
   listDailyStories,
   deleteDailyStories,
   type DailyStoryRecord,
+  type DialogueLine,
 } from "@/api/api-daily-story";
 
 const { handleError } = useErrorHandler();
@@ -180,6 +186,11 @@ async function handleDeleteSelected() {
   } finally {
     deleting.value = false;
   }
+}
+
+function calcWordCount(dialogue?: DialogueLine[]): number {
+  if (!dialogue) return 0;
+  return dialogue.reduce((sum, d) => sum + (d.line?.length || 0), 0);
 }
 
 onMounted(fetchStories);
