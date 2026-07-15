@@ -1,39 +1,39 @@
 <template>
   <el-dialog v-model="visible" title="生成日常故事" width="600px" top="10vh" @closed="onDialogClosed">
-    <el-form @submit.prevent="handleGenerate" label-width="80px">
-      <el-form-item label="场景主题">
-        <div class="flex w-full gap-2">
-          <el-input
-            v-model="generateTheme"
-            placeholder="如：写检查、零花钱花完了、争最后一块饼干"
-            clearable
+    <div class="h-100" >
+      <el-form @submit.prevent="handleGenerate" label-width="80px" >
+        <el-form-item label="场景主题">
+          <div class="flex w-full gap-2">
+            <el-input
+              v-model="generateTheme"
+              placeholder="如：写检查、零花钱花完了、争最后一块饼干"
+              clearable
+              size="large"
+              class="flex-1"
+            />
+            <el-button size="large" :loading="generatingThemes" @click="handleGenerateThemes">
+              生成
+            </el-button>
+          </div>
+        </el-form-item>
+        <div class="mb-4 ml-20 flex flex-wrap gap-2">
+          <el-tag
+            v-for="(theme, idx) in generatedThemes"
+            :key="idx"
+            class="cursor-pointer"
             size="large"
-            class="flex-1"
-          />
-          <el-button size="large" :loading="generatingThemes" @click="handleGenerateThemes">
-            AI 生成
-          </el-button>
+            @click="generateTheme = theme"
+          >
+            {{ theme }}
+          </el-tag>
         </div>
-      </el-form-item>
-      <div v-if="generatedThemes.length" class="mb-4 ml-20 flex flex-wrap gap-2">
-        <el-tag
-          v-for="(theme, idx) in generatedThemes"
-          :key="idx"
-          class="cursor-pointer"
-          size="large"
-          @click="generateTheme = theme"
-        >
-          {{ theme }}
-        </el-tag>
-      </div>
-      <el-form-item>
-        <el-button type="primary" size="large" :loading="generating" @click="handleGenerate">
-          生成故事
-        </el-button>
-      </el-form-item>
-    </el-form>
-
-
+        <el-form-item>
+          <el-button type="primary" size="large" :loading="generating" @click="handleGenerate">
+            生成故事
+          </el-button>
+        </el-form-item>
+      </el-form>
+    </div>
   </el-dialog>
 </template>
 
@@ -75,7 +75,7 @@ function onDialogClosed() {
 async function handleGenerateThemes() {
   generatingThemes.value = true;
   try {
-    generatedThemes.value = await generateDailyStoryThemes(5);
+    generatedThemes.value = await generateDailyStoryThemes(10);
   } catch (e) {
     handleError(e, "生成主题失败");
   } finally {
