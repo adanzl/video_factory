@@ -73,6 +73,52 @@
         </div>
       </section>
 
+      <!-- 推荐标签 -->
+      <section :class="STAGE_PANEL_CLASS">
+        <div :class="STAGE_PANEL_HEADER_CLASS">
+          <div :class="STAGE_PANEL_TITLE_TEXT_CLASS">推荐标签</div>
+          <div class="flex flex-wrap items-center gap-2">
+            <el-button
+              v-if="canRegenerateTags"
+              type="primary"
+              plain
+              size="small"
+              :loading="regeneratingTags"
+              :disabled="actionDisabled"
+              @click="handleRegenerateTags"
+            >
+              生成
+            </el-button>
+            <el-button
+              v-if="tags.length"
+              size="small"
+              type="primary"
+              :icon="DocumentCopy"
+              plain
+              @click="copyTags"
+            >
+            </el-button>
+          </div>
+        </div>
+        <div
+          v-if="tags.length"
+          class="flex flex-wrap gap-2 rounded bg-gray-50 px-4 py-3"
+        >
+          <el-tag
+            v-for="tag in tags"
+            :key="tag"
+            type="warning"
+            effect="plain"
+          >
+            {{ tag }}
+          </el-tag>
+        </div>
+        <div v-else :class="STAGE_EMPTY_CLASS">
+          暂无推荐标签
+          <span v-if="canRegenerateTags">，可点击「生成」</span>
+        </div>
+      </section>
+
       <!-- 封面 / 成片 -->
       <div :class="STAGE_TWO_COL_CLASS">
         <div class="min-w-70 max-w-full shrink-0 basis-130">
@@ -200,7 +246,7 @@
 import { computed, ref, watch } from "vue";
 import { DocumentCopy } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
-import { generateVideoDescription } from "@/api/api-jobs";
+import { generateVideoDescription, generateTags } from "@/api/api-jobs";
 import { downloadMediaFile, getMediaFileUrl, getMediaPicViewUrl } from "@/api/api-media";
 import type { JobDetail, JobLog } from "@/types/jobs";
 import type { ScriptJson } from "@/types/jobs/script";
@@ -237,6 +283,7 @@ const emit = defineEmits<{
 const { handleError } = useErrorHandler();
 
 const regeneratingDescription = ref(false);
+const regeneratingTags = ref(false);
 const downloadingCover = ref(false);
 const downloadingFinal = ref(false);
 const coverLoadError = ref(false);
@@ -275,7 +322,11 @@ const publishTitle = computed(() => {
 
 const videoDescription = computed(() => script.value?.video_description?.trim() || "");
 
+const tags = computed(() => script.value?.tags || []);
+
 const canRegenerateDescription = computed(() => Boolean(script.value?.narration?.trim()));
+
+const canRegenerateTags = computed(() => Boolean(script.value?.narration?.trim()));
 
 const coverPath = computed(() => props.job.cover_path?.trim() || "");
 const coverUrl = computed(() => getMediaPicViewUrl(coverPath.value, 640));
@@ -371,6 +422,18 @@ const copyVideoDescription = async () => {
   }
 };
 
+const copyTags = async () => {
+  if (!tags.value.length) {
+    return;
+  }
+  try {
+    await copyText(tags.value.join(" "));
+    ElMessage.success("已复制标签");
+  } catch (error) {
+    handleError(error, "复制失败");
+  }
+};
+
 const handleRegenerateDescription = async () => {
   regeneratingDescription.value = true;
   try {
@@ -381,6 +444,19 @@ const handleRegenerateDescription = async () => {
     handleError(error, "重新生成视频介绍失败");
   } finally {
     regeneratingDescription.value = false;
+  }
+};
+
+const handleRegenerateTags = async () => {
+  regeneratingTags.value = true;
+  try {
+    await generateTags(props.job.id);
+    ElMessage.success("推荐标签已生成");
+    emit("refresh");
+  } catch (error) {
+    handleError(error, "生成推荐标签失败");
+  } finally {
+    regeneratingTags.value = false;
   }
 };
 

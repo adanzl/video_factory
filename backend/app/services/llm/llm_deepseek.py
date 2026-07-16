@@ -13,6 +13,10 @@ from app.services.script.description import (
     build_video_description_prompts,
     parse_video_description_payload,
 )
+from app.services.script.tags import (
+    build_tags_prompts,
+    parse_tags_payload,
+)
 from app.quality.image_prompt import MIN_IMAGE_PROMPT_CHARS, IMAGE_PROMPT_TARGET_CHARS
 from app.services.script.board import (
     build_image_prompts_prompts,
@@ -1175,6 +1179,15 @@ class DeepSeekClient(LLMClient):
         prompts = build_video_description_prompts(title, narration)
         raw, _ = self._chat_json(prompts["system"], prompts["user"], thinking_enabled=False)
         return parse_video_description_payload(raw)
+
+    def generate_tags(
+        self,
+        title: str,
+        narration: str,
+    ) -> list[str]:
+        prompts = build_tags_prompts(title, narration)
+        raw, _ = self._chat_json(prompts["system"], prompts["user"], thinking_enabled=False)
+        return parse_tags_payload(raw)
 
     def rewrite_pixabay_query(
         self,

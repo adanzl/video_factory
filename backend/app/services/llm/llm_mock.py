@@ -260,6 +260,26 @@ class MockLLMClient(LLMClient):
             f"#科普 #{cleaned}"
         )
 
+    def generate_tags(
+        self,
+        title: str,
+        narration: str,
+    ) -> list[str]:
+        _ = narration
+        import re
+
+        cleaned = re.sub(r"\s+", "", title.strip()) or "科普"
+        return [
+            "#科普",
+            "#冷知识",
+            "#涨知识",
+            f"#{cleaned}",
+            "#科学",
+            "#实验",
+            "#原理",
+            "#知识分享",
+        ]
+
     def rewrite_pixabay_query(
         self,
         query: str,

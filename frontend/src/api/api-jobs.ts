@@ -115,6 +115,17 @@ export async function generateVideoDescription(jobId: number): Promise<{
   return response.data;
 }
 
+export async function generateTags(jobId: number): Promise<{
+  tags: string[];
+  job: JobDetail;
+}> {
+  const response = await api.post<{ tags: string[]; job: JobDetail }>(
+    "/v_factory/api/jobs/script/tags",
+    { id: jobId }
+  );
+  return response.data;
+}
+
 export async function generatePrompts(
   jobId: number,
   options: { type?: string; segments?: number[] } = {}

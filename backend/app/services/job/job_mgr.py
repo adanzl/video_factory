@@ -842,6 +842,29 @@ class JobMgr:
             repo_job_log.append_log(conn, job_id, "script", "video description regenerated")
             return {"video_description": description, "job": job}
 
+    def generate_tags(self, job_id: int) -> dict:
+        from app.services.llm.llm_mgr import llm_mgr
+
+        with connection() as conn:
+            job = repo_job.get_job(conn, job_id)
+            script = job.get("script_json")
+            if not isinstance(script, dict):
+                raise ValueError("script not ready")
+            title = str(script.get("title") or job.get("title") or "").strip()
+            narration = str(script.get("narration") or "").strip()
+            if not title:
+                raise ValueError("title is empty")
+            if not narration:
+                raise ValueError("narration is empty")
+
+            tags = llm_mgr.generate_tags(title, narration)
+            updated_script = dict(script)
+            updated_script["tags"] = tags
+
+            job = repo_job.update_job(conn, job_id, script_json=updated_script)
+            repo_job_log.append_log(conn, job_id, "script", "tags regenerated")
+            return {"tags": tags, "job": job}
+
     def run_intro(
         self,
         job_id: int,
