@@ -387,6 +387,7 @@ const generatingVisualBriefIndex = ref<number | null>(null);
 const generatingMotionPromptIndex = ref<number | null>(null);
 const generatingClipIndex = ref<number | null>(null);
 const segmentScope = ref("segment/images");
+const cacheVer = ref(0);
 
 type ImageProvider = NonNullable<RunStageActionPayload["image_provider"]>;
 type VideoProvider = NonNullable<RunStageActionPayload["video_provider"]>;
@@ -609,19 +610,24 @@ const displaySegments = computed(() =>
   props.segments.map(segment => {
     const imagePath = segment.image_path?.trim() ?? "";
     const clipPath = segment.clip_path?.trim() ?? "";
-    const originUrl = getMediaFileUrl(imagePath);
+    let originUrl = getMediaFileUrl(imagePath);
     let imageUrl = originUrl ? getMediaPicViewUrl(imagePath) : "";
     let clipUrl = "";
     if (clipPath) {
       clipUrl = getMediaFileUrl(clipPath);
     }
-    // 使用 DB 版本号作为缓存破坏参数
-    const ver = segment.version ?? 0;
+    // 使用 DB 版本号 + 局部缓存版本号作为缓存破坏参数
+    const ver = (segment.version ?? 0) + cacheVer.value;
+    const appendVersion = (url: string) =>
+      url + (url.includes("?") ? "&" : "?") + `v=${ver}`;
     if (imageUrl) {
-      imageUrl += (imageUrl.includes("?") ? "&" : "?") + `v=${ver}`;
+      imageUrl = appendVersion(imageUrl);
+    }
+    if (originUrl) {
+      originUrl = appendVersion(originUrl);
     }
     if (clipUrl) {
-      clipUrl += (clipUrl.includes("?") ? "&" : "?") + `v=${ver}`;
+      clipUrl = appendVersion(clipUrl);
     }
     return {
       ...segment,
@@ -742,11 +748,9 @@ const handleRegenerateImage = async (segmentIndex: number) => {
     handleError(error, "静图重新生成失败");
   } finally {
     regeneratingImageIndex.value = null;
+    cacheVer.value++;
   }
 };
-
-
-
 
 const handleGenerateClip = async (segmentIndex: number) => {
   try {
@@ -773,6 +777,7 @@ const handleGenerateClip = async (segmentIndex: number) => {
     handleError(error, "图生视频失败");
   } finally {
     generatingClipIndex.value = null;
+    cacheVer.value++;
   }
 };
 
