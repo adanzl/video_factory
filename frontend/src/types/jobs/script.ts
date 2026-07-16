@@ -33,4 +33,5 @@ export interface ScriptJson {
   supplementary_info?: string;
   video_timeline?: string;
   video_description?: string;
+  tags?: string[];
 }

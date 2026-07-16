@@ -117,6 +117,13 @@ class LLMClient:
     ) -> str:
         raise NotImplementedError
 
+    def generate_tags(
+        self,
+        title: str,
+        narration: str,
+    ) -> list[str]:
+        raise NotImplementedError
+
     def generate_material_script(
         self,
         title: str,
@@ -501,6 +508,27 @@ class LLMMgr:
             elapsed,
         )
         return description
+
+    def generate_tags(
+        self,
+        title: str,
+        narration: str,
+    ) -> list[str]:
+        logger.info("[SCRIPT] generate tags start title=%r", title)
+        started = time.perf_counter()
+        try:
+            tags = self._get_client().generate_tags(title, narration)
+        except Exception:
+            logger.exception("[SCRIPT] generate tags failed title=%r", title)
+            raise
+        elapsed = time.perf_counter() - started
+        logger.info(
+            "[SCRIPT] generate tags done title=%r tags=%s elapsed=%.1fs",
+            title,
+            tags,
+            elapsed,
+        )
+        return tags
 
     def generate_material_script(
         self,

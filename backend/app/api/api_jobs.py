@@ -228,6 +228,17 @@ def generate_script_prompts_route():
     )
 
 
+@bp.post("/script/tags")
+def regenerate_tags_route():
+    data = get_json_body()
+    job_id = parse_id(data)
+    try:
+        result = job_mgr.generate_tags(job_id)
+    except ValueError as exc:
+        raise APIError(str(exc)) from exc
+    return json_ok(result)
+
+
 @bp.post("/script/description")
 def regenerate_video_description_route():
     data = get_json_body()
