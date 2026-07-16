@@ -150,6 +150,7 @@ def _run_tts_task(
                         "pitch": pitch if pitch is not None else 1,
                         "word_timestamp_enabled": word_timestamps,
                         **({"instruction": instruction} if instruction else {}),
+                        "language_hints": ["zh"],
                     },
                     "input": {},
                 },
