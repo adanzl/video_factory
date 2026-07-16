@@ -1339,9 +1339,36 @@ class DeepSeekClient(LLMClient):
         theme: str,
     ) -> dict[str, Any]:
         system, user = build_daily_story_prompts(theme)
-        raw, _ = self._chat_json(system, user, max_tokens=4096, thinking_enabled=False, temperature=0.95)
-        validate_daily_story_json(raw)
-        return raw
+        user_base = user
+        last_exc: ValueError | None = None
+        max_attempts = get_settings().script_qa_max_attempts
+        for attempt in range(max_attempts):
+            raw, _ = self._chat_json(
+                system, user, max_tokens=4096, thinking_enabled=False, temperature=0.95
+            )
+            try:
+                validate_daily_story_json(raw)
+                return raw
+            except ValueError as exc:
+                last_exc = exc
+                if attempt + 1 >= max_attempts:
+                    break
+                errors = str(exc).removeprefix("daily_story 校验失败: ")
+                logger.warning(
+                    "[DAILY_STORY] generate story validation failed attempt=%d/%d: %s",
+                    attempt + 1,
+                    max_attempts,
+                    exc,
+                )
+                user = (
+                    f"{user_base}\n\n"
+                    "【重试】上一轮输出的 JSON 校验未通过："
+                    f"{errors}\n"
+                    "请确保所有 dialogue 条目都包含 speaker 和 line 字段，"
+                    "且 speaker 为「昭昭」或「灿灿」，line 为对应台词文本。"
+                )
+        assert last_exc is not None
+        raise last_exc
 
     def generate_daily_story_themes(
         self,
