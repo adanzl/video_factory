@@ -50,12 +50,12 @@ _TRAILING_PUNCT_RE = re.compile(r'[。！？，、；：.!?,;:]+$')
 
 
 def _strip_trailing_punct_for_digit(text: str) -> str:
-    """若末尾最后一个非标点字符是数字，去掉结尾标点。"""
+    """若末尾最后一个非标点字符是数字，将结尾标点替换为省略号，让发音更自然。"""
     m = _TRAILING_PUNCT_RE.search(text)
     if m:
         before = text[:m.start()]
         if before and before[-1].isdigit():
-            return before
+            return before + "……"
     return text
 
 
