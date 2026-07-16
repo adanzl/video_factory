@@ -46,6 +46,19 @@ def _convert_single_digits(text: str) -> str:
     return re.sub(r'(?<!\d)\d(?!\d)', lambda m: _SINGLE_DIGIT_MAP[m.group(0)], text)
 
 
+_TRAILING_PUNCT_RE = re.compile(r'[。！？，、；：.!?,;:]+$')
+
+
+def _strip_trailing_punct_for_digit(text: str) -> str:
+    """若末尾最后一个非标点字符是数字，去掉结尾标点。"""
+    m = _TRAILING_PUNCT_RE.search(text)
+    if m:
+        before = text[:m.start()]
+        if before and before[-1].isdigit():
+            return before
+    return text
+
+
 logger = logging.getLogger(__name__)
 # cSpell: disable
 VOICE_MODEL_MAP = {
@@ -66,8 +79,8 @@ VOICE_MODEL_MAP = {
     "longniuniu": "cosyvoice-v3-flash",
     "longxian_v3": "cosyvoice-v3-flash",
     "longjielidou_v3": "cosyvoice-v3-flash",
-    "cosyvoice-v3.5-flash-leo-f9d115bfdf2346edbeb9d21ecd4f9ce9": "cosyvoice-v3.5-plus",
-    "cosyvoice-v3.5-flash-leo-40c4359c732f4b459a40f3408e1186ed": "cosyvoice-v3.5-plus",
+    "cosyvoice-v3.5-flash-leo-f9d115bfdf2346edbeb9d21ecd4f9ce9": "cosyvoice-v3.5-flash",
+    "cosyvoice-v3.5-flash-leo-40c4359c732f4b459a40f3408e1186ed": "cosyvoice-v3.5-flash",
 }
 DEFAULT_VOICE = "cosyvoice-v3.5-flash-leo-40c4359c732f4b459a40f3408e1186ed"  # cSpell: disable-line
 DEFAULT_MODEL = "cosyvoice-v3.5-plus"
@@ -125,6 +138,7 @@ def _run_tts_task(
     if not text.strip():
         raise ValueError("TTS text is empty")
 
+    text = _strip_trailing_punct_for_digit(text)
     text = _convert_single_digits(text)
 
     voice = voice or settings.tts_voice
