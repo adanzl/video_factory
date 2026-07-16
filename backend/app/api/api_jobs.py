@@ -31,7 +31,7 @@ from app.utils.job_info import (
 
 bp = Blueprint("api_jobs", __name__, url_prefix="/v_factory/api/jobs")
 
-_UPDATABLE_FIELDS = frozenset({"title", "skip_publish", "status"})
+_UPDATABLE_FIELDS = frozenset({"title", "skip_publish", "status", "stage"})
 
 
 def _parse_stage_body() -> tuple[int, bool]:

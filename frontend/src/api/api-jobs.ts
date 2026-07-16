@@ -51,7 +51,7 @@ export async function getJobLogs(jobId: number): Promise<JobLog[]> {
 
 export async function updateJob(
   jobId: number,
-  data: Partial<Pick<JobDetail, "title" | "skip_publish" | "status">>
+  data: Partial<Pick<JobDetail, "title" | "skip_publish" | "status" | "stage">>
 ): Promise<JobDetail> {
   const response = await api.post<JobDetail>("/v_factory/api/jobs/update", { id: jobId, ...data });
   return response.data;

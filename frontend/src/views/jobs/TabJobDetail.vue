@@ -5,15 +5,24 @@
     </div>
 
     <template v-else-if="job">
-      <div class="mb-4 flex flex-wrap items-center gap-3">
+      <div class="mb-4 flex flex-wrap items-center gap-0">
         <el-button type="primary" :disabled="loading" @click="() => fetchDetail()" size="small" :icon="Refresh" />
-        <span class="flex-1 flex gap-2" >
+        <span class="flex-1 flex gap-2 px-2" >
           <span class="text-gray-500">#{{ job.id }}</span>
           <span class="font-medium">{{ job.title }}</span>
           <el-tag size="small" type="info">{{ pipelineLabel(job.pipeline) }}</el-tag>
           <el-tag :type="statusTagType(job.status)" size="small">{{ job.status }}</el-tag>
           <el-tag v-if="job.fail_stage" type="danger" size="small">失败于 {{ job.fail_stage }}</el-tag>
         </span>
+        <el-button
+          :loading="doneLoading"
+          :disabled="loading"
+          size="small"
+          type="primary"
+          @click="handleDone"
+        >
+          Done
+        </el-button>
         <el-button
           type="danger"
           :loading="aborting"
@@ -76,8 +85,8 @@ import { computed, onUnmounted, ref, watch } from "vue";
 import type { Component } from "vue";
 import { Refresh } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { getJob, getJobLogs, getJobSegments, abortJob, clearJobLogs } from "@/api/api-jobs";
-import { JOB_STATUS_RUNNING } from "@/constants/job";
+import { getJob, getJobLogs, getJobSegments, abortJob, clearJobLogs, updateJob } from "@/api/api-jobs";
+import { JOB_STATUS_RUNNING, JOB_STATUS_DONE } from "@/constants/job";
 import { pipelineLabel, resolveActiveStageTab, stagesForJob, PIPELINE_CHAT } from "@/constants/jobStages";
 import type { JobDetail, JobLog, JobSegment } from "@/types/jobs";
 import { useErrorHandler } from "@/composables/useErrorHandler";
@@ -121,6 +130,7 @@ const logs = ref<JobLog[]>([]);
 const loading = ref(false);
 const aborting = ref(false);
 const clearingLogs = ref(false);
+const doneLoading = ref(false);
 const activeStage = ref("script");
 
 const jobStages = computed(() => (job.value ? stagesForJob(job.value) : []));
@@ -236,6 +246,37 @@ const handleClearLogs = async () => {
     handleError(error, "清空日志失败");
   } finally {
     clearingLogs.value = false;
+  }
+};
+
+const handleDone = async () => {
+  if (!job.value) {
+    return;
+  }
+  try {
+    await ElMessageBox.confirm(
+      "将把任务状态标记为已完成（done），确认？",
+      "完成任务",
+      {
+        type: "success",
+        confirmButtonText: "确认",
+        cancelButtonText: "取消",
+      }
+    );
+  } catch {
+    return;
+  }
+
+  doneLoading.value = true;
+  try {
+    const stages = stagesForJob(job.value);
+    const lastStage = stages[stages.length - 1]?.name ?? "publish";
+    job.value = await updateJob(job.value.id, { status: JOB_STATUS_DONE, stage: lastStage });
+    ElMessage.success("任务已标记为完成");
+  } catch (error) {
+    handleError(error, "标记任务完成失败");
+  } finally {
+    doneLoading.value = false;
   }
 };
 

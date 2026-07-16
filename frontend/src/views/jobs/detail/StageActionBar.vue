@@ -41,7 +41,7 @@ withDefaults(
     loading: false,
     disabled: false,
     disabledReason: "",
-    primaryLabel: "重新生成",
+    primaryLabel: "生成",
     toEndLabel: "从此成片",
     showPrimary: true,
     showToEnd: true,
