@@ -1,4 +1,4 @@
-import { api } from "@/api/config";
+import { api, REMOTE, isLocalIpAvailable } from "@/api/config";
 import type { FinalAsset } from "@/types/jobs";
 
 /**
@@ -10,7 +10,10 @@ export function getMediaFileUrl(filePath: string, version?: number): string {
   }
 
   try {
-    const baseURL = api.defaults.baseURL || "";
+    const isLocal = isLocalIpAvailable();
+    const baseURL = isLocal
+      ? (api.defaults.baseURL || "")
+      : REMOTE.res_url.replace(/\/$/, "");
     if (!baseURL || typeof baseURL !== "string") {
       return "";
     }
