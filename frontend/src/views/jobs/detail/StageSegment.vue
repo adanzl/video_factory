@@ -387,7 +387,6 @@ const generatingVisualBriefIndex = ref<number | null>(null);
 const generatingMotionPromptIndex = ref<number | null>(null);
 const generatingClipIndex = ref<number | null>(null);
 const segmentScope = ref("segment/images");
-const cacheVer = ref(0);
 
 type ImageProvider = NonNullable<RunStageActionPayload["image_provider"]>;
 type VideoProvider = NonNullable<RunStageActionPayload["video_provider"]>;
@@ -611,13 +610,17 @@ const displaySegments = computed(() =>
     const imagePath = segment.image_path?.trim() ?? "";
     const clipPath = segment.clip_path?.trim() ?? "";
     let originUrl = getMediaFileUrl(imagePath);
+    if (originUrl) {
+      // 用 /view/ 端点预览原图（无 max_age 缓存，确保每次加载最新）
+      originUrl = originUrl.replace("/files/", "/view/");
+    }
     let imageUrl = originUrl ? getMediaPicViewUrl(imagePath) : "";
     let clipUrl = "";
     if (clipPath) {
       clipUrl = getMediaFileUrl(clipPath);
     }
-    // 使用 DB 版本号 + 局部缓存版本号作为缓存破坏参数
-    const ver = (segment.version ?? 0) + cacheVer.value;
+    // 使用 DB 版本号作为缓存破坏参数
+    const ver = segment.version ?? 0;
     const appendVersion = (url: string) =>
       url + (url.includes("?") ? "&" : "?") + `v=${ver}`;
     if (imageUrl) {
@@ -748,7 +751,6 @@ const handleRegenerateImage = async (segmentIndex: number) => {
     handleError(error, "静图重新生成失败");
   } finally {
     regeneratingImageIndex.value = null;
-    cacheVer.value++;
   }
 };
 
@@ -777,7 +779,6 @@ const handleGenerateClip = async (segmentIndex: number) => {
     handleError(error, "图生视频失败");
   } finally {
     generatingClipIndex.value = null;
-    cacheVer.value++;
   }
 };
 
