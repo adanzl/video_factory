@@ -25,7 +25,7 @@ from app.utils.job_info import (
 
 logger = logging.getLogger(__name__)
 
-_API_UPDATABLE = frozenset({"title", "skip_publish", "status"})
+_API_UPDATABLE = frozenset({"title", "skip_publish", "status", "stage"})
 _VALID_STATUSES = frozenset({"pending", "running", "done", "failed"})
 
 
