@@ -149,7 +149,7 @@ def trim_audio_trailing(
     path: Path,
     *,
     noise_db: float = -45.0,
-    tail_pad_ms: int = 50,
+    tail_pad_ms: int = 200,
     min_trailing_ms: int = 250,
 ) -> None:
     """用 ffmpeg silencedetect 检测并裁切 WAV 尾部静音。
