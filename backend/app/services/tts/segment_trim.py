@@ -148,7 +148,7 @@ def apply_tts_segment_trim(
 def trim_audio_trailing(
     path: Path,
     *,
-    noise_db: float = -40.0,
+    noise_db: float = -45.0,
     tail_pad_ms: int = 50,
     min_trailing_ms: int = 250,
 ) -> None:
