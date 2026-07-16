@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 import uuid
 from dataclasses import dataclass
+from typing import Final
 from pathlib import Path
 
 import gevent
@@ -31,6 +33,18 @@ from app.services.tts.tts_mgr import (
     TTSUsageTask,
     tts_mgr,
 )
+
+# 一位数 → 汉字映射，避免 TTS 对孤立数字朗读生硬
+_SINGLE_DIGIT_MAP: Final[dict[str, str]] = {
+    '0': '零', '1': '一', '2': '二', '3': '三', '4': '四',
+    '5': '五', '6': '六', '7': '七', '8': '八', '9': '九',
+}
+
+
+def _convert_single_digits(text: str) -> str:
+    """将文本中的孤立一位数数字转为汉字，避免 TTS 误读。"""
+    return re.sub(r'(?<!\d)\d(?!\d)', lambda m: _SINGLE_DIGIT_MAP[m.group(0)], text)
+
 
 logger = logging.getLogger(__name__)
 # cSpell: disable
@@ -110,6 +124,8 @@ def _run_tts_task(
         raise ValueError("DASHSCOPE_API_KEY is required for TTS")
     if not text.strip():
         raise ValueError("TTS text is empty")
+
+    text = _convert_single_digits(text)
 
     voice = voice or settings.tts_voice
     model = VOICE_MODEL_MAP.get(voice) or settings.tts_model or DEFAULT_MODEL
