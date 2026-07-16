@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import base64
+import io
 import logging
 import time
 from pathlib import Path
 
 from gevent.lock import Semaphore
+from PIL import Image as PILImage
 
 import requests
 
@@ -25,7 +27,7 @@ from app.services.segment.image.image_mgr import ImageProvider
 
 logger = logging.getLogger(__name__)
 
-_RETRYABLE = {500, 502, 503, 504}
+_RETRYABLE = frozenset({500, 502, 503, 504})
 
 
 def _to_agnes_size(size: str) -> str:
@@ -259,9 +261,24 @@ class AgnesImageProvider(ImageProvider):
         last_exc: Exception | None = None
         for idx, key in enumerate(keys):
             try:
-                return self._generate_with_key(
+                result = self._generate_with_key(
                     key, prompt, output_path, size=size, ref_images=ref_images
                 )
+                # ── post-processing: verify image matches prompt, retry once if not ──
+                if result is not None and result.exists():
+                    verified = self._verify_image(prompt, result)
+                    if not verified:
+                        logger.warning(
+                            "agnes image verify FAILED (%s key, prompt_chars=%s), "
+                            "regenerating once…",
+                            key.label,
+                            len(prompt),
+                        )
+                        result = self._generate_with_key(
+                            key, prompt, output_path,
+                            size=size, ref_images=ref_images,
+                        )
+                return result
             except AgnesQuotaExceeded as exc:
                 last_exc = exc
                 if idx < len(keys) - 1:
@@ -287,3 +304,100 @@ class AgnesImageProvider(ImageProvider):
         if last_exc:
             raise last_exc
         raise RuntimeError("agnes generate failed without exception")
+
+    # ── image-text match verification ────────────────────────────────
+
+    _VERIFY_SYSTEM_PROMPT = (
+        "你是一个严格的图像-文本匹配检查员。"
+        "你的任务是指出图片是否准确展示了提示词描述的视觉内容。"
+        "请严格但合理地判断。"
+    )
+
+    @staticmethod
+    def _verify_image(prompt: str, image_path: Path) -> bool:
+        """使用 Agnes 多模态判断图片是否匹配提示词。返回 True=匹配, False=不匹配。
+
+        优先使用 .agnes_source_url 侧车文件中的 CDN URL（避免重复传输图片），
+        无侧车文件时回退到 base64 内联。
+        """
+        if not image_path.exists():
+            return True
+
+        try:
+            settings = get_settings()
+
+            # 优先用侧车 CDN URL
+            image_url: str | None = None
+            sidecar = image_path.with_name(image_path.name + ".agnes_source_url")
+            if sidecar.is_file():
+                url = sidecar.read_text(encoding="utf-8").strip()
+                if url.startswith(("http://", "https://")):
+                    image_url = url
+
+            if image_url is None:
+                # 无 CDN URL 时回退 base64
+                img = PILImage.open(image_path)
+                max_dim = 1024
+                if max(img.size) > max_dim:
+                    ratio = max_dim / max(img.size)
+                    new_size = (int(img.size[0] * ratio), int(img.size[1] * ratio))
+                    img = img.resize(new_size, PILImage.LANCZOS)
+                buf = io.BytesIO()
+                img.convert("RGB").save(buf, format="JPEG", quality=85)
+                b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+                image_url = f"data:image/jpeg;base64,{b64}"
+
+            user = (
+                f"【提示词】\n{prompt}\n\n"
+                f"请逐项核对提示词中的视觉元素（主体/场景/风格/构图等）是否在图片中准确呈现。\n"
+                f"如果图片内容与提示词基本一致（主要视觉元素均已呈现），仅输出一个字：是\n"
+                f"如果存在明显不一致（如主体缺失、场景错误、画风严重偏离等），仅输出一个字：否\n"
+                f"不要输出任何其他内容。"
+            )
+
+            keys = agnes_api_keys(settings)
+            if not keys:
+                return True
+
+            for api_key in keys:
+                try:
+                    headers = agnes_auth_header(api_key.value)
+                    url = f"{settings.agnes_api_base_url.rstrip('/')}/chat/completions"
+                    payload = {
+                        "model": settings.agnes_vl_model,
+                        "messages": [
+                            {"role": "system", "content": AgnesImageProvider._VERIFY_SYSTEM_PROMPT},
+                            {
+                                "role": "user",
+                                "content": [
+                                    {"type": "text", "text": user},
+                                    {
+                                        "type": "image_url",
+                                        "image_url": {
+                                            "url": image_url,
+                                        },
+                                    },
+                                ],
+                            },
+                        ],
+                        "max_tokens": 10,
+                    }
+                    resp = requests.post(url, headers=headers, json=payload, timeout=60)
+                    if resp.ok:
+                        content = (
+                            resp.json()
+                            .get("choices", [{}])[0]
+                            .get("message", {})
+                            .get("content", "")
+                            .strip()
+                        )
+                        return content.startswith("是")
+                except Exception:
+                    logger.warning(
+                        "agnes verify_image call failed (%s key), skipping verify",
+                        api_key.label,
+                    )
+            return True
+        except Exception as exc:
+            logger.warning("agnes verify_image error: %s", exc)
+            return True
