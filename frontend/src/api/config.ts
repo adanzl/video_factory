@@ -8,6 +8,7 @@ import { getAccessToken } from "./api-auth";
 
 const REMOTE = {
   url: "https://leo-zhao.natapp4.cc/",
+  res_url: "http://leo-zhao.fucku.top/",
   available: true,
 };
 

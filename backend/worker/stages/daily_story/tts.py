@@ -358,9 +358,9 @@ class DailyTtsStage(StageExecutor):
 
         seg_results: list[_SegResult] = []
         pool = gevent.pool.Pool(size=max_workers)
-        greenlets = [pool.spawn(_run_seg, seg) for seg in segments]
-        gevent.joinall(greenlets, raise_error=True)
-        seg_results = [g.value for g in greenlets]
+        green_lets = [pool.spawn(_run_seg, seg) for seg in segments]
+        gevent.joinall(green_lets, raise_error=True)
+        seg_results = [g.value for g in green_lets]
 
         seg_results.sort(key=lambda r: r.seg_index)
 
@@ -373,9 +373,26 @@ class DailyTtsStage(StageExecutor):
             segment_durations.append(r.duration)
             total_chars += r.chars
 
-        # 拼接所有分镜
+        # 拼接所有分镜（含分镜间句间停留）
         audio_path = output_dir / f"narration{ext}"
-        concat_clips(clip_paths, audio_path)
+        if phrase_gap_sec > 0 and len(clip_paths) > 1:
+            final_clips: list[Path] = []
+            for i, clip in enumerate(clip_paths):
+                if i > 0:
+                    gap_path = clips_dir / f"seg_gap_{i}{ext}"
+                    generate_silent_mp3(gap_path, phrase_gap_sec)
+                    final_clips.append(gap_path)
+                final_clips.append(clip)
+            # 非末段最后一个 cue 需包含后续 gap 时长，使 SRT 时间轴正确
+            for seg_result in seg_results[:-1]:
+                if seg_result.cues:
+                    seg_result.cues[-1].duration_sec += phrase_gap_sec
+            # 非末段 segment_duration 也包含后续 gap，使 merge 视频缩放对齐
+            for i in range(len(seg_results) - 1):
+                segment_durations[i] += phrase_gap_sec
+            concat_clips(final_clips, audio_path)
+        else:
+            concat_clips(clip_paths, audio_path)
 
         # 探测实际音频总长，等比缩放全部 cue 以消除 MP3 重编码累积偏差
         total_duration = probe_duration(audio_path)
