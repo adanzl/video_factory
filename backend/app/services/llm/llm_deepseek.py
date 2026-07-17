@@ -447,6 +447,13 @@ class DeepSeekClient(LLMClient):
         try:
             parsed = _loads_llm_json(content)
         except ValueError as exc:
+            # 记录 LLM 响应片段以便排查
+            preview = content[:300].replace("\n", "\\n")
+            logger.warning(
+                "LLM JSON 解析失败: %s\n  content_preview=%r",
+                exc,
+                preview,
+            )
             raise ValueError(str(exc)) from exc
         return parsed, finish
 
@@ -1320,19 +1327,59 @@ class DeepSeekClient(LLMClient):
         *,
         job: dict | None = None,
     ) -> dict[str, Any]:
-        started = time.perf_counter()
         system, user = build_daily_script_prompts(dialogue_script)
-        raw, _ = self._chat_json(
-            system, user, max_tokens=4096, thinking_enabled=True, temperature=0.8,
-        )
-        raise_if_job_cancelled(job)
-        elapsed = time.perf_counter() - started
-        logger.info(
-            "[DAILY_STORY] script done scenes=%d elapsed=%.1fs",
-            len(raw.get("scenes") or []),
-            elapsed,
-        )
-        return raw
+        user_base = user
+        last_exc: ValueError | None = None
+        max_attempts = get_settings().script_qa_max_attempts
+        for attempt in range(max_attempts):
+            started = time.perf_counter()
+            try:
+                raw, _ = self._chat_json(
+                    system, user, max_tokens=4096, thinking_enabled=True, temperature=0.8,
+                )
+            except ValueError as exc:
+                last_exc = exc
+                if attempt + 1 >= max_attempts:
+                    break
+                logger.warning(
+                    "[DAILY_STORY] generate script json parse failed attempt=%d/%d: %s",
+                    attempt + 1,
+                    max_attempts,
+                    exc,
+                )
+                user = (
+                    f"{user_base}\n\n"
+                    "【重试】上一轮输出的 JSON 格式无效，请确保输出合法的 JSON 格式，"
+                    "包含 scenes 数组。"
+                )
+                continue
+            raise_if_job_cancelled(job)
+            elapsed = time.perf_counter() - started
+            scenes = raw.get("scenes") or []
+            if scenes:
+                logger.info(
+                    "[DAILY_STORY] script done scenes=%d attempt=%d/%d elapsed=%.1fs",
+                    len(scenes),
+                    attempt + 1,
+                    max_attempts,
+                    elapsed,
+                )
+                return raw
+            last_exc = ValueError("generate_daily_script returned empty scenes")
+            if attempt + 1 >= max_attempts:
+                break
+            logger.warning(
+                "[DAILY_STORY] generate script empty scenes attempt=%d/%d",
+                attempt + 1,
+                max_attempts,
+            )
+            user = (
+                f"{user_base}\n\n"
+                "【重试】上一轮输出的 JSON 缺少 scenes 数组，"
+                "请确保输出格式包含 scenes 数组。"
+            )
+        assert last_exc is not None
+        raise last_exc
 
     def generate_daily_story(
         self,
