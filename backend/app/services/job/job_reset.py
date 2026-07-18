@@ -302,6 +302,23 @@ def prepare_for_action(
                 fail_stage=None,
                 error_message=None,
             )
+    elif action == "end":
+        from app.config import get_settings
+
+        settings = get_settings()
+        media_dir = settings.video_data_dir / str(job_id)
+        with connection() as conn:
+            repo_job.update_job(conn, job_id, end_path=None)
+            if media_dir.exists():
+                _delete_files([media_dir / "end.mp4"])
+            repo_job_log.append_log(conn, job_id, "intro", f"action={action}")
+            return repo_job.update_job(
+                conn,
+                job_id,
+                status="pending",
+                fail_stage=None,
+                error_message=None,
+            )
     else:
         stage = normalize_stage(action)
         segment_scope = None
