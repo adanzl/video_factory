@@ -42,6 +42,8 @@ from app.services.topic.prompts.builder import (
 )
 from app.services.daily_story.prompts import (
     DAILY_STORY_CHARACTERS,
+    DAILY_STORY_CHARACTER_MOM,
+    _correct_dialogue_speaker,
     build_daily_script_prompts,
     build_daily_story_prompts,
     build_daily_story_theme_prompts,
@@ -101,7 +103,7 @@ _VISUAL_STYLE_BY_CONTENT_STYLE = {
         "儿童情绪涂鸦风格，彩铅和蜡笔混合笔触，用力不均的线条，"
         "主观夸张变形，高饱和色彩，涂色出界，"
         "橡皮擦拭痕迹，手工感，孩子气的构图。"
-        "主角：" + DAILY_STORY_CHARACTERS
+        "主角：" + DAILY_STORY_CHARACTERS + "；" + DAILY_STORY_CHARACTER_MOM
     ),
     "life_experience": "生活 Vlog 质感写实画面：自然光或室内暖光，色彩真实不过度滤镜。",
     "history_mystery": "电影级写实历史再现：光影考究、暗部有层次、低饱和古风色调。",
@@ -1331,11 +1333,21 @@ class DeepSeekClient(LLMClient):
         user_base = user
         last_exc: ValueError | None = None
         max_attempts = get_settings().script_qa_max_attempts
+
+        # 提取原始台词列表（跳过纯标点行，与下游过滤逻辑一致）
+        original_dialogue = dialogue_script.get("dialogue") or []
+        _correct_dialogue_speaker(original_dialogue)
+        original_lines: list[str] = []
+        for d in original_dialogue:
+            line = (d.get("line") or "").strip()
+            if line and re.search(r"[\u4e00-\u9fff\w]", line):
+                original_lines.append(line)
+
         for attempt in range(max_attempts):
             started = time.perf_counter()
             try:
                 raw, _ = self._chat_json(
-                    system, user, max_tokens=4096, thinking_enabled=True, temperature=0.8,
+                    system, user, max_tokens=get_settings().deepseek_max_tokens, thinking_enabled=True, temperature=0.8,
                 )
             except ValueError as exc:
                 last_exc = exc
@@ -1357,6 +1369,33 @@ class DeepSeekClient(LLMClient):
             elapsed = time.perf_counter() - started
             scenes = raw.get("scenes") or []
             if scenes:
+                # 验证所有原始台词是否都被 LLM 分配到各镜头中
+                generated_text = "".join(
+                    str(d.get("text") or d.get("line") or "")
+                    for scene in scenes
+                    for d in (scene.get("dialogue") or [])
+                    if isinstance(d, dict)
+                )
+                missing = [line for line in original_lines if line not in generated_text]
+                if missing:
+                    last_exc = ValueError(f"LLM 遗漏 {len(missing)} 句台词: {missing}")
+                    if attempt + 1 >= max_attempts:
+                        break
+                    logger.warning(
+                        "[DAILY_STORY] generate script missing %d lines attempt=%d/%d: %s",
+                        len(missing),
+                        attempt + 1,
+                        max_attempts,
+                        missing,
+                    )
+                    user = (
+                        f"{user_base}\n\n"
+                        "【重试】上一轮输出的 scenes 遗漏了以下台词，"
+                        "请重新将所有原台词完整分配到各镜头的 dialogue 数组中，不要修改措辞：\n"
+                        + "\n".join(f"- {m}" for m in missing)
+                    )
+                    continue
+
                 logger.info(
                     "[DAILY_STORY] script done scenes=%d attempt=%d/%d elapsed=%.1fs",
                     len(scenes),

@@ -899,6 +899,10 @@ class ScriptStage(StageExecutor):
                 else:
                     raise last_exc or RuntimeError("image prompt generation failed")
 
+            # 给 image_prompt 添加固定前后缀（LLM 只输出场景核心内容）
+            from app.services.script.prompt.image_prompts import wrap_image_prompts
+            wrap_image_prompts(script.get("segments") or [], content_style=content_style)
+
             max_len = (
                 max_title_length
                 if max_title_length is not None

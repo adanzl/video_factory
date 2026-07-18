@@ -165,6 +165,11 @@ class DailyScriptStage(StageExecutor):
         # 用标准流程生成文生图 + 运动提示词（含内部质量校验与重试）
         llm_mgr.fill_image_prompts(script, job=ctx.job)
 
+        # 给 image_prompt 添加固定前后缀（LLM 只输出场景核心内容）
+        from app.services.script.prompt.image_prompts import wrap_image_prompts
+        from app.utils.job_info import CONTENT_STYLE_DAILY_STORY
+        wrap_image_prompts(script.get("segments") or [], content_style=CONTENT_STYLE_DAILY_STORY)
+
         with connection() as conn:
             repo_job.update_job(
                 conn,
