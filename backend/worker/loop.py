@@ -399,6 +399,12 @@ def _run_image_prompts(
         else None,
     )
 
+    from app.utils.job_info import content_style_from_job
+    from app.services.script.prompt.image_prompts import wrap_image_prompts
+
+    content_style = content_style_from_job(job)
+    wrap_image_prompts(updated.get("segments") or [], content_style=content_style)
+
     with connection() as conn:
         if skip_quality:
             from app.quality.image_prompt import skip_image_prompt_check
