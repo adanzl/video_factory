@@ -1,5 +1,56 @@
 """文生图提示词相关规则（质量、格式、维度、风格规则、motion、SD15）。"""
 
+from app.services.daily_story.prompts import DAILY_STORY_CHARACTERS
+from app.utils.job_info import CONTENT_STYLE_DAILY_STORY
+
+_DAILY_STORY_I2I_PREFIX = (
+    "基于参考图调整人物动作，保留" + DAILY_STORY_CHARACTERS + "的基本外貌特征。"
+)
+
+# 硬编码后期缀，daily_story 出图后自动拼接
+_DAILY_STORY_STYLE_SUFFIX = (
+    "儿童情绪涂鸦风格，彩铅和蜡笔混合笔触，用力不均的线条，"
+    "主观夸张变形，高饱和色彩，涂色出界，"
+    "橡皮擦拭痕迹，手工感，孩子气的构图。"
+)
+
+# content_style → (prefix, suffix) 映射
+_IMAGE_PROMPT_WRAPPERS: dict[str, tuple[str, str]] = {
+    CONTENT_STYLE_DAILY_STORY: (_DAILY_STORY_I2I_PREFIX, _DAILY_STORY_STYLE_SUFFIX),
+}
+
+
+def wrap_image_prompts(
+    segments: list[dict],
+    *,
+    content_style: str | None = None,
+) -> list[dict]:
+    """根据 content_style 给 image_prompt 添加前缀/后缀。
+
+    LLM 只生成场景核心内容，部分 pipeline 需要在返回时给 image_prompt
+    加上固定前缀（如 I2I 参考图指令）和后缀（如风格描述）。
+    此函数在 LLM 生成后、消费前统一应用。
+
+    Args:
+        segments: 分镜列表（原地修改）。
+        content_style: 内容风格标识，如 "daily_story"。
+
+    Returns:
+        原地修改后的 segments。
+    """
+    if not content_style:
+        return segments
+    wrapper = _IMAGE_PROMPT_WRAPPERS.get(content_style)
+    if not wrapper:
+        return segments
+    prefix, suffix = wrapper
+    for seg in segments:
+        prompt = seg.get("image_prompt")
+        if prompt and isinstance(prompt, str) and prompt.strip():
+            seg["image_prompt"] = prefix + prompt + suffix
+    return segments
+
+
 _IMAGE_PROMPT_DIMENSIONS_FULL = (
     "篇幅100-180字，连贯中文，禁用维度标签。"
     "按风格→主体→场景→光照→构图→质量顺序："
@@ -47,13 +98,10 @@ _IMAGE_PROMPT_RULE_DAILY_STORY = (
         "禁提前画后续段落。",
         "禁写实摄影风格、禁卡通以外画风。",
     )
-    + "【图生图规则】本项目使用角色参考图，image_prompt必须按图生图格式："
-    "「[改变要求] + [需保留的元素] + [新风格/场景/添加的元素]」。"
-    + "不得仅写角色名字，必须写明保留参考图中该角色的外貌特征（发型含头发颜色、脸型、服装等）。"
-    + "【参考图说明】角色参考图为昭昭（左）与灿灿（右）并排图，image_prompt须分别写清各角色外貌特征，帮助模型区分。"
-    + "必须且必须仅以改变指令开头（如「将参考图中」「基于参考图」），清晰说明要改变什么、保留什么，再铺开新场景与风格细节，禁止长段从头描述画面（那是T2I写法）。"
+    + "【约束】image_prompt只需写场景内容部分（动作、表情、场景、光照、构图），"
+    + "【参考图说明】角色参考图为昭昭（左）与灿灿（右）并排图。"
     + "【表情要求】image_prompt必须写明每个角色当前的面部表情（如专注皱眉、张大嘴巴、眯眼笑等），表情须对标对话情绪强度（争吵时瞪眼张嘴吵架脸、平静时微笑放松），不得仅写动作忽略表情，表情是情绪涂鸦风格的关键。"
-    + "例子：'将参考图中的人物形象完全置于全新的客厅场景中，保留昭昭的男孩气黑色超短发（发长在耳垂以上、清晰露出双耳及整个后颈、齐耳学生头）圆脸蓝色短袖T恤和灿灿的黑色马尾辫粉色卫衣，比姐姐矮一点，彻底改变原始构图和背景。新场景中昭昭和灿灿跪坐争夺拼图盒，昭昭瞪大眼睛张大嘴巴、灿灿眯眼笑伸手去抢，儿童情绪涂鸦风格，彩铅与蜡笔混合笔触，左侧自然光，低角度仰视构图。'"
+    + '内容写作范例：\'新场景中昭昭踮起脚尖，右手指在空中虚画一个"昭"字，身体略向左倾以保持平衡，脸上是认真专注的神情，嘴唇抿紧、眼睛看着手指画的线条；灿灿站在一旁，双手抱在胸前，撇着嘴摇头，马尾辫随之晃动，眼神略带嘲笑。背景是客厅墙壁，挂着家庭照片。顶部吊灯暖光投射，照亮"昭"字笔画区域。中近景构图，昭昭在左、灿灿在右，头顶留白。\''
 )
 
 # 无参考图角色规则，仅当 segment 涉及该角色时追加
@@ -63,8 +111,8 @@ _IMAGE_PROMPT_RULE_NO_REF_CHARACTER = (
 
 # 带妈妈角色的补充示例，帮助模型理解如何描写妈妈
 _IMAGE_PROMPT_EXAMPLE_WITH_MOM = (
-    "补充含妈妈角色的例子：'新场景中昭昭和灿灿跪坐争夺拼图盒，昭昭瞪大眼睛张大嘴巴、灿灿眯眼笑伸手去抢，"
-    "妈妈站在门口双手叉腰无奈摇头，黑色长发垂肩、米色上衣牛仔裤，儿童情绪涂鸦风格。'"
+    "含妈妈角色的例子（仅场景内容，不含固定前后缀）：'新场景中昭昭和灿灿跪坐争夺拼图盒，昭昭瞪大眼睛张大嘴巴、灿灿眯眼笑伸手去抢，"
+    "妈妈站在门口双手叉腰无奈摇头，黑色长发垂肩、米色上衣牛仔裤。'"
 )
 
 
