@@ -985,6 +985,8 @@ class JobMgr:
         from app.services.end_card import generate_end_card
 
         def _generate() -> None:
+            from app.config import get_settings
+
             settings = get_settings()
             media_dir = settings.video_data_dir / str(job_id)
             end_path = media_dir / "end.mp4"
