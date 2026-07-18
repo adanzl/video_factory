@@ -56,6 +56,8 @@ from .prompt import (
     _IMAGE_PROMPT_RULE_LIFE_LANDSCAPE,
     _IMAGE_PROMPT_MOTION_TAIL,
     _IMAGE_PROMPT_RULE_SD15,
+    _IMAGE_PROMPT_RULE_NO_REF_CHARACTER,
+    _IMAGE_PROMPT_EXAMPLE_WITH_MOM,
     _IMAGE_PROMPT_RULE_MYSTERY_PORTRAIT,
     _IMAGE_PROMPT_RULE_MYSTERY_LANDSCAPE,
 
@@ -395,6 +397,8 @@ def _storyboard_segment_rule(target: float, profile_style: str) -> str:
         "visual_brief为该镜画面描述（80-150字）：写清视觉主旨、关键动作或对比关系、"
         "场景类型与情绪，帮助后续扩写文生图提示词；不写镜头焦距、光线方向、材质参数等细节。"
         f"visual_brief末尾须用括号标注画面类型{types}。"
+        "【角色约束】妈妈角色只在该段有妈妈台词时才出现在画面中，"
+        "妈妈在该段没有台词则禁止在画面描述中出现妈妈（包括不让妈妈旁观、路过、做背景动作等任何形式出现）。"
     )
     if target <= 0:
         return common + "不约束单镜时长，按口播内容逻辑切分，段数由内容决定。"
@@ -612,6 +616,8 @@ def build_visual_brief_prompts(
         f"visual_brief 为该镜画面描述（80-150 字）：写清视觉主旨、关键动作或对比关系、"
         f"场景类型；情绪须对标台词语气强度（争吵时表情激烈如瞪眼皱眉张嘴、温和平静时表情放松）。"
         f"末尾须用括号标注画面类型{types}。"
+        "【角色约束】妈妈角色只在该段有妈妈台词时才出现在画面中，"
+        "妈妈在该段没有台词则禁止在画面描述中出现妈妈（包括不让妈妈旁观、路过、做背景动作等任何形式出现）。"
         "须通读全文 narration，保证相邻分镜画面衔接自然、叙事节奏连贯，"
         "避免前后镜主体/场景毫无关联的跳跃；"
         "同时每镜 visual_brief 只表达本段 text 内容，禁止提前画后续段落情节。"
@@ -781,6 +787,12 @@ def build_image_prompts_prompts(
     if segment_indices is not None:
         wanted = {int(idx) for idx in segment_indices}
         segments = [seg for seg in segments if int(seg.get("segment_index", -1)) in wanted]
+    # 检测涉及的 segment 是否有妈妈角色
+    has_mom = any(
+        d.get("speaker") == "妈妈"
+        for seg in segments
+        for d in (seg.get("dialogue") or [])
+    )
     lines = [
         f"segment {seg['segment_index']}: "
         f"text={seg.get('text', '')!r}; visual_brief={seg.get('visual_brief', '')!r}"
@@ -798,6 +810,8 @@ def build_image_prompts_prompts(
         f"{role}输出JSON，字段：image_prompts。"
         f"image_prompts为数组，每项含segment_index{sd15_fields}。"
         f"{_image_prompt_rule(orientation=profile_orientation, content_style=profile_style, sd15_mode=include_sd15_prompt)}"
+        f"{_IMAGE_PROMPT_RULE_NO_REF_CHARACTER if has_mom else ''}"
+        f"{_IMAGE_PROMPT_EXAMPLE_WITH_MOM if has_mom else ''}"
         f"{sd15_rule}"
         "image_prompts须覆盖输入的每一段，segment_index一一对应，不得遗漏。"
         "【地图合规】image_prompt禁止出现「世界地图」「全球地图」字样；"
