@@ -111,7 +111,8 @@ DAILY_SCRIPT_SYSTEM_PROMPT = """\
       "visual_description": "画面描述：场景背景+角色位置+关键动作+关键道具，200字内纯描述，不得附加（写实场景）等风格标签",
       "dialogue": [
         {{"speaker": "昭昭", "text": "台词1"}},
-        {{"speaker": "灿灿", "text": "台词2"}}
+        {{"speaker": "灿灿", "text": "台词2"}},
+        {{"speaker": "妈妈", "text": "台词3"}}
       ],
     }}
   ]
