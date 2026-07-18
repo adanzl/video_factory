@@ -98,7 +98,7 @@ class ZImageProvider(ImageProvider):
                 return item["image"]
         return None
 
-    def generate(self, prompt: str, output_path: Path, *, size: str | None = None, ref_images: list[Path] | None = None) -> Path:
+    def generate(self, prompt: str, output_path: Path, *, size: str | None = None, ref_images: list[Path] | None = None, expected_speakers: list[str] | None = None) -> Path:
         size = size or self._default_size
         if not self._api_key:
             return self._fallback.generate(prompt, output_path, size=size)

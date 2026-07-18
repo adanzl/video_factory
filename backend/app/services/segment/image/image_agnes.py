@@ -253,6 +253,7 @@ class AgnesImageProvider(ImageProvider):
         *,
         size: str | None = None,
         ref_images: list[Path] | None = None,
+        expected_speakers: list[str] | None = None,
     ) -> Path:
         size = size or self._default_size
         keys = agnes_api_keys()
@@ -267,7 +268,9 @@ class AgnesImageProvider(ImageProvider):
                 )
                 # ── post-processing: verify image matches prompt, retry once if not ──
                 if result is not None and result.exists():
-                    verified = self._verify_image(prompt, result)
+                    verified = self._verify_image(
+                        prompt, result, expected_speakers=expected_speakers,
+                    )
                     if not verified:
                         logger.warning(
                             "agnes image verify FAILED (%s key, prompt_chars=%s), "
@@ -309,14 +312,25 @@ class AgnesImageProvider(ImageProvider):
     # ── image-text match verification ────────────────────────────────
 
     _VERIFY_SYSTEM_PROMPT = (
-        "你是一个严格的图像-文本匹配检查员。"
-        "你的任务是指出图片是否准确展示了提示词描述的视觉内容。"
-        "请严格但合理地判断。"
+        "你是一个严格的图像检查员，严格按照用户指示逐项判断图片。"
     )
 
     @staticmethod
-    def _verify_image(prompt: str, image_path: Path) -> bool:
-        """使用 Agnes 多模态判断图片是否匹配提示词。返回 True=匹配, False=不匹配。
+    def _verify_image(
+        prompt: str,
+        image_path: Path,
+        *,
+        expected_speakers: list[str] | None = None,
+    ) -> bool:
+        """使用 Agnes 多模态判断图片是否匹配提示词且符合内容规则。
+
+        检查项：
+        - 图片内容与提示词一致
+        - 昭昭没有扎辫子
+        - 人物胳膊数量不超过2条
+        - 图片中人数与对话中发言人数一致
+
+        返回 True=通过, False=不通过（触发生成重试）。
 
         优先使用 .agnes_source_url 侧车文件中的 CDN URL（避免重复传输图片），
         无侧车文件时回退到 base64 内联。
@@ -348,13 +362,31 @@ class AgnesImageProvider(ImageProvider):
                 b64 = base64.b64encode(buf.getvalue()).decode("ascii")
                 image_url = f"data:image/jpeg;base64,{b64}"
 
-            user = (
-                f"【提示词】\n{prompt}\n\n"
-                f"请逐项核对提示词中的视觉元素（主体/场景/风格/构图等）是否在图片中准确呈现。\n"
-                f"如果图片内容与提示词基本一致（主要视觉元素均已呈现），仅输出一个字：是\n"
-                f"如果存在明显不一致（如主体缺失、场景错误、画风严重偏离等），仅输出一个字：否\n"
-                f"不要输出任何其他内容。"
-            )
+            # 构建用户提示词
+            expected_count = len(expected_speakers) if expected_speakers else 0
+            if expected_count > 0:
+                speakers_str = "/".join(expected_speakers)
+                user = (
+                    f"【提示词】\n{prompt}\n\n"
+                    f"请检查以下四项，每项一行回答：\n"
+                    f"项1: 图片内容与提示词是否一致？回答「是」或「否」\n"
+                    f"项2: 角色昭昭（小男孩角色）是否有辫子（马尾辫、双马尾、麻花辫、丸子头等发型）？"
+                    f"回答「是」或「否」（如果图中没有昭昭这个角色，回答「无昭昭」）\n"
+                    f"项3: 是否有任何人物胳膊/手臂的数量超过2条？回答「是」或「否」\n"
+                    f"项4: 图片中人物数量是否为 {expected_count} 个（该段发言角色：{speakers_str}）？"
+                    f"回答「是」或「否」\n"
+                    f"不要输出任何其他内容。"
+                )
+            else:
+                user = (
+                    f"【提示词】\n{prompt}\n\n"
+                    f"请检查以下三项，每项一行回答：\n"
+                    f"项1: 图片内容与提示词是否一致？回答「是」或「否」\n"
+                    f"项2: 角色昭昭（小男孩角色）是否有辫子（马尾辫、双马尾、麻花辫、丸子头等发型）？"
+                    f"回答「是」或「否」（如果图中没有昭昭这个角色，回答「无昭昭」）\n"
+                    f"项3: 是否有任何人物胳膊/手臂的数量超过2条？回答「是」或「否」\n"
+                    f"不要输出任何其他内容。"
+                )
 
             keys = agnes_api_keys(settings)
             if not keys:
@@ -381,7 +413,7 @@ class AgnesImageProvider(ImageProvider):
                                 ],
                             },
                         ],
-                        "max_tokens": 10,
+                        "max_tokens": 1024,
                     }
                     resp = requests.post(url, headers=headers, json=payload, timeout=60)
                     if resp.ok:
@@ -392,7 +424,17 @@ class AgnesImageProvider(ImageProvider):
                             .get("content", "")
                             .strip()
                         )
-                        return content.startswith("是")
+                        lines = [l.strip() for l in content.split("\n") if l.strip()]
+                        for line in lines:
+                            if line.startswith("项1") and "否" in line:
+                                return False
+                            if line.startswith("项2") and "是" in line:
+                                return False
+                            if line.startswith("项3") and "是" in line:
+                                return False
+                            if line.startswith("项4") and "否" in line:
+                                return False
+                        return True
                 except Exception:
                     logger.warning(
                         "agnes verify_image call failed (%s key), skipping verify",
