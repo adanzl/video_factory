@@ -183,7 +183,7 @@ import { computed, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { runJobStageAction } from "@/api/api-jobs";
 import { getMediaFileUrl, getMediaText } from "@/api/api-media";
-import { DEFAULT_TTS_VOICE, TTS_VOICE_OPTIONS, TTS_VOICE_ZHAO } from "@/constants/tts-voices";
+import { DEFAULT_TTS_VOICE, TTS_VOICE_MOM, TTS_VOICE_OPTIONS, TTS_VOICE_ZHAO } from "@/constants/tts-voices";
 import type { JobDetail, JobLog } from "@/types/jobs";
 import type { ScriptJson } from "@/types/jobs/script";
 import type { RunStageActionPayload } from "@/types/jobs/stageAction";
@@ -221,7 +221,7 @@ const speakers = [
 const defaultSpeakerConfigs: Record<string, SpeakerConfig> = {
   昭昭: { voice_id: TTS_VOICE_ZHAO, speech_rate: 0.7 },
   灿灿: { voice_id: DEFAULT_TTS_VOICE, speech_rate: 0.81 },
-  妈妈: { voice_id: DEFAULT_TTS_VOICE, speech_rate: 1.0 },
+  妈妈: { voice_id: TTS_VOICE_MOM, speech_rate: 1.0 },
 };
 
 const props = defineProps<{

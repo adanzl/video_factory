@@ -19,6 +19,7 @@ from app.utils.job_info import (
     default_orientation_for_pipeline,
     merge_job_info,
     merge_job_script_params,
+    orientation_for_resolve,
     resolve_image_provider,
     resolve_include_sd15_prompt,
 )
@@ -986,17 +987,25 @@ class JobMgr:
 
         def _generate() -> None:
             from app.config import get_settings
+            from app.services.intro.size import resolve_intro_size
 
             settings = get_settings()
+            with connection() as conn:
+                job = repo_job.get_job(conn, job_id)
+            orient = orientation_for_resolve(job)
+            width, height = resolve_intro_size(
+                settings=settings, orientation=orient, job=job, media_dir=settings.video_data_dir / str(job_id)
+            )
+
             media_dir = settings.video_data_dir / str(job_id)
             end_path = media_dir / "end.mp4"
 
-            generate_end_card(end_path)
+            generate_end_card(end_path, width=width, height=height)
 
             with connection() as conn:
                 repo_job.update_job(conn, job_id, end_path=str(end_path.resolve()))
                 repo_job_log.append_log(
-                    conn, job_id, "end", f"end card generated: {end_path}"
+                    conn, job_id, "end", f"end card generated: {end_path} ({width}x{height})"
                 )
 
         return self._run_in_background(job_id, "end", _generate)
