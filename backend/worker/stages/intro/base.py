@@ -190,11 +190,21 @@ def run_intro_for_category(
     # 与片头同尺寸；合成逻辑见 cover_layout.compose_cover_image
     _generate_cover(job, cover_path, width, height)
 
+    # chat 流水线自动生成片尾
+    end_path = None
+    if job.get("pipeline") == "chat":
+        from app.services.end_card import generate_end_card
+
+        end_path = ctx.rel("end.mp4")
+        generate_end_card(end_path, width=width, height=height)
+
     with connection() as conn:
         updates: dict = {
             "intro_path": str(intro_path.resolve()),
             "cover_path": str(cover_path.resolve()),
         }
+        if end_path is not None:
+            updates["end_path"] = str(end_path.resolve())
         if _normalize_title(str(job.get("title") or "")) != title:
             updates["title"] = title
         repo_job.update_job(conn, ctx.job["id"], **updates)
@@ -204,4 +214,6 @@ def run_intro_for_category(
         )
         if ctx.intro_hold_tail_sec is not None:
             detail += f", hold_tail_sec={ctx.intro_hold_tail_sec:.2f}"
+        if end_path is not None:
+            detail += f", end at {end_path}"
         repo_job_log.append_log(conn, ctx.job["id"], stage.name, detail)

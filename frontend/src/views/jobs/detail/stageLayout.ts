@@ -23,6 +23,10 @@ export const STAGE_COL_WIDE_LEFT_CLASS =
 
 export const STAGE_COL_RIGHT_CLASS = "min-w-[280px] flex-1 basis-[360px]";
 
+/** 三栏预览列（约 1/3 宽度） */
+export const STAGE_COL_THIRD_CLASS =
+  "min-w-[240px] max-w-full flex-1 basis-[320px]";
+
 /** 行内单选组（紧凑、可换行） */
 export const STAGE_RADIO_INLINE_CLASS =
   "flex flex-wrap items-center gap-x-4 gap-y-1 [&_.el-radio]:mr-0 [&_.el-radio]:h-7";

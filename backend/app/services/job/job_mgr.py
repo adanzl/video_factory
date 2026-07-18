@@ -977,6 +977,28 @@ class JobMgr:
 
         return self._run_in_background(job_id, "cover", _generate)
 
+    def run_end(
+        self,
+        job_id: int,
+    ) -> dict:
+        """生成片尾视频。只对 chat 流水线有效。"""
+        from app.services.end_card import generate_end_card
+
+        def _generate() -> None:
+            settings = get_settings()
+            media_dir = settings.video_data_dir / str(job_id)
+            end_path = media_dir / "end.mp4"
+
+            generate_end_card(end_path)
+
+            with connection() as conn:
+                repo_job.update_job(conn, job_id, end_path=str(end_path.resolve()))
+                repo_job_log.append_log(
+                    conn, job_id, "end", f"end card generated: {end_path}"
+                )
+
+        return self._run_in_background(job_id, "end", _generate)
+
     def run_tts(
         self,
         job_id: int,
