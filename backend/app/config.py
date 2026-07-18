@@ -116,6 +116,13 @@ class Config:
             "INTRO_CRAYON_BG_PATH", res_dir / "host/crayon/bg.jpg"
         )
 
+        self.end_card_bg_path: Path = _path(
+            "END_CARD_BG_PATH", res_dir / "host/crayon/end.png"
+        )
+        self.end_card_audio_path: Path = _path(
+            "END_CARD_AUDIO_PATH", res_dir / "audio/end_daily.mp3"
+        )
+
         self.redis_url: str | None = _opt("REDIS_URL")
         self.mock_mode: bool = _bool("MOCK_MODE") or not (
             deepseek_key and dashscope_key and tts_key

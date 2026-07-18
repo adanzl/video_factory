@@ -301,6 +301,12 @@ def run_cover_route():
     return _accept_stage(job_id, lambda: job_mgr.run_cover(job_id, to_end=to_end))
 
 
+@bp.post("/end")
+def run_end_route():
+    job_id, to_end = _parse_stage_body()
+    return _accept_stage(job_id, lambda: job_mgr.run_end(job_id))
+
+
 @bp.post("/tts")
 def run_tts_route():
     data = get_json_body()

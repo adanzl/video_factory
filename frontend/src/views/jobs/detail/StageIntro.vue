@@ -56,8 +56,10 @@
       </p>
     </div>
 
-    <div :class="STAGE_TWO_COL_CLASS">
-      <div :class="STAGE_COL_WIDE_LEFT_CLASS">
+    <!-- 三栏预览布局：封面 / 片头 / 片尾 -->
+    <div class="flex flex-wrap items-start gap-4">
+      <!-- 封面预览 -->
+      <div :class="STAGE_COL_THIRD_CLASS">
         <div :class="STAGE_PANEL_CLASS">
           <div :class="STAGE_PANEL_HEADER_CLASS">
             <span :class="STAGE_PANEL_TITLE_TEXT_CLASS">封面预览</span>
@@ -129,7 +131,8 @@
         </div>
       </div>
 
-      <div :class="STAGE_COL_RIGHT_CLASS">
+      <!-- 片头预览 -->
+      <div :class="STAGE_COL_THIRD_CLASS">
         <div :class="STAGE_PANEL_CLASS">
           <div :class="STAGE_PANEL_HEADER_CLASS">
             <span :class="STAGE_PANEL_TITLE_TEXT_CLASS">片头预览</span>
@@ -166,6 +169,62 @@
           />
         </div>
       </div>
+
+      <!-- 片尾预览（仅 chat 流水线） -->
+      <div v-if="isChatPipeline" :class="STAGE_COL_THIRD_CLASS">
+        <div :class="STAGE_PANEL_CLASS">
+          <div :class="STAGE_PANEL_HEADER_CLASS">
+            <span :class="STAGE_PANEL_TITLE_TEXT_CLASS">片尾预览</span>
+            <div class="flex items-center gap-2">
+              <el-button
+                v-if="!endUrl"
+                size="small"
+                type="primary"
+                :loading="generatingEnd"
+                :disabled="actionDisabled"
+                @click="handleGenerateEnd"
+              >
+                生成
+              </el-button>
+              <el-button
+                v-if="endUrl"
+                size="small"
+                :loading="generatingEnd"
+                @click="handleGenerateEnd"
+              >
+                重新生成
+              </el-button>
+            </div>
+          </div>
+          <div v-if="endUrl" class="flex justify-center">
+            <div
+              class="relative overflow-hidden rounded-lg border border-gray-200 bg-black"
+              :style="previewBoxStyle"
+            >
+              <video
+                :key="endUrl"
+                class="absolute inset-0 size-full bg-black object-contain"
+                :src="lazyEndUrl"
+                :crossorigin="MEDIA_CROSS_ORIGIN"
+                controls
+                playsinline
+                preload="metadata"
+                @error="onEndVideoError"
+              />
+            </div>
+          </div>
+          <div v-else-if="!job.end_path" :class="STAGE_EMPTY_CLASS">
+            暂无片尾视频，请先生成
+          </div>
+          <el-alert
+            v-else-if="endLoadError"
+            type="warning"
+            :title="endLoadError"
+            :closable="false"
+            class="mt-2"
+          />
+        </div>
+      </div>
     </div>
 
     <StageLogsSection :logs="logs" />
@@ -182,14 +241,12 @@ import StageActionBar from "./StageActionBar.vue";
 import StageLogsSection from "./StageLogsSection.vue";
 import {
   STAGE_BLOCK_COMPACT_CLASS,
-  STAGE_COL_RIGHT_CLASS,
-  STAGE_COL_WIDE_LEFT_CLASS,
+  STAGE_COL_THIRD_CLASS,
   STAGE_EMPTY_CLASS,
   STAGE_PANEL_CLASS,
   STAGE_PANEL_HEADER_CLASS,
   STAGE_PANEL_TITLE_TEXT_CLASS,
   STAGE_RADIO_INLINE_CLASS,
-  STAGE_TWO_COL_CLASS,
 } from "./stageLayout";
 import {
   buildCover43GuideLineStyles,
@@ -203,6 +260,7 @@ import {
   readImageNaturalSize,
 } from "@/utils/media";
 import { useErrorHandler } from "@/composables/useErrorHandler";
+import { PIPELINE_CHAT } from "@/constants/jobStages";
 
 const props = defineProps<{
   job: JobDetail;
@@ -232,9 +290,14 @@ const showCover43Guide = ref(false);
 const regeneratingCover = ref(false);
 const coverCacheVer = ref(0);
 const introCacheVer = ref(0);
+const generatingEnd = ref(false);
+const endLoadError = ref("");
+const endCacheVer = ref(0);
 
 const PREVIEW_OPTIONS = { maxWidthPx: 560, maxViewportRatio: 0.85 } as const;
 const COVER_PREVIEW_OPTIONS = { maxWidthPx: 560, maxViewportRatio: 0.9 } as const;
+
+const isChatPipeline = computed(() => props.job.pipeline === PIPELINE_CHAT);
 
 function defaultIntroOrientation(job: JobDetail): "auto" | "portrait" | "landscape" {
   const saved = job.info?.orientation;
@@ -296,6 +359,12 @@ const coverPreviewFullUrl = computed(() => {
 });
 const lazyCoverPreviewFullUrl = computed(() => lazyMediaSrc(coverPreviewFullUrl.value, props.stageActive));
 const lazyCoverPreviewList = computed(() => (lazyCoverPreviewFullUrl.value ? [lazyCoverPreviewFullUrl.value] : []));
+
+const endUrl = computed(() => {
+  const base = getMediaFileUrl(props.job.end_path ?? "");
+  return base ? `${base}?v=${endCacheVer.value}` : "";
+});
+const lazyEndUrl = computed(() => lazyMediaSrc(endUrl.value, props.stageActive));
 
 const actualDurationText = computed(() => {
   if (actualDuration.value !== null) {
@@ -370,6 +439,10 @@ const onVideoMetadata = (event: Event) => {
     videoMeta.value = { width: video.videoWidth, height: video.videoHeight };
     loadError.value = "";
   }
+};
+
+const onEndVideoError = () => {
+  endLoadError.value = "片尾视频加载失败，请确认文件已生成且服务可访问";
 };
 
 const handleIntroCategoryChange = (value: IntroCategory) => {
@@ -451,6 +524,29 @@ const handleReGenCover = async () => {
   }
 };
 
+const handleGenerateEnd = async () => {
+  try {
+    await ElMessageBox.confirm("确定生成片尾视频吗？", "确认", {
+      type: "warning",
+      confirmButtonText: "确定",
+      cancelButtonText: "取消",
+    });
+  } catch {
+    return;
+  }
+  generatingEnd.value = true;
+  try {
+    await runJobStageAction("end", { id: props.job.id, to_end: false });
+    endCacheVer.value++;
+    ElMessage.success("片尾已提交生成，请稍后刷新查看");
+    emit("refresh");
+  } catch (error) {
+    handleError(error, "生成片尾失败");
+  } finally {
+    generatingEnd.value = false;
+  }
+};
+
 watch(
   () => [props.job.info?.intro_category, props.job.info?.content_style] as const,
   ([category]) => {
@@ -494,5 +590,12 @@ watch(
     void loadDuration();
   },
   { immediate: true }
+);
+
+watch(
+  () => props.job.end_path,
+  () => {
+    endLoadError.value = "";
+  }
 );
 </script>

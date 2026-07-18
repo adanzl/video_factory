@@ -161,7 +161,8 @@ const logsByStage = computed(() => {
 const introLogs = computed(() => {
   const intro = logsByStage.value.intro ?? [];
   const cover = logsByStage.value.cover ?? [];
-  return [...intro, ...cover].sort(compareLogTimeDesc);
+  const end = logsByStage.value.end ?? [];
+  return [...intro, ...cover, ...end].sort(compareLogTimeDesc);
 });
 
 const logsForStage = (stageName: string) =>
