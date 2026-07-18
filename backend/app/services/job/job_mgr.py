@@ -1008,6 +1008,8 @@ class JobMgr:
                     conn, job_id, "end", f"end card generated: {end_path} ({width}x{height})"
                 )
 
+            self.mark_done(job_id)
+
         return self._run_in_background(job_id, "end", _generate)
 
     def run_tts(
