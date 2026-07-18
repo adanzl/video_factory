@@ -1,5 +1,7 @@
 """日常故事（昭昭&灿灿姐弟对话剧）提示词常量与构建。"""
 
+import re
+
 # 角色外貌固定描述，供 visual_style 和分镜生成共享
 DAILY_STORY_CHARACTERS = (
     "昭昭：7岁男孩，男孩气黑色超短发（发长在耳垂以上，清晰露出双耳及整个后颈，齐耳学生头），圆脸，穿蓝色短袖T恤，比姐姐矮一点；"
@@ -93,8 +95,8 @@ DAILY_SCRIPT_SYSTEM_PROMPT = """\
 
 【分镜规则】
 1. 绝对禁止：一句台词一个镜头。必须按"场景组"合并，每个镜头承载2-4句对话，同一背景、同一情绪下多句台词合并为一个视觉场面。
-2. 各镜头台词总字数尽量均匀分布，避免某个镜头过多（超过60字）而其他镜头过少（少于20字）。
-3. 每个镜头不要超过25秒（语速基准{chars_per_sec}字/秒）。
+2. 各镜头台词总字数尽量均匀分布，避免某个镜头过多（超过50字）而其他镜头过少（少于20字）。
+3. 每个镜头不要超过18秒（语速基准{chars_per_sec}字/秒）。
 4. 景别切换：全景（交代环境）→ 中景（对话主体）→ 特写（情绪/关键道具）穿插使用。
 
 【输出格式】
@@ -207,6 +209,8 @@ def validate_daily_story_json(story: dict) -> None:
                 errors.append(f"dialogue[{i}] 缺少 line")
             elif not isinstance(item["line"], str) or not item["line"].strip():
                 errors.append(f"dialogue[{i}] line 必须是非空字符串")
+            elif not re.search(r"[\u4e00-\u9fff\w]", item["line"]):
+                errors.append(f"dialogue[{i}] line 不含可发音内容（仅标点符号）")
 
     if errors:
         raise ValueError("daily_story 校验失败: " + "; ".join(errors))
