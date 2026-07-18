@@ -5,6 +5,7 @@
       type="primary"
       :loading="loading"
       :disabled="disabled"
+      size="small"
       @click="$emit('primary')"
     >
       {{ primaryLabel }}
@@ -14,6 +15,7 @@
       type="success"
       :loading="loading"
       :disabled="disabled"
+      size="small"  
       @click="$emit('toEnd')"
     >
       {{ toEndLabel }}

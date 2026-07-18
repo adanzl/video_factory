@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 
 from app.config import get_settings
 from app.repositories import repo_daily_story, repo_job, repo_job_log, repo_segment
@@ -60,6 +61,14 @@ class DailyScriptStage(StageExecutor):
             job_cancel.raise_if_cancelled(job_id)
             raw_lines = scene.get("dialogue") or scene.get("dialogue_lines") or []
             if raw_lines and isinstance(raw_lines[0], dict):
+                # 过滤纯标点行（如……TTS 无法合成）
+                raw_lines = [
+                    d for d in raw_lines
+                    if re.search(r"[\u4e00-\u9fff\w]", d.get("text") or d.get("line") or "")
+                ]
+                if not raw_lines:
+                    logger.warning("scene %d: all dialogue lines are pure punctuation, skipping", i)
+                    continue
                 # 新格式: [{"speaker": "昭昭", "text": "台词"}, ...]
                 segment_text = "".join(str(d.get("text") or d.get("line") or "") for d in raw_lines)
                 dialogue = [
@@ -75,6 +84,12 @@ class DailyScriptStage(StageExecutor):
             # 按实际字数 ÷ 语速基准 估算分镜时长，不依赖 LLM
             seg_chars = len(segment_text)
             duration_sec = round(seg_chars / chars_per_sec, 1)
+
+            if duration_sec > 18.0:
+                logger.warning(
+                    "segment %d duration=%.1fs exceeds 18s limit (chars=%d, rate=%.1f): %s",
+                    i, duration_sec, seg_chars, chars_per_sec, segment_text[:80],
+                )
 
             seg: dict = {
                 "segment_index": i,
