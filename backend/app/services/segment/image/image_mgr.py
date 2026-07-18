@@ -25,6 +25,7 @@ class ImageProvider(ABC):
         *,
         size: str | None = None,
         ref_images: list[Path] | None = None,
+        expected_speakers: list[str] | None = None,
     ) -> Path:
         ...
 
@@ -109,7 +110,17 @@ class ImageMgr:
                 params_desc,
                 len(prompt),
             )
-            provider.generate(prompt, out, size=size, ref_images=ref_images)
+            # 从 dialogue 中提取该分镜的发言角色，传给 provider 用于生图后校验
+            dialogue = seg.get("dialogue") or []
+            speakers = sorted(
+                set(d.get("speaker", "") for d in dialogue if d.get("speaker"))
+            )
+            expected_speakers = speakers if speakers else None
+            provider.generate(
+                prompt, out,
+                size=size, ref_images=ref_images,
+                expected_speakers=expected_speakers,
+            )
             elapsed = time.time() - t0
             logger.info(
                 "image %s/%s done segment %s in %.1fs | %s",
