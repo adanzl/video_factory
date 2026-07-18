@@ -1412,7 +1412,7 @@ class DeepSeekClient(LLMClient):
                     "【重试】上一轮输出的 JSON 校验未通过："
                     f"{errors}\n"
                     "请确保所有 dialogue 条目都包含 speaker 和 line 字段，"
-                    "且 speaker 为「昭昭」或「灿灿」，line 为对应台词文本，"
+                    "且 speaker 为「昭昭」「灿灿」或「妈妈」，line 为对应台词文本，"
                     "line 不能是纯标点符号（如……），必须包含汉字或词语。"
                 )
         assert last_exc is not None

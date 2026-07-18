@@ -114,11 +114,11 @@
               v-for="(line, idx) in dailyStory.story.dialogue"
               :key="idx"
               class="rounded-lg p-1 px-3 flex gap-4 items-center"
-              :class="line.speaker === '昭昭' ? 'bg-blue-50' : 'bg-pink-50'"
+              :class="speakerStyle(line.speaker).bg"
             >
               <div
                 class=" text-xs font-bold"
-                :class="line.speaker === '昭昭' ? 'text-blue-600' : 'text-pink-600'"
+                :class="speakerStyle(line.speaker).text"
               >
                 {{ line.speaker }}
               </div>
@@ -143,7 +143,7 @@
                 v-for="(dl, di) in seg.dialogue"
                 :key="di"
                 class="rounded px-2 py-1 text-sm"
-                :class="dl.speaker === '昭昭' ? 'bg-blue-50 text-blue-800' : 'bg-pink-50 text-pink-800'"
+                :class="speakerStyle(dl.speaker).full"
               >
                 <span class="font-bold">{{ dl.speaker }}：</span>{{ dl.text }}
               </div>
@@ -180,7 +180,7 @@
                 v-for="(dl, di) in seg.dialogue"
                 :key="di"
                 class="rounded px-2 py-1 text-sm"
-                :class="dl.speaker === '昭昭' ? 'bg-blue-50 text-blue-800' : 'bg-pink-50 text-pink-800'"
+                :class="speakerStyle(dl.speaker).full"
               >
                 <span class="font-bold">{{ dl.speaker }}：</span>{{ dl.text }}
               </div>
@@ -223,6 +223,12 @@ import { DEFAULT_CHAT_SPEECH_CHARS_PER_SEC } from "@/utils/media";
 import { useErrorHandler } from "@/composables/useErrorHandler";
 import StageActionBar from "../detail/StageActionBar.vue";
 import StageLogsSection from "../detail/StageLogsSection.vue";
+
+function speakerStyle(speaker: string): { bg: string; text: string; full: string } {
+  if (speaker === '昭昭') return { bg: 'bg-blue-50', text: 'text-blue-600', full: 'bg-blue-50 text-blue-800' }
+  if (speaker === '妈妈') return { bg: 'bg-emerald-50', text: 'text-emerald-600', full: 'bg-emerald-50 text-emerald-800' }
+  return { bg: 'bg-pink-50', text: 'text-pink-600', full: 'bg-pink-50 text-pink-800' }
+}
 
 const props = defineProps<{
   job: JobDetail;

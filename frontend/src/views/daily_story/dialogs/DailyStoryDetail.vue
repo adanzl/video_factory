@@ -123,10 +123,10 @@
             v-for="(line, idx) in editStory.dialogue"
             :key="idx"
             class="rounded-lg p-3 flex items-center gap-2"
-            :class="line.speaker === '昭昭' ? 'bg-blue-50' : 'bg-pink-50'"
+            :class="speakerStyle(line.speaker).bg"
           >
             <div
-              :class="line.speaker === '昭昭' ? 'text-blue-600 font-bold' : 'text-pink-600 font-bold'"
+              :class="speakerStyle(line.speaker).text"
               class="text-xs w-8"
             >
               {{ line.speaker }}
@@ -148,6 +148,12 @@ import { ElMessage } from "element-plus";
 import { Edit } from "@element-plus/icons-vue";
 import type { DailyStoryRecord, StoryContent } from "@/api/api-daily-story";
 import { createDailyStoryJob, regenerateDailyStory, updateDailyStory, syncDailyStoryToJob } from "@/api/api-daily-story";
+
+function speakerStyle(speaker: string): { bg: string; text: string } {
+  if (speaker === '昭昭') return { bg: 'bg-blue-50', text: 'text-blue-600 font-bold' }
+  if (speaker === '妈妈') return { bg: 'bg-emerald-50', text: 'text-emerald-600 font-bold' }
+  return { bg: 'bg-pink-50', text: 'text-pink-600 font-bold' }
+}
 
 const props = defineProps<{
   modelValue: boolean;

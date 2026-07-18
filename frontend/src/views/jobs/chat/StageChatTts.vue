@@ -215,11 +215,13 @@ interface SpeakerConfig {
 const speakers = [
   { key: "昭昭", label: "昭昭（弟弟）" },
   { key: "灿灿", label: "灿灿（姐姐）" },
+  { key: "妈妈", label: "妈妈" },
 ];
 
 const defaultSpeakerConfigs: Record<string, SpeakerConfig> = {
   昭昭: { voice_id: TTS_VOICE_ZHAO, speech_rate: 0.7 },
   灿灿: { voice_id: DEFAULT_TTS_VOICE, speech_rate: 0.81 },
+  妈妈: { voice_id: DEFAULT_TTS_VOICE, speech_rate: 1.0 },
 };
 
 const props = defineProps<{
