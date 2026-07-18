@@ -105,9 +105,10 @@ class AgnesImageProvider(ImageProvider):
         api_key: str,
         json: dict | None = None,
         max_retries: int | None = None,
-        timeout: int = 120,
+        timeout: int | None = None,
     ) -> requests.Response:
         retries = max_retries if max_retries is not None else self._http_max_retries
+        timeout = get_settings().agnes_image_timeout_sec if timeout is None else timeout
         headers = agnes_auth_header(api_key)
         last_exc: Exception | None = None
         for attempt in range(retries):
@@ -236,7 +237,7 @@ class AgnesImageProvider(ImageProvider):
                 return output_path
             if not image_url:
                 raise RuntimeError("agnes response missing image url or b64_json")
-            img = requests.get(image_url, timeout=120)
+            img = requests.get(image_url, timeout=get_settings().agnes_image_timeout_sec)
             img.raise_for_status()
             output_path.write_bytes(img.content)
             sidecar = output_path.with_name(output_path.name + ".agnes_source_url")
