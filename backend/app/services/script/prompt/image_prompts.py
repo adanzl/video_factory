@@ -3,16 +3,14 @@
 from app.services.daily_story.prompts import DAILY_STORY_CHARACTERS
 from app.utils.job_info import CONTENT_STYLE_DAILY_STORY
 
-_DAILY_STORY_I2I_PREFIX = (
-    "基于参考图调整人物动作，保留" + DAILY_STORY_CHARACTERS + "的基本外貌特征。"
-)
+_DAILY_STORY_I2I_PREFIX = ("基于参考图调整人物动作，保留" + DAILY_STORY_CHARACTERS +
+                           "的基本外貌特征。"
+                           "儿童情绪涂鸦风格，彩铅和蜡笔混合笔触，用力不均的线条，"
+                           "主观夸张变形，高饱和色彩，涂色出界，"
+                           "橡皮擦拭痕迹，手工感，孩子气的构图。")
 
 # 硬编码后期缀，daily_story 出图后自动拼接
-_DAILY_STORY_STYLE_SUFFIX = (
-    "儿童情绪涂鸦风格，彩铅和蜡笔混合笔触，用力不均的线条，"
-    "主观夸张变形，高饱和色彩，涂色出界，"
-    "橡皮擦拭痕迹，手工感，孩子气的构图。"
-)
+_DAILY_STORY_STYLE_SUFFIX = ""
 
 # content_style → (prefix, suffix) 映射
 _IMAGE_PROMPT_WRAPPERS: dict[str, tuple[str, str]] = {
