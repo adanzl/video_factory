@@ -17,6 +17,7 @@ from app.services.segment.clip.clip_mgr import clip_mgr
 from app.services.render.subtitle_style import subtitle_style_for_canvas
 from app.services.media.ffmpeg_utils import build_ass_from_phrase_cues
 from app.services.media.ffmpeg_utils import (
+    concat_clips,
     concat_video_audio_pts_fixed,
     ffmpeg_hwaccel_config_summary,
     log_ffmpeg_hwaccel_config,
@@ -274,6 +275,7 @@ class MediaMgr:
         audio_path: Path,
         subtitle_path: Path | None,
         intro_path: Path | None,
+        end_path: Path | None = None,
     ) -> MergeResult:
         t0 = time.time()
         log_ffmpeg_hwaccel_config(context="merge")
@@ -316,6 +318,13 @@ class MediaMgr:
             prepend_intro(intro_path, body_with_audio, final_path)
         else:
             shutil.copy2(body_with_audio, final_path)
+
+        if end_path and end_path.exists():
+            logger.info("merge: appending end card")
+            tmp_final = final_path.with_suffix(".tmp.mp4")
+            shutil.move(final_path, tmp_final)
+            concat_clips([tmp_final, end_path], final_path)
+            tmp_final.unlink(missing_ok=True)
 
         elapsed = time.time() - t0
         logger.info("merge: done in %.1fs -> %s", elapsed, final_path)
