@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from app.repositories import repo_job_log, repo_job
+from app.repositories import repo_job_log, repo_job, repo_segment
 from app.repositories.connection import connection
 from app.services.intro import generate_intro
 from app.services.intro.cover_layout import (
@@ -118,7 +118,7 @@ def _cover_subject_from_job(job: dict) -> str:
 
 
 def _generate_cover(job: dict, cover_path: Path, width: int, height: int) -> None:
-    """intro 阶段：Agnes 出底图 + compose_cover_image 叠字，写入 cover.jpg。"""
+    """intro 阶段：优先用分镜 1 图片做封面，不存在时再 Agnes 生图。"""
     import tempfile
 
     from PIL import Image
@@ -128,11 +128,39 @@ def _generate_cover(job: dict, cover_path: Path, width: int, height: int) -> Non
 
     settings = get_settings()
     title = resolve_intro_title(job)
+    job_id = int(job["id"])
     cw, ch, _ = cover_canvas_size(width, height)
-    subject = _cover_subject_from_job(job)
-    cover_prompt = build_cover_image_prompt(cw=cw, ch=ch, subject=subject)
     pipeline = job.get("pipeline")
     host_intro_path = settings.get_host_intro_path(pipeline)
+
+    # 优先用分镜 1 的图片
+    seg1_image: Path | None = None
+    with connection() as conn:
+        segs = repo_segment.list_segments(conn, job_id)
+    for seg in segs:
+        if int(seg.get("segment_index", 0)) == 1:
+            raw = seg.get("image_path") or ""
+            if raw:
+                seg1_image = Path(raw)
+            break
+
+    if seg1_image and seg1_image.exists():
+        img = Image.open(seg1_image).convert("RGBA")
+        img = img.resize((cw, ch), Image.LANCZOS)
+        brand = "昭墨日常" if pipeline == "chat" else settings.brand_name
+        composed = compose_cover_image(
+            img,
+            title,
+            brand_name=brand,
+            host_intro_path=host_intro_path,
+        )
+        composed.convert("RGB").save(cover_path, quality=92)
+        logger.info("job %s cover: using seg1 image %s", job_id, seg1_image)
+        return
+
+    # 没有分镜 1 图片，走 Agnes 生图
+    subject = _cover_subject_from_job(job)
+    cover_prompt = build_cover_image_prompt(cw=cw, ch=ch, subject=subject)
 
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
         tmp_path = Path(tmp.name)
