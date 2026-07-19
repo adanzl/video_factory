@@ -944,8 +944,6 @@ class JobMgr:
                     width, height = settings.video_height, settings.video_width
 
             cw, ch, _ = cover_canvas_size(width, height)
-            subject = _cover_subject_from_job(job)
-            cover_prompt = build_cover_image_prompt(cw=cw, ch=ch, subject=subject)
 
             media_dir = settings.video_data_dir / str(job_id)
             cover_path = media_dir / "cover.jpg"
@@ -953,11 +951,21 @@ class JobMgr:
             host_intro_path = settings.get_host_intro_path(pipeline)
             brand = "昭墨日常" if pipeline == "chat" else settings.brand_name
 
-            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
-                tmp_path = Path(tmp.name)
-            try:
-                AgnesImageProvider().generate(cover_prompt, tmp_path, size=f"{cw}x{ch}")
-                img = Image.open(tmp_path)
+            # 优先用分镜 1 的图片做封面，无需重新生图
+            seg1_image: Path | None = None
+            with connection() as conn:
+                segs = repo_segment.list_segments(conn, job_id)
+            for seg in segs:
+                if int(seg.get("segment_index", 0)) == 1:
+                    raw = seg.get("image_path") or ""
+                    if raw:
+                        seg1_image = Path(raw)
+                    break
+
+            if seg1_image and seg1_image.exists():
+                img = Image.open(seg1_image).convert("RGBA")
+                # 缩放到封面画布尺寸
+                img = img.resize((cw, ch), Image.LANCZOS)
                 composed = compose_cover_image(
                     img,
                     title,
@@ -965,8 +973,31 @@ class JobMgr:
                     host_intro_path=host_intro_path,
                 )
                 composed.convert("RGB").save(cover_path, quality=92)
-            finally:
-                tmp_path.unlink(missing_ok=True)
+                logger.info(
+                    "job %s cover: using seg1 image %s (%sx%s)",
+                    job_id, seg1_image, cw, ch,
+                )
+            else:
+                subject = _cover_subject_from_job(job)
+                cover_prompt = build_cover_image_prompt(cw=cw, ch=ch, subject=subject)
+                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+                    tmp_path = Path(tmp.name)
+                try:
+                    AgnesImageProvider().generate(cover_prompt, tmp_path, size=f"{cw}x{ch}")
+                    img = Image.open(tmp_path)
+                    composed = compose_cover_image(
+                        img,
+                        title,
+                        brand_name=brand,
+                        host_intro_path=host_intro_path,
+                    )
+                    composed.convert("RGB").save(cover_path, quality=92)
+                finally:
+                    tmp_path.unlink(missing_ok=True)
+                logger.info(
+                    "job %s cover: generated via Agnes (%sx%s)",
+                    job_id, cw, ch,
+                )
 
             with connection() as conn:
                 repo_job.update_job(conn, job_id, cover_path=str(cover_path.resolve()))
