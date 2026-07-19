@@ -790,18 +790,41 @@ def build_image_prompts_prompts(
     segments = script.get("segments") or []
     if segment_indices is not None:
         wanted = {int(idx) for idx in segment_indices}
-        segments = [seg for seg in segments if int(seg.get("segment_index", -1)) in wanted]
-    # 检测涉及的 segment 是否有妈妈角色
-    has_mom = any(
-        d.get("speaker") == "妈妈"
-        for seg in segments
-        for d in (seg.get("dialogue") or [])
-    )
-    lines = [
-        f"segment {seg['segment_index']}: "
-        f"text={seg.get('text', '')!r}; visual_brief={seg.get('visual_brief', '')!r}"
-        for seg in segments
-    ]
+        # 把目标分段前后各一段也作为上下文展示，帮助 LLM 理解剧情连贯性
+        extra_indices: set[int] = set()
+        for idx in wanted:
+            if idx - 1 >= 1:
+                extra_indices.add(idx - 1)
+            if idx + 1 <= len(segments):
+                extra_indices.add(idx + 1)
+        extra_indices -= wanted
+        all_shown = sorted(wanted | extra_indices, key=lambda x: x)
+        lines = []
+        for seg in segments:
+            idx = int(seg.get("segment_index", 0))
+            if idx not in all_shown:
+                continue
+            prefix = "【仅上下文】" if idx in extra_indices else "【需生成】"
+            lines.append(
+                f"{prefix}segment {idx}: "
+                f"text={seg.get('text', '')!r}; visual_brief={seg.get('visual_brief', '')!r}"
+            )
+        has_mom = any(
+            d.get("speaker") == "妈妈"
+            for seg in segments if int(seg.get("segment_index", 0)) in wanted
+            for d in (seg.get("dialogue") or [])
+        )
+    else:
+        lines = [
+            f"segment {seg['segment_index']}: "
+            f"text={seg.get('text', '')!r}; visual_brief={seg.get('visual_brief', '')!r}"
+            for seg in segments
+        ]
+        has_mom = any(
+            d.get("speaker") == "妈妈"
+            for seg in segments
+            for d in (seg.get("dialogue") or [])
+        )
     json_example = _IMAGE_PROMPTS_JSON_EXAMPLE if include_sd15_prompt else _IMAGE_PROMPTS_JSON_EXAMPLE_NO_SD15
     sd15_rule = _SD15_PROMPT_EN_RULE if include_sd15_prompt else ""
     sd15_fields = "、image_prompt、motion_prompt 与 sd15_prompt_en" if include_sd15_prompt else "、image_prompt 与 motion_prompt"
@@ -817,8 +840,10 @@ def build_image_prompts_prompts(
         f"{_IMAGE_PROMPT_RULE_NO_REF_CHARACTER if has_mom else ''}"
         f"{_IMAGE_PROMPT_EXAMPLE_WITH_MOM if has_mom else ''}"
         f"{sd15_rule}"
-        "image_prompts须覆盖输入的每一段，segment_index一一对应，不得遗漏。"
-        "【地图合规】image_prompt禁止出现「世界地图」「全球地图」字样；"
+        + ("image_prompts仅需输出标记为【需生成】的segment，【仅上下文】分段无需输出。"
+           if segment_indices is not None
+           else "image_prompts须覆盖输入的每一段，segment_index一一对应，不得遗漏。")
+        + "【地图合规】image_prompt禁止出现「世界地图」「全球地图」字样；"
         "地图场景必须限定为局部区域地图（如中东地图、非洲地图），不得出现完整世界地图或包含东亚/中国部分的画面。"
         f"{_json_output_clause(json_example)}"
     )
