@@ -149,7 +149,7 @@ class AgnesImageProvider(ImageProvider):
                         "agnes api %s %s: %s",
                         resp.status_code,
                         url,
-                        json.dumps(body, ensure_ascii=False) if isinstance(body, dict) else body,
+                        body,
                     )
                     raise_if_agnes_quota(status_code=resp.status_code, body=body)
                 resp.raise_for_status()
