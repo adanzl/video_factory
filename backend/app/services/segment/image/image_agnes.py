@@ -145,15 +145,17 @@ class AgnesImageProvider(ImageProvider):
                         body = resp.json()
                     except Exception:
                         body = resp.text[:500]
+                    raise_if_agnes_quota(status_code=resp.status_code, body=body)
                     logger.warning(
                         "agnes api %s %s: %s",
                         resp.status_code,
                         url,
                         body,
                     )
-                    raise_if_agnes_quota(status_code=resp.status_code, body=body)
-                resp.raise_for_status()
+                    raise RuntimeError(f"agnes api {resp.status_code}: {body}")
                 return resp
+            except RuntimeError:
+                raise
             except AgnesQuotaExceeded:
                 raise
             except requests.RequestException as exc:
@@ -164,7 +166,7 @@ class AgnesImageProvider(ImageProvider):
                 logger.warning("agnes request error: %s, retry in %ss", exc, wait)
                 time.sleep(wait)
         if last_exc:
-            raise last_exc
+            raise RuntimeError(f"agnes request failed after {retries} retries: {url}: {last_exc}")
         raise RuntimeError(f"agnes request failed after {retries} retries: {url}")
 
     @staticmethod
