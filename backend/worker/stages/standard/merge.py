@@ -37,12 +37,17 @@ class MergeStage(StageExecutor):
             if fallback.exists():
                 intro_path = fallback
 
+        end_path: Path | None = None
+        if job.get("end_path"):
+            end_path = Path(job["end_path"])
+
         result = media_mgr.merge_final(
             media_dir=ctx.media_dir,
             segments=segments,
             audio_path=Path(job["audio_path"]),
             subtitle_path=Path(job["subtitle_path"]) if job.get("subtitle_path") else None,
             intro_path=intro_path,
+            end_path=end_path,
         )
         loudness = analyze_loudness(result.final_path)
         duration = probe_duration(result.final_path)
