@@ -200,12 +200,21 @@ class AgnesImageProvider(ImageProvider):
                 ref_b64_list: list[str] = []
                 for ref_path in ref_images:
                     if ref_path.exists():
-                        ref_b64 = base64.b64encode(ref_path.read_bytes()).decode("ascii")
+                        img = PILImage.open(ref_path)
+                        max_dim = 1024
+                        if max(img.size) > max_dim:
+                            ratio = max_dim / max(img.size)
+                            new_size = (int(img.size[0] * ratio), int(img.size[1] * ratio))
+                            img = img.resize(new_size, PILImage.LANCZOS)
+                        buf = io.BytesIO()
+                        img.convert("RGB").save(buf, format="JPEG", quality=85)
+                        ref_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
                         ref_b64_list.append(ref_b64)
                         logger.info(
-                            "agnes ref_image: %s, size=%s bytes",
+                            "agnes ref_image: %s, original=%s bytes, compressed=%s bytes",
                             ref_path.name,
                             ref_path.stat().st_size,
+                            len(ref_b64) * 3 // 4,
                         )
                     else:
                         logger.warning("agnes ref_image not found: %s", ref_path)
