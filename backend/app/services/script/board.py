@@ -162,15 +162,9 @@ def _writing_target_clause(narration_target: int) -> str:
     )
 
 
-_VISUAL_BRIEF_TYPE_OPTIONS: dict[str, str] = {
-    CONTENT_STYLE_HISTORICAL_MYSTERY: "（历史场景再现）/（人物肖像）/（关键物件特写）/（空间环境）",
-    CONTENT_STYLE_DAILY_STORY: "（日常场景）",
-}
-_DEFAULT_VISUAL_BRIEF_TYPES = "（写实场景）/（结构示意图）/（对比图）/（线稿解剖图）/（微观分子图）"
 
 
-def _visual_brief_types(profile_style: str) -> str:
-    return _VISUAL_BRIEF_TYPE_OPTIONS.get(profile_style, _DEFAULT_VISUAL_BRIEF_TYPES)
+
 
 
 def _storyboard_layer_style(content_style: str) -> str:
@@ -388,15 +382,13 @@ def _title_rule(title: str, max_title: int) -> tuple[str, str]:
     )
 
 
-def _storyboard_segment_rule(target: float, profile_style: str) -> str:
-    types = _visual_brief_types(profile_style)
+def _storyboard_segment_rule(target: float) -> str:
     common = (
         "segments为分镜数组；"
         "各段含segment_index,text,visual_brief,visual_mode=static_motion；"
         "各段text按顺序拼接须与narration全文一致。"
         "visual_brief为该镜画面描述（80-150字）：写清视觉主旨、关键动作或对比关系、"
         "场景类型与情绪，帮助后续扩写文生图提示词；不写镜头焦距、光线方向、材质参数等细节。"
-        f"visual_brief末尾须用括号标注画面类型{types}。"
         "【角色约束】妈妈角色只在该段有妈妈台词（dialogue中speaker=\"妈妈\"）时才出现在画面中；"
         "若该段dialogue数组中没有speaker为妈妈的项，则visual_brief绝对禁止出现妈妈（包括不让妈妈旁观、路过、做背景动作、"
         "在厨房方向、在另一房间等任何形式）。特别注意：台词中提及「妈妈」字样（如\"妈妈说…\"）不等于妈妈在该段说话，"
@@ -610,14 +602,12 @@ def build_visual_brief_prompts(
     narration = str(script.get("narration") or "").strip()
     visual_style = str(script.get("visual_style") or "").strip()
     title = str(script.get("title") or "").strip()
-    types = _visual_brief_types(profile_style)
     seg_rule = (
         "segments 为分镜数组，须与输入逐段一一对应；"
         "各段含 segment_index, visual_brief, visual_mode=static_motion；"
         "不要输出或修改各段 text。"
         f"visual_brief 为该镜画面描述（80-150 字）：写清视觉主旨、关键动作或对比关系、"
         f"场景类型；情绪须对标台词语气强度（争吵时表情激烈如瞪眼皱眉张嘴、温和平静时表情放松）。"
-        f"末尾须用括号标注画面类型{types}。"
         "【角色约束】妈妈角色只在该段有妈妈台词（dialogue中speaker=\"妈妈\"）时才出现在画面中；"
         "若该段dialogue数组中没有speaker为妈妈的项，则visual_brief绝对禁止出现妈妈（包括不让妈妈旁观、路过、做背景动作、"
         "在厨房方向、在另一房间等任何形式）。特别注意：台词中提及「妈妈」字样（如\"妈妈说…\"）不等于妈妈在该段说话，"
@@ -667,7 +657,7 @@ def build_board_prompts(
         content_style=content_style,
     )
     target = settings.segment_target_sec if segment_target_sec is None else segment_target_sec
-    seg_rule = _storyboard_segment_rule(target, profile_style=profile_style)
+    seg_rule = _storyboard_segment_rule(target)
     max_title = settings.max_title_length if max_title_length is None else max_title_length
     narration_word_target = (
         narration_target_words
@@ -692,8 +682,7 @@ def build_board_prompts(
         narration_clause = (
             "【紧凑输出】不要输出 narration 与 word_count 字段；"
             "各段 text 须按字数预算落在验收区间内，后端会自动拼接为 narration。"
-            "每段 visual_brief 控制在 30-60 字，只写画面主旨，末尾用括号注明画面类型"
-            "（写实场景）/（结构示意图）/（对比图）/（线稿解剖图）/（微观分子图），禁止冗长描写。"
+            "每段 visual_brief 控制在 30-60 字，只写画面主旨，禁止冗长描写。"
         )
         word_count_clause = ""
     else:
@@ -747,7 +736,6 @@ def build_board_prompts(
             )
             + "\n\n"
         )
-    types = _visual_brief_types(profile_style)
     user = _append_supplementary_to_user(
         (
             f"{execution_headline}\n\n"
@@ -755,9 +743,9 @@ def build_board_prompts(
             f"{length_budget}\n\n"
             f"{title_user_prefix}与分镜，{split_hint}。\n\n"
             + (
-                f"每段 visual_brief 30-60 字，写清画面主旨，末尾用括号注明画面类型{types}。"
+                "每段 visual_brief 30-60 字，写清画面主旨，禁止冗长描写。"
                 if compact_output
-                else f"每段 visual_brief 写清该镜画面主旨并在末尾注明画面类型{types}，便于下一步扩写文生图提示词。"
+                else "每段 visual_brief 写清该镜画面主旨，便于下一步扩写文生图提示词。"
             )
         ),
         supplementary_info,
