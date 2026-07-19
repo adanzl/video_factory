@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
 
@@ -22,6 +23,8 @@ from app.utils.job_info import (
 from app.utils.title_text import prefer_source_punctuation
 from worker.context import JobContext
 from worker.stages.base import StageExecutor
+
+logger = logging.getLogger(__name__)
 
 
 def _normalize_title(title: str) -> str:
