@@ -153,7 +153,7 @@ _IMAGE_PROMPT_RULE_MYSTERY_LANDSCAPE = _IMAGE_PROMPT_RULE_MYSTERY_PORTRAIT.repla
 _SD15_PROMPT_EN_RULE = (
     "同时为每段输出 sd15_prompt_en：专为 Stable Diffusion 1.5 优化的英文提示词（20～40 词），"
     "格式为「[核心主体] [动作/状态], [场景类型], [一个关键视觉特征]」；"
-    "先读 visual_brief 末尾的画面类型标签确定主体方向，再提炼主体；"
+    "根据 visual_brief 画面描述确定主体方向，再提炼主体；"
     "只写一个核心主体，禁止并列堆砌多个名词；"
     "禁止写 lora 标签、style 词和背景后缀（系统自动追加）；"
     "science 类禁止 person/face/head 等人物词。\n"
