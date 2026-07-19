@@ -403,7 +403,11 @@ def _run_image_prompts(
     from app.services.script.prompt.image_prompts import wrap_image_prompts
 
     content_style = content_style_from_job(job)
-    wrap_image_prompts(updated.get("segments") or [], content_style=content_style)
+    target_segments = [
+        seg for seg in (updated.get("segments") or [])
+        if segment_indices is None or int(seg.get("segment_index", 0)) in segment_indices
+    ]
+    wrap_image_prompts(target_segments, content_style=content_style)
 
     with connection() as conn:
         if skip_quality:
