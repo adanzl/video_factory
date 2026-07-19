@@ -145,6 +145,12 @@ class AgnesImageProvider(ImageProvider):
                         body = resp.json()
                     except Exception:
                         body = resp.text[:500]
+                    logger.warning(
+                        "agnes api %s %s: %s",
+                        resp.status_code,
+                        url,
+                        json.dumps(body, ensure_ascii=False) if isinstance(body, dict) else body,
+                    )
                     raise_if_agnes_quota(status_code=resp.status_code, body=body)
                 resp.raise_for_status()
                 return resp
@@ -195,7 +201,12 @@ class AgnesImageProvider(ImageProvider):
         agnes_size = _to_agnes_size(size)
         self._acquire_submit_slot()
         try:
-            extra_body: dict = {"response_format": "url"}
+            payload: dict = {
+                "model": self._model,
+                "prompt": prompt,
+                "size": agnes_size,
+                "response_format": "url",
+            }
             if ref_images:
                 ref_b64_list: list[str] = []
                 for ref_path in ref_images:
@@ -210,13 +221,7 @@ class AgnesImageProvider(ImageProvider):
                     else:
                         logger.warning("agnes ref_image not found: %s", ref_path)
                 if ref_b64_list:
-                    extra_body["ref_images"] = ref_b64_list
-            payload = {
-                "model": self._model,
-                "prompt": prompt,
-                "size": agnes_size,
-                "extra_body": extra_body,
-            }
+                    payload["ref_images"] = ref_b64_list
             logger.info(
                 "agnes request (%s key): %s, prompt_chars=%s, %s",
                 api_key.label,
