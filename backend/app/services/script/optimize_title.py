@@ -81,22 +81,32 @@ def parse_title_optimize_payload(raw: dict[str, Any], *, max_title_len: int) -> 
 
 # --------------- chat (daily_story) 标题优化 ---------------
 
-_CHAT_TITLE_MAX_LEN = 10
+# chat 封面标题固定 ≤10；不跟全局 MAX_TITLE_LENGTH（默认16）走
+CHAT_TITLE_MAX_LEN = 10
 
 
-def build_chat_title_system_prompt(*, max_title_len: int = _CHAT_TITLE_MAX_LEN) -> str:
-    """chat 流水线专用标题优化 system prompt：儿童对话故事，≤10字，提取孩子视角台词。"""
+def _clamp_chat_title_len(max_title_len: int | None) -> int:
+    if max_title_len is None:
+        return CHAT_TITLE_MAX_LEN
+    return max(1, min(int(max_title_len), CHAT_TITLE_MAX_LEN))
+
+
+def build_chat_title_system_prompt(*, max_title_len: int = CHAT_TITLE_MAX_LEN) -> str:
+    """chat 流水线标题：面向孩子与有娃家长，硬上限 ≤10 字。"""
+    max_title_len = _clamp_chat_title_len(max_title_len)
     return (
-        "你是一个擅长为儿童对话故事取标题的编辑。根据剧本内容，输出 JSON，字段 title。"
-        f"title 为优化后的视频标题：≤{max_title_len} 字，不含空格换行。"
+        "你是家庭日常对话短剧的标题编辑，面向孩子和有娃的大人。"
+        "根据剧本输出 JSON，字段 title。"
+        f"title：≤{max_title_len} 字，不含空格换行，适合短封面。"
         "\n【标题生成规则】"
-        "- 优先从以下来源提取：剧本中某句台词（尤其是结尾或冲突最高潮的那句）、孩子的视角看核心道具/动作"
-        "- 标题必须在10字以内"
-        "- 不使用描述性标题（如\"抢饼干\"\"姐弟吵架\"），使用孩子会说的那句话或孩子认知里的那个名词"
-        "- 好标题示例：\"老鼠会开柜子门吗\"\"就一块，别告状\"\"妈妈藏的饼干\""
-        "- 坏标题示例：\"姐弟偷吃饼干\"\"孩子的选择\"\"妈妈不在家时\""
-        "\n【标题要求】"
-        "请为这个剧本取一个10字以内的标题，优先从对话中提取孩子气的台词或视角。"
+        f"- 硬性：标题必须 ≤{max_title_len} 字（最终上架字数以此为准）"
+        "- 优先来源：①收束或冲突最高潮的孩子台词；"
+        "② punchline_explain 里的反差浓缩成口语；"
+        "③ 核心道具/动作名词"
+        "- 要有口吻或轻反差，让家长一秒认出「自家日常笑点」"
+        "- 不用描述性事件名（如「抢饼干」「姐弟吵架」）"
+        "- 好标题示例：「老鼠会开柜子门吗」「就一块，别告状」「妈妈藏的饼干」"
+        "- 坏标题示例：「姐弟偷吃饼干」「孩子的选择」「妈妈不在家时」"
         'JSON 输出样例：{"title": "优化后标题"}'
     )
 
@@ -105,10 +115,12 @@ def build_chat_title_user_prompt(
     *,
     draft_title: str,
     story_content: dict,
-    max_title_len: int = _CHAT_TITLE_MAX_LEN,
+    max_title_len: int = CHAT_TITLE_MAX_LEN,
 ) -> str:
     """根据故事内容构建 chat 标题优化的 user prompt。"""
+    max_title_len = _clamp_chat_title_len(max_title_len)
     setting = (story_content.get("setting") or "").strip()
+    punchline = (story_content.get("punchline_explain") or "").strip()
     dialogue_lines = story_content.get("dialogue") or []
     dialogue_text = ""
     if dialogue_lines and isinstance(dialogue_lines[0], dict):
@@ -122,13 +134,15 @@ def build_chat_title_user_prompt(
     context_parts = []
     if setting:
         context_parts.append(f"场景：{setting}")
-    context_parts.append(f"对话：\n{dialogue_text}")
+    if punchline:
+        context_parts.append(f"反差说明：{punchline}")
+    context_parts.append(f"对话（优先看结尾与冲突句）：\n{dialogue_text}")
     context = "\n".join(context_parts)
 
     return (
         f"初稿标题：{draft_title}\n"
         f"剧本内容：\n{context}\n\n"
-        f"请为这个剧本取一个 ≤{max_title_len} 字的标题。"
+        f"请输出 ≤{max_title_len} 字的 title；宁可短，不可超字。"
     )
 
 
@@ -138,7 +152,7 @@ def build_chat_title_prompts(
     *,
     max_title_length: int | None = None,
 ) -> dict[str, str]:
-    max_len = max_title_length if max_title_length is not None else _CHAT_TITLE_MAX_LEN
+    max_len = _clamp_chat_title_len(max_title_length)
     return {
         "step": "chat_title_optimize",
         "label": "标题优化",
