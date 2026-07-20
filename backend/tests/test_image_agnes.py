@@ -106,9 +106,23 @@ def test_build_verify_checklist_daily_includes_zhao() -> None:
         content_style="daily_story",
     )
     ids = [cid for cid, _ in items]
-    assert ids == ["scene", "zhao_braid", "extra_arms", "cast_count"]
+    assert ids == [
+        "scene",
+        "zhao_braid",
+        "extra_arms",
+        "cast_count",
+        "height_order",
+    ]
     assert "昭昭" in user
     assert "发言角色" in user
+    assert "半个头" in user
+
+    items_one, _ = AgnesImageProvider._build_verify_checklist(
+        prompt="只有昭昭",
+        expected_speakers=["昭昭"],
+        content_style="daily_story",
+    )
+    assert "height_order" not in [cid for cid, _ in items_one]
 
     items2, user2 = AgnesImageProvider._build_verify_checklist(
         prompt="电池剖面",
@@ -117,6 +131,14 @@ def test_build_verify_checklist_daily_includes_zhao() -> None:
     )
     assert [cid for cid, _ in items2] == ["scene", "extra_arms"]
     assert "昭昭" not in user2
+
+
+def test_evaluate_verify_response_height_order() -> None:
+    ids = ["scene", "zhao_braid", "extra_arms", "cast_count", "height_order"]
+    ok = "项1: 是\n项2: 否\n项3: 否\n项4: 是\n项5: 是\n"
+    assert AgnesImageProvider._evaluate_verify_response(ok, ids)
+    bad = "项1: 是\n项2: 否\n项3: 否\n项4: 是\n项5: 否\n"
+    assert not AgnesImageProvider._evaluate_verify_response(bad, ids)
 
 
 def test_generate_switches_to_backup_key_on_quota(tmp_path: Path) -> None:
