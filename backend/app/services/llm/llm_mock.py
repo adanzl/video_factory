@@ -483,5 +483,5 @@ class MockLLMClient(LLMClient):
         }
 
     def generate_daily_story_themes(self, count: int = 2) -> list[str]:
-        themes = ["争最后一瓶酸奶", "下雨只带了一把伞", "谁先洗澡", "检查作业时发现错题"]
+        themes = ["争最后一瓶酸奶", "谁先洗澡", "检查作业时发现错题", "抢着开门接快递"]
         return themes[:count]

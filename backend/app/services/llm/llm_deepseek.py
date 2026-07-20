@@ -1461,9 +1461,11 @@ class DeepSeekClient(LLMClient):
                     f"{user_base}\n\n"
                     "【重试】上一轮输出的 JSON 校验未通过："
                     f"{errors}\n"
-                    "请确保所有 dialogue 条目都包含 speaker 和 line 字段，"
-                    "且 speaker 为「昭昭」「灿灿」或「妈妈」，line 为对应台词文本，"
-                    "line 不能是纯标点符号（如……），必须包含汉字或词语。"
+                    "请确保：dialogue 含 speaker/line；"
+                    "speaker 仅为「昭昭」「灿灿」「妈妈」；"
+                    "line 含可发音汉字且每句≤18字；"
+                    "全部 line 总字数在360–420之间；"
+                    "禁止纯标点台词。"
                 )
         assert last_exc is not None
         raise last_exc

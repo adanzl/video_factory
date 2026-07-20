@@ -5,11 +5,11 @@ from __future__ import annotations
 import logging
 import re
 
-from app.config import get_settings
 from app.repositories import repo_daily_story, repo_job, repo_job_log, repo_segment
 from app.repositories.connection import connection
 from app.services.llm.llm_mgr import llm_mgr
 from app.services.script.optimize_title import (
+    CHAT_TITLE_MAX_LEN,
     build_chat_title_prompts,
     parse_title_optimize_payload,
 )
@@ -137,13 +137,9 @@ class DailyScriptStage(StageExecutor):
             "visual_style": _VISUAL_STYLE_BY_CONTENT_STYLE["daily_story"]
         }
 
-        # --- 标题优化（独立方案：chat 专用提示词，直调 _chat_json） ---
+        # --- 标题优化（chat 固定 ≤10 字，不跟全局 MAX_TITLE_LENGTH） ---
         if not ctx.script_skip_title_optimize:
-            max_len = (
-                ctx.script_max_title_length
-                if ctx.script_max_title_length is not None
-                else get_settings().max_title_length
-            )
+            max_len = CHAT_TITLE_MAX_LEN
             try:
                 prompts = build_chat_title_prompts(
                     title,
