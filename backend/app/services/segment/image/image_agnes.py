@@ -391,14 +391,27 @@ class AgnesImageProvider(ImageProvider):
                 "是否有任何人物胳膊/手臂数量超过2条？回答「是」或「否」",
             )
         )
-        expected_count = len(expected_speakers) if expected_speakers else 0
+        speakers = [str(s).strip() for s in (expected_speakers or []) if str(s).strip()]
+        expected_count = len(speakers)
         if expected_count > 0:
-            speakers_str = "/".join(expected_speakers)
+            speakers_str = "/".join(speakers)
             items.append(
                 (
                     "cast_count",
                     f"图片中可辨认人物数量是否恰好为 {expected_count} 个"
                     f"（须与该段发言角色一致：{speakers_str}）？回答「是」或「否」",
+                )
+            )
+        if (
+            content_style == CONTENT_STYLE_DAILY_STORY
+            and "昭昭" in speakers
+            and "灿灿" in speakers
+        ):
+            items.append(
+                (
+                    "height_order",
+                    "蓝衣短发小男孩昭昭是否比粉衣马尾女孩灿灿矮约半个头"
+                    "（不得同高或弟弟更高）？回答「是」或「否」",
                 )
             )
 
@@ -433,6 +446,8 @@ class AgnesImageProvider(ImageProvider):
             if cid == "extra_arms" and verdict == "yes":
                 return False
             if cid == "cast_count" and verdict == "no":
+                return False
+            if cid == "height_order" and verdict == "no":
                 return False
         return True
 
