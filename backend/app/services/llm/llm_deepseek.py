@@ -319,19 +319,29 @@ def _assemble_storyboard_narration(data: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
-def _merge_visual_briefs(script: dict[str, Any], payload: dict[str, Any]) -> None:
+def _merge_visual_briefs(
+    script: dict[str, Any],
+    payload: dict[str, Any],
+    *,
+    required_indices: list[int] | None = None,
+) -> None:
     # visual_style 已由 _generate_storyboard 硬编码设置，忽略 LLM 输出
     by_index = {
         int(item["segment_index"]): item
         for item in payload.get("segments") or []
         if item.get("segment_index") is not None
     }
-    required = [int(seg["segment_index"]) for seg in script.get("segments") or []]
+    required = required_indices or [
+        int(seg["segment_index"]) for seg in script.get("segments") or []
+    ]
     missing = [idx for idx in required if idx not in by_index]
     if missing:
         raise ValueError(f"visual_brief response missing segments: {missing}")
+    required_set = set(required)
     for seg in script.get("segments") or []:
         idx = int(seg["segment_index"])
+        if idx not in required_set:
+            continue
         item = by_index[idx]
         brief = str(item.get("visual_brief") or "").strip()
         if not brief:
@@ -615,15 +625,21 @@ class DeepSeekClient(LLMClient):
         feedback: str | None = None,
         supplementary_info: str | None = None,
         job: dict | None = None,
+        segment_indices: list[int] | None = None,
     ) -> dict[str, Any]:
-        if not script.get("segments"):
+        segments = script.get("segments") or []
+        if not segments:
             raise ValueError("script has no segments for visual_brief")
+        required = segment_indices or [
+            int(seg["segment_index"]) for seg in segments
+        ]
         started = time.perf_counter()
         prompts = build_visual_brief_prompts(
             script,
             feedback=feedback,
             supplementary_info=supplementary_info,
             job=job,
+            segment_indices=segment_indices,
         )
         payload, finish = self._chat_json(
             prompts["system"],
@@ -634,16 +650,33 @@ class DeepSeekClient(LLMClient):
         raise_if_job_cancelled(job)
         if finish == "length":
             raise ValueError("LLM visual_brief response truncated")
-        _merge_visual_briefs(script, payload)
+        _merge_visual_briefs(script, payload, required_indices=required)
         elapsed = time.perf_counter() - started
         logger.info(
             "[SCRIPT] visual_brief done segments=%d elapsed=%.1fs",
-            len(script.get("segments") or []),
+            len(required),
             elapsed,
         )
         timing = script.setdefault("_llm_timing", {})
         timing["visual_brief_sec"] = round(elapsed, 1)
         return script
+
+    def fill_visual_briefs(
+        self,
+        script: dict[str, Any],
+        *,
+        feedback: str | None = None,
+        supplementary_info: str | None = None,
+        job: dict | None = None,
+        segment_indices: list[int] | None = None,
+    ) -> dict[str, Any]:
+        return self._fill_visual_briefs(
+            script,
+            feedback=feedback,
+            supplementary_info=supplementary_info,
+            job=job,
+            segment_indices=segment_indices,
+        )
 
     def _generate_storyboard(
         self,

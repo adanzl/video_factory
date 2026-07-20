@@ -79,6 +79,17 @@ class LLMClient:
     ) -> dict[str, Any]:
         raise NotImplementedError
 
+    def fill_visual_briefs(
+        self,
+        script: dict[str, Any],
+        *,
+        feedback: str | None = None,
+        supplementary_info: str | None = None,
+        job: dict | None = None,
+        segment_indices: list[int] | None = None,
+    ) -> dict[str, Any]:
+        raise NotImplementedError
+
     def shrink_segment_texts(
         self,
         script: dict[str, Any],
@@ -282,6 +293,23 @@ class LLMMgr:
             job=job,
             segment_indices=segment_indices,
             include_sd15_prompt=include_sd15_prompt,
+        )
+
+    def fill_visual_briefs(
+        self,
+        script: dict[str, Any],
+        *,
+        feedback: str | None = None,
+        supplementary_info: str | None = None,
+        job: dict | None = None,
+        segment_indices: list[int] | None = None,
+    ) -> dict[str, Any]:
+        return self._get_client().fill_visual_briefs(
+            script,
+            feedback=feedback,
+            supplementary_info=supplementary_info,
+            job=job,
+            segment_indices=segment_indices,
         )
 
     def shrink_segment_texts(

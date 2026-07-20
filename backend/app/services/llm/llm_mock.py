@@ -164,6 +164,30 @@ class MockLLMClient(LLMClient):
             seg.setdefault("motion_prompt", _mock_motion_prompt())
         return script
 
+    def fill_visual_briefs(
+        self,
+        script: dict[str, Any],
+        *,
+        feedback: str | None = None,
+        supplementary_info: str | None = None,
+        job: dict | None = None,
+        segment_indices: list[int] | None = None,
+    ) -> dict[str, Any]:
+        _ = feedback, supplementary_info, job
+        display_title = (
+            re.sub(r"\s+", "", str(script.get("title") or "科普").strip()) or "科普"
+        )
+        allowed = {int(i) for i in segment_indices} if segment_indices else None
+        for seg in script.get("segments") or []:
+            idx = int(seg["segment_index"])
+            if allowed is not None and idx not in allowed:
+                continue
+            seg["visual_brief"] = (
+                f"第{idx}镜：围绕「{display_title}」展示一个生活化科普场景与关键对比。（写实场景）"
+            )
+            seg.setdefault("visual_mode", "static_motion")
+        return script
+
     def shrink_segment_texts(
         self,
         script: dict[str, Any],
