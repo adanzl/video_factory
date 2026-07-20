@@ -129,6 +129,8 @@ DAILY_SCRIPT_SYSTEM_PROMPT = """\
 【重要约束】
 - 不要添加剧本中没有的动作或情绪（不要"无奈地""叹气道"等主观解读）
 - visual_description只描述可看见的画面元素
+- 【角色入画】visual_description 中的人物必须且仅为本镜头 dialogue 的发言角色；
+  未发言角色禁止旁观/路过/入画；台词提到名字不等于发言
 - 台词原文照抄，不要修改措辞
 - 每个镜头的 dialogue 须带上 speaker 角色名，text 为该镜头对应的原剧本台词，禁止修改措辞
 """

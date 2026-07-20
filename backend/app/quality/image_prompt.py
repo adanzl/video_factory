@@ -167,8 +167,9 @@ def check_image_prompt(
     *,
     sd15_mode: bool | None = None,
     segment_indices: list[int] | None = None,
+    content_style: str | None = None,
 ) -> QualityReport:
-    """各段 image_prompt 长度；SD15 模式另校验 sd15_prompt_en。"""
+    """各段 image_prompt 长度；SD15 模式另校验 sd15_prompt_en；daily 校验角色入画。"""
     if sd15_mode is None:
         sd15_mode = bool(script.get("include_sd15_prompt"))
     min_chars = image_prompt_min_chars(sd15_mode=sd15_mode)
@@ -189,6 +190,31 @@ def check_image_prompt(
             fail_stage="script",
             details={"reason": "no segments"},
         )
+
+    style = content_style or script.get("content_style")
+    if style == "daily_story":
+        from app.services.daily_story.cast import collect_daily_cast_leak_segments
+
+        cast_rows = collect_daily_cast_leak_segments(
+            segments,
+            check_visual_brief=False,
+            check_image_prompt=True,
+        )
+        if cast_rows:
+            return QualityReport(
+                level="major",
+                step="image_prompts",
+                fail_stage="script",
+                details={
+                    "reason": "daily cast leak in image_prompt",
+                    "issues": [
+                        f"segment {r['segment_index']}: {r['field']} 含未发言角色 "
+                        f"{r['leaks']} (speakers={r['speakers'] or '[]'})"
+                        for r in cast_rows
+                    ],
+                    "segments": cast_rows,
+                },
+            )
 
     too_short: list[dict] = []
     slightly_short: list[dict] = []

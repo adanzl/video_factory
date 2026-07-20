@@ -337,6 +337,12 @@ class LLMMgr:
         min_chars = image_prompt_min_chars(sd15_mode=include_sd15_prompt)
         target_chars = image_prompt_target_chars(sd15_mode=include_sd15_prompt)
         attempts = max_attempts if max_attempts is not None else get_settings().script_qa_max_attempts
+        style = None
+        if job:
+            from app.utils.job_info import content_style_from_job
+
+            style = content_style_from_job(job)
+            script["content_style"] = style
         for attempt in range(attempts):
             raise_if_job_cancelled(job)
             self.fill_image_prompts(
@@ -351,6 +357,7 @@ class LLMMgr:
                 script,
                 sd15_mode=include_sd15_prompt,
                 segment_indices=segment_indices,
+                content_style=style,
             )
             if report.level != "major":
                 return script
@@ -363,22 +370,29 @@ class LLMMgr:
             if not target_indices:
                 break
             reason = report.details.get("reason", "image_prompt too short")
-            feedback = (
-                f"{reason}: {target_indices}; "
-                f"need image_prompt >={min_chars} chars each (target {target_chars})"
-            )
-            if include_sd15_prompt:
-                feedback += (
-                    f"; ensure each segment has sd15_prompt_en "
-                    f"(>={MIN_SD15_PROMPT_EN_WORDS} English words, target {TARGET_SD15_PROMPT_EN_WORDS}); "
-                    "image_prompt must cover six dimensions concisely "
-                    "(subject, scene, style, lighting, composition, quality)"
+            if reason == "daily cast leak in image_prompt":
+                issues = report.details.get("issues") or []
+                feedback = (
+                    f"{reason}: {'; '.join(str(x) for x in issues[:5])}。"
+                    "只画本段 speakers 中的角色；忽略 visual_brief 里未发言角色。"
                 )
             else:
-                feedback += (
-                    "; expand prompt dimensions (subject, scene/environment, "
-                    "style, lighting, composition, quality) with concrete visible details"
+                feedback = (
+                    f"{reason}: {target_indices}; "
+                    f"need image_prompt >={min_chars} chars each (target {target_chars})"
                 )
+                if include_sd15_prompt:
+                    feedback += (
+                        f"; ensure each segment has sd15_prompt_en "
+                        f"(>={MIN_SD15_PROMPT_EN_WORDS} English words, target {TARGET_SD15_PROMPT_EN_WORDS}); "
+                        "image_prompt must cover six dimensions concisely "
+                        "(subject, scene, style, lighting, composition, quality)"
+                    )
+                else:
+                    feedback += (
+                        "; expand prompt dimensions (subject, scene/environment, "
+                        "style, lighting, composition, quality) with concrete visible details"
+                    )
             logger.warning(
                 "%s",
                 format_image_prompt_retry_warning(

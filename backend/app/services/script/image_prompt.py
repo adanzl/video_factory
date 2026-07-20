@@ -100,36 +100,25 @@ _IMAGE_PROMPT_RULE_LIFE = (
 )
 
 _IMAGE_PROMPT_RULE_DAILY_STORY = (
-    "image_prompt严格遵循visual_style画风定调，角色外貌与visual_style主角形象一致；"
-    "适配{orientation}构图。"
-    "篇幅80-150字，连贯中文，禁用维度标签。"
-    "按场景→动作→光照→构图顺序："
-    "①场景（交代空间位置，如客厅玄关/卧室床上/学校教室等）；"
-    "②角色动作表情（每个角色须写明当前动作与面部表情，"
-    "不得重复发型/服装等外貌特征——系统已通过参考图前缀自动注入；"
-    "妈妈无参考图时例外，须按无参考图角色规则写外貌）；"
-    "③光照（主辅光、明暗）；④构图（景别、占比、留白）。"
-    "【角色入画】须且仅描绘本段 speakers 列出的发言角色；"
-    "禁止未发言角色以旁观/路过/背景/另一房间等任何形式入画；"
-    "台词提及姓名不等于发言，仅以 speakers 为准；无 speakers 时禁止画昭昭/灿灿/妈妈等人像，只画场景。"
-    "【约束】仅单帧静态，禁连续运动/时间推移，动态只放 motion_prompt；"
-    "禁写实摄影风格、禁卡通以外画风。"
-    "【时间约束】禁止使用「先是…接着…」「然后」「镜头切至」等描述时间推移或镜头切换的词语；整段仅描述一帧静态画面。"
-    "【表情要求】image_prompt必须写明每个角色当前的面部表情（如专注皱眉、张大嘴巴、眯眼笑等），"
-    "表情须对标对话情绪强度（争吵时瞪眼张嘴吵架脸、平静时微笑放松），不得仅写动作忽略表情。"
-    "【说明】画风与参考图指令由系统在出图前硬编码拼接，LLM 只写场景核心内容，勿在 image_prompt 重复整段画风套话。"
-    + '内容写作范例：\'新场景中昭昭踮起脚尖，右手指在空中虚画一个"昭"字，身体略向左倾以保持平衡，脸上是认真专注的神情，嘴唇抿紧、眼睛看着手指画的线条；灿灿站在一旁，双手抱在胸前，嘴角下撇，眼神略带嘲笑。背景是客厅墙壁，挂着家庭照片。顶部吊灯暖光投射，照亮"昭"字笔画区域。中近景构图，昭昭在左、灿灿在右，头顶留白。\''
+    "适配{orientation}构图。篇幅80-150字，连贯中文，禁用维度标签。"
+    "顺序：场景→动作表情→光照→构图。"
+    "只写动作与表情，勿重复发型/服装（参考图前缀已注入；"
+    "妈妈入画时外貌须写黑长发、米色上衣、牛仔裤）。"
+    "【角色入画】只画本段 speakers；visual_brief 若出现未在 speakers 中的角色必须忽略；"
+    "无 speakers 则只画场景、禁止画昭昭/灿灿/妈妈。"
+    "单帧静态；表情对标台词情绪；勿写画风套话（出图前系统硬编码）。"
+    "短例：'客厅地板上昭昭举手比石头，脸不服气嘴角下撇眼睛瞪圆；"
+    "灿灿双手叉腰抿嘴瞪着他。窗光斜照地板。中景，昭昭左灿灿右。'"
 )
 
 # 无参考图角色规则，仅当 segment 涉及该角色时追加
 _IMAGE_PROMPT_RULE_NO_REF_CHARACTER = (
-    "【无参考图角色】妈妈角色无参考图，image_prompt中妈妈的外貌必须严格写为黑色长发、米色上衣、牛仔裤，禁止以剧情需要为由替妈妈换其他服装。"
+    "【无参考图角色】妈妈外貌须写为黑色长发、米色上衣、牛仔裤，禁止换装。"
 )
 
 # 带妈妈角色的补充示例，帮助模型理解如何描写妈妈
 _IMAGE_PROMPT_EXAMPLE_WITH_MOM = (
-    "含妈妈角色的例子（仅场景内容，不含固定前后缀）：'新场景中昭昭和灿灿跪坐争夺拼图盒，昭昭瞪大眼睛张大嘴巴、灿灿眯眼笑伸手去抢，"
-    "妈妈站在门口双手叉腰无奈摇头，黑色长发垂肩、米色上衣牛仔裤。'"
+    "含妈妈短例：'昭昭与灿灿对峙，妈妈站中间手臂微张，黑长发米色上衣牛仔裤，面露无奈。'"
 )
 
 
@@ -143,6 +132,12 @@ _IMAGE_PROMPT_MOTION_TAIL = (
     "禁抽象特效词（光效、光晕、粒子、能量、光圈、脉动、闪电、闪烁、图标、UI元素等）与镜头套话。"
     "正例：丹炉炉盖被蒸汽顶起又落下，缝隙中白烟成股涌出向右飘散，丹炉整体位置与造型保持不变。"
     "反例：小偷手指微微弯曲。（人物肢体动作，禁止）"
+)
+
+_IMAGE_PROMPT_MOTION_TAIL_DAILY = (
+    "【motion_prompt】15-80字，只写画面内无生命元素微动（光影、纱帘、尘埃等），"
+    "禁人物/有生命体动作；末尾说明人物姿势保持不变。"
+    "正例：窗边纱帘被风轻轻掀起又落下，人物姿势保持不变。"
 )
 
 _IMAGE_PROMPT_RULE_SD15 = (
@@ -184,6 +179,11 @@ _IMAGE_PROMPT_JSON_EXAMPLE_TEXT = (
     "金属、火焰与烟雾质感真实，细节层次清楚。"
 )
 
+_IMAGE_PROMPT_JSON_EXAMPLE_DAILY = (
+    "客厅地板上昭昭举手比石头，脸不服气嘴角下撇；灿灿双手叉腰抿嘴瞪着他。"
+    "窗光斜照地板。中景，昭昭左灿灿右。"
+)
+
 _IMAGE_PROMPTS_JSON_EXAMPLE = """{
   "image_prompts": [
     {
@@ -201,6 +201,16 @@ _IMAGE_PROMPTS_JSON_EXAMPLE_NO_SD15 = """{
       "segment_index": 1,
       "image_prompt": """ + _IMAGE_PROMPT_JSON_EXAMPLE_TEXT + """,
       "motion_prompt": "炉口青烟缓缓上升，火光轻闪，镜头极缓推进"
+    }
+  ]
+}"""
+
+_IMAGE_PROMPTS_JSON_EXAMPLE_DAILY = """{
+  "image_prompts": [
+    {
+      "segment_index": 1,
+      "image_prompt": """ + _IMAGE_PROMPT_JSON_EXAMPLE_DAILY + """,
+      "motion_prompt": "窗边纱帘被风轻轻掀起又落下，人物姿势保持不变"
     }
   ]
 }"""
@@ -269,7 +279,12 @@ def image_prompt_rule(*, orientation: str, content_style: str, sd15_mode: bool =
     )
     # tech_science 等未单独列出的风格走电影级写实
     body = _IMAGE_PROMPT_STYLE_BODIES.get(content_style, _IMAGE_PROMPT_RULE_REALISTIC)
-    text = head + _with_orientation(body, orientation) + _IMAGE_PROMPT_MOTION_TAIL
+    motion = (
+        _IMAGE_PROMPT_MOTION_TAIL_DAILY
+        if content_style == CONTENT_STYLE_DAILY_STORY
+        else _IMAGE_PROMPT_MOTION_TAIL
+    )
+    text = head + _with_orientation(body, orientation) + motion
     if sd15_mode:
         text += _IMAGE_PROMPT_RULE_SD15
     return text
@@ -397,12 +412,14 @@ def _build_system_prompt(
     if include_sd15_prompt:
         parts.append(_SD15_PROMPT_EN_RULE)
     parts.append(_coverage_clause(partial=partial))
-    parts.append(_MAP_COMPLIANCE)
-    json_example = (
-        _IMAGE_PROMPTS_JSON_EXAMPLE
-        if include_sd15_prompt
-        else _IMAGE_PROMPTS_JSON_EXAMPLE_NO_SD15
-    )
+    if content_style != CONTENT_STYLE_DAILY_STORY:
+        parts.append(_MAP_COMPLIANCE)
+    if content_style == CONTENT_STYLE_DAILY_STORY and not include_sd15_prompt:
+        json_example = _IMAGE_PROMPTS_JSON_EXAMPLE_DAILY
+    elif include_sd15_prompt:
+        json_example = _IMAGE_PROMPTS_JSON_EXAMPLE
+    else:
+        json_example = _IMAGE_PROMPTS_JSON_EXAMPLE_NO_SD15
     parts.append(json_output_clause(json_example))
     return "".join(parts)
 
