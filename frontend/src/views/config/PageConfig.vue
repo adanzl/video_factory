@@ -72,6 +72,12 @@
                   class="max-w-md!"
                 />
               </template>
+              <div
+                v-if="item.type === 'secret' && item.configured"
+                class="mt-1 text-xs text-gray-400 ml-2"
+              >
+                已配置（展示为脱敏值；留空保存可清除）
+              </div>
               <div v-if="item.description" class="mt-1 text-xs text-gray-400 ml-2">
                 {{ item.description }}
               </div>
