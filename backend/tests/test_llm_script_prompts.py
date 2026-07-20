@@ -302,6 +302,29 @@ def test_build_visual_brief_prompts_includes_full_narration():
     assert "不要输出或修改各段 text" in prompts["system"]
 
 
+def test_build_visual_brief_prompts_partial_segments_only():
+    script = {
+        "title": "测试标题",
+        "narration": "第一段。第二段。第三段。",
+        "visual_style": "测试画风",
+        "segments": [
+            {"segment_index": 1, "text": "第一段。"},
+            {"segment_index": 2, "text": "第二段。"},
+            {"segment_index": 3, "text": "第三段。"},
+        ],
+    }
+    prompts = build_visual_brief_prompts(
+        script,
+        job={"pipeline": "standard", "content_style": "science_child"},
+        segment_indices=[2],
+    )
+    assert "【需生成】segment 2:" in prompts["user"]
+    assert "【仅上下文】segment 1:" in prompts["user"]
+    assert "【仅上下文】segment 3:" in prompts["user"]
+    assert "仅需输出标记为【需生成】" in prompts["system"]
+    assert "须与输入逐段一一对应" not in prompts["system"]
+
+
 def test_voiceover_standard_shrink_prompts_preserve_voice():
     script = {
         "segments": [

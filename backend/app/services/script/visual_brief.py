@@ -12,7 +12,7 @@ _VISUAL_BRIEF_RULE = (
 
 # ── JSON 样例 ─────────────────────────────────────────────────────
 
-_VISUAL_BRIEF_JSON_EXAMPLE = """{
+_VISUAL_BRIEF_JSON_EXAMPLE_FULL = """{
   "segments": [
     {"segment_index": 1, "visual_brief": "画面主旨与关键视觉（80-150字）", "visual_mode": "static_motion"},
     {"segment_index": 2, "visual_brief": "画面主旨", "visual_mode": "static_motion"}
@@ -20,6 +20,14 @@ _VISUAL_BRIEF_JSON_EXAMPLE = """{
 }
 
 注意：segments 须覆盖输入的每一段，segment_index 一一对应；不要修改各段 text。"""
+
+_VISUAL_BRIEF_JSON_EXAMPLE_PARTIAL = """{
+  "segments": [
+    {"segment_index": 2, "visual_brief": "画面主旨与关键视觉（80-150字）", "visual_mode": "static_motion"}
+  ]
+}
+
+注意：仅输出标记为【需生成】的 segment；【仅上下文】无需输出；不要修改各段 text。"""
 
 
 # ── builders（常量须在上方）───────────────────────────────────────
@@ -57,30 +65,70 @@ _DEFAULT_MOM_RULE = (
 )
 
 
+def _format_one_visual_brief_segment(
+    seg: dict,
+    *,
+    prefix: str = "",
+    include_dialogue: bool = False,
+) -> str:
+    idx = seg.get("segment_index")
+    text = str(seg.get("text") or "")
+    line = f"{prefix}segment {idx}: text={text!r}"
+    if include_dialogue:
+        speakers = sorted(
+            {
+                str(d.get("speaker") or "").strip()
+                for d in (seg.get("dialogue") or [])
+                if str(d.get("speaker") or "").strip()
+            }
+        )
+        line += f"; speakers={speakers!r}"
+    return line
+
+
 def format_visual_brief_segments_for_prompt(
     segments: list[dict],
     *,
     include_dialogue: bool = False,
+    segment_indices: list[int] | None = None,
 ) -> str:
     ordered = sorted(
         segments,
         key=lambda seg: int(seg.get("segment_index") or seg.get("index") or 0),
     )
+    if segment_indices is None:
+        return "\n".join(
+            _format_one_visual_brief_segment(seg, include_dialogue=include_dialogue)
+            for seg in ordered
+        )
+
+    wanted = {int(idx) for idx in segment_indices}
+    max_idx = max(
+        (int(seg.get("segment_index") or 0) for seg in ordered),
+        default=0,
+    )
+    extra: set[int] = set()
+    for idx in wanted:
+        if idx - 1 >= 1:
+            extra.add(idx - 1)
+        if idx + 1 <= max_idx:
+            extra.add(idx + 1)
+    extra -= wanted
+    shown = wanted | extra
+
     lines: list[str] = []
     for seg in ordered:
-        idx = seg.get("segment_index")
-        text = str(seg.get("text") or "")
-        line = f"segment {idx}: text={text!r}"
-        if include_dialogue:
-            speakers = sorted(
-                {
-                    str(d.get("speaker") or "").strip()
-                    for d in (seg.get("dialogue") or [])
-                    if str(d.get("speaker") or "").strip()
-                }
+        idx = int(seg.get("segment_index") or 0)
+        if idx not in shown:
+            continue
+        tag = "【仅上下文】" if idx in extra else "【需生成】"
+        lines.append(
+            _format_one_visual_brief_segment(
+                seg,
+                prefix=tag,
+                include_dialogue=include_dialogue,
             )
-            line += f"; speakers={speakers!r}"
-        lines.append(line)
+        )
     return "\n".join(lines)
 
 
@@ -92,8 +140,12 @@ def build_visual_brief_prompts(
     job: dict | None = None,
     orientation: str | None = None,
     content_style: str | None = None,
+    segment_indices: list[int] | None = None,
 ) -> dict[str, str]:
-    """第二步：基于已切分的 segments 与全文 narration 生成 visual_brief。"""
+    """第二步：基于已切分的 segments 与全文 narration 生成 visual_brief。
+
+    segment_indices 非空时只要求 LLM 输出这些段（邻段作上下文）。
+    """
     _profile_orientation, profile_style = resolve_script_profile(
         job,
         orientation=orientation,
@@ -108,8 +160,14 @@ def build_visual_brief_prompts(
         if profile_style == CONTENT_STYLE_DAILY_STORY
         else _DEFAULT_MOM_RULE
     )
+    partial = segment_indices is not None
+    coverage = (
+        "segments 仅需输出标记为【需生成】的分镜；【仅上下文】分段无需输出；"
+        if partial
+        else "segments 为分镜数组，须与输入逐段一一对应；"
+    )
     seg_rule = (
-        "segments 为分镜数组，须与输入逐段一一对应；"
+        f"{coverage}"
         "各段含 segment_index, visual_brief, visual_mode=static_motion；"
         "不要输出或修改各段 text。"
         f"visual_brief 为该镜画面描述（80-150 字）：写清视觉主旨、关键动作或对比关系、"
@@ -119,22 +177,28 @@ def build_visual_brief_prompts(
         "避免前后镜主体/场景毫无关联的跳跃；"
         "同时每镜 visual_brief 只表达本段 text 内容，禁止提前画后续段落情节。"
     )
+    example = (
+        _VISUAL_BRIEF_JSON_EXAMPLE_PARTIAL
+        if partial
+        else _VISUAL_BRIEF_JSON_EXAMPLE_FULL
+    )
     system = (
         f"{resolve_style_rules(profile_style).role}输出 JSON，字段：segments。"
         f"{seg_rule}"
         f"{supplementary_system_clause(supplementary_info)}"
-        f"{json_output_clause(_VISUAL_BRIEF_JSON_EXAMPLE)}"
+        f"{json_output_clause(example)}"
     )
     seg_lines = format_visual_brief_segments_for_prompt(
         segments,
         include_dialogue=(profile_style == CONTENT_STYLE_DAILY_STORY),
+        segment_indices=segment_indices,
     )
     user = append_supplementary_to_user(
         (
             f"标题：{title}\n"
             f"全片 visual_style：{visual_style or '（待你输出）'}\n\n"
             f"【口播全文 narration】（供把握画面节奏与连贯性，勿改写）：\n{narration}\n\n"
-            f"【各分镜口播 text】（已固定，须逐段生成 visual_brief）：\n"
+            f"【各分镜口播 text】（已固定，须按标记生成 visual_brief）：\n"
             f"{seg_lines}"
         ),
         supplementary_info,

@@ -313,7 +313,7 @@ def run_script_prompts(
     if prompt_type in ("image_prompt", "motion", "sd15"):
         return _run_image_prompts(job_id, segment_indices=segment_indices)
     if prompt_type == "visual_brief":
-        return _run_visual_brief(job_id)
+        return _run_visual_brief(job_id, segment_indices=segment_indices)
     if prompt_type == "narration":
         return _run_narration(job_id)
     raise ValueError(f"unsupported prompt_type: {prompt_type}")
@@ -454,31 +454,73 @@ def _run_image_prompts(
     return _reload_job(job_id)
 
 
-def _run_visual_brief(job_id: int) -> dict:
-    """为已有脚本重新生成画面描述（visual_brief）。"""
+def _run_visual_brief(
+    job_id: int,
+    *,
+    segment_indices: list[int] | None = None,
+) -> dict:
+    """为已有脚本重新生成画面描述（visual_brief）。
+
+    segment_indices 非空时只更新这些分镜，其余 visual_brief 保持不变。
+    """
     from app.repositories import repo_job_log, repo_job, repo_segment
     from app.services.llm.llm_mgr import llm_mgr
+    from app.utils.job_info import CONTENT_STYLE_DAILY_STORY, content_style_from_job
 
     job = _reload_job(job_id)
     script = dict(job.get("script_json") or {})
     if not script.get("segments"):
         raise ValueError("script has no segments")
 
-    updated = llm_mgr.generate_script(
-        script.get("title") or job.get("title") or "",
-        existing_script=script,
-        retry_scope="visual_brief",
-        job=job,
+    logger.info(
+        "job %s script/visualBrief: %s",
+        job_id,
+        f"segment_indices={segment_indices}"
+        if segment_indices
+        else f"segments={len(script.get('segments') or [])}",
     )
+
+    updated = llm_mgr.fill_visual_briefs(
+        script,
+        job=job,
+        segment_indices=segment_indices,
+    )
+
+    if content_style_from_job(job) == CONTENT_STYLE_DAILY_STORY:
+        from app.services.daily_story.cast import (
+            scrub_cast_leaks,
+            speakers_from_dialogue,
+        )
+
+        wanted = {int(i) for i in segment_indices} if segment_indices else None
+        for seg in updated.get("segments") or []:
+            idx = int(seg.get("segment_index") or 0)
+            if wanted is not None and idx not in wanted:
+                continue
+            allowed = speakers_from_dialogue(seg.get("dialogue") or [])
+            cleaned = scrub_cast_leaks(str(seg.get("visual_brief") or ""), allowed)
+            if cleaned != seg.get("visual_brief"):
+                seg["visual_brief"] = cleaned
 
     with connection() as conn:
         repo_job.update_job(conn, job_id, script_json=updated)
         repo_segment.insert_segments(conn, job_id, updated.get("segments", []))
         repo_job_log.append_log(
-            conn, job_id, "script", "visual_brief regenerated",
+            conn,
+            job_id,
+            "script",
+            (
+                f"visual_brief regenerated: segment_indices={segment_indices}"
+                if segment_indices
+                else "visual_brief regenerated"
+            ),
         )
         repo_job.update_job(conn, job_id, status="pending")
-    logger.info("job %s visual_brief regenerated", job_id)
+    logger.info(
+        "job %s visual_brief regenerated %s",
+        job_id,
+        f"segment_indices={segment_indices}" if segment_indices else "all",
+    )
     return _reload_job(job_id)
 
 
