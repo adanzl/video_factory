@@ -275,9 +275,17 @@ class MockLLMClient(LLMClient):
         self,
         title: str,
         narration: str,
+        *,
+        content_style: str | None = None,
     ) -> str:
         _ = narration
-        cleaned = re.sub(r"\s+", "", title.strip()) or "科普"
+        cleaned = re.sub(r"\s+", "", title.strip()) or "日常"
+        if content_style == "daily_story":
+            return (
+                f"家里又吵起来了：{cleaned}。\n"
+                f"姐弟抬杠笑点一触即发。\n"
+                f"#亲子日常 #{cleaned}"
+            )
         return (
             f"你以为自己懂{cleaned}？很多人第一反应都错了。\n"
             f"一分钟讲清核心原理，帮你看懂常见误区。\n"
@@ -288,11 +296,22 @@ class MockLLMClient(LLMClient):
         self,
         title: str,
         narration: str,
+        *,
+        content_style: str | None = None,
     ) -> list[str]:
         _ = narration
-        import re
-
-        cleaned = re.sub(r"\s+", "", title.strip()) or "科普"
+        cleaned = re.sub(r"\s+", "", title.strip()) or "日常"
+        if content_style == "daily_story":
+            return [
+                "#亲子日常",
+                "#儿童对话",
+                "#姐弟",
+                "#家庭搞笑",
+                "#育儿",
+                "#生活日常",
+                "#昭墨日常",
+                f"#{cleaned}",
+            ]
         return [
             "#科普",
             "#冷知识",

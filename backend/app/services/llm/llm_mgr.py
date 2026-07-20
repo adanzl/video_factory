@@ -125,6 +125,8 @@ class LLMClient:
         self,
         title: str,
         narration: str,
+        *,
+        content_style: str | None = None,
     ) -> str:
         raise NotImplementedError
 
@@ -132,6 +134,8 @@ class LLMClient:
         self,
         title: str,
         narration: str,
+        *,
+        content_style: str | None = None,
     ) -> list[str]:
         raise NotImplementedError
 
@@ -534,11 +538,17 @@ class LLMMgr:
         self,
         title: str,
         narration: str,
+        *,
+        content_style: str | None = None,
     ) -> str:
         logger.info("[SCRIPT] generate video description start title=%r", title)
         started = time.perf_counter()
         try:
-            description = self._get_client().generate_video_description(title, narration)
+            description = self._get_client().generate_video_description(
+                title,
+                narration,
+                content_style=content_style,
+            )
         except Exception:
             logger.exception("[SCRIPT] generate video description failed title=%r", title)
             raise
@@ -555,11 +565,17 @@ class LLMMgr:
         self,
         title: str,
         narration: str,
+        *,
+        content_style: str | None = None,
     ) -> list[str]:
         logger.info("[SCRIPT] generate tags start title=%r", title)
         started = time.perf_counter()
         try:
-            tags = self._get_client().generate_tags(title, narration)
+            tags = self._get_client().generate_tags(
+                title,
+                narration,
+                content_style=content_style,
+            )
         except Exception:
             logger.exception("[SCRIPT] generate tags failed title=%r", title)
             raise

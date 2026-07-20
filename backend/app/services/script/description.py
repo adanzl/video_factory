@@ -4,8 +4,27 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.utils.job_info import CONTENT_STYLE_DAILY_STORY
 
-def build_video_description_system_prompt() -> str:
+
+def build_video_description_system_prompt(
+    *,
+    content_style: str | None = None,
+) -> str:
+    if content_style == CONTENT_STYLE_DAILY_STORY:
+        return (
+            "你是 B 站家庭日常对话短剧简介撰写师。根据视频标题与完整对白口播，"
+            "输出 JSON，字段 video_description。"
+            "video_description 为投稿简介正文，适合粘贴到 B 站视频介绍栏。"
+            "视频约 2 分钟，简介宜短：总字数 60～120，2～3 行即可。"
+            "面向孩子和有娃的大人：第一行一句钩子（日常反差或孩子金句，勿平淡复述标题）；"
+            "第二行点出本集姐弟/亲子笑点；"
+            "末尾附 1～2 个相关话题标签，格式 #标签名。"
+            "勿写长列表、勿堆砌点赞收藏等互动话术；口语自然，事实与口播一致，不得编造。"
+            "禁止：医疗养生承诺、理财荐股、时政情感、虚假夸张标题党、外链与联系方式；"
+            "禁止套用科普话术（如「一分钟讲清原理」）。"
+            'JSON 输出样例：{"video_description": "钩子句。本集笑点。#亲子日常 #儿童对话"}'
+        )
     return (
         "你是 B 站科普短视频简介撰写师。根据视频标题与完整口播，输出 JSON，字段 video_description。"
         "video_description 为投稿简介正文，适合粘贴到 B 站视频介绍栏。"
@@ -37,10 +56,15 @@ def parse_video_description_payload(raw: dict[str, Any]) -> str:
     return desc.strip()
 
 
-def build_video_description_prompts(title: str, narration: str) -> dict[str, str]:
+def build_video_description_prompts(
+    title: str,
+    narration: str,
+    *,
+    content_style: str | None = None,
+) -> dict[str, str]:
     return {
         "step": "video_description",
         "label": "视频介绍",
-        "system": build_video_description_system_prompt(),
+        "system": build_video_description_system_prompt(content_style=content_style),
         "user": build_video_description_user_prompt(title=title, narration=narration),
     }

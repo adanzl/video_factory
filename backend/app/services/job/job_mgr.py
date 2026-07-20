@@ -941,6 +941,7 @@ class JobMgr:
 
     def generate_video_description(self, job_id: int) -> dict:
         from app.services.llm.llm_mgr import llm_mgr
+        from app.utils.job_info import content_style_from_job
 
         with connection() as conn:
             job = repo_job.get_job(conn, job_id)
@@ -954,7 +955,11 @@ class JobMgr:
             if not narration:
                 raise ValueError("narration is empty")
 
-            description = llm_mgr.generate_video_description(title, narration)
+            description = llm_mgr.generate_video_description(
+                title,
+                narration,
+                content_style=content_style_from_job(job),
+            )
             updated_script = dict(script)
             updated_script["video_description"] = description
 
@@ -964,6 +969,7 @@ class JobMgr:
 
     def generate_tags(self, job_id: int) -> dict:
         from app.services.llm.llm_mgr import llm_mgr
+        from app.utils.job_info import content_style_from_job
 
         with connection() as conn:
             job = repo_job.get_job(conn, job_id)
@@ -977,7 +983,11 @@ class JobMgr:
             if not narration:
                 raise ValueError("narration is empty")
 
-            tags = llm_mgr.generate_tags(title, narration)
+            tags = llm_mgr.generate_tags(
+                title,
+                narration,
+                content_style=content_style_from_job(job),
+            )
             updated_script = dict(script)
             updated_script["tags"] = tags
 
