@@ -361,8 +361,9 @@ const lazyCoverPreviewFullUrl = computed(() => lazyMediaSrc(coverPreviewFullUrl.
 const lazyCoverPreviewList = computed(() => (lazyCoverPreviewFullUrl.value ? [lazyCoverPreviewFullUrl.value] : []));
 
 const endUrl = computed(() => {
-  const base = getMediaFileUrl(props.job.end_path ?? "");
-  return base ? `${base}?v=${endCacheVer.value}` : "";
+  const path = props.job.end_path ?? "";
+  if (!path.trim()) return "";
+  return getMediaFileUrl(path, endCacheVer.value);
 });
 const lazyEndUrl = computed(() => lazyMediaSrc(endUrl.value, props.stageActive));
 
@@ -492,6 +493,8 @@ const handleRun = async (toEnd: boolean) => {
     }
     await runJobStageAction("intro", payload);
     introCacheVer.value++;
+    coverCacheVer.value++;
+    endCacheVer.value++;
     ElMessage.success(`已提交${actionLabel}，任务已开始执行`);
     emit("refresh");
   } catch (error) {
@@ -596,6 +599,7 @@ watch(
   () => props.job.end_path,
   () => {
     endLoadError.value = "";
+    endCacheVer.value++;
   }
 );
 </script>
