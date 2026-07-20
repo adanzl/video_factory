@@ -19,6 +19,20 @@ from app.utils.media import (
 )
 
 
+def _minimal_image_script() -> dict:
+    return {
+        "title": "测试",
+        "visual_style": "画风",
+        "segments": [
+            {
+                "segment_index": 1,
+                "text": "口播",
+                "visual_brief": "画面",
+            },
+        ],
+    }
+
+
 def test_narration_word_range_aligns_min_with_validation():
     target = 1318
     lo, hi = narration_word_range(target)
@@ -45,9 +59,37 @@ def test_build_image_prompts_discourages_generic_motion():
     )
     assert "禁止套话" in prompts["user"]
     assert "各段互不重复" in prompts["user"]
+    assert "禁止写人物或任何有生命主体的动作" in prompts["user"]
+    assert "禁止写人物或任何有生命主体的动作" in prompts["system"]
     assert "炉口青烟缓缓上升" in prompts["system"]
-    assert "卡通科普插画风" in prompts["system"]
-    assert "明快蓝橙主色调" in prompts["system"]
+    assert "不修改、不替换 visual_style" in prompts["system"]
+    assert "非绘本水彩" in prompts["system"]
+    assert "明快蓝橙主色调" not in prompts["system"]
+    assert "3D卡通科普" in prompts["user"]
+
+
+def test_build_image_prompts_life_keeps_no_spoil_ahead():
+    prompts = build_image_prompts(
+        _minimal_image_script(),
+        content_style="life_experience",
+        job={"pipeline": "standard", "content_style": "life_experience"},
+    )
+    assert "禁提前画后续段落" in prompts["system"]
+    assert "禁可读大段文字/水印/品牌Logo" in prompts["system"]
+
+
+def test_build_image_prompts_sd15_keeps_style_body():
+    """SD15 附加英文规则，不替换风格正文。"""
+    prompts = build_image_prompts(
+        _minimal_image_script(),
+        content_style="science_child",
+        include_sd15_prompt=True,
+        job={"pipeline": "standard", "content_style": "science_child"},
+    )
+    assert "非绘本水彩" in prompts["system"]
+    assert "不修改、不替换 visual_style" in prompts["system"]
+    assert "sd15_prompt_en" in prompts["system"]
+    assert "实际 SD1.5 出图以 sd15_prompt_en 为准" in prompts["system"]
 
 
 def test_build_voiceover_standard_prompts_science_child_skips_visual_style():
@@ -117,6 +159,69 @@ def test_build_image_prompts_history_mystery_forbids_cartoon():
     )
     assert "禁止卡通/绘本/扁平插画风" in prompts["system"]
     assert "你是历史悬案视频文生图" in prompts["system"]
+
+
+def test_build_image_prompts_role_matches_content_style():
+    script = _minimal_image_script()
+    expected = {
+        "history_mystery": "历史悬案视频文生图",
+        "science_child": "童趣科普视频文生图",
+        "tech_science": "科技/产业科普视频文生图",
+        "life_experience": "生活避坑/经验类视频文生图",
+        "daily_story": "儿童日常故事视频文生图",
+    }
+    for style, role_snip in expected.items():
+        prompts = build_image_prompts(
+            script,
+            content_style=style,
+            job={"pipeline": "standard", "content_style": style},
+        )
+        assert role_snip in prompts["system"]
+        assert "你是科普视频文生图" not in prompts["system"]
+
+
+def test_build_image_prompts_orientation_label_unified():
+    """各风格横竖屏只差 orientation 标签，文案格式统一。"""
+    script = _minimal_image_script()
+    for style, marker in [
+        ("science_child", "非绘本水彩"),
+        ("tech_science", "不修改、不替换 visual_style"),
+        ("life_experience", "禁可读大段文字/水印/品牌Logo"),
+        ("history_mystery", "禁止卡通/绘本/扁平插画风"),
+        ("daily_story", "系统在出图前硬编码拼接"),
+    ]:
+        portrait = build_image_prompts(
+            script,
+            orientation="portrait",
+            content_style=style,
+            job={"pipeline": "standard", "content_style": style},
+        )
+        landscape = build_image_prompts(
+            script,
+            orientation="landscape",
+            content_style=style,
+            job={"pipeline": "standard", "content_style": style},
+        )
+        assert marker in portrait["system"]
+        assert "适配9:16竖屏构图" in portrait["system"]
+        assert "适配16:9横屏构图" in landscape["system"]
+        assert "适配9:16竖屏构图" not in landscape["system"]
+        assert "适配16:9横屏构图" not in portrait["system"]
+        # 画风细节不在 system 硬编码，由 user 的 visual_style 提供
+        assert "明快蓝橙主色调" not in portrait["system"]
+        assert "电影级写实科技视觉" not in portrait["system"]
+
+
+def test_wrap_image_prompts_daily_hardcodes_style():
+    from app.services.script.image_prompt import wrap_image_prompts
+
+    segments = [{"image_prompt": "客厅里对峙。"}]
+    wrap_image_prompts(segments, content_style="daily_story")
+    prompt = segments[0]["image_prompt"]
+    assert prompt.startswith("基于参考图调整人物动作")
+    assert "昭昭" in prompt
+    assert "儿童情绪涂鸦风格" in prompt
+    assert prompt.endswith("客厅里对峙。")
 
 
 def test_build_voiceover_standard_prompts_focuses_on_total_length():

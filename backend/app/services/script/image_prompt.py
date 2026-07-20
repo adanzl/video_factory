@@ -10,14 +10,19 @@ from app.utils.job_info import (
     CONTENT_STYLE_HISTORICAL_MYSTERY,
     CONTENT_STYLE_LIFE_EXPERIENCE,
     CONTENT_STYLE_SCIENCE_CHILD,
+    CONTENT_STYLE_TECH_SCIENCE,
     ORIENTATION_LANDSCAPE,
 )
 
-_DAILY_STORY_I2I_PREFIX = ("基于参考图调整人物动作，保留" + DAILY_STORY_CHARACTERS +
-                           "的基本外貌特征。"
-                           "儿童情绪涂鸦风格，彩铅和蜡笔混合笔触，用力不均的线条，"
-                           "主观夸张变形，高饱和色彩，涂色出界，"
-                           "橡皮擦拭痕迹，手工感，孩子气的构图。")
+_DAILY_STORY_I2I_PREFIX = (
+    "基于参考图调整人物动作，保留"
+    + DAILY_STORY_CHARACTERS
+    + "的基本外貌特征。"
+    "儿童情绪涂鸦风格，彩铅和蜡笔混合笔触，用力不均的线条，"
+    "主观夸张变形，高饱和色彩，涂色出界，"
+    "橡皮擦拭痕迹，手工感，孩子气的构图。"
+)
+# 画风必须硬编码进 wrap：LLM 易漏写，出图侧不能依赖模型自带风格句
 
 # 硬编码后期缀，daily_story 出图后自动拼接
 _DAILY_STORY_STYLE_SUFFIX = ""
@@ -63,7 +68,7 @@ _IMAGE_PROMPT_DIMENSIONS_FULL = (
     "篇幅100-180字，连贯中文，禁用维度标签。"
     "按风格→主体→场景→光照→构图→质量顺序："
     "①视觉风格（遵循 visual_style 定调，置于句首）；"
-    "主体（角色须写年龄/发型/脸型/服装/身高体型等外貌特征，与 visual_style 主角描述一致；表情、姿态、动作）；"
+    "②主体（角色须写年龄/发型/脸型/服装/身高体型等外貌特征，与 visual_style 主角描述一致；表情、姿态、动作）；"
     "③场景（前景/中景/背景）；"
     "④光照（主辅光、明暗）；⑤构图（景别、占比、留白）；"
     "⑥写材质纹理光影层次，禁4K/8K/分辨率套话与空话。"
@@ -73,30 +78,25 @@ _IMAGE_PROMPT_DIMENSIONS_FULL = (
     "【逐段自检】每段 image_prompt 须独立覆盖全部六维，逐段对照六维清单自查，缺则补写，禁止省略任何维度。"
 )
 
-_IMAGE_PROMPT_RULE_SCIENCE_PORTRAIT = (
-    "image_prompt须严格遵循visual_style画风定调，全片统一：卡通科普插画风，"
-    "明快蓝橙主色调，轮廓清晰、色块分明，偏科普示意图质感；"
-    "非绘本水彩、非电影级写实摄影，适配9:16竖屏构图。"
-    + _IMAGE_PROMPT_DIMENSIONS_FULL
-)
-
-_IMAGE_PROMPT_RULE_SCIENCE_LANDSCAPE = _IMAGE_PROMPT_RULE_SCIENCE_PORTRAIT.replace(
-    "适配9:16竖屏构图", "适配16:9横屏构图"
-)
-
-_IMAGE_PROMPT_RULE_REALISTIC_PORTRAIT = (
-    "image_prompt须严格遵循visual_style画风定调，全片统一：电影级写实视觉，布光考究、"
-    "景深自然、材质细节真实可辨，色彩明快有层次，适配9:16竖屏构图。"
-    + _IMAGE_PROMPT_DIMENSIONS_FULL
-)
-
-_IMAGE_PROMPT_RULE_LIFE_LANDSCAPE = (
+# 各风格正文：画风细节只跟 visual_style；规则只写约束与结构，用 {orientation} 占位
+_IMAGE_PROMPT_RULE_SCIENCE = (
     "image_prompt须严格遵循 visual_style 字段中已定义的全片画风定调，"
-    "不修改、不替换 visual_style 的内容，直接按其原文描述生成，适配16:9横屏构图。"
-    + _IMAGE_PROMPT_DIMENSIONS_FULL.replace(
-        "禁提前画后续段落。",
-        "禁可读大段文字/水印/品牌Logo。",
-    )
+    "不修改、不替换 visual_style 的内容，直接按其原文描述生成；"
+    "非绘本水彩、非电影级写实摄影，适配{orientation}构图。"
+    + _IMAGE_PROMPT_DIMENSIONS_FULL
+)
+
+_IMAGE_PROMPT_RULE_REALISTIC = (
+    "image_prompt须严格遵循 visual_style 字段中已定义的全片画风定调，"
+    "不修改、不替换 visual_style 的内容，直接按其原文描述生成，适配{orientation}构图。"
+    + _IMAGE_PROMPT_DIMENSIONS_FULL
+)
+
+_IMAGE_PROMPT_RULE_LIFE = (
+    "image_prompt须严格遵循 visual_style 字段中已定义的全片画风定调，"
+    "不修改、不替换 visual_style 的内容，直接按其原文描述生成，适配{orientation}构图。"
+    + _IMAGE_PROMPT_DIMENSIONS_FULL
+    + "另禁可读大段文字/水印/品牌Logo。"
 )
 
 _IMAGE_PROMPT_RULE_DAILY_STORY = (
@@ -106,14 +106,16 @@ _IMAGE_PROMPT_RULE_DAILY_STORY = (
     "按场景→动作→光照→构图顺序："
     "①场景（交代空间位置，如客厅玄关/卧室床上/学校教室等）；"
     "②角色动作表情（每个角色须写明当前动作与面部表情，"
-    "不得重复发型/服装等外貌特征——系统已通过参考图前缀自动注入）；"
+    "不得重复发型/服装等外貌特征——系统已通过参考图前缀自动注入；"
+    "妈妈无参考图时例外，须按无参考图角色规则写外貌）；"
     "③光照（主辅光、明暗）；④构图（景别、占比、留白）。"
     "【约束】仅单帧静态，禁连续运动/时间推移，动态只放 motion_prompt；"
     "禁写实摄影风格、禁卡通以外画风。"
     "【时间约束】禁止使用「先是…接着…」「然后」「镜头切至」等描述时间推移或镜头切换的词语；整段仅描述一帧静态画面。"
     "【表情要求】image_prompt必须写明每个角色当前的面部表情（如专注皱眉、张大嘴巴、眯眼笑等），"
     "表情须对标对话情绪强度（争吵时瞪眼张嘴吵架脸、平静时微笑放松），不得仅写动作忽略表情。"
-    + '内容写作范例：\'新场景中昭昭踮起脚尖，右手指在空中虚画一个"昭"字，身体略向左倾以保持平衡，脸上是认真专注的神情，嘴唇抿紧、眼睛看着手指画的线条；灿灿站在一旁，双手抱在胸前，撇着嘴摇头，马尾辫随之晃动，眼神略带嘲笑。背景是客厅墙壁，挂着家庭照片。顶部吊灯暖光投射，照亮"昭"字笔画区域。中近景构图，昭昭在左、灿灿在右，头顶留白。\''
+    "【说明】画风与参考图指令由系统在出图前硬编码拼接，LLM 只写场景核心内容，勿在 image_prompt 重复整段画风套话。"
+    + '内容写作范例：\'新场景中昭昭踮起脚尖，右手指在空中虚画一个"昭"字，身体略向左倾以保持平衡，脸上是认真专注的神情，嘴唇抿紧、眼睛看着手指画的线条；灿灿站在一旁，双手抱在胸前，嘴角下撇，眼神略带嘲笑。背景是客厅墙壁，挂着家庭照片。顶部吊灯暖光投射，照亮"昭"字笔画区域。中近景构图，昭昭在左、灿灿在右，头顶留白。\''
 )
 
 # 无参考图角色规则，仅当 segment 涉及该角色时追加
@@ -128,36 +130,29 @@ _IMAGE_PROMPT_EXAMPLE_WITH_MOM = (
 )
 
 
+# 与 quality.image_prompt / user 一致：禁人物主动作，只写环境/物体微动
 _IMAGE_PROMPT_MOTION_TAIL = (
-    "【motion_prompt】中文，15-80字，紧扣 image_prompt 主体与场景。"
-    "写主体10秒内具体动作/神态变化，可补1个环境联动（烟、水、光影等），"
-    "须有方向、速度等细节，禁模糊词；末尾说明稳定元素。"
+    "【motion_prompt】中文，15-80字，紧扣 image_prompt 已出现的具体物体与场景。"
+    "只写画面内无生命元素在约10秒内的细微物理变化（烟、水、光影、尘埃、火焰、布料等），"
+    "须有方向、速度等细节，禁模糊词；末尾说明哪些主体保持稳定。"
     "镜头仅可极缓推近/拉远/平移。"
+    "禁止写人物或任何有生命主体的动作/神态；"
     "禁抽象特效词（光效、光晕、粒子、能量、光圈、脉动、闪电、闪烁、图标、UI元素等）与镜头套话。"
     "正例：丹炉炉盖被蒸汽顶起又落下，缝隙中白烟成股涌出向右飘散，丹炉整体位置与造型保持不变。"
-    "反例：小偷手指微微弯曲。（仅肢体动作，无环境联动）"
+    "反例：小偷手指微微弯曲。（人物肢体动作，禁止）"
 )
 
 _IMAGE_PROMPT_RULE_SD15 = (
-    "篇幅精简，覆盖六维（风格→主体→场景→光照→构图→质量），连贯中文，禁维度标签。"
-    "写材质纹理光影，禁4K/8K套话与空话。"
-    "【约束】仅单帧静态，动态只放 motion_prompt；仅本段内容。"
-    "实际 SD1.5 出图以 sd15_prompt_en 为准。"
-    "image_prompt 用中文，sd15_prompt_en 用英文。"
+    "【SD1.5】另输出 sd15_prompt_en：篇幅精简的英文提示（20～40词），"
+    "实际 SD1.5 出图以 sd15_prompt_en 为准；image_prompt 仍用中文保留六维信息供校对。"
 )
 
-_IMAGE_PROMPT_RULE_MYSTERY_PORTRAIT = (
-    "每段image_prompt须严格遵循visual_style画风定调，全片统一：电影级写实历史再现，"
-    "光影考究、暗部有层次、低饱和古风色调，适配9:16竖屏构图；"
+_IMAGE_PROMPT_RULE_MYSTERY = (
+    "image_prompt须严格遵循 visual_style 字段中已定义的全片画风定调，"
+    "不修改、不替换 visual_style 的内容，直接按其原文描述生成，适配{orientation}构图；"
     "禁止卡通/绘本/扁平插画风。"
-    + _IMAGE_PROMPT_DIMENSIONS_FULL.replace(
-        "禁提前画后续段落。",
-        "禁可读文字、奏折、诏书等文字元素。",
-    )
-)
-
-_IMAGE_PROMPT_RULE_MYSTERY_LANDSCAPE = _IMAGE_PROMPT_RULE_MYSTERY_PORTRAIT.replace(
-    "适配9:16竖屏构图", "适配16:9横屏构图"
+    + _IMAGE_PROMPT_DIMENSIONS_FULL
+    + "另禁可读文字、奏折、诏书等文字元素。"
 )
 
 _SD15_PROMPT_EN_RULE = (
@@ -192,7 +187,7 @@ _IMAGE_PROMPTS_JSON_EXAMPLE = """{
       "segment_index": 1,
       "image_prompt": """ + _IMAGE_PROMPT_JSON_EXAMPLE_TEXT + """,
       "motion_prompt": "炉口青烟缓缓上升，火光轻闪，镜头极缓推进",
-      "sd15_prompt_en": "cross-section diagram of lung alveoli, air sacs highlighted, medical illustration"
+      "sd15_prompt_en": "bronze alchemy furnace with green flame, close-up, dark workshop"
     }
   ]
 }"""
@@ -218,35 +213,196 @@ from app.services.script.prompt_common import (  # noqa: E402
 )
 
 
+def _orientation_label(orientation: str) -> str:
+    """横竖屏文案统一：9:16竖屏 / 16:9横屏。"""
+    if orientation == ORIENTATION_LANDSCAPE:
+        return "16:9横屏"
+    return "9:16竖屏"
+
+
+def _with_orientation(template: str, orientation: str) -> str:
+    return template.format(orientation=_orientation_label(orientation))
+
+
+_IMAGE_PROMPT_ROLES: dict[str, str] = {
+    CONTENT_STYLE_HISTORICAL_MYSTERY: "你是历史悬案视频文生图与运动提示词专家。",
+    CONTENT_STYLE_SCIENCE_CHILD: "你是童趣科普视频文生图与运动提示词专家。",
+    CONTENT_STYLE_TECH_SCIENCE: "你是科技/产业科普视频文生图与运动提示词专家。",
+    CONTENT_STYLE_LIFE_EXPERIENCE: "你是生活避坑/经验类视频文生图与运动提示词专家。",
+    CONTENT_STYLE_DAILY_STORY: "你是儿童日常故事视频文生图与运动提示词专家。",
+}
+
+_IMAGE_PROMPT_STYLE_BODIES: dict[str, str] = {
+    CONTENT_STYLE_DAILY_STORY: _IMAGE_PROMPT_RULE_DAILY_STORY,
+    CONTENT_STYLE_HISTORICAL_MYSTERY: _IMAGE_PROMPT_RULE_MYSTERY,
+    CONTENT_STYLE_LIFE_EXPERIENCE: _IMAGE_PROMPT_RULE_LIFE,
+    CONTENT_STYLE_SCIENCE_CHILD: _IMAGE_PROMPT_RULE_SCIENCE,
+}
+
+_MAP_COMPLIANCE = (
+    "【地图合规】image_prompt禁止出现「世界地图」「全球地图」字样；"
+    "地图场景必须限定为局部区域地图（如中东地图、非洲地图），"
+    "不得出现完整世界地图或包含东亚/中国部分的画面。"
+)
+
+_MOTION_USER_RULE = (
+    "motion_prompt 必须紧扣本段 image_prompt 中已出现的具体物体，从中选 1-2 个写其细微动态，"
+    "禁止写人物或任何有生命主体的动作，禁止脱离画面编造元素，各段互不重复，禁止套话。"
+)
+
+
+def _image_prompt_role(content_style: str) -> str:
+    return _IMAGE_PROMPT_ROLES.get(
+        content_style,
+        "你是视频文生图与运动提示词专家。",
+    )
+
+
 def image_prompt_rule(*, orientation: str, content_style: str, sd15_mode: bool = False) -> str:
+    """按 content_style / orientation 选择文生图规则；sd15 仅附加，不替换风格正文。"""
     head = (
         "根据每段口播text、visual_brief与全片visual_style，扩写为文生图用的image_prompt"
         "和video用的motion_prompt。"
     )
+    # tech_science 等未单独列出的风格走电影级写实
+    body = _IMAGE_PROMPT_STYLE_BODIES.get(content_style, _IMAGE_PROMPT_RULE_REALISTIC)
+    text = head + _with_orientation(body, orientation) + _IMAGE_PROMPT_MOTION_TAIL
     if sd15_mode:
-        return head + _IMAGE_PROMPT_RULE_SD15 + _IMAGE_PROMPT_MOTION_TAIL
-    if content_style == CONTENT_STYLE_DAILY_STORY:
-        orient_text = "16:9横屏" if orientation == ORIENTATION_LANDSCAPE else "9:16竖屏"
-        return head + _IMAGE_PROMPT_RULE_DAILY_STORY.format(orientation=orient_text) + _IMAGE_PROMPT_MOTION_TAIL
-    if content_style == CONTENT_STYLE_HISTORICAL_MYSTERY:
-        body = _IMAGE_PROMPT_RULE_MYSTERY_LANDSCAPE if orientation == ORIENTATION_LANDSCAPE else _IMAGE_PROMPT_RULE_MYSTERY_PORTRAIT
-        return head + body + _IMAGE_PROMPT_MOTION_TAIL
-    if content_style == CONTENT_STYLE_LIFE_EXPERIENCE:
-        body = _IMAGE_PROMPT_RULE_LIFE_LANDSCAPE
-    elif content_style == CONTENT_STYLE_SCIENCE_CHILD:
-        body = (
-            _IMAGE_PROMPT_RULE_SCIENCE_LANDSCAPE
-            if orientation == ORIENTATION_LANDSCAPE
-            else _IMAGE_PROMPT_RULE_SCIENCE_PORTRAIT
+        text += _IMAGE_PROMPT_RULE_SD15
+    return text
+
+
+def _format_segment_brief(seg: dict, *, prefix: str = "") -> str:
+    return (
+        f"{prefix}segment {seg.get('segment_index')}: "
+        f"text={seg.get('text', '')!r}; visual_brief={seg.get('visual_brief', '')!r}"
+    )
+
+
+def _collect_segment_prompt_lines(
+    segments: list[dict],
+    segment_indices: list[int] | None,
+) -> tuple[list[str], set[int] | None]:
+    """拼装分镜行；返回 (lines, wanted)。wanted 为 None 表示全量生成。"""
+    if segment_indices is None:
+        return [_format_segment_brief(seg) for seg in segments], None
+
+    wanted = {int(idx) for idx in segment_indices}
+    # 目标段前后各留一段作上下文，便于 LLM 把握连贯性
+    extra: set[int] = set()
+    for idx in wanted:
+        if idx - 1 >= 1:
+            extra.add(idx - 1)
+        if idx + 1 <= len(segments):
+            extra.add(idx + 1)
+    extra -= wanted
+    shown = wanted | extra
+
+    lines: list[str] = []
+    for seg in segments:
+        idx = int(seg.get("segment_index", 0))
+        if idx not in shown:
+            continue
+        tag = "【仅上下文】" if idx in extra else "【需生成】"
+        lines.append(_format_segment_brief(seg, prefix=tag))
+    return lines, wanted
+
+
+def _has_mom_speaker(segments: list[dict], wanted: set[int] | None) -> bool:
+    for seg in segments:
+        idx = int(seg.get("segment_index", 0))
+        if wanted is not None and idx not in wanted:
+            continue
+        if any(d.get("speaker") == "妈妈" for d in (seg.get("dialogue") or [])):
+            return True
+    return False
+
+
+def _coverage_clause(*, partial: bool) -> str:
+    if partial:
+        return (
+            "image_prompts仅需输出标记为【需生成】的segment，"
+            "【仅上下文】分段无需输出。"
         )
-    elif orientation == ORIENTATION_LANDSCAPE:
-        body = _IMAGE_PROMPT_RULE_LIFE_LANDSCAPE.replace(
-            "生活Vlog质感写实画面",
-            "电影级写实视觉",
+    return "image_prompts须覆盖输入的每一段，segment_index一一对应，不得遗漏。"
+
+
+def _user_tail(*, include_sd15_prompt: bool) -> str:
+    if include_sd15_prompt:
+        head = (
+            "请为每段编写 image_prompt 与 motion_prompt。"
+            "image_prompt 按本风格规则写成一段连贯中文，勿用维度标签，不写分辨率套话。"
         )
+        tail = "同时为每段输出准确的 sd15_prompt_en。"
     else:
-        body = _IMAGE_PROMPT_RULE_REALISTIC_PORTRAIT
-    return head + body + _IMAGE_PROMPT_MOTION_TAIL
+        head = (
+            "请为每段扩写 image_prompt 与 motion_prompt。"
+            "image_prompt 按本风格规则写成一段连贯中文（勿用「主体：」等标签），"
+            "篇幅按画面复杂度充分写，不凑字数、不写4K/8K/分辨率等规格套话。"
+        )
+        tail = ""
+    return "\n\n" + head + _MOTION_USER_RULE + tail
+
+
+def _build_system_prompt(
+    *,
+    content_style: str,
+    orientation: str,
+    include_sd15_prompt: bool,
+    has_mom: bool,
+    partial: bool,
+) -> str:
+    fields = (
+        "、image_prompt、motion_prompt 与 sd15_prompt_en"
+        if include_sd15_prompt
+        else "、image_prompt 与 motion_prompt"
+    )
+    parts = [
+        f"{_image_prompt_role(content_style)}输出JSON，字段：image_prompts。",
+        f"image_prompts为数组，每项含segment_index{fields}。",
+        image_prompt_rule(
+            orientation=orientation,
+            content_style=content_style,
+            sd15_mode=include_sd15_prompt,
+        ),
+    ]
+    if has_mom:
+        parts.append(_IMAGE_PROMPT_RULE_NO_REF_CHARACTER)
+        parts.append(_IMAGE_PROMPT_EXAMPLE_WITH_MOM)
+    if include_sd15_prompt:
+        parts.append(_SD15_PROMPT_EN_RULE)
+    parts.append(_coverage_clause(partial=partial))
+    parts.append(_MAP_COMPLIANCE)
+    json_example = (
+        _IMAGE_PROMPTS_JSON_EXAMPLE
+        if include_sd15_prompt
+        else _IMAGE_PROMPTS_JSON_EXAMPLE_NO_SD15
+    )
+    parts.append(json_output_clause(json_example))
+    return "".join(parts)
+
+
+def _build_user_prompt(
+    script: dict[str, Any],
+    *,
+    lines: list[str],
+    include_sd15_prompt: bool,
+    supplementary_info: str | None,
+    feedback: str | None,
+) -> str:
+    user = append_supplementary_to_user(
+        (
+            f"视频标题：{script.get('title', '')}\n"
+            f"全片画风定调 visual_style：{script.get('visual_style', '')}\n\n"
+            "各分镜口播与画面描述：\n"
+            + "\n".join(lines)
+            + _user_tail(include_sd15_prompt=include_sd15_prompt)
+        ),
+        supplementary_info or script.get("supplementary_info"),
+    )
+    if feedback:
+        user += f"\n\n上次不合格：{feedback}。请按要求重写。"
+    return user
 
 
 def build_image_prompts(
@@ -266,91 +422,19 @@ def build_image_prompts(
         content_style=content_style,
     )
     segments = script.get("segments") or []
-    if segment_indices is not None:
-        wanted = {int(idx) for idx in segment_indices}
-        # 把目标分段前后各一段也作为上下文展示，帮助 LLM 理解剧情连贯性
-        extra_indices: set[int] = set()
-        for idx in wanted:
-            if idx - 1 >= 1:
-                extra_indices.add(idx - 1)
-            if idx + 1 <= len(segments):
-                extra_indices.add(idx + 1)
-        extra_indices -= wanted
-        all_shown = sorted(wanted | extra_indices, key=lambda x: x)
-        lines = []
-        for seg in segments:
-            idx = int(seg.get("segment_index", 0))
-            if idx not in all_shown:
-                continue
-            prefix = "【仅上下文】" if idx in extra_indices else "【需生成】"
-            lines.append(
-                f"{prefix}segment {idx}: "
-                f"text={seg.get('text', '')!r}; visual_brief={seg.get('visual_brief', '')!r}"
-            )
-        has_mom = any(
-            d.get("speaker") == "妈妈"
-            for seg in segments if int(seg.get("segment_index", 0)) in wanted
-            for d in (seg.get("dialogue") or [])
-        )
-    else:
-        lines = [
-            f"segment {seg['segment_index']}: "
-            f"text={seg.get('text', '')!r}; visual_brief={seg.get('visual_brief', '')!r}"
-            for seg in segments
-        ]
-        has_mom = any(
-            d.get("speaker") == "妈妈"
-            for seg in segments
-            for d in (seg.get("dialogue") or [])
-        )
-    json_example = _IMAGE_PROMPTS_JSON_EXAMPLE if include_sd15_prompt else _IMAGE_PROMPTS_JSON_EXAMPLE_NO_SD15
-    sd15_rule = _SD15_PROMPT_EN_RULE if include_sd15_prompt else ""
-    sd15_fields = "、image_prompt、motion_prompt 与 sd15_prompt_en" if include_sd15_prompt else "、image_prompt 与 motion_prompt"
-    role = (
-        "你是历史悬案视频文生图与运动提示词专家。"
-        if profile_style == CONTENT_STYLE_HISTORICAL_MYSTERY
-        else "你是科普视频文生图与运动提示词专家。"
+    lines, wanted = _collect_segment_prompt_lines(segments, segment_indices)
+    system = _build_system_prompt(
+        content_style=profile_style,
+        orientation=profile_orientation,
+        include_sd15_prompt=include_sd15_prompt,
+        has_mom=_has_mom_speaker(segments, wanted),
+        partial=wanted is not None,
     )
-    system = (
-        f"{role}输出JSON，字段：image_prompts。"
-        f"image_prompts为数组，每项含segment_index{sd15_fields}。"
-        f"{image_prompt_rule(orientation=profile_orientation, content_style=profile_style, sd15_mode=include_sd15_prompt)}"
-        f"{_IMAGE_PROMPT_RULE_NO_REF_CHARACTER if has_mom else ''}"
-        f"{_IMAGE_PROMPT_EXAMPLE_WITH_MOM if has_mom else ''}"
-        f"{sd15_rule}"
-        + ("image_prompts仅需输出标记为【需生成】的segment，【仅上下文】分段无需输出。"
-           if segment_indices is not None
-           else "image_prompts须覆盖输入的每一段，segment_index一一对应，不得遗漏。")
-        + "【地图合规】image_prompt禁止出现「世界地图」「全球地图」字样；"
-        "地图场景必须限定为局部区域地图（如中东地图、非洲地图），不得出现完整世界地图或包含东亚/中国部分的画面。"
-        f"{json_output_clause(json_example)}"
+    user = _build_user_prompt(
+        script,
+        lines=lines,
+        include_sd15_prompt=include_sd15_prompt,
+        supplementary_info=supplementary_info,
+        feedback=feedback,
     )
-    if include_sd15_prompt:
-        user_tail = (
-            "\n\n请为每段编写 image_prompt 与 motion_prompt。"
-            "image_prompt 按六维思路写成一段连贯中文，勿用维度标签，不写分辨率套话。"
-            "motion_prompt 必须紧扣本段 image_prompt 中已出现的具体物体，从中选 1-2 个写其细微动态，"
-            "禁止写人物或任何有生命主体的动作，禁止脱离画面编造元素，各段互不重复，禁止套话。"
-            "同时为每段输出准确的 sd15_prompt_en。"
-        )
-    else:
-        user_tail = (
-            "\n\n请为每段扩写 image_prompt 与 motion_prompt。"
-            "image_prompt 按六维思路写成一段连贯中文（勿用「主体：」等标签），"
-            "篇幅按画面复杂度充分写，不凑字数、不写4K/8K/分辨率等规格套话。"
-            "motion_prompt 必须紧扣本段 image_prompt 中已出现的具体物体，从中选 1-2 个写其细微动态，"
-            "禁止写人物或任何有生命主体的动作，禁止脱离画面编造元素，各段互不重复，禁止套话。"
-        )
-    user = append_supplementary_to_user(
-        (
-            f"视频标题：{script.get('title', '')}\n"
-            f"全片画风定调 visual_style：{script.get('visual_style', '')}\n\n"
-            "各分镜口播与画面描述：\n"
-            + "\n".join(lines)
-            + user_tail
-        ),
-        supplementary_info or script.get("supplementary_info"),
-    )
-    if feedback:
-        user += f"\n\n上次不合格：{feedback}。请按要求重写。"
     return prompt_step("image_prompts", system, user)
