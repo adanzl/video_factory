@@ -4,7 +4,7 @@ import sqlite3
 import sys
 sys.path.insert(0, ".")
 
-from app.services.script.board import build_image_prompts_prompts
+from app.services.script.image_prompt import build_image_prompts
 
 conn = sqlite3.connect("../data/data.db")
 conn.row_factory = sqlite3.Row
@@ -32,7 +32,7 @@ print(f"=== job_id={job_id} title={script.get('title', '')} ===")
 print(f"=== 目标分镜 segment_index={target_idx} (共 {len(segments)} 段) ===\n")
 
 # 生成单段提示词
-prompts = build_image_prompts_prompts(
+prompts = build_image_prompts(
     script,
     job={"id": job_id, **row},
     segment_indices=[target_idx],

@@ -4,12 +4,10 @@ from __future__ import annotations
 
 import re
 
-from app.services.script.board import (
-    build_image_prompts_prompts,
-    build_material_script_prompts,
-    build_narration_prompts,
-    build_visual_brief_prompts,
-)
+from app.services.script.image_prompt import build_image_prompts
+from app.services.script.visual_brief import build_visual_brief_prompts
+from app.services.script.voiceover_material import build_voiceover_material_prompts
+from app.services.script.voiceover_standard import build_voiceover_standard_prompts
 
 
 def _is_material_job(job: dict) -> bool:
@@ -68,7 +66,7 @@ def collect_prompts(
     prompts: list[dict[str, str]] = []
     if _is_material_job(job):
         prompts.append(
-            build_material_script_prompts(
+            build_voiceover_material_prompts(
                 title,
                 max_title_length=max_title_length,
                 narration_target_words=narration_target_words,
@@ -79,7 +77,7 @@ def collect_prompts(
         )
     else:
         prompts.append(
-            build_narration_prompts(
+            build_voiceover_standard_prompts(
                 title,
                 max_title_length=max_title_length,
                 narration_target_words=narration_target_words,
@@ -115,7 +113,7 @@ def collect_prompts(
                 build_visual_brief_prompts(followup_script, supplementary_info=extra, job=job)
             )
             prompts.append(
-                build_image_prompts_prompts(followup_script, supplementary_info=extra, job=job)
+                build_image_prompts(followup_script, supplementary_info=extra, job=job)
             )
 
     show_title_optimize = bool(narration and draft_title) and (

@@ -18,13 +18,14 @@ from app.services.script.tags import (
     parse_tags_payload,
 )
 from app.quality.image_prompt import MIN_IMAGE_PROMPT_CHARS, IMAGE_PROMPT_TARGET_CHARS
-from app.services.script.board import (
-    build_image_prompts_prompts,
-    build_material_script_prompts,
-    build_narration_expand_prompts,
-    build_narration_prompts,
-    build_segment_shrink_prompts,
-    build_visual_brief_prompts,
+from app.services.script.image_prompt import build_image_prompts
+from app.services.script.segment_split import apply_segments_from_voiceover
+from app.services.script.visual_brief import build_visual_brief_prompts
+from app.services.script.voiceover_material import build_voiceover_material_prompts
+from app.services.script.voiceover_standard import (
+    build_voiceover_standard_expand_prompts,
+    build_voiceover_standard_prompts,
+    build_voiceover_standard_shrink_prompts,
 )
 from app.services.script.optimize_title import (
     build_title_optimize_prompts,
@@ -56,7 +57,6 @@ from app.utils.media import (
     narration_accept_max_chars,
     narration_accept_min_chars,
     segment_text_char_cap,
-    split_narration_to_segments,
 )
 
 __all__ = ["DeepSeekClient", "MIN_IMAGE_PROMPT_CHARS"]
@@ -319,28 +319,6 @@ def _assemble_storyboard_narration(data: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
-def _apply_segments_from_narration(
-    data: dict[str, Any],
-    *,
-    segment_target_sec: float,
-    chars_per_sec: float | None = None,
-) -> dict[str, Any]:
-    from app.utils.media import DEFAULT_SPEECH_CHARS_PER_SEC
-
-    narration = str(data.get("narration") or "").strip()
-    if not narration:
-        raise ValueError("LLM narration response missing narration")
-    rate = chars_per_sec or DEFAULT_SPEECH_CHARS_PER_SEC
-    data["segments"] = split_narration_to_segments(
-        narration,
-        segment_target_sec,
-        chars_per_sec=rate,
-    )
-    if not data["segments"]:
-        raise ValueError("narration split produced no segments")
-    return _assemble_storyboard_narration(data)
-
-
 def _merge_visual_briefs(script: dict[str, Any], payload: dict[str, Any]) -> None:
     # visual_style 已由 _generate_storyboard 硬编码设置，忽略 LLM 输出
     by_index = {
@@ -475,7 +453,7 @@ class DeepSeekClient(LLMClient):
         default_mode = segments[0].get("visual_mode", "static_motion") if segments else "static_motion"
         for _ in range(_NARRATION_EXPAND_ATTEMPTS):
             raise_if_job_cancelled(job)
-            prompts = build_narration_expand_prompts(current, min_chars=min_chars, mode=mode)
+            prompts = build_voiceover_standard_expand_prompts(current, min_chars=min_chars, mode=mode)
             expanded, _ = self._chat_json(prompts["system"], prompts["user"], thinking_enabled=False)
             raise_if_job_cancelled(job)
             if mode == "narration_only":
@@ -514,7 +492,7 @@ class DeepSeekClient(LLMClient):
             return script
         cap = segment_text_char_cap(segment_target_sec)
         started = time.perf_counter()
-        prompts = build_segment_shrink_prompts(
+        prompts = build_voiceover_standard_shrink_prompts(
             script,
             segment_indices=segment_indices,
             cap=cap,
@@ -573,7 +551,7 @@ class DeepSeekClient(LLMClient):
         data: dict[str, Any] | None = None
         for attempt in range(_storyboard_length_max_attempts()):
             raise_if_job_cancelled(job)
-            prompts = build_narration_prompts(
+            prompts = build_voiceover_standard_prompts(
                 title,
                 feedback=length_feedback,
                 max_title_length=max_title_length,
@@ -693,7 +671,7 @@ class DeepSeekClient(LLMClient):
             job=job,
         )
         narration_elapsed = time.perf_counter() - narration_started
-        data = _apply_segments_from_narration(data, segment_target_sec=seg_target)
+        data = apply_segments_from_voiceover(data, segment_target_sec=seg_target)
         data = self._fill_visual_briefs(
             data,
             supplementary_info=supplementary_info,
@@ -720,7 +698,7 @@ class DeepSeekClient(LLMClient):
         segment_indices: list[int] | None = None,
         include_sd15_prompt: bool = False,
     ) -> dict[str, Any]:
-        prompts = build_image_prompts_prompts(
+        prompts = build_image_prompts(
             script,
             feedback=feedback,
             supplementary_info=supplementary_info,
@@ -1068,7 +1046,7 @@ class DeepSeekClient(LLMClient):
         data: dict[str, Any] | None = None
         for attempt in range(_storyboard_length_max_attempts()):
             raise_if_job_cancelled(job)
-            prompts = build_material_script_prompts(
+            prompts = build_voiceover_material_prompts(
                 title,
                 feedback=length_feedback,
                 max_title_length=max_title_length,

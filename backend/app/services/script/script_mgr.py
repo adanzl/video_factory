@@ -2,12 +2,15 @@
 
 术语：
 - **script**：脚本阶段产出的完整 JSON（分镜、口播、文生图提示词等）
-- **board**：口播分镜，script 生成的第一步（segments / narration / visual_brief）
-- 质检与前端 step id 仍用 ``storyboard``，与 board 同义
+- 质检与前端 step id 仍用 ``storyboard``，与口播分镜同义
 
 各子模块职责：
-- ``board`` 口播分镜、素材口播、扩写/缩字、文生图提示词构建
-- ``optimize_title`` / ``description`` 标题与简介
+- ``voiceover_standard`` 标准管线自由口播（A1/A4/A5）
+- ``voiceover_material`` 素材时间轴口播（B1）
+- ``visual_brief`` / ``image_prompt`` 画面概述与文生图（A2/A3）
+- ``segment_split`` 口播切分镜
+- ``prompt_common`` 跨功能提示词辅助
+- ``optimize_title`` / ``description`` / ``tags`` 标题简介标签
 - ``board_timeline`` 素材管线分镜时间线约束
 - ``compose`` 各子步骤 LLM 提示词组装
 """
@@ -17,12 +20,20 @@ from __future__ import annotations
 from typing import Any
 
 from app.services.llm.llm_mgr import llm_mgr
-from app.quality import image_prompt
-from app.services.script import board as script_board
+from app.quality import image_prompt as quality_image_prompt
 from app.services.script import description as script_description
 from app.services.script import compose as script_compose
 from app.services.script import board_timeline as script_board_timeline
 from app.services.script import optimize_title as script_optimize_title
+from app.services.script.image_prompt import build_image_prompts
+from app.services.script.segment_split import apply_segments_from_voiceover
+from app.services.script.visual_brief import build_visual_brief_prompts
+from app.services.script.voiceover_material import build_voiceover_material_prompts
+from app.services.script.voiceover_standard import (
+    build_voiceover_standard_expand_prompts,
+    build_voiceover_standard_prompts,
+    build_voiceover_standard_shrink_prompts,
+)
 
 __all__ = ["ScriptMgr", "script_mgr"]
 
@@ -30,24 +41,26 @@ __all__ = ["ScriptMgr", "script_mgr"]
 class ScriptMgr:
     """脚本阶段业务管理（对外统一收口）。"""
 
-    # --- board：口播分镜 ---
-    build_board_prompts = staticmethod(script_board.build_board_prompts)
-    build_storyboard_prompts = staticmethod(script_board.build_storyboard_prompts)
-    build_narration_prompts = staticmethod(script_board.build_narration_prompts)
-    build_visual_brief_prompts = staticmethod(script_board.build_visual_brief_prompts)
-    build_material_prompts = staticmethod(script_board.build_material_script_prompts)
-    build_narration_expand_prompts = staticmethod(script_board.build_narration_expand_prompts)
-    build_segment_shrink_prompts = staticmethod(script_board.build_segment_shrink_prompts)
+    # --- voiceover / visual / image ---
+    build_voiceover_standard_prompts = staticmethod(build_voiceover_standard_prompts)
+    build_voiceover_standard_expand_prompts = staticmethod(
+        build_voiceover_standard_expand_prompts
+    )
+    build_voiceover_standard_shrink_prompts = staticmethod(
+        build_voiceover_standard_shrink_prompts
+    )
+    build_voiceover_material_prompts = staticmethod(build_voiceover_material_prompts)
+    build_visual_brief_prompts = staticmethod(build_visual_brief_prompts)
+    build_image_prompts = staticmethod(build_image_prompts)
+    apply_segments_from_voiceover = staticmethod(apply_segments_from_voiceover)
 
-    # --- image_prompt：文生图提示词 ---
-    build_image_prompts = staticmethod(script_board.build_image_prompts_prompts)
-    image_prompt_min_chars = staticmethod(image_prompt.image_prompt_min_chars)
-    image_prompt_pass_chars = staticmethod(image_prompt.image_prompt_pass_chars)
-    image_prompt_target_chars = staticmethod(image_prompt.image_prompt_target_chars)
-    sd15_prompt_en_word_count = staticmethod(image_prompt.sd15_prompt_en_word_count)
-    sd15_prompt_en_ok = staticmethod(image_prompt.sd15_prompt_en_ok)
+    image_prompt_min_chars = staticmethod(quality_image_prompt.image_prompt_min_chars)
+    image_prompt_pass_chars = staticmethod(quality_image_prompt.image_prompt_pass_chars)
+    image_prompt_target_chars = staticmethod(quality_image_prompt.image_prompt_target_chars)
+    sd15_prompt_en_word_count = staticmethod(quality_image_prompt.sd15_prompt_en_word_count)
+    sd15_prompt_en_ok = staticmethod(quality_image_prompt.sd15_prompt_en_ok)
     format_image_prompt_retry_warning = staticmethod(
-        image_prompt.format_image_prompt_retry_warning
+        quality_image_prompt.format_image_prompt_retry_warning
     )
 
     # --- title / description ---
