@@ -230,6 +230,7 @@ def _clear_stage_self(
             script_json=reset_script_json,
             intro_path=None,
             cover_path=None,
+            end_path=None,
             final_path=None,
             quality_report=None,
         )
@@ -239,16 +240,25 @@ def _clear_stage_self(
             if pipe != PIPELINE_MATERIAL:
                 _clear_all_segment_media(conn, job_id, media_dir)
             _clear_merge_artifacts(media_dir)
+            _delete_files([media_dir / "end.mp4"])
             merge_work = media_dir / "merge_work"
             if merge_work.exists():
                 shutil.rmtree(merge_work)
         return
 
     if stage == "intro":
-        repo_job.update_job(conn, job_id, intro_path=None, cover_path=None)
+        # 片头/封面重生成时同步清片尾（chat 流水线会在 intro 阶段重出 end.mp4）
+        repo_job.update_job(
+            conn, job_id, intro_path=None, cover_path=None, end_path=None
+        )
         if media_dir.exists():
             _delete_files(
-                [media_dir / "intro.mp4", media_dir / "intro.png", media_dir / "cover.jpg"]
+                [
+                    media_dir / "intro.mp4",
+                    media_dir / "intro.png",
+                    media_dir / "cover.jpg",
+                    media_dir / "end.mp4",
+                ]
             )
         return
 
