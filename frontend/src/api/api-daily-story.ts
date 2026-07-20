@@ -62,7 +62,7 @@ export async function deleteDailyStories(ids: number[]): Promise<{ deleted: numb
   return response.data;
 }
 
-export async function generateDailyStoryThemes(count: number = 2): Promise<string[]> {
+export async function generateDailyStoryThemes(count: number = 15): Promise<string[]> {
   const response = await api.post<string[]>(
     "/v_factory/api/daily_story/themes",
     { count },

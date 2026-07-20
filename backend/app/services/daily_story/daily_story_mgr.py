@@ -44,7 +44,7 @@ class DailyStoryMgr:
             deleted = repo_daily_story.delete_stories(conn, ids)
         return {"deleted": deleted, "ids": ids}
 
-    def generate_themes(self, count: int = 2) -> list[str]:
+    def generate_themes(self, count: int = 15) -> list[str]:
         return llm_mgr.generate_daily_story_themes(count)
 
     def create_job(

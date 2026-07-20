@@ -482,6 +482,6 @@ class MockLLMClient(LLMClient):
             "punchline_explain": "弟弟用逻辑追问姐姐权威的本质，姐姐用孩子式特权收尾",
         }
 
-    def generate_daily_story_themes(self, count: int = 2) -> list[str]:
+    def generate_daily_story_themes(self, count: int = 15) -> list[str]:
         themes = ["争最后一瓶酸奶", "谁先洗澡", "检查作业时发现错题", "抢着开门接快递"]
         return themes[:count]

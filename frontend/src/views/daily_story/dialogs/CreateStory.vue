@@ -75,7 +75,7 @@ function onDialogClosed() {
 async function handleGenerateThemes() {
   generatingThemes.value = true;
   try {
-    generatedThemes.value = await generateDailyStoryThemes(10);
+    generatedThemes.value = await generateDailyStoryThemes(15);
   } catch (e) {
     handleError(e, "生成主题失败");
   } finally {
