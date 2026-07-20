@@ -26,6 +26,7 @@ class ImageProvider(ABC):
         size: str | None = None,
         ref_images: list[Path] | None = None,
         expected_speakers: list[str] | None = None,
+        content_style: str | None = None,
     ) -> Path:
         ...
 
@@ -66,6 +67,7 @@ class ImageMgr:
         on_image_done: Callable[[int, Path], None] | None = None,
         job_id: int | None = None,
         ref_images: list[Path] | None = None,
+        content_style: str | None = None,
     ) -> list[tuple[int, Path]]:
         images_dir.mkdir(parents=True, exist_ok=True)
         provider = self._get_image_provider(image_provider)
@@ -120,6 +122,7 @@ class ImageMgr:
                 prompt, out,
                 size=size, ref_images=ref_images,
                 expected_speakers=expected_speakers,
+                content_style=content_style,
             )
             elapsed = time.time() - t0
             logger.info(

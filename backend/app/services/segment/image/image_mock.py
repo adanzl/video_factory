@@ -15,7 +15,7 @@ class MockImageProvider(ImageProvider):
         size = size or settings.wan_image_size
         return f"provider=mock, size={size}"
 
-    def generate(self, prompt: str, output_path: Path, *, size: str | None = None, ref_images: list[Path] | None = None, expected_speakers: list[str] | None = None) -> Path:
+    def generate(self, prompt: str, output_path: Path, *, size: str | None = None, ref_images: list[Path] | None = None, expected_speakers: list[str] | None = None, content_style: str | None = None) -> Path:
         settings = get_settings()
         size_str = size or settings.wan_image_size
         w, h = size_str.split("*", 1)

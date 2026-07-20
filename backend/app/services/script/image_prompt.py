@@ -109,6 +109,9 @@ _IMAGE_PROMPT_RULE_DAILY_STORY = (
     "不得重复发型/服装等外貌特征——系统已通过参考图前缀自动注入；"
     "妈妈无参考图时例外，须按无参考图角色规则写外貌）；"
     "③光照（主辅光、明暗）；④构图（景别、占比、留白）。"
+    "【角色入画】须且仅描绘本段 speakers 列出的发言角色；"
+    "禁止未发言角色以旁观/路过/背景/另一房间等任何形式入画；"
+    "台词提及姓名不等于发言，仅以 speakers 为准；无 speakers 时禁止画昭昭/灿灿/妈妈等人像，只画场景。"
     "【约束】仅单帧静态，禁连续运动/时间推移，动态只放 motion_prompt；"
     "禁写实摄影风格、禁卡通以外画风。"
     "【时间约束】禁止使用「先是…接着…」「然后」「镜头切至」等描述时间推移或镜头切换的词语；整段仅描述一帧静态画面。"
@@ -272,20 +275,40 @@ def image_prompt_rule(*, orientation: str, content_style: str, sd15_mode: bool =
     return text
 
 
-def _format_segment_brief(seg: dict, *, prefix: str = "") -> str:
-    return (
+def _format_segment_brief(
+    seg: dict,
+    *,
+    prefix: str = "",
+    include_speakers: bool = False,
+) -> str:
+    line = (
         f"{prefix}segment {seg.get('segment_index')}: "
         f"text={seg.get('text', '')!r}; visual_brief={seg.get('visual_brief', '')!r}"
     )
+    if include_speakers:
+        speakers = sorted(
+            {
+                str(d.get("speaker") or "").strip()
+                for d in (seg.get("dialogue") or [])
+                if str(d.get("speaker") or "").strip()
+            }
+        )
+        line += f"; speakers={speakers!r}"
+    return line
 
 
 def _collect_segment_prompt_lines(
     segments: list[dict],
     segment_indices: list[int] | None,
+    *,
+    include_speakers: bool = False,
 ) -> tuple[list[str], set[int] | None]:
     """拼装分镜行；返回 (lines, wanted)。wanted 为 None 表示全量生成。"""
     if segment_indices is None:
-        return [_format_segment_brief(seg) for seg in segments], None
+        return [
+            _format_segment_brief(seg, include_speakers=include_speakers)
+            for seg in segments
+        ], None
 
     wanted = {int(idx) for idx in segment_indices}
     # 目标段前后各留一段作上下文，便于 LLM 把握连贯性
@@ -304,7 +327,9 @@ def _collect_segment_prompt_lines(
         if idx not in shown:
             continue
         tag = "【仅上下文】" if idx in extra else "【需生成】"
-        lines.append(_format_segment_brief(seg, prefix=tag))
+        lines.append(
+            _format_segment_brief(seg, prefix=tag, include_speakers=include_speakers)
+        )
     return lines, wanted
 
 
@@ -422,7 +447,11 @@ def build_image_prompts(
         content_style=content_style,
     )
     segments = script.get("segments") or []
-    lines, wanted = _collect_segment_prompt_lines(segments, segment_indices)
+    lines, wanted = _collect_segment_prompt_lines(
+        segments,
+        segment_indices,
+        include_speakers=(profile_style == CONTENT_STYLE_DAILY_STORY),
+    )
     system = _build_system_prompt(
         content_style=profile_style,
         orientation=profile_orientation,

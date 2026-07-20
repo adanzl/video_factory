@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import io
 import logging
+import re
 import time
 from pathlib import Path
 
@@ -24,10 +25,15 @@ from app.services.llm.llm_agnes import (
 )
 from app.services.segment.image.image_mock import MockImageProvider
 from app.services.segment.image.image_mgr import ImageProvider
+from app.utils.job_info import CONTENT_STYLE_DAILY_STORY
 
 logger = logging.getLogger(__name__)
 
 _RETRYABLE = frozenset({500, 502, 503, 504})
+_VERIFY_MAX_ATTEMPTS = 3
+_ITEM_LINE_RE = re.compile(r"^项\s*(\d+)\s*[:：]\s*(.*)$")
+_YES_HEAD_RE = re.compile(r"^[「【\[]?是([，,。．\s的」】\]]|$)")
+_NO_HEAD_RE = re.compile(r"^[「【\[]?(否|不是)([，,。．\s」】\]]|$)")
 
 
 def _to_agnes_size(size: str) -> str:
@@ -262,6 +268,7 @@ class AgnesImageProvider(ImageProvider):
         size: str | None = None,
         ref_images: list[Path] | None = None,
         expected_speakers: list[str] | None = None,
+        content_style: str | None = None,
     ) -> Path:
         size = size or self._default_size
         keys = agnes_api_keys()
@@ -276,25 +283,30 @@ class AgnesImageProvider(ImageProvider):
         last_exc: Exception | None = None
         for idx, key in enumerate(keys):
             try:
-                result = self._generate_with_key(
-                    key, prompt, output_path, size=size, ref_images=ref_images
-                )
-                # ── post-processing: verify image matches prompt, retry once if not ──
-                if result is not None and result.exists():
-                    verified = self._verify_image(
-                        prompt, result, expected_speakers=expected_speakers,
+                result: Path | None = None
+                for attempt in range(_VERIFY_MAX_ATTEMPTS):
+                    result = self._generate_with_key(
+                        key, prompt, output_path, size=size, ref_images=ref_images
                     )
-                    if not verified:
-                        logger.warning(
-                            "agnes image verify FAILED (%s key, prompt_chars=%s), "
-                            "regenerating once…",
-                            key.label,
-                            len(prompt),
-                        )
-                        result = self._generate_with_key(
-                            key, prompt, output_path,
-                            size=size, ref_images=ref_images,
-                        )
+                    if result is None or not result.exists():
+                        return result
+                    verified = self._verify_image(
+                        prompt,
+                        result,
+                        expected_speakers=expected_speakers,
+                        content_style=content_style,
+                    )
+                    if verified:
+                        return result
+                    logger.warning(
+                        "agnes image verify FAILED (%s key, attempt=%s/%s, "
+                        "prompt_chars=%s)%s",
+                        key.label,
+                        attempt + 1,
+                        _VERIFY_MAX_ATTEMPTS,
+                        len(prompt),
+                        ", regenerating…" if attempt + 1 < _VERIFY_MAX_ATTEMPTS else ", keep last",
+                    )
                 return result
             except AgnesQuotaExceeded as exc:
                 last_exc = exc
@@ -325,8 +337,104 @@ class AgnesImageProvider(ImageProvider):
     # ── image-text match verification ────────────────────────────────
 
     _VERIFY_SYSTEM_PROMPT = (
-        "你是一个严格的图像检查员，严格按照用户指示逐项判断图片。"
+        "你是图像质检员。只根据用户列出的检查项逐项判断，每项单独一行回答。"
+        "回答格式必须为「项N: 是」或「项N: 否」（昭昭辫子项在无该角色时可答「项N: 无昭昭」）。"
+        "不要解释、不要编号列表外的文字、不要复述提示词。"
+        "项「场景」：只看主场景/主体是否明显跑偏；画风套话、参考图指令前缀、次要细节差异一律算通过（答是）。"
+        "项「人数」：只数画面中可辨认的人物，须与给定发言角色数一致。"
     )
+
+    @staticmethod
+    def _parse_item_answer(body: str) -> str:
+        """归一化为 yes / no / na_zhao / unknown。先判「不是/否」，避免「不是」命中「是」。"""
+        text = (body or "").strip().strip("。．.")
+        if "无昭昭" in text:
+            return "na_zhao"
+        if _NO_HEAD_RE.match(text):
+            return "no"
+        if _YES_HEAD_RE.match(text):
+            return "yes"
+        # 兜底：整段里出现独立否/是（仍避开「不是」误伤后的纯「是」扫描）
+        if re.search(r"(^|[，,、\s])否([，,。．\s]|$)", text):
+            return "no"
+        if re.search(r"(^|[，,、\s])是([，,。．\s的]|$)", text) and "不是" not in text:
+            return "yes"
+        return "unknown"
+
+    @staticmethod
+    def _build_verify_checklist(
+        *,
+        prompt: str,
+        expected_speakers: list[str] | None,
+        content_style: str | None,
+    ) -> tuple[list[tuple[str, str]], str]:
+        """返回 ([(check_id, question_without_index), ...], user_prompt)."""
+        items: list[tuple[str, str]] = [
+            (
+                "scene",
+                "画面主场景/主体是否与提示词核心场景一致？"
+                "仅当主体或场景明显跑偏时答「否」；画风套话、参考图前缀、次要细节差异答「是」。"
+                "回答「是」或「否」",
+            ),
+        ]
+        if content_style == CONTENT_STYLE_DAILY_STORY:
+            items.append(
+                (
+                    "zhao_braid",
+                    "角色昭昭（小男孩）是否扎着辫子（马尾辫、双马尾、麻花辫、丸子头等）？"
+                    "回答「是」或「否」；图中无昭昭时回答「无昭昭」",
+                )
+            )
+        items.append(
+            (
+                "extra_arms",
+                "是否有任何人物胳膊/手臂数量超过2条？回答「是」或「否」",
+            )
+        )
+        expected_count = len(expected_speakers) if expected_speakers else 0
+        if expected_count > 0:
+            speakers_str = "/".join(expected_speakers)
+            items.append(
+                (
+                    "cast_count",
+                    f"图片中可辨认人物数量是否恰好为 {expected_count} 个"
+                    f"（须与该段发言角色一致：{speakers_str}）？回答「是」或「否」",
+                )
+            )
+
+        lines = [f"【提示词】\n{prompt}\n", f"请检查以下 {len(items)} 项，每项一行："]
+        for i, (_cid, q) in enumerate(items, start=1):
+            lines.append(f"项{i}: {q}")
+        lines.append("不要输出任何其他内容。")
+        return items, "\n".join(lines)
+
+    @staticmethod
+    def _evaluate_verify_response(content: str, check_ids: list[str]) -> bool:
+        """按检查项判定；解析失败的项视为通过（避免误杀）。"""
+        answers: dict[int, str] = {}
+        for raw in content.split("\n"):
+            line = raw.strip()
+            if not line:
+                continue
+            m = _ITEM_LINE_RE.match(line)
+            if not m:
+                continue
+            idx = int(m.group(1))
+            answers[idx] = AgnesImageProvider._parse_item_answer(m.group(2))
+
+        for i, cid in enumerate(check_ids, start=1):
+            verdict = answers.get(i, "unknown")
+            if verdict == "unknown":
+                continue
+            if cid == "scene" and verdict == "no":
+                return False
+            if cid == "zhao_braid" and verdict == "yes":
+                return False
+            if cid == "extra_arms" and verdict == "yes":
+                return False
+            if cid == "cast_count" and verdict == "no":
+                return False
+        return True
 
     @staticmethod
     def _verify_image(
@@ -334,19 +442,12 @@ class AgnesImageProvider(ImageProvider):
         image_path: Path,
         *,
         expected_speakers: list[str] | None = None,
+        content_style: str | None = None,
     ) -> bool:
         """使用 Agnes 多模态判断图片是否匹配提示词且符合内容规则。
 
-        检查项：
-        - 图片内容与提示词一致
-        - 昭昭没有扎辫子
-        - 人物胳膊数量不超过2条
-        - 图片中人数与对话中发言人数一致
-
         返回 True=通过, False=不通过（触发生成重试）。
-
-        优先使用 .agnes_source_url 侧车文件中的 CDN URL（避免重复传输图片），
-        无侧车文件时回退到 base64 内联。
+        优先使用 .agnes_source_url 侧车 CDN URL，无侧车时回退 base64。
         """
         if not image_path.exists():
             return True
@@ -354,7 +455,6 @@ class AgnesImageProvider(ImageProvider):
         try:
             settings = get_settings()
 
-            # 优先用侧车 CDN URL
             image_url: str | None = None
             sidecar = image_path.with_name(image_path.name + ".agnes_source_url")
             if sidecar.is_file():
@@ -363,7 +463,6 @@ class AgnesImageProvider(ImageProvider):
                     image_url = url
 
             if image_url is None:
-                # 无 CDN URL 时回退 base64
                 img = PILImage.open(image_path)
                 max_dim = 1024
                 if max(img.size) > max_dim:
@@ -375,31 +474,12 @@ class AgnesImageProvider(ImageProvider):
                 b64 = base64.b64encode(buf.getvalue()).decode("ascii")
                 image_url = f"data:image/jpeg;base64,{b64}"
 
-            # 构建用户提示词
-            expected_count = len(expected_speakers) if expected_speakers else 0
-            if expected_count > 0:
-                speakers_str = "/".join(expected_speakers)
-                user = (
-                    f"【提示词】\n{prompt}\n\n"
-                    f"请检查以下四项，每项一行回答：\n"
-                    f"项1: 图片内容与提示词是否一致？回答「是」或「否」\n"
-                    f"项2: 角色昭昭（小男孩角色）是否有辫子（马尾辫、双马尾、麻花辫、丸子头等发型）？"
-                    f"回答「是」或「否」（如果图中没有昭昭这个角色，回答「无昭昭」）\n"
-                    f"项3: 是否有任何人物胳膊/手臂的数量超过2条？回答「是」或「否」\n"
-                    f"项4: 图片中人物数量是否为 {expected_count} 个（该段发言角色：{speakers_str}）？"
-                    f"回答「是」或「否」\n"
-                    f"不要输出任何其他内容。"
-                )
-            else:
-                user = (
-                    f"【提示词】\n{prompt}\n\n"
-                    f"请检查以下三项，每项一行回答：\n"
-                    f"项1: 图片内容与提示词是否一致？回答「是」或「否」\n"
-                    f"项2: 角色昭昭（小男孩角色）是否有辫子（马尾辫、双马尾、麻花辫、丸子头等发型）？"
-                    f"回答「是」或「否」（如果图中没有昭昭这个角色，回答「无昭昭」）\n"
-                    f"项3: 是否有任何人物胳膊/手臂的数量超过2条？回答「是」或「否」\n"
-                    f"不要输出任何其他内容。"
-                )
+            items, user = AgnesImageProvider._build_verify_checklist(
+                prompt=prompt,
+                expected_speakers=expected_speakers,
+                content_style=content_style,
+            )
+            check_ids = [cid for cid, _ in items]
 
             keys = agnes_api_keys(settings)
             if not keys:
@@ -412,21 +492,22 @@ class AgnesImageProvider(ImageProvider):
                     payload = {
                         "model": settings.agnes_vl_model,
                         "messages": [
-                            {"role": "system", "content": AgnesImageProvider._VERIFY_SYSTEM_PROMPT},
+                            {
+                                "role": "system",
+                                "content": AgnesImageProvider._VERIFY_SYSTEM_PROMPT,
+                            },
                             {
                                 "role": "user",
                                 "content": [
                                     {"type": "text", "text": user},
                                     {
                                         "type": "image_url",
-                                        "image_url": {
-                                            "url": image_url,
-                                        },
+                                        "image_url": {"url": image_url},
                                     },
                                 ],
                             },
                         ],
-                        "max_tokens": 1024,
+                        "max_tokens": 256,
                     }
                     resp = requests.post(url, headers=headers, json=payload, timeout=60)
                     if resp.ok:
@@ -437,17 +518,9 @@ class AgnesImageProvider(ImageProvider):
                             .get("content", "")
                             .strip()
                         )
-                        lines = [l.strip() for l in content.split("\n") if l.strip()]
-                        for line in lines:
-                            if line.startswith("项1") and "否" in line:
-                                return False
-                            if line.startswith("项2") and "是" in line:
-                                return False
-                            if line.startswith("项3") and "是" in line:
-                                return False
-                            if line.startswith("项4") and "否" in line:
-                                return False
-                        return True
+                        return AgnesImageProvider._evaluate_verify_response(
+                            content, check_ids
+                        )
                 except Exception:
                     logger.warning(
                         "agnes verify_image call failed (%s key), skipping verify",
