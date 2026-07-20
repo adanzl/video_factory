@@ -17,12 +17,40 @@ from app.services.media.ffmpeg_utils import (
 )
 
 CLIP_FPS = 25
-_MOTION_FINISH_RATIO = 0.85
+_MOTION_FINISH_RATIO = 0.95
 _PIX_FMT = "yuv420p"
+
+# 相邻尽量不同类；按 segment_index 均匀轮换（无静止）
+_MOTION_MODES = (
+    "zoom_in",
+    "pan_right",
+    "zoom_out",
+    "pan_left",
+    "pan_up",
+    "pan_diag_dr",
+    "pan_down",
+    "pan_diag_ul",
+)
 
 
 def _pix_fmt_filter_suffix() -> str:
     return cpu_pix_fmt_suffix()
+
+
+def _even(value: int) -> int:
+    return value if value % 2 == 0 else value + 1
+
+
+def _still_image_input_args(image_path: Path) -> list[str]:
+    """静图必须带 framerate，否则 loop 时间基不稳，动效会顿/掉帧。"""
+    return [
+        "-loop",
+        "1",
+        "-framerate",
+        str(CLIP_FPS),
+        "-i",
+        str(image_path),
+    ]
 
 
 __all__ = [
@@ -36,15 +64,65 @@ __all__ = [
 
 
 def _prep_filter(*, headroom: float, width: int, height: int) -> str:
-    pw = int(width * headroom)
-    ph = int(height * headroom)
+    pw = _even(int(width * headroom))
+    ph = _even(int(height * headroom))
     return f"scale={pw}:{ph}:force_original_aspect_ratio=increase:flags=lanczos"
 
 
 def _motion_zoom_max(preset: str) -> float:
     if preset == "ken_burns_slow":
-        return 1.08
-    return 1.12
+        return 1.10
+    return 1.14
+
+
+def _pick_motion_mode(segment_index: int) -> str:
+    idx = segment_index if segment_index > 0 else 1
+    return _MOTION_MODES[(idx - 1) % len(_MOTION_MODES)]
+
+
+def _ease_prog(motion_frames: int) -> str:
+    mf = max(motion_frames, 1)
+    return f"min(1,0.5-0.5*cos(PI*n/{mf}))"
+
+
+def _motion_tail() -> str:
+    return f",fps={CLIP_FPS}{_pix_fmt_filter_suffix()}"
+
+
+def _zoom_motion_vf(
+    *,
+    zoom_expr: str,
+    width: int,
+    height: int,
+    headroom: float,
+) -> str:
+    prep = _prep_filter(headroom=headroom, width=width, height=height)
+    # crop 取整，避免亚像素裁切抖动
+    return (
+        f"{prep},"
+        f"scale='iw*({zoom_expr})':'ih*({zoom_expr})':flags=bilinear:eval=frame,"
+        f"crop={width}:{height}:floor((iw-{width})/2):floor((ih-{height})/2)"
+        f"{_motion_tail()}"
+    )
+
+
+def _pan_motion_vf(
+    *,
+    pan_zoom: float,
+    x_expr: str,
+    y_expr: str,
+    width: int,
+    height: int,
+) -> str:
+    headroom = max(pan_zoom + 0.12, 1.24)
+    prep = _prep_filter(headroom=headroom, width=width, height=height)
+    z = f"{pan_zoom:.4f}"
+    return (
+        f"{prep},"
+        f"scale=iw*{z}:ih*{z}:flags=lanczos,"
+        f"crop={width}:{height}:'floor(({x_expr}))':'floor(({y_expr}))'"
+        f"{_motion_tail()}"
+    )
 
 
 def _motion_vf(
@@ -55,39 +133,73 @@ def _motion_vf(
     width: int,
     height: int,
 ) -> str:
-    """Ken Burns：zoom 用 scale:eval=frame（lanczos），pan 用 zoompan。"""
+    """Ken Burns：全部走 scale+crop（不用 zoompan），末尾强制 CFR。"""
     frames = max(1, round(duration_sec * CLIP_FPS))
     zoom_max = _motion_zoom_max(preset)
     delta = zoom_max - 1.0
-    mf = max(int(frames * _MOTION_FINISH_RATIO), 1)
-    prog_z = f"min(1,0.5-0.5*cos(PI*n/{mf}))"
-    prog_p = f"min(1,0.5-0.5*cos(PI*on/{mf}))"
+    prog = _ease_prog(max(int(frames * _MOTION_FINISH_RATIO), 1))
+    mode = _pick_motion_mode(segment_index)
+    pan_zoom = max(zoom_max, 1.08)
+    # 平移可用行程（相对放大后画布）
+    max_x = f"iw-{width}"
+    max_y = f"ih-{height}"
+    mid_x = f"({max_x})/2"
+    mid_y = f"({max_y})/2"
 
-    mode = (segment_index * 7 + 3) % 10
-    if mode < 5:
-        # 放大 50%
-        headroom = zoom_max + 0.04
-        prep = _prep_filter(headroom=headroom, width=width, height=height)
-        z = f"1+{delta:.4f}*({prog_z})"
-        return f"{prep},scale='iw*({z})':'ih*({z})':flags=bilinear:eval=frame,crop={width}:{height}:(iw-{width})/2:(ih-{height})/2{_pix_fmt_filter_suffix()}"
-    elif mode < 7:
-        # 右移 20%
-        pan_zoom = max(zoom_max, 1.06)
-        headroom = max(pan_zoom + 0.10, 1.22)
-        prep = _prep_filter(headroom=headroom, width=width, height=height)
-        return f"{prep},zoompan=z='{pan_zoom:.4f}':x='(iw-iw/zoom)*({prog_p})':y='ih/2-(ih/zoom/2)':d={frames}:s={width}x{height}:fps={CLIP_FPS}{_pix_fmt_filter_suffix()}"
-    elif mode < 9:
-        # 左移 20%
-        pan_zoom = max(zoom_max, 1.06)
-        headroom = max(pan_zoom + 0.10, 1.22)
-        prep = _prep_filter(headroom=headroom, width=width, height=height)
-        return f"{prep},zoompan=z='{pan_zoom:.4f}':x='(iw-iw/zoom)*(1-{prog_p})':y='ih/2-(ih/zoom/2)':d={frames}:s={width}x{height}:fps={CLIP_FPS}{_pix_fmt_filter_suffix()}"
-    else:
-        # 缩小 10%
-        headroom = zoom_max + 0.04
-        prep = _prep_filter(headroom=headroom, width=width, height=height)
-        z = f"{zoom_max:.4f}-{delta:.4f}*({prog_z})"
-        return f"{prep},scale='iw*({z})':'ih*({z})':flags=bilinear:eval=frame,crop={width}:{height}:(iw-{width})/2:(ih-{height})/2{_pix_fmt_filter_suffix()}"
+    if mode == "zoom_in":
+        z = f"1+{delta:.4f}*({prog})"
+        return _zoom_motion_vf(zoom_expr=z, width=width, height=height, headroom=zoom_max + 0.06)
+    if mode == "zoom_out":
+        z = f"{zoom_max:.4f}-{delta:.4f}*({prog})"
+        return _zoom_motion_vf(zoom_expr=z, width=width, height=height, headroom=zoom_max + 0.06)
+    if mode == "pan_right":
+        return _pan_motion_vf(
+            pan_zoom=pan_zoom,
+            x_expr=f"({max_x})*({prog})",
+            y_expr=mid_y,
+            width=width,
+            height=height,
+        )
+    if mode == "pan_left":
+        return _pan_motion_vf(
+            pan_zoom=pan_zoom,
+            x_expr=f"({max_x})*(1-({prog}))",
+            y_expr=mid_y,
+            width=width,
+            height=height,
+        )
+    if mode == "pan_down":
+        return _pan_motion_vf(
+            pan_zoom=pan_zoom,
+            x_expr=mid_x,
+            y_expr=f"({max_y})*({prog})",
+            width=width,
+            height=height,
+        )
+    if mode == "pan_up":
+        return _pan_motion_vf(
+            pan_zoom=pan_zoom,
+            x_expr=mid_x,
+            y_expr=f"({max_y})*(1-({prog}))",
+            width=width,
+            height=height,
+        )
+    if mode == "pan_diag_dr":
+        return _pan_motion_vf(
+            pan_zoom=pan_zoom,
+            x_expr=f"({max_x})*({prog})",
+            y_expr=f"({max_y})*({prog})",
+            width=width,
+            height=height,
+        )
+    # pan_diag_ul
+    return _pan_motion_vf(
+        pan_zoom=pan_zoom,
+        x_expr=f"({max_x})*(1-({prog}))",
+        y_expr=f"({max_y})*(1-({prog}))",
+        width=width,
+        height=height,
+    )
 
 
 def _resolve_clip_canvas(
@@ -95,10 +207,9 @@ def _resolve_clip_canvas(
     height: int | None,
 ) -> tuple[int, int]:
     settings = get_settings()
-    return (
-        width if width is not None else settings.video_width,
-        height if height is not None else settings.video_height,
-    )
+    w = width if width is not None else settings.video_width
+    h = height if height is not None else settings.video_height
+    return _even(w), _even(h)
 
 
 def image_to_clip_with_overlay(
@@ -134,18 +245,16 @@ def image_to_clip_with_overlay(
     run_ffmpeg(
         [
             *ffmpeg_cmd_start(hwaccel=False),
-            "-loop",
-            "1",
-            "-i",
-            str(image_path),
-            "-i",
-            str(overlay_path),
+            *_still_image_input_args(image_path),
+            *_still_image_input_args(overlay_path),
             "-filter_complex",
             filter_complex,
             "-map",
             "[out]",
             "-t",
             str(duration_sec),
+            "-r",
+            str(CLIP_FPS),
             *libx264_encode_args(subtitle=True, force_cpu=True),
             "-sws_flags",
             "lanczos+accurate_rnd+full_chroma_int",
@@ -205,22 +314,10 @@ def image_to_clip_timed_overlays(
     parts = finalize_filter_complex(parts, force_cpu=True)
     cmd = [
         *ffmpeg_cmd_start(hwaccel=False),
-        "-loop",
-        "1",
-        "-i",
-        str(image_path),
+        *_still_image_input_args(image_path),
     ]
     for overlay_path, _, _ in overlay_windows:
-        cmd.extend(
-            [
-                "-loop",
-                "1",
-                "-framerate",
-                str(CLIP_FPS),
-                "-i",
-                str(overlay_path),
-            ]
-        )
+        cmd.extend(_still_image_input_args(overlay_path))
     cmd.extend(
         [
             "-filter_complex",
@@ -229,6 +326,8 @@ def image_to_clip_timed_overlays(
             "[out]",
             "-t",
             str(duration_sec),
+            "-r",
+            str(CLIP_FPS),
             *libx264_encode_args(subtitle=True, force_cpu=True),
             "-sws_flags",
             "lanczos+accurate_rnd+full_chroma_int",
@@ -352,10 +451,7 @@ def image_to_clip(
     canvas_w, canvas_h = _resolve_clip_canvas(width, height)
     cmd = [
         *ffmpeg_cmd_start(hwaccel=False),
-        "-loop",
-        "1",
-        "-i",
-        str(image_path),
+        *_still_image_input_args(image_path),
         "-vf",
         vf_for_encode(
             _motion_vf(duration_sec, preset=preset, segment_index=segment_index, width=canvas_w, height=canvas_h)
@@ -368,6 +464,8 @@ def image_to_clip(
         _PIX_FMT,
         "-movflags",
         "+faststart",
+        "-r",
+        str(CLIP_FPS),
         "-t",
         str(duration_sec),
         str(output_path),
