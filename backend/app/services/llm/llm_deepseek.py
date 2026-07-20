@@ -1464,7 +1464,6 @@ class DeepSeekClient(LLMClient):
                     "请确保：dialogue 含 speaker/line；"
                     "speaker 仅为「昭昭」「灿灿」「妈妈」；"
                     "line 含可发音汉字且每句≤18字；"
-                    "全部 line 总字数在360–420之间；"
                     "禁止纯标点台词。"
                 )
         assert last_exc is not None
@@ -1472,10 +1471,10 @@ class DeepSeekClient(LLMClient):
 
     def generate_daily_story_themes(
         self,
-        count: int = 5,
+        count: int = 15,
     ) -> list[str]:
         system, user = build_daily_story_theme_prompts(count)
-        content, _ = self._chat(system, user, max_tokens=512, json_mode=False, thinking_enabled=False, temperature=0.95)
+        content, _ = self._chat(system, user, max_tokens=1024, json_mode=False, thinking_enabled=False, temperature=0.95)
         themes = []
         for line in content.strip().split("\n"):
             line = line.strip()

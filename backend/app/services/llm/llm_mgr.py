@@ -173,7 +173,7 @@ class LLMClient:
 
     def generate_daily_story_themes(
         self,
-        count: int = 2,
+        count: int = 15,
     ) -> list[str]:
         raise NotImplementedError
 
@@ -664,7 +664,7 @@ class LLMMgr:
 
     def generate_daily_story_themes(
         self,
-        count: int = 2,
+        count: int = 15,
     ) -> list[str]:
         logger.info("[DAILY_STORY] generate themes start count=%d", count)
         started = time.perf_counter()
