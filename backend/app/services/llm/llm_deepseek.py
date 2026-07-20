@@ -1464,7 +1464,7 @@ class DeepSeekClient(LLMClient):
                     "请确保：dialogue 含 speaker/line；"
                     "speaker 仅为「昭昭」「灿灿」「妈妈」；"
                     "line 含可发音汉字且每句≤18字；"
-                    "全部 line 总字数须≥360（略超可接受，禁止过短）；"
+                    "全部 line 总字数须≥300（略超可接受，禁止过短）；"
                     "禁止纯标点台词。"
                 )
         assert last_exc is not None

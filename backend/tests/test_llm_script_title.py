@@ -64,7 +64,7 @@ def test_daily_story_prompts_share_contract():
     story_sys, story_user = build_daily_story_prompts("谁先洗澡")
     assert "10岁" in story_sys
     assert "10岁" in theme_user
-    assert "不少于360" in story_sys or "≥360" in story_user
+    assert "不少于300" in story_sys or "≥300" in story_user
     assert "360" in story_sys and "420" in story_sys
     assert "略超可接受" in story_sys
     assert "18" in story_sys
@@ -75,8 +75,8 @@ def test_daily_story_prompts_share_contract():
     assert "下雨只带了一把伞" not in theme_user
 
 
-def _valid_story(*, line: str | None = None, n: int = 20) -> dict:
-    # 默认 18*20=360，刚好过下限
+def _valid_story(*, line: str | None = None, n: int = 17) -> dict:
+    # 默认 18*17=306，刚好过下限 300
     if line is None:
         line = "一二三四五六七八九十一二三四五六七八"
     assert len(line) <= DAILY_STORY_LINE_CHARS_MAX
@@ -104,7 +104,7 @@ def test_validate_daily_story_json_allows_long_total_chars():
 
 def test_validate_daily_story_json_rejects_short_total_chars():
     with pytest.raises(ValueError, match="总字数须≥"):
-        validate_daily_story_json(_valid_story(n=10))  # 180 < 360
+        validate_daily_story_json(_valid_story(n=10))  # 180 < 300
 
 
 def test_validate_daily_story_json_rejects_long_line():
