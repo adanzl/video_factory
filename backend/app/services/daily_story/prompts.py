@@ -15,9 +15,10 @@ DAILY_STORY_CHARACTERS = (
 # 妈妈无参考图，外貌特征由 LLM 在 image_prompt 中文字描述，不混入有参考图角色常量
 DAILY_STORY_CHARACTER_MOM = "妈妈：成年女性，黑色长发，米色上衣牛仔裤"
 
-# 片长：语速约 3.1 字/秒、目标约 2:00–2:15；总字数为写作建议，校验不卡上限
+# 片长：语速约 3.1 字/秒、目标约 2:00–2:15
+# 总字数下限硬性；上限仅写作建议（略超可接受，不校验失败）
 # 单句上限硬性，配合分镜 2–4 句合并
-DAILY_STORY_TOTAL_CHARS_TARGET_MIN = 360
+DAILY_STORY_TOTAL_CHARS_MIN = 360
 DAILY_STORY_TOTAL_CHARS_TARGET_MAX = 420
 DAILY_STORY_LINE_CHARS_MAX = 18
 
@@ -27,7 +28,7 @@ _DAILY_STORY_CONTRACT = """\
 - 角色年龄：昭昭7岁弟弟，灿灿10岁姐姐；可发言角色仅昭昭、灿灿、妈妈。
 - 爸爸可「不在场被提到」，禁止作为 speaker；禁止老师入戏。
 - 场景：家庭内部或家门口（客厅/厨房/卧室/门口）；禁止学校、放学路、公园等外景主场。
-- 片长：对白总字数建议约360–420字（略超可接受，禁止注水车轱辘）；
+- 片长：对白总字数硬性不少于360字，写作目标约360–420字（略超可接受，禁止注水车轱辘）；
   每句台词硬性≤18字；口语短句，一层意思一句说完。
 """
 
@@ -59,7 +60,8 @@ DAILY_STORY_SYSTEM_PROMPT = f"""\
 【笑点与收束】
 - 笑点 = 孩子的字面/现实逻辑 碰撞 成人的抽象/规则逻辑。
 - 每一句推论须基于刚听到的字面意思或亲眼见过的生活经验，不能跳级。
-- 误会滚雪球后见好就收；最后一句让「大人逻辑」破功或哑口，不要无意义延长。
+- 须有足够回合把误会滚大（总字数≥360），再收束；最后一句让「大人逻辑」破功或哑口。
+- 禁止注水车轱辘；也禁止写到一半就收（过短无效）。
 
 【格式要求】
 严格输出以下JSON结构：
@@ -84,7 +86,7 @@ DAILY_STORY_USER_TEMPLATE = """\
 【要求】：
 1. 紧扣主题，家庭内/门口小事，不要宏大叙事。
 2. 矛盾落在 A–E 可演类型内；姐弟互动要跑偏，禁止说教成功或软收尾。
-3. 对白总字数建议约 360–420（略超可接受）；每句硬性 ≤18 字；speaker 仅昭昭/灿灿/妈妈。
+3. 对白总字数硬性 ≥360，目标约 360–420（略超可接受）；每句硬性 ≤18 字；speaker 仅昭昭/灿灿/妈妈。
 4. 妈妈是否出场随主题需要；爸爸不可作 speaker。
 
 请直接输出JSON。
@@ -245,6 +247,7 @@ def validate_daily_story_json(story: dict) -> None:
     elif not dialogue:
         errors.append("dialogue 不能是空数组")
     else:
+        total_chars = 0
         for i, item in enumerate(dialogue):
             if not isinstance(item, dict):
                 errors.append(f"dialogue[{i}] 不是字典")
@@ -267,11 +270,17 @@ def validate_daily_story_json(story: dict) -> None:
                 errors.append(f"dialogue[{i}] line 不含可发音内容（仅标点符号）")
             else:
                 n = _dialogue_char_count(item["line"].strip())
+                total_chars += n
                 if n > DAILY_STORY_LINE_CHARS_MAX:
                     errors.append(
                         f"dialogue[{i}] line 超过{DAILY_STORY_LINE_CHARS_MAX}字"
                         f"（{n}字）：{item['line']!r}"
                     )
+        # 只硬卡下限；上限略超不失败，避免重试拖垮流程
+        if total_chars and total_chars < DAILY_STORY_TOTAL_CHARS_MIN:
+            errors.append(
+                f"对白总字数须≥{DAILY_STORY_TOTAL_CHARS_MIN}，当前{total_chars}"
+            )
 
     if errors:
         raise ValueError("daily_story 校验失败: " + "; ".join(errors))

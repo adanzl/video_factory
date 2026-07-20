@@ -6,6 +6,7 @@ import pytest
 
 from app.services.daily_story.prompts import (
     DAILY_STORY_LINE_CHARS_MAX,
+    DAILY_STORY_TOTAL_CHARS_MIN,
     build_daily_story_prompts,
     build_daily_story_theme_prompts,
     validate_daily_story_json,
@@ -63,6 +64,7 @@ def test_daily_story_prompts_share_contract():
     story_sys, story_user = build_daily_story_prompts("谁先洗澡")
     assert "10岁" in story_sys
     assert "10岁" in theme_user
+    assert "不少于360" in story_sys or "≥360" in story_user
     assert "360" in story_sys and "420" in story_sys
     assert "略超可接受" in story_sys
     assert "18" in story_sys
@@ -73,7 +75,8 @@ def test_daily_story_prompts_share_contract():
     assert "下雨只带了一把伞" not in theme_user
 
 
-def _valid_story(*, line: str | None = None, n: int = 8) -> dict:
+def _valid_story(*, line: str | None = None, n: int = 20) -> dict:
+    # 默认 18*20=360，刚好过下限
     if line is None:
         line = "一二三四五六七八九十一二三四五六七八"
     assert len(line) <= DAILY_STORY_LINE_CHARS_MAX
@@ -89,12 +92,19 @@ def _valid_story(*, line: str | None = None, n: int = 8) -> dict:
 
 
 def test_validate_daily_story_json_ok():
-    validate_daily_story_json(_valid_story())
+    story = _valid_story()
+    assert sum(len(d["line"]) for d in story["dialogue"]) >= DAILY_STORY_TOTAL_CHARS_MIN
+    validate_daily_story_json(story)
 
 
 def test_validate_daily_story_json_allows_long_total_chars():
-    # 总字数不再硬卡；598 这类略超不应失败
+    # 上限不硬卡；598 这类略超不应失败
     validate_daily_story_json(_valid_story(n=34))
+
+
+def test_validate_daily_story_json_rejects_short_total_chars():
+    with pytest.raises(ValueError, match="总字数须≥"):
+        validate_daily_story_json(_valid_story(n=10))  # 180 < 360
 
 
 def test_validate_daily_story_json_rejects_long_line():
