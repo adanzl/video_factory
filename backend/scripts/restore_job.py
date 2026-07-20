@@ -33,7 +33,7 @@ def restore(job_id: int) -> None:
         sys.exit(1)
     script = json.loads(raw)
     conn.execute(
-        "UPDATE video_job SET script_json=?, status='idle', stage='segment', error_message=NULL WHERE id=?",
+        "UPDATE video_job SET script_json=?, status='pending', stage='segment', error_message=NULL WHERE id=?",
         (json.dumps(script, ensure_ascii=False), job_id),
     )
     print(f"[1/6] script_json restored ({len(raw)} bytes, {len(script.get('segments',[]))} segments)")

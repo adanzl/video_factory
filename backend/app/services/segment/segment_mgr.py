@@ -63,14 +63,19 @@ class SegmentMgr:
 
     @staticmethod
     def _existing_clip_path(seg: dict, clips_dir: Path) -> Path | None:
-        """检测分镜是否已有完成的可复用视频片段文件。"""
-        clip_path = clips_dir / f"{seg['segment_index']}.mp4"
-        if clip_path.exists():
-            return clip_path
-        if seg.get("clip_path"):
-            path = Path(seg["clip_path"])
-            if path.exists():
-                return path
+        """仅当 DB 仍有 clip_path 时才复用磁盘文件。
+
+        TTS 重跑会清空 clip_path 但保留 mp4；此时不得因磁盘残留而 skip。
+        """
+        recorded = seg.get("clip_path")
+        if not recorded:
+            return None
+        path = Path(recorded)
+        if path.exists():
+            return path
+        fallback = clips_dir / f"{seg['segment_index']}.mp4"
+        if fallback.exists():
+            return fallback
         return None
 
     def produce_segments(

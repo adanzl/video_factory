@@ -33,6 +33,19 @@ def create_app() -> Flask:
     # 服务启动时自动恢复卡住的视频生成任务
     _recover_stuck_jobs()
 
+    if config.mock_mode:
+        log.warning(
+            "[CONFIG] MOCK_MODE=true：将使用假文案/假图/假音，勿用于生产成片"
+        )
+    else:
+        missing = config.missing_provider_keys()
+        if missing:
+            log.error(
+                "[CONFIG] MOCK_MODE=false 但缺少 Key：%s（相关调用将失败，"
+                "不会静默 mock）",
+                "；".join(missing),
+            )
+
     cors_origins = config.get_cors_origins()
     if cors_origins == ["*"]:
         log.warning(

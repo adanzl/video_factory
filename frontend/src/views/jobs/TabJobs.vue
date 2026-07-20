@@ -19,7 +19,6 @@
         @change="onFilterChange"
       >
         <el-option label="待处理" value="pending" />
-        <el-option label="待操作" value="idle" />
         <el-option label="运行中" value="running" />
         <el-option label="已完成" value="done" />
         <el-option label="失败" value="failed" />
@@ -160,9 +159,8 @@ const statusTagType = (status: string) => {
 const statusLabel = (status: string) => {
   switch (status) {
     case "pending":
+    case "idle": // 历史数据兼容
       return "待处理";
-    case "idle":
-      return "待操作";
     case "running":
       return "运行中";
     case "done":

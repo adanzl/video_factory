@@ -192,22 +192,54 @@ def delete_job(conn: sqlite3.Connection, job_id: int) -> None:
 
 
 def claim_next_pending(conn: sqlite3.Connection) -> dict | None:
-    row = conn.execute(
-        """
-        SELECT * FROM video_job
-        WHERE status = 'pending'
-        ORDER BY id
-        LIMIT 1
-        """
-    ).fetchone()
-    if row is None:
-        return None
-    conn.execute(
-        """
-        UPDATE video_job
-        SET status = 'running', updated_at = datetime('now')
-        WHERE id = ? AND status = 'pending'
-        """,
-        (row["id"],),
-    )
-    return get_job(conn, row["id"])
+    """原子领取下一条 pending → running。
+
+    单条 UPDATE（子查询选 id）+ ``RETURNING``，避免 SELECT 后再
+    UPDATE 的竞态；无 RETURNING 时回退为条件 UPDATE 重试。
+    """
+    try:
+        cur = conn.execute(
+            """
+            UPDATE video_job
+            SET status = 'running', updated_at = datetime('now')
+            WHERE id = (
+                SELECT id FROM video_job
+                WHERE status = 'pending'
+                ORDER BY id
+                LIMIT 1
+            )
+            AND status = 'pending'
+            RETURNING id
+            """
+        )
+        row = cur.fetchone()
+        if row is None:
+            return None
+        return get_job(conn, int(row["id"]))
+    except sqlite3.OperationalError:
+        # 旧 SQLite 无 RETURNING：条件 UPDATE + 重试
+        pass
+
+    for _ in range(8):
+        row = conn.execute(
+            """
+            SELECT id FROM video_job
+            WHERE status = 'pending'
+            ORDER BY id
+            LIMIT 1
+            """
+        ).fetchone()
+        if row is None:
+            return None
+        job_id = int(row["id"])
+        cur = conn.execute(
+            """
+            UPDATE video_job
+            SET status = 'running', updated_at = datetime('now')
+            WHERE id = ? AND status = 'pending'
+            """,
+            (job_id,),
+        )
+        if cur.rowcount == 1:
+            return get_job(conn, job_id)
+    return None

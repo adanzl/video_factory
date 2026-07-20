@@ -271,7 +271,7 @@ class MaterialVideoMgr:
                 cleaned_title,
                 skip_publish=skip_publish,
                 stage="prepare",
-                status="idle",
+                status="pending",
                 pipeline=PIPELINE_MATERIAL,
                 material_id=material_id,
                 script_json=script_json,
