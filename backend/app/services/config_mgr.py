@@ -388,6 +388,19 @@ def _serialize_runtime_value(value: Any, field: ConfigFieldDef) -> Any:
     return value
 
 
+def mask_secret(value: str, *, visible_tail: int = 4) -> str:
+    """脱敏密钥：保留末尾若干字符，其余用 • 替代。
+
+    空字符串返回空；过短则全部掩码。
+    """
+    text = value or ""
+    if not text:
+        return ""
+    if len(text) <= visible_tail:
+        return "•" * len(text)
+    return ("•" * (len(text) - visible_tail)) + text[-visible_tail:]
+
+
 def _validate_field(field: ConfigFieldDef, raw: Any) -> str:
     if field.readonly:
         raise ValueError(f"{field.attr} is readonly")
@@ -424,12 +437,29 @@ def _field_payload(field: ConfigFieldDef) -> dict[str, Any]:
     runtime = getattr(config, field.attr)
     file_values = parse_env_file(env_file_path())
     env_key = _resolve_env_key(field.env_key, set(file_values))
+    raw_value = _serialize_runtime_value(runtime, field)
+    if field.field_type == "secret":
+        text = "" if raw_value is None else str(raw_value)
+        return {
+            "attr": field.attr,
+            "env_key": env_key,
+            "label": field.label,
+            "type": field.field_type,
+            "value": mask_secret(text),
+            "configured": bool(text.strip()),
+            "description": field.description,
+            "options": list(field.options),
+            "min": field.min_value,
+            "max": field.max_value,
+            "readonly": field.readonly,
+        }
     return {
         "attr": field.attr,
         "env_key": env_key,
         "label": field.label,
         "type": field.field_type,
-        "value": _serialize_runtime_value(runtime, field),
+        "value": raw_value,
+        "configured": None,
         "description": field.description,
         "options": list(field.options),
         "min": field.min_value,
@@ -458,6 +488,7 @@ def apply_config_updates(raw_updates: dict[str, Any]) -> dict[str, Any]:
 
     env_updates: dict[str, str] = {}
     updated_attrs: list[str] = []
+    skipped_attrs: list[str] = []
 
     for attr, raw in raw_updates.items():
         field = _FIELD_BY_ATTR.get(attr)
@@ -465,8 +496,26 @@ def apply_config_updates(raw_updates: dict[str, Any]) -> dict[str, Any]:
             raise ValueError(f"unknown config attr: {attr}")
         if field.readonly:
             raise ValueError(f"{attr} is readonly")
+
+        # 前端若未改密钥，可能把脱敏后的 value 原样提交；跳过以免写坏 .env
+        if field.field_type == "secret":
+            current = _serialize_runtime_value(getattr(config, field.attr), field)
+            current_text = "" if current is None else str(current)
+            incoming = "" if raw is None else str(raw)
+            if incoming == mask_secret(current_text):
+                skipped_attrs.append(attr)
+                continue
+
         env_updates[field.env_key] = _validate_field(field, raw)
         updated_attrs.append(attr)
+
+    if not env_updates:
+        return {
+            "updated": [],
+            "env_keys": [],
+            "skipped": skipped_attrs,
+            "count": 0,
+        }
 
     updated_env_keys = write_env_updates(env_updates)
     for env_key, value in env_updates.items():
@@ -474,4 +523,9 @@ def apply_config_updates(raw_updates: dict[str, Any]) -> dict[str, Any]:
         os.environ[resolved] = value
 
     config.reload()
-    return {"updated": updated_attrs, "env_keys": updated_env_keys, "count": len(updated_attrs)}
+    return {
+        "updated": updated_attrs,
+        "env_keys": updated_env_keys,
+        "skipped": skipped_attrs,
+        "count": len(updated_attrs),
+    }
