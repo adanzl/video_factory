@@ -1195,8 +1195,14 @@ class DeepSeekClient(LLMClient):
         self,
         title: str,
         narration: str,
+        *,
+        content_style: str | None = None,
     ) -> str:
-        prompts = build_video_description_prompts(title, narration)
+        prompts = build_video_description_prompts(
+            title,
+            narration,
+            content_style=content_style,
+        )
         raw, _ = self._chat_json(prompts["system"], prompts["user"], thinking_enabled=False)
         return parse_video_description_payload(raw)
 
@@ -1204,8 +1210,10 @@ class DeepSeekClient(LLMClient):
         self,
         title: str,
         narration: str,
+        *,
+        content_style: str | None = None,
     ) -> list[str]:
-        prompts = build_tags_prompts(title, narration)
+        prompts = build_tags_prompts(title, narration, content_style=content_style)
         raw, _ = self._chat_json(prompts["system"], prompts["user"], thinking_enabled=False)
         return parse_tags_payload(raw)
 
