@@ -160,10 +160,11 @@ class SegmentMgr:
         generated = []
         if scope != "clips" and image_targets:
             _check_cancelled()
-            from app.utils.job_info import resolve_image_provider
+            from app.utils.job_info import content_style_from_job, resolve_image_provider
 
             image_size = resolve_segment_image_size(job)
             image_provider = resolve_image_provider(job)
+            style = content_style_from_job(job) if job else None
 
             # chat 流水线传入角色参考图
             ref_images: list[Path] | None = None
@@ -182,6 +183,7 @@ class SegmentMgr:
                 on_image_done=on_image_done,
                 job_id=job_id,
                 ref_images=ref_images,
+                content_style=style,
             )
         for seg_id, path in generated:
             path_by_id[seg_id] = path

@@ -1304,7 +1304,7 @@ class Sd15ImageProvider(ImageProvider):
         img.save(buf, format="PNG")
         return buf.getvalue()
 
-    def generate(self, prompt: str, output_path: Path, *, size: str | None = None, ref_images: list[Path] | None = None, expected_speakers: list[str] | None = None) -> Path:
+    def generate(self, prompt: str, output_path: Path, *, size: str | None = None, ref_images: list[Path] | None = None, expected_speakers: list[str] | None = None, content_style: str | None = None) -> Path:
         size = size or self._default_size
         prep = _prepare_sd15_prompt(
             prompt,
