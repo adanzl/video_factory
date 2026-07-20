@@ -169,10 +169,10 @@ def preview_script_prompts_route():
         script = job.get("script_json")
         if not isinstance(script, dict):
             raise APIError("script not ready", status_code=400)
-        from app.services.script.board import build_image_prompts_prompts
+        from app.services.script.image_prompt import build_image_prompts
         from app.utils.job_info import resolve_include_sd15_prompt
         include_sd15 = resolve_include_sd15_prompt(job)
-        built = build_image_prompts_prompts(
+        built = build_image_prompts(
             script,
             job=job,
             segment_indices=[segment_index],

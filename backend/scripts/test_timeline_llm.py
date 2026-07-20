@@ -3,7 +3,7 @@ from __future__ import annotations
 import json, sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from app.services.script.board import build_material_script_prompts
+from app.services.script.voiceover_material import build_voiceover_material_prompts
 from app.services.script.board_timeline import _max_chars_for_duration, slot_min_chars
 from app.services.llm.llm_deepseek import DeepSeekClient
 
@@ -25,7 +25,7 @@ cps = 4.1
 
 for opening in [False, True]:
     tag = "need_opening" if opening else "no_opening"
-    p = build_material_script_prompts(title, video_timeline=TL, max_title_length=16, narration_target_words=785, chars_per_sec=cps, need_opening=opening)
+    p = build_voiceover_material_prompts(title, video_timeline=TL, max_title_length=16, narration_target_words=785, chars_per_sec=cps, need_opening=opening)
     data, fin = DeepSeekClient()._chat_json(p["system"], p["user"])
     lines = [f"=== {tag} ==="]
     lines.append("--- SYSTEM ---"); lines.append(p["system"])

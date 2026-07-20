@@ -400,7 +400,7 @@ def _run_image_prompts(
     )
 
     from app.utils.job_info import content_style_from_job
-    from app.services.script.prompt.image_prompts import wrap_image_prompts
+    from app.services.script.image_prompt import wrap_image_prompts
 
     content_style = content_style_from_job(job)
     target_segments = [

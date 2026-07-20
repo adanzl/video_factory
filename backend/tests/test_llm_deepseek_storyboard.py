@@ -3,17 +3,17 @@
 from __future__ import annotations
 
 from app.services.llm.llm_deepseek import (
-    _apply_segments_from_narration,
     _assemble_storyboard_narration,
     _loads_llm_json,
 )
+from app.services.script.segment_split import apply_segments_from_voiceover
 from app.utils.media import segment_text_char_cap
 
 
-def test_apply_segments_from_narration_respects_cap():
+def test_apply_segments_from_voiceover_respects_cap():
     narration = "第一句。" + "字" * 70 + "。第二句。"
     data = {"narration": narration, "visual_style": "写实", "title": "测试"}
-    out = _apply_segments_from_narration(data, segment_target_sec=15.0)
+    out = apply_segments_from_voiceover(data, segment_target_sec=15.0)
     cap = segment_text_char_cap(15.0)
     assert all(len(seg["text"].replace(" ", "")) <= cap for seg in out["segments"])
     assert out["narration"] == narration
@@ -51,4 +51,3 @@ def test_loads_llm_json_strips_markdown_fence():
     raw = '```json\n{"title": "测试", "visual_style": "写实", "segments": []}\n```'
     parsed = _loads_llm_json(raw)
     assert parsed["title"] == "测试"
-
