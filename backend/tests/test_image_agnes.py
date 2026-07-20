@@ -78,6 +78,53 @@ def test_generate_switches_to_backup_key_on_quota(tmp_path: Path) -> None:
     assert mock_generate.call_args_list[1].args[0].value == "main-key"
 
 
+def test_generate_without_keys_raises_unless_mock(tmp_path: Path, monkeypatch) -> None:
+    provider = AgnesImageProvider()
+    output = tmp_path / "1.png"
+    monkeypatch.setattr(
+        "app.services.segment.image.image_agnes.get_settings",
+        lambda: MagicMock(mock_mode=False),
+    )
+    with (
+        patch(
+            "app.services.segment.image.image_agnes.agnes_api_keys",
+            return_value=[],
+        ),
+        patch.object(provider, "_fallback") as mock_fallback,
+    ):
+        try:
+            provider.generate("测试", output)
+            raise AssertionError("expected RuntimeError")
+        except RuntimeError as exc:
+            assert "未配置" in str(exc)
+        mock_fallback.generate.assert_not_called()
+
+
+def test_generate_without_keys_uses_fallback_in_mock(
+    tmp_path: Path, monkeypatch
+) -> None:
+    provider = AgnesImageProvider()
+    output = tmp_path / "1.png"
+    monkeypatch.setattr(
+        "app.services.segment.image.image_agnes.get_settings",
+        lambda: MagicMock(mock_mode=True),
+    )
+    with (
+        patch(
+            "app.services.segment.image.image_agnes.agnes_api_keys",
+            return_value=[],
+        ),
+        patch.object(
+            provider,
+            "_fallback",
+            MagicMock(generate=MagicMock(return_value=output)),
+        ) as mock_fallback,
+    ):
+        result = provider.generate("测试", output)
+    assert result == output
+    mock_fallback.generate.assert_called_once()
+
+
 def test_concurrent_submit_staggered() -> None:
     import time
 

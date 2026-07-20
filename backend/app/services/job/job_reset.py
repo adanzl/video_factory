@@ -18,7 +18,8 @@ from app.repositories.connection import connection
 
 __all__ = ["prepare_for_action", "prepare_job_rerun", "reset_job_from_stage"]
 
-# 重跑 publish 时只刷新自身产物，不影响下游
+# 重跑 publish / tts 时不扫下游文件树；tts 只清 DB clip_path（见
+# _clear_tts_artifacts），分镜 mp4 留给 segment 按需重生成
 _STAGES_SKIP_DOWNSTREAM_CLEAR = frozenset({"publish", "tts"})
 
 
@@ -95,7 +96,13 @@ def _clear_merge_artifacts(media_dir: Path) -> None:
 
 def _clear_tts_artifacts(conn, job_id: int, media_dir: Path) -> None:
     repo_segment.clear_segment_durations(conn, job_id)
-    repo_job.update_job(conn, job_id, audio_path=None, subtitle_path=None, tts_usage_json=None)
+    # 新配音时长会变；清 DB clip_path，避免 segment/merge 复用旧时间轴
+    repo_segment.clear_segment_clips(conn, job_id)
+    repo_job.update_job(
+        conn, job_id, audio_path=None, subtitle_path=None, tts_usage_json=None
+    )
+    if not media_dir.exists():
+        return
     audio_dir = media_dir / "audio"
     for name in ("narration.mp3", "subtitles.srt", "subtitle_cues.json"):
         _delete_files([audio_dir / name])
@@ -245,7 +252,7 @@ def _clear_stage_self(
             )
         return
 
-    if stage == "tts" and media_dir.exists():
+    if stage == "tts":
         _clear_tts_artifacts(conn, job_id, media_dir)
         return
 

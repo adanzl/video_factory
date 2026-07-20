@@ -515,7 +515,7 @@ class TopicMgr:
                     row["title"],
                     skip_publish=skip_publish,
                     stage="script",
-                    status="idle",
+                    status="pending",
                     info=merge_job_script_params(
                         None,
                         orientation=ORIENTATION_LANDSCAPE,

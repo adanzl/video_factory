@@ -305,8 +305,13 @@ const handleAbort = async () => {
   aborting.value = true;
   try {
     job.value = await abortJob(job.value.id);
-    ElMessage.success("任务已中止");
-    stopRunningPoll();
+    if (job.value.status === JOB_STATUS_RUNNING) {
+      ElMessage.success("已请求中止，等待当前步骤结束");
+      startRunningPoll();
+    } else {
+      ElMessage.success("任务已中止");
+      stopRunningPoll();
+    }
     await fetchDetail({ silent: true });
   } catch (error) {
     handleError(error, "中止任务失败");

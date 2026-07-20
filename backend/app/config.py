@@ -124,9 +124,8 @@ class Config:
         )
 
         self.redis_url: str | None = _opt("REDIS_URL")
-        self.mock_mode: bool = _bool("MOCK_MODE") or not (
-            deepseek_key and dashscope_key and tts_key
-        )
+        # 仅显式 MOCK_MODE=true；缺 Key 不再静默强制 mock
+        self.mock_mode: bool = _bool("MOCK_MODE")
         self.skip_publish_default: bool = _bool("SKIP_PUBLISH_DEFAULT", True)
         self.skip_script_quality_check: bool = _bool("SKIP_SCRIPT_QUALITY_CHECK", False)
         self.script_qa_max_attempts: int = int(os.getenv("SCRIPT_QA_MAX_ATTEMPTS", "2"))
@@ -305,6 +304,17 @@ class Config:
         if self.cors_origins.strip() == "*":
             return ["*"]
         return [origin.strip() for origin in self.cors_origins.split(",")]
+
+    def missing_provider_keys(self) -> list[str]:
+        """非 mock 时可能影响流水线的常见 Key（仅提示，不强制）。"""
+        missing: list[str] = []
+        if not self.deepseek_api_key and not (
+            self.agnes_api_key or self.agnes_free_api_key
+        ):
+            missing.append("DEEPSEEK_API_KEY 或 AGNES_*_API_KEY")
+        if not self.dashscope_api_key and not self.tts_api_key:
+            missing.append("DASHSCOPE_API_KEY 或 TTS_API_KEY")
+        return missing
 
 
 config = Config()

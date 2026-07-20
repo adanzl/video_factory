@@ -371,27 +371,64 @@ class JobMgr:
             return job
 
     def abort_job(self, job_id: int) -> dict:
+        """请求中止。
+
+        - 有活着的后台 worker（持锁）：只挂 cancel，保持 ``running``，
+          等 worker ``mark_aborted`` → ``pending``。
+        - 无 worker（僵尸 ``running`` / 未在跑）：直接落到 ``pending``。
+        """
         job = self.get_job(job_id)
         was_running = job["status"] == "running"
-        if was_running:
-            job_cancel.request(job_id)
-        else:
+        if not was_running:
             job_cancel.clear(job_id)
+            with connection() as conn:
+                job = repo_job.update_job(
+                    conn,
+                    job_id,
+                    status="pending",
+                    fail_stage=None,
+                    error_message=None,
+                )
+                repo_job_log.append_log(
+                    conn,
+                    job_id,
+                    "api",
+                    "job aborted to pending",
+                )
+                return job
+
+        job_cancel.request(job_id)
+        lock = self._job_lock(job_id)
+        if lock.acquire(blocking=False):
+            # 拿到锁说明当前进程没有活着的 worker → 僵尸 running
+            try:
+                job_cancel.clear(job_id)
+                with connection() as conn:
+                    job = repo_job.update_job(
+                        conn,
+                        job_id,
+                        status="pending",
+                        fail_stage=None,
+                        error_message=None,
+                    )
+                    repo_job_log.append_log(
+                        conn,
+                        job_id,
+                        "api",
+                        "abort: no active worker, reset to pending",
+                    )
+                    return job
+            finally:
+                lock.release()
+
         with connection() as conn:
-            job = repo_job.update_job(
-                conn,
-                job_id,
-                status="pending",
-                fail_stage=None,
-                error_message=None,
-            )
             repo_job_log.append_log(
                 conn,
                 job_id,
                 "api",
-                "abort requested" if was_running else "job aborted to pending",
+                "abort requested; waiting for worker to stop",
             )
-            return job
+            return repo_job.get_job(conn, job_id)
 
     def _skip_if_aborted(self, job_id: int) -> dict | None:
         if job_cancel.is_cancelled(job_id):
@@ -406,18 +443,16 @@ class JobMgr:
             return repo_job.update_job(conn, job_id, status="running")
 
     def mark_done(self, job_id: int) -> dict:
-        skipped = self._skip_if_aborted(job_id)
-        if skipped is not None:
-            job_cancel.clear(job_id)
-            return skipped
+        # 中止优先：避免 cancel 时跳过写库导致一直卡在 running
+        if job_cancel.is_cancelled(job_id):
+            job = self.get_job(job_id)
+            return self.mark_aborted(job_id, job.get("stage") or "done")
         with connection() as conn:
             return repo_job.update_job(conn, job_id, stage="done", status="done")
 
     def mark_failed(self, job_id: int, stage: str, message: str) -> dict:
-        skipped = self._skip_if_aborted(job_id)
-        if skipped is not None:
-            job_cancel.clear(job_id)
-            return skipped
+        if job_cancel.is_cancelled(job_id):
+            return self.mark_aborted(job_id, stage)
         with connection() as conn:
             repo_job_log.append_log(conn, job_id, stage, message, level="error")
             return repo_job.update_job(
@@ -492,6 +527,15 @@ class JobMgr:
         if not lock.acquire(blocking=False):
             raise JobBusyError(f"job {job_id} is running")
 
+        # 锁必须持有到 worker 结束，否则 abort 后可立刻重入并 clear cancel
+        lock_held = True
+
+        def _release_lock() -> None:
+            nonlocal lock_held
+            if lock_held:
+                lock_held = False
+                lock.release()
+
         try:
             job = self.get_job(job_id)
             if job["status"] == "running":
@@ -500,48 +544,80 @@ class JobMgr:
             prepare_for_action(job_id, action, segment_indices=segment_indices)
             job_cancel.clear(job_id)
             self.mark_running(job_id)
-
             fail_stage = action.split("/")[0]
 
-            def _worker() -> None:
-                if action_detail:
-                    logger.info(
-                        "job %s action [%s] started in background greenlet: %s",
-                        job_id,
-                        action,
-                        action_detail,
-                    )
-                else:
-                    logger.info(
-                        "job %s action [%s] started in background greenlet",
-                        job_id,
-                        action,
-                    )
-                try:
-                    run()
-                except JobCancelledError:
-                    logger.info("job %s action %s aborted", job_id, action)
+            # abort 插在 clear 与 mark_running 之间时，不要再 spawn
+            started = self.get_job(job_id)
+            if (
+                started.get("status") != "running"
+                or job_cancel.is_cancelled(job_id)
+            ):
+                if job_cancel.is_cancelled(job_id):
                     job_cancel.clear(job_id)
-                    job = self.get_job(job_id)
-                    if job["status"] == "running":
-                        self.mark_aborted(job_id, fail_stage)
-                except Exception as exc:
-                    if is_expected_job_failure(exc):
-                        logger.error(
-                            "job %s action %s failed: %s", job_id, action, exc
+                _release_lock()
+                return started
+
+            def _worker() -> None:
+                try:
+                    if action_detail:
+                        logger.info(
+                            "job %s action [%s] started in background "
+                            "greenlet: %s",
+                            job_id,
+                            action,
+                            action_detail,
                         )
                     else:
-                        logger.exception(
-                            "job %s action %s failed: %s", job_id, action, exc
+                        logger.info(
+                            "job %s action [%s] started in background greenlet",
+                            job_id,
+                            action,
                         )
-                    job = self.get_job(job_id)
-                    if job["status"] == "running":
-                        self.mark_failed(job_id, fail_stage, str(exc))
+                    try:
+                        run()
+                    except JobCancelledError:
+                        logger.info("job %s action %s aborted", job_id, action)
+                        job = self.get_job(job_id)
+                        if job["status"] == "running":
+                            self.mark_aborted(job_id, fail_stage)
+                    except Exception as exc:
+                        if is_expected_job_failure(exc):
+                            logger.error(
+                                "job %s action %s failed: %s",
+                                job_id,
+                                action,
+                                exc,
+                            )
+                        else:
+                            logger.exception(
+                                "job %s action %s failed: %s",
+                                job_id,
+                                action,
+                                exc,
+                            )
+                        job = self.get_job(job_id)
+                        if job["status"] == "running":
+                            self.mark_failed(job_id, fail_stage, str(exc))
+                finally:
+                    # 兜底：cancel 仍在则收尾；非 running 也清掉孤儿 cancel
+                    try:
+                        if job_cancel.is_cancelled(job_id):
+                            job = self.get_job(job_id)
+                            if job["status"] == "running":
+                                self.mark_aborted(job_id, fail_stage)
+                            else:
+                                job_cancel.clear(job_id)
+                    except Exception:
+                        logger.exception(
+                            "job %s abort finalize failed", job_id
+                        )
+                    _release_lock()
 
             run_in_background(_worker)
             return self.get_job(job_id)
-        finally:
-            lock.release()
+        except Exception:
+            _release_lock()
+            raise
 
     def _persist_image_provider(self, job_id: int, image_provider: str | None) -> None:
         if image_provider is None:
@@ -669,47 +745,90 @@ class JobMgr:
         if not lock.acquire(blocking=False):
             raise JobBusyError(f"job {job_id} is running")
 
+        lock_held = True
+
+        def _release_lock() -> None:
+            nonlocal lock_held
+            if lock_held:
+                lock_held = False
+                lock.release()
+
         try:
             job = self.get_job(job_id)
             if job["status"] == "running":
                 raise JobBusyError(f"job {job_id} is running")
             job_cancel.clear(job_id)
             self.mark_running(job_id)
-
             fail_stage = "script"
-            detail = _image_prompts_action_detail(job, segment_indices=segment_indices)
+            detail = _image_prompts_action_detail(
+                job, segment_indices=segment_indices
+            )
+
+            started = self.get_job(job_id)
+            if (
+                started.get("status") != "running"
+                or job_cancel.is_cancelled(job_id)
+            ):
+                if job_cancel.is_cancelled(job_id):
+                    job_cancel.clear(job_id)
+                _release_lock()
+                return started
 
             def _worker() -> None:
-                if detail:
-                    logger.info(
-                        "job %s action [script/prompts/%s] started: %s",
-                        job_id, prompt_type, detail,
-                    )
-                else:
-                    logger.info(
-                        "job %s action [script/prompts/%s] started",
-                        job_id, prompt_type,
-                    )
                 try:
-                    run_script_prompts(job_id, prompt_type=prompt_type, segment_indices=segment_indices)
-                except JobCancelledError:
-                    logger.info("job %s cancelled during prompts generation", job_id)
-                    job = self.get_job(job_id)
-                    if job["status"] == "running":
-                        self.mark_aborted(job_id, fail_stage)
-                except Exception:
-                    logger.exception("job %s prompts generation failed", job_id)
-                    job = self.get_job(job_id)
-                    if job["status"] == "running":
-                        self.mark_failed(job_id, fail_stage, "failed")
+                    if detail:
+                        logger.info(
+                            "job %s action [script/prompts/%s] started: %s",
+                            job_id,
+                            prompt_type,
+                            detail,
+                        )
+                    else:
+                        logger.info(
+                            "job %s action [script/prompts/%s] started",
+                            job_id,
+                            prompt_type,
+                        )
+                    try:
+                        run_script_prompts(
+                            job_id,
+                            prompt_type=prompt_type,
+                            segment_indices=segment_indices,
+                        )
+                    except JobCancelledError:
+                        logger.info(
+                            "job %s cancelled during prompts generation",
+                            job_id,
+                        )
+                        job = self.get_job(job_id)
+                        if job["status"] == "running":
+                            self.mark_aborted(job_id, fail_stage)
+                    except Exception as exc:
+                        logger.exception(
+                            "job %s prompts generation failed", job_id
+                        )
+                        job = self.get_job(job_id)
+                        if job["status"] == "running":
+                            self.mark_failed(job_id, fail_stage, str(exc))
+                finally:
+                    try:
+                        if job_cancel.is_cancelled(job_id):
+                            job = self.get_job(job_id)
+                            if job["status"] == "running":
+                                self.mark_aborted(job_id, fail_stage)
+                            else:
+                                job_cancel.clear(job_id)
+                    except Exception:
+                        logger.exception(
+                            "job %s abort finalize failed", job_id
+                        )
+                    _release_lock()
 
-            import gevent
-            gevent.spawn(_worker)
+            run_in_background(_worker)
             return self.get_job(job_id)
         except Exception:
+            _release_lock()
             raise
-        finally:
-            lock.release()
 
     def preview_script_prompts(
         self,
@@ -954,8 +1073,8 @@ class JobMgr:
             # 优先用分镜 1 的图片做封面，无需重新生图
             seg1_image: Path | None = None
             with connection() as conn:
-                segs = repo_segment.list_segments(conn, job_id)
-            for seg in segs:
+                seg_lst = repo_segment.list_segments(conn, job_id)
+            for seg in seg_lst:
                 if int(seg.get("segment_index", 0)) == 1:
                     raw = seg.get("image_path") or ""
                     if raw:

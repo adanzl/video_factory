@@ -122,7 +122,7 @@ def _run_one_stage(
     done = _advance_after_stage(
         job_id,
         stage_cls,
-        status="idle" if hold else "pending",
+        status="pending",
     )
     if done is not None:
         return done
@@ -450,7 +450,7 @@ def _run_image_prompts(
                 f"image_provider={image_provider}, include_sd15_prompt={include_sd15_prompt}"
             ),
         )
-        repo_job.update_job(conn, job_id, status="idle")
+        repo_job.update_job(conn, job_id, status="pending")
     return _reload_job(job_id)
 
 
@@ -477,7 +477,7 @@ def _run_visual_brief(job_id: int) -> dict:
         repo_job_log.append_log(
             conn, job_id, "script", "visual_brief regenerated",
         )
-        repo_job.update_job(conn, job_id, status="idle")
+        repo_job.update_job(conn, job_id, status="pending")
     logger.info("job %s visual_brief regenerated", job_id)
     return _reload_job(job_id)
 
@@ -505,7 +505,7 @@ def _run_narration(job_id: int) -> dict:
         repo_job_log.append_log(
             conn, job_id, "script", "narration regenerated",
         )
-        repo_job.update_job(conn, job_id, status="idle")
+        repo_job.update_job(conn, job_id, status="pending")
     logger.info("job %s narration regenerated", job_id)
     return _reload_job(job_id)
 

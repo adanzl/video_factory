@@ -212,13 +212,36 @@ def test_produce_segments_skips_existing_clips(tmp_path: Path) -> None:
     (images_dir / "2.png").write_bytes(b"png")
     (images_dir / "3.png").write_bytes(b"png")
 
-    # 分镜1 已有 clip（模拟服务重启前已生成1个）
-    (clips_dir / "1.mp4").write_bytes(b"mp4")
+    # 分镜1 已有 clip（模拟服务重启前已生成并写入 DB）
+    existing_clip = clips_dir / "1.mp4"
+    existing_clip.write_bytes(b"mp4")
 
     segments = [
-        {"id": 101, "segment_index": 1, "visual_mode": "wan_i2v", "image_path": str(images_dir / "1.png"), "duration_sec": 5.0, "text": "测试一"},
-        {"id": 102, "segment_index": 2, "visual_mode": "wan_i2v", "image_path": str(images_dir / "2.png"), "duration_sec": 5.0, "text": "测试二"},
-        {"id": 103, "segment_index": 3, "visual_mode": "wan_i2v", "image_path": str(images_dir / "3.png"), "duration_sec": 5.0, "text": "测试三"},
+        {
+            "id": 101,
+            "segment_index": 1,
+            "visual_mode": "wan_i2v",
+            "image_path": str(images_dir / "1.png"),
+            "clip_path": str(existing_clip),
+            "duration_sec": 5.0,
+            "text": "测试一",
+        },
+        {
+            "id": 102,
+            "segment_index": 2,
+            "visual_mode": "wan_i2v",
+            "image_path": str(images_dir / "2.png"),
+            "duration_sec": 5.0,
+            "text": "测试二",
+        },
+        {
+            "id": 103,
+            "segment_index": 3,
+            "visual_mode": "wan_i2v",
+            "image_path": str(images_dir / "3.png"),
+            "duration_sec": 5.0,
+            "text": "测试三",
+        },
     ]
 
     built_indices: list[int] = []
@@ -262,10 +285,19 @@ def test_produce_segments_all_clips_exist_skips_build(tmp_path: Path) -> None:
     clips_dir.mkdir(parents=True)
 
     (images_dir / "1.png").write_bytes(b"png")
-    (clips_dir / "1.mp4").write_bytes(b"mp4")
+    existing_clip = clips_dir / "1.mp4"
+    existing_clip.write_bytes(b"mp4")
 
     segments = [
-        {"id": 101, "segment_index": 1, "visual_mode": "wan_i2v", "image_path": str(images_dir / "1.png"), "duration_sec": 5.0, "text": "测试"},
+        {
+            "id": 101,
+            "segment_index": 1,
+            "visual_mode": "wan_i2v",
+            "image_path": str(images_dir / "1.png"),
+            "clip_path": str(existing_clip),
+            "duration_sec": 5.0,
+            "text": "测试",
+        },
     ]
 
     with patch.object(media_mgr, "build_segment_clips") as mock_build:
@@ -280,3 +312,63 @@ def test_produce_segments_all_clips_exist_skips_build(tmp_path: Path) -> None:
     mock_build.assert_not_called()
     assert len(result.clips.segment_clip_paths) == 1
     assert result.clips.segment_clip_paths[0][0] == 101
+
+
+def test_produce_segments_ignores_orphan_disk_clip_without_db_path(
+    tmp_path: Path,
+) -> None:
+    """TTS 清空 clip_path 后，磁盘残留 mp4 不得跳过重生成。"""
+    from app.services.media.media_mgr import SegmentClipsResult, media_mgr
+
+    media_dir = tmp_path / "19"
+    images_dir = media_dir / "images"
+    images_dir.mkdir(parents=True)
+    clips_dir = media_dir / "segments"
+    clips_dir.mkdir(parents=True)
+
+    (images_dir / "1.png").write_bytes(b"png")
+    (clips_dir / "1.mp4").write_bytes(b"old")
+
+    segments = [
+        {
+            "id": 101,
+            "segment_index": 1,
+            "visual_mode": "static_motion",
+            "image_path": str(images_dir / "1.png"),
+            "clip_path": None,
+            "duration_sec": 5.0,
+            "text": "测试",
+        },
+    ]
+    built: list[int] = []
+
+    def _fake_build(
+        *,
+        media_dir,
+        segments,
+        audio_path=None,
+        only_segment_indices=None,
+        job=None,
+        on_clip_done=None,
+    ):
+        for seg in segments:
+            built.append(seg["segment_index"])
+            path = clips_dir / f"{seg['segment_index']}.mp4"
+            path.write_bytes(b"new")
+        return SegmentClipsResult(
+            segment_clip_paths=[
+                (seg["id"], clips_dir / f"{seg['segment_index']}.mp4")
+                for seg in segments
+            ]
+        )
+
+    with patch.object(media_mgr, "build_segment_clips", side_effect=_fake_build):
+        segment_mgr.produce_segments(
+            segments=segments,
+            media_dir=media_dir,
+            audio_path=None,
+            scope="clips",
+            job=None,
+        )
+
+    assert built == [1]

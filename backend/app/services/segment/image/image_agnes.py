@@ -266,7 +266,12 @@ class AgnesImageProvider(ImageProvider):
         size = size or self._default_size
         keys = agnes_api_keys()
         if not keys:
-            return self._fallback.generate(prompt, output_path, size=size)
+            if get_settings().mock_mode:
+                return self._fallback.generate(prompt, output_path, size=size)
+            raise RuntimeError(
+                "Agnes API Key 未配置（AGNES_API_KEY / AGNES_FREE_API_KEY）；"
+                "非 MOCK_MODE 下拒绝静默出占位图"
+            )
 
         last_exc: Exception | None = None
         for idx, key in enumerate(keys):

@@ -112,7 +112,13 @@ CONFIG_GROUPS: tuple[ConfigGroupDef, ...] = (
         id="runtime",
         label="运行模式",
         items=(
-            _f("mock_mode", "MOCK_MODE", "Mock 模式", "bool"),
+            _f(
+                "mock_mode",
+                "MOCK_MODE",
+                "Mock 模式",
+                "bool",
+                description="仅显式 true 才 mock；缺 Key 不会自动开启",
+            ),
             _f("skip_publish_default", "SKIP_PUBLISH_DEFAULT", "默认跳过投稿", "bool"),
             _f("skip_script_quality_check", "SKIP_SCRIPT_QUALITY_CHECK", "跳过脚本质检", "bool"),
             _f("host_enabled", "HOST_ENABLED", "讲解人 IP", "bool"),

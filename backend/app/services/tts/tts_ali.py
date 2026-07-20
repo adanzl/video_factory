@@ -260,26 +260,42 @@ def _run_tts_task(
         on_message=on_message,
         on_error=on_error,
     )
-    gevent.spawn(ws_app.run_forever)
+    ws_greenlet = gevent.spawn(ws_app.run_forever)
 
-    if not started.wait(timeout=30):
-        ws_app.close()
-        raise TimeoutError("TTS task-started 超时")
+    def _stop_ws() -> None:
+        try:
+            ws_app.close()
+        except Exception:
+            logger.debug("tts ws close failed", exc_info=True)
+        if not ws_greenlet.ready():
+            ws_greenlet.kill(block=False)
+            try:
+                ws_greenlet.join(timeout=2)
+            except Exception:
+                logger.debug("tts ws greenlet join failed", exc_info=True)
 
-    if not finished.wait(timeout=timeout):
-        ws_app.close()
-        raise TimeoutError(f"TTS 合成超时（>{timeout}s）")
+    try:
+        if not started.wait(timeout=30):
+            raise TimeoutError("TTS task-started 超时")
 
-    if error:
-        raise error[0]
-    audio = b"".join(audio_chunks)
-    if not audio:
-        raise RuntimeError("TTS 返回空音频")
-    logger.info(
-        "tts result: audio=%d bytes words=%d text_chars=%d voice=%s",
-        len(audio), len(raw_words), len(text), voice,
-    )
-    return _SynthesisResult(audio=audio, words=raw_words, usage=latest_usage)
+        if not finished.wait(timeout=timeout):
+            raise TimeoutError(f"TTS 合成超时（>{timeout}s）")
+
+        if error:
+            raise error[0]
+        audio = b"".join(audio_chunks)
+        if not audio:
+            raise RuntimeError("TTS 返回空音频")
+        logger.info(
+            "tts result: audio=%d bytes words=%d text_chars=%d voice=%s",
+            len(audio),
+            len(raw_words),
+            len(text),
+            voice,
+        )
+        return _SynthesisResult(audio=audio, words=raw_words, usage=latest_usage)
+    finally:
+        _stop_ws()
 
 
 def _synthesize_segment(
