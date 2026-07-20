@@ -115,11 +115,46 @@
 
           <section class="flex flex-col gap-1">
             <div class="text-xs font-medium text-gray-600">文案</div>
-            <el-tooltip placement="top" :show-after="300" :disabled="!segment.text">
+            <el-tooltip
+              placement="top"
+              :show-after="500"
+              :disabled="!formatSegmentCopyFull(segment)"
+            >
               <template #content>
-                <div class="max-w-sm whitespace-pre-wrap wrap-break-word text-sm">{{ segment.text }}</div>
+                <div class="max-w-sm whitespace-pre-wrap wrap-break-word text-sm">
+                  {{ formatSegmentCopyFull(segment) }}
+                </div>
               </template>
-              <div class="line-clamp-3 min-h-[3lh] cursor-default text-sm leading-relaxed wrap-break-word">
+              <div
+                v-if="segment.dialogue?.length"
+                class="flex min-h-[4lh] cursor-default flex-col gap-0.5 text-sm leading-relaxed"
+              >
+                <template v-if="segment.dialogue.length > 4">
+                  <div
+                    v-for="(dl, di) in segment.dialogue.slice(0, 3)"
+                    :key="di"
+                    class="truncate rounded px-1.5 py-0.5"
+                    :class="speakerStyle(dl.speaker).full"
+                  >
+                    <span class="font-bold">{{ dl.speaker }}：</span>{{ dl.text }}
+                  </div>
+                  <div class="truncate px-1.5 text-gray-400">…</div>
+                </template>
+                <template v-else>
+                  <div
+                    v-for="(dl, di) in segment.dialogue"
+                    :key="di"
+                    class="truncate rounded px-1.5 py-0.5"
+                    :class="speakerStyle(dl.speaker).full"
+                  >
+                    <span class="font-bold">{{ dl.speaker }}：</span>{{ dl.text }}
+                  </div>
+                </template>
+              </div>
+              <div
+                v-else
+                class="line-clamp-4 min-h-[4lh] cursor-default text-sm leading-relaxed wrap-break-word"
+              >
                 {{ segment.text }}
               </div>
             </el-tooltip>
@@ -377,6 +412,19 @@ const emit = defineEmits<{
 }>();
 
 const { handleError } = useErrorHandler();
+
+function speakerStyle(speaker: string): { bg: string; text: string; full: string } {
+  if (speaker === "昭昭") return { bg: "bg-blue-50", text: "text-blue-600", full: "bg-blue-50 text-blue-800" };
+  if (speaker === "妈妈") return { bg: "bg-emerald-50", text: "text-emerald-600", full: "bg-emerald-50 text-emerald-800" };
+  return { bg: "bg-pink-50", text: "text-pink-600", full: "bg-pink-50 text-pink-800" };
+}
+
+function formatSegmentCopyFull(segment: JobSegment): string {
+  if (segment.dialogue?.length) {
+    return segment.dialogue.map(dl => `${dl.speaker}：${dl.text}`).join("\n");
+  }
+  return segment.text || "";
+}
 
 const submitting = ref(false);
 const savingImageProvider = ref(false);

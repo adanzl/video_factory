@@ -1,7 +1,14 @@
+export interface SegmentDialogueLine {
+  speaker: string;
+  text: string;
+}
+
 export interface JobSegment {
   id: number;
   segment_index: number;
   text: string;
+  /** 对白行（日常故事等）；有则文案区按角色分行展示 */
+  dialogue?: SegmentDialogueLine[] | null;
   image_prompt?: string | null;
   motion_prompt?: string | null;
   sd15_prompt_en?: string | null;
