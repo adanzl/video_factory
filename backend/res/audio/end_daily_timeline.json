@@ -1,0 +1,19 @@
+{
+  "duration": 4.932,
+  "ding_end": 0.529,
+  "speech_start": 0.749,
+  "segments": [
+    {
+      "speaker": "昭昭",
+      "text": "他们为什么不关注啊？",
+      "start": 0.749,
+      "end": 3.276
+    },
+    {
+      "speaker": "灿灿",
+      "text": "没准是忘了……",
+      "start": 3.276,
+      "end": 4.932
+    }
+  ]
+}
