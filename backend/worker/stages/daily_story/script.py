@@ -99,6 +99,23 @@ class DailyScriptStage(StageExecutor):
             }
             if dialogue:
                 seg["dialogue"] = dialogue
+            from app.services.daily_story.cast import (
+                scrub_cast_leaks,
+                speakers_from_dialogue,
+            )
+
+            allowed = speakers_from_dialogue(dialogue)
+            cleaned = scrub_cast_leaks(seg["visual_brief"], allowed)
+            if cleaned != seg["visual_brief"]:
+                logger.warning(
+                    "segment %d visual_brief scrubbed cast leaks "
+                    "(speakers=%s): %r -> %r",
+                    i,
+                    sorted(allowed),
+                    seg["visual_brief"][:120],
+                    cleaned[:120],
+                )
+                seg["visual_brief"] = cleaned
             segments.append(seg)
 
         narration = "".join(narration_parts)
@@ -163,7 +180,8 @@ class DailyScriptStage(StageExecutor):
             seg.pop("motion_prompt", None)
 
         # 用标准流程生成文生图 + 运动提示词（含内部质量校验与重试）
-        llm_mgr.fill_image_prompts(script, job=ctx.job)
+        script["content_style"] = "daily_story"
+        llm_mgr.fill_image_prompts_with_retries(script, job=ctx.job)
 
         # 给 image_prompt 添加固定前后缀（LLM 只输出场景核心内容）
         from app.services.script.image_prompt import wrap_image_prompts

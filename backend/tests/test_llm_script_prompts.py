@@ -188,7 +188,7 @@ def test_build_image_prompts_orientation_label_unified():
         ("tech_science", "不修改、不替换 visual_style"),
         ("life_experience", "禁可读大段文字/水印/品牌Logo"),
         ("history_mystery", "禁止卡通/绘本/扁平插画风"),
-        ("daily_story", "系统在出图前硬编码拼接"),
+        ("daily_story", "出图前系统硬编码"),
     ]:
         portrait = build_image_prompts(
             script,
