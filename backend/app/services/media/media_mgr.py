@@ -22,6 +22,7 @@ from app.services.media.ffmpeg_utils import (
     ffmpeg_hwaccel_config_summary,
     log_ffmpeg_hwaccel_config,
     merge_audio_video,
+    mix_bgm_into_video,
     prepend_intro,
     probe_duration,
     probe_video_size,
@@ -276,6 +277,8 @@ class MediaMgr:
         subtitle_path: Path | None,
         intro_path: Path | None,
         end_path: Path | None = None,
+        bgm_path: Path | None = None,
+        bgm_volume_db: float = -18.0,
     ) -> MergeResult:
         t0 = time.time()
         log_ffmpeg_hwaccel_config(context="merge")
@@ -311,6 +314,21 @@ class MediaMgr:
             clip_durations=clip_durations,
         )
         logger.info("merge: audio merged (pts corrected)")
+
+        if bgm_path is not None and bgm_path.exists():
+            logger.info(
+                "merge: mixing bgm path=%s volume_db=%.1f",
+                bgm_path.name,
+                bgm_volume_db,
+            )
+            mixed = media_dir / "body_with_bgm.mp4"
+            mix_bgm_into_video(
+                body_with_audio,
+                bgm_path,
+                mixed,
+                volume_db=bgm_volume_db,
+            )
+            shutil.move(mixed, body_with_audio)
 
         final_path = media_dir / "final.mp4"
         if intro_path and intro_path.exists():

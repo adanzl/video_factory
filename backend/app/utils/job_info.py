@@ -501,3 +501,81 @@ def merge_job_script_params(
     if content_style is not None:
         merged["content_style"] = content_style
     return merged
+
+
+DEFAULT_BGM_VOLUME_DB = -18.0
+
+
+def bgm_params_from_info(info: str | dict | None) -> dict[str, Any]:
+    """解析 job.info.bgm → {enabled, material_id, volume_db}。"""
+    raw = parse_job_info(info).get("bgm")
+    if not isinstance(raw, dict):
+        return {"enabled": False, "material_id": None, "volume_db": DEFAULT_BGM_VOLUME_DB}
+    material_id = raw.get("material_id")
+    try:
+        material_id_int = int(material_id) if material_id is not None else None
+    except (TypeError, ValueError):
+        material_id_int = None
+    if material_id_int is not None and material_id_int <= 0:
+        material_id_int = None
+    volume = raw.get("volume_db", DEFAULT_BGM_VOLUME_DB)
+    try:
+        volume_db = float(volume)
+    except (TypeError, ValueError):
+        volume_db = DEFAULT_BGM_VOLUME_DB
+    volume_db = max(-40.0, min(0.0, volume_db))
+    enabled = bool(raw.get("enabled")) and material_id_int is not None
+    return {
+        "enabled": enabled,
+        "material_id": material_id_int,
+        "volume_db": volume_db,
+    }
+
+
+def resolve_bgm_file(material_id: int | None) -> "Path | None":
+    """从音频素材库解析 BGM 文件路径。"""
+    from pathlib import Path
+
+    from app.repositories import repo_material_audio
+    from app.repositories.connection import connection
+
+    if material_id is None or material_id <= 0:
+        return None
+    try:
+        with connection() as conn:
+            material = repo_material_audio.get_material_audio(conn, material_id)
+    except KeyError:
+        return None
+    path = Path(str(material.get("file_path") or ""))
+    return path if path.is_file() else None
+
+
+def normalize_bgm_payload(raw: object) -> dict[str, Any] | None:
+    """校验 API 传入的 bgm 配置；无效返回 None。"""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError("bgm must be an object")
+    enabled = bool(raw.get("enabled"))
+    material_id = raw.get("material_id")
+    try:
+        material_id_int = int(material_id) if material_id is not None else None
+    except (TypeError, ValueError) as exc:
+        raise ValueError("bgm.material_id must be an integer") from exc
+    if material_id_int is not None and material_id_int <= 0:
+        material_id_int = None
+    volume = raw.get("volume_db", DEFAULT_BGM_VOLUME_DB)
+    try:
+        volume_db = float(volume)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("bgm.volume_db must be a number") from exc
+    volume_db = max(-40.0, min(0.0, volume_db))
+    if enabled and material_id_int is None:
+        raise ValueError("bgm.material_id is required when enabled")
+    if enabled and resolve_bgm_file(material_id_int) is None:
+        raise ValueError(f"bgm material not found: {material_id_int}")
+    return {
+        "enabled": enabled,
+        "material_id": material_id_int,
+        "volume_db": volume_db,
+    }

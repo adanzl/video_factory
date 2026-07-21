@@ -10,6 +10,7 @@ from app.services.tts.audio_analysis import analyze_loudness
 from app.services.media.ffmpeg_utils import ffmpeg_hwaccel_config_summary, probe_duration
 from app.services.media.media_mgr import media_mgr
 from app.utils.final_asset import build_final_asset
+from app.utils.job_info import bgm_params_from_info, resolve_bgm_file
 from worker.context import JobContext
 from worker.stages.base import StageExecutor
 
@@ -41,6 +42,21 @@ class MergeStage(StageExecutor):
         if job.get("end_path"):
             end_path = Path(job["end_path"])
 
+        bgm = bgm_params_from_info(job.get("info"))
+        bgm_path = resolve_bgm_file(bgm["material_id"]) if bgm["enabled"] else None
+        if bgm["enabled"] and bgm_path is None:
+            raise RuntimeError(
+                f"bgm enabled but material {bgm['material_id']} file missing"
+            )
+        if bgm_path is not None:
+            with connection() as conn:
+                repo_job_log.append_log(
+                    conn,
+                    ctx.job["id"],
+                    self.name,
+                    f"bgm material_id={bgm['material_id']} volume_db={bgm['volume_db']}",
+                )
+
         result = media_mgr.merge_final(
             media_dir=ctx.media_dir,
             segments=segments,
@@ -48,6 +64,8 @@ class MergeStage(StageExecutor):
             subtitle_path=Path(job["subtitle_path"]) if job.get("subtitle_path") else None,
             intro_path=intro_path,
             end_path=end_path,
+            bgm_path=bgm_path,
+            bgm_volume_db=float(bgm["volume_db"]),
         )
         loudness = analyze_loudness(result.final_path)
         duration = probe_duration(result.final_path)

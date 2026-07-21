@@ -11,23 +11,74 @@
     <div :class="STAGE_TWO_COL_CLASS">
       <div :class="STAGE_COL_LEFT_CLASS">
         <div :class="STAGE_PANEL_CLASS">
-          <el-descriptions :column="1" border label-width="70px">
-          <el-descriptions-item label="分辨率">{{ resolutionText }}</el-descriptions-item>
-          <el-descriptions-item label="时长">{{ durationText }}</el-descriptions-item>
-          <el-descriptions-item label="大小">{{ sizeText }}</el-descriptions-item>
-          <el-descriptions-item label="耗时">{{ costTimeText }}</el-descriptions-item>
-          <el-descriptions-item label="路径">
-            <span class="break-all">{{ finalFilePath || "-" }}</span>
-          </el-descriptions-item>
-        </el-descriptions>
+          <div :class="STAGE_PANEL_TITLE_CLASS">BGM 配置</div>
+          <el-form :label-width="STAGE_FORM_LABEL_WIDTH" :class="STAGE_FORM_CLASS">
+            <el-form-item label="启用">
+              <el-switch v-model="bgmEnabled" :disabled="actionDisabled" />
+            </el-form-item>
+            <el-form-item label="曲目">
+              <el-select
+                v-model="bgmMaterialId"
+                filterable
+                clearable
+                placeholder="从音频素材库选择"
+                class="w-full!"
+                :disabled="actionDisabled || !bgmEnabled"
+                :loading="bgmListLoading"
+              >
+                <el-option
+                  v-for="item in bgmOptions"
+                  :key="item.id"
+                  :label="bgmOptionLabel(item)"
+                  :value="item.id"
+                />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="音量">
+              <div class="flex w-full items-center gap-2">
+                <el-slider
+                  v-model="bgmVolumeDb"
+                  :min="-40"
+                  :max="0"
+                  :step="1"
+                  :disabled="actionDisabled || !bgmEnabled"
+                  class="mx-2 flex-1"
+                />
+                <span class="w-14 shrink-0 text-xs text-gray-500">{{ bgmVolumeDb }} dB</span>
+              </div>
+            </el-form-item>
+          </el-form>
+          <audio
+            v-if="bgmPreviewUrl"
+            class="mt-2 block w-full"
+            :src="bgmPreviewUrl"
+            :crossorigin="MEDIA_CROSS_ORIGIN"
+            controls
+            preload="metadata"
+          />
+          <div v-else-if="bgmEnabled" class="mt-2 text-xs text-gray-400">
+            选择曲目后可试听
+          </div>
+        </div>
 
-        <el-alert
-          v-if="job.fail_stage === 'merge' && job.error_message"
-          type="danger"
-          :title="job.error_message"
-          :closable="false"
-          class="mt-4"
-        />
+        <div :class="[STAGE_PANEL_CLASS, 'mt-4']">
+          <el-descriptions :column="1" border label-width="70px">
+            <el-descriptions-item label="分辨率">{{ resolutionText }}</el-descriptions-item>
+            <el-descriptions-item label="时长">{{ durationText }}</el-descriptions-item>
+            <el-descriptions-item label="大小">{{ sizeText }}</el-descriptions-item>
+            <el-descriptions-item label="耗时">{{ costTimeText }}</el-descriptions-item>
+            <el-descriptions-item label="路径">
+              <span class="break-all">{{ finalFilePath || "-" }}</span>
+            </el-descriptions-item>
+          </el-descriptions>
+
+          <el-alert
+            v-if="job.fail_stage === 'merge' && job.error_message"
+            type="danger"
+            :title="job.error_message"
+            :closable="false"
+            class="mt-4"
+          />
         </div>
       </div>
 
@@ -80,10 +131,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { runJobStageAction } from "@/api/api-jobs";
 import { downloadMediaFile } from "@/api/api-media";
+import { listMaterialAudios } from "@/api/api-materials";
+import type { MaterialAudioRecord } from "@/types/material-audio";
 import type { JobDetail, JobLog } from "@/types/jobs";
 import {
   buildMediaPreviewBoxStyle,
@@ -103,8 +156,11 @@ import StageLogsSection from "./StageLogsSection.vue";
 import {
   STAGE_COL_LEFT_CLASS,
   STAGE_COL_RIGHT_CLASS,
+  STAGE_FORM_CLASS,
+  STAGE_FORM_LABEL_WIDTH,
   STAGE_PANEL_CLASS,
   STAGE_PANEL_HEADER_CLASS,
+  STAGE_PANEL_TITLE_CLASS,
   STAGE_PANEL_TITLE_TEXT_CLASS,
   STAGE_TWO_COL_CLASS,
 } from "./stageLayout";
@@ -124,6 +180,12 @@ const submitting = ref(false);
 const downloading = ref(false);
 const loadError = ref("");
 const videoMeta = ref<{ width: number; height: number } | null>(null);
+
+const bgmEnabled = ref(false);
+const bgmMaterialId = ref<number | undefined>(undefined);
+const bgmVolumeDb = ref(-18);
+const bgmOptions = ref<MaterialAudioRecord[]>([]);
+const bgmListLoading = ref(false);
 
 const MERGE_PREVIEW_OPTIONS = {
   maxWidthPx: 560,
@@ -157,6 +219,13 @@ const finalFilePath = computed(() => resolveFinalPath(props.job.final_path));
 const videoUrl = computed(() => getMediaFileUrl(finalFilePath.value));
 const lazyVideoUrl = computed(() => lazyMediaSrc(videoUrl.value, props.stageActive));
 
+const selectedBgm = computed(() =>
+  bgmOptions.value.find((item) => item.id === bgmMaterialId.value)
+);
+const bgmPreviewUrl = computed(() =>
+  bgmEnabled.value ? getMediaFileUrl(selectedBgm.value?.file_path) : ""
+);
+
 const durationText = computed(() => {
   const duration = resolveFinalDuration(props.job.final_path);
   return duration != null ? formatMediaDuration(duration) : "-";
@@ -175,6 +244,33 @@ const costTimeText = computed(() => {
   }
   return formatCostTime(finalAsset.value.cost_time);
 });
+
+function bgmOptionLabel(item: MaterialAudioRecord): string {
+  const dur =
+    item.duration_sec != null ? ` · ${formatMediaDuration(item.duration_sec)}` : "";
+  return `#${item.id} ${item.name}${dur}`;
+}
+
+function syncBgmFromJob() {
+  const bgm = props.job.info?.bgm;
+  bgmEnabled.value = Boolean(bgm?.enabled);
+  bgmMaterialId.value =
+    typeof bgm?.material_id === "number" ? bgm.material_id : undefined;
+  bgmVolumeDb.value =
+    typeof bgm?.volume_db === "number" ? bgm.volume_db : -18;
+}
+
+async function loadBgmOptions() {
+  bgmListLoading.value = true;
+  try {
+    const res = await listMaterialAudios({ limit: 200, offset: 0 });
+    bgmOptions.value = Array.isArray(res.items) ? res.items : [];
+  } catch (error) {
+    handleError(error, "加载音频素材失败");
+  } finally {
+    bgmListLoading.value = false;
+  }
+}
 
 const onVideoError = () => {
   loadError.value = "视频加载失败，请确认文件已生成且服务可访问";
@@ -210,6 +306,10 @@ const handleDownload = async () => {
 };
 
 const handleRun = async (toEnd: boolean) => {
+  if (bgmEnabled.value && !bgmMaterialId.value) {
+    ElMessage.warning("已启用 BGM，请先选择曲目");
+    return;
+  }
   const actionLabel = toEnd ? "从此成片" : "重新生成";
   try {
     await ElMessageBox.confirm(`确定对「合成」阶段执行「${actionLabel}」吗？`, "确认执行", {
@@ -223,7 +323,15 @@ const handleRun = async (toEnd: boolean) => {
 
   submitting.value = true;
   try {
-    await runJobStageAction("merge", { id: props.job.id, to_end: toEnd });
+    await runJobStageAction("merge", {
+      id: props.job.id,
+      to_end: toEnd,
+      bgm: {
+        enabled: bgmEnabled.value,
+        material_id: bgmMaterialId.value ?? null,
+        volume_db: bgmVolumeDb.value,
+      },
+    });
     ElMessage.success(`已提交${actionLabel}，任务已开始执行`);
     emit("refresh");
   } catch (error) {
@@ -236,5 +344,16 @@ const handleRun = async (toEnd: boolean) => {
 watch(finalFilePath, () => {
   loadError.value = "";
   videoMeta.value = null;
+});
+
+watch(
+  () => props.job.info?.bgm,
+  () => syncBgmFromJob(),
+  { deep: true }
+);
+
+onMounted(() => {
+  syncBgmFromJob();
+  void loadBgmOptions();
 });
 </script>
