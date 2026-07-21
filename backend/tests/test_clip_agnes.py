@@ -49,15 +49,18 @@ def test_resolve_media_public_base_url_from_cors() -> None:
 
 def test_stabilize_motion_prompt() -> None:
     out = _stabilize_motion_prompt("slow zoom")
-    assert "slow zoom" in out
-    assert "画面稳定" in out
+    assert "slow zoom" not in out.lower()
+    assert "镜头固定" in out or "不推近" in out
     assert "面部表情与静图一致" in out
-    # 已有极缓，不再重复画面稳定；缺表情锁则补上
+    # 旧稿推近用语提交前剔除，并补镜头锁定
     locked = _stabilize_motion_prompt("炉口青烟缓缓上升，镜头极缓推进")
-    assert locked.startswith("炉口青烟缓缓上升，镜头极缓推进")
+    assert "极缓推进" not in locked
+    assert "镜头极缓" not in locked
+    assert locked.startswith("炉口青烟缓缓上升")
     assert "面部表情与静图一致" in locked
-    # 已写表情锁定则不再追加
-    already = "妈妈举手停，面部表情与静图一致不微笑，镜头极缓推近"
+    assert "不推近" in locked or "镜头固定" in locked
+    # 已写表情锁定与固定机位则不再追加冗余
+    already = "妈妈举手停，面部表情与静图一致不微笑，镜头固定不推近不拉远"
     assert _stabilize_motion_prompt(already) == already
 
 
@@ -72,6 +75,7 @@ def test_build_i2v_payload_includes_negative_prompt() -> None:
     )
     assert payload["mode"] == "ti2vid"
     assert "微笑" in payload["negative_prompt"]
+    assert "快速推进" in payload["negative_prompt"]
     assert payload["prompt"] == "微动"
 
 
@@ -166,7 +170,8 @@ def test_agnes_clip_provider_submits_i2v_payload(tmp_path: Path) -> None:
     assert payload["mode"] == "ti2vid"
     assert payload["image"].startswith("data:image/png;base64,")
     assert payload["num_frames"] == 121
-    assert "slow zoom" in payload["prompt"]
+    assert "slow zoom" not in payload["prompt"].lower()
+    assert "不推近" in payload["prompt"] or "镜头固定" in payload["prompt"]
     assert "宇宙飞船" not in payload["prompt"]
 
 
