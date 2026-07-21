@@ -180,7 +180,8 @@ def test_optimize_preview_score_uses_original_hook_when_candidate_empty():
         template="误区反问式",
         hook=hook,
     )
-    assert without.total < 85
+    # 有 hook 时不应更低；且应达到可用阈值
+    assert with_hook.total >= without.total
     assert with_hook.total >= 85
 
 

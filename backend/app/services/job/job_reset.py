@@ -16,7 +16,12 @@ from app.utils.stage_names import normalize_stage
 from app.repositories import repo_job_log, repo_job, repo_segment
 from app.repositories.connection import connection
 
-__all__ = ["prepare_for_action", "prepare_job_rerun", "reset_job_from_stage"]
+__all__ = [
+    "prepare_rerun",
+    "prepare_for_action",
+    "prepare_job_rerun",
+    "reset_job_from_stage",
+]
 
 # 重跑 publish / tts 时不扫下游文件树；tts 只清 DB clip_path（见
 # _clear_tts_artifacts），分镜 mp4 留给 segment 按需重生成
@@ -286,63 +291,80 @@ def _clear_stage_self(
             _clear_merge_artifacts(media_dir)
 
 
-def prepare_for_action(
+def _resolve_action(
+    action: str,
+) -> tuple[str, str | None] | tuple[None, None]:
+    """解析 action → (stage, segment_scope)。cover/end 返回 (None, None)。"""
+    if action == "segment/images":
+        return "segment", "images"
+    if action == "segment/clips":
+        return "segment", "clips"
+    if action == "segment/all":
+        return "segment", None
+    if action in {"cover", "end"}:
+        return None, None
+    return normalize_stage(action), None
+
+
+def _prepare_cover_or_end(job_id: int, action: str) -> dict:
+    from app.config import get_settings
+
+    settings = get_settings()
+    media_dir = settings.video_data_dir / str(job_id)
+    with connection() as conn:
+        if action == "cover":
+            repo_job.update_job(conn, job_id, cover_path=None)
+            if media_dir.exists():
+                _delete_files([media_dir / "cover.jpg"])
+            log_msg = f"action={action} (cover only)"
+        else:
+            repo_job.update_job(conn, job_id, end_path=None)
+            if media_dir.exists():
+                _delete_files([media_dir / "end.mp4"])
+            log_msg = f"action={action}"
+        repo_job_log.append_log(conn, job_id, "intro", log_msg)
+        return repo_job.update_job(
+            conn,
+            job_id,
+            status="pending",
+            fail_stage=None,
+            error_message=None,
+        )
+
+
+def prepare_rerun(
     job_id: int,
     action: str,
     *,
     segment_indices: list[int] | None = None,
+    mode: str = "from",
 ) -> dict:
-    """按 API 动作名清理产物并将 job 指到对应 stage。"""
-    if action == "segment/images":
-        stage = "segment"
-        segment_scope = "images"
-    elif action == "segment/clips":
-        stage = "segment"
-        segment_scope = "clips"
-    elif action == "segment/all":
-        stage = "segment"
-        segment_scope = None
-    elif action == "cover":
-        from app.config import get_settings
+    """统一重跑清理：清空目标产物并将 job 指到对应 stage。
 
-        settings = get_settings()
-        media_dir = settings.video_data_dir / str(job_id)
-        with connection() as conn:
-            repo_job.update_job(conn, job_id, cover_path=None)
-            if media_dir.exists():
-                _delete_files([media_dir / "cover.jpg"])
-            repo_job_log.append_log(conn, job_id, "intro", f"action={action} (cover only)")
-            return repo_job.update_job(
-                conn,
-                job_id,
-                status="pending",
-                fail_stage=None,
-                error_message=None,
-            )
-    elif action == "end":
-        from app.config import get_settings
+    ``action`` 与 API 一致，支持 ``script`` / ``tts`` / ``segment`` /
+    ``segment/images`` / ``segment/clips`` / ``segment/all`` / ``cover`` /
+    ``end`` 等。
 
-        settings = get_settings()
-        media_dir = settings.video_data_dir / str(job_id)
-        with connection() as conn:
-            repo_job.update_job(conn, job_id, end_path=None)
-            if media_dir.exists():
-                _delete_files([media_dir / "end.mp4"])
-            repo_job_log.append_log(conn, job_id, "intro", f"action={action}")
-            return repo_job.update_job(
-                conn,
-                job_id,
-                status="pending",
-                fail_stage=None,
-                error_message=None,
-            )
-    else:
-        stage = normalize_stage(action)
-        segment_scope = None
+    ``mode`` 仅写入日志（``from`` / ``only``）；清理始终为本 stage + 下游。
+    ``cover`` / ``end`` 只清文件，不改 stage 指针。
+    """
+    if mode not in {"from", "only"}:
+        raise ValueError(f"invalid rerun mode: {mode}")
+
+    if action in {"cover", "end"}:
+        if segment_indices is not None:
+            raise ValueError("segments 不可用于 cover/end")
+        return _prepare_cover_or_end(job_id, action)
+
+    stage, segment_scope = _resolve_action(action)
+    assert stage is not None
 
     if segment_indices is not None:
-        if not action.startswith("segment/"):
-            raise ValueError("segments 仅可用于 segment/all、segment/images 或 segment/clips")
+        if stage != "segment":
+            raise ValueError(
+                "segments 仅可用于 segment / segment/all / "
+                "segment/images / segment/clips"
+            )
         if not segment_indices:
             raise ValueError("segments 不能为空")
 
@@ -355,8 +377,12 @@ def prepare_for_action(
         job = repo_job.get_job(conn, job_id)
         if stage not in stages_for(job) or stage == "done":
             raise ValueError(f"invalid action: {action}")
-        if is_material_job(job) and action.startswith("segment/"):
-            raise ValueError(f"action not supported for material pipeline: {action}")
+        if is_material_job(job) and (
+            action.startswith("segment/") or action == "segment"
+        ):
+            raise ValueError(
+                f"action not supported for material pipeline: {action}"
+            )
         _clear_stage_self(
             conn,
             job_id,
@@ -376,11 +402,23 @@ def prepare_for_action(
             fail_stage=None,
             error_message=None,
         )
-        detail = f"action={action}"
+        detail = f"rerun [{mode}] action={action}"
         if segment_indices:
             detail += f", segments={segment_indices}"
         repo_job_log.append_log(conn, job_id, stage, detail)
         return job
+
+
+def prepare_for_action(
+    job_id: int,
+    action: str,
+    *,
+    segment_indices: list[int] | None = None,
+) -> dict:
+    """兼容旧名 → :func:`prepare_rerun`。"""
+    return prepare_rerun(
+        job_id, action, segment_indices=segment_indices, mode="from"
+    )
 
 
 def prepare_job_rerun(
@@ -390,48 +428,13 @@ def prepare_job_rerun(
     segment_indices: list[int] | None = None,
     mode: str = "from",
 ) -> dict:
-    """准备重跑（CLI）：清空 stage 自身 + 下游产物，并将 job 指到 stage。"""
-    if mode not in {"from", "only"}:
-        raise ValueError(f"invalid rerun mode: {mode}")
-    if segment_indices is not None:
-        if stage != "segment":
-            raise ValueError("--segments 仅可与 segment 阶段联用")
-        if not segment_indices:
-            raise ValueError("--segments 不能为空")
-
-    from app.config import get_settings
-
-    settings = get_settings()
-    media_dir = settings.video_data_dir / str(job_id)
-
-    with connection() as conn:
-        job = repo_job.get_job(conn, job_id)
-        if stage not in stages_for(job) or stage == "done":
-            raise ValueError(f"invalid stage: {stage}")
-        _clear_stage_self(
-            conn,
-            job_id,
-            stage,
-            media_dir,
-            job,
-            segment_indices=segment_indices,
-            segment_scope=None,
-        )
-        _clear_downstream(conn, job_id, stage, media_dir, job)
-
-        job = repo_job.update_job(
-            conn,
-            job_id,
-            stage=stage,
-            status="pending",
-            fail_stage=None,
-            error_message=None,
-        )
-        detail = f"rerun [{mode}] stage={stage}"
-        if segment_indices:
-            detail += f", segments={segment_indices}"
-        repo_job_log.append_log(conn, job_id, stage, detail)
-        return job
+    """兼容 CLI 旧名 → :func:`prepare_rerun`（``stage`` 当作 action）。"""
+    return prepare_rerun(
+        job_id,
+        stage,
+        segment_indices=segment_indices,
+        mode=mode,
+    )
 
 
 def reset_job_from_stage(
@@ -440,7 +443,7 @@ def reset_job_from_stage(
     *,
     segment_indices: list[int] | None = None,
 ) -> dict:
-    return prepare_job_rerun(
+    return prepare_rerun(
         job_id,
         from_stage,
         segment_indices=segment_indices,

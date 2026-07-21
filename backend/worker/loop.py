@@ -578,8 +578,10 @@ def run_intro(
 
 
 def run_cover(job_id: int, *, to_end: bool = False) -> dict:
-    """兼容旧 API：封面已并入 intro 阶段。"""
-    return run_intro(job_id, to_end=to_end)
+    """兼容入口：转发 job_mgr.run_cover（仅刷封面，不是 intro）。"""
+    from app.services.job.job_mgr import job_mgr
+
+    return job_mgr.run_cover(job_id, to_end=to_end)
 
 
 def run_tts(
@@ -707,12 +709,24 @@ def run_segment_clips(
 
 
 def drain_pending() -> int:
+    """领取并同步执行所有 pending（经 job_mgr 持锁）。"""
+    from app.services.job.job_mgr import JobBusyError, job_mgr
+
     count = 0
     while True:
         with connection() as conn:
             job = repo_job.claim_next_pending(conn)
         if job is None:
             break
-        run_job(job["id"])
+        try:
+            job_mgr.continue_job(job["id"], sync=True, allow_running=True)
+        except JobBusyError:
+            logger.warning(
+                "drain skipped job %s: already locked; reset to pending",
+                job["id"],
+            )
+            with connection() as conn:
+                repo_job.update_job(conn, job["id"], status="pending")
+            continue
         count += 1
     return count

@@ -37,12 +37,12 @@ def test_effective_segment_narration_sec_caps_at_sixteen():
 
 
 def test_narration_target_for_minutes_uses_default_speech_rate():
-    # 6 分钟成片：358s 正文 × 4.1 × 0.92 = 1350
-    assert narration_target_for_minutes(6.0) == 1350
+    # 6 分钟成片：358s 正文 × 4.1 × 0.92 × 1.1 = 1485
+    assert narration_target_for_minutes(6.0) == 1485
 
 
 def test_narration_accept_min_chars():
-    assert narration_accept_min_chars(1350) == 1147
+    assert narration_accept_min_chars(1485) == 1262
     assert narration_accept_min_chars(404) == 343
 
 
@@ -52,7 +52,7 @@ def test_segment_text_shrink_max():
 
 def test_narration_writing_target_chars_is_ninety_five_percent():
     assert narration_writing_target_chars(404) == 383
-    assert narration_writing_target_chars(1350) == 1282
+    assert narration_writing_target_chars(1485) == 1410
 
 
 def test_narration_writing_plan_15s_prefers_more_segments():
@@ -65,9 +65,10 @@ def test_narration_writing_plan_15s_prefers_more_segments():
 
 
 def test_estimate_narration_target_words_clamps():
-    assert estimate_narration_target_words(5) == 18
-    assert estimate_narration_target_words(30) == 113
-    assert estimate_narration_target_words(700) == 2640
+    assert estimate_narration_target_words(5) == 20
+    assert estimate_narration_target_words(30) == 124
+    assert estimate_narration_target_words(700) == 2904
+    assert estimate_narration_target_words(10_000) == 3000
 
 
 def test_material_duration_bounds_for_short_base():
@@ -134,6 +135,7 @@ def test_assign_segment_timings_from_video_timeline():
                 end_sec=8.0,
                 duration_sec=8.0,
                 scene="A",
+                description="scene A",
                 max_chars=44,
             ),
             TimelineSlot(
@@ -142,6 +144,7 @@ def test_assign_segment_timings_from_video_timeline():
                 end_sec=14.0,
                 duration_sec=6.0,
                 scene="B",
+                description="scene B",
                 max_chars=33,
             ),
         ),

@@ -18,9 +18,11 @@ WORKER_LOG = setup_logging(
 
 from app.core import pipeline
 from app.services.job import job_mgr
+from app.services.job.job_mgr import JobBusyError
 from app.repositories import repo_job
 from app.repositories.connection import connection
-from worker.loop import drain_pending, run_job
+from worker.loop import drain_pending
+from scripts.preview_subtitle import rebuild_segment_subtitles
 
 _STAGE_CHOICES = [s for s in pipeline.STAGES if s != "done"]
 
@@ -64,6 +66,15 @@ def build_parser() -> argparse.ArgumentParser:
     run_p.add_argument("--publish", action="store_true", help="enable publish stage")
 
     sub.add_parser("drain", help="consume all pending jobs")
+
+    sub_p = sub.add_parser("subtitle-test", help="rebuild one segment clip for subtitle preview")
+    sub_p.add_argument("--job-id", type=int, required=True)
+    sub_p.add_argument("--segment", type=int, required=True, help="segment_index, e.g. 1")
+    sub_p.add_argument(
+        "--sentence",
+        type=int,
+        help="only burn one sentence → segments/{N}_test.mp4 (faster)",
+    )
     return parser
 
 
@@ -91,23 +102,9 @@ def cmd_run(args: argparse.Namespace) -> int:
     if args.title:
         job = job_mgr.create_from_title(args.title, skip_publish=skip_publish)
         job_id = job["id"]
-        if rerun_stage:
-            job_mgr.prepare_rerun(
-                job_id,
-                rerun_stage,
-                segment_indices=segment_indices,
-                mode=rerun_mode,
-            )
     elif args.job_id:
         job_id = args.job_id
-        if rerun_stage:
-            job_mgr.prepare_rerun(
-                job_id,
-                rerun_stage,
-                segment_indices=segment_indices,
-                mode=rerun_mode,
-            )
-        elif args.publish or args.skip_publish is not None:
+        if args.publish or args.skip_publish is not None:
             with connection() as conn:
                 repo_job.update_job(conn, job_id, skip_publish=skip_publish)
     else:
@@ -124,12 +121,16 @@ def cmd_run(args: argparse.Namespace) -> int:
     if segment_indices:
         print(f"Partial segments: {segment_indices}")
 
-    job = run_job(
-        job_id,
-        from_stage=args.from_stage,
-        only_stage=args.only_stage,
-        segment_indices=segment_indices,
-    )
+    try:
+        job = job_mgr.run_job_sync(
+            job_id,
+            from_stage=args.from_stage,
+            only_stage=args.only_stage,
+            segment_indices=segment_indices,
+        )
+    except JobBusyError as exc:
+        print(exc, file=sys.stderr)
+        return 1
     print(f"Done: stage={job['stage']} status={job['status']}")
     if job.get("final_path"):
         from app.utils.final_asset import resolve_final_path_file
@@ -148,6 +149,20 @@ def cmd_drain(_: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_subtitle_test(args: argparse.Namespace) -> int:
+    try:
+        out = rebuild_segment_subtitles(
+            args.job_id,
+            args.segment,
+            sentence=args.sentence,
+        )
+    except (ValueError, FileNotFoundError) as exc:
+        print(exc, file=sys.stderr)
+        return 1
+    print(f"Segment clip: {out}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -155,6 +170,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_run(args)
     if args.command == "drain":
         return cmd_drain(args)
+    if args.command == "subtitle-test":
+        return cmd_subtitle_test(args)
     return 1
 
 

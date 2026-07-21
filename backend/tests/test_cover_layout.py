@@ -5,8 +5,8 @@ from __future__ import annotations
 from app.services.intro.cover_layout import COVER_TITLE_MAX_CHARS, split_cover_title_lines
 
 
-def test_split_cover_title_lines_16_chars() -> None:
-    title = "大雪封存十三载桩基之下惊现战编钟"
+def test_split_cover_title_lines_at_max_chars() -> None:
+    title = "大雪封存十三载桩基之下惊现战编钟群秘"
     assert len(title) == COVER_TITLE_MAX_CHARS
     lines = split_cover_title_lines(title)
     assert len(lines) == 2

@@ -33,7 +33,7 @@ def test_pick_business_independent_of_lora():
     business = pick_business_by_keywords("实验室显微镜特写，柔和顶光")
     lora = pick_lora_by_keywords("实验室显微镜特写，柔和顶光")
     assert business == "science"
-    assert lora == "Casual_Life"
+    assert lora == "Laboratory_Scene"
 
 
 def test_fallback_prompt_en_chinese_generic():
@@ -130,7 +130,7 @@ def test_resolve_checkpoint_defaults():
     )
     assert (
         _resolve_checkpoint(business="science", prompt="日系动漫风格科普")
-        == "ToonYouBeta6.safetensors"
+        == "Counterfeit-V3.0.safetensors"
     )
 
 
@@ -295,8 +295,9 @@ def test_generate_split_stitches_panels_vertical(monkeypatch, tmp_path):
         provider.generate("上方湿布下方肺泡，上下对比", out, size="360*640")
 
     assert len(captured["payloads"]) == 2
-    assert captured["payloads"][0]["height"] == 320
-    assert captured["payloads"][1]["height"] == 320
+    # max_dim < 512 时会上采样到 512 短边比例（360/2=180 → 455）
+    assert captured["payloads"][0]["height"] == 455
+    assert captured["payloads"][1]["height"] == 455
     assert out.exists()
 
     from PIL import Image
@@ -368,8 +369,9 @@ def test_generate_split_stitches_panels(monkeypatch, tmp_path):
         provider.generate("左侧湿布右侧肺泡对比", out, size="640*360")
 
     assert len(captured["payloads"]) == 2
-    assert captured["payloads"][0]["width"] == 320
-    assert captured["payloads"][1]["width"] == 320
+    # max_dim < 512 时会上采样到 512 短边比例（640/2=320 → 455）
+    assert captured["payloads"][0]["width"] == 455
+    assert captured["payloads"][1]["width"] == 455
     assert captured["checkpoints"] == [
         "Deliberate_v6_SFW.safetensors",
         "RealisticVisionV51.safetensors",

@@ -1,13 +1,12 @@
-"""自动恢复：服务重启后恢复卡住的视频生成任务。
+"""自动恢复：服务重启后恢复卡住的任务。
 
-当服务（video-factory）意外重启时，正在执行的任务在数据库中仍标记为
-status='running'，但后台工作线程已丢失，这些任务会永久卡住。
+当服务意外重启时，正在执行的任务在数据库中仍标记为
+status='running'，但后台工作线程已丢失。
 
 恢复策略：
 1. 启动时扫描所有 status='running' 的任务
-2. 仅恢复属于视频生成阶段（segment）的任务
-3. 将其重置为 status='pending'
-4. 在后台线程中重新从当前 stage 执行
+2. 重置为 status='pending'
+3. 经 job_mgr.continue_job（持锁、后台）从当前 stage 续跑
 """
 
 from __future__ import annotations
@@ -16,22 +15,20 @@ import logging
 
 from app.repositories import repo_job, repo_job_log
 from app.repositories.connection import connection
-from app.utils.async_util import run_in_background
 
 logger = logging.getLogger(__name__)
 
-# 视频生成相关 stage（先仅开放 segment，后续可按需扩展）
-# segment 阶段包含：图生成（images）和图生视频（clips）
-VIDEO_GENERATION_STAGES: frozenset[str] = frozenset({"segment"})
+# 终态不恢复；其余 running 一律重置并续跑
+_TERMINAL_STAGES: frozenset[str] = frozenset({"done"})
 
 
 def recover_stuck_jobs() -> int:
-    """恢复卡在 running 状态的视频生成任务并重新执行。
+    """恢复卡在 running 状态的任务并经 job_mgr 重新执行。
 
     Returns:
         已恢复的任务数量
     """
-    recovered_jobs: list[int] = []
+    recovered: list[tuple[int, str]] = []
 
     with connection() as conn:
         rows = conn.execute(
@@ -45,9 +42,9 @@ def recover_stuck_jobs() -> int:
 
         for row in rows:
             stage: str = row["stage"] or ""
-            if stage not in VIDEO_GENERATION_STAGES:
+            if stage in _TERMINAL_STAGES:
                 logger.info(
-                    "job %s stage=%s skipped (not in video generation stages)",
+                    "job %s stage=%s skipped (terminal)",
                     row["id"],
                     stage,
                 )
@@ -71,20 +68,24 @@ def recover_stuck_jobs() -> int:
                 "auto-recovered after service restart, reset to pending",
                 level="warning",
             )
-            recovered_jobs.append(job_id)
+            recovered.append((job_id, stage))
 
-    # 在后台重新执行恢复的任务
-    if recovered_jobs:
+    if recovered:
         logger.warning(
-            "recovered %d stuck video-generation job(s), re-running in background",
-            len(recovered_jobs),
+            "recovered %d stuck job(s), re-running via job_mgr",
+            len(recovered),
         )
-        for job_id in recovered_jobs:
-            # 延迟导入避免循环依赖
-            from worker.loop import run_job
+        from app.services.job.job_mgr import JobBusyError, job_mgr
 
-            run_in_background(lambda jid=job_id: run_job(jid))
+        for job_id, _stage in recovered:
+            try:
+                job_mgr.continue_job(job_id, sync=False, allow_running=False)
+            except JobBusyError:
+                logger.warning(
+                    "recovery skipped job %s: already locked",
+                    job_id,
+                )
     else:
         logger.info("no stuck jobs to recover")
 
-    return len(recovered_jobs)
+    return len(recovered)
