@@ -246,6 +246,43 @@ def test_resolve_video_provider_job_override():
     assert resolve_video_provider(job, visual_mode="static_motion", settings=settings) == "wan_i2v"
 
 
+def test_resolve_video_provider_segment_override():
+    from types import SimpleNamespace
+
+    from app.utils.job_info import resolve_video_provider
+
+    settings = SimpleNamespace(clip_provider="ffmpeg")
+    job = {"info": {"video_provider": "ffmpeg"}}
+    segment = {"info": {"video_provider": "agnes_i2v"}}
+    assert (
+        resolve_video_provider(
+            job, visual_mode="static_motion", settings=settings, segment=segment
+        )
+        == "agnes_i2v"
+    )
+
+
+def test_apply_keyframe_video_providers_marks_closeup():
+    from app.utils.job_info import apply_keyframe_video_providers
+
+    segments = [
+        {
+            "segment_index": 1,
+            "shot_type": "中景",
+            "motion_prompt": "窗帘轻动",
+        },
+        {
+            "segment_index": 2,
+            "shot_type": "特写",
+            "motion_prompt": "眉毛微微一挑",
+        },
+    ]
+    marked = apply_keyframe_video_providers(segments)
+    assert marked == [2]
+    assert segments[0].get("info") is None or "video_provider" not in (segments[0].get("info") or {})
+    assert segments[1]["info"]["video_provider"] == "agnes_i2v"
+
+
 def test_resolve_video_provider_visual_mode_fallback():
     from types import SimpleNamespace
 

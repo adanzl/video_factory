@@ -559,6 +559,33 @@ def update_segment_text_route():
     return json_ok(result)
 
 
+@bp.post("/segment/updateInfo")
+def update_segment_info_route():
+    """更新分镜 info.video_provider：Ken Burns / I2V / 取消（回落任务默认）。"""
+    data = get_json_body()
+    job_id = parse_id(data)
+    segment_index = parse_optional_int(data, "segment_index", minimum=1)
+    if segment_index is None:
+        raise APIError("segment_index is required")
+    if "video_provider" not in data:
+        raise APIError("video_provider is required (null to clear)")
+    raw = data.get("video_provider")
+    clear = raw is None or (isinstance(raw, str) and not raw.strip())
+    video_provider = None if clear else parse_optional_str(data, "video_provider")
+    try:
+        result = job_mgr.update_segment_info(
+            job_id,
+            segment_index,
+            video_provider=video_provider,
+            clear_video_provider=clear,
+        )
+    except KeyError as exc:
+        raise APIError(str(exc), status_code=404) from exc
+    except ValueError as exc:
+        raise APIError(str(exc), status_code=400) from exc
+    return json_ok(result)
+
+
 @bp.get("/<int:job_id>/logs")
 def get_job_logs_route(job_id: int):
     return json_ok(job_mgr.get_logs(job_id))

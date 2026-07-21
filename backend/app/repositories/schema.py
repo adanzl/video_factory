@@ -179,6 +179,7 @@ def apply_schema(conn: sqlite3.Connection) -> None:
     _ensure_column(conn, "video_segment", "motion_prompt", "TEXT")
     _ensure_column(conn, "video_segment", "sd15_prompt_en", "TEXT")
     _ensure_column(conn, "video_segment", "dialogue", "TEXT")
+    _ensure_column(conn, "video_segment", "info", "TEXT")
     _ensure_column(conn, "video_segment", "version", "INTEGER NOT NULL DEFAULT 0")
     _ensure_column(conn, "video_job", "audio_version", "INTEGER NOT NULL DEFAULT 0")
 

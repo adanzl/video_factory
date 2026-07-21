@@ -34,7 +34,7 @@ DEFAULT_DAILY_SPEAKER_CONFIGS: dict[str, dict] = {
         "voice_id": "cosyvoice-v3.5-flash-leo-40c4359c732f4b459a40f3408e1186ed",
         "speech_rate": 1.30,
     },
-    "妈妈": {"voice_id": "longwan_v3", "speech_rate": 1.35},
+    "妈妈": {"voice_id": "longwan_v3", "speech_rate": 1.20},
 }
 _DEFAULT_SPEAKER_CONFIGS = DEFAULT_DAILY_SPEAKER_CONFIGS
 _DEFAULT_PHRASE_GAP_SEC = 0.2

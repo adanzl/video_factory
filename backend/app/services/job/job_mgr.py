@@ -245,6 +245,68 @@ class JobMgr:
             )
             return repo_job.get_job(conn, job_id)
 
+    def update_segment_info(
+        self,
+        job_id: int,
+        segment_index: int,
+        *,
+        video_provider: str | None,
+        clear_video_provider: bool = False,
+    ) -> dict:
+        """更新分镜 info（当前仅 video_provider）；同步 script_json.segments[].info。"""
+        from app.utils.job_info import merge_job_info, normalize_video_provider
+
+        if clear_video_provider:
+            provider_value: str | None = None
+        else:
+            provider_value = normalize_video_provider(video_provider)
+            if provider_value is None:
+                raise ValueError("video_provider must be ffmpeg, wan_i2v, or agnes_i2v")
+
+        with connection() as conn:
+            job = repo_job.get_job(conn, job_id)
+            segments = repo_segment.list_segments(conn, job_id)
+            target = next(
+                (s for s in segments if int(s["segment_index"]) == segment_index), None
+            )
+            if target is None:
+                raise KeyError(f"segment {segment_index} not found")
+
+            info = merge_job_info(target.get("info"), video_provider=provider_value)
+            repo_segment.update_segment(
+                conn,
+                int(target["id"]),
+                info=info or None,
+            )
+
+            script = dict(job.get("script_json") or {})
+            script_segments = list(script.get("segments") or [])
+            found = False
+            for i, seg in enumerate(script_segments):
+                if int(seg.get("segment_index", 0)) != segment_index:
+                    continue
+                seg = dict(seg)
+                seg_info = merge_job_info(seg.get("info"), video_provider=provider_value)
+                if seg_info:
+                    seg["info"] = seg_info
+                else:
+                    seg.pop("info", None)
+                script_segments[i] = seg
+                found = True
+                break
+            if found:
+                script["segments"] = script_segments
+                repo_job.update_job(conn, job_id, script_json=script)
+
+            label = "cleared" if clear_video_provider else provider_value
+            repo_job_log.append_log(
+                conn,
+                job_id,
+                "segment",
+                f"segment #{segment_index} info.video_provider={label!r}",
+            )
+            return repo_job.get_job(conn, job_id)
+
     def get_logs(self, job_id: int) -> list[dict]:
         with connection() as conn:
             repo_job.get_job(conn, job_id)
