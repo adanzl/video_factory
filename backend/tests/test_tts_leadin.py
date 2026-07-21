@@ -1,4 +1,8 @@
-"""TTS 句首引导词（复刻音色弱启动）。"""
+"""TTS 句首引导词（复刻音色弱启动）。
+
+引导词默认已禁用（DEFAULT_LEAD_IN=""），prepare 应返回 None；
+strip_tts_lead_in 仍保留，供显式传入 lead_in 时裁剪。
+"""
 
 from __future__ import annotations
 
@@ -10,10 +14,10 @@ from app.services.tts.tts_leadin import (
 )
 
 
-def test_prepare_lead_in_for_cloned_voice_weak_start():
+def test_prepare_lead_in_disabled_by_default():
     text, lead = prepare_lead_in("可是，真相是", voice=CLONED_VOICE_CAN)
-    assert lead == "嗯，"
-    assert text == "嗯，可是，真相是"
+    assert lead is None
+    assert text == "可是，真相是"
 
 
 def test_prepare_lead_in_skips_other_voices():
@@ -22,8 +26,12 @@ def test_prepare_lead_in_skips_other_voices():
     assert text == "可是"
 
 
-def test_prepare_lead_in_for_any_cloned_segment():
-    text, lead = prepare_lead_in("其实呀，地震发生时", voice=CLONED_VOICE_CAN)
+def test_prepare_lead_in_when_explicitly_enabled():
+    text, lead = prepare_lead_in(
+        "其实呀，地震发生时",
+        voice=CLONED_VOICE_CAN,
+        lead_in="嗯，",
+    )
     assert lead == "嗯，"
     assert text == "嗯，其实呀，地震发生时"
 

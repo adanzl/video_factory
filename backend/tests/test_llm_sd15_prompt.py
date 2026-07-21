@@ -47,7 +47,7 @@ def test_parse_sd15_prompt_payload_rejects_invalid_lora():
     raw = {
         "prompt_en": "test scene",
         "business": "science",
-        "lora": "Laboratory_Scene",
+        "lora": "Not_A_Real_Lora",
     }
     try:
         parse_sd15_prompt_payload(raw)
@@ -214,7 +214,8 @@ def test_normalize_sd15_prompt_en_strips_character_terms():
     lower = cleaned.casefold()
     assert "person" not in lower
     assert "head" not in lower
-    assert "glowing" not in lower
+    # single 面板保留 glowing；仅 right 面板剥离
+    assert "glowing" in lower
     assert "co molecule" in lower
 
 
@@ -243,7 +244,8 @@ def test_build_sd15_full_prompt_science_suffix():
         lora="Simple_Diagram",
     )
     assert full.startswith("<lora:Simple_Diagram:0.65>")
-    assert "dark gray background" in full
+    assert "clean light background" in full
+    assert "educational illustration" in full
     assert "person" not in full.casefold()
 
 

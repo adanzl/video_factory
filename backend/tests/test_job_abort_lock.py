@@ -30,7 +30,7 @@ def test_run_in_background_holds_lock_until_worker_done(monkeypatch):
         return {"id": jid, "status": "running"}
 
     monkeypatch.setattr(mgr, "mark_running", _mark_running)
-    monkeypatch.setattr(_job_mgr_mod, "prepare_for_action", lambda *_a, **_k: None)
+    monkeypatch.setattr(_job_mgr_mod, "prepare_rerun_artifacts", lambda *_a, **_k: None)
     monkeypatch.setattr(
         _job_mgr_mod,
         "run_in_background",

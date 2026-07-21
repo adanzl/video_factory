@@ -11,7 +11,7 @@ from pathlib import Path
 
 from app.exceptions import is_expected_job_failure
 from app.utils.job_cancel import JobCancelledError, job_cancel
-from app.services.job.job_reset import prepare_for_action, prepare_job_rerun
+from app.services.job.job_reset import prepare_rerun as prepare_rerun_artifacts
 from app.repositories import repo_job_log, repo_job, repo_segment
 from app.repositories.connection import connection
 from app.utils.async_util import run_in_background
@@ -514,15 +514,25 @@ class JobMgr:
         finally:
             lock.release()
 
-    def _run_in_background(
+    def submit_action(
         self,
         job_id: int,
         action: str,
         run: Callable[[], None],
         *,
+        prepare: bool = True,
         segment_indices: list[int] | None = None,
         action_detail: str | None = None,
+        sync: bool = False,
+        allow_running: bool = False,
+        prepare_mode: str = "from",
     ) -> dict:
+        """统一提交：锁 · prepare · cancel · mark_running · sync|async。
+
+        API 默认 ``sync=False``（后台）；CLI 用 ``sync=True``。
+        drain（已 claim 为 running）用 ``prepare=False, allow_running=True``。
+        recovery / 续跑用 ``prepare=False``。
+        """
         lock = self._job_lock(job_id)
         if not lock.acquire(blocking=False):
             raise JobBusyError(f"job {job_id} is running")
@@ -538,12 +548,19 @@ class JobMgr:
 
         try:
             job = self.get_job(job_id)
-            if job["status"] == "running":
+            if job["status"] == "running" and not allow_running:
                 raise JobBusyError(f"job {job_id} is running")
 
-            prepare_for_action(job_id, action, segment_indices=segment_indices)
+            if prepare:
+                prepare_rerun_artifacts(
+                    job_id,
+                    action,
+                    segment_indices=segment_indices,
+                    mode=prepare_mode,
+                )
             job_cancel.clear(job_id)
-            self.mark_running(job_id)
+            if job["status"] != "running":
+                self.mark_running(job_id)
             fail_stage = action.split("/")[0]
 
             # abort 插在 clear 与 mark_running 之间时，不要再 spawn
@@ -559,19 +576,21 @@ class JobMgr:
 
             def _worker() -> None:
                 try:
+                    mode = "sync" if sync else "background greenlet"
                     if action_detail:
                         logger.info(
-                            "job %s action [%s] started in background "
-                            "greenlet: %s",
+                            "job %s action [%s] started (%s): %s",
                             job_id,
                             action,
+                            mode,
                             action_detail,
                         )
                     else:
                         logger.info(
-                            "job %s action [%s] started in background greenlet",
+                            "job %s action [%s] started (%s)",
                             job_id,
                             action,
+                            mode,
                         )
                     try:
                         run()
@@ -613,11 +632,93 @@ class JobMgr:
                         )
                     _release_lock()
 
+            if sync:
+                _worker()
+                return self.get_job(job_id)
+
             run_in_background(_worker)
             return self.get_job(job_id)
         except Exception:
             _release_lock()
             raise
+
+    def _run_in_background(
+        self,
+        job_id: int,
+        action: str,
+        run: Callable[[], None],
+        *,
+        segment_indices: list[int] | None = None,
+        action_detail: str | None = None,
+    ) -> dict:
+        """兼容旧名 → :meth:`submit_action`（异步）。"""
+        return self.submit_action(
+            job_id,
+            action,
+            run,
+            segment_indices=segment_indices,
+            action_detail=action_detail,
+            sync=False,
+        )
+
+    def run_job_sync(
+        self,
+        job_id: int,
+        *,
+        from_stage: str | None = None,
+        only_stage: str | None = None,
+        segment_indices: list[int] | None = None,
+    ) -> dict:
+        """CLI 同步入口：持锁 + 可选 prepare，再跑 ``loop.run_job``。"""
+        from worker.loop import run_job
+
+        if from_stage and only_stage:
+            raise ValueError("--from-stage 与 --only-stage 不能同时使用")
+
+        rerun_stage = only_stage or from_stage
+        prepare = rerun_stage is not None
+        prepare_mode = "only" if only_stage else "from"
+        if rerun_stage is None:
+            job = self.get_job(job_id)
+            action = str(job.get("stage") or "script")
+        else:
+            action = rerun_stage
+
+        return self.submit_action(
+            job_id,
+            action,
+            lambda: run_job(
+                job_id,
+                from_stage=from_stage,
+                only_stage=only_stage,
+                segment_indices=segment_indices,
+            ),
+            prepare=prepare,
+            segment_indices=segment_indices,
+            sync=True,
+            prepare_mode=prepare_mode,
+        )
+
+    def continue_job(
+        self,
+        job_id: int,
+        *,
+        sync: bool = True,
+        allow_running: bool = False,
+    ) -> dict:
+        """从当前 stage 续跑（不 prepare）。drain / recovery 用。"""
+        from worker.loop import run_job
+
+        job = self.get_job(job_id)
+        action = str(job.get("stage") or "script")
+        return self.submit_action(
+            job_id,
+            action,
+            lambda: run_job(job_id),
+            prepare=False,
+            sync=sync,
+            allow_running=allow_running,
+        )
 
     def _persist_image_provider(self, job_id: int, image_provider: str | None) -> None:
         if image_provider is None:
@@ -741,94 +842,23 @@ class JobMgr:
         from worker.loop import run_script_prompts
 
         job = self.get_job(job_id)
-        lock = self._job_lock(job_id)
-        if not lock.acquire(blocking=False):
-            raise JobBusyError(f"job {job_id} is running")
-
-        lock_held = True
-
-        def _release_lock() -> None:
-            nonlocal lock_held
-            if lock_held:
-                lock_held = False
-                lock.release()
-
-        try:
-            job = self.get_job(job_id)
-            if job["status"] == "running":
-                raise JobBusyError(f"job {job_id} is running")
-            job_cancel.clear(job_id)
-            self.mark_running(job_id)
-            fail_stage = "script"
-            detail = _image_prompts_action_detail(
-                job, segment_indices=segment_indices
-            )
-
-            started = self.get_job(job_id)
-            if (
-                started.get("status") != "running"
-                or job_cancel.is_cancelled(job_id)
-            ):
-                if job_cancel.is_cancelled(job_id):
-                    job_cancel.clear(job_id)
-                _release_lock()
-                return started
-
-            def _worker() -> None:
-                try:
-                    if detail:
-                        logger.info(
-                            "job %s action [script/prompts/%s] started: %s",
-                            job_id,
-                            prompt_type,
-                            detail,
-                        )
-                    else:
-                        logger.info(
-                            "job %s action [script/prompts/%s] started",
-                            job_id,
-                            prompt_type,
-                        )
-                    try:
-                        run_script_prompts(
-                            job_id,
-                            prompt_type=prompt_type,
-                            segment_indices=segment_indices,
-                        )
-                    except JobCancelledError:
-                        logger.info(
-                            "job %s cancelled during prompts generation",
-                            job_id,
-                        )
-                        job = self.get_job(job_id)
-                        if job["status"] == "running":
-                            self.mark_aborted(job_id, fail_stage)
-                    except Exception as exc:
-                        logger.exception(
-                            "job %s prompts generation failed", job_id
-                        )
-                        job = self.get_job(job_id)
-                        if job["status"] == "running":
-                            self.mark_failed(job_id, fail_stage, str(exc))
-                finally:
-                    try:
-                        if job_cancel.is_cancelled(job_id):
-                            job = self.get_job(job_id)
-                            if job["status"] == "running":
-                                self.mark_aborted(job_id, fail_stage)
-                            else:
-                                job_cancel.clear(job_id)
-                    except Exception:
-                        logger.exception(
-                            "job %s abort finalize failed", job_id
-                        )
-                    _release_lock()
-
-            run_in_background(_worker)
-            return self.get_job(job_id)
-        except Exception:
-            _release_lock()
-            raise
+        detail = _image_prompts_action_detail(
+            job, segment_indices=segment_indices
+        )
+        return self.submit_action(
+            job_id,
+            "script",
+            lambda: run_script_prompts(
+                job_id,
+                prompt_type=prompt_type,
+                segment_indices=segment_indices,
+            ),
+            prepare=False,
+            action_detail=f"prompts/{prompt_type}: {detail}" if detail else (
+                f"prompts/{prompt_type}"
+            ),
+            sync=False,
+        )
 
     def preview_script_prompts(
         self,
@@ -1318,7 +1348,7 @@ class JobMgr:
         segment_indices: list[int] | None = None,
         mode: str = "from",
     ) -> dict:
-        return prepare_job_rerun(
+        return prepare_rerun_artifacts(
             job_id,
             stage,
             segment_indices=segment_indices,
