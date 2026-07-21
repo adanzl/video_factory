@@ -68,11 +68,14 @@ def test_daily_story_prompts_share_contract():
     assert "300" in story_sys and "380" in story_sys
     assert "320" in story_sys and "360" in story_sys
     assert "开场钩子" in story_sys
+    assert "单冲突" in story_sys
+    assert "conflict_core" in story_sys
     assert "18" in story_sys
     assert "有娃的大人" in story_sys
     assert "权威翻车" in story_sys
     assert "谁先洗澡" in story_user
     assert "前 2 句" in story_user
+    assert "conflict_core" in story_user
     assert "对付爸妈" not in theme_user
     assert "下雨只带了一把伞" not in theme_user
     assert "动作/实物" in theme_user
@@ -87,9 +90,15 @@ def _valid_story(*, line: str | None = None, n: int = 17) -> dict:
     dialogue = [
         {"speaker": speakers[i % 2], "line": line} for i in range(n)
     ]
+    # 前 2 句露出冲突锚点（凑满 ≤18 字，避免总字数掉线）
+    openers = ("这个橡皮是我的你别抢", "新橡皮明明先是我拿到的")
+    for i, opener in enumerate(openers):
+        pad = max(0, DAILY_STORY_LINE_CHARS_MAX - len(opener))
+        dialogue[i]["line"] = opener + ("呀" * pad)
     return {
-        "scene_title": "谁先洗",
-        "setting": "客厅，妈妈问谁先洗澡",
+        "scene_title": "新橡皮",
+        "setting": "客厅，姐弟抢新橡皮",
+        "conflict_core": "姐弟抢新橡皮",
         "dialogue": dialogue,
         "punchline_explain": "C类公平执念，姐姐规则被字面戳穿",
     }
@@ -141,6 +150,21 @@ def test_validate_daily_story_json_rejects_vague_punchline():
         validate_daily_story_json(story)
 
 
+def test_validate_daily_story_json_rejects_missing_conflict_core():
+    story = _valid_story()
+    del story["conflict_core"]
+    with pytest.raises(ValueError, match="conflict_core"):
+        validate_daily_story_json(story)
+
+
+def test_validate_daily_story_json_rejects_offtopic_latter():
+    story = _valid_story()
+    # 后 1/3 岔开体育课，且前文未出现
+    story["dialogue"][-1]["line"] = "体育课你还敢告老师吗"
+    with pytest.raises(ValueError, match="跑题"):
+        validate_daily_story_json(story)
+
+
 def test_build_daily_story_retry_user_asks_to_expand_short_draft():
     from app.services.daily_story.prompts import build_daily_story_retry_user
 
@@ -154,3 +178,4 @@ def test_build_daily_story_retry_user_asks_to_expand_short_draft():
     assert "上一稿" in user
     assert "鞋带" in user
     assert "增补" in user or "扩到" in user
+    assert "禁止换 conflict_core" in user

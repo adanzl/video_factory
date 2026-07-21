@@ -9,6 +9,8 @@ export interface DialogueLine {
 export interface StoryContent {
   scene_title: string;
   setting: string;
+  /** 单冲突摘要：谁 vs 谁争什么（旧稿可能缺失） */
+  conflict_core?: string;
   dialogue: DialogueLine[];
   punchline_explain: string;
 }

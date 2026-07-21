@@ -18,6 +18,11 @@
           <div v-else class="text-sm text-gray-600">{{ editStory.setting }}</div>
         </div>
         <div>
+          <div class="mb-1 text-xs text-gray-400">单冲突</div>
+          <el-input v-if="editing" v-model="editStory.conflict_core" size="small" maxlength="24" show-word-limit />
+          <div v-else class="text-sm text-gray-600">{{ editStory.conflict_core || "-" }}</div>
+        </div>
+        <div>
           <div class="mb-1 text-xs text-gray-400">笑点解析</div>
           <el-input v-if="editing" v-model="editStory.punchline_explain" type="textarea" :rows="4" size="small" />
           <div v-else class="rounded-lg bg-gray-50 p-3 text-sm text-gray-600">{{ editStory.punchline_explain }}</div>
@@ -178,6 +183,7 @@ const localStory = computed(() => props.story);
 const editStory = ref<StoryContent>({
   scene_title: "",
   setting: "",
+  conflict_core: "",
   dialogue: [],
   punchline_explain: "",
 });
