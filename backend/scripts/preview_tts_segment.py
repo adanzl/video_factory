@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""本地试听：整段流式 PlainText + 字级时间戳断句。"""
+"""预览 TTS：整段流式 PlainText + 字级时间戳断句。"""
 
 from __future__ import annotations
 

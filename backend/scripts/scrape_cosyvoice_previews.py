@@ -7,7 +7,8 @@ import urllib.request
 from pathlib import Path
 
 URL = "https://help.aliyun.com/zh/model-studio/cosyvoice-voice-list"
-OUTPUT = Path(__file__).resolve().parents[1] / "frontend" / "src" / "constants" / "cosyvoice-voice-previews.json"
+ROOT = Path(__file__).resolve().parents[2]
+OUTPUT = ROOT / "frontend" / "src" / "constants" / "cosyvoice-voice-previews.json"
 
 VOICE_ID_RE = re.compile(
     r"voice(?:<[^>]+>)*参数(?:<[^>]+>)*[：:]\s*(long[a-z0-9_]+|loong[a-z0-9_]+)",

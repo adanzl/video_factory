@@ -3,7 +3,7 @@
 流程：rate=1.0 合成 → 切首尾静音 → atempo 对齐 → amix 混音 → 整体倍速。
 
 用法（项目根目录）:
-  python backend/scripts/prepare_intro_audio_daily.py
+  python backend/scripts/gen_intro_audio_daily.py
 """
 
 from __future__ import annotations

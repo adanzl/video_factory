@@ -1,7 +1,7 @@
 """预生成片头品牌喊声 MP3，写入 backend/res/audio/intro_shout.mp3。
 
 用法（项目根目录）:
-  python backend/scripts/prepare_intro_audio.py
+  python backend/scripts/gen_intro_audio.py
 
 有 TTS API Key 时用 CosyVoice 合成；否则生成等时长静音占位（请后续替换为真人录音）。
 """
