@@ -8,7 +8,7 @@ from typing import Any
 from app.repositories import repo_daily_story, repo_job, repo_job_log, repo_segment
 from app.repositories.connection import connection
 from app.services.llm.llm_mgr import llm_mgr
-from app.utils.job_info import merge_job_info
+from app.utils.job_info import merge_job_info, merge_job_script_params
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +57,7 @@ class DailyStoryMgr:
     ) -> dict:
         """基于日常故事创建视频任务（pipeline=daily_story）。"""
         from app.repositories import repo_job, repo_job_log
+        from app.utils.job_info import DEFAULT_DAILY_STORY_SPEECH_CHARS_PER_SEC
 
         with connection() as conn:
             story = repo_daily_story.get_story(conn, story_id)
@@ -65,6 +66,18 @@ class DailyStoryMgr:
             if not title:
                 title = story.get("theme", f"日常故事-{story_id}")
 
+            cps = (
+                float(speech_chars_per_sec)
+                if speech_chars_per_sec is not None
+                else DEFAULT_DAILY_STORY_SPEECH_CHARS_PER_SEC
+            )
+            info = merge_job_info(
+                merge_job_script_params(None, speech_chars_per_sec=cps),
+                daily_story_id=story_id,
+                orientation="landscape",
+                video_provider="ffmpeg",
+                phrase_gap_sec=phrase_gap_sec,
+            )
             job = repo_job.create_job(
                 conn,
                 title,
@@ -73,14 +86,7 @@ class DailyStoryMgr:
                 status="pending",
                 pipeline="chat",
                 material_id=story_id,
-                info=merge_job_info(
-                    None,
-                    daily_story_id=story_id,
-                    orientation="landscape",
-                    video_provider="ffmpeg",
-                    speech_chars_per_sec=speech_chars_per_sec,
-                    phrase_gap_sec=phrase_gap_sec,
-                ),
+                info=info,
             )
             repo_job_log.append_log(
                 conn,

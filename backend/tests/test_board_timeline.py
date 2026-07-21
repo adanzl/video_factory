@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 
 from app.services.script.board_timeline import (
+    _material_timeline_table,
     hard_max_chars,
+    material_timeline_length_budget,
     narration_range_for_timeline,
     parse_video_timeline,
     validate_timeline_script,
@@ -105,3 +107,98 @@ def test_validate_timeline_script_rejects_total_too_short():
     assert err is not None
     assert "总字数不足" in err
     assert str(lo) in err
+
+
+def test_material_timeline_table_includes_object_name():
+    raw = json.dumps(
+        {
+            "duration_sec": 12,
+            "segments": [
+                {
+                    "index": 1,
+                    "name": "1970年用球",
+                    "description": "黑白相间经典足球外观",
+                    "start_sec": 0,
+                    "end_sec": 12,
+                    "duration_sec": 12,
+                }
+            ],
+        },
+        ensure_ascii=False,
+    )
+    timeline = parse_video_timeline(raw)
+    assert timeline is not None
+    table = _material_timeline_table(timeline)
+    assert "1970年用球" in table
+    assert "黑白相间经典足球外观" in table
+    assert "对象" in table
+    budget = material_timeline_length_budget(timeline)
+    assert "三层" in budget
+    assert "字数预算" in budget
+
+
+def test_material_prompts_timeline_keeps_object_and_layers():
+    from app.services.script.voiceover_material import build_voiceover_material_prompts
+
+    raw = json.dumps(
+        {
+            "duration_sec": 12,
+            "segments": [
+                {
+                    "index": 1,
+                    "name": "1970年用球",
+                    "description": "黑白相间经典足球外观",
+                    "start_sec": 0,
+                    "end_sec": 12,
+                    "duration_sec": 12,
+                }
+            ],
+        },
+        ensure_ascii=False,
+    )
+    prompts = build_voiceover_material_prompts(
+        "世界杯用球",
+        video_timeline=raw,
+        chars_per_sec=4.1,
+        need_opening=False,
+    )
+    assert "1970年用球" in prompts["user"]
+    assert "三层" in prompts["user"]
+    assert "按标点自动切分" not in prompts["system"]
+    assert prompts["system"].count("禁止开场钩子") == 1
+
+
+def test_video_analyzer_validate_normalizes_overlap_and_end():
+    from app.services.material.video_analyzer import VideoAnalyzer
+
+    analyzer = VideoAnalyzer.__new__(VideoAnalyzer)
+    analyzer._duration = 20.0
+    raw = json.dumps(
+        {
+            "title": "测试",
+            "duration_sec": 20,
+            "segments": [
+                {
+                    "index": 1,
+                    "name": "甲",
+                    "description": "红色圆形",
+                    "start_sec": 0,
+                    "end_sec": 12,
+                    "duration_sec": 99,
+                },
+                {
+                    "index": 2,
+                    "name": "乙",
+                    "description": "蓝色方块",
+                    "start_sec": 10,
+                    "end_sec": 15,
+                    "duration_sec": 5,
+                },
+            ],
+        },
+        ensure_ascii=False,
+    )
+    out = json.loads(analyzer._validate(raw))
+    assert out["segments"][0]["duration_sec"] == 12.0
+    assert out["segments"][1]["start_sec"] == 12.0
+    assert out["segments"][-1]["end_sec"] == 20.0

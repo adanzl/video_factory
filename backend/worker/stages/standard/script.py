@@ -409,6 +409,7 @@ def _repair_segment_overflow_via_shrink(
             segment_indices=shrinkable,
             segment_target_sec=segment_target_sec,
             job=job,
+            chars_per_sec=speech_chars_per_sec,
         )
         _sync_narration_from_segments(script)
         repaired = True
@@ -453,6 +454,7 @@ def _repair_narration_overflow_via_shrink(
     job_id: int,
     stage_name: str,
     job: dict | None,
+    speech_chars_per_sec: float | None = None,
 ) -> bool:
     """总口播略超上限时，对最长几段做缩字（避免整稿重跑）。"""
     accept_max = narration_accept_max_chars(narration_target_words)
@@ -475,6 +477,7 @@ def _repair_narration_overflow_via_shrink(
             segment_indices=indices,
             segment_target_sec=segment_target_sec,
             job=job,
+            chars_per_sec=speech_chars_per_sec,
         )
         _sync_narration_from_segments(script)
         repaired = True
@@ -721,6 +724,7 @@ class ScriptStage(StageExecutor):
                     job_id=job_id,
                     stage_name=self.name,
                     job=ctx.job,
+                    speech_chars_per_sec=speech_chars_per_sec,
                 )
             try:
                 accept_warnings = _validate_script(
@@ -794,6 +798,7 @@ class ScriptStage(StageExecutor):
                         job_id=job_id,
                         stage_name=self.name,
                         job=ctx.job,
+                        speech_chars_per_sec=speech_chars_per_sec,
                     )
                 try:
                     accept_warnings = _validate_script(

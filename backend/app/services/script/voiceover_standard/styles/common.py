@@ -21,6 +21,12 @@ NO_JSON = (
     "后端会按标点自动切分分镜，不要在口播里写分镜标签。"
 )
 
+MATERIAL_NO_JSON = (
+    "【禁止JSON混入】narration 必须是纯口播文本，禁止出现 JSON 花括号 {}、"
+    "禁止出现 {\"text\":...} 等结构化片段；不要在口播里写分镜标签。"
+    "有时间表时 segments 条数与顺序由时间表决定，禁止按标点自行增删段数。"
+)
+
 MATERIAL_LENGTH_RULE = (
     "【口播字数】每段口播须含三层——"
     "①童趣感叹或「你看」式互动；②一个准确科普点；③比喻/拟声/生活联想。"
@@ -56,9 +62,9 @@ NARRATION_ONLY_JSON_EXAMPLE = """{
 
 MATERIAL_SCRIPT_JSON_EXAMPLE = """{
   "title": "标题示例",
-  "narration": "（各段 text 按序拼接的全文，须达到【字数预算】写作目标）",
+  "narration": "（各段 text 按序拼接的全文，须达到字数要求）",
   "segments": [
-    {"segment_index": 1, "text": "（本段口播，须写满该段字数下限，用具体细节撑开）"},
-    {"segment_index": 2, "text": "（第二段同样写满预算，补比喻或步骤后再接下一段）"}
+    {"segment_index": 1, "text": "（本段口播，须写满该段字数范围，含感叹+科普+比喻）"},
+    {"segment_index": 2, "text": "（第二段同样写满预算，点名对象后再接下一段）"}
   ]
 }"""

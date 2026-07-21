@@ -69,7 +69,13 @@ def _resolve_cover_subject(subject: str) -> str:
     )
     try:
         client = DeepSeekClient()
-        rewritten, _ = client._chat(system, subject, max_tokens=600, json_mode=False)
+        rewritten, _ = client._chat(
+            system,
+            subject,
+            json_mode=False,
+            thinking_enabled=False,
+            temperature=0.5,
+        )
         result = rewritten.strip()
         if result and len(result) >= len(subject) * 0.3:
             logger.info("cover subject rewritten: '%s' -> '%s'", subject[:80], result[:80])

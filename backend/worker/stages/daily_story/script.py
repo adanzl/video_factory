@@ -26,9 +26,8 @@ class DailyScriptStage(StageExecutor):
     """日常对话故事 → 标准分镜 script_json。
 
     从 job.info.daily_story_id 加载故事，调用 LLM 生成 storyboard
-    （scenes 含 dialogue_lines / visual_description），
-    转换为标准 script_json 格式后走 fill_image_prompts 生成提示词，
-    供下游 TTS / Segment / Merge 使用。
+    （scenes 含 dialogue；画面概述走标准 A2 fill_visual_briefs），
+    再 fill_image_prompts，供下游 TTS / Segment / Merge 使用。
     """
 
     name = "script"
@@ -40,15 +39,32 @@ class DailyScriptStage(StageExecutor):
         if not daily_story_id:
             raise RuntimeError("daily_story_id not found in job info")
 
-        # 从 job.info 读取语速，默认 3.0 字/秒（儿童故事音色）
-        chars_per_sec = float(info.get("speech_chars_per_sec") or 3.0)
+        # 语速：统一走 info.script（与 JobContext / 标准链路一致）
+        chars_per_sec = ctx.script_speech_chars_per_sec
+        if chars_per_sec is None:
+            from app.utils.job_info import (
+                DEFAULT_DAILY_STORY_SPEECH_CHARS_PER_SEC,
+                content_style_from_job,
+                resolve_speech_chars_per_sec,
+                script_params_from_info,
+            )
+
+            chars_per_sec = resolve_speech_chars_per_sec(
+                script_params_from_info(ctx.job.get("info")),
+                content_style=content_style_from_job(ctx.job),
+                default=DEFAULT_DAILY_STORY_SPEECH_CHARS_PER_SEC,
+            )
 
         with connection() as conn:
             story = repo_daily_story.get_story(conn, daily_story_id)
         story_content = story["story"]  # {scene_title, setting, dialogue, punchline_explain}
 
-        # --- LLM 生成 storyboard ---
-        scenes_data = llm_mgr.generate_daily_script(story_content, job=ctx.job)
+        # --- LLM 生成 storyboard（只切镜+台词，不写画面概述）---
+        scenes_data = llm_mgr.generate_daily_script(
+            story_content,
+            job=ctx.job,
+            chars_per_sec=chars_per_sec,
+        )
         scenes = scenes_data.get("scenes") or []
         if not scenes:
             raise RuntimeError("generate_daily_script returned empty scenes")
@@ -56,8 +72,9 @@ class DailyScriptStage(StageExecutor):
         # --- 转换为标准格式 ---
         narration_parts: list[str] = []
         segments: list[dict] = []
+        next_index = 1
 
-        for i, scene in enumerate(scenes, start=1):
+        for scene_pos, scene in enumerate(scenes, start=1):
             job_cancel.raise_if_cancelled(job_id)
             raw_lines = scene.get("dialogue") or scene.get("dialogue_lines") or []
             if raw_lines and isinstance(raw_lines[0], dict):
@@ -67,56 +84,61 @@ class DailyScriptStage(StageExecutor):
                     if re.search(r"[\u4e00-\u9fff\w]", d.get("text") or d.get("line") or "")
                 ]
                 if not raw_lines:
-                    logger.warning("scene %d: all dialogue lines are pure punctuation, skipping", i)
+                    logger.warning(
+                        "scene %d: all dialogue lines are pure punctuation, skipping",
+                        scene_pos,
+                    )
                     continue
                 # 新格式: [{"speaker": "昭昭", "text": "台词"}, ...]
-                segment_text = "".join(str(d.get("text") or d.get("line") or "") for d in raw_lines)
+                segment_text = "".join(
+                    str(d.get("text") or d.get("line") or "") for d in raw_lines
+                )
                 dialogue = [
-                    {"speaker": d.get("speaker", ""), "text": d.get("text") or d.get("line") or ""}
+                    {
+                        "speaker": d.get("speaker", ""),
+                        "text": d.get("text") or d.get("line") or "",
+                    }
                     for d in raw_lines
                 ]
             else:
                 # 兼容旧格式: ["台词1", "台词2", ...]
                 segment_text = "".join(str(l) for l in raw_lines)
                 dialogue = []
+            if not str(segment_text).strip():
+                logger.warning("scene %d: empty text after parse, skipping", scene_pos)
+                continue
             narration_parts.append(segment_text)
 
             # 按实际字数 ÷ 语速基准 估算分镜时长，不依赖 LLM
             seg_chars = len(segment_text)
             duration_sec = round(seg_chars / chars_per_sec, 1)
 
-            if duration_sec > 18.0:
+            from app.services.daily_story.prompts import DAILY_SCRIPT_MAX_SEGMENT_SEC
+
+            if duration_sec > DAILY_SCRIPT_MAX_SEGMENT_SEC:
                 logger.warning(
-                    "segment %d duration=%.1fs exceeds 18s limit (chars=%d, rate=%.1f): %s",
-                    i, duration_sec, seg_chars, chars_per_sec, segment_text[:80],
+                    "segment %d duration=%.1fs exceeds %.0fs limit "
+                    "(chars=%d, rate=%.1f): %s",
+                    next_index,
+                    duration_sec,
+                    DAILY_SCRIPT_MAX_SEGMENT_SEC,
+                    seg_chars,
+                    chars_per_sec,
+                    segment_text[:80],
                 )
 
             seg: dict = {
-                "segment_index": i,
+                "segment_index": next_index,
                 "text": segment_text,
-                "visual_brief": (scene.get("visual_description") or "").strip(),
                 "duration_sec": duration_sec,
             }
+            shot_type = str(scene.get("shot_type") or "").strip()
+            if shot_type:
+                seg["shot_type"] = shot_type
             if dialogue:
                 seg["dialogue"] = dialogue
-            from app.services.daily_story.cast import (
-                scrub_cast_leaks,
-                speakers_from_dialogue,
-            )
-
-            allowed = speakers_from_dialogue(dialogue)
-            cleaned = scrub_cast_leaks(seg["visual_brief"], allowed)
-            if cleaned != seg["visual_brief"]:
-                logger.warning(
-                    "segment %d visual_brief scrubbed cast leaks "
-                    "(speakers=%s): %r -> %r",
-                    i,
-                    sorted(allowed),
-                    seg["visual_brief"][:120],
-                    cleaned[:120],
-                )
-                seg["visual_brief"] = cleaned
             segments.append(seg)
+            next_index += 1
 
         narration = "".join(narration_parts)
         title = (story_content.get("scene_title") or ctx.job.get("title") or "").strip()
@@ -134,8 +156,30 @@ class DailyScriptStage(StageExecutor):
             "daily_story_id": daily_story_id,
             "daily_story_theme": story.get("theme", ""),
             "total_chars": total_chars,
-            "visual_style": _VISUAL_STYLE_BY_CONTENT_STYLE["daily_story"]
+            "visual_style": _VISUAL_STYLE_BY_CONTENT_STYLE["daily_story"],
+            "content_style": "daily_story",
         }
+
+        # --- 画面概述：与主线统一走 A2 ---
+        llm_mgr.fill_visual_briefs(script, job=ctx.job)
+        from app.services.daily_story.cast import (
+            scrub_cast_leaks,
+            speakers_from_dialogue,
+        )
+
+        for seg in script.get("segments") or []:
+            allowed = speakers_from_dialogue(seg.get("dialogue") or [])
+            cleaned = scrub_cast_leaks(str(seg.get("visual_brief") or ""), allowed)
+            if cleaned != seg.get("visual_brief"):
+                logger.warning(
+                    "segment %d visual_brief scrubbed cast leaks "
+                    "(speakers=%s): %r -> %r",
+                    seg.get("segment_index"),
+                    sorted(allowed),
+                    str(seg.get("visual_brief") or "")[:120],
+                    cleaned[:120],
+                )
+                seg["visual_brief"] = cleaned
 
         # --- 标题优化（chat 固定 ≤10 字，不跟全局 MAX_TITLE_LENGTH） ---
         if not ctx.script_skip_title_optimize:
@@ -148,7 +192,10 @@ class DailyScriptStage(StageExecutor):
                 )
                 client = llm_mgr._get_client()
                 raw, _ = client._chat_json(
-                    prompts["system"], prompts["user"], thinking_enabled=False
+                    prompts["system"],
+                    prompts["user"],
+                    thinking_enabled=False,
+                    temperature=0.8,
                 )
                 optimized = parse_title_optimize_payload(raw, max_title_len=max_len)
                 if optimized and optimized != title:
@@ -176,7 +223,6 @@ class DailyScriptStage(StageExecutor):
             seg.pop("motion_prompt", None)
 
         # 用标准流程生成文生图 + 运动提示词（含内部质量校验与重试）
-        script["content_style"] = "daily_story"
         llm_mgr.fill_image_prompts_with_retries(script, job=ctx.job)
 
         # 给 image_prompt 添加固定前后缀（LLM 只输出场景核心内容）

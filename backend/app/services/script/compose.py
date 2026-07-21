@@ -73,6 +73,8 @@ def collect_prompts(
                 supplementary_info=extra,
                 video_timeline=timeline_raw,
                 script=script,
+                chars_per_sec=speech_chars_per_sec,
+                job=job,
             )
         )
     else:
@@ -140,6 +142,7 @@ def attach_prompts(
     segment_target_sec: float | None = None,
     max_title_length: int | None = None,
     narration_target_words: int | None = None,
+    speech_chars_per_sec: float | None = None,
     supplementary_info: str | None = None,
     video_timeline: str | None = None,
     skip_title_optimize: bool = False,
@@ -150,6 +153,7 @@ def attach_prompts(
         segment_target_sec=segment_target_sec,
         max_title_length=max_title_length,
         narration_target_words=narration_target_words,
+        speech_chars_per_sec=speech_chars_per_sec,
         supplementary_info=supplementary_info,
         video_timeline=video_timeline,
         script=script,

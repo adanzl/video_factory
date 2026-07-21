@@ -23,6 +23,32 @@ def test_resolve_speech_chars_per_sec_default():
     assert resolve_speech_chars_per_sec({}) == DEFAULT_SPEECH_CHARS_PER_SEC
 
 
+def test_resolve_speech_chars_per_sec_daily_default():
+    from app.utils.job_info import (
+        CONTENT_STYLE_DAILY_STORY,
+        DEFAULT_DAILY_STORY_SPEECH_CHARS_PER_SEC,
+    )
+
+    assert (
+        resolve_speech_chars_per_sec(None, content_style=CONTENT_STYLE_DAILY_STORY)
+        == DEFAULT_DAILY_STORY_SPEECH_CHARS_PER_SEC
+    )
+    assert (
+        resolve_speech_chars_per_sec(
+            {"speech_chars_per_sec": 4.0},
+            content_style=CONTENT_STYLE_DAILY_STORY,
+        )
+        == 4.0
+    )
+
+
+def test_script_params_from_info_migrates_flat_speech_chars_per_sec():
+    params = script_params_from_info(
+        {"speech_chars_per_sec": 3.5, "daily_story_id": 1}
+    )
+    assert params["speech_chars_per_sec"] == 3.5
+
+
 def test_resolve_narration_target_words_uses_custom_speech_rate():
     script = {"estimated_duration_min": 6.0, "speech_chars_per_sec": 5.0}
     assert resolve_narration_target_words(script) == narration_target_for_minutes(6.0, chars_per_sec=5.0)

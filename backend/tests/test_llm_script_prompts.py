@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import pytest
+
 from app.services.script.image_prompt import build_image_prompts
 from app.services.script.visual_brief import build_visual_brief_prompts
 from app.services.script.voiceover_standard import (
+    build_voiceover_standard_expand_prompts,
     build_voiceover_standard_prompts,
     build_voiceover_standard_shrink_prompts,
 )
@@ -298,8 +301,30 @@ def test_build_visual_brief_prompts_includes_full_narration():
     )
     assert "【口播全文 narration】" in prompts["user"]
     assert script["narration"] in prompts["user"]
+    assert "全片 visual_style：测试画风" in prompts["user"]
+    assert "请为每一段生成 visual_brief" in prompts["user"]
+    assert "须按标记生成" not in prompts["user"]
     assert "画面衔接自然" in prompts["system"] or "连贯" in prompts["system"]
     assert "不要输出或修改各段 text" in prompts["system"]
+    assert "焦距" in prompts["system"]
+    assert "妈妈" not in prompts["system"]
+    assert "勿夸张表演" in prompts["system"]
+
+
+def test_build_visual_brief_prompts_omits_empty_visual_style():
+    script = {
+        "title": "测试标题",
+        "narration": "一句口播。",
+        "segments": [
+            {"segment_index": 1, "text": "一句口播。"},
+        ],
+    }
+    prompts = build_visual_brief_prompts(
+        script,
+        job={"pipeline": "standard", "content_style": "science_child"},
+    )
+    assert "visual_style" not in prompts["user"]
+    assert "待你输出" not in prompts["user"]
 
 
 def test_build_visual_brief_prompts_partial_segments_only():
@@ -321,8 +346,123 @@ def test_build_visual_brief_prompts_partial_segments_only():
     assert "【需生成】segment 2:" in prompts["user"]
     assert "【仅上下文】segment 1:" in prompts["user"]
     assert "【仅上下文】segment 3:" in prompts["user"]
+    assert "仅【需生成】段输出 visual_brief" in prompts["user"]
     assert "仅需输出标记为【需生成】" in prompts["system"]
     assert "须与输入逐段一一对应" not in prompts["system"]
+
+
+def test_build_visual_brief_prompts_life_without_dialogue_skips_mom():
+    script = {
+        "title": "测试标题",
+        "narration": "带娃出门先看好书包。",
+        "visual_style": "生活写实",
+        "segments": [
+            {"segment_index": 1, "text": "带娃出门先看好书包。"},
+        ],
+    }
+    prompts = build_visual_brief_prompts(
+        script,
+        job={"pipeline": "chat", "content_style": "life_experience"},
+    )
+    assert "妈妈" not in prompts["system"]
+    assert "speakers=" not in prompts["user"]
+    assert "勿夸张表演" in prompts["system"]
+
+
+def test_build_visual_brief_prompts_dialogue_keeps_mom_rule():
+    script = {
+        "title": "测试标题",
+        "narration": "妈妈说过别乱跑。",
+        "visual_style": "生活写实",
+        "segments": [
+            {
+                "segment_index": 1,
+                "text": "妈妈说过别乱跑。",
+                "dialogue": [{"speaker": "昭昭", "text": "妈妈说过别乱跑。"}],
+            },
+        ],
+    }
+    prompts = build_visual_brief_prompts(
+        script,
+        job={"pipeline": "chat", "content_style": "life_experience"},
+        supplementary_info="补充：厨房场景",
+    )
+    assert "妈妈角色" in prompts["system"]
+    assert "speakers=" in prompts["user"]
+    assert "融入画面描述" in prompts["system"]
+    assert "融入口播内容" not in prompts["system"]
+    assert "融入画面描述" in prompts["user"]
+
+
+def test_build_visual_brief_prompts_daily_story_role_and_cast():
+    script = {
+        "title": "测试标题",
+        "narration": "昭昭：妈妈呢？",
+        "visual_style": "日常写实",
+        "segments": [
+            {
+                "segment_index": 1,
+                "text": "昭昭：妈妈呢？",
+                "dialogue": [{"speaker": "昭昭", "text": "妈妈呢？"}],
+            },
+        ],
+    }
+    prompts = build_visual_brief_prompts(
+        script,
+        job={"pipeline": "chat", "content_style": "daily_story"},
+    )
+    assert "日常亲子对话短剧的分镜画面设计师" in prompts["system"]
+    assert "小朋友讲科普" not in prompts["system"]
+    assert "本段画面人物必须" in prompts["system"]
+    assert "speakers=" in prompts["user"]
+    assert "80-150" in prompts["system"]
+
+
+def test_build_daily_script_prompts_uses_cps_setting_and_no_appearance():
+    from app.services.daily_story.prompts import build_daily_script_prompts
+
+    story = {
+        "scene_title": "争酸奶",
+        "setting": "厨房，傍晚",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "这瓶是我的！"},
+            {"speaker": "灿灿", "line": "我先看到的。"},
+        ],
+    }
+    system, user = build_daily_script_prompts(story, chars_per_sec=4.0)
+    assert "语速 4 字/秒" in system
+    assert "18.0" not in system
+    assert "≤18 秒" in system
+    assert str(int(18 * 4.0)) in system  # max chars = 72
+    assert "彩铅" not in system
+    assert "超短发" not in system
+    assert "不要输出 visual_description" in system
+    assert "【标题】争酸奶" in user
+    assert "【场景设定】厨房，傍晚" in user
+    assert "昭昭：这瓶是我的！" in user
+    # 规则 2/3 合并后字数上限只强调一次主口径
+    assert system.count("≤72 字") == 1
+
+
+def test_build_visual_brief_prompts_includes_shot_type():
+    script = {
+        "title": "测试",
+        "narration": "hi",
+        "visual_style": "日常",
+        "segments": [
+            {
+                "segment_index": 1,
+                "text": "hi",
+                "shot_type": "中景",
+                "dialogue": [{"speaker": "昭昭", "text": "hi"}],
+            },
+        ],
+    }
+    prompts = build_visual_brief_prompts(
+        script,
+        job={"pipeline": "chat", "content_style": "daily_story"},
+    )
+    assert "shot_type='中景'" in prompts["user"]
 
 
 def test_voiceover_standard_shrink_prompts_preserve_voice():
@@ -339,6 +479,33 @@ def test_voiceover_standard_shrink_prompts_preserve_voice():
     )
     assert "segment_index" in prompts["system"]
     assert "不要输出 narration" in prompts["system"]
+
+
+def test_voiceover_standard_expand_narration_only_injects_style():
+    script = {
+        "title": "测试",
+        "narration": "短稿" * 20,
+        "word_count": 40,
+    }
+    prompts = build_voiceover_standard_expand_prompts(
+        script,
+        min_chars=200,
+        mode="narration_only",
+        max_chars=280,
+        job={"content_style": "tech_science"},
+    )
+    assert "narration口吻" in prompts["system"]
+    assert "勿超过 280 字" in prompts["system"]
+    assert "不要输出 segments" in prompts["system"]
+
+
+def test_voiceover_standard_expand_rejects_storyboard_mode():
+    with pytest.raises(ValueError, match="unsupported expand mode"):
+        build_voiceover_standard_expand_prompts(
+            {"narration": "x"},
+            min_chars=100,
+            mode="storyboard",
+        )
 
 
 def test_collect_prompts_accepts_speech_chars_per_sec():

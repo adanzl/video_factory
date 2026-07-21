@@ -31,7 +31,6 @@ from app.services.script.voiceover_standard.styles.common import (
     MATERIAL_SCRIPT_JSON_EXAMPLE,
     NARRATION_ONLY_JSON_EXAMPLE,
     NO_JSON,
-    STORYBOARD_JSON_EXAMPLE,
 )
 
 __all__ = [
@@ -135,19 +134,39 @@ def build_voiceover_standard_expand_prompts(
     script: dict[str, Any],
     *,
     min_chars: int,
-    mode: str = "storyboard",
+    mode: str = "narration_only",
+    max_chars: int | None = None,
+    job: dict | None = None,
+    content_style: str | None = None,
 ) -> dict[str, str]:
-    """在初稿字数不足时专用扩写（保留分镜与画面字段）。"""
+    """初稿字数不足时专用扩写。
+
+    mode:
+      - narration_only：标准主路径（只扩 narration）
+      - material：素材管线（按段扩 text，再拼 narration）
+    """
     current = _narration_char_count(str(script.get("narration") or ""))
     deficit = max(1, min_chars - current)
+    upper = (
+        f"扩写后也勿超过 {max_chars} 字（硬上限）；够用即可，禁止注水。"
+        if max_chars is not None and max_chars > min_chars
+        else ""
+    )
     if mode == "narration_only":
+        _, profile_style = resolve_script_profile(job, content_style=content_style)
+        style = resolve_style_rules(profile_style)
         system = (
             "你是口播扩写编辑。用户在初稿字数不足，须在保持主题与结构的前提下扩写。"
             "输出 JSON，字段：title, narration, word_count。"
-            f"扩写后 narration 须至少 {min_chars} 字（不含空格换行），当前仅 {current} 字，还差约 {deficit} 字。"
+            f"扩写后 narration 须至少 {min_chars} 字（不含空格换行），"
+            f"当前仅 {current} 字，还差约 {deficit} 字。"
+            f"{upper}"
             "规则：只扩写 narration，补具体细节、案例、步骤或结论，禁止删减已有核心信息；"
             "不要输出 segments；word_count 等于 narration 实际字数。"
+            f"narration口吻：{style.voice}"
+            f"{style.anti_rep}"
             f"{ANTI_MEMOIR}"
+            f"{NO_JSON}"
             f"{json_output_clause(NARRATION_ONLY_JSON_EXAMPLE)}"
         )
         draft = {
@@ -160,24 +179,22 @@ def build_voiceover_standard_expand_prompts(
             f"{json.dumps(draft, ensure_ascii=False, indent=2)}"
         )
         return prompt_step("narration_expand", system, user)
-    keep_visual = mode == "storyboard"
+
+    if mode != "material":
+        raise ValueError(f"unsupported expand mode: {mode!r}")
+
     system = (
         "你是口播扩写编辑。用户在初稿字数不足，须在保持主题与分镜结构的前提下扩写。"
         "输出 JSON，字段与输入一致（title, narration, word_count, segments）。"
-        f"扩写后 narration 须至少 {min_chars} 字（不含空格换行），当前仅 {current} 字，还差约 {deficit} 字。"
+        f"扩写后 narration 须至少 {min_chars} 字（不含空格换行），"
+        f"当前仅 {current} 字，还差约 {deficit} 字。"
+        f"{upper}"
         "规则：segments 段数与 segment_index 不得减少、不得合并；"
         "每段 text 只能扩写（补具体细节、案例、步骤或结论），禁止删减已有核心信息；"
         "narration 为各段 text 按顺序原样拼接；word_count 等于 narration 实际字数。"
         f"{ANTI_MEMOIR}"
+        f"{json_output_clause(MATERIAL_SCRIPT_JSON_EXAMPLE)}"
     )
-    if keep_visual:
-        system += (
-            "须保留各段 visual_brief，仅扩写 text；"
-            "禁止删除 visual_brief 或改成空字符串。"
-        )
-        system += json_output_clause(STORYBOARD_JSON_EXAMPLE)
-    else:
-        system += json_output_clause(MATERIAL_SCRIPT_JSON_EXAMPLE)
     draft = {
         "title": script.get("title"),
         "narration": script.get("narration"),
@@ -189,7 +206,7 @@ def build_voiceover_standard_expand_prompts(
         f"{json.dumps(draft, ensure_ascii=False)}\n\n"
         f"请扩写至至少 {min_chars} 字后输出完整 JSON。"
     )
-    return prompt_step(f"expand_{mode}", system, user)
+    return prompt_step("expand_material", system, user)
 
 
 def build_voiceover_standard_shrink_prompts(
@@ -229,12 +246,13 @@ def build_voiceover_standard_shrink_prompts(
         "你是口播缩字编辑。指定分镜口播略超单镜时长上限，只做删字瘦身，禁止改写文风。"
         '输出 JSON：{"segments": [{"segment_index": 序号, "text": "缩短后的口播"}, ...]}。'
         f"每段 text 不得超过 {cap} 字（不含空格换行）。"
-        "【文风·最高优先级】必须完整保留原句的语气、节奏、人称、童趣/悬疑/生活化口吻与修辞习惯；"
-        "禁止把口语改成书面语、禁止换成另一种叙述风格、禁止增删感叹/拟声/比喻的类型。"
+        "【文风·最高优先级】必须完整保留原句的语气、节奏、人称与修辞习惯；"
+        "禁止把口语改成书面语、禁止换成另一种叙述风格。"
         f"当前口吻要求：{voice_rule}"
         "只允许删重复比喻、次要形容词和冗余连接词；禁止改变科学事实与核心信息；"
         "禁止增删 segment_index；不要输出 narration、visual_brief 等其他字段。"
         f"{ANTI_MEMOIR}"
+        f"{NO_JSON}"
     )
     user = (
         f"单镜口播上限 {sec}s（每段 text 最多 {cap} 字）。"

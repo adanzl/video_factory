@@ -78,25 +78,26 @@ def test_parse_item_answer_handles_bu_shi() -> None:
     assert AgnesImageProvider._parse_item_answer("无昭昭") == "na_zhao"
 
 
-def test_evaluate_verify_response_zhao_braid_and_cast() -> None:
-    ok = (
-        "项1: 是\n"
-        "项2: 否\n"
-        "项3: 否\n"
-        "项4: 是\n"
-    )
-    assert AgnesImageProvider._evaluate_verify_response(
-        ok, ["scene", "zhao_braid", "extra_arms", "cast_count"]
-    )
-    bad_braid = "项1: 是\n项2: 是\n项3: 否\n项4: 是\n"
+def test_evaluate_verify_response_zhao_hair_and_cast() -> None:
+    ids = ["scene", "zhao_hair", "extra_arms", "cast_count"]
+    ok = "项1: 是\n项2: 是\n项3: 是\n项4: 是\n"
+    assert AgnesImageProvider._evaluate_verify_response(ok, ids)
+
+    bad_hair = "项1: 是\n项2: 否\n项3: 是\n项4: 是\n"
+    assert not AgnesImageProvider._evaluate_verify_response(bad_hair, ids)
+
+    bad_arms = "项1: 是\n项2: 是\n项3: 否\n项4: 是\n"
+    assert not AgnesImageProvider._evaluate_verify_response(bad_arms, ids)
+
+    # 「不是」= 否 → 短发项失败
+    bu_shi = "项1: 是\n项2: 不是\n项3: 是\n"
     assert not AgnesImageProvider._evaluate_verify_response(
-        bad_braid, ["scene", "zhao_braid", "extra_arms", "cast_count"]
+        bu_shi, ["scene", "zhao_hair", "extra_arms"]
     )
-    # 「不是」不得当成「是」
-    bu_shi = "项1: 是\n项2: 不是\n项3: 否\n"
-    assert AgnesImageProvider._evaluate_verify_response(
-        bu_shi, ["scene", "zhao_braid", "extra_arms"]
-    )
+
+    # 无昭昭 → 短发项放行
+    na = "项1: 是\n项2: 无昭昭\n项3: 是\n项4: 是\n"
+    assert AgnesImageProvider._evaluate_verify_response(na, ids)
 
 
 def test_build_verify_checklist_daily_includes_zhao() -> None:
@@ -108,7 +109,7 @@ def test_build_verify_checklist_daily_includes_zhao() -> None:
     ids = [cid for cid, _ in items]
     assert ids == [
         "scene",
-        "zhao_braid",
+        "zhao_hair",
         "extra_arms",
         "cast_count",
         "height_order",
@@ -116,6 +117,10 @@ def test_build_verify_checklist_daily_includes_zhao() -> None:
     assert "昭昭" in user
     assert "发言角色" in user
     assert "半个头" in user
+    assert "蓝衣" not in user
+    assert "短发男生头" in user
+    assert "最多 2 条" in user
+    assert "照片墙" in user
 
     items_one, _ = AgnesImageProvider._build_verify_checklist(
         prompt="只有昭昭",
@@ -123,6 +128,15 @@ def test_build_verify_checklist_daily_includes_zhao() -> None:
         content_style="daily_story",
     )
     assert "height_order" not in [cid for cid, _ in items_one]
+    assert "zhao_hair" in [cid for cid, _ in items_one]
+
+    # 无昭昭发言时不做短发项
+    items_can, _ = AgnesImageProvider._build_verify_checklist(
+        prompt="只有灿灿",
+        expected_speakers=["灿灿"],
+        content_style="daily_story",
+    )
+    assert "zhao_hair" not in [cid for cid, _ in items_can]
 
     items2, user2 = AgnesImageProvider._build_verify_checklist(
         prompt="电池剖面",
@@ -133,11 +147,29 @@ def test_build_verify_checklist_daily_includes_zhao() -> None:
     assert "昭昭" not in user2
 
 
+def test_strip_prompt_for_verify_drops_daily_wrap() -> None:
+    wrapped = (
+        "基于参考图调整人物动作，保留昭昭：7岁男孩。"
+        "儿童情绪涂鸦风格，孩子气的构图。"
+        "客厅地板上昭昭举手。"
+    )
+    assert AgnesImageProvider._strip_prompt_for_verify(wrapped) == "客厅地板上昭昭举手。"
+
+    items, user = AgnesImageProvider._build_verify_checklist(
+        prompt=wrapped,
+        expected_speakers=["昭昭"],
+        content_style="daily_story",
+    )
+    assert "基于参考图" not in user
+    assert "客厅地板上昭昭举手" in user
+    assert [cid for cid, _ in items][0] == "scene"
+
+
 def test_evaluate_verify_response_height_order() -> None:
-    ids = ["scene", "zhao_braid", "extra_arms", "cast_count", "height_order"]
-    ok = "项1: 是\n项2: 否\n项3: 否\n项4: 是\n项5: 是\n"
+    ids = ["scene", "zhao_hair", "extra_arms", "cast_count", "height_order"]
+    ok = "项1: 是\n项2: 是\n项3: 是\n项4: 是\n项5: 是\n"
     assert AgnesImageProvider._evaluate_verify_response(ok, ids)
-    bad = "项1: 是\n项2: 否\n项3: 否\n项4: 是\n项5: 否\n"
+    bad = "项1: 是\n项2: 是\n项3: 是\n项4: 是\n项5: 否\n"
     assert not AgnesImageProvider._evaluate_verify_response(bad, ids)
 
 

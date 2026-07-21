@@ -91,8 +91,8 @@ class VideoAnalyzer:
             '  "segments": [\n'
             "    {\n"
             '      "index": 序号（整数，从1开始）,\n'
-            '      "name": "对象名称（中文，如：2006年团队之星）",\n'
-            '      "description": "简要描述（中文，15-25字，描述外观特征）",\n'
+            '      "name": "对象名称（中文，须含可点名的核心标识，如：2006年团队之星）",\n'
+            '      "description": "简要描述（中文，15-40字，外观特征与可辨识文字）",\n'
             '      "start_sec": 开始时间（数字，秒，精确到0.5秒）,\n'
             '      "end_sec": 结束时间（数字，秒，精确到0.5秒）,\n'
             '      "duration_sec": 持续时长（数字，秒，= end_sec - start_sec）\n'
@@ -104,7 +104,8 @@ class VideoAnalyzer:
             "2. segments 必须覆盖整个视频，无遗漏、无重叠\n"
             "3. 时间戳基于帧样本位置推断，精确到±1秒\n"
             "4. duration_sec 必须等于 end_sec - start_sec\n"
-            "5. 最后一个 segment 的 end_sec 应接近视频总时长\n\n"
+            "5. 最后一个 segment 的 end_sec 应接近视频总时长\n"
+            "6. name 供后续口播点名，禁止只用颜色/形状等泛称代替具体对象\n\n"
             "【语言规则】\n"
             "- title、name、description 三个字段必须全部使用简体中文\n"
             "- name 格式示例：'2006年团队之星'、'第三代产品'\n"
@@ -121,7 +122,7 @@ class VideoAnalyzer:
         user_text: str,
         images_b64: list[str],
         *,
-        max_tokens: int = 4096,
+        max_tokens: int | None = None,
     ) -> str:
         """调用 Agnes 多模态 LLM，返回响应文本。"""
         settings = get_settings()
@@ -136,13 +137,16 @@ class VideoAnalyzer:
                 "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
             })
 
+        limit = (
+            settings.agnes_llm_max_tokens if max_tokens is None else max_tokens
+        )
         payload: dict = {
             "model": settings.agnes_vl_model,
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": content},
             ],
-            "max_tokens": max_tokens,
+            "max_tokens": limit,
         }
 
         url = f"{settings.agnes_api_base_url.rstrip('/')}/chat/completions"
@@ -198,9 +202,8 @@ class VideoAnalyzer:
 
     # ── response validation ─────────────────────────────────
 
-    @staticmethod
-    def _validate(raw: str) -> str:
-        """校验响应为合法时间表 JSON 并格式化。"""
+    def _validate(self, raw: str) -> str:
+        """校验并规范化时间表 JSON。"""
         text = raw.strip()
         if text.startswith("```"):
             text = re.sub(r"^```(?:json)?\s*", "", text, count=1, flags=re.IGNORECASE)
@@ -215,6 +218,112 @@ class VideoAnalyzer:
             parsed = json.loads(text)
         except json.JSONDecodeError as exc:
             raise ValueError(f"Agnes 多模态返回无效 JSON: {exc}") from exc
-        if "segments" not in parsed or not isinstance(parsed["segments"], list):
+        if not isinstance(parsed, dict):
+            raise ValueError("Agnes 多模态返回非对象 JSON")
+        segments = parsed.get("segments")
+        if not isinstance(segments, list) or not segments:
             raise ValueError("Agnes 多模态返回缺少 segments 字段")
+
+        video_duration = self._duration
+        if video_duration is None:
+            coerced = _coerce_optional_float(parsed.get("duration_sec"))
+            video_duration = coerced
+        if video_duration is not None:
+            parsed["duration_sec"] = round(float(video_duration), 1)
+
+        fixed: list[dict] = []
+        for i, item in enumerate(segments, start=1):
+            if not isinstance(item, dict):
+                raise ValueError(f"segments[{i}] 须为对象")
+            name = str(item.get("name") or "").strip()
+            description = str(item.get("description") or "").strip()
+            if not name:
+                raise ValueError(f"segments[{i}] 缺少 name")
+            if not description:
+                description = name
+            start_sec = _coerce_optional_float(item.get("start_sec"))
+            end_sec = _coerce_optional_float(item.get("end_sec"))
+            duration_sec = _coerce_optional_float(item.get("duration_sec"))
+            if start_sec is None and end_sec is not None and duration_sec and duration_sec > 0:
+                start_sec = end_sec - duration_sec
+            if end_sec is None and start_sec is not None and duration_sec and duration_sec > 0:
+                end_sec = start_sec + duration_sec
+            if start_sec is None or end_sec is None:
+                raise ValueError(f"segments[{i}] 缺少 start_sec/end_sec")
+            if end_sec <= start_sec:
+                raise ValueError(
+                    f"segments[{i}] end_sec({end_sec}) 须大于 start_sec({start_sec})"
+                )
+            duration_sec = round(end_sec - start_sec, 1)
+            fixed.append(
+                {
+                    "index": i,
+                    "name": name,
+                    "description": description,
+                    "start_sec": round(start_sec, 1),
+                    "end_sec": round(end_sec, 1),
+                    "duration_sec": duration_sec,
+                }
+            )
+
+        fixed.sort(key=lambda s: (s["start_sec"], s["end_sec"]))
+        for i, seg in enumerate(fixed, start=1):
+            seg["index"] = i
+
+        for i in range(1, len(fixed)):
+            prev, cur = fixed[i - 1], fixed[i]
+            if cur["start_sec"] < prev["end_sec"] - 0.5:
+                logger.warning(
+                    "timeline overlap: seg %s ends %.1f, seg %s starts %.1f",
+                    prev["index"],
+                    prev["end_sec"],
+                    cur["index"],
+                    cur["start_sec"],
+                )
+                # 裁掉重叠：后段起点贴齐前段终点
+                cur["start_sec"] = prev["end_sec"]
+                if cur["end_sec"] <= cur["start_sec"]:
+                    cur["end_sec"] = round(cur["start_sec"] + max(0.5, cur["duration_sec"]), 1)
+                cur["duration_sec"] = round(cur["end_sec"] - cur["start_sec"], 1)
+
+        if video_duration is not None and fixed:
+            if fixed[0]["start_sec"] > 1.0:
+                logger.warning(
+                    "timeline gap at start: first segment starts at %.1fs",
+                    fixed[0]["start_sec"],
+                )
+            last_end = fixed[-1]["end_sec"]
+            if abs(last_end - video_duration) > 2.0:
+                logger.warning(
+                    "timeline end mismatch: last end %.1fs vs duration %.1fs",
+                    last_end,
+                    video_duration,
+                )
+                # 末段贴齐总时长（不缩短到 0）
+                fixed[-1]["end_sec"] = round(float(video_duration), 1)
+                if fixed[-1]["end_sec"] <= fixed[-1]["start_sec"]:
+                    fixed[-1]["end_sec"] = round(fixed[-1]["start_sec"] + 0.5, 1)
+                fixed[-1]["duration_sec"] = round(
+                    fixed[-1]["end_sec"] - fixed[-1]["start_sec"], 1
+                )
+
+        title = str(parsed.get("title") or "").strip() or "素材时间表"
+        parsed["title"] = title
+        parsed["segments"] = fixed
         return json.dumps(parsed, ensure_ascii=False, indent=2)
+
+
+def _coerce_optional_float(value: object) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            return float(text)
+        except ValueError:
+            return None
+    return None
