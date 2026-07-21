@@ -41,6 +41,19 @@ def _to_agnes_size(size: str) -> str:
     return size.strip().lower().replace("*", "x")
 
 
+def _resp_body_summary(resp: requests.Response, *, limit: int = 500) -> str:
+    """截断响应体，便于日志排查（不含密钥）。"""
+    try:
+        body = resp.json()
+        text = str(body)
+    except Exception:
+        text = (resp.text or "").strip() or "<empty>"
+    text = " ".join(text.split())
+    if len(text) > limit:
+        return text[:limit] + "…"
+    return text
+
+
 class AgnesImageProvider(ImageProvider):
     """Agnes 文生图：IMAGE_MAX_WORKERS 路并发 + IMAGE_SUBMIT_INTERVAL_SEC 错峰发起。"""
 
@@ -112,12 +125,17 @@ class AgnesImageProvider(ImageProvider):
         json: dict | None = None,
         max_retries: int | None = None,
         timeout: int | None = None,
+        log_tag: str = "",
     ) -> requests.Response:
         retries = max_retries if max_retries is not None else self._http_max_retries
         timeout = get_settings().agnes_image_timeout_sec if timeout is None else timeout
         headers = agnes_auth_header(api_key)
+        tag = f"{log_tag} " if log_tag else ""
         last_exc: Exception | None = None
+        last_status: int | None = None
+        last_body: str | None = None
         for attempt in range(retries):
+            t0 = time.monotonic()
             try:
                 resp = requests.request(
                     method,
@@ -126,12 +144,18 @@ class AgnesImageProvider(ImageProvider):
                     json=json,
                     timeout=timeout,
                 )
+                elapsed = time.monotonic() - t0
+                last_status = resp.status_code
+                last_body = _resp_body_summary(resp)
                 if resp.status_code in _RETRYABLE:
                     wait = min(2**attempt * 2, 60)
                     logger.warning(
-                        "agnes %s %s, retry %s/%s in %ss",
+                        "%sagnes %s %s in %.1fs, body=%s, retry %s/%s in %ss",
+                        tag,
                         resp.status_code,
                         url,
+                        elapsed,
+                        last_body,
                         attempt + 1,
                         retries,
                         wait,
@@ -153,27 +177,51 @@ class AgnesImageProvider(ImageProvider):
                         body = resp.text[:500]
                     raise_if_agnes_quota(status_code=resp.status_code, body=body)
                     logger.warning(
-                        "agnes api %s %s: %s",
+                        "%sagnes api %s %s in %.1fs: %s",
+                        tag,
                         resp.status_code,
                         url,
+                        elapsed,
                         body,
                     )
                     raise RuntimeError(f"agnes api {resp.status_code}: {body}")
+                logger.info(
+                    "%sagnes http %s %s ok in %.1fs, bytes=%s",
+                    tag,
+                    resp.status_code,
+                    url,
+                    elapsed,
+                    len(resp.content or b""),
+                )
                 return resp
             except RuntimeError:
                 raise
             except AgnesQuotaExceeded:
                 raise
             except requests.RequestException as exc:
+                elapsed = time.monotonic() - t0
                 last_exc = exc
                 if agnes_quota_exceeded_from_exception(exc):
                     raise AgnesQuotaExceeded(str(exc)) from exc
                 wait = min(2**attempt * 2, 60)
-                logger.warning("agnes request error: %s, retry in %ss", exc, wait)
+                logger.warning(
+                    "%sagnes request error in %.1fs: %s, retry %s/%s in %ss",
+                    tag,
+                    elapsed,
+                    exc,
+                    attempt + 1,
+                    retries,
+                    wait,
+                )
                 time.sleep(wait)
+        detail_parts = [f"after {retries} retries", f"url={url}"]
+        if last_status is not None:
+            detail_parts.append(f"last_status={last_status}")
+        if last_body:
+            detail_parts.append(f"last_body={last_body}")
         if last_exc:
-            raise RuntimeError(f"agnes request failed after {retries} retries: {url}: {last_exc}")
-        raise RuntimeError(f"agnes request failed after {retries} retries: {url}")
+            detail_parts.append(f"last_exc={last_exc}")
+        raise RuntimeError(f"agnes request failed ({'; '.join(detail_parts)})")
 
     @staticmethod
     def _extract_image(body: dict) -> tuple[str | None, bytes | None]:
@@ -207,22 +255,29 @@ class AgnesImageProvider(ImageProvider):
         ref_images: list[Path] | None = None,
     ) -> Path:
         agnes_size = _to_agnes_size(size)
+        log_tag = f"[out={output_path.name}]"
+        t0 = time.monotonic()
         self._acquire_submit_slot()
         try:
             extra_body: dict = {"response_format": "url"}
+            ref_names: list[str] = []
             if ref_images:
                 ref_b64_list: list[str] = []
                 for ref_path in ref_images:
                     if ref_path.exists():
                         ref_b64 = base64.b64encode(ref_path.read_bytes()).decode("ascii")
                         ref_b64_list.append(ref_b64)
+                        ref_names.append(ref_path.name)
                         logger.info(
-                            "agnes ref_image: %s, size=%s bytes",
+                            "%s agnes ref_image: %s, size=%s bytes",
+                            log_tag,
                             ref_path.name,
                             ref_path.stat().st_size,
                         )
                     else:
-                        logger.warning("agnes ref_image not found: %s", ref_path)
+                        logger.warning(
+                            "%s agnes ref_image not found: %s", log_tag, ref_path
+                        )
                 if ref_b64_list:
                     extra_body["ref_images"] = ref_b64_list
             payload = {
@@ -232,9 +287,11 @@ class AgnesImageProvider(ImageProvider):
                 "extra_body": extra_body,
             }
             logger.info(
-                "agnes request (%s key): %s, prompt_chars=%s, %s",
+                "%s agnes request (%s key): %s, refs=%s, prompt_chars=%s, %s",
+                log_tag,
                 api_key.label,
                 self.describe_params(size=size),
+                ref_names or None,
                 len(prompt),
                 prompt,
             )
@@ -243,19 +300,42 @@ class AgnesImageProvider(ImageProvider):
                 self._generation_url,
                 api_key=api_key.value,
                 json=payload,
+                log_tag=log_tag,
             )
             image_url, image_bytes = self._extract_image(resp.json())
             output_path.parent.mkdir(parents=True, exist_ok=True)
             if image_bytes is not None:
                 output_path.write_bytes(image_bytes)
+                logger.info(
+                    "%s agnes saved b64 image (%s key) in %.1fs, bytes=%s path=%s",
+                    log_tag,
+                    api_key.label,
+                    time.monotonic() - t0,
+                    len(image_bytes),
+                    output_path,
+                )
                 return output_path
             if not image_url:
                 raise RuntimeError("agnes response missing image url or b64_json")
+            logger.info(
+                "%s agnes downloading image url (%s key): %s",
+                log_tag,
+                api_key.label,
+                image_url[:120],
+            )
             img = requests.get(image_url, timeout=get_settings().agnes_image_timeout_sec)
             img.raise_for_status()
             output_path.write_bytes(img.content)
             sidecar = output_path.with_name(output_path.name + ".agnes_source_url")
             sidecar.write_text(image_url.strip(), encoding="utf-8")
+            logger.info(
+                "%s agnes saved url image (%s key) in %.1fs, bytes=%s path=%s",
+                log_tag,
+                api_key.label,
+                time.monotonic() - t0,
+                len(img.content),
+                output_path,
+            )
             return output_path
         finally:
             self._release_submit_slot()
@@ -271,6 +351,7 @@ class AgnesImageProvider(ImageProvider):
         content_style: str | None = None,
     ) -> Path:
         size = size or self._default_size
+        log_tag = f"[out={output_path.name}]"
         keys = agnes_api_keys()
         if not keys:
             if get_settings().mock_mode:
@@ -297,14 +378,23 @@ class AgnesImageProvider(ImageProvider):
                         content_style=content_style,
                     )
                     if verified:
+                        logger.info(
+                            "%s agnes generate ok (%s key, verify_attempt=%s/%s)",
+                            log_tag,
+                            key.label,
+                            attempt + 1,
+                            _VERIFY_MAX_ATTEMPTS,
+                        )
                         return result
                     logger.warning(
-                        "agnes image verify FAILED (%s key, attempt=%s/%s, "
-                        "prompt_chars=%s)%s",
+                        "%s agnes image verify FAILED (%s key, attempt=%s/%s, "
+                        "prompt_chars=%s, speakers=%s)%s",
+                        log_tag,
                         key.label,
                         attempt + 1,
                         _VERIFY_MAX_ATTEMPTS,
                         len(prompt),
+                        expected_speakers,
                         ", regenerating…" if attempt + 1 < _VERIFY_MAX_ATTEMPTS else ", keep last",
                     )
                 return result
@@ -312,20 +402,31 @@ class AgnesImageProvider(ImageProvider):
                 last_exc = exc
                 if idx < len(keys) - 1:
                     logger.warning(
-                        "agnes %s key quota/rate limit exceeded, switching to backup",
+                        "%s agnes %s key quota/rate limit exceeded, "
+                        "switching to backup (%s)",
+                        log_tag,
                         key.label,
+                        keys[idx + 1].label,
                     )
                     continue
                 raise
             except Exception as exc:
                 if agnes_quota_exceeded_from_exception(exc) and idx < len(keys) - 1:
                     logger.warning(
-                        "agnes %s key quota/rate limit exceeded, switching to backup",
+                        "%s agnes %s key quota/rate limit exceeded, "
+                        "switching to backup (%s)",
+                        log_tag,
                         key.label,
+                        keys[idx + 1].label,
                     )
                     last_exc = exc
                     continue
-                logger.error("agnes generate failed (%s key): %s", key.label, exc)
+                logger.error(
+                    "%s agnes generate failed (%s key): %s",
+                    log_tag,
+                    key.label,
+                    exc,
+                )
                 if get_settings().mock_mode:
                     return self._fallback.generate(prompt, output_path, size=size)
                 raise
@@ -531,6 +632,7 @@ class AgnesImageProvider(ImageProvider):
             if not keys:
                 return True
 
+            log_tag = f"[out={image_path.name}]"
             for api_key in keys:
                 try:
                     headers = agnes_auth_header(api_key.value)
@@ -564,15 +666,36 @@ class AgnesImageProvider(ImageProvider):
                             .get("content", "")
                             .strip()
                         )
-                        return AgnesImageProvider._evaluate_verify_response(
+                        ok = AgnesImageProvider._evaluate_verify_response(
                             content, check_ids
                         )
-                except Exception:
+                        logger.info(
+                            "%s agnes verify (%s key): ok=%s checks=%s reply=%s",
+                            log_tag,
+                            api_key.label,
+                            ok,
+                            check_ids,
+                            " ".join(content.split())[:200],
+                        )
+                        return ok
                     logger.warning(
-                        "agnes verify_image call failed (%s key), skipping verify",
+                        "%s agnes verify_image http %s (%s key), body=%s",
+                        log_tag,
+                        resp.status_code,
                         api_key.label,
+                        _resp_body_summary(resp),
                     )
+                except Exception as exc:
+                    logger.warning(
+                        "%s agnes verify_image call failed (%s key): %s",
+                        log_tag,
+                        api_key.label,
+                        exc,
+                    )
+            logger.warning("%s agnes verify skipped (all keys failed)", log_tag)
             return True
         except Exception as exc:
-            logger.warning("agnes verify_image error: %s", exc)
+            logger.warning(
+                "agnes verify_image error [out=%s]: %s", image_path.name, exc
+            )
             return True

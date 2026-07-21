@@ -104,34 +104,50 @@ class ImageMgr:
                     f"任何地图不得出现中国领土、藏南地区、阿克赛钦地区。"
                     f"{prompt}"
                 )
-            logger.info(
-                "image %s/%s generating segment %s | %s | prompt_chars=%s",
-                done + 1,
-                total,
-                index,
-                params_desc,
-                len(prompt),
-            )
             # 从 dialogue 中提取该分镜的发言角色，传给 provider 用于生图后校验
             dialogue = seg.get("dialogue") or []
             speakers = sorted(
                 set(d.get("speaker", "") for d in dialogue if d.get("speaker"))
             )
             expected_speakers = speakers if speakers else None
-            provider.generate(
-                prompt, out,
-                size=size, ref_images=ref_images,
-                expected_speakers=expected_speakers,
-                content_style=content_style,
+            logger.info(
+                "image %s/%s generating segment %s | %s | prompt_chars=%s"
+                " | speakers=%s | out=%s",
+                done + 1,
+                total,
+                index,
+                params_desc,
+                len(prompt),
+                expected_speakers,
+                out.name,
             )
+            try:
+                provider.generate(
+                    prompt, out,
+                    size=size, ref_images=ref_images,
+                    expected_speakers=expected_speakers,
+                    content_style=content_style,
+                )
+            except Exception as exc:
+                logger.error(
+                    "image %s/%s FAILED segment %s after %.1fs | %s | err=%s",
+                    done + 1,
+                    total,
+                    index,
+                    time.time() - t0,
+                    params_desc,
+                    exc,
+                )
+                raise
             elapsed = time.time() - t0
             logger.info(
-                "image %s/%s done segment %s in %.1fs | %s",
+                "image %s/%s done segment %s in %.1fs | %s | bytes=%s",
                 done + 1,
                 total,
                 index,
                 elapsed,
                 params_desc,
+                out.stat().st_size if out.exists() else 0,
             )
             return seg["id"], out
 
