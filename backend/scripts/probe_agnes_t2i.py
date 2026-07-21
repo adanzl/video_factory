@@ -1,10 +1,11 @@
-"""探测 Agnes 文生图（/v1/images/generations）。
+"""探测 Agnes 文生图，默认对齐 chat 流水线（hosts.png 参考图）。
 
 用法（在 backend 目录）:
 
   python -m scripts.probe_agnes_t2i
   python -m scripts.probe_agnes_t2i --prompt "客厅里两个小孩在抢橡皮"
-  python -m scripts.probe_agnes_t2i --ref /path/to/hosts.png --size 1280*720
+  python -m scripts.probe_agnes_t2i --no-ref
+  python -m scripts.probe_agnes_t2i --ref /path/to/other.png
   python -m scripts.probe_agnes_t2i --verify
 """
 
@@ -25,18 +26,29 @@ if str(BACKEND_DIR) not in sys.path:
 from app.config import get_settings
 from app.services.llm.llm_agnes import agnes_api_keys
 from app.services.segment.image.image_agnes import AgnesImageProvider
+from app.services.segment.segment_mgr import _resolve_chat_ref_images
 from app.utils.job_info import CONTENT_STYLE_DAILY_STORY
 
+# 贴近 daily_story chat 分镜：带参考图指令前缀
 DEFAULT_PROMPT = (
-    "儿童情绪涂鸦风格，彩铅和蜡笔混合笔触。客厅地板上，"
-    "7岁男孩昭昭（黑色超短发、蓝色短袖）伸手指向10岁女孩灿灿"
-    "（马尾辫、粉色卫衣）；灿灿右手握白色橡皮，两人互瞪。"
-    "中景，窗光从左侧斜照。"
+    "基于参考图调整人物动作，保留昭昭：7岁男孩，男孩气黑色超短发"
+    "（发长在耳垂以上，清晰露出双耳及整个后颈，齐耳学生头），圆脸，"
+    "穿蓝色短袖T恤，比灿灿矮约半个头；灿灿：10岁女孩，扎马尾辫，"
+    "穿粉色卫衣，比昭昭高约半个头的基本外貌特征与身高比例"
+    "（参考图中昭昭比灿灿矮约半个头，须严格保持）。"
+    "儿童情绪涂鸦风格，彩铅和蜡笔混合笔触，用力不均的线条，"
+    "主观夸张变形，高饱和色彩，涂色出界，橡皮擦拭痕迹，手工感，"
+    "孩子气的构图。客厅地板上昭昭伸手指向灿灿，脸生气地瞪着，"
+    "嘴巴大张；灿灿右手握白色橡皮，左手叉腰，瞪眼回视。"
+    "昭昭比灿灿矮约半个头。窗光从左侧斜照在两人身上，"
+    "地板上有蜡笔痕迹。中景，昭昭左灿灿右。"
 )
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Probe Agnes text-to-image")
+    parser = argparse.ArgumentParser(
+        description="Probe Agnes T2I（默认带 chat 流水线 hosts.png）"
+    )
     parser.add_argument("--prompt", default=DEFAULT_PROMPT, help="文生图提示词")
     parser.add_argument(
         "--size",
@@ -47,8 +59,13 @@ def main() -> int:
         "--ref",
         action="append",
         type=Path,
-        default=[],
-        help="参考图路径，可多次传入",
+        default=None,
+        help="参考图路径，可多次传入；默认用流水线 hosts.png",
+    )
+    parser.add_argument(
+        "--no-ref",
+        action="store_true",
+        help="不传参考图（纯文生图）",
     )
     parser.add_argument(
         "--out",
@@ -80,7 +97,14 @@ def main() -> int:
     out = args.out or (TEST_OUTPUT_DIR / "agnes_t2i.png")
     out.parent.mkdir(parents=True, exist_ok=True)
     size = args.size or settings.agnes_image_size
-    refs = [p for p in args.ref if p]
+
+    if args.no_ref:
+        refs: list[Path] = []
+    elif args.ref:
+        refs = list(args.ref)
+    else:
+        refs = _resolve_chat_ref_images()
+
     missing = [str(p) for p in refs if not p.exists()]
     if missing:
         print(f"参考图不存在: {missing}", file=sys.stderr)
