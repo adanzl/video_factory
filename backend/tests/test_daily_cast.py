@@ -75,9 +75,37 @@ def test_build_daily_image_prompts_is_slimmer():
     assert "纱帘" in system or "窗边" in system
     assert "角色入画" in system
     assert "忽略" in system
+    assert "地点" in system
+    assert "禁止输出「竖构图" in system or "竖构图" in system
     assert "motion_mode=ambient" in prompts["user"]
     assert "关键帧禁止纯环境微动" in system
-    assert len(system) < 2800
+    assert len(system) < 3200
+
+
+def test_build_image_prompts_daily_includes_setting():
+    from app.services.script.image_prompt import build_image_prompts
+
+    script = {
+        "title": "新橡皮归谁",
+        "setting": "客厅，昭昭和灿灿同时抓住一块新橡皮。",
+        "visual_style": "儿童情绪涂鸦",
+        "content_style": "daily_story",
+        "segments": [
+            {
+                "segment_index": 1,
+                "text": "我先拿到的！",
+                "visual_brief": "客厅里姐弟抢橡皮",
+                "dialogue": [{"speaker": "昭昭", "text": "我先拿到的！"}],
+            }
+        ],
+    }
+    prompts = build_image_prompts(
+        script,
+        content_style="daily_story",
+        job={"pipeline": "chat", "content_style": "daily_story"},
+    )
+    assert "全片地点 setting：客厅" in prompts["user"]
+    assert "开头必须写清具体室内地点" in prompts["system"]
 
 
 def test_build_image_prompts_daily_keyframe_marks_motion_mode():
