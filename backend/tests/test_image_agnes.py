@@ -70,6 +70,31 @@ def test_generate_retries_verify_up_to_three_times(tmp_path: Path) -> None:
     assert mock_verify.call_args.kwargs["content_style"] == "daily_story"
 
 
+def test_generate_verify_retry_rotates_keys(tmp_path: Path) -> None:
+    provider = AgnesImageProvider()
+    output = tmp_path / "1.png"
+    output.write_bytes(b"png")
+    free = AgnesApiKey("free", "free-key")
+    primary = AgnesApiKey("primary", "main-key")
+
+    with (
+        patch(
+            "app.services.segment.image.image_agnes.agnes_api_keys",
+            return_value=[free, primary],
+        ),
+        patch.object(provider, "_generate_with_key", return_value=output) as mock_gen,
+        patch.object(
+            provider, "_verify_image", side_effect=[False, False, True]
+        ),
+    ):
+        result = provider.generate("prompt", output)
+
+    assert result == output
+    assert mock_gen.call_count == 3
+    used = [c.args[0].label for c in mock_gen.call_args_list]
+    assert used == ["free", "primary", "free"]
+
+
 def test_parse_item_answer_handles_bu_shi() -> None:
     assert AgnesImageProvider._parse_item_answer("不是") == "no"
     assert AgnesImageProvider._parse_item_answer("否") == "no"
@@ -114,26 +139,32 @@ def test_build_verify_checklist_daily_includes_zhao() -> None:
         "cast_count",
     ]
     assert "昭昭" in user
-    assert "发言角色" in user
+    assert "不超过 3" in user
+    assert "未发言" in user
+    assert "恰好" not in user
     assert "蓝衣" not in user
     assert "短发男生头" in user
     assert "最多 2 条" in user
     assert "照片墙" in user
 
-    items_one, _ = AgnesImageProvider._build_verify_checklist(
+    items_one, user_one = AgnesImageProvider._build_verify_checklist(
         prompt="只有昭昭",
         expected_speakers=["昭昭"],
         content_style="daily_story",
     )
     assert "zhao_hair" in [cid for cid, _ in items_one]
+    assert "cast_count" in [cid for cid, _ in items_one]
+    assert "不超过 3" in user_one
 
-    # 无昭昭发言时不做短发项
-    items_can, _ = AgnesImageProvider._build_verify_checklist(
+    # 无昭昭发言时不做短发项；人数仍按最多 3 人校验
+    items_can, user_can = AgnesImageProvider._build_verify_checklist(
         prompt="只有灿灿",
         expected_speakers=["灿灿"],
         content_style="daily_story",
     )
     assert "zhao_hair" not in [cid for cid, _ in items_can]
+    assert "cast_count" in [cid for cid, _ in items_can]
+    assert "未发言" in user_can
 
     items2, user2 = AgnesImageProvider._build_verify_checklist(
         prompt="电池剖面",
