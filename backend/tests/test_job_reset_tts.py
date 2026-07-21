@@ -46,7 +46,9 @@ def test_clear_tts_artifacts_clears_clip_path(tmp_path: Path) -> None:
 
     media_dir = tmp_path / str(job_id)
     media_dir.mkdir()
-    job_reset._clear_tts_artifacts(conn, job_id, media_dir)
+    # 单测直接分拆：DB 用内存 conn，磁盘清理在事务语义之外
+    job_reset._db_clear_tts(conn, job_id)
+    job_reset._fs_clear_tts(media_dir)
 
     updated = repo_segment.list_segments(conn, job_id)
     assert all(row["clip_path"] is None for row in updated)

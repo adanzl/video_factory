@@ -283,7 +283,7 @@ def test_daily_story_create_job_info_stores_phrase_gap_in_tts():
 
     assert info["script"]["speech_chars_per_sec"] == 3.6
     assert info["tts"]["speaker_configs"]["phrase_gap_sec"] == 0.2
-    assert info["tts"]["speaker_configs"]["昭昭"]["speech_rate"] == 0.81
-    assert info["tts"]["speaker_configs"]["灿灿"]["speech_rate"] == 0.94
-    assert info["tts"]["speaker_configs"]["妈妈"]["speech_rate"] == 1.0
+    assert info["tts"]["speaker_configs"]["昭昭"]["speech_rate"] == 0.90
+    assert info["tts"]["speaker_configs"]["灿灿"]["speech_rate"] == 1.05
+    assert info["tts"]["speaker_configs"]["妈妈"]["speech_rate"] == 1.20
     assert "phrase_gap_sec" not in info
