@@ -1,3 +1,10 @@
+"""初始化 SQLite schema（新环境跑一次）。
+
+用法:
+  cd backend
+  python -m scripts.db_init
+"""
+
 from __future__ import annotations
 
 import sys

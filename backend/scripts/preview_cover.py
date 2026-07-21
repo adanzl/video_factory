@@ -1,9 +1,9 @@
-"""本地 debug：以分镜静图为底图合成投稿封面（与 intro 流水线同款 compose_cover_image）。
+"""预览投稿封面（以分镜静图为底，与 intro 同款 compose_cover_image）。
 
 用法（backend 目录）:
-  python scripts/debug_cover.py --base /tmp/segment1.png
-  python scripts/debug_cover.py --base /tmp/segment1.png --title "你的标题"
-  python scripts/debug_cover.py --base /tmp/segment1.png --guides  # 4:3 红线预览
+  python scripts/preview_cover.py --base /tmp/segment1.png
+  python scripts/preview_cover.py --base /tmp/segment1.png --title "你的标题"
+  python scripts/preview_cover.py --base /tmp/segment1.png --guides  # 4:3 红线预览
 """
 
 from __future__ import annotations

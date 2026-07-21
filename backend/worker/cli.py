@@ -21,7 +21,6 @@ from app.services.job import job_mgr
 from app.repositories import repo_job
 from app.repositories.connection import connection
 from worker.loop import drain_pending, run_job
-from scripts.subtitle_test import rebuild_segment_subtitles
 
 _STAGE_CHOICES = [s for s in pipeline.STAGES if s != "done"]
 
@@ -65,15 +64,6 @@ def build_parser() -> argparse.ArgumentParser:
     run_p.add_argument("--publish", action="store_true", help="enable publish stage")
 
     sub.add_parser("drain", help="consume all pending jobs")
-
-    sub_p = sub.add_parser("subtitle-test", help="rebuild one segment clip for subtitle preview")
-    sub_p.add_argument("--job-id", type=int, required=True)
-    sub_p.add_argument("--segment", type=int, required=True, help="segment_index, e.g. 1")
-    sub_p.add_argument(
-        "--sentence",
-        type=int,
-        help="only burn one sentence → segments/{N}_test.mp4 (faster)",
-    )
     return parser
 
 
@@ -158,20 +148,6 @@ def cmd_drain(_: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_subtitle_test(args: argparse.Namespace) -> int:
-    try:
-        out = rebuild_segment_subtitles(
-            args.job_id,
-            args.segment,
-            sentence=args.sentence,
-        )
-    except (ValueError, FileNotFoundError) as exc:
-        print(exc, file=sys.stderr)
-        return 1
-    print(f"Segment clip: {out}")
-    return 0
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -179,8 +155,6 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_run(args)
     if args.command == "drain":
         return cmd_drain(args)
-    if args.command == "subtitle-test":
-        return cmd_subtitle_test(args)
     return 1
 
 

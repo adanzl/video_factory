@@ -25,7 +25,7 @@ cp .env.example .env
 
 ```bash
 cd backend
-python -m scripts.init_db
+python -m scripts.db_init
 ```
 
 ### 跑一条样片（Mock 模式，无需 API Key）
@@ -68,7 +68,7 @@ backend/
 │   ├── repositories/# SQLite 裸 SQL
 │   ├── services/    # LLM / TTS / 出图 / FFmpeg
 │   └── quality/     # 各步骤内置质检（checkers + gate）
-└── scripts/init_db.py
+└── scripts/db_init.py
 ```
 
 流水线：`script → intro → cover → tts → segment → host → merge → publish → done`

@@ -1,4 +1,8 @@
-"""Agnes 图生图脚本：生成昭昭和灿灿的绘本风格形象。"""
+"""Agnes 文生图：生成昭昭 / 灿灿的绘本（crayon）风格形象。
+
+用法（项目根目录）:
+  python backend/scripts/gen_crayon_characters.py
+"""
 
 from __future__ import annotations
 
@@ -6,19 +10,26 @@ import base64
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "backend"))
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+ROOT = BACKEND_DIR.parent
+sys.path.insert(0, str(BACKEND_DIR))
 
 import requests
 
 from app.config import get_settings
 
 # 风格提示词
-STYLE_PROMPT = "儿童情绪涂鸦风格，彩铅和蜡笔混合笔触，用力不均的线条，主观夸张变形，高饱和色彩，涂色出界，横格笔记本纸背景，橡皮擦拭痕迹，手工感，孩子气的构图。"
+STYLE_PROMPT = (
+    "儿童情绪涂鸦风格，彩铅和蜡笔混合笔触，用力不均的线条，主观夸张变形，"
+    "高饱和色彩，涂色出界，横格笔记本纸背景，橡皮擦拭痕迹，手工感，孩子气的构图。"
+)
 
 # 角色固定描述
 CHARACTERS = {
-    "昭昭": "7岁男孩，男孩气黑色超短发（发长在耳垂以上，清晰露出双耳及整个后颈，齐耳学生头），圆脸，穿蓝色短袖T恤，比姐姐矮一点",
+    "昭昭": (
+        "7岁男孩，男孩气黑色超短发（发长在耳垂以上，清晰露出双耳及整个后颈，"
+        "齐耳学生头），圆脸，穿蓝色短袖T恤，比姐姐矮一点"
+    ),
     "灿灿": "9岁女孩，扎马尾辫，穿粉色卫衣",
 }
 
@@ -99,7 +110,7 @@ def main() -> None:
     for task in tasks:
         label = task["label"]
         desc = CHARACTERS[label]
-        print(f"\n{'='*50}")
+        print(f"\n{'=' * 50}")
         print(f"[{label}] 角色描述: {desc}")
 
         prompt = f"{STYLE_PROMPT}，{desc}，白色背景，高清，杰作，最佳质量"

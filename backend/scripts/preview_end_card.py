@@ -1,9 +1,9 @@
-"""调试入口：生成动态片尾（默认写到 res/host/crayon/end.mp4）。
+"""预览动态片尾（默认写到 res/host/crayon/end.mp4）。
 
 用法:
   conda activate flask_env
-  python backend/scripts/compose_end.py
-  python backend/scripts/compose_end.py --width 1920 --height 1080
+  python backend/scripts/preview_end_card.py
+  python backend/scripts/preview_end_card.py --width 1920 --height 1080
 """
 
 from __future__ import annotations

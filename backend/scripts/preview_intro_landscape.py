@@ -1,8 +1,8 @@
-"""本地 debug：生成历史悬案风格片头 MP4 + 预览 PNG。
+"""预览横屏片头 MP4 + PNG。
 
 用法（在 backend 目录）:
-  python scripts/debug_intro_history.py
-  python scripts/debug_intro_history.py --title "大明宫失踪案"
+  python scripts/preview_intro_landscape.py
+  python scripts/preview_intro_landscape.py --title "你的标题" --width 1920 --height 1080
 """
 
 from __future__ import annotations
@@ -31,26 +31,8 @@ from app.services.intro.generator import (  # noqa: E402
 )
 from app.services.intro.themes import get_intro_theme
 
-HISTORY_CATEGORY = "历史悬案"
-
-
-def _ffmpeg_bin(name: str) -> str:
-    found = shutil.which(name)
-    if found:
-        return found
-    for candidate in (
-        Path(r"C:\Tools\ffmpeg") / f"{name}.exe",
-        Path("/usr/bin") / name,
-    ):
-        if candidate.exists():
-            return str(candidate)
-    return name
-
 
 def _run(cmd: list[str], *, timeout: float = 120.0) -> subprocess.CompletedProcess[str]:
-    executable = cmd[0]
-    if executable in {"ffmpeg", "ffprobe"}:
-        cmd = [_ffmpeg_bin(executable), *cmd[1:]]
     print("$", " ".join(cmd))
     return subprocess.run(
         cmd,
@@ -125,29 +107,26 @@ def _mux_video_audio(video_path: Path, audio_path: Path, output_path: Path) -> N
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Debug 历史悬案片头生成")
-    parser.add_argument("--title", default="秦始皇陵未解之谜")
-    parser.add_argument("--width", type=int, default=720)
-    parser.add_argument("--height", type=int, default=1280)
-    parser.add_argument("--hold-tail", type=float, default=0.35)
+    parser = argparse.ArgumentParser(description="Debug 横屏片头生成")
+    parser.add_argument("--title", default="别眨眼，万箭齐发？一分钟看懂冰雹成因")
+    parser.add_argument("--width", type=int, default=1920)
+    parser.add_argument("--height", type=int, default=1080)
+    parser.add_argument("--hold-tail", type=float, default=_HOLD_TAIL_SEC)
     parser.add_argument(
         "--out-dir",
         type=Path,
-        default=BACKEND_DIR.parent / "data" / "debug" / "history_intro",
+        default=BACKEND_DIR.parent / "data" / "debug",
     )
     args = parser.parse_args()
 
     settings = get_settings()
-    theme = get_intro_theme(HISTORY_CATEGORY)
+    theme = get_intro_theme(None)
     layout = _layout_for(args.width, args.height)
-    print(
-        f"category={HISTORY_CATEGORY} layout={'landscape' if layout.landscape else 'portrait'} "
-        f"size={args.width}x{args.height}"
-    )
+    print(f"layout={'landscape' if layout.landscape else 'portrait'} size={args.width}x{args.height}")
 
     out_dir = args.out_dir
     out_dir.mkdir(parents=True, exist_ok=True)
-    output_path = out_dir / "intro_history.mp4"
+    output_path = out_dir / "intro_landscape.mp4"
     work = out_dir / "intro_work"
     if work.exists():
         shutil.rmtree(work)
@@ -155,8 +134,6 @@ def main() -> None:
 
     host = _load_host_sprite(settings, width=args.width, height=args.height, layout=layout)
     moon_tint_yellow = settings.intro_moon_tint in {"yellow", "tint", "gold", "1", "true"}
-    if HISTORY_CATEGORY == "历史悬案":
-        moon_tint_yellow = True
     layers = _build_layers(
         args.title,
         settings.brand_name,
@@ -184,16 +161,12 @@ def main() -> None:
     _mux_video_audio(silent_video, audio_path, output_path)
 
     preview = output_path.with_suffix(".png")
-    preview_img = _compose_frame(layers, duration * 0.45).convert("RGB")
-    preview_img.save(preview, compress_level=1)
-    cover = out_dir / "cover_history.jpg"
-    preview_img.save(cover, quality=92)
+    _compose_frame(layers, duration * 0.45).convert("RGB").save(preview, compress_level=1)
 
     shutil.rmtree(work, ignore_errors=True)
-    print(f"mp4:   {output_path.resolve()}")
-    print(f"png:   {preview.resolve()}")
-    print(f"cover: {cover.resolve()}")
-    print(f"size:  {output_path.stat().st_size:,} bytes")
+    print(f"mp4:  {output_path.resolve()}")
+    print(f"png:  {preview.resolve()}")
+    print(f"size: {output_path.stat().st_size:,} bytes")
 
 
 if __name__ == "__main__":

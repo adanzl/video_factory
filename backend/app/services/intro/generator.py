@@ -504,7 +504,7 @@ def _brand_audio_path(work_dir: Path, pipeline: str | None = None) -> Path:
     src = settings.get_intro_shout_path(pipeline)
     if not src.exists():
         raise FileNotFoundError(
-            f"片头喊声音频不存在: {src}，请运行 scripts/prepare_intro_audio.py 生成"
+            f"片头喊声音频不存在: {src}，请运行 scripts/gen_intro_audio.py 生成"
         )
     dest = work_dir / "intro_shout.mp3"
     shutil.copy2(src, dest)
