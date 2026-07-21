@@ -15,12 +15,31 @@ DAILY_STORY_CHARACTERS = (
 # 妈妈无参考图，外貌特征由 LLM 在 image_prompt 中文字描述，不混入有参考图角色常量
 DAILY_STORY_CHARACTER_MOM = "妈妈：成年女性，黑色长发，米色上衣牛仔裤"
 
-# 片长：语速约 3.1 字/秒、目标约 2:00–2:15
-# 总字数下限硬性；上限仅写作建议（略超可接受，不校验失败）
-# 单句上限硬性，配合分镜 2–4 句合并
+# 片长：语速约 3.6 字/秒、目标约 1:30–2:00
+# 总字数上下限均硬性；单句上限硬性，配合分镜合并
 DAILY_STORY_TOTAL_CHARS_MIN = 300
-DAILY_STORY_TOTAL_CHARS_TARGET_MAX = 420
+DAILY_STORY_TOTAL_CHARS_MAX = 380
+DAILY_STORY_TOTAL_CHARS_TARGET_MAX = 360
 DAILY_STORY_LINE_CHARS_MAX = 18
+
+# 开场须尽快露冲突（验收用关键词，口语即可）
+_OPENING_HOOK_CUES = (
+    "抢", "藏", "谁先", "我的", "不行", "不许", "凭什么", "分",
+    "弄脏", "赔", "偷", "最后", "轮到", "不给", "哼", "别动",
+    "给我", "少了", "弄坏", "打碎", "弄翻", "独占", "公平",
+    "为什么", "少一半", "多喝", "先洗", "新的", "旧的",
+)
+
+_SOFT_ENDING_MARKERS = (
+    "算了", "姐姐真棒", "听妈妈的", "我们和好", "下次注意",
+    "你真棒", "和好吧", "听姐姐的",
+)
+
+_PUNCHLINE_TYPE_MARKERS = (
+    "权威翻车", "公平执念", "字面执行", "结盟翻车", "妈妈破功",
+    "A类", "C类", "D类", "B类", "E类",
+    "A：", "C：", "D：", "B：", "E：",
+)
 
 _DAILY_STORY_CONTRACT = """\
 【共用设定】
@@ -28,7 +47,7 @@ _DAILY_STORY_CONTRACT = """\
 - 角色年龄：昭昭7岁弟弟，灿灿10岁姐姐；可发言角色仅昭昭、灿灿、妈妈。
 - 爸爸可「不在场被提到」，禁止作为 speaker；禁止老师入戏。
 - 场景：家庭内部或家门口（客厅/厨房/卧室/门口）；禁止学校、放学路、公园等外景主场。
-- 片长：对白总字数硬性不少于300字，写作目标约360–420字（略超可接受，禁止注水车轱辘）；
+- 片长：对白总字数硬性 300–380 字，写作目标约 320–360 字（禁止注水车轱辘）；
   每句台词硬性≤18字；口语短句，一层意思一句说完。
 """
 
@@ -55,6 +74,14 @@ DAILY_STORY_SYSTEM_PROMPT = f"""\
 - 主笑点与大部分回合须在昭昭、灿灿之间；禁止妈妈长篇讲理或占半场以上对白。
 - 禁止把「妈妈教育孩子」写成主线。
 
+【开场钩子（硬约束）】
+- 前 2 句必须露出具体冲突（抢/藏/弄脏/谁先/不给等），禁止寒暄铺垫。
+- setting 也要写清冲突已发生（如：客厅，姐弟抢遥控器）。
+
+【节奏（硬约束）】
+- 每 6–8 句须有一个小反转或加码（规则升级、证据翻车、第三方插嘴），禁止平铺到结尾才抖包袱。
+- 台词要具体：点名「上次你也…」「妈说过…」「这是我的…」，少讲抽象公平大道理。
+
 【绝对禁止】
 1. 禁止成人笑话、谐音梗、俏皮话、网络热梗。
 2. 禁止「因为……所以……」等书面连接词，全部用口语短句。
@@ -65,20 +92,20 @@ DAILY_STORY_SYSTEM_PROMPT = f"""\
 【笑点与收束】
 - 笑点 = 孩子的字面/现实逻辑 碰撞 姐姐的「装大人」规则，或两人各执一词越辩越歪。
 - 每一句推论须基于刚听到的字面意思或亲眼见过的生活经验，不能跳级。
-- 须有足够回合把误会滚大（总字数≥300），再收束；最后一句让「装大人/规则逻辑」破功或哑口。
-- 禁止注水车轱辘；也禁止写到一半就收（过短无效）。
+- 在 300–380 字内把误会滚大再收束；最后一句让「装大人/规则逻辑」破功或哑口。
+- punchline_explain 须写明类型（如「C类公平执念」）+ 末句如何破功，禁止空话。
 
 【格式要求】
 严格输出以下JSON结构：
 {{
   "scene_title": "不超过10字，场记或口语钩子均可（如：谁先洗）",
-  "setting": "一句话说明地点和初始动作（如：客厅，姐弟抢遥控器）",
+  "setting": "一句话说明地点和初始冲突动作（如：客厅，姐弟抢遥控器）",
   "dialogue": [
     {{"speaker": "昭昭", "line": "台词（≤18字）"}},
     {{"speaker": "灿灿", "line": "台词"}},
     {{"speaker": "妈妈", "line": "台词（宜少）"}}
   ],
-  "punchline_explain": "一句话说明反差类型（优先A/C/D）与收束逻辑"
+  "punchline_explain": "类型标签+收束逻辑（例：C类公平执念，姐姐规则被字面戳穿）"
 }}
 妈妈可有台词，但宜少（建议≤3句）；主回合仍是姐弟。
 """
@@ -91,9 +118,11 @@ DAILY_STORY_USER_TEMPLATE = """\
 【要求】：
 1. 紧扣主题，家庭内/门口小事，不要宏大叙事。
 2. 矛盾优先 A/C/D（姐弟互怼）；B/E 仅主题明确需要时才用。
-3. 对白总字数硬性 ≥300，目标约 360–420（略超可接受）；每句硬性 ≤18 字；
+3. 对白总字数硬性 300–380，目标约 320–360；每句硬性 ≤18 字；
    speaker 仅昭昭/灿灿/妈妈。
-4. 妈妈可出场，但台词宜少（建议≤3句）；禁止写成妈妈教育戏。爸爸不可作 speaker。
+4. 前 2 句必须露出具体冲突；禁止寒暄开场。
+5. 妈妈可出场，但台词宜少（建议≤3句）；禁止写成妈妈教育戏。爸爸不可作 speaker。
+6. punchline_explain 须含类型标签（A/C/D 等）并说明末句如何破功。
 
 请直接输出JSON。
 """
@@ -111,13 +140,14 @@ DAILY_STORY_THEME_USER_TEMPLATE = """\
 可发言角色仅昭昭、灿灿、妈妈；妈妈可出场但戏份轻（少台词）。
 
 要求：
-1. 主题必须是一件具体的小事，比如：争最后一瓶酸奶、谁先洗澡、检查作业时发现错题。
-2. 不能是抽象概念（如「讨论友谊」「探讨公平」）。
+1. 主题必须是一件具体的小事，且最好带动作/实物（抢遥控器、弄脏裙子、藏橡皮），
+   少写抽象讨论（如「讨论友谊」「探讨公平」）。
+2. 不能是抽象概念。
 3. 主题要有天然矛盾，且主戏能在家门口/室内由姐弟撑起来，例如：
    姐姐管不住弟弟；抢先后/分东西吵公平；把叮嘱按字面做砸。
 4. 少出「妈妈讲理/教育」当主线的主题。
 5. 禁止依赖爸爸入戏、老师入戏、学校/公园等外景主场的主题。
-6. 主题须能用短句口语一场讲完（对白体量大约两分钟出头即可）。
+6. 主题须能用短句口语一场讲完（对白体量约一分半到两分钟）。
 7. 主题用15个字以内描述，直接输出。
 
 示例："争最后一瓶酸奶"
@@ -139,10 +169,12 @@ DAILY_SCRIPT_SYSTEM_PROMPT = """\
 
 【分镜规则】
 1. 禁止一句台词一个镜头。按同一地点、同一轮对话合并为场景组；
-   每个镜头承载 2–4 句对白。
+   每个镜头通常承载 2–4 句对白。
 2. 单镜合计 ≤{max_chars} 字（约 ≤{max_sec} 秒，语速 {chars_per_sec} 字/秒），
    各镜尽量均匀，也避免少于 20 字。
 3. 为每镜标注 shot_type（全景/中景/特写），在环境交代、对话主体、情绪或道具之间穿插。
+4. 【情绪单独成镜】反驳、破功、愣住、妈妈插嘴、证据翻出等转折句，
+   尽量单独成镜或最多两句，优先用「特写」；禁止把转折句塞进四句长镜末尾。
 
 【输出格式】
 严格输出合法 JSON（不要 markdown 代码块）：
@@ -176,8 +208,9 @@ DAILY_SCRIPT_USER_TEMPLATE = """\
 
 【要求】
 1. 按地点/对话轮次合并镜头，禁止一句一镜
-2. 每镜 2–4 句；单镜合计 ≤{max_chars} 字（约 ≤{max_sec} 秒）
-3. 原台词须全部分配到各镜 dialogue，措辞不得改
+2. 每镜通常 2–4 句；单镜合计 ≤{max_chars} 字（约 ≤{max_sec} 秒）
+3. 情绪转折句（反驳/破功/愣住/妈妈插嘴）尽量单独成镜，shot_type 优先特写
+4. 原台词须全部分配到各镜 dialogue，措辞不得改
 
 请直接输出 JSON。
 """
@@ -303,10 +336,46 @@ def validate_daily_story_json(story: dict) -> None:
                         f"dialogue[{i}] line 超过{DAILY_STORY_LINE_CHARS_MAX}字"
                         f"（{n}字）：{item['line']!r}"
                     )
-        # 只硬卡下限；上限略超不失败，避免重试拖垮流程
+        # 总字数硬卡上下限
         if total_chars and total_chars < DAILY_STORY_TOTAL_CHARS_MIN:
             errors.append(
                 f"对白总字数须≥{DAILY_STORY_TOTAL_CHARS_MIN}，当前{total_chars}"
+            )
+        if total_chars and total_chars > DAILY_STORY_TOTAL_CHARS_MAX:
+            errors.append(
+                f"对白总字数须≤{DAILY_STORY_TOTAL_CHARS_MAX}，当前{total_chars}"
+            )
+
+        # 开场钩子：前 3 句内须出现冲突线索
+        opening = "".join(
+            str(item.get("line") or "")
+            for item in dialogue[:3]
+            if isinstance(item, dict)
+        )
+        if opening and not any(cue in opening for cue in _OPENING_HOOK_CUES):
+            errors.append(
+                "开场前3句须露出具体冲突（抢/藏/谁先/不给等），禁止寒暄铺垫"
+            )
+
+        # 禁止软收尾
+        last_line = ""
+        for item in reversed(dialogue):
+            if isinstance(item, dict):
+                last_line = str(item.get("line") or "").strip()
+                if last_line:
+                    break
+        if last_line and any(m in last_line for m in _SOFT_ENDING_MARKERS):
+            errors.append(
+                f"末句禁止软收尾（算了/和好等）：{last_line!r}"
+            )
+
+    # punchline_explain 须标明类型
+    explain = story.get("punchline_explain")
+    if isinstance(explain, str) and explain.strip():
+        if not any(m in explain for m in _PUNCHLINE_TYPE_MARKERS):
+            errors.append(
+                "punchline_explain 须含类型标签"
+                "（如「C类公平执念」或「权威翻车」）"
             )
 
     if errors:

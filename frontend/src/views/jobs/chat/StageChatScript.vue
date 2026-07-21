@@ -284,7 +284,7 @@ const promptsLoading = ref(false);
 const dailyPrompts = ref<LlmPromptStep | null>(null);
 
 /** 句间停留（秒） */
-const lineGap = ref(0.3);
+const lineGap = ref(0.2);
 
 const totalChars = computed(() => {
   const dialogue = dailyStory.value?.story?.dialogue;

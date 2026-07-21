@@ -129,7 +129,7 @@ export function formatCostTime(seconds?: number | null): string {
 
 /** 与后端 DEFAULT_SPEECH_CHARS_PER_SEC 对齐；仅作表单初始值 / info 未加载时的兜底 */
 export const DEFAULT_SPEECH_CHARS_PER_SEC = 4.1;
-export const DEFAULT_CHAT_SPEECH_CHARS_PER_SEC = 3.1;
+export const DEFAULT_CHAT_SPEECH_CHARS_PER_SEC = 3.6;
 const NARRATION_FILL_RATIO = 0.92;
 const NARRATION_MAX_CHARS = 3000;
 

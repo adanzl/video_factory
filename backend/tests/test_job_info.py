@@ -262,3 +262,28 @@ def test_resolve_video_provider_clip_provider_fallback():
 
     settings = SimpleNamespace(clip_provider="ffmpeg")
     assert resolve_video_provider(None, visual_mode="static_motion", settings=settings) == "ffmpeg"
+
+
+def test_daily_story_create_job_info_stores_phrase_gap_in_tts():
+    from app.utils.job_info import merge_job_info, merge_job_script_params
+    from worker.stages.daily_story.tts import DEFAULT_DAILY_SPEAKER_CONFIGS
+
+    info = merge_job_info(
+        merge_job_script_params(None, speech_chars_per_sec=3.6),
+        daily_story_id=18,
+        orientation="landscape",
+        video_provider="ffmpeg",
+    )
+    phrase_gap_sec = 0.2
+    speaker_configs = {
+        name: dict(cfg) for name, cfg in DEFAULT_DAILY_SPEAKER_CONFIGS.items()
+    }
+    speaker_configs["phrase_gap_sec"] = phrase_gap_sec
+    info["tts"] = {"speaker_configs": speaker_configs}
+
+    assert info["script"]["speech_chars_per_sec"] == 3.6
+    assert info["tts"]["speaker_configs"]["phrase_gap_sec"] == 0.2
+    assert info["tts"]["speaker_configs"]["昭昭"]["speech_rate"] == 0.81
+    assert info["tts"]["speaker_configs"]["灿灿"]["speech_rate"] == 0.94
+    assert info["tts"]["speaker_configs"]["妈妈"]["speech_rate"] == 1.0
+    assert "phrase_gap_sec" not in info

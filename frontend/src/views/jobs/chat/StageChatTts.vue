@@ -219,8 +219,8 @@ const speakers = [
 ];
 
 const defaultSpeakerConfigs: Record<string, SpeakerConfig> = {
-  昭昭: { voice_id: TTS_VOICE_ZHAO, speech_rate: 0.7 },
-  灿灿: { voice_id: DEFAULT_TTS_VOICE, speech_rate: 0.81 },
+  昭昭: { voice_id: TTS_VOICE_ZHAO, speech_rate: 0.81 },
+  灿灿: { voice_id: DEFAULT_TTS_VOICE, speech_rate: 0.94 },
   妈妈: { voice_id: TTS_VOICE_MOM, speech_rate: 1.0 },
 };
 
@@ -244,7 +244,7 @@ const audioRef = ref<HTMLAudioElement | null>(null);
 const speakerConfigs = ref<Record<string, SpeakerConfig>>(
   loadSavedConfigs()
 );
-const phraseGapSec = ref(0.3);
+const phraseGapSec = ref(0.2);
 
 function loadSavedConfigs(): Record<string, SpeakerConfig> {
   const defaults = JSON.parse(JSON.stringify(defaultSpeakerConfigs)) as Record<string, SpeakerConfig>;
@@ -257,7 +257,9 @@ function loadSavedConfigs(): Record<string, SpeakerConfig> {
     const cfg = val as Partial<SpeakerConfig> | undefined;
     if (cfg?.voice_id) defaults[key] = { voice_id: cfg.voice_id, speech_rate: cfg.speech_rate ?? defaults[key]?.speech_rate ?? 1.0 };
   }
-  if (typeof tts?.phrase_gap_sec === "number") phraseGapSec.value = tts.phrase_gap_sec;
+  const savedGap = saved.phrase_gap_sec;
+  if (typeof savedGap === "number") phraseGapSec.value = savedGap;
+  else if (typeof tts?.phrase_gap_sec === "number") phraseGapSec.value = tts.phrase_gap_sec;
   return defaults;
 }
 

@@ -23,8 +23,10 @@ CONTENT_STYLE_LIFE_EXPERIENCE = "life_experience"
 CONTENT_STYLE_HISTORICAL_MYSTERY = "history_mystery"
 CONTENT_STYLE_DAILY_STORY = "daily_story"
 
-# 日常对话默认语速（儿童音色偏慢）；标准口播仍用 DEFAULT_SPEECH_CHARS_PER_SEC
-DEFAULT_DAILY_STORY_SPEECH_CHARS_PER_SEC = 3.0
+# 日常对话默认语速（儿童音色仍略慢于成人口播，但略提速减少拖沓）
+DEFAULT_DAILY_STORY_SPEECH_CHARS_PER_SEC = 3.6
+# 日常对话默认句间隔（秒）；写入 info.tts.speaker_configs
+DEFAULT_DAILY_STORY_PHRASE_GAP_SEC = 0.2
 
 _VALID_CONTENT_STYLES = frozenset(
     {

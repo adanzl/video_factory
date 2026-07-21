@@ -6,6 +6,7 @@ import pytest
 
 from app.services.daily_story.prompts import (
     DAILY_STORY_LINE_CHARS_MAX,
+    DAILY_STORY_TOTAL_CHARS_MAX,
     DAILY_STORY_TOTAL_CHARS_MIN,
     build_daily_story_prompts,
     build_daily_story_theme_prompts,
@@ -64,47 +65,53 @@ def test_daily_story_prompts_share_contract():
     story_sys, story_user = build_daily_story_prompts("谁先洗澡")
     assert "10岁" in story_sys
     assert "10岁" in theme_user
-    assert "不少于300" in story_sys or "≥300" in story_user
-    assert "360" in story_sys and "420" in story_sys
-    assert "略超可接受" in story_sys
+    assert "300" in story_sys and "380" in story_sys
+    assert "320" in story_sys and "360" in story_sys
+    assert "开场钩子" in story_sys
     assert "18" in story_sys
     assert "有娃的大人" in story_sys
     assert "权威翻车" in story_sys
     assert "谁先洗澡" in story_user
+    assert "前 2 句" in story_user
     assert "对付爸妈" not in theme_user
     assert "下雨只带了一把伞" not in theme_user
+    assert "动作/实物" in theme_user
 
 
 def _valid_story(*, line: str | None = None, n: int = 17) -> dict:
-    # 默认 18*17=306，刚好过下限 300
+    # 默认 18*17=306，刚好过下限 300、未超上限 380
     if line is None:
         line = "一二三四五六七八九十一二三四五六七八"
     assert len(line) <= DAILY_STORY_LINE_CHARS_MAX
     speakers = ("昭昭", "灿灿")
+    dialogue = [
+        {"speaker": speakers[i % 2], "line": line} for i in range(n)
+    ]
+    # 开场须含冲突线索，且保持原字数不破坏上下限
+    dialogue[0] = {"speaker": "昭昭", "line": "抢" + line[1:]}
     return {
         "scene_title": "谁先洗",
         "setting": "客厅，妈妈问谁先洗澡",
-        "dialogue": [
-            {"speaker": speakers[i % 2], "line": line} for i in range(n)
-        ],
-        "punchline_explain": "C类公平执念收束",
+        "dialogue": dialogue,
+        "punchline_explain": "C类公平执念，姐姐规则被字面戳穿",
     }
 
 
 def test_validate_daily_story_json_ok():
     story = _valid_story()
-    assert sum(len(d["line"]) for d in story["dialogue"]) >= DAILY_STORY_TOTAL_CHARS_MIN
+    total = sum(len(d["line"]) for d in story["dialogue"])
+    assert DAILY_STORY_TOTAL_CHARS_MIN <= total <= DAILY_STORY_TOTAL_CHARS_MAX
     validate_daily_story_json(story)
 
 
-def test_validate_daily_story_json_allows_long_total_chars():
-    # 上限不硬卡；598 这类略超不应失败
-    validate_daily_story_json(_valid_story(n=34))
+def test_validate_daily_story_json_rejects_long_total_chars():
+    with pytest.raises(ValueError, match="总字数须≤"):
+        validate_daily_story_json(_valid_story(n=34))
 
 
 def test_validate_daily_story_json_rejects_short_total_chars():
     with pytest.raises(ValueError, match="总字数须≥"):
-        validate_daily_story_json(_valid_story(n=10))  # 180 < 300
+        validate_daily_story_json(_valid_story(n=10))  # 远低于 300
 
 
 def test_validate_daily_story_json_rejects_long_line():
@@ -119,4 +126,28 @@ def test_validate_daily_story_json_rejects_bad_speaker():
     story = _valid_story()
     story["dialogue"][0]["speaker"] = "爸爸"
     with pytest.raises(ValueError, match="爸爸"):
+        validate_daily_story_json(story)
+
+
+def test_validate_daily_story_json_rejects_weak_opening():
+    story = _valid_story()
+    pad = "一二三四五六七八九十一二三四五六七八"
+    story["dialogue"][0]["line"] = pad
+    story["dialogue"][1]["line"] = pad
+    story["dialogue"][2]["line"] = pad
+    with pytest.raises(ValueError, match="开场前3句"):
+        validate_daily_story_json(story)
+
+
+def test_validate_daily_story_json_rejects_soft_ending():
+    story = _valid_story()
+    story["dialogue"][-1]["line"] = "算了听姐姐的一二三四五六七八"
+    with pytest.raises(ValueError, match="软收尾"):
+        validate_daily_story_json(story)
+
+
+def test_validate_daily_story_json_rejects_vague_punchline():
+    story = _valid_story()
+    story["punchline_explain"] = "姐弟斗嘴很好笑"
+    with pytest.raises(ValueError, match="类型标签"):
         validate_daily_story_json(story)

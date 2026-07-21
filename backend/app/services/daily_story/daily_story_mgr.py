@@ -57,7 +57,11 @@ class DailyStoryMgr:
     ) -> dict:
         """基于日常故事创建视频任务（pipeline=daily_story）。"""
         from app.repositories import repo_job, repo_job_log
-        from app.utils.job_info import DEFAULT_DAILY_STORY_SPEECH_CHARS_PER_SEC
+        from app.utils.job_info import (
+            DEFAULT_DAILY_STORY_PHRASE_GAP_SEC,
+            DEFAULT_DAILY_STORY_SPEECH_CHARS_PER_SEC,
+        )
+        from worker.stages.daily_story.tts import DEFAULT_DAILY_SPEAKER_CONFIGS
 
         with connection() as conn:
             story = repo_daily_story.get_story(conn, story_id)
@@ -71,13 +75,22 @@ class DailyStoryMgr:
                 if speech_chars_per_sec is not None
                 else DEFAULT_DAILY_STORY_SPEECH_CHARS_PER_SEC
             )
+            gap = (
+                float(phrase_gap_sec)
+                if phrase_gap_sec is not None
+                else DEFAULT_DAILY_STORY_PHRASE_GAP_SEC
+            )
             info = merge_job_info(
                 merge_job_script_params(None, speech_chars_per_sec=cps),
                 daily_story_id=story_id,
                 orientation="landscape",
                 video_provider="ffmpeg",
-                phrase_gap_sec=phrase_gap_sec,
             )
+            speaker_configs = {
+                name: dict(cfg) for name, cfg in DEFAULT_DAILY_SPEAKER_CONFIGS.items()
+            }
+            speaker_configs["phrase_gap_sec"] = gap
+            info["tts"] = {"speaker_configs": speaker_configs}
             job = repo_job.create_job(
                 conn,
                 title,

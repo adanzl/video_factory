@@ -437,6 +437,8 @@ def test_build_daily_script_prompts_uses_cps_setting_and_no_appearance():
     assert "彩铅" not in system
     assert "超短发" not in system
     assert "不要输出 visual_description" in system
+    assert "情绪单独成镜" in system
+    assert "特写" in user
     assert "【标题】争酸奶" in user
     assert "【场景设定】厨房，傍晚" in user
     assert "昭昭：这瓶是我的！" in user

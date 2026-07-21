@@ -23,13 +23,20 @@ from worker.stages.base import StageExecutor
 
 logger = logging.getLogger(__name__)
 
-# 默认角色配置（昭昭/灿灿）
-_DEFAULT_SPEAKER_CONFIGS: dict[str, dict] = {
-    "昭昭": {"voice_id": "cosyvoice-v3.5-flash-leo-f9d115bfdf2346edbeb9d21ecd4f9ce9", "speech_rate": 1.0},
-    "灿灿": {"voice_id": "cosyvoice-v3.5-flash-leo-40c4359c732f4b459a40f3408e1186ed", "speech_rate": 1.0},
+# 默认角色配置（与前端 StageChatTts 对齐；rate 随 cps 3.6/3.1 上调）
+DEFAULT_DAILY_SPEAKER_CONFIGS: dict[str, dict] = {
+    "昭昭": {
+        "voice_id": "cosyvoice-v3.5-flash-leo-f9d115bfdf2346edbeb9d21ecd4f9ce9",
+        "speech_rate": 0.81,
+    },
+    "灿灿": {
+        "voice_id": "cosyvoice-v3.5-flash-leo-40c4359c732f4b459a40f3408e1186ed",
+        "speech_rate": 0.94,
+    },
     "妈妈": {"voice_id": "longwan_v3", "speech_rate": 1.0},
 }
-_DEFAULT_PHRASE_GAP_SEC = 0.3
+_DEFAULT_SPEAKER_CONFIGS = DEFAULT_DAILY_SPEAKER_CONFIGS
+_DEFAULT_PHRASE_GAP_SEC = 0.2
 _TTS_MAX_RETRIES = 3
 _TTS_RETRY_BASE_DELAY = 2.0  # seconds
 
@@ -106,9 +113,12 @@ def _synthesize_segment_dialogue(
         if not text:
             continue
 
-        config = speaker_configs.get(speaker, {})
-        voice = config.get("voice_id") or _DEFAULT_SPEAKER_CONFIGS.get(speaker, {}).get("voice_id", "")
-        rate = config.get("speech_rate", 1.0)
+        config = speaker_configs.get(speaker) or {}
+        defaults = _DEFAULT_SPEAKER_CONFIGS.get(speaker) or {}
+        voice = config.get("voice_id") or defaults.get("voice_id") or ""
+        rate = config.get("speech_rate")
+        if rate is None:
+            rate = float(defaults.get("speech_rate", 1.0))
 
         logger.info(
             "tts segment %d line %d speaker=%s voice=%s rate=%.2f text_chars=%d text=%s",

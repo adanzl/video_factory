@@ -57,7 +57,7 @@ def test_motion_vf_segment2_pan_right_uses_scale_crop() -> None:
 
 def test_motion_vf_uses_livelier_ken_burns_zoom() -> None:
     vf = _motion_vf(10.0, preset="ken_burns_slow", segment_index=1, width=1080, height=1920)
-    assert "1.1000" in vf or "1+0.1000" in vf
+    assert "1.1600" in vf or "1+0.1600" in vf
 
 
 def test_resolve_clip_canvas_snaps_to_even() -> None:
