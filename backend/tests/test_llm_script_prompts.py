@@ -464,6 +464,7 @@ def test_build_daily_script_prompts_uses_cps_setting_and_no_appearance():
     assert "超短发" not in system
     assert "不要输出 visual_description" in system
     assert "转折用特写，不拆碎" in system
+    assert "开场首镜" in system
     assert "目标约" in user
     assert "特写" in user
     assert "【标题】争酸奶" in user

@@ -276,11 +276,34 @@ def test_apply_keyframe_video_providers_marks_closeup():
             "shot_type": "特写",
             "motion_prompt": "眉毛微微一挑",
         },
+        {
+            "segment_index": 3,
+            "shot_type": "全景",
+            "motion_prompt": "尘埃漂浮",
+        },
     ]
     marked = apply_keyframe_video_providers(segments)
-    assert marked == [2]
-    assert segments[0].get("info") is None or "video_provider" not in (segments[0].get("info") or {})
+    assert marked == [1, 2]
+    assert segments[0]["info"]["video_provider"] == "agnes_i2v"
     assert segments[1]["info"]["video_provider"] == "agnes_i2v"
+    assert segments[2].get("info") is None or "video_provider" not in (
+        segments[2].get("info") or {}
+    )
+
+
+def test_apply_keyframe_video_providers_marks_opening_without_closeup():
+    from app.utils.job_info import apply_keyframe_video_providers
+
+    segments = [
+        {"segment_index": 1, "shot_type": "全景"},
+        {"segment_index": 2, "shot_type": "中景"},
+    ]
+    marked = apply_keyframe_video_providers(segments)
+    assert marked == [1]
+    assert segments[0]["info"]["video_provider"] == "agnes_i2v"
+    assert segments[1].get("info") is None or "video_provider" not in (
+        segments[1].get("info") or {}
+    )
 
 
 def test_is_keyframe_segment():

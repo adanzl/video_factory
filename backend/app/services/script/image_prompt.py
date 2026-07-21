@@ -114,10 +114,13 @@ _IMAGE_PROMPT_RULE_DAILY_STORY = (
     "禁止同高或弟弟更高。"
     "【表情】须夸张可读：瞪圆眼、撇嘴、叉腰、愣住张嘴、鼓腮、抿嘴鼓气等，"
     "表情强度对标本段台词情绪，禁止面无表情的站桩。"
+    "【开场首镜】segment_index=1 须中近景或特写，定格冲突峰值姿势"
+    "（抢/举/夺/藏道具动作最大的一瞬），冲突道具须清晰可见且占比够大，"
+    "表情比后文再夸张一档；禁止平淡站桩或纯环境交代开场。"
     "单帧静态；勿写画风套话（出图前系统硬编码）。"
-    "短例：'客厅地板上昭昭举手比石头，脸不服气嘴角下撇眼睛瞪圆；"
-    "灿灿双手叉腰抿嘴瞪着他，昭昭比灿灿矮约半个头。"
-    "窗光斜照地板。中景，昭昭左灿灿右。'"
+    "短例：'客厅地板上昭昭右手高举橡皮，瞪圆眼张大嘴喊；"
+    "灿灿左手前伸眉毛倒竖张嘴争辩，昭昭比灿灿矮约半个头。"
+    "窗光斜照地板。中近景，昭昭左灿灿右。'"
 )
 
 # 无参考图角色规则，仅当 segment 涉及该角色时追加
@@ -166,7 +169,7 @@ _IMAGE_PROMPT_MOTION_TAIL_DAILY = (
     "【motion_prompt 分流】按该段 motion_mode 选择规则："
     "motion_mode=ambient（默认）→"
     + _IMAGE_PROMPT_MOTION_TAIL_DAILY_AMBIENT
-    + "motion_mode=keyframe（特写/i2v 关键帧）→"
+    + "motion_mode=keyframe（特写/开场首镜/i2v 关键帧）→"
     + _IMAGE_PROMPT_MOTION_TAIL_DAILY_KEYFRAME
 )
 

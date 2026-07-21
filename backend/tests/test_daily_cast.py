@@ -106,10 +106,12 @@ def test_build_image_prompts_daily_includes_setting():
     )
     assert "全片地点 setting：客厅" in prompts["user"]
     assert "开头必须写清具体室内地点" in prompts["system"]
+    assert "开场首镜" in prompts["system"]
 
 
 def test_build_image_prompts_daily_keyframe_marks_motion_mode():
     from app.services.script.image_prompt import build_image_prompts
+    from app.utils.job_info import apply_keyframe_video_providers
 
     script = {
         "title": "新橡皮归谁",
@@ -118,6 +120,13 @@ def test_build_image_prompts_daily_keyframe_marks_motion_mode():
         "segments": [
             {
                 "segment_index": 1,
+                "text": "开场抢",
+                "visual_brief": "举手抢橡皮",
+                "shot_type": "中景",
+                "dialogue": [{"speaker": "昭昭", "text": "我先拿到的！"}],
+            },
+            {
+                "segment_index": 2,
                 "text": "普通镜",
                 "visual_brief": "中景对峙",
                 "dialogue": [{"speaker": "昭昭", "text": "普通镜"}],
@@ -126,22 +135,26 @@ def test_build_image_prompts_daily_keyframe_marks_motion_mode():
                 "segment_index": 3,
                 "text": "停！",
                 "visual_brief": "妈妈举手停，昭昭侧头",
-                "info": {"video_provider": "agnes_i2v"},
+                "shot_type": "特写",
                 "dialogue": [{"speaker": "妈妈", "text": "停！"}],
             },
         ],
     }
+    apply_keyframe_video_providers(script["segments"])
     prompts = build_image_prompts(
         script,
         content_style="daily_story",
         job={"pipeline": "chat", "content_style": "daily_story"},
     )
+    assert "segment 1:" in prompts["user"] and "motion_mode=keyframe" in prompts["user"]
+    assert "segment 2:" in prompts["user"]
     assert "motion_mode=ambient" in prompts["user"]
     assert "motion_mode=keyframe" in prompts["user"]
     assert "keyframe 写 1 个微动作" in prompts["user"] or "锁住面部表情" in prompts["user"]
     assert "不微笑" in prompts["system"]
     assert "右手微微前推" in prompts["system"]
     assert "与静图一致" in prompts["system"]
+    assert "开场首镜" in prompts["system"]
     assert len(prompts["system"]) < 3600
 
 
