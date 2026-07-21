@@ -222,6 +222,36 @@ def test_generate_switches_to_backup_key_on_quota(tmp_path: Path) -> None:
     assert mock_generate.call_args_list[1].args[0].value == "main-key"
 
 
+def test_generate_switches_to_backup_key_on_5xx(tmp_path: Path) -> None:
+    provider = AgnesImageProvider()
+    output = tmp_path / "1.png"
+    output.write_bytes(b"png")
+    five_xx = RuntimeError(
+        "agnes request failed (after 5 retries, url=https://x, last_status=503)"
+    )
+
+    with (
+        patch(
+            "app.services.segment.image.image_agnes.agnes_api_keys",
+            return_value=[
+                AgnesApiKey("free", "free-key"),
+                AgnesApiKey("primary", "main-key"),
+            ],
+        ),
+        patch.object(
+            provider,
+            "_generate_with_key",
+            side_effect=[five_xx, output],
+        ) as mock_generate,
+        patch.object(provider, "_verify_image", return_value=True),
+    ):
+        provider.generate("测试 prompt", output, size="720*1280")
+
+    assert mock_generate.call_count == 2
+    assert mock_generate.call_args_list[0].args[0].value == "free-key"
+    assert mock_generate.call_args_list[1].args[0].value == "main-key"
+
+
 def test_generate_without_keys_raises_unless_mock(tmp_path: Path, monkeypatch) -> None:
     provider = AgnesImageProvider()
     output = tmp_path / "1.png"

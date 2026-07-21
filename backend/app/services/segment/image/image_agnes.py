@@ -36,6 +36,14 @@ _YES_HEAD_RE = re.compile(r"^[「【\[]?是([，,。．\s的」】\]]|$)")
 _NO_HEAD_RE = re.compile(r"^[「【\[]?(否|不是)([，,。．\s」】\]]|$)")
 
 
+def _should_switch_image_key(exc: BaseException) -> bool:
+    """生图切备用 Key：配额/限流，或同 Key 重试耗尽后的 5xx。"""
+    if isinstance(exc, AgnesQuotaExceeded) or agnes_quota_exceeded_from_exception(exc):
+        return True
+    text = str(exc)
+    return any(f"last_status={code}" in text for code in _RETRYABLE)
+
+
 def _to_agnes_size(size: str) -> str:
     """项目内 720*1280 → Agnes API 720x1280。"""
     return size.strip().lower().replace("*", "x")
@@ -371,7 +379,7 @@ class AgnesImageProvider(ImageProvider):
             if not usable:
                 break
 
-            # 校验失败重试时轮询换 key；本轮若撞配额则同 attempt 内换下一个
+            # 校验失败重试时轮询换 key；本轮若撞配额/5xx 则同 attempt 内换下一个
             start = attempt % len(usable)
             generated = False
             for offset in range(len(usable)):
@@ -383,25 +391,8 @@ class AgnesImageProvider(ImageProvider):
                     )
                     generated = True
                     break
-                except AgnesQuotaExceeded as exc:
-                    exhausted.add(key.value)
-                    last_exc = exc
-                    nxt = next(
-                        (k for k in keys if k.value not in exhausted),
-                        None,
-                    )
-                    if nxt is not None:
-                        logger.warning(
-                            "%s agnes %s key quota/rate limit exceeded, "
-                            "switching to backup (%s)",
-                            log_tag,
-                            key.label,
-                            nxt.label,
-                        )
-                        continue
-                    raise
                 except Exception as exc:
-                    if agnes_quota_exceeded_from_exception(exc):
+                    if _should_switch_image_key(exc):
                         exhausted.add(key.value)
                         last_exc = exc
                         nxt = next(
@@ -410,13 +401,14 @@ class AgnesImageProvider(ImageProvider):
                         )
                         if nxt is not None:
                             logger.warning(
-                                "%s agnes %s key quota/rate limit exceeded, "
+                                "%s agnes %s key quota/rate/5xx exhausted, "
                                 "switching to backup (%s)",
                                 log_tag,
                                 key.label,
                                 nxt.label,
                             )
                             continue
+                        raise
                     logger.error(
                         "%s agnes generate failed (%s key): %s",
                         log_tag,
