@@ -353,7 +353,7 @@ def test_repair_narration_overflow_via_shrink_mock(monkeypatch):
         ],
     }
 
-    def _fake_shrink(s, *, segment_indices, segment_target_sec, job=None):
+    def _fake_shrink(s, *, segment_indices, segment_target_sec, job=None, chars_per_sec=None):
         for seg in s["segments"]:
             if int(seg["segment_index"]) in segment_indices:
                 seg["text"] = "a" * 60
@@ -408,8 +408,8 @@ def test_repair_segment_overflow_via_shrink_mock(monkeypatch):
         ],
     }
 
-    def _fake_shrink(s, *, segment_indices, segment_target_sec, job=None):
-        cap = segment_text_char_cap(segment_target_sec)
+    def _fake_shrink(s, *, segment_indices, segment_target_sec, job=None, chars_per_sec=None):
+        cap = segment_text_char_cap(segment_target_sec, chars_per_sec=chars_per_sec or 4.1)
         for seg in s["segments"]:
             if int(seg["segment_index"]) in segment_indices:
                 seg["text"] = "z" * cap
@@ -436,7 +436,11 @@ def test_repair_segment_overflow_via_shrink_mock(monkeypatch):
     assert warnings == []
 
 
-def test_validate_script_warns_on_generic_motion_prompt():
+def test_validate_script_warns_on_generic_motion_prompt(monkeypatch):
+    monkeypatch.setattr(
+        "worker.stages.standard.script.get_settings",
+        lambda: type("S", (), {"segment_target_sec": 0, "max_title_length": 20})(),
+    )
     script = _valid_script(
         segments=[
             {
@@ -448,5 +452,5 @@ def test_validate_script_warns_on_generic_motion_prompt():
             }
         ],
     )
-    _, warnings = _validate_script(script, min_narration_chars=_DEFAULT_MIN)
+    warnings = _validate_script(script, min_narration_chars=_DEFAULT_MIN)
     assert any("motion_prompt issues" in w for w in warnings)

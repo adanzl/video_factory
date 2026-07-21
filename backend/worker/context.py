@@ -109,7 +109,10 @@ class JobContext:
         resolved_speech_chars_per_sec = (
             script_speech_chars_per_sec
             if script_speech_chars_per_sec is not None
-            else resolve_speech_chars_per_sec(saved_script)
+            else resolve_speech_chars_per_sec(
+                saved_script,
+                content_style=content_style_from_job(job),
+            )
         )
         if script_skip_title_optimize is False:
             saved_skip = saved_script.get("skip_title_optimize")

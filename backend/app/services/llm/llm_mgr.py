@@ -97,6 +97,7 @@ class LLMClient:
         segment_indices: list[int],
         segment_target_sec: float,
         job: dict | None = None,
+        chars_per_sec: float | None = None,
     ) -> dict[str, Any]:
         raise NotImplementedError
 
@@ -186,6 +187,7 @@ class LLMClient:
         dialogue_script: dict,
         *,
         job: dict | None = None,
+        chars_per_sec: float | None = None,
     ) -> dict[str, Any]:
         raise NotImplementedError
 
@@ -323,12 +325,14 @@ class LLMMgr:
         segment_indices: list[int],
         segment_target_sec: float,
         job: dict | None = None,
+        chars_per_sec: float | None = None,
     ) -> dict[str, Any]:
         return self._get_client().shrink_segment_texts(
             script,
             segment_indices=segment_indices,
             segment_target_sec=segment_target_sec,
             job=job,
+            chars_per_sec=chars_per_sec,
         )
 
     def fill_image_prompts_with_retries(
@@ -698,6 +702,7 @@ class LLMMgr:
         dialogue_script: dict,
         *,
         job: dict | None = None,
+        chars_per_sec: float | None = None,
     ) -> dict[str, Any]:
         logger.info("[DAILY_STORY] generate script start")
         started = time.perf_counter()
@@ -705,6 +710,7 @@ class LLMMgr:
             result = self._get_client().generate_daily_script(
                 dialogue_script,
                 job=job,
+                chars_per_sec=chars_per_sec,
             )
         except Exception:
             logger.exception("[DAILY_STORY] generate script failed")

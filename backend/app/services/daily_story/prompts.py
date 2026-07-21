@@ -125,63 +125,65 @@ def build_daily_story_prompts(theme: str) -> tuple[str, str]:
 
 
 DAILY_SCRIPT_SYSTEM_PROMPT = """\
-你是一位儿童绘本动画分镜师，负责将儿童情景对话剧本转化为可执行的分镜脚本。
+你是儿童情景对话短剧的分镜编剧，只负责把对白切成可执行镜头，不写画面描述。
 
-【项目背景】
-- 动画形式：儿童情绪涂鸦风格，彩铅和蜡笔混合笔触，用力不均的线条，主观夸张变形，高饱和色彩，涂色出界，橡皮擦拭痕迹，手工感，孩子气的构图。
-- 角色：昭昭（7岁男孩，蓝T恤，男孩气黑色超短发，发长在耳垂以上，清晰露出双耳及整个后颈，齐耳学生头，圆脸，比灿灿矮约半个头），灿灿（10岁姐姐，粉色卫衣，马尾辫，比昭昭高约半个头），妈妈（成年女性，黑色长发，米色上衣牛仔裤）
-- 场景：家庭内部（客厅/厨房/卧室等）
+【可发言角色】昭昭（7岁弟弟）、灿灿（10岁姐姐）、妈妈。场景以家庭内部/门口为主。
 
 【分镜规则】
-1. 绝对禁止：一句台词一个镜头。必须按"场景组"合并，每个镜头承载2-4句对话，同一背景、同一情绪下多句台词合并为一个视觉场面。
-2. 各镜头台词总字数尽量均匀分布，避免某个镜头过多（超过50字）而其他镜头过少（少于20字）。
-3. 每个镜头不要超过15秒（语速基准{chars_per_sec}字/秒）。
-4. 景别切换：全景（交代环境）→ 中景（对话主体）→ 特写（情绪/关键道具）穿插使用。
+1. 禁止一句台词一个镜头。按同一地点、同一轮对话合并为场景组；
+   每个镜头承载 2–4 句对白。
+2. 单镜合计 ≤{max_chars} 字（约 ≤{max_sec} 秒，语速 {chars_per_sec} 字/秒），
+   各镜尽量均匀，也避免少于 20 字。
+3. 为每镜标注 shot_type（全景/中景/特写），在环境交代、对话主体、情绪或道具之间穿插。
 
 【输出格式】
-严格按照以下JSON结构输出：
+严格输出合法 JSON（不要 markdown 代码块）：
 {{
   "scenes": [
     {{
       "scene_id": 1,
-      "shot_type": "全景/中景/特写",
-      "visual_description": "画面描述：场景背景+角色位置+关键动作+关键道具，200字内纯描述，不得附加（写实场景）等风格标签",
+      "shot_type": "全景",
       "dialogue": [
         {{"speaker": "昭昭", "text": "台词1"}},
-        {{"speaker": "灿灿", "text": "台词2"}},
-        {{"speaker": "妈妈", "text": "台词3"}}
+        {{"speaker": "灿灿", "text": "台词2"}}
       ]
     }}
   ]
 }}
 
-【角色外貌固定描述】
-- 昭昭：7岁男孩，男孩气黑色超短发（发长在耳垂以上，清晰露出双耳及整个后颈，齐耳学生头），圆脸，穿蓝色短袖T恤，比灿灿矮约半个头
-- 灿灿：10岁女孩，扎马尾辫，穿粉色卫衣，比昭昭高约半个头
-- 妈妈：成年女性，黑色长发，米色上衣牛仔裤
-- 【身高】昭昭与灿灿同框时弟弟矮约半个头，禁止同高或弟弟更高
-
 【重要约束】
-- 不要添加剧本中没有的动作或情绪（不要"无奈地""叹气道"等主观解读）
-- visual_description只描述可看见的画面元素
-- 【角色入画】visual_description 中的人物必须且仅为本镜头 dialogue 的发言角色；
-  未发言角色禁止旁观/路过/入画；台词提到名字不等于发言
-- 台词原文照抄，不要修改措辞
-- 每个镜头的 dialogue 须带上 speaker 角色名，text 为该镜头对应的原剧本台词，禁止修改措辞
+- 台词原文照抄，禁止改写、删句、合并措辞；speaker 必须与原剧本一致。
+- 不要输出 visual_description / visual_brief（画面概述由后续步骤生成）。
+- 不要添加剧本中没有的旁白、动作说明或情绪标签。
 """
 
 DAILY_SCRIPT_USER_TEMPLATE = """\
-请根据上述分镜规则，将以下对话剧本转化为分镜脚本：
+请将以下对话剧本切成分镜（只分配台词，不写画面）。
+
+【标题】{scene_title}
+【场景设定】{setting}
 
 【对话剧本】
 {dialogue_text}
 
 【要求】
-1. 按照场景组拆分镜头（不是一句台词一个镜头）
-2. 每个镜头承载2-4句台词
+1. 按地点/对话轮次合并镜头，禁止一句一镜
+2. 每镜 2–4 句；单镜合计 ≤{max_chars} 字（约 ≤{max_sec} 秒）
+3. 原台词须全部分配到各镜 dialogue，措辞不得改
 
-请直接输出JSON。
+请直接输出 JSON。
 """
+
+# 与 DailyScriptStage 时长告警对齐
+DAILY_SCRIPT_MAX_SEGMENT_SEC = 18.0
+
+
+def _format_prompt_number(value: float) -> str:
+    """提示词里去掉无意义的小数尾（18.0 → 18）。"""
+    number = float(value)
+    if number.is_integer():
+        return str(int(number))
+    return f"{number:g}"
 
 
 def build_daily_script_prompts(
@@ -197,6 +199,9 @@ def build_daily_script_prompts(
             [{"speaker": "昭昭", "line": "台词"}, ...] 格式
         chars_per_sec: 语速基准（字/秒），默认 3.0
     """
+    cps = float(chars_per_sec) if chars_per_sec else 3.0
+    max_sec = DAILY_SCRIPT_MAX_SEGMENT_SEC
+    max_chars = max(20, int(max_sec * cps))
     dialogue = dialogue_script.get("dialogue", [])
     # 纠正常见 LLM 拼写错误（speaker 错拼）
     _correct_dialogue_speaker(dialogue)
@@ -204,9 +209,23 @@ def build_daily_script_prompts(
         f"{d.get('speaker', '?')}：{d.get('line', '')}"
         for d in dialogue
     )
-    return DAILY_SCRIPT_SYSTEM_PROMPT.format(chars_per_sec=chars_per_sec), DAILY_SCRIPT_USER_TEMPLATE.format(
-        dialogue_text=dialogue_text,
+    scene_title = str(dialogue_script.get("scene_title") or "").strip() or "（无标题）"
+    setting = str(dialogue_script.get("setting") or "").strip() or "（未提供设定）"
+    max_sec_text = _format_prompt_number(max_sec)
+    cps_text = _format_prompt_number(cps)
+    system = DAILY_SCRIPT_SYSTEM_PROMPT.format(
+        chars_per_sec=cps_text,
+        max_sec=max_sec_text,
+        max_chars=max_chars,
     )
+    user = DAILY_SCRIPT_USER_TEMPLATE.format(
+        dialogue_text=dialogue_text,
+        scene_title=scene_title,
+        setting=setting,
+        max_sec=max_sec_text,
+        max_chars=max_chars,
+    )
+    return system, user
 
 
 def _dialogue_char_count(line: str) -> int:

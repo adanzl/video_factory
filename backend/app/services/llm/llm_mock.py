@@ -6,7 +6,11 @@ from typing import Any
 from app.config import get_settings
 from app.services.llm.llm_mgr import LLMClient
 from app.quality.image_prompt import MIN_IMAGE_PROMPT_CHARS
-from app.utils.media import segment_text_char_cap, split_narration_to_segments
+from app.utils.media import (
+    DEFAULT_SPEECH_CHARS_PER_SEC,
+    segment_text_char_cap,
+    split_narration_to_segments,
+)
 
 
 def _mock_image_prompt(visual_style: str, display_title: str, idx: int) -> str:
@@ -195,9 +199,11 @@ class MockLLMClient(LLMClient):
         segment_indices: list[int],
         segment_target_sec: float,
         job: dict | None = None,
+        chars_per_sec: float | None = None,
     ) -> dict[str, Any]:
         _ = job
-        cap = segment_text_char_cap(segment_target_sec)
+        cps = chars_per_sec if chars_per_sec is not None else DEFAULT_SPEECH_CHARS_PER_SEC
+        cap = segment_text_char_cap(segment_target_sec, chars_per_sec=cps)
         allowed = {int(i) for i in segment_indices}
         for seg in script.get("segments") or []:
             idx = int(seg["segment_index"])
@@ -451,8 +457,9 @@ class MockLLMClient(LLMClient):
         dialogue_script: dict,
         *,
         job: dict | None = None,
+        chars_per_sec: float | None = None,
     ) -> dict[str, Any]:
-        _ = job
+        _ = job, chars_per_sec
         dialogue = dialogue_script.get("dialogue", [])
         # 按 8-10 个镜头模拟
         scene_count = min(10, max(8, (len(dialogue) + 2) // 3))
@@ -472,7 +479,6 @@ class MockLLMClient(LLMClient):
             scenes.append({
                 "scene_id": i + 1,
                 "shot_type": shot_types[i % 3],
-                "visual_description": f"场景{i+1}：昭昭和灿灿在{'客厅' if i % 2 == 0 else '厨房'}互动。",
                 "dialogue": dialogue_data,
                 "img2img_prompt": (
                     "剪贴画风格，扁平插画，纸张纹理，明亮色彩，无阴影，几何图形简洁，"

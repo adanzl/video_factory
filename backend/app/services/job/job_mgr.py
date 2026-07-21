@@ -936,7 +936,19 @@ class JobMgr:
         for i, item in enumerate(dialogue):
             if not isinstance(item, dict) or "speaker" not in item or "line" not in item:
                 logger.warning("对话第 %d 条数据格式异常: %s", i + 1, item)
-        system, user = build_daily_script_prompts(story_content)
+        from app.utils.job_info import (
+            content_style_from_job,
+            resolve_speech_chars_per_sec,
+            script_params_from_info,
+        )
+
+        system, user = build_daily_script_prompts(
+            story_content,
+            chars_per_sec=resolve_speech_chars_per_sec(
+                script_params_from_info(job.get("info")),
+                content_style=content_style_from_job(job),
+            ),
+        )
         return [{"step": "daily_script", "system": system, "user": user}]
 
     def generate_video_description(self, job_id: int) -> dict:

@@ -23,6 +23,9 @@ CONTENT_STYLE_LIFE_EXPERIENCE = "life_experience"
 CONTENT_STYLE_HISTORICAL_MYSTERY = "history_mystery"
 CONTENT_STYLE_DAILY_STORY = "daily_story"
 
+# 日常对话默认语速（儿童音色偏慢）；标准口播仍用 DEFAULT_SPEECH_CHARS_PER_SEC
+DEFAULT_DAILY_STORY_SPEECH_CHARS_PER_SEC = 3.0
+
 _VALID_CONTENT_STYLES = frozenset(
     {
         CONTENT_STYLE_SCIENCE_CHILD,
@@ -302,12 +305,25 @@ _SCRIPT_PARAM_KEYS = (
 )
 
 
-def resolve_speech_chars_per_sec(script: dict[str, Any] | None = None) -> float:
-    """info.script.speech_chars_per_sec；默认 DEFAULT_SPEECH_CHARS_PER_SEC。"""
+def resolve_speech_chars_per_sec(
+    script: dict[str, Any] | None = None,
+    *,
+    content_style: str | None = None,
+    default: float | None = None,
+) -> float:
+    """解析语速（字/秒）。
+
+    优先 ``info.script.speech_chars_per_sec``（传入已 migrate 的 script 节点）；
+    未设置时：日常默认 3.0，其它用 ``DEFAULT_SPEECH_CHARS_PER_SEC``。
+    """
     if isinstance(script, dict):
         rate = _optional_positive_float(script.get("speech_chars_per_sec"))
         if rate is not None:
             return rate
+    if default is not None:
+        return float(default)
+    if content_style == CONTENT_STYLE_DAILY_STORY:
+        return DEFAULT_DAILY_STORY_SPEECH_CHARS_PER_SEC
     return DEFAULT_SPEECH_CHARS_PER_SEC
 
 

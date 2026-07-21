@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from app.config import get_settings
-from app.utils.job_info import CONTENT_STYLE_SCIENCE_CHILD
+from app.utils.job_info import CONTENT_STYLE_SCIENCE_CHILD, script_params_from_info
 from app.utils.media import DEFAULT_SPEECH_CHARS_PER_SEC, narration_word_range
 from app.services.script.board_timeline import (
     append_material_timeline_to_user,
@@ -24,11 +24,29 @@ from app.services.script.voiceover_standard.styles.science_child import VOICE as
 from app.services.script.voiceover_standard.styles.common import (
     ANTI_MEMOIR,
     MATERIAL_LENGTH_RULE,
+    MATERIAL_NO_JSON,
     MATERIAL_SCRIPT_JSON_EXAMPLE,
-    NO_JSON,
 )
 
-__all__ = ["build_voiceover_material_prompts"]
+__all__ = ["build_voiceover_material_prompts", "resolve_need_opening"]
+
+
+def resolve_need_opening(
+    job: dict | None = None,
+    script: dict | None = None,
+) -> bool:
+    """从 script_json / info.script 解析是否需要开场钩子。"""
+    if isinstance(script, dict) and isinstance(script.get("need_opening"), bool):
+        return script["need_opening"]
+    if not job:
+        return False
+    params = script_params_from_info(job.get("info"))
+    if isinstance(params.get("need_opening"), bool):
+        return params["need_opening"]
+    legacy = job.get("script")
+    if isinstance(legacy, dict) and isinstance(legacy.get("need_opening"), bool):
+        return legacy["need_opening"]
+    return False
 
 
 def build_voiceover_material_prompts(
@@ -42,10 +60,16 @@ def build_voiceover_material_prompts(
     script: dict | None = None,
     chars_per_sec: float | None = None,
     need_opening: bool | None = None,
+    job: dict | None = None,
 ) -> dict[str, str]:
     settings = get_settings()
     max_title = settings.max_title_length if max_title_length is None else max_title_length
     timeline = resolve_video_timeline(video_timeline, script=script, chars_per_sec=chars_per_sec)
+    opening = (
+        bool(need_opening)
+        if need_opening is not None
+        else resolve_need_opening(job, script)
+    )
     if timeline:
         narration_word_min, narration_word_max = narration_range_for_timeline(timeline)
         narration_word_target = (narration_word_min + narration_word_max) // 2
@@ -58,20 +82,23 @@ def build_voiceover_material_prompts(
     if timeline:
         segment_rule = (
             f"segments 必须恰好 {len(timeline.slots)} 条，与画面时间表逐段一一对应；"
-            "每项含 segment_index 与 text，第 i 段只讲第 i 段画面；"
+            "每项含 segment_index 与 text，第 i 段只讲第 i 段对象/画面；"
             "口吻保持童趣。"
         )
-        if need_opening:
+        if opening:
             opening_rule = (
                 "开头用一句惊讶感叹或反常识直接吸引观众，如「哇，快看天上！」；"
-                "迅速接入时间表第 1 段画面内容。"
+                "迅速接入时间表第 1 段对象内容。"
             )
         else:
             opening_rule = (
-                "禁止开场钩子、悬念反问、自我介绍或全片总起；"
-                "narration 第一句必须从时间表第 1 段画面内容直接讲起。"
+                "禁止开场钩子、悬念反问、自我介绍、全片总起或结尾清单式连读多段；"
+                "narration 第一句必须从时间表第 1 段对象内容直接讲起。"
             )
-        length_rule = "每段按时间表字数预算写满（见下）。"
+        length_rule = (
+            f"全片 narration 验收区间 {narration_word_min}-{narration_word_max} 字；"
+            "每段按时间表字数范围与三层写法写满（见下）。"
+        )
     else:
         segment_rule = (
             "segments 为分句数组，每项含 segment_index 与 text；"
@@ -80,7 +107,7 @@ def build_voiceover_material_prompts(
         )
         opening_rule = (
             "开头用一句惊讶感叹或反常识吸引观众，迅速进入主题。"
-            if need_opening
+            if opening
             else "禁止开头自我介绍；第一句直接进入主题。"
         )
         length_rule = (
@@ -96,10 +123,10 @@ def build_voiceover_material_prompts(
         f"{length_rule}"
         f"{SCIENCE_CHILD_VOICE}"
         f"{ANTI_MEMOIR}"
-        f"{NO_JSON}"
+        f"{MATERIAL_NO_JSON}"
         f"{opening_rule}"
         f"{segment_rule}"
-        f"{material_timeline_system_clause(timeline, need_opening=bool(need_opening)) if timeline else ''}"
+        f"{material_timeline_system_clause(timeline) if timeline else ''}"
         f"{supplementary_system_clause(supplementary_info, bind_timeline=bool(timeline))}"
         f"{json_output_clause(MATERIAL_SCRIPT_JSON_EXAMPLE)}"
     )

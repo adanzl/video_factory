@@ -1,31 +1,73 @@
 # LLM 调用配置
 
+> 审查日期：2026-07-21。  
+> 相关：`docs/提示词构建.md`（提示词链路）。
+
 ## DeepSeek 配置
 
 | 环境变量 | 默认值 | 说明 |
-|---|---|---|
+| --- | --- | --- |
 | `DEEPSEEK_MODEL` | `deepseek-v4-flash` | 模型名称 |
 | `DEEPSEEK_MAX_TOKENS` | `32768` | 单次最大 token |
 | `DEEPSEEK_THINKING` | `true` | 全局深度思考开关 |
 
-## Thinking 模式配置
+## Agnes 配置
 
-| 方法 | thinking | 控制方式 | 理由 |
-|---|---|---|---|
-| `_generate_narration_only` | ✅ 开启 | 走配置 | 口播长文，不开思考只出 300 字 |
-| `generate_material_script` | ✅ 开启 | 走配置 | 素材口播，同为 narration 类 |
-| `optimize_script_title` | ✅ 开启 | 走配置 | 标题优化需理解全文 |
-| `generate_topics` | ✅ 开启 | 走配置 | 选题生成需深度推理 |
-| `fill_image_prompts` | ❌ 关闭 | 代码硬关 | 短结构化输出（每段 ~150 字） |
-| `shrink_segment_texts` | ❌ 关闭 | 代码硬关 | 输入输出都很短 |
-| `generate_video_description` | ❌ 关闭 | 代码硬关 | 短文案（~200 字） |
-| `_fill_visual_briefs` | ❌ 关闭 | 代码硬关 | 短结构化输出 |
-| `_expand_narration_if_needed` | ❌ 关闭 | 代码硬关 | 扩写已有文本 |
-| `rewrite_pixabay_query` | ❌ 关闭 | 代码硬关 | 极短输出（几个词） |
-| `prepare_sd15_image_prompt` | ❌ 关闭 | 代码硬关 | 短翻译（~50-100 词） |
+| 环境变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `AGNES_LLM_MAX_TOKENS` | `32768` | Agnes 文本/多模态上限 |
 
-## 配置说明
+Agnes 校验清单（出图 VL）固定 `max_tokens=256`。
 
-- 全局默认开启思考（`DEEPSEEK_THINKING=true`），4 个需要思考的方法走配置即可
-- 7 个不需要思考的方法代码中硬编码 `thinking_enabled=False`，不受环境变量影响
-- 想全局关闭思考设 `DEEPSEEK_THINKING=false`，此时 4 个方法也会受影响（长文会变短）
+## max_tokens 约定
+
+DeepSeek `_chat` / `_chat_json` 不传 `max_tokens`，统一走
+`DEEPSEEK_MAX_TOKENS`。Agnes 文本/帧分析走
+`AGNES_LLM_MAX_TOKENS`。
+
+## Thinking 判定原则
+
+本项目偏创意。创意类**硬关** thinking，并设 temperature；需硬约束
+的链路**走配置**（默认 `DEEPSEEK_THINKING=true` 即开）。
+
+开 thinking 时模型会**忽略 temperature**，故走配置链路不传
+temperature。
+
+| 走配置（默认开） | 硬关 |
+| --- | --- |
+| 硬约束：字数、静帧禁动作、切镜完整性、SD15 格式 | 创意文案、画面想象、选题钩子 |
+| 不开会明显挂（太短/违规/结构塌） | 要花样、要温度采样 |
+
+- **走配置**：不传 `thinking_enabled`，跟 `DEEPSEEK_THINKING`
+- **硬关**：`thinking_enabled=False`，不受环境变量影响
+
+## Thinking 全表
+
+| 链路 | thinking | temperature | 理由 |
+| --- | --- | --- | --- |
+| A1 口播 | ✅ 走配置 | — | 长度硬约束（例外） |
+| A2 画面概述 | ❌ 硬关 | 0.8 | 视觉创意 |
+| A3 文生图 | ✅ 走配置 | — | 静帧禁动作等硬约束 |
+| A4 扩写 | ✅ 走配置 | — | 字数限制 |
+| A5 缩句 | ✅ 走配置 | — | 字数限制 |
+| B1 素材口播 | ✅ 走配置 | — | 同 A1 |
+| C1/C2 选题 | ❌ 硬关 | 0.8 | 钩子创意 |
+| D1 主题 | ❌ 硬关 | 0.95 | 高创意 |
+| D2 故事 | ❌ 硬关 | 0.95 | 高创意 |
+| D3 分镜 | ✅ 走配置 | — | 台词完整/切镜结构 |
+| D4 对话标题 | ❌ 硬关 | 0.8 | 标题创意 |
+| E1 标题优化 | ❌ 硬关 | 0.8 | 标题创意 |
+| E2 简介 | ❌ 硬关 | 0.5 | 工具型短文案 |
+| E3 标签 | ❌ 硬关 | 0.5 | 工具型 |
+| E4 Pixabay | ❌ 硬关 | 0.5 | 工具型 |
+| 封面辅调 LLM | ❌ 硬关 | 0.5 | 工具型 |
+| F1 SD15 英文化 | ✅ 走配置 | — | 格式/结构硬约束 |
+| B2/E5主/F2–F4 | — | — | 非 DeepSeek 聊天 |
+
+## temperature（越大越野）
+
+仅硬关 thinking 时生效。代码常量：
+
+- `_TEMP_CREATIVE_HIGH = 0.95`（D1/D2）
+- `_TEMP_CREATIVE_MID = 0.8`（A2/C/D4/E1）
+- `_TEMP_UTILITY = 0.5`（E2/E3/E4/封面）

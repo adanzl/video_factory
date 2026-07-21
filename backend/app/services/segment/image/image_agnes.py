@@ -338,11 +338,28 @@ class AgnesImageProvider(ImageProvider):
 
     _VERIFY_SYSTEM_PROMPT = (
         "你是图像质检员。只根据用户列出的检查项逐项判断，每项单独一行回答。"
-        "回答格式必须为「项N: 是」或「项N: 否」（昭昭辫子项在无该角色时可答「项N: 无昭昭」）。"
+        "回答格式必须为「项N: 是」或「项N: 否」"
+        "（昭昭短发项在无该角色时可答「项N: 无昭昭」）。"
         "不要解释、不要编号列表外的文字、不要复述提示词。"
-        "项「场景」：只看主场景/主体是否明显跑偏；画风套话、参考图指令前缀、次要细节差异一律算通过（答是）。"
-        "项「人数」：只数画面中可辨认的人物，须与给定发言角色数一致。"
+        "项「场景」：只看主场景/主体是否明显跑偏；"
+        "画风套话、参考图指令前缀、次要细节差异一律算通过（答是）。"
+        "项「胳膊」：每人可见胳膊是否最多 2 条；正常答「是」，多肢答「否」。"
+        "项「人数」：只计画面主体人物，须与给定发言角色数一致；"
+        "背景照片墙/镜子虚影/玩具人脸/远处剪影一律不算。"
     )
+
+    @staticmethod
+    def _strip_prompt_for_verify(prompt: str) -> str:
+        """去掉 daily wrap 硬编码前缀，只留给 VL 核心场景句。"""
+        body = (prompt or "").strip()
+        marker = "孩子气的构图。"
+        if "基于参考图调整人物动作" in body and marker in body:
+            idx = body.find(marker)
+            if idx >= 0:
+                stripped = body[idx + len(marker) :].strip()
+                if stripped:
+                    return stripped
+        return body
 
     @staticmethod
     def _parse_item_answer(body: str) -> str:
@@ -369,37 +386,44 @@ class AgnesImageProvider(ImageProvider):
         content_style: str | None,
     ) -> tuple[list[tuple[str, str]], str]:
         """返回 ([(check_id, question_without_index), ...], user_prompt)."""
+        speakers = [str(s).strip() for s in (expected_speakers or []) if str(s).strip()]
+        scene_prompt = AgnesImageProvider._strip_prompt_for_verify(prompt)
+
         items: list[tuple[str, str]] = [
             (
                 "scene",
                 "画面主场景/主体是否与提示词核心场景一致？"
-                "仅当主体或场景明显跑偏时答「否」；画风套话、参考图前缀、次要细节差异答「是」。"
+                "仅当主体或场景明显跑偏时答「否」；"
+                "画风套话、参考图前缀、次要细节差异答「是」。"
                 "回答「是」或「否」",
             ),
         ]
-        if content_style == CONTENT_STYLE_DAILY_STORY:
+        if content_style == CONTENT_STYLE_DAILY_STORY and "昭昭" in speakers:
             items.append(
                 (
-                    "zhao_braid",
-                    "角色昭昭（小男孩）是否扎着辫子（马尾辫、双马尾、麻花辫、丸子头等）？"
+                    "zhao_hair",
+                    "角色昭昭是否为短发男生头"
+                    "（发长约耳垂以上、无马尾/双马尾/麻花辫/丸子头）？"
                     "回答「是」或「否」；图中无昭昭时回答「无昭昭」",
                 )
             )
         items.append(
             (
                 "extra_arms",
-                "是否有任何人物胳膊/手臂数量超过2条？回答「是」或「否」",
+                "画面中每人可见胳膊/手臂是否最多 2 条？"
+                "正常答「是」；有任何人超过 2 条答「否」",
             )
         )
-        speakers = [str(s).strip() for s in (expected_speakers or []) if str(s).strip()]
         expected_count = len(speakers)
         if expected_count > 0:
             speakers_str = "/".join(speakers)
             items.append(
                 (
                     "cast_count",
-                    f"图片中可辨认人物数量是否恰好为 {expected_count} 个"
-                    f"（须与该段发言角色一致：{speakers_str}）？回答「是」或「否」",
+                    f"画面主体人物数量是否恰好为 {expected_count} 个"
+                    f"（须与该段发言角色一致：{speakers_str}；"
+                    f"背景照片墙/镜子虚影/玩具人脸/远处剪影不算）？"
+                    f"回答「是」或「否」",
                 )
             )
         if (
@@ -410,12 +434,16 @@ class AgnesImageProvider(ImageProvider):
             items.append(
                 (
                     "height_order",
-                    "蓝衣短发小男孩昭昭是否比粉衣马尾女孩灿灿矮约半个头"
-                    "（不得同高或弟弟更高）？回答「是」或「否」",
+                    "昭昭是否明显比灿灿矮约半个头"
+                    "（不得同高或弟弟更高；勿因服装颜色偏差而判否）？"
+                    "回答「是」或「否」",
                 )
             )
 
-        lines = [f"【提示词】\n{prompt}\n", f"请检查以下 {len(items)} 项，每项一行："]
+        lines = [
+            f"【核心场景】\n{scene_prompt}\n",
+            f"请检查以下 {len(items)} 项，每项一行：",
+        ]
         for i, (_cid, q) in enumerate(items, start=1):
             lines.append(f"项{i}: {q}")
         lines.append("不要输出任何其他内容。")
@@ -423,7 +451,10 @@ class AgnesImageProvider(ImageProvider):
 
     @staticmethod
     def _evaluate_verify_response(content: str, check_ids: list[str]) -> bool:
-        """按检查项判定；解析失败的项视为通过（避免误杀）。"""
+        """按检查项判定；解析失败的项视为通过（避免误杀）。
+
+        各项极性统一：答「是」为通过侧；答「否」为失败（zhao_hair 的「无昭昭」放行）。
+        """
         answers: dict[int, str] = {}
         for raw in content.split("\n"):
             line = raw.strip()
@@ -439,15 +470,15 @@ class AgnesImageProvider(ImageProvider):
             verdict = answers.get(i, "unknown")
             if verdict == "unknown":
                 continue
-            if cid == "scene" and verdict == "no":
-                return False
-            if cid == "zhao_braid" and verdict == "yes":
-                return False
-            if cid == "extra_arms" and verdict == "yes":
-                return False
-            if cid == "cast_count" and verdict == "no":
-                return False
-            if cid == "height_order" and verdict == "no":
+            if cid == "zhao_hair" and verdict == "na_zhao":
+                continue
+            if verdict == "no" and cid in {
+                "scene",
+                "zhao_hair",
+                "extra_arms",
+                "cast_count",
+                "height_order",
+            }:
                 return False
         return True
 

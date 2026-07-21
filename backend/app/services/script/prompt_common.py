@@ -112,22 +112,33 @@ def storyboard_length_budget(
     )
 
 
-def append_supplementary_to_user(user: str, supplementary_info: str | None) -> str:
+def append_supplementary_to_user(
+    user: str,
+    supplementary_info: str | None,
+    *,
+    scope: str = "voiceover",
+) -> str:
     extra = (supplementary_info or "").strip()
     if not extra:
         return user
-    return (
-        f"{user}\n\n"
-        "用户补充信息（须合理融入口播与分镜，勿编造与补充信息矛盾的内容；"
-        "若与科普常识冲突，以科学事实为准）：\n"
-        f"{extra}"
-    )
+    if scope == "visual":
+        lead = (
+            "用户补充信息（须合理融入画面描述，勿编造与补充信息矛盾的内容；"
+            "若与科普常识冲突，以科学事实为准）：\n"
+        )
+    else:
+        lead = (
+            "用户补充信息（须合理融入口播与分镜，勿编造与补充信息矛盾的内容；"
+            "若与科普常识冲突，以科学事实为准）：\n"
+        )
+    return f"{user}\n\n{lead}{extra}"
 
 
 def supplementary_system_clause(
     supplementary_info: str | None,
     *,
     bind_timeline: bool = False,
+    scope: str = "voiceover",
 ) -> str:
     extra = (supplementary_info or "").strip()
     if not extra:
@@ -136,6 +147,11 @@ def supplementary_system_clause(
         return (
             "用户会提供补充信息：须融入口播内容与表达风格，"
             "但不得与画面时间表冲突；若冲突以时间表为准。"
+        )
+    if scope == "visual":
+        return (
+            "用户会提供补充信息：须合理融入画面描述，"
+            "勿编造与补充信息矛盾的内容；若与科普常识冲突，以科学事实为准。"
         )
     return (
         "用户会提供补充信息：须合理融入口播内容与表达风格，"

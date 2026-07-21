@@ -187,123 +187,98 @@ def slot_min_chars(max_chars: int) -> int:
     return max(8, int(max_chars * 0.7))
 
 
-def slot_target_chars(max_chars: int) -> int:
-    return max(slot_min_chars(max_chars), int(max_chars * 0.85))
+def _slot_object_and_visual(slot: TimelineSlot) -> tuple[str, str]:
+    """拆出对象名与画面特征，避免表格只剩 description。"""
+    scene = (slot.scene or "").strip()
+    desc = (slot.description or "").strip()
+    if not desc:
+        return scene or f"第{slot.index}段", scene or f"第{slot.index}段"
+    if not scene or scene == desc:
+        return desc, desc
+    if scene.endswith(desc):
+        name = scene[: -len(desc)].strip()
+        if name:
+            return name, desc
+    return scene, desc
 
 
-def timeline_table_for_prompt(timeline: VideoTimeline) -> str:
-    lines = [
-        "序号 | 起止(秒) | 时长 | 画面内容 | 字数下限 | 建议字数 | 字数上限",
-        "--- | --- | --- | --- | --- | --- | ---",
-    ]
-    for slot in timeline.slots:
-        min_c = slot_min_chars(slot.max_chars)
-        target_c = slot_target_chars(slot.max_chars)
-        lines.append(
-            f"{slot.index} | {_format_sec(slot.start_sec)}-{_format_sec(slot.end_sec)} | "
-            f"{_format_sec(slot.duration_sec)}s | {slot.scene} | {min_c} | "
-            f"{target_c}-{slot.max_chars} | {slot.max_chars}"
-        )
-    return "\n".join(lines)
-
-
-def material_timeline_length_budget(timeline: VideoTimeline, *, chars_per_sec: float | None = None) -> str:
-    """素材脚本专用：按时间表每段时长分配字数预算，不含三层和验收区间。"""
-    return (
-        "【生成顺序】先按时间表逐段写满 segments（每段严格遵守字数范围），"
-        "再原样拼接为 narration，最后统计 word_count。"
+def material_timeline_length_budget(
+    timeline: VideoTimeline, *, chars_per_sec: float | None = None
+) -> str:
+    """素材脚本：全片字数验收 + 三层写法 + 生成顺序。"""
+    _ = chars_per_sec
+    lo, hi = narration_range_for_timeline(timeline)
+    total_max = sum(slot.max_chars for slot in timeline.slots)
+    sum_min = sum(slot_min_chars(slot.max_chars) for slot in timeline.slots)
+    return "\n".join(
+        [
+            f"【字数预算】全片 narration 硬性 {lo}-{hi} 字"
+            f"（各段上限合计约 {total_max} 字；下限之和约 {sum_min} 字）。",
+            "每段须落在时间表「字数范围」列内。",
+            "【每段三层写法，撑满该段时长】",
+            "① 童趣感叹或「你看」式互动，点名本段「对象」；",
+            "② 讲 1 个准确科普点（机制/原因/对比）；",
+            "③ 加一句比喻、拟声或生活联想（像积木、像气球那样）。",
+            "禁止整段只有一句短感叹（如「哇，好厉害呀」）；"
+            "禁止为省字合并多段；禁止增减 segments 条数。",
+            "【生成顺序】先按时间表逐段写满 segments（每段对照字数范围），"
+            "再原样拼接为 narration，最后统计 word_count；"
+            "不足则当场扩写，超标则当场删繁就简。",
+        ]
     )
 
 
-def _material_timeline_table(timeline: VideoTimeline, *, chars_per_sec: float | None = None) -> str:
-    """时间表表格，含画面内容描述。"""
-    def _mc(d): return _max_chars_for_duration(d, chars_per_sec)
+def _material_timeline_table(
+    timeline: VideoTimeline, *, chars_per_sec: float | None = None
+) -> str:
+    """时间表表格：对象名 + 画面特征 + 字数范围。"""
+
+    def _mc(d: float) -> int:
+        return _max_chars_for_duration(d, chars_per_sec)
+
     lines = [
-        "序号 | 时长 | 画面内容 | 字数范围",
-        "--- | --- | --- | ---",
+        "序号 | 时长 | 对象 | 画面特征 | 字数范围",
+        "--- | --- | --- | --- | ---",
     ]
     for slot in timeline.slots:
         max_c = _mc(slot.duration_sec)
         min_c = slot_min_chars(max_c)
-        desc = slot.description
+        obj, visual = _slot_object_and_visual(slot)
         lines.append(
-            f"{slot.index} | {_format_sec(slot.duration_sec)}s | {desc} | "
-            f"{min_c}-{max_c}"
+            f"{slot.index} | {_format_sec(slot.duration_sec)}s | {obj} | "
+            f"{visual} | {min_c}-{max_c}"
         )
     return "\n".join(lines)
 
 
-def material_timeline_system_clause(timeline: VideoTimeline, *, need_opening: bool = False) -> str:
-    """素材脚本专用：时间表对齐要求，不含三层、验收区间、joined约束。"""
-    count = len(timeline.slots)
-    opening = "" if need_opening else (
-        "禁止开场钩子、悬念反问（如「你知道吗」）、全片总起、结尾长篇回顾或清单式连读多届/多段。"
-        "narration 第一句必须从第 1 段画面内容直接讲起（视频 0 秒即进入该段主题）。"
-    )
-    return (
-        f"用户提供了基底视频画面时间表（共{count}段），口播须与画面逐段严格对齐。"
-        f"segments 必须恰好 {count} 条，segment_index 从 1 到 {count}，与时间表顺序一一对应；"
-        "第 i 段 text 只讲第 i 段画面，禁止提前讲后续画面、禁止滞后讲上一段、禁止合并多段。"
-        f"{opening}"
-        "每段按时间表「字数范围」列写满该段时长。"
-        "若对象名称较长，优先写核心标识（如年份、名称），细节从简。"
-        "有补充信息时不得与时间表矛盾；时间表优先决定分镜与讲什么。"
-    )
-
-
-def append_material_timeline_to_user(user: str, timeline: VideoTimeline, *, chars_per_sec: float | None = None) -> str:
-    """素材脚本专用：附加时间表信息，含画面描述。"""
-    return (
-        f"{user}\n\n"
-        f"{material_timeline_length_budget(timeline, chars_per_sec=chars_per_sec)}\n\n"
-        "基底视频画面时间表（segments 须与此表逐段对齐）：\n"
-        f"{_material_timeline_table(timeline, chars_per_sec=chars_per_sec)}"
-    )
-
-
-def timeline_length_budget_for_prompt(timeline: VideoTimeline) -> str:
-    lo, hi = narration_range_for_timeline(timeline)
-    total_max = sum(slot.max_chars for slot in timeline.slots)
-    sum_min = sum(slot_min_chars(slot.max_chars) for slot in timeline.slots)
-    lines = [
-        f"【字数预算】全片 narration 硬性 {lo}-{hi} 字（各段上限合计约 {total_max} 字）。",
-        f"各段字数下限之和为 {sum_min} 字；写作时每段须达到「字数下限」列，建议落在「建议字数」区间。",
-        "【每段三层写法，撑满该段时长】",
-        "① 童趣感叹或「你看」式互动，点名本段画面；",
-        "② 讲 1 个准确科普点（机制/原因/对比）；",
-        "③ 加一句比喻、拟声或生活联想（像积木、像气球那样）。",
-        "禁止整段只有一句短感叹（如「哇，好厉害呀」），禁止为省字合并多段画面。",
-        "【生成顺序】先按时间表逐段写满 segments（每段对照字数下限），"
-        "再原样拼接为 narration，最后统计 word_count；不足则当场扩写再输出。",
-    ]
-    return "\n".join(lines)
-
-
-def timeline_system_clause(timeline: VideoTimeline) -> str:
+def material_timeline_system_clause(timeline: VideoTimeline) -> str:
+    """素材脚本：时间表对齐与写满要求（开场钩子由 builder 单独注入）。"""
     count = len(timeline.slots)
     lo, hi = narration_range_for_timeline(timeline)
     return (
         f"用户提供了基底视频画面时间表（共{count}段），口播须与画面逐段严格对齐。"
-        f"segments 必须恰好 {count} 条，segment_index 从 1 到 {count}，与时间表顺序一一对应；"
-        "第 i 段 text 只讲第 i 段画面，禁止提前讲后续画面、禁止滞后讲上一段、禁止合并多段。"
-        "禁止开场钩子、悬念反问（如「你知道吗」）、全片总起、结尾长篇回顾或清单式连读多届/多段。"
-        "narration 第一句必须从第 1 段画面内容直接讲起（视频 0 秒即进入该段主题）。"
-        f"全片 narration 总字数硬性 {lo}-{hi} 字；每段须对照时间表「字数下限」列写满，"
+        f"segments 必须恰好 {count} 条，segment_index 从 1 到 {count}，"
+        "与时间表顺序一一对应；"
+        "第 i 段 text 只讲第 i 段「对象/画面」，"
+        "禁止提前讲后续画面、禁止滞后讲上一段、禁止合并多段。"
+        f"全片 narration 总字数硬性 {lo}-{hi} 字；"
+        "每段按时间表「字数范围」列写满，"
         "用「感叹+科普点+比喻/拟声」三层撑满该段时长，禁止敷衍短句。"
-        "若对象名称较长，优先写核心标识（如年份、名称），细节从简。"
+        "口播须点名「对象」列核心标识（如年份、名称）；名称较长时细节从简。"
         "各段 text 按顺序拼接须与 narration 完全一致。"
         "有补充信息时不得与时间表矛盾；时间表优先决定分镜与讲什么。"
     )
 
 
-def append_timeline_to_user(user: str, timeline: VideoTimeline) -> str:
+def append_material_timeline_to_user(
+    user: str, timeline: VideoTimeline, *, chars_per_sec: float | None = None
+) -> str:
+    """素材脚本：附加字数预算与时间表。"""
     return (
         f"{user}\n\n"
-        f"{timeline_length_budget_for_prompt(timeline)}\n\n"
-        "基底视频画面时间表（segments 须与此表逐段对齐；JSON 为权威来源）：\n"
-        f"{timeline_table_for_prompt(timeline)}\n\n"
-        "时间表 JSON：\n"
-        f"{timeline.raw}"
+        f"{material_timeline_length_budget(timeline, chars_per_sec=chars_per_sec)}\n\n"
+        "基底视频画面时间表（segments 须与此表逐段对齐）：\n"
+        f"{_material_timeline_table(timeline, chars_per_sec=chars_per_sec)}"
     )
 
 

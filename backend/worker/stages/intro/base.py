@@ -86,7 +86,13 @@ def _generate_cover_subject_from_narration(title: str, narration: str) -> str:
     user = f"标题：{title}\n口播内容：{narration}"
     try:
         client = DeepSeekClient()
-        result, _ = client._chat(system, user, max_tokens=800, json_mode=False)
+        result, _ = client._chat(
+            system,
+            user,
+            json_mode=False,
+            thinking_enabled=False,
+            temperature=0.5,
+        )
         desc = result.strip()
         if desc and len(desc) >= 20:
             logger.info("cover subject generated from narration: '%s'", desc[:80])

@@ -2,14 +2,6 @@
 
 from __future__ import annotations
 
-_VISUAL_BRIEF_RULE = (
-    "各段含segment_index,text,visual_brief,visual_mode=static_motion；"
-    "各段text按顺序拼接须与narration全文一致。"
-    "visual_brief为该镜画面描述（80-150字）：写清视觉主旨、关键动作或对比关系、"
-    "场景类型与情绪，帮助后续扩写文生图提示词；不写镜头焦距、光线方向、材质参数等细节。"
-)
-
-
 # ── JSON 样例 ─────────────────────────────────────────────────────
 
 _VISUAL_BRIEF_JSON_EXAMPLE_FULL = """{
@@ -48,6 +40,22 @@ from app.services.script.prompt_common import (
 from app.services.script.voiceover_standard.styles import resolve_style_rules
 
 
+_DAILY_VISUAL_ROLE = "你是日常亲子对话短剧的分镜画面设计师。"
+
+_VISUAL_BRIEF_CONTENT_RULE = (
+    "visual_brief 为该镜画面描述（80-150 字）：写清视觉主旨、关键动作或对比关系、"
+    "场景类型与氛围，帮助后续扩写文生图提示词；"
+    "不写镜头焦距、光线方向、材质参数等细节。"
+)
+
+_EMOTION_RULE_DIALOGUE = (
+    "情绪须对标台词语气强度（争吵时表情激烈如瞪眼皱眉张嘴、温和平静时表情放松）。"
+)
+
+_EMOTION_RULE_NARRATION = (
+    "氛围与本段口播语气一致，点到即可，勿夸张表演或堆砌表情描写。"
+)
+
 _DAILY_CAST_RULE = (
     "【角色入画】本段画面人物必须且仅等于 dialogue 中的发言角色"
     "（speaker 去重后的集合）；未发言角色禁止以任何形式入画"
@@ -57,12 +65,38 @@ _DAILY_CAST_RULE = (
     "若该段无人发言，visual_brief 禁止出现昭昭/灿灿/妈妈等人像，只写场景。"
 )
 
-_DEFAULT_MOM_RULE = (
+_MOM_DIALOGUE_RULE = (
     "【角色约束】妈妈角色只在该段有妈妈台词（dialogue中speaker=\"妈妈\"）时才出现在画面中；"
     "若该段dialogue数组中没有speaker为妈妈的项，则visual_brief绝对禁止出现妈妈（包括不让妈妈旁观、路过、做背景动作、"
     "在厨房方向、在另一房间等任何形式）。特别注意：台词中提及「妈妈」字样（如\"妈妈说…\"）不等于妈妈在该段说话，"
     "妈妈未发言时不可出现在该段画面中。"
 )
+
+
+def _segments_have_dialogue(segments: list[dict]) -> bool:
+    return any(bool(seg.get("dialogue")) for seg in segments)
+
+
+def _cast_and_emotion_rules(
+    profile_style: str,
+    segments: list[dict],
+) -> tuple[str, str, bool]:
+    """返回 (cast_rule, emotion_rule, include_dialogue)。
+
+    角色入画规则仅在日常，或 segments 已带 dialogue 时注入；
+    纯口播生活片不再无 dialogue 却禁画妈妈。
+    """
+    if profile_style == CONTENT_STYLE_DAILY_STORY:
+        return _DAILY_CAST_RULE, _EMOTION_RULE_DIALOGUE, True
+    if _segments_have_dialogue(segments):
+        return _MOM_DIALOGUE_RULE, _EMOTION_RULE_DIALOGUE, True
+    return "", _EMOTION_RULE_NARRATION, False
+
+
+def _visual_role(profile_style: str) -> str:
+    if profile_style == CONTENT_STYLE_DAILY_STORY:
+        return _DAILY_VISUAL_ROLE
+    return resolve_style_rules(profile_style).role
 
 
 def _format_one_visual_brief_segment(
@@ -74,6 +108,9 @@ def _format_one_visual_brief_segment(
     idx = seg.get("segment_index")
     text = str(seg.get("text") or "")
     line = f"{prefix}segment {idx}: text={text!r}"
+    shot = str(seg.get("shot_type") or "").strip()
+    if shot:
+        line += f"; shot_type={shot!r}"
     if include_dialogue:
         speakers = sorted(
             {
@@ -155,10 +192,8 @@ def build_visual_brief_prompts(
     narration = str(script.get("narration") or "").strip()
     visual_style = str(script.get("visual_style") or "").strip()
     title = str(script.get("title") or "").strip()
-    cast_rule = (
-        _DAILY_CAST_RULE
-        if profile_style == CONTENT_STYLE_DAILY_STORY
-        else _DEFAULT_MOM_RULE
+    cast_rule, emotion_rule, include_dialogue = _cast_and_emotion_rules(
+        profile_style, segments
     )
     partial = segment_indices is not None
     coverage = (
@@ -170,8 +205,8 @@ def build_visual_brief_prompts(
         f"{coverage}"
         "各段含 segment_index, visual_brief, visual_mode=static_motion；"
         "不要输出或修改各段 text。"
-        f"visual_brief 为该镜画面描述（80-150 字）：写清视觉主旨、关键动作或对比关系、"
-        f"场景类型；情绪须对标台词语气强度（争吵时表情激烈如瞪眼皱眉张嘴、温和平静时表情放松）。"
+        f"{_VISUAL_BRIEF_CONTENT_RULE}"
+        f"{emotion_rule}"
         f"{cast_rule}"
         "须通读全文 narration，保证相邻分镜画面衔接自然、叙事节奏连贯，"
         "避免前后镜主体/场景毫无关联的跳跃；"
@@ -183,25 +218,38 @@ def build_visual_brief_prompts(
         else _VISUAL_BRIEF_JSON_EXAMPLE_FULL
     )
     system = (
-        f"{resolve_style_rules(profile_style).role}输出 JSON，字段：segments。"
+        f"{_visual_role(profile_style)}输出 JSON，字段：segments。"
         f"{seg_rule}"
-        f"{supplementary_system_clause(supplementary_info)}"
+        f"{supplementary_system_clause(supplementary_info, scope='visual')}"
         f"{json_output_clause(example)}"
     )
     seg_lines = format_visual_brief_segments_for_prompt(
         segments,
-        include_dialogue=(profile_style == CONTENT_STYLE_DAILY_STORY),
+        include_dialogue=include_dialogue,
         segment_indices=segment_indices,
     )
+    style_line = (
+        f"全片 visual_style：{visual_style}\n\n"
+        if visual_style
+        else ""
+    )
+    if partial:
+        seg_header = (
+            "【各分镜口播 text】（已固定；仅【需生成】段输出 visual_brief，"
+            "【仅上下文】勿输出）：\n"
+        )
+    else:
+        seg_header = "【各分镜口播 text】（已固定，请为每一段生成 visual_brief）：\n"
     user = append_supplementary_to_user(
         (
             f"标题：{title}\n"
-            f"全片 visual_style：{visual_style or '（待你输出）'}\n\n"
+            f"{style_line}"
             f"【口播全文 narration】（供把握画面节奏与连贯性，勿改写）：\n{narration}\n\n"
-            f"【各分镜口播 text】（已固定，须按标记生成 visual_brief）：\n"
+            f"{seg_header}"
             f"{seg_lines}"
         ),
         supplementary_info,
+        scope="visual",
     )
     if feedback:
         user += f"\n\n上次不合格：{feedback}。请按要求重写。"

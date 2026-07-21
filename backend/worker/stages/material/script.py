@@ -290,6 +290,7 @@ class MaterialScriptStage(StageExecutor):
             title,
             narration_target_words=narration_target_words,
             max_title_length=max_title_length,
+            speech_chars_per_sec=chars_per_sec,
             supplementary_info=supplementary_info,
             video_timeline=video_timeline,
             skip_title_optimize=bool(ctx.script_skip_title_optimize),
