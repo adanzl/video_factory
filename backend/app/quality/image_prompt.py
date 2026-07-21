@@ -81,7 +81,11 @@ def sd15_prompt_en_ok(value: object) -> bool:
     return sd15_prompt_en_word_count(value) >= MIN_SD15_PROMPT_EN_WORDS
 
 
-def generic_motion_prompt_issue(prompt: object) -> str | None:
+def generic_motion_prompt_issue(
+    prompt: object,
+    *,
+    allow_character_action: bool = False,
+) -> str | None:
     """检测 motion_prompt 是否为无信息套话或包含人物主动作。"""
     if not isinstance(prompt, str):
         return "motion_prompt missing"
@@ -93,7 +97,7 @@ def generic_motion_prompt_issue(prompt: object) -> str | None:
     stability = ("镜头固定", "主体稳定", "画面平滑")
     if all(word in text for word in stability) and len(text) <= 28:
         return "套话填空，须描述画面内具体微动"
-    if _CHAR_ACTION_RE.search(text):
+    if not allow_character_action and _CHAR_ACTION_RE.search(text):
         return "禁止描述人物或主体的主动作，只写环境元素微动（如烟雾、光影、水流、尘埃等）"
     if _ABSTRACT_VFX_RE.search(text):
         return "禁止使用抽象视觉特效词（光效/光晕/图标/UI元素/粒子/能量等），须写画面中真实可见物体的物理微动"
@@ -102,12 +106,17 @@ def generic_motion_prompt_issue(prompt: object) -> str | None:
 
 def collect_motion_prompt_issues(segments: list[dict]) -> list[str]:
     """汇总各段 motion_prompt 套话与雷同问题。"""
+    from app.utils.job_info import is_keyframe_segment
+
     issues: list[str] = []
     by_motion: dict[str, list[object]] = {}
     for seg in segments:
         idx = seg.get("segment_index")
         motion = str(seg.get("motion_prompt") or "").strip()
-        issue = generic_motion_prompt_issue(motion)
+        issue = generic_motion_prompt_issue(
+            motion,
+            allow_character_action=is_keyframe_segment(seg),
+        )
         if issue:
             issues.append(f"segment {idx}: {issue}")
         if motion:

@@ -222,19 +222,21 @@ class DailyScriptStage(StageExecutor):
             seg.pop("image_prompt", None)
             seg.pop("motion_prompt", None)
 
+        # 先标关键帧，再 fill：关键帧走人物微动 motion，其余走环境微动
+        from app.utils.job_info import (
+            CONTENT_STYLE_DAILY_STORY,
+            apply_keyframe_video_providers,
+        )
+
+        keyframe_indices = apply_keyframe_video_providers(script.get("segments") or [])
+
         # 用标准流程生成文生图 + 运动提示词（含内部质量校验与重试）
         llm_mgr.fill_image_prompts_with_retries(script, job=ctx.job)
 
         # 给 image_prompt 添加固定前后缀（LLM 只输出场景核心内容）
         from app.services.script.image_prompt import wrap_image_prompts
-        from app.utils.job_info import (
-            CONTENT_STYLE_DAILY_STORY,
-            apply_keyframe_video_providers,
-        )
-        wrap_image_prompts(script.get("segments") or [], content_style=CONTENT_STYLE_DAILY_STORY)
 
-        # 特写等关键帧默认 agnes_i2v（motion_prompt 已由 fill_image_prompts 写入）
-        keyframe_indices = apply_keyframe_video_providers(script.get("segments") or [])
+        wrap_image_prompts(script.get("segments") or [], content_style=CONTENT_STYLE_DAILY_STORY)
 
         with connection() as conn:
             repo_job.update_job(
