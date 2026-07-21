@@ -361,76 +361,115 @@ class AgnesImageProvider(ImageProvider):
                 "非 MOCK_MODE 下拒绝静默出占位图"
             )
 
+        exhausted: set[str] = set()
+        result: Path | None = None
         last_exc: Exception | None = None
-        for idx, key in enumerate(keys):
-            try:
-                result: Path | None = None
-                for attempt in range(_VERIFY_MAX_ATTEMPTS):
+        last_key: AgnesApiKey | None = None
+
+        for attempt in range(_VERIFY_MAX_ATTEMPTS):
+            usable = [k for k in keys if k.value not in exhausted]
+            if not usable:
+                break
+
+            # 校验失败重试时轮询换 key；本轮若撞配额则同 attempt 内换下一个
+            start = attempt % len(usable)
+            generated = False
+            for offset in range(len(usable)):
+                key = usable[(start + offset) % len(usable)]
+                last_key = key
+                try:
                     result = self._generate_with_key(
                         key, prompt, output_path, size=size, ref_images=ref_images
                     )
-                    if result is None or not result.exists():
-                        return result
-                    verified = self._verify_image(
-                        prompt,
-                        result,
-                        expected_speakers=expected_speakers,
-                        content_style=content_style,
+                    generated = True
+                    break
+                except AgnesQuotaExceeded as exc:
+                    exhausted.add(key.value)
+                    last_exc = exc
+                    nxt = next(
+                        (k for k in keys if k.value not in exhausted),
+                        None,
                     )
-                    if verified:
-                        logger.info(
-                            "%s agnes generate ok (%s key, verify_attempt=%s/%s)",
+                    if nxt is not None:
+                        logger.warning(
+                            "%s agnes %s key quota/rate limit exceeded, "
+                            "switching to backup (%s)",
                             log_tag,
                             key.label,
-                            attempt + 1,
-                            _VERIFY_MAX_ATTEMPTS,
+                            nxt.label,
                         )
-                        return result
-                    logger.warning(
-                        "%s agnes image verify FAILED (%s key, attempt=%s/%s, "
-                        "prompt_chars=%s, speakers=%s)%s",
+                        continue
+                    raise
+                except Exception as exc:
+                    if agnes_quota_exceeded_from_exception(exc):
+                        exhausted.add(key.value)
+                        last_exc = exc
+                        nxt = next(
+                            (k for k in keys if k.value not in exhausted),
+                            None,
+                        )
+                        if nxt is not None:
+                            logger.warning(
+                                "%s agnes %s key quota/rate limit exceeded, "
+                                "switching to backup (%s)",
+                                log_tag,
+                                key.label,
+                                nxt.label,
+                            )
+                            continue
+                    logger.error(
+                        "%s agnes generate failed (%s key): %s",
                         log_tag,
                         key.label,
-                        attempt + 1,
-                        _VERIFY_MAX_ATTEMPTS,
-                        len(prompt),
-                        expected_speakers,
-                        ", regenerating…" if attempt + 1 < _VERIFY_MAX_ATTEMPTS else ", keep last",
+                        exc,
                     )
-                return result
-            except AgnesQuotaExceeded as exc:
-                last_exc = exc
-                if idx < len(keys) - 1:
-                    logger.warning(
-                        "%s agnes %s key quota/rate limit exceeded, "
-                        "switching to backup (%s)",
-                        log_tag,
-                        key.label,
-                        keys[idx + 1].label,
-                    )
-                    continue
-                raise
-            except Exception as exc:
-                if agnes_quota_exceeded_from_exception(exc) and idx < len(keys) - 1:
-                    logger.warning(
-                        "%s agnes %s key quota/rate limit exceeded, "
-                        "switching to backup (%s)",
-                        log_tag,
-                        key.label,
-                        keys[idx + 1].label,
-                    )
-                    last_exc = exc
-                    continue
-                logger.error(
-                    "%s agnes generate failed (%s key): %s",
-                    log_tag,
-                    key.label,
-                    exc,
-                )
-                if get_settings().mock_mode:
-                    return self._fallback.generate(prompt, output_path, size=size)
-                raise
+                    if get_settings().mock_mode:
+                        return self._fallback.generate(
+                            prompt, output_path, size=size
+                        )
+                    raise
 
+            if not generated:
+                break
+            if result is None or not result.exists():
+                return result
+
+            verified = self._verify_image(
+                prompt,
+                result,
+                expected_speakers=expected_speakers,
+                content_style=content_style,
+            )
+            key_label = last_key.label if last_key else "?"
+            if verified:
+                logger.info(
+                    "%s agnes generate ok (%s key, verify_attempt=%s/%s)",
+                    log_tag,
+                    key_label,
+                    attempt + 1,
+                    _VERIFY_MAX_ATTEMPTS,
+                )
+                return result
+            more = attempt + 1 < _VERIFY_MAX_ATTEMPTS
+            next_usable = [k for k in keys if k.value not in exhausted]
+            next_label = ""
+            if more and next_usable:
+                next_key = next_usable[(attempt + 1) % len(next_usable)]
+                next_label = f", next_key={next_key.label}"
+            logger.warning(
+                "%s agnes image verify FAILED (%s key, attempt=%s/%s, "
+                "prompt_chars=%s, speakers=%s)%s",
+                log_tag,
+                key_label,
+                attempt + 1,
+                _VERIFY_MAX_ATTEMPTS,
+                len(prompt),
+                expected_speakers,
+                f", regenerating…{next_label}" if more else ", keep last",
+            )
+
+        if result is not None:
+            return result
         if last_exc:
             raise last_exc
         raise RuntimeError("agnes generate failed without exception")
@@ -445,7 +484,8 @@ class AgnesImageProvider(ImageProvider):
         "项「场景」：只看主场景/主体是否明显跑偏；"
         "画风套话、参考图指令前缀、次要细节差异一律算通过（答是）。"
         "项「胳膊」：每人可见胳膊是否最多 2 条；正常答「是」，多肢答「否」。"
-        "项「人数」：只计画面主体人物，须与给定发言角色数一致；"
+        "项「人数」：只计画面主体人物，不超过 3 个即通过；"
+        "昭昭与灿灿可同时出场，即使本段未发言；"
         "背景照片墙/镜子虚影/玩具人脸/远处剪影一律不算。"
     )
 
@@ -515,16 +555,15 @@ class AgnesImageProvider(ImageProvider):
                 "正常答「是」；有任何人超过 2 条答「否」",
             )
         )
-        expected_count = len(speakers)
-        if expected_count > 0:
-            speakers_str = "/".join(speakers)
+        if speakers or content_style == CONTENT_STYLE_DAILY_STORY:
             items.append(
                 (
                     "cast_count",
-                    f"画面主体人物数量是否恰好为 {expected_count} 个"
-                    f"（须与该段发言角色一致：{speakers_str}；"
-                    f"背景照片墙/镜子虚影/玩具人脸/远处剪影不算）？"
-                    f"回答「是」或「否」",
+                    "画面主体人物数量是否不超过 3 个？"
+                    "昭昭与灿灿可同时出场，即使本段未发言也算通过；"
+                    "超过 3 个主体人物答「否」；"
+                    "背景照片墙/镜子虚影/玩具人脸/远处剪影不算。"
+                    "回答「是」或「否」",
                 )
             )
 
