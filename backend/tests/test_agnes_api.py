@@ -16,15 +16,15 @@ from app.services.llm.llm_agnes import (
 )
 
 
-def test_agnes_api_keys_free_first_then_primary() -> None:
+def test_agnes_api_keys_primary_first_then_free() -> None:
     settings = SimpleNamespace(
         agnes_api_key="main-key",
         agnes_free_api_key="free-key",
     )
     keys = agnes_api_keys(settings)
     assert keys == [
-        AgnesApiKey("free", "free-key"),
         AgnesApiKey("primary", "main-key"),
+        AgnesApiKey("free", "free-key"),
     ]
 
 
@@ -43,7 +43,7 @@ def test_agnes_api_keys_dedup_same_value() -> None:
         agnes_free_api_key="same-key",
     )
     keys = agnes_api_keys(settings)
-    assert keys == [AgnesApiKey("free", "same-key")]
+    assert keys == [AgnesApiKey("primary", "same-key")]
 
 
 def test_is_agnes_quota_exceeded_status_and_keywords() -> None:

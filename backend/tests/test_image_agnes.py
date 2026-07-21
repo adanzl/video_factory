@@ -80,7 +80,7 @@ def test_generate_verify_retry_rotates_keys(tmp_path: Path) -> None:
     with (
         patch(
             "app.services.segment.image.image_agnes.agnes_api_keys",
-            return_value=[free, primary],
+            return_value=[primary, free],
         ),
         patch.object(provider, "_generate_with_key", return_value=output) as mock_gen,
         patch.object(
@@ -204,8 +204,8 @@ def test_generate_switches_to_backup_key_on_quota(tmp_path: Path) -> None:
         patch(
             "app.services.segment.image.image_agnes.agnes_api_keys",
             return_value=[
-                AgnesApiKey("free", "free-key"),
                 AgnesApiKey("primary", "main-key"),
+                AgnesApiKey("free", "free-key"),
             ],
         ),
         patch.object(
@@ -236,8 +236,8 @@ def test_generate_switches_to_backup_key_on_5xx(tmp_path: Path) -> None:
         patch(
             "app.services.segment.image.image_agnes.agnes_api_keys",
             return_value=[
-                AgnesApiKey("free", "free-key"),
                 AgnesApiKey("primary", "main-key"),
+                AgnesApiKey("free", "free-key"),
             ],
         ),
         patch.object(

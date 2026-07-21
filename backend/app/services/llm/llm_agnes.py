@@ -43,15 +43,15 @@ class AgnesApiKey:
 
 
 def agnes_api_keys(settings: Settings | None = None) -> list[AgnesApiKey]:
-    """返回 Agnes Key 列表：优先 AGNES_FREE_API_KEY，限流后切换 AGNES_API_KEY。"""
+    """返回 Agnes Key 列表：优先 AGNES_API_KEY（收费），限流后再切 FREE。"""
     cfg = settings or get_settings()
     keys: list[AgnesApiKey] = []
-    free = cfg.agnes_free_api_key
-    if free:
-        keys.append(AgnesApiKey("free", free))
     primary = cfg.agnes_api_key
-    if primary and primary != free:
+    free = cfg.agnes_free_api_key
+    if primary:
         keys.append(AgnesApiKey("primary", primary))
+    if free and free != primary:
+        keys.append(AgnesApiKey("free", free))
     return keys
 
 

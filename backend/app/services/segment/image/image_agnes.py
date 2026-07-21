@@ -53,11 +53,8 @@ def _should_switch_image_key(exc: BaseException) -> bool:
 
 
 def _agnes_image_gen_keys(settings=None) -> list[AgnesApiKey]:
-    """生图 Key 顺序：付费优先，失败再切 free。"""
-    keys = agnes_api_keys(settings)
-    primary = [k for k in keys if k.label == "primary"]
-    others = [k for k in keys if k.label != "primary"]
-    return primary + others
+    """生图 Key 顺序：与全局一致（收费优先，失败再切 free）。"""
+    return agnes_api_keys(settings)
 
 
 def _to_agnes_size(size: str) -> str:
