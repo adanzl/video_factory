@@ -17,9 +17,10 @@ logger = logging.getLogger(__name__)
 __all__ = ["ImageMgr", "ImageProvider", "image_mgr"]
 
 _VERIFY_PROMPT_REGEN_FEEDBACK = (
-    "出图质检连续未通过（发型/人数/肢体/场景等），请改写本段 image_prompt："
+    "出图质检连续未通过（发型/人数/肢体/场景/妈妈是否成年等），请改写本段 image_prompt："
     "换姿势与构图、冲突道具更醒目；仍须保持角色外貌与身高约束"
-    "（灿灿单侧高马尾禁双马尾；昭昭男孩超短发禁波波头；妈妈须为成年女性黑长发米色上衣牛仔裤）。"
+    "（灿灿单侧高马尾禁双马尾；昭昭男孩超短发禁波波头；"
+    "妈妈须为成年女性黑长发米色上衣牛仔裤，禁止画成小孩）。"
 )
 
 
@@ -202,7 +203,7 @@ class ImageMgr:
             )
             return speakers if speakers else None
 
-        def render(seg: dict) -> tuple[int, Path]:
+        def render(seg: dict) -> tuple[int, Path] | None:
             from app.services.segment.image.image_agnes import AgnesImageVerifyFailed
 
             nonlocal done
@@ -232,7 +233,7 @@ class ImageMgr:
                         expected_speakers=expected_speakers,
                         content_style=content_style,
                     )
-                except AgnesImageVerifyFailed:
+                except AgnesImageVerifyFailed as first_fail:
                     logger.warning(
                         "image segment %s verify exhausted on current prompt; "
                         "regenerating image_prompt then retry",
@@ -254,26 +255,35 @@ class ImageMgr:
                         )
                     except Exception as regen_exc:
                         logger.error(
-                            "image segment %s prompt regen failed, keep last image: %s",
+                            "image segment %s prompt regen failed: %s",
                             index,
                             regen_exc,
                         )
-                    else:
-                        try:
-                            provider.generate(
-                                prompt,
-                                out,
-                                size=size,
-                                ref_images=ref_images,
-                                expected_speakers=expected_speakers,
-                                content_style=content_style,
-                            )
-                        except AgnesImageVerifyFailed:
-                            logger.warning(
-                                "image segment %s verify still failed after "
-                                "prompt regen, keep last",
-                                index,
-                            )
+                        raise first_fail from regen_exc
+                    provider.generate(
+                        prompt,
+                        out,
+                        size=size,
+                        ref_images=ref_images,
+                        expected_speakers=expected_speakers,
+                        content_style=content_style,
+                    )
+            except AgnesImageVerifyFailed as exc:
+                logger.error(
+                    "image %s/%s SKIP segment %s after verify fail (%.1fs) | %s | %s",
+                    done + 1,
+                    total,
+                    index,
+                    time.time() - t0,
+                    params_desc,
+                    exc,
+                )
+                if out.exists():
+                    try:
+                        out.unlink()
+                    except OSError:
+                        pass
+                return None
             except Exception as exc:
                 logger.error(
                     "image %s/%s FAILED segment %s after %.1fs | %s | err=%s",
@@ -298,14 +308,19 @@ class ImageMgr:
             return seg["id"], out
 
         results: list[tuple[int, Path]] = []
+        skipped = 0
         if on_image_done is not None:
             for seg in segments:
                 if job_id is not None:
                     job_cancel.raise_if_cancelled(job_id)
-                seg_id, path = render(seg)
+                item = render(seg)
+                done += 1
+                if item is None:
+                    skipped += 1
+                    continue
+                seg_id, path = item
                 results.append((seg_id, path))
                 on_image_done(seg_id, path)
-                done += 1
         else:
             from gevent.pool import Pool
 
@@ -314,10 +329,21 @@ class ImageMgr:
             for g in green_lets:
                 if job_id is not None:
                     job_cancel.raise_if_cancelled(job_id)
-                results.append(g.get())
+                item = g.get()
                 done += 1
+                if item is None:
+                    skipped += 1
+                    continue
+                results.append(item)
         elapsed = time.time() - start
-        logger.info("image batch done: %s/%s in %.1fs | %s", done, total, elapsed, params_desc)
+        logger.info(
+            "image batch done: %s/%s ok, skipped=%s in %.1fs | %s",
+            len(results),
+            total,
+            skipped,
+            elapsed,
+            params_desc,
+        )
         return results
 
     def generate_cover(
