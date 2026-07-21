@@ -30,8 +30,8 @@ from app.utils.job_info import CONTENT_STYLE_DAILY_STORY
 logger = logging.getLogger(__name__)
 
 _RETRYABLE = frozenset({500, 502, 503, 504})
-# 有备用 Key 时，5xx 同 Key 少重试几次再切，避免卡死近 10 分钟
-_FAILOVER_HTTP_RETRIES = 2
+# 有备用 Key 时，5xx 同 Key 只打 1 次，失败立刻切
+_FAILOVER_HTTP_RETRIES = 1
 _VERIFY_MAX_ATTEMPTS = 3
 _ITEM_LINE_RE = re.compile(r"^项\s*(\d+)\s*[:：]\s*(.*)$")
 _YES_HEAD_RE = re.compile(r"^[「【\[]?是([，,。．\s的」】\]]|$)")
@@ -50,6 +50,14 @@ def _should_switch_image_key(exc: BaseException) -> bool:
         return True
     text = str(exc)
     return any(f"last_status={code}" in text for code in _RETRYABLE)
+
+
+def _agnes_image_gen_keys(settings=None) -> list[AgnesApiKey]:
+    """生图 Key 顺序：付费优先，失败再切 free。"""
+    keys = agnes_api_keys(settings)
+    primary = [k for k in keys if k.label == "primary"]
+    others = [k for k in keys if k.label != "primary"]
+    return primary + others
 
 
 def _to_agnes_size(size: str) -> str:
@@ -386,7 +394,7 @@ class AgnesImageProvider(ImageProvider):
     ) -> Path:
         size = size or self._default_size
         log_tag = f"[out={output_path.name}]"
-        keys = agnes_api_keys()
+        keys = _agnes_image_gen_keys()
         if not keys:
             if get_settings().mock_mode:
                 return self._fallback.generate(prompt, output_path, size=size)
@@ -411,7 +419,7 @@ class AgnesImageProvider(ImageProvider):
             for offset in range(len(usable)):
                 key = usable[(start + offset) % len(usable)]
                 last_key = key
-                # 还有其它未耗尽 Key 时少重试几次再切，避免 503 卡死一整轮
+                # 还有其它未耗尽 Key 时：5xx 首次失败即切，不在同 Key 上磨
                 has_backup = any(
                     k.value != key.value and k.value not in exhausted for k in keys
                 )
