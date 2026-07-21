@@ -48,11 +48,31 @@ def test_resolve_media_public_base_url_from_cors() -> None:
 
 
 def test_stabilize_motion_prompt() -> None:
-    assert "slow zoom" in _stabilize_motion_prompt("slow zoom")
-    assert "画面稳定" in _stabilize_motion_prompt("slow zoom")
-    assert _stabilize_motion_prompt("炉口青烟缓缓上升，镜头极缓推进") == (
-        "炉口青烟缓缓上升，镜头极缓推进"
+    out = _stabilize_motion_prompt("slow zoom")
+    assert "slow zoom" in out
+    assert "画面稳定" in out
+    assert "面部表情与静图一致" in out
+    # 已有极缓，不再重复画面稳定；缺表情锁则补上
+    locked = _stabilize_motion_prompt("炉口青烟缓缓上升，镜头极缓推进")
+    assert locked.startswith("炉口青烟缓缓上升，镜头极缓推进")
+    assert "面部表情与静图一致" in locked
+    # 已写表情锁定则不再追加
+    already = "妈妈举手停，面部表情与静图一致不微笑，镜头极缓推近"
+    assert _stabilize_motion_prompt(already) == already
+
+
+def test_build_i2v_payload_includes_negative_prompt() -> None:
+    provider = AgnesClipProvider()
+    payload = provider._build_i2v_payload(
+        prompt="微动",
+        image_ref="https://example.com/a.png",
+        num_frames=81,
+        width=1280,
+        height=720,
     )
+    assert payload["mode"] == "ti2vid"
+    assert "微笑" in payload["negative_prompt"]
+    assert payload["prompt"] == "微动"
 
 
 def test_encode_image_data_uri(tmp_path: Path) -> None:

@@ -79,7 +79,7 @@ def test_build_daily_image_prompts_is_slimmer():
     assert "禁止输出「竖构图" in system or "竖构图" in system
     assert "motion_mode=ambient" in prompts["user"]
     assert "关键帧禁止纯环境微动" in system
-    assert len(system) < 3200
+    assert len(system) < 3600
 
 
 def test_build_image_prompts_daily_includes_setting():
@@ -138,8 +138,11 @@ def test_build_image_prompts_daily_keyframe_marks_motion_mode():
     )
     assert "motion_mode=ambient" in prompts["user"]
     assert "motion_mode=keyframe" in prompts["user"]
-    assert "微微前推做停势" in prompts["system"]
-    assert "keyframe 写 1 个微表情" in prompts["user"]
+    assert "keyframe 写 1 个微动作" in prompts["user"] or "锁住面部表情" in prompts["user"]
+    assert "不微笑" in prompts["system"]
+    assert "右手微微前推" in prompts["system"]
+    assert "与静图一致" in prompts["system"]
+    assert len(prompts["system"]) < 3600
 
 
 def test_collect_issues_ignores_wrap_prefix_cast_names():
