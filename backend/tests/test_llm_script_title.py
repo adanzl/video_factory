@@ -87,8 +87,6 @@ def _valid_story(*, line: str | None = None, n: int = 17) -> dict:
     dialogue = [
         {"speaker": speakers[i % 2], "line": line} for i in range(n)
     ]
-    # 开场须含冲突线索，且保持原字数不破坏上下限
-    dialogue[0] = {"speaker": "昭昭", "line": "抢" + line[1:]}
     return {
         "scene_title": "谁先洗",
         "setting": "客厅，妈妈问谁先洗澡",
@@ -129,16 +127,6 @@ def test_validate_daily_story_json_rejects_bad_speaker():
         validate_daily_story_json(story)
 
 
-def test_validate_daily_story_json_rejects_weak_opening():
-    story = _valid_story()
-    pad = "一二三四五六七八九十一二三四五六七八"
-    story["dialogue"][0]["line"] = pad
-    story["dialogue"][1]["line"] = pad
-    story["dialogue"][2]["line"] = pad
-    with pytest.raises(ValueError, match="开场前3句"):
-        validate_daily_story_json(story)
-
-
 def test_validate_daily_story_json_rejects_soft_ending():
     story = _valid_story()
     story["dialogue"][-1]["line"] = "算了听姐姐的一二三四五六七八"
@@ -151,3 +139,18 @@ def test_validate_daily_story_json_rejects_vague_punchline():
     story["punchline_explain"] = "姐弟斗嘴很好笑"
     with pytest.raises(ValueError, match="类型标签"):
         validate_daily_story_json(story)
+
+
+def test_build_daily_story_retry_user_asks_to_expand_short_draft():
+    from app.services.daily_story.prompts import build_daily_story_retry_user
+
+    prev = _valid_story(n=10)
+    user = build_daily_story_retry_user(
+        "把姐姐的鞋带系一起",
+        prev_story=prev,
+        errors="对白总字数须≥300，当前180（还差120字）",
+    )
+    assert "还差" in user
+    assert "上一稿" in user
+    assert "鞋带" in user
+    assert "增补" in user or "扩到" in user

@@ -1,5 +1,6 @@
 """日常故事（昭昭&灿灿姐弟对话剧）提示词常量与构建。"""
 
+import json
 import re
 
 from app.services.daily_story.cast import DAILY_CAST_NAMES
@@ -22,14 +23,7 @@ DAILY_STORY_TOTAL_CHARS_MAX = 380
 DAILY_STORY_TOTAL_CHARS_TARGET_MAX = 360
 DAILY_STORY_LINE_CHARS_MAX = 18
 
-# 开场须尽快露冲突（验收用关键词，口语即可）
-_OPENING_HOOK_CUES = (
-    "抢", "藏", "谁先", "我的", "不行", "不许", "凭什么", "分",
-    "弄脏", "赔", "偷", "最后", "轮到", "不给", "哼", "别动",
-    "给我", "少了", "弄坏", "打碎", "弄翻", "独占", "公平",
-    "为什么", "少一半", "多喝", "先洗", "新的", "旧的",
-)
-
+# 开场钩子仅作提示词约束，不做关键词硬卡（主题各异，固定词表易误杀）
 _SOFT_ENDING_MARKERS = (
     "算了", "姐姐真棒", "听妈妈的", "我们和好", "下次注意",
     "你真棒", "和好吧", "听姐姐的",
@@ -340,21 +334,12 @@ def validate_daily_story_json(story: dict) -> None:
         if total_chars and total_chars < DAILY_STORY_TOTAL_CHARS_MIN:
             errors.append(
                 f"对白总字数须≥{DAILY_STORY_TOTAL_CHARS_MIN}，当前{total_chars}"
+                f"（还差{DAILY_STORY_TOTAL_CHARS_MIN - total_chars}字）"
             )
         if total_chars and total_chars > DAILY_STORY_TOTAL_CHARS_MAX:
             errors.append(
                 f"对白总字数须≤{DAILY_STORY_TOTAL_CHARS_MAX}，当前{total_chars}"
-            )
-
-        # 开场钩子：前 3 句内须出现冲突线索
-        opening = "".join(
-            str(item.get("line") or "")
-            for item in dialogue[:3]
-            if isinstance(item, dict)
-        )
-        if opening and not any(cue in opening for cue in _OPENING_HOOK_CUES):
-            errors.append(
-                "开场前3句须露出具体冲突（抢/藏/谁先/不给等），禁止寒暄铺垫"
+                f"（超出{total_chars - DAILY_STORY_TOTAL_CHARS_MAX}字）"
             )
 
         # 禁止软收尾
@@ -400,3 +385,55 @@ def _correct_dialogue_speaker(dialogue: list) -> None:
 def build_daily_story_theme_prompts(count: int) -> tuple[str, str]:
     """构造日常故事主题生成的 system + user 提示词。"""
     return DAILY_STORY_THEME_SYSTEM_PROMPT, DAILY_STORY_THEME_USER_TEMPLATE.format(count=count)
+
+
+def dialogue_total_chars(story: dict | None) -> int:
+    """统计 story.dialogue 可发音台词总字数。"""
+    if not isinstance(story, dict):
+        return 0
+    dialogue = story.get("dialogue") or []
+    if not isinstance(dialogue, list):
+        return 0
+    total = 0
+    for item in dialogue:
+        if not isinstance(item, dict):
+            continue
+        line = str(item.get("line") or "").strip()
+        if line and re.search(r"[\u4e00-\u9fff\w]", line):
+            total += _dialogue_char_count(line)
+    return total
+
+
+def build_daily_story_retry_user(
+    theme: str,
+    *,
+    prev_story: dict,
+    errors: str,
+) -> str:
+    """基于上一稿构造修订重试 user（扩写/删减，避免另起炉灶）。"""
+    _, base_user = build_daily_story_prompts(theme)
+    chars = dialogue_total_chars(prev_story)
+    length_hint = ""
+    if chars < DAILY_STORY_TOTAL_CHARS_MIN:
+        deficit = DAILY_STORY_TOTAL_CHARS_MIN - chars
+        length_hint = (
+            f"\n【字数】上一稿仅 {chars} 字，还差 {deficit} 字才能过线。"
+            f"请在上一稿冲突上增补姐弟互怼回合，扩到"
+            f"{DAILY_STORY_TOTAL_CHARS_MIN}–{DAILY_STORY_TOTAL_CHARS_MAX} 字；"
+            "不要换主题、不要重写开场。"
+        )
+    elif chars > DAILY_STORY_TOTAL_CHARS_MAX:
+        excess = chars - DAILY_STORY_TOTAL_CHARS_MAX
+        length_hint = (
+            f"\n【字数】上一稿 {chars} 字，超出 {excess} 字。"
+            f"请删车轱辘/合并回合，压到 ≤{DAILY_STORY_TOTAL_CHARS_MAX} 字，"
+            "保留冲突与收束。"
+        )
+    prev_json = json.dumps(prev_story, ensure_ascii=False)
+    return (
+        f"{base_user}\n\n"
+        f"【重试】上一轮 JSON 校验未通过：{errors}"
+        f"{length_hint}\n"
+        "请直接输出修订后的完整 JSON（仍须满足全部硬约束）。\n"
+        f"【上一稿】\n{prev_json}"
+    )
