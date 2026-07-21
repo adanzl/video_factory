@@ -537,7 +537,8 @@ class AgnesImageProvider(ImageProvider):
         "你是图像质检员。只根据用户列出的检查项逐项判断，每项单独一行回答。"
         "回答格式必须为「项N: 是」或「项N: 否」"
         "（昭昭短发项无该角色可答「项N: 无昭昭」；"
-        "灿灿发型项无该角色可答「项N: 无灿灿」）。"
+        "灿灿发型项无该角色可答「项N: 无灿灿」；"
+        "妈妈成年项无该角色可答「项N: 无妈妈」）。"
         "不要解释、不要编号列表外的文字、不要复述提示词。"
         "项「场景」：只看主场景/主体是否明显跑偏；"
         "画风套话、参考图指令前缀、次要细节差异一律算通过（答是）。"
@@ -562,7 +563,7 @@ class AgnesImageProvider(ImageProvider):
 
     @staticmethod
     def _parse_item_answer(body: str) -> str:
-        """归一化为 yes / no / na_zhao / na_can / unknown。
+        """归一化为 yes / no / na_zhao / na_can / na_mom / unknown。
 
         先判「不是/否」，避免「不是」命中「是」。
         """
@@ -571,6 +572,8 @@ class AgnesImageProvider(ImageProvider):
             return "na_zhao"
         if "无灿灿" in text:
             return "na_can"
+        if "无妈妈" in text:
+            return "na_mom"
         if _NO_HEAD_RE.match(text):
             return "no"
         if _YES_HEAD_RE.match(text):
@@ -621,6 +624,16 @@ class AgnesImageProvider(ImageProvider):
                     "回答「是」或「否」；图中无灿灿时回答「无灿灿」",
                 )
             )
+        if content_style == CONTENT_STYLE_DAILY_STORY and "妈妈" in speakers:
+            items.append(
+                (
+                    "mom_adult",
+                    "角色妈妈是否为成年女性"
+                    "（成人脸与体型、黑长发、米色上衣牛仔裤；"
+                    "若画成小孩脸/童装/与姐弟同龄感则答「否」）？"
+                    "回答「是」或「否」；图中无妈妈时回答「无妈妈」",
+                )
+            )
         items.append(
             (
                 "extra_arms",
@@ -654,7 +667,7 @@ class AgnesImageProvider(ImageProvider):
         """按检查项判定；解析失败的项视为通过（避免误杀）。
 
         各项极性统一：答「是」为通过侧；答「否」为失败
-        （zhao_hair「无昭昭」、can_hair「无灿灿」放行）。
+        （zhao_hair「无昭昭」、can_hair「无灿灿」、mom_adult「无妈妈」放行）。
         """
         answers: dict[int, str] = {}
         for raw in content.split("\n"):
@@ -675,10 +688,13 @@ class AgnesImageProvider(ImageProvider):
                 continue
             if cid == "can_hair" and verdict == "na_can":
                 continue
+            if cid == "mom_adult" and verdict == "na_mom":
+                continue
             if verdict == "no" and cid in {
                 "scene",
                 "zhao_hair",
                 "can_hair",
+                "mom_adult",
                 "extra_arms",
                 "cast_count",
             }:
