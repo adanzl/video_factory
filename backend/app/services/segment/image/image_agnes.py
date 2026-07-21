@@ -516,7 +516,8 @@ class AgnesImageProvider(ImageProvider):
     _VERIFY_SYSTEM_PROMPT = (
         "你是图像质检员。只根据用户列出的检查项逐项判断，每项单独一行回答。"
         "回答格式必须为「项N: 是」或「项N: 否」"
-        "（昭昭短发项在无该角色时可答「项N: 无昭昭」）。"
+        "（昭昭短发项无该角色可答「项N: 无昭昭」；"
+        "灿灿发型项无该角色可答「项N: 无灿灿」）。"
         "不要解释、不要编号列表外的文字、不要复述提示词。"
         "项「场景」：只看主场景/主体是否明显跑偏；"
         "画风套话、参考图指令前缀、次要细节差异一律算通过（答是）。"
@@ -541,10 +542,15 @@ class AgnesImageProvider(ImageProvider):
 
     @staticmethod
     def _parse_item_answer(body: str) -> str:
-        """归一化为 yes / no / na_zhao / unknown。先判「不是/否」，避免「不是」命中「是」。"""
+        """归一化为 yes / no / na_zhao / na_can / unknown。
+
+        先判「不是/否」，避免「不是」命中「是」。
+        """
         text = (body or "").strip().strip("。．.")
         if "无昭昭" in text:
             return "na_zhao"
+        if "无灿灿" in text:
+            return "na_can"
         if _NO_HEAD_RE.match(text):
             return "no"
         if _YES_HEAD_RE.match(text):
@@ -580,9 +586,19 @@ class AgnesImageProvider(ImageProvider):
             items.append(
                 (
                     "zhao_hair",
-                    "角色昭昭是否为短发男生头"
-                    "（发长约耳垂以上、无马尾/双马尾/麻花辫/丸子头）？"
+                    "角色昭昭是否为男孩超短发"
+                    "（耳上短发、双耳与后颈清晰可见，圆寸/学生头感；"
+                    "若为女童波波头、齐肩短发、厚刘海遮额或任何马尾则答「否」）？"
                     "回答「是」或「否」；图中无昭昭时回答「无昭昭」",
+                )
+            )
+        if content_style == CONTENT_STYLE_DAILY_STORY and "灿灿" in speakers:
+            items.append(
+                (
+                    "can_hair",
+                    "角色灿灿是否为单侧高马尾"
+                    "（仅一根马尾，非双马尾/麻花辫/披肩长发）？"
+                    "回答「是」或「否」；图中无灿灿时回答「无灿灿」",
                 )
             )
         items.append(
@@ -617,7 +633,8 @@ class AgnesImageProvider(ImageProvider):
     def _evaluate_verify_response(content: str, check_ids: list[str]) -> bool:
         """按检查项判定；解析失败的项视为通过（避免误杀）。
 
-        各项极性统一：答「是」为通过侧；答「否」为失败（zhao_hair 的「无昭昭」放行）。
+        各项极性统一：答「是」为通过侧；答「否」为失败
+        （zhao_hair「无昭昭」、can_hair「无灿灿」放行）。
         """
         answers: dict[int, str] = {}
         for raw in content.split("\n"):
@@ -636,9 +653,12 @@ class AgnesImageProvider(ImageProvider):
                 continue
             if cid == "zhao_hair" and verdict == "na_zhao":
                 continue
+            if cid == "can_hair" and verdict == "na_can":
+                continue
             if verdict == "no" and cid in {
                 "scene",
                 "zhao_hair",
+                "can_hair",
                 "extra_arms",
                 "cast_count",
             }:
