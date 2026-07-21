@@ -65,6 +65,13 @@ _DAILY_CAST_RULE = (
     "若该段无人发言，visual_brief 禁止出现昭昭/灿灿/妈妈等人像，只写场景。"
 )
 
+_DAILY_SETTING_RULE = (
+    "【地点锚点】全片 setting 已给定（如客厅）；"
+    "每镜 visual_brief 须写明仍在该地点或其可见角落（沙发/茶几/书桌/门口），"
+    "禁止换成学校/公园等外景；"
+    "禁止只用「蜡笔彩虹/涂鸦色块背景」代替真实房间地点。"
+)
+
 _MOM_DIALOGUE_RULE = (
     "【角色约束】妈妈角色只在该段有妈妈台词（dialogue中speaker=\"妈妈\"）时才出现在画面中；"
     "若该段dialogue数组中没有speaker为妈妈的项，则visual_brief绝对禁止出现妈妈（包括不让妈妈旁观、路过、做背景动作、"
@@ -195,6 +202,9 @@ def build_visual_brief_prompts(
     cast_rule, emotion_rule, include_dialogue = _cast_and_emotion_rules(
         profile_style, segments
     )
+    setting_rule = (
+        _DAILY_SETTING_RULE if profile_style == CONTENT_STYLE_DAILY_STORY else ""
+    )
     partial = segment_indices is not None
     coverage = (
         "segments 仅需输出标记为【需生成】的分镜；【仅上下文】分段无需输出；"
@@ -208,6 +218,7 @@ def build_visual_brief_prompts(
         f"{_VISUAL_BRIEF_CONTENT_RULE}"
         f"{emotion_rule}"
         f"{cast_rule}"
+        f"{setting_rule}"
         "须通读全文 narration，保证相邻分镜画面衔接自然、叙事节奏连贯，"
         "避免前后镜主体/场景毫无关联的跳跃；"
         "同时每镜 visual_brief 只表达本段 text 内容，禁止提前画后续段落情节。"
@@ -233,6 +244,8 @@ def build_visual_brief_prompts(
         if visual_style
         else ""
     )
+    setting = str(script.get("setting") or "").strip()
+    setting_line = f"全片地点 setting：{setting}\n" if setting else ""
     if partial:
         seg_header = (
             "【各分镜口播 text】（已固定；仅【需生成】段输出 visual_brief，"
@@ -243,6 +256,7 @@ def build_visual_brief_prompts(
     user = append_supplementary_to_user(
         (
             f"标题：{title}\n"
+            f"{setting_line}"
             f"{style_line}"
             f"【口播全文 narration】（供把握画面节奏与连贯性，勿改写）：\n{narration}\n\n"
             f"{seg_header}"

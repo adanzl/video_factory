@@ -155,6 +155,7 @@ class DailyScriptStage(StageExecutor):
             "total_duration_seconds": sum(s["duration_sec"] for s in segments),
             "daily_story_id": daily_story_id,
             "daily_story_theme": story.get("theme", ""),
+            "setting": str(story_content.get("setting") or "").strip(),
             "total_chars": total_chars,
             "visual_style": _VISUAL_STYLE_BY_CONTENT_STYLE["daily_story"],
             "content_style": "daily_story",

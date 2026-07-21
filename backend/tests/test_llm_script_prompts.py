@@ -418,6 +418,31 @@ def test_build_visual_brief_prompts_daily_story_role_and_cast():
     assert "80-150" in prompts["system"]
 
 
+def test_build_visual_brief_daily_includes_setting_anchor():
+    from app.services.script.visual_brief import build_visual_brief_prompts
+
+    script = {
+        "title": "新橡皮归谁",
+        "setting": "客厅，昭昭和灿灿同时抓住一块新橡皮。",
+        "narration": "昭昭：我先拿到的！",
+        "visual_style": "日常写实",
+        "segments": [
+            {
+                "segment_index": 1,
+                "text": "昭昭：我先拿到的！",
+                "dialogue": [{"speaker": "昭昭", "text": "我先拿到的！"}],
+            },
+        ],
+    }
+    prompts = build_visual_brief_prompts(
+        script,
+        job={"pipeline": "chat", "content_style": "daily_story"},
+    )
+    assert "全片地点 setting：客厅" in prompts["user"]
+    assert "地点锚点" in prompts["system"]
+    assert "蜡笔彩虹" in prompts["system"]
+
+
 def test_build_daily_script_prompts_uses_cps_setting_and_no_appearance():
     from app.services.daily_story.prompts import build_daily_script_prompts
 

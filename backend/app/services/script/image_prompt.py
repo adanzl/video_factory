@@ -101,8 +101,12 @@ _IMAGE_PROMPT_RULE_LIFE = (
 
 _IMAGE_PROMPT_RULE_DAILY_STORY = (
     "适配{orientation}构图。篇幅80-150字，连贯中文，禁用维度标签。"
-    "顺序：场景→动作表情→光照→构图。"
-    "只写动作与表情，勿重复发型/服装（参考图前缀已注入；"
+    "顺序：地点场景→动作表情→光照→构图。"
+    "【地点】开头必须写清具体室内地点（与全片 setting 一致，如客厅/厨房/卧室门口），"
+    "写可见陈设（沙发、茶几、书桌、门口等）；"
+    "禁止用「蜡笔彩虹/涂鸦色块背景」代替真实房间；"
+    "禁止输出「竖构图/横屏/调整为」等元叙述。"
+    "地点写清后写动作与表情；勿重复发型/服装（参考图前缀已注入；"
     "妈妈入画时外貌须写黑长发、米色上衣、牛仔裤）。"
     "【角色入画】只画本段 speakers；visual_brief 若出现未在 speakers 中的角色必须忽略；"
     "无 speakers 则只画场景、禁止画昭昭/灿灿/妈妈。"
@@ -123,7 +127,8 @@ _IMAGE_PROMPT_RULE_NO_REF_CHARACTER = (
 
 # 带妈妈角色的补充示例，帮助模型理解如何描写妈妈
 _IMAGE_PROMPT_EXAMPLE_WITH_MOM = (
-    "含妈妈短例：'昭昭与灿灿对峙，妈妈站中间手臂微张，黑长发米色上衣牛仔裤，面露无奈。'"
+    "含妈妈短例：'客厅里昭昭与灿灿对峙，妈妈站中间手臂微张，"
+    "黑长发米色上衣牛仔裤，面露无奈。'"
 )
 
 
@@ -489,9 +494,12 @@ def _build_user_prompt(
     feedback: str | None,
     content_style: str | None = None,
 ) -> str:
+    setting = str(script.get("setting") or "").strip()
+    setting_line = f"全片地点 setting：{setting}\n" if setting else ""
     user = append_supplementary_to_user(
         (
             f"视频标题：{script.get('title', '')}\n"
+            f"{setting_line}"
             f"全片画风定调 visual_style：{script.get('visual_style', '')}\n\n"
             "各分镜口播与画面描述：\n"
             + "\n".join(lines)

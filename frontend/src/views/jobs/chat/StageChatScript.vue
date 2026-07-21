@@ -129,7 +129,27 @@
       </div>
 
       <!-- 分镜列表 -->
-      <div v-if="script" class="mt-4 flex gap-2 overflow-x-auto pb-2">
+      <div v-if="script" class="mt-4">
+        <div class="mb-2 flex flex-wrap items-center gap-2">
+          <span class="text-sm font-medium text-gray-700">分镜列表</span>
+          <el-button
+            size="small"
+            :loading="generatingVisualBrief"
+            :disabled="promptActionDisabled"
+            @click="handleGenerateVisualBriefs"
+          >
+            生成画面概要
+          </el-button>
+          <el-button
+            size="small"
+            :loading="generatingImagePrompts"
+            :disabled="promptActionDisabled"
+            @click="handleGenerateImagePrompts"
+          >
+            生成t2i提示词
+          </el-button>
+        </div>
+        <div class="flex gap-2 overflow-x-auto pb-2">
         <div v-for="seg in script.segments || []" :key="seg.segment_index" class="shrink-0 rounded-lg border p-4 w-80">
           <div class="mb-2 flex items-center gap-2">
             <el-tag type="primary" size="small"># {{ seg.segment_index }} </el-tag>
@@ -161,11 +181,31 @@
             <pre class="whitespace-pre-wrap rounded-md bg-gray-50 p-3 text-xs text-gray-600">{{ seg.image_prompt }}</pre>
           </div>
         </div>
+        </div>
       </div>
     </template>
 
     <!-- 只有剧本没有对话（数据兼容） -->
     <template v-else-if="script">
+      <div class="mb-2 flex flex-wrap items-center gap-2">
+        <span class="text-sm font-medium text-gray-700">分镜列表</span>
+        <el-button
+          size="small"
+          :loading="generatingVisualBrief"
+          :disabled="promptActionDisabled"
+          @click="handleGenerateVisualBriefs"
+        >
+          生成画面
+        </el-button>
+        <el-button
+          size="small"
+          :loading="generatingImagePrompts"
+          :disabled="promptActionDisabled"
+          @click="handleGenerateImagePrompts"
+        >
+          生成t2i提示词
+        </el-button>
+      </div>
       <div class="space-y-4">
         <div v-for="seg in script.segments || []" :key="seg.segment_index" class="rounded-lg border p-4">
           <div class="mb-2 flex items-center gap-2">
@@ -212,7 +252,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { runJobStageAction, updateJob, updateJobInfo, previewDailyScriptPrompts } from "@/api/api-jobs";
+import { runJobStageAction, updateJob, updateJobInfo, previewDailyScriptPrompts, generatePrompts } from "@/api/api-jobs";
 import { getDailyStory } from "@/api/api-daily-story";
 import type { DailyStoryRecord } from "@/api/api-daily-story";
 import type { JobDetail, JobLog, JobSegment } from "@/types/jobs";
@@ -282,6 +322,8 @@ const savingProfile = ref(false);
 const promptPanelOpen = ref<string[]>([]);
 const promptsLoading = ref(false);
 const dailyPrompts = ref<LlmPromptStep | null>(null);
+const generatingVisualBrief = ref(false);
+const generatingImagePrompts = ref(false);
 
 /** 句间停留（秒） */
 const lineGap = ref(0.2);
@@ -409,14 +451,77 @@ const { handleError } = useErrorHandler();
 const loading = computed(() => props.job.stage === "script" && props.job.status === "running");
 
 const actionDisabled = computed(() => {
-  return loading.value || submitting.value;
+  return (
+    loading.value ||
+    submitting.value ||
+    generatingVisualBrief.value ||
+    generatingImagePrompts.value
+  );
 });
 
 const actionDisabledReason = computed(() => {
   if (loading.value) return "阶段正在执行中";
   if (submitting.value) return "提交中";
+  if (generatingVisualBrief.value) return "正在生成画面描述";
+  if (generatingImagePrompts.value) return "正在生成文生图提示词";
   return "";
 });
+
+const promptActionDisabled = computed(
+  () => actionDisabled.value || !(script.value?.segments?.length)
+);
+
+const handleGenerateVisualBriefs = async () => {
+  if (!script.value?.segments?.length) {
+    ElMessage.warning("请先生成分镜");
+    return;
+  }
+  try {
+    await ElMessageBox.confirm("确定为全部分镜重新生成画面描述吗？", "确认执行", {
+      type: "warning",
+      confirmButtonText: "执行",
+      cancelButtonText: "取消",
+    });
+  } catch {
+    return;
+  }
+  generatingVisualBrief.value = true;
+  try {
+    await generatePrompts(props.job.id, { type: "visual_brief" });
+    ElMessage.success("已提交全部画面描述生成");
+    emit("refresh");
+  } catch (error) {
+    handleError(error, "生成画面描述失败");
+  } finally {
+    generatingVisualBrief.value = false;
+  }
+};
+
+const handleGenerateImagePrompts = async () => {
+  if (!script.value?.segments?.length) {
+    ElMessage.warning("请先生成分镜");
+    return;
+  }
+  try {
+    await ElMessageBox.confirm("确定为全部分镜重新生成文生图提示词吗？", "确认执行", {
+      type: "warning",
+      confirmButtonText: "执行",
+      cancelButtonText: "取消",
+    });
+  } catch {
+    return;
+  }
+  generatingImagePrompts.value = true;
+  try {
+    await generatePrompts(props.job.id, { type: "image_prompt" });
+    ElMessage.success("已提交全部文生图提示词生成");
+    emit("refresh");
+  } catch (error) {
+    handleError(error, "生成文生图提示词失败");
+  } finally {
+    generatingImagePrompts.value = false;
+  }
+};
 
 async function handleUpdateSourceTitle() {
   const trimmedTitle = sourceTitle.value.trim();
