@@ -434,16 +434,18 @@ def test_build_daily_script_prompts_uses_cps_setting_and_no_appearance():
     assert "18.0" not in system
     assert "≤18 秒" in system
     assert str(int(18 * 4.0)) in system  # max chars = 72
+    assert str(int(8 * 4.0)) in system  # min chars = 32
     assert "彩铅" not in system
     assert "超短发" not in system
     assert "不要输出 visual_description" in system
-    assert "情绪单独成镜" in system
+    assert "转折用特写，不拆碎" in system
+    assert "目标约" in user
     assert "特写" in user
     assert "【标题】争酸奶" in user
     assert "【场景设定】厨房，傍晚" in user
     assert "昭昭：这瓶是我的！" in user
-    # 规则 2/3 合并后字数上限只强调一次主口径
-    assert system.count("≤72 字") == 1
+    # 上限口径：不得超过 max_chars
+    assert "不得超过 72 字" in system
 
 
 def test_build_visual_brief_prompts_includes_shot_type():

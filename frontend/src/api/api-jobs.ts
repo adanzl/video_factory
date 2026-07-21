@@ -168,6 +168,19 @@ export async function updateSegmentText(
   return response.data;
 }
 
+export async function updateSegmentInfo(
+  jobId: number,
+  segmentIndex: number,
+  videoProvider: "ffmpeg" | "agnes_i2v" | "wan_i2v" | null
+): Promise<JobDetail> {
+  const response = await api.post<JobDetail>("/v_factory/api/jobs/segment/updateInfo", {
+    id: jobId,
+    segment_index: segmentIndex,
+    video_provider: videoProvider,
+  });
+  return response.data;
+}
+
 export async function cleanJob(jobId: number): Promise<{
   id: number;
   cleaned: boolean;

@@ -268,11 +268,18 @@ def resolve_video_provider(
     *,
     visual_mode: str | None = None,
     settings: Any | None = None,
+    segment: dict | None = None,
 ) -> str:
-    """job.info.video_provider 优先；否则按 visual_mode 与 CLIP_PROVIDER。"""
+    """分镜 info.video_provider → job.info.video_provider → visual_mode → CLIP_PROVIDER。"""
     from app.config import get_settings
 
     cfg = settings or get_settings()
+    if segment is not None:
+        seg_override = normalize_video_provider(
+            parse_job_info(segment.get("info")).get("video_provider")
+        )
+        if seg_override:
+            return seg_override
     override = normalize_video_provider(parse_job_info((job or {}).get("info")).get("video_provider"))
     if override:
         return override
@@ -291,6 +298,39 @@ def merge_job_info(existing: str | dict | None, **updates: Any) -> dict[str, Any
         else:
             merged[key] = value
     return merged
+
+
+# 日常故事自动标关键帧：按 shot_type
+KEYFRAME_SHOT_TYPES = frozenset({"特写"})
+KEYFRAME_VIDEO_PROVIDER = "agnes_i2v"
+
+
+def apply_keyframe_video_providers(segments: list[dict[str, Any]]) -> list[int]:
+    """按 shot_type 自动标关键帧：写入 info.video_provider=agnes_i2v。
+
+    关键帧依赖 motion_prompt（由 fill_image_prompts 写入）；缺省时仅打日志。
+    返回被标为关键帧的 segment_index 列表。
+    """
+    import logging
+
+    logger = logging.getLogger(__name__)
+    marked: list[int] = []
+    for seg in segments:
+        shot = str(seg.get("shot_type") or "").strip()
+        if shot not in KEYFRAME_SHOT_TYPES:
+            continue
+        info = parse_job_info(seg.get("info"))
+        info["video_provider"] = KEYFRAME_VIDEO_PROVIDER
+        seg["info"] = info
+        index = int(seg.get("segment_index") or 0)
+        marked.append(index)
+        if not str(seg.get("motion_prompt") or "").strip():
+            logger.warning(
+                "keyframe segment %s marked as %s but motion_prompt is empty",
+                index,
+                KEYFRAME_VIDEO_PROVIDER,
+            )
+    return marked
 
 
 _SCRIPT_PARAM_KEYS = (

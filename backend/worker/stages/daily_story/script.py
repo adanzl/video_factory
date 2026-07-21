@@ -227,8 +227,14 @@ class DailyScriptStage(StageExecutor):
 
         # 给 image_prompt 添加固定前后缀（LLM 只输出场景核心内容）
         from app.services.script.image_prompt import wrap_image_prompts
-        from app.utils.job_info import CONTENT_STYLE_DAILY_STORY
+        from app.utils.job_info import (
+            CONTENT_STYLE_DAILY_STORY,
+            apply_keyframe_video_providers,
+        )
         wrap_image_prompts(script.get("segments") or [], content_style=CONTENT_STYLE_DAILY_STORY)
+
+        # 特写等关键帧默认 agnes_i2v（motion_prompt 已由 fill_image_prompts 写入）
+        keyframe_indices = apply_keyframe_video_providers(script.get("segments") or [])
 
         with connection() as conn:
             repo_job.update_job(
@@ -238,10 +244,15 @@ class DailyScriptStage(StageExecutor):
                 script_json=script,
             )
             repo_segment.insert_segments(conn, job_id, script["segments"])
+            keyframe_note = (
+                f", keyframes={keyframe_indices}" if keyframe_indices else ""
+            )
             repo_job_log.append_log(
                 conn,
                 job_id,
                 self.name,
                 f"daily story script ready: scenes={len(scenes)}, "
-                f"narration_chars={len(narration)}, total_chars={total_chars}, total_duration={script['total_duration_seconds']:.1f}s",
+                f"narration_chars={len(narration)}, total_chars={total_chars}, "
+                f"total_duration={script['total_duration_seconds']:.1f}s"
+                f"{keyframe_note}",
             )

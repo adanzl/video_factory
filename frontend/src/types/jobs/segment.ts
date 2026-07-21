@@ -24,6 +24,10 @@ export interface JobSegment {
   status: string;
   /** 图片/视频版本号，每次生成+1，用于 URL 缓存破坏 */
   version?: number;
+  /** 分镜扩展：video_provider 等 */
+  info?: {
+    video_provider?: "ffmpeg" | "wan_i2v" | "agnes_i2v";
+  } | null;
 }
 
 export interface JobLog {

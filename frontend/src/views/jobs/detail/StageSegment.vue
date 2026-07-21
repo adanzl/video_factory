@@ -96,6 +96,21 @@
               <el-tag size="small">{{ segment.status }}</el-tag>
             </div>
           </div>
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-xs font-medium text-gray-600">关键帧</span>
+            <el-select
+              size="small"
+              class="w-32"
+              :model-value="segmentKeyframeValue(segment)"
+              :disabled="actionDisabled || savingKeyframeIndex === segment.segment_index"
+              :loading="savingKeyframeIndex === segment.segment_index"
+              @change="(value: string) => handleKeyframeChange(segment, value)"
+            >
+              <el-option label="取消" value="" />
+              <el-option label="Ken Burns" value="ffmpeg" />
+              <el-option label="I2V" value="agnes_i2v" />
+            </el-select>
+          </div>
           <div class="text-xs text-gray-400">
             {{ formatSegmentDurationLabel(segment) }}
           </div>
@@ -413,6 +428,7 @@ import {
   previewSegmentPrompts,
   runJobStageAction,
   updateJobInfo,
+  updateSegmentInfo,
   updateSegmentText,
 } from "@/api/api-jobs";
 import { getMediaFileUrl, getMediaPicViewUrl } from "@/api/api-media";
@@ -466,10 +482,43 @@ const generatingImagePromptIndex = ref<number | null>(null);
 const generatingVisualBriefIndex = ref<number | null>(null);
 const generatingMotionPromptIndex = ref<number | null>(null);
 const generatingClipIndex = ref<number | null>(null);
+const savingKeyframeIndex = ref<number | null>(null);
 const segmentScope = ref("segment/images");
 
 type ImageProvider = NonNullable<RunStageActionPayload["image_provider"]>;
 type VideoProvider = NonNullable<RunStageActionPayload["video_provider"]>;
+type KeyframeProvider = "" | "ffmpeg" | "agnes_i2v";
+
+const segmentKeyframeValue = (segment: JobSegment): KeyframeProvider => {
+  const provider = segment.info?.video_provider;
+  if (provider === "ffmpeg" || provider === "agnes_i2v") {
+    return provider;
+  }
+  return "";
+};
+
+const handleKeyframeChange = async (segment: JobSegment, value: string) => {
+  if (actionDisabled.value) {
+    return;
+  }
+  const next = (value === "ffmpeg" || value === "agnes_i2v" ? value : "") as KeyframeProvider;
+  savingKeyframeIndex.value = segment.segment_index;
+  try {
+    if (next === "agnes_i2v" && !String(segment.motion_prompt || "").trim()) {
+      await generatePrompts(props.job.id, {
+        type: "motion",
+        segments: [segment.segment_index],
+      });
+      ElMessage.info(`分镜 #${segment.segment_index} 已提交运动提示词生成`);
+    }
+    await updateSegmentInfo(props.job.id, segment.segment_index, next || null);
+    emit("refresh");
+  } catch (error) {
+    handleError(error, "更新关键帧失败");
+  } finally {
+    savingKeyframeIndex.value = null;
+  }
+};
 
 const defaultImageProvider = (job: JobDetail): ImageProvider =>
   job.info?.image_provider ?? "agnes_t2i";

@@ -66,13 +66,21 @@ class MergeResult:
 class MediaMgr:
     """媒体合成管理器。"""
 
-    def _resolve_clip_provider(self, *, visual_mode: str, job: dict | None = None) -> str:
+    def _resolve_clip_provider(
+        self,
+        *,
+        visual_mode: str,
+        job: dict | None = None,
+        segment: dict | None = None,
+    ) -> str:
         settings = get_settings()
         if visual_mode == "kling_std" and settings.kling_upgrade_enabled:
             return "kling_std"
         from app.utils.job_info import resolve_video_provider
 
-        return resolve_video_provider(job, visual_mode=visual_mode, settings=settings)
+        return resolve_video_provider(
+            job, visual_mode=visual_mode, settings=settings, segment=segment
+        )
 
     def _describe_clip_provider(
         self,
@@ -154,10 +162,12 @@ class MediaMgr:
         t_start = time.time()
         target_indices = [seg["segment_index"] for seg in targets]
 
-        # 检查是否使用 I2V 提供商，需要并发排队
+        # 检查是否使用 I2V 提供商，需要并发排队（含分镜级 info.video_provider）
         uses_i2v = any(
             self._resolve_clip_provider(
-                visual_mode=seg.get("visual_mode") or "static_motion", job=job
+                visual_mode=seg.get("visual_mode") or "static_motion",
+                job=job,
+                segment=seg,
             )
             in _I2V_PROVIDERS
             for seg in targets
@@ -192,7 +202,9 @@ class MediaMgr:
                 clip_path = clips_dir / f"{index}.mp4"
 
                 visual_mode = seg.get("visual_mode") or "static_motion"
-                provider = self._resolve_clip_provider(visual_mode=visual_mode, job=job)
+                provider = self._resolve_clip_provider(
+                    visual_mode=visual_mode, job=job, segment=seg
+                )
                 params_desc = self._describe_clip_provider(
                     provider,
                     motion_preset=settings.motion_preset,

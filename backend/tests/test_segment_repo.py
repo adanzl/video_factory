@@ -79,3 +79,48 @@ def test_insert_segments_preserves_media_paths() -> None:
     assert by_index[1]["version"] == 3
     assert by_index[2]["image_path"] == "/data/2.png"
     assert by_index[2]["version"] == 5
+
+
+def test_insert_segments_stores_info_json() -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    apply_schema(conn)
+    job = repo_job.create_job(conn, "test segment info")
+    job_id = job["id"]
+    repo_segment.insert_segments(
+        conn,
+        job_id,
+        [
+            {
+                "segment_index": 1,
+                "text": "a",
+                "visual_mode": "static_motion",
+                "info": {"video_provider": "agnes_i2v"},
+            },
+            {
+                "segment_index": 2,
+                "text": "b",
+                "visual_mode": "static_motion",
+            },
+        ],
+    )
+    rows = {row["segment_index"]: row for row in repo_segment.list_segments(conn, job_id)}
+    assert rows[1]["info"]["video_provider"] == "agnes_i2v"
+    assert "info" not in rows[2]
+
+    repo_segment.update_segment(conn, rows[1]["id"], info={"video_provider": "ffmpeg"})
+    updated = {row["segment_index"]: row for row in repo_segment.list_segments(conn, job_id)}
+    assert updated[1]["info"]["video_provider"] == "ffmpeg"
+
+    # 重建时未带 info 则保留旧值
+    repo_segment.insert_segments(
+        conn,
+        job_id,
+        [
+            {"segment_index": 1, "text": "a2", "visual_mode": "static_motion"},
+            {"segment_index": 2, "text": "b2", "visual_mode": "static_motion"},
+        ],
+    )
+    rebuilt = {row["segment_index"]: row for row in repo_segment.list_segments(conn, job_id)}
+    assert rebuilt[1]["info"]["video_provider"] == "ffmpeg"
+    assert rebuilt[1]["text"] == "a2"

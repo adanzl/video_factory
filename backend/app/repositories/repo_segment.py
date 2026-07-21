@@ -4,9 +4,36 @@ import json
 import sqlite3
 
 
+def _serialize_info(value: object | None) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        text = value.strip()
+        return text or None
+    if isinstance(value, dict):
+        return json.dumps(value, ensure_ascii=False) if value else None
+    return None
+
+
+def _parse_info(raw: object | None) -> dict | None:
+    if raw is None:
+        return None
+    if isinstance(raw, dict):
+        return dict(raw) if raw else None
+    if not isinstance(raw, str):
+        return None
+    text = raw.strip()
+    if not text:
+        return None
+    try:
+        parsed = json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    return dict(parsed) if isinstance(parsed, dict) and parsed else None
+
+
 def delete_segments(conn: sqlite3.Connection, job_id: int) -> None:
     conn.execute("DELETE FROM video_segment WHERE job_id = ?", (job_id,))
-
 
 
 def insert_segments(
@@ -34,12 +61,19 @@ def insert_segments(
             status = "pending"
         # 重建行时保留媒体 cache-bust 版本（出图/出片才 increase_version）
         version = int(prev["version"]) if prev is not None else 0
+        if "info" in seg:
+            info_raw = _serialize_info(seg.get("info"))
+        elif prev is not None:
+            info_raw = _serialize_info(prev.get("info"))
+        else:
+            info_raw = None
         conn.execute(
             """
             INSERT INTO video_segment (
                 job_id, segment_index, text, image_prompt, motion_prompt, visual_mode,
-                duration_sec, sd15_prompt_en, image_path, clip_path, status, dialogue, version
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                duration_sec, sd15_prompt_en, image_path, clip_path, status, dialogue,
+                info, version
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 job_id,
@@ -54,6 +88,7 @@ def insert_segments(
                 clip_path,
                 status,
                 json.dumps(seg["dialogue"], ensure_ascii=False) if seg.get("dialogue") else None,
+                info_raw,
                 version,
             ),
         )
@@ -63,7 +98,8 @@ def list_segments(conn: sqlite3.Connection, job_id: int) -> list[dict]:
     rows = conn.execute(
         """
         SELECT id, segment_index, text, image_prompt, motion_prompt, visual_mode,
-               image_path, clip_path, duration_sec, sd15_prompt_en, status, dialogue, version
+               image_path, clip_path, duration_sec, sd15_prompt_en, status, dialogue,
+               info, version
         FROM video_segment
         WHERE job_id = ?
         ORDER BY segment_index
@@ -79,6 +115,9 @@ def list_segments(conn: sqlite3.Connection, job_id: int) -> list[dict]:
                 d["dialogue"] = json.loads(raw)
             except (json.JSONDecodeError, TypeError):
                 d["dialogue"] = None
+        info = _parse_info(d.pop("info", None))
+        if info is not None:
+            d["info"] = info
         result.append(d)
     return result
 
@@ -99,6 +138,7 @@ def update_segment(
         "visual_mode",
         "sd15_prompt_en",
         "dialogue",
+        "info",
         "version",
     }
     parts: list[str] = []
@@ -108,6 +148,8 @@ def update_segment(
             continue
         if key == "dialogue" and value is not None and not isinstance(value, str):
             value = json.dumps(value, ensure_ascii=False)
+        if key == "info":
+            value = _serialize_info(value)
         parts.append(f"{key} = ?")
         values.append(value)
     if not parts:
