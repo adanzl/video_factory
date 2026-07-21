@@ -23,17 +23,19 @@ from worker.stages.base import StageExecutor
 
 logger = logging.getLogger(__name__)
 
-# 默认角色配置（与前端 StageChatTts 对齐；rate 随 cps 3.6/3.1 上调）
+# 默认角色配置（与前端 StageChatTts 对齐）
+# chat 历史主流 rate 为 昭昭0.7/灿灿0.81，实测约 2.8–3.0 字/秒；
+# 目标 3.6 字/秒，按约 1.25× 上调（勿用后端曾误种的 1.0 作基准）
 DEFAULT_DAILY_SPEAKER_CONFIGS: dict[str, dict] = {
     "昭昭": {
         "voice_id": "cosyvoice-v3.5-flash-leo-f9d115bfdf2346edbeb9d21ecd4f9ce9",
-        "speech_rate": 0.81,
+        "speech_rate": 0.90,
     },
     "灿灿": {
         "voice_id": "cosyvoice-v3.5-flash-leo-40c4359c732f4b459a40f3408e1186ed",
-        "speech_rate": 0.94,
+        "speech_rate": 1.05,
     },
-    "妈妈": {"voice_id": "longwan_v3", "speech_rate": 1.0},
+    "妈妈": {"voice_id": "longwan_v3", "speech_rate": 1.20},
 }
 _DEFAULT_SPEAKER_CONFIGS = DEFAULT_DAILY_SPEAKER_CONFIGS
 _DEFAULT_PHRASE_GAP_SEC = 0.2

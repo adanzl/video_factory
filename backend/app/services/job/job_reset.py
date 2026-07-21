@@ -1,4 +1,8 @@
-"""重跑前清理：清空目标 stage 产物及其下游，保留上游。"""
+"""重跑前清理：清空目标 stage 产物及其下游，保留上游。
+
+DB 更新与磁盘 IO 分开：短事务只改库，归档/删除在事务外执行，
+避免长占 SQLite 锁卡死 gevent hub。
+"""
 
 from __future__ import annotations
 
@@ -24,7 +28,7 @@ __all__ = [
 ]
 
 # 重跑 publish / tts 时不扫下游文件树；tts 只清 DB clip_path（见
-# _clear_tts_artifacts），分镜 mp4 留给 segment 按需重生成
+# _db_clear_tts），分镜 mp4 留给 segment 按需重生成
 _STAGES_SKIP_DOWNSTREAM_CLEAR = frozenset({"publish", "tts"})
 
 
@@ -88,7 +92,7 @@ def _archive_wan_merge(media_dir: Path) -> None:
         _archive_file(media_dir / src_name, media_dir / dest_name)
 
 
-def _clear_merge_artifacts(media_dir: Path) -> None:
+def _fs_clear_merge_artifacts(media_dir: Path) -> None:
     _archive_wan_merge(media_dir)
     _delete_files(
         [
@@ -99,13 +103,16 @@ def _clear_merge_artifacts(media_dir: Path) -> None:
     )
 
 
-def _clear_tts_artifacts(conn, job_id: int, media_dir: Path) -> None:
+def _db_clear_tts(conn, job_id: int) -> None:
     repo_segment.clear_segment_durations(conn, job_id)
     # 新配音时长会变；清 DB clip_path，避免 segment/merge 复用旧时间轴
     repo_segment.clear_segment_clips(conn, job_id)
     repo_job.update_job(
         conn, job_id, audio_path=None, subtitle_path=None, tts_usage_json=None
     )
+
+
+def _fs_clear_tts(media_dir: Path) -> None:
     if not media_dir.exists():
         return
     audio_dir = media_dir / "audio"
@@ -113,24 +120,35 @@ def _clear_tts_artifacts(conn, job_id: int, media_dir: Path) -> None:
         _delete_files([audio_dir / name])
     clips_dir = audio_dir / "clips"
     if clips_dir.exists():
-        for pattern in ("*.mp3",):
-            for clip in clips_dir.glob(pattern):
-                clip.unlink()
+        for clip in clips_dir.glob("*.mp3"):
+            clip.unlink()
 
 
-def _clear_segment_clips(conn, job_id: int, media_dir: Path) -> None:
-    """TTS 变更后：clip 依赖字幕时间轴，静图可保留。"""
-    _archive_wan_clips(media_dir)
+def _clear_tts_artifacts(job_id: int, media_dir: Path) -> None:
+    """TTS 产物清理：短事务改库，磁盘删除在事务外。"""
+    with connection() as conn:
+        _db_clear_tts(conn, job_id)
+    _fs_clear_tts(media_dir)
+
+
+def _db_clear_segment_clips(conn, job_id: int) -> None:
     repo_segment.clear_segment_clips(conn, job_id, None)
+
+
+def _fs_clear_segment_clips(media_dir: Path) -> None:
+    _archive_wan_clips(media_dir)
     clips_dir = media_dir / "segments"
     if clips_dir.exists():
         for clip in clips_dir.glob("*.mp4"):
             clip.unlink()
 
 
-def _clear_all_segment_media(conn, job_id: int, media_dir: Path) -> None:
-    _archive_wan_clips(media_dir)
+def _db_clear_all_segment_media(conn, job_id: int) -> None:
     repo_segment.clear_segment_media(conn, job_id, None)
+
+
+def _fs_clear_all_segment_media(media_dir: Path) -> None:
+    _archive_wan_clips(media_dir)
     images_dir = media_dir / "images"
     if images_dir.exists():
         for img in images_dir.glob("*.png"):
@@ -141,54 +159,30 @@ def _clear_all_segment_media(conn, job_id: int, media_dir: Path) -> None:
             clip.unlink()
 
 
-def _clear_partial_segment_media(
-    conn,
-    job_id: int,
-    media_dir: Path,
-    segment_indices: list[int],
+def _db_clear_partial_segment_media(
+    conn, job_id: int, segment_indices: list[int]
 ) -> None:
     repo_segment.clear_segment_clips_only(conn, job_id, segment_indices)
+
+
+def _fs_clear_partial_segment_media(
+    media_dir: Path, segment_indices: list[int]
+) -> None:
     clip_names = [f"{index}.mp4" for index in segment_indices]
     _archive_wan_clips(media_dir, clip_names=clip_names)
     for index in segment_indices:
         _delete_files([media_dir / "segments" / f"{index}.mp4"])
 
 
-def _clear_downstream(conn, job_id: int, stage: str, media_dir: Path, job: dict) -> None:
-    """清空 stage 之后各阶段的产物（不含 stage 自身）。"""
-    if stage in _STAGES_SKIP_DOWNSTREAM_CLEAR:
-        return
-    if not media_dir.exists():
-        return
-
-    pipe = resolve_pipeline(job)
-    idx = stage_index(stage, job)
-
-    if stage == "script":
-        repo_job.update_job(conn, job_id, cover_path=None)
-        _delete_files([media_dir / "cover.jpg"])
-
-    if pipe == PIPELINE_MATERIAL:
-        if idx < stage_index("merge", job):
-            repo_job.update_job(conn, job_id, final_path=None)
-            _clear_merge_artifacts(media_dir)
-        return
-
-    if idx < stage_index("segment", job):
-        _clear_segment_clips(conn, job_id, media_dir)
-
-    if idx < stage_index("merge", job):
-        repo_job.update_job(conn, job_id, final_path=None)
-        _clear_merge_artifacts(media_dir)
-
-
-def _clear_segment_images(
-    conn,
-    job_id: int,
-    media_dir: Path,
-    segment_indices: list[int] | None,
+def _db_clear_segment_images(
+    conn, job_id: int, segment_indices: list[int] | None
 ) -> None:
     repo_segment.clear_segment_media(conn, job_id, segment_indices)
+
+
+def _fs_clear_segment_images(
+    media_dir: Path, segment_indices: list[int] | None
+) -> None:
     if segment_indices:
         for index in segment_indices:
             _delete_files([media_dir / "images" / f"{index}.png"])
@@ -205,21 +199,67 @@ def _clear_segment_images(
             clip.unlink()
 
 
-def _clear_stage_self(
+def _db_clear_downstream(conn, job_id: int, stage: str, job: dict) -> None:
+    """清空 stage 之后各阶段的 DB 字段（不含 stage 自身）。"""
+    if stage in _STAGES_SKIP_DOWNSTREAM_CLEAR:
+        return
+
+    pipe = resolve_pipeline(job)
+    idx = stage_index(stage, job)
+
+    if stage == "script":
+        repo_job.update_job(conn, job_id, cover_path=None)
+
+    if pipe == PIPELINE_MATERIAL:
+        if idx < stage_index("merge", job):
+            repo_job.update_job(conn, job_id, final_path=None)
+        return
+
+    if idx < stage_index("segment", job):
+        _db_clear_segment_clips(conn, job_id)
+
+    if idx < stage_index("merge", job):
+        repo_job.update_job(conn, job_id, final_path=None)
+
+
+def _fs_clear_downstream(stage: str, media_dir: Path, job: dict) -> None:
+    """清空 stage 之后各阶段的磁盘产物（不含 stage 自身）。"""
+    if stage in _STAGES_SKIP_DOWNSTREAM_CLEAR:
+        return
+    if not media_dir.exists():
+        return
+
+    pipe = resolve_pipeline(job)
+    idx = stage_index(stage, job)
+
+    if stage == "script":
+        _delete_files([media_dir / "cover.jpg"])
+
+    if pipe == PIPELINE_MATERIAL:
+        if idx < stage_index("merge", job):
+            _fs_clear_merge_artifacts(media_dir)
+        return
+
+    if idx < stage_index("segment", job):
+        _fs_clear_segment_clips(media_dir)
+
+    if idx < stage_index("merge", job):
+        _fs_clear_merge_artifacts(media_dir)
+
+
+def _db_clear_stage_self(
     conn,
     job_id: int,
     stage: str,
-    media_dir: Path,
     job: dict,
     *,
     segment_indices: list[int] | None,
     segment_scope: str | None = None,
 ) -> None:
-    """清空 stage 自身产物，以便重新执行。"""
+    """清空 stage 自身 DB 产物，以便重新执行。"""
     pipe = resolve_pipeline(job)
 
     if stage == "prepare":
-        _delete_files([media_dir / "base.mp4", media_dir / "base_meta.json"])
         repo_job.update_job(conn, job_id, base_path=None)
         return
 
@@ -239,16 +279,6 @@ def _clear_stage_self(
             final_path=None,
             quality_report=None,
         )
-        if media_dir.exists():
-            if not preserve_base:
-                _delete_files([media_dir / "base.mp4", media_dir / "base_meta.json"])
-            if pipe != PIPELINE_MATERIAL:
-                _clear_all_segment_media(conn, job_id, media_dir)
-            _clear_merge_artifacts(media_dir)
-            _delete_files([media_dir / "end.mp4"])
-            merge_work = media_dir / "merge_work"
-            if merge_work.exists():
-                shutil.rmtree(merge_work)
         return
 
     if stage == "intro":
@@ -256,6 +286,60 @@ def _clear_stage_self(
         repo_job.update_job(
             conn, job_id, intro_path=None, cover_path=None, end_path=None
         )
+        return
+
+    if stage == "tts":
+        _db_clear_tts(conn, job_id)
+        return
+
+    if stage == "segment":
+        if segment_scope == "clips":
+            if segment_indices:
+                _db_clear_partial_segment_media(conn, job_id, segment_indices)
+            else:
+                _db_clear_segment_clips(conn, job_id)
+        elif segment_scope == "images":
+            _db_clear_segment_images(conn, job_id, segment_indices)
+        elif segment_indices:
+            _db_clear_partial_segment_media(conn, job_id, segment_indices)
+        else:
+            _db_clear_all_segment_media(conn, job_id)
+        return
+
+    if stage == "merge":
+        repo_job.update_job(conn, job_id, final_path=None)
+
+
+def _fs_clear_stage_self(
+    stage: str,
+    media_dir: Path,
+    job: dict,
+    *,
+    segment_indices: list[int] | None,
+    segment_scope: str | None = None,
+) -> None:
+    """清空 stage 自身磁盘产物，以便重新执行。"""
+    pipe = resolve_pipeline(job)
+
+    if stage == "prepare":
+        _delete_files([media_dir / "base.mp4", media_dir / "base_meta.json"])
+        return
+
+    if stage in {"title", "script"}:
+        preserve_base = pipe == PIPELINE_MATERIAL and stage == "script"
+        if media_dir.exists():
+            if not preserve_base:
+                _delete_files([media_dir / "base.mp4", media_dir / "base_meta.json"])
+            if pipe != PIPELINE_MATERIAL:
+                _fs_clear_all_segment_media(media_dir)
+            _fs_clear_merge_artifacts(media_dir)
+            _delete_files([media_dir / "end.mp4"])
+            merge_work = media_dir / "merge_work"
+            if merge_work.exists():
+                shutil.rmtree(merge_work)
+        return
+
+    if stage == "intro":
         if media_dir.exists():
             _delete_files(
                 [
@@ -268,27 +352,25 @@ def _clear_stage_self(
         return
 
     if stage == "tts":
-        _clear_tts_artifacts(conn, job_id, media_dir)
+        _fs_clear_tts(media_dir)
         return
 
     if stage == "segment" and media_dir.exists():
         if segment_scope == "clips":
             if segment_indices:
-                _clear_partial_segment_media(conn, job_id, media_dir, segment_indices)
+                _fs_clear_partial_segment_media(media_dir, segment_indices)
             else:
-                _clear_segment_clips(conn, job_id, media_dir)
+                _fs_clear_segment_clips(media_dir)
         elif segment_scope == "images":
-            _clear_segment_images(conn, job_id, media_dir, segment_indices)
+            _fs_clear_segment_images(media_dir, segment_indices)
         elif segment_indices:
-            _clear_partial_segment_media(conn, job_id, media_dir, segment_indices)
+            _fs_clear_partial_segment_media(media_dir, segment_indices)
         else:
-            _clear_all_segment_media(conn, job_id, media_dir)
+            _fs_clear_all_segment_media(media_dir)
         return
 
-    if stage == "merge":
-        repo_job.update_job(conn, job_id, final_path=None)
-        if media_dir.exists():
-            _clear_merge_artifacts(media_dir)
+    if stage == "merge" and media_dir.exists():
+        _fs_clear_merge_artifacts(media_dir)
 
 
 def _resolve_action(
@@ -314,22 +396,22 @@ def _prepare_cover_or_end(job_id: int, action: str) -> dict:
     with connection() as conn:
         if action == "cover":
             repo_job.update_job(conn, job_id, cover_path=None)
-            if media_dir.exists():
-                _delete_files([media_dir / "cover.jpg"])
             log_msg = f"action={action} (cover only)"
+            delete_path = media_dir / "cover.jpg"
         else:
             repo_job.update_job(conn, job_id, end_path=None)
-            if media_dir.exists():
-                _delete_files([media_dir / "end.mp4"])
             log_msg = f"action={action}"
+            delete_path = media_dir / "end.mp4"
         repo_job_log.append_log(conn, job_id, "intro", log_msg)
-        return repo_job.update_job(
+        job = repo_job.update_job(
             conn,
             job_id,
             status="pending",
             fail_stage=None,
             error_message=None,
         )
+    _delete_files([delete_path])
+    return job
 
 
 def prepare_rerun(
@@ -383,16 +465,15 @@ def prepare_rerun(
             raise ValueError(
                 f"action not supported for material pipeline: {action}"
             )
-        _clear_stage_self(
+        _db_clear_stage_self(
             conn,
             job_id,
             stage,
-            media_dir,
             job,
             segment_indices=segment_indices,
             segment_scope=segment_scope,
         )
-        _clear_downstream(conn, job_id, stage, media_dir, job)
+        _db_clear_downstream(conn, job_id, stage, job)
 
         job = repo_job.update_job(
             conn,
@@ -406,7 +487,17 @@ def prepare_rerun(
         if segment_indices:
             detail += f", segments={segment_indices}"
         repo_job_log.append_log(conn, job_id, stage, detail)
-        return job
+
+    # 磁盘清理在事务外：归档/删 mp4 可能很慢
+    _fs_clear_stage_self(
+        stage,
+        media_dir,
+        job,
+        segment_indices=segment_indices,
+        segment_scope=segment_scope,
+    )
+    _fs_clear_downstream(stage, media_dir, job)
+    return job
 
 
 def prepare_for_action(

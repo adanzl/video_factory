@@ -448,18 +448,23 @@ class TopicMgr:
             else:
                 rows = repo_title.list_pending_score(conn)
 
-            scored: list[dict] = []
-            for row in rows:
-                result = score_title(
-                    row["title"],
-                    category=row.get("category"),
-                    template=row.get("template"),
-                    hook=row.get("hook"),
-                )
-                status = status_from_score(result)
+        # 打分在事务外（可能含网络/慢计算），避免长占 SQLite 锁
+        pending: list[tuple[int, object, str]] = []
+        for row in rows:
+            result = score_title(
+                row["title"],
+                category=row.get("category"),
+                template=row.get("template"),
+                hook=row.get("hook"),
+            )
+            pending.append((int(row["id"]), result, status_from_score(result)))
+
+        scored: list[dict] = []
+        with connection() as conn:
+            for title_id, result, status in pending:
                 updated = repo_title.update_title(
                     conn,
-                    row["id"],
+                    title_id,
                     score=result.total,
                     score_detail=result.to_dict(),
                     status=status,
