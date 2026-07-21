@@ -35,6 +35,20 @@ _PUNCHLINE_TYPE_MARKERS = (
     "A：", "C：", "D：", "B：", "E：",
 )
 
+# 后半若出现且未在 conflict_core/setting/前段出现，视为跑题
+_OFFTOPIC_MARKERS = (
+    "体育课", "学校", "老师", "班主任", "告爸爸", "告诉爸爸",
+    "公园", "同学", "操场", "放学", "上课", "教室",
+)
+
+_CONFLICT_CORE_MAX_CHARS = 24
+_CONFLICT_ANCHOR_STOP = frozenset(
+    {
+        "昭昭", "灿灿", "妈妈", "姐弟", "我们", "什么", "怎么",
+        "这个", "那个", "不是", "就是", "可以", "不行",
+    }
+)
+
 _DAILY_STORY_CONTRACT = """\
 【共用设定】
 - 受众：孩子和有娃的大人（家长能会心一笑，孩子觉得好玩；禁成人梗/谐音/网络热梗）。
@@ -72,6 +86,14 @@ DAILY_STORY_SYSTEM_PROMPT = f"""\
 - 前 2 句必须露出具体冲突（抢/藏/弄脏/谁先/不给等），禁止寒暄铺垫。
 - setting 也要写清冲突已发生（如：客厅，姐弟抢遥控器）。
 
+【单冲突（硬约束）】
+- 全文只围绕一件小事加码（规则升级、证据翻车、字面钻空子），禁止后半另开账。
+- 必须输出 conflict_core：一句话写清「谁 vs 谁，争什么」（≤24 字），
+  与 theme / setting / 前 2 句一致。
+- 禁止岔开学校/体育课/告爸爸/老师/公园等与 conflict_core 无关的新主线。
+- 妈妈只收口/点破，禁止由妈妈引入新冲突或新事件。
+- punchline_explain 须说明末句如何破的就是这个 conflict_core。
+
 【节奏（硬约束）】
 - 每 6–8 句须有一个小反转或加码（规则升级、证据翻车、第三方插嘴），禁止平铺到结尾才抖包袱。
 - 台词要具体：点名「上次你也…」「妈说过…」「这是我的…」，少讲抽象公平大道理。
@@ -82,6 +104,7 @@ DAILY_STORY_SYSTEM_PROMPT = f"""\
 3. 禁止叙事小说腔（「他心想」「她无奈地」等），只写纯对话+极简 setting。
 4. 禁止姐姐真的「说教成功」或软收尾（如「算了」「姐姐真棒」当结局）。
 5. 禁止为凑长度反复换说法车轱辘。
+6. 禁止后半段换冲突、换地点主场、新开一件事。
 
 【笑点与收束】
 - 笑点 = 孩子的字面/现实逻辑 碰撞 姐姐的「装大人」规则，或两人各执一词越辩越歪。
@@ -94,6 +117,7 @@ DAILY_STORY_SYSTEM_PROMPT = f"""\
 {{
   "scene_title": "不超过10字，场记或口语钩子均可（如：谁先洗）",
   "setting": "一句话说明地点和初始冲突动作（如：客厅，姐弟抢遥控器）",
+  "conflict_core": "≤24字，谁vs谁争什么（如：姐弟抢新橡皮）",
   "dialogue": [
     {{"speaker": "昭昭", "line": "台词（≤18字）"}},
     {{"speaker": "灿灿", "line": "台词"}},
@@ -110,13 +134,14 @@ DAILY_STORY_USER_TEMPLATE = """\
 【本次场景主题（核心事件）】：{theme}
 
 【要求】：
-1. 紧扣主题，家庭内/门口小事，不要宏大叙事。
+1. 紧扣主题，家庭内/门口小事，不要宏大叙事；全文只服务同一 conflict_core。
 2. 矛盾优先 A/C/D（姐弟互怼）；B/E 仅主题明确需要时才用。
 3. 对白总字数硬性 300–380，目标约 320–360；每句硬性 ≤18 字；
    speaker 仅昭昭/灿灿/妈妈。
 4. 前 2 句必须露出具体冲突；禁止寒暄开场。
 5. 妈妈可出场，但台词宜少（建议≤3句）；禁止写成妈妈教育戏。爸爸不可作 speaker。
-6. punchline_explain 须含类型标签（A/C/D 等）并说明末句如何破功。
+6. 输出 conflict_core（≤24 字）；punchline_explain 须含类型标签并说明如何破该冲突。
+7. 禁止后半另开账（学校/体育课/告爸爸等与主题无关主线）。
 
 请直接输出JSON。
 """
@@ -301,6 +326,64 @@ def _dialogue_char_count(line: str) -> int:
     return len(line or "")
 
 
+def _dialogue_lines_text(dialogue: list) -> list[str]:
+    lines: list[str] = []
+    for item in dialogue:
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("line") or "").strip()
+        if text:
+            lines.append(text)
+    return lines
+
+
+def _conflict_anchor_tokens(text: str) -> list[str]:
+    tokens = re.findall(r"[\u4e00-\u9fff]{2,}", text or "")
+    return [t for t in tokens if t not in _CONFLICT_ANCHOR_STOP]
+
+
+def _append_single_conflict_errors(story: dict, errors: list[str]) -> None:
+    """校验单冲突：conflict_core 必填，开场对齐，后半禁无关岔开。"""
+    core = str(story.get("conflict_core") or "").strip()
+    if not core:
+        errors.append("缺少 conflict_core（≤24字写清谁vs谁争什么）")
+        return
+    if len(core) > _CONFLICT_CORE_MAX_CHARS:
+        errors.append(
+            f"conflict_core 须≤{_CONFLICT_CORE_MAX_CHARS}字，当前{len(core)}字"
+        )
+
+    setting = str(story.get("setting") or "").strip()
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list) or not dialogue:
+        return
+
+    lines = _dialogue_lines_text(dialogue)
+    if not lines:
+        return
+
+    anchors = _conflict_anchor_tokens(core)
+    front = "".join(lines[:2])
+    front_ctx = core + setting + front
+    if anchors and not any(a in front_ctx for a in anchors):
+        errors.append(
+            f"开场/setting 未体现 conflict_core 锚点（{anchors}）：{core!r}"
+        )
+
+    if len(lines) < 9:
+        return
+    third = max(1, len(lines) // 3)
+    latter = "".join(lines[-third:])
+    early = "".join(lines[:-third])
+    allowed = core + setting + early
+    for marker in _OFFTOPIC_MARKERS:
+        if marker in latter and marker not in allowed:
+            errors.append(
+                f"后半疑似跑题：出现「{marker}」，与 conflict_core={core!r} 无关"
+            )
+            break
+
+
 def validate_daily_story_json(story: dict) -> None:
     """校验日常故事 LLM 返回的 JSON 格式是否符合预期结构，失败抛 ValueError。"""
     errors: list[str] = []
@@ -311,7 +394,13 @@ def validate_daily_story_json(story: dict) -> None:
     _correct_dialogue_speaker(story.get("dialogue", []))
 
     # 必需字段检查
-    for field in ("scene_title", "setting", "dialogue", "punchline_explain"):
+    for field in (
+        "scene_title",
+        "setting",
+        "conflict_core",
+        "dialogue",
+        "punchline_explain",
+    ):
         if field not in story:
             errors.append(f"缺少必需字段: {field}")
 
@@ -323,6 +412,11 @@ def validate_daily_story_json(story: dict) -> None:
         errors.append("scene_title 必须是非空字符串")
     if not isinstance(story["setting"], str) or not story["setting"].strip():
         errors.append("setting 必须是非空字符串")
+    if (
+        not isinstance(story.get("conflict_core"), str)
+        or not str(story.get("conflict_core") or "").strip()
+    ):
+        errors.append("conflict_core 必须是非空字符串")
     if not isinstance(story["punchline_explain"], str) or not story["punchline_explain"].strip():
         errors.append("punchline_explain 必须是非空字符串")
 
@@ -396,6 +490,8 @@ def validate_daily_story_json(story: dict) -> None:
                 "（如「C类公平执念」或「权威翻车」）"
             )
 
+    _append_single_conflict_errors(story, errors)
+
     if errors:
         raise ValueError("daily_story 校验失败: " + "; ".join(errors))
 
@@ -462,11 +558,16 @@ def build_daily_story_retry_user(
             f"请删车轱辘/合并回合，压到 ≤{DAILY_STORY_TOTAL_CHARS_MAX} 字，"
             "保留冲突与收束。"
         )
+    conflict_hint = (
+        "\n【单冲突】禁止换 conflict_core / 换主题 / 后半另开账；"
+        "只在上一稿同一冲突上修订。"
+    )
     prev_json = json.dumps(prev_story, ensure_ascii=False)
     return (
         f"{base_user}\n\n"
         f"【重试】上一轮 JSON 校验未通过：{errors}"
-        f"{length_hint}\n"
+        f"{length_hint}"
+        f"{conflict_hint}\n"
         "请直接输出修订后的完整 JSON（仍须满足全部硬约束）。\n"
         f"【上一稿】\n{prev_json}"
     )

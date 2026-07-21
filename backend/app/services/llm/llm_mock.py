@@ -494,6 +494,7 @@ class MockLLMClient(LLMClient):
         return {
             "scene_title": "测试场景",
             "setting": f"家里客厅，姐弟俩围绕{theme}展开对话",
+            "conflict_core": f"姐弟争{theme}"[:24],
             "dialogue": [
                 {"speaker": "昭昭", "line": f"姐，{theme}是怎么回事？"},
                 {"speaker": "灿灿", "line": "就是那样的呗。"},
@@ -504,7 +505,7 @@ class MockLLMClient(LLMClient):
                 {"speaker": "昭昭", "line": "那当姐姐有什么用？"},
                 {"speaker": "灿灿", "line": "可以管你！"},
             ],
-            "punchline_explain": "弟弟用逻辑追问姐姐权威的本质，姐姐用孩子式特权收尾",
+            "punchline_explain": "A类权威翻车，弟弟戳穿姐姐权威",
         }
 
     def generate_daily_story_themes(self, count: int = 15) -> list[str]:

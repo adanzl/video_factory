@@ -94,6 +94,9 @@
               <span class="font-bold">{{ dailyStory.story.scene_title }}</span>
             </el-descriptions-item>
             <el-descriptions-item label="设定">{{ dailyStory.story.setting }}</el-descriptions-item>
+            <el-descriptions-item label="单冲突">
+              {{ dailyStory.story.conflict_core || "-" }}
+            </el-descriptions-item>
             <el-descriptions-item label="笑点解析">
               <div class="rounded-lg bg-gray-50 p-2 text-sm text-gray-600">{{ dailyStory.story.punchline_explain }}</div>
             </el-descriptions-item>
