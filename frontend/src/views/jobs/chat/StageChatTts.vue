@@ -224,9 +224,9 @@ const speakers = [
 ];
 
 const defaultSpeakerConfigs: Record<string, SpeakerConfig> = {
-  昭昭: { voice_id: TTS_VOICE_ZHAO, speech_rate: 0.9 },
-  灿灿: { voice_id: DEFAULT_TTS_VOICE, speech_rate: 1.05 },
-  妈妈: { voice_id: TTS_VOICE_MOM, speech_rate: 1.2 },
+  昭昭: { voice_id: TTS_VOICE_ZHAO, speech_rate: 1.15 },
+  灿灿: { voice_id: DEFAULT_TTS_VOICE, speech_rate: 1.3 },
+  妈妈: { voice_id: TTS_VOICE_MOM, speech_rate: 1.35 },
 };
 
 const props = defineProps<{

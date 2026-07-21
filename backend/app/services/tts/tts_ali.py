@@ -46,6 +46,54 @@ def _convert_single_digits(text: str) -> str:
     return re.sub(r'(?<!\d)\d(?!\d)', lambda m: _SINGLE_DIGIT_MAP[m.group(0)], text)
 
 
+# 「倒」多音：dǎo（摔）/ dào（倾倒、倒数）。CosyVoice 常把「先倒/少倒」读成 dǎo。
+# 合成用「到」(仅 dào) 借音；已知 dǎo 词组先占位保护。字幕仍用原文。
+_DAO3_WORDS: Final[tuple[str, ...]] = (
+    "摔倒",
+    "跌倒",
+    "绊倒",
+    "推倒",
+    "打倒",
+    "晕倒",
+    "躺倒",
+    "病倒",
+    "吓倒",
+    "醉倒",
+    "压倒",
+    "跪倒",
+    "栽倒",
+    "扑倒",
+    "拉倒",
+    "倒霉",
+    "倒闭",
+    "倒台",
+    "倒塌",
+    "倒地",
+    "倒下",
+    "倒戈",
+    "颠倒",
+    "倾倒",  # 口语里也有 qīng dǎo；保护整词避免误伤
+)
+
+
+def _disambiguate_dao_for_tts(text: str) -> str:
+    """将未保护的「倒」替换为「到」，迫使读 dao4（倒水/倒数）。"""
+    if "倒" not in text:
+        return text
+    masked = text
+    placeholders: list[tuple[str, str]] = []
+    for i, word in enumerate(_DAO3_WORDS):
+        if word not in masked:
+            continue
+        token = f"\0DAO3_{i}\0"
+        placeholders.append((token, word))
+        masked = masked.replace(word, token)
+    masked = masked.replace("倒", "到")
+    for token, word in placeholders:
+        masked = masked.replace(token, word)
+    return masked
+
+
 _TRAILING_PUNCT_RE = re.compile(r'[。！？，、；：.!?,;:]+$')
 
 
@@ -140,6 +188,7 @@ def _run_tts_task(
 
     text = _strip_trailing_punct_for_digit(text)
     text = _convert_single_digits(text)
+    text = _disambiguate_dao_for_tts(text)
 
     voice = voice or settings.tts_voice
     model = VOICE_MODEL_MAP.get(voice) or settings.tts_model or DEFAULT_MODEL
