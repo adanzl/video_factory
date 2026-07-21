@@ -30,15 +30,23 @@ from app.utils.job_info import CONTENT_STYLE_DAILY_STORY
 logger = logging.getLogger(__name__)
 
 _RETRYABLE = frozenset({500, 502, 503, 504})
+# 有备用 Key 时，5xx 同 Key 少重试几次再切，避免卡死近 10 分钟
+_FAILOVER_HTTP_RETRIES = 2
 _VERIFY_MAX_ATTEMPTS = 3
 _ITEM_LINE_RE = re.compile(r"^项\s*(\d+)\s*[:：]\s*(.*)$")
 _YES_HEAD_RE = re.compile(r"^[「【\[]?是([，,。．\s的」】\]]|$)")
 _NO_HEAD_RE = re.compile(r"^[「【\[]?(否|不是)([，,。．\s」】\]]|$)")
 
 
+class _AgnesImageKeyFailover(RuntimeError):
+    """生图：配额/限流或持续 5xx，应切备用 Key。"""
+
+
 def _should_switch_image_key(exc: BaseException) -> bool:
     """生图切备用 Key：配额/限流，或同 Key 重试耗尽后的 5xx。"""
-    if isinstance(exc, AgnesQuotaExceeded) or agnes_quota_exceeded_from_exception(exc):
+    if isinstance(exc, (_AgnesImageKeyFailover, AgnesQuotaExceeded)):
+        return True
+    if agnes_quota_exceeded_from_exception(exc):
         return True
     text = str(exc)
     return any(f"last_status={code}" in text for code in _RETRYABLE)
@@ -156,6 +164,19 @@ class AgnesImageProvider(ImageProvider):
                 last_status = resp.status_code
                 last_body = _resp_body_summary(resp)
                 if resp.status_code in _RETRYABLE:
+                    if attempt + 1 >= retries:
+                        # 最后一次仍 5xx：不再 sleep，交给上层切 Key / 失败
+                        logger.warning(
+                            "%sagnes %s %s in %.1fs, body=%s, giving up after %s/%s",
+                            tag,
+                            resp.status_code,
+                            url,
+                            elapsed,
+                            last_body,
+                            attempt + 1,
+                            retries,
+                        )
+                        break
                     wait = min(2**attempt * 2, 60)
                     logger.warning(
                         "%sagnes %s %s in %.1fs, body=%s, retry %s/%s in %ss",
@@ -229,7 +250,10 @@ class AgnesImageProvider(ImageProvider):
             detail_parts.append(f"last_body={last_body}")
         if last_exc:
             detail_parts.append(f"last_exc={last_exc}")
-        raise RuntimeError(f"agnes request failed ({'; '.join(detail_parts)})")
+        detail = f"agnes request failed ({'; '.join(detail_parts)})"
+        if last_status in _RETRYABLE:
+            raise _AgnesImageKeyFailover(detail)
+        raise RuntimeError(detail)
 
     @staticmethod
     def _extract_image(body: dict) -> tuple[str | None, bytes | None]:
@@ -261,6 +285,7 @@ class AgnesImageProvider(ImageProvider):
         *,
         size: str,
         ref_images: list[Path] | None = None,
+        max_retries: int | None = None,
     ) -> Path:
         agnes_size = _to_agnes_size(size)
         log_tag = f"[out={output_path.name}]"
@@ -308,6 +333,7 @@ class AgnesImageProvider(ImageProvider):
                 self._generation_url,
                 api_key=api_key.value,
                 json=payload,
+                max_retries=max_retries,
                 log_tag=log_tag,
             )
             image_url, image_bytes = self._extract_image(resp.json())
@@ -385,9 +411,23 @@ class AgnesImageProvider(ImageProvider):
             for offset in range(len(usable)):
                 key = usable[(start + offset) % len(usable)]
                 last_key = key
+                # 还有其它未耗尽 Key 时少重试几次再切，避免 503 卡死一整轮
+                has_backup = any(
+                    k.value != key.value and k.value not in exhausted for k in keys
+                )
+                key_retries = (
+                    min(_FAILOVER_HTTP_RETRIES, self._http_max_retries)
+                    if has_backup
+                    else None
+                )
                 try:
                     result = self._generate_with_key(
-                        key, prompt, output_path, size=size, ref_images=ref_images
+                        key,
+                        prompt,
+                        output_path,
+                        size=size,
+                        ref_images=ref_images,
+                        max_retries=key_retries,
                     )
                     generated = True
                     break
