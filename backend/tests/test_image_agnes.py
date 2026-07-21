@@ -92,7 +92,7 @@ def test_generate_verify_retry_rotates_keys(tmp_path: Path) -> None:
     assert result == output
     assert mock_gen.call_count == 3
     used = [c.args[0].label for c in mock_gen.call_args_list]
-    assert used == ["free", "primary", "free"]
+    assert used == ["primary", "free", "primary"]
 
 
 def test_parse_item_answer_handles_bu_shi() -> None:
@@ -218,8 +218,8 @@ def test_generate_switches_to_backup_key_on_quota(tmp_path: Path) -> None:
         provider.generate("测试 prompt", output, size="720*1280")
 
     assert mock_generate.call_count == 2
-    assert mock_generate.call_args_list[0].args[0].value == "free-key"
-    assert mock_generate.call_args_list[1].args[0].value == "main-key"
+    assert mock_generate.call_args_list[0].args[0].value == "main-key"
+    assert mock_generate.call_args_list[1].args[0].value == "free-key"
 
 
 def test_generate_switches_to_backup_key_on_5xx(tmp_path: Path) -> None:
@@ -229,7 +229,7 @@ def test_generate_switches_to_backup_key_on_5xx(tmp_path: Path) -> None:
     from app.services.segment.image.image_agnes import _AgnesImageKeyFailover
 
     five_xx = _AgnesImageKeyFailover(
-        "agnes request failed (after 2 retries; url=https://x; last_status=503)"
+        "agnes request failed (after 1 retries; url=https://x; last_status=503)"
     )
 
     with (
@@ -250,10 +250,10 @@ def test_generate_switches_to_backup_key_on_5xx(tmp_path: Path) -> None:
         provider.generate("测试 prompt", output, size="720*1280")
 
     assert mock_generate.call_count == 2
-    assert mock_generate.call_args_list[0].args[0].value == "free-key"
-    assert mock_generate.call_args_list[1].args[0].value == "main-key"
-    # 有备用 Key 时 free 侧少重试再切
-    assert mock_generate.call_args_list[0].kwargs.get("max_retries") == 2
+    assert mock_generate.call_args_list[0].args[0].value == "main-key"
+    assert mock_generate.call_args_list[1].args[0].value == "free-key"
+    # 有备用 Key 时付费侧只打 1 次，503 即切 free
+    assert mock_generate.call_args_list[0].kwargs.get("max_retries") == 1
     assert mock_generate.call_args_list[1].kwargs.get("max_retries") is None
 
 
