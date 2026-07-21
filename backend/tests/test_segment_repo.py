@@ -39,12 +39,14 @@ def test_insert_segments_preserves_media_paths() -> None:
         image_path="/data/1.png",
         clip_path="/data/1.mp4",
         status="done",
+        version=3,
     )
     repo_segment.update_segment(
         conn,
         rows[1]["id"],
         image_path="/data/2.png",
         status="done",
+        version=5,
     )
 
     repo_segment.insert_segments(
@@ -74,4 +76,6 @@ def test_insert_segments_preserves_media_paths() -> None:
     assert by_index[1]["image_path"] == "/data/1.png"
     assert by_index[1]["clip_path"] == "/data/1.mp4"
     assert by_index[1]["status"] == "done"
+    assert by_index[1]["version"] == 3
     assert by_index[2]["image_path"] == "/data/2.png"
+    assert by_index[2]["version"] == 5
