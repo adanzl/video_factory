@@ -101,17 +101,21 @@ def test_parse_item_answer_handles_bu_shi() -> None:
     assert AgnesImageProvider._parse_item_answer("是") == "yes"
     assert AgnesImageProvider._parse_item_answer("是的，基本一致") == "yes"
     assert AgnesImageProvider._parse_item_answer("无昭昭") == "na_zhao"
+    assert AgnesImageProvider._parse_item_answer("无灿灿") == "na_can"
 
 
 def test_evaluate_verify_response_zhao_hair_and_cast() -> None:
-    ids = ["scene", "zhao_hair", "extra_arms", "cast_count"]
-    ok = "项1: 是\n项2: 是\n项3: 是\n项4: 是\n"
+    ids = ["scene", "zhao_hair", "can_hair", "extra_arms", "cast_count"]
+    ok = "项1: 是\n项2: 是\n项3: 是\n项4: 是\n项5: 是\n"
     assert AgnesImageProvider._evaluate_verify_response(ok, ids)
 
-    bad_hair = "项1: 是\n项2: 否\n项3: 是\n项4: 是\n"
-    assert not AgnesImageProvider._evaluate_verify_response(bad_hair, ids)
+    bad_zhao = "项1: 是\n项2: 否\n项3: 是\n项4: 是\n项5: 是\n"
+    assert not AgnesImageProvider._evaluate_verify_response(bad_zhao, ids)
 
-    bad_arms = "项1: 是\n项2: 是\n项3: 否\n项4: 是\n"
+    bad_can = "项1: 是\n项2: 是\n项3: 否\n项4: 是\n项5: 是\n"
+    assert not AgnesImageProvider._evaluate_verify_response(bad_can, ids)
+
+    bad_arms = "项1: 是\n项2: 是\n项3: 是\n项4: 否\n项5: 是\n"
     assert not AgnesImageProvider._evaluate_verify_response(bad_arms, ids)
 
     # 「不是」= 否 → 短发项失败
@@ -120,8 +124,8 @@ def test_evaluate_verify_response_zhao_hair_and_cast() -> None:
         bu_shi, ["scene", "zhao_hair", "extra_arms"]
     )
 
-    # 无昭昭 → 短发项放行
-    na = "项1: 是\n项2: 无昭昭\n项3: 是\n项4: 是\n"
+    # 无昭昭 / 无灿灿 → 对应发型项放行
+    na = "项1: 是\n项2: 无昭昭\n项3: 无灿灿\n项4: 是\n项5: 是\n"
     assert AgnesImageProvider._evaluate_verify_response(na, ids)
 
 
@@ -135,15 +139,19 @@ def test_build_verify_checklist_daily_includes_zhao() -> None:
     assert ids == [
         "scene",
         "zhao_hair",
+        "can_hair",
         "extra_arms",
         "cast_count",
     ]
     assert "昭昭" in user
+    assert "灿灿" in user
     assert "不超过 3" in user
     assert "未发言" in user
     assert "恰好" not in user
     assert "蓝衣" not in user
-    assert "短发男生头" in user
+    assert "男孩超短发" in user
+    assert "波波头" in user
+    assert "单侧高马尾" in user
     assert "最多 2 条" in user
     assert "照片墙" in user
 
@@ -153,18 +161,21 @@ def test_build_verify_checklist_daily_includes_zhao() -> None:
         content_style="daily_story",
     )
     assert "zhao_hair" in [cid for cid, _ in items_one]
+    assert "can_hair" not in [cid for cid, _ in items_one]
     assert "cast_count" in [cid for cid, _ in items_one]
     assert "不超过 3" in user_one
 
-    # 无昭昭发言时不做短发项；人数仍按最多 3 人校验
+    # 无昭昭发言时不做短发项；有灿灿则检单马尾；人数仍按最多 3 人校验
     items_can, user_can = AgnesImageProvider._build_verify_checklist(
         prompt="只有灿灿",
         expected_speakers=["灿灿"],
         content_style="daily_story",
     )
     assert "zhao_hair" not in [cid for cid, _ in items_can]
+    assert "can_hair" in [cid for cid, _ in items_can]
     assert "cast_count" in [cid for cid, _ in items_can]
     assert "未发言" in user_can
+    assert "单侧高马尾" in user_can
 
     items2, user2 = AgnesImageProvider._build_verify_checklist(
         prompt="电池剖面",
