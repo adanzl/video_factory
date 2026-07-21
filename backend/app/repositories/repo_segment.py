@@ -32,7 +32,8 @@ def insert_segments(
             status = prev.get("status")
         if not status:
             status = "pending"
-        version = 0
+        # 重建行时保留媒体 cache-bust 版本（出图/出片才 increase_version）
+        version = int(prev["version"]) if prev is not None else 0
         conn.execute(
             """
             INSERT INTO video_segment (
