@@ -71,8 +71,8 @@ def _prep_filter(*, headroom: float, width: int, height: int) -> str:
 
 def _motion_zoom_max(preset: str) -> float:
     if preset == "ken_burns_slow":
-        return 1.10
-    return 1.14
+        return 1.16
+    return 1.20
 
 
 def _pick_motion_mode(segment_index: int) -> str:

@@ -49,12 +49,7 @@
         <el-descriptions-item label="分镜序号" :span="3">
           <div class="flex flex-col gap-2">
             <div class="flex items-center gap-3">
-              <el-checkbox
-                :model-value="allSelected"
-                @change="toggleSelectAll"
-              >
-                全选
-              </el-checkbox>
+              <el-checkbox :model-value="allSelected" @change="toggleSelectAll"> 全选 </el-checkbox>
               <span class="text-sm text-gray-500">共 {{ segments.length }} 分镜，留空表示全部</span>
             </div>
             <el-checkbox-group v-model="selectedSegments" class="flex flex-wrap gap-x-4 gap-y-1">
@@ -72,10 +67,7 @@
       </el-descriptions>
     </div>
 
-    <div
-      v-if="segments.length"
-      class="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1"
-    >
+    <div v-if="segments.length" class="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1">
       <span class="text-xs text-gray-400">快速定位：</span>
       <button
         v-for="segment in segments"
@@ -98,12 +90,7 @@
           <div class="flex items-center justify-between gap-2">
             <span class="text-sm font-medium text-gray-800">#{{ segment.segment_index }}</span>
             <div class="flex items-center gap-1">
-              <el-button
-                size="small"
-                link
-                type="primary"
-                @click="openEditDialog(segment)"
-              >
+              <el-button size="small" link type="primary" @click="openEditDialog(segment)">
                 编辑
               </el-button>
               <el-tag size="small">{{ segment.status }}</el-tag>
@@ -127,7 +114,7 @@
               </template>
               <div
                 v-if="segment.dialogue?.length"
-                class="flex min-h-[4lh] cursor-default flex-col gap-0.5 text-sm leading-relaxed"
+                class="flex min-h-[5lh] cursor-default flex-col gap-0.5 text-sm leading-relaxed"
               >
                 <template v-if="segment.dialogue.length > 4">
                   <div
@@ -167,18 +154,22 @@
                 size="small"
                 link
                 type="primary"
-:loading="generatingVisualBriefIndex === segment.segment_index"
-:disabled="isSegmentVisualBriefActionDisabled(segment.segment_index)"
-@click="handleGenerateVisualBrief(segment.segment_index)"
+                :loading="generatingVisualBriefIndex === segment.segment_index"
+                :disabled="isSegmentVisualBriefActionDisabled(segment.segment_index)"
+                @click="handleGenerateVisualBrief(segment.segment_index)"
               >
                 生成
               </el-button>
             </div>
             <el-tooltip placement="top" :show-after="300" :disabled="!segment.visual_brief">
               <template #content>
-                <div class="max-w-sm whitespace-pre-wrap wrap-break-word text-sm">{{ segment.visual_brief }}</div>
+                <div class="max-w-sm whitespace-pre-wrap wrap-break-word text-sm">
+                  {{ segment.visual_brief }}
+                </div>
               </template>
-              <div class="line-clamp-4 min-h-[4lh] cursor-default text-sm leading-relaxed wrap-break-word">
+              <div
+                class="line-clamp-3 min-h-[3lh] cursor-default text-sm leading-relaxed wrap-break-word"
+              >
                 {{ segment.visual_brief || "-" }}
               </div>
             </el-tooltip>
@@ -188,7 +179,12 @@
             <div class="flex items-center justify-between gap-2">
               <div class="text-xs font-medium text-gray-600">文生图提示词</div>
               <div class="flex items-center gap-1">
-                <el-popover placement="bottom" :width="520" trigger="click" @show="handleImagePromptPopoverShow(segment.segment_index)">
+                <el-popover
+                  placement="bottom"
+                  :width="520"
+                  trigger="click"
+                  @show="handleImagePromptPopoverShow(segment.segment_index)"
+                >
                   <template #reference>
                     <el-button
                       size="small"
@@ -199,18 +195,26 @@
                       提示词
                     </el-button>
                   </template>
-                  <div v-if="imagePromptLoading" class="py-4 text-center text-xs text-gray-400">加载中…</div>
-                  <div v-else-if="imagePromptError" class="py-2 text-xs text-red-500">{{ imagePromptError }}</div>
+                  <div v-if="imagePromptLoading" class="py-4 text-center text-xs text-gray-400">
+                    加载中…
+                  </div>
+                  <div v-else-if="imagePromptError" class="py-2 text-xs text-red-500">
+                    {{ imagePromptError }}
+                  </div>
                   <div v-else class="space-y-3">
                     <div>
                       <div class="mb-1 text-xs font-medium text-gray-600">System</div>
-                      <div class="max-h-40 overflow-y-auto whitespace-pre-wrap rounded bg-gray-50 p-2 text-xs leading-relaxed wrap-break-word">
+                      <div
+                        class="max-h-40 overflow-y-auto whitespace-pre-wrap rounded bg-gray-50 p-2 text-xs leading-relaxed wrap-break-word"
+                      >
                         {{ imagePromptSystem || "暂无" }}
                       </div>
                     </div>
                     <div>
                       <div class="mb-1 text-xs font-medium text-gray-600">User</div>
-                      <div class="max-h-40 overflow-y-auto whitespace-pre-wrap rounded bg-gray-50 p-2 text-xs leading-relaxed wrap-break-word">
+                      <div
+                        class="max-h-40 overflow-y-auto whitespace-pre-wrap rounded bg-gray-50 p-2 text-xs leading-relaxed wrap-break-word"
+                      >
                         {{ imagePromptUser || "暂无" }}
                       </div>
                     </div>
@@ -230,9 +234,13 @@
             </div>
             <el-tooltip placement="top" :show-after="300" :disabled="!segment.image_prompt">
               <template #content>
-                <div class="max-w-sm whitespace-pre-wrap wrap-break-word text-xs">{{ segment.image_prompt }}</div>
+                <div class="max-w-sm whitespace-pre-wrap wrap-break-word text-xs">
+                  {{ segment.image_prompt }}
+                </div>
               </template>
-              <div class="line-clamp-2 min-h-[2lh] cursor-default text-xs leading-relaxed wrap-break-word text-gray-500">
+              <div
+                class="line-clamp-2 min-h-[2lh] cursor-default text-xs leading-relaxed wrap-break-word text-gray-500"
+              >
                 {{ segment.image_prompt || "-" }}
               </div>
             </el-tooltip>
@@ -244,9 +252,13 @@
             </div>
             <el-tooltip placement="top" :show-after="300" :disabled="!segment.motion_prompt">
               <template #content>
-                <div class="max-w-sm whitespace-pre-wrap wrap-break-word text-xs">{{ segment.motion_prompt }}</div>
+                <div class="max-w-sm whitespace-pre-wrap wrap-break-word text-xs">
+                  {{ segment.motion_prompt }}
+                </div>
               </template>
-              <div class="line-clamp-3 min-h-[3lh] cursor-default text-xs leading-relaxed wrap-break-word text-gray-500">
+              <div
+                class="line-clamp-2 min-h-[2lh] cursor-default text-xs leading-relaxed wrap-break-word text-gray-500"
+              >
                 {{ segment.motion_prompt || "-" }}
               </div>
             </el-tooltip>
@@ -258,7 +270,9 @@
                 <template #title>
                   <span class="text-xs font-medium text-gray-600">SD15 英文提示词</span>
                 </template>
-                <div class="whitespace-pre-wrap wrap-break-word text-xs leading-relaxed text-gray-500">
+                <div
+                  class="whitespace-pre-wrap wrap-break-word text-xs leading-relaxed text-gray-500"
+                >
                   {{ segment.sd15_prompt_en || "-" }}
                 </div>
               </el-collapse-item>
@@ -288,8 +302,9 @@
               fit="cover"
               class="w-full rounded border border-gray-100"
               :style="mediaPreviewStyle"
-              :preview-src-list="stageActive !== false && segment.imageOriginUrl ? [segment.imageOriginUrl] : []
-                "
+              :preview-src-list="
+                stageActive !== false && segment.imageOriginUrl ? [segment.imageOriginUrl] : []
+              "
               preview-teleported
             />
             <div
@@ -375,7 +390,12 @@
       />
       <template #footer>
         <el-button @click="editDialogOpen = false">取消</el-button>
-        <el-button type="primary" :loading="editSaving" :disabled="!editText.trim()" @click="handleSaveSegmentText">
+        <el-button
+          type="primary"
+          :loading="editSaving"
+          :disabled="!editText.trim()"
+          @click="handleSaveSegmentText"
+        >
           保存
         </el-button>
       </template>
@@ -388,7 +408,13 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { generatePrompts, previewSegmentPrompts, runJobStageAction, updateJobInfo, updateSegmentText } from "@/api/api-jobs";
+import {
+  generatePrompts,
+  previewSegmentPrompts,
+  runJobStageAction,
+  updateJobInfo,
+  updateSegmentText,
+} from "@/api/api-jobs";
 import { getMediaFileUrl, getMediaPicViewUrl } from "@/api/api-media";
 import type { JobDetail, JobInfo, JobLog, JobSegment, ScriptJson } from "@/types/jobs";
 import type { RunStageActionPayload } from "@/types/jobs/stageAction";
@@ -414,8 +440,14 @@ const emit = defineEmits<{
 const { handleError } = useErrorHandler();
 
 function speakerStyle(speaker: string): { bg: string; text: string; full: string } {
-  if (speaker === "昭昭") return { bg: "bg-blue-50", text: "text-blue-600", full: "bg-blue-50 text-blue-800" };
-  if (speaker === "妈妈") return { bg: "bg-emerald-50", text: "text-emerald-600", full: "bg-emerald-50 text-emerald-800" };
+  if (speaker === "昭昭")
+    return { bg: "bg-blue-50", text: "text-blue-600", full: "bg-blue-50 text-blue-800" };
+  if (speaker === "妈妈")
+    return {
+      bg: "bg-emerald-50",
+      text: "text-emerald-600",
+      full: "bg-emerald-50 text-emerald-800",
+    };
   return { bg: "bg-pink-50", text: "text-pink-600", full: "bg-pink-50 text-pink-800" };
 }
 
@@ -602,8 +634,7 @@ const isSegmentImagePromptActionDisabled = (segmentIndex: number) =>
   generatingClipIndex.value !== null ||
   generatingMotionPromptIndex.value !== null ||
   generatingVisualBriefIndex.value !== null ||
-  (generatingImagePromptIndex.value !== null &&
-    generatingImagePromptIndex.value !== segmentIndex);
+  (generatingImagePromptIndex.value !== null && generatingImagePromptIndex.value !== segmentIndex);
 
 const isSegmentVisualBriefActionDisabled = (segmentIndex: number) =>
   actionDisabled.value ||
@@ -611,8 +642,7 @@ const isSegmentVisualBriefActionDisabled = (segmentIndex: number) =>
   regeneratingImageIndex.value !== null ||
   generatingImagePromptIndex.value !== null ||
   generatingClipIndex.value !== null ||
-  (generatingVisualBriefIndex.value !== null &&
-    generatingVisualBriefIndex.value !== segmentIndex);
+  (generatingVisualBriefIndex.value !== null && generatingVisualBriefIndex.value !== segmentIndex);
 
 const isSegmentClipActionDisabled = (segment: { segment_index: number; imageUrl: string }) =>
   actionDisabled.value ||
@@ -669,8 +699,7 @@ const displaySegments = computed(() =>
     }
     // 使用 DB 版本号作为缓存破坏参数
     const ver = segment.version ?? 0;
-    const appendVersion = (url: string) =>
-      url + (url.includes("?") ? "&" : "?") + `v=${ver}`;
+    const appendVersion = (url: string) => url + (url.includes("?") ? "&" : "?") + `v=${ver}`;
     if (imageUrl) {
       imageUrl = appendVersion(imageUrl);
     }

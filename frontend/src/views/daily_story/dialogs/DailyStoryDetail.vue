@@ -193,9 +193,9 @@ watch(
 );
 
 /** 默认口播语速（字/秒） */
-const speechRate = ref(3.1);
+const speechRate = ref(3.6);
 /** 句间停留（秒） */
-const lineGap = ref(0.3);
+const lineGap = ref(0.2);
 
 const totalChars = computed(() => {
   const dialogue = editStory.value?.dialogue;
@@ -230,7 +230,7 @@ async function handleCreateJob() {
       speechRate: speechRate.value,
       lineGap: lineGap.value,
     });
-    ElMessage.success(`任务已创建（ID: ${job.id}），即将开始处理`);
+    ElMessage.success(`任务已创建（ID: ${job.id}），请到任务页手动运行各阶段`);
     visible.value = false;
     router.push({ path: "/jobs", query: { id: String(job.id) } });
   } catch (e: any) {
