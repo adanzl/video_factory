@@ -47,6 +47,7 @@ from app.services.daily_story.prompts import (
     _correct_dialogue_speaker,
     build_daily_script_prompts,
     build_daily_story_prompts,
+    build_daily_story_retry_user,
     build_daily_story_theme_prompts,
     validate_daily_story_json,
 )
@@ -1523,43 +1524,48 @@ class DeepSeekClient(LLMClient):
         theme: str,
     ) -> dict[str, Any]:
         system, user = build_daily_story_prompts(theme)
-        user_base = user
         last_exc: ValueError | None = None
-        max_attempts = get_settings().script_qa_max_attempts
+        # 日常故事易因字数波动失败：至少 4 次，且重试改为「带上一稿修订」
+        max_attempts = max(4, get_settings().script_qa_max_attempts)
+        prev_story: dict | None = None
         for attempt in range(max_attempts):
+            temperature = (
+                _TEMP_CREATIVE_HIGH if attempt == 0 else _TEMP_CREATIVE_MID
+            )
             raw, _ = self._chat_json(
                 system,
                 user,
                 thinking_enabled=False,
-                temperature=_TEMP_CREATIVE_HIGH,
+                temperature=temperature,
             )
             try:
                 validate_daily_story_json(raw)
                 return raw
             except ValueError as exc:
                 last_exc = exc
+                prev_story = raw if isinstance(raw, dict) else prev_story
                 if attempt + 1 >= max_attempts:
                     break
                 errors = str(exc).removeprefix("daily_story 校验失败: ")
                 logger.warning(
-                    "[DAILY_STORY] generate story validation failed attempt=%d/%d: %s",
+                    "[DAILY_STORY] generate story validation failed "
+                    "attempt=%d/%d: %s",
                     attempt + 1,
                     max_attempts,
                     exc,
                 )
-                user = (
-                    f"{user_base}\n\n"
-                    "【重试】上一轮输出的 JSON 校验未通过："
-                    f"{errors}\n"
-                    "请确保：dialogue 含 speaker/line；"
-                    "speaker 仅为「昭昭」「灿灿」「妈妈」；"
-                    "line 含可发音汉字且每句≤18字；"
-                    "全部 line 总字数须在300–380；"
-                    "前3句须露出具体冲突（抢/藏/谁先/不给等），禁止寒暄；"
-                    "末句禁止软收尾（算了/和好等）；"
-                    "punchline_explain 须含类型标签（如「C类公平执念」）；"
-                    "禁止纯标点台词。"
-                )
+                if isinstance(prev_story, dict):
+                    user = build_daily_story_retry_user(
+                        theme,
+                        prev_story=prev_story,
+                        errors=errors,
+                    )
+                else:
+                    user = (
+                        f"{build_daily_story_prompts(theme)[1]}\n\n"
+                        f"【重试】上一轮校验未通过：{errors}\n"
+                        "请直接输出符合硬约束的完整 JSON。"
+                    )
         assert last_exc is not None
         raise last_exc
 

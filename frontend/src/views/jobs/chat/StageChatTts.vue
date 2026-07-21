@@ -241,13 +241,17 @@ const loadError = ref("");
 const playbackSpeed = ref(1);
 const audioRef = ref<HTMLAudioElement | null>(null);
 
-const speakerConfigs = ref<Record<string, SpeakerConfig>>(
-  loadSavedConfigs()
-);
 const phraseGapSec = ref(0.2);
+const speakerConfigs = ref<Record<string, SpeakerConfig>>(
+  loadSavedSpeakerConfigs()
+);
+syncPhraseGapFromJob();
 
-function loadSavedConfigs(): Record<string, SpeakerConfig> {
-  const defaults = JSON.parse(JSON.stringify(defaultSpeakerConfigs)) as Record<string, SpeakerConfig>;
+function loadSavedSpeakerConfigs(): Record<string, SpeakerConfig> {
+  const defaults = JSON.parse(JSON.stringify(defaultSpeakerConfigs)) as Record<
+    string,
+    SpeakerConfig
+  >;
   const info = props.job.info as Record<string, unknown> | null | undefined;
   const tts = info?.tts as Record<string, unknown> | undefined;
   const saved = tts?.speaker_configs as Record<string, unknown> | undefined;
@@ -255,12 +259,26 @@ function loadSavedConfigs(): Record<string, SpeakerConfig> {
   for (const [key, val] of Object.entries(saved)) {
     if (key === "phrase_gap_sec") continue;
     const cfg = val as Partial<SpeakerConfig> | undefined;
-    if (cfg?.voice_id) defaults[key] = { voice_id: cfg.voice_id, speech_rate: cfg.speech_rate ?? defaults[key]?.speech_rate ?? 1.0 };
+    if (cfg?.voice_id) {
+      defaults[key] = {
+        voice_id: cfg.voice_id,
+        speech_rate: cfg.speech_rate ?? defaults[key]?.speech_rate ?? 1.0,
+      };
+    }
   }
-  const savedGap = saved.phrase_gap_sec;
-  if (typeof savedGap === "number") phraseGapSec.value = savedGap;
-  else if (typeof tts?.phrase_gap_sec === "number") phraseGapSec.value = tts.phrase_gap_sec;
   return defaults;
+}
+
+function syncPhraseGapFromJob() {
+  const info = props.job.info as Record<string, unknown> | null | undefined;
+  const tts = info?.tts as Record<string, unknown> | undefined;
+  const saved = tts?.speaker_configs as Record<string, unknown> | undefined;
+  const savedGap = saved?.phrase_gap_sec;
+  if (typeof savedGap === "number") {
+    phraseGapSec.value = savedGap;
+  } else if (typeof tts?.phrase_gap_sec === "number") {
+    phraseGapSec.value = tts.phrase_gap_sec;
+  }
 }
 
 const actionDisabled = computed(() => props.job.status === "running");
