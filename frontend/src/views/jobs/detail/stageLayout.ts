@@ -23,6 +23,10 @@ export const STAGE_COL_WIDE_LEFT_CLASS =
 
 export const STAGE_COL_RIGHT_CLASS = "min-w-[280px] flex-1 basis-[360px]";
 
+/** 配音等宽预览列（字幕表需要更宽） */
+export const STAGE_COL_WIDE_RIGHT_CLASS =
+  "min-w-[320px] flex-1 basis-[520px]";
+
 /** 三栏预览列（约 1/3 宽度） */
 export const STAGE_COL_THIRD_CLASS =
   "min-w-[240px] max-w-full flex-1 basis-[320px]";

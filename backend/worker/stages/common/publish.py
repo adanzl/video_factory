@@ -35,47 +35,42 @@ class PublishStage(StageExecutor):
                     "publish meta ready; manual publish: copy description/tags and download cover/final",
                 )
                 return
-
-            from app.services.llm.llm_mgr import llm_mgr
-
             content_style = content_style_from_job(job)
             updated = dict(script)
-            notes: list[str] = []
 
-            if need_description:
-                try:
-                    updated["video_description"] = llm_mgr.generate_video_description(
-                        title,
-                        narration,
-                        content_style=content_style,
-                    )
-                    notes.append("video_description generated")
-                except Exception as exc:
-                    repo_job_log.append_log(
-                        conn,
-                        job_id,
-                        self.name,
-                        f"video description failed: {exc}",
-                        level="warning",
-                    )
+        # LLM 必须在事务外，避免长占 SQLite 锁卡死 gevent hub
+        from app.services.llm.llm_mgr import llm_mgr
 
-            if need_tags:
-                try:
-                    updated["tags"] = llm_mgr.generate_tags(
-                        title,
-                        narration,
-                        content_style=content_style,
-                    )
-                    notes.append("tags generated")
-                except Exception as exc:
-                    repo_job_log.append_log(
-                        conn,
-                        job_id,
-                        self.name,
-                        f"tags failed: {exc}",
-                        level="warning",
-                    )
+        notes: list[str] = []
+        warn_logs: list[str] = []
 
+        if need_description:
+            try:
+                updated["video_description"] = llm_mgr.generate_video_description(
+                    title,
+                    narration,
+                    content_style=content_style,
+                )
+                notes.append("video_description generated")
+            except Exception as exc:
+                warn_logs.append(f"video description failed: {exc}")
+
+        if need_tags:
+            try:
+                updated["tags"] = llm_mgr.generate_tags(
+                    title,
+                    narration,
+                    content_style=content_style,
+                )
+                notes.append("tags generated")
+            except Exception as exc:
+                warn_logs.append(f"tags failed: {exc}")
+
+        with connection() as conn:
+            for msg in warn_logs:
+                repo_job_log.append_log(
+                    conn, job_id, self.name, msg, level="warning"
+                )
             if notes:
                 repo_job.update_job(conn, job_id, script_json=updated)
                 repo_job_log.append_log(

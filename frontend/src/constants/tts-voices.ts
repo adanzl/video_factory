@@ -14,11 +14,11 @@ export const TTS_VOICE_MOM = "longwan_v3";
 
 const CLONED_VOICES: TtsVoiceOption[] = [
   {
-    label: "人声复刻 (灿灿)",
+    label: "复刻 (灿灿)",
     value: TTS_VOICE_CAN,
   },
   {
-    label: "人声复刻 (昭昭)",
+    label: "复刻 (昭昭)",
     value: TTS_VOICE_ZHAO,
   },
 ];
