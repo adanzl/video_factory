@@ -96,11 +96,11 @@
               <el-tag size="small">{{ segment.status }}</el-tag>
             </div>
           </div>
-          <div class="flex items-center justify-between gap-2">
+          <div class="flex items-center gap-2">
             <span class="text-xs font-medium text-gray-600">关键帧</span>
             <el-select
               size="small"
-              class="w-32"
+              class="w-30!"
               :model-value="segmentKeyframeValue(segment)"
               :disabled="actionDisabled || savingKeyframeIndex === segment.segment_index"
               :loading="savingKeyframeIndex === segment.segment_index"
@@ -504,14 +504,18 @@ const handleKeyframeChange = async (segment: JobSegment, value: string) => {
   const next = (value === "ffmpeg" || value === "agnes_i2v" ? value : "") as KeyframeProvider;
   savingKeyframeIndex.value = segment.segment_index;
   try {
-    if (next === "agnes_i2v" && !String(segment.motion_prompt || "").trim()) {
+    // 先落库 video_provider，再生成 motion，才会走 keyframe 规则
+    await updateSegmentInfo(props.job.id, segment.segment_index, next || null);
+    const motion = String(segment.motion_prompt || "").trim();
+    const needsKeyframeMotion =
+      next === "agnes_i2v" && (!motion || motion.includes("人物姿势保持不变"));
+    if (needsKeyframeMotion) {
       await generatePrompts(props.job.id, {
         type: "motion",
         segments: [segment.segment_index],
       });
-      ElMessage.info(`分镜 #${segment.segment_index} 已提交运动提示词生成`);
+      ElMessage.info(`分镜 #${segment.segment_index} 已提交关键帧运动提示词生成`);
     }
-    await updateSegmentInfo(props.job.id, segment.segment_index, next || null);
     emit("refresh");
   } catch (error) {
     handleError(error, "更新关键帧失败");

@@ -139,10 +139,28 @@ _IMAGE_PROMPT_MOTION_TAIL = (
     "反例：小偷手指微微弯曲。（人物肢体动作，禁止）"
 )
 
-_IMAGE_PROMPT_MOTION_TAIL_DAILY = (
-    "【motion_prompt】15-80字，只写画面内无生命元素微动（光影、纱帘、尘埃等），"
-    "禁人物/有生命体动作；末尾说明人物姿势保持不变。"
+_IMAGE_PROMPT_MOTION_TAIL_DAILY_AMBIENT = (
+    "【ambient】15-80字，只写画面内无生命元素微动（光影、纱帘、尘埃、蜡笔屑等），"
+    "禁人物/有生命体动作；末尾须写「人物姿势保持不变」。"
     "正例：窗边纱帘被风轻轻掀起又落下，人物姿势保持不变。"
+)
+
+_IMAGE_PROMPT_MOTION_TAIL_DAILY_KEYFRAME = (
+    "【keyframe】15-80字，紧扣 visual_brief / image_prompt 已出现的人物与道具："
+    "写 1 个可见微动作（举手停、眉毛一挑、嘴角、侧头、握拳等），"
+    "其余主体保持稳定；可带极缓镜头推近。"
+    "禁止大位移换位、全身换姿势、多人齐跑齐飞、抽象光效。"
+    "正例：妈妈右手举至胸前微微前推做停势，昭昭侧脸微抬眼神一亮，其余姿势稳定。"
+    "反例：两人绕桌追逐。（大位移，禁止）"
+    "反例：背景彩铅色块微微晃动，人物姿势保持不变。（关键帧禁止纯环境微动）"
+)
+
+_IMAGE_PROMPT_MOTION_TAIL_DAILY = (
+    "【motion_prompt 分流】按该段 motion_mode 选择规则："
+    "motion_mode=ambient（默认）→"
+    + _IMAGE_PROMPT_MOTION_TAIL_DAILY_AMBIENT
+    + "motion_mode=keyframe（特写/i2v 关键帧）→"
+    + _IMAGE_PROMPT_MOTION_TAIL_DAILY_KEYFRAME
 )
 
 _IMAGE_PROMPT_RULE_SD15 = (
@@ -216,6 +234,11 @@ _IMAGE_PROMPTS_JSON_EXAMPLE_DAILY = """{
       "segment_index": 1,
       "image_prompt": """ + _IMAGE_PROMPT_JSON_EXAMPLE_DAILY + """,
       "motion_prompt": "窗边纱帘被风轻轻掀起又落下，人物姿势保持不变"
+    },
+    {
+      "segment_index": 2,
+      "image_prompt": "特写妈妈举手做停势，昭昭侧头仰望，背景虚化彩铅色块。",
+      "motion_prompt": "妈妈右手举至胸前微微前推做停势，昭昭侧脸微抬眼神一亮，其余姿势稳定"
     }
   ]
 }"""
@@ -268,6 +291,13 @@ _MOTION_USER_RULE = (
     "禁止写人物或任何有生命主体的动作，禁止脱离画面编造元素，各段互不重复，禁止套话。"
 )
 
+_MOTION_USER_RULE_DAILY = (
+    "motion_prompt 须按该段 motion_mode："
+    "ambient 只写无生命微动且末尾写人物姿势保持不变；"
+    "keyframe 写 1 个微表情/微手势（禁大位移、禁纯环境晃动套话）；"
+    "各段互不重复，禁止套话。"
+)
+
 
 def _image_prompt_role(content_style: str) -> str:
     return _IMAGE_PROMPT_ROLES.get(
@@ -300,6 +330,7 @@ def _format_segment_brief(
     *,
     prefix: str = "",
     include_speakers: bool = False,
+    mark_motion_mode: bool = False,
 ) -> str:
     line = (
         f"{prefix}segment {seg.get('segment_index')}: "
@@ -314,6 +345,11 @@ def _format_segment_brief(
             }
         )
         line += f"; speakers={speakers!r}"
+    if mark_motion_mode:
+        from app.utils.job_info import is_keyframe_segment
+
+        mode = "keyframe" if is_keyframe_segment(seg) else "ambient"
+        line += f"; motion_mode={mode}"
     return line
 
 
@@ -322,11 +358,16 @@ def _collect_segment_prompt_lines(
     segment_indices: list[int] | None,
     *,
     include_speakers: bool = False,
+    mark_motion_mode: bool = False,
 ) -> tuple[list[str], set[int] | None]:
     """拼装分镜行；返回 (lines, wanted)。wanted 为 None 表示全量生成。"""
     if segment_indices is None:
         return [
-            _format_segment_brief(seg, include_speakers=include_speakers)
+            _format_segment_brief(
+                seg,
+                include_speakers=include_speakers,
+                mark_motion_mode=mark_motion_mode,
+            )
             for seg in segments
         ], None
 
@@ -348,7 +389,12 @@ def _collect_segment_prompt_lines(
             continue
         tag = "【仅上下文】" if idx in extra else "【需生成】"
         lines.append(
-            _format_segment_brief(seg, prefix=tag, include_speakers=include_speakers)
+            _format_segment_brief(
+                seg,
+                prefix=tag,
+                include_speakers=include_speakers,
+                mark_motion_mode=mark_motion_mode,
+            )
         )
     return lines, wanted
 
@@ -372,7 +418,12 @@ def _coverage_clause(*, partial: bool) -> str:
     return "image_prompts须覆盖输入的每一段，segment_index一一对应，不得遗漏。"
 
 
-def _user_tail(*, include_sd15_prompt: bool) -> str:
+def _user_tail(*, include_sd15_prompt: bool, content_style: str | None = None) -> str:
+    motion_rule = (
+        _MOTION_USER_RULE_DAILY
+        if content_style == CONTENT_STYLE_DAILY_STORY
+        else _MOTION_USER_RULE
+    )
     if include_sd15_prompt:
         head = (
             "请为每段编写 image_prompt 与 motion_prompt。"
@@ -386,7 +437,7 @@ def _user_tail(*, include_sd15_prompt: bool) -> str:
             "篇幅按画面复杂度充分写，不凑字数、不写4K/8K/分辨率等规格套话。"
         )
         tail = ""
-    return "\n\n" + head + _MOTION_USER_RULE + tail
+    return "\n\n" + head + motion_rule + tail
 
 
 def _build_system_prompt(
@@ -436,6 +487,7 @@ def _build_user_prompt(
     include_sd15_prompt: bool,
     supplementary_info: str | None,
     feedback: str | None,
+    content_style: str | None = None,
 ) -> str:
     user = append_supplementary_to_user(
         (
@@ -443,7 +495,10 @@ def _build_user_prompt(
             f"全片画风定调 visual_style：{script.get('visual_style', '')}\n\n"
             "各分镜口播与画面描述：\n"
             + "\n".join(lines)
-            + _user_tail(include_sd15_prompt=include_sd15_prompt)
+            + _user_tail(
+                include_sd15_prompt=include_sd15_prompt,
+                content_style=content_style,
+            )
         ),
         supplementary_info or script.get("supplementary_info"),
     )
@@ -469,10 +524,12 @@ def build_image_prompts(
         content_style=content_style,
     )
     segments = script.get("segments") or []
+    is_daily = profile_style == CONTENT_STYLE_DAILY_STORY
     lines, wanted = _collect_segment_prompt_lines(
         segments,
         segment_indices,
-        include_speakers=(profile_style == CONTENT_STYLE_DAILY_STORY),
+        include_speakers=is_daily,
+        mark_motion_mode=is_daily,
     )
     system = _build_system_prompt(
         content_style=profile_style,
@@ -487,5 +544,6 @@ def build_image_prompts(
         include_sd15_prompt=include_sd15_prompt,
         supplementary_info=supplementary_info,
         feedback=feedback,
+        content_style=profile_style,
     )
     return prompt_step("image_prompts", system, user)

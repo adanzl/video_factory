@@ -75,7 +75,43 @@ def test_build_daily_image_prompts_is_slimmer():
     assert "纱帘" in system or "窗边" in system
     assert "角色入画" in system
     assert "忽略" in system
-    assert len(system) < 1800
+    assert "motion_mode=ambient" in prompts["user"]
+    assert "关键帧禁止纯环境微动" in system
+    assert len(system) < 2800
+
+
+def test_build_image_prompts_daily_keyframe_marks_motion_mode():
+    from app.services.script.image_prompt import build_image_prompts
+
+    script = {
+        "title": "新橡皮归谁",
+        "visual_style": "儿童情绪涂鸦",
+        "content_style": "daily_story",
+        "segments": [
+            {
+                "segment_index": 1,
+                "text": "普通镜",
+                "visual_brief": "中景对峙",
+                "dialogue": [{"speaker": "昭昭", "text": "普通镜"}],
+            },
+            {
+                "segment_index": 3,
+                "text": "停！",
+                "visual_brief": "妈妈举手停，昭昭侧头",
+                "info": {"video_provider": "agnes_i2v"},
+                "dialogue": [{"speaker": "妈妈", "text": "停！"}],
+            },
+        ],
+    }
+    prompts = build_image_prompts(
+        script,
+        content_style="daily_story",
+        job={"pipeline": "chat", "content_style": "daily_story"},
+    )
+    assert "motion_mode=ambient" in prompts["user"]
+    assert "motion_mode=keyframe" in prompts["user"]
+    assert "微微前推做停势" in prompts["system"]
+    assert "keyframe 写 1 个微表情" in prompts["user"]
 
 
 def test_collect_issues_ignores_wrap_prefix_cast_names():

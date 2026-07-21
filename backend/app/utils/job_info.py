@@ -303,17 +303,25 @@ def merge_job_info(existing: str | dict | None, **updates: Any) -> dict[str, Any
 # 日常故事自动标关键帧：按 shot_type
 KEYFRAME_SHOT_TYPES = frozenset({"特写"})
 KEYFRAME_VIDEO_PROVIDER = "agnes_i2v"
+_KEYFRAME_VIDEO_PROVIDERS = frozenset({"agnes_i2v", "wan_i2v"})
+
+
+def is_keyframe_segment(segment: dict[str, Any] | None) -> bool:
+    """分镜是否关键帧（info.video_provider 为 i2v）。"""
+    if not isinstance(segment, dict):
+        return False
+    provider = normalize_video_provider(
+        parse_job_info(segment.get("info")).get("video_provider")
+    )
+    return provider in _KEYFRAME_VIDEO_PROVIDERS
 
 
 def apply_keyframe_video_providers(segments: list[dict[str, Any]]) -> list[int]:
     """按 shot_type 自动标关键帧：写入 info.video_provider=agnes_i2v。
 
-    关键帧依赖 motion_prompt（由 fill_image_prompts 写入）；缺省时仅打日志。
+    应在 fill_image_prompts 之前调用，以便关键帧走专用 motion 规则。
     返回被标为关键帧的 segment_index 列表。
     """
-    import logging
-
-    logger = logging.getLogger(__name__)
     marked: list[int] = []
     for seg in segments:
         shot = str(seg.get("shot_type") or "").strip()
@@ -324,12 +332,6 @@ def apply_keyframe_video_providers(segments: list[dict[str, Any]]) -> list[int]:
         seg["info"] = info
         index = int(seg.get("segment_index") or 0)
         marked.append(index)
-        if not str(seg.get("motion_prompt") or "").strip():
-            logger.warning(
-                "keyframe segment %s marked as %s but motion_prompt is empty",
-                index,
-                KEYFRAME_VIDEO_PROVIDER,
-            )
     return marked
 
 

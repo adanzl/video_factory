@@ -283,6 +283,15 @@ def test_apply_keyframe_video_providers_marks_closeup():
     assert segments[1]["info"]["video_provider"] == "agnes_i2v"
 
 
+def test_is_keyframe_segment():
+    from app.utils.job_info import is_keyframe_segment
+
+    assert not is_keyframe_segment({"segment_index": 1})
+    assert is_keyframe_segment({"info": {"video_provider": "agnes_i2v"}})
+    assert is_keyframe_segment({"info": {"video_provider": "wan_i2v"}})
+    assert not is_keyframe_segment({"info": {"video_provider": "ffmpeg"}})
+
+
 def test_resolve_video_provider_visual_mode_fallback():
     from types import SimpleNamespace
 
