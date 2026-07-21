@@ -6,6 +6,7 @@ import base64
 import logging
 import math
 import mimetypes
+import re
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -33,12 +34,24 @@ _RETRYABLE_HTTP = frozenset({500, 502, 503, 504})
 _TASK_RETRY_TOKENS = ("failed", "timeout", "429", "rate limit", "too many")
 _TERMINAL_POLL_STATES = frozenset({"completed", "failed"})
 _I2V_MODE = "ti2vid"
-_DEFAULT_MOTION_PROMPT = "画面元素轻微自然晃动，镜头极缓推进，面部表情与静图一致"
+_DEFAULT_MOTION_PROMPT = (
+    "画面元素轻微自然晃动，镜头固定不推近不拉远，面部表情与静图一致"
+)
 _STABILITY_HINT = "画面稳定，无快速运镜"
 _FACE_LOCK_HINT = "面部表情与静图一致，不微笑不大笑，五官服装发型保持不变"
+_CAMERA_LOCK_HINT = "镜头固定，不推近不拉远，不放大构图"
 _DEFAULT_NEGATIVE_PROMPT = (
     "微笑, 大笑, 露齿笑, 开心, 嬉笑, 表情突变, 换脸, 脸部变形, "
-    "扭曲, 多手指, 文字水印"
+    "扭曲, 多手指, 文字水印, "
+    "快速推进, 大幅推进, 强烈变焦, 画面放大, 裁切脸部, zoom in, dolly in"
+)
+# 提交前去掉旧稿里的推近用语，避免 I2V 猛 zoom（勿误伤「不推近」）
+_CAMERA_ZOOM_RE = re.compile(
+    r"镜头(?:极缓|缓慢|轻轻|轻微|大幅|强烈)?(?:推近|推进|拉远|变焦)"
+    r"|(?:极缓|缓慢|轻轻|轻微|大幅|强烈)(?:推近|推进|拉远)"
+    r"|放大构图|放大画面"
+    r"|slow\s*zoom(?:\s*in)?|zoom\s*in|dolly\s*in",
+    re.IGNORECASE,
 )
 # Agnes 720p 各比例上限均为 409 帧（1080p 仅 169 帧，更长分镜靠 loop + fit 补齐）
 _MAX_FRAMES = 409
@@ -62,11 +75,15 @@ def _backoff_seconds(attempt: int, *, is_timeout: bool = False) -> float:
 
 
 def _stabilize_motion_prompt(prompt: str) -> str:
-    """补齐 I2V 稳定性与面部锁定（文档：写清动什么、锁什么）。"""
+    """补齐 I2V 稳定性与面部锁定，并压掉推近/变焦（易裁脸）。"""
     text = prompt.strip() or _DEFAULT_MOTION_PROMPT
+    text = _CAMERA_ZOOM_RE.sub("", text)
+    text = re.sub(r"[，,]{2,}", "，", text).strip("，, ").strip()
+    if not text:
+        text = _DEFAULT_MOTION_PROMPT
     parts = [text]
     if _STABILITY_HINT not in text and not any(
-        word in text for word in ("稳定", "平滑", "无抖动", "极缓", "缓慢")
+        word in text for word in ("稳定", "平滑", "无抖动", "镜头固定")
     ):
         parts.append(_STABILITY_HINT)
     if not any(
@@ -74,6 +91,10 @@ def _stabilize_motion_prompt(prompt: str) -> str:
         for word in ("面部", "表情", "静图一致", "不微笑", "五官", "脸")
     ):
         parts.append(_FACE_LOCK_HINT)
+    if not any(
+        word in text for word in ("镜头固定", "不推近", "不拉远", "不放大")
+    ):
+        parts.append(_CAMERA_LOCK_HINT)
     return "，".join(parts) if len(parts) > 1 else text
 
 
