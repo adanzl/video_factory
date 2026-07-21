@@ -48,6 +48,11 @@ export interface RunStageActionPayload {
   video_provider?: "ffmpeg" | "wan_i2v" | "agnes_i2v";
   segment_index?: number;
   speaker_configs?: Record<string, unknown>;
+  bgm?: {
+    enabled?: boolean;
+    material_id?: number | null;
+    volume_db?: number;
+  };
 }
 
 export interface PreviewScriptPromptsPayload {

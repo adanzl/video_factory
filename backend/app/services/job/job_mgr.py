@@ -1310,9 +1310,30 @@ class JobMgr:
             segment_indices=segment_indices,
         )
 
-    def run_merge(self, job_id: int, *, to_end: bool = False) -> dict:
+    def run_merge(
+        self,
+        job_id: int,
+        *,
+        to_end: bool = False,
+        bgm: dict | None = None,
+    ) -> dict:
         """合成成片。实现：worker/loop.run_merge → merge stage（按 pipeline 分发）"""
         from worker.loop import run_merge
+
+        if bgm is not None:
+            from app.utils.job_info import merge_job_info, normalize_bgm_payload
+
+            normalized = normalize_bgm_payload(bgm)
+            with connection() as conn:
+                job = repo_job.get_job(conn, job_id)
+                info = merge_job_info(job.get("info"), bgm=normalized)
+                repo_job.update_job(conn, job_id, info=info)
+                repo_job_log.append_log(
+                    conn,
+                    job_id,
+                    "api",
+                    f"merge bgm config: {normalized}",
+                )
 
         return self._run_in_background(
             job_id,

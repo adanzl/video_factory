@@ -675,6 +675,9 @@ class LLMMgr:
         started = time.perf_counter()
         try:
             story = self._get_client().generate_daily_story(theme)
+        except ValueError as exc:
+            logger.error("[DAILY_STORY] generate failed theme=%r: %s", theme, exc)
+            raise
         except Exception:
             logger.exception("[DAILY_STORY] generate failed theme=%r", theme)
             raise
@@ -690,6 +693,9 @@ class LLMMgr:
         started = time.perf_counter()
         try:
             themes = self._get_client().generate_daily_story_themes(count)
+        except ValueError as exc:
+            logger.error("[DAILY_STORY] generate themes failed: %s", exc)
+            raise
         except Exception:
             logger.exception("[DAILY_STORY] generate themes failed")
             raise
@@ -712,6 +718,9 @@ class LLMMgr:
                 job=job,
                 chars_per_sec=chars_per_sec,
             )
+        except ValueError as exc:
+            logger.error("[DAILY_STORY] generate script failed: %s", exc)
+            raise
         except Exception:
             logger.exception("[DAILY_STORY] generate script failed")
             raise

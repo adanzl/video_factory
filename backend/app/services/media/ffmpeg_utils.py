@@ -816,6 +816,48 @@ def concat_video_audio_pts_fixed(
     return output_path
 
 
+def mix_bgm_into_video(
+    video_path: Path,
+    bgm_path: Path,
+    output_path: Path,
+    *,
+    volume_db: float = -18.0,
+) -> Path:
+    """将 BGM 压低后循环铺满视频时长，与原音轨 amix。视频流 copy。"""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    duration = probe_duration(video_path)
+    if duration <= 0:
+        raise ValueError("video duration must be positive for bgm mix")
+    vol = max(-40.0, min(0.0, float(volume_db)))
+    filter_complex = (
+        f"[1:a]volume={vol}dB,atrim=0:{duration:.3f},asetpts=PTS-STARTPTS[bgm];"
+        f"[0:a][bgm]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[aout]"
+    )
+    cmd: list[str] = [
+        *ffmpeg_cmd_start(hwaccel=False),
+        "-i",
+        str(video_path),
+        "-stream_loop",
+        "-1",
+        "-i",
+        str(bgm_path),
+        "-filter_complex",
+        filter_complex,
+        "-map",
+        "0:v",
+        "-map",
+        "[aout]",
+        "-c:v",
+        "copy",
+        *_AAC_128K,
+        "-t",
+        f"{duration:.3f}",
+        str(output_path),
+    ]
+    run_ffmpeg(cmd)
+    return output_path
+
+
 def _can_concat_demuxer_copy(intro_path: Path, body_path: Path) -> bool:
     """片头与正文流参数完全一致时才 concat -c copy。"""
     intro_v, body_v = _probe_video_stream(intro_path), _probe_video_stream(body_path)
