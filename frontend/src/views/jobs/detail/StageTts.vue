@@ -9,23 +9,13 @@
     />
 
     <div :class="STAGE_TWO_COL_CLASS">
-      <div :class="STAGE_COL_LEFT_CLASS">
+      <div class="min-w-[280px] max-w-full shrink-0 basis-[420px]">
         <div :class="STAGE_PANEL_CLASS">
           <div :class="STAGE_PANEL_TITLE_CLASS">参数配置</div>
           <el-form :label-width="STAGE_FORM_LABEL_WIDTH" :class="STAGE_FORM_CLASS">
-              <el-form-item label="语速">
-                <el-input-number
-                  v-model="speechRate"
-                  :min="0.5"
-                  :max="2"
-                  :step="0.05"
-                  controls-position="right"
-                  class="w-40!"
-                />
-              </el-form-item>
-              <el-form-item label="声音 ID">
+              <el-form-item label="声音">
                 <div class="flex w-full flex-wrap items-center gap-2">
-                  <el-select v-model="voiceId" filterable class="min-w-0 flex-1!">
+                  <el-select v-model="voiceId" filterable class="min-w-48 flex-1!">
                     <el-option
                       v-for="voice in TTS_VOICE_OPTIONS"
                       :key="voice.value"
@@ -40,6 +30,15 @@
                   >
                     {{ voicePreviewPlaying ? "停止" : "预览" }}
                   </el-button>
+                  <span class="shrink-0 text-xs text-gray-500">语速</span>
+                  <el-input-number
+                    v-model="speechRate"
+                    :min="0.5"
+                    :max="2"
+                    :step="0.05"
+                    controls-position="right"
+                    class="w-20! shrink-0"
+                  />
                 </div>
               </el-form-item>
           </el-form>
@@ -53,11 +52,17 @@
             <el-form-item label="TTS 用量">
               <span class="text-gray-700">{{ ttsTotalCharactersText }}</span>
             </el-form-item>
+            <el-form-item label="实测语速">
+              <div class="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                <span class="text-gray-700">{{ measuredSpeechRateText }}</span>
+                <span class="text-xs text-gray-400">文案字数/音频时间</span>
+              </div>
+            </el-form-item>
           </el-form>
         </div>
       </div>
 
-      <div :class="STAGE_COL_RIGHT_CLASS">
+      <div :class="STAGE_COL_WIDE_RIGHT_CLASS">
         <div :class="STAGE_PANEL_CLASS">
           <div :class="STAGE_PANEL_TITLE_CLASS">音频预览</div>
           <div v-if="audioUrl" class="w-full overflow-hidden rounded-lg border border-gray-200 bg-gray-50 p-4">
@@ -179,7 +184,7 @@
 import { computed, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { runJobStageAction } from "@/api/api-jobs";
-import { getMediaFileUrl, getMediaText } from "@/api/api-media";
+import { getMediaDuration, getMediaFileUrl, getMediaText } from "@/api/api-media";
 import { DEFAULT_TTS_VOICE, TTS_VOICE_OPTIONS } from "@/constants/tts-voices";
 import type { JobDetail, JobLog } from "@/types/jobs";
 import type { ScriptJson } from "@/types/jobs/script";
@@ -188,8 +193,7 @@ import { useErrorHandler } from "@/composables/useErrorHandler";
 import StageActionBar from "./StageActionBar.vue";
 import StageLogsSection from "./StageLogsSection.vue";
 import {
-  STAGE_COL_LEFT_CLASS,
-  STAGE_COL_RIGHT_CLASS,
+  STAGE_COL_WIDE_RIGHT_CLASS,
   STAGE_EMPTY_CLASS,
   STAGE_FORM_CLASS,
   STAGE_FORM_LABEL_WIDTH,
@@ -314,6 +318,31 @@ const ttsTotalCharactersText = computed(() => {
     }
   }
   return "-";
+});
+
+const audioDurationSec = ref<number | null>(null);
+
+function resolveScriptCharCount(): number | null {
+  const script = (props.job.script_json as ScriptJson | null | undefined) || null;
+  if (!script) return null;
+  if (typeof script.word_count === "number" && Number.isFinite(script.word_count) && script.word_count > 0) {
+    return script.word_count;
+  }
+  const segments = script.segments || [];
+  if (segments.length) {
+    const joined = segments.map(seg => String(seg.text || "")).join("");
+    const chars = joined.replace(/\s+/g, "").length;
+    if (chars > 0) return chars;
+  }
+  const narration = String(script.narration || "").replace(/\s+/g, "");
+  return narration.length > 0 ? narration.length : null;
+}
+
+const measuredSpeechRateText = computed(() => {
+  const chars = resolveScriptCharCount();
+  const duration = audioDurationSec.value;
+  if (chars == null || duration == null || duration <= 0) return "-";
+  return `${(chars / duration).toFixed(1)} 字/秒`;
 });
 
 const onAudioError = () => {
@@ -441,6 +470,20 @@ watch(
   () => {
     loadError.value = "";
   }
+);
+
+watch(
+  () => [props.job.audio_path, props.stageActive] as const,
+  ([path, active]) => {
+    if (active === false || !path) {
+      audioDurationSec.value = null;
+      return;
+    }
+    void (async () => {
+      audioDurationSec.value = await getMediaDuration(path);
+    })();
+  },
+  { immediate: true }
 );
 
 watch(playbackSpeed, () => {

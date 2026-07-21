@@ -10,7 +10,10 @@ from app.services.job.job_mgr import JobBusyError, job_mgr
 
 
 def import_clip_to_segment(job_id: int, segment_index: int, video_url: str) -> dict:
-    with job_mgr._job_lock(job_id):
+    lock = job_mgr._job_lock(job_id)
+    if not lock.acquire(blocking=False):
+        raise JobBusyError("任务运行中，请稍后再试")
+    try:
         with connection() as conn:
             job = repo_job.get_job(conn, job_id)
             if job["status"] == "running":
@@ -23,18 +26,22 @@ def import_clip_to_segment(job_id: int, segment_index: int, video_url: str) -> d
             )
             if segment is None:
                 raise KeyError(f"segment {segment_index} not found")
+            segment_id = int(segment["id"])
 
-            settings = get_settings()
-            media_dir = settings.video_data_dir / str(job_id)
-            clip_path = download_stock_clip_to_segment(
-                job=job,
-                media_dir=media_dir,
-                segment=segment,
-                video_url=video_url,
-            )
+        # 下载在事务外，避免长占 SQLite 锁卡死 gevent hub
+        settings = get_settings()
+        media_dir = settings.video_data_dir / str(job_id)
+        clip_path = download_stock_clip_to_segment(
+            job=job,
+            media_dir=media_dir,
+            segment=segment,
+            video_url=video_url,
+        )
+
+        with connection() as conn:
             repo_segment.update_segment(
                 conn,
-                int(segment["id"]),
+                segment_id,
                 clip_path=str(clip_path),
                 status="done",
             )
@@ -49,3 +56,5 @@ def import_clip_to_segment(job_id: int, segment_index: int, video_url: str) -> d
                 for row in repo_segment.list_segments(conn, job_id)
                 if int(row["segment_index"]) == segment_index
             )
+    finally:
+        lock.release()

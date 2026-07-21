@@ -996,15 +996,19 @@ class JobMgr:
                 raise ValueError("title is empty")
             if not narration:
                 raise ValueError("narration is empty")
+            content_style = content_style_from_job(job)
+            base_script = dict(script)
 
-            description = llm_mgr.generate_video_description(
-                title,
-                narration,
-                content_style=content_style_from_job(job),
-            )
-            updated_script = dict(script)
-            updated_script["video_description"] = description
+        # LLM 在事务外，避免长占 SQLite 锁
+        description = llm_mgr.generate_video_description(
+            title,
+            narration,
+            content_style=content_style,
+        )
+        updated_script = base_script
+        updated_script["video_description"] = description
 
+        with connection() as conn:
             job = repo_job.update_job(conn, job_id, script_json=updated_script)
             repo_job_log.append_log(conn, job_id, "script", "video description regenerated")
             return {"video_description": description, "job": job}
@@ -1024,15 +1028,19 @@ class JobMgr:
                 raise ValueError("title is empty")
             if not narration:
                 raise ValueError("narration is empty")
+            content_style = content_style_from_job(job)
+            base_script = dict(script)
 
-            tags = llm_mgr.generate_tags(
-                title,
-                narration,
-                content_style=content_style_from_job(job),
-            )
-            updated_script = dict(script)
-            updated_script["tags"] = tags
+        # LLM 在事务外，避免长占 SQLite 锁
+        tags = llm_mgr.generate_tags(
+            title,
+            narration,
+            content_style=content_style,
+        )
+        updated_script = base_script
+        updated_script["tags"] = tags
 
+        with connection() as conn:
             job = repo_job.update_job(conn, job_id, script_json=updated_script)
             repo_job_log.append_log(conn, job_id, "script", "tags regenerated")
             return {"tags": tags, "job": job}
