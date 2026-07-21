@@ -527,19 +527,6 @@ class AgnesImageProvider(ImageProvider):
                     f"回答「是」或「否」",
                 )
             )
-        if (
-            content_style == CONTENT_STYLE_DAILY_STORY
-            and "昭昭" in speakers
-            and "灿灿" in speakers
-        ):
-            items.append(
-                (
-                    "height_order",
-                    "昭昭是否明显比灿灿矮约半个头"
-                    "（不得同高或弟弟更高；勿因服装颜色偏差而判否）？"
-                    "回答「是」或「否」",
-                )
-            )
 
         lines = [
             f"【核心场景】\n{scene_prompt}\n",
@@ -578,7 +565,6 @@ class AgnesImageProvider(ImageProvider):
                 "zhao_hair",
                 "extra_arms",
                 "cast_count",
-                "height_order",
             }:
                 return False
         return True

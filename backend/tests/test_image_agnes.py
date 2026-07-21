@@ -112,11 +112,9 @@ def test_build_verify_checklist_daily_includes_zhao() -> None:
         "zhao_hair",
         "extra_arms",
         "cast_count",
-        "height_order",
     ]
     assert "昭昭" in user
     assert "发言角色" in user
-    assert "半个头" in user
     assert "蓝衣" not in user
     assert "短发男生头" in user
     assert "最多 2 条" in user
@@ -127,7 +125,6 @@ def test_build_verify_checklist_daily_includes_zhao() -> None:
         expected_speakers=["昭昭"],
         content_style="daily_story",
     )
-    assert "height_order" not in [cid for cid, _ in items_one]
     assert "zhao_hair" in [cid for cid, _ in items_one]
 
     # 无昭昭发言时不做短发项
@@ -163,14 +160,6 @@ def test_strip_prompt_for_verify_drops_daily_wrap() -> None:
     assert "基于参考图" not in user
     assert "客厅地板上昭昭举手" in user
     assert [cid for cid, _ in items][0] == "scene"
-
-
-def test_evaluate_verify_response_height_order() -> None:
-    ids = ["scene", "zhao_hair", "extra_arms", "cast_count", "height_order"]
-    ok = "项1: 是\n项2: 是\n项3: 是\n项4: 是\n项5: 是\n"
-    assert AgnesImageProvider._evaluate_verify_response(ok, ids)
-    bad = "项1: 是\n项2: 是\n项3: 是\n项4: 是\n项5: 否\n"
-    assert not AgnesImageProvider._evaluate_verify_response(bad, ids)
 
 
 def test_generate_switches_to_backup_key_on_quota(tmp_path: Path) -> None:
