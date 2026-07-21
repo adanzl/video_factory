@@ -182,6 +182,7 @@ class SegmentMgr:
                 image_provider=image_provider,
                 on_image_done=on_image_done,
                 job_id=job_id,
+                job=job,
                 ref_images=ref_images,
                 content_style=style,
             )

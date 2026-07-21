@@ -32,10 +32,26 @@ logger = logging.getLogger(__name__)
 _RETRYABLE = frozenset({500, 502, 503, 504})
 # 有备用 Key 时，5xx 同 Key 只打 1 次，失败立刻切
 _FAILOVER_HTTP_RETRIES = 1
+# 同一文生图提示词的质检重试次数；耗尽后由上层重生提示词再开一轮
 _VERIFY_MAX_ATTEMPTS = 3
 _ITEM_LINE_RE = re.compile(r"^项\s*(\d+)\s*[:：]\s*(.*)$")
 _YES_HEAD_RE = re.compile(r"^[「【\[]?是([，,。．\s的」】\]]|$)")
 _NO_HEAD_RE = re.compile(r"^[「【\[]?(否|不是)([，,。．\s」】\]]|$)")
+
+
+class AgnesImageVerifyFailed(RuntimeError):
+    """同提示词质检重试耗尽；最后一版图片仍在 output_path。"""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        output_path: Path,
+        prompt: str,
+    ) -> None:
+        super().__init__(message)
+        self.output_path = output_path
+        self.prompt = prompt
 
 
 class _AgnesImageKeyFailover(RuntimeError):
@@ -502,11 +518,15 @@ class AgnesImageProvider(ImageProvider):
                 _VERIFY_MAX_ATTEMPTS,
                 len(prompt),
                 expected_speakers,
-                f", regenerating…{next_label}" if more else ", keep last",
+                f", regenerating…{next_label}" if more else ", raise for prompt re_gen",
             )
 
-        if result is not None:
-            return result
+        if result is not None and result.exists():
+            raise AgnesImageVerifyFailed(
+                f"agnes image verify failed after {_VERIFY_MAX_ATTEMPTS} attempts",
+                output_path=result,
+                prompt=prompt,
+            )
         if last_exc:
             raise last_exc
         raise RuntimeError("agnes generate failed without exception")

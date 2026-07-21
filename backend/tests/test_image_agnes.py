@@ -4,7 +4,12 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from app.services.llm.llm_agnes import AgnesApiKey
-from app.services.segment.image.image_agnes import AgnesImageProvider, _to_agnes_size
+from app.services.segment.image.image_agnes import (
+    AgnesImageProvider,
+    AgnesImageVerifyFailed,
+    _VERIFY_MAX_ATTEMPTS,
+    _to_agnes_size,
+)
 
 
 def test_to_agnes_size() -> None:
@@ -44,7 +49,7 @@ def test_generate_downloads_url(tmp_path: Path) -> None:
     assert output.read_bytes() == b"png-bytes"
 
 
-def test_generate_retries_verify_up_to_three_times(tmp_path: Path) -> None:
+def test_generate_retries_verify_until_pass(tmp_path: Path) -> None:
     provider = AgnesImageProvider()
     output = tmp_path / "1.png"
     output.write_bytes(b"png")
@@ -68,6 +73,27 @@ def test_generate_retries_verify_up_to_three_times(tmp_path: Path) -> None:
     assert mock_gen.call_count == 3
     assert mock_verify.call_count == 3
     assert mock_verify.call_args.kwargs["content_style"] == "daily_story"
+    assert _VERIFY_MAX_ATTEMPTS == 3
+
+
+def test_generate_raises_after_verify_exhausted(tmp_path: Path) -> None:
+    provider = AgnesImageProvider()
+    output = tmp_path / "1.png"
+    output.write_bytes(b"png")
+
+    with (
+        patch(
+            "app.services.segment.image.image_agnes.agnes_api_keys",
+            return_value=[AgnesApiKey("primary", "test-key")],
+        ),
+        patch.object(provider, "_generate_with_key", return_value=output),
+        patch.object(provider, "_verify_image", return_value=False),
+    ):
+        try:
+            provider.generate("prompt", output, content_style="daily_story")
+            raise AssertionError("expected AgnesImageVerifyFailed")
+        except AgnesImageVerifyFailed as exc:
+            assert exc.output_path == output
 
 
 def test_generate_verify_retry_rotates_keys(tmp_path: Path) -> None:

@@ -7,6 +7,7 @@ import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from app.config import get_settings
 from app.utils.job_cancel import job_cancel
@@ -14,6 +15,12 @@ from app.utils.job_cancel import job_cancel
 logger = logging.getLogger(__name__)
 
 __all__ = ["ImageMgr", "ImageProvider", "image_mgr"]
+
+_VERIFY_PROMPT_REGEN_FEEDBACK = (
+    "出图质检连续未通过（发型/人数/肢体/场景等），请改写本段 image_prompt："
+    "换姿势与构图、冲突道具更醒目；仍须保持角色外貌与身高约束"
+    "（灿灿单侧高马尾禁双马尾；昭昭男孩超短发禁波波头；妈妈须为成年女性黑长发米色上衣牛仔裤）。"
+)
 
 
 class ImageProvider(ABC):
@@ -57,6 +64,94 @@ class ImageMgr:
             return AgnesImageProvider()
         raise ValueError(f"unknown IMAGE_PROVIDER: {provider}")
 
+    @staticmethod
+    def _regen_segment_image_prompt(
+        seg: dict,
+        *,
+        job: dict[str, Any] | None,
+        content_style: str | None,
+    ) -> str:
+        """质检耗尽后，按单段重写 image_prompt（含 daily wrap）。"""
+        from app.services.llm.llm_mgr import llm_mgr
+        from app.services.script.image_prompt import wrap_image_prompts
+        from app.utils.job_info import resolve_include_sd15_prompt
+
+        if not job:
+            raise RuntimeError("missing job for image_prompt regen")
+        script = job.get("script_json")
+        if not isinstance(script, dict):
+            raise RuntimeError("job.script_json missing for image_prompt regen")
+
+        index = int(seg["segment_index"])
+        script_segments = list(script.get("segments") or [])
+        by_index = {
+            int(s.get("segment_index") or 0): s for s in script_segments if s
+        }
+        # 用 DB 分镜补齐 script 中可能缺失的字段
+        target = dict(by_index.get(index) or {})
+        for key in (
+            "segment_index",
+            "text",
+            "visual_brief",
+            "dialogue",
+            "shot_type",
+            "info",
+            "motion_prompt",
+            "visual_mode",
+        ):
+            if seg.get(key) is not None:
+                target[key] = seg[key]
+        target["segment_index"] = index
+        by_index[index] = target
+        script["segments"] = sorted(
+            by_index.values(),
+            key=lambda s: int(s.get("segment_index") or 0),
+        )
+
+        llm_mgr.fill_image_prompts(
+            script,
+            feedback=_VERIFY_PROMPT_REGEN_FEEDBACK,
+            job=job,
+            segment_indices=[index],
+            include_sd15_prompt=resolve_include_sd15_prompt(job),
+        )
+        refreshed = next(
+            (
+                s
+                for s in (script.get("segments") or [])
+                if int(s.get("segment_index") or 0) == index
+            ),
+            None,
+        )
+        if refreshed is None:
+            raise RuntimeError(f"image_prompt regen missing segment {index}")
+        wrap_image_prompts([refreshed], content_style=content_style)
+        new_prompt = str(refreshed.get("image_prompt") or "").strip()
+        if not new_prompt:
+            raise RuntimeError(f"image_prompt regen empty for segment {index}")
+        if refreshed.get("motion_prompt") is not None:
+            seg["motion_prompt"] = refreshed.get("motion_prompt")
+        if refreshed.get("sd15_prompt_en") is not None:
+            seg["sd15_prompt_en"] = refreshed.get("sd15_prompt_en")
+        seg["image_prompt"] = new_prompt
+        return new_prompt
+
+    @staticmethod
+    def _persist_segment_prompt(seg: dict) -> None:
+        seg_id = seg.get("id")
+        if seg_id is None:
+            return
+        from app.repositories import repo_segment
+        from app.repositories.connection import connection
+
+        payload: dict[str, Any] = {"image_prompt": seg.get("image_prompt")}
+        if seg.get("motion_prompt") is not None:
+            payload["motion_prompt"] = seg.get("motion_prompt")
+        if seg.get("sd15_prompt_en") is not None:
+            payload["sd15_prompt_en"] = seg.get("sd15_prompt_en")
+        with connection() as conn:
+            repo_segment.update_segment(conn, int(seg_id), **payload)
+
     def generate_segment_images(
         self,
         segments: list[dict],
@@ -66,6 +161,7 @@ class ImageMgr:
         image_provider: str | None = None,
         on_image_done: Callable[[int, Path], None] | None = None,
         job_id: int | None = None,
+        job: dict[str, Any] | None = None,
         ref_images: list[Path] | None = None,
         content_style: str | None = None,
     ) -> list[tuple[int, Path]]:
@@ -84,32 +180,37 @@ class ImageMgr:
             params_desc,
         )
 
-        def render(seg: dict) -> tuple[int, Path]:
-            nonlocal done
-            index = seg["segment_index"]
-            t0 = time.time()
-            out = images_dir / f"{index}.png"
-            # SD15 provider 优先使用预生成的短英文 prompt（sd15_prompt_en），
-            # 避免出图时再次 LLM 翻译导致语义二次漂移；
-            # 其他 provider（ZImage/WAN）继续使用完整中文 image_prompt
+        def _build_prompt(seg: dict) -> str:
             if type(provider).__name__ == "Sd15ImageProvider":
                 prompt = seg.get("sd15_prompt_en") or seg.get("image_prompt") or seg["text"]
             else:
                 prompt = seg.get("image_prompt") or seg["text"]
-            # 仅当 prompt 含地图关键词时才注入地图合规约束，避免无关提示词被污染
             from app.services.intro.cover_layout import _subject_has_map_keyword
+
             if _subject_has_map_keyword(prompt):
                 prompt = (
                     f"若包含世界地图，不得显示中国部分。"
                     f"任何地图不得出现中国领土、藏南地区、阿克赛钦地区。"
                     f"{prompt}"
                 )
-            # 从 dialogue 中提取该分镜的发言角色，传给 provider 用于生图后校验
+            return prompt
+
+        def _speakers(seg: dict) -> list[str] | None:
             dialogue = seg.get("dialogue") or []
             speakers = sorted(
                 set(d.get("speaker", "") for d in dialogue if d.get("speaker"))
             )
-            expected_speakers = speakers if speakers else None
+            return speakers if speakers else None
+
+        def render(seg: dict) -> tuple[int, Path]:
+            from app.services.segment.image.image_agnes import AgnesImageVerifyFailed
+
+            nonlocal done
+            index = seg["segment_index"]
+            t0 = time.time()
+            out = images_dir / f"{index}.png"
+            prompt = _build_prompt(seg)
+            expected_speakers = _speakers(seg)
             logger.info(
                 "image %s/%s generating segment %s | %s | prompt_chars=%s"
                 " | speakers=%s | out=%s",
@@ -122,12 +223,57 @@ class ImageMgr:
                 out.name,
             )
             try:
-                provider.generate(
-                    prompt, out,
-                    size=size, ref_images=ref_images,
-                    expected_speakers=expected_speakers,
-                    content_style=content_style,
-                )
+                try:
+                    provider.generate(
+                        prompt,
+                        out,
+                        size=size,
+                        ref_images=ref_images,
+                        expected_speakers=expected_speakers,
+                        content_style=content_style,
+                    )
+                except AgnesImageVerifyFailed:
+                    logger.warning(
+                        "image segment %s verify exhausted on current prompt; "
+                        "regenerating image_prompt then retry",
+                        index,
+                    )
+                    try:
+                        new_prompt = self._regen_segment_image_prompt(
+                            seg,
+                            job=job,
+                            content_style=content_style,
+                        )
+                        self._persist_segment_prompt(seg)
+                        prompt = _build_prompt(seg)
+                        logger.info(
+                            "image segment %s prompt regenerated chars=%s; "
+                            "retry generate",
+                            index,
+                            len(new_prompt),
+                        )
+                    except Exception as regen_exc:
+                        logger.error(
+                            "image segment %s prompt regen failed, keep last image: %s",
+                            index,
+                            regen_exc,
+                        )
+                    else:
+                        try:
+                            provider.generate(
+                                prompt,
+                                out,
+                                size=size,
+                                ref_images=ref_images,
+                                expected_speakers=expected_speakers,
+                                content_style=content_style,
+                            )
+                        except AgnesImageVerifyFailed:
+                            logger.warning(
+                                "image segment %s verify still failed after "
+                                "prompt regen, keep last",
+                                index,
+                            )
             except Exception as exc:
                 logger.error(
                     "image %s/%s FAILED segment %s after %.1fs | %s | err=%s",
