@@ -51,6 +51,7 @@ from app.services.daily_story.prompts import (
     build_daily_story_prompts,
     build_daily_story_retry_user,
     build_daily_story_theme_prompts,
+    resolve_daily_story_retry_length_mode,
     stitch_daily_story_opening,
     validate_daily_story_json,
     validate_daily_story_opening,
@@ -1595,9 +1596,12 @@ class DeepSeekClient(LLMClient):
                     max_attempts,
                     exc,
                 )
-                # 重试 system/user 均切到校验硬卡字数（去掉铺垫目标）
+                # 重试按上一稿字数分向：偏短 expand / 偏长 trim / 其他 revise
+                length_mode = resolve_daily_story_retry_length_mode(
+                    prev_story if isinstance(prev_story, dict) else None
+                )
                 system, _ = build_daily_story_prompts(
-                    theme, story_type=story_type, length_mode="revise"
+                    theme, story_type=story_type, length_mode=length_mode
                 )
                 if isinstance(prev_story, dict):
                     user = build_daily_story_retry_user(
@@ -1608,7 +1612,7 @@ class DeepSeekClient(LLMClient):
                     )
                 else:
                     user = (
-                        f"{build_daily_story_prompts(theme, story_type=story_type, length_mode='revise')[1]}\n\n"
+                        f"{build_daily_story_prompts(theme, story_type=story_type, length_mode=length_mode)[1]}\n\n"
                         f"【重试】上一轮校验未通过：{errors}\n"
                         "请直接输出符合硬约束的完整 JSON（正文勿写发现开场）。"
                     )
