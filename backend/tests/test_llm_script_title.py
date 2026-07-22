@@ -136,11 +136,18 @@ def test_validate_daily_story_json_rejects_bad_speaker():
         validate_daily_story_json(story)
 
 
-def test_validate_daily_story_json_rejects_soft_ending():
+def test_validate_daily_story_json_allows_soft_ending():
     story = _valid_story()
     story["dialogue"][-1]["line"] = "算了听姐姐的一二三四五六七八"
-    with pytest.raises(ValueError, match="软收尾"):
-        validate_daily_story_json(story)
+    validate_daily_story_json(story)
+
+
+def test_daily_story_prompts_require_stance_coherence():
+    story_sys, story_user = build_daily_story_prompts("抱枕大战")
+    assert "立场连贯" in story_sys
+    assert "自相矛盾" in story_sys
+    assert "软收" in story_sys
+    assert "好吧" in story_user or "自相矛盾" in story_user
 
 
 def test_validate_daily_story_json_rejects_vague_punchline():
