@@ -52,6 +52,7 @@ from app.services.daily_story.prompts import (
     build_daily_story_retry_user,
     build_daily_story_opening_retry_user,
     build_daily_story_theme_prompts,
+    opening_avoid_speaker_from_body,
     resolve_daily_story_retry_length_mode,
     stitch_daily_story_opening,
     validate_daily_story_json,
@@ -1546,11 +1547,34 @@ class DeepSeekClient(LLMClient):
         theme: str,
     ) -> dict[str, Any]:
         body = self._generate_daily_story_body(theme)
-        opening = self._generate_daily_story_opening(theme, body)
-        story = stitch_daily_story_opening(body, opening)
-        # 拼开场后只做结构/单句等终检；全文总字数不再硬卡（开场已单独校验）
-        validate_daily_story_json(story, phase="full")
-        return story
+        avoid = opening_avoid_speaker_from_body(body)
+        last_exc: ValueError | None = None
+        # 拼缝连说：先靠 stitch 丢正文首句；仍失败则重抽开场并避开正文首说话人
+        max_open_rounds = 3
+        for round_i in range(max_open_rounds):
+            opening = self._generate_daily_story_opening(
+                theme,
+                body,
+                avoid_speaker=avoid if round_i > 0 else None,
+            )
+            story = stitch_daily_story_opening(body, opening)
+            try:
+                validate_daily_story_json(story, phase="full")
+                return story
+            except ValueError as exc:
+                last_exc = exc
+                if "连说" not in str(exc) or round_i + 1 >= max_open_rounds:
+                    break
+                logger.warning(
+                    "[DAILY_STORY] stitch consecutive after opening "
+                    "round=%d/%d: %s; retry opening avoid=%r",
+                    round_i + 1,
+                    max_open_rounds,
+                    exc,
+                    avoid,
+                )
+        assert last_exc is not None
+        raise last_exc
 
     def _generate_daily_story_body(self, theme: str) -> dict[str, Any]:
         story_type = _select_story_type(theme)
@@ -1625,8 +1649,18 @@ class DeepSeekClient(LLMClient):
         self,
         theme: str,
         body: dict[str, Any],
+        *,
+        avoid_speaker: str | None = None,
     ) -> list[dict]:
         system, user = build_daily_story_opening_prompts(theme, body)
+        avoid = (avoid_speaker or "").strip() or None
+        if avoid in ("昭昭", "灿灿"):
+            other = "灿灿" if avoid == "昭昭" else "昭昭"
+            user = (
+                f"{user}\n\n"
+                f"【说话人】开场末句须是「{other}」"
+                f"（正文以「{avoid}」起句，避免拼后连说）。"
+            )
         last_exc: ValueError | None = None
         max_attempts = max(3, get_settings().script_qa_max_attempts)
         core = str(body.get("conflict_core") or "")
@@ -1636,11 +1670,21 @@ class DeepSeekClient(LLMClient):
                 # 开场是短约束任务：走配置 thinking（不传 temperature）
                 raw, _ = self._chat_json(system, user)
                 opening_raw = raw.get("opening") if isinstance(raw, dict) else None
-                return validate_daily_story_opening(
+                opening = validate_daily_story_opening(
                     opening_raw,
                     conflict_core=core,
                     setting=setting,
                 )
+                if (
+                    avoid in ("昭昭", "灿灿")
+                    and opening
+                    and opening[-1].get("speaker") == avoid
+                ):
+                    raise ValueError(
+                        "daily_story 开场校验失败: "
+                        f"开场末句不可与正文首句同为「{avoid}」"
+                    )
+                return opening
             except ValueError as exc:
                 last_exc = exc
                 if attempt + 1 >= max_attempts:
@@ -1657,6 +1701,7 @@ class DeepSeekClient(LLMClient):
                     theme,
                     body,
                     errors=errors,
+                    avoid_speaker=avoid,
                 )
         assert last_exc is not None
         raise last_exc

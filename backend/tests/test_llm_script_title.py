@@ -189,6 +189,23 @@ def test_validate_daily_story_json_rejects_limp_soft_close():
         validate_daily_story_json(story)
 
 
+def test_validate_daily_story_json_rejects_weak_endings():
+    story = _valid_story()
+    story["dialogue"][-1]["line"] = "等妈回来评理呀呀呀呀呀呀"
+    with pytest.raises(ValueError, match="弱收束"):
+        validate_daily_story_json(story)
+
+    story = _valid_story()
+    story["dialogue"][-1]["line"] = "一人一半倒杯子里呀呀呀"
+    with pytest.raises(ValueError, match="弱收束"):
+        validate_daily_story_json(story)
+
+    story = _valid_story()
+    story["dialogue"][-1]["line"] = "反正橡皮我要用呀呀呀呀"
+    with pytest.raises(ValueError, match="弱收束"):
+        validate_daily_story_json(story)
+
+
 def test_daily_story_prompts_require_stance_coherence():
     story_sys, story_user = build_daily_story_prompts("抱枕大战")
     assert "立场连贯" in story_sys
@@ -197,6 +214,8 @@ def test_daily_story_prompts_require_stance_coherence():
     assert "轮流" in story_sys or "连说" in story_sys
     assert "镜像" in story_sys or "对称复读" in story_sys
     assert "无破功软收" in story_sys or "先破功" in story_user
+    assert "弱收束" in story_sys or "一人一半" in story_sys
+    assert "等妈" in story_sys or "评理" in story_user
     assert "好吧" in story_sys or "给你" in story_user or "自相矛盾" in story_sys
 
 
@@ -407,6 +426,39 @@ def test_stitch_daily_story_opening_dedupes_overlapping_body_start():
     assert story["dialogue"][1]["line"] != "咦这个新橡皮你怎么攥着呀"
     assert story["discovery_opening"] == opening
     validate_daily_story_json(story, phase="full")
+
+
+def test_stitch_daily_story_opening_drops_same_speaker_junction():
+    body = _valid_story(n=18)
+    # 正文以昭昭起句；开场末句也是昭昭 → 拼后应丢掉正文首句
+    body["dialogue"][0]["speaker"] = "昭昭"
+    body["dialogue"][1]["speaker"] = "灿灿"
+    opening = [
+        {"speaker": "灿灿", "line": "新橡皮怎么在你手里呀"},
+        {"speaker": "昭昭", "line": "你干嘛抢我的橡皮呀"},
+    ]
+    story = stitch_daily_story_opening(body, opening)
+    assert story["dialogue"][0]["speaker"] == "灿灿"
+    assert story["dialogue"][1]["speaker"] == "昭昭"
+    # 接缝后不应再连说
+    for i in range(1, min(4, len(story["dialogue"]))):
+        a = story["dialogue"][i - 1]["speaker"]
+        b = story["dialogue"][i]["speaker"]
+        if a in ("昭昭", "灿灿") and b in ("昭昭", "灿灿"):
+            assert a != b
+    validate_daily_story_json(story, phase="full")
+
+
+def test_validate_daily_story_opening_rejects_consecutive_speakers():
+    with pytest.raises(ValueError, match="连说"):
+        validate_daily_story_opening(
+            [
+                {"speaker": "昭昭", "line": "新橡皮怎么在你手里"},
+                {"speaker": "昭昭", "line": "你干嘛抢我的橡皮呀"},
+            ],
+            conflict_core="姐弟抢新橡皮",
+            setting="客厅抢新橡皮",
+        )
 
 
 def test_validate_daily_story_opening_requires_conflict_anchor():
