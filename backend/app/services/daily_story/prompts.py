@@ -83,7 +83,12 @@ _CONFLICT_ANCHOR_STOP = frozenset(
     }
 )
 
-# 首稿：硬卡 + 写作铺垫（偏长再压回）；重试：只写校验硬卡，禁止再按铺垫目标扩写
+# 重试瞄准硬卡中段，避免贴边再抖出界
+DAILY_STORY_BODY_RETRY_TARGET_MIN = 300
+DAILY_STORY_BODY_RETRY_TARGET_MAX = 320
+
+# 首稿：硬卡 + 写作铺垫（偏长再压回）
+# 重试：按偏短/偏长分向；勿混用「禁止扩写」与「略删」
 _DAILY_STORY_LENGTH_DRAFT = f"""\
 - 片长（正文硬卡，放最前）：{DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
   每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
@@ -92,10 +97,29 @@ _DAILY_STORY_LENGTH_DRAFT = f"""\
   发现开场系统另写另验，不计入正文硬卡。
 """
 
+_DAILY_STORY_LENGTH_REVISE_EXPAND = f"""\
+- 片长（正文偏短重试）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
+  每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
+  只增不删：在上一稿破功前插入互怼/加码，写到
+  约 {DAILY_STORY_BODY_RETRY_TARGET_MIN}–{DAILY_STORY_BODY_RETRY_TARGET_MAX} 字；
+  禁止整稿重写，禁止超过 {DAILY_STORY_BODY_CHARS_MAX} 字。
+  发现开场系统另写另验，不计入正文硬卡。
+"""
+
+_DAILY_STORY_LENGTH_REVISE_TRIM = f"""\
+- 片长（正文偏长重试）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
+  每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
+  只删不增：删车轱辘/合并重复回合，压到
+  约 {DAILY_STORY_BODY_RETRY_TARGET_MIN}–{DAILY_STORY_BODY_RETRY_TARGET_MAX} 字；
+  禁止新增台词，禁止按铺垫目标再扩写；须仍 ≥{DAILY_STORY_BODY_CHARS_MIN}。
+  发现开场系统另写另验，不计入正文硬卡。
+"""
+
+# 非字数问题重试：篇幅别乱动
 _DAILY_STORY_LENGTH_REVISE = f"""\
 - 片长（正文硬卡，放最前）：只遵守 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
   每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
-  禁止再按写作铺垫目标扩写；超长只略删，勿一次砍太多。
+  本轮非字数问题：勿故意加长或缩短；禁止按铺垫目标再扩写。
   发现开场系统另写另验，不计入正文硬卡。
 """
 
@@ -107,20 +131,44 @@ _DAILY_STORY_LENGTH_USER_DRAFT = f"""\
    speaker 仅昭昭/灿灿/妈妈。
 """
 
-_DAILY_STORY_LENGTH_USER_REVISE = f"""\
-3. 【字数硬卡优先】正文只遵守 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
-   每句 ≤{DAILY_STORY_LINE_CHARS_MAX} 字且一句一层意思。
-   超长略删即可，勿砍到下限以下；发现开场另计另验。
+_DAILY_STORY_LENGTH_USER_REVISE_EXPAND = f"""\
+3. 【字数：偏短只增】正文扩到 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字
+   （瞄准 {DAILY_STORY_BODY_RETRY_TARGET_MIN}–{DAILY_STORY_BODY_RETRY_TARGET_MAX}）；
+   只增不删，禁止整稿重写、禁止超上限；发现开场另计另验。
    speaker 仅昭昭/灿灿/妈妈。
 """
 
+_DAILY_STORY_LENGTH_USER_REVISE_TRIM = f"""\
+3. 【字数：偏长只删】正文压到 ≤{DAILY_STORY_BODY_CHARS_MAX} 字
+   （瞄准 {DAILY_STORY_BODY_RETRY_TARGET_MIN}–{DAILY_STORY_BODY_RETRY_TARGET_MAX}，
+   须 ≥{DAILY_STORY_BODY_CHARS_MIN}）；只删不增，禁止新增台词；发现开场另计另验。
+   speaker 仅昭昭/灿灿/妈妈。
+"""
+
+_DAILY_STORY_LENGTH_USER_REVISE = f"""\
+3. 【字数硬卡优先】正文只遵守 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
+   每句 ≤{DAILY_STORY_LINE_CHARS_MAX} 字且一句一层意思。
+   非字数问题勿改篇幅；发现开场另计另验。
+   speaker 仅昭昭/灿灿/妈妈。
+"""
+
+_LENGTH_MODE_SYSTEM = {
+    "draft": _DAILY_STORY_LENGTH_DRAFT,
+    "revise": _DAILY_STORY_LENGTH_REVISE,
+    "revise_expand": _DAILY_STORY_LENGTH_REVISE_EXPAND,
+    "revise_trim": _DAILY_STORY_LENGTH_REVISE_TRIM,
+}
+
+_LENGTH_MODE_USER = {
+    "draft": _DAILY_STORY_LENGTH_USER_DRAFT,
+    "revise": _DAILY_STORY_LENGTH_USER_REVISE,
+    "revise_expand": _DAILY_STORY_LENGTH_USER_REVISE_EXPAND,
+    "revise_trim": _DAILY_STORY_LENGTH_USER_REVISE_TRIM,
+}
+
 
 def _daily_story_contract(*, length_mode: str = "draft") -> str:
-    length = (
-        _DAILY_STORY_LENGTH_REVISE
-        if length_mode == "revise"
-        else _DAILY_STORY_LENGTH_DRAFT
-    )
+    length = _LENGTH_MODE_SYSTEM.get(length_mode, _DAILY_STORY_LENGTH_DRAFT)
     return f"""\
 【共用设定】
 - 受众：孩子和有娃的大人（家长能会心一笑，孩子觉得好玩；禁成人梗/谐音/网络热梗）。
@@ -223,11 +271,7 @@ def _daily_story_system_prompt(*, length_mode: str = "draft") -> str:
 
 
 def _daily_story_user_template(*, length_mode: str = "draft") -> str:
-    length_req = (
-        _DAILY_STORY_LENGTH_USER_REVISE
-        if length_mode == "revise"
-        else _DAILY_STORY_LENGTH_USER_DRAFT
-    )
+    length_req = _LENGTH_MODE_USER.get(length_mode, _DAILY_STORY_LENGTH_USER_DRAFT)
     return f"""\
 请根据上述规则，生成一个昭昭和灿灿的日常对话场景。
 
@@ -251,33 +295,6 @@ def _daily_story_user_template(*, length_mode: str = "draft") -> str:
 _DAILY_STORY_CONTRACT = _daily_story_contract(length_mode="draft")
 DAILY_STORY_SYSTEM_PROMPT = _daily_story_system_prompt(length_mode="draft")
 DAILY_STORY_USER_TEMPLATE = _daily_story_user_template(length_mode="draft")
-
-DAILY_STORY_OPENING_SYSTEM_PROMPT = f"""\
-你只写日常短剧的「发现开场」：1–2 句发现/质问冲突现场，不写互怼正文。
-可发言角色仅：{"、".join(DAILY_CAST_NAMES)}（开场优先昭昭或灿灿，勿用妈妈开场）。
-
-硬约束：
-1. 只输出 JSON：{{"opening":[{{"speaker":"昭昭","line":"..."}}]}}
-2. 每句必须同时有 speaker 与 line 两个字段；
-   禁止写成 {{"speaker":"昭昭":"台词"}}（非法 JSON）。
-3. opening 长度 {DAILY_STORY_OPENING_LINES_MIN}–{DAILY_STORY_OPENING_LINES_MAX} 句；
-   每句 ≤{DAILY_STORY_LINE_CHARS_MAX} 字、口语、一句一层意思。
-4. 必须点出 conflict_core 里的实物/动作（发现现场），让观众立刻知道在争什么。
-5. 禁止寒暄（你好/在干嘛）；禁止进入讲理、甩规则、互怼回合（那是正文）。
-6. 勿复述正文已有句子；勿写旁白或舞台指示。
-"""
-
-DAILY_STORY_OPENING_USER_TEMPLATE = """\
-主题：{theme}
-scene_title：{scene_title}
-setting：{setting}
-conflict_core：{conflict_core}
-
-正文已写好的前几句（开场勿重复、勿接讲理）：
-{body_head}
-
-请输出发现开场 JSON（仅 opening 数组）。
-"""
 
 DAILY_STORY_THEME_SYSTEM_PROMPT = f"""\
 你是一位家庭情景喜剧策划师，为昭昭&灿灿日常对话短剧策划主题。
@@ -342,7 +359,9 @@ def build_daily_story_prompts(
 
     length_mode:
       - draft：首稿，含写作铺垫目标（偏长再压回硬卡）
-      - revise：重试，只写校验硬卡字数，禁止再按铺垫目标扩写
+      - revise_expand：偏短重试，只增不删，瞄准中段
+      - revise_trim：偏长重试，只删不增，瞄准中段
+      - revise：非字数问题重试，勿故意改篇幅
     """
     type_instruction = (
         f"本次矛盾类型必须用：{story_type}。禁止用其他类型。"
@@ -949,6 +968,16 @@ def dialogue_total_chars(story: dict | None) -> int:
     return total
 
 
+def resolve_daily_story_retry_length_mode(prev_story: dict | None) -> str:
+    """按上一稿正文字数选择重试 length_mode（expand / trim / revise）。"""
+    chars = dialogue_total_chars(prev_story if isinstance(prev_story, dict) else None)
+    if chars < DAILY_STORY_BODY_CHARS_MIN:
+        return "revise_expand"
+    if chars > DAILY_STORY_BODY_CHARS_MAX:
+        return "revise_trim"
+    return "revise"
+
+
 def build_daily_story_retry_user(
     theme: str,
     *,
@@ -958,32 +987,40 @@ def build_daily_story_retry_user(
 ) -> str:
     """构造垂直修订重试 user：只列本轮问题 + 上一稿，不复述全套规则。
 
-    字数只按正文硬卡；超长要求略删、勿砍太多。system 侧仍用 revise 规则。
+    偏短：只增不删，给加句量与中段目标；偏长：只删不增。
+    system 须用同向 length_mode（见 resolve_daily_story_retry_length_mode）。
     phase 保留兼容，正文重试固定走 body 硬卡。
     """
     _ = phase
     chars = dialogue_total_chars(prev_story)
     chars_min = DAILY_STORY_BODY_CHARS_MIN
     chars_max = DAILY_STORY_BODY_CHARS_MAX
+    aim_lo = DAILY_STORY_BODY_RETRY_TARGET_MIN
+    aim_hi = DAILY_STORY_BODY_RETRY_TARGET_MAX
+    # 按约 12 字/句估加删句数，给模型可执行动作
+    avg_line = 12
     length_hint = ""
     if chars < chars_min:
         deficit = chars_min - chars
+        add_lines = max(2, (deficit + avg_line - 1) // avg_line)
         length_hint = (
-            f"【字数】上一稿 {chars} 字，还差 {deficit} 字。"
-            f"在上一稿冲突上增补互怼，扩到 {chars_min}–{chars_max} 字。\n"
+            f"【字数·只增不删】上一稿 {chars} 字，还差至少 {deficit} 字。"
+            f"在破功前插入约 {add_lines} 句互怼/加码（同一 conflict_core），"
+            f"写到 {aim_lo}–{aim_hi} 字；禁止整稿重写，禁止超过 {chars_max} 字。\n"
         )
     elif chars > chars_max:
         excess = chars - chars_max
+        drop_lines = max(2, (excess + avg_line - 1) // avg_line)
         length_hint = (
-            f"【字数】上一稿 {chars} 字，超出 {excess} 字。"
-            f"略删车轱辘/合并重复回合，压到 ≤{chars_max} 即可；"
-            f"不要少太多，须仍 ≥{chars_min} 字。\n"
+            f"【字数·只删不增】上一稿 {chars} 字，超出 {excess} 字。"
+            f"删掉约 {drop_lines} 句车轱辘/重复回合，压到 {aim_lo}–{aim_hi} 字；"
+            f"禁止新增任何台词，须仍 ≥{chars_min} 字。\n"
         )
     prev_json = json.dumps(prev_story, ensure_ascii=False)
     return (
         f"主题：{theme}\n"
         f"【字数硬卡】正文 {chars_min}–{chars_max} 字；"
-        f"每句 ≤{DAILY_STORY_LINE_CHARS_MAX} 字。\n"
+        f"每句 ≤{DAILY_STORY_LINE_CHARS_MAX} 字；重试瞄准 {aim_lo}–{aim_hi}。\n"
         f"{length_hint}"
         f"【本轮问题】{errors}\n"
         "【修订要求】只改上述问题；保留 conflict_core 与收束；"

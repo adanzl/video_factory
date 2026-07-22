@@ -211,6 +211,14 @@ def test_daily_story_retry_uses_validation_char_limits_not_write_pad():
     assert str(DAILY_STORY_BODY_CHARS_MIN) in revise_user
     assert str(DAILY_STORY_BODY_CHARS_MAX) in revise_user
 
+    expand_sys, _ = build_daily_story_prompts("争酸奶", length_mode="revise_expand")
+    assert "只增不删" in expand_sys
+    assert "禁止超过" in expand_sys or "禁止超" in expand_sys
+
+    trim_sys, _ = build_daily_story_prompts("争酸奶", length_mode="revise_trim")
+    assert "只删不增" in trim_sys
+    assert "禁止新增台词" in trim_sys
+
     prev = _valid_story()
     # 人为拉长上一稿，触发缩字 hint
     prev["dialogue"] = prev["dialogue"] + [
@@ -225,9 +233,10 @@ def test_daily_story_retry_uses_validation_char_limits_not_write_pad():
     )
     assert "字数硬卡" in retry_user
     assert "本轮问题" in retry_user
-    assert "不要少太多" in retry_user
+    assert "只删不增" in retry_user
+    assert "禁止新增" in retry_user
     assert str(DAILY_STORY_BODY_WRITE_TARGET_MIN) not in retry_user
-    assert f"≤{DAILY_STORY_BODY_CHARS_MAX}" in retry_user
+    assert f"≤{DAILY_STORY_BODY_CHARS_MAX}" in retry_user or "只删不增" in retry_user
     # 垂直：不复述全套首稿要求模板
     assert "请根据上述规则，生成一个昭昭和灿灿" not in retry_user
 
@@ -254,9 +263,13 @@ def test_validate_daily_story_json_rejects_offtopic_latter():
 
 
 def test_build_daily_story_retry_user_asks_to_expand_short_draft():
-    from app.services.daily_story.prompts import build_daily_story_retry_user
+    from app.services.daily_story.prompts import (
+        build_daily_story_retry_user,
+        resolve_daily_story_retry_length_mode,
+    )
 
     prev = _valid_story(n=10)
+    assert resolve_daily_story_retry_length_mode(prev) == "revise_expand"
     user = build_daily_story_retry_user(
         "把姐姐的鞋带系一起",
         prev_story=prev,
@@ -265,10 +278,22 @@ def test_build_daily_story_retry_user_asks_to_expand_short_draft():
     assert "还差" in user
     assert "上一稿" in user
     assert "鞋带" in user
-    assert "增补" in user or "扩到" in user
+    assert "只增不删" in user
+    assert "插入约" in user
     assert "本轮问题" in user
     assert "勿换主题" in user or "另开账" in user
     assert "发现开场" in user
+
+
+def test_resolve_daily_story_retry_length_mode_trim_when_long():
+    from app.services.daily_story.prompts import resolve_daily_story_retry_length_mode
+
+    prev = _valid_story()
+    prev["dialogue"] = prev["dialogue"] + [
+        {"speaker": "昭昭", "line": "一二三四五六七八九十十一"},
+        {"speaker": "灿灿", "line": "一二三四五六七八九十十二"},
+    ] * 20
+    assert resolve_daily_story_retry_length_mode(prev) == "revise_trim"
 
 
 def test_stitch_daily_story_opening_dedupes_overlapping_body_start():
