@@ -16,42 +16,8 @@
             <el-form-item label="烧录字幕">
               <el-switch v-model="subtitleEnabled" :disabled="actionDisabled" />
             </el-form-item>
-            <el-form-item label="字幕路径">
-              <span class="break-all text-gray-600">{{ job.subtitle_path || "-" }}</span>
-            </el-form-item>
           </el-form>
-          <div v-if="subtitleEnabled" :class="STAGE_SUBSECTION_CLASS">
-            <div :class="STAGE_PANEL_TITLE_CLASS">字幕预览</div>
-            <el-table
-              v-if="srtCues.length"
-              :data="srtCues"
-              stripe
-              size="small"
-              class="w-full"
-              max-height="280"
-            >
-              <el-table-column prop="index" label="#" width="48" />
-              <el-table-column prop="time" label="时间" width="180" show-overflow-tooltip />
-              <el-table-column prop="text" label="文案" min-width="120">
-                <template #default="{ row }">
-                  <div class="leading-relaxed wrap-break-word whitespace-pre-wrap">
-                    {{ row.text }}
-                  </div>
-                </template>
-              </el-table-column>
-            </el-table>
-            <div v-else-if="srtLoading" :class="STAGE_EMPTY_CLASS">加载中…</div>
-            <div v-else-if="!job.subtitle_path" :class="STAGE_EMPTY_CLASS">
-              暂无字幕，请先完成配音
-            </div>
-            <el-alert
-              v-else-if="srtLoadError"
-              type="warning"
-              :title="srtLoadError"
-              :closable="false"
-            />
-          </div>
-          <div v-else class="mt-1 text-xs text-gray-400">关闭后成片不烧字幕</div>
+          <div class="text-xs text-gray-400">关闭后成片不叠加字幕</div>
         </div>
 
         <div :class="[STAGE_PANEL_CLASS, 'mt-4']">
@@ -178,7 +144,7 @@
 import { computed, onMounted, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { runJobStageAction } from "@/api/api-jobs";
-import { downloadMediaFile, getMediaText } from "@/api/api-media";
+import { downloadMediaFile } from "@/api/api-media";
 import { listMaterialAudios } from "@/api/api-materials";
 import type { MaterialAudioRecord } from "@/types/material-audio";
 import type { JobDetail, JobLog } from "@/types/jobs";
@@ -200,14 +166,12 @@ import StageLogsSection from "./StageLogsSection.vue";
 import {
   STAGE_COL_LEFT_CLASS,
   STAGE_COL_RIGHT_CLASS,
-  STAGE_EMPTY_CLASS,
   STAGE_FORM_CLASS,
   STAGE_FORM_LABEL_WIDTH,
   STAGE_PANEL_CLASS,
   STAGE_PANEL_HEADER_CLASS,
   STAGE_PANEL_TITLE_CLASS,
   STAGE_PANEL_TITLE_TEXT_CLASS,
-  STAGE_SUBSECTION_CLASS,
   STAGE_TWO_COL_CLASS,
 } from "./stageLayout";
 
@@ -233,16 +197,6 @@ const bgmMaterialId = ref<number | undefined>(undefined);
 const bgmVolumeDb = ref(-18);
 const bgmOptions = ref<MaterialAudioRecord[]>([]);
 const bgmListLoading = ref(false);
-
-interface SrtCueRow {
-  index: string;
-  time: string;
-  text: string;
-}
-
-const srtLoading = ref(false);
-const srtLoadError = ref("");
-const srtCues = ref<SrtCueRow[]>([]);
 
 const MERGE_PREVIEW_OPTIONS = {
   maxWidthPx: 560,
@@ -279,9 +233,12 @@ const lazyVideoUrl = computed(() => lazyMediaSrc(videoUrl.value, props.stageActi
 const selectedBgm = computed(() =>
   bgmOptions.value.find((item) => item.id === bgmMaterialId.value)
 );
-const bgmPreviewUrl = computed(() =>
-  bgmEnabled.value ? getMediaFileUrl(selectedBgm.value?.file_path) : ""
-);
+const bgmPreviewUrl = computed(() => {
+  if (!bgmEnabled.value || !selectedBgm.value?.file_path) {
+    return "";
+  }
+  return getMediaFileUrl(selectedBgm.value.file_path);
+});
 
 const durationText = computed(() => {
   const duration = resolveFinalDuration(props.job.final_path);
@@ -324,52 +281,6 @@ function syncBgmFromJob() {
     typeof bgm?.material_id === "number" ? bgm.material_id : undefined;
   bgmVolumeDb.value =
     typeof bgm?.volume_db === "number" ? bgm.volume_db : -18;
-}
-
-function parseSrt(raw: string): SrtCueRow[] {
-  return raw
-    .trim()
-    .split(/\n\s*\n/)
-    .map((block) => {
-      const lines = block.trim().split("\n");
-      if (lines.length < 3) {
-        return null;
-      }
-      return {
-        index: lines[0],
-        time: lines[1],
-        text: lines.slice(2).join("\n"),
-      };
-    })
-    .filter((item): item is SrtCueRow => item !== null);
-}
-
-async function loadSrtPreview() {
-  if (!props.job.subtitle_path) {
-    srtCues.value = [];
-    srtLoadError.value = "";
-    srtLoading.value = false;
-    return;
-  }
-  srtLoading.value = true;
-  srtLoadError.value = "";
-  try {
-    const content = await getMediaText(props.job.subtitle_path);
-    if (!content?.trim()) {
-      srtCues.value = [];
-      srtLoadError.value = "字幕文件为空或无法读取";
-      return;
-    }
-    srtCues.value = parseSrt(content);
-    if (!srtCues.value.length) {
-      srtLoadError.value = "字幕格式无法解析";
-    }
-  } catch {
-    srtCues.value = [];
-    srtLoadError.value = "字幕加载失败，请确认文件已生成且服务可访问";
-  } finally {
-    srtLoading.value = false;
-  }
 }
 
 async function loadBgmOptions() {
@@ -471,22 +382,6 @@ watch(
   () => props.job.info?.subtitle,
   () => syncSubtitleFromJob(),
   { deep: true }
-);
-
-watch(
-  () => [props.job.subtitle_path, props.stageActive, subtitleEnabled.value] as const,
-  ([path, active, enabled]) => {
-    if (!enabled || active === false || !path) {
-      if (!path || !enabled) {
-        srtCues.value = [];
-        srtLoadError.value = "";
-        srtLoading.value = false;
-      }
-      return;
-    }
-    void loadSrtPreview();
-  },
-  { immediate: true }
 );
 
 onMounted(() => {

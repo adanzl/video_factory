@@ -9,7 +9,76 @@ from app.utils.job_info import (
     intro_generate_category,
 )
 from worker.stages.intro import IntroStage
-from worker.stages.intro.base import resolve_intro_title
+from worker.stages.intro.base import pick_cover_image, resolve_intro_title
+
+
+def test_pick_cover_image_chat_prefers_closeup(tmp_path) -> None:
+    closeup = tmp_path / "3.png"
+    opening = tmp_path / "1.png"
+    closeup.write_bytes(b"x")
+    opening.write_bytes(b"x")
+    job = {
+        "pipeline": "chat",
+        "script_json": {
+            "segments": [
+                {"segment_index": 1, "shot_type": "全景"},
+                {"segment_index": 2, "shot_type": "中景"},
+                {"segment_index": 3, "shot_type": "特写"},
+            ]
+        },
+    }
+    segs = [
+        {"segment_index": 1, "image_path": str(opening)},
+        {"segment_index": 2, "image_path": str(tmp_path / "missing.png")},
+        {"segment_index": 3, "image_path": str(closeup)},
+    ]
+    path, reason = pick_cover_image(job, segs)
+    assert path == closeup
+    assert reason == "closeup seg3"
+
+
+def test_pick_cover_image_chat_falls_back_to_seg1(tmp_path) -> None:
+    opening = tmp_path / "1.png"
+    opening.write_bytes(b"x")
+    job = {
+        "pipeline": "chat",
+        "script_json": {
+            "segments": [
+                {"segment_index": 1, "shot_type": "全景"},
+                {"segment_index": 2, "shot_type": "中景"},
+            ]
+        },
+    }
+    segs = [
+        {"segment_index": 1, "image_path": str(opening)},
+        {"segment_index": 2, "image_path": str(tmp_path / "2.png")},
+    ]
+    path, reason = pick_cover_image(job, segs)
+    assert path == opening
+    assert reason == "seg1"
+
+
+def test_pick_cover_image_standard_uses_seg1(tmp_path) -> None:
+    opening = tmp_path / "1.png"
+    closeup = tmp_path / "3.png"
+    opening.write_bytes(b"x")
+    closeup.write_bytes(b"x")
+    job = {
+        "pipeline": "standard",
+        "script_json": {
+            "segments": [
+                {"segment_index": 1, "shot_type": "全景"},
+                {"segment_index": 3, "shot_type": "特写"},
+            ]
+        },
+    }
+    segs = [
+        {"segment_index": 1, "image_path": str(opening)},
+        {"segment_index": 3, "image_path": str(closeup)},
+    ]
+    path, reason = pick_cover_image(job, segs)
+    assert path == opening
+    assert reason == "seg1"
 
 
 def test_central_43_bounds_landscape() -> None:
