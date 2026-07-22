@@ -41,9 +41,19 @@
           {{ row.created_at ? formatDateTime(row.created_at) : "-" }}
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="180" fixed="right">
+      <el-table-column label="播放" width="200">
         <template #default="{ row }">
-          <el-button type="primary" link @click="openPlayDialog(row)">播放</el-button>
+          <MediaComponent
+            :src="getMediaFileUrl(row.file_path)"
+            :duration="row.duration_sec"
+            :player="audioPlayer"
+            preload="metadata"
+            width-class="w-full"
+          />
+        </template>
+      </el-table-column>
+      <el-table-column label="操作" width="120" fixed="right">
+        <template #default="{ row }">
           <el-button type="primary" link @click="openEditDialog(row)">编辑</el-button>
           <el-button type="danger" link @click="handleDelete(row)">删除</el-button>
         </template>
@@ -101,18 +111,11 @@
       </template>
     </el-dialog>
 
-    <!-- 播放弹窗 -->
-    <el-dialog v-model="showPlayDialog" title="播放音频" width="600">
-      <div class="flex flex-col items-center gap-4 py-4">
-        <p class="text-lg font-medium">{{ playMaterial?.name }}</p>
-        <audio v-if="playAudioUrl" :src="playAudioUrl" controls class="w-full" />
-      </div>
-    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from "vue";
+import { ref, onMounted, onBeforeUnmount } from "vue";
 import { Refresh } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 
@@ -123,6 +126,8 @@ import {
   editMaterialAudio,
 } from "@/api/api-materials";
 import type { MaterialAudioRecord } from "@/types/material-audio";
+import MediaComponent from "@/components/MediaComponent.vue";
+import { useAudioPlayer } from "@/composables/useAudioPlayer";
 import { useErrorHandler } from "@/composables/useErrorHandler";
 import { formatDateTime } from "@/utils/date";
 import { formatFileSize, formatMediaDuration, getMediaFileUrl } from "@/utils/media";
@@ -153,16 +158,17 @@ const editName = ref("");
 const editNote = ref("");
 const editFile = ref<File | null>(null);
 
-// play
-const showPlayDialog = ref(false);
-const playMaterial = ref<MaterialAudioRecord | null>(null);
-
-const audioUrl = (row: MaterialAudioRecord) =>
-  row.file_path ? getMediaFileUrl(row.file_path) : "";
-
-const playAudioUrl = computed(() =>
-  playMaterial.value?.file_path ? getMediaFileUrl(playMaterial.value.file_path) : ""
-);
+const audioPlayer = useAudioPlayer({
+  callbacks: {
+    onError: () => {
+      ElMessage.error("音频播放失败");
+      audioPlayer.clear();
+    },
+    onEnded: () => {
+      audioPlayer.clear();
+    },
+  },
+});
 
 const onSelectionChange = (rows: MaterialAudioRecord[]) => {
   selectedIds.value = rows.map(row => row.id);
@@ -297,13 +303,11 @@ const handleDeleteSelected = async () => {
   }
 };
 
-const openPlayDialog = (row: MaterialAudioRecord) => {
-  if (!audioUrl(row)) return;
-  playMaterial.value = row;
-  showPlayDialog.value = true;
-};
-
 onMounted(() => {
   void fetchMaterials();
+});
+
+onBeforeUnmount(() => {
+  audioPlayer.clear();
 });
 </script>

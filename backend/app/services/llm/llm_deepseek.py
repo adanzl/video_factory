@@ -69,7 +69,8 @@ _NARRATION_EXPAND_ATTEMPTS = 2
 _TRUNCATION_RETRY_ATTEMPTS = 3
 
 # 硬关 thinking 时的温度：越大越野。走配置（开 thinking）时勿传。
-_TEMP_CREATIVE_HIGH = 0.95  # D1/D2
+# D2 重试硬开 thinking，不传 temperature。
+_TEMP_CREATIVE_HIGH = 0.95  # D1/D2 首稿
 _TEMP_CREATIVE_MID = 0.8  # A2/C/D4/E1
 _TEMP_UTILITY = 0.5  # E2/E3/E4/封面
 
@@ -1529,15 +1530,21 @@ class DeepSeekClient(LLMClient):
         max_attempts = max(4, get_settings().script_qa_max_attempts)
         prev_story: dict | None = None
         for attempt in range(max_attempts):
-            temperature = (
-                _TEMP_CREATIVE_HIGH if attempt == 0 else _TEMP_CREATIVE_MID
-            )
-            raw, _ = self._chat_json(
-                system,
-                user,
-                thinking_enabled=False,
-                temperature=temperature,
-            )
+            # 首稿硬关 thinking + 高温度保创意；重试开 thinking 修字数等硬约束
+            # （开 thinking 时模型忽略 temperature，故重试不传）
+            if attempt == 0:
+                raw, _ = self._chat_json(
+                    system,
+                    user,
+                    thinking_enabled=False,
+                    temperature=_TEMP_CREATIVE_HIGH,
+                )
+            else:
+                raw, _ = self._chat_json(
+                    system,
+                    user,
+                    thinking_enabled=True,
+                )
             try:
                 validate_daily_story_json(raw)
                 return raw

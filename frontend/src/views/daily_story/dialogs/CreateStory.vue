@@ -92,7 +92,7 @@ async function handleGenerate() {
   generating.value = true;
   try {
     await generateDailyStory(theme);
-    ElMessage.success("生成成功");
+    ElMessage.success("已开始生成，列表稍后刷新");
     emit("created");
     emit("update:modelValue", false);
   } catch (e) {
