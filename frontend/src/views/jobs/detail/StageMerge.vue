@@ -9,24 +9,20 @@
     />
 
     <div :class="STAGE_TWO_COL_CLASS">
-      <div :class="STAGE_COL_LEFT_CLASS">
-        <div :class="STAGE_PANEL_CLASS">
-          <div :class="STAGE_PANEL_TITLE_CLASS">字幕配置</div>
+      <div :class="STAGE_COL_LEFT_CLASS" class="flex gap-2">
+        <div :class="STAGE_PANEL_CLASS" class="basis-80">
+          <div :class="STAGE_PANEL_TITLE_CLASS">成片配置</div>
           <el-form :label-width="STAGE_FORM_LABEL_WIDTH" :class="STAGE_FORM_CLASS">
             <el-form-item label="烧录字幕">
-              <el-switch v-model="subtitleEnabled" :disabled="actionDisabled" />
+              <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <el-switch v-model="subtitleEnabled" :disabled="actionDisabled" />
+                <span class="text-xs text-gray-400">关闭后成片不叠加字幕</span>
+              </div>
             </el-form-item>
-          </el-form>
-          <div class="text-xs text-gray-400">关闭后成片不叠加字幕</div>
-        </div>
-
-        <div :class="[STAGE_PANEL_CLASS, 'mt-4']">
-          <div :class="STAGE_PANEL_TITLE_CLASS">BGM 配置</div>
-          <el-form :label-width="STAGE_FORM_LABEL_WIDTH" :class="STAGE_FORM_CLASS">
-            <el-form-item label="启用">
+            <el-form-item label="BGM">
               <el-switch v-model="bgmEnabled" :disabled="actionDisabled" />
             </el-form-item>
-            <el-form-item label="曲目">
+            <el-form-item label="背景音乐">
               <el-select
                 v-model="bgmMaterialId"
                 filterable
@@ -60,18 +56,19 @@
           </el-form>
           <audio
             v-if="bgmPreviewUrl"
-            class="mt-2 block w-full"
+            class="mt-1 block w-full"
             :src="bgmPreviewUrl"
             :crossorigin="MEDIA_CROSS_ORIGIN"
             controls
             preload="metadata"
           />
-          <div v-else-if="bgmEnabled" class="mt-2 text-xs text-gray-400">
+          <div v-else-if="bgmEnabled" class="mt-1 text-xs text-gray-400">
             选择曲目后可试听
           </div>
         </div>
 
-        <div :class="[STAGE_PANEL_CLASS, 'mt-4']">
+        <div :class="STAGE_PANEL_CLASS" class="basis-80">
+          <div :class="STAGE_PANEL_TITLE_CLASS">成片信息</div>
           <el-descriptions :column="1" border label-width="70px">
             <el-descriptions-item label="分辨率">{{ resolutionText }}</el-descriptions-item>
             <el-descriptions-item label="时长">{{ durationText }}</el-descriptions-item>
