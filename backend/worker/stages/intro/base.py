@@ -18,6 +18,7 @@ from app.utils.job_info import (
     ORIENTATION_PORTRAIT,
     intro_category_from_job,
     intro_generate_category,
+    is_keyframe_segment,
     orientation_for_resolve,
 )
 from app.utils.title_text import prefer_source_punctuation
@@ -126,8 +127,64 @@ def _cover_subject_from_job(job: dict) -> str:
     return title
 
 
+def pick_cover_image(
+    job: dict,
+    segments: list[dict],
+) -> tuple[Path | None, str]:
+    """选择封面底图。
+
+    chat：优先特写 → 非开场关键帧 → 分镜 1；其它流水线：分镜 1。
+    """
+    by_index = {
+        int(seg["segment_index"]): seg
+        for seg in segments
+        if seg.get("segment_index") is not None
+    }
+
+    def _existing(seg: dict | None) -> Path | None:
+        if not seg:
+            return None
+        raw = str(seg.get("image_path") or "").strip()
+        if not raw:
+            return None
+        path = Path(raw)
+        return path if path.is_file() else None
+
+    if (job.get("pipeline") or "").strip() == "chat":
+        shots: dict[int, str] = {}
+        script = job.get("script_json")
+        if isinstance(script, dict):
+            for seg in script.get("segments") or []:
+                if not isinstance(seg, dict):
+                    continue
+                try:
+                    index = int(seg.get("segment_index") or 0)
+                except (TypeError, ValueError):
+                    continue
+                shot = str(seg.get("shot_type") or "").strip()
+                if index > 0 and shot:
+                    shots[index] = shot
+        for index in sorted(by_index):
+            if shots.get(index) != "特写":
+                continue
+            path = _existing(by_index[index])
+            if path is not None:
+                return path, f"closeup seg{index}"
+        for index in sorted(by_index):
+            if index == 1 or not is_keyframe_segment(by_index[index]):
+                continue
+            path = _existing(by_index[index])
+            if path is not None:
+                return path, f"keyframe seg{index}"
+
+    path = _existing(by_index.get(1))
+    if path is not None:
+        return path, "seg1"
+    return None, "none"
+
+
 def _generate_cover(job: dict, cover_path: Path, width: int, height: int) -> None:
-    """intro 阶段：优先用分镜 1 图片做封面，不存在时再 Agnes 生图。"""
+    """intro 阶段：选分镜图做封面；没有可用图再 Agnes 生图。"""
     import tempfile
 
     from PIL import Image
@@ -141,22 +198,15 @@ def _generate_cover(job: dict, cover_path: Path, width: int, height: int) -> Non
     cw, ch, _ = cover_canvas_size(width, height)
     pipeline = job.get("pipeline")
     host_intro_path = settings.get_host_intro_path(pipeline)
+    brand = "昭墨日常" if pipeline == "chat" else settings.brand_name
 
-    # 优先用分镜 1 的图片
-    seg1_image: Path | None = None
     with connection() as conn:
         segs = repo_segment.list_segments(conn, job_id)
-    for seg in segs:
-        if int(seg.get("segment_index", 0)) == 1:
-            raw = seg.get("image_path") or ""
-            if raw:
-                seg1_image = Path(raw)
-            break
+    source, reason = pick_cover_image(job, segs)
 
-    if seg1_image and seg1_image.exists():
-        img = Image.open(seg1_image).convert("RGBA")
+    if source is not None:
+        img = Image.open(source).convert("RGBA")
         img = img.resize((cw, ch), Image.LANCZOS)
-        brand = "昭墨日常" if pipeline == "chat" else settings.brand_name
         composed = compose_cover_image(
             img,
             title,
@@ -164,10 +214,9 @@ def _generate_cover(job: dict, cover_path: Path, width: int, height: int) -> Non
             host_intro_path=host_intro_path,
         )
         composed.convert("RGB").save(cover_path, quality=92)
-        logger.info("job %s cover: using seg1 image %s", job_id, seg1_image)
+        logger.info("job %s cover: using %s (%s)", job_id, reason, source)
         return
 
-    # 没有分镜 1 图片，走 Agnes 生图
     subject = _cover_subject_from_job(job)
     cover_prompt = build_cover_image_prompt(cw=cw, ch=ch, subject=subject)
 
@@ -176,7 +225,6 @@ def _generate_cover(job: dict, cover_path: Path, width: int, height: int) -> Non
     try:
         AgnesImageProvider().generate(cover_prompt, tmp_path, size=f"{cw}x{ch}")
         img = Image.open(tmp_path)
-        brand = "昭墨日常" if pipeline == "chat" else settings.brand_name
         composed = compose_cover_image(
             img,
             title,
@@ -184,6 +232,7 @@ def _generate_cover(job: dict, cover_path: Path, width: int, height: int) -> Non
             host_intro_path=host_intro_path,
         )
         composed.convert("RGB").save(cover_path, quality=92)
+        logger.info("job %s cover: agnes generated (no segment image)", job_id)
     finally:
         tmp_path.unlink(missing_ok=True)
 
