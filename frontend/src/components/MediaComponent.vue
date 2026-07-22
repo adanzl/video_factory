@@ -34,7 +34,7 @@
 
     <span
       v-if="showTimeLabel"
-      class="text-xs text-gray-600 shrink-0 tabular-nums text-center"
+      class="text-xs text-gray-600 shrink-0 text-center"
       :class="fullTimeLabel ? 'min-w-14' : 'min-w-14'"
     >
       {{ timeLabelText }}
@@ -62,7 +62,7 @@
 <script setup lang="ts">
 import { computed, ref, watch, onBeforeUnmount } from "vue";
 import { Headset } from "@element-plus/icons-vue";
-import { formatMediaDuration } from "@/utils/media";
+import { formatMediaDuration, dbToLinearVolume } from "@/utils/media";
 import type { Ref } from "vue";
 
 export type MediaPreload = "none" | "metadata" | "auto";
@@ -105,6 +105,8 @@ interface Props {
   showTimeLabel?: boolean;
   fullTimeLabel?: boolean;
   showVol?: boolean;
+  /** 外部 dB 音量（如页面音量控件）；与 showVol 同时存在时优先 showVol */
+  volumeDb?: number | null;
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -119,6 +121,7 @@ const props = withDefaults(defineProps<Props>(), {
   showTimeLabel: true,
   fullTimeLabel: false,
   showVol: false,
+  volumeDb: null,
 });
 
 const emit = defineEmits<{
@@ -202,6 +205,22 @@ const applyVolumeToPlayer = () => {
   }
 };
 
+/** 优先组件内音量条，否则用页面传入的 volumeDb */
+const applyPreviewVolume = () => {
+  if (!props.player?.setVolume) return;
+  if (props.showVol) {
+    applyVolumeToPlayer();
+    return;
+  }
+  if (props.volumeDb != null && Number.isFinite(props.volumeDb)) {
+    props.player.setVolume(dbToLinearVolume(props.volumeDb));
+    return;
+  }
+  if (props.player.volume) {
+    props.player.setVolume(props.player.volume.value);
+  }
+};
+
 const clearPreloadAudio = () => {
   if (!preloadAudio) return;
   try {
@@ -249,10 +268,10 @@ const togglePlay = () => {
       return;
     }
     isLoading.value = true;
-    applyVolumeToPlayer();
+    applyPreviewVolume();
     props.player.load?.(playableSrc.value, { playingFilePath: playKey.value });
     // load 会重建 Audio，需再设一次音量
-    applyVolumeToPlayer();
+    applyPreviewVolume();
     props.player.play?.().catch(() => {
       isLoading.value = false;
       props.player?.clear?.();
@@ -288,6 +307,14 @@ const handleVolume = (value: number) => {
   }
   emit("volume", playableSrc.value, percent / 100);
 };
+
+watch(
+  () => props.volumeDb,
+  () => {
+    if (props.showVol) return;
+    applyPreviewVolume();
+  }
+);
 
 watch(
   [isPlaying, duration],

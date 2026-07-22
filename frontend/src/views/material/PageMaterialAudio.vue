@@ -13,6 +13,18 @@
       >
         删除
       </el-button>
+      <div class="flex items-center gap-1.5">
+        <span class="text-sm text-gray-600">预览音量</span>
+        <el-input-number
+          v-model="previewVolumeDb"
+          :min="-40"
+          :max="0"
+          :step="1"
+          controls-position="right"
+          class="w-28!"
+        />
+        <span class="text-sm text-gray-500">dB</span>
+      </div>
     </div>
 
     <el-table
@@ -47,6 +59,7 @@
             :src="getMediaFileUrl(row.file_path)"
             :duration="row.duration_sec"
             :player="audioPlayer"
+            :volume-db="previewVolumeDb"
             preload="metadata"
             width-class="w-full"
           />
@@ -138,6 +151,8 @@ const materials = ref<MaterialAudioRecord[]>([]);
 const loading = ref(false);
 const deleting = ref(false);
 const selectedIds = ref<number[]>([]);
+/** 仅影响本页预览播放，默认 -14 dB */
+const previewVolumeDb = ref(-14);
 
 const page = ref(1);
 const pageSize = ref(15);

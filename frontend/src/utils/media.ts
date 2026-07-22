@@ -195,6 +195,12 @@ export const MEDIA_PREVIEW_MAX_WIDTH_PX = 420;
 /** 跨域媒体预览需 CORS；避免 Chrome ORB 拦截 */
 export const MEDIA_CROSS_ORIGIN = "anonymous";
 
+/** dB → HTMLAudioElement.volume（0–1） */
+export function dbToLinearVolume(db: number, fallbackDb = -14): number {
+  const value = Number.isFinite(db) ? db : fallbackDb;
+  return Math.max(0, Math.min(1, Math.pow(10, value / 20)));
+}
+
 export type CssSizeStyle = Record<string, string>;
 
 export type MediaPreviewBoxOptions = {
