@@ -85,6 +85,8 @@ class DailyStoryMgr:
                 daily_story_id=story_id,
                 orientation="landscape",
                 video_provider="ffmpeg",
+                bgm={"enabled": True, "volume_db": -18.0},
+                subtitle={"enabled": False},
             )
             speaker_configs = {
                 name: dict(cfg) for name, cfg in DEFAULT_DAILY_SPEAKER_CONFIGS.items()
