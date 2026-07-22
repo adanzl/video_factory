@@ -140,7 +140,7 @@ class DailyStoryMgr:
                 daily_story_id=story_id,
                 orientation="landscape",
                 video_provider="ffmpeg",
-                bgm={"enabled": True, "volume_db": -18.0},
+                bgm={"enabled": True, "volume_db": -14.0},
                 subtitle={"enabled": False},
             )
             speaker_configs = {
@@ -168,7 +168,11 @@ class DailyStoryMgr:
             return job
 
     def update_story(self, story_id: int, *, story: dict[str, Any]) -> dict:
-        """更新日常故事内容。"""
+        """更新日常故事内容（保存时重算观感分）。"""
+        from app.services.daily_story.quality import attach_daily_story_quality
+
+        if isinstance(story, dict):
+            attach_daily_story_quality(story)
         with connection() as conn:
             return repo_daily_story.update_story(conn, story_id, story=story)
 

@@ -50,6 +50,7 @@ from app.services.daily_story.prompts import (
     build_daily_story_opening_prompts,
     build_daily_story_prompts,
     build_daily_story_retry_user,
+    build_daily_story_opening_retry_user,
     build_daily_story_theme_prompts,
     resolve_daily_story_retry_length_mode,
     stitch_daily_story_opening,
@@ -1558,8 +1559,8 @@ class DeepSeekClient(LLMClient):
             theme, story_type=story_type, length_mode="draft"
         )
         last_exc: ValueError | None = None
-        # 日常故事易因字数波动失败：至少 4 次，且重试改为「带上一稿修订」
-        max_attempts = max(4, get_settings().script_qa_max_attempts)
+        # 日常故事易因字数+节奏硬卡波动：至少 5 次，带上一稿修订
+        max_attempts = max(5, get_settings().script_qa_max_attempts)
         prev_story: dict | None = None
         for attempt in range(max_attempts):
             # 首稿硬关 thinking + 高温度保创意；重试走配置修硬约束
@@ -1596,9 +1597,10 @@ class DeepSeekClient(LLMClient):
                     max_attempts,
                     exc,
                 )
-                # 重试按上一稿字数分向：偏短 expand / 偏长 trim / 其他 revise
+                # 重试按错误文案+字数分向；非字数问题走 revise 保篇幅
                 length_mode = resolve_daily_story_retry_length_mode(
-                    prev_story if isinstance(prev_story, dict) else None
+                    prev_story if isinstance(prev_story, dict) else None,
+                    errors=errors,
                 )
                 system, _ = build_daily_story_prompts(
                     theme, story_type=story_type, length_mode=length_mode
@@ -1651,12 +1653,10 @@ class DeepSeekClient(LLMClient):
                     max_attempts,
                     exc,
                 )
-                user = (
-                    f"{build_daily_story_opening_prompts(theme, body)[1]}\n\n"
-                    f"【重试】上一轮开场未通过：{errors}\n"
-                    "请只输出合法 JSON："
-                    '{"opening":[{"speaker":"昭昭","line":"..."}]}；'
-                    "禁止写成 {\"speaker\":\"昭昭\":\"台词\"}。"
+                user = build_daily_story_opening_retry_user(
+                    theme,
+                    body,
+                    errors=errors,
                 )
         assert last_exc is not None
         raise last_exc

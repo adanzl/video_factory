@@ -6,6 +6,13 @@ export interface DialogueLine {
   line: string;
 }
 
+export interface StoryQuality {
+  grade: "好" | "中" | "偏弱" | string;
+  score: number;
+  summary: string;
+  reasons?: string[];
+}
+
 export interface StoryContent {
   scene_title: string;
   setting: string;
@@ -13,6 +20,8 @@ export interface StoryContent {
   conflict_core?: string;
   dialogue: DialogueLine[];
   punchline_explain: string;
+  discovery_opening?: DialogueLine[];
+  quality?: StoryQuality;
 }
 
 export interface DailyStoryRecord {

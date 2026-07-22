@@ -100,6 +100,15 @@
             <el-descriptions-item label="笑点解析">
               <div class="rounded-lg bg-gray-50 p-2 text-sm text-gray-600">{{ dailyStory.story.punchline_explain }}</div>
             </el-descriptions-item>
+            <el-descriptions-item v-if="dailyStory.story.quality?.grade" label="观感">
+              <el-tag
+                size="small"
+                :type="dailyStory.story.quality.grade === '好' ? 'success' : dailyStory.story.quality.grade === '中' ? 'warning' : 'danger'"
+              >
+                {{ dailyStory.story.quality.grade }} {{ dailyStory.story.quality.score }}
+              </el-tag>
+              <span class="ml-2 text-sm text-gray-600">{{ dailyStory.story.quality.summary }}</span>
+            </el-descriptions-item>
             <el-descriptions-item label="总字数">{{ totalChars }} 字</el-descriptions-item>
             <el-descriptions-item label="时长估算">{{ estimatedDuration }}</el-descriptions-item>
             <el-descriptions-item v-if="script" label="分镜数">{{ (script.segments || []).length }}</el-descriptions-item>

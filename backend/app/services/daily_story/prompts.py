@@ -35,7 +35,17 @@ DAILY_STORY_OPENING_LINES_MIN = 1
 DAILY_STORY_OPENING_LINES_MAX = 2
 
 # 开场钩子仅作提示词约束，不做关键词硬卡（主题各异，固定词表易误杀）
-# 软收尾允许；立场自相矛盾靠提示词约束，不做关键词硬卡
+# 同人连说：硬卡。无破功软收：轻量关键词硬卡（末句软收词 + 前两句无破功痕迹）
+
+_LIMP_SOFT_CLOSE_MARKERS = (
+    "给你", "算了", "好吧", "好了好了", "行吧", "随你",
+)
+
+_PUNCH_BEFORE_SOFT_MARKERS = (
+    "说晚了", "已经在了", "自相矛盾", "那你也", "你也没",
+    "那不算", "当然不算", "堵死", "戳穿", "说不通",
+    "你让的", "重新说", "晚了",
+)
 
 _PUNCHLINE_TYPE_MARKERS = (
     "权威翻车", "公平执念", "字面执行", "结盟翻车", "妈妈破功",
@@ -80,7 +90,16 @@ _CONFLICT_ANCHOR_STOP = frozenset(
     {
         "昭昭", "灿灿", "妈妈", "姐弟", "我们", "什么", "怎么",
         "这个", "那个", "不是", "就是", "可以", "不行",
+        "争第", "一个", "个洗", "一洗",  # 碎片噪声，优先「洗澡」「橡皮」等实物
     }
+)
+# 抽锚点前从 core 去掉角色名/连接词，避免「昭灿灿争」一类噪声
+_CONFLICT_ANCHOR_STRIP = (
+    *DAILY_CAST_NAMES,
+    "姐弟",
+    "vs",
+    "VS",
+    "对",
 )
 
 # 重试瞄准硬卡中段，避免贴边再抖出界
@@ -102,6 +121,7 @@ _DAILY_STORY_LENGTH_REVISE_EXPAND = f"""\
   每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
   只增不删：在上一稿破功前插入互怼/加码，写到
   约 {DAILY_STORY_BODY_RETRY_TARGET_MIN}–{DAILY_STORY_BODY_RETRY_TARGET_MAX} 字；
+  增补须轮流说话、每轮带新证据；禁止镜像复读、禁止同人连说。
   禁止整稿重写，禁止超过 {DAILY_STORY_BODY_CHARS_MAX} 字。
   发现开场系统另写另验，不计入正文硬卡。
 """
@@ -221,27 +241,34 @@ _DAILY_STORY_SYSTEM_BODY = """\
 - 每 6–8 句须有一个小反转或加码（同一规则升级、证据翻车、字面钻空子），禁止平铺到结尾才抖包袱。
 - 台词要具体：点名「上次你也…」「妈说过…」「这是我的…」，少讲抽象公平大道理。
 - 一句说完一层意思；禁止为凑 ≤18 字把同一半截话硬拆成两句（听感断裂）。
+- 昭昭/灿灿必须轮流说：禁止同一人连说 ≥2 句（听感碎、像注水）。
+- 禁止对称复读注水：同一对立（如先碰/先放、手/眼、先看/先拿）
+  连续超过 2 个来回只换说法；每新一轮须加新证据或规则加码。
 
 【立场连贯（硬约束）】
 - 同一角色前后立场须连贯：可以软收、可以认栽，但禁止无铺垫的态度骤变。
-- 反例：刚喊「不公平/不行」下一句立刻「好吧/算了」认怂——中间缺转折理由。
+- 反例：刚喊「不公平/不行」下一句立刻「好吧/算了/给你」认怂——中间缺转折理由。
 - 若要改口，须有新理由（被字面戳穿、被证据打脸），不能为收束硬拧。
-- 同一人连说两句时，后一句须接前一句，禁止自打嘴巴。
+- 同一人若因格式错误连说，后一句也须接前一句，禁止自打嘴巴。
 
 【绝对禁止】
 1. 禁止成人笑话、谐音梗、俏皮话、网络热梗。
 2. 禁止「因为……所以……」等书面连接词，全部用口语短句。
 3. 禁止叙事小说腔（「他心想」「她无奈地」等），只写纯对话+极简 setting。
-4. 禁止为凑长度反复换说法车轱辘。
+4. 禁止为凑长度反复换说法车轱辘，或镜像对白（「你先看到有什么用」「你先拿到有什么用」）。
 5. 禁止后半段换冲突、换地点主场、新开一件事或换一套分法/赛制。
 6. 禁止角色无铺垫的自相矛盾（立场/证据前后打架）。
 7. 禁止用「明天再战/今晚占位」当唯一收束，却没先破本场规则。
+8. 禁止无破功软收：末句「给你/算了/好吧/好了好了」前，
+   须已有一句把对方规则戳穿或自相矛盾；禁止吵不动就罢休。
 
 【笑点与收束】
 - 笑点 = 孩子的字面/现实逻辑 碰撞 姐姐的「装大人」规则，或两人各执一词越辩越歪。
 - 每一句推论须基于刚听到的字面意思或亲眼见过的生活经验，不能跳级。
 - 在正文篇幅内把同一条误会滚大；末句须落在本场规则破功/哑口，或被戳穿后的顺势软收。
-- 软收可以（认栽、哼一声放过），前提是前面已被戳穿或理由说得通——不是妈妈一句话掐灭后再软收。
+- 软收可以（认栽、哼一声放过），前提是前 1–2 句已被字面戳穿或理由说不通——
+  正例：「你说晚了，我已经在了」→ 再软收；反例：争到一半突然「好了好了给你」。
+- 不是妈妈一句话掐灭后再软收。
 - punchline_explain 须写明类型（如「C类公平执念」）+ 末句如何收这个 conflict_core，禁止空话。
 
 【格式要求】
@@ -285,7 +312,8 @@ def _daily_story_user_template(*, length_mode: str = "draft") -> str:
 5. 妈妈默认可不写；若出场宜少（建议≤2句）；禁止「算你赢/一人一半」类判赢判平。
 6. 输出 conflict_core（≤24 字）；punchline_explain 须含类型标签并说明如何收该冲突。
 7. 禁止中途换分法（剪刀石头布、轮流、另算谁先碰到等）或扯无关旧账。
-8. 立场须连贯：可软收，禁止无铺垫自相矛盾；末句须先破本场规则，勿只甩「明天再战」。
+8. 立场须连贯：可软收，但须先破功再软收；禁无铺垫「给你/算了」；
+   禁同人连说、禁对称复读注水；末句勿只甩「明天再战」。
 
 请直接输出JSON。
 """
@@ -613,15 +641,35 @@ def _dialogue_lines_text(dialogue: list) -> list[str]:
 
 
 def _conflict_anchor_tokens(text: str) -> list[str]:
-    """从 conflict_core 抽 2–4 字锚点（整段中文连写时也能命中「橡皮」等）。"""
+    """从 conflict_core 抽 2–4 字锚点（先去角色名，减少噪声）。"""
     compact = "".join(re.findall(r"[\u4e00-\u9fff]+", text or ""))
+    for piece in _CONFLICT_ANCHOR_STRIP:
+        compact = compact.replace(piece, "")
     tokens: set[str] = set()
     for n in (4, 3, 2):
         for i in range(0, max(0, len(compact) - n + 1)):
             t = compact[i : i + n]
             if t not in _CONFLICT_ANCHOR_STOP:
                 tokens.add(t)
-    return sorted(tokens, key=len, reverse=True)
+    # 长词优先；同长度保持稳定顺序
+    return sorted(tokens, key=lambda t: (-len(t), t))
+
+
+def _conflict_anchor_must_words(conflict_core: str, *, limit: int = 4) -> list[str]:
+    """开场重试用：挑应点名的锚点（短词优先，如「洗澡」而非「一个洗澡」）。"""
+    anchors = _conflict_anchor_tokens(conflict_core)
+    # 2–3 字优先；跳过已被更短锚点覆盖的长串
+    ordered = sorted(anchors, key=lambda t: (len(t), t))
+    picked: list[str] = []
+    for a in ordered:
+        if len(a) > 3 and picked:
+            continue
+        if any(p in a for p in picked):
+            continue
+        picked.append(a)
+        if len(picked) >= limit:
+            break
+    return picked or anchors[:limit]
 
 
 def _append_single_conflict_errors(story: dict, errors: list[str]) -> None:
@@ -664,6 +712,48 @@ def _append_single_conflict_errors(story: dict, errors: list[str]) -> None:
                 f"后半疑似跑题：出现「{marker}」，与 conflict_core={core!r} 无关"
             )
             break
+
+
+def _append_dialogue_rhythm_errors(story: dict, errors: list[str]) -> None:
+    """节奏硬卡：姐弟禁同人连说；末句无破功软收则拦。"""
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list) or not dialogue:
+        return
+
+    prev_speaker = ""
+    run = 0
+    for i, item in enumerate(dialogue):
+        if not isinstance(item, dict):
+            continue
+        speaker = str(item.get("speaker") or "").strip()
+        if speaker not in ("昭昭", "灿灿"):
+            prev_speaker = speaker
+            run = 0
+            continue
+        if speaker == prev_speaker:
+            run += 1
+            if run >= 2:
+                errors.append(
+                    f"dialogue[{i - 1}:{i}] {speaker} 连说≥2句，须轮流说话"
+                )
+                break
+        else:
+            prev_speaker = speaker
+            run = 1
+
+    lines = _dialogue_lines_text(dialogue)
+    if len(lines) < 3:
+        return
+    last = lines[-1]
+    if not any(m in last for m in _LIMP_SOFT_CLOSE_MARKERS):
+        return
+    # 末句是软收：前 2 句须已有破功/戳穿痕迹
+    prev = "".join(lines[-3:-1])
+    if not any(m in prev for m in _PUNCH_BEFORE_SOFT_MARKERS):
+        errors.append(
+            "末句疑似无破功软收（如「给你/算了/好吧」）；"
+            "软收前须先有字面戳穿或自相矛盾"
+        )
 
 
 def _append_mom_line_errors(story: dict, errors: list[str]) -> None:
@@ -805,6 +895,9 @@ def validate_daily_story_json(
 
     _append_single_conflict_errors(story, errors)
 
+    # 节奏：禁同人连说；无破功软收
+    _append_dialogue_rhythm_errors(story, errors)
+
     # 妈妈台词硬约束
     _append_mom_line_errors(story, errors)
 
@@ -874,12 +967,14 @@ def validate_daily_story_opening(
 
     core = (conflict_core or "").strip()
     anchors = _conflict_anchor_tokens(core)
+    must = _conflict_anchor_must_words(core)
     joined = "".join(d["line"] for d in normalized)
     # 锚点须落在开场台词或 setting（core 自身不算已体现）
     ctx = (setting or "") + joined
     if anchors and normalized and not any(a in ctx for a in anchors):
+        hint = "、".join(must) if must else "、".join(anchors[:4])
         errors.append(
-            f"发现开场未体现 conflict_core 锚点（{anchors}）：{core!r}"
+            f"发现开场未体现 conflict_core 锚点（须点名其一：{hint}）：{core!r}"
         )
 
     if errors:
@@ -968,14 +1063,57 @@ def dialogue_total_chars(story: dict | None) -> int:
     return total
 
 
-def resolve_daily_story_retry_length_mode(prev_story: dict | None) -> str:
-    """按上一稿正文字数选择重试 length_mode（expand / trim / revise）。"""
+def resolve_daily_story_retry_length_mode(
+    prev_story: dict | None,
+    *,
+    errors: str = "",
+) -> str:
+    """按本轮错误 + 上一稿字数选择重试 length_mode。
+
+    优先信校验文案（总字数须≥/≤）；字数已在区间时走 revise，
+    避免「只修连说」被 trim/expand 带跑篇幅。
+    """
+    err = errors or ""
+    if "总字数须≥" in err:
+        return "revise_expand"
+    if "总字数须≤" in err:
+        return "revise_trim"
     chars = dialogue_total_chars(prev_story if isinstance(prev_story, dict) else None)
     if chars < DAILY_STORY_BODY_CHARS_MIN:
         return "revise_expand"
     if chars > DAILY_STORY_BODY_CHARS_MAX:
         return "revise_trim"
     return "revise"
+
+
+def _retry_issue_hints(errors: str, *, chars: int) -> str:
+    """按本轮校验问题追加可执行修订指令。"""
+    hints: list[str] = []
+    err = errors or ""
+    if "连说" in err:
+        hints.append(
+            "【连说】全文改为昭昭/灿灿严格交替；把连说拆开或改 speaker，"
+            f"勿借机大删；保持约 {chars} 字（{DAILY_STORY_BODY_CHARS_MIN}–"
+            f"{DAILY_STORY_BODY_CHARS_MAX}）。"
+        )
+    if "无破功软收" in err:
+        hints.append(
+            "【软收】在末句软收前插入一句字面戳穿/自相矛盾，再软收；"
+            "勿只改末句口头禅。"
+        )
+    if "超过" in err and f"{DAILY_STORY_LINE_CHARS_MAX}字" in err:
+        hints.append(
+            f"【单句】超长句压到 ≤{DAILY_STORY_LINE_CHARS_MAX} 字；"
+            "可拆给两人轮流说，禁止同人连说硬拆。"
+        )
+    if "跑题" in err:
+        hints.append("【跑题】删掉后半无关主线，回到 conflict_core。")
+    if not hints and "总字数" not in err:
+        hints.append(
+            f"【篇幅】字数已在硬卡内（当前约 {chars}），"
+            "只改本轮问题，禁止大幅增删。"
+        )
+    return ("\n".join(hints) + "\n") if hints else ""
 
 
 def build_daily_story_retry_user(
@@ -987,7 +1125,8 @@ def build_daily_story_retry_user(
 ) -> str:
     """构造垂直修订重试 user：只列本轮问题 + 上一稿，不复述全套规则。
 
-    偏短：只增不删，给加句量与中段目标；偏长：只删不增。
+    偏短：只增不删；偏长：只删不增（超出少则只删 1 句，防砍过猛）。
+    连说/软收等非字数问题走专项 hint，避免越修越短。
     system 须用同向 length_mode（见 resolve_daily_story_retry_length_mode）。
     phase 保留兼容，正文重试固定走 body 硬卡。
     """
@@ -997,34 +1136,64 @@ def build_daily_story_retry_user(
     chars_max = DAILY_STORY_BODY_CHARS_MAX
     aim_lo = DAILY_STORY_BODY_RETRY_TARGET_MIN
     aim_hi = DAILY_STORY_BODY_RETRY_TARGET_MAX
-    # 按约 12 字/句估加删句数，给模型可执行动作
     avg_line = 12
     length_hint = ""
     if chars < chars_min:
         deficit = chars_min - chars
-        add_lines = max(2, (deficit + avg_line - 1) // avg_line)
+        add_lines = max(1, (deficit + avg_line - 1) // avg_line)
+        if deficit <= 24:
+            add_lines = 1
+        elif deficit <= 48:
+            add_lines = min(add_lines, 3)
         length_hint = (
             f"【字数·只增不删】上一稿 {chars} 字，还差至少 {deficit} 字。"
             f"在破功前插入约 {add_lines} 句互怼/加码（同一 conflict_core），"
+            f"须轮流说话、每轮新证据；禁止镜像复读与同人连说；"
             f"写到 {aim_lo}–{aim_hi} 字；禁止整稿重写，禁止超过 {chars_max} 字。\n"
         )
     elif chars > chars_max:
         excess = chars - chars_max
-        drop_lines = max(2, (excess + avg_line - 1) // avg_line)
+        drop_lines = max(1, (excess + avg_line - 1) // avg_line)
+        if excess <= 24:
+            drop_lines = 1
         length_hint = (
             f"【字数·只删不增】上一稿 {chars} 字，超出 {excess} 字。"
-            f"删掉约 {drop_lines} 句车轱辘/重复回合，压到 {aim_lo}–{aim_hi} 字；"
-            f"禁止新增任何台词，须仍 ≥{chars_min} 字。\n"
+            f"只删约 {drop_lines} 句车轱辘/重复回合，压到 {aim_lo}–{aim_hi} 字；"
+            f"禁止新增任何台词，禁止大段重写，须仍 ≥{chars_min} 字。\n"
         )
+    issue_hint = _retry_issue_hints(errors, chars=chars)
     prev_json = json.dumps(prev_story, ensure_ascii=False)
     return (
         f"主题：{theme}\n"
         f"【字数硬卡】正文 {chars_min}–{chars_max} 字；"
         f"每句 ≤{DAILY_STORY_LINE_CHARS_MAX} 字；重试瞄准 {aim_lo}–{aim_hi}。\n"
         f"{length_hint}"
+        f"{issue_hint}"
         f"【本轮问题】{errors}\n"
         "【修订要求】只改上述问题；保留 conflict_core 与收束；"
         "勿写发现开场；勿换主题/另开账。\n"
         "请输出修订后的完整 JSON。\n"
         f"【上一稿】\n{prev_json}"
+    )
+
+
+def build_daily_story_opening_retry_user(
+    theme: str,
+    body: dict,
+    *,
+    errors: str,
+) -> str:
+    """开场重试：点名须出现的 conflict_core 锚点词。"""
+    base = build_daily_story_opening_prompts(theme, body)[1]
+    core = str(body.get("conflict_core") or "").strip()
+    must = _conflict_anchor_must_words(core)
+    must_txt = "、".join(must) if must else core or "冲突实物/动作"
+    return (
+        f"{base}\n\n"
+        f"【重试】上一轮开场未通过：{errors}\n"
+        f"开场台词必须点名以下至少一词：{must_txt}；"
+        "写发现/质问现场，勿寒暄、勿开辩。\n"
+        "请只输出合法 JSON："
+        '{"opening":[{"speaker":"昭昭","line":"..."}]}；'
+        "禁止写成 {\"speaker\":\"昭昭\":\"台词\"}。"
     )

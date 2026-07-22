@@ -78,6 +78,7 @@ def _lines(story: dict, *, speaker: str | None = None) -> list[str]:
 def _summarize(theme: str, story: dict, elapsed: float) -> dict:
     dialogue = story.get("dialogue") or []
     opening = story.get("discovery_opening") or []
+    quality = story.get("quality") if isinstance(story.get("quality"), dict) else {}
     return {
         "theme": theme,
         "ok": True,
@@ -90,6 +91,9 @@ def _summarize(theme: str, story: dict, elapsed: float) -> dict:
         "setting": story.get("setting"),
         "conflict_core": story.get("conflict_core"),
         "punchline_explain": story.get("punchline_explain"),
+        "quality_grade": quality.get("grade"),
+        "quality_score": quality.get("score"),
+        "quality_summary": quality.get("summary"),
         "opening": opening,
         "head": _lines(story)[:4],
         "tail": _lines(story)[-4:],
@@ -110,11 +114,14 @@ def run_batch(themes: list[str]) -> list[dict]:
             print(
                 f"ok chars={item['chars']} lines={item['lines']} "
                 f"opening={item['opening_lines']} speakers={item['speakers']} "
-                f"elapsed={item['elapsed_sec']}s",
+                f"elapsed={item['elapsed_sec']}s "
+                f"grade={item.get('quality_grade')}({item.get('quality_score')})",
                 flush=True,
             )
             print(f"core={item['conflict_core']}", flush=True)
             print(f"setting={item['setting']}", flush=True)
+            if item.get("quality_summary"):
+                print(f"quality={item['quality_summary']}", flush=True)
             if item["opening"]:
                 print("opening:", flush=True)
                 for row in item["opening"]:

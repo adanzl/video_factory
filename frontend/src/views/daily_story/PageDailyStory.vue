@@ -48,6 +48,22 @@
           {{ row.story?.dialogue?.length || 0 }}
         </template>
       </el-table-column>
+      <el-table-column label="观感" min-width="160" show-overflow-tooltip>
+        <template #default="{ row }">
+          <template v-if="row.story?.quality?.grade">
+            <el-tag
+              size="small"
+              :type="qualityTagType(row.story.quality.grade)"
+              class="mr-1"
+            >
+              {{ row.story.quality.grade }}
+              {{ row.story.quality.score }}
+            </el-tag>
+            <span class="text-xs text-gray-500">{{ row.story.quality.summary }}</span>
+          </template>
+          <span v-else class="text-gray-400">-</span>
+        </template>
+      </el-table-column>
       <el-table-column label="字数" width="70" align="center">
         <template #default="{ row }">
           {{ calcWordCount(row.story?.dialogue) }}
@@ -117,6 +133,13 @@ const total = ref(0);
 
 const POLL_INTERVAL_MS = 3000;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
+
+function qualityTagType(grade: string): "success" | "warning" | "danger" | "info" {
+  if (grade === "好") return "success";
+  if (grade === "中") return "warning";
+  if (grade === "偏弱") return "danger";
+  return "info";
+}
 
 function stopPolling() {
   if (pollTimer != null) {
