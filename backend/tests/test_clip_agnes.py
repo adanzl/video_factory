@@ -111,6 +111,31 @@ def test_resolve_i2v_image_uses_data_uri(tmp_path: Path) -> None:
     assert ref.startswith("data:image/png;base64,")
 
 
+def test_agnes_i2v_poll_throttle_is_global() -> None:
+    """多路并发共用全局 poll 间隔，避免状态查询 429。"""
+    provider = AgnesClipProvider()
+    provider._poll_interval_sec = 15.0  # noqa: SLF001
+    AgnesClipProvider._last_poll_at = 0.0
+
+    sleeps: list[float] = []
+
+    def _fake_sleep(sec: float) -> None:
+        sleeps.append(sec)
+
+    with (
+        patch(
+            "app.services.segment.clip.video_agnes.time.monotonic",
+            side_effect=[100.0, 100.0, 105.0, 115.0],
+        ),
+        patch("app.services.segment.clip.video_agnes.time.sleep", side_effect=_fake_sleep),
+    ):
+        provider._throttle_poll()  # noqa: SLF001  # 首次不 sleep
+        provider._throttle_poll()  # noqa: SLF001  # 距上次 5s，还需等 10s
+
+    assert len(sleeps) == 1
+    assert abs(sleeps[0] - 10.0) < 0.01
+
+
 def test_agnes_i2v_submit_interval_by_key() -> None:
     """付费 enterprise≈2 RPM(30s)，免费≈1 RPM(60s)；按 key 分开记时。"""
     provider = AgnesClipProvider()
