@@ -283,15 +283,17 @@ def test_apply_keyframe_video_providers_marks_closeup():
         },
     ]
     marked = apply_keyframe_video_providers(segments)
-    assert marked == [1, 2]
-    assert segments[0]["info"]["video_provider"] == "agnes_i2v"
+    assert marked == [2]
+    assert segments[0].get("info") is None or "video_provider" not in (
+        segments[0].get("info") or {}
+    )
     assert segments[1]["info"]["video_provider"] == "agnes_i2v"
     assert segments[2].get("info") is None or "video_provider" not in (
         segments[2].get("info") or {}
     )
 
 
-def test_apply_keyframe_video_providers_marks_opening_without_closeup():
+def test_apply_keyframe_video_providers_skips_non_closeup_opening():
     from app.utils.job_info import apply_keyframe_video_providers
 
     segments = [
@@ -299,8 +301,10 @@ def test_apply_keyframe_video_providers_marks_opening_without_closeup():
         {"segment_index": 2, "shot_type": "中景"},
     ]
     marked = apply_keyframe_video_providers(segments)
-    assert marked == [1]
-    assert segments[0]["info"]["video_provider"] == "agnes_i2v"
+    assert marked == []
+    assert segments[0].get("info") is None or "video_provider" not in (
+        segments[0].get("info") or {}
+    )
     assert segments[1].get("info") is None or "video_provider" not in (
         segments[1].get("info") or {}
     )

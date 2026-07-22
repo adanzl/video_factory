@@ -491,22 +491,59 @@ class MockLLMClient(LLMClient):
         }
 
     def generate_daily_story(self, theme: str) -> dict[str, Any]:
-        return {
+        from app.services.daily_story.prompts import (
+            DAILY_STORY_BODY_CHARS_MIN,
+            DAILY_STORY_LINE_CHARS_MAX,
+            dialogue_total_chars,
+            stitch_daily_story_opening,
+            validate_daily_story_json,
+        )
+
+        pad = "一二三四五六七八九十一二三四五六七八"[:DAILY_STORY_LINE_CHARS_MAX]
+        speakers = ("昭昭", "灿灿")
+        # 正文从互怼起，不含发现开场；凑满正文下限
+        body_lines: list[dict[str, str]] = [
+            {"speaker": "昭昭", "line": "这橡皮明明是我先拿到的呀"},
+            {"speaker": "灿灿", "line": "规则是谁看见谁就能拿"},
+            {"speaker": "昭昭", "line": "那你刚才明明没看见"},
+            {"speaker": "灿灿", "line": "我说看见了就算看见了"},
+            {"speaker": "昭昭", "line": "那你规则自己说了不算"},
+            {"speaker": "灿灿", "line": "姐姐说的规则当然算数"},
+            {"speaker": "昭昭", "line": "那我也可以说新规则"},
+            {"speaker": "灿灿", "line": "你还小你说了不算"},
+            {"speaker": "昭昭", "line": "你刚才也说谁看见谁拿"},
+            {"speaker": "灿灿", "line": "那是对你说的规矩"},
+            {"speaker": "昭昭", "line": "规矩怎么能两套标准"},
+            {"speaker": "灿灿", "line": "因为我是姐姐"},
+            {"speaker": "昭昭", "line": "姐姐也不能自己改规则"},
+            {"speaker": "灿灿", "line": "好好好算你说得有点道理"},
+            {"speaker": "昭昭", "line": "那橡皮先放中间谁都别抢"},
+            {"speaker": "灿灿", "line": "行吧今天听你这一回"},
+        ]
+        i = 0
+        while dialogue_total_chars({"dialogue": body_lines}) < DAILY_STORY_BODY_CHARS_MIN:
+            body_lines.insert(
+                -2,
+                {"speaker": speakers[i % 2], "line": pad},
+            )
+            i += 1
+        body = {
             "scene_title": "测试场景",
-            "setting": f"家里客厅，姐弟俩围绕{theme}展开对话",
-            "conflict_core": f"姐弟争{theme}"[:24],
-            "dialogue": [
-                {"speaker": "昭昭", "line": f"姐，{theme}是怎么回事？"},
-                {"speaker": "灿灿", "line": "就是那样的呗。"},
-                {"speaker": "昭昭", "line": "那样是哪样？"},
-                {"speaker": "灿灿", "line": "你问我我问谁？"},
-                {"speaker": "昭昭", "line": "你不是姐姐吗？"},
-                {"speaker": "灿灿", "line": "姐姐也不是什么都知道！"},
-                {"speaker": "昭昭", "line": "那当姐姐有什么用？"},
-                {"speaker": "灿灿", "line": "可以管你！"},
-            ],
-            "punchline_explain": "A类权威翻车，弟弟戳穿姐姐权威",
+            "setting": f"家里客厅，姐弟俩围绕{theme}争新橡皮",
+            "conflict_core": f"姐弟争{theme}"[:24] if theme else "姐弟抢新橡皮",
+            "dialogue": body_lines,
+            "punchline_explain": "C类公平执念，弟弟戳穿双标规则",
         }
+        # 保证 conflict 锚点可进 setting
+        if "橡皮" not in body["conflict_core"]:
+            body["conflict_core"] = "姐弟抢新橡皮"
+            body["setting"] = f"家里客厅，围绕{theme}抢新橡皮"
+        opening = [
+            {"speaker": "昭昭", "line": "咦这个新橡皮你怎么攥着"},
+        ]
+        story = stitch_daily_story_opening(body, opening)
+        validate_daily_story_json(story, phase="full")
+        return story
 
     def generate_daily_story_themes(self, count: int = 15) -> list[str]:
         themes = ["争最后一瓶酸奶", "谁先洗澡", "检查作业时发现错题", "抢着开门接快递"]
