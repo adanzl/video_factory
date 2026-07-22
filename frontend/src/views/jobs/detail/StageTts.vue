@@ -154,12 +154,12 @@
                 </div>
               </el-tooltip>
             </div>
-            <audio
-              v-if="item.clipUrl"
-              class="block w-full"
-              :src="item.clipUrl"
-              controls
+            <MediaComponent
+              v-if="item.path"
+              :src="getMediaFileUrl(item.path, job.audio_version)"
+              :player="clipPlayer"
               preload="metadata"
+              width-class="w-full"
             />
             <div v-else class="py-1 text-xs text-gray-400">音频不可用</div>
           </div>
@@ -181,14 +181,16 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { runJobStageAction } from "@/api/api-jobs";
 import { getMediaDuration, getMediaFileUrl, getMediaText } from "@/api/api-media";
+import MediaComponent from "@/components/MediaComponent.vue";
 import { DEFAULT_TTS_VOICE, TTS_VOICE_OPTIONS } from "@/constants/tts-voices";
 import type { JobDetail, JobLog } from "@/types/jobs";
 import type { ScriptJson } from "@/types/jobs/script";
 import { MEDIA_CROSS_ORIGIN, lazyMediaSrc } from "@/utils/media";
+import { useAudioPlayer } from "@/composables/useAudioPlayer";
 import { useErrorHandler } from "@/composables/useErrorHandler";
 import StageActionBar from "./StageActionBar.vue";
 import StageLogsSection from "./StageLogsSection.vue";
@@ -267,8 +269,10 @@ const lazyAudioUrl = computed(() => lazyMediaSrc(audioUrl.value, props.stageActi
 interface SegmentClip {
   segment_index: number;
   text: string;
-  clipUrl: string;
+  path: string;
 }
+
+const clipPlayer = useAudioPlayer();
 
 /** script_json 中按 segment_index 索引的文案 */
 const scriptTextByIndex = computed<Record<number, string>>(() => {
@@ -288,17 +292,17 @@ const segmentClips = computed<SegmentClip[]>(() => {
   if (!clips?.length) return [];
   const textMap = scriptTextByIndex.value;
   return clips
-    .map(clipPath => {
-      const fileName = clipPath.trim().replace(/\\/g, "/").split("/").pop() || "";
+    .map(path => {
+      const fileName = path.trim().replace(/\\/g, "/").split("/").pop() || "";
       const index = parseInt(fileName.replace(/\.mp3$/i, ""), 10);
       const segIndex = Number.isFinite(index) ? index : 0;
       return {
         segment_index: segIndex,
         text: textMap[segIndex] || "",
-        clipUrl: getMediaFileUrl(clipPath, props.job.audio_version),
+        path,
       };
     })
-    .filter(item => item.clipUrl)
+    .filter(item => item.path)
     .sort((a, b) => a.segment_index - b.segment_index);
 });
 
@@ -508,4 +512,17 @@ watch(
   },
   { immediate: true }
 );
+
+watch(
+  () => props.stageActive,
+  active => {
+    if (active === false) {
+      clipPlayer.clear();
+    }
+  }
+);
+
+onBeforeUnmount(() => {
+  clipPlayer.clear();
+});
 </script>

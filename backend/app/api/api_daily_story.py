@@ -45,7 +45,10 @@ def generate_story_route():
     data = get_json_body()
     theme = parse_str(data, "theme")
     logger.info("[DAILY_STORY] api /generate theme=%r", theme)
-    return json_ok(daily_story_mgr.generate_and_save(theme))
+    try:
+        return json_ok(daily_story_mgr.generate_and_save(theme))
+    except ValueError as e:
+        raise APIError(str(e), status_code=400)
 
 
 @bp.post("/delete")
@@ -83,6 +86,8 @@ def create_job_route():
         )
     except KeyError:
         raise APIError("故事不存在")
+    except ValueError as e:
+        raise APIError(str(e), status_code=400)
     return json_created(job)
 
 
@@ -123,3 +128,5 @@ def regenerate_story_route():
         return json_ok(daily_story_mgr.regenerate_story(story_id))
     except KeyError:
         raise APIError("故事不存在")
+    except ValueError as e:
+        raise APIError(str(e), status_code=400)

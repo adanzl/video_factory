@@ -27,7 +27,12 @@ export interface DailyStoryRecord {
 
 export type DailyStoryListResponse = ListResponse<DailyStoryRecord>;
 
-const DAILY_STORY_LLM_TIMEOUT_MS = 120_000;
+const DAILY_STORY_POLL_INTERVAL_MS = 3_000;
+const DAILY_STORY_POLL_MAX_MS = 10 * 60_000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 export async function listDailyStories(params: {
   status?: string;
@@ -47,12 +52,27 @@ export async function getDailyStory(id: number): Promise<DailyStoryRecord> {
   return response.data;
 }
 
+/** 轮询直到 status 不再是 processing；超时仍返回最后一次结果。 */
+export async function waitDailyStoryReady(
+  storyId: number,
+  {
+    intervalMs = DAILY_STORY_POLL_INTERVAL_MS,
+    maxWaitMs = DAILY_STORY_POLL_MAX_MS,
+  }: { intervalMs?: number; maxWaitMs?: number } = {}
+): Promise<DailyStoryRecord> {
+  const started = Date.now();
+  let latest = await getDailyStory(storyId);
+  while (latest.status === "processing" && Date.now() - started < maxWaitMs) {
+    await sleep(intervalMs);
+    latest = await getDailyStory(storyId);
+  }
+  return latest;
+}
+
 export async function generateDailyStory(theme: string): Promise<DailyStoryRecord> {
-  const response = await api.post<DailyStoryRecord>(
-    "/v_factory/api/daily_story/generate",
-    { theme },
-    { timeout: DAILY_STORY_LLM_TIMEOUT_MS }
-  );
+  const response = await api.post<DailyStoryRecord>("/v_factory/api/daily_story/generate", {
+    theme,
+  });
   return response.data;
 }
 
@@ -94,11 +114,9 @@ export async function updateDailyStory(
 }
 
 export async function regenerateDailyStory(storyId: number): Promise<DailyStoryRecord> {
-  const response = await api.post<DailyStoryRecord>(
-    "/v_factory/api/daily_story/regenerate",
-    { id: storyId },
-    { timeout: DAILY_STORY_LLM_TIMEOUT_MS }
-  );
+  const response = await api.post<DailyStoryRecord>("/v_factory/api/daily_story/regenerate", {
+    id: storyId,
+  });
   return response.data;
 }
 
