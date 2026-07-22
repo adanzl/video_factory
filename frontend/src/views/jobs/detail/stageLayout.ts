@@ -15,13 +15,13 @@ export const STAGE_BLOCK_COMPACT_CLASS =
 
 export const STAGE_TWO_COL_CLASS = "flex flex-wrap items-start gap-4";
 
-export const STAGE_COL_LEFT_CLASS = "min-w-[280px] max-w-full shrink-0 basis-80";
+export const STAGE_COL_LEFT_CLASS = "min-w-[280px] max-w-160 shrink-0 basis-auto";
 
 /** 封面等宽预览列（520px 基准） */
 export const STAGE_COL_WIDE_LEFT_CLASS =
   "min-w-[280px] max-w-full shrink-0 basis-[520px]";
 
-export const STAGE_COL_RIGHT_CLASS = "min-w-[280px] flex-1 basis-[360px]";
+export const STAGE_COL_RIGHT_CLASS = "min-w-[100px] flex-1 basis-auto";
 
 /** 配音等宽预览列（字幕表需要更宽） */
 export const STAGE_COL_WIDE_RIGHT_CLASS =
@@ -54,7 +54,7 @@ export const STAGE_LOGS_SECTION_CLASS = "mt-6";
 /** 主内容区下方次级区块（质量报告等） */
 export const STAGE_SUBSECTION_CLASS = "mt-4";
 
-export const STAGE_FORM_LABEL_WIDTH = "96px";
+export const STAGE_FORM_LABEL_WIDTH = "70px";
 
 export const STAGE_FORM_CLASS =
   "[&_.el-form-item]:mb-3 [&_.el-form-item__content]:min-w-0 [&_.el-form-item__content]:flex-1";
