@@ -206,6 +206,9 @@ class AgnesClipProvider(ClipProvider):
     # 按 Key 池分别限流：付费(enterprise≈2 RPM)与免费(≈1 RPM)互不影响
     _submit_lock = Semaphore(value=1)
     _last_submit_at_by_key: dict[str, float] = {}
+    # 状态查询全局错峰，避免多路并发把 poll RPM 打爆
+    _poll_lock = Semaphore(value=1)
+    _last_poll_at = 0.0
 
     def __init__(self) -> None:
         settings = get_settings()
@@ -247,6 +250,21 @@ class AgnesClipProvider(ClipProvider):
                 )
                 time.sleep(wait)
             self._last_submit_at_by_key[key_label] = time.monotonic()
+
+    def _throttle_poll(self) -> None:
+        """多路 i2v 共用同一状态查询节奏，避免 status query 429。"""
+        interval = max(0.0, self._poll_interval_sec)
+        with self._poll_lock:
+            elapsed = time.monotonic() - self._last_poll_at
+            if elapsed < interval:
+                wait = interval - elapsed
+                logger.debug(
+                    "agnes i2v poll throttle: wait %.1fs (interval=%.1fs)",
+                    wait,
+                    interval,
+                )
+                time.sleep(wait)
+            AgnesClipProvider._last_poll_at = time.monotonic()
 
     def _request(
         self,
@@ -542,19 +560,31 @@ class AgnesClipProvider(ClipProvider):
         task_label = video_id or task_id or "unknown"
         state = "queued"
         for poll_idx in range(self._poll_max_attempts):
-            time.sleep(self._poll_interval_sec)
-            poll_resp = self._request(
-                "GET",
-                self._poll_url(video_id, task_id),
-                headers={**headers, "Connection": "close"},
-                label="poll",
-            )
-            poll = poll_resp.json()
-            if poll.get("error"):
-                _raise_i2v_api_error("poll", poll["error"], body=poll)
+            self._throttle_poll()
+            try:
+                poll_resp = self._request(
+                    "GET",
+                    self._poll_url(video_id, task_id),
+                    headers={**headers, "Connection": "close"},
+                    label="poll",
+                )
+                poll = poll_resp.json()
+                if poll.get("error"):
+                    _raise_i2v_api_error("poll", poll["error"], body=poll)
+            except AgnesQuotaExceeded as exc:
+                # 状态查询限流：退避后继续轮询，不要切 key / 整批失败
+                wait = max(self._poll_interval_sec, 15.0) * (1 + poll_idx % 3)
+                logger.warning(
+                    "agnes i2v poll rate-limited (%s), retry in %.0fs: %s",
+                    task_label,
+                    wait,
+                    str(exc)[:160],
+                )
+                time.sleep(wait)
+                continue
 
             state = str(poll.get("status") or "unknown")
-            if poll_idx % 6 == 0 and state not in _TERMINAL_POLL_STATES:
+            if poll_idx % 4 == 0 and state not in _TERMINAL_POLL_STATES:
                 logger.info(
                     "agnes i2v task %s polling... state=%s (~%ss)",
                     task_label,
