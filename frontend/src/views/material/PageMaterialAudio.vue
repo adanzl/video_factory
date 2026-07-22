@@ -115,7 +115,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount } from "vue";
+import { ref, onMounted } from "vue";
 import { Refresh } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 
@@ -305,9 +305,5 @@ const handleDeleteSelected = async () => {
 
 onMounted(() => {
   void fetchMaterials();
-});
-
-onBeforeUnmount(() => {
-  audioPlayer.clear();
 });
 </script>

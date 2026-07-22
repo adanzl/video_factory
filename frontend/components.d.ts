@@ -51,6 +51,8 @@ declare module 'vue' {
     ElTag: typeof import('element-plus/es')['ElTag']
     ElTooltip: typeof import('element-plus/es')['ElTooltip']
     IMdiFloppy: typeof import('~icons/mdi/floppy')['default']
+    IMdiVolumeHigh: typeof import('~icons/mdi/volume-high')['default']
+    IMdiVolumeOff: typeof import('~icons/mdi/volume-off')['default']
     MediaComponent: typeof import('./src/components/MediaComponent.vue')['default']
     PlaceholderCard: typeof import('./src/components/PlaceholderCard.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']

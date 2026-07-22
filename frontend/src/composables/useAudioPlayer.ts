@@ -2,7 +2,7 @@
  * 音频播放器 Composable
  * 提供统一的音频播放器管理功能
  */
-import { ref, type Ref } from "vue";
+import { onScopeDispose, ref, toValue, watch, type MaybeRefOrGetter, type Ref } from "vue";
 
 const NOOP = () => {};
 const INITIAL_TIME = 0;
@@ -21,6 +21,8 @@ interface AudioPlayerOptions {
   playingFilePath?: string | null;
   playingFileIndex?: number | null;
   callbacks?: AudioPlayerCallbacks;
+  /** false 时自动 clear；组件卸载时也会 clear */
+  active?: MaybeRefOrGetter<boolean | undefined>;
 }
 
 export function useAudioPlayer(options: AudioPlayerOptions = {}) {
@@ -28,6 +30,7 @@ export function useAudioPlayer(options: AudioPlayerOptions = {}) {
     playingFilePath: initialFilePath = null,
     playingFileIndex: initialFileIndex = null,
     callbacks = {},
+    active,
   } = options;
 
   const callbacksRef: Required<AudioPlayerCallbacks> = {
@@ -287,6 +290,21 @@ export function useAudioPlayer(options: AudioPlayerOptions = {}) {
       audio.volume = next;
     }
   };
+
+  if (active !== undefined) {
+    watch(
+      () => toValue(active),
+      value => {
+        if (value === false) {
+          clear();
+        }
+      }
+    );
+  }
+
+  onScopeDispose(() => {
+    clear();
+  });
 
   return {
     get audio() {

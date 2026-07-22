@@ -1,5 +1,5 @@
 <template>
-  <div class="flex items-center gap-1.5 bg-gray-50 rounded border-gray-500 pr-1" :class="widthClass">
+  <div class="flex items-center gap-1.5 bg-gray-100 rounded border-gray-500 px-1" :class="widthClass">
     <el-button
       v-if="showPlayButton"
       type="default"
@@ -35,16 +35,14 @@
     <span
       v-if="showTimeLabel"
       class="text-xs text-gray-600 shrink-0 tabular-nums text-center"
-      :class="fullTimeLabel ? 'min-w-24' : 'w-14'"
+      :class="fullTimeLabel ? 'min-w-14' : 'min-w-14'"
     >
       {{ timeLabelText }}
     </span>
 
-    <div v-if="showVol" class="flex items-center gap-1 shrink-0 w-20" @click.stop>
-      <el-icon class="text-gray-500 w-3.5! h-3.5! shrink-0">
-        <Mute v-if="volumePercent === 0" />
-        <Headset v-else />
-      </el-icon>
+    <div v-if="showVol" class="flex items-center gap-1 shrink-0 w-20 pr-1.5" @click.stop>
+      <i-mdi-volume-off v-if="volumePercent === 0" class="text-gray-500 w-5! h-5! shrink-0" />
+      <i-mdi-volume-high v-else class="text-gray-500 w-4! h-4! shrink-0" />
       <el-slider
         :model-value="volumePercent"
         :min="0"
@@ -63,7 +61,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch, onBeforeUnmount } from "vue";
-import { Headset, Mute } from "@element-plus/icons-vue";
+import { Headset } from "@element-plus/icons-vue";
 import { formatMediaDuration } from "@/utils/media";
 import type { Ref } from "vue";
 
@@ -186,16 +184,23 @@ const timeLabelText = computed(() => {
   return `${formatMediaDuration(currentTime.value)}/${full}`;
 });
 
-const volumePercent = computed(() => {
-  if (props.player?.volume) {
-    return Math.round(props.player.volume.value * 100);
-  }
-  return localVolumePercent.value;
-});
+const volumePercent = computed(() => localVolumePercent.value);
 
 const isButtonDisabled = computed(() => {
   return props.disabled || isLoading.value;
 });
+
+const isActiveFile = computed(() => {
+  return Boolean(
+    props.player?.playingFilePath && props.player.playingFilePath.value === playKey.value
+  );
+});
+
+const applyVolumeToPlayer = () => {
+  if (props.player?.setVolume) {
+    props.player.setVolume(localVolumePercent.value / 100);
+  }
+};
 
 const clearPreloadAudio = () => {
   if (!preloadAudio) return;
@@ -244,7 +249,10 @@ const togglePlay = () => {
       return;
     }
     isLoading.value = true;
+    applyVolumeToPlayer();
     props.player.load?.(playableSrc.value, { playingFilePath: playKey.value });
+    // load 会重建 Audio，需再设一次音量
+    applyVolumeToPlayer();
     props.player.play?.().catch(() => {
       isLoading.value = false;
       props.player?.clear?.();
@@ -274,8 +282,9 @@ const handleVolume = (value: number) => {
   if (props.disabled) return;
   const percent = Number(value);
   localVolumePercent.value = percent;
-  if (props.player?.setVolume) {
-    props.player.setVolume(percent / 100);
+  // 仅当前播放项写入共享 player，避免一改全变
+  if (isActiveFile.value) {
+    applyVolumeToPlayer();
   }
   emit("volume", playableSrc.value, percent / 100);
 };
@@ -309,6 +318,23 @@ onBeforeUnmount(() => {
 .player-slider {
   --el-slider-button-size: 10px;
   --el-slider-button-wrapper-size: 20px;
-  --el-slider-button-wrapper-offset: -7px;
+  --el-slider-height: 6px;
+  /* 与播放按钮 h-5.5 对齐，避免整行视觉偏斜 */
+  height: 22px;
+}
+
+.player-slider :deep(.el-slider__button-wrapper) {
+  top: 50%;
+  margin-top: calc(var(--el-slider-button-wrapper-size) / -2);
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+}
+
+/* Element Plus 用 ::after + vertical-align 居中，缩小时易偏，关掉 */
+.player-slider :deep(.el-slider__button-wrapper::after) {
+  display: none;
 }
 </style>

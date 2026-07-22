@@ -173,6 +173,8 @@
               :player="clipPlayer"
               preload="metadata"
               width-class="w-full"
+              full-time-label
+              show-vol
             />
             <div v-else class="py-1 text-xs text-gray-400">音频不可用</div>
           </div>
@@ -185,7 +187,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { runJobStageAction } from "@/api/api-jobs";
 import { getMediaDuration, getMediaFileUrl, getMediaText } from "@/api/api-media";
@@ -358,7 +360,9 @@ interface SegmentClip {
   path: string;
 }
 
-const clipPlayer = useAudioPlayer();
+const clipPlayer = useAudioPlayer({
+  active: () => props.stageActive,
+});
 
 const scriptTextByIndex = computed<Record<number, string>>(() => {
   const script = (props.job.script_json as ScriptJson | null | undefined) || {};
@@ -527,18 +531,5 @@ watch(
   },
   { immediate: true }
 );
-
-watch(
-  () => props.stageActive,
-  active => {
-    if (active === false) {
-      clipPlayer.clear();
-    }
-  }
-);
-
-onBeforeUnmount(() => {
-  clipPlayer.clear();
-});
 
 </script>
