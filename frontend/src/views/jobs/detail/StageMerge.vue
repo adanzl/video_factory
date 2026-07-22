@@ -183,7 +183,7 @@ const videoMeta = ref<{ width: number; height: number } | null>(null);
 
 const bgmEnabled = ref(false);
 const bgmMaterialId = ref<number | undefined>(undefined);
-const bgmVolumeDb = ref(-18);
+const bgmVolumeDb = ref(-16);
 const bgmOptions = ref<MaterialAudioRecord[]>([]);
 const bgmListLoading = ref(false);
 
@@ -257,7 +257,7 @@ function syncBgmFromJob() {
   bgmMaterialId.value =
     typeof bgm?.material_id === "number" ? bgm.material_id : undefined;
   bgmVolumeDb.value =
-    typeof bgm?.volume_db === "number" ? bgm.volume_db : -18;
+    typeof bgm?.volume_db === "number" ? bgm.volume_db : -16;
 }
 
 async function loadBgmOptions() {
