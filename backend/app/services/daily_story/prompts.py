@@ -36,6 +36,7 @@ DAILY_STORY_OPENING_LINES_MAX = 2
 
 # 开场钩子仅作提示词约束，不做关键词硬卡（主题各异，固定词表易误杀）
 # 同人连说：硬卡。无破功软收：轻量关键词硬卡（末句软收词 + 前两句无破功痕迹）
+# 弱收束（和解/耍赖/甩妈）：末 2 句关键词硬卡
 
 _LIMP_SOFT_CLOSE_MARKERS = (
     "给你", "算了", "好吧", "好了好了", "行吧", "随你",
@@ -46,6 +47,12 @@ _PUNCH_BEFORE_SOFT_MARKERS = (
     "那不算", "当然不算", "堵死", "戳穿", "说不通",
     "你让的", "重新说", "晚了",
 )
+
+# 末 2 句弱收束：与观感打分口径对齐，生成时硬拦
+_WEAK_END_WAIT_MOM = ("等妈", "叫妈", "问妈", "告诉妈", "妈回来", "评理")
+_WEAK_END_SPLIT = ("一人一半", "平分", "倒杯子", "一人一个")
+_WEAK_END_STUBBORN = ("反正我要用", "反正橡皮", "反正是我的", "谁用谁小狗")
+
 
 _PUNCHLINE_TYPE_MARKERS = (
     "权威翻车", "公平执念", "字面执行", "结盟翻车", "妈妈破功",
@@ -261,14 +268,20 @@ _DAILY_STORY_SYSTEM_BODY = """\
 7. 禁止用「明天再战/今晚占位」当唯一收束，却没先破本场规则。
 8. 禁止无破功软收：末句「给你/算了/好吧/好了好了」前，
    须已有一句把对方规则戳穿或自相矛盾；禁止吵不动就罢休。
+9. 禁止弱收束（末 2 句内出现即违规）：
+   - 和解分赃：「一人一半」「平分」「倒杯子」——把冲突和稀泥；
+   - 耍赖占有：「反正我要用」「反正是我的」——没戳穿只赖账；
+   - 甩给妈妈：「等妈回来」「叫妈评理」——本场须姐弟内收束。
 
 【笑点与收束】
 - 笑点 = 孩子的字面/现实逻辑 碰撞 姐姐的「装大人」规则，或两人各执一词越辩越歪。
 - 每一句推论须基于刚听到的字面意思或亲眼见过的生活经验，不能跳级。
-- 在正文篇幅内把同一条误会滚大；末句须落在本场规则破功/哑口，或被戳穿后的顺势软收。
-- 软收可以（认栽、哼一声放过），前提是前 1–2 句已被字面戳穿或理由说不通——
-  正例：「你说晚了，我已经在了」→ 再软收；反例：争到一半突然「好了好了给你」。
-- 不是妈妈一句话掐灭后再软收。
+- 【收束公式】倒数第 2 句须完成字面戳穿/自相矛盾；末句落在破功哑口，
+  或被戳穿后的嘴硬软收（认栽、哼一声放过、占便宜话）。
+  正例：「你说晚了，我已经在了」；「之前是旧的，这个新的，标签在」；
+  「哼，那你洗吧，水凉了别怪我」。
+  反例：「一人一半倒杯子」；「反正橡皮我要用」；「等妈回来评理」。
+- 不是妈妈一句话掐灭后再软收；禁止把裁决权交给不在场的妈妈。
 - punchline_explain 须写明类型（如「C类公平执念」）+ 末句如何收这个 conflict_core，禁止空话。
 
 【格式要求】
@@ -314,6 +327,8 @@ def _daily_story_user_template(*, length_mode: str = "draft") -> str:
 7. 禁止中途换分法（剪刀石头布、轮流、另算谁先碰到等）或扯无关旧账。
 8. 立场须连贯：可软收，但须先破功再软收；禁无铺垫「给你/算了」；
    禁同人连说、禁对称复读注水；末句勿只甩「明天再战」。
+9. 禁弱收束：末 2 句勿写「一人一半/平分」「反正我要用」「等妈评理」；
+   倒数第 2 句须字面戳穿，末句破功或嘴硬软收。
 
 请直接输出JSON。
 """
@@ -715,7 +730,7 @@ def _append_single_conflict_errors(story: dict, errors: list[str]) -> None:
 
 
 def _append_dialogue_rhythm_errors(story: dict, errors: list[str]) -> None:
-    """节奏硬卡：姐弟禁同人连说；末句无破功软收则拦。"""
+    """节奏硬卡：姐弟禁同人连说；弱收束/无破功软收则拦。"""
     dialogue = story.get("dialogue")
     if not isinstance(dialogue, list) or not dialogue:
         return
@@ -745,10 +760,28 @@ def _append_dialogue_rhythm_errors(story: dict, errors: list[str]) -> None:
     if len(lines) < 3:
         return
     last = lines[-1]
+    tail2 = "".join(lines[-2:])
+    prev = "".join(lines[-3:-1])
+
+    if any(m in tail2 for m in _WEAK_END_WAIT_MOM):
+        errors.append(
+            "末尾弱收束：甩给妈妈（等妈/评理）；"
+            "须在姐弟内字面戳穿后再收"
+        )
+    if any(m in tail2 for m in _WEAK_END_SPLIT):
+        errors.append(
+            "末尾弱收束：和解分赃（一人一半/平分/倒杯子）；"
+            "须先破本场规则，禁止和稀泥"
+        )
+    if any(m in last for m in _WEAK_END_STUBBORN):
+        errors.append(
+            "末尾弱收束：耍赖占有（反正我要用）；"
+            "须先字面戳穿对方规则，禁止赖账收场"
+        )
+
     if not any(m in last for m in _LIMP_SOFT_CLOSE_MARKERS):
         return
     # 末句是软收：前 2 句须已有破功/戳穿痕迹
-    prev = "".join(lines[-3:-1])
     if not any(m in prev for m in _PUNCH_BEFORE_SOFT_MARKERS):
         errors.append(
             "末句疑似无破功软收（如「给你/算了/好吧」）；"
@@ -965,6 +998,15 @@ def validate_daily_story_opening(
             else:
                 normalized.append({"speaker": speaker, "line": line})
 
+    # 开场内部也禁同人连说
+    for i in range(1, len(normalized)):
+        if normalized[i]["speaker"] == normalized[i - 1]["speaker"]:
+            errors.append(
+                f"opening[{i - 1}:{i}] {normalized[i]['speaker']} 连说；"
+                "两句开场须换人"
+            )
+            break
+
     core = (conflict_core or "").strip()
     anchors = _conflict_anchor_tokens(core)
     must = _conflict_anchor_must_words(core)
@@ -1001,7 +1043,11 @@ def stitch_daily_story_opening(
     story: dict,
     opening: list[dict],
 ) -> dict:
-    """将发现开场前置到 dialogue；去掉正文开头重复发现句。"""
+    """将发现开场前置到 dialogue。
+
+    1) 去掉正文开头与开场高度重叠的发现句；
+    2) 若开场末句与正文首句同人，丢掉正文首句（防拼后连说）。
+    """
     out = copy.deepcopy(story)
     body = list(out.get("dialogue") or [])
     if not isinstance(body, list):
@@ -1021,9 +1067,32 @@ def stitch_daily_story_opening(
             dropped += 1
             continue
         break
+    # 接缝同人：丢掉正文开头连说句（最多 2 句，避免掏空）
+    speaker_drops = 0
+    while body and opening_norm and speaker_drops < 2:
+        first = body[0] if isinstance(body[0], dict) else None
+        first_sp = str((first or {}).get("speaker") or "").strip()
+        last_sp = opening_norm[-1]["speaker"]
+        if first_sp in ("昭昭", "灿灿") and first_sp == last_sp:
+            body.pop(0)
+            speaker_drops += 1
+            continue
+        break
     out["dialogue"] = opening_norm + body
     out["discovery_opening"] = opening_norm
     return out
+
+
+def opening_avoid_speaker_from_body(body: dict | None) -> str | None:
+    """正文首句说话人：开场末句应避开此人，减少拼缝连说。"""
+    if not isinstance(body, dict):
+        return None
+    dialogue = body.get("dialogue")
+    if not isinstance(dialogue, list) or not dialogue:
+        return None
+    first = dialogue[0] if isinstance(dialogue[0], dict) else None
+    sp = str((first or {}).get("speaker") or "").strip()
+    return sp if sp in ("昭昭", "灿灿") else None
 
 
 _KNOWN_SPEAKER_TYPOS = frozenset({"speayer", "speeker", "spaker"})
@@ -1096,10 +1165,11 @@ def _retry_issue_hints(errors: str, *, chars: int) -> str:
             f"勿借机大删；保持约 {chars} 字（{DAILY_STORY_BODY_CHARS_MIN}–"
             f"{DAILY_STORY_BODY_CHARS_MAX}）。"
         )
-    if "无破功软收" in err:
+    if "无破功软收" in err or "弱收束" in err:
         hints.append(
-            "【软收】在末句软收前插入一句字面戳穿/自相矛盾，再软收；"
-            "勿只改末句口头禅。"
+            "【收束】只改末 2–3 句：倒数第 2 句字面戳穿/自相矛盾，"
+            "末句破功哑口或嘴硬软收；"
+            "禁止一人一半/平分、反正我要用、等妈评理。"
         )
     if "超过" in err and f"{DAILY_STORY_LINE_CHARS_MAX}字" in err:
         hints.append(
@@ -1182,17 +1252,28 @@ def build_daily_story_opening_retry_user(
     body: dict,
     *,
     errors: str,
+    avoid_speaker: str | None = None,
 ) -> str:
-    """开场重试：点名须出现的 conflict_core 锚点词。"""
+    """开场重试：点名须出现的 conflict_core 锚点词；可选避开正文首句说话人。"""
     base = build_daily_story_opening_prompts(theme, body)[1]
     core = str(body.get("conflict_core") or "").strip()
     must = _conflict_anchor_must_words(core)
     must_txt = "、".join(must) if must else core or "冲突实物/动作"
+    avoid = (avoid_speaker or "").strip()
+    other = "灿灿" if avoid == "昭昭" else ("昭昭" if avoid == "灿灿" else "")
+    speaker_hint = ""
+    if other:
+        speaker_hint = (
+            f"开场末句说话人必须是「{other}」"
+            f"（正文以「{avoid}」起句，避免拼后连说）；"
+            f"若只写 1 句也须是「{other}」。\n"
+        )
     return (
         f"{base}\n\n"
         f"【重试】上一轮开场未通过：{errors}\n"
+        f"{speaker_hint}"
         f"开场台词必须点名以下至少一词：{must_txt}；"
-        "写发现/质问现场，勿寒暄、勿开辩。\n"
+        "两句时须换人；写发现/质问现场，勿寒暄、勿开辩。\n"
         "请只输出合法 JSON："
         '{"opening":[{"speaker":"昭昭","line":"..."}]}；'
         "禁止写成 {\"speaker\":\"昭昭\":\"台词\"}。"
