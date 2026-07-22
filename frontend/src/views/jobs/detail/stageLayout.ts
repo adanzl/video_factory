@@ -15,7 +15,7 @@ export const STAGE_BLOCK_COMPACT_CLASS =
 
 export const STAGE_TWO_COL_CLASS = "flex flex-wrap items-start gap-4";
 
-export const STAGE_COL_LEFT_CLASS = "min-w-[280px] max-w-160 shrink-0 basis-auto";
+export const STAGE_COL_LEFT_CLASS = "min-w-160 max-w-160 shrink-0 basis-auto";
 
 /** 封面等宽预览列（520px 基准） */
 export const STAGE_COL_WIDE_LEFT_CLASS =

@@ -62,7 +62,7 @@
             <el-form-item label="字幕路径">
               <span class="break-all text-gray-600">{{ job.subtitle_path || "-" }}</span>
             </el-form-item>
-            <el-form-item label="TTS 用量">
+            <el-form-item label="TTS用量">
               <span class="text-gray-700">{{ ttsTotalCharactersText }}</span>
             </el-form-item>
             <el-form-item label="实测语速">
@@ -79,8 +79,8 @@
         <div :class="STAGE_PANEL_CLASS">
           <div :class="STAGE_PANEL_TITLE_CLASS">音频预览</div>
           <div v-if="audioUrl" class="w-full overflow-hidden rounded-lg border border-gray-200 bg-gray-50 p-4">
-            <div class="mb-3">
-              <div class="mb-2 text-sm text-gray-600">倍速</div>
+            <div class="mb-3 flex items-center gap-2">
+              <div class="text-sm text-gray-600">倍速</div>
               <el-radio-group v-model="playbackSpeed" size="small" class="flex flex-wrap gap-1">
                 <el-radio-button
                   v-for="speed in AUDIO_PLAYBACK_SPEED_OPTIONS"
@@ -218,8 +218,8 @@ interface SpeakerConfig {
 }
 
 const speakers = [
-  { key: "昭昭", label: "昭昭（弟弟）" },
-  { key: "灿灿", label: "灿灿（姐姐）" },
+  { key: "昭昭", label: "弟弟" },
+  { key: "灿灿", label: "姐姐" },
   { key: "妈妈", label: "妈妈" },
 ];
 
