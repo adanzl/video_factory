@@ -130,6 +130,8 @@ class DailyStoryMgr:
         """基于日常故事创建视频任务（pipeline=daily_story）。"""
         from app.repositories import repo_job, repo_job_log
         from app.utils.job_info import (
+            DEFAULT_BGM_VOLUME_DB,
+            DEFAULT_DAILY_STORY_BGM_MATERIAL_ID,
             DEFAULT_DAILY_STORY_PHRASE_GAP_SEC,
             DEFAULT_DAILY_STORY_SPEECH_CHARS_PER_SEC,
         )
@@ -162,7 +164,11 @@ class DailyStoryMgr:
                 daily_story_id=story_id,
                 orientation="landscape",
                 video_provider="ffmpeg",
-                bgm={"enabled": True, "volume_db": -14.0},
+                bgm={
+                    "enabled": True,
+                    "material_id": DEFAULT_DAILY_STORY_BGM_MATERIAL_ID,
+                    "volume_db": DEFAULT_BGM_VOLUME_DB,
+                },
                 subtitle={"enabled": False},
             )
             speaker_configs = {

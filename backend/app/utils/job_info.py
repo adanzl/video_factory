@@ -554,6 +554,8 @@ def merge_job_script_params(
 
 
 DEFAULT_BGM_VOLUME_DB = -14.0
+# 日常故事默认 BGM：Molecules · Tobias Voigt
+DEFAULT_DAILY_STORY_BGM_MATERIAL_ID = 4
 
 
 def bgm_params_from_info(info: str | dict | None) -> dict[str, Any]:
