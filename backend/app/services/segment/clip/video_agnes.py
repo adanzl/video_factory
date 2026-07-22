@@ -27,6 +27,7 @@ from app.services.llm.llm_agnes import (
     agnes_quota_exceeded_from_exception,
     raise_if_agnes_quota,
 )
+from app.utils.job_cancel import job_cancel
 
 logger = logging.getLogger(__name__)
 
@@ -228,6 +229,11 @@ class AgnesClipProvider(ClipProvider):
         self._submit_max_retries = settings.agnes_video_submit_max_retries
         self._poll_max_attempts = settings.agnes_video_poll_max_attempts
         self._poll_interval_sec = settings.agnes_video_poll_interval_sec
+        self._active_job_id: int | None = None
+
+    def _raise_if_job_cancelled(self) -> None:
+        if self._active_job_id is not None:
+            job_cancel.raise_if_cancelled(self._active_job_id)
 
     def _submit_interval_for_key(self, key_label: str) -> float:
         """Agnes 视频：free≈1 RPM，付费 enterprise≈2 RPM（可配）。"""
@@ -236,6 +242,7 @@ class AgnesClipProvider(ClipProvider):
         return max(0.0, self._submit_interval)
 
     def _throttle_submit(self, key_label: str = "primary") -> None:
+        self._raise_if_job_cancelled()
         interval = self._submit_interval_for_key(key_label)
         with self._submit_lock:
             last = self._last_submit_at_by_key.get(key_label, 0.0)
@@ -249,10 +256,12 @@ class AgnesClipProvider(ClipProvider):
                     interval,
                 )
                 time.sleep(wait)
+                self._raise_if_job_cancelled()
             self._last_submit_at_by_key[key_label] = time.monotonic()
 
     def _throttle_poll(self) -> None:
         """多路 i2v 共用同一状态查询节奏，避免 status query 429。"""
+        self._raise_if_job_cancelled()
         interval = max(0.0, self._poll_interval_sec)
         with self._poll_lock:
             elapsed = time.monotonic() - self._last_poll_at
@@ -264,6 +273,7 @@ class AgnesClipProvider(ClipProvider):
                     interval,
                 )
                 time.sleep(wait)
+                self._raise_if_job_cancelled()
             AgnesClipProvider._last_poll_at = time.monotonic()
 
     def _request(
@@ -560,6 +570,7 @@ class AgnesClipProvider(ClipProvider):
         task_label = video_id or task_id or "unknown"
         state = "queued"
         for poll_idx in range(self._poll_max_attempts):
+            self._raise_if_job_cancelled()
             self._throttle_poll()
             try:
                 poll_resp = self._request(
@@ -583,6 +594,7 @@ class AgnesClipProvider(ClipProvider):
                 time.sleep(wait)
                 continue
 
+            self._raise_if_job_cancelled()
             state = str(poll.get("status") or "unknown")
             if poll_idx % 4 == 0 and state not in _TERMINAL_POLL_STATES:
                 logger.info(
@@ -631,55 +643,61 @@ class AgnesClipProvider(ClipProvider):
         image_prompt: str | None = None,
         width: int | None = None,
         height: int | None = None,
+        job_id: int | None = None,
     ) -> Path:
         _ = motion_preset
         _ = image_prompt
+        self._active_job_id = job_id
         t0 = time.time()
-        total_duration = clip_mgr.cue_total_duration(subtitle_cues)
-        if total_duration <= 0:
-            raise ValueError(f"segment {segment_index} has zero duration")
-
-        clip_width = width or get_settings().video_width
-        clip_height = height or get_settings().video_height
-        api_w, api_h = _resolve_api_dimensions(clip_width, clip_height)
-        prompt = _stabilize_motion_prompt(motion_prompt or "")
-        num_frames = _pick_num_frames(total_duration, self._frame_rate)
-        raw_path = work_dir / f"{segment_index}.agnes_raw.mp4"
-
-        logger.info(
-            "segment %s: total_duration=%.2fs n_cues=%s; submitting agnes i2v "
-            "(frames=%s, fps=%s, motion=%s...)",
-            segment_index,
-            total_duration,
-            len(subtitle_cues),
-            num_frames,
-            self._frame_rate,
-            prompt[:80],
-        )
-        output_path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            self._generate_raw(
-                image_path, prompt, raw_path,
-                num_frames=num_frames,
-                width=api_w, height=api_h,
-            )
-            logger.info("clip %s: raw done, fitting to %.1fs", segment_index, total_duration)
-            raw_path = _loop_video_to_duration(
-                raw_path,
-                work_dir=work_dir,
-                segment_index=segment_index,
-                total_duration=total_duration,
-            )
-            # 字幕改在 merge 阶段 ASS 烧录
-            fit_video_duration(
-                raw_path,
-                output_path,
-                total_duration,
-                width=clip_width,
-                height=clip_height,
-            )
-        finally:
-            raw_path.unlink(missing_ok=True)
+            total_duration = clip_mgr.cue_total_duration(subtitle_cues)
+            if total_duration <= 0:
+                raise ValueError(f"segment {segment_index} has zero duration")
 
-        logger.info("clip %s: done in %.1fs", segment_index, time.time() - t0)
-        return output_path
+            clip_width = width or get_settings().video_width
+            clip_height = height or get_settings().video_height
+            api_w, api_h = _resolve_api_dimensions(clip_width, clip_height)
+            prompt = _stabilize_motion_prompt(motion_prompt or "")
+            num_frames = _pick_num_frames(total_duration, self._frame_rate)
+            raw_path = work_dir / f"{segment_index}.agnes_raw.mp4"
+
+            logger.info(
+                "segment %s: total_duration=%.2fs n_cues=%s; submitting agnes i2v "
+                "(frames=%s, fps=%s, motion=%s...)",
+                segment_index,
+                total_duration,
+                len(subtitle_cues),
+                num_frames,
+                self._frame_rate,
+                prompt[:80],
+            )
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                self._generate_raw(
+                    image_path, prompt, raw_path,
+                    num_frames=num_frames,
+                    width=api_w, height=api_h,
+                )
+                self._raise_if_job_cancelled()
+                logger.info("clip %s: raw done, fitting to %.1fs", segment_index, total_duration)
+                raw_path = _loop_video_to_duration(
+                    raw_path,
+                    work_dir=work_dir,
+                    segment_index=segment_index,
+                    total_duration=total_duration,
+                )
+                # 字幕改在 merge 阶段 ASS 烧录
+                fit_video_duration(
+                    raw_path,
+                    output_path,
+                    total_duration,
+                    width=clip_width,
+                    height=clip_height,
+                )
+            finally:
+                raw_path.unlink(missing_ok=True)
+
+            logger.info("clip %s: done in %.1fs", segment_index, time.time() - t0)
+            return output_path
+        finally:
+            self._active_job_id = None

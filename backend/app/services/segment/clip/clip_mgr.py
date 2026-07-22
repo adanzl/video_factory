@@ -30,6 +30,7 @@ class ClipProvider(ABC):
         image_prompt: str | None = None,
         width: int | None = None,
         height: int | None = None,
+        job_id: int | None = None,
     ) -> Path:
         ...
 
@@ -113,6 +114,7 @@ class ClipMgr:
         image_prompt: str | None = None,
         width: int | None = None,
         height: int | None = None,
+        job_id: int | None = None,
     ) -> Path:
         if not subtitle_cues:
             raise ValueError(f"segment {segment_index} has no subtitle cues")
@@ -128,6 +130,7 @@ class ClipMgr:
             image_prompt=image_prompt,
             width=width,
             height=height,
+            job_id=job_id,
         )
 
 

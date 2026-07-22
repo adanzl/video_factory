@@ -16,6 +16,7 @@ from app.config import get_settings
 from app.services.segment.clip.clip_mgr import ClipProvider, clip_mgr
 from app.services.segment.clip.clip_render import fit_video_duration
 from app.services.media.ffmpeg_utils import ffmpeg_cmd_start, probe_duration, run_ffmpeg
+from app.utils.job_cancel import job_cancel
 
 logger = logging.getLogger(__name__)
 
@@ -49,12 +50,19 @@ class WanClipProvider(ClipProvider):
         self._http_max_retries = settings.dashscope_http_max_retries
         self._task_max_retries = settings.wan_i2v_task_max_retries
         self._poll_max_attempts = settings.wan_i2v_poll_max_attempts
+        self._active_job_id: int | None = None
+
+    def _raise_if_job_cancelled(self) -> None:
+        if self._active_job_id is not None:
+            job_cancel.raise_if_cancelled(self._active_job_id)
 
     def _throttle_submit(self) -> None:
+        self._raise_if_job_cancelled()
         with self._submit_lock:
             elapsed = time.monotonic() - self._last_submit_at
             if elapsed < self._submit_interval:
                 time.sleep(self._submit_interval - elapsed)
+                self._raise_if_job_cancelled()
             self._last_submit_at = time.monotonic()
 
     _last_submit_at = 0.0
@@ -184,6 +192,7 @@ class WanClipProvider(ClipProvider):
 
         state = "PENDING"
         for poll_idx in range(self._poll_max_attempts):
+            self._raise_if_job_cancelled()
             status_resp = self._request(
                 "GET",
                 f"https://dashscope.aliyuncs.com/api/v1/tasks/{task_id}",
@@ -231,50 +240,56 @@ class WanClipProvider(ClipProvider):
         image_prompt: str | None = None,
         width: int | None = None,
         height: int | None = None,
+        job_id: int | None = None,
     ) -> Path:
         _ = motion_preset
         _ = image_prompt
+        self._active_job_id = job_id
         t0 = time.time()
-        total_duration = clip_mgr.cue_total_duration(subtitle_cues)
-        if total_duration <= 0:
-            raise ValueError(f"segment {segment_index} has zero duration")
-
-        prompt = _stabilize_motion_prompt(motion_prompt or "")
-        api_duration = self._pick_api_duration(total_duration)
-        raw_path = work_dir / f"{segment_index}.wan_raw.mp4"
-
-        logger.info("clip %s: submitting i2v (duration=%s, motion=%s...)", segment_index, api_duration, prompt[:60])
-        output_path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            self._generate_raw(
-                image_path,
-                prompt,
-                raw_path,
-                duration=api_duration,
-            )
-            logger.info("clip %s: raw done, fitting to %.1fs", segment_index, total_duration)
-            raw_dur = probe_duration(raw_path)
-            if raw_dur > 0 and total_duration > raw_dur * 1.15:
-                loop = math.ceil(total_duration / raw_dur) - 1
-                looped = work_dir / f"{segment_index}.wan_loop.mp4"
-                run_ffmpeg([
-                    *ffmpeg_cmd_start(hwaccel=False),
-                    "-stream_loop", str(loop),
-                    "-i", str(raw_path),
-                    "-c", "copy",
-                    "-y", str(looped),
-                ])
-                raw_path = looped
-            # 字幕改在 merge 阶段 ASS 烧录
-            fit_video_duration(
-                raw_path,
-                output_path,
-                total_duration,
-                width=width,
-                height=height,
-            )
+            total_duration = clip_mgr.cue_total_duration(subtitle_cues)
+            if total_duration <= 0:
+                raise ValueError(f"segment {segment_index} has zero duration")
+
+            prompt = _stabilize_motion_prompt(motion_prompt or "")
+            api_duration = self._pick_api_duration(total_duration)
+            raw_path = work_dir / f"{segment_index}.wan_raw.mp4"
+
+            logger.info("clip %s: submitting i2v (duration=%s, motion=%s...)", segment_index, api_duration, prompt[:60])
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                self._generate_raw(
+                    image_path,
+                    prompt,
+                    raw_path,
+                    duration=api_duration,
+                )
+                self._raise_if_job_cancelled()
+                logger.info("clip %s: raw done, fitting to %.1fs", segment_index, total_duration)
+                raw_dur = probe_duration(raw_path)
+                if raw_dur > 0 and total_duration > raw_dur * 1.15:
+                    loop = math.ceil(total_duration / raw_dur) - 1
+                    looped = work_dir / f"{segment_index}.wan_loop.mp4"
+                    run_ffmpeg([
+                        *ffmpeg_cmd_start(hwaccel=False),
+                        "-stream_loop", str(loop),
+                        "-i", str(raw_path),
+                        "-c", "copy",
+                        "-y", str(looped),
+                    ])
+                    raw_path = looped
+                # 字幕改在 merge 阶段 ASS 烧录
+                fit_video_duration(
+                    raw_path,
+                    output_path,
+                    total_duration,
+                    width=width,
+                    height=height,
+                )
+            finally:
+                raw_path.unlink(missing_ok=True)
+            elapsed = time.time() - t0
+            logger.info("clip %s: done in %.1fs", segment_index, elapsed)
+            return output_path
         finally:
-            raw_path.unlink(missing_ok=True)
-        elapsed = time.time() - t0
-        logger.info("clip %s: done in %.1fs", segment_index, elapsed)
-        return output_path
+            self._active_job_id = None
