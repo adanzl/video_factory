@@ -18,6 +18,25 @@ _STATUS_ACTIVE = "active"
 _STATUS_FAILED = "failed"
 
 
+def _ensure_story_quality(row: dict, *, persist: bool = False, conn=None) -> dict:
+    """旧稿无 quality 时补打分；persist=True 时写回 DB。"""
+    from app.services.daily_story.quality import attach_daily_story_quality
+
+    story = row.get("story")
+    if not isinstance(story, dict):
+        return row
+    if not (story.get("dialogue") or []):
+        return row
+    quality = story.get("quality")
+    if isinstance(quality, dict) and quality.get("grade"):
+        return row
+    attach_daily_story_quality(story)
+    row["story"] = story
+    if persist and conn is not None and row.get("id") is not None:
+        repo_daily_story.update_story(conn, int(row["id"]), story=story)
+    return row
+
+
 class DailyStoryMgr:
     def list_stories(
         self,
@@ -32,11 +51,14 @@ class DailyStoryMgr:
                 conn, status=status, limit=limit, offset=offset
             )
             total = repo_daily_story.count_stories(conn, status=status)
+            # 列表补分（内存）；打开详情 get 时再持久化
+            items = [_ensure_story_quality(item) for item in items]
             return {"items": items, "total": total}
 
     def get_story(self, story_id: int) -> dict:
         with connection() as conn:
-            return repo_daily_story.get_story(conn, story_id)
+            row = repo_daily_story.get_story(conn, story_id)
+            return _ensure_story_quality(row, persist=True, conn=conn)
 
     def generate_and_save(self, theme: str) -> dict[str, Any]:
         """异步生成：先落 processing 占位，立刻返回，后台写结果。"""

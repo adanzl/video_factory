@@ -27,20 +27,23 @@
           <el-input v-if="editing" v-model="editStory.punchline_explain" type="textarea" :rows="4" size="small" />
           <div v-else class="rounded-lg bg-gray-50 p-3 text-sm text-gray-600">{{ editStory.punchline_explain }}</div>
         </div>
-        <div v-if="editStory.quality?.grade">
-          <div class="mb-1 text-xs text-gray-400">观感</div>
-          <div class="flex flex-wrap items-center gap-2">
-            <el-tag size="small" :type="qualityTagType(editStory.quality.grade)">
-              {{ editStory.quality.grade }} {{ editStory.quality.score }}
-            </el-tag>
-            <span class="text-sm text-gray-600">{{ editStory.quality.summary }}</span>
-          </div>
-          <ul
-            v-if="editStory.quality.reasons?.length"
-            class="mt-2 list-disc space-y-0.5 pl-4 text-xs text-gray-500"
-          >
-            <li v-for="(r, i) in editStory.quality.reasons" :key="i">{{ r }}</li>
-          </ul>
+        <div>
+          <div class="mb-1 text-xs text-gray-400">评价</div>
+          <template v-if="editStory.quality?.grade">
+            <div class="flex flex-wrap items-center gap-2">
+              <el-tag size="small" :type="qualityTagType(editStory.quality.grade)">
+                {{ editStory.quality.grade }} {{ editStory.quality.score }}
+              </el-tag>
+              <span class="text-sm text-gray-600">{{ editStory.quality.summary }}</span>
+            </div>
+            <ul
+              v-if="editStory.quality.reasons?.length"
+              class="mt-2 list-disc space-y-0.5 pl-4 text-xs text-gray-500"
+            >
+              <li v-for="(r, i) in editStory.quality.reasons" :key="i">{{ r }}</li>
+            </ul>
+          </template>
+          <div v-else class="text-sm text-gray-400">暂无评价</div>
         </div>
         <div>
           <div class="mb-1 text-xs text-gray-400">语速</div>
