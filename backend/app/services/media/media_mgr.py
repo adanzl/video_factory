@@ -327,7 +327,7 @@ class MediaMgr:
         intro_path: Path | None,
         end_path: Path | None = None,
         bgm_path: Path | None = None,
-        bgm_volume_db: float = -18.0,
+        bgm_volume_db: float = -14.0,
         burn_subtitles: bool = True,
     ) -> MergeResult:
         t0 = time.time()

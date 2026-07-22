@@ -1,12 +1,7 @@
 <template>
   <div>
-    <StageActionBar
-      :loading="submitting"
-      :disabled="actionDisabled"
-      :disabled-reason="actionDisabledReason"
-      @primary="handleRun(false)"
-      @to-end="handleRun(true)"
-    />
+    <StageActionBar :loading="submitting" :disabled="actionDisabled" :disabled-reason="actionDisabledReason"
+      @primary="handleRun(false)" @to-end="handleRun(true)" />
 
     <div :class="STAGE_TWO_COL_CLASS">
       <div :class="STAGE_COL_LEFT_CLASS" class="flex gap-2">
@@ -23,48 +18,28 @@
               <el-switch v-model="bgmEnabled" :disabled="actionDisabled" />
             </el-form-item>
             <el-form-item label="背景音乐">
-              <el-select
-                v-model="bgmMaterialId"
-                filterable
-                clearable
-                placeholder="从音频素材库选择"
-                class="w-full!"
-                :disabled="actionDisabled || !bgmEnabled"
-                :loading="bgmListLoading"
-              >
-                <el-option
-                  v-for="item in bgmOptions"
-                  :key="item.id"
-                  :label="bgmOptionLabel(item)"
-                  :value="item.id"
-                />
+              <el-select v-model="bgmMaterialId" filterable clearable placeholder="从音频素材库选择" class="w-full!"
+                :disabled="actionDisabled || !bgmEnabled" :loading="bgmListLoading">
+                <el-option v-for="item in bgmOptions" :key="item.id" :label="bgmOptionLabel(item)" :value="item.id" />
               </el-select>
             </el-form-item>
             <el-form-item label="音量">
               <div class="flex w-full items-center gap-2">
-                <el-slider
-                  v-model="bgmVolumeDb"
-                  :min="-40"
-                  :max="0"
-                  :step="1"
-                  :disabled="actionDisabled || !bgmEnabled"
-                  class="mx-2 flex-1"
-                />
+                <el-slider v-model="bgmVolumeDb" :min="-40" :max="0" :step="1" :disabled="actionDisabled || !bgmEnabled"
+                  class="mx-2 flex-1" />
                 <span class="w-14 shrink-0 text-xs text-gray-500">{{ bgmVolumeDb }} dB</span>
               </div>
             </el-form-item>
+            <el-form-item label="试听">
+              <MediaComponent v-if="bgmPreviewUrl" class="mt-1" :src="bgmPreviewUrl"
+                :duration="selectedBgm?.duration_sec" :player="bgmPlayer" :volume-db="bgmVolumeDb" preload="metadata"
+                width-class="w-full" />
+              <div v-else-if="bgmEnabled" class="mt-1 text-xs text-gray-400">
+                选择曲目后可试听
+              </div>
+            </el-form-item>
           </el-form>
-          <audio
-            v-if="bgmPreviewUrl"
-            class="mt-1 block w-full"
-            :src="bgmPreviewUrl"
-            :crossorigin="MEDIA_CROSS_ORIGIN"
-            controls
-            preload="metadata"
-          />
-          <div v-else-if="bgmEnabled" class="mt-1 text-xs text-gray-400">
-            选择曲目后可试听
-          </div>
+
         </div>
 
         <div :class="STAGE_PANEL_CLASS" class="basis-80">
@@ -79,13 +54,8 @@
             </el-descriptions-item>
           </el-descriptions>
 
-          <el-alert
-            v-if="job.fail_stage === 'merge' && job.error_message"
-            type="danger"
-            :title="job.error_message"
-            :closable="false"
-            class="mt-4"
-          />
+          <el-alert v-if="job.fail_stage === 'merge' && job.error_message" type="danger" :title="job.error_message"
+            :closable="false" class="mt-4" />
         </div>
       </div>
 
@@ -98,37 +68,17 @@
             </el-button>
           </div>
           <div v-if="videoUrl" class="flex justify-center">
-            <div
-              class="overflow-hidden rounded-lg border border-gray-200 bg-black"
-              :style="previewBoxStyle"
-            >
-              <video
-                :key="videoUrl"
-                class="block h-full w-full bg-black object-contain"
-                :src="lazyVideoUrl"
-                :crossorigin="MEDIA_CROSS_ORIGIN"
-                controls
-                playsinline
-                preload="metadata"
-                @error="onVideoError"
-                @loadedmetadata="onVideoMetadata"
-              />
+            <div class="overflow-hidden rounded-lg border border-gray-200 bg-black" :style="previewBoxStyle">
+              <video :key="videoUrl" class="block h-full w-full bg-black object-contain" :src="lazyVideoUrl"
+                :crossorigin="MEDIA_CROSS_ORIGIN" controls playsinline preload="metadata" @error="onVideoError"
+                @loadedmetadata="onVideoMetadata" />
             </div>
           </div>
-          <div
-            v-else-if="!finalFilePath"
-            class="flex items-center justify-center text-sm text-gray-400"
-            :style="previewPlaceholderStyle"
-          >
+          <div v-else-if="!finalFilePath" class="flex items-center justify-center text-sm text-gray-400"
+            :style="previewPlaceholderStyle">
             暂无成片，请先生成
           </div>
-          <el-alert
-            v-if="loadError"
-            type="warning"
-            :title="loadError"
-            :closable="false"
-            class="mt-2"
-          />
+          <el-alert v-if="loadError" type="warning" :title="loadError" :closable="false" class="mt-2" />
         </div>
       </div>
     </div>
@@ -145,6 +95,8 @@ import { downloadMediaFile } from "@/api/api-media";
 import { listMaterialAudios } from "@/api/api-materials";
 import type { MaterialAudioRecord } from "@/types/material-audio";
 import type { JobDetail, JobLog } from "@/types/jobs";
+import MediaComponent from "@/components/MediaComponent.vue";
+import { useAudioPlayer } from "@/composables/useAudioPlayer";
 import {
   buildMediaPreviewBoxStyle,
   formatCostTime,
@@ -191,9 +143,22 @@ const videoMeta = ref<{ width: number; height: number } | null>(null);
 const subtitleEnabled = ref(true);
 const bgmEnabled = ref(false);
 const bgmMaterialId = ref<number | undefined>(undefined);
-const bgmVolumeDb = ref(-16);
+const bgmVolumeDb = ref(-14);
 const bgmOptions = ref<MaterialAudioRecord[]>([]);
 const bgmListLoading = ref(false);
+
+const bgmPlayer = useAudioPlayer({
+  active: () => props.stageActive,
+  callbacks: {
+    onError: () => {
+      ElMessage.error("BGM 试听失败");
+      bgmPlayer.clear();
+    },
+    onEnded: () => {
+      bgmPlayer.clear();
+    },
+  },
+});
 
 const MERGE_PREVIEW_OPTIONS = {
   maxWidthPx: 560,
@@ -277,7 +242,7 @@ function syncBgmFromJob() {
   bgmMaterialId.value =
     typeof bgm?.material_id === "number" ? bgm.material_id : undefined;
   bgmVolumeDb.value =
-    typeof bgm?.volume_db === "number" ? bgm.volume_db : -16;
+    typeof bgm?.volume_db === "number" ? bgm.volume_db : -14;
 }
 
 async function loadBgmOptions() {
@@ -380,6 +345,12 @@ watch(
   () => syncSubtitleFromJob(),
   { deep: true }
 );
+
+watch(bgmPreviewUrl, url => {
+  if (!url) {
+    bgmPlayer.clear();
+  }
+});
 
 onMounted(() => {
   syncSubtitleFromJob();

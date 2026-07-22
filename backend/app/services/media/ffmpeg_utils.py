@@ -821,7 +821,7 @@ def mix_bgm_into_video(
     bgm_path: Path,
     output_path: Path,
     *,
-    volume_db: float = -18.0,
+    volume_db: float = -14.0,
 ) -> Path:
     """将 BGM 压低后循环铺满视频时长，与原音轨 amix。视频流 copy。"""
     output_path.parent.mkdir(parents=True, exist_ok=True)

@@ -553,7 +553,7 @@ def merge_job_script_params(
     return merged
 
 
-DEFAULT_BGM_VOLUME_DB = -18.0
+DEFAULT_BGM_VOLUME_DB = -14.0
 
 
 def bgm_params_from_info(info: str | dict | None) -> dict[str, Any]:
