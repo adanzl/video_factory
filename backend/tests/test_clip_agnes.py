@@ -4,6 +4,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from app.services.segment.clip.video_agnes import (
     AgnesClipProvider,
     _backoff_seconds,
@@ -306,3 +308,46 @@ def test_clip_batch_i2v_concurrency_respects_max_workers(tmp_path: Path) -> None
     assert peak == workers
     assert len(result.segment_clip_paths) == 6
     assert sorted(persisted) == [101, 102, 103, 104, 105, 106]
+
+
+def test_agnes_i2v_poll_stops_on_job_abort(tmp_path: Path) -> None:
+    """abort 后轮询应立刻抛 JobCancelledError，不再继续拉状态。"""
+    from app.utils.job_cancel import JobCancelledError, job_cancel
+
+    job_id = 9001
+    job_cancel.clear(job_id)
+    provider = AgnesClipProvider()
+    provider._poll_interval_sec = 0.0  # noqa: SLF001
+    provider._active_job_id = job_id  # noqa: SLF001
+    AgnesClipProvider._last_poll_at = 0.0
+
+    poll_calls = {"n": 0}
+
+    def fake_request(method, url, **kwargs):
+        _ = method, url, kwargs
+        poll_calls["n"] += 1
+        if poll_calls["n"] == 1:
+            job_cancel.request(job_id)
+        resp = MagicMock()
+        resp.json.return_value = {"status": "in_progress"}
+        resp.raise_for_status = MagicMock()
+        return resp
+
+    with (
+        patch.object(provider, "_request", side_effect=fake_request),
+        patch("app.services.segment.clip.video_agnes.time.sleep"),
+    ):
+        try:
+            with pytest.raises(JobCancelledError):
+                provider._poll_task(  # noqa: SLF001
+                    headers={"Authorization": "Bearer x"},
+                    video_id="task_abort_test",
+                    task_id=None,
+                    output_path=tmp_path / "out.mp4",
+                )
+        finally:
+            job_cancel.clear(job_id)
+            provider._active_job_id = None  # noqa: SLF001
+
+    # 第 1 次 poll 后设置 abort，下一轮循环开头应立刻退出
+    assert poll_calls["n"] == 1

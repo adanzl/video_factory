@@ -22,10 +22,12 @@ class FfmpegClipProvider(ClipProvider):
         image_prompt: str | None = None,
         width: int | None = None,
         height: int | None = None,
+        job_id: int | None = None,
     ) -> Path:
         _ = motion_prompt
         _ = image_prompt
         _ = work_dir
+        _ = job_id
         total_duration = clip_mgr.cue_total_duration(subtitle_cues)
         if total_duration <= 0:
             raise ValueError(f"segment {segment_index} has zero duration")

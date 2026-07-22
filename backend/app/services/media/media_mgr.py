@@ -12,7 +12,7 @@ from pathlib import Path
 from gevent.lock import Semaphore
 
 from app.config import get_settings
-from app.utils.job_cancel import job_cancel
+from app.utils.job_cancel import JobCancelledError, job_cancel
 from app.services.segment.clip.clip_mgr import clip_mgr
 from app.services.render.subtitle_style import subtitle_style_for_canvas
 from app.services.media.ffmpeg_utils import build_ass_from_phrase_cues
@@ -195,8 +195,9 @@ class MediaMgr:
         )
 
         def build_one(seg: dict, ordinal: int) -> tuple[int, Path]:
-            if job is not None and job.get("id") is not None:
-                job_cancel.raise_if_cancelled(int(job["id"]))
+            job_id = int(job["id"]) if job is not None and job.get("id") is not None else None
+            if job_id is not None:
+                job_cancel.raise_if_cancelled(job_id)
             index = seg["segment_index"]
             clip_path = clips_dir / f"{index}.mp4"
 
@@ -249,6 +250,8 @@ class MediaMgr:
                 i2v_sem.acquire()
                 logger.info("clip segment %s: acquired i2v slot", index)
             try:
+                if job_id is not None:
+                    job_cancel.raise_if_cancelled(job_id)
                 clip_mgr.build_segment_clip(
                     clip_provider=provider,
                     image_path=Path(seg["image_path"]),
@@ -261,6 +264,7 @@ class MediaMgr:
                     image_prompt=image_prompt or None,
                     width=clip_width,
                     height=clip_height,
+                    job_id=job_id,
                 )
             finally:
                 if i2v_sem is not None:
@@ -292,19 +296,30 @@ class MediaMgr:
                 pool.spawn(build_one, seg, i) for i, seg in enumerate(targets, 1)
             ]
             pending = set(greenlets)
-            while pending:
-                if job is not None and job.get("id") is not None:
-                    job_cancel.raise_if_cancelled(int(job["id"]))
-                ready = [g for g in pending if g.ready()]
-                if not ready:
-                    gevent.wait(pending, count=1, timeout=1.0)
-                    continue
-                for g in ready:
-                    pending.discard(g)
-                    seg_id, clip_path = g.get()
-                    segment_clips.append((seg_id, clip_path))
-                    if on_clip_done is not None:
-                        on_clip_done(seg_id, clip_path)
+            job_id = int(job["id"]) if job is not None and job.get("id") is not None else None
+            try:
+                while pending:
+                    if job_id is not None and job_cancel.is_cancelled(job_id):
+                        exc = JobCancelledError(f"job {job_id} aborted")
+                        for g in list(pending):
+                            g.kill(exc, block=False)
+                        pool.kill(exc, block=False)
+                        raise exc
+                    ready = [g for g in pending if g.ready()]
+                    if not ready:
+                        gevent.wait(pending, count=1, timeout=1.0)
+                        continue
+                    for g in ready:
+                        pending.discard(g)
+                        seg_id, clip_path = g.get()
+                        segment_clips.append((seg_id, clip_path))
+                        if on_clip_done is not None:
+                            on_clip_done(seg_id, clip_path)
+            except JobCancelledError:
+                for g in list(pending):
+                    g.kill(block=False)
+                pool.kill(block=False)
+                raise
 
         elapsed = time.time() - t_start
         logger.info(
