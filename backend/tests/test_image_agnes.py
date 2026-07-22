@@ -159,6 +159,29 @@ def test_evaluate_verify_response_zhao_hair_and_cast() -> None:
     assert AgnesImageProvider._evaluate_verify_response(na, ids)
 
 
+def test_allowed_cast_for_verify() -> None:
+    assert AgnesImageProvider._allowed_cast_for_verify(
+        speakers=["昭昭", "灿灿"],
+        content_style="daily_story",
+    ) == ["昭昭", "灿灿"]
+    assert AgnesImageProvider._allowed_cast_for_verify(
+        speakers=["灿灿"],
+        content_style="daily_story",
+    ) == ["昭昭", "灿灿"]
+    assert AgnesImageProvider._allowed_cast_for_verify(
+        speakers=["妈妈"],
+        content_style="daily_story",
+    ) == ["昭昭", "灿灿", "妈妈"]
+    assert AgnesImageProvider._allowed_cast_for_verify(
+        speakers=["妈妈", "昭昭", "灿灿"],
+        content_style="daily_story",
+    ) == ["昭昭", "灿灿", "妈妈"]
+    assert AgnesImageProvider._allowed_cast_for_verify(
+        speakers=["旁白"],
+        content_style="science_child",
+    ) == ["旁白"]
+
+
 def test_build_verify_checklist_daily_includes_zhao() -> None:
     items, user = AgnesImageProvider._build_verify_checklist(
         prompt="客厅对峙",
@@ -177,8 +200,9 @@ def test_build_verify_checklist_daily_includes_zhao() -> None:
     assert "昭昭" in user
     assert "灿灿" in user
     assert "成年女性" in user
-    assert "不超过 3" in user
-    assert "未发言" in user
+    assert "不超过 3 个" in user
+    assert "只能是：昭昭、灿灿、妈妈" in user
+    assert "禁止路人" in user
     assert "恰好" not in user
     assert "蓝衣" not in user
     assert "男孩超短发" in user
@@ -196,9 +220,11 @@ def test_build_verify_checklist_daily_includes_zhao() -> None:
     assert "can_hair" not in [cid for cid, _ in items_one]
     assert "mom_adult" not in [cid for cid, _ in items_one]
     assert "cast_count" in [cid for cid, _ in items_one]
-    assert "不超过 3" in user_one
+    assert "不超过 2 个" in user_one
+    assert "只能是：昭昭、灿灿" in user_one
+    assert "未发言也可同框" in user_one
 
-    # 无昭昭发言时不做短发项；有灿灿则检单马尾；人数仍按最多 3 人校验
+    # 无昭昭发言时不做短发项；有灿灿则检单马尾；人数按姐弟上限 2
     items_can, user_can = AgnesImageProvider._build_verify_checklist(
         prompt="只有灿灿",
         expected_speakers=["灿灿"],
@@ -208,7 +234,8 @@ def test_build_verify_checklist_daily_includes_zhao() -> None:
     assert "can_hair" in [cid for cid, _ in items_can]
     assert "mom_adult" not in [cid for cid, _ in items_can]
     assert "cast_count" in [cid for cid, _ in items_can]
-    assert "未发言" in user_can
+    assert "不超过 2 个" in user_can
+    assert "只能是：昭昭、灿灿" in user_can
     assert "单侧高马尾" in user_can
 
     items_mom, user_mom = AgnesImageProvider._build_verify_checklist(
@@ -218,6 +245,8 @@ def test_build_verify_checklist_daily_includes_zhao() -> None:
     )
     assert "mom_adult" in [cid for cid, _ in items_mom]
     assert "成年女性" in user_mom
+    assert "不超过 3 个" in user_mom
+    assert "只能是：昭昭、灿灿、妈妈" in user_mom
 
     items2, user2 = AgnesImageProvider._build_verify_checklist(
         prompt="电池剖面",
