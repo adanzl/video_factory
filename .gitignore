@@ -3,6 +3,7 @@ __pycache__/
 .env
 .mypy_cache/
 .pytest_cache/
+.opencode/
 .venv/
 *.db
 *.egg-info/

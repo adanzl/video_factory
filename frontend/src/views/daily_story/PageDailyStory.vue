@@ -48,7 +48,7 @@
           {{ row.story?.dialogue?.length || 0 }}
         </template>
       </el-table-column>
-      <el-table-column label="观感" min-width="160" show-overflow-tooltip>
+      <el-table-column label="评价" min-width="160" show-overflow-tooltip>
         <template #default="{ row }">
           <template v-if="row.story?.quality?.grade">
             <el-tag
