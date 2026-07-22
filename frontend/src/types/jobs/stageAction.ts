@@ -53,6 +53,9 @@ export interface RunStageActionPayload {
     material_id?: number | null;
     volume_db?: number;
   };
+  subtitle?: {
+    enabled?: boolean;
+  };
 }
 
 export interface PreviewScriptPromptsPayload {

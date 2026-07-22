@@ -51,3 +51,15 @@ def test_loads_llm_json_strips_markdown_fence():
     raw = '```json\n{"title": "测试", "visual_style": "写实", "segments": []}\n```'
     parsed = _loads_llm_json(raw)
     assert parsed["title"] == "测试"
+
+
+def test_loads_llm_json_repairs_speaker_line_colon_typo():
+    raw = (
+        '{"opening":[{"speaker":"灿灿","line":"蓝色抱枕怎么在你手里"},'
+        '{"speaker":"昭昭":"我拽着一角你没看见吗"}]}'
+    )
+    parsed = _loads_llm_json(raw)
+    assert parsed["opening"][1] == {
+        "speaker": "昭昭",
+        "line": "我拽着一角你没看见吗",
+    }

@@ -1134,11 +1134,13 @@ def build_ass_from_phrase_cues(
     lines = [header]
     cursor = 0.0
     for text, duration in cues:
-        if duration <= 0 or not text.strip():
+        if duration <= 0:
             continue
         start = cursor
         end = cursor + duration
         cursor = end
+        if not text.strip():
+            continue
         body = _ass_escape_dialogue(text.strip())
         lines.append(
             f"Dialogue: 0,{_fmt_ass_time(start)},{_fmt_ass_time(end)},Default,,0,0,0,,{body}\n"

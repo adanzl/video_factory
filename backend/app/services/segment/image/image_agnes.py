@@ -37,6 +37,9 @@ _VERIFY_MAX_ATTEMPTS = 3
 _ITEM_LINE_RE = re.compile(r"^项\s*(\d+)\s*[:：]\s*(.*)$")
 _YES_HEAD_RE = re.compile(r"^[「【\[]?是([，,。．\s的」】\]]|$)")
 _NO_HEAD_RE = re.compile(r"^[「【\[]?(否|不是)([，,。．\s」】\]]|$)")
+# 日常故事固定卡司顺序；姐弟未发言也可同框
+_DAILY_SIBLINGS = ("昭昭", "灿灿")
+_DAILY_CAST_ORDER = ("昭昭", "灿灿", "妈妈")
 
 
 class AgnesImageVerifyFailed(RuntimeError):
@@ -586,6 +589,27 @@ class AgnesImageProvider(ImageProvider):
         return "unknown"
 
     @staticmethod
+    def _allowed_cast_for_verify(
+        *,
+        speakers: list[str],
+        content_style: str | None,
+    ) -> list[str]:
+        """本段允许出镜角色（有序）→ cast_count 上限 = len(结果)。
+
+        - 以 dialogue speakers 为底
+        - daily_story：始终可带昭昭/灿灿（未发言也可同框）
+        - 妈妈仅当本段 speakers 含「妈妈」
+        """
+        allowed: set[str] = {s for s in speakers if s}
+        if content_style == CONTENT_STYLE_DAILY_STORY:
+            allowed.update(_DAILY_SIBLINGS)
+        ordered = [name for name in _DAILY_CAST_ORDER if name in allowed]
+        for name in speakers:
+            if name and name not in ordered:
+                ordered.append(name)
+        return ordered
+
+    @staticmethod
     def _build_verify_checklist(
         *,
         prompt: str,
@@ -641,13 +665,25 @@ class AgnesImageProvider(ImageProvider):
                 "正常答「是」；有任何人超过 2 条答「否」",
             )
         )
-        if speakers or content_style == CONTENT_STYLE_DAILY_STORY:
+        allowed = AgnesImageProvider._allowed_cast_for_verify(
+            speakers=speakers,
+            content_style=content_style,
+        )
+        if allowed:
+            max_n = len(allowed)
+            roles = "、".join(allowed)
+            sibling_note = ""
+            if content_style == CONTENT_STYLE_DAILY_STORY and set(_DAILY_SIBLINGS) - set(
+                speakers
+            ):
+                sibling_note = "昭昭与灿灿未发言也可同框；"
             items.append(
                 (
                     "cast_count",
-                    "画面主体人物数量是否不超过 3 个？"
-                    "昭昭与灿灿可同时出场，即使本段未发言也算通过；"
-                    "超过 3 个主体人物答「否」；"
+                    f"画面清晰主体人物是否不超过 {max_n} 个，且只能是：{roles}？"
+                    f"{sibling_note}"
+                    "禁止路人/多余小孩或其他未列出的人物；"
+                    "人数超过或出现外人答「否」；"
                     "背景照片墙/镜子虚影/玩具人脸/远处剪影不算。"
                     "回答「是」或「否」",
                 )

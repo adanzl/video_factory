@@ -9,7 +9,7 @@
     />
 
     <div :class="STAGE_TWO_COL_CLASS">
-      <div class="min-w-[280px] max-w-full shrink-0 basis-[420px]">
+      <div class="min-w-70 max-w-full shrink-0 basis-105">
         <div :class="STAGE_PANEL_CLASS">
           <div :class="STAGE_PANEL_TITLE_CLASS">参数配置</div>
           <el-form :label-width="STAGE_FORM_LABEL_WIDTH" :class="STAGE_FORM_CLASS">
@@ -49,7 +49,7 @@
             <el-form-item label="字幕路径">
               <span class="break-all text-gray-600">{{ job.subtitle_path || "-" }}</span>
             </el-form-item>
-            <el-form-item label="TTS 用量">
+            <el-form-item label="TTS用量">
               <span class="text-gray-700">{{ ttsTotalCharactersText }}</span>
             </el-form-item>
             <el-form-item label="实测语速">
@@ -66,8 +66,8 @@
         <div :class="STAGE_PANEL_CLASS">
           <div :class="STAGE_PANEL_TITLE_CLASS">音频预览</div>
           <div v-if="audioUrl" class="w-full overflow-hidden rounded-lg border border-gray-200 bg-gray-50 p-4">
-            <div class="mb-3">
-              <div class="mb-2 text-sm text-gray-600">倍速</div>
+            <div class="mb-3 flex items-center gap-2">
+              <div class="text-sm text-gray-600">倍速</div>
               <el-radio-group v-model="playbackSpeed" size="small" class="flex flex-wrap gap-1">
                 <el-radio-button
                   v-for="speed in AUDIO_PLAYBACK_SPEED_OPTIONS"
@@ -154,12 +154,14 @@
                 </div>
               </el-tooltip>
             </div>
-            <audio
-              v-if="item.clipUrl"
-              class="block w-full"
-              :src="item.clipUrl"
-              controls
+            <MediaComponent
+              v-if="item.path"
+              :src="getMediaFileUrl(item.path, job.audio_version)"
+              :player="clipPlayer"
               preload="metadata"
+              width-class="w-full"
+              full-time-label
+              show-vol
             />
             <div v-else class="py-1 text-xs text-gray-400">音频不可用</div>
           </div>
@@ -185,10 +187,12 @@ import { computed, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { runJobStageAction } from "@/api/api-jobs";
 import { getMediaDuration, getMediaFileUrl, getMediaText } from "@/api/api-media";
+import MediaComponent from "@/components/MediaComponent.vue";
 import { DEFAULT_TTS_VOICE, TTS_VOICE_OPTIONS } from "@/constants/tts-voices";
 import type { JobDetail, JobLog } from "@/types/jobs";
 import type { ScriptJson } from "@/types/jobs/script";
 import { MEDIA_CROSS_ORIGIN, lazyMediaSrc } from "@/utils/media";
+import { useAudioPlayer } from "@/composables/useAudioPlayer";
 import { useErrorHandler } from "@/composables/useErrorHandler";
 import StageActionBar from "./StageActionBar.vue";
 import StageLogsSection from "./StageLogsSection.vue";
@@ -217,7 +221,7 @@ const parseSrt = (raw: string): SrtCueRow[] => {
   return raw
     .trim()
     .split(/\n\s*\n/)
-    .map(block => {
+    .map((block) => {
       const lines = block.trim().split("\n");
       if (lines.length < 3) {
         return null;
@@ -267,8 +271,12 @@ const lazyAudioUrl = computed(() => lazyMediaSrc(audioUrl.value, props.stageActi
 interface SegmentClip {
   segment_index: number;
   text: string;
-  clipUrl: string;
+  path: string;
 }
+
+const clipPlayer = useAudioPlayer({
+  active: () => props.stageActive,
+});
 
 /** script_json 中按 segment_index 索引的文案 */
 const scriptTextByIndex = computed<Record<number, string>>(() => {
@@ -288,17 +296,17 @@ const segmentClips = computed<SegmentClip[]>(() => {
   if (!clips?.length) return [];
   const textMap = scriptTextByIndex.value;
   return clips
-    .map(clipPath => {
-      const fileName = clipPath.trim().replace(/\\/g, "/").split("/").pop() || "";
+    .map(path => {
+      const fileName = path.trim().replace(/\\/g, "/").split("/").pop() || "";
       const index = parseInt(fileName.replace(/\.mp3$/i, ""), 10);
       const segIndex = Number.isFinite(index) ? index : 0;
       return {
         segment_index: segIndex,
         text: textMap[segIndex] || "",
-        clipUrl: getMediaFileUrl(clipPath, props.job.audio_version),
+        path,
       };
     })
-    .filter(item => item.clipUrl)
+    .filter(item => item.path)
     .sort((a, b) => a.segment_index - b.segment_index);
 });
 
@@ -397,35 +405,6 @@ const handleVoicePreview = async () => {
   }
 };
 
-const loadSrtPreview = async () => {
-  if (!props.job.subtitle_path) {
-    srtCues.value = [];
-    srtLoadError.value = "";
-    srtLoading.value = false;
-    return;
-  }
-
-  srtLoading.value = true;
-  srtLoadError.value = "";
-  try {
-    const content = await getMediaText(props.job.subtitle_path);
-    if (!content?.trim()) {
-      srtCues.value = [];
-      srtLoadError.value = "字幕文件为空或无法读取";
-      return;
-    }
-    srtCues.value = parseSrt(content);
-    if (!srtCues.value.length) {
-      srtLoadError.value = "字幕格式无法解析";
-    }
-  } catch {
-    srtCues.value = [];
-    srtLoadError.value = "字幕加载失败，请确认文件已生成且服务可访问";
-  } finally {
-    srtLoading.value = false;
-  }
-};
-
 const handleRun = async (toEnd: boolean) => {
   const actionLabel = toEnd ? "从此成片" : "重新生成";
   try {
@@ -493,6 +472,34 @@ watch(playbackSpeed, () => {
 watch(voiceId, () => {
   stopVoicePreview();
 });
+
+const loadSrtPreview = async () => {
+  if (!props.job.subtitle_path) {
+    srtCues.value = [];
+    srtLoadError.value = "";
+    srtLoading.value = false;
+    return;
+  }
+  srtLoading.value = true;
+  srtLoadError.value = "";
+  try {
+    const content = await getMediaText(props.job.subtitle_path);
+    if (!content?.trim()) {
+      srtCues.value = [];
+      srtLoadError.value = "字幕文件为空或无法读取";
+      return;
+    }
+    srtCues.value = parseSrt(content);
+    if (!srtCues.value.length) {
+      srtLoadError.value = "字幕格式无法解析";
+    }
+  } catch {
+    srtCues.value = [];
+    srtLoadError.value = "字幕加载失败，请确认文件已生成且服务可访问";
+  } finally {
+    srtLoading.value = false;
+  }
+};
 
 watch(
   () => [props.job.subtitle_path, props.stageActive] as const,

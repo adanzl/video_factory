@@ -26,6 +26,13 @@
       <el-table-column type="selection" width="48" />
       <el-table-column prop="id" label="ID" width="70" />
       <el-table-column prop="theme" label="主题" min-width="150" show-overflow-tooltip />
+      <el-table-column label="状态" width="90" align="center">
+        <template #default="{ row }">
+          <el-tag v-if="row.status === 'processing'" type="warning" size="small">生成中</el-tag>
+          <el-tag v-else-if="row.status === 'failed'" type="danger" size="small">失败</el-tag>
+          <el-tag v-else type="success" size="small">就绪</el-tag>
+        </template>
+      </el-table-column>
       <el-table-column label="场景标题" width="120">
         <template #default="{ row }">
           {{ row.story?.scene_title || "-" }}
@@ -77,7 +84,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
+import { ref, onMounted, onUnmounted } from "vue";
 import { useRouter } from "vue-router";
 import { Refresh } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
@@ -108,8 +115,31 @@ const page = ref(1);
 const pageSize = ref(15);
 const total = ref(0);
 
-async function fetchStories() {
-  loading.value = true;
+const POLL_INTERVAL_MS = 3000;
+let pollTimer: ReturnType<typeof setInterval> | null = null;
+
+function stopPolling() {
+  if (pollTimer != null) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+}
+
+function startPollingIfNeeded() {
+  const hasProcessing = stories.value.some((s) => s.status === "processing");
+  if (!hasProcessing) {
+    stopPolling();
+    return;
+  }
+  if (pollTimer != null) return;
+  pollTimer = setInterval(() => {
+    void fetchStories({ quiet: true });
+  }, POLL_INTERVAL_MS);
+}
+
+async function fetchStories(opts?: { quiet?: boolean }) {
+  const quiet = opts?.quiet === true;
+  if (!quiet) loading.value = true;
   try {
     const res = await listDailyStories({
       limit: pageSize.value,
@@ -117,10 +147,15 @@ async function fetchStories() {
     });
     stories.value = res.items;
     total.value = res.total;
+    if (currentStory.value && showDetailDialog.value) {
+      const latest = res.items.find((s) => s.id === currentStory.value?.id);
+      if (latest) currentStory.value = latest;
+    }
+    startPollingIfNeeded();
   } catch (e) {
-    handleError(e, "加载故事列表失败");
+    if (!quiet) handleError(e, "加载故事列表失败");
   } finally {
-    loading.value = false;
+    if (!quiet) loading.value = false;
   }
 }
 
@@ -147,6 +182,10 @@ function onSelectionChange(rows: DailyStoryRecord[]) {
 }
 
 function viewStory(row: DailyStoryRecord) {
+  if (row.status === "processing") {
+    ElMessage.info("故事还在生成中，请稍候");
+    return;
+  }
   currentStory.value = row;
   showDetailDialog.value = true;
 }
@@ -194,4 +233,5 @@ function calcWordCount(dialogue?: DialogueLine[]): number {
 }
 
 onMounted(fetchStories);
+onUnmounted(stopPolling);
 </script>

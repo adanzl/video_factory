@@ -1,4 +1,4 @@
-"""分镜图 → 视频 clip：Ken Burns 动效 + 字幕 overlay 合成。"""
+"""分镜图 → 视频 clip：Ken Burns 动效（字幕在 merge 阶段 ASS 烧录）。"""
 
 from __future__ import annotations
 
@@ -54,6 +54,7 @@ def _still_image_input_args(image_path: Path) -> list[str]:
 
 
 __all__ = [
+    "burn_ass_subtitles",
     "fit_video_duration",
     "fit_video_with_ass_subtitles",
     "image_to_clip",
@@ -360,6 +361,40 @@ def _fit_vf_chain(
         return f"{scale},trim=0:{duration_sec:.3f},setpts=PTS-STARTPTS"
     pad = duration_sec - video_dur
     return f"{scale},tpad=stop_mode=clone:stop_duration={pad:.3f}"
+
+
+def burn_ass_subtitles(
+    video_path: Path,
+    ass_path: Path,
+    output_path: Path,
+    *,
+    fonts_dir: Path | None = None,
+) -> Path:
+    """对已有音视频烧 ASS 字幕：视频重编码，音频 copy。"""
+    settings = get_settings()
+    fonts_dir = fonts_dir if fonts_dir is not None else settings.font_path.parent
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    ass_esc = escape_ffmpeg_filter_path(ass_path)
+    fonts_esc = escape_ffmpeg_filter_path(fonts_dir)
+    vf = f"subtitles={ass_esc}:fontsdir={fonts_esc},format={_PIX_FMT}"
+    run_ffmpeg(
+        [
+            *ffmpeg_cmd_start(hwaccel=False),
+            "-i",
+            str(video_path),
+            "-vf",
+            vf,
+            *libx264_encode_args(subtitle=True, force_cpu=True),
+            "-c:a",
+            "copy",
+            "-map",
+            "0:v:0",
+            "-map",
+            "0:a:0?",
+            str(output_path),
+        ]
+    )
+    return output_path
 
 
 def fit_video_with_ass_subtitles(

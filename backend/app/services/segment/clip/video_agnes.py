@@ -17,7 +17,7 @@ import requests
 
 from app.config import get_settings
 from app.services.segment.clip.clip_mgr import ClipProvider, clip_mgr
-from app.services.segment.clip.clip_render import fit_video_duration, video_to_clip_timed_overlays
+from app.services.segment.clip.clip_render import fit_video_duration
 from app.services.media.ffmpeg_utils import ffmpeg_cmd_start, probe_duration, run_ffmpeg
 from app.services.llm.llm_agnes import (
     AgnesApiKey,
@@ -203,8 +203,12 @@ def _loop_video_to_duration(
 
 
 class AgnesClipProvider(ClipProvider):
+    # 按 Key 池分别限流：付费(enterprise≈2 RPM)与免费(≈1 RPM)互不影响
     _submit_lock = Semaphore(value=1)
-    _last_submit_at = 0.0
+    _last_submit_at_by_key: dict[str, float] = {}
+    # 状态查询全局错峰，避免多路并发把 poll RPM 打爆
+    _poll_lock = Semaphore(value=1)
+    _last_poll_at = 0.0
 
     def __init__(self) -> None:
         settings = get_settings()
@@ -214,6 +218,7 @@ class AgnesClipProvider(ClipProvider):
         self._model = settings.agnes_video_model
         self._frame_rate = settings.agnes_video_frame_rate
         self._submit_interval = settings.agnes_submit_interval_sec
+        self._free_submit_interval = settings.agnes_free_submit_interval_sec
         self._http_max_retries = settings.agnes_http_max_retries
         self._connect_timeout = settings.agnes_http_connect_timeout_sec
         self._submit_read_timeout = settings.agnes_http_submit_read_timeout_sec
@@ -224,12 +229,42 @@ class AgnesClipProvider(ClipProvider):
         self._poll_max_attempts = settings.agnes_video_poll_max_attempts
         self._poll_interval_sec = settings.agnes_video_poll_interval_sec
 
-    def _throttle_submit(self) -> None:
+    def _submit_interval_for_key(self, key_label: str) -> float:
+        """Agnes 视频：free≈1 RPM，付费 enterprise≈2 RPM（可配）。"""
+        if key_label == "free":
+            return max(0.0, self._free_submit_interval)
+        return max(0.0, self._submit_interval)
+
+    def _throttle_submit(self, key_label: str = "primary") -> None:
+        interval = self._submit_interval_for_key(key_label)
         with self._submit_lock:
-            elapsed = time.monotonic() - self._last_submit_at
-            if elapsed < self._submit_interval:
-                time.sleep(self._submit_interval - elapsed)
-            self._last_submit_at = time.monotonic()
+            last = self._last_submit_at_by_key.get(key_label, 0.0)
+            elapsed = time.monotonic() - last
+            if elapsed < interval:
+                wait = interval - elapsed
+                logger.info(
+                    "agnes i2v throttle (%s key): wait %.1fs (interval=%.1fs)",
+                    key_label,
+                    wait,
+                    interval,
+                )
+                time.sleep(wait)
+            self._last_submit_at_by_key[key_label] = time.monotonic()
+
+    def _throttle_poll(self) -> None:
+        """多路 i2v 共用同一状态查询节奏，避免 status query 429。"""
+        interval = max(0.0, self._poll_interval_sec)
+        with self._poll_lock:
+            elapsed = time.monotonic() - self._last_poll_at
+            if elapsed < interval:
+                wait = interval - elapsed
+                logger.debug(
+                    "agnes i2v poll throttle: wait %.1fs (interval=%.1fs)",
+                    wait,
+                    interval,
+                )
+                time.sleep(wait)
+            AgnesClipProvider._last_poll_at = time.monotonic()
 
     def _request(
         self,
@@ -411,7 +446,7 @@ class AgnesClipProvider(ClipProvider):
             len(prompt),
         )
 
-        self._throttle_submit()
+        self._throttle_submit(api_key.label)
         max_attempts = max(1, self._task_max_retries)
         last_exc: Exception | None = None
         for attempt in range(max_attempts):
@@ -525,19 +560,31 @@ class AgnesClipProvider(ClipProvider):
         task_label = video_id or task_id or "unknown"
         state = "queued"
         for poll_idx in range(self._poll_max_attempts):
-            time.sleep(self._poll_interval_sec)
-            poll_resp = self._request(
-                "GET",
-                self._poll_url(video_id, task_id),
-                headers={**headers, "Connection": "close"},
-                label="poll",
-            )
-            poll = poll_resp.json()
-            if poll.get("error"):
-                _raise_i2v_api_error("poll", poll["error"], body=poll)
+            self._throttle_poll()
+            try:
+                poll_resp = self._request(
+                    "GET",
+                    self._poll_url(video_id, task_id),
+                    headers={**headers, "Connection": "close"},
+                    label="poll",
+                )
+                poll = poll_resp.json()
+                if poll.get("error"):
+                    _raise_i2v_api_error("poll", poll["error"], body=poll)
+            except AgnesQuotaExceeded as exc:
+                # 状态查询限流：退避后继续轮询，不要切 key / 整批失败
+                wait = max(self._poll_interval_sec, 15.0) * (1 + poll_idx % 3)
+                logger.warning(
+                    "agnes i2v poll rate-limited (%s), retry in %.0fs: %s",
+                    task_label,
+                    wait,
+                    str(exc)[:160],
+                )
+                time.sleep(wait)
+                continue
 
             state = str(poll.get("status") or "unknown")
-            if poll_idx % 6 == 0 and state not in _TERMINAL_POLL_STATES:
+            if poll_idx % 4 == 0 and state not in _TERMINAL_POLL_STATES:
                 logger.info(
                     "agnes i2v task %s polling... state=%s (~%ss)",
                     task_label,
@@ -588,13 +635,7 @@ class AgnesClipProvider(ClipProvider):
         _ = motion_preset
         _ = image_prompt
         t0 = time.time()
-        total_duration, overlay_windows, overlay_paths = clip_mgr.prepare_subtitle_overlays(
-            subtitle_cues=subtitle_cues,
-            work_dir=work_dir,
-            segment_index=segment_index,
-            width=width,
-            height=height,
-        )
+        total_duration = clip_mgr.cue_total_duration(subtitle_cues)
         if total_duration <= 0:
             raise ValueError(f"segment {segment_index} has zero duration")
 
@@ -604,7 +645,6 @@ class AgnesClipProvider(ClipProvider):
         prompt = _stabilize_motion_prompt(motion_prompt or "")
         num_frames = _pick_num_frames(total_duration, self._frame_rate)
         raw_path = work_dir / f"{segment_index}.agnes_raw.mp4"
-        fitted_path = work_dir / f"{segment_index}.agnes_fit.mp4"
 
         logger.info(
             "segment %s: total_duration=%.2fs n_cues=%s; submitting agnes i2v "
@@ -630,30 +670,16 @@ class AgnesClipProvider(ClipProvider):
                 segment_index=segment_index,
                 total_duration=total_duration,
             )
+            # 字幕改在 merge 阶段 ASS 烧录
             fit_video_duration(
                 raw_path,
-                fitted_path,
+                output_path,
                 total_duration,
                 width=clip_width,
                 height=clip_height,
             )
-            logger.info("clip %s: overlaying %s subtitles", segment_index, len(overlay_windows))
-            if overlay_windows:
-                video_to_clip_timed_overlays(
-                    fitted_path,
-                    overlay_windows,
-                    output_path,
-                    total_duration,
-                    width=clip_width,
-                    height=clip_height,
-                )
-            else:
-                fitted_path.replace(output_path)
         finally:
-            clip_mgr.cleanup_overlay_paths(overlay_paths)
             raw_path.unlink(missing_ok=True)
-            if fitted_path.exists() and fitted_path != output_path:
-                fitted_path.unlink(missing_ok=True)
 
         logger.info("clip %s: done in %.1fs", segment_index, time.time() - t0)
         return output_path

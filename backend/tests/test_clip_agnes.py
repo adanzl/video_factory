@@ -111,6 +111,75 @@ def test_resolve_i2v_image_uses_data_uri(tmp_path: Path) -> None:
     assert ref.startswith("data:image/png;base64,")
 
 
+def test_agnes_i2v_poll_throttle_is_global() -> None:
+    """多路并发共用全局 poll 间隔，避免状态查询 429。"""
+    provider = AgnesClipProvider()
+    provider._poll_interval_sec = 15.0  # noqa: SLF001
+    AgnesClipProvider._last_poll_at = 0.0
+
+    sleeps: list[float] = []
+
+    def _fake_sleep(sec: float) -> None:
+        sleeps.append(sec)
+
+    with (
+        patch(
+            "app.services.segment.clip.video_agnes.time.monotonic",
+            side_effect=[100.0, 100.0, 105.0, 115.0],
+        ),
+        patch("app.services.segment.clip.video_agnes.time.sleep", side_effect=_fake_sleep),
+    ):
+        provider._throttle_poll()  # noqa: SLF001  # 首次不 sleep
+        provider._throttle_poll()  # noqa: SLF001  # 距上次 5s，还需等 10s
+
+    assert len(sleeps) == 1
+    assert abs(sleeps[0] - 10.0) < 0.01
+
+
+def test_agnes_i2v_submit_interval_by_key() -> None:
+    """付费 enterprise≈2 RPM(30s)，免费≈1 RPM(60s)；按 key 分开记时。"""
+    provider = AgnesClipProvider()
+    provider._submit_interval = 30.0  # noqa: SLF001
+    provider._free_submit_interval = 60.0  # noqa: SLF001
+    AgnesClipProvider._last_submit_at_by_key.clear()
+
+    assert provider._submit_interval_for_key("primary") == 30.0  # noqa: SLF001
+    assert provider._submit_interval_for_key("free") == 60.0  # noqa: SLF001
+
+    sleeps: list[float] = []
+
+    def _fake_sleep(sec: float) -> None:
+        sleeps.append(sec)
+
+    with (
+        patch(
+            "app.services.segment.clip.video_agnes.time.monotonic",
+            side_effect=[100.0, 100.0, 130.0, 130.0],
+        ),
+        patch("app.services.segment.clip.video_agnes.time.sleep", side_effect=_fake_sleep),
+    ):
+        provider._throttle_submit("primary")  # noqa: SLF001
+        provider._throttle_submit("free")  # noqa: SLF001
+
+    # primary 首次、free 首次都不 sleep
+    assert sleeps == []
+
+    with (
+        patch(
+            "app.services.segment.clip.video_agnes.time.monotonic",
+            side_effect=[145.0, 145.0, 160.0, 160.0],
+        ),
+        patch("app.services.segment.clip.video_agnes.time.sleep", side_effect=_fake_sleep),
+    ):
+        # free 上次在 130，间隔 60 → 还需等 45s
+        provider._throttle_submit("free")  # noqa: SLF001
+        # primary 上次在 100，间隔 30 → 145 已够，不等
+        provider._throttle_submit("primary")  # noqa: SLF001
+
+    assert len(sleeps) == 1
+    assert abs(sleeps[0] - 45.0) < 0.01
+
+
 def test_agnes_clip_provider_submits_i2v_payload(tmp_path: Path) -> None:
     provider = AgnesClipProvider()
     image_path = tmp_path / "1.png"
@@ -145,11 +214,7 @@ def test_agnes_clip_provider_submits_i2v_payload(tmp_path: Path) -> None:
         patch("app.services.segment.clip.video_agnes.requests.get", return_value=video_resp),
         patch("app.services.segment.clip.video_agnes.probe_duration", return_value=5.0),
         patch("app.services.segment.clip.video_agnes.fit_video_duration") as mock_fit,
-        patch("app.services.segment.clip.video_agnes.video_to_clip_timed_overlays"),
-        patch("app.services.segment.clip.video_agnes.clip_mgr.prepare_subtitle_overlays") as mock_overlays,
-        patch("app.services.segment.clip.video_agnes.clip_mgr.cleanup_overlay_paths"),
     ):
-        mock_overlays.return_value = (5.0, [], [])
         mock_fit.side_effect = lambda src, dst, *_args, **_kwargs: dst.write_bytes(b"fit")
         provider.build_segment_clip(
             image_path=image_path,

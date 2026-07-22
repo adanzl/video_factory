@@ -1,6 +1,6 @@
-"""字幕烧录：PIL 透明层 + 连续 Ken Burns 单次 FFmpeg 合成。
+"""字幕烧录：PIL 透明层绘制（调试/预览）；成片改在 merge 用 ASS 烧录。
 
-按 TTS 句级时间轴绘制 overlay PNG，在同一分镜内按 t 切换字幕（方案 A）。
+按 TTS 句级时间轴绘制 overlay PNG；日常流水线分镜不再叠字幕。
 """
 
 from __future__ import annotations
