@@ -149,8 +149,8 @@ class Config:
         self.clip_submit_interval_sec: float = float(
             os.getenv("CLIP_SUBMIT_INTERVAL_SEC", os.getenv("IMAGE_SUBMIT_INTERVAL_SEC", "3"))
         )
-        # Token Plan / 付费 Key：视频有效 RPM≈5 → 默认 12s
-        self.agnes_submit_interval_sec: float = float(os.getenv("AGNES_SUBMIT_INTERVAL_SEC", "12"))
+        # 付费 Key：enterprise 有效 RPM≈2 → 默认 30s（Token Plan≈5 可改更短）
+        self.agnes_submit_interval_sec: float = float(os.getenv("AGNES_SUBMIT_INTERVAL_SEC", "30"))
         # Free / default Key：视频有效 RPM=1 → 默认 60s
         self.agnes_free_submit_interval_sec: float = float(
             os.getenv("AGNES_FREE_SUBMIT_INTERVAL_SEC", "60")

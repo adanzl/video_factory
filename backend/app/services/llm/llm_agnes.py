@@ -11,6 +11,7 @@ from typing import Any
 import requests
 
 from app.config import Settings, get_settings
+from app.exceptions import JobStageFailureError
 
 logger = logging.getLogger(__name__)
 
@@ -32,8 +33,8 @@ _QUOTA_KEYWORDS = (
 )
 
 
-class AgnesQuotaExceeded(RuntimeError):
-    """当前 Key 配额/限流耗尽，可切换备用 Key。"""
+class AgnesQuotaExceeded(RuntimeError, JobStageFailureError):
+    """当前 Key 配额/限流耗尽，可切换备用 Key；整任务失败时不必打堆栈。"""
 
 
 @dataclass(frozen=True)

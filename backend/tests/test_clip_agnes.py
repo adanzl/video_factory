@@ -112,13 +112,13 @@ def test_resolve_i2v_image_uses_data_uri(tmp_path: Path) -> None:
 
 
 def test_agnes_i2v_submit_interval_by_key() -> None:
-    """付费 Token≈5 RPM(12s)，免费≈1 RPM(60s)；按 key 分开记时。"""
+    """付费 enterprise≈2 RPM(30s)，免费≈1 RPM(60s)；按 key 分开记时。"""
     provider = AgnesClipProvider()
-    provider._submit_interval = 12.0  # noqa: SLF001
+    provider._submit_interval = 30.0  # noqa: SLF001
     provider._free_submit_interval = 60.0  # noqa: SLF001
     AgnesClipProvider._last_submit_at_by_key.clear()
 
-    assert provider._submit_interval_for_key("primary") == 12.0  # noqa: SLF001
+    assert provider._submit_interval_for_key("primary") == 30.0  # noqa: SLF001
     assert provider._submit_interval_for_key("free") == 60.0  # noqa: SLF001
 
     sleeps: list[float] = []
@@ -127,29 +127,32 @@ def test_agnes_i2v_submit_interval_by_key() -> None:
         sleeps.append(sec)
 
     with (
-        patch("app.services.segment.clip.video_agnes.time.monotonic", side_effect=[100.0, 100.0, 112.0, 112.0]),
+        patch(
+            "app.services.segment.clip.video_agnes.time.monotonic",
+            side_effect=[100.0, 100.0, 130.0, 130.0],
+        ),
         patch("app.services.segment.clip.video_agnes.time.sleep", side_effect=_fake_sleep),
     ):
         provider._throttle_submit("primary")  # noqa: SLF001
         provider._throttle_submit("free")  # noqa: SLF001
 
-    # primary 首次、free 首次都不 sleep；再测 free 需等待
+    # primary 首次、free 首次都不 sleep
     assert sleeps == []
 
     with (
         patch(
             "app.services.segment.clip.video_agnes.time.monotonic",
-            side_effect=[130.0, 130.0, 160.0, 160.0],
+            side_effect=[145.0, 145.0, 160.0, 160.0],
         ),
         patch("app.services.segment.clip.video_agnes.time.sleep", side_effect=_fake_sleep),
     ):
-        # free 上次在 112，间隔 60 → 还需等 42s
+        # free 上次在 130，间隔 60 → 还需等 45s
         provider._throttle_submit("free")  # noqa: SLF001
-        # primary 上次在 100，间隔 12 → 130 已够，不等
+        # primary 上次在 100，间隔 30 → 145 已够，不等
         provider._throttle_submit("primary")  # noqa: SLF001
 
     assert len(sleeps) == 1
-    assert abs(sleeps[0] - 42.0) < 0.01
+    assert abs(sleeps[0] - 45.0) < 0.01
 
 
 def test_agnes_clip_provider_submits_i2v_payload(tmp_path: Path) -> None:

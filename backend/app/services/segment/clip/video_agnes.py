@@ -203,7 +203,7 @@ def _loop_video_to_duration(
 
 
 class AgnesClipProvider(ClipProvider):
-    # 按 Key 池分别限流：付费(Token≈5 RPM)与免费(≈1 RPM)互不影响
+    # 按 Key 池分别限流：付费(enterprise≈2 RPM)与免费(≈1 RPM)互不影响
     _submit_lock = Semaphore(value=1)
     _last_submit_at_by_key: dict[str, float] = {}
 
@@ -227,7 +227,7 @@ class AgnesClipProvider(ClipProvider):
         self._poll_interval_sec = settings.agnes_video_poll_interval_sec
 
     def _submit_interval_for_key(self, key_label: str) -> float:
-        """Agnes 视频：free≈1 RPM，付费 Token Plan≈5 RPM。"""
+        """Agnes 视频：free≈1 RPM，付费 enterprise≈2 RPM（可配）。"""
         if key_label == "free":
             return max(0.0, self._free_submit_interval)
         return max(0.0, self._submit_interval)
