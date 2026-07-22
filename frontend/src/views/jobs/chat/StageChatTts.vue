@@ -9,7 +9,7 @@
     />
 
     <div :class="STAGE_TWO_COL_CLASS">
-      <div class="min-w-[280px] max-w-full shrink-0 basis-[420px]">
+      <div class="min-w-70 max-w-full shrink-0 basis-105">
         <div :class="STAGE_PANEL_CLASS">
           <div :class="STAGE_PANEL_TITLE_CLASS">角色配音配置</div>
           <el-form :label-width="STAGE_FORM_LABEL_WIDTH" :class="STAGE_FORM_CLASS">
@@ -58,9 +58,6 @@
           <el-form :label-width="STAGE_FORM_LABEL_WIDTH" class="[&_.el-form-item]:mb-2 mt-2">
             <el-form-item label="音频路径">
               <span class="break-all text-gray-600">{{ job.audio_path || "-" }}</span>
-            </el-form-item>
-            <el-form-item label="字幕路径">
-              <span class="break-all text-gray-600">{{ job.subtitle_path || "-" }}</span>
             </el-form-item>
             <el-form-item label="TTS 用量">
               <span class="text-gray-700">{{ ttsTotalCharactersText }}</span>
@@ -113,34 +110,6 @@
             :closable="false"
             class="mt-2"
           />
-
-          <div :class="STAGE_SUBSECTION_CLASS">
-            <div :class="STAGE_PANEL_TITLE_CLASS">字幕预览</div>
-            <el-table
-              v-if="srtCues.length"
-              :data="srtCues"
-              stripe
-              size="small"
-              class="w-full"
-              max-height="320"
-            >
-              <el-table-column prop="index" label="#" width="56" />
-              <el-table-column prop="time" label="时间" width="210" show-overflow-tooltip />
-              <el-table-column prop="text" label="文案" min-width="160">
-                <template #default="{ row }">
-                  <div class="leading-relaxed wrap-break-word whitespace-pre-wrap">{{ row.text }}</div>
-                </template>
-              </el-table-column>
-            </el-table>
-            <div v-else-if="srtLoading" :class="STAGE_EMPTY_CLASS">加载中…</div>
-            <div v-else-if="!job.subtitle_path" :class="STAGE_EMPTY_CLASS">暂无字幕，请先生成</div>
-            <el-alert
-              v-else-if="srtLoadError"
-              type="warning"
-              :title="srtLoadError"
-              :closable="false"
-            />
-          </div>
         </div>
       </div>
     </div>
@@ -188,7 +157,7 @@
 import { computed, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { runJobStageAction } from "@/api/api-jobs";
-import { getMediaDuration, getMediaFileUrl, getMediaText } from "@/api/api-media";
+import { getMediaDuration, getMediaFileUrl } from "@/api/api-media";
 import { DEFAULT_TTS_VOICE, TTS_VOICE_MOM, TTS_VOICE_OPTIONS, TTS_VOICE_ZHAO } from "@/constants/tts-voices";
 import type { JobDetail, JobLog } from "@/types/jobs";
 import type { ScriptJson } from "@/types/jobs/script";
@@ -204,7 +173,6 @@ import {
   STAGE_FORM_LABEL_WIDTH,
   STAGE_PANEL_CLASS,
   STAGE_PANEL_TITLE_CLASS,
-  STAGE_SUBSECTION_CLASS,
   STAGE_TWO_COL_CLASS,
 } from "../detail/stageLayout";
 
@@ -226,7 +194,7 @@ const speakers = [
 const defaultSpeakerConfigs: Record<string, SpeakerConfig> = {
   昭昭: { voice_id: TTS_VOICE_ZHAO, speech_rate: 1.15 },
   灿灿: { voice_id: DEFAULT_TTS_VOICE, speech_rate: 1.3 },
-  妈妈: { voice_id: TTS_VOICE_MOM, speech_rate: 1.35 },
+  妈妈: { voice_id: TTS_VOICE_MOM, speech_rate: 1.2 },
 };
 
 const props = defineProps<{
@@ -293,62 +261,6 @@ const actionDisabledReason = computed(() =>
 
 const audioUrl = computed(() => getMediaFileUrl(props.job.audio_path ?? "", props.job.audio_version));
 const lazyAudioUrl = computed(() => lazyMediaSrc(audioUrl.value, props.stageActive));
-
-interface SrtCueRow {
-  index: string;
-  time: string;
-  text: string;
-}
-
-const parseSrt = (raw: string): SrtCueRow[] => {
-  return raw
-    .trim()
-    .split(/\n\s*\n/)
-    .map(block => {
-      const lines = block.trim().split("\n");
-      if (lines.length < 3) {
-        return null;
-      }
-      return {
-        index: lines[0],
-        time: lines[1],
-        text: lines.slice(2).join("\n"),
-      };
-    })
-    .filter((item): item is SrtCueRow => item !== null);
-};
-
-const srtLoading = ref(false);
-const srtLoadError = ref("");
-const srtCues = ref<SrtCueRow[]>([]);
-
-const loadSrtPreview = async () => {
-  if (!props.job.subtitle_path) {
-    srtCues.value = [];
-    srtLoadError.value = "";
-    srtLoading.value = false;
-    return;
-  }
-  srtLoading.value = true;
-  srtLoadError.value = "";
-  try {
-    const content = await getMediaText(props.job.subtitle_path);
-    if (!content?.trim()) {
-      srtCues.value = [];
-      srtLoadError.value = "字幕文件为空或无法读取";
-      return;
-    }
-    srtCues.value = parseSrt(content);
-    if (!srtCues.value.length) {
-      srtLoadError.value = "字幕格式无法解析";
-    }
-  } catch {
-    srtCues.value = [];
-    srtLoadError.value = "字幕加载失败，请确认文件已生成且服务可访问";
-  } finally {
-    srtLoading.value = false;
-  }
-};
 
 interface SegmentClip {
   segment_index: number;
@@ -504,22 +416,6 @@ watch(
     void (async () => {
       audioDurationSec.value = await getMediaDuration(path);
     })();
-  },
-  { immediate: true }
-);
-
-watch(
-  () => [props.job.subtitle_path, props.stageActive] as const,
-  ([path, active]) => {
-    if (active === false || !path) {
-      if (!path) {
-        srtCues.value = [];
-        srtLoadError.value = "";
-        srtLoading.value = false;
-      }
-      return;
-    }
-    void loadSrtPreview();
   },
   { immediate: true }
 );

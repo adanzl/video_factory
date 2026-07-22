@@ -149,7 +149,12 @@ class Config:
         self.clip_submit_interval_sec: float = float(
             os.getenv("CLIP_SUBMIT_INTERVAL_SEC", os.getenv("IMAGE_SUBMIT_INTERVAL_SEC", "3"))
         )
+        # Token Plan / 付费 Key：视频有效 RPM≈5 → 默认 12s
         self.agnes_submit_interval_sec: float = float(os.getenv("AGNES_SUBMIT_INTERVAL_SEC", "12"))
+        # Free / default Key：视频有效 RPM=1 → 默认 60s
+        self.agnes_free_submit_interval_sec: float = float(
+            os.getenv("AGNES_FREE_SUBMIT_INTERVAL_SEC", "60")
+        )
         self.wan_i2v_model: str = os.getenv("WAN_I2V_MODEL", "wanx2.1-i2v-turbo")  # cSpell: disable-line
         self.wan_i2v_resolution: str = os.getenv("WAN_I2V_RESOLUTION", "720P")
         self.wan_i2v_prompt_extend: bool = _bool("WAN_I2V_PROMPT_EXTEND", True)

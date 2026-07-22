@@ -631,3 +631,25 @@ def normalize_bgm_payload(raw: object) -> dict[str, Any] | None:
         "material_id": material_id_int,
         "volume_db": volume_db,
     }
+
+
+DEFAULT_SUBTITLE_ENABLED = True
+
+
+def subtitle_params_from_info(info: str | dict | None) -> dict[str, Any]:
+    """解析 job.info.subtitle → {enabled}。缺省烧录（兼容旧任务）。"""
+    raw = parse_job_info(info).get("subtitle")
+    if not isinstance(raw, dict):
+        return {"enabled": DEFAULT_SUBTITLE_ENABLED}
+    if "enabled" not in raw:
+        return {"enabled": DEFAULT_SUBTITLE_ENABLED}
+    return {"enabled": bool(raw.get("enabled"))}
+
+
+def normalize_subtitle_payload(raw: object) -> dict[str, Any] | None:
+    """校验 API 传入的 subtitle 配置；无效返回 None。"""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError("subtitle must be an object")
+    return {"enabled": bool(raw.get("enabled"))}
