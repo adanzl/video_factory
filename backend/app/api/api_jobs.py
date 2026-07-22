@@ -413,10 +413,13 @@ def run_merge_route():
     job_id = parse_id(data)
     to_end = parse_bool(data, "to_end", default=False)
     bgm = data.get("bgm") if "bgm" in data else None
+    subtitle = data.get("subtitle") if "subtitle" in data else None
     try:
         return _accept_stage(
             job_id,
-            lambda: job_mgr.run_merge(job_id, to_end=to_end, bgm=bgm),
+            lambda: job_mgr.run_merge(
+                job_id, to_end=to_end, bgm=bgm, subtitle=subtitle
+            ),
         )
     except ValueError as exc:
         raise APIError(str(exc), status_code=400) from exc

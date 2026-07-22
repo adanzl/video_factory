@@ -23,7 +23,7 @@ from app.services.render.text_render import load_cjk_font
 from app.services.render.title_render import STROKE_WIDTH, render_text_rgba
 
 _FPS = 25
-_ENTER_SEC = 0.32
+_ENTER_SEC = 0.38
 _HOLD_TAIL_SEC = 0.15
 
 
@@ -290,10 +290,12 @@ def _render_brand_mark(theme, brand: str) -> Image.Image:
         brand,
         font,
         fill=theme.brand_fill,
-        stroke_width=STROKE_WIDTH + 4,
+        stroke_width=STROKE_WIDTH + 5,
         stroke_fill=theme.brand_stroke,
         with_shadow=True,
-        shadow_blur=6,
+        shadow_blur=12,
+        shadow_offset_x=3,
+        shadow_offset_y=4,
     )
 
 
@@ -403,6 +405,10 @@ def _build_layers(
         "width": width,
         "height": height,
         "skip_moon_opacity": bg_image_path is not None,
+        "title_center": (
+            int(width * layout.title_center_x_ratio),
+            int(height * layout.title_center_y_ratio),
+        ),
     }
 
 
@@ -420,8 +426,23 @@ def _host_position(layers: dict, host_w: int, host_h: int, *, enter: float) -> t
         host_y = height - int(host_h * visible)
     else:
         host_y = height - host_h - int(height * layout.host_bottom_ratio)
-    host_y += int((1.0 - enter) * (60 if layout.landscape else 80))
+    # 入场弹跳位移加大，更「孩子气」
+    host_y += int((1.0 - enter) * (90 if layout.landscape else 110))
     return host_x, host_y
+
+
+def _scale_image_about(img: Image.Image, scale: float, cx: float, cy: float) -> Image.Image:
+    """绕画布点 (cx, cy) 缩放，输出同尺寸。"""
+    if abs(scale - 1.0) < 0.002:
+        return img
+    inv = 1.0 / scale
+    w, h = img.size
+    return img.transform(
+        (w, h),
+        Image.Transform.AFFINE,
+        (inv, 0, cx * (1.0 - inv), 0, inv, cy * (1.0 - inv)),
+        resample=Image.Resampling.BICUBIC,
+    )
 
 
 def _compose_frame(layers: dict, t: float) -> Image.Image:
@@ -432,15 +453,30 @@ def _compose_frame(layers: dict, t: float) -> Image.Image:
 
     enter = _ease_out_back(min(t / _ENTER_SEC, 1.0))
     opacity = min(1.0, t / 0.12) if t < _ENTER_SEC else 1.0
-    breathe = 1.0 + 0.012 * math.sin(max(0.0, t - _ENTER_SEC) * 5.5)
+    post = max(0.0, t - _ENTER_SEC)
+    breathe = 1.0 + 0.022 * math.sin(post * 6.2)
+    # 太阳/月亮轻晃；标题入场后轻微回弹
+    sun_angle = 7.0 * math.sin(t * 4.2)
+    title_scale = 0.86 + 0.14 * enter
+    title_bob = int(4 * math.sin(post * 5.0)) if post > 0 else 0
+    title_cx, title_cy = layers.get("title_center") or (
+        int(width * layout.title_center_x_ratio),
+        int(height * layout.title_center_y_ratio),
+    )
 
     host: Image.Image = layers["host"]
-    host_w = int(host.size[0] * (0.88 + 0.12 * enter) * breathe)
-    host_h = int(host.size[1] * (0.88 + 0.12 * enter) * breathe)
+    host_w = int(host.size[0] * (0.84 + 0.16 * enter) * breathe)
+    host_h = int(host.size[1] * (0.84 + 0.16 * enter) * breathe)
     host_frame = host.resize((host_w, host_h), Image.Resampling.LANCZOS)
     host_x, host_y = _host_position(layers, host_w, host_h, enter=enter)
 
     moon: Image.Image = layers["moon_layer"]
+    moon = moon.rotate(
+        sun_angle,
+        resample=Image.Resampling.BICUBIC,
+        center=(title_cx, title_cy),
+        expand=False,
+    )
     if layers.get("skip_moon_opacity"):
         frame.alpha_composite(moon, (0, 0))
     else:
@@ -450,14 +486,19 @@ def _compose_frame(layers: dict, t: float) -> Image.Image:
 
     header: Image.Image = layers["brand_header"]
     header_x = _brand_header_x(width, height, layout, header.size[0])
-    header_y = int(height * layout.brand_top_ratio)
+    header_y = int(height * layout.brand_top_ratio) - int((1.0 - enter) * 18)
     frame.alpha_composite(_with_opacity(header, opacity), (header_x, header_y))
 
     text: Image.Image = layers["text_layer"]
+    text = _scale_image_about(text, title_scale, title_cx, title_cy)
+    if title_bob:
+        shifted = Image.new("RGBA", text.size, (0, 0, 0, 0))
+        shifted.alpha_composite(text, (0, title_bob))
+        text = shifted
     frame.alpha_composite(_with_opacity(text, opacity), (0, 0))
 
     if layout.accent_width_ratio > 0:
-        accent_w = int(width * layout.accent_width_ratio)
+        accent_w = int(width * layout.accent_width_ratio * (0.55 + 0.45 * enter))
         accent_x = (width - accent_w) // 2
         accent_y = height - 24
         accent = layers["theme"].accent
@@ -499,7 +540,9 @@ def _render_frames(
 
 
 def _brand_audio_path(work_dir: Path, pipeline: str | None = None) -> Path:
-    """优先使用 res 预置喊声；缺失时抛出明确错误。"""
+    """优先使用 res 预置喊声；缺失时抛出明确错误。拷贝后响度对齐成片目标。"""
+    from app.services.tts.audio_analysis import normalize_loudness
+
     settings = get_settings()
     src = settings.get_intro_shout_path(pipeline)
     if not src.exists():
@@ -508,6 +551,11 @@ def _brand_audio_path(work_dir: Path, pipeline: str | None = None) -> Path:
         )
     dest = work_dir / "intro_shout.mp3"
     shutil.copy2(src, dest)
+    normalize_loudness(
+        dest,
+        target_lufs=settings.audio_target_lufs,
+        true_peak=settings.audio_true_peak,
+    )
     return dest
 
 

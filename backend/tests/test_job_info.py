@@ -354,5 +354,5 @@ def test_daily_story_create_job_info_stores_phrase_gap_in_tts():
     assert info["tts"]["speaker_configs"]["phrase_gap_sec"] == 0.2
     assert info["tts"]["speaker_configs"]["昭昭"]["speech_rate"] == 1.15
     assert info["tts"]["speaker_configs"]["灿灿"]["speech_rate"] == 1.30
-    assert info["tts"]["speaker_configs"]["妈妈"]["speech_rate"] == 1.35
+    assert info["tts"]["speaker_configs"]["妈妈"]["speech_rate"] == 1.20
     assert "phrase_gap_sec" not in info

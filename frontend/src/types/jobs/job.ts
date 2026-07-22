@@ -31,6 +31,9 @@ export interface JobInfo {
     material_id?: number | null;
     volume_db?: number;
   };
+  subtitle?: {
+    enabled?: boolean;
+  };
 }
 
 export type IntroCategory = "百科" | "历史悬案";

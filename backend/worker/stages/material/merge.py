@@ -10,6 +10,7 @@ from app.services.tts.audio_analysis import analyze_loudness
 from app.services.media.ffmpeg_utils import ffmpeg_hwaccel_config_summary, probe_duration
 from app.services.media.media_mgr import media_mgr
 from app.utils.final_asset import build_final_asset
+from app.utils.job_info import subtitle_params_from_info
 from app.utils.media import material_final_min_duration_sec
 from worker.context import JobContext
 from worker.stages.base import StageExecutor
@@ -53,11 +54,21 @@ class MaterialMergeStage(StageExecutor):
             if fallback.exists():
                 intro_path = fallback
 
+        subtitle = subtitle_params_from_info(job.get("info"))
+        with connection() as conn:
+            repo_job_log.append_log(
+                conn,
+                ctx.job["id"],
+                self.name,
+                f"subtitle burn={'on' if subtitle['enabled'] else 'off'}",
+            )
+
         result = media_mgr.merge_material_final(
             media_dir=ctx.media_dir,
             base_video_path=base_path,
             audio_path=Path(job["audio_path"]),
             intro_path=intro_path,
+            burn_subtitles=bool(subtitle["enabled"]),
         )
         loudness = analyze_loudness(result.final_path)
         duration = probe_duration(result.final_path)
@@ -88,7 +99,7 @@ class MaterialMergeStage(StageExecutor):
                     f"material final at {result.final_path}, "
                     f"lufs={loudness.integrated_lufs}, "
                     f"cost_time={updates['final_path']['cost_time']}s, "
-                    f"subtitles=burned"
+                    f"subtitles={'burned' if subtitle['enabled'] else 'off'}"
                 ),
             )
             apply_quality_checks(
