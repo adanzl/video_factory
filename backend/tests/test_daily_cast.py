@@ -122,7 +122,7 @@ def test_build_image_prompts_daily_keyframe_marks_motion_mode():
                 "segment_index": 1,
                 "text": "开场抢",
                 "visual_brief": "举手抢橡皮",
-                "shot_type": "中景",
+                "shot_type": "特写",
                 "dialogue": [{"speaker": "昭昭", "text": "我先拿到的！"}],
             },
             {
@@ -156,6 +156,7 @@ def test_build_image_prompts_daily_keyframe_marks_motion_mode():
     assert "与静图一致" in prompts["system"]
     assert "镜头固定" in prompts["system"] or "不推近" in prompts["system"]
     assert "开场首镜" in prompts["system"]
+    assert "须特写" in prompts["system"]
     assert len(prompts["system"]) < 3800
 
 

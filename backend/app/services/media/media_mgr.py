@@ -328,6 +328,7 @@ class MediaMgr:
         end_path: Path | None = None,
         bgm_path: Path | None = None,
         bgm_volume_db: float = -18.0,
+        burn_subtitles: bool = True,
     ) -> MergeResult:
         t0 = time.time()
         log_ffmpeg_hwaccel_config(context="merge")
@@ -363,6 +364,50 @@ class MediaMgr:
             clip_durations=clip_durations,
         )
         logger.info("merge: audio merged (pts corrected)")
+
+        # 成片统一 ASS 烧字幕（分镜 clip 不再叠字幕）
+        if burn_subtitles:
+            subtitle_cues = tts_mgr.load_subtitle_cues(
+                tts_mgr.subtitle_cues_path_for(audio_path.parent)
+            )
+            flat_cues: list[tuple[str, float]] = []
+            for seg in sorted_seg_lst:
+                index = seg["segment_index"]
+                for cue in subtitle_cues:
+                    if cue.segment_index != index or cue.duration_sec <= 0:
+                        continue
+                    flat_cues.append((cue.text, cue.duration_sec))
+            if not flat_cues and subtitle_path and subtitle_path.exists():
+                logger.warning(
+                    "merge: no subtitle_cues.json phrases; subtitle_path=%s unused for burn",
+                    subtitle_path.name,
+                )
+            if flat_cues:
+                from app.services.segment.clip.clip_render import burn_ass_subtitles
+
+                base_w, base_h = probe_video_size(body_with_audio)
+                work_dir = media_dir / "merge_work"
+                work_dir.mkdir(parents=True, exist_ok=True)
+                subtitle_style = subtitle_style_for_canvas(base_w, base_h)
+                logger.info(
+                    "merge: burning %s subtitle cues via ass on %sx%s font_size=%s",
+                    len(flat_cues),
+                    base_w,
+                    base_h,
+                    subtitle_style["font_size"],
+                )
+                ass_path = work_dir / "subtitles.ass"
+                ass_path.write_text(
+                    build_ass_from_phrase_cues(flat_cues, width=base_w, height=base_h),
+                    encoding="utf-8",
+                )
+                burned = work_dir / "body_with_subs.mp4"
+                burn_ass_subtitles(body_with_audio, ass_path, burned)
+                shutil.move(burned, body_with_audio)
+            else:
+                logger.warning("merge: no subtitle cues with duration, skipping burn")
+        else:
+            logger.info("merge: subtitle burn disabled")
 
         if bgm_path is not None and bgm_path.exists():
             logger.info(
@@ -408,6 +453,7 @@ class MediaMgr:
         base_video_path: Path,
         audio_path: Path,
         intro_path: Path | None,
+        burn_subtitles: bool = True,
     ) -> MergeResult:
         """素材流水线：基底视频 + 字幕烧录 + TTS + 片头。"""
         t0 = time.time()
@@ -416,7 +462,7 @@ class MediaMgr:
         subtitle_cues = tts_mgr.load_subtitle_cues(
             tts_mgr.subtitle_cues_path_for(audio_path.parent)
         )
-        if not subtitle_cues:
+        if burn_subtitles and not subtitle_cues:
             raise FileNotFoundError(
                 f"缺少 {tts_mgr.subtitle_cues_path_for(audio_path.parent)}，请从 tts 阶段重跑"
             )
@@ -442,7 +488,7 @@ class MediaMgr:
             (cue.text, cue.duration_sec)
             for cue in subtitle_cues
             if cue.duration_sec > 0 and cue.text.strip()
-        ]
+        ] if burn_subtitles else []
 
         work_dir = media_dir / "merge_work"
         work_dir.mkdir(parents=True, exist_ok=True)
@@ -478,7 +524,12 @@ class MediaMgr:
                 height=base_h,
             )
         else:
-            logger.warning("merge_material: no subtitle cues with duration, skipping burn")
+            if burn_subtitles:
+                logger.warning(
+                    "merge_material: no subtitle cues with duration, skipping burn"
+                )
+            else:
+                logger.info("merge_material: subtitle burn disabled")
             fit_video_duration(
                 base_video_path,
                 body_path,

@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from app.services.segment.clip.clip_mgr import ClipProvider, clip_mgr
-from app.services.segment.clip.clip_render import image_to_clip, image_to_clip_timed_overlays
+from app.services.segment.clip.clip_render import image_to_clip
 
 
 class FfmpegClipProvider(ClipProvider):
@@ -25,39 +25,20 @@ class FfmpegClipProvider(ClipProvider):
     ) -> Path:
         _ = motion_prompt
         _ = image_prompt
-        total_duration, overlay_windows, overlay_paths = clip_mgr.prepare_subtitle_overlays(
-            subtitle_cues=subtitle_cues,
-            work_dir=work_dir,
-            segment_index=segment_index,
-            width=width,
-            height=height,
-        )
+        _ = work_dir
+        total_duration = clip_mgr.cue_total_duration(subtitle_cues)
         if total_duration <= 0:
             raise ValueError(f"segment {segment_index} has zero duration")
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            if overlay_windows:
-                image_to_clip_timed_overlays(
-                    image_path,
-                    overlay_windows,
-                    output_path,
-                    total_duration,
-                    preset=motion_preset,
-                    segment_index=segment_index,
-                    width=width,
-                    height=height,
-                )
-            else:
-                image_to_clip(
-                    image_path,
-                    output_path,
-                    total_duration,
-                    preset=motion_preset,
-                    segment_index=segment_index,
-                    width=width,
-                    height=height,
-                )
-        finally:
-            clip_mgr.cleanup_overlay_paths(overlay_paths)
+        # 字幕改在 merge 阶段 ASS 烧录，分镜只出干净动效片
+        image_to_clip(
+            image_path,
+            output_path,
+            total_duration,
+            preset=motion_preset,
+            segment_index=segment_index,
+            width=width,
+            height=height,
+        )
         return output_path

@@ -14,7 +14,7 @@ import requests
 
 from app.config import get_settings
 from app.services.segment.clip.clip_mgr import ClipProvider, clip_mgr
-from app.services.segment.clip.clip_render import fit_video_duration, video_to_clip_timed_overlays
+from app.services.segment.clip.clip_render import fit_video_duration
 from app.services.media.ffmpeg_utils import ffmpeg_cmd_start, probe_duration, run_ffmpeg
 
 logger = logging.getLogger(__name__)
@@ -235,20 +235,13 @@ class WanClipProvider(ClipProvider):
         _ = motion_preset
         _ = image_prompt
         t0 = time.time()
-        total_duration, overlay_windows, overlay_paths = clip_mgr.prepare_subtitle_overlays(
-            subtitle_cues=subtitle_cues,
-            work_dir=work_dir,
-            segment_index=segment_index,
-            width=width,
-            height=height,
-        )
+        total_duration = clip_mgr.cue_total_duration(subtitle_cues)
         if total_duration <= 0:
             raise ValueError(f"segment {segment_index} has zero duration")
 
         prompt = _stabilize_motion_prompt(motion_prompt or "")
         api_duration = self._pick_api_duration(total_duration)
         raw_path = work_dir / f"{segment_index}.wan_raw.mp4"
-        fitted_path = work_dir / f"{segment_index}.wan_fit.mp4"
 
         logger.info("clip %s: submitting i2v (duration=%s, motion=%s...)", segment_index, api_duration, prompt[:60])
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -272,30 +265,16 @@ class WanClipProvider(ClipProvider):
                     "-y", str(looped),
                 ])
                 raw_path = looped
+            # 字幕改在 merge 阶段 ASS 烧录
             fit_video_duration(
                 raw_path,
-                fitted_path,
+                output_path,
                 total_duration,
                 width=width,
                 height=height,
             )
-            logger.info("clip %s: overlaying %s subtitles", segment_index, len(overlay_windows))
-            if overlay_windows:
-                video_to_clip_timed_overlays(
-                    fitted_path,
-                    overlay_windows,
-                    output_path,
-                    total_duration,
-                    width=width,
-                    height=height,
-                )
-            else:
-                fitted_path.replace(output_path)
         finally:
-            clip_mgr.cleanup_overlay_paths(overlay_paths)
             raw_path.unlink(missing_ok=True)
-            if fitted_path.exists() and fitted_path != output_path:
-                fitted_path.unlink(missing_ok=True)
         elapsed = time.time() - t0
         logger.info("clip %s: done in %.1fs", segment_index, elapsed)
         return output_path

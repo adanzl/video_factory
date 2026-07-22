@@ -149,7 +149,12 @@ class Config:
         self.clip_submit_interval_sec: float = float(
             os.getenv("CLIP_SUBMIT_INTERVAL_SEC", os.getenv("IMAGE_SUBMIT_INTERVAL_SEC", "3"))
         )
-        self.agnes_submit_interval_sec: float = float(os.getenv("AGNES_SUBMIT_INTERVAL_SEC", "12"))
+        # 付费 Key：enterprise 有效 RPM≈2 → 默认 30s（Token Plan≈5 可改更短）
+        self.agnes_submit_interval_sec: float = float(os.getenv("AGNES_SUBMIT_INTERVAL_SEC", "30"))
+        # Free / default Key：视频有效 RPM=1 → 默认 60s
+        self.agnes_free_submit_interval_sec: float = float(
+            os.getenv("AGNES_FREE_SUBMIT_INTERVAL_SEC", "60")
+        )
         self.wan_i2v_model: str = os.getenv("WAN_I2V_MODEL", "wanx2.1-i2v-turbo")  # cSpell: disable-line
         self.wan_i2v_resolution: str = os.getenv("WAN_I2V_RESOLUTION", "720P")
         self.wan_i2v_prompt_extend: bool = _bool("WAN_I2V_PROMPT_EXTEND", True)
@@ -202,7 +207,7 @@ class Config:
         self.agnes_video_height: int = int(os.getenv("AGNES_VIDEO_HEIGHT", "720"))
         self.agnes_video_frame_rate: int = int(os.getenv("AGNES_VIDEO_FRAME_RATE", "24"))
         self.agnes_video_poll_interval_sec: float = float(
-            os.getenv("AGNES_VIDEO_POLL_INTERVAL_SEC", "5")
+            os.getenv("AGNES_VIDEO_POLL_INTERVAL_SEC", "15")
         )
         self.agnes_video_poll_max_attempts: int = int(os.getenv("AGNES_VIDEO_POLL_MAX_ATTEMPTS", "120"))
         self.agnes_video_task_max_retries: int = int(os.getenv("AGNES_VIDEO_TASK_MAX_RETRIES", "2"))

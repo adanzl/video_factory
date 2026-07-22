@@ -68,7 +68,7 @@
             class="flex-1"
             size="small"
             :loading="submitting"
-            :disabled="!localStory?.id"
+            :disabled="!localStory?.id || localStory.status === 'processing' || !(editStory.dialogue?.length)"
             @click="handleCreateJob"
           >
             发起任务
@@ -152,7 +152,7 @@ import { useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import { Edit } from "@element-plus/icons-vue";
 import type { DailyStoryRecord, StoryContent } from "@/api/api-daily-story";
-import { createDailyStoryJob, regenerateDailyStory, updateDailyStory, syncDailyStoryToJob } from "@/api/api-daily-story";
+import { createDailyStoryJob, regenerateDailyStory, updateDailyStory, syncDailyStoryToJob, waitDailyStoryReady } from "@/api/api-daily-story";
 
 function speakerStyle(speaker: string): { bg: string; text: string } {
   if (speaker === '昭昭') return { bg: 'bg-blue-50', text: 'text-blue-600 font-bold' }
@@ -285,7 +285,18 @@ async function handleRegenerate() {
   if (!storyId) return;
   regenerating.value = true;
   try {
-    const newStory = await regenerateDailyStory(storyId);
+    await regenerateDailyStory(storyId);
+    const newStory = await waitDailyStoryReady(storyId);
+    if (newStory.status === "failed") {
+      ElMessage.error("重新生成失败，仍保留上一稿");
+      emit("updated", newStory);
+      return;
+    }
+    if (newStory.status === "processing") {
+      ElMessage.warning("仍在生成中，请稍后刷新");
+      emit("updated", newStory);
+      return;
+    }
     ElMessage.success("已重新生成");
     emit("updated", newStory);
   } catch (e: any) {

@@ -40,7 +40,7 @@ def render_feed_title(
         max_height=max_height,
     )
     line_gap = max(8, font_size // 14)
-    stroke = STROKE_WIDTH + 2
+    stroke = STROKE_WIDTH + 4
 
     rendered = [
         render_text_rgba(
@@ -50,7 +50,9 @@ def render_feed_title(
             stroke_width=stroke,
             stroke_fill=theme.title_stroke,
             with_shadow=True,
-            shadow_blur=10,
+            shadow_blur=14,
+            shadow_offset_x=3,
+            shadow_offset_y=4,
         )
         for line in lines
     ]

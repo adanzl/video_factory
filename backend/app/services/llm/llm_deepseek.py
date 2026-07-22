@@ -45,11 +45,15 @@ from app.services.daily_story.prompts import (
     DAILY_STORY_CHARACTERS,
     DAILY_STORY_CHARACTER_MOM,
     _correct_dialogue_speaker,
+    _select_story_type,
     build_daily_script_prompts,
+    build_daily_story_opening_prompts,
     build_daily_story_prompts,
     build_daily_story_retry_user,
     build_daily_story_theme_prompts,
+    stitch_daily_story_opening,
     validate_daily_story_json,
+    validate_daily_story_opening,
 )
 from app.utils.job_cancel import raise_if_job_cancelled
 from app.utils.media import (
@@ -69,7 +73,8 @@ _NARRATION_EXPAND_ATTEMPTS = 2
 _TRUNCATION_RETRY_ATTEMPTS = 3
 
 # 硬关 thinking 时的温度：越大越野。走配置（开 thinking）时勿传。
-_TEMP_CREATIVE_HIGH = 0.95  # D1/D2
+# D2 重试 / D2b 开场走配置 thinking，不传 temperature。
+_TEMP_CREATIVE_HIGH = 0.95  # D1/D2 首稿
 _TEMP_CREATIVE_MID = 0.8  # A2/C/D4/E1
 _TEMP_UTILITY = 0.5  # E2/E3/E4/封面
 
@@ -246,6 +251,25 @@ def _escape_control_chars_in_json_strings(raw: str) -> str:
     return "".join(result)
 
 
+def _fix_trailing_commas(text: str) -> str:
+    """移除 JSON 数组和对象中非法的尾部逗号。"""
+    import re
+    # 移除数组中 ] 前的尾部逗号
+    text = re.sub(r',\s*]', ']', text)
+    # 移除对象中 } 前的尾部逗号
+    text = re.sub(r',\s*}', '}', text)
+    return text
+
+
+def _repair_speaker_line_colon_json(text: str) -> str:
+    """修常见笔误：\"speaker\":\"昭昭\":\"台词\" → \"speaker\":\"昭昭\",\"line\":\"台词\"。"""
+    return re.sub(
+        r'"speaker"\s*:\s*"(昭昭|灿灿|妈妈)"\s*:\s*"',
+        r'"speaker":"\1","line":"',
+        text,
+    )
+
+
 def _loads_llm_json(content: str) -> dict[str, Any]:
     text = _strip_markdown_json_fence(content)
     candidates = [text]
@@ -255,7 +279,13 @@ def _loads_llm_json(content: str) -> dict[str, Any]:
 
     last_exc: json.JSONDecodeError | None = None
     for candidate in candidates:
-        for variant in (candidate, _escape_control_chars_in_json_strings(candidate), _fix_trailing_commas(candidate)):
+        for variant in (
+            candidate,
+            _escape_control_chars_in_json_strings(candidate),
+            _fix_trailing_commas(candidate),
+            _repair_speaker_line_colon_json(candidate),
+            _fix_trailing_commas(_repair_speaker_line_colon_json(candidate)),
+        ):
             try:
                 parsed = json.loads(variant)
             except json.JSONDecodeError as exc:
@@ -264,16 +294,6 @@ def _loads_llm_json(content: str) -> dict[str, Any]:
             if isinstance(parsed, dict):
                 return parsed
     raise ValueError(f"LLM returned invalid JSON: {last_exc}") from last_exc
-
-
-def _fix_trailing_commas(text: str) -> str:
-    """移除 JSON 数组和对象中非法的尾部逗号。"""
-    import re
-    # 移除数组中 ] 前的尾部逗号
-    text = re.sub(r',\s*]', ']', text)
-    # 移除对象中 } 前的尾部逗号
-    text = re.sub(r',\s*}', '}', text)
-    return text
 
 
 def _assemble_storyboard_narration(data: dict[str, Any]) -> dict[str, Any]:
@@ -1523,49 +1543,117 @@ class DeepSeekClient(LLMClient):
         self,
         theme: str,
     ) -> dict[str, Any]:
-        system, user = build_daily_story_prompts(theme)
+        body = self._generate_daily_story_body(theme)
+        opening = self._generate_daily_story_opening(theme, body)
+        story = stitch_daily_story_opening(body, opening)
+        # 拼开场后只做结构/单句等终检；全文总字数不再硬卡（开场已单独校验）
+        validate_daily_story_json(story, phase="full")
+        return story
+
+    def _generate_daily_story_body(self, theme: str) -> dict[str, Any]:
+        story_type = _select_story_type(theme)
+        # 首稿 draft（含铺垫字数）；重试 revise（只走校验硬卡）
+        system, user = build_daily_story_prompts(
+            theme, story_type=story_type, length_mode="draft"
+        )
         last_exc: ValueError | None = None
         # 日常故事易因字数波动失败：至少 4 次，且重试改为「带上一稿修订」
         max_attempts = max(4, get_settings().script_qa_max_attempts)
         prev_story: dict | None = None
         for attempt in range(max_attempts):
-            temperature = (
-                _TEMP_CREATIVE_HIGH if attempt == 0 else _TEMP_CREATIVE_MID
-            )
-            raw, _ = self._chat_json(
-                system,
-                user,
-                thinking_enabled=False,
-                temperature=temperature,
-            )
+            # 首稿硬关 thinking + 高温度保创意；重试走配置修硬约束
+            # （配置开 thinking 时模型忽略 temperature，故重试不传）
+            if attempt == 0:
+                raw, _ = self._chat_json(
+                    system,
+                    user,
+                    thinking_enabled=False,
+                    temperature=_TEMP_CREATIVE_HIGH,
+                )
+            else:
+                raw, _ = self._chat_json(system, user)
             try:
-                validate_daily_story_json(raw)
+                validate_daily_story_json(raw, phase="body")
                 return raw
             except ValueError as exc:
                 last_exc = exc
                 prev_story = raw if isinstance(raw, dict) else prev_story
                 if attempt + 1 >= max_attempts:
+                    logger.warning(
+                        "[DAILY_STORY] generate story body validation failed "
+                        "attempt=%d/%d: %s",
+                        attempt + 1,
+                        max_attempts,
+                        exc,
+                    )
                     break
                 errors = str(exc).removeprefix("daily_story 校验失败: ")
                 logger.warning(
-                    "[DAILY_STORY] generate story validation failed "
+                    "[DAILY_STORY] generate story body validation failed "
                     "attempt=%d/%d: %s",
                     attempt + 1,
                     max_attempts,
                     exc,
+                )
+                # 重试 system/user 均切到校验硬卡字数（去掉铺垫目标）
+                system, _ = build_daily_story_prompts(
+                    theme, story_type=story_type, length_mode="revise"
                 )
                 if isinstance(prev_story, dict):
                     user = build_daily_story_retry_user(
                         theme,
                         prev_story=prev_story,
                         errors=errors,
+                        phase="body",
                     )
                 else:
                     user = (
-                        f"{build_daily_story_prompts(theme)[1]}\n\n"
+                        f"{build_daily_story_prompts(theme, story_type=story_type, length_mode='revise')[1]}\n\n"
                         f"【重试】上一轮校验未通过：{errors}\n"
-                        "请直接输出符合硬约束的完整 JSON。"
+                        "请直接输出符合硬约束的完整 JSON（正文勿写发现开场）。"
                     )
+        assert last_exc is not None
+        raise last_exc
+
+    def _generate_daily_story_opening(
+        self,
+        theme: str,
+        body: dict[str, Any],
+    ) -> list[dict]:
+        system, user = build_daily_story_opening_prompts(theme, body)
+        last_exc: ValueError | None = None
+        max_attempts = max(3, get_settings().script_qa_max_attempts)
+        core = str(body.get("conflict_core") or "")
+        setting = str(body.get("setting") or "")
+        for attempt in range(max_attempts):
+            try:
+                # 开场是短约束任务：走配置 thinking（不传 temperature）
+                raw, _ = self._chat_json(system, user)
+                opening_raw = raw.get("opening") if isinstance(raw, dict) else None
+                return validate_daily_story_opening(
+                    opening_raw,
+                    conflict_core=core,
+                    setting=setting,
+                )
+            except ValueError as exc:
+                last_exc = exc
+                if attempt + 1 >= max_attempts:
+                    break
+                errors = str(exc).removeprefix("daily_story 开场校验失败: ")
+                logger.warning(
+                    "[DAILY_STORY] generate opening validation failed "
+                    "attempt=%d/%d: %s",
+                    attempt + 1,
+                    max_attempts,
+                    exc,
+                )
+                user = (
+                    f"{build_daily_story_opening_prompts(theme, body)[1]}\n\n"
+                    f"【重试】上一轮开场未通过：{errors}\n"
+                    "请只输出合法 JSON："
+                    '{"opening":[{"speaker":"昭昭","line":"..."}]}；'
+                    "禁止写成 {\"speaker\":\"昭昭\":\"台词\"}。"
+                )
         assert last_exc is not None
         raise last_exc
 

@@ -114,7 +114,8 @@ _IMAGE_PROMPT_RULE_DAILY_STORY = (
     "禁止同高或弟弟更高。"
     "【表情】须夸张可读：瞪圆眼、撇嘴、叉腰、愣住张嘴、鼓腮、抿嘴鼓气等，"
     "表情强度对标本段台词情绪，禁止面无表情的站桩。"
-    "【开场首镜】segment_index=1 须中近景或特写，定格冲突峰值姿势"
+    "【开场首镜】segment_index=1 须特写，定格冲突峰值姿势（抢/举/夺/藏），"
+    "用发现开场也要落在动作峰值上，禁止全景空镜开场"
     "（抢/举/夺/藏道具动作最大的一瞬），冲突道具须清晰可见且占比够大，"
     "表情比后文再夸张一档；禁止平淡站桩或纯环境交代开场。"
     "单帧静态；勿写画风套话（出图前系统硬编码）。"
@@ -171,7 +172,7 @@ _IMAGE_PROMPT_MOTION_TAIL_DAILY = (
     "【motion_prompt 分流】按该段 motion_mode 选择规则："
     "motion_mode=ambient（默认）→"
     + _IMAGE_PROMPT_MOTION_TAIL_DAILY_AMBIENT
-    + "motion_mode=keyframe（特写/开场首镜/i2v 关键帧）→"
+    + "motion_mode=keyframe（特写/i2v 关键帧）→"
     + _IMAGE_PROMPT_MOTION_TAIL_DAILY_KEYFRAME
 )
 

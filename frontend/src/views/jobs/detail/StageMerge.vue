@@ -9,14 +9,20 @@
     />
 
     <div :class="STAGE_TWO_COL_CLASS">
-      <div :class="STAGE_COL_LEFT_CLASS">
-        <div :class="STAGE_PANEL_CLASS">
-          <div :class="STAGE_PANEL_TITLE_CLASS">BGM 配置</div>
+      <div :class="STAGE_COL_LEFT_CLASS" class="flex gap-2">
+        <div :class="STAGE_PANEL_CLASS" class="basis-80">
+          <div :class="STAGE_PANEL_TITLE_CLASS">成片配置</div>
           <el-form :label-width="STAGE_FORM_LABEL_WIDTH" :class="STAGE_FORM_CLASS">
-            <el-form-item label="启用">
+            <el-form-item label="烧录字幕">
+              <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <el-switch v-model="subtitleEnabled" :disabled="actionDisabled" />
+                <span class="text-xs text-gray-400">关闭后成片不叠加字幕</span>
+              </div>
+            </el-form-item>
+            <el-form-item label="BGM">
               <el-switch v-model="bgmEnabled" :disabled="actionDisabled" />
             </el-form-item>
-            <el-form-item label="曲目">
+            <el-form-item label="背景音乐">
               <el-select
                 v-model="bgmMaterialId"
                 filterable
@@ -50,18 +56,19 @@
           </el-form>
           <audio
             v-if="bgmPreviewUrl"
-            class="mt-2 block w-full"
+            class="mt-1 block w-full"
             :src="bgmPreviewUrl"
             :crossorigin="MEDIA_CROSS_ORIGIN"
             controls
             preload="metadata"
           />
-          <div v-else-if="bgmEnabled" class="mt-2 text-xs text-gray-400">
+          <div v-else-if="bgmEnabled" class="mt-1 text-xs text-gray-400">
             选择曲目后可试听
           </div>
         </div>
 
-        <div :class="[STAGE_PANEL_CLASS, 'mt-4']">
+        <div :class="STAGE_PANEL_CLASS" class="basis-80">
+          <div :class="STAGE_PANEL_TITLE_CLASS">成片信息</div>
           <el-descriptions :column="1" border label-width="70px">
             <el-descriptions-item label="分辨率">{{ resolutionText }}</el-descriptions-item>
             <el-descriptions-item label="时长">{{ durationText }}</el-descriptions-item>
@@ -181,6 +188,7 @@ const downloading = ref(false);
 const loadError = ref("");
 const videoMeta = ref<{ width: number; height: number } | null>(null);
 
+const subtitleEnabled = ref(true);
 const bgmEnabled = ref(false);
 const bgmMaterialId = ref<number | undefined>(undefined);
 const bgmVolumeDb = ref(-16);
@@ -222,9 +230,12 @@ const lazyVideoUrl = computed(() => lazyMediaSrc(videoUrl.value, props.stageActi
 const selectedBgm = computed(() =>
   bgmOptions.value.find((item) => item.id === bgmMaterialId.value)
 );
-const bgmPreviewUrl = computed(() =>
-  bgmEnabled.value ? getMediaFileUrl(selectedBgm.value?.file_path) : ""
-);
+const bgmPreviewUrl = computed(() => {
+  if (!bgmEnabled.value || !selectedBgm.value?.file_path) {
+    return "";
+  }
+  return getMediaFileUrl(selectedBgm.value.file_path);
+});
 
 const durationText = computed(() => {
   const duration = resolveFinalDuration(props.job.final_path);
@@ -249,6 +260,15 @@ function bgmOptionLabel(item: MaterialAudioRecord): string {
   const dur =
     item.duration_sec != null ? ` · ${formatMediaDuration(item.duration_sec)}` : "";
   return `#${item.id} ${item.name}${dur}`;
+}
+
+function syncSubtitleFromJob() {
+  const subtitle = props.job.info?.subtitle;
+  if (subtitle && typeof subtitle.enabled === "boolean") {
+    subtitleEnabled.value = subtitle.enabled;
+  } else {
+    subtitleEnabled.value = true;
+  }
 }
 
 function syncBgmFromJob() {
@@ -326,6 +346,9 @@ const handleRun = async (toEnd: boolean) => {
     await runJobStageAction("merge", {
       id: props.job.id,
       to_end: toEnd,
+      subtitle: {
+        enabled: subtitleEnabled.value,
+      },
       bgm: {
         enabled: bgmEnabled.value,
         material_id: bgmMaterialId.value ?? null,
@@ -352,7 +375,14 @@ watch(
   { deep: true }
 );
 
+watch(
+  () => props.job.info?.subtitle,
+  () => syncSubtitleFromJob(),
+  { deep: true }
+);
+
 onMounted(() => {
+  syncSubtitleFromJob();
   syncBgmFromJob();
   void loadBgmOptions();
 });

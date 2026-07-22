@@ -80,13 +80,14 @@ def insert_story(
     *,
     theme: str,
     story: dict[str, Any],
+    status: str = "active",
 ) -> int:
     cur = conn.execute(
         """
-        INSERT INTO daily_story (theme, story_json)
-        VALUES (?, ?)
+        INSERT INTO daily_story (theme, story_json, status)
+        VALUES (?, ?, ?)
         """,
-        (theme, json.dumps(story, ensure_ascii=False)),
+        (theme, json.dumps(story, ensure_ascii=False), status),
     )
     return cur.lastrowid  # type: ignore[return-value]
 
@@ -114,13 +115,22 @@ def update_story(
     conn: sqlite3.Connection,
     story_id: int,
     *,
-    story: dict[str, Any],
+    story: dict[str, Any] | None = None,
+    status: str | None = None,
 ) -> dict:
+    if story is None and status is None:
+        return get_story(conn, story_id)
+    sets: list[str] = ["updated_at = datetime('now')"]
+    params: list[Any] = []
+    if story is not None:
+        sets.append("story_json = ?")
+        params.append(json.dumps(story, ensure_ascii=False))
+    if status is not None:
+        sets.append("status = ?")
+        params.append(status)
+    params.append(story_id)
     conn.execute(
-        """
-        UPDATE daily_story SET story_json = ?, updated_at = datetime('now')
-        WHERE id = ?
-        """,
-        (json.dumps(story, ensure_ascii=False), story_id),
+        f"UPDATE daily_story SET {', '.join(sets)} WHERE id = ?",
+        params,
     )
     return get_story(conn, story_id)

@@ -37,6 +37,10 @@ class ClipProvider(ABC):
 class ClipMgr:
     """分镜 clip 管理器。"""
 
+    @staticmethod
+    def cue_total_duration(subtitle_cues: list[tuple[str, float]]) -> float:
+        return sum(duration for _, duration in subtitle_cues if duration > 0)
+
     def prepare_subtitle_overlays(
         self,
         *,
@@ -46,9 +50,10 @@ class ClipMgr:
         width: int | None = None,
         height: int | None = None,
     ) -> tuple[float, list[tuple[Path, float, float]], list[Path]]:
+        """按句生成字幕 PNG 时间窗（预览/调试用；成片烧录已改到 merge）。"""
         from app.services.segment.clip.subtitle_overlay import render_subtitle_overlay
 
-        total_duration = sum(duration for _, duration in subtitle_cues if duration > 0)
+        total_duration = self.cue_total_duration(subtitle_cues)
         overlay_windows: list[tuple[Path, float, float]] = []
         overlay_paths: list[Path] = []
         cursor = 0.0
