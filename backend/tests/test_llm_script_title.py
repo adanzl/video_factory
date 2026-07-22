@@ -168,8 +168,25 @@ def test_validate_daily_story_json_rejects_bad_speaker():
 
 def test_validate_daily_story_json_allows_soft_ending():
     story = _valid_story()
+    # 软收前先破功
+    story["dialogue"][-2]["line"] = "你说晚了我已经在了呀呀呀呀"
     story["dialogue"][-1]["line"] = "算了听姐姐的一二三四五六七八"
     validate_daily_story_json(story)
+
+
+def test_validate_daily_story_json_rejects_consecutive_same_speaker():
+    story = _valid_story()
+    story["dialogue"][4]["speaker"] = "昭昭"
+    story["dialogue"][5]["speaker"] = "昭昭"
+    with pytest.raises(ValueError, match="连说"):
+        validate_daily_story_json(story)
+
+
+def test_validate_daily_story_json_rejects_limp_soft_close():
+    story = _valid_story()
+    story["dialogue"][-1]["line"] = "好了好了给你一二三四五六七八"
+    with pytest.raises(ValueError, match="无破功软收"):
+        validate_daily_story_json(story)
 
 
 def test_daily_story_prompts_require_stance_coherence():
@@ -177,7 +194,10 @@ def test_daily_story_prompts_require_stance_coherence():
     assert "立场连贯" in story_sys
     assert "自相矛盾" in story_sys
     assert "软收" in story_sys
-    assert "好吧" in story_user or "自相矛盾" in story_user
+    assert "轮流" in story_sys or "连说" in story_sys
+    assert "镜像" in story_sys or "对称复读" in story_sys
+    assert "无破功软收" in story_sys or "先破功" in story_user
+    assert "好吧" in story_sys or "给你" in story_user or "自相矛盾" in story_sys
 
 
 def test_daily_story_prompts_keep_single_rule_and_no_mom_referee():
@@ -270,6 +290,12 @@ def test_build_daily_story_retry_user_asks_to_expand_short_draft():
 
     prev = _valid_story(n=10)
     assert resolve_daily_story_retry_length_mode(prev) == "revise_expand"
+    assert (
+        resolve_daily_story_retry_length_mode(
+            prev, errors="正文总字数须≥280，当前180（还差100字）"
+        )
+        == "revise_expand"
+    )
     user = build_daily_story_retry_user(
         "把姐姐的鞋带系一起",
         prev_story=prev,
@@ -286,7 +312,10 @@ def test_build_daily_story_retry_user_asks_to_expand_short_draft():
 
 
 def test_resolve_daily_story_retry_length_mode_trim_when_long():
-    from app.services.daily_story.prompts import resolve_daily_story_retry_length_mode
+    from app.services.daily_story.prompts import (
+        build_daily_story_retry_user,
+        resolve_daily_story_retry_length_mode,
+    )
 
     prev = _valid_story()
     prev["dialogue"] = prev["dialogue"] + [
@@ -294,6 +323,78 @@ def test_resolve_daily_story_retry_length_mode_trim_when_long():
         {"speaker": "灿灿", "line": "一二三四五六七八九十十二"},
     ] * 20
     assert resolve_daily_story_retry_length_mode(prev) == "revise_trim"
+    # 只超一点：只删 1 句
+    barely = _valid_story(n=20)  # 18*20=360
+    user = build_daily_story_retry_user(
+        "争酸奶",
+        prev_story=barely,
+        errors="正文总字数须≤340，当前360（超出20字）",
+    )
+    assert "只删约 1 句" in user
+    # 字数已在区间、只修连说 → revise，且提示勿大删
+    ok = _valid_story()
+    assert (
+        resolve_daily_story_retry_length_mode(
+            ok, errors="dialogue[1:2] 昭昭 连说≥2句，须轮流说话"
+        )
+        == "revise"
+    )
+    alt = build_daily_story_retry_user(
+        "争酸奶",
+        prev_story=ok,
+        errors="dialogue[1:2] 昭昭 连说≥2句，须轮流说话",
+    )
+    assert "连说" in alt
+    assert "勿借机大删" in alt
+
+
+def test_conflict_anchor_must_words_prefers_short_object():
+    from app.services.daily_story.prompts import (
+        _conflict_anchor_must_words,
+        build_daily_story_opening_retry_user,
+    )
+
+    must = _conflict_anchor_must_words("昭昭vs灿灿争第一个洗澡")
+    assert "洗澡" in must
+    assert "一个洗澡" not in must
+    user = build_daily_story_opening_retry_user(
+        "谁先洗澡",
+        {
+            "scene_title": "谁先洗",
+            "setting": "浴室门口",
+            "conflict_core": "昭昭vs灿灿争第一个洗澡",
+            "dialogue": [{"speaker": "昭昭", "line": "谁先到谁先洗"}],
+        },
+        errors="发现开场未体现 conflict_core 锚点",
+    )
+    assert "洗澡" in user
+    assert "必须点名" in user
+
+
+def test_score_daily_story_penalizes_wait_mom_ending():
+    from app.services.daily_story.quality import score_daily_story
+
+    story = _valid_story()
+    story["discovery_opening"] = [{"speaker": "昭昭", "line": "咦新橡皮怎么在你手里"}]
+    story["dialogue"][-1]["line"] = "等妈回来评理呀呀呀呀呀呀"
+    q = score_daily_story(story)
+    assert q["grade"] in ("中", "偏弱")
+    assert any("妈妈" in r or "等妈" in r for r in q["reasons"])
+    assert "等妈" in q["summary"] or "妈妈" in q["summary"]
+
+
+def test_score_daily_story_rewards_punch_ending():
+    from app.services.daily_story.quality import attach_daily_story_quality, score_daily_story
+
+    story = _valid_story()
+    story["discovery_opening"] = [{"speaker": "昭昭", "line": "咦新橡皮怎么在你手里"}]
+    story["dialogue"][-2]["line"] = "你说晚了我已经在了呀呀"
+    story["dialogue"][-1]["line"] = "之前是旧的这个新的标签在"
+    q = score_daily_story(story)
+    assert q["score"] >= 75
+    assert q["grade"] == "好"
+    attach_daily_story_quality(story)
+    assert story["quality"]["grade"] == "好"
 
 
 def test_stitch_daily_story_opening_dedupes_overlapping_body_start():

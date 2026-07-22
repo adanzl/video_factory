@@ -675,6 +675,9 @@ class LLMMgr:
         started = time.perf_counter()
         try:
             story = self._get_client().generate_daily_story(theme)
+            from app.services.daily_story.quality import attach_daily_story_quality
+
+            attach_daily_story_quality(story)
         except ValueError as exc:
             logger.error("[DAILY_STORY] generate failed theme=%r: %s", theme, exc)
             raise
