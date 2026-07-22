@@ -319,9 +319,9 @@ def is_keyframe_segment(segment: dict[str, Any] | None) -> bool:
 def apply_keyframe_video_providers(segments: list[dict[str, Any]]) -> list[int]:
     """自动标关键帧：写入 info.video_provider=agnes_i2v。
 
-    规则：
-    - shot_type 为「特写」的分镜
-    - 开场首镜（segment_index=1），不论景别，用于留住前 3 秒
+    规则：shot_type 为「特写」的分镜。
+    开场吸引力靠分镜提示强制 scene_id=1 用特写定格冲突峰值，
+    从而仍走关键帧；不再无条件把 segment_index=1 标成关键帧。
 
     应在 fill_image_prompts 之前调用，以便关键帧走专用 motion 规则。
     返回被标为关键帧的 segment_index 列表（升序去重）。
@@ -331,9 +331,7 @@ def apply_keyframe_video_providers(segments: list[dict[str, Any]]) -> list[int]:
     for seg in segments:
         index = int(seg.get("segment_index") or 0)
         shot = str(seg.get("shot_type") or "").strip()
-        is_opening = index == 1
-        is_closeup = shot in KEYFRAME_SHOT_TYPES
-        if not is_opening and not is_closeup:
+        if shot not in KEYFRAME_SHOT_TYPES:
             continue
         info = parse_job_info(seg.get("info"))
         info["video_provider"] = KEYFRAME_VIDEO_PROVIDER

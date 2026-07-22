@@ -5,12 +5,15 @@ from __future__ import annotations
 import pytest
 
 from app.services.daily_story.prompts import (
+    DAILY_STORY_BODY_CHARS_MAX,
+    DAILY_STORY_BODY_CHARS_MIN,
     DAILY_STORY_LINE_CHARS_MAX,
-    DAILY_STORY_TOTAL_CHARS_MAX,
-    DAILY_STORY_TOTAL_CHARS_MIN,
+    build_daily_story_opening_prompts,
     build_daily_story_prompts,
     build_daily_story_theme_prompts,
+    stitch_daily_story_opening,
     validate_daily_story_json,
+    validate_daily_story_opening,
 )
 from app.services.script.optimize_title import (
     CHAT_TITLE_MAX_LEN,
@@ -65,24 +68,45 @@ def test_daily_story_prompts_share_contract():
     story_sys, story_user = build_daily_story_prompts("谁先洗澡")
     assert "10岁" in story_sys
     assert "10岁" in theme_user
-    assert "300" in story_sys and "380" in story_sys
-    assert "320" in story_sys and "360" in story_sys
-    assert "开场钩子" in story_sys
+    assert "280" in story_sys and "340" in story_sys
+    assert "390" in story_sys and "430" in story_sys
+    assert "压回硬卡" in story_sys or "先写够" in story_sys
+    assert "发现开场" in story_sys
     assert "单冲突" in story_sys
     assert "conflict_core" in story_sys
     assert "18" in story_sys
     assert "有娃的大人" in story_sys
     assert "权威翻车" in story_sys
     assert "谁先洗澡" in story_user
-    assert "前 2 句" in story_user
+    assert "发现开场" in story_user or "系统另写" in story_user
     assert "conflict_core" in story_user
     assert "对付爸妈" not in theme_user
     assert "下雨只带了一把伞" not in theme_user
     assert "动作/实物" in theme_user
 
+    open_sys, open_user = build_daily_story_opening_prompts(
+        "谁先洗澡",
+        {
+            "scene_title": "洗澡",
+            "setting": "浴室门口争谁先洗",
+            "conflict_core": "姐弟争谁先洗澡",
+            "dialogue": [
+                {"speaker": "昭昭", "line": "规则是谁先到谁先洗"},
+                {"speaker": "灿灿", "line": "我是姐姐我优先"},
+            ],
+        },
+    )
+    assert "发现" in open_sys
+    assert "谁先洗澡" in open_user
+    assert "opening" in open_sys
+    assert "正例" in open_sys
+    assert "反例" in open_sys
+    assert "鞋带" in open_sys
+    assert "本场只争这一件" in open_user
+
 
 def _valid_story(*, line: str | None = None, n: int = 17) -> dict:
-    # 默认 18*17=306，刚好过下限 300、未超上限 380
+    # 默认 18*17=306，过正文硬卡 280–340
     if line is None:
         line = "一二三四五六七八九十一二三四五六七八"
     assert len(line) <= DAILY_STORY_LINE_CHARS_MAX
@@ -107,19 +131,25 @@ def _valid_story(*, line: str | None = None, n: int = 17) -> dict:
 def test_validate_daily_story_json_ok():
     story = _valid_story()
     total = sum(len(d["line"]) for d in story["dialogue"])
-    assert DAILY_STORY_TOTAL_CHARS_MIN <= total <= DAILY_STORY_TOTAL_CHARS_MAX
-    validate_daily_story_json(story)
+    assert DAILY_STORY_BODY_CHARS_MIN <= total <= DAILY_STORY_BODY_CHARS_MAX
+    validate_daily_story_json(story, phase="body")
+    validate_daily_story_json(story, phase="full")
 
 
-def test_validate_daily_story_json_rejects_long_total_chars():
+def test_validate_daily_story_json_rejects_long_body_chars():
     with pytest.raises(ValueError, match="总字数须≤"):
-        validate_daily_story_json(_valid_story(n=34))
+        validate_daily_story_json(_valid_story(n=34), phase="body")
 
 
-def test_validate_daily_story_json_rejects_short_total_chars():
+def test_validate_daily_story_json_full_skips_total_char_hard_limit():
+    # 拼开场后全文不再卡总字数
+    long_story = _valid_story(n=34)
+    validate_daily_story_json(long_story, phase="full")
+
+
+def test_validate_daily_story_json_rejects_short_body_chars():
     with pytest.raises(ValueError, match="总字数须≥"):
-        validate_daily_story_json(_valid_story(n=10))  # 远低于 300
-
+        validate_daily_story_json(_valid_story(n=10), phase="body")
 
 def test_validate_daily_story_json_rejects_long_line():
     story = _valid_story()
@@ -150,6 +180,57 @@ def test_daily_story_prompts_require_stance_coherence():
     assert "好吧" in story_user or "自相矛盾" in story_user
 
 
+def test_daily_story_prompts_keep_single_rule_and_no_mom_referee():
+    story_sys, story_user = build_daily_story_prompts("抱枕大战")
+    assert "判赢" in story_sys or "判平" in story_sys
+    assert "一人一半" in story_sys
+    assert "换裁决" in story_sys or "剪刀石头布" in story_sys
+    assert "明天再战" in story_sys or "本场规则" in story_user
+    assert "硬拆" in story_sys
+    assert "默认可不写妈妈" in story_sys or "默认可不写" in story_user
+    assert "谁也别用" not in story_sys
+
+
+def test_daily_story_retry_uses_validation_char_limits_not_write_pad():
+    from app.services.daily_story.prompts import (
+        DAILY_STORY_BODY_CHARS_MAX,
+        DAILY_STORY_BODY_CHARS_MIN,
+        DAILY_STORY_BODY_WRITE_TARGET_MAX,
+        DAILY_STORY_BODY_WRITE_TARGET_MIN,
+        build_daily_story_retry_user,
+    )
+
+    draft_sys, draft_user = build_daily_story_prompts("争酸奶", length_mode="draft")
+    assert str(DAILY_STORY_BODY_WRITE_TARGET_MIN) in draft_sys
+    assert str(DAILY_STORY_BODY_WRITE_TARGET_MIN) in draft_user
+
+    revise_sys, revise_user = build_daily_story_prompts("争酸奶", length_mode="revise")
+    assert "硬卡" in revise_sys
+    assert str(DAILY_STORY_BODY_WRITE_TARGET_MIN) not in revise_sys
+    assert str(DAILY_STORY_BODY_WRITE_TARGET_MAX) not in revise_user
+    assert str(DAILY_STORY_BODY_CHARS_MIN) in revise_user
+    assert str(DAILY_STORY_BODY_CHARS_MAX) in revise_user
+
+    prev = _valid_story()
+    # 人为拉长上一稿，触发缩字 hint
+    prev["dialogue"] = prev["dialogue"] + [
+        {"speaker": "昭昭", "line": "一二三四五六七八九十十一"},
+        {"speaker": "灿灿", "line": "一二三四五六七八九十十二"},
+    ] * 20
+    retry_user = build_daily_story_retry_user(
+        "争酸奶",
+        prev_story=prev,
+        errors="正文总字数须≤340",
+        phase="body",
+    )
+    assert "字数硬卡" in retry_user
+    assert "本轮问题" in retry_user
+    assert "不要少太多" in retry_user
+    assert str(DAILY_STORY_BODY_WRITE_TARGET_MIN) not in retry_user
+    assert f"≤{DAILY_STORY_BODY_CHARS_MAX}" in retry_user
+    # 垂直：不复述全套首稿要求模板
+    assert "请根据上述规则，生成一个昭昭和灿灿" not in retry_user
+
 def test_validate_daily_story_json_rejects_vague_punchline():
     story = _valid_story()
     story["punchline_explain"] = "姐弟斗嘴很好笑"
@@ -179,10 +260,47 @@ def test_build_daily_story_retry_user_asks_to_expand_short_draft():
     user = build_daily_story_retry_user(
         "把姐姐的鞋带系一起",
         prev_story=prev,
-        errors="对白总字数须≥300，当前180（还差120字）",
+        errors="正文总字数须≥280，当前180（还差100字）",
     )
     assert "还差" in user
     assert "上一稿" in user
     assert "鞋带" in user
     assert "增补" in user or "扩到" in user
-    assert "禁止换 conflict_core" in user
+    assert "本轮问题" in user
+    assert "勿换主题" in user or "另开账" in user
+    assert "发现开场" in user
+
+
+def test_stitch_daily_story_opening_dedupes_overlapping_body_start():
+    body = _valid_story(n=18)  # 略长，去重后仍过全文下限
+    # 正文误写了发现句，应被拼开场时丢掉
+    body["dialogue"][0]["line"] = "咦这个新橡皮你怎么攥着呀"
+    opening = [{"speaker": "昭昭", "line": "咦这个新橡皮你怎么攥着"}]
+    story = stitch_daily_story_opening(body, opening)
+    assert story["dialogue"][0]["line"] == opening[0]["line"]
+    assert story["dialogue"][1]["line"] != "咦这个新橡皮你怎么攥着呀"
+    assert story["discovery_opening"] == opening
+    validate_daily_story_json(story, phase="full")
+
+
+def test_validate_daily_story_opening_requires_conflict_anchor():
+    with pytest.raises(ValueError, match="锚点"):
+        validate_daily_story_opening(
+            [{"speaker": "昭昭", "line": "你看今天天气真好呀"}],
+            conflict_core="姐弟抢新橡皮",
+            setting="客厅",
+        )
+    ok = validate_daily_story_opening(
+        [{"speaker": "昭昭", "line": "咦新橡皮怎么在你手里"}],
+        conflict_core="姐弟抢新橡皮",
+        setting="客厅抢新橡皮",
+    )
+    assert len(ok) == 1
+
+def test_validate_daily_story_opening_coerces_name_key_shorthand():
+    ok = validate_daily_story_opening(
+        [{"昭昭": "咦新橡皮怎么在你手里"}],
+        conflict_core="姐弟抢新橡皮",
+        setting="客厅抢新橡皮",
+    )
+    assert ok == [{"speaker": "昭昭", "line": "咦新橡皮怎么在你手里"}]
