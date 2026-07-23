@@ -201,12 +201,15 @@ def test_build_verify_checklist_daily_includes_zhao() -> None:
     assert "灿灿" in user
     assert "成年女性" in user
     assert "不超过 3 个" in user
-    assert "只能是：昭昭、灿灿、妈妈" in user
-    assert "禁止路人" in user
+    assert "只数人头" in user
+    assert "只能是：" not in user
+    assert "禁止路人" not in user
     assert "恰好" not in user
     assert "蓝衣" not in user
+    assert "短发男孩即昭昭" in user
     assert "男孩超短发" in user
     assert "波波头" in user
+    assert "扎马尾的女孩即灿灿" in user
     assert "单侧高马尾" in user
     assert "最多 2 条" in user
     assert "照片墙" in user
@@ -221,8 +224,8 @@ def test_build_verify_checklist_daily_includes_zhao() -> None:
     assert "mom_adult" not in [cid for cid, _ in items_one]
     assert "cast_count" in [cid for cid, _ in items_one]
     assert "不超过 2 个" in user_one
-    assert "只能是：昭昭、灿灿" in user_one
-    assert "未发言也可同框" in user_one
+    assert "只数人头" in user_one
+    assert "只能是：" not in user_one
 
     # 无昭昭发言时不做短发项；有灿灿则检单马尾；人数按姐弟上限 2
     items_can, user_can = AgnesImageProvider._build_verify_checklist(
@@ -235,7 +238,7 @@ def test_build_verify_checklist_daily_includes_zhao() -> None:
     assert "mom_adult" not in [cid for cid, _ in items_can]
     assert "cast_count" in [cid for cid, _ in items_can]
     assert "不超过 2 个" in user_can
-    assert "只能是：昭昭、灿灿" in user_can
+    assert "只数人头" in user_can
     assert "单侧高马尾" in user_can
 
     items_mom, user_mom = AgnesImageProvider._build_verify_checklist(
@@ -246,7 +249,8 @@ def test_build_verify_checklist_daily_includes_zhao() -> None:
     assert "mom_adult" in [cid for cid, _ in items_mom]
     assert "成年女性" in user_mom
     assert "不超过 3 个" in user_mom
-    assert "只能是：昭昭、灿灿、妈妈" in user_mom
+    assert "只数人头" in user_mom
+    assert "只能是：" not in user_mom
 
     items2, user2 = AgnesImageProvider._build_verify_checklist(
         prompt="电池剖面",
