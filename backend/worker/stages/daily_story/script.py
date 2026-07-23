@@ -167,13 +167,15 @@ class DailyScriptStage(StageExecutor):
             scrub_cast_leaks,
             speakers_from_dialogue,
         )
+        from app.services.script.visual_brief import scrub_daily_visual_brief
 
         for seg in script.get("segments") or []:
             allowed = speakers_from_dialogue(seg.get("dialogue") or [])
             cleaned = scrub_cast_leaks(str(seg.get("visual_brief") or ""), allowed)
+            cleaned = scrub_daily_visual_brief(cleaned)
             if cleaned != seg.get("visual_brief"):
                 logger.warning(
-                    "segment %d visual_brief scrubbed cast leaks "
+                    "segment %d visual_brief scrubbed "
                     "(speakers=%s): %r -> %r",
                     seg.get("segment_index"),
                     sorted(allowed),

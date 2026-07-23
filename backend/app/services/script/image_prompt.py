@@ -99,6 +99,10 @@ def assemble_daily_t2i_prompt(
     风格 + visual_brief + 出场角色外貌 + 光照 + 构图（+ 可选质检反馈）。
     """
     vb = str(seg.get("visual_brief") or "").strip()
+    if vb:
+        from app.services.script.visual_brief import scrub_daily_visual_brief
+
+        vb = scrub_daily_visual_brief(vb)
     speakers = _daily_speakers_of(seg)
     shot = str(seg.get("shot_type") or "").strip()
 

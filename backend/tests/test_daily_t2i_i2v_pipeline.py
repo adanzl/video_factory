@@ -145,3 +145,19 @@ def test_stabilize_keeps_timeline_ranges():
     assert "0.0-1.4秒灿灿说话，同时" in out
     assert "1.4-2.5秒昭昭说话，同时" in out
     assert "镜头固定" in out
+
+
+def test_scrub_daily_visual_brief_strips_labels_and_outfit_props():
+    from app.services.script.visual_brief import scrub_daily_visual_brief
+
+    raw = (
+        "客厅沙发上，灿灿刚叠好的一堆衣服（粉色卫衣、蓝色T恤等）堆在沙发左侧，"
+        "其中一件蓝色T恤被揉得皱成一团。灿灿站在沙发前叉腰瞪眼。"
+        "冲突道具：那件皱成一团的蓝色T恤清晰可见。"
+    )
+    cleaned = scrub_daily_visual_brief(raw)
+    assert "冲突道具" not in cleaned
+    assert "粉色卫衣" not in cleaned
+    assert "蓝色T恤" not in cleaned
+    assert "衣服" in cleaned
+    assert "叉腰瞪眼" in cleaned
