@@ -2,7 +2,7 @@
   <el-dialog v-model="visible" title="故事详情" width="1200px" top="5vh" @closed="emit('closed')">
     <div v-if="localStory" class="flex gap-4" style="height: 80vh;">
       <!-- 左侧：信息 -->
-      <div class="w-64 shrink-0 space-y-4 overflow-y-auto pr-2">
+      <div class="w-70 shrink-0 space-y-4 overflow-y-auto pr-2">
         <div>
           <div class="mb-1 text-xs text-gray-400">主题</div>
           <div class="text-sm">{{ localStory.theme }}</div>
@@ -30,54 +30,71 @@
         <div>
           <div class="mb-1 text-xs text-gray-400">评价</div>
           <template v-if="editStory.quality?.grade">
-            <div class="flex flex-wrap items-center gap-2">
-              <el-tag size="small" :type="qualityTagType(editStory.quality.grade)">
-                {{ editStory.quality.grade }} {{ editStory.quality.score }}
-              </el-tag>
-              <span class="text-sm text-gray-600">{{ editStory.quality.summary }}</span>
+            <div class="rounded-lg bg-gray-50 p-3">
+              <div class="flex items-start justify-between gap-3">
+                <div class="min-w-0 flex-1">
+                  <p class="text-sm text-gray-600">{{ editStory.quality.summary }}</p>
+                  <ul
+                    v-if="editStory.quality.reasons?.length"
+                    class="mt-2 list-disc space-y-0.5 pl-4 text-xs text-gray-500"
+                  >
+                    <li v-for="(r, i) in editStory.quality.reasons" :key="i">{{ r }}</li>
+                  </ul>
+                </div>
+                <div class="flex shrink-0 flex-col items-center gap-1">
+                  <el-tag size="small" :type="qualityTagType(editStory.quality.grade)">
+                    {{ editStory.quality.grade }}
+                  </el-tag>
+                  <span class="text-lg font-semibold leading-none text-gray-700">
+                    {{ editStory.quality.score }}
+                  </span>
+                </div>
+              </div>
             </div>
-            <ul
-              v-if="editStory.quality.reasons?.length"
-              class="mt-2 list-disc space-y-0.5 pl-4 text-xs text-gray-500"
-            >
-              <li v-for="(r, i) in editStory.quality.reasons" :key="i">{{ r }}</li>
-            </ul>
           </template>
           <div v-else class="text-sm text-gray-400">暂无评价</div>
         </div>
-        <div>
-          <div class="mb-1 text-xs text-gray-400">语速</div>
-          <el-input-number
-            v-model="speechRate"
-            :min="1"
-            :max="10"
-            :step="0.1"
-            :precision="1"
-            size="small"
-            class="w-28!"
-          />
-          <span class="ml-1 text-xs text-gray-400">字/秒</span>
+        <div class="flex gap-3">
+          <div class="min-w-0 flex-1">
+            <div class="mb-1 text-xs text-gray-400">语速</div>
+            <div class="flex items-center gap-1">
+              <el-input-number
+                v-model="speechRate"
+                :min="1"
+                :max="10"
+                :step="0.1"
+                :precision="1"
+                size="small"
+                class="w-22!"
+              />
+              <span class="shrink-0 text-xs text-gray-400">字/秒</span>
+            </div>
+          </div>
+          <div class="min-w-0 flex-1">
+            <div class="mb-1 text-xs text-gray-400">句间停留</div>
+            <div class="flex items-center gap-1">
+              <el-input-number
+                v-model="lineGap"
+                :min="0"
+                :max="3"
+                :step="0.1"
+                :precision="1"
+                size="small"
+                class="w-22!"
+              />
+              <span class="shrink-0 text-xs text-gray-400">秒</span>
+            </div>
+          </div>
         </div>
-        <div>
-          <div class="mb-1 text-xs text-gray-400">句间停留</div>
-          <el-input-number
-            v-model="lineGap"
-            :min="0"
-            :max="3"
-            :step="0.1"
-            :precision="1"
-            size="small"
-            class="w-28!"
-          />
-          <span class="ml-1 text-xs text-gray-400">秒</span>
-        </div>
-        <div>
-          <div class="mb-1 text-xs text-gray-400">总字数</div>
-          <div class="text-sm text-gray-600">{{ totalChars }} 字</div>
-        </div>
-        <div>
-          <div class="mb-1 text-xs text-gray-400">时长估算</div>
-          <div class="text-sm text-gray-600">{{ estimatedDuration }}</div>
+        <div class="flex gap-3">
+          <div class="min-w-0 flex-1">
+            <div class="mb-1 text-xs text-gray-400">总字数</div>
+            <div class="text-sm text-gray-600">{{ totalChars }} 字</div>
+          </div>
+          <div class="min-w-0 flex-1">
+            <div class="mb-1 text-xs text-gray-400">时长估算</div>
+            <div class="text-sm text-gray-600">{{ estimatedDuration }}</div>
+          </div>
         </div>
         <div class="mt-4">
           <el-button
