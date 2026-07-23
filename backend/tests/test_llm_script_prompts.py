@@ -221,9 +221,9 @@ def test_wrap_image_prompts_daily_hardcodes_style():
     segments = [{"image_prompt": "客厅里对峙。"}]
     wrap_image_prompts(segments, content_style="daily_story")
     prompt = segments[0]["image_prompt"]
-    assert prompt.startswith("基于参考图调整人物动作")
+    assert prompt.startswith("参考图中人物外貌不变")
     assert "昭昭" in prompt
-    assert "儿童情绪涂鸦风格" in prompt
+    assert "彩铅蜡笔涂鸦风" in prompt
     assert prompt.endswith("客厅里对峙。")
 
 

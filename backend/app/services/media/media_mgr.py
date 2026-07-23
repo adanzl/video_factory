@@ -71,6 +71,41 @@ class MergeResult:
     final_path: Path
 
 
+def _inject_mouth_motion(
+    prompt: str,
+    seg: dict,
+    cues: list[tuple[str, float]],
+) -> str:
+    """如有对话，在 motion_prompt 前注入开口说话动作（含起止时间）。"""
+    dialogue = seg.get("dialogue") or []
+    if not dialogue or not cues:
+        return prompt
+    # dialogue 与 cues 同序；cue[1] 为 duration_sec
+    speaker_actions: dict[str, list[tuple[float, float]]] = {}
+    t = 0.0
+    for i, (_, dur) in enumerate(cues):
+        if i >= len(dialogue):
+            break
+        speaker = str((dialogue[i].get("speaker") or "")).strip()
+        if not speaker:
+            t += dur
+            continue
+        start, end = t, t + dur
+        t = end
+        speaker_actions.setdefault(speaker, []).append((start, end))
+    if not speaker_actions:
+        return prompt
+    parts: list[str] = []
+    for name, intervals in speaker_actions.items():
+        segs = ",".join(
+            f"{s:.1f}-{e:.1f}秒" for s, e in intervals
+        )
+        parts.append(f"{segs}{name}说话")
+    if not parts:
+        return prompt
+    return "；".join(parts) + "。" + prompt
+
+
 class MediaMgr:
     """媒体合成管理器。"""
 
@@ -229,6 +264,8 @@ class MediaMgr:
                     sum(duration for _, duration in seg_cues),
                 )
             motion_prompt = seg.get("motion_prompt") or seg.get("visual_brief") or ""
+            # 代码注入开口动作（从 dialogue 取 speaker + 从 cues 取时长）
+            motion_prompt = _inject_mouth_motion(motion_prompt, seg, seg_cues)
             image_prompt = seg.get("image_prompt") or ""
             logger.info(
                 "clip %s/%s building segment %s | %s | image_chars=%s motion_chars=%s",

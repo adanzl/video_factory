@@ -42,6 +42,8 @@ _STABILITY_HINT = "画面稳定，无快速运镜"
 _FACE_LOCK_HINT = "面部表情与静图一致，不微笑不大笑，五官服装发型保持不变"
 _CAMERA_LOCK_HINT = "镜头固定，不推近不拉远，不放大构图"
 _DEFAULT_NEGATIVE_PROMPT = (
+    "subtitles, text, words, letters, captions, watermark, overlay, "
+    "字幕, 文字, 水印, 弹幕, 对白气泡, "
     "微笑, 大笑, 露齿笑, 开心, 嬉笑, 表情突变, 换脸, 脸部变形, "
     "扭曲, 多手指, 文字水印, "
     "快速推进, 大幅推进, 强烈变焦, 画面放大, 裁切脸部, zoom in, dolly in"
@@ -73,6 +75,39 @@ def _backoff_seconds(attempt: int, *, is_timeout: bool = False) -> float:
     if is_timeout:
         return min(45.0 + attempt * 30.0, 180.0)
     return min(2**attempt * 2, 60.0)
+
+
+def _inject_mouth_motion(prompt: str, subtitle_cues: list[tuple[str, float]]) -> str:
+    """如有对话，在 motion_prompt 前注入开口说话动作。
+
+    从 subtitle_cues 提取发言角色及累计时长，为每位 speaker 生成
+    嘴巴张合动作描述（部位+幅度+次数+时长），避免 I2V 模型自由发挥。
+    """
+    if not subtitle_cues:
+        return prompt
+    speaker_sec: dict[str, float] = {}
+    prev_end = 0.0
+    for speaker, end_sec in subtitle_cues:
+        name = str(speaker or "").strip()
+        if not name:
+            prev_end = end_sec
+            continue
+        dur = max(0.0, end_sec - prev_end)
+        speaker_sec[name] = speaker_sec.get(name, 0.0) + dur
+        prev_end = end_sec
+    if not speaker_sec:
+        return prompt
+    parts: list[str] = []
+    for name, total_sec in speaker_sec.items():
+        n = max(2, int(total_sec * 3))
+        dur = min(total_sec, 2.0)
+        parts.append(
+            f"{name}嘴巴快速张合约3毫米{n}次持续{dur:.1f}秒后闭合"
+        )
+    if not parts:
+        return prompt
+    mouth = "；".join(parts) + "。"
+    return mouth + prompt
 
 
 def _stabilize_motion_prompt(prompt: str) -> str:

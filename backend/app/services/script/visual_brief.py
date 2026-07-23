@@ -48,6 +48,19 @@ _VISUAL_BRIEF_CONTENT_RULE = (
     "不写镜头焦距、光线方向、材质参数等细节。"
 )
 
+_DAILY_VISUAL_BRIEF_CONTENT_RULE = (
+    "visual_brief 为该镜画面描述（100-200 字）：须具体描写角色的动作姿态与面部表情"
+    "（如瞪圆眼、撇嘴角、双手叉腰、身体前倾等），"
+    "写明至少 2 个场景陈设物品；"
+    "人物动作须与台词语气强度对齐。"
+    "【事实一致】画面描述须与台词内容的事实严格一致："
+    "台词说衣服皱了则衣服必须是皱的、说东西掉了则地上必须有该物品等；"
+    "禁止写出与台词事实矛盾的画面（如台词说乱但写整齐、台词说没有但写出有）。"
+    "不写镜头焦距、光线方向、材质参数等细节。"
+    "【画风禁令】禁止在 visual_brief 中描述画风、笔触、色彩、风格等任何美术风格信息，"
+    "此类由系统固定处理，绝对禁止以任何形式出现在 visual_brief 中。"
+)
+
 _EMOTION_RULE_DIALOGUE = (
     "情绪须对标台词语气强度（争吵时表情激烈如瞪眼皱眉张嘴、温和平静时表情放松）。"
 )
@@ -205,6 +218,11 @@ def build_visual_brief_prompts(
     setting_rule = (
         _DAILY_SETTING_RULE if profile_style == CONTENT_STYLE_DAILY_STORY else ""
     )
+    content_rule = (
+        _DAILY_VISUAL_BRIEF_CONTENT_RULE
+        if profile_style == CONTENT_STYLE_DAILY_STORY
+        else _VISUAL_BRIEF_CONTENT_RULE
+    )
     partial = segment_indices is not None
     coverage = (
         "segments 仅需输出标记为【需生成】的分镜；【仅上下文】分段无需输出；"
@@ -215,7 +233,7 @@ def build_visual_brief_prompts(
         f"{coverage}"
         "各段含 segment_index, visual_brief, visual_mode=static_motion；"
         "不要输出或修改各段 text。"
-        f"{_VISUAL_BRIEF_CONTENT_RULE}"
+        f"{content_rule}"
         f"{emotion_rule}"
         f"{cast_rule}"
         f"{setting_rule}"

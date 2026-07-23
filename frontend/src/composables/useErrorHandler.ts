@@ -1,4 +1,3 @@
-import type { AxiosError } from "axios";
 import { logAndNoticeError } from "@/utils/error";
 import { logger } from "@/utils/logger";
 
