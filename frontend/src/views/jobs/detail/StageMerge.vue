@@ -170,8 +170,8 @@ const xfadeTransitionOptions = [
   { label: "右滑", value: "slideright" },
 ] as const;
 
-const xfadeTransition = ref("none");
-const xfadeDurationSec = ref(0.4);
+const xfadeTransition = ref("fade");
+const xfadeDurationSec = ref(0.2);
 
 const bgmPlayer = useAudioPlayer({
   active: () => props.stageActive,
@@ -274,12 +274,12 @@ function syncBgmFromJob() {
 function syncXfadeFromJob() {
   const xfade = props.job.info?.xfade;
   const transition =
-    typeof xfade?.transition === "string" ? xfade.transition : "none";
+    typeof xfade?.transition === "string" ? xfade.transition : "fade";
   xfadeTransition.value = xfadeTransitionOptions.some((item) => item.value === transition)
     ? transition
-    : "none";
+    : "fade";
   xfadeDurationSec.value =
-    typeof xfade?.duration_sec === "number" ? xfade.duration_sec : 0.4;
+    typeof xfade?.duration_sec === "number" ? xfade.duration_sec : 0.2;
 }
 
 async function loadBgmOptions() {
