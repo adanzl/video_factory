@@ -8,7 +8,7 @@ from flask_cors import CORS
 from app.api import register_api
 from app.config import config
 from app.core.log_config import setup_server_logging
-from worker.recovery import recover_stuck_jobs
+from worker.recovery import recover_stuck_daily_stories, recover_stuck_jobs
 
 app_logger, gevent_access_logger = setup_server_logging(
     log_dir=config.log_dir,
@@ -27,11 +27,24 @@ def _recover_stuck_jobs() -> None:
         log.exception("startup recovery failed, jobs may still be stuck")
 
 
+def _recover_stuck_daily_stories() -> None:
+    try:
+        count = recover_stuck_daily_stories()
+        if count:
+            log.warning(
+                "startup recovery: %d daily story/stories were stuck and have been re-queued",
+                count,
+            )
+    except Exception:
+        log.exception("startup recovery failed, daily stories may still be stuck")
+
+
 def create_app() -> Flask:
     app = Flask(__name__)
 
-    # 服务启动时自动恢复卡住的视频生成任务
+    # 服务启动时自动恢复卡住的视频生成任务与日常故事
     _recover_stuck_jobs()
+    _recover_stuck_daily_stories()
 
     if config.mock_mode:
         log.warning(

@@ -18,6 +18,12 @@ _STATUS_ACTIVE = "active"
 _STATUS_FAILED = "failed"
 
 
+def _story_has_content(story: dict[str, Any] | None) -> bool:
+    if not isinstance(story, dict):
+        return False
+    return bool(story.get("dialogue") or [])
+
+
 def _ensure_story_quality(row: dict, *, persist: bool = False, conn=None) -> dict:
     """旧稿无 quality 时补打分；persist=True 时写回 DB。"""
     from app.services.daily_story.quality import attach_daily_story_quality
@@ -38,6 +44,103 @@ def _ensure_story_quality(row: dict, *, persist: bool = False, conn=None) -> dic
 
 
 class DailyStoryMgr:
+    def _queue_story_generation(
+        self,
+        story_id: int,
+        theme: str,
+        *,
+        is_regenerate: bool,
+    ) -> None:
+        action = "regenerate" if is_regenerate else "generate"
+
+        def _worker() -> None:
+            try:
+                story = llm_mgr.generate_daily_story(theme)
+                with connection() as conn:
+                    repo_daily_story.update_story(
+                        conn,
+                        story_id,
+                        story=story,
+                        status=_STATUS_ACTIVE,
+                    )
+                logger.info(
+                    "[DAILY_STORY] async %s done story_id=%d theme=%r",
+                    action,
+                    story_id,
+                    theme,
+                )
+            except Exception as exc:
+                logger.error(
+                    "[DAILY_STORY] async %s failed story_id=%d theme=%r: %s",
+                    action,
+                    story_id,
+                    theme,
+                    exc,
+                )
+                with connection() as conn:
+                    repo_daily_story.update_story(
+                        conn,
+                        story_id,
+                        status=_STATUS_FAILED,
+                    )
+
+        run_in_background(_worker)
+        logger.info(
+            "[DAILY_STORY] async %s queued story_id=%d theme=%r",
+            action,
+            story_id,
+            theme,
+        )
+
+    def recover_processing_stories(self) -> int:
+        """服务重启后恢复卡在 processing 的日常故事生成。"""
+        with connection() as conn:
+            rows = repo_daily_story.list_stories(
+                conn,
+                status=_STATUS_PROCESSING,
+                limit=200,
+                offset=0,
+            )
+
+        if not rows:
+            logger.info("no stuck daily stories to recover")
+            return 0
+
+        for row in rows:
+            story_id = int(row["id"])
+            theme = str(row.get("theme") or "").strip()
+            if not theme:
+                logger.warning(
+                    "[DAILY_STORY] recovery skipped story_id=%d: empty theme",
+                    story_id,
+                )
+                with connection() as conn:
+                    repo_daily_story.update_story(
+                        conn,
+                        story_id,
+                        status=_STATUS_FAILED,
+                    )
+                continue
+
+            is_regenerate = _story_has_content(row.get("story"))
+            logger.warning(
+                "[DAILY_STORY] recovering stuck story_id=%d theme=%r regenerate=%s",
+                story_id,
+                theme,
+                is_regenerate,
+            )
+            self._queue_story_generation(
+                story_id,
+                theme,
+                is_regenerate=is_regenerate,
+            )
+
+        logger.warning(
+            "recovered %d stuck daily story/stories",
+            len(rows),
+        )
+        return len(rows)
+
     def list_stories(
         self,
         *,
@@ -74,41 +177,7 @@ class DailyStoryMgr:
             )
             row = repo_daily_story.get_story(conn, story_id)
 
-        def _worker() -> None:
-            try:
-                story = llm_mgr.generate_daily_story(theme)
-                with connection() as conn:
-                    repo_daily_story.update_story(
-                        conn,
-                        story_id,
-                        story=story,
-                        status=_STATUS_ACTIVE,
-                    )
-                logger.info(
-                    "[DAILY_STORY] async generate done story_id=%d theme=%r",
-                    story_id,
-                    theme,
-                )
-            except Exception as exc:
-                logger.error(
-                    "[DAILY_STORY] async generate failed story_id=%d theme=%r: %s",
-                    story_id,
-                    theme,
-                    exc,
-                )
-                with connection() as conn:
-                    repo_daily_story.update_story(
-                        conn,
-                        story_id,
-                        status=_STATUS_FAILED,
-                    )
-
-        run_in_background(_worker)
-        logger.info(
-            "[DAILY_STORY] async generate queued story_id=%d theme=%r",
-            story_id,
-            theme,
-        )
+        self._queue_story_generation(story_id, theme, is_regenerate=False)
         return row
 
     def delete_stories(self, ids: list[int]) -> dict[str, Any]:
@@ -219,42 +288,7 @@ class DailyStoryMgr:
                 status=_STATUS_PROCESSING,
             )
 
-        def _worker() -> None:
-            try:
-                new_story = llm_mgr.generate_daily_story(theme)
-                with connection() as conn:
-                    repo_daily_story.update_story(
-                        conn,
-                        story_id,
-                        story=new_story,
-                        status=_STATUS_ACTIVE,
-                    )
-                logger.info(
-                    "[DAILY_STORY] async regenerate done story_id=%d theme=%r",
-                    story_id,
-                    theme,
-                )
-            except Exception as exc:
-                logger.error(
-                    "[DAILY_STORY] async regenerate failed story_id=%d theme=%r: %s",
-                    story_id,
-                    theme,
-                    exc,
-                )
-                # 失败保留旧稿，标 failed 方便前端提示
-                with connection() as conn:
-                    repo_daily_story.update_story(
-                        conn,
-                        story_id,
-                        status=_STATUS_FAILED,
-                    )
-
-        run_in_background(_worker)
-        logger.info(
-            "[DAILY_STORY] async regenerate queued story_id=%d theme=%r",
-            story_id,
-            theme,
-        )
+        self._queue_story_generation(story_id, theme, is_regenerate=True)
         return row
 
     def sync_to_job(self, story_id: int, *, story: dict[str, Any] | None = None) -> dict:
