@@ -679,7 +679,7 @@ class LLMMgr:
         best_story: dict[str, Any] | None = None
         best_score = -1
         target = 85
-        max_attempts = 3
+        max_attempts = 2
         last_exc: Exception | None = None
 
         for attempt in range(max_attempts):
