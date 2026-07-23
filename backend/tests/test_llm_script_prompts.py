@@ -457,21 +457,22 @@ def test_build_daily_script_prompts_uses_cps_setting_and_no_appearance():
     system, user = build_daily_script_prompts(story, chars_per_sec=4.0)
     assert "语速 4 字/秒" in system
     assert "18.0" not in system
-    assert "≤18 秒" in system
-    assert str(int(18 * 4.0)) in system  # max chars = 72
-    assert str(int(8 * 4.0)) in system  # min chars = 32
+    assert "≤10 秒" in system
+    assert str(int(10 * 4.0)) in system  # max chars = 40
+    assert "20" in system  # min chars floor
+    assert "2–3 句" in system
     assert "彩铅" not in system
     assert "超短发" not in system
     assert "不要输出 visual_description" in system
     assert "转折用特写，不拆碎" in system
     assert "开场首镜" in system
-    assert "目标约" in user
+    assert "禁止一句一镜" in user
     assert "特写" in user
     assert "【标题】争酸奶" in user
     assert "【场景设定】厨房，傍晚" in user
     assert "昭昭：这瓶是我的！" in user
     # 上限口径：不得超过 max_chars
-    assert "不得超过 72 字" in system
+    assert "不得超过 40 字" in system
 
 
 def test_build_visual_brief_prompts_includes_shot_type():
