@@ -663,7 +663,6 @@ class DeepSeekClient(LLMClient):
         payload, finish = self._chat_json(
             prompts["system"],
             prompts["user"],
-            thinking_enabled=False,
             temperature=_TEMP_CREATIVE_MID,
         )
         raise_if_job_cancelled(job)
