@@ -123,6 +123,7 @@ DAILY_STORY_BODY_RETRY_TARGET_MAX = 350
 _DAILY_STORY_LENGTH_DRAFT = f"""\
 - 片长（正文硬卡，放最前）：{DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
   每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
+  【先按句数写】写 22–28 句对话（每句约 12–15 字），写完后字数自然落在目标区间。
   写作先按约 {DAILY_STORY_BODY_WRITE_TARGET_MIN}–{DAILY_STORY_BODY_WRITE_TARGET_MAX} 字铺回合，
   再压回硬卡；宁先写够再删，禁止首稿过短。
   发现开场系统另写另验，不计入正文硬卡。
@@ -158,6 +159,7 @@ _DAILY_STORY_LENGTH_REVISE = f"""\
 _DAILY_STORY_LENGTH_USER_DRAFT = f"""\
 3. 【字数硬卡优先】正文 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
    每句 ≤{DAILY_STORY_LINE_CHARS_MAX} 字且一句一层意思。
+   【按句数写更准】先控制写 22–28 句对话（每句约 12–15 字），字数自然达标。
    写作先按约 {DAILY_STORY_BODY_WRITE_TARGET_MIN}–{DAILY_STORY_BODY_WRITE_TARGET_MAX} 字铺回合再压回硬卡
    （宁先写够再删；发现开场另计另验）。
    speaker 仅昭昭/灿灿/妈妈。
