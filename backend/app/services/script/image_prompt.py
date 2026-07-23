@@ -114,6 +114,16 @@ def _daily_composition(shot_type: str, speakers: list[str]) -> str:
     return "根据画面自然构图。"
 
 
+def strip_verify_regen_leak(prompt: str) -> str:
+    """去掉误拼进 T2I 的质检改写元指令（历史污染 / 兜底）。"""
+    text = (prompt or "").strip()
+    marker = "出图质检连续未通过"
+    idx = text.find(marker)
+    if idx < 0:
+        return text
+    return text[:idx].rstrip(" \n\t")
+
+
 def assemble_daily_t2i_prompt(
     seg: dict,
     *,
@@ -129,6 +139,8 @@ def assemble_daily_t2i_prompt(
         from app.services.script.visual_brief import scrub_daily_visual_brief
 
         vb = scrub_daily_visual_brief(vb)
+    # visual_brief 若曾被污染，先剥掉质检元指令
+    vb = strip_verify_regen_leak(vb)
     speakers = _daily_speakers_of(seg)
     shot = str(seg.get("shot_type") or "").strip()
 
@@ -149,7 +161,12 @@ def assemble_daily_t2i_prompt(
     layout = _daily_layout_speakers(seg, vb)
     parts.append(_daily_composition(shot, layout))
     if extra and extra.strip():
-        parts.append(extra.strip())
+        # 禁止把质检元指令当出图正文
+        cleaned = strip_verify_regen_leak(extra.strip())
+        if cleaned and cleaned != extra.strip():
+            cleaned = ""
+        if cleaned:
+            parts.append(cleaned)
     return "".join(parts)
 
 
@@ -251,10 +268,11 @@ _IMAGE_PROMPT_MOTION_TAIL_DAILY_AMBIENT = (
 )
 
 _IMAGE_PROMPT_MOTION_TAIL_DAILY_KEYFRAME = (
-    "【keyframe】按以下模板输出 motion_prompt（120-220 字）：\n"
+    "【keyframe】按以下模板输出 motion_prompt（120-280 字）：\n"
     "画面左边是{角色A}，右边是{角色B}。\n"
-    "{角色A}说话，同时{微动作——部位+幅度}后停止；\n"
-    "{角色B}说话，同时{微动作——部位+幅度}后定格。\n"
+    "【说话句】必须按本段 dialogue 顺序，每一句台词各写一行"
+    "「{该句说话人}说话，同时{微动作}后停止/定格」；"
+    "同人说多句就要写多行，禁止合并成一句；禁止漏句、禁止打乱对白顺序。\n"
     "【站位】左右必须与本段 image_prompt/visual_brief 中"
     "「画面左边是…，右边是…」完全一致，禁止对调。\n"
     "【时间轴】禁止自编起止秒数；写成「{角色}说话，同时…」即可，"
@@ -267,16 +285,18 @@ _IMAGE_PROMPT_MOTION_TAIL_DAILY_KEYFRAME = (
     "镜头固定，不推近不拉远，画面只有人物和场景，无任何文字叠加。\n"
     "禁止镜头推近/推进/拉远/变焦/放大；禁止只写动作不写表情；"
     "禁止大位移换位、全身换姿势、多人齐跑、抽象光效。\n"
-    "正例：\n"
+    "正例（dialogue 三句：灿灿→昭昭→灿灿）：\n"
     "画面左边是灿灿，右边是昭昭。"
     "灿灿说话，同时右手食指微微向下点动约2厘米后停止；"
-    "昭昭说话，同时肩膀轻轻耸起约3厘米后定格。"
+    "昭昭说话，同时肩膀轻轻耸起约3厘米后停止；"
+    "灿灿说话，同时下巴微微抬起约1厘米后定格。"
     "两人说话后面部表情恢复与静图一致："
     "灿灿瞪圆眼睛嘴巴大张（惊讶质问状），不微笑；"
     "昭昭撇着嘴角耸肩（无辜状），表情不变。"
     "服装发型稳定，身高比例（昭昭比灿灿矮半个头）不变。"
     "镜头固定，不推近不拉远，画面只有人物和场景，无任何文字叠加。\n"
     "反例：0.0-1.5秒灿灿说话…（禁止自编秒数）；"
+    "只写两句说话但 dialogue 有三句（漏句）；"
     "灿灿右手点动持续0.5秒（缺「说话，同时」，系统无法注入时间）。\n"
 )
 
