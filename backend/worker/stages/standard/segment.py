@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from app.config import get_settings
@@ -27,24 +28,42 @@ class SegmentStage(StageExecutor):
         audio_path = Path(job["audio_path"]) if job.get("audio_path") else None
         produce_scope = ctx.segment_scope or "all"
 
+        def _merge_info(info_raw: str | None, key: str, value: float) -> str | None:
+            info: dict = {}
+            if info_raw:
+                try:
+                    info = json.loads(info_raw)
+                except (json.JSONDecodeError, TypeError):
+                    info = {}
+            info[key] = value
+            return json.dumps(info, ensure_ascii=False)
+
         def persist_segment_image(seg_id: int, path: Path, gen_sec: float = 0) -> None:
             with connection() as conn:
+                row = conn.execute(
+                    "SELECT info FROM video_segment WHERE id = ?", (seg_id,)
+                ).fetchone()
+                info = _merge_info(row["info"] if row else None, "image_gen_sec", gen_sec)
                 repo_segment.update_segment(
                     conn,
                     seg_id,
                     image_path=str(path),
                     status="done",
-                    image_gen_sec=gen_sec,
+                    info=info,
                 )
                 repo_segment.increase_version(conn, seg_id)
 
         def persist_segment_clip(seg_id: int, path: Path, gen_sec: float = 0) -> None:
             with connection() as conn:
+                row = conn.execute(
+                    "SELECT info FROM video_segment WHERE id = ?", (seg_id,)
+                ).fetchone()
+                info = _merge_info(row["info"] if row else None, "clip_gen_sec", gen_sec)
                 repo_segment.update_segment(
                     conn,
                     seg_id,
                     clip_path=str(path),
-                    clip_gen_sec=gen_sec,
+                    info=info,
                 )
                 repo_segment.increase_version(conn, seg_id)
 
