@@ -136,6 +136,13 @@ class Config:
         self.cover_width: int = cover_w
         self.cover_height: int = cover_h
         self.motion_preset: str = os.getenv("MOTION_PRESET", "ken_burns_slow")
+        self.clip_fps: int = int(os.getenv("CLIP_FPS", "25"))
+        self.segment_xfade_duration_sec: float = float(
+            os.getenv("SEGMENT_XFADE_DURATION_SEC", "0.4")
+        )
+        self.segment_xfade_transition: str = os.getenv(
+            "SEGMENT_XFADE_TRANSITION", "none"
+        ).strip().lower()
         self.clip_provider: str = os.getenv("CLIP_PROVIDER", "ffmpeg")
         self.ffmpeg_preset: str = os.getenv("FFMPEG_PRESET", "veryfast")
         self.ffmpeg_crf: int = ffmpeg_crf
@@ -205,7 +212,6 @@ class Config:
         self.agnes_video_model: str = os.getenv("AGNES_VIDEO_MODEL", "agnes-video-v2.0")
         self.agnes_video_width: int = int(os.getenv("AGNES_VIDEO_WIDTH", "1280"))
         self.agnes_video_height: int = int(os.getenv("AGNES_VIDEO_HEIGHT", "720"))
-        self.agnes_video_frame_rate: int = int(os.getenv("AGNES_VIDEO_FRAME_RATE", "24"))
         self.agnes_video_poll_interval_sec: float = float(
             os.getenv("AGNES_VIDEO_POLL_INTERVAL_SEC", "15")
         )

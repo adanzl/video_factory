@@ -24,13 +24,13 @@ DAILY_STORY_CHARACTER_MOM = "妈妈：成年女性，黑色长发，米色上衣
 # 片长：语速约 3.6 字/秒、目标约 1:30–2:00
 # 全文/正文硬卡不变；首稿提示词写作目标约 +100，抵消偏短（写长了靠校验/重试压回）
 DAILY_STORY_TOTAL_CHARS_MIN = 300
-DAILY_STORY_TOTAL_CHARS_MAX = 380
-DAILY_STORY_TOTAL_CHARS_TARGET_MAX = 360
+DAILY_STORY_TOTAL_CHARS_MAX = 400
+DAILY_STORY_TOTAL_CHARS_TARGET_MAX = 380
 DAILY_STORY_BODY_CHARS_MIN = 280
-DAILY_STORY_BODY_CHARS_MAX = 340
+DAILY_STORY_BODY_CHARS_MAX = 370
 DAILY_STORY_BODY_WRITE_TARGET_MIN = 390
-DAILY_STORY_BODY_WRITE_TARGET_MAX = 430
-DAILY_STORY_LINE_CHARS_MAX = 18
+DAILY_STORY_BODY_WRITE_TARGET_MAX = 450
+DAILY_STORY_LINE_CHARS_MAX = 22
 DAILY_STORY_OPENING_LINES_MIN = 1
 DAILY_STORY_OPENING_LINES_MAX = 2
 
@@ -40,12 +40,15 @@ DAILY_STORY_OPENING_LINES_MAX = 2
 
 _LIMP_SOFT_CLOSE_MARKERS = (
     "给你", "算了", "好吧", "好了好了", "行吧", "随你",
+    "我不管", "不管了", "随便你", "那行", "行行行",
+    "哼", "吃吧", "你赢",
 )
 
 _PUNCH_BEFORE_SOFT_MARKERS = (
     "说晚了", "已经在了", "自相矛盾", "那你也", "你也没",
     "那不算", "当然不算", "堵死", "戳穿", "说不通",
-    "你让的", "重新说", "晚了",
+    "你让的", "重新说", "晚了", "改不了", "从来不",
+    "已经.*了", "你说的", "装让", "反悔", "变卦",
 )
 
 # 末 2 句弱收束：与观感打分口径对齐，生成时硬拦
@@ -110,8 +113,8 @@ _CONFLICT_ANCHOR_STRIP = (
 )
 
 # 重试瞄准硬卡中段，避免贴边再抖出界
-DAILY_STORY_BODY_RETRY_TARGET_MIN = 300
-DAILY_STORY_BODY_RETRY_TARGET_MAX = 320
+DAILY_STORY_BODY_RETRY_TARGET_MIN = 310
+DAILY_STORY_BODY_RETRY_TARGET_MAX = 350
 
 # 首稿：硬卡 + 写作铺垫（偏长再压回）
 # 重试：按偏短/偏长分向；勿混用「禁止扩写」与「略删」
@@ -213,12 +216,21 @@ _DAILY_STORY_SYSTEM_BODY = """\
 - 妈妈：配角。可出场，但台词少；主戏仍是姐弟，妈妈不是戏核。
 - 关系：亲姐弟，住在一起；主戏是姐弟斗嘴/较真/互相带偏，不是被妈妈教育。
 
-【矛盾类型（默认优先 A/C/D；B/E 少用）】
-- A 权威翻车（优先）：姐姐用「大人腔/我是姐姐」压弟弟，被字面逻辑戳穿。
-- C 公平执念（优先）：抢先后、分东西、谁吃亏——双方规则各执一词，越辩越歪。
-- D 字面执行（优先）：把叮嘱/规则按字面做砸（叮嘱可来自不在场的大人）。
-- B 结盟翻车（少用）：姐弟想瞒妈妈或钻空子，一起露馅。
-- E 妈妈破功（少用）：妈妈想讲理或装凶，被孩子绕到自己逻辑矛盾。
+【矛盾类型（默认优先 A/C/D；B/E 少用）—— 每条包含写作公式，不是空标签】
+- A 权威翻车（优先）：
+  公式：姐姐亮家长姿态「我是姐姐/大人说了」→弟弟用字面逻辑找漏洞→姐姐规则自相矛盾→姐姐破功。
+  例：姐姐说「我是姐姐你得听我的」，弟弟「那上次妈妈说你也要听我，因为我是小孩需要照顾」。
+- C 公平执念（优先）：
+  公式：双方抢同一资源→各自抛对己有利的规则→规则互相冲突（如你先拿 vs 我先看 / 你切你选 vs 你拿你就选了）
+  →一方规则被字面执行反噬或两套规则产生荒谬结论→收束。
+  关键：每个人在"自己的规则下"都是对的，笑点来自两套公平标准无法兼容。
+- D 字面执行（优先）：
+  公式：有人给叮嘱/规则→另一方按字面严格执行→结果与初衷相反→原叮嘱方傻眼。
+  例：妈妈说「别让弟弟碰剪刀」→姐姐把剪刀锁起来，弟弟要用剪刀开零食→两人都饿着。
+- B 结盟翻车（少用）：
+  公式：姐弟联手瞒妈妈/钻空子→计划在执行中露馅→互相甩锅→一起暴露。
+- E 妈妈破功（少用）：
+  公式：妈妈想讲道理/立规矩→被孩子用字面逻辑或连环追问绕进去→妈妈自己先破功。
 
 【妈妈戏份（硬约束）】
 - A/C/D 默认可不写妈妈；主戏与破功优先纯姐弟完成。
@@ -233,6 +245,8 @@ _DAILY_STORY_SYSTEM_BODY = """\
 - 正文 dialogue 从互怼、讲理、甩规则开始，禁止再写寒暄或重复发现现场。
 - setting 仍须写清地点 + 已发生的同一冲突动作，与 conflict_core 同一件实物/规则
   （反例：setting 写「各抓一个对峙」，core 却写「争同一个蓝抱枕」）。
+- setting 中若提到妈妈做了某动作（如「妈妈切好蛋糕」），正文里妈妈必须至少出场 1 句台词
+  呼应这个动作；否则把该动作改由姐弟中的一人执行（如「灿灿切好蛋糕」）。
 
 【单冲突（硬约束）】
 - 全文只滚一条规则加码（如始终争「先拿 vs 先看」），禁止中途换裁决方式。
@@ -245,12 +259,17 @@ _DAILY_STORY_SYSTEM_BODY = """\
 - punchline_explain 须说明末句如何收的就是这个 conflict_core（不是另起「明天再战」）。
 
 【节奏（硬约束）】
+- 冲突升级路线（沿路线一步步推进，禁止同层来回绕、禁止跳级又回退）：
+  1争归属(谁先碰/谁的)→2挑战规则(你的规则不算)→3挑战权威(凭什么你定)→4推出新证据→5收束
+  每一层最多 2 个来回；超过 2 个来回即为空转，须立刻推进到下一层。
+  禁止在前3层逗留超过全文一半；后半程须进入第4、5层。
 - 每 6–8 句须有一个小反转或加码（同一规则升级、证据翻车、字面钻空子），禁止平铺到结尾才抖包袱。
 - 台词要具体：点名「上次你也…」「妈说过…」「这是我的…」，少讲抽象公平大道理。
 - 一句说完一层意思；禁止为凑 ≤18 字把同一半截话硬拆成两句（听感断裂）。
 - 昭昭/灿灿必须轮流说：禁止同一人连说 ≥2 句（听感碎、像注水）。
-- 禁止对称复读注水：同一对立（如先碰/先放、手/眼、先看/先拿）
-  连续超过 2 个来回只换说法；每新一轮须加新证据或规则加码。
+- 禁止概念绕圈：同一逻辑结论（如「刀碰到蛋糕=碰了蛋糕」）的不同措辞变体也算同一对立面，
+  最多 2 个来回后必须引入新事实（实物证据、目击证人、过去先例），
+  禁止空转语义辩论连续超过 4 句。
 
 【立场连贯（硬约束）】
 - 同一角色前后立场须连贯：可以软收、可以认栽，但禁止无铺垫的态度骤变。
@@ -272,17 +291,22 @@ _DAILY_STORY_SYSTEM_BODY = """\
    - 和解分赃：「一人一半」「平分」「倒杯子」——把冲突和稀泥；
    - 耍赖占有：「反正我要用」「反正是我的」——没戳穿只赖账；
    - 甩给妈妈：「等妈回来」「叫妈评理」——本场须姐弟内收束。
+10. 禁止赢家说最后一句：末句 speaker 必须是破功/被反杀/嘴硬的一方。
+    笑点永远来自输家的反应，不是赢家的总结陈词。
+    反例：昭昭抢到蛋糕说"瞧就瞧，蛋糕归我"→ 赢家收束无笑点。
+    正例：昭昭戳穿后，灿灿「……随便你」或灿灿一言不发转身走开。
+11. setting 一致性：若 setting 中妈妈完成某动作（如切蛋糕/拿东西），
+    她必须在正文至少出场 1 句台词呼应；否则把该动作改由姐弟中的一人执行。
 
 【笑点与收束】
 - 笑点 = 孩子的字面/现实逻辑 碰撞 姐姐的「装大人」规则，或两人各执一词越辩越歪。
 - 每一句推论须基于刚听到的字面意思或亲眼见过的生活经验，不能跳级。
-- 【收束公式】倒数第 2 句须完成字面戳穿/自相矛盾；末句落在破功哑口，
-  或被戳穿后的嘴硬软收（认栽、哼一声放过、占便宜话）。
-  正例：「你说晚了，我已经在了」；「之前是旧的，这个新的，标签在」；
-  「哼，那你洗吧，水凉了别怪我」。
-  反例：「一人一半倒杯子」；「反正橡皮我要用」；「等妈回来评理」。
-- 不是妈妈一句话掐灭后再软收；禁止把裁决权交给不在场的妈妈。
-- punchline_explain 须写明类型（如「C类公平执念」）+ 末句如何收这个 conflict_core，禁止空话。
+- 【收束必须用回旋镖或字面戳穿（二选一，不用其他）】：
+  回旋镖模式（优先）：倒数第3句用对方刚说的规则反问ta→倒数第2句对方发现自己自相矛盾试图狡辩→末句ta嘴硬收场（"……哼/……行/……随便你"），ta说最后一句。
+    正例：昭昭「你自己说切的人先选，那你切的你选，我拿大的就行」→灿灿「我没说切的人先选大的」→灿灿「……哼，给你」。
+  字面戳穿模式：倒数第2句点出对方一句话里自相矛盾→末句对方破功哑口或嘴硬。
+    正例：昭昭「你说晚了，我已经在了」→灿灿「……」。
+  关键约束：末句说话人必须是破功/被反杀/嘴硬的那一方，禁止让赢家说最后一句。
 
 【格式要求】
 严格输出以下JSON结构：
@@ -318,7 +342,8 @@ def _daily_story_user_template(*, length_mode: str = "draft") -> str:
 【本次场景主题（核心事件）】：{{theme}}
 
 【要求】：
-1. 紧扣主题，家庭内/门口小事；setting / conflict_core / 对白只服务同一条规则。
+1. 主题即冲突实物：setting、conflict_core、正文首句须锚定主题中的实物/动作。
+   「分蛋糕大小不均」→ setting 须有大小两块蛋糕（非争刀/争谁切），core 写谁vs谁争大的，正文首句直接争大的归谁。
 2. {{type_instruction}}
 {length_req}\
 4. 正文从互怼/讲理起笔，禁止发现现场开场（发现句系统另写）。
@@ -327,8 +352,12 @@ def _daily_story_user_template(*, length_mode: str = "draft") -> str:
 7. 禁止中途换分法（剪刀石头布、轮流、另算谁先碰到等）或扯无关旧账。
 8. 立场须连贯：可软收，但须先破功再软收；禁无铺垫「给你/算了」；
    禁同人连说、禁对称复读注水；末句勿只甩「明天再战」。
-9. 禁弱收束：末 2 句勿写「一人一半/平分」「反正我要用」「等妈评理」；
-   倒数第 2 句须字面戳穿，末句破功或嘴硬软收。
+9. 【收束模板·必遵守】末尾4句套用这个结构（把[主题词]替换成当前争论的实物）：
+   倒数第4句：用对方刚说的规则反问他（例："你自己说切的人先选，那你切你选，我拿大的"）
+   倒数第3句：对方试图狡辩但露馅（例："我没说切的人先选大的……"）
+   倒数第2句：指出他的矛盾（例："那你说'切的人先选'是什么意思？"）
+   末句：对方嘴硬收场，说"……哼"或"……行"或"……随便"（必须他说最后一句）
+   禁止赢家说最后一句、禁止双方互讲道理后忽然让步。
 
 请直接输出JSON。
 """
@@ -818,6 +847,49 @@ def _append_mom_line_errors(story: dict, errors: list[str]) -> None:
         )
 
 
+def _append_winner_last_line_errors(story: dict, errors: list[str]) -> None:
+    """校验末句说话人是否为被破功方（禁止赢家收束）。"""
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 3:
+        return
+    # 只取正文（不含发现开场）的末尾 2 个 speaker
+    siblings = [
+        item for item in dialogue
+        if isinstance(item, dict) and str(item.get("speaker") or "") in ("昭昭", "灿灿")
+    ]
+    if len(siblings) < 2:
+        return
+    last_sp = str(siblings[-1].get("speaker") or "")
+    prev_sp = str(siblings[-2].get("speaker") or "")
+    last_line = str(siblings[-1].get("line") or "")
+    # 若末两句同人 + 末句不含软收/认输关键词 → 可能是赢家连说
+    if last_sp == prev_sp:
+        if not any(m in last_line for m in ("算了", "好吧", "给你", "随你", "不管", "哼")):
+            errors.append(
+                f"末 2 句同人（{last_sp}连说），疑似赢家收束；"
+                "末句须由被破功方说话"
+            )
+
+
+def _append_setting_mom_consistency_errors(story: dict, errors: list[str]) -> None:
+    """setting 中妈妈有动作但正文妈妈无台词 → 违规。"""
+    setting = str(story.get("setting") or "").strip()
+    if "妈妈" not in setting:
+        return
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list):
+        return
+    mom_lines = [
+        item for item in dialogue
+        if isinstance(item, dict) and item.get("speaker") == "妈妈"
+    ]
+    if not mom_lines:
+        errors.append(
+            "setting 提到妈妈动作（如切蛋糕）但正文妈妈无台词；"
+            "须给妈妈至少 1 句台词呼应，或把 setting 中的动作改由姐弟执行"
+        )
+
+
 def validate_daily_story_json(
     story: dict,
     *,
@@ -933,6 +1005,13 @@ def validate_daily_story_json(
 
     # 妈妈台词硬约束
     _append_mom_line_errors(story, errors)
+
+    # 末句赢家检测（仅正文阶段，拼开场后不在 body phase 执行）
+    if phase == "body":
+        _append_winner_last_line_errors(story, errors)
+
+    # setting 妈妈动作一致性
+    _append_setting_mom_consistency_errors(story, errors)
 
     if errors:
         raise ValueError("daily_story 校验失败: " + "; ".join(errors))
@@ -1277,4 +1356,29 @@ def build_daily_story_opening_retry_user(
         "请只输出合法 JSON："
         '{"opening":[{"speaker":"昭昭","line":"..."}]}；'
         "禁止写成 {\"speaker\":\"昭昭\":\"台词\"}。"
+    )
+
+
+def build_daily_story_quality_retry_user(
+    theme: str,
+    prev_story: dict,
+    revision_hints: str,
+) -> str:
+    """构造质量定向修订 user prompt。
+
+    不是重写，是在现有骨架基础上修补指定弱点。
+    """
+    import json
+    return (
+        f"主题：{theme}\n\n"
+        f"以下是已生成的剧本草稿，整体结构可用，但有几个维度需要针对性修补。\n"
+        f"【核心原则】保留原有对话骨架（角色、冲突主线、台词风格），"
+        f"只修补下面列出的短板。禁止推翻重写、禁止另起冲突、禁止改变角色立场。\n\n"
+        f"【待修补维度】\n{revision_hints}\n\n"
+        f"【字数硬卡】正文 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字，"
+        f"每句 ≤{DAILY_STORY_LINE_CHARS_MAX} 字。修补后不能超上限，删改的字数在别处补回。\n"
+        f"speaker 仅昭昭/灿灿，轮流说话，禁同人连说。\n"
+        f"setting / conflict_core 如已正确则保留不动。\n\n"
+        f"【上一稿】\n{json.dumps(prev_story, ensure_ascii=False)}\n\n"
+        "请输出修订后的完整 JSON。"
     )

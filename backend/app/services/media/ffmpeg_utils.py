@@ -18,11 +18,14 @@ _FFMPEG_TIMEOUT = 600.0
 _PROBE_TIMEOUT = 60.0
 _PIX_FMT = "yuv420p"
 _VAAPI_HWUPLOAD = "format=nv12,hwupload"
-_OUTPUT_FPS = 25
 OUTPUT_AUDIO_SAMPLE_RATE = 48000
 _AAC_128K = ("-c:a", "aac", "-b:a", "128k")
 _COPY_FASTSTART = ("-c", "copy", "-movflags", "+faststart")
 _VIDEO_COMPARE_KEYS = ("width", "height", "pix_fmt", "profile", "level", "codec_tag")
+
+
+def _clip_fps() -> int:
+    return get_settings().clip_fps
 
 
 @dataclass(frozen=True)
@@ -412,12 +415,13 @@ def probe_video_size(path: Path) -> tuple[int, int]:
     return int(width), int(height)
 
 
-def scale_pad_filter(*, width: int, height: int, fps: int = _OUTPUT_FPS) -> str:
+def scale_pad_filter(*, width: int, height: int, fps: int | None = None) -> str:
     """等比缩放至目标画布内，不足处留黑边，并统一输出帧率。"""
+    out_fps = fps if fps is not None else _clip_fps()
     return (
         f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
         f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,"
-        f"format=yuv420p,fps={fps}"
+        f"format=yuv420p,fps={out_fps}"
     )
 
 
@@ -742,17 +746,124 @@ def merge_audio_video(
     return output_path
 
 
+_XFADE_TRANSITION_NONE = "none"
+_VALID_XFADE_TRANSITIONS = frozenset(
+    {
+        "fade",
+        "dissolve",
+        "wipeleft",
+        "wiperight",
+        "wipeup",
+        "wipedown",
+        "slideleft",
+        "slideright",
+        "slideup",
+        "slidedown",
+        "smoothleft",
+        "smoothright",
+        "smoothup",
+        "smoothdown",
+        "fadeblack",
+        "fadewhite",
+    }
+)
+_MIN_XFADE_SEC = 0.05
+
+
+def normalize_xfade_transition(value: object) -> str:
+    """规范转场名；none/空 表示硬切。"""
+    if value is None:
+        return _XFADE_TRANSITION_NONE
+    if not isinstance(value, str):
+        return _XFADE_TRANSITION_NONE
+    normalized = value.strip().lower()
+    if not normalized or normalized == _XFADE_TRANSITION_NONE:
+        return _XFADE_TRANSITION_NONE
+    if normalized in _VALID_XFADE_TRANSITIONS:
+        return normalized
+    raise ValueError(f"unsupported xfade transition: {value}")
+
+
+def resolve_effective_xfade(
+    *,
+    transition: str,
+    duration_sec: float,
+    scaled_durations: list[float],
+) -> tuple[str, float]:
+    """返回实际使用的转场与时长；过短或 none 时回退硬切。"""
+    if transition == _XFADE_TRANSITION_NONE or len(scaled_durations) < 2:
+        return _XFADE_TRANSITION_NONE, 0.0
+    fade_sec = max(0.0, float(duration_sec))
+    if fade_sec < _MIN_XFADE_SEC:
+        return _XFADE_TRANSITION_NONE, 0.0
+    min_dur = min(scaled_durations)
+    max_fade = min_dur * 0.45
+    if max_fade < _MIN_XFADE_SEC:
+        return _XFADE_TRANSITION_NONE, 0.0
+    if fade_sec > max_fade:
+        _logger.info(
+            "xfade duration clamped %.3fs -> %.3fs (min segment=%.3fs)",
+            fade_sec,
+            max_fade,
+            min_dur,
+        )
+        fade_sec = max_fade
+    return transition, fade_sec
+
+
+def build_segment_video_filter_complex(
+    n: int,
+    *,
+    factors: list[float],
+    scaled_durations: list[float],
+    fade_sec: float,
+    transition: str,
+) -> tuple[str, str]:
+    """构建分镜视频 filter_complex，返回 (filter_complex, output_label)。"""
+    if len(factors) != n or len(scaled_durations) != n:
+        raise ValueError("factors/scaled_durations length mismatch")
+    fps = _clip_fps()
+    parts: list[str] = []
+    for i in range(n):
+        parts.append(f"[{i}:v]setpts=PTS*{factors[i]:.6f}[v{i}]")
+
+    effective_transition, effective_fade = resolve_effective_xfade(
+        transition=transition,
+        duration_sec=fade_sec,
+        scaled_durations=scaled_durations,
+    )
+    if effective_transition == _XFADE_TRANSITION_NONE:
+        concat_inputs = "".join(f"[v{i}]" for i in range(n))
+        parts.append(f"{concat_inputs}concat=n={n}:v=1:a=0,fps={fps}[vout]")
+        return ";".join(parts), "vout"
+
+    label_in = "v0"
+    for k in range(1, n):
+        offset = max(0.0, sum(scaled_durations[:k]) - k * effective_fade)
+        label_out = "vout" if k == n - 1 else f"vx{k}"
+        parts.append(
+            f"[{label_in}][v{k}]xfade=transition={effective_transition}"
+            f":duration={effective_fade:.3f}:offset={offset:.3f}[{label_out}]"
+        )
+        label_in = label_out
+    parts.append(f"[vout]fps={fps}[voutfps]")
+    return ";".join(parts), "voutfps"
+
+
 def concat_video_audio_pts_fixed(
     clips: list[Path],
     audio_path: Path,
     output_path: Path,
     *,
     clip_durations: list[float],
+    xfade_duration_sec: float | None = None,
+    xfade_transition: str | None = None,
 ) -> Path:
     """PTS 校正拼接 + 音频合并，单步编码。
 
     探测每个 clip 实际时长，对比目标时长后通过 setpts 微调，
     使拼接后总视频时长精确对齐音频，避免末尾字幕错位。
+    可选 xfade 链式转场（xfade_transition=none 时硬切）。
     """
     output_path.parent.mkdir(parents=True, exist_ok=True)
     n = len(clips)
@@ -770,32 +881,53 @@ def concat_video_audio_pts_fixed(
     if any(d <= 0 for d in clip_durations):
         raise ValueError("clip_durations 含非正值")
 
+    transition = normalize_xfade_transition(xfade_transition)
+    fade_sec = 0.4 if xfade_duration_sec is None else float(xfade_duration_sec)
+    fade_overlap = 0.0
+    if transition != _XFADE_TRANSITION_NONE and n > 1:
+        fade_overlap = fade_sec * (n - 1)
+
+    scale = (
+        (audio_dur + fade_overlap) / total_intended if total_intended > 0 else 1.0
+    )
+    scaled_durations = [clip_durations[i] * scale for i in range(n)]
+    factors: list[float] = []
+    for i in range(n):
+        actual = actual_durs[i]
+        factors.append(scaled_durations[i] / actual if actual > 0 else 1.0)
+
+    effective_transition, effective_fade = resolve_effective_xfade(
+        transition=transition,
+        duration_sec=fade_sec,
+        scaled_durations=scaled_durations,
+    )
+
     _logger.info(
-        "concat_pts_fixed: %d clips, intended_total=%.3fs, audio=%.3fs",
-        n, total_intended, audio_dur,
+        "concat_pts_fixed: %d clips, intended_total=%.3fs, audio=%.3fs, "
+        "xfade=%s duration=%.3fs",
+        n,
+        total_intended,
+        audio_dur,
+        effective_transition,
+        effective_fade,
     )
     for i in range(n):
         _logger.debug(
-            "  clip %s: intended=%.3fs actual=%.3fs",
-            clips[i].name, clip_durations[i], actual_durs[i],
+            "  clip %s: intended=%.3fs scaled=%.3fs actual=%.3fs factor=%.6f",
+            clips[i].name,
+            clip_durations[i],
+            scaled_durations[i],
+            actual_durs[i],
+            factors[i],
         )
 
-    # 用音频时长作为总参考，按比例分配到每个 clip
-    scale = audio_dur / total_intended if total_intended > 0 else 1.0
-
-    filter_parts: list[str] = []
-    for i in range(n):
-        intended = clip_durations[i] * scale
-        actual = actual_durs[i]
-        factor = intended / actual if actual > 0 else 1.0
-        vf = f"setpts=PTS*{factor:.6f}"
-        filter_parts.append(f"[{i}:v]{vf}[v{i}]")
-
-    concat_inputs = "".join(f"[v{i}]" for i in range(n))
-    filter_parts.append(
-        f"{concat_inputs}concat=n={n}:v=1:a=0,fps={_OUTPUT_FPS}[vout]"
+    filter_complex, vout_label = build_segment_video_filter_complex(
+        n,
+        factors=factors,
+        scaled_durations=scaled_durations,
+        fade_sec=fade_sec,
+        transition=transition,
     )
-    filter_complex = ";".join(filter_parts)
 
     cmd: list[str] = [
         *ffmpeg_cmd_start(hwaccel=False),
@@ -805,7 +937,7 @@ def concat_video_audio_pts_fixed(
     cmd.extend([
         "-i", str(audio_path),
         "-filter_complex", filter_complex,
-        "-map", "[vout]",
+        "-map", f"[{vout_label}]",
         "-map", f"{n}:a",
         "-t", f"{audio_dur:.3f}",
         *libx264_encode_args(subtitle=True, force_cpu=True),
@@ -957,7 +1089,7 @@ def _align_intro_to_body(intro_path: Path, body_path: Path, output_path: Path) -
         return output_path
 
     body_fps = body_v.get("fps")
-    fps = int(body_fps) if body_fps and abs(body_fps - round(body_fps)) < 0.01 else _OUTPUT_FPS
+    fps = int(body_fps) if body_fps and abs(body_fps - round(body_fps)) < 0.01 else _clip_fps()
     body_a = _probe_audio_stream(body_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     cmd: list[str] = [
@@ -988,7 +1120,7 @@ def _prepend_intro_reencode(intro_path: Path, body_path: Path, output_path: Path
     body_v = _probe_video_stream(body_path)
     w = body_v["width"] if body_v else settings.video_width
     h = body_v["height"] if body_v else settings.video_height
-    fps = (body_v or {}).get("fps") or _OUTPUT_FPS
+    fps = (body_v or {}).get("fps") or _clip_fps()
     norm_v = _concat_norm_vf(w, h, fps)
     video_graph = f"[0:v]{norm_v}[v0];[1:v]{norm_v}[v1];[v0][v1]concat=n=2:v=1:a=0[vraw]"
     filter_complex, audio_maps, audio_encode = _prepend_audio_graph(

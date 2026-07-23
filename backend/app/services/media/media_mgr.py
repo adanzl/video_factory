@@ -109,7 +109,7 @@ class MediaMgr:
         if provider == "agnes_i2v":
             return (
                 f"provider=agnes_i2v, model={settings.agnes_video_model}, "
-                f"frame_rate={settings.agnes_video_frame_rate}, "
+                f"frame_rate={settings.clip_fps}, "
                 f"size={width}x{height}"
             )
         if provider == "ffmpeg":
@@ -292,10 +292,10 @@ class MediaMgr:
             from gevent.pool import Pool
 
             pool = Pool(size=max_workers)
-            greenlets = [
+            green_lets = [
                 pool.spawn(build_one, seg, i) for i, seg in enumerate(targets, 1)
             ]
-            pending = set(greenlets)
+            pending = set(green_lets)
             job_id = int(job["id"]) if job is not None and job.get("id") is not None else None
             try:
                 while pending:
@@ -344,6 +344,8 @@ class MediaMgr:
         bgm_path: Path | None = None,
         bgm_volume_db: float = -14.0,
         burn_subtitles: bool = True,
+        xfade_duration_sec: float | None = None,
+        xfade_transition: str | None = None,
     ) -> MergeResult:
         t0 = time.time()
         log_ffmpeg_hwaccel_config(context="merge")
@@ -377,6 +379,8 @@ class MediaMgr:
             audio_path,
             body_with_audio,
             clip_durations=clip_durations,
+            xfade_duration_sec=xfade_duration_sec,
+            xfade_transition=xfade_transition,
         )
         logger.info("merge: audio merged (pts corrected)")
 

@@ -673,20 +673,60 @@ class LLMMgr:
     ) -> dict[str, Any]:
         logger.info("[DAILY_STORY] generate start theme=%r", theme)
         started = time.perf_counter()
-        try:
-            story = self._get_client().generate_daily_story(theme)
-            from app.services.daily_story.quality import attach_daily_story_quality
+        from app.services.daily_story.quality import attach_daily_story_quality
 
-            attach_daily_story_quality(story)
-        except ValueError as exc:
-            logger.error("[DAILY_STORY] generate failed theme=%r: %s", theme, exc)
-            raise
-        except Exception:
-            logger.exception("[DAILY_STORY] generate failed theme=%r", theme)
-            raise
+        client = self._get_client()
+        best_story: dict[str, Any] | None = None
+        best_score = -1
+        target = 85
+        max_attempts = 3
+        last_exc: Exception | None = None
+
+        for attempt in range(max_attempts):
+            try:
+                story = client.generate_daily_story(theme)
+                attach_daily_story_quality(story, theme=theme)
+            except ValueError as exc:
+                last_exc = exc
+                logger.warning(
+                    "[DAILY_STORY] attempt %d/%d validation failed: %s",
+                    attempt + 1, max_attempts, exc,
+                )
+                continue
+            except Exception:
+                raise
+
+            score = story.get("quality", {}).get("score", 0)
+            if score > best_score:
+                best_score = score
+                best_story = story
+
+            if score >= target:
+                elapsed = time.perf_counter() - started
+                logger.info(
+                    "[DAILY_STORY] hit target score=%d >= %d "
+                    "attempt=%d/%d elapsed=%.1fs",
+                    score, target, attempt + 1, max_attempts, elapsed,
+                )
+                return story
+
+            logger.info(
+                "[DAILY_STORY] score=%d < %d, retry attempt=%d/%d",
+                score, target, attempt + 1, max_attempts,
+            )
+
         elapsed = time.perf_counter() - started
-        logger.info("[DAILY_STORY] generate done theme=%r elapsed=%.1fs", theme, elapsed)
-        return story
+        if best_story is not None:
+            logger.warning(
+                "[DAILY_STORY] best score=%d < %d after %d attempts "
+                "elapsed=%.1fs",
+                best_score, target, max_attempts, elapsed,
+            )
+            return best_story
+
+        raise last_exc or RuntimeError(
+            f"daily story generation failed after {max_attempts} attempts"
+        )
 
     def generate_daily_story_themes(
         self,

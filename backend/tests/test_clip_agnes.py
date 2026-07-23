@@ -236,7 +236,7 @@ def test_agnes_clip_provider_submits_i2v_payload(tmp_path: Path) -> None:
     assert payload["model"] == provider._model  # noqa: SLF001
     assert payload["mode"] == "ti2vid"
     assert payload["image"].startswith("data:image/png;base64,")
-    assert payload["num_frames"] == 121
+    assert payload["num_frames"] == 129
     assert "slow zoom" not in payload["prompt"].lower()
     assert "不推近" in payload["prompt"] or "镜头固定" in payload["prompt"]
     assert "宇宙飞船" not in payload["prompt"]

@@ -16,7 +16,6 @@ from app.services.media.ffmpeg_utils import (
     vf_for_encode,
 )
 
-CLIP_FPS = 25
 _MOTION_FINISH_RATIO = 0.95
 _PIX_FMT = "yuv420p"
 
@@ -41,13 +40,18 @@ def _even(value: int) -> int:
     return value if value % 2 == 0 else value + 1
 
 
+def clip_fps() -> int:
+    """分镜 clip 帧率（Ken Burns / agnes i2v / merge 拼接统一）。"""
+    return get_settings().clip_fps
+
+
 def _still_image_input_args(image_path: Path) -> list[str]:
     """静图必须带 framerate，否则 loop 时间基不稳，动效会顿/掉帧。"""
     return [
         "-loop",
         "1",
         "-framerate",
-        str(CLIP_FPS),
+        str(clip_fps()),
         "-i",
         str(image_path),
     ]
@@ -55,6 +59,7 @@ def _still_image_input_args(image_path: Path) -> list[str]:
 
 __all__ = [
     "burn_ass_subtitles",
+    "clip_fps",
     "fit_video_duration",
     "fit_video_with_ass_subtitles",
     "image_to_clip",
@@ -87,7 +92,7 @@ def _ease_prog(motion_frames: int) -> str:
 
 
 def _motion_tail() -> str:
-    return f",fps={CLIP_FPS}{_pix_fmt_filter_suffix()}"
+    return f",fps={clip_fps()}{_pix_fmt_filter_suffix()}"
 
 
 def _zoom_motion_vf(
@@ -135,7 +140,7 @@ def _motion_vf(
     height: int,
 ) -> str:
     """Ken Burns：全部走 scale+crop（不用 zoompan），末尾强制 CFR。"""
-    frames = max(1, round(duration_sec * CLIP_FPS))
+    frames = max(1, round(duration_sec * clip_fps()))
     zoom_max = _motion_zoom_max(preset)
     delta = zoom_max - 1.0
     prog = _ease_prog(max(int(frames * _MOTION_FINISH_RATIO), 1))
@@ -255,7 +260,7 @@ def image_to_clip_with_overlay(
             "-t",
             str(duration_sec),
             "-r",
-            str(CLIP_FPS),
+            str(clip_fps()),
             *libx264_encode_args(subtitle=True, force_cpu=True),
             "-sws_flags",
             "lanczos+accurate_rnd+full_chroma_int",
@@ -328,7 +333,7 @@ def image_to_clip_timed_overlays(
             "-t",
             str(duration_sec),
             "-r",
-            str(CLIP_FPS),
+            str(clip_fps()),
             *libx264_encode_args(subtitle=True, force_cpu=True),
             "-sws_flags",
             "lanczos+accurate_rnd+full_chroma_int",
@@ -447,7 +452,7 @@ def fit_video_duration(
         video_dur = probe_duration(input_path)
         vf = _fit_vf_chain(video_dur, target_sec, width=width, height=height)
     else:
-        vf = f"fps={CLIP_FPS},format={_PIX_FMT}"
+        vf = f"fps={clip_fps()},format={_PIX_FMT}"
     run_ffmpeg(
         [
             *ffmpeg_cmd_start(hwaccel=False),
@@ -500,7 +505,7 @@ def image_to_clip(
         "-movflags",
         "+faststart",
         "-r",
-        str(CLIP_FPS),
+        str(clip_fps()),
         "-t",
         str(duration_sec),
         str(output_path),
@@ -543,7 +548,7 @@ def video_to_clip_timed_overlays(
         str(video_path),
     ]
     for ov_path, _, _ in overlay_windows:
-        cmd.extend(["-loop", "1", "-framerate", str(CLIP_FPS), "-i", str(ov_path)])
+        cmd.extend(["-loop", "1", "-framerate", str(clip_fps()), "-i", str(ov_path)])
     cmd.extend(
         [
             "-filter_complex",

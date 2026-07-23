@@ -38,6 +38,19 @@
                 选择曲目后可试听
               </div>
             </el-form-item>
+            <el-form-item label="分镜转场">
+              <el-select v-model="xfadeTransition" class="w-full!" :disabled="actionDisabled">
+                <el-option v-for="item in xfadeTransitionOptions" :key="item.value" :label="item.label"
+                  :value="item.value" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="转场时长">
+              <div class="flex w-full items-center gap-2">
+                <el-slider v-model="xfadeDurationSec" :min="0.1" :max="1.0" :step="0.1"
+                  :disabled="actionDisabled || xfadeTransition === 'none'" class="mx-2 flex-1" />
+                <span class="w-14 shrink-0 text-xs text-gray-500">{{ xfadeDurationSec }} s</span>
+              </div>
+            </el-form-item>
           </el-form>
 
         </div>
@@ -147,6 +160,19 @@ const bgmVolumeDb = ref(-14);
 const bgmOptions = ref<MaterialAudioRecord[]>([]);
 const bgmListLoading = ref(false);
 
+const xfadeTransitionOptions = [
+  { label: "无（硬切）", value: "none" },
+  { label: "交叉淡化", value: "fade" },
+  { label: "溶解", value: "dissolve" },
+  { label: "左擦", value: "wipeleft" },
+  { label: "右擦", value: "wiperight" },
+  { label: "左滑", value: "slideleft" },
+  { label: "右滑", value: "slideright" },
+] as const;
+
+const xfadeTransition = ref("none");
+const xfadeDurationSec = ref(0.4);
+
 const bgmPlayer = useAudioPlayer({
   active: () => props.stageActive,
   callbacks: {
@@ -245,6 +271,17 @@ function syncBgmFromJob() {
     typeof bgm?.volume_db === "number" ? bgm.volume_db : -14;
 }
 
+function syncXfadeFromJob() {
+  const xfade = props.job.info?.xfade;
+  const transition =
+    typeof xfade?.transition === "string" ? xfade.transition : "none";
+  xfadeTransition.value = xfadeTransitionOptions.some((item) => item.value === transition)
+    ? transition
+    : "none";
+  xfadeDurationSec.value =
+    typeof xfade?.duration_sec === "number" ? xfade.duration_sec : 0.4;
+}
+
 async function loadBgmOptions() {
   bgmListLoading.value = true;
   try {
@@ -319,6 +356,10 @@ const handleRun = async (toEnd: boolean) => {
         material_id: bgmMaterialId.value ?? null,
         volume_db: bgmVolumeDb.value,
       },
+      xfade: {
+        transition: xfadeTransition.value,
+        duration_sec: xfadeDurationSec.value,
+      },
     });
     ElMessage.success(`已提交${actionLabel}，任务已开始执行`);
     emit("refresh");
@@ -346,6 +387,12 @@ watch(
   { deep: true }
 );
 
+watch(
+  () => props.job.info?.xfade,
+  () => syncXfadeFromJob(),
+  { deep: true }
+);
+
 watch(bgmPreviewUrl, url => {
   if (!url) {
     bgmPlayer.clear();
@@ -355,6 +402,7 @@ watch(bgmPreviewUrl, url => {
 onMounted(() => {
   syncSubtitleFromJob();
   syncBgmFromJob();
+  syncXfadeFromJob();
   void loadBgmOptions();
 });
 </script>

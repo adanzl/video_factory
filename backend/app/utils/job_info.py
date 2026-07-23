@@ -653,3 +653,55 @@ def normalize_subtitle_payload(raw: object) -> dict[str, Any] | None:
     if not isinstance(raw, dict):
         raise ValueError("subtitle must be an object")
     return {"enabled": bool(raw.get("enabled"))}
+
+
+DEFAULT_XFADE_DURATION_SEC = 0.4
+
+
+def xfade_params_from_info(info: str | dict | None, *, settings: Any | None = None) -> dict[str, Any]:
+    """解析 job.info.xfade；缺省回退全局 SEGMENT_XFADE_*。"""
+    from app.config import get_settings
+    from app.services.media.ffmpeg_utils import normalize_xfade_transition
+
+    cfg = settings or get_settings()
+    raw = parse_job_info(info).get("xfade")
+    transition_raw: object | None = None
+    duration_raw: object | None = None
+    if isinstance(raw, dict):
+        transition_raw = raw.get("transition")
+        duration_raw = raw.get("duration_sec")
+    if transition_raw is None:
+        transition_raw = cfg.segment_xfade_transition
+    if duration_raw is None:
+        duration_raw = cfg.segment_xfade_duration_sec
+    transition = normalize_xfade_transition(
+        transition_raw if isinstance(transition_raw, str) else str(transition_raw or "none")
+    )
+    try:
+        duration_sec = float(duration_raw)
+    except (TypeError, ValueError):
+        duration_sec = DEFAULT_XFADE_DURATION_SEC
+    duration_sec = max(0.05, min(2.0, duration_sec))
+    return {
+        "transition": transition,
+        "duration_sec": duration_sec,
+        "enabled": transition != "none",
+    }
+
+
+def normalize_xfade_payload(raw: object) -> dict[str, Any] | None:
+    """校验 API 传入的 xfade 配置。"""
+    from app.services.media.ffmpeg_utils import normalize_xfade_transition
+
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError("xfade must be an object")
+    transition = normalize_xfade_transition(raw.get("transition"))
+    duration = raw.get("duration_sec", DEFAULT_XFADE_DURATION_SEC)
+    try:
+        duration_sec = float(duration)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("xfade.duration_sec must be a number") from exc
+    duration_sec = max(0.05, min(2.0, duration_sec))
+    return {"transition": transition, "duration_sec": duration_sec}
