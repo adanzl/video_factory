@@ -56,6 +56,10 @@ export interface RunStageActionPayload {
   subtitle?: {
     enabled?: boolean;
   };
+  xfade?: {
+    transition?: string;
+    duration_sec?: number;
+  };
 }
 
 export interface PreviewScriptPromptsPayload {

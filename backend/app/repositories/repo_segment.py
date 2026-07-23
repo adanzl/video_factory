@@ -54,6 +54,10 @@ def insert_segments(
         clip_path = seg.get("clip_path")
         if clip_path is None and prev is not None:
             clip_path = prev.get("clip_path")
+        # TTS 实测时长优先：脚本/image_prompt 重跑常带估算 duration_sec，勿覆盖
+        duration_sec = seg.get("duration_sec")
+        if prev is not None and prev.get("duration_sec") is not None:
+            duration_sec = prev.get("duration_sec")
         status = seg.get("status")
         if not status and prev is not None:
             status = prev.get("status")
@@ -82,7 +86,7 @@ def insert_segments(
                 seg.get("image_prompt"),
                 seg.get("motion_prompt"),
                 seg.get("visual_mode", "static_motion"),
-                seg.get("duration_sec"),
+                duration_sec,
                 seg.get("sd15_prompt_en"),
                 image_path,
                 clip_path,

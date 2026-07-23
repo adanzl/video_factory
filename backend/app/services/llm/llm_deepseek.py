@@ -1645,6 +1645,72 @@ class DeepSeekClient(LLMClient):
         assert last_exc is not None
         raise last_exc
 
+    def _revise_daily_story_body(
+        self,
+        theme: str,
+        prev_story: dict[str, Any],
+        revision_hints: str,
+        *,
+        max_attempts: int = 3,
+    ) -> dict[str, Any]:
+        """定向修订：保持骨架，只修补短板。"""
+        from app.services.daily_story.prompts import (
+            DAILY_STORY_BODY_CHARS_MIN,
+            DAILY_STORY_BODY_CHARS_MAX,
+            DAILY_STORY_LINE_CHARS_MAX,
+            build_daily_story_prompts,
+            build_daily_story_retry_user,
+            resolve_daily_story_retry_length_mode,
+            validate_daily_story_json,
+        )
+        import json
+
+        # 用已有的重试模板（处理好字数约束），注入质量提示词
+        system, _ = build_daily_story_prompts(theme, length_mode="revise")
+        base_user = (
+            f"主题：{theme}\n"
+            f"【字数硬卡】正文 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；"
+            f"每句 ≤{DAILY_STORY_LINE_CHARS_MAX} 字；只修补不扩写。\n"
+            f"【核心原则】保留对话骨架，只修补以下短板。禁止推翻重写、禁止另起冲突。\n\n"
+            f"【待修补】\n{revision_hints}\n\n"
+            f"【上一稿】\n{json.dumps(prev_story, ensure_ascii=False)}\n\n"
+            "请输出修订后的完整 JSON，格式与上一稿一致。"
+        )
+        user = base_user
+        last_exc: ValueError | None = None
+
+        for attempt in range(max_attempts):
+            raw, _ = self._chat_json(system, user)
+            try:
+                validate_daily_story_json(raw, phase="body")
+                return raw
+            except ValueError as exc:
+                last_exc = exc
+                if attempt + 1 >= max_attempts:
+                    break
+                errors = str(exc).removeprefix("daily_story 校验失败: ")
+                logger.warning(
+                    "[DAILY_STORY] quality revise validation failed "
+                    "attempt=%d/%d: %s",
+                    attempt + 1, max_attempts, errors,
+                )
+                # 用已有重试机制处理字数等格式问题
+                length_mode = resolve_daily_story_retry_length_mode(
+                    raw if isinstance(raw, dict) else None, errors=errors,
+                )
+                system, _ = build_daily_story_prompts(
+                    theme, length_mode=length_mode,
+                )
+                user = build_daily_story_retry_user(
+                    theme,
+                    prev_story=raw if isinstance(raw, dict) else prev_story,
+                    errors=errors,
+                )
+                # 把质量提示词追加到 error feedback 后面
+                user += f"\n\n【同时修补】\n{revision_hints}"
+        assert last_exc is not None
+        raise last_exc
+
     def _generate_daily_story_opening(
         self,
         theme: str,

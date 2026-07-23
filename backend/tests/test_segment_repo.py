@@ -124,3 +124,43 @@ def test_insert_segments_stores_info_json() -> None:
     rebuilt = {row["segment_index"]: row for row in repo_segment.list_segments(conn, job_id)}
     assert rebuilt[1]["info"]["video_provider"] == "ffmpeg"
     assert rebuilt[1]["text"] == "a2"
+
+
+def test_insert_segments_preserves_tts_duration_sec() -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    apply_schema(conn)
+    job = repo_job.create_job(conn, "test preserve duration")
+    job_id = job["id"]
+    repo_segment.insert_segments(
+        conn,
+        job_id,
+        [
+            {
+                "segment_index": 1,
+                "text": "a",
+                "visual_mode": "static_motion",
+                "duration_sec": 8.78,
+            },
+        ],
+    )
+    rows = repo_segment.list_segments(conn, job_id)
+    repo_segment.update_segment(conn, rows[0]["id"], duration_sec=9.795)
+
+    repo_segment.insert_segments(
+        conn,
+        job_id,
+        [
+            {
+                "segment_index": 1,
+                "text": "a",
+                "visual_mode": "static_motion",
+                "duration_sec": 8.78,
+                "image_prompt": "new prompt",
+            },
+        ],
+    )
+
+    updated = repo_segment.list_segments(conn, job_id)[0]
+    assert updated["duration_sec"] == 9.795
+    assert updated["image_prompt"] == "new prompt"

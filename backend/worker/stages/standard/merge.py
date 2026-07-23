@@ -10,7 +10,7 @@ from app.services.tts.audio_analysis import analyze_loudness
 from app.services.media.ffmpeg_utils import ffmpeg_hwaccel_config_summary, probe_duration
 from app.services.media.media_mgr import media_mgr
 from app.utils.final_asset import build_final_asset
-from app.utils.job_info import bgm_params_from_info, resolve_bgm_file, subtitle_params_from_info
+from app.utils.job_info import bgm_params_from_info, resolve_bgm_file, subtitle_params_from_info, xfade_params_from_info
 from worker.context import JobContext
 from worker.stages.base import StageExecutor
 
@@ -58,12 +58,22 @@ class MergeStage(StageExecutor):
                 )
 
         subtitle = subtitle_params_from_info(job.get("info"))
+        xfade = xfade_params_from_info(job.get("info"))
         with connection() as conn:
             repo_job_log.append_log(
                 conn,
                 ctx.job["id"],
                 self.name,
                 f"subtitle burn={'on' if subtitle['enabled'] else 'off'}",
+            )
+            repo_job_log.append_log(
+                conn,
+                ctx.job["id"],
+                self.name,
+                (
+                    f"xfade transition={xfade['transition']} "
+                    f"duration_sec={xfade['duration_sec']}"
+                ),
             )
 
         result = media_mgr.merge_final(
@@ -76,6 +86,8 @@ class MergeStage(StageExecutor):
             bgm_path=bgm_path,
             bgm_volume_db=float(bgm["volume_db"]),
             burn_subtitles=bool(subtitle["enabled"]),
+            xfade_duration_sec=float(xfade["duration_sec"]),
+            xfade_transition=str(xfade["transition"]),
         )
         loudness = analyze_loudness(result.final_path)
         duration = probe_duration(result.final_path)

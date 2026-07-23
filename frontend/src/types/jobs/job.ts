@@ -34,6 +34,10 @@ export interface JobInfo {
   subtitle?: {
     enabled?: boolean;
   };
+  xfade?: {
+    transition?: string;
+    duration_sec?: number;
+  };
 }
 
 export type IntroCategory = "百科" | "历史悬案";

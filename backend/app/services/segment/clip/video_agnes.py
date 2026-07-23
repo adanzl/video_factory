@@ -217,7 +217,7 @@ class AgnesClipProvider(ClipProvider):
         self._create_url = f"{base}/videos"
         self._poll_root = _agnes_api_root(base)
         self._model = settings.agnes_video_model
-        self._frame_rate = settings.agnes_video_frame_rate
+        self._frame_rate = settings.clip_fps
         self._submit_interval = settings.agnes_submit_interval_sec
         self._free_submit_interval = settings.agnes_free_submit_interval_sec
         self._http_max_retries = settings.agnes_http_max_retries
