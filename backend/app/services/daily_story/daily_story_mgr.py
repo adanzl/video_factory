@@ -56,18 +56,30 @@ class DailyStoryMgr:
         def _worker() -> None:
             try:
                 story = llm_mgr.generate_daily_story(theme)
+                new_score = story.get("quality", {}).get("score", 0)
                 with connection() as conn:
-                    repo_daily_story.update_story(
-                        conn,
-                        story_id,
-                        story=story,
-                        status=_STATUS_ACTIVE,
+                    old_row = repo_daily_story.get_story(conn, story_id)
+                    old_story = old_row.get("story") if old_row else None
+                    old_score = (
+                        old_story.get("quality", {}).get("score", 0)
+                        if isinstance(old_story, dict) else 0
                     )
+                    if old_score > new_score:
+                        logger.info(
+                            "[DAILY_STORY] async %s keeping old (score %d > new %d) "
+                            "story_id=%d theme=%r",
+                            action, old_score, new_score, story_id, theme,
+                        )
+                        repo_daily_story.update_story(
+                            conn, story_id, status=_STATUS_ACTIVE,
+                        )
+                    else:
+                        repo_daily_story.update_story(
+                            conn, story_id, story=story, status=_STATUS_ACTIVE,
+                        )
                 logger.info(
-                    "[DAILY_STORY] async %s done story_id=%d theme=%r",
-                    action,
-                    story_id,
-                    theme,
+                    "[DAILY_STORY] async %s done story_id=%d theme=%r score=%d",
+                    action, story_id, theme, new_score,
                 )
             except Exception as exc:
                 logger.error(
