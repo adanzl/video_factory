@@ -384,14 +384,23 @@ def _run_image_prompts(
     updated["include_sd15_prompt"] = include_sd15_prompt
     updated.pop("_llm_timing", None)
 
-    # 用 dialogue 估算时间，注入到 motion_prompt
+    # 用真实 TTS cues（若已有）注入时间，否则用 dialogue 估算
     from app.services.media.media_mgr import _inject_mouth_motion
+    from app.services.tts.tts_mgr import tts_mgr
+    from pathlib import Path as _Path
+    media_dir = _Path(get_settings().video_data_dir) / str(job_id)
+    cues_path = tts_mgr.subtitle_cues_path_for(media_dir / "audio")
+    subtitle_cues = tts_mgr.load_subtitle_cues(cues_path) if cues_path.exists() else []
     for seg in updated.get("segments") or []:
         mp = seg.get("motion_prompt")
         dl = seg.get("dialogue")
-        if mp and dl:
+        if not mp or not dl:
+            continue
+        if subtitle_cues:
+            cues = tts_mgr.cues_for_segment(subtitle_cues, seg["segment_index"])
+        else:
             cues = [(d.get("text", ""), len(d.get("text", "")) * 0.25) for d in dl]
-            seg["motion_prompt"] = _inject_mouth_motion(mp, seg, cues)
+        seg["motion_prompt"] = _inject_mouth_motion(mp, seg, cues)
 
     from app.services.script.board_timeline import parse_video_timeline
     from app.utils.media import assign_segment_timings
