@@ -132,16 +132,34 @@ def _cast_names_from_motion(text: str) -> list[str]:
 
 
 def _cast_lock_hint(text: str) -> str | None:
-    """按本段出场角色锁定；有妈妈时允许 3 人，只禁路人/复制。"""
+    """按本段出场角色锁定；有妈妈时允许 3 人，无妈妈时禁成年男/第三人。"""
     names = _cast_names_from_motion(text)
     if not names:
         return None
     cast = "、".join(names)
     n = len(names)
-    return (
-        f"画面清晰主体人物只能是{cast}共{n}人，人数与静图完全一致，"
-        f"禁止路人、禁止复制角色、禁止未列出的人物"
-    )
+    parts = [
+        f"画面清晰主体人物只能是{cast}共{n}人，人数与静图完全一致",
+        "禁止路人、禁止复制角色、禁止未列出的人物",
+    ]
+    if "妈妈" not in names:
+        parts.append("禁止妈妈入画、禁止任何成年男性或额外小孩入画")
+    return "，".join(parts)
+
+
+def _negative_prompt_for_motion(text: str) -> str:
+    """按出场动态补 negative：无妈妈时才禁第三人/成年男，避免误伤有妈妈镜头。"""
+    names = _cast_names_from_motion(text)
+    extra: list[str] = []
+    if names and "妈妈" not in names:
+        extra.append(
+            "third person, extra person, adult man, adult woman, "
+            "第三人, 成年男性, 成年女人, 多余男人, 多余小孩, 第三个小孩, "
+            "妈妈, 沙发后男人, man behind sofa"
+        )
+    if not extra:
+        return _DEFAULT_NEGATIVE_PROMPT
+    return f"{_DEFAULT_NEGATIVE_PROMPT}, {', '.join(extra)}"
 
 
 def _stabilize_motion_prompt(prompt: str) -> str:
@@ -151,24 +169,27 @@ def _stabilize_motion_prompt(prompt: str) -> str:
     text = re.sub(r"[，,]{2,}", "，", text).strip("，, ").strip()
     if not text:
         text = _DEFAULT_MOTION_PROMPT
-    parts = [text]
+    extras: list[str] = []
     if _STABILITY_HINT not in text and not any(
         word in text for word in ("稳定", "平滑", "无抖动", "镜头固定")
     ):
-        parts.append(_STABILITY_HINT)
+        extras.append(_STABILITY_HINT)
     if not any(
         word in text
         for word in ("面部", "表情", "静图一致", "不微笑", "五官", "脸")
     ):
-        parts.append(_FACE_LOCK_HINT)
+        extras.append(_FACE_LOCK_HINT)
     if not any(
         word in text for word in ("镜头固定", "不推近", "不拉远", "不放大")
     ):
-        parts.append(_CAMERA_LOCK_HINT)
+        extras.append(_CAMERA_LOCK_HINT)
     cast_hint = _cast_lock_hint(text)
+    # 人数锁定前置：I2V 对前缀更敏感
     if cast_hint and "人数与静图" not in text and "只能是" not in text:
-        parts.append(cast_hint)
-    return "，".join(parts) if len(parts) > 1 else text
+        chunks = [cast_hint, text, *extras]
+    else:
+        chunks = [text, *extras]
+    return "，".join(chunks) if len(chunks) > 1 else chunks[0]
 
 
 def _pick_num_frames(target_sec: float, frame_rate: int) -> int:
@@ -462,7 +483,7 @@ class AgnesClipProvider(ClipProvider):
             "mode": _I2V_MODE,
             "num_frames": num_frames,
             "frame_rate": self._frame_rate,
-            "negative_prompt": _DEFAULT_NEGATIVE_PROMPT,
+            "negative_prompt": _negative_prompt_for_motion(prompt),
         }
         if width is not None:
             payload["width"] = width
