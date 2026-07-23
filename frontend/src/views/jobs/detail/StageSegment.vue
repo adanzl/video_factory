@@ -298,8 +298,8 @@
             <div class="flex items-center justify-between gap-2">
               <div class="flex items-center gap-1 text-xs font-medium text-gray-600">
                 分镜图片
-                <span v-if="segment.image_gen_sec != null" class="font-normal text-gray-400">
-                  {{ formatGenSec(segment.image_gen_sec) }}
+                <span v-if="segment.info?.image_gen_sec != null" class="font-normal text-gray-400">
+                  {{ formatGenSec(segment.info.image_gen_sec) }}
                 </span>
               </div>
               <div class="flex items-center gap-1">
@@ -340,8 +340,8 @@
             <div class="flex items-center justify-between gap-2">
               <div class="flex items-center gap-1 text-xs font-medium text-gray-600">
                 视频片段
-                <span v-if="segment.clip_gen_sec != null" class="font-normal text-gray-400">
-                  {{ formatGenSec(segment.clip_gen_sec) }}
+                <span v-if="segment.info?.clip_gen_sec != null" class="font-normal text-gray-400">
+                  {{ formatGenSec(segment.info.clip_gen_sec) }}
                 </span>
               </div>
               <div class="flex items-center gap-1">

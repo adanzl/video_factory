@@ -24,13 +24,13 @@ export interface JobSegment {
   status: string;
   /** 图片/视频版本号，每次生成+1，用于 URL 缓存破坏 */
   version?: number;
-  /** 分镜图片生成耗时（秒） */
-  image_gen_sec?: number | null;
-  /** 分镜视频片段生成耗时（秒） */
-  clip_gen_sec?: number | null;
-  /** 分镜扩展：video_provider 等 */
+  /** 分镜扩展：video_provider、生成耗时等 */
   info?: {
     video_provider?: "ffmpeg" | "wan_i2v" | "agnes_i2v";
+    /** 分镜图片生成耗时（秒） */
+    image_gen_sec?: number;
+    /** 分镜视频片段生成耗时（秒） */
+    clip_gen_sec?: number;
   } | null;
 }
 
