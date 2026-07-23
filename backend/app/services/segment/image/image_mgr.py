@@ -160,7 +160,7 @@ class ImageMgr:
         *,
         size: str | None = None,
         image_provider: str | None = None,
-        on_image_done: Callable[[int, Path], None] | None = None,
+        on_image_done: Callable[[int, Path, float], None] | None = None,
         job_id: int | None = None,
         job: dict[str, Any] | None = None,
         ref_images: list[Path] | None = None,
@@ -305,7 +305,7 @@ class ImageMgr:
                 params_desc,
                 out.stat().st_size if out.exists() else 0,
             )
-            return seg["id"], out
+            return seg["id"], out, elapsed
 
         results: list[tuple[int, Path]] = []
         skipped = 0
@@ -318,9 +318,9 @@ class ImageMgr:
                 if item is None:
                     skipped += 1
                     continue
-                seg_id, path = item
+                seg_id, path, gen_sec = item
                 results.append((seg_id, path))
-                on_image_done(seg_id, path)
+                on_image_done(seg_id, path, gen_sec)
         else:
             from gevent.pool import Pool
 
@@ -334,7 +334,8 @@ class ImageMgr:
                 if item is None:
                     skipped += 1
                     continue
-                results.append(item)
+                seg_id, path, _ = item
+                results.append((seg_id, path))
         elapsed = time.time() - start
         logger.info(
             "image batch done: %s/%s ok, skipped=%s in %.1fs | %s",

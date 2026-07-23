@@ -834,7 +834,7 @@ class AgnesImageProvider(ImageProvider):
                             ],
                             "max_tokens": 256,
                         }
-                        resp = requests.post(url, headers=headers, json=payload, timeout=60)
+                        resp = requests.post(url, headers=headers, json=payload, timeout=300)
                         if resp.ok:
                             content = (
                                 resp.json()

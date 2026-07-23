@@ -80,7 +80,7 @@ def test_produce_images_persists_each_image_via_callback(tmp_path: Path) -> None
         for seg in targets:
             path = out_dir / f"{seg['segment_index']}.png"
             path.write_bytes(b"png")
-            on_image_done(seg["id"], path)
+            on_image_done(seg["id"], path, 0.0)
             results.append((seg["id"], path))
         return results
 
@@ -90,7 +90,7 @@ def test_produce_images_persists_each_image_via_callback(tmp_path: Path) -> None
             media_dir=media_dir,
             scope="images",
             job={"info": {"orientation": "landscape"}},
-            on_image_done=lambda seg_id, path: persisted.append((seg_id, path)),
+            on_image_done=lambda seg_id, path, gen_sec: persisted.append((seg_id, path)),
         )
 
     assert persisted == [(101, images_dir / "1.png"), (102, images_dir / "2.png")]
@@ -180,7 +180,7 @@ def test_produce_clips_persists_each_clip_via_callback(tmp_path: Path) -> None:
         for seg in segments:
             path = media_dir / "segments" / f"{seg['segment_index']}.mp4"
             path.write_bytes(b"mp4")
-            on_clip_done(seg["id"], path)
+            on_clip_done(seg["id"], path, 0.0)
             results.append((seg["id"], path))
         from app.services.media.media_mgr import SegmentClipsResult
 
@@ -192,7 +192,7 @@ def test_produce_clips_persists_each_clip_via_callback(tmp_path: Path) -> None:
             media_dir=media_dir,
             audio_path=None,
             scope="clips",
-            on_clip_done=lambda seg_id, path: persisted.append((seg_id, path)),
+            on_clip_done=lambda seg_id, path, gen_sec: persisted.append((seg_id, path)),
         )
 
     assert persisted == [
@@ -256,7 +256,7 @@ def test_produce_segments_skips_existing_clips(tmp_path: Path) -> None:
             path = clips_dir / f"{seg['segment_index']}.mp4"
             path.write_bytes(b"mp4")
             if on_clip_done:
-                on_clip_done(seg["id"], path)
+                on_clip_done(seg["id"], path, 0.0)
         return SegmentClipsResult(
             segment_clip_paths=[(seg["id"], clips_dir / f"{seg['segment_index']}.mp4") for seg in segments]
         )

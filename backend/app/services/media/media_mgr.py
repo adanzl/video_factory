@@ -141,7 +141,7 @@ class MediaMgr:
         audio_path: Path | None = None,
         only_segment_indices: set[int] | None = None,
         job: dict | None = None,
-        on_clip_done: Callable[[int, Path], None] | None = None,
+        on_clip_done: Callable[[int, Path, float], None] | None = None,
     ) -> SegmentClipsResult:
         settings = get_settings()
         from app.utils.job_info import resolve_segment_video_size
@@ -194,7 +194,8 @@ class MediaMgr:
             " (i2v)" if uses_i2v else "",
         )
 
-        def build_one(seg: dict, ordinal: int) -> tuple[int, Path]:
+        def build_one(seg: dict, ordinal: int) -> tuple[int, Path, float]:
+            t0 = time.time()
             job_id = int(job["id"]) if job is not None and job.get("id") is not None else None
             if job_id is not None:
                 job_cancel.raise_if_cancelled(job_id)
@@ -271,22 +272,24 @@ class MediaMgr:
                     i2v_sem.release()
                     logger.info("clip segment %s: released i2v slot", index)
 
+            elapsed = time.time() - t0
             logger.info(
-                "clip %s/%s done segment %s | %s",
+                "clip %s/%s done segment %s in %.1fs | %s",
                 ordinal,
                 total,
                 index,
+                elapsed,
                 params_desc,
             )
-            return seg["id"], clip_path
+            return seg["id"], clip_path, elapsed
 
         segment_clips: list[tuple[int, Path]] = []
         if max_workers <= 1:
             for i, seg in enumerate(targets, 1):
-                seg_id, clip_path = build_one(seg, i)
+                seg_id, clip_path, gen_sec = build_one(seg, i)
                 segment_clips.append((seg_id, clip_path))
                 if on_clip_done is not None:
-                    on_clip_done(seg_id, clip_path)
+                    on_clip_done(seg_id, clip_path, gen_sec)
         else:
             import gevent
             from gevent.pool import Pool
@@ -311,10 +314,10 @@ class MediaMgr:
                         continue
                     for g in ready:
                         pending.discard(g)
-                        seg_id, clip_path = g.get()
+                        seg_id, clip_path, gen_sec = g.get()
                         segment_clips.append((seg_id, clip_path))
                         if on_clip_done is not None:
-                            on_clip_done(seg_id, clip_path)
+                            on_clip_done(seg_id, clip_path, gen_sec)
             except JobCancelledError:
                 for g in list(pending):
                     g.kill(block=False)

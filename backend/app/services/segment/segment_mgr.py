@@ -87,8 +87,8 @@ class SegmentMgr:
         only_segment_indices: set[int] | None = None,
         scope: str = "all",
         job: dict | None = None,
-        on_image_done: Callable[[int, Path], None] | None = None,
-        on_clip_done: Callable[[int, Path], None] | None = None,
+        on_image_done: Callable[[int, Path, float], None] | None = None,
+        on_clip_done: Callable[[int, Path, float], None] | None = None,
     ) -> SegmentProduceResult:
         if scope not in {"all", "images", "clips"}:
             raise ValueError(f"invalid segment scope: {scope}")

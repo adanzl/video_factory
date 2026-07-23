@@ -133,7 +133,7 @@ def test_generate_segment_images_skips_after_prompt_regen_fail(
             images_dir,
             job=job,
             content_style="daily_story",
-            on_image_done=lambda seg_id, _path: done_ids.append(seg_id),
+            on_image_done=lambda seg_id, _path, *_unused: done_ids.append(seg_id),
         )
 
     assert results == [(5, images_dir / "5.png")]

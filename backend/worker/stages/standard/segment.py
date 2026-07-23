@@ -27,22 +27,24 @@ class SegmentStage(StageExecutor):
         audio_path = Path(job["audio_path"]) if job.get("audio_path") else None
         produce_scope = ctx.segment_scope or "all"
 
-        def persist_segment_image(seg_id: int, path: Path) -> None:
+        def persist_segment_image(seg_id: int, path: Path, gen_sec: float = 0) -> None:
             with connection() as conn:
                 repo_segment.update_segment(
                     conn,
                     seg_id,
                     image_path=str(path),
                     status="done",
+                    image_gen_sec=gen_sec,
                 )
                 repo_segment.increase_version(conn, seg_id)
 
-        def persist_segment_clip(seg_id: int, path: Path) -> None:
+        def persist_segment_clip(seg_id: int, path: Path, gen_sec: float = 0) -> None:
             with connection() as conn:
                 repo_segment.update_segment(
                     conn,
                     seg_id,
                     clip_path=str(path),
+                    clip_gen_sec=gen_sec,
                 )
                 repo_segment.increase_version(conn, seg_id)
 
