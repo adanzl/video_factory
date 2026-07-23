@@ -53,8 +53,9 @@ def test_build_segment_video_filter_xfade_chain():
     )
     assert "[v0][v1]xfade=transition=fade:duration=0.400:offset=9.600" in fc
     assert "[vx1][v2]xfade=transition=fade:duration=0.400:offset=21.200" in fc
-    assert "[vout]fps=" in fc
-    assert label == "voutfps"
+    assert "fps=25" in fc
+    assert "format=yuv420p" in fc
+    assert label == "vout"
 
 
 def test_xfade_params_from_info_job_override():

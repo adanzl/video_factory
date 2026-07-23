@@ -825,7 +825,11 @@ def build_segment_video_filter_complex(
     fps = _clip_fps()
     parts: list[str] = []
     for i in range(n):
-        parts.append(f"[{i}:v]setpts=PTS*{factors[i]:.6f}[v{i}]")
+        # xfade 要求各输入 timebase / fps / pix_fmt 一致（I2V 24fps vs Ken Burns 25fps）
+        parts.append(
+            f"[{i}:v]setpts=PTS*{factors[i]:.6f},fps={fps},"
+            f"format={_PIX_FMT},setsar=1[v{i}]"
+        )
 
     effective_transition, effective_fade = resolve_effective_xfade(
         transition=transition,
@@ -834,7 +838,7 @@ def build_segment_video_filter_complex(
     )
     if effective_transition == _XFADE_TRANSITION_NONE:
         concat_inputs = "".join(f"[v{i}]" for i in range(n))
-        parts.append(f"{concat_inputs}concat=n={n}:v=1:a=0,fps={fps}[vout]")
+        parts.append(f"{concat_inputs}concat=n={n}:v=1:a=0[vout]")
         return ";".join(parts), "vout"
 
     label_in = "v0"
@@ -846,8 +850,7 @@ def build_segment_video_filter_complex(
             f":duration={effective_fade:.3f}:offset={offset:.3f}[{label_out}]"
         )
         label_in = label_out
-    parts.append(f"[vout]fps={fps}[voutfps]")
-    return ";".join(parts), "voutfps"
+    return ";".join(parts), "vout"
 
 
 def concat_video_audio_pts_fixed(
