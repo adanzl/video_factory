@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from app.utils.job_info import (
@@ -51,6 +52,30 @@ def _daily_speakers_of(seg: dict) -> list[str]:
 
     names = speakers_from_dialogue(seg.get("dialogue"))
     return [n for n in ("昭昭", "灿灿", "妈妈") if n in names]
+
+
+_DAILY_LR_RE = re.compile(
+    r"画面左边是\s*(昭昭|灿灿|妈妈)\s*[，,；;]?\s*右边是\s*(昭昭|灿灿|妈妈)"
+)
+
+
+def _daily_layout_speakers(seg: dict, vb: str) -> list[str]:
+    """左右站位：优先 visual_brief 明示，否则对白出现顺序，最后固定角色序。"""
+    m = _DAILY_LR_RE.search(vb or "")
+    if m:
+        left, right = m.group(1), m.group(2)
+        if left in _DAILY_CHAR_MAP and right in _DAILY_CHAR_MAP and left != right:
+            return [left, right]
+    order: list[str] = []
+    for item in seg.get("dialogue") or []:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("speaker") or "").strip()
+        if name in _DAILY_CHAR_MAP and name not in order:
+            order.append(name)
+    if len(order) >= 2:
+        return order
+    return _daily_speakers_of(seg)
 
 
 def _strip_style_suffix(vb: str) -> str:
@@ -120,7 +145,8 @@ def assemble_daily_t2i_prompt(
         parts.append("".join(char_parts))
 
     parts.append(_daily_lighting(vb))
-    parts.append(_daily_composition(shot, speakers))
+    layout = _daily_layout_speakers(seg, vb)
+    parts.append(_daily_composition(shot, layout))
     if extra and extra.strip():
         parts.append(extra.strip())
     return "".join(parts)
@@ -228,6 +254,8 @@ _IMAGE_PROMPT_MOTION_TAIL_DAILY_KEYFRAME = (
     "画面左边是{角色A}，右边是{角色B}。\n"
     "{角色A}说话，同时{微动作——部位+幅度}后停止；\n"
     "{角色B}说话，同时{微动作——部位+幅度}后定格。\n"
+    "【站位】左右必须与本段 image_prompt/visual_brief 中"
+    "「画面左边是…，右边是…」完全一致，禁止对调。\n"
     "【时间轴】禁止自编起止秒数；写成「{角色}说话，同时…」即可，"
     "出片前系统按 TTS 句时长自动写入「X.X-Y.Y秒」。\n"
     "有台词角色必须含「说话，同时」；无台词角色可不写「说话，同时」，只写微动作。\n"
