@@ -32,7 +32,26 @@ def test_assemble_daily_t2i_prompt_structure():
     assert "昭昭比灿灿矮约半个头" in prompt
     assert "窗光从一侧斜照" in prompt
     assert "中近景特写" in prompt
+    # 对白先发言者在左（灿灿），勿固定昭昭在左
+    assert "灿灿占左半，昭昭占右半" in prompt
     assert "蜡笔" in prompt
+
+
+def test_assemble_daily_layout_from_visual_brief():
+    """visual_brief 明示左右时，构图跟 brief，不对白序。"""
+    seg = {
+        "shot_type": "中景",
+        "visual_brief": (
+            "客厅沙发上，画面左边是昭昭，右边是灿灿；"
+            "昭昭摊手耸肩，灿灿叉腰瞪眼。"
+        ),
+        "dialogue": [
+            {"speaker": "灿灿", "text": "你怎么又乱扔！"},
+            {"speaker": "昭昭", "text": "我没有啊。"},
+        ],
+    }
+    prompt = assemble_daily_t2i_prompt(seg)
+    assert "昭昭左灿灿右" in prompt
 
 
 def test_build_image_prompts_daily_motion_modes_and_duration():
@@ -122,6 +141,28 @@ def test_inject_mouth_motion_adds_times_when_missing():
     out = _inject_mouth_motion(mp, seg, cues)
     assert "0.0-1.4秒灿灿说话，同时" in out
     assert "1.4-2.5秒昭昭说话，同时" in out
+
+
+def test_inject_mouth_motion_zeros_min_start():
+    """前导无 speaker 把起点推高时，最小值归零再全体平移。"""
+    seg = {
+        "dialogue": [
+            {"speaker": "", "text": "（静音）"},
+            {"speaker": "灿灿", "text": "你怎么又乱扔！"},
+            {"speaker": "昭昭", "text": "我没有啊。"},
+        ],
+    }
+    mp = (
+        "画面左边是昭昭，右边是灿灿。"
+        "昭昭说话，同时右手食指向前戳动约3厘米后收回；"
+        "灿灿说话，同时双手在胸前轻轻摆动约2次后停止。"
+    )
+    cues = [("（静音）", 3.3), ("你怎么又乱扔！", 4.0), ("我没有啊。", 3.4)]
+    out = _inject_mouth_motion(mp, seg, cues)
+    assert "0.0-4.0秒灿灿说话，同时" in out
+    assert "4.0-7.4秒昭昭说话，同时" in out
+    assert "3.3-" not in out
+    assert "7.3-" not in out
 
 
 def test_inject_mouth_motion_noop_for_ambient():

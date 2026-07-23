@@ -76,13 +76,17 @@ def _inject_mouth_motion(
     seg: dict,
     cues: list[tuple[str, float]],
 ) -> str:
-    """用真实时间替换「{角色}说话，同时」前已有的或缺失的时间。幂等。"""
+    """用真实时间替换「{角色}说话，同时」前已有的或缺失的时间。幂等。
+
+    时间轴相对本段 I2V 片段：说话窗口最小值归零后全体平移，
+    避免前导静音/旁白把起点推成全局时间。
+    """
     dialogue = seg.get("dialogue") or []
     if not dialogue or not cues or not prompt.strip():
         return prompt
     import re
     t = 0.0
-    speaker_times: list[tuple[str, str]] = []
+    speaker_windows: list[tuple[str, float, float]] = []
     for i, (_, dur) in enumerate(cues):
         if i >= len(dialogue):
             break
@@ -92,9 +96,14 @@ def _inject_mouth_motion(
             continue
         start, end = t, t + dur
         t = end
-        speaker_times.append((speaker, f"{start:.1f}-{end:.1f}秒"))
-    if not speaker_times:
+        speaker_windows.append((speaker, start, end))
+    if not speaker_windows:
         return prompt
+    offset = min(start for _, start, _ in speaker_windows)
+    speaker_times = [
+        (speaker, f"{start - offset:.1f}-{end - offset:.1f}秒")
+        for speaker, start, end in speaker_windows
+    ]
     result = prompt
     for speaker, time_str in speaker_times:
         # 匹配可选的已有时间 + speaker说话，同时

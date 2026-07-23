@@ -455,6 +455,8 @@ def test_build_visual_brief_prompts_daily_story_role_and_cast():
     assert "冲突道具：" in prompts["system"] or "冒号小标题" in prompts["system"]
     assert "粉色卫衣" in prompts["system"]
     assert "人物关系" in prompts["system"]
+    assert "站位" in prompts["system"]
+    assert "画面左边是" in prompts["system"]
     assert "刚叠好" in prompts["system"]
     assert "禁止编造" in prompts["system"] or "台词未点名" in prompts["system"]
 
