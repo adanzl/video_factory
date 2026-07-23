@@ -64,6 +64,20 @@ def test_stabilize_motion_prompt() -> None:
     # 已写表情锁定与固定机位则不再追加冗余
     already = "妈妈举手停，面部表情与静图一致不微笑，镜头固定不推近不拉远"
     assert _stabilize_motion_prompt(already) == already
+    # 站位句触发人数锁定（只禁路人/复制，不禁用妈妈第三人）
+    casted = _stabilize_motion_prompt(
+        "画面左边是灿灿，右边是昭昭。灿灿说话，同时点头。镜头固定不推近不拉远，"
+        "面部表情与静图一致不微笑"
+    )
+    assert "禁止路人" in casted
+    assert "灿灿、昭昭共2人" in casted
+    assert "禁止第三人" not in casted
+    with_mom = _stabilize_motion_prompt(
+        "画面左边是灿灿，右边是昭昭。妈妈说话，同时点头。镜头固定不推近不拉远，"
+        "面部表情与静图一致不微笑"
+    )
+    assert "妈妈" in with_mom and "共3人" in with_mom
+    assert "禁止第三人" not in with_mom
 
 
 def test_build_i2v_payload_includes_negative_prompt() -> None:
@@ -78,6 +92,9 @@ def test_build_i2v_payload_includes_negative_prompt() -> None:
     assert payload["mode"] == "ti2vid"
     assert "微笑" in payload["negative_prompt"]
     assert "快速推进" in payload["negative_prompt"]
+    assert "第三人" not in payload["negative_prompt"]
+    assert "third person" not in payload["negative_prompt"]
+    assert "duplicate character" in payload["negative_prompt"]
     assert payload["prompt"] == "微动"
 
 
