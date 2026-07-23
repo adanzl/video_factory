@@ -132,14 +132,14 @@ def _format_one_visual_brief_segment(
     if shot:
         line += f"; shot_type={shot!r}"
     if include_dialogue:
-        speakers = sorted(
-            {
-                str(d.get("speaker") or "").strip()
-                for d in (seg.get("dialogue") or [])
-                if str(d.get("speaker") or "").strip()
-            }
-        )
-        line += f"; speakers={speakers!r}"
+        dialogue = seg.get("dialogue") or []
+        dl_parts = [
+            f'{d["speaker"]}:"{d["text"]}"'
+            for d in dialogue
+            if d.get("speaker") and d.get("text")
+        ]
+        if dl_parts:
+            line += "; dialogue=" + " ".join(dl_parts)
     return line
 
 
