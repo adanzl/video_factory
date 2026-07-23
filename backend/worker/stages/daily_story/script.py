@@ -231,10 +231,10 @@ class DailyScriptStage(StageExecutor):
 
         keyframe_indices = apply_keyframe_video_providers(script.get("segments") or [])
 
-        # 用标准流程生成文生图 + 运动提示词（含内部质量校验与重试）
+        # fill：规则拼装 image_prompt + LLM 只写 motion（含质量校验与重试）
         llm_mgr.fill_image_prompts_with_retries(script, job=ctx.job)
 
-        # 给 image_prompt 添加固定前后缀（LLM 只输出场景核心内容）
+        # 再拼装一遍定稿（与 fill 内一致，幂等）
         from app.services.script.image_prompt import wrap_image_prompts
 
         wrap_image_prompts(script.get("segments") or [], content_style=CONTENT_STYLE_DAILY_STORY)

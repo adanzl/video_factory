@@ -780,12 +780,21 @@ class DeepSeekClient(LLMClient):
         prompts: list[dict],
         *,
         required_indices: list[int] | None = None,
+        motion_only: bool = False,
     ) -> None:
-        by_index: dict[int, dict] = {
-            int(item["segment_index"]): item
-            for item in prompts
-            if item.get("image_prompt")
-        }
+        if motion_only:
+            by_index: dict[int, dict] = {
+                int(item["segment_index"]): item
+                for item in prompts
+                if item.get("segment_index") is not None
+                and str(item.get("motion_prompt") or "").strip()
+            }
+        else:
+            by_index = {
+                int(item["segment_index"]): item
+                for item in prompts
+                if item.get("image_prompt")
+            }
         required = required_indices or [
             int(seg["segment_index"]) for seg in script.get("segments") or []
         ]
@@ -798,7 +807,8 @@ class DeepSeekClient(LLMClient):
             if idx not in index_set:
                 continue
             item = by_index[idx]
-            seg["image_prompt"] = item["image_prompt"]
+            if not motion_only and item.get("image_prompt"):
+                seg["image_prompt"] = item["image_prompt"]
             seg["motion_prompt"] = item.get("motion_prompt", "")
             # 存储 SD15 专用英文 prompt（仅当 LLM 输出了该字段时）
             sd15_en = item.get("sd15_prompt_en")
@@ -815,11 +825,44 @@ class DeepSeekClient(LLMClient):
         segment_indices: list[int] | None = None,
         include_sd15_prompt: bool = False,
     ) -> dict[str, Any]:
+        from app.services.script.image_prompt import assemble_daily_image_prompts
+        from app.utils.job_info import CONTENT_STYLE_DAILY_STORY, content_style_from_job
+
         settings = get_settings()
         segments = script.get("segments") or []
         if not segments:
             raise ValueError("script has no segments")
         all_indices = segment_indices or [int(seg["segment_index"]) for seg in segments]
+        style = content_style_from_job(job) if job else script.get("content_style")
+        is_daily = style == CONTENT_STYLE_DAILY_STORY
+        if is_daily:
+            # 角色泄漏：先 scrub visual_brief 再拼装
+            if feedback and "cast leak" in feedback:
+                from app.services.daily_story.cast import (
+                    scrub_cast_leaks,
+                    speakers_from_dialogue,
+                )
+
+                wanted = {int(i) for i in all_indices}
+                for seg in segments:
+                    if int(seg.get("segment_index") or 0) not in wanted:
+                        continue
+                    allowed = speakers_from_dialogue(seg.get("dialogue"))
+                    seg["visual_brief"] = scrub_cast_leaks(
+                        str(seg.get("visual_brief") or ""),
+                        allowed,
+                    )
+            assemble_daily_image_prompts(
+                segments,
+                segment_indices=all_indices,
+                extra=(
+                    feedback
+                    if feedback
+                    and "cast leak" not in feedback
+                    and "too short" not in feedback
+                    else None
+                ),
+            )
         batch_size = settings.llm_image_prompt_batch_size
         started = time.perf_counter()
 
@@ -861,7 +904,12 @@ class DeepSeekClient(LLMClient):
             batches = _chunk_indices(all_indices, 1)
             prompt_items = _run_all(batches)
 
-        self._merge_image_prompts(script, prompt_items, required_indices=all_indices)
+        self._merge_image_prompts(
+            script,
+            prompt_items,
+            required_indices=all_indices,
+            motion_only=is_daily,
+        )
         raise_if_job_cancelled(job)
         elapsed = time.perf_counter() - started
         logger.info(

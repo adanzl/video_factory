@@ -45,7 +45,7 @@ _DEFAULT_NEGATIVE_PROMPT = (
     "subtitles, text, words, letters, captions, watermark, overlay, "
     "字幕, 文字, 水印, 弹幕, 对白气泡, "
     "微笑, 大笑, 露齿笑, 开心, 嬉笑, 表情突变, 换脸, 脸部变形, "
-    "扭曲, 多手指, 文字水印, "
+    "扭曲, 多手指, "
     "快速推进, 大幅推进, 强烈变焦, 画面放大, 裁切脸部, zoom in, dolly in"
 )
 # 提交前去掉旧稿里的推近用语，避免 I2V 猛 zoom（勿误伤「不推近」）

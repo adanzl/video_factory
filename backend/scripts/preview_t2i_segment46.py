@@ -8,12 +8,13 @@
   python -m scripts.preview_t2i_segment46 --no-verify    # 跳过质检
 
 输出: tmp/t2i_seg1_<ts>.png
+
+提示词与流水线共用 assemble_daily_t2i_prompt（规则拼装）。
 """
 
 from __future__ import annotations
 
 import logging
-import os
 import sys
 import time
 from datetime import datetime
@@ -34,67 +35,12 @@ load_dotenv(ROOT_DIR / ".env")
 
 from app.config import get_settings
 from app.services.llm.llm_agnes import agnes_api_keys
+from app.services.script.image_prompt import assemble_daily_t2i_prompt
 from app.services.segment.image.image_agnes import AgnesImageProvider
 from app.services.segment.segment_mgr import _resolve_chat_ref_images
 from app.utils.job_info import CONTENT_STYLE_DAILY_STORY
 
 logger = logging.getLogger(__name__)
-
-# ══════════════════════════════════════════════════════════════════════
-#  规则拼装式 T2I 提示词
-#
-#  结构: 风格 + visual_brief(核心场景) + 角色外貌 + 光照 + 构图
-#  思路: visual_brief 由 LLM 产出（已有上下文），不再二次 LLM 扩写；
-#        固定信息（风格/外貌/光照/构图）从常量 + 推导规则拼装。
-#
-#  直接改下面的常量和分镜数据来调效果。
-# ══════════════════════════════════════════════════════════════════════
-
-# ── 画风常量（所有分镜共享）────────────────────────────────────────────
-STYLE = (
-    "儿童情绪涂鸦风格，彩铅和蜡笔混合笔触，线条用力不均，"
-    "高饱和色彩，涂色出界，橡皮擦拭痕迹，手工感。"
-)
-
-# ── 角色外貌常量（无参考图 T2I 必须完整写在这）───────────────────────
-CHAR_ZHAOZHAO = (
-    "昭昭：7岁男孩，黑色超短发露耳露后颈，圆脸，蓝色短袖T恤。"
-)
-CHAR_CANCAN = (
-    "灿灿：10岁女孩，单侧高马尾，粉色卫衣。"
-)
-CHAR_MOM = (
-    "妈妈：成年女性，黑色长发，米色上衣，牛仔裤。"
-)
-CHAR_HEIGHT = "昭昭比灿灿矮约半个头。"
-
-_CHAR_MAP: dict[str, str] = {
-    "昭昭": CHAR_ZHAOZHAO,
-    "灿灿": CHAR_CANCAN,
-    "妈妈": CHAR_MOM,
-}
-
-# ── 光照推导规则 ──────────────────────────────────────────────────────
-def _lighting(vb: str, shot_type: str) -> str:
-    """根据场景推导光照；室内默认窗光、室外默认日光。"""
-    indoor = any(w in vb for w in ("客厅", "卧室", "厨房", "房间", "室内", "书房"))
-    if indoor:
-        return "窗光从一侧斜照，在墙面和地面投下柔和光影。"
-    return "室外自然光，柔和散射，画面明亮。"
-
-# ── 构图推导规则 ──────────────────────────────────────────────────────
-def _composition(shot_type: str, speakers: list[str]) -> str:
-    """根据 shot_type 和出场角色推导构图描述。"""
-    names = [s for s in speakers if s in _CHAR_MAP]
-    if shot_type == "特写":
-        if len(names) == 2:
-            return f"中近景特写，{names[0]}占左半，{names[1]}占右半。"
-        return "面部特写，占画面主体，背景虚化。"
-    if shot_type == "中景":
-        if len(names) == 2:
-            return f"中景，{names[0]}左{names[1]}右，全身可见。"
-        return "中景，人物全身，环境可见。"
-    return "根据画面自然构图。"
 
 # ══════════════════════════════════════════════════════════════════════
 #  分镜数据（模拟 DB 中 job 46 seg1 的字段；改这里换分镜）
@@ -114,64 +60,8 @@ SEG1 = {
     ),
 }
 
-# ══════════════════════════════════════════════════════════════════════
-#  拼装函数
-# ══════════════════════════════════════════════════════════════════════
-
-def assemble_t2i_prompt(seg: dict) -> str:
-    """规则拼装 T2I 提示词: 风格 + visual_brief + 角色外貌 + 光照 + 构图。"""
-    vb = seg["visual_brief"]
-    speakers = seg["speakers"]
-    shot = seg["shot_type"]
-
-    # 1) 风格（句首定调）
-    parts = [STYLE]
-
-    # 2) 核心场景: 直接用 visual_brief（掐掉它自带的风格尾巴）
-    vb_clean = _strip_style_suffix(vb)
-    parts.append(vb_clean)
-
-    # 3) 角色外貌: 只写本段出场角色
-    char_parts: list[str] = []
-    for name in speakers:
-        if name in _CHAR_MAP:
-            char_parts.append(_CHAR_MAP[name])
-    if "昭昭" in speakers and "灿灿" in speakers:
-        char_parts.append(CHAR_HEIGHT)
-    if char_parts:
-        parts.append("".join(char_parts))
-
-    # 4) 光照
-    parts.append(_lighting(vb, shot))
-
-    # 5) 构图
-    parts.append(_composition(shot, speakers))
-
-    return "".join(parts)
-
-
-def _strip_style_suffix(vb: str) -> str:
-    """去掉 visual_brief 末尾的画风描述句（如「彩铅涂鸦风格…」）。
-
-    只匹配末尾句号分隔的最后一个句子，且该句必须含「风格/线条/笔触/质感」等画风限定词，
-    避免误杀含画材物品名的场景句（如「茶几上放着一盒蜡笔」）。
-    """
-    vb = vb.rstrip("。，, ")
-    last_period = vb.rfind("。")
-    tail = vb[last_period + 1:] if last_period >= 0 else vb
-    style_context = any(w in tail for w in ("风格", "线条", "笔触", "质感", "画风"))
-    if not style_context:
-        return vb + "。"
-    style_keywords = ["彩铅", "涂鸦", "蜡笔", "水彩", "油画", "扁平", "写实风", "绘本"]
-    if any(kw in tail for kw in style_keywords):
-        pre = vb[:last_period].rstrip("。，, ") if last_period >= 0 else ""
-        if pre:
-            return pre + "。"
-    return vb + "。"
-
-
-# ── 默认 prompt: 规则拼装 ────────────────────────────────────────────
-T2I_PROMPT = assemble_t2i_prompt(SEG1)
+# ── 默认 prompt: 与流水线同一套规则拼装 ──────────────────────────────
+T2I_PROMPT = assemble_daily_t2i_prompt(SEG1)
 
 # 同段 speakers 供质检用
 EXPECTED_SPEAKERS = SEG1["speakers"]

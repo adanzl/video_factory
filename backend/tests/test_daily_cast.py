@@ -60,6 +60,7 @@ def test_build_daily_image_prompts_is_slimmer():
                 "segment_index": 1,
                 "text": "台词",
                 "visual_brief": "昭昭举手",
+                "image_prompt": "儿童情绪涂鸦风格。昭昭举手。",
                 "dialogue": [{"speaker": "昭昭", "text": "台词"}],
             }
         ],
@@ -73,12 +74,11 @@ def test_build_daily_image_prompts_is_slimmer():
     assert "世界地图" not in system
     assert "丹炉" not in system
     assert "纱帘" in system or "窗边" in system
-    assert "角色入画" in system
-    assert "忽略" in system
-    assert "地点" in system
-    assert "禁止输出「竖构图" in system or "竖构图" in system
+    assert "规则拼装" in system
+    assert "禁止改写" in system
+    assert "不要输出 image_prompt" in prompts["user"]
     assert "motion_mode=ambient" in prompts["user"]
-    assert "关键帧禁止纯环境微动" in system
+    assert "image_prompt=" in prompts["user"]
     assert len(system) < 3800
 
 
@@ -95,6 +95,7 @@ def test_build_image_prompts_daily_includes_setting():
                 "segment_index": 1,
                 "text": "我先拿到的！",
                 "visual_brief": "客厅里姐弟抢橡皮",
+                "image_prompt": "已拼装提示词",
                 "dialogue": [{"speaker": "昭昭", "text": "我先拿到的！"}],
             }
         ],
@@ -105,8 +106,8 @@ def test_build_image_prompts_daily_includes_setting():
         job={"pipeline": "chat", "content_style": "daily_story"},
     )
     assert "全片地点 setting：客厅" in prompts["user"]
-    assert "开头必须写清具体室内地点" in prompts["system"]
-    assert "开场首镜" in prompts["system"]
+    assert "规则拼装" in prompts["system"]
+    assert "motion_prompt" in prompts["system"]
 
 
 def test_build_image_prompts_daily_keyframe_marks_motion_mode():
@@ -150,14 +151,15 @@ def test_build_image_prompts_daily_keyframe_marks_motion_mode():
     assert "segment 2:" in prompts["user"]
     assert "motion_mode=ambient" in prompts["user"]
     assert "motion_mode=keyframe" in prompts["user"]
-    assert "keyframe 写 1 个微动作" in prompts["user"] or "锁住面部表情" in prompts["user"]
+    assert "keyframe" in prompts["user"] or "锁住面部表情" in prompts["user"]
+    assert "禁止自编" in prompts["system"] or "TTS" in prompts["system"]
+    assert "说话，同时" in prompts["system"]
     assert "不微笑" in prompts["system"]
-    assert "右手微微前推" in prompts["system"]
+    assert "点动约2厘米" in prompts["system"] or "食指" in prompts["system"]
     assert "与静图一致" in prompts["system"]
     assert "镜头固定" in prompts["system"] or "不推近" in prompts["system"]
-    assert "开场首镜" in prompts["system"]
-    assert "须特写" in prompts["system"]
-    assert len(prompts["system"]) < 3800
+    assert "规则拼装" in prompts["system"]
+    assert len(prompts["system"]) < 4200
 
 
 def test_collect_issues_ignores_wrap_prefix_cast_names():
