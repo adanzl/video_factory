@@ -121,7 +121,8 @@ def assemble_daily_t2i_prompt(
 ) -> str:
     """规则拼装 daily_story image_prompt。
 
-    风格 + visual_brief + 出场角色外貌 + 光照 + 构图（+ 可选质检反馈）。
+    风格 + visual_brief + 出场角色外貌 + 光照 + 构图。
+    extra 仅用于显式附加的出图正文（勿传入质检/改写元指令）。
     """
     vb = str(seg.get("visual_brief") or "").strip()
     if vb:

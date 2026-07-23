@@ -142,3 +142,103 @@ def test_generate_segment_images_skips_after_prompt_regen_fail(
     # bad: 3+3 attempts across two rounds → 2 generate calls that raise after
     # each round's internal retries are mocked as single raise per generate()
     assert provider.generate.call_count == 3  # 2 for bad rounds + 1 for good
+
+
+def test_regen_daily_rewrites_visual_brief_not_append_feedback() -> None:
+    """daily 质检重写应改 visual_brief 再拼装，禁止把改写说明塞进 T2I。"""
+    mgr = ImageMgr()
+    seg = {
+        "id": 6,
+        "segment_index": 6,
+        "text": "脏衣篮",
+        "visual_brief": "客厅沙发旁地上放着藤编脏衣篮。",
+        "shot_type": "中景",
+        "image_prompt": "旧提示",
+        "dialogue": [
+            {"speaker": "灿灿", "text": "你看！"},
+            {"speaker": "昭昭", "text": "哼。"},
+        ],
+    }
+    job = {
+        "id": 99,
+        "script_json": {
+            "title": "t",
+            "visual_style": "儿童情绪涂鸦",
+            "setting": "客厅",
+            "content_style": "daily_story",
+            "segments": [dict(seg)],
+        },
+    }
+
+    def _fake_vb(script, **kwargs):
+        fb = kwargs.get("feedback") or ""
+        assert "出图质检" in fb
+        assert "昭昭" in fb and "灿灿" in fb
+        assert "禁止新增未出场角色" in fb
+        # 本段无妈妈，反馈不得写妈妈外貌约束
+        assert "米色上衣" not in fb
+        assert kwargs.get("segment_indices") == [6]
+        for s in script["segments"]:
+            if int(s["segment_index"]) == 6:
+                s["visual_brief"] = (
+                    "客厅沙发旁地上放着藤编脏衣篮，里面零散衣物更醒目；"
+                    "画面左边是灿灿，右边是昭昭；"
+                    "灿灿叉腰指着脏衣篮，昭昭双手抱臂撇嘴。"
+                )
+        return script
+
+    def _fake_fill(script, **kwargs):
+        # daily 路径不应再带质检 feedback 去拼 T2I
+        assert kwargs.get("feedback") is None
+        return script
+
+    with (
+        patch(
+            "app.services.llm.llm_mgr.llm_mgr.fill_visual_briefs",
+            side_effect=_fake_vb,
+        ) as mock_vb,
+        patch(
+            "app.services.llm.llm_mgr.llm_mgr.fill_image_prompts",
+            side_effect=_fake_fill,
+        ) as mock_fill,
+        patch(
+            "app.utils.job_info.resolve_include_sd15_prompt",
+            return_value=False,
+        ),
+    ):
+        new_prompt = mgr._regen_segment_image_prompt(
+            seg,
+            job=job,
+            content_style="daily_story",
+        )
+
+    mock_vb.assert_called_once()
+    mock_fill.assert_called_once()
+    assert "出图质检连续未通过" not in new_prompt
+    assert "请改写本段" not in new_prompt
+    assert "脏衣篮" in new_prompt
+    assert "灿灿" in (seg.get("visual_brief") or "")
+    assert "妈妈" not in new_prompt
+    assert seg["image_prompt"] == new_prompt
+
+
+def test_verify_regen_feedback_cast_aware() -> None:
+    from app.services.segment.image.image_mgr import (
+        _verify_prompt_regen_feedback,
+        _verify_visual_brief_regen_feedback,
+    )
+
+    no_mom = _verify_prompt_regen_feedback(["昭昭", "灿灿"])
+    assert "妈妈" not in no_mom
+    assert "米色上衣" not in no_mom
+    assert "昭昭男孩超短发" in no_mom
+    assert "昭昭、灿灿" in no_mom
+
+    with_mom = _verify_prompt_regen_feedback(["妈妈", "灿灿"])
+    assert "米色上衣" in with_mom
+    assert "妈妈" in with_mom
+
+    vb = _verify_visual_brief_regen_feedback(["昭昭", "灿灿"])
+    assert "昭昭、灿灿" in vb
+    assert "禁止无故加入妈妈" in vb
+    assert "米色上衣" not in vb
