@@ -94,7 +94,12 @@
       @size-change="onPageSizeChange"
     />
 
-    <DailyStoryDetail v-model="showDetailDialog" :story="currentStory" @updated="onStoryUpdated" />
+    <DailyStoryDetail
+      v-model="showDetailDialog"
+      :story="currentStory"
+      @updated="onStoryUpdated"
+      @closed="onDetailClosed"
+    />
     <CreateStory v-model="showGenerateDialog" @created="fetchStories" />
   </div>
 </template>
@@ -188,10 +193,14 @@ function onPageChange() {
 }
 
 function onStoryUpdated(newStory?: DailyStoryRecord) {
-  fetchStories();
+  void fetchStories({ quiet: true });
   if (newStory) {
     currentStory.value = newStory;
   }
+}
+
+function onDetailClosed() {
+  void fetchStories({ quiet: true });
 }
 
 function onPageSizeChange() {

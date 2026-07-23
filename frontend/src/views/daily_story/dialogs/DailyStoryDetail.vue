@@ -1,5 +1,5 @@
 <template>
-  <el-dialog v-model="visible" title="故事详情" width="1200px" top="5vh">
+  <el-dialog v-model="visible" title="故事详情" width="1200px" top="5vh" @closed="emit('closed')">
     <div v-if="localStory" class="flex gap-4" style="height: 80vh;">
       <!-- 左侧：信息 -->
       <div class="w-64 shrink-0 space-y-4 overflow-y-auto pr-2">
@@ -193,6 +193,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: "update:modelValue", val: boolean): void;
   (e: "updated", story?: DailyStoryRecord): void;
+  (e: "closed"): void;
 }>();
 
 const router = useRouter();
@@ -310,19 +311,17 @@ async function handleRegenerate() {
   if (!storyId) return;
   regenerating.value = true;
   try {
-    await regenerateDailyStory(storyId);
+    const processingStory = await regenerateDailyStory(storyId);
+    emit("updated", processingStory);
+
     const newStory = await waitDailyStoryReady(storyId);
     if (newStory.status === "failed") {
       ElMessage.error("重新生成失败，仍保留上一稿");
-      emit("updated", newStory);
-      return;
-    }
-    if (newStory.status === "processing") {
+    } else if (newStory.status === "processing") {
       ElMessage.warning("仍在生成中，请稍后刷新");
-      emit("updated", newStory);
-      return;
+    } else if (visible.value) {
+      ElMessage.success("已重新生成");
     }
-    ElMessage.success("已重新生成");
     emit("updated", newStory);
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.message || "重新生成失败");
