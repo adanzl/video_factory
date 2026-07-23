@@ -76,10 +76,11 @@ def _inject_mouth_motion(
     seg: dict,
     cues: list[tuple[str, float]],
 ) -> str:
-    """找到「{角色}说话，同时」并前插真实 TTS 时间。无台词角色不受影响。"""
+    """用真实时间替换「{角色}说话，同时」前已有的或缺失的时间。幂等。"""
     dialogue = seg.get("dialogue") or []
     if not dialogue or not cues or not prompt.strip():
         return prompt
+    import re
     t = 0.0
     speaker_times: list[tuple[str, str]] = []
     for i, (_, dur) in enumerate(cues):
@@ -96,10 +97,13 @@ def _inject_mouth_motion(
         return prompt
     result = prompt
     for speaker, time_str in speaker_times:
-        needle = f"{speaker}说话，同时"
-        idx = result.find(needle)
-        if idx != -1:
-            result = result[:idx] + time_str + result[idx:]
+        # 匹配可选的已有时间 + speaker说话，同时
+        result = re.sub(
+            rf"(?:[\d.]+-[\d.]+秒)?{re.escape(speaker)}说话，同时",
+            f"{time_str}{speaker}说话，同时",
+            result,
+            count=1,
+        )
     return result
 
 
@@ -263,6 +267,7 @@ class MediaMgr:
             motion_prompt = seg.get("motion_prompt") or seg.get("visual_brief") or ""
             # 代码注入开口动作（从 dialogue 取 speaker + 从 cues 取时长）
             motion_prompt = _inject_mouth_motion(motion_prompt, seg, seg_cues)
+            seg["motion_prompt"] = motion_prompt  # 写回，让 DB 能看到注入后结果
             image_prompt = seg.get("image_prompt") or ""
             logger.info(
                 "clip %s/%s building segment %s | %s | image_chars=%s motion_chars=%s",

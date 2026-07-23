@@ -384,6 +384,15 @@ def _run_image_prompts(
     updated["include_sd15_prompt"] = include_sd15_prompt
     updated.pop("_llm_timing", None)
 
+    # 用 dialogue 估算时间，注入到 motion_prompt
+    from app.services.media.media_mgr import _inject_mouth_motion
+    for seg in updated.get("segments") or []:
+        mp = seg.get("motion_prompt")
+        dl = seg.get("dialogue")
+        if mp and dl:
+            cues = [(d.get("text", ""), len(d.get("text", "")) * 0.25) for d in dl]
+            seg["motion_prompt"] = _inject_mouth_motion(mp, seg, cues)
+
     from app.services.script.board_timeline import parse_video_timeline
     from app.utils.media import assign_segment_timings
 
