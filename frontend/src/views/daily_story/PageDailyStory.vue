@@ -214,10 +214,6 @@ function onSelectionChange(rows: DailyStoryRecord[]) {
 }
 
 function viewStory(row: DailyStoryRecord) {
-  if (row.status === "processing") {
-    ElMessage.info("故事还在生成中，请稍候");
-    return;
-  }
   currentStory.value = row;
   showDetailDialog.value = true;
 }

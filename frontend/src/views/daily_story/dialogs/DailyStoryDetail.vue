@@ -66,6 +66,7 @@
                 :precision="1"
                 size="small"
                 class="w-22!"
+                :disabled="isProcessing"
               />
               <span class="shrink-0 text-xs text-gray-400">字/秒</span>
             </div>
@@ -81,6 +82,7 @@
                 :precision="1"
                 size="small"
                 class="w-22!"
+                :disabled="isProcessing"
               />
               <span class="shrink-0 text-xs text-gray-400">秒</span>
             </div>
@@ -103,7 +105,7 @@
             class="flex-1"
             size="small"
             :loading="submitting"
-            :disabled="!localStory?.id || localStory.status === 'processing' || !(editStory.dialogue?.length)"
+            :disabled="!localStory?.id || isProcessing || !(editStory.dialogue?.length)"
             @click="handleCreateJob"
           >
             发起任务
@@ -112,6 +114,7 @@
             v-if="localStory?.job_id"
             type="primary"
             size="small"
+            :disabled="isProcessing"
             @click="handleViewJob"
           >
             任务详情
@@ -121,6 +124,7 @@
             type="warning"
             size="small"
             :loading="syncing"
+            :disabled="isProcessing"
             @click="handleSyncToJob"
           >
             同步
@@ -128,7 +132,7 @@
         </div>
         <div class="mt-4">
           <el-button
-            :disabled="!localStory?.id || regenerating"
+            :disabled="!localStory?.id || regenerating || isProcessing"
             type="success"
             size="small"
             @click="handleSave"
@@ -138,7 +142,7 @@
             </template>
           </el-button>
           <el-button
-            :disabled="!localStory?.id || regenerating"
+            :disabled="!localStory?.id || regenerating || isProcessing"
             :loading="regenerating"
             size="small"
             @click="handleRegenerate"
@@ -154,7 +158,7 @@
           <span class="text-xs text-gray-400">
             对话 <el-tag size="small" type="info" class="ml-3">{{ editStory.dialogue?.length ?? 0 }} 轮</el-tag>
           </span>
-          <el-button size="small" :icon="Edit" @click="editing = !editing">
+          <el-button size="small" :icon="Edit" :disabled="isProcessing" @click="editing = !editing">
             编辑
           </el-button>
         </div>
@@ -222,6 +226,8 @@ const visible = computed({
 
 const localStory = computed(() => props.story);
 
+const isProcessing = computed(() => localStory.value?.status === "processing");
+
 /** 本地可编辑副本 */
 const editStory = ref<StoryContent>({
   scene_title: "",
@@ -240,6 +246,10 @@ watch(
   },
   { immediate: true }
 );
+
+watch(isProcessing, (processing) => {
+  if (processing) editing.value = false;
+});
 
 /** 默认口播语速（字/秒） */
 const speechRate = ref(3.6);
