@@ -219,6 +219,36 @@ def test_inject_mouth_motion_three_lines_same_speaker_twice():
     assert "两人说话后面部表情恢复与静图一致" in out
 
 
+def test_inject_mouth_motion_face_mark_between_lines():
+    """收束句被插在说话句中间时，仍按对白序重建，不丢第二句。"""
+    seg = {
+        "dialogue": [
+            {"speaker": "灿灿", "text": "我刚叠好的衣服怎么皱成一团了？"},
+            {"speaker": "昭昭", "text": "我就碰了一下，没弄皱！"},
+        ],
+    }
+    mp = (
+        "画面左边是灿灿，右边是昭昭。"
+        "0.0-3.0秒灿灿说话，同时右手食指向前点动约2厘米后停止。"
+        "两人说话后面部表情恢复与静图一致：昭昭撇着嘴角耸肩（无辜状），表情不变；"
+        "3.0-6.1秒昭昭说话，同时双手摊开微微向上抬起约2厘米后定格；"
+        "两人说话后面部表情恢复与静图一致：昭昭撇着嘴角耸肩（无辜状），表情不变；"
+        "灿灿瞪圆眼睛嘴巴大张（惊讶质问状），不微笑。"
+        "服装发型稳定，身高比例（昭昭比灿灿矮半个头）不变。"
+        "镜头固定，不推近不拉远，画面只有人物和场景，无任何文字叠加。"
+    )
+    cues = [
+        ("我刚叠好的衣服怎么皱成一团了？", 3.0),
+        ("我就碰了一下，没弄皱！", 3.1),
+    ]
+    out = _inject_mouth_motion(mp, seg, cues)
+    assert "0.0-3.0秒灿灿说话，同时" in out
+    assert "3.0-6.1秒昭昭说话，同时" in out
+    assert out.index("0.0-3.0秒灿灿") < out.index("3.0-6.1秒昭昭")
+    assert out.index("3.0-6.1秒昭昭") < out.index("两人说话后面部表情")
+    assert out.count("两人说话后面部表情") == 1
+
+
 def test_stabilize_keeps_timeline_ranges():
     mp = (
         "画面左边是灿灿，右边是昭昭。"

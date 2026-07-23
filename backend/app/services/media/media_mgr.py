@@ -114,11 +114,14 @@ def _inject_mouth_motion(
 
     speak_re = re.compile(
         r"(?:[\d.]+-[\d.]+秒)?(昭昭|灿灿|妈妈)说话，同时"
-        r"([^；;]*?)(?=[；;]|$)"
+        r"([^；;。]*?)(?=[；;。]|$)"
     )
+    face_mark = "两人说话后面部表情"
     action_queues: dict[str, list[str]] = {}
     for m in speak_re.finditer(prompt):
         action = (m.group(2) or "").strip().rstrip("。")
+        if face_mark in action:
+            action = action.split(face_mark, 1)[0].strip().rstrip("。；;")
         if action:
             action_queues.setdefault(m.group(1), []).append(action)
 
@@ -128,24 +131,37 @@ def _inject_mouth_motion(
         "妈妈": "微微点头约1厘米后停止",
     }
 
-    first = speak_re.search(prompt)
-    face_mark = "两人说话后面部表情"
-    face_at = prompt.find(face_mark)
     speaks = list(speak_re.finditer(prompt))
 
     if speaks:
         head = prompt[: speaks[0].start()]
+        # 表情收束段须在「最后一句说话」之后，避免 LLM 把收束插在中间导致漏句/重复
+        face_at = prompt.find(face_mark, speaks[-1].end())
+        if face_at < 0:
+            face_at = prompt.rfind(face_mark)
         if face_at >= 0:
             tail = prompt[face_at:]
+            tail = speak_re.sub("", tail)
+            chunks = tail.split(face_mark)
+            if len(chunks) > 2:
+                tail = face_mark + chunks[-1]
+            tail = re.sub(r"[；;]{2,}", "；", tail)
         else:
-            tail = prompt[speaks[-1].end() :].lstrip("；;")
+            tail = prompt[speaks[-1].end() :].lstrip("；;。")
     else:
         m_stand = re.search(r"画面左边是[^。]*。", prompt)
         if not m_stand:
             return prompt
         head = prompt[: m_stand.end()]
+        face_at = prompt.find(face_mark, m_stand.end())
+        if face_at < 0:
+            face_at = prompt.rfind(face_mark)
         if face_at >= 0:
             tail = prompt[face_at:]
+            tail = speak_re.sub("", tail)
+            chunks = tail.split(face_mark)
+            if len(chunks) > 2:
+                tail = face_mark + chunks[-1]
         else:
             tail = prompt[m_stand.end() :]
             if "说话，同时" in tail:
@@ -164,7 +180,8 @@ def _inject_mouth_motion(
             action = action[: -len("后停止")] + "后定格"
         clauses.append(f"{time_str}{speaker}说话，同时{action}")
     middle = "；".join(clauses)
-    if face_at >= 0 or (tail and not middle.endswith("。")):
+    has_face = face_mark in (tail or "")
+    if has_face or (tail and not middle.endswith("。")):
         if not middle.endswith("；"):
             middle += "；"
     elif not middle.endswith("。"):

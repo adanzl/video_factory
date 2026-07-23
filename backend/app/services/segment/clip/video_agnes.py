@@ -46,8 +46,14 @@ _DEFAULT_NEGATIVE_PROMPT = (
     "字幕, 文字, 水印, 弹幕, 对白气泡, "
     "微笑, 大笑, 露齿笑, 开心, 嬉笑, 表情突变, 换脸, 脸部变形, "
     "扭曲, 多手指, "
+    "crowd, duplicate character, cloned person, extra stranger, "
+    "路人, 多余路人, 复制人物, 克隆角色, "
     "快速推进, 大幅推进, 强烈变焦, 画面放大, 裁切脸部, zoom in, dolly in"
 )
+_CAST_LR_RE = re.compile(
+    r"画面左边是\s*(昭昭|灿灿|妈妈)\s*[，,；;]?\s*右边是\s*(昭昭|灿灿|妈妈)"
+)
+_CAST_SPEAK_RE = re.compile(r"(昭昭|灿灿|妈妈)说话")
 # 提交前去掉旧稿里的推近用语，避免 I2V 猛 zoom（勿误伤「不推近」）
 _CAMERA_ZOOM_RE = re.compile(
     r"镜头(?:极缓|缓慢|轻轻|轻微|大幅|强烈)?(?:推近|推进|拉远|变焦)"
@@ -110,6 +116,34 @@ def _inject_mouth_motion(prompt: str, subtitle_cues: list[tuple[str, float]]) ->
     return mouth + prompt
 
 
+def _cast_names_from_motion(text: str) -> list[str]:
+    """从站位/说话句收集本段允许角色（可含妈妈）。"""
+    ordered: list[str] = []
+    m = _CAST_LR_RE.search(text or "")
+    if m:
+        for name in (m.group(1), m.group(2)):
+            if name not in ordered:
+                ordered.append(name)
+    for sm in _CAST_SPEAK_RE.finditer(text or ""):
+        name = sm.group(1)
+        if name not in ordered:
+            ordered.append(name)
+    return ordered
+
+
+def _cast_lock_hint(text: str) -> str | None:
+    """按本段出场角色锁定；有妈妈时允许 3 人，只禁路人/复制。"""
+    names = _cast_names_from_motion(text)
+    if not names:
+        return None
+    cast = "、".join(names)
+    n = len(names)
+    return (
+        f"画面清晰主体人物只能是{cast}共{n}人，人数与静图完全一致，"
+        f"禁止路人、禁止复制角色、禁止未列出的人物"
+    )
+
+
 def _stabilize_motion_prompt(prompt: str) -> str:
     """补齐 I2V 稳定性与面部锁定，并压掉推近/变焦（易裁脸）。"""
     text = prompt.strip() or _DEFAULT_MOTION_PROMPT
@@ -131,6 +165,9 @@ def _stabilize_motion_prompt(prompt: str) -> str:
         word in text for word in ("镜头固定", "不推近", "不拉远", "不放大")
     ):
         parts.append(_CAMERA_LOCK_HINT)
+    cast_hint = _cast_lock_hint(text)
+    if cast_hint and "人数与静图" not in text and "只能是" not in text:
+        parts.append(cast_hint)
     return "，".join(parts) if len(parts) > 1 else text
 
 
