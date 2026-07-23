@@ -774,7 +774,6 @@ def _append_dialogue_rhythm_errors(story: dict, errors: list[str]) -> None:
         return
     last = lines[-1]
     tail2 = "".join(lines[-2:])
-    prev = "".join(lines[-3:-1])
 
     if any(m in tail2 for m in _WEAK_END_WAIT_MOM):
         errors.append(
@@ -792,14 +791,7 @@ def _append_dialogue_rhythm_errors(story: dict, errors: list[str]) -> None:
             "须先字面戳穿对方规则，禁止赖账收场"
         )
 
-    if not any(m in last for m in _LIMP_SOFT_CLOSE_MARKERS):
-        return
-    # 末句是软收：前 2 句须已有破功/戳穿痕迹
-    if not any(m in prev for m in _PUNCH_BEFORE_SOFT_MARKERS):
-        errors.append(
-            "末句疑似无破功软收（如「给你/算了/好吧」）；"
-            "软收前须先有字面戳穿或自相矛盾"
-        )
+    # 无破功软收改由 quality 评分扣分，不再硬拦生成
 
 
 def _append_mom_line_errors(story: dict, errors: list[str]) -> None:
