@@ -37,6 +37,19 @@ def test_assemble_daily_t2i_prompt_structure():
     assert "蜡笔" in prompt
 
 
+def test_strip_verify_regen_leak():
+    from app.services.script.image_prompt import strip_verify_regen_leak
+
+    clean = "客厅沙发旁，灿灿指着脏衣篮。"
+    dirty = (
+        clean
+        + "出图质检连续未通过（发型/人数/肢体/场景/妈妈是否成年等），"
+        + "请改写本段 image_prompt：换姿势与构图。"
+    )
+    assert strip_verify_regen_leak(dirty) == clean
+    assert strip_verify_regen_leak(clean) == clean
+
+
 def test_assemble_daily_layout_from_visual_brief():
     """visual_brief 明示左右时，构图跟 brief，不对白序。"""
     seg = {
@@ -169,6 +182,41 @@ def test_inject_mouth_motion_noop_for_ambient():
     seg = {"dialogue": [{"speaker": "灿灿", "text": "哼！"}]}
     amb = "窗边纱帘被风轻轻掀起，人物姿势保持不变。"
     assert _inject_mouth_motion(amb, seg, [("哼！", 1.0)]) == amb
+
+
+def test_inject_mouth_motion_three_lines_same_speaker_twice():
+    """三句对白（灿灿→昭昭→灿灿）须写出三段时间，不能漏首句。"""
+    seg = {
+        "dialogue": [
+            {"speaker": "灿灿", "text": "对，意思是别碰。"},
+            {"speaker": "昭昭", "text": "那你现在弄乱了，要负责吗？"},
+            {"speaker": "灿灿", "text": "我哪里弄乱了？"},
+        ],
+    }
+    # LLM 漏了首句，且顺序写成昭昭→灿灿
+    mp = (
+        "画面左边是灿灿，右边是昭昭。"
+        "2.5-6.5秒昭昭说话，同时双手摊开的手指微微向内抖动约1厘米后停止；"
+        "6.5-8.3秒灿灿说话，同时右手食指轻轻向前点动约1厘米后定格。"
+        "两人说话后面部表情恢复与静图一致："
+        "灿灿瞪圆眼睛嘴巴大张（愤怒状），不微笑；"
+        "昭昭眯着眼睛嘴角上翘（无辜状），表情不变。"
+        "服装发型稳定，身高比例（昭昭比灿灿矮半个头）不变。"
+        "镜头固定，不推近不拉远，画面只有人物和场景，无任何文字叠加。"
+    )
+    cues = [
+        ("对，意思是别碰。", 2.5),
+        ("那你现在弄乱了，要负责吗？", 4.0),
+        ("我哪里弄乱了？", 1.8),
+    ]
+    out = _inject_mouth_motion(mp, seg, cues)
+    assert "0.0-2.5秒灿灿说话，同时" in out
+    assert "2.5-6.5秒昭昭说话，同时" in out
+    assert "6.5-8.3秒灿灿说话，同时" in out
+    # 对白序：首句灿灿须出现在昭昭之前
+    assert out.index("0.0-2.5秒灿灿") < out.index("2.5-6.5秒昭昭")
+    assert out.count("说话，同时") == 3
+    assert "两人说话后面部表情恢复与静图一致" in out
 
 
 def test_stabilize_keeps_timeline_ranges():

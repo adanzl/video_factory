@@ -237,7 +237,14 @@ class ImageMgr:
             else:
                 prompt = seg.get("image_prompt") or seg["text"]
             from app.services.intro.cover_layout import _subject_has_map_keyword
+            from app.services.script.image_prompt import strip_verify_regen_leak
 
+            prompt = strip_verify_regen_leak(str(prompt))
+            # 若库内仍残留质检元指令，剥掉后写回，避免下轮再带上
+            raw_ip = str(seg.get("image_prompt") or "").strip()
+            if raw_ip and prompt != raw_ip and "出图质检连续未通过" in raw_ip:
+                seg["image_prompt"] = prompt
+                self._persist_segment_prompt(seg)
             if _subject_has_map_keyword(prompt):
                 prompt = (
                     f"若包含世界地图，不得显示中国部分。"

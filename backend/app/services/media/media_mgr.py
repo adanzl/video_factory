@@ -76,15 +76,17 @@ def _inject_mouth_motion(
     seg: dict,
     cues: list[tuple[str, float]],
 ) -> str:
-    """用真实时间替换「{角色}说话，同时」前已有的或缺失的时间。幂等。
+    """用真实时间按对白句序写入「{角色}说话，同时」时间轴。幂等。
 
-    时间轴相对本段 I2V 片段：说话窗口最小值归零后全体平移，
-    避免前导静音/旁白把起点推成全局时间。
+    - 每一句对白对应一句「说话，同时」（同人多句写多行，不合并）
+    - 时间轴相对本段 I2V：说话窗口最小值归零后全体平移
+    - LLM 少写/写乱顺序时，按对白序重建说话句，微动作按角色队列复用
     """
     dialogue = seg.get("dialogue") or []
     if not dialogue or not cues or not prompt.strip():
         return prompt
     import re
+
     t = 0.0
     speaker_windows: list[tuple[str, float, float]] = []
     for i, (_, dur) in enumerate(cues):
@@ -99,21 +101,76 @@ def _inject_mouth_motion(
         speaker_windows.append((speaker, start, end))
     if not speaker_windows:
         return prompt
+
+    # ambient：无说话槽且无站位句 → 不注入
+    if "说话，同时" not in prompt and "画面左边" not in prompt:
+        return prompt
+
     offset = min(start for _, start, _ in speaker_windows)
     speaker_times = [
         (speaker, f"{start - offset:.1f}-{end - offset:.1f}秒")
         for speaker, start, end in speaker_windows
     ]
-    result = prompt
-    for speaker, time_str in speaker_times:
-        # 匹配可选的已有时间 + speaker说话，同时
-        result = re.sub(
-            rf"(?:[\d.]+-[\d.]+秒)?{re.escape(speaker)}说话，同时",
-            f"{time_str}{speaker}说话，同时",
-            result,
-            count=1,
-        )
-    return result
+
+    speak_re = re.compile(
+        r"(?:[\d.]+-[\d.]+秒)?(昭昭|灿灿|妈妈)说话，同时"
+        r"([^；;]*?)(?=[；;]|$)"
+    )
+    action_queues: dict[str, list[str]] = {}
+    for m in speak_re.finditer(prompt):
+        action = (m.group(2) or "").strip().rstrip("。")
+        if action:
+            action_queues.setdefault(m.group(1), []).append(action)
+
+    fallback = {
+        "昭昭": "身体轻微后仰约1厘米后定格",
+        "灿灿": "右手食指轻轻点动约1厘米后停止",
+        "妈妈": "微微点头约1厘米后停止",
+    }
+
+    first = speak_re.search(prompt)
+    face_mark = "两人说话后面部表情"
+    face_at = prompt.find(face_mark)
+    speaks = list(speak_re.finditer(prompt))
+
+    if speaks:
+        head = prompt[: speaks[0].start()]
+        if face_at >= 0:
+            tail = prompt[face_at:]
+        else:
+            tail = prompt[speaks[-1].end() :].lstrip("；;")
+    else:
+        m_stand = re.search(r"画面左边是[^。]*。", prompt)
+        if not m_stand:
+            return prompt
+        head = prompt[: m_stand.end()]
+        if face_at >= 0:
+            tail = prompt[face_at:]
+        else:
+            tail = prompt[m_stand.end() :]
+            if "说话，同时" in tail:
+                tail = speak_re.sub("", tail)
+                tail = re.sub(r"[；;]{2,}", "；", tail).lstrip("；;")
+
+    clauses: list[str] = []
+    for i, (speaker, time_str) in enumerate(speaker_times):
+        q = action_queues.get(speaker) or []
+        action = q.pop(0) if q else fallback.get(speaker, "轻微点头约1厘米后停止")
+        if (
+            i == len(speaker_times) - 1
+            and "定格" not in action
+            and action.endswith("后停止")
+        ):
+            action = action[: -len("后停止")] + "后定格"
+        clauses.append(f"{time_str}{speaker}说话，同时{action}")
+    middle = "；".join(clauses)
+    if face_at >= 0 or (tail and not middle.endswith("。")):
+        if not middle.endswith("；"):
+            middle += "；"
+    elif not middle.endswith("。"):
+        middle += "。"
+
+    return f"{head}{middle}{tail}"
 
 
 class MediaMgr:
