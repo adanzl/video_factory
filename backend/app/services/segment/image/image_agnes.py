@@ -549,8 +549,8 @@ class AgnesImageProvider(ImageProvider):
         "项「场景」：只看主场景/主体是否明显跑偏；"
         "画风套话、参考图指令前缀、次要细节差异一律算通过（答是）。"
         "项「胳膊」：每人可见胳膊是否最多 2 条；正常答「是」，多肢答「否」。"
-        "项「人数」：只计画面主体人物，不超过 3 个即通过；"
-        "昭昭与灿灿可同时出场，即使本段未发言；"
+        "项「人数」：只数清晰主体人物个数是否不超过该项写明的上限；"
+        "不判断是谁、不因认不出角色而答否；"
         "背景照片墙/镜子虚影/玩具人脸/远处剪影一律不算。"
     )
 
@@ -636,19 +636,23 @@ class AgnesImageProvider(ImageProvider):
             items.append(
                 (
                     "zhao_hair",
-                    "角色昭昭是否为男孩超短发"
+                    "图中短发男孩即昭昭。"
+                    "其发型是否为男孩超短发"
                     "（耳上短发、双耳与后颈清晰可见，圆寸/学生头感；"
                     "若为女童波波头、齐肩短发、厚刘海遮额或任何马尾则答「否」）？"
-                    "回答「是」或「否」；图中无昭昭时回答「无昭昭」",
+                    "回答「是」或「否」；"
+                    "仅当画面完全没有短发男孩时才答「无昭昭」",
                 )
             )
         if content_style == CONTENT_STYLE_DAILY_STORY and "灿灿" in speakers:
             items.append(
                 (
                     "can_hair",
-                    "角色灿灿是否为单侧高马尾"
+                    "图中扎马尾的女孩即灿灿。"
+                    "其发型是否为单侧高马尾"
                     "（仅一根马尾，非双马尾/麻花辫/披肩长发）？"
-                    "回答「是」或「否」；图中无灿灿时回答「无灿灿」",
+                    "回答「是」或「否」；"
+                    "仅当画面完全没有扎马尾女孩时才答「无灿灿」",
                 )
             )
         if content_style == CONTENT_STYLE_DAILY_STORY and "妈妈" in speakers:
@@ -674,19 +678,14 @@ class AgnesImageProvider(ImageProvider):
         )
         if allowed:
             max_n = len(allowed)
-            roles = "、".join(allowed)
-            sibling_note = ""
-            if content_style == CONTENT_STYLE_DAILY_STORY and set(_DAILY_SIBLINGS) - set(
-                speakers
-            ):
-                sibling_note = "昭昭与灿灿未发言也可同框；"
+            # 只数人头；身份由 zhao_hair/can_hair/mom_adult 负责，
+            # 避免 VL 认不出昭昭时把人当「外人」误杀 cast_count。
             items.append(
                 (
                     "cast_count",
-                    f"画面清晰主体人物是否不超过 {max_n} 个，且只能是：{roles}？"
-                    f"{sibling_note}"
-                    "禁止路人/多余小孩或其他未列出的人物；"
-                    "人数超过或出现外人答「否」；"
+                    f"画面清晰主体人物个数是否不超过 {max_n} 个？"
+                    "只数人头，不判断是谁；"
+                    "人数超过答「否」；"
                     "背景照片墙/镜子虚影/玩具人脸/远处剪影不算。"
                     "回答「是」或「否」",
                 )
