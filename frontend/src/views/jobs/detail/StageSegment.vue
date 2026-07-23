@@ -97,10 +97,16 @@
             </div>
           </div>
           <div class="flex items-center gap-2">
-            <span class="text-xs font-medium text-gray-600">关键帧</span>
+            <span
+              class="text-xs font-medium"
+              :class="segmentKeyframeValue(segment) ? 'text-amber-600' : 'text-gray-600'"
+            >
+              关键帧
+            </span>
             <el-select
               size="small"
               class="w-30!"
+              :class="{ 'keyframe-select--active': !!segmentKeyframeValue(segment) }"
               :model-value="segmentKeyframeValue(segment)"
               :disabled="actionDisabled || savingKeyframeIndex === segment.segment_index"
               :loading="savingKeyframeIndex === segment.segment_index"
@@ -975,5 +981,15 @@ const handleRun = async (toEnd: boolean) => {
   display: inline-block;
   min-width: 2.5em;
   text-align: right;
+}
+
+.keyframe-select--active :deep(.el-select__wrapper) {
+  background-color: #fffbeb;
+  box-shadow: 0 0 0 1px #f59e0b inset;
+}
+
+.keyframe-select--active :deep(.el-select__selected-item) {
+  color: #d97706;
+  font-weight: 600;
 }
 </style>
