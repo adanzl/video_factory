@@ -296,7 +296,12 @@
 
           <section class="flex flex-col gap-1">
             <div class="flex items-center justify-between gap-2">
-              <div class="text-xs font-medium text-gray-600">分镜图片</div>
+              <div class="flex items-center gap-1 text-xs font-medium text-gray-600">
+                分镜图片
+                <span v-if="segment.image_gen_sec != null" class="font-normal text-gray-400">
+                  {{ formatGenSec(segment.image_gen_sec) }}
+                </span>
+              </div>
               <div class="flex items-center gap-1">
                 <el-button
                   size="small"
@@ -333,7 +338,12 @@
 
           <section class="flex flex-col gap-1">
             <div class="flex items-center justify-between gap-2">
-              <div class="text-xs font-medium text-gray-600">视频片段</div>
+              <div class="flex items-center gap-1 text-xs font-medium text-gray-600">
+                视频片段
+                <span v-if="segment.clip_gen_sec != null" class="font-normal text-gray-400">
+                  {{ formatGenSec(segment.clip_gen_sec) }}
+                </span>
+              </div>
               <div class="flex items-center gap-1">
                 <el-button
                   size="small"
@@ -777,6 +787,16 @@ const formatSegmentDuration = (value?: number | null) => {
     return "-";
   }
   return `${value.toFixed(2)}s`;
+};
+
+const formatGenSec = (value?: number | null) => {
+  if (value === null || value === undefined || !Number.isFinite(value)) {
+    return "";
+  }
+  if (value < 1) {
+    return `${(value * 1000).toFixed(0)}ms`;
+  }
+  return `${value.toFixed(1)}s`;
 };
 
 const formatSegmentDurationLabel = (segment: JobSegment) => {

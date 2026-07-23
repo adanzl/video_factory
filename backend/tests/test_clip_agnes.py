@@ -302,7 +302,7 @@ def test_clip_batch_i2v_concurrency_respects_max_workers(tmp_path: Path) -> None
         result = media_mgr.build_segment_clips(
             media_dir=media_dir,
             segments=segments,
-            on_clip_done=lambda seg_id, _path: persisted.append(seg_id),
+            on_clip_done=lambda seg_id, _path, *_unused: persisted.append(seg_id),
         )
 
     assert peak == workers
