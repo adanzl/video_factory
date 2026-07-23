@@ -16,12 +16,39 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["ImageMgr", "ImageProvider", "image_mgr"]
 
-_VERIFY_PROMPT_REGEN_FEEDBACK = (
-    "出图质检连续未通过（发型/人数/肢体/场景/妈妈是否成年等），请改写本段 image_prompt："
-    "换姿势与构图、冲突道具更醒目；仍须保持角色外貌与身高约束"
-    "（灿灿单侧高马尾禁双马尾；昭昭男孩超短发禁波波头；"
-    "妈妈须为成年女性黑长发米色上衣牛仔裤，禁止画成小孩）。"
-)
+# 非 daily：交给 LLM 改写 image_prompt（外貌约束按本段出场动态拼）
+def _verify_prompt_regen_feedback(speakers: list[str]) -> str:
+    look: list[str] = []
+    if "灿灿" in speakers:
+        look.append("灿灿单侧高马尾禁双马尾")
+    if "昭昭" in speakers:
+        look.append("昭昭男孩超短发禁波波头")
+    if "妈妈" in speakers:
+        look.append("妈妈须为成年女性黑长发米色上衣牛仔裤，禁止画成小孩")
+    look_clause = f"；仍须保持：{'；'.join(look)}" if look else ""
+    cast = "、".join(speakers) if speakers else "本段对白角色"
+    return (
+        "出图质检连续未通过（发型/人数/肢体/场景等），请改写本段 image_prompt："
+        f"换姿势与构图、冲突道具更醒目{look_clause}。"
+        f"画面人物只能是：{cast}；禁止新增未出场角色。"
+    )
+
+
+# daily：改写 visual_brief（再规则拼装），禁止把本段说明拼进 T2I prompt
+def _verify_visual_brief_regen_feedback(speakers: list[str]) -> str:
+    cast = "、".join(speakers) if speakers else "本段对白角色"
+    return (
+        "出图质检连续未通过，请改写本段 visual_brief："
+        "换姿势与构图、冲突道具更大更醒目；"
+        "站位与台词事实保持一致；禁止写发型/服装/鞋帽；"
+        f"画面人物只能是：{cast}；禁止新增未出场角色（尤其禁止无故加入妈妈）。"
+    )
+
+
+def _speakers_for_regen(seg: dict) -> list[str]:
+    from app.services.script.image_prompt import _daily_speakers_of
+
+    return _daily_speakers_of(seg)
 
 
 class ImageProvider(ABC):
@@ -109,13 +136,30 @@ class ImageMgr:
             key=lambda s: int(s.get("segment_index") or 0),
         )
 
-        llm_mgr.fill_image_prompts(
-            script,
-            feedback=_VERIFY_PROMPT_REGEN_FEEDBACK,
-            job=job,
-            segment_indices=[index],
-            include_sd15_prompt=resolve_include_sd15_prompt(job),
-        )
+        speakers = _speakers_for_regen(target)
+        if content_style == CONTENT_STYLE_DAILY_STORY:
+            # daily 的 image_prompt 由 visual_brief 规则拼装；
+            # 质检反馈只用于改写 visual_brief，切勿 append 进 T2I 正文。
+            llm_mgr.fill_visual_briefs(
+                script,
+                feedback=_verify_visual_brief_regen_feedback(speakers),
+                job=job,
+                segment_indices=[index],
+            )
+            llm_mgr.fill_image_prompts(
+                script,
+                job=job,
+                segment_indices=[index],
+                include_sd15_prompt=resolve_include_sd15_prompt(job),
+            )
+        else:
+            llm_mgr.fill_image_prompts(
+                script,
+                feedback=_verify_prompt_regen_feedback(speakers),
+                job=job,
+                segment_indices=[index],
+                include_sd15_prompt=resolve_include_sd15_prompt(job),
+            )
         refreshed = next(
             (
                 s
@@ -126,19 +170,16 @@ class ImageMgr:
         )
         if refreshed is None:
             raise RuntimeError(f"image_prompt regen missing segment {index}")
-        wrap_extra = (
-            _VERIFY_PROMPT_REGEN_FEEDBACK
-            if content_style == CONTENT_STYLE_DAILY_STORY
-            else None
-        )
-        wrap_image_prompts(
-            [refreshed],
-            content_style=content_style,
-            extra=wrap_extra,
-        )
+        wrap_image_prompts([refreshed], content_style=content_style)
         new_prompt = str(refreshed.get("image_prompt") or "").strip()
         if not new_prompt:
             raise RuntimeError(f"image_prompt regen empty for segment {index}")
+        if "出图质检连续未通过" in new_prompt:
+            raise RuntimeError(
+                f"image_prompt regen leaked verify feedback into T2I for segment {index}"
+            )
+        if refreshed.get("visual_brief") is not None:
+            seg["visual_brief"] = refreshed.get("visual_brief")
         if refreshed.get("motion_prompt") is not None:
             seg["motion_prompt"] = refreshed.get("motion_prompt")
         if refreshed.get("sd15_prompt_en") is not None:

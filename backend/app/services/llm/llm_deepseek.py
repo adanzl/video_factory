@@ -852,16 +852,10 @@ class DeepSeekClient(LLMClient):
                         str(seg.get("visual_brief") or ""),
                         allowed,
                     )
+            # feedback 只给后续 LLM（motion）；禁止拼进规则组装的 T2I 正文
             assemble_daily_image_prompts(
                 segments,
                 segment_indices=all_indices,
-                extra=(
-                    feedback
-                    if feedback
-                    and "cast leak" not in feedback
-                    and "too short" not in feedback
-                    else None
-                ),
             )
         batch_size = settings.llm_image_prompt_batch_size
         started = time.perf_counter()
