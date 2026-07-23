@@ -76,17 +76,12 @@ def _inject_mouth_motion(
     seg: dict,
     cues: list[tuple[str, float]],
 ) -> str:
-    """如有对话，在「说话，同时」前注入真实起止时间。
-
-    LLM 生成: 「灿灿说话，同时右手...」
-    注入后:   「0.0-1.5秒灿灿说话，同时右手...」
-    """
+    """找到「{角色}说话，同时」并前插真实 TTS 时间。无台词角色不受影响。"""
     dialogue = seg.get("dialogue") or []
     if not dialogue or not cues or not prompt.strip():
         return prompt
-    # 按 dialogue 顺序累计时间
     t = 0.0
-    speaker_intervals: list[tuple[str, float, float]] = []
+    speaker_times: list[tuple[str, str]] = []
     for i, (_, dur) in enumerate(cues):
         if i >= len(dialogue):
             break
@@ -96,29 +91,16 @@ def _inject_mouth_motion(
             continue
         start, end = t, t + dur
         t = end
-        speaker_intervals.append((speaker, start, end))
-    if not speaker_intervals:
+        speaker_times.append((speaker, f"{start:.1f}-{end:.1f}秒"))
+    if not speaker_times:
         return prompt
-    # 找到每人「说话，同时」并注入真实时间
-    lines = prompt.split("\n")
-    result: list[str] = []
-    used: set[int] = set()
-    for line in lines:
-        replaced = False
-        for idx, (speaker, start, end) in enumerate(speaker_intervals):
-            if idx in used:
-                continue
-            needle = f"{speaker}说话，同时"
-            pos = line.find(needle)
-            if pos == -1:
-                continue
-            time_prefix = f"{start:.1f}-{end:.1f}秒"
-            line = line[:pos] + time_prefix + line[pos:]
-            used.add(idx)
-            replaced = True
-            break
-        result.append(line)
-    return "\n".join(result)
+    result = prompt
+    for speaker, time_str in speaker_times:
+        needle = f"{speaker}说话，同时"
+        idx = result.find(needle)
+        if idx != -1:
+            result = result[:idx] + time_str + result[idx:]
+    return result
 
 
 class MediaMgr:
