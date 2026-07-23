@@ -76,13 +76,16 @@ def _inject_mouth_motion(
     seg: dict,
     cues: list[tuple[str, float]],
 ) -> str:
-    """如有对话，在 motion_prompt 前注入开口说话动作（含起止时间）。"""
+    """如有对话，在每人动作行前注入「起止时间+说话，同时」。
+
+    LLM 生成格式: 「灿灿右手...后停止；\n昭昭肩膀...后定格。」
+    注入后:      「0.0-1.5秒灿灿说话，同时右手...后停止；\n"""
     dialogue = seg.get("dialogue") or []
-    if not dialogue or not cues:
+    if not dialogue or not cues or not prompt.strip():
         return prompt
-    # dialogue 与 cues 同序；cue[1] 为 duration_sec
-    speaker_actions: dict[str, list[tuple[float, float]]] = {}
+    # 按 dialogue 顺序累计时间，得到每人起止区间
     t = 0.0
+    speaker_intervals: list[tuple[str, float, float]] = []
     for i, (_, dur) in enumerate(cues):
         if i >= len(dialogue):
             break
@@ -92,18 +95,31 @@ def _inject_mouth_motion(
             continue
         start, end = t, t + dur
         t = end
-        speaker_actions.setdefault(speaker, []).append((start, end))
-    if not speaker_actions:
+        speaker_intervals.append((speaker, start, end))
+    if not speaker_intervals:
         return prompt
-    parts: list[str] = []
-    for name, intervals in speaker_actions.items():
-        segs = ",".join(
-            f"{s:.1f}-{e:.1f}秒" for s, e in intervals
-        )
-        parts.append(f"{segs}{name}说话")
-    if not parts:
-        return prompt
-    return "；".join(parts) + "。" + prompt
+    # 为每位发言者的动作行注入时间+说话
+    lines = prompt.split("\n")
+    result: list[str] = []
+    used: set[int] = set()  # 已用 interval 索引
+    for line in lines:
+        stripped = line.strip()
+        injected = False
+        for idx, (speaker, start, end) in enumerate(speaker_intervals):
+            if idx in used:
+                continue
+            if stripped.startswith(speaker):
+                prefix = f"{start:.1f}-{end:.1f}秒{speaker}说话，同时"
+                # 首字母小写
+                rest = stripped[len(speaker):]
+                # 直接拼接：prefix + 剩余内容
+                result.append(prefix + rest)
+                used.add(idx)
+                injected = True
+                break
+        if not injected:
+            result.append(line)
+    return "\n".join(result)
 
 
 class MediaMgr:
