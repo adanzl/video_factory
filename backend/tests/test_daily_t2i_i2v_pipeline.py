@@ -33,7 +33,11 @@ def test_assemble_daily_t2i_prompt_structure():
     assert "窗光从一侧斜照" in prompt
     assert "中近景特写" in prompt
     # 对白先发言者在左（灿灿），勿固定昭昭在左
-    assert "灿灿占左半，昭昭占右半" in prompt
+    assert "粉卫衣马尾女孩灿灿" in prompt
+    assert "蓝T恤短发男孩昭昭" in prompt
+    assert "禁止左右对调" in prompt
+    assert "画面左边是灿灿，右边是昭昭" in prompt
+    assert "占左半" in prompt and "占右半" in prompt
     assert "蜡笔" in prompt
 
 
@@ -64,7 +68,10 @@ def test_assemble_daily_layout_from_visual_brief():
         ],
     }
     prompt = assemble_daily_t2i_prompt(seg)
-    assert "昭昭左灿灿右" in prompt
+    assert "蓝T恤短发男孩昭昭" in prompt
+    assert "粉卫衣马尾女孩灿灿" in prompt
+    assert "禁止左右对调" in prompt
+    assert "画面左边是昭昭，右边是灿灿" in prompt
 
 
 def test_build_image_prompts_daily_motion_modes_and_duration():
@@ -131,10 +138,13 @@ def test_inject_mouth_motion_overwrites_llm_times_from_cues():
     )
     cues = [("你怎么又乱扔！", 1.4), ("我没有啊。", 1.1)]
     out = _inject_mouth_motion(mp, seg, cues)
-    assert "0.0-1.4秒灿灿说话，同时" in out
-    assert "1.4-2.5秒昭昭说话，同时" in out
+    assert "0.0-1.4秒粉色卫衣的马尾女孩（灿灿）张嘴说话，同时" in out
+    assert "1.4-2.5秒蓝色短袖T恤的短发男孩（昭昭）张嘴说话，同时" in out
+    assert "蓝色短袖T恤的短发男孩（昭昭）嘴巴闭合不张嘴" in out
+    assert "粉色卫衣的马尾女孩（灿灿）嘴巴闭合不张嘴" in out
     assert "0.0-1.0秒" not in out
     assert "1.0-2.0秒" not in out
+    assert "画面左边灿灿" not in out
 
 
 def test_inject_mouth_motion_adds_times_when_missing():
@@ -152,8 +162,9 @@ def test_inject_mouth_motion_adds_times_when_missing():
     )
     cues = [("你怎么又乱扔！", 1.4), ("我没有啊。", 1.1)]
     out = _inject_mouth_motion(mp, seg, cues)
-    assert "0.0-1.4秒灿灿说话，同时" in out
-    assert "1.4-2.5秒昭昭说话，同时" in out
+    assert "0.0-1.4秒粉色卫衣的马尾女孩（灿灿）张嘴说话，同时" in out
+    assert "1.4-2.5秒蓝色短袖T恤的短发男孩（昭昭）张嘴说话，同时" in out
+    assert "蓝色短袖T恤的短发男孩（昭昭）嘴巴闭合不张嘴" in out
 
 
 def test_inject_mouth_motion_zeros_min_start():
@@ -172,8 +183,9 @@ def test_inject_mouth_motion_zeros_min_start():
     )
     cues = [("（静音）", 3.3), ("你怎么又乱扔！", 4.0), ("我没有啊。", 3.4)]
     out = _inject_mouth_motion(mp, seg, cues)
-    assert "0.0-4.0秒灿灿说话，同时" in out
-    assert "4.0-7.4秒昭昭说话，同时" in out
+    # 外貌锚点，不依赖左右（即使站位句写反也不绑错人）
+    assert "0.0-4.0秒粉色卫衣的马尾女孩（灿灿）张嘴说话，同时" in out
+    assert "4.0-7.4秒蓝色短袖T恤的短发男孩（昭昭）张嘴说话，同时" in out
     assert "3.3-" not in out
     assert "7.3-" not in out
 
@@ -210,13 +222,16 @@ def test_inject_mouth_motion_three_lines_same_speaker_twice():
         ("我哪里弄乱了？", 1.8),
     ]
     out = _inject_mouth_motion(mp, seg, cues)
-    assert "0.0-2.5秒灿灿说话，同时" in out
-    assert "2.5-6.5秒昭昭说话，同时" in out
-    assert "6.5-8.3秒灿灿说话，同时" in out
-    # 对白序：首句灿灿须出现在昭昭之前
-    assert out.index("0.0-2.5秒灿灿") < out.index("2.5-6.5秒昭昭")
-    assert out.count("说话，同时") == 3
+    assert "0.0-2.5秒粉色卫衣的马尾女孩（灿灿）张嘴说话，同时" in out
+    assert "2.5-6.5秒蓝色短袖T恤的短发男孩（昭昭）张嘴说话，同时" in out
+    assert "6.5-8.3秒粉色卫衣的马尾女孩（灿灿）张嘴说话，同时" in out
+    assert out.count("蓝色短袖T恤的短发男孩（昭昭）嘴巴闭合不张嘴") == 2
+    assert "粉色卫衣的马尾女孩（灿灿）嘴巴闭合不张嘴" in out
+    assert out.index("0.0-2.5秒粉色卫衣") < out.index("2.5-6.5秒蓝色短袖")
+    assert out.count("张嘴说话，同时") == 3
     assert "两人说话后面部表情恢复与静图一致" in out
+    first = out.split("；")[0]
+    assert "后定格" not in first
 
 
 def test_inject_mouth_motion_face_mark_between_lines():
@@ -242,10 +257,10 @@ def test_inject_mouth_motion_face_mark_between_lines():
         ("我就碰了一下，没弄皱！", 3.1),
     ]
     out = _inject_mouth_motion(mp, seg, cues)
-    assert "0.0-3.0秒灿灿说话，同时" in out
-    assert "3.0-6.1秒昭昭说话，同时" in out
-    assert out.index("0.0-3.0秒灿灿") < out.index("3.0-6.1秒昭昭")
-    assert out.index("3.0-6.1秒昭昭") < out.index("两人说话后面部表情")
+    assert "0.0-3.0秒粉色卫衣的马尾女孩（灿灿）张嘴说话，同时" in out
+    assert "3.0-6.1秒蓝色短袖T恤的短发男孩（昭昭）张嘴说话，同时" in out
+    assert out.index("0.0-3.0秒粉色卫衣") < out.index("3.0-6.1秒蓝色短袖")
+    assert out.index("3.0-6.1秒蓝色短袖") < out.index("两人说话后面部表情")
     assert out.count("两人说话后面部表情") == 1
 
 

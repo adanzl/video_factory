@@ -103,13 +103,28 @@ def _daily_lighting(vb: str) -> str:
 
 def _daily_composition(shot_type: str, speakers: list[str]) -> str:
     names = [s for s in speakers if s in _DAILY_CHAR_MAP]
+    look = {
+        "昭昭": "蓝T恤短发男孩昭昭",
+        "灿灿": "粉卫衣马尾女孩灿灿",
+        "妈妈": "米色上衣黑长发妈妈",
+    }
     if shot_type == "特写":
         if len(names) == 2:
-            return f"中近景特写，{names[0]}占左半，{names[1]}占右半。"
+            a, b = names[0], names[1]
+            return (
+                f"画面左边是{a}，右边是{b}。"
+                f"中近景特写，严格左侧{look.get(a, a)}占左半、"
+                f"右侧{look.get(b, b)}占右半，禁止左右对调。"
+            )
         return "面部特写，占画面主体，背景虚化。"
     if shot_type == "中景":
         if len(names) == 2:
-            return f"中景，{names[0]}左{names[1]}右，全身可见。"
+            a, b = names[0], names[1]
+            return (
+                f"画面左边是{a}，右边是{b}。"
+                f"中景，严格左{look.get(a, a)}、右{look.get(b, b)}，"
+                f"禁止左右对调，全身可见。"
+            )
         return "中景，人物全身，环境可见。"
     return "根据画面自然构图。"
 

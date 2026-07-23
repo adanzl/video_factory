@@ -214,6 +214,16 @@ def test_build_verify_checklist_daily_includes_zhao() -> None:
     assert "最多 2 条" in user
     assert "照片墙" in user
 
+    items_lr, user_lr = AgnesImageProvider._build_verify_checklist(
+        prompt="画面左边是灿灿，右边是昭昭。客厅对峙。",
+        expected_speakers=["昭昭", "灿灿"],
+        content_style="daily_story",
+    )
+    assert "lr_pos" in [cid for cid, _ in items_lr]
+    assert "粉色卫衣的马尾女孩（灿灿）" in user_lr
+    assert "蓝色短袖T恤的短发男孩（昭昭）" in user_lr
+    assert "左右人物对调" in user_lr
+
     items_one, user_one = AgnesImageProvider._build_verify_checklist(
         prompt="只有昭昭",
         expected_speakers=["昭昭"],
