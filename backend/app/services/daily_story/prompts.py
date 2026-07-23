@@ -412,9 +412,13 @@ def _select_story_type(theme: str) -> str:
     }
     max_score = max(scores.values())
     if max_score <= 0:
-        candidates = ["A", "C", "D"]
+        candidates = ["A", "C"]
     else:
         candidates = [k for k, v in scores.items() if v >= max_score]
+    # D类字面执行难以产出高质量收束 → 排除，让主题走 A/C
+    candidates = [k for k in candidates if k != "D"]
+    if not candidates:
+        candidates = ["A", "C"]
     selected = random.choice(candidates)
     return f"{selected}类{_STORY_TYPE_LABELS[selected]}"
 
