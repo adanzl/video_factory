@@ -531,9 +531,10 @@ DAILY_SCRIPT_SYSTEM_PROMPT = """\
 【可发言角色】昭昭（7岁弟弟）、灿灿（10岁姐姐）、妈妈。场景以家庭内部/门口为主。
 
 【分镜规则】
-1. 【目标镜数】全文切成约 {target_min}–{target_max} 镜（对白 {total_chars} 字 / {line_count} 句）。
-   禁止一句一镜；禁止拆成远超目标的碎镜。
-2. 【默认并镜】按同一地点、同一轮互怼/同一话题合并；每镜通常 2–5 句对白。
+1. 【切分原则】按单镜 2–3 句、≤{max_sec} 秒切分（对白共 {total_chars} 字 / {line_count} 句）；
+   禁止一句一镜。
+2. 【默认并镜】按同一地点、同一轮互怼/同一话题合并；每镜通常 2–3 句对白，
+   单镜不得超过 3 句。
 3. 【单镜字数】建议 {min_chars}–{max_chars} 字（约 {min_sec}–{max_sec} 秒，
    语速 {chars_per_sec} 字/秒）。少于 {min_chars} 字必须并入邻镜；
    单镜合计不得超过 {max_chars} 字（约 ≤{max_sec} 秒）。各镜尽量均匀。
@@ -544,7 +545,7 @@ DAILY_SCRIPT_SYSTEM_PROMPT = """\
 6. 【转折用特写，不拆碎】反驳、破功、愣住、妈妈插嘴、证据翻出等转折句：
    放在该镜开头（可带紧随的 1–2 句回应），shot_type 优先「特写」；
    禁止为转折把短句单独拆成不足 {min_chars} 字的镜；
-   也禁止把转折句埋进五句长镜末尾。全文特写镜不超过总镜数约 1/3。
+   也禁止把转折句埋进四句长镜末尾。全文特写镜不超过总镜数约 1/3。
 
 【输出格式】
 严格输出合法 JSON（不要 markdown 代码块）：
@@ -577,20 +578,17 @@ DAILY_SCRIPT_USER_TEMPLATE = """\
 {dialogue_text}
 
 【要求】
-1. 目标约 {target_min}–{target_max} 镜；禁止一句一镜、禁止碎镜
-2. 每镜通常 2–5 句；单镜建议 {min_chars}–{max_chars} 字（约 ≤{max_sec} 秒）
-3. 转折句用特写并放在镜首，但须并入邻句，不得单独拆成短镜
-4. 原台词须全部分配到各镜 dialogue，措辞不得改
+1. 每镜 2–3 句、不得超过 3 句；单镜 {min_chars}–{max_chars} 字（约 ≤{max_sec} 秒）；禁止一句一镜
+2. 转折句用特写并放在镜首，但须并入邻句，不得单独拆成短镜
+3. 原台词须全部分配到各镜 dialogue，措辞不得改
 
 请直接输出 JSON。
 """
 
 # 与 DailyScriptStage 时长告警对齐
-DAILY_SCRIPT_MAX_SEGMENT_SEC = 18.0
-# 单镜下限：过短会碎镜、出图浪费；与近期正常任务（约 24+ 字/镜）对齐
-DAILY_SCRIPT_MIN_SEGMENT_SEC = 8.0
-# 目标镜字数中位（用总字数估算镜数）
-DAILY_SCRIPT_TARGET_CHARS_PER_SHOT = 40
+DAILY_SCRIPT_MAX_SEGMENT_SEC = 10.0
+# 单镜下限（约 2 句短对白）；过短须并入邻镜
+DAILY_SCRIPT_MIN_SEGMENT_SEC = 4.0
 
 
 def _format_prompt_number(value: float) -> str:
@@ -599,19 +597,6 @@ def _format_prompt_number(value: float) -> str:
     if number.is_integer():
         return str(int(number))
     return f"{number:g}"
-
-
-def _daily_script_shot_targets(total_chars: int) -> tuple[int, int]:
-    """按总字数估算目标镜数区间（对齐近期正常任务约 7–11 镜）。"""
-    per = DAILY_SCRIPT_TARGET_CHARS_PER_SHOT
-    ideal = max(1, round(total_chars / per)) if total_chars else 8
-    target_min = max(1, ideal - 2)
-    target_max = ideal + 2
-    if total_chars >= DAILY_STORY_TOTAL_CHARS_MIN:
-        # 完整篇幅：压在 6–14，避免再出现 30+ 碎镜
-        target_min = max(6, min(target_min, 12))
-        target_max = min(14, max(target_max, target_min + 2))
-    return target_min, target_max
 
 
 def build_daily_script_prompts(
@@ -641,7 +626,6 @@ def build_daily_script_prompts(
     )
     total_chars = sum(_dialogue_char_count(str(d.get("line") or "")) for d in dialogue)
     line_count = len(dialogue)
-    target_min, target_max = _daily_script_shot_targets(total_chars)
     scene_title = str(dialogue_script.get("scene_title") or "").strip() or "（无标题）"
     setting = str(dialogue_script.get("setting") or "").strip() or "（未提供设定）"
     max_sec_text = _format_prompt_number(max_sec)
@@ -655,8 +639,6 @@ def build_daily_script_prompts(
         min_chars=min_chars,
         total_chars=total_chars,
         line_count=line_count,
-        target_min=target_min,
-        target_max=target_max,
     )
     system = DAILY_SCRIPT_SYSTEM_PROMPT.format(**fmt)
     user = DAILY_SCRIPT_USER_TEMPLATE.format(
