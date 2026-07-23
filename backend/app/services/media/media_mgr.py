@@ -71,6 +71,13 @@ class MergeResult:
     final_path: Path
 
 
+_LOOK_ANCHOR = {
+    "昭昭": "蓝色短袖T恤的短发男孩（昭昭）",
+    "灿灿": "粉色卫衣的马尾女孩（灿灿）",
+    "妈妈": "米色上衣的黑长发成年女性（妈妈）",
+}
+
+
 def _inject_mouth_motion(
     prompt: str,
     seg: dict,
@@ -80,7 +87,7 @@ def _inject_mouth_motion(
 
     - 每一句对白对应一句「说话，同时」（同人多句写多行，不合并）
     - 时间轴相对本段 I2V：说话窗口最小值归零后全体平移
-    - LLM 少写/写乱顺序时，按对白序重建说话句，微动作按角色队列复用
+    - 用服装外貌锚点点名张嘴/闭嘴（不靠左右），避免 T2I 左右对调后全片嘴型反了
     """
     dialogue = seg.get("dialogue") or []
     if not dialogue or not cues or not prompt.strip():
@@ -112,8 +119,24 @@ def _inject_mouth_motion(
         for speaker, start, end in speaker_windows
     ]
 
+    cast_order: list[str] = []
+    for name, _, _ in speaker_windows:
+        if name not in cast_order:
+            cast_order.append(name)
+    lr = re.search(
+        r"画面左边是\s*(昭昭|灿灿|妈妈)\s*[，,；;]?\s*右边是\s*(昭昭|灿灿|妈妈)",
+        prompt,
+    )
+    if lr:
+        for name in (lr.group(1), lr.group(2)):
+            if name not in cast_order:
+                cast_order.append(name)
+
     speak_re = re.compile(
-        r"(?:[\d.]+-[\d.]+秒)?(昭昭|灿灿|妈妈)说话，同时"
+        r"(?:[\d.]+-[\d.]+秒)?(?:画面(?:左边|右边))?"
+        r"(?:蓝色短袖T恤的短发男孩|粉色卫衣的马尾女孩|米色上衣的黑长发成年女性)?"
+        r"[（(]?(昭昭|灿灿|妈妈)[）)]?"
+        r"(?:张嘴)?说话，同时"
         r"([^；;。]*?)(?=[；;。]|$)"
     )
     face_mark = "两人说话后面部表情"
@@ -122,11 +145,12 @@ def _inject_mouth_motion(
         action = (m.group(2) or "").strip().rstrip("。")
         if face_mark in action:
             action = action.split(face_mark, 1)[0].strip().rstrip("。；;")
+        action = re.sub(r"，?此时.*$", "", action).strip().rstrip("，,")
         if action:
             action_queues.setdefault(m.group(1), []).append(action)
 
     fallback = {
-        "昭昭": "身体轻微后仰约1厘米后定格",
+        "昭昭": "身体轻微后仰约1厘米后停止",
         "灿灿": "右手食指轻轻点动约1厘米后停止",
         "妈妈": "微微点头约1厘米后停止",
     }
@@ -135,7 +159,6 @@ def _inject_mouth_motion(
 
     if speaks:
         head = prompt[: speaks[0].start()]
-        # 表情收束段须在「最后一句说话」之后，避免 LLM 把收束插在中间导致漏句/重复
         face_at = prompt.find(face_mark, speaks[-1].end())
         if face_at < 0:
             face_at = prompt.rfind(face_mark)
@@ -169,16 +192,27 @@ def _inject_mouth_motion(
                 tail = re.sub(r"[；;]{2,}", "；", tail).lstrip("；;")
 
     clauses: list[str] = []
+    last_i = len(speaker_times) - 1
     for i, (speaker, time_str) in enumerate(speaker_times):
         q = action_queues.get(speaker) or []
         action = q.pop(0) if q else fallback.get(speaker, "轻微点头约1厘米后停止")
-        if (
-            i == len(speaker_times) - 1
-            and "定格" not in action
-            and action.endswith("后停止")
-        ):
+        if i < last_i and action.endswith("后定格"):
+            action = action[: -len("后定格")] + "后停止"
+        elif i == last_i and "定格" not in action and action.endswith("后停止"):
             action = action[: -len("后停止")] + "后定格"
-        clauses.append(f"{time_str}{speaker}说话，同时{action}")
+
+        look = _LOOK_ANCHOR.get(speaker, speaker)
+        lead = f"{time_str}{look}张嘴说话，同时{action}"
+        quiet: list[str] = []
+        for other in cast_order:
+            if other == speaker:
+                continue
+            other_look = _LOOK_ANCHOR.get(other, other)
+            quiet.append(f"{other_look}嘴巴闭合不张嘴")
+        if quiet:
+            lead = f"{lead}，此时{'，'.join(quiet)}"
+        clauses.append(lead)
+
     middle = "；".join(clauses)
     has_face = face_mark in (tail or "")
     if has_face or (tail and not middle.endswith("。")):

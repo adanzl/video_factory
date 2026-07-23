@@ -665,6 +665,27 @@ class AgnesImageProvider(ImageProvider):
                     "回答「是」或「否」；图中无妈妈时回答「无妈妈」",
                 )
             )
+        # 左右站位：提示词写了「左边是A，右边是B」时校验，防 T2I 对调导致后续嘴型全反
+        lr = re.search(
+            r"画面左边是\s*(昭昭|灿灿|妈妈)\s*[，,；;]?\s*右边是\s*(昭昭|灿灿|妈妈)",
+            scene_prompt,
+        )
+        if content_style == CONTENT_STYLE_DAILY_STORY and lr:
+            left, right = lr.group(1), lr.group(2)
+            look = {
+                "昭昭": "蓝色短袖T恤的短发男孩（昭昭）",
+                "灿灿": "粉色卫衣的马尾女孩（灿灿）",
+                "妈妈": "米色上衣的黑长发成年女性（妈妈）",
+            }
+            items.append(
+                (
+                    "lr_pos",
+                    f"画面左边是否为{look.get(left, left)}、"
+                    f"右边是否为{look.get(right, right)}？"
+                    "若左右人物对调答「否」。"
+                    "回答「是」或「否」",
+                )
+            )
         items.append(
             (
                 "extra_arms",
@@ -733,6 +754,7 @@ class AgnesImageProvider(ImageProvider):
                 "zhao_hair",
                 "can_hair",
                 "mom_adult",
+                "lr_pos",
                 "extra_arms",
                 "cast_count",
             }:
