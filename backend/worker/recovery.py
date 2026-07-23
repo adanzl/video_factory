@@ -89,3 +89,14 @@ def recover_stuck_jobs() -> int:
         logger.info("no stuck jobs to recover")
 
     return len(recovered)
+
+
+def recover_stuck_daily_stories() -> int:
+    """恢复卡在 processing 状态的日常故事生成。
+
+    Returns:
+        已恢复的故事数量
+    """
+    from app.services.daily_story.daily_story_mgr import daily_story_mgr
+
+    return daily_story_mgr.recover_processing_stories()

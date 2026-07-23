@@ -117,3 +117,104 @@ def test_recover_stuck_jobs_no_stuck_jobs(memory_conn: sqlite3.Connection) -> No
         cont.assert_not_called()
 
     assert count == 0
+
+
+def _insert_daily_story(
+    conn: sqlite3.Connection,
+    *,
+    theme: str,
+    story: dict | None = None,
+    status: str = "active",
+) -> int:
+    import json
+
+    conn.execute(
+        """
+        INSERT INTO daily_story (theme, story_json, status)
+        VALUES (?, ?, ?)
+        """,
+        (theme, json.dumps(story or {}, ensure_ascii=False), status),
+    )
+    conn.commit()
+    return conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+
+
+def test_recover_stuck_daily_stories_requeues_generate_and_regenerate(
+    memory_conn: sqlite3.Connection,
+) -> None:
+    s1 = _insert_daily_story(
+        memory_conn,
+        theme="谁先洗澡",
+        story={},
+        status="processing",
+    )
+    s2 = _insert_daily_story(
+        memory_conn,
+        theme="争最后一块饼干",
+        story={"dialogue": [{"speaker": "小明", "line": "我的"}]},
+        status="processing",
+    )
+    s3 = _insert_daily_story(
+        memory_conn,
+        theme="已完成",
+        story={"dialogue": [{"speaker": "小明", "line": "好了"}]},
+        status="active",
+    )
+
+    queued: list[tuple[int, str, bool]] = []
+
+    def _queue(story_id: int, theme: str, *, is_regenerate: bool):
+        queued.append((story_id, theme, is_regenerate))
+
+    with (
+        patch(
+            "worker.recovery.connection",
+            side_effect=lambda: _mock_connection(memory_conn),
+        ),
+        patch(
+            "app.services.daily_story.daily_story_mgr.connection",
+            side_effect=lambda: _mock_connection(memory_conn),
+        ),
+        patch(
+            "app.services.daily_story.daily_story_mgr.DailyStoryMgr._queue_story_generation",
+            side_effect=_queue,
+        ),
+    ):
+        from worker.recovery import recover_stuck_daily_stories
+
+        count = recover_stuck_daily_stories()
+
+    assert count == 2
+    assert set(queued) == {
+        (s1, "谁先洗澡", False),
+        (s2, "争最后一块饼干", True),
+    }
+
+    row = memory_conn.execute(
+        "SELECT status FROM daily_story WHERE id = ?", (s3,)
+    ).fetchone()
+    assert row["status"] == "active"
+
+
+def test_recover_stuck_daily_stories_no_stuck(memory_conn: sqlite3.Connection) -> None:
+    _insert_daily_story(memory_conn, theme="已完成", status="active")
+
+    with (
+        patch(
+            "worker.recovery.connection",
+            side_effect=lambda: _mock_connection(memory_conn),
+        ),
+        patch(
+            "app.services.daily_story.daily_story_mgr.connection",
+            side_effect=lambda: _mock_connection(memory_conn),
+        ),
+        patch(
+            "app.services.daily_story.daily_story_mgr.DailyStoryMgr._queue_story_generation",
+        ) as queue_mock,
+    ):
+        from worker.recovery import recover_stuck_daily_stories
+
+        count = recover_stuck_daily_stories()
+        queue_mock.assert_not_called()
+
+    assert count == 0
