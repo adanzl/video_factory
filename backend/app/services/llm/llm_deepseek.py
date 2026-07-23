@@ -1584,7 +1584,7 @@ class DeepSeekClient(LLMClient):
         )
         last_exc: ValueError | None = None
         # 日常故事易因字数+节奏硬卡波动：至少 5 次，带上一稿修订
-        max_attempts = max(5, get_settings().script_qa_max_attempts)
+        max_attempts = max(4, get_settings().script_qa_max_attempts)
         prev_story: dict | None = None
         for attempt in range(max_attempts):
             # 首稿硬关 thinking + 高温度保创意；重试走配置修硬约束
