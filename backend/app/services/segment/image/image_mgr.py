@@ -72,10 +72,10 @@ class ImageMgr:
         job: dict[str, Any] | None,
         content_style: str | None,
     ) -> str:
-        """质检耗尽后，按单段重写 image_prompt（含 daily wrap）。"""
+        """质检耗尽后，按单段重写 image_prompt（含 daily 规则拼装）。"""
         from app.services.llm.llm_mgr import llm_mgr
         from app.services.script.image_prompt import wrap_image_prompts
-        from app.utils.job_info import resolve_include_sd15_prompt
+        from app.utils.job_info import CONTENT_STYLE_DAILY_STORY, resolve_include_sd15_prompt
 
         if not job:
             raise RuntimeError("missing job for image_prompt regen")
@@ -126,7 +126,16 @@ class ImageMgr:
         )
         if refreshed is None:
             raise RuntimeError(f"image_prompt regen missing segment {index}")
-        wrap_image_prompts([refreshed], content_style=content_style)
+        wrap_extra = (
+            _VERIFY_PROMPT_REGEN_FEEDBACK
+            if content_style == CONTENT_STYLE_DAILY_STORY
+            else None
+        )
+        wrap_image_prompts(
+            [refreshed],
+            content_style=content_style,
+            extra=wrap_extra,
+        )
         new_prompt = str(refreshed.get("image_prompt") or "").strip()
         if not new_prompt:
             raise RuntimeError(f"image_prompt regen empty for segment {index}")

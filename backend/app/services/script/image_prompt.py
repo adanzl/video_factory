@@ -13,51 +13,146 @@ from app.utils.job_info import (
     ORIENTATION_LANDSCAPE,
 )
 
-_DAILY_STORY_I2I_PREFIX = (
-    "参考图中人物外貌不变，仅调整动作表情。"
-    "昭昭：7岁男孩，超短发露耳露后颈（禁波波头/齐肩发/厚刘海/马尾），圆脸，蓝T恤，矮灿灿约半头；"
-    "灿灿：10岁女孩，单侧高马尾（禁双马尾/麻花辫/披发），粉卫衣，高昭昭约半头。"
-    "彩铅蜡笔涂鸦风，高饱和色，笔触用力不均，涂色出界，橡皮擦痕。"
+# ══════════════════════════════════════════════════════════════════════
+#  daily_story 规则拼装 T2I（不再二次 LLM 扩写 visual_brief）
+#
+#  结构: 风格 + visual_brief + 角色外貌 + 光照 + 构图
+# ══════════════════════════════════════════════════════════════════════
+
+_DAILY_T2I_STYLE = (
+    "儿童情绪涂鸦风格，彩铅和蜡笔混合笔触，线条用力不均，"
+    "高饱和色彩，涂色出界，橡皮擦拭痕迹，手工感。"
 )
-# 画风必须硬编码进 wrap：LLM 易漏写，出图侧不能依赖模型自带风格句
 
-# 硬编码后期缀，daily_story 出图后自动拼接
-_DAILY_STORY_STYLE_SUFFIX = ""
+_DAILY_CHAR_ZHAO = (
+    "昭昭：7岁男孩，黑色超短发露耳露后颈，圆脸，蓝色短袖T恤。"
+)
+_DAILY_CHAR_CANCAN = (
+    "灿灿：10岁女孩，单侧高马尾，粉色卫衣。"
+)
+_DAILY_CHAR_MOM = (
+    "妈妈：成年女性，黑色长发，米色上衣，牛仔裤。"
+)
+_DAILY_CHAR_HEIGHT = "昭昭比灿灿矮约半个头。"
 
-# content_style → (prefix, suffix) 映射
-_IMAGE_PROMPT_WRAPPERS: dict[str, tuple[str, str]] = {
-    CONTENT_STYLE_DAILY_STORY: (_DAILY_STORY_I2I_PREFIX, _DAILY_STORY_STYLE_SUFFIX),
+_DAILY_CHAR_MAP: dict[str, str] = {
+    "昭昭": _DAILY_CHAR_ZHAO,
+    "灿灿": _DAILY_CHAR_CANCAN,
+    "妈妈": _DAILY_CHAR_MOM,
 }
+
+
+def _daily_speakers_of(seg: dict) -> list[str]:
+    """本段出场角色：优先 speakers 字段，否则从 dialogue 推导。"""
+    raw = seg.get("speakers")
+    if isinstance(raw, list) and raw:
+        return [str(s).strip() for s in raw if str(s).strip()]
+    from app.services.daily_story.cast import speakers_from_dialogue
+
+    names = speakers_from_dialogue(seg.get("dialogue"))
+    return [n for n in ("昭昭", "灿灿", "妈妈") if n in names]
+
+
+def _strip_style_suffix(vb: str) -> str:
+    """去掉 visual_brief 末尾画风句（含风格/线条/笔触等）。"""
+    vb = vb.rstrip("。，, ")
+    last_period = vb.rfind("。")
+    tail = vb[last_period + 1 :] if last_period >= 0 else vb
+    style_context = any(w in tail for w in ("风格", "线条", "笔触", "质感", "画风"))
+    if not style_context:
+        return vb + "。" if vb else ""
+    style_keywords = ["彩铅", "涂鸦", "蜡笔", "水彩", "油画", "扁平", "写实风", "绘本"]
+    if any(kw in tail for kw in style_keywords):
+        pre = vb[:last_period].rstrip("。，, ") if last_period >= 0 else ""
+        if pre:
+            return pre + "。"
+    return vb + "。" if vb else ""
+
+
+def _daily_lighting(vb: str) -> str:
+    indoor = any(w in vb for w in ("客厅", "卧室", "厨房", "房间", "室内", "书房"))
+    if indoor:
+        return "窗光从一侧斜照，在墙面和地面投下柔和光影。"
+    return "室外自然光，柔和散射，画面明亮。"
+
+
+def _daily_composition(shot_type: str, speakers: list[str]) -> str:
+    names = [s for s in speakers if s in _DAILY_CHAR_MAP]
+    if shot_type == "特写":
+        if len(names) == 2:
+            return f"中近景特写，{names[0]}占左半，{names[1]}占右半。"
+        return "面部特写，占画面主体，背景虚化。"
+    if shot_type == "中景":
+        if len(names) == 2:
+            return f"中景，{names[0]}左{names[1]}右，全身可见。"
+        return "中景，人物全身，环境可见。"
+    return "根据画面自然构图。"
+
+
+def assemble_daily_t2i_prompt(
+    seg: dict,
+    *,
+    extra: str | None = None,
+) -> str:
+    """规则拼装 daily_story image_prompt。
+
+    风格 + visual_brief + 出场角色外貌 + 光照 + 构图（+ 可选质检反馈）。
+    """
+    vb = str(seg.get("visual_brief") or "").strip()
+    speakers = _daily_speakers_of(seg)
+    shot = str(seg.get("shot_type") or "").strip()
+
+    parts = [_DAILY_T2I_STYLE]
+    if vb:
+        parts.append(_strip_style_suffix(vb))
+
+    char_parts: list[str] = []
+    for name in speakers:
+        if name in _DAILY_CHAR_MAP:
+            char_parts.append(_DAILY_CHAR_MAP[name])
+    if "昭昭" in speakers and "灿灿" in speakers:
+        char_parts.append(_DAILY_CHAR_HEIGHT)
+    if char_parts:
+        parts.append("".join(char_parts))
+
+    parts.append(_daily_lighting(vb))
+    parts.append(_daily_composition(shot, speakers))
+    if extra and extra.strip():
+        parts.append(extra.strip())
+    return "".join(parts)
+
+
+def assemble_daily_image_prompts(
+    segments: list[dict],
+    *,
+    segment_indices: list[int] | None = None,
+    extra: str | None = None,
+) -> list[dict]:
+    """原地为 daily 分镜写入规则拼装的 image_prompt。"""
+    wanted = (
+        {int(i) for i in segment_indices} if segment_indices is not None else None
+    )
+    for seg in segments:
+        idx = int(seg.get("segment_index") or 0)
+        if wanted is not None and idx not in wanted:
+            continue
+        seg["image_prompt"] = assemble_daily_t2i_prompt(seg, extra=extra)
+    return segments
 
 
 def wrap_image_prompts(
     segments: list[dict],
     *,
     content_style: str | None = None,
+    extra: str | None = None,
 ) -> list[dict]:
-    """根据 content_style 给 image_prompt 添加前缀/后缀。
+    """按 content_style 定稿 image_prompt。
 
-    LLM 只生成场景核心内容，部分 pipeline 需要在返回时给 image_prompt
-    加上固定前缀（如 I2I 参考图指令）和后缀（如风格描述）。
-    此函数在 LLM 生成后、消费前统一应用。
-
-    Args:
-        segments: 分镜列表（原地修改）。
-        content_style: 内容风格标识，如 "daily_story"。
-
-    Returns:
-        原地修改后的 segments。
+    daily_story：规则拼装（风格+visual_brief+外貌+光照+构图），不依赖 LLM 扩写。
+    其他风格：无额外 wrap。
     """
-    if not content_style:
-        return segments
-    wrapper = _IMAGE_PROMPT_WRAPPERS.get(content_style)
-    if not wrapper:
-        return segments
-    prefix, suffix = wrapper
-    for seg in segments:
-        prompt = seg.get("image_prompt")
-        if prompt and isinstance(prompt, str) and prompt.strip():
-            seg["image_prompt"] = prefix + prompt + suffix
+    if content_style == CONTENT_STYLE_DAILY_STORY:
+        return assemble_daily_image_prompts(segments, extra=extra)
     return segments
 
 
@@ -97,41 +192,12 @@ _IMAGE_PROMPT_RULE_LIFE = (
     + "另禁可读大段文字/水印/品牌Logo。"
 )
 
-_IMAGE_PROMPT_RULE_DAILY_STORY = (
-    "适配{orientation}构图。篇幅150-280字，连贯中文，禁用维度标签。"
-    "顺序：地点场景→人物动作表情→光照→构图→质感细节。"
-    "【地点】开头必须写清具体室内地点（与全片 setting 一致，如客厅/厨房/卧室门口），"
-    "写可见陈设（沙发、茶几、书桌、门口等）和至少 2 个具体物品；"
-    "禁止用「蜡笔彩虹/涂鸦色块背景」代替真实房间；"
-    "禁止输出「竖构图/横屏/调整为」等元叙述。"
-    "地点写清后写动作与表情；勿重复发型/服装（参考图前缀已注入；"
-    "妈妈入画时外貌须写黑长发、米色上衣、牛仔裤）。"
-    "【角色入画】只画本段 speakers；visual_brief 若出现未在 speakers 中的角色必须忽略；"
-    "无 speakers 则只画场景、禁止画昭昭/灿灿/妈妈。"
-    "【身高】昭昭与灿灿同框时必须写明昭昭比灿灿矮约半个头，"
-    "禁止同高或弟弟更高。"
-    "【表情】须夸张可读：瞪圆眼、撇嘴、叉腰、愣住张嘴、鼓腮、抿嘴鼓气等，"
-    "表情强度对标本段台词情绪，禁止面无表情的站桩。"
-    "【开场首镜】segment_index=1 须特写，定格冲突峰值姿势（抢/举/夺/藏），"
-    "用发现开场也要落在动作峰值上，禁止全景空镜开场"
-    "（抢/举/夺/藏道具动作最大的一瞬），冲突道具须清晰可见且占比够大，"
-    "表情比后文再夸张一档；禁止平淡站桩或纯环境交代开场。"
-    "单帧静态；勿写画风套话（出图前系统硬编码）。"
-    "短例：'客厅地板上昭昭右手高举橡皮，瞪圆眼张大嘴喊；"
-    "灿灿左手前伸眉毛倒竖张嘴争辩，昭昭比灿灿矮约半个头。"
-    "窗光斜照地板，在地毯上投下暖黄色光斑，前景铅笔屑散落。"
-    "中近景，昭昭左灿灿右，橡皮在画面中央占四分之一。'"
-)
-
-# 无参考图角色规则，仅当 segment 涉及该角色时追加
-_IMAGE_PROMPT_RULE_NO_REF_CHARACTER = (
-    "【无参考图角色】妈妈外貌须写为黑色长发、米色上衣、牛仔裤，禁止换装。"
-)
-
-# 带妈妈角色的补充示例，帮助模型理解如何描写妈妈
-_IMAGE_PROMPT_EXAMPLE_WITH_MOM = (
-    "含妈妈短例：'客厅里昭昭与灿灿对峙，妈妈站中间手臂微张，"
-    "黑长发米色上衣牛仔裤，面露无奈。'"
+# daily_story：image_prompt 由规则拼装，LLM 只写 motion
+_IMAGE_PROMPT_RULE_DAILY_STORY_MOTION = (
+    "适配{orientation}构图。"
+    "image_prompt 已由系统按「风格+visual_brief+角色外貌+光照+构图」规则拼装，"
+    "禁止改写、禁止再输出 image_prompt 字段。"
+    "仅为每段编写 motion_prompt，须紧扣已给出的 image_prompt。"
 )
 
 
@@ -154,12 +220,13 @@ _IMAGE_PROMPT_MOTION_TAIL_DAILY_AMBIENT = (
 )
 
 _IMAGE_PROMPT_MOTION_TAIL_DAILY_KEYFRAME = (
-    "【keyframe】按以下模板逐行输出 motion_prompt（120-200 字）：\n"
+    "【keyframe】按以下模板输出 motion_prompt（120-220 字）：\n"
     "画面左边是{角色A}，右边是{角色B}。\n"
-    "{角色A}{微动作——部位+幅度+时长}；\n"
-    "{角色B}{微动作——部位+幅度+时长}。\n"
-    "【说话】有台词的角色的微动作前加「说话，同时」（如「灿灿说话，同时右手...」），"
-    "无台词角色不加。\n"
+    "{角色A}说话，同时{微动作——部位+幅度}后停止；\n"
+    "{角色B}说话，同时{微动作——部位+幅度}后定格。\n"
+    "【时间轴】禁止自编起止秒数；写成「{角色}说话，同时…」即可，"
+    "出片前系统按 TTS 句时长自动写入「X.X-Y.Y秒」。\n"
+    "有台词角色必须含「说话，同时」；无台词角色可不写「说话，同时」，只写微动作。\n"
     "两人说话后面部表情恢复与静图一致：\n"
     "{角色A}{具体表情}（{情绪备注}），不微笑；\n"
     "{角色B}{具体表情}（{情绪备注}），表情不变。\n"
@@ -168,15 +235,16 @@ _IMAGE_PROMPT_MOTION_TAIL_DAILY_KEYFRAME = (
     "禁止镜头推近/推进/拉远/变焦/放大；禁止只写动作不写表情；"
     "禁止大位移换位、全身换姿势、多人齐跑、抽象光效。\n"
     "正例：\n"
-    "画面左边是妈妈，右边是昭昭。\n"
-    "妈妈说话，同时右手微微前推约2厘米持续0.5秒后定格；\n"
-    "昭昭侧脸微抬约1厘米持续1秒后静止。\n"
-    "两人说话后面部表情恢复与静图一致：\n"
-    "妈妈表情严肃（教育责备状），不微笑；\n"
-    "昭昭撇嘴（委屈状），表情不变。\n"
-    "服装发型稳定，身高比例（昭昭比妈妈矮半个头）不变。\n"
+    "画面左边是灿灿，右边是昭昭。"
+    "灿灿说话，同时右手食指微微向下点动约2厘米后停止；"
+    "昭昭说话，同时肩膀轻轻耸起约3厘米后定格。"
+    "两人说话后面部表情恢复与静图一致："
+    "灿灿瞪圆眼睛嘴巴大张（惊讶质问状），不微笑；"
+    "昭昭撇着嘴角耸肩（无辜状），表情不变。"
+    "服装发型稳定，身高比例（昭昭比灿灿矮半个头）不变。"
     "镜头固定，不推近不拉远，画面只有人物和场景，无任何文字叠加。\n"
-    "反例：两人表情不变，身高比例固定。（未逐人描述、未写具体身高差值）\n"
+    "反例：0.0-1.5秒灿灿说话…（禁止自编秒数）；"
+    "灿灿右手点动持续0.5秒（缺「说话，同时」，系统无法注入时间）。\n"
 )
 
 _IMAGE_PROMPT_MOTION_TAIL_DAILY = (
@@ -226,11 +294,6 @@ _IMAGE_PROMPT_JSON_EXAMPLE_TEXT = (
     "金属、火焰与烟雾质感真实，细节层次清楚。"
 )
 
-_IMAGE_PROMPT_JSON_EXAMPLE_DAILY = (
-    "客厅地板上昭昭举手比石头，脸不服气嘴角下撇；灿灿双手叉腰抿嘴瞪着他。"
-    "窗光斜照地板。中景，昭昭左灿灿右。"
-)
-
 _IMAGE_PROMPTS_JSON_EXAMPLE = """{
   "image_prompts": [
     {
@@ -252,17 +315,15 @@ _IMAGE_PROMPTS_JSON_EXAMPLE_NO_SD15 = """{
   ]
 }"""
 
-_IMAGE_PROMPTS_JSON_EXAMPLE_DAILY = """{
+_IMAGE_PROMPTS_JSON_EXAMPLE_DAILY_MOTION = """{
   "image_prompts": [
     {
       "segment_index": 1,
-      "image_prompt": """ + '"客厅地板上昭昭右手高举橡皮，瞪圆眼张大嘴仰头喊叫；灿灿左手前伸五指张开，眉毛倒竖张嘴争辩，昭昭比灿灿矮约半个头。窗光从左侧斜照在地毯上投下暖黄色光斑，前景散落几支彩色蜡笔。中近景，昭昭左灿灿右，橡皮在画面中央偏上占四分之一。"' + """,
       "motion_prompt": "窗边纱帘被微风掀起下摆向右飘动约10厘米后缓缓回摆，沙发靠垫绒面光影随帘动明暗交替，地毯蜡笔屑被气流吹动向前翻滚半圈停下，人物姿势保持不变"
     },
     {
       "segment_index": 2,
-      "image_prompt": "特写妈妈右手微微前推做停势，黑长发垂肩米色上衣，昭昭侧头仰望，背景虚化彩铅色块。",
-      "motion_prompt": "妈妈右手微微前推做停势后定格，面部表情保持严肃与静图一致不微笑，昭昭侧脸微抬后静止，五官表情不变，服装发型稳定，镜头固定不推近不拉远"
+      "motion_prompt": "画面左边是灿灿，右边是昭昭。灿灿说话，同时右手食指微微向下点动约2厘米后停止；昭昭说话，同时肩膀轻轻耸起约3厘米后定格。两人说话后面部表情恢复与静图一致：灿灿瞪圆眼睛嘴巴大张（惊讶质问状），不微笑；昭昭撇着嘴角耸肩（无辜状），表情不变。服装发型稳定，身高比例（昭昭比灿灿矮半个头）不变。镜头固定，不推近不拉远，画面只有人物和场景，无任何文字叠加。"
     }
   ]
 }"""
@@ -298,7 +359,7 @@ _IMAGE_PROMPT_ROLES: dict[str, str] = {
 }
 
 _IMAGE_PROMPT_STYLE_BODIES: dict[str, str] = {
-    CONTENT_STYLE_DAILY_STORY: _IMAGE_PROMPT_RULE_DAILY_STORY,
+    CONTENT_STYLE_DAILY_STORY: _IMAGE_PROMPT_RULE_DAILY_STORY_MOTION,
     CONTENT_STYLE_HISTORICAL_MYSTERY: _IMAGE_PROMPT_RULE_MYSTERY,
     CONTENT_STYLE_LIFE_EXPERIENCE: _IMAGE_PROMPT_RULE_LIFE,
     CONTENT_STYLE_SCIENCE_CHILD: _IMAGE_PROMPT_RULE_SCIENCE,
@@ -318,7 +379,8 @@ _MOTION_USER_RULE = (
 _MOTION_USER_RULE_DAILY = (
     "motion_prompt 须按该段 motion_mode："
     "ambient 只写无生命微动且末尾写人物姿势保持不变；"
-    "keyframe 写 1 个微动作并明确锁住面部表情与静图一致（不微笑），"
+    "keyframe 写成「{角色}说话，同时…」微动作并锁住面部表情与静图一致（不微笑），"
+    "禁止自编起止秒数（系统按 TTS 注入），"
     "末尾镜头固定不推近不拉远（禁止变焦放大），禁大位移、禁纯环境晃动套话；"
     "各段互不重复，禁止套话。"
 )
@@ -333,17 +395,21 @@ def _image_prompt_role(content_style: str) -> str:
 
 def image_prompt_rule(*, orientation: str, content_style: str, sd15_mode: bool = False) -> str:
     """按 content_style / orientation 选择文生图规则；sd15 仅附加，不替换风格正文。"""
+    if content_style == CONTENT_STYLE_DAILY_STORY:
+        # daily：image_prompt 规则拼装，LLM 只写 motion
+        text = (
+            "根据每段已拼装的 image_prompt 与口播，仅为 video 编写 motion_prompt。"
+            + _with_orientation(_IMAGE_PROMPT_RULE_DAILY_STORY_MOTION, orientation)
+            + _IMAGE_PROMPT_MOTION_TAIL_DAILY
+        )
+        return text
     head = (
         "根据每段口播text、visual_brief与全片visual_style，扩写为文生图用的image_prompt"
         "和video用的motion_prompt。"
     )
     # tech_science 等未单独列出的风格走电影级写实
     body = _IMAGE_PROMPT_STYLE_BODIES.get(content_style, _IMAGE_PROMPT_RULE_REALISTIC)
-    motion = (
-        _IMAGE_PROMPT_MOTION_TAIL_DAILY
-        if content_style == CONTENT_STYLE_DAILY_STORY
-        else _IMAGE_PROMPT_MOTION_TAIL
-    )
+    motion = _IMAGE_PROMPT_MOTION_TAIL
     text = head + _with_orientation(body, orientation) + motion
     if sd15_mode:
         text += _IMAGE_PROMPT_RULE_SD15
@@ -356,6 +422,7 @@ def _format_segment_brief(
     prefix: str = "",
     include_speakers: bool = False,
     mark_motion_mode: bool = False,
+    include_image_prompt: bool = False,
 ) -> str:
     line = (
         f"{prefix}segment {seg.get('segment_index')}: "
@@ -370,11 +437,19 @@ def _format_segment_brief(
             }
         )
         line += f"; speakers={speakers!r}"
+    if include_image_prompt:
+        line += f"; image_prompt={seg.get('image_prompt', '')!r}"
     if mark_motion_mode:
         from app.utils.job_info import is_keyframe_segment
 
         mode = "keyframe" if is_keyframe_segment(seg) else "ambient"
         line += f"; motion_mode={mode}"
+        dur = seg.get("duration_sec")
+        if dur is not None:
+            try:
+                line += f"; duration_sec={float(dur):.1f}"
+            except (TypeError, ValueError):
+                pass
     return line
 
 
@@ -384,6 +459,7 @@ def _collect_segment_prompt_lines(
     *,
     include_speakers: bool = False,
     mark_motion_mode: bool = False,
+    include_image_prompt: bool = False,
 ) -> tuple[list[str], set[int] | None]:
     """拼装分镜行；返回 (lines, wanted)。wanted 为 None 表示全量生成。"""
     if segment_indices is None:
@@ -392,6 +468,7 @@ def _collect_segment_prompt_lines(
                 seg,
                 include_speakers=include_speakers,
                 mark_motion_mode=mark_motion_mode,
+                include_image_prompt=include_image_prompt,
             )
             for seg in segments
         ], None
@@ -419,6 +496,7 @@ def _collect_segment_prompt_lines(
                 prefix=tag,
                 include_speakers=include_speakers,
                 mark_motion_mode=mark_motion_mode,
+                include_image_prompt=include_image_prompt,
             )
         )
     return lines, wanted
@@ -444,11 +522,12 @@ def _coverage_clause(*, partial: bool) -> str:
 
 
 def _user_tail(*, include_sd15_prompt: bool, content_style: str | None = None) -> str:
-    motion_rule = (
-        _MOTION_USER_RULE_DAILY
-        if content_style == CONTENT_STYLE_DAILY_STORY
-        else _MOTION_USER_RULE
-    )
+    if content_style == CONTENT_STYLE_DAILY_STORY:
+        return (
+            "\n\n请仅为每段编写 motion_prompt，不要输出 image_prompt。"
+            + _MOTION_USER_RULE_DAILY
+        )
+    motion_rule = _MOTION_USER_RULE
     if include_sd15_prompt:
         head = (
             "请为每段编写 image_prompt 与 motion_prompt。"
@@ -473,30 +552,33 @@ def _build_system_prompt(
     has_mom: bool,
     partial: bool,
 ) -> str:
-    fields = (
-        "、image_prompt、motion_prompt 与 sd15_prompt_en"
-        if include_sd15_prompt
-        else "、image_prompt 与 motion_prompt"
-    )
+    _ = has_mom  # daily 外貌已在规则拼装；其它风格不再注入妈妈补充例
+    is_daily = content_style == CONTENT_STYLE_DAILY_STORY
+    if is_daily:
+        fields = "、motion_prompt"
+        role = "你是儿童日常故事视频运动提示词专家。"
+    elif include_sd15_prompt:
+        fields = "、image_prompt、motion_prompt 与 sd15_prompt_en"
+        role = _image_prompt_role(content_style)
+    else:
+        fields = "、image_prompt 与 motion_prompt"
+        role = _image_prompt_role(content_style)
     parts = [
-        f"{_image_prompt_role(content_style)}输出JSON，字段：image_prompts。",
+        f"{role}输出JSON，字段：image_prompts。",
         f"image_prompts为数组，每项含segment_index{fields}。",
         image_prompt_rule(
             orientation=orientation,
             content_style=content_style,
-            sd15_mode=include_sd15_prompt,
+            sd15_mode=include_sd15_prompt and not is_daily,
         ),
     ]
-    if has_mom:
-        parts.append(_IMAGE_PROMPT_RULE_NO_REF_CHARACTER)
-        parts.append(_IMAGE_PROMPT_EXAMPLE_WITH_MOM)
-    if include_sd15_prompt:
+    if include_sd15_prompt and not is_daily:
         parts.append(_SD15_PROMPT_EN_RULE)
     parts.append(_coverage_clause(partial=partial))
     if content_style != CONTENT_STYLE_DAILY_STORY:
         parts.append(_MAP_COMPLIANCE)
-    if content_style == CONTENT_STYLE_DAILY_STORY and not include_sd15_prompt:
-        json_example = _IMAGE_PROMPTS_JSON_EXAMPLE_DAILY
+    if is_daily:
+        json_example = _IMAGE_PROMPTS_JSON_EXAMPLE_DAILY_MOTION
     elif include_sd15_prompt:
         json_example = _IMAGE_PROMPTS_JSON_EXAMPLE
     else:
@@ -558,6 +640,7 @@ def build_image_prompts(
         segment_indices,
         include_speakers=is_daily,
         mark_motion_mode=is_daily,
+        include_image_prompt=is_daily,
     )
     system = _build_system_prompt(
         content_style=profile_style,

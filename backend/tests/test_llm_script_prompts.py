@@ -171,7 +171,7 @@ def test_build_image_prompts_role_matches_content_style():
         "science_child": "童趣科普视频文生图",
         "tech_science": "科技/产业科普视频文生图",
         "life_experience": "生活避坑/经验类视频文生图",
-        "daily_story": "儿童日常故事视频文生图",
+        "daily_story": "儿童日常故事视频运动提示词",
     }
     for style, role_snip in expected.items():
         prompts = build_image_prompts(
@@ -191,7 +191,7 @@ def test_build_image_prompts_orientation_label_unified():
         ("tech_science", "不修改、不替换 visual_style"),
         ("life_experience", "禁可读大段文字/水印/品牌Logo"),
         ("history_mystery", "禁止卡通/绘本/扁平插画风"),
-        ("daily_story", "出图前系统硬编码"),
+        ("daily_story", "规则拼装"),
     ]:
         portrait = build_image_prompts(
             script,
@@ -215,17 +215,47 @@ def test_build_image_prompts_orientation_label_unified():
         assert "电影级写实科技视觉" not in portrait["system"]
 
 
-def test_wrap_image_prompts_daily_hardcodes_style():
+def test_wrap_image_prompts_daily_assembles_from_visual_brief():
     from app.services.script.image_prompt import wrap_image_prompts
 
-    segments = [{"image_prompt": "客厅里对峙。"}]
+    segments = [
+        {
+            "segment_index": 1,
+            "visual_brief": (
+                "客厅地板上昭昭右手高举橡皮，瞪圆眼；灿灿左手前伸争辩。"
+            ),
+            "dialogue": [
+                {"speaker": "昭昭", "text": "我的！"},
+                {"speaker": "灿灿", "text": "还我！"},
+            ],
+            "shot_type": "特写",
+        }
+    ]
     wrap_image_prompts(segments, content_style="daily_story")
     prompt = segments[0]["image_prompt"]
-    assert prompt.startswith("参考图中人物外貌不变")
-    assert "昭昭" in prompt
-    assert "彩铅蜡笔涂鸦风" in prompt
-    assert prompt.endswith("客厅里对峙。")
+    assert prompt.startswith("儿童情绪涂鸦风格")
+    assert "昭昭：7岁男孩" in prompt
+    assert "灿灿：10岁女孩" in prompt
+    assert "昭昭比灿灿矮约半个头" in prompt
+    assert "窗光从一侧斜照" in prompt
+    assert "中近景特写" in prompt
+    assert "橡皮" in prompt
 
+
+def test_assemble_daily_t2i_prompt_only_speakers():
+    from app.services.script.image_prompt import assemble_daily_t2i_prompt
+
+    prompt = assemble_daily_t2i_prompt(
+        {
+            "visual_brief": "厨房里灿灿叉腰瞪眼。",
+            "dialogue": [{"speaker": "灿灿", "text": "不许动！"}],
+            "shot_type": "中景",
+        }
+    )
+    assert "灿灿：10岁女孩" in prompt
+    assert "昭昭" not in prompt
+    assert "妈妈" not in prompt
+    assert "中景，人物全身" in prompt
 
 def test_build_voiceover_standard_prompts_focuses_on_total_length():
     target = 1318
@@ -388,7 +418,8 @@ def test_build_visual_brief_prompts_dialogue_keeps_mom_rule():
         supplementary_info="补充：厨房场景",
     )
     assert "妈妈角色" in prompts["system"]
-    assert "speakers=" in prompts["user"]
+    assert "dialogue=" in prompts["user"]
+    assert "昭昭:" in prompts["user"]
     assert "融入画面描述" in prompts["system"]
     assert "融入口播内容" not in prompts["system"]
     assert "融入画面描述" in prompts["user"]
@@ -404,6 +435,7 @@ def test_build_visual_brief_prompts_daily_story_role_and_cast():
                 "segment_index": 1,
                 "text": "昭昭：妈妈呢？",
                 "dialogue": [{"speaker": "昭昭", "text": "妈妈呢？"}],
+                "shot_type": "特写",
             },
         ],
     }
@@ -414,8 +446,12 @@ def test_build_visual_brief_prompts_daily_story_role_and_cast():
     assert "日常亲子对话短剧的分镜画面设计师" in prompts["system"]
     assert "小朋友讲科普" not in prompts["system"]
     assert "本段画面人物必须" in prompts["system"]
-    assert "speakers=" in prompts["user"]
-    assert "80-150" in prompts["system"]
+    assert "dialogue=" in prompts["user"]
+    assert "100-200" in prompts["system"]
+    assert "直接拼入文生图" in prompts["system"]
+    assert "开场首镜" in prompts["system"]
+    assert "冲突峰值" in prompts["system"]
+    assert "画风" in prompts["system"] or "笔触" in prompts["system"]
 
 
 def test_build_visual_brief_daily_includes_setting_anchor():
