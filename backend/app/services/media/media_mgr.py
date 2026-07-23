@@ -76,14 +76,15 @@ def _inject_mouth_motion(
     seg: dict,
     cues: list[tuple[str, float]],
 ) -> str:
-    """如有对话，在每人动作行前注入「起止时间+说话，同时」。
+    """如有对话，在「说话，同时」前注入真实起止时间。
 
-    LLM 生成格式: 「灿灿右手...后停止；\n昭昭肩膀...后定格。」
-    注入后:      「0.0-1.5秒灿灿说话，同时右手...后停止；\n"""
+    LLM 生成: 「灿灿说话，同时右手...」
+    注入后:   「0.0-1.5秒灿灿说话，同时右手...」
+    """
     dialogue = seg.get("dialogue") or []
     if not dialogue or not cues or not prompt.strip():
         return prompt
-    # 按 dialogue 顺序累计时间，得到每人起止区间
+    # 按 dialogue 顺序累计时间
     t = 0.0
     speaker_intervals: list[tuple[str, float, float]] = []
     for i, (_, dur) in enumerate(cues):
@@ -98,27 +99,25 @@ def _inject_mouth_motion(
         speaker_intervals.append((speaker, start, end))
     if not speaker_intervals:
         return prompt
-    # 为每位发言者的动作行注入时间+说话
+    # 找到每人「说话，同时」并注入真实时间
     lines = prompt.split("\n")
     result: list[str] = []
-    used: set[int] = set()  # 已用 interval 索引
+    used: set[int] = set()
     for line in lines:
-        stripped = line.strip()
-        injected = False
+        replaced = False
         for idx, (speaker, start, end) in enumerate(speaker_intervals):
             if idx in used:
                 continue
-            if stripped.startswith(speaker):
-                prefix = f"{start:.1f}-{end:.1f}秒{speaker}说话，同时"
-                # 首字母小写
-                rest = stripped[len(speaker):]
-                # 直接拼接：prefix + 剩余内容
-                result.append(prefix + rest)
-                used.add(idx)
-                injected = True
-                break
-        if not injected:
-            result.append(line)
+            needle = f"{speaker}说话，同时"
+            pos = line.find(needle)
+            if pos == -1:
+                continue
+            time_prefix = f"{start:.1f}-{end:.1f}秒"
+            line = line[:pos] + time_prefix + line[pos:]
+            used.add(idx)
+            replaced = True
+            break
+        result.append(line)
     return "\n".join(result)
 
 
