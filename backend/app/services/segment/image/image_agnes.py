@@ -34,6 +34,9 @@ _RETRYABLE = frozenset({500, 502, 503, 504})
 _FAILOVER_HTTP_RETRIES = 1
 # 同一文生图提示词的质检重试次数；耗尽后由上层重生提示词再开一轮
 _VERIFY_MAX_ATTEMPTS = 3
+# 验证接口超时/网络失败时的重试次数（不重生图，只重试验证）
+_VERIFY_RETRY_COUNT = 2
+_VERIFY_RETRY_DELAY = 10
 _ITEM_LINE_RE = re.compile(r"^项\s*(\d+)\s*[:：]\s*(.*)$")
 _YES_HEAD_RE = re.compile(r"^[「【\[]?是([，,。．\s的」】\]]|$)")
 _NO_HEAD_RE = re.compile(r"^[「【\[]?(否|不是)([，,。．\s」】\]]|$)")
@@ -738,6 +741,25 @@ class AgnesImageProvider(ImageProvider):
         return True
 
     @staticmethod
+    def _format_verify_reply(content: str, check_ids: list[str]) -> str:
+        """解析回复，生成「scene=是 zhao_hair=否 …」格式的简短日志。"""
+        answers: dict[int, str] = {}
+        for raw in content.split("\n"):
+            line = raw.strip()
+            if not line:
+                continue
+            m = _ITEM_LINE_RE.match(line)
+            if not m:
+                continue
+            idx = int(m.group(1))
+            answers[idx] = AgnesImageProvider._parse_item_answer(m.group(2))
+        parts: list[str] = []
+        for i, cid in enumerate(check_ids, start=1):
+            verdict = answers.get(i, "unknown")
+            parts.append(f"{cid}={verdict}")
+        return " ".join(parts)
+
+    @staticmethod
     def _verify_image(
         prompt: str,
         image_path: Path,
@@ -787,67 +809,86 @@ class AgnesImageProvider(ImageProvider):
                 return True
 
             log_tag = f"[out={image_path.name}]"
-            for api_key in keys:
-                try:
-                    headers = agnes_auth_header(api_key.value)
-                    url = f"{settings.agnes_api_base_url.rstrip('/')}/chat/completions"
-                    payload = {
-                        "model": settings.agnes_vl_model,
-                        "messages": [
-                            {
-                                "role": "system",
-                                "content": AgnesImageProvider._VERIFY_SYSTEM_PROMPT,
-                            },
-                            {
-                                "role": "user",
-                                "content": [
-                                    {"type": "text", "text": user},
-                                    {
-                                        "type": "image_url",
-                                        "image_url": {"url": image_url},
-                                    },
-                                ],
-                            },
-                        ],
-                        "max_tokens": 256,
-                    }
-                    resp = requests.post(url, headers=headers, json=payload, timeout=60)
-                    if resp.ok:
-                        content = (
-                            resp.json()
-                            .get("choices", [{}])[0]
-                            .get("message", {})
-                            .get("content", "")
-                            .strip()
+            for retry in range(_VERIFY_RETRY_COUNT + 1):
+                for api_key in keys:
+                    try:
+                        headers = agnes_auth_header(api_key.value)
+                        url = f"{settings.agnes_api_base_url.rstrip('/')}/chat/completions"
+                        payload = {
+                            "model": settings.agnes_vl_model,
+                            "messages": [
+                                {
+                                    "role": "system",
+                                    "content": AgnesImageProvider._VERIFY_SYSTEM_PROMPT,
+                                },
+                                {
+                                    "role": "user",
+                                    "content": [
+                                        {"type": "text", "text": user},
+                                        {
+                                            "type": "image_url",
+                                            "image_url": {"url": image_url},
+                                        },
+                                    ],
+                                },
+                            ],
+                            "max_tokens": 256,
+                        }
+                        resp = requests.post(url, headers=headers, json=payload, timeout=60)
+                        if resp.ok:
+                            content = (
+                                resp.json()
+                                .get("choices", [{}])[0]
+                                .get("message", {})
+                                .get("content", "")
+                                .strip()
+                            )
+                            ok = AgnesImageProvider._evaluate_verify_response(
+                                content, check_ids
+                            )
+                            logger.info(
+                                "%s agnes verify (%s key, retry=%s/%s): ok=%s %s",
+                                log_tag,
+                                api_key.label,
+                                retry,
+                                _VERIFY_RETRY_COUNT,
+                                ok,
+                                AgnesImageProvider._format_verify_reply(content, check_ids),
+                            )
+                            return ok
+                        logger.warning(
+                            "%s agnes verify_image http %s (%s key, retry=%s/%s), body=%s",
+                            log_tag,
+                            resp.status_code,
+                            api_key.label,
+                            retry,
+                            _VERIFY_RETRY_COUNT,
+                            _resp_body_summary(resp),
                         )
-                        ok = AgnesImageProvider._evaluate_verify_response(
-                            content, check_ids
-                        )
-                        logger.info(
-                            "%s agnes verify (%s key): ok=%s checks=%s reply=%s",
+                    except Exception as exc:
+                        logger.warning(
+                            "%s agnes verify_image call failed (%s key, retry=%s/%s): %s",
                             log_tag,
                             api_key.label,
-                            ok,
-                            check_ids,
-                            " ".join(content.split())[:200],
+                            retry,
+                            _VERIFY_RETRY_COUNT,
+                            exc,
                         )
-                        return ok
-                    logger.warning(
-                        "%s agnes verify_image http %s (%s key), body=%s",
+                if retry < _VERIFY_RETRY_COUNT:
+                    logger.info(
+                        "%s agnes verify retrying in %ss (retry=%s/%s)",
                         log_tag,
-                        resp.status_code,
-                        api_key.label,
-                        _resp_body_summary(resp),
+                        _VERIFY_RETRY_DELAY,
+                        retry + 1,
+                        _VERIFY_RETRY_COUNT,
                     )
-                except Exception as exc:
-                    logger.warning(
-                        "%s agnes verify_image call failed (%s key): %s",
-                        log_tag,
-                        api_key.label,
-                        exc,
-                    )
-            logger.warning("%s agnes verify skipped (all keys failed)", log_tag)
-            return True
+                    time.sleep(_VERIFY_RETRY_DELAY)
+            logger.warning(
+                "%s agnes verify exhausted (all keys failed after %s retries)",
+                log_tag,
+                _VERIFY_RETRY_COUNT + 1,
+            )
+            return False
         except Exception as exc:
             logger.warning(
                 "agnes verify_image error [out=%s]: %s", image_path.name, exc
