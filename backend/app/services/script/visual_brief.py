@@ -62,6 +62,9 @@ _DAILY_VISUAL_BRIEF_CONTENT_RULE = (
     "【站位】两人及以上同框时必须写清「画面左边是A，右边是B」，"
     "再按左→右分别写各自动作表情；禁止只写动作不写左右"
     "（否则出图常把指责方画到左边另一个人身上）。"
+    "【单帧定格】每角色仅写一组动作表情（一个姿势）；"
+    "本镜有多句对白时，只取冲突最强的一瞬，禁止同一角色写两段动作"
+    "（如先写昭昭比划再吃冰棍、又写昭昭双手叉腰）。"
     "站位须与人物关系一致：质问/进攻方在左、辩解/防御方在右"
     "（或按对白先后：先发言者在左）；左右与动作禁止对调。"
     "【人物】只写动作姿态与面部表情"
@@ -142,6 +145,40 @@ _DAILY_BRIEF_LABEL_RE = re.compile(
     r"(?:冲突道具|地点|人物|道具|场景|主体|构图|光照)\s*[：:]"
 )
 
+# visual_brief 中「昭昭右手…」类单角色动作句（单帧只保留每人首句）
+_POSE_CLAUSE_START_RE = re.compile(
+    r"^(昭昭|灿灿|妈妈)(?:[，,]|右手|左手|双手|身体|瞪|点|叉|摊|耸|仰头|点头|张嘴|比划)"
+)
+
+
+def _collapse_duplicate_pose_clauses(body: str) -> str:
+    """同一角色多段动作只保留首段（文生图为单帧）。"""
+    parts = re.split(r"([；;。])", body)
+    if not parts:
+        return body
+    seen: set[str] = set()
+    out: list[str] = []
+    i = 0
+    while i < len(parts):
+        segment = parts[i]
+        delim = parts[i + 1] if i + 1 < len(parts) else ""
+        clause = segment.strip()
+        drop = False
+        if clause:
+            m = _POSE_CLAUSE_START_RE.match(clause)
+            if m:
+                name = m.group(1)
+                if name in seen:
+                    drop = True
+                else:
+                    seen.add(name)
+        if not drop:
+            out.append(segment)
+            if delim:
+                out.append(delim)
+        i += 2 if delim else 1
+    return "".join(out)
+
 
 def scrub_daily_visual_brief(text: str) -> str:
     """去掉 daily visual_brief 中易破坏拼装出图的标签与固定着装词。"""
@@ -161,6 +198,7 @@ def scrub_daily_visual_brief(text: str) -> str:
         "原本叠好现已揉皱成一团的衣服",
     )
     body = re.sub(r"[，,]{2,}", "，", body)
+    body = _collapse_duplicate_pose_clauses(body)
     return body.strip("，, ").strip()
 
 

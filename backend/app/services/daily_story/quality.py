@@ -46,6 +46,17 @@ _REDUNDANCY_STOP_WORDS: frozenset[str] = frozenset({
 })
 _CONTENT_WORD_RE = re.compile(r"[\u4e00-\u9fff]{2,}")
 
+# 结构（格式/节奏/类型收束形态）满分上限；超过须靠好笑维度叠加
+STRUCTURE_SCORE_CAP = 80
+# 好笑维度 0–20：≥5 才可到 85 档，≥15 才可到 95 档
+_HUMOR_POINTS_FOR_GOOD = 5
+_HUMOR_POINTS_FOR_GREAT = 15
+
+_RE_HAMMER = re.compile(
+    r"\d+|[一二三四五六七八九十]+(?:分钟|秒|块|个|次|遍)|"
+    r"算错|写错|弹错|多玩|少玩|进位|竖式|升fa|降",
+)
+
 # ── 好笑 / 节奏（规则近似人工：具体、有出处、少复读）──
 _RE_DIRECT_QUOTE = re.compile(
     r"(?:你刚才说|你自己说|你不是说|你刚说|你说的)([^，。！？…]{3,})",
@@ -257,18 +268,26 @@ def _fragment_grounded_in_text(fragment: str, haystack: str, *, min_run: int = 5
     return False
 
 
-def _score_humor(
+def _a_close_four_beat_complete(tail4: list[str]) -> bool:
+    if len(tail4) < 4:
+        return False
+    block = "".join(tail4)
+    return (
+        "那不一样" in tail4[-3]
+        and ("哪里不一样" in tail4[-2] or "都是听" in tail4[-2])
+        and any(m in tail4[-1] for m in ("哼", "行吧", "随便", "好吧", "算了"))
+    )
+
+
+def _collect_humor_issues(
     lines: list[str],
     *,
     type_code: str,
-) -> tuple[int, list[str], list[str]]:
-    """好笑近似分：具体细节加分，空引话/模板复读/类型串味扣分。"""
-    if len(lines) < 6:
-        return 0, [], []
-
-    bonus = 0
-    pros: list[str] = []
+) -> list[str]:
+    """好笑维度的硬伤（不直接改结构分，用于压低好笑分）。"""
     cons: list[str] = []
+    if len(lines) < 6:
+        return cons
 
     body = lines[:-4] if len(lines) > 4 else lines[:-1]
     tail4 = lines[-4:] if len(lines) >= 4 else lines
@@ -281,56 +300,85 @@ def _score_humor(
             frag = m.group(1).strip()
             if not _fragment_grounded_in_text(frag, body_text):
                 cons.append(f"收束引话无出处（「{frag[:12]}」）")
-                bonus -= 16
-                break
-        if cons:
-            break
-
-    if not cons and type_code == "A":
-        precedent_in_tail = any(
-            _RE_MOM_PRECEDENT_CLAIM.search(ln) or "上次" in ln or "之前" in ln
-            for ln in tail4
-        )
-        if precedent_in_tail:
-            prior_body = "".join(body[: max(1, len(body) // 2)])
-            if not (
-                _RE_MOM_PRECEDENT_CLAIM.search(prior_body)
-                or "上次" in prior_body
-                or "昨天" in prior_body
-            ):
-                cons.append("引先例收束但前文未埋旧账")
-                bonus -= 10
+                return cons
 
     if type_code == "A":
-        template_hits = sum(1 for m in _A_TEMPLATE_MARKERS if m in full_text)
-        loop_in_body = "哪里不一样" in body_text or "都是听" in body_text
-        loop_in_tail = "哪里不一样" in tail_text or "都是听" in tail_text
-        if loop_in_body and loop_in_tail:
+        if ("哪里不一样" in body_text or "都是听" in body_text) and (
+            "哪里不一样" in tail_text or "都是听" in tail_text
+        ):
             cons.append("追问闭环模板复读")
-            bonus -= 10
-        elif template_hits >= 3 and loop_in_tail:
-            cons.append("收束句式过于模板化")
-            bonus -= 6
-
+        elif not _a_close_four_beat_complete(tail4):
+            cons.append("末四拍不完整")
         if "不公平" in body_text and "凭什么" not in body_text[:40]:
             cons.append("偏C式争公平口号")
-            bonus -= 5
 
-    concrete = len(re.findall(r"\d+|[一二三四五六七八九十]+(?:分钟|块|个|次)", full_text))
-    vivid = len(re.findall(r"菜谱|练琴|作业|手机|橡皮|蛋糕|酸奶|洗澡|抱枕", full_text))
-    if concrete >= 2:
-        bonus += 6
-        pros.append("有具体细节")
-    elif concrete == 1 and vivid >= 1:
-        bonus += 4
-        pros.append("细节够具体")
-    elif vivid >= 2 and not cons:
-        bonus += 2
+    return cons
 
-    if not cons and bonus > 0:
-        pros.append("笑点有生活颗粒")
 
-    return bonus, pros, cons
+def _score_funniness(
+    lines: list[str],
+    *,
+    type_code: str,
+    humor_issues: list[str],
+) -> tuple[int, list[str], list[str]]:
+    """好笑维度 0–20，叠在结构分（≤80）之上。"""
+    cons = list(humor_issues)
+    pros: list[str] = []
+    if len(lines) < 6:
+        return 0, pros, cons
+
+    if any("无出处" in c for c in cons):
+        return 0, pros, cons
+
+    body = lines[:-4] if len(lines) > 4 else lines[:-1]
+    tail4 = lines[-4:] if len(lines) >= 4 else lines
+    body_text = "".join(body)
+    mid_text = "".join(body[: max(1, len(body) * 2 // 3)])
+    full_text = "".join(lines)
+
+    points = 0
+
+    if _RE_HAMMER.search(mid_text):
+        points += 6
+        pros.append("有一锤场面")
+    elif _RE_HAMMER.search(full_text):
+        points += 3
+        pros.append("有具体场面")
+
+    grounded_tail = any(
+        p in "".join(tail4)
+        for p in ("你刚才说", "你自己说", "你不是说", "明明说", "你自己")
+    )
+    if grounded_tail and not any("无出处" in c for c in cons):
+        points += 4
+        pros.append("收束扣原话")
+
+    if type_code == "A" and _a_close_four_beat_complete(tail4):
+        points += 5
+        pros.append("末四拍完整")
+    elif type_code == "A" and "末四拍不完整" in cons:
+        points = min(points, 4)
+
+    if len(re.findall(r"\d+", full_text)) >= 2:
+        points += 2
+    if points >= 10 and not cons:
+        pros.append("好笑够格")
+
+    for c in cons:
+        if "模板复读" in c:
+            points = min(points, 6)
+        elif "末四拍不完整" in c:
+            points = min(points, 5)
+        elif "偏C" in c:
+            points = min(points, 8)
+
+    points = max(0, min(20, points))
+    if points >= _HUMOR_POINTS_FOR_GREAT:
+        pros.append("很好笑")
+    elif points >= _HUMOR_POINTS_FOR_GOOD:
+        pros.append("好笑达标")
+
+    return points, pros, cons
 
 
 def score_daily_story(
@@ -341,9 +389,8 @@ def score_daily_story(
     """给故事打观感分。
 
     评分模型：
-    - 基础分 40（及格线以下起步，靠质量拉分）
-    - 结构项只扣不加（合规是义务，不是加分项）
-    - 质量项（推进层数、收束类型、绕圈、好笑感）决定最终分数
+    - 结构分（格式、层数、收束形态、节奏）上限 80
+    - 好笑维度 0–20 叠加上去；≥5 才可能到 85，≥15 才可能到 95
     """
     if not isinstance(story, dict):
         return {
@@ -461,12 +508,9 @@ def score_daily_story(
     punch_bonus, punch_details = score_punchline_for_profile(
         profile, lines, speakers, prev2, last,
     )
-    humor_bonus, humor_pros, humor_cons = _score_humor(
-        lines,
-        type_code=profile.code,
-    )
-    if humor_cons:
-        grounded = not any("无出处" in c or "未埋旧账" in c for c in humor_cons)
+    humor_issues = _collect_humor_issues(lines, type_code=profile.code)
+    if humor_issues:
+        grounded = not any("无出处" in c for c in humor_issues)
         if not grounded and punch_bonus > 8:
             punch_bonus = 8
             punch_details = [
@@ -480,11 +524,22 @@ def score_daily_story(
     elif punch_bonus < 0:
         cons.extend(punch_details)
 
-    score += humor_bonus
+    structure_score = max(0, min(STRUCTURE_SCORE_CAP, score))
+    humor_points, humor_pros, humor_cons = _score_funniness(
+        lines,
+        type_code=profile.code,
+        humor_issues=humor_issues,
+    )
     pros.extend(humor_pros)
     cons.extend(humor_cons)
 
-    score = max(0, min(100, score))
+    score = max(0, min(100, structure_score + humor_points))
+    if structure_score >= 70 and humor_points < _HUMOR_POINTS_FOR_GOOD:
+        cons.append(
+            f"格式达标但好笑不足（好笑{humor_points}/20，须≥{_HUMOR_POINTS_FOR_GOOD}才宜≥85）",
+        )
+    pros.append(f"结构{structure_score}")
+    pros.append(f"好笑{humor_points}")
     grade = _grade_from_score(score)
     summary = _build_summary(
         pros, cons, grade, profile.summary_highlight_tokens,
@@ -515,7 +570,7 @@ def _build_summary(
             for c in cons
             for w in (
                 "甩给妈妈", "和解", "无破功", "跑题",
-                "无出处", "未埋旧账", "模板", "拖沓",
+                "无出处", "未埋旧账", "模板", "拖沓", "好笑不足", "末四拍",
             )
         )
         if severe or grade == "偏弱":
@@ -526,7 +581,7 @@ def _build_summary(
                         k in c
                         for k in (
                             "收束", "软收", "绕圈", "跑题", "推进",
-                            "出处", "模板", "拖沓", "公平",
+                            "出处", "模板", "拖沓", "公平", "好笑",
                         )
                     )
                 ),
@@ -607,7 +662,10 @@ def build_quality_revision_hints(
     humor_issue = next(
         (
             c for c in cons
-            if any(k in c for k in ("无出处", "未埋旧账", "模板", "拖沓", "公平"))
+            if any(
+                k in c
+                for k in ("无出处", "未埋旧账", "模板", "拖沓", "公平", "好笑不足", "末四拍")
+            )
         ),
         None,
     )

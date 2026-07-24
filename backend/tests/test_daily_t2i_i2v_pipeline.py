@@ -77,6 +77,41 @@ def test_assemble_daily_layout_from_visual_brief():
     assert "粉卫衣马尾女孩灿灿" in prompt
     assert "禁止左右对调" in prompt
     assert "画面左边是昭昭，右边是灿灿" in prompt
+    assert prompt.count("画面左边是昭昭，右边是灿灿") == 1
+
+
+def test_scrub_daily_visual_brief_drops_duplicate_pose():
+    from app.services.script.visual_brief import scrub_daily_visual_brief
+
+    raw = (
+        "卫生间门口，地面有拖把痕迹；画面左边是昭昭，右边是灿灿；"
+        "昭昭右手比划吃冰棍，左手叉腰，瞪眼；灿灿右手比划数字十，左手叉腰，仰头；"
+        "昭昭双手叉腰，点头瞪眼。"
+    )
+    out = scrub_daily_visual_brief(raw)
+    assert out.count("昭昭右手比划吃冰棍") == 1
+    assert "昭昭双手叉腰" not in out
+    assert "灿灿右手比划数字十" in out
+
+
+def test_assemble_daily_t2i_no_duplicate_lr_in_prompt():
+    """visual_brief 已有左右时，构图段不再重复「画面左边…」。"""
+    seg = {
+        "shot_type": "中景",
+        "visual_brief": (
+            "卫生间门口，地面有拖把痕迹；画面左边是昭昭，右边是灿灿；"
+            "昭昭右手比划吃冰棍，左手叉腰，瞪眼；灿灿右手比划数字十，左手叉腰，仰头；"
+            "昭昭双手叉腰，点头瞪眼。"
+        ),
+        "dialogue": [
+            {"speaker": "昭昭", "text": "一天十根。"},
+            {"speaker": "灿灿", "text": "你吃了十二根。"},
+        ],
+    }
+    prompt = assemble_daily_t2i_prompt(seg)
+    assert prompt.count("画面左边是昭昭，右边是灿灿") == 1
+    assert "昭昭双手叉腰，点头瞪眼" not in prompt
+    assert "中景，严格左蓝T恤短发男孩昭昭" in prompt
 
 
 def test_build_image_prompts_daily_motion_modes_and_duration():
