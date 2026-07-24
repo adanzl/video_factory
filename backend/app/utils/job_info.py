@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 from app.utils.media import (
@@ -554,7 +555,7 @@ def merge_job_script_params(
 
 
 DEFAULT_BGM_VOLUME_DB = -14.0
-# 日常故事默认 BGM：Molecules · Tobias Voigt
+# 日常故事默认 BGM：Molecules · Tobias
 DEFAULT_DAILY_STORY_BGM_MATERIAL_ID = 4
 
 
@@ -584,10 +585,8 @@ def bgm_params_from_info(info: str | dict | None) -> dict[str, Any]:
     }
 
 
-def resolve_bgm_file(material_id: int | None) -> "Path | None":
+def resolve_bgm_file(material_id: int | None) -> Path | None:
     """从音频素材库解析 BGM 文件路径。"""
-    from pathlib import Path
-
     from app.repositories import repo_material_audio
     from app.repositories.connection import connection
 
