@@ -476,13 +476,16 @@ class MockLLMClient(LLMClient):
                 for d in lines
             ]
             shot_types = ["全景", "中景", "特写"]
+            shot = shot_types[i % 3]
+            if shot == "特写" and len(lines) > 2:
+                shot = "中景"
             scenes.append({
                 "scene_id": i + 1,
-                "shot_type": shot_types[i % 3],
+                "shot_type": shot,
                 "dialogue": dialogue_data,
                 "img2img_prompt": (
                     "剪贴画风格，扁平插画，纸张纹理，明亮色彩，无阴影，几何图形简洁，"
-                    f"{shot_types[i % 3]}，家庭场景，"
+                    f"{shot}，家庭场景，"
                     "昭昭男孩气黑色超短发（发长在耳垂以上，清晰露出双耳及整个后颈，齐耳学生头），蓝色短袖T恤，比姐姐矮一点；灿灿单侧高马尾（仅一根），粉色卫衣。"
                 ),
             })
@@ -490,7 +493,12 @@ class MockLLMClient(LLMClient):
             "scenes": scenes,
         }
 
-    def generate_daily_story(self, theme: str) -> dict[str, Any]:
+    def generate_daily_story(
+        self,
+        theme: str,
+        *,
+        story_type: str | None = None,
+    ) -> dict[str, Any]:
         from app.services.daily_story.prompts import (
             DAILY_STORY_BODY_CHARS_MIN,
             DAILY_STORY_LINE_CHARS_MAX,

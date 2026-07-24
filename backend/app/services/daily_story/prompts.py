@@ -2,9 +2,18 @@
 
 import copy
 import json
-import random
 import re
 
+from app.services.daily_story.story_type_lines import (
+    STORY_TYPE_LINES,
+    STORY_TYPE_LABELS,
+    format_block_for_code,
+    parse_story_type_code,
+    select_story_type_tag,
+    story_line_for_code,
+    story_type_tag,
+    type_catalog_system_block,
+)
 from app.services.daily_story.cast import DAILY_CAST_NAMES
 
 # 角色外貌固定描述，供 visual_style 和分镜生成共享
@@ -70,22 +79,6 @@ _OFF_TOPIC_MARKERS = (
     "体育课", "学校", "老师", "班主任", "告爸爸", "告诉爸爸",
     "公园", "同学", "操场", "放学", "上课", "教室",
 )
-
-_STORY_TYPE_LABELS = {
-    "A": "权威翻车",
-    "C": "公平执念",
-    "D": "字面执行",
-    "B": "结盟翻车",
-    "E": "妈妈破功",
-}
-
-_STORY_TYPE_KEYWORDS = {
-    "A": {"管", "不许", "应该", "必须", "听我的", "姐姐", "我是", "你小", "大人", "谁怕"},
-    "C": {"争", "抢", "分", "谁先", "最后一", "平分", "归谁", "哪个", "大战", "之战", "我的", "你的"},
-    "D": {"弄", "撒", "碎", "掉了", "帮忙", "收拾", "照做", "叮嘱", "按", "照"},
-    "B": {"一起", "偷偷", "瞒", "藏", "约定", "联手", "别告诉", "俩", "暗号"},
-    "E": {"妈妈", "问妈", "告状", "跟妈", "叫妈妈"},
-}
 
 # 妈妈台词硬卡：只拦明确「判赢/判平/另开赛制」
 # 日常口气（不许再吵、谁也别用、都别…）易误杀，放给提示词约束
@@ -213,39 +206,19 @@ def _daily_story_contract(*, length_mode: str = "draft") -> str:
 """
 
 
-_DAILY_STORY_SYSTEM_BODY = """\
+_DAILY_STORY_SYSTEM_SHARED = """\
 【角色设定】
 - 昭昭：弟弟，男孩，7岁。好奇心强，喜欢追问，擅长用现实经验挑战抽象规则，经常把简单的事越问越复杂。天真且固执。
 - 灿灿：姐姐，女孩，10岁。比昭昭懂事一点，偶尔想模仿大人的语气管教弟弟，但自己的逻辑也经常掉进孩子的坑里。有时候会被昭昭带偏，嘴硬但心软。
 - 妈妈：配角。可出场，但台词少；主戏仍是姐弟，妈妈不是戏核。
 - 关系：亲姐弟，住在一起；主戏是姐弟斗嘴/较真/互相带偏，不是被妈妈教育。
 
-【矛盾类型（默认优先 A/C/D；B/E 少用）—— 每条包含写作公式，不是空标签】
-- A 权威翻车（优先）：
-  公式：姐姐亮家长姿态「我是姐姐/大人说了」→弟弟用字面逻辑找漏洞→姐姐退一步改规则→弟弟引先例（"上次你明明说..."）证明规则前后矛盾→姐姐规则自相矛盾→破功。
-  例：姐姐说「我是姐姐你得听我的」，弟弟「那上次妈妈说你也要听我，因为我是小孩需要照顾」→姐姐「那不一样」→弟弟「哪里不一样？都是照顾」→姐姐「……哼」。
-  关键：必须有引先例环节（L4），否则层次不够。
-- C 公平执念（优先）：
-  公式：双方抢同一资源→各自抛对己有利的规则→规则互相冲突（如你先拿 vs 我先看 / 你切你选 vs 你拿你就选了）
-  →一方规则被字面执行反噬或两套规则产生荒谬结论→收束。
-  关键：每个人在"自己的规则下"都是对的，笑点来自两套公平标准无法兼容。
-- D 字面执行（优先）：
-  公式：有人给叮嘱/规则→另一方按字面严格执行→结果与初衷相反→**反转：原叮嘱方被迫自己违反规则来收拾残局→执行方用对方自己的规则反堵ta（回旋镖）**。
-  例1：灿灿说「叠好的衣服不许碰」→昭昭不动衣服，但把柜子门全打开→衣服滑落→灿灿来捡→昭昭「你自己说叠好的不许碰，你现在碰了」。
-  例2：妈妈说「别让弟弟碰剪刀」→姐姐把剪刀锁起来→弟弟要用剪刀开零食→两人都饿着→姐姐被迫开锁→弟弟「你自己说的别让我碰，你现在让他碰了」。
-  关键：不能只写到"搞砸了→原叮嘱方傻眼"就结束，必须让叮嘱方自陷矛盾（为补救而违反自己立的规矩），形成回旋镖收束。
-- B 结盟翻车（少用）：
-  公式：姐弟联手瞒妈妈/钻空子→计划在执行中露馅→互相甩锅→一起暴露。
-- E 妈妈破功（少用）：
-  公式：妈妈想讲道理/立规矩→被孩子用字面逻辑或连环追问绕进去→妈妈自己先破功。
-
 【妈妈戏份（硬约束）】
-- A/C/D 默认可不写妈妈；主戏与破功优先纯姐弟完成。
-- 若出场：建议全程 ≤2 句；禁止长篇讲理、禁止妈妈当主线。
+- A/C/D 默认可不写妈妈；主戏与破功优先纯姐弟完成；E 类妈妈可略多。
+- 若出场：建议全程 ≤2 句（E 类≤5 句）；禁止长篇讲理、禁止妈妈当主线（E 除外）。
 - 禁止明确判赢/判平/另开赛制（如「算你赢」「一人一半」「谁先放好谁先选」）。
-- 日常口气可以（叮嘱、谁也别乱动、别吵了）：但不应用一句掐灭姐弟尚未落地的破功。
-- 破功/软收优先在姐弟对白里完成；妈妈最多旁听、附和或事后收拾。
-- 仅主题明确是 E 类（妈妈破功）时，才允许妈妈被孩子绕到自相矛盾。
+- 日常口气可以（叮嘱、谁也别乱动、别吵了）：但不应用一句掐灭尚未落地的破功。
+- 破功/软收优先在姐弟对白里完成；妈妈最多旁听、附和或事后收拾（E 类可在妈妈对白里破功）。
 
 【发现开场（系统另写，正文勿写）】
 - 发现现场的质问/惊呼（如「鞋带怎么系一块了」）由系统单独生成并前置。
@@ -256,27 +229,31 @@ _DAILY_STORY_SYSTEM_BODY = """\
   呼应这个动作；否则把该动作改由姐弟中的一人执行（如「灿灿切好蛋糕」）。
 
 【单冲突（硬约束）】
-- 全文只滚一条规则加码（如始终争「先拿 vs 先看」），禁止中途换裁决方式。
+- 全文只滚一条规则加码，禁止中途换裁决方式。
 - 反例：先争归属 → 改剪刀石头布 → 再扯道歉 → 再让妈妈轮流——这是另开账。
 - 「上次你也…」只可当同一规则的证据，禁止借机开新仇（砸人、红抱枕、别的玩具）。
 - 必须输出 conflict_core：一句话写清「谁 vs 谁，争什么」（≤24 字），
   与 theme / setting / 前 2 句一致。
 - 禁止岔开学校/体育课/告爸爸/老师/公园等与 conflict_core 无关的新主线。
-- 妈妈只点破，禁止由妈妈引入新冲突、新赛制或新事件。
-- punchline_explain 须说明末句如何收的就是这个 conflict_core（不是另起「明天再战」）。
+- 妈妈只点破，禁止由妈妈引入新冲突、新赛制或新事件（E 类立规矩除外）。
+- punchline_explain 须含类型标签（A–E）并说明末句如何收该 conflict_core。
 
-【节奏（硬约束）】
-- 冲突升级路线（沿路线一步步推进，禁止同层来回绕、禁止跳级又回退）：
-  1争归属(谁先碰/谁的)→2挑战规则(你的规则不算)→3挑战权威(凭什么你定)→4推出新证据→5收束
-  每一层最多 2 个来回；超过 2 个来回即为空转，须立刻推进到下一层。
-  禁止在前3层逗留超过全文一半；后半程须进入第4、5层。
-- 每 6–8 句须有一个小反转或加码（同一规则升级、证据翻车、字面钻空子），禁止平铺到结尾才抖包袱。
-- 台词要具体：点名「上次你也…」「妈说过…」「这是我的…」，少讲抽象公平大道理。
+【节奏（共用）】
+- 每 6–8 句须有一个小反转或加码，禁止平铺到结尾才抖包袱。
 - 一句说完一层意思；禁止为凑 ≤18 字把同一半截话硬拆成两句（听感断裂）。
 - 昭昭/灿灿必须轮流说：禁止同一人连说 ≥2 句（听感碎、像注水）。
-- 禁止概念绕圈：同一逻辑结论（如「刀碰到蛋糕=碰了蛋糕」）的不同措辞变体也算同一对立面，
-  最多 2 个来回后必须引入新事实（实物证据、目击证人、过去先例），
-  禁止空转语义辩论连续超过 4 句。
+- 禁止概念绕圈：同一逻辑结论的不同措辞变体也算同一对立面，
+  最多 2 个来回后必须引入新事实，禁止空转语义辩论连续超过 4 句。
+
+【好笑（硬约束，观感核心）】
+- 笑点来自本场具体小事（算错哪题、多玩几分钟、哪个音弹错），
+  不靠空喊「不公平」或背标准金句。
+- 收束若写「你刚才说/你自己说/你刚说……」，被引用的半句须在前文
+  dialogue 里由对方亲口说过（可略改语气，核心词须一致）；禁止编造
+  正文从未出现过的「大人也要听小孩」等套话。
+- 「哪里不一样？都是听」只许在全文出现一次（收束闭环）；中段追问
+  用别的说法（凭什么、那你也、教和练不是一回事），勿提前复读收束模板。
+- 同一借口（考验、我没错、听我的）全篇最多出现 2 次，第三次须换证据或换层。
 
 【立场连贯（硬约束）】
 - 同一角色前后立场须连贯：可以软收、可以认栽，但禁止无铺垫的态度骤变。
@@ -288,7 +265,7 @@ _DAILY_STORY_SYSTEM_BODY = """\
 1. 禁止成人笑话、谐音梗、俏皮话、网络热梗。
 2. 禁止「因为……所以……」等书面连接词，全部用口语短句。
 3. 禁止叙事小说腔（「他心想」「她无奈地」等），只写纯对话+极简 setting。
-4. 禁止为凑长度反复换说法车轱辘，或镜像对白（「你先看到有什么用」「你先拿到有什么用」）。
+4. 禁止为凑长度反复换说法车轱辘，或镜像对白。
 5. 禁止后半段换冲突、换地点主场、新开一件事或换一套分法/赛制。
 6. 禁止角色无铺垫的自相矛盾（立场/证据前后打架）。
 7. 禁止用「明天再战/今晚占位」当唯一收束，却没先破本场规则。
@@ -297,83 +274,85 @@ _DAILY_STORY_SYSTEM_BODY = """\
 9. 禁止弱收束（末 2 句内出现即违规）：
    - 和解分赃：「一人一半」「平分」「倒杯子」——把冲突和稀泥；
    - 耍赖占有：「反正我要用」「反正是我的」——没戳穿只赖账；
-   - 甩给妈妈：「等妈回来」「叫妈评理」——本场须姐弟内收束。
+   - 甩给妈妈：「等妈回来」「叫妈评理」——本场须姐弟内收束（E 类妈妈在场除外）。
 10. 禁止赢家说最后一句：末句 speaker 必须是破功/被反杀/嘴硬的一方。
-    笑点永远来自输家的反应，不是赢家的总结陈词。
-    反例：昭昭抢到蛋糕说"瞧就瞧，蛋糕归我"→ 赢家收束无笑点。
-    正例：昭昭戳穿后，灿灿「……随便你」或灿灿一言不发转身走开。
 11. setting 一致性：若 setting 中妈妈完成某动作（如切蛋糕/拿东西），
     她必须在正文至少出场 1 句台词呼应；否则把该动作改由姐弟中的一人执行。
-
-【笑点与收束】
-- 笑点 = 孩子的字面/现实逻辑 碰撞 姐姐的「装大人」规则，或两人各执一词越辩越歪。
-- 每一句推论须基于刚听到的字面意思或亲眼见过的生活经验，不能跳级。
-- 【收束必须用回旋镖或字面戳穿（二选一，不用其他）】：
-  回旋镖模式（优先）：倒数第3句用对方刚说的规则反问ta→倒数第2句对方发现自己自相矛盾试图狡辩→末句ta嘴硬收场（"……哼/……行/……随便你"），ta说最后一句。
-    正例：昭昭「你自己说切的人先选，那你切的你选，我拿大的就行」→灿灿「我没说切的人先选大的」→灿灿「……哼，给你」。
-  字面戳穿模式：倒数第2句点出对方一句话里自相矛盾→末句对方破功哑口或嘴硬。
-    正例：昭昭「你说晚了，我已经在了」→灿灿「……」。
-  关键约束：末句说话人必须是破功/被反杀/嘴硬的那一方，禁止让赢家说最后一句。
-
-【格式要求】
-严格输出以下JSON结构：
-{
-  "scene_title": "不超过10字，场记或口语钩子均可（如：谁先洗）",
-  "setting": "一句话说明地点和初始冲突动作（如：客厅，姐弟抢遥控器）",
-  "conflict_core": "≤24字，谁vs谁争什么（如：姐弟抢新橡皮）",
-  "dialogue": [
-    {"speaker": "昭昭", "line": "台词（≤18字）"},
-    {"speaker": "灿灿", "line": "台词"},
-    {"speaker": "妈妈", "line": "台词（宜少）"}
-  ],
-  "punchline_explain": "类型标签+收束逻辑（例：C类公平执念，姐姐规则被字面戳穿）"
-}
-妈妈可有台词，但宜少（建议≤3句）；主回合仍是姐弟。
 """
 
 
-def _daily_story_system_prompt(*, length_mode: str = "draft") -> str:
+def _daily_story_system_body(*, type_code: str | None = None) -> str:
+    catalog = type_catalog_system_block()
+    if not type_code:
+        return f"{_DAILY_STORY_SYSTEM_SHARED}\n{catalog}\n"
+    line = STORY_TYPE_LINES.get(type_code.upper())
+    if not line:
+        return f"{_DAILY_STORY_SYSTEM_SHARED}\n{catalog}\n"
     return (
-        "你是一位家庭情景喜剧编剧，写昭昭&灿灿的日常对话短剧。\n"
-        "面向孩子和有娃的大人：笑点要孩子听得懂，家长看得出自家日常。\n\n"
-        f"{_daily_story_contract(length_mode=length_mode)}"
-        f"{_DAILY_STORY_SYSTEM_BODY}"
+        f"{_DAILY_STORY_SYSTEM_SHARED}\n"
+        f"{line.prompt_block}\n"
+        f"{format_block_for_code(line.code)}\n"
     )
 
 
-def _daily_story_user_template(*, length_mode: str = "draft") -> str:
+def _daily_story_user_template(
+    *,
+    length_mode: str = "draft",
+    type_code: str | None = None,
+) -> str:
     length_req = _LENGTH_MODE_USER.get(length_mode, _DAILY_STORY_LENGTH_USER_DRAFT)
+    if type_code and type_code.upper() in STORY_TYPE_LINES:
+        line = STORY_TYPE_LINES[type_code.upper()]
+        closing = line.user_closing
+        anchor = line.body_user_anchor or (
+            "1. 主题即冲突实物：setting、conflict_core、正文首句须锚定主题中的实物/动作。"
+        )
+    else:
+        closing = (
+            "9. 收束须遵守本次锁定类型的专属线路（见 system）；"
+            "末句破功方说最后一句。"
+        )
+        anchor = (
+            "1. 主题即冲突实物：setting、conflict_core、正文首句须锚定主题中的实物/动作。"
+        )
     return f"""\
 请根据上述规则，生成一个昭昭和灿灿的日常对话场景。
 
 【本次场景主题（核心事件）】：{{theme}}
 
 【要求】：
-1. 主题即冲突实物：setting、conflict_core、正文首句须锚定主题中的实物/动作。
-   「分蛋糕大小不均」→ setting 须有大小两块蛋糕（非争刀/争谁切），core 写谁vs谁争大的，正文首句直接争大的归谁。
+{anchor}
 2. {{type_instruction}}
 {length_req}\
 4. 正文从互怼/讲理起笔，禁止发现现场开场（发现句系统另写）。
-5. 妈妈默认可不写；若出场宜少（建议≤2句）；禁止「算你赢/一人一半」类判赢判平。
+5. 妈妈默认可不写；若出场宜少；禁止「算你赢/一人一半」类判赢判平（E 类除外）。
 6. 输出 conflict_core（≤24 字）；punchline_explain 须含类型标签并说明如何收该冲突。
 7. 禁止中途换分法（剪刀石头布、轮流、另算谁先碰到等）或扯无关旧账。
 8. 立场须连贯：可软收，但须先破功再软收；禁无铺垫「给你/算了」；
    禁同人连说、禁对称复读注水；末句勿只甩「明天再战」。
-9. 【收束模板·必遵守】末尾4句套用这个结构（把[主题词]替换成当前争论的实物）：
-   倒数第4句：用对方刚说的规则反问他（例："你自己说切的人先选，那你切你选，我拿大的"）
-   倒数第3句：对方试图狡辩但露馅（例："我没说切的人先选大的……"）
-   倒数第2句：指出他的矛盾（例："那你说'切的人先选'是什么意思？"）
-   末句：对方嘴硬收场，说"……哼"或"……行"或"……随便"（必须他说最后一句）
-   禁止赢家说最后一句、禁止双方互讲道理后忽然让步。
+{closing}
 
 请直接输出JSON。
 """
 
 
-# 兼容旧引用：默认 = 首稿（含写作铺垫）
-_DAILY_STORY_CONTRACT = _daily_story_contract(length_mode="draft")
+def _daily_story_system_prompt(
+    *,
+    length_mode: str = "draft",
+    type_code: str | None = None,
+) -> str:
+    return (
+        "你是一位家庭情景喜剧编剧，写昭昭&灿灿的日常对话短剧。\n"
+        "面向孩子和有娃的大人：笑点要孩子听得懂，家长看得出自家日常。\n\n"
+        f"{_daily_story_contract(length_mode=length_mode)}"
+        f"{_daily_story_system_body(type_code=type_code)}"
+    )
+
+
+# 兼容旧引用：默认 = 首稿（含写作铺垫），未锁定类型
 DAILY_STORY_SYSTEM_PROMPT = _daily_story_system_prompt(length_mode="draft")
 DAILY_STORY_USER_TEMPLATE = _daily_story_user_template(length_mode="draft")
+_DAILY_STORY_CONTRACT = _daily_story_contract(length_mode="draft")
 
 DAILY_STORY_THEME_SYSTEM_PROMPT = f"""\
 你是一位家庭情景喜剧策划师，为昭昭&灿灿日常对话短剧策划主题。
@@ -391,44 +370,35 @@ DAILY_STORY_THEME_USER_TEMPLATE = """\
 1. 主题必须是一件具体的小事，且最好带动作/实物（抢遥控器、弄脏裙子、藏橡皮），
    少写抽象讨论（如「讨论友谊」「探讨公平」）。
 2. 不能是抽象概念。
-3. 主题要有天然矛盾，且主戏能在家门口/室内由姐弟撑起来，例如：
-   姐姐管不住弟弟；抢先后/分东西吵公平；把叮嘱按字面做砸。
-4. 少出「妈妈讲理/教育」当主线的主题。
+3. 主题要有天然矛盾，且主戏能在家门口/室内由姐弟撑起来，类型须多样，例如：
+   A 姐姐管教/教作业被反问到哑口；C 抢先后/分东西吵公平；
+   D 把叮嘱按字面做砸；B 姐弟联手瞒事露馅；E 妈妈讲理被绕进去。
+4. 少出「妈妈讲理/教育」当主线的主题（E 类除外）。
 5. 禁止依赖爸爸入戏、老师入戏、学校/公园等外景主场的主题。
 6. 主题须能用短句口语一场讲完（对白体量约一分半到两分钟）。
 7. 主题用15个字以内描述，直接输出。
 
 示例："争最后一瓶酸奶"
 示例："谁先洗澡"
+示例："姐姐教弟弟写作业自己写错"
+示例："把叠好的衣服弄乱"
+示例："偷偷一起吃零食"
 
 请直接输出标题，每行一个，不要其他内容。
 """
 
 
 def _select_story_type(theme: str) -> str:
-    """评估主题与各矛盾类型的贴切度，从最高分中随机选一个。"""
-    scores = {
-        k: sum(1 for kw in v if kw in theme)
-        for k, v in _STORY_TYPE_KEYWORDS.items()
-    }
-    max_score = max(scores.values())
-    if max_score <= 0:
-        candidates = ["A", "C"]
-    else:
-        candidates = [k for k, v in scores.items() if v >= max_score]
-    # D类字面执行难以产出高质量收束 → 排除，让主题走 A/C
-    candidates = [k for k in candidates if k != "D"]
-    if not candidates:
-        candidates = ["A", "C"]
-    selected = random.choice(candidates)
-    return f"{selected}类{_STORY_TYPE_LABELS[selected]}"
+    return select_story_type_tag(theme)
 
 
 def _extract_type_from_punchline(punchline: str) -> str | None:
     """从 punchline_explain 中提取矛盾类型标签。"""
-    for k, v in _STORY_TYPE_LABELS.items():
-        if f"{k}类{v}" in punchline or f"{k}类" in punchline or f"{k}：" in punchline:
-            return f"{k}类{v}"
+    text = punchline or ""
+    for k in ("A", "B", "C", "D", "E"):
+        label = STORY_TYPE_LABELS[k]
+        if f"{k}类{label}" in text or f"{k}类" in text or f"{k}：" in text:
+            return story_type_tag(k)
     return None
 
 
@@ -449,11 +419,20 @@ def build_daily_story_prompts(
     type_instruction = (
         f"本次矛盾类型必须用：{story_type}。禁止用其他类型。"
         if story_type
-        else "矛盾优先 A/C/D（姐弟互怼）；B/E 仅主题明确需要时才用。"
+        else "生成前须从 A/C/D/B/E 中择一类型并走其专属线路（见 system）。"
     )
-    user_tpl = _daily_story_user_template(length_mode=length_mode)
+    type_code = (
+        parse_story_type_code(story_type=story_type) if story_type else None
+    )
+    user_tpl = _daily_story_user_template(
+        length_mode=length_mode,
+        type_code=type_code,
+    )
     return (
-        _daily_story_system_prompt(length_mode=length_mode),
+        _daily_story_system_prompt(
+            length_mode=length_mode,
+            type_code=type_code,
+        ),
         user_tpl.format(theme=theme, type_instruction=type_instruction),
     )
 
@@ -513,8 +492,19 @@ DAILY_STORY_OPENING_USER_TEMPLATE = """\
 def build_daily_story_opening_prompts(
     theme: str,
     story: dict,
+    *,
+    type_code: str | None = None,
 ) -> tuple[str, str]:
     """构造发现开场单抽的 system + user。"""
+    if not type_code and isinstance(story, dict):
+        type_code = parse_story_type_code(
+            punchline=str(story.get("punchline_explain") or ""),
+        )
+    system = DAILY_STORY_OPENING_SYSTEM_PROMPT
+    if type_code and type_code.upper() in STORY_TYPE_LINES:
+        append = STORY_TYPE_LINES[type_code.upper()].opening_system_append
+        if append.strip():
+            system = f"{system}\n{append}"
     dialogue = story.get("dialogue") if isinstance(story, dict) else None
     head_lines: list[str] = []
     if isinstance(dialogue, list):
@@ -533,8 +523,15 @@ def build_daily_story_opening_prompts(
         conflict_core=str(story.get("conflict_core") or "").strip() or "（无）",
         body_head=body_head,
     )
-    return DAILY_STORY_OPENING_SYSTEM_PROMPT, user
+    if type_code and type_code.upper() in STORY_TYPE_LINES:
+        ou = STORY_TYPE_LINES[type_code.upper()].opening_user_append.strip()
+        if ou:
+            user = f"{user}\n{ou}"
+    return system, user
 
+
+# 特写镜（后续走 I2V）对白上限，利于口型轮次
+DAILY_SCRIPT_KEYFRAME_MAX_DIALOGUE_LINES = 2
 
 DAILY_SCRIPT_SYSTEM_PROMPT = """\
 你是儿童情景对话短剧的分镜编剧，只负责把对白切成可执行镜头，不写画面描述。
@@ -544,19 +541,22 @@ DAILY_SCRIPT_SYSTEM_PROMPT = """\
 【分镜规则】
 1. 【切分原则】按单镜 2–3 句、≤{max_sec} 秒切分（对白共 {total_chars} 字 / {line_count} 句）；
    禁止一句一镜。
-2. 【默认并镜】按同一地点、同一轮互怼/同一话题合并；每镜通常 2–3 句对白，
+2. 【默认并镜】按同一地点、同一轮互怼/同一话题合并；中景/全景每镜通常 2–3 句，
    单镜不得超过 3 句。
-3. 【单镜字数】建议 {min_chars}–{max_chars} 字（约 {min_sec}–{max_sec} 秒，
+3. 【特写对白上限】shot_type 为「特写」的镜，dialogue **不得超过 2 句**
+   （图生视频口型轮次限制）。若该轮还有第 3 句，须拆到下一镜（可仍特写），
+   或本镜改标「中景」并保留 3 句。
+4. 【单镜字数】建议 {min_chars}–{max_chars} 字（约 {min_sec}–{max_sec} 秒，
    语速 {chars_per_sec} 字/秒）。少于 {min_chars} 字必须并入邻镜；
    单镜合计不得超过 {max_chars} 字（约 ≤{max_sec} 秒）。各镜尽量均匀。
-4. 为每镜标注 shot_type（全景/中景/特写），在环境交代、对话主体、情绪或道具之间穿插。
-5. 【开场首镜】scene_id=1 须定格冲突峰值姿势（抢/举/夺/藏/对峙），
+5. 为每镜标注 shot_type（全景/中景/特写），在环境交代、对话主体、情绪或道具之间穿插。
+6. 【开场首镜】scene_id=1 须定格冲突峰值姿势（抢/举/夺/藏/对峙），
    shot_type **必须「特写」**（发现开场也要落在动作峰值上，用特写留住开头吸引力）；
-   禁止全景空镜、中景站桩或寒暄开场。
-6. 【转折用特写，不拆碎】反驳、破功、愣住、妈妈插嘴、证据翻出等转折句：
-   放在该镜开头（可带紧随的 1–2 句回应），shot_type 优先「特写」；
+   禁止全景空镜、中景站桩或寒暄开场；首镜 dialogue 亦须遵守特写 ≤2 句。
+7. 【转折用特写，不拆碎】反驳、破功、愣住、妈妈插嘴、证据翻出等转折句：
+   放在该镜开头，shot_type 优先「特写」，且本镜最多再跟 **1 句**回应（特写合计 ≤2 句）；
    禁止为转折把短句单独拆成不足 {min_chars} 字的镜；
-   也禁止把转折句埋进四句长镜末尾。全文特写镜不超过总镜数约 1/3。
+   也禁止在特写镜里塞 3 句。全文特写镜不超过总镜数约 1/3。
 
 【输出格式】
 严格输出合法 JSON（不要 markdown 代码块）：
@@ -589,9 +589,10 @@ DAILY_SCRIPT_USER_TEMPLATE = """\
 {dialogue_text}
 
 【要求】
-1. 每镜 2–3 句、不得超过 3 句；单镜 {min_chars}–{max_chars} 字（约 ≤{max_sec} 秒）；禁止一句一镜
-2. 转折句用特写并放在镜首，但须并入邻句，不得单独拆成短镜
-3. 原台词须全部分配到各镜 dialogue，措辞不得改
+1. 中景/全景每镜 2–3 句、不得超过 3 句；**特写镜不得超过 2 句**
+2. 单镜 {min_chars}–{max_chars} 字（约 ≤{max_sec} 秒）；禁止一句一镜
+3. 转折句用特写并放在镜首，特写镜最多再跟 1 句回应；第 3 句须拆到下一镜或改中景
+4. 原台词须全部分配到各镜 dialogue，措辞不得改
 
 请直接输出 JSON。
 """
@@ -600,6 +601,26 @@ DAILY_SCRIPT_USER_TEMPLATE = """\
 DAILY_SCRIPT_MAX_SEGMENT_SEC = 10.0
 # 单镜下限（约 2 句短对白）；过短须并入邻镜
 DAILY_SCRIPT_MIN_SEGMENT_SEC = 4.0
+
+
+def validate_daily_script_scenes(scenes: list) -> list[str]:
+    """分镜硬校验：特写镜对白不得超过 DAILY_SCRIPT_KEYFRAME_MAX_DIALOGUE_LINES。"""
+    max_lines = DAILY_SCRIPT_KEYFRAME_MAX_DIALOGUE_LINES
+    errors: list[str] = []
+    for scene in scenes:
+        if not isinstance(scene, dict):
+            continue
+        shot = str(scene.get("shot_type") or "").strip()
+        if shot != "特写":
+            continue
+        dialogue = scene.get("dialogue") or []
+        n = sum(1 for d in dialogue if isinstance(d, dict))
+        if n > max_lines:
+            sid = scene.get("scene_id", "?")
+            errors.append(
+                f"scene_id={sid} 为特写但含 {n} 句对白（特写镜最多 {max_lines} 句）"
+            )
+    return errors
 
 
 def _format_prompt_number(value: float) -> str:
@@ -1174,9 +1195,18 @@ def _correct_dialogue_speaker(dialogue: list) -> None:
                     break
 
 
-def build_daily_story_theme_prompts(count: int) -> tuple[str, str]:
+def build_daily_story_theme_prompts(
+    count: int,
+    *,
+    type_code: str | None = None,
+) -> tuple[str, str]:
     """构造日常故事主题生成的 system + user 提示词。"""
-    return DAILY_STORY_THEME_SYSTEM_PROMPT, DAILY_STORY_THEME_USER_TEMPLATE.format(count=count)
+    user = DAILY_STORY_THEME_USER_TEMPLATE.format(count=count)
+    if type_code and type_code.upper() in STORY_TYPE_LINES:
+        extra = STORY_TYPE_LINES[type_code.upper()].theme_user_append.strip()
+        if extra:
+            user = f"{user}\n{extra}"
+    return DAILY_STORY_THEME_SYSTEM_PROMPT, user
 
 
 def dialogue_total_chars(story: dict | None) -> int:
@@ -1219,7 +1249,12 @@ def resolve_daily_story_retry_length_mode(
     return "revise"
 
 
-def _retry_issue_hints(errors: str, *, chars: int) -> str:
+def _retry_issue_hints(
+    errors: str,
+    *,
+    chars: int,
+    type_code: str | None = None,
+) -> str:
     """按本轮校验问题追加可执行修订指令。"""
     hints: list[str] = []
     err = errors or ""
@@ -1230,10 +1265,16 @@ def _retry_issue_hints(errors: str, *, chars: int) -> str:
             f"{DAILY_STORY_BODY_CHARS_MAX}）。"
         )
     if "无破功软收" in err or "弱收束" in err:
+        soft = ""
+        if type_code:
+            soft = story_line_for_code(type_code).retry_soft_close_hint.strip()
         hints.append(
-            "【收束】只改末 2–3 句：倒数第 2 句字面戳穿/自相矛盾，"
-            "末句破功哑口或嘴硬软收；"
-            "禁止一人一半/平分、反正我要用、等妈评理。"
+            soft
+            or (
+                "【收束】只改末 2–3 句：倒数第 2 句字面戳穿/自相矛盾，"
+                "末句破功哑口或嘴硬软收；"
+                "禁止一人一半/平分、反正我要用、等妈评理。"
+            )
         )
     if "超过" in err and f"{DAILY_STORY_LINE_CHARS_MAX}字" in err:
         hints.append(
@@ -1256,6 +1297,7 @@ def build_daily_story_retry_user(
     prev_story: dict,
     errors: str,
     phase: str = "body",
+    story_type: str | None = None,
 ) -> str:
     """构造垂直修订重试 user：只列本轮问题 + 上一稿，不复述全套规则。
 
@@ -1295,7 +1337,11 @@ def build_daily_story_retry_user(
             f"只删约 {drop_lines} 句车轱辘/重复回合，压到 {aim_lo}–{aim_hi} 字；"
             f"禁止新增任何台词，禁止大段重写，须仍 ≥{chars_min} 字。\n"
         )
-    issue_hint = _retry_issue_hints(errors, chars=chars)
+    type_code = parse_story_type_code(
+        story_type=story_type,
+        punchline=str(prev_story.get("punchline_explain") or ""),
+    )
+    issue_hint = _retry_issue_hints(errors, chars=chars, type_code=type_code)
     prev_json = json.dumps(prev_story, ensure_ascii=False)
     return (
         f"主题：{theme}\n"

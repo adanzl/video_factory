@@ -504,6 +504,8 @@ def test_build_daily_script_prompts_uses_cps_setting_and_no_appearance():
     assert str(int(10 * 4.0)) in system  # max chars = 40
     assert "20" in system  # min chars floor
     assert "2–3 句" in system
+    assert "特写对白上限" in system or "特写」的镜" in system
+    assert "特写镜不得超过 2 句" in user
     assert "彩铅" not in system
     assert "超短发" not in system
     assert "不要输出 visual_description" in system
@@ -516,6 +518,24 @@ def test_build_daily_script_prompts_uses_cps_setting_and_no_appearance():
     assert "昭昭：这瓶是我的！" in user
     # 上限口径：不得超过 max_chars
     assert "不得超过 40 字" in system
+
+
+def test_validate_daily_script_scenes_closeup_max_two_lines():
+    from app.services.daily_story.prompts import validate_daily_script_scenes
+
+    ok = [
+        {"scene_id": 1, "shot_type": "特写", "dialogue": [{}, {}]},
+        {"scene_id": 2, "shot_type": "中景", "dialogue": [{}, {}, {}]},
+    ]
+    assert validate_daily_script_scenes(ok) == []
+
+    bad = [
+        {"scene_id": 8, "shot_type": "特写", "dialogue": [{}, {}, {}]},
+    ]
+    errs = validate_daily_script_scenes(bad)
+    assert len(errs) == 1
+    assert "scene_id=8" in errs[0]
+    assert "3 句" in errs[0]
 
 
 def test_build_visual_brief_prompts_includes_shot_type():

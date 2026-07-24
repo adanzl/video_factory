@@ -173,6 +173,8 @@ class LLMClient:
     def generate_daily_story(
         self,
         theme: str,
+        *,
+        story_type: str | None = None,
     ) -> dict[str, Any]:
         raise NotImplementedError
 
@@ -670,10 +672,15 @@ class LLMMgr:
     def generate_daily_story(
         self,
         theme: str,
+        *,
+        story_type: str | None = None,
     ) -> dict[str, Any]:
         logger.info("[DAILY_STORY] generate start theme=%r", theme)
         started = time.perf_counter()
-        from app.services.daily_story.quality import attach_daily_story_quality
+        from app.services.daily_story.quality import (
+            attach_daily_story_quality,
+            build_quality_revision_hints,
+        )
 
         client = self._get_client()
         best_story: dict[str, Any] | None = None
@@ -684,7 +691,10 @@ class LLMMgr:
 
         for attempt in range(max_attempts):
             try:
-                story = client.generate_daily_story(theme)
+                story = client.generate_daily_story(
+                    theme,
+                    story_type=story_type,
+                )
                 attach_daily_story_quality(story, theme=theme)
             except ValueError as exc:
                 last_exc = exc
@@ -709,6 +719,36 @@ class LLMMgr:
                     score, target, attempt + 1, max_attempts, elapsed,
                 )
                 return story
+
+            revision_hints = build_quality_revision_hints(
+                story.get("quality") or {},
+                story=story,
+            )
+            refine = getattr(client, "refine_daily_story_for_quality", None)
+            if revision_hints and callable(refine):
+                try:
+                    refined = refine(theme, story, revision_hints)
+                    attach_daily_story_quality(refined, theme=theme)
+                    r_score = refined.get("quality", {}).get("score", 0)
+                    if r_score > best_score:
+                        best_score = r_score
+                        best_story = refined
+                    if r_score >= target:
+                        elapsed = time.perf_counter() - started
+                        logger.info(
+                            "[DAILY_STORY] quality refine hit score=%d "
+                            "attempt=%d/%d elapsed=%.1fs",
+                            r_score, attempt + 1, max_attempts, elapsed,
+                        )
+                        return refined
+                    story = refined
+                    score = r_score
+                except ValueError as exc:
+                    logger.warning(
+                        "[DAILY_STORY] quality refine failed attempt=%d: %s",
+                        attempt + 1,
+                        exc,
+                    )
 
             logger.info(
                 "[DAILY_STORY] score=%d < %d, retry attempt=%d/%d",

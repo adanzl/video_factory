@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from app.services.media.media_mgr import _inject_mouth_motion
+import re
+
+from app.services.media.media_mgr import (
+    _inject_mouth_motion,
+    inject_speaking_times_into_motion_prompts,
+)
 from app.services.script.image_prompt import (
     assemble_daily_image_prompts,
     assemble_daily_t2i_prompt,
@@ -138,10 +143,10 @@ def test_inject_mouth_motion_overwrites_llm_times_from_cues():
     )
     cues = [("你怎么又乱扔！", 1.4), ("我没有啊。", 1.1)]
     out = _inject_mouth_motion(mp, seg, cues)
-    assert "0.0-1.4秒粉色卫衣的马尾女孩（灿灿）张嘴说话，同时" in out
-    assert "1.4-2.5秒蓝色短袖T恤的短发男孩（昭昭）张嘴说话，同时" in out
-    assert "蓝色短袖T恤的短发男孩（昭昭）嘴巴闭合不张嘴" in out
-    assert "粉色卫衣的马尾女孩（灿灿）嘴巴闭合不张嘴" in out
+    assert "0.0-1.4秒左侧女孩张嘴说话，同时" in out
+    assert "1.4-2.5秒右侧男孩张嘴说话，同时" in out
+    assert "此时右侧男孩闭嘴" in out
+    assert "此时左侧女孩闭嘴" in out
     assert "0.0-1.0秒" not in out
     assert "1.0-2.0秒" not in out
     assert "画面左边灿灿" not in out
@@ -162,9 +167,9 @@ def test_inject_mouth_motion_adds_times_when_missing():
     )
     cues = [("你怎么又乱扔！", 1.4), ("我没有啊。", 1.1)]
     out = _inject_mouth_motion(mp, seg, cues)
-    assert "0.0-1.4秒粉色卫衣的马尾女孩（灿灿）张嘴说话，同时" in out
-    assert "1.4-2.5秒蓝色短袖T恤的短发男孩（昭昭）张嘴说话，同时" in out
-    assert "蓝色短袖T恤的短发男孩（昭昭）嘴巴闭合不张嘴" in out
+    assert "0.0-1.4秒左侧女孩张嘴说话，同时" in out
+    assert "1.4-2.5秒右侧男孩张嘴说话，同时" in out
+    assert "此时右侧男孩闭嘴" in out
 
 
 def test_inject_mouth_motion_zeros_min_start():
@@ -183,9 +188,9 @@ def test_inject_mouth_motion_zeros_min_start():
     )
     cues = [("（静音）", 3.3), ("你怎么又乱扔！", 4.0), ("我没有啊。", 3.4)]
     out = _inject_mouth_motion(mp, seg, cues)
-    # 外貌锚点，不依赖左右（即使站位句写反也不绑错人）
-    assert "0.0-4.0秒粉色卫衣的马尾女孩（灿灿）张嘴说话，同时" in out
-    assert "4.0-7.4秒蓝色短袖T恤的短发男孩（昭昭）张嘴说话，同时" in out
+    # 按站位+身份标注，对白序仍跟 dialogue
+    assert "0.0-4.0秒右侧女孩张嘴说话，同时" in out
+    assert "4.0-7.4秒左侧男孩张嘴说话，同时" in out
     assert "3.3-" not in out
     assert "7.3-" not in out
 
@@ -194,6 +199,27 @@ def test_inject_mouth_motion_noop_for_ambient():
     seg = {"dialogue": [{"speaker": "灿灿", "text": "哼！"}]}
     amb = "窗边纱帘被风轻轻掀起，人物姿势保持不变。"
     assert _inject_mouth_motion(amb, seg, [("哼！", 1.0)]) == amb
+
+
+def test_inject_mouth_motion_without_face_mark_tail():
+    """无「两人说话后面部表情」时仍可注入，尾部锁定句保留。"""
+    seg = {
+        "dialogue": [
+            {"speaker": "灿灿", "text": "a"},
+            {"speaker": "昭昭", "text": "b"},
+        ],
+    }
+    mp = (
+        "画面左边是灿灿，右边是昭昭。"
+        "灿灿说话，同时右手点动约2厘米后停止；"
+        "昭昭说话，同时耸肩约3厘米后停止。"
+        "镜头固定，不推近不拉远，画面只有人物和场景，无任何文字叠加。"
+    )
+    out = _inject_mouth_motion(mp, seg, [("a", 1.0), ("b", 1.5)])
+    assert "左侧女孩张嘴说话" in out
+    assert "后定格" in out
+    assert "两人说话后面部表情" not in out
+    assert "镜头固定" in out
 
 
 def test_inject_mouth_motion_three_lines_same_speaker_twice():
@@ -222,12 +248,12 @@ def test_inject_mouth_motion_three_lines_same_speaker_twice():
         ("我哪里弄乱了？", 1.8),
     ]
     out = _inject_mouth_motion(mp, seg, cues)
-    assert "0.0-2.5秒粉色卫衣的马尾女孩（灿灿）张嘴说话，同时" in out
-    assert "2.5-6.5秒蓝色短袖T恤的短发男孩（昭昭）张嘴说话，同时" in out
-    assert "6.5-8.3秒粉色卫衣的马尾女孩（灿灿）张嘴说话，同时" in out
-    assert out.count("蓝色短袖T恤的短发男孩（昭昭）嘴巴闭合不张嘴") == 2
-    assert "粉色卫衣的马尾女孩（灿灿）嘴巴闭合不张嘴" in out
-    assert out.index("0.0-2.5秒粉色卫衣") < out.index("2.5-6.5秒蓝色短袖")
+    assert "0.0-2.5秒左侧女孩张嘴说话，同时" in out
+    assert "2.5-6.5秒右侧男孩张嘴说话，同时" in out
+    assert "6.5-8.3秒左侧女孩张嘴说话，同时" in out
+    assert out.count("右侧男孩闭嘴") == 2
+    assert "左侧女孩闭嘴" in out
+    assert out.index("0.0-2.5秒左侧女孩") < out.index("2.5-6.5秒右侧男孩")
     assert out.count("张嘴说话，同时") == 3
     assert "两人说话后面部表情恢复与静图一致" in out
     first = out.split("；")[0]
@@ -257,10 +283,10 @@ def test_inject_mouth_motion_face_mark_between_lines():
         ("我就碰了一下，没弄皱！", 3.1),
     ]
     out = _inject_mouth_motion(mp, seg, cues)
-    assert "0.0-3.0秒粉色卫衣的马尾女孩（灿灿）张嘴说话，同时" in out
-    assert "3.0-6.1秒蓝色短袖T恤的短发男孩（昭昭）张嘴说话，同时" in out
-    assert out.index("0.0-3.0秒粉色卫衣") < out.index("3.0-6.1秒蓝色短袖")
-    assert out.index("3.0-6.1秒蓝色短袖") < out.index("两人说话后面部表情")
+    assert "0.0-3.0秒左侧女孩张嘴说话，同时" in out
+    assert "3.0-6.1秒右侧男孩张嘴说话，同时" in out
+    assert out.index("0.0-3.0秒左侧女孩") < out.index("3.0-6.1秒右侧男孩")
+    assert out.index("3.0-6.1秒右侧男孩") < out.index("两人说话后面部表情")
     assert out.count("两人说话后面部表情") == 1
 
 
@@ -279,6 +305,86 @@ def test_stabilize_keeps_timeline_ranges():
     assert "0.0-1.4秒灿灿说话，同时" in out
     assert "1.4-2.5秒昭昭说话，同时" in out
     assert "镜头固定" in out
+
+
+_KEYFRAME_LLM_MOTION = (
+    "画面左边是灿灿，右边是昭昭。"
+    "灿灿说话，同时右手食指指向衣服团微微颤抖约2厘米后停止；"
+    "昭昭说话，同时双手摊开向上微抖一下后停止。"
+    "两人说话后面部表情恢复与静图一致："
+    "灿灿瞪圆眼睛嘴巴大张（愤怒质问状），不微笑；"
+    "昭昭撇着嘴角耸肩（委屈不服状），表情不变。"
+    "服装发型稳定，身高比例（昭昭比灿灿矮半个头）不变。"
+    "镜头固定，不推近不拉远，画面只有人物和场景，无任何文字叠加。"
+)
+_FORBIDDEN_INJECTED = re.compile(
+    r"粉色卫衣的马尾女孩|蓝色短袖T恤的短发男孩|嘴巴闭合不张嘴"
+)
+_SPEAK_WINDOW_RE = re.compile(
+    r"[\d.]+-[\d.]+秒(?:左侧|右侧)(?:男孩|女孩|妈妈)张嘴说话，同时"
+)
+
+
+def test_keyframe_motion_llm_draft_contract():
+    """LLM 底稿：站位、按句说话、统一后停止、不自编秒数与 inject 字段。"""
+    base = _KEYFRAME_LLM_MOTION
+    assert "画面左边是灿灿，右边是昭昭" in base
+    assert base.count("说话，同时") == 2
+    assert "后定格" not in base
+    assert "张嘴说话" not in base
+    head = base.split("两人说话后面部表情", 1)[0]
+    assert not re.search(r"[\d.]+-[\d.]+秒", head)
+    assert _FORBIDDEN_INJECTED.search(base) is None
+
+
+def test_keyframe_motion_after_inject_contract():
+    """TTS 注入后：左右侧身份、张嘴/闭嘴、末句定格、无长外貌锚点。"""
+    dialogue = [
+        {"speaker": "灿灿", "text": "我刚叠好的衣服怎么皱成一团了？"},
+        {"speaker": "昭昭", "text": "我就碰了一下，没弄皱！"},
+    ]
+    cues = [("我刚叠好的衣服怎么皱成一团了？", 3.05), ("我就碰了一下，没弄皱！", 3.02)]
+    out = _inject_mouth_motion(_KEYFRAME_LLM_MOTION, {"dialogue": dialogue}, cues)
+
+    assert out.count("张嘴说话，同时") == 2
+    assert out.count("闭嘴") == 2
+    assert _SPEAK_WINDOW_RE.search(out)
+    assert "0.0-3.0秒左侧女孩张嘴说话" in out
+    assert "3.0-6.1秒右侧男孩张嘴说话" in out
+    assert _FORBIDDEN_INJECTED.search(out) is None
+    assert "两人说话后面部表情恢复与静图一致" in out
+    assert "愤怒质问状" in out
+    assert "委屈不服状" in out
+    # 末句动作由 inject 改为定格
+    assert "双手摊开向上微抖一下后定格" in out
+    assert "微微颤抖约2厘米后停止" in out
+    assert "镜头固定，不推近不拉远" in out
+
+
+def test_inject_speaking_times_into_motion_prompts_updates_segment():
+    """与 worker clip 前同一入口：segments 原地写入 motion_prompt。"""
+    dialogue = [
+        {"speaker": "灿灿", "text": "a"},
+        {"speaker": "昭昭", "text": "b"},
+    ]
+    segments = [
+        {
+            "segment_index": 1,
+            "dialogue": dialogue,
+            "motion_prompt": _KEYFRAME_LLM_MOTION,
+        },
+    ]
+    from app.services.tts.tts_mgr import SubtitleCue
+
+    cues = [
+        SubtitleCue(segment_index=1, text="a", duration_sec=1.0),
+        SubtitleCue(segment_index=1, text="b", duration_sec=1.5),
+    ]
+    n = inject_speaking_times_into_motion_prompts(segments, cues)
+    assert n == 1
+    mp = segments[0]["motion_prompt"]
+    assert "左侧女孩张嘴说话" in mp
+    assert "右侧男孩张嘴说话" in mp
 
 
 def test_scrub_daily_visual_brief_strips_labels_and_outfit_props():

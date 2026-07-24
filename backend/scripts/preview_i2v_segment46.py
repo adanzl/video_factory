@@ -3,7 +3,7 @@
 用法（在 backend 目录）:
 
   python -m scripts.preview_i2v_segment46
-  python -m scripts.preview_i2v_segment46 --image tmp/t2i_seg1_<ts>.png
+  python -m scripts.preview_i2v_segment46 --image ../tmp/job46_seg1.png
   python -m scripts.preview_i2v_segment46 --width 1280 --height 720
 
 输出: tmp/i2v_seg1_<ts>.mp4
@@ -14,7 +14,6 @@ from __future__ import annotations
 import base64
 import logging
 import mimetypes
-import os
 import sys
 import time
 from datetime import datetime
@@ -32,14 +31,39 @@ load_dotenv(ROOT_DIR / ".env")
 
 from app.config import get_settings
 from app.services.llm.llm_agnes import agnes_api_keys, agnes_auth_header
+from app.services.media.media_mgr import _inject_mouth_motion
 
 logger = logging.getLogger(__name__)
 
 # ══════════════════════════════════════════════════════════════════════
-#  Motion Prompt — 直接改这里调效果
+#  Motion Prompt — LLM 底稿 + TTS 句时长注入（与 clip 阶段一致）
 # ══════════════════════════════════════════════════════════════════════
 
-MOTION_PROMPT = (
+_PREVIEW_SEG = {
+    "dialogue": [
+        {"speaker": "灿灿", "text": "我刚叠好的衣服怎么皱成一团了？"},
+        {"speaker": "昭昭", "text": "我就碰了一下，没弄皱！"},
+    ],
+}
+# 与 job 46 seg1 远程 TTS 句时长一致（subtitle_cues.json）
+_PREVIEW_CUES: list[tuple[str, float]] = [
+    ("我刚叠好的衣服怎么皱成一团了？", 3.05),
+    ("我就碰了一下，没弄皱！", 3.02),
+]
+
+MOTION_PROMPT_BASE = (
+    "画面左边是灿灿，右边是昭昭。"
+    "灿灿说话，同时右手食指微微向下点动约2厘米后停止；"
+    "昭昭说话，同时肩膀轻轻耸起约3厘米后停止。"
+    "两人说话后面部表情恢复与静图一致："
+    "灿灿瞪圆眼睛嘴巴大张（愤怒质问状），不微笑；"
+    "昭昭撇着嘴角耸肩（委屈不服状），表情不变。"
+    "服装发型稳定，身高比例（昭昭比灿灿矮半个头）不变。"
+    "镜头固定，不推近不拉远，画面只有人物和场景，无任何文字叠加。"
+)
+
+# 此前手工写秒数、效果较好的对照版（--legacy-motion）
+MOTION_PROMPT_LEGACY = (
     "画面左边是灿灿，右边是昭昭。"
     "0.0-1.5秒灿灿说话，同时右手食指微微向下点动约2厘米后停止；"
     "1.5-2.5秒昭昭说话，同时肩膀轻轻耸起约3厘米后定格。"
@@ -49,6 +73,19 @@ MOTION_PROMPT = (
     "服装发型稳定，身高比例（昭昭比灿灿矮半个头）不变。"
     "镜头固定，不推近不拉远，画面只有人物和场景，无任何文字叠加。"
 )
+
+
+def build_motion_prompt(*, legacy: bool = False) -> str:
+    if legacy:
+        return MOTION_PROMPT_LEGACY
+    return _inject_mouth_motion(
+        MOTION_PROMPT_BASE,
+        _PREVIEW_SEG,
+        _PREVIEW_CUES,
+    )
+
+
+MOTION_PROMPT = build_motion_prompt()
 
 NEGATIVE_PROMPT = (
     "subtitles, text, words, letters, captions, watermark, overlay, "
@@ -155,13 +192,22 @@ def main() -> int:
 
     parser = argparse.ArgumentParser(description="预览 job 46 第 1 分镜图生视频（I2V）")
     parser.add_argument("--image", type=Path, default=None, help="输入图片路径（默认自动找 tmp/ 下最新的 t2i_seg1_*.png）")
-    parser.add_argument("--motion", default=MOTION_PROMPT, help="Motion prompt")
+    parser.add_argument(
+        "--legacy-motion",
+        action="store_true",
+        help="使用旧版手工秒数 prompt（灿灿/昭昭），不经过 inject",
+    )
+    parser.add_argument("--motion", default=None, help="覆盖 motion prompt（默认 inject 或 --legacy-motion）")
     parser.add_argument("--out", type=Path, default=None, help="输出路径（默认 tmp/i2v_seg1_<时间戳>.mp4）")
     parser.add_argument("--frames", type=int, default=DEFAULT_NUM_FRAMES, help=f"生成帧数（默认 {DEFAULT_NUM_FRAMES}）")
     parser.add_argument("--width", type=int, default=1280, help="视频宽度（默认 1280）")
     parser.add_argument("--height", type=int, default=720, help="视频高度（默认 720）")
     parser.add_argument("-v", "--verbose", action="store_true", help="打印 DEBUG 日志")
     args = parser.parse_args()
+
+    motion = args.motion
+    if motion is None:
+        motion = build_motion_prompt(legacy=args.legacy_motion)
 
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
@@ -193,7 +239,7 @@ def main() -> int:
 
     payload = {
         "model": settings.agnes_video_model,
-        "prompt": args.motion,
+        "prompt": motion,
         "image": image_ref,
         "mode": I2V_MODE,
         "num_frames": args.frames,
@@ -210,8 +256,8 @@ def main() -> int:
     print(f"image:      {image_path}")
     print(f"frames:     {args.frames} @ {DEFAULT_FPS}fps ≈ {args.frames / DEFAULT_FPS:.1f}s")
     print(f"out:        {out}")
-    print(f"motion ({len(args.motion)} chars):")
-    print(f"  {args.motion}")
+    print(f"motion ({len(motion)} chars):")
+    print(f"  {motion}")
     print()
 
     t0 = time.time()

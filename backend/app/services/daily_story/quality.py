@@ -11,14 +11,6 @@ _LIMP_SOFT_CLOSE_MARKERS = (
     "我不管", "不管了", "随便你", "那行", "行行行",
     "哼", "吃吧", "你赢",
 )
-_PUNCH_BEFORE_SOFT_MARKERS = (
-    "说晚了", "已经在了", "自相矛盾", "矛盾", "打脸",
-    "那你也", "你也没", "那不算", "当然不算", "堵死",
-    "戳穿", "说不通", "你让的", "重新说", "晚了",
-    "改不了", "从来不", "已经.*了", "你说的", "你说过",
-    "装让", "反悔", "变卦", "自己说", "自己打",
-    "你自己说", "你刚说", "上次你说", "自己弄",
-)
 _PUNCHLINE_TYPE_MARKERS = (
     "权威翻车", "公平执念", "字面执行", "结盟翻车", "妈妈破功",
     "A类", "C类", "D类", "B类", "E类",
@@ -37,51 +29,11 @@ _STRONG_END_MARKERS = (
     "自相矛盾", "你让的", "戳穿",
 )
 
-# ── 冲突升级层级检测 ──
-_LAYER_PATTERNS: list[tuple[str, re.Pattern]] = [
-    ("L1_争归属", re.compile(
-        r"凭什么.*拿|怎么在.*你手|我先|归谁|凭什么.*你的|你抢|"
-        r"应该给我|我要.*块|我吃.*的|谁先|拿.*大|大的.*我|我大.*我吃",
-    )),
-    ("L2_挑战规则", re.compile(
-        r"谁说的|没说过|不算|你定的|你刚说|你编的|规矩|切的人|"
-        r"拿到的人|谁说|又不是你定的|规则是你|反悔|变来变去|"
-        r"说话不算|凭什么.*定|你说的不算|你自己.*又说",
-    )),
-    ("L3_挑战权威", re.compile(
-        r"凭什么你|你说了算|你又不是|你是姐姐|你凭什么|"
-        r"不是.*说了算|又不是你|你定.*不算|我比你大|"
-        r"大的该给|大的.*应该|大的.*给.*小|按年龄|我是姐姐",
-    )),
-    ("L4_新证据", re.compile(
-        r"上次|之前|上一次|妈妈说过|爸爸.*说|柜子里|第二块|"
-        r"还有.*块|烤箱|里面还有|等等.*说|说过什么|你再想想|"
-        r"记得.*说|谁说.*洗碗|谁先.*洗碗|吃大.*洗碗|吃完.*洗碗|"
-        r"上次.*分|上次.*说|上次.*梨|上次.*规则",
-    )),
-    ("L5_收束", re.compile(
-        r"那.*你还|你还要|还是吃|我不要|我才不|你洗碗|那你吃|"
-        r"说不过|反正我|就是|不管了|给你|那给你|下次.*算|"
-        r"哼|算了算了|归我|归你|大的归|自相矛盾|嘴硬",
-    )),
-]
-
-# ── 收束质量检测 ──
-_BOOMERANG_RE = re.compile(
-    r"你自己说|你说的|你承认|你刚才说|你自己.*说|"
-    r"你说的.*你先.*选|你.*说.*先选|你定的.*你先",
+from app.services.daily_story.quality_by_type import (
+    closing_satisfied,
+    resolve_quality_profile,
+    score_punchline_for_profile,
 )
-_REVELATION_RE = re.compile(
-    r"柜子里|第二块|还有一块|烤箱|里面还有|谁说.*洗碗|"
-    r"吃完.*洗碗|吃大.*洗碗|还没.*洗|空了|坏了|掉.*地上",
-)
-_SURRENDER_RE = re.compile(
-    r"还是.*吧|那.*吃.*的|算了.*给你|那.*给你|我不要了|"
-    r"我不.*了|你吃吧|你拿.*吧|我不管|不管了|反正|"
-    r"下次.*听你|这次.*听我",
-)
-_TWIST_SEGUE_RE = re.compile(r"等等|不对|可是|不过|等一下|你再想")
-
 # ── 绕圈检测 ──
 _REDUNDANCY_STOP_WORDS: frozenset[str] = frozenset({
     "我", "你", "他", "她", "我们", "你们", "他们", "她们",
@@ -93,6 +45,19 @@ _REDUNDANCY_STOP_WORDS: frozenset[str] = frozenset({
     "但是", "如果", "虽然", "而且", "还是", "应该", "必须",
 })
 _CONTENT_WORD_RE = re.compile(r"[\u4e00-\u9fff]{2,}")
+
+# ── 好笑 / 节奏（规则近似人工：具体、有出处、少复读）──
+_RE_DIRECT_QUOTE = re.compile(
+    r"(?:你刚才说|你自己说|你不是说|你刚说|你说的)([^，。！？…]{3,})",
+)
+_RE_MOM_PRECEDENT_CLAIM = re.compile(
+    r"(?:上次|之前|昨天).{0,10}(?:妈|妈妈)|妈妈(?:说过|说要|也说过)",
+)
+_A_DRUDGE_PHRASES = (
+    "你得听", "听我的", "我是姐姐", "考验", "我没错", "那不一样",
+    "凭什么", "不公平", "教你", "规矩",
+)
+_A_TEMPLATE_MARKERS = ("哪里不一样", "都是听", "大人也要听小孩", "大人要听小孩")
 
 
 def _dialogue_lines(story: dict) -> list[str]:
@@ -151,7 +116,11 @@ def _has_consecutive_sibling(dialogue: list) -> bool:
     return False
 
 
-def _score_escalation(lines: list[str]) -> tuple[int, list[str]]:
+def _score_escalation(
+    lines: list[str],
+    *,
+    layer_patterns: tuple[tuple[str, re.Pattern[str]], ...],
+) -> tuple[int, list[str]]:
     n = len(lines)
     if n < 6:
         return -12, ["冲突无明显推进"]
@@ -168,7 +137,7 @@ def _score_escalation(lines: list[str]) -> tuple[int, list[str]]:
     for seg in segments:
         seg_text = "".join(seg)
         triggered: set[str] = set()
-        for label, pat in _LAYER_PATTERNS:
+        for label, pat in layer_patterns:
             if pat.search(seg_text):
                 triggered.add(label)
         triggered_per_seg.append(triggered)
@@ -181,8 +150,8 @@ def _score_escalation(lines: list[str]) -> tuple[int, list[str]]:
 
     layer_count = len(layer_first_seg)
 
-    layer_scores = {0: -12, 1: -6, 2: 2, 3: 10, 4: 18, 5: 25}
-    bonus = layer_scores.get(layer_count, 25)
+    layer_scores = {0: -12, 1: -6, 2: 2, 3: 8, 4: 14, 5: 18}
+    bonus = layer_scores.get(layer_count, 18)
 
     if layer_count >= 4:
         return bonus, [f"冲突推进{layer_count}层"]
@@ -253,59 +222,115 @@ def _score_redundancy(lines: list[str]) -> tuple[int, list[str]]:
         return -10, [f"「{worst_word}」连续4句绕圈"]
     if max_consecutive_hits >= 3:
         return -5, [f"「{worst_word}」连续3句偏绕"]
-    return 5, ["无绕圈"]
+
+    hook_hits = 0
+    worst_hook = ""
+    for phrase in _A_DRUDGE_PHRASES:
+        n_hit = sum(1 for line in body_lines if phrase in line)
+        if n_hit > hook_hits:
+            hook_hits = n_hit
+            worst_hook = phrase
+    if hook_hits >= 5:
+        return -12, [f"中段「{worst_hook}」复读拖沓"]
+    if hook_hits >= 4:
+        return -7, [f"中段「{worst_hook}」偏重复"]
+
+    return 2, ["节奏紧凑"]
 
 
-def _score_punchline_quality(
+def _fragment_grounded_in_text(fragment: str, haystack: str, *, min_run: int = 5) -> bool:
+    frag = re.sub(r"[的话呢呀嘛吧啊…\s]", "", fragment)
+    if len(frag) < min_run:
+        min_run = max(3, len(frag))
+    if len(frag) < 3:
+        return True
+    run = min(min_run, len(frag))
+    for i in range(len(frag) - run + 1):
+        if frag[i:i + run] in haystack:
+            return True
+    # 同义改写：取 2 字片，过半命中即视为前文提过
+    pieces = [frag[i:i + 2] for i in range(0, len(frag) - 1, 2)]
+    if len(pieces) >= 3:
+        hit = sum(1 for p in pieces if p in haystack)
+        if hit >= (len(pieces) * 2 + 2) // 3:
+            return True
+    return False
+
+
+def _score_humor(
     lines: list[str],
-    speakers: list[str],
-    prev2: str,
-    last: str,
-) -> tuple[int, list[str]]:
-    n = len(lines)
-    if n < 4:
-        return 0, []
+    *,
+    type_code: str,
+) -> tuple[int, list[str], list[str]]:
+    """好笑近似分：具体细节加分，空引话/模板复读/类型串味扣分。"""
+    if len(lines) < 6:
+        return 0, [], []
 
-    tail4 = "".join(lines[-4:])
-    tail3 = "".join(lines[-3:])
     bonus = 0
-    details: list[str] = []
+    pros: list[str] = []
+    cons: list[str] = []
 
-    first_half = "".join(lines[:n // 2])
-    second_half = "".join(lines[n // 2:])
-    revelations = _REVELATION_RE.findall(second_half)
-    new_revelations = [r for r in revelations if r not in first_half]
-    if new_revelations and any(m in tail4 for m in new_revelations):
-        bonus += 10
-        details.append("实物真相反转")
+    body = lines[:-4] if len(lines) > 4 else lines[:-1]
+    tail4 = lines[-4:] if len(lines) >= 4 else lines
+    body_text = "".join(body)
+    tail_text = "".join(tail4)
+    full_text = "".join(lines)
 
-    if _BOOMERANG_RE.search(tail3):
-        bonus += 8
-        if "实物真相反转" not in details:
-            details.append("回旋镖收束")
+    for line in tail4:
+        for m in _RE_DIRECT_QUOTE.finditer(line):
+            frag = m.group(1).strip()
+            if not _fragment_grounded_in_text(frag, body_text):
+                cons.append(f"收束引话无出处（「{frag[:12]}」）")
+                bonus -= 16
+                break
+        if cons:
+            break
 
-    if _SURRENDER_RE.search(tail3):
-        if any(m in tail3 for m in ("洗碗", "洗", "坏了", "掉了", "空了")):
-            bonus += 6
-            if not details:
-                details.append("困境秒怂反转")
-        # 有回旋镖/戳穿垫底的不扣分，没理由的纯怂才扣
-        elif not _BOOMERANG_RE.search(tail3) and not any(
-            m in tail3 for m in _STRONG_END_MARKERS
-        ):
-            bonus -= 3
+    if not cons and type_code == "A":
+        precedent_in_tail = any(
+            _RE_MOM_PRECEDENT_CLAIM.search(ln) or "上次" in ln or "之前" in ln
+            for ln in tail4
+        )
+        if precedent_in_tail:
+            prior_body = "".join(body[: max(1, len(body) // 2)])
+            if not (
+                _RE_MOM_PRECEDENT_CLAIM.search(prior_body)
+                or "上次" in prior_body
+                or "昨天" in prior_body
+            ):
+                cons.append("引先例收束但前文未埋旧账")
+                bonus -= 10
 
-    twist_matches = _TWIST_SEGUE_RE.findall(tail3)
-    if twist_matches and (_REVELATION_RE.search(tail4) or _BOOMERANG_RE.search(tail4)):
-        bonus += 3
+    if type_code == "A":
+        template_hits = sum(1 for m in _A_TEMPLATE_MARKERS if m in full_text)
+        loop_in_body = "哪里不一样" in body_text or "都是听" in body_text
+        loop_in_tail = "哪里不一样" in tail_text or "都是听" in tail_text
+        if loop_in_body and loop_in_tail:
+            cons.append("追问闭环模板复读")
+            bonus -= 10
+        elif template_hits >= 3 and loop_in_tail:
+            cons.append("收束句式过于模板化")
+            bonus -= 6
 
-    if speakers and len(speakers) >= 2:
-        last_sp = speakers[-1]
-        prev_sp = speakers[-2]
-        if last_sp != prev_sp and _SURRENDER_RE.search(last):
-            bonus += 3
+        if "不公平" in body_text and "凭什么" not in body_text[:40]:
+            cons.append("偏C式争公平口号")
+            bonus -= 5
 
-    return bonus, details
+    concrete = len(re.findall(r"\d+|[一二三四五六七八九十]+(?:分钟|块|个|次)", full_text))
+    vivid = len(re.findall(r"菜谱|练琴|作业|手机|橡皮|蛋糕|酸奶|洗澡|抱枕", full_text))
+    if concrete >= 2:
+        bonus += 6
+        pros.append("有具体细节")
+    elif concrete == 1 and vivid >= 1:
+        bonus += 4
+        pros.append("细节够具体")
+    elif vivid >= 2 and not cons:
+        bonus += 2
+
+    if not cons and bonus > 0:
+        pros.append("笑点有生活颗粒")
+
+    return bonus, pros, cons
 
 
 def score_daily_story(
@@ -318,7 +343,7 @@ def score_daily_story(
     评分模型：
     - 基础分 40（及格线以下起步，靠质量拉分）
     - 结构项只扣不加（合规是义务，不是加分项）
-    - 质量项（推进层数、收束类型、绕圈）决定最终分数
+    - 质量项（推进层数、收束类型、绕圈、好笑感）决定最终分数
     """
     if not isinstance(story, dict):
         return {
@@ -351,6 +376,8 @@ def score_daily_story(
         cons.append("缺 conflict_core")
 
     explain = str(story.get("punchline_explain") or "")
+    profile = resolve_quality_profile(story)
+
     if not explain or not any(m in explain for m in _PUNCHLINE_TYPE_MARKERS):
         score -= 10
         cons.append("笑点解析缺类型")
@@ -365,19 +392,20 @@ def score_daily_story(
         1 for d in dialogue
         if isinstance(d, dict) and str(d.get("speaker") or "").strip() == "妈妈"
     )
-    if mom_n >= 3:
-        score -= 10
+    if mom_n >= profile.mom_lines_penalty_at:
+        score -= profile.mom_lines_penalty
         cons.append(f"妈妈台词偏多（{mom_n}句）")
 
-    for pat in _MOM_JUDGE_PATTERNS:
-        if any(
-            pat in str(d.get("line") or "")
-            for d in dialogue
-            if isinstance(d, dict) and d.get("speaker") == "妈妈"
-        ):
-            score -= 25
-            cons.append(f"妈妈裁判式收场（{pat}）")
-            break
+    if profile.penalize_mom_judge:
+        for pat in _MOM_JUDGE_PATTERNS:
+            if any(
+                pat in str(d.get("line") or "")
+                for d in dialogue
+                if isinstance(d, dict) and d.get("speaker") == "妈妈"
+            ):
+                score -= 25
+                cons.append(f"妈妈裁判式收场（{pat}）")
+                break
 
     if _has_consecutive_sibling(dialogue):
         score -= 15
@@ -385,21 +413,21 @@ def score_daily_story(
 
     # ── 收束硬伤 ──
     weak_hit = False
-    if any(m in tail2 for m in _WEAK_END_WAIT_MOM):
+    if profile.penalize_wait_mom_end and any(m in tail2 for m in _WEAK_END_WAIT_MOM):
         score -= 25
         cons.append("收束甩给妈妈")
         weak_hit = True
-    if any(m in tail2 for m in _WEAK_END_SPLIT):
+    if profile.penalize_split_end and any(m in tail2 for m in _WEAK_END_SPLIT):
         score -= 20
         cons.append("收束偏和解")
         weak_hit = True
-    if any(m in last for m in _WEAK_END_STUBBORN):
+    if profile.penalize_stubborn_end and any(m in last for m in _WEAK_END_STUBBORN):
         score -= 15
         cons.append("耍赖软收")
         weak_hit = True
 
     limp = any(m in last for m in _LIMP_SOFT_CLOSE_MARKERS)
-    punched = any(m in prev2 for m in _PUNCH_BEFORE_SOFT_MARKERS) or any(
+    punched = any(m in prev2 for m in profile.punch_before_soft_markers) or any(
         m in prev2 or m in last for m in _STRONG_END_MARKERS
     )
     if limp and not punched:
@@ -407,14 +435,16 @@ def score_daily_story(
         cons.append("无破功软收")
         weak_hit = True
     elif limp and punched:
-        score += 10
+        score += 7
         pros.append("先破功再软收")
     elif any(m in last for m in _STRONG_END_MARKERS):
         score += 14
         pros.append("末句有破功落点")
 
+    layer_patterns = profile.layer_patterns()
+
     # ── 核心质量维度 ──
-    esc_bonus, esc_details = _score_escalation(lines)
+    esc_bonus, esc_details = _score_escalation(lines, layer_patterns=layer_patterns)
     score += esc_bonus
     if esc_bonus > 0:
         pros.extend(esc_details)
@@ -428,16 +458,37 @@ def score_daily_story(
     elif red_bonus > 0:
         pros.extend(red_details)
 
-    punch_bonus, punch_details = _score_punchline_quality(lines, speakers, prev2, last)
+    punch_bonus, punch_details = score_punchline_for_profile(
+        profile, lines, speakers, prev2, last,
+    )
+    humor_bonus, humor_pros, humor_cons = _score_humor(
+        lines,
+        type_code=profile.code,
+    )
+    if humor_cons:
+        grounded = not any("无出处" in c or "未埋旧账" in c for c in humor_cons)
+        if not grounded and punch_bonus > 8:
+            punch_bonus = 8
+            punch_details = [
+                d for d in punch_details
+                if "破功" in d or "闭环" in d
+            ][:2]
+
     score += punch_bonus
     if punch_bonus > 0:
         pros.extend(punch_details)
     elif punch_bonus < 0:
         cons.extend(punch_details)
 
+    score += humor_bonus
+    pros.extend(humor_pros)
+    cons.extend(humor_cons)
+
     score = max(0, min(100, score))
     grade = _grade_from_score(score)
-    summary = _build_summary(pros, cons, grade)
+    summary = _build_summary(
+        pros, cons, grade, profile.summary_highlight_tokens,
+    )
 
     return {
         "grade": grade,
@@ -447,14 +498,38 @@ def score_daily_story(
     }
 
 
-def _build_summary(pros: list[str], cons: list[str], grade: str) -> str:
-    highlights = [p for p in pros if "反转" in p or "回旋镖" in p or "推进" in p or "破功" in p]
+def _build_summary(
+    pros: list[str],
+    cons: list[str],
+    grade: str,
+    highlight_tokens: tuple[str, ...],
+) -> str:
+    highlights = [
+        p for p in pros
+        if any(k in p for k in highlight_tokens)
+    ]
 
     if cons:
-        severe = any("甩给妈妈" in c or "和解" in c or "无破功" in c or "跑题" in c for c in cons)
+        severe = any(
+            w in c
+            for c in cons
+            for w in (
+                "甩给妈妈", "和解", "无破功", "跑题",
+                "无出处", "未埋旧账", "模板", "拖沓",
+            )
+        )
         if severe or grade == "偏弱":
             primary = next(
-                (c for c in cons if "收束" in c or "软收" in c or "绕圈" in c or "跑题" in c or "推进" in c),
+                (
+                    c for c in cons
+                    if any(
+                        k in c
+                        for k in (
+                            "收束", "软收", "绕圈", "跑题", "推进",
+                            "出处", "模板", "拖沓", "公平",
+                        )
+                    )
+                ),
                 cons[0],
             )
             summary = primary
@@ -486,51 +561,40 @@ def attach_daily_story_quality(
     return story
 
 
-def build_quality_revision_hints(quality: dict) -> str:
+def build_quality_revision_hints(
+    quality: dict,
+    *,
+    story: dict | None = None,
+) -> str:
     """根据质量评分结果，生成针对性修订指令。
 
     返回空字符串表示无需修订（已达目标）。
     """
     reasons = quality.get("reasons", [])
     pros = [r for r in reasons if not any(
-        r.startswith(w) for w in ("缺", "存", "妈", "无破功", "收束偏", "耍赖", "跑题")
+        r.startswith(w) for w in (
+            "缺", "存", "妈", "无破功", "收束偏", "耍赖", "跑题",
+            "收束引", "引先例收", "追问闭", "偏C", "模板", "拖沓",
+        )
     )]
     cons = [r for r in reasons if r not in pros]
 
     hints: list[str] = []
+    profile = resolve_quality_profile(story)
+    esc_type_hint, close_type_hint = profile.revision_hints()
 
     # 冲突层次不足
     layer_info = next((r for r in pros if "推进" in r), "")
-    if not layer_info or "2层" in layer_info:
-        hints.append(
-            "【冲突升级】当前层次偏少。在中间插入 2-4 句新维度交锋："
-            "先引入第三方规则（如'妈妈说过的'/'上次你也是这样'），"
-            "再让一方用字面逻辑反推对方规则，形成自相矛盾。"
-        )
+    if not layer_info or "2层" in layer_info or "偏少" in layer_info:
+        hints.append(esc_type_hint)
     elif "3层" in layer_info:
-        hints.append(
-            "【冲突升级】再加 1 层推进。在后半段引入一个对方没料到的新证据"
-            "（如'上次你明明说过'/'妈妈定的规矩是'），"
-            "用事实戳穿对方当前的规则。"
-        )
+        hints.append(esc_type_hint)
 
     # 收束质量
-    has_boomerang = any("回旋镖" in r for r in pros)
-    has_revelation = any("反转" in r for r in pros)
-    has_punch_ending = any("破功" in r for r in pros)
+    has_punch_ending = closing_satisfied(pros, profile)
 
-    if not has_boomerang and not has_revelation:
-        hints.append(
-            "【收束升级】当前收束缺乏反转感。把倒数第3-4句改为回旋镖模式："
-            "用对方刚说的规则原路反问ta（如'你自己说切的人先选，那你切的你选，我拿大的就行了'），"
-            "让对方陷入自相矛盾，末句ta只能嘴硬认栽。"
-            "末句必须由被戳穿方说话（'……哼/……行/……随便'开头）。"
-        )
-    elif not has_punch_ending:
-        hints.append(
-            "【收束落点】末句缺乏破功感。确保末句说话人是被戳穿的一方，"
-            "用'……行'/'……算了'/'……随便你'/'……哼'开头，带出嘴硬但认栽的语气。"
-        )
+    if not has_punch_ending:
+        hints.append(close_type_hint)
 
     # 绕圈
     redundancy = next((c for c in cons if "绕圈" in c), None)
@@ -538,6 +602,20 @@ def build_quality_revision_hints(quality: dict) -> str:
         hints.append(
             f"【去绕圈】{redundancy}。删掉重复的回合，同一逻辑点最多 2 句讲完。"
             "删掉后若字数不够，在别处插入新维度的交锋补上。"
+        )
+
+    humor_issue = next(
+        (
+            c for c in cons
+            if any(k in c for k in ("无出处", "未埋旧账", "模板", "拖沓", "公平"))
+        ),
+        None,
+    )
+    if humor_issue:
+        hints.append(
+            f"【好笑】{humor_issue}。"
+            "收束只能引用前文真实说过的话；中段用一件具体小事升级，"
+            "勿复读同一句式或套「哪里不一样」模板。"
         )
 
     # 结构性缺失

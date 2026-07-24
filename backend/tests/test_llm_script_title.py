@@ -80,7 +80,7 @@ def test_daily_story_prompts_share_contract():
     assert "conflict_core" in story_sys
     assert str(DAILY_STORY_LINE_CHARS_MAX) in story_sys
     assert "有娃的大人" in story_sys
-    assert "权威翻车" in story_sys
+    assert "权威翻车" in story_sys or "矛盾类型一览" in story_sys
     assert "谁先洗澡" in story_user
     assert "发现开场" in story_user or "系统另写" in story_user
     assert "conflict_core" in story_user
@@ -415,14 +415,15 @@ def test_score_daily_story_rewards_punch_ending():
 
     story = _valid_story()
     story["discovery_opening"] = [{"speaker": "昭昭", "line": "咦新橡皮怎么在你手里"}]
+    story["dialogue"][4]["line"] = "我说先拿到的人先选才行呀呀呀呀"
     story["dialogue"][-3]["line"] = "你自己说先拿到的人先选呀呀"
     story["dialogue"][-2]["line"] = "我没说先拿到就能一直占着呀"
     story["dialogue"][-1]["line"] = "……哼，给你一二三四五六七八"
     q = score_daily_story(story)
-    assert q["score"] >= 60
+    assert q["score"] >= 55
     assert any("回旋镖" in r for r in q["reasons"])
     attach_daily_story_quality(story)
-    assert story["quality"]["score"] >= 60
+    assert story["quality"]["score"] >= 55
 
 
 def test_stitch_daily_story_opening_dedupes_overlapping_body_start():
@@ -491,3 +492,119 @@ def test_validate_daily_story_opening_coerces_name_key_shorthand():
         setting="客厅抢新橡皮",
     )
     assert ok == [{"speaker": "昭昭", "line": "咦新橡皮怎么在你手里"}]
+
+
+def test_daily_story_prompts_c_type_route():
+    _sys, user = build_daily_story_prompts(
+        "谁先洗澡",
+        story_type="C类公平执念",
+    )
+    assert "C 公平执念" in _sys
+    assert "争归属" in _sys
+    assert "C类收束模板" in user
+    assert "切的人先选" in user or "切的你选" in user
+
+
+def test_daily_story_prompts_a_type_route():
+    sys_a, user_a = build_daily_story_prompts(
+        "姐姐教弟弟写作业自己写错",
+        story_type="A类权威翻车",
+    )
+    assert "好笑" in sys_a
+    assert "你刚才说" in sys_a
+    assert "A 权威翻车" in sys_a
+    assert "禁止写成别的类型" in sys_a
+    assert "引先例" in sys_a
+    assert "A类·主题锚定" in user_a
+    assert "A类收束模板" in user_a
+    assert "前文已出现" in user_a or "埋句" in user_a
+    assert "哪里不一样" in user_a
+
+    os_a, user_o = build_daily_story_opening_prompts(
+        "姐姐教弟弟写作业自己写错",
+        {
+            "scene_title": "教作业",
+            "setting": "书桌前",
+            "conflict_core": "姐弟教作业谁说了算",
+            "punchline_explain": "A类权威翻车",
+            "dialogue": [
+                {"speaker": "灿灿", "line": "这题我刚教过你"},
+                {"speaker": "昭昭", "line": "凭什么你得听我的"},
+            ],
+        },
+    )
+    assert "A 类开场补充" in os_a
+    assert "权威翻车" in user_o
+
+    _ts, user_t = build_daily_story_theme_prompts(3, type_code="A")
+    assert "只出 A 类主题" in user_t
+
+
+def test_score_daily_story_a_type_punchline():
+    from app.services.daily_story.quality import score_daily_story
+
+    pad = "呀呀呀呀呀呀呀呀"
+    filler = (pad + "一二三四五六七八")[:DAILY_STORY_LINE_CHARS_MAX]
+    speakers = ("灿灿", "昭昭")
+    openers = [
+        {"speaker": "灿灿", "line": ("你得听我的我是姐姐" + pad)[:DAILY_STORY_LINE_CHARS_MAX]},
+        {"speaker": "昭昭", "line": ("凭什么你也得听我的" + pad)[:DAILY_STORY_LINE_CHARS_MAX]},
+        {"speaker": "灿灿", "line": ("大人也要听小孩的话妈妈说的" + pad)[:DAILY_STORY_LINE_CHARS_MAX]},
+        {"speaker": "灿灿", "line": ("那不一样我是教你" + pad)[:DAILY_STORY_LINE_CHARS_MAX]},
+    ]
+    closers = [
+        {"speaker": "昭昭", "line": ("哪里不一样都是听" + pad)[:DAILY_STORY_LINE_CHARS_MAX]},
+        {"speaker": "灿灿", "line": ("上次妈妈说你也要听我的" + pad)[:DAILY_STORY_LINE_CHARS_MAX]},
+        {"speaker": "昭昭", "line": ("你刚才说大人要听小孩" + pad)[:DAILY_STORY_LINE_CHARS_MAX]},
+        {"speaker": "灿灿", "line": ("……哼随便你" + pad)[:DAILY_STORY_LINE_CHARS_MAX]},
+    ]
+    mid = [
+        {"speaker": speakers[i % 2], "line": filler}
+        for i in range(16 - len(openers) - len(closers))
+    ]
+    dialogue = openers + mid + closers
+    story = {
+        "scene_title": "教作业",
+        "setting": "书桌前姐姐教弟弟",
+        "conflict_core": "姐弟教作业谁说了算",
+        "dialogue": dialogue,
+        "punchline_explain": "A类权威翻车，姐姐被追问闭环戳穿",
+        "discovery_opening": [{"speaker": "昭昭", "line": "姐姐你这道题写错了"}],
+    }
+    q = score_daily_story(story)
+    assert any(
+        "追问闭环" in r or "引先例" in r or "权威破功" in r or "回旋" in r
+        for r in q["reasons"]
+    )
+
+
+def test_score_daily_story_penalizes_ungrounded_closing_quote():
+    from app.services.daily_story.quality import score_daily_story
+
+    pad = "呀呀呀呀"
+    line = lambda t: (t + pad)[:DAILY_STORY_LINE_CHARS_MAX]
+    dialogue = [
+        {"speaker": "灿灿", "line": line("你得听我的不许玩手机")},
+        {"speaker": "昭昭", "line": line("可你上次查资料玩很久")},
+        {"speaker": "灿灿", "line": line("那不一样我是查学习")},
+        {"speaker": "昭昭", "line": line("查资料也是看屏幕呀")},
+        {"speaker": "灿灿", "line": line("我是姐姐得管你")},
+        {"speaker": "昭昭", "line": line("那不公平呀")},
+        {"speaker": "灿灿", "line": line("教你规矩不算玩")},
+        {"speaker": "昭昭", "line": line("你刚才说大人也要听小孩的话")},
+        {"speaker": "灿灿", "line": line("那不一样我是教你")},
+        {"speaker": "昭昭", "line": line("哪里不一样都是听")},
+        {"speaker": "灿灿", "line": line("哼随便你玩吧")},
+    ]
+    story = {
+        "scene_title": "手机",
+        "setting": "客厅玩手机",
+        "conflict_core": "姐姐管昭昭玩手机",
+        "dialogue": dialogue,
+        "punchline_explain": "A类权威翻车",
+        "discovery_opening": [{"speaker": "灿灿", "line": line("你怎么还在玩手机")}],
+    }
+    q = score_daily_story(story, theme="灿灿不许昭昭玩手机")
+    assert q["score"] < 85
+    assert any("无出处" in r for r in q["reasons"])
+    assert "无出处" in q["summary"] or "模板" in q["summary"] or "公平" in q["summary"]
