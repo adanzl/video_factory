@@ -1016,8 +1016,79 @@ def validate_daily_story_json(
     # setting 妈妈动作一致性
     _append_setting_mom_consistency_errors(story, errors)
 
+    _append_homework_fact_errors(story, errors)
+
     if errors:
         raise ValueError("daily_story 校验失败: " + "; ".join(errors))
+
+
+def _append_homework_fact_errors(story: dict, errors: list[str]) -> None:
+    """教作业类：首句权责与口算事实勿自相矛盾。"""
+    setting = str(story.get("setting") or "")
+    core = str(story.get("conflict_core") or "")
+    punch = str(story.get("punchline_explain") or "")
+    blob = setting + core + punch
+    if not re.search(r"作业|算术|算数|口算|竖式|算题", blob):
+        return
+
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list) or not dialogue:
+        return
+
+    first = dialogue[0]
+    if isinstance(first, dict):
+        sp = str(first.get("speaker") or "").strip()
+        line0 = str(first.get("line") or "")
+        if sp == "昭昭" and re.search(r"也算错|也写错|你也错", line0):
+            errors.append(
+                "教作业：正文首句应由灿灿查/教，禁止昭昭无前提「也算错了」",
+            )
+        if sp == "昭昭" and "也" in line0[:10] and "姐" in line0:
+            errors.append(
+                "教作业：首句「也」缺前文，改灿灿先挑错",
+            )
+
+    lines_text = [
+        str(d.get("line") or "")
+        for d in dialogue
+        if isinstance(d, dict)
+    ]
+    full = "".join(lines_text)
+    sum_m = re.search(
+        r"(\d{1,3})\s*[加＋]\s*(\d{1,3})",
+        full,
+    )
+    if not sum_m:
+        return
+    a, b = int(sum_m.group(1)), int(sum_m.group(2))
+    correct = a + b
+    correct_s = str(correct)
+
+    # 灿灿用正确得数批弟弟错答案，却标成「姐姐算错」
+    if (
+        correct_s in full
+        and re.search(r"算错|写错|教.*错", punch)
+        and any(
+            sp == "灿灿"
+            and correct_s in ln
+            and str(a) in ln
+            and str(b) in ln
+            for sp, ln in (
+                (str(d.get("speaker") or "").strip(), str(d.get("line") or ""))
+                for d in dialogue
+                if isinstance(d, dict)
+            )
+        )
+    ):
+        wrong_claim = re.search(
+            rf"{correct_s}.*错|错.*{correct_s}",
+            full,
+        )
+        if not wrong_claim:
+            errors.append(
+                f"教作业事实：{a}+{b}={correct}为正确得数，"
+                "灿灿若用该数批弟弟则不算姐姐算错，须改灿灿说错的得数",
+            )
 
 
 def _coerce_opening_item(item: object, *, index: int) -> tuple[dict | None, str | None]:
