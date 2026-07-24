@@ -132,7 +132,7 @@ const loading = ref(false);
 const statusFilter = ref<string>();
 const pipelineFilter = ref("");
 const page = ref(1);
-const pageSize = ref(15);
+const pageSize = ref(parseInt(localStorage.getItem("jobsPageSize") || "15", 10));
 const total = ref(0);
 const deletingId = ref<number>();
 const showCreateJobDialog = ref(false);
@@ -202,6 +202,7 @@ const onFilterChange = () => {
 
 const onPageSizeChange = () => {
   page.value = 1;
+  localStorage.setItem("jobsPageSize", String(pageSize.value));
   fetchJobs();
 };
 

@@ -103,7 +103,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from "vue";
+import { ref, onMounted, onUnmounted, onActivated, onDeactivated } from "vue";
 import { useRouter } from "vue-router";
 import { Refresh } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
@@ -131,7 +131,7 @@ const currentStory = ref<DailyStoryRecord | null>(null);
 const showGenerateDialog = ref(false);
 
 const page = ref(1);
-const pageSize = ref(15);
+const pageSize = ref(parseInt(localStorage.getItem("dailyStoryPageSize") || "15", 10));
 const total = ref(0);
 
 const POLL_INTERVAL_MS = 3000;
@@ -203,6 +203,7 @@ function onDetailClosed() {
 function onPageSizeChange() {
   page.value = 1;
   selectedIds.value = [];
+  localStorage.setItem("dailyStoryPageSize", String(pageSize.value));
   fetchStories();
 }
 
@@ -258,5 +259,9 @@ function calcWordCount(dialogue?: DialogueLine[]): number {
 }
 
 onMounted(fetchStories);
+onActivated(() => {
+  startPollingIfNeeded();
+});
+onDeactivated(stopPolling);
 onUnmounted(stopPolling);
 </script>

@@ -250,19 +250,27 @@ def _score_redundancy(lines: list[str]) -> tuple[int, list[str]]:
 
 
 def _fragment_grounded_in_text(fragment: str, haystack: str, *, min_run: int = 5) -> bool:
-    frag = re.sub(r"[的话呢呀嘛吧啊…\s]", "", fragment)
+    frag = re.sub(r"[的话呢呀嘛吧啊…\s「」『』\"'‘’：:]", "", fragment)
+    hay = re.sub(r"[\s「」『』\"'‘’]", "", haystack)
     if len(frag) < min_run:
         min_run = max(3, len(frag))
     if len(frag) < 3:
         return True
+    # ≥6 字引文：须连续命中，禁止靠 2 字片拼出「假出处」
+    if len(frag) >= 6:
+        run = min(6, len(frag))
+        for i in range(len(frag) - run + 1):
+            if frag[i:i + run] in hay:
+                return True
+        return False
     run = min(min_run, len(frag))
     for i in range(len(frag) - run + 1):
-        if frag[i:i + run] in haystack:
+        if frag[i:i + run] in hay:
             return True
-    # 同义改写：取 2 字片，过半命中即视为前文提过
+    # 短引文才允许同义改写：2 字片过半命中
     pieces = [frag[i:i + 2] for i in range(0, len(frag) - 1, 2)]
     if len(pieces) >= 3:
-        hit = sum(1 for p in pieces if p in haystack)
+        hit = sum(1 for p in pieces if p in hay)
         if hit >= (len(pieces) * 2 + 2) // 3:
             return True
     return False
@@ -283,6 +291,7 @@ def _collect_humor_issues(
     lines: list[str],
     *,
     type_code: str,
+    speakers: list[str] | None = None,
 ) -> list[str]:
     """好笑维度的硬伤（不直接改结构分，用于压低好笑分）。"""
     cons: list[str] = []
@@ -293,12 +302,22 @@ def _collect_humor_issues(
     tail4 = lines[-4:] if len(lines) >= 4 else lines
     body_text = "".join(body)
     tail_text = "".join(tail4)
-    full_text = "".join(lines)
+    # A 类埋句须出灿灿之口；禁止昭昭自造「特殊情况可以」再假装引用
+    quote_haystack = body_text
+    if type_code == "A" and speakers and len(speakers) == len(lines):
+        body_n = len(body)
+        cancan = "".join(
+            lines[i]
+            for i in range(body_n)
+            if speakers[i] == "灿灿"
+        )
+        if cancan.strip():
+            quote_haystack = cancan
 
     for line in tail4:
         for m in _RE_DIRECT_QUOTE.finditer(line):
             frag = m.group(1).strip()
-            if not _fragment_grounded_in_text(frag, body_text):
+            if not _fragment_grounded_in_text(frag, quote_haystack):
                 cons.append(f"收束引话无出处（「{frag[:12]}」）")
                 return cons
 
@@ -503,7 +522,9 @@ def score_daily_story(
     punch_bonus, punch_details = score_punchline_for_profile(
         profile, lines, speakers, prev2, last,
     )
-    humor_issues = _collect_humor_issues(lines, type_code=profile.code)
+    humor_issues = _collect_humor_issues(
+        lines, type_code=profile.code, speakers=speakers,
+    )
     if humor_issues:
         grounded = not any("无出处" in c for c in humor_issues)
         if not grounded and punch_bonus > 8:

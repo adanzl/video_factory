@@ -671,3 +671,77 @@ def test_score_daily_story_structure_capped_without_humor():
     }
     q = score_daily_story(story)
     assert q["score"] <= 80
+
+
+def test_validate_rejects_brush_duration_inconsistency():
+    from app.services.daily_story.prompts import validate_daily_story_json
+
+    story = {
+        "scene_title": "刷牙快慢之争",
+        "setting": "卫生间门口，昭昭刚刷完牙，灿灿拿着计时器拦住他。",
+        "conflict_core": "灿灿嫌昭昭刷牙太快，立规矩却自己犯规",
+        "punchline_explain": "A类权威翻车，时长前后不一",
+        "discovery_opening": [
+            {"speaker": "昭昭", "line": "姐，你计时器上自己才刷了半分钟！"},
+        ],
+        "dialogue": [
+            {"speaker": "昭昭", "line": "姐，你计时器上自己才刷了半分钟！"},
+            {"speaker": "灿灿", "line": "你刷牙才一分钟，重刷！"},
+            {"speaker": "昭昭", "line": "我刷干净了，为什么要重刷？"},
+            {"speaker": "灿灿", "line": "妈妈说至少两分钟，你太快了。"},
+            {"speaker": "昭昭", "line": "我用了计时器，正好两分钟。"},
+            {"speaker": "灿灿", "line": "计时器肯定被你动了手脚。"},
+            {"speaker": "昭昭", "line": "可你自己刷牙也很快，上次才一分半。"},
+            {"speaker": "灿灿", "line": "我那次是特殊情况！现在听我的。"},
+            {"speaker": "昭昭", "line": "你刚才说特殊情况可以，那我也是。"},
+            {"speaker": "灿灿", "line": "那不一样，我是赶时间。"},
+            {"speaker": "昭昭", "line": "哪里不一样？都是刷牙快。"},
+            {"speaker": "灿灿", "line": "哼，你爱刷不刷。"},
+        ],
+    }
+    with pytest.raises(ValueError, match="时长"):
+        validate_daily_story_json(story, phase="full")
+
+
+def test_validate_a_opening_rejects_spoiler_hammer():
+    from app.services.daily_story.prompts import validate_daily_story_opening
+
+    with pytest.raises(ValueError, match="揭穿"):
+        validate_daily_story_opening(
+            [{"speaker": "昭昭", "line": "姐你计时器上自己才刷了半分钟"}],
+            conflict_core="灿灿嫌昭昭刷牙太快立规矩却自己犯规",
+            setting="卫生间刷牙计时",
+            type_code="A",
+        )
+
+
+def test_score_a_quote_must_come_from_cancan():
+    from app.services.daily_story.quality import score_daily_story
+    from app.services.daily_story.prompts import DAILY_STORY_LINE_CHARS_MAX
+
+    pad = "呀呀呀呀"
+    line = lambda t: (t + pad)[:DAILY_STORY_LINE_CHARS_MAX]
+    dialogue = [
+        {"speaker": "灿灿", "line": line("你刷牙才一分钟重刷")},
+        {"speaker": "昭昭", "line": line("我刷够两分钟了呀")},
+        {"speaker": "灿灿", "line": line("我是姐姐我说了算")},
+        {"speaker": "昭昭", "line": line("那你自己也刷很快")},
+        {"speaker": "灿灿", "line": line("我那次是特殊情况")},
+        {"speaker": "昭昭", "line": line("为什么特殊情况可以我不可以")},
+        {"speaker": "灿灿", "line": line("因为我是姐姐呀")},
+        {"speaker": "昭昭", "line": line("你刚才说特殊情况可以那我也是")},
+        {"speaker": "灿灿", "line": line("那不一样我赶时间")},
+        {"speaker": "昭昭", "line": line("哪里不一样都是刷牙快")},
+        {"speaker": "灿灿", "line": line("哼你爱刷不刷")},
+    ]
+    story = {
+        "scene_title": "刷牙",
+        "setting": "卫生间刷牙",
+        "conflict_core": "姐姐管弟弟刷牙太快",
+        "dialogue": dialogue,
+        "punchline_explain": "A类权威翻车",
+        "discovery_opening": [{"speaker": "灿灿", "line": line("你怎么刷这么快")}],
+    }
+    q = score_daily_story(story, theme="姐姐嫌弟弟刷牙太快")
+    assert any("无出处" in r for r in q["reasons"])
+    assert q["score"] < 85

@@ -40,14 +40,26 @@ export async function downloadMediaFile(filePath: string, filename?: string): Pr
   // 追加时间戳防止后端缓存
   const separator = url.includes("?") ? "&" : "?";
   const cacheUrl = `${url}${separator}_=${Date.now()}`;
-  const response = await api.get<Blob>(cacheUrl, { responseType: "blob" });
-  const name = filename ?? filePath.trim().replace(/\\/g, "/").split("/").pop() ?? "download";
-  const blobUrl = URL.createObjectURL(response.data);
+  const response = await api.get<Blob>(cacheUrl, {
+    responseType: "blob",
+    // 成片可能较大，避免默认 30s 超时
+    timeout: 0,
+  });
+  const fallbackName = filePath.trim().replace(/\\/g, "/").split("/").pop() ?? "download";
+  const name = (filename?.trim() || fallbackName).replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_");
+  // 强制 octet-stream，避免浏览器对 mp4/jpeg 忽略 download 文件名
+  const source = response.data instanceof Blob ? response.data : new Blob([response.data]);
+  const blob = new Blob([source], { type: "application/octet-stream" });
+  const blobUrl = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = blobUrl;
   anchor.download = name;
+  anchor.rel = "noopener";
+  anchor.style.display = "none";
+  document.body.appendChild(anchor);
   anchor.click();
-  URL.revokeObjectURL(blobUrl);
+  document.body.removeChild(anchor);
+  window.setTimeout(() => URL.revokeObjectURL(blobUrl), 10_000);
 }
 
 export { getMediaFileUrl, getMediaPicViewUrl, MEDIA_CROSS_ORIGIN } from "@/utils/media";
