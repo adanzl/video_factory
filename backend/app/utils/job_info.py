@@ -1,50 +1,26 @@
 """video_job.info JSON 字段解析与合并。"""
-
 from __future__ import annotations
-
 import json
 from pathlib import Path
 from typing import Any
-
-from app.utils.media import (
-    DEFAULT_HISTORY_VIDEO_MINUTES,
-    DEFAULT_SPEECH_CHARS_PER_SEC,
-    DEFAULT_STANDARD_VIDEO_MINUTES,
-    default_narration_target_words,
-    narration_target_for_minutes,
-)
-
-ORIENTATION_AUTO = "auto"
-ORIENTATION_PORTRAIT = "portrait"
-ORIENTATION_LANDSCAPE = "landscape"
-
-CONTENT_STYLE_SCIENCE_CHILD = "science_child"
-CONTENT_STYLE_TECH_SCIENCE = "tech_science"
-CONTENT_STYLE_LIFE_EXPERIENCE = "life_experience"
-CONTENT_STYLE_HISTORICAL_MYSTERY = "history_mystery"
-CONTENT_STYLE_DAILY_STORY = "daily_story"
-
-# 日常对话默认语速（儿童音色仍略慢于成人口播，但略提速减少拖沓）
+from app.utils.media import DEFAULT_HISTORY_VIDEO_MINUTES, DEFAULT_SPEECH_CHARS_PER_SEC, DEFAULT_STANDARD_VIDEO_MINUTES, default_narration_target_words, narration_target_for_minutes
+from app.repositories.sql_exec import atomic
+ORIENTATION_AUTO = 'auto'
+ORIENTATION_PORTRAIT = 'portrait'
+ORIENTATION_LANDSCAPE = 'landscape'
+CONTENT_STYLE_SCIENCE_CHILD = 'science_child'
+CONTENT_STYLE_TECH_SCIENCE = 'tech_science'
+CONTENT_STYLE_LIFE_EXPERIENCE = 'life_experience'
+CONTENT_STYLE_HISTORICAL_MYSTERY = 'history_mystery'
+CONTENT_STYLE_DAILY_STORY = 'daily_story'
 DEFAULT_DAILY_STORY_SPEECH_CHARS_PER_SEC = 3.6
-# 日常对话默认句间隔（秒）；写入 info.tts.speaker_configs
 DEFAULT_DAILY_STORY_PHRASE_GAP_SEC = 0.2
-
-_VALID_CONTENT_STYLES = frozenset(
-    {
-        CONTENT_STYLE_SCIENCE_CHILD,
-        CONTENT_STYLE_TECH_SCIENCE,
-        CONTENT_STYLE_LIFE_EXPERIENCE,
-        CONTENT_STYLE_HISTORICAL_MYSTERY,
-        CONTENT_STYLE_DAILY_STORY,
-    }
-)
-
-_VALID_IMAGE_PROVIDERS = frozenset({"z_image_t2i", "wan_t2i", "sd15_t2i", "agnes_t2i"})
-_VALID_VIDEO_PROVIDERS = frozenset({"ffmpeg", "wan_i2v", "agnes_i2v"})
-INTRO_CATEGORY_SCIENCE = "百科"
-INTRO_CATEGORY_HISTORY = "历史悬案"
+_VALID_CONTENT_STYLES = frozenset({CONTENT_STYLE_SCIENCE_CHILD, CONTENT_STYLE_TECH_SCIENCE, CONTENT_STYLE_LIFE_EXPERIENCE, CONTENT_STYLE_HISTORICAL_MYSTERY, CONTENT_STYLE_DAILY_STORY})
+_VALID_IMAGE_PROVIDERS = frozenset({'z_image_t2i', 'wan_t2i', 'sd15_t2i', 'agnes_t2i'})
+_VALID_VIDEO_PROVIDERS = frozenset({'ffmpeg', 'wan_i2v', 'agnes_i2v'})
+INTRO_CATEGORY_SCIENCE = '百科'
+INTRO_CATEGORY_HISTORY = '历史悬案'
 _VALID_INTRO_CATEGORIES = frozenset({INTRO_CATEGORY_SCIENCE, INTRO_CATEGORY_HISTORY})
-
 
 def parse_job_info(raw: str | dict | None) -> dict[str, Any]:
     if raw is None:
@@ -62,30 +38,27 @@ def parse_job_info(raw: str | dict | None) -> dict[str, Any]:
         return {}
     return dict(parsed) if isinstance(parsed, dict) else {}
 
-
 def normalize_orientation(value: str | None) -> str | None:
     """将 orientation 规范为 auto / portrait / landscape。"""
     if value is None:
         return None
     normalized = value.strip().lower()
-    if not normalized or normalized in {"auto", "自动", "default"}:
+    if not normalized or normalized in {'auto', '自动', 'default'}:
         return ORIENTATION_AUTO
-    if normalized in {ORIENTATION_PORTRAIT, "竖屏", "vertical", "9:16", "9x16"}:
+    if normalized in {ORIENTATION_PORTRAIT, '竖屏', 'vertical', '9:16', '9x16'}:
         return ORIENTATION_PORTRAIT
-    if normalized in {ORIENTATION_LANDSCAPE, "横屏", "horizontal", "16:9", "16x9"}:
+    if normalized in {ORIENTATION_LANDSCAPE, '横屏', 'horizontal', '16:9', '16x9'}:
         return ORIENTATION_LANDSCAPE
     return None
-
 
 def orientation_from_dimensions(width: int, height: int) -> str:
     if width > height:
         return ORIENTATION_LANDSCAPE
     return ORIENTATION_PORTRAIT
 
-
 def orientation_for_resolve(job: dict) -> str | None:
     """读取 job.info.orientation，供片头尺寸解析（auto 返回 None）。"""
-    raw = parse_job_info(job.get("info")).get("orientation")
+    raw = parse_job_info(job.get('info')).get('orientation')
     if not isinstance(raw, str):
         return None
     normalized = normalize_orientation(raw)
@@ -93,53 +66,32 @@ def orientation_for_resolve(job: dict) -> str | None:
         return normalized
     return None
 
-
 def default_orientation_for_pipeline(pipeline: str | None) -> str:
-    if (pipeline or "standard").strip() == "material":
+    if (pipeline or 'standard').strip() == 'material':
         return ORIENTATION_AUTO
     return ORIENTATION_PORTRAIT
-
 
 def normalize_content_style(value: str | None) -> str | None:
     if value is None:
         return None
     normalized = value.strip().lower()
-    aliases = {
-        "science": CONTENT_STYLE_SCIENCE_CHILD,
-        "科普": CONTENT_STYLE_SCIENCE_CHILD,
-        "童趣科普": CONTENT_STYLE_SCIENCE_CHILD,
-        "life": CONTENT_STYLE_LIFE_EXPERIENCE,
-        "生活": CONTENT_STYLE_LIFE_EXPERIENCE,
-        "生活经验": CONTENT_STYLE_LIFE_EXPERIENCE,
-        "vlog": CONTENT_STYLE_LIFE_EXPERIENCE,
-        "mystery": CONTENT_STYLE_HISTORICAL_MYSTERY,
-        "历史悬案": CONTENT_STYLE_HISTORICAL_MYSTERY,
-        "history": CONTENT_STYLE_HISTORICAL_MYSTERY,
-        "historical": CONTENT_STYLE_HISTORICAL_MYSTERY,
-        "tech": CONTENT_STYLE_TECH_SCIENCE,
-        "科技": CONTENT_STYLE_TECH_SCIENCE,
-        "数码": CONTENT_STYLE_TECH_SCIENCE,
-        "产业": CONTENT_STYLE_TECH_SCIENCE,
-    }
+    aliases = {'science': CONTENT_STYLE_SCIENCE_CHILD, '科普': CONTENT_STYLE_SCIENCE_CHILD, '童趣科普': CONTENT_STYLE_SCIENCE_CHILD, 'life': CONTENT_STYLE_LIFE_EXPERIENCE, '生活': CONTENT_STYLE_LIFE_EXPERIENCE, '生活经验': CONTENT_STYLE_LIFE_EXPERIENCE, 'vlog': CONTENT_STYLE_LIFE_EXPERIENCE, 'mystery': CONTENT_STYLE_HISTORICAL_MYSTERY, '历史悬案': CONTENT_STYLE_HISTORICAL_MYSTERY, 'history': CONTENT_STYLE_HISTORICAL_MYSTERY, 'historical': CONTENT_STYLE_HISTORICAL_MYSTERY, 'tech': CONTENT_STYLE_TECH_SCIENCE, '科技': CONTENT_STYLE_TECH_SCIENCE, '数码': CONTENT_STYLE_TECH_SCIENCE, '产业': CONTENT_STYLE_TECH_SCIENCE}
     if normalized in aliases:
         return aliases[normalized]
     if normalized in _VALID_CONTENT_STYLES:
         return normalized
     return None
 
-
 def content_style_from_job(job: dict) -> str:
-    info = parse_job_info(job.get("info"))
-    # daily_story 任务优先使用 daily_story 画风
-    if info.get("daily_story_id"):
+    info = parse_job_info(job.get('info'))
+    if info.get('daily_story_id'):
         return CONTENT_STYLE_DAILY_STORY
-    raw = info.get("content_style")
+    raw = info.get('content_style')
     if isinstance(raw, str):
         normalized = normalize_content_style(raw)
         if normalized:
             return normalized
     return CONTENT_STYLE_SCIENCE_CHILD
-
 
 def normalize_intro_category(value: str | None) -> str | None:
     if value is None:
@@ -147,33 +99,24 @@ def normalize_intro_category(value: str | None) -> str | None:
     normalized = value.strip()
     if normalized in _VALID_INTRO_CATEGORIES:
         return normalized
-    aliases = {
-        "science": INTRO_CATEGORY_SCIENCE,
-        "science_child": INTRO_CATEGORY_SCIENCE,
-        "history_mystery": INTRO_CATEGORY_HISTORY,
-        "mystery": INTRO_CATEGORY_HISTORY,
-    }
+    aliases = {'science': INTRO_CATEGORY_SCIENCE, 'science_child': INTRO_CATEGORY_SCIENCE, 'history_mystery': INTRO_CATEGORY_HISTORY, 'mystery': INTRO_CATEGORY_HISTORY}
     return aliases.get(normalized.lower())
-
 
 def default_intro_category_for_content_style(content_style: str) -> str:
     if content_style == CONTENT_STYLE_HISTORICAL_MYSTERY:
         return INTRO_CATEGORY_HISTORY
     return INTRO_CATEGORY_SCIENCE
 
-
 def intro_category_from_job(job: dict) -> str:
-    raw = parse_job_info(job.get("info")).get("intro_category")
+    raw = parse_job_info(job.get('info')).get('intro_category')
     if isinstance(raw, str):
         normalized = normalize_intro_category(raw)
         if normalized:
             return normalized
     return default_intro_category_for_content_style(content_style_from_job(job))
 
-
 def is_history_intro_category(category: str) -> bool:
     return category == INTRO_CATEGORY_HISTORY
-
 
 def intro_generate_category(job: dict) -> str | None:
     """传给 generate_intro 的 category；None 表示百科默认主题。"""
@@ -181,54 +124,38 @@ def intro_generate_category(job: dict) -> str | None:
         return INTRO_CATEGORY_HISTORY
     return None
 
-
 def is_landscape_job(job: dict) -> bool:
     return orientation_for_resolve(job) == ORIENTATION_LANDSCAPE
 
-
-def resolve_segment_image_size(job: dict | None = None, *, settings: Any | None = None) -> str:
+def resolve_segment_image_size(job: dict | None=None, *, settings: Any | None=None) -> str:
     """按 job orientation 解析分镜静图尺寸（Wan/Z-Image 格式 width*height）。"""
     from app.config import get_settings
-
     cfg = settings or get_settings()
     provider = resolve_image_provider(job, settings=cfg)
-    default = (
-        cfg.z_image_size
-        if provider == "z_image_t2i"
-        else cfg.sd_image_size
-        if provider == "sd15_t2i"
-        else cfg.agnes_image_size
-        if provider == "agnes_t2i"
-        else cfg.wan_image_size
-    )
-    normalized = default.strip().lower().replace("x", "*")
-    w_str, h_str = normalized.split("*", 1)
-    width, height = int(w_str.strip()), int(h_str.strip())
-
+    default = cfg.z_image_size if provider == 'z_image_t2i' else cfg.sd_image_size if provider == 'sd15_t2i' else cfg.agnes_image_size if provider == 'agnes_t2i' else cfg.wan_image_size
+    normalized = default.strip().lower().replace('x', '*')
+    w_str, h_str = normalized.split('*', 1)
+    width, height = (int(w_str.strip()), int(h_str.strip()))
     orient = orientation_for_resolve(job or {})
     if orient == ORIENTATION_LANDSCAPE:
         if width < height:
-            width, height = height, width
+            width, height = (height, width)
     elif width > height:
-        width, height = height, width
-    return f"{width}*{height}"
+        width, height = (height, width)
+    return f'{width}*{height}'
 
-
-def resolve_segment_video_size(job: dict | None = None, *, settings: Any | None = None) -> tuple[int, int]:
+def resolve_segment_video_size(job: dict | None=None, *, settings: Any | None=None) -> tuple[int, int]:
     """按 job orientation 解析分镜 clip 输出尺寸（width, height）。"""
     from app.config import get_settings
     from app.services.intro.size import landscape_size, portrait_size
-
     cfg = settings or get_settings()
     orient = orientation_for_resolve(job or {})
     if orient == ORIENTATION_LANDSCAPE:
         return landscape_size(cfg)
     return portrait_size(cfg)
 
-
 def default_content_style_for_pipeline(pipeline: str | None) -> str:
     return CONTENT_STYLE_SCIENCE_CHILD
-
 
 def normalize_image_provider(value: str | None) -> str | None:
     if value is None:
@@ -238,22 +165,18 @@ def normalize_image_provider(value: str | None) -> str | None:
         return normalized
     return None
 
-
-def resolve_image_provider(job: dict | None = None, *, settings: Any | None = None) -> str:
+def resolve_image_provider(job: dict | None=None, *, settings: Any | None=None) -> str:
     """job.info.image_provider 优先，否则全局 IMAGE_PROVIDER。"""
     from app.config import get_settings
-
     cfg = settings or get_settings()
-    override = normalize_image_provider(parse_job_info((job or {}).get("info")).get("image_provider"))
+    override = normalize_image_provider(parse_job_info((job or {}).get('info')).get('image_provider'))
     if override:
         return override
     return cfg.image_provider
 
-
-def resolve_include_sd15_prompt(job: dict | None = None, *, settings: Any | None = None) -> bool:
+def resolve_include_sd15_prompt(job: dict | None=None, *, settings: Any | None=None) -> bool:
     """脚本/补全文生图提示词时是否一并生成 sd15_prompt_en。"""
-    return resolve_image_provider(job, settings=settings) == "sd15_t2i"
-
+    return resolve_image_provider(job, settings=settings) == 'sd15_t2i'
 
 def normalize_video_provider(value: str | None) -> str | None:
     if value is None:
@@ -263,33 +186,22 @@ def normalize_video_provider(value: str | None) -> str | None:
         return normalized
     return None
 
-
-def resolve_video_provider(
-    job: dict | None = None,
-    *,
-    visual_mode: str | None = None,
-    settings: Any | None = None,
-    segment: dict | None = None,
-) -> str:
+def resolve_video_provider(job: dict | None=None, *, visual_mode: str | None=None, settings: Any | None=None, segment: dict | None=None) -> str:
     """分镜 info.video_provider → job.info.video_provider → visual_mode → CLIP_PROVIDER。"""
     from app.config import get_settings
-
     cfg = settings or get_settings()
     if segment is not None:
-        seg_override = normalize_video_provider(
-            parse_job_info(segment.get("info")).get("video_provider")
-        )
+        seg_override = normalize_video_provider(parse_job_info(segment.get('info')).get('video_provider'))
         if seg_override:
             return seg_override
-    override = normalize_video_provider(parse_job_info((job or {}).get("info")).get("video_provider"))
+    override = normalize_video_provider(parse_job_info((job or {}).get('info')).get('video_provider'))
     if override:
         return override
-    if visual_mode == "wan_i2v":
-        return "wan_i2v"
-    if visual_mode == "agnes_i2v":
-        return "agnes_i2v"
+    if visual_mode == 'wan_i2v':
+        return 'wan_i2v'
+    if visual_mode == 'agnes_i2v':
+        return 'agnes_i2v'
     return cfg.clip_provider
-
 
 def merge_job_info(existing: str | dict | None, **updates: Any) -> dict[str, Any]:
     merged = parse_job_info(existing)
@@ -299,23 +211,16 @@ def merge_job_info(existing: str | dict | None, **updates: Any) -> dict[str, Any
         else:
             merged[key] = value
     return merged
-
-
-# 日常故事自动标关键帧：按 shot_type
-KEYFRAME_SHOT_TYPES = frozenset({"特写"})
-KEYFRAME_VIDEO_PROVIDER = "agnes_i2v"
-_KEYFRAME_VIDEO_PROVIDERS = frozenset({"agnes_i2v", "wan_i2v"})
-
+KEYFRAME_SHOT_TYPES = frozenset({'特写'})
+KEYFRAME_VIDEO_PROVIDER = 'agnes_i2v'
+_KEYFRAME_VIDEO_PROVIDERS = frozenset({'agnes_i2v', 'wan_i2v'})
 
 def is_keyframe_segment(segment: dict[str, Any] | None) -> bool:
     """分镜是否关键帧（info.video_provider 为 i2v）。"""
     if not isinstance(segment, dict):
         return False
-    provider = normalize_video_provider(
-        parse_job_info(segment.get("info")).get("video_provider")
-    )
+    provider = normalize_video_provider(parse_job_info(segment.get('info')).get('video_provider'))
     return provider in _KEYFRAME_VIDEO_PROVIDERS
-
 
 def apply_keyframe_video_providers(segments: list[dict[str, Any]]) -> list[int]:
     """自动标关键帧：写入 info.video_provider=agnes_i2v。
@@ -330,47 +235,28 @@ def apply_keyframe_video_providers(segments: list[dict[str, Any]]) -> list[int]:
     marked: list[int] = []
     seen: set[int] = set()
     for seg in segments:
-        index = int(seg.get("segment_index") or 0)
-        shot = str(seg.get("shot_type") or "").strip()
+        index = int(seg.get('segment_index') or 0)
+        shot = str(seg.get('shot_type') or '').strip()
         if shot not in KEYFRAME_SHOT_TYPES:
             continue
-        info = parse_job_info(seg.get("info"))
-        info["video_provider"] = KEYFRAME_VIDEO_PROVIDER
-        seg["info"] = info
+        info = parse_job_info(seg.get('info'))
+        info['video_provider'] = KEYFRAME_VIDEO_PROVIDER
+        seg['info'] = info
         if index > 0 and index not in seen:
             seen.add(index)
             marked.append(index)
     marked.sort()
     return marked
+_SCRIPT_PARAM_KEYS = ('segment_target_sec', 'max_title_length', 'estimated_duration_min', 'narration_target_words', 'speech_chars_per_sec', 'skip_title_optimize', 'generate_image_prompts', 'supplementary_info', 'video_timeline', 'need_opening')
 
-
-_SCRIPT_PARAM_KEYS = (
-    "segment_target_sec",
-    "max_title_length",
-    "estimated_duration_min",
-    "narration_target_words",
-    "speech_chars_per_sec",
-    "skip_title_optimize",
-    "generate_image_prompts",
-    "supplementary_info",
-    "video_timeline",
-    "need_opening",
-)
-
-
-def resolve_speech_chars_per_sec(
-    script: dict[str, Any] | None = None,
-    *,
-    content_style: str | None = None,
-    default: float | None = None,
-) -> float:
+def resolve_speech_chars_per_sec(script: dict[str, Any] | None=None, *, content_style: str | None=None, default: float | None=None) -> float:
     """解析语速（字/秒）。
 
     优先 ``info.script.speech_chars_per_sec``（传入已 migrate 的 script 节点）；
     未设置时：日常默认 3.0，其它用 ``DEFAULT_SPEECH_CHARS_PER_SEC``。
     """
     if isinstance(script, dict):
-        rate = _optional_positive_float(script.get("speech_chars_per_sec"))
+        rate = _optional_positive_float(script.get('speech_chars_per_sec'))
         if rate is not None:
             return rate
     if default is not None:
@@ -379,7 +265,6 @@ def resolve_speech_chars_per_sec(
         return DEFAULT_DAILY_STORY_SPEECH_CHARS_PER_SEC
     return DEFAULT_SPEECH_CHARS_PER_SEC
 
-
 def _optional_positive_float(value: object) -> float | None:
     if isinstance(value, bool):
         return None
@@ -387,7 +272,6 @@ def _optional_positive_float(value: object) -> float | None:
         parsed = float(value)
         return parsed if parsed > 0 else None
     return None
-
 
 def _optional_positive_int(value: object) -> int | None:
     if isinstance(value, bool):
@@ -399,54 +283,35 @@ def _optional_positive_int(value: object) -> int | None:
         return parsed if parsed > 0 else None
     return None
 
-
-def resolve_estimated_duration_min(
-    script: dict[str, Any],
-    *,
-    content_style: str | None = None,
-) -> float:
+def resolve_estimated_duration_min(script: dict[str, Any], *, content_style: str | None=None) -> float:
     """从 script 参数解析预计成片时长（分钟）。"""
-    raw_min = _optional_positive_float(script.get("estimated_duration_min"))
+    raw_min = _optional_positive_float(script.get('estimated_duration_min'))
     if raw_min is not None:
         return raw_min
-    raw_words = _optional_positive_int(script.get("narration_target_words"))
+    raw_words = _optional_positive_int(script.get('narration_target_words'))
     if raw_words is not None:
         from app.utils.media import estimated_minutes_from_narration_words
-
-        return estimated_minutes_from_narration_words(
-            raw_words,
-            chars_per_sec=resolve_speech_chars_per_sec(script),
-        )
+        return estimated_minutes_from_narration_words(raw_words, chars_per_sec=resolve_speech_chars_per_sec(script))
     if content_style == CONTENT_STYLE_HISTORICAL_MYSTERY:
         return DEFAULT_HISTORY_VIDEO_MINUTES
     return DEFAULT_STANDARD_VIDEO_MINUTES
 
-
-def resolve_narration_target_words(
-    script: dict[str, Any],
-    *,
-    content_style: str | None = None,
-) -> int:
+def resolve_narration_target_words(script: dict[str, Any], *, content_style: str | None=None) -> int:
     """由预计时长或显式口播目标解析口播字数。"""
-    raw_min = _optional_positive_float(script.get("estimated_duration_min"))
+    raw_min = _optional_positive_float(script.get('estimated_duration_min'))
     if raw_min is not None:
-        return narration_target_for_minutes(
-            raw_min,
-            chars_per_sec=resolve_speech_chars_per_sec(script),
-        )
-    raw_words = _optional_positive_int(script.get("narration_target_words"))
+        return narration_target_for_minutes(raw_min, chars_per_sec=resolve_speech_chars_per_sec(script))
+    raw_words = _optional_positive_int(script.get('narration_target_words'))
     if raw_words is not None:
         return raw_words
     if content_style == CONTENT_STYLE_HISTORICAL_MYSTERY:
         from app.utils.media import DEFAULT_HISTORY_NARRATION_WORDS
-
         return DEFAULT_HISTORY_NARRATION_WORDS
     return default_narration_target_words()
 
-
 def _migrate_flat_script_params(info: dict[str, Any]) -> None:
     """将旧版平铺在 info 顶层的 script 参数迁入 info.script。"""
-    script = info.get("script")
+    script = info.get('script')
     script_node = dict(script) if isinstance(script, dict) else {}
     migrated = False
     for key in _SCRIPT_PARAM_KEYS:
@@ -454,253 +319,178 @@ def _migrate_flat_script_params(info: dict[str, Any]) -> None:
             script_node.setdefault(key, info.pop(key))
             migrated = True
     if migrated or script_node:
-        info["script"] = script_node
-
+        info['script'] = script_node
 
 def script_params_from_info(raw: str | dict | None) -> dict[str, Any]:
     info = parse_job_info(raw)
     _migrate_flat_script_params(info)
-    script = info.get("script")
+    script = info.get('script')
     return dict(script) if isinstance(script, dict) else {}
 
-
-def build_script_params(
-    *,
-    segment_target_sec: float | None = None,
-    max_title_length: int | None = None,
-    estimated_duration_min: float | None = None,
-    narration_target_words: int | None = None,
-    speech_chars_per_sec: float | None = None,
-    skip_title_optimize: bool = False,
-    generate_image_prompts: bool = False,
-    supplementary_info: str | None = None,
-    video_timeline: str | None = None,
-    content_style: str | None = None,
-) -> dict[str, Any]:
+def build_script_params(*, segment_target_sec: float | None=None, max_title_length: int | None=None, estimated_duration_min: float | None=None, narration_target_words: int | None=None, speech_chars_per_sec: float | None=None, skip_title_optimize: bool=False, generate_image_prompts: bool=False, supplementary_info: str | None=None, video_timeline: str | None=None, content_style: str | None=None) -> dict[str, Any]:
     """组装脚本生成参数（info.script 子节点内容）。"""
-    params: dict[str, Any] = {
-        "skip_title_optimize": skip_title_optimize,
-        "generate_image_prompts": generate_image_prompts,
-    }
+    params: dict[str, Any] = {'skip_title_optimize': skip_title_optimize, 'generate_image_prompts': generate_image_prompts}
     if segment_target_sec is not None:
-        params["segment_target_sec"] = segment_target_sec
+        params['segment_target_sec'] = segment_target_sec
     elif content_style == CONTENT_STYLE_HISTORICAL_MYSTERY:
-        params["segment_target_sec"] = 8
+        params['segment_target_sec'] = 8
     if max_title_length is not None:
-        params["max_title_length"] = max_title_length
+        params['max_title_length'] = max_title_length
     if estimated_duration_min is not None:
-        params["estimated_duration_min"] = estimated_duration_min
+        params['estimated_duration_min'] = estimated_duration_min
     elif content_style == CONTENT_STYLE_HISTORICAL_MYSTERY:
-        params["estimated_duration_min"] = DEFAULT_HISTORY_VIDEO_MINUTES
+        params['estimated_duration_min'] = DEFAULT_HISTORY_VIDEO_MINUTES
     if narration_target_words is not None:
-        params["narration_target_words"] = narration_target_words
+        params['narration_target_words'] = narration_target_words
     if speech_chars_per_sec is not None:
-        params["speech_chars_per_sec"] = round(float(speech_chars_per_sec), 2)
+        params['speech_chars_per_sec'] = round(float(speech_chars_per_sec), 2)
     if supplementary_info is not None:
         stripped = supplementary_info.strip()
-        params["supplementary_info"] = stripped or None
+        params['supplementary_info'] = stripped or None
     if video_timeline is not None:
         stripped = video_timeline.strip()
-        params["video_timeline"] = stripped or None
+        params['video_timeline'] = stripped or None
     return params
 
-
-def merge_job_script_params(
-    existing: str | dict | None,
-    *,
-    segment_target_sec: float | None = None,
-    max_title_length: int | None = None,
-    estimated_duration_min: float | None = None,
-    narration_target_words: int | None = None,
-    speech_chars_per_sec: float | None = None,
-    skip_title_optimize: bool = False,
-    generate_image_prompts: bool = False,
-    supplementary_info: str | None = None,
-    video_timeline: str | None = None,
-    orientation: str | None = None,
-    content_style: str | None = None,
-) -> dict[str, Any]:
+def merge_job_script_params(existing: str | dict | None, *, segment_target_sec: float | None=None, max_title_length: int | None=None, estimated_duration_min: float | None=None, narration_target_words: int | None=None, speech_chars_per_sec: float | None=None, skip_title_optimize: bool=False, generate_image_prompts: bool=False, supplementary_info: str | None=None, video_timeline: str | None=None, orientation: str | None=None, content_style: str | None=None) -> dict[str, Any]:
     """合并脚本生成参数到 info.script，并更新 job 级 orientation/content_style。"""
     merged = parse_job_info(existing)
     _migrate_flat_script_params(merged)
-    script_node = dict(merged.get("script") or {})
-    updates = build_script_params(
-        segment_target_sec=segment_target_sec,
-        max_title_length=max_title_length,
-        estimated_duration_min=estimated_duration_min,
-        narration_target_words=narration_target_words,
-        speech_chars_per_sec=speech_chars_per_sec,
-        skip_title_optimize=skip_title_optimize,
-        generate_image_prompts=generate_image_prompts,
-        supplementary_info=supplementary_info,
-        video_timeline=video_timeline,
-        content_style=content_style,
-    )
+    script_node = dict(merged.get('script') or {})
+    updates = build_script_params(segment_target_sec=segment_target_sec, max_title_length=max_title_length, estimated_duration_min=estimated_duration_min, narration_target_words=narration_target_words, speech_chars_per_sec=speech_chars_per_sec, skip_title_optimize=skip_title_optimize, generate_image_prompts=generate_image_prompts, supplementary_info=supplementary_info, video_timeline=video_timeline, content_style=content_style)
     for key, value in updates.items():
         if value is None:
             script_node.pop(key, None)
         else:
             script_node[key] = value
     if script_node:
-        merged["script"] = script_node
+        merged['script'] = script_node
     else:
-        merged.pop("script", None)
+        merged.pop('script', None)
     if orientation is not None:
-        merged["orientation"] = orientation
+        merged['orientation'] = orientation
     elif content_style == CONTENT_STYLE_HISTORICAL_MYSTERY:
-        merged.setdefault("orientation", ORIENTATION_LANDSCAPE)
+        merged.setdefault('orientation', ORIENTATION_LANDSCAPE)
     if content_style is not None:
-        merged["content_style"] = content_style
+        merged['content_style'] = content_style
     return merged
-
-
 DEFAULT_BGM_VOLUME_DB = -14.0
-# 日常故事默认 BGM：Molecules · Tobias
 DEFAULT_DAILY_STORY_BGM_MATERIAL_ID = 4
-
 
 def bgm_params_from_info(info: str | dict | None) -> dict[str, Any]:
     """解析 job.info.bgm → {enabled, material_id, volume_db}。"""
-    raw = parse_job_info(info).get("bgm")
+    raw = parse_job_info(info).get('bgm')
     if not isinstance(raw, dict):
-        return {"enabled": False, "material_id": None, "volume_db": DEFAULT_BGM_VOLUME_DB}
-    material_id = raw.get("material_id")
+        return {'enabled': False, 'material_id': None, 'volume_db': DEFAULT_BGM_VOLUME_DB}
+    material_id = raw.get('material_id')
     try:
         material_id_int = int(material_id) if material_id is not None else None
     except (TypeError, ValueError):
         material_id_int = None
     if material_id_int is not None and material_id_int <= 0:
         material_id_int = None
-    volume = raw.get("volume_db", DEFAULT_BGM_VOLUME_DB)
+    volume = raw.get('volume_db', DEFAULT_BGM_VOLUME_DB)
     try:
         volume_db = float(volume)
     except (TypeError, ValueError):
         volume_db = DEFAULT_BGM_VOLUME_DB
     volume_db = max(-40.0, min(0.0, volume_db))
-    enabled = bool(raw.get("enabled")) and material_id_int is not None
-    return {
-        "enabled": enabled,
-        "material_id": material_id_int,
-        "volume_db": volume_db,
-    }
-
+    enabled = bool(raw.get('enabled')) and material_id_int is not None
+    return {'enabled': enabled, 'material_id': material_id_int, 'volume_db': volume_db}
 
 def resolve_bgm_file(material_id: int | None) -> Path | None:
     """从音频素材库解析 BGM 文件路径。"""
     from app.repositories import repo_material_audio
-    from app.repositories.connection import connection
 
     if material_id is None or material_id <= 0:
         return None
     try:
-        with connection() as conn:
-            material = repo_material_audio.get_material_audio(conn, material_id)
+        material = repo_material_audio.get_material_audio(material_id)
     except KeyError:
         return None
-    path = Path(str(material.get("file_path") or ""))
+    path = Path(str(material.get('file_path') or ''))
     return path if path.is_file() else None
-
 
 def normalize_bgm_payload(raw: object) -> dict[str, Any] | None:
     """校验 API 传入的 bgm 配置；无效返回 None。"""
     if raw is None:
         return None
     if not isinstance(raw, dict):
-        raise ValueError("bgm must be an object")
-    enabled = bool(raw.get("enabled"))
-    material_id = raw.get("material_id")
+        raise ValueError('bgm must be an object')
+    enabled = bool(raw.get('enabled'))
+    material_id = raw.get('material_id')
     try:
         material_id_int = int(material_id) if material_id is not None else None
     except (TypeError, ValueError) as exc:
-        raise ValueError("bgm.material_id must be an integer") from exc
+        raise ValueError('bgm.material_id must be an integer') from exc
     if material_id_int is not None and material_id_int <= 0:
         material_id_int = None
-    volume = raw.get("volume_db", DEFAULT_BGM_VOLUME_DB)
+    volume = raw.get('volume_db', DEFAULT_BGM_VOLUME_DB)
     try:
         volume_db = float(volume)
     except (TypeError, ValueError) as exc:
-        raise ValueError("bgm.volume_db must be a number") from exc
+        raise ValueError('bgm.volume_db must be a number') from exc
     volume_db = max(-40.0, min(0.0, volume_db))
     if enabled and material_id_int is None:
-        raise ValueError("bgm.material_id is required when enabled")
+        raise ValueError('bgm.material_id is required when enabled')
     if enabled and resolve_bgm_file(material_id_int) is None:
-        raise ValueError(f"bgm material not found: {material_id_int}")
-    return {
-        "enabled": enabled,
-        "material_id": material_id_int,
-        "volume_db": volume_db,
-    }
-
-
+        raise ValueError(f'bgm material not found: {material_id_int}')
+    return {'enabled': enabled, 'material_id': material_id_int, 'volume_db': volume_db}
 DEFAULT_SUBTITLE_ENABLED = True
-
 
 def subtitle_params_from_info(info: str | dict | None) -> dict[str, Any]:
     """解析 job.info.subtitle → {enabled}。缺省烧录（兼容旧任务）。"""
-    raw = parse_job_info(info).get("subtitle")
+    raw = parse_job_info(info).get('subtitle')
     if not isinstance(raw, dict):
-        return {"enabled": DEFAULT_SUBTITLE_ENABLED}
-    if "enabled" not in raw:
-        return {"enabled": DEFAULT_SUBTITLE_ENABLED}
-    return {"enabled": bool(raw.get("enabled"))}
-
+        return {'enabled': DEFAULT_SUBTITLE_ENABLED}
+    if 'enabled' not in raw:
+        return {'enabled': DEFAULT_SUBTITLE_ENABLED}
+    return {'enabled': bool(raw.get('enabled'))}
 
 def normalize_subtitle_payload(raw: object) -> dict[str, Any] | None:
     """校验 API 传入的 subtitle 配置；无效返回 None。"""
     if raw is None:
         return None
     if not isinstance(raw, dict):
-        raise ValueError("subtitle must be an object")
-    return {"enabled": bool(raw.get("enabled"))}
-
-
+        raise ValueError('subtitle must be an object')
+    return {'enabled': bool(raw.get('enabled'))}
 DEFAULT_XFADE_DURATION_SEC = 0.4
 
-
-def xfade_params_from_info(info: str | dict | None, *, settings: Any | None = None) -> dict[str, Any]:
+def xfade_params_from_info(info: str | dict | None, *, settings: Any | None=None) -> dict[str, Any]:
     """解析 job.info.xfade；缺省回退全局 SEGMENT_XFADE_*。"""
     from app.config import get_settings
     from app.services.media.ffmpeg_utils import normalize_xfade_transition
-
     cfg = settings or get_settings()
-    raw = parse_job_info(info).get("xfade")
+    raw = parse_job_info(info).get('xfade')
     transition_raw: object | None = None
     duration_raw: object | None = None
     if isinstance(raw, dict):
-        transition_raw = raw.get("transition")
-        duration_raw = raw.get("duration_sec")
+        transition_raw = raw.get('transition')
+        duration_raw = raw.get('duration_sec')
     if transition_raw is None:
         transition_raw = cfg.segment_xfade_transition
     if duration_raw is None:
         duration_raw = cfg.segment_xfade_duration_sec
-    transition = normalize_xfade_transition(
-        transition_raw if isinstance(transition_raw, str) else str(transition_raw or "none")
-    )
+    transition = normalize_xfade_transition(transition_raw if isinstance(transition_raw, str) else str(transition_raw or 'none'))
     try:
         duration_sec = float(duration_raw)
     except (TypeError, ValueError):
         duration_sec = DEFAULT_XFADE_DURATION_SEC
     duration_sec = max(0.05, min(2.0, duration_sec))
-    return {
-        "transition": transition,
-        "duration_sec": duration_sec,
-        "enabled": transition != "none",
-    }
-
+    return {'transition': transition, 'duration_sec': duration_sec, 'enabled': transition != 'none'}
 
 def normalize_xfade_payload(raw: object) -> dict[str, Any] | None:
     """校验 API 传入的 xfade 配置。"""
     from app.services.media.ffmpeg_utils import normalize_xfade_transition
-
     if raw is None:
         return None
     if not isinstance(raw, dict):
-        raise ValueError("xfade must be an object")
-    transition = normalize_xfade_transition(raw.get("transition"))
-    duration = raw.get("duration_sec", DEFAULT_XFADE_DURATION_SEC)
+        raise ValueError('xfade must be an object')
+    transition = normalize_xfade_transition(raw.get('transition'))
+    duration = raw.get('duration_sec', DEFAULT_XFADE_DURATION_SEC)
     try:
         duration_sec = float(duration)
     except (TypeError, ValueError) as exc:
-        raise ValueError("xfade.duration_sec must be a number") from exc
+        raise ValueError('xfade.duration_sec must be a number') from exc
     duration_sec = max(0.05, min(2.0, duration_sec))
-    return {"transition": transition, "duration_sec": duration_sec}
+    return {'transition': transition, 'duration_sec': duration_sec}

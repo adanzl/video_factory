@@ -1,44 +1,30 @@
-"""自动恢复：服务重启后恢复卡住的任务。
-
-当服务意外重启时，正在执行的任务在数据库中仍标记为
-status='running'，但后台工作线程已丢失。
-
-恢复策略：
-1. 启动时扫描所有 status='running' 的任务
-2. 重置为 status='pending'
-3. 经 job_mgr.continue_job（持锁、后台）从当前 stage 续跑
-"""
+"""自动恢复：服务重启后恢复卡住的任务。"""
 
 from __future__ import annotations
 
 import logging
 
 from app.repositories import repo_job, repo_job_log
-from app.repositories.connection import connection
+from app.repositories import sql_exec as sql
+from app.repositories.sql_exec import atomic
 
 logger = logging.getLogger(__name__)
 
-# 终态不恢复；其余 running 一律重置并续跑
 _TERMINAL_STAGES: frozenset[str] = frozenset({"done"})
 
 
 def recover_stuck_jobs() -> int:
-    """恢复卡在 running 状态的任务并经 job_mgr 重新执行。
-
-    Returns:
-        已恢复的任务数量
-    """
     recovered: list[tuple[int, str]] = []
 
-    with connection() as conn:
-        rows = conn.execute(
+    with atomic():
+        rows = sql.fetchall(
             """
             SELECT id, stage, pipeline, title
             FROM video_job
             WHERE status = 'running'
             ORDER BY id
             """,
-        ).fetchall()
+        )
 
         for row in rows:
             stage: str = row["stage"] or ""
@@ -60,9 +46,8 @@ def recover_stuck_jobs() -> int:
                 title_preview,
             )
 
-            repo_job.update_job(conn, job_id, status="pending", error_message=None)
+            repo_job.update_job(job_id, status="pending", error_message=None)
             repo_job_log.append_log(
-                conn,
                 job_id,
                 stage,
                 "auto-recovered after service restart, reset to pending",
@@ -92,11 +77,6 @@ def recover_stuck_jobs() -> int:
 
 
 def recover_stuck_daily_stories() -> int:
-    """恢复卡在 processing 状态的日常故事生成。
-
-    Returns:
-        已恢复的故事数量
-    """
     from app.services.daily_story.daily_story_mgr import daily_story_mgr
 
     return daily_story_mgr.recover_processing_stories()

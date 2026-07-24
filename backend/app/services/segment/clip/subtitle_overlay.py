@@ -25,12 +25,14 @@ from app.services.render.subtitle_style import (
     subtitle_style_for_canvas,
 )
 from app.services.render.text_render import load_cjk_font, wrap_text
+from app.repositories import repo_segment
 from app.services.render.title_render import (
     SHADOW_OFFSET_X,
     SHADOW_OFFSET_Y,
     fit_font_and_lines,
     render_title_block,
 )
+from app.services.tts.tts_mgr import tts_mgr
 
 # 布局 / 样式常量见 subtitle_style.py
 _SUBTITLE_RENDER_SCALE = 2
@@ -40,6 +42,7 @@ __all__ = [
     "SUBTITLE_ASS_PRIMARY_COLOUR",
     "build_segment_clip",
     "burn_subtitled_clip",
+    "rebuild_segment_subtitles",
     "render_subtitle_overlay",
     "subtitle_style_for_canvas",
 ]
@@ -181,3 +184,56 @@ def build_segment_clip(
         segment_index=segment_index,
         motion_prompt=motion_prompt,
     )
+
+
+def rebuild_segment_subtitles(
+    job_id: int,
+    segment_index: int,
+    *,
+    sentence: int | None = None,
+) -> Path:
+    """单分镜字幕预览：重建 segments/{N}.mp4 或句级 {N}_test.mp4。"""
+    settings = get_settings()
+    media_dir = settings.video_data_dir / str(job_id)
+    clips_dir = media_dir / "segments"
+    clips_dir.mkdir(parents=True, exist_ok=True)
+
+    segments = repo_segment.list_segments(job_id)
+    seg = next((s for s in segments if s["segment_index"] == segment_index), None)
+    if seg is None:
+        raise ValueError(f"job {job_id} 无 segment {segment_index}")
+
+    image_path = seg.get("image_path")
+    if not image_path:
+        raise FileNotFoundError(f"segment {segment_index} 无 image_path")
+
+    cues_path = tts_mgr.subtitle_cues_path_for(media_dir / "audio")
+    seg_cues = tts_mgr.cues_for_segment(tts_mgr.load_subtitle_cues(cues_path), segment_index)
+    if not seg_cues:
+        raise ValueError(f"segment {segment_index} 无字幕时间轴")
+
+    if sentence is not None:
+        if sentence < 0 or sentence >= len(seg_cues):
+            raise ValueError(f"sentence 需在 0..{len(seg_cues) - 1}")
+        text, duration = seg_cues[sentence]
+        out_path = clips_dir / f"{segment_index}_test.mp4"
+        burn_subtitled_clip(
+            image_path=Path(image_path),
+            text=text,
+            output_path=out_path,
+            duration_sec=duration,
+            motion_preset=settings.motion_preset,
+            segment_index=segment_index,
+        )
+        return out_path
+
+    out_path = clips_dir / f"{segment_index}.mp4"
+    build_segment_clip(
+        image_path=Path(image_path),
+        subtitle_cues=seg_cues,
+        output_path=out_path,
+        motion_preset=settings.motion_preset,
+        work_dir=clips_dir,
+        segment_index=segment_index,
+    )
+    return out_path

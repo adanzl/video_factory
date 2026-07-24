@@ -1,43 +1,20 @@
-import sqlite3
-
 from app.repositories import repo_title
 
 
-def _conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
-    conn.execute(
-        """
-        CREATE TABLE title (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT NOT NULL,
-            category TEXT,
-            template TEXT,
-            hook TEXT,
-            score INTEGER,
-            score_detail TEXT,
-            status TEXT NOT NULL DEFAULT 'pending',
-            job_id INTEGER,
-            source TEXT DEFAULT 'manual',
-            created_at TEXT DEFAULT (datetime('now')),
-            updated_at TEXT DEFAULT (datetime('now'))
-        )
-        """
-    )
-    return conn
+def test_list_ids_below_score_excludes_enqueued_and_null(app_ctx):
+    low = repo_title.insert_title(title="低分")
+    assert low is not None
+    repo_title.update_title(low["id"], score=60, status="rejected")
+    boundary = repo_title.insert_title(title="边界")
+    assert boundary is not None
+    repo_title.update_title(boundary["id"], score=75, status="queued")
+    high = repo_title.insert_title(title="高分")
+    assert high is not None
+    repo_title.update_title(high["id"], score=80, status="queued")
+    repo_title.insert_title(title="未打分")
+    enq = repo_title.insert_title(title="已入队低分")
+    assert enq is not None
+    repo_title.update_title(enq["id"], score=50, status="enqueued")
 
-
-def test_list_ids_below_score_excludes_enqueued_and_null():
-    conn = _conn()
-    conn.executemany(
-        "INSERT INTO title (title, score, status) VALUES (?, ?, ?)",
-        [
-            ("低分", 60, "rejected"),
-            ("边界", 75, "queued"),
-            ("高分", 80, "queued"),
-            ("未打分", None, "pending"),
-            ("已入队低分", 50, "enqueued"),
-        ],
-    )
-    ids = repo_title.list_ids_below_score(conn, 75)
-    assert ids == [1]
+    ids = repo_title.list_ids_below_score(75)
+    assert ids == [low["id"]]

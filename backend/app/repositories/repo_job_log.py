@@ -1,34 +1,35 @@
 from __future__ import annotations
 
-import sqlite3
+from app.repositories import sql_exec as sql
 
 
 def append_log(
-    conn: sqlite3.Connection,
     job_id: int,
     stage: str,
     message: str,
     level: str = "info",
 ) -> None:
-    conn.execute(
+    sql.execute(
         """
         INSERT INTO job_log (job_id, stage, level, message)
         VALUES (?, ?, ?, ?)
         """,
         (job_id, stage, level, message),
     )
+    sql.commit()
 
 
-def delete_logs(conn: sqlite3.Connection, job_id: int) -> int:
-    cursor = conn.execute(
+def delete_logs(job_id: int) -> int:
+    result = sql.execute(
         "DELETE FROM job_log WHERE job_id = ?",
         (job_id,),
     )
-    return cursor.rowcount
+    sql.commit()
+    return result.rowcount
 
 
-def list_logs(conn: sqlite3.Connection, job_id: int) -> list[dict]:
-    rows = conn.execute(
+def list_logs(job_id: int) -> list[dict]:
+    rows = sql.fetchall(
         """
         SELECT stage, level, message, created_at
         FROM job_log
@@ -36,5 +37,6 @@ def list_logs(conn: sqlite3.Connection, job_id: int) -> list[dict]:
         ORDER BY id
         """,
         (job_id,),
-    ).fetchall()
-    return [dict(row) for row in rows]
+    )
+    sql.commit()
+    return rows

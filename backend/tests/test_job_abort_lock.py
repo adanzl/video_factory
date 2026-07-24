@@ -66,7 +66,7 @@ def test_run_in_background_holds_lock_until_worker_done(monkeypatch):
     assert not mgr._job_lock(job_id).locked()
 
 
-def test_abort_with_active_worker_keeps_running(monkeypatch):
+def test_abort_with_active_worker_keeps_running(monkeypatch, noop_atomic):
     mgr = JobMgr()
     job_id = 77
     logged: list[str] = []
@@ -77,23 +77,15 @@ def test_abort_with_active_worker_keeps_running(monkeypatch):
         lambda jid: {"id": jid, "status": "running", "stage": "tts"},
     )
 
-    class _Conn:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return False
-
-    monkeypatch.setattr(_job_mgr_mod, "connection", lambda: _Conn())
     monkeypatch.setattr(
         _job_mgr_mod.repo_job_log,
         "append_log",
-        lambda _c, _jid, _stage, msg, **_k: logged.append(msg),
+        lambda _jid, _stage, msg, **_k: logged.append(msg),
     )
     monkeypatch.setattr(
         _job_mgr_mod.repo_job,
         "get_job",
-        lambda _c, jid: {"id": jid, "status": "running", "stage": "tts"},
+        lambda jid: {"id": jid, "status": "running", "stage": "tts"},
     )
 
     def _forbid_update(*_a, **_k):
@@ -116,7 +108,7 @@ def test_abort_with_active_worker_keeps_running(monkeypatch):
         job_cancel.clear(job_id)
 
 
-def test_abort_zombie_running_resets_to_pending(monkeypatch):
+def test_abort_zombie_running_resets_to_pending(monkeypatch, noop_atomic):
     mgr = JobMgr()
     job_id = 78
     logged: list[str] = []
@@ -128,21 +120,13 @@ def test_abort_zombie_running_resets_to_pending(monkeypatch):
         lambda jid: {"id": jid, "status": "running", "stage": "tts"},
     )
 
-    class _Conn:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return False
-
-    monkeypatch.setattr(_job_mgr_mod, "connection", lambda: _Conn())
     monkeypatch.setattr(
         _job_mgr_mod.repo_job_log,
         "append_log",
-        lambda _c, _jid, _stage, msg, **_k: logged.append(msg),
+        lambda _jid, _stage, msg, **_k: logged.append(msg),
     )
 
-    def _update(_c, jid, **fields):
+    def _update(jid, **fields):
         updates.append(fields)
         return {"id": jid, "status": fields.get("status"), **fields}
 
@@ -157,19 +141,11 @@ def test_abort_zombie_running_resets_to_pending(monkeypatch):
     assert logged and "no active worker" in logged[0]
 
 
-def test_mark_done_while_cancelled_becomes_aborted(monkeypatch):
+def test_mark_done_while_cancelled_becomes_aborted(monkeypatch, noop_atomic):
     mgr = JobMgr()
     job_id = 88
     updates: list[dict] = []
 
-    class _Conn:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return False
-
-    monkeypatch.setattr(_job_mgr_mod, "connection", lambda: _Conn())
     monkeypatch.setattr(
         mgr,
         "get_job",
@@ -181,7 +157,7 @@ def test_mark_done_while_cancelled_becomes_aborted(monkeypatch):
         lambda *_a, **_k: None,
     )
 
-    def _update(_c, jid, **fields):
+    def _update(jid, **fields):
         updates.append(fields)
         return {"id": jid, "status": fields.get("status"), **fields}
 

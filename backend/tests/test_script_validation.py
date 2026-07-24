@@ -332,7 +332,7 @@ def test_validate_script_narration_slightly_over_accepts_with_warning(monkeypatc
     assert any("slightly over target" in w for w in warnings)
 
 
-def test_repair_narration_overflow_via_shrink_mock(monkeypatch):
+def test_repair_narration_overflow_via_shrink_mock(monkeypatch, noop_atomic):
     monkeypatch.setattr(
         "worker.stages.standard.script.get_settings",
         lambda: type("S", (), {"segment_target_sec": 15, "max_title_length": 20})(),
@@ -390,7 +390,7 @@ def test_classify_segment_overflow_mild_vs_severe():
     assert severe == [(2, shrink_max + 1)]
 
 
-def test_repair_segment_overflow_via_shrink_mock(monkeypatch):
+def test_repair_segment_overflow_via_shrink_mock(monkeypatch, noop_atomic):
     monkeypatch.setattr("worker.stages.standard.script.get_settings", lambda: type("S", (), {"segment_target_sec": 15, "max_title_length": 20})())
     hard_cap = segment_text_hard_cap(15.0)
     long_text = "y" * (hard_cap + 8)
@@ -418,6 +418,7 @@ def test_repair_segment_overflow_via_shrink_mock(monkeypatch):
         return s
 
     monkeypatch.setattr("worker.stages.standard.script.llm_mgr.shrink_segment_texts", _fake_shrink)
+    monkeypatch.setattr("worker.stages.standard.script.repo_job_log.append_log", lambda *a, **k: None)
     assert _repair_segment_overflow_via_shrink(
         script,
         segment_target_sec=15.0,

@@ -1,15 +1,11 @@
 from __future__ import annotations
 
-import sqlite3
 from typing import Any
 
-
-def _row_to_dict(row: sqlite3.Row) -> dict:
-    return dict(row)
+from app.repositories import sql_exec as sql
 
 
 def create_material_audio(
-    conn: sqlite3.Connection,
     *,
     name: str,
     file_path: str,
@@ -17,7 +13,7 @@ def create_material_audio(
     size_bytes: int | None = None,
     note: str | None = None,
 ) -> dict:
-    cur = conn.execute(
+    cur = sql.execute(
         """
         INSERT INTO material_audio (
             name, file_path, duration_sec, size_bytes, note
@@ -26,37 +22,38 @@ def create_material_audio(
         """,
         (name, file_path, duration_sec, size_bytes, note),
     )
-    return get_material_audio(conn, cur.lastrowid)
+    material_id = int(cur.lastrowid)
+    sql.commit()
+    return get_material_audio(material_id)
 
 
-def get_material_audio(conn: sqlite3.Connection, material_id: int) -> dict:
-    row = conn.execute(
+def get_material_audio(material_id: int) -> dict:
+    row = sql.fetchone(
         "SELECT * FROM material_audio WHERE id = ? AND status IN ('active', 'analyzing')",
         (material_id,),
-    ).fetchone()
+    )
+    sql.commit()
     if row is None:
         raise KeyError(f"audio material {material_id} not found")
-    return _row_to_dict(row)
+    return dict(row)
 
 
-def count_material_audios(
-    conn: sqlite3.Connection,
-) -> int:
-    row = conn.execute(
+def count_material_audios() -> int:
+    row = sql.fetchone(
         "SELECT COUNT(*) AS cnt FROM material_audio WHERE status != 'deleted'",
-    ).fetchone()
+    )
+    sql.commit()
     return row["cnt"] if row else 0
 
 
 def list_material_audios(
-    conn: sqlite3.Connection,
     *,
     limit: int = 50,
     offset: int = 0,
 ) -> list[dict]:
     limit = max(1, min(limit, 200))
     offset = max(0, offset)
-    rows = conn.execute(
+    rows = sql.fetchall(
         """
         SELECT id, name, file_path, duration_sec,
                size_bytes, note, status, created_at, updated_at
@@ -66,11 +63,12 @@ def list_material_audios(
         LIMIT ? OFFSET ?
         """,
         (limit, offset),
-    ).fetchall()
-    return [_row_to_dict(row) for row in rows]
+    )
+    sql.commit()
+    return [dict(row) for row in rows]
 
 
-def update_material_audio(conn: sqlite3.Connection, material_id: int, **fields: Any) -> dict:
+def update_material_audio(material_id: int, **fields: Any) -> dict:
     allowed = {
         "name",
         "note",
@@ -89,15 +87,16 @@ def update_material_audio(conn: sqlite3.Connection, material_id: int, **fields: 
     if len(parts) == 1:
         raise ValueError("no updatable fields")
     values.append(material_id)
-    conn.execute(
+    sql.execute(
         f"UPDATE material_audio SET {', '.join(parts)} WHERE id = ?",
         values,
     )
-    return get_material_audio(conn, material_id)
+    sql.commit()
+    return get_material_audio(material_id)
 
 
-def soft_delete_material_audio(conn: sqlite3.Connection, material_id: int) -> None:
-    cur = conn.execute(
+def soft_delete_material_audio(material_id: int) -> None:
+    cur = sql.execute(
         """
         UPDATE material_audio
         SET status = 'deleted', updated_at = datetime('now')
@@ -105,5 +104,6 @@ def soft_delete_material_audio(conn: sqlite3.Connection, material_id: int) -> No
         """,
         (material_id,),
     )
+    sql.commit()
     if cur.rowcount == 0:
         raise KeyError(f"audio material {material_id} not found")

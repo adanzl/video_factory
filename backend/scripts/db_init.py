@@ -14,13 +14,20 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-from app.repositories.connection import connection
+from app.core import create_app
+from app.repositories.database import get_dbapi_connection
 from app.repositories.schema import apply_schema
 
 
 def main() -> None:
-    with connection() as conn:
-        apply_schema(conn)
+    app = create_app()
+    with app.app_context():
+        conn = get_dbapi_connection()
+        try:
+            apply_schema(conn)
+            conn.commit()
+        finally:
+            conn.close()
     print("Database initialized.")
 
 
