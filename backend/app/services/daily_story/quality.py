@@ -307,10 +307,10 @@ def _collect_humor_issues(
             "哪里不一样" in tail_text or "都是听" in tail_text
         ):
             cons.append("追问闭环模板复读")
-        elif not _a_close_four_beat_complete(tail4):
-            cons.append("末四拍不完整")
         if "不公平" in body_text and "凭什么" not in body_text[:40]:
             cons.append("偏C式争公平口号")
+    if type_code == "A" and not _a_close_four_beat_complete(tail4):
+        cons.append("末四拍不完整")
 
     return cons
 
@@ -339,10 +339,10 @@ def _score_funniness(
     points = 0
 
     if _RE_HAMMER.search(mid_text):
-        points += 6
+        points += 5
         pros.append("有一锤场面")
     elif _RE_HAMMER.search(full_text):
-        points += 3
+        points += 2
         pros.append("有具体场面")
 
     grounded_tail = any(
@@ -353,15 +353,10 @@ def _score_funniness(
         points += 4
         pros.append("收束扣原话")
 
-    if type_code == "A" and _a_close_four_beat_complete(tail4):
-        points += 5
-        pros.append("末四拍完整")
-    elif type_code == "A" and "末四拍不完整" in cons:
-        points = min(points, 4)
-
     if len(re.findall(r"\d+", full_text)) >= 2:
         points += 2
-    if points >= 10 and not cons:
+
+    if points >= 9 and not cons:
         pros.append("好笑够格")
 
     for c in cons:
@@ -534,6 +529,10 @@ def score_daily_story(
     cons.extend(humor_cons)
 
     score = max(0, min(100, structure_score + humor_points))
+    if humor_points < _HUMOR_POINTS_FOR_GOOD:
+        score = min(score, STRUCTURE_SCORE_CAP)
+    elif humor_points < _HUMOR_POINTS_FOR_GREAT:
+        score = min(score, 94)
     if structure_score >= 70 and humor_points < _HUMOR_POINTS_FOR_GOOD:
         cons.append(
             f"格式达标但好笑不足（好笑{humor_points}/20，须≥{_HUMOR_POINTS_FOR_GOOD}才宜≥85）",
