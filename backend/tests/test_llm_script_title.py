@@ -515,10 +515,10 @@ def test_daily_story_prompts_a_type_route():
     assert "A 权威翻车" in sys_a
     assert "禁止写成别的类型" in sys_a
     assert "引先例" in sys_a
-    assert "A类·主题锚定" in user_a
-    assert "A类收束模板" in user_a
-    assert "前文已出现" in user_a or "埋句" in user_a
+    assert "A类·主题锚定" in user_a or "A类·本场一锤" in user_a
+    assert "末四拍" in user_a or "埋句" in user_a
     assert "哪里不一样" in user_a
+    assert "本场一锤" in sys_a
 
     os_a, user_o = build_daily_story_opening_prompts(
         "姐姐教弟弟写作业自己写错",

@@ -101,18 +101,25 @@ def _daily_lighting(vb: str) -> str:
     return "室外自然光，柔和散射，画面明亮。"
 
 
-def _daily_composition(shot_type: str, speakers: list[str]) -> str:
+def _daily_composition(
+    shot_type: str,
+    speakers: list[str],
+    *,
+    vb: str = "",
+) -> str:
     names = [s for s in speakers if s in _DAILY_CHAR_MAP]
     look = {
         "昭昭": "蓝T恤短发男孩昭昭",
         "灿灿": "粉卫衣马尾女孩灿灿",
         "妈妈": "米色上衣黑长发妈妈",
     }
+    has_lr = bool(_DAILY_LR_RE.search(vb or ""))
     if shot_type == "特写":
         if len(names) == 2:
             a, b = names[0], names[1]
+            lr = "" if has_lr else f"画面左边是{a}，右边是{b}。"
             return (
-                f"画面左边是{a}，右边是{b}。"
+                f"{lr}"
                 f"中近景特写，严格左侧{look.get(a, a)}占左半、"
                 f"右侧{look.get(b, b)}占右半，禁止左右对调。"
             )
@@ -120,8 +127,9 @@ def _daily_composition(shot_type: str, speakers: list[str]) -> str:
     if shot_type == "中景":
         if len(names) == 2:
             a, b = names[0], names[1]
+            lr = "" if has_lr else f"画面左边是{a}，右边是{b}。"
             return (
-                f"画面左边是{a}，右边是{b}。"
+                f"{lr}"
                 f"中景，严格左{look.get(a, a)}、右{look.get(b, b)}，"
                 f"禁止左右对调，全身可见。"
             )
@@ -174,7 +182,7 @@ def assemble_daily_t2i_prompt(
 
     parts.append(_daily_lighting(vb))
     layout = _daily_layout_speakers(seg, vb)
-    parts.append(_daily_composition(shot, layout))
+    parts.append(_daily_composition(shot, layout, vb=vb))
     if extra and extra.strip():
         # 禁止把质检元指令当出图正文
         cleaned = strip_verify_regen_leak(extra.strip())
