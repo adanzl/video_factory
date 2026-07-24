@@ -1392,15 +1392,16 @@ class JobMgr:
         """合成成片。实现：worker/loop.run_merge → merge stage（按 pipeline 分发）"""
         from worker.loop import run_merge
 
-        if bgm is not None or subtitle is not None or xfade is not None:
-            from app.utils.job_info import (
-                merge_job_info,
-                normalize_bgm_payload,
-                normalize_subtitle_payload,
-                normalize_xfade_payload,
-            )
+        with connection() as conn:
+            updates: dict = {}
+            if bgm is not None or subtitle is not None or xfade is not None:
+                from app.utils.job_info import (
+                    merge_job_info,
+                    normalize_bgm_payload,
+                    normalize_subtitle_payload,
+                    normalize_xfade_payload,
+                )
 
-            with connection() as conn:
                 job = repo_job.get_job(conn, job_id)
                 info = job.get("info")
                 if bgm is not None:
@@ -1430,7 +1431,14 @@ class JobMgr:
                         "api",
                         f"merge xfade config: {normalized_xfade}",
                     )
-                repo_job.update_job(conn, job_id, info=info)
+                updates["info"] = info
+            repo_job.update_job(
+                conn,
+                job_id,
+                bump_version=True,
+                fetch=False,
+                **updates,
+            )
 
         return self._run_in_background(
             job_id,

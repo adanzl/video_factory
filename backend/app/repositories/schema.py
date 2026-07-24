@@ -110,7 +110,7 @@ def apply_schema(conn: sqlite3.Connection) -> None:
             pipeline TEXT NOT NULL DEFAULT 'standard',
             material_id INTEGER,
             fail_stage TEXT,
-            retry_count INTEGER NOT NULL DEFAULT 0,
+            version INTEGER NOT NULL DEFAULT 0,
             skip_publish INTEGER NOT NULL DEFAULT 1,
             script_json TEXT,
             quality_report TEXT,
@@ -182,6 +182,21 @@ def apply_schema(conn: sqlite3.Connection) -> None:
     _ensure_column(conn, "video_segment", "info", "TEXT")
     _ensure_column(conn, "video_segment", "version", "INTEGER NOT NULL DEFAULT 0")
     _ensure_column(conn, "video_job", "audio_version", "INTEGER NOT NULL DEFAULT 0")
+    _rename_column_if_exists(conn, "video_job", "retry_count", "version")
+    _ensure_column(conn, "video_job", "version", "INTEGER NOT NULL DEFAULT 0")
+
+
+def _rename_column_if_exists(
+    conn: sqlite3.Connection,
+    table: str,
+    old: str,
+    new: str,
+) -> None:
+    columns = {
+        row[1] for row in conn.execute(f"PRAGMA table_info({table})")
+    }
+    if old in columns and new not in columns:
+        conn.execute(f"ALTER TABLE {table} RENAME COLUMN {old} TO {new}")
 
 
 _DAILY_STORY_DDL = """

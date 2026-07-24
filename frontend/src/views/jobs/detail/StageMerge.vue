@@ -215,7 +215,9 @@ const actionDisabledReason = computed(() =>
 
 const finalAsset = computed(() => props.job.final_path);
 const finalFilePath = computed(() => resolveFinalPath(props.job.final_path));
-const videoUrl = computed(() => getMediaFileUrl(finalFilePath.value));
+const videoUrl = computed(() =>
+  getMediaFileUrl(finalFilePath.value, props.job.version)
+);
 const lazyVideoUrl = computed(() => lazyMediaSrc(videoUrl.value, props.stageActive));
 
 const selectedBgm = computed(() =>

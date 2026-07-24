@@ -56,7 +56,7 @@ export interface JobListItem {
 
 export interface JobDetail extends JobListItem {
   fail_stage?: string | null;
-  retry_count?: number;
+  version?: number;
   skip_publish?: boolean;
   info?: JobInfo | null;
   script_json?: unknown;

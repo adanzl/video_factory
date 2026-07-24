@@ -329,14 +329,21 @@ const canRegenerateDescription = computed(() => Boolean(script.value?.narration?
 const canRegenerateTags = computed(() => Boolean(script.value?.narration?.trim()));
 
 const coverPath = computed(() => props.job.cover_path?.trim() || "");
-const coverUrl = computed(() => getMediaPicViewUrl(coverPath.value, 640));
+const coverUrl = computed(() => {
+  const base = getMediaPicViewUrl(coverPath.value, 640);
+  if (!base) return "";
+  const ver = props.job.version;
+  return ver !== undefined && ver !== null ? `${base}&v=${ver}` : base;
+});
 
 const finalFilePath = computed(() => resolveFinalPath(props.job.final_path));
-const videoUrl = computed(() => getMediaFileUrl(finalFilePath.value));
+const videoUrl = computed(() =>
+  getMediaFileUrl(finalFilePath.value, props.job.version)
+);
 const lazyCoverUrl = computed(() => lazyMediaSrc(coverUrl.value, props.stageActive));
 const lazyCoverPreviewList = computed(() => {
   if (!coverPath.value) return [];
-  const fullUrl = getMediaFileUrl(coverPath.value);
+  const fullUrl = getMediaFileUrl(coverPath.value, props.job.version);
   const lazyUrl = lazyMediaSrc(fullUrl, props.stageActive);
   return lazyUrl ? [lazyUrl] : [];
 });

@@ -140,13 +140,20 @@ def get_job(conn: sqlite3.Connection, job_id: int) -> dict:
     return _row_to_dict(row)
 
 
-def update_job(conn: sqlite3.Connection, job_id: int, **fields: Any) -> dict:
+def update_job(
+    conn: sqlite3.Connection,
+    job_id: int,
+    *,
+    bump_version: bool = False,
+    fetch: bool = True,
+    **fields: Any,
+) -> dict:
     allowed = {
         "title",
         "stage",
         "status",
         "fail_stage",
-        "retry_count",
+        "version",
         "skip_publish",
         "pipeline",
         "material_id",
@@ -165,6 +172,8 @@ def update_job(conn: sqlite3.Connection, job_id: int, **fields: Any) -> dict:
         "audio_version",
     }
     parts: list[str] = ["updated_at = datetime('now')"]
+    if bump_version:
+        parts.append("version = version + 1")
     values: list[Any] = []
     for key, value in fields.items():
         if key not in allowed:
@@ -182,6 +191,8 @@ def update_job(conn: sqlite3.Connection, job_id: int, **fields: Any) -> dict:
         f"UPDATE video_job SET {', '.join(parts)} WHERE id = ?",
         values,
     )
+    if not fetch:
+        return {}
     return get_job(conn, job_id)
 
 
