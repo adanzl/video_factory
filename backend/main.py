@@ -24,7 +24,7 @@ monkey.patch_all(subprocess=True, thread=False, queue=False)
 from flask import make_response
 
 from app.config import config
-from app.core import app_logger, create_app, gevent_access_logger
+from app.core import app_logger, create_app
 
 log = app_logger
 
@@ -73,7 +73,7 @@ if __name__ == "__main__":
         http_server = WSGIServer(
             (HOST, PORT),
             application,
-            log=gevent_access_logger,
+            log=None,
             error_log=log,
             handler_class=WebSocketHandler,
         )

@@ -7,7 +7,7 @@ from app.config import config
 from app.core.log_config import setup_server_logging
 from app.repositories.database import get_app, get_dbapi_connection, init_database
 from worker.recovery import recover_stuck_daily_stories, recover_stuck_jobs
-app_logger, gevent_access_logger = setup_server_logging(log_dir=config.log_dir, is_production=config.is_production)
+app_logger, access_logger = setup_server_logging(log_dir=config.log_dir, is_production=config.is_production)
 log = app_logger
 
 def _recover_stuck_jobs() -> None:
@@ -44,9 +44,25 @@ def create_app() -> Flask:
         CORS(app, supports_credentials=True, resources={'/*': {'origins': cors_origins}})
 
     @app.before_request
-    def _record_options_start_time():
-        if request.method == 'OPTIONS':
-            request._start_time = time.time()
+    def _record_request_start_time():
+        request._vf_start_time = time.perf_counter()
+
+    @app.after_request
+    def _log_api_access(response):
+        start = getattr(request, '_vf_start_time', None)
+        if start is None:
+            return response
+        duration_ms = (time.perf_counter() - start) * 1000
+        path = request.full_path if request.query_string else request.path
+        access_logger.info(
+            '%s %s %s %s %.1fms',
+            request.remote_addr or '-',
+            request.method,
+            path,
+            response.status_code,
+            duration_ms,
+        )
+        return response
 
     @app.route('/')
     def main_page():
@@ -62,4 +78,4 @@ def create_app() -> Flask:
         _recover_stuck_jobs()
         _recover_stuck_daily_stories()
     return app
-__all__ = ['app_logger', 'create_app', 'gevent_access_logger', 'get_app', 'log']
+__all__ = ['access_logger', 'app_logger', 'create_app', 'get_app', 'log']
