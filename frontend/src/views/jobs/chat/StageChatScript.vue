@@ -170,22 +170,48 @@
 
           <div class="mb-2">
             <div class="mb-1 text-xs text-gray-400">台词</div>
-            <div v-if="seg.dialogue && seg.dialogue.length" class="space-y-1">
+            <el-tooltip placement="top" :show-after="300" :disabled="!formatSegmentDialogueFull(seg)">
+              <template #content>
+                <div class="max-w-sm whitespace-pre-wrap wrap-break-word text-sm">
+                  {{ formatSegmentDialogueFull(seg) }}
+                </div>
+              </template>
               <div
-                v-for="(dl, di) in seg.dialogue"
-                :key="di"
-                class="rounded px-2 py-1 text-sm"
-                :class="speakerStyle(dl.speaker).full"
+                v-if="seg.dialogue?.length"
+                class="min-h-[4lh] max-h-[4lh] cursor-default space-y-0.5 overflow-hidden"
               >
-                <span class="font-bold">{{ dl.speaker }}：</span>{{ dl.text }}
+                <div
+                  v-for="(dl, di) in seg.dialogue"
+                  :key="di"
+                  class="rounded px-2 py-0.5 text-sm leading-relaxed"
+                  :class="speakerStyle(dl.speaker).full"
+                >
+                  <span class="font-bold">{{ dl.speaker }}：</span>{{ dl.text }}
+                </div>
               </div>
-            </div>
-            <div v-else class="rounded-md bg-gray-50 p-3 text-sm">{{ seg.text }}</div>
+              <div
+                v-else
+                class="line-clamp-3 min-h-[3lh] cursor-default overflow-hidden rounded-md bg-gray-50 px-2 py-1 text-sm leading-relaxed wrap-break-word"
+              >
+                {{ seg.text || "-" }}
+              </div>
+            </el-tooltip>
           </div>
 
           <div v-if="seg.visual_brief" class="mb-2">
             <div class="mb-1 text-xs text-gray-400">画面概要</div>
-            <div class="text-sm text-gray-600">{{ seg.visual_brief }}</div>
+            <el-tooltip placement="top" :show-after="300" :disabled="!seg.visual_brief">
+              <template #content>
+                <div class="max-w-sm whitespace-pre-wrap wrap-break-word text-sm">
+                  {{ seg.visual_brief }}
+                </div>
+              </template>
+              <div
+                class="line-clamp-5 min-h-[5lh] cursor-default overflow-hidden text-sm leading-relaxed text-gray-600 wrap-break-word"
+              >
+                {{ seg.visual_brief }}
+              </div>
+            </el-tooltip>
           </div>
 
           <div v-if="seg.image_prompt">
@@ -227,22 +253,48 @@
 
           <div class="mb-2">
             <div class="mb-1 text-xs text-gray-400">台词</div>
-            <div v-if="seg.dialogue && seg.dialogue.length" class="space-y-1">
+            <el-tooltip placement="top" :show-after="300" :disabled="!formatSegmentDialogueFull(seg)">
+              <template #content>
+                <div class="max-w-sm whitespace-pre-wrap wrap-break-word text-sm">
+                  {{ formatSegmentDialogueFull(seg) }}
+                </div>
+              </template>
               <div
-                v-for="(dl, di) in seg.dialogue"
-                :key="di"
-                class="rounded px-2 py-1 text-sm"
-                :class="speakerStyle(dl.speaker).full"
+                v-if="seg.dialogue?.length"
+                class="min-h-[3lh] max-h-[3lh] cursor-default space-y-0.5 overflow-hidden"
               >
-                <span class="font-bold">{{ dl.speaker }}：</span>{{ dl.text }}
+                <div
+                  v-for="(dl, di) in seg.dialogue"
+                  :key="di"
+                  class="rounded px-2 py-0.5 text-sm leading-relaxed"
+                  :class="speakerStyle(dl.speaker).full"
+                >
+                  <span class="font-bold">{{ dl.speaker }}：</span>{{ dl.text }}
+                </div>
               </div>
-            </div>
-            <div v-else class="rounded-md bg-gray-50 p-3 text-sm">{{ seg.text }}</div>
+              <div
+                v-else
+                class="line-clamp-3 min-h-[3lh] cursor-default overflow-hidden rounded-md bg-gray-50 px-2 py-1 text-sm leading-relaxed wrap-break-word"
+              >
+                {{ seg.text || "-" }}
+              </div>
+            </el-tooltip>
           </div>
 
           <div v-if="seg.visual_brief" class="mb-2">
             <div class="mb-1 text-xs text-gray-400">画面概要</div>
-            <div class="text-sm text-gray-600">{{ seg.visual_brief }}</div>
+            <el-tooltip placement="top" :show-after="300" :disabled="!seg.visual_brief">
+              <template #content>
+                <div class="max-w-sm whitespace-pre-wrap wrap-break-word text-sm">
+                  {{ seg.visual_brief }}
+                </div>
+              </template>
+              <div
+                class="line-clamp-5 min-h-[5lh] cursor-default overflow-hidden text-sm leading-relaxed text-gray-600 wrap-break-word"
+              >
+                {{ seg.visual_brief }}
+              </div>
+            </el-tooltip>
           </div>
 
           <div v-if="seg.image_prompt">
@@ -316,6 +368,13 @@ interface ChatScript {
   daily_story_id?: number;
   daily_story_theme?: string;
   total_chars?: number;
+}
+
+function formatSegmentDialogueFull(seg: ChatSegment): string {
+  if (seg.dialogue?.length) {
+    return seg.dialogue.map(dl => `${dl.speaker}：${dl.text}`).join("\n");
+  }
+  return seg.text?.trim() || "";
 }
 
 const submitting = ref(false);
