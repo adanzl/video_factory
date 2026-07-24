@@ -19,8 +19,11 @@ _VALID_CONTENT_STYLES = frozenset({CONTENT_STYLE_SCIENCE_CHILD, CONTENT_STYLE_TE
 _VALID_IMAGE_PROVIDERS = frozenset({'z_image_t2i', 'wan_t2i', 'sd15_t2i', 'agnes_t2i'})
 _VALID_VIDEO_PROVIDERS = frozenset({'ffmpeg', 'wan_i2v', 'agnes_i2v'})
 INTRO_CATEGORY_SCIENCE = '百科'
+INTRO_CATEGORY_DAILY = '童趣日常'
 INTRO_CATEGORY_HISTORY = '历史悬案'
-_VALID_INTRO_CATEGORIES = frozenset({INTRO_CATEGORY_SCIENCE, INTRO_CATEGORY_HISTORY})
+_VALID_INTRO_CATEGORIES = frozenset(
+    {INTRO_CATEGORY_SCIENCE, INTRO_CATEGORY_DAILY, INTRO_CATEGORY_HISTORY}
+)
 
 def parse_job_info(raw: str | dict | None) -> dict[str, Any]:
     if raw is None:
@@ -99,12 +102,23 @@ def normalize_intro_category(value: str | None) -> str | None:
     normalized = value.strip()
     if normalized in _VALID_INTRO_CATEGORIES:
         return normalized
-    aliases = {'science': INTRO_CATEGORY_SCIENCE, 'science_child': INTRO_CATEGORY_SCIENCE, 'history_mystery': INTRO_CATEGORY_HISTORY, 'mystery': INTRO_CATEGORY_HISTORY}
-    return aliases.get(normalized.lower())
+    aliases = {
+        'science': INTRO_CATEGORY_SCIENCE,
+        'science_child': INTRO_CATEGORY_SCIENCE,
+        'daily': INTRO_CATEGORY_DAILY,
+        'daily_story': INTRO_CATEGORY_DAILY,
+        'life': INTRO_CATEGORY_DAILY,
+        'life_experience': INTRO_CATEGORY_DAILY,
+        'history_mystery': INTRO_CATEGORY_HISTORY,
+        'mystery': INTRO_CATEGORY_HISTORY,
+    }
+    return aliases.get(normalized.lower()) or aliases.get(normalized)
 
 def default_intro_category_for_content_style(content_style: str) -> str:
     if content_style == CONTENT_STYLE_HISTORICAL_MYSTERY:
         return INTRO_CATEGORY_HISTORY
+    if content_style == CONTENT_STYLE_DAILY_STORY:
+        return INTRO_CATEGORY_DAILY
     return INTRO_CATEGORY_SCIENCE
 
 def intro_category_from_job(job: dict) -> str:
@@ -119,10 +133,8 @@ def is_history_intro_category(category: str) -> bool:
     return category == INTRO_CATEGORY_HISTORY
 
 def intro_generate_category(job: dict) -> str | None:
-    """传给 generate_intro 的 category；None 表示百科默认主题。"""
-    if intro_category_from_job(job) == INTRO_CATEGORY_HISTORY:
-        return INTRO_CATEGORY_HISTORY
-    return None
+    """传给 generate_intro 的 category。"""
+    return intro_category_from_job(job)
 
 def is_landscape_job(job: dict) -> bool:
     return orientation_for_resolve(job) == ORIENTATION_LANDSCAPE

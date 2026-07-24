@@ -463,6 +463,7 @@ DAILY_STORY_OPENING_SYSTEM_PROMPT = f"""\
 - 寒暄铺垫：「姐你在干嘛」「今天好无聊」
 - 直接开辩：「规则是谁先看见谁拿」「我是姐姐我说了算」
 - 抽象空话：「这不公平」「你怎么这样」——没点出实物/动作
+- 片头定场，不是正文互怼：勿把需要前文才成立的反击、双标对比、引用原话写在开场第 1 句
 - 妈妈出场、复述正文已有句子、续写互怼第二回合
 
 【输出】只输出 JSON：
@@ -482,6 +483,7 @@ DAILY_STORY_OPENING_USER_TEMPLATE = """\
 {body_head}
 
 要求：点名冲突物或正在发生的动作，让观众立刻知道在争什么；
+开场是片头定场（看见/抓住现场），不是正文里已吵过几轮后的反击句；
 不要寒暄，不要甩规则，不要妈妈。直接输出 JSON。
 """
 
@@ -1016,10 +1018,238 @@ def validate_daily_story_json(
     # setting 妈妈动作一致性
     _append_setting_mom_consistency_errors(story, errors)
 
+    _append_verifiable_fact_errors(story, errors)
     _append_homework_fact_errors(story, errors)
 
     if errors:
         raise ValueError("daily_story 校验失败: " + "; ".join(errors))
+
+
+_CN_DIGIT: dict[str, int] = {
+    "零": 0,
+    "一": 1,
+    "二": 2,
+    "三": 3,
+    "四": 4,
+    "五": 5,
+    "六": 6,
+    "七": 7,
+    "八": 8,
+    "九": 9,
+    "两": 2,
+}
+
+_CLOCK_TOKEN_RE = re.compile(
+    r"([零一二三四五六七八九十两]{1,3})点"
+    r"(半|整|(?:零[一二三四五六七八九])|(?:[一二三四五六七八九十]{1,3}))?",
+)
+
+_DURATION_MINUTES_RE = re.compile(
+    r"(\d+|"
+    r"二十[一二三四五六七八九]?|"
+    r"十[一二三四五六七八九]?|"
+    r"[一二三四五六七八九])"
+    r"分钟",
+)
+
+_DURATION_NUM = (
+    r"(?:\d+|二十[一二三四五六七八九]?|十[一二三四五六七八九]?|[一二三四五六七八九])"
+)
+
+
+def _parse_cn_small_int(s: str) -> int | None:
+    if not s:
+        return None
+    if s == "十":
+        return 10
+    if s.startswith("十") and len(s) == 2:
+        return 10 + _CN_DIGIT.get(s[1], 0)
+    if "十" in s:
+        head, _, tail = s.partition("十")
+        hi = _CN_DIGIT.get(head, 1) if head else 1
+        lo = _CN_DIGIT.get(tail, 0) if tail else 0
+        return hi * 10 + lo
+    if len(s) == 1 and s in _CN_DIGIT:
+        return _CN_DIGIT[s]
+    return None
+
+
+def _parse_cn_clock_token(token: str) -> int | None:
+    """将「八点十五」类短语转为当日分钟数（0–1439）。"""
+    m = _CLOCK_TOKEN_RE.fullmatch(token.strip())
+    if not m:
+        return None
+    hour = _parse_cn_small_int(m.group(1))
+    if hour is None or hour > 23:
+        return None
+    minute_part = m.group(2)
+    if not minute_part:
+        minute = 0
+    elif minute_part == "整":
+        minute = 0
+    elif minute_part == "半":
+        minute = 30
+    elif minute_part.startswith("零") and len(minute_part) == 2:
+        minute = _CN_DIGIT.get(minute_part[1], 0)
+    else:
+        minute = _parse_cn_small_int(minute_part)
+        if minute is None or minute > 59:
+            return None
+    return hour * 60 + minute
+
+
+def _iter_clock_tokens(text: str) -> list[tuple[str, int]]:
+    out: list[tuple[str, int]] = []
+    for m in _CLOCK_TOKEN_RE.finditer(text):
+        tok = m.group(0)
+        minutes = _parse_cn_clock_token(tok)
+        if minutes is not None:
+            out.append((tok, minutes))
+    return out
+
+
+def _start_anchor_minutes_from_line(line: str) -> list[int]:
+    anchors: list[int] = []
+    rm = re.search(
+        r"从\s*([零一二三四五六七八九十两]+点"
+        r"(?:半|整|(?:零[一二三四五六七八九])|(?:[一二三四五六七八九十]{1,3}))?)\s*到",
+        line,
+    )
+    if rm:
+        t = _parse_cn_clock_token(rm.group(1))
+        if t is not None:
+            anchors.append(t)
+    if re.search(r"拿|起算|计时", line):
+        for tok, minutes in _iter_clock_tokens(line):
+            if re.search(rf"{re.escape(tok)}.{0,6}拿|拿.{0,6}{re.escape(tok)}", line):
+                anchors.append(minutes)
+            elif tok in line and "拿" in line:
+                anchors.append(minutes)
+    if re.search(r"开始|整开始", line):
+        for _, minutes in _iter_clock_tokens(line):
+            anchors.append(minutes)
+    return anchors
+
+
+def _parse_duration_minutes(token: str) -> int | None:
+    token = token.strip()
+    if token.isdigit():
+        n = int(token)
+        return n if 0 < n <= 180 else None
+    n = _parse_cn_small_int(token)
+    if n is None or n <= 0 or n > 180:
+        return None
+    return n
+
+
+def _line_claims_time_up(line: str) -> bool:
+    if re.search(r"马上.{0,8}(到时间|时间到)|快.{0,4}到时间", line):
+        return False
+    return bool(re.search(r"时间到了|到点了|时间已到|到时间了", line))
+
+
+def _append_clock_fact_errors(
+    lines_text: list[str],
+    full: str,
+    errors: list[str],
+) -> None:
+    all_clocks: list[tuple[str, int]] = []
+    for line in lines_text:
+        all_clocks.extend(_iter_clock_tokens(line))
+    if len(all_clocks) < 2:
+        return
+
+    start_anchors: list[int] = []
+    for line in lines_text:
+        start_anchors.extend(_start_anchor_minutes_from_line(line))
+    unique_starts = sorted(set(start_anchors))
+    if len(unique_starts) >= 2:
+        errors.append(
+            "可核对事实：计时起点前后不一致（如八点拿与八点整开始混用），"
+            "请统一一条时间线或删掉钟点",
+        )
+
+    now_min: int | None = None
+    end_min: int | None = None
+    for line in lines_text:
+        nm = re.search(
+            r"现在\s*([零一二三四五六七八九十两]+点"
+            r"(?:半|整|(?:零[一二三四五六七八九])|(?:[一二三四五六七八九十]{1,3}))?)",
+            line,
+        )
+        if nm:
+            now_min = _parse_cn_clock_token(nm.group(1))
+        em = re.search(
+            r"从\s*[零一二三四五六七八九十两]+点"
+            r"(?:半|整|(?:零[一二三四五六七八九])|(?:[一二三四五六七八九十]{1,3}))?\s*到\s*"
+            r"([零一二三四五六七八九十两]+点"
+            r"(?:半|整|(?:零[一二三四五六七八九])|(?:[一二三四五六七八九十]{1,3}))?)",
+            line,
+        )
+        if em:
+            end_min = _parse_cn_clock_token(em.group(1))
+
+    if (
+        now_min is not None
+        and end_min is not None
+        and now_min < end_min
+        and re.search(r"正好|到点|时间到|已满|够了", full)
+    ):
+        errors.append(
+            "可核对事实：「现在」未到所述结束时刻却说已到点/正好，"
+            "请改时刻或改台词",
+        )
+
+
+def _append_duration_fact_errors(
+    lines_text: list[str],
+    full: str,
+    errors: list[str],
+) -> None:
+    """约定 X 分钟 +「才 Y 分钟」且 Y<X 时，禁止说时间已到（有锚才查）。"""
+    limit: int | None = None
+    lm = re.search(
+        rf"(?:说好|约定|只能|限时|就玩).{{0,8}}?({_DURATION_NUM})分钟",
+        full,
+    )
+    if lm:
+        limit = _parse_duration_minutes(lm.group(1))
+    if limit is None:
+        lm = re.search(
+            rf"({_DURATION_NUM})分钟.{{0,6}}(?:到|满|结束|不能再)",
+            full,
+        )
+        if lm:
+            limit = _parse_duration_minutes(lm.group(1))
+    elapsed_m = re.search(rf"才\s*({_DURATION_NUM})分钟", full)
+    if limit is None or not elapsed_m:
+        return
+    elapsed = _parse_duration_minutes(elapsed_m.group(1))
+    if limit is None or elapsed is None or elapsed >= limit:
+        return
+    for line in lines_text:
+        if _line_claims_time_up(line):
+            errors.append(
+                f"可核对事实：约定{limit}分钟、才玩{elapsed}分钟时不应说时间到/到了，"
+                "请改首句催促或改数字",
+            )
+            return
+
+
+def _append_verifiable_fact_errors(story: dict, errors: list[str]) -> None:
+    """正文出现可核对事实（钟点、时长、算式等）时，检查是否自相矛盾。"""
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list) or not dialogue:
+        return
+
+    lines_text = [
+        str(d.get("line") or "")
+        for d in dialogue
+        if isinstance(d, dict)
+    ]
+    full = "".join(lines_text)
+    _append_clock_fact_errors(lines_text, full, errors)
+    _append_duration_fact_errors(lines_text, full, errors)
 
 
 def _append_homework_fact_errors(story: dict, errors: list[str]) -> None:
@@ -1113,6 +1343,7 @@ def validate_daily_story_opening(
     *,
     conflict_core: str = "",
     setting: str = "",
+    type_code: str | None = None,
 ) -> list[dict]:
     """校验发现开场 1–2 句，返回规范化列表；失败抛 ValueError。"""
     errors: list[str] = []

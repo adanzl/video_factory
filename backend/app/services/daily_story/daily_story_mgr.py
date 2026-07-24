@@ -143,7 +143,13 @@ class DailyStoryMgr:
     def create_job(self, story_id: int, *, skip_publish: bool=False, speech_chars_per_sec: float | None=None, phrase_gap_sec: float | None=None) -> dict:
         """基于日常故事创建视频任务（pipeline=daily_story）。"""
         from app.repositories import repo_job, repo_job_log
-        from app.utils.job_info import DEFAULT_BGM_VOLUME_DB, DEFAULT_DAILY_STORY_BGM_MATERIAL_ID, DEFAULT_DAILY_STORY_PHRASE_GAP_SEC, DEFAULT_DAILY_STORY_SPEECH_CHARS_PER_SEC
+        from app.utils.job_info import (
+            DEFAULT_BGM_VOLUME_DB,
+            DEFAULT_DAILY_STORY_BGM_MATERIAL_ID,
+            DEFAULT_DAILY_STORY_PHRASE_GAP_SEC,
+            DEFAULT_DAILY_STORY_SPEECH_CHARS_PER_SEC,
+            INTRO_CATEGORY_DAILY,
+        )
         from worker.stages.daily_story.tts import DEFAULT_DAILY_SPEAKER_CONFIGS
         with atomic():
             story = repo_daily_story.get_story(story_id)
@@ -158,7 +164,15 @@ class DailyStoryMgr:
                 title = story.get('theme', f'日常故事-{story_id}')
             cps = float(speech_chars_per_sec) if speech_chars_per_sec is not None else DEFAULT_DAILY_STORY_SPEECH_CHARS_PER_SEC
             gap = float(phrase_gap_sec) if phrase_gap_sec is not None else DEFAULT_DAILY_STORY_PHRASE_GAP_SEC
-            info = merge_job_info(merge_job_script_params(None, speech_chars_per_sec=cps), daily_story_id=story_id, orientation='landscape', video_provider='ffmpeg', bgm={'enabled': True, 'material_id': DEFAULT_DAILY_STORY_BGM_MATERIAL_ID, 'volume_db': DEFAULT_BGM_VOLUME_DB}, subtitle={'enabled': False})
+            info = merge_job_info(
+                merge_job_script_params(None, speech_chars_per_sec=cps),
+                daily_story_id=story_id,
+                orientation='landscape',
+                intro_category=INTRO_CATEGORY_DAILY,
+                video_provider='ffmpeg',
+                bgm={'enabled': True, 'material_id': DEFAULT_DAILY_STORY_BGM_MATERIAL_ID, 'volume_db': DEFAULT_BGM_VOLUME_DB},
+                subtitle={'enabled': False},
+            )
             speaker_configs = {name: dict(cfg) for name, cfg in DEFAULT_DAILY_SPEAKER_CONFIGS.items()}
             speaker_configs['phrase_gap_sec'] = gap
             info['tts'] = {'speaker_configs': speaker_configs}

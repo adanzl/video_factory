@@ -266,7 +266,7 @@ def _parse_intro_body() -> tuple[int, bool, float | None, str | None, str | None
     if "intro_category" in data:
         intro_category = normalize_intro_category(parse_optional_str(data, "intro_category"))
         if intro_category is None:
-            raise APIError("intro_category must be 百科 or 历史悬案", status_code=400)
+            raise APIError("intro_category must be 百科, 童趣日常 or 历史悬案", status_code=400)
     return (
         parse_id(data),
         parse_bool(data, "to_end", default=False),

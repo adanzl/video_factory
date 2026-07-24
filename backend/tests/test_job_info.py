@@ -337,14 +337,27 @@ def test_resolve_video_provider_clip_provider_fallback():
     assert resolve_video_provider(None, visual_mode="static_motion", settings=settings) == "ffmpeg"
 
 
+def test_daily_story_create_job_info_sets_intro_category():
+    from app.utils.job_info import INTRO_CATEGORY_DAILY, merge_job_info, merge_job_script_params
+
+    info = merge_job_info(
+        merge_job_script_params(None, speech_chars_per_sec=3.6),
+        daily_story_id=18,
+        orientation="landscape",
+        intro_category=INTRO_CATEGORY_DAILY,
+    )
+    assert info["intro_category"] == INTRO_CATEGORY_DAILY
+
+
 def test_daily_story_create_job_info_stores_phrase_gap_in_tts():
-    from app.utils.job_info import merge_job_info, merge_job_script_params
+    from app.utils.job_info import INTRO_CATEGORY_DAILY, merge_job_info, merge_job_script_params
     from worker.stages.daily_story.tts import DEFAULT_DAILY_SPEAKER_CONFIGS
 
     info = merge_job_info(
         merge_job_script_params(None, speech_chars_per_sec=3.6),
         daily_story_id=18,
         orientation="landscape",
+        intro_category=INTRO_CATEGORY_DAILY,
         video_provider="ffmpeg",
     )
     phrase_gap_sec = 0.2

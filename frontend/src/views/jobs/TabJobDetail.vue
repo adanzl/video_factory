@@ -270,9 +270,7 @@ const handleDone = async () => {
 
   doneLoading.value = true;
   try {
-    const stages = stagesForJob(job.value);
-    const lastStage = stages[stages.length - 1]?.name ?? "publish";
-    job.value = await updateJob(job.value.id, { status: JOB_STATUS_DONE, stage: lastStage });
+    job.value = await updateJob(job.value.id, { status: JOB_STATUS_DONE, stage: "done" });
     ElMessage.success("任务已标记为完成");
   } catch (error) {
     handleError(error, "标记任务完成失败");
