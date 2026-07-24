@@ -1027,6 +1027,8 @@ def validate_daily_story_json(
 
     _append_verifiable_fact_errors(story, errors)
     _append_homework_fact_errors(story, errors)
+    _append_brush_timer_fact_errors(story, errors)
+    _append_a_closing_quote_errors(story, errors)
 
     if errors:
         raise ValueError("daily_story 校验失败: " + "; ".join(errors))
@@ -1328,6 +1330,157 @@ def _append_homework_fact_errors(story: dict, errors: list[str]) -> None:
             )
 
 
+_DURATION_TOKEN_RE = re.compile(
+    r"(?:半分钟|"
+    r"(?:\d+|二十[一二三四五六七八九]?|十[一二三四五六七八九]?|"
+    r"[一二三四五六七八九两])分半|"
+    r"(?:\d+|二十[一二三四五六七八九]?|十[一二三四五六七八九]?|"
+    r"[一二三四五六七八九两])分钟)"
+)
+
+# A 开场禁止先揭穿一锤（灿灿已翻车/双标）
+_A_OPENING_SPOILER_RE = re.compile(
+    r"自己才|自己刷了|自己算错|自己写错|自己弹错|"
+    r"草稿.{0,6}错|计时器上自己|你也错了|"
+    r"刚玩过|你上次|双标|才刷了半|一分半"
+)
+
+_RE_CLOSING_QUOTE = re.compile(
+    r"(?:你刚才说|你自己说|你不是说|你刚说|你说的)([^，。！？…]{3,})",
+)
+
+
+def _duration_token_to_seconds(token: str) -> int | None:
+    t = token.strip()
+    if t == "半分钟":
+        return 30
+    if t.endswith("分半"):
+        head = t[:-2]
+        n = _parse_duration_minutes(head)
+        return None if n is None else n * 60 + 30
+    if t.endswith("分钟"):
+        n = _parse_duration_minutes(t[:-2])
+        return None if n is None else n * 60
+    return None
+
+
+def _iter_duration_seconds(text: str) -> list[int]:
+    out: list[int] = []
+    for m in _DURATION_TOKEN_RE.finditer(text or ""):
+        sec = _duration_token_to_seconds(m.group(0))
+        if sec is not None:
+            out.append(sec)
+    return out
+
+
+def _append_brush_timer_fact_errors(story: dict, errors: list[str]) -> None:
+    """刷牙/计时类：本场一锤时长全文只认一套，禁半分钟与一分半混用。"""
+    setting = str(story.get("setting") or "")
+    core = str(story.get("conflict_core") or "")
+    punch = str(story.get("punchline_explain") or "")
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list) or not dialogue:
+        return
+    lines_text = [
+        str(d.get("line") or "")
+        for d in dialogue
+        if isinstance(d, dict)
+    ]
+    full = "".join(lines_text)
+    blob = setting + core + punch + full
+    if not re.search(r"刷牙|刷够|计时器|计时", blob):
+        return
+
+    all_secs = set(_iter_duration_seconds(full))
+    if len(all_secs) >= 4:
+        errors.append(
+            "可核对事实：刷牙/计时出现≥4种不同时长，"
+            "本场一锤只留一套数（规则+弟弟+姐姐各至多一个）",
+        )
+
+    sister_secs: set[int] = set()
+    brother_secs: set[int] = set()
+    for line in lines_text:
+        secs = _iter_duration_seconds(line)
+        if not secs:
+            continue
+        if re.search(
+            r"自己.{0,8}(?:刷|才)|上次.{0,12}(?:刷|才)|我那次|计时器上自己",
+            line,
+        ):
+            sister_secs.update(secs)
+        if re.search(
+            r"你刷.{0,8}才|我(?:用了计时器|刷).{0,8}|"
+            r"正好.{0,4}(?:两|二|\d)|刷干净了",
+            line,
+        ) or (
+            "正好" in line and _iter_duration_seconds(line)
+        ):
+            if not re.search(r"自己|我那次|上次你|上次才", line):
+                brother_secs.update(secs)
+
+    if len(sister_secs) >= 2:
+        errors.append(
+            "可核对事实：灿灿自己刷牙时长前后不一"
+            "（如半分钟与一分半），全文只留一个数",
+        )
+    if len(brother_secs) >= 2:
+        errors.append(
+            "可核对事实：昭昭刷牙时长前后不一"
+            "（如才一分钟又说正好两分钟），请统一",
+        )
+
+
+def _append_a_closing_quote_errors(story: dict, errors: list[str]) -> None:
+    """A 类：末段「你刚才说…」须能在灿灿前文找到原话。"""
+    punch = str(story.get("punchline_explain") or "")
+    code = parse_story_type_code(punchline=punch)
+    if code != "A":
+        return
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 6:
+        return
+    body = dialogue[:-4]
+    cancan = "".join(
+        str(d.get("line") or "")
+        for d in body
+        if isinstance(d, dict) and str(d.get("speaker") or "").strip() == "灿灿"
+    )
+    if not cancan.strip():
+        return
+
+    def _grounded(frag: str, hay: str) -> bool:
+        clean = re.sub(r"[的话呢呀嘛吧啊…\s「」『』\"'‘’：:]", "", frag)
+        hay2 = re.sub(r"[\s「」『』\"'‘’]", "", hay)
+        if len(clean) < 3:
+            return True
+        run = 6 if len(clean) >= 6 else max(3, min(5, len(clean)))
+        for i in range(len(clean) - run + 1):
+            if clean[i:i + run] in hay2:
+                return True
+        if len(clean) < 6:
+            pieces = [clean[i:i + 2] for i in range(0, len(clean) - 1, 2)]
+            if len(pieces) >= 3:
+                hit = sum(1 for p in pieces if p in hay2)
+                if hit >= (len(pieces) * 2 + 2) // 3:
+                    return True
+        return False
+
+    for item in dialogue[-4:]:
+        if not isinstance(item, dict):
+            continue
+        line = str(item.get("line") or "")
+        for m in _RE_CLOSING_QUOTE.finditer(line):
+            frag = m.group(1).strip()
+            if not _grounded(frag, cancan):
+                errors.append(
+                    f"A类收束引话须出自灿灿前文原话（无「{frag[:14]}」），"
+                    "禁止昭昭自造后再假装引用",
+                )
+                return
+
+
+
 def _coerce_opening_item(item: object, *, index: int) -> tuple[dict | None, str | None]:
     """把开场单句规范成 {speaker,line}；无法识别则返回错误信息。"""
     if not isinstance(item, dict):
@@ -1409,6 +1562,16 @@ def validate_daily_story_opening(
         errors.append(
             f"发现开场未体现 conflict_core 锚点（须点名其一：{hint}）：{core!r}"
         )
+
+    code = (type_code or "").strip().upper()[:1]
+    if code == "A":
+        for i, item in enumerate(normalized):
+            if _A_OPENING_SPOILER_RE.search(item["line"]):
+                errors.append(
+                    f"opening[{i}] A类禁止开场先揭穿灿灿翻车/双标"
+                    "（自己才刷/算错/刚玩过等），一锤留给正文中段",
+                )
+                break
 
     if errors:
         raise ValueError("daily_story 开场校验失败: " + "; ".join(errors))

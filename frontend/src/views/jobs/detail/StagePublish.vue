@@ -386,15 +386,33 @@ const cover43Guide = computed(() =>
   )
 );
 
-const coverDownloadName = computed(() => {
-  const fromPath = coverPath.value.split("/").pop();
-  return fromPath || `job-${props.job.id}-cover.jpg`;
-});
+function pathExtension(path: string, fallback: string): string {
+  const name = path.replace(/\\/g, "/").split("/").pop() || "";
+  const dot = name.lastIndexOf(".");
+  if (dot <= 0) return fallback;
+  return name.slice(dot);
+}
 
-const finalDownloadName = computed(() => {
-  const fromPath = finalFilePath.value.split("/").pop();
-  return fromPath || `job-${props.job.id}-final.mp4`;
-});
+function sanitizeDownloadBase(name: string): string {
+  const cleaned = name
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[. ]+$/g, "");
+  return cleaned || `job-${props.job.id}`;
+}
+
+const downloadBaseName = computed(() =>
+  sanitizeDownloadBase(publishTitle.value || props.job.title || "")
+);
+
+const coverDownloadName = computed(
+  () => `${downloadBaseName.value}${pathExtension(coverPath.value, ".jpg")}`
+);
+
+const finalDownloadName = computed(
+  () => `${downloadBaseName.value}${pathExtension(finalFilePath.value, ".mp4")}`
+);
 
 const onCoverLoad = () => {
   coverLoadError.value = false;

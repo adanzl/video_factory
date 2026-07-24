@@ -1,5 +1,13 @@
 import { setupChunkReloadGuard } from "@/utils/utils";
 import { createRouter, createWebHashHistory, type RouteRecordRaw } from "vue-router";
+import PageHome from "@/views/PageHome.vue";
+import PageJobs from "@/views/jobs/PageJobs.vue";
+import PageMaterialVideo from "@/views/material/PageMaterialVideo.vue";
+import PageMaterialAudio from "@/views/material/PageMaterialAudio.vue";
+import PageClipSearch from "@/views/clips/PageClipSearch.vue";
+import PageTopic from "@/views/topic/PageTopic.vue";
+import PageDailyStory from "@/views/daily_story/PageDailyStory.vue";
+import PageConfig from "@/views/config/PageConfig.vue";
 
 const routes: RouteRecordRaw[] = [
   {
@@ -9,42 +17,42 @@ const routes: RouteRecordRaw[] = [
   {
     path: "/home",
     name: "Home",
-    component: () => import("@/views/PageHome.vue"),
+    component: PageHome,
   },
   {
     path: "/jobs",
     name: "Jobs",
-    component: () => import("@/views/jobs/PageJobs.vue"),
+    component: PageJobs,
   },
   {
     path: "/materials/video",
     name: "MaterialsVideo",
-    component: () => import("@/views/material/PageMaterialVideo.vue"),
+    component: PageMaterialVideo,
   },
   {
     path: "/materials/audio",
     name: "MaterialsAudio",
-    component: () => import("@/views/material/PageMaterialAudio.vue"),
+    component: PageMaterialAudio,
   },
   {
     path: "/clips",
     name: "ClipSearch",
-    component: () => import("@/views/clips/PageClipSearch.vue"),
+    component: PageClipSearch,
   },
   {
     path: "/topic",
     name: "Topic",
-    component: () => import("@/views/topic/PageTopic.vue"),
+    component: PageTopic,
   },
   {
     path: "/daily-story",
     name: "DailyStory",
-    component: () => import("@/views/daily_story/PageDailyStory.vue"),
+    component: PageDailyStory,
   },
   {
     path: "/config",
     name: "Config",
-    component: () => import("@/views/config/PageConfig.vue"),
+    component: PageConfig,
   },
 ];
 

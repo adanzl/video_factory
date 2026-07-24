@@ -81,7 +81,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onUnmounted, ref, watch } from "vue";
+import { computed, onActivated, onDeactivated, onUnmounted, ref, watch } from "vue";
 import type { Component } from "vue";
 import { Refresh } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
@@ -355,5 +355,11 @@ watch(
   { immediate: true }
 );
 
+onActivated(() => {
+  if (job.value?.status === JOB_STATUS_RUNNING) {
+    startRunningPoll();
+  }
+});
+onDeactivated(stopRunningPoll);
 onUnmounted(stopRunningPoll);
 </script>
