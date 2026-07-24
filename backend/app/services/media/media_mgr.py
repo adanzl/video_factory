@@ -13,6 +13,10 @@ from gevent.lock import Semaphore
 
 from app.config import get_settings
 from app.utils.job_cancel import JobCancelledError, job_cancel
+from app.services.tts.audio_timeline import (
+    extend_phrase_cues_to_duration,
+    segment_timeline_durations_from_db,
+)
 from app.services.segment.clip.clip_mgr import clip_mgr
 from app.services.render.subtitle_style import subtitle_style_for_canvas
 from app.services.media.ffmpeg_utils import build_ass_from_phrase_cues
@@ -375,6 +379,14 @@ class MediaMgr:
                 raise ValueError(
                     f"segment {index} 无句级字幕时间轴，请先执行 tts，或确保分镜有 duration_sec"
                 )
+            raw_dur = seg.get("duration_sec")
+            if raw_dur is None or float(raw_dur) <= 0:
+                raise ValueError(
+                    f"segment {index} 缺少 duration_sec，请先执行 tts"
+                )
+            seg_cues = extend_phrase_cues_to_duration(
+                seg_cues, float(raw_dur)
+            )
             if not tts_mgr.cues_for_segment(subtitle_cues, index):
                 logger.info(
                     "clip segment %s: using duration_sec fallback (%.2fs)",
@@ -512,7 +524,6 @@ class MediaMgr:
         clips_dir = media_dir / "segments"
         sorted_seg_lst = sorted(segments, key=lambda s: s["segment_index"])
         clip_paths: list[Path] = []
-        clip_durations: list[float] = []
         for seg in sorted_seg_lst:
             index = seg["segment_index"]
             if seg.get("clip_path"):
@@ -524,11 +535,8 @@ class MediaMgr:
                         f"segment {index} 缺少 clip，请从 segment 阶段重跑"
                     )
                 clip_paths.append(fallback)
-            if seg["duration_sec"] is None:
-                raise ValueError(
-                    f"segment {index} 缺少 duration_sec，请从 tts 阶段重跑"
-                )
-            clip_durations.append(seg["duration_sec"])
+
+        clip_durations = segment_timeline_durations_from_db(sorted_seg_lst)
 
         logger.info("merge: concatenating %s clips with pts fix", len(clip_paths))
         body_path = media_dir / "body.mp4"

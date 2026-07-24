@@ -13,6 +13,10 @@ from app.services.tts.audio_analysis import analyze_loudness, analyze_silence, n
 from app.services.tts.tts_mgr import tts_mgr, SubtitleCue
 from app.services.media.ffmpeg_utils import build_srt_from_cues, concat_clips, generate_silent_mp3, probe_duration, run_ffmpeg
 from app.utils.job_info import parse_job_info
+from app.services.tts.audio_timeline import (
+    resolve_segment_timeline_durations,
+    save_audio_timeline_manifest,
+)
 from worker.context import JobContext
 from worker.stages.base import StageExecutor
 from app.repositories.sql_exec import atomic
@@ -156,14 +160,27 @@ class DailyTtsStage(StageExecutor):
         result['duration_sec'] = final_duration
         loudness = analyze_loudness(result['audio_path'])
         silence = analyze_silence(result['audio_path'], noise_db=settings.audio_silence_noise_db)
+        audio_dir = ctx.media_dir / 'audio'
+        timeline_durations = resolve_segment_timeline_durations(
+            audio_dir=audio_dir,
+            narration_path=result['audio_path'],
+            segments=segments,
+            segment_durations=result['segment_durations'],
+        )
+        save_audio_timeline_manifest(
+            audio_dir,
+            segments,
+            timeline_durations,
+            result['audio_path'],
+        )
         with atomic():
-            for seg, duration in zip(segments, result['segment_durations']):
+            for seg, duration in zip(segments, timeline_durations, strict=True):
                 repo_segment.update_segment(seg['id'], duration_sec=duration)
                 seg['duration_sec'] = duration
             audio_version = (job.get('audio_version') or 0) + 1
             repo_job.update_job(ctx.job['id'], audio_path=str(result['audio_path'].resolve()), subtitle_path=str(result['subtitle_path'].resolve()), tts_usage_json=result.get('usage_summary'), audio_version=audio_version)
-            repo_job_log.append_log(ctx.job['id'], self.name, f"audio {result['duration_sec']:.1f}s, segments={len(result['segment_durations'])}, cues={len(result['subtitle_cues'])}, lufs={loudness.integrated_lufs}, max_silence={silence.max_gap_sec:.2f}s")
-            apply_quality_checks(ctx.job['id'], self.name, {'tts': check_tts_audio(result['audio_path'], result['duration_sec'], subtitle_cues=result['subtitle_cues'], segments=segments, loudness=loudness, silence=silence)}, existing_report=job.get('quality_report'))
+            repo_job_log.append_log(ctx.job['id'], self.name, f"audio {sum(timeline_durations):.1f}s, segments={len(timeline_durations)}, cues={len(result['subtitle_cues'])}, lufs={loudness.integrated_lufs}, max_silence={silence.max_gap_sec:.2f}s")
+            apply_quality_checks(ctx.job['id'], self.name, {'tts': check_tts_audio(result['audio_path'], sum(timeline_durations), subtitle_cues=result['subtitle_cues'], segments=segments, loudness=loudness, silence=silence)}, existing_report=job.get('quality_report'))
 
     def _persist_speaker_configs(self, job_id: int, configs: dict) -> None:
         with atomic():
