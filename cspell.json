@@ -63,6 +63,8 @@
         "setsar",
         "setuptools",
         "Silero",
+        "slideleft",
+        "slideright",
         "SSML",
         "STARTPTS",
         "swapfile",
@@ -83,6 +85,8 @@
         "veryfast",
         "wanx",
         "webui",
+        "wipeleft",
+        "wiperight",
         "xfade",
         "xianyu",
         "ZHAO"
