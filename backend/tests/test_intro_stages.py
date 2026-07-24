@@ -4,8 +4,11 @@ from unittest.mock import MagicMock, patch
 
 from app.services.intro.generator import _normalize_title, central_43_bounds
 from app.utils.job_info import (
+    CONTENT_STYLE_DAILY_STORY,
     CONTENT_STYLE_HISTORICAL_MYSTERY,
     CONTENT_STYLE_SCIENCE_CHILD,
+    INTRO_CATEGORY_DAILY,
+    default_intro_category_for_content_style,
     intro_generate_category,
 )
 from worker.stages.intro import IntroStage
@@ -134,8 +137,14 @@ def test_intro_generate_category_from_job() -> None:
     }
     fallback_job = {"info": {"content_style": CONTENT_STYLE_HISTORICAL_MYSTERY}}
     assert intro_generate_category(history_job) == "历史悬案"
-    assert intro_generate_category(science_job) is None
+    assert intro_generate_category(science_job) == "百科"
     assert intro_generate_category(fallback_job) == "历史悬案"
+
+
+def test_default_intro_category_for_daily_story() -> None:
+    assert default_intro_category_for_content_style(CONTENT_STYLE_DAILY_STORY) == INTRO_CATEGORY_DAILY
+    daily_job = {"info": {"daily_story_id": 1, "content_style": CONTENT_STYLE_SCIENCE_CHILD}}
+    assert intro_generate_category(daily_job) == INTRO_CATEGORY_DAILY
 
 
 def test_intro_stage_uses_history_theme_from_job(noop_atomic) -> None:

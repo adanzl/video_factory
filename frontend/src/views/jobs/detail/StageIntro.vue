@@ -17,8 +17,13 @@
             :disabled="savingIntroCategory || actionDisabled"
             @change="handleIntroCategoryChange"
           >
-            <el-radio value="百科">童趣百科</el-radio>
-            <el-radio value="历史悬案">历史悬案</el-radio>
+            <el-radio
+              v-for="option in INTRO_CATEGORY_OPTIONS"
+              :key="option.value"
+              :value="option.value"
+            >
+              {{ option.label }}
+            </el-radio>
           </el-radio-group>
         </el-descriptions-item>
         <el-descriptions-item label="画面方向">
@@ -237,6 +242,8 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import { runJobStageAction, updateJobInfo } from "@/api/api-jobs";
 import { getMediaDuration, getMediaFileUrl, getMediaPicViewUrl } from "@/api/api-media";
 import type { IntroCategory, JobDetail, JobLog } from "@/types/jobs";
+import { INTRO_CATEGORY_OPTIONS, isIntroCategory } from "@/constants/introCategory";
+import { defaultIntroCategoryFromJob } from "@/utils/introCategory";
 import StageActionBar from "./StageActionBar.vue";
 import StageLogsSection from "./StageLogsSection.vue";
 import {
@@ -276,7 +283,7 @@ const { handleError } = useErrorHandler();
 
 const submitting = ref(false);
 const holdTailSec = ref(0.35);
-const introCategory = ref<IntroCategory>(defaultIntroCategory(props.job));
+const introCategory = ref<IntroCategory>(defaultIntroCategoryFromJob(props.job));
 const savingIntroCategory = ref(false);
 const introOrientation = ref<"auto" | "portrait" | "landscape">(
   defaultIntroOrientation(props.job)
@@ -307,17 +314,6 @@ function defaultIntroOrientation(job: JobDetail): "auto" | "portrait" | "landsca
   return job.pipeline === "material" ? "auto" : "portrait";
 }
 
-function defaultIntroCategory(job: JobDetail): IntroCategory {
-  const saved = job.info?.intro_category;
-  if (saved === "百科" || saved === "历史悬案") {
-    return saved;
-  }
-  if (job.info?.content_style === "history_mystery") {
-    return "历史悬案";
-  }
-  return "百科";
-}
-
 const actionDisabled = computed(() => props.job.status === "running");
 const actionDisabledReason = computed(() =>
   props.job.status === "running" ? "任务运行中，请稍后再试" : ""
@@ -326,11 +322,6 @@ const actionDisabledReason = computed(() =>
 const previewFallbackAspectRatio = computed(() =>
   guessIntroPreviewAspectRatio(introOrientation.value, props.job.pipeline)
 );
-
-const coverDimensions = computed(() => ({
-  width: coverMeta.value?.width ?? videoMeta.value?.width,
-  height: coverMeta.value?.height ?? videoMeta.value?.height,
-}));
 
 const videoUrl = computed(() => {
   const base = getMediaFileUrl(props.job.intro_path ?? "");
@@ -376,8 +367,8 @@ const actualDurationText = computed(() => {
 
 const previewBoxStyle = computed(() =>
   buildMediaPreviewBoxStyle(
-    videoMeta.value?.width,
-    videoMeta.value?.height,
+    undefined,
+    undefined,
     previewFallbackAspectRatio.value,
     PREVIEW_OPTIONS
   )
@@ -385,8 +376,8 @@ const previewBoxStyle = computed(() =>
 
 const coverBoxStyle = computed(() =>
   buildMediaPreviewBoxStyle(
-    coverDimensions.value.width,
-    coverDimensions.value.height,
+    undefined,
+    undefined,
     previewFallbackAspectRatio.value,
     COVER_PREVIEW_OPTIONS
   )
@@ -395,8 +386,8 @@ const coverBoxStyle = computed(() =>
 const cover43GuideLines = computed(() =>
   buildCover43GuideLineStyles(
     computeCentered43GuideLines(
-      coverDimensions.value.width,
-      coverDimensions.value.height,
+      undefined,
+      undefined,
       parseAspectRatio(previewFallbackAspectRatio.value)
     )
   )
@@ -407,7 +398,7 @@ const introResolutionText = computed(() =>
 );
 
 const coverResolutionText = computed(() =>
-  formatVideoResolution(coverDimensions.value.width, coverDimensions.value.height)
+  formatVideoResolution(coverMeta.value?.width, coverMeta.value?.height)
 );
 
 const loadDuration = async () => {
@@ -454,7 +445,7 @@ const handleIntroCategoryChange = (value: IntroCategory) => {
   void updateJobInfo(props.job.id, { intro_category: value })
     .then(() => emit("refresh"))
     .catch(error => {
-      introCategory.value = defaultIntroCategory(props.job);
+      introCategory.value = defaultIntroCategoryFromJob(props.job);
       handleError(error, "更新片头风格失败");
     })
     .finally(() => {
@@ -553,10 +544,10 @@ const handleGenerateEnd = async () => {
 watch(
   () => [props.job.info?.intro_category, props.job.info?.content_style] as const,
   ([category]) => {
-    if (category === "百科" || category === "历史悬案") {
+    if (typeof category === "string" && isIntroCategory(category)) {
       introCategory.value = category;
     } else if (!props.job.info?.intro_category) {
-      introCategory.value = defaultIntroCategory(props.job);
+      introCategory.value = defaultIntroCategoryFromJob(props.job);
     }
   }
 );

@@ -253,8 +253,9 @@ import type { ScriptJson } from "@/types/jobs/script";
 import {
   buildMediaPreviewBoxStyle,
   computeCentered43GuideLines,
+  guessIntroPreviewAspectRatio,
   lazyMediaSrc,
-  readImageNaturalSize,
+  parseAspectRatio,
   resolveFinalPath,
   MEDIA_CROSS_ORIGIN,
 } from "@/utils/media";
@@ -288,8 +289,6 @@ const downloadingCover = ref(false);
 const downloadingFinal = ref(false);
 const coverLoadError = ref(false);
 const finalLoadError = ref(false);
-const coverMeta = ref<{ width: number; height: number } | null>(null);
-const videoMeta = ref<{ width: number; height: number } | null>(null);
 const showCover43Guide = ref(false);
 
 const COVER_PREVIEW_OPTIONS = {
@@ -349,28 +348,41 @@ const lazyCoverPreviewList = computed(() => {
 });
 const lazyVideoUrl = computed(() => lazyMediaSrc(videoUrl.value, props.stageActive));
 
+const publishOrientation = computed((): "auto" | "portrait" | "landscape" => {
+  const saved = props.job.info?.orientation;
+  if (saved === "auto" || saved === "portrait" || saved === "landscape") {
+    return saved;
+  }
+  return props.job.pipeline === "material" ? "auto" : "portrait";
+});
+
+const publishPreviewAspectRatio = computed(() =>
+  guessIntroPreviewAspectRatio(publishOrientation.value, props.job.pipeline)
+);
+
 const previewBoxStyle = computed(() =>
   buildMediaPreviewBoxStyle(
-    videoMeta.value?.width,
-    videoMeta.value?.height,
-    "16 / 9",
+    undefined,
+    undefined,
+    publishPreviewAspectRatio.value,
     PUBLISH_PREVIEW_OPTIONS
   )
 );
 
 const coverBoxStyle = computed(() =>
   buildMediaPreviewBoxStyle(
-    coverMeta.value?.width ?? videoMeta.value?.width,
-    coverMeta.value?.height ?? videoMeta.value?.height,
-    "9 / 16",
+    undefined,
+    undefined,
+    publishPreviewAspectRatio.value,
     COVER_PREVIEW_OPTIONS
   )
 );
 
 const cover43Guide = computed(() =>
   computeCentered43GuideLines(
-    coverMeta.value?.width ?? videoMeta.value?.width,
-    coverMeta.value?.height ?? videoMeta.value?.height
+    undefined,
+    undefined,
+    parseAspectRatio(publishPreviewAspectRatio.value)
   )
 );
 
@@ -384,20 +396,11 @@ const finalDownloadName = computed(() => {
   return fromPath || `job-${props.job.id}-final.mp4`;
 });
 
-const onCoverLoad = (event: Event) => {
-  const size = readImageNaturalSize(event);
-  if (size) {
-    coverMeta.value = size;
-  }
+const onCoverLoad = () => {
   coverLoadError.value = false;
 };
 
-const onVideoMetadata = (event: Event) => {
-  const video = event.target as HTMLVideoElement;
-  if (!video.videoWidth || !video.videoHeight) {
-    return;
-  }
-  videoMeta.value = { width: video.videoWidth, height: video.videoHeight };
+const onVideoMetadata = () => {
   finalLoadError.value = false;
 };
 
@@ -499,12 +502,10 @@ const handleDownloadFinal = async () => {
 
 watch(coverPath, () => {
   coverLoadError.value = false;
-  coverMeta.value = null;
   showCover43Guide.value = false;
 });
 
 watch(finalFilePath, () => {
   finalLoadError.value = false;
-  videoMeta.value = null;
 });
 </script>

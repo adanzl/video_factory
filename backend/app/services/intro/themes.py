@@ -24,8 +24,7 @@ class IntroTheme:
     particle: tuple[int, int, int, int]
 
 
-THEMES: dict[str, IntroTheme] = {
-    "百科": IntroTheme(
+_THEMES_SCIENCE_CHILD = IntroTheme(
         bg_top=(26, 58, 110),
         bg_bottom=(196, 218, 245),
         title_fill=(255, 214, 64, 255),
@@ -39,6 +38,24 @@ THEMES: dict[str, IntroTheme] = {
         badge_fg=(26, 58, 110, 255),
         accent=(255, 214, 64, 255),
         particle=(255, 255, 255, 40),
+    )
+
+THEMES: dict[str, IntroTheme] = {
+    "百科": _THEMES_SCIENCE_CHILD,
+    "童趣日常": IntroTheme(
+        bg_top=_THEMES_SCIENCE_CHILD.bg_top,
+        bg_bottom=_THEMES_SCIENCE_CHILD.bg_bottom,
+        title_fill=_THEMES_SCIENCE_CHILD.title_fill,
+        title_stroke=_THEMES_SCIENCE_CHILD.title_stroke,
+        brand_fill=_THEMES_SCIENCE_CHILD.brand_fill,
+        brand_stroke=_THEMES_SCIENCE_CHILD.brand_stroke,
+        title_circle_top=_THEMES_SCIENCE_CHILD.title_circle_top,
+        title_circle_bottom=_THEMES_SCIENCE_CHILD.title_circle_bottom,
+        badge_text="日常",
+        badge_bg=_THEMES_SCIENCE_CHILD.badge_bg,
+        badge_fg=_THEMES_SCIENCE_CHILD.badge_fg,
+        accent=_THEMES_SCIENCE_CHILD.accent,
+        particle=_THEMES_SCIENCE_CHILD.particle,
     ),
     "历史悬案": IntroTheme(
         bg_top=(15, 8, 5),

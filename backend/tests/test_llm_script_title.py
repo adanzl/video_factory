@@ -398,6 +398,47 @@ def test_conflict_anchor_must_words_prefers_short_object():
     assert "必须点名" in user
 
 
+def test_validate_rejects_conflicting_clock_start_anchors():
+    from app.services.daily_story.prompts import _parse_cn_clock_token
+
+    assert _parse_cn_clock_token("八点零五") == 8 * 60 + 5
+    assert _parse_cn_clock_token("八点十五") == 8 * 60 + 15
+    assert _parse_cn_clock_token("八点十二") == 8 * 60 + 12
+
+    story = _valid_story(n=20)
+    story["punchline_explain"] = "A类权威翻车，灿灿计时双标被追问"
+    story["dialogue"][0]["line"] = "你八点零五就拿手机了呀呀呀呀呀呀呀呀呀"
+    story["dialogue"][1]["line"] = "从八点到八点十五正好到点呀呀呀呀呀呀呀"
+    with pytest.raises(ValueError, match="计时起点"):
+        validate_daily_story_json(story, phase="body")
+
+
+def test_validate_rejects_premature_time_up_claim():
+    story = _valid_story(n=20)
+    story["punchline_explain"] = "A类权威翻车，灿灿计时双标被追问"
+    story["dialogue"][0]["line"] = "从八点到八点十五，时间到了呀呀呀呀呀呀呀"
+    story["dialogue"][1]["line"] = "现在八点十二，我说正好到点呀呀呀呀呀呀呀"
+    with pytest.raises(ValueError, match="未到所述结束时刻"):
+        validate_daily_story_json(story, phase="body")
+
+
+def test_validate_rejects_time_up_before_duration_limit():
+    story = _valid_story(n=20)
+    story["punchline_explain"] = "A类权威翻车，灿灿管手机双标"
+    story["dialogue"][0]["line"] = "手机时间到了，快放下呀呀呀呀呀呀呀呀呀"
+    story["dialogue"][1]["line"] = "才十分钟，说好十五分钟呀呀呀呀呀呀呀"
+    with pytest.raises(ValueError, match="才玩10分钟"):
+        validate_daily_story_json(story, phase="body")
+
+
+def test_validate_allows_soon_time_up_with_duration_anchor():
+    story = _valid_story(n=20)
+    story["punchline_explain"] = "A类权威翻车，灿灿管手机双标"
+    story["dialogue"][0]["line"] = "马上到时间了，别磨蹭了呀呀呀呀呀呀呀"
+    story["dialogue"][1]["line"] = "才十分钟，说好十五分钟呀呀呀呀呀呀呀"
+    validate_daily_story_json(story, phase="body")
+
+
 def test_score_daily_story_penalizes_wait_mom_ending():
     from app.services.daily_story.quality import score_daily_story
 

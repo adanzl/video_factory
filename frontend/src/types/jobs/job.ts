@@ -1,4 +1,7 @@
 import type { ListResponse } from "../api/api";
+import type { IntroCategory } from "@/constants/introCategory";
+
+export type { IntroCategory };
 
 export interface FinalAsset {
   path: string;
@@ -21,8 +24,14 @@ export interface JobScriptParams {
 
 export interface JobInfo {
   orientation?: "auto" | "portrait" | "landscape";
-  content_style?: "science_child" | "life_experience" | "history_mystery";
+  content_style?:
+    | "science_child"
+    | "life_experience"
+    | "history_mystery"
+    | "daily_story"
+    | "tech_science";
   intro_category?: IntroCategory;
+  daily_story_id?: number | null;
   image_provider?: "z_image_t2i" | "wan_t2i" | "sd15_t2i" | "agnes_t2i";
   video_provider?: "ffmpeg" | "wan_i2v" | "agnes_i2v";
   script?: JobScriptParams;
@@ -39,8 +48,6 @@ export interface JobInfo {
     duration_sec?: number;
   };
 }
-
-export type IntroCategory = "百科" | "历史悬案";
 
 export interface JobListItem {
   id: number;

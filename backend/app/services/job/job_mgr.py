@@ -243,7 +243,7 @@ class JobMgr:
         if intro_category is not None:
             normalized = normalize_intro_category(intro_category)
             if normalized is None:
-                raise ValueError('intro_category must be 百科 or 历史悬案')
+                raise ValueError('intro_category must be 百科, 童趣日常 or 历史悬案')
             patch['intro_category'] = normalized
         if image_provider is not None:
             normalized = normalize_image_provider(image_provider)
@@ -649,7 +649,7 @@ class JobMgr:
             from app.utils.job_info import normalize_intro_category
             normalized = normalize_intro_category(intro_category)
             if normalized is None:
-                raise ValueError('intro_category must be 百科 or 历史悬案')
+                raise ValueError('intro_category must be 百科, 童趣日常 or 历史悬案')
             info_patch['intro_category'] = normalized
         if info_patch:
             with atomic():

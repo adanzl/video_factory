@@ -1838,6 +1838,11 @@ class DeepSeekClient(LLMClient):
         max_attempts = max(3, get_settings().script_qa_max_attempts)
         core = str(body.get("conflict_core") or "")
         setting = str(body.get("setting") or "")
+        from app.services.daily_story.story_type_lines import parse_story_type_code
+
+        open_type = parse_story_type_code(
+            punchline=str(body.get("punchline_explain") or ""),
+        )
         for attempt in range(max_attempts):
             try:
                 # 开场是短约束任务：走配置 thinking（不传 temperature）
@@ -1847,6 +1852,7 @@ class DeepSeekClient(LLMClient):
                     opening_raw,
                     conflict_core=core,
                     setting=setting,
+                    type_code=open_type,
                 )
                 if (
                     avoid in ("昭昭", "灿灿")
