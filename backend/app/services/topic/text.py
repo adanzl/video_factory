@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 
 from app.services.topic.catalog import CATEGORY_HISTORY, resolve_category
@@ -121,6 +122,13 @@ def topic_title_issue(
     return None
 
 
+def _stable_template_index(key: str, count: int) -> int:
+    if count <= 1:
+        return 0
+    digest = hashlib.md5(key.encode("utf-8")).hexdigest()
+    return int(digest[:8], 16) % count
+
+
 def conversational_rewrite_example(title: str) -> str:
     """为无问号标题生成对话反转改写示例（仅用于提示词）。"""
     base = _rewrite_base(title)
@@ -132,7 +140,7 @@ def conversational_rewrite_example(title: str) -> str:
             r"霍尔木兹|油路|海峡|油轮|航运|原油|航道",
             [
                 "都怕霍尔木兹堵？备用航线早分流了",
-                "都说霍尔木兹险，堵了反而不慌",
+                "都说霍尔木兹险？油轮堵了反而不慌",
                 "霍尔木兹卡住油轮？备用航道其实有规则",
             ],
         ),
@@ -181,14 +189,16 @@ def conversational_rewrite_example(title: str) -> str:
     ]
     for pattern, templates in rules:
         if re.search(pattern, base):
-            return templates[hash(base) % len(templates)].format(base=base)
+            templates_list = templates
+            pick = _stable_template_index(base, len(templates_list))
+            return templates_list[pick].format(base=base)
 
     defaults = [
         f"{base}？压根没那么玄乎",
         f"真以为{base}？哪有那么夸张",
         f"{base}？根本站不住",
     ]
-    return defaults[hash(base) % len(defaults)]
+    return defaults[_stable_template_index(base, len(defaults))]
 
 
 def _rewrite_base(title: str) -> str:

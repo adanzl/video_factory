@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import shutil
 import time
 from collections.abc import Callable
@@ -75,11 +76,58 @@ class MergeResult:
     final_path: Path
 
 
-_LOOK_ANCHOR = {
-    "昭昭": "蓝色短袖T恤的短发男孩（昭昭）",
-    "灿灿": "粉色卫衣的马尾女孩（灿灿）",
-    "妈妈": "米色上衣的黑长发成年女性（妈妈）",
+_CAST_SIDE_ROLE: dict[str, str] = {
+    "昭昭": "男孩",
+    "灿灿": "女孩",
+    "妈妈": "妈妈",
 }
+_LR_STAND_RE = re.compile(
+    r"画面左边是\s*(昭昭|灿灿|妈妈)\s*[，,；;]?\s*右边是\s*(昭昭|灿灿|妈妈)"
+)
+_SPEAK_LINE_RE = re.compile(
+    r"(?:[\d.]+-[\d.]+秒)?(?:画面(?:左边|右边))?"
+    r"(?:蓝色短袖T恤的短发男孩|粉色卫衣的马尾女孩|米色上衣的黑长发成年女性)?"
+    r"(?:"
+    r"(?P<side>左侧|右侧)(?P<role>男孩|女孩|妈妈)"
+    r"|"
+    r"[（(]?(?P<name>昭昭|灿灿|妈妈)[）)]?"
+    r")"
+    r"(?:张嘴)?说话，同时"
+    r"(?P<action>[^；;。]*?)(?=[；;。]|$)"
+)
+
+
+def _side_speak_label(speaker: str, lr: re.Match[str] | None) -> str:
+    """按站位句把说话人写成「左侧男孩」等（与静图左右一致）。"""
+    if not lr or speaker not in _CAST_SIDE_ROLE:
+        return speaker
+    left, right = lr.group(1), lr.group(2)
+    role = _CAST_SIDE_ROLE[speaker]
+    if speaker == left:
+        return f"左侧{role}"
+    if speaker == right:
+        return f"右侧{role}"
+    return speaker
+
+
+def _speaker_from_speak_match(
+    m: re.Match[str],
+    lr: re.Match[str] | None,
+) -> str | None:
+    name = m.group("name")
+    if name:
+        return name
+    side, role = m.group("side"), m.group("role")
+    if not lr or not side or not role:
+        return None
+    left, right = lr.group(1), lr.group(2)
+    for candidate in (left, right):
+        if _CAST_SIDE_ROLE.get(candidate) != role:
+            continue
+        pos = "左侧" if candidate == left else "右侧"
+        if pos == side:
+            return candidate
+    return None
 
 
 def _inject_mouth_motion(
@@ -91,13 +139,13 @@ def _inject_mouth_motion(
 
     - 每一句对白对应一句「说话，同时」（同人多句写多行，不合并）
     - 时间轴相对本段 I2V：说话窗口最小值归零后全体平移
-    - 用服装外貌锚点点名张嘴/闭嘴（不靠左右），避免 T2I 左右对调后全片嘴型反了
+    - 说话句用「秒数+左右侧身份」（如左侧男孩），与 head 站位一致；LLM 仍写昭昭/灿灿说话
     """
     dialogue = seg.get("dialogue") or []
     if not dialogue or not cues or not prompt.strip():
         return prompt
-    import re
 
+    lr = _LR_STAND_RE.search(prompt)
     t = 0.0
     speaker_windows: list[tuple[str, float, float]] = []
     for i, (_, dur) in enumerate(cues):
@@ -127,31 +175,24 @@ def _inject_mouth_motion(
     for name, _, _ in speaker_windows:
         if name not in cast_order:
             cast_order.append(name)
-    lr = re.search(
-        r"画面左边是\s*(昭昭|灿灿|妈妈)\s*[，,；;]?\s*右边是\s*(昭昭|灿灿|妈妈)",
-        prompt,
-    )
     if lr:
         for name in (lr.group(1), lr.group(2)):
             if name not in cast_order:
                 cast_order.append(name)
 
-    speak_re = re.compile(
-        r"(?:[\d.]+-[\d.]+秒)?(?:画面(?:左边|右边))?"
-        r"(?:蓝色短袖T恤的短发男孩|粉色卫衣的马尾女孩|米色上衣的黑长发成年女性)?"
-        r"[（(]?(昭昭|灿灿|妈妈)[）)]?"
-        r"(?:张嘴)?说话，同时"
-        r"([^；;。]*?)(?=[；;。]|$)"
-    )
+    speak_re = _SPEAK_LINE_RE
     face_mark = "两人说话后面部表情"
     action_queues: dict[str, list[str]] = {}
     for m in speak_re.finditer(prompt):
-        action = (m.group(2) or "").strip().rstrip("。")
+        sp = _speaker_from_speak_match(m, lr)
+        if not sp:
+            continue
+        action = (m.group("action") or "").strip().rstrip("。")
         if face_mark in action:
             action = action.split(face_mark, 1)[0].strip().rstrip("。；;")
         action = re.sub(r"，?此时.*$", "", action).strip().rstrip("，,")
         if action:
-            action_queues.setdefault(m.group(1), []).append(action)
+            action_queues.setdefault(sp, []).append(action)
 
     fallback = {
         "昭昭": "身体轻微后仰约1厘米后停止",
@@ -205,16 +246,15 @@ def _inject_mouth_motion(
         elif i == last_i and "定格" not in action and action.endswith("后停止"):
             action = action[: -len("后停止")] + "后定格"
 
-        look = _LOOK_ANCHOR.get(speaker, speaker)
-        lead = f"{time_str}{look}张嘴说话，同时{action}"
+        label = _side_speak_label(speaker, lr)
+        lead = f"{time_str}{label}张嘴说话，同时{action}"
         quiet: list[str] = []
         for other in cast_order:
             if other == speaker:
                 continue
-            other_look = _LOOK_ANCHOR.get(other, other)
-            quiet.append(f"{other_look}嘴巴闭合不张嘴")
+            quiet.append(f"{_side_speak_label(other, lr)}闭嘴")
         if quiet:
-            lead = f"{lead}，此时{'，'.join(quiet)}"
+            lead = f"{lead}，此时{'、'.join(quiet)}"
         clauses.append(lead)
 
     middle = "；".join(clauses)

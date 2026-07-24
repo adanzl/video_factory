@@ -53,6 +53,7 @@ from app.services.daily_story.prompts import (
     build_daily_story_opening_retry_user,
     build_daily_story_theme_prompts,
     opening_avoid_speaker_from_body,
+    validate_daily_script_scenes,
     resolve_daily_story_retry_length_mode,
     stitch_daily_story_opening,
     validate_daily_story_json,
@@ -1559,6 +1560,27 @@ class DeepSeekClient(LLMClient):
                     )
                     continue
 
+                closeup_errs = validate_daily_script_scenes(scenes)
+                if closeup_errs:
+                    last_exc = ValueError(
+                        "特写镜对白超过 2 句: " + "; ".join(closeup_errs)
+                    )
+                    if attempt + 1 >= max_attempts:
+                        break
+                    logger.warning(
+                        "[DAILY_STORY] generate script closeup dialogue attempt=%d/%d: %s",
+                        attempt + 1,
+                        max_attempts,
+                        closeup_errs,
+                    )
+                    user = (
+                        f"{user_base}\n\n"
+                        "【重试】特写镜 dialogue 不得超过 2 句（图生视频口型限制）。"
+                        "请把多出的台词拆到下一镜，或把该镜 shot_type 改为中景/全景：\n"
+                        + "\n".join(f"- {e}" for e in closeup_errs)
+                    )
+                    continue
+
                 logger.info(
                     "[DAILY_STORY] script done scenes=%d attempt=%d/%d elapsed=%.1fs",
                     len(scenes),
@@ -1586,11 +1608,42 @@ class DeepSeekClient(LLMClient):
     def generate_daily_story(
         self,
         theme: str,
+        *,
+        story_type: str | None = None,
     ) -> dict[str, Any]:
-        body = self._generate_daily_story_body(theme)
+        body = self._generate_daily_story_body(theme, story_type=story_type)
+        return self._stitch_daily_story_full(theme, body)
+
+    def refine_daily_story_for_quality(
+        self,
+        theme: str,
+        story: dict[str, Any],
+        revision_hints: str,
+    ) -> dict[str, Any]:
+        """按观感短板定向修订正文并重新拼开场。"""
+        hints = (revision_hints or "").strip()
+        if not hints:
+            return story
+        body = {
+            k: v
+            for k, v in story.items()
+            if k not in ("discovery_opening", "quality")
+        }
+        new_body = self._revise_daily_story_body(theme, body, hints)
+        return self._stitch_daily_story_full(theme, new_body)
+
+    def _stitch_daily_story_full(
+        self,
+        theme: str,
+        body: dict[str, Any],
+    ) -> dict[str, Any]:
+        from app.services.daily_story.prompts import (
+            stitch_daily_story_opening,
+            validate_daily_story_json,
+        )
+
         avoid = opening_avoid_speaker_from_body(body)
         last_exc: ValueError | None = None
-        # 拼缝连说：先靠 stitch 丢正文首句；仍失败则重抽开场并避开正文首说话人
         max_open_rounds = 3
         for round_i in range(max_open_rounds):
             opening = self._generate_daily_story_opening(
@@ -1617,8 +1670,14 @@ class DeepSeekClient(LLMClient):
         assert last_exc is not None
         raise last_exc
 
-    def _generate_daily_story_body(self, theme: str) -> dict[str, Any]:
-        story_type = _select_story_type(theme)
+    def _generate_daily_story_body(
+        self,
+        theme: str,
+        *,
+        story_type: str | None = None,
+    ) -> dict[str, Any]:
+        if not story_type:
+            story_type = _select_story_type(theme)
         # 首稿 draft（含铺垫字数）；重试 revise（只走校验硬卡）
         system, user = build_daily_story_prompts(
             theme, story_type=story_type, length_mode="draft"
@@ -1676,6 +1735,7 @@ class DeepSeekClient(LLMClient):
                         prev_story=prev_story,
                         errors=errors,
                         phase="body",
+                        story_type=story_type,
                     )
                 else:
                     user = (
@@ -1706,8 +1766,13 @@ class DeepSeekClient(LLMClient):
         )
         import json
 
-        # 用已有的重试模板（处理好字数约束），注入质量提示词
-        system, _ = build_daily_story_prompts(theme, length_mode="revise")
+        punch = str(prev_story.get("punchline_explain") or "")
+        from app.services.daily_story.story_type_lines import parse_story_type_code, story_type_tag
+
+        rev_type = story_type_tag(parse_story_type_code(punchline=punch))
+        system, _ = build_daily_story_prompts(
+            theme, story_type=rev_type, length_mode="revise",
+        )
         base_user = (
             f"主题：{theme}\n"
             f"【字数硬卡】正文 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；"
@@ -1740,12 +1805,13 @@ class DeepSeekClient(LLMClient):
                     raw if isinstance(raw, dict) else None, errors=errors,
                 )
                 system, _ = build_daily_story_prompts(
-                    theme, length_mode=length_mode,
+                    theme, story_type=rev_type, length_mode=length_mode,
                 )
                 user = build_daily_story_retry_user(
                     theme,
                     prev_story=raw if isinstance(raw, dict) else prev_story,
                     errors=errors,
+                    story_type=rev_type,
                 )
                 # 把质量提示词追加到 error feedback 后面
                 user += f"\n\n【同时修补】\n{revision_hints}"

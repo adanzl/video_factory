@@ -7,8 +7,9 @@
 
   conda run -n flask_env python \\
     backend/scripts/preview_daily_story_batch.py \\
-    --themes 争最后一瓶酸奶 谁先洗澡 \\
-    --out tmp/daily_one.json
+    --story-type A \\
+    --themes 姐姐教弟弟写作业自己写错 灿灿不许昭昭磨蹭玩手机 \\
+    --out tmp/daily_a_smoke.json
 
 默认主题见 DEFAULT_THEMES；结果默认写到
 tmp/daily_story_batch_<时间戳>.json（项目根 tmp/，已在
@@ -37,6 +38,7 @@ from app.services.daily_story.prompts import (  # noqa: E402
     dialogue_total_chars,
     validate_daily_story_json,
 )
+from app.services.daily_story.story_type_lines import story_type_tag  # noqa: E402
 from app.services.llm.llm_mgr import llm_mgr  # noqa: E402
 
 DEFAULT_THEMES = [
@@ -102,13 +104,23 @@ def _summarize(theme: str, story: dict, elapsed: float) -> dict:
     }
 
 
-def run_batch(themes: list[str]) -> list[dict]:
+def run_batch(
+    themes: list[str],
+    *,
+    story_type: str | None = None,
+) -> list[dict]:
+    locked = story_type_tag(story_type) if story_type else None
+    if locked:
+        print(f"[batch] locked story_type={locked}", flush=True)
     results: list[dict] = []
     for i, theme in enumerate(themes, 1):
         print(f"\n===== [{i}/{len(themes)}] {theme} =====", flush=True)
         started = time.perf_counter()
         try:
-            story = llm_mgr.generate_daily_story(theme)
+            story = llm_mgr.generate_daily_story(
+                theme,
+                story_type=locked,
+            )
             validate_daily_story_json(story, phase="full")
             item = _summarize(theme, story, time.perf_counter() - started)
             print(
@@ -166,9 +178,15 @@ def main() -> None:
         default=None,
         help="结果 JSON 路径（默认 tmp/daily_story_batch_*.json）",
     )
+    parser.add_argument(
+        "--story-type",
+        choices=["A", "B", "C", "D", "E"],
+        default=None,
+        help="锁定矛盾类型（A–E），不指定则按主题关键词自动选",
+    )
     args = parser.parse_args()
 
-    results = run_batch(list(args.themes))
+    results = run_batch(list(args.themes), story_type=args.story_type)
     out = args.out
     if out is None:
         DEFAULT_OUT_DIR.mkdir(parents=True, exist_ok=True)
