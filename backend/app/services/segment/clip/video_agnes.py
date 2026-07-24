@@ -16,11 +16,13 @@ from gevent.lock import Semaphore
 import requests
 
 from app.config import get_settings
+from app.exceptions import JobStageFailureError
 from app.services.segment.clip.clip_mgr import ClipProvider, clip_mgr
 from app.services.segment.clip.clip_render import fit_video_duration
 from app.services.media.ffmpeg_utils import ffmpeg_cmd_start, probe_duration, run_ffmpeg
 from app.services.llm.llm_agnes import (
     AgnesApiKey,
+    AgnesI2VError,
     AgnesQuotaExceeded,
     agnes_api_keys,
     agnes_auth_header,
@@ -252,10 +254,10 @@ def _response_body(resp: requests.Response) -> dict | str | None:
 def _raise_i2v_api_error(phase: str, err: object, *, body: dict | None = None) -> None:
     raise_if_agnes_quota(body=body, message=str(err))
     if isinstance(err, dict):
-        raise RuntimeError(
+        raise AgnesI2VError(
             f"agnes i2v {phase} error: {err.get('code')} - {err.get('message')}"
         )
-    raise RuntimeError(f"agnes i2v {phase} error: {err}")
+    raise AgnesI2VError(f"agnes i2v {phase} error: {err}")
 
 
 def _is_retriable_task_error(message: str) -> bool:
@@ -455,8 +457,10 @@ class AgnesClipProvider(ClipProvider):
                 time.sleep(wait)
 
         if last_exc:
-            raise last_exc
-        raise RuntimeError(f"agnes request failed after {retries} retries: {url}")
+            if isinstance(last_exc, JobStageFailureError):
+                raise last_exc
+            raise AgnesI2VError(str(last_exc)) from last_exc
+        raise AgnesI2VError(f"agnes request failed after {retries} retries: {url}")
 
     @staticmethod
     def _extract_video_url(body: dict) -> str | None:
@@ -494,7 +498,7 @@ class AgnesClipProvider(ClipProvider):
     def _with_api_key_fallback(self, operation: Callable[[AgnesApiKey], Path]) -> Path:
         keys = agnes_api_keys()
         if not keys:
-            raise RuntimeError("AGNES_FREE_API_KEY / AGNES_API_KEY 未配置，无法调用 Agnes 图生视频")
+            raise AgnesI2VError("AGNES_FREE_API_KEY / AGNES_API_KEY 未配置，无法调用 Agnes 图生视频")
 
         last_exc: Exception | None = None
         for idx, key in enumerate(keys):
@@ -515,7 +519,7 @@ class AgnesClipProvider(ClipProvider):
                 key.label,
             )
 
-        raise RuntimeError("agnes i2v failed without exception")
+        raise AgnesI2VError("agnes i2v failed without exception")
 
     def _generate_raw_with_key(
         self,
@@ -580,7 +584,7 @@ class AgnesClipProvider(ClipProvider):
 
         if last_exc:
             raise last_exc
-        raise RuntimeError("agnes i2v failed without exception")
+        raise AgnesI2VError("agnes i2v failed without exception")
 
     def _generate_raw(
         self,
@@ -620,7 +624,7 @@ class AgnesClipProvider(ClipProvider):
         video_id = _strip_optional_str(body.get("video_id"))
         task_id = _strip_optional_str(body.get("task_id") or body.get("id"))
         if not video_id and not task_id:
-            raise RuntimeError(f"agnes i2v submit missing task id: {body}")
+            raise AgnesI2VError(f"agnes i2v submit missing task id: {body}")
 
         state = str(body.get("status") or "queued")
         logger.info(
@@ -637,12 +641,12 @@ class AgnesClipProvider(ClipProvider):
             return f"{self._poll_root}/agnesapi?{urlencode({'video_id': video_id})}"
         if task_id:
             return f"{self._create_url}/{task_id}"
-        raise RuntimeError("agnes poll missing both video_id and task_id")
+        raise AgnesI2VError("agnes poll missing both video_id and task_id")
 
     def _download_video(self, poll: dict, output_path: Path, task_label: str) -> Path:
         video_url = self._extract_video_url(poll)
         if not video_url:
-            raise RuntimeError(f"agnes i2v task {task_label} completed but missing video url")
+            raise AgnesI2VError(f"agnes i2v task {task_label} completed but missing video url")
         video = requests.get(
             video_url,
             timeout=(self._connect_timeout, self._download_timeout),
@@ -701,9 +705,9 @@ class AgnesClipProvider(ClipProvider):
             if state == "failed":
                 err = poll.get("error")
                 detail = err if isinstance(err, str) else repr(err)
-                raise RuntimeError(f"agnes i2v task {task_label} failed: {detail}")
+                raise AgnesI2VError(f"agnes i2v task {task_label} failed: {detail}")
 
-        raise RuntimeError(f"agnes i2v task {task_label} timeout, last state={state}")
+        raise AgnesI2VError(f"agnes i2v task {task_label} timeout, last state={state}")
 
     def _submit_and_poll(
         self,

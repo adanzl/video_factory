@@ -1,5 +1,5 @@
 from app.exceptions import JobStageFailureError, is_expected_job_failure
-from app.services.llm.llm_agnes import AgnesQuotaExceeded
+from app.services.llm.llm_agnes import AgnesI2VError, AgnesQuotaExceeded
 from worker.stages.standard.script import ScriptValidationError
 
 
@@ -15,6 +15,12 @@ def test_is_expected_job_failure_quality_major():
 
 def test_is_expected_job_failure_agnes_quota():
     assert is_expected_job_failure(AgnesQuotaExceeded("429 rate_limit_exceeded"))
+
+
+def test_is_expected_job_failure_agnes_i2v():
+    assert is_expected_job_failure(
+        AgnesI2VError("agnes request failed after 2 retries: https://apihub.agnes-ai.com/v1/videos")
+    )
 
 
 def test_is_expected_job_failure_unexpected():
