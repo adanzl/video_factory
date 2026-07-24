@@ -15,6 +15,10 @@ _QUOTA_KEYWORDS = ('quota', 'limit', 'exceeded', 'insufficient', 'balance', 'cre
 class AgnesQuotaExceeded(RuntimeError, JobStageFailureError):
     """当前 Key 配额/限流耗尽，可切换备用 Key；整任务失败时不必打堆栈。"""
 
+
+class AgnesI2VError(RuntimeError, JobStageFailureError):
+    """图生视频 API 调用失败（重试耗尽、任务失败等），消息即原因。"""
+
 @dataclass(frozen=True)
 class AgnesApiKey:
     label: str
