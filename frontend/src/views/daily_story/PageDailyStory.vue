@@ -33,9 +33,9 @@
           <el-tag v-else type="success" size="small">就绪</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="场景标题" width="120">
+      <el-table-column label="笑点解析" min-width="200" show-overflow-tooltip>
         <template #default="{ row }">
-          {{ row.story?.scene_title || "-" }}
+          {{ row.story?.punchline_explain || "-" }}
         </template>
       </el-table-column>
       <el-table-column label="设定" min-width="200" show-overflow-tooltip>
@@ -48,19 +48,17 @@
           {{ row.story?.dialogue?.length || 0 }}
         </template>
       </el-table-column>
-      <el-table-column label="评价" min-width="160" show-overflow-tooltip>
+      <el-table-column label="评价" width="80" align="center">
         <template #default="{ row }">
-          <template v-if="row.story?.quality?.grade">
-            <el-tag
-              size="small"
-              :type="qualityTagType(row.story.quality.grade)"
-              class="mr-1"
-            >
-              {{ row.story.quality.grade }}
-              {{ row.story.quality.score }}
-            </el-tag>
-            <span class="text-xs text-gray-500">{{ row.story.quality.summary }}</span>
-          </template>
+          <el-tag
+            v-if="row.story?.quality?.score != null"
+            size="small"
+            effect="dark"
+            :type="scoreTagType(row.story.quality.score)"
+            class="inline-flex! w-8! justify-center! px-0! tabular-nums"
+          >
+            {{ row.story.quality.score }}
+          </el-tag>
           <span v-else class="text-gray-400">-</span>
         </template>
       </el-table-column>
@@ -139,11 +137,10 @@ const total = ref(0);
 const POLL_INTERVAL_MS = 3000;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 
-function qualityTagType(grade: string): "success" | "warning" | "danger" | "info" {
-  if (grade === "好") return "success";
-  if (grade === "中") return "warning";
-  if (grade === "偏弱") return "danger";
-  return "info";
+function scoreTagType(score: number): "success" | "warning" | "danger" {
+  if (score >= 85) return "success";
+  if (score >= 61) return "warning";
+  return "danger";
 }
 
 function stopPolling() {
