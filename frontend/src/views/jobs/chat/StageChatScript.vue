@@ -165,6 +165,9 @@
         <div v-for="seg in script.segments || []" :key="seg.segment_index" class="shrink-0 rounded-lg border p-4 w-80">
           <div class="mb-2 flex items-center gap-2">
             <el-tag type="primary" size="small"># {{ seg.segment_index }} </el-tag>
+            <el-tag v-if="seg.shot_type" size="small" :type="shotTypeTagType(seg.shot_type)">
+              {{ seg.shot_type }}
+            </el-tag>
             <span class="text-xs text-gray-400">约 {{ seg.duration_sec }} 秒</span>
           </div>
 
@@ -248,6 +251,9 @@
         <div v-for="seg in script.segments || []" :key="seg.segment_index" class="rounded-lg border p-4">
           <div class="mb-2 flex items-center gap-2">
             <el-tag type="primary" size="small">第 {{ seg.segment_index }} 段</el-tag>
+            <el-tag v-if="seg.shot_type" size="small" :type="shotTypeTagType(seg.shot_type)">
+              {{ seg.shot_type }}
+            </el-tag>
             <span class="text-xs text-gray-400">约 {{ seg.duration_sec }} 秒</span>
           </div>
 
@@ -334,6 +340,13 @@ function speakerStyle(speaker: string): { bg: string; text: string; full: string
   return { bg: 'bg-pink-50', text: 'text-pink-600', full: 'bg-pink-50 text-pink-800' }
 }
 
+function shotTypeTagType(shotType: string): "success" | "warning" | "info" | "" {
+  if (shotType === "特写") return "warning";
+  if (shotType === "中景") return "";
+  if (shotType === "全景") return "info";
+  return "info";
+}
+
 const props = defineProps<{
   job: JobDetail;
   segments: JobSegment[];
@@ -353,6 +366,7 @@ interface ChatDialogueLine {
 interface ChatSegment {
   segment_index: number;
   text: string;
+  shot_type?: string;
   dialogue?: ChatDialogueLine[];
   visual_brief?: string;
   image_prompt?: string;

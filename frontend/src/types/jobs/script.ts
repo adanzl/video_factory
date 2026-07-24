@@ -1,6 +1,8 @@
 export interface ScriptSegment {
   segment_index: number;
   text: string;
+  /** 景别：全景 / 中景 / 特写（日常对话分镜） */
+  shot_type?: string;
   visual_brief?: string;
   image_prompt?: string;
   motion_prompt?: string;
