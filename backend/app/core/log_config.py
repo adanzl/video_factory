@@ -63,7 +63,7 @@ def setup_logging(*, log_dir: Path, retention_days: int = 3) -> Path:
 
 
 def setup_server_logging(*, log_dir: Path, is_production: bool) -> tuple[logging.Logger, logging.Logger]:
-    """初始化 Web 服务日志：app + gevent.access。"""
+    """初始化 Web 服务日志：app + app.access（HTTP 访问日志）。"""
     log_dir.mkdir(parents=True, exist_ok=True)
 
     formatter = _formatter()
@@ -93,23 +93,18 @@ def setup_server_logging(*, log_dir: Path, is_production: bool) -> tuple[logging
         worker_logger.addHandler(console)
         worker_logger.addHandler(file_handler)
 
-    gevent_access_logger = logging.getLogger("gevent.access")
-    gevent_access_logger.setLevel(logging.INFO if is_production else logging.CRITICAL)
-    gevent_access_logger.propagate = False
+    access_logger = logging.getLogger("app.access")
+    access_logger.setLevel(logging.INFO)
+    access_logger.propagate = False
 
-    if is_production and not gevent_access_logger.handlers:
-        access_handler = TimedRotatingFileHandler(
-            log_dir / "access.log",
-            when="midnight",
-            interval=1,
-            backupCount=10,
-            encoding="utf-8",
+    if not access_logger.handlers:
+        access_handler = _rotating_file_handler(log_dir / "access.log", retention_days=3)
+        access_handler.setFormatter(
+            logging.Formatter("%(asctime)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S"),
         )
-        access_handler.suffix = "%Y-%m-%d"
-        access_handler.setFormatter(logging.Formatter("%(asctime)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
-        gevent_access_logger.addHandler(access_handler)
+        access_logger.addHandler(access_handler)
 
-    return app_logger, gevent_access_logger
+    return app_logger, access_logger
 
 
 def attach_job_log(media_dir: Path, job_id: int) -> Path:

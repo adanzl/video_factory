@@ -93,7 +93,6 @@ class MediaServeMgr:
         path = resolve_media_serve_path(filepath, allowed_roots=self.allowed_roots)
         ext = os.path.splitext(path)[1].lower()
         mimetype = MIMETYPE_MAP.get(ext, "application/octet-stream")
-        logger.info("[MEDIA] Serving file: %s (MIME: %s)", path, mimetype)
         return {"path": path, "mimetype": mimetype}
 
     def get_pic_view_path(self, filepath: str, w_val: int | None, h_val: int | None) -> tuple[str, str]:
