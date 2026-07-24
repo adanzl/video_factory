@@ -608,3 +608,25 @@ def test_score_daily_story_penalizes_ungrounded_closing_quote():
     assert q["score"] < 85
     assert any("无出处" in r for r in q["reasons"])
     assert "无出处" in q["summary"] or "模板" in q["summary"] or "公平" in q["summary"]
+
+
+def test_score_daily_story_structure_capped_without_humor():
+    from app.services.daily_story.quality import score_daily_story
+
+    story = {
+        "scene_title": "橡皮",
+        "setting": "客厅抢橡皮",
+        "conflict_core": "姐弟抢橡皮",
+        "punchline_explain": "C类公平执念",
+        "discovery_opening": [{"speaker": "昭昭", "line": "橡皮怎么在你手里"}],
+        "dialogue": [
+            {"speaker": "昭昭", "line": "这是我先拿到的橡皮呀"},
+            {"speaker": "灿灿", "line": "我先看到应该归我呀"},
+            {"speaker": "昭昭", "line": "拿到的人先选呀"},
+            {"speaker": "灿灿", "line": "我没说一直占着呀"},
+            {"speaker": "昭昭", "line": "你自己说先拿到的呀"},
+            {"speaker": "灿灿", "line": "……哼，给你吧"},
+        ],
+    }
+    q = score_daily_story(story)
+    assert q["score"] <= 80
