@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-import sqlite3
+
+from app.repositories import sql_exec as sql
 
 
 def _serialize_info(value: object | None) -> str | None:
@@ -32,19 +33,19 @@ def _parse_info(raw: object | None) -> dict | None:
     return dict(parsed) if isinstance(parsed, dict) and parsed else None
 
 
-def delete_segments(conn: sqlite3.Connection, job_id: int) -> None:
-    conn.execute("DELETE FROM video_segment WHERE job_id = ?", (job_id,))
+def delete_segments(job_id: int) -> None:
+    sql.execute("DELETE FROM video_segment WHERE job_id = ?", (job_id,))
+    sql.commit()
 
 
 def insert_segments(
-    conn: sqlite3.Connection,
     job_id: int,
     segments: list[dict],
 ) -> None:
     existing_by_index = {
-        int(row["segment_index"]): row for row in list_segments(conn, job_id)
+        int(row["segment_index"]): row for row in list_segments(job_id)
     }
-    delete_segments(conn, job_id)
+    delete_segments(job_id)
     for seg in segments:
         index = int(seg["segment_index"])
         prev = existing_by_index.get(index)
@@ -54,7 +55,6 @@ def insert_segments(
         clip_path = seg.get("clip_path")
         if clip_path is None and prev is not None:
             clip_path = prev.get("clip_path")
-        # TTS 实测时长优先：脚本/image_prompt 重跑常带估算 duration_sec，勿覆盖
         duration_sec = seg.get("duration_sec")
         if prev is not None and prev.get("duration_sec") is not None:
             duration_sec = prev.get("duration_sec")
@@ -63,7 +63,6 @@ def insert_segments(
             status = prev.get("status")
         if not status:
             status = "pending"
-        # 重建行时保留媒体 cache-bust 版本（出图/出片才 increase_version）
         version = int(prev["version"]) if prev is not None else 0
         if "info" in seg:
             info_raw = _serialize_info(seg.get("info"))
@@ -71,7 +70,7 @@ def insert_segments(
             info_raw = _serialize_info(prev.get("info"))
         else:
             info_raw = None
-        conn.execute(
+        sql.execute(
             """
             INSERT INTO video_segment (
                 job_id, segment_index, text, image_prompt, motion_prompt, visual_mode,
@@ -96,10 +95,11 @@ def insert_segments(
                 version,
             ),
         )
+    sql.commit()
 
 
-def list_segments(conn: sqlite3.Connection, job_id: int) -> list[dict]:
-    rows = conn.execute(
+def list_segments(job_id: int) -> list[dict]:
+    rows = sql.fetchall(
         """
         SELECT id, segment_index, text, image_prompt, motion_prompt, visual_mode,
                image_path, clip_path, duration_sec, sd15_prompt_en, status, dialogue,
@@ -109,7 +109,8 @@ def list_segments(conn: sqlite3.Connection, job_id: int) -> list[dict]:
         ORDER BY segment_index
         """,
         (job_id,),
-    ).fetchall()
+    )
+    sql.commit()
     result = []
     for row in rows:
         d = dict(row)
@@ -126,8 +127,16 @@ def list_segments(conn: sqlite3.Connection, job_id: int) -> list[dict]:
     return result
 
 
+def get_segment_info(segment_id: int) -> str | None:
+    row = sql.fetchone(
+        "SELECT info FROM video_segment WHERE id = ?",
+        (segment_id,),
+    )
+    sql.commit()
+    return row["info"] if row else None
+
+
 def update_segment(
-    conn: sqlite3.Connection,
     segment_id: int,
     **fields: object,
 ) -> None:
@@ -159,37 +168,36 @@ def update_segment(
     if not parts:
         return
     values.append(segment_id)
-    conn.execute(
+    sql.execute(
         f"UPDATE video_segment SET {', '.join(parts)} WHERE id = ?",
         values,
     )
+    sql.commit()
 
 
-def increase_version(
-    conn: sqlite3.Connection,
-    segment_id: int,
-) -> None:
-    conn.execute(
+def increase_version(segment_id: int) -> None:
+    sql.execute(
         "UPDATE video_segment SET version = version + 1 WHERE id = ?",
         (segment_id,),
     )
+    sql.commit()
 
 
-def clear_segment_durations(conn: sqlite3.Connection, job_id: int) -> None:
-    conn.execute(
+def clear_segment_durations(job_id: int) -> None:
+    sql.execute(
         "UPDATE video_segment SET duration_sec = NULL WHERE job_id = ?",
         (job_id,),
     )
+    sql.commit()
 
 
 def clear_segment_clips(
-    conn: sqlite3.Connection,
     job_id: int,
     segment_indices: list[int] | None = None,
 ) -> None:
     if segment_indices:
         placeholders = ",".join("?" for _ in segment_indices)
-        conn.execute(
+        sql.execute(
             f"""
             UPDATE video_segment
             SET clip_path = NULL
@@ -197,20 +205,20 @@ def clear_segment_clips(
             """,
             (job_id, *segment_indices),
         )
-        return
-    conn.execute(
-        "UPDATE video_segment SET clip_path = NULL WHERE job_id = ?",
-        (job_id,),
-    )
+    else:
+        sql.execute(
+            "UPDATE video_segment SET clip_path = NULL WHERE job_id = ?",
+            (job_id,),
+        )
+    sql.commit()
 
 
 def clear_segment_clips_only(
-    conn: sqlite3.Connection,
     job_id: int,
     segment_indices: list[int],
 ) -> None:
     placeholders = ",".join("?" for _ in segment_indices)
-    conn.execute(
+    sql.execute(
         f"""
         UPDATE video_segment
         SET clip_path = NULL, status = 'pending'
@@ -218,16 +226,16 @@ def clear_segment_clips_only(
         """,
         (job_id, *segment_indices),
     )
+    sql.commit()
 
 
 def clear_segment_media(
-    conn: sqlite3.Connection,
     job_id: int,
     segment_indices: list[int] | None,
 ) -> None:
     if segment_indices:
         placeholders = ",".join("?" for _ in segment_indices)
-        conn.execute(
+        sql.execute(
             f"""
             UPDATE video_segment
             SET image_path = NULL, clip_path = NULL, status = 'pending'
@@ -235,12 +243,13 @@ def clear_segment_media(
             """,
             (job_id, *segment_indices),
         )
-        return
-    conn.execute(
-        """
-        UPDATE video_segment
-        SET image_path = NULL, clip_path = NULL, status = 'pending'
-        WHERE job_id = ?
-        """,
-        (job_id,),
-    )
+    else:
+        sql.execute(
+            """
+            UPDATE video_segment
+            SET image_path = NULL, clip_path = NULL, status = 'pending'
+            WHERE job_id = ?
+            """,
+            (job_id,),
+        )
+    sql.commit()

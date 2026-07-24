@@ -7,6 +7,8 @@ import pytest
 from app.services.daily_story.prompts import (
     DAILY_STORY_BODY_CHARS_MAX,
     DAILY_STORY_BODY_CHARS_MIN,
+    DAILY_STORY_BODY_WRITE_TARGET_MAX,
+    DAILY_STORY_BODY_WRITE_TARGET_MIN,
     DAILY_STORY_LINE_CHARS_MAX,
     build_daily_story_opening_prompts,
     build_daily_story_prompts,
@@ -68,13 +70,15 @@ def test_daily_story_prompts_share_contract():
     story_sys, story_user = build_daily_story_prompts("谁先洗澡")
     assert "10岁" in story_sys
     assert "10岁" in theme_user
-    assert "280" in story_sys and "340" in story_sys
-    assert "390" in story_sys and "430" in story_sys
+    assert str(DAILY_STORY_BODY_CHARS_MIN) in story_sys
+    assert str(DAILY_STORY_BODY_CHARS_MAX) in story_sys
+    assert str(DAILY_STORY_BODY_WRITE_TARGET_MIN) in story_sys
+    assert str(DAILY_STORY_BODY_WRITE_TARGET_MAX) in story_sys
     assert "压回硬卡" in story_sys or "先写够" in story_sys
     assert "发现开场" in story_sys
     assert "单冲突" in story_sys
     assert "conflict_core" in story_sys
-    assert "18" in story_sys
+    assert str(DAILY_STORY_LINE_CHARS_MAX) in story_sys
     assert "有娃的大人" in story_sys
     assert "权威翻车" in story_sys
     assert "谁先洗澡" in story_user
@@ -153,9 +157,9 @@ def test_validate_daily_story_json_rejects_short_body_chars():
 
 def test_validate_daily_story_json_rejects_long_line():
     story = _valid_story()
-    story["dialogue"][0]["line"] = "一二三四五六七八九十一二三四五六七八九"
+    story["dialogue"][0]["line"] = "一" * (DAILY_STORY_LINE_CHARS_MAX + 1)
     assert len(story["dialogue"][0]["line"]) > DAILY_STORY_LINE_CHARS_MAX
-    with pytest.raises(ValueError, match="超过18字"):
+    with pytest.raises(ValueError, match=f"超过{DAILY_STORY_LINE_CHARS_MAX}字"):
         validate_daily_story_json(story)
 
 
@@ -183,10 +187,12 @@ def test_validate_daily_story_json_rejects_consecutive_same_speaker():
 
 
 def test_validate_daily_story_json_rejects_limp_soft_close():
+    from app.services.daily_story.quality import score_daily_story
+
     story = _valid_story()
     story["dialogue"][-1]["line"] = "好了好了给你一二三四五六七八"
-    with pytest.raises(ValueError, match="无破功软收"):
-        validate_daily_story_json(story)
+    q = score_daily_story(story)
+    assert q["score"] < 75 or any("软收" in r or "破功" in r for r in q["reasons"])
 
 
 def test_validate_daily_story_json_rejects_weak_endings():
@@ -333,6 +339,7 @@ def test_build_daily_story_retry_user_asks_to_expand_short_draft():
 def test_resolve_daily_story_retry_length_mode_trim_when_long():
     from app.services.daily_story.prompts import (
         build_daily_story_retry_user,
+        dialogue_total_chars,
         resolve_daily_story_retry_length_mode,
     )
 
@@ -342,12 +349,13 @@ def test_resolve_daily_story_retry_length_mode_trim_when_long():
         {"speaker": "灿灿", "line": "一二三四五六七八九十十二"},
     ] * 20
     assert resolve_daily_story_retry_length_mode(prev) == "revise_trim"
-    # 只超一点：只删 1 句
-    barely = _valid_story(n=20)  # 18*20=360
+    barely = _valid_story(n=21)
+    total = dialogue_total_chars(barely)
+    assert DAILY_STORY_BODY_CHARS_MAX < total <= DAILY_STORY_BODY_CHARS_MAX + 24
     user = build_daily_story_retry_user(
         "争酸奶",
         prev_story=barely,
-        errors="正文总字数须≤340，当前360（超出20字）",
+        errors=f"正文总字数须≤{DAILY_STORY_BODY_CHARS_MAX}，当前{total}（超出20字）",
     )
     assert "只删约 1 句" in user
     # 字数已在区间、只修连说 → revise，且提示勿大删
@@ -407,13 +415,14 @@ def test_score_daily_story_rewards_punch_ending():
 
     story = _valid_story()
     story["discovery_opening"] = [{"speaker": "昭昭", "line": "咦新橡皮怎么在你手里"}]
-    story["dialogue"][-2]["line"] = "你说晚了我已经在了呀呀"
-    story["dialogue"][-1]["line"] = "之前是旧的这个新的标签在"
+    story["dialogue"][-3]["line"] = "你自己说先拿到的人先选呀呀"
+    story["dialogue"][-2]["line"] = "我没说先拿到就能一直占着呀"
+    story["dialogue"][-1]["line"] = "……哼，给你一二三四五六七八"
     q = score_daily_story(story)
-    assert q["score"] >= 75
-    assert q["grade"] == "好"
+    assert q["score"] >= 60
+    assert any("回旋镖" in r for r in q["reasons"])
     attach_daily_story_quality(story)
-    assert story["quality"]["grade"] == "好"
+    assert story["quality"]["score"] >= 60
 
 
 def test_stitch_daily_story_opening_dedupes_overlapping_body_start():

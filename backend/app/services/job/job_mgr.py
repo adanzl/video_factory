@@ -1,112 +1,64 @@
 """Job 业务管理：CRUD、状态流转、stage 动作提交。"""
-
 from __future__ import annotations
-
 import logging
 import re
 import shutil
 import threading
 from collections.abc import Callable
 from pathlib import Path
-
 from app.exceptions import is_expected_job_failure
 from app.utils.job_cancel import JobCancelledError, job_cancel
 from app.services.job.job_reset import prepare_rerun as prepare_rerun_artifacts
 from app.repositories import repo_job_log, repo_job, repo_segment
-from app.repositories.connection import connection
 from app.utils.async_util import run_in_background
-from app.utils.job_info import (
-    default_orientation_for_pipeline,
-    merge_job_info,
-    merge_job_script_params,
-    orientation_for_resolve,
-    resolve_image_provider,
-    resolve_include_sd15_prompt,
-)
-
+from app.utils.job_info import default_orientation_for_pipeline, merge_job_info, merge_job_script_params, orientation_for_resolve, resolve_image_provider, resolve_include_sd15_prompt
+from app.repositories.sql_exec import atomic
 logger = logging.getLogger(__name__)
+_API_UPDATABLE = frozenset({'title', 'skip_publish', 'status', 'stage'})
+_VALID_STATUSES = frozenset({'pending', 'running', 'done', 'failed'})
 
-_API_UPDATABLE = frozenset({"title", "skip_publish", "status", "stage"})
-_VALID_STATUSES = frozenset({"pending", "running", "done", "failed"})
-
-
-def _script_action_detail(
-    *,
-    job: dict,
-    to_end: bool,
-    title: str | None,
-    segment_target_sec: float | None,
-    max_title_length: int | None,
-    estimated_duration_min: float | None,
-    narration_target_words: int | None,
-    speech_chars_per_sec: float | None,
-    skip_title_optimize: bool,
-    generate_image_prompts: bool,
-    supplementary_info: str | None,
-    video_timeline: str | None,
-    orientation: str | None,
-    content_style: str | None,
-) -> str:
+def _script_action_detail(*, job: dict, to_end: bool, title: str | None, segment_target_sec: float | None, max_title_length: int | None, estimated_duration_min: float | None, narration_target_words: int | None, speech_chars_per_sec: float | None, skip_title_optimize: bool, generate_image_prompts: bool, supplementary_info: str | None, video_timeline: str | None, orientation: str | None, content_style: str | None) -> str:
     from app.utils.job_info import content_style_from_job, orientation_for_resolve
-
-    effective_title = (title or job.get("title") or "").strip()
-    parts = [
-        f"to_end={to_end}",
-        f"title={effective_title!r}",
-    ]
+    effective_title = (title or job.get('title') or '').strip()
+    parts = [f'to_end={to_end}', f'title={effective_title!r}']
     if segment_target_sec is not None:
-        parts.append(f"segment_target_sec={segment_target_sec}")
+        parts.append(f'segment_target_sec={segment_target_sec}')
     if max_title_length is not None:
-        parts.append(f"max_title_length={max_title_length}")
+        parts.append(f'max_title_length={max_title_length}')
     if estimated_duration_min is not None:
-        parts.append(f"estimated_duration_min={estimated_duration_min}")
+        parts.append(f'estimated_duration_min={estimated_duration_min}')
     if narration_target_words is not None:
-        parts.append(f"narration_target_words={narration_target_words}")
+        parts.append(f'narration_target_words={narration_target_words}')
     if speech_chars_per_sec is not None:
-        parts.append(f"speech_chars_per_sec={speech_chars_per_sec}")
+        parts.append(f'speech_chars_per_sec={speech_chars_per_sec}')
     if skip_title_optimize:
-        parts.append("skip_title_optimize=True")
+        parts.append('skip_title_optimize=True')
     if generate_image_prompts:
-        parts.append("generate_image_prompts=True")
+        parts.append('generate_image_prompts=True')
         provider = resolve_image_provider(job)
-        parts.append(f"image_provider={provider}")
-        parts.append(f"include_sd15_prompt={resolve_include_sd15_prompt(job)}")
-    orient = orientation or orientation_for_resolve(job) or "portrait"
+        parts.append(f'image_provider={provider}')
+        parts.append(f'include_sd15_prompt={resolve_include_sd15_prompt(job)}')
+    orient = orientation or orientation_for_resolve(job) or 'portrait'
     style = content_style or content_style_from_job(job)
-    parts.append(f"orientation={orient}")
-    parts.append(f"content_style={style}")
-    extra = (supplementary_info or "").strip()
+    parts.append(f'orientation={orient}')
+    parts.append(f'content_style={style}')
+    extra = (supplementary_info or '').strip()
     if extra:
-        parts.append(f"supplementary_info=[{len(extra)}]")
-    timeline = (video_timeline or "").strip()
+        parts.append(f'supplementary_info=[{len(extra)}]')
+    timeline = (video_timeline or '').strip()
     if timeline:
-        parts.append(f"video_timeline=[{len(timeline)}]")
-    return ", ".join(parts)
+        parts.append(f'video_timeline=[{len(timeline)}]')
+    return ', '.join(parts)
 
-
-def _image_prompts_action_detail(
-    job: dict,
-    *,
-    segment_indices: list[int] | None = None,
-) -> str:
-    script = job.get("script_json") or {}
-    segments = script.get("segments") or []
+def _image_prompts_action_detail(job: dict, *, segment_indices: list[int] | None=None) -> str:
+    script = job.get('script_json') or {}
+    segments = script.get('segments') or []
     provider = resolve_image_provider(job)
-    scope = (
-        f"segment_indices={segment_indices}"
-        if segment_indices
-        else f"segments={len(segments)}"
-    )
-    return (
-        f"{scope}, "
-        f"image_provider={provider}, "
-        f"include_sd15_prompt={resolve_include_sd15_prompt(job)}"
-    )
-
+    scope = f'segment_indices={segment_indices}' if segment_indices else f'segments={len(segments)}'
+    return f'{scope}, image_provider={provider}, include_sd15_prompt={resolve_include_sd15_prompt(job)}'
 
 class JobBusyError(Exception):
     """Job 正在执行，拒绝并发动作。"""
-
 
 class JobMgr:
     """Job 管理器。"""
@@ -123,313 +75,217 @@ class JobMgr:
                 self._locks[job_id] = lock
             return lock
 
-    def list_jobs(
-        self,
-        *,
-        condition: dict | None = None,
-        limit: int = 50,
-        offset: int = 0,
-    ) -> dict:
+    def list_jobs(self, *, condition: dict | None=None, limit: int=50, offset: int=0) -> dict:
         """返回 {items: [...], total: N}。"""
-        with connection() as conn:
-            items = repo_job.list_jobs(conn, condition=condition, limit=limit, offset=offset)
-            total = repo_job.count_jobs(conn, condition=condition)
-            return {"items": items, "total": total}
+        with atomic():
+            items = repo_job.list_jobs(condition=condition, limit=limit, offset=offset)
+            total = repo_job.count_jobs(condition=condition)
+            return {'items': items, 'total': total}
 
     def get_job(self, job_id: int) -> dict:
         from pathlib import Path
-
-        with connection() as conn:
-            job = repo_job.get_job(conn, job_id)
-
-        audio_path = job.get("audio_path")
+        with atomic():
+            job = repo_job.get_job(job_id)
+        audio_path = job.get('audio_path')
         if audio_path:
-            clips_dir = Path(audio_path).parent / "clips"
+            clips_dir = Path(audio_path).parent / 'clips'
             if clips_dir.is_dir():
                 import re
-
-                clips = sorted(
-                    p.name
-                    for p in clips_dir.glob("*.mp3")
-                    if re.fullmatch(r"\d+", p.stem)
-                )
-                job["tts_clips"] = [str(clips_dir / name) for name in clips]
+                clips = sorted((p.name for p in clips_dir.glob('*.mp3') if re.fullmatch('\\d+', p.stem)))
+                job['tts_clips'] = [str(clips_dir / name) for name in clips]
             else:
-                job["tts_clips"] = []
+                job['tts_clips'] = []
         else:
-            job["tts_clips"] = []
+            job['tts_clips'] = []
         return job
 
     def get_segments(self, job_id: int) -> list[dict]:
         from pathlib import Path
-
         from app.services.tts.tts_mgr import tts_mgr
         from app.utils.media import resolve_segment_duration_sec, script_segment_duration_sec
-
-        with connection() as conn:
-            job = repo_job.get_job(conn, job_id)
-            segments = repo_segment.list_segments(conn, job_id)
-
-        script = job.get("script_json") or {}
+        with atomic():
+            job = repo_job.get_job(job_id)
+            segments = repo_segment.list_segments(job_id)
+        script = job.get('script_json') or {}
         script_by_index: dict[int, dict] = {}
-        for item in script.get("segments") or []:
-            if isinstance(item, dict) and item.get("segment_index") is not None:
-                script_by_index[int(item["segment_index"])] = item
-
+        for item in script.get('segments') or []:
+            if isinstance(item, dict) and item.get('segment_index') is not None:
+                script_by_index[int(item['segment_index'])] = item
         tts_by_index: dict[int, float] = {}
-        audio_path = job.get("audio_path")
+        audio_path = job.get('audio_path')
         if audio_path:
             cues_path = tts_mgr.subtitle_cues_path_for(Path(audio_path).parent)
             if cues_path.is_file():
-                tts_by_index = tts_mgr.segment_durations_from_cues(
-                    tts_mgr.load_subtitle_cues(cues_path)
-                )
-
+                tts_by_index = tts_mgr.segment_durations_from_cues(tts_mgr.load_subtitle_cues(cues_path))
         for segment in segments:
-            index = int(segment["segment_index"])
+            index = int(segment['segment_index'])
             script_seg = script_by_index.get(index)
             script_dur = script_segment_duration_sec(script_seg)
             if script_dur is not None:
-                segment["script_duration_sec"] = script_dur
-
+                segment['script_duration_sec'] = script_dur
             tts_dur = tts_by_index.get(index)
             if tts_dur is not None:
-                segment["tts_duration_sec"] = tts_dur
-
-            db_dur = segment.get("duration_sec")
+                segment['tts_duration_sec'] = tts_dur
+            db_dur = segment.get('duration_sec')
             if db_dur is not None and float(db_dur) > 0:
                 continue
             if tts_dur is not None:
-                segment["duration_sec"] = tts_dur
+                segment['duration_sec'] = tts_dur
                 continue
             resolved = resolve_segment_duration_sec(segment, script_seg=script_seg)
             if resolved is not None:
-                segment["duration_sec"] = resolved
+                segment['duration_sec'] = resolved
         return segments
 
     def update_segment_text(self, job_id: int, segment_index: int, text: str) -> dict:
         """修改分镜文案，同步更新 video_segment 表与 script_json。"""
         cleaned = text.strip()
         if not cleaned:
-            raise ValueError("text is empty")
-        with connection() as conn:
-            job = repo_job.get_job(conn, job_id)
-            segments = repo_segment.list_segments(conn, job_id)
-            target = next(
-                (s for s in segments if int(s["segment_index"]) == segment_index), None
-            )
+            raise ValueError('text is empty')
+        with atomic():
+            job = repo_job.get_job(job_id)
+            segments = repo_segment.list_segments(job_id)
+            target = next((s for s in segments if int(s['segment_index']) == segment_index), None)
             if target is None:
-                raise KeyError(f"segment {segment_index} not found")
-            repo_segment.update_segment(conn, int(target["id"]), text=cleaned)
-            # 同步 script_json
-            script = dict(job.get("script_json") or {})
-            script_segments = list(script.get("segments") or [])
+                raise KeyError(f'segment {segment_index} not found')
+            repo_segment.update_segment(int(target['id']), text=cleaned)
+            script = dict(job.get('script_json') or {})
+            script_segments = list(script.get('segments') or [])
             narration_parts: list[str] = []
             found = False
             for i, seg in enumerate(script_segments):
-                if int(seg.get("segment_index", 0)) == segment_index:
+                if int(seg.get('segment_index', 0)) == segment_index:
                     seg = dict(seg)
-                    seg["text"] = cleaned
+                    seg['text'] = cleaned
                     script_segments[i] = seg
                     found = True
-                narration_parts.append(str(seg.get("text") or ""))
+                narration_parts.append(str(seg.get('text') or ''))
             if not found:
-                raise KeyError(f"segment {segment_index} not found in script_json")
-            script["segments"] = script_segments
-            script["narration"] = "".join(narration_parts)
-            script["word_count"] = sum(len(p) for p in narration_parts)
-            repo_job.update_job(conn, job_id, script_json=script)
-            repo_job_log.append_log(
-                conn, job_id, "segment",
-                f"segment #{segment_index} text updated ({len(cleaned)} chars)",
-            )
-            return repo_job.get_job(conn, job_id)
+                raise KeyError(f'segment {segment_index} not found in script_json')
+            script['segments'] = script_segments
+            script['narration'] = ''.join(narration_parts)
+            script['word_count'] = sum((len(p) for p in narration_parts))
+            repo_job.update_job(job_id, script_json=script)
+            repo_job_log.append_log(job_id, 'segment', f'segment #{segment_index} text updated ({len(cleaned)} chars)')
+            return repo_job.get_job(job_id)
 
-    def update_segment_info(
-        self,
-        job_id: int,
-        segment_index: int,
-        *,
-        video_provider: str | None,
-        clear_video_provider: bool = False,
-    ) -> dict:
+    def update_segment_info(self, job_id: int, segment_index: int, *, video_provider: str | None, clear_video_provider: bool=False) -> dict:
         """更新分镜 info（当前仅 video_provider）；同步 script_json.segments[].info。"""
         from app.utils.job_info import merge_job_info, normalize_video_provider
-
         if clear_video_provider:
             provider_value: str | None = None
         else:
             provider_value = normalize_video_provider(video_provider)
             if provider_value is None:
-                raise ValueError("video_provider must be ffmpeg, wan_i2v, or agnes_i2v")
-
-        with connection() as conn:
-            job = repo_job.get_job(conn, job_id)
-            segments = repo_segment.list_segments(conn, job_id)
-            target = next(
-                (s for s in segments if int(s["segment_index"]) == segment_index), None
-            )
+                raise ValueError('video_provider must be ffmpeg, wan_i2v, or agnes_i2v')
+        with atomic():
+            job = repo_job.get_job(job_id)
+            segments = repo_segment.list_segments(job_id)
+            target = next((s for s in segments if int(s['segment_index']) == segment_index), None)
             if target is None:
-                raise KeyError(f"segment {segment_index} not found")
-
-            info = merge_job_info(target.get("info"), video_provider=provider_value)
-            repo_segment.update_segment(
-                conn,
-                int(target["id"]),
-                info=info or None,
-            )
-
-            script = dict(job.get("script_json") or {})
-            script_segments = list(script.get("segments") or [])
+                raise KeyError(f'segment {segment_index} not found')
+            info = merge_job_info(target.get('info'), video_provider=provider_value)
+            repo_segment.update_segment(int(target['id']), info=info or None)
+            script = dict(job.get('script_json') or {})
+            script_segments = list(script.get('segments') or [])
             found = False
             for i, seg in enumerate(script_segments):
-                if int(seg.get("segment_index", 0)) != segment_index:
+                if int(seg.get('segment_index', 0)) != segment_index:
                     continue
                 seg = dict(seg)
-                seg_info = merge_job_info(seg.get("info"), video_provider=provider_value)
+                seg_info = merge_job_info(seg.get('info'), video_provider=provider_value)
                 if seg_info:
-                    seg["info"] = seg_info
+                    seg['info'] = seg_info
                 else:
-                    seg.pop("info", None)
+                    seg.pop('info', None)
                 script_segments[i] = seg
                 found = True
                 break
             if found:
-                script["segments"] = script_segments
-                repo_job.update_job(conn, job_id, script_json=script)
-
-            label = "cleared" if clear_video_provider else provider_value
-            repo_job_log.append_log(
-                conn,
-                job_id,
-                "segment",
-                f"segment #{segment_index} info.video_provider={label!r}",
-            )
-            return repo_job.get_job(conn, job_id)
+                script['segments'] = script_segments
+                repo_job.update_job(job_id, script_json=script)
+            label = 'cleared' if clear_video_provider else provider_value
+            repo_job_log.append_log(job_id, 'segment', f'segment #{segment_index} info.video_provider={label!r}')
+            return repo_job.get_job(job_id)
 
     def get_logs(self, job_id: int) -> list[dict]:
-        with connection() as conn:
-            repo_job.get_job(conn, job_id)
-            return repo_job_log.list_logs(conn, job_id)
+        with atomic():
+            repo_job.get_job(job_id)
+            return repo_job_log.list_logs(job_id)
 
     def clear_logs(self, job_id: int) -> dict:
-        with connection() as conn:
-            count = repo_job_log.delete_logs(conn, job_id)
-        return {"id": job_id, "cleared": True, "deleted_count": count}
+        with atomic():
+            count = repo_job_log.delete_logs(job_id)
+        return {'id': job_id, 'cleared': True, 'deleted_count': count}
 
-    def create_from_title(
-        self,
-        title: str,
-        *,
-        skip_publish: bool = True,
-    ) -> dict:
+    def create_from_title(self, title: str, *, skip_publish: bool=True) -> dict:
         cleaned = title.strip()
         if not cleaned:
-            raise ValueError("title is empty")
-        with connection() as conn:
-            job = repo_job.create_job(
-                conn,
-                cleaned,
-                skip_publish=skip_publish,
-                stage="script",
-                status="pending",
-                pipeline="standard",
-                info=merge_job_info(
-                    None,
-                    orientation=default_orientation_for_pipeline("standard"),
-                ),
-            )
-            repo_job_log.append_log(conn, job["id"], "title", f"created job: {cleaned}")
+            raise ValueError('title is empty')
+        with atomic():
+            job = repo_job.create_job(cleaned, skip_publish=skip_publish, stage='script', status='pending', pipeline='standard', info=merge_job_info(None, orientation=default_orientation_for_pipeline('standard')))
+            repo_job_log.append_log(job['id'], 'title', f'created job: {cleaned}')
             return job
 
-    def update_job_info(
-        self,
-        job_id: int,
-        *,
-        orientation: str | None = None,
-        content_style: str | None = None,
-        intro_category: str | None = None,
-        image_provider: str | None = None,
-        video_provider: str | None = None,
-    ) -> dict:
-        from app.utils.job_info import (
-            normalize_content_style,
-            normalize_image_provider,
-            normalize_intro_category,
-            normalize_orientation,
-            normalize_video_provider,
-        )
-
+    def update_job_info(self, job_id: int, *, orientation: str | None=None, content_style: str | None=None, intro_category: str | None=None, image_provider: str | None=None, video_provider: str | None=None) -> dict:
+        from app.utils.job_info import normalize_content_style, normalize_image_provider, normalize_intro_category, normalize_orientation, normalize_video_provider
         patch: dict[str, str] = {}
         if orientation is not None:
             normalized = normalize_orientation(orientation)
-            if normalized not in {"portrait", "landscape"}:
-                raise ValueError("orientation must be portrait or landscape")
-            patch["orientation"] = normalized
+            if normalized not in {'portrait', 'landscape'}:
+                raise ValueError('orientation must be portrait or landscape')
+            patch['orientation'] = normalized
         if content_style is not None:
             normalized = normalize_content_style(content_style)
             if normalized is None:
-                raise ValueError(
-                    "content_style must be science_child, life_experience or history_mystery"
-                )
-            patch["content_style"] = normalized
+                raise ValueError('content_style must be science_child, life_experience or history_mystery')
+            patch['content_style'] = normalized
         if intro_category is not None:
             normalized = normalize_intro_category(intro_category)
             if normalized is None:
-                raise ValueError("intro_category must be 百科 or 历史悬案")
-            patch["intro_category"] = normalized
+                raise ValueError('intro_category must be 百科 or 历史悬案')
+            patch['intro_category'] = normalized
         if image_provider is not None:
             normalized = normalize_image_provider(image_provider)
             if normalized is None:
-                raise ValueError(
-                    "image_provider must be z_image_t2i, wan_t2i, sd15_t2i, or agnes_t2i"
-                )
-            patch["image_provider"] = normalized
+                raise ValueError('image_provider must be z_image_t2i, wan_t2i, sd15_t2i, or agnes_t2i')
+            patch['image_provider'] = normalized
         if video_provider is not None:
             normalized = normalize_video_provider(video_provider)
             if normalized is None:
-                raise ValueError("video_provider must be ffmpeg, wan_i2v, or agnes_i2v")
-            patch["video_provider"] = normalized
+                raise ValueError('video_provider must be ffmpeg, wan_i2v, or agnes_i2v')
+            patch['video_provider'] = normalized
         if not patch:
-            raise ValueError("no updatable info fields provided")
-        with connection() as conn:
-            job = repo_job.get_job(conn, job_id)
-            job = repo_job.update_job(
-                conn,
-                job_id,
-                info=merge_job_info(job.get("info"), **patch),
-            )
-            repo_job_log.append_log(
-                conn,
-                job_id,
-                "api",
-                f"updated info: {', '.join(f'{k}={v!r}' for k, v in patch.items())}",
-            )
+            raise ValueError('no updatable info fields provided')
+        with atomic():
+            job = repo_job.get_job(job_id)
+            job = repo_job.update_job(job_id, info=merge_job_info(job.get('info'), **patch))
+            repo_job_log.append_log(job_id, 'api', f"updated info: {', '.join((f'{k}={v!r}' for k, v in patch.items()))}")
             return job
 
     def update_job(self, job_id: int, **fields: object) -> dict:
         updates = {k: v for k, v in fields.items() if k in _API_UPDATABLE}
         if not updates:
-            raise ValueError("no updatable fields provided")
-        if "title" in updates:
-            title = updates["title"]
+            raise ValueError('no updatable fields provided')
+        if 'title' in updates:
+            title = updates['title']
             if not isinstance(title, str) or not title.strip():
-                raise ValueError("title is empty")
-            updates["title"] = title.strip()
-        if "skip_publish" in updates and not isinstance(updates["skip_publish"], bool):
-            raise ValueError("skip_publish must be boolean")
-        if "status" in updates and updates["status"] not in _VALID_STATUSES:
+                raise ValueError('title is empty')
+            updates['title'] = title.strip()
+        if 'skip_publish' in updates and (not isinstance(updates['skip_publish'], bool)):
+            raise ValueError('skip_publish must be boolean')
+        if 'status' in updates and updates['status'] not in _VALID_STATUSES:
             raise ValueError(f"status must be one of: {', '.join(sorted(_VALID_STATUSES))}")
-        with connection() as conn:
-            job = repo_job.get_job(conn, job_id)
-            if "title" in updates:
-                script = job.get("script_json")
+        with atomic():
+            job = repo_job.get_job(job_id)
+            if 'title' in updates:
+                script = job.get('script_json')
                 if isinstance(script, dict):
                     synced = dict(script)
-                    synced["title"] = re.sub(r"\s+", "", updates["title"].strip())
-                    updates["script_json"] = synced
-            job = repo_job.update_job(conn, job_id, **updates)
-            repo_job_log.append_log(conn, job_id, "api", f"updated fields: {', '.join(updates)}")
+                    synced['title'] = re.sub('\\s+', '', updates['title'].strip())
+                    updates['script_json'] = synced
+            job = repo_job.update_job(job_id, **updates)
+            repo_job_log.append_log(job_id, 'api', f"updated fields: {', '.join(updates)}")
             return job
 
     def abort_job(self, job_id: int) -> dict:
@@ -440,57 +296,27 @@ class JobMgr:
         - 无 worker（僵尸 ``running`` / 未在跑）：直接落到 ``pending``。
         """
         job = self.get_job(job_id)
-        was_running = job["status"] == "running"
+        was_running = job['status'] == 'running'
         if not was_running:
             job_cancel.clear(job_id)
-            with connection() as conn:
-                job = repo_job.update_job(
-                    conn,
-                    job_id,
-                    status="pending",
-                    fail_stage=None,
-                    error_message=None,
-                )
-                repo_job_log.append_log(
-                    conn,
-                    job_id,
-                    "api",
-                    "job aborted to pending",
-                )
+            with atomic():
+                job = repo_job.update_job(job_id, status='pending', fail_stage=None, error_message=None)
+                repo_job_log.append_log(job_id, 'api', 'job aborted to pending')
                 return job
-
         job_cancel.request(job_id)
         lock = self._job_lock(job_id)
         if lock.acquire(blocking=False):
-            # 拿到锁说明当前进程没有活着的 worker → 僵尸 running
             try:
                 job_cancel.clear(job_id)
-                with connection() as conn:
-                    job = repo_job.update_job(
-                        conn,
-                        job_id,
-                        status="pending",
-                        fail_stage=None,
-                        error_message=None,
-                    )
-                    repo_job_log.append_log(
-                        conn,
-                        job_id,
-                        "api",
-                        "abort: no active worker, reset to pending",
-                    )
+                with atomic():
+                    job = repo_job.update_job(job_id, status='pending', fail_stage=None, error_message=None)
+                    repo_job_log.append_log(job_id, 'api', 'abort: no active worker, reset to pending')
                     return job
             finally:
                 lock.release()
-
-        with connection() as conn:
-            repo_job_log.append_log(
-                conn,
-                job_id,
-                "api",
-                "abort requested; waiting for worker to stop",
-            )
-            return repo_job.get_job(conn, job_id)
+        with atomic():
+            repo_job_log.append_log(job_id, 'api', 'abort requested; waiting for worker to stop')
+            return repo_job.get_job(job_id)
 
     def _skip_if_aborted(self, job_id: int) -> dict | None:
         if job_cancel.is_cancelled(job_id):
@@ -501,94 +327,53 @@ class JobMgr:
         skipped = self._skip_if_aborted(job_id)
         if skipped is not None:
             return skipped
-        with connection() as conn:
-            return repo_job.update_job(conn, job_id, status="running")
+        return repo_job.update_job(job_id, status='running')
 
     def mark_done(self, job_id: int) -> dict:
-        # 中止优先：避免 cancel 时跳过写库导致一直卡在 running
         if job_cancel.is_cancelled(job_id):
             job = self.get_job(job_id)
-            return self.mark_aborted(job_id, job.get("stage") or "done")
-        with connection() as conn:
-            return repo_job.update_job(conn, job_id, stage="done", status="done")
+            return self.mark_aborted(job_id, job.get('stage') or 'done')
+        return repo_job.update_job(job_id, stage='done', status='done')
 
     def mark_failed(self, job_id: int, stage: str, message: str) -> dict:
         if job_cancel.is_cancelled(job_id):
             return self.mark_aborted(job_id, stage)
-        with connection() as conn:
-            repo_job_log.append_log(conn, job_id, stage, message, level="error")
-            return repo_job.update_job(
-                conn,
-                job_id,
-                status="failed",
-                error_message=message,
-            )
+        with atomic():
+            repo_job_log.append_log(job_id, stage, message, level='error')
+            return repo_job.update_job(job_id, status='failed', error_message=message)
 
     def mark_aborted(self, job_id: int, stage: str) -> dict:
         job_cancel.clear(job_id)
-        with connection() as conn:
-            repo_job_log.append_log(
-                conn,
-                job_id,
-                stage,
-                "任务已中止",
-                level="warning",
-            )
-            return repo_job.update_job(
-                conn,
-                job_id,
-                status="pending",
-                fail_stage=None,
-                error_message=None,
-            )
+        with atomic():
+            repo_job_log.append_log(job_id, stage, '任务已中止', level='warning')
+            return repo_job.update_job(job_id, status='pending', fail_stage=None, error_message=None)
 
     def delete_job(self, job_id: int) -> None:
-        with connection() as conn:
-            repo_job.delete_job(conn, job_id)
+        with atomic():
+            repo_job.delete_job(job_id)
 
     def clean_job_files(self, job_id: int) -> dict:
         """删除任务本地媒体文件，保留数据库记录。"""
         lock = self._job_lock(job_id)
         if not lock.acquire(blocking=False):
-            raise JobBusyError(f"job {job_id} is running")
-
+            raise JobBusyError(f'job {job_id} is running')
         try:
             job = self.get_job(job_id)
-            if job["status"] == "running":
-                raise JobBusyError(f"job {job_id} is running")
-
+            if job['status'] == 'running':
+                raise JobBusyError(f'job {job_id} is running')
             from app.config import get_settings
-
             media_dir: Path = get_settings().video_data_dir / str(job_id)
             cleaned = False
             if media_dir.exists():
                 shutil.rmtree(media_dir)
                 cleaned = True
-
-            with connection() as conn:
-                repo_job_log.append_log(conn, job_id, "api", "cleaned local media files")
-
-            return {
-                "id": job_id,
-                "cleaned": cleaned,
-                "media_dir": str(media_dir),
-            }
+            with atomic():
+                repo_job_log.append_log(job_id, 'api', 'cleaned local media files')
+            return {'id': job_id, 'cleaned': cleaned, 'media_dir': str(media_dir)}
         finally:
             lock.release()
 
-    def submit_action(
-        self,
-        job_id: int,
-        action: str,
-        run: Callable[[], None],
-        *,
-        prepare: bool = True,
-        segment_indices: list[int] | None = None,
-        action_detail: str | None = None,
-        sync: bool = False,
-        allow_running: bool = False,
-        prepare_mode: str = "from",
-    ) -> dict:
+    def submit_action(self, job_id: int, action: str, run: Callable[[], None], *, prepare: bool=True, segment_indices: list[int] | None=None, action_detail: str | None=None, sync: bool=False, allow_running: bool=False, prepare_mode: str='from') -> dict:
         """统一提交：锁 · prepare · cancel · mark_running · sync|async。
 
         API 默认 ``sync=False``（后台）；CLI 用 ``sync=True``。
@@ -597,9 +382,7 @@ class JobMgr:
         """
         lock = self._job_lock(job_id)
         if not lock.acquire(blocking=False):
-            raise JobBusyError(f"job {job_id} is running")
-
-        # 锁必须持有到 worker 结束，否则 abort 后可立刻重入并 clear cancel
+            raise JobBusyError(f'job {job_id} is running')
         lock_held = True
 
         def _release_lock() -> None:
@@ -607,881 +390,419 @@ class JobMgr:
             if lock_held:
                 lock_held = False
                 lock.release()
-
         try:
             job = self.get_job(job_id)
-            if job["status"] == "running" and not allow_running:
-                raise JobBusyError(f"job {job_id} is running")
-
+            if job['status'] == 'running' and (not allow_running):
+                raise JobBusyError(f'job {job_id} is running')
             if prepare:
-                prepare_rerun_artifacts(
-                    job_id,
-                    action,
-                    segment_indices=segment_indices,
-                    mode=prepare_mode,
-                )
+                prepare_rerun_artifacts(job_id, action, segment_indices=segment_indices, mode=prepare_mode)
             job_cancel.clear(job_id)
-            if job["status"] != "running":
+            if job['status'] != 'running':
                 self.mark_running(job_id)
-            fail_stage = action.split("/")[0]
-
-            # abort 插在 clear 与 mark_running 之间时，不要再 spawn
+            fail_stage = action.split('/')[0]
             started = self.get_job(job_id)
-            if (
-                started.get("status") != "running"
-                or job_cancel.is_cancelled(job_id)
-            ):
+            if started.get('status') != 'running' or job_cancel.is_cancelled(job_id):
                 if job_cancel.is_cancelled(job_id):
                     job_cancel.clear(job_id)
                 _release_lock()
                 return started
 
             def _worker() -> None:
-                try:
-                    mode = "sync" if sync else "background greenlet"
-                    if action_detail:
-                        logger.info(
-                            "job %s action [%s] started (%s): %s",
-                            job_id,
-                            action,
-                            mode,
-                            action_detail,
-                        )
-                    else:
-                        logger.info(
-                            "job %s action [%s] started (%s)",
-                            job_id,
-                            action,
-                            mode,
-                        )
-                    try:
-                        run()
-                    except JobCancelledError:
-                        logger.info("job %s action %s aborted", job_id, action)
-                        job = self.get_job(job_id)
-                        if job["status"] == "running":
-                            self.mark_aborted(job_id, fail_stage)
-                    except Exception as exc:
-                        if is_expected_job_failure(exc):
-                            logger.error(
-                                "job %s action %s failed: %s",
-                                job_id,
-                                action,
-                                exc,
-                            )
-                        else:
-                            logger.exception(
-                                "job %s action %s failed: %s",
-                                job_id,
-                                action,
-                                exc,
-                            )
-                        job = self.get_job(job_id)
-                        if job["status"] == "running":
-                            self.mark_failed(job_id, fail_stage, str(exc))
-                finally:
-                    # 兜底：cancel 仍在则收尾；非 running 也清掉孤儿 cancel
-                    try:
-                        if job_cancel.is_cancelled(job_id):
-                            job = self.get_job(job_id)
-                            if job["status"] == "running":
-                                self.mark_aborted(job_id, fail_stage)
-                            else:
-                                job_cancel.clear(job_id)
-                    except Exception:
-                        logger.exception(
-                            "job %s abort finalize failed", job_id
-                        )
-                    _release_lock()
+                from app.repositories.database import get_app
 
+                with get_app().app_context():
+                    try:
+                        mode = 'sync' if sync else 'background greenlet'
+                        if action_detail:
+                            logger.info('job %s action [%s] started (%s): %s', job_id, action, mode, action_detail)
+                        else:
+                            logger.info('job %s action [%s] started (%s)', job_id, action, mode)
+                        try:
+                            run()
+                        except JobCancelledError:
+                            logger.info('job %s action %s aborted', job_id, action)
+                            job = self.get_job(job_id)
+                            if job['status'] == 'running':
+                                self.mark_aborted(job_id, fail_stage)
+                        except Exception as exc:
+                            if is_expected_job_failure(exc):
+                                logger.error('job %s action %s failed: %s', job_id, action, exc)
+                            else:
+                                logger.exception('job %s action %s failed: %s', job_id, action, exc)
+                            job = self.get_job(job_id)
+                            if job['status'] == 'running':
+                                self.mark_failed(job_id, fail_stage, str(exc))
+                    finally:
+                        try:
+                            if job_cancel.is_cancelled(job_id):
+                                job = self.get_job(job_id)
+                                if job['status'] == 'running':
+                                    self.mark_aborted(job_id, fail_stage)
+                                else:
+                                    job_cancel.clear(job_id)
+                        except Exception:
+                            logger.exception('job %s abort finalize failed', job_id)
+                        _release_lock()
             if sync:
                 _worker()
                 return self.get_job(job_id)
-
             run_in_background(_worker)
             return self.get_job(job_id)
         except Exception:
             _release_lock()
             raise
 
-    def _run_in_background(
-        self,
-        job_id: int,
-        action: str,
-        run: Callable[[], None],
-        *,
-        segment_indices: list[int] | None = None,
-        action_detail: str | None = None,
-    ) -> dict:
+    def _run_in_background(self, job_id: int, action: str, run: Callable[[], None], *, segment_indices: list[int] | None=None, action_detail: str | None=None) -> dict:
         """兼容旧名 → :meth:`submit_action`（异步）。"""
-        return self.submit_action(
-            job_id,
-            action,
-            run,
-            segment_indices=segment_indices,
-            action_detail=action_detail,
-            sync=False,
-        )
+        return self.submit_action(job_id, action, run, segment_indices=segment_indices, action_detail=action_detail, sync=False)
 
-    def run_job_sync(
-        self,
-        job_id: int,
-        *,
-        from_stage: str | None = None,
-        only_stage: str | None = None,
-        segment_indices: list[int] | None = None,
-    ) -> dict:
+    def run_job_sync(self, job_id: int, *, from_stage: str | None=None, only_stage: str | None=None, segment_indices: list[int] | None=None) -> dict:
         """CLI 同步入口：持锁 + 可选 prepare，再跑 ``loop.run_job``。"""
         from worker.loop import run_job
-
         if from_stage and only_stage:
-            raise ValueError("--from-stage 与 --only-stage 不能同时使用")
-
+            raise ValueError('--from-stage 与 --only-stage 不能同时使用')
         rerun_stage = only_stage or from_stage
         prepare = rerun_stage is not None
-        prepare_mode = "only" if only_stage else "from"
+        prepare_mode = 'only' if only_stage else 'from'
         if rerun_stage is None:
             job = self.get_job(job_id)
-            action = str(job.get("stage") or "script")
+            action = str(job.get('stage') or 'script')
         else:
             action = rerun_stage
+        return self.submit_action(job_id, action, lambda: run_job(job_id, from_stage=from_stage, only_stage=only_stage, segment_indices=segment_indices), prepare=prepare, segment_indices=segment_indices, sync=True, prepare_mode=prepare_mode)
 
-        return self.submit_action(
-            job_id,
-            action,
-            lambda: run_job(
-                job_id,
-                from_stage=from_stage,
-                only_stage=only_stage,
-                segment_indices=segment_indices,
-            ),
-            prepare=prepare,
-            segment_indices=segment_indices,
-            sync=True,
-            prepare_mode=prepare_mode,
-        )
-
-    def continue_job(
-        self,
-        job_id: int,
-        *,
-        sync: bool = True,
-        allow_running: bool = False,
-    ) -> dict:
+    def continue_job(self, job_id: int, *, sync: bool=True, allow_running: bool=False) -> dict:
         """从当前 stage 续跑（不 prepare）。drain / recovery 用。"""
         from worker.loop import run_job
-
         job = self.get_job(job_id)
-        action = str(job.get("stage") or "script")
-        return self.submit_action(
-            job_id,
-            action,
-            lambda: run_job(job_id),
-            prepare=False,
-            sync=sync,
-            allow_running=allow_running,
-        )
+        action = str(job.get('stage') or 'script')
+        return self.submit_action(job_id, action, lambda: run_job(job_id), prepare=False, sync=sync, allow_running=allow_running)
 
     def _persist_image_provider(self, job_id: int, image_provider: str | None) -> None:
         if image_provider is None:
             return
-        with connection() as conn:
-            job = repo_job.get_job(conn, job_id)
-            repo_job.update_job(
-                conn,
-                job_id,
-                info=merge_job_info(job.get("info"), image_provider=image_provider),
-            )
+        with atomic():
+            job = repo_job.get_job(job_id)
+            repo_job.update_job(job_id, info=merge_job_info(job.get('info'), image_provider=image_provider))
 
     def _persist_video_provider(self, job_id: int, video_provider: str | None) -> None:
         if video_provider is None:
             return
-        with connection() as conn:
-            job = repo_job.get_job(conn, job_id)
-            repo_job.update_job(
-                conn,
-                job_id,
-                info=merge_job_info(job.get("info"), video_provider=video_provider),
-            )
+        with atomic():
+            job = repo_job.get_job(job_id)
+            repo_job.update_job(job_id, info=merge_job_info(job.get('info'), video_provider=video_provider))
 
-    def run_script(
-        self,
-        job_id: int,
-        *,
-        to_end: bool = False,
-        title: str | None = None,
-        segment_target_sec: float | None = None,
-        max_title_length: int | None = None,
-        estimated_duration_min: float | None = None,
-        narration_target_words: int | None = None,
-        speech_chars_per_sec: float | None = None,
-        skip_title_optimize: bool = False,
-        generate_image_prompts: bool = False,
-        supplementary_info: str | None = None,
-        video_timeline: str | None = None,
-        orientation: str | None = None,
-        content_style: str | None = None,
-        segment_index: int | None = None,
-    ) -> dict:
+    def run_script(self, job_id: int, *, to_end: bool=False, title: str | None=None, segment_target_sec: float | None=None, max_title_length: int | None=None, estimated_duration_min: float | None=None, narration_target_words: int | None=None, speech_chars_per_sec: float | None=None, skip_title_optimize: bool=False, generate_image_prompts: bool=False, supplementary_info: str | None=None, video_timeline: str | None=None, orientation: str | None=None, content_style: str | None=None, segment_index: int | None=None) -> dict:
         """生成文案。实现：worker/loop.run_script → worker/stages/*/script.py"""
         from worker.loop import run_script
-
-        with connection() as conn:
-            job = repo_job.get_job(conn, job_id)
-            repo_job.update_job(
-                conn,
-                job_id,
-                info=merge_job_script_params(
-                    job.get("info"),
-                    segment_target_sec=segment_target_sec,
-                    max_title_length=max_title_length,
-                    estimated_duration_min=estimated_duration_min,
-                    narration_target_words=narration_target_words,
-                    speech_chars_per_sec=speech_chars_per_sec,
-                    skip_title_optimize=skip_title_optimize,
-                    generate_image_prompts=generate_image_prompts,
-                    supplementary_info=supplementary_info,
-                    video_timeline=video_timeline,
-                    orientation=orientation,
-                    content_style=content_style,
-                ),
-            )
-
+        with atomic():
+            job = repo_job.get_job(job_id)
+            repo_job.update_job(job_id, info=merge_job_script_params(job.get('info'), segment_target_sec=segment_target_sec, max_title_length=max_title_length, estimated_duration_min=estimated_duration_min, narration_target_words=narration_target_words, speech_chars_per_sec=speech_chars_per_sec, skip_title_optimize=skip_title_optimize, generate_image_prompts=generate_image_prompts, supplementary_info=supplementary_info, video_timeline=video_timeline, orientation=orientation, content_style=content_style))
         if title is not None:
             cleaned = title.strip()
             if not cleaned:
-                raise ValueError("title is empty")
+                raise ValueError('title is empty')
             job = self.get_job(job_id)
-            if cleaned != job["title"]:
+            if cleaned != job['title']:
                 self.update_job(job_id, title=cleaned)
-
         job = self.get_job(job_id)
-        detail = _script_action_detail(
-            job=job,
-            to_end=to_end,
-            title=title,
-            segment_target_sec=segment_target_sec,
-            max_title_length=max_title_length,
-            estimated_duration_min=estimated_duration_min,
-            narration_target_words=narration_target_words,
-            speech_chars_per_sec=speech_chars_per_sec,
-            skip_title_optimize=skip_title_optimize,
-            generate_image_prompts=generate_image_prompts,
-            supplementary_info=supplementary_info,
-            video_timeline=video_timeline,
-            orientation=orientation,
-            content_style=content_style,
-        )
+        detail = _script_action_detail(job=job, to_end=to_end, title=title, segment_target_sec=segment_target_sec, max_title_length=max_title_length, estimated_duration_min=estimated_duration_min, narration_target_words=narration_target_words, speech_chars_per_sec=speech_chars_per_sec, skip_title_optimize=skip_title_optimize, generate_image_prompts=generate_image_prompts, supplementary_info=supplementary_info, video_timeline=video_timeline, orientation=orientation, content_style=content_style)
         if segment_index is not None:
-            detail += f", segment_index={segment_index}"
-        return self._run_in_background(
-            job_id,
-            "script",
-            lambda: run_script(
-                job_id,
-                to_end=to_end,
-                segment_target_sec=segment_target_sec,
-                max_title_length=max_title_length,
-                narration_target_words=narration_target_words,
-                speech_chars_per_sec=speech_chars_per_sec,
-                skip_title_optimize=skip_title_optimize,
-                generate_image_prompts=generate_image_prompts,
-                supplementary_info=supplementary_info,
-                video_timeline=video_timeline,
-                segment_index=segment_index,
-            ),
-            action_detail=detail,
-        )
+            detail += f', segment_index={segment_index}'
+        return self._run_in_background(job_id, 'script', lambda: run_script(job_id, to_end=to_end, segment_target_sec=segment_target_sec, max_title_length=max_title_length, narration_target_words=narration_target_words, speech_chars_per_sec=speech_chars_per_sec, skip_title_optimize=skip_title_optimize, generate_image_prompts=generate_image_prompts, supplementary_info=supplementary_info, video_timeline=video_timeline, segment_index=segment_index), action_detail=detail)
 
-    def generate_script(
-        self,
-        job_id: int,
-        *,
-        prompt_type: str = "image_prompt",
-        segment_indices: list[int] | None = None,
-    ) -> dict:
+    def generate_script(self, job_id: int, *, prompt_type: str='image_prompt', segment_indices: list[int] | None=None) -> dict:
         """生成指定类型的提示词（不重置脚本、不清除产物）。"""
         from worker.loop import run_script_prompts
-
         job = self.get_job(job_id)
-        detail = _image_prompts_action_detail(
-            job, segment_indices=segment_indices
-        )
-        return self.submit_action(
-            job_id,
-            "script",
-            lambda: run_script_prompts(
-                job_id,
-                prompt_type=prompt_type,
-                segment_indices=segment_indices,
-            ),
-            prepare=False,
-            action_detail=f"prompts/{prompt_type}: {detail}" if detail else (
-                f"prompts/{prompt_type}"
-            ),
-            sync=False,
-        )
+        detail = _image_prompts_action_detail(job, segment_indices=segment_indices)
+        return self.submit_action(job_id, 'script', lambda: run_script_prompts(job_id, prompt_type=prompt_type, segment_indices=segment_indices), prepare=False, action_detail=f'prompts/{prompt_type}: {detail}' if detail else f'prompts/{prompt_type}', sync=False)
 
-    def preview_script_prompts(
-        self,
-        job_id: int,
-        *,
-        title: str | None = None,
-        segment_target_sec: float | None = None,
-        max_title_length: int | None = None,
-        estimated_duration_min: float | None = None,
-        narration_target_words: int | None = None,
-        speech_chars_per_sec: float | None = None,
-        skip_title_optimize: bool = False,
-        supplementary_info: str | None = None,
-        video_timeline: str | None = None,
-        orientation: str | None = None,
-        content_style: str | None = None,
-    ) -> list[dict[str, str]]:
+    def preview_script_prompts(self, job_id: int, *, title: str | None=None, segment_target_sec: float | None=None, max_title_length: int | None=None, estimated_duration_min: float | None=None, narration_target_words: int | None=None, speech_chars_per_sec: float | None=None, skip_title_optimize: bool=False, supplementary_info: str | None=None, video_timeline: str | None=None, orientation: str | None=None, content_style: str | None=None) -> list[dict[str, str]]:
         from app.services.script.script_mgr import script_mgr
         from app.utils.job_info import parse_job_info
-
         job = self.get_job(job_id)
-
-        # 从 DB 读取已保存的参数作为默认值
-        info = parse_job_info(job.get("info"))
-        sp = info.get("script") or {}
+        info = parse_job_info(job.get('info'))
+        sp = info.get('script') or {}
         if segment_target_sec is None:
-            segment_target_sec = sp.get("segment_target_sec")
+            segment_target_sec = sp.get('segment_target_sec')
         if max_title_length is None:
-            max_title_length = sp.get("max_title_length")
+            max_title_length = sp.get('max_title_length')
         if narration_target_words is None:
-            narration_target_words = sp.get("narration_target_words")
+            narration_target_words = sp.get('narration_target_words')
         if speech_chars_per_sec is None:
-            speech_chars_per_sec = sp.get("speech_chars_per_sec")
+            speech_chars_per_sec = sp.get('speech_chars_per_sec')
         if not skip_title_optimize:
-            skip_title_optimize = sp.get("skip_title_optimize", False)
+            skip_title_optimize = sp.get('skip_title_optimize', False)
         if supplementary_info is None:
-            supplementary_info = sp.get("supplementary_info")
+            supplementary_info = sp.get('supplementary_info')
         if video_timeline is None:
-            video_timeline = sp.get("video_timeline")
-
+            video_timeline = sp.get('video_timeline')
         if orientation is not None or content_style is not None:
             job = dict(job)
             patch: dict[str, str] = {}
             if orientation is not None:
-                patch["orientation"] = orientation
+                patch['orientation'] = orientation
             if content_style is not None:
-                patch["content_style"] = content_style
-            job["info"] = merge_job_info(job.get("info"), **patch)
+                patch['content_style'] = content_style
+            job['info'] = merge_job_info(job.get('info'), **patch)
         else:
-            # 从 DB 读取 orientation/content_style
             if orientation is None:
-                orientation = info.get("orientation")
+                orientation = info.get('orientation')
             if content_style is None:
-                content_style = info.get("content_style")
+                content_style = info.get('content_style')
             if orientation is not None or content_style is not None:
                 job = dict(job)
                 patch = {}
                 if orientation is not None:
-                    patch["orientation"] = orientation
+                    patch['orientation'] = orientation
                 if content_style is not None:
-                    patch["content_style"] = content_style
-                job["info"] = merge_job_info(job.get("info"), **patch)
-
-        source_title = (title or job["title"] or "").strip()
+                    patch['content_style'] = content_style
+                job['info'] = merge_job_info(job.get('info'), **patch)
+        source_title = (title or job['title'] or '').strip()
         if not source_title:
-            raise ValueError("title is empty")
-        script = job.get("script_json")
-        if script is not None and not isinstance(script, dict):
+            raise ValueError('title is empty')
+        script = job.get('script_json')
+        if script is not None and (not isinstance(script, dict)):
             script = None
-        return script_mgr.collect_prompts(
-            job,
-            source_title,
-            segment_target_sec=segment_target_sec,
-            max_title_length=max_title_length,
-            narration_target_words=narration_target_words,
-            speech_chars_per_sec=speech_chars_per_sec,
-            supplementary_info=supplementary_info,
-            video_timeline=video_timeline,
-            script=script,
-            skip_title_optimize=skip_title_optimize,
-            preview_followups=True,
-        )
+        return script_mgr.collect_prompts(job, source_title, segment_target_sec=segment_target_sec, max_title_length=max_title_length, narration_target_words=narration_target_words, speech_chars_per_sec=speech_chars_per_sec, supplementary_info=supplementary_info, video_timeline=video_timeline, script=script, skip_title_optimize=skip_title_optimize, preview_followups=True)
 
     def preview_daily_script_prompts(self, job_id: int) -> list[dict[str, str]]:
         from app.repositories import repo_daily_story
-        from app.repositories.connection import connection
         from app.services.daily_story.prompts import build_daily_script_prompts
         from app.utils.job_info import parse_job_info
-
         job = self.get_job(job_id)
-        info = parse_job_info(job.get("info"))
-        daily_story_id = info.get("daily_story_id") or job.get("material_id")
+        info = parse_job_info(job.get('info'))
+        daily_story_id = info.get('daily_story_id') or job.get('material_id')
         if not daily_story_id:
-            raise ValueError("daily_story_id not found in job info")
-
-        with connection() as conn:
-            story = repo_daily_story.get_story(conn, daily_story_id)
-
-        story_content = story["story"]
+            raise ValueError('daily_story_id not found in job info')
+        with atomic():
+            story = repo_daily_story.get_story(daily_story_id)
+        story_content = story['story']
         if not isinstance(story_content, dict):
-            raise ValueError("故事数据格式异常")
-        dialogue = story_content.get("dialogue")
+            raise ValueError('故事数据格式异常')
+        dialogue = story_content.get('dialogue')
         if not isinstance(dialogue, list):
-            raise ValueError("故事数据中缺少 dialogue 字段或格式不正确")
+            raise ValueError('故事数据中缺少 dialogue 字段或格式不正确')
         for i, item in enumerate(dialogue):
-            if not isinstance(item, dict) or "speaker" not in item or "line" not in item:
-                logger.warning("对话第 %d 条数据格式异常: %s", i + 1, item)
-        from app.utils.job_info import (
-            content_style_from_job,
-            resolve_speech_chars_per_sec,
-            script_params_from_info,
-        )
-
-        system, user = build_daily_script_prompts(
-            story_content,
-            chars_per_sec=resolve_speech_chars_per_sec(
-                script_params_from_info(job.get("info")),
-                content_style=content_style_from_job(job),
-            ),
-        )
-        return [{"step": "daily_script", "system": system, "user": user}]
+            if not isinstance(item, dict) or 'speaker' not in item or 'line' not in item:
+                logger.warning('对话第 %d 条数据格式异常: %s', i + 1, item)
+        from app.utils.job_info import content_style_from_job, resolve_speech_chars_per_sec, script_params_from_info
+        system, user = build_daily_script_prompts(story_content, chars_per_sec=resolve_speech_chars_per_sec(script_params_from_info(job.get('info')), content_style=content_style_from_job(job)))
+        return [{'step': 'daily_script', 'system': system, 'user': user}]
 
     def generate_video_description(self, job_id: int) -> dict:
         from app.services.llm.llm_mgr import llm_mgr
         from app.utils.job_info import content_style_from_job
-
-        with connection() as conn:
-            job = repo_job.get_job(conn, job_id)
-            script = job.get("script_json")
+        with atomic():
+            job = repo_job.get_job(job_id)
+            script = job.get('script_json')
             if not isinstance(script, dict):
-                raise ValueError("script not ready")
-            title = str(script.get("title") or job.get("title") or "").strip()
-            narration = str(script.get("narration") or "").strip()
+                raise ValueError('script not ready')
+            title = str(script.get('title') or job.get('title') or '').strip()
+            narration = str(script.get('narration') or '').strip()
             if not title:
-                raise ValueError("title is empty")
+                raise ValueError('title is empty')
             if not narration:
-                raise ValueError("narration is empty")
+                raise ValueError('narration is empty')
             content_style = content_style_from_job(job)
             base_script = dict(script)
-
-        # LLM 在事务外，避免长占 SQLite 锁
-        description = llm_mgr.generate_video_description(
-            title,
-            narration,
-            content_style=content_style,
-        )
+        description = llm_mgr.generate_video_description(title, narration, content_style=content_style)
         updated_script = base_script
-        updated_script["video_description"] = description
-
-        with connection() as conn:
-            job = repo_job.update_job(conn, job_id, script_json=updated_script)
-            repo_job_log.append_log(conn, job_id, "script", "video description regenerated")
-            return {"video_description": description, "job": job}
+        updated_script['video_description'] = description
+        with atomic():
+            job = repo_job.update_job(job_id, script_json=updated_script)
+            repo_job_log.append_log(job_id, 'script', 'video description regenerated')
+            return {'video_description': description, 'job': job}
 
     def generate_tags(self, job_id: int) -> dict:
         from app.services.llm.llm_mgr import llm_mgr
         from app.utils.job_info import content_style_from_job
-
-        with connection() as conn:
-            job = repo_job.get_job(conn, job_id)
-            script = job.get("script_json")
+        with atomic():
+            job = repo_job.get_job(job_id)
+            script = job.get('script_json')
             if not isinstance(script, dict):
-                raise ValueError("script not ready")
-            title = str(script.get("title") or job.get("title") or "").strip()
-            narration = str(script.get("narration") or "").strip()
+                raise ValueError('script not ready')
+            title = str(script.get('title') or job.get('title') or '').strip()
+            narration = str(script.get('narration') or '').strip()
             if not title:
-                raise ValueError("title is empty")
+                raise ValueError('title is empty')
             if not narration:
-                raise ValueError("narration is empty")
+                raise ValueError('narration is empty')
             content_style = content_style_from_job(job)
             base_script = dict(script)
-
-        # LLM 在事务外，避免长占 SQLite 锁
-        tags = llm_mgr.generate_tags(
-            title,
-            narration,
-            content_style=content_style,
-        )
+        tags = llm_mgr.generate_tags(title, narration, content_style=content_style)
         updated_script = base_script
-        updated_script["tags"] = tags
+        updated_script['tags'] = tags
+        with atomic():
+            job = repo_job.update_job(job_id, script_json=updated_script)
+            repo_job_log.append_log(job_id, 'script', 'tags regenerated')
+            return {'tags': tags, 'job': job}
 
-        with connection() as conn:
-            job = repo_job.update_job(conn, job_id, script_json=updated_script)
-            repo_job_log.append_log(conn, job_id, "script", "tags regenerated")
-            return {"tags": tags, "job": job}
-
-    def run_intro(
-        self,
-        job_id: int,
-        *,
-        to_end: bool = False,
-        hold_tail_sec: float | None = None,
-        orientation: str | None = None,
-        orientation_preference: str | None = None,
-        intro_category: str | None = None,
-    ) -> dict:
+    def run_intro(self, job_id: int, *, to_end: bool=False, hold_tail_sec: float | None=None, orientation: str | None=None, orientation_preference: str | None=None, intro_category: str | None=None) -> dict:
         """生成片头。实现：worker/loop.run_intro → worker/stages/intro/"""
         from worker.loop import run_intro
-
         info_patch: dict = {}
         if orientation_preference is not None:
-            info_patch["orientation"] = orientation_preference
+            info_patch['orientation'] = orientation_preference
         if intro_category is not None:
             from app.utils.job_info import normalize_intro_category
-
             normalized = normalize_intro_category(intro_category)
             if normalized is None:
-                raise ValueError("intro_category must be 百科 or 历史悬案")
-            info_patch["intro_category"] = normalized
+                raise ValueError('intro_category must be 百科 or 历史悬案')
+            info_patch['intro_category'] = normalized
         if info_patch:
-            with connection() as conn:
-                job = repo_job.get_job(conn, job_id)
-                repo_job.update_job(
-                    conn,
-                    job_id,
-                    info=merge_job_info(job.get("info"), **info_patch),
-                )
+            with atomic():
+                job = repo_job.get_job(job_id)
+                repo_job.update_job(job_id, info=merge_job_info(job.get('info'), **info_patch))
+        return self._run_in_background(job_id, 'intro', lambda: run_intro(job_id, to_end=to_end, hold_tail_sec=hold_tail_sec, orientation=orientation))
 
-        return self._run_in_background(
-            job_id,
-            "intro",
-            lambda: run_intro(
-                job_id,
-                to_end=to_end,
-                hold_tail_sec=hold_tail_sec,
-                orientation=orientation,
-            ),
-        )
-
-    def run_cover(self, job_id: int, *, to_end: bool = False) -> dict:
+    def run_cover(self, job_id: int, *, to_end: bool=False) -> dict:
         """仅重新生成封面，不动片头视频。"""
         import tempfile
-
         from PIL import Image
-
         from app.config import get_settings
-        from app.services.intro.cover_layout import (
-            build_cover_image_prompt,
-            compose_cover_image,
-            cover_canvas_size,
-        )
+        from app.services.intro.cover_layout import build_cover_image_prompt, compose_cover_image, cover_canvas_size
         from app.services.media.ffmpeg_utils import probe_video_size
         from app.services.segment.image.image_agnes import AgnesImageProvider
         from worker.stages.intro.base import _cover_subject_from_job, resolve_intro_title
 
         def _generate() -> None:
-            with connection() as conn:
-                job = repo_job.get_job(conn, job_id)
+            with atomic():
+                job = repo_job.get_job(job_id)
             settings = get_settings()
             title = resolve_intro_title(job)
-
-            intro_path = job.get("intro_path")
+            intro_path = job.get('intro_path')
             if intro_path:
                 try:
                     width, height = probe_video_size(Path(intro_path))
                 except Exception:
-                    width, height = settings.video_width, settings.video_height
+                    width, height = (settings.video_width, settings.video_height)
+            elif settings.video_width > settings.video_height:
+                width, height = (settings.video_width, settings.video_height)
             else:
-                if settings.video_width > settings.video_height:
-                    width, height = settings.video_width, settings.video_height
-                else:
-                    width, height = settings.video_height, settings.video_width
-
+                width, height = (settings.video_height, settings.video_width)
             cw, ch, _ = cover_canvas_size(width, height)
-
             media_dir = settings.video_data_dir / str(job_id)
-            cover_path = media_dir / "cover.jpg"
-            pipeline = job.get("pipeline")
+            cover_path = media_dir / 'cover.jpg'
+            pipeline = job.get('pipeline')
             host_intro_path = settings.get_host_intro_path(pipeline)
-            brand = "昭墨日常" if pipeline == "chat" else settings.brand_name
-
-            # 优先用分镜 1 的图片做封面，无需重新生图
+            brand = '昭墨日常' if pipeline == 'chat' else settings.brand_name
             seg1_image: Path | None = None
-            with connection() as conn:
-                seg_lst = repo_segment.list_segments(conn, job_id)
+            with atomic():
+                seg_lst = repo_segment.list_segments(job_id)
             for seg in seg_lst:
-                if int(seg.get("segment_index", 0)) == 1:
-                    raw = seg.get("image_path") or ""
+                if int(seg.get('segment_index', 0)) == 1:
+                    raw = seg.get('image_path') or ''
                     if raw:
                         seg1_image = Path(raw)
                     break
-
             if seg1_image and seg1_image.exists():
-                img = Image.open(seg1_image).convert("RGBA")
-                # 缩放到封面画布尺寸
+                img = Image.open(seg1_image).convert('RGBA')
                 img = img.resize((cw, ch), Image.LANCZOS)
-                composed = compose_cover_image(
-                    img,
-                    title,
-                    brand_name=brand,
-                    host_intro_path=host_intro_path,
-                )
-                composed.convert("RGB").save(cover_path, quality=92)
-                logger.info(
-                    "job %s cover: using seg1 image %s (%sx%s)",
-                    job_id, seg1_image, cw, ch,
-                )
+                composed = compose_cover_image(img, title, brand_name=brand, host_intro_path=host_intro_path)
+                composed.convert('RGB').save(cover_path, quality=92)
+                logger.info('job %s cover: using seg1 image %s (%sx%s)', job_id, seg1_image, cw, ch)
             else:
                 subject = _cover_subject_from_job(job)
                 cover_prompt = build_cover_image_prompt(cw=cw, ch=ch, subject=subject)
-                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+                with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
                     tmp_path = Path(tmp.name)
                 try:
-                    AgnesImageProvider().generate(cover_prompt, tmp_path, size=f"{cw}x{ch}")
+                    AgnesImageProvider().generate(cover_prompt, tmp_path, size=f'{cw}x{ch}')
                     img = Image.open(tmp_path)
-                    composed = compose_cover_image(
-                        img,
-                        title,
-                        brand_name=brand,
-                        host_intro_path=host_intro_path,
-                    )
-                    composed.convert("RGB").save(cover_path, quality=92)
+                    composed = compose_cover_image(img, title, brand_name=brand, host_intro_path=host_intro_path)
+                    composed.convert('RGB').save(cover_path, quality=92)
                 finally:
                     tmp_path.unlink(missing_ok=True)
-                logger.info(
-                    "job %s cover: generated via Agnes (%sx%s)",
-                    job_id, cw, ch,
-                )
-
-            with connection() as conn:
-                repo_job.update_job(conn, job_id, cover_path=str(cover_path.resolve()))
-                repo_job_log.append_log(
-                    conn, job_id, "cover", f"cover regenerated: {cover_path} ({cw}x{ch})"
-                )
-
+                logger.info('job %s cover: generated via Agnes (%sx%s)', job_id, cw, ch)
+            with atomic():
+                repo_job.update_job(job_id, cover_path=str(cover_path.resolve()))
+                repo_job_log.append_log(job_id, 'cover', f'cover regenerated: {cover_path} ({cw}x{ch})')
             self.mark_done(job_id)
+        return self._run_in_background(job_id, 'cover', _generate)
 
-        return self._run_in_background(job_id, "cover", _generate)
-
-    def run_end(
-        self,
-        job_id: int,
-    ) -> dict:
+    def run_end(self, job_id: int) -> dict:
         """生成片尾视频。只对 chat 流水线有效。"""
         from app.services.end_card import generate_end_card
 
         def _generate() -> None:
             from app.config import get_settings
             from app.services.intro.size import resolve_intro_size
-
             settings = get_settings()
-            with connection() as conn:
-                job = repo_job.get_job(conn, job_id)
+            with atomic():
+                job = repo_job.get_job(job_id)
             orient = orientation_for_resolve(job)
-            width, height = resolve_intro_size(
-                settings=settings, orientation=orient, job=job, media_dir=settings.video_data_dir / str(job_id)
-            )
-
+            width, height = resolve_intro_size(settings=settings, orientation=orient, job=job, media_dir=settings.video_data_dir / str(job_id))
             media_dir = settings.video_data_dir / str(job_id)
-            end_path = media_dir / "end.mp4"
-
+            end_path = media_dir / 'end.mp4'
             generate_end_card(end_path, width=width, height=height)
-
-            with connection() as conn:
-                repo_job.update_job(conn, job_id, end_path=str(end_path.resolve()))
-                repo_job_log.append_log(
-                    conn, job_id, "end", f"end card generated: {end_path} ({width}x{height})"
-                )
-
+            with atomic():
+                repo_job.update_job(job_id, end_path=str(end_path.resolve()))
+                repo_job_log.append_log(job_id, 'end', f'end card generated: {end_path} ({width}x{height})')
             self.mark_done(job_id)
+        return self._run_in_background(job_id, 'end', _generate)
 
-        return self._run_in_background(job_id, "end", _generate)
-
-    def run_tts(
-        self,
-        job_id: int,
-        *,
-        to_end: bool = False,
-        speech_rate: float | None = None,
-        voice_id: str | None = None,
-        speaker_configs: dict | None = None,
-    ) -> dict:
+    def run_tts(self, job_id: int, *, to_end: bool=False, speech_rate: float | None=None, voice_id: str | None=None, speaker_configs: dict | None=None) -> dict:
         """生成配音。实现：worker/loop.run_tts → worker/stages/common/tts.py"""
         from worker.loop import run_tts
+        return self._run_in_background(job_id, 'tts', lambda: run_tts(job_id, to_end=to_end, speech_rate=speech_rate, voice_id=voice_id, speaker_configs=speaker_configs))
 
-        return self._run_in_background(
-            job_id,
-            "tts",
-            lambda: run_tts(
-                job_id,
-                to_end=to_end,
-                speech_rate=speech_rate,
-                voice_id=voice_id,
-                speaker_configs=speaker_configs,
-            ),
-        )
-
-    def run_segment_all(
-        self,
-        job_id: int,
-        *,
-        to_end: bool = False,
-        segment_indices: list[int] | None = None,
-        image_provider: str | None = None,
-        video_provider: str | None = None,
-    ) -> dict:
+    def run_segment_all(self, job_id: int, *, to_end: bool=False, segment_indices: list[int] | None=None, image_provider: str | None=None, video_provider: str | None=None) -> dict:
         """重跑分镜静图与图生视频。实现：worker/loop.run_segment_all → worker/stages/standard/segment.py"""
         from worker.loop import run_segment_all
-
         self._persist_image_provider(job_id, image_provider)
         self._persist_video_provider(job_id, video_provider)
-        return self._run_in_background(
-            job_id,
-            "segment/all",
-            lambda: run_segment_all(
-                job_id,
-                to_end=to_end,
-                segment_indices=segment_indices,
-            ),
-            segment_indices=segment_indices,
-        )
+        return self._run_in_background(job_id, 'segment/all', lambda: run_segment_all(job_id, to_end=to_end, segment_indices=segment_indices), segment_indices=segment_indices)
 
-    def run_segment_images(
-        self,
-        job_id: int,
-        *,
-        to_end: bool = False,
-        segment_indices: list[int] | None = None,
-        image_provider: str | None = None,
-    ) -> dict:
+    def run_segment_images(self, job_id: int, *, to_end: bool=False, segment_indices: list[int] | None=None, image_provider: str | None=None) -> dict:
         """重出分镜静图。实现：worker/loop.run_segment_images → worker/stages/standard/segment.py"""
         from worker.loop import run_segment_images
-
         self._persist_image_provider(job_id, image_provider)
-        return self._run_in_background(
-            job_id,
-            "segment/images",
-            lambda: run_segment_images(
-                job_id,
-                to_end=to_end,
-                segment_indices=segment_indices,
-            ),
-            segment_indices=segment_indices,
-        )
+        return self._run_in_background(job_id, 'segment/images', lambda: run_segment_images(job_id, to_end=to_end, segment_indices=segment_indices), segment_indices=segment_indices)
 
-    def run_segment_clips(
-        self,
-        job_id: int,
-        *,
-        to_end: bool = False,
-        segment_indices: list[int] | None = None,
-        video_provider: str | None = None,
-    ) -> dict:
+    def run_segment_clips(self, job_id: int, *, to_end: bool=False, segment_indices: list[int] | None=None, video_provider: str | None=None) -> dict:
         """重跑图生视频。实现：worker/loop.run_segment_clips → worker/stages/standard/segment.py"""
         from worker.loop import run_segment_clips
-
         self._persist_video_provider(job_id, video_provider)
+        return self._run_in_background(job_id, 'segment/clips', lambda: run_segment_clips(job_id, to_end=to_end, segment_indices=segment_indices), segment_indices=segment_indices)
 
-        return self._run_in_background(
-            job_id,
-            "segment/clips",
-            lambda: run_segment_clips(
-                job_id,
-                to_end=to_end,
-                segment_indices=segment_indices,
-            ),
-            segment_indices=segment_indices,
-        )
-
-    def run_merge(
-        self,
-        job_id: int,
-        *,
-        to_end: bool = False,
-        bgm: dict | None = None,
-        subtitle: dict | None = None,
-        xfade: dict | None = None,
-    ) -> dict:
+    def run_merge(self, job_id: int, *, to_end: bool=False, bgm: dict | None=None, subtitle: dict | None=None, xfade: dict | None=None) -> dict:
         """合成成片。实现：worker/loop.run_merge → merge stage（按 pipeline 分发）"""
         from worker.loop import run_merge
-
-        with connection() as conn:
+        with atomic():
             updates: dict = {}
             if bgm is not None or subtitle is not None or xfade is not None:
-                from app.utils.job_info import (
-                    merge_job_info,
-                    normalize_bgm_payload,
-                    normalize_subtitle_payload,
-                    normalize_xfade_payload,
-                )
-
-                job = repo_job.get_job(conn, job_id)
-                info = job.get("info")
+                from app.utils.job_info import merge_job_info, normalize_bgm_payload, normalize_subtitle_payload, normalize_xfade_payload
+                job = repo_job.get_job(job_id)
+                info = job.get('info')
                 if bgm is not None:
                     normalized_bgm = normalize_bgm_payload(bgm)
                     info = merge_job_info(info, bgm=normalized_bgm)
-                    repo_job_log.append_log(
-                        conn,
-                        job_id,
-                        "api",
-                        f"merge bgm config: {normalized_bgm}",
-                    )
+                    repo_job_log.append_log(job_id, 'api', f'merge bgm config: {normalized_bgm}')
                 if subtitle is not None:
                     normalized_sub = normalize_subtitle_payload(subtitle)
                     info = merge_job_info(info, subtitle=normalized_sub)
-                    repo_job_log.append_log(
-                        conn,
-                        job_id,
-                        "api",
-                        f"merge subtitle config: {normalized_sub}",
-                    )
+                    repo_job_log.append_log(job_id, 'api', f'merge subtitle config: {normalized_sub}')
                 if xfade is not None:
                     normalized_xfade = normalize_xfade_payload(xfade)
                     info = merge_job_info(info, xfade=normalized_xfade)
-                    repo_job_log.append_log(
-                        conn,
-                        job_id,
-                        "api",
-                        f"merge xfade config: {normalized_xfade}",
-                    )
-                updates["info"] = info
-            repo_job.update_job(
-                conn,
-                job_id,
-                bump_version=True,
-                fetch=False,
-                **updates,
-            )
+                    repo_job_log.append_log(job_id, 'api', f'merge xfade config: {normalized_xfade}')
+                updates['info'] = info
+            repo_job.update_job(job_id, bump_version=True, fetch=False, **updates)
+        return self._run_in_background(job_id, 'merge', lambda: run_merge(job_id, to_end=to_end))
 
-        return self._run_in_background(
-            job_id,
-            "merge",
-            lambda: run_merge(job_id, to_end=to_end),
-        )
-
-    def run_prepare(self, job_id: int, *, to_end: bool = False) -> dict:
+    def run_prepare(self, job_id: int, *, to_end: bool=False) -> dict:
         """素材任务：复制基底视频。实现：worker/loop.run_prepare → worker/stages/material/prepare.py"""
         from worker.loop import run_prepare
+        return self._run_in_background(job_id, 'prepare', lambda: run_prepare(job_id, to_end=to_end))
 
-        return self._run_in_background(
-            job_id,
-            "prepare",
-            lambda: run_prepare(job_id, to_end=to_end),
-        )
-
-    def run_publish(self, job_id: int, *, to_end: bool = False) -> dict:
+    def run_publish(self, job_id: int, *, to_end: bool=False) -> dict:
         """发布。实现：worker/loop.run_publish → worker/stages/common/publish.py"""
         from worker.loop import run_publish
+        return self._run_in_background(job_id, 'publish', lambda: run_publish(job_id, to_end=to_end))
 
-        return self._run_in_background(
-            job_id,
-            "publish",
-            lambda: run_publish(job_id, to_end=to_end),
-        )
-
-    def prepare_rerun(
-        self,
-        job_id: int,
-        stage: str,
-        *,
-        segment_indices: list[int] | None = None,
-        mode: str = "from",
-    ) -> dict:
-        return prepare_rerun_artifacts(
-            job_id,
-            stage,
-            segment_indices=segment_indices,
-            mode=mode,
-        )
-
-
+    def prepare_rerun(self, job_id: int, stage: str, *, segment_indices: list[int] | None=None, mode: str='from') -> dict:
+        return prepare_rerun_artifacts(job_id, stage, segment_indices=segment_indices, mode=mode)
 job_mgr = JobMgr()
-
-__all__ = ["JobBusyError", "JobCancelledError", "JobMgr", "job_mgr"]
+__all__ = ['JobBusyError', 'JobCancelledError', 'JobMgr', 'job_mgr']

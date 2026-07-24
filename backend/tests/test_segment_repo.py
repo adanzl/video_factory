@@ -1,19 +1,12 @@
 from __future__ import annotations
 
-import sqlite3
-
 from app.repositories import repo_job, repo_segment
-from app.repositories.schema import apply_schema
 
 
-def test_insert_segments_preserves_media_paths() -> None:
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
-    apply_schema(conn)
-    job = repo_job.create_job(conn, "test preserve media")
+def test_insert_segments_preserves_media_paths(app_ctx) -> None:
+    job = repo_job.create_job("test preserve media")
     job_id = job["id"]
     repo_segment.insert_segments(
-        conn,
         job_id,
         [
             {
@@ -32,9 +25,8 @@ def test_insert_segments_preserves_media_paths() -> None:
             },
         ],
     )
-    rows = repo_segment.list_segments(conn, job_id)
+    rows = repo_segment.list_segments(job_id)
     repo_segment.update_segment(
-        conn,
         rows[0]["id"],
         image_path="/data/1.png",
         clip_path="/data/1.mp4",
@@ -42,7 +34,6 @@ def test_insert_segments_preserves_media_paths() -> None:
         version=3,
     )
     repo_segment.update_segment(
-        conn,
         rows[1]["id"],
         image_path="/data/2.png",
         status="done",
@@ -50,7 +41,6 @@ def test_insert_segments_preserves_media_paths() -> None:
     )
 
     repo_segment.insert_segments(
-        conn,
         job_id,
         [
             {
@@ -70,7 +60,7 @@ def test_insert_segments_preserves_media_paths() -> None:
         ],
     )
 
-    updated = repo_segment.list_segments(conn, job_id)
+    updated = repo_segment.list_segments(job_id)
     by_index = {row["segment_index"]: row for row in updated}
     assert by_index[1]["image_prompt"] == "new prompt"
     assert by_index[1]["image_path"] == "/data/1.png"
@@ -81,14 +71,10 @@ def test_insert_segments_preserves_media_paths() -> None:
     assert by_index[2]["version"] == 5
 
 
-def test_insert_segments_stores_info_json() -> None:
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
-    apply_schema(conn)
-    job = repo_job.create_job(conn, "test segment info")
+def test_insert_segments_stores_info_json(app_ctx) -> None:
+    job = repo_job.create_job("test segment info")
     job_id = job["id"]
     repo_segment.insert_segments(
-        conn,
         job_id,
         [
             {
@@ -104,36 +90,30 @@ def test_insert_segments_stores_info_json() -> None:
             },
         ],
     )
-    rows = {row["segment_index"]: row for row in repo_segment.list_segments(conn, job_id)}
+    rows = {row["segment_index"]: row for row in repo_segment.list_segments(job_id)}
     assert rows[1]["info"]["video_provider"] == "agnes_i2v"
     assert "info" not in rows[2]
 
-    repo_segment.update_segment(conn, rows[1]["id"], info={"video_provider": "ffmpeg"})
-    updated = {row["segment_index"]: row for row in repo_segment.list_segments(conn, job_id)}
+    repo_segment.update_segment(rows[1]["id"], info={"video_provider": "ffmpeg"})
+    updated = {row["segment_index"]: row for row in repo_segment.list_segments(job_id)}
     assert updated[1]["info"]["video_provider"] == "ffmpeg"
 
-    # 重建时未带 info 则保留旧值
     repo_segment.insert_segments(
-        conn,
         job_id,
         [
             {"segment_index": 1, "text": "a2", "visual_mode": "static_motion"},
             {"segment_index": 2, "text": "b2", "visual_mode": "static_motion"},
         ],
     )
-    rebuilt = {row["segment_index"]: row for row in repo_segment.list_segments(conn, job_id)}
+    rebuilt = {row["segment_index"]: row for row in repo_segment.list_segments(job_id)}
     assert rebuilt[1]["info"]["video_provider"] == "ffmpeg"
     assert rebuilt[1]["text"] == "a2"
 
 
-def test_insert_segments_preserves_tts_duration_sec() -> None:
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
-    apply_schema(conn)
-    job = repo_job.create_job(conn, "test preserve duration")
+def test_insert_segments_preserves_tts_duration_sec(app_ctx) -> None:
+    job = repo_job.create_job("test preserve duration")
     job_id = job["id"]
     repo_segment.insert_segments(
-        conn,
         job_id,
         [
             {
@@ -144,11 +124,10 @@ def test_insert_segments_preserves_tts_duration_sec() -> None:
             },
         ],
     )
-    rows = repo_segment.list_segments(conn, job_id)
-    repo_segment.update_segment(conn, rows[0]["id"], duration_sec=9.795)
+    rows = repo_segment.list_segments(job_id)
+    repo_segment.update_segment(rows[0]["id"], duration_sec=9.795)
 
     repo_segment.insert_segments(
-        conn,
         job_id,
         [
             {
@@ -161,6 +140,6 @@ def test_insert_segments_preserves_tts_duration_sec() -> None:
         ],
     )
 
-    updated = repo_segment.list_segments(conn, job_id)[0]
+    updated = repo_segment.list_segments(job_id)[0]
     assert updated["duration_sec"] == 9.795
     assert updated["image_prompt"] == "new prompt"

@@ -138,24 +138,22 @@ def test_intro_generate_category_from_job() -> None:
     assert intro_generate_category(fallback_job) == "历史悬案"
 
 
-def test_intro_stage_uses_history_theme_from_job() -> None:
+def test_intro_stage_uses_history_theme_from_job(noop_atomic) -> None:
     stage = IntroStage()
     ctx = MagicMock()
     ctx.job = {"id": 1}
     job = {"id": 1, "info": {"intro_category": "历史悬案"}}
 
     with (
-        patch("worker.stages.intro.connection") as mock_conn,
         patch("worker.stages.intro.repo_job.get_job", return_value=job),
         patch("worker.stages.intro.run_intro_for_category") as mock_run,
     ):
-        mock_conn.return_value.__enter__.return_value = MagicMock()
         stage.run(ctx)
 
     mock_run.assert_called_once_with(ctx, job, stage=stage)
 
 
-def test_intro_stage_uses_science_theme_when_intro_category_百科() -> None:
+def test_intro_stage_uses_science_theme_when_intro_category_百科(noop_atomic) -> None:
     stage = IntroStage()
     ctx = MagicMock()
     ctx.job = {"id": 3}
@@ -168,11 +166,9 @@ def test_intro_stage_uses_science_theme_when_intro_category_百科() -> None:
     }
 
     with (
-        patch("worker.stages.intro.connection") as mock_conn,
         patch("worker.stages.intro.repo_job.get_job", return_value=job),
         patch("worker.stages.intro.run_intro_for_category") as mock_run,
     ):
-        mock_conn.return_value.__enter__.return_value = MagicMock()
         stage.run(ctx)
 
     mock_run.assert_called_once_with(ctx, job, stage=stage)

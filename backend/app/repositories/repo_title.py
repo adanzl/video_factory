@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from typing import Any
 
+from app.repositories import sql_exec as sql
 
-def _row_to_dict(row: sqlite3.Row) -> dict:
+
+def _row_to_dict(row: dict) -> dict:
     data = dict(row)
     if data.get("score_detail"):
         data["score_detail"] = json.loads(data["score_detail"])
@@ -13,24 +14,23 @@ def _row_to_dict(row: sqlite3.Row) -> dict:
 
 
 def count_titles(
-    conn: sqlite3.Connection,
     *,
     status: str | None = None,
 ) -> int:
     if status:
-        row = conn.execute(
+        row = sql.fetchone(
             "SELECT COUNT(*) AS cnt FROM title WHERE status = ?",
             (status,),
-        ).fetchone()
+        )
     else:
-        row = conn.execute(
+        row = sql.fetchone(
             "SELECT COUNT(*) AS cnt FROM title",
-        ).fetchone()
+        )
+    sql.commit()
     return row["cnt"] if row else 0
 
 
 def list_titles(
-    conn: sqlite3.Connection,
     *,
     status: str | None = None,
     limit: int = 50,
@@ -39,7 +39,7 @@ def list_titles(
     limit = max(1, min(limit, 200))
     offset = max(0, offset)
     if status:
-        rows = conn.execute(
+        rows = sql.fetchall(
             """
             SELECT id, title, category, template, hook, score, score_detail,
                    status, job_id, source, keyword, created_at, updated_at
@@ -49,9 +49,9 @@ def list_titles(
             LIMIT ? OFFSET ?
             """,
             (status, limit, offset),
-        ).fetchall()
+        )
     else:
-        rows = conn.execute(
+        rows = sql.fetchall(
             """
             SELECT id, title, category, template, hook, score, score_detail,
                    status, job_id, source, keyword, created_at, updated_at
@@ -60,30 +60,38 @@ def list_titles(
             LIMIT ? OFFSET ?
             """,
             (limit, offset),
-        ).fetchall()
+        )
+    sql.commit()
     return [_row_to_dict(row) for row in rows]
 
 
-def get_title(conn: sqlite3.Connection, title_id: int) -> dict:
-    row = conn.execute("SELECT * FROM title WHERE id = ?", (title_id,)).fetchone()
+def get_title(title_id: int) -> dict:
+    row = sql.fetchone("SELECT * FROM title WHERE id = ?", (title_id,))
+    sql.commit()
     if row is None:
         raise KeyError(f"title {title_id} not found")
     return _row_to_dict(row)
 
 
-def find_by_titles(conn: sqlite3.Connection, titles: list[str]) -> set[str]:
+def find_by_titles(titles: list[str]) -> set[str]:
     if not titles:
         return set()
     placeholders = ",".join("?" for _ in titles)
-    rows = conn.execute(
+    rows = sql.fetchall(
         f"SELECT title FROM title WHERE title IN ({placeholders})",
         titles,
-    ).fetchall()
+    )
+    sql.commit()
     return {row["title"] for row in rows}
 
 
+def list_all_keywords() -> list[str]:
+    rows = sql.fetchall("SELECT keyword FROM title WHERE keyword IS NOT NULL")
+    sql.commit()
+    return [str(row["keyword"]) for row in rows if row.get("keyword")]
+
+
 def insert_title(
-    conn: sqlite3.Connection,
     *,
     title: str,
     category: str | None = None,
@@ -92,7 +100,7 @@ def insert_title(
     source: str = "manual",
     keyword: str | None = None,
 ) -> dict | None:
-    cur = conn.execute(
+    cur = sql.execute(
         """
         INSERT OR IGNORE INTO title (title, category, template, hook, source, keyword)
         VALUES (?, ?, ?, ?, ?, ?)
@@ -100,11 +108,14 @@ def insert_title(
         (title, category, template, hook, source, keyword),
     )
     if cur.rowcount == 0:
+        sql.commit()
         return None
-    return get_title(conn, cur.lastrowid)
+    title_id = int(cur.lastrowid)
+    sql.commit()
+    return get_title(title_id)
 
 
-def update_title(conn: sqlite3.Connection, title_id: int, **fields: Any) -> dict:
+def update_title(title_id: int, **fields: Any) -> dict:
     allowed = {
         "title",
         "category",
@@ -127,37 +138,40 @@ def update_title(conn: sqlite3.Connection, title_id: int, **fields: Any) -> dict
         parts.append(f"{key} = ?")
         values.append(value)
     values.append(title_id)
-    conn.execute(
+    sql.execute(
         f"UPDATE title SET {', '.join(parts)} WHERE id = ?",
         values,
     )
-    return get_title(conn, title_id)
+    sql.commit()
+    return get_title(title_id)
 
 
-def delete_titles(conn: sqlite3.Connection, title_ids: list[int]) -> int:
+def delete_titles(title_ids: list[int]) -> int:
     if not title_ids:
         return 0
     placeholders = ",".join("?" for _ in title_ids)
-    cur = conn.execute(
+    cur = sql.execute(
         f"DELETE FROM title WHERE id IN ({placeholders})",
         title_ids,
     )
+    sql.commit()
     return cur.rowcount
 
 
-def list_by_ids(conn: sqlite3.Connection, title_ids: list[int]) -> list[dict]:
+def list_by_ids(title_ids: list[int]) -> list[dict]:
     if not title_ids:
         return []
     placeholders = ",".join("?" for _ in title_ids)
-    rows = conn.execute(
+    rows = sql.fetchall(
         f"SELECT * FROM title WHERE id IN ({placeholders})",
         title_ids,
-    ).fetchall()
+    )
+    sql.commit()
     return [_row_to_dict(row) for row in rows]
 
 
-def list_pending_score(conn: sqlite3.Connection, *, limit: int = 200) -> list[dict]:
-    rows = conn.execute(
+def list_pending_score(*, limit: int = 200) -> list[dict]:
+    rows = sql.fetchall(
         """
         SELECT * FROM title
         WHERE status = 'pending' OR score IS NULL
@@ -165,40 +179,40 @@ def list_pending_score(conn: sqlite3.Connection, *, limit: int = 200) -> list[di
         LIMIT ?
         """,
         (max(1, min(limit, 500)),),
-    ).fetchall()
+    )
+    sql.commit()
     return [_row_to_dict(row) for row in rows]
 
 
 def list_ids_below_score(
-    conn: sqlite3.Connection,
     max_score: int,
     *,
     exclude_enqueued: bool = True,
 ) -> list[int]:
-    """返回 score 已存在且严格低于 max_score 的选题 id。"""
     if exclude_enqueued:
-        rows = conn.execute(
+        rows = sql.fetchall(
             """
             SELECT id FROM title
             WHERE score IS NOT NULL AND score < ? AND status != 'enqueued'
             ORDER BY id
             """,
             (max_score,),
-        ).fetchall()
+        )
     else:
-        rows = conn.execute(
+        rows = sql.fetchall(
             """
             SELECT id FROM title
             WHERE score IS NOT NULL AND score < ?
             ORDER BY id
             """,
             (max_score,),
-        ).fetchall()
+        )
+    sql.commit()
     return [row["id"] for row in rows]
 
 
-def list_queued(conn: sqlite3.Connection, *, limit: int = 200) -> list[dict]:
-    rows = conn.execute(
+def list_queued(*, limit: int = 200) -> list[dict]:
+    rows = sql.fetchall(
         """
         SELECT * FROM title
         WHERE status = 'queued'
@@ -206,5 +220,6 @@ def list_queued(conn: sqlite3.Connection, *, limit: int = 200) -> list[dict]:
         LIMIT ?
         """,
         (max(1, min(limit, 500)),),
-    ).fetchall()
+    )
+    sql.commit()
     return [_row_to_dict(row) for row in rows]
