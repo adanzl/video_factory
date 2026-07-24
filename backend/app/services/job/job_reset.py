@@ -67,7 +67,7 @@ def _fs_clear_tts(media_dir: Path) -> None:
     if not media_dir.exists():
         return
     audio_dir = media_dir / 'audio'
-    for name in ('narration.mp3', 'subtitles.srt', 'subtitle_cues.json'):
+    for name in ('narration.mp3', 'subtitles.srt', 'subtitle_cues.json', 'segment_timeline.json'):
         _delete_files([audio_dir / name])
     clips_dir = audio_dir / 'clips'
     if clips_dir.exists():
