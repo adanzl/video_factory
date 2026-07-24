@@ -35,7 +35,7 @@ from app.services.tts.tts_mgr import tts_mgr
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["MediaMgr", "MergeResult", "SegmentClipsResult", "media_mgr"]
+__all__ = ["MediaMgr", "MergeResult", "SegmentClipsResult", "media_mgr", "inject_speaking_times_into_motion_prompts"]
 
 # I2V 并发控制：单分镜占槽，限制全局同时进行的图生视频路数
 _i2v_semaphore: Semaphore | None = None
@@ -226,6 +226,55 @@ def _inject_mouth_motion(
         middle += "。"
 
     return f"{head}{middle}{tail}"
+
+
+def inject_speaking_times_into_motion_prompts(
+    segments: list[dict],
+    subtitle_cues: list,
+    *,
+    script_segments: list[dict] | None = None,
+    segment_indices: set[int] | None = None,
+    estimate_cues_without_tts: bool = False,
+) -> int:
+    """按 TTS subtitle_cues 为 motion_prompt 写入说话时间轴（原地更新 segments）。"""
+    script_by_index: dict[int, dict] = {}
+    if script_segments:
+        for item in script_segments:
+            if isinstance(item, dict) and item.get("segment_index") is not None:
+                script_by_index[int(item["segment_index"])] = item
+
+    changed = 0
+    for seg in segments:
+        index = int(seg.get("segment_index") or 0)
+        if index <= 0:
+            continue
+        if segment_indices is not None and index not in segment_indices:
+            continue
+        script_seg = script_by_index.get(index, {})
+        motion = (seg.get("motion_prompt") or script_seg.get("motion_prompt") or "").strip()
+        if not motion:
+            continue
+        dialogue = seg.get("dialogue") or script_seg.get("dialogue")
+        if not dialogue:
+            continue
+        cues = tts_mgr.cues_for_segment(subtitle_cues, index)
+        if not cues and estimate_cues_without_tts:
+            cues = [
+                (str(line.get("text") or ""), max(0.1, len(str(line.get("text") or "")) * 0.25))
+                for line in dialogue
+                if isinstance(line, dict)
+            ]
+        if not cues:
+            continue
+        payload = {**script_seg, **seg, "dialogue": dialogue, "motion_prompt": motion}
+        updated = _inject_mouth_motion(motion, payload, cues)
+        if updated == motion:
+            continue
+        changed += 1
+        seg["motion_prompt"] = updated
+        if index in script_by_index:
+            script_by_index[index]["motion_prompt"] = updated
+    return changed
 
 
 class MediaMgr:
