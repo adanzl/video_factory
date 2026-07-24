@@ -11,6 +11,7 @@ from app.services.tts.audio_timeline import (
     save_audio_timeline_manifest,
 )
 from app.utils.media import base_video_duration_sec, material_min_audio_duration_sec
+from app.services.media.media_mgr import inject_speaking_times_into_motion_prompts
 from worker.context import JobContext
 from worker.stages.base import StageExecutor
 from app.repositories.sql_exec import atomic
@@ -58,12 +59,33 @@ class TTSStage(StageExecutor):
         if (job.get('pipeline') or 'standard').strip() == 'material':
             base_dur = base_video_duration_sec(job=job, media_dir=ctx.media_dir)
             min_audio_dur = material_min_audio_duration_sec(base_dur)
+        script = dict(job.get('script_json') or {})
+        script_segments = script.get('segments')
+        if isinstance(script_segments, list):
+            script['segments'] = [dict(s) if isinstance(s, dict) else s for s in script_segments]
+        else:
+            script['segments'] = []
+        n_motion = inject_speaking_times_into_motion_prompts(
+            segments,
+            result.subtitle_cues,
+            script_segments=script['segments'],
+        )
         with atomic():
             for seg, duration in zip(segments, timeline_durations, strict=True):
-                repo_segment.update_segment(seg['id'], duration_sec=duration)
+                patch: dict = {'duration_sec': duration}
+                if seg.get('motion_prompt'):
+                    patch['motion_prompt'] = seg['motion_prompt']
+                repo_segment.update_segment(seg['id'], **patch)
                 seg['duration_sec'] = duration
-            audio_version = (job.get('audio_version') or 0) + 1
-            repo_job.update_job(ctx.job['id'], audio_path=str(result.audio_path.resolve()), subtitle_path=str(result.subtitle_path.resolve()), tts_usage_json=result.usage_summary(), audio_version=audio_version)
+            job_updates: dict = {
+                'audio_path': str(result.audio_path.resolve()),
+                'subtitle_path': str(result.subtitle_path.resolve()),
+                'tts_usage_json': result.usage_summary(),
+                'audio_version': (job.get('audio_version') or 0) + 1,
+            }
+            if n_motion:
+                job_updates['script_json'] = script
+            repo_job.update_job(ctx.job['id'], **job_updates)
             clip_sum = sum(probed_clips)
             narr_dur = sum(timeline_durations)
             repo_job_log.append_log(
@@ -71,6 +93,6 @@ class TTSStage(StageExecutor):
                 self.name,
                 f'audio {narr_dur:.1f}s, clips_sum={clip_sum:.1f}s, segments={len(timeline_durations)}, '
                 f'cues={len(result.subtitle_cues)}, billing_chars={result.total_characters}, '
-                f'lufs={loudness.integrated_lufs}, max_silence={silence.max_gap_sec:.2f}s',
+                f'motion_timing={n_motion}, lufs={loudness.integrated_lufs}, max_silence={silence.max_gap_sec:.2f}s',
             )
             apply_quality_checks(ctx.job['id'], self.name, {'tts': check_tts_audio(result.audio_path, narr_dur, subtitle_cues=result.subtitle_cues, segments=segments, loudness=loudness, silence=silence, min_duration_sec=min_audio_dur)}, existing_report=job.get('quality_report'))

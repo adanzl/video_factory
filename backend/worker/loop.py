@@ -163,22 +163,20 @@ def _run_image_prompts(job_id: int, *, segment_indices: list[int] | None=None) -
     updated['generate_image_prompts'] = True
     updated['include_sd15_prompt'] = include_sd15_prompt
     updated.pop('_llm_timing', None)
-    from app.services.media.media_mgr import _inject_mouth_motion
+    from app.services.media.media_mgr import inject_speaking_times_into_motion_prompts
     from app.services.tts.tts_mgr import tts_mgr
     from pathlib import Path as _Path
     media_dir = _Path(get_settings().video_data_dir) / str(job_id)
     cues_path = tts_mgr.subtitle_cues_path_for(media_dir / 'audio')
     subtitle_cues = tts_mgr.load_subtitle_cues(cues_path) if cues_path.exists() else []
-    for seg in updated.get('segments') or []:
-        mp = seg.get('motion_prompt')
-        dl = seg.get('dialogue')
-        if not mp or not dl:
-            continue
-        if subtitle_cues:
-            cues = tts_mgr.cues_for_segment(subtitle_cues, seg['segment_index'])
-        else:
-            cues = [(d.get('text', ''), len(d.get('text', '')) * 0.25) for d in dl]
-        seg['motion_prompt'] = _inject_mouth_motion(mp, seg, cues)
+    indices = set(segment_indices) if segment_indices else None
+    inject_speaking_times_into_motion_prompts(
+        updated.get('segments') or [],
+        subtitle_cues,
+        script_segments=updated.get('segments'),
+        segment_indices=indices,
+        estimate_cues_without_tts=not subtitle_cues,
+    )
     from app.services.script.board_timeline import parse_video_timeline
     from app.utils.media import assign_segment_timings
     segment_target_sec = updated.get('segment_target_sec')
