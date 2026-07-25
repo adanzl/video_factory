@@ -35,7 +35,7 @@ def _speakers_for_regen(seg: dict) -> list[str]:
 class ImageProvider(ABC):
 
     @abstractmethod
-    def generate(self, prompt: str, output_path: Path, *, size: str | None=None, ref_images: list[Path] | None=None, expected_speakers: list[str] | None=None, content_style: str | None=None) -> Path:
+    def generate(self, prompt: str, output_path: Path, *, size: str | None=None, ref_images: list[Path | str] | None=None, expected_speakers: list[str] | None=None, content_style: str | None=None) -> Path:
         ...
 
     def describe_params(self, *, size: str | None=None) -> str:
@@ -123,7 +123,7 @@ class ImageMgr:
         with atomic():
             repo_segment.update_segment(int(seg_id), **payload)
 
-    def generate_segment_images(self, segments: list[dict], images_dir: Path, *, size: str | None=None, image_provider: str | None=None, on_image_done: Callable[[int, Path, float], None] | None=None, job_id: int | None=None, job: dict[str, Any] | None=None, ref_images: list[Path] | None=None, content_style: str | None=None) -> list[tuple[int, Path]]:
+    def generate_segment_images(self, segments: list[dict], images_dir: Path, *, size: str | None=None, image_provider: str | None=None, on_image_done: Callable[[int, Path, float], None] | None=None, job_id: int | None=None, job: dict[str, Any] | None=None, ref_images: list[Path | str] | None=None, content_style: str | None=None) -> list[tuple[int, Path]]:
         images_dir.mkdir(parents=True, exist_ok=True)
         provider = self._get_image_provider(image_provider)
         settings = get_settings()
