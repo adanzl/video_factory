@@ -49,6 +49,44 @@ def test_generate_downloads_url(tmp_path: Path) -> None:
     assert output.read_bytes() == b"png-bytes"
 
 
+def test_generate_puts_http_ref_into_ref_images_not_image(tmp_path: Path) -> None:
+    """GitHub URL 须进 ref_images（角色参考），禁止误入 image（i2i 底图）。"""
+    provider = AgnesImageProvider()
+    output = tmp_path / "1.png"
+    ref_url = (
+        "https://raw.githubusercontent.com/adanzl/video_factory/main/"
+        "backend/res/host/crayon/hosts.png"
+    )
+
+    mock_post = MagicMock()
+    mock_post.json.return_value = {"data": [{"url": "https://example.com/out.png"}]}
+    mock_post.raise_for_status = MagicMock()
+    mock_img = MagicMock()
+    mock_img.content = b"png-bytes"
+    mock_img.raise_for_status = MagicMock()
+
+    with (
+        patch(
+            "app.services.segment.image.image_agnes.agnes_api_keys",
+            return_value=[AgnesApiKey("primary", "test-key")],
+        ),
+        patch.object(provider, "_request", return_value=mock_post) as mock_request,
+        patch("app.services.segment.image.image_agnes.requests.get", return_value=mock_img),
+        patch.object(provider, "_verify_image", return_value=True),
+    ):
+        provider.generate(
+            "测试 prompt",
+            output,
+            size="1280*720",
+            ref_images=[ref_url],
+        )
+
+    payload = mock_request.call_args.kwargs["json"]
+    extra = payload["extra_body"]
+    assert extra["ref_images"] == [ref_url]
+    assert "image" not in extra
+
+
 def test_generate_retries_verify_until_pass(tmp_path: Path) -> None:
     provider = AgnesImageProvider()
     output = tmp_path / "1.png"
