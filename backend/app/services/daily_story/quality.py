@@ -53,8 +53,9 @@ _HUMOR_POINTS_FOR_GOOD = 5
 _HUMOR_POINTS_FOR_GREAT = 15
 
 _RE_HAMMER = re.compile(
-    r"\d+|[一二三四五六七八九十]+(?:分钟|秒|块|个|次|遍)|"
-    r"算错|写错|弹错|多玩|少玩|进位|竖式|升fa|降",
+    r"\d+|[一二三四五六七八九十两]+(?:分钟|秒|块|个|次|遍|下)|"
+    r"算错|写错|弹错|多玩|少玩|进位|竖式|升fa|降|"
+    r"就吐水|才刷了|刷了三|泡沫还|边刷边|玩手机",
 )
 
 # ── 好笑 / 节奏（规则近似人工：具体、有出处、少复读）──
@@ -246,6 +247,11 @@ def _score_redundancy(lines: list[str]) -> tuple[int, list[str]]:
     if hook_hits >= 4:
         return -7, [f"中段「{worst_hook}」偏重复"]
 
+    for stem in ("漱口", "两分钟", "重来", "停了"):
+        n_hit = sum(1 for line in body_lines if stem in line)
+        if n_hit >= 4:
+            return -10, [f"中段「{stem}」复读拖沓"]
+
     return 2, ["节奏紧凑"]
 
 
@@ -328,6 +334,33 @@ def _collect_humor_issues(
             cons.append("追问闭环模板复读")
         if "不公平" in body_text and "凭什么" not in body_text[:40]:
             cons.append("偏C式争公平口号")
+        last = tail4[-1] if tail4 else ""
+        if re.search(r"哼", last) and re.search(
+            r"你.{0,4}(?:重刷|再刷|漱口|过关)|明天你|你等着",
+            last,
+        ):
+            cons.append("末句哼完仍发指令，破功不干净")
+        if re.search(r"算你厉害|你赢了|算你赢|你厉害", last):
+            cons.append("末句认赢或甩狠，破功不干净")
+        # 刷牙：收束应扣翻车动作，勿只引「两分钟」空规矩
+        if re.search(r"刷牙|漱口|牙刷", "".join(lines)):
+            quote_frags = [
+                m.group(1)
+                for line in tail4
+                for m in _RE_DIRECT_QUOTE.finditer(line)
+            ]
+            hammer_hit = bool(re.search(
+                r"才刷|就吐|就停|就漱|玩手机|泡沫|几下|二十秒|五十秒",
+                body_text,
+            ))
+            if quote_frags and hammer_hit:
+                joined_q = "".join(quote_frags)
+                if (
+                    re.search(r"两分钟", joined_q)
+                    and not re.search(r"吐|停|连续|漱口|手", joined_q)
+                    and re.search(r"吐水|漱口|停手|连续", body_text)
+                ):
+                    cons.append("收束未扣一锤（应引吐水/停手类原话）")
     if type_code == "A" and not _a_close_four_beat_complete(tail4):
         cons.append("末四拍不完整")
 
@@ -385,6 +418,8 @@ def _score_funniness(
             points = min(points, 5)
         elif "偏C" in c:
             points = min(points, 8)
+        elif "未扣一锤" in c or "仍发指令" in c or "认弟弟赢" in c:
+            points = min(points, 4)
 
     points = max(0, min(20, points))
     if points >= _HUMOR_POINTS_FOR_GREAT:
@@ -591,6 +626,7 @@ def _build_summary(
             for w in (
                 "甩给妈妈", "和解", "无破功", "跑题",
                 "无出处", "未埋旧账", "模板", "拖沓", "好笑不足", "末四拍",
+                "未扣一锤", "仍发指令",
             )
         )
         if severe or grade == "偏弱":
@@ -684,7 +720,8 @@ def build_quality_revision_hints(
             c for c in cons
             if any(
                 k in c
-                for k in ("无出处", "未埋旧账", "模板", "拖沓", "公平", "好笑不足", "末四拍")
+                for k in ("无出处", "未埋旧账", "模板", "拖沓", "公平", "好笑不足", "末四拍",
+                          "未扣一锤", "仍发指令")
             )
         ),
         None,

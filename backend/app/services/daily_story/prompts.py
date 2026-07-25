@@ -96,6 +96,8 @@ _CONFLICT_ANCHOR_STOP = frozenset(
         "昭昭", "灿灿", "妈妈", "姐弟", "我们", "什么", "怎么",
         "这个", "那个", "不是", "就是", "可以", "不行",
         "争第", "一个", "个洗", "一洗",  # 碎片噪声，优先「洗澡」「橡皮」等实物
+        "后自", "反被", "却翻", "矩后", "己示", "范翻", "快立", "牙太",
+        "立规", "规定", "自己", "示范", "打脸", "翻车", "却更", "却要",
     }
 )
 # 抽锚点前从 core 去掉角色名/连接词，避免「昭灿灿争」一类噪声
@@ -719,6 +721,18 @@ def _conflict_anchor_tokens(text: str) -> list[str]:
     return sorted(tokens, key=lambda t: (-len(t), t))
 
 
+def _conflict_anchors_hit(core: str, ctx: str, anchors: list[str]) -> bool:
+    """开场/setting 是否点到 conflict；刷牙允许牙刷/牙膏等同场词。"""
+    if anchors and any(a in ctx for a in anchors):
+        return True
+    if "刷牙" in (core or "") and re.search(
+        r"刷牙|牙刷|牙膏|漱口|吐水|刷太",
+        ctx or "",
+    ):
+        return True
+    return False
+
+
 def _conflict_anchor_must_words(conflict_core: str, *, limit: int = 4) -> list[str]:
     """开场重试用：挑应点名的锚点（短词优先，如「洗澡」而非「一个洗澡」）。"""
     anchors = _conflict_anchor_tokens(conflict_core)
@@ -759,7 +773,7 @@ def _append_single_conflict_errors(story: dict, errors: list[str]) -> None:
     anchors = _conflict_anchor_tokens(core)
     front = "".join(lines[:2])
     front_ctx = core + setting + front
-    if anchors and not any(a in front_ctx for a in anchors):
+    if anchors and not _conflict_anchors_hit(core, front_ctx, anchors):
         errors.append(
             f"开场/setting 未体现 conflict_core 锚点（{anchors}）：{core!r}"
         )
@@ -1029,6 +1043,8 @@ def validate_daily_story_json(
     _append_homework_fact_errors(story, errors)
     _append_brush_timer_fact_errors(story, errors)
     _append_a_closing_quote_errors(story, errors)
+    _append_a_mid_restatement_errors(story, errors)
+    _append_dangling_term_errors(story, errors)
 
     if errors:
         raise ValueError("daily_story 校验失败: " + "; ".join(errors))
@@ -1344,6 +1360,11 @@ _A_OPENING_SPOILER_RE = re.compile(
     r"草稿.{0,6}错|计时器上自己|你也错了|"
     r"刚玩过|你上次|双标|才刷了半|一分半"
 )
+# A 开场禁止「互怼中途读数/宣判」——须先看见场面
+_A_OPENING_MID_FIGHT_RE = re.compile(
+    r"计时器才走|才走了\s*\d+\s*秒|才走了\s*[一二三四五六七八九十两半]+\s*秒|"
+    r"至少两分钟|牙医说的|重刷|时间到了|到点了"
+)
 
 _RE_CLOSING_QUOTE = re.compile(
     r"(?:你刚才说|你自己说|你不是说|你刚说|你说的)([^，。！？…]{3,})",
@@ -1388,7 +1409,7 @@ def _append_brush_timer_fact_errors(story: dict, errors: list[str]) -> None:
     ]
     full = "".join(lines_text)
     blob = setting + core + punch + full
-    if not re.search(r"刷牙|刷够|计时器|计时", blob):
+    if not re.search(r"刷牙|刷够", blob):
         return
 
     all_secs = set(_iter_duration_seconds(full))
@@ -1466,18 +1487,240 @@ def _append_a_closing_quote_errors(story: dict, errors: list[str]) -> None:
                     return True
         return False
 
-    for item in dialogue[-4:]:
+    for i, item in enumerate(dialogue):
         if not isinstance(item, dict):
+            continue
+        if str(item.get("speaker") or "").strip() != "昭昭":
             continue
         line = str(item.get("line") or "")
         for m in _RE_CLOSING_QUOTE.finditer(line):
             frag = m.group(1).strip()
-            if not _grounded(frag, cancan):
+            prior_cancan = "".join(
+                str(d.get("line") or "")
+                for d in dialogue[:i]
+                if isinstance(d, dict)
+                and str(d.get("speaker") or "").strip() == "灿灿"
+            )
+            if not prior_cancan.strip():
+                continue
+            if not _grounded(frag, prior_cancan):
+                soft_ok = (
+                    re.search(r"吐水.{0,4}停", frag)
+                    and re.search(r"吐水.{0,6}停", prior_cancan)
+                ) or (
+                    re.search(r"漱口.{0,4}停", frag)
+                    and re.search(r"漱口.{0,6}停", prior_cancan)
+                )
+                if not soft_ok:
+                    errors.append(
+                        f"A类引话须出自灿灿前文原话（无「{frag[:14]}」），"
+                        "禁止昭昭自造后再假装引用",
+                    )
+                    return
+
+
+_A_MID_RULE_STEMS = (
+    ("漱口", 4),
+    ("两分钟", 5),
+    ("停了", 4),
+    ("说话算数", 3),
+)
+
+
+def _line_bigrams(text: str) -> set[str]:
+    chars = re.sub(r"[^\u4e00-\u9fff]", "", text or "")
+    if len(chars) < 2:
+        return set()
+    return {chars[i:i + 2] for i in range(len(chars) - 1)}
+
+
+def _lines_high_overlap(a: str, b: str, *, thresh: float = 0.5) -> bool:
+    sa, sb = _line_bigrams(a), _line_bigrams(b)
+    if len(sa) < 3 or len(sb) < 3:
+        return False
+    return len(sa & sb) / len(sa | sb) >= thresh
+
+
+def _append_a_mid_restatement_errors(story: dict, errors: list[str]) -> None:
+    """A 类：中段同一规矩勿换措辞再立一遍。"""
+    punch = str(story.get("punchline_explain") or "")
+    if parse_story_type_code(punchline=punch) != "A":
+        return
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 10:
+        return
+    body = dialogue[:-4]
+    lines: list[tuple[str, str]] = []
+    for d in body:
+        if not isinstance(d, dict):
+            continue
+        sp = str(d.get("speaker") or "").strip()
+        ln = str(d.get("line") or "").strip()
+        if ln:
+            lines.append((sp, ln))
+    if len(lines) < 8:
+        return
+
+    for stem, limit in _A_MID_RULE_STEMS:
+        hits = sum(1 for _, ln in lines if stem in ln)
+        if hits >= limit:
+            errors.append(
+                f"中段「{stem}」出现{hits}次：同一规矩只立一次"
+                "（最多再确认1句），然后立刻进一锤场面",
+            )
+            return
+
+    filler_hits = sum(
+        1
+        for _, ln in lines
+        if re.search(
+            r"你确定|说到做到|绝不反悔|你好好数|我看着|我数着|"
+            r"眨眼睛|换手拿|中间不能|换位置|别数|没离开嘴巴|"
+            r"挤牙膏了吗|牙刷没沾|你不能作弊|数得准|数错了|我看着你",
+            ln,
+        )
+    )
+    if filler_hits >= 2:
+        errors.append(
+            "中段注水过多（换位置/数着/别数/眨眼睛等），"
+            "立完吐水算停后立刻示范翻车",
+        )
+        return
+
+    full_mid = "".join(ln for _, ln in lines)
+    if re.search(r"刷牙|漱口|牙刷", full_mid):
+        timer_pad = sum(
+            1
+            for _, ln in lines
+            if re.search(
+                r"默数|电子表|掐表|没带手机|计时器呢|用那个|我盯着表|帮你掐",
+                ln,
+            )
+        )
+        if timer_pad >= 3:
+            errors.append(
+                "刷牙中段禁止抠计时工具（默数/电子表/掐表），"
+                "立完规矩后立刻示范翻车",
+            )
+            return
+        # 一锤过晚：立规后勿先吵换位置
+        rule_i = next(
+            (
+                i
+                for i, (_, ln) in enumerate(lines)
+                if "两分钟" in ln
+                or "连续刷" in ln
+                or re.search(r"吐水.{0,4}停", ln)
+            ),
+            None,
+        )
+        hammer_i = next(
+            (
+                i
+                for i, (sp, ln) in enumerate(lines)
+                if i > (rule_i or 0)
+                and re.search(
+                    r"才刷|就吐|就停|就漱|玩手机|泡沫|几下|"
+                    r"[一二三四五六七八九十两\d]+下|示范.{0,6}吐",
+                    ln,
+                )
+                and (sp == "昭昭" or sp == "灿灿")
+            ),
+            None,
+        )
+        if rule_i is not None and hammer_i is None:
+            errors.append(
+                "刷牙缺一锤场面：须有昭昭指出灿灿示范时"
+                "刷几下就吐/停/玩手机",
+            )
+            return
+        if (
+            rule_i is not None
+            and hammer_i is not None
+            and hammer_i - rule_i > 10
+        ):
+            errors.append(
+                "刷牙一锤过晚：立完规矩后勿先吵换位置/数拍，尽快示范翻车",
+            )
+            return
+        many = any(
+            sp == "灿灿" and re.search(r"很多下|刷了好多|刷了不少", ln)
+            for sp, ln in lines
+        )
+        few = any(
+            re.search(r"才刷\s*[一二两三四五六七八九十两\d]+\s*下", ln)
+            for _, ln in lines
+        )
+        if many and few:
+            errors.append(
+                "刷牙次数自相矛盾：先说刷了很多下，后又才刷两三下，只留一套",
+            )
+            return
+
+    if dialogue:
+        last = dialogue[-1]
+        if isinstance(last, dict):
+            last_ln = str(last.get("line") or "")
+            if re.search(
+                r"算你厉害|你赢了|算你赢|你厉害|你等着|"
+                r"你.{0,4}(?:重刷|再刷|过关)",
+                last_ln,
+            ):
                 errors.append(
-                    f"A类收束引话须出自灿灿前文原话（无「{frag[:14]}」），"
-                    "禁止昭昭自造后再假装引用",
+                    "末句禁止认赢/甩狠/继续管人（重刷/你等着），"
+                    "只许哼/行吧/随便",
                 )
                 return
+
+    zhao_qs = [
+        (i, ln)
+        for i, (sp, ln) in enumerate(lines)
+        if sp == "昭昭" and ("？" in ln or "吗" in ln or "呢" in ln)
+    ]
+    for i in range(len(zhao_qs)):
+        for j in range(i + 1, len(zhao_qs)):
+            ia, la = zhao_qs[i]
+            ib, lb = zhao_qs[j]
+            if ib - ia > 8:
+                break
+            if _lines_high_overlap(la, lb):
+                errors.append(
+                    "中段昭昭换措辞重复追问同一规矩"
+                    f"（近重复：「{la[:10]}」≈「{lb[:10]}」），"
+                    "删掉重复回合直接进一锤",
+                )
+                return
+
+
+_RE_ASK_WHAT_TERM = re.compile(
+    r"什么叫\s*([\u4e00-\u9fff]{1,8})"
+    r"|([\u4e00-\u9fff]{1,8})\s*是什么意思"
+    r"|什么是\s*([\u4e00-\u9fff]{1,8})"
+)
+
+
+def _append_dangling_term_errors(story: dict, errors: list[str]) -> None:
+    """禁止「什么叫连续」类追问在前文尚未出现该词。"""
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 2:
+        return
+    prior = ""
+    for i, item in enumerate(dialogue):
+        if not isinstance(item, dict):
+            continue
+        line = str(item.get("line") or "")
+        for m in _RE_ASK_WHAT_TERM.finditer(line):
+            term = (m.group(1) or m.group(2) or m.group(3) or "").strip()
+            term = re.sub(r"[的呢吗啊呀嘛吧了]$", "", term)
+            if len(term) < 2:
+                continue
+            if term not in prior:
+                errors.append(
+                    f"dialogue[{i}]「什么叫{term}」前文未出现「{term}」，"
+                    "须先有人说出该词再追问（常见于开场顶掉正文首句后指代断裂）",
+                )
+                return
+        prior += line
 
 
 
@@ -1557,7 +1800,7 @@ def validate_daily_story_opening(
     joined = "".join(d["line"] for d in normalized)
     # 锚点须落在开场台词或 setting（core 自身不算已体现）
     ctx = (setting or "") + joined
-    if anchors and normalized and not any(a in ctx for a in anchors):
+    if anchors and normalized and not _conflict_anchors_hit(core, ctx, anchors):
         hint = "、".join(must) if must else "、".join(anchors[:4])
         errors.append(
             f"发现开场未体现 conflict_core 锚点（须点名其一：{hint}）：{core!r}"
@@ -1566,10 +1809,17 @@ def validate_daily_story_opening(
     code = (type_code or "").strip().upper()[:1]
     if code == "A":
         for i, item in enumerate(normalized):
-            if _A_OPENING_SPOILER_RE.search(item["line"]):
+            line = item["line"]
+            if _A_OPENING_SPOILER_RE.search(line):
                 errors.append(
                     f"opening[{i}] A类禁止开场先揭穿灿灿翻车/双标"
                     "（自己才刷/算错/刚玩过等），一锤留给正文中段",
+                )
+                break
+            if _A_OPENING_MID_FIGHT_RE.search(line):
+                errors.append(
+                    f"opening[{i}] A类开场须像发现现场（物/动作），"
+                    "禁止读秒宣判或直接立规（如「计时器才走了30秒」）",
                 )
                 break
 
