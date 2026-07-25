@@ -84,6 +84,9 @@ _CAST_SIDE_ROLE: dict[str, str] = {
 _LR_STAND_RE = re.compile(
     r"画面左边是\s*(昭昭|灿灿|妈妈)\s*[，,；;]?\s*右边是\s*(昭昭|灿灿|妈妈)"
 )
+_STAND_END_RE = re.compile(
+    r"画面左边是\s*(?:昭昭|灿灿|妈妈)\s*[，,；;]?\s*右边是\s*(?:昭昭|灿灿|妈妈)\s*[。．;；]?"
+)
 _SPEAK_LINE_RE = re.compile(
     r"(?:[\d.]+-[\d.]+秒)?(?:画面(?:左边|右边))?"
     r"(?:蓝色短袖T恤的短发男孩|粉色卫衣的马尾女孩|米色上衣的黑长发成年女性)?"
@@ -94,6 +97,14 @@ _SPEAK_LINE_RE = re.compile(
     r")"
     r"(?:张嘴)?说话，同时"
     r"(?P<action>[^；;。]*?)(?=[；;。]|$)"
+)
+# LLM 常把收束写成「灿灿说话后面部表情…」，统一识别并归一
+_FACE_MARK_RE = re.compile(
+    r"(?:两人|昭昭|灿灿|妈妈)?说话后面部表情恢复与静图一致："
+)
+_FACE_MARK_CANON = "两人说话后面部表情恢复与静图一致："
+_TAIL_ANCHOR_RE = re.compile(
+    r"(?:(?:两人|昭昭|灿灿|妈妈)?说话后面部表情恢复与静图一致：|服装发型稳定|镜头固定)"
 )
 
 
@@ -181,15 +192,16 @@ def _inject_mouth_motion(
                 cast_order.append(name)
 
     speak_re = _SPEAK_LINE_RE
-    face_mark = "两人说话后面部表情"
     action_queues: dict[str, list[str]] = {}
     for m in speak_re.finditer(prompt):
         sp = _speaker_from_speak_match(m, lr)
         if not sp:
             continue
         action = (m.group("action") or "").strip().rstrip("。")
-        if face_mark in action:
-            action = action.split(face_mark, 1)[0].strip().rstrip("。；;")
+        # 动作里若误拼收束标记，截断
+        face_in_action = _FACE_MARK_RE.search(action)
+        if face_in_action:
+            action = action[: face_in_action.start()].strip().rstrip("。；;")
         action = re.sub(r"，?此时.*$", "", action).strip().rstrip("，,")
         if action:
             action_queues.setdefault(sp, []).append(action)
@@ -202,39 +214,44 @@ def _inject_mouth_motion(
 
     speaks = list(speak_re.finditer(prompt))
 
+    def _extract_tail(after: int) -> str:
+        """从 after 起取收束/锁定尾部；丢掉中间无时间轴残留动作句。"""
+        rest = prompt[after:]
+        m_face = _FACE_MARK_RE.search(rest)
+        if m_face:
+            body = rest[m_face.end() :]
+            body = speak_re.sub("", body)
+            # 只保留最后一段收束，避免重复
+            extras = list(_FACE_MARK_RE.finditer(body))
+            if extras:
+                body = body[extras[-1].end() :]
+            body = re.sub(r"[；;]{2,}", "；", body)
+            return _FACE_MARK_CANON + body
+        m_anchor = _TAIL_ANCHOR_RE.search(rest)
+        if m_anchor:
+            tail = rest[m_anchor.start() :]
+            return speak_re.sub("", tail)
+        # 无收束锚点：不保留 speak 后的游离动作（常为 LLM 多写的无时间句）
+        return ""
+
     if speaks:
         head = prompt[: speaks[0].start()]
-        face_at = prompt.find(face_mark, speaks[-1].end())
-        if face_at < 0:
-            face_at = prompt.rfind(face_mark)
-        if face_at >= 0:
-            tail = prompt[face_at:]
-            tail = speak_re.sub("", tail)
-            chunks = tail.split(face_mark)
-            if len(chunks) > 2:
-                tail = face_mark + chunks[-1]
-            tail = re.sub(r"[；;]{2,}", "；", tail)
-        else:
-            tail = prompt[speaks[-1].end() :].lstrip("；;。")
+        tail = _extract_tail(speaks[-1].end())
     else:
-        m_stand = re.search(r"画面左边是[^。]*。", prompt)
+        m_stand = _STAND_END_RE.search(prompt)
         if not m_stand:
             return prompt
         head = prompt[: m_stand.end()]
-        face_at = prompt.find(face_mark, m_stand.end())
-        if face_at < 0:
-            face_at = prompt.rfind(face_mark)
-        if face_at >= 0:
-            tail = prompt[face_at:]
-            tail = speak_re.sub("", tail)
-            chunks = tail.split(face_mark)
-            if len(chunks) > 2:
-                tail = face_mark + chunks[-1]
-        else:
-            tail = prompt[m_stand.end() :]
-            if "说话，同时" in tail:
-                tail = speak_re.sub("", tail)
-                tail = re.sub(r"[；;]{2,}", "；", tail).lstrip("；;")
+        if not head.endswith(("。", "．", ";", "；")):
+            head = head.rstrip() + "。"
+        tail = _extract_tail(m_stand.end())
+        if not tail and "说话，同时" in prompt[m_stand.end() :]:
+            # 有说话槽但正则未命中时，清掉旧说话句再拼
+            dirty = prompt[m_stand.end() :]
+            dirty = speak_re.sub("", dirty)
+            dirty = re.sub(r"[；;]{2,}", "；", dirty).lstrip("；;")
+            m_anchor = _TAIL_ANCHOR_RE.search(dirty)
+            tail = dirty[m_anchor.start() :] if m_anchor else ""
 
     clauses: list[str] = []
     last_i = len(speaker_times) - 1
@@ -258,7 +275,9 @@ def _inject_mouth_motion(
         clauses.append(lead)
 
     middle = "；".join(clauses)
-    has_face = face_mark in (tail or "")
+    has_face = bool(tail) and (
+        tail.startswith(_FACE_MARK_CANON) or "说话后面部表情" in tail
+    )
     if has_face or (tail and not middle.endswith("。")):
         if not middle.endswith("；"):
             middle += "；"
@@ -299,11 +318,12 @@ def inject_speaking_times_into_motion_prompts(
             continue
         cues = tts_mgr.cues_for_segment(subtitle_cues, index)
         if not cues and estimate_cues_without_tts:
-            cues = [
-                (str(line.get("text") or ""), max(0.1, len(str(line.get("text") or "")) * 0.25))
-                for line in dialogue
-                if isinstance(line, dict)
-            ]
+            cues = []
+            for line in dialogue:
+                if not isinstance(line, dict):
+                    continue
+                text = str(line.get("text") or line.get("line") or "").strip()
+                cues.append((text, max(0.1, len(text) * 0.25)))
         if not cues:
             continue
         payload = {**script_seg, **seg, "dialogue": dialogue, "motion_prompt": motion}
