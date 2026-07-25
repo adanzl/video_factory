@@ -138,10 +138,10 @@ class Config:
         self.motion_preset: str = os.getenv("MOTION_PRESET", "ken_burns_slow")
         self.clip_fps: int = int(os.getenv("CLIP_FPS", "25"))
         self.segment_xfade_duration_sec: float = float(
-            os.getenv("SEGMENT_XFADE_DURATION_SEC", "0.4")
+            os.getenv("SEGMENT_XFADE_DURATION_SEC", "0.2")
         )
         self.segment_xfade_transition: str = os.getenv(
-            "SEGMENT_XFADE_TRANSITION", "none"
+            "SEGMENT_XFADE_TRANSITION", "fade"
         ).strip().lower()
         self.clip_provider: str = os.getenv("CLIP_PROVIDER", "ffmpeg")
         self.ffmpeg_preset: str = os.getenv("FFMPEG_PRESET", "veryfast")

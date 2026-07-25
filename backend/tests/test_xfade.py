@@ -67,6 +67,17 @@ def test_xfade_params_from_info_job_override():
     assert params["duration_sec"] == 0.5
 
 
+def test_xfade_params_from_info_falls_back_to_settings():
+    class _Cfg:
+        segment_xfade_transition = "fade"
+        segment_xfade_duration_sec = 0.2
+
+    params = xfade_params_from_info({}, settings=_Cfg())
+    assert params["transition"] == "fade"
+    assert params["duration_sec"] == 0.2
+    assert params["enabled"] is True
+
+
 def test_normalize_xfade_payload():
     payload = normalize_xfade_payload({"transition": "fade", "duration_sec": 0.3})
     assert payload == {"transition": "fade", "duration_sec": 0.3}
