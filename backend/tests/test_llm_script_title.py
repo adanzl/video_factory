@@ -715,6 +715,25 @@ def test_validate_a_opening_rejects_spoiler_hammer():
         )
 
 
+def test_validate_a_opening_rejects_mid_fight_timer():
+    from app.services.daily_story.prompts import validate_daily_story_opening
+
+    with pytest.raises(ValueError, match="发现现场|读秒"):
+        validate_daily_story_opening(
+            [{"speaker": "灿灿", "line": "计时器才走了30秒"}],
+            conflict_core="灿灿嫌昭昭刷牙太快立规矩却自己犯规",
+            setting="卫生间刷牙计时",
+            type_code="A",
+        )
+    ok = validate_daily_story_opening(
+        [{"speaker": "灿灿", "line": "你牙膏沫吐了？才刷几下"}],
+        conflict_core="灿灿嫌昭昭刷牙太快立规矩却自己犯规",
+        setting="卫生间刷牙",
+        type_code="A",
+    )
+    assert len(ok) == 1
+
+
 def test_score_a_quote_must_come_from_cancan():
     from app.services.daily_story.quality import score_daily_story
     from app.services.daily_story.prompts import DAILY_STORY_LINE_CHARS_MAX
@@ -745,3 +764,66 @@ def test_score_a_quote_must_come_from_cancan():
     q = score_daily_story(story, theme="姐姐嫌弟弟刷牙太快")
     assert any("无出处" in r for r in q["reasons"])
     assert q["score"] < 85
+
+
+def test_validate_rejects_dangling_what_is_term():
+    from app.services.daily_story.prompts import validate_daily_story_json
+
+    story = {
+        "scene_title": "刷牙",
+        "setting": "卫生间",
+        "conflict_core": "灿灿规定连续刷自己却先停",
+        "punchline_explain": "A类权威翻车",
+        "discovery_opening": [{"speaker": "灿灿", "line": "你吐水了？才刷几下啊"}],
+        "dialogue": [
+            {"speaker": "灿灿", "line": "你吐水了？才刷几下啊"},
+            {"speaker": "昭昭", "line": "什么叫连续？"},
+            {"speaker": "灿灿", "line": "就是一直动，停手就重来"},
+            {"speaker": "昭昭", "line": "那吐水算不算停"},
+            {"speaker": "灿灿", "line": "吐水也算停"},
+            {"speaker": "昭昭", "line": "你示范给我看"},
+            {"speaker": "灿灿", "line": "看好了刷刷刷"},
+            {"speaker": "昭昭", "line": "你才刷了三下就吐水了"},
+            {"speaker": "灿灿", "line": "示范不算"},
+            {"speaker": "昭昭", "line": "你刚才说吐水也算停"},
+            {"speaker": "灿灿", "line": "那不一样"},
+            {"speaker": "昭昭", "line": "哪里不一样都是停"},
+            {"speaker": "灿灿", "line": "哼行吧"},
+        ],
+    }
+    with pytest.raises(ValueError, match="什么叫连续|前文未出现"):
+        validate_daily_story_json(story, phase="full")
+
+
+def test_validate_rejects_a_mid_rule_restatement():
+    from app.services.daily_story.prompts import validate_daily_story_json
+
+    story = {
+        "scene_title": "刷牙计时",
+        "setting": "客厅刷牙",
+        "conflict_core": "灿灿嫌昭昭刷牙太快立规矩反被打脸",
+        "punchline_explain": "A类权威翻车",
+        "discovery_opening": [{"speaker": "昭昭", "line": "姐你又拿秒表盯我刷牙"}],
+        "dialogue": [
+            {"speaker": "昭昭", "line": "姐你又拿秒表盯我刷牙"},
+            {"speaker": "灿灿", "line": "你才刷一分钟，重刷"},
+            {"speaker": "昭昭", "line": "那能停下来漱口或者喝水吗"},
+            {"speaker": "灿灿", "line": "不能停，停了就不算数"},
+            {"speaker": "昭昭", "line": "停了重来，不能耍赖哦"},
+            {"speaker": "灿灿", "line": "对，我说话算数"},
+            {"speaker": "昭昭", "line": "那如果刷一半停下来漱口或者吐水呢"},
+            {"speaker": "灿灿", "line": "漱口吐水也算停，必须重来"},
+            {"speaker": "昭昭", "line": "你确定"},
+            {"speaker": "灿灿", "line": "确定，我说到做到绝不反悔"},
+            {"speaker": "昭昭", "line": "好你现在刷我看着"},
+            {"speaker": "灿灿", "line": "行，计时开始"},
+            {"speaker": "昭昭", "line": "你才刷了五十秒就停了嘴"},
+            {"speaker": "灿灿", "line": "我就漱了一下口"},
+            {"speaker": "昭昭", "line": "你自己说的大人小孩都一样"},
+            {"speaker": "灿灿", "line": "那不一样"},
+            {"speaker": "昭昭", "line": "哪里不一样都是停"},
+            {"speaker": "灿灿", "line": "哼行吧你过关了"},
+        ],
+    }
+    with pytest.raises(ValueError, match="复读|重复追问|注水|漱口"):
+        validate_daily_story_json(story, phase="full")
