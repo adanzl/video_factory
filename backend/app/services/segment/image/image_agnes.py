@@ -311,7 +311,7 @@ class AgnesImageProvider(ImageProvider):
         output_path: Path,
         *,
         size: str,
-        ref_images: list[Path] | None = None,
+        ref_images: list[Path | str] | None = None,
         max_retries: int | None = None,
     ) -> Path:
         agnes_size = _to_agnes_size(size)
@@ -322,11 +322,18 @@ class AgnesImageProvider(ImageProvider):
             extra_body: dict = {"response_format": "url"}
             ref_names: list[str] = []
             if ref_images:
-                ref_b64_list: list[str] = []
-                for ref_path in ref_images:
+                url_list: list[str] = []
+                b64_list: list[str] = []
+                for ref in ref_images:
+                    if isinstance(ref, str) and ref.startswith(("http://", "https://")):
+                        url_list.append(ref)
+                        ref_names.append(ref)
+                        logger.info("%s agnes ref_image url: %s", log_tag, ref)
+                        continue
+                    ref_path = Path(ref)
                     if ref_path.exists():
                         ref_b64 = base64.b64encode(ref_path.read_bytes()).decode("ascii")
-                        ref_b64_list.append(ref_b64)
+                        b64_list.append(ref_b64)
                         ref_names.append(ref_path.name)
                         logger.info(
                             "%s agnes ref_image: %s, size=%s bytes",
@@ -338,8 +345,11 @@ class AgnesImageProvider(ImageProvider):
                         logger.warning(
                             "%s agnes ref_image not found: %s", log_tag, ref_path
                         )
-                if ref_b64_list:
-                    extra_body["ref_images"] = ref_b64_list
+                # URL 走官方 image 字段；本地文件仍用既有 ref_images(base64)
+                if url_list:
+                    extra_body["image"] = url_list
+                if b64_list:
+                    extra_body["ref_images"] = b64_list
             payload = {
                 "model": self._model,
                 "prompt": prompt,
@@ -407,7 +417,7 @@ class AgnesImageProvider(ImageProvider):
         output_path: Path,
         *,
         size: str | None = None,
-        ref_images: list[Path] | None = None,
+        ref_images: list[Path | str] | None = None,
         expected_speakers: list[str] | None = None,
         content_style: str | None = None,
     ) -> Path:

@@ -100,13 +100,15 @@ def main() -> int:
     size = args.size or settings.agnes_image_size
 
     if args.no_ref:
-        refs: list[Path] = []
+        refs: list[Path | str] = []
     elif args.ref:
         refs = list(args.ref)
     else:
         refs = _resolve_chat_ref_images()
 
-    missing = [str(p) for p in refs if not p.exists()]
+    missing = [
+        str(p) for p in refs if isinstance(p, Path) and not p.exists()
+    ]
     if missing:
         print(f"参考图不存在: {missing}", file=sys.stderr)
         return 1

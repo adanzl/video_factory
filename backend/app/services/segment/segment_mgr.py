@@ -8,7 +8,6 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from app.config import get_settings
 from app.utils.job_cancel import job_cancel
 from app.services.media.media_mgr import SegmentClipsResult, media_mgr
 from app.services.tts.tts_mgr import tts_mgr
@@ -26,20 +25,19 @@ class SegmentProduceResult:
     clips: SegmentClipsResult
 
 
-def _resolve_chat_ref_images() -> list[Path]:
-    """解析 chat 流水线角色参考图路径。
+# 昭昭+灿灿并排参考图；公开 raw URL，供 Agnes 直接拉取（免本地 base64）
+_CHAT_HOSTS_REF_URL = (
+    "https://raw.githubusercontent.com/adanzl/video_factory/main/"
+    "backend/res/host/crayon/hosts.png"
+)
 
-    昭昭与灿灿参考图已合并为一张并排图（combined.png），
-    避免分别发送多张参考图时模型混淆角色。
+
+def _resolve_chat_ref_images() -> list[Path | str]:
+    """解析 chat 流水线角色参考图。
+
+    优先返回 GitHub raw URL（hosts.png 并排图）；本地文件仅作回退。
     """
-    settings = get_settings()
-    combined = settings.res_dir / "host" / "crayon" / "hosts.png"
-    if combined.exists():
-        return [combined]
-    return [
-        settings.res_dir / "host" / "crayon" / "zhao.png",
-        settings.res_dir / "host" / "crayon" / "can.png",
-    ]
+    return [_CHAT_HOSTS_REF_URL]
 
 
 class SegmentMgr:
@@ -167,12 +165,15 @@ class SegmentMgr:
             style = content_style_from_job(job) if job else None
 
             # chat 流水线传入角色参考图
-            ref_images: list[Path] | None = None
+            ref_images: list[Path | str] | None = None
             if job and job.get("pipeline") == "chat":
                 ref_images = _resolve_chat_ref_images()
                 logger.info(
                     "produce_segments: chat pipeline, ref_images=%s",
-                    [p.name for p in ref_images],
+                    [
+                        p.name if isinstance(p, Path) else p
+                        for p in ref_images
+                    ],
                 )
 
             generated = image_mgr.generate_segment_images(

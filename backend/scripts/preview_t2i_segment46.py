@@ -73,7 +73,7 @@ def _size_from_env() -> str:
 def _resolve_ref_images(
     ref_args: list[Path] | None,
     no_ref: bool,
-) -> list[Path]:
+) -> list[Path | str]:
     """解析参考图：--no-ref 为空，--ref 手动指定，默认走 chat 流水线 hosts.png。"""
     if no_ref:
         return []
@@ -131,7 +131,11 @@ def main() -> int:
 
     # ── 参考图 ────────────────────────────────────────────────────
     ref_images = _resolve_ref_images(args.ref, args.no_ref)
-    missing = [str(p) for p in ref_images if not p.exists()]
+    missing = [
+        str(p)
+        for p in ref_images
+        if isinstance(p, Path) and not p.exists()
+    ]
     if missing:
         print(f"❌ 参考图不存在: {missing}", file=sys.stderr)
         return 1
