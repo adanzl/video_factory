@@ -1658,7 +1658,7 @@ def _append_a_mid_restatement_errors(story: dict, errors: list[str]) -> None:
                 "刷牙次数自相矛盾：先说刷了很多下，后又才刷两三下，只留一套",
             )
             return
-        # 埋句到一锤过远 = 不好玩
+        # 埋句到一锤过远 = 不好玩（一锤可是灿灿示范噗，或昭昭点破）
         bury_i = next(
             (i for i, (_, ln) in enumerate(lines) if re.search(r"吐水.{0,4}停", ln)),
             None,
@@ -1666,9 +1666,12 @@ def _append_a_mid_restatement_errors(story: dict, errors: list[str]) -> None:
         spit_hammer_i = next(
             (
                 i
-                for i, (sp, ln) in enumerate(lines)
-                if sp == "昭昭"
-                and re.search(r"才.{0,6}下|才刷|就吐|噗", ln)
+                for i, (_, ln) in enumerate(lines)
+                if re.search(
+                    r"才.{0,6}下|才刷|就吐|噗|"
+                    r"一[、,，]\s*二|一\s*二\s*三",
+                    ln,
+                )
                 and i > (bury_i or -1)
             ),
             None,

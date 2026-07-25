@@ -136,7 +136,14 @@ def _run_image_prompts(job_id: int, *, segment_indices: list[int] | None=None) -
     from app.repositories import repo_job_log, repo_job, repo_segment
     from app.services.llm.llm_mgr import llm_mgr
     from app.services.script.script_mgr import script_mgr
-    from app.utils.job_info import resolve_image_provider, resolve_include_sd15_prompt
+    from app.utils.job_info import (
+        CONTENT_STYLE_DAILY_STORY,
+        apply_keyframe_video_providers,
+        content_style_from_job,
+        parse_job_info,
+        resolve_image_provider,
+        resolve_include_sd15_prompt,
+    )
     from worker.stages.standard.script import _log_llm_timing
     job = _reload_job(job_id)
     script = job.get('script_json')
@@ -151,7 +158,27 @@ def _run_image_prompts(job_id: int, *, segment_indices: list[int] | None=None) -
     supplementary_raw = script.get('supplementary_info')
     supplementary_info = (str(supplementary_raw).strip() if supplementary_raw else None) or None
     updated = dict(script)
+    # 合并 DB 分镜 info（含手动关键帧），避免 script_json 缺 video_provider 时走 ambient
+    db_segs = {int(s['segment_index']): s for s in repo_segment.list_segments(job_id)}
+    merged_segments: list[dict] = []
+    for seg in segments:
+        if not isinstance(seg, dict):
+            continue
+        item = dict(seg)
+        db = db_segs.get(int(item.get('segment_index') or 0))
+        if db and db.get('info') is not None and 'info' not in item:
+            item['info'] = db['info']
+        elif db and isinstance(db.get('info'), dict):
+            info = parse_job_info(item.get('info'))
+            db_info = parse_job_info(db.get('info'))
+            if db_info.get('video_provider') and not info.get('video_provider'):
+                info['video_provider'] = db_info['video_provider']
+                item['info'] = info
+        merged_segments.append(item)
+    updated['segments'] = merged_segments
     from app.config import get_settings
+    if content_style_from_job(job) == CONTENT_STYLE_DAILY_STORY:
+        apply_keyframe_video_providers(updated.get('segments') or [])
     skip_quality = get_settings().skip_script_quality_check
     llm_mgr.fill_image_prompts_with_retries(updated, supplementary_info=supplementary_info, job=job, segment_indices=segment_indices, include_sd15_prompt=include_sd15_prompt, skip_quality_check=skip_quality)
     _log_llm_timing(job_id, 'script', updated)
@@ -184,7 +211,6 @@ def _run_image_prompts(job_id: int, *, segment_indices: list[int] | None=None) -
         segment_target_sec = get_settings().segment_target_sec
     video_timeline_raw = updated.get('video_timeline')
     assign_segment_timings(updated, segment_target_sec=float(segment_target_sec) if segment_target_sec else None, video_timeline=parse_video_timeline(video_timeline_raw) if video_timeline_raw else None)
-    from app.utils.job_info import content_style_from_job
     from app.services.script.image_prompt import wrap_image_prompts
     content_style = content_style_from_job(job)
     target_segments = [seg for seg in updated.get('segments') or [] if segment_indices is None or int(seg.get('segment_index', 0)) in segment_indices]

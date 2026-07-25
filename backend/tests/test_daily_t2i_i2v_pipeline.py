@@ -422,6 +422,39 @@ def test_inject_speaking_times_into_motion_prompts_updates_segment():
     assert "右侧男孩张嘴说话" in mp
 
 
+def test_inject_mouth_motion_strips_orphan_and_normalizes_face_mark():
+    """重生成后 LLM 多写无时间动作、收束写成「灿灿说话后…」时仍正确注入。"""
+    seg = {
+        "dialogue": [
+            {"speaker": "灿灿", "text": "这道题你写错了，等于九十四"},
+            {"speaker": "昭昭", "text": "可你自己刚才也算九十四"},
+        ],
+    }
+    mp = (
+        "画面左边是灿灿，右边是昭昭。"
+        "灿灿说话，同时右手食指向下点动约2厘米后停止；"
+        "昭昭说话，同时身体轻微后仰约1厘米后停止；"
+        "昭昭保持双手摊开耸肩姿势，肩膀微微耸起约3厘米后停止。"
+        "灿灿说话后面部表情恢复与静图一致："
+        "灿灿瞪圆眼睛嘴巴大张（质问状），不微笑；"
+        "昭昭皱着眉头撇嘴（不服状），表情不变。"
+        "服装发型稳定，身高比例（昭昭比灿灿矮半个头）不变。"
+        "镜头固定，不推近不拉远，画面只有人物和场景，无任何文字叠加。"
+    )
+    cues = [
+        ("这道题你写错了，等于九十四", 3.4289),
+        ("可你自己刚才也算九十四", 2.8154),
+    ]
+    out = _inject_mouth_motion(mp, seg, cues)
+    assert "0.0-3.4秒左侧女孩张嘴说话，同时" in out
+    assert "3.4-6.2秒右侧男孩张嘴说话，同时" in out
+    assert "昭昭保持双手摊开耸肩姿势" not in out
+    assert "灿灿说话后面部表情" not in out
+    assert "两人说话后面部表情恢复与静图一致：" in out
+    assert out.count("张嘴说话，同时") == 2
+    assert "服装发型稳定" in out
+
+
 def test_scrub_daily_visual_brief_strips_labels_and_outfit_props():
     from app.services.script.visual_brief import scrub_daily_visual_brief
 
