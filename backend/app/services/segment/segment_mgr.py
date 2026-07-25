@@ -25,7 +25,7 @@ class SegmentProduceResult:
     clips: SegmentClipsResult
 
 
-# 昭昭+灿灿并排参考图；公开 raw URL，供 Agnes 直接拉取（免本地 base64）
+# 昭昭+灿灿并排参考图；公开 raw URL，塞进 Agnes ref_images（角色参考，非 i2i 底图）
 _CHAT_HOSTS_REF_URL = (
     "https://raw.githubusercontent.com/adanzl/video_factory/main/"
     "backend/res/host/crayon/hosts.png"
@@ -33,10 +33,7 @@ _CHAT_HOSTS_REF_URL = (
 
 
 def _resolve_chat_ref_images() -> list[Path | str]:
-    """解析 chat 流水线角色参考图。
-
-    优先返回 GitHub raw URL（hosts.png 并排图）；本地文件仅作回退。
-    """
+    """解析 chat 流水线角色参考图：GitHub raw URL → Agnes ref_images。"""
     return [_CHAT_HOSTS_REF_URL]
 
 
