@@ -252,6 +252,15 @@ def _score_redundancy(lines: list[str]) -> tuple[int, list[str]]:
         if n_hit >= 4:
             return -10, [f"中段「{stem}」复读拖沓"]
 
+    # 刷牙预热注水：有一锤但前面「认真数/三十下」过多 → 不算紧凑
+    pad_n = sum(
+        1
+        for line in body_lines
+        if re.search(r"三十下|认真数|帮你盯|你确定能|偷工减料|起步", line)
+    )
+    if pad_n >= 2:
+        return -8, ["中段预热注水，好笑被拖死"]
+
     return 2, ["节奏紧凑"]
 
 
@@ -342,6 +351,20 @@ def _collect_humor_issues(
             cons.append("末句哼完仍发指令，破功不干净")
         if re.search(r"算你厉害|你赢了|算你赢|你厉害", last):
             cons.append("末句认赢或甩狠，破功不干净")
+        if len(tail4) >= 3 and "那不一样" in tail4[-3]:
+            if re.search(r"我是姐姐|我说了算", tail4[-3]) and not re.search(
+                r"示范|泡沫|教学|吐泡沫|教你",
+                tail4[-3],
+            ):
+                cons.append("收束空甩身份，不好笑")
+        # 刷牙：无一锤声画（噗/数下就吐）则不好笑
+        if re.search(r"刷牙|漱口|牙刷|吐水", "".join(lines)):
+            fun_beat = bool(re.search(
+                r"噗|一[、,，]二|才[一二两三四五六\d]+下|才刷.{0,4}下",
+                "".join(lines),
+            ))
+            if not fun_beat:
+                cons.append("刷牙缺可拍一锤声画（噗/数下就吐）")
         # 刷牙：收束应扣翻车动作，勿只引「两分钟」空规矩
         if re.search(r"刷牙|漱口|牙刷", "".join(lines)):
             quote_frags = [
@@ -418,8 +441,10 @@ def _score_funniness(
             points = min(points, 5)
         elif "偏C" in c:
             points = min(points, 8)
-        elif "未扣一锤" in c or "仍发指令" in c or "认弟弟赢" in c:
+        elif "未扣一锤" in c or "仍发指令" in c or "认弟弟赢" in c or "空甩身份" in c or "可拍一锤" in c:
             points = min(points, 4)
+        elif "预热注水" in c:
+            points = min(points, 5)
 
     points = max(0, min(20, points))
     if points >= _HUMOR_POINTS_FOR_GREAT:

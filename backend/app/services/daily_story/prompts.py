@@ -725,8 +725,9 @@ def _conflict_anchors_hit(core: str, ctx: str, anchors: list[str]) -> bool:
     """开场/setting 是否点到 conflict；刷牙允许牙刷/牙膏等同场词。"""
     if anchors and any(a in ctx for a in anchors):
         return True
-    if "刷牙" in (core or "") and re.search(
-        r"刷牙|牙刷|牙膏|漱口|吐水|刷太",
+    # 刷牙主题：core 可能写「刷太快」而无「刷牙」二字
+    if re.search(r"刷牙|刷太|漱口|牙刷", core or "") and re.search(
+        r"刷牙|牙刷|牙膏|漱口|吐水|刷太|刷几|刷够",
         ctx or "",
     ):
         return True
@@ -1521,7 +1522,7 @@ def _append_a_closing_quote_errors(story: dict, errors: list[str]) -> None:
 
 _A_MID_RULE_STEMS = (
     ("漱口", 4),
-    ("两分钟", 5),
+    ("两分钟", 6),
     ("停了", 4),
     ("说话算数", 3),
 )
@@ -1576,14 +1577,15 @@ def _append_a_mid_restatement_errors(story: dict, errors: list[str]) -> None:
         if re.search(
             r"你确定|说到做到|绝不反悔|你好好数|我看着|我数着|"
             r"眨眼睛|换手拿|中间不能|换位置|别数|没离开嘴巴|"
-            r"挤牙膏了吗|牙刷没沾|你不能作弊|数得准|数错了|我看着你",
+            r"挤牙膏了吗|牙刷没沾|你不能作弊|数得准|数错了|我看着你|"
+            r"三十下|认真数|帮你盯|偷工减料|起步",
             ln,
         )
     )
     if filler_hits >= 2:
         errors.append(
-            "中段注水过多（换位置/数着/别数/眨眼睛等），"
-            "立完吐水算停后立刻示范翻车",
+            "中段注水过多（三十下/认真数/换位置等），"
+            "埋「吐水算停」后立刻示范翻车",
         )
         return
 
@@ -1637,7 +1639,7 @@ def _append_a_mid_restatement_errors(story: dict, errors: list[str]) -> None:
         if (
             rule_i is not None
             and hammer_i is not None
-            and hammer_i - rule_i > 10
+            and hammer_i - rule_i > 14
         ):
             errors.append(
                 "刷牙一锤过晚：立完规矩后勿先吵换位置/数拍，尽快示范翻车",
@@ -1656,6 +1658,33 @@ def _append_a_mid_restatement_errors(story: dict, errors: list[str]) -> None:
                 "刷牙次数自相矛盾：先说刷了很多下，后又才刷两三下，只留一套",
             )
             return
+        # 埋句到一锤过远 = 不好玩
+        bury_i = next(
+            (i for i, (_, ln) in enumerate(lines) if re.search(r"吐水.{0,4}停", ln)),
+            None,
+        )
+        spit_hammer_i = next(
+            (
+                i
+                for i, (sp, ln) in enumerate(lines)
+                if sp == "昭昭"
+                and re.search(r"才.{0,6}下|才刷|就吐|噗", ln)
+                and i > (bury_i or -1)
+            ),
+            None,
+        )
+        if bury_i is not None and spit_hammer_i is not None and spit_hammer_i - bury_i > 6:
+            errors.append(
+                "刷牙不好玩：埋「吐水算停」后铺垫过长，"
+                "须很快出现数下就吐/噗",
+            )
+            return
+        if bury_i is not None and spit_hammer_i is None:
+            errors.append(
+                "刷牙不好玩：有吐水算停却无一锤"
+                "（才X下就吐 / 一、二、噗）",
+            )
+            return
 
     if dialogue:
         last = dialogue[-1]
@@ -1671,6 +1700,16 @@ def _append_a_mid_restatement_errors(story: dict, errors: list[str]) -> None:
                     "只许哼/行吧/随便",
                 )
                 return
+        # 收束「那不一样」禁止空甩身份
+        if len(dialogue) >= 3:
+            dodge = str(dialogue[-3].get("line") or "") if isinstance(dialogue[-3], dict) else ""
+            if "那不一样" in dodge and re.search(r"我是姐姐|我说了算", dodge):
+                if not re.search(r"示范|泡沫|教学|吐泡沫|教你", dodge):
+                    errors.append(
+                        "收束「那不一样」禁止只甩「我是姐姐」，"
+                        "须具体借口（示范/吐泡沫等）",
+                    )
+                    return
 
     zhao_qs = [
         (i, ln)
