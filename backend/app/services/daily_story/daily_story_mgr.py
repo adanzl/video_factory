@@ -171,7 +171,7 @@ class DailyStoryMgr:
                 intro_category=INTRO_CATEGORY_DAILY,
                 video_provider='ffmpeg',
                 bgm={'enabled': True, 'material_id': DEFAULT_DAILY_STORY_BGM_MATERIAL_ID, 'volume_db': DEFAULT_BGM_VOLUME_DB},
-                subtitle={'enabled': False},
+                subtitle={'enabled': True},
             )
             speaker_configs = {name: dict(cfg) for name, cfg in DEFAULT_DAILY_SPEAKER_CONFIGS.items()}
             speaker_configs['phrase_gap_sec'] = gap
