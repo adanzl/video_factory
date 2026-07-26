@@ -48,14 +48,17 @@ _CONTENT_WORD_RE = re.compile(r"[\u4e00-\u9fff]{2,}")
 
 # 结构（格式/节奏/类型收束形态）满分上限；超过须靠好笑维度叠加
 STRUCTURE_SCORE_CAP = 80
-# 好笑维度 0–20：≥5 才可到 85 档，≥15 才可到 95 档
-_HUMOR_POINTS_FOR_GOOD = 5
+# 好笑维度 0–20：≥9 才可到 85 档，≥15 才可到 95 档
+# （格式齐+弱笑点不应靠「好笑5」摸到 85）
+_HUMOR_POINTS_FOR_GOOD = 9
 _HUMOR_POINTS_FOR_GREAT = 15
 
 _RE_HAMMER = re.compile(
-    r"\d+|[一二三四五六七八九十两]+(?:分钟|秒|块|个|次|遍|下)|"
+    # 禁止裸 \d+ 凑「一锤」（如「少了1块」）；须带量词或翻车动作
+    r"(?:\d+|[一二三四五六七八九十两]+)(?:分钟|秒|下|次|遍)|"
     r"算错|写错|弹错|多玩|少玩|进位|竖式|升fa|降|"
-    r"就吐水|才刷了|刷了三|泡沫还|边刷边|玩手机",
+    r"就吐水|才刷了|刷了三|泡沫还|边刷边|玩手机|噗|"
+    r"咽下|塞嘴里|整块塞",
 )
 
 # ── 好笑 / 节奏（规则近似人工：具体、有出处、少复读）──
@@ -261,6 +264,15 @@ def _score_redundancy(lines: list[str]) -> tuple[int, list[str]]:
     if pad_n >= 2:
         return -8, ["中段预热注水，好笑被拖死"]
 
+    # 中段身份/把关话术过多 = 拖沓，不给「节奏紧凑」加分
+    auth_pad = sum(
+        1
+        for line in body_lines
+        if re.search(r"我是姐姐|我说了算|检查员|把关|听我的|你得听", line)
+    )
+    if auth_pad >= 5:
+        return -6, ["中段身份/把关话术过多"]
+
     return 2, ["节奏紧凑"]
 
 
@@ -357,6 +369,108 @@ def _collect_humor_issues(
                 tail4[-3],
             ):
                 cons.append("收束空甩身份，不好笑")
+            # 收束借口与中段同义复读 / 换皮叠套
+            dodge = tail4[-3]
+            if re.search(r"试味道|试甜|尝一下|帮你试|尝了|只尝|试一口", dodge) and re.search(
+                r"试甜|试味道|帮你试|尝了|只尝|尝味道|甜不甜|试一口|确认味道",
+                body_text,
+            ):
+                cons.append("收束借口复读中段，不好笑")
+            if re.search(r"把关|负责|我说了算", dodge) and not re.search(
+                r"样品|耗掉|泡沫|教学",
+                dodge,
+            ):
+                cons.append("收束空甩身份，不好笑")
+            if re.search(r"那不一样[，,]?\s*(我那是)?[…\.。]{0,3}\s*$", dodge):
+                cons.append("收束空甩身份，不好笑")
+        # 中段叠两套免责：试吃 / 检查 / 把关 / 示范 各算一套
+        excuse_n = 0
+        if re.search(
+            r"试甜|试味道|帮你试|尝一下|尝得准|尝了|只尝|尝味道|甜不甜|"
+            r"试一口|确认味道|咬一口就|知道甜|先试|算尝味|"
+            r"看看熟|熟不熟|坏了没|有没有坏|是甜的|甜度|确认质量",
+            body_text,
+        ):
+            excuse_n += 1
+        if re.search(r"检查不算|检查样品|特地挑", body_text):
+            excuse_n += 1
+        if re.search(r"把关|资格|负责质量|检查员|有特权", body_text):
+            excuse_n += 1
+        if re.search(r"示范|教你吐|特批", body_text):
+            excuse_n += 1
+        if excuse_n >= 2:
+            cons.append("中段多套免责借口叠罗汉")
+        # 偷吃：咽下后还开质检说明书 = 拖沓不好笑
+        if re.search(r"偷吃|饭前|水果|苹果|草莓|葡萄", "".join(lines)):
+            if re.search(
+                r"半成品|大家安全|新不新鲜|合格证书|专业方法|含三秒|"
+                r"为了大家|品质检测|安全起见|确认甜度|确认质量|是甜的",
+                body_text,
+            ):
+                cons.append("偷吃质检说明书注水，不好笑")
+            wash_n = sum(1 for ln in lines if "洗手" in ln)
+            if wash_n >= 2:
+                cons.append("偷吃质检说明书注水，不好笑")
+            # 检查样品前无赖账抬杠（鼓鼓只算发现，不算赖账）
+            check_i = next(
+                (
+                    i
+                    for i, ln in enumerate(lines)
+                    if re.search(r"检查样品|特地挑|检查不算吃", ln)
+                ),
+                None,
+            )
+            if check_i is not None:
+                cancan_dodge = any(
+                    (speakers[i] if i < len(speakers) else "") == "灿灿"
+                    and re.search(r"溅|手脏|擦过|果汁", lines[i])
+                    for i in range(check_i)
+                )
+                if not cancan_dodge:
+                    cons.append("偷吃缺赖账抬杠，不好笑")
+            la_n = sum(
+                1
+                for ln in lines
+                if re.search(r"[啦呀嘛]$", str(ln).rstrip())
+            )
+            if la_n >= 4:
+                cons.append("偷吃质检说明书注水，不好笑")
+            pairs = list(
+                zip(speakers or [""] * len(lines), lines, strict=False)
+            )
+            spit_i = next(
+                (
+                    i
+                    for i, (sp, ln) in enumerate(pairs)
+                    if sp == "灿灿"
+                    and (
+                        re.search(r"已经咽|咽下去了|看不了|吐不出来", ln)
+                        or (
+                            re.search(r"咽了", ln)
+                            and "才算" not in ln
+                            and "不咽" not in ln
+                        )
+                    )
+                ),
+                None,
+            )
+            quote_indices = [
+                i
+                for i, (_sp, ln) in enumerate(pairs)
+                if re.search(
+                    r"你刚才(?:明明|自己)?说|你自己(?:刚才)?说|你刚说",
+                    ln,
+                )
+            ]
+            quote_i = quote_indices[-1] if quote_indices else None
+            if len(quote_indices) >= 2 or (
+                quote_i is not None and quote_i < len(pairs) - 4
+            ):
+                cons.append("中段提前引话，不好笑")
+            if spit_i is not None and quote_i is not None and quote_i - spit_i > 3:
+                cons.append("咽下后质检说明书注水，不好笑")
+        if re.search(r"反正我说了算|我说了算", "".join(tail4[-1:])):
+            cons.append("末句仍嘴硬甩权，破功不干净")
         # 刷牙：无一锤声画（噗/数下就吐）则不好笑
         if re.search(r"刷牙|漱口|牙刷|吐水", "".join(lines)):
             fun_beat = bool(re.search(
@@ -428,7 +542,11 @@ def _score_funniness(
         points += 4
         pros.append("收束扣原话")
 
-    if len(re.findall(r"\d+", full_text)) >= 2:
+    # 仅时长/次数类数字可加分，禁止「1块」「2口」刷分
+    if len(re.findall(
+        r"(?:\d+|[一二三四五六七八九十两]+)(?:分钟|秒|下)",
+        full_text,
+    )) >= 2:
         points += 2
 
     if points >= 9 and not cons:
@@ -443,8 +561,10 @@ def _score_funniness(
             points = min(points, 8)
         elif "未扣一锤" in c or "仍发指令" in c or "认弟弟赢" in c or "空甩身份" in c or "可拍一锤" in c:
             points = min(points, 4)
-        elif "预热注水" in c:
+        elif "预热注水" in c or "把关话术" in c or "质检说明书" in c or "缺赖账" in c:
             points = min(points, 5)
+        elif "多套免责" in c or "借口复读" in c:
+            points = min(points, 4)
 
     points = max(0, min(20, points))
     if points >= _HUMOR_POINTS_FOR_GREAT:
@@ -464,7 +584,7 @@ def score_daily_story(
 
     评分模型：
     - 结构分（格式、层数、收束形态、节奏）上限 80
-    - 好笑维度 0–20 叠加上去；≥5 才可能到 85，≥15 才可能到 95
+    - 好笑维度 0–20 叠加上去；≥9 才可能到 85，≥15 才可能到 95
     """
     if not isinstance(story, dict):
         return {
@@ -745,18 +865,30 @@ def build_quality_revision_hints(
             c for c in cons
             if any(
                 k in c
-                for k in ("无出处", "未埋旧账", "模板", "拖沓", "公平", "好笑不足", "末四拍",
-                          "未扣一锤", "仍发指令")
+                for k in (
+                    "无出处", "未埋旧账", "模板", "拖沓", "公平", "好笑不足",
+                    "末四拍", "未扣一锤", "仍发指令", "多套免责", "借口复读",
+                    "质检说明书", "空甩身份", "缺赖账",
+                )
             )
         ),
         None,
     )
     if humor_issue:
-        hints.append(
-            f"【好笑】{humor_issue}。"
-            "收束只能引用前文真实说过的话；中段用一件具体小事升级，"
-            "勿复读同一句式或套「哪里不一样」模板。"
-        )
+        if "多套免责" in humor_issue or "质检" in humor_issue or "缺赖账" in humor_issue:
+            hints.append(
+                f"【单线】{humor_issue}。"
+                "照偷吃压缩正例：先溅脸/手脏赖账≥1来回，再上次是上次，"
+                "再我是姐姐（仅1次），再检查样品→检查不算吃→咽下→末四拍；"
+                "删半成品/大家安全/新不新鲜/洗手/句尾连灌啦；"
+                "收束原句「那不一样，检样不算开饭」。"
+            )
+        else:
+            hints.append(
+                f"【好笑】{humor_issue}。"
+                "收束只能引用前文真实说过的话；中段用一件具体小事升级，"
+                "勿复读同一句式或套「哪里不一样」模板。"
+            )
 
     # 结构性缺失
     for c in cons:

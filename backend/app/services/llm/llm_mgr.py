@@ -686,10 +686,12 @@ class LLMMgr:
         best_story: dict[str, Any] | None = None
         best_score = -1
         target = 85
-        max_attempts = 3
+        # 整稿最多 2 次；不够分优先 refine，避免 body×5 再乘外环
+        max_full = 2
+        max_refine = 2
         last_exc: Exception | None = None
 
-        for attempt in range(max_attempts):
+        for attempt in range(max_full):
             try:
                 story = client.generate_daily_story(
                     theme,
@@ -700,7 +702,7 @@ class LLMMgr:
                 last_exc = exc
                 logger.warning(
                     "[DAILY_STORY] attempt %d/%d validation failed: %s",
-                    attempt + 1, max_attempts, exc,
+                    attempt + 1, max_full, exc,
                 )
                 continue
             except Exception:
@@ -716,16 +718,18 @@ class LLMMgr:
                 logger.info(
                     "[DAILY_STORY] hit target score=%d >= %d "
                     "attempt=%d/%d elapsed=%.1fs",
-                    score, target, attempt + 1, max_attempts, elapsed,
+                    score, target, attempt + 1, max_full, elapsed,
                 )
                 return story
 
-            revision_hints = build_quality_revision_hints(
-                story.get("quality") or {},
-                story=story,
-            )
             refine = getattr(client, "refine_daily_story_for_quality", None)
-            if revision_hints and callable(refine):
+            for _ri in range(max_refine):
+                revision_hints = build_quality_revision_hints(
+                    story.get("quality") or {},
+                    story=story,
+                )
+                if not (revision_hints and callable(refine)):
+                    break
                 try:
                     refined = refine(theme, story, revision_hints)
                     attach_daily_story_quality(refined, theme=theme)
@@ -738,7 +742,7 @@ class LLMMgr:
                         logger.info(
                             "[DAILY_STORY] quality refine hit score=%d "
                             "attempt=%d/%d elapsed=%.1fs",
-                            r_score, attempt + 1, max_attempts, elapsed,
+                            r_score, attempt + 1, max_full, elapsed,
                         )
                         return refined
                     story = refined
@@ -749,23 +753,33 @@ class LLMMgr:
                         attempt + 1,
                         exc,
                     )
+                    break
+
+            # 已有可用稿且分不太差：勿再整稿重开（省一层 body 重试乘法）
+            if best_score >= 75:
+                logger.info(
+                    "[DAILY_STORY] stop full regen score=%d < %d "
+                    "(keep best, skip more full drafts)",
+                    best_score, target,
+                )
+                break
 
             logger.info(
-                "[DAILY_STORY] score=%d < %d, retry attempt=%d/%d",
-                score, target, attempt + 1, max_attempts,
+                "[DAILY_STORY] score=%d < %d, full retry attempt=%d/%d",
+                score, target, attempt + 1, max_full,
             )
 
         elapsed = time.perf_counter() - started
         if best_story is not None:
             logger.warning(
-                "[DAILY_STORY] best score=%d < %d after %d attempts "
+                "[DAILY_STORY] best score=%d < %d after %d full attempts "
                 "elapsed=%.1fs",
-                best_score, target, max_attempts, elapsed,
+                best_score, target, max_full, elapsed,
             )
             return best_story
 
         raise last_exc or RuntimeError(
-            f"daily story generation failed after {max_attempts} attempts"
+            f"daily story generation failed after {max_full} attempts"
         )
 
     def generate_daily_story_themes(
