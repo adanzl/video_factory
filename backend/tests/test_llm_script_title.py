@@ -74,7 +74,12 @@ def test_daily_story_prompts_share_contract():
     assert str(DAILY_STORY_BODY_CHARS_MAX) in story_sys
     assert str(DAILY_STORY_BODY_WRITE_TARGET_MIN) in story_sys
     assert str(DAILY_STORY_BODY_WRITE_TARGET_MAX) in story_sys
-    assert "压回硬卡" in story_sys or "先写够" in story_sys
+    assert (
+        "压回硬卡" in story_sys
+        or "先写够" in story_sys
+        or "直接落在硬卡" in story_sys
+        or "禁止先写爆" in story_sys
+    )
     assert "发现开场" in story_sys
     assert "单冲突" in story_sys
     assert "conflict_core" in story_sys
@@ -280,7 +285,9 @@ def test_daily_story_retry_uses_validation_char_limits_not_write_pad():
     assert "本轮问题" in retry_user
     assert "只删不增" in retry_user
     assert "禁止新增" in retry_user
-    assert str(DAILY_STORY_BODY_WRITE_TARGET_MIN) not in retry_user
+    # 重试勿带回首稿「先写爆/铺回合」话术
+    assert "先写爆" not in retry_user
+    assert "铺回合" not in retry_user
     assert f"≤{DAILY_STORY_BODY_CHARS_MAX}" in retry_user or "只删不增" in retry_user
     # 垂直：不复述全套首稿要求模板
     assert "请根据上述规则，生成一个昭昭和灿灿" not in retry_user
@@ -336,6 +343,160 @@ def test_build_daily_story_retry_user_asks_to_expand_short_draft():
     assert "发现开场" in user
 
 
+def test_retry_small_deficit_uses_patch_not_expand():
+    """只差几个字应句内微调，勿按偏短插入多句。"""
+    from app.services.daily_story.prompts import (
+        build_daily_story_prompts,
+        build_daily_story_retry_user,
+        resolve_daily_story_retry_length_mode,
+    )
+
+    prev = _valid_story(n=18)
+    err = "正文总字数须≥280，当前274（还差6字）"
+    assert resolve_daily_story_retry_length_mode(prev, errors=err) == "revise_patch"
+    patch_sys, _ = build_daily_story_prompts("饭前偷吃", length_mode="revise_patch")
+    assert "微调" in patch_sys or "句内" in patch_sys
+    user = build_daily_story_retry_user(
+        "灿灿不许昭昭饭前偷吃自己却先捏了一块",
+        prev_story=prev,
+        errors=err,
+    )
+    assert "句内补" in user
+    assert "禁止增删句数" in user or "禁止插入新句" in user
+    assert "插入约" not in user
+    quote_err = (
+        "正文总字数须≥280，当前274（还差6字）；"
+        "A类引话须出自灿灿前文原话（无「检查不算吃」），禁止昭昭自造后再假装引用"
+    )
+    assert (
+        resolve_daily_story_retry_length_mode(prev, errors=quote_err)
+        == "revise_patch"
+    )
+    quote_user = build_daily_story_retry_user(
+        "灿灿不许昭昭饭前偷吃自己却先捏了一块",
+        prev_story=prev,
+        errors=quote_err,
+        story_type="A",
+    )
+    assert "引话" in quote_user
+    assert "只改1–2句" in quote_user or "1–2句" in quote_user
+
+
+def test_local_patch_pads_small_char_deficit():
+    from app.services.daily_story.prompts import (
+        dialogue_total_chars,
+        try_local_patch_daily_story_body,
+        validate_daily_story_json,
+    )
+
+    story = _valid_story(n=18)
+    target = 268  # 还差 12，落在本地补字窗口
+    while dialogue_total_chars(story) > target:
+        progressed = False
+        for d in story["dialogue"][2:-4]:
+            line = d["line"]
+            if len(line) <= 8:
+                continue
+            d["line"] = line[:-1]
+            progressed = True
+            if dialogue_total_chars(story) <= target:
+                break
+        if not progressed:
+            break
+    before = dialogue_total_chars(story)
+    assert 280 - 32 <= before < 280
+    patched, notes = try_local_patch_daily_story_body(story)
+    after = dialogue_total_chars(patched)
+    assert notes
+    assert after >= before
+    if after >= 280:
+        validate_daily_story_json(patched, phase="body")
+
+
+def test_local_patch_strips_a_steal_try_taste():
+    from app.services.daily_story.prompts import try_local_patch_daily_story_body
+    from app.services.daily_story.quality import score_daily_story
+
+    speakers = ("昭昭", "灿灿")
+    line = "一二三四五六七八九十一二三四五六"
+    dlg = [
+        {"speaker": speakers[i % 2], "line": line} for i in range(20)
+    ]
+    dlg[0]["line"] = "水果盘怎么少了一块呀呀呀"
+    dlg[1]["line"] = "饭前不许偷吃你别瞎说呀呀"
+    dlg[9] = {"speaker": "灿灿", "line": "这是样品，我咬了一口测试甜不甜"}
+    dlg[11] = {"speaker": "灿灿", "line": "检查不算吃，咽了才算检"}
+    dlg[13] = {"speaker": "灿灿", "line": "嗯，为了确认味道，只好咽了"}
+    dlg[-4] = {"speaker": "昭昭", "line": "你刚才说检查不算吃"}
+    dlg[-3] = {"speaker": "灿灿", "line": "那不一样，检样不算开饭"}
+    dlg[-2] = {"speaker": "昭昭", "line": "哪里不一样？都进肚子了"}
+    dlg[-1] = {"speaker": "灿灿", "line": "……行吧，给你一块"}
+    story = {
+        "scene_title": "饭前检查",
+        "setting": "厨房案板旁",
+        "conflict_core": "灿灿不许昭昭饭前偷吃自己却先捏",
+        "dialogue": dlg,
+        "punchline_explain": "A类权威翻车：检查不算吃",
+    }
+    before = score_daily_story(story, theme=story["conflict_core"])
+    assert any("叠" in r or "多套" in r for r in (before.get("reasons") or []))
+    patched, notes = try_local_patch_daily_story_body(story)
+    assert any("去试尝" in n for n in notes)
+    blob = "".join(d["line"] for d in patched["dialogue"])
+    assert "甜不甜" not in blob
+    assert "确认味道" not in blob
+    after = score_daily_story(patched, theme=story["conflict_core"])
+    assert not any("叠" in r or "多套" in r for r in (after.get("reasons") or []))
+
+
+def test_local_patch_aligns_a_closing_quote():
+    from app.services.daily_story.prompts import (
+        try_local_patch_daily_story_body,
+        validate_daily_story_json,
+    )
+
+    speakers = ("昭昭", "灿灿")
+    line = "一二三四五六七八九十一二三四五六"
+    dlg = [
+        {"speaker": speakers[i % 2], "line": line} for i in range(22)
+    ]
+    dlg[0]["line"] = "水果盘怎么少了一块呀呀呀"
+    dlg[1]["line"] = "饭前不许偷吃你别瞎说呀呀"
+    # 埋句落在灿灿位（奇数）
+    dlg[11] = {"speaker": "灿灿", "line": "检查样品不算偷吃呀"}
+    dlg[-4] = {"speaker": "昭昭", "line": "你刚才说咽了才算检完"}
+    dlg[-3] = {"speaker": "灿灿", "line": "那不一样，检样不算开饭"}
+    dlg[-2] = {"speaker": "昭昭", "line": "哪里不一样？都进肚子了"}
+    dlg[-1] = {"speaker": "灿灿", "line": "……行吧，给你一块"}
+    story = {
+        "scene_title": "饭前检查",
+        "setting": "厨房案板旁",
+        "conflict_core": "灿灿不许昭昭饭前偷吃自己却先捏",
+        "dialogue": dlg,
+        "punchline_explain": "A类权威翻车：检查不算吃",
+    }
+    patched, notes = try_local_patch_daily_story_body(story)
+    assert any("引话" in n for n in notes)
+    quote_line = patched["dialogue"][-4]["line"]
+    assert "咽了才算" not in quote_line
+    assert "检查" in quote_line or "不算" in quote_line
+    validate_daily_story_json(patched, phase="body")
+
+
+def test_draft_write_target_aligned_with_hard_card():
+    from app.services.daily_story.prompts import (
+        DAILY_STORY_BODY_CHARS_MAX,
+        DAILY_STORY_BODY_WRITE_TARGET_MAX,
+        DAILY_STORY_BODY_WRITE_TARGET_MIN,
+        build_daily_story_prompts,
+    )
+
+    assert DAILY_STORY_BODY_WRITE_TARGET_MIN >= 280
+    assert DAILY_STORY_BODY_WRITE_TARGET_MAX <= DAILY_STORY_BODY_CHARS_MAX
+    sys, _ = build_daily_story_prompts("刷牙", length_mode="draft")
+    assert "先写爆" in sys or "直接落在硬卡" in sys or "勿先写" in sys
+
+
 def test_resolve_daily_story_retry_length_mode_trim_when_long():
     from app.services.daily_story.prompts import (
         build_daily_story_retry_user,
@@ -357,7 +518,11 @@ def test_resolve_daily_story_retry_length_mode_trim_when_long():
         prev_story=barely,
         errors=f"正文总字数须≤{DAILY_STORY_BODY_CHARS_MAX}，当前{total}（超出20字）",
     )
-    assert "只删约 1 句" in user
+    assert "句内删" in user
+    assert resolve_daily_story_retry_length_mode(
+        barely,
+        errors=f"正文总字数须≤{DAILY_STORY_BODY_CHARS_MAX}，当前{total}（超出20字）",
+    ) == "revise_patch"
     # 字数已在区间、只修连说 → revise，且提示勿大删
     ok = _valid_story()
     assert (
@@ -671,6 +836,56 @@ def test_score_daily_story_structure_capped_without_humor():
     }
     q = score_daily_story(story)
     assert q["score"] <= 80
+
+
+def test_score_a_penalizes_stacked_excuses_below_85():
+    """格式齐但中段叠两套免责+收束复读，不应摸到85。"""
+    from app.services.daily_story.quality import score_daily_story
+
+    dlg = [
+        {"speaker": "昭昭", "line": "水果盘怎么少了1块？"},
+        {"speaker": "灿灿", "line": "少了？我刚数过还在啊"},
+        {"speaker": "昭昭", "line": "你嘴里鼓鼓的，在嚼什么"},
+        {"speaker": "灿灿", "line": "饭前不许偷吃，你别瞎说"},
+        {"speaker": "昭昭", "line": "那你腮帮子一动一动的"},
+        {"speaker": "灿灿", "line": "我是帮你试甜不甜的"},
+        {"speaker": "昭昭", "line": "试甜还要把整块塞嘴里？"},
+        {"speaker": "灿灿", "line": "不塞怎么尝得准啊你说"},
+        {"speaker": "昭昭", "line": "你上次偷吃也是这套词"},
+        {"speaker": "灿灿", "line": "上次？那是妈妈让我尝的"},
+        {"speaker": "昭昭", "line": "那我也要试，给我一块"},
+        {"speaker": "灿灿", "line": "不行，小小孩饭前不能吃"},
+        {"speaker": "昭昭", "line": "你不也还没开饭吗你"},
+        {"speaker": "灿灿", "line": "我是检查员，检查不算吃"},
+        {"speaker": "昭昭", "line": "检查员？谁任命你的啊"},
+        {"speaker": "灿灿", "line": "我是姐姐，今天我说了算"},
+        {"speaker": "昭昭", "line": "凭什么你能吃我不能吃"},
+        {"speaker": "灿灿", "line": "因为我负责把关好不好"},
+        {"speaker": "昭昭", "line": "把关就能先把水果吃掉？"},
+        {"speaker": "灿灿", "line": "先尝2口才叫把关啊"},
+        {"speaker": "昭昭", "line": "那检查完吐出来给我看"},
+        {"speaker": "灿灿", "line": "已经咽下去了，看不了啦"},
+        {"speaker": "昭昭", "line": "咽下去了还叫检查啊？"},
+        {"speaker": "灿灿", "line": "咽了才知道甜不甜嘛"},
+        {"speaker": "昭昭", "line": "你刚才说检查不算吃"},
+        {"speaker": "灿灿", "line": "那不一样，我是在试味道"},
+        {"speaker": "昭昭", "line": "哪里不一样？都进肚子里了"},
+        {"speaker": "灿灿", "line": "……哼"},
+    ]
+    story = {
+        "scene_title": "饭前试吃",
+        "setting": "厨房案板旁",
+        "conflict_core": "灿灿不许昭昭饭前偷吃自己却先捏",
+        "discovery_opening": dlg[:2],
+        "dialogue": dlg,
+        "punchline_explain": "A类权威翻车：检查不算吃",
+    }
+    q = score_daily_story(story, theme="灿灿不许昭昭饭前偷吃自己却先捏了一块")
+    assert q["score"] < 85
+    assert any(
+        "多套免责" in r or "借口复读" in r or "把关话术" in r or "好笑不足" in r
+        for r in q["reasons"]
+    )
 
 
 def test_validate_rejects_brush_duration_inconsistency():

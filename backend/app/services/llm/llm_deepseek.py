@@ -1686,6 +1686,8 @@ class DeepSeekClient(LLMClient):
         # 日常故事易因字数+节奏硬卡波动：至少 5 次，带上一稿修订
         max_attempts = max(5, get_settings().script_qa_max_attempts)
         prev_story: dict | None = None
+        same_err_streak = 0
+        prev_err_key = ""
         for attempt in range(max_attempts):
             # 首稿硬关 thinking + 高温度保创意；重试走配置修硬约束
             # （配置开 thinking 时模型忽略 temperature，故重试不传）
@@ -1698,22 +1700,65 @@ class DeepSeekClient(LLMClient):
                 )
             else:
                 raw, _ = self._chat_json(system, user)
+            if isinstance(raw, dict):
+                from app.services.daily_story.prompts import (
+                    try_local_patch_daily_story_body,
+                )
+
+                patched, patch_notes = try_local_patch_daily_story_body(raw)
+                if patch_notes:
+                    logger.info(
+                        "[DAILY_STORY] local body patch attempt=%d: %s",
+                        attempt + 1,
+                        ",".join(patch_notes),
+                    )
+                    raw = patched
             try:
                 validate_daily_story_json(raw, phase="body")
                 return raw
             except ValueError as exc:
                 last_exc = exc
                 prev_story = raw if isinstance(raw, dict) else prev_story
-                if attempt + 1 >= max_attempts:
+                # 失败后再本地修一次（针对本轮错误文案能覆盖的缺口）
+                if isinstance(prev_story, dict):
+                    from app.services.daily_story.prompts import (
+                        try_local_patch_daily_story_body,
+                    )
+
+                    patched2, notes2 = try_local_patch_daily_story_body(prev_story)
+                    if notes2:
+                        try:
+                            validate_daily_story_json(patched2, phase="body")
+                            logger.info(
+                                "[DAILY_STORY] local body patch saved LLM "
+                                "retry: %s",
+                                ",".join(notes2),
+                            )
+                            return patched2
+                        except ValueError:
+                            prev_story = patched2
+                errors = str(exc).removeprefix("daily_story 校验失败: ")
+                # 同一硬伤连撞 3 次：停，别空转烧额度
+                err_key = (
+                    "A偷吃"
+                    if "A类偷吃" in errors or "检样不算开饭" in errors
+                    else errors[:48]
+                )
+                if err_key == prev_err_key:
+                    same_err_streak += 1
+                else:
+                    same_err_streak = 1
+                    prev_err_key = err_key
+                if attempt + 1 >= max_attempts or same_err_streak >= 3:
                     logger.warning(
                         "[DAILY_STORY] generate story body validation failed "
-                        "attempt=%d/%d: %s",
+                        "attempt=%d/%d streak=%d: %s",
                         attempt + 1,
                         max_attempts,
+                        same_err_streak,
                         exc,
                     )
                     break
-                errors = str(exc).removeprefix("daily_story 校验失败: ")
                 logger.warning(
                     "[DAILY_STORY] generate story body validation failed "
                     "attempt=%d/%d: %s",
@@ -1762,6 +1807,7 @@ class DeepSeekClient(LLMClient):
             build_daily_story_prompts,
             build_daily_story_retry_user,
             resolve_daily_story_retry_length_mode,
+            try_local_patch_daily_story_body,
             validate_daily_story_json,
         )
         import json
@@ -1787,11 +1833,27 @@ class DeepSeekClient(LLMClient):
 
         for attempt in range(max_attempts):
             raw, _ = self._chat_json(system, user)
+            if isinstance(raw, dict):
+                patched, notes = try_local_patch_daily_story_body(raw)
+                if notes:
+                    logger.info(
+                        "[DAILY_STORY] local patch on quality revise: %s",
+                        ",".join(notes),
+                    )
+                    raw = patched
             try:
                 validate_daily_story_json(raw, phase="body")
                 return raw
             except ValueError as exc:
                 last_exc = exc
+                if isinstance(raw, dict):
+                    patched2, notes2 = try_local_patch_daily_story_body(raw)
+                    if notes2:
+                        try:
+                            validate_daily_story_json(patched2, phase="body")
+                            return patched2
+                        except ValueError:
+                            raw = patched2
                 if attempt + 1 >= max_attempts:
                     break
                 errors = str(exc).removeprefix("daily_story 校验失败: ")
