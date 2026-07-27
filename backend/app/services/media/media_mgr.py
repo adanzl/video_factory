@@ -530,9 +530,14 @@ class MediaMgr:
             try:
                 if job_id is not None:
                     job_cancel.raise_if_cancelled(job_id)
+                raw_image_path = seg.get("image_path")
+                if not raw_image_path:
+                    raise ValueError(
+                        f"segment {index} 缺少 image_path，无法生成视频片段"
+                    )
                 clip_mgr.build_segment_clip(
                     clip_provider=provider,
-                    image_path=Path(seg["image_path"]),
+                    image_path=Path(raw_image_path),
                     subtitle_cues=seg_cues,
                     output_path=clip_path,
                     motion_preset=settings.motion_preset,

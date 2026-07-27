@@ -187,15 +187,26 @@ class SegmentMgr:
         for seg_id, path in generated:
             path_by_id[seg_id] = path
 
-        segments_with_images = [
-            {
-                **seg,
-                "image_path": str(path)
-                if (path := path_by_id.get(seg["id"]))
-                else seg.get("image_path"),
-            }
-            for seg in segments
-        ]
+        segments_with_images: list[dict] = []
+        skipped_no_image: list[int] = []
+        for seg in segments:
+            path = path_by_id.get(seg["id"])
+            image_path = str(path) if path else seg.get("image_path")
+            if not image_path:
+                skipped_no_image.append(seg["segment_index"])
+                logger.warning(
+                    "produce_segments: segment %s has no image_path, skipping",
+                    seg["segment_index"],
+                )
+                continue
+            segments_with_images.append({**seg, "image_path": image_path})
+        if skipped_no_image:
+            logger.warning(
+                "produce_segments: %s/%s segments skipped due to missing image_path: %s",
+                len(skipped_no_image),
+                len(segments),
+                skipped_no_image,
+            )
         if scope == "images":
             logger.info("produce_segments: images only, skipping clips")
             clips = SegmentClipsResult(segment_clip_paths=[])
