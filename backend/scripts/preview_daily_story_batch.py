@@ -38,7 +38,7 @@ from app.services.daily_story.prompts import (  # noqa: E402
     dialogue_total_chars,
     validate_daily_story_json,
 )
-from app.services.daily_story.story_type_lines import story_type_tag  # noqa: E402
+from app.services.daily_story.story_types import story_type_tag  # noqa: E402
 from app.services.llm.llm_mgr import llm_mgr  # noqa: E402
 
 DEFAULT_THEMES = [

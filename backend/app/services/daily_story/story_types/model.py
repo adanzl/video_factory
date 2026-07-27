@@ -1,0 +1,71 @@
+"""日常故事矛盾类型（A–E）各自写作线路与观感打分特征。"""
+
+from __future__ import annotations
+
+import random
+import re
+from dataclasses import dataclass
+from typing import Sequence
+
+STORY_TYPE_LABELS: dict[str, str] = {
+    "A": "权威翻车",
+    "C": "公平执念",
+    "D": "字面执行",
+    "B": "结盟翻车",
+    "E": "妈妈破功",
+}
+
+STORY_TYPE_KEYWORDS: dict[str, frozenset[str]] = {
+    "A": frozenset(
+        {
+            "管", "教", "作业", "不许", "应该", "必须", "听我的", "你小", "大人",
+            "谁怕", "写错", "管教", "指正", "功课", "练琴", "手机", "规矩",
+            "辈分", "姐姐说", "得听", "批评", "顶嘴", "磨蹭",
+        },
+    ),
+    "C": frozenset(
+        {
+            "争", "抢", "分", "谁先", "最后一", "平分", "归谁", "哪个",
+            "大战", "之战", "马桶", "抱枕", "酸奶", "蛋糕", "橡皮",
+        },
+    ),
+    "D": frozenset(
+        {"弄", "撒", "碎", "掉了", "帮忙", "收拾", "照做", "叮嘱", "按", "照", "叠", "鞋带"},
+    ),
+    "B": frozenset(
+        {"一起", "偷偷", "瞒", "藏", "约定", "联手", "别告诉", "俩", "暗号", "零食"},
+    ),
+    "E": frozenset({"妈妈", "问妈", "告状", "跟妈", "叫妈妈", "讲理"}),
+}
+
+TYPE_CATALOG_LINE = (
+    "【矛盾类型一览】A权威翻车 / C公平执念 / D字面执行 / "
+    "B结盟翻车 / E妈妈破功；生成时会锁定其中一种并走该类型专属线路。"
+)
+
+
+@dataclass(frozen=True)
+class StoryTypeLine:
+    code: str
+    label: str
+    keywords: frozenset[str]
+    prompt_block: str
+    user_closing: str
+    punchline_example: str
+    layer_patterns: tuple[tuple[str, re.Pattern[str]], ...]
+    quality_ready: bool
+    escalation_revision_hint: str
+    closing_revision_hint: str
+    body_user_anchor: str = ""
+    opening_system_append: str = ""
+    opening_user_append: str = ""
+    theme_user_append: str = ""
+    retry_soft_close_hint: str = ""
+
+
+def compile_layers(
+    pairs: Sequence[tuple[str, str]],
+) -> tuple[tuple[str, re.Pattern[str]], ...]:
+    return tuple((label, re.compile(pat)) for label, pat in pairs)
+
+

@@ -408,7 +408,7 @@ class LLMMgr:
             if not target_indices:
                 break
             reason = report.details.get("reason", "image_prompt too short")
-            if reason == "daily cast leak in image_prompt":
+            if reason == "daily speaker leak in image_prompt":
                 issues = report.details.get("issues") or []
                 feedback = (
                     f"{reason}: {'; '.join(str(x) for x in issues[:5])}。"

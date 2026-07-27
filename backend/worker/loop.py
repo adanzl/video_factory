@@ -246,14 +246,17 @@ def _run_visual_brief(job_id: int, *, segment_indices: list[int] | None=None) ->
     logger.info('job %s script/visualBrief: %s', job_id, f'segment_indices={segment_indices}' if segment_indices else f"segments={len(script.get('segments') or [])}")
     updated = llm_mgr.fill_visual_briefs(script, job=job, segment_indices=segment_indices)
     if content_style_from_job(job) == CONTENT_STYLE_DAILY_STORY:
-        from app.services.daily_story.cast import scrub_cast_leaks, speakers_from_dialogue
+        from app.services.daily_story.speaker import (
+            scrub_leaked_speaker_names,
+            speakers_from_dialogue,
+        )
         wanted = {int(i) for i in segment_indices} if segment_indices else None
         for seg in updated.get('segments') or []:
             idx = int(seg.get('segment_index') or 0)
             if wanted is not None and idx not in wanted:
                 continue
             allowed = speakers_from_dialogue(seg.get('dialogue') or [])
-            cleaned = scrub_cast_leaks(str(seg.get('visual_brief') or ''), allowed)
+            cleaned = scrub_leaked_speaker_names(str(seg.get('visual_brief') or ''), allowed)
             if cleaned != seg.get('visual_brief'):
                 seg['visual_brief'] = cleaned
     with atomic():

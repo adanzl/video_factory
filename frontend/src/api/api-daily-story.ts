@@ -28,6 +28,8 @@ export interface DailyStoryRecord {
   id: number;
   theme: string;
   story: StoryContent;
+  /** 矛盾类型代码 A–E，来自笑点解析 */
+  story_type: string | null;
   job_id: number | null;
   status: string;
   created_at: string;
@@ -35,6 +37,23 @@ export interface DailyStoryRecord {
 }
 
 export type DailyStoryListResponse = ListResponse<DailyStoryRecord>;
+
+/** 与后端 STORY_TYPE_LABELS 一致 */
+export const DAILY_STORY_TYPE_LABELS: Record<string, string> = {
+  A: "权威翻车",
+  B: "结盟翻车",
+  C: "公平执念",
+  D: "字面执行",
+  E: "妈妈破功",
+};
+
+/** 如 A权威翻车；无有效代码时返回 "-" */
+export function formatDailyStoryType(code: string | null | undefined): string {
+  const c = (code ?? "").trim().toUpperCase();
+  const label = DAILY_STORY_TYPE_LABELS[c];
+  if (!label) return "-";
+  return `${c}${label}`;
+}
 
 const DAILY_STORY_POLL_INTERVAL_MS = 3_000;
 const DAILY_STORY_POLL_MAX_MS = 10 * 60_000;

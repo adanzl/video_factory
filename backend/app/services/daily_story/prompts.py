@@ -4,17 +4,25 @@ import copy
 import json
 import re
 
-from app.services.daily_story.story_type_lines import (
+from app.services.daily_story.dialogue_text import (
+    DAILY_STORY_LINE_CHARS_MAX,
+    dialogue_char_count as _dialogue_char_count,
+    truncate_overlong_line as _truncate_overlong_line,
+)
+from app.services.daily_story.speaker import DAILY_STORY_SPEAKER_NAMES
+from app.services.daily_story.story_types import (
     STORY_TYPE_LINES,
     STORY_TYPE_LABELS,
+    append_type_body_validation_errors,
     format_block_for_code,
     parse_story_type_code,
+    patch_type_body,
     select_story_type_tag,
     story_line_for_code,
     story_type_tag,
     type_catalog_system_block,
+    validate_type_opening,
 )
-from app.services.daily_story.cast import DAILY_CAST_NAMES
 
 # 角色外貌固定描述，供 visual_style 和分镜生成共享
 # 昭昭与灿灿有参考图，妈妈无参考图独立定义
@@ -42,7 +50,7 @@ DAILY_STORY_RETRY_PATCH_DEFICIT_MAX = 32
 # 首稿直接瞄准硬卡中段（勿先写到 390+ 再压，易反复重试）
 DAILY_STORY_BODY_WRITE_TARGET_MIN = 310
 DAILY_STORY_BODY_WRITE_TARGET_MAX = 350
-DAILY_STORY_LINE_CHARS_MAX = 22
+# DAILY_STORY_LINE_CHARS_MAX 见 dialogue_text.py（上方已导入）
 DAILY_STORY_OPENING_LINES_MIN = 1
 DAILY_STORY_OPENING_LINES_MAX = 2
 
@@ -105,7 +113,7 @@ _CONFLICT_ANCHOR_STOP = frozenset(
 )
 # 抽锚点前从 core 去掉角色名/连接词，避免「昭灿灿争」一类噪声
 _CONFLICT_ANCHOR_STRIP = (
-    *DAILY_CAST_NAMES,
+    *DAILY_STORY_SPEAKER_NAMES,
     "姐弟",
     "vs",
     "VS",
@@ -710,11 +718,6 @@ def build_daily_script_prompts(
     return system, user
 
 
-def _dialogue_char_count(line: str) -> int:
-    """与成片时长估算一致：按台词字符串长度计。"""
-    return len(line or "")
-
-
 def _dialogue_lines_text(dialogue: list) -> list[str]:
     lines: list[str] = []
     for item in dialogue:
@@ -986,7 +989,7 @@ def validate_daily_story_json(
 
     # dialogue 校验
     dialogue = story.get("dialogue", [])
-    allowed_speakers = set(DAILY_CAST_NAMES)
+    allowed_speakers = set(DAILY_STORY_SPEAKER_NAMES)
     if not isinstance(dialogue, list):
         errors.append("dialogue 必须是数组")
     elif not dialogue:
@@ -1004,7 +1007,7 @@ def validate_daily_story_json(
             elif item["speaker"].strip() not in allowed_speakers:
                 errors.append(
                     f"dialogue[{i}] speaker 必须是「"
-                    + "」「".join(DAILY_CAST_NAMES)
+                    + "」「".join(DAILY_STORY_SPEAKER_NAMES)
                     + f"」，收到：{item['speaker']!r}"
                 )
             if "line" not in item:
@@ -1061,11 +1064,7 @@ def validate_daily_story_json(
     _append_setting_mom_consistency_errors(story, errors)
 
     _append_verifiable_fact_errors(story, errors)
-    _append_homework_fact_errors(story, errors)
-    _append_brush_timer_fact_errors(story, errors)
-    _append_a_closing_quote_errors(story, errors)
-    _append_a_mid_restatement_errors(story, errors)
-    _append_a_steal_single_line_errors(story, errors)
+    append_type_body_validation_errors(story, errors)
     _append_dangling_term_errors(story, errors)
 
     dialogue = story.get("dialogue")
@@ -1382,500 +1381,6 @@ def _append_homework_fact_errors(story: dict, errors: list[str]) -> None:
             )
 
 
-_DURATION_TOKEN_RE = re.compile(
-    r"(?:半分钟|"
-    r"(?:\d+|二十[一二三四五六七八九]?|十[一二三四五六七八九]?|"
-    r"[一二三四五六七八九两])分半|"
-    r"(?:\d+|二十[一二三四五六七八九]?|十[一二三四五六七八九]?|"
-    r"[一二三四五六七八九两])分钟)"
-)
-
-# A 开场禁止先揭穿一锤（灿灿已翻车/双标）
-_A_OPENING_SPOILER_RE = re.compile(
-    r"自己才|自己刷了|自己算错|自己写错|自己弹错|"
-    r"草稿.{0,6}错|计时器上自己|你也错了|"
-    r"刚玩过|你上次|双标|才刷了半|一分半"
-)
-# A 开场禁止「互怼中途读数/宣判」——须先看见场面
-_A_OPENING_MID_FIGHT_RE = re.compile(
-    r"计时器才走|才走了\s*\d+\s*秒|才走了\s*[一二三四五六七八九十两半]+\s*秒|"
-    r"至少两分钟|牙医说的|重刷|时间到了|到点了"
-)
-
-_RE_CLOSING_QUOTE = re.compile(
-    r"(?:你刚才(?:明明|自己)?说|你自己(?:刚才)?说|你不是说|你刚说|你说的)"
-    r"([^，。！？…]{3,})",
-)
-
-
-def _duration_token_to_seconds(token: str) -> int | None:
-    t = token.strip()
-    if t == "半分钟":
-        return 30
-    if t.endswith("分半"):
-        head = t[:-2]
-        n = _parse_duration_minutes(head)
-        return None if n is None else n * 60 + 30
-    if t.endswith("分钟"):
-        n = _parse_duration_minutes(t[:-2])
-        return None if n is None else n * 60
-    return None
-
-
-def _iter_duration_seconds(text: str) -> list[int]:
-    out: list[int] = []
-    for m in _DURATION_TOKEN_RE.finditer(text or ""):
-        sec = _duration_token_to_seconds(m.group(0))
-        if sec is not None:
-            out.append(sec)
-    return out
-
-
-def _append_brush_timer_fact_errors(story: dict, errors: list[str]) -> None:
-    """刷牙/计时类：本场一锤时长全文只认一套，禁半分钟与一分半混用。"""
-    setting = str(story.get("setting") or "")
-    core = str(story.get("conflict_core") or "")
-    punch = str(story.get("punchline_explain") or "")
-    dialogue = story.get("dialogue")
-    if not isinstance(dialogue, list) or not dialogue:
-        return
-    lines_text = [
-        str(d.get("line") or "")
-        for d in dialogue
-        if isinstance(d, dict)
-    ]
-    full = "".join(lines_text)
-    blob = setting + core + punch + full
-    if not re.search(r"刷牙|刷够", blob):
-        return
-
-    all_secs = set(_iter_duration_seconds(full))
-    if len(all_secs) >= 4:
-        errors.append(
-            "可核对事实：刷牙/计时出现≥4种不同时长，"
-            "本场一锤只留一套数（规则+弟弟+姐姐各至多一个）",
-        )
-
-    sister_secs: set[int] = set()
-    brother_secs: set[int] = set()
-    for line in lines_text:
-        secs = _iter_duration_seconds(line)
-        if not secs:
-            continue
-        if re.search(
-            r"自己.{0,8}(?:刷|才)|上次.{0,12}(?:刷|才)|我那次|计时器上自己",
-            line,
-        ):
-            sister_secs.update(secs)
-        if re.search(
-            r"你刷.{0,8}才|我(?:用了计时器|刷).{0,8}|"
-            r"正好.{0,4}(?:两|二|\d)|刷干净了",
-            line,
-        ) or (
-            "正好" in line and _iter_duration_seconds(line)
-        ):
-            if not re.search(r"自己|我那次|上次你|上次才", line):
-                brother_secs.update(secs)
-
-    if len(sister_secs) >= 2:
-        errors.append(
-            "可核对事实：灿灿自己刷牙时长前后不一"
-            "（如半分钟与一分半），全文只留一个数",
-        )
-    if len(brother_secs) >= 2:
-        errors.append(
-            "可核对事实：昭昭刷牙时长前后不一"
-            "（如才一分钟又说正好两分钟），请统一",
-        )
-
-
-def _append_a_closing_quote_errors(story: dict, errors: list[str]) -> None:
-    """A 类：末段「你刚才说…」须能在灿灿前文找到原话。"""
-    punch = str(story.get("punchline_explain") or "")
-    code = parse_story_type_code(punchline=punch)
-    if code != "A":
-        return
-    dialogue = story.get("dialogue")
-    if not isinstance(dialogue, list) or len(dialogue) < 6:
-        return
-    body = dialogue[:-4]
-    cancan = "".join(
-        str(d.get("line") or "")
-        for d in body
-        if isinstance(d, dict) and str(d.get("speaker") or "").strip() == "灿灿"
-    )
-    if not cancan.strip():
-        return
-
-    def _grounded(frag: str, hay: str) -> bool:
-        clean = re.sub(r"[的话呢呀嘛吧啊…\s「」『』\"'‘’：:]", "", frag)
-        hay2 = re.sub(r"[\s「」『』\"'‘’]", "", hay)
-        if len(clean) < 3:
-            return True
-        run = 6 if len(clean) >= 6 else max(3, min(5, len(clean)))
-        for i in range(len(clean) - run + 1):
-            if clean[i:i + run] in hay2:
-                return True
-        if len(clean) < 6:
-            pieces = [clean[i:i + 2] for i in range(0, len(clean) - 1, 2)]
-            if len(pieces) >= 3:
-                hit = sum(1 for p in pieces if p in hay2)
-                if hit >= (len(pieces) * 2 + 2) // 3:
-                    return True
-        return False
-
-    for i, item in enumerate(dialogue):
-        if not isinstance(item, dict):
-            continue
-        if str(item.get("speaker") or "").strip() != "昭昭":
-            continue
-        line = str(item.get("line") or "")
-        for m in _RE_CLOSING_QUOTE.finditer(line):
-            frag = m.group(1).strip()
-            prior_cancan = "".join(
-                str(d.get("line") or "")
-                for d in dialogue[:i]
-                if isinstance(d, dict)
-                and str(d.get("speaker") or "").strip() == "灿灿"
-            )
-            if not prior_cancan.strip():
-                continue
-            if not _grounded(frag, prior_cancan):
-                soft_ok = (
-                    (
-                        re.search(r"吐水.{0,4}停", frag)
-                        and re.search(r"吐水.{0,6}停", prior_cancan)
-                    )
-                    or (
-                        re.search(r"漱口.{0,4}停", frag)
-                        and re.search(r"漱口.{0,6}停", prior_cancan)
-                    )
-                    or (
-                        re.search(r"检查.{0,6}不算吃", frag)
-                        and re.search(r"检查.{0,10}不算", prior_cancan)
-                    )
-                )
-                if not soft_ok:
-                    errors.append(
-                        f"A类引话须出自灿灿前文原话（无「{frag[:14]}」），"
-                        "禁止昭昭自造后再假装引用",
-                    )
-                    return
-
-
-_A_MID_RULE_STEMS = (
-    ("漱口", 4),
-    ("两分钟", 6),
-    ("停了", 4),
-    ("说话算数", 3),
-)
-
-
-def _line_bigrams(text: str) -> set[str]:
-    chars = re.sub(r"[^\u4e00-\u9fff]", "", text or "")
-    if len(chars) < 2:
-        return set()
-    return {chars[i:i + 2] for i in range(len(chars) - 1)}
-
-
-def _lines_high_overlap(a: str, b: str, *, thresh: float = 0.5) -> bool:
-    sa, sb = _line_bigrams(a), _line_bigrams(b)
-    if len(sa) < 3 or len(sb) < 3:
-        return False
-    return len(sa & sb) / len(sa | sb) >= thresh
-
-
-def _a_steal_context_blob(story: dict) -> str:
-    parts = [
-        str(story.get("conflict_core") or ""),
-        str(story.get("scene_title") or ""),
-        str(story.get("setting") or ""),
-        str(story.get("punchline_explain") or ""),
-    ]
-    dialogue = story.get("dialogue") or []
-    if isinstance(dialogue, list):
-        for d in dialogue[:6]:
-            if isinstance(d, dict):
-                parts.append(str(d.get("line") or ""))
-    return "".join(parts)
-
-
-def _append_a_steal_single_line_errors(story: dict, errors: list[str]) -> None:
-    """A 类饭前偷吃：单线免责 + 咽下后立刻收束（硬卡）。"""
-    punch = str(story.get("punchline_explain") or "")
-    code = parse_story_type_code(punchline=punch)
-    if code and code != "A":
-        return
-    blob = _a_steal_context_blob(story)
-    if not re.search(r"偷吃|饭前|水果|苹果|草莓|葡萄|西瓜|香蕉", blob):
-        return
-    dialogue = story.get("dialogue")
-    if not isinstance(dialogue, list) or len(dialogue) < 8:
-        return
-    text = "".join(
-        str(d.get("line") or "")
-        for d in dialogue
-        if isinstance(d, dict)
-    )
-    buckets: list[str] = []
-    # 硬卡只拦「检查 + 把关/示范」；试尝叠检查改由质检压分，避免生成空转
-    if re.search(r"检查不算|检查样品|特地挑", text):
-        buckets.append("检查")
-    if re.search(r"把关|资格|负责质量|检查员|有特权|我有权利", text):
-        buckets.append("把关")
-    if re.search(r"示范", text):
-        buckets.append("示范")
-    if len(buckets) >= 2:
-        errors.append(
-            "A类偷吃只能一套免责（检查不算吃）；"
-            f"正文叠了{'+'.join(buckets)}，删到只留检查线"
-            "（禁把关/示范/资格）",
-        )
-        return
-
-    # 收束硬卡（结构节奏交给质检，避免生成空转）
-    lines = [
-        str(d.get("line") or "")
-        for d in dialogue
-        if isinstance(d, dict)
-    ]
-    if len(lines) >= 3:
-        dodge = lines[-3]
-        if "那不一样" in dodge and re.search(
-            r"那不一样[，,]?\s*(我那是)?[…\.。]{0,3}\s*$",
-            dodge,
-        ):
-            errors.append(
-                "收束「那不一样」须说完新借口（如检样不算开饭），禁止半截省略",
-            )
-        elif "那不一样" in dodge and not re.search(
-            r"检样不算开饭|不算开饭",
-            dodge,
-        ):
-            errors.append(
-                "收束「那不一样」须用「检样不算开饭」类区分，"
-                "禁止只回样品/检查的一部分",
-            )
-
-
-def _append_a_mid_restatement_errors(story: dict, errors: list[str]) -> None:
-    """A 类：中段同一规矩勿换措辞再立一遍。"""
-    punch = str(story.get("punchline_explain") or "")
-    if parse_story_type_code(punchline=punch) != "A":
-        return
-    dialogue = story.get("dialogue")
-    if not isinstance(dialogue, list) or len(dialogue) < 10:
-        return
-    body = dialogue[:-4]
-    lines: list[tuple[str, str]] = []
-    for d in body:
-        if not isinstance(d, dict):
-            continue
-        sp = str(d.get("speaker") or "").strip()
-        ln = str(d.get("line") or "").strip()
-        if ln:
-            lines.append((sp, ln))
-    if len(lines) < 8:
-        return
-
-    for stem, limit in _A_MID_RULE_STEMS:
-        hits = sum(1 for _, ln in lines if stem in ln)
-        if hits >= limit:
-            errors.append(
-                f"中段「{stem}」出现{hits}次：同一规矩只立一次"
-                "（最多再确认1句），然后立刻进一锤场面",
-            )
-            return
-
-    filler_hits = sum(
-        1
-        for _, ln in lines
-        if re.search(
-            r"你确定|说到做到|绝不反悔|你好好数|我看着|我数着|"
-            r"眨眼睛|换手拿|中间不能|换位置|别数|没离开嘴巴|"
-            r"挤牙膏了吗|牙刷没沾|你不能作弊|数得准|数错了|我看着你|"
-            r"三十下|二十下|认真数|帮你盯|偷工减料|起步|"
-            r"你又没计时|你也没计时|怎么证明|怎么知道我没|"
-            r"数得慢|秒表一样|我数了",
-            ln,
-        )
-    )
-    if filler_hits >= 3:
-        errors.append(
-            "中段注水过多（三十下/认真数/计时抬杠等），"
-            "埋「吐水算停」后立刻示范翻车",
-        )
-        return
-
-    # 相邻两句同义复读：你又没计时 / 你也没计时 / 怎么证明
-    for i in range(1, len(lines)):
-        a, b = lines[i - 1][1], lines[i][1]
-        if re.search(r"计时|怎么证明|怎么知道.{0,4}没", a) and re.search(
-            r"计时|怎么证明|怎么知道.{0,4}没",
-            b,
-        ):
-            errors.append(
-                "中段禁止连着两句抠「没计时/怎么证明」同义抬杠，"
-                "一句带过就进立规或示范",
-            )
-            return
-
-    full_mid = "".join(ln for _, ln in lines)
-    if re.search(r"刷牙|漱口|牙刷", full_mid):
-        timer_pad = sum(
-            1
-            for _, ln in lines
-            if re.search(
-                r"默数|电子表|掐表|没带手机|计时器呢|用那个|我盯着表|帮你掐",
-                ln,
-            )
-        )
-        if timer_pad >= 3:
-            errors.append(
-                "刷牙中段禁止抠计时工具（默数/电子表/掐表），"
-                "立完规矩后立刻示范翻车",
-            )
-            return
-        # 一锤过晚：以「吐水算停」埋句为起点（勿用开场「两分钟」抬杠起算）
-        rule_i = next(
-            (
-                i
-                for i, (_, ln) in enumerate(lines)
-                if re.search(r"吐水.{0,4}停", ln)
-            ),
-            None,
-        )
-        if rule_i is None:
-            rule_i = next(
-                (
-                    i
-                    for i, (_, ln) in enumerate(lines)
-                    if "两分钟" in ln or "连续刷" in ln
-                ),
-                None,
-            )
-        hammer_i = next(
-            (
-                i
-                for i, (sp, ln) in enumerate(lines)
-                if i > (rule_i or 0)
-                and re.search(
-                    r"才刷|就吐|就停|就漱|玩手机|泡沫|几下|"
-                    r"[一二三四五六七八九十两\d]+下|示范.{0,6}吐|噗|"
-                    r"一[、,，]\s*二",
-                    ln,
-                )
-                and (sp == "昭昭" or sp == "灿灿")
-            ),
-            None,
-        )
-        if rule_i is not None and hammer_i is None:
-            errors.append(
-                "刷牙缺一锤场面：须有昭昭指出灿灿示范时"
-                "刷几下就吐/停/玩手机",
-            )
-            return
-        if (
-            rule_i is not None
-            and hammer_i is not None
-            and hammer_i - rule_i > 8
-        ):
-            errors.append(
-                "刷牙一锤过晚：埋「吐水算停」后勿再抬杠，立刻示范翻车",
-            )
-            return
-        many = any(
-            sp == "灿灿" and re.search(r"很多下|刷了好多|刷了不少", ln)
-            for sp, ln in lines
-        )
-        few = any(
-            re.search(r"才刷\s*[一二两三四五六七八九十两\d]+\s*下", ln)
-            for _, ln in lines
-        )
-        if many and few:
-            errors.append(
-                "刷牙次数自相矛盾：先说刷了很多下，后又才刷两三下，只留一套",
-            )
-            return
-        # 埋句取最后一次「吐水…停」（开场抬杠可先谈两分钟）
-        bury_idxs = [
-            i for i, (_, ln) in enumerate(lines) if re.search(r"吐水.{0,4}停", ln)
-        ]
-        bury_i = bury_idxs[-1] if bury_idxs else None
-        spit_hammer_i = next(
-            (
-                i
-                for i, (_, ln) in enumerate(lines)
-                if re.search(
-                    r"才.{0,6}下|才刷|就吐|噗|"
-                    r"一[、,，]\s*二|一\s*二\s*三",
-                    ln,
-                )
-                and i > (bury_i or -1)
-            ),
-            None,
-        )
-        if bury_i is not None and spit_hammer_i is not None and spit_hammer_i - bury_i > 6:
-            errors.append(
-                "刷牙不好玩：埋「吐水算停」后铺垫过长，"
-                "须很快出现数下就吐/噗",
-            )
-            return
-        if bury_i is not None and spit_hammer_i is None:
-            errors.append(
-                "刷牙不好玩：有吐水算停却无一锤"
-                "（才X下就吐 / 一、二、噗）",
-            )
-            return
-
-    if dialogue:
-        last = dialogue[-1]
-        if isinstance(last, dict):
-            last_ln = str(last.get("line") or "")
-            if re.search(
-                r"算你厉害|你赢了|算你赢|你厉害|你等着|"
-                r"你.{0,4}(?:重刷|再刷|过关)",
-                last_ln,
-            ):
-                errors.append(
-                    "末句禁止认赢/甩狠/继续管人（重刷/你等着），"
-                    "只许哼/行吧/随便/给你一块",
-                )
-                return
-        # 收束「那不一样」禁止空甩身份
-        if len(dialogue) >= 3:
-            dodge = str(dialogue[-3].get("line") or "") if isinstance(dialogue[-3], dict) else ""
-            if "那不一样" in dodge and re.search(r"我是姐姐|我说了算", dodge):
-                if not re.search(
-                    r"示范|泡沫|教学|吐泡沫|教你|检样|开饭|样品",
-                    dodge,
-                ):
-                    errors.append(
-                        "收束「那不一样」禁止只甩「我是姐姐」，"
-                        "须具体借口（示范/检样不算开饭等）",
-                    )
-                    return
-
-    zhao_qs = [
-        (i, ln)
-        for i, (sp, ln) in enumerate(lines)
-        if sp == "昭昭" and ("？" in ln or "吗" in ln or "呢" in ln)
-    ]
-    for i in range(len(zhao_qs)):
-        for j in range(i + 1, len(zhao_qs)):
-            ia, la = zhao_qs[i]
-            ib, lb = zhao_qs[j]
-            if ib - ia > 8:
-                break
-            if _lines_high_overlap(la, lb):
-                errors.append(
-                    "中段昭昭换措辞重复追问同一规矩"
-                    f"（近重复：「{la[:10]}」≈「{lb[:10]}」），"
-                    "删掉重复回合直接进一锤",
-                )
-                return
-
-
 _RE_ASK_WHAT_TERM = re.compile(
     r"什么叫\s*([\u4e00-\u9fff]{1,8})"
     r"|([\u4e00-\u9fff]{1,8})\s*是什么意思"
@@ -1990,22 +1495,11 @@ def validate_daily_story_opening(
             f"发现开场未体现 conflict_core 锚点（须点名其一：{hint}）：{core!r}"
         )
 
-    code = (type_code or "").strip().upper()[:1]
-    if code == "A":
-        for i, item in enumerate(normalized):
-            line = item["line"]
-            if _A_OPENING_SPOILER_RE.search(line):
-                errors.append(
-                    f"opening[{i}] A类禁止开场先揭穿灿灿翻车/双标"
-                    "（自己才刷/算错/刚玩过等），一锤留给正文中段",
-                )
-                break
-            if _A_OPENING_MID_FIGHT_RE.search(line):
-                errors.append(
-                    f"opening[{i}] A类开场须像发现现场（物/动作），"
-                    "禁止读秒宣判或直接立规（如「计时器才走了30秒」）",
-                )
-                break
+    validate_type_opening(
+        normalized,
+        type_code=type_code,
+        errors=errors,
+    )
 
     if errors:
         raise ValueError("daily_story 开场校验失败: " + "; ".join(errors))
@@ -2172,23 +1666,6 @@ def _trim_dialogue_line(line: str, need: int) -> tuple[str, int]:
     return out, removed
 
 
-def _truncate_overlong_line(line: str) -> str:
-    """超长句压到硬卡：优先在标点处切。"""
-    n = _dialogue_char_count(line)
-    if n <= DAILY_STORY_LINE_CHARS_MAX:
-        return line
-    limit = DAILY_STORY_LINE_CHARS_MAX
-    cut = -1
-    for i, ch in enumerate(line):
-        if i >= limit:
-            break
-        if ch in "，、；; ":
-            cut = i
-    if cut >= 6:
-        return line[:cut].rstrip("，、；; ")
-    return line[:limit]
-
-
 def _patch_overlong_lines(story: dict) -> list[str]:
     notes: list[str] = []
     dialogue = story.get("dialogue")
@@ -2257,121 +1734,22 @@ def _patch_body_char_budget(story: dict) -> list[str]:
     return notes
 
 
-def _quote_grounded(frag: str, hay: str) -> bool:
-    clean = re.sub(r"[的话呢呀嘛吧啊…\s「」『』\"'‘’：:]", "", frag)
-    hay2 = re.sub(r"[\s「」『』\"'‘’]", "", hay)
-    if len(clean) < 3:
-        return True
-    run = 6 if len(clean) >= 6 else max(3, min(5, len(clean)))
-    for i in range(len(clean) - run + 1):
-        if clean[i:i + run] in hay2:
-            return True
-    return False
-
-
-def _pick_cite_chunk(cancan_line: str) -> str:
-    """从灿灿句抽出可引短串。"""
-    text = re.sub(r"^[「」\"'‘’]+|[「」\"'‘’]+$", "", cancan_line.strip())
-    for m in re.finditer(r"[^，。！？…；;]{4,14}", text):
-        chunk = m.group(0).strip()
-        if re.search(r"不算|算停|吐水|检查|示范|咽了", chunk):
-            return chunk
-    # fallback: 去掉语气后截断
-    compact = re.sub(r"[的话呢呀嘛吧啊啦]", "", text)
-    return compact[:14] if len(compact) >= 4 else text[:14]
-
-
-def _patch_a_closing_quotes(story: dict) -> list[str]:
-    """引话未接地：仅当灿灿前文已有相近埋点时，把昭昭引语改成可引子串。
-
-    若前文完全没有「检查/吐水/不算」类埋点，不硬改（交给 LLM）。
-    """
+def _patch_consecutive_speakers(story: dict) -> list[str]:
+    """同人连说：把后一句 speaker 改成另一方（仅修硬卡，少动文案）。"""
     notes: list[str] = []
     dialogue = story.get("dialogue")
-    if not isinstance(dialogue, list) or len(dialogue) < 6:
+    if not isinstance(dialogue, list) or len(dialogue) < 2:
         return notes
-    for i, item in enumerate(dialogue):
-        if not isinstance(item, dict):
+    for i in range(1, len(dialogue)):
+        a, b = dialogue[i - 1], dialogue[i]
+        if not isinstance(a, dict) or not isinstance(b, dict):
             continue
-        if str(item.get("speaker") or "").strip() != "昭昭":
-            continue
-        line = str(item.get("line") or "")
-        m = _RE_CLOSING_QUOTE.search(line)
-        if not m:
-            continue
-        frag = m.group(1).strip()
-        prior_lines = [
-            str(d.get("line") or "")
-            for d in dialogue[:i]
-            if isinstance(d, dict)
-            and str(d.get("speaker") or "").strip() == "灿灿"
-            and str(d.get("line") or "").strip()
-        ]
-        prior = "".join(prior_lines)
-        if not prior.strip():
-            continue
-        soft_ok = (
-            (
-                re.search(r"检查.{0,6}不算吃", frag)
-                and re.search(r"检查.{0,10}不算", prior)
-            )
-            or (
-                re.search(r"吐水.{0,4}停", frag)
-                and re.search(r"吐水.{0,6}停", prior)
-            )
-            or (
-                re.search(r"漱口.{0,4}停", frag)
-                and re.search(r"漱口.{0,6}停", prior)
-            )
-        )
-        # 偷吃：前文已埋「检查不算吃」时，引话须点到这句（勿只引咽了才算）
-        prefer_check = (
-            "检查不算吃" in prior
-            and "检查不算吃" not in frag
-            and re.search(r"偷吃|饭前|水果|样品|检查", prior)
-        )
-        if (_quote_grounded(frag, prior) or soft_ok) and not prefer_check:
-            continue
-        donor = ""
-        if prefer_check:
-            for ln in reversed(prior_lines):
-                if "检查不算吃" in ln:
-                    donor = ln
-                    break
-        if not donor:
-            for ln in reversed(prior_lines):
-                if re.search(r"不算|吐水|检查|示范|算停", ln):
-                    donor = ln
-                    break
-        # 没有可对齐埋点就别乱改引话
-        if not donor:
-            continue
-        cite = (
-            "检查不算吃"
-            if prefer_check and "检查不算吃" in donor
-            else _pick_cite_chunk(donor)
-        )
-        if not cite or (
-            not prefer_check
-            and not _quote_grounded(cite, donor)
-            and cite not in donor
-        ):
-            cite = donor[: min(12, len(donor))]
-        if prefer_check:
-            new_line = f"你刚才说{cite}"
-        else:
-            head = line[: m.start(1)]
-            tail = line[m.end(1) :]
-            room = DAILY_STORY_LINE_CHARS_MAX - _dialogue_char_count(head + tail)
-            if room < 4:
-                continue
-            new_frag = cite if _dialogue_char_count(cite) <= room else cite[:room]
-            new_line = f"{head}{new_frag}{tail}"
-        if _dialogue_char_count(new_line) > DAILY_STORY_LINE_CHARS_MAX:
-            new_line = _truncate_overlong_line(new_line)
-        if new_line != line:
-            item["line"] = new_line
-            notes.append(f"引话对齐[{i}]")
+        sa = str(a.get("speaker") or "").strip()
+        sb = str(b.get("speaker") or "").strip()
+        if sa in {"昭昭", "灿灿"} and sa == sb:
+            b["speaker"] = "灿灿" if sa == "昭昭" else "昭昭"
+            notes.append(f"连说改speaker[{i}]")
+            # 每处只改一次，避免连锁乱改
             break
     return notes
 
@@ -2397,515 +1775,6 @@ def _patch_setting_mom_without_line(story: dict) -> list[str]:
     return notes
 
 
-_A_STEAL_TRY_TASTE_RE = re.compile(
-    r"试甜|试味道|帮你试|尝一下|尝得准|尝了|只尝|尝味道|甜不甜|"
-    r"试一口|确认味道|咬一口就|知道甜|先试|算尝味|是甜的|甜度|"
-    r"看看熟|熟不熟|坏了没|有没有坏|测试甜|确认质量"
-)
-_A_STEAL_GATE_RE = re.compile(
-    r"把关|资格|负责质量|检查员|有特权|质量员|我负责|我有权利"
-)
-_A_STEAL_QC_RE = re.compile(
-    r"半成品|大家安全|新不新鲜|为了大家|品质检测|安全起见|合格证书|"
-    r"确认甜度|确认质量|含着|检查完"
-)
-_A_STEAL_DODGE_RE = re.compile(r"溅|手脏|擦过|果汁")  # 鼓鼓只算发现，不算赖账
-
-
-def _patch_a_steal_strip_qc_jargon(story: dict) -> list[str]:
-    """偷吃去掉质检说明书词，改回赖账/检查口径。"""
-    notes: list[str] = []
-    punch = str(story.get("punchline_explain") or "")
-    code = parse_story_type_code(punchline=punch)
-    if code and code != "A":
-        return notes
-    blob = _a_steal_context_blob(story)
-    if not re.search(r"偷吃|饭前|水果|苹果|草莓|葡萄", blob):
-        return notes
-    dialogue = story.get("dialogue")
-    if not isinstance(dialogue, list):
-        return notes
-    for i, d in enumerate(dialogue):
-        if not isinstance(d, dict):
-            continue
-        line = str(d.get("line") or "")
-        sp = str(d.get("speaker") or "")
-        new_line = line
-        if _A_STEAL_QC_RE.search(line):
-            if sp == "灿灿":
-                new_line = "这是检查样品，是我特地挑出来检查的"
-            else:
-                new_line = "检查样品就能先吃掉？"
-        elif "洗手" in line:
-            if sp == "灿灿":
-                new_line = "你手脏，先别碰这个盘子"
-            else:
-                new_line = "你手不也刚捏过水果吗"
-        if (
-            new_line != line
-            and _dialogue_char_count(new_line) <= DAILY_STORY_LINE_CHARS_MAX
-        ):
-            d["line"] = new_line
-            notes.append(f"偷吃去质检词[{i}]")
-    return notes
-
-
-def _patch_a_steal_strip_try_taste(story: dict) -> list[str]:
-    """偷吃已走检查线时，把试甜/尝味句改回检查口径（去叠免责）。"""
-    notes: list[str] = []
-    punch = str(story.get("punchline_explain") or "")
-    code = parse_story_type_code(punchline=punch)
-    if code and code != "A":
-        return notes
-    blob = _a_steal_context_blob(story)
-    if not re.search(r"偷吃|饭前|水果|苹果|草莓|葡萄", blob):
-        return notes
-    dialogue = story.get("dialogue")
-    if not isinstance(dialogue, list):
-        return notes
-    text = "".join(
-        str(d.get("line") or "") for d in dialogue if isinstance(d, dict)
-    )
-    if not re.search(r"检查不算|检查样品|特地挑", text):
-        return notes
-    for i, d in enumerate(dialogue):
-        if not isinstance(d, dict):
-            continue
-        line = str(d.get("line") or "")
-        if not _A_STEAL_TRY_TASTE_RE.search(line):
-            continue
-        if re.search(r"咽|看不了", line):
-            new_line = "嗯，检查完了，只好咽了"
-        elif re.search(r"样品|检查", line):
-            new_line = "这是检查样品，是我特地挑出来检查的"
-        else:
-            new_line = _A_STEAL_TRY_TASTE_RE.sub("", line)
-            new_line = re.sub(r"[，,]{2,}", "，", new_line)
-            new_line = re.sub(r"\s{2,}", " ", new_line).strip("，,。 ")
-            if len(new_line) < 4:
-                new_line = "这是检查样品，是我特地挑出来检查的"
-        if (
-            new_line != line
-            and _dialogue_char_count(new_line) <= DAILY_STORY_LINE_CHARS_MAX
-        ):
-            d["line"] = new_line
-            notes.append(f"偷吃去试尝[{i}]")
-    return notes
-
-
-def _patch_a_steal_strip_gate(story: dict) -> list[str]:
-    """偷吃已走检查线时，删把关/资格/检查员等叠套词。"""
-    notes: list[str] = []
-    punch = str(story.get("punchline_explain") or "")
-    code = parse_story_type_code(punchline=punch)
-    if code and code != "A":
-        return notes
-    blob = _a_steal_context_blob(story)
-    if not re.search(r"偷吃|饭前|水果|苹果|草莓|葡萄", blob):
-        return notes
-    dialogue = story.get("dialogue")
-    if not isinstance(dialogue, list):
-        return notes
-    text = "".join(
-        str(d.get("line") or "") for d in dialogue if isinstance(d, dict)
-    )
-    if not re.search(r"检查不算|检查样品|特地挑", text):
-        return notes
-    if not _A_STEAL_GATE_RE.search(text):
-        return notes
-    for i, d in enumerate(dialogue):
-        if not isinstance(d, dict):
-            continue
-        line = str(d.get("line") or "")
-        if not _A_STEAL_GATE_RE.search(line):
-            continue
-        new_line = _A_STEAL_GATE_RE.sub("", line)
-        new_line = re.sub(r"[，,]{2,}", "，", new_line)
-        new_line = re.sub(r"\s{2,}", " ", new_line).strip("，,。 ")
-        if len(new_line) < 4:
-            # 整句只剩身份话术：换成检查线短句，避免空行硬卡
-            if "那不一样" in line:
-                new_line = "那不一样，检样不算开饭"
-            else:
-                new_line = "这是检查样品，是我特地挑出来检查的"
-        if (
-            new_line != line
-            and _dialogue_char_count(new_line) <= DAILY_STORY_LINE_CHARS_MAX
-        ):
-            d["line"] = new_line
-            notes.append(f"偷吃去把关[{i}]")
-    return notes
-
-
-def _patch_a_steal_fix_broken_authority(story: dict) -> list[str]:
-    """修好半截「我是姐姐，…啦」残句，避免补语气词后更怪。"""
-    notes: list[str] = []
-    punch = str(story.get("punchline_explain") or "")
-    code = parse_story_type_code(punchline=punch)
-    if code and code != "A":
-        return notes
-    blob = _a_steal_context_blob(story)
-    if not re.search(r"偷吃|饭前|水果|苹果|草莓|葡萄", blob):
-        return notes
-    dialogue = story.get("dialogue")
-    if not isinstance(dialogue, list):
-        return notes
-    for i, d in enumerate(dialogue):
-        if not isinstance(d, dict):
-            continue
-        if str(d.get("speaker") or "") != "灿灿":
-            continue
-        line = str(d.get("line") or "").strip()
-        if not re.match(r"^我是姐姐[，,]", line):
-            continue
-        # 过短或明显截断：先/我得/得 + 可选啦
-        if len(line) <= 8 or re.match(
-            r"^我是姐姐[，,]\s*(先|我得|得|管)啦?$",
-            line,
-        ):
-            new_line = "我是姐姐，饭前你不能吃"
-            if (
-                new_line != line
-                and _dialogue_char_count(new_line) <= DAILY_STORY_LINE_CHARS_MAX
-            ):
-                d["line"] = new_line
-                notes.append(f"偷吃修权威残句[{i}]")
-    return notes
-
-
-def _patch_a_steal_ensure_beats(story: dict) -> list[str]:
-    """偷吃检查线：补「我是姐姐 / 上次 / 检查不算吃」骨架词（助冲突层+引话）。"""
-    notes: list[str] = []
-    punch = str(story.get("punchline_explain") or "")
-    code = parse_story_type_code(punchline=punch)
-    if code and code != "A":
-        return notes
-    blob = _a_steal_context_blob(story)
-    if not re.search(r"偷吃|饭前|水果|苹果|草莓|葡萄", blob):
-        return notes
-    dialogue = story.get("dialogue")
-    if not isinstance(dialogue, list) or len(dialogue) < 10:
-        return notes
-    text = "".join(
-        str(d.get("line") or "") for d in dialogue if isinstance(d, dict)
-    )
-    if not re.search(r"检查不算|检查样品|特地挑", text):
-        return notes
-    mid = [d for d in dialogue[:-4] if isinstance(d, dict)]
-    if len(mid) < 4:
-        return notes
-
-    def _set_line(d: dict, new_line: str, note: str) -> bool:
-        if _dialogue_char_count(new_line) > DAILY_STORY_LINE_CHARS_MAX:
-            return False
-        if new_line == str(d.get("line") or ""):
-            return False
-        d["line"] = new_line
-        notes.append(note)
-        return True
-
-    if "我是姐姐" not in text:
-        for d in mid:
-            if str(d.get("speaker") or "") != "灿灿":
-                continue
-            line = str(d.get("line") or "")
-            if re.search(r"饭前|不许|不能吃|我说不行", line):
-                cand = f"我是姐姐，{line}"
-                if _set_line(d, cand, "偷吃补我是姐姐"):
-                    break
-        else:
-            for d in mid:
-                if str(d.get("speaker") or "") == "灿灿":
-                    if _set_line(
-                        d,
-                        "我是姐姐，饭前你不能吃",
-                        "偷吃补我是姐姐",
-                    ):
-                        break
-
-    text = "".join(
-        str(d.get("line") or "") for d in dialogue if isinstance(d, dict)
-    )
-    if not re.search(r"上次", text):
-        for d in mid:
-            if str(d.get("speaker") or "") != "灿灿":
-                continue
-            line = str(d.get("line") or "")
-            if re.search(r"溅|手脏|别碰|果汁", line) or len(line) <= 10:
-                if _set_line(
-                    d,
-                    "上次是上次，妈妈在今天不算",
-                    "偷吃补上次",
-                ):
-                    break
-        else:
-            # 找中段第二句灿灿位改写
-            for d in mid[2:]:
-                if str(d.get("speaker") or "") == "灿灿":
-                    if _set_line(
-                        d,
-                        "上次是上次，妈妈在今天不算",
-                        "偷吃补上次",
-                    ):
-                        break
-
-    text = "".join(
-        str(d.get("line") or "") for d in dialogue if isinstance(d, dict)
-    )
-    if "检查不算吃" not in text:
-        for d in mid:
-            if str(d.get("speaker") or "") != "灿灿":
-                continue
-            line = str(d.get("line") or "")
-            if re.search(r"检查样品|特地挑|样品", line):
-                if _set_line(
-                    d,
-                    "检查不算吃，咽了才算检",
-                    "偷吃补检查不算吃",
-                ):
-                    break
-        else:
-            for d in reversed(mid):
-                if str(d.get("speaker") or "") == "灿灿":
-                    if _set_line(
-                        d,
-                        "检查不算吃，咽了才算检",
-                        "偷吃补检查不算吃",
-                    ):
-                        break
-    return notes
-
-
-def _patch_a_steal_closing(story: dict) -> list[str]:
-    """偷吃收束：统一成「那不一样，检样不算开饭」。"""
-    notes: list[str] = []
-    punch = str(story.get("punchline_explain") or "")
-    code = parse_story_type_code(punchline=punch)
-    if code and code != "A":
-        return notes
-    blob = _a_steal_context_blob(story)
-    if not re.search(r"偷吃|饭前|水果|苹果|草莓|葡萄", blob):
-        return notes
-    dialogue = story.get("dialogue")
-    if not isinstance(dialogue, list) or len(dialogue) < 4:
-        return notes
-    dodge = dialogue[-3]
-    if not isinstance(dodge, dict):
-        return notes
-    line = str(dodge.get("line") or "")
-    if "那不一样" not in line:
-        return notes
-    new_line = "那不一样，检样不算开饭"
-    if line != new_line and _dialogue_char_count(new_line) <= DAILY_STORY_LINE_CHARS_MAX:
-        dodge["line"] = new_line
-        notes.append("收束改检样不算开饭")
-    return notes
-
-
-def _patch_a_steal_trim_la(story: dict) -> list[str]:
-    """偷吃：句尾语气词过多时剥掉，避免补字注水。"""
-    notes: list[str] = []
-    punch = str(story.get("punchline_explain") or "")
-    code = parse_story_type_code(punchline=punch)
-    if code and code != "A":
-        return notes
-    blob = _a_steal_context_blob(story)
-    if not re.search(r"偷吃|饭前|水果|苹果|草莓|葡萄", blob):
-        return notes
-    dialogue = story.get("dialogue")
-    if not isinstance(dialogue, list):
-        return notes
-    particle_idx = [
-        i
-        for i, d in enumerate(dialogue)
-        if isinstance(d, dict)
-        and re.search(r"[啦呀嘛啊呢吧]$", str(d.get("line") or "").rstrip())
-    ]
-    if len(particle_idx) < 3:
-        return notes
-    # 最多留 1 个句尾语气词
-    for i in particle_idx[1:]:
-        line = str(dialogue[i].get("line") or "")
-        new_line = re.sub(r"[啦呀嘛啊呢吧]+$", "", line).rstrip("，, ")
-        if new_line and new_line != line:
-            dialogue[i]["line"] = new_line
-            notes.append(f"偷吃去语气词[{i}]")
-    return notes
-
-
-def _patch_a_steal_dedupe_sister(story: dict) -> list[str]:
-    """「我是姐姐」全场只留一次。"""
-    notes: list[str] = []
-    punch = str(story.get("punchline_explain") or "")
-    code = parse_story_type_code(punchline=punch)
-    if code and code != "A":
-        return notes
-    blob = _a_steal_context_blob(story)
-    if not re.search(r"偷吃|饭前|水果|苹果|草莓|葡萄", blob):
-        return notes
-    dialogue = story.get("dialogue")
-    if not isinstance(dialogue, list):
-        return notes
-    seen = False
-    for i, d in enumerate(dialogue[:-4] if len(dialogue) > 4 else dialogue):
-        if not isinstance(d, dict):
-            continue
-        if str(d.get("speaker") or "") != "灿灿":
-            continue
-        line = str(d.get("line") or "")
-        if "我是姐姐" not in line:
-            continue
-        if not seen:
-            seen = True
-            continue
-        new_line = "饭前你不能吃，听到没"
-        if _dialogue_char_count(new_line) <= DAILY_STORY_LINE_CHARS_MAX:
-            d["line"] = new_line
-            notes.append(f"偷吃去姐姐复读[{i}]")
-    return notes
-
-
-def _steal_dodge_templates(prev_speaker: str) -> list[tuple[str, str]]:
-    """按上一句 speaker 选交替赖账四句，避免连说。"""
-    if prev_speaker == "昭昭":
-        return [
-            ("灿灿", "果汁溅脸上了，不是偷吃"),
-            ("昭昭", "溅脸上？你整块塞嘴里了"),
-            ("灿灿", "你手脏，先别碰这个盘子"),
-            ("昭昭", "你手不也刚捏过水果吗"),
-        ]
-    return [
-        ("昭昭", "那你腮帮子一动一动的"),
-        ("灿灿", "果汁溅脸上了，不是偷吃"),
-        ("昭昭", "溅脸上？你整块塞嘴里了"),
-        ("灿灿", "你手脏，先别碰这个盘子"),
-    ]
-
-
-def _patch_a_steal_fix_dodge_roles(story: dict) -> list[str]:
-    """赖账借口须灿灿说；角色反了则整段重写第 2–5 句，避免连说。"""
-    notes: list[str] = []
-    punch = str(story.get("punchline_explain") or "")
-    code = parse_story_type_code(punchline=punch)
-    if code and code != "A":
-        return notes
-    blob = _a_steal_context_blob(story)
-    if not re.search(r"偷吃|饭前|水果|苹果|草莓|葡萄|西瓜", blob):
-        return notes
-    dialogue = story.get("dialogue")
-    if not isinstance(dialogue, list) or len(dialogue) < 10:
-        return notes
-    excuse_re = re.compile(r"溅脸上了|不是偷吃|手脏，先别碰|我擦过了")
-    flipped = any(
-        isinstance(d, dict)
-        and str(d.get("speaker") or "") == "昭昭"
-        and excuse_re.search(str(d.get("line") or ""))
-        for d in dialogue[:-4]
-    )
-    if not flipped:
-        return notes
-    prev = str(dialogue[1].get("speaker") or "") if isinstance(dialogue[1], dict) else ""
-    templates = _steal_dodge_templates(prev)
-    for i, (sp, ln) in enumerate(templates):
-        idx = 2 + i
-        if not isinstance(dialogue[idx], dict):
-            return notes
-        dialogue[idx]["speaker"] = sp
-        dialogue[idx]["line"] = ln
-        notes.append(f"偷吃纠角色[{idx}]")
-    return notes
-
-
-def _patch_a_steal_ensure_dodge(story: dict) -> list[str]:
-    """检查样品前须有赖账抬杠（溅脸/手脏）；缺则改写中前段 2 来回。"""
-    notes: list[str] = []
-    punch = str(story.get("punchline_explain") or "")
-    code = parse_story_type_code(punchline=punch)
-    if code and code != "A":
-        return notes
-    blob = _a_steal_context_blob(story)
-    if not re.search(r"偷吃|饭前|水果|苹果|草莓|葡萄|西瓜", blob):
-        return notes
-    dialogue = story.get("dialogue")
-    if not isinstance(dialogue, list) or len(dialogue) < 12:
-        return notes
-    lines = [str(d.get("line") or "") if isinstance(d, dict) else "" for d in dialogue]
-    check_i = next(
-        (
-            i
-            for i, ln in enumerate(lines)
-            if re.search(r"检查样品|特地挑|检查不算吃", ln)
-        ),
-        None,
-    )
-    if check_i is None:
-        return notes
-    cancan_dodge = any(
-        isinstance(dialogue[i], dict)
-        and str(dialogue[i].get("speaker") or "") == "灿灿"
-        and re.search(r"溅|手脏|擦过|果汁", str(dialogue[i].get("line") or ""))
-        for i in range(check_i)
-    )
-    if cancan_dodge:
-        return notes
-    if len(dialogue) < 10:
-        return notes
-    saved_check = ""
-    for i in range(2, 6):
-        if isinstance(dialogue[i], dict) and re.search(
-            r"检查样品|特地挑|检查不算吃",
-            str(dialogue[i].get("line") or ""),
-        ):
-            saved_check = str(dialogue[i].get("line") or "")
-            break
-    prev = str(dialogue[1].get("speaker") or "") if isinstance(dialogue[1], dict) else ""
-    templates = _steal_dodge_templates(prev)
-    for i, (sp, ln) in enumerate(templates):
-        idx = 2 + i
-        if not isinstance(dialogue[idx], dict):
-            return notes
-        dialogue[idx]["speaker"] = sp
-        dialogue[idx]["line"] = ln
-        notes.append(f"偷吃补赖账[{idx}]")
-    if saved_check:
-        for j in range(6, len(dialogue) - 4):
-            if not isinstance(dialogue[j], dict):
-                continue
-            if str(dialogue[j].get("speaker") or "") != "灿灿":
-                continue
-            cur = str(dialogue[j].get("line") or "")
-            if re.search(r"检查样品|特地挑|检查不算吃", cur):
-                break
-            dialogue[j]["line"] = (
-                saved_check
-                if _dialogue_char_count(saved_check) <= DAILY_STORY_LINE_CHARS_MAX
-                else "这是检查样品，是我特地挑出来检查的"
-            )
-            notes.append(f"偷吃挪检查[{j}]")
-            break
-    return notes
-
-
-def _patch_consecutive_speakers(story: dict) -> list[str]:
-    """同人连说：把后一句 speaker 改成另一方（仅修硬卡，少动文案）。"""
-    notes: list[str] = []
-    dialogue = story.get("dialogue")
-    if not isinstance(dialogue, list) or len(dialogue) < 2:
-        return notes
-    for i in range(1, len(dialogue)):
-        a, b = dialogue[i - 1], dialogue[i]
-        if not isinstance(a, dict) or not isinstance(b, dict):
-            continue
-        sa = str(a.get("speaker") or "").strip()
-        sb = str(b.get("speaker") or "").strip()
-        if sa in {"昭昭", "灿灿"} and sa == sb:
-            b["speaker"] = "灿灿" if sa == "昭昭" else "昭昭"
-            notes.append(f"连说改speaker[{i}]")
-            # 每处只改一次，避免连锁乱改
-            break
-    return notes
-
-
 def try_local_patch_daily_story_body(story: dict) -> tuple[dict, list[str]]:
     """校验前确定性修补：超长句/字数小缺口/引话/setting妈妈。
 
@@ -2918,27 +1787,12 @@ def try_local_patch_daily_story_body(story: dict) -> tuple[dict, list[str]]:
     notes.extend(_patch_overlong_lines(out))
     notes.extend(_patch_setting_mom_without_line(out))
     notes.extend(_patch_consecutive_speakers(out))
-    notes.extend(_patch_a_steal_strip_try_taste(out))
-    notes.extend(_patch_a_steal_strip_gate(out))
-    notes.extend(_patch_a_steal_strip_qc_jargon(out))
-    notes.extend(_patch_a_steal_ensure_dodge(out))
-    notes.extend(_patch_a_steal_fix_dodge_roles(out))
-    notes.extend(_patch_a_steal_fix_broken_authority(out))
-    notes.extend(_patch_a_steal_ensure_beats(out))
-    notes.extend(_patch_a_steal_dedupe_sister(out))
-    notes.extend(_patch_a_closing_quotes(out))
-    notes.extend(_patch_a_steal_closing(out))
-    notes.extend(_patch_a_steal_trim_la(out))
+    notes.extend(patch_type_body(out))
     notes.extend(_patch_body_char_budget(out))
     # 补字后可能又超单句硬卡 / 又引出连说 / 又叠试尝
     notes.extend(_patch_overlong_lines(out))
     notes.extend(_patch_consecutive_speakers(out))
-    notes.extend(_patch_a_steal_strip_try_taste(out))
-    notes.extend(_patch_a_steal_strip_gate(out))
-    notes.extend(_patch_a_steal_strip_qc_jargon(out))
-    notes.extend(_patch_a_steal_trim_la(out))
-    notes.extend(_patch_a_steal_fix_broken_authority(out))
-    notes.extend(_patch_a_steal_closing(out))
+    notes.extend(patch_type_body(out))
     return out, notes
 
 
@@ -3039,6 +1893,16 @@ def _retry_issue_hints(
         hints.append(
             "【引话·只改1–2句】保留全文骨架：要么把灿灿前文埋句改成昭昭所引原话，"
             "要么把昭昭引话改成灿灿已说过的子串；禁止整篇重写。"
+        )
+    if "C类" in err or "回旋镖" in err:
+        hints.append(
+            "【C·收束】只改末 3–4 句：用对方刚立的规则反问（你自己说/你刚说）；"
+            "末句被戳穿方嘴硬（哼/给你/算了）；勿写 A 式「哪里不一样」末四拍。"
+        )
+    if "A 式末四拍" in err or "勿写成 A" in err:
+        hints.append(
+            "【C·去A化】删掉末段「你刚才说+那不一样+哪里不一样」模板；"
+            "改成争资源的双标规则回旋镖。"
         )
     deficit = _parse_body_char_deficit(err)
     if "总字数须≥" in err:

@@ -48,7 +48,7 @@ def _daily_speakers_of(seg: dict) -> list[str]:
     raw = seg.get("speakers")
     if isinstance(raw, list) and raw:
         return [str(s).strip() for s in raw if str(s).strip()]
-    from app.services.daily_story.cast import speakers_from_dialogue
+    from app.services.daily_story.speaker import speakers_from_dialogue
 
     names = speakers_from_dialogue(seg.get("dialogue"))
     return [n for n in ("昭昭", "灿灿", "妈妈") if n in names]

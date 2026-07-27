@@ -202,26 +202,26 @@ def check_image_prompt(
 
     style = content_style or script.get("content_style")
     if style == "daily_story":
-        from app.services.daily_story.cast import collect_daily_cast_leak_segments
+        from app.services.daily_story.speaker import collect_speaker_leak_segments
 
-        cast_rows = collect_daily_cast_leak_segments(
+        speaker_rows = collect_speaker_leak_segments(
             segments,
             check_visual_brief=False,
             check_image_prompt=True,
         )
-        if cast_rows:
+        if speaker_rows:
             return QualityReport(
                 level="major",
                 step="image_prompts",
                 fail_stage="script",
                 details={
-                    "reason": "daily cast leak in image_prompt",
+                    "reason": "daily speaker leak in image_prompt",
                     "issues": [
                         f"segment {r['segment_index']}: {r['field']} 含未发言角色 "
                         f"{r['leaks']} (speakers={r['speakers'] or '[]'})"
-                        for r in cast_rows
+                        for r in speaker_rows
                     ],
-                    "segments": cast_rows,
+                    "segments": speaker_rows,
                 },
             )
 

@@ -5,6 +5,12 @@ from typing import Any
 
 from app.repositories import sql_exec as sql
 
+_MISSING = object()
+
+_DAILY_STORY_COLUMNS = (
+    "id, theme, story_json, status, created_at, updated_at, job_id, story_type"
+)
+
 
 def _row_to_dict(row: dict) -> dict:
     data = dict(row)
@@ -43,8 +49,8 @@ def list_stories(
     offset = max(0, offset)
     if status:
         rows = sql.fetchall(
-            """
-            SELECT id, theme, story_json, status, created_at, updated_at, job_id
+            f"""
+            SELECT {_DAILY_STORY_COLUMNS}
             FROM daily_story
             WHERE status = ?
             ORDER BY id DESC
@@ -54,8 +60,8 @@ def list_stories(
         )
     else:
         rows = sql.fetchall(
-            """
-            SELECT id, theme, story_json, status, created_at, updated_at, job_id
+            f"""
+            SELECT {_DAILY_STORY_COLUMNS}
             FROM daily_story
             ORDER BY id DESC
             LIMIT ? OFFSET ?
@@ -68,7 +74,7 @@ def list_stories(
 
 def get_story(story_id: int) -> dict:
     row = sql.fetchone(
-        "SELECT id, theme, story_json, status, created_at, updated_at, job_id FROM daily_story WHERE id = ?",
+        f"SELECT {_DAILY_STORY_COLUMNS} FROM daily_story WHERE id = ?",
         (story_id,),
     )
     sql.commit()
@@ -82,13 +88,14 @@ def insert_story(
     theme: str,
     story: dict[str, Any],
     status: str = "active",
+    story_type: str | None = None,
 ) -> int:
     cur = sql.execute(
         """
-        INSERT INTO daily_story (theme, story_json, status)
-        VALUES (?, ?, ?)
+        INSERT INTO daily_story (theme, story_json, status, story_type)
+        VALUES (?, ?, ?, ?)
         """,
-        (theme, json.dumps(story, ensure_ascii=False), status),
+        (theme, json.dumps(story, ensure_ascii=False), status, story_type),
     )
     story_id = int(cur.lastrowid)
     sql.commit()
@@ -120,8 +127,9 @@ def update_story(
     *,
     story: dict[str, Any] | None = None,
     status: str | None = None,
+    story_type: str | None | object = _MISSING,
 ) -> dict:
-    if story is None and status is None:
+    if story is None and status is None and story_type is _MISSING:
         return get_story(story_id)
     sets: list[str] = ["updated_at = datetime('now')"]
     params: list[Any] = []
@@ -131,6 +139,9 @@ def update_story(
     if status is not None:
         sets.append("status = ?")
         params.append(status)
+    if story_type is not _MISSING:
+        sets.append("story_type = ?")
+        params.append(story_type)
     params.append(story_id)
     sql.execute(
         f"UPDATE daily_story SET {', '.join(sets)} WHERE id = ?",
