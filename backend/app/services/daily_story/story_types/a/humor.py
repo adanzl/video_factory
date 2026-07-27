@@ -9,6 +9,23 @@ _RE_DIRECT_QUOTE = re.compile(
 )
 
 
+def humor_revision_hint(issue: str) -> str | None:
+    if any(
+        k in issue
+        for k in (
+            "缺赖账", "催进度", "埋句过早", "检查样品复读", "质检说明书",
+            "多套免责", "咽下后", "缺咽下一锤", "咽下自相矛盾", "权威过早",
+            "角色错位", "语气词注水",
+        )
+    ):
+        return (
+            f"【偷吃口感】{issue}。"
+            "严格按压缩正例换水果：少一块→溅脸手脏→上次→姐姐→样品→"
+            "检查不算吃→吐出来/咽了→末四拍；删大颗检查/桌上假吐/新鲜闲聊。"
+        )
+    return None
+
+
 def closing_quote_haystack(
     lines: list[str],
     speakers: list[str] | None,
@@ -92,15 +109,78 @@ def collect_humor_issues(
         excuse_n += 1
     if excuse_n >= 2:
         cons.append("中段多套免责借口叠罗汉")
-    if re.search(r"偷吃|饭前|水果|苹果|草莓|葡萄", "".join(lines)):
+    if re.search(r"偷吃|饭前|水果|苹果|草莓|葡萄|西瓜|香蕉|芒果", "".join(lines)):
         if re.search(
-            r"半成品|大家安全|新不新鲜|合格证书|专业方法|含三秒|"
+            r"半成品|大家安全|新不新鲜|新鲜不新鲜|不新鲜|合格证书|专业方法|含三秒|"
             r"为了大家|品质检测|安全起见|确认甜度|确认质量|是甜的",
             body_text,
         ):
             cons.append("偷吃质检说明书注水，不好笑")
         if sum(1 for ln in lines if "洗手" in ln) >= 2:
             cons.append("偷吃质检说明书注水，不好笑")
+        if sum(1 for ln in lines if "擦过" in ln) >= 2:
+            cons.append("偷吃质检说明书注水，不好笑")
+        if any(re.search(r"倒是说|你倒是|到底咽|你倒是说", ln) for ln in lines):
+            cons.append("偷吃催进度，不好笑")
+        if any(
+            re.search(r"大颗|小的不用|容易检查|检查工作|检查过了|大的都检查", ln)
+            for ln in lines
+        ):
+            cons.append("偷吃质检说明书注水，不好笑")
+        if any(
+            re.search(r"吐出来了.{0,6}(桌上|这里|那儿)|吐在桌上", ln)
+            for ln in lines
+        ):
+            cons.append("偷吃咽下自相矛盾，不好笑")
+        mid = lines[:-4] if len(lines) > 4 else lines
+        mid_pairs = list(
+            zip(
+                (speakers or [""] * len(lines))[: len(mid)],
+                mid,
+                strict=False,
+            )
+        )
+        sample_n = sum(
+            1
+            for sp, ln in mid_pairs
+            if sp == "灿灿" and re.search(r"检查样品|特地挑", ln)
+        )
+        if sample_n >= 2:
+            cons.append("偷吃检查样品复读，不好笑")
+        if any(
+            sp == "昭昭"
+            and (
+                re.search(r"这是检查样品|特地挑出来", ln)
+                or (
+                    "检查不算吃" in ln
+                    and not re.search(r"你刚才说|你自己说|你不是说|你刚说", ln)
+                )
+            )
+            for sp, ln in zip(speakers or [""] * len(lines), lines, strict=False)
+        ):
+            cons.append("偷吃角色错位，不好笑")
+        if any(
+            re.search(r"中间才准|边上不甜|比我拇指|挖的那勺", ln) for ln in lines
+        ):
+            cons.append("偷吃质检说明书注水，不好笑")
+        bury_i = next(
+            (i for i, ln in enumerate(lines) if "检查不算吃" in ln),
+            None,
+        )
+        sister_i = next(
+            (i for i, ln in enumerate(lines) if "我是姐姐" in ln),
+            None,
+        )
+        last_i = next(
+            (i for i, ln in enumerate(lines) if re.search(r"上次是上次|上次妈妈", ln)),
+            None,
+        )
+        if sister_i is not None and sister_i < 4:
+            cons.append("偷吃权威过早，不好笑")
+        if bury_i is not None:
+            anchors = [i for i in (sister_i, last_i) if i is not None]
+            if anchors and bury_i < max(anchors):
+                cons.append("偷吃埋句过早，不好笑")
         check_i = next(
             (
                 i
@@ -110,15 +190,16 @@ def collect_humor_issues(
             None,
         )
         if check_i is not None:
+            # 须灿灿真赖账（溅/手脏）；「擦过/那是果汁」不算
             cancan_dodge = any(
                 (speakers[i] if speakers and i < len(speakers) else "") == "灿灿"
-                and re.search(r"溅|手脏|擦过|果汁", lines[i])
+                and re.search(r"溅|手脏", lines[i])
                 for i in range(check_i)
             )
             if not cancan_dodge:
                 cons.append("偷吃缺赖账抬杠，不好笑")
-        if sum(1 for ln in lines if re.search(r"[啦呀嘛]$", str(ln).rstrip())) >= 4:
-            cons.append("偷吃质检说明书注水，不好笑")
+        if sum(1 for ln in lines if re.search(r"[啦呀嘛]$", str(ln).rstrip())) >= 6:
+            cons.append("偷吃语气词注水，不好笑")
         pairs = list(zip(speakers or [""] * len(lines), lines, strict=False))
         spit_i = next(
             (
@@ -136,6 +217,9 @@ def collect_humor_issues(
             ),
             None,
         )
+        ask_spit = any(
+            re.search(r"吐出来|吐给我看|吐出来看看", ln) for ln in lines
+        )
         quote_indices = [
             i
             for i, (_sp, ln) in enumerate(pairs)
@@ -145,6 +229,12 @@ def collect_humor_issues(
             )
         ]
         quote_i = quote_indices[-1] if quote_indices else None
+        if bury_i is not None and (
+            spit_i is None
+            or not ask_spit
+            or (quote_i is not None and spit_i is not None and spit_i > quote_i)
+        ):
+            cons.append("偷吃缺咽下一锤，不好笑")
         if len(quote_indices) >= 2 or (
             quote_i is not None and quote_i < len(pairs) - 4
         ):
