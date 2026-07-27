@@ -11,11 +11,15 @@ RE_A_WHERE_DIFF = re.compile(r"哪里不一样|都是听|大人也要听小孩")
 RE_A_CITE_CLOSE = re.compile(
     r"(?:你刚才(?:明明|自己)?说|你自己(?:刚才)?说|你不是说|你刚说|你说的)",
 )
-RE_MOM_RULE = re.compile(r"应该|必须|规矩|听我的|我说|不行|不能")
+RE_MOM_RULE = re.compile(
+    r"应该|必须|规矩|听我的|我说|不行|不能|不许|别吃|得睡|别玩",
+)
 RE_KID_LOOP = re.compile(
     r"你自己说|你刚才|那你也是|你也这样|那你现在|妈妈你也",
 )
-RE_MOM_WAFFLE = re.compile(r"不是|不一样|那是|总之|反正|不是那个")
+RE_MOM_WAFFLE = re.compile(
+    r"不是|不一样|那是|总之|反正|不是那个|不算|尝咸淡|大人|工作需要",
+)
 
 
 def _dialogue_lines(story: dict) -> tuple[list[str], list[str]]:

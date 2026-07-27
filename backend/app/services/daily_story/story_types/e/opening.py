@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 
+from app.services.daily_story.dialogue_text import score_opening_cinematic
+
 # 开场禁止妈妈已破功
 E_OPENING_SPOILER_RE = re.compile(
     r"行行行|算你说得对|随便你|说不通|唉算了|"
@@ -20,7 +22,8 @@ E_OPENING_C_RE = re.compile(
     r"不公平|谁先拿|你输了",
 )
 E_OPENING_ANCHOR_RE = re.compile(
-    r"妈妈|妈|讲理|规矩|应该|不行|怎么又|我说",
+    r"妈妈|妈|讲理|规矩|应该|不行|怎么又|我说|"
+    r"挂钟|嘴角|勺子|屏幕|被窝|亮着",
 )
 
 
@@ -110,9 +113,10 @@ def score_opening_quality(story: dict) -> tuple[int, list[str], list[str]]:
             cons.append("E开场与正文首句重复")
             pts -= 3
 
-    if len(opening) == 2 and pts >= 0:
-        pts += 1
-        pros.append("E开场双句定格")
+    cin_pts, cin_pros, cin_cons = score_opening_cinematic(lines_o)
+    pts += cin_pts
+    pros.extend(cin_pros)
+    cons.extend(cin_cons)
 
     return max(-8, min(8, pts)), pros, cons
 
@@ -122,6 +126,7 @@ def opening_revision_hint(issue: str) -> str | None:
         return None
     return (
         f"【开场·E】{issue}。"
-        "1–2 句定格找妈妈讲理/挨训前（妈你怎么又/我说不行）；"
-        "勿行行行/嘘别告诉/不公平。"
+        "须 2 句正片第一镜：地点+现行（灶台嘴角、卧室挂钟/被窝亮光）；"
+        "换人说，speaker 可为孩子或妈妈；先抓现行再立规；"
+        "勿行行行/孩子预支规矩/嘘别告诉；勿单句干问。"
     )

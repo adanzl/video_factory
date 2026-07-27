@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 
+from app.services.daily_story.dialogue_text import score_opening_cinematic
+
 # 开场禁止已露馅/已受罚
 B_OPENING_CAUGHT_RE = re.compile(
     r"完蛋|死定了|站好|罚站|被抓|妈妈来了|露馅了|藏不住了|"
@@ -95,9 +97,10 @@ def score_opening_quality(story: dict) -> tuple[int, list[str], list[str]]:
         pts += 3
         pros.append("B开场密谋片头")
 
-    if len(opening) == 2 and pts >= 0:
-        pts += 2
-        pros.append("B开场双句定格")
+    cin_pts, cin_pros, cin_cons = score_opening_cinematic(lines_o)
+    pts += cin_pts
+    pros.extend(cin_pros)
+    cons.extend(cin_cons)
 
     dialogue = story.get("dialogue")
     if isinstance(dialogue, list) and dialogue and lines_o:
@@ -123,6 +126,6 @@ def opening_revision_hint(issue: str) -> str | None:
         return None
     return (
         f"【开场·B】{issue}。"
-        "1–2 句姐弟嘀咕/分工（嘘、别告诉、你望风我拆），"
-        "点名主题物；勿完蛋/勿妈妈/勿不公平。"
+        "须 2 句正片第一镜：地点+嘀咕/分工（厨房柜门缝、玄关书包）；"
+        "嘘/别告诉/你望风；勿完蛋/勿不公平；勿单句干问。"
     )
