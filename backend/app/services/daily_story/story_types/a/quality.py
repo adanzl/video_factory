@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 
 from app.services.daily_story.story_types.a import humor as a_humor
+from app.services.daily_story.story_types.a import facts as a_facts
+from app.services.daily_story.story_types.a import opening as a_opening
 from app.services.daily_story.story_types.quality import (
     RE_SOFT_LAST,
     RE_SURRENDER,
@@ -68,6 +70,13 @@ def score_punchline(
     return bonus, details
 
 
+def _a_revision_hint(issue: str) -> str | None:
+    from app.services.daily_story.story_types.a.facts import fact_revision_hint
+    from app.services.daily_story.story_types.a.opening import opening_revision_hint
+
+    return fact_revision_hint(issue) or opening_revision_hint(issue)
+
+
 QUALITY_PROFILE = TypeQualityProfile(
     code="A",
     score_punchline=score_punchline,
@@ -86,6 +95,9 @@ QUALITY_PROFILE = TypeQualityProfile(
         "追问闭环",
         "引先例",
         "权威",
+        "好笑",
+        "事实",
+        "开场",
     ),
     punch_before_soft_markers=SHARED_PUNCH_SOFT
     + (
@@ -95,6 +107,9 @@ QUALITY_PROFILE = TypeQualityProfile(
         "你也",
     ),
     collect_humor_issues=a_humor.collect_humor_issues,
+    collect_fact_issues=a_facts.collect_fact_issues,
+    score_opening_quality=a_opening.score_opening_quality,
     closing_quote_haystack=a_humor.closing_quote_haystack,
     stop_on_ungrounded_quote=True,
+    humor_revision_hint=_a_revision_hint,
 )

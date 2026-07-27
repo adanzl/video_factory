@@ -527,6 +527,24 @@ def score_daily_story(
     if not isinstance(opening, list) or not (1 <= len(opening) <= 2):
         score -= 5
         cons.append("缺发现开场")
+    elif profile.score_opening_quality:
+        op_pts, op_pros, op_cons = profile.score_opening_quality(story)
+        score += op_pts
+        pros.extend(op_pros)
+        cons.extend(op_cons)
+
+    if profile.collect_fact_issues:
+        fact_issues = profile.collect_fact_issues(story)
+        if fact_issues:
+            for issue in fact_issues:
+                cons.append(issue)
+            score -= min(
+                21,
+                len(fact_issues) * profile.fact_issue_penalty,
+            )
+        else:
+            if profile.code in ("A", "B", "C"):
+                pros.append("事实自洽")
 
     # ── 角色违规 ──
     mom_n = sum(
@@ -772,6 +790,14 @@ def build_quality_revision_hints(
                     f"【好笑】{issue_text}。中段一件具体小事升级，"
                     "收束只引前文真实说过的话。"
                 )
+        elif kind in ("fact", "opening"):
+            hint = None
+            if q_profile.humor_revision_hint:
+                hint = q_profile.humor_revision_hint(issue_text)
+            if hint:
+                hints.append(hint)
+            else:
+                hints.append(f"【修补】{issue_text}。")
         elif kind in ("c_filmable", "c_chatter", "c_de_a", "quote"):
             hint = (
                 q_profile.humor_revision_hint(issue_text)
@@ -812,10 +838,15 @@ def build_quality_revision_hints(
         escalation=need_esc,
         closing=not has_punch_ending,
     )
-    if profile.code == "C" and isinstance(story, dict):
+    if profile.code == "C" and isinstance(story, dict) and primary_kind != "opening":
         scope_line = format_c_dialogue_scope_hint(story, scope)
         if scope_line:
             hints.append(scope_line)
+    if primary_kind == "opening":
+        hints.append(
+            "【改稿范围】只改 discovery_opening（1–2 句）；"
+            "正文 dialogue 与末四拍勿动。",
+        )
 
     return "\n".join(hints)
 

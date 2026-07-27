@@ -5,104 +5,22 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 
+from app.services.daily_story.story_types.b import facts as b_facts
+from app.services.daily_story.story_types.b import humor as b_humor
+from app.services.daily_story.story_types.b import opening as b_opening
 from app.services.daily_story.story_types.quality import (
-    RE_BOOMERANG_RULE,
     RE_SOFT_LAST,
     SHARED_PUNCH_SOFT,
     TypeQualityProfile,
 )
 
-RE_ALLY = re.compile(
-    r"一起|咱俩|别告诉|瞒着|瞒妈|约定|联手|暗号|分工|你望风|你放风|放风|望风|说好了",
-)
-RE_BLAME = re.compile(
-    r"都怪你|是你先|你答应|不是我的|你先|赖我|你不是说好|才不是我的",
-)
-RE_EXPOSED = re.compile(
-    r"露馅|完了|糟糕|抓到了|听见了|看见了|妈妈|撞见|藏不住",
-)
-RE_PLAN_FAIL = re.compile(
-    r"多拿|忘藏|说漏|掉了|洒了|露出来|忘了藏|袋口|碎|脚印|油渍",
-)
 _A_STYLE_TAIL = re.compile(r"那不一样|哪里不一样|你刚才说|你自己说")
-RE_MOM_PUNISH = re.compile(
-    r"站好|过来|罚|不许|今晚|检讨|说清楚|墙角|罚站|别想吃",
-)
-RE_DOOM = re.compile(r"完蛋|完了|糟糕|死定了|藏不住|露馅")
-
-RE_BLAME_MID = re.compile(r"都怪你|是你先|你答应|赖我|你还怪")
-
-HUMOR_ISSUE_CAPS: tuple[tuple[str, int], ...] = (
-    ("偏A式末四拍", 6),
-    ("缺结盟约定", 5),
-    ("缺互甩锅", 7),
-    ("偏C式争公平", 5),
-    ("中段甩锅拖沓", 8),
-    ("收束戛然而止", 6),
-    ("走样连锁中甩锅打断", 7),
-    ("收束缺权威落槌", 7),
-)
-
-
-def collect_humor_issues(
-    lines: list[str],
-    speakers: list[str] | None,
-) -> list[str]:
-    cons: list[str] = []
-    n = len(lines)
-    if n < 6:
-        return cons
-
-    head6 = "".join(lines[:6])
-    tail6 = "".join(lines[-6:])
-    tail4 = "".join(lines[-4:])
-    tail8 = "".join(lines[-8:]) if n >= 8 else "".join(lines)
-
-    if _A_STYLE_TAIL.search(tail4) and not RE_BLAME.search(tail6):
-        cons.append("B收束偏A式末四拍")
-
-    if not RE_ALLY.search(head6) and not RE_ALLY.search("".join(lines[: n // 3])):
-        cons.append("B缺结盟约定")
-
-    if RE_EXPOSED.search(tail4) and not RE_BLAME.search(tail6):
-        cons.append("B露馅前缺互甩锅")
-
-    body_pre = "".join(lines[: max(0, n - 8)])
-    if body_pre.count("不公平") >= 2 and not RE_ALLY.search(head6):
-        cons.append("B偏C式争公平口号")
-
-    if RE_BOOMERANG_RULE.search(tail4) and not RE_BLAME.search(tail6):
-        cons.append("B收束偏回旋镖非甩锅")
-
-    body_mid = lines[6 : max(6, n - 8)]
-    blame_mid = sum(1 for ln in body_mid if RE_BLAME_MID.search(ln))
-    if blame_mid >= 4:
-        cons.append("B中段甩锅拖沓")
-
-    chain_zone = lines[6 : min(n - 6, 18)]
-    fail_i = next((i for i, ln in enumerate(chain_zone) if RE_PLAN_FAIL.search(ln)), None)
-    if fail_i is not None:
-        chain_slice = chain_zone[fail_i : fail_i + 5]
-        if any(RE_BLAME_MID.search(ln) for ln in chain_slice):
-            cons.append("B走样连锁中甩锅打断")
-
-    last = lines[-1] if lines else ""
-    if RE_EXPOSED.search(tail6) and not RE_SOFT_LAST.search(last):
-        if RE_BLAME.search(last) and "哼" not in last and "才不是" not in last:
-            cons.append("B收束戛然而止缺嘴硬余韵")
-
-    mom_late = False
-    if speakers and len(speakers) == n:
-        mom_late = any(
-            speakers[i] == "妈妈" for i in range(max(0, n - 8), n)
-        )
-    if mom_late or RE_EXPOSED.search(tail8):
-        has_punish = bool(RE_MOM_PUNISH.search(tail8))
-        has_doom = bool(RE_DOOM.search(tail8))
-        if not has_punish or not has_doom:
-            cons.append("B收束缺权威落槌")
-
-    return cons
+RE_ALLY = b_humor.RE_ALLY
+RE_BLAME = b_humor.RE_BLAME
+RE_EXPOSED = b_humor.RE_EXPOSED
+RE_PLAN_FAIL = b_humor.RE_PLAN_FAIL
+RE_MOM_PUNISH = b_humor.RE_MOM_PUNISH
+RE_DOOM = b_humor.RE_DOOM
 
 
 def score_scene_beat(
@@ -116,74 +34,15 @@ def score_scene_beat(
         return 0, []
     if RE_PLAN_FAIL.search(mid_text):
         return 4, ["同盟走样场面"]
+    chain_run = b_humor._longest_chain_run(
+        body[1:] if len(body) > 1 else body,
+        b_humor.RE_CHAIN_ACTION,
+    )
+    if chain_run >= 3:
+        return 5, ["越补越糟连锁场面"]
     if RE_BLAME.search(mid_text) and RE_ALLY.search("".join(body[: len(body) // 2])):
-        return 3, ["走样后甩锅"]
+        return 2, ["走样后甩锅"]
     return 0, []
-
-
-def humor_revision_hint(issue: str) -> str | None:
-    if "缺结盟" in issue:
-        return (
-            f"【好笑·B】{issue}。"
-            "前 6 句姐弟亲口约定分工或暗号（望风/下手/别告诉妈），扣主题实物。"
-        )
-    if "缺互甩锅" in issue:
-        return (
-            f"【好笑·B】{issue}。"
-            "露馅前先互甩 2 句：都怪你/是你先/你答应的；须扣同盟分工。"
-        )
-    if "偏A" in issue:
-        return (
-            f"【好笑·B】{issue}。"
-            "收束用互甩锅+一起露馅+末句嘴硬推给对方；"
-            "勿「那不一样/哪里不一样」四连拍。"
-        )
-    if "偏C" in issue or "回旋镖" in issue:
-        return (
-            f"【好笑·B】{issue}。"
-            "主线是同盟裂了互推，不是争公平赛规或回旋镖扣原话。"
-        )
-    if "拖沓" in issue:
-        return (
-            f"【好笑·B】{issue}。"
-            "走样写成 3–5 句连续动作链；删「你还怪我」链；"
-            "甩锅全篇≤4 句，连锁后各 1 句即进露馅。"
-        )
-    if "戛然而止" in issue:
-        return (
-            f"【好笑·B】{issue}。"
-            "露馅后末句加哼/才不是/才不是我的主意，短句嘴硬收束；"
-            "勿纯怼句或感叹号怼停。"
-        )
-    if "连锁" in issue:
-        return (
-            f"【好笑·B】{issue}。"
-            "意外 3–5 句连拍期间只写动作与慌张，勿插入都怪你；"
-            "连锁结束后再各甩 1 句。"
-        )
-    if "权威落槌" in issue:
-        return (
-            f"【好笑·B】{issue}。"
-            "妈妈 1 句短惩罚（如你们过来站好），姐弟接完蛋了/完了；"
-            "再短甩锅，末句哼/才不是。"
-        )
-    return None
-
-
-def score_funniness_tail(lines: list[str]) -> tuple[int, list[str]]:
-    tail4 = lines[-4:] if len(lines) >= 4 else lines
-    late4_text = "".join(tail4)
-    points = 0
-    pros: list[str] = []
-    if RE_BLAME.search(late4_text) and RE_EXPOSED.search(late4_text):
-        points += 3
-        pros.append("露馅互甩好笑")
-    if RE_ALLY.search("".join(lines[: max(1, len(lines) // 4)])) and RE_PLAN_FAIL.search(
-        late4_text,
-    ):
-        points += 2
-        pros.append("同盟翻车好笑")
-    return points, pros
 
 
 def score_punchline(
@@ -244,7 +103,7 @@ def score_punchline(
 QUALITY_PROFILE = TypeQualityProfile(
     code="B",
     score_punchline=score_punchline,
-    closing_pro_markers=("露馅", "甩锅", "翻车", "破功", "嘴硬", "走样", "落槌"),
+    closing_pro_markers=("露馅", "甩锅", "翻车", "破功", "嘴硬", "走样", "落槌", "连锁"),
     summary_highlight_tokens=(
         "推进",
         "露馅",
@@ -253,6 +112,10 @@ QUALITY_PROFILE = TypeQualityProfile(
         "破功",
         "走样",
         "落槌",
+        "连锁",
+        "好笑",
+        "事实",
+        "开场",
     ),
     punch_before_soft_markers=SHARED_PUNCH_SOFT
     + (
@@ -263,10 +126,12 @@ QUALITY_PROFILE = TypeQualityProfile(
         "完蛋",
         "站好",
     ),
-    collect_humor_issues=collect_humor_issues,
+    collect_humor_issues=b_humor.collect_humor_issues,
+    collect_fact_issues=b_facts.collect_fact_issues,
+    score_opening_quality=b_opening.score_opening_quality,
     score_scene_beat=score_scene_beat,
-    score_funniness_tail=score_funniness_tail,
-    humor_issue_caps=HUMOR_ISSUE_CAPS,
-    humor_revision_hint=humor_revision_hint,
+    score_funniness_tail=b_humor.score_funniness_tail,
+    humor_issue_caps=b_humor.HUMOR_ISSUE_CAPS,
+    humor_revision_hint=b_humor.humor_revision_hint,
     penalize_stubborn_end=False,
 )

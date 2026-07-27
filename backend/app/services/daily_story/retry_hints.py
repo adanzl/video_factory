@@ -246,6 +246,11 @@ def build_validation_retry_hints(
 
 _QUALITY_CON_PRIORITY: tuple[tuple[str, str], ...] = (
     ("收束引话无出处", "quote"),
+    ("B事实", "fact"),
+    ("C事实", "fact"),
+    ("可核对事实", "fact"),
+    ("B开场", "opening"),
+    ("C开场", "opening"),
     ("C收束缺可拍争法", "c_filmable"),
     ("C中段归属口水战", "c_chatter"),
     ("C收束偏A", "c_de_a"),
@@ -276,6 +281,8 @@ def revision_scope_kind(
 ) -> str:
     if primary_kind in ("c_filmable", "c_chatter", "redundancy"):
         return "mid"
+    if primary_kind in ("fact", "opening"):
+        return "last4" if primary_kind == "fact" else "opening"
     if primary_kind in ("quote", "c_de_a"):
         return "last4"
     if primary_kind == "humor":

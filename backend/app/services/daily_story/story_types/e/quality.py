@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 
+from app.services.daily_story.story_types.e import humor as e_humor
+from app.services.daily_story.story_types.e import opening as e_opening
 from app.services.daily_story.story_types.quality import (
     SHARED_PUNCH_SOFT,
     TypeQualityProfile,
@@ -72,4 +74,8 @@ QUALITY_PROFILE = TypeQualityProfile(
     penalize_split_end=True,
     penalize_stubborn_end=False,
     penalize_mom_judge=True,
+    collect_humor_issues=e_humor.collect_humor_issues,
+    score_opening_quality=e_opening.score_opening_quality,
+    humor_issue_caps=e_humor.HUMOR_ISSUE_CAPS,
+    humor_revision_hint=e_humor.humor_revision_hint,
 )

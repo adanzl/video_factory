@@ -40,3 +40,64 @@ def append_a_opening_errors(
                 "禁止读秒宣判或直接立规（如「计时器才走了30秒」）",
             )
             break
+
+
+def _opening_body_overlap(a: str, b: str) -> bool:
+    left = (a or "").strip()
+    right = (b or "").strip()
+    if not left or not right:
+        return False
+    if left == right or left in right or right in left:
+        return True
+    n = min(len(left), len(right), 8)
+    return n >= 4 and left[:n] == right[:n]
+
+
+def score_opening_quality(story: dict) -> tuple[int, list[str], list[str]]:
+    """A 类开场质量：约 -6～+6。"""
+    pros: list[str] = []
+    cons: list[str] = []
+    opening = story.get("discovery_opening")
+    if not isinstance(opening, list) or not opening:
+        return -5, pros, ["A开场缺失"]
+
+    lines_o = [
+        str(d.get("line") or "").strip()
+        for d in opening
+        if isinstance(d, dict)
+    ]
+    joined = "".join(lines_o)
+    pts = 0
+
+    if A_OPENING_SPOILER_RE.search(joined):
+        cons.append("A开场先揭穿一锤")
+        pts -= 5
+    elif A_OPENING_MID_FIGHT_RE.search(joined):
+        cons.append("A开场像读秒宣判")
+        pts -= 4
+    else:
+        pts += 2
+        pros.append("A开场发现现场")
+
+    dialogue = story.get("dialogue")
+    if isinstance(dialogue, list) and dialogue and lines_o:
+        first_body = ""
+        for item in dialogue:
+            if isinstance(item, dict):
+                first_body = str(item.get("line") or "").strip()
+                if first_body:
+                    break
+        if first_body and _opening_body_overlap(lines_o[0], first_body):
+            cons.append("A开场与正文首句重复")
+            pts -= 3
+
+    return max(-8, min(6, pts)), pros, cons
+
+
+def opening_revision_hint(issue: str) -> str | None:
+    if "开场" not in issue and "A开场" not in issue:
+        return None
+    return (
+        f"【开场·A】{issue}。"
+        "1–2 句看见物/动作（计时器/作业本），勿自己才刷/算错/到点了。"
+    )

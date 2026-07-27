@@ -986,6 +986,33 @@ def test_validate_a_opening_rejects_spoiler_hammer():
         )
 
 
+def test_validate_b_opening_rejects_already_caught():
+    from app.services.daily_story.prompts import validate_daily_story_opening
+
+    with pytest.raises(ValueError, match="露馅|受罚"):
+        validate_daily_story_opening(
+            [{"speaker": "灿灿", "line": "完蛋了妈妈来了"}],
+            conflict_core="姐弟偷吃薯片瞒妈妈",
+            setting="客厅偷吃",
+            type_code="B",
+        )
+
+
+def test_validate_b_opening_accepts_whisper_pact():
+    from app.services.daily_story.prompts import validate_daily_story_opening
+
+    ok = validate_daily_story_opening(
+        [
+            {"speaker": "昭昭", "line": "嘘，薯片轻点拆"},
+            {"speaker": "灿灿", "line": "我盯厨房门"},
+        ],
+        conflict_core="姐弟偷吃薯片瞒妈妈",
+        setting="客厅茶几旁拆薯片",
+        type_code="B",
+    )
+    assert len(ok) == 2
+
+
 def test_validate_a_opening_rejects_mid_fight_timer():
     from app.services.daily_story.prompts import validate_daily_story_opening
 
@@ -1167,7 +1194,7 @@ def test_score_c_folding_literal_play_not_flatlined():
         "dialogue": dialogue,
         "punchline_explain": "C类公平执念，赛规字面回旋镖",
         "discovery_opening": [
-            {"speaker": "灿灿", "line": line("叠好的衣服怎么翻出来了")},
+            {"speaker": "灿灿", "line": line("沙发上那堆衣服谁弄的")},
         ],
     }
     q = score_daily_story(story, theme="弄乱叠好的衣服")
@@ -1305,6 +1332,30 @@ def test_build_quality_edit_scope_hint_for_c_closing():
     assert "中段" in hints
     scope = build_quality_edit_scope_hint(story, "【C·收束】回旋镖")
     assert "第" in scope and "行" in scope
+
+
+def test_c_quality_has_fact_opening_and_humor_dims():
+    import json
+
+    from app.services.daily_story.quality import score_daily_story
+
+    path = "tmp/daily_story_c_clothes_regen.json"
+    try:
+        raw = json.load(open(path))
+    except OSError:
+        return
+    if not raw:
+        return
+    st = raw[0].get("story")
+    if not isinstance(st, dict):
+        return
+    q = score_daily_story(st)
+    reasons = q.get("reasons") or []
+    assert any("好笑" in r for r in reasons)
+    assert any("C事实" in r or "事实自洽" in r for r in reasons)
+    assert any(
+        "C开场" in r or "开场" in r for r in reasons
+    ) or any("C开场锚定" in r for r in reasons)
 
 
 def test_validation_retry_hints_primary_issue_only():

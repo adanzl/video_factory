@@ -288,16 +288,30 @@ def append_type_body_validation_errors(story: dict, errors: list[str]) -> None:
         append_homework_fact_errors,
     )
     from app.services.daily_story.story_types.a.validate import append_a_body_errors
+    from app.services.daily_story.story_types.b.facts import append_b_fact_errors
 
     append_homework_fact_errors(story, errors)
     append_brush_timer_fact_errors(story, errors)
     code = resolve_story_type_code(story)
+    append_b_fact_errors(story, errors)
     if code == "A":
         append_a_body_errors(story, errors)
+    elif code == "B":
+        from app.services.daily_story.story_types.b.validate import append_b_body_errors
+
+        append_b_body_errors(story, errors)
     elif code == "C":
         from app.services.daily_story.story_types.c.validate import append_c_body_errors
 
         append_c_body_errors(story, errors)
+    elif code == "D":
+        from app.services.daily_story.story_types.d.validate import append_d_body_errors
+
+        append_d_body_errors(story, errors)
+    elif code == "E":
+        from app.services.daily_story.story_types.e.validate import append_e_body_errors
+
+        append_e_body_errors(story, errors)
 
 
 def patch_type_body(story: dict) -> list[str]:
@@ -310,6 +324,14 @@ def patch_type_body(story: dict) -> list[str]:
         from app.services.daily_story.story_types.c.patch import patch_c_body
 
         return patch_c_body(story)
+    if code == "D":
+        from app.services.daily_story.story_types.d.patch import patch_d_body
+
+        return patch_d_body(story)
+    if code == "E":
+        from app.services.daily_story.story_types.e.patch import patch_e_body
+
+        return patch_e_body(story)
     return []
 
 
@@ -320,5 +342,15 @@ def validate_type_opening(
     errors: list[str],
 ) -> None:
     from app.services.daily_story.story_types.a.opening import append_a_opening_errors
+    from app.services.daily_story.story_types.b.opening import append_b_opening_errors
 
     append_a_opening_errors(normalized, type_code=type_code, errors=errors)
+    append_b_opening_errors(normalized, type_code=type_code, errors=errors)
+    from app.services.daily_story.story_types.c.opening import append_c_opening_errors
+
+    append_c_opening_errors(normalized, type_code=type_code, errors=errors)
+    from app.services.daily_story.story_types.d.opening import append_d_opening_errors
+    from app.services.daily_story.story_types.e.opening import append_e_opening_errors
+
+    append_d_opening_errors(normalized, type_code=type_code, errors=errors)
+    append_e_opening_errors(normalized, type_code=type_code, errors=errors)

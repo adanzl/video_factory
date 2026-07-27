@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 
+from app.services.daily_story.story_types.d import humor as d_humor
+from app.services.daily_story.story_types.d import opening as d_opening
 from app.services.daily_story.story_types.quality import (
     RE_BOOMERANG_RULE,
     RE_SOFT_LAST,
@@ -74,4 +76,8 @@ QUALITY_PROFILE = TypeQualityProfile(
         "你刚才",
         "你现在也",
     ),
+    collect_humor_issues=d_humor.collect_humor_issues,
+    score_opening_quality=d_opening.score_opening_quality,
+    humor_issue_caps=d_humor.HUMOR_ISSUE_CAPS,
+    humor_revision_hint=d_humor.humor_revision_hint,
 )

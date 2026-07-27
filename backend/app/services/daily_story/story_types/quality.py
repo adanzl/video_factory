@@ -24,6 +24,8 @@ SceneBeatScorer = Callable[
 ]
 FunninessTailScorer = Callable[[list[str]], tuple[int, list[str]]]
 HumorRevisionHintFn = Callable[[str], str | None]
+FactIssueCollector = Callable[[dict], list[str]]
+OpeningQualityScorer = Callable[[dict], tuple[int, list[str], list[str]]]
 
 RE_BOOMERANG_RULE = re.compile(
     r"你自己说|你说的|你承认|你刚才说|你刚说|你不是说|你自己.*说|"
@@ -106,6 +108,9 @@ class TypeQualityProfile:
     score_funniness_tail: FunninessTailScorer | None = None
     humor_issue_caps: tuple[tuple[str, int], ...] = field(default_factory=tuple)
     humor_revision_hint: HumorRevisionHintFn | None = None
+    collect_fact_issues: FactIssueCollector | None = None
+    score_opening_quality: OpeningQualityScorer | None = None
+    fact_issue_penalty: int = 7
 
     def layer_patterns(self):
         return story_line_for_code(self.code).layer_patterns
