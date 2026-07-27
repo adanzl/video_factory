@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 
+from app.services.daily_story.dialogue_text import score_opening_cinematic
+
 # A 开场禁止先揭穿一锤（灿灿已翻车/双标）
 A_OPENING_SPOILER_RE = re.compile(
     r"自己才|自己刷了|自己算错|自己写错|自己弹错|"
@@ -54,7 +56,7 @@ def _opening_body_overlap(a: str, b: str) -> bool:
 
 
 def score_opening_quality(story: dict) -> tuple[int, list[str], list[str]]:
-    """A 类开场质量：约 -6～+6。"""
+    """A 类开场质量：约 -8～+8。"""
     pros: list[str] = []
     cons: list[str] = []
     opening = story.get("discovery_opening")
@@ -79,6 +81,11 @@ def score_opening_quality(story: dict) -> tuple[int, list[str], list[str]]:
         pts += 2
         pros.append("A开场发现现场")
 
+    cin_pts, cin_pros, cin_cons = score_opening_cinematic(lines_o)
+    pts += cin_pts
+    pros.extend(cin_pros)
+    cons.extend(cin_cons)
+
     dialogue = story.get("dialogue")
     if isinstance(dialogue, list) and dialogue and lines_o:
         first_body = ""
@@ -91,7 +98,7 @@ def score_opening_quality(story: dict) -> tuple[int, list[str], list[str]]:
             cons.append("A开场与正文首句重复")
             pts -= 3
 
-    return max(-8, min(6, pts)), pros, cons
+    return max(-8, min(8, pts)), pros, cons
 
 
 def opening_revision_hint(issue: str) -> str | None:
@@ -99,5 +106,6 @@ def opening_revision_hint(issue: str) -> str | None:
         return None
     return (
         f"【开场·A】{issue}。"
-        "1–2 句看见物/动作（计时器/作业本），勿自己才刷/算错/到点了。"
+        "须 2 句正片第一镜：地点+物/动作（洗手台牙膏沫、餐桌水果盘）；"
+        "勿自己才刷/算错/到点了；勿单句干问。"
     )

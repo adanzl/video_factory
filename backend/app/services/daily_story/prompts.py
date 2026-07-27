@@ -51,7 +51,7 @@ DAILY_STORY_RETRY_PATCH_DEFICIT_MAX = 32
 DAILY_STORY_BODY_WRITE_TARGET_MIN = 310
 DAILY_STORY_BODY_WRITE_TARGET_MAX = 350
 # DAILY_STORY_LINE_CHARS_MAX 见 dialogue_text.py（上方已导入）
-DAILY_STORY_OPENING_LINES_MIN = 1
+DAILY_STORY_OPENING_LINES_MIN = 2
 DAILY_STORY_OPENING_LINES_MAX = 2
 
 # 开场钩子仅作提示词约束，不做关键词硬卡（主题各异，固定词表易误杀）
@@ -250,7 +250,7 @@ _DAILY_STORY_SYSTEM_SHARED = """\
 - 破功/软收优先在姐弟对白里完成；妈妈最多旁听、附和或事后收拾（E 类可在妈妈对白里破功）。
 
 【发现开场（系统另写，正文勿写）】
-- 发现现场的质问/惊呼（如「鞋带怎么系一块了」）由系统单独生成并前置。
+- 开场=正片第一镜：系统另写 **2 句**，须有背景地点 + 可拍画面，再前置进片。
 - 正文 dialogue 从互怼、讲理、甩规则开始，禁止再写寒暄或重复发现现场。
 - setting 仍须写清地点 + 已发生的同一冲突动作，与 conflict_core 同一件实物/规则
   （反例：setting 写「各抓一个对峙」，core 却写「争同一个蓝抱枕」）。
@@ -465,51 +465,65 @@ def build_daily_story_prompts(
 
 
 DAILY_STORY_OPENING_SYSTEM_PROMPT = f"""\
-你为昭昭&灿灿日常短剧写「发现现场」开场：观众一听就知道在争什么。
-只写 1–2 句发现/质问，不写正文互怼。
+你为昭昭&灿灿日常短剧写「正片开端」开场：像片头第一镜，观众立刻入戏。
+必须写 **2 句**（换人说），不写正文互怼中段。
 
-【角色】昭昭7岁弟弟、灿灿10岁姐姐；开场 speaker 仅二人，勿写妈妈。
+【角色】昭昭7岁弟弟、灿灿10岁姐姐、妈妈；开场 speaker 仅此三人。
+两句须换人；可以是姐弟互说，也可以是孩子与妈妈对说。
 【场景】家庭内部/门口；口语短句，每句≤{DAILY_STORY_LINE_CHARS_MAX}字；禁成人梗/网络热梗。
 
 【开场要干什么】
-写**正文开始之前**定格的一瞬：观众看见实物/动作/场面，知道马上要争什么。
-不是寒暄，也不是正文里已经吵起来的那一轮。
+开场=正片开端，不是旁白寒暄，也不是正文已经吵起来的那一轮。
+两句合起来必须同时有：
+1. **背景**：地点或场记里能看见的环境（厨房/卧室门口/洗手台/餐桌旁…）
+2. **画面**：冲突物 + 异常状态或正在发生的动作（可拍特写）
+禁止单句干问、抽象「不公平」、或只点名无场面。
+
+【双句分工】
+- 第1句：定场——环境 + 物/动作异常（观众脑内出画面）
+- 第2句：接住异常，点出马上要争什么（仍不展开辩论）
+须换人说，勿同人连说。可借用【现场】setting 里的地点词。
 
 【时间线（生成必守）】
-成片顺序是：**发现开场 → 正文第 1 句 → 正文第 2 句 → …**
+成片顺序是：**开场2句 → 正文第 1 句 → 正文第 2 句 → …**
 因此开场在剧情时间上**早于**下面 user 里的「正文前两句」。
 - 正文第 1 句里才第一次说出口的指责/规矩，开场里**不能**用「还/也/你刚才」去接。
 - 勿把正文前两句或更后面的反击、顶嘴、引用原话写进开场。
 - 开场只写「看见/抓住」当下；互怼从正文第 1 句起。
 
-【句式（优先挑一种，可两句接力）】
-- 看见实物：点名冲突物 + 异常状态
-  （例：「咦鞋带怎么系一块了」「新橡皮怎么在你手里」）
-- 抓住动作：点名正在抢/藏/弄脏
-  （例：「你干嘛抢我遥控器」「别藏我的彩笔」）
-- 质问规则入口：点出「谁先/不给/弄坏」但不展开辩论
-  （例：「谁先到的你凭什么先洗」「这酸奶不是说留给我的吗」）
-
-【正例】
-主题「把姐姐鞋带系一起」→ 灿灿：「咦我的鞋带怎么系一块了」
-主题「抢新橡皮」→ 昭昭：「新橡皮怎么攥你手里」
-主题「谁先洗澡」→ 灿灿：「我先到门口的我先洗澡」
-主题「争最后一瓶酸奶」→ 昭昭：「最后一瓶酸奶你怎么打开了」
+【正例（须双句·有背景有画面）】
+主题「把姐姐鞋带系一起」→
+  昭昭：玄关地板上鞋带怎么绕一块了
+  灿灿：谁把我鞋带系成死结了
+主题「抢新橡皮」→
+  昭昭：书桌上新橡皮怎么攥你手里
+  灿灿：刚拆封的你怎么先拿走了
+主题「谁先洗澡」→
+  灿灿：浴室门口拖鞋我先摆好的
+  昭昭：水龙头我先拧开的凭什么你先
+主题「争最后一瓶酸奶」→
+  昭昭：冰箱门开着最后一瓶酸奶呢
+  灿灿：你怎么已经撕开吸管了
+主题「九点必须睡觉」（可含妈妈）→
+  昭昭：妈，卧室挂钟都指向九了呀
+  妈妈：九点了必须睡觉，快去躺着
 
 【反例（禁止）】
+- 单薄一句：「鞋带怎么系一块了」（缺背景、缺第二镜）
 - 寒暄铺垫：「姐你在干嘛」「今天好无聊」
 - 直接开辩：「规则是谁先看见谁拿」「我是姐姐我说了算」
-- 抽象空话：「这不公平」「你怎么这样」——没点出实物/动作
-- 片头定场，不是正文互怼：勿把需要前文才成立的反击、双标对比、引用原话写在开场第 1 句
-- 妈妈出场、复述正文已有句子、续写互怼第二回合
+- 抽象空话：「这不公平」「你怎么这样」——没点出地点/实物/动作
+- 把需要前文才成立的反击、双标对比、引用原话写在开场
+- 妈妈已破功（行行行）、复述正文已有句子、续写互怼第二回合
 
 【输出】只输出 JSON：
-{{"opening":[{{"speaker":"昭昭","line":"…"}},…]}}
-opening 须 1–2 句；须锚定本次 conflict_core 的实物或动作。
+{{"opening":[{{"speaker":"昭昭","line":"…"}},{{"speaker":"灿灿","line":"…"}}]}}
+opening 必须恰好 2 句、换人说；speaker 为昭昭/灿灿/妈妈；
+须锚定本次 conflict_core 的实物或动作，并带地点/画面。
 """
 
 DAILY_STORY_OPENING_USER_TEMPLATE = """\
-请为下面这场戏写发现开场（1–2 句）。
+请为下面这场戏写正片开端开场（必须 2 句，换人说）。
 
 【主题】{theme}
 【场记】{scene_title}
@@ -519,9 +533,11 @@ DAILY_STORY_OPENING_USER_TEMPLATE = """\
 【正文前两句】（**开场之后才发生**，勿复述、勿接下去顶嘴、勿用「还」接这里的词）：
 {body_head}
 
-要求：开场只写正文开始**之前**能看见的现场（物/动作）；
+要求：开场=正片第一镜，须有**背景地点 + 可拍画面**；
+从【现场】里借地点词；第1句定场，第2句点冲突；
+speaker 为昭昭/灿灿/妈妈（可孩子对说，也可孩子与妈妈对说）；
 正文第 1 句尚未发生，禁止开场预支其中的「磨蹭/不许/放下」等指责后再用「还说我…」；
-不要寒暄，不要妈妈。直接输出 JSON。
+不要寒暄，不要只写一句干问。直接输出 JSON。
 """
 
 
@@ -869,7 +885,12 @@ def _append_dialogue_rhythm_errors(story: dict, errors: list[str]) -> None:
 
 
 def _append_mom_line_errors(story: dict, errors: list[str]) -> None:
-    """校验妈妈台词：句数上限、禁止裁判式收场。"""
+    """校验妈妈台词：句数上限、禁止裁判式收场。
+
+    E 类主戏就是妈妈被绕，允许略多（≤5）；其它类型主戏在姐弟，≤3。
+    """
+    from app.services.daily_story.story_types import resolve_story_type_code
+
     dialogue = story.get("dialogue")
     if not isinstance(dialogue, list):
         return
@@ -878,9 +899,12 @@ def _append_mom_line_errors(story: dict, errors: list[str]) -> None:
         for i, item in enumerate(dialogue)
         if isinstance(item, dict) and item.get("speaker") == "妈妈"
     ]
-    if len(mom_items) > 3:
+    type_code = resolve_story_type_code(story)
+    mom_max = 5 if type_code == "E" else 3
+    if len(mom_items) > mom_max:
         errors.append(
-            f"妈妈台词超过3句（{len(mom_items)}句），主戏应在姐弟"
+            f"妈妈台词超过{mom_max}句（{len(mom_items)}句），"
+            + ("E类仍须≤5句" if type_code == "E" else "主戏应在姐弟")
         )
     for _, item in mom_items:
         line = str(item.get("line") or "")
@@ -890,8 +914,8 @@ def _append_mom_line_errors(story: dict, errors: list[str]) -> None:
                     f"妈妈台词不可当裁判（发现「{pattern}」）：{line!r}"
                 )
                 break
-    # 妈妈的句数占比：总句数≤10 且妈妈≥3 句视为妈妈主导
-    if len(dialogue) <= 10 and len(mom_items) >= 3:
+    # 妈妈的句数占比：总句数≤10 且妈妈≥3 句视为妈妈主导（E 除外）
+    if type_code != "E" and len(dialogue) <= 10 and len(mom_items) >= 3:
         errors.append(
             f"短剧（{len(dialogue)}句）中妈妈台词过多（{len(mom_items)}句），禁止妈妈主导"
         )
@@ -1437,7 +1461,7 @@ def validate_daily_story_opening(
     setting: str = "",
     type_code: str | None = None,
 ) -> list[dict]:
-    """校验发现开场 1–2 句，返回规范化列表；失败抛 ValueError。"""
+    """校验发现开场 2 句，返回规范化列表；失败抛 ValueError。"""
     errors: list[str] = []
     if not isinstance(opening, list):
         raise ValueError("opening 必须是数组")
@@ -1450,7 +1474,7 @@ def validate_daily_story_opening(
             f"opening 须 {DAILY_STORY_OPENING_LINES_MIN}–"
             f"{DAILY_STORY_OPENING_LINES_MAX} 句，当前 {len(opening)}"
         )
-    allowed = {"昭昭", "灿灿"}
+    allowed = {"昭昭", "灿灿", "妈妈"}
     normalized: list[dict] = []
     for i, item in enumerate(opening or []):
         coerced, err = _coerce_opening_item(item, index=i)
@@ -1461,7 +1485,9 @@ def validate_daily_story_opening(
         speaker = coerced["speaker"]
         line = coerced["line"]
         if speaker not in allowed:
-            errors.append(f"opening[{i}] speaker 须为昭昭/灿灿，收到：{speaker!r}")
+            errors.append(
+                f"opening[{i}] speaker 须为昭昭/灿灿/妈妈，收到：{speaker!r}"
+            )
         if not line or not re.search(r"[\u4e00-\u9fff\w]", line):
             errors.append(f"opening[{i}] line 须含可发音内容")
         else:
@@ -1973,22 +1999,22 @@ def build_daily_story_opening_retry_user(
     must = _conflict_anchor_must_words(core)
     must_txt = "、".join(must) if must else core or "冲突实物/动作"
     avoid = (avoid_speaker or "").strip()
-    other = "灿灿" if avoid == "昭昭" else ("昭昭" if avoid == "灿灿" else "")
     speaker_hint = ""
-    if other:
+    if avoid in {"昭昭", "灿灿", "妈妈"}:
         speaker_hint = (
-            f"开场末句说话人必须是「{other}」"
+            f"开场末句说话人不能是「{avoid}」"
             f"（正文以「{avoid}」起句，避免拼后连说）；"
-            f"若只写 1 句也须是「{other}」。\n"
+            "可为另外两人之一。\n"
         )
     return (
         f"{base}\n\n"
         f"【重试】上一轮开场未通过：{errors}\n"
         f"{speaker_hint}"
         f"开场台词必须点名以下至少一词：{must_txt}；"
-        "两句时须换人；写正文开始前的定格现场，勿接正文前两句顶嘴。\n"
+        "必须 2 句且换人；写正文开始前的定格现场，勿接正文前两句顶嘴。\n"
         "请只输出合法 JSON："
-        '{"opening":[{"speaker":"昭昭","line":"..."}]}；'
+        '{"opening":[{"speaker":"昭昭","line":"..."},'
+        '{"speaker":"妈妈","line":"..."}]}；'
         "禁止写成 {\"speaker\":\"昭昭\":\"台词\"}。"
     )
 
@@ -2011,7 +2037,7 @@ def build_daily_story_quality_retry_user(
         f"【待修补维度】\n{revision_hints}\n\n"
         f"【字数硬卡】正文 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字，"
         f"每句 ≤{DAILY_STORY_LINE_CHARS_MAX} 字。修补后不能超上限，删改的字数在别处补回。\n"
-        f"speaker 仅昭昭/灿灿，轮流说话，禁同人连说。\n"
+        f"speaker 仅昭昭/灿灿/妈妈，禁同人连说。\n"
         f"setting / conflict_core 如已正确则保留不动。\n\n"
         f"【上一稿】\n{json.dumps(prev_story, ensure_ascii=False)}\n\n"
         "请输出修订后的完整 JSON。"

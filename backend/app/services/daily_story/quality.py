@@ -532,7 +532,7 @@ def score_daily_story(
         cons.append("笑点解析缺类型")
 
     opening = story.get("discovery_opening")
-    if not isinstance(opening, list) or not (1 <= len(opening) <= 2):
+    if not isinstance(opening, list) or not (2 <= len(opening) <= 2):
         score -= 5
         cons.append("缺发现开场")
     elif profile.score_opening_quality:
@@ -836,7 +836,7 @@ def build_quality_revision_hints(
                 "【补 conflict_core】添加 ≤24 字冲突摘要，格式「谁 vs 谁争什么」。",
             )
         if "缺发现开场" in c:
-            hints.append("【补开场】添加 1–2 句发现开场，点名冲突实物。")
+            hints.append("【补开场】添加 2 句正片开端（地点+画面），点名冲突实物。")
 
     if not hints:
         return ""
@@ -852,7 +852,7 @@ def build_quality_revision_hints(
             hints.append(scope_line)
     if primary_kind == "opening":
         hints.append(
-            "【改稿范围】只改 discovery_opening（1–2 句）；"
+            "【改稿范围】只改 discovery_opening（须 2 句，有背景有画面）；"
             "正文 dialogue 与末四拍勿动。",
         )
 
