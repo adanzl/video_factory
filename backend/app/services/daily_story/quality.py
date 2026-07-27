@@ -722,10 +722,13 @@ def build_quality_revision_hints(
     *,
     story: dict | None = None,
 ) -> str:
-    """根据质量评分结果，生成针对性修订指令。
+    """根据质量评分结果，生成**单维度**修订指令（一次只推一项）。"""
+    from app.services.daily_story.retry_hints import (
+        format_c_dialogue_scope_hint,
+        pick_primary_quality_issue,
+        revision_scope_kind,
+    )
 
-    返回空字符串表示无需修订（已达目标）。
-    """
     reasons = quality.get("reasons", [])
     pros = [r for r in reasons if not any(
         r.startswith(w) for w in (
@@ -736,117 +739,83 @@ def build_quality_revision_hints(
     )]
     cons = [r for r in reasons if r not in pros]
 
-    hints: list[str] = []
     profile = resolve_quality_profile(story)
     esc_type_hint, close_type_hint = profile.revision_hints()
-
-    # 冲突层次不足
-    layer_info = next((r for r in pros if "推进" in r), "")
-    if not layer_info or "2层" in layer_info or "偏少" in layer_info:
-        hints.append(esc_type_hint)
-    elif "3层" in layer_info:
-        hints.append(esc_type_hint)
-
-    # 收束质量
     has_punch_ending = closing_satisfied(pros, profile)
+    score = int(quality.get("score") or 0)
 
-    if not has_punch_ending:
-        hints.append(close_type_hint)
+    hints: list[str] = []
+    primary_kind: str | None = None
 
-    # 绕圈
-    redundancy = next((c for c in cons if "绕圈" in c), None)
-    if redundancy:
-        hints.append(
-            f"【去绕圈】{redundancy}。删掉重复的回合，同一逻辑点最多 2 句讲完。"
-            "删掉后若字数不够，在别处插入新维度的交锋补上。"
+    kind, issue_text = pick_primary_quality_issue(cons)
+    if kind and issue_text:
+        primary_kind = kind
+        from app.services.daily_story.story_types import parse_story_type_code
+
+        code = parse_story_type_code(
+            punchline=str((story or {}).get("punchline_explain") or ""),
         )
-
-    humor_issue = next((c for c in cons if "归属口水战" in c), None)
-    if not humor_issue:
-        humor_issue = next(
-            (
-                c for c in cons
-                if any(
-                    k in c
-                    for k in (
-                        "无出处", "未埋旧账", "模板", "拖沓", "公平", "好笑不足",
-                        "末四拍", "未扣一锤", "仍发指令", "多套免责", "借口复读",
-                        "质检说明书", "空甩身份", "缺赖账",
-                        "偏A式", "缺可拍争法",
-                    )
-                )
-            ),
-            None,
-        )
-    if humor_issue:
-        if "多套免责" in humor_issue or "质检" in humor_issue or "缺赖账" in humor_issue:
+        q_profile = quality_profile_for_code(code)
+        if kind == "redundancy":
             hints.append(
-                f"【单线】{humor_issue}。"
-                "照偷吃压缩正例：先溅脸/手脏赖账≥1来回，再上次是上次，"
-                "再我是姐姐（仅1次），再检查样品→检查不算吃→咽下→末四拍；"
-                "删半成品/大家安全/新不新鲜/洗手/句尾连灌啦；"
-                "收束原句「那不一样，检样不算开饭」。"
+                f"【去绕圈】{issue_text}。同一逻辑点最多 2 句，删重复回合；"
+                "若删后偏短，用新证据补 1 来回，勿动末四拍。"
             )
-        else:
-            from app.services.daily_story.story_types import parse_story_type_code
-
-            code = "?"
-            if isinstance(story, dict):
-                code = parse_story_type_code(
-                    punchline=str(story.get("punchline_explain") or ""),
-                )
-            q_profile = quality_profile_for_code(code)
-            hint = (
-                q_profile.humor_revision_hint(humor_issue)
-                if q_profile.humor_revision_hint
-                else None
-            )
+        elif kind == "humor" and q_profile.humor_revision_hint:
+            hint = q_profile.humor_revision_hint(issue_text)
+            if not hint and "好笑不足" in issue_text:
+                hint = q_profile.humor_revision_hint("好笑不足")
             if hint:
                 hints.append(hint)
             else:
                 hints.append(
-                    f"【好笑】{humor_issue}。"
-                    "收束只能引用前文真实说过的话；中段用一件具体小事升级，"
-                    "勿复读同一句式或套「哪里不一样」模板。"
+                    f"【好笑】{issue_text}。中段一件具体小事升级，"
+                    "收束只引前文真实说过的话。"
                 )
-            if code == "C" and q_profile.humor_revision_hint:
-                for c in cons:
-                    if c == humor_issue or not str(c).startswith("C"):
-                        continue
-                    extra = q_profile.humor_revision_hint(c)
-                    if extra and extra not in hints:
-                        hints.append(extra)
+        elif kind in ("c_filmable", "c_chatter", "c_de_a", "quote"):
+            hint = (
+                q_profile.humor_revision_hint(issue_text)
+                if q_profile.humor_revision_hint
+                else None
+            )
+            hints.append(hint or f"【修补】{issue_text}。")
 
-    score = int(quality.get("score") or 0)
-    humor_pts = next(
-        (int(m.group(1)) for r in reasons if (m := re.search(r"好笑(\d+)", r))),
-        None,
-    )
-    if (
-        profile.code == "C"
-        and score < 85
-        and humor_pts is not None
-        and humor_pts < _HUMOR_POINTS_FOR_GOOD
-    ):
-        hints.append(
-            "【C·好笑目标】中段在赛规成立后加可拍字面加赛或量化争法（勿口水战）；"
-            "末段「动作/加赛→喊不算→你说的+赛规→哼」；"
-            "禁止那不一样/哪里不一样。"
-        )
+    need_esc = False
+    layer_info = next((r for r in pros if "推进" in r), "")
+    if not hints:
+        if not layer_info or "2层" in layer_info or "偏少" in layer_info:
+            need_esc = True
+        elif "3层" in layer_info and score < 85 and has_punch_ending:
+            need_esc = True
+        if need_esc:
+            primary_kind = primary_kind or "escalation"
+            hints.append(esc_type_hint)
+        elif not has_punch_ending:
+            primary_kind = primary_kind or "closing"
+            hints.append(close_type_hint)
 
-    # 结构性缺失
     for c in cons:
+        if hints:
+            break
         if "缺 conflict_core" in c:
-            hints.append("【补 conflict_core】添加 ≤24 字的冲突摘要，格式'谁vs谁争什么'。")
+            hints.append(
+                "【补 conflict_core】添加 ≤24 字冲突摘要，格式「谁 vs 谁争什么」。",
+            )
         if "缺发现开场" in c:
-            hints.append("【补开场】添加 1-2 句发现/质问开场白，点名冲突实物或动作。")
+            hints.append("【补开场】添加 1–2 句发现开场，点名冲突实物。")
 
     if not hints:
         return ""
 
-    scope = build_quality_edit_scope_hint(story, "\n".join(hints))
-    if scope:
-        hints.append(scope)
+    scope = revision_scope_kind(
+        primary_kind=primary_kind,
+        escalation=need_esc,
+        closing=not has_punch_ending,
+    )
+    if profile.code == "C" and isinstance(story, dict):
+        scope_line = format_c_dialogue_scope_hint(story, scope)
+        if scope_line:
+            hints.append(scope_line)
 
     return "\n".join(hints)
 

@@ -13,7 +13,7 @@ from app.services.daily_story.story_types.quality import (
 )
 
 RE_ALLY = re.compile(
-    r"一起|咱俩|别告诉|瞒着|瞒妈|约定|联手|暗号|分工|你望风|你放风|说好了",
+    r"一起|咱俩|别告诉|瞒着|瞒妈|约定|联手|暗号|分工|你望风|你放风|放风|望风|说好了",
 )
 RE_BLAME = re.compile(
     r"都怪你|是你先|你答应|不是我的|你先|赖我|你不是说好|才不是我的",
@@ -25,12 +25,22 @@ RE_PLAN_FAIL = re.compile(
     r"多拿|忘藏|说漏|掉了|洒了|露出来|忘了藏|袋口|碎|脚印|油渍",
 )
 _A_STYLE_TAIL = re.compile(r"那不一样|哪里不一样|你刚才说|你自己说")
+RE_MOM_PUNISH = re.compile(
+    r"站好|过来|罚|不许|今晚|检讨|说清楚|墙角|罚站|别想吃",
+)
+RE_DOOM = re.compile(r"完蛋|完了|糟糕|死定了|藏不住|露馅")
+
+RE_BLAME_MID = re.compile(r"都怪你|是你先|你答应|赖我|你还怪")
 
 HUMOR_ISSUE_CAPS: tuple[tuple[str, int], ...] = (
     ("偏A式末四拍", 6),
     ("缺结盟约定", 5),
     ("缺互甩锅", 7),
     ("偏C式争公平", 5),
+    ("中段甩锅拖沓", 8),
+    ("收束戛然而止", 6),
+    ("走样连锁中甩锅打断", 7),
+    ("收束缺权威落槌", 7),
 )
 
 
@@ -38,7 +48,6 @@ def collect_humor_issues(
     lines: list[str],
     speakers: list[str] | None,
 ) -> list[str]:
-    _ = speakers
     cons: list[str] = []
     n = len(lines)
     if n < 6:
@@ -47,6 +56,7 @@ def collect_humor_issues(
     head6 = "".join(lines[:6])
     tail6 = "".join(lines[-6:])
     tail4 = "".join(lines[-4:])
+    tail8 = "".join(lines[-8:]) if n >= 8 else "".join(lines)
 
     if _A_STYLE_TAIL.search(tail4) and not RE_BLAME.search(tail6):
         cons.append("B收束偏A式末四拍")
@@ -63,6 +73,34 @@ def collect_humor_issues(
 
     if RE_BOOMERANG_RULE.search(tail4) and not RE_BLAME.search(tail6):
         cons.append("B收束偏回旋镖非甩锅")
+
+    body_mid = lines[6 : max(6, n - 8)]
+    blame_mid = sum(1 for ln in body_mid if RE_BLAME_MID.search(ln))
+    if blame_mid >= 4:
+        cons.append("B中段甩锅拖沓")
+
+    chain_zone = lines[6 : min(n - 6, 18)]
+    fail_i = next((i for i, ln in enumerate(chain_zone) if RE_PLAN_FAIL.search(ln)), None)
+    if fail_i is not None:
+        chain_slice = chain_zone[fail_i : fail_i + 5]
+        if any(RE_BLAME_MID.search(ln) for ln in chain_slice):
+            cons.append("B走样连锁中甩锅打断")
+
+    last = lines[-1] if lines else ""
+    if RE_EXPOSED.search(tail6) and not RE_SOFT_LAST.search(last):
+        if RE_BLAME.search(last) and "哼" not in last and "才不是" not in last:
+            cons.append("B收束戛然而止缺嘴硬余韵")
+
+    mom_late = False
+    if speakers and len(speakers) == n:
+        mom_late = any(
+            speakers[i] == "妈妈" for i in range(max(0, n - 8), n)
+        )
+    if mom_late or RE_EXPOSED.search(tail8):
+        has_punish = bool(RE_MOM_PUNISH.search(tail8))
+        has_doom = bool(RE_DOOM.search(tail8))
+        if not has_punish or not has_doom:
+            cons.append("B收束缺权威落槌")
 
     return cons
 
@@ -105,6 +143,30 @@ def humor_revision_hint(issue: str) -> str | None:
             f"【好笑·B】{issue}。"
             "主线是同盟裂了互推，不是争公平赛规或回旋镖扣原话。"
         )
+    if "拖沓" in issue:
+        return (
+            f"【好笑·B】{issue}。"
+            "走样写成 3–5 句连续动作链；删「你还怪我」链；"
+            "甩锅全篇≤4 句，连锁后各 1 句即进露馅。"
+        )
+    if "戛然而止" in issue:
+        return (
+            f"【好笑·B】{issue}。"
+            "露馅后末句加哼/才不是/才不是我的主意，短句嘴硬收束；"
+            "勿纯怼句或感叹号怼停。"
+        )
+    if "连锁" in issue:
+        return (
+            f"【好笑·B】{issue}。"
+            "意外 3–5 句连拍期间只写动作与慌张，勿插入都怪你；"
+            "连锁结束后再各甩 1 句。"
+        )
+    if "权威落槌" in issue:
+        return (
+            f"【好笑·B】{issue}。"
+            "妈妈 1 句短惩罚（如你们过来站好），姐弟接完蛋了/完了；"
+            "再短甩锅，末句哼/才不是。"
+        )
     return None
 
 
@@ -136,6 +198,7 @@ def score_punchline(
 
     tail4 = "".join(lines[-4:])
     tail3 = "".join(lines[-3:])
+    tail8 = "".join(lines[-8:]) if n >= 8 else "".join(lines)
     head_third = "".join(lines[: max(1, n // 3)])
     bonus = 0
     details: list[str] = []
@@ -152,6 +215,10 @@ def score_punchline(
         bonus += 10
         details.append("联手露馅收场")
 
+    if RE_MOM_PUNISH.search(tail8) and RE_DOOM.search(tail8):
+        bonus += 5
+        details.append("惩罚落槌有底")
+
     if RE_ALLY.search(head_third) and RE_PLAN_FAIL.search(
         "".join(lines[n // 3 : n - 3]),
     ):
@@ -159,12 +226,14 @@ def score_punchline(
         if "走样" not in "".join(details):
             details.append("约定走样")
 
-    if RE_SOFT_LAST.search(last) and RE_BLAME.search(prev2 + last):
-        bonus += 4
-        details.append("末句嘴硬甩锅")
+    if RE_SOFT_LAST.search(last) and (
+        RE_BLAME.search(prev2) or RE_BLAME.search(last) or RE_EXPOSED.search(prev2)
+    ):
+        bonus += 5
+        details.append("末句嘴硬收束")
     elif RE_BLAME.search(last) and speakers and speakers[-1] in ("灿灿", "昭昭"):
-        bonus += 3
-        details.append("末句嘴硬甩锅")
+        bonus += 1
+        details.append("末句仍甩锅")
 
     if _A_STYLE_TAIL.search(tail4) and RE_BLAME.search(tail4):
         bonus -= 4
@@ -175,7 +244,7 @@ def score_punchline(
 QUALITY_PROFILE = TypeQualityProfile(
     code="B",
     score_punchline=score_punchline,
-    closing_pro_markers=("露馅", "甩锅", "翻车", "破功", "嘴硬", "走样"),
+    closing_pro_markers=("露馅", "甩锅", "翻车", "破功", "嘴硬", "走样", "落槌"),
     summary_highlight_tokens=(
         "推进",
         "露馅",
@@ -183,6 +252,7 @@ QUALITY_PROFILE = TypeQualityProfile(
         "翻车",
         "破功",
         "走样",
+        "落槌",
     ),
     punch_before_soft_markers=SHARED_PUNCH_SOFT
     + (
@@ -190,7 +260,8 @@ QUALITY_PROFILE = TypeQualityProfile(
         "露馅",
         "完了",
         "是你先",
-        "你答应",
+        "完蛋",
+        "站好",
     ),
     collect_humor_issues=collect_humor_issues,
     score_scene_beat=score_scene_beat,
