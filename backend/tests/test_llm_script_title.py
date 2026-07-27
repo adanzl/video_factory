@@ -206,7 +206,14 @@ def test_validate_daily_story_json_rejects_bad_speaker():
 
 def test_validate_daily_story_json_rejects_inverted_vocative():
     story = _valid_story()
-    story["dialogue"][3]["line"] = "你刚才还噗嗤笑出声了呢妈妈你听听"
+    story["dialogue"][3]["line"] = "你刚才还笑出声了呢妈妈你听听"
+    with pytest.raises(ValueError, match="语序不自然"):
+        validate_daily_story_json(story)
+
+
+def test_validate_daily_story_json_rejects_trailing_listen_command():
+    story = _valid_story()
+    story["dialogue"][3]["line"] = "大人工作需要，跟你们玩不一样啊听着"
     with pytest.raises(ValueError, match="语序不自然"):
         validate_daily_story_json(story)
 
@@ -221,7 +228,7 @@ def test_validate_daily_story_json_allows_natural_vocative_end():
 def test_validate_daily_story_json_allows_natural_vocative_start():
     # 称呼放句首是正常口语
     story = _valid_story()
-    story["dialogue"][3]["line"] = "妈妈，你刚才还噗嗤笑出声了呢"
+    story["dialogue"][3]["line"] = "妈妈，你刚才还笑出声了呢"
     validate_daily_story_json(story)
 
 

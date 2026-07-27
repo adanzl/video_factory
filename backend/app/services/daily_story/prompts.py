@@ -270,7 +270,7 @@ _DAILY_STORY_SYSTEM_SHARED = """\
 【节奏（共用）】
 - 每 6–8 句须有一个小反转或加码，禁止平铺到结尾才抖包袱。
 - 一句说完一层意思；禁止为凑 ≤18 字把同一半截话硬拆成两句（听感断裂）。
-- 台词须用自然口语语序：称呼语一般放句首或句尾，一句只喊一次；禁止把称呼、证据词叠在句子末尾造成倒装（反例：「你刚才还噗嗤笑出声了呢妈妈你听听」应改为「妈妈，你刚才还噗嗤笑出声了呢」）。
+- 台词须用自然口语语序：称呼语一般放句首或句尾，一句只喊一次；禁止把称呼、证据词或命令语（如「你听听」「听着」）叠在句子末尾造成倒装。反例：「你刚才还笑出声了呢妈妈你听听」应改为「你刚才还笑出声了呢，妈妈」；「大人工作需要，跟你们玩不一样啊听着」应改为「大人工作需要，跟你们玩不一样啊」。
 - 昭昭/灿灿必须轮流说：禁止同一人连说 ≥2 句（听感碎、像注水）。
 - 禁止概念绕圈：同一逻辑结论的不同措辞变体也算同一对立面，
   最多 2 个来回后必须引入新事实，禁止空转语义辩论连续超过 4 句。
@@ -965,15 +965,16 @@ def _append_setting_mom_consistency_errors(story: dict, errors: list[str]) -> No
         )
 
 
-# 句子末尾把称呼塞在陈述与另一个呼唤/证据词之间，造成倒装
+# 句子末尾把称呼/命令语塞在陈述之后，造成倒装或叠词
 _INVERTED_VOCATIVE_PATTERN = re.compile(
-    r"[了呢啊么嘛]\s*(?:妈妈|妈)\s*(?:你听听|你看|你说|你讲)",
+    r"[了呢啊么嘛]\s*(?:妈妈|妈)\s*(?:你听听|你看|你说|你讲|听着)|"
+    r"[了呢啊么嘛]\s*(?:你听听|听着)",
     re.UNICODE,
 )
 
 
 def _append_natural_word_order_errors(story: dict, errors: list[str]) -> None:
-    """检查台词是否存在倒装/叠称呼问题。"""
+    """检查台词是否存在倒装/叠称呼/叠命令语问题。"""
     dialogue = story.get("dialogue")
     if not isinstance(dialogue, list):
         return
@@ -983,7 +984,7 @@ def _append_natural_word_order_errors(story: dict, errors: list[str]) -> None:
         line = str(item.get("line") or "").strip()
         if _INVERTED_VOCATIVE_PATTERN.search(line):
             errors.append(
-                f"dialogue[{i}] 语序不自然，称呼/证据词叠在句尾造成倒装："
+                f"dialogue[{i}] 语序不自然，称呼/证据词/命令语叠在句尾："
                 f"{line!r}；请改为正常口语语序"
             )
 
