@@ -270,7 +270,7 @@ _DAILY_STORY_SYSTEM_SHARED = """\
 【节奏（共用）】
 - 每 6–8 句须有一个小反转或加码，禁止平铺到结尾才抖包袱。
 - 一句说完一层意思；禁止为凑 ≤18 字把同一半截话硬拆成两句（听感断裂）。
-- 台词须用自然口语语序：称呼语一般放句首或句尾，一句只喊一次；禁止把称呼、证据词或命令语（如「你听听」「听着」）叠在句子末尾造成倒装。反例：「你刚才还笑出声了呢妈妈你听听」应改为「你刚才还笑出声了呢，妈妈」；「大人工作需要，跟你们玩不一样啊听着」应改为「大人工作需要，跟你们玩不一样啊」。
+- 台词须用自然口语语序：称呼语可放句首、句尾或省略，一句只喊一次；不要句句都以「呀妈」「吗妈妈」结尾，避免听起来像念经。禁止把称呼、证据词或命令语（如「你听听」「听着」）叠在句子末尾造成倒装。反例：「你刚才还笑出声了呢妈妈你听听」应改为「你刚才还笑出声了呢妈妈」；「大人工作需要，跟你们玩不一样啊听着」应改为「大人工作需要，跟你们玩不一样啊」。
 - 昭昭/灿灿必须轮流说：禁止同一人连说 ≥2 句（听感碎、像注水）。
 - 禁止概念绕圈：同一逻辑结论的不同措辞变体也算同一对立面，
   最多 2 个来回后必须引入新事实，禁止空转语义辩论连续超过 4 句。
@@ -1823,29 +1823,14 @@ _FINAL_PARTICLES = "呀啊呢吧吗了啦"
 
 
 def _patch_vocative_punctuation(story: dict) -> list[str]:
-    """句尾称呼前缺逗号时补逗号；句尾多余「听着」时去掉。"""
+    """句尾多余「听着」时去掉；不强制补逗号，避免句句尾都带标点。"""
     notes: list[str] = []
     dialogue = story.get("dialogue")
     if not isinstance(dialogue, list):
         return notes
 
     vocatives = "|".join(re.escape(v) for v in _VOCATIVE_NAMES)
-    # 1) 「呢你看妈」→「呢你看，妈」（保留一个逗号在称呼前）
-    pattern_full = re.compile(
-        rf"([{_FINAL_PARTICLES}])你看({vocatives})$",
-        re.UNICODE,
-    )
-    # 2) 「呀妈」「吗妈妈」→「呀，妈」「吗，妈妈」
-    pattern_particle = re.compile(
-        rf"([{_FINAL_PARTICLES}])({vocatives})$",
-        re.UNICODE,
-    )
-    # 3) 「你看妈」→「你看，妈」
-    pattern_evidence = re.compile(
-        rf"(你看|你瞧)({vocatives})$",
-        re.UNICODE,
-    )
-    # 4) 句尾多余「听着」：「啊孩子们听着」→「啊孩子们」
+    # 句尾多余「听着」：「啊孩子们听着」→「啊孩子们」
     pattern_trailing_listen = re.compile(
         rf"([{_FINAL_PARTICLES}]|{vocatives})听着$",
         re.UNICODE,
@@ -1857,14 +1842,10 @@ def _patch_vocative_punctuation(story: dict) -> list[str]:
         line = str(item.get("line") or "").rstrip()
         if not line:
             continue
-        new_line = line
-        new_line = pattern_trailing_listen.sub(r"\1", new_line)
-        new_line = pattern_full.sub(r"\1你看，\2", new_line)
-        new_line = pattern_particle.sub(r"\1，\2", new_line)
-        new_line = pattern_evidence.sub(r"\1，\2", new_line)
+        new_line = pattern_trailing_listen.sub(r"\1", line)
         if new_line != line:
             item["line"] = new_line
-            notes.append(f"称呼标点[{i}]")
+            notes.append(f"去句尾听着[{i}]")
     return notes
 
 
