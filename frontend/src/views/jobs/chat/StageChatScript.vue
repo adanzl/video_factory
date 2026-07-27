@@ -90,6 +90,9 @@
         <div class="w-lg shrink-0 overflow-y-auto pr-2">
           <el-descriptions :column="1" border label-width="80px">
             <el-descriptions-item label="主题">{{ dailyStory.theme }}</el-descriptions-item>
+            <el-descriptions-item label="矛盾类型">
+              {{ formatDailyStoryType(dailyStory.story_type) }}
+            </el-descriptions-item>
             <el-descriptions-item label="场景标题">
               <span class="font-bold">{{ dailyStory.story.scene_title }}</span>
             </el-descriptions-item>
@@ -323,7 +326,7 @@
 import { computed, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { runJobStageAction, updateJob, updateJobInfo, previewDailyScriptPrompts, generatePrompts } from "@/api/api-jobs";
-import { getDailyStory } from "@/api/api-daily-story";
+import { getDailyStory, formatDailyStoryType } from "@/api/api-daily-story";
 import type { DailyStoryRecord } from "@/api/api-daily-story";
 import type { JobDetail, JobLog, JobSegment } from "@/types/jobs";
 import type { UpdateJobInfoParams } from "@/types/jobs/job";

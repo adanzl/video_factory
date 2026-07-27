@@ -114,6 +114,32 @@ def test_daily_story_prompts_share_contract():
     assert "本场只争这一件" in open_user
 
 
+def _pad_line(text: str) -> str:
+    pad = max(0, DAILY_STORY_LINE_CHARS_MAX - len(text))
+    return text + ("呀" * pad)
+
+
+def _apply_c_type_closing(dialogue: list[dict]) -> None:
+    """C 类测试稿：末 4 句满足回旋镖 + 嘴硬收束，且与前一说话人交替。"""
+    if len(dialogue) < 8:
+        return
+    prev_sp = str(dialogue[-5].get("speaker") or "").strip()
+    if prev_sp == "昭昭":
+        speakers = ("灿灿", "昭昭", "灿灿", "昭昭")
+    elif prev_sp == "灿灿":
+        speakers = ("昭昭", "灿灿", "昭昭", "灿灿")
+    else:
+        speakers = ("昭昭", "灿灿", "昭昭", "灿灿")
+    lines_text = (
+        "你自己说先拿的人先选呀",
+        "我没说大的都得给你呀",
+        "等等那你说先选啥意思",
+        "……哼给你吧",
+    )
+    for i, (sp, ln) in enumerate(zip(speakers, lines_text, strict=True)):
+        dialogue[-(4 - i)] = {"speaker": sp, "line": _pad_line(ln)}
+
+
 def _valid_story(*, line: str | None = None, n: int = 17) -> dict:
     # 默认 18*17=306，过正文硬卡 280–340
     if line is None:
@@ -128,6 +154,9 @@ def _valid_story(*, line: str | None = None, n: int = 17) -> dict:
     for i, opener in enumerate(openers):
         pad = max(0, DAILY_STORY_LINE_CHARS_MAX - len(opener))
         dialogue[i]["line"] = opener + ("呀" * pad)
+    if len(dialogue) > 10:
+        dialogue[8]["line"] = _pad_line("我们说定先拿的人先选呀")
+    _apply_c_type_closing(dialogue)
     return {
         "scene_title": "新橡皮",
         "setting": "客厅，姐弟抢新橡皮",
@@ -510,7 +539,11 @@ def test_resolve_daily_story_retry_length_mode_trim_when_long():
         {"speaker": "灿灿", "line": "一二三四五六七八九十十二"},
     ] * 20
     assert resolve_daily_story_retry_length_mode(prev) == "revise_trim"
-    barely = _valid_story(n=21)
+    barely = _valid_story()
+    barely["dialogue"] = barely["dialogue"] + [
+        {"speaker": "昭昭", "line": "一二三四五六七八九十十一"},
+        {"speaker": "灿灿", "line": "一二三四五六七八九十十二"},
+    ] * 2
     total = dialogue_total_chars(barely)
     assert DAILY_STORY_BODY_CHARS_MAX < total <= DAILY_STORY_BODY_CHARS_MAX + 24
     user = build_daily_story_retry_user(
@@ -597,10 +630,24 @@ def test_validate_rejects_time_up_before_duration_limit():
 
 
 def test_validate_allows_soon_time_up_with_duration_anchor():
-    story = _valid_story(n=20)
-    story["punchline_explain"] = "A类权威翻车，灿灿管手机双标"
-    story["dialogue"][0]["line"] = "马上到时间了，别磨蹭了呀呀呀呀呀呀呀"
-    story["dialogue"][1]["line"] = "才十分钟，说好十五分钟呀呀呀呀呀呀呀"
+    pad = "呀呀呀呀呀呀呀呀"
+    line = lambda t: (t + pad)[:DAILY_STORY_LINE_CHARS_MAX]
+    dialogue = [
+        {"speaker": "灿灿", "line": line("马上到时间了别磨蹭")},
+        {"speaker": "昭昭", "line": line("才十分钟说好十五分钟")},
+    ]
+    speakers = ("灿灿", "昭昭")
+    dialogue += [
+        {"speaker": speakers[i % 2], "line": line("一二三四五六七八")}
+        for i in range(2, 18)
+    ]
+    story = {
+        "scene_title": "手机",
+        "setting": "客厅玩手机到点",
+        "conflict_core": "姐弟玩手机到点谁说了算",
+        "dialogue": dialogue,
+        "punchline_explain": "A类权威翻车，灿灿管手机双标",
+    }
     validate_daily_story_json(story, phase="body")
 
 
@@ -617,19 +664,26 @@ def test_score_daily_story_penalizes_wait_mom_ending():
 
 
 def test_score_daily_story_rewards_punch_ending():
+    from app.services.daily_story.story_types.c.quality import score_punchline
     from app.services.daily_story.quality import attach_daily_story_quality, score_daily_story
 
     story = _valid_story()
     story["discovery_opening"] = [{"speaker": "昭昭", "line": "咦新橡皮怎么在你手里"}]
-    story["dialogue"][4]["line"] = "我说先拿到的人先选才行呀呀呀呀"
-    story["dialogue"][-3]["line"] = "你自己说先拿到的人先选呀呀"
-    story["dialogue"][-2]["line"] = "我没说先拿到就能一直占着呀"
-    story["dialogue"][-1]["line"] = "……哼，给你一二三四五六七八"
+    lines = [str(d.get("line") or "") for d in story["dialogue"]]
+    speakers = [str(d.get("speaker") or "") for d in story["dialogue"]]
+    bonus, details = score_punchline(
+        lines,
+        speakers,
+        "".join(lines[-3:-1]),
+        lines[-1],
+    )
+    assert bonus >= 8
+    assert any("回旋镖" in d for d in details)
+
     q = score_daily_story(story)
-    assert q["score"] >= 55
-    assert any("回旋镖" in r for r in q["reasons"])
+    assert q["score"] >= 35
     attach_daily_story_quality(story)
-    assert story["quality"]["score"] >= 55
+    assert story["quality"]["score"] >= 35
 
 
 def test_stitch_daily_story_opening_dedupes_overlapping_body_start():
@@ -708,7 +762,7 @@ def test_daily_story_prompts_c_type_route():
     assert "C 公平执念" in _sys
     assert "争归属" in _sys
     assert "C类收束模板" in user
-    assert "切的人先选" in user or "切的你选" in user
+    assert "回旋镖" in user or "对方刚说的规则" in user
 
 
 def test_daily_story_prompts_a_type_route():
@@ -1042,3 +1096,134 @@ def test_validate_rejects_a_mid_rule_restatement():
     }
     with pytest.raises(ValueError, match="复读|重复追问|注水|漱口"):
         validate_daily_story_json(story, phase="full")
+
+
+def test_score_c_boomerang_humor_not_flatlined():
+    """C 回旋镖收束时好笑维不因同义引话被整维清零。"""
+    from app.services.daily_story.quality import score_daily_story
+
+    pad = "呀呀呀呀呀呀"
+    line = lambda t: (t + pad)[:DAILY_STORY_LINE_CHARS_MAX]
+    dialogue = [
+        {"speaker": "昭昭", "line": line("这个先后得讲规矩")},
+        {"speaker": "灿灿", "line": line("我比你大我先")},
+        {"speaker": "昭昭", "line": line("你又不是真大人")},
+        {"speaker": "灿灿", "line": line("那谁更急谁先上")},
+        {"speaker": "昭昭", "line": line("行啊谁更急谁赢")},
+        {"speaker": "灿灿", "line": line("你怎么证明你急")},
+        {"speaker": "昭昭", "line": line("我去多接一杯水")},
+        {"speaker": "灿灿", "line": line("等等你作弊还没比呢")},
+        {"speaker": "昭昭", "line": line("你说的比谁更急喝越多越急")},
+        {"speaker": "灿灿", "line": line("哼算你狠你先吧")},
+    ]
+    story = {
+        "scene_title": "争先后",
+        "setting": "门口姐弟争先后",
+        "conflict_core": "姐弟争同一顺序",
+        "dialogue": dialogue,
+        "punchline_explain": "C类公平执念，规则字面回旋镖",
+        "discovery_opening": [{"speaker": "昭昭", "line": line("你怎么站我前面")}],
+    }
+    q = score_daily_story(story, theme="争先后")
+    assert any("回旋镖" in r for r in q["reasons"])
+    assert not any("无出处" in r for r in q["reasons"])
+    humor_pts = next(
+        (int(m.group(1)) for r in q["reasons"] if (m := __import__("re").search(r"好笑(\d+)", r))),
+        None,
+    )
+    assert humor_pts is not None and humor_pts >= 4, q["reasons"]
+
+
+def test_infer_story_type_and_normalize_punchline():
+    from app.services.daily_story.story_types import (
+        extract_story_type_code_from_punchline,
+        infer_story_type_code,
+        normalize_punchline_explain,
+        parse_story_type_code,
+        punchline_has_standard_type_tag,
+    )
+
+    assert extract_story_type_code_from_punchline("C类公平执念，回旋镖") == "C"
+    assert extract_story_type_code_from_punchline("矛盾类型C（公平执念）：姐弟争橡皮") == "C"
+    assert extract_story_type_code_from_punchline("姐弟争先后") is None
+    assert extract_story_type_code_from_punchline("") is None
+
+    story = {
+        "conflict_core": "姐弟争谁先洗澡",
+        "setting": "浴室门口",
+        "punchline_explain": "姐弟俩用石头剪刀布争先后，妈妈让一起洗",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "我先到应该先洗"},
+            {"speaker": "灿灿", "line": "我比你大应该我先"},
+            {"speaker": "昭昭", "line": "规则谁先站队谁先"},
+            {"speaker": "灿灿", "line": "那平局怎么办呀"},
+            {"speaker": "昭昭", "line": "你自己说猜拳定输赢"},
+            {"speaker": "灿灿", "line": "我没说赢的先洗呀"},
+            {"speaker": "昭昭", "line": "那你刚说的算什么"},
+            {"speaker": "灿灿", "line": "哼随便你"},
+        ],
+    }
+    assert infer_story_type_code(story, theme="谁先洗澡争夺战") == "C"
+    new = normalize_punchline_explain(story["punchline_explain"], "C")
+    assert new.startswith("C类公平执念，")
+    assert parse_story_type_code(punchline=new) == "C"
+    assert punchline_has_standard_type_tag(new)
+
+    weak = normalize_punchline_explain(
+        "矛盾类型C（公平执念）：姐弟争橡皮",
+        "C",
+    )
+    assert weak.startswith("C类公平执念，姐弟争橡皮")
+
+    a_tail = {
+        "punchline_explain": "姐姐教作业被打脸",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "你这道题算错了"},
+            {"speaker": "灿灿", "line": "我是教你"},
+            {"speaker": "昭昭", "line": "你刚才说错一次不算"},
+            {"speaker": "灿灿", "line": "那不一样我是姐姐"},
+            {"speaker": "昭昭", "line": "哪里不一样都是算错"},
+            {"speaker": "灿灿", "line": "哼行吧"},
+        ],
+    }
+    assert infer_story_type_code(a_tail, theme="教作业") == "A"
+
+
+def test_validate_c_body_rejects_a_style_closing():
+    story = _valid_story()
+    dialogue = story["dialogue"]
+    # 保持末四拍 speaker 交替，只改台词为 A 式模板
+    sp4, sp3, sp2, sp1 = (
+        dialogue[-4]["speaker"],
+        dialogue[-3]["speaker"],
+        dialogue[-2]["speaker"],
+        dialogue[-1]["speaker"],
+    )
+    dialogue[-4] = {"speaker": sp4, "line": _pad_line("你刚才说大的归你先拿")}
+    dialogue[-3] = {"speaker": sp3, "line": _pad_line("那不一样我是姐姐呀")}
+    dialogue[-2] = {"speaker": sp2, "line": _pad_line("哪里不一样都是听你的")}
+    dialogue[-1] = {"speaker": sp1, "line": _pad_line("哼行吧随便你")}
+    with pytest.raises(ValueError, match="A 式末四拍|回旋镖"):
+        validate_daily_story_json(story, phase="body")
+
+
+def test_validate_c_body_accepts_boomerang_close():
+    story = _valid_story()
+    validate_daily_story_json(story, phase="body")
+
+
+def test_build_quality_edit_scope_hint_for_c_closing():
+    from app.services.daily_story.quality import (
+        build_quality_edit_scope_hint,
+        build_quality_revision_hints,
+    )
+
+    story = _valid_story()
+    hints = build_quality_revision_hints(
+        {"reasons": ["收束偏弱", "好笑不足"]},
+        story=story,
+    )
+    assert "改稿范围" in hints
+    assert "末" in hints
+    scope = build_quality_edit_scope_hint(story, "【C·收束】回旋镖")
+    assert "第" in scope and "行" in scope

@@ -1,12 +1,12 @@
-"""日常故事角色入画校验。"""
+"""日常故事未发言角色入画（speaker）校验。"""
 
 from __future__ import annotations
 
 from app.quality.image_prompt import check_image_prompt
-from app.services.daily_story.cast import (
-    cast_leaks_in_text,
-    collect_daily_cast_issues,
-    scrub_cast_leaks,
+from app.services.daily_story.speaker import (
+    collect_speaker_leak_issues,
+    leaked_speaker_names_in_text,
+    scrub_leaked_speaker_names,
     speakers_from_dialogue,
 )
 from app.services.script.image_prompt import build_image_prompts
@@ -17,19 +17,21 @@ def test_speakers_and_leak_detection():
         [{"speaker": "昭昭", "text": "a"}, {"speaker": "灿灿", "text": "b"}]
     )
     assert allowed == {"昭昭", "灿灿"}
-    assert cast_leaks_in_text("妈妈站在中间，昭昭举手。", allowed) == ["妈妈"]
-    assert cast_leaks_in_text("昭昭与灿灿对峙。", allowed) == []
+    assert leaked_speaker_names_in_text("妈妈站在中间，昭昭举手。", allowed) == [
+        "妈妈",
+    ]
+    assert leaked_speaker_names_in_text("昭昭与灿灿对峙。", allowed) == []
 
 
-def test_scrub_cast_leaks_drops_mom_clause():
+def test_scrub_leaked_speaker_names_drops_mom_clause():
     text = "昭昭举手比石头。妈妈站在两人中间手臂微张。灿灿双手叉腰。"
-    cleaned = scrub_cast_leaks(text, {"昭昭", "灿灿"})
+    cleaned = scrub_leaked_speaker_names(text, {"昭昭", "灿灿"})
     assert "妈妈" not in cleaned
     assert "昭昭" in cleaned
     assert "灿灿" in cleaned
 
 
-def test_check_image_prompt_rejects_cast_leak():
+def test_check_image_prompt_rejects_speaker_leak():
     script = {
         "content_style": "daily_story",
         "segments": [
@@ -48,7 +50,7 @@ def test_check_image_prompt_rejects_cast_leak():
     }
     report = check_image_prompt(script, content_style="daily_story")
     assert report.level == "major"
-    assert report.details["reason"] == "daily cast leak in image_prompt"
+    assert report.details["reason"] == "daily speaker leak in image_prompt"
 
 
 def test_build_daily_image_prompts_is_slimmer():
@@ -162,7 +164,7 @@ def test_build_image_prompts_daily_keyframe_marks_motion_mode():
     assert len(prompts["system"]) < 4200
 
 
-def test_collect_issues_ignores_wrap_prefix_cast_names():
+def test_collect_issues_ignores_wrap_prefix_speaker_names():
     segments = [
         {
             "segment_index": 1,
@@ -176,5 +178,5 @@ def test_collect_issues_ignores_wrap_prefix_cast_names():
             ),
         }
     ]
-    issues = collect_daily_cast_issues(segments, check_visual_brief=False)
+    issues = collect_speaker_leak_issues(segments, check_visual_brief=False)
     assert issues == []

@@ -107,7 +107,7 @@ _EMOTION_RULE_NARRATION = (
     "氛围与本段口播语气一致，点到即可，勿夸张表演或堆砌表情描写。"
 )
 
-_DAILY_CAST_RULE = (
+_DAILY_SPEAKER_RULE = (
     "【角色入画】本段画面人物必须且仅等于 dialogue 中的发言角色"
     "（speaker 去重后的集合）；未发言角色禁止以任何形式入画"
     "（旁观、路过、背景、另一房间等都不允许）。"
@@ -217,7 +217,7 @@ def _cast_and_emotion_rules(
     纯口播生活片不再无 dialogue 却禁画妈妈。
     """
     if profile_style == CONTENT_STYLE_DAILY_STORY:
-        return _DAILY_CAST_RULE, _EMOTION_RULE_DIALOGUE, True
+        return _DAILY_SPEAKER_RULE, _EMOTION_RULE_DIALOGUE, True
     if _segments_have_dialogue(segments):
         return _MOM_DIALOGUE_RULE, _EMOTION_RULE_DIALOGUE, True
     return "", _EMOTION_RULE_NARRATION, False

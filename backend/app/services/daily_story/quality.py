@@ -29,7 +29,9 @@ _STRONG_END_MARKERS = (
     "自相矛盾", "你让的", "戳穿",
 )
 
-from app.services.daily_story.quality_by_type import (
+from app.services.daily_story.story_types.quality import (
+    RE_BOOMERANG_RULE,
+    RE_TWIST_SEGUE,
     closing_satisfied,
     resolve_quality_profile,
     score_punchline_for_profile,
@@ -303,10 +305,26 @@ def _fragment_grounded_in_text(fragment: str, haystack: str, *, min_run: int = 5
     return False
 
 
+def _fragment_grounded_c_rule_quote(fragment: str, haystack: str) -> bool:
+    """C 类：收束引对方赛规时允许与正文同义（更急/先选/公平）。"""
+    frag = re.sub(r"[的话呢呀嘛吧啊…\s「」『』\"'‘’：:，,]", "", fragment)
+    hay = re.sub(r"[的话呢呀嘛吧啊…\s「」『』\"'‘’：:，,]", "", haystack)
+    if len(frag) < 3:
+        return True
+    if "更急" in frag and "更急" in hay:
+        return True
+    if "先选" in frag and "先选" in hay:
+        return True
+    if "公平" in frag and "公平" in hay:
+        return True
+    if "先到" in frag and ("先到" in hay or "先拿" in hay):
+        return True
+    return False
+
+
 def _a_close_four_beat_complete(tail4: list[str]) -> bool:
     if len(tail4) < 4:
         return False
-    block = "".join(tail4)
     return (
         "那不一样" in tail4[-3]
         and ("哪里不一样" in tail4[-2] or "都是听" in tail4[-2])
@@ -344,9 +362,13 @@ def _collect_humor_issues(
     for line in tail4:
         for m in _RE_DIRECT_QUOTE.finditer(line):
             frag = m.group(1).strip()
-            if not _fragment_grounded_in_text(frag, quote_haystack):
+            grounded = _fragment_grounded_in_text(frag, quote_haystack)
+            if not grounded and type_code == "C":
+                grounded = _fragment_grounded_c_rule_quote(frag, quote_haystack)
+            if not grounded:
                 cons.append(f"收束引话无出处（「{frag[:12]}」）")
-                return cons
+                if type_code != "C":
+                    return cons
 
     if type_code == "A":
         if ("哪里不一样" in body_text or "都是听" in body_text) and (
@@ -517,7 +539,9 @@ def _score_funniness(
         return 0, pros, cons
 
     if any("无出处" in c for c in cons):
-        return 0, pros, cons
+        if type_code != "C":
+            return 0, pros, cons
+        cons = [c for c in cons if "无出处" not in c]
 
     body = lines[:-4] if len(lines) > 4 else lines[:-1]
     tail4 = lines[-4:] if len(lines) >= 4 else lines
@@ -548,6 +572,14 @@ def _score_funniness(
         full_text,
     )) >= 2:
         points += 2
+
+    if type_code == "C":
+        late = "".join(tail4)
+        if RE_BOOMERANG_RULE.search(late) and RE_TWIST_SEGUE.search(
+            "".join(lines[-6:])
+        ):
+            points += 4
+            pros.append("字面回旋好笑")
 
     if points >= 9 and not cons:
         pros.append("好笑够格")
@@ -884,11 +916,25 @@ def build_quality_revision_hints(
                 "收束原句「那不一样，检样不算开饭」。"
             )
         else:
-            hints.append(
-                f"【好笑】{humor_issue}。"
-                "收束只能引用前文真实说过的话；中段用一件具体小事升级，"
-                "勿复读同一句式或套「哪里不一样」模板。"
-            )
+            from app.services.daily_story.story_types import parse_story_type_code
+
+            code = "?"
+            if isinstance(story, dict):
+                code = parse_story_type_code(
+                    punchline=str(story.get("punchline_explain") or ""),
+                )
+            if code == "C":
+                hints.append(
+                    f"【好笑·C】{humor_issue}。"
+                    "中段用一件具体争法升级；"
+                    "末段用对方规则回旋镖反问，末句嘴硬收场。"
+                )
+            else:
+                hints.append(
+                    f"【好笑】{humor_issue}。"
+                    "收束只能引用前文真实说过的话；中段用一件具体小事升级，"
+                    "勿复读同一句式或套「哪里不一样」模板。"
+                )
 
     # 结构性缺失
     for c in cons:
@@ -900,4 +946,49 @@ def build_quality_revision_hints(
     if not hints:
         return ""
 
+    scope = build_quality_edit_scope_hint(story, "\n".join(hints))
+    if scope:
+        hints.append(scope)
+
     return "\n".join(hints)
+
+
+def build_quality_edit_scope_hint(
+    story: dict | None,
+    revision_blob: str,
+) -> str:
+    """C 类观感修订：限定可改 dialogue 行号，避免整稿重写。"""
+    if not isinstance(story, dict) or not (revision_blob or "").strip():
+        return ""
+    from app.services.daily_story.story_types import parse_story_type_code
+
+    code = parse_story_type_code(
+        punchline=str(story.get("punchline_explain") or ""),
+    )
+    if code != "C":
+        return ""
+
+    dialogue = story.get("dialogue")
+    n = len(dialogue) if isinstance(dialogue, list) else 0
+    if n < 6:
+        return ""
+
+    blob = revision_blob
+    if any(
+        k in blob
+        for k in ("收束", "回旋镖", "C·", "好笑", "末句", "末段", "C类")
+    ):
+        start = max(0, n - 4)
+        return (
+            f"【改稿范围】只改 dialogue 第 {start + 1}–{n} 行（末段收束）；"
+            f"第 1–{start} 行须原样保留（speaker 与 line 勿动）。"
+        )
+    if any(k in blob for k in ("推进", "升级", "绕圈", "去绕圈", "冲突")):
+        end = max(3, n - 4)
+        return (
+            f"【改稿范围】只改 dialogue 第 3–{end} 行（中段交锋）；"
+            "勿动末 4 句收束与 setting/conflict_core。"
+        )
+    return (
+        "【改稿范围】优先改中段或末 4 句；禁止换 conflict_core 与主题。"
+    )

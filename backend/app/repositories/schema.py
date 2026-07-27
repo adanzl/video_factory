@@ -213,10 +213,64 @@ CREATE INDEX IF NOT EXISTS idx_daily_story_status ON daily_story(status);
 """
 
 
+def extract_story_type_from_punchline(punchline: str | None) -> str | None:
+    """从笑点解析提取 A–E（与 story_types 逻辑对齐，供迁移回填，避免循环依赖）。"""
+    import re
+
+    t = (punchline or "").strip()
+    if not t:
+        return None
+    m = re.search(r"矛盾类型\s*([ABCDE])", t, re.IGNORECASE)
+    if m:
+        return m.group(1).upper()
+    m = re.match(r"^([ABCDE])\s*类?\s*([^，,。：:]+)", t)
+    if m:
+        return m.group(1).upper()
+    m = re.match(r"^([ABCDE])\s+\S+", t)
+    if m:
+        return m.group(1).upper()
+    for k in ("A", "B", "C", "D", "E"):
+        if f"{k}类" in t or f"{k}：" in t:
+            return k
+    return None
+
+
+def _backfill_daily_story_type(conn: sqlite3.Connection) -> None:
+    import json
+
+    rows = conn.execute(
+        """
+        SELECT id, story_json
+        FROM daily_story
+        WHERE story_type IS NULL OR TRIM(story_type) = ''
+        """,
+    ).fetchall()
+    for row in rows:
+        story_id = int(row[0])
+        raw = row[1] or ""
+        try:
+            story = json.loads(raw) if raw else {}
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(story, dict):
+            continue
+        code = extract_story_type_from_punchline(
+            str(story.get("punchline_explain") or ""),
+        )
+        if not code:
+            continue
+        conn.execute(
+            "UPDATE daily_story SET story_type = ? WHERE id = ?",
+            (code, story_id),
+        )
+
+
 def apply_daily_story_schema(conn: sqlite3.Connection) -> None:
     """创建日常故事表（幂等）。"""
     conn.executescript(_DAILY_STORY_DDL)
     _ensure_column(conn, "daily_story", "job_id", "INTEGER")
+    _ensure_column(conn, "daily_story", "story_type", "TEXT")
+    _backfill_daily_story_type(conn)
     _ensure_journal_mode_delete(conn)
 
 

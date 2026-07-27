@@ -838,9 +838,9 @@ class DeepSeekClient(LLMClient):
         is_daily = style == CONTENT_STYLE_DAILY_STORY
         if is_daily:
             # 角色泄漏：先 scrub visual_brief 再拼装
-            if feedback and "cast leak" in feedback:
-                from app.services.daily_story.cast import (
-                    scrub_cast_leaks,
+            if feedback and "speaker leak" in feedback:
+                from app.services.daily_story.speaker import (
+                    scrub_leaked_speaker_names,
                     speakers_from_dialogue,
                 )
 
@@ -849,7 +849,7 @@ class DeepSeekClient(LLMClient):
                     if int(seg.get("segment_index") or 0) not in wanted:
                         continue
                     allowed = speakers_from_dialogue(seg.get("dialogue"))
-                    seg["visual_brief"] = scrub_cast_leaks(
+                    seg["visual_brief"] = scrub_leaked_speaker_names(
                         str(seg.get("visual_brief") or ""),
                         allowed,
                     )
@@ -1813,7 +1813,7 @@ class DeepSeekClient(LLMClient):
         import json
 
         punch = str(prev_story.get("punchline_explain") or "")
-        from app.services.daily_story.story_type_lines import parse_story_type_code, story_type_tag
+        from app.services.daily_story.story_types import parse_story_type_code, story_type_tag
 
         rev_type = story_type_tag(parse_story_type_code(punchline=punch))
         system, _ = build_daily_story_prompts(
@@ -1900,7 +1900,7 @@ class DeepSeekClient(LLMClient):
         max_attempts = max(3, get_settings().script_qa_max_attempts)
         core = str(body.get("conflict_core") or "")
         setting = str(body.get("setting") or "")
-        from app.services.daily_story.story_type_lines import parse_story_type_code
+        from app.services.daily_story.story_types import parse_story_type_code
 
         open_type = parse_story_type_code(
             punchline=str(body.get("punchline_explain") or ""),

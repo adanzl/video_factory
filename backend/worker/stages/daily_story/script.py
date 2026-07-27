@@ -78,11 +78,14 @@ class DailyScriptStage(StageExecutor):
         from app.services.llm.llm_deepseek import _VISUAL_STYLE_BY_CONTENT_STYLE
         script = {'title': title, 'narration': narration, 'word_count': len(narration), 'segments': segments, 'total_duration_seconds': sum((s['duration_sec'] for s in segments)), 'daily_story_id': daily_story_id, 'daily_story_theme': story.get('theme', ''), 'setting': str(story_content.get('setting') or '').strip(), 'total_chars': total_chars, 'visual_style': _VISUAL_STYLE_BY_CONTENT_STYLE['daily_story'], 'content_style': 'daily_story'}
         llm_mgr.fill_visual_briefs(script, job=ctx.job)
-        from app.services.daily_story.cast import scrub_cast_leaks, speakers_from_dialogue
+        from app.services.daily_story.speaker import (
+            scrub_leaked_speaker_names,
+            speakers_from_dialogue,
+        )
         from app.services.script.visual_brief import scrub_daily_visual_brief
         for seg in script.get('segments') or []:
             allowed = speakers_from_dialogue(seg.get('dialogue') or [])
-            cleaned = scrub_cast_leaks(str(seg.get('visual_brief') or ''), allowed)
+            cleaned = scrub_leaked_speaker_names(str(seg.get('visual_brief') or ''), allowed)
             cleaned = scrub_daily_visual_brief(cleaned)
             if cleaned != seg.get('visual_brief'):
                 logger.warning('segment %d visual_brief scrubbed (speakers=%s): %r -> %r', seg.get('segment_index'), sorted(allowed), str(seg.get('visual_brief') or '')[:120], cleaned[:120])

@@ -41,10 +41,14 @@ class DailyStoryMgr:
 
         def _worker() -> None:
             from app.repositories.database import get_app
+            from app.services.daily_story.story_types import parse_story_type_code
 
             with get_app().app_context():
                 try:
                     story = llm_mgr.generate_daily_story(theme)
+                    type_code = parse_story_type_code(
+                        punchline=str(story.get("punchline_explain") or ""),
+                    )
                     new_score = story.get('quality', {}).get('score', 0)
                     with atomic():
                         old_row = repo_daily_story.get_story(story_id)
@@ -66,7 +70,10 @@ class DailyStoryMgr:
                             repo_daily_story.update_story(story_id, status=_STATUS_ACTIVE)
                         else:
                             repo_daily_story.update_story(
-                                story_id, story=story, status=_STATUS_ACTIVE
+                                story_id,
+                                story=story,
+                                status=_STATUS_ACTIVE,
+                                story_type=type_code,
                             )
                     logger.info(
                         '[DAILY_STORY] async %s done story_id=%d theme=%r score=%d',

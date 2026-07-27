@@ -15,6 +15,7 @@ from PIL import Image as PILImage
 import requests
 
 from app.config import get_settings
+from app.services.daily_story.speaker import DAILY_STORY_SPEAKER_NAMES
 from app.services.llm.llm_agnes import (
     AgnesApiKey,
     AgnesQuotaExceeded,
@@ -40,9 +41,10 @@ _VERIFY_RETRY_DELAY = 10
 _ITEM_LINE_RE = re.compile(r"^项\s*(\d+)\s*[:：]\s*(.*)$")
 _YES_HEAD_RE = re.compile(r"^[「【\[]?是([，,。．\s的」】\]]|$)")
 _NO_HEAD_RE = re.compile(r"^[「【\[]?(否|不是)([，,。．\s」】\]]|$)")
-# 日常故事固定卡司顺序；姐弟未发言也可同框
+
+# 日常故事固定角色顺序；姐弟未发言也可同框
 _DAILY_SIBLINGS = ("昭昭", "灿灿")
-_DAILY_CAST_ORDER = ("昭昭", "灿灿", "妈妈")
+_DAILY_SPEAKER_ORDER = DAILY_STORY_SPEAKER_NAMES
 
 
 class AgnesImageVerifyFailed(RuntimeError):
@@ -613,7 +615,7 @@ class AgnesImageProvider(ImageProvider):
         allowed: set[str] = {s for s in speakers if s}
         if content_style == CONTENT_STYLE_DAILY_STORY:
             allowed.update(_DAILY_SIBLINGS)
-        ordered = [name for name in _DAILY_CAST_ORDER if name in allowed]
+        ordered = [name for name in _DAILY_SPEAKER_ORDER if name in allowed]
         for name in speakers:
             if name and name not in ordered:
                 ordered.append(name)

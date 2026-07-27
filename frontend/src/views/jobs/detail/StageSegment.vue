@@ -59,7 +59,12 @@
                 :value="segment.segment_index"
                 class="segment-check"
               >
-                #{{ segment.segment_index }}
+                <span
+                  class="font-medium"
+                  :class="segmentKeyframeValue(segment) ? 'text-amber-600' : 'text-gray-600'"
+                >
+                  #{{ segment.segment_index }}
+                </span>
               </el-checkbox>
             </el-checkbox-group>
           </div>
@@ -88,7 +93,12 @@
           class="flex w-72 shrink-0 flex-col gap-3 rounded-lg border border-gray-200 bg-white p-4"
         >
           <div class="flex items-center justify-between gap-2">
-            <span class="text-sm font-medium text-gray-800">#{{ segment.segment_index }}</span>
+            <span
+              class="text-sm font-medium"
+              :class="segmentKeyframeValue(segment) ? 'text-amber-600' : 'text-gray-600'"
+            >
+              #{{ segment.segment_index }}
+            </span>
             <div class="flex items-center gap-1">
               <el-button size="small" link type="primary" @click="openEditDialog(segment)">
                 编辑
@@ -499,7 +509,18 @@ const generatingVisualBriefIndex = ref<number | null>(null);
 const generatingMotionPromptIndex = ref<number | null>(null);
 const generatingClipIndex = ref<number | null>(null);
 const savingKeyframeIndex = ref<number | null>(null);
-const segmentScope = ref("segment/images");
+
+const SEGMENT_SCOPE_STORAGE_KEY = "stageSegmentScope";
+const VALID_SEGMENT_SCOPES = new Set(["segment/all", "segment/images", "segment/clips"]);
+const storedSegmentScope = localStorage.getItem(SEGMENT_SCOPE_STORAGE_KEY);
+const segmentScope = ref(
+  storedSegmentScope && VALID_SEGMENT_SCOPES.has(storedSegmentScope)
+    ? storedSegmentScope
+    : "segment/images",
+);
+watch(segmentScope, value => {
+  localStorage.setItem(SEGMENT_SCOPE_STORAGE_KEY, value);
+});
 
 type ImageProvider = NonNullable<RunStageActionPayload["image_provider"]>;
 type VideoProvider = NonNullable<RunStageActionPayload["video_provider"]>;

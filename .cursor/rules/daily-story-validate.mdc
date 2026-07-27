@@ -1,0 +1,49 @@
+---
+description: 日常故事 validate/patch/quality 边界，禁止剧情词表硬编码
+globs: backend/app/services/daily_story/**/*
+alwaysApply: false
+---
+
+# 日常故事：硬卡 vs 提示词
+
+与 [日常故事-类型.md](../../docs/日常故事-类型.md) 原则一致：
+**类型差异用叙事层 + 不变量**，不在代码里按单篇剧情/用词穷举。
+
+## 三层分工
+
+| 层 | 放哪 | 写什么 |
+| --- | --- | --- |
+| 叙事与措辞 | `story_types/*/line.py`、`prompts.py`、重试 hint | 赛规怎么立、反例、收束模板、「更急谁赢」类创作约束 |
+| 机读不变量 | `*/validate.py`、`prompts.validate_*`（通用） | 字数、连说、speaker、末 N 句**结构槽位**（与类型契约一致） |
+| 观感 | `quality.py`、`*/quality.py` | 类型级 pattern（回旋镖、末四拍），**不**为单篇主题加 regex |
+
+## `validate.py` / `patch.py` 允许
+
+- 与 **StoryTypeLine / 类型文档** 对齐的抽象不变量（例：C 末段须回旋镖形态、末句嘴硬方、勿 A 式末四拍全套）。
+- 可 **程序判定** 且 **全类型稿通用** 的规则（交替说话、妈妈末句收束等）。
+- A 的 `facts.py`：**主题触发**的可核对事实（算式、时长），不是对白用词表。
+
+## 禁止写入 `validate.py`
+
+- 单篇/单主题台词（「憋不住谁输」「抢马桶」「喝水作弊」等）。
+- 用 regex **穷举**「好/坏措辞」列表来挡生成。
+- 把本应 **观感扣分** 或 **人工改稿** 的问题做成生成硬拦（除非产品明确要求硬卡）。
+
+## 新增规则前的自检
+
+1. 是否 **所有** C（或 A）稿都适用，而不是只修了一篇 bug？  
+2. 能否用 **已有字段 + 抽象 pattern**（`layer_patterns`、共享 `RE_*`）表达？  
+3. 若只是「写得不好听」→ **line 提示词** 或 **quality 降分**，不要 `validate`。  
+4. 若需新文件 → 先与用户确认（项目惯例）。
+
+## 反例 / 正例
+
+```text
+# ❌ validate：更急 + 憋不住 → 报错（剧情用词）
+# ✅ line.py：更急赛规写「谁更急谁赢」，勿偷换憋尿逻辑
+
+# ❌ validate：必须出现「切的人先选」六字
+# ✅ C validate：末段命中回旋镖类 pattern（与 c/quality 共用）
+
+# ✅ A validate：末四拍 speaker 顺序、引话须在灿灿前文（类型契约）
+```

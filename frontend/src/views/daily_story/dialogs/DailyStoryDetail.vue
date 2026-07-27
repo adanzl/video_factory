@@ -8,6 +8,10 @@
           <div class="text-sm">{{ localStory.theme }}</div>
         </div>
         <div>
+          <div class="mb-1 text-xs text-gray-400">矛盾类型</div>
+          <div class="text-sm">{{ formatDailyStoryType(localStory.story_type) }}</div>
+        </div>
+        <div>
           <div class="mb-1 text-xs text-gray-400">场景标题</div>
           <el-input v-if="editing" v-model="editStory.scene_title" size="small" />
           <div v-else class="font-bold">{{ editStory.scene_title }}</div>
@@ -191,7 +195,14 @@ import { useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import { Edit } from "@element-plus/icons-vue";
 import type { DailyStoryRecord, StoryContent } from "@/api/api-daily-story";
-import { createDailyStoryJob, regenerateDailyStory, updateDailyStory, syncDailyStoryToJob, waitDailyStoryReady } from "@/api/api-daily-story";
+import {
+  createDailyStoryJob,
+  formatDailyStoryType,
+  regenerateDailyStory,
+  updateDailyStory,
+  syncDailyStoryToJob,
+  waitDailyStoryReady,
+} from "@/api/api-daily-story";
 
 function speakerStyle(speaker: string): { bg: string; text: string } {
   if (speaker === '昭昭') return { bg: 'bg-blue-50', text: 'text-blue-600 font-bold' }
