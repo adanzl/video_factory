@@ -1818,6 +1818,56 @@ def _patch_consecutive_speakers(story: dict) -> list[str]:
     return notes
 
 
+_VOCATIVE_NAMES = ("妈妈", "妈", "孩子们", "孩子", "昭昭", "灿灿")
+_FINAL_PARTICLES = "呀啊呢吧吗了啦"
+
+
+def _patch_vocative_punctuation(story: dict) -> list[str]:
+    """句尾称呼前缺逗号时补逗号；句尾多余「听着」时去掉。"""
+    notes: list[str] = []
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list):
+        return notes
+
+    vocatives = "|".join(re.escape(v) for v in _VOCATIVE_NAMES)
+    # 1) 「呢你看妈」→「呢你看，妈」（保留一个逗号在称呼前）
+    pattern_full = re.compile(
+        rf"([{_FINAL_PARTICLES}])你看({vocatives})$",
+        re.UNICODE,
+    )
+    # 2) 「呀妈」「吗妈妈」→「呀，妈」「吗，妈妈」
+    pattern_particle = re.compile(
+        rf"([{_FINAL_PARTICLES}])({vocatives})$",
+        re.UNICODE,
+    )
+    # 3) 「你看妈」→「你看，妈」
+    pattern_evidence = re.compile(
+        rf"(你看|你瞧)({vocatives})$",
+        re.UNICODE,
+    )
+    # 4) 句尾多余「听着」：「啊孩子们听着」→「啊孩子们」
+    pattern_trailing_listen = re.compile(
+        rf"([{_FINAL_PARTICLES}]|{vocatives})听着$",
+        re.UNICODE,
+    )
+
+    for i, item in enumerate(dialogue):
+        if not isinstance(item, dict):
+            continue
+        line = str(item.get("line") or "").rstrip()
+        if not line:
+            continue
+        new_line = line
+        new_line = pattern_trailing_listen.sub(r"\1", new_line)
+        new_line = pattern_full.sub(r"\1你看，\2", new_line)
+        new_line = pattern_particle.sub(r"\1，\2", new_line)
+        new_line = pattern_evidence.sub(r"\1，\2", new_line)
+        if new_line != line:
+            item["line"] = new_line
+            notes.append(f"称呼标点[{i}]")
+    return notes
+
+
 def _patch_setting_mom_without_line(story: dict) -> list[str]:
     """setting 写了妈妈动作但正文无妈妈台词 → 改由姐弟场景。"""
     notes: list[str] = []
@@ -1852,6 +1902,7 @@ def try_local_patch_daily_story_body(story: dict) -> tuple[dict, list[str]]:
     notes.extend(_patch_setting_mom_without_line(out))
     notes.extend(_patch_consecutive_speakers(out))
     notes.extend(patch_type_body(out))
+    notes.extend(_patch_vocative_punctuation(out))
     notes.extend(_patch_body_char_budget(out))
     # 补字后可能又超单句硬卡 / 又引出连说 / 又叠试尝
     notes.extend(_patch_overlong_lines(out))

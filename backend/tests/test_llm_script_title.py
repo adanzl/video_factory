@@ -10,6 +10,7 @@ from app.services.daily_story.prompts import (
     DAILY_STORY_BODY_WRITE_TARGET_MAX,
     DAILY_STORY_BODY_WRITE_TARGET_MIN,
     DAILY_STORY_LINE_CHARS_MAX,
+    _patch_vocative_punctuation,
     build_daily_story_opening_prompts,
     build_daily_story_prompts,
     build_daily_story_theme_prompts,
@@ -237,6 +238,33 @@ def test_validate_daily_story_json_allows_evidence_after_vocative():
     story = _valid_story()
     story["dialogue"][3]["line"] = "你拇指还在屏幕上滑个不停呢你看妈"
     validate_daily_story_json(story)
+
+
+def test_patch_vocative_punctuation_adds_comma_before_vocative():
+    story = _valid_story()
+    story["dialogue"][0]["line"] = "那你被子里手机屏幕怎么还亮着呀妈"
+    story["dialogue"][1]["line"] = "刷到第九个视频还叫工作需要吗妈妈"
+    notes = _patch_vocative_punctuation(story)
+    assert "称呼标点[0]" in notes
+    assert "称呼标点[1]" in notes
+    assert story["dialogue"][0]["line"] == "那你被子里手机屏幕怎么还亮着呀，妈"
+    assert story["dialogue"][1]["line"] == "刷到第九个视频还叫工作需要吗，妈妈"
+
+
+def test_patch_vocative_punctuation_keeps_single_comma_for_evidence_vocative():
+    story = _valid_story()
+    story["dialogue"][0]["line"] = "你拇指还在屏幕上滑个不停呢你看妈"
+    notes = _patch_vocative_punctuation(story)
+    assert "称呼标点[0]" in notes
+    assert story["dialogue"][0]["line"] == "你拇指还在屏幕上滑个不停呢你看，妈"
+
+
+def test_patch_vocative_punctuation_strips_trailing_listen():
+    story = _valid_story()
+    story["dialogue"][0]["line"] = "我回工作消息，不是玩手机啊孩子们听着"
+    notes = _patch_vocative_punctuation(story)
+    assert "称呼标点[0]" in notes
+    assert story["dialogue"][0]["line"] == "我回工作消息，不是玩手机啊，孩子们"
 
 
 def test_validate_daily_story_json_allows_soft_ending():
