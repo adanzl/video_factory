@@ -26,9 +26,23 @@ logger = logging.getLogger(__name__)
 @bp.get("/list")
 def list_stories_route():
     status = get_query("status")
+    story_type_raw = get_query("story_type")
+    story_type: str | None = None
+    if story_type_raw:
+        code = story_type_raw.strip().upper()
+        if code not in ("A", "B", "C", "D", "E"):
+            raise APIError("story_type 须为 A–E", status_code=400)
+        story_type = code
     limit = parse_query_int("limit", 15, required=False, minimum=1, maximum=200)
     offset = parse_query_int("offset", 0, required=False, minimum=0)
-    return json_ok(daily_story_mgr.list_stories(status=status, limit=limit, offset=offset))
+    return json_ok(
+        daily_story_mgr.list_stories(
+            status=status,
+            story_type=story_type,
+            limit=limit,
+            offset=offset,
+        ),
+    )
 
 
 @bp.get("/get")

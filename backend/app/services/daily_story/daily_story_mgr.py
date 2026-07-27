@@ -116,11 +116,26 @@ class DailyStoryMgr:
         logger.warning('recovered %d stuck daily story/stories', len(rows))
         return len(rows)
 
-    def list_stories(self, *, status: str | None=None, limit: int=50, offset: int=0) -> dict:
+    def list_stories(
+        self,
+        *,
+        status: str | None = None,
+        story_type: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict:
         """返回 {items: [...], total: N}。"""
         with atomic():
-            items = repo_daily_story.list_stories(status=status, limit=limit, offset=offset)
-            total = repo_daily_story.count_stories(status=status)
+            items = repo_daily_story.list_stories(
+                status=status,
+                story_type=story_type,
+                limit=limit,
+                offset=offset,
+            )
+            total = repo_daily_story.count_stories(
+                status=status,
+                story_type=story_type,
+            )
             items = [_ensure_story_quality(item) for item in items]
             return {'items': items, 'total': total}
 
