@@ -577,6 +577,7 @@ class MediaMgr:
             ]
             pending = set(green_lets)
             job_id = int(job["id"]) if job is not None and job.get("id") is not None else None
+            failures: list[BaseException] = []
             try:
                 while pending:
                     if job_id is not None and job_cancel.is_cancelled(job_id):
@@ -591,7 +592,17 @@ class MediaMgr:
                         continue
                     for g in ready:
                         pending.discard(g)
-                        seg_id, clip_path, gen_sec = g.get()
+                        try:
+                            seg_id, clip_path, gen_sec = g.get()
+                        except BaseException as exc:
+                            failures.append(exc)
+                            logger.warning(
+                                "clip worker failed (%s/%s still running): %s",
+                                len(pending),
+                                total,
+                                exc,
+                            )
+                            continue
                         segment_clips.append((seg_id, clip_path))
                         if on_clip_done is not None:
                             on_clip_done(seg_id, clip_path, gen_sec)
@@ -600,6 +611,14 @@ class MediaMgr:
                     g.kill(block=False)
                 pool.kill(block=False)
                 raise
+            if failures:
+                logger.error(
+                    "clip batch finished with failures: ok=%s/%s, failed=%s",
+                    len(segment_clips),
+                    total,
+                    len(failures),
+                )
+                raise failures[0]
 
         elapsed = time.time() - t_start
         logger.info(

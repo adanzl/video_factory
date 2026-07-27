@@ -349,6 +349,94 @@ def test_clip_batch_i2v_concurrency_respects_max_workers(tmp_path: Path) -> None
     assert sorted(persisted) == [101, 102, 103, 104, 105, 106]
 
 
+def test_clip_batch_waits_for_all_workers_before_raise_on_partial_failure(
+    tmp_path: Path,
+) -> None:
+    """有分镜失败时仍等其它路完成，成功的分镜应先 on_clip_done，最后再抛错。"""
+    import gevent
+
+    from app.config import get_settings
+    from app.services.media import media_mgr as media_mgr_mod
+    from app.services.media.media_mgr import media_mgr
+
+    workers = 3
+    media_mgr_mod._reset_i2v_semaphore_for_tests()
+    settings = get_settings()
+
+    media_dir = tmp_path / "job"
+    images_dir = media_dir / "images"
+    images_dir.mkdir(parents=True)
+    image_path = images_dir / "1.png"
+    image_path.write_bytes(b"png")
+
+    segments = [
+        {
+            "id": 201,
+            "segment_index": 1,
+            "visual_mode": "wan_i2v",
+            "image_path": str(image_path),
+            "duration_sec": 3.0,
+            "text": "a",
+            "image_prompt": "test",
+            "motion_prompt": "slow pan",
+        },
+        {
+            "id": 202,
+            "segment_index": 2,
+            "visual_mode": "wan_i2v",
+            "image_path": str(image_path),
+            "duration_sec": 3.0,
+            "text": "b",
+            "image_prompt": "test",
+            "motion_prompt": "slow pan",
+        },
+        {
+            "id": 203,
+            "segment_index": 3,
+            "visual_mode": "wan_i2v",
+            "image_path": str(image_path),
+            "duration_sec": 3.0,
+            "text": "c",
+            "image_prompt": "test",
+            "motion_prompt": "slow pan",
+        },
+    ]
+
+    finished: list[int] = []
+
+    def fake_build_segment_clip(**kwargs):
+        index = kwargs["segment_index"]
+        gevent.sleep(0.05 if index != 2 else 0.15)
+        if index == 2:
+            raise RuntimeError("segment 2 boom")
+        out = kwargs["output_path"]
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(b"mp4")
+        finished.append(index)
+
+    persisted: list[int] = []
+
+    with (
+        patch.object(settings, "video_max_workers", workers),
+        patch.object(settings, "mock_mode", False),
+        patch.object(
+            media_mgr_mod.clip_mgr,
+            "build_segment_clip",
+            side_effect=fake_build_segment_clip,
+        ),
+        patch.object(media_mgr, "_load_subtitle_cues", return_value=[]),
+    ):
+        with pytest.raises(RuntimeError, match="segment 2 boom"):
+            media_mgr.build_segment_clips(
+                media_dir=media_dir,
+                segments=segments,
+                on_clip_done=lambda seg_id, _path, *_unused: persisted.append(seg_id),
+            )
+
+    assert sorted(finished) == [1, 3]
+    assert sorted(persisted) == [201, 203]
+
+
 def test_agnes_i2v_poll_stops_on_job_abort(tmp_path: Path) -> None:
     """abort 后轮询应立刻抛 JobCancelledError，不再继续拉状态。"""
     from app.utils.job_cancel import JobCancelledError, job_cancel
