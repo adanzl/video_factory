@@ -204,6 +204,34 @@ def test_validate_daily_story_json_rejects_bad_speaker():
         validate_daily_story_json(story)
 
 
+def test_validate_daily_story_json_rejects_inverted_vocative():
+    story = _valid_story()
+    story["dialogue"][3]["line"] = "你刚才还噗嗤笑出声了呢妈妈你听听"
+    with pytest.raises(ValueError, match="语序不自然"):
+        validate_daily_story_json(story)
+
+
+def test_validate_daily_story_json_allows_natural_vocative_end():
+    # 句尾单喊「妈」是正常口语
+    story = _valid_story()
+    story["dialogue"][3]["line"] = "我隔着门都听见短视频声音了啊妈"
+    validate_daily_story_json(story)
+
+
+def test_validate_daily_story_json_allows_natural_vocative_start():
+    # 称呼放句首是正常口语
+    story = _valid_story()
+    story["dialogue"][3]["line"] = "妈妈，你刚才还噗嗤笑出声了呢"
+    validate_daily_story_json(story)
+
+
+def test_validate_daily_story_json_allows_evidence_after_vocative():
+    # 「呢你看妈」中称呼在证据词之后，属于正常口语
+    story = _valid_story()
+    story["dialogue"][3]["line"] = "你拇指还在屏幕上滑个不停呢你看妈"
+    validate_daily_story_json(story)
+
+
 def test_validate_daily_story_json_allows_soft_ending():
     story = _valid_story()
     # 软收前先破功
