@@ -19,7 +19,7 @@ RE_LITERAL_RULE_PLAY = re.compile(
     r"(?:急|赢|比赛).{0,16}(?:喝|吃|忍|憋)|"
     r"(?:你叠|我叠|叠好).{0,12}(?:给|收|拿|放)|"
     r"(?:按|照).{0,6}(?:规矩|赛规|你说的|你刚说)|"
-    r"谁弄乱|弄乱谁收拾|比你更|更久",
+    r"谁弄乱|弄乱谁收拾|比你更|更久|碰了就算|碰了.*算",
 )
 _OWNERSHIP_CHATTER = re.compile(
     r"都是我的|你的没|各管各|叠了没|不公平|凭什么.*我的|"
@@ -28,7 +28,7 @@ _OWNERSHIP_CHATTER = re.compile(
 _RULE_LINE = re.compile(r"谁碰|碰了.*负责|弄乱.*负责|谁弄乱")
 _FILMABLE_TWIST = re.compile(
     r"歪了|乱了|倒了|洒了|摔了|碰倒|多拿|偷拿|藏了|"
-    r"东倒西歪|翻乱|弄乱|乱放|叠好|给你这件|递给你|给你。",
+    r"东倒西歪|翻乱|弄乱|乱放|叠好|给你这件|递给你|给你。|碰了|碰倒",
 )
 
 HUMOR_ISSUE_CAPS: tuple[tuple[str, int], ...] = (
@@ -51,6 +51,16 @@ def ground_closing_quote(fragment: str, haystack: str) -> bool:
         return True
     if "先到" in frag and ("先到" in hay or "先拿" in hay):
         return True
+    if re.search(r"碰|弄乱|收拾|叠", frag) and re.search(
+        r"碰|弄乱|收拾|叠|规矩|赛规", hay,
+    ):
+        return True
+    if ("就算" in frag or "不算" in frag) and ("规矩" in hay or "算" in hay):
+        return True
+    run = min(6, len(frag))
+    for i in range(len(frag) - run + 1):
+        if frag[i:i + run] in hay:
+            return True
     return False
 
 
