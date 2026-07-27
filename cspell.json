@@ -18,6 +18,7 @@
         "embedder",
         "fallocate",
         "faststart",
+        "FILMABLE",
         "flac",
         "fontsdir",
         "fuser",

@@ -1,10 +1,10 @@
-"""观感：共用 building block、TypeQualityProfile、按类型注册表。"""
+"""单类型的观感质检路由配置。"""
 
 from __future__ import annotations
 
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from app.services.daily_story.story_types import parse_story_type_code, story_line_for_code
 
@@ -12,9 +12,21 @@ PunchlineScorer = Callable[
     [list[str], list[str], str, str],
     tuple[int, list[str]],
 ]
+HumorIssueCollector = Callable[
+    [list[str], list[str] | None],
+    list[str],
+]
+GroundQuoteFn = Callable[[str, str], bool]
+QuoteHaystackFn = Callable[[list[str], list[str] | None, str], str]
+SceneBeatScorer = Callable[
+    [list[str], Callable[[str], bool]],
+    tuple[int, list[str]],
+]
+FunninessTailScorer = Callable[[list[str]], tuple[int, list[str]]]
+HumorRevisionHintFn = Callable[[str], str | None]
 
 RE_BOOMERANG_RULE = re.compile(
-    r"你自己说|你说的|你承认|你刚才说|你自己.*说|"
+    r"你自己说|你说的|你承认|你刚才说|你刚说|你不是说|你自己.*说|"
     r"你说的.*你先.*选|你.*说.*先选|你定的.*你先",
 )
 RE_REVELATION_PROP = re.compile(
@@ -86,6 +98,14 @@ class TypeQualityProfile:
     penalize_split_end: bool = True
     penalize_stubborn_end: bool = True
     penalize_mom_judge: bool = True
+    collect_humor_issues: HumorIssueCollector | None = None
+    closing_quote_haystack: QuoteHaystackFn | None = None
+    ground_closing_quote: GroundQuoteFn | None = None
+    stop_on_ungrounded_quote: bool = True
+    score_scene_beat: SceneBeatScorer | None = None
+    score_funniness_tail: FunninessTailScorer | None = None
+    humor_issue_caps: tuple[tuple[str, int], ...] = field(default_factory=tuple)
+    humor_revision_hint: HumorRevisionHintFn | None = None
 
     def layer_patterns(self):
         return story_line_for_code(self.code).layer_patterns

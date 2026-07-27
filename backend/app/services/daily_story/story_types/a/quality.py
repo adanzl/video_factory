@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 
+from app.services.daily_story.story_types.a import humor as a_humor
 from app.services.daily_story.story_types.quality import (
     RE_SOFT_LAST,
     RE_SURRENDER,
@@ -93,4 +94,7 @@ QUALITY_PROFILE = TypeQualityProfile(
         "凭什么",
         "你也",
     ),
+    collect_humor_issues=a_humor.collect_humor_issues,
+    closing_quote_haystack=a_humor.closing_quote_haystack,
+    stop_on_ungrounded_quote=True,
 )

@@ -30,9 +30,8 @@ _STRONG_END_MARKERS = (
 )
 
 from app.services.daily_story.story_types.quality import (
-    RE_BOOMERANG_RULE,
-    RE_TWIST_SEGUE,
     closing_satisfied,
+    quality_profile_for_code,
     resolve_quality_profile,
     score_punchline_for_profile,
 )
@@ -75,6 +74,58 @@ _A_DRUDGE_PHRASES = (
     "凭什么", "不公平", "教你", "规矩",
 )
 _A_TEMPLATE_MARKERS = ("哪里不一样", "都是听", "大人也要听小孩", "大人要听小孩")
+
+# 口语「碰了一下」等不算可拍一锤
+_RE_HAMMER_SOFT = re.compile(
+    r"了一下|碰一下|试一下|看一下|摸一下|瞅一下",
+)
+
+
+def _text_has_hammer_beat(text: str) -> bool:
+    if not _RE_HAMMER.search(text):
+        return False
+    if re.search(
+        r"(?:\d+|[二三四五六七八九十两]+)(?:分钟|秒|次|遍)|"
+        r"算错|写错|噗|才刷|就吐|咽下|塞嘴里|整块塞|玩手机|泡沫|"
+        r"(?:两|三|四|五|几|\d+)下",
+        text,
+    ):
+        return True
+    if _RE_HAMMER_SOFT.search(text):
+        return False
+    return True
+
+
+_HUMOR_ISSUE_CAPS_SHARED: tuple[tuple[str, int], ...] = (
+    ("模板复读", 6),
+    ("末四拍不完整", 5),
+    ("偏C", 8),
+    ("未扣一锤", 4),
+    ("仍发指令", 4),
+    ("认弟弟赢", 4),
+    ("空甩身份", 4),
+    ("可拍一锤", 4),
+    ("预热注水", 5),
+    ("把关话术", 5),
+    ("质检说明书", 5),
+    ("缺赖账", 5),
+    ("多套免责", 4),
+    ("借口复读", 4),
+)
+
+
+def _apply_humor_issue_caps(
+    points: int,
+    cons: list[str],
+    profile,
+) -> int:
+    caps = (*_HUMOR_ISSUE_CAPS_SHARED, *profile.humor_issue_caps)
+    for c in cons:
+        for substr, cap in caps:
+            if substr in c:
+                points = min(points, cap)
+                break
+    return points
 
 
 def _dialogue_lines(story: dict) -> list[str]:
@@ -305,33 +356,6 @@ def _fragment_grounded_in_text(fragment: str, haystack: str, *, min_run: int = 5
     return False
 
 
-def _fragment_grounded_c_rule_quote(fragment: str, haystack: str) -> bool:
-    """C 类：收束引对方赛规时允许与正文同义（更急/先选/公平）。"""
-    frag = re.sub(r"[的话呢呀嘛吧啊…\s「」『』\"'‘’：:，,]", "", fragment)
-    hay = re.sub(r"[的话呢呀嘛吧啊…\s「」『』\"'‘’：:，,]", "", haystack)
-    if len(frag) < 3:
-        return True
-    if "更急" in frag and "更急" in hay:
-        return True
-    if "先选" in frag and "先选" in hay:
-        return True
-    if "公平" in frag and "公平" in hay:
-        return True
-    if "先到" in frag and ("先到" in hay or "先拿" in hay):
-        return True
-    return False
-
-
-def _a_close_four_beat_complete(tail4: list[str]) -> bool:
-    if len(tail4) < 4:
-        return False
-    return (
-        "那不一样" in tail4[-3]
-        and ("哪里不一样" in tail4[-2] or "都是听" in tail4[-2])
-        and any(m in tail4[-1] for m in ("哼", "行吧", "随便", "好吧", "算了"))
-    )
-
-
 def _collect_humor_issues(
     lines: list[str],
     *,
@@ -343,186 +367,31 @@ def _collect_humor_issues(
     if len(lines) < 6:
         return cons
 
+    profile = quality_profile_for_code(type_code)
     body = lines[:-4] if len(lines) > 4 else lines[:-1]
     tail4 = lines[-4:] if len(lines) >= 4 else lines
     body_text = "".join(body)
-    tail_text = "".join(tail4)
-    # A 类埋句须出灿灿之口；禁止昭昭自造「特殊情况可以」再假装引用
     quote_haystack = body_text
-    if type_code == "A" and speakers and len(speakers) == len(lines):
-        body_n = len(body)
-        cancan = "".join(
-            lines[i]
-            for i in range(body_n)
-            if speakers[i] == "灿灿"
+    if profile.closing_quote_haystack:
+        quote_haystack = profile.closing_quote_haystack(
+            lines, speakers, body_text,
         )
-        if cancan.strip():
-            quote_haystack = cancan
 
     for line in tail4:
         for m in _RE_DIRECT_QUOTE.finditer(line):
             frag = m.group(1).strip()
             grounded = _fragment_grounded_in_text(frag, quote_haystack)
-            if not grounded and type_code == "C":
-                grounded = _fragment_grounded_c_rule_quote(frag, quote_haystack)
+            if profile.ground_closing_quote:
+                grounded = grounded or profile.ground_closing_quote(
+                    frag, quote_haystack,
+                )
             if not grounded:
                 cons.append(f"收束引话无出处（「{frag[:12]}」）")
-                if type_code != "C":
+                if profile.stop_on_ungrounded_quote:
                     return cons
 
-    if type_code == "A":
-        if ("哪里不一样" in body_text or "都是听" in body_text) and (
-            "哪里不一样" in tail_text or "都是听" in tail_text
-        ):
-            cons.append("追问闭环模板复读")
-        if "不公平" in body_text and "凭什么" not in body_text[:40]:
-            cons.append("偏C式争公平口号")
-        last = tail4[-1] if tail4 else ""
-        if re.search(r"哼", last) and re.search(
-            r"你.{0,4}(?:重刷|再刷|漱口|过关)|明天你|你等着",
-            last,
-        ):
-            cons.append("末句哼完仍发指令，破功不干净")
-        if re.search(r"算你厉害|你赢了|算你赢|你厉害", last):
-            cons.append("末句认赢或甩狠，破功不干净")
-        if len(tail4) >= 3 and "那不一样" in tail4[-3]:
-            if re.search(r"我是姐姐|我说了算", tail4[-3]) and not re.search(
-                r"示范|泡沫|教学|吐泡沫|教你",
-                tail4[-3],
-            ):
-                cons.append("收束空甩身份，不好笑")
-            # 收束借口与中段同义复读 / 换皮叠套
-            dodge = tail4[-3]
-            if re.search(r"试味道|试甜|尝一下|帮你试|尝了|只尝|试一口", dodge) and re.search(
-                r"试甜|试味道|帮你试|尝了|只尝|尝味道|甜不甜|试一口|确认味道",
-                body_text,
-            ):
-                cons.append("收束借口复读中段，不好笑")
-            if re.search(r"把关|负责|我说了算", dodge) and not re.search(
-                r"样品|耗掉|泡沫|教学",
-                dodge,
-            ):
-                cons.append("收束空甩身份，不好笑")
-            if re.search(r"那不一样[，,]?\s*(我那是)?[…\.。]{0,3}\s*$", dodge):
-                cons.append("收束空甩身份，不好笑")
-        # 中段叠两套免责：试吃 / 检查 / 把关 / 示范 各算一套
-        excuse_n = 0
-        if re.search(
-            r"试甜|试味道|帮你试|尝一下|尝得准|尝了|只尝|尝味道|甜不甜|"
-            r"试一口|确认味道|咬一口就|知道甜|先试|算尝味|"
-            r"看看熟|熟不熟|坏了没|有没有坏|是甜的|甜度|确认质量",
-            body_text,
-        ):
-            excuse_n += 1
-        if re.search(r"检查不算|检查样品|特地挑", body_text):
-            excuse_n += 1
-        if re.search(r"把关|资格|负责质量|检查员|有特权", body_text):
-            excuse_n += 1
-        if re.search(r"示范|教你吐|特批", body_text):
-            excuse_n += 1
-        if excuse_n >= 2:
-            cons.append("中段多套免责借口叠罗汉")
-        # 偷吃：咽下后还开质检说明书 = 拖沓不好笑
-        if re.search(r"偷吃|饭前|水果|苹果|草莓|葡萄", "".join(lines)):
-            if re.search(
-                r"半成品|大家安全|新不新鲜|合格证书|专业方法|含三秒|"
-                r"为了大家|品质检测|安全起见|确认甜度|确认质量|是甜的",
-                body_text,
-            ):
-                cons.append("偷吃质检说明书注水，不好笑")
-            wash_n = sum(1 for ln in lines if "洗手" in ln)
-            if wash_n >= 2:
-                cons.append("偷吃质检说明书注水，不好笑")
-            # 检查样品前无赖账抬杠（鼓鼓只算发现，不算赖账）
-            check_i = next(
-                (
-                    i
-                    for i, ln in enumerate(lines)
-                    if re.search(r"检查样品|特地挑|检查不算吃", ln)
-                ),
-                None,
-            )
-            if check_i is not None:
-                cancan_dodge = any(
-                    (speakers[i] if i < len(speakers) else "") == "灿灿"
-                    and re.search(r"溅|手脏|擦过|果汁", lines[i])
-                    for i in range(check_i)
-                )
-                if not cancan_dodge:
-                    cons.append("偷吃缺赖账抬杠，不好笑")
-            la_n = sum(
-                1
-                for ln in lines
-                if re.search(r"[啦呀嘛]$", str(ln).rstrip())
-            )
-            if la_n >= 4:
-                cons.append("偷吃质检说明书注水，不好笑")
-            pairs = list(
-                zip(speakers or [""] * len(lines), lines, strict=False)
-            )
-            spit_i = next(
-                (
-                    i
-                    for i, (sp, ln) in enumerate(pairs)
-                    if sp == "灿灿"
-                    and (
-                        re.search(r"已经咽|咽下去了|看不了|吐不出来", ln)
-                        or (
-                            re.search(r"咽了", ln)
-                            and "才算" not in ln
-                            and "不咽" not in ln
-                        )
-                    )
-                ),
-                None,
-            )
-            quote_indices = [
-                i
-                for i, (_sp, ln) in enumerate(pairs)
-                if re.search(
-                    r"你刚才(?:明明|自己)?说|你自己(?:刚才)?说|你刚说",
-                    ln,
-                )
-            ]
-            quote_i = quote_indices[-1] if quote_indices else None
-            if len(quote_indices) >= 2 or (
-                quote_i is not None and quote_i < len(pairs) - 4
-            ):
-                cons.append("中段提前引话，不好笑")
-            if spit_i is not None and quote_i is not None and quote_i - spit_i > 3:
-                cons.append("咽下后质检说明书注水，不好笑")
-        if re.search(r"反正我说了算|我说了算", "".join(tail4[-1:])):
-            cons.append("末句仍嘴硬甩权，破功不干净")
-        # 刷牙：无一锤声画（噗/数下就吐）则不好笑
-        if re.search(r"刷牙|漱口|牙刷|吐水", "".join(lines)):
-            fun_beat = bool(re.search(
-                r"噗|一[、,，]二|才[一二两三四五六\d]+下|才刷.{0,4}下",
-                "".join(lines),
-            ))
-            if not fun_beat:
-                cons.append("刷牙缺可拍一锤声画（噗/数下就吐）")
-        # 刷牙：收束应扣翻车动作，勿只引「两分钟」空规矩
-        if re.search(r"刷牙|漱口|牙刷", "".join(lines)):
-            quote_frags = [
-                m.group(1)
-                for line in tail4
-                for m in _RE_DIRECT_QUOTE.finditer(line)
-            ]
-            hammer_hit = bool(re.search(
-                r"才刷|就吐|就停|就漱|玩手机|泡沫|几下|二十秒|五十秒",
-                body_text,
-            ))
-            if quote_frags and hammer_hit:
-                joined_q = "".join(quote_frags)
-                if (
-                    re.search(r"两分钟", joined_q)
-                    and not re.search(r"吐|停|连续|漱口|手", joined_q)
-                    and re.search(r"吐水|漱口|停手|连续", body_text)
-                ):
-                    cons.append("收束未扣一锤（应引吐水/停手类原话）")
-    if type_code == "A" and not _a_close_four_beat_complete(tail4):
-        cons.append("末四拍不完整")
-
+    if profile.collect_humor_issues:
+        cons.extend(profile.collect_humor_issues(lines, speakers))
     return cons
 
 
@@ -538,65 +407,64 @@ def _score_funniness(
     if len(lines) < 6:
         return 0, pros, cons
 
+    profile = quality_profile_for_code(type_code)
     if any("无出处" in c for c in cons):
-        if type_code != "C":
+        if profile.stop_on_ungrounded_quote:
             return 0, pros, cons
         cons = [c for c in cons if "无出处" not in c]
 
     body = lines[:-4] if len(lines) > 4 else lines[:-1]
     tail4 = lines[-4:] if len(lines) >= 4 else lines
-    body_text = "".join(body)
     mid_text = "".join(body[: max(1, len(body) * 2 // 3)])
     full_text = "".join(lines)
+    late4_text = "".join(tail4)
 
     points = 0
-
-    if _RE_HAMMER.search(mid_text):
+    scene_pts, scene_pros = 0, []
+    if profile.score_scene_beat:
+        scene_pts, scene_pros = profile.score_scene_beat(
+            lines, text_has_hammer_beat=_text_has_hammer_beat,
+        )
+    if scene_pts:
+        points += scene_pts
+        pros.extend(scene_pros)
+    elif _text_has_hammer_beat(mid_text):
         points += 5
         pros.append("有一锤场面")
-    elif _RE_HAMMER.search(full_text):
+    elif _text_has_hammer_beat(full_text):
         points += 2
         pros.append("有具体场面")
 
     grounded_tail = any(
-        p in "".join(tail4)
-        for p in ("你刚才说", "你自己说", "你不是说", "明明说", "你自己")
+        p in late4_text
+        for p in (
+            "你刚才说",
+            "你自己说",
+            "你不是说",
+            "明明说",
+            "你自己",
+            "你说的",
+        )
     )
     if grounded_tail and not any("无出处" in c for c in cons):
         points += 4
         pros.append("收束扣原话")
 
-    # 仅时长/次数类数字可加分，禁止「1块」「2口」刷分
     if len(re.findall(
         r"(?:\d+|[一二三四五六七八九十两]+)(?:分钟|秒|下)",
         full_text,
     )) >= 2:
         points += 2
 
-    if type_code == "C":
-        late = "".join(tail4)
-        if RE_BOOMERANG_RULE.search(late) and RE_TWIST_SEGUE.search(
-            "".join(lines[-6:])
-        ):
-            points += 4
-            pros.append("字面回旋好笑")
+    if profile.score_funniness_tail:
+        tail_pts, tail_pros = profile.score_funniness_tail(lines)
+        points += tail_pts
+        pros.extend(tail_pros)
 
     if points >= 9 and not cons:
         pros.append("好笑够格")
 
-    for c in cons:
-        if "模板复读" in c:
-            points = min(points, 6)
-        elif "末四拍不完整" in c:
-            points = min(points, 5)
-        elif "偏C" in c:
-            points = min(points, 8)
-        elif "未扣一锤" in c or "仍发指令" in c or "认弟弟赢" in c or "空甩身份" in c or "可拍一锤" in c:
-            points = min(points, 4)
-        elif "预热注水" in c or "把关话术" in c or "质检说明书" in c or "缺赖账" in c:
-            points = min(points, 5)
-        elif "多套免责" in c or "借口复读" in c:
-            points = min(points, 4)
+    points = _apply_humor_issue_caps(points, cons, profile)
 
     points = max(0, min(20, points))
     if points >= _HUMOR_POINTS_FOR_GREAT:
@@ -863,6 +731,7 @@ def build_quality_revision_hints(
         r.startswith(w) for w in (
             "缺", "存", "妈", "无破功", "收束偏", "耍赖", "跑题",
             "收束引", "引先例收", "追问闭", "偏C", "模板", "拖沓",
+            "C收束", "C中段", "格式达标", "收束引话无出处",
         )
     )]
     cons = [r for r in reasons if r not in pros]
@@ -892,20 +761,23 @@ def build_quality_revision_hints(
             "删掉后若字数不够，在别处插入新维度的交锋补上。"
         )
 
-    humor_issue = next(
-        (
-            c for c in cons
-            if any(
-                k in c
-                for k in (
-                    "无出处", "未埋旧账", "模板", "拖沓", "公平", "好笑不足",
-                    "末四拍", "未扣一锤", "仍发指令", "多套免责", "借口复读",
-                    "质检说明书", "空甩身份", "缺赖账",
+    humor_issue = next((c for c in cons if "归属口水战" in c), None)
+    if not humor_issue:
+        humor_issue = next(
+            (
+                c for c in cons
+                if any(
+                    k in c
+                    for k in (
+                        "无出处", "未埋旧账", "模板", "拖沓", "公平", "好笑不足",
+                        "末四拍", "未扣一锤", "仍发指令", "多套免责", "借口复读",
+                        "质检说明书", "空甩身份", "缺赖账",
+                        "偏A式", "缺可拍争法",
+                    )
                 )
-            )
-        ),
-        None,
-    )
+            ),
+            None,
+        )
     if humor_issue:
         if "多套免责" in humor_issue or "质检" in humor_issue or "缺赖账" in humor_issue:
             hints.append(
@@ -923,18 +795,44 @@ def build_quality_revision_hints(
                 code = parse_story_type_code(
                     punchline=str(story.get("punchline_explain") or ""),
                 )
-            if code == "C":
-                hints.append(
-                    f"【好笑·C】{humor_issue}。"
-                    "中段用一件具体争法升级；"
-                    "末段用对方规则回旋镖反问，末句嘴硬收场。"
-                )
+            q_profile = quality_profile_for_code(code)
+            hint = (
+                q_profile.humor_revision_hint(humor_issue)
+                if q_profile.humor_revision_hint
+                else None
+            )
+            if hint:
+                hints.append(hint)
             else:
                 hints.append(
                     f"【好笑】{humor_issue}。"
                     "收束只能引用前文真实说过的话；中段用一件具体小事升级，"
                     "勿复读同一句式或套「哪里不一样」模板。"
                 )
+            if code == "C" and q_profile.humor_revision_hint:
+                for c in cons:
+                    if c == humor_issue or not str(c).startswith("C"):
+                        continue
+                    extra = q_profile.humor_revision_hint(c)
+                    if extra and extra not in hints:
+                        hints.append(extra)
+
+    score = int(quality.get("score") or 0)
+    humor_pts = next(
+        (int(m.group(1)) for r in reasons if (m := re.search(r"好笑(\d+)", r))),
+        None,
+    )
+    if (
+        profile.code == "C"
+        and score < 85
+        and humor_pts is not None
+        and humor_pts < _HUMOR_POINTS_FOR_GOOD
+    ):
+        hints.append(
+            "【C·好笑目标】中段在赛规成立后加可拍字面加赛或量化争法（勿口水战）；"
+            "末段「动作/加赛→喊不算→你说的+赛规→哼」；"
+            "禁止那不一样/哪里不一样。"
+        )
 
     # 结构性缺失
     for c in cons:
@@ -976,6 +874,18 @@ def build_quality_edit_scope_hint(
     blob = revision_blob
     if any(
         k in blob
+        for k in (
+            "推进", "升级", "绕圈", "去绕圈", "冲突",
+            "归谁", "你没叠", "口水战", "缺可拍争法", "字面加赛",
+        )
+    ):
+        end = max(3, n - 4)
+        return (
+            f"【改稿范围】只改 dialogue 第 3–{end} 行（中段交锋）；"
+            "末 4 句收束已合格则逐字保留，禁止改坏回旋镖。"
+        )
+    if any(
+        k in blob
         for k in ("收束", "回旋镖", "C·", "好笑", "末句", "末段", "C类")
     ):
         start = max(0, n - 4)
@@ -983,7 +893,7 @@ def build_quality_edit_scope_hint(
             f"【改稿范围】只改 dialogue 第 {start + 1}–{n} 行（末段收束）；"
             f"第 1–{start} 行须原样保留（speaker 与 line 勿动）。"
         )
-    if any(k in blob for k in ("推进", "升级", "绕圈", "去绕圈", "冲突")):
+    if any(k in blob for k in ("绕圈", "去绕圈")):
         end = max(3, n - 4)
         return (
             f"【改稿范围】只改 dialogue 第 3–{end} 行（中段交锋）；"

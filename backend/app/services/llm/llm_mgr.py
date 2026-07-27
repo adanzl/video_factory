@@ -756,7 +756,7 @@ class LLMMgr:
                     break
 
             # 已有可用稿且分不太差：勿再整稿重开（省一层 body 重试乘法）
-            if best_score >= 75:
+            if best_score >= 80:
                 logger.info(
                     "[DAILY_STORY] stop full regen score=%d < %d "
                     "(keep best, skip more full drafts)",
