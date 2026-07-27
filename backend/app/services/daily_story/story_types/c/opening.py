@@ -63,6 +63,43 @@ def _opening_body_overlap(a: str, b: str) -> bool:
     return n >= 4 and left[:n] == right[:n]
 
 
+def _first_body_line_after_opening(story: dict) -> str:
+    opening = story.get("discovery_opening")
+    dialogue = story.get("dialogue")
+    if not isinstance(opening, list) or not isinstance(dialogue, list):
+        return ""
+    o_lines = [
+        str(d.get("line") or "").strip()
+        for d in opening
+        if isinstance(d, dict)
+    ]
+    d_lines = [
+        str(d.get("line") or "").strip()
+        for d in dialogue
+        if isinstance(d, dict)
+    ]
+    k = 0
+    while (
+        k < len(o_lines)
+        and k < len(d_lines)
+        and _opening_body_overlap(o_lines[k], d_lines[k])
+    ):
+        k += 1
+    return d_lines[k] if k < len(d_lines) else ""
+
+
+def _conflict_anchor_tokens(blob: str) -> list[str]:
+    cleaned = re.sub(
+        r"灿灿|昭昭|[，。！？\s]|vs|VS|争谁|谁该|重新",
+        "",
+        blob,
+    )
+    return [
+        t for t in re.findall(r"[\u4e00-\u9fff]{2,}", cleaned)
+        if len(t) >= 2
+    ][:8]
+
+
 def score_opening_quality(story: dict) -> tuple[int, list[str], list[str]]:
     """开场质量：约 -6～+6，叠在结构分上。"""
     pros: list[str] = []
@@ -95,24 +132,22 @@ def score_opening_quality(story: dict) -> tuple[int, list[str], list[str]]:
     core = str(story.get("conflict_core") or "")
     setting = str(story.get("setting") or "")
     anchor_blob = core + setting
-    # 开场是否点到 conflict 里的实物/动作词（≥2 字子串）
     if pts >= 0 and anchor_blob.strip():
-        frag = re.sub(r"[，。！？\s]", "", anchor_blob)[:12]
-        if len(frag) >= 4 and not any(frag[i:i + 4] in joined for i in range(len(frag) - 3)):
+        tokens = _conflict_anchor_tokens(anchor_blob)
+        anchored = bool(tokens) and any(t in joined for t in tokens)
+        if not anchored and anchor_blob.strip():
+            if re.search(r"衣服|叠好|零食|酸奶|马桶|洗澡", anchor_blob) and re.search(
+                r"衣服|叠|零食|酸奶|马桶|洗澡", joined,
+            ):
+                anchored = True
+        if tokens and not anchored:
             cons.append("C开场未扣 conflict_core")
             pts -= 2
 
-    dialogue = story.get("dialogue")
-    if isinstance(dialogue, list) and dialogue and lines_o:
-        first_body = ""
-        for item in dialogue:
-            if isinstance(item, dict):
-                first_body = str(item.get("line") or "").strip()
-                if first_body:
-                    break
-        if first_body and _opening_body_overlap(lines_o[0], first_body):
-            cons.append("C开场与正文首句重复")
-            pts -= 3
+    first_body = _first_body_line_after_opening(story)
+    if first_body and _opening_body_overlap(lines_o[-1], first_body):
+        cons.append("C开场与正文首句重复")
+        pts -= 3
 
     if len(opening) == 2 and pts >= 0:
         pts += 1
@@ -127,5 +162,6 @@ def opening_revision_hint(issue: str) -> str | None:
     return (
         f"【开场·C】{issue}。"
         "1–2 句发现争点（谁弄乱/怎么抢/凭什么），点名主题物；"
+        "勿照抄正文首句（开场可定格远景，正文再顶嘴）；"
         "勿你赢了/算你狠/嘘别告诉/那不一样。"
     )
