@@ -763,6 +763,8 @@ def test_daily_story_prompts_c_type_route():
     assert "争归属" in _sys
     assert "C类收束模板" in user
     assert "回旋镖" in user or "对方刚说的规则" in user
+    assert "字面加赛" in _sys or "加赛" in _sys
+    assert "那不一样" in _sys or "禁止" in _sys
 
 
 def test_daily_story_prompts_a_type_route():
@@ -1131,7 +1133,51 @@ def test_score_c_boomerang_humor_not_flatlined():
         (int(m.group(1)) for r in q["reasons"] if (m := __import__("re").search(r"好笑(\d+)", r))),
         None,
     )
-    assert humor_pts is not None and humor_pts >= 4, q["reasons"]
+    assert humor_pts is not None and humor_pts >= 9, q["reasons"]
+    assert any("字面加赛" in r for r in q["reasons"]), q["reasons"]
+
+
+def test_score_c_folding_literal_play_not_flatlined():
+    """C 叠收字面加赛：勿误扣缺可拍争法、好笑维须够格。"""
+    from app.services.daily_story.quality import score_daily_story
+
+    pad = "呀呀呀呀呀呀"
+    line = lambda t: (t + pad)[:DAILY_STORY_LINE_CHARS_MAX]
+    dialogue = [
+        {"speaker": "灿灿", "line": line("叠好的衣服怎么翻出来了")},
+        {"speaker": "昭昭", "line": line("我找袜子又不是故意的")},
+        {"speaker": "灿灿", "line": line("谁弄乱谁收拾这是规矩")},
+        {"speaker": "昭昭", "line": line("凭什么你定的规矩呀")},
+        {"speaker": "灿灿", "line": line("我叠好了你弄乱你收")},
+        {"speaker": "昭昭", "line": line("行我叠但叠完你得收")},
+        {"speaker": "灿灿", "line": line("你叠的必须整整齐齐")},
+        {"speaker": "昭昭", "line": line("那你看着一件一件收")},
+        {"speaker": "灿灿", "line": line("行谁怕谁你叠吧")},
+        {"speaker": "昭昭", "line": line("这件叠好了给你")},
+        {"speaker": "灿灿", "line": line("东倒西歪算什么叠法")},
+        {"speaker": "昭昭", "line": line("你叠你收又没说要多好")},
+        {"speaker": "灿灿", "line": line("你耍赖还不如不叠")},
+        {"speaker": "昭昭", "line": line("你说的谁弄乱谁收拾呢")},
+        {"speaker": "灿灿", "line": line("哼算你狠我自己来")},
+    ]
+    story = {
+        "scene_title": "叠好的衣服",
+        "setting": "客厅沙发衣服被翻乱",
+        "conflict_core": "姐弟争谁收拾叠好的衣服",
+        "dialogue": dialogue,
+        "punchline_explain": "C类公平执念，赛规字面回旋镖",
+        "discovery_opening": [
+            {"speaker": "灿灿", "line": line("叠好的衣服怎么翻出来了")},
+        ],
+    }
+    q = score_daily_story(story, theme="弄乱叠好的衣服")
+    assert not any("缺可拍争法" in r for r in q["reasons"]), q["reasons"]
+    humor_pts = next(
+        (int(m.group(1)) for r in q["reasons"] if (m := __import__("re").search(r"好笑(\d+)", r))),
+        None,
+    )
+    assert humor_pts is not None and humor_pts >= 9, q["reasons"]
+    assert q["score"] >= 78, q["reasons"]
 
 
 def test_infer_story_type_and_normalize_punchline():
@@ -1210,6 +1256,27 @@ def test_validate_c_body_rejects_a_style_closing():
 def test_validate_c_body_accepts_boomerang_close():
     story = _valid_story()
     validate_daily_story_json(story, phase="body")
+
+
+def test_validate_c_body_accepts_ni_gang_shuo_boomerang():
+    story = _valid_story()
+    sp2 = story["dialogue"][-2]["speaker"]
+    story["dialogue"][-2] = {
+        "speaker": sp2,
+        "line": _pad_line("你刚说谁弄乱谁收拾呀"),
+    }
+    validate_daily_story_json(story, phase="body")
+
+
+def test_validate_c_body_rejects_truncated_close_line():
+    story = _valid_story()
+    sp2 = story["dialogue"][-2]["speaker"]
+    story["dialogue"][-2] = {
+        "speaker": sp2,
+        "line": "反正你说的'谁弄乱",
+    }
+    with pytest.raises(ValueError, match="完整|未说完|引号"):
+        validate_daily_story_json(story, phase="body")
 
 
 def test_build_quality_edit_scope_hint_for_c_closing():
