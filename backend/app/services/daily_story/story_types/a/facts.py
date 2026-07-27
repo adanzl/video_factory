@@ -124,6 +124,7 @@ DURATION_TOKEN_RE = re.compile(
     r"[一二三四五六七八九两])分钟)"
 )
 
+
 def duration_token_to_seconds(token: str) -> int | None:
     t = token.strip()
     if t == "半分钟":
@@ -203,4 +204,21 @@ def append_brush_timer_fact_errors(story: dict, errors: list[str]) -> None:
             "可核对事实：昭昭刷牙时长前后不一"
             "（如才一分钟又说正好两分钟），请统一",
         )
+
+
+def fact_revision_hint(issue: str) -> str | None:
+    if "可核对" not in issue and "教作业" not in issue and "事实" not in issue:
+        return None
+    return (
+        f"【事实·A】{issue}。"
+        "钟点/时长/算式全场只认一套数；改口须有铺垫。"
+    )
+
+
+def collect_fact_issues(story: dict) -> list[str]:
+    """观感层：复用正文硬卡事实逻辑，返回 issue 文案。"""
+    issues: list[str] = []
+    append_homework_fact_errors(story, issues)
+    append_brush_timer_fact_errors(story, issues)
+    return issues
 
