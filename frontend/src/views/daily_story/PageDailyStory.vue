@@ -5,6 +5,20 @@
         <el-icon><Refresh /></el-icon>
       </el-button>
       <el-button type="primary" @click="showGenerateDialog = true">生成故事</el-button>
+      <el-select
+        v-model="filterStoryType"
+        placeholder="矛盾类型"
+        clearable
+        class="w-36!"
+        @change="onFilterStoryTypeChange"
+      >
+        <el-option
+          v-for="opt in DAILY_STORY_TYPE_OPTIONS"
+          :key="opt.value"
+          :label="opt.label"
+          :value="opt.value"
+        />
+      </el-select>
       <el-button
         type="danger"
         :disabled="!selectedIds.length"
@@ -36,11 +50,6 @@
           <el-tag v-if="row.status === 'processing'" type="warning" size="small">生成中</el-tag>
           <el-tag v-else-if="row.status === 'failed'" type="danger" size="small">失败</el-tag>
           <el-tag v-else type="success" size="small">就绪</el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column label="笑点解析" min-width="200" show-overflow-tooltip>
-        <template #default="{ row }">
-          {{ row.story?.punchline_explain || "-" }}
         </template>
       </el-table-column>
       <el-table-column label="设定" min-width="200" show-overflow-tooltip>
@@ -119,6 +128,7 @@ import CreateStory from "@/views/daily_story/dialogs/CreateStory.vue";
 import {
   listDailyStories,
   deleteDailyStories,
+  DAILY_STORY_TYPE_OPTIONS,
   formatDailyStoryType,
   type DailyStoryRecord,
   type DialogueLine,
@@ -139,6 +149,13 @@ const showGenerateDialog = ref(false);
 const page = ref(1);
 const pageSize = ref(parseInt(localStorage.getItem("dailyStoryPageSize") || "15", 10));
 const total = ref(0);
+const filterStoryType = ref<string>("");
+
+function onFilterStoryTypeChange() {
+  page.value = 1;
+  selectedIds.value = [];
+  void fetchStories();
+}
 
 const POLL_INTERVAL_MS = 3000;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -175,6 +192,7 @@ async function fetchStories(opts?: { quiet?: boolean }) {
     const res = await listDailyStories({
       limit: pageSize.value,
       offset: (page.value - 1) * pageSize.value,
+      ...(filterStoryType.value ? { story_type: filterStoryType.value } : {}),
     });
     stories.value = res.items;
     total.value = res.total;

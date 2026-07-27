@@ -55,6 +55,13 @@ export function formatDailyStoryType(code: string | null | undefined): string {
   return `${c}${label}`;
 }
 
+export const DAILY_STORY_TYPE_OPTIONS = (["A", "B", "C", "D", "E"] as const).map(
+  (code) => ({
+    value: code,
+    label: formatDailyStoryType(code),
+  }),
+);
+
 const DAILY_STORY_POLL_INTERVAL_MS = 3_000;
 const DAILY_STORY_POLL_MAX_MS = 10 * 60_000;
 
@@ -64,6 +71,7 @@ function sleep(ms: number): Promise<void> {
 
 export async function listDailyStories(params: {
   status?: string;
+  story_type?: string;
   limit?: number;
   offset?: number;
 } = {}): Promise<DailyStoryListResponse> {

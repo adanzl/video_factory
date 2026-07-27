@@ -22,19 +22,34 @@ def _row_to_dict(row: dict) -> dict:
     return data
 
 
+def _list_where(
+    *,
+    status: str | None = None,
+    story_type: str | None = None,
+) -> tuple[str, list[Any]]:
+    clauses: list[str] = []
+    params: list[Any] = []
+    if status:
+        clauses.append("status = ?")
+        params.append(status)
+    if story_type:
+        clauses.append("story_type = ?")
+        params.append(story_type)
+    if not clauses:
+        return "", []
+    return " WHERE " + " AND ".join(clauses), params
+
+
 def count_stories(
     *,
     status: str | None = None,
+    story_type: str | None = None,
 ) -> int:
-    if status:
-        row = sql.fetchone(
-            "SELECT COUNT(*) AS cnt FROM daily_story WHERE status = ?",
-            (status,),
-        )
-    else:
-        row = sql.fetchone(
-            "SELECT COUNT(*) AS cnt FROM daily_story",
-        )
+    where, params = _list_where(status=status, story_type=story_type)
+    row = sql.fetchone(
+        f"SELECT COUNT(*) AS cnt FROM daily_story{where}",
+        tuple(params) if params else None,
+    )
     sql.commit()
     return row["cnt"] if row else 0
 
@@ -42,32 +57,22 @@ def count_stories(
 def list_stories(
     *,
     status: str | None = None,
+    story_type: str | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> list[dict]:
     limit = max(1, min(limit, 200))
     offset = max(0, offset)
-    if status:
-        rows = sql.fetchall(
-            f"""
-            SELECT {_DAILY_STORY_COLUMNS}
-            FROM daily_story
-            WHERE status = ?
-            ORDER BY id DESC
-            LIMIT ? OFFSET ?
-            """,
-            (status, limit, offset),
-        )
-    else:
-        rows = sql.fetchall(
-            f"""
-            SELECT {_DAILY_STORY_COLUMNS}
-            FROM daily_story
-            ORDER BY id DESC
-            LIMIT ? OFFSET ?
-            """,
-            (limit, offset),
-        )
+    where, params = _list_where(status=status, story_type=story_type)
+    rows = sql.fetchall(
+        f"""
+        SELECT {_DAILY_STORY_COLUMNS}
+        FROM daily_story{where}
+        ORDER BY id DESC
+        LIMIT ? OFFSET ?
+        """,
+        (*params, limit, offset),
+    )
     sql.commit()
     return [_row_to_dict(row) for row in rows]
 
