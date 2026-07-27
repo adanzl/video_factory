@@ -1705,6 +1705,7 @@ class DeepSeekClient(LLMClient):
                     try_local_patch_daily_story_body,
                 )
 
+                raw["_theme"] = theme
                 patched, patch_notes = try_local_patch_daily_story_body(raw)
                 if patch_notes:
                     logger.info(
@@ -1715,6 +1716,8 @@ class DeepSeekClient(LLMClient):
                     raw = patched
             try:
                 validate_daily_story_json(raw, phase="body")
+                if isinstance(raw, dict):
+                    raw.pop("_theme", None)
                 return raw
             except ValueError as exc:
                 last_exc = exc
@@ -1725,6 +1728,7 @@ class DeepSeekClient(LLMClient):
                         try_local_patch_daily_story_body,
                     )
 
+                    prev_story["_theme"] = theme
                     patched2, notes2 = try_local_patch_daily_story_body(prev_story)
                     if notes2:
                         try:
@@ -1734,6 +1738,8 @@ class DeepSeekClient(LLMClient):
                                 "retry: %s",
                                 ",".join(notes2),
                             )
+                            if isinstance(patched2, dict):
+                                patched2.pop("_theme", None)
                             return patched2
                         except ValueError:
                             prev_story = patched2
@@ -1835,6 +1841,7 @@ class DeepSeekClient(LLMClient):
         for attempt in range(max_attempts):
             raw, _ = self._chat_json(system, user)
             if isinstance(raw, dict):
+                raw["_theme"] = theme
                 patched, notes = try_local_patch_daily_story_body(raw)
                 if notes:
                     logger.info(
@@ -1842,6 +1849,7 @@ class DeepSeekClient(LLMClient):
                         ",".join(notes),
                     )
                     raw = patched
+                    raw.pop("_theme", None)
             try:
                 validate_daily_story_json(raw, phase="body")
                 return raw

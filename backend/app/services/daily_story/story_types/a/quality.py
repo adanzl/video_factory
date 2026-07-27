@@ -72,9 +72,14 @@ def score_punchline(
 
 def _a_revision_hint(issue: str) -> str | None:
     from app.services.daily_story.story_types.a.facts import fact_revision_hint
+    from app.services.daily_story.story_types.a.humor import humor_revision_hint
     from app.services.daily_story.story_types.a.opening import opening_revision_hint
 
-    return fact_revision_hint(issue) or opening_revision_hint(issue)
+    return (
+        humor_revision_hint(issue)
+        or fact_revision_hint(issue)
+        or opening_revision_hint(issue)
+    )
 
 
 QUALITY_PROFILE = TypeQualityProfile(

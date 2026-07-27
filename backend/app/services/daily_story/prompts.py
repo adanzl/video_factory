@@ -1623,8 +1623,18 @@ def dialogue_total_chars(story: dict | None) -> int:
     return total
 
 
-_LOCAL_PAD_TAILS = ("呀", "呢", "吧", "嘛", "啊")  # 勿用「啦」灌水
+_LOCAL_PAD_TAILS = (
+    "好不好",
+    "你听着",
+    "真的呀",
+    "呢",
+    "吧",
+    "嘛",
+    "啊",
+    "呀",
+)  # 优先多字少句，勿满篇单「呀」
 _LOCAL_TRIM_CHARS = "的了呢嘛呀啊吧啦哦喔哈嗯"
+
 
 
 def _clone_story(story: dict) -> dict:

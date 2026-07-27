@@ -387,7 +387,7 @@ def append_mid_restatement_errors(story: dict, errors: list[str]) -> None:
             ib, lb = zhao_qs[j]
             if ib - ia > 8:
                 break
-            if _lines_high_overlap(la, lb):
+            if lines_high_overlap(la, lb):
                 errors.append(
                     "中段昭昭换措辞重复追问同一规矩"
                     f"（近重复：「{la[:10]}」≈「{lb[:10]}」），"
