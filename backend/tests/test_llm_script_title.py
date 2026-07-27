@@ -1287,10 +1287,45 @@ def test_build_quality_edit_scope_hint_for_c_closing():
 
     story = _valid_story()
     hints = build_quality_revision_hints(
-        {"reasons": ["收束偏弱", "好笑不足"]},
+        {
+            "reasons": [
+                "回旋镖收束",
+                "冲突推进3层",
+                "C收束缺可拍争法",
+                "结构65",
+                "好笑9",
+            ],
+            "score": 69,
+        },
         story=story,
     )
+    assert "缺可拍" in hints or "字面加赛" in hints
+    assert "C·好笑目标" not in hints
     assert "改稿范围" in hints
-    assert "末" in hints
+    assert "中段" in hints
     scope = build_quality_edit_scope_hint(story, "【C·收束】回旋镖")
     assert "第" in scope and "行" in scope
+
+
+def test_validation_retry_hints_primary_issue_only():
+    from app.services.daily_story.retry_hints import (
+        build_validation_retry_hints,
+        pick_primary_validation_errors,
+    )
+
+    err = (
+        "正文总字数须≥280，当前219（还差61字）; "
+        "C类末段须有回旋镖（用对方刚立的规则反问）或实物真相反转收束"
+    )
+    assert "总字数" in pick_primary_validation_errors(err)[0]
+    hint = build_validation_retry_hints(err, chars=219, type_code="C")
+    assert "补字" in hint
+    assert "末 4 句" not in hint
+
+    err2 = (
+        "dialogue[9:10] 昭昭 连说≥2句，须轮流说话; "
+        "C类末段须有回旋镖（用对方刚立的规则反问）或实物真相反转收束"
+    )
+    hint2 = build_validation_retry_hints(err2, chars=300, type_code="C")
+    assert "连说" in hint2
+    assert "回旋镖·只改末" not in hint2

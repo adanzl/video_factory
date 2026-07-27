@@ -1852,110 +1852,12 @@ def _retry_issue_hints(
     chars: int,
     type_code: str | None = None,
 ) -> str:
-    """按本轮校验问题追加可执行修订指令。"""
-    hints: list[str] = []
-    err = errors or ""
-    if "连说" in err:
-        hints.append(
-            "【连说】全文改为昭昭/灿灿严格交替；把连说拆开或改 speaker，"
-            f"勿借机大删；保持约 {chars} 字（{DAILY_STORY_BODY_CHARS_MIN}–"
-            f"{DAILY_STORY_BODY_CHARS_MAX}）。"
-        )
-    if "注水" in err or "三十下" in err or "认真数" in err:
-        hints.append(
-            "【删注水】删掉三十下/认真数/帮你盯/换位置/检查员把关；"
-            "用拌嘴抬杠补字，只留一套免责埋句。"
-        )
-    if "多套免责" in err or "借口复读" in err or "只能一套免责" in err:
-        hints.append(
-            "【单线借口】偷吃只留「检查不算吃」；删试甜/示范/资格/把关；"
-            "咽下后立刻末四拍，勿写质检说明书。"
-        )
-    if "咽下" in err and ("末四拍" in err or "质检" in err):
-        hints.append(
-            "【偷吃收束】已经咽/看不了后最多再 1 来回，立刻："
-            "你刚才说检查不算吃→检样不算开饭→都进肚子了→行吧给你一块。"
-        )
-    if "提前引话" in err:
-        hints.append(
-            "【引话位置】删掉中段所有「你刚才说」；只保留末四拍那一句引「检查不算吃」。"
-        )
-    if "半截" in err or ("那不一样" in err and ("省略" in err or "样品" in err)):
-        hints.append(
-            "【收束说完】那不一样须接「检样不算开饭」，禁止半截或只说这是样品。"
-        )
-    if "不好玩" in err or ("吐水算停" in err and "一锤" in err):
-        hints.append(
-            "【刷牙一锤】埋「吐水也算停」后下一来回必须示范："
-            "灿灿「一、二、三——噗」或昭昭「才刷几下就吐」。"
-        )
-    if "引话" in err:
-        hints.append(
-            "【引话·只改1–2句】保留全文骨架：要么把灿灿前文埋句改成昭昭所引原话，"
-            "要么把昭昭引话改成灿灿已说过的子串；禁止整篇重写。"
-        )
-    if "C类" in err or "回旋镖" in err:
-        hints.append(
-            "【C·收束】末 4 句：可见加赛/动作→对方喊不算→你刚说/你说的+短赛规（完整一句）"
-            "→破功方哼/认了；勿 A 式「哪里不一样」。"
-        )
-    if "不完整" in err or "未说完" in err or "引号" in err:
-        hints.append(
-            "【C·完整句】每句≤22字且须写完整；回旋镖拆成两句说，"
-            "勿在「你说的」处截断。"
-        )
-    if "口水战" in err or "归属" in err:
-        hints.append(
-            "【C·中段】前 8 句立赛规；删「归谁/你没叠」多轮；"
-            "加量化或字面加赛 2–4 句再收束。"
-        )
-    if "可拍争法" in err or "缺可拍" in err:
-        hints.append(
-            "【C·好笑】收束前加可拍动作（按赛规多喝/多拿/弄乱实物），"
-            "再回旋镖扣原话；勿只靠指一下/不算诡辩。"
-        )
-    if "A 式末四拍" in err or "勿写成 A" in err:
-        hints.append(
-            "【C·去A化】删掉末段「你刚才说+那不一样+哪里不一样」模板；"
-            "改成争资源的双标规则回旋镖。"
-        )
-    deficit = _parse_body_char_deficit(err)
-    if "总字数须≥" in err:
-        if deficit is not None and deficit <= DAILY_STORY_RETRY_PATCH_DEFICIT_MAX:
-            hints.append(
-                f"【补字·句内】只差 {deficit} 字：在中段 2–3 句各加 2–6 字抬杠语气，"
-                f"禁止插入新句、禁止动末四拍；写到 ≥{DAILY_STORY_BODY_CHARS_MIN}。"
-            )
-        else:
-            hints.append(
-                "【补字】在立规前加抬杠、一锤后加追问；"
-                "禁止用三十下/认真数/计时器注水凑字。"
-            )
-    if "无破功软收" in err or "弱收束" in err:
-        soft = ""
-        if type_code:
-            soft = story_line_for_code(type_code).retry_soft_close_hint.strip()
-        hints.append(
-            soft
-            or (
-                "【收束】只改末 2–3 句：倒数第 2 句字面戳穿/自相矛盾，"
-                "末句破功哑口或嘴硬软收；"
-                "禁止一人一半/平分、反正我要用、等妈评理。"
-            )
-        )
-    if "超过" in err and f"{DAILY_STORY_LINE_CHARS_MAX}字" in err:
-        hints.append(
-            f"【单句】超长句压到 ≤{DAILY_STORY_LINE_CHARS_MAX} 字；"
-            "可拆给两人轮流说，禁止同人连说硬拆。"
-        )
-    if "跑题" in err:
-        hints.append("【跑题】删掉后半无关主线，回到 conflict_core。")
-    if not hints and "总字数" not in err:
-        hints.append(
-            f"【篇幅】字数已在硬卡内（当前约 {chars}），"
-            "只改本轮问题，禁止大幅增删。"
-        )
-    return ("\n".join(hints) + "\n") if hints else ""
+    """按本轮**首要**校验问题追加一条可执行修订指令。"""
+    from app.services.daily_story.retry_hints import build_validation_retry_hints
+
+    return build_validation_retry_hints(
+        errors, chars=chars, type_code=type_code, max_issues=1,
+    )
 
 
 def build_daily_story_retry_user(
@@ -2023,11 +1925,15 @@ def build_daily_story_retry_user(
                 f"只删约 {drop_lines} 句车轱辘/重复回合，压到 {aim_lo}–{aim_hi} 字；"
                 f"禁止新增任何台词，禁止大段重写，须仍 ≥{chars_min} 字。\n"
             )
+    from app.services.daily_story.retry_hints import pick_primary_validation_errors
+
     type_code = parse_story_type_code(
         story_type=story_type,
         punchline=str(prev_story.get("punchline_explain") or ""),
     )
     issue_hint = _retry_issue_hints(errors, chars=chars, type_code=type_code)
+    primary = pick_primary_validation_errors(errors, max_items=1)
+    primary_line = primary[0] if primary else errors
     prev_json = json.dumps(prev_story, ensure_ascii=False)
     return (
         f"主题：{theme}\n"
@@ -2035,9 +1941,10 @@ def build_daily_story_retry_user(
         f"每句 ≤{DAILY_STORY_LINE_CHARS_MAX} 字；重试瞄准 {aim_lo}–{aim_hi}。\n"
         f"{length_hint}"
         f"{issue_hint}"
-        f"【本轮问题】{errors}\n"
-        "【修订要求】只改上述问题；保留 conflict_core 与收束；"
-        "差几个字就句内补，勿整稿重开；勿写发现开场；勿换主题/另开账。\n"
+        f"【本轮问题·优先修此项】{primary_line}\n"
+        "【修订要求】只改上述专项指令；保留 conflict_core；"
+        "一次只修优先项，其余下轮再验；"
+        "差几个字就句内补，勿整稿重开；勿写发现开场；勿换主题。\n"
         "请输出修订后的完整 JSON。\n"
         f"【上一稿】\n{prev_json}"
     )

@@ -2,7 +2,8 @@
   <el-dialog v-model="visible" title="故事详情" width="1200px" top="5vh" @closed="emit('closed')">
     <div v-if="localStory" class="flex gap-4" style="height: 80vh;">
       <!-- 左侧：信息 -->
-      <div class="w-70 shrink-0 space-y-4 overflow-y-auto pr-2">
+      <div class="flex h-full min-h-0 w-80 shrink-0 flex-col pr-2">
+        <div class="min-h-0 flex-1 space-y-4 overflow-y-auto">
         <div>
           <div class="mb-1 text-xs text-gray-400">主题</div>
           <div class="text-sm">{{ localStory.theme }}</div>
@@ -37,13 +38,19 @@
             <div class="rounded-lg bg-gray-50 p-3">
               <div class="flex items-start justify-between gap-3">
                 <div class="min-w-0 flex-1">
-                  <p class="text-sm text-gray-600">{{ editStory.quality.summary }}</p>
                   <ul
                     v-if="editStory.quality.reasons?.length"
-                    class="mt-2 list-disc space-y-0.5 pl-4 text-xs text-gray-500"
+                    class="line-clamp-4 list-disc space-y-0.5 pl-4 text-xs leading-relaxed text-gray-500 wrap-break-word"
+                    :title="qualityReasonsTitle"
                   >
                     <li v-for="(r, i) in editStory.quality.reasons" :key="i">{{ r }}</li>
                   </ul>
+                  <p
+                    v-else
+                    class="line-clamp-4 text-sm leading-relaxed text-gray-600 wrap-break-word"
+                  >
+                    {{ editStory.quality.summary }}
+                  </p>
                 </div>
                 <div class="flex shrink-0 flex-col items-center gap-1">
                   <el-tag size="small" :type="qualityTagType(editStory.quality.grade)">
@@ -102,11 +109,12 @@
             <div class="text-sm text-gray-600">{{ estimatedDuration }}</div>
           </div>
         </div>
-        <div class="mt-4">
+        </div>
+
+        <div class="mt-3 flex shrink-0 flex-wrap items-center gap-2 border-t border-gray-200 pt-3">
           <el-button
             v-if="!localStory?.job_id"
             type="primary"
-            class="flex-1"
             size="small"
             :loading="submitting"
             :disabled="!localStory?.id || isProcessing || !(editStory.dialogue?.length)"
@@ -121,7 +129,7 @@
             :disabled="isProcessing"
             @click="handleViewJob"
           >
-            任务详情
+            跳转任务
           </el-button>
           <el-button
             v-if="localStory?.job_id"
@@ -133,8 +141,6 @@
           >
             同步
           </el-button>
-        </div>
-        <div class="mt-4">
           <el-button
             :disabled="!localStory?.id || regenerating || isProcessing"
             type="success"
@@ -157,7 +163,7 @@
       </div>
 
       <!-- 右侧：对话 -->
-      <div class="flex flex-1 flex-col pl-2" style="border-left: 1px solid #e5e7eb;">
+      <div class="flex min-h-0 flex-1 flex-col pl-2" style="border-left: 1px solid #e5e7eb;">
         <div class="mb-2 flex shrink-0 items-center justify-between">
           <span class="text-xs text-gray-400">
             对话 <el-tag size="small" type="info" class="ml-3">{{ editStory.dialogue?.length ?? 0 }} 轮</el-tag>
@@ -271,6 +277,12 @@ const totalChars = computed(() => {
   const dialogue = editStory.value?.dialogue;
   if (!dialogue) return 0;
   return dialogue.reduce((sum, line) => sum + (line.line?.length || 0), 0);
+});
+
+const qualityReasonsTitle = computed(() => {
+  const reasons = editStory.value.quality?.reasons;
+  if (reasons?.length) return reasons.join("\n");
+  return editStory.value.quality?.summary ?? "";
 });
 
 const estimatedDuration = computed(() => {
