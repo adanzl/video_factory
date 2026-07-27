@@ -48,8 +48,8 @@ DAILY_STORY_BODY_CHARS_MAX = 370
 # 还差≤此值：句内补字微调，勿按偏短插入多句重写
 DAILY_STORY_RETRY_PATCH_DEFICIT_MAX = 32
 # 首稿直接瞄准硬卡中段（勿先写到 390+ 再压，易反复重试）
-DAILY_STORY_BODY_WRITE_TARGET_MIN = 310
-DAILY_STORY_BODY_WRITE_TARGET_MAX = 350
+DAILY_STORY_BODY_WRITE_TARGET_MIN = 290
+DAILY_STORY_BODY_WRITE_TARGET_MAX = 330
 # DAILY_STORY_LINE_CHARS_MAX 见 dialogue_text.py（上方已导入）
 DAILY_STORY_OPENING_LINES_MIN = 2
 DAILY_STORY_OPENING_LINES_MAX = 2
@@ -121,15 +121,15 @@ _CONFLICT_ANCHOR_STRIP = (
 )
 
 # 重试瞄准硬卡中段，避免贴边再抖出界
-DAILY_STORY_BODY_RETRY_TARGET_MIN = 310
-DAILY_STORY_BODY_RETRY_TARGET_MAX = 350
+DAILY_STORY_BODY_RETRY_TARGET_MIN = 290
+DAILY_STORY_BODY_RETRY_TARGET_MAX = 330
 
 # 首稿：硬卡 + 写作铺垫（偏长再压回）
 # 重试：按偏短/偏长分向；勿混用「禁止扩写」与「略删」
 _DAILY_STORY_LENGTH_DRAFT = f"""\
 - 片长（正文硬卡，放最前）：{DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
   每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
-  【先按句数写】写 22–26 句对话（每句约 12–15 字），直接落在硬卡中段
+  【先按句数写】写 24–28 句对话（每句约 10–14 字），直接落在硬卡中段
   （约 {DAILY_STORY_BODY_WRITE_TARGET_MIN}–{DAILY_STORY_BODY_WRITE_TARGET_MAX} 字）；
   禁止先写爆再砍；禁止首稿明显短于 {DAILY_STORY_BODY_CHARS_MIN}。
   发现开场系统另写另验，不计入正文硬卡。
@@ -173,7 +173,7 @@ _DAILY_STORY_LENGTH_REVISE = f"""\
 _DAILY_STORY_LENGTH_USER_DRAFT = f"""\
 3. 【字数硬卡优先】正文 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
    每句 ≤{DAILY_STORY_LINE_CHARS_MAX} 字且一句一层意思。
-   【按句数写更准】写 22–26 句（每句约 12–15 字），直接瞄准
+   【按句数写更准】写 24–28 句（每句约 10–14 字），直接瞄准
    {DAILY_STORY_BODY_WRITE_TARGET_MIN}–{DAILY_STORY_BODY_WRITE_TARGET_MAX} 字；
    勿先写超长再删。发现开场另计另验。
    speaker 仅昭昭/灿灿/妈妈。
@@ -509,10 +509,10 @@ DAILY_STORY_OPENING_SYSTEM_PROMPT = f"""\
   灿灿：浴室门口拖鞋我先摆好的
   昭昭：水龙头我先拧开的凭什么你先
 主题「争最后一瓶酸奶」→
-  昭昭：冰箱门开着最后一瓶酸奶呢
+  昭昭：冰箱门开着最后一瓶酸奶
   灿灿：你怎么已经撕开吸管了
 主题「九点必须睡觉」（可含妈妈）→
-  昭昭：妈，卧室挂钟都指向九了呀
+  昭昭：妈，卧室挂钟都指向九了
   妈妈：九点了必须睡觉，快去躺着
 
 【反例（禁止）】
