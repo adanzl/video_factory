@@ -5,7 +5,8 @@ from __future__ import annotations
 import re
 
 from app.services.daily_story.story_types import parse_story_type_code, resolve_story_type_code
-from app.services.daily_story.story_types.quality import RE_SOFT_LAST
+
+RE_SOFT_LAST = re.compile(r"哼|行吧|随便|好吧|算了|认栽|说不通|行行行")
 
 RE_A_WHERE_DIFF = re.compile(r"哪里不一样|都是听|大人也要听小孩")
 RE_A_CITE_CLOSE = re.compile(
@@ -22,6 +23,19 @@ RE_MOM_WAFFLE = re.compile(
 )
 RE_SLEEP_TOPIC = re.compile(r"睡觉|九点|早睡|刷手机|卧床|被窝|挂钟")
 RE_SNACK_TOPIC = re.compile(r"零食|尝菜|偷吃|薯片|饭前不吃|瓜子|试吃|试菜")
+RE_LIE_TOPIC = re.compile(r"说谎|撒谎|敷衍|诚实|假话|骗")
+RE_LIE_MOM_RULE = re.compile(r"不能说谎|不许说谎|要诚实|别说谎|老实")
+RE_LIE_WAFFLE = re.compile(
+    r"不是敷衍|善意谎言|让奶奶放心|特殊情况|为了不让|不是骗",
+)
+RE_SNACK_BLEED = re.compile(
+    r"那一口算不算|尝咸淡|咽下去|三大勺|勺上|吐回锅里|试吃|偷吃零",
+)
+RE_LIE_FOOD_ITEM = re.compile(r"红烧|清蒸|排骨汤|白米饭|两碗汤|清蒸虾|红烧鱼")
+RE_MOM_DENY_QUOTE = re.compile(
+    r"我说什么了|没说吃|挺好的呀|没骗|没说谎|就说我们挺好",
+)
+RE_KID_QUOTE_EAT = re.compile(r"吃了好多|吃撑|三碗|好几碗|咕咕叫")
 RE_WEAK_TASTE_EYE = re.compile(r"汤汁|舀汤|舔勺|喝了一口汤|偷尝了汤|尝了汤")
 RE_STRONG_TASTE_EYE = re.compile(
     r"勺子|勺上|尝菜|试吃|试菜|嘴角|油渍|油花|菜叶|三大勺|咽|黏黏",
@@ -63,6 +77,8 @@ def append_e_body_errors(story: dict, errors: list[str]) -> None:
     )
     sleep_t = bool(RE_SLEEP_TOPIC.search(anchor))
     snack_t = bool(RE_SNACK_TOPIC.search(anchor))
+    lie_t = bool(RE_LIE_TOPIC.search(anchor)) and not snack_t and not sleep_t
+    all_text = "".join(lines)
     mom_early = "".join(
         ln
         for sp, ln in zip(speakers[: max(1, n // 2)], lines[: max(1, n // 2)])
@@ -82,6 +98,45 @@ def append_e_body_errors(story: dict, errors: list[str]) -> None:
             errors.append(
                 "E类尝菜眼须可拍试吃（勺子/嘴角油），汤汁太弱勿当唯一现行",
             )
+
+    if lie_t:
+        if RE_SNACK_BLEED.search(all_text):
+            errors.append(
+                "E类说谎主题禁尝菜串场（那一口/咽下去/尝咸淡等）",
+            )
+        if "那不一样" in all_text:
+            errors.append("E类说谎主题禁A式那不一样开脱")
+        food_hits = len(RE_LIE_FOOD_ITEM.findall(all_text))
+        if food_hits >= 3:
+            errors.append("E类说谎主题禁堆菜品名灌水")
+        rule_i = next(
+            (
+                i
+                for i, ln in enumerate(lines)
+                if speakers[i] == "妈妈" and RE_LIE_MOM_RULE.search(ln)
+            ),
+            None,
+        )
+        if rule_i is not None:
+            for i in range(min(rule_i, 6)):
+                if speakers[i] == "妈妈" and RE_LIE_WAFFLE.search(lines[i]):
+                    errors.append(
+                        "E类说谎须先妈妈立不能说谎，再开脱敷衍",
+                    )
+                    break
+        for i, (sp, ln) in enumerate(zip(speakers, lines)):
+            if sp not in ("昭昭", "灿灿") or not RE_KID_QUOTE_EAT.search(ln):
+                continue
+            mom_after = "".join(
+                lines[j]
+                for j in range(i + 1, n)
+                if speakers[j] == "妈妈"
+            )
+            if RE_MOM_DENY_QUOTE.search(mom_after):
+                errors.append(
+                    "E类说谎禁妈妈否认孩子已引用的电话内容",
+                )
+                break
 
     tail4 = "".join(lines[-4:])
     tail3 = "".join(lines[-3:])

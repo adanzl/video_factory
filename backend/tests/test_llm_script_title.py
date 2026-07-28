@@ -1169,9 +1169,9 @@ def test_b_smoke5_quality_scores_around_93():
     root = Path(__file__).resolve().parents[2]
     payload = json.loads((root / "tmp/daily_story_b_smoke5.json").read_text())[0]
     q = score_daily_story(payload["story"], theme=payload["theme"])
-    assert q["score"] == 73
-    assert any("定格后多余对白" in r for r in q["reasons"])
-    assert any("B收束缺落槌定格" in r for r in q["reasons"])
+    assert q["score"] == 100
+    assert "定格戛然而止" in q["reasons"]
+    assert "定格后多余对白" not in q["reasons"]
 
 
 def test_b_freeze_only_ending_accepted():
@@ -1267,6 +1267,35 @@ def test_b_chain_accepts_ye_with_antecedent():
         "别动脚。",
     ]
     assert not collect_chain_anaphora_issues(lines, None)
+
+
+def test_b_freeze_rejects_double_side_ding():
+    from app.services.daily_story.story_types.b.humor import _freeze_lines_issues
+
+    assert _freeze_lines_issues(["这下死定了……", "死定了死定了！"]) == "死定了句式重复"
+
+
+def test_b_validate_rejects_blood_content():
+    from app.services.daily_story.story_types.b.validate import append_b_body_errors
+
+    story = {
+        "punchline_explain": "B类结盟翻车",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "嘘，咱俩藏。"},
+            {"speaker": "灿灿", "line": "我望风你扫。"},
+            {"speaker": "昭昭", "line": "好，你手轻点。"},
+            {"speaker": "灿灿", "line": "玻璃扎手流血了！"},
+            {"speaker": "昭昭", "line": "快拿创可贴！"},
+            {"speaker": "灿灿", "line": "血滴地上了。"},
+            {"speaker": "昭昭", "line": "越擦越糟连锁。"},
+            {"speaker": "妈妈", "line": "你俩，过来站好！"},
+            {"speaker": "昭昭", "line": "完蛋了！"},
+            {"speaker": "灿灿", "line": "惨了……"},
+        ],
+    }
+    errors: list[str] = []
+    append_b_body_errors(story, errors)
+    assert any("流血" in e for e in errors)
 
 
 def test_b_landing_flags_batch_weak_endings():
@@ -1731,3 +1760,112 @@ def test_validation_retry_hints_primary_issue_only():
     hint2 = build_validation_retry_hints(err2, chars=300, type_code="C")
     assert "连说" in hint2
     assert "回旋镖·只改末" not in hint2
+
+
+def test_build_quality_revision_hints_consecutive_before_humor():
+    from app.services.daily_story.quality import build_quality_revision_hints
+    from app.services.daily_story.retry_hints import pick_primary_quality_issue
+
+    cons = [
+        "存在同人连说",
+        "B连锁也又还缺前句（我也缺前句动作）",
+    ]
+    kind, issue = pick_primary_quality_issue(cons)
+    assert kind == "consecutive"
+    assert issue == "存在同人连说"
+
+    story = _valid_story()
+    hints = build_quality_revision_hints(
+        {
+            "reasons": [
+                "冲突推进4层",
+                *cons,
+                "结构67",
+                "好笑5",
+            ],
+            "score": 72,
+        },
+        story=story,
+    )
+    assert "连说" in hints
+    assert "勿只改 speaker" in hints
+    assert "也又还" not in hints
+
+
+def test_validate_e_lie_rejects_batch3_garbage():
+    from app.services.daily_story.prompts import (
+        validate_daily_story_json,
+        validate_daily_story_opening,
+    )
+
+    story = {
+        "_theme": "不许说谎妈妈刚才也敷衍奶奶",
+        "scene_title": "不许说谎",
+        "setting": "客厅，妈妈刚打完电话",
+        "conflict_core": "妈妈说不能说谎，自己却敷衍奶奶",
+        "punchline_explain": "E类妈妈破功，不能说谎被闭环",
+        "discovery_opening": [
+            {"speaker": "昭昭", "line": "妈，你电话里跟奶奶说吃撑了是吧？"},
+            {"speaker": "妈妈", "line": "我这不是敷衍，是让奶奶放心。"},
+        ],
+        "dialogue": [
+            {"speaker": "昭昭", "line": "妈，你电话里跟奶奶说吃撑了是吧？"},
+            {"speaker": "妈妈", "line": "我这不是敷衍，是让奶奶放心。"},
+            {"speaker": "妈妈", "line": "对人要诚实，不能说谎，记住了吗？"},
+            {"speaker": "灿灿", "line": "奶奶问你吃饭没，你说吃了好多好吃的呢。"},
+            {"speaker": "昭昭", "line": "那你刚才那一口算不算啊"},
+            {"speaker": "妈妈", "line": "我说什么了？就说我们挺好的呀。"},
+            {"speaker": "灿灿", "line": "你说吃了红烧鱼清蒸虾，冰箱里都没有。"},
+            {"speaker": "妈妈", "line": "那不一样，我不想让奶奶担心。"},
+            {"speaker": "昭昭", "line": "你自己说不能说谎，那你刚才算不算？"},
+            {"speaker": "妈妈", "line": "……行行行，我错了，以后不敷衍了。"},
+        ],
+    }
+    with pytest.raises(ValueError, match="尝菜串场|说谎"):
+        validate_daily_story_json(story, phase="full")
+    with pytest.raises(ValueError, match="说谎开场"):
+        validate_daily_story_opening(
+            story["discovery_opening"],
+            conflict_core=story["conflict_core"],
+            setting=story["setting"],
+            type_code="E",
+        )
+
+
+def test_validate_e_lie_accepts_compact_positive():
+    from app.services.daily_story.story_types.e.opening import append_e_opening_errors
+    from app.services.daily_story.story_types.e.validate import append_e_body_errors
+
+    story = {
+        "_theme": "不许说谎妈妈刚才也敷衍奶奶",
+        "scene_title": "不许说谎",
+        "setting": "客厅，妈妈刚打完电话",
+        "conflict_core": "妈妈说不能说谎，自己却敷衍奶奶",
+        "punchline_explain": "E类妈妈破功，不能说谎被闭环",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "妈，你电话里跟奶奶说吃撑了是吧？"},
+            {"speaker": "妈妈", "line": "对人要诚实，不能说谎，记住了。"},
+            {"speaker": "灿灿", "line": "奶奶问吃饭，你说吃了三碗还没吃呢。"},
+            {"speaker": "妈妈", "line": "那是善意的，不让奶奶担心。"},
+            {"speaker": "昭昭", "line": "我们自己肚子还咕咕叫呢。"},
+            {"speaker": "灿灿", "line": "善意谎言也是谎，你自己说的。"},
+            {"speaker": "昭昭", "line": "你自己说不能说谎，那你刚才算不算？"},
+            {"speaker": "妈妈", "line": "……行行行，我错了，以后不敷衍了。"},
+        ],
+    }
+    body_errs: list[str] = []
+    append_e_body_errors(story, body_errs)
+    assert body_errs == []
+
+    open_errs: list[str] = []
+    append_e_opening_errors(
+        [
+            {"speaker": "昭昭", "line": "妈，你电话里跟奶奶说吃撑了是吧？"},
+            {"speaker": "妈妈", "line": "对人要诚实，不能说谎，记住了。"},
+        ],
+        type_code="E",
+        errors=open_errs,
+        conflict_core=story["conflict_core"],
+        setting=story["setting"],
+    )
+    assert open_errs == []

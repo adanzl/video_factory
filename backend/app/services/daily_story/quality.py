@@ -761,6 +761,7 @@ def build_quality_revision_hints(
     """根据质量评分结果，生成**单维度**修订指令（一次只推一项）。"""
     from app.services.daily_story.retry_hints import (
         format_c_dialogue_scope_hint,
+        format_quality_consecutive_revision_hint,
         pick_primary_quality_issue,
         revision_scope_kind,
     )
@@ -796,6 +797,16 @@ def build_quality_revision_hints(
             hints.append(
                 f"【去绕圈】{issue_text}。同一逻辑点最多 2 句，删重复回合；"
                 "若删后偏短，用新证据补 1 来回，勿动末四拍。"
+            )
+        elif kind == "consecutive":
+            from app.services.daily_story.prompts import dialogue_total_chars
+
+            chars = dialogue_total_chars(story) if isinstance(story, dict) else 0
+            hints.append(
+                format_quality_consecutive_revision_hint(
+                    chars=chars,
+                    type_code=code,
+                ),
             )
         elif kind == "humor" and q_profile.humor_revision_hint:
             hint = q_profile.humor_revision_hint(issue_text)

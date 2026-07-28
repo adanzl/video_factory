@@ -34,6 +34,8 @@ def append_b_body_errors(story: dict, errors: list[str]) -> None:
         return
 
     from app.services.daily_story.story_types.b.humor import (
+        RE_BLEED_CONTENT,
+        _freeze_lines_issues,
         _landing_doom_lines_repeat,
         _punish_freeze_react,
         analyze_post_freeze_bloat,
@@ -80,5 +82,13 @@ def append_b_body_errors(story: dict, errors: list[str]) -> None:
         ]
         if _landing_doom_lines_repeat(react_lines):
             errors.append(
-                "B类：定格句式重复（勿完蛋了/我也完了连用，改不同句式如真倒霉）",
+                "B类：定格句式重复（勿两句都用完蛋/完了）",
             )
+        if freeze_tag := _freeze_lines_issues(react_lines):
+            errors.append(
+                "B类：定格收束不当"
+                + (f"（{freeze_tag}）" if freeze_tag else ""),
+            )
+
+    if RE_BLEED_CONTENT.search("".join(lines)):
+        errors.append("B类：勿写实流血/止血/创可贴，可说怕扎到不敢动")

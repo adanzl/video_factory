@@ -243,6 +243,15 @@ def _daily_story_length_draft_for_type(type_code: str | None) -> str:
   笑点须在自相矛盾打脸，禁空说教连问。
   发现开场系统另写另验，不计入正文硬卡。
 """
+    if type_code and type_code.upper() == "D":
+        return f"""\
+- 片长（D类正文硬卡，放最前）：{DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
+  每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
+  【D类·先按句数写】写 **{lo}–{hi} 句**对白（每句 **17–20 字**），瞄准
+  {DAILY_STORY_BODY_WRITE_TARGET_MIN}–{DAILY_STORY_BODY_WRITE_TARGET_MAX} 字；
+  **硬上限 18 句**；禁止 12–14 句碎短稿（易只有 200 字过不了卡）。
+  发现开场系统另写另验，不计入正文硬卡。
+"""
     return _DAILY_STORY_LENGTH_DRAFT
 
 
@@ -252,6 +261,13 @@ def _daily_story_length_user_draft_for_type(type_code: str | None) -> str:
         return f"""\
 3. 【E类·字数硬卡】正文 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
    妈妈为主戏台词宜多；每句 18–22 字为宜。发现开场另计另验。speaker 仅昭昭/灿灿/妈妈。
+"""
+    if type_code and type_code.upper() == "D":
+        return f"""\
+3. 【D类·字数句数硬卡】正文 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
+   写 **{lo}–{hi} 句**（≤18），每句 **17–20 字**，瞄准
+   {DAILY_STORY_BODY_WRITE_TARGET_MIN}–{DAILY_STORY_BODY_WRITE_TARGET_MAX} 字；
+   禁止 12–14 句短稿。发现开场另计另验。speaker 仅昭昭/灿灿/妈妈。
 """
     return _DAILY_STORY_LENGTH_USER_DRAFT
 
@@ -264,6 +280,14 @@ def _daily_story_length_revise_expand_for_type(type_code: str | None) -> str:
   可增句或句内扩字到硬卡；加妈妈开脱/孩子追问细节，勿空说教。
   须轮流说话，禁止同人连说。发现开场另写另验。
 """
+    if type_code and type_code.upper() == "D":
+        return f"""\
+- 片长（D类偏短重试）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
+  每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
+  **优先句内加 2–5 字**；仍不够可加 1–2 句字面执行连拍，但总句数须 ≤18。
+  写到约 {DAILY_STORY_BODY_RETRY_TARGET_MIN}–{DAILY_STORY_BODY_RETRY_TARGET_MAX} 字；
+  禁止整稿重写。发现开场系统另写另验。
+"""
     return _DAILY_STORY_LENGTH_REVISE_EXPAND
 
 
@@ -275,13 +299,38 @@ def _daily_story_length_revise_patch_for_type(type_code: str | None) -> str:
   **禁止增删句**；把偏短句各加 2–8 字（可拍细节/语气），写到 ≥265 即可；
   末段闭环+妈妈破功原样保留。发现开场另写另验。
 """
+    if type_code and type_code.upper() == "D":
+        return f"""\
+- 片长（D类句内微调）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
+  每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
+  **禁止增删句**；偏短句各加 2–8 字，写到 ≥{DAILY_STORY_BODY_CHARS_MIN}；
+  末段回旋镖+嘴硬收束原样保留。发现开场另写另验。
+"""
     return _DAILY_STORY_LENGTH_REVISE_PATCH
+
+
+def _daily_story_length_revise_trim_for_type(type_code: str | None) -> str:
+    if type_code and type_code.upper() == "D":
+        return f"""\
+- 片长（D类偏长重试）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
+  每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
+  只删不增：合并重复回合/空辩论，压到 **≤17 句**、
+  约 {DAILY_STORY_BODY_RETRY_TARGET_MIN}–{DAILY_STORY_BODY_RETRY_TARGET_MAX} 字；
+  保留立叮嘱→字面→搞砸→破规→回旋镖链。发现开场另写另验。
+"""
+    return _DAILY_STORY_LENGTH_REVISE_TRIM
 
 
 def _daily_story_length_user_revise_expand_for_type(type_code: str | None) -> str:
     if type_code and type_code.upper() == "E":
         return f"""\
 3. 【E类·句内补字】偏短可增句或句内扩字，写到 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX}；
+   发现开场另计另验。speaker 仅昭昭/灿灿/妈妈。
+"""
+    if type_code and type_code.upper() == "D":
+        return f"""\
+3. 【D类·偏短只增】句内加字优先；仍不够可加 1–2 句连拍，总句数 ≤18；
+   写到 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
    发现开场另计另验。speaker 仅昭昭/灿灿/妈妈。
 """
     return _DAILY_STORY_LENGTH_USER_REVISE_EXPAND
@@ -292,6 +341,11 @@ def _daily_story_length_user_revise_patch_for_type(type_code: str | None) -> str
         return f"""\
 3. 【E类·句内微调】禁止增删句；偏短句各加几个字（可拍细节），写到≥265；
    闭环与妈妈末句破功勿动；发现开场另计另验。speaker 仅昭昭/灿灿/妈妈。
+"""
+    if type_code and type_code.upper() == "D":
+        return f"""\
+3. 【D类·句内微调】禁止增删句；偏短句各加 2–8 字，写到≥{DAILY_STORY_BODY_CHARS_MIN}；
+   回旋镖收束勿动；发现开场另计另验。speaker 仅昭昭/灿灿/妈妈。
 """
     return _DAILY_STORY_LENGTH_USER_REVISE_PATCH
 
@@ -307,6 +361,8 @@ def _daily_story_contract(
         length = _daily_story_length_revise_expand_for_type(type_code)
     elif length_mode == "revise_patch":
         length = _daily_story_length_revise_patch_for_type(type_code)
+    elif length_mode == "revise_trim":
+        length = _daily_story_length_revise_trim_for_type(type_code)
     else:
         length = _LENGTH_MODE_SYSTEM.get(length_mode, _DAILY_STORY_LENGTH_DRAFT)
     return f"""\
