@@ -1142,6 +1142,8 @@ def _stitch_horizontal(left_bytes: bytes, right_bytes: bytes) -> bytes:
 
 
 class Sd15ImageProvider(ImageProvider):
+    # 本地 WebUI 单实例独占显存（780M 共享显存 3GiB），并发出图会 OOM，且切 checkpoint 需串行
+    max_workers = 1
     _checkpoint_lock = Semaphore(value=1)
 
     def __init__(self) -> None:

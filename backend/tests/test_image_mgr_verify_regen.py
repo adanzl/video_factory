@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from app.services.segment.image.image_agnes import AgnesImageVerifyFailed
-from app.services.segment.image.image_mgr import ImageMgr
+from app.services.segment.image.image_mgr import ImageMgr, ImageProvider
 
 
 def test_generate_segment_images_regens_prompt_after_verify_fail(tmp_path: Path) -> None:
@@ -142,6 +142,115 @@ def test_generate_segment_images_skips_after_prompt_regen_fail(
     # bad: 3+3 attempts across two rounds → 2 generate calls that raise after
     # each round's internal retries are mocked as single raise per generate()
     assert provider.generate.call_count == 3  # 2 for bad rounds + 1 for good
+
+
+def _batch_provider(max_workers: int | None, peak: list[int]) -> ImageProvider:
+    """出图时记录并发峰值的假 provider。"""
+    import gevent
+
+    class _Provider(ImageProvider):
+        def describe_params(self, *, size: str | None = None) -> str:
+            return "provider=fake"
+
+        def generate(self, prompt, output_path, **kwargs):  # noqa: ANN001, ANN003
+            peak[0] += 1
+            peak[1] = max(peak[1], peak[0])
+            gevent.sleep(0.05)
+            peak[0] -= 1
+            output_path.write_bytes(b"png")
+            return output_path
+
+    _Provider.max_workers = max_workers
+    return _Provider()
+
+
+def _run_batch(provider: ImageProvider, images_dir: Path, workers: int) -> tuple[list, list[int]]:
+    from app.config import get_settings
+
+    mgr = ImageMgr()
+    segments = [
+        {
+            "id": 100 + i,
+            "segment_index": i,
+            "text": f"第{i}段",
+            "image_prompt": "提示词内容 " * 20,
+        }
+        for i in range(1, 5)
+    ]
+    done_ids: list[int] = []
+    settings = get_settings()
+    with (
+        patch.object(mgr, "_get_image_provider", return_value=provider),
+        patch.object(settings, "mock_mode", False),
+        patch.object(settings, "image_max_workers", workers),
+    ):
+        results = mgr.generate_segment_images(
+            segments,
+            images_dir,
+            on_image_done=lambda seg_id, *_: done_ids.append(seg_id),
+        )
+    return results, done_ids
+
+
+def test_cloud_provider_runs_concurrently_with_callback(tmp_path: Path) -> None:
+    """传了落库回调也要按 IMAGE_MAX_WORKERS 并发，不能退化成串行。"""
+    images_dir = tmp_path / "images"
+    images_dir.mkdir()
+    peak = [0, 0]
+    results, done_ids = _run_batch(_batch_provider(None, peak), images_dir, 4)
+
+    assert peak[1] == 4
+    assert sorted(seg_id for seg_id, _ in results) == [101, 102, 103, 104]
+    assert sorted(done_ids) == [101, 102, 103, 104]
+
+
+def test_local_provider_stays_serial(tmp_path: Path) -> None:
+    """SD15 独占本地显存，调大 IMAGE_MAX_WORKERS 也必须串行。"""
+    from app.services.segment.image.image_sd15 import Sd15ImageProvider
+
+    assert Sd15ImageProvider.max_workers == 1
+
+    images_dir = tmp_path / "images"
+    images_dir.mkdir()
+    peak = [0, 0]
+    results, done_ids = _run_batch(_batch_provider(1, peak), images_dir, 4)
+
+    assert peak[1] == 1
+    assert len(results) == 4
+    assert sorted(done_ids) == [101, 102, 103, 104]
+
+
+def test_concurrent_prompt_persist_is_safe(app_ctx) -> None:
+    """greenlet 不继承 app context，出图内的提示词落库须自行推入才写得进库。"""
+    import gevent
+
+    from app.repositories import repo_segment
+    from app.repositories.sql_exec import atomic, execute
+    from app.services.segment.image.image_mgr import _greenlet_app_context
+
+    with atomic():
+        execute("INSERT INTO video_job (id, title) VALUES (1, '并发写库')")
+        repo_segment.insert_segments(
+            1,
+            [{"segment_index": i, "text": f"第{i}段", "image_prompt": "旧"} for i in range(1, 5)],
+        )
+
+    mgr = ImageMgr()
+    rows = {int(r["segment_index"]): dict(r) for r in repo_segment.list_segments(1)}
+
+    def persist(index: int) -> None:
+        with _greenlet_app_context():
+            gevent.sleep(0.01)
+            seg = rows[index]
+            seg["image_prompt"] = f"新提示词{index}"
+            mgr._persist_segment_prompt(seg)
+
+    gevent.joinall([gevent.spawn(persist, i) for i in range(1, 5)], raise_error=True)
+
+    saved = {
+        int(r["segment_index"]): r["image_prompt"] for r in repo_segment.list_segments(1)
+    }
+    assert saved == {i: f"新提示词{i}" for i in range(1, 5)}
 
 
 def test_regen_daily_rewrites_visual_brief_not_append_feedback() -> None:
