@@ -37,11 +37,13 @@ def test_assemble_daily_t2i_prompt_structure():
     assert "昭昭比灿灿矮约半个头" in prompt
     assert "窗光从一侧斜照" in prompt
     assert "中近景特写" in prompt
-    # 对白先发言者在左（灿灿），勿固定昭昭在左
-    assert "粉卫衣马尾女孩灿灿" in prompt
-    assert "蓝T恤短发男孩昭昭" in prompt
+    # 昭昭+灿灿同框默认左昭昭右灿灿（不再按对白先发言者左右对调）
+    assert "蓝T恤深蓝短裤短发男孩昭昭" in prompt
+    assert "粉卫衣蓝裤马尾女孩灿灿" in prompt
     assert "禁止左右对调" in prompt
-    assert "画面左边是灿灿，右边是昭昭" in prompt
+    assert "画面左边是昭昭，右边是灿灿" in prompt
+    assert "深蓝色短裤" in prompt
+    assert "蓝色长裤" in prompt
     assert "占左半" in prompt and "占右半" in prompt
     assert "蜡笔" in prompt
 
@@ -73,8 +75,8 @@ def test_assemble_daily_layout_from_visual_brief():
         ],
     }
     prompt = assemble_daily_t2i_prompt(seg)
-    assert "蓝T恤短发男孩昭昭" in prompt
-    assert "粉卫衣马尾女孩灿灿" in prompt
+    assert "蓝T恤深蓝短裤短发男孩昭昭" in prompt
+    assert "粉卫衣蓝裤马尾女孩灿灿" in prompt
     assert "禁止左右对调" in prompt
     assert "画面左边是昭昭，右边是灿灿" in prompt
     assert prompt.count("画面左边是昭昭，右边是灿灿") == 1
@@ -111,7 +113,7 @@ def test_assemble_daily_t2i_no_duplicate_lr_in_prompt():
     prompt = assemble_daily_t2i_prompt(seg)
     assert prompt.count("画面左边是昭昭，右边是灿灿") == 1
     assert "昭昭双手叉腰，点头瞪眼" not in prompt
-    assert "中景，严格左蓝T恤短发男孩昭昭" in prompt
+    assert "中景，严格左蓝T恤深蓝短裤短发男孩昭昭" in prompt
 
 
 def test_build_image_prompts_daily_motion_modes_and_duration():

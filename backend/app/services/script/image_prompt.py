@@ -26,13 +26,14 @@ _DAILY_T2I_STYLE = (
 )
 
 _DAILY_CHAR_ZHAO = (
-    "昭昭：7岁男孩，黑色超短发露耳露后颈，圆脸，蓝色短袖T恤。"
+    "昭昭：7岁男孩，黑色超短发露耳露后颈，圆脸，"
+    "蓝色短袖T恤，深蓝色短裤，两侧同色蓝白运动鞋（禁止左右异色鞋）。"
 )
 _DAILY_CHAR_CANCAN = (
-    "灿灿：10岁女孩，单侧高马尾，粉色卫衣。"
+    "灿灿：10岁女孩，单侧高马尾，粉色卫衣，蓝色长裤，两侧同色粉红运动鞋。"
 )
 _DAILY_CHAR_MOM = (
-    "妈妈：成年女性，黑色长发，米色上衣，牛仔裤。"
+    "妈妈：成年女性，黑色长发，米色上衣，蓝色牛仔裤，深色平底鞋。"
 )
 _DAILY_CHAR_HEIGHT = "昭昭比灿灿矮约半个头。"
 
@@ -60,22 +61,17 @@ _DAILY_LR_RE = re.compile(
 
 
 def _daily_layout_speakers(seg: dict, vb: str) -> list[str]:
-    """左右站位：优先 visual_brief 明示，否则对白出现顺序，最后固定角色序。"""
+    """左右站位：优先 visual_brief 明示；否则昭昭+灿灿默认左昭右灿。"""
     m = _DAILY_LR_RE.search(vb or "")
     if m:
         left, right = m.group(1), m.group(2)
         if left in _DAILY_CHAR_MAP and right in _DAILY_CHAR_MAP and left != right:
             return [left, right]
-    order: list[str] = []
-    for item in seg.get("dialogue") or []:
-        if not isinstance(item, dict):
-            continue
-        name = str(item.get("speaker") or "").strip()
-        if name in _DAILY_CHAR_MAP and name not in order:
-            order.append(name)
-    if len(order) >= 2:
-        return order
-    return _daily_speakers_of(seg)
+    speakers = _daily_speakers_of(seg)
+    if "昭昭" in speakers and "灿灿" in speakers:
+        rest = [s for s in speakers if s not in ("昭昭", "灿灿")]
+        return ["昭昭", "灿灿", *rest]
+    return speakers
 
 
 def _strip_style_suffix(vb: str) -> str:
@@ -109,9 +105,9 @@ def _daily_composition(
 ) -> str:
     names = [s for s in speakers if s in _DAILY_CHAR_MAP]
     look = {
-        "昭昭": "蓝T恤短发男孩昭昭",
-        "灿灿": "粉卫衣马尾女孩灿灿",
-        "妈妈": "米色上衣黑长发妈妈",
+        "昭昭": "蓝T恤深蓝短裤短发男孩昭昭",
+        "灿灿": "粉卫衣蓝裤马尾女孩灿灿",
+        "妈妈": "米色上衣牛仔裤黑长发妈妈",
     }
     has_lr = bool(_DAILY_LR_RE.search(vb or ""))
     if shot_type == "特写":
