@@ -16,7 +16,7 @@ RE_EXPOSED = re.compile(
 )
 RE_PLAN_FAIL = re.compile(
     r"多拿|忘藏|说漏|掉了|洒了|露出来|忘了藏|袋口|碎|脚印|油渍|"
-    r"响了|破了|更明显|鼓出来",
+    r"响了|破了|更明显|鼓出来|撕|裂|滑|洒|掉",
 )
 RE_BLAME_MID = re.compile(r"都怪你|是你先|你答应|赖我|你还怪")
 _A_STYLE_TAIL = re.compile(r"那不一样|哪里不一样|你刚才说|你自己说")
@@ -24,6 +24,10 @@ RE_MOM_PUNISH = re.compile(
     r"站好|过来|罚|不许|今晚|检讨|说清楚|墙角|罚站|别想吃",
 )
 RE_DOOM = re.compile(r"完蛋|完了|糟糕|死定了|藏不住|露馅")
+RE_REACT_ALT = re.compile(
+    r"真倒霉|倒霉|惨了|糟了|惨喽|完犊子|死定了|这回完|这下完|惨了惨了",
+)
+RE_DOOM_CLUSTER = re.compile(r"完蛋|完了")
 RE_PACT_DUTY = re.compile(
     r"望风|放风|暗号|分工|你拿|我盯|你拆|我望|别告诉|一人一半",
 )
@@ -49,19 +53,64 @@ _SIBLING = frozenset({"昭昭", "灿灿"})
 HUMOR_ISSUE_CAPS: tuple[tuple[str, int], ...] = (
     ("偏A式末四拍", 6),
     ("缺结盟约定", 5),
-    ("缺互甩锅", 7),
+    ("联盟崩塌缺自保", 8),
     ("偏C式争公平", 5),
     ("中段甩锅拖沓", 8),
-    ("收束戛然而止", 6),
     ("走样连锁中甩锅打断", 7),
     ("收束缺权威落槌", 7),
     ("好笑缺越补越糟", 7),
     ("好笑空吵无场面", 6),
     ("甩锅不扣分工", 5),
     ("结盟分工复读", 6),
-    ("惩罚后甩锅过长", 7),
-    ("B收束惩罚缺底", 13),
+    ("B收束缺落槌定格", 13),
+    ("B落槌定格句式重复", 4),
+    ("B定格后多余对白", 12),
+    ("B连锁也又还缺前句", 5),
+    ("B写实流血不宜", 8),
 )
+
+
+RE_FREEZE_REACT = re.compile(
+    r"完蛋|完了|糟糕|死定了|死定|真倒霉|倒霉|惨了|糟了|惨喽|"
+    r"被发现|露馅了|露馅|"
+    r"傻眼|愣住|僵住",
+)
+RE_FREEZE_SILENT = re.compile(
+    r"低头不敢动|一动不敢动|傻眼对视|对视不敢|僵住不敢说话",
+)
+RE_FREEZE_SIDE_DING = re.compile(r"死定了|死定")
+RE_BLEED_CONTENT = re.compile(
+    r"流血|出血|鲜血|血滴|血渗|血印|止血|还在流血|用嘴吸|创可贴",
+)
+
+
+def _sibling_landing_react(line: str) -> bool:
+    return bool(
+        RE_FREEZE_REACT.search(line)
+        or RE_LANDING_GROUND.search(line)
+    )
+
+
+def _punish_freeze_react(line: str) -> bool:
+    """惩罚令后定格反应（不含甩锅/哼）。"""
+    return bool(RE_FREEZE_REACT.search(line))
+
+
+def _landing_doom_lines_repeat(lines: list[str]) -> bool:
+    doomish = [ln for ln in lines if RE_DOOM_CLUSTER.search(ln)]
+    return len(doomish) >= 2
+
+
+def _freeze_lines_issues(react_lines: list[str]) -> str | None:
+    if not react_lines:
+        return None
+    if any(RE_FREEZE_SILENT.search(ln) for ln in react_lines):
+        return "定格须说话勿动作描写"
+    if sum(1 for ln in react_lines if RE_FREEZE_SIDE_DING.search(ln)) >= 2:
+        return "死定了句式重复"
+    if sum(1 for ln in react_lines if RE_DOOM_CLUSTER.search(ln)) >= 2:
+        return "完蛋完了句式重复"
+    return None
 
 
 def _find_last_mom_punish(
@@ -91,11 +140,79 @@ def _trim_stubborn_tail(
     return post_lines, post_speakers
 
 
-def analyze_punish_landing(
+def _lines_before_last_punish(
+    lines: list[str],
+    speakers: list[str],
+) -> tuple[list[str], int | None]:
+    punish_i = _find_last_mom_punish(lines, speakers)
+    if punish_i is None:
+        return lines, None
+    return lines[:punish_i], punish_i
+
+
+def analyze_pre_punish_self_preservation(
     lines: list[str],
     speakers: list[str] | None,
 ) -> tuple[bool, str]:
-    """返回 (是否缺底, 细分标签)。认栽底 = 惩罚令后、互甩前的同框定格一拍。"""
+    """段 4：妈妈惩罚令之前须有互甩自保（联盟崩塌）。"""
+    if not speakers or len(speakers) != len(lines) or len(lines) < 8:
+        return False, ""
+
+    pre_lines, punish_i = _lines_before_last_punish(lines, speakers)
+    if punish_i is None:
+        return False, ""
+
+    tail_pre = pre_lines[-10:] if len(pre_lines) >= 10 else pre_lines
+    if RE_BLAME.search("".join(tail_pre)):
+        return False, ""
+    return True, "妈妈惩罚令前缺自保甩锅"
+
+
+def analyze_post_freeze_bloat(
+    lines: list[str],
+    speakers: list[str] | None,
+) -> tuple[bool, str]:
+    """段 5 定格之后不应再有对白（甩锅/哼均算多余）。"""
+    if not speakers or len(speakers) != len(lines):
+        return False, ""
+
+    punish_i = _find_last_mom_punish(lines, speakers)
+    if punish_i is None:
+        return False, ""
+
+    post_lines = lines[punish_i + 1 :]
+    post_speakers = speakers[punish_i + 1 :]
+    if not post_lines:
+        return False, ""
+
+    freeze_end = 0
+    for i, (sp, ln) in enumerate(zip(post_speakers, post_lines)):
+        if sp in _SIBLING and _punish_freeze_react(ln):
+            freeze_end = i + 1
+            continue
+        if sp in _SIBLING:
+            break
+
+    if freeze_end == 0:
+        return False, ""
+
+    extra = post_lines[freeze_end:]
+    if not extra:
+        return False, ""
+
+    extra_text = "".join(extra)
+    if RE_BLAME.search(extra_text):
+        return True, "定格后仍甩锅"
+    if RE_STUBBORN_LAST.search(extra_text):
+        return True, "定格后仍嘴硬"
+    return True, "定格后多余对白"
+
+
+def analyze_freeze_after_punish(
+    lines: list[str],
+    speakers: list[str] | None,
+) -> tuple[bool, str]:
+    """返回 (是否缺落槌定格, 标签)。定格=惩罚令后姐弟同框反应，可戛然而止收束。"""
     n = len(lines)
     if n < 6 or not speakers or len(speakers) != n:
         return False, ""
@@ -109,67 +226,231 @@ def analyze_punish_landing(
     if not post_lines:
         return True, "惩罚令后无姐弟反应"
 
-    body_lines, body_speakers = _trim_stubborn_tail(post_lines, post_speakers)
-    post_text = "".join(body_lines)
     post_doom_speakers = {
         sp
-        for sp, ln in zip(body_speakers, body_lines)
-        if sp in _SIBLING and RE_DOOM.search(ln)
+        for sp, ln in zip(post_speakers, post_lines)
+        if sp in _SIBLING and _punish_freeze_react(ln)
     }
     post_blame_n = sum(
         1
-        for sp, ln in zip(body_speakers, body_lines)
+        for sp, ln in zip(post_speakers, post_lines)
         if sp in _SIBLING and RE_BLAME.search(ln)
     )
-    if RE_LANDING_GROUND.search(post_text) or len(post_doom_speakers) >= 2:
-        if post_blame_n > 2:
-            return True, "认栽后甩锅抢拍过长"
+    if len(post_doom_speakers) >= 2:
         return False, ""
 
-    if not post_doom_speakers:
+    if len(post_doom_speakers) == 1:
+        return True, "仅单人定格缺同框"
+
+    if post_blame_n > 0:
         pre_doom = any(
             RE_DOOM.search(ln)
             for ln in lines[max(0, punish_i - 4) : punish_i]
         )
-        if pre_doom and post_blame_n > 0:
-            return True, "完蛋写在惩罚前缺落槌底"
-        if post_blame_n > 0:
-            return True, "惩罚后无完蛋直接甩锅"
         if pre_doom:
-            return True, "完蛋写在惩罚前缺落槌底"
-        return True, "惩罚后缺认栽反应"
+            return True, "完蛋写在惩罚前缺定格"
+        return True, "惩罚后无定格直接甩锅"
 
-    return True, "仅单人认栽缺同框底"
+    return True, "惩罚后缺定格反应"
+
+
+def analyze_punish_landing(
+    lines: list[str],
+    speakers: list[str] | None,
+) -> tuple[bool, str]:
+    """兼容旧名；见 analyze_freeze_after_punish。"""
+    return analyze_freeze_after_punish(lines, speakers)
+
+
+def analyze_bottom_punchline(
+    lines: list[str],
+    speakers: list[str] | None,
+) -> tuple[bool, str]:
+    """兼容旧名；B 类不再要求末句底包袱，改查定格后是否多余。"""
+    return analyze_post_freeze_bloat(lines, speakers)
+
+
+def is_weak_freeze_after_punish(
+    lines: list[str],
+    speakers: list[str] | None,
+) -> bool:
+    return analyze_freeze_after_punish(lines, speakers)[0]
+
+
+def is_weak_bottom_punchline(
+    lines: list[str],
+    speakers: list[str] | None,
+) -> bool:
+    return analyze_post_freeze_bloat(lines, speakers)[0]
 
 
 def is_weak_punish_landing(
     lines: list[str],
     speakers: list[str] | None,
 ) -> bool:
-    return analyze_punish_landing(lines, speakers)[0]
+    return is_weak_freeze_after_punish(lines, speakers)
+
+
+def freeze_revision_hint(tag: str) -> str:
+    if tag == "惩罚后无定格直接甩锅":
+        return (
+            "妈妈愤怒短令后先写定格（从词池抽两句不同反应），"
+            "互甩应写在惩罚令之前的段4，禁止站好后下一句就「都怪你」。"
+        )
+    if tag == "完蛋写在惩罚前缺定格":
+        return (
+            "露馅慌张可说「完了」，但惩罚令后须再写定格一拍，然后戛然而止。"
+        )
+    if tag == "仅单人定格缺同框":
+        return (
+            "惩罚令后须俩人都有定格反应，各用不同句式（从词池抽两句），"
+            "须开口说话，勿低头不敢动。"
+        )
+    if "句式重复" in tag or "落槌定格句式重复" in tag:
+        if tag == "定格须说话勿动作描写":
+            return "定格须姐弟开口（被发现了/这下死定了等），勿写低头不敢动。"
+        if tag == "死定了句式重复":
+            return "定格两句勿都用死定了；死定了/完了类词各最多出现一次。"
+        if tag == "完蛋完了句式重复":
+            return "定格两句勿都用完蛋/完了；从词池各抽不同句式。"
+        return (
+            "定格两句从词池各抽不同句式（被发现了/露馅了/惨了/真倒霉/"
+            "这下死定了等）；死定了、完了类词各最多用一次。"
+        )
+    return (
+        "段5：妈妈短令→姐弟定格（完蛋了+真倒霉）即收；"
+        "笑料写在段2/3连锁与段4互甩，勿在定格后再写。"
+    )
+
+
+def bloat_revision_hint(tag: str) -> str:
+    if "甩锅" in tag:
+        return "互甩锅写在妈妈惩罚令之前（段4自保）；定格后禁止都怪你/是你先。"
+    if "嘴硬" in tag:
+        return "禁止定格后再写哼/才不是；末句停在完蛋了+真倒霉即可。"
+    return "定格后戛然而止，勿再补任何姐弟对白。"
+
+
+def bottom_revision_hint(tag: str) -> str:
+    return bloat_revision_hint(tag)
 
 
 def landing_revision_hint(tag: str) -> str:
-    if tag == "惩罚后无完蛋直接甩锅":
-        return (
-            "妈妈惩罚令后先写姐弟认栽（完蛋了/咱俩完了/低头不敢动），"
-            "再各甩 1 句；禁止站好后下一句就「都怪你」。"
+    return freeze_revision_hint(tag)
+
+
+RE_CHAIN_STEM = re.compile(
+    r"踩|滑|掉|洒|蹭|捡|塞|压|破|碎|露|响|黏|脏|印|泼|抹|擦|踢|冲|流|倒|崩|溅|鼓",
+)
+RE_ANAPHORA_SKIP = re.compile(
+    r"还是|还好|还有|还行|还没|还不错|说不定|"
+    r"妈还在|妈妈在|别告诉|你说好|说好了|最好|越",
+)
+RE_ANAPHORA_MARK = re.compile(
+    r"我也|你又|他又|她又|"
+    r"又(?!错|好|是|行|可以|来|给|不一|没说|没听|没看见|怎么样)|"
+    r"还(?!是|有|行|好|可以|没|不错|不如|算|得|没呢|没听|没看见|没弄)",
+)
+
+
+def _chain_zone_bounds(
+    lines: list[str],
+    speakers: list[str] | None,
+) -> tuple[int, int]:
+    n = len(lines)
+    start = next(
+        (i for i, ln in enumerate(lines) if RE_PLAN_FAIL.search(ln)),
+        None,
+    )
+    if start is None:
+        start = next(
+            (i for i, ln in enumerate(lines) if RE_CHAIN_ACTION.search(ln)),
+            min(4, n),
         )
-    if tag == "完蛋写在惩罚前缺落槌底":
+    end = n
+    if speakers and len(speakers) == n:
+        punish_i = _find_last_mom_punish(lines, speakers)
+        if punish_i is not None:
+            end = punish_i
+        else:
+            mom_i = next(
+                (i for i, sp in enumerate(speakers) if sp == "妈妈"),
+                n,
+            )
+            end = min(end, mom_i)
+    while end > start and RE_BLAME_MID.search(lines[end - 1]):
+        end -= 1
+    return start, end
+
+
+def _stems_in(text: str) -> set[str]:
+    return set(RE_CHAIN_STEM.findall(text))
+
+
+def _chain_anaphora_tag(line: str, prev2: str) -> str | None:
+    if RE_ANAPHORA_SKIP.search(line):
+        return None
+    if not RE_ANAPHORA_MARK.search(line):
+        return None
+
+    if "我也" in line:
+        tail = line.split("我也", 1)[-1]
+        stems = _stems_in(tail)
+        if not stems and tail.strip():
+            stems = _stems_in(tail) or (
+                {tail.strip()[0]} if tail.strip() else set()
+            )
+        if stems and not any(s in prev2 for s in stems):
+            return "我也缺前句动作"
+
+    for m in re.finditer(r"又([^，。！？]{1,10})", line):
+        frag = m.group(1)
+        if re.match(r"^[错好是不行可没]", frag):
+            continue
+        stems = _stems_in(frag)
+        if stems and not any(s in prev2 for s in stems):
+            return "又字缺前句动作"
+
+    for m in re.finditer(r"还([^，。！？]{1,10})", line):
+        frag = m.group(1)
+        if re.match(r"^[是有好行可没不]", frag):
+            continue
+        stems = _stems_in(frag)
+        if stems and not any(s in prev2 for s in stems):
+            return "还字缺前句动作"
+
+    return None
+
+
+def collect_chain_anaphora_issues(
+    lines: list[str],
+    speakers: list[str] | None,
+) -> list[str]:
+    start, end = _chain_zone_bounds(lines, speakers)
+    if end - start < 2:
+        return []
+    for i in range(start, end):
+        prev2 = "".join(lines[max(start, i - 2) : i])
+        tag = _chain_anaphora_tag(lines[i], prev2)
+        if tag:
+            return [f"B连锁也又还缺前句（{tag}）"]
+    return []
+
+
+def chain_anaphora_revision_hint(tag: str) -> str:
+    if tag == "我也缺前句动作":
         return (
-            "露馅慌张可说「完了」，但惩罚令后须再写一拍认栽底"
-            "（俩人一起完蛋或傻眼对视），再甩锅。"
+            "「我也…」须扣前 1–2 句已有动作；"
+            "如先写「踩上去了」再写「我也踩到了」，"
+            "或改「哎呀，我踩一脚」。"
         )
-    if tag == "仅单人认栽缺同框底" or tag == "单人完蛋后立刻甩锅":
-        return (
-            "惩罚令后须俩人都有认栽反应：一人完蛋→另一人也完了/咱俩完了，"
-            "或俩人低头不敢动/傻眼对视；勿仅一人完蛋后另一人直接甩锅。"
-        )
-    if tag == "认栽后甩锅抢拍过长":
-        return "认栽底后互甩各 1 句即到末句哼，勿连甩 2–3 句。"
+    if tag == "又字缺前句动作":
+        return "「又…」须前句已写过同类意外；如先洒了再写「又洒了」。"
+    if tag == "还字缺前句动作":
+        return "「还…」须前句已写过该动作；勿凭空「还在漏」。"
     return (
-        "惩罚令后补同框认栽底：俩人一起完蛋/低头不敢动/傻眼对视，"
-        "再各甩 1 句→哼。"
+        "连锁「我也/又/还」须扣前 1–2 句已有动作，"
+        "一句接一句，勿凭空续接。"
     )
 
 
@@ -210,8 +491,13 @@ def collect_humor_issues(
     if not RE_ALLY.search(head6) and not RE_ALLY.search("".join(lines[: n // 3])):
         cons.append("B缺结盟约定")
 
-    if RE_EXPOSED.search(tail4) and not RE_BLAME.search(tail6):
-        cons.append("B露馅前缺互甩锅")
+    if RE_EXPOSED.search(tail4):
+        pre_weak, pre_tag = analyze_pre_punish_self_preservation(lines, speakers)
+        if pre_weak:
+            cons.append(
+                "B联盟崩塌缺自保"
+                + (f"（{pre_tag}）" if pre_tag else ""),
+            )
 
     body_pre = "".join(lines[: max(0, n - 8)])
     if body_pre.count("不公平") >= 2 and not RE_ALLY.search(head6):
@@ -234,6 +520,8 @@ def collect_humor_issues(
         chain_slice = chain_zone[fail_i : fail_i + 6]
         if any(RE_BLAME_MID.search(ln) for ln in chain_slice):
             cons.append("B走样连锁中甩锅打断")
+
+    cons.extend(collect_chain_anaphora_issues(lines, speakers))
 
     mid_chain = body[1:] if len(body) > 1 else body
     chain_run = _longest_chain_run(mid_chain, RE_CHAIN_ACTION)
@@ -259,10 +547,7 @@ def collect_humor_issues(
         cons.append("B结盟分工复读拖沓")
 
     doom_i = next((i for i, ln in enumerate(lines) if RE_DOOM.search(ln)), None)
-    punish_i = next(
-        (i for i, ln in enumerate(lines) if RE_MOM_PUNISH.search(ln)),
-        None,
-    )
+    punish_i = _find_last_mom_punish(lines, speakers) if speakers else None
     if (
         doom_i is not None
         and punish_i is not None
@@ -270,15 +555,10 @@ def collect_humor_issues(
         and doom_i < n - 1
     ):
         tail_blame = sum(
-            1 for ln in lines[doom_i + 1 : -1] if RE_BLAME_MID.search(ln)
+            1 for ln in lines[doom_i + 1 :] if RE_BLAME_MID.search(ln)
         )
-        if tail_blame >= 3:
-            cons.append("B惩罚后甩锅过长")
-
-    last = lines[-1] if lines else ""
-    if RE_EXPOSED.search(tail6) and not re.search(r"哼|才不是|才不是我的", last):
-        if RE_BLAME.search(last):
-            cons.append("B收束戛然而止缺嘴硬余韵")
+        if tail_blame >= 2:
+            cons.append("B定格后多余对白")
 
     mom_late = bool(
         speakers
@@ -289,12 +569,40 @@ def collect_humor_issues(
         if not RE_MOM_PUNISH.search(tail8) or not RE_DOOM.search(tail8):
             cons.append("B收束缺权威落槌")
 
-    if is_weak_punish_landing(lines, speakers):
-        _, landing_tag = analyze_punish_landing(lines, speakers)
+    if is_weak_freeze_after_punish(lines, speakers):
+        _, freeze_tag = analyze_freeze_after_punish(lines, speakers)
         cons.append(
-            f"B收束惩罚缺底"
-            + (f"（{landing_tag}）" if landing_tag else ""),
+            "B收束缺落槌定格"
+            + (f"（{freeze_tag}）" if freeze_tag else ""),
         )
+
+    bloat, bloat_tag = analyze_post_freeze_bloat(lines, speakers)
+    if bloat:
+        cons.append(
+            "B定格后多余对白"
+            + (f"（{bloat_tag}）" if bloat_tag else ""),
+        )
+
+    if speakers and len(speakers) == n:
+        punish_i = _find_last_mom_punish(lines, speakers)
+        if punish_i is not None:
+            post_lines = lines[punish_i + 1 :]
+            post_speakers = speakers[punish_i + 1 :]
+            react_lines = [
+                ln
+                for sp, ln in zip(post_speakers, post_lines)
+                if sp in _SIBLING and _punish_freeze_react(ln)
+            ]
+            if freeze_tag := _freeze_lines_issues(react_lines):
+                cons.append(
+                    "B落槌定格句式重复"
+                    + (f"（{freeze_tag}）" if freeze_tag else ""),
+                )
+            elif _landing_doom_lines_repeat(react_lines):
+                cons.append("B落槌定格句式重复")
+
+    if RE_BLEED_CONTENT.search(body_text):
+        cons.append("B写实流血不宜")
 
     return cons
 
@@ -306,9 +614,8 @@ def score_funniness_tail(
     n = len(lines)
     body = lines[:-6] if n > 6 else lines[:-1]
     tail8 = "".join(lines[-8:]) if n >= 8 else "".join(lines)
-    late4 = lines[-4:] if n >= 4 else lines
-    late4_text = "".join(late4)
-    weak_landing = is_weak_punish_landing(lines, speakers)
+    weak_freeze = is_weak_freeze_after_punish(lines, speakers)
+    has_bloat = analyze_post_freeze_bloat(lines, speakers)[0]
 
     points = 0
     pros: list[str] = []
@@ -327,17 +634,32 @@ def score_funniness_tail(
         points += 3
         pros.append("荒谬补救好笑")
 
+    pre_lines, punish_i = (
+        _lines_before_last_punish(lines, speakers)
+        if speakers
+        else (lines, None)
+    )
+    if punish_i is not None:
+        tail_pre = pre_lines[-8:] if len(pre_lines) >= 8 else pre_lines
+        if RE_BLAME.search("".join(tail_pre)):
+            points += 3
+            pros.append("联盟自保好笑")
+
     if (
         RE_MOM_PUNISH.search(tail8)
         and RE_DOOM.search(tail8)
-        and not weak_landing
+        and not weak_freeze
+        and not has_bloat
+    ):
+        points += 4
+        pros.append("定格戛然而止好笑")
+    elif (
+        RE_MOM_PUNISH.search(tail8)
+        and not weak_freeze
+        and not has_bloat
     ):
         points += 2
-        pros.append("惩罚落槌好笑")
-
-    if RE_BLAME.search(late4_text) and RE_DOOM.search(late4_text) and not weak_landing:
-        points += 2
-        pros.append("完蛋互甩好笑")
+        pros.append("落槌定格好笑")
 
     if RE_ALLY.search("".join(lines[: max(1, n // 4)])) and RE_PLAN_FAIL.search(
         "".join(body),
@@ -354,10 +676,10 @@ def humor_revision_hint(issue: str) -> str | None:
             f"【好笑·B】{issue}。"
             "前 6 句姐弟亲口约定分工或暗号（望风/下手/别告诉妈），扣主题实物。"
         )
-    if "缺互甩锅" in issue:
+    if "缺互甩" in issue or "联盟崩塌" in issue or "自保" in issue:
         return (
             f"【好笑·B】{issue}。"
-            "露馅前先互甩 2 句：都怪你/是你先/你答应的；须扣同盟分工。"
+            "段4：连锁崩后、妈妈惩罚令前互甩 1–2 句，扣同盟分工。"
         )
     if "偏A" in issue:
         return (
@@ -374,31 +696,43 @@ def humor_revision_hint(issue: str) -> str | None:
         return (
             f"【好笑·B】{issue}。"
             "删口头互怼；结盟分工说清一次即进连锁；"
-            "惩罚后：完蛋→各甩1句→哼，勿再吵一轮。"
+            "段5定格后勿再写对白。"
         )
-    if "戛然而止" in issue:
-        return (
-            f"【好笑·B】{issue}。"
-            "末句加哼/才不是/才不是我的主意，短句嘴硬收束。"
-        )
-    if "连锁" in issue and "好笑" not in issue:
+    if "定格后" in issue or "多余对白" in issue:
+        tag = ""
+        if "（" in issue and "）" in issue:
+            tag = issue.split("（", 1)[-1].rstrip("）")
+        return f"【好笑·B】{issue}。" + bloat_revision_hint(tag)
+    if "连锁" in issue and "好笑" not in issue and "也又还" not in issue:
         return (
             f"【好笑·B】{issue}。"
             "连锁期间只写动作与慌张，勿插入都怪你。"
         )
+    if "也又还缺前句" in issue:
+        tag = ""
+        if "（" in issue and "）" in issue:
+            tag = issue.split("（", 1)[-1].rstrip("）")
+        return f"【好笑·B】{issue}。" + chain_anaphora_revision_hint(tag)
     if "越补越糟" in issue or "说明书" in issue:
         return (
             f"【好笑·B】{issue}。"
             "结盟 2–3 句即可；立刻写意外连锁："
             "如滑了→鞋底蹭→更脏→踩袋响→油印；好笑在补救越帮越倒忙。"
         )
-    if "权威落槌" in issue or "惩罚缺底" in issue:
+    if "流血" in issue:
+        return (
+            f"【好笑·B】{issue}。"
+            "勿写实流血/止血/创可贴；可说怕扎到不敢动、不敢捡、不敢挪脚。"
+        )
+    if "落槌定格" in issue or "句式重复" in issue:
         tag = ""
         if "（" in issue and "）" in issue:
             tag = issue.split("（", 1)[-1].rstrip("）")
+        return f"【好笑·B】{issue}。" + freeze_revision_hint(tag)
+    if "权威落槌" in issue:
         return (
             f"【好笑·B】{issue}。"
-            + landing_revision_hint(tag)
+            "段5：妈妈愤怒短令（你俩站好）+姐弟定格，隐喻受罚即可。"
         )
     if "分工" in issue:
         return (
@@ -408,8 +742,8 @@ def humor_revision_hint(issue: str) -> str | None:
     if any(k in issue for k in ("好笑", "幽默", "不足")):
         return (
             f"【好笑·B】{issue}。"
-            "中段用 3–5 句越补越糟动作链（少吵）；"
-            "末段妈妈惩罚令→完蛋→互甩→哼收束。"
+            "段2/3写 3–5 句越补越糟连锁；段4惩罚令前互甩自保；"
+            "段5妈妈短令→定格（完蛋了+真倒霉）戛然而止。"
         )
     from app.services.daily_story.story_types.b.facts import fact_revision_hint
     from app.services.daily_story.story_types.b.opening import opening_revision_hint

@@ -17,7 +17,8 @@ RE_MOM_WAFFLE = e_humor.RE_MOM_WAFFLE
 RE_LOOP = e_humor.RE_LOOP
 RE_MOM_SOFT = e_humor.RE_MOM_SOFT
 RE_CATCH = re.compile(
-    r"嘴角|勺子|腮帮|手机|还在刷|尝了|咽|敷衍|撒谎|说瞎话|三大勺|还亮着",
+    r"嘴角|勺子|勺上|腮帮|手机|还在刷|尝了|咽|敷衍|撒谎|说瞎话|三大勺|"
+    r"菜叶|油渍|油花|试吃|试菜",
 )
 
 
@@ -99,7 +100,7 @@ QUALITY_PROFILE = TypeQualityProfile(
         "你也",
         "你刚才",
     ),
-    mom_lines_penalty_at=9,
+    mom_lines_penalty_at=18,
     penalize_wait_mom_end=False,
     penalize_split_end=True,
     penalize_stubborn_end=False,

@@ -9,7 +9,7 @@ from app.services.daily_story.dialogue_text import score_opening_cinematic
 # 开场禁止已回旋镖/叮嘱方已破规
 D_OPENING_SPOILER_RE = re.compile(
     r"你自己说|你刚才说|你也破了|你也碰了|回旋镖|"
-    r"我说不许你|你不也|算你狠",
+    r"我说不许你|你不也|算你狠|谁让你",
 )
 # 勿像 A 管教末四拍、C 争公平
 D_OPENING_A_RE = re.compile(
@@ -20,7 +20,7 @@ D_OPENING_C_RE = re.compile(
 )
 # 正向：叮嘱/待执行场面
 D_OPENING_ANCHOR_RE = re.compile(
-    r"别碰|不许|轻点|慢点|按|照|叠|鞋带|收拾|弄|叮嘱|规矩",
+    r"别碰|不许|轻点|慢点|慢慢|按|照|叠|鞋带|收拾|弄|叮嘱|规矩|系紧|别洒|整齐|擦|端|晃",
 )
 
 
@@ -53,6 +53,19 @@ def append_d_opening_errors(
                 "应是「别这样弄/按我说的」类叮嘱前场面",
             )
             break
+    # 须有一镜立叮嘱（灿灿/妈妈），勿事后质问当开场
+    if normalized:
+        rule_lines = [
+            item["line"]
+            for item in normalized
+            if item.get("speaker") in ("灿灿", "妈妈")
+            and D_OPENING_ANCHOR_RE.search(item["line"])
+        ]
+        if not rule_lines:
+            errors.append(
+                "opening[0:2] D类开场须立叮嘱（灿灿/妈妈：不许/轻点/系紧等），"
+                "勿事后质问（谁让你…）",
+            )
 
 
 def _opening_body_overlap(a: str, b: str) -> bool:

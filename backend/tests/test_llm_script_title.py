@@ -808,6 +808,37 @@ def test_d_opening_score_skips_stitched_prefix_overlap():
     assert "D开场与正文首句重复" not in cons
 
 
+def test_patch_d_strips_mom_and_compresses():
+    from app.services.daily_story.prompts import try_local_patch_daily_story_body
+
+    speakers = ("昭昭", "灿灿")
+    dlg = [
+        {"speaker": speakers[i % 2], "line": f"台词{i}一二三四五六七八"}
+        for i in range(24)
+    ]
+    dlg[0]["line"] = "厨房灶台这碗汤好烫手呀"
+    dlg[1]["line"] = "端过去不许晃，洒了别哭"
+    dlg[2]["line"] = "端过去不许晃，再叮嘱一次"
+    dlg[5] = {"speaker": "妈妈", "line": "汤都凉了赶紧放下别端"}
+    dlg[-4] = {"speaker": "昭昭", "line": "你自己说别碰，你现在也碰了"}
+    dlg[-3] = {"speaker": "灿灿", "line": "现在不碰谁收拾啊"}
+    dlg[-2] = {"speaker": "昭昭", "line": "那你刚才说别碰呢"}
+    dlg[-1] = {"speaker": "灿灿", "line": "……哼，算了"}
+    story = {
+        "scene_title": "端汤",
+        "setting": "厨房餐桌边",
+        "conflict_core": "端汤不许晃字面执行烫手",
+        "dialogue": dlg,
+        "punchline_explain": "D类字面执行，灿灿叮嘱不许晃",
+    }
+    patched, notes = try_local_patch_daily_story_body(story)
+    assert any("妈妈" in n for n in notes)
+    assert len(patched["dialogue"]) <= 18
+    assert not any(
+        str(d.get("speaker") or "") == "妈妈" for d in patched["dialogue"]
+    )
+
+
 def test_validate_daily_story_opening_rejects_consecutive_speakers():
     with pytest.raises(ValueError, match="连说"):
         validate_daily_story_opening(
@@ -1138,19 +1169,114 @@ def test_b_smoke5_quality_scores_around_93():
     root = Path(__file__).resolve().parents[2]
     payload = json.loads((root / "tmp/daily_story_b_smoke5.json").read_text())[0]
     q = score_daily_story(payload["story"], theme=payload["theme"])
-    assert q["score"] == 93
-    assert "B开场与正文首句重复" not in q["reasons"]
-    assert any("B收束惩罚缺底" in r for r in q["reasons"])
-    assert "仅单人认栽缺同框底" in "".join(q["reasons"])
-    assert "开场缺可拍画面" in q["reasons"]
-    assert "惩罚落槌有底" not in q["reasons"]
+    assert q["score"] == 73
+    assert any("定格后多余对白" in r for r in q["reasons"])
+    assert any("B收束缺落槌定格" in r for r in q["reasons"])
+
+
+def test_b_freeze_only_ending_accepted():
+    from app.services.daily_story.story_types.b.humor import (
+        analyze_post_freeze_bloat,
+        analyze_punish_landing,
+    )
+
+    lines = [
+        "咱俩吃这包，你望风我拆",
+        "哎，薯片滑出去了",
+        "踩到了，鞋底黏了",
+        "都怪你手太快！",
+        "是你让我拆的！",
+        "妈妈：地上怎么一地碎渣？",
+        "妈妈：你俩，站好！！！",
+        "昭昭：完蛋了！",
+        "灿灿：真倒霉……",
+    ]
+    speakers = [
+        "昭昭", "灿灿", "昭昭", "昭昭", "灿灿", "妈妈", "妈妈", "昭昭", "灿灿",
+    ]
+    weak, tag = analyze_punish_landing(lines, speakers)
+    assert not weak, tag
+    bloat, bloat_tag = analyze_post_freeze_bloat(lines, speakers)
+    assert not bloat, bloat_tag
+
+
+def test_b_landing_flags_post_freeze_blame():
+    from app.services.daily_story.story_types.b.humor import (
+        analyze_post_freeze_bloat,
+        collect_humor_issues,
+    )
+
+    lines = [
+        "结盟",
+        "走样",
+        "都怪你",
+        "是你先",
+        "妈妈：你俩，过来站好！",
+        "昭昭：完蛋了！",
+        "灿灿：真倒霉……",
+        "昭昭：都怪你没望风！",
+        "灿灿：哼，才不是。",
+    ]
+    speakers = [
+        "昭昭", "灿灿", "昭昭", "灿灿", "妈妈", "昭昭", "灿灿", "昭昭", "灿灿",
+    ]
+    bloat, _ = analyze_post_freeze_bloat(lines, speakers)
+    assert bloat
+    issues = collect_humor_issues(lines, speakers)
+    assert any("定格后多余对白" in c for c in issues)
+
+
+def test_b_chain_flags_orphan_wo_ye():
+    from app.services.daily_story.story_types.b.humor import collect_chain_anaphora_issues
+
+    lines = [
+        "结盟",
+        "嘘妈在厨房",
+        "好你拆",
+        "啊呀，包装撕太大了！",
+        "饼干蹦出来了，快用脚接！",
+        "没接住，全掉地上了。",
+        "我也踩到了，更糟了。",
+        "别动脚，脚印会更多。",
+    ]
+    issues = collect_chain_anaphora_issues(lines, None)
+    assert any("我也缺前句动作" in i for i in issues)
+
+
+def test_b_chain_accepts_wo_ye_step():
+    from app.services.daily_story.story_types.b.humor import collect_chain_anaphora_issues
+
+    lines = [
+        "结盟",
+        "包装撕太大了",
+        "没接住，全掉地上了。",
+        "哎呀，我踩一脚。",
+        "别动脚，脚印会更多。",
+    ]
+    assert not collect_chain_anaphora_issues(lines, None)
+
+
+def test_b_chain_accepts_ye_with_antecedent():
+    from app.services.daily_story.story_types.b.humor import collect_chain_anaphora_issues
+
+    lines = [
+        "结盟",
+        "包装撕太大了",
+        "我不小心踩上去了。",
+        "我也踩到了，更糟了。",
+        "别动脚。",
+    ]
+    assert not collect_chain_anaphora_issues(lines, None)
 
 
 def test_b_landing_flags_batch_weak_endings():
     import json
     from pathlib import Path
 
-    from app.services.daily_story.story_types.b.humor import analyze_punish_landing
+    from app.services.daily_story.story_types.b.humor import (
+        analyze_post_freeze_bloat,
+        analyze_punish_landing,
+    )
 
     root = Path(__file__).resolve().parents[2]
     batch = json.loads((root / "tmp/daily_story_b_batch5.json").read_text())
@@ -1159,7 +1285,8 @@ def test_b_landing_flags_batch_weak_endings():
         lines = [str(x["line"]) for x in story["dialogue"]]
         speakers = [str(x["speaker"]) for x in story["dialogue"]]
         weak, _ = analyze_punish_landing(lines, speakers)
-        assert weak, idx
+        bloat, _ = analyze_post_freeze_bloat(lines, speakers)
+        assert weak or bloat, idx
 
 
 def test_b_landing_accepts_double_doom_tail():
@@ -1168,19 +1295,43 @@ def test_b_landing_accepts_double_doom_tail():
     lines = [
         "前段结盟",
         "走样连锁",
-        "妈妈来了",
+        "都怪你望风",
+        "是你先弄洒",
         "妈妈：你俩，过来站好！",
         "昭昭：完蛋了！",
-        "灿灿：我也完了。",
-        "昭昭：都怪你没望风！",
-        "灿灿：是你先弄洒的！",
-        "昭昭：哼，才不是我的主意。",
+        "灿灿：真倒霉……",
     ]
     speakers = [
-        "昭昭", "灿灿", "妈妈", "妈妈", "昭昭", "灿灿", "昭昭", "灿灿", "昭昭",
+        "昭昭", "灿灿", "昭昭", "灿灿", "妈妈", "昭昭", "灿灿",
     ]
     weak, tag = analyze_punish_landing(lines, speakers)
     assert not weak, tag
+
+
+def test_b_landing_flags_doom_phrase_repeat():
+    from app.services.daily_story.story_types.b.humor import (
+        analyze_punish_landing,
+        collect_humor_issues,
+    )
+
+    lines = [
+        "结盟",
+        "走样",
+        "妈妈：你俩，过来站好！",
+        "昭昭：完蛋了。",
+        "灿灿：我也完了。",
+        "昭昭：都怪你！",
+        "灿灿：是你先！",
+        "昭昭：哼，才不是。",
+    ]
+    speakers = [
+        "昭昭", "灿灿", "妈妈", "昭昭", "灿灿", "昭昭", "灿灿", "昭昭",
+    ]
+    weak, _ = analyze_punish_landing(lines, speakers)
+    assert not weak
+    issues = collect_humor_issues(lines, speakers)
+    assert any("句式重复" in c for c in issues)
+    assert any("定格后多余对白" in c for c in issues)
 
 
 def test_b_validate_rejects_missing_landing():
@@ -1204,7 +1355,7 @@ def test_b_validate_rejects_missing_landing():
     }
     errors: list[str] = []
     append_b_body_errors(story, errors)
-    assert any("认栽底" in e for e in errors)
+    assert any("定格" in e for e in errors)
 
 
 def test_validate_a_opening_rejects_mid_fight_timer():

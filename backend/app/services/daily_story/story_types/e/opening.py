@@ -25,6 +25,21 @@ E_OPENING_ANCHOR_RE = re.compile(
     r"妈妈|妈|讲理|规矩|应该|不行|怎么又|我说|"
     r"挂钟|嘴角|勺子|屏幕|被窝|亮着",
 )
+RE_SLEEP_TOPIC = re.compile(r"睡觉|九点|早睡|刷手机|卧床|被窝|挂钟")
+RE_SLEEP_MOM_RULE = re.compile(r"必须睡觉|九点了|快去躺|得睡觉")
+RE_SNACK_TOPIC = re.compile(r"零食|尝菜|偷吃|饭前不吃|试吃|试菜")
+RE_WEAK_TASTE_EYE = re.compile(r"汤汁|舀汤|舔勺|喝了一口汤|偷尝了汤|尝了汤")
+RE_STRONG_TASTE_EYE = re.compile(
+    r"勺子|勺上|尝菜|试吃|试菜|嘴角|油渍|油花|菜叶|三大勺|咽下去|腮帮|黏黏",
+)
+# 孩子句旁白定格式：地点名词起句（非「刚才在…」回忆式）
+RE_CHILD_NARRATOR_PREFIX = re.compile(
+    r"^(?:客厅|厨房|卧室|饭桌|灶台|沙发|门口)(?:饭桌前?|里|旁|边|门口)?[，,]",
+)
+RE_CHILD_QUESTION = re.compile(r"[？?]|为什么|怎么|啥|吗|呢")
+RE_CAMERA_NARRATION = re.compile(
+    r"刚离开嘴边|勺子刚离开|还躺着刷|正靠在|正躺在",
+)
 
 
 def append_e_opening_errors(
@@ -32,6 +47,8 @@ def append_e_opening_errors(
     *,
     type_code: str | None,
     errors: list[str],
+    conflict_core: str = "",
+    setting: str = "",
 ) -> None:
     code = (type_code or "").strip().upper()[:1]
     if code != "E":
@@ -60,6 +77,49 @@ def append_e_opening_errors(
                 f"opening[{i}] E类开场勿像A姐弟末四拍（那不一样等）",
             )
             break
+        sp = str(item.get("speaker") or "").strip()
+        if sp in ("昭昭", "灿灿"):
+            narr = RE_CHILD_NARRATOR_PREFIX.search(line)
+            quest = RE_CHILD_QUESTION.search(line)
+            camera = RE_CAMERA_NARRATION.search(line)
+            if narr and (camera or not quest):
+                errors.append(
+                    f"opening[{i}] E类孩子开场勿旁白定格式"
+                    "（宜「刚才在客厅，妈你为什么…」）",
+                )
+                break
+            if camera and not quest:
+                errors.append(
+                    f"opening[{i}] E类孩子开场勿镜头描写"
+                    "（宜问妈「你为什么把勺子放嘴边」）",
+                )
+                break
+
+    joined = "".join(d.get("line", "") for d in normalized)
+    ctx = (conflict_core or "") + (setting or "") + joined
+    if RE_SLEEP_TOPIC.search(ctx) and not RE_SLEEP_MOM_RULE.search(joined):
+        errors.append(
+            "E类睡觉主题开场须有妈妈立睡觉规矩"
+            "（如「九点了必须睡觉」）",
+        )
+    snack_t = bool(RE_SNACK_TOPIC.search(ctx))
+    sleep_t = bool(RE_SLEEP_TOPIC.search(ctx))
+    if snack_t and not sleep_t:
+        if RE_WEAK_TASTE_EYE.search(joined) and not RE_STRONG_TASTE_EYE.search(
+            joined,
+        ):
+            errors.append(
+                "E类尝菜开场眼须可拍试吃（勺子/嘴角油），汤汁太弱",
+            )
+        if re.search(r"你不是说|不是说饭前|饭前不能吃零食|不能吃零食", joined):
+            if not any(
+                d.get("speaker") == "妈妈"
+                and re.search(r"不能吃零食|不能吃零|饭前", d.get("line", ""))
+                for d in normalized
+            ):
+                errors.append(
+                    "E类零食开场勿孩子预支规矩，须妈妈亲口立「饭前不能吃零食」",
+                )
 
 
 def _opening_body_overlap(a: str, b: str) -> bool:
@@ -126,6 +186,24 @@ def score_opening_quality(story: dict) -> tuple[int, list[str], list[str]]:
         pts += 3
         pros.append("E开场锚定讲理场面")
 
+    for d in opening:
+        if not isinstance(d, dict):
+            continue
+        sp = str(d.get("speaker") or "").strip()
+        ln = str(d.get("line") or "").strip()
+        if sp in ("昭昭", "灿灿"):
+            narr = RE_CHILD_NARRATOR_PREFIX.search(ln)
+            quest = RE_CHILD_QUESTION.search(ln)
+            camera = RE_CAMERA_NARRATION.search(ln)
+            if narr and (camera or not quest):
+                cons.append("E开场旁白定格式")
+                pts -= 4
+                break
+            if camera and not quest:
+                cons.append("E开场镜头描写")
+                pts -= 3
+                break
+
     first_body = _first_body_line_after_opening(story)
     if first_body and _opening_body_overlap(lines_o[-1], first_body):
         cons.append("E开场与正文首句重复")
@@ -144,7 +222,7 @@ def opening_revision_hint(issue: str) -> str | None:
         return None
     return (
         f"【开场·E】{issue}。"
-        "须 2 句正片第一镜：地点+现行（灶台嘴角、卧室挂钟/被窝亮光）；"
-        "换人说，speaker 可为孩子或妈妈；先抓现行再立规；"
-        "勿行行行/孩子预支规矩/嘘别告诉；勿单句干问。"
+        "孩子句宜口语问妈：「刚才在客厅，妈你为什么把勺子放嘴边啊」；"
+        "勿旁白定格式（客厅饭桌前…刚离开嘴边）；"
+        "第2句可妈妈立规矩；勿孩子预支规矩/行行行/嘘别告诉。"
     )

@@ -17,12 +17,141 @@ from app.services.daily_story.story_types.d.humor import (
 )
 from app.services.daily_story.story_types.quality import RE_SOFT_LAST
 
-_A_TAIL = re.compile(r"哪里不一样|都是听|那不一样")
+_A_TAIL = re.compile(r"哪里不一样|都是听|那不一样|完全不一样|跟.{0,6}不一样")
+_RE_RULE = re.compile(r"不许|别碰|别晃|轻点|慢点|系紧|规矩|叮嘱|不准|不能|要整齐")
+_WAFFLE = re.compile(
+    r"没有毛病|死板|坚持执行|脑子怎么|转不过弯|特殊补救|我这是帮你",
+)
+_D_MAX_LINES = 18
 
 
 def _is_d(story: dict) -> bool:
     punch = str(story.get("punchline_explain") or "")
     return parse_story_type_code(punchline=punch) == "D"
+
+
+def patch_d_strip_mom(story: dict) -> list[str]:
+    """D 主戏姐弟：删掉妈妈插话（留给 E 类）。"""
+    notes: list[str] = []
+    if not _is_d(story):
+        return notes
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list):
+        return notes
+    dropped = 0
+    for i in reversed(range(len(dialogue))):
+        d = dialogue[i]
+        if isinstance(d, dict) and str(d.get("speaker") or "").strip() == "妈妈":
+            dialogue.pop(i)
+            dropped += 1
+    if dropped:
+        notes.append(f"D删妈妈插话×{dropped}")
+    return notes
+
+
+def patch_d_trim_duplicate_rule(story: dict) -> list[str]:
+    """前段灿灿重复唠叨同一条规矩时删后句。"""
+    notes: list[str] = []
+    if not _is_d(story):
+        return notes
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 4:
+        return notes
+    seen_rule = False
+    i = 0
+    while i < min(len(dialogue), 10):
+        d = dialogue[i]
+        if not isinstance(d, dict):
+            i += 1
+            continue
+        sp = str(d.get("speaker") or "").strip()
+        line = str(d.get("line") or "")
+        if sp in ("灿灿", "妈妈") and _RE_RULE.search(line):
+            if seen_rule:
+                dialogue.pop(i)
+                notes.append(f"D删重复立规[{i}]")
+                continue
+            seen_rule = True
+        i += 1
+    return notes
+
+
+def patch_d_trim_waffle(story: dict) -> list[str]:
+    """删中段空辩/说教复读句。"""
+    notes: list[str] = []
+    if not _is_d(story):
+        return notes
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 8:
+        return notes
+    for i in range(2, len(dialogue) - 4):
+        d = dialogue[i]
+        if not isinstance(d, dict):
+            continue
+        line = str(d.get("line") or "")
+        if _WAFFLE.search(line):
+            dialogue.pop(i)
+            notes.append(f"D删空辩[{i}]")
+            return patch_d_trim_waffle(story)
+    return notes
+
+
+def patch_d_compress_body(story: dict) -> list[str]:
+    """超过 18 句时从中段删注水，保留立规/一锤/破规/回旋镖。"""
+    notes: list[str] = []
+    if not _is_d(story):
+        return notes
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) <= _D_MAX_LINES:
+        return notes
+
+    while len(dialogue) > _D_MAX_LINES:
+        lines = [
+            str(d.get("line") or "") if isinstance(d, dict) else ""
+            for d in dialogue
+        ]
+        speakers = [
+            str(d.get("speaker") or "") if isinstance(d, dict) else ""
+            for d in dialogue
+        ]
+        n = len(dialogue)
+        mess_i = next((i for i, ln in enumerate(lines) if RE_MESS.search(ln)), None)
+        fix_i = next((i for i, ln in enumerate(lines) if RE_FIX.search(ln)), None)
+        boom_i = next(
+            (i for i, ln in enumerate(lines) if RE_BOOM_CLOSE.search(ln)),
+            n - 2,
+        )
+        protected = {0, 1, 2, 3, n - 1, n - 2, n - 3, n - 4, boom_i}
+        if mess_i is not None:
+            protected.add(mess_i)
+        if fix_i is not None:
+            protected.add(fix_i)
+
+        drop_i: int | None = None
+        for i in range(n - 5, 3, -1):
+            if i in protected:
+                continue
+            if _WAFFLE.search(lines[i]):
+                drop_i = i
+                break
+        if drop_i is None:
+            for i in range(n - 5, 3, -1):
+                if i in protected:
+                    continue
+                if speakers[i] in ("昭昭", "灿灿") and RE_LITERAL.search(lines[i]):
+                    if sum(1 for ln in lines if RE_LITERAL.search(ln)) > 2:
+                        drop_i = i
+                        break
+        if drop_i is None:
+            for i in range(n - 5, 3, -1):
+                if i not in protected:
+                    drop_i = i
+                    break
+        if drop_i is None:
+            break
+        dialogue.pop(drop_i)
+        notes.append(f"D删注水[{drop_i}]")
+    return notes
 
 
 def patch_d_strip_a_close(story: dict) -> list[str]:
@@ -168,7 +297,24 @@ def patch_d_ensure_boomerang(story: dict) -> list[str]:
     if not isinstance(d, dict):
         return notes
     d["speaker"] = "昭昭"
-    d["line"] = "你自己说别碰，你现在也碰了"
+    rule_hint = ""
+    for item in dialogue:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("speaker") or "") in ("灿灿", "妈妈"):
+            ln = str(item.get("line") or "")
+            if _RE_RULE.search(ln):
+                rule_hint = ln
+                break
+    if "晃" in rule_hint or "晃" in str(story.get("conflict_core") or ""):
+        boom_line = "你自己说不许晃，你现在也晃了"
+    elif "碰" in rule_hint:
+        boom_line = "你自己说别碰，你现在也碰了"
+    elif "慢" in rule_hint or "擦" in rule_hint:
+        boom_line = "你自己说慢慢擦，你现在也用力了"
+    else:
+        boom_line = "你自己说过的，你现在也破了"
+    d["line"] = boom_line
     notes.append("D补回旋镖")
     last = dialogue[-1]
     if isinstance(last, dict) and not RE_SOFT_LAST.search(str(last.get("line") or "")):
@@ -278,16 +424,20 @@ def patch_d_trim_second_boom(story: dict) -> list[str]:
 
 def patch_d_body(story: dict) -> list[str]:
     notes: list[str] = []
+    notes.extend(patch_d_strip_mom(story))
+    notes.extend(patch_d_trim_duplicate_rule(story))
     notes.extend(patch_d_strip_a_close(story))
     notes.extend(patch_d_strip_nitpick(story))
+    notes.extend(patch_d_trim_waffle(story))
     notes.extend(patch_d_ensure_literal(story))
     notes.extend(patch_d_ensure_mess(story))
     notes.extend(patch_d_ensure_fix(story))
     notes.extend(patch_d_ensure_boomerang(story))
     notes.extend(patch_d_closing_speaker(story))
     notes.extend(patch_d_trim_second_boom(story))
+    notes.extend(patch_d_compress_body(story))
     notes.extend(patch_d_strip_a_close(story))
-    notes.extend(patch_d_strip_nitpick(story))
+    notes.extend(patch_d_trim_waffle(story))
     notes.extend(patch_d_ensure_fix(story))
     notes.extend(patch_d_ensure_boomerang(story))
     notes.extend(patch_d_trim_second_boom(story))
