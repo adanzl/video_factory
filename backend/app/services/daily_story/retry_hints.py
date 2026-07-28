@@ -6,12 +6,13 @@ import re
 from collections.abc import Callable
 from typing import Any
 
+from app.services.daily_story.dialogue_text import DAILY_STORY_LINE_CHARS_MAX
+from app.services.daily_story.prompts import (
+    DAILY_STORY_BODY_CHARS_MAX,
+    DAILY_STORY_BODY_CHARS_MIN,
+    DAILY_STORY_RETRY_PATCH_DEFICIT_MAX,
+)
 from app.services.daily_story.story_types import story_line_for_code
-
-DAILY_STORY_BODY_CHARS_MIN = 280
-DAILY_STORY_BODY_CHARS_MAX = 340
-DAILY_STORY_LINE_CHARS_MAX = 22
-DAILY_STORY_RETRY_PATCH_DEFICIT_MAX = 24
 
 
 def _parse_body_char_deficit(errors: str) -> int | None:

@@ -22,7 +22,10 @@ SceneBeatScorer = Callable[
     [list[str], Callable[[str], bool]],
     tuple[int, list[str]],
 ]
-FunninessTailScorer = Callable[[list[str]], tuple[int, list[str]]]
+FunninessTailScorer = Callable[
+    [list[str], list[str] | None],
+    tuple[int, list[str]],
+]
 HumorRevisionHintFn = Callable[[str], str | None]
 FactIssueCollector = Callable[[dict], list[str]]
 OpeningQualityScorer = Callable[[dict], tuple[int, list[str], list[str]]]

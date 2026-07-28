@@ -329,11 +329,23 @@ function handleViewJob() {
   router.push({ path: "/jobs", query: { id: String(jobId) } });
 }
 
+function syncDiscoveryOpening(story: StoryContent): StoryContent {
+  const dialogue = story.dialogue;
+  if (!dialogue || dialogue.length < 2) return story;
+  return {
+    ...story,
+    discovery_opening: dialogue.slice(0, 2).map((line) => ({
+      speaker: line.speaker,
+      line: line.line,
+    })),
+  };
+}
+
 async function handleSave() {
   const storyId = props.story?.id;
   if (!storyId) return;
   try {
-    await updateDailyStory(storyId, editStory.value);
+    await updateDailyStory(storyId, syncDiscoveryOpening(editStory.value));
     ElMessage.success("已保存");
     emit("updated");
   } catch (e: any) {
@@ -346,7 +358,7 @@ async function handleSyncToJob() {
   if (!storyId) return;
   syncing.value = true;
   try {
-    await syncDailyStoryToJob(storyId, editStory.value);
+    await syncDailyStoryToJob(storyId, syncDiscoveryOpening(editStory.value));
     ElMessage.success("已同步到任务，任务脚本阶段已重置");
     emit("updated");
   } catch (e: any) {
