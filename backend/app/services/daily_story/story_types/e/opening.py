@@ -6,6 +6,18 @@ import re
 
 from app.services.daily_story.dialogue_text import score_opening_cinematic
 
+RE_SLEEP_TOPIC = re.compile(r"睡觉|九点|早睡|刷手机|卧床|被窝|挂钟")
+RE_SLEEP_MOM_RULE = re.compile(r"必须睡觉|九点了|快去躺|得睡觉")
+RE_SNACK_TOPIC = re.compile(r"零食|尝菜|偷吃|饭前不吃|试吃|试菜")
+RE_LIE_TOPIC = re.compile(r"说谎|撒谎|敷衍|诚实|假话|骗")
+RE_LIE_MOM_RULE = re.compile(r"不能说谎|不许说谎|要诚实|别说谎|老实")
+RE_LIE_WAFFLE = re.compile(
+    r"不是敷衍|善意谎言|让奶奶放心|特殊情况|为了不让|不是骗",
+)
+RE_WEAK_TASTE_EYE = re.compile(r"汤汁|舀汤|舔勺|喝了一口汤|偷尝了汤|尝了汤")
+RE_STRONG_TASTE_EYE = re.compile(
+    r"勺子|勺上|尝菜|试吃|试菜|嘴角|油渍|油花|菜叶|三大勺|咽下去|腮帮|黏黏",
+)
 # 开场禁止妈妈已破功
 E_OPENING_SPOILER_RE = re.compile(
     r"行行行|算你说得对|随便你|说不通|唉算了|"
@@ -23,14 +35,7 @@ E_OPENING_C_RE = re.compile(
 )
 E_OPENING_ANCHOR_RE = re.compile(
     r"妈妈|妈|讲理|规矩|应该|不行|怎么又|我说|"
-    r"挂钟|嘴角|勺子|屏幕|被窝|亮着",
-)
-RE_SLEEP_TOPIC = re.compile(r"睡觉|九点|早睡|刷手机|卧床|被窝|挂钟")
-RE_SLEEP_MOM_RULE = re.compile(r"必须睡觉|九点了|快去躺|得睡觉")
-RE_SNACK_TOPIC = re.compile(r"零食|尝菜|偷吃|饭前不吃|试吃|试菜")
-RE_WEAK_TASTE_EYE = re.compile(r"汤汁|舀汤|舔勺|喝了一口汤|偷尝了汤|尝了汤")
-RE_STRONG_TASTE_EYE = re.compile(
-    r"勺子|勺上|尝菜|试吃|试菜|嘴角|油渍|油花|菜叶|三大勺|咽下去|腮帮|黏黏",
+    r"挂钟|嘴角|勺子|屏幕|被窝|亮着|电话|奶奶|诚实|说谎",
 )
 # 孩子句旁白定格式：地点名词起句（非「刚才在…」回忆式）
 RE_CHILD_NARRATOR_PREFIX = re.compile(
@@ -119,6 +124,23 @@ def append_e_opening_errors(
             ):
                 errors.append(
                     "E类零食开场勿孩子预支规矩，须妈妈亲口立「饭前不能吃零食」",
+                )
+    lie_t = bool(RE_LIE_TOPIC.search(ctx)) and not snack_t and not sleep_t
+    if lie_t:
+        if not RE_LIE_MOM_RULE.search(joined):
+            errors.append("E类说谎开场须妈妈立不能说谎")
+        mom_lines = [
+            str(d.get("line") or "")
+            for d in normalized
+            if d.get("speaker") == "妈妈"
+        ]
+        if mom_lines:
+            first_mom = mom_lines[0]
+            if RE_LIE_WAFFLE.search(first_mom) and not RE_LIE_MOM_RULE.search(
+                first_mom,
+            ):
+                errors.append(
+                    "E类说谎开场勿妈妈先狡辩，须先立不能说谎",
                 )
 
 
@@ -222,7 +244,6 @@ def opening_revision_hint(issue: str) -> str | None:
         return None
     return (
         f"【开场·E】{issue}。"
-        "孩子句宜口语问妈：「刚才在客厅，妈你为什么把勺子放嘴边啊」；"
-        "勿旁白定格式（客厅饭桌前…刚离开嘴边）；"
-        "第2句可妈妈立规矩；勿孩子预支规矩/行行行/嘘别告诉。"
+        "说谎题：孩子问电话内容→妈妈先立不能说谎→再开脱；"
+        "孩子句宜口语问妈；勿旁白定格式；勿尝菜串场；勿妈妈先狡辩。"
     )

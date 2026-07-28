@@ -31,6 +31,7 @@ _VALIDATION_PRIORITY: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"总字数须≤"), "body_too_long"),
     (re.compile(r"E类正文过长"), "e_body_too_long"),
     (re.compile(r"汤汁太弱|尝菜眼"), "e_weak_taste_eye"),
+    (re.compile(r"说谎主题禁|说谎开场|说谎须|说谎禁"), "e_lie_theme"),
     (re.compile(r"引话须|无出处|自造后再假装引用|提前引话"), "quote_ground"),
     (re.compile(r"总字数须≥"), "body_too_short"),
     (re.compile(r"角色反了"), "role_swap"),
@@ -189,6 +190,13 @@ def _register_validation_hints() -> None:
             "试吃咽下；禁止「偷尝汤汁」当唯一眼，改勺子或嘴角。"
         )
 
+    def e_lie_theme(**_kw: Any) -> str:
+        return (
+            "【E·说谎】孩子问电话/奶奶场面→妈妈先立「不能说谎」→"
+            "再开脱善意谎言；闭环扣原话；禁尝菜串场、禁那不一样、"
+            "禁堆菜品名、禁否认已说内容。"
+        )
+
     _VALIDATION_HINT_BUILDERS.update({
         "consecutive": consecutive,
         "line_too_long": line_too_long,
@@ -198,6 +206,7 @@ def _register_validation_hints() -> None:
         "body_too_long": lambda frag, **_kw: _hint_body_too_long(frag),
         "e_body_too_long": e_body_too_long,
         "e_weak_taste_eye": e_weak_taste_eye,
+        "e_lie_theme": e_lie_theme,
         "c_incomplete_line": c_incomplete_line,
         "c_boomerang": c_boomerang,
         "c_loser_last": c_loser_last,
@@ -268,6 +277,7 @@ def build_validation_retry_hints(
 
 _QUALITY_CON_PRIORITY: tuple[tuple[str, str], ...] = (
     ("收束引话无出处", "quote"),
+    ("同人连说", "consecutive"),
     ("B事实", "fact"),
     ("C事实", "fact"),
     ("可核对事实", "fact"),
@@ -295,6 +305,26 @@ def pick_primary_quality_issue(
     return None, None
 
 
+def format_quality_consecutive_revision_hint(
+    *,
+    chars: int = 0,
+    type_code: str | None = None,
+) -> str:
+    """观感分检出同人连说：指导 LLM 插接话，勿只改 speaker。"""
+    _ = type_code
+    budget = (
+        f"保持约 {chars} 字，"
+        if chars > 0
+        else ""
+    )
+    return (
+        "【连说】昭昭/灿灿须轮流说话：在连说处插入另一方短接话"
+        "（如「行，我这就去拿桶」「完了完了！」），"
+        "勿只改 speaker 标签；"
+        f"{budget}勿动末四拍。"
+    )
+
+
 def revision_scope_kind(
     *,
     primary_kind: str | None,
@@ -302,6 +332,8 @@ def revision_scope_kind(
     closing: bool,
 ) -> str:
     if primary_kind in ("c_filmable", "c_chatter", "redundancy"):
+        return "mid"
+    if primary_kind == "consecutive":
         return "mid"
     if primary_kind in ("fact", "opening"):
         return "last4" if primary_kind == "fact" else "opening"

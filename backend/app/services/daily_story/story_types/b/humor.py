@@ -440,9 +440,8 @@ def collect_chain_anaphora_issues(
 def chain_anaphora_revision_hint(tag: str) -> str:
     if tag == "我也缺前句动作":
         return (
-            "「我也…」须扣前 1–2 句已有动作；"
-            "如先写「踩上去了」再写「我也踩到了」，"
-            "或改「哎呀，我踩一脚」。"
+            "优先去掉「也」，如「我不敢用手捡」；"
+            "或前句先写「用手捡？」再写「我也不敢捡」。"
         )
     if tag == "又字缺前句动作":
         return "「又…」须前句已写过同类意外；如先洒了再写「又洒了」。"

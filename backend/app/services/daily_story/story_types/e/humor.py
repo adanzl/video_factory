@@ -13,7 +13,21 @@ RE_KID_ASK = re.compile(
 RE_MOM_WAFFLE = re.compile(
     r"不是|不一样|那是|总之|反正|不是那个|不算|尝咸淡|大人|工作需要",
 )
+RE_LIE_TOPIC = re.compile(r"说谎|撒谎|敷衍|诚实|假话|骗")
+RE_LIE_MOM_RULE = re.compile(r"不能说谎|不许说谎|要诚实|别说谎|老实")
+RE_LIE_WAFFLE = re.compile(
+    r"不是敷衍|善意谎言|让奶奶放心|特殊情况|为了不让|不是骗",
+)
+RE_SNACK_BLEED = re.compile(
+    r"那一口算不算|尝咸淡|咽下去|三大勺|勺上|吐回锅里|试吃|偷吃零",
+)
+RE_LIE_FOOD_ITEM = re.compile(r"红烧|清蒸|排骨汤|白米饭|两碗汤|清蒸虾|红烧鱼")
+RE_MOM_DENY_QUOTE = re.compile(
+    r"我说什么了|没说吃|挺好的呀|没骗|没说谎|就说我们挺好",
+)
+RE_KID_QUOTE_EAT = re.compile(r"吃了好多|吃撑|三碗|好几碗|咕咕叫")
 RE_SNACK_TOPIC = re.compile(r"零食|尝菜|偷吃|饭前不吃|试吃|试菜")
+RE_SLEEP_TOPIC = re.compile(r"睡觉|九点|早睡|刷手机|卧床|被窝|挂钟")
 RE_WEAK_TASTE_EYE = re.compile(r"汤汁|舀汤|舔勺|喝了一口汤|偷尝了汤|尝了汤")
 RE_STRONG_TASTE_EYE = re.compile(
     r"勺子|勺上|尝菜|试吃|试菜|嘴角|油渍|油花|菜叶|三大勺|咽|黏黏",
@@ -38,6 +52,11 @@ HUMOR_ISSUE_CAPS: tuple[tuple[str, int], ...] = (
     ("破功过早", 5),
     ("补字残留", 8),
     ("尝菜眼太弱", 7),
+    ("尝菜串场", 8),
+    ("偏A式那不一样", 6),
+    ("妈妈否认引话", 7),
+    ("谎题堆菜品", 6),
+    ("说谎先狡辩", 6),
 )
 
 
@@ -114,6 +133,45 @@ def collect_humor_issues(
         "".join(lines[: min(8, n)]),
     ):
         cons.append("尝菜眼太弱，不好笑")
+
+    lie_t = (
+        RE_LIE_TOPIC.search(all_text)
+        and not RE_SNACK_TOPIC.search(all_text)
+        and not RE_SLEEP_TOPIC.search(all_text)
+    )
+    if lie_t and RE_SNACK_BLEED.search(all_text):
+        cons.append("尝菜串场，不好笑")
+    if lie_t and "那不一样" in all_text:
+        cons.append("偏A式那不一样，不好笑")
+    if lie_t and len(RE_LIE_FOOD_ITEM.findall(all_text)) >= 3:
+        cons.append("谎题堆菜品，不好笑")
+    if lie_t and speakers and len(speakers) == n:
+        for i, ln in enumerate(lines):
+            if speakers[i] not in ("昭昭", "灿灿"):
+                continue
+            if not RE_KID_QUOTE_EAT.search(ln):
+                continue
+            mom_after = "".join(
+                lines[j]
+                for j in range(i + 1, n)
+                if speakers[j] == "妈妈"
+            )
+            if RE_MOM_DENY_QUOTE.search(mom_after):
+                cons.append("妈妈否认引话，不好笑")
+                break
+        rule_i = next(
+            (
+                i
+                for i, ln in enumerate(lines)
+                if speakers[i] == "妈妈" and RE_LIE_MOM_RULE.search(ln)
+            ),
+            None,
+        )
+        if rule_i is not None:
+            for i in range(min(rule_i, 4)):
+                if speakers[i] == "妈妈" and RE_LIE_WAFFLE.search(lines[i]):
+                    cons.append("说谎先狡辩，不好笑")
+                    break
 
     return cons
 
