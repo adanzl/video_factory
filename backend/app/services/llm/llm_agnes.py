@@ -86,7 +86,8 @@ def raise_if_agnes_quota(*, status_code: int | None=None, body: dict | str | Non
     if is_agnes_quota_exceeded(status_code=status_code, body=body, message=message):
         detail = _collect_error_text(status_code=status_code, body=body, message=message)
         raise AgnesQuotaExceeded(detail or 'agnes quota or rate limit exceeded')
-_RETRYABLE = frozenset({500, 502, 503, 504})
+# 含 Cloudflare 源站错误 52x（如 520 unknown error）
+_RETRYABLE = frozenset({500, 502, 503, 504, 520, 521, 522, 523, 524, 525, 526, 527})
 
 def _build_chat_payload(*, model: str, system: str, user: str, max_tokens: int) -> dict[str, Any]:
     return {'model': model, 'messages': [{'role': 'system', 'content': system}, {'role': 'user', 'content': user}], 'max_tokens': max_tokens, 'response_format': {'type': 'json_object'}}

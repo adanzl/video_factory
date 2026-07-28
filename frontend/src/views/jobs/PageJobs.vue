@@ -5,7 +5,7 @@
         <TabJobs ref="jobsTabRef" @view-detail="openJobDetail" />
       </el-tab-pane>
       <el-tab-pane label="任务详情" name="detail">
-        <TabJobDetail :job-id="selectedJobId" />
+        <TabJobDetail ref="detailTabRef" :job-id="selectedJobId" />
       </el-tab-pane>
     </el-tabs>
   </div>
@@ -14,6 +14,7 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import { usePageRefresh } from "@/stores/app";
 import TabJobs from "./TabJobs.vue";
 import TabJobDetail from "./TabJobDetail.vue";
 
@@ -23,6 +24,7 @@ const router = useRouter();
 const activeTab = ref("jobs");
 const selectedJobId = ref<number>();
 const jobsTabRef = ref<InstanceType<typeof TabJobs> | null>(null);
+const detailTabRef = ref<InstanceType<typeof TabJobDetail> | null>(null);
 
 const openJobDetail = (jobId: number) => {
   void router.push({ path: "/jobs", query: { id: String(jobId) } });
@@ -42,8 +44,17 @@ const applyJobFromQuery = () => {
   }
 };
 
+const refreshPage = () => {
+  if (activeTab.value === "detail") {
+    detailTabRef.value?.refresh();
+    return;
+  }
+  jobsTabRef.value?.refresh();
+};
+
 onMounted(applyJobFromQuery);
 watch(() => route.query.id, applyJobFromQuery);
+usePageRefresh(refreshPage);
 
 watch(activeTab, tab => {
   if (tab === "jobs") {

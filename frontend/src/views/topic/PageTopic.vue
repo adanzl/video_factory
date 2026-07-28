@@ -316,6 +316,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from "vue";
+import { usePageRefresh } from "@/stores/app";
 import { useRouter } from "vue-router";
 import { Refresh } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
@@ -739,8 +740,11 @@ const handleGenerate = async () => {
 };
 
 
-onMounted(() => {
+const refreshPage = () => {
   loadTopicCatalog();
-  fetchTitles();
-});
+  void fetchTitles();
+};
+
+onMounted(refreshPage);
+usePageRefresh(refreshPage);
 </script>

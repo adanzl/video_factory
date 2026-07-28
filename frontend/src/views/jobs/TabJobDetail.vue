@@ -362,4 +362,8 @@ onActivated(() => {
 });
 onDeactivated(stopRunningPoll);
 onUnmounted(stopRunningPoll);
+
+defineExpose({
+  refresh: () => fetchDetail(),
+});
 </script>

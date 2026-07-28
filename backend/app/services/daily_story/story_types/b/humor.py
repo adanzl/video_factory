@@ -16,7 +16,8 @@ RE_EXPOSED = re.compile(
 )
 RE_PLAN_FAIL = re.compile(
     r"多拿|忘藏|说漏|掉了|洒了|露出来|忘了藏|袋口|碎|脚印|油渍|"
-    r"响了|破了|更明显|鼓出来|撕|裂|滑|洒|掉",
+    r"响了|破了|更明显|鼓出来|撕|裂|滑|洒|掉|"
+    r"卡住|卡死|摔开|摔了|滚到|滚进|散架|翻倒|掀翻|拽不",
 )
 RE_BLAME_MID = re.compile(r"都怪你|是你先|你答应|赖我|你还怪")
 _A_STYLE_TAIL = re.compile(r"那不一样|哪里不一样|你刚才说|你自己说")
@@ -32,7 +33,8 @@ RE_PACT_DUTY = re.compile(
     r"望风|放风|暗号|分工|你拿|我盯|你拆|我望|别告诉|一人一半",
 )
 RE_CHAIN_ACTION = re.compile(
-    r"掉|碎|滑|洒|蹭|捡|塞|压|挡|擦|摸|踩|响|破|油|印|鼓|露|咽",
+    r"掉|碎|滑|洒|蹭|捡|塞|压|挡|擦|摸|踩|响|破|油|印|鼓|露|咽|"
+    r"卡|滚|摔|踢|掀|散|拽|翻|捅|戳|漏|黏",
 )
 RE_ABSURD_FIX = re.compile(
     r"鞋底|洒水|塞嘴里|靠垫|沙发垫|用脚|蹭碎|更糟|更明|别出声",
@@ -57,6 +59,9 @@ RE_SIGNAL_REF = re.compile(
 RE_COUGH_LINE = re.compile(
     r"咳嗽|咳咳|咳太|咳给谁|咳什么|怎么咳|教我咳|假装咳嗽",
 )
+RE_DRY_DUTY_OPENING = re.compile(
+    r"谁负责|谁望风|谁动手|谁来藏|谁来拿",
+)
 RE_VERBOSE_FREEZE = re.compile(
     r"怎么办|被抓住了|全完了|这下惨了|露馅了.*怎么办",
 )
@@ -77,8 +82,8 @@ HUMOR_ISSUE_CAPS: tuple[tuple[str, int], ...] = (
     ("B收束缺落槌定格", 13),
     ("B落槌定格句式重复", 4),
     ("B定格后多余对白", 12),
-    ("B连锁也又还缺前句", 5),
-    ("B也字过多", 6),
+    ("B连锁也又还缺前句", 12),
+    ("B也字过多", 12),
     ("B写实流血不宜", 8),
     ("B甩锅提暗号无前文约定", 8),
     ("B咳嗽暗号拖沓", 10),
@@ -356,7 +361,8 @@ def landing_revision_hint(tag: str) -> str:
 
 
 RE_CHAIN_STEM = re.compile(
-    r"踩|滑|掉|洒|蹭|捡|塞|压|破|碎|露|响|黏|脏|印|泼|抹|擦|踢|冲|流|倒|崩|溅|鼓",
+    r"踩|滑|掉|洒|蹭|捡|塞|压|破|碎|露|响|黏|脏|印|泼|抹|擦|踢|冲|流|倒|崩|溅|鼓|"
+    r"卡|滚|摔|掀|散|拽|翻|捅|戳|漏",
 )
 RE_ANAPHORA_SKIP = re.compile(
     r"还是|还好|还有|还行|还没|还不错|说不定|"
@@ -425,6 +431,9 @@ def _chain_anaphora_tag(line: str, prev2: str) -> str | None:
             continue
         stems = _stems_in(frag)
         if stems and not any(s in prev2 for s in stems):
+            # 「又」常接新意外（又挤碎/又洒了）；前文已有连锁动作则放过
+            if RE_CHAIN_ACTION.search(prev2) or RE_PLAN_FAIL.search(prev2):
+                continue
             return "又字缺前句动作"
 
     for m in re.finditer(r"还([^，。！？]{1,10})", line):
@@ -468,8 +477,14 @@ def collect_chain_anaphora_issues(
     if end - start < 2:
         return []
     for i in range(start, end):
-        prev2 = "".join(lines[max(0, i - 2) : i])
-        tag = _chain_anaphora_tag(lines[i], prev2)
+        # 「我也」仍看近邻；「又/还」允许扣本连锁段前文（同动作再现）
+        if "又" in lines[i] or (
+            "还" in lines[i] and "我也" not in lines[i]
+        ):
+            prev = "".join(lines[start:i])
+        else:
+            prev = "".join(lines[max(0, i - 2) : i])
+        tag = _chain_anaphora_tag(lines[i], prev)
         if tag:
             zone = "结盟" if i < 6 else "连锁"
             return [f"B连锁也又还缺前句（{tag}·{zone}）"]
@@ -480,9 +495,9 @@ def collect_ye_overuse_issues(
     lines: list[str],
     speakers: list[str] | None,
     *,
-    max_ye: int = 2,
+    max_ye: int = 3,
 ) -> list[str]:
-    """全篇「也」宜少；结盟段尤忌凭空「我也…」。"""
+    """全篇「也」宜少；结盟段尤忌凭空「我也…」。观感层允许到 3，超过再压分。"""
     _, end = _anaphora_scan_bounds(lines, speakers)
     if end < 4:
         return []
@@ -555,7 +570,7 @@ def collect_signal_and_freeze_issues(
         cons.append("B甩锅提暗号无前文约定")
 
     cough_n = sum(1 for ln in lines if RE_COUGH_LINE.search(ln))
-    if cough_n >= 3:
+    if cough_n >= 2:
         cons.append("B咳嗽暗号拖沓")
 
     if not speakers or len(speakers) != n:
@@ -593,6 +608,10 @@ def collect_humor_issues(
 
     if not RE_ALLY.search(head6) and not RE_ALLY.search("".join(lines[: n // 3])):
         cons.append("B缺结盟约定")
+
+    if RE_DRY_DUTY_OPENING.search(head6):
+        if not re.search(r"别告诉|瞒|偷吃|藏起|藏好|快拿|快藏|别让妈|妈在", head6):
+            cons.append("B开场空谈谁负责，未点名同盟要瞒什么")
 
     if RE_EXPOSED.search(tail4):
         pre_weak, pre_tag = analyze_pre_punish_self_preservation(lines, speakers)
@@ -834,7 +853,13 @@ def humor_revision_hint(issue: str) -> str | None:
     if "咳嗽暗号拖沓" in issue:
         return (
             f"【好笑·B】{issue}。"
-            "勿执着咳嗽；没约定不写，约定了也全篇≤2句，删中段讨论怎么咳。"
+            "默认不用咳嗽暗号；没约定不写，约定了也全篇≤2句，删中段讨论怎么咳。"
+        )
+    if "空谈谁负责" in issue:
+        return (
+            f"【好笑·B】{issue}。"
+            "开场直接点名一起瞒妈妈做什么，并顺手下分工；"
+            "别两句都在问谁负责望风。"
         )
     if "定格啰嗦" in issue:
         return (
@@ -844,8 +869,9 @@ def humor_revision_hint(issue: str) -> str | None:
     if "越补越糟" in issue or "说明书" in issue:
         return (
             f"【好笑·B】{issue}。"
-            "结盟 2–3 句即可；立刻写意外连锁："
-            "如滑了→鞋底蹭→更脏→踩袋响→油印；好笑在补救越帮越倒忙。"
+            "结盟≤4句后立刻进段2/3：连续≥4句每句都有新意外动作"
+            "（掉/卡/滚/摔/踢/掀/洒/塞），少写「那怎么办」空慌；"
+            "补救须立刻造成下一意外（用脚踢→更散/拿扫把→更响）。"
         )
     if "流血" in issue:
         return (

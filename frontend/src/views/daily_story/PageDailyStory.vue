@@ -117,8 +117,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, onActivated, onDeactivated } from "vue";
+import { ref, onMounted, onUnmounted, onDeactivated } from "vue";
 import { useRouter } from "vue-router";
+import { usePageRefresh } from "@/stores/app";
 import { Refresh } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { useErrorHandler } from "@/composables/useErrorHandler";
@@ -283,9 +284,7 @@ function calcWordCount(dialogue?: DialogueLine[]): number {
 }
 
 onMounted(fetchStories);
-onActivated(() => {
-  startPollingIfNeeded();
-});
+usePageRefresh(fetchStories);
 onDeactivated(stopPolling);
 onUnmounted(stopPolling);
 </script>

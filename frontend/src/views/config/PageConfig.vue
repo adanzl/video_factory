@@ -95,6 +95,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from "vue";
+import { usePageRefresh } from "@/stores/app";
 import { Refresh } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
 import { fetchSystemConfig, updateSystemConfig } from "@/api/api-config";
@@ -217,4 +218,5 @@ const handleSave = async () => {
 };
 
 onMounted(loadConfig);
+usePageRefresh(loadConfig);
 </script>

@@ -33,7 +33,8 @@ from app.utils.job_cancel import job_cancel
 
 logger = logging.getLogger(__name__)
 
-_RETRYABLE_HTTP = frozenset({500, 502, 503, 504})
+# 含 Cloudflare 源站错误 52x（如 520 unknown error）
+_RETRYABLE_HTTP = frozenset({500, 502, 503, 504, 520, 521, 522, 523, 524, 525, 526, 527})
 _TASK_RETRY_TOKENS = ("failed", "timeout", "429", "rate limit", "too many")
 _TERMINAL_POLL_STATES = frozenset({"completed", "failed"})
 _I2V_MODE = "ti2vid"
