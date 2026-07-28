@@ -90,11 +90,11 @@ def collect_humor_issues(
     if nit_n >= 3:
         cons.append("空辩论注水，不好笑")
 
-    if n > 20:
+    if n > 18:
         cons.append("中段拖沓注水，不好笑")
 
     boom_n = sum(1 for ln in lines if RE_BOOM_CLOSE.search(ln))
-    if boom_n >= 3:
+    if boom_n >= 2:
         cons.append("回旋镖复读，不好笑")
 
     soft_indices = [
@@ -126,7 +126,7 @@ def humor_revision_hint(issue: str) -> str | None:
     if any(k in issue for k in keys):
         return (
             f"【好笑·D】{issue}。"
-            "立具体叮嘱→认真字面画面（端热汤/花生米）→倒/解不开→"
-            "上手破规→回旋镖→哼；最多一句尾巴，勿第二场回旋镖。"
+            "立具体叮嘱→认真字面画面（端热汤/花生米）→意外一锤→"
+            "上手破规→回旋镖≤2句→哼；最多一句尾巴，勿第二场回旋镖。"
         )
     return None
