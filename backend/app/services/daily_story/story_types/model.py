@@ -61,6 +61,8 @@ class StoryTypeLine:
     opening_user_append: str = ""
     theme_user_append: str = ""
     retry_soft_close_hint: str = ""
+    body_lines_min: int = 0
+    body_lines_max: int = 0
 
 
 def compile_layers(

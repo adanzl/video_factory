@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from app.services.daily_story.story_types import parse_story_type_code
+from app.services.daily_story.story_types import parse_story_type_code, resolve_story_type_code
 from app.services.daily_story.story_types.quality import RE_SOFT_LAST
 
 RE_A_WHERE_DIFF = re.compile(r"哪里不一样|都是听|大人也要听小孩")
@@ -20,6 +20,11 @@ RE_KID_LOOP = re.compile(
 RE_MOM_WAFFLE = re.compile(
     r"不是|不一样|那是|总之|反正|不是那个|不算|尝咸淡|大人|工作需要",
 )
+RE_SLEEP_TOPIC = re.compile(r"睡觉|九点|早睡|刷手机|卧床|被窝|挂钟")
+RE_SNACK_TOPIC = re.compile(r"零食|尝菜|偷吃|薯片|饭前不吃|瓜子")
+
+E_BODY_LINES_MIN = 10
+E_BODY_LINES_MAX = 16
 
 
 def _dialogue_lines(story: dict) -> tuple[list[str], list[str]]:
@@ -41,8 +46,7 @@ def _dialogue_lines(story: dict) -> tuple[list[str], list[str]]:
 
 
 def append_e_body_errors(story: dict, errors: list[str]) -> None:
-    punch = str(story.get("punchline_explain") or "")
-    if parse_story_type_code(punchline=punch) != "E":
+    if resolve_story_type_code(story) != "E":
         return
 
     lines, speakers = _dialogue_lines(story)
@@ -50,6 +54,31 @@ def append_e_body_errors(story: dict, errors: list[str]) -> None:
     if n < 8:
         errors.append("E类正文过短，不足以完成妈妈破功收束（至少约 8 句对白）")
         return
+
+    if n > E_BODY_LINES_MAX:
+        errors.append(
+            f"E类正文过长（宜12–16句），当前{n}句",
+        )
+
+    anchor = (
+        str(story.get("conflict_core") or "")
+        + str(story.get("punchline_explain") or "")
+        + str(story.get("theme") or "")
+        + str(story.get("_theme") or "")
+    )
+    sleep_t = bool(RE_SLEEP_TOPIC.search(anchor))
+    snack_t = bool(RE_SNACK_TOPIC.search(anchor))
+    mom_early = "".join(
+        ln
+        for sp, ln in zip(speakers[: max(1, n // 2)], lines[: max(1, n // 2)])
+        if sp == "妈妈"
+    )
+    if sleep_t and not snack_t and RE_SNACK_TOPIC.search(mom_early):
+        if "九点" not in mom_early and "必须睡觉" not in mom_early:
+            errors.append("E类睡觉主题禁串场立零食规矩")
+    if snack_t and not sleep_t and RE_SLEEP_TOPIC.search(mom_early):
+        if "零食" not in mom_early and "尝" not in mom_early:
+            errors.append("E类零食主题禁串场立睡觉规矩")
 
     tail4 = "".join(lines[-4:])
     tail3 = "".join(lines[-3:])

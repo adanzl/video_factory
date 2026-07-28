@@ -17,6 +17,7 @@ from app.services.daily_story.story_types import (
     format_block_for_code,
     parse_story_type_code,
     patch_type_body,
+    resolve_story_type_code,
     select_story_type_tag,
     story_line_for_code,
     story_type_tag,
@@ -223,8 +224,49 @@ _LENGTH_MODE_USER = {
 }
 
 
-def _daily_story_contract(*, length_mode: str = "draft") -> str:
-    length = _LENGTH_MODE_SYSTEM.get(length_mode, _DAILY_STORY_LENGTH_DRAFT)
+def _body_line_budget(type_code: str | None) -> tuple[int, int, int]:
+    """(min_lines, max_lines, avg_chars_per_line) for draft/retry hints."""
+    if type_code:
+        line = STORY_TYPE_LINES.get(type_code.upper())
+        if line and line.body_lines_min > 0 and line.body_lines_max > 0:
+            return line.body_lines_min, line.body_lines_max, 20
+    return 24, 28, 12
+
+
+def _daily_story_length_draft_for_type(type_code: str | None) -> str:
+    lo, hi, _avg = _body_line_budget(type_code)
+    if type_code and type_code.upper() == "E":
+        return f"""\
+- 片长（正文硬卡，放最前）：{DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
+  每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
+  【E类·按句数写】写 **{lo}–{hi} 句**（每句约 **18–22 字**），
+  直接落在硬卡中段（约 {DAILY_STORY_BODY_WRITE_TARGET_MIN}–{DAILY_STORY_BODY_WRITE_TARGET_MAX} 字）；
+  **禁止写到 18+ 句灌水**；妈妈宜 4–7 句打脸开脱，勿为凑字数加句。
+  发现开场系统另写另验，不计入正文硬卡。
+"""
+    return _DAILY_STORY_LENGTH_DRAFT
+
+
+def _daily_story_length_user_draft_for_type(type_code: str | None) -> str:
+    lo, hi, _avg = _body_line_budget(type_code)
+    if type_code and type_code.upper() == "E":
+        return f"""\
+3. 【E类·字数硬卡】正文 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
+   写 **{lo}–{hi} 句**、每句 **18–22 字**（勿写 18+ 句凑字）；妈妈宜 4–7 句打脸开脱。
+   发现开场另计另验。speaker 仅昭昭/灿灿/妈妈。
+"""
+    return _DAILY_STORY_LENGTH_USER_DRAFT
+
+
+def _daily_story_contract(
+    *,
+    length_mode: str = "draft",
+    type_code: str | None = None,
+) -> str:
+    if length_mode == "draft":
+        length = _daily_story_length_draft_for_type(type_code)
+    else:
+        length = _LENGTH_MODE_SYSTEM.get(length_mode, _DAILY_STORY_LENGTH_DRAFT)
     return f"""\
 【共用设定】
 - 受众：孩子和有娃的大人（家长能会心一笑，孩子觉得好玩；禁成人梗/谐音/网络热梗）。
@@ -243,11 +285,11 @@ _DAILY_STORY_SYSTEM_SHARED = """\
 - 关系：亲姐弟，住在一起；主戏是姐弟斗嘴/较真/互相带偏，不是被妈妈教育。
 
 【妈妈戏份（硬约束）】
-- A/C/D 默认可不写妈妈；主戏与破功优先纯姐弟完成；E 类妈妈可略多。
-- 若出场：建议全程 ≤2 句（E 类≤5 句）；禁止长篇讲理、禁止妈妈当主线（E 除外）。
+- A/C/D 默认可不写妈妈；主戏与破功优先纯姐弟完成；**E 类妈妈为主戏**（宜 4–7 句打脸开脱）。
+- 若出场：A/C/D 建议全程 ≤2 句；**E 类妈妈宜 4–7 句**（立论、否认、改口、破功）。
 - 禁止明确判赢/判平/另开赛制（如「算你赢」「一人一半」「谁先放好谁先选」）。
 - 日常口气可以（叮嘱、谁也别乱动、别吵了）：但不应用一句掐灭尚未落地的破功。
-- 破功/软收优先在姐弟对白里完成；妈妈最多旁听、附和或事后收拾（E 类可在妈妈对白里破功）。
+- 破功/软收：A/B/C/D 优先姐弟对白；**E 类末句妈妈破功收场**。
 
 【发现开场（系统另写，正文勿写）】
 - 开场=正片第一镜：系统另写 **2 句**，须有背景地点 + 可拍画面，再前置进片。
@@ -333,7 +375,19 @@ def _daily_story_user_template(
     length_mode: str = "draft",
     type_code: str | None = None,
 ) -> str:
-    length_req = _LENGTH_MODE_USER.get(length_mode, _DAILY_STORY_LENGTH_USER_DRAFT)
+    length_req = (
+        _daily_story_length_user_draft_for_type(type_code)
+        if length_mode == "draft" and type_code
+        else _LENGTH_MODE_USER.get(length_mode, _DAILY_STORY_LENGTH_USER_DRAFT)
+    )
+    mom_role_note = (
+        "5. E类妈妈宜4–7句打脸开脱，末句妈妈破功；禁空说教连问。"
+        if type_code and type_code.upper() == "E"
+        else (
+            "5. 妈妈默认可不写；若出场宜少；"
+            "禁止「算你赢/一人一半」类判赢判平（E 类除外）。"
+        )
+    )
     if type_code and type_code.upper() in STORY_TYPE_LINES:
         line = STORY_TYPE_LINES[type_code.upper()]
         closing = line.user_closing
@@ -358,7 +412,7 @@ def _daily_story_user_template(
 2. {{type_instruction}}
 {length_req}\
 4. 正文从互怼/讲理起笔，禁止发现现场开场（发现句系统另写）。
-5. 妈妈默认可不写；若出场宜少；禁止「算你赢/一人一半」类判赢判平（E 类除外）。
+{mom_role_note}
 6. 输出 conflict_core（≤24 字）；punchline_explain 须含类型标签并说明如何收该冲突。
 7. 禁止中途换分法（剪刀石头布、轮流、另算谁先碰到等）或扯无关旧账。
 8. 立场须连贯：可软收，但须先破功再软收；禁无铺垫「给你/算了」；
@@ -377,7 +431,7 @@ def _daily_story_system_prompt(
     return (
         "你是一位家庭情景喜剧编剧，写昭昭&灿灿的日常对话短剧。\n"
         "面向孩子和有娃的大人：笑点要孩子听得懂，家长看得出自家日常。\n\n"
-        f"{_daily_story_contract(length_mode=length_mode)}"
+        f"{_daily_story_contract(length_mode=length_mode, type_code=type_code)}"
         f"{_daily_story_system_body(type_code=type_code)}"
     )
 
@@ -1081,10 +1135,15 @@ def validate_daily_story_json(
                     )
         # 总字数硬卡仅正文；拼开场后全文不卡总字数
         if phase == "body" and total_chars:
-            if total_chars < DAILY_STORY_BODY_CHARS_MIN:
-                deficit = DAILY_STORY_BODY_CHARS_MIN - total_chars
+            chars_min = DAILY_STORY_BODY_CHARS_MIN
+            type_code = resolve_story_type_code(story)
+            n_lines = len(dialogue) if isinstance(dialogue, list) else 0
+            if type_code == "E" and 10 <= n_lines <= 16:
+                chars_min = 265
+            if total_chars < chars_min:
+                deficit = chars_min - total_chars
                 errors.append(
-                    f"正文总字数须≥{DAILY_STORY_BODY_CHARS_MIN}，当前{total_chars}"
+                    f"正文总字数须≥{chars_min}，当前{total_chars}"
                     f"（还差{deficit}字）"
                 )
             if total_chars > DAILY_STORY_BODY_CHARS_MAX:
@@ -1934,6 +1993,7 @@ def resolve_daily_story_retry_length_mode(
     prev_story: dict | None,
     *,
     errors: str = "",
+    story_type: str | None = None,
 ) -> str:
     """按本轮错误 + 上一稿字数选择重试 length_mode。
 
@@ -1941,6 +2001,19 @@ def resolve_daily_story_retry_length_mode(
     字数已在区间时走 revise，避免「只修连说」被 trim/expand 带跑篇幅。
     """
     err = errors or ""
+    type_code = parse_story_type_code(
+        story_type=story_type,
+        punchline=str(
+            (prev_story or {}).get("punchline_explain") or "",
+        ),
+    )
+    if type_code == "E" and "E类正文过长" in err:
+        return "revise_trim"
+    if type_code == "E" and isinstance(prev_story, dict):
+        dialogue = prev_story.get("dialogue")
+        if isinstance(dialogue, list) and len(dialogue) > 16:
+            if "中段拖沓" in err or "正文过长" in err or "E类正文" in err:
+                return "revise_trim"
     deficit = _parse_body_char_deficit(err)
     excess = _parse_body_char_excess(err)
     if "总字数须≥" in err:
@@ -2053,6 +2126,23 @@ def build_daily_story_retry_user(
         story_type=story_type,
         punchline=str(prev_story.get("punchline_explain") or ""),
     )
+    dialogue = prev_story.get("dialogue")
+    n_lines = len(dialogue) if isinstance(dialogue, list) else 0
+    if type_code == "E" and n_lines > 16 and not length_hint:
+        drop = n_lines - 16
+        length_hint = (
+            f"【E·删句】上一稿 {n_lines} 句过长（宜12–16句）。"
+            f"只删中段同型揭穿/狡辩复读约 {drop} 句，"
+            "保留妈妈立论+开脱+闭环+末句破功；禁止新增台词。\n"
+        )
+    if type_code == "E" and chars < chars_min and not length_hint:
+        deficit = chars_min - chars
+        if n_lines >= 12:
+            length_hint = (
+                f"【E·句内补字】上一稿 {chars}字/{n_lines}句，还差 {deficit} 字。"
+                f"每句扩到18–22字（加可拍细节），禁止加句超16句；"
+                f"写到 ≥{chars_min} 即可。\n"
+            )
     issue_hint = _retry_issue_hints(errors, chars=chars, type_code=type_code)
     primary = pick_primary_validation_errors(errors, max_items=1)
     primary_line = primary[0] if primary else errors

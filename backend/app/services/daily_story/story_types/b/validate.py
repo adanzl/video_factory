@@ -43,3 +43,12 @@ def append_b_body_errors(story: dict, errors: list[str]) -> None:
             errors.append(
                 "B类：末句须破功方嘴硬收束（哼/才不是/才不是我的主意）",
             )
+
+    from app.services.daily_story.story_types.b.humor import analyze_punish_landing
+
+    weak, landing_tag = analyze_punish_landing(lines, speakers)
+    if weak:
+        errors.append(
+            "B类：惩罚令后缺认栽底"
+            + (f"（{landing_tag}）" if landing_tag else ""),
+        )

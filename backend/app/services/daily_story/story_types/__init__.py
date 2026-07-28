@@ -218,10 +218,19 @@ def resolve_story_type_code(
     theme: str = "",
 ) -> str:
     """解析或推断类型（DB 旧稿、生成选题均可用）。"""
+    if isinstance(story, dict):
+        locked = str(story.get("_story_type") or "").strip()
+        if locked:
+            parsed = parse_story_type_code(story_type=locked)
+            if parsed in STORY_TYPE_LABELS:
+                return parsed
     punch = str(story.get("punchline_explain") or "") if isinstance(story, dict) else ""
     if punchline_has_standard_type_tag(punch):
         return parse_story_type_code(punchline=punch)
-    return infer_story_type_code(story, theme=theme)
+    th = theme or (
+        str(story.get("_theme") or "") if isinstance(story, dict) else ""
+    )
+    return infer_story_type_code(story, theme=th)
 
 
 def story_type_tag(code: str) -> str:

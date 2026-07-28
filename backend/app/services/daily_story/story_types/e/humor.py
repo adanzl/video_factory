@@ -100,7 +100,7 @@ def collect_humor_issues(
     if lecture_n >= 3 or _EMPTY.search(all_text):
         cons.append("空说教注水，不好笑")
 
-    if n > 18:
+    if n > 16:
         cons.append("中段拖沓注水，不好笑")
 
     return cons

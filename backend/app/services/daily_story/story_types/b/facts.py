@@ -59,10 +59,17 @@ def append_b_fact_errors(story: dict, errors: list[str]) -> None:
             errors.append(
                 "B类：妈妈出场后须有短惩罚令（站好/过来/今晚别想…）",
             )
-        elif not RE_DOOM.search(tail):
-            errors.append(
-                "B类：惩罚令后须有姐弟完蛋/完了反应",
+        else:
+            from app.services.daily_story.story_types.b.humor import (
+                analyze_punish_landing,
             )
+
+            weak, landing_tag = analyze_punish_landing(lines, speakers)
+            if weak:
+                errors.append(
+                    "B类：惩罚令后缺认栽底"
+                    + (f"（{landing_tag}）" if landing_tag else ""),
+                )
 
     share_m = RE_SHARE.search(full)
     if share_m:
@@ -115,22 +122,6 @@ def collect_fact_issues(story: dict) -> list[str]:
         tail = "".join(lines[mom_i:])
         if not RE_MOM_PUNISH.search(tail):
             issues.append("B事实缺惩罚令")
-        elif not RE_DOOM.search(tail):
-            issues.append("B事实缺完蛋反应")
-        doom_i = next(
-            (i for i, ln in enumerate(lines) if RE_DOOM.search(ln)),
-            None,
-        )
-        punish_i = next(
-            (i for i, ln in enumerate(lines) if RE_MOM_PUNISH.search(ln)),
-            None,
-        )
-        if (
-            doom_i is not None
-            and punish_i is not None
-            and doom_i < punish_i
-        ):
-            issues.append("B事实完蛋早于惩罚令")
 
     punch = str(story.get("punchline_explain") or "")
     if "罚站" in punch or "站好" in punch:
@@ -147,12 +138,13 @@ def collect_fact_issues(story: dict) -> list[str]:
 def fact_revision_hint(issue: str) -> str | None:
     if "事实" not in issue and "可核对" not in issue:
         return None
-    if "完蛋" in issue or "惩罚" in issue:
-        return (
-            f"【事实·B】{issue}。"
-            "顺序：妈妈短惩罚令→姐弟完蛋了→短甩锅→哼；"
-            "勿先完蛋再罚。"
-        )
+    if "完蛋" in issue or "惩罚" in issue or "认栽" in issue:
+        tag = ""
+        if "（" in issue and "）" in issue:
+            tag = issue.split("（", 1)[-1].rstrip("）")
+        from app.services.daily_story.story_types.b.humor import landing_revision_hint
+
+        return f"【事实·B】{issue}。" + landing_revision_hint(tag)
     if "定量" in issue or "一半" in issue or "份" in issue:
         return (
             f"【事实·B】{issue}。"

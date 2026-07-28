@@ -29,7 +29,7 @@ def test_chat_with_key_fallback_switches_on_quota(monkeypatch) -> None:
     monkeypatch.setattr(config, "agnes_api_key", "main-key", raising=False)
     monkeypatch.setattr(config, "agnes_llm_model", "agnes-2.0-flash", raising=False)
     monkeypatch.setattr(config, "agnes_llm_max_tokens", 1024, raising=False)
-    monkeypatch.setattr(config, "agnes_api_base_url", "https://apihub.agnes-ai.com/v1", raising=False)
+    monkeypatch.setattr(config, "agnes_api_base_url", "https://apihub.agnes-ai.cn/v1", raising=False)
     monkeypatch.setattr(config, "agnes_http_max_retries", 1, raising=False)
     monkeypatch.setattr(config, "agnes_http_connect_timeout_sec", 1.0, raising=False)
     monkeypatch.setattr(config, "agnes_http_submit_read_timeout_sec", 1.0, raising=False)

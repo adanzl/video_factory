@@ -1140,10 +1140,71 @@ def test_b_smoke5_quality_scores_around_93():
     q = score_daily_story(payload["story"], theme=payload["theme"])
     assert q["score"] == 93
     assert "B开场与正文首句重复" not in q["reasons"]
-    assert "B收束惩罚缺底" in q["reasons"]
-    assert "惩罚落槌缺底" in q["reasons"]
+    assert any("B收束惩罚缺底" in r for r in q["reasons"])
+    assert "仅单人认栽缺同框底" in "".join(q["reasons"])
     assert "开场缺可拍画面" in q["reasons"]
     assert "惩罚落槌有底" not in q["reasons"]
+
+
+def test_b_landing_flags_batch_weak_endings():
+    import json
+    from pathlib import Path
+
+    from app.services.daily_story.story_types.b.humor import analyze_punish_landing
+
+    root = Path(__file__).resolve().parents[2]
+    batch = json.loads((root / "tmp/daily_story_b_batch5.json").read_text())
+    for idx in (2, 3, 4):
+        story = batch[idx]["story"]
+        lines = [str(x["line"]) for x in story["dialogue"]]
+        speakers = [str(x["speaker"]) for x in story["dialogue"]]
+        weak, _ = analyze_punish_landing(lines, speakers)
+        assert weak, idx
+
+
+def test_b_landing_accepts_double_doom_tail():
+    from app.services.daily_story.story_types.b.humor import analyze_punish_landing
+
+    lines = [
+        "前段结盟",
+        "走样连锁",
+        "妈妈来了",
+        "妈妈：你俩，过来站好！",
+        "昭昭：完蛋了！",
+        "灿灿：我也完了。",
+        "昭昭：都怪你没望风！",
+        "灿灿：是你先弄洒的！",
+        "昭昭：哼，才不是我的主意。",
+    ]
+    speakers = [
+        "昭昭", "灿灿", "妈妈", "妈妈", "昭昭", "灿灿", "昭昭", "灿灿", "昭昭",
+    ]
+    weak, tag = analyze_punish_landing(lines, speakers)
+    assert not weak, tag
+
+
+def test_b_validate_rejects_missing_landing():
+    from app.services.daily_story.story_types.b.validate import append_b_body_errors
+
+    story = {
+        "punchline_explain": "B类结盟翻车，姐弟偷吃露馅",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "嘘，咱俩吃这包。"},
+            {"speaker": "灿灿", "line": "我望风你拆。"},
+            {"speaker": "昭昭", "line": "好，你手轻点。"},
+            {"speaker": "灿灿", "line": "哎，滑出去了！"},
+            {"speaker": "昭昭", "line": "快捡起来！"},
+            {"speaker": "灿灿", "line": "来不及了鞋底黏了。"},
+            {"speaker": "昭昭", "line": "一步一个油印。"},
+            {"speaker": "妈妈", "line": "地上怎么一地碎渣？"},
+            {"speaker": "妈妈", "line": "你俩，过来站好！"},
+            {"speaker": "灿灿", "line": "都怪你望风不咳嗽！"},
+            {"speaker": "昭昭", "line": "哼，才不是我的主意。"},
+        ],
+    }
+    errors: list[str] = []
+    append_b_body_errors(story, errors)
+    assert any("认栽底" in e for e in errors)
 
 
 def test_validate_a_opening_rejects_mid_fight_timer():

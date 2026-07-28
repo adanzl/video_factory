@@ -1706,6 +1706,7 @@ class DeepSeekClient(LLMClient):
                 )
 
                 raw["_theme"] = theme
+                raw["_story_type"] = story_type
                 patched, patch_notes = try_local_patch_daily_story_body(raw)
                 if patch_notes:
                     logger.info(
@@ -1718,6 +1719,7 @@ class DeepSeekClient(LLMClient):
                 validate_daily_story_json(raw, phase="body")
                 if isinstance(raw, dict):
                     raw.pop("_theme", None)
+                    raw.pop("_story_type", None)
                 return raw
             except ValueError as exc:
                 last_exc = exc
@@ -1729,6 +1731,7 @@ class DeepSeekClient(LLMClient):
                     )
 
                     prev_story["_theme"] = theme
+                    prev_story["_story_type"] = story_type
                     patched2, notes2 = try_local_patch_daily_story_body(prev_story)
                     if notes2:
                         try:
@@ -1740,6 +1743,7 @@ class DeepSeekClient(LLMClient):
                             )
                             if isinstance(patched2, dict):
                                 patched2.pop("_theme", None)
+                                patched2.pop("_story_type", None)
                             return patched2
                         except ValueError:
                             prev_story = patched2
@@ -1776,6 +1780,7 @@ class DeepSeekClient(LLMClient):
                 length_mode = resolve_daily_story_retry_length_mode(
                     prev_story if isinstance(prev_story, dict) else None,
                     errors=errors,
+                    story_type=story_type,
                 )
                 system, _ = build_daily_story_prompts(
                     theme, story_type=story_type, length_mode=length_mode
@@ -1873,7 +1878,9 @@ class DeepSeekClient(LLMClient):
                 )
                 # 用已有重试机制处理字数等格式问题
                 length_mode = resolve_daily_story_retry_length_mode(
-                    raw if isinstance(raw, dict) else None, errors=errors,
+                    raw if isinstance(raw, dict) else None,
+                    errors=errors,
+                    story_type=rev_type,
                 )
                 system, _ = build_daily_story_prompts(
                     theme, story_type=rev_type, length_mode=length_mode,
