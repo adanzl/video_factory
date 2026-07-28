@@ -4,13 +4,22 @@ import logging
 import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 from app.config import get_settings
 from app.utils.job_cancel import job_cancel
+from app.repositories.database import get_app
 from app.repositories.sql_exec import atomic
 logger = logging.getLogger(__name__)
 __all__ = ['ImageMgr', 'ImageProvider', 'image_mgr']
+
+def _greenlet_app_context():
+    """greenlet 不继承父协程的 Flask app context，访问 DB 前须自行推入。"""
+    try:
+        return get_app().app_context()
+    except RuntimeError:
+        return nullcontext()
 
 def _verify_prompt_regen_feedback(speakers: list[str]) -> str:
     look: list[str] = []
@@ -33,6 +42,8 @@ def _speakers_for_regen(seg: dict) -> list[str]:
     return _daily_speakers_of(seg)
 
 class ImageProvider(ABC):
+    max_workers: int | None = None
+    """批量出图并发上限；None 表示跟随 IMAGE_MAX_WORKERS。本地推理类 provider 独占显存，须覆写为 1。"""
 
     @abstractmethod
     def generate(self, prompt: str, output_path: Path, *, size: str | None=None, ref_images: list[Path | str] | None=None, expected_speakers: list[str] | None=None, content_style: str | None=None) -> Path:
@@ -62,6 +73,17 @@ class ImageMgr:
         if provider == 'agnes_t2i':
             return AgnesImageProvider()
         raise ValueError(f'unknown IMAGE_PROVIDER: {provider}')
+
+    @staticmethod
+    def _resolve_max_workers(provider: ImageProvider) -> int:
+        """并发度以 provider 自身能力为准，仅云端 provider 跟随 IMAGE_MAX_WORKERS。"""
+        settings = get_settings()
+        if settings.mock_mode:
+            return 1
+        cap = getattr(provider, 'max_workers', None)
+        if isinstance(cap, int) and cap > 0:
+            return cap
+        return max(1, settings.image_max_workers)
 
     @staticmethod
     def _regen_segment_image_prompt(seg: dict, *, job: dict[str, Any] | None, content_style: str | None) -> str:
@@ -126,9 +148,9 @@ class ImageMgr:
     def generate_segment_images(self, segments: list[dict], images_dir: Path, *, size: str | None=None, image_provider: str | None=None, on_image_done: Callable[[int, Path, float], None] | None=None, job_id: int | None=None, job: dict[str, Any] | None=None, ref_images: list[Path | str] | None=None, content_style: str | None=None) -> list[tuple[int, Path]]:
         images_dir.mkdir(parents=True, exist_ok=True)
         provider = self._get_image_provider(image_provider)
-        settings = get_settings()
-        max_workers = 1 if settings.mock_mode else max(1, settings.image_max_workers)
+        max_workers = self._resolve_max_workers(provider)
         total = len(segments)
+        started = 0
         done = 0
         start = time.time()
         params_desc = provider.describe_params(size=size)
@@ -155,15 +177,21 @@ class ImageMgr:
             speakers = sorted(set((d.get('speaker', '') for d in dialogue if d.get('speaker'))))
             return speakers if speakers else None
 
-        def render(seg: dict) -> tuple[int, Path] | None:
+        def render(seg: dict) -> tuple[int, Path, float] | None:
+            with _greenlet_app_context():
+                return _render_one(seg)
+
+        def _render_one(seg: dict) -> tuple[int, Path, float] | None:
             from app.services.segment.image.image_agnes import AgnesImageVerifyFailed
-            nonlocal done
+            nonlocal started
+            started += 1
+            seq = started
             index = seg['segment_index']
             t0 = time.time()
             out = images_dir / f'{index}.png'
             prompt = _build_prompt(seg)
             expected_speakers = _speakers(seg)
-            logger.info('image %s/%s generating segment %s | %s | prompt_chars=%s | speakers=%s | out=%s', done + 1, total, index, params_desc, len(prompt), expected_speakers, out.name)
+            logger.info('image %s/%s generating segment %s | %s | prompt_chars=%s | speakers=%s | out=%s', seq, total, index, params_desc, len(prompt), expected_speakers, out.name)
             try:
                 try:
                     provider.generate(prompt, out, size=size, ref_images=ref_images, expected_speakers=expected_speakers, content_style=content_style)
@@ -179,7 +207,7 @@ class ImageMgr:
                         raise first_fail from regen_exc
                     provider.generate(prompt, out, size=size, ref_images=ref_images, expected_speakers=expected_speakers, content_style=content_style)
             except AgnesImageVerifyFailed as exc:
-                logger.error('image %s/%s SKIP segment %s after verify fail (%.1fs) | %s | %s', done + 1, total, index, time.time() - t0, params_desc, exc)
+                logger.error('image %s/%s SKIP segment %s after verify fail (%.1fs) | %s | %s', seq, total, index, time.time() - t0, params_desc, exc)
                 if out.exists():
                     try:
                         out.unlink()
@@ -187,30 +215,19 @@ class ImageMgr:
                         pass
                 return None
             except Exception as exc:
-                logger.error('image %s/%s FAILED segment %s after %.1fs | %s | err=%s', done + 1, total, index, time.time() - t0, params_desc, exc)
+                logger.error('image %s/%s FAILED segment %s after %.1fs | %s | err=%s', seq, total, index, time.time() - t0, params_desc, exc)
                 raise
             elapsed = time.time() - t0
-            logger.info('image %s/%s done segment %s in %.1fs | %s | bytes=%s', done + 1, total, index, elapsed, params_desc, out.stat().st_size if out.exists() else 0)
+            logger.info('image %s/%s done segment %s in %.1fs | %s | bytes=%s', seq, total, index, elapsed, params_desc, out.stat().st_size if out.exists() else 0)
             return (seg['id'], out, elapsed)
         results: list[tuple[int, Path]] = []
         skipped = 0
-        if on_image_done is not None:
-            for seg in segments:
-                if job_id is not None:
-                    job_cancel.raise_if_cancelled(job_id)
-                item = render(seg)
-                done += 1
-                if item is None:
-                    skipped += 1
-                    continue
-                seg_id, path, gen_sec = item
-                results.append((seg_id, path))
-                on_image_done(seg_id, path, gen_sec)
-        else:
-            from gevent.pool import Pool
-            pool = Pool(size=max_workers)
-            green_lets = [pool.spawn(render, seg) for seg in segments]
-            for g in green_lets:
+        from gevent import iwait
+        from gevent.pool import Pool
+        pool = Pool(size=max_workers)
+        green_lets = [pool.spawn(render, seg) for seg in segments]
+        try:
+            for g in iwait(green_lets):
                 if job_id is not None:
                     job_cancel.raise_if_cancelled(job_id)
                 item = g.get()
@@ -218,8 +235,12 @@ class ImageMgr:
                 if item is None:
                     skipped += 1
                     continue
-                seg_id, path, _ = item
+                seg_id, path, gen_sec = item
                 results.append((seg_id, path))
+                if on_image_done is not None:
+                    on_image_done(seg_id, path, gen_sec)
+        finally:
+            pool.kill(block=False)
         elapsed = time.time() - start
         logger.info('image batch done: %s/%s ok, skipped=%s in %.1fs | %s', len(results), total, skipped, elapsed, params_desc)
         return results
