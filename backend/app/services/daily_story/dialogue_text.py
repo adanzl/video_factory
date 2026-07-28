@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-DAILY_STORY_LINE_CHARS_MAX = 22
+DAILY_STORY_LINE_CHARS_MAX = 24
 
 # 正片开端：背景地点 / 可拍画面（质量加分用，不做硬卡词表误杀）
 OPENING_PLACE_RE = re.compile(

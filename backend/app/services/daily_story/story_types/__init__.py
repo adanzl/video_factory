@@ -333,6 +333,10 @@ def patch_type_body(story: dict) -> list[str]:
         from app.services.daily_story.story_types.c.patch import patch_c_body
 
         return patch_c_body(story)
+    if code == "B":
+        from app.services.daily_story.story_types.b.patch import patch_b_body
+
+        return patch_b_body(story)
     if code == "D":
         from app.services.daily_story.story_types.d.patch import patch_d_body
 

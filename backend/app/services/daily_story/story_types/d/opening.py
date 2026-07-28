@@ -21,7 +21,12 @@ D_OPENING_C_RE = re.compile(
 # 正向：叮嘱/待执行场面
 D_OPENING_ANCHOR_RE = re.compile(
     r"别碰|不许|轻点|慢点|慢慢|按|照|叠|鞋带|收拾|弄|叮嘱|规矩|系紧|别洒|整齐|擦|端|晃|"
-    r"别浇|别多|浇|花|夹|晾|关|门|玩具|箱|收|抽屉|书桌|悠着",
+    r"别浇|别多|浇|花|夹|晾|关|门|玩具|箱|收|抽屉|书桌|悠着|"
+    r"挂|洗|摆|整理|扫|装|倒|铺|系|穿|搬|拿",
+)
+# 起因/邀约：开场须交代「为什么要做这件事」
+D_OPENING_INVITE_RE = re.compile(
+    r"咱俩|咱们|一起|我们俩|帮我|帮你|我来|你来|要不|走吧|吧$|好啊|好吧|行啊",
 )
 
 
@@ -54,18 +59,13 @@ def append_d_opening_errors(
                 "应是「别这样弄/按我说的」类叮嘱前场面",
             )
             break
-    # 须有一镜立叮嘱（灿灿/妈妈），勿事后质问当开场
+    # 须点到即将一起做的事（邀约或叮嘱均可），勿事后质问当开场
     if normalized:
-        rule_lines = [
-            item["line"]
-            for item in normalized
-            if item.get("speaker") in ("灿灿", "妈妈")
-            and D_OPENING_ANCHOR_RE.search(item["line"])
-        ]
-        if not rule_lines:
+        joined = "".join(item["line"] for item in normalized)
+        if not D_OPENING_ANCHOR_RE.search(joined):
             errors.append(
-                "opening[0:2] D类开场须立叮嘱（灿灿/妈妈：不许/轻点/系紧等），"
-                "勿事后质问（谁让你…）",
+                "opening[0:2] D类开场须点到即将做的家务事"
+                "（挂衣服/叠/系鞋带/浇花等），勿事后质问（谁让你…）",
             )
 
 
@@ -133,6 +133,13 @@ def score_opening_quality(story: dict) -> tuple[int, list[str], list[str]]:
         pts += 3
         pros.append("D开场锚定叮嘱物")
 
+    if D_OPENING_INVITE_RE.search(joined):
+        pts += 2
+        pros.append("D开场交代起因")
+    else:
+        cons.append("D开场缺起因（没说为什么做这件事）")
+        pts -= 2
+
     first_body = _first_body_line_after_opening(story)
     if first_body and _opening_body_overlap(lines_o[-1], first_body):
         cons.append("D开场与正文首句重复")
@@ -151,7 +158,8 @@ def opening_revision_hint(issue: str) -> str | None:
         return None
     return (
         f"【开场·D】{issue}。"
-        "须 2 句正片第一镜：第1句昭昭报地点+场面，第2句灿灿立叮嘱"
-        "（别/轻点/不许/系紧/别多/慢慢等）；"
-        "参考：阳台浇花、衣架夹子、玄关鞋带；勿回旋镖/不公平/那不一样/事后质问。"
+        "须 2 句：第1句一方**发起邀约交代起因**（咱俩一起挂衣服吧/我来帮你叠），"
+        "第2句另一方**答应+报地点与眼前场面**（好啊，客厅晾衣架的夹子我掰不动）；"
+        "两句合起来要让人明白「为什么在做这件事、在哪做」；"
+        "勿回旋镖/不公平/那不一样/事后质问。"
     )

@@ -20,6 +20,12 @@ RE_BOOM_CLOSE = re.compile(
 )
 _A_STYLE = re.compile(r"那不一样.*哪里不一样|哪里不一样.*都是听")
 _EMPTY_DEBATE = re.compile(r"谁对谁错|到底谁有理|你赢了|我不听你的了")
+# 叮嘱方搞砸前批准了执行方的做法 → 后果成了她自己的方案失败，笑点作废
+_RE_PREAPPROVE = re.compile(
+    r"可以啊|行啊，?你|就那样|没错，?就|你试一?试|你试试吧|对，?就这样|这样就行",
+)
+# 执行方句句征求同意 = 没有「闷头字面做」的反差
+_RE_ASK_PERMIT = re.compile(r"好不好|行不行|可以吗|对吧|行吗")
 
 HUMOR_ISSUE_CAPS: tuple[tuple[str, int], ...] = (
     ("偏A式末四拍", 6),
@@ -33,6 +39,8 @@ HUMOR_ISSUE_CAPS: tuple[tuple[str, int], ...] = (
     ("回旋镖复读", 5),
     ("二次收束注水", 5),
     ("妈妈插话", 8),
+    ("叮嘱方事先批准", 6),
+    ("执行方句句求同意", 6),
 )
 
 
@@ -94,6 +102,15 @@ def collect_humor_issues(
     if n > 16:
         cons.append("中段拖沓注水，不好笑")
 
+    # 搞砸（首个 RE_MESS 句）之前灿灿若已点头批准，笑点作废
+    mess_i = next((i for i, ln in enumerate(lines) if RE_MESS.search(ln)), None)
+    before_mess = lines[:mess_i] if mess_i is not None else body
+    if _RE_PREAPPROVE.search("".join(before_mess)):
+        cons.append("叮嘱方事先批准，不好笑")
+
+    if sum(1 for ln in body if _RE_ASK_PERMIT.search(ln)) >= 3:
+        cons.append("执行方句句求同意，不好笑")
+
     mom_n = sum(1 for sp in (speakers or []) if sp == "妈妈")
     if mom_n > 0:
         cons.append("妈妈插话不好笑")
@@ -128,10 +145,35 @@ def humor_revision_hint(issue: str) -> str | None:
         "二次收束",
         "D",
     )
+    if "拖沓" in issue:
+        return (
+            f"【好笑·D】{issue}。"
+            "成片压到 ≤16 句（正文 ≤14 句）：合并中段重复回合，"
+            "把删掉的字补进保留句（每句写足 ≤24 字）；"
+            "立叮嘱→字面→搞砸→破规→回旋镖链勿动。"
+        )
+    if "复读" in issue:
+        return (
+            f"【好笑·D】{issue}。"
+            "全文「你自己说/你刚才说/你现在也」只准留末段那 1 句；"
+            "中段同类引话改写成「照你说的」「按你说的」。"
+        )
+    if "事先批准" in issue:
+        return (
+            f"【好笑·D】{issue}。"
+            "把搞砸前灿灿的「可以啊/你试试吧/就那样」改成她没在看、"
+            "或只顾说别的；后果必须是灿灿回头才发现，勿让她提前点过头。"
+        )
+    if "求同意" in issue:
+        return (
+            f"【好笑·D】{issue}。"
+            "删掉昭昭句尾的「好不好/行不行/对吧」，改成他自顾自认真汇报动作"
+            "（我只夹了一个角、我数着夹了两下），字面执行才有反差。"
+        )
     if any(k in issue for k in keys):
         return (
             f"【好笑·D】{issue}。"
-            "立具体叮嘱→认真字面画面（端热汤/花生米）→意外一锤→"
-            "上手破规→回旋镖≤2句→哼；最多一句尾巴，勿第二场回旋镖。"
+            "立具体叮嘱→认真字面画面（绕成花生米/叠成小山/夹住一角）→意外一锤→"
+            "上手破规→回旋镖只 1 句→哼；最多一句尾巴，勿第二场回旋镖。"
         )
     return None

@@ -31,7 +31,14 @@ _VALIDATION_PRIORITY: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"总字数须≤"), "body_too_long"),
     (re.compile(r"E类正文过长"), "e_body_too_long"),
     (re.compile(r"汤汁太弱|尝菜眼"), "e_weak_taste_eye"),
-    (re.compile(r"说谎主题禁|说谎开场|说谎须|说谎禁"), "e_lie_theme"),
+    (
+        re.compile(
+            r"说谎主题禁|说谎开场|说谎须|说谎禁|善意谎言复读|那是开脱|"
+            r"叠爸爸|语气垫字|实物反证|自套逻辑|套自己|"
+            r"当场否掉|开脱句过多|重复立同一规矩",
+        ),
+        "e_lie_theme",
+    ),
     (re.compile(r"引话须|无出处|自造后再假装引用|提前引话"), "quote_ground"),
     (re.compile(r"总字数须≥"), "body_too_short"),
     (re.compile(r"角色反了"), "role_swap"),
@@ -145,7 +152,7 @@ def _register_validation_hints() -> None:
 
     def c_incomplete_line(**_kw: Any) -> str:
         return (
-            "【C·完整句】收束前两句须写完整（≤22字）；"
+            "【C·完整句】收束前两句须写完整（≤24字）；"
             "回旋镖可拆成两句，禁止停在引号或未说完。"
         )
 
@@ -193,8 +200,14 @@ def _register_validation_hints() -> None:
     def e_lie_theme(**_kw: Any) -> str:
         return (
             "【E·说谎】孩子问电话/奶奶场面→妈妈先立「不能说谎」→"
-            "再开脱善意谎言；闭环扣原话；禁尝菜串场、禁那不一样、"
-            "禁堆菜品名、禁否认已说内容。"
+            "开脱善意谎言只 1 句；中段须摆可拍实物反证"
+            "（锅里一粒米都没有／碗都是干的／肚子还咕咕叫／外卖盒）；"
+            "末段孩子把妈妈逻辑套自己（那我跟奶奶说我考了一百分，"
+            "也算善意的吧）→妈妈下一句当场否掉（那可不行，你那是骗人）"
+            "→孩子扣原话→妈妈末句破功；套用对象用奶奶勿岔学校老师。"
+            "妈妈开脱≤3句且同一套借口加码，禁一句一个新借口；"
+            "「不能说谎」只立一次，同一质问勿换词重问。"
+            "禁尝菜串场、禁那不一样、禁善意/那是复读、禁句尾呵哈垫字。"
         )
 
     _VALIDATION_HINT_BUILDERS.update({

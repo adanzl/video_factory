@@ -7,7 +7,7 @@ import re
 from app.services.daily_story.story_types import parse_story_type_code
 
 RE_MOM_PUNISH = re.compile(
-    r"站好|过来|罚|不许|今晚|检讨|说清楚|墙角|罚站|别想吃",
+    r"站好|过来|罚|不许|今晚|检讨|说清楚|墙角|罚站|别想吃|偷吃|拿的什么",
 )
 RE_DOOM = re.compile(r"完蛋|完了|糟糕|死定了|藏不住")
 RE_PACT_ROLE = re.compile(
