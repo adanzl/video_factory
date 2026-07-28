@@ -13,12 +13,26 @@ from worker.stages.base import StageExecutor
 from app.repositories.sql_exec import atomic
 logger = logging.getLogger(__name__)
 
+
+def _persist_daily_script(job_id: int, script: dict, *, log_msg: str) -> None:
+    """分步子进度落库：script_json + segments 同步写入。"""
+    with atomic():
+        title = script.get('title')
+        if title:
+            repo_job.update_job(job_id, title=title, script_json=script)
+        else:
+            repo_job.update_job(job_id, script_json=script)
+        repo_segment.insert_segments(job_id, script.get('segments') or [])
+        repo_job_log.append_log(job_id, 'script', log_msg)
+
+
 class DailyScriptStage(StageExecutor):
     """日常对话故事 → 标准分镜 script_json。
 
     从 job.info.daily_story_id 加载故事，调用 LLM 生成 storyboard
     （scenes 含 dialogue；画面概述走标准 A2 fill_visual_briefs），
     再 fill_image_prompts，供下游 TTS / Segment / Merge 使用。
+    各子步骤完成后立即落库，避免长 LLM 链结束后才一次性写入。
     """
     name = 'script'
 
@@ -77,6 +91,15 @@ class DailyScriptStage(StageExecutor):
         total_chars = sum((len(d.get('line', '')) for d in story_content.get('dialogue') or []))
         from app.services.llm.llm_deepseek import _VISUAL_STYLE_BY_CONTENT_STYLE
         script = {'title': title, 'narration': narration, 'word_count': len(narration), 'segments': segments, 'total_duration_seconds': sum((s['duration_sec'] for s in segments)), 'daily_story_id': daily_story_id, 'daily_story_theme': story.get('theme', ''), 'setting': str(story_content.get('setting') or '').strip(), 'total_chars': total_chars, 'visual_style': _VISUAL_STYLE_BY_CONTENT_STYLE['daily_story'], 'content_style': 'daily_story'}
+        closeup_count = sum(1 for s in segments if s.get('shot_type') == '特写')
+        _persist_daily_script(
+            job_id,
+            script,
+            log_msg=(
+                f"daily story storyboard cut: scenes={len(scenes)}, "
+                f"segments={len(segments)}, closeups={closeup_count}"
+            ),
+        )
         llm_mgr.fill_visual_briefs(script, job=ctx.job)
         from app.services.daily_story.speaker import (
             scrub_leaked_speaker_names,
@@ -90,6 +113,11 @@ class DailyScriptStage(StageExecutor):
             if cleaned != seg.get('visual_brief'):
                 logger.warning('segment %d visual_brief scrubbed (speakers=%s): %r -> %r', seg.get('segment_index'), sorted(allowed), str(seg.get('visual_brief') or '')[:120], cleaned[:120])
                 seg['visual_brief'] = cleaned
+        _persist_daily_script(
+            job_id,
+            script,
+            log_msg=f"daily story visual_brief ready: segments={len(script.get('segments') or [])}",
+        )
         if not ctx.script_skip_title_optimize:
             max_len = CHAT_TITLE_MAX_LEN
             try:
@@ -113,8 +141,13 @@ class DailyScriptStage(StageExecutor):
         llm_mgr.fill_image_prompts_with_retries(script, job=ctx.job)
         from app.services.script.image_prompt import wrap_image_prompts
         wrap_image_prompts(script.get('segments') or [], content_style=CONTENT_STYLE_DAILY_STORY)
-        with atomic():
-            repo_job.update_job(job_id, title=script['title'], script_json=script)
-            repo_segment.insert_segments(job_id, script['segments'])
-            keyframe_note = f', keyframes={keyframe_indices}' if keyframe_indices else ''
-            repo_job_log.append_log(job_id, self.name, f"daily story script ready: scenes={len(scenes)}, narration_chars={len(narration)}, total_chars={total_chars}, total_duration={script['total_duration_seconds']:.1f}s{keyframe_note}")
+        _persist_daily_script(
+            job_id,
+            script,
+            log_msg=(
+                f"daily story script ready: scenes={len(scenes)}, "
+                f"narration_chars={len(narration)}, total_chars={total_chars}, "
+                f"total_duration={script['total_duration_seconds']:.1f}s"
+                f"{f', keyframes={keyframe_indices}' if keyframe_indices else ''}"
+            ),
+        )

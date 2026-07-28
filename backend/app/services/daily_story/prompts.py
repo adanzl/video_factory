@@ -239,9 +239,8 @@ def _daily_story_length_draft_for_type(type_code: str | None) -> str:
         return f"""\
 - 片长（正文硬卡，放最前）：{DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
   每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
-  【E类·按句数写】写 **{lo}–{hi} 句**（每句约 **18–22 字**），
-  直接落在硬卡中段（约 {DAILY_STORY_BODY_WRITE_TARGET_MIN}–{DAILY_STORY_BODY_WRITE_TARGET_MAX} 字）；
-  **禁止写到 18+ 句灌水**；妈妈宜 4–7 句打脸开脱，勿为凑字数加句。
+  【E类·妈妈主戏】妈妈台词宜多（立论、否认、改口、越描越黑、破功），
+  笑点须在自相矛盾打脸，禁空说教连问。
   发现开场系统另写另验，不计入正文硬卡。
 """
     return _DAILY_STORY_LENGTH_DRAFT
@@ -252,10 +251,49 @@ def _daily_story_length_user_draft_for_type(type_code: str | None) -> str:
     if type_code and type_code.upper() == "E":
         return f"""\
 3. 【E类·字数硬卡】正文 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
-   写 **{lo}–{hi} 句**、每句 **18–22 字**（勿写 18+ 句凑字）；妈妈宜 4–7 句打脸开脱。
-   发现开场另计另验。speaker 仅昭昭/灿灿/妈妈。
+   妈妈为主戏台词宜多；每句 18–22 字为宜。发现开场另计另验。speaker 仅昭昭/灿灿/妈妈。
 """
     return _DAILY_STORY_LENGTH_USER_DRAFT
+
+
+def _daily_story_length_revise_expand_for_type(type_code: str | None) -> str:
+    if type_code and type_code.upper() == "E":
+        return f"""\
+- 片长（E类偏短重试）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
+  每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
+  可增句或句内扩字到硬卡；加妈妈开脱/孩子追问细节，勿空说教。
+  须轮流说话，禁止同人连说。发现开场另写另验。
+"""
+    return _DAILY_STORY_LENGTH_REVISE_EXPAND
+
+
+def _daily_story_length_revise_patch_for_type(type_code: str | None) -> str:
+    if type_code and type_code.upper() == "E":
+        return f"""\
+- 片长（E类句内微调）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
+  每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
+  **禁止增删句**；把偏短句各加 2–8 字（可拍细节/语气），写到 ≥265 即可；
+  末段闭环+妈妈破功原样保留。发现开场另写另验。
+"""
+    return _DAILY_STORY_LENGTH_REVISE_PATCH
+
+
+def _daily_story_length_user_revise_expand_for_type(type_code: str | None) -> str:
+    if type_code and type_code.upper() == "E":
+        return f"""\
+3. 【E类·句内补字】偏短可增句或句内扩字，写到 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX}；
+   发现开场另计另验。speaker 仅昭昭/灿灿/妈妈。
+"""
+    return _DAILY_STORY_LENGTH_USER_REVISE_EXPAND
+
+
+def _daily_story_length_user_revise_patch_for_type(type_code: str | None) -> str:
+    if type_code and type_code.upper() == "E":
+        return f"""\
+3. 【E类·句内微调】禁止增删句；偏短句各加几个字（可拍细节），写到≥265；
+   闭环与妈妈末句破功勿动；发现开场另计另验。speaker 仅昭昭/灿灿/妈妈。
+"""
+    return _DAILY_STORY_LENGTH_USER_REVISE_PATCH
 
 
 def _daily_story_contract(
@@ -265,6 +303,10 @@ def _daily_story_contract(
 ) -> str:
     if length_mode == "draft":
         length = _daily_story_length_draft_for_type(type_code)
+    elif length_mode == "revise_expand":
+        length = _daily_story_length_revise_expand_for_type(type_code)
+    elif length_mode == "revise_patch":
+        length = _daily_story_length_revise_patch_for_type(type_code)
     else:
         length = _LENGTH_MODE_SYSTEM.get(length_mode, _DAILY_STORY_LENGTH_DRAFT)
     return f"""\
@@ -285,8 +327,8 @@ _DAILY_STORY_SYSTEM_SHARED = """\
 - 关系：亲姐弟，住在一起；主戏是姐弟斗嘴/较真/互相带偏，不是被妈妈教育。
 
 【妈妈戏份（硬约束）】
-- A/C/D 默认可不写妈妈；主戏与破功优先纯姐弟完成；**E 类妈妈为主戏**（宜 4–7 句打脸开脱）。
-- 若出场：A/C/D 建议全程 ≤2 句；**E 类妈妈宜 4–7 句**（立论、否认、改口、破功）。
+- A/C/D 默认可不写妈妈；主戏与破功优先纯姐弟完成；**E 类妈妈为主戏**。
+- 若出场：A/C/D 建议全程 ≤2 句；**E 类妈妈宜多句**（立论、否认、改口、破功）。
 - 禁止明确判赢/判平/另开赛制（如「算你赢」「一人一半」「谁先放好谁先选」）。
 - 日常口气可以（叮嘱、谁也别乱动、别吵了）：但不应用一句掐灭尚未落地的破功。
 - 破功/软收：A/B/C/D 优先姐弟对白；**E 类末句妈妈破功收场**。
@@ -378,10 +420,14 @@ def _daily_story_user_template(
     length_req = (
         _daily_story_length_user_draft_for_type(type_code)
         if length_mode == "draft" and type_code
+        else _daily_story_length_user_revise_expand_for_type(type_code)
+        if length_mode == "revise_expand" and type_code
+        else _daily_story_length_user_revise_patch_for_type(type_code)
+        if length_mode == "revise_patch" and type_code
         else _LENGTH_MODE_USER.get(length_mode, _DAILY_STORY_LENGTH_USER_DRAFT)
     )
     mom_role_note = (
-        "5. E类妈妈宜4–7句打脸开脱，末句妈妈破功；禁空说教连问。"
+        "5. E类妈妈为主戏，台词宜多、末句妈妈破功；禁空说教连问。"
         if type_code and type_code.upper() == "E"
         else (
             "5. 妈妈默认可不写；若出场宜少；"
@@ -645,6 +691,11 @@ def build_daily_story_opening_prompts(
 
 # 特写镜（后续走 I2V）对白上限，利于口型轮次
 DAILY_SCRIPT_KEYFRAME_MAX_DIALOGUE_LINES = 2
+# 特写镜数量：约 1/4 下限、1/3 上限（关键帧 i2v 节奏）
+_CLOSEUP_TURNING_RE = re.compile(
+    r"妈脚步声|站好|干什么|完蛋|破功|愣住|证据|翻出|拆穿|露馅|"
+    r"啊呀|哎呀|不对|才怪|才不是"
+)
 
 DAILY_SCRIPT_SYSTEM_PROMPT = """\
 你是儿童情景对话短剧的分镜编剧，只负责把对白切成可执行镜头，不写画面描述。
@@ -669,7 +720,10 @@ DAILY_SCRIPT_SYSTEM_PROMPT = """\
 7. 【转折用特写，不拆碎】反驳、破功、愣住、妈妈插嘴、证据翻出等转折句：
    放在该镜开头，shot_type 优先「特写」，且本镜最多再跟 **1 句**回应（特写合计 ≤2 句）；
    禁止为转折把短句单独拆成不足 {min_chars} 字的镜；
-   也禁止在特写镜里塞 3 句。全文特写镜不超过总镜数约 1/3。
+   也禁止在特写镜里塞 3 句。
+8. 【特写数量】全文 {scene_count} 镜，特写宜 **{closeup_min}–{closeup_max}** 个
+   （约 1/4–1/3）：开场首镜 + 至少 1 个中段转折 + 妈妈破功/收场镜须特写；
+   禁止全文只有 1–2 个特写。
 
 【输出格式】
 严格输出合法 JSON（不要 markdown 代码块）：
@@ -705,7 +759,8 @@ DAILY_SCRIPT_USER_TEMPLATE = """\
 1. 中景/全景每镜 2–3 句、不得超过 3 句；**特写镜不得超过 2 句**
 2. 单镜 {min_chars}–{max_chars} 字（约 ≤{max_sec} 秒）；禁止一句一镜
 3. 转折句用特写并放在镜首，特写镜最多再跟 1 句回应；第 3 句须拆到下一镜或改中景
-4. 原台词须全部分配到各镜 dialogue，措辞不得改
+4. 特写宜 {closeup_min}–{closeup_max} 个：首镜 + 中段转折 + 妈妈收场至少各 1 特写
+5. 原台词须全部分配到各镜 dialogue，措辞不得改
 
 请直接输出 JSON。
 """
@@ -716,8 +771,113 @@ DAILY_SCRIPT_MAX_SEGMENT_SEC = 10.0
 DAILY_SCRIPT_MIN_SEGMENT_SEC = 4.0
 
 
+def daily_script_closeup_bounds(scene_count: int) -> tuple[int, int]:
+    """特写镜数量上下限（约 1/4 下限、1/3 上限）。"""
+    if scene_count <= 0:
+        return (0, 0)
+    min_cu = max(2, (scene_count + 3) // 4)
+    max_cu = max(min_cu, (scene_count + 2) // 3)
+    return (min_cu, max_cu)
+
+
+def _scene_dialogue_line_count(scene: dict) -> int:
+    dialogue = scene.get("dialogue") or []
+    return sum(1 for d in dialogue if isinstance(d, dict))
+
+
+def _scene_closeup_eligible(scene: dict) -> bool:
+    return (
+        _scene_dialogue_line_count(scene)
+        <= DAILY_SCRIPT_KEYFRAME_MAX_DIALOGUE_LINES
+    )
+
+
+def _closeup_promotion_score(scene: dict, *, index: int, total: int) -> int:
+    score = 0
+    sid = int(scene.get("scene_id") or index)
+    if sid == 1:
+        score += 100
+    if index == total:
+        score += 80
+    dialogue = scene.get("dialogue") or []
+    if dialogue and isinstance(dialogue[0], dict):
+        if dialogue[0].get("speaker") == "妈妈":
+            score += 70
+    text = "".join(
+        str(d.get("text") or d.get("line") or "")
+        for d in dialogue
+        if isinstance(d, dict)
+    )
+    if _CLOSEUP_TURNING_RE.search(text):
+        score += 50
+    if "！" in text:
+        score += 20
+    if index > total * 2 // 3:
+        score += 15
+    return score
+
+
+def enforce_daily_script_closeups(scenes: list) -> list[str]:
+    """本地补足特写镜：LLM 常只标 1–2 个，按转折优先级升格。"""
+    if not scenes:
+        return []
+    min_cu, _ = daily_script_closeup_bounds(len(scenes))
+    notes: list[str] = []
+
+    def is_closeup(scene: dict) -> bool:
+        return str(scene.get("shot_type") or "").strip() == "特写"
+
+    closeup_count = sum(1 for s in scenes if is_closeup(s))
+
+    if scenes and not is_closeup(scenes[0]) and _scene_closeup_eligible(scenes[0]):
+        scenes[0]["shot_type"] = "特写"
+        notes.append("scene_id=1 promoted to 特写 (opening)")
+        closeup_count += 1
+
+    if closeup_count >= min_cu:
+        return notes
+
+    candidates: list[tuple[int, int]] = []
+    for i, scene in enumerate(scenes):
+        if is_closeup(scene) or not _scene_closeup_eligible(scene):
+            continue
+        score = _closeup_promotion_score(scene, index=i + 1, total=len(scenes))
+        if score > 0:
+            candidates.append((score, i))
+    candidates.sort(key=lambda x: (-x[0], x[1]))
+
+    for _, idx in candidates:
+        if closeup_count >= min_cu:
+            break
+        scenes[idx]["shot_type"] = "特写"
+        sid = scenes[idx].get("scene_id", idx + 1)
+        notes.append(f"scene_id={sid} promoted to 特写")
+        closeup_count += 1
+    return notes
+
+
+def validate_daily_script_closeup_count(scenes: list) -> list[str]:
+    """特写镜数量硬校验。"""
+    if not scenes:
+        return []
+    min_cu, max_cu = daily_script_closeup_bounds(len(scenes))
+    count = sum(
+        1 for s in scenes if str(s.get("shot_type") or "").strip() == "特写"
+    )
+    errors: list[str] = []
+    if count < min_cu:
+        errors.append(
+            f"特写镜仅 {count} 个，全文 {len(scenes)} 镜宜至少 {min_cu} 个（约 1/4）"
+        )
+    if count > max_cu:
+        errors.append(
+            f"特写镜 {count} 个超过上限 {max_cu}（约 1/3）"
+        )
+    return errors
+
+
 def validate_daily_script_scenes(scenes: list) -> list[str]:
-    """分镜硬校验：特写镜对白不得超过 DAILY_SCRIPT_KEYFRAME_MAX_DIALOGUE_LINES。"""
+    """分镜硬校验：特写对白上限 + 特写数量区间。"""
     max_lines = DAILY_SCRIPT_KEYFRAME_MAX_DIALOGUE_LINES
     errors: list[str] = []
     for scene in scenes:
@@ -733,6 +893,7 @@ def validate_daily_script_scenes(scenes: list) -> list[str]:
             errors.append(
                 f"scene_id={sid} 为特写但含 {n} 句对白（特写镜最多 {max_lines} 句）"
             )
+    errors.extend(validate_daily_script_closeup_count(scenes))
     return errors
 
 
@@ -771,6 +932,8 @@ def build_daily_script_prompts(
     )
     total_chars = sum(_dialogue_char_count(str(d.get("line") or "")) for d in dialogue)
     line_count = len(dialogue)
+    est_scenes = max(6, min(14, (line_count + 2) // 3))
+    closeup_min, closeup_max = daily_script_closeup_bounds(est_scenes)
     scene_title = str(dialogue_script.get("scene_title") or "").strip() or "（无标题）"
     setting = str(dialogue_script.get("setting") or "").strip() or "（未提供设定）"
     max_sec_text = _format_prompt_number(max_sec)
@@ -784,6 +947,9 @@ def build_daily_script_prompts(
         min_chars=min_chars,
         total_chars=total_chars,
         line_count=line_count,
+        scene_count=est_scenes,
+        closeup_min=closeup_min,
+        closeup_max=closeup_max,
     )
     system = DAILY_SCRIPT_SYSTEM_PROMPT.format(**fmt)
     user = DAILY_SCRIPT_USER_TEMPLATE.format(
@@ -948,7 +1114,7 @@ def _append_dialogue_rhythm_errors(story: dict, errors: list[str]) -> None:
 def _append_mom_line_errors(story: dict, errors: list[str]) -> None:
     """校验妈妈台词：句数上限、禁止裁判式收场。
 
-    E 类主戏是妈妈破功，妈妈宜 4–7 句（硬卡 ≤8）；其它类型主戏在姐弟，≤3。
+    E 类妈妈为主戏，不设句数上限；其它类型主戏在姐弟，≤3。
     """
     from app.services.daily_story.story_types import resolve_story_type_code
 
@@ -961,11 +1127,9 @@ def _append_mom_line_errors(story: dict, errors: list[str]) -> None:
         if isinstance(item, dict) and item.get("speaker") == "妈妈"
     ]
     type_code = resolve_story_type_code(story)
-    mom_max = 8 if type_code == "E" else 3
-    if len(mom_items) > mom_max:
+    if type_code != "E" and len(mom_items) > 3:
         errors.append(
-            f"妈妈台词超过{mom_max}句（{len(mom_items)}句），"
-            + ("E类宜4–7句打脸开脱" if type_code == "E" else "主戏应在姐弟")
+            f"妈妈台词超过3句（{len(mom_items)}句），主戏应在姐弟"
         )
     for _, item in mom_items:
         line = str(item.get("line") or "")
@@ -1138,7 +1302,7 @@ def validate_daily_story_json(
             chars_min = DAILY_STORY_BODY_CHARS_MIN
             type_code = resolve_story_type_code(story)
             n_lines = len(dialogue) if isinstance(dialogue, list) else 0
-            if type_code == "E" and 10 <= n_lines <= 16:
+            if type_code == "E" and n_lines >= 10:
                 chars_min = 265
             if total_chars < chars_min:
                 deficit = chars_min - total_chars
@@ -1618,6 +1782,8 @@ def validate_daily_story_opening(
         normalized,
         type_code=type_code,
         errors=errors,
+        conflict_core=core,
+        setting=setting or "",
     )
 
     if errors:
@@ -1835,16 +2001,25 @@ def _patch_overlong_lines(story: dict) -> list[str]:
 
 def _patch_body_char_budget(story: dict) -> list[str]:
     """仅小缺口本地补/删语气词；大缺口留给 LLM，避免硬塞口感崩。"""
+    from app.services.daily_story.story_types import resolve_story_type_code
+
     notes: list[str] = []
     dialogue = story.get("dialogue")
     if not isinstance(dialogue, list) or len(dialogue) < 6:
         return notes
     mid = dialogue[:-4]
     total = dialogue_total_chars(story)
-    if total < DAILY_STORY_BODY_CHARS_MIN:
-        need = DAILY_STORY_BODY_CHARS_MIN - total
-        # 差太多硬补会怪，只处理小缺口
-        if need > DAILY_STORY_RETRY_PATCH_DEFICIT_MAX:
+    code = resolve_story_type_code(story)
+    n_lines = len(dialogue)
+    chars_min = DAILY_STORY_BODY_CHARS_MIN
+    max_pad = DAILY_STORY_RETRY_PATCH_DEFICIT_MAX
+    if code == "E" and 10 <= n_lines <= 16:
+        chars_min = 265
+        max_pad = 72
+    if total < chars_min:
+        need = chars_min - total
+        # 差太多硬补会怪，只处理小缺口（E 类压缩稿可放宽）
+        if need > max_pad:
             return notes
         before = total
         for item in mid:
@@ -1864,7 +2039,10 @@ def _patch_body_char_budget(story: dict) -> list[str]:
             notes.append(f"本地补字{before}→{after}")
     elif total > DAILY_STORY_BODY_CHARS_MAX:
         excess = total - DAILY_STORY_BODY_CHARS_MAX
-        if excess > DAILY_STORY_RETRY_PATCH_DEFICIT_MAX:
+        trim_max = DAILY_STORY_RETRY_PATCH_DEFICIT_MAX
+        if code == "E" and 10 <= n_lines <= 16:
+            trim_max = 48
+        if excess > trim_max:
             return notes
         before = total
         for item in reversed(mid):
@@ -1889,6 +2067,7 @@ def _patch_consecutive_speakers(story: dict) -> list[str]:
     dialogue = story.get("dialogue")
     if not isinstance(dialogue, list) or len(dialogue) < 2:
         return notes
+    fixes = 0
     for i in range(1, len(dialogue)):
         a, b = dialogue[i - 1], dialogue[i]
         if not isinstance(a, dict) or not isinstance(b, dict):
@@ -1898,8 +2077,9 @@ def _patch_consecutive_speakers(story: dict) -> list[str]:
         if sa in {"昭昭", "灿灿"} and sa == sb:
             b["speaker"] = "灿灿" if sa == "昭昭" else "昭昭"
             notes.append(f"连说改speaker[{i}]")
-            # 每处只改一次，避免连锁乱改
-            break
+            fixes += 1
+            if fixes >= 6:
+                break
     return notes
 
 
@@ -2007,16 +2187,37 @@ def resolve_daily_story_retry_length_mode(
             (prev_story or {}).get("punchline_explain") or "",
         ),
     )
-    if type_code == "E" and "E类正文过长" in err:
-        return "revise_trim"
-    if type_code == "E" and isinstance(prev_story, dict):
+    if isinstance(prev_story, dict):
+        locked = resolve_story_type_code(prev_story)
+        if locked in STORY_TYPE_LABELS:
+            type_code = locked
+    n_lines = 0
+    chars = dialogue_total_chars(prev_story if isinstance(prev_story, dict) else None)
+    if isinstance(prev_story, dict) and isinstance(prev_story.get("dialogue"), list):
+        n_lines = len(prev_story["dialogue"])
+    e_chars_min = (
+        265
+        if type_code == "E" and n_lines >= 10
+        else DAILY_STORY_BODY_CHARS_MIN
+    )
+    if type_code == "E" and n_lines >= 10 and chars < e_chars_min:
+        gap = e_chars_min - chars
+        if gap <= 72:
+            return "revise_patch"
+    if type_code == "D" and isinstance(prev_story, dict):
         dialogue = prev_story.get("dialogue")
-        if isinstance(dialogue, list) and len(dialogue) > 16:
-            if "中段拖沓" in err or "正文过长" in err or "E类正文" in err:
+        if isinstance(dialogue, list) and len(dialogue) > 18:
+            if (
+                "D类正文过长" in err
+                or "中段拖沓" in err
+                or "妈妈插话" in err
+            ):
                 return "revise_trim"
     deficit = _parse_body_char_deficit(err)
     excess = _parse_body_char_excess(err)
     if "总字数须≥" in err:
+        if type_code == "E" and n_lines >= 10:
+            return "revise_patch"
         if deficit is not None and deficit <= DAILY_STORY_RETRY_PATCH_DEFICIT_MAX:
             return "revise_patch"
         return "revise_expand"
@@ -2028,8 +2229,10 @@ def resolve_daily_story_retry_length_mode(
     if "引话" in err:
         return "revise_patch"
     chars = dialogue_total_chars(prev_story if isinstance(prev_story, dict) else None)
-    if chars < DAILY_STORY_BODY_CHARS_MIN:
-        gap = DAILY_STORY_BODY_CHARS_MIN - chars
+    if chars < e_chars_min:
+        gap = e_chars_min - chars
+        if type_code == "E" and n_lines >= 10:
+            return "revise_patch"
         if gap <= DAILY_STORY_RETRY_PATCH_DEFICIT_MAX:
             return "revise_patch"
         return "revise_expand"
@@ -2128,20 +2331,12 @@ def build_daily_story_retry_user(
     )
     dialogue = prev_story.get("dialogue")
     n_lines = len(dialogue) if isinstance(dialogue, list) else 0
-    if type_code == "E" and n_lines > 16 and not length_hint:
-        drop = n_lines - 16
-        length_hint = (
-            f"【E·删句】上一稿 {n_lines} 句过长（宜12–16句）。"
-            f"只删中段同型揭穿/狡辩复读约 {drop} 句，"
-            "保留妈妈立论+开脱+闭环+末句破功；禁止新增台词。\n"
-        )
     if type_code == "E" and chars < chars_min and not length_hint:
         deficit = chars_min - chars
-        if n_lines >= 12:
+        if n_lines >= 10:
             length_hint = (
-                f"【E·句内补字】上一稿 {chars}字/{n_lines}句，还差 {deficit} 字。"
-                f"每句扩到18–22字（加可拍细节），禁止加句超16句；"
-                f"写到 ≥{chars_min} 即可。\n"
+                f"【E·补字】上一稿 {chars}字/{n_lines}句，还差 {deficit} 字。"
+                f"句内扩字或加妈妈开脱/追问细节，写到 ≥{chars_min} 即可。\n"
             )
     issue_hint = _retry_issue_hints(errors, chars=chars, type_code=type_code)
     primary = pick_primary_validation_errors(errors, max_items=1)

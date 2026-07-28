@@ -510,6 +510,7 @@ def test_build_daily_script_prompts_uses_cps_setting_and_no_appearance():
     assert "超短发" not in system
     assert "不要输出 visual_description" in system
     assert "转折用特写，不拆碎" in system
+    assert "特写数量" in system or "特写宜" in system
     assert "开场首镜" in system
     assert "禁止一句一镜" in user
     assert "特写" in user
@@ -526,16 +527,50 @@ def test_validate_daily_script_scenes_closeup_max_two_lines():
     ok = [
         {"scene_id": 1, "shot_type": "特写", "dialogue": [{}, {}]},
         {"scene_id": 2, "shot_type": "中景", "dialogue": [{}, {}, {}]},
+        {"scene_id": 3, "shot_type": "特写", "dialogue": [{}, {}]},
     ]
     assert validate_daily_script_scenes(ok) == []
 
     bad = [
         {"scene_id": 8, "shot_type": "特写", "dialogue": [{}, {}, {}]},
+        {"scene_id": 9, "shot_type": "特写", "dialogue": [{}, {}]},
     ]
     errs = validate_daily_script_scenes(bad)
-    assert len(errs) == 1
-    assert "scene_id=8" in errs[0]
-    assert "3 句" in errs[0]
+    assert any("scene_id=8" in e and "3 句" in e for e in errs)
+
+
+def test_daily_script_closeup_bounds_and_enforce():
+    from app.services.daily_story.prompts import (
+        daily_script_closeup_bounds,
+        enforce_daily_script_closeups,
+        validate_daily_script_closeup_count,
+    )
+
+    assert daily_script_closeup_bounds(11) == (3, 4)
+    assert daily_script_closeup_bounds(8) == (2, 3)
+
+    scenes = [
+        {"scene_id": 1, "shot_type": "特写", "dialogue": [{}, {}]},
+        *[
+            {"scene_id": i, "shot_type": "中景", "dialogue": [{}, {}]}
+            for i in range(2, 11)
+        ],
+        {
+            "scene_id": 11,
+            "shot_type": "中景",
+            "dialogue": [
+                {"speaker": "妈妈", "text": "你俩在干什么？！"},
+                {"speaker": "昭昭", "text": "完蛋了！"},
+            ],
+        },
+    ]
+    notes = enforce_daily_script_closeups(scenes)
+    assert validate_daily_script_closeup_count(scenes) == []
+    closeups = [s["scene_id"] for s in scenes if s.get("shot_type") == "特写"]
+    assert len(closeups) >= 3
+    assert 1 in closeups
+    assert 11 in closeups
+    assert notes
 
 
 def test_build_visual_brief_prompts_includes_shot_type():

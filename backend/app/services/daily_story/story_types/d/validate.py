@@ -21,6 +21,8 @@ RE_MESS = re.compile(
     r"掉了|滑|洒|乱|坏|打不开|饿着|够不着|弄翻|摔|倒了|全掉|洒一地|堆塌|"
     r"解不开|勒|死结|死疙瘩|大马趴",
 )
+_D_MAX_DIALOGUE_LINES = 18
+_RE_RULE = re.compile(r"不许|别碰|别晃|轻点|慢点|系紧|规矩|叮嘱|不准|不能")
 
 
 def _dialogue_lines(story: dict) -> tuple[list[str], list[str]]:
@@ -51,6 +53,21 @@ def append_d_body_errors(story: dict, errors: list[str]) -> None:
     if n < 8:
         errors.append("D类正文过短，不足以完成字面执行收束（至少约 8 句对白）")
         return
+
+    if n > _D_MAX_DIALOGUE_LINES:
+        errors.append(
+            f"D类正文过长（须≤{_D_MAX_DIALOGUE_LINES}句对白），当前{n}句",
+        )
+        return
+
+    mom_n = sum(1 for sp in speakers if sp == "妈妈")
+    if mom_n > 0:
+        errors.append("D类主戏姐弟，禁止妈妈插话（留给E类）")
+
+    head6 = "".join(lines[:6])
+    rule_hits = len(_RE_RULE.findall(head6))
+    if rule_hits >= 3:
+        errors.append("D类前段勿重复唠叨同一条规矩（立规≤2次）")
 
     tail4 = "".join(lines[-4:])
     tail3 = "".join(lines[-3:])

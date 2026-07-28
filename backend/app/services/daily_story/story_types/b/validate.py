@@ -1,13 +1,10 @@
-"""B 类正文硬卡（收束落槌、末句嘴硬）。"""
+"""B 类正文硬卡（段5定格收束）。"""
 
 from __future__ import annotations
 
 import re
 
 from app.services.daily_story.story_types import parse_story_type_code
-
-RE_SOFT_LAST = re.compile(r"哼|才不是|才不是我的主意")
-RE_BLAME_TAIL = re.compile(r"都怪你|是你先|你答应|赖我")
 
 
 def _lines_and_speakers(story: dict) -> tuple[list[str], list[str]]:
@@ -36,19 +33,52 @@ def append_b_body_errors(story: dict, errors: list[str]) -> None:
     if len(lines) < 8:
         return
 
-    last = lines[-1]
-    last_sp = speakers[-1] if speakers else ""
-    if last_sp in ("昭昭", "灿灿") and not RE_SOFT_LAST.search(last):
-        if not RE_BLAME_TAIL.search(last):
-            errors.append(
-                "B类：末句须破功方嘴硬收束（哼/才不是/才不是我的主意）",
-            )
-
-    from app.services.daily_story.story_types.b.humor import analyze_punish_landing
+    from app.services.daily_story.story_types.b.humor import (
+        _landing_doom_lines_repeat,
+        _punish_freeze_react,
+        analyze_post_freeze_bloat,
+        analyze_punish_landing,
+        analyze_pre_punish_self_preservation,
+    )
 
     weak, landing_tag = analyze_punish_landing(lines, speakers)
     if weak:
         errors.append(
-            "B类：惩罚令后缺认栽底"
+            "B类：惩罚令后缺定格收束"
             + (f"（{landing_tag}）" if landing_tag else ""),
         )
+
+    bloat, bloat_tag = analyze_post_freeze_bloat(lines, speakers)
+    if bloat:
+        errors.append(
+            "B类：定格后勿再写对白"
+            + (f"（{bloat_tag}）" if bloat_tag else ""),
+        )
+
+    pre_weak, pre_tag = analyze_pre_punish_self_preservation(lines, speakers)
+    if pre_weak:
+        errors.append(
+            "B类：惩罚令前缺联盟自保甩锅"
+            + (f"（{pre_tag}）" if pre_tag else ""),
+        )
+
+    punish_i = None
+    for i in range(len(lines) - 1, max(-1, len(lines) - 12), -1):
+        if speakers[i] == "妈妈" and re.search(
+            r"站好|过来|罚|不许|今晚|检讨|说清楚|墙角|罚站|别想吃",
+            lines[i],
+        ):
+            punish_i = i
+            break
+    if punish_i is not None:
+        post_lines = lines[punish_i + 1 :]
+        post_speakers = speakers[punish_i + 1 :]
+        react_lines = [
+            ln
+            for sp, ln in zip(post_speakers, post_lines)
+            if sp in ("昭昭", "灿灿") and _punish_freeze_react(ln)
+        ]
+        if _landing_doom_lines_repeat(react_lines):
+            errors.append(
+                "B类：定格句式重复（勿完蛋了/我也完了连用，改不同句式如真倒霉）",
+            )

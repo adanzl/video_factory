@@ -13,6 +13,11 @@ RE_KID_ASK = re.compile(
 RE_MOM_WAFFLE = re.compile(
     r"不是|不一样|那是|总之|反正|不是那个|不算|尝咸淡|大人|工作需要",
 )
+RE_SNACK_TOPIC = re.compile(r"零食|尝菜|偷吃|饭前不吃|试吃|试菜")
+RE_WEAK_TASTE_EYE = re.compile(r"汤汁|舀汤|舔勺|喝了一口汤|偷尝了汤|尝了汤")
+RE_STRONG_TASTE_EYE = re.compile(
+    r"勺子|勺上|尝菜|试吃|试菜|嘴角|油渍|油花|菜叶|三大勺|咽|黏黏",
+)
 RE_LOOP = re.compile(
     r"你自己说|你刚才|那你也是|你也这样|那你现在|妈妈你也",
 )
@@ -31,6 +36,8 @@ HUMOR_ISSUE_CAPS: tuple[tuple[str, int], ...] = (
     ("空说教注水", 5),
     ("中段拖沓注水", 5),
     ("破功过早", 5),
+    ("补字残留", 8),
+    ("尝菜眼太弱", 7),
 )
 
 
@@ -74,8 +81,6 @@ def collect_humor_issues(
             cons.append("末句非妈妈破功，不好笑")
         elif not RE_MOM_SOFT.search(lines[-1]):
             cons.append("末句非妈妈破功，不好笑")
-        if speakers.count("妈妈") > 8:
-            cons.append("妈妈说教过长，不好笑")
 
     soft_i = next(
         (i for i, ln in enumerate(lines) if RE_MOM_SOFT.search(ln)),
@@ -97,11 +102,18 @@ def collect_humor_issues(
         and speakers[i] == "妈妈"
         and re.search(r"听我的|我说了|必须听|要听话|道理", ln)
     )
-    if lecture_n >= 3 or _EMPTY.search(all_text):
+    if lecture_n >= 5 or _EMPTY.search(all_text):
         cons.append("空说教注水，不好笑")
 
-    if n > 16:
-        cons.append("中段拖沓注水，不好笑")
+    if all_text.count("还在亮") >= 2 or all_text.count("，你看") >= 2:
+        cons.append("补字残留，不好笑")
+
+    if RE_SNACK_TOPIC.search(all_text) and RE_WEAK_TASTE_EYE.search(
+        "".join(lines[: min(6, n)]),
+    ) and not RE_STRONG_TASTE_EYE.search(
+        "".join(lines[: min(8, n)]),
+    ):
+        cons.append("尝菜眼太弱，不好笑")
 
     return cons
 

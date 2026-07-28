@@ -9,7 +9,6 @@ from app.services.daily_story.story_types.b import facts as b_facts
 from app.services.daily_story.story_types.b import humor as b_humor
 from app.services.daily_story.story_types.b import opening as b_opening
 from app.services.daily_story.story_types.quality import (
-    RE_SOFT_LAST,
     SHARED_PUNCH_SOFT,
     TypeQualityProfile,
 )
@@ -56,7 +55,6 @@ def score_punchline(
         return 0, []
 
     tail4 = "".join(lines[-4:])
-    tail3 = "".join(lines[-3:])
     tail8 = "".join(lines[-8:]) if n >= 8 else "".join(lines)
     head_third = "".join(lines[: max(1, n // 3)])
     bonus = 0
@@ -66,40 +64,43 @@ def score_punchline(
         bonus += 4
         details.append("前段结盟约定")
 
-    if RE_BLAME.search(tail3):
-        bonus += 6
-        details.append("结盟互甩锅")
+    pre_lines, punish_i = b_humor._lines_before_last_punish(lines, speakers)
+    if punish_i is not None:
+        tail_pre = pre_lines[-8:] if len(pre_lines) >= 8 else pre_lines
+        if RE_BLAME.search("".join(tail_pre)):
+            bonus += 6
+            details.append("联盟自保甩锅")
 
     if RE_EXPOSED.search(tail4):
-        bonus += 10
+        bonus += 8
         details.append("联手露馅收场")
 
+    weak_freeze = b_humor.is_weak_freeze_after_punish(lines, speakers)
+    has_bloat = b_humor.analyze_post_freeze_bloat(lines, speakers)[0]
     if (
         RE_MOM_PUNISH.search(tail8)
-        and RE_DOOM.search(tail8)
-        and not b_humor.is_weak_punish_landing(lines, speakers)
+        and not weak_freeze
+        and not has_bloat
     ):
-        bonus += 5
-        details.append("惩罚落槌有底")
-    elif RE_MOM_PUNISH.search(tail8) and RE_DOOM.search(tail8):
-        bonus -= 2
-        details.append("惩罚落槌缺底")
+        bonus += 6
+        if RE_DOOM.search(tail8):
+            details.append("定格戛然而止")
+        else:
+            details.append("落槌定格够")
+    elif RE_MOM_PUNISH.search(tail8) and weak_freeze:
+        bonus -= 3
+        details.append("落槌定格不足")
+
+    if has_bloat:
+        bonus -= 6
+        details.append("定格后多余对白")
 
     if RE_ALLY.search(head_third) and RE_PLAN_FAIL.search(
-        "".join(lines[n // 3 : n - 3]),
+        "".join(lines[n // 3 : max(n // 3, punish_i or n - 3)]),
     ):
         bonus += 4
         if "走样" not in "".join(details):
             details.append("约定走样")
-
-    if RE_SOFT_LAST.search(last) and (
-        RE_BLAME.search(prev2) or RE_BLAME.search(last) or RE_EXPOSED.search(prev2)
-    ):
-        bonus += 5
-        details.append("末句嘴硬收束")
-    elif RE_BLAME.search(last) and speakers and speakers[-1] in ("灿灿", "昭昭"):
-        bonus += 1
-        details.append("末句仍甩锅")
 
     if _A_STYLE_TAIL.search(tail4) and RE_BLAME.search(tail4):
         bonus -= 4
@@ -110,19 +111,19 @@ def score_punchline(
 QUALITY_PROFILE = TypeQualityProfile(
     code="B",
     score_punchline=score_punchline,
-    closing_pro_markers=("露馅", "甩锅", "翻车", "破功", "嘴硬", "走样", "落槌", "连锁"),
+    closing_pro_markers=("露馅", "甩锅", "翻车", "破功", "走样", "落槌", "连锁", "定格"),
     summary_highlight_tokens=(
         "推进",
         "露馅",
         "甩锅",
         "翻车",
-        "破功",
         "走样",
-        "落槌",
+        "定格",
         "连锁",
         "好笑",
         "事实",
         "开场",
+        "自保",
     ),
     punch_before_soft_markers=SHARED_PUNCH_SOFT
     + (

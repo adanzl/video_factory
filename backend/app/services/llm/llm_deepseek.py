@@ -52,6 +52,7 @@ from app.services.daily_story.prompts import (
     build_daily_story_retry_user,
     build_daily_story_opening_retry_user,
     build_daily_story_theme_prompts,
+    enforce_daily_script_closeups,
     opening_avoid_speaker_from_body,
     validate_daily_script_scenes,
     resolve_daily_story_retry_length_mode,
@@ -1533,6 +1534,14 @@ class DeepSeekClient(LLMClient):
             elapsed = time.perf_counter() - started
             scenes = raw.get("scenes") or []
             if scenes:
+                promoted = enforce_daily_script_closeups(scenes)
+                if promoted:
+                    logger.info(
+                        "[DAILY_STORY] closeup promote attempt=%d/%d: %s",
+                        attempt + 1,
+                        max_attempts,
+                        promoted,
+                    )
                 # 验证所有原始台词是否都被 LLM 分配到各镜头中
                 generated_text = "".join(
                     str(d.get("text") or d.get("line") or "")
@@ -1563,21 +1572,28 @@ class DeepSeekClient(LLMClient):
                 closeup_errs = validate_daily_script_scenes(scenes)
                 if closeup_errs:
                     last_exc = ValueError(
-                        "特写镜对白超过 2 句: " + "; ".join(closeup_errs)
+                        "分镜特写校验失败: " + "; ".join(closeup_errs)
                     )
                     if attempt + 1 >= max_attempts:
                         break
                     logger.warning(
-                        "[DAILY_STORY] generate script closeup dialogue attempt=%d/%d: %s",
+                        "[DAILY_STORY] generate script closeup attempt=%d/%d: %s",
                         attempt + 1,
                         max_attempts,
                         closeup_errs,
                     )
-                    user = (
-                        f"{user_base}\n\n"
+                    retry_hint = (
                         "【重试】特写镜 dialogue 不得超过 2 句（图生视频口型限制）。"
                         "请把多出的台词拆到下一镜，或把该镜 shot_type 改为中景/全景：\n"
-                        + "\n".join(f"- {e}" for e in closeup_errs)
+                    )
+                    if any("特写镜仅" in e or "超过上限" in e for e in closeup_errs):
+                        retry_hint = (
+                            "【重试】特写镜数量不足或过多。"
+                            "开场首镜、中段转折、妈妈收场须标「特写」，"
+                            "全文约 1/4–1/3 镜为特写，且每特写 ≤2 句对白：\n"
+                        )
+                    user = f"{user_base}\n\n{retry_hint}" + "\n".join(
+                        f"- {e}" for e in closeup_errs
                     )
                     continue
 

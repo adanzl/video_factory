@@ -32,6 +32,7 @@ HUMOR_ISSUE_CAPS: tuple[tuple[str, int], ...] = (
     ("中段拖沓注水", 5),
     ("回旋镖复读", 5),
     ("二次收束注水", 5),
+    ("妈妈插话", 8),
 )
 
 
@@ -53,7 +54,7 @@ def collect_humor_issues(
 
     if _A_STYLE.search(tail_text) or (
         "哪里不一样" in tail_text and "那不一样" in tail_text
-    ):
+    ) or re.search(r"完全不一样|跟.{0,6}不一样", tail_text):
         cons.append("偏A式末四拍，不好笑")
 
     if not RE_LITERAL.search(body_text):
@@ -90,8 +91,12 @@ def collect_humor_issues(
     if nit_n >= 3:
         cons.append("空辩论注水，不好笑")
 
-    if n > 18:
+    if n > 16:
         cons.append("中段拖沓注水，不好笑")
+
+    mom_n = sum(1 for sp in (speakers or []) if sp == "妈妈")
+    if mom_n > 0:
+        cons.append("妈妈插话不好笑")
 
     boom_n = sum(1 for ln in lines if RE_BOOM_CLOSE.search(ln))
     if boom_n >= 2:

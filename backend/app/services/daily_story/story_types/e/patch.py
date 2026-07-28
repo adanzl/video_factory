@@ -329,17 +329,43 @@ def patch_e_compress_body(story: dict) -> list[str]:
     return notes
 
 
+_RE_PATCH_GARBAGE = re.compile(
+    r"，(?:还在亮着呢?|你看呢?|明明呢?|地上也见|刚才那样|明明这样)$",
+)
+
+
+def patch_e_strip_patch_garbage(story: dict) -> list[str]:
+    """剥掉句内补字 patch 误粘的尾巴（还在亮着/你看/明明等）。"""
+    notes: list[str] = []
+    if not _is_e(story):
+        return notes
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list):
+        return notes
+    for i, item in enumerate(dialogue):
+        if not isinstance(item, dict):
+            continue
+        line = str(item.get("line") or "")
+        new_line = _RE_PATCH_GARBAGE.sub("", line)
+        # 叠词残留：「，你看，明明」
+        new_line = re.sub(r"，你看，明明呢?$", "", new_line)
+        new_line = re.sub(r"，明明，还在亮着呢?$", "", new_line)
+        if new_line != line:
+            item["line"] = new_line
+            notes.append(f"E剥补字残[{i}]")
+    return notes
+
+
 def patch_e_body(story: dict) -> list[str]:
     notes: list[str] = []
+    notes.extend(patch_e_strip_patch_garbage(story))
     notes.extend(patch_e_strip_a_close(story))
-    notes.extend(patch_e_compress_body(story))
     notes.extend(patch_e_ensure_mom_rule(story))
     notes.extend(patch_e_ensure_kid_ask(story))
     notes.extend(patch_e_ensure_waffle(story))
     notes.extend(patch_e_ensure_loop(story))
     notes.extend(patch_e_closing_mom_soft(story))
-    notes.extend(patch_e_trim_mom_lecture(story))
-    notes.extend(patch_e_compress_body(story))
+    notes.extend(patch_e_strip_patch_garbage(story))
     notes.extend(patch_e_strip_a_close(story))
     notes.extend(patch_e_ensure_loop(story))
     notes.extend(patch_e_closing_mom_soft(story))

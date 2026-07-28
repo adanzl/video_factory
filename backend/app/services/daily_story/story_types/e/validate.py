@@ -21,11 +21,11 @@ RE_MOM_WAFFLE = re.compile(
     r"不是|不一样|那是|总之|反正|不是那个|不算|尝咸淡|大人|工作需要",
 )
 RE_SLEEP_TOPIC = re.compile(r"睡觉|九点|早睡|刷手机|卧床|被窝|挂钟")
-RE_SNACK_TOPIC = re.compile(r"零食|尝菜|偷吃|薯片|饭前不吃|瓜子")
-
-E_BODY_LINES_MIN = 10
-E_BODY_LINES_MAX = 16
-
+RE_SNACK_TOPIC = re.compile(r"零食|尝菜|偷吃|薯片|饭前不吃|瓜子|试吃|试菜")
+RE_WEAK_TASTE_EYE = re.compile(r"汤汁|舀汤|舔勺|喝了一口汤|偷尝了汤|尝了汤")
+RE_STRONG_TASTE_EYE = re.compile(
+    r"勺子|勺上|尝菜|试吃|试菜|嘴角|油渍|油花|菜叶|三大勺|咽|黏黏",
+)
 
 def _dialogue_lines(story: dict) -> tuple[list[str], list[str]]:
     dialogue = story.get("dialogue")
@@ -55,11 +55,6 @@ def append_e_body_errors(story: dict, errors: list[str]) -> None:
         errors.append("E类正文过短，不足以完成妈妈破功收束（至少约 8 句对白）")
         return
 
-    if n > E_BODY_LINES_MAX:
-        errors.append(
-            f"E类正文过长（宜12–16句），当前{n}句",
-        )
-
     anchor = (
         str(story.get("conflict_core") or "")
         + str(story.get("punchline_explain") or "")
@@ -77,8 +72,16 @@ def append_e_body_errors(story: dict, errors: list[str]) -> None:
         if "九点" not in mom_early and "必须睡觉" not in mom_early:
             errors.append("E类睡觉主题禁串场立零食规矩")
     if snack_t and not sleep_t and RE_SLEEP_TOPIC.search(mom_early):
-        if "零食" not in mom_early and "尝" not in mom_early:
-            errors.append("E类零食主题禁串场立睡觉规矩")
+        errors.append("E类零食主题禁串场立睡觉规矩")
+
+    if snack_t and not sleep_t:
+        head_text = "".join(lines[: min(8, n)])
+        if RE_WEAK_TASTE_EYE.search(head_text) and not RE_STRONG_TASTE_EYE.search(
+            head_text,
+        ):
+            errors.append(
+                "E类尝菜眼须可拍试吃（勺子/嘴角油），汤汁太弱勿当唯一现行",
+            )
 
     tail4 = "".join(lines[-4:])
     tail3 = "".join(lines[-3:])
@@ -118,12 +121,6 @@ def append_e_body_errors(story: dict, errors: list[str]) -> None:
             "E类末句妈妈须破功（唉/行了/好吧/随便/说不通等）",
         )
         return
-
-    mom_n = sum(1 for sp in speakers if sp == "妈妈")
-    if mom_n > 8:
-        errors.append(
-            "E类妈妈台词过多（宜4–7句），笑点应在逻辑自相矛盾而非空说教",
-        )
 
     if RE_MOM_WAFFLE.search(tail3) and not RE_KID_LOOP.search(tail3):
         errors.append(

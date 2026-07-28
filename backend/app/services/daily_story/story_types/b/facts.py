@@ -67,7 +67,7 @@ def append_b_fact_errors(story: dict, errors: list[str]) -> None:
             weak, landing_tag = analyze_punish_landing(lines, speakers)
             if weak:
                 errors.append(
-                    "B类：惩罚令后缺认栽底"
+                    "B类：惩罚令后缺落槌定格"
                     + (f"（{landing_tag}）" if landing_tag else ""),
                 )
 
@@ -138,7 +138,7 @@ def collect_fact_issues(story: dict) -> list[str]:
 def fact_revision_hint(issue: str) -> str | None:
     if "事实" not in issue and "可核对" not in issue:
         return None
-    if "完蛋" in issue or "惩罚" in issue or "认栽" in issue:
+    if "完蛋" in issue or "惩罚" in issue or "定格" in issue or "落槌" in issue:
         tag = ""
         if "（" in issue and "）" in issue:
             tag = issue.split("（", 1)[-1].rstrip("）")

@@ -30,6 +30,7 @@ _VALIDATION_PRIORITY: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(rf"超过.*{DAILY_STORY_LINE_CHARS_MAX}字"), "line_too_long"),
     (re.compile(r"总字数须≤"), "body_too_long"),
     (re.compile(r"E类正文过长"), "e_body_too_long"),
+    (re.compile(r"汤汁太弱|尝菜眼"), "e_weak_taste_eye"),
     (re.compile(r"引话须|无出处|自造后再假装引用|提前引话"), "quote_ground"),
     (re.compile(r"总字数须≥"), "body_too_short"),
     (re.compile(r"角色反了"), "role_swap"),
@@ -177,10 +178,16 @@ def _register_validation_hints() -> None:
         if type_code:
             soft = story_line_for_code(type_code).retry_soft_close_hint.strip()
         base = (
-            "【E·删句】只删中段同型揭穿/狡辩复读，压到12–16句；"
+            "【E·删句】只删中段同型揭穿/狡辩复读；"
             "保留妈妈立论+开脱+闭环+末句破功；禁止新增台词。"
         )
         return f"{base} {soft}" if soft else base
+
+    def e_weak_taste_eye(**_kw: Any) -> str:
+        return (
+            "【E·尝菜眼】开场/前段须可拍试吃：勺上沾菜、嘴角油渍、"
+            "试吃咽下；禁止「偷尝汤汁」当唯一眼，改勺子或嘴角。"
+        )
 
     _VALIDATION_HINT_BUILDERS.update({
         "consecutive": consecutive,
@@ -190,6 +197,7 @@ def _register_validation_hints() -> None:
         ),
         "body_too_long": lambda frag, **_kw: _hint_body_too_long(frag),
         "e_body_too_long": e_body_too_long,
+        "e_weak_taste_eye": e_weak_taste_eye,
         "c_incomplete_line": c_incomplete_line,
         "c_boomerang": c_boomerang,
         "c_loser_last": c_loser_last,
