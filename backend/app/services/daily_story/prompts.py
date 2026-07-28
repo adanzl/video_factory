@@ -247,9 +247,10 @@ def _daily_story_length_draft_for_type(type_code: str | None) -> str:
         return f"""\
 - 片长（D类正文硬卡，放最前）：{DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
   每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
-  【D类·先按句数写】写 **{lo}–{hi} 句**对白（每句 **17–20 字**），瞄准
-  {DAILY_STORY_BODY_WRITE_TARGET_MIN}–{DAILY_STORY_BODY_WRITE_TARGET_MAX} 字；
-  **硬上限 18 句**；禁止 12–14 句碎短稿（易只有 200 字过不了卡）。
+  【D类·先按句数写】正文写 **{lo}–{hi} 句**对白，**每句 ≤{DAILY_STORY_LINE_CHARS_MAX} 字写足**，
+  瞄准 {DAILY_STORY_BODY_WRITE_TARGET_MIN}–{DAILY_STORY_BODY_WRITE_TARGET_MAX} 字；
+  系统会在最前面另拼 2 句开场，**成片 15–16 句，17 句起判拖沓扣分**。
+  最佳落点：正文 14 句 × ~21 字 ≈ 294 字；句少字足，勿写短句凑数。
   发现开场系统另写另验，不计入正文硬卡。
 """
     return _DAILY_STORY_LENGTH_DRAFT
@@ -260,14 +261,14 @@ def _daily_story_length_user_draft_for_type(type_code: str | None) -> str:
     if type_code and type_code.upper() == "E":
         return f"""\
 3. 【E类·字数硬卡】正文 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
-   妈妈为主戏台词宜多；每句 18–22 字为宜。发现开场另计另验。speaker 仅昭昭/灿灿/妈妈。
+   妈妈为主戏台词宜多；每句 ≤{DAILY_STORY_LINE_CHARS_MAX} 字为宜。发现开场另计另验。speaker 仅昭昭/灿灿/妈妈。
 """
     if type_code and type_code.upper() == "D":
         return f"""\
 3. 【D类·字数句数硬卡】正文 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
-   写 **{lo}–{hi} 句**（≤18），每句 **17–20 字**，瞄准
+   写 **{lo}–{hi} 句**、每句 **≤{DAILY_STORY_LINE_CHARS_MAX} 字**，瞄准
    {DAILY_STORY_BODY_WRITE_TARGET_MIN}–{DAILY_STORY_BODY_WRITE_TARGET_MAX} 字；
-   禁止 12–14 句短稿。发现开场另计另验。speaker 仅昭昭/灿灿/妈妈。
+   拼开场后成片 15–16 句，17 句起判拖沓。发现开场另计另验。speaker 仅昭昭/灿灿/妈妈。
 """
     return _DAILY_STORY_LENGTH_USER_DRAFT
 
@@ -284,7 +285,7 @@ def _daily_story_length_revise_expand_for_type(type_code: str | None) -> str:
         return f"""\
 - 片长（D类偏短重试）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
   每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
-  **优先句内加 2–5 字**；仍不够可加 1–2 句字面执行连拍，但总句数须 ≤18。
+  **只在现有句内加字**（每句可扩到 {DAILY_STORY_LINE_CHARS_MAX} 字）；**正文句数须 ≤14**，勿靠加句凑字。
   写到约 {DAILY_STORY_BODY_RETRY_TARGET_MIN}–{DAILY_STORY_BODY_RETRY_TARGET_MAX} 字；
   禁止整稿重写。发现开场系统另写另验。
 """
@@ -314,7 +315,7 @@ def _daily_story_length_revise_trim_for_type(type_code: str | None) -> str:
         return f"""\
 - 片长（D类偏长重试）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
   每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
-  只删不增：合并重复回合/空辩论，压到 **≤17 句**、
+  只删不增：合并重复回合/空辩论，压到 **≤14 句**、
   约 {DAILY_STORY_BODY_RETRY_TARGET_MIN}–{DAILY_STORY_BODY_RETRY_TARGET_MAX} 字；
   保留立叮嘱→字面→搞砸→破规→回旋镖链。发现开场另写另验。
 """
@@ -329,7 +330,7 @@ def _daily_story_length_user_revise_expand_for_type(type_code: str | None) -> st
 """
     if type_code and type_code.upper() == "D":
         return f"""\
-3. 【D类·偏短只增】句内加字优先；仍不够可加 1–2 句连拍，总句数 ≤18；
+3. 【D类·偏短只增】只在现有句内加字（每句可到 {DAILY_STORY_LINE_CHARS_MAX} 字），**正文句数 ≤14**；
    写到 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
    发现开场另计另验。speaker 仅昭昭/灿灿/妈妈。
 """
@@ -1073,6 +1074,23 @@ def _conflict_anchor_must_words(conflict_core: str, *, limit: int = 4) -> list[s
     return picked or anchors[:limit]
 
 
+def _is_self_apply_beat(story: dict, line: str) -> bool:
+    """E 说谎题「孩子把妈妈逻辑套自己」那一句允许提老师，不算跑题。"""
+    from app.services.daily_story.story_types.e.humor import (
+        RE_KID_SELF_APPLY,
+        RE_LIE_TOPIC,
+    )
+
+    topic = (
+        str(story.get("conflict_core") or "")
+        + str(story.get("_theme") or "")
+        + str(story.get("scene_title") or "")
+    )
+    if not RE_LIE_TOPIC.search(topic):
+        return False
+    return bool(RE_KID_SELF_APPLY.search(line))
+
+
 def _append_single_conflict_errors(story: dict, errors: list[str]) -> None:
     """校验单冲突：conflict_core 必填，开场对齐，后半禁无关岔开。"""
     core = str(story.get("conflict_core") or "").strip()
@@ -1104,7 +1122,9 @@ def _append_single_conflict_errors(story: dict, errors: list[str]) -> None:
     if len(lines) < 9:
         return
     third = max(1, len(lines) // 3)
-    latter = "".join(lines[-third:])
+    latter = "".join(
+        ln for ln in lines[-third:] if not _is_self_apply_beat(story, ln)
+    )
     early = "".join(lines[:-third])
     allowed = core + setting + early
     for marker in _OFF_TOPIC_MARKERS:
@@ -2006,17 +2026,31 @@ def _line_room(line: str) -> int:
     return max(0, DAILY_STORY_LINE_CHARS_MAX - _dialogue_char_count(line))
 
 
-def _pad_dialogue_line(line: str, need: int) -> tuple[str, int]:
-    """句尾最多补一个语气词，返回 (新句, 实际增加字数)。"""
+def _pad_dialogue_line(
+    line: str,
+    need: int,
+    used: set[str] | None = None,
+) -> tuple[str, int]:
+    """句尾最多补一个语气词，返回 (新句, 实际增加字数)。
+
+    used 记录整篇已用过的垫字，避免多句复读同一个「好不好」。
+    """
     if need <= 0 or not line:
         return line, 0
     if line[-1] in "啦嘛呀啊呢吧哦！？。…":
+        return line, 0
+    # 已补过垫字的句子不再叠加（防「好不好呢」）
+    if any(line.endswith(suf) for suf in _LOCAL_PAD_TAILS):
         return line, 0
     room = _line_room(line)
     if room <= 0:
         return line, 0
     for suf in _LOCAL_PAD_TAILS:
+        if used is not None and suf in used:
+            continue
         if len(suf) <= room and len(suf) <= need:
+            if used is not None:
+                used.add(suf)
             return f"{line}{suf}", len(suf)
     return line, 0
 
@@ -2078,6 +2112,13 @@ def _patch_body_char_budget(story: dict) -> list[str]:
         if need > max_pad:
             return notes
         before = total
+        # 整篇已出现的垫字（含上一轮补过的）都不再复用
+        used_pads = {
+            suf
+            for suf in _LOCAL_PAD_TAILS
+            for item in dialogue
+            if isinstance(item, dict) and str(item.get("line") or "").endswith(suf)
+        }
         for item in mid:
             if need <= 0:
                 break
@@ -2086,7 +2127,7 @@ def _patch_body_char_budget(story: dict) -> list[str]:
             line = str(item.get("line") or "")
             if not line:
                 continue
-            new_line, added = _pad_dialogue_line(line, need)
+            new_line, added = _pad_dialogue_line(line, need, used_pads)
             if added:
                 item["line"] = new_line
                 need -= added
@@ -2119,6 +2160,10 @@ def _patch_body_char_budget(story: dict) -> list[str]:
 
 def _patch_consecutive_speakers(story: dict) -> list[str]:
     """同人连说：把后一句 speaker 改成另一方（仅修硬卡，少动文案）。"""
+    from app.services.daily_story.story_types import resolve_story_type_code
+
+    if resolve_story_type_code(story) == "B":
+        return []
     notes: list[str] = []
     dialogue = story.get("dialogue")
     if not isinstance(dialogue, list) or len(dialogue) < 2:

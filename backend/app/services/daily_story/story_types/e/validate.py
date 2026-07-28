@@ -29,13 +29,40 @@ RE_LIE_WAFFLE = re.compile(
     r"不是敷衍|善意谎言|让奶奶放心|特殊情况|为了不让|不是骗",
 )
 RE_SNACK_BLEED = re.compile(
-    r"那一口算不算|尝咸淡|咽下去|三大勺|勺上|吐回锅里|试吃|偷吃零",
+    r"那一口算不算|尝咸淡|咽下去|三大勺|勺上|吐回锅里|试吃|偷吃零|"
+    r"尝菜|调味|不算吃|偷吃零食|油光",
 )
 RE_LIE_FOOD_ITEM = re.compile(r"红烧|清蒸|排骨汤|白米饭|两碗汤|清蒸虾|红烧鱼")
 RE_MOM_DENY_QUOTE = re.compile(
     r"我说什么了|没说吃|挺好的呀|没骗|没说谎|就说我们挺好",
 )
 RE_KID_QUOTE_EAT = re.compile(r"吃了好多|吃撑|三碗|好几碗|咕咕叫")
+RE_LIE_GOOD_WAFFLE = re.compile(r"善意")
+# 说谎题的「眼」：可拍实物反证，不能只靠口头对质
+RE_LIE_PHYSICAL = re.compile(
+    r"空(?:的)?锅|锅是空|锅里.{0,6}(?:没|空)|饭锅|电饭锅|一粒米|"
+    r"碗(?:都|还|是|一个)?(?:是)?(?:干|没动|空)|没洗的碗|外卖盒|"
+    r"泡面桶|垃圾桶|肚子(?:还|都)?咕咕|盘子还扣着|米还在袋",
+)
+# 孩子把妈妈的逻辑套回自己身上（反杀一拍）
+RE_KID_SELF_APPLY = re.compile(
+    r"那我(?:也|跟|对|明天|以后|回头|可以|能)|我也(?:这么|这样|能|可以)|"
+    r"我(?:明天|以后|回头)?跟(?:老师|奶奶|爷爷|外婆|同学)说|告老师|考砸了?也说",
+)
+RE_MOM_EXCUSE_ANY = re.compile(
+    r"善意|好心|随口|怕她|怕奶奶|为大人|大人.{0,4}(?:着想|需要)|工作需要|"
+    r"不算|为了不让|报喜|礼貌|着想|不想让.{0,4}(?:担心|操心)|"
+    r"不让.{0,3}(?:担心|操心)",
+)
+RE_MOM_FLAT_REFUSE = re.compile(
+    r"不行|不许|不可以|不准|当然不|想都别想|少来|你敢|哪能",
+)
+RE_LIE_SIDE_PLOT = re.compile(
+    r"爸爸|加班|打游戏|作业|写完|三页|鱼腥|倒了.*醋|唠叨|夸奶奶",
+)
+RE_GARBAGE_FILLER = re.compile(
+    r"[呵哈]{2,}|(?:呢|吗|啊|呀|啦|吧|嘛){2,}$|对不对呀真的",
+)
 RE_WEAK_TASTE_EYE = re.compile(r"汤汁|舀汤|舔勺|喝了一口汤|偷尝了汤|尝了汤")
 RE_STRONG_TASTE_EYE = re.compile(
     r"勺子|勺上|尝菜|试吃|试菜|嘴角|油渍|油花|菜叶|三大勺|咽|黏黏",
@@ -69,15 +96,18 @@ def append_e_body_errors(story: dict, errors: list[str]) -> None:
         errors.append("E类正文过短，不足以完成妈妈破功收束（至少约 8 句对白）")
         return
 
-    anchor = (
+    topic_anchor = (
         str(story.get("conflict_core") or "")
-        + str(story.get("punchline_explain") or "")
         + str(story.get("theme") or "")
         + str(story.get("_theme") or "")
     )
-    sleep_t = bool(RE_SLEEP_TOPIC.search(anchor))
-    snack_t = bool(RE_SNACK_TOPIC.search(anchor))
-    lie_t = bool(RE_LIE_TOPIC.search(anchor)) and not snack_t and not sleep_t
+    anchor = topic_anchor + (
+        str(story.get("punchline_explain") or "")
+        + str(story.get("setting") or "")
+    )
+    sleep_t = bool(RE_SLEEP_TOPIC.search(topic_anchor))
+    snack_t = bool(RE_SNACK_TOPIC.search(topic_anchor))
+    lie_t = bool(RE_LIE_TOPIC.search(topic_anchor)) and not snack_t and not sleep_t
     all_text = "".join(lines)
     mom_early = "".join(
         ln
@@ -100,12 +130,62 @@ def append_e_body_errors(story: dict, errors: list[str]) -> None:
             )
 
     if lie_t:
+        if not RE_LIE_PHYSICAL.search(all_text):
+            errors.append(
+                "E类说谎须有可拍实物反证（空饭锅/碗还干着/外卖盒/肚子咕咕），"
+                "勿只口头对质",
+            )
+        self_i = next(
+            (
+                i
+                for i in range(max(0, n - 6), n)
+                if speakers[i] in ("昭昭", "灿灿")
+                and RE_KID_SELF_APPLY.search(lines[i])
+            ),
+            None,
+        )
+        if self_i is None:
+            errors.append(
+                "E类说谎末段须孩子把妈妈逻辑套自己"
+                "（那我跟奶奶说我考了一百分，也算善意的吧）",
+            )
+        else:
+            mom_reply = next(
+                (
+                    lines[j]
+                    for j in range(self_i + 1, n)
+                    if speakers[j] == "妈妈"
+                ),
+                "",
+            )
+            if not RE_MOM_FLAT_REFUSE.search(mom_reply):
+                errors.append(
+                    "E类说谎孩子自套逻辑后，妈妈下一句须当场否掉"
+                    "（那不行/不许/你敢），勿再另编借口",
+                )
+        mom_excuse_n = sum(
+            1
+            for sp, ln in zip(speakers, lines)
+            if sp == "妈妈" and RE_MOM_EXCUSE_ANY.search(ln)
+        )
+        if mom_excuse_n >= 5:
+            errors.append(
+                "E类说谎妈妈开脱句过多（宜≤3句、同一套借口加码），"
+                "勿一句一个新借口",
+            )
+        mom_rule_head = sum(
+            1
+            for sp, ln in zip(speakers[: min(6, n)], lines[: min(6, n)])
+            if sp == "妈妈" and RE_LIE_MOM_RULE.search(ln)
+        )
+        if mom_rule_head >= 2:
+            errors.append("E类说谎前段禁重复立同一规矩（不能说谎只说一次）")
         if RE_SNACK_BLEED.search(all_text):
             errors.append(
                 "E类说谎主题禁尝菜串场（那一口/咽下去/尝咸淡等）",
             )
-        if "那不一样" in all_text:
-            errors.append("E类说谎主题禁A式那不一样开脱")
+        if re.search(r"(?:这|那)不一样", all_text):
+            errors.append("E类说谎主题禁不一样开脱")
         food_hits = len(RE_LIE_FOOD_ITEM.findall(all_text))
         if food_hits >= 3:
             errors.append("E类说谎主题禁堆菜品名灌水")
@@ -136,6 +216,49 @@ def append_e_body_errors(story: dict, errors: list[str]) -> None:
                 errors.append(
                     "E类说谎禁妈妈否认孩子已引用的电话内容",
                 )
+                break
+        if sum(
+            1
+            for sp, ln in zip(speakers, lines)
+            if sp == "妈妈" and "善意" in ln
+        ) >= 3:
+            errors.append("E类说谎禁善意谎言复读（宜一套开脱）")
+        mom_na = sum(
+            1
+            for sp, ln in zip(speakers, lines)
+            if sp == "妈妈" and ln.startswith("那是")
+        )
+        if mom_na >= 3:
+            errors.append("E类说谎禁那是开脱连复读")
+        mom_waffle_n = sum(
+            1
+            for sp, ln in zip(speakers, lines)
+            if sp == "妈妈"
+            and (
+                ln.startswith("那是")
+                or RE_LIE_GOOD_WAFFLE.search(ln)
+                or "特殊" in ln
+            )
+        )
+        if mom_waffle_n >= 4:
+            errors.append("E类说谎禁开脱句连复读")
+        side_text = "".join(
+            ln for ln in lines if not RE_KID_SELF_APPLY.search(ln)
+        )
+        side_hits = len(RE_LIE_SIDE_PLOT.findall(side_text))
+        if side_hits >= 2:
+            errors.append(
+                "E类说谎禁叠爸爸/作业/鱼腥等支线，只盯电话吃饭这一谎",
+            )
+        for i, ln in enumerate(lines):
+            if RE_GARBAGE_FILLER.search(ln):
+                errors.append(f"E类对白[{i}]含无意义语气垫字")
+                break
+
+    if not lie_t:
+        for i, ln in enumerate(lines):
+            if RE_GARBAGE_FILLER.search(ln):
+                errors.append(f"E类对白[{i}]含无意义语气垫字")
                 break
 
     tail4 = "".join(lines[-4:])

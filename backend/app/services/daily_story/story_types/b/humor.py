@@ -21,7 +21,7 @@ RE_PLAN_FAIL = re.compile(
 RE_BLAME_MID = re.compile(r"都怪你|是你先|你答应|赖我|你还怪")
 _A_STYLE_TAIL = re.compile(r"那不一样|哪里不一样|你刚才说|你自己说")
 RE_MOM_PUNISH = re.compile(
-    r"站好|过来|罚|不许|今晚|检讨|说清楚|墙角|罚站|别想吃",
+    r"站好|过来|罚|不许|今晚|检讨|说清楚|墙角|罚站|别想吃|偷吃|拿的什么",
 )
 RE_DOOM = re.compile(r"完蛋|完了|糟糕|死定了|藏不住|露馅")
 RE_REACT_ALT = re.compile(
@@ -48,6 +48,18 @@ RE_LANDING_GROUND = re.compile(
     r"两个人都|妈都看见|一听就完|也完了|一起挨|一块儿完|咱俩全完|一起完蛋",
 )
 RE_STUBBORN_LAST = re.compile(r"哼|才不是|才不是我的主意")
+RE_SIGNAL_PACT = re.compile(
+    r"咳嗽两声|咳嗽一声|咳两声|咳一声|你就咳|咳我就|咳一声|暗号是|就咳嗽",
+)
+RE_SIGNAL_REF = re.compile(
+    r"暗号没用|暗号没|咳嗽没用|咳给谁|咳什么咳|没咳|暗号失效",
+)
+RE_COUGH_LINE = re.compile(
+    r"咳嗽|咳咳|咳太|咳给谁|咳什么|怎么咳|教我咳|假装咳嗽",
+)
+RE_VERBOSE_FREEZE = re.compile(
+    r"怎么办|被抓住了|全完了|这下惨了|露馅了.*怎么办",
+)
 _SIBLING = frozenset({"昭昭", "灿灿"})
 
 HUMOR_ISSUE_CAPS: tuple[tuple[str, int], ...] = (
@@ -66,7 +78,11 @@ HUMOR_ISSUE_CAPS: tuple[tuple[str, int], ...] = (
     ("B落槌定格句式重复", 4),
     ("B定格后多余对白", 12),
     ("B连锁也又还缺前句", 5),
+    ("B也字过多", 6),
     ("B写实流血不宜", 8),
+    ("B甩锅提暗号无前文约定", 8),
+    ("B咳嗽暗号拖沓", 10),
+    ("B定格啰嗦", 10),
 )
 
 
@@ -422,25 +438,66 @@ def _chain_anaphora_tag(line: str, prev2: str) -> str | None:
     return None
 
 
+def _anaphora_scan_bounds(
+    lines: list[str],
+    speakers: list[str] | None,
+) -> tuple[int, int]:
+    """正文扫描上界：结盟段 + 连锁段，止于妈妈惩罚令前（不含甩锅尾）。"""
+    n = len(lines)
+    end = n
+    if speakers and len(speakers) == n:
+        punish_i = _find_last_mom_punish(lines, speakers)
+        if punish_i is not None:
+            end = punish_i
+        else:
+            mom_i = next(
+                (i for i, sp in enumerate(speakers) if sp == "妈妈"),
+                n,
+            )
+            end = min(end, mom_i)
+    while end > 0 and RE_BLAME_MID.search(lines[end - 1]):
+        end -= 1
+    return 0, end
+
+
 def collect_chain_anaphora_issues(
     lines: list[str],
     speakers: list[str] | None,
 ) -> list[str]:
-    start, end = _chain_zone_bounds(lines, speakers)
+    start, end = _anaphora_scan_bounds(lines, speakers)
     if end - start < 2:
         return []
     for i in range(start, end):
-        prev2 = "".join(lines[max(start, i - 2) : i])
+        prev2 = "".join(lines[max(0, i - 2) : i])
         tag = _chain_anaphora_tag(lines[i], prev2)
         if tag:
-            return [f"B连锁也又还缺前句（{tag}）"]
+            zone = "结盟" if i < 6 else "连锁"
+            return [f"B连锁也又还缺前句（{tag}·{zone}）"]
+    return []
+
+
+def collect_ye_overuse_issues(
+    lines: list[str],
+    speakers: list[str] | None,
+    *,
+    max_ye: int = 2,
+) -> list[str]:
+    """全篇「也」宜少；结盟段尤忌凭空「我也…」。"""
+    _, end = _anaphora_scan_bounds(lines, speakers)
+    if end < 4:
+        return []
+    body = "".join(lines[:end])
+    ye_count = body.count("也")
+    if ye_count > max_ye:
+        return [f"B也字过多（{ye_count}处，宜≤{max_ye}）"]
     return []
 
 
 def chain_anaphora_revision_hint(tag: str) -> str:
     if tag == "我也缺前句动作":
         return (
-            "优先去掉「也」，如「我不敢用手捡」；"
+            "优先去掉「也」：结盟用「想吃！」勿写「我也想吃」；"
+            "连锁如「我不敢用手捡」；"
             "或前句先写「用手捡？」再写「我也不敢捡」。"
         )
     if tag == "又字缺前句动作":
@@ -463,6 +520,53 @@ def _longest_chain_run(lines: list[str], pattern: re.Pattern[str]) -> int:
         else:
             cur = 0
     return best
+
+
+def _freeze_line_verbose(line: str) -> bool:
+    text = (line or "").strip()
+    if len(text) > 14:
+        return True
+    if RE_VERBOSE_FREEZE.search(text):
+        return True
+    doom_hits = sum(
+        1 for m in ("完了", "完蛋", "惨了", "露馅", "倒霉") if m in text
+    )
+    return doom_hits >= 2
+
+
+def collect_signal_and_freeze_issues(
+    lines: list[str],
+    speakers: list[str] | None,
+) -> list[str]:
+    cons: list[str] = []
+    n = len(lines)
+    if n < 6:
+        return cons
+
+    alliance = "".join(lines[: min(6, n)])
+    punish_i = (
+        _find_last_mom_punish(lines, speakers)
+        if speakers and len(speakers) == n
+        else None
+    )
+    blame_end = punish_i if punish_i is not None else max(4, n - 2)
+    blame_zone = "".join(lines[4:blame_end]) if blame_end > 4 else ""
+    if RE_SIGNAL_REF.search(blame_zone) and not RE_SIGNAL_PACT.search(alliance):
+        cons.append("B甩锅提暗号无前文约定")
+
+    cough_n = sum(1 for ln in lines if RE_COUGH_LINE.search(ln))
+    if cough_n >= 3:
+        cons.append("B咳嗽暗号拖沓")
+
+    if not speakers or len(speakers) != n:
+        return cons
+    if punish_i is None:
+        return cons
+    for sp, ln in zip(speakers[punish_i + 1 :], lines[punish_i + 1 :]):
+        if sp in _SIBLING and _punish_freeze_react(ln) and _freeze_line_verbose(ln):
+            cons.append("B定格啰嗦")
+            break
+    return cons
 
 
 def collect_humor_issues(
@@ -521,6 +625,8 @@ def collect_humor_issues(
             cons.append("B走样连锁中甩锅打断")
 
     cons.extend(collect_chain_anaphora_issues(lines, speakers))
+    cons.extend(collect_ye_overuse_issues(lines, speakers))
+    cons.extend(collect_signal_and_freeze_issues(lines, speakers))
 
     mid_chain = body[1:] if len(body) > 1 else body
     chain_run = _longest_chain_run(mid_chain, RE_CHAIN_ACTION)
@@ -711,7 +817,30 @@ def humor_revision_hint(issue: str) -> str | None:
         tag = ""
         if "（" in issue and "）" in issue:
             tag = issue.split("（", 1)[-1].rstrip("）")
+            if "·" in tag:
+                tag = tag.split("·", 1)[0]
         return f"【好笑·B】{issue}。" + chain_anaphora_revision_hint(tag)
+    if "也字过多" in issue:
+        return (
+            f"【好笑·B】{issue}。"
+            "全篇少用「也」（宜≤2处）；结盟同意用「想吃！」「好！」；"
+            "并列意外直接说「蛋糕掉了一块」，勿写「蛋糕也掉了一块」。"
+        )
+    if "暗号无前文" in issue:
+        return (
+            f"【好笑·B】{issue}。"
+            "结盟没约定咳嗽/暗号就别写「暗号没用」；甩锅扣望风/下手/谁弄洒。"
+        )
+    if "咳嗽暗号拖沓" in issue:
+        return (
+            f"【好笑·B】{issue}。"
+            "勿执着咳嗽；没约定不写，约定了也全篇≤2句，删中段讨论怎么咳。"
+        )
+    if "定格啰嗦" in issue:
+        return (
+            f"【好笑·B】{issue}。"
+            "惩罚令后定格各一句短反应（被发现了/这下死定了），勿叠「怎么办全完了」。"
+        )
     if "越补越糟" in issue or "说明书" in issue:
         return (
             f"【好笑·B】{issue}。"

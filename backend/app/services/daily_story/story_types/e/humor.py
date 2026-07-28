@@ -18,14 +18,41 @@ RE_LIE_MOM_RULE = re.compile(r"不能说谎|不许说谎|要诚实|别说谎|老
 RE_LIE_WAFFLE = re.compile(
     r"不是敷衍|善意谎言|让奶奶放心|特殊情况|为了不让|不是骗",
 )
+RE_LIE_GOOD_WAFFLE = re.compile(r"善意")
 RE_SNACK_BLEED = re.compile(
-    r"那一口算不算|尝咸淡|咽下去|三大勺|勺上|吐回锅里|试吃|偷吃零",
+    r"那一口算不算|尝咸淡|咽下去|三大勺|勺上|吐回锅里|试吃|偷吃零|"
+    r"尝菜|调味|不算吃|偷吃零食|油光",
 )
 RE_LIE_FOOD_ITEM = re.compile(r"红烧|清蒸|排骨汤|白米饭|两碗汤|清蒸虾|红烧鱼")
 RE_MOM_DENY_QUOTE = re.compile(
     r"我说什么了|没说吃|挺好的呀|没骗|没说谎|就说我们挺好",
 )
 RE_KID_QUOTE_EAT = re.compile(r"吃了好多|吃撑|三碗|好几碗|咕咕叫")
+RE_LIE_PHYSICAL = re.compile(
+    r"空(?:的)?锅|锅是空|锅里.{0,6}(?:没|空)|饭锅|电饭锅|一粒米|"
+    r"碗(?:都|还|是|一个)?(?:是)?(?:干|没动|空)|没洗的碗|外卖盒|"
+    r"泡面桶|垃圾桶|肚子(?:还|都)?咕咕|盘子还扣着|米还在袋",
+)
+RE_KID_SELF_APPLY = re.compile(
+    r"那我(?:也|跟|对|明天|以后|回头|可以|能)|我也(?:这么|这样|能|可以)|"
+    r"我(?:明天|以后|回头)?跟(?:老师|奶奶|爷爷|外婆|同学)说|告老师|考砸了?也说",
+)
+# 妈妈开脱的各种花样说法（宽口径，只对妈妈的句子计数）
+RE_MOM_EXCUSE_ANY = re.compile(
+    r"善意|好心|随口|怕她|怕奶奶|为大人|大人.{0,4}(?:着想|需要)|工作需要|"
+    r"不算|为了不让|报喜|礼貌|着想|不想让.{0,4}(?:担心|操心)|"
+    r"不让.{0,3}(?:担心|操心)",
+)
+# 孩子自套逻辑后，妈妈须当场一口否掉（双标才成立）
+RE_MOM_FLAT_REFUSE = re.compile(
+    r"不行|不许|不可以|不准|当然不|想都别想|少来|你敢|哪能",
+)
+RE_LIE_SIDE_PLOT = re.compile(
+    r"爸爸|加班|打游戏|作业|写完|三页|鱼腥|倒了.*醋|唠叨|夸奶奶",
+)
+RE_GARBAGE_FILLER = re.compile(
+    r"[呵哈]{2,}|(?:呢|吗|啊|呀|啦|吧|嘛){2,}$|对不对呀真的",
+)
 RE_SNACK_TOPIC = re.compile(r"零食|尝菜|偷吃|饭前不吃|试吃|试菜")
 RE_SLEEP_TOPIC = re.compile(r"睡觉|九点|早睡|刷手机|卧床|被窝|挂钟")
 RE_WEAK_TASTE_EYE = re.compile(r"汤汁|舀汤|舔勺|喝了一口汤|偷尝了汤|尝了汤")
@@ -57,6 +84,14 @@ HUMOR_ISSUE_CAPS: tuple[tuple[str, int], ...] = (
     ("妈妈否认引话", 7),
     ("谎题堆菜品", 6),
     ("说谎先狡辩", 6),
+    ("善意谎言复读", 7),
+    ("那是开脱复读", 6),
+    ("开脱句连复读", 7),
+    ("说谎叠支线", 7),
+    ("说谎缺实物反证", 8),
+    ("说谎缺自套逻辑反杀", 8),
+    ("妈妈一句一个新借口", 8),
+    ("语气垫字", 8),
 )
 
 
@@ -141,8 +176,8 @@ def collect_humor_issues(
     )
     if lie_t and RE_SNACK_BLEED.search(all_text):
         cons.append("尝菜串场，不好笑")
-    if lie_t and "那不一样" in all_text:
-        cons.append("偏A式那不一样，不好笑")
+    if lie_t and re.search(r"(?:这|那)不一样", all_text):
+        cons.append("偏不一样开脱，不好笑")
     if lie_t and len(RE_LIE_FOOD_ITEM.findall(all_text)) >= 3:
         cons.append("谎题堆菜品，不好笑")
     if lie_t and speakers and len(speakers) == n:
@@ -172,6 +207,51 @@ def collect_humor_issues(
                 if speakers[i] == "妈妈" and RE_LIE_WAFFLE.search(lines[i]):
                     cons.append("说谎先狡辩，不好笑")
                     break
+        if sum(
+            1
+            for i, ln in enumerate(lines)
+            if speakers[i] == "妈妈" and "善意" in ln
+        ) >= 3:
+            cons.append("善意谎言复读，不好笑")
+        mom_na = sum(
+            1
+            for i, ln in enumerate(lines)
+            if speakers[i] == "妈妈" and ln.startswith("那是")
+        )
+        if mom_na >= 3:
+            cons.append("那是开脱复读，不好笑")
+        mom_waffle_n = sum(
+            1
+            for i, ln in enumerate(lines)
+            if speakers[i] == "妈妈"
+            and (
+                ln.startswith("那是")
+                or RE_LIE_GOOD_WAFFLE.search(ln)
+                or "特殊" in ln
+            )
+        )
+        if mom_waffle_n >= 3:
+            cons.append("开脱句连复读，不好笑")
+        side_text = "".join(
+            ln for ln in lines if not RE_KID_SELF_APPLY.search(ln)
+        )
+        if len(RE_LIE_SIDE_PLOT.findall(side_text)) >= 2:
+            cons.append("说谎叠支线，不好笑")
+        if not RE_LIE_PHYSICAL.search(all_text):
+            cons.append("说谎缺实物反证，不好笑")
+        if not RE_KID_SELF_APPLY.search("".join(lines[max(0, len(lines) - 6) :])):
+            cons.append("说谎缺自套逻辑反杀，不好笑")
+        if sum(
+            1
+            for sp, ln in zip(speakers or [], lines)
+            if sp == "妈妈" and RE_MOM_EXCUSE_ANY.search(ln)
+        ) >= 4:
+            cons.append("妈妈一句一个新借口，不好笑")
+
+    for ln in lines:
+        if RE_GARBAGE_FILLER.search(ln):
+            cons.append("语气垫字，不好笑")
+            break
 
     return cons
 

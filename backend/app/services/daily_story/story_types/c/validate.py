@@ -18,7 +18,7 @@ RE_A_WHERE_DIFF = re.compile(r"哪里不一样|都是听|大人也要听小孩|�
 RE_A_CITE_CLOSE = re.compile(
     r"(?:你刚才(?:明明|自己)?说|你自己(?:刚才)?说|你不是说|你刚说|你说的)",
 )
-# 末句须收完整（22 字/句限制下尤忌写到一半）
+# 末句须收完整（24 字/句限制下尤忌写到一半）
 RE_C_LINE_END_OK = re.compile(
     r"(?:[。！？…]|哼|行吧|随便|好吧|算了|认了|你赢|我先|你先|算了算)",
 )
@@ -103,7 +103,7 @@ def append_c_body_errors(story: dict, errors: list[str]) -> None:
     for ln in lines[-3:-1]:
         if _line_incomplete(ln):
             errors.append(
-                "C类收束对白须写完整（每句≤22字且以。！？或哼/行吧等收束，"
+                "C类收束对白须写完整（每句≤24字且以。！？或哼/行吧等收束，"
                 "禁止停在引号或未说完）",
             )
             return

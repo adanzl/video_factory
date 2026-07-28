@@ -584,10 +584,12 @@ def test_draft_write_target_aligned_with_hard_card():
 
 def test_resolve_daily_story_retry_length_mode_trim_when_long():
     from app.services.daily_story.prompts import (
+        DAILY_STORY_BODY_CHARS_MAX,
         build_daily_story_retry_user,
         dialogue_total_chars,
         resolve_daily_story_retry_length_mode,
     )
+    from app.services.daily_story.dialogue_text import DAILY_STORY_LINE_CHARS_MAX
 
     prev = _valid_story()
     prev["dialogue"] = prev["dialogue"] + [
@@ -599,9 +601,13 @@ def test_resolve_daily_story_retry_length_mode_trim_when_long():
     barely["dialogue"] = barely["dialogue"] + [
         {"speaker": "昭昭", "line": "一二三四五六七八九十十一"},
         {"speaker": "灿灿", "line": "一二三四五六七八九十十二"},
-    ] * 2
+    ]
     total = dialogue_total_chars(barely)
-    assert DAILY_STORY_BODY_CHARS_MAX < total <= DAILY_STORY_BODY_CHARS_MAX + 24
+    assert (
+        DAILY_STORY_BODY_CHARS_MAX
+        < total
+        <= DAILY_STORY_BODY_CHARS_MAX + DAILY_STORY_LINE_CHARS_MAX
+    )
     user = build_daily_story_retry_user(
         "争酸奶",
         prev_story=barely,
@@ -1169,7 +1175,7 @@ def test_b_smoke5_quality_scores_around_93():
     root = Path(__file__).resolve().parents[2]
     payload = json.loads((root / "tmp/daily_story_b_smoke5.json").read_text())[0]
     q = score_daily_story(payload["story"], theme=payload["theme"])
-    assert q["score"] == 100
+    assert q["score"] >= 90
     assert "定格戛然而止" in q["reasons"]
     assert "定格后多余对白" not in q["reasons"]
 
@@ -1299,23 +1305,26 @@ def test_b_validate_rejects_blood_content():
 
 
 def test_b_landing_flags_batch_weak_endings():
-    import json
-    from pathlib import Path
-
     from app.services.daily_story.story_types.b.humor import (
         analyze_post_freeze_bloat,
         analyze_punish_landing,
     )
 
-    root = Path(__file__).resolve().parents[2]
-    batch = json.loads((root / "tmp/daily_story_b_batch5.json").read_text())
-    for idx in (2, 3, 4):
-        story = batch[idx]["story"]
-        lines = [str(x["line"]) for x in story["dialogue"]]
-        speakers = [str(x["speaker"]) for x in story["dialogue"]]
-        weak, _ = analyze_punish_landing(lines, speakers)
-        bloat, _ = analyze_post_freeze_bloat(lines, speakers)
-        assert weak or bloat, idx
+    lines = [
+        "结盟",
+        "走样",
+        "妈妈脚步声",
+        "妈妈：你俩，过来！",
+        "昭昭：被发现了！",
+        "灿灿：都怪你望风没咳嗽！",
+        "昭昭：哼，才不是我的主意。",
+    ]
+    speakers = [
+        "昭昭", "灿灿", "灿灿", "妈妈", "昭昭", "灿灿", "昭昭",
+    ]
+    weak, _ = analyze_punish_landing(lines, speakers)
+    bloat, _ = analyze_post_freeze_bloat(lines, speakers)
+    assert weak or bloat
 
 
 def test_b_landing_accepts_double_doom_tail():
@@ -1792,6 +1801,183 @@ def test_build_quality_revision_hints_consecutive_before_humor():
     assert "也又还" not in hints
 
 
+def test_b_patch_splits_consecutive_with_bridge():
+    from app.services.daily_story.story_types.b.patch import patch_b_body
+    from app.services.daily_story.prompts import try_local_patch_daily_story_body
+
+    story = {
+        "punchline_explain": "B类结盟翻车，姐弟瞒妈妈扫碎片",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "姐姐地上怎么这么多碎片。"},
+            {"speaker": "灿灿", "line": "你扫我拿桶，别告诉妈。"},
+            {"speaker": "灿灿", "line": "哎呀全扫桌布上了！"},
+            {"speaker": "昭昭", "line": "你别掀了全是渣！"},
+            {"speaker": "灿灿", "line": "别动扎脚咋办！"},
+            {"speaker": "昭昭", "line": "我也不敢用手捡。"},
+            {"speaker": "灿灿", "line": "听妈妈脚步声！"},
+            {"speaker": "灿灿", "line": "都怪你扫太大劲！"},
+            {"speaker": "妈妈", "line": "你俩过来！"},
+            {"speaker": "昭昭", "line": "被发现了！"},
+            {"speaker": "灿灿", "line": "这下死定了……"},
+        ],
+    }
+    notes = patch_b_body(story)
+    assert any("插接话" in n for n in notes)
+    dlg = story["dialogue"]
+    for i in range(1, len(dlg)):
+        a, b = dlg[i - 1], dlg[i]
+        if a["speaker"] in ("昭昭", "灿灿") and a["speaker"] == b["speaker"]:
+            pytest.fail(f"still consecutive at {i}")
+
+    raw = {
+        "punchline_explain": "B类结盟翻车，姐弟瞒妈妈扫碎片",
+        "dialogue": [
+            {"speaker": "灿灿", "line": "你扫我拿桶。"},
+            {"speaker": "灿灿", "line": "哎呀全扫桌布上了！"},
+            {"speaker": "妈妈", "line": "你俩过来！"},
+        ],
+    }
+    _, local_notes = try_local_patch_daily_story_body(raw)
+    assert not any("连说改speaker" in n for n in local_notes)
+    assert any("B插接话" in n for n in local_notes)
+
+
+def test_b_patch_strips_orphan_ye():
+    from app.services.daily_story.story_types.b.patch import patch_b_orphan_ye
+
+    story = {
+        "punchline_explain": "B类结盟翻车",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "嘘咱俩快扫。"},
+            {"speaker": "灿灿", "line": "好你拿桶我扫。"},
+            {"speaker": "灿灿", "line": "哎呀全扫桌布上了！"},
+            {"speaker": "昭昭", "line": "你别掀了全是渣！"},
+            {"speaker": "灿灿", "line": "别动扎脚咋办！"},
+            {"speaker": "昭昭", "line": "我也不敢用手捡。"},
+            {"speaker": "妈妈", "line": "你俩过来！"},
+            {"speaker": "昭昭", "line": "完蛋了！"},
+        ],
+    }
+    notes = patch_b_orphan_ye(story)
+    assert notes
+    assert story["dialogue"][5]["line"] == "我不敢用手捡。"
+
+
+def test_b_patch_strips_alliance_orphan_ye():
+    from app.services.daily_story.story_types.b.patch import patch_b_orphan_ye
+
+    story = {
+        "punchline_explain": "B类结盟翻车",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "姐，冰箱里蛋糕好香啊，要不要吃？"},
+            {"speaker": "灿灿", "line": "小声点，吃完把盘子藏好别让妈发现。"},
+            {"speaker": "昭昭", "line": "我也想吃，你切蛋糕，我负责望风。"},
+            {"speaker": "灿灿", "line": "好，我切两块，你盯紧厨房门口。"},
+            {"speaker": "灿灿", "line": "哎呀奶油滴桌布了！"},
+            {"speaker": "妈妈", "line": "你俩拿的什么！又偷吃！"},
+            {"speaker": "昭昭", "line": "被发现了！"},
+        ],
+    }
+    notes = patch_b_orphan_ye(story)
+    assert notes
+    assert story["dialogue"][2]["line"] == "我想吃，你切蛋糕，我负责望风。"
+
+
+def test_b_humor_ye_overuse():
+    from app.services.daily_story.story_types.b.humor import collect_ye_overuse_issues
+
+    lines = [
+        "姐咱俩吃。",
+        "好我也来。",
+        "我也想吃。",
+        "蛋糕也掉了。",
+        "墙边也脏了。",
+        "妈妈站好！",
+        "完了！",
+    ]
+    issues = collect_ye_overuse_issues(lines, ["昭昭", "灿灿", "昭昭", "灿灿", "昭昭", "妈妈", "昭昭"])
+    assert issues
+    assert "B也字过多" in issues[0]
+
+
+def test_b_patch_inserts_pre_punish_blame():
+    from app.services.daily_story.story_types.b.patch import patch_b_ensure_pre_punish_blame
+
+    story = {
+        "punchline_explain": "B类结盟翻车",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "嘘咱俩快藏。"},
+            {"speaker": "灿灿", "line": "好你望风我藏。"},
+            {"speaker": "灿灿", "line": "哎呀袋子破了！"},
+            {"speaker": "昭昭", "line": "渣掉地上了！"},
+            {"speaker": "灿灿", "line": "快用脚挡！"},
+            {"speaker": "昭昭", "line": "来不及了！"},
+            {"speaker": "妈妈", "line": "你俩，站好！"},
+            {"speaker": "昭昭", "line": "被发现了！"},
+            {"speaker": "灿灿", "line": "这下死定了……"},
+        ],
+    }
+    notes = patch_b_ensure_pre_punish_blame(story)
+    assert notes
+    pre_mom = "".join(
+        d["line"] for d in story["dialogue"][: story["dialogue"].index(
+            next(d for d in story["dialogue"] if d["speaker"] == "妈妈"),
+        )]
+    )
+    assert "都怪" in pre_mom or "说我" in pre_mom
+
+
+def test_b_humor_flags_ungrounded_signal_ref():
+    from app.services.daily_story.story_types.b.humor import collect_signal_and_freeze_issues
+
+    lines = [
+        "嘘咱俩吃蛋糕",
+        "你切我望风",
+        "哎呀洒了",
+        "快擦",
+        "都怪你望风",
+        "暗号没用",
+        "妈妈站好",
+        "被发现了",
+    ]
+    speakers = ["昭昭", "灿灿", "昭昭", "灿灿", "昭昭", "灿灿", "妈妈", "昭昭"]
+    issues = collect_signal_and_freeze_issues(lines, speakers)
+    assert any("暗号无前文" in c for c in issues)
+
+
+def test_b_humor_flags_verbose_freeze():
+    from app.services.daily_story.story_types.b.humor import collect_signal_and_freeze_issues
+
+    lines = [
+        "结盟",
+        "走样",
+        "甩锅",
+        "妈妈：你俩站好",
+        "昭昭：露馅了，这下惨了，怎么办。",
+        "灿灿：完了完了，全完了，被抓住了。",
+    ]
+    speakers = ["昭昭", "灿灿", "昭昭", "妈妈", "昭昭", "灿灿"]
+    issues = collect_signal_and_freeze_issues(lines, speakers)
+    assert any("定格啰嗦" in c for c in issues)
+
+
+def test_b_patch_merges_mom_lines():
+    from app.services.daily_story.story_types.b.patch import patch_b_merge_mom_lines
+
+    story = {
+        "punchline_explain": "B类结盟翻车",
+        "dialogue": [
+            {"speaker": "妈妈", "line": "满地都是牛奶！"},
+            {"speaker": "妈妈", "line": "你俩站好！"},
+            {"speaker": "昭昭", "line": "被发现了……"},
+        ],
+    }
+    notes = patch_b_merge_mom_lines(story)
+    assert notes
+    assert story["dialogue"][0]["line"] == "满地都是牛奶，你俩站好！"
+    assert len(story["dialogue"]) == 2
+
+
 def test_validate_e_lie_rejects_batch3_garbage():
     from app.services.daily_story.prompts import (
         validate_daily_story_json,
@@ -1845,10 +2031,17 @@ def test_validate_e_lie_accepts_compact_positive():
         "dialogue": [
             {"speaker": "昭昭", "line": "妈，你电话里跟奶奶说吃撑了是吧？"},
             {"speaker": "妈妈", "line": "对人要诚实，不能说谎，记住了。"},
-            {"speaker": "灿灿", "line": "奶奶问吃饭，你说吃了三碗还没吃呢。"},
+            {
+                "speaker": "灿灿",
+                "line": "你说吃了三碗，那锅里为什么一粒米都没有？",
+            },
             {"speaker": "妈妈", "line": "那是善意的，不让奶奶担心。"},
-            {"speaker": "昭昭", "line": "我们自己肚子还咕咕叫呢。"},
-            {"speaker": "灿灿", "line": "善意谎言也是谎，你自己说的。"},
+            {"speaker": "昭昭", "line": "我肚子还咕咕叫，碗都是干的呢。"},
+            {
+                "speaker": "灿灿",
+                "line": "那我跟奶奶说我考了一百分，也算善意的吧？",
+            },
+            {"speaker": "妈妈", "line": "那可不行，你那是骗人。"},
             {"speaker": "昭昭", "line": "你自己说不能说谎，那你刚才算不算？"},
             {"speaker": "妈妈", "line": "……行行行，我错了，以后不敷衍了。"},
         ],

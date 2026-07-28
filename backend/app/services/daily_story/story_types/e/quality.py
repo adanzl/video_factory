@@ -18,8 +18,10 @@ RE_LOOP = e_humor.RE_LOOP
 RE_MOM_SOFT = e_humor.RE_MOM_SOFT
 RE_CATCH = re.compile(
     r"嘴角|勺子|勺上|腮帮|手机|还在刷|尝了|咽|敷衍|撒谎|说瞎话|三大勺|"
-    r"菜叶|油渍|油花|试吃|试菜",
+    r"菜叶|油渍|油花|试吃|试菜|"
+    r"空(?:的)?锅|锅是空|饭锅|碗还干|碗是干|外卖盒|泡面桶|肚子(?:还)?咕咕",
 )
+RE_KID_SELF_APPLY = e_humor.RE_KID_SELF_APPLY
 
 
 def score_scene_beat(
@@ -72,6 +74,10 @@ def score_punchline(
         bonus += 3
         if "破功" not in "".join(details):
             details.append("妈妈破功收束")
+
+    if RE_KID_SELF_APPLY.search(late) and RE_MOM_SOFT.search(last):
+        bonus += 5
+        details.append("自套逻辑反杀")
 
     return bonus, details
 

@@ -332,6 +332,7 @@ def patch_e_compress_body(story: dict) -> list[str]:
 _RE_PATCH_GARBAGE = re.compile(
     r"，(?:还在亮着呢?|你看呢?|明明呢?|地上也见|刚才那样|明明这样)$",
 )
+_RE_FILLER_TAIL = re.compile(r"(?:[呵哈]{2,}|(?:呢|吗|啊|呀|啦|吧|嘛){2,})$")
 
 
 def patch_e_strip_patch_garbage(story: dict) -> list[str]:
@@ -350,6 +351,7 @@ def patch_e_strip_patch_garbage(story: dict) -> list[str]:
         # 叠词残留：「，你看，明明」
         new_line = re.sub(r"，你看，明明呢?$", "", new_line)
         new_line = re.sub(r"，明明，还在亮着呢?$", "", new_line)
+        new_line = _RE_FILLER_TAIL.sub("", new_line)
         if new_line != line:
             item["line"] = new_line
             notes.append(f"E剥补字残[{i}]")
