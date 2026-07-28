@@ -30,7 +30,8 @@ from app.utils.job_info import CONTENT_STYLE_DAILY_STORY
 
 logger = logging.getLogger(__name__)
 
-_RETRYABLE = frozenset({500, 502, 503, 504})
+# 含 Cloudflare 源站错误 52x（如 520 unknown error）
+_RETRYABLE = frozenset({500, 502, 503, 504, 520, 521, 522, 523, 524, 525, 526, 527})
 # 有备用 Key 时，5xx 同 Key 只打 1 次，失败立刻切
 _FAILOVER_HTTP_RETRIES = 1
 # 同一文生图提示词的质检重试次数；耗尽后由上层重生提示词再开一轮
@@ -41,6 +42,7 @@ _VERIFY_RETRY_DELAY = 10
 _ITEM_LINE_RE = re.compile(r"^项\s*(\d+)\s*[:：]\s*(.*)$")
 _YES_HEAD_RE = re.compile(r"^[「【\[]?是([，,。．\s的」】\]]|$)")
 _NO_HEAD_RE = re.compile(r"^[「【\[]?(否|不是)([，,。．\s」】\]]|$)")
+_HTML_TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.I | re.S)
 
 # 日常故事固定角色顺序；姐弟未发言也可同框
 _DAILY_SIBLINGS = ("昭昭", "灿灿")
@@ -87,12 +89,19 @@ def _to_agnes_size(size: str) -> str:
 
 
 def _resp_body_summary(resp: requests.Response, *, limit: int = 500) -> str:
-    """截断响应体，便于日志排查（不含密钥）。"""
+    """截断响应体，便于日志排查（不含密钥）。HTML 错误页只保留 title。"""
     try:
         body = resp.json()
         text = str(body)
     except Exception:
-        text = (resp.text or "").strip() or "<empty>"
+        raw = (resp.text or "").strip() or "<empty>"
+        head = raw[:300].lower()
+        if head.startswith("<!doctype") or "<html" in head:
+            m = _HTML_TITLE_RE.search(raw)
+            title = " ".join(m.group(1).split()) if m else ""
+            text = f"<html: {title}>" if title else f"<html status={resp.status_code}>"
+        else:
+            text = raw
     text = " ".join(text.split())
     if len(text) > limit:
         return text[:limit] + "…"
@@ -225,14 +234,14 @@ class AgnesImageProvider(ImageProvider):
                     try:
                         body = resp.json()
                     except Exception:
-                        body = resp.text[:500]
+                        body = _resp_body_summary(resp)
                     raise_if_agnes_quota(status_code=resp.status_code, body=body)
                 if not resp.ok:
                     body = None
                     try:
                         body = resp.json()
                     except Exception:
-                        body = resp.text[:500]
+                        body = _resp_body_summary(resp)
                     raise_if_agnes_quota(status_code=resp.status_code, body=body)
                     logger.warning(
                         "%sagnes api %s %s in %.1fs: %s",

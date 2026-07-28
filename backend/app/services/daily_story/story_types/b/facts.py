@@ -19,6 +19,9 @@ RE_SHARE = re.compile(
 RE_TAKE_N = re.compile(
     r"(?:拿|抓|拆了?|吃了?)([半一二三四五六七八两三四五六\d]+)(?:块|份|个|片)",
 )
+RE_EXECUTION_ONLY_CORE = re.compile(
+    r"争谁负责|谁负责望风|谁望风谁动手|谁望风|谁动手|谁下手|谁负责藏|谁来望风",
+)
 
 
 def _dialogue_blob(story: dict) -> tuple[list[str], list[str], str]:
@@ -99,6 +102,10 @@ def collect_fact_issues(story: dict) -> list[str]:
     lines, speakers, full = _dialogue_blob(story)
     if len(lines) < 8:
         return issues
+    core = str(story.get("conflict_core") or "").strip()
+
+    if core and RE_EXECUTION_ONLY_CORE.search(core):
+        issues.append("B conflict_core 偏局部分工，未写清联手瞒妈妈做什么")
 
     head = "".join(lines[:10])
     roles = RE_PACT_ROLE.findall(head)
@@ -149,6 +156,12 @@ def fact_revision_hint(issue: str) -> str | None:
         return (
             f"【事实·B】{issue}。"
             "约定几人几份后，多拿须写在走样连锁里，勿前后改口无交代。"
+        )
+    if "conflict_core" in issue:
+        return (
+            f"【事实·B】{issue}。"
+            "把 conflict_core 改成「姐弟联手瞒妈妈做什么，执行翻车露馅」，"
+            "不要只写谁负责望风/谁动手。"
         )
     return (
         f"【事实·B】{issue}。"

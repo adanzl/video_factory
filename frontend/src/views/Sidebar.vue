@@ -1,7 +1,12 @@
 <template>
   <el-aside :width="isCollapse ? '64px' : '200px'" class="transition-all duration-300">
     <el-scrollbar>
-      <el-menu :default-active="route.path" :collapse="isCollapse" unique-opened router>
+      <el-menu
+        :default-active="route.path"
+        :collapse="isCollapse"
+        unique-opened
+        @select="onMenuSelect"
+      >
         <el-menu-item index="/home">
           <el-icon><HomeFilled /></el-icon>
           <template #title>首页</template>
@@ -45,15 +50,32 @@
 
 <script setup lang="ts">
 import { ref } from "vue";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { HomeFilled, List, Document, Setting, Expand, Fold, VideoCamera, Search, Headset, ChatDotRound } from "@element-plus/icons-vue";
+import { useAppStore } from "@/stores/app";
 
 const emit = defineEmits<{
   collapseChange: [collapsed: boolean];
 }>();
 
 const route = useRoute();
+const router = useRouter();
+const appStore = useAppStore();
 const isCollapse = ref(false);
+
+const onMenuSelect = async (index: string) => {
+  if (!index || index === "#") {
+    return;
+  }
+  if (route.path === index) {
+    if (route.fullPath !== index) {
+      await router.push(index);
+    }
+    appStore.requestPageRefresh();
+    return;
+  }
+  await router.push(index);
+};
 
 const toggleCollapse = () => {
   isCollapse.value = !isCollapse.value;

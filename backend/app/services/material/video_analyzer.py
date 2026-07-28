@@ -24,7 +24,8 @@ from app.services.media.ffmpeg_utils import extract_frames_interval, probe_durat
 
 logger = logging.getLogger(__name__)
 
-_RETRYABLE_HTTP = frozenset({500, 502, 503, 504})
+# 含 Cloudflare 源站错误 52x（如 520 unknown error）
+_RETRYABLE_HTTP = frozenset({500, 502, 503, 504, 520, 521, 522, 523, 524, 525, 526, 527})
 
 
 class VideoAnalyzer:

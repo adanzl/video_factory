@@ -129,6 +129,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from "vue";
+import { usePageRefresh } from "@/stores/app";
 import { Refresh } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 
@@ -321,4 +322,5 @@ const handleDeleteSelected = async () => {
 onMounted(() => {
   void fetchMaterials();
 });
+usePageRefresh(fetchMaterials);
 </script>
