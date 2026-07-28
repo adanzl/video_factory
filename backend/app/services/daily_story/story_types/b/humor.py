@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import re
 
-from app.services.daily_story.story_types.quality import RE_BOOMERANG_RULE
-
 RE_ALLY = re.compile(
     r"一起|咱俩|别告诉|瞒着|瞒妈|约定|联手|暗号|分工|你望风|你放风|"
     r"放风|望风|说好了|盯门口|你盯|手快|别出声|一人一半|拆包|拆包装",
@@ -43,8 +41,10 @@ RE_EMPTY_ARGUE = re.compile(
 )
 RE_LANDING_GROUND = re.compile(
     r"藏不住|傻眼|愣住|愣住了|低头|不敢动|僵住|对视|一起完|咱俩完|"
-    r"全完了|两个人都|妈都看见|一听就完",
+    r"两个人都|妈都看见|一听就完|也完了|一起挨|一块儿完|咱俩全完|一起完蛋",
 )
+RE_STUBBORN_LAST = re.compile(r"哼|才不是|才不是我的主意")
+_SIBLING = frozenset({"昭昭", "灿灿"})
 
 HUMOR_ISSUE_CAPS: tuple[tuple[str, int], ...] = (
     ("偏A式末四拍", 6),
@@ -64,51 +64,113 @@ HUMOR_ISSUE_CAPS: tuple[tuple[str, int], ...] = (
 )
 
 
+def _find_last_mom_punish(
+    lines: list[str],
+    speakers: list[str],
+    *,
+    tail_window: int = 12,
+) -> int | None:
+    n = len(lines)
+    for i in range(n - 1, max(-1, n - tail_window), -1):
+        if speakers[i] == "妈妈" and RE_MOM_PUNISH.search(lines[i]):
+            return i
+    return None
+
+
+def _trim_stubborn_tail(
+    post_lines: list[str],
+    post_speakers: list[str],
+) -> tuple[list[str], list[str]]:
+    if (
+        post_lines
+        and post_speakers
+        and post_speakers[-1] in _SIBLING
+        and RE_STUBBORN_LAST.search(post_lines[-1])
+    ):
+        return post_lines[:-1], post_speakers[:-1]
+    return post_lines, post_speakers
+
+
+def analyze_punish_landing(
+    lines: list[str],
+    speakers: list[str] | None,
+) -> tuple[bool, str]:
+    """返回 (是否缺底, 细分标签)。认栽底 = 惩罚令后、互甩前的同框定格一拍。"""
+    n = len(lines)
+    if n < 6 or not speakers or len(speakers) != n:
+        return False, ""
+
+    punish_i = _find_last_mom_punish(lines, speakers)
+    if punish_i is None:
+        return False, ""
+
+    post_lines = lines[punish_i + 1 :]
+    post_speakers = speakers[punish_i + 1 :]
+    if not post_lines:
+        return True, "惩罚令后无姐弟反应"
+
+    body_lines, body_speakers = _trim_stubborn_tail(post_lines, post_speakers)
+    post_text = "".join(body_lines)
+    post_doom_speakers = {
+        sp
+        for sp, ln in zip(body_speakers, body_lines)
+        if sp in _SIBLING and RE_DOOM.search(ln)
+    }
+    post_blame_n = sum(
+        1
+        for sp, ln in zip(body_speakers, body_lines)
+        if sp in _SIBLING and RE_BLAME.search(ln)
+    )
+    if RE_LANDING_GROUND.search(post_text) or len(post_doom_speakers) >= 2:
+        if post_blame_n > 2:
+            return True, "认栽后甩锅抢拍过长"
+        return False, ""
+
+    if not post_doom_speakers:
+        pre_doom = any(
+            RE_DOOM.search(ln)
+            for ln in lines[max(0, punish_i - 4) : punish_i]
+        )
+        if pre_doom and post_blame_n > 0:
+            return True, "完蛋写在惩罚前缺落槌底"
+        if post_blame_n > 0:
+            return True, "惩罚后无完蛋直接甩锅"
+        if pre_doom:
+            return True, "完蛋写在惩罚前缺落槌底"
+        return True, "惩罚后缺认栽反应"
+
+    return True, "仅单人认栽缺同框底"
+
+
 def is_weak_punish_landing(
     lines: list[str],
     speakers: list[str] | None,
 ) -> bool:
-    """惩罚令后只有单人完蛋、缺同框认栽底，立刻互甩。"""
-    n = len(lines)
-    if n < 6 or not speakers or len(speakers) != n:
-        return False
+    return analyze_punish_landing(lines, speakers)[0]
 
-    punish_i: int | None = None
-    for i in range(n - 1, max(-1, n - 10), -1):
-        if speakers[i] == "妈妈" and RE_MOM_PUNISH.search(lines[i]):
-            punish_i = i
-            break
-    if punish_i is None:
-        return False
 
-    seg_lines = lines[punish_i + 1 :]
-    seg_speakers = speakers[punish_i + 1 :]
-    if not seg_lines:
-        return True
-
-    seg_text = "".join(seg_lines)
-    if not RE_DOOM.search(seg_text):
-        return False
-    if RE_LANDING_GROUND.search(seg_text):
-        return False
-
-    doom_speakers = {
-        sp
-        for sp, ln in zip(seg_speakers, seg_lines)
-        if sp in ("昭昭", "灿灿") and RE_DOOM.search(ln)
-    }
-    if len(doom_speakers) >= 2:
-        return False
-
-    for j, (sp, ln) in enumerate(zip(seg_speakers, seg_lines)):
-        if sp not in ("昭昭", "灿灿") or not RE_DOOM.search(ln):
-            continue
-        if j + 1 < len(seg_lines):
-            nsp, nln = seg_speakers[j + 1], seg_lines[j + 1]
-            if nsp in ("昭昭", "灿灿") and nsp != sp and RE_BLAME.search(nln):
-                return True
-        return True
-    return False
+def landing_revision_hint(tag: str) -> str:
+    if tag == "惩罚后无完蛋直接甩锅":
+        return (
+            "妈妈惩罚令后先写姐弟认栽（完蛋了/咱俩完了/低头不敢动），"
+            "再各甩 1 句；禁止站好后下一句就「都怪你」。"
+        )
+    if tag == "完蛋写在惩罚前缺落槌底":
+        return (
+            "露馅慌张可说「完了」，但惩罚令后须再写一拍认栽底"
+            "（俩人一起完蛋或傻眼对视），再甩锅。"
+        )
+    if tag == "仅单人认栽缺同框底" or tag == "单人完蛋后立刻甩锅":
+        return (
+            "惩罚令后须俩人都有认栽反应：一人完蛋→另一人也完了/咱俩完了，"
+            "或俩人低头不敢动/傻眼对视；勿仅一人完蛋后另一人直接甩锅。"
+        )
+    if tag == "认栽后甩锅抢拍过长":
+        return "认栽底后互甩各 1 句即到末句哼，勿连甩 2–3 句。"
+    return (
+        "惩罚令后补同框认栽底：俩人一起完蛋/低头不敢动/傻眼对视，"
+        "再各甩 1 句→哼。"
+    )
 
 
 def _longest_chain_run(lines: list[str], pattern: re.Pattern[str]) -> int:
@@ -127,6 +189,8 @@ def collect_humor_issues(
     lines: list[str],
     speakers: list[str] | None,
 ) -> list[str]:
+    from app.services.daily_story.story_types.quality import RE_BOOMERANG_RULE
+
     cons: list[str] = []
     n = len(lines)
     if n < 6:
@@ -226,7 +290,11 @@ def collect_humor_issues(
             cons.append("B收束缺权威落槌")
 
     if is_weak_punish_landing(lines, speakers):
-        cons.append("B收束惩罚缺底")
+        _, landing_tag = analyze_punish_landing(lines, speakers)
+        cons.append(
+            f"B收束惩罚缺底"
+            + (f"（{landing_tag}）" if landing_tag else ""),
+        )
 
     return cons
 
@@ -267,7 +335,7 @@ def score_funniness_tail(
         points += 2
         pros.append("惩罚落槌好笑")
 
-    if RE_BLAME.search(late4_text) and RE_DOOM.search(late4_text):
+    if RE_BLAME.search(late4_text) and RE_DOOM.search(late4_text) and not weak_landing:
         points += 2
         pros.append("完蛋互甩好笑")
 
@@ -325,10 +393,12 @@ def humor_revision_hint(issue: str) -> str | None:
             "如滑了→鞋底蹭→更脏→踩袋响→油印；好笑在补救越帮越倒忙。"
         )
     if "权威落槌" in issue or "惩罚缺底" in issue:
+        tag = ""
+        if "（" in issue and "）" in issue:
+            tag = issue.split("（", 1)[-1].rstrip("）")
         return (
             f"【好笑·B】{issue}。"
-            "妈妈惩罚令后先写同框认栽底（俩人一起完/低头不敢动/傻眼对视），"
-            "再各甩 1 句→哼；勿单人完蛋后立刻都怪你。"
+            + landing_revision_hint(tag)
         )
     if "分工" in issue:
         return (

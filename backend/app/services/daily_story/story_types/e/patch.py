@@ -21,8 +21,9 @@ _A_TAIL = re.compile(r"哪里不一样|都是听|那不一样")
 
 
 def _is_e(story: dict) -> bool:
-    punch = str(story.get("punchline_explain") or "")
-    return parse_story_type_code(punchline=punch) == "E"
+    from app.services.daily_story.story_types import resolve_story_type_code
+
+    return resolve_story_type_code(story) == "E"
 
 
 def _lines(dialogue: list) -> list[str]:
@@ -261,15 +262,84 @@ def patch_e_trim_mom_lecture(story: dict) -> list[str]:
     return notes
 
 
+def patch_e_compress_body(story: dict) -> list[str]:
+    """正文超过 18 句时，从中段删同型揭穿句（保留立论/闭环/破功）。"""
+    notes: list[str] = []
+    if not _is_e(story):
+        return notes
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) <= 16:
+        return notes
+
+    while len(dialogue) > 16:
+        speakers = _speakers(dialogue)
+        lines = _lines(dialogue)
+        n = len(dialogue)
+        loop_i = next(
+            (i for i, ln in enumerate(lines) if RE_LOOP.search(ln)),
+            n - 2,
+        )
+        waffle_i = next(
+            (
+                i
+                for i, ln in enumerate(lines)
+                if speakers[i] == "妈妈" and RE_MOM_WAFFLE.search(ln)
+            ),
+            None,
+        )
+        mom_rule_i = next(
+            (
+                i
+                for i, ln in enumerate(lines[: max(3, n // 3)])
+                if speakers[i] == "妈妈" and RE_MOM_RULE.search(ln)
+            ),
+            0,
+        )
+        protected = {
+            0, 1, 2, 3,
+            n - 1, n - 2, n - 3,
+            loop_i, mom_rule_i,
+        }
+        if waffle_i is not None:
+            protected.add(waffle_i)
+
+        drop_i: int | None = None
+        for i in range(n - 4, 3, -1):
+            if i in protected:
+                continue
+            if speakers[i] in ("昭昭", "灿灿"):
+                drop_i = i
+                break
+        if drop_i is None:
+            for i in range(n - 4, 3, -1):
+                if i in protected:
+                    continue
+                if speakers[i] == "妈妈" and i != mom_rule_i and i != n - 1:
+                    drop_i = i
+                    break
+        if drop_i is None:
+            for i in range(n - 4, 3, -1):
+                if i not in protected:
+                    drop_i = i
+                    break
+        if drop_i is None:
+            break
+        dialogue.pop(drop_i)
+        notes.append(f"E删注水[{drop_i}]")
+    return notes
+
+
 def patch_e_body(story: dict) -> list[str]:
     notes: list[str] = []
     notes.extend(patch_e_strip_a_close(story))
+    notes.extend(patch_e_compress_body(story))
     notes.extend(patch_e_ensure_mom_rule(story))
     notes.extend(patch_e_ensure_kid_ask(story))
     notes.extend(patch_e_ensure_waffle(story))
     notes.extend(patch_e_ensure_loop(story))
     notes.extend(patch_e_closing_mom_soft(story))
     notes.extend(patch_e_trim_mom_lecture(story))
+    notes.extend(patch_e_compress_body(story))
     notes.extend(patch_e_strip_a_close(story))
     notes.extend(patch_e_ensure_loop(story))
     notes.extend(patch_e_closing_mom_soft(story))

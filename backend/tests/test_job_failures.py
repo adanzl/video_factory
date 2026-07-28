@@ -19,7 +19,7 @@ def test_is_expected_job_failure_agnes_quota():
 
 def test_is_expected_job_failure_agnes_i2v():
     assert is_expected_job_failure(
-        AgnesI2VError("agnes request failed after 2 retries: https://apihub.agnes-ai.com/v1/videos")
+        AgnesI2VError("agnes request failed after 2 retries: https://apihub.agnes-ai.cn/v1/videos")
     )
 
 
