@@ -15,6 +15,7 @@ from app.services.daily_story.prompts import (
     build_daily_story_prompts,
     build_daily_story_theme_prompts,
     stitch_daily_story_opening,
+    sync_discovery_opening_from_dialogue,
     validate_daily_story_json,
     validate_daily_story_opening,
 )
@@ -142,7 +143,7 @@ def _apply_c_type_closing(dialogue: list[dict]) -> None:
 
 
 def _valid_story(*, line: str | None = None, n: int = 17) -> dict:
-    # 默认 18*17=306，过正文硬卡 280–340
+    # 默认 18*17=306，过正文硬卡 280–370
     if line is None:
         line = "一二三四五六七八九十一二三四五六七八"
     assert len(line) <= DAILY_STORY_LINE_CHARS_MAX
@@ -362,7 +363,7 @@ def test_daily_story_retry_uses_validation_char_limits_not_write_pad():
     retry_user = build_daily_story_retry_user(
         "争酸奶",
         prev_story=prev,
-        errors="正文总字数须≤340",
+        errors=f"正文总字数须≤{DAILY_STORY_BODY_CHARS_MAX}",
         phase="body",
     )
     assert "字数硬卡" in retry_user
@@ -774,6 +775,39 @@ def test_stitch_daily_story_opening_drops_same_speaker_junction():
     validate_daily_story_json(story, phase="full")
 
 
+def test_sync_discovery_opening_from_dialogue_aligns_prefix():
+    story = {
+        "dialogue": [
+            {"speaker": "昭昭", "line": "鞋带又松了，刚系好走两步就散"},
+            {"speaker": "灿灿", "line": "你就不能系紧点吗？别老让我说"},
+            {"speaker": "昭昭", "line": "好，我按你说的"},
+        ],
+        "discovery_opening": [{"speaker": "昭昭", "line": "蝴蝶结又散了"}],
+    }
+    sync_discovery_opening_from_dialogue(story)
+    assert story["discovery_opening"] == story["dialogue"][:2]
+
+
+def test_d_opening_score_skips_stitched_prefix_overlap():
+    from app.services.daily_story.story_types.d.opening import score_opening_quality
+
+    story = {
+        "dialogue": [
+            {"speaker": "昭昭", "line": "这摞衣服歪着，要我帮你叠一叠吗"},
+            {"speaker": "灿灿", "line": "你来叠，轻点，这摞别碰，一碰就倒"},
+            {"speaker": "昭昭", "line": "好，我按你说的，连呼吸都放轻轻的"},
+        ],
+        "discovery_opening": [
+            {"speaker": "昭昭", "line": "这摞衣服歪着，要我帮你叠一叠吗"},
+            {"speaker": "灿灿", "line": "你来叠，轻点，这摞别碰，一碰就倒"},
+        ],
+        "conflict_core": "叠衣轻点却憋气喷倒",
+        "setting": "客厅沙发旁叠衣服",
+    }
+    _pts, _pros, cons = score_opening_quality(story)
+    assert "D开场与正文首句重复" not in cons
+
+
 def test_validate_daily_story_opening_rejects_consecutive_speakers():
     with pytest.raises(ValueError, match="连说"):
         validate_daily_story_opening(
@@ -794,19 +828,28 @@ def test_validate_daily_story_opening_requires_conflict_anchor():
             setting="客厅",
         )
     ok = validate_daily_story_opening(
-        [{"speaker": "昭昭", "line": "咦新橡皮怎么在你手里"}],
+        [
+            {"speaker": "昭昭", "line": "咦新橡皮怎么在你手里"},
+            {"speaker": "灿灿", "line": "我才刚拿到还没拆呢"},
+        ],
         conflict_core="姐弟抢新橡皮",
         setting="客厅抢新橡皮",
     )
-    assert len(ok) == 1
+    assert len(ok) == 2
 
 def test_validate_daily_story_opening_coerces_name_key_shorthand():
     ok = validate_daily_story_opening(
-        [{"昭昭": "咦新橡皮怎么在你手里"}],
+        [
+            {"昭昭": "咦新橡皮怎么在你手里"},
+            {"灿灿": "我才刚拿到还没拆呢"},
+        ],
         conflict_core="姐弟抢新橡皮",
         setting="客厅抢新橡皮",
     )
-    assert ok == [{"speaker": "昭昭", "line": "咦新橡皮怎么在你手里"}]
+    assert ok == [
+        {"speaker": "昭昭", "line": "咦新橡皮怎么在你手里"},
+        {"speaker": "灿灿", "line": "我才刚拿到还没拆呢"},
+    ]
 
 
 def test_daily_story_prompts_c_type_route():
@@ -1068,23 +1111,64 @@ def test_validate_b_opening_accepts_whisper_pact():
     assert len(ok) == 2
 
 
+def test_b_opening_score_skips_prepended_discovery_block():
+    from app.services.daily_story.story_types.b.opening import score_opening_quality
+
+    story = {
+        "discovery_opening": [
+            {"speaker": "昭昭", "line": "我望风，你拆，看到妈就咳一声。"},
+            {"speaker": "灿灿", "line": "嘘，妈在厨房，咱俩吃这包。"},
+        ],
+        "dialogue": [
+            {"speaker": "昭昭", "line": "我望风，你拆，看到妈就咳一声。"},
+            {"speaker": "灿灿", "line": "嘘，妈在厨房，咱俩吃这包。"},
+            {"speaker": "昭昭", "line": "行，你手轻点撕，我盯着门。"},
+        ],
+    }
+    _, _, cons = score_opening_quality(story)
+    assert "B开场与正文首句重复" not in cons
+
+
+def test_b_smoke5_quality_scores_around_93():
+    import json
+    from pathlib import Path
+
+    from app.services.daily_story.quality import score_daily_story
+
+    root = Path(__file__).resolve().parents[2]
+    payload = json.loads((root / "tmp/daily_story_b_smoke5.json").read_text())[0]
+    q = score_daily_story(payload["story"], theme=payload["theme"])
+    assert q["score"] == 93
+    assert "B开场与正文首句重复" not in q["reasons"]
+    assert "B收束惩罚缺底" in q["reasons"]
+    assert "惩罚落槌缺底" in q["reasons"]
+    assert "开场缺可拍画面" in q["reasons"]
+    assert "惩罚落槌有底" not in q["reasons"]
+
+
 def test_validate_a_opening_rejects_mid_fight_timer():
     from app.services.daily_story.prompts import validate_daily_story_opening
 
     with pytest.raises(ValueError, match="发现现场|读秒"):
         validate_daily_story_opening(
-            [{"speaker": "灿灿", "line": "计时器才走了30秒"}],
+            [
+                {"speaker": "灿灿", "line": "你牙刷上的沫还挂那儿呢"},
+                {"speaker": "昭昭", "line": "计时器才走了30秒"},
+            ],
             conflict_core="灿灿嫌昭昭刷牙太快立规矩却自己犯规",
             setting="卫生间刷牙计时",
             type_code="A",
         )
     ok = validate_daily_story_opening(
-        [{"speaker": "灿灿", "line": "你牙膏沫吐了？才刷几下"}],
+        [
+            {"speaker": "灿灿", "line": "你牙刷上的沫还挂那儿呢"},
+            {"speaker": "昭昭", "line": "我才刷了几下呀"},
+        ],
         conflict_core="灿灿嫌昭昭刷牙太快立规矩却自己犯规",
         setting="卫生间刷牙",
         type_code="A",
     )
-    assert len(ok) == 1
+    assert len(ok) == 2
 
 
 def test_score_a_quote_must_come_from_cancan():

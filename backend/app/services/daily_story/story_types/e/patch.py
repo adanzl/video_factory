@@ -230,7 +230,7 @@ def patch_e_trim_mom_lecture(story: dict) -> list[str]:
         return notes
     speakers = _speakers(dialogue)
     mom_idx = [i for i, sp in enumerate(speakers) if sp == "妈妈"]
-    if len(mom_idx) <= 5:
+    if len(mom_idx) <= 8:
         return notes
     # 砍中间多余妈妈句（保留首立论、改口、末破功）
     keep_first = mom_idx[0]
@@ -247,10 +247,10 @@ def patch_e_trim_mom_lecture(story: dict) -> list[str]:
         if i not in (keep_first, waffle_i, keep_last)
         and 1 < i < len(dialogue) - 2
     ]
-    # 从后往前删，最多删到剩 5 句妈妈
+    # 从后往前删，最多删到剩 8 句妈妈
     dropped = 0
     for i in reversed(drop):
-        if len(mom_idx) - dropped <= 5:
+        if len(mom_idx) - dropped <= 8:
             break
         # 改成昭昭短追问，避免句数塌
         if isinstance(dialogue[i], dict):

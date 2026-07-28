@@ -29,6 +29,10 @@ _STRONG_END_MARKERS = (
     "自相矛盾", "你让的", "戳穿",
 )
 
+from app.services.daily_story.prompts import (
+    DAILY_STORY_OPENING_LINES_MAX,
+    DAILY_STORY_OPENING_LINES_MIN,
+)
 from app.services.daily_story.story_types.quality import (
     closing_satisfied,
     quality_profile_for_code,
@@ -408,6 +412,7 @@ def _score_funniness(
     *,
     type_code: str,
     humor_issues: list[str],
+    speakers: list[str] | None = None,
 ) -> tuple[int, list[str], list[str]]:
     """好笑维度 0–20，叠在结构分（≤80）之上。"""
     cons = list(humor_issues)
@@ -465,7 +470,7 @@ def _score_funniness(
         points += 2
 
     if profile.score_funniness_tail:
-        tail_pts, tail_pros = profile.score_funniness_tail(lines)
+        tail_pts, tail_pros = profile.score_funniness_tail(lines, speakers)
         points += tail_pts
         pros.extend(tail_pros)
 
@@ -532,7 +537,11 @@ def score_daily_story(
         cons.append("笑点解析缺类型")
 
     opening = story.get("discovery_opening")
-    if not isinstance(opening, list) or not (2 <= len(opening) <= 2):
+    if not isinstance(opening, list) or not (
+        DAILY_STORY_OPENING_LINES_MIN
+        <= len(opening)
+        <= DAILY_STORY_OPENING_LINES_MAX
+    ):
         score -= 5
         cons.append("缺发现开场")
     elif profile.score_opening_quality:
@@ -651,6 +660,7 @@ def score_daily_story(
         lines,
         type_code=profile.code,
         humor_issues=humor_issues,
+        speakers=speakers,
     )
     pros.extend(humor_pros)
     cons.extend(humor_cons)

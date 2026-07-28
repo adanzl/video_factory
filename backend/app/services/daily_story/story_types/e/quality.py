@@ -99,7 +99,7 @@ QUALITY_PROFILE = TypeQualityProfile(
         "你也",
         "你刚才",
     ),
-    mom_lines_penalty_at=7,
+    mom_lines_penalty_at=9,
     penalize_wait_mom_end=False,
     penalize_split_end=True,
     penalize_stubborn_end=False,

@@ -125,7 +125,10 @@ def score_scene_beat(
     return 0, []
 
 
-def score_funniness_tail(lines: list[str]) -> tuple[int, list[str]]:
+def score_funniness_tail(
+    lines: list[str],
+    speakers: list[str] | None = None,
+) -> tuple[int, list[str]]:
     tail4 = lines[-4:] if len(lines) >= 4 else lines
     late4_text = "".join(tail4)
     late6 = "".join(lines[-6:]) if len(lines) >= 6 else late4_text

@@ -74,9 +74,16 @@ def score_punchline(
         bonus += 10
         details.append("联手露馅收场")
 
-    if RE_MOM_PUNISH.search(tail8) and RE_DOOM.search(tail8):
+    if (
+        RE_MOM_PUNISH.search(tail8)
+        and RE_DOOM.search(tail8)
+        and not b_humor.is_weak_punish_landing(lines, speakers)
+    ):
         bonus += 5
         details.append("惩罚落槌有底")
+    elif RE_MOM_PUNISH.search(tail8) and RE_DOOM.search(tail8):
+        bonus -= 2
+        details.append("惩罚落槌缺底")
 
     if RE_ALLY.search(head_third) and RE_PLAN_FAIL.search(
         "".join(lines[n // 3 : n - 3]),

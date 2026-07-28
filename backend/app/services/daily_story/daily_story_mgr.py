@@ -205,8 +205,10 @@ class DailyStoryMgr:
 
     def update_story(self, story_id: int, *, story: dict[str, Any]) -> dict:
         """更新日常故事内容（保存时重算观感分）。"""
+        from app.services.daily_story.prompts import sync_discovery_opening_from_dialogue
         from app.services.daily_story.quality import attach_daily_story_quality
         if isinstance(story, dict):
+            sync_discovery_opening_from_dialogue(story)
             attach_daily_story_quality(story)
         return repo_daily_story.update_story(story_id, story=story)
 
@@ -231,6 +233,12 @@ class DailyStoryMgr:
             if not job_id:
                 raise ValueError('该故事尚未创建任务，无法同步')
             if story:
+                from app.services.daily_story.prompts import (
+                    sync_discovery_opening_from_dialogue,
+                )
+                from app.services.daily_story.quality import attach_daily_story_quality
+                sync_discovery_opening_from_dialogue(story)
+                attach_daily_story_quality(story)
                 repo_daily_story.update_story(story_id, story=story)
             job = repo_job.get_job(job_id)
             title = (story or {}).get('scene_title', '') or old.get('story', {}).get('scene_title', '') or job['title']

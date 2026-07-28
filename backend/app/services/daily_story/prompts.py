@@ -894,7 +894,7 @@ def _append_dialogue_rhythm_errors(story: dict, errors: list[str]) -> None:
 def _append_mom_line_errors(story: dict, errors: list[str]) -> None:
     """校验妈妈台词：句数上限、禁止裁判式收场。
 
-    E 类主戏就是妈妈被绕，允许略多（≤5）；其它类型主戏在姐弟，≤3。
+    E 类主戏是妈妈破功，妈妈宜 4–7 句（硬卡 ≤8）；其它类型主戏在姐弟，≤3。
     """
     from app.services.daily_story.story_types import resolve_story_type_code
 
@@ -907,11 +907,11 @@ def _append_mom_line_errors(story: dict, errors: list[str]) -> None:
         if isinstance(item, dict) and item.get("speaker") == "妈妈"
     ]
     type_code = resolve_story_type_code(story)
-    mom_max = 5 if type_code == "E" else 3
+    mom_max = 8 if type_code == "E" else 3
     if len(mom_items) > mom_max:
         errors.append(
             f"妈妈台词超过{mom_max}句（{len(mom_items)}句），"
-            + ("E类仍须≤5句" if type_code == "E" else "主戏应在姐弟")
+            + ("E类宜4–7句打脸开脱" if type_code == "E" else "主戏应在姐弟")
         )
     for _, item in mom_items:
         line = str(item.get("line") or "")
@@ -1002,7 +1002,7 @@ def validate_daily_story_json(
 ) -> None:
     """校验日常故事 JSON。
 
-    phase=body：验正文（含字数硬卡 280–340）。
+    phase=body：验正文（含字数硬卡 280–370）。
     phase=full：拼开场后结构/单句等终检；**不再卡全文总字数**
     （开场由 validate_daily_story_opening 单独校验）。
     """
@@ -1623,6 +1623,26 @@ def stitch_daily_story_opening(
     out["dialogue"] = opening_norm + body
     out["discovery_opening"] = opening_norm
     return out
+
+
+def sync_discovery_opening_from_dialogue(story: dict) -> None:
+    """人工改 dialogue 后，把 discovery_opening 对齐为前 2 句。
+
+    拼稿后 discovery_opening 即 dialogue 前缀；页面保存/同步须保持一致。
+    """
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list):
+        return
+    opening: list[dict[str, str]] = []
+    for item in dialogue[:DAILY_STORY_OPENING_LINES_MAX]:
+        if not isinstance(item, dict):
+            continue
+        line = str(item.get("line") or "").strip()
+        speaker = str(item.get("speaker") or "").strip()
+        if line and speaker:
+            opening.append({"speaker": speaker, "line": line})
+    if len(opening) >= DAILY_STORY_OPENING_LINES_MIN:
+        story["discovery_opening"] = opening[:DAILY_STORY_OPENING_LINES_MAX]
 
 
 def opening_avoid_speaker_from_body(body: dict | None) -> str | None:

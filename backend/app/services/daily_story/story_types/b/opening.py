@@ -68,6 +68,31 @@ def _opening_body_overlap(a: str, b: str) -> bool:
     return n >= 4 and left[:n] == right[:n]
 
 
+def _first_body_line_after_opening(story: dict) -> str:
+    opening = story.get("discovery_opening")
+    dialogue = story.get("dialogue")
+    if not isinstance(opening, list) or not isinstance(dialogue, list):
+        return ""
+    o_lines = [
+        str(d.get("line") or "").strip()
+        for d in opening
+        if isinstance(d, dict)
+    ]
+    d_lines = [
+        str(d.get("line") or "").strip()
+        for d in dialogue
+        if isinstance(d, dict)
+    ]
+    k = 0
+    while (
+        k < len(o_lines)
+        and k < len(d_lines)
+        and _opening_body_overlap(o_lines[k], d_lines[k])
+    ):
+        k += 1
+    return d_lines[k] if k < len(d_lines) else ""
+
+
 def score_opening_quality(story: dict) -> tuple[int, list[str], list[str]]:
     """开场质量：约 -5～+5，叠在结构分上。"""
     pros: list[str] = []
@@ -102,17 +127,10 @@ def score_opening_quality(story: dict) -> tuple[int, list[str], list[str]]:
     pros.extend(cin_pros)
     cons.extend(cin_cons)
 
-    dialogue = story.get("dialogue")
-    if isinstance(dialogue, list) and dialogue and lines_o:
-        first_body = ""
-        for item in dialogue:
-            if isinstance(item, dict):
-                first_body = str(item.get("line") or "").strip()
-                if first_body:
-                    break
-        if first_body and _opening_body_overlap(lines_o[0], first_body):
-            cons.append("B开场与正文首句重复")
-            pts -= 3
+    first_body = _first_body_line_after_opening(story)
+    if first_body and _opening_body_overlap(lines_o[-1], first_body):
+        cons.append("B开场与正文首句重复")
+        pts -= 3
 
     if not B_OPENING_ALLY_RE.search(joined) and pts >= 0:
         cons.append("B开场缺密谋感")

@@ -74,7 +74,7 @@ def collect_humor_issues(
             cons.append("末句非妈妈破功，不好笑")
         elif not RE_MOM_SOFT.search(lines[-1]):
             cons.append("末句非妈妈破功，不好笑")
-        if speakers.count("妈妈") > 6:
+        if speakers.count("妈妈") > 8:
             cons.append("妈妈说教过长，不好笑")
 
     soft_i = next(
@@ -100,7 +100,7 @@ def collect_humor_issues(
     if lecture_n >= 3 or _EMPTY.search(all_text):
         cons.append("空说教注水，不好笑")
 
-    if n > 20:
+    if n > 18:
         cons.append("中段拖沓注水，不好笑")
 
     return cons

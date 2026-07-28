@@ -91,8 +91,10 @@ def append_e_body_errors(story: dict, errors: list[str]) -> None:
         return
 
     mom_n = sum(1 for sp in speakers if sp == "妈妈")
-    if mom_n > 6:
-        errors.append("E类妈妈台词过多（建议≤5句），笑点应在逻辑自相矛盾而非说教")
+    if mom_n > 8:
+        errors.append(
+            "E类妈妈台词过多（宜4–7句），笑点应在逻辑自相矛盾而非空说教",
+        )
 
     if RE_MOM_WAFFLE.search(tail3) and not RE_KID_LOOP.search(tail3):
         errors.append(
