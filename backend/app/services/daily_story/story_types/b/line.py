@@ -10,7 +10,7 @@ LINE_B = StoryTypeLine(
     code="B",
     label="结盟翻车",
     keywords=STORY_TYPE_KEYWORDS["B"],
-    quality_ready=False,
+    quality_ready=True,
     punchline_example="B类结盟翻车，姐弟瞒妈结盟执行走样互甩锅一起露馅",
     prompt_block="""\
 【本次类型：B 结盟翻车 — 专属线路】
