@@ -1019,7 +1019,7 @@ def build_daily_story_opening_prompts(
     return system, user
 
 
-# 特写镜（后续走 I2V）对白上限，利于口型轮次
+# 特写镜（后续走 I2V）对白上限，图生视频口型轮次限制
 DAILY_SCRIPT_KEYFRAME_MAX_DIALOGUE_LINES = 2
 # 特写镜数量：约 1/4 下限、1/3 上限（关键帧 i2v 节奏）
 _CLOSEUP_TURNING_RE = re.compile(
@@ -1037,20 +1037,20 @@ DAILY_SCRIPT_SYSTEM_PROMPT = """\
    禁止一句一镜。
 2. 【默认并镜】按同一地点、同一轮互怼/同一话题合并；中景/全景每镜通常 2–3 句，
    单镜不得超过 3 句。
-3. 【特写对白上限】shot_type 为「特写」的镜，dialogue **不得超过 2 句**
-   （图生视频口型轮次限制）。若该轮还有第 3 句，须拆到下一镜（可仍特写），
-   或本镜改标「中景」并保留 3 句。
+3. 【特写对白上限·硬性】shot_type 为「特写」的镜，dialogue **不得超过 2 句**
+   （图生视频口型限制，超 2 句会生成失败）。若该轮有 3 句：
+   须把第 3 句拆到下一镜，或本镜改标「中景」并保留 3 句——**禁止特写塞 3 句**。
 4. 【单镜字数】建议 {min_chars}–{max_chars} 字（约 {min_sec}–{max_sec} 秒，
    语速 {chars_per_sec} 字/秒）。少于 {min_chars} 字必须并入邻镜；
    单镜合计不得超过 {max_chars} 字（约 ≤{max_sec} 秒）。各镜尽量均匀。
 5. 为每镜标注 shot_type（全景/中景/特写），在环境交代、对话主体、情绪或道具之间穿插。
 6. 【开场首镜】scene_id=1 须定格冲突峰值姿势（抢/举/夺/藏/对峙），
    shot_type **必须「特写」**（发现开场也要落在动作峰值上，用特写留住开头吸引力）；
-   禁止全景空镜、中景站桩或寒暄开场；首镜 dialogue 亦须遵守特写 ≤2 句。
+   禁止全景空镜、中景站桩或寒暄开场；首镜 dialogue **必须 ≤2 句**（多出的拆到 scene_id=2）。
 7. 【转折用特写，不拆碎】反驳、破功、愣住、妈妈插嘴、证据翻出等转折句：
    放在该镜开头，shot_type 优先「特写」，且本镜最多再跟 **1 句**回应（特写合计 ≤2 句）；
    禁止为转折把短句单独拆成不足 {min_chars} 字的镜；
-   也禁止在特写镜里塞 3 句。
+   若转折轮共 3 句：特写只留前 2 句，第 3 句进下一镜（可中景）。
 8. 【特写数量】全文 {scene_count} 镜，特写宜 **{closeup_min}–{closeup_max}** 个
    （约 1/4–1/3）：开场首镜 + 至少 1 个中段转折 + 妈妈破功/收场镜须特写；
    禁止全文只有 1–2 个特写。
@@ -1086,7 +1086,7 @@ DAILY_SCRIPT_USER_TEMPLATE = """\
 {dialogue_text}
 
 【要求】
-1. 中景/全景每镜 2–3 句、不得超过 3 句；**特写镜不得超过 2 句**
+1. 中景/全景每镜 2–3 句、不得超过 3 句；**特写镜硬性不得超过 2 句**（超了改中景或拆镜）
 2. 单镜 {min_chars}–{max_chars} 字（约 ≤{max_sec} 秒）；禁止一句一镜
 3. 转折句用特写并放在镜首，特写镜最多再跟 1 句回应；第 3 句须拆到下一镜或改中景
 4. 特写宜 {closeup_min}–{closeup_max} 个：首镜 + 中段转折 + 妈妈收场至少各 1 特写
@@ -1148,14 +1148,28 @@ def _closeup_promotion_score(scene: dict, *, index: int, total: int) -> int:
 
 
 def enforce_daily_script_closeups(scenes: list) -> list[str]:
-    """本地补足特写镜：LLM 常只标 1–2 个，按转折优先级升格。"""
+    """本地修正特写：超对白上限降中景，数量不足则按转折优先级升格。"""
     if not scenes:
         return []
+    max_lines = DAILY_SCRIPT_KEYFRAME_MAX_DIALOGUE_LINES
     min_cu, _ = daily_script_closeup_bounds(len(scenes))
     notes: list[str] = []
 
     def is_closeup(scene: dict) -> bool:
         return str(scene.get("shot_type") or "").strip() == "特写"
+
+    # 特写超口型上限 → 降中景（保留 3 句并镜，避免 i2v 失败）
+    for scene in scenes:
+        if not is_closeup(scene):
+            continue
+        n = _scene_dialogue_line_count(scene)
+        if n <= max_lines:
+            continue
+        sid = scene.get("scene_id", "?")
+        scene["shot_type"] = "中景"
+        notes.append(
+            f"scene_id={sid} demoted to 中景 ({n}>{max_lines} dialogue lines)"
+        )
 
     closeup_count = sum(1 for s in scenes if is_closeup(s))
 

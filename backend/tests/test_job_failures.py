@@ -23,5 +23,13 @@ def test_is_expected_job_failure_agnes_i2v():
     )
 
 
+def test_is_expected_job_failure_daily_script_closeup():
+    assert is_expected_job_failure(
+        JobStageFailureError(
+            "分镜特写校验失败: scene_id=10 为特写但含 3 句对白（特写镜最多 2 句）"
+        )
+    )
+
+
 def test_is_expected_job_failure_unexpected():
     assert not is_expected_job_failure(RuntimeError("network down"))

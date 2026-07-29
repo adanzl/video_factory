@@ -30,7 +30,7 @@ _RE_CLOSING_QUOTE = re.compile(
 _WAFFLE = re.compile(
     r"没有毛病|死板|坚持执行|脑子怎么|转不过弯|特殊补救|我这是帮你",
 )
-_D_MAX_LINES = 16  # 成片 ≤16，17 起判拖沓扣好笑分
+_D_MAX_LINES = 20  # 成片宜 ≤16；本地压缩上限 20（≥21 才扣好笑拖沓）
 # 中段引话降级用：改后不再命中 RE_BOOM_CLOSE，收束那一处保持不动
 _BOOM_SOFTEN_MAP = {
     "你自己说": "你说的",
@@ -691,7 +691,7 @@ def patch_d_strip_nitpick(story: dict) -> list[str]:
 
 
 def patch_d_trim_second_boom(story: dict) -> list[str]:
-    """哼/算了后若再开回旋镖，砍到第一次软收（可留一句无回旋镖的尾巴）。"""
+    """哼/算了后一律砍掉尾巴（禁止第二场/新叮嘱）。"""
     notes: list[str] = []
     if not _is_d(story):
         return notes
@@ -703,29 +703,14 @@ def patch_d_trim_second_boom(story: dict) -> list[str]:
             i
             for i, d in enumerate(dialogue)
             if isinstance(d, dict)
-            and re.search(r"哼|算了", str(d.get("line") or ""))
+            and re.search(r"哼|算了|行吧", str(d.get("line") or ""))
         ),
         None,
     )
-    if soft_i is None or soft_i >= len(dialogue) - 2:
+    if soft_i is None or soft_i >= len(dialogue) - 1:
         return notes
-    later_boom = any(
-        isinstance(dialogue[i], dict)
-        and RE_BOOM_CLOSE.search(str(dialogue[i].get("line") or ""))
-        for i in range(soft_i + 1, len(dialogue))
-    )
-    if not later_boom:
-        return notes
-    # 保留软收 + 最多 2 句无回旋镖尾巴
-    keep = soft_i + 1
-    for i in range(soft_i + 1, min(len(dialogue), soft_i + 3)):
-        ln = str(dialogue[i].get("line") or "") if isinstance(dialogue[i], dict) else ""
-        if RE_BOOM_CLOSE.search(ln):
-            break
-        keep = i + 1
-    if keep < len(dialogue):
-        del dialogue[keep:]
-        notes.append(f"D砍二次回旋镖→{keep}句")
+    del dialogue[soft_i + 1 :]
+    notes.append(f"D砍哼后尾巴→{soft_i + 1}句")
     return notes
 
 
