@@ -36,17 +36,36 @@ def _ensure_story_quality(row: dict, *, persist: bool=False) -> dict:
 
 class DailyStoryMgr:
 
-    def _queue_story_generation(self, story_id: int, theme: str, *, is_regenerate: bool) -> None:
+    def _queue_story_generation(
+        self,
+        story_id: int,
+        theme: str,
+        *,
+        is_regenerate: bool,
+        story_type: str | None = None,
+    ) -> None:
         action = 'regenerate' if is_regenerate else 'generate'
+        locked_type = (story_type or '').strip().upper()[:1] or None
+        if locked_type and locked_type not in ('A', 'B', 'C', 'D', 'E'):
+            locked_type = None
 
         def _worker() -> None:
             from app.repositories.database import get_app
-            from app.services.daily_story.story_types import parse_story_type_code
+            from app.services.daily_story.story_types import (
+                parse_story_type_code,
+                story_type_tag,
+            )
 
             with get_app().app_context():
                 try:
-                    story = llm_mgr.generate_daily_story(theme)
-                    type_code = parse_story_type_code(
+                    gen_type = (
+                        story_type_tag(locked_type) if locked_type else None
+                    )
+                    story = llm_mgr.generate_daily_story(
+                        theme,
+                        story_type=gen_type,
+                    )
+                    type_code = locked_type or parse_story_type_code(
                         punchline=str(story.get("punchline_explain") or ""),
                     )
                     new_score = story.get('quality', {}).get('score', 0)
@@ -111,8 +130,14 @@ class DailyStoryMgr:
                     repo_daily_story.update_story(story_id, status=_STATUS_FAILED)
                 continue
             is_regenerate = _story_has_content(row.get('story'))
+            locked = str(row.get('story_type') or '').strip().upper()[:1] or None
             logger.warning('[DAILY_STORY] recovering stuck story_id=%d theme=%r regenerate=%s', story_id, theme, is_regenerate)
-            self._queue_story_generation(story_id, theme, is_regenerate=is_regenerate)
+            self._queue_story_generation(
+                story_id,
+                theme,
+                is_regenerate=is_regenerate,
+                story_type=locked,
+            )
         logger.warning('recovered %d stuck daily story/stories', len(rows))
         return len(rows)
 
@@ -143,15 +168,33 @@ class DailyStoryMgr:
         row = repo_daily_story.get_story(story_id)
         return _ensure_story_quality(row, persist=True)
 
-    def generate_and_save(self, theme: str) -> dict[str, Any]:
+    def generate_and_save(
+        self,
+        theme: str,
+        *,
+        story_type: str | None = None,
+    ) -> dict[str, Any]:
         """异步生成：先落 processing 占位，立刻返回，后台写结果。"""
         theme = (theme or '').strip()
         if not theme:
             raise ValueError('theme is empty')
+        locked = (story_type or '').strip().upper()[:1] or None
+        if locked and locked not in ('A', 'B', 'C', 'D', 'E'):
+            raise ValueError('story_type 须为 A–E')
         with atomic():
-            story_id = repo_daily_story.insert_story(theme=theme, story={}, status=_STATUS_PROCESSING)
+            story_id = repo_daily_story.insert_story(
+                theme=theme,
+                story={},
+                status=_STATUS_PROCESSING,
+                story_type=locked,
+            )
             row = repo_daily_story.get_story(story_id)
-        self._queue_story_generation(story_id, theme, is_regenerate=False)
+        self._queue_story_generation(
+            story_id,
+            theme,
+            is_regenerate=False,
+            story_type=locked,
+        )
         return row
 
     def delete_stories(self, ids: list[int]) -> dict[str, Any]:
@@ -159,8 +202,13 @@ class DailyStoryMgr:
             deleted = repo_daily_story.delete_stories(ids)
         return {'deleted': deleted, 'ids': ids}
 
-    def generate_themes(self, count: int=15) -> list[str]:
-        return llm_mgr.generate_daily_story_themes(count)
+    def generate_themes(
+        self,
+        count: int = 15,
+        *,
+        exclude: list[str] | None = None,
+    ) -> list[dict]:
+        return llm_mgr.generate_daily_story_themes(count, avoid=exclude)
 
     def create_job(self, story_id: int, *, skip_publish: bool=False, speech_chars_per_sec: float | None=None, phrase_gap_sec: float | None=None) -> dict:
         """基于日常故事创建视频任务（pipeline=daily_story）。"""
@@ -221,8 +269,14 @@ class DailyStoryMgr:
             theme = str(old.get('theme') or '').strip()
             if not theme:
                 raise ValueError('theme is empty')
+            locked = str(old.get('story_type') or '').strip().upper()[:1] or None
             row = repo_daily_story.update_story(story_id, status=_STATUS_PROCESSING)
-        self._queue_story_generation(story_id, theme, is_regenerate=True)
+        self._queue_story_generation(
+            story_id,
+            theme,
+            is_regenerate=True,
+            story_type=locked,
+        )
         return row
 
     def sync_to_job(self, story_id: int, *, story: dict[str, Any] | None=None) -> dict:

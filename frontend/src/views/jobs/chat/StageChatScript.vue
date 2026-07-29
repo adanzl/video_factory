@@ -343,9 +343,9 @@ function speakerStyle(speaker: string): { bg: string; text: string; full: string
   return { bg: 'bg-pink-50', text: 'text-pink-600', full: 'bg-pink-50 text-pink-800' }
 }
 
-function shotTypeTagType(shotType: string): "success" | "warning" | "info" | "" {
+function shotTypeTagType(shotType: string): "success" | "warning" | "info" | "primary" {
   if (shotType === "特写") return "warning";
-  if (shotType === "中景") return "";
+  if (shotType === "中景") return "primary";
   if (shotType === "全景") return "info";
   return "info";
 }

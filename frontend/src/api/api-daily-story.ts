@@ -55,6 +55,14 @@ export function formatDailyStoryType(code: string | null | undefined): string {
   return `${c}${label}`;
 }
 
+/** 多个类型用 / 连接 */
+export function formatDailyStoryTypes(codes: string[] | null | undefined): string {
+  const parts = (codes ?? [])
+    .map((c) => formatDailyStoryType(c))
+    .filter((s) => s !== "-");
+  return parts.length ? parts.join(" / ") : "-";
+}
+
 export const DAILY_STORY_TYPE_OPTIONS = (["A", "B", "C", "D", "E"] as const).map(
   (code) => ({
     value: code,
@@ -105,9 +113,14 @@ export async function waitDailyStoryReady(
   return latest;
 }
 
-export async function generateDailyStory(theme: string): Promise<DailyStoryRecord> {
+export async function generateDailyStory(
+  theme: string,
+  opts?: { storyType?: string | null },
+): Promise<DailyStoryRecord> {
+  const story_type = (opts?.storyType ?? "").trim().toUpperCase().slice(0, 1) || undefined;
   const response = await api.post<DailyStoryRecord>("/v_factory/api/daily_story/generate", {
     theme,
+    ...(story_type ? { story_type } : {}),
   });
   return response.data;
 }
@@ -120,13 +133,48 @@ export async function deleteDailyStories(ids: number[]): Promise<{ deleted: numb
   return response.data;
 }
 
-export async function generateDailyStoryThemes(count: number = 15): Promise<string[]> {
-  const response = await api.post<string[]>(
+export interface DailyStoryThemeItem {
+  theme: string;
+  /** 可适配的矛盾类型 A–E，首项为主类型 */
+  story_types: string[];
+}
+
+function normalizeThemeItem(item: unknown): DailyStoryThemeItem | null {
+  if (typeof item === "string") {
+    const theme = item.trim();
+    return theme ? { theme, story_types: [] } : null;
+  }
+  if (!item || typeof item !== "object") return null;
+  const row = item as Record<string, unknown>;
+  const theme = String(row.theme ?? "").trim();
+  if (!theme) return null;
+  let story_types: string[] = [];
+  if (Array.isArray(row.story_types)) {
+    story_types = row.story_types
+      .map((c) => String(c ?? "").trim().toUpperCase().slice(0, 1))
+      .filter((c) => "ABCDE".includes(c));
+  } else if (row.story_type) {
+    const c = String(row.story_type).trim().toUpperCase().slice(0, 1);
+    if ("ABCDE".includes(c)) story_types = [c];
+  }
+  // 去重保序
+  story_types = [...new Set(story_types)];
+  return { theme, story_types };
+}
+
+export async function generateDailyStoryThemes(
+  count: number = 15,
+  opts?: { exclude?: string[] },
+): Promise<DailyStoryThemeItem[]> {
+  const response = await api.post<unknown[]>(
     "/v_factory/api/daily_story/themes",
-    { count },
+    { count, exclude: opts?.exclude ?? [] },
     { timeout: 60_000 }
   );
-  return Array.isArray(response.data) ? response.data : [];
+  const raw = Array.isArray(response.data) ? response.data : [];
+  return raw
+    .map(normalizeThemeItem)
+    .filter((item): item is DailyStoryThemeItem => item != null);
 }
 
 export async function createDailyStoryJob(storyId: number, params?: { speechRate?: number; lineGap?: number }): Promise<any> {

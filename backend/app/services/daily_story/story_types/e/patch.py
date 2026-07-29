@@ -74,35 +74,106 @@ def patch_e_strip_a_close(story: dict) -> list[str]:
 
 
 def patch_e_ensure_mom_rule(story: dict) -> list[str]:
-    """前段缺妈妈立论时，改一句妈妈为短规矩。"""
+    """前段缺妈妈立论时，按主题补一句可被闭环的短规矩。
+
+    挑食题另保因果：先立「不许挑食」，再抓拨青菜。
+    """
     notes: list[str] = []
     if not _is_e(story):
         return notes
     dialogue = story.get("dialogue")
     if not isinstance(dialogue, list) or len(dialogue) < 6:
         return notes
+    theme_ctx = (
+        str(story.get("conflict_core") or "")
+        + str(story.get("_theme") or "")
+        + str(story.get("theme") or "")
+        + str(story.get("scene_title") or "")
+    )
+    is_picky = bool(re.search(r"挑食|青菜|拨到碗边", theme_ctx))
+    if is_picky:
+        rule_line = "吃饭不许挑食，青菜都得吃"
+        rule_ok = re.compile(r"不准挑食|不许挑食|不能挑食|青菜.{0,6}吃")
+        eye_re = re.compile(r"拨到|拨开|碗边|拨了.{0,4}青菜")
+    elif re.search(r"睡觉|九点|刷手机|被窝", theme_ctx):
+        rule_line = "九点了必须睡觉，快去躺着"
+        rule_ok = re.compile(r"必须睡觉|九点了|说好不玩手机")
+        eye_re = None
+    elif re.search(r"零食|尝菜|试吃", theme_ctx):
+        rule_line = "我说了，饭前不能吃零食"
+        rule_ok = re.compile(r"不能吃零食|饭前")
+        eye_re = None
+    else:
+        rule_line = "我说了，规矩就是规矩"
+        rule_ok = RE_MOM_RULE
+        eye_re = None
+
+    if is_picky and eye_re is not None:
+        rule_i = next(
+            (
+                i
+                for i, d in enumerate(dialogue)
+                if isinstance(d, dict)
+                and str(d.get("speaker") or "") == "妈妈"
+                and rule_ok.search(str(d.get("line") or ""))
+            ),
+            None,
+        )
+        eye_i = next(
+            (
+                i
+                for i, d in enumerate(dialogue)
+                if isinstance(d, dict)
+                and str(d.get("speaker") or "") in ("昭昭", "灿灿")
+                and eye_re.search(str(d.get("line") or ""))
+            ),
+            None,
+        )
+        if eye_i is not None and (rule_i is None or eye_i < rule_i):
+            eye_line = "那你自己怎么把青菜拨到碗边了？"
+            if isinstance(dialogue[eye_i], dict):
+                raw = str(dialogue[eye_i].get("line") or "").strip()
+                if eye_re.search(raw):
+                    eye_line = raw
+            dialogue[0] = {
+                "speaker": "昭昭",
+                "line": "妈，碗里青菜这么多，我们真要全吃完？",
+            }
+            dialogue[1] = {"speaker": "妈妈", "line": rule_line}
+            has_eye_after = any(
+                isinstance(d, dict)
+                and str(d.get("speaker") or "") in ("昭昭", "灿灿")
+                and eye_re.search(str(d.get("line") or ""))
+                for d in dialogue[2:]
+            )
+            if not has_eye_after and len(dialogue) > 2 and isinstance(
+                dialogue[2], dict,
+            ):
+                dialogue[2]["speaker"] = "灿灿"
+                dialogue[2]["line"] = eye_line
+            notes.append("E挑食因果：先立规再抓拨开")
+            return notes
+
     head = dialogue[: max(2, len(dialogue) // 2)]
     text = "".join(_lines(head))
-    if RE_MOM_RULE.search(text):
+    if rule_ok.search(text):
         return notes
     for d in head:
         if not isinstance(d, dict):
             continue
         if str(d.get("speaker") or "") != "妈妈":
             continue
-        new_line = "我说了，饭前不能吃零食"
-        if dialogue_char_count(new_line) <= DAILY_STORY_LINE_CHARS_MAX:
-            d["line"] = new_line
+        if dialogue_char_count(rule_line) <= DAILY_STORY_LINE_CHARS_MAX:
+            d["line"] = rule_line
             notes.append("E补妈妈立论")
             break
     else:
         # 无妈妈句：插在第 2 句位置改写成妈妈
         if isinstance(dialogue[1], dict):
             dialogue[1]["speaker"] = "妈妈"
-            dialogue[1]["line"] = "我说了，饭前不能吃零食"
+            dialogue[1]["line"] = rule_line
             notes.append("E补妈妈立论[1]")
     return notes
-
 
 def patch_e_ensure_kid_ask(story: dict) -> list[str]:
     """中段缺孩子追问时，改一句昭昭。"""
