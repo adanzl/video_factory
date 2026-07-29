@@ -249,13 +249,11 @@ def _daily_story_length_draft_for_type(type_code: str | None) -> str:
 """
     if type_code and type_code.upper() == "D":
         return f"""\
-- 片长（D类正文硬卡，放最前）：{DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
+- 片长（D类正文，放最前）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
   每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
-  【D类·先按句数写】正文写 **{lo}–{hi} 句**对白，**每句 ≤{DAILY_STORY_LINE_CHARS_MAX} 字写足**，
-  瞄准 {DAILY_STORY_BODY_WRITE_TARGET_MIN}–{DAILY_STORY_BODY_WRITE_TARGET_MAX} 字；
-  系统会在最前面另拼 2 句开场，**成片 15–16 句，17 句起判拖沓扣分**。
-  最佳落点：正文 14 句 × ~21 字 ≈ 294 字；句少字足，勿写短句凑数。
-  发现开场系统另写另验，不计入正文硬卡。
+  【D类·首稿】优先写清「合理叮嘱 + 不知变通 → 错误结果」骨架与 13–14 句节奏；
+  **字数可偏短**，留给下一轮一次补满；勿为凑字堆轻轻放×N。
+  系统另拼 2 句开场。发现开场另写另验。
 """
     return _DAILY_STORY_LENGTH_DRAFT
 
@@ -269,10 +267,8 @@ def _daily_story_length_user_draft_for_type(type_code: str | None) -> str:
 """
     if type_code and type_code.upper() == "D":
         return f"""\
-3. 【D类·字数句数硬卡】正文 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
-   写 **{lo}–{hi} 句**、每句 **≤{DAILY_STORY_LINE_CHARS_MAX} 字**，瞄准
-   {DAILY_STORY_BODY_WRITE_TARGET_MIN}–{DAILY_STORY_BODY_WRITE_TARGET_MAX} 字；
-   拼开场后成片 15–16 句，17 句起判拖沓。发现开场另计另验。speaker 仅昭昭/灿灿/妈妈。
+3. 【D类·首稿】写 **{lo}–{hi} 句**不知变通骨架即可；字数可先不到
+   {DAILY_STORY_BODY_CHARS_MIN}，重试一轮补满。发现开场另计另验。speaker 仅昭昭/灿灿。
 """
     return _DAILY_STORY_LENGTH_USER_DRAFT
 
@@ -287,11 +283,11 @@ def _daily_story_length_revise_expand_for_type(type_code: str | None) -> str:
 """
     if type_code and type_code.upper() == "D":
         return f"""\
-- 片长（D类偏短重试）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
+- 片长（D类偏短重试·一次补满）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
   每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
-  **只在现有句内加字**（每句可扩到 {DAILY_STORY_LINE_CHARS_MAX} 字）；**正文句数须 ≤14**，勿靠加句凑字。
-  写到约 {DAILY_STORY_BODY_RETRY_TARGET_MIN}–{DAILY_STORY_BODY_RETRY_TARGET_MAX} 字；
-  禁止整稿重写。发现开场系统另写另验。
+  **本轮必须一次写到 ≥{DAILY_STORY_BODY_CHARS_MIN} 字**（瞄准 {DAILY_STORY_BODY_RETRY_TARGET_MIN}–{DAILY_STORY_BODY_RETRY_TARGET_MAX}）。
+  保留上一稿不知变通骨架：句数补到 13–14（勿超过 14）；每句尽量 ≥20 字；
+  只增不删、禁止整稿重写、禁止轻轻放×N 凑字。发现开场另写另验。
 """
     return _DAILY_STORY_LENGTH_REVISE_EXPAND
 
@@ -334,9 +330,9 @@ def _daily_story_length_user_revise_expand_for_type(type_code: str | None) -> st
 """
     if type_code and type_code.upper() == "D":
         return f"""\
-3. 【D类·偏短只增】只在现有句内加字（每句可到 {DAILY_STORY_LINE_CHARS_MAX} 字），**正文句数 ≤14**；
-   写到 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
-   发现开场另计另验。speaker 仅昭昭/灿灿/妈妈。
+3. 【D类·一次补满】本轮必须写到 ≥{DAILY_STORY_BODY_CHARS_MIN} 字；
+   句数 13–14；每句尽量 ≥20 字（≤{DAILY_STORY_LINE_CHARS_MAX}）；保留骨架只增不删。
+   发现开场另计另验。speaker 仅昭昭/灿灿。
 """
     return _DAILY_STORY_LENGTH_USER_REVISE_EXPAND
 
@@ -2433,6 +2429,30 @@ _LOCAL_PAD_TAILS = (
     "啊",
     "呀",
 )  # 优先多字少句，勿满篇单「呀」
+# D 大缺口本地补：可拍短尾巴，一次重试后只差几十时垫满
+_LOCAL_PAD_TAILS_D = (
+    "，我按你说的认真做",
+    "，一点都不含糊",
+    "，照做就是了",
+    "，我数着做",
+    "好不好",
+    "呢",
+    "吧",
+)
+# D 句内顶字：只用可拍长片段，禁单字语气词连叠成「呢吧呢吧」
+_LOCAL_FILL_CHUNKS_D = (
+    "，我按你说的认真做",
+    "，一点都不含糊",
+    "，照做就是了",
+    "，我数着做",
+    "，绝不偷懒",
+    "，一步不差",
+    "，你看着",
+    "，听你的",
+    "，马上好",
+    "，别催我",
+    "好不好",
+)
 _LOCAL_TRIM_CHARS = "的了呢嘛呀啊吧啦哦喔哈嗯"
 
 
@@ -2449,29 +2469,103 @@ def _pad_dialogue_line(
     line: str,
     need: int,
     used: set[str] | None = None,
+    *,
+    tails: tuple[str, ...] | None = None,
 ) -> tuple[str, int]:
-    """句尾最多补一个语气词，返回 (新句, 实际增加字数)。
+    """句尾最多补一个语气词/短尾巴，返回 (新句, 实际增加字数)。
 
     used 记录整篇已用过的垫字，避免多句复读同一个「好不好」。
+    句末若是 。！？…，垫在标点前，避免「有标点就补不动」。
     """
+    pad_tails = tails or _LOCAL_PAD_TAILS
     if need <= 0 or not line:
         return line, 0
-    if line[-1] in "啦嘛呀啊呢吧哦！？。…":
+    trail = ""
+    core = line
+    if core[-1] in "。！？…":
+        trail = core[-1]
+        core = core[:-1]
+        if not core:
+            return line, 0
+    if core[-1] in "啦嘛呀啊呢吧哦":
         return line, 0
     # 已补过垫字的句子不再叠加（防「好不好呢」）
-    if any(line.endswith(suf) for suf in _LOCAL_PAD_TAILS):
+    if any(core.endswith(suf) for suf in (*_LOCAL_PAD_TAILS, *_LOCAL_PAD_TAILS_D)):
         return line, 0
-    room = _line_room(line)
+    room = max(0, DAILY_STORY_LINE_CHARS_MAX - _dialogue_char_count(line))
     if room <= 0:
         return line, 0
-    for suf in _LOCAL_PAD_TAILS:
+    # 缺口大时优先长尾巴
+    ordered = sorted(pad_tails, key=len, reverse=(need >= 8))
+    for suf in ordered:
         if used is not None and suf in used:
             continue
         if len(suf) <= room and len(suf) <= need:
             if used is not None:
                 used.add(suf)
-            return f"{line}{suf}", len(suf)
+            return f"{core}{suf}{trail}", len(suf)
     return line, 0
+
+
+def _fill_d_dialogue_line(
+    line: str,
+    need: int,
+    used: set[str] | None = None,
+) -> tuple[str, int]:
+    """D：把单句顶到上限；剥句末标点/语气词再垫；每句最多两段长片段。"""
+    if need <= 0 or not line:
+        return line, 0
+    trail = ""
+    core = line
+    if core and core[-1] in "。！？…":
+        trail = core[-1]
+        core = core[:-1]
+    if core and core[-1] in "啦嘛呀啊呢吧哦":
+        trail = core[-1] + trail
+        core = core[:-1]
+    if not core:
+        return line, 0
+    added = 0
+    appends = 0
+    local_used: set[str] = set()
+    start = _dialogue_char_count(core) % len(_LOCAL_FILL_CHUNKS_D)
+    chunks = (
+        _LOCAL_FILL_CHUNKS_D[start:] + _LOCAL_FILL_CHUNKS_D[:start]
+    )
+    while need > 0 and appends < 2:
+        room = max(
+            0,
+            DAILY_STORY_LINE_CHARS_MAX
+            - _dialogue_char_count(core)
+            - _dialogue_char_count(trail),
+        )
+        if room < 3:
+            break
+        picked = ""
+        for suf in sorted(chunks, key=len, reverse=True):
+            if suf in local_used:
+                continue
+            # 整篇限用次数，避免篇篇同一尾巴
+            if used is not None and list(used).count(suf) >= 3:
+                continue
+            if len(suf) > room or len(suf) > need:
+                continue
+            if core.endswith(suf) or suf.lstrip("，") in core:
+                continue
+            picked = suf
+            break
+        if not picked:
+            break
+        core = f"{core}{picked}"
+        need -= len(picked)
+        added += len(picked)
+        appends += 1
+        local_used.add(picked)
+        if used is not None:
+            used.add(picked)
+    if not added:
+        return line, 0
+    return f"{core}{trail}", added
 
 
 def _trim_dialogue_line(line: str, need: int) -> tuple[str, int]:
@@ -2508,17 +2602,56 @@ def _patch_overlong_lines(story: dict) -> list[str]:
     return notes
 
 
+def _patch_d_ensure_min_lines(
+    story: dict,
+    *,
+    target_lines: int = 13,
+) -> list[str]:
+    """D 句数不足时，在末四拍前插入轮流短句，便于一次补满字数。"""
+    notes: list[str] = []
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 4:
+        return notes
+    target = max(13, min(14, int(target_lines)))
+    need_lines = target - len(dialogue)
+    if need_lines <= 0:
+        return notes
+    insert_at = max(2, len(dialogue) - 4)
+    prev_sp = str(dialogue[insert_at - 1].get("speaker") or "灿灿").strip()
+    fillers = (
+        "我按你说的，一步都不含糊",
+        "你看我这不是照做吗",
+        "再紧一点，我认真系",
+        "系好了，绝对不会散",
+        "还是按你说的来",
+        "我继续，绝不偷懒",
+    )
+    for i in range(need_lines):
+        sp = "昭昭" if prev_sp == "灿灿" else "灿灿"
+        line = fillers[i % len(fillers)]
+        if _dialogue_char_count(line) > DAILY_STORY_LINE_CHARS_MAX:
+            line = _truncate_overlong_line(line)
+        dialogue.insert(insert_at + i, {"speaker": sp, "line": line})
+        prev_sp = sp
+        notes.append(f"D补句[{insert_at + i}]")
+    return notes
+
+
 def _patch_body_char_budget(story: dict) -> list[str]:
-    """仅小缺口本地补/删语气词；大缺口留给 LLM，避免硬塞口感崩。"""
+    """仅小缺口本地补/删语气词；D 在重试后可把句内顶满以一次过硬卡。"""
     from app.services.daily_story.story_types import resolve_story_type_code
 
     notes: list[str] = []
     dialogue = story.get("dialogue")
-    if not isinstance(dialogue, list) or len(dialogue) < 6:
+    if not isinstance(dialogue, list) or len(dialogue) < 4:
         return notes
-    mid = dialogue[:-4]
     total = dialogue_total_chars(story)
     code = resolve_story_type_code(story)
+    locked = str(story.get("_story_type") or "").strip()
+    if locked.upper().startswith("D") or "字面执行" in str(
+        story.get("punchline_explain") or "",
+    ):
+        code = "D"
     n_lines = len(dialogue)
     chars_min = DAILY_STORY_BODY_CHARS_MIN
     max_pad = DAILY_STORY_RETRY_PATCH_DEFICIT_MAX
@@ -2535,35 +2668,69 @@ def _patch_body_char_budget(story: dict) -> list[str]:
         chars_min = 265
         max_pad = 72
     if code == "D":
-        # D 句少字足，差几个字优先本地补，避免整轮重试卡在 275
-        max_pad = max(max_pad, 40)
+        # 首稿可短；一次重试后常差 80–150，本地把句顶满即可过硬卡
+        max_pad = max(max_pad, 160)
+        if n_lines < 13:
+            notes.extend(_patch_d_ensure_min_lines(story, target_lines=13))
+            dialogue = story.get("dialogue") or dialogue
+            n_lines = len(dialogue) if isinstance(dialogue, list) else n_lines
+            total = dialogue_total_chars(story)
+        if total < chars_min and n_lines < 14:
+            notes.extend(_patch_d_ensure_min_lines(story, target_lines=14))
+            dialogue = story.get("dialogue") or dialogue
+            n_lines = len(dialogue) if isinstance(dialogue, list) else n_lines
+            total = dialogue_total_chars(story)
+    mid = dialogue[:-4] if len(dialogue) >= 8 else dialogue[1:]
     if total < chars_min:
         need = chars_min - total
-        # 差太多硬补会怪，只处理小缺口（E 类压缩稿可放宽）
-        if need > max_pad:
+        if need > max_pad and code != "D":
             return notes
         before = total
-        # 整篇已出现的垫字（含上一轮补过的）都不再复用
-        used_pads = {
-            suf
-            for suf in _LOCAL_PAD_TAILS
-            for item in dialogue
-            if isinstance(item, dict) and str(item.get("line") or "").endswith(suf)
-        }
-        # D 小缺口：末两句（回旋镖+嘴硬）以外都可以补
-        targets = dialogue[2:-2] if code == "D" and need <= 16 else mid
-        for item in targets:
-            if need <= 0:
-                break
-            if not isinstance(item, dict):
-                continue
-            line = str(item.get("line") or "")
-            if not line:
-                continue
-            new_line, added = _pad_dialogue_line(line, need, used_pads)
-            if added:
-                item["line"] = new_line
-                need -= added
+        if code == "D":
+            # 中段+收束前都可顶字；片段整篇不复用
+            targets = dialogue[2:] if len(dialogue) > 4 else dialogue
+            used_fills: set[str] = set()
+            for _ in range(2):
+                if need <= 0:
+                    break
+                progressed = False
+                for item in targets:
+                    if need <= 0:
+                        break
+                    if not isinstance(item, dict):
+                        continue
+                    line = str(item.get("line") or "")
+                    if not line:
+                        continue
+                    new_line, added = _fill_d_dialogue_line(
+                        line, need, used_fills,
+                    )
+                    if added:
+                        item["line"] = new_line
+                        need -= added
+                        progressed = True
+                if not progressed:
+                    break
+        else:
+            used_pads = {
+                suf
+                for suf in _LOCAL_PAD_TAILS
+                for item in dialogue
+                if isinstance(item, dict)
+                and str(item.get("line") or "").endswith(suf)
+            }
+            for item in mid:
+                if need <= 0:
+                    break
+                if not isinstance(item, dict):
+                    continue
+                line = str(item.get("line") or "")
+                if not line:
+                    continue
+                new_line, added = _pad_dialogue_line(line, need, used_pads)
+                if added:
+                    item["line"] = new_line
+                    need -= added
         after = dialogue_total_chars(story)
         if after > before:
             notes.append(f"本地补字{before}→{after}")
@@ -2683,11 +2850,14 @@ def try_local_patch_daily_story_body(story: dict) -> tuple[dict, list[str]]:
     notes.extend(_patch_consecutive_speakers(out))
     notes.extend(patch_type_body(out))
     notes.extend(_patch_vocative_punctuation(out))
-    notes.extend(_patch_body_char_budget(out))
-    # 补字后可能又超单句硬卡 / 又引出连说 / 又叠试尝
     notes.extend(_patch_overlong_lines(out))
     notes.extend(_patch_consecutive_speakers(out))
     notes.extend(patch_type_body(out))
+    notes.extend(_patch_consecutive_speakers(out))
+    # 字数垫最后做：避免被 patch_type_body / 截断吃掉
+    notes.extend(_patch_body_char_budget(out))
+    notes.extend(_patch_overlong_lines(out))
+    notes.extend(_patch_consecutive_speakers(out))
     return out, notes
 
 
@@ -2754,6 +2924,7 @@ def resolve_daily_story_retry_length_mode(
             return "revise_patch"
         if deficit is not None and deficit <= DAILY_STORY_RETRY_PATCH_DEFICIT_MAX:
             return "revise_patch"
+        # D 偏短：走 expand 在上一稿上一次补满，勿打回 draft 整开
         return "revise_expand"
     if "总字数须≤" in err:
         if excess is not None and excess <= DAILY_STORY_RETRY_PATCH_DEFICIT_MAX:
@@ -2815,6 +2986,10 @@ def build_daily_story_retry_user(
     aim_hi = DAILY_STORY_BODY_RETRY_TARGET_MAX
     avg_line = 12
     length_hint = ""
+    type_code = parse_story_type_code(
+        story_type=story_type,
+        punchline=str(prev_story.get("punchline_explain") or ""),
+    )
     if chars < chars_min:
         deficit = chars_min - chars
         err_deficit = _parse_body_char_deficit(errors)
@@ -2828,15 +3003,32 @@ def build_daily_story_retry_user(
                 f"写到 ≥{chars_min} 即可，勿冲到上限猛扩。\n"
             )
         else:
-            add_lines = max(1, (deficit + avg_line - 1) // avg_line)
-            if deficit <= 48:
-                add_lines = min(add_lines, 2)
-            length_hint = (
-                f"【字数·只增不删】上一稿 {chars} 字，还差至少 {deficit} 字。"
-                f"在破功前插入约 {add_lines} 句互怼/加码（同一 conflict_core），"
-                f"须轮流说话、每轮新证据；禁止镜像复读与同人连说；"
-                f"写到 {aim_lo}–{aim_hi} 字；禁止整稿重写，禁止超过 {chars_max} 字。\n"
-            )
+            # D 类：正文句数预算固定（13–14 句），缺字时不让模型去“插很多句”走偏，
+            # 而是优先补到 13 句；若已在 13–14 句内，则只做句内顶字。
+            if type_code == "D":
+                dialogue = prev_story.get("dialogue")
+                n_lines = len(dialogue) if isinstance(dialogue, list) else 0
+                avg = (chars // n_lines) if n_lines else 0
+                length_hint = (
+                    f"【D·一次补满·硬验收】上一稿 {chars} 字 / {n_lines} 句"
+                    f"（均 {avg} 字/句），还差 {deficit} 字。\n"
+                    f"本轮输出须同时满足：① 正文恰好 13 或 14 句；"
+                    f"② 中段每句尽量 20–{DAILY_STORY_LINE_CHARS_MAX} 字；"
+                    f"③ dialogue 总字数 ≥{aim_lo}（至少 ≥{chars_min}）。\n"
+                    f"保留不知变通骨架只增不删；轮流说话；"
+                    f"禁止整稿重写、禁止轻轻放×N 凑字。"
+                    f"写不满 {chars_min} 字视为失败，勿交短稿。\n"
+                )
+            else:
+                add_lines = max(1, (deficit + avg_line - 1) // avg_line)
+                if deficit <= 48:
+                    add_lines = min(add_lines, 2)
+                length_hint = (
+                    f"【字数·只增不删】上一稿 {chars} 字，还差至少 {deficit} 字。"
+                    f"在破功前插入约 {add_lines} 句互怼/加码（同一 conflict_core），"
+                    f"须轮流说话、每轮新证据；禁止镜像复读与同人连说；"
+                    f"写到 {aim_lo}–{aim_hi} 字；禁止整稿重写，禁止超过 {chars_max} 字。\n"
+                )
     elif chars > chars_max:
         excess = chars - chars_max
         err_excess = _parse_body_char_excess(errors)
@@ -2859,10 +3051,6 @@ def build_daily_story_retry_user(
             )
     from app.services.daily_story.retry_hints import pick_primary_validation_errors
 
-    type_code = parse_story_type_code(
-        story_type=story_type,
-        punchline=str(prev_story.get("punchline_explain") or ""),
-    )
     dialogue = prev_story.get("dialogue")
     n_lines = len(dialogue) if isinstance(dialogue, list) else 0
     if type_code == "E" and chars < chars_min and not length_hint:
@@ -2873,6 +3061,12 @@ def build_daily_story_retry_user(
                 f"句内扩字或加妈妈开脱/追问细节，写到 ≥{chars_min} 即可。\n"
             )
     issue_hint = _retry_issue_hints(errors, chars=chars, type_code=type_code)
+    if "D类后果跑偏宜在中段已可见" in errors:
+        issue_hint = (
+            "【D·中段后果】中段（建议第 5–10 句）必须出现至少 1 个后果关键词："
+            "洒/掉/乱/倒了/弄乱/坏了/打不开/死结/溢/变形；不要只在末句才出现。\n"
+            + issue_hint
+        )
     primary = pick_primary_validation_errors(errors, max_items=1)
     primary_line = primary[0] if primary else errors
     prev_json = json.dumps(prev_story, ensure_ascii=False)
