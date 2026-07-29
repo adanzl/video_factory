@@ -1599,9 +1599,11 @@ class DeepSeekClient(LLMClient):
                     )
                     if any("特写镜仅" in e or "超过上限" in e for e in closeup_errs):
                         retry_hint = (
-                            "【重试】特写镜数量不足或过多。"
+                            "【重试】特写镜数量不足或过多（硬性：按实际镜数 N，"
+                            "特写须在 max(2,⌈N/4⌉)–⌊N/3⌋；例 8→2–3、10→3–4）。"
                             "开场首镜、中段转折、妈妈收场须标「特写」，"
-                            "全文约 1/4–1/3 镜为特写，且每特写 ≤2 句对白：\n"
+                            "每特写 ≤2 句对白；只改 shot_type 或拆/并镜，"
+                            "**禁止删改或遗漏原台词**：\n"
                         )
                     user = f"{user_base}\n\n{retry_hint}" + "\n".join(
                         f"- {e}" for e in closeup_errs
