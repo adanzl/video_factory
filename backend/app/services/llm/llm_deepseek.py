@@ -1660,7 +1660,8 @@ class DeepSeekClient(LLMClient):
 
         avoid = opening_avoid_speaker_from_body(body)
         last_exc: ValueError | None = None
-        max_open_rounds = 3
+        # 开场重拼最多 2 轮：连说靠 avoid_speaker，别空烧额度
+        max_open_rounds = 2
         for round_i in range(max_open_rounds):
             opening = self._generate_daily_story_opening(
                 theme,
@@ -1699,14 +1700,14 @@ class DeepSeekClient(LLMClient):
             theme, story_type=story_type, length_mode="draft"
         )
         last_exc: ValueError | None = None
-        # 日常故事易因字数+节奏硬卡波动：至少 5 次，带上一稿修订
-        max_attempts = max(5, get_settings().script_qa_max_attempts)
+        # 首稿可短（关 thinking）+ 1 次带 thinking 修订一次补满；再留 1 次兜底
+        max_attempts = 3
         prev_story: dict | None = None
         same_err_streak = 0
         prev_err_key = ""
         for attempt in range(max_attempts):
-            # 首稿硬关 thinking + 高温度保创意；重试走配置修硬约束
-            # （配置开 thinking 时模型忽略 temperature，故重试不传）
+            # 首稿：关 thinking + 高温度保发散；重试：开 thinking，字数一次补满
+            # （开 thinking 时模型忽略 temperature，故重试不传）
             if attempt == 0:
                 raw, _ = self._chat_json(
                     system,
@@ -1764,7 +1765,7 @@ class DeepSeekClient(LLMClient):
                         except ValueError:
                             prev_story = patched2
                 errors = str(exc).removeprefix("daily_story 校验失败: ")
-                # 同一硬伤连撞 3 次：停，别空转烧额度
+                # 同一硬伤连撞 3 次再停：首稿短→thinking 修订有时仍差一点，留满 3 次
                 err_key = (
                     "A偷吃"
                     if "A类偷吃" in errors or "检样不算开饭" in errors
@@ -1824,7 +1825,7 @@ class DeepSeekClient(LLMClient):
         prev_story: dict[str, Any],
         revision_hints: str,
         *,
-        max_attempts: int = 3,
+        max_attempts: int = 2,
     ) -> dict[str, Any]:
         """定向修订：保持骨架，只修补短板。"""
         from app.services.daily_story.prompts import (
@@ -1860,6 +1861,7 @@ class DeepSeekClient(LLMClient):
         last_exc: ValueError | None = None
 
         for attempt in range(max_attempts):
+            # 质量修订：开 thinking，按短板改，不走首稿高发散
             raw, _ = self._chat_json(system, user)
             if isinstance(raw, dict):
                 raw["_theme"] = theme
@@ -1929,7 +1931,7 @@ class DeepSeekClient(LLMClient):
                 f"（正文以「{avoid}」起句，避免拼后连说）。"
             )
         last_exc: ValueError | None = None
-        max_attempts = max(3, get_settings().script_qa_max_attempts)
+        max_attempts = max(1, min(2, get_settings().script_qa_max_attempts))
         core = str(body.get("conflict_core") or "")
         setting = str(body.get("setting") or "")
         from app.services.daily_story.story_types import parse_story_type_code
@@ -1939,8 +1941,10 @@ class DeepSeekClient(LLMClient):
         )
         for attempt in range(max_attempts):
             try:
-                # 开场是短约束任务：走配置 thinking（不传 temperature）
-                raw, _ = self._chat_json(system, user)
+                # 开场短约束：关 thinking，快失败快重试
+                raw, _ = self._chat_json(
+                    system, user, thinking_enabled=False,
+                )
                 opening_raw = raw.get("opening") if isinstance(raw, dict) else None
                 opening = validate_daily_story_opening(
                     opening_raw,
@@ -1979,11 +1983,96 @@ class DeepSeekClient(LLMClient):
         assert last_exc is not None
         raise last_exc
 
+    def review_daily_story_issues(
+        self,
+        theme: str,
+        story: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """审读一次：以读者身份逐句挑硬伤，返回结构化问题清单。"""
+        from app.services.daily_story.review import (
+            build_review_prompts,
+            parse_review_issues,
+        )
+
+        system, user = build_review_prompts(theme, story)
+        try:
+            # 审读关 thinking：单遍+程序本地检已够用，开 thinking 动辄数分钟
+            raw, _ = self._chat_json(
+                system,
+                user,
+                thinking_enabled=False,
+                temperature=0.0,
+            )
+        except ValueError as exc:
+            logger.warning("[DAILY_STORY] review call failed: %s", exc)
+            return []
+        n_lines = len(story.get("dialogue") or [])
+        return parse_review_issues(raw, line_count=n_lines)
+
+    def spot_fix_daily_story(
+        self,
+        theme: str,
+        story: dict[str, Any],
+        issues: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """定点修一次：只回被点出的行，落盘与降级由 review 模块决定。"""
+        from app.services.daily_story.prompts import DAILY_STORY_LINE_CHARS_MAX
+        from app.services.daily_story.review import build_spot_fix_prompts
+
+        system, user = build_spot_fix_prompts(
+            theme,
+            story,
+            issues,
+            line_chars_max=DAILY_STORY_LINE_CHARS_MAX,
+        )
+        try:
+            raw, _ = self._chat_json(system, user)
+        except ValueError as exc:
+            logger.warning("[DAILY_STORY] spot fix call failed: %s", exc)
+            return {}
+        return raw
+
     def generate_daily_story_themes(
         self,
         count: int = 15,
-    ) -> list[str]:
-        system, user = build_daily_story_theme_prompts(count)
+        *,
+        avoid: list[str] | None = None,
+    ) -> list[dict]:
+        from app.repositories import repo_daily_story
+        from app.services.daily_story.prompts import (
+            allocate_theme_type_quotas,
+            build_daily_story_theme_prompts,
+            filter_writable_themes,
+            merge_theme_story_types,
+            parse_typed_theme_lines,
+            select_themes_by_quota,
+        )
+
+        n = max(1, min(int(count), 20))
+        recent: list[str] = []
+        try:
+            recent = repo_daily_story.list_recent_themes(40)
+        except Exception as exc:  # noqa: BLE001 — 出题不因读库失败中断
+            logger.warning("[DAILY_STORY] list_recent_themes failed: %s", exc)
+
+        avoid_all: list[str] = []
+        seen_avoid: set[str] = set()
+        for raw in [*(avoid or []), *recent]:
+            t = str(raw or "").strip()
+            if not t or t in seen_avoid:
+                continue
+            seen_avoid.add(t)
+            avoid_all.append(t)
+
+        quotas = allocate_theme_type_quotas(n)
+        # 多要一点，过滤近义后仍够配额
+        ask = min(n + 5, 25)
+        ask_quotas = allocate_theme_type_quotas(ask)
+        system, user = build_daily_story_theme_prompts(
+            ask,
+            avoid=avoid_all,
+            quotas=ask_quotas,
+        )
         content, _ = self._chat(
             system,
             user,
@@ -1991,13 +2080,46 @@ class DeepSeekClient(LLMClient):
             thinking_enabled=False,
             temperature=_TEMP_CREATIVE_HIGH,
         )
-        themes = []
-        for line in content.strip().split("\n"):
-            line = line.strip()
-            if not line:
-                continue
-            # 去掉序号前缀，如 "1. "、"1、"、"1. 主题名"
-            line = re.sub(r"^\d+[.、)\s]*", "", line).strip()
-            if line:
-                themes.append(line)
-        return themes[:count]
+        typed = parse_typed_theme_lines(content)
+        picked = select_themes_by_quota(typed, quotas, avoid=avoid_all)
+        if len(picked) < n:
+            # 兜底：把解析出的纯主题再滤一遍补齐
+            plain = [t for _codes, t in typed]
+            codes_by_theme = {
+                t: list(codes) for codes, t in typed if codes and t
+            }
+
+            def _primary_count(code: str) -> int:
+                return sum(
+                    1
+                    for r in picked
+                    if (r.get("story_types") or [""])[0] == code
+                )
+
+            extra = filter_writable_themes(
+                plain,
+                avoid=[*avoid_all, *[r["theme"] for r in picked]],
+            )
+            for t in extra:
+                if len(picked) >= n:
+                    break
+                declared = codes_by_theme.get(t) or []
+                if not declared:
+                    st = next(
+                        (
+                            c
+                            for c in ("A", "B", "C", "D", "E")
+                            if _primary_count(c) < int(quotas.get(c) or 0)
+                        ),
+                        "C",
+                    )
+                    declared = [st]
+                types = merge_theme_story_types(t, declared=declared)
+                picked.append({"theme": t, "story_types": types})
+        if len(picked) < n:
+            logger.warning(
+                "[DAILY_STORY] theme quota short got=%d want=%d",
+                len(picked),
+                n,
+            )
+        return picked[:n]

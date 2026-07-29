@@ -553,6 +553,47 @@ class MockLLMClient(LLMClient):
         validate_daily_story_json(story, phase="full")
         return story
 
-    def generate_daily_story_themes(self, count: int = 15) -> list[str]:
-        themes = ["争最后一瓶酸奶", "谁先洗澡", "检查作业时发现错题", "抢着开门接快递"]
-        return themes[:count]
+    def generate_daily_story_themes(
+        self,
+        count: int = 15,
+        *,
+        avoid: list[str] | None = None,
+    ) -> list[dict]:
+        from app.services.daily_story.prompts import (
+            filter_writable_themes,
+            merge_theme_story_types,
+        )
+
+        catalog = [
+            ("C", "争沙发上最后一块靠垫归谁"),
+            ("B", "俩人约定藏起打翻的颜料"),
+            ("D", "浇花别浇太多结果溢出来"),
+            ("A", "姐姐嫌弟弟刷牙沫溅一圈"),
+            ("E", "说好不玩手机被窝屏幕还亮着"),
+            ("C", "谁先用新洗好的水杯"),
+            ("B", "偷偷一起多看五分钟动画"),
+            ("D", "关门轻点结果门没关严"),
+            ("C", "分最后一块布丁谁切谁选"),
+            ("E", "饭前不吃零食勺子还挂着菜"),
+            ("A", "教弟弟拉拉链一直拉反"),
+            ("B", "约好把碎掉的杯子先藏起来"),
+            ("D", "收玩具放回箱里全塞沙发底"),
+            ("C", "抢坐窗边那把椅子"),
+            ("E", "九点必须睡妈妈还在刷短视频"),
+        ]
+        plain = filter_writable_themes(
+            [t for _c, t in catalog],
+            avoid=avoid,
+        )
+        allowed = set(plain)
+        out: list[dict] = []
+        for code, theme in catalog:
+            if theme not in allowed:
+                continue
+            out.append({
+                "theme": theme,
+                "story_types": merge_theme_story_types(theme, declared=[code]),
+            })
+            if len(out) >= count:
+                break
+        return out

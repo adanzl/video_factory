@@ -77,6 +77,31 @@ def list_stories(
     return [_row_to_dict(row) for row in rows]
 
 
+def list_recent_themes(limit: int = 40) -> list[str]:
+    """最近入库主题（去重保序），做出题避重负样本。"""
+    limit = max(1, min(limit, 100))
+    rows = sql.fetchall(
+        """
+        SELECT theme FROM daily_story
+        ORDER BY id DESC
+        LIMIT ?
+        """,
+        (limit * 2,),
+    )
+    sql.commit()
+    out: list[str] = []
+    seen: set[str] = set()
+    for row in rows or []:
+        t = str(row.get("theme") or "").strip()
+        if not t or t in seen:
+            continue
+        seen.add(t)
+        out.append(t)
+        if len(out) >= limit:
+            break
+    return out
+
+
 def get_story(story_id: int) -> dict:
     row = sql.fetchone(
         f"SELECT {_DAILY_STORY_COLUMNS} FROM daily_story WHERE id = ?",
