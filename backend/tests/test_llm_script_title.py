@@ -2146,7 +2146,7 @@ def test_validate_e_lie_accepts_compact_positive():
 
 
 def test_validate_e_picky_rejects_catch_before_rule():
-    """现行=规矩名：禁先问拨开再答不许挑食。"""
+    """现行=规矩名：禁先问拨开再答不许挑食；须妈妈开场。"""
     from app.services.daily_story.story_types.e.opening import append_e_opening_errors
     from app.services.daily_story.story_types.e.validate import append_e_body_errors
 
@@ -2169,7 +2169,7 @@ def test_validate_e_picky_rejects_catch_before_rule():
     }
     body_errs: list[str] = []
     append_e_body_errors(story, body_errs)
-    assert any("因果反了" in e for e in body_errs)
+    assert any("妈妈开场训" in e or "因果反了" in e for e in body_errs)
 
     open_errs: list[str] = []
     append_e_opening_errors(
@@ -2179,7 +2179,7 @@ def test_validate_e_picky_rejects_catch_before_rule():
         conflict_core=story["conflict_core"],
         setting=story["setting"],
     )
-    assert any("因果反了" in e for e in open_errs)
+    assert any("妈妈先训" in e or "因果反了" in e for e in open_errs)
 
 
 def test_validate_e_picky_accepts_rule_before_catch():
@@ -2193,19 +2193,19 @@ def test_validate_e_picky_accepts_rule_before_catch():
         "setting": "餐桌旁",
         "conflict_core": "妈妈说不许挑食自己却拨开青菜",
         "dialogue": [
-            {"speaker": "昭昭", "line": "妈，碗里青菜这么多，我们真要全吃完？"},
-            {"speaker": "妈妈", "line": "吃饭不许挑食，青菜都得吃。"},
-            {"speaker": "灿灿", "line": "那你自己怎么把青菜拨到碗边上去了？"},
+            {"speaker": "妈妈", "line": "昭昭，你最近菜吃得太少了，不能挑食哦"},
+            {"speaker": "昭昭", "line": "那你怎么把青菜拨到碗边上去了？"},
             {"speaker": "妈妈", "line": "我这是晾着，等会儿配饭吃。"},
-            {"speaker": "昭昭", "line": "晾了半天还不动筷子，算不算挑？"},
-            {"speaker": "灿灿", "line": "那我把肉拨开，也算晾着配饭？"},
-            {"speaker": "昭昭", "line": "你自己说吃饭不许挑食。"},
+            {"speaker": "灿灿", "line": "晾了半天还不动筷子，算不算挑？"},
+            {"speaker": "昭昭", "line": "那我把肉拨开，也算晾着配饭？"},
+            {"speaker": "灿灿", "line": "你自己说不能挑食。"},
+            {"speaker": "昭昭", "line": "那你拨开算不算挑食？"},
             {"speaker": "妈妈", "line": "……行行行，我夹起来吃了啊。"},
         ],
     }
     body_errs: list[str] = []
     append_e_body_errors(story, body_errs)
-    assert not any("因果反了" in e for e in body_errs)
+    assert not any("因果反了" in e or "妈妈开场训" in e for e in body_errs)
 
     open_errs: list[str] = []
     append_e_opening_errors(
@@ -2215,7 +2215,7 @@ def test_validate_e_picky_accepts_rule_before_catch():
         conflict_core=story["conflict_core"],
         setting=story["setting"],
     )
-    assert not any("因果反了" in e for e in open_errs)
+    assert open_errs == []
 
 
 def _review_story() -> dict:

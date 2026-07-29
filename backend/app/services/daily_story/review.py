@@ -8,6 +8,7 @@
 2. 审读 1 次（LLM 以读者身份逐句读）→ 结构化问题清单；
 3. 定点修 1 次（只回改动行，按行号替换，说话人与行数不动）；
 4. 再审读 1 次 → 剩余问题直接扣分并写进 quality，不再重生成。
+首轮不再双遍并集（双遍+thinking 曾把单稿拖到十几分钟）。
 """
 
 from __future__ import annotations
@@ -31,8 +32,8 @@ _KIND_PENALTY: dict[str, int] = {
 }
 REVIEW_PENALTY_CAP = 25
 REVIEW_MAX_ISSUES = 6
-# 单遍审读召回不稳（同一篇稿两次结论会差），首轮取两遍并集
-REVIEW_FIRST_PASSES = 2
+# 首轮单遍：召回靠本地检 + 复审，禁止双遍 LLM 把单稿拖长
+REVIEW_FIRST_PASSES = 1
 
 _RE_PUNCT = re.compile(r"[，。！？…、：；~—\s·「」“”\"'?!.,]")
 # 末段结构句：引用原话闭环，跟前面质问像也不算复读

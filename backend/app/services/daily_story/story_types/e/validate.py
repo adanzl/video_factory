@@ -32,6 +32,12 @@ RE_PICKY_EYE = re.compile(r"拨到|拨开|碗边|拨了.{0,4}青菜")
 RE_PICKY_WAFFLE = re.compile(
     r"晾|配饭|配着饭|等会儿|一会儿|留到最后|饭太烫|再凉|慢慢来|翻一翻|翻个面",
 )
+RE_PICKY_RELECTURE = re.compile(
+    r"一口.{0,4}不(?:动|吃)|怎么不吃|多吃青菜|你要多吃|青菜都不动",
+)
+RE_PICKY_PAD = re.compile(
+    r"数数看|蔫了|证明你不是|打自己脸|说话算话|夹一根青菜|叶子都",
+)
 RE_LIE_TOPIC = re.compile(r"说谎|撒谎|敷衍|诚实|假话|骗")
 RE_LIE_MOM_RULE = re.compile(r"不能说谎|不许说谎|要诚实|别说谎|老实")
 RE_LIE_WAFFLE = re.compile(
@@ -167,7 +173,12 @@ def append_e_body_errors(story: dict, errors: list[str]) -> None:
             ),
             None,
         )
-        if rule_i is None or rule_i > 5:
+        if speakers[0] != "妈妈" or not RE_PICKY_MOM_RULE.search(lines[0]):
+            errors.append(
+                "E类挑食须妈妈开场训孩子不能挑食"
+                "（如「菜吃太少了，不能挑食」），再抓拨开",
+            )
+        elif rule_i is None or rule_i > 5:
             errors.append(
                 "E类挑食前段须妈妈亲口立规矩（不准挑食/青菜都得吃），"
                 "勿只说必须吃完却不点挑食",
@@ -177,6 +188,16 @@ def append_e_body_errors(story: dict, errors: list[str]) -> None:
                 "E类挑食须先妈妈立「不许挑食」，再抓拨青菜现行；"
                 "勿先质问拨开再立同名规矩（因果反了）",
             )
+        if eye_i is not None:
+            for i in range(eye_i + 1, min(eye_i + 4, n - 1)):
+                if speakers[i] != "妈妈":
+                    continue
+                if RE_PICKY_RELECTURE.search(lines[i]):
+                    errors.append(
+                        "E类挑食抓现行后禁妈妈回训孩子不吃菜，"
+                        "应开脱晾着/配饭",
+                    )
+                break
         if not RE_PICKY_EYE.search(all_text):
             errors.append(
                 "E类挑食须有可拍现行（拨到碗边/拨开青菜）",
@@ -191,16 +212,20 @@ def append_e_body_errors(story: dict, errors: list[str]) -> None:
                 "E类挑食妈妈开脱过多（晾着/配饭/等会儿宜≤2句一套加码）",
             )
         mom_n = sum(1 for sp in speakers if sp == "妈妈")
-        if mom_n >= 8 or n > 18:
+        if mom_n >= 8 or n > 16:
             errors.append(
-                "E类挑食正文过长（宜≤16句、妈妈开脱≤2句），勿晾着复读灌水",
+                "E类挑食正文过长（宜≤14句、妈妈开脱≤2句），勿晾着复读灌水",
             )
-        if sum(
-            1
+        if any(
+            sp == "妈妈" and "不一样" in ln
             for sp, ln in zip(speakers, lines)
-            if sp == "妈妈" and "不一样" in ln
-        ) >= 2:
-            errors.append("E类挑食禁不一样开脱复读（最多一次）")
+        ):
+            errors.append("E类挑食禁不一样/大人原因开脱")
+        if RE_PICKY_PAD.search(all_text):
+            errors.append(
+                "E类挑食禁注水（数叶子/打自己脸/证明夹菜），"
+                "中段用自套反例即可",
+            )
         # 规矩只立一次
         if sum(
             1

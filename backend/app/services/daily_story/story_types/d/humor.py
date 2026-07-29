@@ -60,8 +60,9 @@ _RE_DEF_TALK = re.compile(
 )
 # 字面动作递进：中段至少要有两档升级痕迹
 _RE_ESCALATE = re.compile(
-    r"再|又|第二|第三|两下|三口|第三圈|更高|更松|更轻|"
-    r"第一块|第二块|第三块|下一件|再叠|再绕|再夹|再倒|再放",
+    r"再|又|第二|第三|两下|三口|第三圈|更高|更松|更轻|太松|太紧|"
+    r"第一块|第二块|第三块|下一件|再叠|再绕|再夹|再倒|再放|"
+    r"一点点|只夹|只放|再试|又滑|又掉|还是",
 )
 
 HUMOR_ISSUE_CAPS: tuple[tuple[str, int], ...] = (
@@ -150,6 +151,17 @@ def collect_humor_issues(
     )
     if nit_n >= 3:
         cons.append("空辩论注水，不好笑")
+
+    # 中段开讨论会 / 缺动作递进 → 演进无意义，不好玩
+    def_talk_n = sum(1 for ln in body if _RE_DEF_TALK.search(ln))
+    escalate_n = sum(1 for ln in body if _RE_ESCALATE.search(ln))
+    if def_talk_n >= 2:
+        cons.append("中段抠定义无升级，不好玩")
+    elif def_talk_n >= 1 and escalate_n < 2 and len(body) >= 4:
+        # 有辩字义却几乎没有递进动作
+        cons.append("中段缺动作升级，不好玩")
+    elif escalate_n < 1 and len(body) >= 6:
+        cons.append("中段缺动作升级，不好玩")
 
     if n > 16:
         cons.append("中段拖沓注水，不好笑")
@@ -288,6 +300,12 @@ def humor_revision_hint(issue: str) -> str | None:
             f"【好笑·D】{issue}。"
             "删掉搞砸前灿灿的纠正句（不是让你垒塔/要平放/别往高）；"
             "叮嘱只说一次，让字面误解一路跑到倒/洒，回头再发现。"
+        )
+    if "抠定义" in issue or "缺动作升级" in issue or "不好玩" in issue:
+        return (
+            f"【好笑·D】{issue}。"
+            "中段改成同一误解的动作递进：第一块/第二块/第三块（或再叠、再绕、再夹），"
+            "删掉「是不是/不就是/记住没」讨论会；让观众只看动作就知道下一步会倒。"
         )
     if "未扣破规" in issue:
         return (

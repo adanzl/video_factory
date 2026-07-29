@@ -1660,7 +1660,8 @@ class DeepSeekClient(LLMClient):
 
         avoid = opening_avoid_speaker_from_body(body)
         last_exc: ValueError | None = None
-        max_open_rounds = 3
+        # 开场重拼最多 2 轮：连说靠 avoid_speaker，别空烧额度
+        max_open_rounds = 2
         for round_i in range(max_open_rounds):
             opening = self._generate_daily_story_opening(
                 theme,
@@ -1699,8 +1700,8 @@ class DeepSeekClient(LLMClient):
             theme, story_type=story_type, length_mode="draft"
         )
         last_exc: ValueError | None = None
-        # 日常故事易因字数+节奏硬卡波动：至少 5 次，带上一稿修订
-        max_attempts = max(5, get_settings().script_qa_max_attempts)
+        # 硬顶 3：靠本地 patch + 定向 hint 逼近，禁止 5× 空转
+        max_attempts = max(1, min(3, get_settings().script_qa_max_attempts))
         prev_story: dict | None = None
         same_err_streak = 0
         prev_err_key = ""
@@ -1715,7 +1716,10 @@ class DeepSeekClient(LLMClient):
                     temperature=_TEMP_CREATIVE_HIGH,
                 )
             else:
-                raw, _ = self._chat_json(system, user)
+                # 重试也关 thinking：修硬卡不靠长推理
+                raw, _ = self._chat_json(
+                    system, user, thinking_enabled=False,
+                )
             if isinstance(raw, dict):
                 from app.services.daily_story.prompts import (
                     try_local_patch_daily_story_body,
@@ -1764,7 +1768,7 @@ class DeepSeekClient(LLMClient):
                         except ValueError:
                             prev_story = patched2
                 errors = str(exc).removeprefix("daily_story 校验失败: ")
-                # 同一硬伤连撞 3 次：停，别空转烧额度
+                # 同一硬伤连撞 2 次：停，别空转烧额度
                 err_key = (
                     "A偷吃"
                     if "A类偷吃" in errors or "检样不算开饭" in errors
@@ -1775,7 +1779,7 @@ class DeepSeekClient(LLMClient):
                 else:
                     same_err_streak = 1
                     prev_err_key = err_key
-                if attempt + 1 >= max_attempts or same_err_streak >= 3:
+                if attempt + 1 >= max_attempts or same_err_streak >= 2:
                     logger.warning(
                         "[DAILY_STORY] generate story body validation failed "
                         "attempt=%d/%d streak=%d: %s",
@@ -1824,7 +1828,7 @@ class DeepSeekClient(LLMClient):
         prev_story: dict[str, Any],
         revision_hints: str,
         *,
-        max_attempts: int = 3,
+        max_attempts: int = 2,
     ) -> dict[str, Any]:
         """定向修订：保持骨架，只修补短板。"""
         from app.services.daily_story.prompts import (
@@ -1860,59 +1864,9 @@ class DeepSeekClient(LLMClient):
         last_exc: ValueError | None = None
 
         for attempt in range(max_attempts):
-            raw, _ = self._chat_json(system, user)
-            if isinstance(raw, dict):
-                raw["_theme"] = theme
-                patched, notes = try_local_patch_daily_story_body(raw)
-                if notes:
-                    logger.info(
-                        "[DAILY_STORY] local patch on quality revise: %s",
-                        ",".join(notes),
-                    )
-                    raw = patched
-                    raw.pop("_theme", None)
-            try:
-                validate_daily_story_json(raw, phase="body")
-                return raw
-            except ValueError as exc:
-                last_exc = exc
-                if isinstance(raw, dict):
-                    patched2, notes2 = try_local_patch_daily_story_body(raw)
-                    if notes2:
-                        try:
-                            validate_daily_story_json(patched2, phase="body")
-                            return patched2
-                        except ValueError:
-                            raw = patched2
-                if attempt + 1 >= max_attempts:
-                    break
-                errors = str(exc).removeprefix("daily_story 校验失败: ")
-                logger.warning(
-                    "[DAILY_STORY] quality revise validation failed "
-                    "attempt=%d/%d: %s",
-                    attempt + 1, max_attempts, errors,
-                )
-                # 用已有重试机制处理字数等格式问题
-                length_mode = resolve_daily_story_retry_length_mode(
-                    raw if isinstance(raw, dict) else None,
-                    errors=errors,
-                    story_type=rev_type,
-                )
-                system, _ = build_daily_story_prompts(
-                    theme, story_type=rev_type, length_mode=length_mode,
-                )
-                user = build_daily_story_retry_user(
-                    theme,
-                    prev_story=raw if isinstance(raw, dict) else prev_story,
-                    errors=errors,
-                    story_type=rev_type,
-                )
-                # 把质量提示词追加到 error feedback 后面
-                user += f"\n\n【同时修补】\n{revision_hints}"
-        assert last_exc is not None
-        raise last_exc
-
-    def _generate_daily_story_opening(
+            raw, _ = self._chat_json(
+                system, user, thinking_enabled=False,
+            )
         self,
         theme: str,
         body: dict[str, Any],
@@ -1929,7 +1883,7 @@ class DeepSeekClient(LLMClient):
                 f"（正文以「{avoid}」起句，避免拼后连说）。"
             )
         last_exc: ValueError | None = None
-        max_attempts = max(3, get_settings().script_qa_max_attempts)
+        max_attempts = max(1, min(2, get_settings().script_qa_max_attempts))
         core = str(body.get("conflict_core") or "")
         setting = str(body.get("setting") or "")
         from app.services.daily_story.story_types import parse_story_type_code
@@ -1939,8 +1893,10 @@ class DeepSeekClient(LLMClient):
         )
         for attempt in range(max_attempts):
             try:
-                # 开场是短约束任务：走配置 thinking（不传 temperature）
-                raw, _ = self._chat_json(system, user)
+                # 开场短约束：关 thinking，快失败快重试
+                raw, _ = self._chat_json(
+                    system, user, thinking_enabled=False,
+                )
                 opening_raw = raw.get("opening") if isinstance(raw, dict) else None
                 opening = validate_daily_story_opening(
                     opening_raw,
@@ -1992,11 +1948,11 @@ class DeepSeekClient(LLMClient):
 
         system, user = build_review_prompts(theme, story)
         try:
-            # 审读是推理活，开 thinking + 低温，避免同一篇稿两次结论不一样
+            # 审读关 thinking：单遍+程序本地检已够用，开 thinking 动辄数分钟
             raw, _ = self._chat_json(
                 system,
                 user,
-                thinking_enabled=True,
+                thinking_enabled=False,
                 temperature=0.0,
             )
         except ValueError as exc:

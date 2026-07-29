@@ -23,6 +23,16 @@ RE_CATCH = re.compile(
     r"拨到|拨开|碗边|青菜",
 )
 RE_KID_SELF_APPLY = e_humor.RE_KID_SELF_APPLY
+_RE_PICKY_RULE_TOKEN = re.compile(r"(?:不准|不许|不能|别)挑食")
+
+
+def ground_closing_quote(fragment: str, haystack: str) -> bool:
+    """挑食规矩词不许/不能视为同出；其余走默认连续子串。"""
+    frag = (fragment or "").strip()
+    hay = haystack or ""
+    if _RE_PICKY_RULE_TOKEN.search(frag) and _RE_PICKY_RULE_TOKEN.search(hay):
+        return True
+    return False
 
 
 def score_scene_beat(
@@ -115,6 +125,7 @@ QUALITY_PROFILE = TypeQualityProfile(
     collect_humor_issues=e_humor.collect_humor_issues,
     score_opening_quality=e_opening.score_opening_quality,
     score_scene_beat=score_scene_beat,
+    ground_closing_quote=ground_closing_quote,
     humor_issue_caps=e_humor.HUMOR_ISSUE_CAPS,
     humor_revision_hint=_e_revision_hint,
 )
