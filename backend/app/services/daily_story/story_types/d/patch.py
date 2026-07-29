@@ -23,6 +23,16 @@ _WAFFLE = re.compile(
     r"没有毛病|死板|坚持执行|脑子怎么|转不过弯|特殊补救|我这是帮你",
 )
 _D_MAX_LINES = 18
+# 中段引话降级用：改后不再命中 RE_BOOM_CLOSE，收束那一处保持不动
+_BOOM_SOFTEN_MAP = {
+    "你自己说": "你说的",
+    "你刚才说": "你说的",
+    "你刚说": "你说的",
+    "你现在也": "你这会儿也",
+    "你也碰了": "你这会儿碰了",
+    "你也动了": "你这会儿动了",
+}
+_BOOM_SOFTEN_RE = re.compile("|".join(_BOOM_SOFTEN_MAP))
 
 
 def _is_d(story: dict) -> bool:
@@ -422,6 +432,38 @@ def patch_d_trim_second_boom(story: dict) -> list[str]:
     return notes
 
 
+def patch_d_dedupe_boomerang(story: dict) -> list[str]:
+    """引话回旋镖只留末段那一处，前面的改写成普通引述。
+
+    「你自己说/你刚才说」出现两次就判复读压好笑分；中段本该用
+    「你说的/照你说的」，把正式回旋镖留给收束。
+    """
+    notes: list[str] = []
+    if not _is_d(story):
+        return notes
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 4:
+        return notes
+
+    hits = [
+        i
+        for i, d in enumerate(dialogue)
+        if isinstance(d, dict) and RE_BOOM_CLOSE.search(str(d.get("line") or ""))
+    ]
+    if len(hits) < 2:
+        return notes
+
+    for i in hits[:-1]:
+        line = str(dialogue[i].get("line") or "")
+        new_line = _BOOM_SOFTEN_RE.sub(
+            lambda m: _BOOM_SOFTEN_MAP[m.group(0)], line,
+        )
+        if new_line != line:
+            dialogue[i]["line"] = new_line
+            notes.append(f"D去回旋镖复读[{i}]")
+    return notes
+
+
 def patch_d_body(story: dict) -> list[str]:
     notes: list[str] = []
     notes.extend(patch_d_strip_mom(story))
@@ -441,4 +483,5 @@ def patch_d_body(story: dict) -> list[str]:
     notes.extend(patch_d_ensure_fix(story))
     notes.extend(patch_d_ensure_boomerang(story))
     notes.extend(patch_d_trim_second_boom(story))
+    notes.extend(patch_d_dedupe_boomerang(story))
     return notes

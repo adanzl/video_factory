@@ -16,12 +16,13 @@ RE_MOM_WAFFLE = re.compile(
 RE_LIE_TOPIC = re.compile(r"说谎|撒谎|敷衍|诚实|假话|骗")
 RE_LIE_MOM_RULE = re.compile(r"不能说谎|不许说谎|要诚实|别说谎|老实")
 RE_LIE_WAFFLE = re.compile(
-    r"不是敷衍|善意谎言|让奶奶放心|特殊情况|为了不让|不是骗",
+    r"不是敷衍|善意.{0,2}谎|让奶奶放心|特殊情况|为了不让|不是骗|"
+    r"不算撒谎|不算说谎",
 )
 RE_LIE_GOOD_WAFFLE = re.compile(r"善意")
 RE_SNACK_BLEED = re.compile(
-    r"那一口算不算|尝咸淡|咽下去|三大勺|勺上|吐回锅里|试吃|偷吃零|"
-    r"尝菜|调味|不算吃|偷吃零食|油光",
+    r"那一口算不算|尝咸淡|三大勺|勺上|吐回锅里|试吃|偷吃零|"
+    r"尝菜|调味|油光",
 )
 RE_LIE_FOOD_ITEM = re.compile(r"红烧|清蒸|排骨汤|白米饭|两碗汤|清蒸虾|红烧鱼")
 RE_MOM_DENY_QUOTE = re.compile(
@@ -41,7 +42,7 @@ RE_KID_SELF_APPLY = re.compile(
 RE_MOM_EXCUSE_ANY = re.compile(
     r"善意|好心|随口|怕她|怕奶奶|为大人|大人.{0,4}(?:着想|需要)|工作需要|"
     r"不算|为了不让|报喜|礼貌|着想|不想让.{0,4}(?:担心|操心)|"
-    r"不让.{0,3}(?:担心|操心)",
+    r"不让.{0,3}(?:担心|操心)|特殊情况|两码事|不一样|分寸|你们还小",
 )
 # 孩子自套逻辑后，妈妈须当场一口否掉（双标才成立）
 RE_MOM_FLAT_REFUSE = re.compile(
