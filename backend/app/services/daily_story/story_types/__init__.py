@@ -30,6 +30,7 @@ __all__ = [
     "normalize_punchline_explain",
     "extract_story_type_code_from_punchline",
     "parse_story_type_code",
+    "quality_ready_codes",
     "resolve_story_type_code",
     "patch_type_body",
     "revision_hints_for_type",
@@ -238,19 +239,25 @@ def story_type_tag(code: str) -> str:
     return f"{c}类{STORY_TYPE_LABELS[c]}"
 
 
+def quality_ready_codes() -> list[str]:
+    """已校准、可进入默认可选池的类型码。"""
+    return [k for k, line in STORY_TYPE_LINES.items() if line.quality_ready]
+
+
 def select_story_type_tag(theme: str) -> str:
-    """按主题关键词选类型；无匹配时在已校准类型 A/C 中随机。"""
+    """按主题关键词选类型；无匹配时在 `quality_ready` 类型中随机。"""
     scores = {
         k: sum(1 for kw in line.keywords if kw in theme)
         for k, line in STORY_TYPE_LINES.items()
     }
     max_score = max(scores.values())
+    ready = quality_ready_codes() or ["A", "C"]
     if max_score <= 0:
-        candidates = ["A", "C"]
+        candidates = list(ready)
     else:
         candidates = [k for k, v in scores.items() if v >= max_score]
     if not candidates:
-        candidates = ["A", "C"]
+        candidates = list(ready)
     selected = random.choice(candidates)
     return story_type_tag(selected)
 
