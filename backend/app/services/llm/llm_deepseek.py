@@ -4,8 +4,10 @@ import json
 import logging
 import re
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
+
+import gevent
+import gevent.pool
 
 from app.config import get_settings
 from app.exceptions import JobStageFailureError
@@ -875,15 +877,21 @@ class DeepSeekClient(LLMClient):
             return result["image_prompts"]
 
         def _run_all(batches: list[list[int]]) -> list[dict]:
-            items: list[dict] = []
+            """多批并行：用 gevent 绿程，勿用 ThreadPoolExecutor。
+
+            script 阶段跑在 hub 主线程 greenlet 上；OS 线程 + as_completed
+            会堵死整个 WSGI hub（接口不返回），且 thread 里打 patched
+            requests 易与 hub 死锁。绿程并行时 socket 可让出，其它接口仍响应。
+            """
             if len(batches) <= 1:
-                items = _run_batch(batches[0])
-            else:
-                with ThreadPoolExecutor(max_workers=len(batches)) as pool:
-                    futures = {pool.submit(_run_batch, batch): batch for batch in batches}
-                    for future in as_completed(futures):
-                        items.extend(future.result())
-                        raise_if_job_cancelled(job)
+                return _run_batch(batches[0])
+            pool = gevent.pool.Pool(size=len(batches))
+            green_lets = [pool.spawn(_run_batch, batch) for batch in batches]
+            gevent.joinall(green_lets, raise_error=True)
+            items: list[dict] = []
+            for g in green_lets:
+                items.extend(g.value)
+                raise_if_job_cancelled(job)
             return items
 
         # 首次尝试
