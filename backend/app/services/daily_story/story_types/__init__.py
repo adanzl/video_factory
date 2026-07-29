@@ -239,18 +239,21 @@ def story_type_tag(code: str) -> str:
 
 
 def select_story_type_tag(theme: str) -> str:
-    """按主题关键词选类型；无匹配时在已校准类型 A/C 中随机。"""
+    """按主题关键词选类型；无匹配时在 quality_ready 类型中随机。"""
+    ready = [k for k, line in STORY_TYPE_LINES.items() if line.quality_ready]
+    if not ready:
+        ready = ["A", "C"]
     scores = {
         k: sum(1 for kw in line.keywords if kw in theme)
         for k, line in STORY_TYPE_LINES.items()
     }
     max_score = max(scores.values())
     if max_score <= 0:
-        candidates = ["A", "C"]
+        candidates = list(ready)
     else:
         candidates = [k for k, v in scores.items() if v >= max_score]
     if not candidates:
-        candidates = ["A", "C"]
+        candidates = list(ready)
     selected = random.choice(candidates)
     return story_type_tag(selected)
 
