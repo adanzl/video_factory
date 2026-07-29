@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -329,6 +330,83 @@ def test_regen_daily_rewrites_visual_brief_not_append_feedback() -> None:
     assert "灿灿" in (seg.get("visual_brief") or "")
     assert "妈妈" not in new_prompt
     assert seg["image_prompt"] == new_prompt
+
+
+def test_regen_segment_reinjects_speaking_times_into_motion() -> None:
+    """质检重生 motion 后须按对白估时写入说话时间轴，避免落库无秒数原文。"""
+    mgr = ImageMgr()
+    seg = {
+        "id": 99,
+        "job_id": 54,
+        "segment_index": 1,
+        "text": "a。b。",
+        "visual_brief": "画面左边是昭昭，右边是灿灿；昭昭指妈妈，灿灿叉腰。",
+        "dialogue": [
+            {"speaker": "昭昭", "text": "客厅挂钟都九点了。"},
+            {"speaker": "灿灿", "text": "对啊她还不睡。"},
+        ],
+        "image_prompt": "旧图",
+        "motion_prompt": "旧运动",
+        "shot_type": "特写",
+    }
+    job = {
+        "id": 54,
+        "info": {"content_style": "daily_story"},
+        "script_json": {
+            "title": "t",
+            "visual_style": "儿童情绪涂鸦",
+            "setting": "客厅",
+            "content_style": "daily_story",
+            "segments": [dict(seg)],
+        },
+    }
+
+    def _fake_vb(script, **kwargs):
+        return script
+
+    def _fake_fill(script, **kwargs):
+        for s in script["segments"]:
+            if int(s["segment_index"]) == 1:
+                s["image_prompt"] = (
+                    "儿童情绪涂鸦风格。客厅。画面左边是昭昭，右边是灿灿。"
+                )
+                s["motion_prompt"] = (
+                    "画面左边是昭昭，右边是灿灿。"
+                    "昭昭说话，同时右手食指微微向下点动约2厘米后停止；"
+                    "灿灿说话，同时右手食指微微点动约1厘米后停止。"
+                    "两人说话后面部表情恢复与静图一致：昭昭瞪眼，灿灿撇嘴。"
+                    "服装发型稳定。镜头固定，不推近不拉远，画面只有人物和场景，无任何文字叠加。"
+                )
+        return script
+
+    with (
+        patch(
+            "app.services.llm.llm_mgr.llm_mgr.fill_visual_briefs",
+            side_effect=_fake_vb,
+        ),
+        patch(
+            "app.services.llm.llm_mgr.llm_mgr.fill_image_prompts",
+            side_effect=_fake_fill,
+        ),
+        patch(
+            "app.utils.job_info.resolve_include_sd15_prompt",
+            return_value=False,
+        ),
+        patch(
+            "app.services.tts.tts_mgr.tts_mgr.subtitle_cues_path_for",
+            return_value=Path("/tmp/missing_cues.json"),
+        ),
+    ):
+        mgr._regen_segment_image_prompt(
+            seg,
+            job=job,
+            content_style="daily_story",
+        )
+
+    mp = seg.get("motion_prompt") or ""
+    assert re.search(r"\d+\.\d+-\d+\.\d+秒", mp)
+    assert "左侧男孩张嘴说话，同时" in mp
+    assert "右侧女孩张嘴说话，同时" in mp
 
 
 def test_verify_regen_feedback_cast_aware() -> None:
