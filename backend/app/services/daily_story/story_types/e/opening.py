@@ -119,6 +119,9 @@ def append_e_opening_errors(
     sleep_t = bool(RE_SLEEP_TOPIC.search(ctx))
     picky_t = bool(RE_PICKY_TOPIC.search(ctx)) and not snack_t
     if picky_t:
+        first = normalized[0] if normalized else {}
+        first_sp = first.get("speaker", "")
+        first_ln = first.get("line", "")
         rule_i = next(
             (
                 i
@@ -138,11 +141,12 @@ def append_e_opening_errors(
             ),
             None,
         )
-        if rule_i is None:
+        if first_sp != "妈妈" or not RE_PICKY_MOM_RULE.search(first_ln):
             errors.append(
-                "E类挑食开场须妈妈亲口立规矩（不准挑食/青菜都得吃）",
+                "E类挑食开场须妈妈先训孩子不能挑食"
+                "（如「菜吃太少了，不能挑食」），再孩子抓拨开",
             )
-        elif eye_i is not None and eye_i < rule_i:
+        elif eye_i is not None and rule_i is not None and eye_i < rule_i:
             errors.append(
                 "E类挑食开场须先立「不许挑食」，再点拨青菜；"
                 "勿先问拨开再答不许挑食（因果反了）",
@@ -282,7 +286,7 @@ def opening_revision_hint(issue: str) -> str | None:
         return None
     return (
         f"【开场·E】{issue}。"
-        "挑食：先立不许挑食，再点拨青菜；禁拨开→不许挑食。"
+        "挑食：妈妈开场训不能挑食，再孩子抓拨开；禁拨开→不许挑食。"
         "说谎题：孩子问电话内容→妈妈先立不能说谎→再开脱；"
         "孩子句宜口语问妈；勿旁白定格式；勿尝菜串场；勿妈妈先狡辩。"
     )

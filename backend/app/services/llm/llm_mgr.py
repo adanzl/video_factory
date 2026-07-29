@@ -676,11 +676,17 @@ class LLMMgr:
         theme: str,
         *,
         story_type: str | None = None,
+        review: bool = True,
     ) -> dict[str, Any]:
-        """出稿后固定走一遍人读审稿：审读→定点修→复审，不回环重生成。"""
+        """出稿后固定走一遍人读审稿：审读→定点修→复审，不回环重生成。
+
+        review=False 仅给本地预览调提示用，跳过慢审读。
+        """
         from app.services.daily_story.review import run_daily_story_review
 
         story = self._generate_daily_story_scored(theme, story_type=story_type)
+        if not review:
+            return story
         return run_daily_story_review(self._get_client(), theme, story)
 
     def _generate_daily_story_scored(
@@ -700,9 +706,9 @@ class LLMMgr:
         best_story: dict[str, Any] | None = None
         best_score = -1
         target = 85
-        # 整稿最多 2 次；不够分优先 refine，避免 body×5 再乘外环
-        max_full = 2
-        max_refine = 2
+        # 整稿 1 次 + refine 1 次：不够分交人/下一主题，禁止乘法空转
+        max_full = 1
+        max_refine = 1
         last_exc: Exception | None = None
 
         for attempt in range(max_full):
@@ -768,20 +774,6 @@ class LLMMgr:
                         exc,
                     )
                     break
-
-            # 已有可用稿且分不太差：勿再整稿重开（省一层 body 重试乘法）
-            if best_score >= 80:
-                logger.info(
-                    "[DAILY_STORY] stop full regen score=%d < %d "
-                    "(keep best, skip more full drafts)",
-                    best_score, target,
-                )
-                break
-
-            logger.info(
-                "[DAILY_STORY] score=%d < %d, full retry attempt=%d/%d",
-                score, target, attempt + 1, max_full,
-            )
 
         elapsed = time.perf_counter() - started
         if best_story is not None:

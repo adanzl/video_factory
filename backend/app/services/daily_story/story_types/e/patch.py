@@ -18,6 +18,18 @@ from app.services.daily_story.story_types.e.humor import (
 )
 
 _A_TAIL = re.compile(r"哪里不一样|都是听|那不一样")
+_RE_PICKY_THEME = re.compile(r"挑食|青菜|拨到碗边")
+_RE_PICKY_RULE = re.compile(
+    r"不准挑食|不许挑食|不能挑食|别挑食|挑食不行|"
+    r"青菜.{0,6}(?:必须|得|要)吃",
+)
+_RE_PICKY_EYE = re.compile(r"拨到|拨开|碗边|拨了.{0,4}青菜")
+_RE_PICKY_RELECTURE = re.compile(
+    r"一口.{0,4}不(?:动|吃)|怎么不吃|多吃青菜|你要多吃|青菜都不动",
+)
+_RE_PICKY_PAD = re.compile(
+    r"数数|蔫了|证明你不是|打自己脸|说话算话|夹一根|叶子都",
+)
 
 
 def _is_e(story: dict) -> bool:
@@ -25,6 +37,30 @@ def _is_e(story: dict) -> bool:
 
     return resolve_story_type_code(story) == "E"
 
+
+def _theme_ctx(story: dict) -> str:
+    return (
+        str(story.get("conflict_core") or "")
+        + str(story.get("_theme") or "")
+        + str(story.get("theme") or "")
+        + str(story.get("scene_title") or "")
+    )
+
+
+def _is_picky(story: dict) -> bool:
+    return bool(_RE_PICKY_THEME.search(_theme_ctx(story)))
+
+
+def _picky_rule_phrase(dialogue: list) -> str:
+    for d in dialogue:
+        if not isinstance(d, dict):
+            continue
+        if str(d.get("speaker") or "") != "妈妈":
+            continue
+        m = _RE_PICKY_RULE.search(str(d.get("line") or ""))
+        if m:
+            return m.group(0)
+    return "不能挑食"
 
 def _lines(dialogue: list) -> list[str]:
     return [
@@ -130,28 +166,42 @@ def patch_e_ensure_mom_rule(story: dict) -> list[str]:
             None,
         )
         if eye_i is not None and (rule_i is None or eye_i < rule_i):
-            eye_line = "那你自己怎么把青菜拨到碗边了？"
+            eye_line = "那你怎么把青菜拨到碗边了？"
             if isinstance(dialogue[eye_i], dict):
                 raw = str(dialogue[eye_i].get("line") or "").strip()
                 if eye_re.search(raw):
                     eye_line = raw
-            dialogue[0] = {
-                "speaker": "昭昭",
-                "line": "妈，碗里青菜这么多，我们真要全吃完？",
-            }
-            dialogue[1] = {"speaker": "妈妈", "line": rule_line}
-            has_eye_after = any(
-                isinstance(d, dict)
-                and str(d.get("speaker") or "") in ("昭昭", "灿灿")
-                and eye_re.search(str(d.get("line") or ""))
-                for d in dialogue[2:]
-            )
-            if not has_eye_after and len(dialogue) > 2 and isinstance(
-                dialogue[2], dict,
-            ):
-                dialogue[2]["speaker"] = "灿灿"
-                dialogue[2]["line"] = eye_line
-            notes.append("E挑食因果：先立规再抓拨开")
+            mom_open = "昭昭，你最近菜吃得太少了，不能挑食哦"
+            if dialogue_char_count(mom_open) > DAILY_STORY_LINE_CHARS_MAX:
+                mom_open = "菜吃太少了，不能挑食哦"
+            dialogue[0] = {"speaker": "妈妈", "line": mom_open}
+            dialogue[1] = {"speaker": "昭昭", "line": eye_line}
+            notes.append("E挑食因果：妈妈开场训后再抓拨开")
+            return notes
+
+        # 已有规矩但非妈妈开场：仍改成妈妈先训
+        if (
+            rule_i is not None
+            and rule_i > 0
+            and str(dialogue[0].get("speaker") or "") != "妈妈"
+        ):
+            eye_line = "那你怎么把青菜拨到碗边了？"
+            for d in dialogue:
+                if (
+                    isinstance(d, dict)
+                    and str(d.get("speaker") or "") in ("昭昭", "灿灿")
+                    and eye_re.search(str(d.get("line") or ""))
+                ):
+                    eye_line = str(d.get("line") or "").strip()
+                    break
+            mom_open = "昭昭，你最近菜吃得太少了，不能挑食哦"
+            if dialogue_char_count(mom_open) > DAILY_STORY_LINE_CHARS_MAX:
+                mom_open = "菜吃太少了，不能挑食哦"
+            dialogue[0] = {"speaker": "妈妈", "line": mom_open}
+            if isinstance(dialogue[1], dict):
+                dialogue[1]["speaker"] = "昭昭"
+                dialogue[1]["line"] = eye_line
+            notes.append("E挑食因果：改妈妈开场训孩子")
             return notes
 
     head = dialogue[: max(2, len(dialogue) // 2)]
@@ -187,12 +237,17 @@ def patch_e_ensure_kid_ask(story: dict) -> list[str]:
     text = "".join(_lines(mid))
     if RE_KID_ASK.search(text):
         return notes
+    if _is_picky(story) and re.search(r"那我|算不算|拨开|晾着", text):
+        return notes
     for d in mid:
         if not isinstance(d, dict):
             continue
         if str(d.get("speaker") or "") not in ("昭昭", "灿灿"):
             continue
-        new_line = "那你刚才那一口算不算啊"
+        if _is_picky(story):
+            new_line = "那我把肉拨开，也算晾着配饭？"
+        else:
+            new_line = "那你刚才那一口算不算啊"
         if dialogue_char_count(new_line) <= DAILY_STORY_LINE_CHARS_MAX:
             d["line"] = new_line
             notes.append("E补孩子追问")
@@ -211,18 +266,23 @@ def patch_e_ensure_waffle(story: dict) -> list[str]:
     lines = _lines(dialogue)
     if RE_MOM_WAFFLE.search("".join(lines)):
         return notes
+    if _is_picky(story) and re.search(r"晾|配饭|等会儿", "".join(lines)):
+        return notes
     # 找闭环前最近的妈妈句
     loop_i = next(
         (i for i, ln in enumerate(lines) if RE_LOOP.search(ln)),
         len(dialogue) - 2,
     )
+    if _is_picky(story):
+        new_line = "我这是晾着，等会儿配饭吃"
+    else:
+        new_line = "那是尝咸淡，不算吃零食"
     for i in range(min(loop_i, len(dialogue) - 1) - 1, 1, -1):
         d = dialogue[i]
         if not isinstance(d, dict):
             continue
         if str(d.get("speaker") or "") != "妈妈":
             continue
-        new_line = "那是尝咸淡，不算吃零食"
         if dialogue_char_count(new_line) <= DAILY_STORY_LINE_CHARS_MAX:
             d["line"] = new_line
             notes.append(f"E补妈妈改口[{i}]")
@@ -231,7 +291,7 @@ def patch_e_ensure_waffle(story: dict) -> list[str]:
     i = len(dialogue) - 3
     if isinstance(dialogue[i], dict):
         dialogue[i]["speaker"] = "妈妈"
-        dialogue[i]["line"] = "那是尝咸淡，不算吃零食"
+        dialogue[i]["line"] = new_line
         notes.append(f"E补妈妈改口[{i}]")
     return notes
 
@@ -251,10 +311,115 @@ def patch_e_ensure_loop(story: dict) -> list[str]:
     if not isinstance(d, dict):
         return notes
     d["speaker"] = "昭昭"
-    d["line"] = "你自己说不能吃，你现在也吃了"
+    if _is_picky(story):
+        phrase = _picky_rule_phrase(dialogue)
+        d["line"] = f"你自己说{phrase}"
+    else:
+        d["line"] = "你自己说不能吃，你现在也吃了"
     notes.append("E补追问闭环")
     return notes
 
+
+def patch_e_picky_mid(story: dict) -> list[str]:
+    """挑食中段：禁回训孩子、禁不一样、引话对齐开场原词、削注水。"""
+    notes: list[str] = []
+    if not _is_e(story) or not _is_picky(story):
+        return notes
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 6:
+        return notes
+
+    speakers = _speakers(dialogue)
+    lines = _lines(dialogue)
+    eye_i = next(
+        (
+            i
+            for i, (sp, ln) in enumerate(zip(speakers, lines))
+            if sp in ("昭昭", "灿灿") and _RE_PICKY_EYE.search(ln)
+        ),
+        None,
+    )
+    if eye_i is not None:
+        for i in range(eye_i + 1, min(eye_i + 4, len(dialogue) - 1)):
+            if speakers[i] != "妈妈":
+                continue
+            if _RE_PICKY_RELECTURE.search(lines[i]) or (
+                _RE_PICKY_RULE.search(lines[i]) and i > 0
+            ):
+                dialogue[i]["line"] = "我这是晾着，等会儿配饭吃"
+                notes.append(f"E挑食去回训[{i}]")
+                speakers = _speakers(dialogue)
+                lines = _lines(dialogue)
+            break
+
+    for i, (sp, ln) in enumerate(zip(speakers, lines)):
+        if sp != "妈妈" or "不一样" not in ln:
+            continue
+        dialogue[i]["line"] = "我这是晾着，等会儿配饭吃"
+        notes.append(f"E挑食去不一样[{i}]")
+        speakers = _speakers(dialogue)
+        lines = _lines(dialogue)
+
+    phrase = _picky_rule_phrase(dialogue)
+    for i in range(max(0, len(dialogue) - 4), len(dialogue) - 1):
+        if speakers[i] not in ("昭昭", "灿灿"):
+            continue
+        ln = lines[i]
+        if not RE_LOOP.search(ln):
+            continue
+        m = re.search(
+            r"(不准挑食|不许挑食|不能挑食|别挑食)",
+            ln,
+        )
+        if m and m.group(1) != phrase and phrase in (
+            "不准挑食", "不许挑食", "不能挑食", "别挑食",
+        ):
+            dialogue[i]["line"] = ln.replace(m.group(1), phrase, 1)
+            notes.append(f"E挑食引话对齐[{i}]")
+            speakers = _speakers(dialogue)
+            lines = _lines(dialogue)
+
+    # 末段前注水：打自己脸/数叶子等改成自套反例
+    for i in range(2, max(2, len(dialogue) - 3)):
+        if speakers[i] not in ("昭昭", "灿灿"):
+            continue
+        if not _RE_PICKY_PAD.search(lines[i]):
+            continue
+        dialogue[i]["line"] = "那我把肉拨开，也算晾着配饭？"
+        notes.append(f"E挑食去注水[{i}]")
+        speakers = _speakers(dialogue)
+        lines = _lines(dialogue)
+        break
+
+    # 挑食宜短：超 16 句砍中段
+    while len(dialogue) > 16:
+        n = len(dialogue)
+        protected = {0, 1, n - 1, n - 2, n - 3}
+        if eye_i is not None:
+            protected.add(eye_i)
+            protected.add(min(eye_i + 1, n - 1))
+        drop_i = None
+        for i in range(n - 4, 2, -1):
+            if i in protected:
+                continue
+            drop_i = i
+            break
+        if drop_i is None:
+            break
+        dialogue.pop(drop_i)
+        notes.append(f"E挑食删注水[{drop_i}]")
+        speakers = _speakers(dialogue)
+        lines = _lines(dialogue)
+        eye_i = next(
+            (
+                i
+                for i, (sp, ln) in enumerate(zip(speakers, lines))
+                if sp in ("昭昭", "灿灿") and _RE_PICKY_EYE.search(ln)
+            ),
+            None,
+        )
+
+    return notes
 
 def patch_e_closing_mom_soft(story: dict) -> list[str]:
     """末句须妈妈破功。"""
@@ -434,10 +599,12 @@ def patch_e_body(story: dict) -> list[str]:
     notes.extend(patch_e_strip_patch_garbage(story))
     notes.extend(patch_e_strip_a_close(story))
     notes.extend(patch_e_ensure_mom_rule(story))
+    notes.extend(patch_e_picky_mid(story))
     notes.extend(patch_e_ensure_kid_ask(story))
     notes.extend(patch_e_ensure_waffle(story))
     notes.extend(patch_e_ensure_loop(story))
     notes.extend(patch_e_closing_mom_soft(story))
+    notes.extend(patch_e_picky_mid(story))
     notes.extend(patch_e_strip_patch_garbage(story))
     notes.extend(patch_e_strip_a_close(story))
     notes.extend(patch_e_ensure_loop(story))

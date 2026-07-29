@@ -762,7 +762,7 @@ def _theme_bigrams(text: str) -> set[str]:
 
 
 def themes_near_duplicate(a: str, b: str, *, threshold: float = 0.45) -> bool:
-    """同批/对历史的近义：包含关系或 bigram Jaccard。"""
+    """同批/对历史的近义：包含关系"""
     na, nb = _theme_norm(a), _theme_norm(b)
     if len(na) < 4 or len(nb) < 4:
         return na == nb and bool(na)
@@ -1655,7 +1655,19 @@ def validate_daily_story_json(
             chars_min = DAILY_STORY_BODY_CHARS_MIN
             type_code = resolve_story_type_code(story)
             n_lines = len(dialogue) if isinstance(dialogue, list) else 0
-            if type_code == "E" and n_lines >= 10:
+            theme_ctx = (
+                str(story.get("conflict_core") or "")
+                + str(story.get("_theme") or "")
+                + str(story.get("theme") or "")
+                + str(story.get("scene_title") or "")
+            )
+            # 挑食宜短稿，勿与通用 ≥280/265 硬顶死
+            if type_code == "E" and re.search(
+                r"挑食|青菜|拨到碗边",
+                theme_ctx,
+            ):
+                chars_min = 200
+            elif type_code == "E" and n_lines >= 10:
                 chars_min = 265
             if total_chars < chars_min:
                 deficit = chars_min - total_chars
@@ -2510,7 +2522,16 @@ def _patch_body_char_budget(story: dict) -> list[str]:
     n_lines = len(dialogue)
     chars_min = DAILY_STORY_BODY_CHARS_MIN
     max_pad = DAILY_STORY_RETRY_PATCH_DEFICIT_MAX
-    if code == "E" and 10 <= n_lines <= 16:
+    theme_ctx = (
+        str(story.get("conflict_core") or "")
+        + str(story.get("_theme") or "")
+        + str(story.get("theme") or "")
+        + str(story.get("scene_title") or "")
+    )
+    if code == "E" and re.search(r"挑食|青菜|拨到碗边", theme_ctx):
+        chars_min = 200
+        max_pad = 48
+    elif code == "E" and 10 <= n_lines <= 16:
         chars_min = 265
         max_pad = 72
     if code == "D":

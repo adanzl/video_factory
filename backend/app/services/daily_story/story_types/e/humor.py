@@ -93,6 +93,8 @@ HUMOR_ISSUE_CAPS: tuple[tuple[str, int], ...] = (
     ("说谎缺自套逻辑反杀", 8),
     ("妈妈一句一个新借口", 8),
     ("语气垫字", 8),
+    ("抓现行后回训", 5),
+    ("偏不一样开脱", 5),
 )
 
 
@@ -169,6 +171,37 @@ def collect_humor_issues(
         "".join(lines[: min(8, n)]),
     ):
         cons.append("尝菜眼太弱，不好笑")
+
+    picky_t = bool(re.search(r"挑食|青菜|拨到碗边", all_text)) and not (
+        RE_SNACK_TOPIC.search(all_text) and not re.search(r"挑食|拨开|碗边", all_text)
+    )
+    if picky_t and speakers and len(speakers) == n:
+        if any(
+            speakers[i] == "妈妈" and "不一样" in lines[i]
+            for i in range(n)
+        ):
+            cons.append("偏不一样开脱，不好笑")
+        eye_i = next(
+            (
+                i
+                for i, ln in enumerate(lines)
+                if speakers[i] in ("昭昭", "灿灿")
+                and re.search(r"拨到|拨开|碗边", ln)
+            ),
+            None,
+        )
+        if eye_i is not None:
+            for i in range(eye_i + 1, min(eye_i + 4, n - 1)):
+                if speakers[i] != "妈妈":
+                    continue
+                if re.search(
+                    r"一口.{0,4}不(?:动|吃)|怎么不吃|多吃青菜",
+                    lines[i],
+                ):
+                    cons.append("抓现行后回训，不好笑")
+                break
+        if re.search(r"打自己脸|说话算话|数数看|蔫了", all_text):
+            cons.append("中段拖沓注水，不好笑")
 
     lie_t = (
         RE_LIE_TOPIC.search(all_text)
