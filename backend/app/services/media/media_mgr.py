@@ -505,7 +505,23 @@ class MediaMgr:
             motion_prompt = seg.get("motion_prompt") or seg.get("visual_brief") or ""
             # 代码注入开口动作（从 dialogue 取 speaker + 从 cues 取时长）
             motion_prompt = _inject_mouth_motion(motion_prompt, seg, seg_cues)
-            seg["motion_prompt"] = motion_prompt  # 写回，让 DB 能看到注入后结果
+            seg["motion_prompt"] = motion_prompt
+            # 落库，避免 UI/后续重跑仍读到未注入时间的 LLM 原文
+            seg_id = seg.get("id")
+            if seg_id is not None and motion_prompt:
+                try:
+                    from app.repositories import repo_segment
+                    from app.repositories.sql_exec import atomic
+
+                    with atomic():
+                        repo_segment.update_segment(
+                            int(seg_id), motion_prompt=motion_prompt
+                        )
+                except Exception:
+                    logger.exception(
+                        "clip segment %s: failed to persist injected motion_prompt",
+                        index,
+                    )
             image_prompt = seg.get("image_prompt") or ""
             logger.info(
                 "clip %s/%s building segment %s | %s | image_chars=%s motion_chars=%s",

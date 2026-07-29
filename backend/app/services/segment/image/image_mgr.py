@@ -125,10 +125,49 @@ class ImageMgr:
             seg['visual_brief'] = refreshed.get('visual_brief')
         if refreshed.get('motion_prompt') is not None:
             seg['motion_prompt'] = refreshed.get('motion_prompt')
+            ImageMgr._inject_speaking_times_for_segment(seg, job=job)
         if refreshed.get('sd15_prompt_en') is not None:
             seg['sd15_prompt_en'] = refreshed.get('sd15_prompt_en')
         seg['image_prompt'] = new_prompt
         return new_prompt
+
+    @staticmethod
+    def _inject_speaking_times_for_segment(
+        seg: dict,
+        *,
+        job: dict[str, Any] | None,
+    ) -> None:
+        """质检重生 motion 后按 TTS cues 写回说话时间轴（无 cues 则字数估时）。"""
+        motion = str(seg.get('motion_prompt') or '').strip()
+        if not motion or '说话，同时' not in motion:
+            return
+        job_id = None
+        if job is not None and job.get('id') is not None:
+            job_id = int(job['id'])
+        elif seg.get('job_id') is not None:
+            job_id = int(seg['job_id'])
+        index = int(seg.get('segment_index') or 0)
+        if index <= 0:
+            return
+        from app.services.media.media_mgr import inject_speaking_times_into_motion_prompts
+        from app.services.tts.tts_mgr import tts_mgr
+        cues: list = []
+        if job_id is not None:
+            media_dir = get_settings().video_data_dir / str(job_id)
+            cues_path = tts_mgr.subtitle_cues_path_for(media_dir / 'audio')
+            if cues_path.exists():
+                cues = tts_mgr.load_subtitle_cues(cues_path)
+        n = inject_speaking_times_into_motion_prompts(
+            [seg],
+            cues,
+            segment_indices={index},
+            estimate_cues_without_tts=not cues,
+        )
+        if n:
+            logger.info(
+                'image segment %s: reinjected speaking times into motion_prompt after prompt regen',
+                index,
+            )
 
     @staticmethod
     def _persist_segment_prompt(seg: dict) -> None:

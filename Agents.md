@@ -54,6 +54,7 @@ CPU: AMD Ryzen 9 7940HS w/ Radeon 780M Graphics
 - 你要是说服务器就旧代码先去服务器上查git记录再说
 - 不要用powershell命令执行远程查询
 - 要测试先本地测通过了再推送，除非我要求，不要远程测试
+- PowerShell 会拆坏远程 Python，不要直接用
 
 ## 快捷命令
 
