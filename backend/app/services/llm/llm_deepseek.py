@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 from app.config import get_settings
+from app.exceptions import JobStageFailureError
 from app.services.llm.llm_mgr import LLMClient
 from app.services.script.description import (
     build_video_description_prompts,
@@ -1480,7 +1481,7 @@ class DeepSeekClient(LLMClient):
             dialogue_script, chars_per_sec=cps
         )
         user_base = user
-        last_exc: ValueError | None = None
+        last_exc: Exception | None = None
         max_attempts = get_settings().script_qa_max_attempts
 
         # 提取原始台词列表（跳过纯标点行，与下游过滤逻辑一致）
@@ -1500,7 +1501,7 @@ class DeepSeekClient(LLMClient):
                     user,
                 )
             except ValueError as exc:
-                last_exc = exc
+                last_exc = JobStageFailureError(str(exc))
                 if attempt + 1 >= max_attempts:
                     break
                 logger.warning(
@@ -1517,7 +1518,7 @@ class DeepSeekClient(LLMClient):
                 continue
             raise_if_job_cancelled(job)
             if finish == "length":
-                last_exc = ValueError("LLM daily_script response truncated")
+                last_exc = JobStageFailureError("LLM daily_script response truncated")
                 if attempt + 1 >= max_attempts:
                     break
                 logger.warning(
@@ -1551,7 +1552,9 @@ class DeepSeekClient(LLMClient):
                 )
                 missing = [line for line in original_lines if line not in generated_text]
                 if missing:
-                    last_exc = ValueError(f"LLM 遗漏 {len(missing)} 句台词: {missing}")
+                    last_exc = JobStageFailureError(
+                        f"LLM 遗漏 {len(missing)} 句台词: {missing}"
+                    )
                     if attempt + 1 >= max_attempts:
                         break
                     logger.warning(
@@ -1571,7 +1574,7 @@ class DeepSeekClient(LLMClient):
 
                 closeup_errs = validate_daily_script_scenes(scenes)
                 if closeup_errs:
-                    last_exc = ValueError(
+                    last_exc = JobStageFailureError(
                         "分镜特写校验失败: " + "; ".join(closeup_errs)
                     )
                     if attempt + 1 >= max_attempts:
@@ -1605,7 +1608,9 @@ class DeepSeekClient(LLMClient):
                     elapsed,
                 )
                 return raw
-            last_exc = ValueError("generate_daily_script returned empty scenes")
+            last_exc = JobStageFailureError(
+                "generate_daily_script returned empty scenes"
+            )
             if attempt + 1 >= max_attempts:
                 break
             logger.warning(

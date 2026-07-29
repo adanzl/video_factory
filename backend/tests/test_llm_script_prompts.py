@@ -506,8 +506,8 @@ def test_build_daily_script_prompts_uses_cps_setting_and_no_appearance():
     assert str(int(10 * 4.0)) in system  # max chars = 40
     assert "20" in system  # min chars floor
     assert "2–3 句" in system
-    assert "特写对白上限" in system or "特写」的镜" in system
-    assert "特写镜不得超过 2 句" in user
+    assert "特写对白上限" in system
+    assert "特写镜硬性不得超过 2 句" in user
     assert "彩铅" not in system
     assert "超短发" not in system
     assert "不要输出 visual_description" in system
@@ -539,6 +539,32 @@ def test_validate_daily_script_scenes_closeup_max_two_lines():
     ]
     errs = validate_daily_script_scenes(bad)
     assert any("scene_id=8" in e and "3 句" in e for e in errs)
+
+
+def test_enforce_daily_script_closeups_demotes_overfull():
+    from app.services.daily_story.prompts import (
+        enforce_daily_script_closeups,
+        validate_daily_script_scenes,
+    )
+
+    scenes = [
+        {"scene_id": 1, "shot_type": "特写", "dialogue": [{}, {}]},
+        {"scene_id": 2, "shot_type": "中景", "dialogue": [{}, {}]},
+        {"scene_id": 3, "shot_type": "中景", "dialogue": [{}, {}]},
+        {
+            "scene_id": 10,
+            "shot_type": "特写",
+            "dialogue": [
+                {"speaker": "昭昭", "text": "a"},
+                {"speaker": "灿灿", "text": "b"},
+                {"speaker": "昭昭", "text": "c"},
+            ],
+        },
+    ]
+    notes = enforce_daily_script_closeups(scenes)
+    assert any("demoted" in n and "scene_id=10" in n for n in notes)
+    assert scenes[3]["shot_type"] == "中景"
+    assert validate_daily_script_scenes(scenes) == []
 
 
 def test_daily_script_closeup_bounds_and_enforce():

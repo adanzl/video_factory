@@ -20,11 +20,8 @@ RE_MESS = re.compile(
     r"掉了|滑落|滑掉|洒|弄乱|乱了|乱成|全乱|坏了|打不开|饿着|够不着|倒了|全掉|弄翻|"
     r"解不开|勒|死结|死疙瘩|大马趴|溢|变形",
 )
-RE_FIX = re.compile(
-    r"我来扶|我来捡|我来弄|我自己来|我来夹|我来收|我来擦|我来晾|"
-    r"只好|没办法|用力夹|用力扯|夹紧|夹得?更?紧|"
-    r"擦地|抹布|我擦|扫进|一把扫|我自己浇|我自己关|我自己夹",
-)
+# 与 humor.RE_FIX 同源，避免「我来解」一类破规漏认
+RE_FIX = d_humor.RE_FIX
 
 
 def score_scene_beat(
@@ -79,10 +76,10 @@ def score_punchline(
     if RE_SOFT_LAST.search(last) and RE_BOOMERANG_RULE.search(prev2):
         bonus += 4
         details.append("末句叮嘱方破功")
-    elif n >= 3 and RE_SOFT_LAST.search(lines[-3]):
-        # 允许哼后 1–2 句尾巴（越轻轻越倒）
-        bonus += 4
+    elif RE_SOFT_LAST.search(last):
+        bonus += 2
         details.append("末句叮嘱方破功")
+    # 哼不在末句 = 收束没落地，不加分
 
     if RE_SURRENDER.search(tail3) and not details:
         bonus -= 3

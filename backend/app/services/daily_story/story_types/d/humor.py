@@ -22,6 +22,7 @@ _RE_MESS_BEAT = re.compile(
 )
 RE_FIX = re.compile(
     r"我来扶|我来捡|我来弄|我自己来|我来夹|我来收|我来擦|我来晾|"
+    r"我来解|我来解开|我解开|我来抠|我抠|"
     r"只好|没办法|用力夹|用力扯|夹紧|夹得?更?紧|"
     r"擦地|抹布|我擦|扫进|一把扫|我自己浇|我自己关|我自己夹",
 )
@@ -41,13 +42,20 @@ _RE_ASK_PERMIT = re.compile(r"好不好|行不行|可以吗|对吧|行吗")
 # 搞砸前灿灿拆穿/纠正字面误解 → 意外感没了
 _RE_SPOIL_LITERAL = re.compile(
     r"不是让你|我让你.{0,6}不是|要平放|别往高|别垒|别堆高|"
-    r"别码高|你理解错|我说的是|我是说",
+    r"别码高|你理解错|我说的是|我是说|"
+    r"绕成死结|打成死结|要绕成|这是死结|死结了|"
+    r"你这是要|别绕那么|别绕成",
+)
+# 中段叮嘱方催停/劝阻复读（一句慌即可，堆「快停/别拉」稀释歪读）
+_RE_MID_STOP_NAG = re.compile(
+    r"快停|停下|别拉|别绕|别再|悠着|够了|别搞|别弄那么",
 )
 # 回旋镖引的规矩，须能在叮嘱方补救动作里对上「她也破了」
 _BOOM_VIOLATION_PAIRS: tuple[tuple[re.Pattern[str], re.Pattern[str]], ...] = (
     (re.compile(r"轻|慢"), re.compile(r"用力|重|猛|摔|砸|扯|拽|扫")),
     (re.compile(r"别碰|不许碰|不准碰|别动"), re.compile(r"碰|扶|捡|拿|摸|弄")),
     (re.compile(r"别夹|太紧|夹紧"), re.compile(r"夹紧|夹得?更?紧|更紧|用力夹|用力扯|用力捏")),
+    (re.compile(r"系紧|用力拉|拉紧|别老散"), re.compile(r"解|抠|拆|扯开")),
     (re.compile(r"别浇|别多|一小口|倒一次"), re.compile(r"擦|浇|倒|抹|冲")),
     (re.compile(r"别弄乱|整齐|平放|别乱翻"), re.compile(r"弄乱|乱了|乱成|扒乱|翻乱|扫乱|堆乱")),
     (re.compile(r"关.*轻|轻.*关|别响"), re.compile(r"用力关|摔门|砰|响")),
@@ -95,6 +103,9 @@ HUMOR_ISSUE_CAPS: tuple[tuple[str, int], ...] = (
     ("回旋镖未扣破规", 4),
     ("中段抠定义", 4),
     ("中段缺动作升级", 4),
+    ("中段催停复读", 4),
+    ("哼后第二场", 5),
+    ("末句发指令", 4),
     ("缺字面歪读点", 0),
     # 模板/动作复读：不是“扣结构”，是好笑加分归零（无有意思的点）
     ("模板复读", 0),
@@ -196,7 +207,8 @@ def collect_humor_issues(
         cons.append("模板复读，不好笑")
         cons.append("中段动作复读，不好笑")
 
-    if n > 16:
+    # 成片宜 15–16；17–20 不硬卡好笑；≥21 才记拖沓
+    if n >= 21:
         cons.append("中段拖沓注水，不好笑")
 
     # 搞砸（一锤）之前灿灿若已点头批准 / 拆穿字面，笑点作废
@@ -219,6 +231,16 @@ def collect_humor_issues(
     if _RE_SPOIL_LITERAL.search("".join(cancan_before)):
         cons.append("字面笑点被提前拆穿，不好笑")
 
+    # 中段催停复读：叮嘱方慌 ≥3 句 = 劝阻会，不是歪读递进
+    stop_n = 0
+    for i, ln in enumerate(body):
+        if speakers and len(speakers) == len(lines) and speakers[i] != "灿灿":
+            continue
+        if _RE_MID_STOP_NAG.search(ln):
+            stop_n += 1
+    if stop_n >= 3:
+        cons.append("中段催停复读，不好笑")
+
     if sum(1 for ln in body if _RE_ASK_PERMIT.search(ln)) >= 2:
         cons.append("执行方句句求同意，不好笑")
 
@@ -226,9 +248,32 @@ def collect_humor_issues(
     if mom_n > 0:
         cons.append("妈妈插话不好笑")
 
-    boom_n = sum(1 for ln in lines if RE_BOOM_CLOSE.search(ln))
-    if boom_n >= 2:
+    # 末段相邻再引一次常见于 LLM 结巴，不硬杀；
+    # 中段（末 6 句之外）+ 收束各一枪、或 ≥3 次才记复读
+    boom_idx = [i for i, ln in enumerate(lines) if RE_BOOM_CLOSE.search(ln)]
+    boom_n = len(boom_idx)
+    mid_boom = any(i < n - 6 for i in boom_idx)
+    if boom_n >= 3 or (boom_n >= 2 and mid_boom):
         cons.append("回旋镖复读，不好笑")
+
+    # 哼/算了后不许再开第二场（含新叮嘱、再问要不要花生米）
+    soft_indices = [
+        i
+        for i, ln in enumerate(lines)
+        if re.search(r"哼|算了|行吧", ln)
+    ]
+    if soft_indices and soft_indices[0] < n - 1:
+        cons.append("哼后第二场，不好笑")
+
+    # 末句须嘴硬收束，勿发新指令（轻轻拉一下就够了）
+    last = lines[-1] if lines else ""
+    last_sp = speakers[-1] if speakers and len(speakers) == n else ""
+    if last_sp == "灿灿" and not re.search(r"哼|算了|行吧", last):
+        if re.search(
+            r"轻轻|别提|就够|下次|以后|别再|要|不许|不准|得",
+            last,
+        ):
+            cons.append("末句发指令，不好笑")
 
     # 回旋镖引的规矩，须对应叮嘱方补救时的破规动作
     if boom_i is not None:
@@ -262,16 +307,6 @@ def collect_humor_issues(
         if matched_rule and not violated:
             cons.append("回旋镖未扣破规动作，不好笑")
 
-    soft_indices = [
-        i
-        for i, ln in enumerate(lines)
-        if re.search(r"哼|算了|行吧", ln)
-    ]
-    if len(soft_indices) >= 2 and soft_indices[0] < n - 3:
-        # 中段已哼/算了，后面又开第二场
-        if any(RE_BOOM_CLOSE.search(lines[i]) for i in range(soft_indices[0] + 1, n)):
-            cons.append("二次收束注水，不好笑")
-
     return cons
 
 
@@ -301,6 +336,10 @@ def humor_revision_hint(issue: str) -> str | None:
         "拖沓",
         "复读",
         "二次收束",
+        "哼后",
+        "末句发指令",
+        "催停",
+        "提前拆穿",
         "D",
     )
     if "无出处" in issue or "引话" in issue:
@@ -312,7 +351,7 @@ def humor_revision_hint(issue: str) -> str | None:
     if "拖沓" in issue:
         return (
             f"【好笑·D】{issue}。"
-            "成片压到 ≤16 句（正文 ≤14 句）：合并中段重复回合，"
+            "成片压到 ≤20 句（正文 ≤14 句为佳）：合并中段重复回合，"
             "把删掉的字补进保留句（每句写足 ≤24 字）；"
             "立叮嘱→字面→搞砸→破规→回旋镖链勿动。"
         )
@@ -331,8 +370,24 @@ def humor_revision_hint(issue: str) -> str | None:
     if "提前拆穿" in issue:
         return (
             f"【好笑·D】{issue}。"
-            "删掉搞砸前灿灿的纠正句（不是让你垒塔/要平放/别往高）；"
-            "叮嘱只说一次，让字面误解一路跑到倒/洒，回头再发现。"
+            "删掉搞砸前灿灿的纠正句（不是让你垒塔/要平放/绕成死结了）；"
+            "叮嘱只说一次，中段最多一句慌，让字面误解一路跑到倒/洒再发现。"
+        )
+    if "催停" in issue:
+        return (
+            f"【好笑·D】{issue}。"
+            "中段灿灿最多一句慌（白印了/悠着点），勿「快停/别拉/停下」连喊；"
+            "把回合留给昭昭把同一歪读做极端。"
+        )
+    if "哼后" in issue or "二次收束" in issue:
+        return (
+            f"【好笑·D】{issue}。"
+            "回旋镖 1 句后立刻灿灿哼/算了收束；哼后禁止再开场、再叮嘱、再问要不要花生米。"
+        )
+    if "末句发指令" in issue:
+        return (
+            f"【好笑·D】{issue}。"
+            "末句只许哼/算了/行吧嘴硬；勿「轻轻拉一下就够了」发新规矩。"
         )
     if "抠定义" in issue or "缺动作升级" in issue or "不好玩" in issue or "模板复读" in issue or "动作复读" in issue or "歪读点" in issue:
         return (

@@ -89,16 +89,30 @@ def append_d_body_errors(story: dict, errors: list[str]) -> None:
         )
         return
 
-    # 允许哼后留 1–2 句尾巴；回旋镖看近 8 句即可
+    # 回旋镖须在近段；末句须嘴硬，禁止哼后再开第二场
     if not RE_BOOMERANG_RULE.search(late8):
         errors.append(
             "D类末段须用叮嘱方原话回旋镖（你自己说/你刚才说/你现在也…）",
         )
         return
 
+    soft_i = next(
+        (i for i, ln in enumerate(lines) if re.search(r"哼|算了|行吧", ln)),
+        None,
+    )
+    if soft_i is not None and soft_i < n - 1:
+        errors.append("D类哼/算了后禁止再开第二场，末句须停在嘴硬")
+        return
+
     last = lines[-1]
     last_sp = speakers[-1] if speakers else ""
-    if last_sp == "妈妈" and not RE_SOFT_LAST.search(last):
+    if last_sp == "灿灿":
+        if not RE_SOFT_LAST.search(last) and not re.search(
+            r"哼|算了|行吧", last,
+        ):
+            errors.append("D类末句须灿灿嘴硬（哼/行吧/算了），勿发新指令")
+            return
+    elif last_sp == "妈妈" and not RE_SOFT_LAST.search(last):
         if not re.search(r"哼|才不是|没办法|算了|行吧", last):
             errors.append(
                 "D类末句叮嘱方（若由妈妈收束）须嘴硬或软破功（哼/行吧/算了等）",
