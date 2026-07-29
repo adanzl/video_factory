@@ -337,6 +337,44 @@ def collect_humor_issues(
     return cons
 
 
+# 孩子假替妈开脱（帮腔口吻、实则讽刺）
+RE_KID_FAKE_OPEN = re.compile(
+    r"你不懂|放凉|晾着|配饭|等会儿|大人|不一样|不算|"
+    r"意外|调理|当然不算|专门留|会吃的|肯定一会",
+)
+
+
+def score_funniness_tail(
+    lines: list[str],
+    speakers: list[str] | None = None,
+) -> tuple[int, list[str]]:
+    """E 好笑加分：假开脱帮腔（孩子2讽刺护妈）优先计分。"""
+    points = 0
+    pros: list[str] = []
+    if not speakers or len(speakers) != len(lines) or len(lines) < 6:
+        return 0, []
+
+    fake_lines = [
+        ln
+        for sp, ln in zip(speakers, lines)
+        if sp in ("昭昭", "灿灿")
+        and RE_KID_FAKE_OPEN.search(ln)
+        and re.search(r"妈妈|大人|放凉|晾|配饭|不算|不一样|意外|调理", ln)
+    ]
+    # 至少两句假帮腔才算「嘲讽线」立住；分值宜克制，勿轻松摸到 95
+    if len(fake_lines) >= 3:
+        points += 4
+        pros.append("假开脱越帮越黑")
+    elif len(fake_lines) >= 2:
+        points += 3
+        pros.append("假开脱帮腔好笑")
+    elif len(fake_lines) == 1:
+        points += 1
+        pros.append("假开脱帮腔")
+
+    return points, pros
+
+
 def humor_revision_hint(issue: str) -> str | None:
     keys = (
         "妈妈",
