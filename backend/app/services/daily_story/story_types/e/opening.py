@@ -9,10 +9,17 @@ from app.services.daily_story.dialogue_text import score_opening_cinematic
 RE_SLEEP_TOPIC = re.compile(r"睡觉|九点|早睡|刷手机|卧床|被窝|挂钟")
 RE_SLEEP_MOM_RULE = re.compile(r"必须睡觉|九点了|快去躺|得睡觉")
 RE_SNACK_TOPIC = re.compile(r"零食|尝菜|偷吃|饭前不吃|试吃|试菜")
+RE_PICKY_TOPIC = re.compile(r"挑食|青菜|拨到碗边|拨开青菜")
+RE_PICKY_MOM_RULE = re.compile(
+    r"不准挑食|不许挑食|不能挑食|别挑食|挑食不行|"
+    r"青菜.{0,6}(?:必须|得|要)吃|饭菜都得吃",
+)
+RE_PICKY_EYE = re.compile(r"拨到|拨开|碗边|拨了.{0,4}青菜")
 RE_LIE_TOPIC = re.compile(r"说谎|撒谎|敷衍|诚实|假话|骗")
 RE_LIE_MOM_RULE = re.compile(r"不能说谎|不许说谎|要诚实|别说谎|老实")
 RE_LIE_WAFFLE = re.compile(
-    r"不是敷衍|善意谎言|让奶奶放心|特殊情况|为了不让|不是骗",
+    r"不是敷衍|善意.{0,2}谎|让奶奶放心|特殊情况|为了不让|不是骗|"
+    r"不算撒谎|不算说谎",
 )
 RE_WEAK_TASTE_EYE = re.compile(r"汤汁|舀汤|舔勺|喝了一口汤|偷尝了汤|尝了汤")
 RE_STRONG_TASTE_EYE = re.compile(
@@ -35,7 +42,8 @@ E_OPENING_C_RE = re.compile(
 )
 E_OPENING_ANCHOR_RE = re.compile(
     r"妈妈|妈|讲理|规矩|应该|不行|怎么又|我说|"
-    r"挂钟|嘴角|勺子|屏幕|被窝|亮着|电话|奶奶|诚实|说谎",
+    r"挂钟|嘴角|勺子|屏幕|被窝|亮着|电话|奶奶|"
+    r"青菜|挑食|碗边|拨",
 )
 # 孩子句旁白定格式：地点名词起句（非「刚才在…」回忆式）
 RE_CHILD_NARRATOR_PREFIX = re.compile(
@@ -109,6 +117,40 @@ def append_e_opening_errors(
         )
     snack_t = bool(RE_SNACK_TOPIC.search(ctx))
     sleep_t = bool(RE_SLEEP_TOPIC.search(ctx))
+    picky_t = bool(RE_PICKY_TOPIC.search(ctx)) and not snack_t
+    if picky_t:
+        first = normalized[0] if normalized else {}
+        first_sp = first.get("speaker", "")
+        first_ln = first.get("line", "")
+        rule_i = next(
+            (
+                i
+                for i, d in enumerate(normalized)
+                if d.get("speaker") == "妈妈"
+                and RE_PICKY_MOM_RULE.search(d.get("line", ""))
+            ),
+            None,
+        )
+        # 孩子点名妈妈拨青菜现行
+        eye_i = next(
+            (
+                i
+                for i, d in enumerate(normalized)
+                if d.get("speaker") in ("昭昭", "灿灿")
+                and RE_PICKY_EYE.search(d.get("line", ""))
+            ),
+            None,
+        )
+        if first_sp != "妈妈" or not RE_PICKY_MOM_RULE.search(first_ln):
+            errors.append(
+                "E类挑食开场须妈妈先训孩子不能挑食"
+                "（如「菜吃太少了，不能挑食」），再孩子抓拨开",
+            )
+        elif eye_i is not None and rule_i is not None and eye_i < rule_i:
+            errors.append(
+                "E类挑食开场须先立「不许挑食」，再点拨青菜；"
+                "勿先问拨开再答不许挑食（因果反了）",
+            )
     if snack_t and not sleep_t:
         if RE_WEAK_TASTE_EYE.search(joined) and not RE_STRONG_TASTE_EYE.search(
             joined,
@@ -127,8 +169,8 @@ def append_e_opening_errors(
                 )
     lie_t = bool(RE_LIE_TOPIC.search(ctx)) and not snack_t and not sleep_t
     if lie_t:
-        if not RE_LIE_MOM_RULE.search(joined):
-            errors.append("E类说谎开场须妈妈立不能说谎")
+        # 正文已硬性要求妈妈亲口立「不能说谎」，开场只有两句、重试仅 3 次，
+        # 再要求规矩必须出现在开场会把整篇逼废，这里只拦「开口先狡辩」。
         mom_lines = [
             str(d.get("line") or "")
             for d in normalized
@@ -244,6 +286,7 @@ def opening_revision_hint(issue: str) -> str | None:
         return None
     return (
         f"【开场·E】{issue}。"
+        "挑食：妈妈开场训不能挑食，再孩子抓拨开；禁拨开→不许挑食。"
         "说谎题：孩子问电话内容→妈妈先立不能说谎→再开脱；"
         "孩子句宜口语问妈；勿旁白定格式；勿尝菜串场；勿妈妈先狡辩。"
     )

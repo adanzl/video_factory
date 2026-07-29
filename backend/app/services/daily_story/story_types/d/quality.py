@@ -17,10 +17,14 @@ from app.services.daily_story.story_types.quality import (
 RE_RULE = re.compile(r"不许|别碰|规矩|叮嘱|说了|不能")
 RE_LITERAL = re.compile(r"照做|按你说的|你不是说|字面|打开|碰了|动了")
 RE_MESS = re.compile(
-    r"掉了|滑|洒|乱|坏|打不开|饿着|够不着|倒了|全掉|弄翻|"
-    r"解不开|勒|死结|死疙瘩|大马趴",
+    r"掉了|滑落|滑掉|洒|弄乱|乱了|乱成|全乱|坏了|打不开|饿着|够不着|倒了|全掉|弄翻|"
+    r"解不开|勒|死结|死疙瘩|大马趴|溢|变形",
 )
-RE_FIX = re.compile(r"我来|我捡|我弄|只好|只能|没办法|我得|我扶")
+RE_FIX = re.compile(
+    r"我来扶|我来捡|我来弄|我自己来|我来夹|我来收|我来擦|我来晾|"
+    r"只好|没办法|用力夹|用力扯|夹紧|夹得?更?紧|"
+    r"擦地|抹布|我擦|扫进|一把扫|我自己浇|我自己关|我自己夹",
+)
 
 
 def score_scene_beat(
@@ -28,11 +32,15 @@ def score_scene_beat(
     *,
     text_has_hammer_beat,
 ) -> tuple[int, list[str]]:
-    """D 的一锤=可见搞砸（倒/洒/掉），勿只靠通用分钟/秒锤。"""
+    """D 的一锤优先认「歪读可拍画面」，其次才是倒/洒。"""
     _ = text_has_hammer_beat
     text = "".join(lines)
+    if d_humor.RE_TWIST_VISUAL.search(text) and RE_MESS.search(text):
+        return 5, ["有字面歪读一锤"]
+    if d_humor.RE_TWIST_VISUAL.search(text):
+        return 4, ["有字面歪读场面"]
     if RE_MESS.search(text):
-        return 5, ["有一锤场面"]
+        return 2, ["有后果场面"]
     return 0, []
 
 
@@ -111,4 +119,6 @@ QUALITY_PROFILE = TypeQualityProfile(
     score_scene_beat=score_scene_beat,
     humor_issue_caps=d_humor.HUMOR_ISSUE_CAPS,
     humor_revision_hint=_d_revision_hint,
+    closing_quote_haystack=d_humor.closing_quote_haystack,
+    stop_on_ungrounded_quote=True,
 )

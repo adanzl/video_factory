@@ -16,12 +16,13 @@ RE_MOM_WAFFLE = re.compile(
 RE_LIE_TOPIC = re.compile(r"说谎|撒谎|敷衍|诚实|假话|骗")
 RE_LIE_MOM_RULE = re.compile(r"不能说谎|不许说谎|要诚实|别说谎|老实")
 RE_LIE_WAFFLE = re.compile(
-    r"不是敷衍|善意谎言|让奶奶放心|特殊情况|为了不让|不是骗",
+    r"不是敷衍|善意.{0,2}谎|让奶奶放心|特殊情况|为了不让|不是骗|"
+    r"不算撒谎|不算说谎",
 )
 RE_LIE_GOOD_WAFFLE = re.compile(r"善意")
 RE_SNACK_BLEED = re.compile(
-    r"那一口算不算|尝咸淡|咽下去|三大勺|勺上|吐回锅里|试吃|偷吃零|"
-    r"尝菜|调味|不算吃|偷吃零食|油光",
+    r"那一口算不算|尝咸淡|三大勺|勺上|吐回锅里|试吃|偷吃零|"
+    r"尝菜|调味|油光",
 )
 RE_LIE_FOOD_ITEM = re.compile(r"红烧|清蒸|排骨汤|白米饭|两碗汤|清蒸虾|红烧鱼")
 RE_MOM_DENY_QUOTE = re.compile(
@@ -41,7 +42,7 @@ RE_KID_SELF_APPLY = re.compile(
 RE_MOM_EXCUSE_ANY = re.compile(
     r"善意|好心|随口|怕她|怕奶奶|为大人|大人.{0,4}(?:着想|需要)|工作需要|"
     r"不算|为了不让|报喜|礼貌|着想|不想让.{0,4}(?:担心|操心)|"
-    r"不让.{0,3}(?:担心|操心)",
+    r"不让.{0,3}(?:担心|操心)|特殊情况|两码事|不一样|分寸|你们还小",
 )
 # 孩子自套逻辑后，妈妈须当场一口否掉（双标才成立）
 RE_MOM_FLAT_REFUSE = re.compile(
@@ -60,7 +61,7 @@ RE_STRONG_TASTE_EYE = re.compile(
     r"勺子|勺上|尝菜|试吃|试菜|嘴角|油渍|油花|菜叶|三大勺|咽|黏黏",
 )
 RE_LOOP = re.compile(
-    r"你自己说|你刚才|那你也是|你也这样|那你现在|妈妈你也",
+    r"你自己说|自己说|你刚才|那你也是|你也这样|那你现在|妈妈你也",
 )
 RE_MOM_SOFT = re.compile(r"唉|行了|好吧|随便|说不通|行行行|算了")
 _A_STYLE = re.compile(r"那不一样.*哪里不一样|哪里不一样.*都是听")
@@ -92,6 +93,9 @@ HUMOR_ISSUE_CAPS: tuple[tuple[str, int], ...] = (
     ("说谎缺自套逻辑反杀", 8),
     ("妈妈一句一个新借口", 8),
     ("语气垫字", 8),
+    ("抓现行后回训", 5),
+    ("偏不一样开脱", 5),
+    ("缺自套反例", 7),
 )
 
 
@@ -125,7 +129,21 @@ def collect_humor_issues(
         cons.append("缺孩子追问，不好笑")
 
     if not RE_MOM_WAFFLE.search(all_text):
-        cons.append("缺妈妈改口，不好笑")
+        # 假开脱：孩子帮腔也可承担「改口」槽位
+        kid_fake = bool(
+            speakers
+            and any(
+                speakers[i] in ("昭昭", "灿灿")
+                and re.search(
+                    r"你不懂|放凉|大人|不一样|不算|晾着|配饭|等会儿|"
+                    r"工作需要|尝咸淡",
+                    lines[i],
+                )
+                for i in range(n)
+            )
+        )
+        if not kid_fake:
+            cons.append("缺妈妈改口，不好笑")
 
     if not RE_LOOP.search(tail_text):
         cons.append("缺追问闭环，不好笑")
@@ -168,6 +186,69 @@ def collect_humor_issues(
         "".join(lines[: min(8, n)]),
     ):
         cons.append("尝菜眼太弱，不好笑")
+
+    picky_t = bool(re.search(r"挑食|青菜|拨到碗边", all_text)) and not (
+        RE_SNACK_TOPIC.search(all_text) and not re.search(r"挑食|拨开|碗边", all_text)
+    )
+    if picky_t and speakers and len(speakers) == n:
+        if any(
+            speakers[i] == "妈妈" and "不一样" in lines[i]
+            for i in range(n)
+        ):
+            cons.append("偏不一样开脱，不好笑")
+        # 孩子讽刺用「不一样/大人」不算偏；仅妈妈当真开脱才扣
+        eye_i = next(
+            (
+                i
+                for i, ln in enumerate(lines)
+                if speakers[i] in ("昭昭", "灿灿")
+                and re.search(r"拨到|拨开|碗边", ln)
+            ),
+            None,
+        )
+        if eye_i is not None:
+            for i in range(eye_i + 1, min(eye_i + 4, n - 1)):
+                if speakers[i] != "妈妈":
+                    continue
+                if re.search(
+                    r"一口.{0,4}不(?:动|吃)|怎么不吃|多吃青菜",
+                    lines[i],
+                ):
+                    cons.append("抓现行后回训，不好笑")
+                break
+        if re.search(r"打自己脸|说话算话|数数看|蔫了", all_text):
+            cons.append("中段拖沓注水，不好笑")
+        mom_excuse_n = sum(
+            1
+            for i, ln in enumerate(lines)
+            if speakers[i] == "妈妈"
+            and (
+                re.search(r"晾|配饭|等会儿|太烫|老叶子|放错|特殊情况", ln)
+                or ln.startswith("那是")
+            )
+        )
+        if mom_excuse_n >= 4:
+            cons.append("妈妈一句一个新借口，不好笑")
+        if any(
+            i > 0
+            and speakers[i] == "妈妈"
+            and speakers[i - 1] == "妈妈"
+            and i < n - 1
+            for i in range(n)
+        ):
+            cons.append("中段拖沓注水，不好笑")
+        if not RE_KID_SELF_APPLY.search(all_text) and not re.search(
+            r"那我也可以|照你这样",
+            all_text,
+        ):
+            # 假开脱模板可不靠自套；有孩子讽刺帮腔则放过
+            kid_fake = any(
+                speakers[i] in ("昭昭", "灿灿")
+                and re.search(r"你不懂|放凉|大人|不一样|不算|晾着", lines[i])
+                for i in range(n)
+            )
+            if not kid_fake:
+                cons.append("缺自套反例，不好笑")
 
     lie_t = (
         RE_LIE_TOPIC.search(all_text)
@@ -254,6 +335,44 @@ def collect_humor_issues(
             break
 
     return cons
+
+
+# 孩子假替妈开脱（帮腔口吻、实则讽刺）
+RE_KID_FAKE_OPEN = re.compile(
+    r"你不懂|放凉|晾着|配饭|等会儿|大人|不一样|不算|"
+    r"意外|调理|当然不算|专门留|会吃的|肯定一会",
+)
+
+
+def score_funniness_tail(
+    lines: list[str],
+    speakers: list[str] | None = None,
+) -> tuple[int, list[str]]:
+    """E 好笑加分：假开脱帮腔（孩子2讽刺护妈）优先计分。"""
+    points = 0
+    pros: list[str] = []
+    if not speakers or len(speakers) != len(lines) or len(lines) < 6:
+        return 0, []
+
+    fake_lines = [
+        ln
+        for sp, ln in zip(speakers, lines)
+        if sp in ("昭昭", "灿灿")
+        and RE_KID_FAKE_OPEN.search(ln)
+        and re.search(r"妈妈|大人|放凉|晾|配饭|不算|不一样|意外|调理", ln)
+    ]
+    # 至少两句假帮腔才算「嘲讽线」立住；分值宜克制，勿轻松摸到 95
+    if len(fake_lines) >= 3:
+        points += 4
+        pros.append("假开脱越帮越黑")
+    elif len(fake_lines) >= 2:
+        points += 3
+        pros.append("假开脱帮腔好笑")
+    elif len(fake_lines) == 1:
+        points += 1
+        pros.append("假开脱帮腔")
+
+    return points, pros
 
 
 def humor_revision_hint(issue: str) -> str | None:

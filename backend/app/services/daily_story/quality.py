@@ -433,18 +433,23 @@ def _score_funniness(
     late4_text = "".join(tail4)
 
     points = 0
+    # 模板复读等：不是扣结构，而是好笑加分项一律不计（无“有意思的点”）
+    humor_blocked = any(
+        any(k in c for k in ("模板复读", "中段动作复读", "缺字面歪读点"))
+        for c in cons
+    )
     scene_pts, scene_pros = 0, []
-    if profile.score_scene_beat:
+    if not humor_blocked and profile.score_scene_beat:
         scene_pts, scene_pros = profile.score_scene_beat(
             lines, text_has_hammer_beat=_text_has_hammer_beat,
         )
     if scene_pts:
         points += scene_pts
         pros.extend(scene_pros)
-    elif _text_has_hammer_beat(mid_text):
+    elif not humor_blocked and _text_has_hammer_beat(mid_text):
         points += 5
         pros.append("有一锤场面")
-    elif _text_has_hammer_beat(full_text):
+    elif not humor_blocked and _text_has_hammer_beat(full_text):
         points += 2
         pros.append("有具体场面")
 
@@ -459,17 +464,21 @@ def _score_funniness(
             "你说的",
         )
     )
-    if grounded_tail and not any("无出处" in c for c in cons):
+    if (
+        not humor_blocked
+        and grounded_tail
+        and not any("无出处" in c for c in cons)
+    ):
         points += 4
         pros.append("收束扣原话")
 
-    if len(re.findall(
+    if not humor_blocked and len(re.findall(
         r"(?:\d+|[一二三四五六七八九十两]+)(?:分钟|秒|下)",
         full_text,
     )) >= 2:
         points += 2
 
-    if profile.score_funniness_tail:
+    if not humor_blocked and profile.score_funniness_tail:
         tail_pts, tail_pros = profile.score_funniness_tail(lines, speakers)
         points += tail_pts
         pros.extend(tail_pros)
@@ -665,6 +674,7 @@ def score_daily_story(
     pros.extend(humor_pros)
     cons.extend(humor_cons)
 
+    # 结构≤80（扣分制）+ 好笑 0–20（加分制）；好笑不够不冲 85/95 档
     score = max(0, min(100, structure_score + humor_points))
     if humor_points < _HUMOR_POINTS_FOR_GOOD:
         score = min(score, STRUCTURE_SCORE_CAP)

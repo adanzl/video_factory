@@ -19,9 +19,20 @@ RE_MOM_SOFT = e_humor.RE_MOM_SOFT
 RE_CATCH = re.compile(
     r"嘴角|勺子|勺上|腮帮|手机|还在刷|尝了|咽|敷衍|撒谎|说瞎话|三大勺|"
     r"菜叶|油渍|油花|试吃|试菜|"
-    r"空(?:的)?锅|锅是空|饭锅|碗还干|碗是干|外卖盒|泡面桶|肚子(?:还)?咕咕",
+    r"空(?:的)?锅|锅是空|饭锅|碗还干|碗是干|外卖盒|泡面桶|肚子(?:还)?咕咕|"
+    r"拨到|拨开|碗边|青菜",
 )
 RE_KID_SELF_APPLY = e_humor.RE_KID_SELF_APPLY
+_RE_PICKY_RULE_TOKEN = re.compile(r"(?:不准|不许|不能|别)挑食")
+
+
+def ground_closing_quote(fragment: str, haystack: str) -> bool:
+    """挑食规矩词不许/不能视为同出；其余走默认连续子串。"""
+    frag = (fragment or "").strip()
+    hay = haystack or ""
+    if _RE_PICKY_RULE_TOKEN.search(frag) and _RE_PICKY_RULE_TOKEN.search(hay):
+        return True
+    return False
 
 
 def score_scene_beat(
@@ -102,6 +113,7 @@ QUALITY_PROFILE = TypeQualityProfile(
     punch_before_soft_markers=SHARED_PUNCH_SOFT
     + (
         "你自己说",
+        "自己说",
         "那你也是",
         "你也",
         "你刚才",
@@ -114,6 +126,8 @@ QUALITY_PROFILE = TypeQualityProfile(
     collect_humor_issues=e_humor.collect_humor_issues,
     score_opening_quality=e_opening.score_opening_quality,
     score_scene_beat=score_scene_beat,
+    score_funniness_tail=e_humor.score_funniness_tail,
+    ground_closing_quote=ground_closing_quote,
     humor_issue_caps=e_humor.HUMOR_ISSUE_CAPS,
     humor_revision_hint=_e_revision_hint,
 )

@@ -108,10 +108,13 @@ def run_batch(
     themes: list[str],
     *,
     story_type: str | None = None,
+    review: bool = True,
 ) -> list[dict]:
     locked = story_type_tag(story_type) if story_type else None
     if locked:
         print(f"[batch] locked story_type={locked}", flush=True)
+    if not review:
+        print("[batch] skip LLM review (fast preview)", flush=True)
     results: list[dict] = []
     for i, theme in enumerate(themes, 1):
         print(f"\n===== [{i}/{len(themes)}] {theme} =====", flush=True)
@@ -120,6 +123,7 @@ def run_batch(
             story = llm_mgr.generate_daily_story(
                 theme,
                 story_type=locked,
+                review=review,
             )
             validate_daily_story_json(story, phase="full")
             item = _summarize(theme, story, time.perf_counter() - started)
@@ -184,9 +188,18 @@ def main() -> None:
         default=None,
         help="锁定矛盾类型（A–E），不指定则按主题关键词自动选",
     )
+    parser.add_argument(
+        "--skip-review",
+        action="store_true",
+        help="跳过人读审稿（调提示词时更快）",
+    )
     args = parser.parse_args()
 
-    results = run_batch(list(args.themes), story_type=args.story_type)
+    results = run_batch(
+        list(args.themes),
+        story_type=args.story_type,
+        review=not args.skip_review,
+    )
     out = args.out
     if out is None:
         DEFAULT_OUT_DIR.mkdir(parents=True, exist_ok=True)

@@ -31,6 +31,18 @@ _VALIDATION_PRIORITY: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"总字数须≤"), "body_too_long"),
     (re.compile(r"E类正文过长"), "e_body_too_long"),
     (re.compile(r"汤汁太弱|尝菜眼"), "e_weak_taste_eye"),
+    # 因果顺序优先于其他挑食软伤：先立规再抓现行
+    (
+        re.compile(
+            r"因果反了|先立「不许挑食」|先妈妈立「不许挑食」|"
+            r"妈妈开场训|妈妈先训孩子",
+        ),
+        "e_picky_causal",
+    ),
+    (
+        re.compile(r"挑食开场|挑食前段|挑食须|挑食妈妈|挑食禁|挑食抓|挑食正文"),
+        "e_picky_theme",
+    ),
     (
         re.compile(
             r"说谎主题禁|说谎开场|说谎须|说谎禁|善意谎言复读|那是开脱|"
@@ -197,6 +209,23 @@ def _register_validation_hints() -> None:
             "试吃咽下；禁止「偷尝汤汁」当唯一眼，改勺子或嘴角。"
         )
 
+    def e_picky_causal(**_kw: Any) -> str:
+        return (
+            "【E·挑食因果】开场须妈妈先训孩子："
+            "「昭昭，你最近菜吃得太少了，不能挑食哦」→"
+            "下一句孩子再抓「你怎么拨到碗边」；"
+            "禁孩子先问拨开、禁孩子先开口再立规。"
+        )
+
+    def e_picky_theme(**_kw: Any) -> str:
+        return (
+            "【E·挑食·假开脱】妈妈开场训「不能挑食」→孩子1抓拨到碗边→"
+            "孩子2假替妈解释（你不懂/放凉/大人/不算，主语用妈妈，"
+            "如「妈妈会吃的，上次是意外」；禁「你别翻旧账」）→"
+            "孩子1再追→孩子2继续越帮越黑→verbatim 闭环→妈妈末句破功。"
+            "中段妈妈少说话；禁妈妈当真用不一样；禁回训；全文宜8–12句。"
+        )
+
     def e_lie_theme(**_kw: Any) -> str:
         return (
             "【E·说谎】孩子问电话/奶奶场面→妈妈先立「不能说谎」→"
@@ -205,7 +234,9 @@ def _register_validation_hints() -> None:
             "末段孩子把妈妈逻辑套自己（那我跟奶奶说我考了一百分，"
             "也算善意的吧）→妈妈下一句当场否掉（那可不行，你那是骗人）"
             "→孩子扣原话→妈妈末句破功；套用对象用奶奶勿岔学校老师。"
-            "妈妈开脱≤3句且同一套借口加码，禁一句一个新借口；"
+            "妈妈开脱≤3句且同一套借口加码，禁一句一个新借口"
+            "（善意/特殊情况/两码事/你们还小/不一样 轮着来最闷）；"
+            "「不一样」全篇最多一次；"
             "「不能说谎」只立一次，同一质问勿换词重问。"
             "禁尝菜串场、禁那不一样、禁善意/那是复读、禁句尾呵哈垫字。"
         )
@@ -219,6 +250,8 @@ def _register_validation_hints() -> None:
         "body_too_long": lambda frag, **_kw: _hint_body_too_long(frag),
         "e_body_too_long": e_body_too_long,
         "e_weak_taste_eye": e_weak_taste_eye,
+        "e_picky_causal": e_picky_causal,
+        "e_picky_theme": e_picky_theme,
         "e_lie_theme": e_lie_theme,
         "c_incomplete_line": c_incomplete_line,
         "c_boomerang": c_boomerang,

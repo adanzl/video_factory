@@ -57,4 +57,4 @@ CPU: AMD Ryzen 9 7940HS w/ Radeon 780M Graphics
 
 ## 快捷命令
 
-- push 表示执行提交git 并执行push
+- push 表示执行提交git 并执行push，不用你管pull的事
