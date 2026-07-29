@@ -512,10 +512,13 @@ def test_build_daily_script_prompts_uses_cps_setting_and_no_appearance():
     assert "超短发" not in system
     assert "不要输出 visual_description" in system
     assert "转折用特写，不拆碎" in system
-    assert "特写数量" in system or "特写宜" in system
+    assert "特写数量·硬性" in system
+    assert "实际切出的镜数" in system
+    assert "⌈N/4⌉" in system or "N/4" in system
     assert "开场首镜" in system
     assert "禁止一句一镜" in user
-    assert "特写" in user
+    assert "特写数量·硬性" in user
+    assert "不得丢句" in user
     assert "【标题】争酸奶" in user
     assert "【场景设定】厨房，傍晚" in user
     assert "昭昭：这瓶是我的！" in user
