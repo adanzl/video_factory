@@ -58,9 +58,22 @@ def get_story_route():
 def generate_story_route():
     data = get_json_body()
     theme = parse_str(data, "theme")
-    logger.info("[DAILY_STORY] api /generate theme=%r", theme)
+    story_type_raw = parse_str(data, "story_type", required=False)
+    story_type: str | None = None
+    if story_type_raw:
+        code = story_type_raw.strip().upper()[:1]
+        if code not in ("A", "B", "C", "D", "E"):
+            raise APIError("story_type 须为 A–E", status_code=400)
+        story_type = code
+    logger.info(
+        "[DAILY_STORY] api /generate theme=%r story_type=%r",
+        theme,
+        story_type,
+    )
     try:
-        return json_ok(daily_story_mgr.generate_and_save(theme))
+        return json_ok(
+            daily_story_mgr.generate_and_save(theme, story_type=story_type),
+        )
     except ValueError as e:
         raise APIError(str(e), status_code=400)
 
@@ -78,8 +91,19 @@ def delete_stories_route():
 def generate_themes_route():
     data = get_json_body(required=False) or {}
     count = parse_int(data, "count", 15, minimum=1, maximum=15)
-    logger.info("[DAILY_STORY] api /themes count=%d", count)
-    return json_ok(daily_story_mgr.generate_themes(count))
+    exclude_raw = data.get("exclude")
+    exclude: list[str] = []
+    if isinstance(exclude_raw, list):
+        for item in exclude_raw:
+            t = str(item or "").strip()
+            if t:
+                exclude.append(t)
+    logger.info(
+        "[DAILY_STORY] api /themes count=%d exclude=%d",
+        count,
+        len(exclude),
+    )
+    return json_ok(daily_story_mgr.generate_themes(count, exclude=exclude))
 
 
 @bp.post("/create_job")

@@ -93,7 +93,88 @@ def test_daily_story_prompts_share_contract():
     assert "conflict_core" in story_user
     assert "对付爸妈" not in theme_user
     assert "下雨只带了一把伞" not in theme_user
-    assert "动作/实物" in theme_user
+    assert "动作/实物" in theme_user or "带动作/实物" in theme_user
+    assert "按类型配额" in theme_user or "类型|主题" in theme_user
+    assert "争最后一瓶酸奶" in theme_user  # 禁复读清单
+
+    _ts_e, user_e = build_daily_story_theme_prompts(3, type_code="E")
+    assert "只出 E 类主题" in user_e
+    assert "可拍现行" in user_e or "E×3" in user_e
+    assert "饭前不吃零食勺子还挂着菜" in user_e or "勺子" in user_e
+    # 说谎题从 E 正例拿掉，改列为禁止
+    assert "不许说谎" in user_e
+
+
+def test_theme_is_writable_rejects_oral_lie_without_eye():
+    from app.services.daily_story.prompts import (
+        filter_writable_themes,
+        theme_is_writable,
+    )
+
+    assert not theme_is_writable("不许说谎妈妈刚才也敷衍奶奶")
+    assert not theme_is_writable("讨论什么叫公平")
+    assert theme_is_writable("九点了必须睡觉妈妈还在刷手机")
+    assert theme_is_writable("饭前不能吃零食妈妈自己尝菜")
+    assert theme_is_writable("争最后一瓶酸奶")
+    kept = filter_writable_themes([
+        "不许说谎妈妈刚才也敷衍奶奶",
+        "九点了必须睡觉妈妈还在刷手机",
+        "不许说谎妈妈刚才也敷衍奶奶",
+    ])
+    assert kept == ["九点了必须睡觉妈妈还在刷手机"]
+
+
+def test_theme_quota_and_near_dedupe():
+    from app.services.daily_story.prompts import (
+        allocate_theme_type_quotas,
+        filter_writable_themes,
+        parse_typed_theme_lines,
+        select_themes_by_quota,
+        themes_near_duplicate,
+    )
+
+    assert allocate_theme_type_quotas(15) == {
+        "A": 3, "B": 3, "C": 3, "D": 3, "E": 3,
+    }
+    assert themes_near_duplicate("争最后一瓶酸奶", "抢最后一瓶酸奶")
+    assert not themes_near_duplicate("浇花别浇太多", "关门轻点没关严")
+
+    typed = parse_typed_theme_lines(
+        "C|争沙发上最后一块靠垫归谁\n"
+        "C|争沙发靠垫归谁坐\n"
+        "A|姐姐嫌弟弟刷牙沫溅一圈\n"
+        "B|俩人约定藏起打翻的颜料\n"
+        "D|浇花别浇太多结果溢出来\n"
+        "E,A|说好不玩手机被窝屏幕还亮着\n"
+        "胡说一行\n",
+    )
+    assert (("C",), "争沙发上最后一块靠垫归谁") in typed
+    assert (("E", "A"), "说好不玩手机被窝屏幕还亮着") in typed
+    picked = select_themes_by_quota(
+        typed,
+        {"A": 1, "B": 1, "C": 1, "D": 1, "E": 1},
+        avoid=["争沙发靠垫"],
+    )
+    assert len(picked) == 5
+    # C 近义被 avoid / 同批去重后应只留一条靠垫题或被 avoid 掉
+    assert sum("靠垫" in r["theme"] for r in picked) <= 1
+    assert all(isinstance(r["story_types"], list) and r["story_types"] for r in picked)
+    primaries = {r["story_types"][0] for r in picked}
+    assert primaries == {"A", "B", "C", "D", "E"}
+    phone = next(r for r in picked if "手机" in r["theme"])
+    assert phone["story_types"][0] == "E"
+    assert "A" in phone["story_types"] or len(phone["story_types"]) >= 1
+
+    near_filtered = filter_writable_themes(
+        ["争最后一瓶酸奶", "抢最后一瓶酸奶喝", "浇花溢出来"],
+        avoid=["争最后一瓶酸奶"],
+    )
+    assert near_filtered == ["浇花溢出来"]
+
+
+def test_daily_story_prompts_share_contract_opening_bits():
+    # 原 share_contract 后半段拆出，避免上面插测打乱；保留开场断言
+    from app.services.daily_story.prompts import build_daily_story_opening_prompts
 
     open_sys, open_user = build_daily_story_opening_prompts(
         "谁先洗澡",
@@ -2064,6 +2145,79 @@ def test_validate_e_lie_accepts_compact_positive():
     assert open_errs == []
 
 
+def test_validate_e_picky_rejects_catch_before_rule():
+    """现行=规矩名：禁先问拨开再答不许挑食。"""
+    from app.services.daily_story.story_types.e.opening import append_e_opening_errors
+    from app.services.daily_story.story_types.e.validate import append_e_body_errors
+
+    story = {
+        "_story_type": "E",
+        "_theme": "吃饭不许挑食妈妈把青菜拨到碗边",
+        "scene_title": "拨到碗边的青菜",
+        "setting": "餐桌旁",
+        "conflict_core": "妈妈说不许挑食自己却拨开青菜",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "妈，你碗边上那些青菜怎么都拨开了？"},
+            {"speaker": "妈妈", "line": "吃饭不许挑食，青菜都得吃。"},
+            {"speaker": "灿灿", "line": "可你自己碗边也堆了一大堆。"},
+            {"speaker": "妈妈", "line": "我这是晾着，等会儿配饭吃。"},
+            {"speaker": "昭昭", "line": "晾了半天还不动筷子，算不算挑？"},
+            {"speaker": "灿灿", "line": "那我把肉拨开，也算晾着配饭？"},
+            {"speaker": "昭昭", "line": "你自己说吃饭不许挑食。"},
+            {"speaker": "妈妈", "line": "……行行行，我夹起来吃了啊。"},
+        ],
+    }
+    body_errs: list[str] = []
+    append_e_body_errors(story, body_errs)
+    assert any("因果反了" in e for e in body_errs)
+
+    open_errs: list[str] = []
+    append_e_opening_errors(
+        story["dialogue"][:2],
+        type_code="E",
+        errors=open_errs,
+        conflict_core=story["conflict_core"],
+        setting=story["setting"],
+    )
+    assert any("因果反了" in e for e in open_errs)
+
+
+def test_validate_e_picky_accepts_rule_before_catch():
+    from app.services.daily_story.story_types.e.opening import append_e_opening_errors
+    from app.services.daily_story.story_types.e.validate import append_e_body_errors
+
+    story = {
+        "_story_type": "E",
+        "_theme": "吃饭不许挑食妈妈把青菜拨到碗边",
+        "scene_title": "拨到碗边的青菜",
+        "setting": "餐桌旁",
+        "conflict_core": "妈妈说不许挑食自己却拨开青菜",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "妈，碗里青菜这么多，我们真要全吃完？"},
+            {"speaker": "妈妈", "line": "吃饭不许挑食，青菜都得吃。"},
+            {"speaker": "灿灿", "line": "那你自己怎么把青菜拨到碗边上去了？"},
+            {"speaker": "妈妈", "line": "我这是晾着，等会儿配饭吃。"},
+            {"speaker": "昭昭", "line": "晾了半天还不动筷子，算不算挑？"},
+            {"speaker": "灿灿", "line": "那我把肉拨开，也算晾着配饭？"},
+            {"speaker": "昭昭", "line": "你自己说吃饭不许挑食。"},
+            {"speaker": "妈妈", "line": "……行行行，我夹起来吃了啊。"},
+        ],
+    }
+    body_errs: list[str] = []
+    append_e_body_errors(story, body_errs)
+    assert not any("因果反了" in e for e in body_errs)
+
+    open_errs: list[str] = []
+    append_e_opening_errors(
+        story["dialogue"][:2],
+        type_code="E",
+        errors=open_errs,
+        conflict_core=story["conflict_core"],
+        setting=story["setting"],
+    )
+    assert not any("因果反了" in e for e in open_errs)
+
+
 def _review_story() -> dict:
     return {
         "setting": "客厅",
@@ -2089,6 +2243,56 @@ def test_review_local_issues_catch_dup_and_empty_line():
     kinds = {(it["kind"], tuple(it["lines"])) for it in issues}
     assert ("重复", (1, 5)) in kinds
     assert ("其他", (3,)) in kinds
+
+
+def test_review_topic_cluster_catches_repeated_challenge():
+    """同一质问换词三遍，近邻检测抓不到时靠话题聚类。"""
+    from app.services.daily_story.review import collect_local_issues
+
+    story = {
+        "dialogue": [
+            {"speaker": "昭昭", "line": "妈，你电话里跟奶奶说吃了三碗饭？"},
+            {"speaker": "妈妈", "line": "对人要诚实，不能说谎。"},
+            {"speaker": "昭昭", "line": "那你为啥要说三碗？"},
+            {"speaker": "妈妈", "line": "那是善意的，不让奶奶担心。"},
+            {"speaker": "昭昭", "line": "锅里一粒米都没有。"},
+            {"speaker": "灿灿", "line": "那你电话里为啥说吃撑了呢？"},
+            {"speaker": "灿灿", "line": "那我跟奶奶说我考了一百分，也算善意？"},
+            {"speaker": "妈妈", "line": "那可不行，你那是骗人。"},
+            {"speaker": "昭昭", "line": "你自己说不能说谎，那你刚才算不算？"},
+            {"speaker": "妈妈", "line": "……行行行，我错了。"},
+        ],
+    }
+    issues = collect_local_issues(story)
+    topic = [it for it in issues if "质问电话撒谎" in it["desc"]]
+    assert topic, issues
+    assert set(topic[0]["lines"]) >= {1, 3, 6}
+
+
+def test_review_topic_cluster_skips_compact_good_story():
+    """压缩正例只摆一次物证/质问，不应误伤。"""
+    from app.services.daily_story.review import collect_local_issues
+
+    story = {
+        "dialogue": [
+            {"speaker": "昭昭", "line": "妈，你电话里跟奶奶说吃撑了是吧？"},
+            {"speaker": "妈妈", "line": "对人要诚实，不能说谎，记住了。"},
+            {
+                "speaker": "灿灿",
+                "line": "你说吃了三碗，那锅里为什么一粒米都没有？",
+            },
+            {"speaker": "妈妈", "line": "那是善意的，不让奶奶担心。"},
+            {"speaker": "昭昭", "line": "我肚子还咕咕叫，碗都是干的呢。"},
+            {
+                "speaker": "灿灿",
+                "line": "那我跟奶奶说我考了一百分，也算善意的吧？",
+            },
+            {"speaker": "妈妈", "line": "那可不行，你那是骗人。"},
+            {"speaker": "昭昭", "line": "你自己说不能说谎，那你刚才算不算？"},
+            {"speaker": "妈妈", "line": "……行行行，我错了，以后不敷衍了。"},
+        ],
+    }
+    assert collect_local_issues(story) == []
 
 
 def test_review_merge_issues_dedups_overlapping_lines():

@@ -181,7 +181,9 @@ class LLMClient:
     def generate_daily_story_themes(
         self,
         count: int = 15,
-    ) -> list[str]:
+        *,
+        avoid: list[str] | None = None,
+    ) -> list[dict]:
         raise NotImplementedError
 
     def generate_daily_script(
@@ -797,11 +799,20 @@ class LLMMgr:
     def generate_daily_story_themes(
         self,
         count: int = 15,
-    ) -> list[str]:
-        logger.info("[DAILY_STORY] generate themes start count=%d", count)
+        *,
+        avoid: list[str] | None = None,
+    ) -> list[dict]:
+        logger.info(
+            "[DAILY_STORY] generate themes start count=%d avoid=%d",
+            count,
+            len(avoid or []),
+        )
         started = time.perf_counter()
         try:
-            themes = self._get_client().generate_daily_story_themes(count)
+            themes = self._get_client().generate_daily_story_themes(
+                count,
+                avoid=avoid,
+            )
         except ValueError as exc:
             logger.error("[DAILY_STORY] generate themes failed: %s", exc)
             raise
@@ -809,7 +820,11 @@ class LLMMgr:
             logger.exception("[DAILY_STORY] generate themes failed")
             raise
         elapsed = time.perf_counter() - started
-        logger.info("[DAILY_STORY] generate themes done count=%d elapsed=%.1fs", len(themes), elapsed)
+        logger.info(
+            "[DAILY_STORY] generate themes done count=%d elapsed=%.1fs",
+            len(themes),
+            elapsed,
+        )
         return themes
 
     def generate_daily_script(

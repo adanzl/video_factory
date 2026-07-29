@@ -35,6 +35,39 @@ REVIEW_MAX_ISSUES = 6
 REVIEW_FIRST_PASSES = 2
 
 _RE_PUNCT = re.compile(r"[，。！？…、：；~—\s·「」“”\"'?!.,]")
+# 末段结构句：引用原话闭环，跟前面质问像也不算复读
+_RE_STRUCT_CLOSE = re.compile(r"你自己说|那你刚才算不算|那你刚才也")
+
+# 话题聚类：换词复读近邻检测抓不到时，按话题打标签计数
+# (标签, 正则, 触发阈值) —— ≥阈值才报，末 2 句不计入质问类
+_TOPIC_SPECS: tuple[tuple[str, re.Pattern[str], int], ...] = (
+    (
+        "空锅干碗物证",
+        re.compile(
+            r"空锅|干碗|一粒米|碗.{0,6}干|干干的|锅里.{0,10}(?:没|空)|"
+            r"盘子.{0,4}空|空盘",
+        ),
+        3,
+    ),
+    (
+        "肚子饿物证",
+        re.compile(r"咕咕叫|肚子.{0,4}饿|没吃饱|没吃到|一口都没"),
+        3,
+    ),
+    (
+        "质问电话撒谎",
+        re.compile(
+            r"(?:电话里|跟奶奶).{0,14}(?:说|谎)|为啥.{0,2}说|为什么.{0,2}说|"
+            r"那句话算不算|算不算谎",
+        ),
+        3,
+    ),
+)
+# 自套逻辑那句常含「跟奶奶说」，不当质问复读
+_RE_SELF_APPLY_SKIP = re.compile(
+    r"那我(?:也|跟|对)|我也(?:这么|这样)|"
+    r"我(?:明天|以后|回头)?跟(?:老师|奶奶|爷爷|外婆)说",
+)
 
 
 def _dialogue(story: dict) -> list[dict]:
@@ -75,18 +108,52 @@ def _near_duplicate(a: str, b: str) -> bool:
     return len(ga & gb) / len(ga | gb) >= 0.55
 
 
+def _is_struct_close(line: str, *, index: int, n: int) -> bool:
+    """末 3 句里的原话闭环，不当复读。"""
+    return index >= n - 3 and bool(_RE_STRUCT_CLOSE.search(line))
+
+
+def _collect_topic_repeats(lines: list[str]) -> list[dict[str, Any]]:
+    """同一话题换词说满阈值次 → 重复。"""
+    n = len(lines)
+    issues: list[dict[str, Any]] = []
+    for label, pattern, threshold in _TOPIC_SPECS:
+        hits = [
+            i + 1
+            for i, ln in enumerate(lines)
+            if pattern.search(ln)
+            and not _is_struct_close(ln, index=i, n=n)
+            and not _RE_SELF_APPLY_SKIP.search(ln)
+        ]
+        if len(hits) < threshold:
+            continue
+        nos = "、".join(str(h) for h in hits)
+        issues.append({
+            "lines": hits,
+            "kind": "重复",
+            "desc": f"「{label}」在第{nos}句反复出现，换词复读",
+            "fix": (
+                f"只保留一处{label}，其余改成新信息或删掉"
+            ),
+        })
+    return issues
+
+
 def collect_local_issues(story: dict) -> list[dict[str, Any]]:
-    """程序能直接判死的：同义重复句、两三字空句。"""
+    """程序能直接判死的：同义重复、话题复读、两三字空句。"""
     rows = _dialogue(story)
     lines = [str(r.get("line") or "").strip() for r in rows]
+    n = len(lines)
     issues: list[dict[str, Any]] = []
 
     seen_pairs: set[int] = set()
-    for i in range(len(lines)):
-        if i in seen_pairs:
+    for i in range(n):
+        if i in seen_pairs or _is_struct_close(lines[i], index=i, n=n):
             continue
-        for j in range(i + 1, len(lines)):
-            if j in seen_pairs or not _near_duplicate(lines[i], lines[j]):
+        for j in range(i + 1, n):
+            if j in seen_pairs or _is_struct_close(lines[j], index=j, n=n):
+                continue
+            if not _near_duplicate(lines[i], lines[j]):
                 continue
             seen_pairs.add(j)
             issues.append({
@@ -96,6 +163,8 @@ def collect_local_issues(story: dict) -> list[dict[str, Any]]:
                 "fix": f"把第{j + 1}句改成推进新信息的话，勿复述第{i + 1}句",
             })
             break
+
+    issues.extend(_collect_topic_repeats(lines))
 
     for i, line in enumerate(lines, 1):
         # 「怎么办！」这类三字惊慌句是有效反应，只揪「行！」级别的空应答
@@ -387,11 +456,11 @@ def _apply_fixes_greedily(
     accepted: set[int] = set()
     for no in fix_line_numbers(raw_fixes):
         trial = accepted | {no}
-        cand, notes = apply_spot_fixes(story, raw_fixes, only=trial)
+        condition, notes = apply_spot_fixes(story, raw_fixes, only=trial)
         if not notes:
             continue
         try:
-            validate_daily_story_json(cand, phase="full")
+            validate_daily_story_json(condition, phase="full")
         except ValueError as exc:
             logger.info(
                 "[DAILY_STORY] spot fix line %d dropped (breaks hard card): %s",

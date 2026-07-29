@@ -3,6 +3,7 @@
 import copy
 import json
 import re
+from collections.abc import Sequence
 
 from app.services.daily_story.dialogue_text import (
     DAILY_STORY_LINE_CHARS_MAX,
@@ -552,33 +553,306 @@ DAILY_STORY_THEME_SYSTEM_PROMPT = f"""\
 {_DAILY_STORY_CONTRACT}
 """
 
+# 轮换正例池：按类型各抽 1 条；池要够散，避免题材族变窄
+_THEME_EXAMPLE_POOL: dict[str, tuple[str, ...]] = {
+    "A": (
+        "姐姐嫌弟弟刷牙沫溅一圈",
+        "教弟弟拉拉链一直拉反",
+        "批评弟弟吃饭吧唧嘴",
+        "不许碰平板自己却还亮着",
+        "嫌弟弟书包拉链没拉自己也没拉",
+        "骂弟弟拖鞋乱甩自己也甩飞",
+        "教弟弟折纸飞机自己先折垮",
+        "管弟弟别玩泥巴手上全是泥",
+        "嫌弟弟画画出格自己笔也歪",
+        "训弟弟别抠墙皮自己指甲有灰",
+        "教弟弟包饺子皮捏得太厚",
+        "不许哼歌唱自己却哼出声",
+        "嫌弟弟洗脸只胡乱抹一把",
+        "教弟弟摆碗筷自己摆反了",
+    ),
+    "B": (
+        "俩人约定藏起打翻的颜料",
+        "偷偷一起多看五分钟动画",
+        "约好把碎掉的杯子先藏起来",
+        "联手把弄湿的地毯翻面骗过去",
+        "一起把吃剩的糖纸塞沙发缝",
+        "悄悄把摔裂的碗藏进柜底",
+        "合伙把洒的牛奶用布吸干",
+        "联手把吃剩的果核塞花盆",
+        "约好把弄脏的桌布先卷起来",
+        "一起把碰倒的花瓶扶正装傻",
+        "偷偷把撕坏的书页夹回中间",
+        "俩人把踩脏的脚印用拖把糊",
+        "约好把空了的饼干盒先盖上",
+        "联手把掉漆的玩具翻面朝下",
+    ),
+    "C": (
+        "争沙发上最后一块靠垫归谁",
+        "谁先用新洗好的水杯",
+        "分最后一块布丁谁切谁选",
+        "抢坐窗边那把椅子",
+        "争谁先挑新买的贴纸",
+        "抢冰箱里最后一根冰棍",
+        "争门口谁先穿鞋出门",
+        "抢卫生间最后一张纸巾",
+        "争床上谁睡靠窗那边",
+        "分最后两颗糖谁先挑颜色",
+        "争谁先用新买的彩色笔",
+        "抢阳台谁先晾自己的袜子",
+        "争客厅谁先选动画片频道",
+        "分半个西瓜谁先挖中间红",
+    ),
+    "D": (
+        "浇花别浇太多结果溢出来",
+        "关门轻点结果门没关严",
+        "收玩具放回箱里全塞沙发底",
+        "擦桌子慢慢擦结果只擦一角",
+        "晾衣服夹紧结果夹住袖口撕了",
+        "倒垃圾别洒结果弄脏楼道",
+        "关灯要关紧却留一条缝",
+        "摆鞋对齐结果摆成一溜歪的",
+        "擦桌子别弄湿结果整桌透湿",
+        "收衣服叠整齐结果塞成一团",
+        "扫地扫干净结果只扫门口一圈",
+        "洗碗别碰倒结果水龙头开太大",
+        "把书放回架上结果全插反了",
+        "给盆栽松土结果挖出半盆土",
+    ),
+    "E": (
+        "说好不玩手机被窝屏幕还亮着",
+        "饭前不吃零食勺子还挂着菜",
+        "九点必须睡妈妈还在刷短视频",
+        "说好少喝饮料冰箱自己开罐",
+        "不许踩沙发妈妈脚却搁扶手上",
+        "规定剩饭要吃完自己碗底留米",
+        "定好不躺地板自己先趴下玩",
+        "立规矩关电视自己却偷偷看",
+        "说好饭桌不玩手机屏幕朝上亮",
+        "不许大声嚷自己却在厨房喊",
+        "规定拖鞋摆门口自己踢进客厅",
+        "说好早睡闹钟响了还在刷",
+        "饭前洗手自己却直接抓饼",
+        "不许边走边吃自己啃着苹果进门",
+    ),
+}
+
+# 高频老题：每次出题写入禁复读，模型勿换词重出
+_THEME_OVERUSED_BAN: tuple[str, ...] = (
+    "争最后一瓶酸奶",
+    "谁先洗澡",
+    "姐姐教弟弟写作业自己写错",
+    "把叠好的衣服弄乱",
+    "抢遥控器",
+    "抢电视遥控器",
+    "偷偷一起吃零食",
+    "系鞋带要系紧",
+    "叠衣服要轻点",
+)
+
+_THEME_TYPE_ORDER: tuple[str, ...] = ("A", "B", "C", "D", "E")
+
 DAILY_STORY_THEME_USER_TEMPLATE = """\
-请给出{count}个适合昭昭（7岁弟弟）与灿灿（10岁姐姐）日常对话的场景主题。
+请给出适合昭昭（7岁弟弟）与灿灿（10岁姐姐）日常对话的场景主题。
 面向孩子和有娃的大人。
 
 家庭背景：姐弟和爸爸妈妈住在一起，家里没有宠物；
 可发言角色仅昭昭、灿灿、妈妈；妈妈可出场但戏份轻（少台词）。
 
-要求：
-1. 主题必须是一件具体的小事，且最好带动作/实物（抢遥控器、弄脏裙子、藏橡皮），
-   少写抽象讨论（如「讨论友谊」「探讨公平」）。
-2. 不能是抽象概念。
-3. 主题要有天然矛盾，且主戏能在家门口/室内由姐弟撑起来，类型须多样，例如：
-   A 姐姐管教/教作业被反问到哑口；C 抢先后/分东西吵公平；
-   D 把叮嘱按字面做砸；B 姐弟联手瞒事露馅；E 妈妈讲理被绕进去。
-4. 少出「妈妈讲理/教育」当主线的主题（E 类除外）。
-5. 禁止依赖爸爸入戏、老师入戏、学校/公园等外景主场的主题。
-6. 主题须能用短句口语一场讲完（对白体量约一分半到两分钟）。
-7. 主题用15个字以内描述，直接输出。
+【硬要求】
+1. 具体小事，带动作/实物；禁抽象讨论（友谊/公平概念题）。
+2. 主戏在家门口/室内；禁爸/老师入戏、禁学校公园外景主场。
+3. 每条≤15字；可拍优先；口头道德题（说谎/诚实/有礼貌）禁止。
+4. E 类须「规矩+妈妈可拍现行」同题写出（手机亮/勺子挂菜等）。
+5. **按类型配额输出**，共 {count} 条，配额：{quota_line}。
+   配额按**主类型**计数；兼适类型不占配额。
+6. **每行格式必须是** `主类型[,兼适…]|主题`（类型仅 A/B/C/D/E）。
+   一条主题可兼适多个类型时用逗号列出，主类型写在最前，例如：
+   E,A|九点必须睡妈妈还在刷短视频
+   C|争沙发上最后一块靠垫归谁
+7. 勿与「已出现/禁复读」列表近义改写（换词重说也算重复）。
 
-示例："争最后一瓶酸奶"
-示例："谁先洗澡"
-示例："姐姐教弟弟写作业自己写错"
-示例："把叠好的衣服弄乱"
-示例："偷偷一起吃零食"
+【类型要点（各出各的，勿串类）】
+A 姐姐管教被反问翻车 · B 姐弟联手瞒事露馅 · C 争同一物/先后吵公平
+D 叮嘱被字面执行搞砸 · E 妈妈立规矩自己现行被抓
 
-请直接输出标题，每行一个，不要其他内容。
+【本批轮换正例（结构可参考，勿照抄原句）】
+{examples_block}
+
+【禁复读 / 已出现（勿近义改写）】
+{avoid_block}
+
+请直接按 `主类型[,兼适…]|主题` 逐行输出，不要序号，不要其他内容。
 """
+
+
+# 主题出题后过滤：口头道德/抽象题难写出合格稿，直接丢掉
+_THEME_ABSTRACT_ORAL = re.compile(
+    r"说谎|撒谎|敷衍|诚实|假话|骗奶奶|善意谎言|有礼貌|讲礼貌|"
+    r"讨论|探讨|什么叫公平|什么是友谊",
+)
+_THEME_VISUAL_EYE = re.compile(
+    r"手机|刷|勺子|尝|嘴角|油|睡|九点|瓜子|屏幕|亮着|试吃|"
+    r"抢|争|藏|弄|碎|洒|倒|叠|鞋带|酸奶|零食|橡皮|抱枕|"
+    r"作业|写错|刷牙|牙膏|平板|靠垫|水杯|布丁|贴纸|浇花|"
+    r"关门|拖把|颜料|地毯|糖纸|扶手|短视频|饮料",
+)
+_RE_THEME_PUNCT = re.compile(r"[，。！？…、：；~—\s·「」“”\"'?!.,|｜]")
+
+
+def allocate_theme_type_quotas(count: int) -> dict[str, int]:
+    """把 count 尽量均分到 A–E。"""
+    n = max(1, int(count))
+    base, rem = divmod(n, len(_THEME_TYPE_ORDER))
+    out = {c: base for c in _THEME_TYPE_ORDER}
+    for i in range(rem):
+        out[_THEME_TYPE_ORDER[i]] += 1
+    return out
+
+
+def _pick_rotating_examples(*, per_type: int = 1) -> list[str]:
+    import random
+
+    picked: list[str] = []
+    for code in _THEME_TYPE_ORDER:
+        pool = list(_THEME_EXAMPLE_POOL.get(code) or ())
+        if not pool:
+            continue
+        k = min(per_type, len(pool))
+        for ex in random.sample(pool, k=k):
+            picked.append(f"{code}|{ex}")
+    return picked
+
+
+def _format_avoid_block(avoid: list[str], *, limit: int = 36) -> str:
+    rows: list[str] = []
+    seen: set[str] = set()
+    for raw in [*_THEME_OVERUSED_BAN, *(avoid or [])]:
+        t = str(raw or "").strip()
+        if not t or t in seen:
+            continue
+        seen.add(t)
+        rows.append(t)
+        if len(rows) >= limit:
+            break
+    if not rows:
+        return "（无）"
+    return "\n".join(f"- {t}" for t in rows)
+
+
+def theme_is_writable(theme: str) -> bool:
+    """粗判主题能否写成合格短剧：抽象口头题且无可拍眼 → 否。"""
+    text = (theme or "").strip()
+    if not text:
+        return False
+    if _THEME_ABSTRACT_ORAL.search(text) and not _THEME_VISUAL_EYE.search(text):
+        return False
+    return True
+
+
+def _theme_norm(text: str) -> str:
+    return _RE_THEME_PUNCT.sub("", text or "")
+
+
+def _theme_bigrams(text: str) -> set[str]:
+    n = _theme_norm(text)
+    if len(n) < 2:
+        return {n} if n else set()
+    return {n[i : i + 2] for i in range(len(n) - 1)}
+
+
+def themes_near_duplicate(a: str, b: str, *, threshold: float = 0.45) -> bool:
+    """同批/对历史的近义：包含关系或 bigram Jaccard。"""
+    na, nb = _theme_norm(a), _theme_norm(b)
+    if len(na) < 4 or len(nb) < 4:
+        return na == nb and bool(na)
+    if na == nb or na in nb or nb in na:
+        return True
+    ga, gb = _theme_bigrams(a), _theme_bigrams(b)
+    if not ga or not gb:
+        return False
+    return len(ga & gb) / len(ga | gb) >= threshold
+
+
+def parse_typed_theme_lines(content: str) -> list[tuple[tuple[str, ...], str]]:
+    """解析 `A|主题` / `E,A|主题` / `A：主题`。
+
+    返回 [(codes, theme), ...]；codes[0] 为主类型（占配额）。
+    """
+    out: list[tuple[tuple[str, ...], str]] = []
+    for raw in (content or "").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        line = re.sub(r"^\d+[.、)\s]*", "", line).strip()
+        m = re.match(
+            r"^[\[【]?\s*([ABCDE](?:\s*[,/、+]\s*[ABCDE])*)\s*[\]】]?"
+            r"\s*[|｜:：\-–—]\s*(.+)$",
+            line,
+        )
+        if not m:
+            if theme_is_writable(line):
+                out.append(((), line))
+            continue
+        codes_raw, theme = m.group(1), m.group(2).strip().strip("\"'")
+        codes: list[str] = []
+        for part in re.split(r"[,/、+\s]+", codes_raw):
+            c = part.strip().upper()[:1]
+            if c in _THEME_TYPE_ORDER and c not in codes:
+                codes.append(c)
+        if theme and codes:
+            out.append((tuple(codes), theme))
+        elif theme and theme_is_writable(theme):
+            out.append(((), theme))
+    return out
+
+
+def merge_theme_story_types(
+    theme: str,
+    *,
+    declared: Sequence[str] | None = None,
+) -> list[str]:
+    """合并模型标注 + 关键词提示，去重保序；至少返回一个类型。"""
+    from app.services.daily_story.story_types.model import STORY_TYPE_KEYWORDS
+
+    out: list[str] = []
+    for raw in declared or ():
+        c = str(raw or "").strip().upper()[:1]
+        if c in _THEME_TYPE_ORDER and c not in out:
+            out.append(c)
+    scores = {
+        k: sum(1 for kw in STORY_TYPE_KEYWORDS.get(k, ()) if kw in (theme or ""))
+        for k in _THEME_TYPE_ORDER
+    }
+    for k, sc in sorted(
+        scores.items(),
+        key=lambda kv: (-kv[1], _THEME_TYPE_ORDER.index(kv[0])),
+    ):
+        if sc > 0 and k not in out:
+            out.append(k)
+    if not out:
+        out = ["C"]
+    return out
+
+
+def filter_writable_themes(
+    themes: list[str],
+    *,
+    avoid: list[str] | None = None,
+) -> list[str]:
+    """可写性 + 精确去重 + 对历史/同批近义去重。"""
+    avoid_list = [str(x).strip() for x in (avoid or []) if str(x).strip()]
+    out: list[str] = []
+    for raw in themes:
+        t = str(raw or "").strip()
+        if not t or not theme_is_writable(t):
+            continue
+        if any(themes_near_duplicate(t, a) for a in avoid_list):
+            continue
+        if any(themes_near_duplicate(t, kept) for kept in out):
+            continue
+        out.append(t)
+    return out
 
 
 def _select_story_type(theme: str) -> str:
@@ -1980,14 +2254,144 @@ def build_daily_story_theme_prompts(
     count: int,
     *,
     type_code: str | None = None,
+    avoid: list[str] | None = None,
+    quotas: dict[str, int] | None = None,
 ) -> tuple[str, str]:
-    """构造日常故事主题生成的 system + user 提示词。"""
-    user = DAILY_STORY_THEME_USER_TEMPLATE.format(count=count)
+    """构造日常故事主题生成的 system + user 提示词。
+
+    - 默认按 A–E 配额出题（`主类型[,兼适…]|主题`）。
+    - 若传入 type_code，改为单类型出题，并追加该类 theme_user_append。
+    """
+    n = max(1, int(count))
     if type_code and type_code.upper() in STORY_TYPE_LINES:
-        extra = STORY_TYPE_LINES[type_code.upper()].theme_user_append.strip()
+        code = type_code.upper()
+        quota_map = {c: 0 for c in _THEME_TYPE_ORDER}
+        quota_map[code] = n
+        quota_line = f"{code}×{n}"
+        examples = [
+            f"{code}|{ex}"
+            for ex in list(_THEME_EXAMPLE_POOL.get(code) or ())[:2]
+        ]
+        user = DAILY_STORY_THEME_USER_TEMPLATE.format(
+            count=n,
+            quota_line=quota_line,
+            examples_block="\n".join(examples) or "（无）",
+            avoid_block=_format_avoid_block(list(avoid or [])),
+        )
+        extra = STORY_TYPE_LINES[code].theme_user_append.strip()
         if extra:
             user = f"{user}\n{extra}"
+        return DAILY_STORY_THEME_SYSTEM_PROMPT, user
+
+    quota_map = quotas or allocate_theme_type_quotas(n)
+    quota_line = "、".join(
+        f"{c}×{quota_map.get(c, 0)}"
+        for c in _THEME_TYPE_ORDER
+        if quota_map.get(c, 0) > 0
+    )
+    examples = _pick_rotating_examples(per_type=1)
+    user = DAILY_STORY_THEME_USER_TEMPLATE.format(
+        count=n,
+        quota_line=quota_line or "A–E 尽量均分",
+        examples_block="\n".join(examples) or "（无）",
+        avoid_block=_format_avoid_block(list(avoid or [])),
+    )
     return DAILY_STORY_THEME_SYSTEM_PROMPT, user
+
+
+def select_themes_by_quota(
+    typed: list[tuple[tuple[str, ...], str]],
+    quotas: dict[str, int],
+    *,
+    avoid: list[str] | None = None,
+) -> list[dict]:
+    """按主类型 A–E 配额挑选；返回 [{theme, story_types}, ...]。"""
+    avoid_list = [str(x).strip() for x in (avoid or []) if str(x).strip()]
+    # primary -> [(theme, story_types)]
+    buckets: dict[str, list[tuple[str, list[str]]]] = {
+        c: [] for c in _THEME_TYPE_ORDER
+    }
+    untyped: list[tuple[str, list[str]]] = []
+
+    def _theme_texts(rows: list[dict]) -> list[str]:
+        return [r["theme"] for r in rows]
+
+    def _accept(theme: str, existing: list[str]) -> bool:
+        if not theme or not theme_is_writable(theme):
+            return False
+        if any(themes_near_duplicate(theme, a) for a in avoid_list):
+            return False
+        if any(themes_near_duplicate(theme, x) for x in existing):
+            return False
+        return True
+
+    def _primary_count(rows: list[dict], code: str) -> int:
+        return sum(
+            1
+            for r in rows
+            if (r.get("story_types") or [""])[0] == code
+        )
+
+    seen_bucket_themes: set[str] = set()
+    for codes, theme in typed:
+        t = theme.strip()
+        types = merge_theme_story_types(t, declared=codes)
+        primary = types[0]
+        if t in seen_bucket_themes:
+            continue
+        if not _accept(t, list(seen_bucket_themes)):
+            continue
+        if codes:
+            buckets[primary].append((t, types))
+            seen_bucket_themes.add(t)
+        else:
+            untyped.append((t, types))
+            seen_bucket_themes.add(t)
+
+    picked: list[dict] = []
+    for code in _THEME_TYPE_ORDER:
+        need = int(quotas.get(code) or 0)
+        for t, types in buckets[code]:
+            if need <= 0:
+                break
+            if not _accept(t, _theme_texts(picked)):
+                continue
+            # 保证配额主类型在首位
+            ordered = [code] + [c for c in types if c != code]
+            picked.append({"theme": t, "story_types": ordered})
+            need -= 1
+        for t, types in untyped:
+            if need <= 0:
+                break
+            if not _accept(t, _theme_texts(picked)):
+                continue
+            ordered = [code] + [c for c in types if c != code]
+            picked.append({"theme": t, "story_types": ordered})
+            need -= 1
+
+    total_need = sum(int(quotas.get(c) or 0) for c in _THEME_TYPE_ORDER)
+    if len(picked) < total_need:
+        leftovers: list[tuple[str, str, list[str]]] = [
+            (code, t, types)
+            for code in _THEME_TYPE_ORDER
+            for t, types in buckets[code]
+        ] + [("", t, types) for t, types in untyped]
+        for code, t, types in leftovers:
+            if len(picked) >= total_need:
+                break
+            if not _accept(t, _theme_texts(picked)):
+                continue
+            st = code or next(
+                (
+                    c
+                    for c in _THEME_TYPE_ORDER
+                    if _primary_count(picked, c) < int(quotas.get(c) or 0)
+                ),
+                (types[0] if types else _THEME_TYPE_ORDER[0]),
+            )
+            ordered = [st] + [c for c in types if c != st]
+            picked.append({"theme": t, "story_types": ordered})
+    return picked[:total_need]
 
 
 def dialogue_total_chars(story: dict | None) -> int:
@@ -2109,6 +2513,9 @@ def _patch_body_char_budget(story: dict) -> list[str]:
     if code == "E" and 10 <= n_lines <= 16:
         chars_min = 265
         max_pad = 72
+    if code == "D":
+        # D 句少字足，差几个字优先本地补，避免整轮重试卡在 275
+        max_pad = max(max_pad, 40)
     if total < chars_min:
         need = chars_min - total
         # 差太多硬补会怪，只处理小缺口（E 类压缩稿可放宽）
@@ -2122,7 +2529,9 @@ def _patch_body_char_budget(story: dict) -> list[str]:
             for item in dialogue
             if isinstance(item, dict) and str(item.get("line") or "").endswith(suf)
         }
-        for item in mid:
+        # D 小缺口：末两句（回旋镖+嘴硬）以外都可以补
+        targets = dialogue[2:-2] if code == "D" and need <= 16 else mid
+        for item in targets:
             if need <= 0:
                 break
             if not isinstance(item, dict):

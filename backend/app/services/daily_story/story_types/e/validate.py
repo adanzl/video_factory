@@ -23,6 +23,15 @@ RE_MOM_WAFFLE = re.compile(
 )
 RE_SLEEP_TOPIC = re.compile(r"睡觉|九点|早睡|刷手机|卧床|被窝|挂钟")
 RE_SNACK_TOPIC = re.compile(r"零食|尝菜|偷吃|薯片|饭前不吃|瓜子|试吃|试菜")
+RE_PICKY_TOPIC = re.compile(r"挑食|青菜|拨到碗边|拨开青菜")
+RE_PICKY_MOM_RULE = re.compile(
+    r"不准挑食|不许挑食|不能挑食|别挑食|挑食不行|"
+    r"青菜.{0,6}(?:必须|得|要)吃|饭菜都得吃",
+)
+RE_PICKY_EYE = re.compile(r"拨到|拨开|碗边|拨了.{0,4}青菜")
+RE_PICKY_WAFFLE = re.compile(
+    r"晾|配饭|配着饭|等会儿|一会儿|留到最后|饭太烫|再凉|慢慢来|翻一翻|翻个面",
+)
 RE_LIE_TOPIC = re.compile(r"说谎|撒谎|敷衍|诚实|假话|骗")
 RE_LIE_MOM_RULE = re.compile(r"不能说谎|不许说谎|要诚实|别说谎|老实")
 RE_LIE_WAFFLE = re.compile(
@@ -109,7 +118,17 @@ def append_e_body_errors(story: dict, errors: list[str]) -> None:
     )
     sleep_t = bool(RE_SLEEP_TOPIC.search(topic_anchor))
     snack_t = bool(RE_SNACK_TOPIC.search(topic_anchor))
-    lie_t = bool(RE_LIE_TOPIC.search(topic_anchor)) and not snack_t and not sleep_t
+    picky_t = (
+        bool(RE_PICKY_TOPIC.search(topic_anchor))
+        and not snack_t
+        and not sleep_t
+    )
+    lie_t = (
+        bool(RE_LIE_TOPIC.search(topic_anchor))
+        and not snack_t
+        and not sleep_t
+        and not picky_t
+    )
     all_text = "".join(lines)
     mom_early = "".join(
         ln
@@ -129,6 +148,72 @@ def append_e_body_errors(story: dict, errors: list[str]) -> None:
         ):
             errors.append(
                 "E类尝菜眼须可拍试吃（勺子/嘴角油），汤汁太弱勿当唯一现行",
+            )
+
+    if picky_t:
+        rule_i = next(
+            (
+                i
+                for i, (sp, ln) in enumerate(zip(speakers, lines))
+                if sp == "妈妈" and RE_PICKY_MOM_RULE.search(ln)
+            ),
+            None,
+        )
+        eye_i = next(
+            (
+                i
+                for i, (sp, ln) in enumerate(zip(speakers, lines))
+                if sp in ("昭昭", "灿灿") and RE_PICKY_EYE.search(ln)
+            ),
+            None,
+        )
+        if rule_i is None or rule_i > 5:
+            errors.append(
+                "E类挑食前段须妈妈亲口立规矩（不准挑食/青菜都得吃），"
+                "勿只说必须吃完却不点挑食",
+            )
+        elif eye_i is not None and eye_i < rule_i:
+            errors.append(
+                "E类挑食须先妈妈立「不许挑食」，再抓拨青菜现行；"
+                "勿先质问拨开再立同名规矩（因果反了）",
+            )
+        if not RE_PICKY_EYE.search(all_text):
+            errors.append(
+                "E类挑食须有可拍现行（拨到碗边/拨开青菜）",
+            )
+        waffle_n = sum(
+            1
+            for sp, ln in zip(speakers, lines)
+            if sp == "妈妈" and RE_PICKY_WAFFLE.search(ln)
+        )
+        if waffle_n >= 3:
+            errors.append(
+                "E类挑食妈妈开脱过多（晾着/配饭/等会儿宜≤2句一套加码）",
+            )
+        mom_n = sum(1 for sp in speakers if sp == "妈妈")
+        if mom_n >= 8 or n > 18:
+            errors.append(
+                "E类挑食正文过长（宜≤16句、妈妈开脱≤2句），勿晾着复读灌水",
+            )
+        if sum(
+            1
+            for sp, ln in zip(speakers, lines)
+            if sp == "妈妈" and "不一样" in ln
+        ) >= 2:
+            errors.append("E类挑食禁不一样开脱复读（最多一次）")
+        # 规矩只立一次
+        if sum(
+            1
+            for sp, ln in zip(speakers, lines)
+            if sp == "妈妈" and RE_PICKY_MOM_RULE.search(ln)
+        ) >= 3:
+            errors.append("E类挑食禁重复立同一规矩（不许挑食只说一次）")
+        if RE_SNACK_BLEED.search(all_text) or re.search(
+            r"尝咸淡|不算吃零食|饭前不能吃零食",
+            all_text,
+        ):
+            errors.append(
+                "E类挑食禁尝菜/零食串场，只盯青菜拨开这一条线",
             )
 
     if lie_t:

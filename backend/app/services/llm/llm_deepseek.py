@@ -2031,8 +2031,44 @@ class DeepSeekClient(LLMClient):
     def generate_daily_story_themes(
         self,
         count: int = 15,
-    ) -> list[str]:
-        system, user = build_daily_story_theme_prompts(count)
+        *,
+        avoid: list[str] | None = None,
+    ) -> list[dict]:
+        from app.repositories import repo_daily_story
+        from app.services.daily_story.prompts import (
+            allocate_theme_type_quotas,
+            build_daily_story_theme_prompts,
+            filter_writable_themes,
+            merge_theme_story_types,
+            parse_typed_theme_lines,
+            select_themes_by_quota,
+        )
+
+        n = max(1, min(int(count), 20))
+        recent: list[str] = []
+        try:
+            recent = repo_daily_story.list_recent_themes(40)
+        except Exception as exc:  # noqa: BLE001 — 出题不因读库失败中断
+            logger.warning("[DAILY_STORY] list_recent_themes failed: %s", exc)
+
+        avoid_all: list[str] = []
+        seen_avoid: set[str] = set()
+        for raw in [*(avoid or []), *recent]:
+            t = str(raw or "").strip()
+            if not t or t in seen_avoid:
+                continue
+            seen_avoid.add(t)
+            avoid_all.append(t)
+
+        quotas = allocate_theme_type_quotas(n)
+        # 多要一点，过滤近义后仍够配额
+        ask = min(n + 5, 25)
+        ask_quotas = allocate_theme_type_quotas(ask)
+        system, user = build_daily_story_theme_prompts(
+            ask,
+            avoid=avoid_all,
+            quotas=ask_quotas,
+        )
         content, _ = self._chat(
             system,
             user,
@@ -2040,13 +2076,46 @@ class DeepSeekClient(LLMClient):
             thinking_enabled=False,
             temperature=_TEMP_CREATIVE_HIGH,
         )
-        themes = []
-        for line in content.strip().split("\n"):
-            line = line.strip()
-            if not line:
-                continue
-            # 去掉序号前缀，如 "1. "、"1、"、"1. 主题名"
-            line = re.sub(r"^\d+[.、)\s]*", "", line).strip()
-            if line:
-                themes.append(line)
-        return themes[:count]
+        typed = parse_typed_theme_lines(content)
+        picked = select_themes_by_quota(typed, quotas, avoid=avoid_all)
+        if len(picked) < n:
+            # 兜底：把解析出的纯主题再滤一遍补齐
+            plain = [t for _codes, t in typed]
+            codes_by_theme = {
+                t: list(codes) for codes, t in typed if codes and t
+            }
+
+            def _primary_count(code: str) -> int:
+                return sum(
+                    1
+                    for r in picked
+                    if (r.get("story_types") or [""])[0] == code
+                )
+
+            extra = filter_writable_themes(
+                plain,
+                avoid=[*avoid_all, *[r["theme"] for r in picked]],
+            )
+            for t in extra:
+                if len(picked) >= n:
+                    break
+                declared = codes_by_theme.get(t) or []
+                if not declared:
+                    st = next(
+                        (
+                            c
+                            for c in ("A", "B", "C", "D", "E")
+                            if _primary_count(c) < int(quotas.get(c) or 0)
+                        ),
+                        "C",
+                    )
+                    declared = [st]
+                types = merge_theme_story_types(t, declared=declared)
+                picked.append({"theme": t, "story_types": types})
+        if len(picked) < n:
+            logger.warning(
+                "[DAILY_STORY] theme quota short got=%d want=%d",
+                len(picked),
+                n,
+            )
+        return picked[:n]

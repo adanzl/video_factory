@@ -31,6 +31,15 @@ _VALIDATION_PRIORITY: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"总字数须≤"), "body_too_long"),
     (re.compile(r"E类正文过长"), "e_body_too_long"),
     (re.compile(r"汤汁太弱|尝菜眼"), "e_weak_taste_eye"),
+    # 因果顺序优先于其他挑食软伤：先立规再抓现行
+    (
+        re.compile(r"因果反了|先立「不许挑食」|先妈妈立「不许挑食」"),
+        "e_picky_causal",
+    ),
+    (
+        re.compile(r"挑食开场|挑食前段|挑食须|挑食妈妈|挑食禁"),
+        "e_picky_theme",
+    ),
     (
         re.compile(
             r"说谎主题禁|说谎开场|说谎须|说谎禁|善意谎言复读|那是开脱|"
@@ -197,6 +206,21 @@ def _register_validation_hints() -> None:
             "试吃咽下；禁止「偷尝汤汁」当唯一眼，改勺子或嘴角。"
         )
 
+    def e_picky_causal(**_kw: Any) -> str:
+        return (
+            "【E·挑食因果】须先妈妈立「吃饭不许挑食」，再孩子抓拨到碗边；"
+            "禁「你怎么拨开了→不许挑食」。开场可问「青菜真要全吃完？」→妈妈立规"
+            "→下一句再点碗边拨开。"
+        )
+
+    def e_picky_theme(**_kw: Any) -> str:
+        return (
+            "【E·挑食】妈妈先立「吃饭不许挑食」（只一次）→孩子抓青菜拨到碗边→"
+            "开脱晾着/配饭只 1–2 句→孩子扣原话闭环→妈妈末句破功。"
+            "全文宜≤16句；禁晾着/等会儿/翻面连复读灌水；禁不一样复读；"
+            "禁尝咸淡/零食串场，只盯青菜拨开；禁先抓拨开再立同名规矩。"
+        )
+
     def e_lie_theme(**_kw: Any) -> str:
         return (
             "【E·说谎】孩子问电话/奶奶场面→妈妈先立「不能说谎」→"
@@ -221,6 +245,8 @@ def _register_validation_hints() -> None:
         "body_too_long": lambda frag, **_kw: _hint_body_too_long(frag),
         "e_body_too_long": e_body_too_long,
         "e_weak_taste_eye": e_weak_taste_eye,
+        "e_picky_causal": e_picky_causal,
+        "e_picky_theme": e_picky_theme,
         "e_lie_theme": e_lie_theme,
         "c_incomplete_line": c_incomplete_line,
         "c_boomerang": c_boomerang,
