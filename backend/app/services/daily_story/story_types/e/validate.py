@@ -16,7 +16,7 @@ RE_MOM_RULE = re.compile(
     r"应该|必须|规矩|听我的|我说|不行|不能|不许|别吃|得睡|别玩",
 )
 RE_KID_LOOP = re.compile(
-    r"你自己说|你刚才|那你也是|你也这样|那你现在|妈妈你也",
+    r"你自己说|自己说|你刚才|那你也是|你也这样|那你现在|妈妈你也",
 )
 RE_MOM_WAFFLE = re.compile(
     r"不是|不一样|那是|总之|反正|不是那个|不算|尝咸淡|大人|工作需要",
@@ -195,9 +195,18 @@ def append_e_body_errors(story: dict, errors: list[str]) -> None:
                 if RE_PICKY_RELECTURE.search(lines[i]):
                     errors.append(
                         "E类挑食抓现行后禁妈妈回训孩子不吃菜，"
-                        "应开脱晾着/配饭",
+                        "应开脱或由孩子假替妈解释",
                     )
                 break
+            # 全文须有开脱痕迹（妈妈自辩或孩子假替均可）
+            if not (
+                RE_PICKY_WAFFLE.search(all_text)
+                or re.search(r"你不懂|放凉|大人|不一样|不算挑", all_text)
+            ):
+                errors.append(
+                    "E类挑食抓现行后须有开脱"
+                    "（妈妈自辩或孩子假替妈解释均可）",
+                )
         if not RE_PICKY_EYE.search(all_text):
             errors.append(
                 "E类挑食须有可拍现行（拨到碗边/拨开青菜）",
@@ -211,27 +220,27 @@ def append_e_body_errors(story: dict, errors: list[str]) -> None:
             errors.append(
                 "E类挑食妈妈开脱过多（晾着/配饭/等会儿宜≤2句一套加码）",
             )
-        mom_n = sum(1 for sp in speakers if sp == "妈妈")
-        if mom_n >= 8 or n > 16:
-            errors.append(
-                "E类挑食正文过长（宜≤14句、妈妈开脱≤2句），勿晾着复读灌水",
-            )
+        # 总句数/妈妈句数不再用「开脱≤2」这种口径硬卡，
+        # 否则会误伤“句数略多但并未反复用晾着/配饭开脱”的好稿。
+        # 保留极端上限防 runaway（仍以全局字数硬卡为主）。
+        if n > 20:
+            errors.append("E类挑食正文过长（不宜超 20 句）")
         if any(
             sp == "妈妈" and "不一样" in ln
             for sp, ln in zip(speakers, lines)
         ):
-            errors.append("E类挑食禁不一样/大人原因开脱")
+            errors.append("E类挑食禁妈妈当真用不一样开脱（孩子讽刺帮腔除外）")
         if RE_PICKY_PAD.search(all_text):
             errors.append(
                 "E类挑食禁注水（数叶子/打自己脸/证明夹菜），"
                 "中段用自套反例即可",
             )
-        # 规矩只立一次
+        # 规矩只立一次（两次即拦，避免开场后再训）
         if sum(
             1
             for sp, ln in zip(speakers, lines)
             if sp == "妈妈" and RE_PICKY_MOM_RULE.search(ln)
-        ) >= 3:
+        ) >= 2:
             errors.append("E类挑食禁重复立同一规矩（不许挑食只说一次）")
         if RE_SNACK_BLEED.search(all_text) or re.search(
             r"尝咸淡|不算吃零食|饭前不能吃零食",
@@ -368,7 +377,7 @@ def append_e_body_errors(story: dict, errors: list[str]) -> None:
 
     if not RE_KID_LOOP.search(tail3) and not RE_KID_LOOP.search(tail4):
         errors.append(
-            "E类末段须孩子用妈妈原话闭环反问（你自己说/那你也是等）",
+            "E类末段须孩子用妈妈原话闭环反问（自己说/你刚才等）",
         )
         return
 

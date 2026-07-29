@@ -31,6 +31,10 @@ _RE_PICKY_PAD = re.compile(
     r"数数|蔫了|证明你不是|打自己脸|说话算话|夹一根|叶子都",
 )
 
+_RE_PICKY_WAFFLE = re.compile(
+    r"晾|配饭|配着饭|等会儿|一会儿|留到最后|饭太烫|再凉|慢慢来|翻一翻|翻个面",
+)
+
 
 def _is_e(story: dict) -> bool:
     from app.services.daily_story.story_types import resolve_story_type_code
@@ -76,6 +80,20 @@ def _speakers(dialogue: list) -> list[str]:
     ]
 
 
+def _next_kid_speaker(dialogue: list, before_i: int) -> str:
+    """取 before_i 之前最近孩子句的另一人，避免末两句孩子同人硬卡。"""
+    for j in range(before_i - 1, -1, -1):
+        d = dialogue[j]
+        if not isinstance(d, dict):
+            continue
+        sp = str(d.get("speaker") or "").strip()
+        if sp == "昭昭":
+            return "灿灿"
+        if sp == "灿灿":
+            return "昭昭"
+    return "昭昭"
+
+
 def patch_e_strip_a_close(story: dict) -> list[str]:
     """剥 A 式末四拍，改孩子闭环 + 妈妈破功。"""
     notes: list[str] = []
@@ -99,7 +117,12 @@ def patch_e_strip_a_close(story: dict) -> list[str]:
             new_line = "你自己说的，你现在也这样"
         elif "那不一样" in line:
             d["speaker"] = "妈妈"
-            new_line = "那是工作需要，不算数"
+            # 勿串「工作需要」到吃饭题
+            new_line = (
+                "快了，马上就好"
+                if _is_picky(story)
+                else "那是工作需要，不算数"
+            )
         else:
             d["speaker"] = "昭昭"
             new_line = "那你刚才也破规矩了"
@@ -245,7 +268,8 @@ def patch_e_ensure_kid_ask(story: dict) -> list[str]:
         if str(d.get("speaker") or "") not in ("昭昭", "灿灿"):
             continue
         if _is_picky(story):
-            new_line = "那我把肉拨开，也算晾着配饭？"
+            # E 通用自套反例（勿硬写青菜/肉/碗边物词）
+            new_line = "那我也可以照你这样？"
         else:
             new_line = "那你刚才那一口算不算啊"
         if dialogue_char_count(new_line) <= DAILY_STORY_LINE_CHARS_MAX:
@@ -256,7 +280,10 @@ def patch_e_ensure_kid_ask(story: dict) -> list[str]:
 
 
 def patch_e_ensure_waffle(story: dict) -> list[str]:
-    """缺妈妈改口时，在闭环前改一句妈妈。"""
+    """缺妈妈改口时，在闭环前改一句妈妈。
+
+    若已有孩子假替妈开脱（讽刺帮腔），不再硬塞妈妈自辩。
+    """
     notes: list[str] = []
     if not _is_e(story):
         return notes
@@ -264,9 +291,20 @@ def patch_e_ensure_waffle(story: dict) -> list[str]:
     if not isinstance(dialogue, list) or len(dialogue) < 8:
         return notes
     lines = _lines(dialogue)
+    speakers = _speakers(dialogue)
     if RE_MOM_WAFFLE.search("".join(lines)):
         return notes
     if _is_picky(story) and re.search(r"晾|配饭|等会儿", "".join(lines)):
+        return notes
+    # 假开脱已在：孩子帮腔带开脱词 → 跳过
+    if any(
+        sp in ("昭昭", "灿灿")
+        and re.search(
+            r"你不懂|放凉|大人|不一样|不算|晾|配饭|等会儿|尝咸淡|工作需要",
+            ln,
+        )
+        for sp, ln in zip(speakers, lines)
+    ):
         return notes
     # 找闭环前最近的妈妈句
     loop_i = next(
@@ -313,9 +351,9 @@ def patch_e_ensure_loop(story: dict) -> list[str]:
     d["speaker"] = "昭昭"
     if _is_picky(story):
         phrase = _picky_rule_phrase(dialogue)
-        d["line"] = f"你自己说{phrase}"
+        d["line"] = f"自己说{phrase}，还说我"
     else:
-        d["line"] = "你自己说不能吃，你现在也吃了"
+        d["line"] = "自己说的规矩，还说我"
     notes.append("E补追问闭环")
     return notes
 
@@ -346,8 +384,9 @@ def patch_e_picky_mid(story: dict) -> list[str]:
             if _RE_PICKY_RELECTURE.search(lines[i]) or (
                 _RE_PICKY_RULE.search(lines[i]) and i > 0
             ):
-                dialogue[i]["line"] = "我这是晾着，等会儿配饭吃"
-                notes.append(f"E挑食去回训[{i}]")
+                # 结构修：删掉回训/重复立规句，不塞主题台词
+                dialogue.pop(i)
+                notes.append(f"E挑食删回训/重复立规[{i}]")
                 speakers = _speakers(dialogue)
                 lines = _lines(dialogue)
             break
@@ -355,8 +394,21 @@ def patch_e_picky_mid(story: dict) -> list[str]:
     for i, (sp, ln) in enumerate(zip(speakers, lines)):
         if sp != "妈妈" or "不一样" not in ln:
             continue
-        dialogue[i]["line"] = "我这是晾着，等会儿配饭吃"
+        dialogue[i]["line"] = "快了，马上就好"
         notes.append(f"E挑食去不一样[{i}]")
+        speakers = _speakers(dialogue)
+        lines = _lines(dialogue)
+
+    # 开场已立规矩后，删掉后续所有重复立规（含近尾，不写死替换台词）
+    rule_hits = [
+        i
+        for i, (sp, ln) in enumerate(zip(speakers, lines))
+        if sp == "妈妈" and _RE_PICKY_RULE.search(ln)
+    ]
+    for i in reversed(rule_hits[1:]):
+        # 末句破功一般不含「不能挑食」；若误伤由 closing 再补
+        dialogue.pop(i)
+        notes.append(f"E挑食删重复立规[{i}]")
         speakers = _speakers(dialogue)
         lines = _lines(dialogue)
 
@@ -379,13 +431,137 @@ def patch_e_picky_mid(story: dict) -> list[str]:
             speakers = _speakers(dialogue)
             lines = _lines(dialogue)
 
-    # 末段前注水：打自己脸/数叶子等改成自套反例
+    # 中段妈妈解释→孩子短戳穿（替换句用 E 通用，勿硬写物词）
+    explain_pats = (
+        (re.compile(r"刚晾着|还没到吃饭时间"), "都快完了你还在晾？"),
+        (re.compile(r"那是昨天"), "昨天也这么说？现在呢？"),
+        (re.compile(r"等你们全部吃完"), "我们都完了，你呢？"),
+        (re.compile(r"喝完这口汤"), "汤都喝完了还晾着？"),
+        (re.compile(r"特殊情况|太老了|不能浪费"), "又换一套说法？"),
+        (re.compile(r"放错了|夹错了"), "夹了又放回，算吃过？"),
+        (re.compile(r"最后吃|保证吃掉"), "你刚才也这么说。"),
+    )
+    for i in range(2, max(2, len(dialogue) - 3)):
+        if speakers[i] != "妈妈":
+            continue
+        for pat, kid_line in explain_pats:
+            if pat.search(lines[i]):
+                kid_sp = _next_kid_speaker(dialogue, i)
+                if dialogue_char_count(kid_line) > DAILY_STORY_LINE_CHARS_MAX:
+                    kid_line = "那你现在呢？"
+                dialogue[i]["speaker"] = kid_sp
+                dialogue[i]["line"] = kid_line
+                notes.append(f"E挑食删妈妈解释[{i}]")
+                speakers = _speakers(dialogue)
+                lines = _lines(dialogue)
+                break
+
+    # 妈妈开脱只留一套；多余中段开脱→孩子追问（E 通用句）
+    mom_waffle_idx = [
+        i
+        for i, (sp, ln) in enumerate(zip(speakers, lines))
+        if sp == "妈妈" and _RE_PICKY_WAFFLE.search(ln)
+    ]
+    if len(mom_waffle_idx) >= 3:
+        for idx in mom_waffle_idx[2:]:
+            if idx >= len(dialogue) - 3:
+                continue
+            dialogue[idx]["speaker"] = _next_kid_speaker(dialogue, idx)
+            dialogue[idx]["line"] = "那你现在到底算不算？"
+            notes.append(f"E挑食限开脱[{idx}]")
+        speakers = _speakers(dialogue)
+        lines = _lines(dialogue)
+
+    # 妈妈连说两句→第二句改孩子短戳；末 3 句留给闭环/破功
+    for i in range(1, max(1, len(dialogue) - 3)):
+        if speakers[i] != "妈妈" or speakers[i - 1] != "妈妈":
+            continue
+        dialogue[i]["speaker"] = _next_kid_speaker(dialogue, i)
+        dialogue[i]["line"] = "那你现在呢？"
+        notes.append(f"E挑食断妈妈连说[{i}]")
+        speakers = _speakers(dialogue)
+        lines = _lines(dialogue)
+
+    # 中段缺自套反例时补一锤；若已有假开脱帮腔则跳过
+    mid_text = "".join(lines[2:-2]) if len(lines) > 4 else "".join(lines)
+    has_fake = bool(
+        re.search(r"你不懂|放凉|大人|不一样|不算|晾着|配饭", mid_text)
+    )
+    if (
+        not has_fake
+        and not re.search(r"那我|我也这么|我也这样|照你这样", mid_text)
+    ):
+        for i in range(2, max(2, len(dialogue) - 3)):
+            if speakers[i] not in ("昭昭", "灿灿"):
+                continue
+            alt = "那我也可以照你这样？"
+            if dialogue_char_count(alt) <= DAILY_STORY_LINE_CHARS_MAX:
+                dialogue[i]["line"] = alt
+                notes.append(f"E挑食补自套[{i}]")
+                speakers = _speakers(dialogue)
+                lines = _lines(dialogue)
+            break
+
+    # 去重：同型现行质问只留第一次
+    seen_pile_question = False
+    pile_pat = re.compile(r"(碗边|拨到|拨开).{0,6}(青菜|花菜)")
+    for i, (sp, ln) in enumerate(zip(speakers, lines)):
+        if sp not in ("昭昭", "灿灿"):
+            continue
+        if not pile_pat.search(ln):
+            continue
+        if not RE_KID_ASK.search(ln) and "拨" not in ln:
+            continue
+        if not seen_pile_question:
+            seen_pile_question = True
+            continue
+        alt = "那你现在到底算不算？"
+        if dialogue_char_count(alt) <= DAILY_STORY_LINE_CHARS_MAX:
+            dialogue[i]["line"] = alt
+            notes.append(f"E挑食去重复质问[{i}]")
+            speakers = _speakers(dialogue)
+            lines = _lines(dialogue)
+
+    # 孩子「不一样」：假开脱模板里是讽刺帮腔，保留；勿删成追问
+    # （仅当整句像 A 式诡辩且无帮腔词时才改）
+    for i, (sp, ln) in enumerate(zip(speakers, lines)):
+        if sp not in ("昭昭", "灿灿"):
+            continue
+        if "不一样" not in ln:
+            continue
+        if re.search(r"你不懂|大人|放凉|不算|当然|反正", ln):
+            continue
+        alt = "你自己说的规矩，你呢？"
+        if dialogue_char_count(alt) <= DAILY_STORY_LINE_CHARS_MAX:
+            dialogue[i]["line"] = alt
+            notes.append(f"E挑食删不一样[{i}]")
+            speakers = _speakers(dialogue)
+            lines = _lines(dialogue)
+            break
+
+    # 中段妈妈讲理 → 阳奉阴违式短开脱（E 通用口吻）
+    mom_lecture_pat = re.compile(
+        r"大人的吃法|为了让你学|你小孩得直接吃|现在我说了|你是小孩",
+    )
+    alt_mom = "快了，马上就好"
+    for i in range(2, max(2, len(dialogue) - 3)):
+        if speakers[i] != "妈妈":
+            continue
+        if not mom_lecture_pat.search(lines[i]):
+            continue
+        if dialogue_char_count(alt_mom) <= DAILY_STORY_LINE_CHARS_MAX:
+            dialogue[i]["line"] = alt_mom
+            notes.append(f"E挑食替换妈妈讲理[{i}]")
+            speakers = _speakers(dialogue)
+            lines = _lines(dialogue)
+
+    # 末段前注水 → E 通用自套/追问
     for i in range(2, max(2, len(dialogue) - 3)):
         if speakers[i] not in ("昭昭", "灿灿"):
             continue
         if not _RE_PICKY_PAD.search(lines[i]):
             continue
-        dialogue[i]["line"] = "那我把肉拨开，也算晾着配饭？"
+        dialogue[i]["line"] = "那我也可以照你这样？"
         notes.append(f"E挑食去注水[{i}]")
         speakers = _speakers(dialogue)
         lines = _lines(dialogue)
@@ -432,28 +608,71 @@ def patch_e_closing_mom_soft(story: dict) -> list[str]:
     last = dialogue[-1]
     if not isinstance(last, dict):
         return notes
+    soft = "……行行行，算你说得对"
     last_sp = str(last.get("speaker") or "").strip()
     last_ln = str(last.get("line") or "")
-    if last_sp == "妈妈" and RE_MOM_SOFT.search(last_ln):
-        return notes
-    # 上一句已闭环才改
-    prev_ln = ""
-    if isinstance(dialogue[-2], dict):
-        prev_ln = str(dialogue[-2].get("line") or "")
-    if not RE_LOOP.search(prev_ln) and last_sp == "妈妈":
-        # 仅补软词
-        soft = "……行行行，算你说得对"
-        if dialogue_char_count(soft) <= DAILY_STORY_LINE_CHARS_MAX:
-            last["line"] = soft
-            notes.append("E末句补妈妈破功词")
-        return notes
-    if not RE_LOOP.search(prev_ln):
-        return notes
-    soft = "……行行行，算你说得对"
-    if dialogue_char_count(soft) <= DAILY_STORY_LINE_CHARS_MAX:
+    prev = dialogue[-2] if isinstance(dialogue[-2], dict) else {}
+    prev_sp = str(prev.get("speaker") or "").strip()
+    prev_ln = str(prev.get("line") or "")
+
+    # 末两句同人（孩子连说）时，倒数第二改闭环，末句改妈妈破功
+    if (
+        last_sp == prev_sp
+        and last_sp in ("昭昭", "灿灿")
+        and dialogue_char_count(soft) <= DAILY_STORY_LINE_CHARS_MAX
+    ):
+        if not RE_LOOP.search(prev_ln):
+            if _is_picky(story):
+                phrase = _picky_rule_phrase(dialogue)
+                prev["line"] = f"自己说{phrase}，还说我"
+            else:
+                prev["line"] = "自己说的规矩，还说我"
+            notes.append("E末前补闭环")
         last["speaker"] = "妈妈"
         last["line"] = soft
         notes.append("E末句改妈妈破功")
+    else:
+        soft_norm = soft.strip().rstrip("。！？")
+        last_norm = last_ln.strip().rstrip("。！？")
+        if last_sp == "妈妈" and RE_MOM_SOFT.search(last_ln) and last_norm == soft_norm:
+            pass
+        elif not RE_LOOP.search(prev_ln) and last_sp == "妈妈":
+            if dialogue_char_count(soft) <= DAILY_STORY_LINE_CHARS_MAX:
+                last["line"] = soft
+                notes.append("E末句补妈妈破功词")
+        elif not RE_LOOP.search(prev_ln):
+            if dialogue_char_count(soft) <= DAILY_STORY_LINE_CHARS_MAX:
+                if last_sp != "妈妈":
+                    if isinstance(prev, dict) and prev_sp == "妈妈":
+                        dialogue[-2], dialogue[-1] = dialogue[-1], dialogue[-2]
+                        dialogue[-1]["speaker"] = "妈妈"
+                        dialogue[-1]["line"] = soft
+                        notes.append("E末句对调妈妈破功")
+                    else:
+                        last["speaker"] = "妈妈"
+                        last["line"] = soft
+                        notes.append("E末句改妈妈破功")
+        elif dialogue_char_count(soft) <= DAILY_STORY_LINE_CHARS_MAX:
+            last["speaker"] = "妈妈"
+            last["line"] = soft
+            notes.append("E末句改妈妈破功")
+
+    # 兜底：正文里末两句「孩子」若同人，改倒数第二孩子为另一人
+    # （硬卡看的是孩子序列末两人，不是对白末两句）
+    kids = [
+        (i, d)
+        for i, d in enumerate(dialogue)
+        if isinstance(d, dict)
+        and str(d.get("speaker") or "").strip() in ("昭昭", "灿灿")
+    ]
+    if len(kids) >= 2:
+        i_a, a = kids[-2]
+        _i_b, b = kids[-1]
+        sa = str(a.get("speaker") or "").strip()
+        sb = str(b.get("speaker") or "").strip()
+        if sa == sb:
+            a["speaker"] = "灿灿" if sa == "昭昭" else "昭昭"
+            notes.append(f"E末两孩换人[{i_a}]")
     return notes
 
 
@@ -467,7 +686,9 @@ def patch_e_trim_mom_lecture(story: dict) -> list[str]:
         return notes
     speakers = _speakers(dialogue)
     mom_idx = [i for i, sp in enumerate(speakers) if sp == "妈妈"]
-    if len(mom_idx) <= 8:
+    # 挑食宜更紧：妈妈句过多会变成批斗会，好笑被冲淡
+    mom_cap = 5 if _is_picky(story) else 8
+    if len(mom_idx) <= mom_cap:
         return notes
     # 砍中间多余妈妈句（保留首立论、改口、末破功）
     keep_first = mom_idx[0]
@@ -484,15 +705,13 @@ def patch_e_trim_mom_lecture(story: dict) -> list[str]:
         if i not in (keep_first, waffle_i, keep_last)
         and 1 < i < len(dialogue) - 2
     ]
-    # 从后往前删，最多删到剩 8 句妈妈
     dropped = 0
     for i in reversed(drop):
-        if len(mom_idx) - dropped <= 8:
+        if len(mom_idx) - dropped <= mom_cap:
             break
-        # 改成昭昭短追问，避免句数塌
         if isinstance(dialogue[i], dict):
-            dialogue[i]["speaker"] = "昭昭"
-            dialogue[i]["line"] = "那你刚才呢"
+            dialogue[i]["speaker"] = _next_kid_speaker(dialogue, i)
+            dialogue[i]["line"] = "那你刚才呢？"
             dropped += 1
             notes.append(f"E削妈妈说教[{i}]")
     return notes
@@ -603,10 +822,6 @@ def patch_e_body(story: dict) -> list[str]:
     notes.extend(patch_e_ensure_kid_ask(story))
     notes.extend(patch_e_ensure_waffle(story))
     notes.extend(patch_e_ensure_loop(story))
-    notes.extend(patch_e_closing_mom_soft(story))
-    notes.extend(patch_e_picky_mid(story))
-    notes.extend(patch_e_strip_patch_garbage(story))
-    notes.extend(patch_e_strip_a_close(story))
-    notes.extend(patch_e_ensure_loop(story))
+    notes.extend(patch_e_trim_mom_lecture(story))
     notes.extend(patch_e_closing_mom_soft(story))
     return notes

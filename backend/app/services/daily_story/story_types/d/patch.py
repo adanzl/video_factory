@@ -486,6 +486,66 @@ def patch_d_ensure_mess(story: dict) -> list[str]:
     return notes
 
 
+def patch_d_ensure_mess_in_mid(story: dict) -> list[str]:
+    """后果只出现在末段 last4：把后果关键词挪到 body（last4 之前）。"""
+    notes: list[str] = []
+    if not _is_d(story):
+        return notes
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 8:
+        return notes
+
+    lines: list[str] = [
+        str(d.get("line") or "") if isinstance(d, dict) else "" for d in dialogue
+    ]
+    n = len(lines)
+    body_text = "".join(lines[: max(0, n - 4)])
+    tail4_text = "".join(lines[-4:])
+
+    # 校验报的正是：tail4 有后果，但 body 没后果
+    if not RE_MESS.search(tail4_text) or RE_MESS.search(body_text):
+        return notes
+
+    # 优先选靠中段的 i，保证仍在 body 范围（last4 之前）
+    prefer_center = n - 6
+    candidates = [
+        idx
+        for idx in range(3, max(3, n - 4))
+        if isinstance(dialogue[idx], dict)
+        and not RE_LITERAL.search(str(dialogue[idx].get("line") or ""))
+    ]
+    if candidates:
+        i = min(candidates, key=lambda idx: abs(idx - prefer_center))
+    else:
+        i = max(3, n - 6)
+        i = min(i, max(3, n - 5))
+        if i < 0 or i >= n or not isinstance(dialogue[i], dict):
+            # 找一个替换点（仍限制在 body 范围）
+            for j in range(max(3, n - 10), max(3, n - 4)):
+                if 0 <= j < n and isinstance(dialogue[j], dict):
+                    i = j
+                    break
+            else:
+                return notes
+
+    cur_line = str(dialogue[i].get("line") or "")
+    # 已有后果则不再动
+    if RE_MESS.search(cur_line):
+        return notes
+
+    addition = "倒了"
+    room = DAILY_STORY_LINE_CHARS_MAX - dialogue_char_count(cur_line)
+    if room < dialogue_char_count(addition):
+        # 没空位：不硬塞，避免截断破坏句子
+        return notes
+
+    new_line = f"{cur_line}{addition}"
+    dialogue[i]["speaker"] = "昭昭"
+    dialogue[i]["line"] = new_line
+    notes.append(f"D追加中段后果[{i}]")
+    return notes
+
+
 def patch_d_ensure_fix(story: dict) -> list[str]:
     """回旋镖前须有叮嘱方破规补救。"""
     notes: list[str] = []
@@ -712,6 +772,9 @@ def patch_d_body(story: dict) -> list[str]:
     notes.extend(patch_d_trim_waffle(story))
     notes.extend(patch_d_ensure_literal(story))
     notes.extend(patch_d_ensure_mess(story))
+    notes.extend(patch_d_ensure_mess_in_mid(story))
+    # 若“挪后果”覆盖了中段字面执行关键词，这里再兜底一次
+    notes.extend(patch_d_ensure_literal(story))
     notes.extend(patch_d_ensure_fix(story))
     notes.extend(patch_d_ensure_boomerang(story))
     notes.extend(patch_d_fix_closing_roles(story))

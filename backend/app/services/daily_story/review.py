@@ -476,6 +476,29 @@ def _apply_fixes_greedily(
         return story
 
     fixed, notes = apply_spot_fixes(story, raw_fixes, only=accepted)
+    # 定点改句后可能又带回重复立规等；再跑一轮本地结构 patch
+    from app.services.daily_story.prompts import try_local_patch_daily_story_body
+
+    fixed["_theme"] = theme
+    patched, patch_notes = try_local_patch_daily_story_body(fixed)
+    if patch_notes:
+        fixed = patched
+        notes.extend(patch_notes)
+        logger.info(
+            "[DAILY_STORY] local patch after spot fix: %s",
+            ",".join(patch_notes),
+        )
+    if isinstance(fixed, dict):
+        fixed.pop("_theme", None)
+        fixed.pop("_story_type", None)
+    try:
+        validate_daily_story_json(fixed, phase="full")
+    except ValueError as exc:
+        logger.warning(
+            "[DAILY_STORY] spot fix+patch still breaks hard card, keep pre-fix: %s",
+            exc,
+        )
+        return story
     attach_daily_story_quality(fixed, theme=theme)
     logger.info("[DAILY_STORY] spot fix applied: %s", "，".join(notes))
     return fixed

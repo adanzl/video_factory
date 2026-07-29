@@ -83,6 +83,9 @@ HUMOR_ISSUE_CAPS: tuple[tuple[str, int], ...] = (
     ("回旋镖未扣破规", 4),
     ("中段抠定义", 4),
     ("中段缺动作升级", 4),
+    # 模板/动作复读：不是“扣结构”，是好笑加分归零（无有意思的点）
+    ("模板复读", 0),
+    ("中段动作复读", 0),
 )
 
 
@@ -162,6 +165,13 @@ def collect_humor_issues(
         cons.append("中段缺动作升级，不好玩")
     elif escalate_n < 1 and len(body) >= 6:
         cons.append("中段缺动作升级，不好玩")
+
+    # 中段动作模板复读：如“轻轻放第一块/第二块/第三块…”堆块式照做
+    # 这种容易被观众当成“节拍平铺”，即使后面有一锤场面也未必好笑。
+    place_n = sum(1 for ln in body if "轻轻放" in ln)
+    if place_n >= 3:
+        cons.append("模板复读，不好笑")
+        cons.append("中段动作复读，不好笑")
 
     if n > 16:
         cons.append("中段拖沓注水，不好笑")
@@ -301,11 +311,12 @@ def humor_revision_hint(issue: str) -> str | None:
             "删掉搞砸前灿灿的纠正句（不是让你垒塔/要平放/别往高）；"
             "叮嘱只说一次，让字面误解一路跑到倒/洒，回头再发现。"
         )
-    if "抠定义" in issue or "缺动作升级" in issue or "不好玩" in issue:
+    if "抠定义" in issue or "缺动作升级" in issue or "不好玩" in issue or "模板复读" in issue or "动作复读" in issue:
         return (
             f"【好笑·D】{issue}。"
-            "中段改成同一误解的动作递进：第一块/第二块/第三块（或再叠、再绕、再夹），"
-            "删掉「是不是/不就是/记住没」讨论会；让观众只看动作就知道下一步会倒。"
+            "改成：合理叮嘱 + 不知变通的第二种读法（从第一下就偏），"
+            "同一误解越做越极端；禁止轻轻放第一/二/三块换序号；"
+            "错误结果须由不知变通必然推出。"
         )
     if "未扣破规" in issue:
         return (
