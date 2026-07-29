@@ -28,9 +28,13 @@ D_OPENING_ANCHOR_RE = re.compile(
 # 含场面陈述（鞋带又松了 / 土干裂了）——不必死抠「咱俩一起」
 D_OPENING_INVITE_RE = re.compile(
     r"咱俩|咱们|一起|我们俩|帮我|帮你|我来|你来|要不|走吧|吧$|好啊|好吧|行啊|"
-    r"又松|又散|松了|散了|要出门|出门了|穿鞋|教你|"
+    r"又松|又散|松了|散了|要出门|出门了|这次出门|还没出门|穿鞋|教你|"
     r"干裂|堆了一|歪着|门缝|掰不动|乱七八糟|倒了",
 )
+# 将要出门/去做 vs 已走完：有「走两步就」须用「还没」钉时间
+_RE_OPENING_GOING = re.compile(r"出门|穿鞋|要走|快走|去上学")
+_RE_OPENING_WALKED = re.compile(r"走两步就|走了两步|走过就|刚走就")
+_RE_OPENING_NOT_YET = re.compile(r"还没")
 
 
 def append_d_opening_errors(
@@ -143,6 +147,17 @@ def score_opening_quality(story: dict) -> tuple[int, list[str], list[str]]:
         cons.append("D开场缺起因（没说为什么做这件事）")
         pts -= 2
 
+    # 将出门 + 「走两步就…」且无「还没」→ 时间线拧着（观感扣，不硬拦）
+    if len(lines_o) >= 2:
+        first, second = lines_o[0], lines_o[1]
+        if _RE_OPENING_GOING.search(first) and _RE_OPENING_WALKED.search(second):
+            if _RE_OPENING_NOT_YET.search(second):
+                pts += 1
+                pros.append("D开场时间线自洽")
+            else:
+                cons.append("D开场时间线拧着（将出门却像已走过）")
+                pts -= 3
+
     first_body = _first_body_line_after_opening(story)
     if first_body and _opening_body_overlap(lines_o[-1], first_body):
         cons.append("D开场与正文首句重复")
@@ -161,8 +176,8 @@ def opening_revision_hint(issue: str) -> str | None:
         return None
     return (
         f"【开场·D】{issue}。"
-        "须 2 句：第1句一方**发起邀约交代起因**（咱俩一起挂衣服吧/我来帮你叠），"
-        "第2句另一方**答应+报地点与眼前场面**（好啊，客厅晾衣架的夹子我掰不动）；"
-        "两句合起来要让人明白「为什么在做这件事、在哪做」；"
+        "须 2 句：第1句一方**发起邀约交代起因**（这次出门再教你系/咱俩一起挂衣服吧），"
+        "第2句另一方**答应+报地点与眼前场面**（好啊，还没出门这根又松了）；"
+        "两句同一时间线：将要做 ≠ 已经做过；隐患用「还没/又/一…就」；"
         "勿回旋镖/不公平/那不一样/事后质问。"
     )
