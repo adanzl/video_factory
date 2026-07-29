@@ -34,8 +34,8 @@ def _verify_prompt_regen_feedback(speakers: list[str]) -> str:
     return f'出图质检连续未通过（发型/人数/肢体/场景等），请改写本段 image_prompt：换姿势与构图、冲突道具更醒目{look_clause}。画面人物只能是：{cast}；禁止新增未出场角色。'
 
 def _verify_visual_brief_regen_feedback(speakers: list[str]) -> str:
-    cast = '、'.join(speakers) if speakers else '本段对白角色'
-    return f'出图质检连续未通过，请改写本段 visual_brief：换姿势与构图、冲突道具更大更醒目；站位与台词事实保持一致；禁止写发型/服装/鞋帽；画面人物只能是：{cast}；禁止新增未出场角色（尤其禁止无故加入妈妈）。'
+    cast = '、'.join(speakers) if speakers else '本段可入画角色'
+    return f'出图质检连续未通过，请改写本段 visual_brief：换姿势与构图、冲突道具更大更醒目；站位与台词事实保持一致；禁止写发型/服装/鞋帽；画面人物只能是：{cast}；禁止新增台词未写明在场的角色。'
 
 def _speakers_for_regen(seg: dict) -> list[str]:
     from app.services.script.image_prompt import _daily_speakers_of
@@ -173,6 +173,10 @@ class ImageMgr:
             return prompt
 
         def _speakers(seg: dict) -> list[str] | None:
+            from app.services.script.image_prompt import _daily_speakers_of
+            cast = _daily_speakers_of(seg)
+            if cast:
+                return cast
             dialogue = seg.get('dialogue') or []
             speakers = sorted(set((d.get('speaker', '') for d in dialogue if d.get('speaker'))))
             return speakers if speakers else None

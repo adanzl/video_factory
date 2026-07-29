@@ -45,13 +45,10 @@ _DAILY_CHAR_MAP: dict[str, str] = {
 
 
 def _daily_speakers_of(seg: dict) -> list[str]:
-    """本段出场角色：优先 speakers 字段，否则从 dialogue 推导。"""
-    raw = seg.get("speakers")
-    if isinstance(raw, list) and raw:
-        return [str(s).strip() for s in raw if str(s).strip()]
-    from app.services.daily_story.speaker import speakers_from_dialogue
+    """本段出场角色：发言 ∪ 台词写明在场（优先 speakers 字段）。"""
+    from app.services.daily_story.speaker import allowed_cast_from_segment
 
-    names = speakers_from_dialogue(seg.get("dialogue"))
+    names = allowed_cast_from_segment(seg)
     return [n for n in ("昭昭", "灿灿", "妈妈") if n in names]
 
 

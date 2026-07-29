@@ -841,15 +841,15 @@ class DeepSeekClient(LLMClient):
             # 角色泄漏：先 scrub visual_brief 再拼装
             if feedback and "speaker leak" in feedback:
                 from app.services.daily_story.speaker import (
+                    allowed_cast_from_segment,
                     scrub_leaked_speaker_names,
-                    speakers_from_dialogue,
                 )
 
                 wanted = {int(i) for i in all_indices}
                 for seg in segments:
                     if int(seg.get("segment_index") or 0) not in wanted:
                         continue
-                    allowed = speakers_from_dialogue(seg.get("dialogue"))
+                    allowed = allowed_cast_from_segment(seg)
                     seg["visual_brief"] = scrub_leaked_speaker_names(
                         str(seg.get("visual_brief") or ""),
                         allowed,

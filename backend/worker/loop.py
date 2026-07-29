@@ -247,15 +247,15 @@ def _run_visual_brief(job_id: int, *, segment_indices: list[int] | None=None) ->
     updated = llm_mgr.fill_visual_briefs(script, job=job, segment_indices=segment_indices)
     if content_style_from_job(job) == CONTENT_STYLE_DAILY_STORY:
         from app.services.daily_story.speaker import (
+            allowed_cast_from_segment,
             scrub_leaked_speaker_names,
-            speakers_from_dialogue,
         )
         wanted = {int(i) for i in segment_indices} if segment_indices else None
         for seg in updated.get('segments') or []:
             idx = int(seg.get('segment_index') or 0)
             if wanted is not None and idx not in wanted:
                 continue
-            allowed = speakers_from_dialogue(seg.get('dialogue') or [])
+            allowed = allowed_cast_from_segment(seg)
             cleaned = scrub_leaked_speaker_names(str(seg.get('visual_brief') or ''), allowed)
             if cleaned != seg.get('visual_brief'):
                 seg['visual_brief'] = cleaned

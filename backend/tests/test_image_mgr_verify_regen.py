@@ -283,7 +283,7 @@ def test_regen_daily_rewrites_visual_brief_not_append_feedback() -> None:
         fb = kwargs.get("feedback") or ""
         assert "出图质检" in fb
         assert "昭昭" in fb and "灿灿" in fb
-        assert "禁止新增未出场角色" in fb
+        assert "禁止新增台词未写明在场的角色" in fb
         # 本段无妈妈，反馈不得写妈妈外貌约束
         assert "米色上衣" not in fb
         assert kwargs.get("segment_indices") == [6]
@@ -349,5 +349,5 @@ def test_verify_regen_feedback_cast_aware() -> None:
 
     vb = _verify_visual_brief_regen_feedback(["昭昭", "灿灿"])
     assert "昭昭、灿灿" in vb
-    assert "禁止无故加入妈妈" in vb
+    assert "台词未写明在场" in vb
     assert "米色上衣" not in vb
