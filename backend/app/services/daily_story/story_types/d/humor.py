@@ -64,6 +64,18 @@ _RE_ESCALATE = re.compile(
     r"第一块|第二块|第三块|下一件|再叠|再绕|再夹|再倒|再放|"
     r"一点点|只夹|只放|再试|又滑|又掉|还是",
 )
+# 「执行歪」可拍画面：有字面词不够，须有第二种读法的结果物
+RE_TWIST_VISUAL = re.compile(
+    r"死结|死疙瘩|花生米|小山|高塔|垒成|码成|码高|焊|"
+    r"溢|浇满|满出来|只夹|一角|一声不吭|气都不用|"
+    r"叠成|绕成|打结|勒红|脚背|扫进|一把扫|关死|浇到|"
+    r"解不开|脚卡住|进不去",
+)
+_RE_TWIST_VISUAL = RE_TWIST_VISUAL
+# 把主冲突写成辩定义，不是演歪读
+_RE_DEF_CORE = re.compile(
+    r"多紧算紧|算不算轻|算不算紧|什么叫轻|什么叫紧|谁对谁错",
+)
 
 HUMOR_ISSUE_CAPS: tuple[tuple[str, int], ...] = (
     ("偏A式末四拍", 6),
@@ -83,6 +95,7 @@ HUMOR_ISSUE_CAPS: tuple[tuple[str, int], ...] = (
     ("回旋镖未扣破规", 4),
     ("中段抠定义", 4),
     ("中段缺动作升级", 4),
+    ("缺字面歪读点", 0),
     # 模板/动作复读：不是“扣结构”，是好笑加分归零（无有意思的点）
     ("模板复读", 0),
     ("中段动作复读", 0),
@@ -158,13 +171,23 @@ def collect_humor_issues(
     # 中段开讨论会 / 缺动作递进 → 演进无意义，不好玩
     def_talk_n = sum(1 for ln in body if _RE_DEF_TALK.search(ln))
     escalate_n = sum(1 for ln in body if _RE_ESCALATE.search(ln))
-    if def_talk_n >= 2:
+    if def_talk_n >= 2 or _RE_DEF_CORE.search(all_text):
         cons.append("中段抠定义无升级，不好玩")
     elif def_talk_n >= 1 and escalate_n < 2 and len(body) >= 4:
         # 有辩字义却几乎没有递进动作
         cons.append("中段缺动作升级，不好玩")
     elif escalate_n < 1 and len(body) >= 6:
         cons.append("中段缺动作升级，不好玩")
+
+    # 有「照做」但没有歪读可拍画面 → 缺「执行歪」的点
+    mid_for_twist = body[1:] if len(body) > 2 else body
+    mid_twist_text = "".join(mid_for_twist)
+    if (
+        RE_LITERAL.search(body_text)
+        and not _RE_TWIST_VISUAL.search(mid_twist_text)
+        and not _RE_TWIST_VISUAL.search("".join(tail4[:2]))
+    ):
+        cons.append("缺字面歪读点，不好笑")
 
     # 中段动作模板复读：如“轻轻放第一块/第二块/第三块…”堆块式照做
     # 这种容易被观众当成“节拍平铺”，即使后面有一锤场面也未必好笑。
@@ -311,12 +334,12 @@ def humor_revision_hint(issue: str) -> str | None:
             "删掉搞砸前灿灿的纠正句（不是让你垒塔/要平放/别往高）；"
             "叮嘱只说一次，让字面误解一路跑到倒/洒，回头再发现。"
         )
-    if "抠定义" in issue or "缺动作升级" in issue or "不好玩" in issue or "模板复读" in issue or "动作复读" in issue:
+    if "抠定义" in issue or "缺动作升级" in issue or "不好玩" in issue or "模板复读" in issue or "动作复读" in issue or "歪读点" in issue:
         return (
             f"【好笑·D】{issue}。"
-            "改成：合理叮嘱 + 不知变通的第二种读法（从第一下就偏），"
-            "同一误解越做越极端；禁止轻轻放第一/二/三块换序号；"
-            "错误结果须由不知变通必然推出。"
+            "先钉歪读点：合理规矩词 + 第二种读法 + 必然后果；"
+            "中段演歪读（死结/小山/塔/溢），勿辩「多紧算紧」；"
+            "禁止轻轻放第一/二/三块换序号；错误结果须由歪读必然推出。"
         )
     if "未扣破规" in issue:
         return (

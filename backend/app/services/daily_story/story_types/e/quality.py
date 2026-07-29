@@ -113,6 +113,7 @@ QUALITY_PROFILE = TypeQualityProfile(
     punch_before_soft_markers=SHARED_PUNCH_SOFT
     + (
         "你自己说",
+        "自己说",
         "那你也是",
         "你也",
         "你刚才",
@@ -125,6 +126,7 @@ QUALITY_PROFILE = TypeQualityProfile(
     collect_humor_issues=e_humor.collect_humor_issues,
     score_opening_quality=e_opening.score_opening_quality,
     score_scene_beat=score_scene_beat,
+    score_funniness_tail=e_humor.score_funniness_tail,
     ground_closing_quote=ground_closing_quote,
     humor_issue_caps=e_humor.HUMOR_ISSUE_CAPS,
     humor_revision_hint=_e_revision_hint,

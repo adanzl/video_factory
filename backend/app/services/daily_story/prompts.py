@@ -251,8 +251,8 @@ def _daily_story_length_draft_for_type(type_code: str | None) -> str:
         return f"""\
 - 片长（D类正文，放最前）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
   每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
-  【D类·首稿】优先写清「合理叮嘱 + 不知变通 → 错误结果」骨架与 13–14 句节奏；
-  **字数可偏短**，留给下一轮一次补满；勿为凑字堆轻轻放×N。
+  【D类·首稿】先钉「规矩词 + 歪读点 + 必然后果」，写清 13–14 句节奏；
+  **接受字数偏短**（留给下一轮一次补满），勿为凑字堆轻轻放×N。
   系统另拼 2 句开场。发现开场另写另验。
 """
     return _DAILY_STORY_LENGTH_DRAFT
@@ -267,8 +267,8 @@ def _daily_story_length_user_draft_for_type(type_code: str | None) -> str:
 """
     if type_code and type_code.upper() == "D":
         return f"""\
-3. 【D类·首稿】写 **{lo}–{hi} 句**不知变通骨架即可；字数可先不到
-   {DAILY_STORY_BODY_CHARS_MIN}，重试一轮补满。发现开场另计另验。speaker 仅昭昭/灿灿。
+3. 【D类·首稿】写 **{lo}–{hi} 句**，先钉歪读点再写对白；字数偏短可接受，
+   重试一轮补到 ≥{DAILY_STORY_BODY_CHARS_MIN}。发现开场另计另验。speaker 仅昭昭/灿灿。
 """
     return _DAILY_STORY_LENGTH_USER_DRAFT
 
@@ -2435,11 +2435,10 @@ _LOCAL_PAD_TAILS_D = (
     "，一点都不含糊",
     "，照做就是了",
     "，我数着做",
-    "好不好",
     "呢",
     "吧",
 )
-# D 句内顶字：只用可拍长片段，禁单字语气词连叠成「呢吧呢吧」
+# D 句内顶字：只用可拍长片段，禁「好不好」求同意、禁单字连叠
 _LOCAL_FILL_CHUNKS_D = (
     "，我按你说的认真做",
     "，一点都不含糊",
@@ -2451,7 +2450,6 @@ _LOCAL_FILL_CHUNKS_D = (
     "，听你的",
     "，马上好",
     "，别催我",
-    "好不好",
 )
 _LOCAL_TRIM_CHARS = "的了呢嘛呀啊吧啦哦喔哈嗯"
 
@@ -2510,7 +2508,7 @@ def _pad_dialogue_line(
 def _fill_d_dialogue_line(
     line: str,
     need: int,
-    used: set[str] | None = None,
+    used: dict[str, int] | None = None,
 ) -> tuple[str, int]:
     """D：把单句顶到上限；剥句末标点/语气词再垫；每句最多两段长片段。"""
     if need <= 0 or not line:
@@ -2545,8 +2543,7 @@ def _fill_d_dialogue_line(
         for suf in sorted(chunks, key=len, reverse=True):
             if suf in local_used:
                 continue
-            # 整篇限用次数，避免篇篇同一尾巴
-            if used is not None and list(used).count(suf) >= 3:
+            if used is not None and used.get(suf, 0) >= 3:
                 continue
             if len(suf) > room or len(suf) > need:
                 continue
@@ -2562,7 +2559,7 @@ def _fill_d_dialogue_line(
         appends += 1
         local_used.add(picked)
         if used is not None:
-            used.add(picked)
+            used[picked] = used.get(picked, 0) + 1
     if not added:
         return line, 0
     return f"{core}{trail}", added
@@ -2668,7 +2665,7 @@ def _patch_body_char_budget(story: dict) -> list[str]:
         chars_min = 265
         max_pad = 72
     if code == "D":
-        # 首稿可短；一次重试后常差 80–150，本地把句顶满即可过硬卡
+        # 接受首稿偏短；重试后常差 80–150，本地把句顶满即可过硬卡
         max_pad = max(max_pad, 160)
         if n_lines < 13:
             notes.extend(_patch_d_ensure_min_lines(story, target_lines=13))
@@ -2687,9 +2684,9 @@ def _patch_body_char_budget(story: dict) -> list[str]:
             return notes
         before = total
         if code == "D":
-            # 中段+收束前都可顶字；片段整篇不复用
+            # 中段+收束前都可顶字；片段整篇限次复用
             targets = dialogue[2:] if len(dialogue) > 4 else dialogue
-            used_fills: set[str] = set()
+            used_fills: dict[str, int] = {}
             for _ in range(2):
                 if need <= 0:
                     break
@@ -2710,6 +2707,53 @@ def _patch_body_char_budget(story: dict) -> list[str]:
                         need -= added
                         progressed = True
                 if not progressed:
+                    break
+            # 还差几个字：放开复用，末段前再顶一轮
+            need = chars_min - dialogue_total_chars(story)
+            if 0 < need <= 24:
+                for item in reversed(targets):
+                    if need <= 0:
+                        break
+                    if not isinstance(item, dict):
+                        continue
+                    line = str(item.get("line") or "")
+                    if not line:
+                        continue
+                    new_line, added = _fill_d_dialogue_line(
+                        line, need, None,
+                    )
+                    if added:
+                        item["line"] = new_line
+                        need -= added
+            # 仍差 1–2：中段标点前补「呀/好呀」，勿动末两句收束
+            need = chars_min - dialogue_total_chars(story)
+            if 0 < need <= 2:
+                mid_targets = (
+                    targets[:-2] if len(targets) > 4 else targets
+                )
+                for item in reversed(mid_targets):
+                    if need <= 0:
+                        break
+                    if not isinstance(item, dict):
+                        continue
+                    line = str(item.get("line") or "")
+                    if not line or _line_room(line) < need:
+                        continue
+                    trail = ""
+                    core = line
+                    if core[-1] in "。！？…":
+                        trail = core[-1]
+                        core = core[:-1]
+                    if core and core[-1] in "啦嘛呀啊呢吧哦":
+                        trail = core[-1] + trail
+                        core = core[:-1]
+                    if not core:
+                        continue
+                    pad = "呀" if need == 1 else "好呀"
+                    if len(pad) > need:
+                        pad = pad[:need]
+                    item["line"] = f"{core}{pad}{trail}"
+                    need = 0
                     break
         else:
             used_pads = {

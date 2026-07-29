@@ -32,11 +32,15 @@ def score_scene_beat(
     *,
     text_has_hammer_beat,
 ) -> tuple[int, list[str]]:
-    """D 的一锤=可见搞砸（倒/洒/掉），勿只靠通用分钟/秒锤。"""
+    """D 的一锤优先认「歪读可拍画面」，其次才是倒/洒。"""
     _ = text_has_hammer_beat
     text = "".join(lines)
+    if d_humor.RE_TWIST_VISUAL.search(text) and RE_MESS.search(text):
+        return 5, ["有字面歪读一锤"]
+    if d_humor.RE_TWIST_VISUAL.search(text):
+        return 4, ["有字面歪读场面"]
     if RE_MESS.search(text):
-        return 5, ["有一锤场面"]
+        return 2, ["有后果场面"]
     return 0, []
 
 
