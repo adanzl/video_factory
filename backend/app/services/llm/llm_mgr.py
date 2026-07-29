@@ -675,6 +675,18 @@ class LLMMgr:
         *,
         story_type: str | None = None,
     ) -> dict[str, Any]:
+        """出稿后固定走一遍人读审稿：审读→定点修→复审，不回环重生成。"""
+        from app.services.daily_story.review import run_daily_story_review
+
+        story = self._generate_daily_story_scored(theme, story_type=story_type)
+        return run_daily_story_review(self._get_client(), theme, story)
+
+    def _generate_daily_story_scored(
+        self,
+        theme: str,
+        *,
+        story_type: str | None = None,
+    ) -> dict[str, Any]:
         logger.info("[DAILY_STORY] generate start theme=%r", theme)
         started = time.perf_counter()
         from app.services.daily_story.quality import (

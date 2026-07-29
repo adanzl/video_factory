@@ -1979,6 +1979,55 @@ class DeepSeekClient(LLMClient):
         assert last_exc is not None
         raise last_exc
 
+    def review_daily_story_issues(
+        self,
+        theme: str,
+        story: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """审读一次：以读者身份逐句挑硬伤，返回结构化问题清单。"""
+        from app.services.daily_story.review import (
+            build_review_prompts,
+            parse_review_issues,
+        )
+
+        system, user = build_review_prompts(theme, story)
+        try:
+            # 审读是推理活，开 thinking + 低温，避免同一篇稿两次结论不一样
+            raw, _ = self._chat_json(
+                system,
+                user,
+                thinking_enabled=True,
+                temperature=0.0,
+            )
+        except ValueError as exc:
+            logger.warning("[DAILY_STORY] review call failed: %s", exc)
+            return []
+        n_lines = len(story.get("dialogue") or [])
+        return parse_review_issues(raw, line_count=n_lines)
+
+    def spot_fix_daily_story(
+        self,
+        theme: str,
+        story: dict[str, Any],
+        issues: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """定点修一次：只回被点出的行，落盘与降级由 review 模块决定。"""
+        from app.services.daily_story.prompts import DAILY_STORY_LINE_CHARS_MAX
+        from app.services.daily_story.review import build_spot_fix_prompts
+
+        system, user = build_spot_fix_prompts(
+            theme,
+            story,
+            issues,
+            line_chars_max=DAILY_STORY_LINE_CHARS_MAX,
+        )
+        try:
+            raw, _ = self._chat_json(system, user)
+        except ValueError as exc:
+            logger.warning("[DAILY_STORY] spot fix call failed: %s", exc)
+            return {}
+        return raw
+
     def generate_daily_story_themes(
         self,
         count: int = 15,

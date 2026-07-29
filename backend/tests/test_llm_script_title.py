@@ -2062,3 +2062,119 @@ def test_validate_e_lie_accepts_compact_positive():
         setting=story["setting"],
     )
     assert open_errs == []
+
+
+def _review_story() -> dict:
+    return {
+        "setting": "客厅",
+        "conflict_core": "妈妈说不能说谎自己敷衍奶奶",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "妈，你跟奶奶说吃撑了，可你没吃。"},
+            {"speaker": "妈妈", "line": "对人要诚实，不能说谎。"},
+            {"speaker": "灿灿", "line": "行！"},
+            {"speaker": "妈妈", "line": "那是善意的，不让奶奶担心。"},
+            {"speaker": "昭昭", "line": "妈，你跟奶奶说吃撑了，可你没吃。"},
+        ],
+        "discovery_opening": [
+            {"speaker": "昭昭", "line": "妈，你跟奶奶说吃撑了，可你没吃。"},
+            {"speaker": "妈妈", "line": "对人要诚实，不能说谎。"},
+        ],
+    }
+
+
+def test_review_local_issues_catch_dup_and_empty_line():
+    from app.services.daily_story.review import collect_local_issues
+
+    issues = collect_local_issues(_review_story())
+    kinds = {(it["kind"], tuple(it["lines"])) for it in issues}
+    assert ("重复", (1, 5)) in kinds
+    assert ("其他", (3,)) in kinds
+
+
+def test_review_merge_issues_dedups_overlapping_lines():
+    from app.services.daily_story.review import merge_issues
+
+    merged = merge_issues(
+        [{"lines": [11, 14], "kind": "重复", "desc": "a", "fix": ""}],
+        [{"lines": [3, 11, 14], "kind": "重复", "desc": "b", "fix": ""}],
+    )
+    assert len(merged) == 1
+    assert merged[0]["lines"] == [3, 11, 14]
+
+
+def test_review_parse_issues_drops_out_of_range_lines():
+    from app.services.daily_story.review import parse_review_issues
+
+    parsed = parse_review_issues(
+        {
+            "issues": [
+                {"lines": [2], "kind": "矛盾", "desc": "有效"},
+                {"lines": [99], "kind": "矛盾", "desc": "行号越界"},
+                {"lines": [1], "kind": "矛盾", "desc": ""},
+            ],
+        },
+        line_count=5,
+    )
+    assert [it["desc"] for it in parsed] == ["有效"]
+
+
+def test_review_apply_spot_fixes_strips_prefix_and_syncs_opening():
+    from app.services.daily_story.review import apply_spot_fixes
+
+    fixed, notes = apply_spot_fixes(
+        _review_story(),
+        {"fixes": [{"no": 1, "line": "昭昭：妈，你刚才跟奶奶说啥了？"}]},
+    )
+    assert notes == ["第1句"]
+    assert fixed["dialogue"][0]["line"] == "妈，你刚才跟奶奶说啥了？"
+    assert fixed["discovery_opening"][0]["line"] == "妈，你刚才跟奶奶说啥了？"
+
+
+def test_review_apply_spot_fixes_honors_only_filter():
+    from app.services.daily_story.review import apply_spot_fixes
+
+    fixed, notes = apply_spot_fixes(
+        _review_story(),
+        {
+            "fixes": [
+                {"no": 1, "line": "改第一句"},
+                {"no": 4, "line": "改第四句"},
+            ],
+        },
+        only={4},
+    )
+    assert notes == ["第4句"]
+    assert fixed["dialogue"][0]["line"] == "妈，你跟奶奶说吃撑了，可你没吃。"
+    assert fixed["dialogue"][3]["line"] == "改第四句"
+
+
+def test_review_penalty_deducts_and_caps():
+    from app.services.daily_story.review import REVIEW_PENALTY_CAP, review_penalty
+
+    points, reasons = review_penalty([
+        {"lines": [5, 8], "kind": "重复", "desc": "碗干说两遍", "fix": ""},
+        {"lines": [10], "kind": "示范", "desc": "妈妈教孩子隐瞒", "fix": ""},
+    ])
+    assert points == 15
+    assert reasons[0].startswith("审读第5、8句重复：")
+
+    many = [
+        {"lines": [i], "kind": "示范", "desc": "坏示范", "fix": ""}
+        for i in range(1, 6)
+    ]
+    assert review_penalty(many)[0] == REVIEW_PENALTY_CAP
+
+
+def test_review_applies_penalty_to_quality_score_and_grade():
+    from app.services.daily_story.review import apply_review_to_quality
+
+    story = {
+        "dialogue": [{"speaker": "昭昭", "line": "话"}],
+        "quality": {"grade": "好", "score": 89, "summary": "旧", "reasons": ["好笑9"]},
+    }
+    apply_review_to_quality(story, [
+        {"lines": [10], "kind": "示范", "desc": "妈妈教孩子隐瞒", "fix": ""},
+    ])
+    assert story["quality"]["score"] == 79
+    assert "审读第10句示范" in story["quality"]["summary"]
+    assert story["quality"]["review_issues"][0]["kind"] == "示范"
