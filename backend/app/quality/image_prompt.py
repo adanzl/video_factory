@@ -217,8 +217,8 @@ def check_image_prompt(
                 details={
                     "reason": "daily speaker leak in image_prompt",
                     "issues": [
-                        f"segment {r['segment_index']}: {r['field']} 含未发言角色 "
-                        f"{r['leaks']} (speakers={r['speakers'] or '[]'})"
+                        f"segment {r['segment_index']}: {r['field']} 含未授权角色 "
+                        f"{r['leaks']} (cast={r['speakers'] or '[]'})"
                         for r in speaker_rows
                     ],
                     "segments": speaker_rows,

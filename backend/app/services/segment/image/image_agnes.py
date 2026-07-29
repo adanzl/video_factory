@@ -617,9 +617,9 @@ class AgnesImageProvider(ImageProvider):
     ) -> list[str]:
         """本段允许出镜角色（有序）→ cast_count 上限 = len(结果)。
 
-        - 以 dialogue speakers 为底
+        - 以 expected_speakers（发言 ∪ 台词写明在场）为底
         - daily_story：始终可带昭昭/灿灿（未发言也可同框）
-        - 妈妈仅当本段 speakers 含「妈妈」
+        - 妈妈：传入的 speakers 已含「妈妈」时保留（含未发言但台词写明在场）
         """
         allowed: set[str] = {s for s in speakers if s}
         if content_style == CONTENT_STYLE_DAILY_STORY:

@@ -414,7 +414,8 @@ class LLMMgr:
                 issues = report.details.get("issues") or []
                 feedback = (
                     f"{reason}: {'; '.join(str(x) for x in issues[:5])}。"
-                    "只画本段 speakers 中的角色；忽略 visual_brief 里未发言角色。"
+                    "只画本段可入画角色（发言 ∪ 台词写明在场）；"
+                    "忽略 visual_brief 里未授权角色。"
                 )
             else:
                 feedback = (

@@ -102,16 +102,16 @@ class DailyScriptStage(StageExecutor):
         )
         llm_mgr.fill_visual_briefs(script, job=ctx.job)
         from app.services.daily_story.speaker import (
+            allowed_cast_from_segment,
             scrub_leaked_speaker_names,
-            speakers_from_dialogue,
         )
         from app.services.script.visual_brief import scrub_daily_visual_brief
         for seg in script.get('segments') or []:
-            allowed = speakers_from_dialogue(seg.get('dialogue') or [])
+            allowed = allowed_cast_from_segment(seg)
             cleaned = scrub_leaked_speaker_names(str(seg.get('visual_brief') or ''), allowed)
             cleaned = scrub_daily_visual_brief(cleaned)
             if cleaned != seg.get('visual_brief'):
-                logger.warning('segment %d visual_brief scrubbed (speakers=%s): %r -> %r', seg.get('segment_index'), sorted(allowed), str(seg.get('visual_brief') or '')[:120], cleaned[:120])
+                logger.warning('segment %d visual_brief scrubbed (cast=%s): %r -> %r', seg.get('segment_index'), sorted(allowed), str(seg.get('visual_brief') or '')[:120], cleaned[:120])
                 seg['visual_brief'] = cleaned
         _persist_daily_script(
             job_id,

@@ -417,7 +417,8 @@ def test_build_visual_brief_prompts_dialogue_keeps_mom_rule():
         job={"pipeline": "chat", "content_style": "life_experience"},
         supplementary_info="补充：厨房场景",
     )
-    assert "妈妈角色" in prompts["system"]
+    assert "妈妈可入画" in prompts["system"] or "妈妈" in prompts["system"]
+    assert "不要为了让妈妈入画而改写" in prompts["system"] or "不算在场" in prompts["system"]
     assert "dialogue=" in prompts["user"]
     assert "昭昭:" in prompts["user"]
     assert "融入画面描述" in prompts["system"]
@@ -445,7 +446,8 @@ def test_build_visual_brief_prompts_daily_story_role_and_cast():
     )
     assert "日常亲子对话短剧的分镜画面设计师" in prompts["system"]
     assert "小朋友讲科普" not in prompts["system"]
-    assert "本段画面人物必须" in prompts["system"]
+    assert "可入画" in prompts["system"]
+    assert "台词写明" in prompts["system"] or "当场在场" in prompts["system"]
     assert "dialogue=" in prompts["user"]
     assert "100-200" in prompts["system"]
     assert "直接拼入文生图" in prompts["system"]

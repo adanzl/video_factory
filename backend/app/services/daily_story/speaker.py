@@ -1,4 +1,4 @@
-"""日常故事：对白 speaker 与画面文案中的角色名对齐（未发言不入画）。"""
+"""日常故事：对白 speaker / 台词在场角色 与画面文案中的角色名对齐。"""
 
 from __future__ import annotations
 
@@ -6,11 +6,51 @@ import re
 
 DAILY_STORY_SPEAKER_NAMES: tuple[str, ...] = ("昭昭", "灿灿", "妈妈")
 
+# 点名但非当场在画：转述旧规矩、询问去向等（不授予入画）
+_ABSENT_MOM_RE = re.compile(
+    r"妈妈?(?:说过|说的|让我们|叫我们|呢|在哪儿?|去哪儿?)"
+    r"|听妈妈的"
+)
+
+# 台词写明妈妈当场可见：动作/状态，或当面称呼
+_PRESENT_MOM_RE = re.compile(
+    r"妈妈?(?:还|正|就)?(?:在)?"
+    r"(?:躺|刷|拿|握|坐|站|睡|笑|吃|嗑|看|玩|举|点|回|戴|听|抱)"
+    r"|妈妈?(?:手里|手机|屏幕|沙发|被窝|床上)"
+    r"|妈妈?还在"
+    r"|(?:^|[，,。！？\s])妈[，,]"
+    r"|妈妈[，,]"
+    r"|妈妈?你"
+)
+
+_ABSENT_CHILD_RE = {
+    "昭昭": re.compile(r"昭昭(?:说过|呢|在哪|去哪)"),
+    "灿灿": re.compile(r"灿灿(?:说过|呢|在哪|去哪)"),
+}
+
+_PRESENT_CHILD_RE = {
+    "昭昭": re.compile(
+        r"昭昭(?:还|正|就)?(?:在)?"
+        r"(?:躺|拿|握|坐|站|笑|吃|举|指|抢|夺|藏|摊|耸|叉|瞪|看)"
+        r"|昭昭[，,]"
+        r"|昭昭你"
+    ),
+    "灿灿": re.compile(
+        r"灿灿(?:还|正|就)?(?:在)?"
+        r"(?:躺|拿|握|坐|站|笑|吃|举|指|抢|夺|藏|摊|耸|叉|瞪|看)"
+        r"|灿灿[，,]"
+        r"|灿灿你"
+    ),
+}
+
 __all__ = [
     "DAILY_STORY_SPEAKER_NAMES",
+    "allowed_cast_from_dialogue",
+    "allowed_cast_from_segment",
     "collect_speaker_leak_issues",
     "collect_speaker_leak_segments",
     "leaked_speaker_names_in_text",
+    "present_cast_from_dialogue",
     "scrub_leaked_speaker_names",
     "speakers_from_dialogue",
 ]
@@ -25,6 +65,52 @@ def speakers_from_dialogue(dialogue: list | None) -> set[str]:
         if name:
             names.add(name)
     return names
+
+
+def _line_texts(dialogue: list | None) -> list[str]:
+    texts: list[str] = []
+    for item in dialogue or []:
+        if not isinstance(item, dict):
+            continue
+        # daily 分镜用 text；故事原稿用 line
+        raw = item.get("text")
+        if raw is None:
+            raw = item.get("line")
+        text = str(raw or "").strip()
+        if text:
+            texts.append(text)
+    return texts
+
+
+def present_cast_from_dialogue(dialogue: list | None) -> set[str]:
+    """台词写明当场在场/动作的角色（可不发言）。
+
+    不含仅转述/询问去向的点名（如「妈妈说过」「妈妈呢」）。
+    """
+    present: set[str] = set()
+    for text in _line_texts(dialogue):
+        if _PRESENT_MOM_RE.search(text) and not _ABSENT_MOM_RE.search(text):
+            present.add("妈妈")
+        for name in ("昭昭", "灿灿"):
+            if _PRESENT_CHILD_RE[name].search(text) and not _ABSENT_CHILD_RE[
+                name
+            ].search(text):
+                present.add(name)
+    return present
+
+
+def allowed_cast_from_dialogue(dialogue: list | None) -> set[str]:
+    """本段可入画角色 = 发言角色 ∪ 台词写明在场角色。"""
+    return speakers_from_dialogue(dialogue) | present_cast_from_dialogue(dialogue)
+
+
+def allowed_cast_from_segment(seg: dict | None) -> set[str]:
+    """优先用显式 speakers 字段，否则从 dialogue 推导（含在场）。"""
+    seg = seg or {}
+    raw = seg.get("speakers")
+    if isinstance(raw, list) and raw:
+        return {str(s).strip() for s in raw if str(s).strip()}
+    return allowed_cast_from_dialogue(seg.get("dialogue"))
 
 
 def leaked_speaker_names_in_text(text: str, allowed: set[str]) -> list[str]:
@@ -49,7 +135,7 @@ def scrub_leaked_speaker_names(text: str, allowed: set[str]) -> str:
     cleaned = "".join(kept).strip()
     if cleaned:
         return cleaned
-    return "室内场景，无未发言角色入画。"
+    return "室内场景，无未授权角色入画。"
 
 
 def _image_prompt_body_for_speaker_check(text: str) -> str:
@@ -73,7 +159,7 @@ def collect_speaker_leak_segments(
     rows: list[dict] = []
     for seg in segments:
         idx = seg.get("segment_index")
-        allowed = speakers_from_dialogue(seg.get("dialogue"))
+        allowed = allowed_cast_from_segment(seg)
         if check_visual_brief:
             leaks = leaked_speaker_names_in_text(
                 str(seg.get("visual_brief") or ""),
@@ -111,14 +197,14 @@ def collect_speaker_leak_issues(
     check_image_prompt: bool = True,
     check_visual_brief: bool = True,
 ) -> list[str]:
-    """汇总 daily 分镜未发言角色入画违规文案。"""
+    """汇总 daily 分镜未授权角色入画违规文案。"""
     rows = collect_speaker_leak_segments(
         segments,
         check_image_prompt=check_image_prompt,
         check_visual_brief=check_visual_brief,
     )
     return [
-        f"segment {r['segment_index']}: {r['field']} 含未发言角色 {r['leaks']} "
-        f"(speakers={r['speakers'] or '[]'})"
+        f"segment {r['segment_index']}: {r['field']} 含未授权角色 {r['leaks']} "
+        f"(cast={r['speakers'] or '[]'})"
         for r in rows
     ]

@@ -1,11 +1,13 @@
-"""日常故事未发言角色入画（speaker）校验。"""
+"""日常故事角色入画（发言 ∪ 台词在场）校验。"""
 
 from __future__ import annotations
 
 from app.quality.image_prompt import check_image_prompt
 from app.services.daily_story.speaker import (
+    allowed_cast_from_dialogue,
     collect_speaker_leak_issues,
     leaked_speaker_names_in_text,
+    present_cast_from_dialogue,
     scrub_leaked_speaker_names,
     speakers_from_dialogue,
 )
@@ -21,6 +23,43 @@ def test_speakers_and_leak_detection():
         "妈妈",
     ]
     assert leaked_speaker_names_in_text("昭昭与灿灿对峙。", allowed) == []
+
+
+def test_present_cast_allows_mom_without_speaking():
+    dialogue = [
+        {"speaker": "昭昭", "text": "客厅挂钟都九点了，妈妈还躺着刷手机。"},
+        {"speaker": "灿灿", "text": "对啊，她手机屏幕亮着，自己也不睡觉。"},
+    ]
+    assert speakers_from_dialogue(dialogue) == {"昭昭", "灿灿"}
+    assert present_cast_from_dialogue(dialogue) == {"妈妈"}
+    assert allowed_cast_from_dialogue(dialogue) == {"昭昭", "灿灿", "妈妈"}
+
+
+def test_present_cast_addressing_mom():
+    dialogue = [{"speaker": "昭昭", "text": "妈，你手机屏幕还亮着"}]
+    assert "妈妈" in allowed_cast_from_dialogue(dialogue)
+
+
+def test_hearsay_and_where_do_not_allow_mom():
+    assert "妈妈" not in allowed_cast_from_dialogue(
+        [{"speaker": "昭昭", "text": "妈妈说过别乱跑。"}]
+    )
+    assert "妈妈" not in allowed_cast_from_dialogue(
+        [{"speaker": "昭昭", "text": "妈妈呢？"}]
+    )
+
+
+def test_scrub_keeps_mom_when_present_in_dialogue():
+    dialogue = [
+        {"speaker": "昭昭", "text": "妈妈还躺着刷手机。"},
+        {"speaker": "灿灿", "text": "她自己也不睡觉。"},
+    ]
+    allowed = allowed_cast_from_dialogue(dialogue)
+    text = (
+        "客厅沙发上妈妈躺着刷手机。画面左边是昭昭，右边是灿灿。"
+        "昭昭左手指向挂钟。灿灿右手指着妈妈手机。"
+    )
+    assert scrub_leaked_speaker_names(text, allowed) == text
 
 
 def test_scrub_leaked_speaker_names_drops_mom_clause():
@@ -51,6 +90,33 @@ def test_check_image_prompt_rejects_speaker_leak():
     report = check_image_prompt(script, content_style="daily_story")
     assert report.level == "major"
     assert report.details["reason"] == "daily speaker leak in image_prompt"
+
+
+def test_check_image_prompt_allows_present_mom():
+    script = {
+        "content_style": "daily_story",
+        "segments": [
+            {
+                "segment_index": 1,
+                "dialogue": [
+                    {
+                        "speaker": "昭昭",
+                        "text": "客厅挂钟都九点了，妈妈还躺着刷手机。",
+                    },
+                    {
+                        "speaker": "灿灿",
+                        "text": "对啊，她手机屏幕亮着，自己也不睡觉。",
+                    },
+                ],
+                "image_prompt": (
+                    "客厅沙发上妈妈躺着刷手机，昭昭指向挂钟，灿灿指着手机。"
+                    + "x" * 80
+                ),
+            }
+        ],
+    }
+    report = check_image_prompt(script, content_style="daily_story")
+    assert report.details.get("reason") != "daily speaker leak in image_prompt"
 
 
 def test_build_daily_image_prompts_is_slimmer():
@@ -180,3 +246,22 @@ def test_collect_issues_ignores_wrap_prefix_speaker_names():
     ]
     issues = collect_speaker_leak_issues(segments, check_visual_brief=False)
     assert issues == []
+
+
+def test_assemble_injects_mom_look_when_present():
+    from app.services.script.image_prompt import assemble_daily_t2i_prompt
+
+    prompt = assemble_daily_t2i_prompt(
+        {
+            "visual_brief": "客厅沙发上妈妈躺着刷手机，昭昭指向挂钟。",
+            "shot_type": "特写",
+            "dialogue": [
+                {
+                    "speaker": "昭昭",
+                    "text": "妈妈还躺着刷手机。",
+                }
+            ],
+        }
+    )
+    assert "妈妈" in prompt
+    assert "米色上衣" in prompt
