@@ -119,9 +119,9 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { h, onMounted, ref } from "vue";
 import { Refresh } from "@element-plus/icons-vue";
-import { ElMessage, ElMessageBox } from "element-plus";
+import { ElCheckbox, ElMessage, ElMessageBox } from "element-plus";
 import { createJob, deleteJob, listJobs, updateJob } from "@/api/api-jobs";
 import { pipelineLabel } from "@/constants/jobStages";
 import { PIPELINE_CHAT, PIPELINE_MATERIAL, PIPELINE_STANDARD } from "@/constants/jobStages";
@@ -281,20 +281,38 @@ const handleTogglePublish = async (row: JobListItem) => {
 };
 
 const handleDelete = async (row: JobListItem) => {
+  const deleteFiles = ref(true);
   try {
-    await ElMessageBox.confirm(`确定删除任务「${row.title}」吗？`, "删除确认", {
-      type: "warning",
-      confirmButtonText: "删除",
-      cancelButtonText: "取消",
-    });
+    await ElMessageBox.confirm(
+      () =>
+        h("div", { class: "flex flex-col gap-3" }, [
+          h("p", null, `确定删除任务「${row.title}」吗？`),
+          h(
+            ElCheckbox,
+            {
+              modelValue: deleteFiles.value,
+              "onUpdate:modelValue": (val: string | number | boolean) => {
+                deleteFiles.value = Boolean(val);
+              },
+            },
+            () => "同时删除本地文件"
+          ),
+        ]),
+      "删除确认",
+      {
+        type: "warning",
+        confirmButtonText: "删除",
+        cancelButtonText: "取消",
+      }
+    );
   } catch {
     return;
   }
 
   deletingId.value = row.id;
   try {
-    await deleteJob(row.id);
-    ElMessage.success("删除成功");
+    await deleteJob(row.id, { delete_files: deleteFiles.value });
+    ElMessage.success(deleteFiles.value ? "已删除任务及本地文件" : "删除成功");
     if (jobs.value.length === 1 && page.value > 1) {
       page.value -= 1;
     }
