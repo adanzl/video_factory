@@ -13,6 +13,7 @@ from pathlib import Path
 from gevent.lock import Semaphore
 
 from app.config import get_settings
+from app.exceptions import JobStageFailureError
 from app.repositories.database import get_app
 from app.utils.job_cancel import JobCancelledError, job_cancel
 from app.services.tts.audio_timeline import (
@@ -560,7 +561,7 @@ class MediaMgr:
                     job_cancel.raise_if_cancelled(job_id)
                 raw_image_path = seg.get("image_path")
                 if not raw_image_path:
-                    raise ValueError(
+                    raise JobStageFailureError(
                         f"segment {index} 缺少 image_path，无法生成视频片段"
                     )
                 clip_mgr.build_segment_clip(
