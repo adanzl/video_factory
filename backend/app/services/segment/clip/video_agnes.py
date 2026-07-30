@@ -532,6 +532,7 @@ class AgnesClipProvider(ClipProvider):
         num_frames: int,
         width: int | None = None,
         height: int | None = None,
+        segment_index: int | None = None,
     ) -> Path:
         image_ref = _resolve_i2v_image(image_path)
         headers = agnes_auth_header(api_key.value, extra={"Connection": "close"})
@@ -563,6 +564,7 @@ class AgnesClipProvider(ClipProvider):
                     headers=headers,
                     payload=payload,
                     output_path=output_path,
+                    segment_index=segment_index,
                 )
             except AgnesQuotaExceeded:
                 raise
@@ -596,6 +598,7 @@ class AgnesClipProvider(ClipProvider):
         num_frames: int,
         width: int | None = None,
         height: int | None = None,
+        segment_index: int | None = None,
     ) -> Path:
         return self._with_api_key_fallback(
             lambda key: self._generate_raw_with_key(
@@ -606,6 +609,7 @@ class AgnesClipProvider(ClipProvider):
                 num_frames=num_frames,
                 width=width,
                 height=height,
+                segment_index=segment_index,
             )
         )
 
@@ -664,6 +668,7 @@ class AgnesClipProvider(ClipProvider):
         video_id: str | None,
         task_id: str | None,
         output_path: Path,
+        segment_index: int | None = None,
     ) -> Path:
         task_label = video_id or task_id or "unknown"
         state = "queued"
@@ -696,8 +701,11 @@ class AgnesClipProvider(ClipProvider):
             state = str(poll.get("status") or "unknown")
             if poll_idx % 4 == 0 and state not in _TERMINAL_POLL_STATES:
                 logger.info(
-                    "agnes i2v task %s polling... state=%s (~%ss)",
-                    task_label,
+                    "agnes i2v polling... seg=%s task_id=%s video_id=%s state=%s "
+                    "(~%ss)",
+                    segment_index if segment_index is not None else "?",
+                    task_id or "?",
+                    video_id or "?",
                     state,
                     int((poll_idx + 1) * self._poll_interval_sec),
                 )
@@ -716,6 +724,7 @@ class AgnesClipProvider(ClipProvider):
         headers: dict,
         payload: dict,
         output_path: Path,
+        segment_index: int | None = None,
     ) -> Path:
         video_id, task_id, state, body = self._submit_task(headers=headers, payload=payload)
         task_label = video_id or task_id or "unknown"
@@ -726,6 +735,7 @@ class AgnesClipProvider(ClipProvider):
             video_id=video_id,
             task_id=task_id,
             output_path=output_path,
+            segment_index=segment_index,
         )
 
     def build_segment_clip(
@@ -775,6 +785,7 @@ class AgnesClipProvider(ClipProvider):
                     image_path, prompt, raw_path,
                     num_frames=num_frames,
                     width=api_w, height=api_h,
+                    segment_index=segment_index,
                 )
                 self._raise_if_job_cancelled()
                 logger.info("clip %s: raw done, fitting to %.1fs", segment_index, total_duration)
