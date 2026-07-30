@@ -63,14 +63,22 @@ def _quote_grounded(frag: str, hay: str) -> bool:
 def _pick_d_cite(cancan_line: str) -> str:
     """从灿灿叮嘱句抽可引子串（优先带别/轻/不许等，宜短）。"""
     text = re.sub(r"^[「」\"'‘’]+|[「」\"'‘’]+$", "", cancan_line.strip())
+    # 优先核心规矩词，避免被后半「别半路散开」抢走
+    for key in ("系紧点", "系紧", "轻轻放", "轻轻", "轻点", "别碰", "不许晃", "别浇多"):
+        if key in text:
+            if key == "系紧":
+                return "系紧点" if "点" in text else "系紧"
+            return key
     m = re.search(
-        r"((?:别|不许|不准|只能|轻点|轻轻|轻拿|慢慢|系紧)"
-        r"[\u4e00-\u9fff]{1,5})",
+        r"((?:别|不许|不准|只能|轻点|轻轻|轻拿|慢慢|系紧点|系紧)"
+        r"[\u4e00-\u9fff]{0,5})",
         text,
     )
     if m:
         chunk = re.sub(r"[哦啊呀呢吧嘛啦]+$", "", m.group(1).strip())
-        if len(chunk) >= 3:
+        if chunk.startswith("系紧"):
+            return "系紧点" if "点" in text else "系紧"
+        if len(chunk) >= 2:
             return chunk[:8]
     for m in re.finditer(r"[^，。！？…；;]{3,8}", text):
         chunk = re.sub(r"[哦啊呀呢吧嘛啦]+$", "", m.group(0).strip())
@@ -242,16 +250,18 @@ def patch_d_fix_closing_roles(story: dict) -> list[str]:
     if not RE_BOOM_CLOSE.search(str(prev.get("line") or "")):
         rule = _first_cancan_rule(dialogue)
         cite = _pick_d_cite(rule) if rule else "别这样"
-        boom = f"你自己说{cite}"
+        boom = f"你自己说{cite}，怎么现在又上手来解了"
         if dialogue_char_count(boom) > DAILY_STORY_LINE_CHARS_MAX:
             boom = truncate_overlong_line(boom)
         prev["line"] = boom
         notes.append("D收束补回旋镖")
 
-    if not RE_SOFT_LAST.search(str(last.get("line") or "")) and not re.search(
-        r"哼|算了|行吧|我自己", str(last.get("line") or ""),
-    ):
-        last["line"] = "哼，算了，我自己来"
+    last_ln_now = str(last.get("line") or "")
+    if (
+        not RE_SOFT_LAST.search(last_ln_now)
+        and not re.search(r"哼|算了|行吧", last_ln_now)
+    ) or re.search(r"拿剪刀|剪开|下次|你忍着", last_ln_now):
+        last["line"] = "……哼，真是服了你了，算了"
         notes.append("D末句改嘴硬")
 
     # 末四拍与中段交界处连说：只改 -5，勿动末四角色
@@ -823,6 +833,54 @@ def patch_d_trim_cancan_nag_repeats(story: dict) -> list[str]:
     return notes
 
 
+def patch_d_dedupe_cancan_alarm_echo(story: dict) -> list[str]:
+    """灿灿中段惨状若几乎同句复读，后句改成更重一层。"""
+    notes: list[str] = []
+    if not _is_d(story):
+        return notes
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 8:
+        return notes
+    alarm_lines = _d_theme_alarm_lines(story)
+    seen: list[str] = []
+    replace_i = 0
+    for i, item in enumerate(dialogue[2:-3], start=2):
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("speaker") or "").strip() != "灿灿":
+            continue
+        line = str(item.get("line") or "").strip()
+        if not line or RE_FIX.search(line):
+            continue
+        # 抽核心惨状词，判是否同层复读
+        keys = re.findall(
+            r"白印|勒红|鼓起|麻花|脚背|脚趾|伸不进|卡住|焊|麻了|陷进",
+            line,
+        )
+        if not keys:
+            continue
+        key_sig = "".join(sorted(set(keys)))
+        if key_sig in seen:
+            target = alarm_lines[min(replace_i + 2, len(alarm_lines) - 1)]
+            replace_i = min(replace_i + 1, len(alarm_lines) - 1)
+            if target != line and dialogue_char_count(target) <= DAILY_STORY_LINE_CHARS_MAX:
+                item["line"] = target
+                notes.append(f"D灿灿惨状去复读[{i}]")
+                key_sig = "".join(
+                    sorted(
+                        set(
+                            re.findall(
+                                r"白印|勒红|鼓起|麻花|脚背|脚趾|伸不进|卡住|焊|麻了|陷进",
+                                target,
+                            )
+                        )
+                    )
+                )
+        if key_sig:
+            seen.append(key_sig)
+    return notes
+
+
 def patch_d_progress_cancan_alarm(story: dict) -> list[str]:
     """灿灿中段若只会催，改成按主题逐步报新惨状。"""
     notes: list[str] = []
@@ -1004,23 +1062,29 @@ def patch_d_monotonic_zhao_action(story: dict) -> list[str]:
     return notes
 
 
+def _d_theme_fix_line(story: dict) -> str:
+    ctx = _d_theme_ctx(story)
+    if re.search(r"鞋带|系紧|死结", ctx):
+        # 对齐任务55：先报死结卡住，再亲手解
+        return "死结！指甲抠都转不动，我得赶紧给你解开"
+    if re.search(r"玩具|收纳|筐|箱子", ctx):
+        return "筐都撑坏了，我来一把扫进箱子里"
+    if re.search(r"叠|衣服|衣", ctx):
+        return "全塌了，我来用力拍平重新叠"
+    return "坏了，我来弄，你别乱动"
+
+
 def patch_d_strengthen_fix(story: dict) -> list[str]:
-    """把灿灿破规补救句钉成更明显的“我来解/我来剪”。"""
+    """灿灿破规句若太空/太模板，改成可拍的亲手补救。"""
     notes: list[str] = []
     if not _is_d(story):
         return notes
     dialogue = story.get("dialogue")
     if not isinstance(dialogue, list) or len(dialogue) < 8:
         return notes
-    ctx = _d_theme_ctx(story)
-    if re.search(r"鞋带|系紧|死结", ctx):
-        fix_line = "你别动，我来解开这个死结，实在不行再剪开"
-    elif re.search(r"玩具|收纳|筐|箱子", ctx):
-        fix_line = "你别塞了，我来一件件掏出来重新收"
-    elif re.search(r"叠|衣服|衣", ctx):
-        fix_line = "你别再垒了，我来一件件拆下来重新叠"
-    else:
-        fix_line = "你别动了，我来弄，我自己收拾"
+    fix_line = _d_theme_fix_line(story)
+    # 优先改回旋镖前那句灿灿破规
+    candidates: list[tuple[int, dict]] = []
     for i, item in enumerate(dialogue[2:-1], start=2):
         if not isinstance(item, dict):
             continue
@@ -1031,10 +1095,101 @@ def patch_d_strengthen_fix(story: dict) -> list[str]:
             continue
         if RE_BOOM_CLOSE.search(line):
             continue
-        if line != fix_line and dialogue_char_count(fix_line) <= DAILY_STORY_LINE_CHARS_MAX:
-            item["line"] = fix_line
-            notes.append(f"D破规增强[{i}]")
-        break
+        candidates.append((i, item))
+    if not candidates:
+        return notes
+    i, item = candidates[-1]
+    line = str(item.get("line") or "").strip()
+    weak = (
+        dialogue_char_count(line) < 12
+        or re.search(r"你别动，我来解开|实在不行再剪开|我来弄，我自己收拾", line)
+        or (
+            RE_FIX.search(line)
+            and not re.search(r"死结|指甲|抠|扫进|拍平|赶紧|转不动", line)
+        )
+    )
+    if weak and line != fix_line and dialogue_char_count(fix_line) <= DAILY_STORY_LINE_CHARS_MAX:
+        item["line"] = fix_line
+        notes.append(f"D破规增强[{i}]")
+    return notes
+
+
+def patch_d_polish_closing(story: dict) -> list[str]:
+    """末三拍对齐任务55：具体破规 → 回旋镖点破上手解 → 纯嘴硬。"""
+    notes: list[str] = []
+    if not _is_d(story):
+        return notes
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 6:
+        return notes
+
+    fix = dialogue[-3]
+    boom = dialogue[-2]
+    last = dialogue[-1]
+    if not all(isinstance(x, dict) for x in (fix, boom, last)):
+        return notes
+
+    # 1) -3 灿灿破规：空/模板则换成具体亲手解
+    if str(fix.get("speaker") or "").strip() != "灿灿":
+        fix["speaker"] = "灿灿"
+        notes.append("D收尾破规speaker→灿灿")
+    fix_ln = str(fix.get("line") or "").strip()
+    want_fix = _d_theme_fix_line(story)
+    if (
+        not RE_FIX.search(fix_ln)
+        or re.search(r"实在不行再剪开|你别动，我来解开|拿剪刀", fix_ln)
+        or (
+            RE_FIX.search(fix_ln)
+            and not re.search(r"死结|指甲|抠|扫进|拍平|赶紧|转不动|用力", fix_ln)
+        )
+    ):
+        if dialogue_char_count(want_fix) <= DAILY_STORY_LINE_CHARS_MAX:
+            fix["line"] = want_fix
+            notes.append("D收尾破规具体化")
+
+    # 2) -2 昭昭回旋镖：引原话 + 点破「现在又上手来解」
+    boom["speaker"] = "昭昭"
+    rule = _first_cancan_rule(dialogue)
+    cite = _pick_d_cite(rule) if rule else ""
+    if not cite:
+        ctx = _d_theme_ctx(story)
+        if re.search(r"系紧|鞋带", ctx):
+            cite = "系紧点"
+        elif re.search(r"轻", ctx):
+            cite = "轻轻放"
+        else:
+            cite = "别这样"
+    boom_ln = str(boom.get("line") or "").strip()
+    has_cite = bool(RE_BOOM_CLOSE.search(boom_ln))
+    points_undo = bool(
+        re.search(r"上手|来解|又解|现在又|你却|怎么现在", boom_ln),
+    )
+    ctx = _d_theme_ctx(story)
+    # 鞋带主题回旋镖必须扣「系紧」，勿引后半「别半路散开」
+    if re.search(r"鞋带|系紧|死结", ctx) and "系紧" not in boom_ln:
+        cite = "系紧点" if "点" in (rule or "") or "点" in ctx else "系紧"
+        want_boom = f"你自己说{cite}，怎么现在又上手来解了"
+        has_cite = False
+    want_boom = f"你自己说{cite}，怎么现在又上手来解了"
+    if dialogue_char_count(want_boom) > DAILY_STORY_LINE_CHARS_MAX:
+        want_boom = truncate_overlong_line(want_boom)
+    if (not has_cite) or (not points_undo):
+        boom["line"] = want_boom
+        notes.append("D收尾回旋镖点破")
+    elif has_cite and points_undo and re.search(r"鞋带|系紧|死结", ctx) and "系紧" not in boom_ln:
+        boom["line"] = want_boom
+        notes.append("D收尾回旋镖改扣系紧")
+
+    # 3) 末句纯嘴硬：哼后禁止拿剪刀/发新指令
+    last["speaker"] = "灿灿"
+    last_ln = str(last.get("line") or "").strip()
+    soft_ok = bool(re.search(r"哼|算了|行吧", last_ln))
+    has_cmd = bool(
+        re.search(r"拿剪刀|剪开|解开|下次|以后|别再|你忍着|一下就好", last_ln),
+    )
+    if (not soft_ok) or has_cmd or re.search(r"抠字眼|你赢了|算你狠|下次", last_ln):
+        last["line"] = "……哼，真是服了你了，算了"
+        notes.append("D收尾纯嘴硬")
     return notes
 
 
@@ -1063,7 +1218,10 @@ def patch_d_dedupe_tail_fix(story: dict) -> list[str]:
     pre_sp = str(pre.get("speaker") or "").strip()
     pre2_ln = str(pre2.get("line") or "").strip()
     pre_ln = str(pre.get("line") or "").strip()
-    if pre2_sp == "昭昭" and RE_FIX.search(pre2_ln):
+    if pre2_sp == "昭昭" and (
+        RE_FIX.search(pre2_ln)
+        or re.search(r"指甲抠|我得赶紧给你解|你别动，我来", pre2_ln)
+    ):
         pre2["line"] = zhao_tail
         notes.append("D尾巴昭昭破规→后果")
     elif pre2_sp == "昭昭" and pre_sp == "灿灿" and pre2_ln == pre_ln:
@@ -1493,7 +1651,7 @@ def patch_d_ensure_boomerang(story: dict) -> list[str]:
     rule_hint = _first_cancan_rule(dialogue)
     cite = _pick_d_cite(rule_hint) if rule_hint else ""
     if cite:
-        boom_line = f"你自己说{cite}"
+        boom_line = f"你自己说{cite}，怎么现在又上手来解了"
     elif "晃" in rule_hint or "晃" in str(story.get("conflict_core") or ""):
         boom_line = "你自己说不许晃，你现在也晃了"
     elif "碰" in rule_hint:
@@ -1501,7 +1659,7 @@ def patch_d_ensure_boomerang(story: dict) -> list[str]:
     elif "慢" in rule_hint or "擦" in rule_hint:
         boom_line = "你自己说慢慢擦，你现在也用力了"
     else:
-        boom_line = "你自己说过的，你现在也破了"
+        boom_line = "你自己说过的，怎么现在又上手来破了"
     if dialogue_char_count(boom_line) > DAILY_STORY_LINE_CHARS_MAX:
         boom_line = truncate_overlong_line(boom_line)
     d["line"] = boom_line
@@ -1667,6 +1825,7 @@ def patch_d_body(story: dict) -> list[str]:
     notes.extend(patch_d_trim_cancan_nag_repeats(story))
     notes.extend(patch_d_progress_cancan_alarm(story))
     notes.extend(patch_d_monotonic_cancan_alarm(story))
+    notes.extend(patch_d_dedupe_cancan_alarm_echo(story))
     notes.extend(patch_d_trim_zhao_tail_repeats(story))
     notes.extend(patch_d_reduce_zhao_explaining(story))
     notes.extend(patch_d_monotonic_zhao_action(story))
@@ -1708,6 +1867,7 @@ def patch_d_body(story: dict) -> list[str]:
     notes.extend(patch_d_trim_cancan_nag_repeats(story))
     notes.extend(patch_d_progress_cancan_alarm(story))
     notes.extend(patch_d_monotonic_cancan_alarm(story))
+    notes.extend(patch_d_dedupe_cancan_alarm_echo(story))
     notes.extend(patch_d_trim_zhao_tail_repeats(story))
     notes.extend(patch_d_reduce_zhao_explaining(story))
     notes.extend(patch_d_monotonic_zhao_action(story))
@@ -1716,4 +1876,5 @@ def patch_d_body(story: dict) -> list[str]:
     notes.extend(patch_d_dedupe_tail_fix(story))
     notes.extend(patch_d_dedupe_literal_echo(story))
     notes.extend(patch_d_dedupe_mess_echo(story))
+    notes.extend(patch_d_polish_closing(story))
     return notes
