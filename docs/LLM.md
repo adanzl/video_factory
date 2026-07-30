@@ -7,9 +7,13 @@
 
 | 环境变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `DEEPSEEK_MODEL` | `deepseek-v4-flash` | 模型名称 |
+| `DEEPSEEK_MODEL` | `deepseek-v4-flash` | 默认模型 |
+| `DEEPSEEK_PRO_MODEL` | `deepseek-v4-pro` | A1/D2 失败重试用 |
 | `DEEPSEEK_MAX_TOKENS` | `32768` | 单次最大 token |
 | `DEEPSEEK_THINKING` | `true` | 全局深度思考开关 |
+
+**Pro 路由**：A1 口播、D2 正文（含质量修订）首稿走
+`DEEPSEEK_MODEL`；校验失败后的重试走 `DEEPSEEK_PRO_MODEL`。
 
 ## Agnes 配置
 

@@ -252,7 +252,8 @@ def _daily_story_length_draft_for_type(type_code: str | None) -> str:
 - 片长（D类正文，放最前）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
   每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
   【D类·首稿】先钉「规矩词 + 歪读点 + 必然后果」，写清 13–14 句节奏；
-  **接受字数偏短**（留给下一轮一次补满），勿为凑字堆轻轻放×N。
+  **首稿也须一次写到 ≥{DAILY_STORY_BODY_CHARS_MIN} 字**（瞄准 {DAILY_STORY_BODY_RETRY_TARGET_MIN}–{DAILY_STORY_BODY_RETRY_TARGET_MAX}）；
+  每句尽量 ≥20 字；勿偏短指望补满，勿为凑字堆轻轻放×N。
   系统另拼 2 句开场。发现开场另写另验。
 """
     return _DAILY_STORY_LENGTH_DRAFT
@@ -267,8 +268,9 @@ def _daily_story_length_user_draft_for_type(type_code: str | None) -> str:
 """
     if type_code and type_code.upper() == "D":
         return f"""\
-3. 【D类·首稿】写 **{lo}–{hi} 句**，先钉歪读点再写对白；字数偏短可接受，
-   重试一轮补到 ≥{DAILY_STORY_BODY_CHARS_MIN}。发现开场另计另验。speaker 仅昭昭/灿灿。
+3. 【D类·首稿】写 **{lo}–{hi} 句**，先钉歪读点再写对白；
+   **须一次写到 ≥{DAILY_STORY_BODY_CHARS_MIN} 字**（瞄准 {DAILY_STORY_BODY_RETRY_TARGET_MIN}–{DAILY_STORY_BODY_RETRY_TARGET_MAX}），
+   每句尽量 ≥20 字；勿交短稿。发现开场另计另验。speaker 仅昭昭/灿灿。
 """
     return _DAILY_STORY_LENGTH_USER_DRAFT
 
@@ -2463,19 +2465,73 @@ _LOCAL_PAD_TAILS_D = (
 # D 句内顶字：每词全篇最多 1 次；禁「好不好」；禁呀/呢/啊连叠
 _LOCAL_FILL_CHUNKS_D = (
     "，按你说的做",
-    "，绕得更紧了",
     "，你看着",
     "，马上好",
+    "，又卡住了",
+    "，更糟了",
 )
 _LOCAL_FILL_LITERAL_MARK = re.compile(
     r"按你说的|照做|我数着|不含糊|一步不差|绝不偷懒",
 )
-# 灿灿催促垫字：禁第一人称照做；每词全篇最多 1 次
+# 灿灿催促垫字：禁第一人称照做；默认通用，鞋/叠等按主题换池
 _LOCAL_FILL_CHUNKS_CAN_D = (
-    "，都拧成麻花了",
-    "，鞋扣都卡住了",
-    "，脚都快伸不进了",
+    "，都快坏了",
+    "，别再弄了",
+    "，已经过头了",
 )
+
+
+def _d_fill_chunks_for_story(story: dict) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """按主题选 D 句内垫词，避免鞋带尾巴糊到挂衣服。"""
+    ctx = (
+        str(story.get("conflict_core") or "")
+        + str(story.get("_theme") or "")
+        + str(story.get("theme") or "")
+        + str(story.get("scene_title") or "")
+    )
+    zhao = _LOCAL_FILL_CHUNKS_D
+    can = _LOCAL_FILL_CHUNKS_CAN_D
+    if re.search(r"鞋带|系紧|死结", ctx):
+        zhao = (
+            "，按你说的做",
+            "，绕得更紧了",
+            "，脚进不去",
+            "，你看着",
+            "，马上好",
+        )
+        can = (
+            "，都拧成麻花了",
+            "，鞋扣都卡住了",
+            "，脚都快伸不进了",
+            "，别再弄了",
+        )
+    elif re.search(r"挂|衣架|衣服|叠", ctx):
+        zhao = (
+            "，按你说的做",
+            "，又高一层",
+            "，更晃了",
+            "，你看着",
+            "，马上好",
+        )
+        can = (
+            "，都歪了",
+            "，快塌了",
+            "，别再塞了",
+            "，已经过头了",
+        )
+    elif re.search(r"浇|花|水", ctx):
+        zhao = (
+            "，按你说的做",
+            "，又浇一点",
+            "，你看着",
+            "，马上好",
+        )
+        can = (
+            "，都溢出来了",
+            "，别再浇了",
+            "，已经过头了",
+        )
+    return zhao, can
 _LOCAL_TRIM_CHARS = "的了呢嘛呀啊吧啦哦喔哈嗯"
 
 
@@ -2813,6 +2869,7 @@ def _patch_body_char_budget(
             targets = _d_mid_zhao_targets(
                 dialogue, include_cancan=(need0 > 8),
             )
+            zhao_pool, can_pool = _d_fill_chunks_for_story(story)
             used_fills: dict[str, int] = {}
             for _ in range(3):
                 if need <= 0:
@@ -2825,11 +2882,7 @@ def _patch_body_char_budget(
                     if not line:
                         continue
                     sp = str(item.get("speaker") or "").strip()
-                    pool = (
-                        _LOCAL_FILL_CHUNKS_CAN_D
-                        if sp == "灿灿"
-                        else _LOCAL_FILL_CHUNKS_D
-                    )
+                    pool = can_pool if sp == "灿灿" else zhao_pool
                     new_line, added = _fill_d_dialogue_line(
                         line, need, used_fills, chunks=pool,
                     )
@@ -2852,11 +2905,7 @@ def _patch_body_char_budget(
                     if not line:
                         continue
                     sp = str(item.get("speaker") or "").strip()
-                    pool = (
-                        _LOCAL_FILL_CHUNKS_CAN_D
-                        if sp == "灿灿"
-                        else _LOCAL_FILL_CHUNKS_D
-                    )
+                    pool = can_pool if sp == "灿灿" else zhao_pool
                     new_line, added = _fill_d_dialogue_line(
                         line, need, None, chunks=pool,
                     )
@@ -2885,11 +2934,7 @@ def _patch_body_char_budget(
                     if not line or _LOCAL_FILL_LITERAL_MARK.search(line):
                         continue
                     sp = str(item.get("speaker") or "").strip()
-                    pool = (
-                        _LOCAL_FILL_CHUNKS_CAN_D
-                        if sp == "灿灿"
-                        else _LOCAL_FILL_CHUNKS_D
-                    )
+                    pool = can_pool if sp == "灿灿" else zhao_pool
                     new_line, added = _fill_d_dialogue_line(
                         line, need, used_tail, chunks=pool,
                     )
@@ -3049,7 +3094,8 @@ def _patch_d_micro_pad(story: dict) -> list[str]:
     if not isinstance(dialogue, list) or len(dialogue) < 6:
         return notes
     need = DAILY_STORY_BODY_CHARS_MIN - dialogue_total_chars(story)
-    if need <= 0 or need > 40:
+    # 重试常停在还差 30–70；放宽微补上限，交给收尾顶满
+    if need <= 0 or need > 80:
         return notes
     mid = dialogue[2:-1]
     candidates = [
@@ -3386,6 +3432,12 @@ def try_local_patch_daily_story_body(story: dict) -> tuple[dict, list[str]]:
                 notes.extend(_patch_body_char_budget(out, allow_insert_lines=False))
                 notes.extend(_patch_d_micro_pad(out))
             notes.extend(patch_d_polish_closing(out))
+
+        # 结构修完后再顶满字数；避免被中段 strip/trim 吃掉后无收口
+        if dialogue_total_chars(out) < DAILY_STORY_BODY_CHARS_MIN:
+            notes.extend(_patch_body_char_budget(out, allow_insert_lines=True))
+            notes.extend(_patch_d_micro_pad(out))
+            notes.extend(_patch_overlong_lines(out))
     return out, notes
 
 
