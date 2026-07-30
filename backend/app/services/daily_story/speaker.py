@@ -6,10 +6,17 @@ import re
 
 DAILY_STORY_SPEAKER_NAMES: tuple[str, ...] = ("昭昭", "灿灿", "妈妈")
 
-# 点名但非当场在画：转述旧规矩、询问去向等（不授予入画）
+# 点名但非当场在画：转述旧规矩、询问去向、刻意避开等（不授予入画）
 _ABSENT_MOM_RE = re.compile(
     r"妈妈?(?:说过|说的|让我们|叫我们|呢|在哪儿?|去哪儿?)"
     r"|听妈妈的"
+    r"|(?:别|先别|不要).{0,4}(?:告诉|让).{0,3}妈妈"
+    r"|(?:躲|背|瞒)着妈妈"
+    r"|别让妈妈(?:看见|发现|知道)"
+    r"|别被妈妈(?:看见|发现)"
+    r"|不让妈妈知道"
+    r"|趁妈妈不在"
+    r"|(?:听见?|听着?).{0,6}妈妈(?:脚步声|脚步|声音|动静)"
 )
 
 # 台词写明妈妈当场可见：动作/状态，或当面称呼
@@ -43,6 +50,24 @@ _PRESENT_CHILD_RE = {
     ),
 }
 
+_ROOM_WORDS = (
+    "客厅",
+    "厨房",
+    "卧室",
+    "卫生间",
+    "厕所",
+    "阳台",
+    "餐厅",
+    "书房",
+    "玄关",
+    "门口",
+)
+_ROOM_RE = re.compile("|".join(_ROOM_WORDS))
+_SETTING_OFFSCREEN_MOM_RE = re.compile(
+    r"妈妈(?:还|正|就)?(?:在|待在|留在|躲在)?"
+    r"(客厅|厨房|卧室|卫生间|厕所|阳台|餐厅|书房|玄关|门口)"
+)
+
 __all__ = [
     "DAILY_STORY_SPEAKER_NAMES",
     "allowed_cast_from_dialogue",
@@ -51,6 +76,7 @@ __all__ = [
     "collect_speaker_leak_issues",
     "collect_speaker_leak_segments",
     "leaked_speaker_names_in_text",
+    "mom_should_stay_offscreen",
     "present_cast_from_dialogue",
     "scrub_leaked_speaker_names",
     "speakers_from_dialogue",
@@ -106,10 +132,40 @@ def allowed_cast_from_dialogue(dialogue: list | None) -> set[str]:
     return speakers_from_dialogue(dialogue) | present_cast_from_dialogue(dialogue)
 
 
+def mom_should_stay_offscreen(dialogue: list | None) -> bool:
+    """台词明确要求避开妈妈视线时，妈妈本段不得入画。"""
+    speakers = speakers_from_dialogue(dialogue)
+    if "妈妈" in speakers:
+        return False
+    present = present_cast_from_dialogue(dialogue)
+    if "妈妈" in present:
+        return False
+    return any(_ABSENT_MOM_RE.search(text) for text in _line_texts(dialogue))
+
+
+def _primary_room_from_setting(setting: str | None) -> str | None:
+    text = str(setting or "")
+    m = _ROOM_RE.search(text)
+    return m.group(0) if m else None
+
+
+def _mom_should_stay_offscreen_in_setting(setting: str | None) -> bool:
+    """setting 只表示妈妈在另一房间/门外时，不授予当前镜头入画。"""
+    text = str(setting or "")
+    primary_room = _primary_room_from_setting(text)
+    mom_room_m = _SETTING_OFFSCREEN_MOM_RE.search(text)
+    if not primary_room or not mom_room_m:
+        return False
+    return mom_room_m.group(1) != primary_room
+
+
 def stage_cast_from_setting(setting: str | None) -> set[str]:
     """setting 点名的角色视为开场已在场（同场戏粘性起点）。"""
     text = str(setting or "")
-    return {name for name in DAILY_STORY_SPEAKER_NAMES if name in text}
+    cast = {name for name in DAILY_STORY_SPEAKER_NAMES if name in text}
+    if _mom_should_stay_offscreen_in_setting(text):
+        cast.discard("妈妈")
+    return cast
 
 
 def annotate_sticky_stage_speakers(
@@ -128,10 +184,11 @@ def annotate_sticky_stage_speakers(
     segs = [s for s in (segments or []) if isinstance(s, dict)]
     sticky = stage_cast_from_setting(setting)
     # 无 setting 重跑拼装时，保留已有 speakers，避免把开场三人冲成两人
-    for seg in segs:
-        raw = seg.get("speakers")
-        if isinstance(raw, list) and raw:
-            sticky |= {str(s).strip() for s in raw if str(s).strip()}
+    if not str(setting or "").strip():
+        for seg in segs:
+            raw = seg.get("speakers")
+            if isinstance(raw, list) and raw:
+                sticky |= {str(s).strip() for s in raw if str(s).strip()}
     story_speakers: set[str] = set()
     for seg in segs:
         story_speakers |= speakers_from_dialogue(seg.get("dialogue"))
@@ -153,6 +210,11 @@ def annotate_sticky_stage_speakers(
         sticky |= story_speakers
     for seg in ordered:
         local = allowed_cast_from_dialogue(seg.get("dialogue"))
+        if mom_should_stay_offscreen(seg.get("dialogue")):
+            local.discard("妈妈")
+            # 当前段明确要求避开妈妈视线时，打断“妈妈持续同框”的粘性；
+            # 后续若台词再次明确在场或由妈妈发言，会自然重新入画。
+            sticky.discard("妈妈")
         sticky |= local
         seg["speakers"] = [n for n in DAILY_STORY_SPEAKER_NAMES if n in sticky]
 
@@ -162,7 +224,10 @@ def allowed_cast_from_segment(seg: dict | None) -> set[str]:
     seg = seg or {}
     raw = seg.get("speakers")
     if isinstance(raw, list) and raw:
-        return {str(s).strip() for s in raw if str(s).strip()}
+        allowed = {str(s).strip() for s in raw if str(s).strip()}
+        if mom_should_stay_offscreen(seg.get("dialogue")):
+            allowed.discard("妈妈")
+        return allowed
     return allowed_cast_from_dialogue(seg.get("dialogue"))
 
 

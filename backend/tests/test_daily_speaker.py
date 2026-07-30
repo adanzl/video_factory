@@ -7,6 +7,7 @@ from app.services.daily_story.speaker import (
     allowed_cast_from_dialogue,
     collect_speaker_leak_issues,
     leaked_speaker_names_in_text,
+    mom_should_stay_offscreen,
     present_cast_from_dialogue,
     scrub_leaked_speaker_names,
     speakers_from_dialogue,
@@ -116,6 +117,67 @@ def test_sticky_stage_opening_mom_expands_without_setting():
     assert segments[1]["speakers"] == ["昭昭", "灿灿", "妈妈"]
 
 
+def test_sticky_stage_hiding_from_mom_breaks_mom_sticky():
+    from app.services.daily_story.speaker import annotate_sticky_stage_speakers
+
+    segments = [
+        {
+            "segment_index": 1,
+            "dialogue": [
+                {"speaker": "妈妈", "text": "我去阳台收衣服。"},
+                {"speaker": "昭昭", "text": "知道了。"},
+            ],
+        },
+        {
+            "segment_index": 2,
+            "dialogue": [
+                {"speaker": "灿灿", "text": "快躲着妈妈，把零食先塞沙发缝里。"},
+                {"speaker": "昭昭", "text": "你快挡住门口。"},
+            ],
+        },
+        {
+            "segment_index": 3,
+            "dialogue": [{"speaker": "妈妈", "text": "你们俩在藏什么？"}],
+        },
+    ]
+    annotate_sticky_stage_speakers(segments, setting="客厅，妈妈刚从门口经过。")
+    assert segments[0]["speakers"] == ["昭昭", "灿灿", "妈妈"]
+    assert segments[1]["speakers"] == ["昭昭", "灿灿"]
+    assert segments[2]["speakers"] == ["昭昭", "灿灿", "妈妈"]
+
+
+def test_setting_mom_in_other_room_does_not_grant_onstage_cast():
+    from app.services.daily_story.speaker import annotate_sticky_stage_speakers
+
+    segments = [
+        {
+            "segment_index": 1,
+            "dialogue": [
+                {"speaker": "昭昭", "text": "姐姐，别告诉妈妈。"},
+                {"speaker": "灿灿", "text": "你快拿桶。"},
+            ],
+            "speakers": ["昭昭", "灿灿", "妈妈"],
+        },
+        {
+            "segment_index": 2,
+            "dialogue": [{"speaker": "灿灿", "text": "听，妈妈脚步声！"}],
+            "speakers": ["昭昭", "灿灿", "妈妈"],
+        },
+        {
+            "segment_index": 3,
+            "dialogue": [{"speaker": "妈妈", "text": "你俩，过来！"}],
+            "speakers": ["昭昭", "灿灿", "妈妈"],
+        },
+    ]
+    annotate_sticky_stage_speakers(
+        segments,
+        setting="客厅，地上有碎片，昭昭和灿灿蹲在旁边，妈妈在厨房。",
+    )
+    assert segments[0]["speakers"] == ["昭昭", "灿灿"]
+    assert segments[1]["speakers"] == ["昭昭", "灿灿"]
+    assert segments[2]["speakers"] == ["昭昭", "灿灿", "妈妈"]
+
+
 def test_assemble_layout_does_not_leak_cancan_when_cast_two():
     """vb 写了三人站位但 cast 只有两人时，构图不得带入灿灿。"""
     from app.services.script.image_prompt import assemble_daily_t2i_prompt
@@ -146,6 +208,18 @@ def test_hearsay_and_where_do_not_allow_mom():
     assert "妈妈" not in allowed_cast_from_dialogue(
         [{"speaker": "昭昭", "text": "妈妈呢？"}]
     )
+
+
+def test_hide_from_mom_marks_her_offscreen():
+    dialogue = [{"speaker": "昭昭", "text": "快点把玩具塞进去，别告诉妈妈。"}]
+    assert "妈妈" not in allowed_cast_from_dialogue(dialogue)
+    assert mom_should_stay_offscreen(dialogue) is True
+
+
+def test_footsteps_only_do_not_grant_mom_onstage():
+    dialogue = [{"speaker": "灿灿", "text": "听，妈妈脚步声！"}]
+    assert "妈妈" not in allowed_cast_from_dialogue(dialogue)
+    assert mom_should_stay_offscreen(dialogue) is True
 
 
 def test_scrub_keeps_mom_when_present_in_dialogue():
@@ -216,6 +290,33 @@ def test_check_image_prompt_allows_present_mom():
     }
     report = check_image_prompt(script, content_style="daily_story")
     assert report.details.get("reason") != "daily speaker leak in image_prompt"
+
+
+def test_check_image_prompt_rejects_hidden_mom_even_if_speakers_polluted():
+    script = {
+        "content_style": "daily_story",
+        "segments": [
+            {
+                "segment_index": 2,
+                "speakers": ["昭昭", "灿灿", "妈妈"],
+                "dialogue": [
+                    {
+                        "speaker": "灿灿",
+                        "text": "快躲着妈妈，别让她看见我们在藏零食。",
+                    },
+                    {"speaker": "昭昭", "text": "你挡住门口。"},
+                ],
+                "image_prompt": (
+                    "客厅里昭昭蹲在沙发边，灿灿回头张望；"
+                    "妈妈站在两人面前盯着他们。"
+                    + "x" * 80
+                ),
+            }
+        ],
+    }
+    report = check_image_prompt(script, content_style="daily_story")
+    assert report.level == "major"
+    assert report.details["reason"] == "daily speaker leak in image_prompt"
 
 
 def test_build_daily_image_prompts_is_slimmer():
