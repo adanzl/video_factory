@@ -374,11 +374,23 @@ class DeepSeekClient(LLMClient):
         self._api_key = settings.deepseek_api_key
         self._base_url = settings.deepseek_base_url.rstrip("/")
         self._model = settings.deepseek_model
+        self._pro_model = settings.deepseek_pro_model or settings.deepseek_model
 
-    def _chat(self, system: str, user: str, *, max_tokens: int | None = None, json_mode: bool = True, thinking_enabled: bool | None = None, temperature: float | None = None) -> tuple[str, str | None]:
+    def _chat(
+        self,
+        system: str,
+        user: str,
+        *,
+        max_tokens: int | None = None,
+        json_mode: bool = True,
+        thinking_enabled: bool | None = None,
+        temperature: float | None = None,
+        model: str | None = None,
+    ) -> tuple[str, str | None]:
         settings = get_settings()
         limit = settings.deepseek_max_tokens if max_tokens is None else max_tokens
         use_thinking = settings.deepseek_thinking_enabled if thinking_enabled is None else thinking_enabled
+        use_model = model or self._model
         resp = self._requests.post(
             f"{self._base_url}/chat/completions",
             headers={
@@ -386,7 +398,7 @@ class DeepSeekClient(LLMClient):
                 "Content-Type": "application/json",
             },
             json=_build_deepseek_chat_payload(
-                model=self._model,
+                model=use_model,
                 system=system,
                 user=user,
                 max_tokens=limit,
@@ -404,7 +416,7 @@ class DeepSeekClient(LLMClient):
             logger.warning(
                 "LLM response truncated (finish_reason=length), max_tokens=%d model=%s",
                 limit,
-                self._model,
+                use_model,
             )
         return content, finish
 
@@ -416,10 +428,18 @@ class DeepSeekClient(LLMClient):
         max_tokens: int | None = None,
         thinking_enabled: bool | None = None,
         temperature: float | None = None,
+        model: str | None = None,
     ) -> tuple[dict[str, Any], str | None]:
         _EMPTY_RETRIES = 3
         for _ in range(_EMPTY_RETRIES):
-            content, finish = self._chat(system, user, max_tokens=max_tokens, thinking_enabled=thinking_enabled, temperature=temperature)
+            content, finish = self._chat(
+                system,
+                user,
+                max_tokens=max_tokens,
+                thinking_enabled=thinking_enabled,
+                temperature=temperature,
+                model=model,
+            )
             if content.strip():
                 break
             logger.warning(
@@ -583,6 +603,14 @@ class DeepSeekClient(LLMClient):
         data: dict[str, Any] | None = None
         for attempt in range(_storyboard_length_max_attempts()):
             raise_if_job_cancelled(job)
+            # 首稿 Flash；字数/截断重试升 Pro
+            use_model = self._model if attempt == 0 else self._pro_model
+            if attempt > 0 and use_model != self._model:
+                logger.info(
+                    "[SCRIPT] A1 narration retry attempt=%d model=%s",
+                    attempt + 1,
+                    use_model,
+                )
             prompts = build_voiceover_standard_prompts(
                 title,
                 feedback=length_feedback,
@@ -594,6 +622,7 @@ class DeepSeekClient(LLMClient):
             data, finish = self._chat_json(
                 prompts["system"],
                 prompts["user"],
+                model=use_model,
             )
             raise_if_job_cancelled(job)
             if finish == "length":
@@ -1726,17 +1755,24 @@ class DeepSeekClient(LLMClient):
         same_err_streak = 0
         prev_err_key = ""
         for attempt in range(max_attempts):
-            # 首稿：关 thinking + 高温度保发散；重试：开 thinking，字数一次补满
-            # （开 thinking 时模型忽略 temperature，故重试不传）
+            # 首稿：Flash + 关 thinking + 高温度；重试：Pro + 开 thinking
+            use_model = self._model if attempt == 0 else self._pro_model
             if attempt == 0:
                 raw, _ = self._chat_json(
                     system,
                     user,
                     thinking_enabled=False,
                     temperature=_TEMP_CREATIVE_HIGH,
+                    model=use_model,
                 )
             else:
-                raw, _ = self._chat_json(system, user)
+                if use_model != self._model:
+                    logger.info(
+                        "[DAILY_STORY] D2 body retry attempt=%d model=%s",
+                        attempt + 1,
+                        use_model,
+                    )
+                raw, _ = self._chat_json(system, user, model=use_model)
             if isinstance(raw, dict):
                 from app.services.daily_story.prompts import (
                     try_local_patch_daily_story_body,
@@ -1881,8 +1917,13 @@ class DeepSeekClient(LLMClient):
         last_exc: ValueError | None = None
 
         for attempt in range(max_attempts):
-            # 质量修订：开 thinking，按短板改，不走首稿高发散
-            raw, _ = self._chat_json(system, user)
+            # 质量修订：Pro + thinking，按短板改，不走首稿高发散
+            if attempt == 0:
+                logger.info(
+                    "[DAILY_STORY] D2 quality revise model=%s",
+                    self._pro_model,
+                )
+            raw, _ = self._chat_json(system, user, model=self._pro_model)
             if isinstance(raw, dict):
                 raw["_theme"] = theme
                 patched, notes = try_local_patch_daily_story_body(raw)

@@ -262,6 +262,12 @@ CONFIG_GROUPS: tuple[ConfigGroupDef, ...] = (
             _f("deepseek_api_key", "DEEPSEEK_API_KEY", "API Key", "secret"),
             _f("deepseek_base_url", "DEEPSEEK_BASE_URL", "API 地址"),
             _f("deepseek_model", "DEEPSEEK_MODEL", "模型"),
+            _f(
+                "deepseek_pro_model",
+                "DEEPSEEK_PRO_MODEL",
+                "Pro 模型",
+                description="A1/D2 校验失败重试时使用",
+            ),
             _f("deepseek_max_tokens", "DEEPSEEK_MAX_TOKENS", "最大 Token", "number", min_value=1024, max_value=65536),
             _f("deepseek_thinking_enabled", "DEEPSEEK_THINKING", "思考模式", "bool"),
             _f("agnes_llm_model", "AGNES_LLM_MODEL", "模型"),
