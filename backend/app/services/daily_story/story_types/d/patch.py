@@ -168,6 +168,31 @@ def patch_d_fix_closing_roles(story: dict) -> list[str]:
     dialogue = story.get("dialogue")
     if not isinstance(dialogue, list) or len(dialogue) < 4:
         return notes
+
+    # 回旋镖前排成：昭昭后果 → 灿灿破规 → 昭昭回旋镖（尽量保留歪读原文）
+    if len(dialogue) >= 4:
+        pre2, pre = dialogue[-4], dialogue[-3]
+        if isinstance(pre2, dict) and isinstance(pre, dict):
+            s2 = str(pre2.get("speaker") or "").strip()
+            s1 = str(pre.get("speaker") or "").strip()
+            # -3 与即将焊死的回旋镖都是昭昭 → -3 改灿灿破规
+            if s1 == "昭昭":
+                # 若 -4 是灿灿且像后果，对调角色保留歪读在昭昭
+                if s2 == "灿灿" and RE_MESS.search(str(pre2.get("line") or "")):
+                    pre2["speaker"] = "昭昭"
+                    notes.append("D后果speaker→昭昭")
+                    s2 = "昭昭"
+                if s2 == "昭昭":
+                    pre["speaker"] = "灿灿"
+                    if not RE_FIX.search(str(pre.get("line") or "")):
+                        pre["line"] = "我来扶，你别乱动"
+                    notes.append("D回旋镖前→灿灿破规")
+            elif s1 == s2 == "灿灿":
+                pre["speaker"] = "昭昭"
+                if not RE_LITERAL.search(str(pre.get("line") or "")):
+                    pre["line"] = "那我按你说的，照做就是了"
+                notes.append("D回旋镖前→昭昭照做")
+
     prev = dialogue[-2]
     last = dialogue[-1]
     if not isinstance(prev, dict) or not isinstance(last, dict):
@@ -441,7 +466,7 @@ def patch_d_strip_a_close(story: dict) -> list[str]:
 
 
 def patch_d_ensure_literal(story: dict) -> list[str]:
-    """中段缺字面执行时，改一句昭昭为「按你说的」。"""
+    """中段缺字面执行词时，在昭昭句上补「按你说的」，勿覆盖歪读画面。"""
     notes: list[str] = []
     if not _is_d(story):
         return notes
@@ -452,16 +477,35 @@ def patch_d_ensure_literal(story: dict) -> list[str]:
     text = "".join(str(d.get("line") or "") for d in mid if isinstance(d, dict))
     if RE_LITERAL.search(text):
         return notes
+    twist_re = re.compile(
+        r"死结|花生米|小山|高塔|垒成|码成|焊|溢|绕成|打结|勒红|脚背",
+    )
     for d in mid:
         if not isinstance(d, dict):
             continue
         if str(d.get("speaker") or "") != "昭昭":
             continue
-        new_line = "那我按你说的，照做就是了"
-        if dialogue_char_count(new_line) <= DAILY_STORY_LINE_CHARS_MAX:
-            d["line"] = new_line
+        line = str(d.get("line") or "").strip()
+        if not line:
+            continue
+        # 已有歪读画面：句首加「按你说的」保留原画面，勿整句替换
+        prefix = "按你说的，"
+        if twist_re.search(line):
+            if line.startswith(prefix):
+                return notes
+            merged = prefix + line
+            if dialogue_char_count(merged) > DAILY_STORY_LINE_CHARS_MAX:
+                merged = truncate_overlong_line(merged)
+            d["line"] = merged
             notes.append("D补字面执行")
             break
+        # 无歪读的短句才允许整句换成照做
+        if dialogue_char_count(line) <= 12:
+            new_line = "那我按你说的，照做就是了"
+            if dialogue_char_count(new_line) <= DAILY_STORY_LINE_CHARS_MAX:
+                d["line"] = new_line
+                notes.append("D补字面执行")
+                break
     return notes
 
 
@@ -555,19 +599,49 @@ def patch_d_ensure_fix(story: dict) -> list[str]:
     if not isinstance(dialogue, list) or len(dialogue) < 8:
         return notes
     lines = [str(d.get("line") or "") if isinstance(d, dict) else "" for d in dialogue]
-    fix_i = next((i for i, ln in enumerate(lines) if RE_FIX.search(ln)), None)
+    speakers = [
+        str(d.get("speaker") or "").strip() if isinstance(d, dict) else ""
+        for d in dialogue
+    ]
     boom_i = next(
         (i for i, ln in enumerate(lines) if RE_BOOM_CLOSE.search(ln)),
         None,
     )
-    if fix_i is not None and (boom_i is None or fix_i < boom_i):
+    # 昭昭说「我来弄」= 破规口吻挂错人 → 改回灿灿
+    scan_end = boom_i if boom_i is not None else max(0, len(dialogue) - 2)
+    for i in range(scan_end):
+        if not isinstance(dialogue[i], dict):
+            continue
+        if speakers[i] != "昭昭":
+            continue
+        if not RE_FIX.search(lines[i]):
+            continue
+        dialogue[i]["speaker"] = "灿灿"
+        speakers[i] = "灿灿"
+        notes.append(f"D破规speaker→灿灿[{i}]")
+        # 可能造成连说，交给后续 consecutive 处理
+        break
+
+    fix_i = None
+    for i, ln in enumerate(lines):
+        if boom_i is not None and i >= boom_i:
+            break
+        if not RE_FIX.search(ln):
+            continue
+        if speakers[i] not in ("灿灿", "妈妈"):
+            continue
+        fix_i = i
+    if fix_i is not None:
         return notes
-    # 找末四拍前灿灿句改写
+    # 找末四拍前灿灿句改写（勿改昭昭执行句）
     end = len(dialogue) - 4
     for j in range(end - 1, 2, -1):
         if not isinstance(dialogue[j], dict):
             continue
         if str(dialogue[j].get("speaker") or "") not in ("灿灿", "妈妈"):
+            continue
+        # 勿覆盖已有回旋镖词
+        if RE_BOOM_CLOSE.search(str(dialogue[j].get("line") or "")):
             continue
         new_line = "我来扶，你别乱动"
         if dialogue_char_count(new_line) <= DAILY_STORY_LINE_CHARS_MAX:
@@ -746,6 +820,38 @@ def patch_d_dedupe_boomerang(story: dict) -> list[str]:
     return notes
 
 
+def patch_d_strip_executor_voice_from_cancan(story: dict) -> list[str]:
+    """灿灿若被垫成「我按你说的/照做」，改回催促（末句嘴硬除外）。"""
+    notes: list[str] = []
+    if not _is_d(story):
+        return notes
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 4:
+        return notes
+    # 末句是灿灿嘴硬，不改；前段叮嘱也可能含「要/系紧」但不含照做
+    end = max(2, len(dialogue) - 1)
+    for i in range(0, end):
+        d = dialogue[i]
+        if not isinstance(d, dict):
+            continue
+        if str(d.get("speaker") or "").strip() != "灿灿":
+            continue
+        line = str(d.get("line") or "")
+        if not re.search(r"按你说的|照做|我数着做|一步都不含糊|绝不偷懒", line):
+            continue
+        if RE_BOOM_CLOSE.search(line) or RE_SOFT_LAST.search(line):
+            continue
+        if RE_FIX.search(line):
+            continue
+        new_line = "你小心点，别乱动"
+        if dialogue_char_count(new_line) > DAILY_STORY_LINE_CHARS_MAX:
+            new_line = truncate_overlong_line(new_line)
+        if new_line != line:
+            d["line"] = new_line
+            notes.append(f"D灿灿去执行口吻[{i}]")
+    return notes
+
+
 def patch_d_body(story: dict) -> list[str]:
     notes: list[str] = []
     notes.extend(patch_d_strip_mom(story))
@@ -769,6 +875,7 @@ def patch_d_body(story: dict) -> list[str]:
     notes.extend(patch_d_compress_body(story))
     notes.extend(patch_d_strip_a_close(story))
     notes.extend(patch_d_trim_waffle(story))
+    notes.extend(patch_d_strip_executor_voice_from_cancan(story))
     notes.extend(patch_d_ensure_fix(story))
     notes.extend(patch_d_ensure_boomerang(story))
     notes.extend(patch_d_fix_closing_roles(story))

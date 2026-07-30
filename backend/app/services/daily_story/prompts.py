@@ -1033,13 +1033,13 @@ DAILY_SCRIPT_SYSTEM_PROMPT = """\
 【可发言角色】昭昭（7岁弟弟）、灿灿（10岁姐姐）、妈妈。场景以家庭内部/门口为主。
 
 【分镜规则】
-1. 【切分原则】按单镜 2–3 句、≤{max_sec} 秒切分（对白共 {total_chars} 字 / {line_count} 句）；
-   禁止一句一镜。
-2. 【默认并镜】按同一地点、同一轮互怼/同一话题合并；中景/全景每镜通常 2–3 句，
-   单镜不得超过 3 句。
+1. 【切分原则】按单镜**倾向 2 句**、≤{max_sec} 秒切分（对白共 {total_chars} 字 / {line_count} 句）；
+   禁止一句一镜。默认两人一轮对答并成一镜；不要为凑满而硬塞第 3 句。
+2. 【默认并镜】按同一地点、同一轮互怼/同一话题合并；中景/全景**优先每镜 2 句**，
+   仅当邻句过短、不足 {min_chars} 字时才并到 3 句；单镜不得超过 3 句。
 3. 【特写对白上限·硬性】shot_type 为「特写」的镜，dialogue **不得超过 2 句**
    （图生视频口型限制，超 2 句会生成失败）。若该轮有 3 句：
-   须把第 3 句拆到下一镜，或本镜改标「中景」并保留 3 句——**禁止特写塞 3 句**。
+   **优先**把第 3 句拆到下一镜——**禁止特写塞 3 句**；勿为省镜把 3 句塞进中景。
 4. 【单镜字数】建议 {min_chars}–{max_chars} 字（约 {min_sec}–{max_sec} 秒，
    语速 {chars_per_sec} 字/秒）。少于 {min_chars} 字必须并入邻镜；
    单镜合计不得超过 {max_chars} 字（约 ≤{max_sec} 秒）。各镜尽量均匀。
@@ -1090,9 +1090,10 @@ DAILY_SCRIPT_USER_TEMPLATE = """\
 {dialogue_text}
 
 【要求】
-1. 中景/全景每镜 2–3 句、不得超过 3 句；**特写镜硬性不得超过 2 句**（超了改中景或拆镜）
+1. 中景/全景**倾向每镜 2 句**（默认两人一轮），仅邻句过短才并到 3 句、不得超过 3 句；
+   **特写镜硬性不得超过 2 句**（超了拆到下一镜，勿塞 3 句中景糊弄）
 2. 单镜 {min_chars}–{max_chars} 字（约 ≤{max_sec} 秒）；禁止一句一镜
-3. 转折句用特写并放在镜首，特写镜最多再跟 1 句回应；第 3 句须拆到下一镜或改中景
+3. 转折句用特写并放在镜首，特写镜最多再跟 1 句回应；第 3 句须拆到下一镜
 4. 【特写数量·硬性】按实际镜数 N：特写须在 max(2,⌈N/4⌉)–⌊N/3⌋
    （例 8→2–3、10→3–4；约估 {scene_count} 镜约 {closeup_min}–{closeup_max}）；
    首镜 + 中段转折 + 妈妈收场至少各 1 特写，禁止只标 1–2 个特写糊弄
@@ -1282,7 +1283,8 @@ def build_daily_script_prompts(
     )
     total_chars = sum(_dialogue_char_count(str(d.get("line") or "")) for d in dialogue)
     line_count = len(dialogue)
-    est_scenes = max(6, min(14, (line_count + 2) // 3))
+    # 倾向每镜 2 句（与提示词一致）；仍夹在 6–14
+    est_scenes = max(6, min(14, (line_count + 1) // 2))
     closeup_min, closeup_max = daily_script_closeup_bounds(est_scenes)
     scene_title = str(dialogue_script.get("scene_title") or "").strip() or "（无标题）"
     setting = str(dialogue_script.get("setting") or "").strip() or "（未提供设定）"
@@ -2624,7 +2626,7 @@ def _patch_d_ensure_min_lines(
     *,
     target_lines: int = 13,
 ) -> list[str]:
-    """D 句数不足时，在末四拍前插入轮流短句，便于一次补满字数。"""
+    """D 句数不足时，在末四拍前插入轮流短句；昭昭演歪读，灿灿只催/慌。"""
     notes: list[str] = []
     dialogue = story.get("dialogue")
     if not isinstance(dialogue, list) or len(dialogue) < 4:
@@ -2635,23 +2637,52 @@ def _patch_d_ensure_min_lines(
         return notes
     insert_at = max(2, len(dialogue) - 4)
     prev_sp = str(dialogue[insert_at - 1].get("speaker") or "灿灿").strip()
-    fillers = (
+    zhao_fillers = (
         "我按你说的，一步都不含糊",
-        "你看我这不是照做吗",
-        "再紧一点，我认真系",
-        "系好了，绝对不会散",
-        "还是按你说的来",
-        "我继续，绝不偷懒",
+        "再紧一点，我认真系死结",
+        "我数着做，绕成花生米",
+        "还是按你说的，再焊一圈",
     )
+    can_fillers = (
+        "你小心点，鞋带别扯断了",
+        "快点系，别在这儿磨蹭",
+        "你倒是系啊，别光使劲",
+        "小心点，别把鞋弄坏了",
+    )
+    z_i = 0
+    c_i = 0
     for i in range(need_lines):
         sp = "昭昭" if prev_sp == "灿灿" else "灿灿"
-        line = fillers[i % len(fillers)]
+        if sp == "昭昭":
+            line = zhao_fillers[z_i % len(zhao_fillers)]
+            z_i += 1
+        else:
+            line = can_fillers[c_i % len(can_fillers)]
+            c_i += 1
         if _dialogue_char_count(line) > DAILY_STORY_LINE_CHARS_MAX:
             line = _truncate_overlong_line(line)
         dialogue.insert(insert_at + i, {"speaker": sp, "line": line})
         prev_sp = sp
         notes.append(f"D补句[{insert_at + i}]")
     return notes
+
+
+def _d_mid_zhao_targets(dialogue: list) -> list[dict]:
+    """D 补字只动昭昭中段：跳过前 2、末 2，且跳过破规/回旋镖句。"""
+    if not isinstance(dialogue, list) or len(dialogue) < 6:
+        return []
+    # 末两句收束不垫；末四里若有昭昭执行句可垫（破规句除外）
+    mid = dialogue[2:-2]
+    skip = re.compile(
+        r"你自己说|你刚才说|我来扶|我来弄|我来捡|我来夹|哼|算了|行吧",
+    )
+    return [
+        item
+        for item in mid
+        if isinstance(item, dict)
+        and str(item.get("speaker") or "").strip() == "昭昭"
+        and not skip.search(str(item.get("line") or ""))
+    ]
 
 
 def _patch_body_char_budget(story: dict) -> list[str]:
@@ -2704,18 +2735,16 @@ def _patch_body_char_budget(story: dict) -> list[str]:
             return notes
         before = total
         if code == "D":
-            # 中段+收束前都可顶字；片段整篇限次复用
-            targets = dialogue[2:] if len(dialogue) > 4 else dialogue
+            # 只垫昭昭中段，禁止垫灿灿/末四拍
+            targets = _d_mid_zhao_targets(dialogue)
             used_fills: dict[str, int] = {}
-            for _ in range(2):
+            for _ in range(3):
                 if need <= 0:
                     break
                 progressed = False
                 for item in targets:
                     if need <= 0:
                         break
-                    if not isinstance(item, dict):
-                        continue
                     line = str(item.get("line") or "")
                     if not line:
                         continue
@@ -2728,14 +2757,12 @@ def _patch_body_char_budget(story: dict) -> list[str]:
                         progressed = True
                 if not progressed:
                     break
-            # 还差几个字：放开复用，末段前再顶一轮
+            # 还差几个字：放开复用，仍只动昭昭中段
             need = chars_min - dialogue_total_chars(story)
-            if 0 < need <= 24:
+            if 0 < need <= 48:
                 for item in reversed(targets):
                     if need <= 0:
                         break
-                    if not isinstance(item, dict):
-                        continue
                     line = str(item.get("line") or "")
                     if not line:
                         continue
@@ -2745,17 +2772,12 @@ def _patch_body_char_budget(story: dict) -> list[str]:
                     if added:
                         item["line"] = new_line
                         need -= added
-            # 仍差 1–2：中段标点前补「呀/好呀」，勿动末两句收束
+            # 仍差 1–2：昭昭中段标点前补「呀/好呀」
             need = chars_min - dialogue_total_chars(story)
             if 0 < need <= 2:
-                mid_targets = (
-                    targets[:-2] if len(targets) > 4 else targets
-                )
-                for item in reversed(mid_targets):
+                for item in reversed(targets):
                     if need <= 0:
                         break
-                    if not isinstance(item, dict):
-                        continue
                     line = str(item.get("line") or "")
                     if not line or _line_room(line) < need:
                         continue
@@ -2826,22 +2848,42 @@ def _patch_consecutive_speakers(story: dict) -> list[str]:
     """同人连说：把后一句 speaker 改成另一方（仅修硬卡，少动文案）。"""
     from app.services.daily_story.story_types import resolve_story_type_code
 
-    if resolve_story_type_code(story) == "B":
+    code = resolve_story_type_code(story)
+    if code == "B":
         return []
     notes: list[str] = []
     dialogue = story.get("dialogue")
     if not isinstance(dialogue, list) or len(dialogue) < 2:
         return notes
+    # D 末两句焊死回旋镖+嘴硬：可改 -3，勿改 -2/-1 的 speaker
+    protect_tail = 2 if code == "D" else 0
+    end = max(1, len(dialogue) - protect_tail)
     fixes = 0
-    for i in range(1, len(dialogue)):
+    for i in range(1, end):
         a, b = dialogue[i - 1], dialogue[i]
         if not isinstance(a, dict) or not isinstance(b, dict):
             continue
         sa = str(a.get("speaker") or "").strip()
         sb = str(b.get("speaker") or "").strip()
         if sa in {"昭昭", "灿灿"} and sa == sb:
-            b["speaker"] = "灿灿" if sa == "昭昭" else "昭昭"
+            new_sp = "灿灿" if sa == "昭昭" else "昭昭"
+            b["speaker"] = new_sp
             notes.append(f"连说改speaker[{i}]")
+            # D：只翻 speaker 会把「我按你说的」挂到灿灿 → 按角色改口
+            if code == "D":
+                ln = str(b.get("line") or "")
+                if new_sp == "灿灿" and re.search(
+                    r"按你说的|照做|我数着|一步都不含糊|绝不偷懒|我认真系",
+                    ln,
+                ):
+                    b["line"] = "你小心点，别乱动"
+                    notes.append(f"D连说改口催[{i}]")
+                elif new_sp == "昭昭" and re.search(
+                    r"我来扶|我来弄|你别乱动|小心点|你倒是|快点",
+                    ln,
+                ):
+                    b["line"] = "那我按你说的，照做就是了"
+                    notes.append(f"D连说改口照做[{i}]")
             fixes += 1
             if fixes >= 6:
                 break
@@ -2922,6 +2964,28 @@ def try_local_patch_daily_story_body(story: dict) -> tuple[dict, list[str]]:
     notes.extend(_patch_body_char_budget(out))
     notes.extend(_patch_overlong_lines(out))
     notes.extend(_patch_consecutive_speakers(out))
+    # D：连说/补字后再次焊死收束角色，防回旋镖落到灿灿
+    locked = str(out.get("_story_type") or "").strip()
+    is_d = (
+        locked.upper().startswith("D")
+        or "字面执行" in str(out.get("punchline_explain") or "")
+        or resolve_story_type_code(out) == "D"
+    )
+    if is_d:
+        from app.services.daily_story.story_types.d.patch import (
+            patch_d_align_boomerang_quote,
+            patch_d_ensure_fix,
+            patch_d_fix_closing_roles,
+            patch_d_strip_executor_voice_from_cancan,
+        )
+
+        notes.extend(patch_d_strip_executor_voice_from_cancan(out))
+        notes.extend(patch_d_ensure_fix(out))
+        notes.extend(patch_d_fix_closing_roles(out))
+        notes.extend(patch_d_align_boomerang_quote(out))
+        # 收束焊死后可能与 -3 连说，再修一次连说但保护末两句
+        notes.extend(_patch_consecutive_speakers(out))
+        notes.extend(patch_d_fix_closing_roles(out))
     return out, notes
 
 
