@@ -3049,9 +3049,9 @@ def _patch_d_micro_pad(story: dict) -> list[str]:
     if not isinstance(dialogue, list) or len(dialogue) < 6:
         return notes
     need = DAILY_STORY_BODY_CHARS_MIN - dialogue_total_chars(story)
-    if need <= 0 or need > 24:
+    if need <= 0 or need > 40:
         return notes
-    mid = dialogue[2:-2]
+    mid = dialogue[2:-1]
     candidates = [
         item for item in mid
         if isinstance(item, dict)
@@ -3086,6 +3086,10 @@ def _patch_d_micro_pad(story: dict) -> list[str]:
             "灿灿": ("，都快坏了", "，别再弄了"),
             "昭昭": ("，更糟了", "，又卡住了"),
         }
+    tiny_addons = {
+        "灿灿": ("紧", "疼", "麻"),
+        "昭昭": ("死", "卡", "紧"),
+    }
     for item in candidates:
         if need <= 0:
             break
@@ -3138,6 +3142,61 @@ def _patch_d_micro_pad(story: dict) -> list[str]:
                 need -= len(piece)
                 notes.append("D微补字")
                 break
+    if need > 0:
+        for item in candidates:
+            if need <= 0:
+                break
+            sp = str(item.get("speaker") or "").strip()
+            line = str(item.get("line") or "")
+            if not line:
+                continue
+            room = _line_room(line)
+            if room <= 0:
+                continue
+            trail = ""
+            core = line
+            if core[-1] in "。！？…":
+                trail = core[-1]
+                core = core[:-1]
+            for tiny in tiny_addons.get(sp, ()):
+                if tiny in core:
+                    continue
+                if len(tiny) > room or len(tiny) > need:
+                    continue
+                item["line"] = f"{core}{tiny}{trail}"
+                need -= len(tiny)
+                notes.append("D微补字")
+                break
+    if need > 0 and len(dialogue) < 18:
+        pivot = max(2, len(dialogue) - 4)
+        prev_sp = ""
+        if 0 <= pivot - 1 < len(dialogue) and isinstance(dialogue[pivot - 1], dict):
+            prev_sp = str(dialogue[pivot - 1].get("speaker") or "").strip()
+        next_sp = "灿灿" if prev_sp == "昭昭" else "昭昭"
+        if re.search(r"鞋带|系紧|死结", ctx):
+            insert_map = {
+                "灿灿": "鞋扣也卡住了，别再拽了",
+                "昭昭": "我再抠一下，这结还在往里缩",
+            }
+        elif re.search(r"玩具|收纳|筐|箱子", ctx):
+            insert_map = {
+                "灿灿": "筐口都鼓出来了，别再塞了",
+                "昭昭": "我再按一下，这堆还在往外顶",
+            }
+        elif re.search(r"叠|衣服|衣", ctx):
+            insert_map = {
+                "灿灿": "这一摞又歪了，别再往上垒了",
+                "昭昭": "我再扶一下，上面那件还在往下滑",
+            }
+        else:
+            insert_map = {
+                "灿灿": "又坏一点了，快住手",
+                "昭昭": "我再弄一下，还是更糟了",
+            }
+        line = insert_map.get(next_sp, "")
+        if line:
+            dialogue.insert(pivot, {"speaker": next_sp, "line": line})
+            notes.append("D补短句")
     return notes
 
 
@@ -3174,13 +3233,28 @@ def try_local_patch_daily_story_body(story: dict) -> tuple[dict, list[str]]:
         from app.services.daily_story.story_types.d.patch import (
             patch_d_align_boomerang_quote,
             patch_d_dedupe_literal_echo,
+            patch_d_dedupe_mess_echo,
+            patch_d_dedupe_tail_fix,
+            patch_d_ensure_literal,
             patch_d_ensure_fix,
             patch_d_fix_closing_roles,
+            patch_d_monotonic_zhao_action,
+            patch_d_monotonic_cancan_alarm,
+            patch_d_progress_cancan_alarm,
+            patch_d_reduce_zhao_explaining,
+            patch_d_strengthen_fix,
+            patch_d_progress_cancan_alarm,
+            patch_d_strip_mom,
             patch_d_strip_executor_voice_from_cancan,
             patch_d_strip_pad_garbage,
+            patch_d_trim_cancan_nag_repeats,
+            patch_d_trim_duplicate_rule,
+            patch_d_trim_zhao_tail_repeats,
         )
 
         notes.extend(patch_d_strip_executor_voice_from_cancan(out))
+        notes.extend(patch_d_strip_mom(out))
+        notes.extend(patch_d_trim_duplicate_rule(out))
         notes.extend(patch_d_ensure_fix(out))
         notes.extend(_patch_consecutive_speakers(out))
         notes.extend(patch_d_fix_closing_roles(out))
@@ -3195,11 +3269,16 @@ def try_local_patch_daily_story_body(story: dict) -> tuple[dict, list[str]]:
         if isinstance(last, dict) and str(last.get("speaker") or "") != "灿灿":
             last["speaker"] = "灿灿"
             notes.append("D末句speaker→灿灿")
-        # 先剥垫片/消复读，再补字（补字放最后，避免再被剥穿）
-        from app.services.daily_story.story_types.d.patch import (
-            patch_d_dedupe_mess_echo,
-        )
         notes.extend(patch_d_strip_pad_garbage(out))
+        notes.extend(patch_d_trim_cancan_nag_repeats(out))
+        notes.extend(patch_d_progress_cancan_alarm(out))
+        notes.extend(patch_d_monotonic_cancan_alarm(out))
+        notes.extend(patch_d_trim_zhao_tail_repeats(out))
+        notes.extend(patch_d_reduce_zhao_explaining(out))
+        notes.extend(patch_d_monotonic_zhao_action(out))
+        notes.extend(patch_d_ensure_literal(out))
+        notes.extend(patch_d_strengthen_fix(out))
+        notes.extend(patch_d_dedupe_tail_fix(out))
         notes.extend(patch_d_dedupe_literal_echo(out))
         notes.extend(patch_d_dedupe_mess_echo(out))
         notes.extend(_patch_consecutive_speakers(out))
@@ -3209,6 +3288,16 @@ def try_local_patch_daily_story_body(story: dict) -> tuple[dict, list[str]]:
             )
             notes.extend(_patch_overlong_lines(out))
             notes.extend(_patch_consecutive_speakers(out))
+            notes.extend(patch_d_strip_pad_garbage(out))
+            notes.extend(patch_d_trim_cancan_nag_repeats(out))
+            notes.extend(patch_d_progress_cancan_alarm(out))
+            notes.extend(patch_d_monotonic_cancan_alarm(out))
+            notes.extend(patch_d_trim_zhao_tail_repeats(out))
+            notes.extend(patch_d_reduce_zhao_explaining(out))
+            notes.extend(patch_d_monotonic_zhao_action(out))
+            notes.extend(patch_d_ensure_literal(out))
+            notes.extend(patch_d_strengthen_fix(out))
+            notes.extend(patch_d_dedupe_tail_fix(out))
             notes.extend(patch_d_dedupe_mess_echo(out))
         # 末两句角色再焊一次（不合并中段，防吃字）
         prev = (out.get("dialogue") or [None, None])[-2]
@@ -3221,11 +3310,30 @@ def try_local_patch_daily_story_body(story: dict) -> tuple[dict, list[str]]:
             notes.append("D末句speaker→灿灿")
         # 轻剥一次呀呢即可
         notes.extend(patch_d_strip_pad_garbage(out))
+        notes.extend(patch_d_trim_cancan_nag_repeats(out))
+        notes.extend(patch_d_progress_cancan_alarm(out))
+        notes.extend(patch_d_monotonic_cancan_alarm(out))
+        notes.extend(patch_d_trim_zhao_tail_repeats(out))
+        notes.extend(patch_d_reduce_zhao_explaining(out))
+        notes.extend(patch_d_monotonic_zhao_action(out))
+        notes.extend(patch_d_ensure_literal(out))
+        notes.extend(patch_d_strengthen_fix(out))
+        notes.extend(patch_d_dedupe_tail_fix(out))
         if dialogue_total_chars(out) < DAILY_STORY_BODY_CHARS_MIN:
             notes.extend(
                 _patch_body_char_budget(out, allow_insert_lines=True),
             )
             notes.extend(_patch_d_micro_pad(out))
+            notes.extend(patch_d_strip_pad_garbage(out))
+            notes.extend(patch_d_trim_cancan_nag_repeats(out))
+            notes.extend(patch_d_progress_cancan_alarm(out))
+            notes.extend(patch_d_monotonic_cancan_alarm(out))
+            notes.extend(patch_d_trim_zhao_tail_repeats(out))
+            notes.extend(patch_d_reduce_zhao_explaining(out))
+            notes.extend(patch_d_monotonic_zhao_action(out))
+            notes.extend(patch_d_ensure_literal(out))
+            notes.extend(patch_d_strengthen_fix(out))
+            notes.extend(patch_d_dedupe_tail_fix(out))
 
         # D：句数硬上限兜底（正文控制在 ≤16，给开场留空间）
         dialogue = out.get("dialogue")
@@ -3273,6 +3381,7 @@ def try_local_patch_daily_story_body(story: dict) -> tuple[dict, list[str]]:
             # 裁句后若字数偏短：只补字，不再插句
             if dialogue_total_chars(out) < DAILY_STORY_BODY_CHARS_MIN:
                 notes.extend(_patch_body_char_budget(out, allow_insert_lines=False))
+                notes.extend(_patch_d_micro_pad(out))
     return out, notes
 
 

@@ -623,6 +623,49 @@ def _d_theme_mess_line(story: dict) -> str:
     return "倒了……全掉地上了"
 
 
+def _d_theme_alarm_lines(story: dict) -> list[str]:
+    ctx = _d_theme_ctx(story)
+    if re.search(r"鞋带|系紧|死结", ctx):
+        return [
+            "鞋面都勒出一道白印了",
+            "脚趾都勒红一圈了",
+            "你脚背都鼓起来了",
+            "这鞋带都拧成麻花了",
+        ]
+    if re.search(r"玩具|收纳|筐|箱子", ctx):
+        return [
+            "筐沿都被顶鼓了",
+            "盖子已经扣不上了",
+            "这堆都歪得要倒了",
+            "边上的玩具都被挤变形了",
+        ]
+    if re.search(r"叠|衣服|衣", ctx):
+        return [
+            "这一摞都歪出边了",
+            "最上面那件快滑下来了",
+            "这塔已经晃得要塌了",
+            "边角全挤皱了",
+        ]
+    return [
+        "都快弄糟了",
+        "越弄越不对劲了",
+        "眼看就要坏了",
+    ]
+
+
+def _d_alarm_rank(line: str) -> int:
+    text = line or ""
+    if re.search(r"勒进肉|焊死|脚麻|全麻|解不开", text):
+        return 4
+    if re.search(r"脚伸不进|花生米|麻花|鼓起|鼓鼓的|脚背", text):
+        return 3
+    if re.search(r"勒红|胀得|红一圈", text):
+        return 2
+    if re.search(r"白印", text):
+        return 1
+    return 0
+
+
 _RE_D_PARTICLE_STACK = re.compile(
     r"(?:，你看)?(?:呀|呢|啊){2,}([。！？…]?)$",
 )
@@ -777,6 +820,271 @@ def patch_d_trim_cancan_nag_repeats(story: dict) -> list[str]:
         if new_line and new_line != line:
             item["line"] = new_line
             notes.append(f"D灿灿去复读[{i}]")
+    return notes
+
+
+def patch_d_progress_cancan_alarm(story: dict) -> list[str]:
+    """灿灿中段若只会催，改成按主题逐步报新惨状。"""
+    notes: list[str] = []
+    if not _is_d(story):
+        return notes
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 8:
+        return notes
+    alarm_lines = _d_theme_alarm_lines(story)
+    alarm_i = 0
+    for i, item in enumerate(dialogue[2:-4], start=2):
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("speaker") or "").strip() != "灿灿":
+            continue
+        line = str(item.get("line") or "").strip()
+        if not line:
+            continue
+        # 只对“纯催促/重复立规”句下手；已经在报场面就保留
+        if re.search(r"白印|勒红|鼓起|麻花|脚背|脚趾|鼓包|变形|晃|塌", line):
+            continue
+        if not re.search(r"别|快|小心|倒是|系|紧|轻", line):
+            continue
+        new_line = alarm_lines[min(alarm_i, len(alarm_lines) - 1)]
+        alarm_i += 1
+        if dialogue_char_count(new_line) > DAILY_STORY_LINE_CHARS_MAX:
+            new_line = truncate_overlong_line(new_line)
+        if new_line != line:
+            item["line"] = new_line
+            notes.append(f"D灿灿报惨状[{i}]")
+    return notes
+
+
+def patch_d_monotonic_cancan_alarm(story: dict) -> list[str]:
+    """灿灿惨状必须单向升级，后面不许回头再报更轻一层。"""
+    notes: list[str] = []
+    if not _is_d(story):
+        return notes
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 8:
+        return notes
+    alarm_lines = _d_theme_alarm_lines(story)
+    highest = 0
+    replace_i = 0
+    for i, item in enumerate(dialogue[2:-2], start=2):
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("speaker") or "").strip() != "灿灿":
+            continue
+        line = str(item.get("line") or "").strip()
+        if not line:
+            continue
+        rank = _d_alarm_rank(line)
+        if rank <= 0:
+            continue
+        if rank >= highest:
+            highest = rank
+            continue
+        # 后面回头报更轻一层：改成更重一级的场面
+        target_idx = min(max(highest, 1), len(alarm_lines)) - 1
+        target = alarm_lines[min(target_idx + replace_i, len(alarm_lines) - 1)]
+        replace_i = min(replace_i + 1, 1)
+        if target == line and target_idx + 1 < len(alarm_lines):
+            target = alarm_lines[target_idx + 1]
+        if dialogue_char_count(target) > DAILY_STORY_LINE_CHARS_MAX:
+            target = truncate_overlong_line(target)
+        if target != line:
+            item["line"] = target
+            highest = max(highest, _d_alarm_rank(target))
+            notes.append(f"D惨状单向升级[{i}]")
+    return notes
+
+
+def patch_d_reduce_zhao_explaining(story: dict) -> list[str]:
+    """昭昭中段若只解释“按你说的”，改回动作递进句。"""
+    notes: list[str] = []
+    if not _is_d(story):
+        return notes
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 8:
+        return notes
+    ctx = _d_theme_ctx(story)
+    if re.search(r"鞋带|系紧|死结", ctx):
+        action_lines = (
+            "我再绕第三圈，鞋带和鞋扣全缠死了",
+            "再拽一下，这结就焊在脚背上了",
+            "我绕了五圈，死结越收越紧了",
+        )
+    else:
+        action_lines = (
+            "我再按你说的来一下",
+            "我照你那句再往死里做一步",
+            "我这回做得更彻底了",
+        )
+    act_i = 0
+    for i, item in enumerate(dialogue[2:-4], start=2):
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("speaker") or "").strip() != "昭昭":
+            continue
+        line = str(item.get("line") or "").strip()
+        if not line:
+            continue
+        if not re.search(r"按你说|照做|没错吧|真紧|你看着", line):
+            continue
+        if _RE_D_TWIST.search(line) and not re.search(r"按你说|照做", line):
+            continue
+        new_line = action_lines[min(act_i, len(action_lines) - 1)]
+        act_i += 1
+        if dialogue_char_count(new_line) > DAILY_STORY_LINE_CHARS_MAX:
+            new_line = truncate_overlong_line(new_line)
+        if new_line != line:
+            item["line"] = new_line
+            notes.append(f"D昭昭解释→动作[{i}]")
+    return notes
+
+
+def patch_d_monotonic_zhao_action(story: dict) -> list[str]:
+    """昭昭中段执行必须越做越离谱，禁止重复同一动作模板。"""
+    notes: list[str] = []
+    if not _is_d(story):
+        return notes
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 8:
+        return notes
+    ctx = _d_theme_ctx(story)
+    if re.search(r"鞋带|系紧|死结", ctx):
+        action_lines = (
+            "我先拉到底，鞋带勒得一丝缝都不剩，鞋面都贴平了",
+            "我再绕第三圈，鞋扣都被我拽歪了，带子全绞在一块",
+            "我狠狠干一拽，这结直接焊在脚背上了，扯都扯不开",
+            "我又收一把，死结卡死连指甲都抠不动了，彻底抠不开",
+        )
+    elif re.search(r"玩具|收纳|筐|箱子", ctx):
+        action_lines = (
+            "我先往里塞满，空缝一点都不留",
+            "我再压一层，盖子都被顶起来了",
+            "我狠狠干一按，边上的玩具都挤歪了",
+            "我又往死里塞，整个筐口都撑变形了",
+        )
+    elif re.search(r"叠|衣服|衣", ctx):
+        action_lines = (
+            "我先摞整齐，一件都不露边",
+            "我再叠高一层，最上面已经开始打晃了",
+            "我狠狠干一压，这塔都被我压斜了",
+            "我又补一件，整摞直接塌下来了",
+        )
+    else:
+        action_lines = (
+            "我先按你说的做满",
+            "我再往前推一步",
+            "我狠狠干一下，已经卡死了",
+            "我又补一把，这下彻底弄坏了",
+        )
+    zhao_idx: list[int] = []
+    for i, item in enumerate(dialogue[2:-4], start=2):
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("speaker") or "").strip() != "昭昭":
+            continue
+        zhao_idx.append(i)
+    last_line = ""
+    for seq, i in enumerate(zhao_idx):
+        item = dialogue[i]
+        if not isinstance(item, dict):
+            continue
+        line = str(item.get("line") or "").strip()
+        if not line:
+            continue
+        target = action_lines[min(seq, len(action_lines) - 1)]
+        if line == last_line or (seq < len(action_lines) and line != target):
+            if dialogue_char_count(target) > DAILY_STORY_LINE_CHARS_MAX:
+                target = truncate_overlong_line(target)
+            if target != line:
+                item["line"] = target
+                line = target
+                notes.append(f"D昭昭动作单向升级[{i}]")
+        last_line = line
+    return notes
+
+
+def patch_d_strengthen_fix(story: dict) -> list[str]:
+    """把灿灿破规补救句钉成更明显的“我来解/我来剪”。"""
+    notes: list[str] = []
+    if not _is_d(story):
+        return notes
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 8:
+        return notes
+    ctx = _d_theme_ctx(story)
+    if re.search(r"鞋带|系紧|死结", ctx):
+        fix_line = "你别动，我来解开这个死结，实在不行再剪开"
+    elif re.search(r"玩具|收纳|筐|箱子", ctx):
+        fix_line = "你别塞了，我来一件件掏出来重新收"
+    elif re.search(r"叠|衣服|衣", ctx):
+        fix_line = "你别再垒了，我来一件件拆下来重新叠"
+    else:
+        fix_line = "你别动了，我来弄，我自己收拾"
+    for i, item in enumerate(dialogue[2:-1], start=2):
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("speaker") or "").strip() != "灿灿":
+            continue
+        line = str(item.get("line") or "").strip()
+        if not RE_FIX.search(line):
+            continue
+        if RE_BOOM_CLOSE.search(line):
+            continue
+        if line != fix_line and dialogue_char_count(fix_line) <= DAILY_STORY_LINE_CHARS_MAX:
+            item["line"] = fix_line
+            notes.append(f"D破规增强[{i}]")
+        break
+    return notes
+
+
+def patch_d_dedupe_tail_fix(story: dict) -> list[str]:
+    """回旋镖前禁止昭昭说灿灿的破规句；若撞车则改回后果句。"""
+    notes: list[str] = []
+    if not _is_d(story):
+        return notes
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 6:
+        return notes
+    ctx = _d_theme_ctx(story)
+    if re.search(r"鞋带|系紧|死结", ctx):
+        zhao_tail = "我又收一把，死结卡死连指甲都抠不动了"
+    elif re.search(r"玩具|收纳|筐|箱子", ctx):
+        zhao_tail = "我又往里塞了一把，这下整个筐口都撑变形了"
+    elif re.search(r"叠|衣服|衣", ctx):
+        zhao_tail = "我又往上压一件，这一摞当场就塌下来了"
+    else:
+        zhao_tail = "我又补了一下，这回彻底弄坏了"
+    pre2 = dialogue[-4]
+    pre = dialogue[-3]
+    if not isinstance(pre2, dict) or not isinstance(pre, dict):
+        return notes
+    pre2_sp = str(pre2.get("speaker") or "").strip()
+    pre_sp = str(pre.get("speaker") or "").strip()
+    pre2_ln = str(pre2.get("line") or "").strip()
+    pre_ln = str(pre.get("line") or "").strip()
+    if pre2_sp == "昭昭" and RE_FIX.search(pre2_ln):
+        pre2["line"] = zhao_tail
+        notes.append("D尾巴昭昭破规→后果")
+    elif pre2_sp == "昭昭" and pre_sp == "灿灿" and pre2_ln == pre_ln:
+        pre2["line"] = zhao_tail
+        notes.append("D尾巴同句去重")
+    # 回旋镖前昭昭后果若与更早一句重复，换成更晚一级的惨状
+    if pre2_sp == "昭昭":
+        prev_same = False
+        for item in dialogue[2:-4]:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("speaker") or "").strip() != "昭昭":
+                continue
+            if str(item.get("line") or "").strip() == str(pre2.get("line") or "").strip():
+                prev_same = True
+                break
+        if prev_same:
+            alt = _d_theme_escalation_lines(story)[-1]
+            if dialogue_char_count(alt) <= DAILY_STORY_LINE_CHARS_MAX:
+                pre2["line"] = alt
+                notes.append("D尾巴昭昭后果升级")
     return notes
 
 
@@ -1357,7 +1665,14 @@ def patch_d_body(story: dict) -> list[str]:
     notes: list[str] = []
     notes.extend(patch_d_strip_pad_garbage(story))
     notes.extend(patch_d_trim_cancan_nag_repeats(story))
+    notes.extend(patch_d_progress_cancan_alarm(story))
+    notes.extend(patch_d_monotonic_cancan_alarm(story))
     notes.extend(patch_d_trim_zhao_tail_repeats(story))
+    notes.extend(patch_d_reduce_zhao_explaining(story))
+    notes.extend(patch_d_monotonic_zhao_action(story))
+    notes.extend(patch_d_ensure_literal(story))
+    notes.extend(patch_d_strengthen_fix(story))
+    notes.extend(patch_d_dedupe_tail_fix(story))
     notes.extend(patch_d_strip_mom(story))
     notes.extend(patch_d_strip_mom_mentions(story))
     notes.extend(patch_d_align_opening_action(story))
@@ -1391,7 +1706,14 @@ def patch_d_body(story: dict) -> list[str]:
     notes.extend(patch_d_dedupe_boomerang(story))
     notes.extend(patch_d_strip_pad_garbage(story))
     notes.extend(patch_d_trim_cancan_nag_repeats(story))
+    notes.extend(patch_d_progress_cancan_alarm(story))
+    notes.extend(patch_d_monotonic_cancan_alarm(story))
     notes.extend(patch_d_trim_zhao_tail_repeats(story))
+    notes.extend(patch_d_reduce_zhao_explaining(story))
+    notes.extend(patch_d_monotonic_zhao_action(story))
+    notes.extend(patch_d_ensure_literal(story))
+    notes.extend(patch_d_strengthen_fix(story))
+    notes.extend(patch_d_dedupe_tail_fix(story))
     notes.extend(patch_d_dedupe_literal_echo(story))
     notes.extend(patch_d_dedupe_mess_echo(story))
     return notes
