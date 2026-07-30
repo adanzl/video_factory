@@ -1,7 +1,10 @@
 from __future__ import annotations
 import json
+import logging
+from contextlib import nullcontext
 from pathlib import Path
 from app.config import get_settings
+from app.repositories.database import get_app
 from app.utils.job_info import resolve_image_provider, resolve_video_provider
 from app.quality.quality_mgr import apply_quality_checks, check_segment_clips, check_segment_images
 from app.repositories import repo_job_log, repo_job, repo_segment
@@ -10,11 +13,20 @@ from worker.context import JobContext
 from worker.stages.base import StageExecutor
 from app.repositories.sql_exec import atomic
 
+logger = logging.getLogger(__name__)
+
 class SegmentStage(StageExecutor):
     name = 'segment'
 
     def run(self, ctx: JobContext) -> None:
         settings = get_settings()
+
+        def _db_context():
+            try:
+                return get_app().app_context()
+            except RuntimeError:
+                return nullcontext()
+
         with atomic():
             job = repo_job.get_job(ctx.job['id'])
             segments = repo_segment.list_segments(ctx.job['id'])
@@ -34,18 +46,22 @@ class SegmentStage(StageExecutor):
             return json.dumps(info, ensure_ascii=False)
 
         def persist_segment_image(seg_id: int, path: Path, gen_sec: float=0) -> None:
-            with atomic():
-                info_raw = repo_segment.get_segment_info(seg_id)
-                info = _merge_info(info_raw, 'image_gen_sec', gen_sec)
-                repo_segment.update_segment(seg_id, image_path=str(path), status='done', info=info)
-                repo_segment.increase_version(seg_id)
+            with _db_context():
+                with atomic():
+                    info_raw = repo_segment.get_segment_info(seg_id)
+                    info = _merge_info(info_raw, 'image_gen_sec', gen_sec)
+                    repo_segment.update_segment(seg_id, image_path=str(path), status='done', info=info)
+                    repo_segment.increase_version(seg_id)
+            logger.info('segment image persisted: seg_id=%s path=%s gen_sec=%.1f', seg_id, path.name, gen_sec)
 
         def persist_segment_clip(seg_id: int, path: Path, gen_sec: float=0) -> None:
-            with atomic():
-                info_raw = repo_segment.get_segment_info(seg_id)
-                info = _merge_info(info_raw, 'clip_gen_sec', gen_sec)
-                repo_segment.update_segment(seg_id, clip_path=str(path), info=info)
-                repo_segment.increase_version(seg_id)
+            with _db_context():
+                with atomic():
+                    info_raw = repo_segment.get_segment_info(seg_id)
+                    info = _merge_info(info_raw, 'clip_gen_sec', gen_sec)
+                    repo_segment.update_segment(seg_id, clip_path=str(path), info=info)
+                    repo_segment.increase_version(seg_id)
+            logger.info('segment clip persisted: seg_id=%s path=%s gen_sec=%.1f', seg_id, path.name, gen_sec)
         on_image_done = persist_segment_image if produce_scope in {'all', 'images'} else None
         on_clip_done = persist_segment_clip if produce_scope in {'all', 'clips'} else None
         result = segment_mgr.produce_segments(segments=segments, media_dir=ctx.media_dir, audio_path=audio_path, only_segment_indices=ctx.segment_indices_set(), scope=produce_scope, job=job, on_image_done=on_image_done, on_clip_done=on_clip_done)
