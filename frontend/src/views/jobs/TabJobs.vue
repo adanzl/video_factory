@@ -56,10 +56,19 @@
         </template>
       </el-table-column>
       <el-table-column prop="error_message" label="错误信息" width="100" show-overflow-tooltip />
-      <el-table-column label="操作" width="120">
+      <el-table-column label="操作" width="180">
         <template #default="{ row }">
           <el-button type="primary" link size="small" @click="handleViewDetail(row.id)">
             详情
+          </el-button>
+          <el-button
+            :type="row.publish ? 'success' : 'info'"
+            link
+            size="small"
+            :loading="publishingId === row.id"
+            @click="handleTogglePublish(row)"
+          >
+            {{ row.publish ? "已发布" : "未发布" }}
           </el-button>
           <el-button
             type="danger"
@@ -113,7 +122,7 @@
 import { onMounted, ref } from "vue";
 import { Refresh } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { createJob, deleteJob, listJobs } from "@/api/api-jobs";
+import { createJob, deleteJob, listJobs, updateJob } from "@/api/api-jobs";
 import { pipelineLabel } from "@/constants/jobStages";
 import { PIPELINE_CHAT, PIPELINE_MATERIAL, PIPELINE_STANDARD } from "@/constants/jobStages";
 import type { CreateJobRunMode, JobListItem } from "@/types/jobs";
@@ -135,6 +144,7 @@ const page = ref(1);
 const pageSize = ref(parseInt(localStorage.getItem("jobsPageSize") || "15", 10));
 const total = ref(0);
 const deletingId = ref<number>();
+const publishingId = ref<number>();
 const showCreateJobDialog = ref(false);
 const createJobTitle = ref("");
 const createJobSkipPublish = ref(true);
@@ -253,6 +263,20 @@ const handleCreateJob = async () => {
     handleError(error, "创建任务失败");
   } finally {
     creatingJob.value = false;
+  }
+};
+
+const handleTogglePublish = async (row: JobListItem) => {
+  const next = !row.publish;
+  publishingId.value = row.id;
+  try {
+    await updateJob(row.id, { publish: next });
+    row.publish = next;
+    ElMessage.success(next ? "已标记为已发布" : "已标记为未发布");
+  } catch (error) {
+    handleError(error, "更新发布状态失败");
+  } finally {
+    publishingId.value = undefined;
   }
 };
 

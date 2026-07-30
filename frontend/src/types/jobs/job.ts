@@ -59,6 +59,7 @@ export interface JobListItem {
   final_path?: FinalAsset | null;
   updated_at?: string | null;
   error_message?: string | null;
+  publish?: boolean;
 }
 
 export interface JobDetail extends JobListItem {

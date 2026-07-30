@@ -14,7 +14,7 @@ from app.utils.async_util import run_in_background
 from app.utils.job_info import default_orientation_for_pipeline, merge_job_info, merge_job_script_params, orientation_for_resolve, resolve_image_provider, resolve_include_sd15_prompt
 from app.repositories.sql_exec import atomic
 logger = logging.getLogger(__name__)
-_API_UPDATABLE = frozenset({'title', 'skip_publish', 'status', 'stage'})
+_API_UPDATABLE = frozenset({'title', 'skip_publish', 'publish', 'status', 'stage'})
 _VALID_STATUSES = frozenset({'pending', 'running', 'done', 'failed'})
 
 def _script_action_detail(*, job: dict, to_end: bool, title: str | None, segment_target_sec: float | None, max_title_length: int | None, estimated_duration_min: float | None, narration_target_words: int | None, speech_chars_per_sec: float | None, skip_title_optimize: bool, generate_image_prompts: bool, supplementary_info: str | None, video_timeline: str | None, orientation: str | None, content_style: str | None) -> str:
@@ -274,6 +274,8 @@ class JobMgr:
             updates['title'] = title.strip()
         if 'skip_publish' in updates and (not isinstance(updates['skip_publish'], bool)):
             raise ValueError('skip_publish must be boolean')
+        if 'publish' in updates and (not isinstance(updates['publish'], bool)):
+            raise ValueError('publish must be boolean')
         if 'status' in updates and updates['status'] not in _VALID_STATUSES:
             raise ValueError(f"status must be one of: {', '.join(sorted(_VALID_STATUSES))}")
         with atomic():
