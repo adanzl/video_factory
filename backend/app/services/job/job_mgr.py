@@ -352,9 +352,26 @@ class JobMgr:
             repo_job_log.append_log(job_id, stage, '任务已中止', level='warning')
             return repo_job.update_job(job_id, status='pending', fail_stage=None, error_message=None)
 
-    def delete_job(self, job_id: int) -> None:
-        with atomic():
-            repo_job.delete_job(job_id)
+    def delete_job(self, job_id: int, *, delete_files: bool = False) -> None:
+        if not delete_files:
+            with atomic():
+                repo_job.delete_job(job_id)
+            return
+        lock = self._job_lock(job_id)
+        if not lock.acquire(blocking=False):
+            raise JobBusyError(f'job {job_id} is running')
+        try:
+            job = self.get_job(job_id)
+            if job['status'] == 'running':
+                raise JobBusyError(f'job {job_id} is running')
+            from app.config import get_settings
+            media_dir: Path = get_settings().video_data_dir / str(job_id)
+            with atomic():
+                repo_job.delete_job(job_id)
+            if media_dir.exists():
+                shutil.rmtree(media_dir)
+        finally:
+            lock.release()
 
     def clean_job_files(self, job_id: int) -> dict:
         """删除任务本地媒体文件，保留数据库记录。"""

@@ -523,8 +523,12 @@ def abort_job_route():
 def delete_job_route():
     data = get_json_body()
     job_id = parse_id(data)
-    job_mgr.delete_job(job_id)
-    return json_ok({"id": job_id, "deleted": True})
+    delete_files = parse_bool(data, "delete_files", default=False)
+    try:
+        job_mgr.delete_job(job_id, delete_files=delete_files)
+    except JobBusyError as exc:
+        raise APIError(str(exc), status_code=409, code="job_busy") from exc
+    return json_ok({"id": job_id, "deleted": True, "delete_files": delete_files})
 
 
 @bp.post("/clean")
