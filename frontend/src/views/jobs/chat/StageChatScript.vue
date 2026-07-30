@@ -87,16 +87,31 @@
     <template v-if="dailyStory">
       <div class="flex gap-4">
         <!-- 左侧：信息 -->
-        <div class="w-lg shrink-0 overflow-y-auto pr-2">
-          <el-descriptions :column="1" border label-width="80px">
+        <div class="w-lg min-w-0 shrink-0 overflow-x-hidden overflow-y-auto pr-2">
+          <el-descriptions
+            :column="1"
+            border
+            :label-width="DESC_LABEL_WIDTH"
+            class="daily-story-desc w-full max-w-full"
+            :style="{ '--desc-label-width': DESC_LABEL_WIDTH }"
+          >
             <el-descriptions-item label="主题">{{ dailyStory.theme }}</el-descriptions-item>
-            <el-descriptions-item label="矛盾类型">
+            <el-descriptions-item label="矛盾">
               {{ formatDailyStoryType(dailyStory.story_type) }}
             </el-descriptions-item>
             <el-descriptions-item label="场景标题">
               <span class="font-bold">{{ dailyStory.story.scene_title }}</span>
             </el-descriptions-item>
-            <el-descriptions-item label="设定">{{ dailyStory.story.setting }}</el-descriptions-item>
+            <el-descriptions-item label="设定">
+              <el-tooltip placement="top" :show-after="300" :disabled="!dailyStory.story.setting">
+                <template #content>
+                  <div class="max-w-sm whitespace-pre-wrap wrap-break-word text-sm">
+                    {{ dailyStory.story.setting }}
+                  </div>
+                </template>
+                <div class="w-full min-w-0 truncate cursor-default">{{ dailyStory.story.setting }}</div>
+              </el-tooltip>
+            </el-descriptions-item>
             <el-descriptions-item label="单冲突">
               {{ dailyStory.story.conflict_core || "-" }}
             </el-descriptions-item>
@@ -119,12 +134,12 @@
         </div>
 
         <!-- 右侧：对话 -->
-        <div class="flex flex-1 flex-col pl-2" style="border-left: 1px solid #e5e7eb;">
+        <div class="flex flex-1 flex-col p-2" style="border: 1px solid #e5e7eb;">
           <div class="mb-2 shrink-0 text-xs text-gray-400">
             对话
             <span class="ml-3">{{ dailyStory.story.dialogue.length }} 轮</span>
           </div>
-          <div class="flex-1 space-y-3 overflow-y-auto max-h-100">
+          <div class="flex-1 space-y-3 overflow-y-auto max-h-120">
             <div
               v-for="(line, idx) in dailyStory.story.dialogue"
               :key="idx"
@@ -336,6 +351,8 @@ import { DEFAULT_CHAT_SPEECH_CHARS_PER_SEC } from "@/utils/media";
 import { useErrorHandler } from "@/composables/useErrorHandler";
 import StageActionBar from "../detail/StageActionBar.vue";
 import StageLogsSection from "../detail/StageLogsSection.vue";
+
+const DESC_LABEL_WIDTH = "80px";
 
 function speakerStyle(speaker: string): { bg: string; text: string; full: string } {
   if (speaker === '昭昭') return { bg: 'bg-blue-50', text: 'text-blue-600', full: 'bg-blue-50 text-blue-800' }
@@ -684,3 +701,23 @@ async function handleRun(toEnd: boolean) {
   }
 }
 </script>
+
+<style scoped>
+.daily-story-desc :deep(.el-descriptions__table) {
+  table-layout: fixed;
+  width: 100%;
+}
+
+.daily-story-desc :deep(.el-descriptions__label) {
+  width: var(--desc-label-width) !important;
+  min-width: var(--desc-label-width) !important;
+  max-width: var(--desc-label-width) !important;
+  overflow: hidden;
+}
+
+.daily-story-desc :deep(.el-descriptions__content) {
+  min-width: 0;
+  overflow: hidden;
+  word-break: break-word;
+}
+</style>

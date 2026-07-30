@@ -177,8 +177,20 @@ def patch_d_fix_closing_roles(story: dict) -> list[str]:
             s1 = str(pre.get("speaker") or "").strip()
             # -3 与即将焊死的回旋镖都是昭昭 → -3 改灿灿破规
             if s1 == "昭昭":
-                # 若 -4 是灿灿且像后果，对调角色保留歪读在昭昭
+                # 若 -4 是灿灿且像后果，尽量把后果还给昭昭，但勿制造 -5/-4 连说
                 if s2 == "灿灿" and RE_MESS.search(str(pre2.get("line") or "")):
+                    pre3_sp = ""
+                    if len(dialogue) >= 5 and isinstance(dialogue[-5], dict):
+                        pre3_sp = str(dialogue[-5].get("speaker") or "").strip()
+                    if pre3_sp == "昭昭":
+                        dialogue[-5]["speaker"] = "灿灿"
+                        p3ln = str(dialogue[-5].get("line") or "")
+                        if re.search(
+                            r"按你说的|照做|我数着|一步都不含糊",
+                            p3ln,
+                        ):
+                            dialogue[-5]["line"] = "你小心点，别乱动"
+                        notes.append("D破规前连说→灿灿催")
                     pre2["speaker"] = "昭昭"
                     notes.append("D后果speaker→昭昭")
                     s2 = "昭昭"
@@ -188,10 +200,17 @@ def patch_d_fix_closing_roles(story: dict) -> list[str]:
                         pre["line"] = "我来扶，你别乱动"
                     notes.append("D回旋镖前→灿灿破规")
             elif s1 == s2 == "灿灿":
-                pre["speaker"] = "昭昭"
-                if not RE_LITERAL.search(str(pre.get("line") or "")):
-                    pre["line"] = "那我按你说的，照做就是了"
-                notes.append("D回旋镖前→昭昭照做")
+                # 优先：-4 后果给昭昭，-3 留灿灿破规；勿把破规改成昭昭照做
+                if RE_MESS.search(str(pre2.get("line") or "")):
+                    pre2["speaker"] = "昭昭"
+                    if not RE_FIX.search(str(pre.get("line") or "")):
+                        pre["line"] = "我来扶，你别乱动"
+                    notes.append("D后果→昭昭，破规留灿灿")
+                else:
+                    pre["speaker"] = "昭昭"
+                    if not RE_LITERAL.search(str(pre.get("line") or "")):
+                        pre["line"] = "那我按你说的，照做就是了"
+                    notes.append("D回旋镖前→昭昭照做")
 
     prev = dialogue[-2]
     last = dialogue[-1]
@@ -234,6 +253,39 @@ def patch_d_fix_closing_roles(story: dict) -> list[str]:
     ):
         last["line"] = "哼，算了，我自己来"
         notes.append("D末句改嘴硬")
+
+    # 末四拍与中段交界处连说：只改 -5，勿动末四角色
+    if len(dialogue) >= 5 and isinstance(dialogue[-5], dict):
+        border = dialogue[-5]
+        first_of_tail = dialogue[-4]
+        if isinstance(first_of_tail, dict):
+            bs = str(border.get("speaker") or "").strip()
+            ts = str(first_of_tail.get("speaker") or "").strip()
+            if bs == ts == "昭昭":
+                # 合并 -5 进 -4，避免中段末昭昭连说（也不再造灿灿连说）
+                extra = str(border.get("line") or "").strip()
+                base = str(first_of_tail.get("line") or "").strip()
+                merged = base
+                if extra and extra not in base:
+                    room = DAILY_STORY_LINE_CHARS_MAX - dialogue_char_count(
+                        base,
+                    )
+                    if room >= 4:
+                        add = extra[:room]
+                        merged = f"{base.rstrip('。！？')}，{add}".rstrip("，")
+                        if not merged.endswith(("。", "！", "？")):
+                            merged += "。"
+                        if dialogue_char_count(merged) > DAILY_STORY_LINE_CHARS_MAX:
+                            merged = truncate_overlong_line(merged)
+                first_of_tail["line"] = merged
+                dialogue.pop(-5)
+                notes.append("D合并中段末昭昭连说")
+            elif bs == ts == "灿灿":
+                border["speaker"] = "昭昭"
+                bln = str(border.get("line") or "")
+                if re.search(r"我来扶|小心点|快点", bln):
+                    border["line"] = "那我按你说的，照做就是了"
+                notes.append("D中段末连说→昭昭照做")
     return notes
 
 

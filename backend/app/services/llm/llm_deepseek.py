@@ -861,6 +861,7 @@ class DeepSeekClient(LLMClient):
             assemble_daily_image_prompts(
                 segments,
                 segment_indices=all_indices,
+                setting=str(script.get("setting") or "").strip() or None,
             )
         batch_size = settings.llm_image_prompt_batch_size
         started = time.perf_counter()

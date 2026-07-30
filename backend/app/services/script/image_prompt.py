@@ -36,6 +36,7 @@ _DAILY_CHAR_MOM = (
     "妈妈：成年女性，黑色长发，米色上衣，蓝色牛仔裤，深色平底鞋。"
 )
 _DAILY_CHAR_HEIGHT = "昭昭比灿灿矮约半个头。"
+_DAILY_CHAR_HEIGHT_3 = "妈妈最高，灿灿次之，昭昭最矮（约差半个头）。"
 
 _DAILY_CHAR_MAP: dict[str, str] = {
     "昭昭": _DAILY_CHAR_ZHAO,
@@ -45,7 +46,7 @@ _DAILY_CHAR_MAP: dict[str, str] = {
 
 
 def _daily_speakers_of(seg: dict) -> list[str]:
-    """本段出场角色：发言 ∪ 台词写明在场（优先 speakers 字段）。"""
+    """本段出场角色：发言 ∪ 台词写明在场 ∪ 粘性 speakers（优先 speakers 字段）。"""
     from app.services.daily_story.speaker import allowed_cast_from_segment
 
     names = allowed_cast_from_segment(seg)
@@ -55,16 +56,37 @@ def _daily_speakers_of(seg: dict) -> list[str]:
 _DAILY_LR_RE = re.compile(
     r"画面左边是\s*(昭昭|灿灿|妈妈)\s*[，,；;]?\s*右边是\s*(昭昭|灿灿|妈妈)"
 )
+_DAILY_LCR_RE = re.compile(
+    r"(?:画面)?从左到右是\s*(昭昭|灿灿|妈妈)\s*[、,，]\s*"
+    r"(昭昭|灿灿|妈妈)\s*[、,，]\s*(昭昭|灿灿|妈妈)"
+    r"|左边是\s*(昭昭|灿灿|妈妈)\s*[，,；;]?\s*"
+    r"中间是\s*(昭昭|灿灿|妈妈)\s*[，,；;]?\s*"
+    r"右边是\s*(昭昭|灿灿|妈妈)"
+)
 
 
 def _daily_layout_speakers(seg: dict, vb: str) -> list[str]:
-    """左右站位：优先 visual_brief 明示；否则昭昭+灿灿默认左昭右灿。"""
+    """站位：优先 visual_brief 明示；三人默认左昭中妈右灿；两人左昭右灿。"""
+    m3 = _DAILY_LCR_RE.search(vb or "")
+    if m3:
+        names = [g for g in m3.groups() if g]
+        if len(names) == 3 and len(set(names)) == 3:
+            if all(n in _DAILY_CHAR_MAP for n in names):
+                return names
     m = _DAILY_LR_RE.search(vb or "")
     if m:
         left, right = m.group(1), m.group(2)
         if left in _DAILY_CHAR_MAP and right in _DAILY_CHAR_MAP and left != right:
+            speakers = _daily_speakers_of(seg)
+            if len(speakers) >= 3 and "妈妈" in speakers:
+                # 两人句但三人同框：补默认中间位妈妈
+                mid = "妈妈"
+                if mid not in (left, right):
+                    return [left, mid, right]
             return [left, right]
     speakers = _daily_speakers_of(seg)
+    if set(speakers) >= {"昭昭", "灿灿", "妈妈"}:
+        return ["昭昭", "妈妈", "灿灿"]
     if "昭昭" in speakers and "灿灿" in speakers:
         rest = [s for s in speakers if s not in ("昭昭", "灿灿")]
         return ["昭昭", "灿灿", *rest]
@@ -107,6 +129,22 @@ def _daily_composition(
         "妈妈": "米色上衣牛仔裤黑长发妈妈",
     }
     has_lr = bool(_DAILY_LR_RE.search(vb or ""))
+    has_lcr = bool(_DAILY_LCR_RE.search(vb or ""))
+    if len(names) >= 3:
+        a, b, c = names[0], names[1], names[2]
+        lr = "" if has_lcr else f"画面从左到右是{a}、{b}、{c}。"
+        if shot_type == "特写":
+            return (
+                f"{lr}"
+                f"中近景三人特写，严格左{look.get(a, a)}、"
+                f"中{look.get(b, b)}、右{look.get(c, c)}，禁止左右对调。"
+            )
+        return (
+            f"{lr}"
+            f"中景三人同框，严格左{look.get(a, a)}、"
+            f"中{look.get(b, b)}、右{look.get(c, c)}，"
+            f"禁止漏人、禁止左右对调，全身可见。"
+        )
     if shot_type == "特写":
         if len(names) == 2:
             a, b = names[0], names[1]
@@ -168,7 +206,9 @@ def assemble_daily_t2i_prompt(
     for name in speakers:
         if name in _DAILY_CHAR_MAP:
             char_parts.append(_DAILY_CHAR_MAP[name])
-    if "昭昭" in speakers and "灿灿" in speakers:
+    if set(speakers) >= {"昭昭", "灿灿", "妈妈"}:
+        char_parts.append(_DAILY_CHAR_HEIGHT_3)
+    elif "昭昭" in speakers and "灿灿" in speakers:
         char_parts.append(_DAILY_CHAR_HEIGHT)
     if char_parts:
         parts.append("".join(char_parts))
@@ -191,8 +231,12 @@ def assemble_daily_image_prompts(
     *,
     segment_indices: list[int] | None = None,
     extra: str | None = None,
+    setting: str | None = None,
 ) -> list[dict]:
     """原地为 daily 分镜写入规则拼装的 image_prompt。"""
+    from app.services.daily_story.speaker import annotate_sticky_stage_speakers
+
+    annotate_sticky_stage_speakers(segments, setting=setting)
     wanted = (
         {int(i) for i in segment_indices} if segment_indices is not None else None
     )

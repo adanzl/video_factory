@@ -35,7 +35,7 @@ def _verify_prompt_regen_feedback(speakers: list[str]) -> str:
 
 def _verify_visual_brief_regen_feedback(speakers: list[str]) -> str:
     cast = '、'.join(speakers) if speakers else '本段可入画角色'
-    return f'出图质检连续未通过，请改写本段 visual_brief：换姿势与构图、冲突道具更大更醒目；站位与台词事实保持一致；禁止写发型/服装/鞋帽；画面人物只能是：{cast}；禁止新增台词未写明在场的角色。'
+    return f'出图质检连续未通过，请改写本段 visual_brief：换姿势与构图、冲突道具更大更醒目；站位与台词事实保持一致；禁止写发型/服装/鞋帽；画面人物必须含：{cast}（同场粘性角色不可漏画）；禁止新增未授权角色。'
 
 def _speakers_for_regen(seg: dict) -> list[str]:
     from app.services.script.image_prompt import _daily_speakers_of

@@ -448,6 +448,8 @@ def test_build_visual_brief_prompts_daily_story_role_and_cast():
     assert "小朋友讲科普" not in prompts["system"]
     assert "可入画" in prompts["system"]
     assert "台词写明" in prompts["system"] or "当场在场" in prompts["system"]
+    assert "粘性" in prompts["system"] or "speakers" in prompts["system"]
+    assert "三人同框" in prompts["system"] or "从左到右" in prompts["system"]
     assert "dialogue=" in prompts["user"]
     assert "100-200" in prompts["system"]
     assert "直接拼入文生图" in prompts["system"]
