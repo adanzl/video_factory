@@ -25,6 +25,7 @@ def _row_to_dict(row: dict) -> dict:
     if data.get("stage"):
         data["stage"] = normalize_stage(data["stage"])
     data["skip_publish"] = bool(data.get("skip_publish"))
+    data["publish"] = bool(data.get("publish"))
     return data
 
 
@@ -32,6 +33,7 @@ def _normalize_list_row(row: dict) -> dict:
     data = dict(row)
     if data.get("final_path"):
         data["final_path"] = parse_final_asset(data["final_path"])
+    data["publish"] = bool(data.get("publish"))
     return data
 
 
@@ -97,7 +99,7 @@ def list_jobs(
 
     rows = sql.fetchall(
         f"""
-        SELECT id, title, stage, status, pipeline, final_path, updated_at, error_message
+        SELECT id, title, stage, status, pipeline, final_path, updated_at, error_message, publish
         FROM video_job
         {where_clause}
         ORDER BY id DESC
@@ -157,6 +159,7 @@ def update_job(
         "fail_stage",
         "version",
         "skip_publish",
+        "publish",
         "pipeline",
         "material_id",
         "script_json",
@@ -184,7 +187,7 @@ def update_job(
             value = json.dumps(value, ensure_ascii=False)
         if key == "final_path" and isinstance(value, dict):
             value = json.dumps(value, ensure_ascii=False)
-        if key == "skip_publish":
+        if key in {"skip_publish", "publish"}:
             value = int(bool(value))
         parts.append(f"{key} = ?")
         values.append(value)

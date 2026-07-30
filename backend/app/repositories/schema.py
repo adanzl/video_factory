@@ -112,6 +112,7 @@ def apply_schema(conn: sqlite3.Connection) -> None:
             fail_stage TEXT,
             version INTEGER NOT NULL DEFAULT 0,
             skip_publish INTEGER NOT NULL DEFAULT 1,
+            publish INTEGER NOT NULL DEFAULT 0,
             script_json TEXT,
             quality_report TEXT,
             final_path TEXT,
@@ -184,6 +185,7 @@ def apply_schema(conn: sqlite3.Connection) -> None:
     _ensure_column(conn, "video_job", "audio_version", "INTEGER NOT NULL DEFAULT 0")
     _rename_column_if_exists(conn, "video_job", "retry_count", "version")
     _ensure_column(conn, "video_job", "version", "INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(conn, "video_job", "publish", "INTEGER NOT NULL DEFAULT 0")
 
 
 def _rename_column_if_exists(
