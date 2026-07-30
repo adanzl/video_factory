@@ -162,7 +162,7 @@
                 <template #content>
                   <div class="max-w-sm whitespace-pre-wrap wrap-break-word text-xs">{{ item.text }}</div>
                 </template>
-                <div class="line-clamp-2 min-h-[2lh] flex-1 cursor-default text-xs leading-relaxed wrap-break-word text-gray-600">
+                <div class="line-clamp-2 min-h-[2lh] flex-1 cursor-default whitespace-pre-line text-xs leading-relaxed wrap-break-word text-gray-600">
                   {{ item.text }}
                 </div>
               </el-tooltip>
@@ -368,7 +368,21 @@ const scriptTextByIndex = computed<Record<number, string>>(() => {
   const script = (props.job.script_json as ScriptJson | null | undefined) || {};
   const map: Record<number, string> = {};
   for (const seg of script.segments || []) {
-    if (seg.segment_index != null && seg.text) {
+    if (seg.segment_index == null) continue;
+    const dialogue = (seg as { dialogue?: Array<{ speaker?: string; text?: string; line?: string }> }).dialogue;
+    if (Array.isArray(dialogue) && dialogue.length) {
+      map[seg.segment_index] = dialogue
+        .map(dl => {
+          const speaker = String(dl.speaker || "").trim();
+          const text = String(dl.text || dl.line || "").trim();
+          if (!text) return "";
+          return speaker ? `${speaker}：${text}` : text;
+        })
+        .filter(Boolean)
+        .join("\n");
+      continue;
+    }
+    if (seg.text) {
       map[seg.segment_index] = seg.text;
     }
   }

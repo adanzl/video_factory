@@ -59,12 +59,16 @@ _DAILY_VISUAL_BRIEF_CONTENT_RULE = (
     "【人物关系】须对标本段 dialogue 谁在质问/谁在辩解："
     "质问方动作更进攻（指/瞪/叉腰），辩解方更防御（摊手/耸肩/撇嘴）；"
     "禁止双方动作表情对调或都站桩。"
-    "【站位】两人及以上同框时必须写清「画面左边是A，右边是B」，"
+    "【站位】两人同框时必须写清「画面左边是A，右边是B」，"
     "再按左→右分别写各自动作表情；禁止只写动作不写左右"
     "（否则出图常把指责方画到左边另一个人身上）。"
+    "三人同框时必须写清「画面从左到右是A、B、C」"
+    "（默认左昭昭、中妈妈、右灿灿，全片尽量保持），"
+    "并写清每人动作；未发言者写在场旁听姿态，禁止漏画。"
     "【默认站位】昭昭与灿灿同框时默认「画面左边是昭昭，右边是灿灿」，"
     "全片尽量保持，禁止因质问/辩解角色对调而左右对调；"
-    "仅妈妈入画或单人镜可例外。"
+    "三人时默认「从左到右是昭昭、妈妈、灿灿」。"
+    "仅单人镜可例外。"
     "【单帧定格】每角色仅写一组动作表情（一个姿势）；"
     "本镜有多句对白时，只取冲突最强的一瞬，禁止同一角色写两段动作"
     "（如先写昭昭比划再吃冰棍、又写昭昭双手叉腰）。"
@@ -112,13 +116,15 @@ _EMOTION_RULE_NARRATION = (
 )
 
 _DAILY_SPEAKER_RULE = (
-    "【角色入画】可入画 = 本段 dialogue 发言角色"
-    " ∪ 台词写明当场在场/动作的角色（可不发言）。"
-    "发言角色必须入画；未发言但台词写清其可见动作/状态的也必须入画"
-    "（例：「妈妈还躺着刷手机」→ 须画妈妈躺刷手机，禁止改成茶几空放手机）。"
+    "【角色入画】可入画 = 本段须入画角色（若输入含 speakers 字段则以其为准）"
+    " = 本段 dialogue 发言 ∪ 台词写明当场在场 ∪ 同场粘性角色"
+    "（setting 已点名，或前面分镜已出场的角色，后续镜继续保留）。"
+    "speakers 列出的角色必须全部入画；未发言者写旁听/在场姿态"
+    "（坐着吃饭、看向说话人、夹菜等），禁止消失。"
     "禁止无故旁观/路过/另一房间凑人数。"
-    "仅转述或询问去向不算在场（如「妈妈说过…」「妈妈呢？」），不可因此入画。"
-    "若该段无人发言且台词也未写明任何人在场，禁止出现昭昭/灿灿/妈妈等人像，只写场景。"
+    "仅转述或询问去向不算新授予入画（如「妈妈说过…」「妈妈呢？」）；"
+    "但若 speakers 已含该角色（同场粘性），仍须保留入画。"
+    "若该段无人发言且 speakers 为空，禁止出现昭昭/灿灿/妈妈等人像，只写场景。"
 )
 
 _DAILY_SETTING_RULE = (
@@ -222,7 +228,7 @@ def _cast_and_emotion_rules(
 
     角色入画规则仅在日常，或 segments 已带 dialogue 时注入；
     纯口播生活片不再无 dialogue 却禁画妈妈。
-    日常可入画 = 发言角色 ∪ 台词写明当场在场的角色。
+    日常可入画 = 发言 ∪ 台词在场 ∪ 同场粘性（setting/前镜已出场）。
     """
     if profile_style == CONTENT_STYLE_DAILY_STORY:
         return _DAILY_SPEAKER_RULE, _EMOTION_RULE_DIALOGUE, True
@@ -249,6 +255,11 @@ def _format_one_visual_brief_segment(
     shot = str(seg.get("shot_type") or "").strip()
     if shot:
         line += f"; shot_type={shot!r}"
+    speakers = seg.get("speakers")
+    if isinstance(speakers, list) and speakers:
+        names = [str(s).strip() for s in speakers if str(s).strip()]
+        if names:
+            line += f"; speakers={('、'.join(names))!r}"
     if include_dialogue:
         dialogue = seg.get("dialogue") or []
         dl_parts = [
@@ -327,6 +338,13 @@ def build_visual_brief_prompts(
         content_style=content_style,
     )
     segments = script.get("segments") or []
+    if profile_style == CONTENT_STYLE_DAILY_STORY:
+        from app.services.daily_story.speaker import annotate_sticky_stage_speakers
+
+        annotate_sticky_stage_speakers(
+            segments,
+            setting=str(script.get("setting") or "").strip(),
+        )
     narration = str(script.get("narration") or "").strip()
     visual_style = str(script.get("visual_style") or "").strip()
     title = str(script.get("title") or "").strip()

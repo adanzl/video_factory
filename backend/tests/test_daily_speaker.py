@@ -40,6 +40,57 @@ def test_present_cast_addressing_mom():
     assert "妈妈" in allowed_cast_from_dialogue(dialogue)
 
 
+def test_sticky_stage_keeps_mom_after_she_appears():
+    from app.services.daily_story.speaker import annotate_sticky_stage_speakers
+
+    segments = [
+        {
+            "segment_index": 1,
+            "dialogue": [
+                {"speaker": "妈妈", "text": "青菜不能挑食"},
+                {"speaker": "昭昭", "text": "那你碗边呢"},
+            ],
+        },
+        {
+            "segment_index": 2,
+            "dialogue": [
+                {"speaker": "灿灿", "text": "那是放凉"},
+                {"speaker": "昭昭", "text": "堆那么高？"},
+            ],
+        },
+    ]
+    annotate_sticky_stage_speakers(
+        segments,
+        setting="客厅餐桌前，妈妈正夹青菜给昭昭，自己碗边堆了一小堆菜叶。",
+    )
+    assert segments[0]["speakers"] == ["昭昭", "灿灿", "妈妈"]
+    assert segments[1]["speakers"] == ["昭昭", "灿灿", "妈妈"]
+
+
+def test_sticky_stage_mom_not_forced_before_entrance():
+    from app.services.daily_story.speaker import annotate_sticky_stage_speakers
+
+    segments = [
+        {
+            "segment_index": 1,
+            "dialogue": [
+                {"speaker": "昭昭", "text": "这橡皮我的"},
+                {"speaker": "灿灿", "text": "我先拿到的"},
+            ],
+        },
+        {
+            "segment_index": 2,
+            "dialogue": [{"speaker": "妈妈", "text": "你俩过来"}],
+        },
+    ]
+    annotate_sticky_stage_speakers(
+        segments,
+        setting="客厅，昭昭和灿灿同时抓住一块新橡皮。",
+    )
+    assert segments[0]["speakers"] == ["昭昭", "灿灿"]
+    assert segments[1]["speakers"] == ["昭昭", "灿灿", "妈妈"]
+
+
 def test_hearsay_and_where_do_not_allow_mom():
     assert "妈妈" not in allowed_cast_from_dialogue(
         [{"speaker": "昭昭", "text": "妈妈说过别乱跑。"}]
@@ -265,3 +316,26 @@ def test_assemble_injects_mom_look_when_present():
     )
     assert "妈妈" in prompt
     assert "米色上衣" in prompt
+
+
+def test_assemble_three_person_layout_from_speakers():
+    from app.services.script.image_prompt import assemble_daily_t2i_prompt
+
+    prompt = assemble_daily_t2i_prompt(
+        {
+            "visual_brief": (
+                "客厅餐桌前，画面从左到右是昭昭、妈妈、灿灿。"
+                "昭昭叉腰质问，妈妈低头夹菜，灿灿摊手帮腔。"
+            ),
+            "shot_type": "中景",
+            "speakers": ["昭昭", "灿灿", "妈妈"],
+            "dialogue": [
+                {"speaker": "灿灿", "text": "那是放凉"},
+                {"speaker": "昭昭", "text": "堆那么高？"},
+            ],
+        }
+    )
+    assert "从左到右是昭昭、妈妈、灿灿" in prompt
+    assert "三人同框" in prompt
+    assert "米色上衣" in prompt
+    assert "妈妈最高" in prompt

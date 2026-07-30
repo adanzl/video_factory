@@ -47,12 +47,14 @@ __all__ = [
     "DAILY_STORY_SPEAKER_NAMES",
     "allowed_cast_from_dialogue",
     "allowed_cast_from_segment",
+    "annotate_sticky_stage_speakers",
     "collect_speaker_leak_issues",
     "collect_speaker_leak_segments",
     "leaked_speaker_names_in_text",
     "present_cast_from_dialogue",
     "scrub_leaked_speaker_names",
     "speakers_from_dialogue",
+    "stage_cast_from_setting",
 ]
 
 
@@ -102,6 +104,40 @@ def present_cast_from_dialogue(dialogue: list | None) -> set[str]:
 def allowed_cast_from_dialogue(dialogue: list | None) -> set[str]:
     """本段可入画角色 = 发言角色 ∪ 台词写明在场角色。"""
     return speakers_from_dialogue(dialogue) | present_cast_from_dialogue(dialogue)
+
+
+def stage_cast_from_setting(setting: str | None) -> set[str]:
+    """setting 点名的角色视为开场已在场（同场戏粘性起点）。"""
+    text = str(setting or "")
+    return {name for name in DAILY_STORY_SPEAKER_NAMES if name in text}
+
+
+def annotate_sticky_stage_speakers(
+    segments: list | None,
+    *,
+    setting: str | None = None,
+) -> None:
+    """同场粘性入画：setting 已点名 + 前面镜已出场的角色，后续镜继续保留。
+
+    写入每段 ``speakers``（有序）。例：餐桌戏妈妈先出场后，
+    姐弟互怼镜仍须三人同框，不能把妈妈 scrub 掉。
+
+    若 setting 已同时点到妈妈与另一角色（同场开局），则把本片
+    所有会发言的角色一并视为开场同场（如灿灿稍后才开口）。
+    """
+    segs = [s for s in (segments or []) if isinstance(s, dict)]
+    sticky = stage_cast_from_setting(setting)
+    if "妈妈" in sticky and len(sticky) >= 2:
+        for seg in segs:
+            sticky |= speakers_from_dialogue(seg.get("dialogue"))
+    ordered = sorted(
+        segs,
+        key=lambda s: int(s.get("segment_index") or 0),
+    )
+    for seg in ordered:
+        local = allowed_cast_from_dialogue(seg.get("dialogue"))
+        sticky |= local
+        seg["speakers"] = [n for n in DAILY_STORY_SPEAKER_NAMES if n in sticky]
 
 
 def allowed_cast_from_segment(seg: dict | None) -> set[str]:

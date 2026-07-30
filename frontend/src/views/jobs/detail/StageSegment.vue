@@ -145,7 +145,7 @@
               </template>
               <div
                 v-if="segment.dialogue?.length"
-                class="flex min-h-[5lh] cursor-default flex-col gap-0.5 text-sm leading-relaxed"
+                class="flex min-h-[4lh] cursor-default flex-col gap-0.5 text-sm leading-relaxed"
               >
                 <template v-if="segment.dialogue.length > 4">
                   <div
