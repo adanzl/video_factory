@@ -291,9 +291,10 @@ class JobMgr:
     def abort_job(self, job_id: int) -> dict:
         """请求中止。
 
-        - 有活着的后台 worker（持锁）：只挂 cancel，保持 ``running``，
-          等 worker ``mark_aborted`` → ``pending``。
-        - 无 worker（僵尸 ``running`` / 未在跑）：直接落到 ``pending``。
+        - 一律先挂 cancel，并把 DB 状态落到 ``pending``，避免服务重启后
+          ``recovery`` 把用户已中止的任务误当作 stuck/running 自动续跑。
+        - 若当前仍有活着的后台 worker（持锁），它会在同进程内继续跑到下一次
+          cancel 检查点后自行退出；锁在 worker 结束前不会释放。
         """
         job = self.get_job(job_id)
         was_running = job['status'] == 'running'
@@ -315,7 +316,8 @@ class JobMgr:
             finally:
                 lock.release()
         with atomic():
-            repo_job_log.append_log(job_id, 'api', 'abort requested; waiting for worker to stop')
+            repo_job.update_job(job_id, status='pending', fail_stage=None, error_message=None, fetch=False)
+            repo_job_log.append_log(job_id, 'api', 'abort requested; reset to pending and waiting for worker to stop')
             return repo_job.get_job(job_id)
 
     def _skip_if_aborted(self, job_id: int) -> dict | None:
