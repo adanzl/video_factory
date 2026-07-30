@@ -3240,10 +3240,10 @@ def try_local_patch_daily_story_body(story: dict) -> tuple[dict, list[str]]:
             patch_d_fix_closing_roles,
             patch_d_monotonic_zhao_action,
             patch_d_monotonic_cancan_alarm,
+            patch_d_polish_closing,
             patch_d_progress_cancan_alarm,
             patch_d_reduce_zhao_explaining,
             patch_d_strengthen_fix,
-            patch_d_progress_cancan_alarm,
             patch_d_strip_mom,
             patch_d_strip_executor_voice_from_cancan,
             patch_d_strip_pad_garbage,
@@ -3335,6 +3335,9 @@ def try_local_patch_daily_story_body(story: dict) -> tuple[dict, list[str]]:
             notes.extend(patch_d_strengthen_fix(out))
             notes.extend(patch_d_dedupe_tail_fix(out))
 
+        # 收尾最后焊一次：破规具体 / 回旋镖点破 / 纯嘴硬
+        notes.extend(patch_d_polish_closing(out))
+
         # D：句数硬上限兜底（正文控制在 ≤16，给开场留空间）
         dialogue = out.get("dialogue")
         if isinstance(dialogue, list) and len(dialogue) > 16:
@@ -3382,6 +3385,7 @@ def try_local_patch_daily_story_body(story: dict) -> tuple[dict, list[str]]:
             if dialogue_total_chars(out) < DAILY_STORY_BODY_CHARS_MIN:
                 notes.extend(_patch_body_char_budget(out, allow_insert_lines=False))
                 notes.extend(_patch_d_micro_pad(out))
+            notes.extend(patch_d_polish_closing(out))
     return out, notes
 
 

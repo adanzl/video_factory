@@ -105,6 +105,7 @@ HUMOR_ISSUE_CAPS: tuple[tuple[str, int], ...] = (
     ("执行方句句求同意", 5),
     ("字面笑点被提前拆穿", 4),
     ("回旋镖未扣破规", 4),
+    ("回旋镖未点破", 5),
     ("中段抠定义", 4),
     ("中段缺动作升级", 4),
     ("中段催停复读", 4),
@@ -287,7 +288,7 @@ def collect_humor_issues(
     if soft_indices and soft_indices[0] < n - 1:
         cons.append("哼后第二场，不好笑")
 
-    # 末句须嘴硬收束，勿发新指令（轻轻拉一下就够了）
+    # 末句须嘴硬收束，勿发新指令（轻轻拉一下就够了 / 哼完拿剪刀）
     last = lines[-1] if lines else ""
     last_sp = speakers[-1] if speakers and len(speakers) == n else ""
     if last_sp == "灿灿" and not re.search(r"哼|算了|行吧", last):
@@ -296,6 +297,18 @@ def collect_humor_issues(
             last,
         ):
             cons.append("末句发指令，不好笑")
+    if last_sp == "灿灿" and re.search(r"哼|算了|行吧", last):
+        if re.search(r"拿剪刀|剪开|解开吧|下次|以后|你忍着", last):
+            cons.append("末句发指令，不好笑")
+
+    # 回旋镖须点破「现在又上手破规」，不能只引原话
+    if boom_i is not None:
+        boom_ln = lines[boom_i]
+        if RE_BOOM_CLOSE.search(boom_ln) and not re.search(
+            r"上手|来解|又解|现在又|你却|你现在也|怎么现在",
+            boom_ln,
+        ):
+            cons.append("回旋镖未点破，不好笑")
 
     # 回旋镖引的规矩，须对应叮嘱方补救时的破规动作
     if boom_i is not None:
@@ -409,7 +422,15 @@ def humor_revision_hint(issue: str) -> str | None:
     if "末句发指令" in issue:
         return (
             f"【好笑·D】{issue}。"
-            "末句只许哼/算了/行吧嘴硬；勿「轻轻拉一下就够了」发新规矩。"
+            "末句只许哼/算了/服了嘴硬；"
+            "勿「拿剪刀吧/下次我说轻点」哼后再发指令。"
+        )
+    if "未点破" in issue:
+        return (
+            f"【好笑·D】{issue}。"
+            "回旋镖须引原话并点破矛盾："
+            "「你自己说系紧点，怎么现在又上手来解了」；"
+            "禁止只写「你自己说鞋带要系紧」就停。"
         )
     if "抠定义" in issue or "缺动作升级" in issue or "不好玩" in issue or "模板复读" in issue or "动作复读" in issue or "歪读点" in issue:
         return (
