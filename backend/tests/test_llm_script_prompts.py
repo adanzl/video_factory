@@ -505,7 +505,9 @@ def test_build_daily_script_prompts_uses_cps_setting_and_no_appearance():
     assert "≤10 秒" in system
     assert str(int(10 * 4.0)) in system  # max chars = 40
     assert "20" in system  # min chars floor
-    assert "2–3 句" in system
+    assert "倾向 2 句" in system
+    assert "优先每镜 2 句" in system
+    assert "倾向每镜 2 句" in user
     assert "特写对白上限" in system
     assert "特写镜硬性不得超过 2 句" in user
     assert "彩铅" not in system

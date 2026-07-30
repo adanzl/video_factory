@@ -1595,7 +1595,8 @@ class DeepSeekClient(LLMClient):
                     )
                     retry_hint = (
                         "【重试】特写镜 dialogue 不得超过 2 句（图生视频口型限制）。"
-                        "请把多出的台词拆到下一镜，或把该镜 shot_type 改为中景/全景：\n"
+                        "请把多出的台词拆到下一镜（分镜倾向每镜 2 句），"
+                        "不要为省镜把 3 句塞进中景：\n"
                     )
                     if any("特写镜仅" in e or "超过上限" in e for e in closeup_errs):
                         retry_hint = (
