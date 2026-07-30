@@ -8,6 +8,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from app.exceptions import JobStageFailureError
 from app.utils.job_cancel import job_cancel
 from app.services.media.media_mgr import SegmentClipsResult, media_mgr
 from app.services.tts.tts_mgr import tts_mgr
@@ -111,7 +112,7 @@ class SegmentMgr:
                     continue
                 existing = self._existing_image_path(seg, images_dir)
                 if existing is None:
-                    raise FileNotFoundError(
+                    raise JobStageFailureError(
                         f"segment {index} 缺少 image_path，请先执行 segment/images"
                     )
                 path_by_id[seg["id"]] = existing

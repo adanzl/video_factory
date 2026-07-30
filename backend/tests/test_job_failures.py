@@ -31,5 +31,13 @@ def test_is_expected_job_failure_daily_script_closeup():
     )
 
 
+def test_is_expected_job_failure_missing_segment_image():
+    assert is_expected_job_failure(
+        JobStageFailureError(
+            "segment 1 缺少 image_path，请先执行 segment/images"
+        )
+    )
+
+
 def test_is_expected_job_failure_unexpected():
     assert not is_expected_job_failure(RuntimeError("network down"))
