@@ -242,6 +242,43 @@ def test_wrap_image_prompts_daily_assembles_from_visual_brief():
     assert "橡皮" in prompt
 
 
+def test_wrap_image_prompts_passes_setting_for_sticky_cast():
+    from app.services.script.image_prompt import wrap_image_prompts
+
+    segments = [
+        {
+            "segment_index": 1,
+            "visual_brief": (
+                "客厅餐桌前，画面从左到右是昭昭、妈妈、灿灿。"
+                "妈妈指碗，昭昭瞪眼，灿灿托腮旁听。"
+            ),
+            "dialogue": [
+                {"speaker": "妈妈", "text": "青菜不能挑食"},
+                {"speaker": "昭昭", "text": "那你碗边呢"},
+            ],
+            "shot_type": "特写",
+        },
+        {
+            "segment_index": 2,
+            "visual_brief": "灿灿摊手，昭昭叉腰，妈妈在场。",
+            "dialogue": [
+                {"speaker": "灿灿", "text": "那是放凉"},
+                {"speaker": "昭昭", "text": "堆那么高？"},
+            ],
+            "shot_type": "中景",
+        },
+    ]
+    wrap_image_prompts(
+        segments,
+        content_style="daily_story",
+        setting="客厅餐桌前，妈妈正夹青菜给昭昭，自己碗边堆了一小堆菜叶。",
+        segment_indices=[1],
+    )
+    assert segments[0]["speakers"] == ["昭昭", "灿灿", "妈妈"]
+    assert "灿灿" in segments[0]["image_prompt"]
+    assert "三人" in segments[0]["image_prompt"]
+
+
 def test_assemble_daily_t2i_prompt_only_speakers():
     from app.services.script.image_prompt import assemble_daily_t2i_prompt
 

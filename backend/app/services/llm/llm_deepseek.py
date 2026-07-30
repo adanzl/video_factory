@@ -841,13 +841,16 @@ class DeepSeekClient(LLMClient):
         style = content_style_from_job(job) if job else script.get("content_style")
         is_daily = style == CONTENT_STYLE_DAILY_STORY
         if is_daily:
-            # 角色泄漏：先 scrub visual_brief 再拼装
-            if feedback and "speaker leak" in feedback:
-                from app.services.daily_story.speaker import (
-                    allowed_cast_from_segment,
-                    scrub_leaked_speaker_names,
-                )
+            from app.services.daily_story.speaker import (
+                annotate_sticky_stage_speakers,
+                allowed_cast_from_segment,
+                scrub_leaked_speaker_names,
+            )
 
+            setting = str(script.get("setting") or "").strip() or None
+            # 先粘性标注再 scrub，避免 cast 仍按本段对白把同场角色 scrub 掉
+            annotate_sticky_stage_speakers(segments, setting=setting)
+            if feedback and "speaker leak" in feedback:
                 wanted = {int(i) for i in all_indices}
                 for seg in segments:
                     if int(seg.get("segment_index") or 0) not in wanted:
@@ -861,7 +864,7 @@ class DeepSeekClient(LLMClient):
             assemble_daily_image_prompts(
                 segments,
                 segment_indices=all_indices,
-                setting=str(script.get("setting") or "").strip() or None,
+                setting=setting,
             )
         batch_size = settings.llm_image_prompt_batch_size
         started = time.perf_counter()

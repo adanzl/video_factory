@@ -66,24 +66,31 @@ _DAILY_LCR_RE = re.compile(
 
 
 def _daily_layout_speakers(seg: dict, vb: str) -> list[str]:
-    """站位：优先 visual_brief 明示；三人默认左昭中妈右灿；两人左昭右灿。"""
+    """站位：优先 visual_brief 明示；三人默认左昭中妈右灿；两人左昭右灿。
+
+    站位角色必须 ⊆ 本段可入画 cast，避免 vb 写了三人却 cast 只有两人时
+    把未授权角色拼进构图句触发质检泄漏。
+    """
+    allowed = set(_daily_speakers_of(seg))
+
+    def _keep(names: list[str]) -> list[str]:
+        return [n for n in names if n in allowed]
+
     m3 = _DAILY_LCR_RE.search(vb or "")
     if m3:
-        names = [g for g in m3.groups() if g]
+        names = _keep([g for g in m3.groups() if g])
         if len(names) == 3 and len(set(names)) == 3:
-            if all(n in _DAILY_CHAR_MAP for n in names):
-                return names
+            return names
     m = _DAILY_LR_RE.search(vb or "")
     if m:
         left, right = m.group(1), m.group(2)
-        if left in _DAILY_CHAR_MAP and right in _DAILY_CHAR_MAP and left != right:
-            speakers = _daily_speakers_of(seg)
-            if len(speakers) >= 3 and "妈妈" in speakers:
-                # 两人句但三人同框：补默认中间位妈妈
+        pair = _keep([left, right])
+        if len(pair) == 2 and pair[0] != pair[1]:
+            if len(allowed) >= 3 and "妈妈" in allowed:
                 mid = "妈妈"
-                if mid not in (left, right):
-                    return [left, mid, right]
-            return [left, right]
+                if mid not in pair:
+                    return [pair[0], mid, pair[1]]
+            return pair
     speakers = _daily_speakers_of(seg)
     if set(speakers) >= {"昭昭", "灿灿", "妈妈"}:
         return ["昭昭", "妈妈", "灿灿"]
@@ -189,13 +196,16 @@ def assemble_daily_t2i_prompt(
     extra 仅用于显式附加的出图正文（勿传入质检/改写元指令）。
     """
     vb = str(seg.get("visual_brief") or "").strip()
+    speakers = _daily_speakers_of(seg)
     if vb:
+        from app.services.daily_story.speaker import scrub_leaked_speaker_names
         from app.services.script.visual_brief import scrub_daily_visual_brief
 
         vb = scrub_daily_visual_brief(vb)
-    # visual_brief 若曾被污染，先剥掉质检元指令
-    vb = strip_verify_regen_leak(vb)
-    speakers = _daily_speakers_of(seg)
+        vb = strip_verify_regen_leak(vb)
+        vb = scrub_leaked_speaker_names(vb, set(speakers))
+    else:
+        vb = strip_verify_regen_leak(vb)
     shot = str(seg.get("shot_type") or "").strip()
 
     parts = [_DAILY_T2I_STYLE]
@@ -253,14 +263,22 @@ def wrap_image_prompts(
     *,
     content_style: str | None = None,
     extra: str | None = None,
+    setting: str | None = None,
+    segment_indices: list[int] | None = None,
 ) -> list[dict]:
     """按 content_style 定稿 image_prompt。
 
     daily_story：规则拼装（风格+visual_brief+外貌+光照+构图），不依赖 LLM 扩写。
+    setting 须从 script 带入，供同场粘性入画；勿只传 segments。
     其他风格：无额外 wrap。
     """
     if content_style == CONTENT_STYLE_DAILY_STORY:
-        return assemble_daily_image_prompts(segments, extra=extra)
+        return assemble_daily_image_prompts(
+            segments,
+            extra=extra,
+            setting=setting,
+            segment_indices=segment_indices,
+        )
     return segments
 
 

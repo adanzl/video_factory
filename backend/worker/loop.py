@@ -213,8 +213,12 @@ def _run_image_prompts(job_id: int, *, segment_indices: list[int] | None=None) -
     assign_segment_timings(updated, segment_target_sec=float(segment_target_sec) if segment_target_sec else None, video_timeline=parse_video_timeline(video_timeline_raw) if video_timeline_raw else None)
     from app.services.script.image_prompt import wrap_image_prompts
     content_style = content_style_from_job(job)
-    target_segments = [seg for seg in updated.get('segments') or [] if segment_indices is None or int(seg.get('segment_index', 0)) in segment_indices]
-    wrap_image_prompts(target_segments, content_style=content_style)
+    wrap_image_prompts(
+        updated.get('segments') or [],
+        content_style=content_style,
+        setting=str(updated.get('setting') or '').strip() or None,
+        segment_indices=segment_indices,
+    )
     with atomic():
         if skip_quality:
             from app.quality.image_prompt import skip_image_prompt_check

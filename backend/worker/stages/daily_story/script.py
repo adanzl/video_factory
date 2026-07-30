@@ -140,7 +140,11 @@ class DailyScriptStage(StageExecutor):
         keyframe_indices = apply_keyframe_video_providers(script.get('segments') or [])
         llm_mgr.fill_image_prompts_with_retries(script, job=ctx.job)
         from app.services.script.image_prompt import wrap_image_prompts
-        wrap_image_prompts(script.get('segments') or [], content_style=CONTENT_STYLE_DAILY_STORY)
+        wrap_image_prompts(
+            script.get('segments') or [],
+            content_style=CONTENT_STYLE_DAILY_STORY,
+            setting=str(script.get('setting') or '').strip() or None,
+        )
         _persist_daily_script(
             job_id,
             script,
