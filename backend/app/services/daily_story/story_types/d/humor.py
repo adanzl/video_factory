@@ -208,6 +208,19 @@ def collect_humor_issues(
         cons.append("模板复读，不好笑")
         cons.append("中段动作复读，不好笑")
 
+    # 本地补字残渣：呀呢叠词 / 照做口头禅复读
+    if re.search(r"(?:呀|呢|啊){3,}|你看呀呢", all_text):
+        cons.append("补字垫片注水，不好笑")
+    literal_echo_n = sum(
+        1
+        for ln in body
+        if RE_LITERAL.search(ln)
+        and not _RE_TWIST_VISUAL.search(ln)
+        and not RE_MESS.search(ln)
+    )
+    if literal_echo_n >= 3:
+        cons.append("照做口头禅复读，不好笑")
+
     # 成片宜 15–16；17–20 不硬卡好笑；≥21 才记拖沓
     if n >= 21:
         cons.append("中段拖沓注水，不好笑")
