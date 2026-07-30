@@ -245,6 +245,24 @@ def _strip_optional_str(value: object) -> str | None:
     return stripped or None
 
 
+def _normalize_submit_ids(
+    *,
+    video_id: str | None,
+    task_id: str | None,
+) -> tuple[str | None, str | None]:
+    """纠正 submit 响应里被回填成 task id 的 video_id。
+
+    Agnes 异步排队时常返回 video_id=task_xxx（与 id/task_id 相同），
+    这不是可走 agnesapi?video_id= 的真实 video id，应归入 task_id，
+    走 /videos/{task_id} 轮询。
+    """
+    if video_id and video_id.startswith("task_"):
+        return None, task_id or video_id
+    if video_id and task_id and video_id == task_id:
+        return None, task_id
+    return video_id, task_id
+
+
 def _response_body(resp: requests.Response) -> dict | str | None:
     try:
         return resp.json()
@@ -626,26 +644,31 @@ class AgnesClipProvider(ClipProvider):
         if body.get("error"):
             _raise_i2v_api_error("submit", body["error"], body=body)
 
-        video_id = _strip_optional_str(body.get("video_id"))
-        task_id = _strip_optional_str(body.get("task_id") or body.get("id"))
+        video_id, task_id = _normalize_submit_ids(
+            video_id=_strip_optional_str(body.get("video_id")),
+            task_id=_strip_optional_str(body.get("task_id") or body.get("id")),
+        )
         if not video_id and not task_id:
             raise AgnesI2VError(f"agnes i2v submit missing task id: {body}")
 
         state = str(body.get("status") or "queued")
+        # 日志约定：video_id=Agnes 侧 id，task_id=本地 DB 主键
+        agnes_id = video_id or task_id
         logger.info(
             "agnes i2v task queued (async): video_id=%s task_id=%s status=%s",
-            video_id or "-",
-            task_id or "-",
+            agnes_id or "-",
+            self._active_job_id if self._active_job_id is not None else "-",
             state,
         )
         return video_id, task_id, state, body
 
     def _poll_url(self, video_id: str | None, task_id: str | None) -> str:
+        # 有 Agnes task id 时优先走 /videos/{id}；agnesapi 仅用于真实 video_id
+        if task_id:
+            return f"{self._create_url}/{task_id}"
         if video_id:
             # cSpell: disable-next-line
             return f"{self._poll_root}/agnesapi?{urlencode({'video_id': video_id})}"
-        if task_id:
-            return f"{self._create_url}/{task_id}"
         raise AgnesI2VError("agnes poll missing both video_id and task_id")
 
     def _download_video(self, poll: dict, output_path: Path, task_label: str) -> Path:
@@ -670,7 +693,7 @@ class AgnesClipProvider(ClipProvider):
         output_path: Path,
         segment_index: int | None = None,
     ) -> Path:
-        task_label = video_id or task_id or "unknown"
+        agnes_id = video_id or task_id or "unknown"
         state = "queued"
         for poll_idx in range(self._poll_max_attempts):
             self._raise_if_job_cancelled()
@@ -690,7 +713,7 @@ class AgnesClipProvider(ClipProvider):
                 wait = max(self._poll_interval_sec, 15.0) * (1 + poll_idx % 3)
                 logger.warning(
                     "agnes i2v poll rate-limited (%s), retry in %.0fs: %s",
-                    task_label,
+                    agnes_id,
                     wait,
                     str(exc)[:160],
                 )
@@ -704,19 +727,19 @@ class AgnesClipProvider(ClipProvider):
                     "agnes i2v polling... seg=%s task_id=%s video_id=%s state=%s "
                     "(~%ss)",
                     segment_index if segment_index is not None else "?",
-                    task_id or "?",
-                    video_id or "?",
+                    self._active_job_id if self._active_job_id is not None else "?",
+                    agnes_id,
                     state,
                     int((poll_idx + 1) * self._poll_interval_sec),
                 )
             if state == "completed":
-                return self._download_video(poll, output_path, task_label)
+                return self._download_video(poll, output_path, agnes_id)
             if state == "failed":
                 err = poll.get("error")
                 detail = err if isinstance(err, str) else repr(err)
-                raise AgnesI2VError(f"agnes i2v task {task_label} failed: {detail}")
+                raise AgnesI2VError(f"agnes i2v task {agnes_id} failed: {detail}")
 
-        raise AgnesI2VError(f"agnes i2v task {task_label} timeout, last state={state}")
+        raise AgnesI2VError(f"agnes i2v task {agnes_id} timeout, last state={state}")
 
     def _submit_and_poll(
         self,
@@ -727,9 +750,9 @@ class AgnesClipProvider(ClipProvider):
         segment_index: int | None = None,
     ) -> Path:
         video_id, task_id, state, body = self._submit_task(headers=headers, payload=payload)
-        task_label = video_id or task_id or "unknown"
+        agnes_id = video_id or task_id or "unknown"
         if state == "completed":
-            return self._download_video(body, output_path, task_label)
+            return self._download_video(body, output_path, agnes_id)
         return self._poll_task(
             headers=headers,
             video_id=video_id,
