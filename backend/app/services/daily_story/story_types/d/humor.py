@@ -51,6 +51,9 @@ _RE_SPOIL_LITERAL = re.compile(
 _RE_MID_STOP_NAG = re.compile(
     r"快停|停下|别拉|别绕|别再|悠着|够了|别搞|别弄那么",
 )
+_RE_ALARM_BEAT = re.compile(
+    r"白印|勒红|鼓成|鼓起|麻了|麻花|陷进肉|焊死|脚背|脚趾|解不开",
+)
 # 回旋镖引的规矩，须能在叮嘱方补救动作里对上「她也破了」
 _BOOM_VIOLATION_PAIRS: tuple[tuple[re.Pattern[str], re.Pattern[str]], ...] = (
     (re.compile(r"轻|慢"), re.compile(r"用力|重|猛|摔|砸|扯|拽|扫")),
@@ -247,13 +250,18 @@ def collect_humor_issues(
 
     # 中段催停复读：叮嘱方慌 ≥3 句 = 劝阻会，不是歪读递进
     stop_n = 0
+    alarm_n = 0
     for i, ln in enumerate(body):
         if speakers and len(speakers) == len(lines) and speakers[i] != "灿灿":
             continue
         if _RE_MID_STOP_NAG.search(ln):
             stop_n += 1
+        if _RE_ALARM_BEAT.search(ln):
+            alarm_n += 1
     if stop_n >= 3:
         cons.append("中段催停复读，不好笑")
+    elif stop_n >= 2 and alarm_n < 2:
+        cons.append("中段只会催，没有连续报新惨状，不好笑")
 
     if sum(1 for ln in body if _RE_ASK_PERMIT.search(ln)) >= 2:
         cons.append("执行方句句求同意，不好笑")
