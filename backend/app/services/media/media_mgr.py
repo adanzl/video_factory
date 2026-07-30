@@ -13,6 +13,7 @@ from pathlib import Path
 from gevent.lock import Semaphore
 
 from app.config import get_settings
+from app.repositories.database import get_app
 from app.utils.job_cancel import JobCancelledError, job_cancel
 from app.services.tts.audio_timeline import (
     extend_phrase_cues_to_duration,
@@ -43,6 +44,16 @@ _i2v_semaphore: Semaphore | None = None
 _i2v_max_workers: int = 1
 _i2v_semaphore_lock = Semaphore(value=1)
 _I2V_PROVIDERS = frozenset({"wan_i2v", "agnes_i2v"})
+
+
+def _greenlet_app_context():
+    """greenlet 内做 DB 访问时兜底补 Flask app context。"""
+    try:
+        return get_app().app_context()
+    except RuntimeError:
+        from contextlib import nullcontext
+
+        return nullcontext()
 
 
 def _ensure_i2v_semaphore() -> Semaphore:
@@ -513,10 +524,11 @@ class MediaMgr:
                     from app.repositories import repo_segment
                     from app.repositories.sql_exec import atomic
 
-                    with atomic():
-                        repo_segment.update_segment(
-                            int(seg_id), motion_prompt=motion_prompt
-                        )
+                    with _greenlet_app_context():
+                        with atomic():
+                            repo_segment.update_segment(
+                                int(seg_id), motion_prompt=motion_prompt
+                            )
                 except Exception:
                     logger.exception(
                         "clip segment %s: failed to persist injected motion_prompt",
