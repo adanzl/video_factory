@@ -10,6 +10,7 @@ from app.services.segment.clip.video_agnes import (
     AgnesClipProvider,
     _backoff_seconds,
     _encode_image_data_uri,
+    _normalize_submit_ids,
     _pick_num_frames,
     _read_agnes_source_url,
     _resolve_i2v_image,
@@ -22,6 +23,34 @@ from app.utils.media_path import resolve_media_public_base_url
 
 def test_backoff_seconds_timeout() -> None:
     assert _backoff_seconds(0, is_timeout=True) >= 45.0
+
+
+def test_normalize_submit_ids_drops_task_prefixed_video_id() -> None:
+    video_id, task_id = _normalize_submit_ids(
+        video_id="task_hmLXl8ALGUeArDTsu7xBZHBaqgZYVNji",
+        task_id="task_hmLXl8ALGUeArDTsu7xBZHBaqgZYVNji",
+    )
+    assert video_id is None
+    assert task_id == "task_hmLXl8ALGUeArDTsu7xBZHBaqgZYVNji"
+
+
+def test_normalize_submit_ids_keeps_distinct_video_id() -> None:
+    video_id, task_id = _normalize_submit_ids(
+        video_id="video_real",
+        task_id="task_test",
+    )
+    assert video_id == "video_real"
+    assert task_id == "task_test"
+
+
+def test_agnes_poll_url_prefers_task_id() -> None:
+    provider = AgnesClipProvider()
+    url = provider._poll_url(  # noqa: SLF001
+        video_id="video_real",
+        task_id="task_test",
+    )
+    assert url.endswith("/videos/task_test")
+    assert "agnesapi" not in url
 
 
 def test_pick_num_frames() -> None:
@@ -279,6 +308,11 @@ def test_agnes_clip_provider_submits_i2v_payload(tmp_path: Path) -> None:
     assert "slow zoom" not in payload["prompt"].lower()
     assert "不推近" in payload["prompt"] or "镜头固定" in payload["prompt"]
     assert "宇宙飞船" not in payload["prompt"]
+
+    poll_call = mock_request.call_args_list[1]
+    assert poll_call.args[0] == "GET"
+    assert poll_call.args[1].endswith("/videos/task_test")
+    assert "agnesapi" not in poll_call.args[1]
 
 
 def test_clip_batch_i2v_concurrency_respects_max_workers(tmp_path: Path) -> None:
