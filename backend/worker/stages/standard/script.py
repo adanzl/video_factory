@@ -441,7 +441,11 @@ class ScriptStage(StageExecutor):
                 else:
                     raise last_exc or RuntimeError('image prompt generation failed')
             from app.services.script.image_prompt import wrap_image_prompts
-            wrap_image_prompts(script.get('segments') or [], content_style=content_style)
+            wrap_image_prompts(
+                script.get('segments') or [],
+                content_style=content_style,
+                setting=str(script.get('setting') or '').strip() or None,
+            )
             max_len = max_title_length if max_title_length is not None else get_settings().max_title_length
             _apply_script_title(script, source_title=title, max_len=max_len, skip_optimize=bool(ctx.script_skip_title_optimize), job_id=ctx.job['id'], stage_name=self.name, content_style=content_style_from_job(ctx.job))
             _apply_video_description(script, job_id=ctx.job['id'], stage_name=self.name)

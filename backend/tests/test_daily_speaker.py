@@ -91,6 +91,54 @@ def test_sticky_stage_mom_not_forced_before_entrance():
     assert segments[1]["speakers"] == ["昭昭", "灿灿", "妈妈"]
 
 
+def test_sticky_stage_opening_mom_expands_without_setting():
+    """无 setting 重跑拼装时，开场妈妈发言 + 全文三人 → 开场起三人。"""
+    from app.services.daily_story.speaker import annotate_sticky_stage_speakers
+
+    segments = [
+        {
+            "segment_index": 1,
+            "dialogue": [
+                {"speaker": "妈妈", "text": "青菜不能挑食"},
+                {"speaker": "昭昭", "text": "那你碗边呢"},
+            ],
+        },
+        {
+            "segment_index": 2,
+            "dialogue": [
+                {"speaker": "灿灿", "text": "那是放凉"},
+                {"speaker": "昭昭", "text": "堆那么高？"},
+            ],
+        },
+    ]
+    annotate_sticky_stage_speakers(segments, setting=None)
+    assert segments[0]["speakers"] == ["昭昭", "灿灿", "妈妈"]
+    assert segments[1]["speakers"] == ["昭昭", "灿灿", "妈妈"]
+
+
+def test_assemble_layout_does_not_leak_cancan_when_cast_two():
+    """vb 写了三人站位但 cast 只有两人时，构图不得带入灿灿。"""
+    from app.services.script.image_prompt import assemble_daily_t2i_prompt
+
+    prompt = assemble_daily_t2i_prompt(
+        {
+            "visual_brief": (
+                "客厅餐桌前，画面从左到右是昭昭、妈妈、灿灿。"
+                "妈妈指碗，昭昭瞪眼。"
+            ),
+            "shot_type": "特写",
+            "speakers": ["昭昭", "妈妈"],
+            "dialogue": [
+                {"speaker": "妈妈", "text": "青菜不能挑食"},
+                {"speaker": "昭昭", "text": "那你碗边呢"},
+            ],
+        }
+    )
+    assert "灿灿" not in prompt
+    assert "妈妈" in prompt
+    assert "昭昭" in prompt
+
+
 def test_hearsay_and_where_do_not_allow_mom():
     assert "妈妈" not in allowed_cast_from_dialogue(
         [{"speaker": "昭昭", "text": "妈妈说过别乱跑。"}]

@@ -202,8 +202,15 @@ def check_image_prompt(
 
     style = content_style or script.get("content_style")
     if style == "daily_story":
-        from app.services.daily_story.speaker import collect_speaker_leak_segments
+        from app.services.daily_story.speaker import (
+            annotate_sticky_stage_speakers,
+            collect_speaker_leak_segments,
+        )
 
+        annotate_sticky_stage_speakers(
+            script.get("segments") or [],
+            setting=str(script.get("setting") or "").strip() or None,
+        )
         speaker_rows = collect_speaker_leak_segments(
             segments,
             check_visual_brief=False,

@@ -122,18 +122,35 @@ def annotate_sticky_stage_speakers(
     写入每段 ``speakers``（有序）。例：餐桌戏妈妈先出场后，
     姐弟互怼镜仍须三人同框，不能把妈妈 scrub 掉。
 
-    若 setting 已同时点到妈妈与另一角色（同场开局），则把本片
-    所有会发言的角色一并视为开场同场（如灿灿稍后才开口）。
+    若 setting 已同时点到妈妈与另一角色，或开场镜妈妈已发言且
+    全文三人都会出场，则开场起全员同框。
     """
     segs = [s for s in (segments or []) if isinstance(s, dict)]
     sticky = stage_cast_from_setting(setting)
-    if "妈妈" in sticky and len(sticky) >= 2:
-        for seg in segs:
-            sticky |= speakers_from_dialogue(seg.get("dialogue"))
+    # 无 setting 重跑拼装时，保留已有 speakers，避免把开场三人冲成两人
+    for seg in segs:
+        raw = seg.get("speakers")
+        if isinstance(raw, list) and raw:
+            sticky |= {str(s).strip() for s in raw if str(s).strip()}
+    story_speakers: set[str] = set()
+    for seg in segs:
+        story_speakers |= speakers_from_dialogue(seg.get("dialogue"))
     ordered = sorted(
         segs,
         key=lambda s: int(s.get("segment_index") or 0),
     )
+    opening = speakers_from_dialogue(
+        ordered[0].get("dialogue") if ordered else None,
+    )
+    family_stage = (
+        ("妈妈" in sticky and len(sticky) >= 2)
+        or (
+            "妈妈" in opening
+            and len(story_speakers) >= 3
+        )
+    )
+    if family_stage:
+        sticky |= story_speakers
     for seg in ordered:
         local = allowed_cast_from_dialogue(seg.get("dialogue"))
         sticky |= local

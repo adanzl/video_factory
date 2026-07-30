@@ -262,24 +262,27 @@ def patch_d_fix_closing_roles(story: dict) -> list[str]:
             bs = str(border.get("speaker") or "").strip()
             ts = str(first_of_tail.get("speaker") or "").strip()
             if bs == ts == "昭昭":
-                # 合并 -5 进 -4，避免中段末昭昭连说（也不再造灿灿连说）
+                # 合并 -5 进 -4；合并不下则在末四前插灿灿催，勿丢字、勿造连说
                 extra = str(border.get("line") or "").strip()
                 base = str(first_of_tail.get("line") or "").strip()
-                merged = base
-                if extra and extra not in base:
-                    room = DAILY_STORY_LINE_CHARS_MAX - dialogue_char_count(
-                        base,
+                room = DAILY_STORY_LINE_CHARS_MAX - dialogue_char_count(base)
+                if extra and extra not in base and room >= 4:
+                    add = extra[:room]
+                    merged = f"{base.rstrip('。！？')}，{add}".rstrip("，")
+                    if not merged.endswith(("。", "！", "？")):
+                        merged += "。"
+                    if dialogue_char_count(merged) > DAILY_STORY_LINE_CHARS_MAX:
+                        merged = truncate_overlong_line(merged)
+                    first_of_tail["line"] = merged
+                    dialogue.pop(-5)
+                    notes.append("D合并中段末昭昭连说")
+                else:
+                    insert_at = len(dialogue) - 4
+                    dialogue.insert(
+                        insert_at,
+                        {"speaker": "灿灿", "line": "你小心点，别乱动啊"},
                     )
-                    if room >= 4:
-                        add = extra[:room]
-                        merged = f"{base.rstrip('。！？')}，{add}".rstrip("，")
-                        if not merged.endswith(("。", "！", "？")):
-                            merged += "。"
-                        if dialogue_char_count(merged) > DAILY_STORY_LINE_CHARS_MAX:
-                            merged = truncate_overlong_line(merged)
-                first_of_tail["line"] = merged
-                dialogue.pop(-5)
-                notes.append("D合并中段末昭昭连说")
+                    notes.append("D中段末插灿灿消连说")
             elif bs == ts == "灿灿":
                 border["speaker"] = "昭昭"
                 bln = str(border.get("line") or "")

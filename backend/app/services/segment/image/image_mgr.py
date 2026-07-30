@@ -106,6 +106,21 @@ class ImageMgr:
         target['segment_index'] = index
         by_index[index] = target
         script['segments'] = sorted(by_index.values(), key=lambda s: int(s.get('segment_index') or 0))
+        if content_style == CONTENT_STYLE_DAILY_STORY:
+            from app.services.daily_story.speaker import annotate_sticky_stage_speakers
+
+            annotate_sticky_stage_speakers(
+                script.get('segments') or [],
+                setting=str(script.get('setting') or '').strip() or None,
+            )
+            target = next(
+                (
+                    s
+                    for s in (script.get('segments') or [])
+                    if int(s.get('segment_index') or 0) == index
+                ),
+                target,
+            )
         speakers = _speakers_for_regen(target)
         if content_style == CONTENT_STYLE_DAILY_STORY:
             llm_mgr.fill_visual_briefs(script, feedback=_verify_visual_brief_regen_feedback(speakers), job=job, segment_indices=[index])
@@ -115,7 +130,13 @@ class ImageMgr:
         refreshed = next((s for s in script.get('segments') or [] if int(s.get('segment_index') or 0) == index), None)
         if refreshed is None:
             raise RuntimeError(f'image_prompt regen missing segment {index}')
-        wrap_image_prompts([refreshed], content_style=content_style)
+        wrap_image_prompts(
+            script.get('segments') or [],
+            content_style=content_style,
+            setting=str(script.get('setting') or '').strip() or None,
+            segment_indices=[index],
+        )
+        refreshed = next((s for s in script.get('segments') or [] if int(s.get('segment_index') or 0) == index), None) or refreshed
         new_prompt = str(refreshed.get('image_prompt') or '').strip()
         if not new_prompt:
             raise RuntimeError(f'image_prompt regen empty for segment {index}')
@@ -194,6 +215,31 @@ class ImageMgr:
         start = time.time()
         params_desc = provider.describe_params(size=size)
         logger.info('image batch start: count=%s, workers=%s, %s', total, max_workers, params_desc)
+
+        from app.utils.job_info import CONTENT_STYLE_DAILY_STORY, content_style_from_job
+        style = content_style or (content_style_from_job(job) if job else None)
+        if style == CONTENT_STYLE_DAILY_STORY:
+            from app.services.daily_story.speaker import annotate_sticky_stage_speakers
+
+            setting = None
+            full_segs = segments
+            if isinstance(job, dict):
+                sj = job.get('script_json')
+                if isinstance(sj, dict):
+                    setting = str(sj.get('setting') or '').strip() or None
+                    raw = sj.get('segments')
+                    if isinstance(raw, list) and raw:
+                        full_segs = raw
+            annotate_sticky_stage_speakers(full_segs, setting=setting)
+            by_idx = {
+                int(s.get('segment_index') or 0): s
+                for s in full_segs
+                if isinstance(s, dict)
+            }
+            for seg in segments:
+                src = by_idx.get(int(seg.get('segment_index') or 0))
+                if src and isinstance(src.get('speakers'), list) and src.get('speakers'):
+                    seg['speakers'] = list(src['speakers'])
 
         def _build_prompt(seg: dict) -> str:
             if type(provider).__name__ == 'Sd15ImageProvider':
