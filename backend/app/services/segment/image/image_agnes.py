@@ -575,8 +575,8 @@ class AgnesImageProvider(ImageProvider):
         "项「场景」：只看主场景/主体是否明显跑偏；"
         "画风套话、参考图指令前缀、次要细节差异一律算通过（答是）。"
         "项「胳膊」：每人可见胳膊是否最多 2 条；正常答「是」，多肢答「否」。"
-        "项「嘴型」：只看该项写明的「其他人物」是否闭嘴，指定说话人张闭均可；"
-        "轻抿嘴/撇嘴算闭合（答是），明显张大嘴/露齿喊叫才答「否」。"
+        "项「嘴型」：只看该项写明角色本人是否张着嘴，微张即算张（答是）；"
+        "完全闭合才答「否」；其他人物的嘴型与本项无关。"
         "项「人数」：只数清晰主体人物个数是否不超过该项写明的上限；"
         "不判断是谁、不因认不出角色而答否；"
         "背景照片墙/镜子虚影/玩具人脸/远处剪影一律不算。"
@@ -709,22 +709,17 @@ class AgnesImageProvider(ImageProvider):
                     "回答「是」或「否」",
                 )
             )
-        # 嘴型归属：首帧里谁张嘴 i2v 就让谁说话，非首个说话人张嘴会导致口型全反
+        # 嘴型：首个说话人张着嘴 i2v 就会让 ta 开口，只查 ta 本人即可
         mouth = _MOUTH_FIRST_SPEAKER_RE.search(scene_prompt)
-        if (
-            content_style == CONTENT_STYLE_DAILY_STORY
-            and mouth
-            and len(speakers) >= 2
-        ):
+        if content_style == CONTENT_STYLE_DAILY_STORY and mouth:
             first = mouth.group(1)
             items.append(
                 (
-                    "mouth_owner",
-                    f"除{_DAILY_LOOK.get(first, first)}外，"
-                    "画面其他人物嘴巴是否都闭合（无张大嘴喊叫/露齿说话状）？"
-                    f"{first}本人张嘴或闭嘴不影响本项；"
-                    "轻抿嘴/嘴角下撇算闭合。"
-                    "其他人都闭嘴答「是」，任何其他人明显张嘴答「否」。"
+                    "mouth_first",
+                    f"{_DAILY_LOOK.get(first, first)}是否张着嘴"
+                    "（微张/张开做说话状都算「是」）？"
+                    "只看该角色本人，其他人张嘴与否不影响本项；"
+                    "该角色嘴巴完全闭合才答「否」。"
                     "回答「是」或「否」",
                 )
             )
@@ -797,7 +792,7 @@ class AgnesImageProvider(ImageProvider):
                 "can_hair",
                 "mom_adult",
                 "lr_pos",
-                "mouth_owner",
+                "mouth_first",
                 "extra_arms",
                 "cast_count",
             }:
@@ -896,7 +891,9 @@ class AgnesImageProvider(ImageProvider):
                                     ],
                                 },
                             ],
-                            "max_tokens": 256,
+                            # agnes VL 强制思考且关不掉，预算须容纳思考链，
+                            # 否则正文为空 → 全项 unknown → 质检形同虚设
+                            "max_tokens": 16384,
                         }
                         resp = requests.post(url, headers=headers, json=payload, timeout=300)
                         if resp.ok:
