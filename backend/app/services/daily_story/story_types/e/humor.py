@@ -8,7 +8,8 @@ RE_MOM_RULE = re.compile(
     r"应该|必须|规矩|听我的|我说|不行|不能|不许|别吃|得睡|别玩",
 )
 RE_KID_ASK = re.compile(
-    r"为什么|凭什么|那你|你也|上次|妈妈你也|算不算|怎么又",
+    r"为什么|凭什么|那你|你也|上次|上回|妈妈你也|算不算|怎么又|"
+    r"明明|亲口说|还能|也算",
 )
 RE_MOM_WAFFLE = re.compile(
     r"不是|不一样|那是|总之|反正|不是那个|不算|尝咸淡|大人|工作需要",
@@ -126,7 +127,19 @@ def collect_humor_issues(
         cons.append("缺妈妈立论，不好笑")
 
     if not RE_KID_ASK.search("".join(mid)) and not RE_KID_ASK.search(body_text):
-        cons.append("缺孩子追问，不好笑")
+        # 兜底：孩子冲妈妈的问句（证据式反问）本身就是追问
+        kid_question = bool(
+            speakers
+            and len(speakers) == n
+            and any(
+                speakers[i] in ("昭昭", "灿灿")
+                and "？" in lines[i]
+                and re.search(r"你|妈", lines[i])
+                for i in range(1, n - 2)
+            )
+        )
+        if not kid_question:
+            cons.append("缺孩子追问，不好笑")
 
     if not RE_MOM_WAFFLE.search(all_text):
         # 假开脱：孩子帮腔也可承担「改口」槽位
@@ -337,10 +350,11 @@ def collect_humor_issues(
     return cons
 
 
-# 孩子假替妈开脱（帮腔口吻、实则讽刺）
+# 孩子假替妈开脱（帮腔口吻、实则讽刺）；含荒诞开脱（那是…/才不是…）
 RE_KID_FAKE_OPEN = re.compile(
     r"你不懂|放凉|晾着|配饭|等会儿|大人|不一样|不算|"
-    r"意外|调理|当然不算|专门留|会吃的|肯定一会",
+    r"意外|调理|当然不算|专门留|会吃的|肯定一会|"
+    r"^那是|才不是|特意|合情合理",
 )
 
 
@@ -359,7 +373,11 @@ def score_funniness_tail(
         for sp, ln in zip(speakers, lines)
         if sp in ("昭昭", "灿灿")
         and RE_KID_FAKE_OPEN.search(ln)
-        and re.search(r"妈妈|大人|放凉|晾|配饭|不算|不一样|意外|调理", ln)
+        and re.search(
+            r"妈妈|大人|放凉|晾|配饭|不算|不一样|意外|调理|"
+            r"^那是|你不懂|特意|合情合理",
+            ln,
+        )
     ]
     # 至少两句假帮腔才算「嘲讽线」立住；分值宜克制，勿轻松摸到 95
     if len(fake_lines) >= 3:

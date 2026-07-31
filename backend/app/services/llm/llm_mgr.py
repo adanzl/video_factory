@@ -706,7 +706,7 @@ class LLMMgr:
         client = self._get_client()
         best_story: dict[str, Any] | None = None
         best_score = -1
-        target = 85
+        target = 88
         # 整稿 1 次 + refine 1 次：不够分交人/下一主题，禁止乘法空转
         max_full = 1
         max_refine = 1

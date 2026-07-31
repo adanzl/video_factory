@@ -113,6 +113,8 @@ QUALITY_PROFILE = TypeQualityProfile(
     + (
         "你自己说",
         "你刚才",
+        "你自己刚才",
+        "自己刚才说",
         "你现在也",
     ),
     collect_humor_issues=d_humor.collect_humor_issues,
