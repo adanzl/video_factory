@@ -47,6 +47,14 @@ _HTML_TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.I | re.S)
 # 日常故事固定角色顺序；姐弟未发言也可同框
 _DAILY_SIBLINGS = ("昭昭", "灿灿")
 _DAILY_SPEAKER_ORDER = DAILY_STORY_SPEAKER_NAMES
+# 供质检项引用的角色外观速写
+_DAILY_LOOK = {
+    "昭昭": "蓝色短袖T恤的短发男孩（昭昭）",
+    "灿灿": "粉色卫衣的马尾女孩（灿灿）",
+    "妈妈": "米色上衣的黑长发成年女性（妈妈）",
+}
+# 拼装器写入 image_prompt 的首个说话人张嘴标记（须与 image_prompt.py 一致）
+_MOUTH_FIRST_SPEAKER_RE = re.compile(r"(昭昭|灿灿|妈妈)微微张嘴正在开口说话")
 
 
 class AgnesImageVerifyFailed(RuntimeError):
@@ -567,6 +575,8 @@ class AgnesImageProvider(ImageProvider):
         "项「场景」：只看主场景/主体是否明显跑偏；"
         "画风套话、参考图指令前缀、次要细节差异一律算通过（答是）。"
         "项「胳膊」：每人可见胳膊是否最多 2 条；正常答「是」，多肢答「否」。"
+        "项「嘴型」：只看该项写明的「其他人物」是否闭嘴，指定说话人张闭均可；"
+        "轻抿嘴/撇嘴算闭合（答是），明显张大嘴/露齿喊叫才答「否」。"
         "项「人数」：只数清晰主体人物个数是否不超过该项写明的上限；"
         "不判断是谁、不因认不出角色而答否；"
         "背景照片墙/镜子虚影/玩具人脸/远处剪影一律不算。"
@@ -690,17 +700,31 @@ class AgnesImageProvider(ImageProvider):
         )
         if content_style == CONTENT_STYLE_DAILY_STORY and lr:
             left, right = lr.group(1), lr.group(2)
-            look = {
-                "昭昭": "蓝色短袖T恤的短发男孩（昭昭）",
-                "灿灿": "粉色卫衣的马尾女孩（灿灿）",
-                "妈妈": "米色上衣的黑长发成年女性（妈妈）",
-            }
             items.append(
                 (
                     "lr_pos",
-                    f"画面左边是否为{look.get(left, left)}、"
-                    f"右边是否为{look.get(right, right)}？"
+                    f"画面左边是否为{_DAILY_LOOK.get(left, left)}、"
+                    f"右边是否为{_DAILY_LOOK.get(right, right)}？"
                     "若左右人物对调答「否」。"
+                    "回答「是」或「否」",
+                )
+            )
+        # 嘴型归属：首帧里谁张嘴 i2v 就让谁说话，非首个说话人张嘴会导致口型全反
+        mouth = _MOUTH_FIRST_SPEAKER_RE.search(scene_prompt)
+        if (
+            content_style == CONTENT_STYLE_DAILY_STORY
+            and mouth
+            and len(speakers) >= 2
+        ):
+            first = mouth.group(1)
+            items.append(
+                (
+                    "mouth_owner",
+                    f"除{_DAILY_LOOK.get(first, first)}外，"
+                    "画面其他人物嘴巴是否都闭合（无张大嘴喊叫/露齿说话状）？"
+                    f"{first}本人张嘴或闭嘴不影响本项；"
+                    "轻抿嘴/嘴角下撇算闭合。"
+                    "其他人都闭嘴答「是」，任何其他人明显张嘴答「否」。"
                     "回答「是」或「否」",
                 )
             )
@@ -773,6 +797,7 @@ class AgnesImageProvider(ImageProvider):
                 "can_hair",
                 "mom_adult",
                 "lr_pos",
+                "mouth_owner",
                 "extra_arms",
                 "cast_count",
             }:

@@ -53,6 +53,15 @@ def _daily_speakers_of(seg: dict) -> list[str]:
     return [n for n in ("昭昭", "灿灿", "妈妈") if n in names]
 
 
+def _daily_first_speaker(seg: dict) -> str | None:
+    """本段第一句台词的说话角色；无台词返回 None。"""
+    for d in seg.get("dialogue") or []:
+        name = str(d.get("speaker") or "").strip()
+        if name:
+            return name
+    return None
+
+
 _DAILY_LR_RE = re.compile(
     r"画面左边是\s*(昭昭|灿灿|妈妈)\s*[，,；;]?\s*右边是\s*(昭昭|灿灿|妈妈)"
 )
@@ -222,6 +231,18 @@ def assemble_daily_t2i_prompt(
         char_parts.append(_DAILY_CHAR_HEIGHT)
     if char_parts:
         parts.append("".join(char_parts))
+
+    # 嘴型锁定：首帧里谁嘴张着 I2V 就让谁说话（实测压过文字指令），
+    # 故张嘴只允许给第一句台词的说话人，其余人闭嘴防止 i2v 说话人反转
+    first = _daily_first_speaker(seg)
+    if first and first in speakers:
+        others = [n for n in speakers if n != first]
+        mouth = f"{first}微微张嘴正在开口说话"
+        if others:
+            mouth += (
+                f"；{'、'.join(others)}嘴巴闭合不露齿，情绪只用眉眼和肢体表达"
+            )
+        parts.append(mouth + "。")
 
     parts.append(_daily_lighting(vb))
     layout = _daily_layout_speakers(seg, vb)
