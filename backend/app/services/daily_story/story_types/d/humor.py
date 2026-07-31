@@ -318,7 +318,7 @@ def collect_humor_issues(
     if boom_i is not None:
         boom_ln = lines[boom_i]
         if RE_BOOM_CLOSE.search(boom_ln) and not re.search(
-            r"上手|来解|又解|现在又|你却|自己却|自己倒|你现在也|怎么现在",
+            r"上手|来解|又解|现在又|你却|自己却|自己倒|你现在也|怎么现在|现在你",
             boom_ln,
         ):
             cons.append("回旋镖未点破，不好笑")
