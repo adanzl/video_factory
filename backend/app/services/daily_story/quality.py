@@ -51,11 +51,11 @@ _REDUNDANCY_STOP_WORDS: frozenset[str] = frozenset({
 })
 _CONTENT_WORD_RE = re.compile(r"[\u4e00-\u9fff]{2,}")
 
-# 结构（格式/节奏/类型收束形态）满分上限；超过须靠好笑维度叠加
+# 结构（格式/节奏/类型收束形态）满分上限；总分=结构+好笑，纯加法
+# 发布线 88（llm_mgr target）：格式齐只值 80，须好笑≥8 才够发布
 STRUCTURE_SCORE_CAP = 80
-# 好笑维度 0–20：≥9 才可到 85 档，≥15 才可到 95 档
-# （格式齐+弱笑点不应靠「好笑5」摸到 85）
-_HUMOR_POINTS_FOR_GOOD = 9
+# 好笑维度 0–20：达标=8（够发布线）；很好笑=15（仅标签）
+_HUMOR_POINTS_FOR_GOOD = 8
 _HUMOR_POINTS_FOR_GREAT = 15
 
 _RE_HAMMER = re.compile(
@@ -486,6 +486,8 @@ def _score_funniness(
             "明明说",
             "你自己",
             "你说的",
+            # E 类闭环侧写句式（对妈少用「你」硬质问）：自己说的规矩…
+            "自己说",
         )
     )
     if (
@@ -530,7 +532,7 @@ def score_daily_story(
 
     评分模型：
     - 结构分（格式、层数、收束形态、节奏）上限 80
-    - 好笑维度 0–20 叠加上去；≥9 才可能到 85，≥15 才可能到 95
+    - 好笑维度 0–20 直接相加：总分 = 结构 + 好笑（发布线 88 需好笑≥8）
     """
     if not isinstance(story, dict):
         return {
@@ -698,15 +700,11 @@ def score_daily_story(
     pros.extend(humor_pros)
     cons.extend(humor_cons)
 
-    # 结构≤80（扣分制）+ 好笑 0–20（加分制）；好笑不够不冲 85/95 档
+    # 结构≤80（扣分制）+ 好笑 0–20（加分制），纯加法
     score = max(0, min(100, structure_score + humor_points))
-    if humor_points < _HUMOR_POINTS_FOR_GOOD:
-        score = min(score, STRUCTURE_SCORE_CAP)
-    elif humor_points < _HUMOR_POINTS_FOR_GREAT:
-        score = min(score, 94)
     if structure_score >= 70 and humor_points < _HUMOR_POINTS_FOR_GOOD:
         cons.append(
-            f"格式达标但好笑不足（好笑{humor_points}/20，须≥{_HUMOR_POINTS_FOR_GOOD}才宜≥85）",
+            f"格式达标但好笑不足（好笑{humor_points}/20）",
         )
     pros.append(f"结构{structure_score}")
     pros.append(f"好笑{humor_points}")
@@ -874,7 +872,7 @@ def build_quality_revision_hints(
     if not hints:
         if not layer_info or "2层" in layer_info or "偏少" in layer_info:
             need_esc = True
-        elif "3层" in layer_info and score < 85 and has_punch_ending:
+        elif "3层" in layer_info and score < 88 and has_punch_ending:
             need_esc = True
         if need_esc:
             primary_kind = primary_kind or "escalation"
