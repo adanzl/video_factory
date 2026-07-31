@@ -792,9 +792,11 @@ class DeepSeekClient(LLMClient):
             segment_indices=segment_indices,
             include_sd15_prompt=include_sd15_prompt,
         )
+        # 模板化改写任务，无需推理；开思考模式一批要 ~100s
         raw, finish = self._chat_json(
             prompts["system"],
             prompts["user"],
+            thinking_enabled=False,
         )
         raise_if_job_cancelled(job)
         if finish == "length":
