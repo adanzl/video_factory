@@ -107,17 +107,20 @@ _SPEAK_LINE_RE = re.compile(
     r"|"
     r"[（(]?(?P<name>昭昭|灿灿|妈妈)[）)]?"
     r")"
-    r"(?:张嘴)?说话，同时"
+    r"(?:张嘴|嘴巴持续张合)?说话(?:，嘴唇明显一开一合约\d+次)?，同时"
     r"(?P<action>[^；;。]*?)(?=[；;。]|$)"
 )
-# LLM 常把收束写成「灿灿说话后面部表情…」，统一识别并归一
+# LLM 常把收束写成「灿灿说话后面部表情…」，统一识别（注入时整段丢弃）
 _FACE_MARK_RE = re.compile(
     r"(?:两人|昭昭|灿灿|妈妈)?说话后面部表情恢复与静图一致："
 )
-_FACE_MARK_CANON = "两人说话后面部表情恢复与静图一致："
 _TAIL_ANCHOR_RE = re.compile(
     r"(?:(?:两人|昭昭|灿灿|妈妈)?说话后面部表情恢复与静图一致：|服装发型稳定|镜头固定)"
 )
+# 收束表情段会把嘴锁回静图闭嘴状态（I2V 直接不动口型），注入时
+# 只保留服装/镜头锁定尾部，表情收束替换为嘴唇锁定句
+_LOCK_TAIL_RE = re.compile(r"服装发型稳定|镜头固定")
+_MOUTH_LOCK_HINT = "说话时只动嘴唇和下巴，头部姿态与五官其余部分保持稳定。"
 
 
 def _side_speak_label(speaker: str, lr: re.Match[str] | None) -> str:
@@ -163,6 +166,8 @@ def _inject_mouth_motion(
     - 每一句对白对应一句「说话，同时」（同人多句写多行，不合并）
     - 时间轴相对本段 I2V：说话窗口最小值归零后全体平移
     - 说话句用「秒数+左右侧身份」（如左侧男孩），与 head 站位一致；LLM 仍写昭昭/灿灿说话
+    - 说话句写显式口型（嘴巴持续张合+一开一合次数），非说话方写「嘴巴闭合不动」
+    - 丢弃「面部表情恢复与静图一致」收束段（会把嘴锁回闭嘴），替换为嘴唇锁定句
     """
     dialogue = seg.get("dialogue") or []
     if not dialogue or not cues or not prompt.strip():
@@ -190,7 +195,7 @@ def _inject_mouth_motion(
 
     offset = min(start for _, start, _ in speaker_windows)
     speaker_times = [
-        (speaker, f"{start - offset:.1f}-{end - offset:.1f}秒")
+        (speaker, f"{start - offset:.1f}-{end - offset:.1f}秒", end - start)
         for speaker, start, end in speaker_windows
     ]
 
@@ -227,22 +232,23 @@ def _inject_mouth_motion(
     speaks = list(speak_re.finditer(prompt))
 
     def _extract_tail(after: int) -> str:
-        """从 after 起取收束/锁定尾部；丢掉中间无时间轴残留动作句。"""
+        """从 after 起取服装/镜头锁定尾部；丢弃表情收束与无时间轴残留动作句。"""
         rest = prompt[after:]
         m_face = _FACE_MARK_RE.search(rest)
         if m_face:
             body = rest[m_face.end() :]
             body = speak_re.sub("", body)
-            # 只保留最后一段收束，避免重复
+            # 收束段整体丢弃（会锁回闭嘴脸），只保留其后的服装/镜头锁定
             extras = list(_FACE_MARK_RE.finditer(body))
             if extras:
                 body = body[extras[-1].end() :]
-            body = re.sub(r"[；;]{2,}", "；", body)
-            return _FACE_MARK_CANON + body
+            m_lock = _LOCK_TAIL_RE.search(body)
+            return body[m_lock.start() :] if m_lock else ""
         m_anchor = _TAIL_ANCHOR_RE.search(rest)
         if m_anchor:
-            tail = rest[m_anchor.start() :]
-            return speak_re.sub("", tail)
+            tail = speak_re.sub("", rest[m_anchor.start() :])
+            m_lock = _LOCK_TAIL_RE.search(tail)
+            return tail[m_lock.start() :] if m_lock else ""
         # 无收束锚点：不保留 speak 后的游离动作（常为 LLM 多写的无时间句）
         return ""
 
@@ -267,7 +273,7 @@ def _inject_mouth_motion(
 
     clauses: list[str] = []
     last_i = len(speaker_times) - 1
-    for i, (speaker, time_str) in enumerate(speaker_times):
+    for i, (speaker, time_str, dur) in enumerate(speaker_times):
         q = action_queues.get(speaker) or []
         action = q.pop(0) if q else fallback.get(speaker, "轻微点头约1厘米后停止")
         if i < last_i and action.endswith("后定格"):
@@ -276,27 +282,27 @@ def _inject_mouth_motion(
             action = action[: -len("后停止")] + "后定格"
 
         label = _side_speak_label(speaker, lr)
-        lead = f"{time_str}{label}张嘴说话，同时{action}"
+        # 显式口型幅度+次数（约3次/秒），笼统的「张嘴说话」会被
+        # 面部锁定提示压掉导致 I2V 不动口型
+        n_open = max(2, min(15, int(dur * 3 + 0.5)))
+        lead = (
+            f"{time_str}{label}嘴巴持续张合说话，"
+            f"嘴唇明显一开一合约{n_open}次，同时{action}"
+        )
         quiet: list[str] = []
         for other in cast_order:
             if other == speaker:
                 continue
-            quiet.append(f"{_side_speak_label(other, lr)}闭嘴")
+            quiet.append(f"{_side_speak_label(other, lr)}嘴巴闭合不动")
         if quiet:
             lead = f"{lead}，此时{'、'.join(quiet)}"
         clauses.append(lead)
 
     middle = "；".join(clauses)
-    has_face = bool(tail) and (
-        tail.startswith(_FACE_MARK_CANON) or "说话后面部表情" in tail
-    )
-    if has_face or (tail and not middle.endswith("。")):
-        if not middle.endswith("；"):
-            middle += "；"
-    elif not middle.endswith("。"):
+    if not middle.endswith(("。", "；", ";")):
         middle += "。"
 
-    return f"{head}{middle}{tail}"
+    return f"{head}{middle}{_MOUTH_LOCK_HINT}{tail}"
 
 
 def inject_speaking_times_into_motion_prompts(

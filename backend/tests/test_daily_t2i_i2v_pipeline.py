@@ -180,13 +180,15 @@ def test_inject_mouth_motion_overwrites_llm_times_from_cues():
     )
     cues = [("你怎么又乱扔！", 1.4), ("我没有啊。", 1.1)]
     out = _inject_mouth_motion(mp, seg, cues)
-    assert "0.0-1.4秒左侧女孩张嘴说话，同时" in out
-    assert "1.4-2.5秒右侧男孩张嘴说话，同时" in out
-    assert "此时右侧男孩闭嘴" in out
-    assert "此时左侧女孩闭嘴" in out
+    assert "0.0-1.4秒左侧女孩嘴巴持续张合说话，嘴唇明显一开一合约4次，同时" in out
+    assert "1.4-2.5秒右侧男孩嘴巴持续张合说话，嘴唇明显一开一合约3次，同时" in out
+    assert "此时右侧男孩嘴巴闭合不动" in out
+    assert "此时左侧女孩嘴巴闭合不动" in out
     assert "0.0-1.0秒" not in out
     assert "1.0-2.0秒" not in out
     assert "画面左边灿灿" not in out
+    assert "两人说话后面部表情" not in out
+    assert "说话时只动嘴唇和下巴" in out
 
 
 def test_inject_mouth_motion_adds_times_when_missing():
@@ -204,9 +206,9 @@ def test_inject_mouth_motion_adds_times_when_missing():
     )
     cues = [("你怎么又乱扔！", 1.4), ("我没有啊。", 1.1)]
     out = _inject_mouth_motion(mp, seg, cues)
-    assert "0.0-1.4秒左侧女孩张嘴说话，同时" in out
-    assert "1.4-2.5秒右侧男孩张嘴说话，同时" in out
-    assert "此时右侧男孩闭嘴" in out
+    assert "0.0-1.4秒左侧女孩嘴巴持续张合说话，嘴唇明显一开一合约4次，同时" in out
+    assert "1.4-2.5秒右侧男孩嘴巴持续张合说话，嘴唇明显一开一合约3次，同时" in out
+    assert "此时右侧男孩嘴巴闭合不动" in out
 
 
 def test_inject_mouth_motion_zeros_min_start():
@@ -226,8 +228,8 @@ def test_inject_mouth_motion_zeros_min_start():
     cues = [("（静音）", 3.3), ("你怎么又乱扔！", 4.0), ("我没有啊。", 3.4)]
     out = _inject_mouth_motion(mp, seg, cues)
     # 按站位+身份标注，对白序仍跟 dialogue
-    assert "0.0-4.0秒右侧女孩张嘴说话，同时" in out
-    assert "4.0-7.4秒左侧男孩张嘴说话，同时" in out
+    assert "0.0-4.0秒右侧女孩嘴巴持续张合说话，嘴唇明显一开一合约12次，同时" in out
+    assert "4.0-7.4秒左侧男孩嘴巴持续张合说话，嘴唇明显一开一合约10次，同时" in out
     assert "3.3-" not in out
     assert "7.3-" not in out
 
@@ -253,9 +255,10 @@ def test_inject_mouth_motion_without_face_mark_tail():
         "镜头固定，不推近不拉远，画面只有人物和场景，无任何文字叠加。"
     )
     out = _inject_mouth_motion(mp, seg, [("a", 1.0), ("b", 1.5)])
-    assert "左侧女孩张嘴说话" in out
+    assert "左侧女孩嘴巴持续张合说话" in out
     assert "后定格" in out
     assert "两人说话后面部表情" not in out
+    assert "说话时只动嘴唇和下巴" in out
     assert "镜头固定" in out
 
 
@@ -285,14 +288,16 @@ def test_inject_mouth_motion_three_lines_same_speaker_twice():
         ("我哪里弄乱了？", 1.8),
     ]
     out = _inject_mouth_motion(mp, seg, cues)
-    assert "0.0-2.5秒左侧女孩张嘴说话，同时" in out
-    assert "2.5-6.5秒右侧男孩张嘴说话，同时" in out
-    assert "6.5-8.3秒左侧女孩张嘴说话，同时" in out
-    assert out.count("右侧男孩闭嘴") == 2
-    assert "左侧女孩闭嘴" in out
+    assert "0.0-2.5秒左侧女孩嘴巴持续张合说话，嘴唇明显一开一合约8次，同时" in out
+    assert "2.5-6.5秒右侧男孩嘴巴持续张合说话，嘴唇明显一开一合约12次，同时" in out
+    assert "6.5-8.3秒左侧女孩嘴巴持续张合说话，嘴唇明显一开一合约5次，同时" in out
+    assert out.count("右侧男孩嘴巴闭合不动") == 2
+    assert "左侧女孩嘴巴闭合不动" in out
     assert out.index("0.0-2.5秒左侧女孩") < out.index("2.5-6.5秒右侧男孩")
-    assert out.count("张嘴说话，同时") == 3
-    assert "两人说话后面部表情恢复与静图一致" in out
+    assert out.count("嘴巴持续张合说话") == 3
+    assert "两人说话后面部表情恢复与静图一致" not in out
+    assert "说话时只动嘴唇和下巴" in out
+    assert "服装发型稳定" in out
     first = out.split("；")[0]
     assert "后定格" not in first
 
@@ -320,11 +325,12 @@ def test_inject_mouth_motion_face_mark_between_lines():
         ("我就碰了一下，没弄皱！", 3.1),
     ]
     out = _inject_mouth_motion(mp, seg, cues)
-    assert "0.0-3.0秒左侧女孩张嘴说话，同时" in out
-    assert "3.0-6.1秒右侧男孩张嘴说话，同时" in out
+    assert "0.0-3.0秒左侧女孩嘴巴持续张合说话，嘴唇明显一开一合约9次，同时" in out
+    assert "3.0-6.1秒右侧男孩嘴巴持续张合说话，嘴唇明显一开一合约9次，同时" in out
     assert out.index("0.0-3.0秒左侧女孩") < out.index("3.0-6.1秒右侧男孩")
-    assert out.index("3.0-6.1秒右侧男孩") < out.index("两人说话后面部表情")
-    assert out.count("两人说话后面部表情") == 1
+    assert out.index("3.0-6.1秒右侧男孩") < out.index("说话时只动嘴唇和下巴")
+    assert "两人说话后面部表情" not in out
+    assert "服装发型稳定" in out
 
 
 def test_stabilize_keeps_timeline_ranges():
@@ -358,7 +364,8 @@ _FORBIDDEN_INJECTED = re.compile(
     r"粉色卫衣的马尾女孩|蓝色短袖T恤的短发男孩|嘴巴闭合不张嘴"
 )
 _SPEAK_WINDOW_RE = re.compile(
-    r"[\d.]+-[\d.]+秒(?:左侧|右侧)(?:男孩|女孩|妈妈)张嘴说话，同时"
+    r"[\d.]+-[\d.]+秒(?:左侧|右侧)(?:男孩|女孩|妈妈)"
+    r"嘴巴持续张合说话，嘴唇明显一开一合约\d+次，同时"
 )
 
 
@@ -383,18 +390,19 @@ def test_keyframe_motion_after_inject_contract():
     cues = [("我刚叠好的衣服怎么皱成一团了？", 3.05), ("我就碰了一下，没弄皱！", 3.02)]
     out = _inject_mouth_motion(_KEYFRAME_LLM_MOTION, {"dialogue": dialogue}, cues)
 
-    assert out.count("张嘴说话，同时") == 2
-    assert out.count("闭嘴") == 2
+    assert out.count("嘴巴持续张合说话") == 2
+    assert out.count("嘴巴闭合不动") == 2
     assert _SPEAK_WINDOW_RE.search(out)
-    assert "0.0-3.0秒左侧女孩张嘴说话" in out
-    assert "3.0-6.1秒右侧男孩张嘴说话" in out
+    assert "0.0-3.0秒左侧女孩嘴巴持续张合说话" in out
+    assert "3.0-6.1秒右侧男孩嘴巴持续张合说话" in out
     assert _FORBIDDEN_INJECTED.search(out) is None
-    assert "两人说话后面部表情恢复与静图一致" in out
-    assert "愤怒质问状" in out
-    assert "委屈不服状" in out
+    # 收束表情段会锁回闭嘴脸，注入后须被替换为嘴唇锁定句
+    assert "两人说话后面部表情恢复与静图一致" not in out
+    assert "说话时只动嘴唇和下巴" in out
     # 末句动作由 inject 改为定格
     assert "双手摊开向上微抖一下后定格" in out
     assert "微微颤抖约2厘米后停止" in out
+    assert "服装发型稳定" in out
     assert "镜头固定，不推近不拉远" in out
 
 
@@ -420,8 +428,8 @@ def test_inject_speaking_times_into_motion_prompts_updates_segment():
     n = inject_speaking_times_into_motion_prompts(segments, cues)
     assert n == 1
     mp = segments[0]["motion_prompt"]
-    assert "左侧女孩张嘴说话" in mp
-    assert "右侧男孩张嘴说话" in mp
+    assert "左侧女孩嘴巴持续张合说话" in mp
+    assert "右侧男孩嘴巴持续张合说话" in mp
 
 
 def test_inject_mouth_motion_strips_orphan_and_normalizes_face_mark():
@@ -448,12 +456,13 @@ def test_inject_mouth_motion_strips_orphan_and_normalizes_face_mark():
         ("可你自己刚才也算九十四", 2.8154),
     ]
     out = _inject_mouth_motion(mp, seg, cues)
-    assert "0.0-3.4秒左侧女孩张嘴说话，同时" in out
-    assert "3.4-6.2秒右侧男孩张嘴说话，同时" in out
+    assert "0.0-3.4秒左侧女孩嘴巴持续张合说话，嘴唇明显一开一合约10次，同时" in out
+    assert "3.4-6.2秒右侧男孩嘴巴持续张合说话，嘴唇明显一开一合约8次，同时" in out
     assert "昭昭保持双手摊开耸肩姿势" not in out
     assert "灿灿说话后面部表情" not in out
-    assert "两人说话后面部表情恢复与静图一致：" in out
-    assert out.count("张嘴说话，同时") == 2
+    assert "两人说话后面部表情恢复与静图一致：" not in out
+    assert "说话时只动嘴唇和下巴" in out
+    assert out.count("嘴巴持续张合说话") == 2
     assert "服装发型稳定" in out
 
 

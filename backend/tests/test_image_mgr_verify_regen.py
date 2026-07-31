@@ -406,8 +406,8 @@ def test_regen_segment_reinjects_speaking_times_into_motion() -> None:
 
     mp = seg.get("motion_prompt") or ""
     assert re.search(r"\d+\.\d+-\d+\.\d+秒", mp)
-    assert "左侧男孩张嘴说话，同时" in mp
-    assert "右侧女孩张嘴说话，同时" in mp
+    assert "左侧男孩嘴巴持续张合说话" in mp
+    assert "右侧女孩嘴巴持续张合说话" in mp
 
 
 def test_verify_regen_feedback_cast_aware() -> None:
