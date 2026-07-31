@@ -43,6 +43,21 @@ def test_normalize_submit_ids_keeps_distinct_video_id() -> None:
     assert task_id == "task_test"
 
 
+def test_extract_video_url_from_metadata() -> None:
+    """completed 返回体的地址可能嵌在 metadata.url（线上实测）。"""
+    body = {
+        "id": "task_x",
+        "video_id": "task_x",
+        "status": "completed",
+        "metadata": {
+            "size_mapping": {"adjusted": True},
+            "url": "https://platform-outputs.agnes-ai.space/videos/task_x.mp4",
+        },
+    }
+    url = AgnesClipProvider._extract_video_url(body)  # noqa: SLF001
+    assert url == "https://platform-outputs.agnes-ai.space/videos/task_x.mp4"
+
+
 def test_agnes_poll_url_prefers_task_id() -> None:
     provider = AgnesClipProvider()
     url = provider._poll_url(  # noqa: SLF001
