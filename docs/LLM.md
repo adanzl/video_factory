@@ -8,12 +8,13 @@
 | 环境变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `DEEPSEEK_MODEL` | `deepseek-v4-flash` | 默认模型 |
-| `DEEPSEEK_PRO_MODEL` | `deepseek-v4-pro` | A1/D2 失败重试用 |
+| `DEEPSEEK_PRO_MODEL` | `deepseek-v4-pro` | A1/D2 失败重试；D1.5 骨架 |
 | `DEEPSEEK_MAX_TOKENS` | `32768` | 单次最大 token |
 | `DEEPSEEK_THINKING` | `true` | 全局深度思考开关 |
 
 **Pro 路由**：A1 口播、D2 正文（含质量修订）首稿走
 `DEEPSEEK_MODEL`；校验失败后的重试走 `DEEPSEEK_PRO_MODEL`。
+D1.5 笑点骨架（类型 `story_plan.ENABLED`）固定用 Pro。
 
 ## Agnes 配置
 
@@ -57,7 +58,8 @@ temperature。
 | B1 素材口播 | ✅ 走配置 | — | 同 A1 |
 | C1/C2 选题 | ❌ 硬关 | 0.8 | 钩子创意 |
 | D1 主题 | ❌ 硬关 | 0.95 | 高创意 |
-| D2 故事 | ❌ 首稿硬关；重试走配置 | 0.95 / — | 首稿创意；重试修字数等硬约束 |
+| D1.5 笑点骨架 | ✅ 走配置 | — | 短 JSON；按类型 ENABLED |
+| D2 故事 | ❌ 首稿硬关；重试走配置 | 0.95/1.0 / — | 有骨架时首稿 1.0；重试修硬约束 |
 | D2b 发现开场 | ✅ 走配置 | — | 短约束：JSON/锚点/只发现不讲理 |
 | D3 分镜 | ✅ 走配置 | — | 台词完整/切镜结构 |
 | D4 对话标题 | ❌ 硬关 | 0.8 | 标题创意 |
@@ -74,5 +76,6 @@ temperature。
 仅硬关 thinking 时生效。代码常量：
 
 - `_TEMP_CREATIVE_HIGH = 0.95`（D1/D2 首稿）
+- `_TEMP_CREATIVE_BLUEPRINT = 1.0`（D1.5 有骨架时的 D2 首稿）
 - `_TEMP_CREATIVE_MID = 0.8`（A2/C/D4/E1）
 - `_TEMP_UTILITY = 0.5`（E2/E3/E4/封面）
