@@ -10,7 +10,9 @@ from app.services.segment.clip.video_agnes import (
     AgnesClipProvider,
     _backoff_seconds,
     _encode_image_data_uri,
+    _extract_speak_windows,
     _normalize_submit_ids,
+    _parse_speaking_sides,
     _pick_num_frames,
     _read_agnes_source_url,
     _resolve_i2v_image,
@@ -23,6 +25,36 @@ from app.utils.media_path import resolve_media_public_base_url
 
 def test_backoff_seconds_timeout() -> None:
     assert _backoff_seconds(0, is_timeout=True) >= 45.0
+
+
+def test_extract_speak_windows_new_and_legacy_formats() -> None:
+    prompt = (
+        "画面左边是昭昭，右边是灿灿。"
+        "0.0-3.4秒右侧女孩开口说话，口型自然开合，说完即闭嘴，同时右手点动后停止，"
+        "此时左侧男孩嘴巴闭合不动；"
+        "3.4-8.4秒左侧男孩开口说话，口型自然开合，说完即闭嘴，同时拇指摩挲后定格。"
+    )
+    windows = _extract_speak_windows(prompt)
+    assert windows == [(0.0, 3.4, "右侧女孩"), (3.4, 8.4, "左侧男孩")]
+
+    legacy = "0.0-1.4秒左侧女孩张嘴说话，同时点头；1.4-2.5秒右侧男孩张嘴说话，同时耸肩。"
+    assert _extract_speak_windows(legacy) == [
+        (0.0, 1.4, "左侧女孩"),
+        (1.4, 2.5, "右侧男孩"),
+    ]
+    # ambient 无说话窗口
+    assert _extract_speak_windows("窗帘轻轻飘动，人物姿势保持不变。") == []
+
+
+def test_parse_speaking_sides() -> None:
+    assert _parse_speaking_sides("左侧") == {"左侧"}
+    assert _parse_speaking_sides("右侧。") == {"右侧"}
+    assert _parse_speaking_sides("两者") == {"左侧", "右侧"}
+    assert _parse_speaking_sides("左侧和右侧都在说") == {"左侧", "右侧"}
+    assert _parse_speaking_sides("无人") == set()
+    assert _parse_speaking_sides("都没有说话") == set()
+    assert _parse_speaking_sides("") is None
+    assert _parse_speaking_sides("无法判断画面内容") is None
 
 
 def test_normalize_submit_ids_drops_task_prefixed_video_id() -> None:
