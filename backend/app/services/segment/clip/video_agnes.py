@@ -487,10 +487,13 @@ class AgnesClipProvider(ClipProvider):
             value = body.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip()
-        output = body.get("output")
-        if isinstance(output, dict):
+        # completed 返回体有时把地址嵌在 output/metadata 里（如 metadata.url）
+        for nested_key in ("output", "metadata"):
+            nested = body.get(nested_key)
+            if not isinstance(nested, dict):
+                continue
             for key in ("video_url", "url"):
-                value = output.get(key)
+                value = nested.get(key)
                 if isinstance(value, str) and value.strip():
                     return value.strip()
         return None
@@ -674,6 +677,11 @@ class AgnesClipProvider(ClipProvider):
     def _download_video(self, poll: dict, output_path: Path, task_label: str) -> Path:
         video_url = self._extract_video_url(poll)
         if not video_url:
+            logger.error(
+                "agnes i2v task %s completed but missing video url, body=%s",
+                task_label,
+                repr(poll)[:800],
+            )
             raise AgnesI2VError(f"agnes i2v task {task_label} completed but missing video url")
         video = requests.get(
             video_url,
