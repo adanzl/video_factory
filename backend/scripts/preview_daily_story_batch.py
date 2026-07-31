@@ -93,6 +93,7 @@ def _summarize(theme: str, story: dict, elapsed: float) -> dict:
         "setting": story.get("setting"),
         "conflict_core": story.get("conflict_core"),
         "punchline_explain": story.get("punchline_explain"),
+        "punchline_blueprint": story.get("punchline_blueprint"),
         "quality_grade": quality.get("grade"),
         "quality_score": quality.get("score"),
         "quality_summary": quality.get("summary"),
@@ -136,6 +137,8 @@ def run_batch(
             )
             print(f"core={item['conflict_core']}", flush=True)
             print(f"setting={item['setting']}", flush=True)
+            if item.get("punchline_blueprint"):
+                print(f"blueprint={item['punchline_blueprint']}", flush=True)
             if item.get("quality_summary"):
                 print(f"quality={item['quality_summary']}", flush=True)
             if item["opening"]:

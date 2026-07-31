@@ -83,6 +83,7 @@ _TRUNCATION_RETRY_ATTEMPTS = 3
 # 硬关 thinking 时的温度：越大越野。走配置（开 thinking）时勿传。
 # D2 重试 / D2b 开场走配置 thinking，不传 temperature。
 _TEMP_CREATIVE_HIGH = 0.95  # D1/D2 首稿
+_TEMP_CREATIVE_BLUEPRINT = 1.0  # D1.5 有骨架时的 D2 首稿
 _TEMP_CREATIVE_MID = 0.8  # A2/C/D4/E1
 _TEMP_UTILITY = 0.5  # E2/E3/E4/封面
 
@@ -1736,6 +1737,69 @@ class DeepSeekClient(LLMClient):
         assert last_exc is not None
         raise last_exc
 
+    def _design_punchline_blueprint(
+        self,
+        theme: str,
+        *,
+        story_type: str | None = None,
+    ) -> dict[str, Any] | None:
+        """D1.5：Pro 设计短笑点骨架；失败返回 None（降级无卡 D2）。"""
+        from app.services.daily_story.story_design import (
+            build_punchline_blueprint_prompts,
+            parse_blueprint_response,
+            story_plan_enabled,
+            validate_punchline_blueprint,
+        )
+
+        if not story_plan_enabled(story_type=story_type):
+            return None
+        try:
+            system, user = build_punchline_blueprint_prompts(
+                theme,
+                story_type=story_type,
+            )
+        except ValueError as exc:
+            logger.warning("[DAILY_STORY] D1.5 skip: %s", exc)
+            return None
+
+        last_err = ""
+        for attempt in range(2):
+            try:
+                raw, _ = self._chat_json(
+                    system,
+                    user,
+                    model=self._pro_model,
+                )
+                bp = parse_blueprint_response(raw)
+                errors = validate_punchline_blueprint(bp, story_type=story_type)
+                if errors:
+                    last_err = "; ".join(errors)
+                    logger.warning(
+                        "[DAILY_STORY] D1.5 blueprint invalid "
+                        "attempt=%d/2: %s",
+                        attempt + 1,
+                        last_err,
+                    )
+                    continue
+                logger.info(
+                    "[DAILY_STORY] D1.5 blueprint ok model=%s keys=%s",
+                    self._pro_model,
+                    ",".join(sorted(bp.keys())),
+                )
+                return bp
+            except Exception as exc:  # noqa: BLE001
+                last_err = str(exc)
+                logger.warning(
+                    "[DAILY_STORY] D1.5 blueprint failed attempt=%d/2: %s",
+                    attempt + 1,
+                    exc,
+                )
+        logger.warning(
+            "[DAILY_STORY] D1.5 fallback to plain D2: %s",
+            last_err or "unknown",
+        )
+        return None
+
     def _generate_daily_story_body(
         self,
         theme: str,
@@ -1744,9 +1808,16 @@ class DeepSeekClient(LLMClient):
     ) -> dict[str, Any]:
         if not story_type:
             story_type = _select_story_type(theme)
+        blueprint = self._design_punchline_blueprint(
+            theme,
+            story_type=story_type,
+        )
         # 首稿 draft（含铺垫字数）；重试 revise（只走校验硬卡）
         system, user = build_daily_story_prompts(
-            theme, story_type=story_type, length_mode="draft"
+            theme,
+            story_type=story_type,
+            length_mode="draft",
+            punchline_blueprint=blueprint,
         )
         last_exc: ValueError | None = None
         # 首稿可短（关 thinking）+ 1 次带 thinking 修订一次补满；再留 1 次兜底
@@ -1754,6 +1825,9 @@ class DeepSeekClient(LLMClient):
         prev_story: dict | None = None
         same_err_streak = 0
         prev_err_key = ""
+        draft_temp = (
+            _TEMP_CREATIVE_BLUEPRINT if blueprint else _TEMP_CREATIVE_HIGH
+        )
         for attempt in range(max_attempts):
             # 首稿：Flash + 关 thinking + 高温度；重试：Pro + 开 thinking
             use_model = self._model if attempt == 0 else self._pro_model
@@ -1762,7 +1836,7 @@ class DeepSeekClient(LLMClient):
                     system,
                     user,
                     thinking_enabled=False,
-                    temperature=_TEMP_CREATIVE_HIGH,
+                    temperature=draft_temp,
                     model=use_model,
                 )
             else:
@@ -1777,9 +1851,18 @@ class DeepSeekClient(LLMClient):
                 from app.services.daily_story.prompts import (
                     try_local_patch_daily_story_body,
                 )
+                from app.services.daily_story.story_design import (
+                    apply_blueprint_to_story,
+                )
 
                 raw["_theme"] = theme
                 raw["_story_type"] = story_type
+                if blueprint:
+                    apply_blueprint_to_story(
+                        raw,
+                        blueprint,
+                        story_type=story_type,
+                    )
                 patched, patch_notes = try_local_patch_daily_story_body(raw)
                 if patch_notes:
                     logger.info(
@@ -1788,11 +1871,27 @@ class DeepSeekClient(LLMClient):
                         ",".join(patch_notes),
                     )
                     raw = patched
+                    if blueprint:
+                        apply_blueprint_to_story(
+                            raw,
+                            blueprint,
+                            story_type=story_type,
+                        )
             try:
                 validate_daily_story_json(raw, phase="body")
                 if isinstance(raw, dict):
                     raw.pop("_theme", None)
                     raw.pop("_story_type", None)
+                    if blueprint:
+                        from app.services.daily_story.story_design import (
+                            apply_blueprint_to_story,
+                        )
+
+                        apply_blueprint_to_story(
+                            raw,
+                            blueprint,
+                            story_type=story_type,
+                        )
                 return raw
             except ValueError as exc:
                 last_exc = exc
@@ -1802,12 +1901,27 @@ class DeepSeekClient(LLMClient):
                     from app.services.daily_story.prompts import (
                         try_local_patch_daily_story_body,
                     )
+                    from app.services.daily_story.story_design import (
+                        apply_blueprint_to_story,
+                    )
 
                     prev_story["_theme"] = theme
                     prev_story["_story_type"] = story_type
+                    if blueprint:
+                        apply_blueprint_to_story(
+                            prev_story,
+                            blueprint,
+                            story_type=story_type,
+                        )
                     patched2, notes2 = try_local_patch_daily_story_body(prev_story)
                     if notes2:
                         try:
+                            if blueprint:
+                                apply_blueprint_to_story(
+                                    patched2,
+                                    blueprint,
+                                    story_type=story_type,
+                                )
                             validate_daily_story_json(patched2, phase="body")
                             logger.info(
                                 "[DAILY_STORY] local body patch saved LLM "
@@ -1856,7 +1970,10 @@ class DeepSeekClient(LLMClient):
                     story_type=story_type,
                 )
                 system, _ = build_daily_story_prompts(
-                    theme, story_type=story_type, length_mode=length_mode
+                    theme,
+                    story_type=story_type,
+                    length_mode=length_mode,
+                    punchline_blueprint=blueprint,
                 )
                 if isinstance(prev_story, dict):
                     user = build_daily_story_retry_user(
@@ -1866,9 +1983,20 @@ class DeepSeekClient(LLMClient):
                         phase="body",
                         story_type=story_type,
                     )
+                    if blueprint:
+                        from app.services.daily_story.story_design import (
+                            expansion_outline_for,
+                            format_blueprint_block,
+                        )
+
+                        user = (
+                            f"{format_blueprint_block(blueprint)}\n\n"
+                            f"{expansion_outline_for(blueprint, story_type=story_type)}\n\n"
+                            f"{user}"
+                        )
                 else:
                     user = (
-                        f"{build_daily_story_prompts(theme, story_type=story_type, length_mode=length_mode)[1]}\n\n"
+                        f"{build_daily_story_prompts(theme, story_type=story_type, length_mode=length_mode, punchline_blueprint=blueprint)[1]}\n\n"
                         f"【重试】上一轮校验未通过：{errors}\n"
                         "请直接输出符合硬约束的完整 JSON（正文勿写发现开场）。"
                     )

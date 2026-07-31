@@ -872,6 +872,7 @@ def build_daily_story_prompts(
     *,
     story_type: str | None = None,
     length_mode: str = "draft",
+    punchline_blueprint: dict | None = None,
 ) -> tuple[str, str]:
     """构造日常故事正文生成的 system + user 提示词。
 
@@ -881,6 +882,7 @@ def build_daily_story_prompts(
       - revise_patch：只差几个字/局部硬卡，句内微调，勿整稿重写
       - revise_trim：偏长重试，只删不增，瞄准中段
       - revise：非字数问题重试，勿故意改篇幅
+    punchline_blueprint：D1.5 骨架；有则注入 user，要求按卡展开。
     """
     type_instruction = (
         f"本次矛盾类型必须用：{story_type}。禁止用其他类型。"
@@ -894,12 +896,29 @@ def build_daily_story_prompts(
         length_mode=length_mode,
         type_code=type_code,
     )
+    user = user_tpl.format(theme=theme, type_instruction=type_instruction)
+    if punchline_blueprint:
+        from app.services.daily_story.story_design import (
+            expansion_outline_for,
+            format_blueprint_block,
+        )
+
+        block = format_blueprint_block(punchline_blueprint)
+        outline = expansion_outline_for(
+            punchline_blueprint,
+            story_type=story_type,
+        )
+        user = (
+            f"{block}\n\n{outline}\n\n"
+            "必须严格按上方骨架展开，禁止更换歪读点或另起冲突。\n\n"
+            f"{user}"
+        )
     return (
         _daily_story_system_prompt(
             length_mode=length_mode,
             type_code=type_code,
         ),
-        user_tpl.format(theme=theme, type_instruction=type_instruction),
+        user,
     )
 
 
@@ -2453,85 +2472,6 @@ _LOCAL_PAD_TAILS = (
     "啊",
     "呀",
 )  # 优先多字少句，勿满篇单「呀」
-# D 大缺口本地补：可拍短尾巴，一次重试后只差几十时垫满
-_LOCAL_PAD_TAILS_D = (
-    "，我按你说的认真做",
-    "，一点都不含糊",
-    "，照做就是了",
-    "，我数着做",
-    "呢",
-    "吧",
-)
-# D 句内顶字：每词全篇最多 1 次；禁「好不好」；禁呀/呢/啊连叠
-_LOCAL_FILL_CHUNKS_D = (
-    "，按你说的做",
-    "，你看着",
-    "，马上好",
-    "，又卡住了",
-    "，更糟了",
-)
-_LOCAL_FILL_LITERAL_MARK = re.compile(
-    r"按你说的|照做|我数着|不含糊|一步不差|绝不偷懒",
-)
-# 灿灿催促垫字：禁第一人称照做；默认通用，鞋/叠等按主题换池
-_LOCAL_FILL_CHUNKS_CAN_D = (
-    "，都快坏了",
-    "，别再弄了",
-    "，已经过头了",
-)
-
-
-def _d_fill_chunks_for_story(story: dict) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """按主题选 D 句内垫词，避免鞋带尾巴糊到挂衣服。"""
-    ctx = (
-        str(story.get("conflict_core") or "")
-        + str(story.get("_theme") or "")
-        + str(story.get("theme") or "")
-        + str(story.get("scene_title") or "")
-    )
-    zhao = _LOCAL_FILL_CHUNKS_D
-    can = _LOCAL_FILL_CHUNKS_CAN_D
-    if re.search(r"鞋带|系紧|死结", ctx):
-        zhao = (
-            "，按你说的做",
-            "，绕得更紧了",
-            "，脚进不去",
-            "，你看着",
-            "，马上好",
-        )
-        can = (
-            "，都拧成麻花了",
-            "，鞋扣都卡住了",
-            "，脚都快伸不进了",
-            "，别再弄了",
-        )
-    elif re.search(r"挂|衣架|衣服|叠", ctx):
-        zhao = (
-            "，按你说的做",
-            "，又高一层",
-            "，更晃了",
-            "，你看着",
-            "，马上好",
-        )
-        can = (
-            "，都歪了",
-            "，快塌了",
-            "，别再塞了",
-            "，已经过头了",
-        )
-    elif re.search(r"浇|花|水", ctx):
-        zhao = (
-            "，按你说的做",
-            "，又浇一点",
-            "，你看着",
-            "，马上好",
-        )
-        can = (
-            "，都溢出来了",
-            "，别再浇了",
-            "，已经过头了",
-        )
-    return zhao, can
 _LOCAL_TRIM_CHARS = "的了呢嘛呀啊吧啦哦喔哈嗯"
 
 
@@ -2569,7 +2509,7 @@ def _pad_dialogue_line(
     if core[-1] in "啦嘛呀啊呢吧哦":
         return line, 0
     # 已补过垫字的句子不再叠加（防「好不好呢」）
-    if any(core.endswith(suf) for suf in (*_LOCAL_PAD_TAILS, *_LOCAL_PAD_TAILS_D)):
+    if any(core.endswith(suf) for suf in _LOCAL_PAD_TAILS):
         return line, 0
     room = max(0, DAILY_STORY_LINE_CHARS_MAX - _dialogue_char_count(line))
     if room <= 0:
@@ -2583,60 +2523,6 @@ def _pad_dialogue_line(
             if used is not None:
                 used.add(suf)
             return f"{core}{suf}{trail}", len(suf)
-    return line, 0
-
-
-def _fill_d_dialogue_line(
-    line: str,
-    need: int,
-    used: dict[str, int] | None = None,
-    *,
-    chunks: tuple[str, ...] | None = None,
-) -> tuple[str, int]:
-    """D：句内最多垫 1 段；已有照做口吻不再叠；禁呀呢啊连叠。"""
-    if need <= 0 or not line:
-        return line, 0
-    trail = ""
-    core = line
-    if core and core[-1] in "。！？…":
-        trail = core[-1]
-        core = core[:-1]
-    if core and core[-1] in "啦嘛呀啊呢吧哦":
-        trail = core[-1] + trail
-        core = core[:-1]
-    if not core:
-        return line, 0
-    pool = chunks or _LOCAL_FILL_CHUNKS_D
-    # 已有字面口吻：不再叠「按你说的/照做」类，只允许场面尾巴
-    if _LOCAL_FILL_LITERAL_MARK.search(core):
-        pool = tuple(
-            s for s in pool
-            if not _LOCAL_FILL_LITERAL_MARK.search(s)
-        )
-        if not pool:
-            return line, 0
-    room = max(
-        0,
-        DAILY_STORY_LINE_CHARS_MAX
-        - _dialogue_char_count(core)
-        - _dialogue_char_count(trail),
-    )
-    if room < 3:
-        return line, 0
-    start = _dialogue_char_count(core) % max(1, len(pool))
-    ordered = pool[start:] + pool[:start]
-    for suf in sorted(ordered, key=len, reverse=True):
-        if used is not None and used.get(suf, 0) >= 1:
-            continue
-        if len(suf) > room or len(suf) > need:
-            continue
-        bare = suf.lstrip("，")
-        if core.endswith(suf) or bare in core:
-            continue
-        core = f"{core}{suf}"
-        if used is not None:
-            used[suf] = used.get(suf, 0) + 1
-        return f"{core}{trail}", len(suf)
     return line, 0
 
 

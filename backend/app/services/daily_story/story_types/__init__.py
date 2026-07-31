@@ -344,10 +344,7 @@ def patch_type_body(story: dict) -> list[str]:
         from app.services.daily_story.story_types.b.patch import patch_b_body
 
         return patch_b_body(story)
-    if code == "D":
-        from app.services.daily_story.story_types.d.patch import patch_d_body
-
-        return patch_d_body(story)
+    # D 不做本地修稿：硬卡不过直接交 LLM 重试
     if code == "E":
         from app.services.daily_story.story_types.e.patch import patch_e_body
 
