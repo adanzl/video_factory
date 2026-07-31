@@ -253,7 +253,7 @@ def _normalize_submit_ids(
     """纠正 submit 响应里被回填成 task id 的 video_id。
 
     Agnes 异步排队时常返回 video_id=task_xxx（与 id/task_id 相同），
-    这不是可走 agnesapi?video_id= 的真实 video id，应归入 task_id，
+    这不是可走 agnes-api?video_id= 的真实 video id，应归入 task_id，
     走 /videos/{task_id} 轮询。
     """
     if video_id and video_id.startswith("task_"):
@@ -666,7 +666,7 @@ class AgnesClipProvider(ClipProvider):
         return video_id, task_id, state, body
 
     def _poll_url(self, video_id: str | None, task_id: str | None) -> str:
-        # 有 Agnes task id 时优先走 /videos/{id}；agnesapi 仅用于真实 video_id
+        # 有 Agnes task id 时优先走 /videos/{id}；agnes-api 仅用于真实 video_id
         if task_id:
             return f"{self._create_url}/{task_id}"
         if video_id:
@@ -802,13 +802,13 @@ class AgnesClipProvider(ClipProvider):
 
             logger.info(
                 "segment %s: total_duration=%.2fs n_cues=%s; submitting agnes i2v "
-                "(frames=%s, fps=%s, motion=%s...)",
+                "(frames=%s, fps=%s, motion=%s)",
                 segment_index,
                 total_duration,
                 len(subtitle_cues),
                 num_frames,
                 self._frame_rate,
-                prompt[:80],
+                prompt,
             )
             output_path.parent.mkdir(parents=True, exist_ok=True)
             try:
