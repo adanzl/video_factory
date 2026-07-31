@@ -95,10 +95,12 @@ def append_e_opening_errors(
             narr = RE_CHILD_NARRATOR_PREFIX.search(line)
             quest = RE_CHILD_QUESTION.search(line)
             camera = RE_CAMERA_NARRATION.search(line)
-            if narr and (camera or not quest):
+            # 裸地点起句即旁白腔，带问号也不放行（地点嵌句中或回忆式）
+            if narr:
                 errors.append(
                     f"opening[{i}] E类孩子开场勿旁白定格式"
-                    "（宜「刚才在客厅，妈你为什么…」）",
+                    "（勿「客厅门口，…」起句；宜「刚才在客厅，妈你为什么…」"
+                    "或把地点嵌进动作里）",
                 )
                 break
             if camera and not quest:
@@ -194,7 +196,16 @@ def _opening_body_overlap(a: str, b: str) -> bool:
     if left == right or left in right or right in left:
         return True
     n = min(len(left), len(right), 8)
-    return n >= 4 and left[:n] == right[:n]
+    if n >= 4 and left[:n] == right[:n]:
+        return True
+    # 换词复述同一拍（问句主干重合）也算重复；先去标点再比双字词
+    la = re.sub(r"[，。！？、,.!?…\s]", "", left)
+    lb = re.sub(r"[，。！？、,.!?…\s]", "", right)
+    ga = {la[i : i + 2] for i in range(len(la) - 1)}
+    gb = {lb[i : i + 2] for i in range(len(lb) - 1)}
+    if not ga or not gb:
+        return False
+    return len(ga & gb) / min(len(ga), len(gb)) >= 0.6
 
 
 def _first_body_line_after_opening(story: dict) -> str:
@@ -259,7 +270,7 @@ def score_opening_quality(story: dict) -> tuple[int, list[str], list[str]]:
             narr = RE_CHILD_NARRATOR_PREFIX.search(ln)
             quest = RE_CHILD_QUESTION.search(ln)
             camera = RE_CAMERA_NARRATION.search(ln)
-            if narr and (camera or not quest):
+            if narr:
                 cons.append("E开场旁白定格式")
                 pts -= 4
                 break

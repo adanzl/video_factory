@@ -1763,17 +1763,22 @@ class DeepSeekClient(LLMClient):
             return None
 
         last_err = ""
+        retry_user = user
         for attempt in range(2):
             try:
                 raw, _ = self._chat_json(
                     system,
-                    user,
+                    retry_user,
                     model=self._pro_model,
                 )
                 bp = parse_blueprint_response(raw)
                 errors = validate_punchline_blueprint(bp, story_type=story_type)
                 if errors:
                     last_err = "; ".join(errors)
+                    retry_user = (
+                        f"{user}\n上一稿骨架被拒：{last_err}。"
+                        "请修正后重新只输出一个 JSON 对象。"
+                    )
                     logger.warning(
                         "[DAILY_STORY] D1.5 blueprint invalid "
                         "attempt=%d/2: %s",
@@ -1935,6 +1940,9 @@ class DeepSeekClient(LLMClient):
                         except ValueError:
                             prev_story = patched2
                 errors = str(exc).removeprefix("daily_story 校验失败: ")
+                # 跑题稿是毒样本：丢掉上一稿，重试走全新首稿而非修订
+                if "正文跑题" in errors:
+                    prev_story = None
                 # 同一硬伤连撞 3 次再停：首稿短→thinking 修订有时仍差一点，留满 3 次
                 err_key = (
                     "A偷吃"
@@ -2061,9 +2069,11 @@ class DeepSeekClient(LLMClient):
                         ",".join(notes),
                     )
                     raw = patched
-                    raw.pop("_theme", None)
             try:
+                # _theme 留到校验后再弹出：贴题硬卡要用
                 validate_daily_story_json(raw, phase="body")
+                if isinstance(raw, dict):
+                    raw.pop("_theme", None)
                 return raw
             except ValueError as exc:
                 last_exc = exc
@@ -2072,6 +2082,7 @@ class DeepSeekClient(LLMClient):
                     if notes2:
                         try:
                             validate_daily_story_json(patched2, phase="body")
+                            patched2.pop("_theme", None)
                             return patched2
                         except ValueError:
                             raw = patched2

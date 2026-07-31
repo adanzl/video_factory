@@ -39,8 +39,8 @@ HUMOR_ISSUE_CAPS: tuple[tuple[str, int], ...] = (
 
 
 def ground_closing_quote(fragment: str, haystack: str) -> bool:
-    frag = re.sub(r"[的话呢呀嘛吧啊…\s「」『』\"'‘’：:，,]", "", fragment)
-    hay = re.sub(r"[的话呢呀嘛吧啊…\s「」『』\"'‘’：:，,]", "", haystack)
+    frag = re.sub(r"[的话呢呀嘛吧啊…\s「」『』“”\"'‘’：:，,]", "", fragment)
+    hay = re.sub(r"[的话呢呀嘛吧啊…\s「」『』“”\"'‘’：:，,]", "", haystack)
     if len(frag) < 3:
         return True
     if "更急" in frag and "更急" in hay:

@@ -35,6 +35,42 @@ D_OPENING_INVITE_RE = re.compile(
 _RE_OPENING_GOING = re.compile(r"出门|穿鞋|要走|快走|去上学")
 _RE_OPENING_WALKED = re.compile(r"走两步就|走了两步|走过就|刚走就")
 _RE_OPENING_NOT_YET = re.compile(r"还没")
+# 执行者错位：D 正文永远昭昭动手，灿灿开场说「看我做」正文必穿帮
+_RE_EXEC_MISMATCH = re.compile(r"看我|瞧我|给你看|我先来|我示范|我做给")
+# 裸地点短语当独立小句（报幕腔）：「好啊，客厅茶几上，你手里的…」
+_RE_BARE_PLACE_CLAUSE = re.compile(
+    r"(?:^|[，,])(?:客厅|厨房|卧室|玄关|阳台|门口|餐厅|书房|洗手间)"
+    r"[^，,。！？]{0,4}[，,]",
+)
+
+
+def _twist_tail(conflict_core: str) -> str:
+    """core「X被读成Y」的 Y——歪读做法，开场说破=剧透。"""
+    core = (conflict_core or "").strip()
+    if "被读成" not in core:
+        return ""
+    return core.split("被读成", 1)[1].strip()
+
+
+def _leaks_twist(joined: str, conflict_core: str) -> bool:
+    tail = _twist_tail(conflict_core)
+    if len(tail) < 4:
+        return False
+    return any(tail[i : i + 4] in joined for i in range(len(tail) - 3))
+
+
+def _shares_core_bigram(joined: str, conflict_core: str) -> bool:
+    """开场与 conflict_core 共享 ≥2 字连续片段即视为点到主题。
+
+    家务动词表只认旧主题；主题词以 core 为准，勿枚举。
+    """
+    compact = "".join(re.findall(r"[\u4e00-\u9fff]+", conflict_core or ""))
+    for noise in ("被读成", "读成", "昭昭", "灿灿", "妈妈"):
+        compact = compact.replace(noise, "")
+    for i in range(len(compact) - 1):
+        if compact[i : i + 2] in joined:
+            return True
+    return False
 
 
 def append_d_opening_errors(
@@ -42,10 +78,27 @@ def append_d_opening_errors(
     *,
     type_code: str | None,
     errors: list[str],
+    conflict_core: str = "",
 ) -> None:
     code = (type_code or "").strip().upper()[:1]
     if code != "D":
         return
+    for i, item in enumerate(normalized):
+        if str(item.get("speaker") or "").strip() == "妈妈":
+            errors.append(
+                f"opening[{i}] D类主戏姐弟，开场禁止妈妈说话（留给E类）",
+            )
+            break
+    for i, item in enumerate(normalized):
+        if str(item.get("speaker") or "").strip() != "灿灿":
+            continue
+        if _RE_EXEC_MISMATCH.search(item["line"]):
+            errors.append(
+                f"opening[{i}] D开场执行者错位：正文由昭昭动手执行，"
+                "邀约须把活交给昭昭（你来试试/帮我把…/我教你），"
+                "禁止灿灿「看我做/我做给你看」",
+            )
+            break
     for i, item in enumerate(normalized):
         line = item["line"]
         if D_OPENING_SPOILER_RE.search(line):
@@ -66,13 +119,21 @@ def append_d_opening_errors(
                 "应是「别这样弄/按我说的」类叮嘱前场面",
             )
             break
-    # 须点到即将一起做的事（邀约或叮嘱均可），勿事后质问当开场
+    # 须点到即将一起做的事（邀约或叮嘱均可），勿事后质问当开场；
+    # 词表命不中时，与 conflict_core 共享片段同样算点到（主题勿枚举）
     if normalized:
         joined = "".join(item["line"] for item in normalized)
-        if not D_OPENING_ANCHOR_RE.search(joined):
+        if _leaks_twist(joined, conflict_core):
             errors.append(
-                "opening[0:2] D类开场须点到即将做的家务事"
-                "（挂衣服/叠/系鞋带/浇花等），勿事后质问（谁让你…）",
+                "opening 泄歪读（开场就把读歪的做法说破），"
+                "开场只许点规矩/实物，歪读留给正文由昭昭逐步演",
+            )
+        if not D_OPENING_ANCHOR_RE.search(joined) and not _shares_core_bigram(
+            joined, conflict_core,
+        ):
+            errors.append(
+                "opening[0:2] D类开场须点到即将做的那件事"
+                "（含主题里的实物/动词），勿事后质问（谁让你…）",
             )
 
 
@@ -127,6 +188,25 @@ def score_opening_quality(story: dict) -> tuple[int, list[str], list[str]]:
     joined = "".join(lines_o)
     pts = 0
 
+    if _leaks_twist(joined, str(story.get("conflict_core") or "")):
+        cons.append("D开场泄歪读")
+        pts -= 4
+
+    speakers_o = [
+        str(d.get("speaker") or "").strip()
+        for d in opening
+        if isinstance(d, dict)
+    ]
+    if any(
+        sp == "灿灿" and _RE_EXEC_MISMATCH.search(ln)
+        for sp, ln in zip(speakers_o, lines_o)
+    ):
+        cons.append("D开场执行者错位（正文昭昭动手，勿灿灿看我做）")
+        pts -= 4
+    if any(_RE_BARE_PLACE_CLAUSE.search(ln) for ln in lines_o):
+        cons.append("D开场裸地点报幕腔（地点须嵌进物件短语）")
+        pts -= 2
+
     if D_OPENING_SPOILER_RE.search(joined):
         cons.append("D开场已像末段回旋镖")
         pts -= 5
@@ -178,6 +258,8 @@ def opening_revision_hint(issue: str) -> str | None:
         f"【开场·D】{issue}。"
         "须 2 句：第1句一方**发起邀约交代起因**（这次出门再教你系/咱俩一起挂衣服吧），"
         "第2句另一方**答应+报地点与眼前场面**（好啊，还没出门这根又松了）；"
+        "逻辑优先：活须交到昭昭手里（禁灿灿「看我做」）；"
+        "地点嵌进物件短语，禁裸地点小句报幕；隐患须真隐患；"
         "两句同一时间线：将要做 ≠ 已经做过；隐患用「还没/又/一…就」；"
         "勿回旋镖/不公平/那不一样/事后质问。"
     )

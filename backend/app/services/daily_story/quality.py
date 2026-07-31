@@ -341,24 +341,48 @@ def _score_redundancy(lines: list[str]) -> tuple[int, list[str]]:
     return 2, ["节奏紧凑"]
 
 
+def _subseq_in_window(frag: str, hay: str, *, max_extra: int = 3) -> bool:
+    """frag 按原顺序落在 hay 的一个近距窗口内（允许原话多出少量字）。
+
+    容忍引话省略助词/插入词（「关门要轻点」↔「关门记得要轻点」），
+    窗口 ≤ len(frag)+max_extra，防止跨句拼出假出处。
+    """
+    if not frag or not hay:
+        return False
+    for start in range(len(hay)):
+        if hay[start] != frag[0]:
+            continue
+        j = 1
+        limit = min(len(hay), start + len(frag) + max_extra)
+        for k in range(start + 1, limit):
+            if j < len(frag) and hay[k] == frag[j]:
+                j += 1
+        if j >= len(frag):
+            return True
+    return False
+
+
 def _fragment_grounded_in_text(fragment: str, haystack: str, *, min_run: int = 5) -> bool:
-    frag = re.sub(r"[的话呢呀嘛吧啊…\s「」『』\"'‘’：:]", "", fragment)
-    hay = re.sub(r"[\s「」『』\"'‘’]", "", haystack)
+    frag = re.sub(r"[的话呢呀嘛吧啊…\s「」『』“”\"'‘’：:]", "", fragment)
+    hay = re.sub(r"[\s「」『』“”\"'‘’]", "", haystack)
     if len(frag) < min_run:
         min_run = max(3, len(frag))
     if len(frag) < 3:
         return True
-    # ≥6 字引文：须连续命中，禁止靠 2 字片拼出「假出处」
+    # ≥6 字引文：连续命中，或按序落在近距窗口（容忍省字），
+    # 禁止靠 2 字片拼出「假出处」
     if len(frag) >= 6:
         run = min(6, len(frag))
         for i in range(len(frag) - run + 1):
             if frag[i:i + run] in hay:
                 return True
-        return False
+        return _subseq_in_window(frag, hay)
     run = min(min_run, len(frag))
     for i in range(len(frag) - run + 1):
         if frag[i:i + run] in hay:
             return True
+    if _subseq_in_window(frag, hay):
+        return True
     # 短引文才允许同义改写：2 字片过半命中
     pieces = [frag[i:i + 2] for i in range(0, len(frag) - 1, 2)]
     if len(pieces) >= 3:

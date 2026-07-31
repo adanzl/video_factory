@@ -26,6 +26,8 @@ def _parse_body_char_excess(errors: str) -> int | None:
 
 # 数字越小越优先（先修硬性格式，再修收束形态）
 _VALIDATION_PRIORITY: tuple[tuple[re.Pattern[str], str], ...] = (
+    # 跑题最优先：主题都写错时，其余项修了也白修
+    (re.compile(r"正文跑题"), "theme_drift"),
     (re.compile(r"连说"), "consecutive"),
     (re.compile(rf"超过.*{DAILY_STORY_LINE_CHARS_MAX}字"), "line_too_long"),
     (re.compile(r"总字数须≤"), "body_too_long"),
@@ -241,7 +243,15 @@ def _register_validation_hints() -> None:
             "禁尝菜串场、禁那不一样、禁善意/那是复读、禁句尾呵哈垫字。"
         )
 
+    def theme_drift(**_kw: Any) -> str:
+        return (
+            "【跑题重写】上一稿写的不是主题那件事：规矩词、道具、"
+            "可拍现行全部改用主题原词重立，按本类型公式重写正文；"
+            "禁止沿用上一稿场景，禁止照抄提示词示例（挑食/尝菜等）。"
+        )
+
     _VALIDATION_HINT_BUILDERS.update({
+        "theme_drift": theme_drift,
         "consecutive": consecutive,
         "line_too_long": line_too_long,
         "body_too_short": lambda frag, *, chars=0, **_kw: _hint_body_too_short(

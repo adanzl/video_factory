@@ -29,7 +29,7 @@ def append_closing_quote_errors(story: dict, errors: list[str]) -> None:
         return
 
     def _grounded(frag: str, hay: str) -> bool:
-        clean = re.sub(r"[的话呢呀嘛吧啊…\s「」『』\"'‘’：:]", "", frag)
+        clean = re.sub(r"[的话呢呀嘛吧啊…\s「」『』“”\"'‘’：:]", "", frag)
         hay2 = re.sub(r"[\s「」『』\"'‘’]", "", hay)
         if len(clean) < 3:
             return True

@@ -15,10 +15,14 @@ from app.services.daily_story.story_types.quality import (
 )
 
 RE_RULE = re.compile(r"不许|别碰|规矩|叮嘱|说了|不能")
-RE_LITERAL = re.compile(r"照做|按你说的|你不是说|字面|打开|碰了|动了")
+RE_LITERAL = re.compile(
+    r"照做|按你说的|你不是说|字面|打开|碰了|动了|"
+    r"你说[^，。！？]{1,8}我就|我按你|你叫我|你要我|我照你",
+)
 RE_MESS = re.compile(
     r"掉了|滑落|滑掉|洒|弄乱|乱了|乱成|全乱|坏了|打不开|饿着|够不着|倒了|全掉|弄翻|"
-    r"解不开|勒|死结|死疙瘩|大马趴|溢|变形",
+    r"解不开|勒|死结|死疙瘩|大马趴|溢|变形|"
+    r"[削剪切磨啃抠]没|只剩|就剩|快没了|小一圈|露出来|[削切剪磨啃]成",
 )
 # 与 humor.RE_FIX 同源，避免「我来解」一类破规漏认
 RE_FIX = d_humor.RE_FIX
