@@ -71,6 +71,76 @@ _MIN_FRAMES = 81
 # Agnes API 默认 1152×768 ≈ 884K 像素（720P 级别），超出会 400
 _API_TARGET_PIXELS = 921_600  # 1280×720
 
+# ── 口型后校验：按说话窗口抽帧给 VL 判断是否开口 ──────────────────
+_MOUTH_SPEAK_WINDOW_RE = re.compile(
+    r"(?P<start>\d+(?:\.\d+)?)-(?P<end>\d+(?:\.\d+)?)秒"
+    r"(?P<side>左侧|右侧)(?P<role>男孩|女孩|妈妈)"
+    r"(?:开口说话|张嘴说话|嘴巴持续张合说话)"
+)
+# 口型开合有闭合瞬间，单帧易误判，窗口内多点抽帧对比口型变化
+_MOUTH_VERIFY_FRACTIONS = (0.15, 0.35, 0.5, 0.65, 0.85)
+_MOUTH_VERIFY_FRAME_WIDTH = 640
+# 强制选边比「他有没有说话」的是非题更有区分度（是非题易偏向答是）
+_MOUTH_VERIFY_SYSTEM = (
+    "你是视频抽帧质检员。用户给出同一段视频某时间段按时间顺序抽取的几帧画面。"
+    "判断画面中哪个人物在说话：任一帧张开嘴巴，或各帧间嘴部有明显开合/口型变化，即算在说话。"
+    "只回答「左侧」「右侧」「两者」或「无人」，不要输出任何其他内容。"
+)
+
+
+def _extract_speak_windows(prompt: str) -> list[tuple[float, float, str]]:
+    """从注入后的 motion_prompt 提取说话窗口 (start, end, 左右侧身份)。"""
+    windows: list[tuple[float, float, str]] = []
+    for m in _MOUTH_SPEAK_WINDOW_RE.finditer(prompt or ""):
+        start, end = float(m.group("start")), float(m.group("end"))
+        if end > start:
+            windows.append((start, end, f"{m.group('side')}{m.group('role')}"))
+    return windows
+
+
+def _frame_data_uri(video_path: Path, at_sec: float, tmp_path: Path) -> str | None:
+    """抽单帧缩放到 640 宽，返回 JPEG Data URI；失败返回 None。"""
+    try:
+        run_ffmpeg([
+            *ffmpeg_cmd_start(hide_banner=True, hwaccel=False),
+            "-ss",
+            f"{max(0.0, at_sec):.2f}",
+            "-i",
+            str(video_path),
+            "-frames:v",
+            "1",
+            "-vf",
+            f"scale={_MOUTH_VERIFY_FRAME_WIDTH}:-2",
+            "-q:v",
+            "5",
+            str(tmp_path),
+        ])
+        if not tmp_path.is_file():
+            return None
+        data = base64.b64encode(tmp_path.read_bytes()).decode("ascii")
+        return f"data:image/jpeg;base64,{data}"
+    except Exception as exc:
+        logger.warning("mouth verify frame extract failed at %.2fs: %s", at_sec, exc)
+        return None
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
+def _parse_speaking_sides(content: str) -> set[str] | None:
+    """解析 VL 选边回答 → 在说话的侧集合；无法解析返回 None。"""
+    text = (content or "").strip().strip("。．.")
+    if not text:
+        return None
+    if "无人" in text or "都没" in text or "没有" in text:
+        return set()
+    if "两者" in text or "都在" in text or ("左侧" in text and "右侧" in text):
+        return {"左侧", "右侧"}
+    if "左侧" in text or text.startswith("左"):
+        return {"左侧"}
+    if "右侧" in text or text.startswith("右"):
+        return {"右侧"}
+    return None
+
 
 def _resolve_api_dimensions(target_w: int, target_h: int) -> tuple[int, int]:
     """将目标画布尺寸缩放到 Agnes API 支持的 ~720P 总像素范围内，保持比例。"""
@@ -749,6 +819,118 @@ class AgnesClipProvider(ClipProvider):
 
         raise AgnesI2VError(f"agnes i2v task {agnes_id} timeout, last state={state}")
 
+    def _ask_vl_speaking_sides(
+        self, question: str, frames: list[str]
+    ) -> set[str] | None:
+        """单次 VL 判定哪侧人物在说话；调用/解析失败返回 None（放行，避免误杀）。"""
+        settings = get_settings()
+        keys = agnes_api_keys()
+        if not keys:
+            return None
+        url = f"{settings.agnes_api_base_url.rstrip('/')}/chat/completions"
+        content: list[dict] = [{"type": "text", "text": question}]
+        content.extend(
+            {"type": "image_url", "image_url": {"url": uri}} for uri in frames
+        )
+        payload = {
+            "model": settings.agnes_vl_model,
+            "messages": [
+                {"role": "system", "content": _MOUTH_VERIFY_SYSTEM},
+                {"role": "user", "content": content},
+            ],
+            # agnes-2.0-flash 强制思考且无法关闭，预算须容纳思考过程，
+            # 否则 content 恒为空（finish_reason=length）
+            "max_tokens": 2048,
+        }
+        for api_key in keys:
+            try:
+                resp = requests.post(
+                    url,
+                    headers=agnes_auth_header(api_key.value),
+                    json=payload,
+                    timeout=(self._connect_timeout, 120),
+                )
+                if not resp.ok:
+                    logger.warning(
+                        "mouth verify vl http %s (%s key)",
+                        resp.status_code,
+                        api_key.label,
+                    )
+                    continue
+                msg = (
+                    resp.json().get("choices", [{}])[0].get("message", {})
+                )
+                reply = (msg.get("content") or "").strip()
+                if not reply:
+                    # agnes VL 常把短答案放进 reasoning_content；
+                    # 仅当它足够短（是直接答案而非思考链）才采信
+                    reasoning = (msg.get("reasoning_content") or "").strip()
+                    if len(reasoning) <= 20:
+                        reply = reasoning
+                sides = _parse_speaking_sides(reply)
+                if sides is None:
+                    logger.warning(
+                        "mouth verify vl reply unparsable (%s key): %s",
+                        api_key.label,
+                        str(reply)[:80],
+                    )
+                return sides
+            except Exception as exc:
+                logger.warning(
+                    "mouth verify vl call failed (%s key): %s", api_key.label, exc
+                )
+        return None
+
+    def _verify_mouth_motion(
+        self,
+        raw_path: Path,
+        prompt: str,
+        *,
+        work_dir: Path,
+        segment_index: int,
+    ) -> bool:
+        """按说话窗口抽帧（640 宽）问 VL 说话人是否开口；全窗口通过返回 True。"""
+        windows = _extract_speak_windows(prompt)
+        if not windows:
+            return True
+        duration = probe_duration(raw_path)
+        for w_idx, (start, end, label) in enumerate(windows):
+            frames: list[str] = []
+            for fraction in _MOUTH_VERIFY_FRACTIONS:
+                t = start + (end - start) * fraction
+                if duration > 0:
+                    t = min(t, max(0.0, duration - 0.05))
+                uri = _frame_data_uri(
+                    raw_path,
+                    t,
+                    work_dir
+                    / f"{segment_index}.mouth_{w_idx}_{int(fraction * 100)}.jpg",
+                )
+                if uri:
+                    frames.append(uri)
+            if not frames:
+                continue
+            question = (
+                f"这{len(frames)}张图按时间顺序取自同一段视频 "
+                f"{start:.1f}-{end:.1f} 秒。对比各帧，画面中谁有张嘴说话迹象？"
+                f"回答「左侧」「右侧」「两者」或「无人」。"
+            )
+            sides = self._ask_vl_speaking_sides(question, frames)
+            expected_side = label[:2]
+            ok = sides is None or expected_side in sides
+            logger.info(
+                "clip %s mouth verify %.1f-%.1fs expect=%s vl=%s: %s",
+                segment_index,
+                start,
+                end,
+                label,
+                "/".join(sorted(sides)) if sides else ("?" if sides is None else "无人"),
+                "ok" if ok else "SPEAKER MOUTH NOT MOVING",
+            )
+            if not ok:
+                return False
+        return True
+
     def _submit_and_poll(
         self,
         *,
@@ -812,12 +994,44 @@ class AgnesClipProvider(ClipProvider):
             )
             output_path.parent.mkdir(parents=True, exist_ok=True)
             try:
-                self._generate_raw(
-                    image_path, prompt, raw_path,
-                    num_frames=num_frames,
-                    width=api_w, height=api_h,
-                    segment_index=segment_index,
+                settings = get_settings()
+                verify_attempts = (
+                    max(1, settings.agnes_video_mouth_verify_attempts)
+                    if settings.agnes_video_mouth_verify
+                    else 1
                 )
+                for v_attempt in range(1, verify_attempts + 1):
+                    self._generate_raw(
+                        image_path, prompt, raw_path,
+                        num_frames=num_frames,
+                        width=api_w, height=api_h,
+                        segment_index=segment_index,
+                    )
+                    self._raise_if_job_cancelled()
+                    if not settings.agnes_video_mouth_verify:
+                        break
+                    if self._verify_mouth_motion(
+                        raw_path,
+                        prompt,
+                        work_dir=work_dir,
+                        segment_index=segment_index,
+                    ):
+                        break
+                    if v_attempt < verify_attempts:
+                        logger.warning(
+                            "clip %s: mouth verify FAILED, resubmitting i2v "
+                            "(attempt %s/%s)",
+                            segment_index,
+                            v_attempt,
+                            verify_attempts,
+                        )
+                    else:
+                        logger.warning(
+                            "clip %s: mouth verify FAILED after %s attempts, "
+                            "keeping last clip",
+                            segment_index,
+                            verify_attempts,
+                        )
                 self._raise_if_job_cancelled()
                 logger.info("clip %s: raw done, fitting to %.1fs", segment_index, total_duration)
                 raw_path = _loop_video_to_duration(
