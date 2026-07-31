@@ -120,10 +120,16 @@ _CONFLICT_ANCHOR_STOP = frozenset(
 _CONFLICT_ANCHOR_STRIP = (
     *DAILY_STORY_SPEAKER_NAMES,
     "姐弟",
+    "孩子",
+    "小孩",
+    "大人",
     "vs",
     "VS",
     "对",
 )
+
+# 提示用锚点词不含虚字/连接字（防「却穿」「子穿」这类跨词碎片进重试提示）
+_CONFLICT_ANCHOR_FUNC_CHARS = frozenset("的了着又再先就把被给让在是都也还却自己之与和或")
 
 # 重试瞄准硬卡中段，避免贴边再抖出界
 DAILY_STORY_BODY_RETRY_TARGET_MIN = 290
@@ -759,6 +765,52 @@ def _theme_bigrams(text: str) -> set[str]:
     return {n[i : i + 2] for i in range(len(n) - 1)}
 
 
+# 贴题硬卡不计入的通用词（人物/常见规矩虚词），避免「妈妈/自己」凑贴题
+_THEME_STOP_GRAMS = frozenset({
+    "妈妈", "自己", "昭昭", "灿灿", "姐姐", "弟弟", "孩子",
+    "不许", "不能", "必须", "还在", "说好", "一直", "总是", "却在",
+})
+
+
+def _append_theme_adherence_errors(story: dict, errors: list[str]) -> None:
+    """通用贴题硬卡：主题字词须落到正文，防提示词示例整段盖题。
+
+    只判「一个主题实词都没写进正文」的硬跑题（2026-07 E 类案例：
+    题面看电视、成稿整篇挑食模板）；正常改写措辞不受影响。
+    """
+    theme = str(story.get("_theme") or "").strip()
+    if not theme:
+        return
+    grams = [
+        g for g in _theme_bigrams(theme) if g not in _THEME_STOP_GRAMS
+    ]
+    if len(grams) < 4:
+        return
+    dialogue = story.get("dialogue")
+    lines = (
+        [
+            str(d.get("line") or "")
+            for d in dialogue
+            if isinstance(d, dict)
+        ]
+        if isinstance(dialogue, list)
+        else []
+    )
+    blob = _theme_norm(
+        str(story.get("scene_title") or "")
+        + str(story.get("setting") or "")
+        + str(story.get("conflict_core") or "")
+        + "".join(lines)
+    )
+    hits = sum(1 for g in grams if g in blob)
+    # 长题面允许 1 个双字词偶然撞上，仍判跑题
+    if hits == 0 or (hits == 1 and len(grams) >= 8):
+        errors.append(
+            f"正文跑题：主题「{theme}」的实词没落到正文；"
+            "规矩词与可拍现行须用主题原词重写，禁套提示词示例场景"
+        )
+
+
 def themes_near_duplicate(a: str, b: str, *, threshold: float = 0.45) -> bool:
     """同批/对历史的近义：包含关系"""
     na, nb = _theme_norm(a), _theme_norm(b)
@@ -936,6 +988,13 @@ DAILY_STORY_OPENING_SYSTEM_PROMPT = f"""\
 1. **背景**：地点或场记里能看见的环境（厨房/卧室门口/洗手台/餐桌旁…）
 2. **画面**：冲突物 + 异常状态或正在发生的动作（可拍特写）
 禁止单句干问、抽象「不公平」、或只点名无场面。
+
+【逻辑优先（高于背景/画面）】
+- 两句先过逻辑：谁在做、对谁说、状态是不是真问题；逻辑不通的开场作废，
+  背景画面写得再好也救不回来。
+- 地点要嵌进动作或物件短语里（「玄关地板上鞋带怎么绕一块了」√），
+  嵌不进就不报地点；禁止裸地点短语当独立小句（「好啊，客厅茶几上，…」×）。
+- 禁止拿正常状态硬凑「还没…/怎么…」句式冒充异常。
 
 【双句分工】
 - 第1句：定场——环境 + 物/动作异常（观众脑内出画面）
@@ -1346,8 +1405,13 @@ def _dialogue_lines_text(dialogue: list) -> list[str]:
 
 
 def _conflict_anchor_tokens(text: str) -> list[str]:
-    """从 conflict_core 抽 2–4 字锚点（先去角色名，减少噪声）。"""
-    compact = "".join(re.findall(r"[\u4e00-\u9fff]+", text or ""))
+    """从 conflict_core 抽 2–4 字锚点（先去角色名，减少噪声）。
+
+    D 类 core 形如「X被读成Y」：只取左半抽锚点，
+    否则锚点带出歪读词，开场重试点名后把笑点提前说破。
+    """
+    text = (text or "").split("被读成")[0] or text or ""
+    compact = "".join(re.findall(r"[\u4e00-\u9fff]+", text))
     for piece in _CONFLICT_ANCHOR_STRIP:
         compact = compact.replace(piece, "")
     tokens: set[str] = set()
@@ -1364,6 +1428,13 @@ def _conflict_anchors_hit(core: str, ctx: str, anchors: list[str]) -> bool:
     """开场/setting 是否点到 conflict；刷牙允许牙刷/牙膏等同场词。"""
     if anchors and any(a in ctx for a in anchors):
         return True
+    # 双字锚点允许中间插一字：「穿鞋」命中「穿着鞋」，防误判逼出硬塞词
+    for a in anchors or []:
+        if len(a) == 2 and re.search(
+            re.escape(a[0]) + r".?" + re.escape(a[1]),
+            ctx or "",
+        ):
+            return True
     # 刷牙主题：core 可能写「刷太快」而无「刷牙」二字
     if re.search(r"刷牙|刷太|漱口|牙刷", core or "") and re.search(
         r"刷牙|牙刷|牙膏|漱口|吐水|刷太|刷几|刷够",
@@ -1376,13 +1447,17 @@ def _conflict_anchors_hit(core: str, ctx: str, anchors: list[str]) -> bool:
 def _conflict_anchor_must_words(conflict_core: str, *, limit: int = 4) -> list[str]:
     """开场重试用：挑应点名的锚点（短词优先，如「洗澡」而非「一个洗澡」）。"""
     anchors = _conflict_anchor_tokens(conflict_core)
-    # 2–3 字优先；跳过已被更短锚点覆盖的长串
+    # 2–3 字优先；跳过已被更短锚点覆盖的长串；
+    # 含虚字/连接字的碎片（却穿/子穿）不进提示，防模型照抄造怪话
     ordered = sorted(anchors, key=lambda t: (len(t), t))
     picked: list[str] = []
     for a in ordered:
+        if any(ch in _CONFLICT_ANCHOR_FUNC_CHARS for ch in a):
+            continue
         if len(a) > 3 and picked:
             continue
-        if any(p in a for p in picked):
+        # 与已选词共享字的跨词碎片（选了不许/穿鞋后跳过「许穿」）
+        if any(ch in p for p in picked for ch in a):
             continue
         picked.append(a)
         if len(picked) >= limit:
@@ -1729,6 +1804,9 @@ def validate_daily_story_json(
                 "punchline_explain 须含类型标签"
                 "（如「C类公平执念」或「权威翻车」）"
             )
+
+    # 贴题：主题实词须落到正文（仅生成期挂 _theme 时生效）
+    _append_theme_adherence_errors(story, errors)
 
     _append_single_conflict_errors(story, errors)
 
@@ -2195,6 +2273,17 @@ def validate_daily_story_opening(
     return normalized
 
 
+def _line_bigram_overlap(a: str, b: str) -> float:
+    """去标点后双字词重合率（按较短句归一），用于换词复述判定。"""
+    la = re.sub(r"[，。！？、,.!?…\s]", "", a or "")
+    lb = re.sub(r"[，。！？、,.!?…\s]", "", b or "")
+    if len(la) < 2 or len(lb) < 2:
+        return 0.0
+    ga = {la[i : i + 2] for i in range(len(la) - 1)}
+    gb = {lb[i : i + 2] for i in range(len(lb) - 1)}
+    return len(ga & gb) / min(len(ga), len(gb))
+
+
 def _dialogue_lines_overlap(a: str, b: str) -> bool:
     """判断两句是否高度重叠（用于拼接时去掉正文重复发现句）。"""
     left = (a or "").strip()
@@ -2207,7 +2296,8 @@ def _dialogue_lines_overlap(a: str, b: str) -> bool:
     for n in range(4, limit + 1):
         if left[:n] == right[:n] or left[-n:] == right[:n]:
             return True
-    return False
+    # 换词复述同一拍（主干双字词大量重合）也算重叠
+    return _line_bigram_overlap(left, right) >= 0.6
 
 
 def stitch_daily_story_opening(
@@ -2238,13 +2328,23 @@ def stitch_daily_story_opening(
             dropped += 1
             continue
         break
-    # 接缝同人：丢掉正文开头连说句（最多 2 句，避免掏空）
+    # 接缝同人：孩子连说直接丢；妈妈连说仅当近重复（复读立规）才丢
     speaker_drops = 0
     while body and opening_norm and speaker_drops < 2:
         first = body[0] if isinstance(body[0], dict) else None
         first_sp = str((first or {}).get("speaker") or "").strip()
+        first_ln = str((first or {}).get("line") or "").strip()
         last_sp = opening_norm[-1]["speaker"]
-        if first_sp in ("昭昭", "灿灿") and first_sp == last_sp:
+        if first_sp != last_sp:
+            break
+        if first_sp in ("昭昭", "灿灿"):
+            body.pop(0)
+            speaker_drops += 1
+            continue
+        if (
+            first_sp == "妈妈"
+            and _line_bigram_overlap(opening_norm[-1]["line"], first_ln) >= 0.45
+        ):
             body.pop(0)
             speaker_drops += 1
             continue
@@ -2480,10 +2580,6 @@ def _clone_story(story: dict) -> dict:
     return json.loads(json.dumps(story, ensure_ascii=False))
 
 
-def _line_room(line: str) -> int:
-    return max(0, DAILY_STORY_LINE_CHARS_MAX - _dialogue_char_count(line))
-
-
 def _pad_dialogue_line(
     line: str,
     need: int,
@@ -2560,146 +2656,8 @@ def _patch_overlong_lines(story: dict) -> list[str]:
     return notes
 
 
-def _patch_d_ensure_min_lines(
-    story: dict,
-    *,
-    target_lines: int = 13,
-) -> list[str]:
-    """D 句数不足时，在末四拍前插入轮流短句；昭昭演歪读，灿灿只催/慌。"""
-    notes: list[str] = []
-    dialogue = story.get("dialogue")
-    if not isinstance(dialogue, list) or len(dialogue) < 4:
-        return notes
-    target = max(13, min(14, int(target_lines)))
-    need_lines = target - len(dialogue)
-    if need_lines <= 0:
-        return notes
-    insert_at = max(2, len(dialogue) - 4)
-    prev_sp = str(dialogue[insert_at - 1].get("speaker") or "灿灿").strip()
-    ctx = (
-        str(story.get("conflict_core") or "")
-        + str(story.get("_theme") or "")
-        + str(story.get("theme") or "")
-        + str(story.get("scene_title") or "")
-        + str(story.get("punchline_explain") or "")
-    )
-    if re.search(r"鞋带|系紧|死结", ctx):
-        zhao_fillers = (
-            "死结解不开，脚伸不进去了",
-            "再紧一点，我认真系成死结",
-            "我按你说的，绕成花生米结",
-            "鞋带焊在脚背上了",
-        )
-        can_fillers = (
-            "都拧成一坨了，你先别硬拽",
-            "这不是蝴蝶结了，都快成麻花了",
-            "先别使劲拉，鞋扣都卡住了",
-            "你看，鞋带已经勒住脚背了",
-        )
-    elif re.search(r"玩具|收纳|筐|箱子", ctx):
-        zhao_fillers = (
-            "按你说的全塞进筐，筐鼓包了",
-            "一件不落，我都塞进去了",
-            "筐沿都撑变形了",
-            "盖子扣不上了，全按你说的",
-        )
-        can_fillers = (
-            "轻点塞，别把筐撑破了",
-            "快点收，别在那儿硬塞",
-            "你倒是收啊，别光堆",
-            "小心点，玩具别压坏了",
-        )
-    elif re.search(r"叠|衣服|衣", ctx):
-        zhao_fillers = (
-            "按你说的叠成一座高塔",
-            "再叠一层，叠整齐就是了",
-            "高塔晃了一下，我继续叠",
-            "塌了……全按你说的叠的",
-        )
-        can_fillers = (
-            "轻点叠，别叠太高了",
-            "快点叠，别在那儿磨蹭",
-            "你倒是叠啊，别光堆",
-            "小心点，别把衣服弄皱了",
-        )
-    else:
-        zhao_fillers = (
-            "按你说的做完了，全搞砸了",
-            "我一步不差，结果更糟了",
-            "还是按你说的，再来一遍",
-            "坏了……我是照你说的做的",
-        )
-        can_fillers = (
-            "你小心点，别弄坏了",
-            "快点做，别在这儿磨蹭",
-            "你倒是动手啊，别光站着",
-            "小心点，别越弄越糟",
-        )
-    z_i = 0
-    c_i = 0
-    for i in range(need_lines):
-        sp = "昭昭" if prev_sp == "灿灿" else "灿灿"
-        if sp == "昭昭":
-            line = zhao_fillers[z_i % len(zhao_fillers)]
-            z_i += 1
-        else:
-            line = can_fillers[c_i % len(can_fillers)]
-            c_i += 1
-        if _dialogue_char_count(line) > DAILY_STORY_LINE_CHARS_MAX:
-            line = _truncate_overlong_line(line)
-        dialogue.insert(insert_at + i, {"speaker": sp, "line": line})
-        prev_sp = sp
-        notes.append(f"D补句[{insert_at + i}]")
-    return notes
-
-
-def _d_mid_zhao_targets(
-    dialogue: list,
-    *,
-    include_cancan: bool = False,
-) -> list[dict]:
-    """D 补字只动中段：昭昭执行/后果；灿灿催促/破规可句内顶满。"""
-    if not isinstance(dialogue, list) or len(dialogue) < 6:
-        return []
-    # 末两句收束不垫；末四里若有昭昭执行/后果句可垫（回旋镖除外）
-    mid = dialogue[2:-2]
-    boom_skip = re.compile(r"你自己说|你刚才说")
-    soft_skip = re.compile(r"哼|算了|行吧")
-    # 后果/歪读画面句不垫：避免「死结…，按你说的做」
-    beat_skip = re.compile(
-        r"死结|伸不进|脚背|花生米|高塔|塌了|鼓包|变形|溢出来|倒了|全掉",
-    )
-    out = [
-        item
-        for item in mid
-        if isinstance(item, dict)
-        and str(item.get("speaker") or "").strip() == "昭昭"
-        and not boom_skip.search(str(item.get("line") or ""))
-        and not soft_skip.search(str(item.get("line") or ""))
-        and not beat_skip.search(str(item.get("line") or ""))
-    ]
-    # 灿灿：催促/破规都可垫（禁照做口吻）；破规短句可垫
-    can_bad = re.compile(r"按你说的|照做|我数着|一步都不含糊")
-    if include_cancan or len(out) < 3:
-        for item in mid:
-            if not isinstance(item, dict):
-                continue
-            if str(item.get("speaker") or "").strip() != "灿灿":
-                continue
-            ln = str(item.get("line") or "")
-            if can_bad.search(ln) or soft_skip.search(ln):
-                continue
-            if item not in out:
-                out.append(item)
-    return out
-
-
-def _patch_body_char_budget(
-    story: dict,
-    *,
-    allow_insert_lines: bool = True,
-) -> list[str]:
-    """仅小缺口本地补/删语气词；D 在重试后可把句内顶满以一次过硬卡。"""
+def _patch_body_char_budget(story: dict) -> list[str]:
+    """仅小缺口本地补/删语气词；D 不做本地字数修补，交 LLM 重试。"""
     from app.services.daily_story.story_types import resolve_story_type_code
 
     notes: list[str] = []
@@ -2709,10 +2667,12 @@ def _patch_body_char_budget(
     total = dialogue_total_chars(story)
     code = resolve_story_type_code(story)
     locked = str(story.get("_story_type") or "").strip()
-    if locked.upper().startswith("D") or "字面执行" in str(
-        story.get("punchline_explain") or "",
+    if (
+        code == "D"
+        or locked.upper().startswith("D")
+        or "字面执行" in str(story.get("punchline_explain") or "")
     ):
-        code = "D"
+        return notes
     n_lines = len(dialogue)
     chars_min = DAILY_STORY_BODY_CHARS_MIN
     max_pad = DAILY_STORY_RETRY_PATCH_DEFICIT_MAX
@@ -2728,126 +2688,31 @@ def _patch_body_char_budget(
     elif code == "E" and 10 <= n_lines <= 16:
         chars_min = 265
         max_pad = 72
-    if code == "D" and allow_insert_lines:
-        # 接受首稿偏短；重试后常差 80–150，本地把句顶满即可过硬卡
-        max_pad = max(max_pad, 160)
-        if n_lines < 13:
-            notes.extend(_patch_d_ensure_min_lines(story, target_lines=13))
-            dialogue = story.get("dialogue") or dialogue
-            n_lines = len(dialogue) if isinstance(dialogue, list) else n_lines
-            total = dialogue_total_chars(story)
-        if total < chars_min and n_lines < 14:
-            notes.extend(_patch_d_ensure_min_lines(story, target_lines=14))
-            dialogue = story.get("dialogue") or dialogue
-            n_lines = len(dialogue) if isinstance(dialogue, list) else n_lines
-            total = dialogue_total_chars(story)
-    elif code == "D":
-        max_pad = max(max_pad, 160)
     mid = dialogue[:-4] if len(dialogue) >= 8 else dialogue[1:]
     if total < chars_min:
         need = chars_min - total
-        if need > max_pad and code != "D":
+        if need > max_pad:
             return notes
         before = total
-        if code == "D":
-            # 只垫昭昭中段，禁止垫灿灿/末四拍；缺口大时顺带垫催促灿灿
-            need0 = need
-            targets = _d_mid_zhao_targets(
-                dialogue, include_cancan=(need0 > 8),
-            )
-            zhao_pool, can_pool = _d_fill_chunks_for_story(story)
-            used_fills: dict[str, int] = {}
-            for _ in range(3):
-                if need <= 0:
-                    break
-                progressed = False
-                for item in targets:
-                    if need <= 0:
-                        break
-                    line = str(item.get("line") or "")
-                    if not line:
-                        continue
-                    sp = str(item.get("speaker") or "").strip()
-                    pool = can_pool if sp == "灿灿" else zhao_pool
-                    new_line, added = _fill_d_dialogue_line(
-                        line, need, used_fills, chunks=pool,
-                    )
-                    if added:
-                        item["line"] = new_line
-                        need -= added
-                        progressed = True
-                if not progressed:
-                    break
-            # 还差几个字：放开复用，仍只动安全目标句
-            need = chars_min - dialogue_total_chars(story)
-            if 0 < need <= 80:
-                targets = _d_mid_zhao_targets(
-                    dialogue, include_cancan=True,
-                )
-                for item in reversed(targets):
-                    if need <= 0:
-                        break
-                    line = str(item.get("line") or "")
-                    if not line:
-                        continue
-                    sp = str(item.get("speaker") or "").strip()
-                    pool = can_pool if sp == "灿灿" else zhao_pool
-                    new_line, added = _fill_d_dialogue_line(
-                        line, need, None, chunks=pool,
-                    )
-                    if added:
-                        item["line"] = new_line
-                        need -= added
-            # 仍差：优先插有画面的中段句，禁呀/呢/好呀叠字
-            need = chars_min - dialogue_total_chars(story)
-            if need > 0 and allow_insert_lines and n_lines < 14:
-                notes.extend(_patch_d_ensure_min_lines(story, target_lines=min(14, n_lines + 2)))
-                dialogue = story.get("dialogue") or dialogue
-                n_lines = len(dialogue) if isinstance(dialogue, list) else n_lines
-                total = dialogue_total_chars(story)
-                need = chars_min - total
-            # 仍差极少：只在无照做口吻的短句末补一个实义尾巴
-            need = chars_min - dialogue_total_chars(story)
-            if 0 < need <= 24:
-                targets = _d_mid_zhao_targets(
-                    dialogue, include_cancan=True,
-                )
-                used_tail: dict[str, int] = {}
-                for item in reversed(targets):
-                    if need <= 0:
-                        break
-                    line = str(item.get("line") or "")
-                    if not line or _LOCAL_FILL_LITERAL_MARK.search(line):
-                        continue
-                    sp = str(item.get("speaker") or "").strip()
-                    pool = can_pool if sp == "灿灿" else zhao_pool
-                    new_line, added = _fill_d_dialogue_line(
-                        line, need, used_tail, chunks=pool,
-                    )
-                    if added:
-                        item["line"] = new_line
-                        need -= added
-            # 不再垫前两句立规（防把叮嘱句垫成照做复读）
-        else:
-            used_pads = {
-                suf
-                for suf in _LOCAL_PAD_TAILS
-                for item in dialogue
-                if isinstance(item, dict)
-                and str(item.get("line") or "").endswith(suf)
-            }
-            for item in mid:
-                if need <= 0:
-                    break
-                if not isinstance(item, dict):
-                    continue
-                line = str(item.get("line") or "")
-                if not line:
-                    continue
-                new_line, added = _pad_dialogue_line(line, need, used_pads)
-                if added:
-                    item["line"] = new_line
-                    need -= added
+        used_pads = {
+            suf
+            for suf in _LOCAL_PAD_TAILS
+            for item in dialogue
+            if isinstance(item, dict)
+            and str(item.get("line") or "").endswith(suf)
+        }
+        for item in mid:
+            if need <= 0:
+                break
+            if not isinstance(item, dict):
+                continue
+            line = str(item.get("line") or "")
+            if not line:
+                continue
+            new_line, added = _pad_dialogue_line(line, need, used_pads)
+            if added:
+                item["line"] = new_line
+                need -= added
         after = dialogue_total_chars(story)
         if after > before:
             notes.append(f"本地补字{before}→{after}")
@@ -2900,20 +2765,6 @@ def _patch_consecutive_speakers(story: dict) -> list[str]:
             new_sp = "灿灿" if sa == "昭昭" else "昭昭"
             b["speaker"] = new_sp
             notes.append(f"连说改speaker[{i}]")
-            if code == "D":
-                ln = str(b.get("line") or "")
-                if new_sp == "灿灿" and re.search(
-                    r"按你说的|照做|我数着|一步都不含糊|绝不偷懒|我认真系",
-                    ln,
-                ):
-                    b["line"] = "你小心点，别乱动"
-                    notes.append(f"D连说改口催[{i}]")
-                elif new_sp == "昭昭" and re.search(
-                    r"我来扶|我来弄|你别乱动|小心点|你倒是|快点",
-                    ln,
-                ):
-                    b["line"] = "那我按你说的，照做就是了"
-                    notes.append(f"D连说改口照做[{i}]")
             fixes += 1
             if fixes >= 6:
                 break
@@ -2973,165 +2824,6 @@ def _patch_setting_mom_without_line(story: dict) -> list[str]:
 
 
 
-def _patch_d_micro_pad(story: dict) -> list[str]:
-    """还差很少字：把最短的中段催促/执行句补一句实义，禁呀呢。"""
-    notes: list[str] = []
-    dialogue = story.get("dialogue")
-    if not isinstance(dialogue, list) or len(dialogue) < 6:
-        return notes
-    need = DAILY_STORY_BODY_CHARS_MIN - dialogue_total_chars(story)
-    # 重试常停在还差 30–70；放宽微补上限，交给收尾顶满
-    if need <= 0 or need > 80:
-        return notes
-    mid = dialogue[2:-1]
-    candidates = [
-        item for item in mid
-        if isinstance(item, dict)
-        and _line_room(str(item.get("line") or "")) >= need
-        and str(item.get("speaker") or "") in {"昭昭", "灿灿"}
-        and "你自己说" not in str(item.get("line") or "")
-    ]
-    candidates.sort(key=lambda it: _dialogue_char_count(str(it.get("line") or "")))
-    ctx = (
-        str(story.get("conflict_core") or "")
-        + str(story.get("_theme") or "")
-        + str(story.get("theme") or "")
-        + str(story.get("scene_title") or "")
-    )
-    if re.search(r"鞋带|系紧|死结", ctx):
-        addons = {
-            "灿灿": ("，都卡住了", "，拧成麻花了", "，鞋扣卡死了"),
-            "昭昭": ("，脚进不去", "，越绕越死", "，更解不开"),
-        }
-    elif re.search(r"玩具|收纳|筐|箱子", ctx):
-        addons = {
-            "灿灿": ("，筐都鼓包了", "，快撑破了"),
-            "昭昭": ("，盖子扣不上", "，全塞满了"),
-        }
-    elif re.search(r"叠|衣服|衣", ctx):
-        addons = {
-            "灿灿": ("，都歪了", "，快塌了"),
-            "昭昭": ("，又高一层", "，更晃了"),
-        }
-    else:
-        addons = {
-            "灿灿": ("，都快坏了", "，别再弄了"),
-            "昭昭": ("，更糟了", "，又卡住了"),
-        }
-    tiny_addons = {
-        "灿灿": ("紧", "疼", "麻"),
-        "昭昭": ("死", "卡", "紧"),
-    }
-    for item in candidates:
-        if need <= 0:
-            break
-        sp = str(item.get("speaker") or "").strip()
-        line = str(item.get("line") or "")
-        if not line:
-            continue
-        for suf in addons.get(sp, ()):
-            bare = suf.lstrip("，")
-            if bare in line:
-                continue
-            room = _line_room(line)
-            if len(suf) > room or len(suf) > need:
-                continue
-            trail = ""
-            core = line
-            if core[-1] in "。！？…":
-                trail = core[-1]
-                core = core[:-1]
-            item["line"] = f"{core}{suf}{trail}"
-            need -= len(suf)
-            notes.append("D微补字")
-            break
-    # 还差几个字：允许把实义尾巴截短补进 room，吃满残缺口
-    if need > 0:
-        for item in candidates:
-            if need <= 0:
-                break
-            sp = str(item.get("speaker") or "").strip()
-            line = str(item.get("line") or "")
-            if not line:
-                continue
-            room = _line_room(line)
-            if room <= 0:
-                continue
-            trail = ""
-            core = line
-            if core[-1] in "。！？…":
-                trail = core[-1]
-                core = core[:-1]
-            for suf in addons.get(sp, ()):
-                bare = suf.lstrip("，")
-                if bare in core:
-                    continue
-                take = min(len(suf), room, need)
-                if take < 3:
-                    continue
-                piece = suf[:take]
-                item["line"] = f"{core}{piece}{trail}"
-                need -= len(piece)
-                notes.append("D微补字")
-                break
-    if need > 0:
-        for item in candidates:
-            if need <= 0:
-                break
-            sp = str(item.get("speaker") or "").strip()
-            line = str(item.get("line") or "")
-            if not line:
-                continue
-            room = _line_room(line)
-            if room <= 0:
-                continue
-            trail = ""
-            core = line
-            if core[-1] in "。！？…":
-                trail = core[-1]
-                core = core[:-1]
-            for tiny in tiny_addons.get(sp, ()):
-                if tiny in core:
-                    continue
-                if len(tiny) > room or len(tiny) > need:
-                    continue
-                item["line"] = f"{core}{tiny}{trail}"
-                need -= len(tiny)
-                notes.append("D微补字")
-                break
-    if need > 0 and len(dialogue) < 18:
-        pivot = max(2, len(dialogue) - 4)
-        prev_sp = ""
-        if 0 <= pivot - 1 < len(dialogue) and isinstance(dialogue[pivot - 1], dict):
-            prev_sp = str(dialogue[pivot - 1].get("speaker") or "").strip()
-        next_sp = "灿灿" if prev_sp == "昭昭" else "昭昭"
-        if re.search(r"鞋带|系紧|死结", ctx):
-            insert_map = {
-                "灿灿": "鞋扣也卡住了，别再拽了",
-                "昭昭": "我再抠一下，这结还在往里缩",
-            }
-        elif re.search(r"玩具|收纳|筐|箱子", ctx):
-            insert_map = {
-                "灿灿": "筐口都鼓出来了，别再塞了",
-                "昭昭": "我再按一下，这堆还在往外顶",
-            }
-        elif re.search(r"叠|衣服|衣", ctx):
-            insert_map = {
-                "灿灿": "这一摞又歪了，别再往上垒了",
-                "昭昭": "我再扶一下，上面那件还在往下滑",
-            }
-        else:
-            insert_map = {
-                "灿灿": "又坏一点了，快住手",
-                "昭昭": "我再弄一下，还是更糟了",
-            }
-        line = insert_map.get(next_sp, "")
-        if line:
-            dialogue.insert(pivot, {"speaker": next_sp, "line": line})
-            notes.append("D补短句")
-    return notes
-
-
 def try_local_patch_daily_story_body(story: dict) -> tuple[dict, list[str]]:
     """校验前确定性修补：超长句/字数小缺口/引话/setting妈妈。
 
@@ -3151,179 +2843,10 @@ def try_local_patch_daily_story_body(story: dict) -> tuple[dict, list[str]]:
     notes.extend(patch_type_body(out))
     notes.extend(_patch_consecutive_speakers(out))
     # 字数垫最后做：避免被 patch_type_body / 截断吃掉
+    # （D 在 _patch_body_char_budget 内直接跳过，不做本地修补）
     notes.extend(_patch_body_char_budget(out))
     notes.extend(_patch_overlong_lines(out))
     notes.extend(_patch_consecutive_speakers(out))
-    # D：连说/补字后再次焊死收束角色，防回旋镖落到灿灿
-    locked = str(out.get("_story_type") or "").strip()
-    is_d = (
-        locked.upper().startswith("D")
-        or "字面执行" in str(out.get("punchline_explain") or "")
-        or resolve_story_type_code(out) == "D"
-    )
-    if is_d:
-        from app.services.daily_story.story_types.d.patch import (
-            patch_d_align_boomerang_quote,
-            patch_d_dedupe_literal_echo,
-            patch_d_dedupe_mess_echo,
-            patch_d_dedupe_tail_fix,
-            patch_d_ensure_literal,
-            patch_d_ensure_fix,
-            patch_d_fix_closing_roles,
-            patch_d_monotonic_zhao_action,
-            patch_d_monotonic_cancan_alarm,
-            patch_d_polish_closing,
-            patch_d_progress_cancan_alarm,
-            patch_d_reduce_zhao_explaining,
-            patch_d_strengthen_fix,
-            patch_d_strip_mom,
-            patch_d_strip_executor_voice_from_cancan,
-            patch_d_strip_pad_garbage,
-            patch_d_trim_cancan_nag_repeats,
-            patch_d_trim_duplicate_rule,
-            patch_d_trim_zhao_tail_repeats,
-        )
-
-        notes.extend(patch_d_strip_executor_voice_from_cancan(out))
-        notes.extend(patch_d_strip_mom(out))
-        notes.extend(patch_d_trim_duplicate_rule(out))
-        notes.extend(patch_d_ensure_fix(out))
-        notes.extend(_patch_consecutive_speakers(out))
-        notes.extend(patch_d_fix_closing_roles(out))
-        # 收束可能在中段末制造连说；再修中段，末四拍仍保护
-        notes.extend(_patch_consecutive_speakers(out))
-        notes.extend(patch_d_align_boomerang_quote(out))
-        prev = (out.get("dialogue") or [None, None])[-2]
-        last = (out.get("dialogue") or [None])[-1]
-        if isinstance(prev, dict) and str(prev.get("speaker") or "") != "昭昭":
-            prev["speaker"] = "昭昭"
-            notes.append("D回旋镖speaker→昭昭")
-        if isinstance(last, dict) and str(last.get("speaker") or "") != "灿灿":
-            last["speaker"] = "灿灿"
-            notes.append("D末句speaker→灿灿")
-        notes.extend(patch_d_strip_pad_garbage(out))
-        notes.extend(patch_d_trim_cancan_nag_repeats(out))
-        notes.extend(patch_d_progress_cancan_alarm(out))
-        notes.extend(patch_d_monotonic_cancan_alarm(out))
-        notes.extend(patch_d_trim_zhao_tail_repeats(out))
-        notes.extend(patch_d_reduce_zhao_explaining(out))
-        notes.extend(patch_d_monotonic_zhao_action(out))
-        notes.extend(patch_d_ensure_literal(out))
-        notes.extend(patch_d_strengthen_fix(out))
-        notes.extend(patch_d_dedupe_tail_fix(out))
-        notes.extend(patch_d_dedupe_literal_echo(out))
-        notes.extend(patch_d_dedupe_mess_echo(out))
-        notes.extend(_patch_consecutive_speakers(out))
-        if dialogue_total_chars(out) < DAILY_STORY_BODY_CHARS_MIN:
-            notes.extend(
-                _patch_body_char_budget(out, allow_insert_lines=True),
-            )
-            notes.extend(_patch_overlong_lines(out))
-            notes.extend(_patch_consecutive_speakers(out))
-            notes.extend(patch_d_strip_pad_garbage(out))
-            notes.extend(patch_d_trim_cancan_nag_repeats(out))
-            notes.extend(patch_d_progress_cancan_alarm(out))
-            notes.extend(patch_d_monotonic_cancan_alarm(out))
-            notes.extend(patch_d_trim_zhao_tail_repeats(out))
-            notes.extend(patch_d_reduce_zhao_explaining(out))
-            notes.extend(patch_d_monotonic_zhao_action(out))
-            notes.extend(patch_d_ensure_literal(out))
-            notes.extend(patch_d_strengthen_fix(out))
-            notes.extend(patch_d_dedupe_tail_fix(out))
-            notes.extend(patch_d_dedupe_mess_echo(out))
-        # 末两句角色再焊一次（不合并中段，防吃字）
-        prev = (out.get("dialogue") or [None, None])[-2]
-        last = (out.get("dialogue") or [None])[-1]
-        if isinstance(prev, dict) and str(prev.get("speaker") or "") != "昭昭":
-            prev["speaker"] = "昭昭"
-            notes.append("D回旋镖speaker→昭昭")
-        if isinstance(last, dict) and str(last.get("speaker") or "") != "灿灿":
-            last["speaker"] = "灿灿"
-            notes.append("D末句speaker→灿灿")
-        # 轻剥一次呀呢即可
-        notes.extend(patch_d_strip_pad_garbage(out))
-        notes.extend(patch_d_trim_cancan_nag_repeats(out))
-        notes.extend(patch_d_progress_cancan_alarm(out))
-        notes.extend(patch_d_monotonic_cancan_alarm(out))
-        notes.extend(patch_d_trim_zhao_tail_repeats(out))
-        notes.extend(patch_d_reduce_zhao_explaining(out))
-        notes.extend(patch_d_monotonic_zhao_action(out))
-        notes.extend(patch_d_ensure_literal(out))
-        notes.extend(patch_d_strengthen_fix(out))
-        notes.extend(patch_d_dedupe_tail_fix(out))
-        if dialogue_total_chars(out) < DAILY_STORY_BODY_CHARS_MIN:
-            notes.extend(
-                _patch_body_char_budget(out, allow_insert_lines=True),
-            )
-            notes.extend(_patch_d_micro_pad(out))
-            notes.extend(patch_d_strip_pad_garbage(out))
-            notes.extend(patch_d_trim_cancan_nag_repeats(out))
-            notes.extend(patch_d_progress_cancan_alarm(out))
-            notes.extend(patch_d_monotonic_cancan_alarm(out))
-            notes.extend(patch_d_trim_zhao_tail_repeats(out))
-            notes.extend(patch_d_reduce_zhao_explaining(out))
-            notes.extend(patch_d_monotonic_zhao_action(out))
-            notes.extend(patch_d_ensure_literal(out))
-            notes.extend(patch_d_strengthen_fix(out))
-            notes.extend(patch_d_dedupe_tail_fix(out))
-
-        # 收尾最后焊一次：破规具体 / 回旋镖点破 / 纯嘴硬
-        notes.extend(patch_d_polish_closing(out))
-
-        # D：句数硬上限兜底（正文控制在 ≤16，给开场留空间）
-        dialogue = out.get("dialogue")
-        if isinstance(dialogue, list) and len(dialogue) > 16:
-            RE_LITERAL_MID = re.compile(
-                r"照做|按你说的|你不是说|字面|按规矩|你说要",
-            )
-            RE_BOOM_TAIL = re.compile(r"你自己说|你刚才说|你现在也|你说的|哼|算了|行吧")
-            while len(dialogue) > 16:
-                n = len(dialogue)
-                removed = False
-                # 只裁 body（保护末四拍：n-4..n-1）
-                for idx in range(n - 5, 1, -1):
-                    item = dialogue[idx]
-                    if not isinstance(item, dict):
-                        continue
-                    ln = str(item.get("line") or "")
-                    if RE_LITERAL_MID.search(ln) or RE_BOOM_TAIL.search(ln):
-                        continue
-                    if (
-                        _dialogue_char_count(ln) <= 14
-                        or re.search(r"你小心点|别磨蹭|别乱动|快点|倒是系", ln)
-                    ):
-                        dialogue.pop(idx)
-                        notes.append(f"D裁句[{idx}]")
-                        removed = True
-                        break
-                if removed:
-                    continue
-                # 兜底：丢掉最靠近末四拍的非锚点句
-                for idx in range(n - 5, 1, -1):
-                    item = dialogue[idx]
-                    if not isinstance(item, dict):
-                        continue
-                    ln = str(item.get("line") or "")
-                    if RE_LITERAL_MID.search(ln):
-                        continue
-                    dialogue.pop(idx)
-                    notes.append(f"D裁句兜底[{idx}]")
-                    removed = True
-                    break
-                if not removed:
-                    break
-
-            # 裁句后若字数偏短：只补字，不再插句
-            if dialogue_total_chars(out) < DAILY_STORY_BODY_CHARS_MIN:
-                notes.extend(_patch_body_char_budget(out, allow_insert_lines=False))
-                notes.extend(_patch_d_micro_pad(out))
-            notes.extend(patch_d_polish_closing(out))
-
-        # 结构修完后再顶满字数；避免被中段 strip/trim 吃掉后无收口
-        if dialogue_total_chars(out) < DAILY_STORY_BODY_CHARS_MIN:
-            notes.extend(_patch_body_char_budget(out, allow_insert_lines=True))
-            notes.extend(_patch_d_micro_pad(out))
-            notes.extend(_patch_overlong_lines(out))
     return out, notes
 
 
@@ -3462,11 +2985,14 @@ def build_daily_story_retry_user(
         if err_deficit is not None:
             deficit = err_deficit
         if deficit <= DAILY_STORY_RETRY_PATCH_DEFICIT_MAX:
+            # 模型补字必短补：按缺口 2 倍下指令，落区间中段才稳过硬卡
+            pad_target = min(chars + max(deficit * 2, 24), aim_hi)
             length_hint = (
                 f"【字数·句内补】上一稿 {chars} 字，还差 {deficit} 字。"
-                f"禁止增删句数、禁止整稿重写；只把中段 2–3 句各加几个字"
+                f"禁止增删句数、禁止整稿重写；把中段 3–5 句各加 6–10 字"
                 f"（每句仍 ≤{DAILY_STORY_LINE_CHARS_MAX}），末四拍原样保留；"
-                f"写到 ≥{chars_min} 即可，勿冲到上限猛扩。\n"
+                f"合计补约 {max(deficit * 2, 24)} 字、写到 {pad_target} 字上下"
+                f"（低于 {chars_min} 视为失败）。\n"
             )
         else:
             # D 类：正文句数预算固定（13–14 句），缺字时不让模型去“插很多句”走偏，
@@ -3478,12 +3004,15 @@ def build_daily_story_retry_user(
                 length_hint = (
                     f"【D·一次补满·硬验收】上一稿 {chars} 字 / {n_lines} 句"
                     f"（均 {avg} 字/句），还差 {deficit} 字。\n"
-                    f"本轮输出须同时满足：① 正文恰好 13 或 14 句；"
-                    f"② 中段每句尽量 20–{DAILY_STORY_LINE_CHARS_MAX} 字；"
-                    f"③ dialogue 总字数 ≥{aim_lo}（至少 ≥{chars_min}）。\n"
+                    f"本轮输出须同时满足：① 正文 14–16 句；"
+                    f"② 每句 18–{DAILY_STORY_LINE_CHARS_MAX} 字"
+                    f"（严禁超 {DAILY_STORY_LINE_CHARS_MAX}，超长会被截掉毁句，"
+                    f"缺字靠加句补）；"
+                    f"③ dialogue 总字数落在 {max(aim_lo, 300)}–{aim_hi} 字"
+                    f"（低于 {max(aim_lo, 300)} 视为失败——你上一稿就是短交的，"
+                    f"这轮宁可写满勿再短）。\n"
                     f"保留不知变通骨架只增不删；轮流说话；"
-                    f"禁止整稿重写、禁止轻轻放×N 凑字。"
-                    f"写不满 {chars_min} 字视为失败，勿交短稿。\n"
+                    f"禁止整稿重写、禁止轻轻放×N 凑字。\n"
                 )
             else:
                 add_lines = max(1, (deficit + avg_line - 1) // avg_line)
@@ -3536,6 +3065,20 @@ def build_daily_story_retry_user(
     primary = pick_primary_validation_errors(errors, max_items=1)
     primary_line = primary[0] if primary else errors
     prev_json = json.dumps(prev_story, ensure_ascii=False)
+    if "正文跑题" in errors:
+        # 上一稿主题写错：不许保留旧 conflict_core，按主题原词重写
+        revision_req = (
+            "【修订要求】上一稿写的不是主题那件事："
+            "以主题原词重写 conflict_core、setting 与正文"
+            "（规矩词、道具、动作都从主题里取），保持本类型结构；"
+            "禁止沿用上一稿场景道具；勿写发现开场。\n"
+        )
+    else:
+        revision_req = (
+            "【修订要求】只改上述专项指令；保留 conflict_core；"
+            "一次只修优先项，其余下轮再验；"
+            "差几个字就句内补，勿整稿重开；勿写发现开场；勿换主题。\n"
+        )
     return (
         f"主题：{theme}\n"
         f"【字数硬卡】正文 {chars_min}–{chars_max} 字；"
@@ -3543,9 +3086,7 @@ def build_daily_story_retry_user(
         f"{length_hint}"
         f"{issue_hint}"
         f"【本轮问题·优先修此项】{primary_line}\n"
-        "【修订要求】只改上述专项指令；保留 conflict_core；"
-        "一次只修优先项，其余下轮再验；"
-        "差几个字就句内补，勿整稿重开；勿写发现开场；勿换主题。\n"
+        f"{revision_req}"
         "请输出修订后的完整 JSON。\n"
         f"【上一稿】\n{prev_json}"
     )

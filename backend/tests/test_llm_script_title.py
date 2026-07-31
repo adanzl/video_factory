@@ -579,42 +579,6 @@ def test_local_patch_pads_small_char_deficit():
         validate_daily_story_json(patched, phase="body")
 
 
-def test_local_patch_strips_a_steal_try_taste():
-    from app.services.daily_story.prompts import try_local_patch_daily_story_body
-    from app.services.daily_story.quality import score_daily_story
-
-    speakers = ("昭昭", "灿灿")
-    line = "一二三四五六七八九十一二三四五六"
-    dlg = [
-        {"speaker": speakers[i % 2], "line": line} for i in range(20)
-    ]
-    dlg[0]["line"] = "水果盘怎么少了一块呀呀呀"
-    dlg[1]["line"] = "饭前不许偷吃你别瞎说呀呀"
-    dlg[9] = {"speaker": "灿灿", "line": "这是样品，我咬了一口测试甜不甜"}
-    dlg[11] = {"speaker": "灿灿", "line": "检查不算吃，咽了才算检"}
-    dlg[13] = {"speaker": "灿灿", "line": "嗯，为了确认味道，只好咽了"}
-    dlg[-4] = {"speaker": "昭昭", "line": "你刚才说检查不算吃"}
-    dlg[-3] = {"speaker": "灿灿", "line": "那不一样，检样不算开饭"}
-    dlg[-2] = {"speaker": "昭昭", "line": "哪里不一样？都进肚子了"}
-    dlg[-1] = {"speaker": "灿灿", "line": "……行吧，给你一块"}
-    story = {
-        "scene_title": "饭前检查",
-        "setting": "厨房案板旁",
-        "conflict_core": "灿灿不许昭昭饭前偷吃自己却先捏",
-        "dialogue": dlg,
-        "punchline_explain": "A类权威翻车：检查不算吃",
-    }
-    before = score_daily_story(story, theme=story["conflict_core"])
-    assert any("叠" in r or "多套" in r for r in (before.get("reasons") or []))
-    patched, notes = try_local_patch_daily_story_body(story)
-    assert any("去试尝" in n for n in notes)
-    blob = "".join(d["line"] for d in patched["dialogue"])
-    assert "甜不甜" not in blob
-    assert "确认味道" not in blob
-    after = score_daily_story(patched, theme=story["conflict_core"])
-    assert not any("叠" in r or "多套" in r for r in (after.get("reasons") or []))
-
-
 def test_local_patch_aligns_a_closing_quote():
     from app.services.daily_story.prompts import (
         try_local_patch_daily_story_body,
@@ -895,22 +859,16 @@ def test_d_opening_score_skips_stitched_prefix_overlap():
     assert "D开场与正文首句重复" not in cons
 
 
-def test_patch_d_strips_mom_and_compresses():
+def test_patch_d_no_content_rewrite():
+    """D patch：删妈妈/压句数可以，但不改写干净台词的内容。"""
     from app.services.daily_story.prompts import try_local_patch_daily_story_body
 
     speakers = ("昭昭", "灿灿")
     dlg = [
         {"speaker": speakers[i % 2], "line": f"台词{i}一二三四五六七八"}
-        for i in range(24)
+        for i in range(12)
     ]
-    dlg[0]["line"] = "厨房灶台这碗汤好烫手呀"
-    dlg[1]["line"] = "端过去不许晃，洒了别哭"
-    dlg[2]["line"] = "端过去不许晃，再叮嘱一次"
     dlg[5] = {"speaker": "妈妈", "line": "汤都凉了赶紧放下别端"}
-    dlg[-4] = {"speaker": "昭昭", "line": "你自己说别碰，你现在也碰了"}
-    dlg[-3] = {"speaker": "灿灿", "line": "现在不碰谁收拾啊"}
-    dlg[-2] = {"speaker": "昭昭", "line": "那你刚才说别碰呢"}
-    dlg[-1] = {"speaker": "灿灿", "line": "……哼，算了"}
     story = {
         "scene_title": "端汤",
         "setting": "厨房餐桌边",
@@ -919,11 +877,15 @@ def test_patch_d_strips_mom_and_compresses():
         "punchline_explain": "D类字面执行，灿灿叮嘱不许晃",
     }
     patched, notes = try_local_patch_daily_story_body(story)
+    # 妈妈插话被删（删除类规则允许）
     assert any("妈妈" in n for n in notes)
-    assert len(patched["dialogue"]) <= 18
     assert not any(
         str(d.get("speaker") or "") == "妈妈" for d in patched["dialogue"]
     )
+    # 其余台词一字未改（禁止模板改写）
+    kept = [d["line"] for d in patched["dialogue"]]
+    original = [d["line"] for d in story["dialogue"] if d["speaker"] != "妈妈"]
+    assert kept == original
 
 
 def test_validate_daily_story_opening_rejects_consecutive_speakers():

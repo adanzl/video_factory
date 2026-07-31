@@ -344,7 +344,10 @@ def patch_type_body(story: dict) -> list[str]:
         from app.services.daily_story.story_types.b.patch import patch_b_body
 
         return patch_b_body(story)
-    # D 不做本地修稿：硬卡不过直接交 LLM 重试
+    if code == "D":
+        from app.services.daily_story.story_types.d.patch import patch_d_body
+
+        return patch_d_body(story)
     if code == "E":
         from app.services.daily_story.story_types.e.patch import patch_e_body
 
@@ -371,7 +374,12 @@ def validate_type_opening(
     from app.services.daily_story.story_types.d.opening import append_d_opening_errors
     from app.services.daily_story.story_types.e.opening import append_e_opening_errors
 
-    append_d_opening_errors(normalized, type_code=type_code, errors=errors)
+    append_d_opening_errors(
+        normalized,
+        type_code=type_code,
+        errors=errors,
+        conflict_core=conflict_core,
+    )
     append_e_opening_errors(
         normalized,
         type_code=type_code,

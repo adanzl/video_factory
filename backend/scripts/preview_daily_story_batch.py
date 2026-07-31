@@ -20,10 +20,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+
+# 调稿要看本地 patch / 重试模型等 INFO 日志
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 ROOT = Path(__file__).resolve().parents[2]
 BACKEND = ROOT / "backend"
