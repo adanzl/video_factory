@@ -169,11 +169,14 @@ def _run_image_prompts(job_id: int, *, segment_indices: list[int] | None=None) -
         if db and db.get('info') is not None and 'info' not in item:
             item['info'] = db['info']
         elif db and isinstance(db.get('info'), dict):
+            # DB info 打底、script 覆盖：script_json 里的分镜 info 只有
+            # video_provider 等少数键，若只挑单键合并会把 DB 里的
+            # image_gen_sec/clip_gen_sec 等耗时统计冲掉
             info = parse_job_info(item.get('info'))
             db_info = parse_job_info(db.get('info'))
-            if db_info.get('video_provider') and not info.get('video_provider'):
-                info['video_provider'] = db_info['video_provider']
-                item['info'] = info
+            merged = {**db_info, **info}
+            if merged:
+                item['info'] = merged
         merged_segments.append(item)
     updated['segments'] = merged_segments
     from app.config import get_settings

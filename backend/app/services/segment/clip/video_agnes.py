@@ -840,7 +840,7 @@ class AgnesClipProvider(ClipProvider):
             ],
             # agnes-2.0-flash 强制思考且无法关闭，预算须容纳思考过程，
             # 否则 content 恒为空（finish_reason=length）
-            "max_tokens": 2048,
+            "max_tokens": 16384,
         }
         for api_key in keys:
             try:
