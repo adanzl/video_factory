@@ -3004,7 +3004,7 @@ def build_daily_story_retry_user(
                 length_hint = (
                     f"【D·一次补满·硬验收】上一稿 {chars} 字 / {n_lines} 句"
                     f"（均 {avg} 字/句），还差 {deficit} 字。\n"
-                    f"本轮输出须同时满足：① 正文 14–16 句；"
+                    f"本轮输出须同时满足：① 正文 15–17 句；"
                     f"② 每句 18–{DAILY_STORY_LINE_CHARS_MAX} 字"
                     f"（严禁超 {DAILY_STORY_LINE_CHARS_MAX}，超长会被截掉毁句，"
                     f"缺字靠加句补）；"
