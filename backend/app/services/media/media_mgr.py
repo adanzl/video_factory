@@ -107,7 +107,8 @@ _SPEAK_LINE_RE = re.compile(
     r"|"
     r"[（(]?(?P<name>昭昭|灿灿|妈妈)[）)]?"
     r")"
-    r"(?:张嘴|嘴巴持续张合)?说话(?:，嘴唇明显一开一合约\d+次)?，同时"
+    r"(?:张嘴|嘴巴持续张合|开口)?说话"
+    r"(?:，嘴唇明显一开一合约\d+次|，口型自然开合，说完即闭嘴)?，同时"
     r"(?P<action>[^；;。]*?)(?=[；;。]|$)"
 )
 # LLM 常把收束写成「灿灿说话后面部表情…」，统一识别（注入时整段丢弃）
@@ -166,7 +167,7 @@ def _inject_mouth_motion(
     - 每一句对白对应一句「说话，同时」（同人多句写多行，不合并）
     - 时间轴相对本段 I2V：说话窗口最小值归零后全体平移
     - 说话句用「秒数+左右侧身份」（如左侧男孩），与 head 站位一致；LLM 仍写昭昭/灿灿说话
-    - 说话句写显式口型（嘴巴持续张合+一开一合次数），非说话方写「嘴巴闭合不动」
+    - 说话句写自然口型（开口说话+口型自然开合+说完即闭嘴），非说话方写「嘴巴闭合不动」
     - 丢弃「面部表情恢复与静图一致」收束段（会把嘴锁回闭嘴），替换为嘴唇锁定句
     """
     dialogue = seg.get("dialogue") or []
@@ -195,7 +196,7 @@ def _inject_mouth_motion(
 
     offset = min(start for _, start, _ in speaker_windows)
     speaker_times = [
-        (speaker, f"{start - offset:.1f}-{end - offset:.1f}秒", end - start)
+        (speaker, f"{start - offset:.1f}-{end - offset:.1f}秒")
         for speaker, start, end in speaker_windows
     ]
 
@@ -273,7 +274,7 @@ def _inject_mouth_motion(
 
     clauses: list[str] = []
     last_i = len(speaker_times) - 1
-    for i, (speaker, time_str, dur) in enumerate(speaker_times):
+    for i, (speaker, time_str) in enumerate(speaker_times):
         q = action_queues.get(speaker) or []
         action = q.pop(0) if q else fallback.get(speaker, "轻微点头约1厘米后停止")
         if i < last_i and action.endswith("后定格"):
@@ -282,12 +283,11 @@ def _inject_mouth_motion(
             action = action[: -len("后停止")] + "后定格"
 
         label = _side_speak_label(speaker, lr)
-        # 显式口型幅度+次数（约3次/秒），笼统的「张嘴说话」会被
-        # 面部锁定提示压掉导致 I2V 不动口型
-        n_open = max(2, min(15, int(dur * 3 + 0.5)))
+        # 显式写「口型自然开合」防止被面部锁定压掉；不写固定次数
+        # （固定次数会机械开合像金鱼、且与语速对不上停不下来）
         lead = (
-            f"{time_str}{label}嘴巴持续张合说话，"
-            f"嘴唇明显一开一合约{n_open}次，同时{action}"
+            f"{time_str}{label}开口说话，口型自然开合，"
+            f"说完即闭嘴，同时{action}"
         )
         quiet: list[str] = []
         for other in cast_order:
