@@ -46,6 +46,9 @@ def test_assemble_daily_t2i_prompt_structure():
     assert "蓝色长裤" in prompt
     assert "占左半" in prompt and "占右半" in prompt
     assert "蜡笔" in prompt
+    # 嘴型锁定：首个说话人（灿灿）张嘴，其余闭嘴，防 i2v 说话人反转
+    assert "灿灿微微张嘴正在开口说话" in prompt
+    assert "昭昭嘴巴闭合不露齿" in prompt
 
 
 def test_strip_verify_regen_leak():

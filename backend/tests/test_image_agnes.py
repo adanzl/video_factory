@@ -262,6 +262,27 @@ def test_build_verify_checklist_daily_includes_zhao() -> None:
     assert "蓝色短袖T恤的短发男孩（昭昭）" in user_lr
     assert "左右人物对调" in user_lr
 
+    # 首个说话人张嘴标记 → 嘴型归属项：其他人须闭嘴
+    items_mouth, user_mouth = AgnesImageProvider._build_verify_checklist(
+        prompt=(
+            "画面左边是昭昭，右边是灿灿。"
+            "灿灿微微张嘴正在开口说话；昭昭嘴巴闭合不露齿。客厅对峙。"
+        ),
+        expected_speakers=["昭昭", "灿灿"],
+        content_style="daily_story",
+    )
+    assert "mouth_owner" in [cid for cid, _ in items_mouth]
+    assert "除粉色卫衣的马尾女孩（灿灿）外" in user_mouth
+    assert "其他人物嘴巴是否都闭合" in user_mouth
+    # 无张嘴标记或单人时不加该项
+    assert "mouth_owner" not in [cid for cid, _ in items_lr]
+    items_solo, _ = AgnesImageProvider._build_verify_checklist(
+        prompt="灿灿微微张嘴正在开口说话。只有灿灿。",
+        expected_speakers=["灿灿"],
+        content_style="daily_story",
+    )
+    assert "mouth_owner" not in [cid for cid, _ in items_solo]
+
     items_one, user_one = AgnesImageProvider._build_verify_checklist(
         prompt="只有昭昭",
         expected_speakers=["昭昭"],
