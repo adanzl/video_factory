@@ -75,6 +75,48 @@ def validate_punchline_blueprint(
     return list(mod.validate(bp))
 
 
+# 流程块序号前缀：「第X块/第X步/第X招」及 ①②③ 、X. 等，均可安全剥掉
+_RE_BEAT_ORDINAL_PREFIX = re.compile(
+    r"^(?:第[一二三四五六123456]+\s*[块步招个拍条]"
+    r"|[①②③④⑤⑥⑦⑧]|[1-6]\s*[.、）\)])"
+    r"?\s*",
+)
+
+
+def clean_blueprint(
+    bp: dict,
+    *,
+    story_type: str | None = None,
+) -> tuple[dict, list[str]]:
+    """本地清洗确定性格式错误：剥 beats 序号前缀、丢空条。
+
+    校验失败后先试这个再重烧 Pro；返回 (清洗后骨架, 改动说明)。
+    """
+    if not isinstance(bp, dict):
+        return bp, []
+    beats = bp.get("beats")
+    if not isinstance(beats, list):
+        return bp, []
+    notes: list[str] = []
+    cleaned: list[Any] = []
+    changed = False
+    for b in beats:
+        s = str(b or "").strip()
+        new = _RE_BEAT_ORDINAL_PREFIX.sub("", s).strip()
+        if not new:
+            changed = True
+            notes.append(f"beats 丢空条 {s!r}")
+            continue
+        if new != s:
+            changed = True
+            notes.append(f"beats 剥序号 {s!r}→{new!r}")
+        cleaned.append(new)
+    if changed:
+        bp = dict(bp)
+        bp["beats"] = cleaned
+    return bp, notes
+
+
 def format_blueprint_block(bp: dict) -> str:
     """注入 D2 user 的可读骨架块。"""
     lines = ["【笑点骨架·只许表演不许换歪读】"]

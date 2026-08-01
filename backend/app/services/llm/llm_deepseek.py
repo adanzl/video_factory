@@ -1680,15 +1680,19 @@ class DeepSeekClient(LLMClient):
         story_type: str | None = None,
     ) -> dict[str, Any]:
         body = self._generate_daily_story_body(theme, story_type=story_type)
-        return self._stitch_daily_story_full(theme, body)
+        return self._stitch_daily_story_full(theme, body, story_type=story_type)
 
     def refine_daily_story_for_quality(
         self,
         theme: str,
         story: dict[str, Any],
         revision_hints: str,
+        *,
+        story_type: str | None = None,
     ) -> dict[str, Any]:
         """按观感短板定向修订正文并重新拼开场。"""
+        from app.services.daily_story.story_types import parse_story_type_code
+
         hints = (revision_hints or "").strip()
         if not hints:
             return story
@@ -1697,13 +1701,23 @@ class DeepSeekClient(LLMClient):
             for k, v in story.items()
             if k not in ("discovery_opening", "quality")
         }
+        rev_code = parse_story_type_code(
+            story_type=story_type,
+            punchline=str(body.get("punchline_explain") or ""),
+        )
         new_body = self._revise_daily_story_body(theme, body, hints)
-        return self._stitch_daily_story_full(theme, new_body)
+        return self._stitch_daily_story_full(
+            theme,
+            new_body,
+            story_type=rev_code,
+        )
 
     def _stitch_daily_story_full(
         self,
         theme: str,
         body: dict[str, Any],
+        *,
+        story_type: str | None = None,
     ) -> dict[str, Any]:
         from app.services.daily_story.prompts import (
             stitch_daily_story_opening,
@@ -1719,6 +1733,7 @@ class DeepSeekClient(LLMClient):
                 theme,
                 body,
                 avoid_speaker=avoid if round_i > 0 else None,
+                story_type=story_type,
             )
             story = stitch_daily_story_opening(body, opening)
             try:
@@ -1748,6 +1763,7 @@ class DeepSeekClient(LLMClient):
         """D1.5：Pro 设计短笑点骨架；失败返回 None（降级无卡 D2）。"""
         from app.services.daily_story.story_design import (
             build_punchline_blueprint_prompts,
+            clean_blueprint,
             parse_blueprint_response,
             story_plan_enabled,
             validate_punchline_blueprint,
@@ -1776,6 +1792,21 @@ class DeepSeekClient(LLMClient):
                 bp = parse_blueprint_response(raw)
                 errors = validate_punchline_blueprint(bp, story_type=story_type)
                 if errors:
+                    # 确定性格式错误（序号前缀/空条）本地剥掉复检，省一次 Pro
+                    bp2, clean_notes = clean_blueprint(
+                        bp, story_type=story_type,
+                    )
+                    if clean_notes:
+                        err2 = validate_punchline_blueprint(
+                            bp2, story_type=story_type,
+                        )
+                        if not err2:
+                            logger.info(
+                                "[DAILY_STORY] D1.5 local clean saved "
+                                "Pro retry: %s",
+                                "; ".join(clean_notes),
+                            )
+                            return bp2
                     last_err = "; ".join(errors)
                     retry_user = (
                         f"{user}\n上一稿骨架被拒：{last_err}。"
@@ -1815,10 +1846,8 @@ class DeepSeekClient(LLMClient):
     ) -> dict[str, Any]:
         if not story_type:
             story_type = _select_story_type(theme)
-        blueprint = self._design_punchline_blueprint(
-            theme,
-            story_type=story_type,
-        )
+        # 临时跳过 D1.5 骨架（Pro×2 太慢）；直接走纯 D2 验证质量
+        blueprint = None
         # 首稿 draft（含铺垫字数）；重试 revise（只走校验硬卡）
         system, user = build_daily_story_prompts(
             theme,
@@ -1827,7 +1856,8 @@ class DeepSeekClient(LLMClient):
             punchline_blueprint=blueprint,
         )
         last_exc: ValueError | None = None
-        # 首稿可短（关 thinking）+ 1 次带 thinking 修订一次补满；再留 1 次兜底
+        # 实验结论：关 thinking + 高温一次即达标（297 字/6.4s），开 thinking
+        # 虽更长但慢 36 倍。全部走关 thinking + 高温，靠次数+本地补字兜住。
         max_attempts = 3
         prev_story: dict | None = None
         same_err_streak = 0
@@ -1836,24 +1866,21 @@ class DeepSeekClient(LLMClient):
             _TEMP_CREATIVE_BLUEPRINT if blueprint else _TEMP_CREATIVE_HIGH
         )
         for attempt in range(max_attempts):
-            # 首稿：Flash + 关 thinking + 高温度；重试：Pro + 开 thinking
-            use_model = self._model if attempt == 0 else self._pro_model
-            if attempt == 0:
-                raw, _ = self._chat_json(
-                    system,
-                    user,
-                    thinking_enabled=False,
-                    temperature=draft_temp,
-                    model=use_model,
+            # 全程 Flash：关 thinking + 高温，不用 Pro/thinking（太慢）
+            use_model = self._model
+            if attempt > 0:
+                logger.info(
+                    "[DAILY_STORY] D2 body retry attempt=%d model=%s",
+                    attempt + 1,
+                    use_model,
                 )
-            else:
-                if use_model != self._model:
-                    logger.info(
-                        "[DAILY_STORY] D2 body retry attempt=%d model=%s",
-                        attempt + 1,
-                        use_model,
-                    )
-                raw, _ = self._chat_json(system, user, model=use_model)
+            raw, _ = self._chat_json(
+                system,
+                user,
+                thinking_enabled=False,
+                temperature=draft_temp,
+                model=use_model,
+            )
             if isinstance(raw, dict):
                 from app.services.daily_story.prompts import (
                     try_local_patch_daily_story_body,
@@ -2037,16 +2064,26 @@ class DeepSeekClient(LLMClient):
         punch = str(prev_story.get("punchline_explain") or "")
         from app.services.daily_story.story_types import parse_story_type_code, story_type_tag
 
-        rev_type = story_type_tag(parse_story_type_code(punchline=punch))
+        rev_code = parse_story_type_code(punchline=punch)
+        rev_type = story_type_tag(rev_code)
         system, _ = build_daily_story_prompts(
             theme, story_type=rev_type, length_mode="revise",
         )
+        preserve_note = ""
+        if rev_code == "D":
+            preserve_note = (
+                "【D类·必留硬卡】上一稿已过校验的招牌话不许丢："
+                "中段昭昭「按你说的/你说…我就…」字面原话、回旋镖「你自己说」"
+                "+逐字引前段叮嘱原话、灿灿搞砸前禁拆穿、句数 15–17。"
+                "只修点名的那条短板，其余原文保留，禁止整段重写。\n"
+            )
         base_user = (
             f"主题：{theme}\n"
             f"【字数硬卡】正文 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；"
             f"每句 ≤{DAILY_STORY_LINE_CHARS_MAX} 字；只修补不扩写。\n"
             f"【核心原则】保留对话骨架，只修补下面**一条**短板（做完即停）。"
             f"禁止推翻重写、禁止另起冲突。\n\n"
+            f"{preserve_note}"
             f"【待修补】\n{revision_hints}\n\n"
             f"【上一稿】\n{json.dumps(prev_story, ensure_ascii=False)}\n\n"
             "请输出修订后的完整 JSON，格式与上一稿一致。"
@@ -2055,13 +2092,19 @@ class DeepSeekClient(LLMClient):
         last_exc: ValueError | None = None
 
         for attempt in range(max_attempts):
-            # 质量修订：Pro + thinking，按短板改，不走首稿高发散
+            # 质量修订：Flash + 关 thinking，按短板改，不走首稿高发散；
+            # 不用 Pro（Pro+thinking 曾产出 268 短稿且白烧 ~170s）
             if attempt == 0:
                 logger.info(
                     "[DAILY_STORY] D2 quality revise model=%s",
-                    self._pro_model,
+                    self._model,
                 )
-            raw, _ = self._chat_json(system, user, model=self._pro_model)
+            raw, _ = self._chat_json(
+                system,
+                user,
+                thinking_enabled=False,
+                model=self._model,
+            )
             if isinstance(raw, dict):
                 raw["_theme"] = theme
                 patched, notes = try_local_patch_daily_story_body(raw)
@@ -2122,6 +2165,7 @@ class DeepSeekClient(LLMClient):
         body: dict[str, Any],
         *,
         avoid_speaker: str | None = None,
+        story_type: str | None = None,
     ) -> list[dict]:
         system, user = build_daily_story_opening_prompts(theme, body)
         avoid = (avoid_speaker or "").strip() or None
@@ -2139,6 +2183,7 @@ class DeepSeekClient(LLMClient):
         from app.services.daily_story.story_types import parse_story_type_code
 
         open_type = parse_story_type_code(
+            story_type=story_type,
             punchline=str(body.get("punchline_explain") or ""),
         )
         for attempt in range(max_attempts):
