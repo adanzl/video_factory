@@ -63,6 +63,8 @@ class StoryTypeLine:
     retry_soft_close_hint: str = ""
     body_lines_min: int = 0
     body_lines_max: int = 0
+    # 格式示例里的单句行宽提示（共享模板默认 A 类 ≤18字，各类型可覆盖）
+    line_format_hint: str = "≤18字"
 
 
 def compile_layers(
