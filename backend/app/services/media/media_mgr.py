@@ -96,14 +96,22 @@ _CAST_SIDE_ROLE: dict[str, str] = {
 _LR_STAND_RE = re.compile(
     r"画面左边是\s*(昭昭|灿灿|妈妈)\s*[，,；;]?\s*右边是\s*(昭昭|灿灿|妈妈)"
 )
+# 三人：左边/中间/右边（须先于二人正则匹配，避免截成「左边…右边」）
+_LCR_STAND_RE = re.compile(
+    r"画面左边是\s*(昭昭|灿灿|妈妈)\s*[，,；;]?\s*"
+    r"中间是\s*(昭昭|灿灿|妈妈)\s*[，,；;]?\s*"
+    r"右边是\s*(昭昭|灿灿|妈妈)"
+)
 _STAND_END_RE = re.compile(
-    r"画面左边是\s*(?:昭昭|灿灿|妈妈)\s*[，,；;]?\s*右边是\s*(?:昭昭|灿灿|妈妈)\s*[。．;；]?"
+    r"画面左边是\s*(?:昭昭|灿灿|妈妈)\s*[，,；;]?\s*"
+    r"(?:中间是\s*(?:昭昭|灿灿|妈妈)\s*[，,；;]?\s*)?"
+    r"右边是\s*(?:昭昭|灿灿|妈妈)\s*[。．;；]?"
 )
 _SPEAK_LINE_RE = re.compile(
-    r"(?:[\d.]+-[\d.]+秒)?(?:画面(?:左边|右边))?"
+    r"(?:[\d.]+-[\d.]+秒)?(?:画面(?:左边|中间|右边))?"
     r"(?:蓝色短袖T恤的短发男孩|粉色卫衣的马尾女孩|米色上衣的黑长发成年女性)?"
     r"(?:"
-    r"(?P<side>左侧|右侧)(?P<role>男孩|女孩|妈妈)"
+    r"(?P<side>左侧|中间|右侧)(?P<role>男孩|女孩|妈妈)"
     r"|"
     r"[（(]?(?P<name>昭昭|灿灿|妈妈)[）)]?"
     r")"
@@ -124,35 +132,44 @@ _LOCK_TAIL_RE = re.compile(r"服装发型稳定|镜头固定")
 _MOUTH_LOCK_HINT = "说话时只动嘴唇和下巴，头部姿态与五官其余部分保持稳定。"
 
 
-def _side_speak_label(speaker: str, lr: re.Match[str] | None) -> str:
-    """按站位句把说话人写成「左侧男孩」等（与静图左右一致）。"""
-    if not lr or speaker not in _CAST_SIDE_ROLE:
+def _parse_stand_layout(prompt: str) -> list[tuple[str, str]]:
+    """解析站位 → [(左侧|中间|右侧, 角色名), ...]。三人优先于二人。"""
+    lcr = _LCR_STAND_RE.search(prompt or "")
+    if lcr:
+        return [
+            ("左侧", lcr.group(1)),
+            ("中间", lcr.group(2)),
+            ("右侧", lcr.group(3)),
+        ]
+    lr = _LR_STAND_RE.search(prompt or "")
+    if lr:
+        return [("左侧", lr.group(1)), ("右侧", lr.group(2))]
+    return []
+
+
+def _side_speak_label(speaker: str, stand: list[tuple[str, str]]) -> str:
+    """按站位句把说话人写成「左侧男孩/中间妈妈」等（与静图一致）。"""
+    if speaker not in _CAST_SIDE_ROLE:
         return speaker
-    left, right = lr.group(1), lr.group(2)
     role = _CAST_SIDE_ROLE[speaker]
-    if speaker == left:
-        return f"左侧{role}"
-    if speaker == right:
-        return f"右侧{role}"
+    for side, name in stand:
+        if name == speaker:
+            return f"{side}{role}"
     return speaker
 
 
 def _speaker_from_speak_match(
     m: re.Match[str],
-    lr: re.Match[str] | None,
+    stand: list[tuple[str, str]],
 ) -> str | None:
     name = m.group("name")
     if name:
         return name
     side, role = m.group("side"), m.group("role")
-    if not lr or not side or not role:
+    if not side or not role:
         return None
-    left, right = lr.group(1), lr.group(2)
-    for candidate in (left, right):
-        if _CAST_SIDE_ROLE.get(candidate) != role:
-            continue
-        pos = "左侧" if candidate == left else "右侧"
-        if pos == side:
+    for pos, candidate in stand:
+        if pos == side and _CAST_SIDE_ROLE.get(candidate) == role:
             return candidate
     return None
 
@@ -174,7 +191,7 @@ def _inject_mouth_motion(
     if not dialogue or not cues or not prompt.strip():
         return prompt
 
-    lr = _LR_STAND_RE.search(prompt)
+    stand = _parse_stand_layout(prompt)
     t = 0.0
     speaker_windows: list[tuple[str, float, float]] = []
     for i, (_, dur) in enumerate(cues):
@@ -204,15 +221,14 @@ def _inject_mouth_motion(
     for name, _, _ in speaker_windows:
         if name not in cast_order:
             cast_order.append(name)
-    if lr:
-        for name in (lr.group(1), lr.group(2)):
-            if name not in cast_order:
-                cast_order.append(name)
+    for _, name in stand:
+        if name not in cast_order:
+            cast_order.append(name)
 
     speak_re = _SPEAK_LINE_RE
     action_queues: dict[str, list[str]] = {}
     for m in speak_re.finditer(prompt):
-        sp = _speaker_from_speak_match(m, lr)
+        sp = _speaker_from_speak_match(m, stand)
         if not sp:
             continue
         action = (m.group("action") or "").strip().rstrip("。")
@@ -282,7 +298,7 @@ def _inject_mouth_motion(
         elif i == last_i and "定格" not in action and action.endswith("后停止"):
             action = action[: -len("后停止")] + "后定格"
 
-        label = _side_speak_label(speaker, lr)
+        label = _side_speak_label(speaker, stand)
         # 显式写「口型自然开合」防止被面部锁定压掉；不写固定次数
         # （固定次数会机械开合像金鱼、且与语速对不上停不下来）
         lead = (
@@ -293,7 +309,7 @@ def _inject_mouth_motion(
         for other in cast_order:
             if other == speaker:
                 continue
-            quiet.append(f"{_side_speak_label(other, lr)}嘴巴闭合不动")
+            quiet.append(f"{_side_speak_label(other, stand)}嘴巴闭合不动")
         if quiet:
             lead = f"{lead}，此时{'、'.join(quiet)}"
         clauses.append(lead)

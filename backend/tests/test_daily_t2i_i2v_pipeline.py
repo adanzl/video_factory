@@ -214,6 +214,28 @@ def test_inject_mouth_motion_adds_times_when_missing():
     assert "此时右侧男孩嘴巴闭合不动" in out
 
 
+def test_inject_mouth_motion_three_person_stand():
+    """三人站位写入左侧/中间/右侧身份，口型后校验才能抽到窗口。"""
+    seg = {
+        "dialogue": [
+            {"speaker": "昭昭", "text": "哪里不一样？"},
+            {"speaker": "灿灿", "text": "当然不算。"},
+        ],
+    }
+    mp = (
+        "画面左边是昭昭，中间是妈妈，右边是灿灿。"
+        "昭昭说话，同时双手向上摊开约5厘米后停止；"
+        "灿灿说话，同时右手食指轻轻点动两下后定格。"
+        "服装发型稳定，身高比例（灿灿比昭昭高半个头，妈妈最高）不变。"
+        "镜头固定，不推近不拉远。"
+    )
+    out = _inject_mouth_motion(mp, seg, [("哪里不一样？", 5.3), ("当然不算。", 3.4)])
+    assert "0.0-5.3秒左侧男孩开口说话，口型自然开合，说完即闭嘴，同时" in out
+    assert "5.3-8.7秒右侧女孩开口说话，口型自然开合，说完即闭嘴，同时" in out
+    assert "中间妈妈嘴巴闭合不动" in out
+    assert "昭昭开口说话" not in out
+
+
 def test_inject_mouth_motion_zeros_min_start():
     """前导无 speaker 把起点推高时，最小值归零再全体平移。"""
     seg = {
