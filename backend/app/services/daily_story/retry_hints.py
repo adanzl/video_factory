@@ -56,11 +56,21 @@ _VALIDATION_PRIORITY: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"引话须|无出处|自造后再假装引用|提前引话"), "quote_ground"),
     (re.compile(r"总字数须≥"), "body_too_short"),
     (re.compile(r"角色反了"), "role_swap"),
+    # D 专属须在「勿写成 A 式末四拍」之前，避免误中 C 式赛规提示
+    (re.compile(r"D类收束勿写成 A 式末四拍"), "d_not_a_close"),
+    (re.compile(r"D类回旋镖须原样引|D类末段须用叮嘱方原话回旋镖"), "d_boomerang"),
+    (re.compile(r"D类中段须有|D类中段须演骨架"), "d_literal_mid"),
+    (re.compile(r"D类前段须灿灿"), "d_rule_setup"),
+    (re.compile(r"D类搞砸前禁止拆穿"), "d_spoil"),
+    (re.compile(r"D类哼/算了后禁止|D类末句须灿灿嘴硬"), "d_soft_close"),
+    (re.compile(r"D类正文过短|D类正文过长"), "d_line_count"),
+    (re.compile(r"D类主戏姐弟|D类前段勿重复唠叨|D类后果跑偏"), "d_generic"),
     (re.compile(r"收束对白须写完整|未说完|引号"), "c_incomplete_line"),
     (re.compile(r"末段须有回旋镖|实物真相反转"), "c_boomerang"),
     (re.compile(r"末句须被戳穿方"), "c_loser_last"),
     (re.compile(r"末句须写完整或嘴硬"), "c_incomplete_last"),
-    (re.compile(r"勿写成 A 式末四拍"), "c_not_a_close"),
+    # 仅 C；D/E 已有专属条，勿用裸「勿写成 A」误伤
+    (re.compile(r"C类收束勿写成 A 式末四拍"), "c_not_a_close"),
     (re.compile(r"收束末两句须换人"), "c_close_alternate"),
     (re.compile(r"无破功软收|弱收束|甩给妈妈"), "soft_close"),
     (re.compile(r"多套免责|借口复读|只能一套免责"), "a_excuse"),
@@ -69,6 +79,7 @@ _VALIDATION_PRIORITY: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"不好玩|吐水算停"), "hammer_beat"),
     (re.compile(r"跑题"), "off_topic"),
     (re.compile(r"C类"), "c_generic"),
+    (re.compile(r"D类"), "d_generic"),
 )
 
 
@@ -181,6 +192,63 @@ def _register_validation_hints() -> None:
             "改成赛规回旋镖反问，只改末 4 句。"
         )
 
+    def d_not_a_close(**_kw: Any) -> str:
+        return (
+            "【D·去A化】删掉「那不一样+哪里不一样」末四拍；"
+            "改成末三拍：灿灿破规补救→昭昭「你自己说」+叮嘱原话"
+            "+点破「怎么现在又上手…」→灿灿只哼/算了；只改末 3–4 句。"
+        )
+
+    def d_boomerang(**_kw: Any) -> str:
+        return (
+            "【D·回旋镖】倒数第 2 句须「你自己说」+逐字抄前段叮嘱原话"
+            "+点破矛盾；禁改引中段催促；只改末 2–3 句。"
+        )
+
+    def d_literal_mid(**_kw: Any) -> str:
+        return (
+            "【D·字面执行】中段补「照做/按你说的」+可见歪读场面；"
+            "同一偏读递进，禁轻轻放×N、禁辩定义。"
+        )
+
+    def d_rule_setup(**_kw: Any) -> str:
+        return (
+            "【D·立规】正文前段灿灿须说出可抠叮嘱（轻点/系紧/轻轻…）；"
+            "裸邀约「收进箱子吧」不算；key_line 须落进前段对白。"
+        )
+
+    def d_spoil(**_kw: Any) -> str:
+        return (
+            "【D·禁拆穿】删搞砸前灿灿纠正（不是让你…/我是让你…）；"
+            "叮嘱只说一次，让歪读跑到倒/洒再发现。"
+        )
+
+    def d_soft_close(**_kw: Any) -> str:
+        type_code = _kw.get("type_code")
+        soft = ""
+        if type_code:
+            soft = story_line_for_code(type_code).retry_soft_close_hint.strip()
+        return soft or (
+            "【D·收束】末句停在哼/算了，禁止哼后再发指令；"
+            "倒数第 2 句昭昭引原话点破。"
+        )
+
+    def d_line_count(**_kw: Any) -> str:
+        return (
+            "【D·句数】正文压到 15–17 句：过短补歪读递进句，"
+            "过长合并中段重复回合；立叮嘱→字面→搞砸→破规→回旋镖链勿动。"
+        )
+
+    def d_generic(**_kw: Any) -> str:
+        type_code = _kw.get("type_code")
+        soft = ""
+        if type_code:
+            soft = story_line_for_code(type_code).retry_soft_close_hint.strip()
+        return soft or (
+            "【D】只修校验指出的问题：立叮嘱→歪读→搞砸→破规→回旋镖；"
+            "勿改写成 A/C 收束。"
+        )
+
     def c_close_alternate(**_kw: Any) -> str:
         return "【C·收束】末两句须灿灿/昭昭交替，禁止同人连说。"
 
@@ -268,6 +336,14 @@ def _register_validation_hints() -> None:
         "c_loser_last": c_loser_last,
         "c_incomplete_last": c_incomplete_last,
         "c_not_a_close": c_not_a_close,
+        "d_not_a_close": d_not_a_close,
+        "d_boomerang": d_boomerang,
+        "d_literal_mid": d_literal_mid,
+        "d_rule_setup": d_rule_setup,
+        "d_spoil": d_spoil,
+        "d_soft_close": d_soft_close,
+        "d_line_count": d_line_count,
+        "d_generic": d_generic,
         "c_close_alternate": c_close_alternate,
         "soft_close": soft_close,
         "c_generic": c_boomerang,
