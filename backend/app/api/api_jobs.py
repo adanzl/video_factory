@@ -434,11 +434,20 @@ def run_publish_route():
 
 @bp.get("/list")
 def list_jobs_route():
-    condition: dict[str, str] = {}
+    condition: dict[str, str | int] = {}
     for key in ("status", "pipeline"):
         val = get_query(key)
         if val:
             condition[key] = val
+    publish_raw = get_query("publish")
+    if publish_raw is not None:
+        low = publish_raw.strip().lower()
+        if low in ("1", "true", "yes"):
+            condition["publish"] = 1
+        elif low in ("0", "false", "no"):
+            condition["publish"] = 0
+        else:
+            raise APIError("publish must be boolean")
     limit = parse_query_int("limit", 50, required=False, minimum=1, maximum=200)
     offset = parse_query_int("offset", 0, required=False, minimum=0)
     return json_ok(job_mgr.list_jobs(condition=condition or None, limit=limit, offset=offset))

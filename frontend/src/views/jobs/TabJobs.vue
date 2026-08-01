@@ -23,6 +23,11 @@
         <el-option label="已完成" value="done" />
         <el-option label="失败" value="failed" />
       </el-select>
+      <el-radio-group v-model="publishFilter" size="small" @change="onFilterChange">
+        <el-radio-button value="">不限</el-radio-button>
+        <el-radio-button value="0">未发布</el-radio-button>
+        <el-radio-button value="1">已发布</el-radio-button>
+      </el-radio-group>
     </div>
 
     <el-table
@@ -140,6 +145,8 @@ const jobs = ref<JobListItem[]>([]);
 const loading = ref(false);
 const statusFilter = ref<string>();
 const pipelineFilter = ref("");
+/** ""=不限，"0"=未发布，"1"=已发布 */
+const publishFilter = ref<"" | "0" | "1">("");
 const page = ref(1);
 const pageSize = ref(parseInt(localStorage.getItem("jobsPageSize") || "15", 10));
 const total = ref(0);
@@ -193,6 +200,10 @@ const fetchJobs = async () => {
     const res = await listJobs({
       status: statusFilter.value || undefined,
       pipeline: pipelineFilter.value || undefined,
+      publish:
+        publishFilter.value === ""
+          ? undefined
+          : publishFilter.value === "1",
       limit: pageSize.value,
       offset: (page.value - 1) * pageSize.value,
     });
