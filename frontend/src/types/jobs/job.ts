@@ -86,6 +86,8 @@ export type Job = JobDetail;
 export interface ListJobsParams {
   status?: string;
   pipeline?: string;
+  /** 不传=不限；true=已发布；false=未发布 */
+  publish?: boolean;
   limit?: number;
   offset?: number;
 }

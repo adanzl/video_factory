@@ -41,6 +41,15 @@
         >
           清日志
         </el-button>
+        <el-button
+          :type="job.publish ? 'success' : 'info'"
+          :loading="publishing"
+          :disabled="loading"
+          size="small"
+          @click="handleTogglePublish"
+        >
+          {{ job.publish ? "已发布" : "未发布" }}
+        </el-button>
       </div>
 
       <el-alert
@@ -130,6 +139,7 @@ const logs = ref<JobLog[]>([]);
 const loading = ref(false);
 const aborting = ref(false);
 const clearingLogs = ref(false);
+const publishing = ref(false);
 const doneLoading = ref(false);
 const activeStage = ref("script");
 
@@ -247,6 +257,23 @@ const handleClearLogs = async () => {
     handleError(error, "清空日志失败");
   } finally {
     clearingLogs.value = false;
+  }
+};
+
+const handleTogglePublish = async () => {
+  if (!job.value) {
+    return;
+  }
+  const next = !job.value.publish;
+  publishing.value = true;
+  try {
+    await updateJob(job.value.id, { publish: next });
+    job.value.publish = next;
+    ElMessage.success(next ? "已标记为已发布" : "已标记为未发布");
+  } catch (error) {
+    handleError(error, "更新发布状态失败");
+  } finally {
+    publishing.value = false;
   }
 };
 
