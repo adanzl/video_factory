@@ -42,6 +42,16 @@ def test_extract_speak_windows_new_and_legacy_formats() -> None:
         (0.0, 1.4, "左侧女孩"),
         (1.4, 2.5, "右侧男孩"),
     ]
+    # 三人站位：角色名按站位映射到侧边身份
+    trio = (
+        "画面左边是昭昭，中间是妈妈，右边是灿灿。"
+        "0.0-5.3秒昭昭开口说话，口型自然开合，说完即闭嘴，同时摊手后停止；"
+        "5.3-8.7秒灿灿开口说话，口型自然开合，说完即闭嘴，同时点指后定格。"
+    )
+    assert _extract_speak_windows(trio) == [
+        (0.0, 5.3, "左侧男孩"),
+        (5.3, 8.7, "右侧女孩"),
+    ]
     # ambient 无说话窗口
     assert _extract_speak_windows("窗帘轻轻飘动，人物姿势保持不变。") == []
 
@@ -49,7 +59,9 @@ def test_extract_speak_windows_new_and_legacy_formats() -> None:
 def test_parse_speaking_sides() -> None:
     assert _parse_speaking_sides("左侧") == {"左侧"}
     assert _parse_speaking_sides("右侧。") == {"右侧"}
+    assert _parse_speaking_sides("中间") == {"中间"}
     assert _parse_speaking_sides("两者") == {"左侧", "右侧"}
+    assert _parse_speaking_sides("多人") == {"左侧", "右侧"}
     assert _parse_speaking_sides("左侧和右侧都在说") == {"左侧", "右侧"}
     assert _parse_speaking_sides("无人") == set()
     assert _parse_speaking_sides("都没有说话") == set()

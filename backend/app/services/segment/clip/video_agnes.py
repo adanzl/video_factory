@@ -72,11 +72,17 @@ _MIN_FRAMES = 81
 _API_TARGET_PIXELS = 921_600  # 1280×720
 
 # ── 口型后校验：按说话窗口抽帧给 VL 判断是否开口 ──────────────────
+# 兼容侧边身份（左侧男孩）与旧版角色名（昭昭）；三人含中间
 _MOUTH_SPEAK_WINDOW_RE = re.compile(
     r"(?P<start>\d+(?:\.\d+)?)-(?P<end>\d+(?:\.\d+)?)秒"
-    r"(?P<side>左侧|右侧)(?P<role>男孩|女孩|妈妈)"
+    r"(?:"
+    r"(?P<side>左侧|中间|右侧)(?P<role>男孩|女孩|妈妈)"
+    r"|"
+    r"(?P<name>昭昭|灿灿|妈妈)"
+    r")"
     r"(?:开口说话|张嘴说话|嘴巴持续张合说话)"
 )
+_NAME_TO_SIDE_HINT = {"昭昭": "左侧", "灿灿": "右侧", "妈妈": "中间"}
 # 口型开合有闭合瞬间，单帧易误判，窗口内多点抽帧对比口型变化
 _MOUTH_VERIFY_FRACTIONS = (0.15, 0.35, 0.5, 0.65, 0.85)
 _MOUTH_VERIFY_FRAME_WIDTH = 640
@@ -84,17 +90,48 @@ _MOUTH_VERIFY_FRAME_WIDTH = 640
 _MOUTH_VERIFY_SYSTEM = (
     "你是视频抽帧质检员。用户给出同一段视频某时间段按时间顺序抽取的几帧画面。"
     "判断画面中哪个人物在说话：任一帧张开嘴巴，或各帧间嘴部有明显开合/口型变化，即算在说话。"
-    "只回答「左侧」「右侧」「两者」或「无人」，不要输出任何其他内容。"
+    "只回答「左侧」「中间」「右侧」「多人」或「无人」，不要输出任何其他内容。"
 )
 
 
 def _extract_speak_windows(prompt: str) -> list[tuple[float, float, str]]:
-    """从注入后的 motion_prompt 提取说话窗口 (start, end, 左右侧身份)。"""
+    """从注入后的 motion_prompt 提取说话窗口 (start, end, 侧边身份)。"""
+    # 站位句优先：名字 → 实际站位侧（三人中间妈妈、二人右灿等）
+    name_side: dict[str, str] = {}
+    lcr = re.search(
+        r"画面左边是\s*(昭昭|灿灿|妈妈)\s*[，,；;]?\s*"
+        r"中间是\s*(昭昭|灿灿|妈妈)\s*[，,；;]?\s*"
+        r"右边是\s*(昭昭|灿灿|妈妈)",
+        prompt or "",
+    )
+    if lcr:
+        name_side = {
+            lcr.group(1): "左侧",
+            lcr.group(2): "中间",
+            lcr.group(3): "右侧",
+        }
+    else:
+        lr = re.search(
+            r"画面左边是\s*(昭昭|灿灿|妈妈)\s*[，,；;]?\s*"
+            r"右边是\s*(昭昭|灿灿|妈妈)",
+            prompt or "",
+        )
+        if lr:
+            name_side = {lr.group(1): "左侧", lr.group(2): "右侧"}
+
     windows: list[tuple[float, float, str]] = []
     for m in _MOUTH_SPEAK_WINDOW_RE.finditer(prompt or ""):
         start, end = float(m.group("start")), float(m.group("end"))
-        if end > start:
-            windows.append((start, end, f"{m.group('side')}{m.group('role')}"))
+        if end <= start:
+            continue
+        if m.group("side"):
+            label = f"{m.group('side')}{m.group('role')}"
+        else:
+            name = m.group("name")
+            side = name_side.get(name) or _NAME_TO_SIDE_HINT.get(name, "左侧")
+            role = {"昭昭": "男孩", "灿灿": "女孩", "妈妈": "妈妈"}.get(name, name)
+            label = f"{side}{role}"
+        windows.append((start, end, label))
     return windows
 
 
@@ -133,13 +170,18 @@ def _parse_speaking_sides(content: str) -> set[str] | None:
         return None
     if "无人" in text or "都没" in text or "没有" in text:
         return set()
-    if "两者" in text or "都在" in text or ("左侧" in text and "右侧" in text):
-        return {"左侧", "右侧"}
+    found: set[str] = set()
     if "左侧" in text or text.startswith("左"):
-        return {"左侧"}
+        found.add("左侧")
+    if "中间" in text or text.startswith("中"):
+        found.add("中间")
     if "右侧" in text or text.startswith("右"):
-        return {"右侧"}
-    return None
+        found.add("右侧")
+    if "多人" in text or "两者" in text or "都在" in text:
+        # 旧回答「两者」按左+右；含中间时由字面命中补齐
+        if not found:
+            found.update({"左侧", "右侧"})
+    return found or None
 
 
 def _resolve_api_dimensions(target_w: int, target_h: int) -> tuple[int, int]:
@@ -913,7 +955,7 @@ class AgnesClipProvider(ClipProvider):
             question = (
                 f"这{len(frames)}张图按时间顺序取自同一段视频 "
                 f"{start:.1f}-{end:.1f} 秒。对比各帧，画面中谁有张嘴说话迹象？"
-                f"回答「左侧」「右侧」「两者」或「无人」。"
+                f"回答「左侧」「中间」「右侧」「多人」或「无人」。"
             )
             sides = self._ask_vl_speaking_sides(question, frames)
             expected_side = label[:2]
