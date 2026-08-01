@@ -286,6 +286,10 @@ def format_block_for_code(code: str) -> str:
         vals = list(range(line.body_lines_min, line.body_lines_max + 1))
         num_text = "、".join(str(v) for v in vals[:-1]) + " 或 " + str(vals[-1])
         lines_hard = f'    // 数组长度必须等于 {num_text}，不得少，不得多。\n'
+    alternation_hard = (
+        '    // 【硬约束】speaker 必须与上一句严格交替'
+        '（昭昭→灿灿→昭昭→…），连续相同则整组作废\n'
+    )
     code_u = (code or "").upper()
     if code_u == "D":
         rows = (
@@ -315,9 +319,15 @@ def format_block_for_code(code: str) -> str:
   "setting": "一句话说明地点和初始冲突动作",
   "conflict_core": "≤24字，谁vs谁争什么",
   "dialogue": [
-{lines_hard}{rows}  ],
+{alternation_hard}{lines_hard}{rows}  ],
   "punchline_explain": "{line.punchline_example}"
 }}
+
+【轮换硬锁·全域最高优先级】
+每一句的 speaker 必须与上一句严格交替（昭昭→灿灿→昭昭→…）。
+生成任何一句前，先检查上句 speaker；若相同，禁止输出，重写本句。
+无论语义衔接多顺、无论当前说话人是否「还没说完」，禁止连说。
+宁可把同一人的完整内容拆成两轮说（中间隔一句），也绝不允许连说 2 句。
 {footer}
 """
 

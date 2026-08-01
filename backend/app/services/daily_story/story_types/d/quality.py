@@ -27,6 +27,43 @@ RE_MESS = re.compile(
 # 与 humor.RE_FIX 同源，避免「我来解」一类破规漏认
 RE_FIX = d_humor.RE_FIX
 
+# D 的 +2 同位替代（避免评分只偏爱某一种笑点风味）：
+#   通道A·数字具体量：≥2 句昭昭台词各含一个真实可数的数量
+#      （分钟/秒/块/层/遍/次/圈、数到X；剔「一下」虚量词、不认每块/整层/半截）
+#   通道B·荒诞整体执行：1 句昭昭台词把歪读产物当「整体」搬运/处理
+#      （整座端进箱、连塔一起端、两手托住底座端）
+#   任一通道满足即 +2，不叠加。
+_RE_NUM_DURATION = re.compile(r"(?:\d+|[一二三四五六七八九十两]+)(?:分钟|秒)")
+_RE_NUM_COUNT = re.compile(r"数到\s*[一二三四五六七八九十\d]+")
+_RE_NUM_ITEM = re.compile(r"[一二三四五六七八九十两\d]+(?:块|层|遍|次|圈)")
+_RE_CLIMAX_WHOLE = re.compile(
+    r"(?:整座|整个|整根|一整|连[^，。！？]{0,3}(?:一起|一块))"
+    r"[^，。！？]{0,6}(?:端|抬|搬|挪|托|抱|扛|举|捧|放|进)|"
+    r"(?:双手|两手|托住|抱住)[^，。！？]{0,8}(?:整座|整个|整根|端|抬|搬|挪)",
+)
+
+
+def score_specificity_bonus(
+    lines: list[str],
+    speakers: list[str] | None,
+) -> int:
+    """D：数字具体量 OR 荒诞整体执行，任一风味即给 +2（同位替代，不叠加）。"""
+    if not speakers:
+        return 0
+    zz = [ln for ln, sp in zip(lines, speakers) if sp == "昭昭"]
+    if any(_RE_CLIMAX_WHOLE.search(ln) for ln in zz):
+        return 2
+    num_lines = {
+        ln
+        for ln in zz
+        if (
+            _RE_NUM_DURATION.search(ln)
+            or _RE_NUM_COUNT.search(ln)
+            or _RE_NUM_ITEM.search(ln)
+        )
+    }
+    return 2 if len(num_lines) >= 2 else 0
+
 
 def score_scene_beat(
     lines: list[str],
@@ -120,6 +157,7 @@ QUALITY_PROFILE = TypeQualityProfile(
     collect_humor_issues=d_humor.collect_humor_issues,
     score_opening_quality=d_opening.score_opening_quality,
     score_scene_beat=score_scene_beat,
+    score_specificity_bonus=score_specificity_bonus,
     humor_issue_caps=d_humor.HUMOR_ISSUE_CAPS,
     humor_revision_hint=_d_revision_hint,
     closing_quote_haystack=d_humor.closing_quote_haystack,
