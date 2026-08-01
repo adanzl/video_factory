@@ -257,9 +257,9 @@ def _daily_story_length_draft_for_type(type_code: str | None) -> str:
         return f"""\
 - 片长（D类正文，放最前）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
   每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
-  【D类·首稿】先钉「规矩词 + 歪读点 + 必然后果」，写清 13–14 句节奏；
+  【D类·首稿】先钉「规矩词 + 歪读点 + 必然后果」，写清 {lo}–{hi} 句节奏；
   **首稿也须一次写到 ≥{DAILY_STORY_BODY_CHARS_MIN} 字**（瞄准 {DAILY_STORY_BODY_RETRY_TARGET_MIN}–{DAILY_STORY_BODY_RETRY_TARGET_MAX}）；
-  每句尽量 ≥20 字；勿偏短指望补满，勿为凑字堆轻轻放×N。
+  每句尽量 19–21 字；勿偏短指望补满，勿为凑字堆轻轻放×N。
   系统另拼 2 句开场。发现开场另写另验。
 """
     return _DAILY_STORY_LENGTH_DRAFT
@@ -276,7 +276,7 @@ def _daily_story_length_user_draft_for_type(type_code: str | None) -> str:
         return f"""\
 3. 【D类·首稿】写 **{lo}–{hi} 句**，先钉歪读点再写对白；
    **须一次写到 ≥{DAILY_STORY_BODY_CHARS_MIN} 字**（瞄准 {DAILY_STORY_BODY_RETRY_TARGET_MIN}–{DAILY_STORY_BODY_RETRY_TARGET_MAX}），
-   每句尽量 ≥20 字；勿交短稿。发现开场另计另验。speaker 仅昭昭/灿灿。
+   每句尽量 19–21 字；勿交短稿。发现开场另计另验。speaker 仅昭昭/灿灿。
 """
     return _DAILY_STORY_LENGTH_USER_DRAFT
 
@@ -290,11 +290,12 @@ def _daily_story_length_revise_expand_for_type(type_code: str | None) -> str:
   须轮流说话，禁止同人连说。发现开场另写另验。
 """
     if type_code and type_code.upper() == "D":
+        lo, hi, _avg = _body_line_budget(type_code)
         return f"""\
 - 片长（D类偏短重试·一次补满）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
   每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
   **本轮必须一次写到 ≥{DAILY_STORY_BODY_CHARS_MIN} 字**（瞄准 {DAILY_STORY_BODY_RETRY_TARGET_MIN}–{DAILY_STORY_BODY_RETRY_TARGET_MAX}）。
-  保留上一稿不知变通骨架：句数补到 13–14（勿超过 14）；每句尽量 ≥20 字；
+  保留上一稿不知变通骨架：句数补到 {lo}–{hi}（勿超过 {hi}）；每句尽量 19–21 字；
   只增不删、禁止整稿重写、禁止轻轻放×N 凑字。发现开场另写另验。
 """
     return _DAILY_STORY_LENGTH_REVISE_EXPAND
@@ -320,10 +321,11 @@ def _daily_story_length_revise_patch_for_type(type_code: str | None) -> str:
 
 def _daily_story_length_revise_trim_for_type(type_code: str | None) -> str:
     if type_code and type_code.upper() == "D":
+        _lo, hi, _avg = _body_line_budget(type_code)
         return f"""\
 - 片长（D类偏长重试）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
   每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
-  只删不增：合并重复回合/空辩论，压到 **≤14 句**、
+  只删不增：合并重复回合/空辩论，压到 **≤{hi} 句**、
   约 {DAILY_STORY_BODY_RETRY_TARGET_MIN}–{DAILY_STORY_BODY_RETRY_TARGET_MAX} 字；
   保留立叮嘱→字面→搞砸→破规→回旋镖链。发现开场另写另验。
 """
@@ -337,9 +339,10 @@ def _daily_story_length_user_revise_expand_for_type(type_code: str | None) -> st
    发现开场另计另验。speaker 仅昭昭/灿灿/妈妈。
 """
     if type_code and type_code.upper() == "D":
+        lo, hi, _avg = _body_line_budget(type_code)
         return f"""\
 3. 【D类·一次补满】本轮必须写到 ≥{DAILY_STORY_BODY_CHARS_MIN} 字；
-   句数 13–14；每句尽量 ≥20 字（≤{DAILY_STORY_LINE_CHARS_MAX}）；保留骨架只增不删。
+   句数 {lo}–{hi}；每句尽量 19–21 字（≤{DAILY_STORY_LINE_CHARS_MAX}）；保留骨架只增不删。
    发现开场另计另验。speaker 仅昭昭/灿灿。
 """
     return _DAILY_STORY_LENGTH_USER_REVISE_EXPAND
@@ -2995,19 +2998,19 @@ def build_daily_story_retry_user(
                 f"（低于 {chars_min} 视为失败）。\n"
             )
         else:
-            # D 类：正文句数预算固定（13–14 句），缺字时不让模型去“插很多句”走偏，
-            # 而是优先补到 13 句；若已在 13–14 句内，则只做句内顶字。
+            # D 类：正文句数预算固定（15–17 句），缺字时不让模型去“插很多句”走偏，
+            # 而是优先补到 15 句；若已在 15–17 句内，则只做句内顶字。
             if type_code == "D":
                 dialogue = prev_story.get("dialogue")
                 n_lines = len(dialogue) if isinstance(dialogue, list) else 0
                 avg = (chars // n_lines) if n_lines else 0
+                d_lo, d_hi, _ = _body_line_budget("D")
                 length_hint = (
                     f"【D·一次补满·硬验收】上一稿 {chars} 字 / {n_lines} 句"
                     f"（均 {avg} 字/句），还差 {deficit} 字。\n"
-                    f"本轮输出须同时满足：① 正文 15–17 句；"
-                    f"② 每句 18–{DAILY_STORY_LINE_CHARS_MAX} 字"
-                    f"（严禁超 {DAILY_STORY_LINE_CHARS_MAX}，超长会被截掉毁句，"
-                    f"缺字靠加句补）；"
+                    f"本轮输出须同时满足：① 正文 {d_lo}–{d_hi} 句；"
+                    f"② 每句 19–21 字为主（严禁超 {DAILY_STORY_LINE_CHARS_MAX}，"
+                    f"超长会被截掉毁句，缺字靠加句补）；"
                     f"③ dialogue 总字数落在 {max(aim_lo, 300)}–{aim_hi} 字"
                     f"（低于 {max(aim_lo, 300)} 视为失败——你上一稿就是短交的，"
                     f"这轮宁可写满勿再短）。\n"

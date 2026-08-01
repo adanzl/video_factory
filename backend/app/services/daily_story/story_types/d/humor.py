@@ -48,10 +48,17 @@ _RE_PREAPPROVE = re.compile(
 _RE_ASK_PERMIT = re.compile(r"好不好|行不行|可以吗|对吧|行吗")
 # 搞砸前灿灿拆穿/纠正字面误解 → 意外感没了
 _RE_SPOIL_LITERAL = re.compile(
-    r"不是让你|我让你.{0,6}不是|要平放|别往高|别垒|别堆高|"
+    r"不是让你|我是让你|我让你.{0,8}不是|要平放|别往高|别垒|别堆高|"
     r"别码高|你理解错|我说的是|我是说|"
+    r"你.{0,8}地上.{0,14}干(?:什么|嘛)|要直接放|直接放箱子|"
+    r"直接.{0,10}(?:不好吗|才对)|"
     r"绕成死结|打成死结|要绕成|这是死结|死结了|"
     r"你这是要|别绕那么|别绕成",
+)
+# 收束引话 haystack：只认前段可抠叮嘱，不认中段「不能再塞」催促
+_RE_RULE_CORE = re.compile(
+    r"不许|别碰|别晃|轻点|慢点|系紧|轻轻|轻拿|别浇|别多|别夹|"
+    r"别响|别堆|别乱|规矩|叮嘱|不准|只能|别太",
 )
 # 中段叮嘱方催停/劝阻复读（一句慌即可，堆「快停/别拉」稀释歪读）
 _RE_MID_STOP_NAG = re.compile(
@@ -363,10 +370,18 @@ def closing_quote_haystack(
     speakers: list[str] | None,
     body_text: str,
 ) -> str:
-    """D 收束引话只认灿灿前文叮嘱，不认昭昭自报。"""
+    """D 收束引话只认前段灿灿叮嘱，不认昭昭自报、不认中段催促。"""
     if not speakers or len(speakers) != len(lines):
         return body_text
     body_n = len(lines[:-4]) if len(lines) > 4 else max(0, len(lines) - 1)
+    early_n = min(6, body_n)
+    early_rules = [
+        lines[i]
+        for i in range(early_n)
+        if speakers[i] == "灿灿" and _RE_RULE_CORE.search(lines[i])
+    ]
+    if early_rules:
+        return "".join(early_rules)
     cancan = "".join(
         lines[i] for i in range(body_n) if speakers[i] == "灿灿"
     )
@@ -399,7 +414,7 @@ def humor_revision_hint(issue: str) -> str | None:
     if "拖沓" in issue:
         return (
             f"【好笑·D】{issue}。"
-            "成片压到 ≤20 句（正文 ≤14 句为佳）：合并中段重复回合，"
+            "成片压到 ≤20 句（正文 ≤17 句为佳）：合并中段重复回合，"
             "把删掉的字补进保留句（每句写足 ≤24 字）；"
             "立叮嘱→字面→搞砸→破规→回旋镖链勿动。"
         )

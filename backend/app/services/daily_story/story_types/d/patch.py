@@ -26,8 +26,9 @@ from app.services.daily_story.story_types.d.humor import (
 )
 from app.services.daily_story.story_types.quality import RE_SOFT_LAST
 
+# 立规用：不含裸「不能」（避免把「不能再塞了」当成叮嘱原话）
 _RE_RULE = re.compile(
-    r"不许|别碰|别晃|轻点|慢点|系紧|规矩|叮嘱|不准|(?<![只])不能|"
+    r"不许|别碰|别晃|轻点|慢点|系紧|规矩|叮嘱|不准|"
     r"别夹|别浇|别多|别响|别堆|轻拿|轻轻|别乱|只能|别太",
 )
 _RE_CLOSING_QUOTE = re.compile(
@@ -37,7 +38,7 @@ _RE_CLOSING_QUOTE = re.compile(
 _WAFFLE = re.compile(
     r"没有毛病|死板|坚持执行|脑子怎么|转不过弯|特殊补救|我这是帮你",
 )
-_D_MAX_LINES = 16  # D 正文宜 13–14；本地压缩到 ≤16，给开场留空间
+_D_MAX_LINES = 17  # D 正文宜 15–17；本地压缩到 ≤17，给开场留空间
 # 中段引话降级用：改后不再命中 RE_BOOM_CLOSE，收束那一处保持不动
 _BOOM_SOFTEN_MAP = {
     "你自己说": "你说的",
@@ -110,9 +111,9 @@ def _pick_d_cite(cancan_line: str) -> str:
 
 
 def _first_cancan_rule(dialogue: list) -> str:
-    """取前段灿灿叮嘱句（避开末段补救/嘴硬）。"""
+    """取前段灿灿叮嘱句（只扫前 6 句；避开中段催促/末段补救）。"""
     n = len(dialogue)
-    end = max(3, n - 4)
+    end = min(6, max(3, n - 4))
     for item in dialogue[:end]:
         if not isinstance(item, dict):
             continue
@@ -120,7 +121,7 @@ def _first_cancan_rule(dialogue: list) -> str:
             continue
         ln = str(item.get("line") or "")
         if _RE_RULE.search(ln) or re.search(
-            r"别.{1,8}|只能|轻轻|轻点|轻拿", ln,
+            r"别.{1,8}|只能|轻轻|轻点|轻拿|系紧", ln,
         ):
             return ln
     return ""

@@ -1813,6 +1813,17 @@ def test_validation_retry_hints_primary_issue_only():
     assert "连说" in hint2
     assert "回旋镖·只改末" not in hint2
 
+    # D「勿写成 A」不得误中 C 式赛规提示
+    err_d = (
+        "D类收束勿写成 A 式末四拍（引话+那不一样+哪里不一样）；"
+        "应走叮嘱方破规+字面回旋镖"
+    )
+    assert pick_primary_validation_errors(err_d)[0].startswith("D类收束")
+    hint_d = build_validation_retry_hints(err_d, chars=300, type_code="D")
+    assert "D·去A化" in hint_d
+    assert "赛规回旋镖" not in hint_d
+    assert "你自己说" in hint_d
+
 
 def test_build_quality_revision_hints_consecutive_before_humor():
     from app.services.daily_story.quality import build_quality_revision_hints
