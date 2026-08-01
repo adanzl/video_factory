@@ -17,6 +17,7 @@ from app.services.media.ffmpeg_utils import (
     OUTPUT_AUDIO_SAMPLE_RATE,
     mux_video_audio,
     probe_duration,
+    run_ffmpeg,
     sequence_to_video,
 )
 from app.services.render.text_render import load_cjk_font
@@ -26,8 +27,11 @@ logger = logging.getLogger(__name__)
 _FPS = 25
 _FADE_IN_SEC = 0.40
 _CHAR_ENTER_SEC = 0.45
-_ICON_STAGGER_SEC = 0.16
 _ICON_ENTER_SEC = 0.28
+# pop3.mp3 内三段爆破 onset（相对文件起点），画面与音效对齐
+_ICON_POP_SFX = "pop3.mp3"
+_ICON_POP_ONSETS = (0.125, 0.570, 1.135)
+_ICON_POP_VOLUME_DB = -1.0
 # 每人开口后脉冲次数（放大缩小一轮算 1 次），满次停住
 _SPEAK_PULSE_CYCLES = 3
 _SPEAK_PULSE_PERIOD = 0.38
@@ -64,6 +68,30 @@ class _Timeline:
             if seg.speaker == speaker:
                 return seg
         return None
+
+
+def _icon_start(timeline: _Timeline) -> float:
+    zhao_seg = timeline.segment_for("昭昭")
+    if zhao_seg:
+        return zhao_seg.start
+    return max(_CHAR_ENTER_SEC, timeline.duration * 0.15)
+
+
+def _icon_pop_offsets() -> tuple[float, ...]:
+    """相对第一击的延迟；长度与三连一致。"""
+    base = _ICON_POP_ONSETS[0]
+    offsets = tuple(max(0.0, t - base) for t in _ICON_POP_ONSETS)
+    n = len(_ICON_ORDER)
+    if len(offsets) >= n:
+        return offsets[:n]
+    # 音效击点不足时用末击间隔补齐
+    step = offsets[-1] - offsets[-2] if len(offsets) >= 2 else 0.45
+    last = offsets[-1] if offsets else 0.0
+    padded = list(offsets)
+    while len(padded) < n:
+        last += step
+        padded.append(last)
+    return tuple(padded)
 
 
 @dataclass(frozen=True)
@@ -383,10 +411,11 @@ def _compose_frame(layers: dict, t: float, timeline: _Timeline) -> Image.Image:
         (cx + cdx, cy + cdy + slide + can_bob),
     )
 
-    # 三连：灿灿开口时弹出（对白答「忘了关注」→ CTA）
-    icon_start = can_seg.start if can_seg else timeline.duration * 0.5
+    # 三连：昭昭开口时弹出，间隔对齐 pop3 三段击点
+    icon_start = _icon_start(timeline)
+    pop_offsets = _icon_pop_offsets()
     for i, slot in enumerate(layers["icon_slots"]):
-        local_t = t - (icon_start + i * _ICON_STAGGER_SEC)
+        local_t = t - (icon_start + pop_offsets[i])
         if local_t < 0:
             continue
         pop = _ease_out_back(min(local_t / _ICON_ENTER_SEC, 1.0))
@@ -406,6 +435,63 @@ def _compose_frame(layers: dict, t: float, timeline: _Timeline) -> Image.Image:
         )
 
     return frame
+
+
+def _mix_voice_with_icon_pops(
+    voice_path: Path,
+    sfx_path: Path,
+    output_path: Path,
+    *,
+    icon_start: float,
+    duration: float,
+) -> Path:
+    """对白混入 pop3：第一击落在 icon_start，后续击点跟画面 stagger。"""
+    if not sfx_path.exists():
+        raise FileNotFoundError(f"三连音效不存在: {sfx_path}")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    # 文件开头有短静音，裁掉/延时后让第一击对准按钮
+    lead = _ICON_POP_ONSETS[0]
+    delay_sec = icon_start - lead
+    trim = max(0.0, -delay_sec)
+    delay_ms = max(0, int(round(max(0.0, delay_sec) * 1000)))
+    vol = max(-24.0, min(6.0, float(_ICON_POP_VOLUME_DB)))
+    sr = OUTPUT_AUDIO_SAMPLE_RATE
+    filter_complex = (
+        f"[1:a]aformat=sample_rates={sr}:channel_layouts=mono,"
+        f"atrim=start={trim:.3f},asetpts=PTS-STARTPTS,"
+        f"volume={vol}dB,adelay={delay_ms}:all=1,"
+        f"apad=whole_dur={duration:.3f}[sfx];"
+        f"[0:a]aformat=sample_rates={sr}:channel_layouts=mono,"
+        f"atrim=0:{duration:.3f},asetpts=PTS-STARTPTS[voice];"
+        f"[voice][sfx]amix=inputs=2:duration=first:dropout_transition=0:"
+        f"normalize=0[aout]"
+    )
+    run_ffmpeg(
+        [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(voice_path),
+            "-i",
+            str(sfx_path),
+            "-filter_complex",
+            filter_complex,
+            "-map",
+            "[aout]",
+            "-ar",
+            str(sr),
+            "-ac",
+            "1",
+            "-c:a",
+            "libmp3lame",
+            "-q:a",
+            "4",
+            "-t",
+            f"{duration:.3f}",
+            str(output_path),
+        ]
+    )
+    return output_path
 
 
 def _render_frames(
@@ -474,9 +560,27 @@ def generate_end_card(
         force_cpu=True,
     )
 
+    sfx_path = settings.res_dir / "audio" / _ICON_POP_SFX
+    mixed_audio = work / "end_mixed.mp3"
+    icon_t0 = _icon_start(timeline)
+    pop_offsets = _icon_pop_offsets()
+    _mix_voice_with_icon_pops(
+        audio_path,
+        sfx_path,
+        mixed_audio,
+        icon_start=icon_t0,
+        duration=audio_dur,
+    )
+    logger.info(
+        "end_card icon pops mixed: sfx=%s icon_start=%.3fs offsets=%s",
+        sfx_path.name,
+        icon_t0,
+        pop_offsets,
+    )
+
     mux_video_audio(
         silent_video,
-        audio_path,
+        mixed_audio,
         output_path,
         sample_rate=OUTPUT_AUDIO_SAMPLE_RATE,
         channels=1,
