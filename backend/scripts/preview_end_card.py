@@ -1,4 +1,4 @@
-"""预览动态片尾（默认写到 res/host/crayon/end.mp4）。
+"""预览动态片尾（默认写到项目 tmp/end_card_preview.mp4）。
 
 用法:
   conda activate flask_env
@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 _root = Path(__file__).resolve().parent.parent
+_repo = _root.parent
 sys.path.insert(0, str(_root))
 
 from app.services.end_card import generate_end_card  # noqa: E402
@@ -25,7 +26,7 @@ def main() -> int:
     parser.add_argument(
         "--out",
         type=Path,
-        default=_root / "res" / "host" / "crayon" / "end.mp4",
+        default=_repo / "tmp" / "end_card_preview.mp4",
     )
     args = parser.parse_args()
 

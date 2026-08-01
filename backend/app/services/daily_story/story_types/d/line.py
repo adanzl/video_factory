@@ -12,6 +12,7 @@ LINE_D = StoryTypeLine(
     keywords=STORY_TYPE_KEYWORDS["D"],
     body_lines_min=15,
     body_lines_max=17,
+    line_format_hint="19–21字，严禁超24",
     quality_ready=False,
     punchline_example="D类字面执行，叮嘱方立规矩被字面照做搞砸后自己破规被回旋镖",
     prompt_block="""\
@@ -75,7 +76,8 @@ LINE_D = StoryTypeLine(
 
 【节奏（D）】
 1 立**合理**叮嘱（1 句，可抠一个字）
-2 歪读执行（3–5 句）：同一偏读越做越极端，每步可拍，勿换序号复读
+2 歪读执行（3–5 句）：昭昭此段至少 1 句须带「按你说的/你说…我就…」字面原话
+  （招牌话，缺了校验不过）；同一偏读越做越极端，每步可拍，勿换序号复读
 3 错误结果一锤（1–2 句）：须由步骤 2 必然推出
 4 叮嘱方破规补救（1–2 句）
 5 倒数第 2 句回旋镖 → 末句嘴硬

@@ -288,7 +288,7 @@ def format_block_for_code(code: str) -> str:
   "setting": "一句话说明地点和初始冲突动作",
   "conflict_core": "≤24字，谁vs谁争什么",
   "dialogue": [
-    {{"speaker": "昭昭", "line": "台词（≤18字）"}},
+    {{"speaker": "昭昭", "line": "台词（{line.line_format_hint}）"}},
     {{"speaker": "灿灿", "line": "台词"}},
     {{"speaker": "妈妈", "line": "台词（宜少）"}}
   ],
