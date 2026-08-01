@@ -26,6 +26,7 @@ FunninessTailScorer = Callable[
     [list[str], list[str] | None],
     tuple[int, list[str]],
 ]
+SpecificityBonusScorer = Callable[[list[str], list[str] | None], int]
 HumorRevisionHintFn = Callable[[str], str | None]
 FactIssueCollector = Callable[[dict], list[str]]
 OpeningQualityScorer = Callable[[dict], tuple[int, list[str], list[str]]]
@@ -109,6 +110,7 @@ class TypeQualityProfile:
     stop_on_ungrounded_quote: bool = True
     score_scene_beat: SceneBeatScorer | None = None
     score_funniness_tail: FunninessTailScorer | None = None
+    score_specificity_bonus: SpecificityBonusScorer | None = None
     humor_issue_caps: tuple[tuple[str, int], ...] = field(default_factory=tuple)
     humor_revision_hint: HumorRevisionHintFn | None = None
     collect_fact_issues: FactIssueCollector | None = None

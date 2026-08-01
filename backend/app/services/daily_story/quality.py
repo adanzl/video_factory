@@ -57,6 +57,8 @@ STRUCTURE_SCORE_CAP = 80
 # 好笑维度 0–20：达标=8（够发布线）；很好笑=15（仅标签）
 _HUMOR_POINTS_FOR_GOOD = 8
 _HUMOR_POINTS_FOR_GREAT = 15
+# 共享数字加分（A/B/C/E 兜底）：全文任意「数字+分钟/秒/下」≥2 处 → +2
+_RE_NUMBER_BONUS = re.compile(r"(?:\d+|[一二三四五六七八九十两]+)(?:分钟|秒|下)")
 
 _RE_HAMMER = re.compile(
     # 禁止裸 \d+ 凑「一锤」（如「少了1块」）；须带量词或翻车动作
@@ -498,11 +500,12 @@ def _score_funniness(
         points += 4
         pros.append("收束扣原话")
 
-    if not humor_blocked and len(re.findall(
-        r"(?:\d+|[一二三四五六七八九十两]+)(?:分钟|秒|下)",
-        full_text,
-    )) >= 2:
-        points += 2
+    if not humor_blocked:
+        if profile.score_specificity_bonus:
+            # 类型专属 +2 同位替代（D：数字具体量 OR 荒诞整体执行，任一风味即给）
+            points += profile.score_specificity_bonus(lines, speakers)
+        elif len(_RE_NUMBER_BONUS.findall(full_text)) >= 2:
+            points += 2
 
     if not humor_blocked and profile.score_funniness_tail:
         tail_pts, tail_pros = profile.score_funniness_tail(lines, speakers)
