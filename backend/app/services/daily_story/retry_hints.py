@@ -126,9 +126,11 @@ def _hint_body_too_short(err: str, *, chars: int) -> str:
             f"【补字·句内】只差 {deficit} 字：在中段 2–3 句各加 2–6 字抬杠语气，"
             f"禁止插入新句、禁止动末四拍；写到 ≥{DAILY_STORY_BODY_CHARS_MIN}。"
         )
+    deficit_txt = f"缺 ~{deficit} 字" if deficit else "字太少"
     return (
-        "【补字】在立规后加 1–2 个新证据来回（量化/动作），"
-        "禁止用三十下/认真数/计时器注水凑字。"
+        f"【补字·扩句】{deficit_txt}：把中段多数句各扩到 19–21 字"
+        "（补当场动作/状态细节），禁止 ~11 字短句、禁止加新句、"
+        "禁止用三十下/认真数/计时器注水凑字；写足 ≥280 字。"
     )
 
 

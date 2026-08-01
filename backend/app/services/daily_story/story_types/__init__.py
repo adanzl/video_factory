@@ -280,6 +280,33 @@ def type_catalog_system_block() -> str:
 
 def format_block_for_code(code: str) -> str:
     line = story_line_for_code(code)
+    lines_hard = ""
+    if line.body_lines_min and line.body_lines_max and line.body_lines_max > line.body_lines_min:
+        # D 等硬句数类型：把数组长度写进 JSON 模板（Flash 对可校验格式更听话）
+        vals = list(range(line.body_lines_min, line.body_lines_max + 1))
+        num_text = "、".join(str(v) for v in vals[:-1]) + " 或 " + str(vals[-1])
+        lines_hard = f'    // 数组长度必须等于 {num_text}，不得少，不得多。\n'
+    code_u = (code or "").upper()
+    if code_u == "D":
+        rows = (
+            f'    {{"speaker": "昭昭", "line": "台词（{line.line_format_hint}）"}},\n'
+            '    {"speaker": "灿灿", "line": "台词"}  // 本场仅昭昭/灿灿，禁止妈妈\n'
+        )
+        footer = "本场仅昭昭/灿灿出场；禁止妈妈。"
+    elif code_u == "E":
+        rows = (
+            '    {"speaker": "妈妈", "line": "台词（宜多）"},\n'
+            '    {"speaker": "昭昭", "line": "台词"},\n'
+            '    {"speaker": "灿灿", "line": "台词"}\n'
+        )
+        footer = "本场妈妈为主戏角色，台词宜多；主回合是妈妈与孩子的交锋。"
+    else:
+        rows = (
+            f'    {{"speaker": "昭昭", "line": "台词（{line.line_format_hint}）"}},\n'
+            '    {"speaker": "灿灿", "line": "台词"},\n'
+            '    {"speaker": "妈妈", "line": "台词（宜少）"}\n'
+        )
+        footer = "妈妈可有台词，但宜少（建议≤3句）；主回合仍是姐弟。"
     return f"""\
 【格式要求】
 严格输出以下JSON结构：
@@ -288,13 +315,10 @@ def format_block_for_code(code: str) -> str:
   "setting": "一句话说明地点和初始冲突动作",
   "conflict_core": "≤24字，谁vs谁争什么",
   "dialogue": [
-    {{"speaker": "昭昭", "line": "台词（{line.line_format_hint}）"}},
-    {{"speaker": "灿灿", "line": "台词"}},
-    {{"speaker": "妈妈", "line": "台词（宜少）"}}
-  ],
+{lines_hard}{rows}  ],
   "punchline_explain": "{line.punchline_example}"
 }}
-妈妈可有台词，但宜少（建议≤3句）；主回合仍是姐弟。
+{footer}
 """
 
 

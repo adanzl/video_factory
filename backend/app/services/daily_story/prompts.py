@@ -259,7 +259,8 @@ def _daily_story_length_draft_for_type(type_code: str | None) -> str:
   每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
   【D类·首稿】先钉「规矩词 + 歪读点 + 必然后果」，写清 {lo}–{hi} 句节奏；
   **首稿也须一次写到 ≥{DAILY_STORY_BODY_CHARS_MIN} 字**（瞄准 {DAILY_STORY_BODY_RETRY_TARGET_MIN}–{DAILY_STORY_BODY_RETRY_TARGET_MAX}）；
-  每句尽量 19–21 字；勿偏短指望补满，勿为凑字堆轻轻放×N。
+  每句须有动作+结果/位置/理由双信息块，自然达到 18–24 字；禁单动作句；
+  勿偏短指望补满，勿为凑字堆轻轻放×N。
   系统另拼 2 句开场。发现开场另写另验。
 """
     return _DAILY_STORY_LENGTH_DRAFT
@@ -276,7 +277,8 @@ def _daily_story_length_user_draft_for_type(type_code: str | None) -> str:
         return f"""\
 3. 【D类·首稿】写 **{lo}–{hi} 句**，先钉歪读点再写对白；
    **须一次写到 ≥{DAILY_STORY_BODY_CHARS_MIN} 字**（瞄准 {DAILY_STORY_BODY_RETRY_TARGET_MIN}–{DAILY_STORY_BODY_RETRY_TARGET_MAX}），
-   每句尽量 19–21 字；勿交短稿。发现开场另计另验。speaker 仅昭昭/灿灿。
+   每句须有动作+结果/位置/理由双信息块，自然达到 18–24 字；禁单动作句；勿交短稿。
+   发现开场另计另验。speaker 仅昭昭/灿灿。
 """
     return _DAILY_STORY_LENGTH_USER_DRAFT
 
@@ -362,6 +364,12 @@ def _daily_story_length_user_revise_patch_for_type(type_code: str | None) -> str
     return _DAILY_STORY_LENGTH_USER_REVISE_PATCH
 
 
+_SPEAKER_BY_TYPE = {
+    "D": "昭昭、灿灿（本场禁止妈妈出场）",
+    "E": "昭昭、灿灿、妈妈（本场妈妈为主戏角色）",
+}
+
+
 def _daily_story_contract(
     *,
     length_mode: str = "draft",
@@ -377,10 +385,11 @@ def _daily_story_contract(
         length = _daily_story_length_revise_trim_for_type(type_code)
     else:
         length = _LENGTH_MODE_SYSTEM.get(length_mode, _DAILY_STORY_LENGTH_DRAFT)
+    speakers = _SPEAKER_BY_TYPE.get((type_code or "").upper(), "昭昭、灿灿、妈妈")
     return f"""\
 【共用设定】
 - 受众：孩子和有娃的大人（家长能会心一笑，孩子觉得好玩；禁成人梗/谐音/网络热梗）。
-- 角色年龄：昭昭7岁弟弟，灿灿10岁姐姐；可发言角色仅昭昭、灿灿、妈妈。
+- 角色年龄：昭昭7岁弟弟，灿灿10岁姐姐；可发言角色仅{speakers}。
 - 爸爸可「不在场被提到」，禁止作为 speaker；禁止老师入戏。
 - 场景：家庭内部或家门口（客厅/厨房/卧室/门口）；禁止学校、放学路、公园等外景主场。
 {length}\
@@ -465,6 +474,115 @@ _DAILY_STORY_SYSTEM_SHARED = """\
 """
 
 
+# 类型化共享段：锁定类型时按需裁剪，不再把五类交叉规则全量灌给单一类型。
+# 妈妈的角色定义与戏份规则随类型切换（D 禁妈妈、E 妈妈主戏、A/B/C 可少出场）。
+_SHARED_GENERIC = """\
+【角色设定】
+- 昭昭：弟弟，男孩，7岁。好奇心强，喜欢追问，擅长用现实经验挑战抽象规则，经常把简单的事越问越复杂。天真且固执。
+- 灿灿：姐姐，女孩，10岁。比昭昭懂事一点，偶尔想模仿大人的语气管教弟弟，但自己的逻辑也经常掉进孩子的坑里。有时候会被昭昭带偏，嘴硬但心软。
+- 关系：亲姐弟，住在一起；主戏是姐弟斗嘴/较真/互相带偏，不是被妈妈教育。
+
+【发现开场（系统另写，正文勿写）】
+- 开场=正片第一镜：系统另写 **2 句**，须有背景地点 + 可拍画面，再前置进片。
+- 正文 dialogue 从互怼、讲理、甩规则开始，禁止再写寒暄或重复发现现场。
+- setting 仍须写清地点 + 已发生的同一冲突动作，与 conflict_core 同一件实物/规则
+  （反例：setting 写「各抓一个对峙」，core 却写「争同一个蓝抱枕」）。
+- setting 中若提到妈妈做了某动作（如「妈妈切好蛋糕」），正文里妈妈必须至少出场 1 句台词
+  呼应这个动作；否则把该动作改由姐弟中的一人执行（如「灿灿切好蛋糕」）。
+
+【单冲突（硬约束）】
+- 全文只滚一条规则加码，禁止中途换裁决方式。
+- 反例：先争归属 → 改剪刀石头布 → 再扯道歉 → 再让妈妈轮流——这是另开账。
+- 「上次你也…」只可当同一规则的证据，禁止借机开新仇（砸人、红抱枕、别的玩具）。
+- 必须输出 conflict_core：一句话写清「谁 vs 谁，争什么」（≤24 字），
+  与 theme / setting / 前 2 句一致。
+- 禁止岔开学校/体育课/告爸爸/老师/公园等与 conflict_core 无关的新主线。
+- 妈妈只点破，禁止由妈妈引入新冲突、新赛制或新事件。
+- punchline_explain 须含类型标签并说明末句如何收该 conflict_core。
+
+【节奏（共用）】
+- 每 6–8 句须有一个小反转或加码，禁止平铺到结尾才抖包袱。
+- 一句说完一层意思；禁止为凑字数把同一半截话硬拆成两句（听感断裂）。
+- 台词须用自然口语语序：称呼语可放句首、句尾或省略，一句只喊一次；不要句句都以「呀妈」「吗妈妈」结尾，避免听起来像念经。禁止把称呼、证据词或命令语（如「你听听」「听着」）叠在句子末尾造成倒装。反例：「你刚才还笑出声了呢妈妈你听听」应改为「你刚才还笑出声了呢妈妈」；「大人工作需要，跟你们玩不一样听着」应改为「大人工作需要，跟你们玩不一样」。
+- 昭昭/灿灿必须轮流说：禁止同一人连说 ≥2 句（听感碎、像注水）。
+- 禁止概念绕圈：同一逻辑结论的不同措辞变体也算同一对立面，
+  最多 2 个来回后必须引入新事实，禁止空转语义辩论连续超过 4 句。
+
+【台词风格（硬约束）】
+1. 称呼语不要句句都喊：只在关键句点名（如首句、收束句），其他句省略称呼，避免每句都以「妈」「妈妈」「孩子们」收尾。
+2. 少用「呀/呢/啊」等轻语气词：句子用句号、问号、感叹号收尾，不要每句都带语气词。
+3. 证据链要有节奏：不要均匀堆叠证据，合并同类项（如声音+笑声可放在同一回合），让攻防有快有慢、有停顿有加码。
+
+【好笑（硬约束，观感核心）】
+- **本场一锤**：须有可拍细节（数字、分钟、题号、音名、具体物件），
+  笑点从这一锤长出来，不靠空辩「姐姐说了算」。
+- 收束「你刚才说…」须引用前文原话；禁止编造套话。
+- 同一借口/同一旧账全篇最多 2 次（旧账建议只 1 次）。
+
+【立场连贯（硬约束）】
+- 同一角色前后立场须连贯：可以软收、可以认栽，但禁止无铺垫的态度骤变。
+- 反例：刚喊「不公平/不行」下一句立刻「好吧/算了/给你」认怂——中间缺转折理由。
+- 若要改口，须有新理由（被字面戳穿、被证据打脸），不能为收束硬拧。
+- 同一人若因格式错误连说，后一句也须接前一句，禁止自打嘴巴。
+
+【绝对禁止】
+1. 禁止成人笑话、谐音梗、俏皮话、网络热梗。
+2. 禁止「因为……所以……」等书面连接词，全部用口语短句。
+3. 禁止叙事小说腔（「他心想」「她无奈地」等），只写纯对话+极简 setting。
+4. 禁止为凑长度反复换说法车轱辘，或镜像对白。
+5. 禁止后半段换冲突、换地点主场、新开一件事或换一套分法/赛制。
+6. 禁止角色无铺垫的自相矛盾（立场/证据前后打架）。
+7. 禁止用「明天再战/今晚占位」当唯一收束，却没先破本场规则。
+8. 禁止无破功软收：末句「给你/算了/好吧/好了好了」前，
+   须已有一句把对方规则戳穿或自相矛盾；禁止吵不动就罢休。
+9. 禁止弱收束（末 2 句内出现即违规）：
+   - 和解分赃：「一人一半」「平分」「倒杯子」——把冲突和稀泥；
+   - 耍赖占有：「反正我要用」「反正是我的」——没戳穿只赖账；
+   - 甩给妈妈：「等妈回来」「叫妈评理」——本场须姐弟内收束。
+10. 禁止赢家说最后一句：末句 speaker 必须是破功/被反杀/嘴硬的一方。
+11. setting 一致性：若 setting 中妈妈完成某动作（如切蛋糕/拿东西），
+    她必须在正文至少出场 1 句台词呼应；否则把该动作改由姐弟中的一人执行。
+"""
+
+_MOM_BLOCK_DEFAULT = """\
+【妈妈戏份（硬约束）】
+- 妈妈：配角。可出场，但台词少；主戏仍是姐弟，妈妈不是戏核。
+- 妈妈默认可不写；若出场宜全程 ≤2 句。
+- 禁止明确判赢/判平/另开赛制（如「算你赢」「一人一半」「谁先放好谁先选」）。
+- 日常口气可以（叮嘱、谁也别乱动、别吵了）：但不应用一句掐灭尚未落地的破功。
+- 破功/软收：优先姐弟对白完成。
+- 若妈妈出场：情绪须有层次，从「解释/管教」→「心虚/语塞」→「认输/投降」。
+"""
+
+_MOM_BLOCK_D = """\
+【妈妈戏份（D类硬约束）】
+- 妈妈：本场严禁出场（主戏仅昭昭/灿灿，规矩由灿灿立）；可被提及，禁发言、禁「妈妈说」。
+- 禁止明确判赢/判平/另开赛制（如「算你赢」「一人一半」「谁先放好谁先选」）。
+- 破功/软收：纯姐弟对白完成。
+"""
+
+_MOM_BLOCK_E = """\
+【妈妈戏份（E类硬约束）】
+- 妈妈：本场主戏角色，台词宜多；妈妈立规矩/讲理，孩子追问反驳，末句妈妈破功。
+- 禁止明确判赢/判平/另开赛制（如「算你赢」「一人一半」「谁先放好谁先选」）。
+- 妈妈情绪须有层次：从「解释/管教」→「心虚/语塞」→「认输/投降」。
+"""
+
+
+def _shared_block_for_type(*, type_code: str | None = None) -> str:
+    """按类型裁剪共享段：锁定类型时只含该类型的通用规则 + 对应妈妈戏份。
+
+    未锁定类型时返回原始全量 shared（供自动选型模式参考五类）。
+    """
+    if not type_code:
+        return _DAILY_STORY_SYSTEM_SHARED
+    mom = {
+        "D": _MOM_BLOCK_D,
+        "E": _MOM_BLOCK_E,
+    }.get(type_code.upper(), _MOM_BLOCK_DEFAULT)
+    return f"{_SHARED_GENERIC}\n{mom}"
+
+
 def _daily_story_system_body(*, type_code: str | None = None) -> str:
     catalog = type_catalog_system_block()
     if not type_code:
@@ -472,10 +590,12 @@ def _daily_story_system_body(*, type_code: str | None = None) -> str:
     line = STORY_TYPE_LINES.get(type_code.upper())
     if not line:
         return f"{_DAILY_STORY_SYSTEM_SHARED}\n{catalog}\n"
+    humor = f"\n{line.humor_pack}\n" if (line.humor_pack or "").strip() else ""
     return (
-        f"{_DAILY_STORY_SYSTEM_SHARED}\n"
+        f"{_shared_block_for_type(type_code=type_code)}\n"
         f"{line.prompt_block}\n"
         f"{format_block_for_code(line.code)}\n"
+        f"{humor}"
     )
 
 
@@ -494,12 +614,11 @@ def _daily_story_user_template(
         else _LENGTH_MODE_USER.get(length_mode, _DAILY_STORY_LENGTH_USER_DRAFT)
     )
     mom_role_note = (
-        "5. E类妈妈为主戏，台词宜多、末句妈妈破功；禁空说教连问。"
+        "5. 妈妈严禁出场（D类硬约束）；主戏仅昭昭/灿灿，规矩由灿灿立。"
+        if type_code and type_code.upper() == "D"
+        else "5. E类妈妈为主戏，台词宜多、末句妈妈破功；禁空说教连问。"
         if type_code and type_code.upper() == "E"
-        else (
-            "5. 妈妈默认可不写；若出场宜少；"
-            "禁止「算你赢/一人一半」类判赢判平（E 类除外）。"
-        )
+        else "5. 妈妈默认可不写；若出场宜少；禁止「算你赢/一人一半」类判赢判平。"
     )
     if type_code and type_code.upper() in STORY_TYPE_LINES:
         line = STORY_TYPE_LINES[type_code.upper()]
@@ -2256,7 +2375,13 @@ def validate_daily_story_opening(
     joined = "".join(d["line"] for d in normalized)
     # 锚点须落在开场台词或 setting（core 自身不算已体现）
     ctx = (setting or "") + joined
-    if anchors and normalized and not _conflict_anchors_hit(core, ctx, anchors):
+    d_type = (type_code or "").strip().upper().startswith("D")
+    if (
+        not d_type
+        and anchors
+        and normalized
+        and not _conflict_anchors_hit(core, ctx, anchors)
+    ):
         hint = "、".join(must) if must else "、".join(anchors[:4])
         errors.append(
             f"发现开场未体现 conflict_core 锚点（须点名其一：{hint}）：{core!r}"
@@ -2659,7 +2784,7 @@ def _patch_overlong_lines(story: dict) -> list[str]:
 
 
 def _patch_body_char_budget(story: dict) -> list[str]:
-    """仅小缺口本地补/删语气词；D 不做本地字数修补，交 LLM 重试。"""
+    """仅小缺口本地补/删语气词；D 差 ≤32 也本地补，大缺口才交 LLM。"""
     from app.services.daily_story.story_types import resolve_story_type_code
 
     notes: list[str] = []
@@ -2668,13 +2793,6 @@ def _patch_body_char_budget(story: dict) -> list[str]:
         return notes
     total = dialogue_total_chars(story)
     code = resolve_story_type_code(story)
-    locked = str(story.get("_story_type") or "").strip()
-    if (
-        code == "D"
-        or locked.upper().startswith("D")
-        or "字面执行" in str(story.get("punchline_explain") or "")
-    ):
-        return notes
     n_lines = len(dialogue)
     chars_min = DAILY_STORY_BODY_CHARS_MIN
     max_pad = DAILY_STORY_RETRY_PATCH_DEFICIT_MAX

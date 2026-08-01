@@ -707,8 +707,9 @@ class LLMMgr:
         best_story: dict[str, Any] | None = None
         best_score = -1
         target = 88
-        # 整稿 1 次 + refine 1 次：不够分交人/下一主题，禁止乘法空转
-        max_full = 1
+        # 整稿 3 次（全 Flash 高温发散，多滚踩好笑分）+ refine 1 次兜底；
+        # refine 已切 Flash 关 thinking，总耗时可控
+        max_full = 3
         max_refine = 1
         last_exc: Exception | None = None
 
@@ -752,7 +753,12 @@ class LLMMgr:
                 if not (revision_hints and callable(refine)):
                     break
                 try:
-                    refined = refine(theme, story, revision_hints)
+                    refined = refine(
+                        theme,
+                        story,
+                        revision_hints,
+                        story_type=story_type,
+                    )
                     attach_daily_story_quality(refined, theme=theme)
                     r_score = refined.get("quality", {}).get("score", 0)
                     if r_score > best_score:

@@ -65,6 +65,8 @@ class StoryTypeLine:
     body_lines_max: int = 0
     # 格式示例里的单句行宽提示（共享模板默认 A 类 ≤18字，各类型可覆盖）
     line_format_hint: str = "≤18字"
+    # 格式要求之后的幽默强化块（可选，类型专属；D 类用于拉满好笑分）
+    humor_pack: str = ""
 
 
 def compile_layers(

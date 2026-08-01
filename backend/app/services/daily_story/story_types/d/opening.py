@@ -89,6 +89,13 @@ def append_d_opening_errors(
                 f"opening[{i}] D类主戏姐弟，开场禁止妈妈说话（留给E类）",
             )
             break
+    # 末句 speaker 须昭昭：D 开场=灿灿邀约+昭昭答应报场面；
+    # 末句若是灿灿，拼正文时接缝同人会把灿灿立规句当连说吞掉（key_line 丢失）
+    if normalized and normalized[-1]["speaker"] == "灿灿":
+        errors.append(
+            "D开场末句须昭昭答应并报场面（第1句灿灿邀约、第2句昭昭答应），"
+            "禁止末句仍是灿灿——否则拼正文会把灿灿立规句当连说吞掉"
+        )
     for i, item in enumerate(normalized):
         if str(item.get("speaker") or "").strip() != "灿灿":
             continue

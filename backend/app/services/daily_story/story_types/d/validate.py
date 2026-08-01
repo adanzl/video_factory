@@ -44,7 +44,8 @@ _RE_SPOIL_LITERAL = re.compile(
     r"绕成死结|打成死结|要绕成|这是死结|死结了|"
     r"你这是要|别绕那么|别绕成",
 )
-_D_MAX_DIALOGUE_LINES = 18
+# D 正文 15–17 句 + 开场 2 句 = 成片宜 17–19 句；上限对齐设计（20 含 1 句余量）
+_D_MAX_DIALOGUE_LINES = 20
 _RE_RULE = re.compile(r"不许|别碰|别晃|轻点|慢点|系紧|规矩|叮嘱|不准|不能")
 
 
@@ -190,8 +191,12 @@ def append_d_body_errors(story: dict, errors: list[str]) -> None:
                     cite[j : j + 4] in hay for j in range(0, len(cite) - 3)
                 ))
             )
-            if key_line and len(key_line) >= 2:
-                if key_line not in lines[boom_i] and key_line[:4] not in lines[boom_i]:
+            if key_line and len(key_line) >= 2 and cite:
+                # 引文须落在 key_line 上：boom 句含 key_line（或其≥4字前缀），
+                # 或引文本体是 key_line 的逐字连续子串（放行「轻轻放」这类≥3字短原话）
+                boom_has_key = key_line in lines[boom_i] or key_line[:4] in lines[boom_i]
+                cite_from_key = len(cite) >= 3 and cite in key_line
+                if not (boom_has_key or cite_from_key):
                     grounded = False
             if not grounded:
                 errors.append(
