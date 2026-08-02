@@ -2700,6 +2700,18 @@ _LOCAL_PAD_TAILS = (
     "呀",
 )  # 优先多字少句，勿满篇单「呀」
 _LOCAL_TRIM_CHARS = "的了呢嘛呀啊吧啦哦喔哈嗯"
+# 全句粒子化兜底：单语气词前插「了」成自然双语气词（快松一松吧→快松一松了吧）
+_PARTICLE_UPGRADE_REPLACE = (
+    ("吧", "了吧"),
+    ("呢", "了呢"),
+    ("啊", "了啊"),
+    ("呀", "了呀"),
+)
+# 已带垫尾巴的句子再缀一声（绊脚好不好→绊脚好不好呀）
+_PARTICLE_UPGRADE_APPEND = (
+    ("好不好", "呀"),
+    ("你听着", "呀"),
+)
 
 
 
@@ -2718,6 +2730,8 @@ def _pad_dialogue_line(
 
     used 记录整篇已用过的垫字，避免多句复读同一个「好不好」。
     句末若是 。！？…，垫在标点前，避免「有标点就补不动」。
+    全句粒子化（每句都收在语气词/垫尾巴上）时走 _particle_upgrade
+    兜底，把单语气词升级成自然双语气词，每个仍只补 1 字。
     """
     pad_tails = tails or _LOCAL_PAD_TAILS
     if need <= 0 or not line:
@@ -2730,10 +2744,10 @@ def _pad_dialogue_line(
         if not core:
             return line, 0
     if core[-1] in "啦嘛呀啊呢吧哦":
-        return line, 0
+        return _particle_upgrade(line, core, trail, need)
     # 已补过垫字的句子不再叠加（防「好不好呢」）
     if any(core.endswith(suf) for suf in _LOCAL_PAD_TAILS):
-        return line, 0
+        return _particle_upgrade(line, core, trail, need)
     room = max(0, DAILY_STORY_LINE_CHARS_MAX - _dialogue_char_count(line))
     if room <= 0:
         return line, 0
@@ -2746,6 +2760,36 @@ def _pad_dialogue_line(
             if used is not None:
                 used.add(suf)
             return f"{core}{suf}{trail}", len(suf)
+    return line, 0
+
+
+def _particle_upgrade(
+    line: str,
+    core: str,
+    trail: str,
+    need: int,
+) -> tuple[str, int]:
+    """粒子化句子的兜底补字：语气词/垫尾巴升级成自然双语气词（只补 1 字）。
+
+    最后一搏，used 不再约束：多句同形升级可接受，且与正文垫字不冲突。
+    """
+    room = max(0, DAILY_STORY_LINE_CHARS_MAX - _dialogue_char_count(line))
+    if room <= 0 or need <= 0:
+        return line, 0
+    # 垫尾巴后能再缀一声（绊脚好不好→绊脚好不好呀）
+    for tail, upgrade in _PARTICLE_UPGRADE_APPEND:
+        if core.endswith(tail) and len(upgrade) <= room and len(upgrade) <= need:
+            return f"{core}{upgrade}{trail}", len(upgrade)
+    # 单语气词前插「了」（吧→了吧/呢→了呢/啊→了啊/呀→了呀）
+    for tail, upgrade in _PARTICLE_UPGRADE_REPLACE:
+        if not core.endswith(tail):
+            continue
+        prev = core[-2] if len(core) >= 2 else ""
+        if prev in "的了":
+            continue  # 「真的呀/绷直了呢」不叠
+        delta = len(upgrade) - len(tail)  # 换字后净增（如 吧→了吧 净 +1）
+        if len(upgrade) <= room and delta <= need:
+            return f"{core[:-1]}{upgrade}{trail}", delta
     return line, 0
 
 
@@ -2784,7 +2828,7 @@ def _patch_overlong_lines(story: dict) -> list[str]:
 
 
 def _patch_body_char_budget(story: dict) -> list[str]:
-    """仅小缺口本地补/删语气词；D 差 ≤32 也本地补，大缺口才交 LLM。"""
+    """仅小缺口本地补/删语气词；D 差 ≤48 也本地补，大缺口才交 LLM。"""
     from app.services.daily_story.story_types import resolve_story_type_code
 
     notes: list[str] = []
@@ -2808,6 +2852,9 @@ def _patch_body_char_budget(story: dict) -> list[str]:
     elif code == "E" and 10 <= n_lines <= 16:
         chars_min = 265
         max_pad = 72
+    elif code == "D":
+        # D 靠中段粒子垫字+升级兜底（16–17 句×18–20 字），小缺口全本地化
+        max_pad = 48
     mid = dialogue[:-4] if len(dialogue) >= 8 else dialogue[1:]
     if total < chars_min:
         need = chars_min - total
@@ -2840,6 +2887,8 @@ def _patch_body_char_budget(story: dict) -> list[str]:
         excess = total - DAILY_STORY_BODY_CHARS_MAX
         trim_max = DAILY_STORY_RETRY_PATCH_DEFICIT_MAX
         if code == "E" and 10 <= n_lines <= 16:
+            trim_max = 48
+        elif code == "D":
             trim_max = 48
         if excess > trim_max:
             return notes

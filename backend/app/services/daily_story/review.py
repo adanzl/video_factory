@@ -151,11 +151,22 @@ def _collect_topic_repeats(lines: list[str]) -> list[dict[str, Any]]:
     return issues
 
 
+def _is_opening_mirror(i: int, j: int, open_len: int) -> bool:
+    """开场片头（前 open_len 句）与正文开头几句重合是拼接设计，不算重复。
+
+    D 尤其如此：开场邀约与正文首句立规须是同一件事（扣 theme），
+    程序把「帮我浇绿萝」开场句 vs 正文首句「你来浇水吧」判成重复是误报。
+    只豁免开场 ↔ 正文前 2 句这一小区域，别处重叠照常报。
+    """
+    return i < open_len and j < open_len + 2
+
+
 def collect_local_issues(story: dict) -> list[dict[str, Any]]:
     """程序能直接判死的：同义重复、话题复读、两三字空句。"""
     rows = _dialogue(story)
     lines = [str(r.get("line") or "").strip() for r in rows]
     n = len(lines)
+    open_len = len(story.get("discovery_opening") or [])
     issues: list[dict[str, Any]] = []
 
     seen_pairs: set[int] = set()
@@ -164,6 +175,8 @@ def collect_local_issues(story: dict) -> list[dict[str, Any]]:
             continue
         for j in range(i + 1, n):
             if j in seen_pairs or _is_struct_close(lines[j], index=j, n=n):
+                continue
+            if _is_opening_mirror(i, j, open_len):
                 continue
             if not _near_duplicate(lines[i], lines[j]):
                 continue
@@ -450,6 +463,24 @@ def review_penalty(issues: list[dict[str, Any]]) -> tuple[int, list[str]]:
     return min(REVIEW_PENALTY_CAP, points), reasons
 
 
+def _on_design_line(
+    no: int,
+    lines: list[str],
+    n: int,
+    open_len: int,
+) -> bool:
+    """该句是否是结构设计行：开场片头 / 末段原话闭环。
+
+    审读（尤其 LLM 二次审）会把「立规矩句 ↔ 回旋镖引原话句」、
+    「开场邀约 ↔ 正文首句立规」当换词重复来报，但这两对是本片结构，
+    重复类硬伤不成立，扣分前滤掉。
+    """
+    idx = no - 1
+    if idx < open_len:
+        return True
+    return idx >= n - 3 and bool(_RE_STRUCT_CLOSE.search(lines[idx]))
+
+
 def apply_review_to_quality(
     story: dict,
     issues: list[dict[str, Any]],
@@ -460,8 +491,23 @@ def apply_review_to_quality(
     quality = story.get("quality")
     if not isinstance(quality, dict):
         return story
-    points, reasons = review_penalty(issues)
+    lines = [str(r.get("line") or "").strip() for r in _dialogue(story)]
+    n = len(lines)
+    open_len = len(story.get("discovery_opening") or [])
+    penalized = [
+        it
+        for it in issues
+        if not (
+            it.get("kind") == "重复"
+            and it.get("lines")
+            and all(
+                _on_design_line(no, lines, n, open_len)
+                for no in it["lines"]
+            )
+        )
+    ]
     quality["review_issues"] = issues
+    points, reasons = review_penalty(penalized)
     if not points:
         return story
     score = max(0, int(quality.get("score") or 0) - points)

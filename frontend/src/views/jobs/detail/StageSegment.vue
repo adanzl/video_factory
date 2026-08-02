@@ -107,28 +107,30 @@
             </div>
           </div>
           <div class="flex items-center gap-2">
-            <span
-              class="text-xs font-medium"
-              :class="segmentKeyframeValue(segment) ? 'text-amber-600' : 'text-gray-600'"
-            >
-              关键帧
+            <span class="text-xs text-gray-400">
+              {{ formatSegmentDurationLabel(segment) }}
             </span>
-            <el-select
-              size="small"
-              class="w-30!"
-              :class="{ 'keyframe-select--active': !!segmentKeyframeValue(segment) }"
-              :model-value="segmentKeyframeValue(segment)"
-              :disabled="actionDisabled || savingKeyframeIndex === segment.segment_index"
-              :loading="savingKeyframeIndex === segment.segment_index"
-              @change="(value: string) => handleKeyframeChange(segment, value)"
-            >
-              <el-option label="取消" value="" />
-              <el-option label="Ken Burns" value="ffmpeg" />
-              <el-option label="I2V" value="agnes_i2v" />
-            </el-select>
-          </div>
-          <div class="text-xs text-gray-400">
-            {{ formatSegmentDurationLabel(segment) }}
+            <div class="ml-auto flex items-center gap-2">
+              <span
+                class="text-xs font-medium"
+                :class="segmentKeyframeValue(segment) ? 'text-amber-600' : 'text-gray-600'"
+              >
+                帧
+              </span>
+              <el-select
+                size="small"
+                class="w-22!"
+                :class="{ 'keyframe-select--active': !!segmentKeyframeValue(segment) }"
+                :model-value="segmentKeyframeValue(segment)"
+                :disabled="actionDisabled || savingKeyframeIndex === segment.segment_index"
+                :loading="savingKeyframeIndex === segment.segment_index"
+                @change="(value: string) => handleKeyframeChange(segment, value)"
+              >
+                <el-option label="取消" value="" />
+                <el-option label="Ken Burns" value="ffmpeg" />
+                <el-option label="I2V" value="agnes_i2v" />
+              </el-select>
+            </div>
           </div>
 
           <section class="flex flex-col gap-1">

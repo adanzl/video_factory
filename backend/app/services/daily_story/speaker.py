@@ -84,6 +84,7 @@ __all__ = [
     "mom_should_stay_offscreen",
     "present_cast_from_dialogue",
     "scrub_leaked_speaker_names",
+    "scrub_offscreen_doorway_cues",
     "speakers_from_dialogue",
     "stage_cast_from_setting",
 ]
@@ -259,6 +260,39 @@ def scrub_leaked_speaker_names(text: str, allowed: set[str]) -> str:
     if cleaned:
         return cleaned
     return "室内场景，无未授权角色入画。"
+
+
+# 妈妈未入画时，「盯/瞟门口」会诱使 T2I 画出陌生人（如「妈出来了」却无妈妈外貌）
+_OFFSCREEN_DOOR_GAZE_RE = re.compile(
+    r"(?:同时)?"
+    r"(?:眼睛|目光|余光|身体)?"
+    r"(?:扭头)?"
+    r"(?:紧)?"
+    r"(?:瞟|瞥|盯|望|看)(?:向|着)?"
+    r"(?:厨房|客厅|卧室|卫生间|厕所|阳台|餐厅|玄关)?"
+    r"门口"
+    r"(?:方向)?"
+)
+
+
+def scrub_offscreen_doorway_cues(text: str, *, allowed: set[str]) -> str:
+    """妈妈不在 allowed 时，把「盯/瞟门口」改成空门口，避免路人入画。"""
+    body = (text or "").strip()
+    if not body or "妈妈" in allowed:
+        return body
+
+    def _repl(m: re.Match[str]) -> str:
+        room_m = re.search(
+            r"(厨房|客厅|卧室|卫生间|厕所|阳台|餐厅|玄关)?门口",
+            m.group(0),
+        )
+        room = (room_m.group(1) or "") if room_m else ""
+        return f"{room}门口空无无人"
+
+    cleaned = _OFFSCREEN_DOOR_GAZE_RE.sub(_repl, body)
+    cleaned = re.sub(r"[，,]{2,}", "，", cleaned)
+    cleaned = re.sub(r"[；;]{2,}", "；", cleaned)
+    return cleaned.strip("，,；; ").strip()
 
 
 def _image_prompt_body_for_speaker_check(text: str) -> str:
