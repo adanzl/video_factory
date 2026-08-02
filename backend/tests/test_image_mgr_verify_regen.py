@@ -205,6 +205,77 @@ def test_cloud_provider_runs_concurrently_with_callback(tmp_path: Path) -> None:
     assert sorted(done_ids) == [101, 102, 103, 104]
 
 
+def test_on_image_done_fires_before_all_spawns_finish(tmp_path: Path) -> None:
+    """首张完成须立刻回调；不得等 Pool 列表推导把剩余任务都 spawn 完。
+
+    旧实现用 ``[pool.spawn(...) for ...]``：池满时 spawn 阻塞父协程，
+    iwait/on_image_done 要等 (n-workers) 张完成后才开始。若后续任务又
+    等待首张回调信号，会直接死锁——本用例即复现该问题。
+    """
+    import gevent
+    from gevent.event import Event
+
+    from app.config import get_settings
+
+    mgr = ImageMgr()
+    images_dir = tmp_path / "images"
+    images_dir.mkdir()
+    first_callback = Event()
+    allow_slow = Event()
+    callbacks: list[int] = []
+
+    class _Provider(ImageProvider):
+        max_workers = None
+
+        def describe_params(self, *, size: str | None = None) -> str:
+            return "provider=fake"
+
+        def generate(self, prompt, output_path, **kwargs):  # noqa: ANN001, ANN003
+            idx = int(output_path.stem)
+            if idx <= 2:
+                gevent.sleep(0.05)
+                output_path.write_bytes(b"png")
+                return output_path
+            assert first_callback.wait(timeout=2), "on_image_done never fired"
+            assert allow_slow.wait(timeout=2), "test did not release slow tasks"
+            output_path.write_bytes(b"png")
+            return output_path
+
+    segments = [
+        {
+            "id": 100 + i,
+            "segment_index": i,
+            "text": f"第{i}段",
+            "image_prompt": "提示词内容 " * 20,
+        }
+        for i in range(1, 7)
+    ]
+
+    def on_done(seg_id: int, *_args) -> None:
+        callbacks.append(seg_id)
+        if len(callbacks) == 1:
+            first_callback.set()
+
+    settings = get_settings()
+    with (
+        patch.object(mgr, "_get_image_provider", return_value=_Provider()),
+        patch.object(settings, "mock_mode", False),
+        patch.object(settings, "image_max_workers", 2),
+    ):
+        worker = gevent.spawn(
+            mgr.generate_segment_images,
+            segments,
+            images_dir,
+            on_image_done=on_done,
+        )
+        assert first_callback.wait(timeout=2), "callback blocked by Pool.spawn"
+        allow_slow.set()
+        results = worker.get(timeout=5)
+
+    assert len(callbacks) == 6
+    assert sorted(seg_id for seg_id, _ in results) == list(range(101, 107))
+
+
 def test_local_provider_stays_serial(tmp_path: Path) -> None:
     """SD15 独占本地显存，调大 IMAGE_MAX_WORKERS 也必须串行。"""
     from app.services.segment.image.image_sd15 import Sd15ImageProvider
