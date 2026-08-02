@@ -11,6 +11,7 @@ from app.services.daily_story.speaker import (
     mom_should_stay_offscreen,
     present_cast_from_dialogue,
     scrub_leaked_speaker_names,
+    scrub_offscreen_doorway_cues,
     speakers_from_dialogue,
 )
 from app.services.script.image_prompt import build_image_prompts
@@ -227,6 +228,20 @@ def test_hide_from_ma_short_form_marks_her_offscreen():
         dialogue = [{"speaker": "灿灿", "text": text}]
         assert "妈妈" not in allowed_cast_from_dialogue(dialogue), text
         assert mom_should_stay_offscreen(dialogue) is True, text
+
+
+def test_scrub_offscreen_doorway_cues_when_mom_absent():
+    """妈妈未入画时，「瞟/盯门口」须改成空门口。"""
+    raw = (
+        "灿灿蹲在沙发边，右手举拖鞋，眼睛瞟向厨房门口，身体僵住。"
+        "昭昭捂嘴指向拖鞋。"
+    )
+    out = scrub_offscreen_doorway_cues(raw, allowed={"昭昭", "灿灿"})
+    assert "瞟向" not in out
+    assert "厨房门口空无无人" in out
+    # 妈妈已入画则保留盯门口（可画妈妈站门口）
+    keep = scrub_offscreen_doorway_cues(raw, allowed={"昭昭", "灿灿", "妈妈"})
+    assert "眼睛瞟向厨房门口" in keep
 
 
 def test_sticky_drops_mom_when_hide_from_ma():

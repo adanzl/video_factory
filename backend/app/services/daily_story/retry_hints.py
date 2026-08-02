@@ -152,6 +152,18 @@ _VALIDATION_HINT_BUILDERS: dict[str, Callable[..., str]] = {}
 def _register_validation_hints() -> None:
     def consecutive(**_kw: Any) -> str:
         chars = _kw.get("chars", 0)
+        type_code = _kw.get("type_code")
+        if type_code == "D":
+            # D 收尾拍内连说常是「灿灿反应 + 灿灿破规」两连：破规句
+            # speaker 不能翻（叮嘱方亲手补救才成回旋镖），只能插一句昭昭。
+            return (
+                "【D·连说】同人连说（常落在收尾拍内）：破规句 speaker"
+                "（灿灿亲手补救）不能改成昭昭。修法二选一："
+                "① 在两句之间插入被照做方（昭昭）一句即时反应/得意台词"
+                "（10–16 字，如「我系的结，牢得很！」），让 speaker 交替；"
+                "② 把连说的前一句改写成昭昭视角的台词（保留原句细节词）。"
+                "只许加/改这 1 句；破规句、回旋镖、末句「哼/算了」原样保留。"
+            )
         return (
             "【连说】把连说拆开：交替 speaker 或合并为一人一句；"
             f"保持约 {chars} 字，勿借机大删末四拍。"

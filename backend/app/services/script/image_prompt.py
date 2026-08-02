@@ -205,12 +205,16 @@ def assemble_daily_t2i_prompt(
     vb = str(seg.get("visual_brief") or "").strip()
     speakers = _daily_speakers_of(seg)
     if vb:
-        from app.services.daily_story.speaker import scrub_leaked_speaker_names
+        from app.services.daily_story.speaker import (
+            scrub_leaked_speaker_names,
+            scrub_offscreen_doorway_cues,
+        )
         from app.services.script.visual_brief import scrub_daily_visual_brief
 
         vb = scrub_daily_visual_brief(vb)
         vb = strip_verify_regen_leak(vb)
         vb = scrub_leaked_speaker_names(vb, set(speakers))
+        vb = scrub_offscreen_doorway_cues(vb, allowed=set(speakers))
     else:
         vb = strip_verify_regen_leak(vb)
     shot = str(seg.get("shot_type") or "").strip()
@@ -245,6 +249,13 @@ def assemble_daily_t2i_prompt(
     parts.append(_daily_lighting(vb))
     layout = _daily_layout_speakers(seg, vb)
     parts.append(_daily_composition(shot, layout, vb=vb))
+    # 妈妈未入画时硬锁人数+空门口，压住「妈出来了/盯门口」诱出的路人
+    if speakers and "妈妈" not in speakers:
+        n = len(speakers)
+        parts.append(
+            f"画面清晰主体人物恰好 {n} 个，门口与门外空无无人，"
+            "禁止第三人脸、半身或路人入画。"
+        )
     if extra and extra.strip():
         # 禁止把质检元指令当出图正文
         cleaned = strip_verify_regen_leak(extra.strip())

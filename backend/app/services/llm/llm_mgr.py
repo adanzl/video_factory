@@ -707,10 +707,12 @@ class LLMMgr:
         best_story: dict[str, Any] | None = None
         best_score = -1
         target = 88
-        # 整稿 3 次（全 Flash 高温发散，多滚踩好笑分）+ refine 1 次兜底；
-        # refine 已切 Flash 关 thinking，总耗时可控
+        # 整稿 3 次（全 Flash 高温发散，多滚踩好笑分）+ refine 兜底；
+        # refine 已切 Flash 关 thinking，总耗时可控。refine 一次只修一个主问题
+        # （build_quality_revision_hints 单主项），85 分稿常叠 2 个短板
+        # （口头禅复读+回旋镖未点破），留 2 轮让它连续补完到 88。
         max_full = 3
-        max_refine = 1
+        max_refine = 2
         last_exc: Exception | None = None
 
         for attempt in range(max_full):

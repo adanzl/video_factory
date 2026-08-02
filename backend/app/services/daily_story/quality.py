@@ -488,6 +488,8 @@ def _score_funniness(
             "明明说",
             "你自己",
             "你说的",
+            # D 变体回旋镖「你说别太多…倒完」：引的正是前文叮嘱原话
+            "你说别",
             # E 类闭环侧写句式（对妈少用「你」硬质问）：自己说的规矩…
             "自己说",
         )
@@ -850,9 +852,31 @@ def build_quality_revision_hints(
             if hint:
                 hints.append(hint)
             else:
+                # 主项是「格式达标但好笑不足」等元问题、自身无定点可修时，
+                # 退回扫具体 con：取第一个能映射出定点修 hint 的具体毛病
+                # （照做口头禅复读/回旋镖未点破…），让 refine 对准病灶，
+                # 而不是泛泛「中段一件具体小事升级」。
+                # 注意：部分 humor con（照做口头禅复读/回旋镖未点破…）不以
+                # 上方黑名单前缀开头，会被误分进 pros，故补扫含「不好笑/不好玩」的 reason。
+                humor_cons = cons + [
+                    r
+                    for r in reasons
+                    if r not in cons and ("不好笑" in r or "不好玩" in r)
+                ]
+                fallback = next(
+                    (
+                        q_profile.humor_revision_hint(c)
+                        for c in humor_cons
+                        if q_profile.humor_revision_hint(c)
+                    ),
+                    None,
+                )
                 hints.append(
-                    f"【好笑】{issue_text}。中段一件具体小事升级，"
-                    "收束只引前文真实说过的话。"
+                    fallback
+                    or (
+                        f"【好笑】{issue_text}。中段一件具体小事升级，"
+                        "收束只引前文真实说过的话。"
+                    )
                 )
         elif kind in ("fact", "opening"):
             hint = None

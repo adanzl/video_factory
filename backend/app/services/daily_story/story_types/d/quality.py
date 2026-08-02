@@ -14,18 +14,36 @@ from app.services.daily_story.story_types.quality import (
     TypeQualityProfile,
 )
 
-RE_RULE = re.compile(r"不许|别碰|规矩|叮嘱|说了|不能")
+RE_RULE = re.compile(
+    r"不许|别碰|规矩|叮嘱|说了|不能|别浇|别多|别响|"
+    r"轻轻|轻点|慢点|慢慢|轻擦|系紧|别毛|别用力|别猛",
+)
 RE_LITERAL = re.compile(
     r"照做|按你说的|你不是说|字面|打开|碰了|动了|"
-    r"你说[^，。！？]{1,8}我就|我按你|你叫我|你要我|我照你",
+    r"你说[^，。！？]{1,8}，?我就|我按你|你叫我|你要我|我照你",
 )
 RE_MESS = re.compile(
     r"掉了|滑落|滑掉|洒|弄乱|乱了|乱成|全乱|坏了|打不开|饿着|够不着|倒了|全掉|弄翻|"
     r"解不开|勒|死结|死疙瘩|大马趴|溢|变形|"
+    r"流|淌|泡|淹|漫|漏|渗|满|皱|鼓|肿|挤|碎|破|断|歪|"
+    r"泼|甩|滴水|滴到|滴在|湿透|水痕|水渍|水印|"
     r"[削剪切磨啃抠]没|只剩|就剩|快没了|小一圈|露出来|[削切剪磨啃]成",
 )
 # 与 humor.RE_FIX 同源，避免「我来解」一类破规漏认
 RE_FIX = d_humor.RE_FIX
+
+# 收束引话的 D 放宽：与 validate._cite_grounded_in_hay 对齐——3–6 字短引文
+# 允许同词序调整（叠衣「叠衣服要轻点」→ 引「要轻点叠」也算忠实），
+# 逐字子串/4 连字已由共享 `_fragment_grounded_in_text` 兜住。
+_RE_BAG_NOISE = re.compile(r"[的话呢呀嘛吧啊…\s「」『』“”\"'‘’：:]")
+
+
+def _ground_closing_quote_by_bag(frag: str, hay: str) -> bool:
+    f = _RE_BAG_NOISE.sub("", frag or "")
+    h = re.sub(r"[\s「」『』“”\"'‘’]", "", hay or "")
+    return 3 <= len(f) <= 6 and all(
+        h.count(c) >= f.count(c) for c in set(f)
+    )
 
 # D 的 +2 同位替代（避免评分只偏爱某一种笑点风味）：
 #   通道A·数字具体量：≥2 句昭昭台词各含一个真实可数的数量
@@ -153,6 +171,9 @@ QUALITY_PROFILE = TypeQualityProfile(
         "你自己刚才",
         "自己刚才说",
         "你现在也",
+        # 变体回旋镖：浇花类主题「你说别太多，我就把整壶水都倒完」
+        # （只认尾段位置——先破功再软收只看倒数第 2、3 句，中段字面执行句不会落这里）
+        "你说别",
     ),
     collect_humor_issues=d_humor.collect_humor_issues,
     score_opening_quality=d_opening.score_opening_quality,
@@ -161,5 +182,6 @@ QUALITY_PROFILE = TypeQualityProfile(
     humor_issue_caps=d_humor.HUMOR_ISSUE_CAPS,
     humor_revision_hint=_d_revision_hint,
     closing_quote_haystack=d_humor.closing_quote_haystack,
+    ground_closing_quote=_ground_closing_quote_by_bag,
     stop_on_ungrounded_quote=True,
 )

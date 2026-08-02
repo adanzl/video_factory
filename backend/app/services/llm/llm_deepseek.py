@@ -2038,6 +2038,9 @@ class DeepSeekClient(LLMClient):
                         "请直接输出符合硬约束的完整 JSON（正文勿写发现开场）。"
                     )
         assert last_exc is not None
+        # 诊断：把最后一次被拒稿挂到异常上，便于上层/测试定位硬卡失败原因
+        if isinstance(prev_story, dict):
+            last_exc._failed_body = prev_story  # type: ignore[attr-defined]
         raise last_exc
 
     def _revise_daily_story_body(
@@ -2157,6 +2160,9 @@ class DeepSeekClient(LLMClient):
                 # 把质量提示词追加到 error feedback 后面
                 user += f"\n\n【同时修补】\n{revision_hints}"
         assert last_exc is not None
+        # 诊断：把最后一次被拒修订稿挂到异常上
+        if isinstance(raw, dict):
+            last_exc._failed_body = raw  # type: ignore[attr-defined]
         raise last_exc
 
     def _generate_daily_story_opening(

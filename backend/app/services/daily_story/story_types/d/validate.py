@@ -16,7 +16,7 @@ RE_A_CITE_CLOSE = re.compile(
 )
 RE_LITERAL_MID = re.compile(
     r"照做|按你说的|你不是说|字面|按规矩|你说要|你让我|照你说的|"
-    r"你说[^，。！？]{1,8}我就|我按你|你叫我|你要我|我照你",
+    r"你说[^，。！？]{1,8}，?我就|我按你|你叫我|你要我|我照你",
 )
 RE_MESS = re.compile(
     r"掉了|滑落|滑掉|洒|弄乱|乱了|乱成|全乱|坏了|打不开|饿着|够不着|弄翻|摔|"
@@ -27,14 +27,35 @@ _RE_MESS_BEAT = re.compile(
     r"弄翻|全乱|变形了|夹变形|撑变形",
 )
 # 立规：须可抠字眼；裸「不能再塞」类中段催促不算
+# 词表与 D prompt 的「可抠叮嘱示例（轻点/系紧/别碰/慢慢/别多/别响…）」对齐
 _RE_RULE_CORE = re.compile(
     r"不许|别碰|别晃|轻点|慢点|系紧|轻轻|轻拿|别浇|别多|别夹|"
-    r"别响|别堆|别乱|规矩|叮嘱|不准|只能|别太",
+    r"别响|别堆|别乱|规矩|叮嘱|不准|只能|别太|"
+    r"慢慢|慢点擦|轻擦|别毛|别用力|别猛|小心|毛手毛脚",
 )
 _RE_DIRECT_QUOTE = re.compile(
     r"(?:你刚才(?:明明|自己)?说|你自己(?:刚才)?说|你不是说|你刚说|你说的)"
     r"([^，。！？…]{3,})",
 )
+
+
+def _cite_grounded_in_hay(cite: str, hay: str) -> bool:
+    """回旋镖引文须落前段叮嘱原话：
+    1) 逐字子串即可；2) ≥4 字时允许 4 连字子串；
+    3) 3–6 字短引文放宽为「同词序调整」——每个字都须在前段叮嘱里出现过
+       （叠衣「叠衣服要轻点」→ 引「轻点叠」也算忠实），
+       仍挡「不能再塞了」这类中段催促（催促字不落在立规句里）。"""
+    if not cite:
+        return False
+    if cite in hay:
+        return True
+    if len(cite) >= 4 and any(
+        cite[j : j + 4] in hay for j in range(0, len(cite) - 3)
+    ):
+        return True
+    if 3 <= len(cite) <= 6:
+        return all(hay.count(ch) >= cite.count(ch) for ch in set(cite))
+    return False
 # 搞砸前拆穿字面误解（与 humor 同源，升硬卡）
 _RE_SPOIL_LITERAL = re.compile(
     r"不是让你|我是让你|我让你.{0,8}不是|要平放|别往高|别垒|别堆高|"
@@ -90,8 +111,14 @@ def append_d_body_errors(story: dict, errors: list[str]) -> None:
     if mom_n > 0:
         errors.append("D类主戏姐弟，禁止妈妈插话（留给E类）")
 
-    head6 = "".join(lines[:6])
-    rule_hits = len(_RE_RULE.findall(head6))
+    # 唠叨门：只数灿灿前 6 句里自己立规矩的次数。
+    # 昭昭「你说系紧，我就…」这类**引规复述**不算唠叨（字面执行本来就须引原话）。
+    head6_cancan = "".join(
+        lines[i]
+        for i in range(min(6, n))
+        if i < len(speakers) and speakers[i] == "灿灿"
+    )
+    rule_hits = len(_RE_RULE.findall(head6_cancan))
     if rule_hits >= 3:
         errors.append("D类前段勿重复唠叨同一条规矩（立规≤2次）")
 
@@ -187,12 +214,7 @@ def append_d_body_errors(story: dict, errors: list[str]) -> None:
             hay = early_rule_text
             if key_line:
                 hay = f"{key_line}{hay}"
-            grounded = bool(cite) and (
-                cite in hay
-                or (len(cite) >= 4 and any(
-                    cite[j : j + 4] in hay for j in range(0, len(cite) - 3)
-                ))
-            )
+            grounded = _cite_grounded_in_hay(cite, hay)
             if key_line and len(key_line) >= 2 and cite:
                 # 引文须落在 key_line 上：boom 句含 key_line（或其≥4字前缀），
                 # 或引文本体是 key_line 的逐字连续子串（放行「轻轻放」这类≥3字短原话）

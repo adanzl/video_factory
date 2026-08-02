@@ -109,6 +109,28 @@ def test_assemble_daily_lr_brief_not_force_mom_mid():
     assert "画面左边是昭昭，右边是灿灿" in prompt
 
 
+def test_assemble_daily_ma_coming_keeps_empty_doorway():
+    """「妈出来了」但未入画：盯门口改空门口，并硬锁恰好两人。"""
+    seg = {
+        "shot_type": "中景",
+        "speakers": ["昭昭", "灿灿"],
+        "visual_brief": (
+            "客厅茶几旁，两人半蹲；画面左边是昭昭，右边是灿灿；"
+            "昭昭捂嘴惊恐；灿灿举拖鞋，眼睛瞟向厨房门口，身体僵住。"
+        ),
+        "dialogue": [
+            {"speaker": "昭昭", "text": "完了完了！"},
+            {"speaker": "灿灿", "text": "糟了，妈出来了，快蹲下！"},
+        ],
+    }
+    prompt = assemble_daily_t2i_prompt(seg)
+    assert "妈妈：" not in prompt
+    assert "瞟向厨房门口" not in prompt
+    assert "厨房门口空无无人" in prompt
+    assert "恰好 2 个" in prompt
+    assert "禁止第三人脸" in prompt
+
+
 def test_assemble_daily_hide_ma_keeps_two_person_cast():
     """「别让妈看见」离场后，拼装应为两人，不含妈妈外貌/三人句。"""
     segs = [
@@ -142,7 +164,9 @@ def test_assemble_daily_hide_ma_keeps_two_person_cast():
     )
     p1 = segs[0]["image_prompt"]
     assert "妈妈：" not in p1
-    assert "三人" not in p1
+    assert "三人同框" not in p1
+    assert "三人特写" not in p1
+    assert "恰好 2 个" in p1
     assert "灿灿：" in p1
     p2 = segs[1]["image_prompt"]
     assert "妈妈：" in p2
