@@ -577,10 +577,10 @@ class AgnesImageProvider(ImageProvider):
         "项「胳膊」：每人可见胳膊是否最多 2 条；正常答「是」，多肢答「否」。"
         "项「嘴型」：只看该项写明角色本人是否张着嘴，微张即算张（答是）；"
         "完全闭合才答「否」；其他人物的嘴型与本项无关。"
-        "项「人数」：只数清晰主体人物个数是否不超过该项写明的上限；"
-        "不判断是谁、不因认不出角色而答否；"
-        "两个相同服装/双胞胎外形各算一人；"
+        "项「人数」：数清晰完整的主体人头，只回答阿拉伯数字；"
+        "不判断是谁；两个相同服装/双胞胎/额外漂浮人头各算一人；"
         "背景照片墙/镜子虚影/玩具人脸/远处剪影一律不算。"
+        "项「粉卫衣」：穿粉色卫衣的女孩是否恰好 1 个；多了（含漂浮头）答否。"
     )
 
     @staticmethod
@@ -620,6 +620,35 @@ class AgnesImageProvider(ImageProvider):
             return "yes"
         return "unknown"
 
+    _CN_COUNT = {
+        "零": 0,
+        "一": 1,
+        "二": 2,
+        "两": 2,
+        "三": 3,
+        "四": 4,
+        "五": 5,
+        "六": 6,
+        "七": 7,
+        "八": 8,
+        "九": 9,
+        "十": 10,
+    }
+
+    @staticmethod
+    def _parse_person_count(body: str) -> int | None:
+        """解析人数项答案为整数；是/否等非数字返回 None。"""
+        text = (body or "").strip().strip("。．.")
+        if not text:
+            return None
+        m = re.search(r"(\d+)\s*个?", text)
+        if m:
+            return int(m.group(1))
+        m = re.search(r"([零一二两三四五六七八九十])\s*个?", text)
+        if m:
+            return AgnesImageProvider._CN_COUNT.get(m.group(1))
+        return None
+
     @staticmethod
     def _allowed_cast_for_verify(
         *,
@@ -647,8 +676,8 @@ class AgnesImageProvider(ImageProvider):
         prompt: str,
         expected_speakers: list[str] | None,
         content_style: str | None,
-    ) -> tuple[list[tuple[str, str]], str]:
-        """返回 ([(check_id, question_without_index), ...], user_prompt)."""
+    ) -> tuple[list[tuple[str, str]], str, int | None]:
+        """返回 ([(check_id, question), ...], user_prompt, cast_max)。"""
         speakers = [str(s).strip() for s in (expected_speakers or []) if str(s).strip()]
         scene_prompt = AgnesImageProvider._strip_prompt_for_verify(prompt)
 
@@ -682,6 +711,14 @@ class AgnesImageProvider(ImageProvider):
                     "（仅一根马尾，非双马尾/麻花辫/披肩长发）？"
                     "回答「是」或「否」；"
                     "仅当画面完全没有扎马尾女孩时才答「无灿灿」",
+                )
+            )
+            items.append(
+                (
+                    "can_one",
+                    "画面中穿粉色卫衣的女孩是否恰好 1 个？"
+                    "出现两个及以上粉卫衣女孩、或额外漂浮的女孩头/脸答「否」。"
+                    "回答「是」或「否」",
                 )
             )
         if content_style == CONTENT_STYLE_DAILY_STORY and "妈妈" in speakers:
@@ -735,19 +772,19 @@ class AgnesImageProvider(ImageProvider):
             speakers=speakers,
             content_style=content_style,
         )
+        cast_max: int | None = None
         if allowed:
-            max_n = len(allowed)
-            # 只数人头；身份由 zhao_hair/can_hair/mom_adult 负责，
-            # 避免 VL 认不出昭昭时把人当「外人」误杀 cast_count。
+            cast_max = len(allowed)
+            # 要数字而非是/否：VL 对「是否不超过 N」常把双胞胎/漂浮头漏算。
             items.append(
                 (
                     "cast_count",
-                    f"画面清晰主体人物个数是否不超过 {max_n} 个？"
+                    f"画面清晰完整的主体人头一共几个？"
+                    f"（上限参考 {cast_max}，但须如实报数）"
                     "只数人头，不判断是谁；"
-                    "两个相同粉卫衣女孩/双胞胎外形也算两人；"
-                    "人数超过答「否」；"
+                    "两个相同粉卫衣女孩/双胞胎外形/额外漂浮人头各算一人；"
                     "背景照片墙/镜子虚影/玩具人脸/远处剪影不算。"
-                    "回答「是」或「否」",
+                    "只回答阿拉伯数字，例如「3」",
                 )
             )
 
@@ -758,7 +795,7 @@ class AgnesImageProvider(ImageProvider):
         for i, (_cid, q) in enumerate(items, start=1):
             lines.append(f"项{i}: {q}")
         lines.append("不要输出任何其他内容。")
-        return items, "\n".join(lines)
+        return items, "\n".join(lines), cast_max
 
     @staticmethod
     def _extract_item_lines(text: str) -> str:
@@ -788,15 +825,21 @@ class AgnesImageProvider(ImageProvider):
         return content or reasoning
 
     @staticmethod
-    def _evaluate_verify_response(content: str, check_ids: list[str]) -> bool:
+    def _evaluate_verify_response(
+        content: str,
+        check_ids: list[str],
+        *,
+        cast_max: int | None = None,
+    ) -> bool:
         """按检查项判定。
 
         单项解析失败仍跳过（避免误杀）；但若整段一个有效项都没有，
         视为质检失效，返回 False 触发重生（避免全 unknown 放行）。
-        各项极性：答「是」通过；答「否」失败
+        cast_count 须报数字，并由 cast_max 卡上限（是/否已不可靠）。
+        其余项：答「是」通过；答「否」失败
         （zhao_hair「无昭昭」、can_hair「无灿灿」、mom_adult「无妈妈」放行）。
         """
-        answers: dict[int, str] = {}
+        raw_answers: dict[int, str] = {}
         for raw in content.split("\n"):
             line = raw.strip()
             if not line:
@@ -804,12 +847,23 @@ class AgnesImageProvider(ImageProvider):
             m = _ITEM_LINE_RE.match(line)
             if not m:
                 continue
-            idx = int(m.group(1))
-            answers[idx] = AgnesImageProvider._parse_item_answer(m.group(2))
+            raw_answers[int(m.group(1))] = m.group(2)
 
         parsed_any = False
         for i, cid in enumerate(check_ids, start=1):
-            verdict = answers.get(i, "unknown")
+            raw = raw_answers.get(i)
+            if raw is None:
+                continue
+            if cid == "cast_count":
+                n = AgnesImageProvider._parse_person_count(raw)
+                if n is None:
+                    # 人数项必须给出数字；是/否或空答视为质检失败
+                    return False
+                parsed_any = True
+                if cast_max is not None and n > cast_max:
+                    return False
+                continue
+            verdict = AgnesImageProvider._parse_item_answer(raw)
             if verdict == "unknown":
                 continue
             parsed_any = True
@@ -823,19 +877,19 @@ class AgnesImageProvider(ImageProvider):
                 "scene",
                 "zhao_hair",
                 "can_hair",
+                "can_one",
                 "mom_adult",
                 "lr_pos",
                 "mouth_first",
                 "extra_arms",
-                "cast_count",
             }:
                 return False
         return parsed_any
 
     @staticmethod
     def _format_verify_reply(content: str, check_ids: list[str]) -> str:
-        """解析回复，生成「scene=是 zhao_hair=否 …」格式的简短日志。"""
-        answers: dict[int, str] = {}
+        """解析回复，生成「scene=yes cast_count=4 …」格式的简短日志。"""
+        raw_answers: dict[int, str] = {}
         for raw in content.split("\n"):
             line = raw.strip()
             if not line:
@@ -843,12 +897,18 @@ class AgnesImageProvider(ImageProvider):
             m = _ITEM_LINE_RE.match(line)
             if not m:
                 continue
-            idx = int(m.group(1))
-            answers[idx] = AgnesImageProvider._parse_item_answer(m.group(2))
+            raw_answers[int(m.group(1))] = m.group(2)
         parts: list[str] = []
         for i, cid in enumerate(check_ids, start=1):
-            verdict = answers.get(i, "unknown")
-            parts.append(f"{cid}={verdict}")
+            raw = raw_answers.get(i)
+            if raw is None:
+                parts.append(f"{cid}=unknown")
+                continue
+            if cid == "cast_count":
+                n = AgnesImageProvider._parse_person_count(raw)
+                parts.append(f"{cid}={n if n is not None else 'unknown'}")
+                continue
+            parts.append(f"{cid}={AgnesImageProvider._parse_item_answer(raw)}")
         return " ".join(parts)
 
     @staticmethod
@@ -889,7 +949,7 @@ class AgnesImageProvider(ImageProvider):
                 b64 = base64.b64encode(buf.getvalue()).decode("ascii")
                 image_url = f"data:image/jpeg;base64,{b64}"
 
-            items, user = AgnesImageProvider._build_verify_checklist(
+            items, user, cast_max = AgnesImageProvider._build_verify_checklist(
                 prompt=prompt,
                 expected_speakers=expected_speakers,
                 content_style=content_style,
@@ -938,7 +998,7 @@ class AgnesImageProvider(ImageProvider):
                             )
                             content = AgnesImageProvider._vl_message_text(msg)
                             ok = AgnesImageProvider._evaluate_verify_response(
-                                content, check_ids
+                                content, check_ids, cast_max=cast_max
                             )
                             logger.info(
                                 "%s agnes verify (%s key, retry=%s/%s): ok=%s %s",

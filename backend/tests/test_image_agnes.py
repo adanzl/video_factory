@@ -170,21 +170,33 @@ def test_parse_item_answer_handles_bu_shi() -> None:
 
 
 def test_evaluate_verify_response_zhao_hair_and_cast() -> None:
-    ids = ["scene", "zhao_hair", "can_hair", "mom_adult", "extra_arms", "cast_count"]
-    ok = "项1: 是\n项2: 是\n项3: 是\n项4: 是\n项5: 是\n项6: 是\n"
-    assert AgnesImageProvider._evaluate_verify_response(ok, ids)
+    ids = ["scene", "zhao_hair", "can_hair", "can_one", "mom_adult", "extra_arms", "cast_count"]
+    ok = "项1: 是\n项2: 是\n项3: 是\n项4: 是\n项5: 是\n项6: 是\n项7: 3\n"
+    assert AgnesImageProvider._evaluate_verify_response(ok, ids, cast_max=3)
 
-    bad_zhao = "项1: 是\n项2: 否\n项3: 是\n项4: 是\n项5: 是\n项6: 是\n"
-    assert not AgnesImageProvider._evaluate_verify_response(bad_zhao, ids)
+    bad_zhao = "项1: 是\n项2: 否\n项3: 是\n项4: 是\n项5: 是\n项6: 是\n项7: 3\n"
+    assert not AgnesImageProvider._evaluate_verify_response(bad_zhao, ids, cast_max=3)
 
-    bad_can = "项1: 是\n项2: 是\n项3: 否\n项4: 是\n项5: 是\n项6: 是\n"
-    assert not AgnesImageProvider._evaluate_verify_response(bad_can, ids)
+    bad_can = "项1: 是\n项2: 是\n项3: 否\n项4: 是\n项5: 是\n项6: 是\n项7: 3\n"
+    assert not AgnesImageProvider._evaluate_verify_response(bad_can, ids, cast_max=3)
 
-    bad_mom = "项1: 是\n项2: 是\n项3: 是\n项4: 否\n项5: 是\n项6: 是\n"
-    assert not AgnesImageProvider._evaluate_verify_response(bad_mom, ids)
+    bad_can_one = "项1: 是\n项2: 是\n项3: 是\n项4: 否\n项5: 是\n项6: 是\n项7: 3\n"
+    assert not AgnesImageProvider._evaluate_verify_response(
+        bad_can_one, ids, cast_max=3
+    )
 
-    bad_arms = "项1: 是\n项2: 是\n项3: 是\n项4: 是\n项5: 否\n项6: 是\n"
-    assert not AgnesImageProvider._evaluate_verify_response(bad_arms, ids)
+    bad_mom = "项1: 是\n项2: 是\n项3: 是\n项4: 是\n项5: 否\n项6: 是\n项7: 3\n"
+    assert not AgnesImageProvider._evaluate_verify_response(bad_mom, ids, cast_max=3)
+
+    bad_arms = "项1: 是\n项2: 是\n项3: 是\n项4: 是\n项5: 是\n项6: 否\n项7: 3\n"
+    assert not AgnesImageProvider._evaluate_verify_response(bad_arms, ids, cast_max=3)
+
+    bad_cast = "项1: 是\n项2: 是\n项3: 是\n项4: 是\n项5: 是\n项6: 是\n项7: 4\n"
+    assert not AgnesImageProvider._evaluate_verify_response(bad_cast, ids, cast_max=3)
+
+    # 人数项答「是」不可靠 → 失败
+    cast_yes = "项1: 是\n项2: 是\n项3: 是\n项4: 是\n项5: 是\n项6: 是\n项7: 是\n"
+    assert not AgnesImageProvider._evaluate_verify_response(cast_yes, ids, cast_max=3)
 
     # 「不是」= 否 → 短发项失败
     bu_shi = "项1: 是\n项2: 不是\n项3: 是\n"
@@ -193,12 +205,12 @@ def test_evaluate_verify_response_zhao_hair_and_cast() -> None:
     )
 
     # 无昭昭 / 无灿灿 / 无妈妈 → 对应项放行
-    na = "项1: 是\n项2: 无昭昭\n项3: 无灿灿\n项4: 无妈妈\n项5: 是\n项6: 是\n"
-    assert AgnesImageProvider._evaluate_verify_response(na, ids)
+    na = "项1: 是\n项2: 无昭昭\n项3: 无灿灿\n项4: 是\n项5: 无妈妈\n项6: 是\n项7: 3\n"
+    assert AgnesImageProvider._evaluate_verify_response(na, ids, cast_max=3)
 
     # 正文空 / 全项解析失败 → 质检失效，不得放行
-    assert not AgnesImageProvider._evaluate_verify_response("", ids)
-    assert not AgnesImageProvider._evaluate_verify_response("思考中……", ids)
+    assert not AgnesImageProvider._evaluate_verify_response("", ids, cast_max=3)
+    assert not AgnesImageProvider._evaluate_verify_response("思考中……", ids, cast_max=3)
 
 
 def test_vl_message_text_falls_back_to_reasoning_items() -> None:
@@ -208,14 +220,14 @@ def test_vl_message_text_falls_back_to_reasoning_items() -> None:
         "reasoning_content": (
             "我先数人头……\n"
             "项1: 是\n项2: 是\n项3: 否\n"
-            "项4: 是\n项5: 是\n项6: 否\n"
+            "项4: 是\n项5: 是\n项6: 4\n"
         ),
     }
     text = AgnesImageProvider._vl_message_text(msg)
     assert "项1: 是" in text
-    assert "项6: 否" in text
+    assert "项6: 4" in text
     ids = ["scene", "zhao_hair", "can_hair", "mom_adult", "extra_arms", "cast_count"]
-    assert not AgnesImageProvider._evaluate_verify_response(text, ids)
+    assert not AgnesImageProvider._evaluate_verify_response(text, ids, cast_max=3)
 
 
 def test_allowed_cast_for_verify() -> None:
@@ -242,7 +254,7 @@ def test_allowed_cast_for_verify() -> None:
 
 
 def test_build_verify_checklist_daily_includes_zhao() -> None:
-    items, user = AgnesImageProvider._build_verify_checklist(
+    items, user, cast_max = AgnesImageProvider._build_verify_checklist(
         prompt="客厅对峙",
         expected_speakers=["昭昭", "灿灿", "妈妈"],
         content_style="daily_story",
@@ -252,18 +264,21 @@ def test_build_verify_checklist_daily_includes_zhao() -> None:
         "scene",
         "zhao_hair",
         "can_hair",
+        "can_one",
         "mom_adult",
         "extra_arms",
         "cast_count",
     ]
+    assert cast_max == 3
     assert "昭昭" in user
     assert "灿灿" in user
     assert "成年女性" in user
-    assert "不超过 3 个" in user
+    assert "一共几个" in user
+    assert "阿拉伯数字" in user
+    assert "穿粉色卫衣的女孩是否恰好 1 个" in user
     assert "只数人头" in user
     assert "只能是：" not in user
     assert "禁止路人" not in user
-    assert "恰好" not in user
     assert "蓝衣" not in user
     assert "短发男孩即昭昭" in user
     assert "男孩超短发" in user
@@ -273,7 +288,7 @@ def test_build_verify_checklist_daily_includes_zhao() -> None:
     assert "最多 2 条" in user
     assert "照片墙" in user
 
-    items_lr, user_lr = AgnesImageProvider._build_verify_checklist(
+    items_lr, user_lr, _ = AgnesImageProvider._build_verify_checklist(
         prompt="画面左边是灿灿，右边是昭昭。客厅对峙。",
         expected_speakers=["昭昭", "灿灿"],
         content_style="daily_story",
@@ -284,7 +299,7 @@ def test_build_verify_checklist_daily_includes_zhao() -> None:
     assert "左右人物对调" in user_lr
 
     # 首个说话人张嘴标记 → 嘴型项：只查首个说话人本人是否张嘴
-    items_mouth, user_mouth = AgnesImageProvider._build_verify_checklist(
+    items_mouth, user_mouth, _ = AgnesImageProvider._build_verify_checklist(
         prompt=(
             "画面左边是昭昭，右边是灿灿。"
             "灿灿微微张嘴正在开口说话；昭昭嘴巴闭合不露齿。客厅对峙。"
@@ -297,57 +312,63 @@ def test_build_verify_checklist_daily_includes_zhao() -> None:
     assert "其他人张嘴与否不影响本项" in user_mouth
     # 无张嘴标记时不加该项；单人有标记也查
     assert "mouth_first" not in [cid for cid, _ in items_lr]
-    items_solo, _ = AgnesImageProvider._build_verify_checklist(
+    items_solo, _, _ = AgnesImageProvider._build_verify_checklist(
         prompt="灿灿微微张嘴正在开口说话。只有灿灿。",
         expected_speakers=["灿灿"],
         content_style="daily_story",
     )
     assert "mouth_first" in [cid for cid, _ in items_solo]
 
-    items_one, user_one = AgnesImageProvider._build_verify_checklist(
+    items_one, user_one, max_one = AgnesImageProvider._build_verify_checklist(
         prompt="只有昭昭",
         expected_speakers=["昭昭"],
         content_style="daily_story",
     )
     assert "zhao_hair" in [cid for cid, _ in items_one]
     assert "can_hair" not in [cid for cid, _ in items_one]
+    assert "can_one" not in [cid for cid, _ in items_one]
     assert "mom_adult" not in [cid for cid, _ in items_one]
     assert "cast_count" in [cid for cid, _ in items_one]
-    assert "不超过 2 个" in user_one
+    assert max_one == 2
+    assert "上限参考 2" in user_one
     assert "只数人头" in user_one
     assert "只能是：" not in user_one
 
-    # 无昭昭发言时不做短发项；有灿灿则检单马尾；人数按姐弟上限 2
-    items_can, user_can = AgnesImageProvider._build_verify_checklist(
+    # 无昭昭发言时不做短发项；有灿灿则检单马尾+粉卫衣人数；人数按姐弟上限 2
+    items_can, user_can, max_can = AgnesImageProvider._build_verify_checklist(
         prompt="只有灿灿",
         expected_speakers=["灿灿"],
         content_style="daily_story",
     )
     assert "zhao_hair" not in [cid for cid, _ in items_can]
     assert "can_hair" in [cid for cid, _ in items_can]
+    assert "can_one" in [cid for cid, _ in items_can]
     assert "mom_adult" not in [cid for cid, _ in items_can]
     assert "cast_count" in [cid for cid, _ in items_can]
-    assert "不超过 2 个" in user_can
+    assert max_can == 2
+    assert "上限参考 2" in user_can
     assert "只数人头" in user_can
     assert "单侧高马尾" in user_can
 
-    items_mom, user_mom = AgnesImageProvider._build_verify_checklist(
+    items_mom, user_mom, max_mom = AgnesImageProvider._build_verify_checklist(
         prompt="只有妈妈",
         expected_speakers=["妈妈"],
         content_style="daily_story",
     )
     assert "mom_adult" in [cid for cid, _ in items_mom]
+    assert max_mom == 3
     assert "成年女性" in user_mom
-    assert "不超过 3 个" in user_mom
+    assert "上限参考 3" in user_mom
     assert "只数人头" in user_mom
     assert "只能是：" not in user_mom
 
-    items2, user2 = AgnesImageProvider._build_verify_checklist(
+    items2, user2, max2 = AgnesImageProvider._build_verify_checklist(
         prompt="电池剖面",
         expected_speakers=None,
         content_style="science_child",
     )
     assert [cid for cid, _ in items2] == ["scene", "extra_arms"]
+    assert max2 is None
     assert "昭昭" not in user2
 
 
@@ -359,7 +380,7 @@ def test_strip_prompt_for_verify_drops_daily_wrap() -> None:
     )
     assert AgnesImageProvider._strip_prompt_for_verify(wrapped) == "客厅地板上昭昭举手。"
 
-    items, user = AgnesImageProvider._build_verify_checklist(
+    items, user, _ = AgnesImageProvider._build_verify_checklist(
         prompt=wrapped,
         expected_speakers=["昭昭"],
         content_style="daily_story",
