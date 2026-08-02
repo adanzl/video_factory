@@ -22,6 +22,7 @@ import argparse
 import json
 import logging
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -56,6 +57,8 @@ DEFAULT_THEMES = [
 ]
 
 DEFAULT_OUT_DIR = ROOT / "tmp"
+
+_PRINT_LOCK = threading.Lock()
 
 
 def _speakers(story: dict) -> dict[str, int]:
@@ -111,29 +114,26 @@ def _summarize(theme: str, story: dict, elapsed: float) -> dict:
     }
 
 
-def run_batch(
-    themes: list[str],
-    *,
-    story_type: str | None = None,
-    review: bool = True,
-) -> list[dict]:
-    locked = story_type_tag(story_type) if story_type else None
-    if locked:
-        print(f"[batch] locked story_type={locked}", flush=True)
-    if not review:
-        print("[batch] skip LLM review (fast preview)", flush=True)
-    results: list[dict] = []
-    for i, theme in enumerate(themes, 1):
-        print(f"\n===== [{i}/{len(themes)}] {theme} =====", flush=True)
-        started = time.perf_counter()
-        try:
-            story = llm_mgr.generate_daily_story(
-                theme,
-                story_type=locked,
-                review=review,
-            )
-            validate_daily_story_json(story, phase="full")
-            item = _summarize(theme, story, time.perf_counter() - started)
+def _run_one(
+    theme: str,
+    idx: int,
+    total: int,
+    locked: str | None,
+    review: bool,
+) -> dict:
+    """跑单个主题：生成→校验→汇总→打印。线程安全（打印加锁防互相撕）。"""
+    with _PRINT_LOCK:
+        print(f"\n===== [{idx}/{total}] {theme} =====", flush=True)
+    started = time.perf_counter()
+    try:
+        story = llm_mgr.generate_daily_story(
+            theme,
+            story_type=locked,
+            review=review,
+        )
+        validate_daily_story_json(story, phase="full")
+        item = _summarize(theme, story, time.perf_counter() - started)
+        with _PRINT_LOCK:
             print(
                 f"ok chars={item['chars']} lines={item['lines']} "
                 f"opening={item['opening_lines']} speakers={item['speakers']} "
@@ -165,15 +165,56 @@ def run_batch(
                 for line in item["mom_lines"]:
                     print(f"  {line}", flush=True)
             print(f"punchline={item['punchline_explain']}", flush=True)
-        except Exception as exc:
-            item = {
-                "theme": theme,
-                "ok": False,
-                "elapsed_sec": round(time.perf_counter() - started, 1),
-                "error": str(exc),
-            }
+    except Exception as exc:
+        item = {
+            "theme": theme,
+            "ok": False,
+            "elapsed_sec": round(time.perf_counter() - started, 1),
+            "error": str(exc),
+        }
+        with _PRINT_LOCK:
             print(f"FAIL elapsed={item['elapsed_sec']}s: {exc}", flush=True)
-        results.append(item)
+    return item
+
+
+def run_batch(
+    themes: list[str],
+    *,
+    story_type: str | None = None,
+    review: bool = True,
+    parallel: int = 1,
+) -> list[dict]:
+    locked = story_type_tag(story_type) if story_type else None
+    if locked:
+        print(f"[batch] locked story_type={locked}", flush=True)
+    if not review:
+        print("[batch] skip LLM review (fast preview)", flush=True)
+    if parallel > 1:
+        print(f"[batch] parallel={parallel} workers", flush=True)
+    results: list[dict] = []
+    if parallel > 1:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        with ThreadPoolExecutor(max_workers=parallel) as pool:
+            future_map = {
+                pool.submit(
+                    _run_one,
+                    theme,
+                    i,
+                    len(themes),
+                    locked,
+                    review,
+                ): theme
+                for i, theme in enumerate(themes, 1)
+            }
+            done: dict[str, dict] = {}
+            for fut in as_completed(future_map):
+                theme = future_map[fut]
+                done[theme] = fut.result()
+        results = [done[t] for t in themes]
+    else:
+        for i, theme in enumerate(themes, 1):
+            results.append(_run_one(theme, i, len(themes), locked, review))
     return results
 
 
@@ -202,12 +243,19 @@ def main() -> None:
         action="store_true",
         help="跳过人读审稿（调提示词时更快）",
     )
+    parser.add_argument(
+        "--parallel",
+        type=int,
+        default=4,
+        help="并发主题数（默认 4；注意 LLM 限流，太高会触发重试）",
+    )
     args = parser.parse_args()
 
     results = run_batch(
         list(args.themes),
         story_type=args.story_type,
         review=not args.skip_review,
+        parallel=args.parallel,
     )
     out = args.out
     if out is None:

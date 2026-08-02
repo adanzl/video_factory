@@ -263,6 +263,18 @@ def _daily_story_length_draft_for_type(type_code: str | None) -> str:
   勿偏短指望补满，勿为凑字堆轻轻放×N。
   系统另拼 2 句开场。发现开场另写另验。
 """
+    if type_code and type_code.upper() == "A":
+        return f"""\
+- 片长（A类正文，放最前）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
+  每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
+  【A类·首稿】写 {lo}–{hi} 句；**首稿也须一次写到 ≥{DAILY_STORY_BODY_CHARS_MIN} 字**
+  （瞄准 310–345：正文开头与开场重叠的发现句拼接时会被删约 30 字，须留出重叠余量，
+  删后仍 ≥{DAILY_STORY_BODY_CHARS_MIN}；上限勿超 {DAILY_STORY_BODY_CHARS_MAX}）；
+  每句带动作/表情 + 抬杠点双信息，自然达到 13–15 字；禁单字/干读秒短句；
+  末四拍收束（引话→那不一样→哪里不一样→软破功）满 4 句、可短；
+  勿偏短指望补满，勿为凑字堆语气词尾巴。
+  系统另拼 2 句开场。发现开场另写另验。
+"""
     return _DAILY_STORY_LENGTH_DRAFT
 
 
@@ -279,6 +291,13 @@ def _daily_story_length_user_draft_for_type(type_code: str | None) -> str:
    **须一次写到 ≥{DAILY_STORY_BODY_CHARS_MIN} 字**（瞄准 {DAILY_STORY_BODY_RETRY_TARGET_MIN}–{DAILY_STORY_BODY_RETRY_TARGET_MAX}），
    每句须有动作+结果/位置/理由双信息块，自然达到 18–24 字；禁单动作句；勿交短稿。
    发现开场另计另验。speaker 仅昭昭/灿灿。
+"""
+    if type_code and type_code.upper() == "A":
+        return f"""\
+3. 【A类·首稿】写 **{lo}–{hi} 句**；**须一次写到 ≥{DAILY_STORY_BODY_CHARS_MIN} 字**
+   （瞄准 {DAILY_STORY_BODY_RETRY_TARGET_MIN}–{DAILY_STORY_BODY_RETRY_TARGET_MAX}），
+   每句带动作/表情+抬杠点双信息，自然达到 13–15 字；勿交短稿。
+   发现开场另计另验。speaker 仅昭昭/灿灿/妈妈。
 """
     return _DAILY_STORY_LENGTH_USER_DRAFT
 
@@ -300,6 +319,16 @@ def _daily_story_length_revise_expand_for_type(type_code: str | None) -> str:
   保留上一稿不知变通骨架：句数补到 {lo}–{hi}（勿超过 {hi}）；每句尽量 19–21 字；
   只增不删、禁止整稿重写、禁止轻轻放×N 凑字。发现开场另写另验。
 """
+    if type_code and type_code.upper() == "A":
+        lo, hi, _avg = _body_line_budget(type_code)
+        return f"""\
+- 片长（A类偏短重试·一次补满）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
+  每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
+  **本轮必须一次写到 ≥{DAILY_STORY_BODY_CHARS_MIN} 字**（瞄准 {DAILY_STORY_BODY_RETRY_TARGET_MIN}–{DAILY_STORY_BODY_RETRY_TARGET_MAX}）。
+  保留上一稿灿灿立规→一锤→埋句→末四拍骨架：句数补到 {lo}–{hi}（勿超过 {hi}）；每句尽量 13–15 字；
+  只增不删、禁止整稿重写、禁止轻轻放×N 凑字、禁止为凑字堆语气词尾巴。
+  发现开场另写另验。
+"""
     return _DAILY_STORY_LENGTH_REVISE_EXPAND
 
 
@@ -317,6 +346,16 @@ def _daily_story_length_revise_patch_for_type(type_code: str | None) -> str:
   每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
   **禁止增删句**；偏短句各加 2–8 字，写到 ≥{DAILY_STORY_BODY_CHARS_MIN}；
   末段回旋镖+嘴硬收束原样保留。发现开场另写另验。
+"""
+    if type_code and type_code.upper() == "A":
+        return f"""\
+- 片长（A类句内微调）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
+  每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
+  禁止整稿重写、禁止大段增删句；只改现有 1–2 句措辞。
+  末四拍的**引话那句（倒数第4）可改**——若它不接地/自造，
+  改它或改被引的埋句，使其成为灿灿前文真实原话的逐字子串；
+  其余三句（那不一样/哪里不一样/软破功）原样保留。
+  发现开场系统另写另验，不计入正文硬卡。
 """
     return _DAILY_STORY_LENGTH_REVISE_PATCH
 
@@ -346,6 +385,13 @@ def _daily_story_length_user_revise_expand_for_type(type_code: str | None) -> st
 3. 【D类·一次补满】本轮必须写到 ≥{DAILY_STORY_BODY_CHARS_MIN} 字；
    句数 {lo}–{hi}；每句尽量 19–21 字（≤{DAILY_STORY_LINE_CHARS_MAX}）；保留骨架只增不删。
    发现开场另计另验。speaker 仅昭昭/灿灿。
+"""
+    if type_code and type_code.upper() == "A":
+        lo, hi, _avg = _body_line_budget(type_code)
+        return f"""\
+3. 【A类·一次补满】本轮必须写到 ≥{DAILY_STORY_BODY_CHARS_MIN} 字；
+   句数 {lo}–{hi}；每句尽量 13–15 字（≤{DAILY_STORY_LINE_CHARS_MAX}）；保留骨架只增不删。
+   发现开场另计另验。speaker 仅昭昭/灿灿/妈妈。
 """
     return _DAILY_STORY_LENGTH_USER_REVISE_EXPAND
 
@@ -2932,6 +2978,113 @@ def _patch_body_char_budget(story: dict) -> list[str]:
     return notes
 
 
+def _body_part_chars(story: dict) -> int:
+    """拼接后 body-part 字数：dialogue 去掉发现开场前缀。"""
+    dialogue = story.get("dialogue")
+    opening = story.get("discovery_opening") or []
+    if not isinstance(dialogue, list) or not isinstance(opening, list):
+        return 0
+    body = dialogue[len(opening):] if len(dialogue) > len(opening) else []
+    return sum(
+        _dialogue_char_count(str(d.get("line") or ""))
+        for d in body
+        if isinstance(d, dict)
+    )
+
+
+def _patch_body_part_char_budget(story: dict) -> list[str]:
+    """拼接后复验 body-part 字数（dialogue 去掉发现开场），小缺口本地补/删。
+
+    拼接时正文开头与开场重叠的发现句被删，body-part 可能跌破 280；
+    而 phase='full' 校验不再查总字数，这里把最终产物收口回硬卡内。
+    只动 body-part 中段，不碰发现开场、不碰末四拍。
+    """
+    notes: list[str] = []
+    dialogue = story.get("dialogue")
+    opening = story.get("discovery_opening") or []
+    if not isinstance(dialogue, list) or not isinstance(opening, list) or not opening:
+        return notes
+    if len(dialogue) <= len(opening):
+        return notes
+    body = dialogue[len(opening):]
+    if len(body) < 6:
+        return notes
+    total = sum(
+        _dialogue_char_count(str(d.get("line") or ""))
+        for d in body
+        if isinstance(d, dict)
+    )
+    if total < DAILY_STORY_BODY_CHARS_MIN:
+        need = DAILY_STORY_BODY_CHARS_MIN - total
+        if need > DAILY_STORY_RETRY_PATCH_DEFICIT_MAX + 16:
+            return notes
+        before = total
+        mid = body[:-4] if len(body) >= 8 else body[1:]
+        used_pads = {
+            suf
+            for suf in _LOCAL_PAD_TAILS
+            for item in dialogue
+            if isinstance(item, dict)
+            and str(item.get("line") or "").endswith(suf)
+        }
+        for item in mid:
+            if need <= 0:
+                break
+            if not isinstance(item, dict):
+                continue
+            line = str(item.get("line") or "")
+            if not line:
+                continue
+            new_line, added = _pad_dialogue_line(line, need, used_pads)
+            if added:
+                item["line"] = new_line
+                need -= added
+        if need > 0:
+            for item in mid:
+                if need <= 0:
+                    break
+                if not isinstance(item, dict):
+                    continue
+                line = str(item.get("line") or "")
+                if not line:
+                    continue
+                new_line, added = _pad_dialogue_line(line, need, None)
+                if added:
+                    item["line"] = new_line
+                    need -= added
+        after = sum(
+            _dialogue_char_count(str(d.get("line") or ""))
+            for d in body
+            if isinstance(d, dict)
+        )
+        if after > before:
+            notes.append(f"拼接后补字{before}→{after}")
+    elif total > DAILY_STORY_BODY_CHARS_MAX:
+        excess = total - DAILY_STORY_BODY_CHARS_MAX
+        if excess > DAILY_STORY_RETRY_PATCH_DEFICIT_MAX + 16:
+            return notes
+        before = total
+        mid = body[:-4] if len(body) >= 8 else body[1:]
+        for item in reversed(mid):
+            if excess <= 0:
+                break
+            if not isinstance(item, dict):
+                continue
+            line = str(item.get("line") or "")
+            new_line, removed = _trim_dialogue_line(line, excess)
+            if removed:
+                item["line"] = new_line
+                excess -= removed
+        after = sum(
+            _dialogue_char_count(str(d.get("line") or ""))
+            for d in body
+            if isinstance(d, dict)
+        )
+        if after < before:
+            notes.append(f"拼接后删字{before}→{after}")
+    return notes
+
+
 def _patch_consecutive_speakers(story: dict) -> list[str]:
     """同人连说：把后一句 speaker 改成另一方（仅修硬卡，少动文案）。"""
     from app.services.daily_story.story_types import resolve_story_type_code
@@ -3205,6 +3358,27 @@ def build_daily_story_retry_user(
                     f"这轮宁可写满勿再短）。\n"
                     f"保留不知变通骨架只增不删；轮流说话；"
                     f"禁止整稿重写、禁止轻轻放×N 凑字。\n"
+                )
+            elif type_code == "A":
+                # A 偏短：按 D 式「一次补满」下硬验收（句数+每句字长），
+                # 别再丢「插入约N句」让 Flash 空转成同字数短稿
+                dialogue = prev_story.get("dialogue")
+                n_lines = len(dialogue) if isinstance(dialogue, list) else 0
+                avg = (chars // n_lines) if n_lines else 0
+                a_lo, a_hi, _ = _body_line_budget("A")
+                length_hint = (
+                    f"【A·一次补满·硬验收】上一稿 {chars} 字 / {n_lines} 句"
+                    f"（均 {avg} 字/句），还差 {deficit} 字。\n"
+                    f"本轮输出须同时满足：① 正文 {a_lo}–{a_hi} 句；"
+                    f"② 每句 13–15 字为主（末四拍可短，严禁超 "
+                    f"{DAILY_STORY_LINE_CHARS_MAX}，超长会被截掉毁句，"
+                    f"缺字靠加句补）；"
+                    f"③ dialogue 总字数落在 {aim_lo}–{aim_hi} 字"
+                    f"（低于 {chars_min} 视为失败——你上一稿就是短交的，"
+                    f"这轮宁可写满勿再短）。\n"
+                    f"保留灿灿立规→一锤→埋句→末四拍骨架只增不删；轮流说话；"
+                    f"禁止整稿重写、禁止轻轻放×N 凑字、"
+                    f"禁止为凑字堆语气词尾巴（好不好/呢/吧/嘛）。\n"
                 )
             else:
                 add_lines = max(1, (deficit + avg_line - 1) // avg_line)

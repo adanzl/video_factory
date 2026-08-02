@@ -144,6 +144,16 @@ def _hint_body_too_short(
             f"禁止插入新句、禁止动末四拍；写到 ≥{DAILY_STORY_BODY_CHARS_MIN}。"
         )
     deficit_txt = f"缺 ~{deficit} 字" if deficit else "字太少"
+    if type_code == "A":
+        # A 行宽天然 13–15（非 D 的 19–21），别用 D 的扩句指标把 A 顶成注水长句
+        line = story_line_for_code("A")
+        lo, hi = line.body_lines_min, line.body_lines_max
+        return (
+            f"【A·补字】{deficit_txt}：保持上一稿骨架，句数补到 {lo}–{hi} 句、"
+            f"每句 13–15 字（补当场动作/表情/抬杠点双信息），"
+            "禁止 ~11 字短句、禁止用语气词尾巴凑字；写足 "
+            f"≥{DAILY_STORY_BODY_CHARS_MIN}。"
+        )
     return (
         f"【补字·扩句】{deficit_txt}：把中段多数句各扩到 19–21 字"
         "（补当场动作/状态细节），禁止 ~11 字短句、禁止加新句、"
@@ -415,8 +425,14 @@ def _register_validation_hints() -> None:
         "c_generic": c_boomerang,
         "off_topic": lambda **_kw: "【跑题】删掉后半无关句，回到 conflict_core。",
         "role_swap": lambda **_kw: "【角色】昭昭=弟弟、灿灿=姐姐，改正自称与立场。",
-        "quote_ground": lambda **_kw: (
-            "【引话·只改1–2句】引话须是前文真实子串；"
+        "quote_ground": lambda type_code=None, **_kw: (
+            "【引话·A】收束引话须逐字照抄灿灿前文台词："
+            "埋句写哪几个字就引哪几个字，禁止改写/换词/加字"
+            "（「鞋扣朝外就对了」勿引成「鞋头朝外才对」）；"
+            "若引语不是原话子串，把要引的那句逐字写进灿灿台词（埋句），"
+            "或把引话改成灿灿真实说过的子串；只改埋句或引话1–2句。"
+            if type_code == "A"
+            else "【引话·只改1–2句】引话须是前文真实子串；"
             "改埋句或改引话，禁止整篇重写。"
         ),
         "padding": lambda **_kw: (
@@ -486,6 +502,7 @@ _QUALITY_CON_PRIORITY: tuple[tuple[str, str], ...] = (
     ("C收束偏A", "c_de_a"),
     ("好笑不足", "humor"),
     ("格式达标但好笑", "humor"),
+    ("末四拍不完整", "humor"),
     ("绕圈", "redundancy"),
     ("复读拖沓", "redundancy"),
     ("身份/把关话术", "redundancy"),

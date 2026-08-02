@@ -1720,6 +1720,7 @@ class DeepSeekClient(LLMClient):
         story_type: str | None = None,
     ) -> dict[str, Any]:
         from app.services.daily_story.prompts import (
+            _patch_body_part_char_budget,
             stitch_daily_story_opening,
             validate_daily_story_json,
         )
@@ -1736,6 +1737,13 @@ class DeepSeekClient(LLMClient):
                 story_type=story_type,
             )
             story = stitch_daily_story_opening(body, opening)
+            # 拼接删正文开头发现句后 body-part 可能跌破 280：本地收口回硬卡内
+            bp_notes = _patch_body_part_char_budget(story)
+            if bp_notes:
+                logger.info(
+                    "[DAILY_STORY] body-part char budget patch: %s",
+                    ",".join(bp_notes),
+                )
             try:
                 validate_daily_story_json(story, phase="full")
                 return story
