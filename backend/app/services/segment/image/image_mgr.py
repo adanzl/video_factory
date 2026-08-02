@@ -312,9 +312,20 @@ class ImageMgr:
         results: list[tuple[int, Path]] = []
         skipped = 0
         from gevent import iwait
-        from gevent.pool import Pool
-        pool = Pool(size=max_workers)
-        green_lets = [pool.spawn(render, seg) for seg in segments]
+        from gevent.lock import Semaphore
+        from gevent.pool import Group
+
+        # Pool.spawn 在池满时会阻塞。若用列表推导一次性 spawn 全部任务，
+        # iwait/on_image_done 要等 (n - workers) 张完成后才能开始，DB 长时间不更新。
+        # Group + Semaphore：spawn 不阻塞，信号量限并发，完成即回调落库。
+        sem = Semaphore(max_workers)
+        group = Group()
+
+        def limited_render(seg: dict) -> tuple[int, Path, float] | None:
+            with sem:
+                return render(seg)
+
+        green_lets = [group.spawn(limited_render, seg) for seg in segments]
         try:
             for g in iwait(green_lets):
                 if job_id is not None:
@@ -329,7 +340,7 @@ class ImageMgr:
                 if on_image_done is not None:
                     on_image_done(seg_id, path, gen_sec)
         finally:
-            pool.kill(block=False)
+            group.kill(block=False)
         elapsed = time.time() - start
         logger.info('image batch done: %s/%s ok, skipped=%s in %.1fs | %s', len(results), total, skipped, elapsed, params_desc)
         return results
