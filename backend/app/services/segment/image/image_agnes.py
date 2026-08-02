@@ -22,6 +22,7 @@ from app.services.llm.llm_agnes import (
     agnes_api_keys,
     agnes_auth_header,
     agnes_quota_exceeded_from_exception,
+    raise_if_agnes_content_policy,
     raise_if_agnes_quota,
 )
 from app.services.segment.image.image_mock import MockImageProvider
@@ -251,6 +252,9 @@ class AgnesImageProvider(ImageProvider):
                     except Exception:
                         body = _resp_body_summary(resp)
                     raise_if_agnes_quota(status_code=resp.status_code, body=body)
+                    raise_if_agnes_content_policy(
+                        status_code=resp.status_code, body=body
+                    )
                     logger.warning(
                         "%sagnes api %s %s in %.1fs: %s",
                         tag,
@@ -306,6 +310,10 @@ class AgnesImageProvider(ImageProvider):
         if body.get("error"):
             err = body["error"]
             raise_if_agnes_quota(body=body if isinstance(body, dict) else None, message=str(err))
+            raise_if_agnes_content_policy(
+                body=body if isinstance(body, dict) else None,
+                message=str(err),
+            )
             if isinstance(err, dict):
                 raise RuntimeError(
                     f"agnes api error: {err.get('code')} - {err.get('message')}"
