@@ -258,6 +258,25 @@ def test_footsteps_only_do_not_grant_mom_onstage():
     assert mom_should_stay_offscreen(dialogue) is True
 
 
+def test_mom_return_future_does_not_grant_onstage():
+    """「回」在将来/假设句式里，妈妈尚未到场，不得入画。"""
+    for text in (
+        "哎呀，反正你快收拾，不然妈妈回来要骂人。",
+        "昭昭，快把玩具收拾好，妈妈马上回来了。",
+        "等妈妈回来就露馅了。",
+    ):
+        dialogue = [{"speaker": "灿灿", "text": text}]
+        assert "妈妈" not in allowed_cast_from_dialogue(dialogue), text
+        assert mom_should_stay_offscreen(dialogue) is True, text
+
+
+def test_mom_return_arrived_keeps_onstage():
+    """「妈妈回来了」（已到场）与「爸妈回来了」仍是入画。"""
+    dialogue = [{"speaker": "灿灿", "text": "门开了，爸妈回来了！"}]
+    assert "妈妈" in allowed_cast_from_dialogue(dialogue)
+    assert mom_should_stay_offscreen(dialogue) is False
+
+
 def test_scrub_keeps_mom_when_present_in_dialogue():
     dialogue = [
         {"speaker": "昭昭", "text": "妈妈还躺着刷手机。"},
