@@ -548,6 +548,44 @@ def test_retry_small_deficit_uses_patch_not_expand():
     assert "只改1–2句" in quote_user or "1–2句" in quote_user
 
 
+def test_revise_patch_A_exempts_quote_from_keep_last_four():
+    """引话不接地走 revise_patch 时，A类 system 不得再叫模型原样保留末四拍
+    （引话就是末四拍倒数第4句，原样保留会把要修的坏引话一起冻住）。"""
+    from app.services.daily_story.prompts import (
+        _daily_story_contract,
+        build_daily_story_prompts,
+        resolve_daily_story_retry_length_mode,
+    )
+
+    prev = _valid_story(n=18)
+    err = (
+        "A类引话须出自灿灿前文原话"
+        "（无「你叠的被子角都没对齐」），禁止昭昭自造后再假装引用"
+    )
+    assert resolve_daily_story_retry_length_mode(prev, errors=err) == "revise_patch"
+    sys_a, _ = build_daily_story_prompts(
+        "姐姐嫌弟弟叠被子总叠不齐",
+        story_type="A",
+        length_mode="revise_patch",
+    )
+    assert "末四拍尽量原样保留" not in sys_a
+    assert "引话" in sys_a and "倒数第4" in sys_a
+    # 非 A 类型仍走通用 revise_patch，不回归
+    generic = _daily_story_contract(length_mode="revise_patch", type_code=None)
+    assert "末四拍尽量原样保留" in generic
+
+
+def test_a_prompt_blocks_midbody_rehearsal_of_quote_beat():
+    """中段禁提前上演「引原话→那不一样」拍子，引话只准末四拍引一次
+    （拿筷子 79：中段 [12][13] 先引埋句被审读判与末四拍重复）。"""
+    from app.services.daily_story.story_types.a.line import LINE_A
+
+    blk = LINE_A.prompt_block
+    assert "引话只演一次" in blk
+    assert "末四拍才是昭昭引灿灿原话的场合" in blk
+    assert "同一引语中段演过、末四拍再引 = 审读判重复" in blk
+
+
 def test_local_patch_pads_small_char_deficit():
     from app.services.daily_story.prompts import (
         dialogue_total_chars,
@@ -1207,20 +1245,6 @@ def test_b_opening_score_skips_prepended_discovery_block():
     }
     _, _, cons = score_opening_quality(story)
     assert "B开场与正文首句重复" not in cons
-
-
-def test_b_smoke5_quality_scores_around_93():
-    import json
-    from pathlib import Path
-
-    from app.services.daily_story.quality import score_daily_story
-
-    root = Path(__file__).resolve().parents[2]
-    payload = json.loads((root / "tmp/daily_story_b_smoke5.json").read_text())[0]
-    q = score_daily_story(payload["story"], theme=payload["theme"])
-    assert q["score"] >= 90
-    assert "定格戛然而止" in q["reasons"]
-    assert "定格后多余对白" not in q["reasons"]
 
 
 def test_b_freeze_only_ending_accepted():

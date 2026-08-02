@@ -36,13 +36,32 @@ def quote_grounded(frag: str, hay: str) -> bool:
     return False
 
 
+def _overlap_chars(a: str, b: str) -> int:
+    """两句话共用的实词字符数（引话 paraphrase 与灿灿原话的重合度）。"""
+    ca = set(re.sub(r"[^一-鿿]", "", a))
+    cb = set(re.sub(r"[^一-鿿]", "", b))
+    return len(ca & cb)
+
+
 def pick_cite_chunk(cancan_line: str) -> str:
-    """从灿灿原话抽可引子串（优先「XX不算YY」类免责句核）。"""
+    """从灿灿原话抽可引子串（优先「XX不算YY」类免责句核；否则取首个分句）。
+
+    非免责主题（鞋带「鞋扣朝外就对了」/刷牙「吐水也算停」）没有「不算」核，
+    取逗号/自称动作前的首分句，剔掉「我系/我给你/你看着」类示范尾巴。
+    """
     text = re.sub(r"^[「」\"'‘’]+|[「」\"'‘’]+$", "", cancan_line.strip())
     for m in re.finditer(r"[^，。！？…；;]{4,14}", text):
         chunk = m.group(0).strip()
         if re.search(r"不算|算停|才算", chunk):
             return chunk
+    clause = re.split(r"[，。！？…；;]", text, maxsplit=1)[0].strip()
+    clause = re.split(
+        r"(我系|我给你|你看着|你数着|别眨眼|你学着|你尝尝|你自己|这就算|你仔细)",
+        clause,
+        maxsplit=1,
+    )[0].strip()
+    if len(clause) >= 4:
+        return clause
     compact = re.sub(r"[的话呢呀嘛吧啊啦]", "", text)
     return compact[:14] if len(compact) >= 4 else text[:14]
 
@@ -78,11 +97,19 @@ def patch_closing_quotes(story: dict) -> list[str]:
             continue
         if quote_grounded(frag, prior):
             continue
-        donor = ""
+        # 重合度优先：引语 paraphrase 与哪句灿灿前文共用字最多，就对齐到哪句
+        best_donor, best_hit = "", 0
         for ln in reversed(prior_lines):
-            if re.search(r"不算|才算|不许|不能|别", ln):
-                donor = ln
-                break
+            hit = _overlap_chars(frag, ln)
+            if hit > best_hit:
+                best_donor, best_hit = ln, hit
+        donor = best_donor if best_hit >= 2 else ""
+        if not donor:
+            # 兜底：找不到像的埋句时，退到旧逻辑的「不算/才算/不许/不能/别」免责核句
+            for ln in reversed(prior_lines):
+                if re.search(r"不算|才算|不许|不能|别", ln):
+                    donor = ln
+                    break
         # 没有可对齐埋点就别乱改引话
         if not donor:
             continue
