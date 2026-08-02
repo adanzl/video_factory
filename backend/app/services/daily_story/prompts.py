@@ -2700,12 +2700,17 @@ _LOCAL_PAD_TAILS = (
     "呀",
 )  # 优先多字少句，勿满篇单「呀」
 _LOCAL_TRIM_CHARS = "的了呢嘛呀啊吧啦哦喔哈嗯"
-# 全句粒子化兜底：单语气词前插「了」成自然双语气词（快松一松吧→快松一松了吧）
+# 全句粒子化兜底：单语气词前插「了」成自然双语气词（快松一松吧→快松一松了吧）；
+# 2 字尾在前（了呢→了呢呀），处理已带「了」挡升级的句子
 _PARTICLE_UPGRADE_REPLACE = (
+    ("了呢", "了呢呀"),
+    ("来了", "来了呀"),
     ("吧", "了吧"),
     ("呢", "了呢"),
     ("啊", "了啊"),
     ("呀", "了呀"),
+    ("嘛", "嘛呀"),
+    ("啦", "啦呀"),
 )
 # 已带垫尾巴的句子再缀一声（绊脚好不好→绊脚好不好呀）
 _PARTICLE_UPGRADE_APPEND = (
@@ -2780,16 +2785,20 @@ def _particle_upgrade(
     for tail, upgrade in _PARTICLE_UPGRADE_APPEND:
         if core.endswith(tail) and len(upgrade) <= room and len(upgrade) <= need:
             return f"{core}{upgrade}{trail}", len(upgrade)
-    # 单语气词前插「了」（吧→了吧/呢→了呢/啊→了啊/呀→了呀）
+    # 单语气词前插「了」（吧→了吧/呢→了呢/啊→了啊/呀→了呀）；
+    # 2 字尾（了呢/来了）补缀一声（了呢→了呢呀），不再被「了」挡
     for tail, upgrade in _PARTICLE_UPGRADE_REPLACE:
         if not core.endswith(tail):
             continue
-        prev = core[-2] if len(core) >= 2 else ""
-        if prev in "的了":
-            continue  # 「真的呀/绷直了呢」不叠
+        if len(tail) == 1:
+            prev = core[-2] if len(core) >= 2 else ""
+            if prev == "了":
+                continue  # 了呀→了了呀 叠「了」
+            if prev == "的" and tail == "呀":
+                continue  # 「真的呀」→「真的了呀」拗口；「真的呢」可升「真的了呢」
         delta = len(upgrade) - len(tail)  # 换字后净增（如 吧→了吧 净 +1）
-        if len(upgrade) <= room and delta <= need:
-            return f"{core[:-1]}{upgrade}{trail}", delta
+        if delta <= room and delta <= need:
+            return f"{core[:-len(tail)]}{upgrade}{trail}", delta
     return line, 0
 
 
@@ -2880,6 +2889,20 @@ def _patch_body_char_budget(story: dict) -> list[str]:
             if added:
                 item["line"] = new_line
                 need -= added
+        # 第一轮用完去重尾巴仍差一点：放开 used 再扫一遍（垫字复读优于再失败）
+        if need > 0:
+            for item in mid:
+                if need <= 0:
+                    break
+                if not isinstance(item, dict):
+                    continue
+                line = str(item.get("line") or "")
+                if not line:
+                    continue
+                new_line, added = _pad_dialogue_line(line, need, None)
+                if added:
+                    item["line"] = new_line
+                    need -= added
         after = dialogue_total_chars(story)
         if after > before:
             notes.append(f"本地补字{before}→{after}")

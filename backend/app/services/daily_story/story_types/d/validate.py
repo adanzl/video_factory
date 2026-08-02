@@ -5,6 +5,13 @@ from __future__ import annotations
 import re
 
 from app.services.daily_story.story_types import parse_story_type_code
+from app.services.daily_story.story_types.d.humor import (
+    RE_BOOM_CLOSE,
+    RE_BOOM_POINT,
+    RE_FIX,
+    RE_MESS,
+    _BOOM_VIOLATION_PAIRS,
+)
 from app.services.daily_story.story_types.quality import (
     RE_BOOMERANG_RULE,
     RE_SOFT_LAST,
@@ -18,10 +25,8 @@ RE_LITERAL_MID = re.compile(
     r"照做|按你说的|你不是说|字面|按规矩|你说要|你让我|照你说的|"
     r"你说[^，。！？]{1,8}，?我就|我按你|你叫我|你要我|我照你",
 )
-RE_MESS = re.compile(
-    r"掉了|滑落|滑掉|洒|弄乱|乱了|乱成|全乱|坏了|打不开|饿着|够不着|弄翻|摔|"
-    r"倒了|全掉|洒一地|堆塌|解不开|勒|死结|死疙瘩|大马趴|溢|变形",
-)
+# 后果场面词表与好笑侧同源（含 满/漫/泡/漂 等水类惨状），
+# 勿用收玩具/叠衣专属窄表——浇花主题的惨状全是水词，窄表会把中段惨状看漏
 _RE_MESS_BEAT = re.compile(
     r"倒了|掉了|全掉|掉地上|洒|滑落|滑掉|堆塌|解不开|死结|溢|"
     r"弄翻|全乱|变形了|夹变形|撑变形",
@@ -67,6 +72,16 @@ _RE_SPOIL_LITERAL = re.compile(
     r"绕成死结|打成死结|要绕成|这是死结|死结了|"
     r"你这是要|别绕那么|别绕成",
 )
+# 破规动词须由灿灿自称动作句演出：我/被我 标记后 14 字内须有破规动词，
+# 且动词前禁 别/不/没（「我早说了别浇」是叮嘱不是违犯）。
+# 挡住「你还浇！我来抢水壶！」——浇字落在指责句里，抢水壶不是违犯
+def _self_performs(line: str, viol_re: re.Pattern[str]) -> bool:
+    pat = r"(?:我[^。！？]{0,14}|被我[^。！？]{0,10})(?<![别不没])(?:%s)" % (
+        viol_re.pattern,
+    )
+    return re.search(pat, line) is not None
+
+
 # D 正文 15–17 句 + 开场 2 句 = 成片宜 17–19 句；上限对齐设计（20 含 1 句余量）
 _D_MAX_DIALOGUE_LINES = 20
 _RE_RULE = re.compile(r"不许|别碰|别晃|轻点|慢点|系紧|规矩|叮嘱|不准|不能")
@@ -200,6 +215,78 @@ def append_d_body_errors(story: dict, errors: list[str]) -> None:
         )
         return
 
+    # 回旋镖须在破规动作句之后：先点破再破规 = 笑点泄光。
+    # 确定性硬卡：首个回旋镖行之前若无灿灿 RE_FIX 补救句 → 重试
+    #（把「缺叮嘱方破规/破规未先于回旋镖」的 −7/−5 好笑扣分转成可修错误）
+    boom_any_i = next(
+        (i for i, ln in enumerate(lines) if RE_BOOM_CLOSE.search(ln)),
+        None,
+    )
+    if boom_any_i is not None:
+        fix_before_boom = None
+        for i, ln in enumerate(lines):
+            if i >= boom_any_i:
+                break
+            if not RE_FIX.search(ln):
+                continue
+            if i < len(speakers) and speakers[i] not in ("灿灿", "妈妈"):
+                continue
+            fix_before_boom = i
+        if fix_before_boom is None:
+            errors.append(
+                "D类回旋镖须在破规动作句之后：正文须有灿灿亲手补救句"
+                "（我来/自己上手/一把/拢住等），回旋镖点破须在其后；"
+                "禁止昭昭在破规前说「你也破了/你这会儿也破」",
+            )
+            return
+
+    # 回旋镖须点破当场矛盾：只引原话不点破 = 笑点没落地（确定性硬卡）
+    if boom_any_i is not None:
+        boom_ln = lines[boom_any_i]
+        if RE_BOOM_CLOSE.search(boom_ln) and not RE_BOOM_POINT.search(boom_ln):
+            errors.append(
+                "D类回旋镖须点破矛盾：引原话后须点出她此刻的破规动作"
+                "（怎么现在又上手来解/自己整壶都倒进去了），"
+                "禁止只写「是你自己说别浇太多的」就停",
+            )
+            return
+
+    # 破规须违反回旋镖引的那条规矩：说轻点却用力扫/说别浇太多却整壶倒回。
+    # 破规动作须先在灿灿台词里演出来，禁止只在回旋镖里被追认
+    #（把「回旋镖未扣破规动作」的 −4 扣分转成可修错误）
+    if boom_any_i is not None:
+        boom_ln = lines[boom_any_i]
+        m = _RE_DIRECT_QUOTE.search(boom_ln)
+        cite = m.group(1) if m else boom_ln
+        cite = re.split(r"[，。！？]|你现在|你却|怎么|我照", cite)[0]
+        cite = re.sub(r"的$", "", cite.strip())
+        if len(cite) >= 3:
+            start = max(0, boom_any_i - 5)
+            if fix_before_boom is not None:
+                start = max(start, fix_before_boom - 1)
+            window_lines = []
+            for j in range(start, boom_any_i):
+                if j < len(speakers) and speakers[j] not in ("灿灿", "妈妈"):
+                    continue
+                window_lines.append(lines[j])
+            for rule_re, viol_re in _BOOM_VIOLATION_PAIRS:
+                if not rule_re.search(cite):
+                    continue
+                # 破规动词须落在灿灿自称动作句里（我/被我 + 动作）：
+                # 「你还浇！我来抢水壶！」里浇字在指责句、抢水壶不是违犯，
+                # 回旋镖追认整壶倒进花盆 = 责任错位，审读必扣
+                performed = any(_self_performs(ln, viol_re) for ln in window_lines)
+                if not performed:
+                    errors.append(
+                        "D类破规须亲手违反回旋镖引的那条规矩"
+                        "（说轻点却用力扫/说别浇太多却整壶倒回）；"
+                        "破规动作须先在她台词里演出来"
+                        "（我一把抢过水壶哗啦全倒进花盆/上手用力拍压等，"
+                        "我+可见动作），禁止「抢水壶/收拾」止步、"
+                        "禁止「你还浇」指责句冒充破规、禁止只在回旋镖里被追认",
+                    )
+                    return
+
     # 回旋镖引文须落在前段叮嘱，禁止改引中段催促「不能再塞了」
     boom_i = next(
         (i for i in range(max(0, n - 4), n) if RE_BOOMERANG_RULE.search(lines[i])),
@@ -223,9 +310,12 @@ def append_d_body_errors(story: dict, errors: list[str]) -> None:
                 if not (boom_has_key or cite_from_key):
                     grounded = False
             if not grounded:
+                key_txt = ""
+                if key_line and len(key_line) >= 2:
+                    key_txt = f"，key_line「{key_line}」须逐字出现在回旋镖句里"
                 errors.append(
                     "D类回旋镖须原样引前段叮嘱原话"
-                    "（禁改引中段催促如「不能再塞了」）",
+                    "（禁改引中段催促如「不能再塞了」" + key_txt + "）",
                 )
                 return
 

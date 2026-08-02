@@ -58,6 +58,9 @@ _VALIDATION_PRIORITY: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"角色反了"), "role_swap"),
     # D 专属须在「勿写成 A 式末四拍」之前，避免误中 C 式赛规提示
     (re.compile(r"D类收束勿写成 A 式末四拍"), "d_not_a_close"),
+    (re.compile(r"D类回旋镖须在破规动作句之后"), "d_boom_after_fix"),
+    (re.compile(r"D类回旋镖须点破"), "d_boom_point"),
+    (re.compile(r"D类破规须亲手违反"), "d_fix_violates"),
     (re.compile(r"D类回旋镖须原样引|D类末段须用叮嘱方原话回旋镖"), "d_boomerang"),
     (re.compile(r"D类中段须有|D类中段须演骨架"), "d_literal_mid"),
     (re.compile(r"D类前段须灿灿"), "d_rule_setup"),
@@ -119,9 +122,23 @@ def pick_primary_validation_errors(
     return [chosen for _, _, chosen in ranked[: max(1, max_items)]]
 
 
-def _hint_body_too_short(err: str, *, chars: int) -> str:
+def _hint_body_too_short(
+    err: str,
+    *,
+    chars: int,
+    type_code: str | None = None,
+) -> str:
     deficit = _parse_body_char_deficit(err)
     if deficit is not None and deficit <= DAILY_STORY_RETRY_PATCH_DEFICIT_MAX:
+        if type_code == "D" and chars < 16 * 19 and deficit >= 5:
+            # D 短稿（13–15 句）差一点：补模板里的「机动句」比句内抠字靠谱
+            return (
+                f"【D·补句】只差 {deficit} 字：现在只有约 {chars // 21} 句，"
+                "在中段循环里补 1 句昭昭第 6 次歪读推进（机动句，19–21 字，"
+                "带新动作/新位置，勿只换说法；插在昭昭/灿灿交替处，"
+                "勿造成同人连说），其余句各补 2–4 字动作细节；"
+                f"尾三拍（破规→回旋镖→嘴硬）原样不动；写到 ≥{DAILY_STORY_BODY_CHARS_MIN}。"
+            )
         return (
             f"【补字·句内】只差 {deficit} 字：在中段 2–3 句各加 2–6 字抬杠语气，"
             f"禁止插入新句、禁止动末四拍；写到 ≥{DAILY_STORY_BODY_CHARS_MIN}。"
@@ -213,10 +230,42 @@ def _register_validation_hints() -> None:
             "+点破「怎么现在又上手…」→灿灿只哼/算了；只改末 3–4 句。"
         )
 
-    def d_boomerang(**_kw: Any) -> str:
+    def d_boom_after_fix(**_kw: Any) -> str:
         return (
-            "【D·回旋镖】倒数第 2 句须「你自己说」+逐字抄前段叮嘱原话"
-            "+点破矛盾；禁改引中段催促；只改末 2–3 句。"
+            "【D·破规先于回旋镖】正文须有灿灿亲手补救句"
+            "（我来/我自己/上手/一把/拢住…，speaker=灿灿），"
+            "回旋镖点破（你自己说+原话）移到补救句之后；"
+            "删掉破规前昭昭的「你也破了/你这会儿也破」类预判句。"
+        )
+
+    def d_boom_point(**_kw: Any) -> str:
+        return (
+            "【D·点破】回旋镖须引原话并点破她此刻的破规动作："
+            "「你说别浇太多，怎么自己整壶都倒进去了」；"
+            "破规须是同一条规矩的亲手违犯"
+            "（说别浇太多却端起壶整壶灌回、说系紧却上手解结）；"
+            "禁止只引原话就停（「是你自己说别浇太多的！」×）。"
+        )
+
+    def d_fix_violates(**_kw: Any) -> str:
+        return (
+            "【D·破规违规】灿灿补救句须亲手演出回旋镖引的那条规矩的违犯："
+            "我/被我 + 可见动作（我一把抢过水壶哗啦全倒进花盆、"
+            "上手用力拍压、我指甲抠进结里用力掰），回旋镖再点破；"
+            "禁止「抢水壶/收拾/擦地」止步、禁止「你还浇」指责句冒充破规"
+            "（那是说她还在浇，不是她浇）、禁止只在回旋镖里被追认。"
+        )
+
+    def d_boomerang(**_kw: Any) -> str:
+        frag = _kw.get("frag") or ""
+        key_txt = ""
+        m = re.search(r"key_line「([^」]+)」", frag)
+        if m:
+            key_txt = f"逐字抄「{m.group(1)}」"
+        return (
+            "【D·回旋镖】倒数第 2 句须「你自己说」+"
+            + (key_txt or "逐字抄前段叮嘱原话")
+            + "+点破矛盾；禁改引中段催促；只改末 2–3 句。"
         )
 
     def d_literal_mid(**_kw: Any) -> str:
@@ -336,8 +385,8 @@ def _register_validation_hints() -> None:
         "theme_drift": theme_drift,
         "consecutive": consecutive,
         "line_too_long": line_too_long,
-        "body_too_short": lambda frag, *, chars=0, **_kw: _hint_body_too_short(
-            frag, chars=chars,
+        "body_too_short": lambda frag, *, chars=0, type_code=None, **_kw: _hint_body_too_short(
+            frag, chars=chars, type_code=type_code,
         ),
         "body_too_long": lambda frag, **_kw: _hint_body_too_long(frag),
         "e_body_too_long": e_body_too_long,
@@ -351,6 +400,9 @@ def _register_validation_hints() -> None:
         "c_incomplete_last": c_incomplete_last,
         "c_not_a_close": c_not_a_close,
         "d_not_a_close": d_not_a_close,
+        "d_boom_after_fix": d_boom_after_fix,
+        "d_boom_point": d_boom_point,
+        "d_fix_violates": d_fix_violates,
         "d_boomerang": d_boomerang,
         "d_literal_mid": d_literal_mid,
         "d_rule_setup": d_rule_setup,
@@ -407,11 +459,11 @@ def build_validation_retry_hints(
         if not builder:
             continue
         if key == "body_too_short":
-            hints.append(builder(frag, chars=chars))
+            hints.append(builder(frag, chars=chars, type_code=type_code))
         elif key == "body_too_long":
             hints.append(builder(frag))
         else:
-            hints.append(builder(chars=chars, type_code=type_code))
+            hints.append(builder(frag=frag, chars=chars, type_code=type_code))
     if not hints:
         hints.append(
             f"【本轮】只修校验指出的问题，保持约 {chars} 字，勿整稿重写。"
