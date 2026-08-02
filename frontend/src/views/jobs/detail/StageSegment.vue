@@ -50,7 +50,9 @@
           <div class="flex flex-col gap-2">
             <div class="flex items-center gap-3">
               <el-checkbox :model-value="allSelected" @change="toggleSelectAll"> 全选 </el-checkbox>
-              <span class="text-sm text-gray-500">共 {{ segments.length }} 分镜，留空表示全部</span>
+              <span class="text-sm text-gray-500">
+                共 {{ segments.length }} 分镜，{{ closeupCount }}个特写，留空表示全部
+              </span>
             </div>
             <el-checkbox-group v-model="selectedSegments" class="flex flex-wrap gap-x-4 gap-y-1">
               <el-checkbox
@@ -749,6 +751,10 @@ const isSegmentClipActionDisabled = (segment: { segment_index: number; imageUrl:
 const mediaPreviewStyle = computed(() => ({
   aspectRatio: props.job.info?.orientation === "landscape" ? "16 / 9" : "9 / 16",
 }));
+
+const closeupCount = computed(
+  () => props.segments.filter(seg => !!segmentKeyframeValue(seg)).length
+);
 
 const visualBriefByIndex = computed(() => {
   const script = props.job.script_json as ScriptJson | null;
