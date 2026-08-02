@@ -8,10 +8,13 @@ import requests
 
 from app.services.llm.llm_agnes import (
     AgnesApiKey,
+    AgnesContentPolicyError,
     AgnesQuotaExceeded,
     agnes_api_keys,
     agnes_quota_exceeded_from_exception,
+    is_agnes_content_policy,
     is_agnes_quota_exceeded,
+    raise_if_agnes_content_policy,
     raise_if_agnes_quota,
 )
 
@@ -57,6 +60,25 @@ def test_is_agnes_quota_exceeded_status_and_keywords() -> None:
 def test_raise_if_agnes_quota_raises() -> None:
     with pytest.raises(AgnesQuotaExceeded):
         raise_if_agnes_quota(status_code=429)
+
+
+def test_is_agnes_content_policy() -> None:
+    body = {
+        "error": {
+            "message": "Unable to generate this content.",
+            "type": "invalid_request_error",
+            "param": "prompt",
+            "code": "content_policy_violation",
+        }
+    }
+    assert is_agnes_content_policy(body=body)
+    assert not is_agnes_content_policy(body={"error": {"code": "invalid_prompt"}})
+
+
+def test_raise_if_agnes_content_policy_raises() -> None:
+    body = {"error": {"code": "content_policy_violation", "message": "blocked"}}
+    with pytest.raises(AgnesContentPolicyError, match="content_policy_violation"):
+        raise_if_agnes_content_policy(status_code=400, body=body)
 
 
 def test_agnes_quota_exceeded_from_http_error() -> None:

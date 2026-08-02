@@ -19,6 +19,10 @@ class AgnesQuotaExceeded(RuntimeError, JobStageFailureError):
 class AgnesI2VError(RuntimeError, JobStageFailureError):
     """图生视频 API 调用失败（重试耗尽、任务失败等），消息即原因。"""
 
+
+class AgnesContentPolicyError(RuntimeError, JobStageFailureError):
+    """内容策略拦截（prompt 违规等），不必打堆栈。"""
+
 @dataclass(frozen=True)
 class AgnesApiKey:
     label: str
@@ -86,6 +90,36 @@ def raise_if_agnes_quota(*, status_code: int | None=None, body: dict | str | Non
     if is_agnes_quota_exceeded(status_code=status_code, body=body, message=message):
         detail = _collect_error_text(status_code=status_code, body=body, message=message)
         raise AgnesQuotaExceeded(detail or 'agnes quota or rate limit exceeded')
+
+
+def is_agnes_content_policy(
+    *,
+    body: dict | str | None = None,
+    message: str | None = None,
+) -> bool:
+    if isinstance(body, dict):
+        err = body.get("error")
+        if isinstance(err, dict) and err.get("code") == "content_policy_violation":
+            return True
+    text = _collect_error_text(body=body, message=message)
+    return "content_policy_violation" in text
+
+
+def raise_if_agnes_content_policy(
+    *,
+    status_code: int | None = None,
+    body: dict | str | None = None,
+    message: str | None = None,
+) -> None:
+    if not is_agnes_content_policy(body=body, message=message):
+        return
+    if status_code is not None:
+        raise AgnesContentPolicyError(f"agnes api {status_code}: {body}")
+    if message:
+        raise AgnesContentPolicyError(message)
+    raise AgnesContentPolicyError(f"agnes content_policy_violation: {body}")
+
+
 # 含 Cloudflare 源站错误 52x（如 520 unknown error）
 _RETRYABLE = frozenset({500, 502, 503, 504, 520, 521, 522, 523, 524, 525, 526, 527})
 

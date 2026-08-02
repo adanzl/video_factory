@@ -1,5 +1,9 @@
 from app.exceptions import JobStageFailureError, is_expected_job_failure
-from app.services.llm.llm_agnes import AgnesI2VError, AgnesQuotaExceeded
+from app.services.llm.llm_agnes import (
+    AgnesContentPolicyError,
+    AgnesI2VError,
+    AgnesQuotaExceeded,
+)
 from worker.stages.standard.script import ScriptValidationError
 
 
@@ -20,6 +24,14 @@ def test_is_expected_job_failure_agnes_quota():
 def test_is_expected_job_failure_agnes_i2v():
     assert is_expected_job_failure(
         AgnesI2VError("agnes request failed after 2 retries: https://apihub.agnes-ai.cn/v1/videos")
+    )
+
+
+def test_is_expected_job_failure_agnes_content_policy():
+    assert is_expected_job_failure(
+        AgnesContentPolicyError(
+            "agnes api 400: {'error': {'code': 'content_policy_violation'}}"
+        )
     )
 
 
