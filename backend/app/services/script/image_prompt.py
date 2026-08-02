@@ -94,11 +94,9 @@ def _daily_layout_speakers(seg: dict, vb: str) -> list[str]:
     if m:
         left, right = m.group(1), m.group(2)
         pair = _keep([left, right])
+        # vb 明示左右两人时尊重 brief，勿因 sticky cast 含妈妈再强插中间人；
+        # 真要三人同框应由 vb 写「从左到右是A、B、C」（上面 LCR 分支）。
         if len(pair) == 2 and pair[0] != pair[1]:
-            if len(allowed) >= 3 and "妈妈" in allowed:
-                mid = "妈妈"
-                if mid not in pair:
-                    return [pair[0], mid, pair[1]]
             return pair
     speakers = _daily_speakers_of(seg)
     if set(speakers) >= {"昭昭", "灿灿", "妈妈"}:

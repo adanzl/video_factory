@@ -5,6 +5,7 @@ from __future__ import annotations
 from app.quality.image_prompt import check_image_prompt
 from app.services.daily_story.speaker import (
     allowed_cast_from_dialogue,
+    annotate_sticky_stage_speakers,
     collect_speaker_leak_issues,
     leaked_speaker_names_in_text,
     mom_should_stay_offscreen,
@@ -214,6 +215,41 @@ def test_hide_from_mom_marks_her_offscreen():
     dialogue = [{"speaker": "昭昭", "text": "快点把玩具塞进去，别告诉妈妈。"}]
     assert "妈妈" not in allowed_cast_from_dialogue(dialogue)
     assert mom_should_stay_offscreen(dialogue) is True
+
+
+def test_hide_from_ma_short_form_marks_her_offscreen():
+    """口语「妈」须与「妈妈」同等离场，避免 sticky 误塞三人。"""
+    for text in (
+        "快擦，千万别让妈看见，用袖子擦。",
+        "小声点，吃完把盘子藏好别让妈发现。",
+        "别让妈知道。",
+    ):
+        dialogue = [{"speaker": "灿灿", "text": text}]
+        assert "妈妈" not in allowed_cast_from_dialogue(dialogue), text
+        assert mom_should_stay_offscreen(dialogue) is True, text
+
+
+def test_sticky_drops_mom_when_hide_from_ma():
+    """前镜妈妈已粘性在场时，本镜「别让妈看见」须打断粘性。"""
+    segments = [
+        {
+            "segment_index": 3,
+            "dialogue": [
+                {"speaker": "妈妈", "text": "你们小声点。"},
+                {"speaker": "昭昭", "text": "知道了。"},
+            ],
+        },
+        {
+            "segment_index": 4,
+            "dialogue": [
+                {"speaker": "昭昭", "text": "奶油滴桌布了！"},
+                {"speaker": "灿灿", "text": "快擦，千万别让妈看见。"},
+            ],
+        },
+    ]
+    annotate_sticky_stage_speakers(segments, setting="客厅，妈妈刚走过。")
+    assert "妈妈" in segments[0]["speakers"]
+    assert segments[1]["speakers"] == ["昭昭", "灿灿"]
 
 
 def test_footsteps_only_do_not_grant_mom_onstage():
