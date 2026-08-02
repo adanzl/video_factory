@@ -85,6 +85,70 @@ def test_assemble_daily_layout_from_visual_brief():
     assert prompt.count("画面左边是昭昭，右边是灿灿") == 1
 
 
+def test_assemble_daily_lr_brief_not_force_mom_mid():
+    """vb 写左昭右灿时，即使 speakers 含妈妈也不强插三人构图。"""
+    from app.services.script.image_prompt import _daily_layout_speakers
+
+    seg = {
+        "shot_type": "特写",
+        "speakers": ["昭昭", "灿灿", "妈妈"],
+        "visual_brief": (
+            "客厅茶几旁；画面左边是昭昭，右边是灿灿；"
+            "昭昭端盘瞪眼；灿灿扯袖子瞥向厨房门口。"
+        ),
+        "dialogue": [
+            {"speaker": "昭昭", "text": "奶油滴桌布了！"},
+            {"speaker": "灿灿", "text": "快擦，千万别让妈看见。"},
+        ],
+    }
+    assert _daily_layout_speakers(seg, seg["visual_brief"]) == ["昭昭", "灿灿"]
+    prompt = assemble_daily_t2i_prompt(seg)
+    assert "三人特写" not in prompt
+    assert "从左到右是昭昭、妈妈、灿灿" not in prompt
+    assert "妈妈：" not in prompt
+    assert "画面左边是昭昭，右边是灿灿" in prompt
+
+
+def test_assemble_daily_hide_ma_keeps_two_person_cast():
+    """「别让妈看见」离场后，拼装应为两人，不含妈妈外貌/三人句。"""
+    segs = [
+        {
+            "segment_index": 1,
+            "shot_type": "特写",
+            "visual_brief": (
+                "客厅茶几旁；画面左边是昭昭，右边是灿灿；"
+                "昭昭端盘；灿灿扯袖子。"
+            ),
+            "dialogue": [
+                {"speaker": "昭昭", "text": "奶油滴桌布了！"},
+                {"speaker": "灿灿", "text": "快擦，千万别让妈看见。"},
+            ],
+        },
+        {
+            "segment_index": 2,
+            "shot_type": "中景",
+            "visual_brief": (
+                "客厅里；画面从左到右是昭昭、妈妈、灿灿；"
+                "妈妈叉腰指茶几。"
+            ),
+            "dialogue": [
+                {"speaker": "妈妈", "text": "你俩拿的什么！"},
+                {"speaker": "昭昭", "text": "被发现了！"},
+            ],
+        },
+    ]
+    assemble_daily_image_prompts(
+        segs, setting="客厅，昭昭和灿灿刚打开冰箱，妈妈在厨房。"
+    )
+    p1 = segs[0]["image_prompt"]
+    assert "妈妈：" not in p1
+    assert "三人" not in p1
+    assert "灿灿：" in p1
+    p2 = segs[1]["image_prompt"]
+    assert "妈妈：" in p2
+    assert "三人同框" in p2
+
+
 def test_scrub_daily_visual_brief_drops_duplicate_pose():
     from app.services.script.visual_brief import scrub_daily_visual_brief
 
