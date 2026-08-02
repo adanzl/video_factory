@@ -196,6 +196,27 @@ def test_evaluate_verify_response_zhao_hair_and_cast() -> None:
     na = "项1: 是\n项2: 无昭昭\n项3: 无灿灿\n项4: 无妈妈\n项5: 是\n项6: 是\n"
     assert AgnesImageProvider._evaluate_verify_response(na, ids)
 
+    # 正文空 / 全项解析失败 → 质检失效，不得放行
+    assert not AgnesImageProvider._evaluate_verify_response("", ids)
+    assert not AgnesImageProvider._evaluate_verify_response("思考中……", ids)
+
+
+def test_vl_message_text_falls_back_to_reasoning_items() -> None:
+    """Agnes VL 把「项N」答案放进 reasoning_content 时须能抽出。"""
+    msg = {
+        "content": "",
+        "reasoning_content": (
+            "我先数人头……\n"
+            "项1: 是\n项2: 是\n项3: 否\n"
+            "项4: 是\n项5: 是\n项6: 否\n"
+        ),
+    }
+    text = AgnesImageProvider._vl_message_text(msg)
+    assert "项1: 是" in text
+    assert "项6: 否" in text
+    ids = ["scene", "zhao_hair", "can_hair", "mom_adult", "extra_arms", "cast_count"]
+    assert not AgnesImageProvider._evaluate_verify_response(text, ids)
+
 
 def test_allowed_cast_for_verify() -> None:
     assert AgnesImageProvider._allowed_cast_for_verify(

@@ -579,6 +579,7 @@ class AgnesImageProvider(ImageProvider):
         "完全闭合才答「否」；其他人物的嘴型与本项无关。"
         "项「人数」：只数清晰主体人物个数是否不超过该项写明的上限；"
         "不判断是谁、不因认不出角色而答否；"
+        "两个相同服装/双胞胎外形各算一人；"
         "背景照片墙/镜子虚影/玩具人脸/远处剪影一律不算。"
     )
 
@@ -743,6 +744,7 @@ class AgnesImageProvider(ImageProvider):
                     "cast_count",
                     f"画面清晰主体人物个数是否不超过 {max_n} 个？"
                     "只数人头，不判断是谁；"
+                    "两个相同粉卫衣女孩/双胞胎外形也算两人；"
                     "人数超过答「否」；"
                     "背景照片墙/镜子虚影/玩具人脸/远处剪影不算。"
                     "回答「是」或「否」",
@@ -759,10 +761,39 @@ class AgnesImageProvider(ImageProvider):
         return items, "\n".join(lines)
 
     @staticmethod
-    def _evaluate_verify_response(content: str, check_ids: list[str]) -> bool:
-        """按检查项判定；解析失败的项视为通过（避免误杀）。
+    def _extract_item_lines(text: str) -> str:
+        """从正文或思考链中抽出「项N: …」行。"""
+        lines = [
+            ln.strip()
+            for ln in (text or "").splitlines()
+            if _ITEM_LINE_RE.match(ln.strip())
+        ]
+        return "\n".join(lines)
 
-        各项极性统一：答「是」为通过侧；答「否」为失败
+    @staticmethod
+    def _vl_message_text(msg: dict) -> str:
+        """取出可用于质检解析的文本。
+
+        Agnes VL 常把短答案放进 reasoning_content，content 为空；
+        嘴型质检已处理，出图质检须同样回退，否则全项 unknown。
+        """
+        content = (msg.get("content") or "").strip()
+        extracted = AgnesImageProvider._extract_item_lines(content)
+        if extracted:
+            return extracted
+        reasoning = (msg.get("reasoning_content") or "").strip()
+        extracted = AgnesImageProvider._extract_item_lines(reasoning)
+        if extracted:
+            return extracted
+        return content or reasoning
+
+    @staticmethod
+    def _evaluate_verify_response(content: str, check_ids: list[str]) -> bool:
+        """按检查项判定。
+
+        单项解析失败仍跳过（避免误杀）；但若整段一个有效项都没有，
+        视为质检失效，返回 False 触发重生（避免全 unknown 放行）。
+        各项极性：答「是」通过；答「否」失败
         （zhao_hair「无昭昭」、can_hair「无灿灿」、mom_adult「无妈妈」放行）。
         """
         answers: dict[int, str] = {}
@@ -776,10 +807,12 @@ class AgnesImageProvider(ImageProvider):
             idx = int(m.group(1))
             answers[idx] = AgnesImageProvider._parse_item_answer(m.group(2))
 
+        parsed_any = False
         for i, cid in enumerate(check_ids, start=1):
             verdict = answers.get(i, "unknown")
             if verdict == "unknown":
                 continue
+            parsed_any = True
             if cid == "zhao_hair" and verdict == "na_zhao":
                 continue
             if cid == "can_hair" and verdict == "na_can":
@@ -797,7 +830,7 @@ class AgnesImageProvider(ImageProvider):
                 "cast_count",
             }:
                 return False
-        return True
+        return parsed_any
 
     @staticmethod
     def _format_verify_reply(content: str, check_ids: list[str]) -> str:
@@ -897,13 +930,13 @@ class AgnesImageProvider(ImageProvider):
                         }
                         resp = requests.post(url, headers=headers, json=payload, timeout=300)
                         if resp.ok:
-                            content = (
+                            msg = (
                                 resp.json()
                                 .get("choices", [{}])[0]
                                 .get("message", {})
-                                .get("content", "")
-                                .strip()
+                                or {}
                             )
+                            content = AgnesImageProvider._vl_message_text(msg)
                             ok = AgnesImageProvider._evaluate_verify_response(
                                 content, check_ids
                             )
