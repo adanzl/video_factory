@@ -381,10 +381,7 @@ def patch_d_align_boomerang_quote(story: dict) -> list[str]:
         if _quote_grounded(frag, prior):
             continue
         head = line[: m.start(1)]
-        # 尾巴若是改写续写，收成「你现在也破了」避免再造无出处
         new_line = f"{head}{cite}"
-        if not re.search(r"现在|却|也", line[m.end(1) :]):
-            new_line = f"{head}{cite}，你现在也破了"
         if dialogue_char_count(new_line) > DAILY_STORY_LINE_CHARS_MAX:
             room = DAILY_STORY_LINE_CHARS_MAX - dialogue_char_count(head)
             short = cite if dialogue_char_count(cite) <= room else cite[: max(4, room)]

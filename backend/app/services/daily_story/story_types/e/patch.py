@@ -447,11 +447,18 @@ def patch_e_compress_body(story: dict) -> list[str]:
 _RE_PATCH_GARBAGE = re.compile(
     r"，(?:还在亮着呢?|你看呢?|明明呢?|地上也见|刚才那样|明明这样)$",
 )
-_RE_FILLER_TAIL = re.compile(r"(?:[呵哈]{2,}|(?:呢|吗|啊|呀|啦|吧|嘛){2,})$")
+_RE_FILLER_TAIL = re.compile(
+    r"(?:[呵哈]{2,}|(?:呢|吗|啊|呀|啦|吧|嘛){2,}|"
+    r"了呢[了呀]|了呀[呢]|嘛了[呀]|了呢呀|"
+    r"了呢|了呀|嘛了|呢吧|呀呢|呢嘛)$",
+)
+_RE_FILLER_INLINE = re.compile(
+    r"了呢了呀|了呢呀|嘛了呀|了呢了|了呀呢",
+)
 
 
 def patch_e_strip_patch_garbage(story: dict) -> list[str]:
-    """剥掉句内补字 patch 误粘的尾巴（还在亮着/你看/明明等）。"""
+    """剥掉句内补字 patch 误粘的尾巴（还在亮着/你看/明明/了呢了呀等）。"""
     notes: list[str] = []
     if not _is_e(story):
         return notes
@@ -466,6 +473,8 @@ def patch_e_strip_patch_garbage(story: dict) -> list[str]:
         # 叠词残留：「，你看，明明」
         new_line = re.sub(r"，你看，明明呢?$", "", new_line)
         new_line = re.sub(r"，明明，还在亮着呢?$", "", new_line)
+        # 混合语气垫字（句中或句尾）
+        new_line = _RE_FILLER_INLINE.sub("", new_line)
         new_line = _RE_FILLER_TAIL.sub("", new_line)
         if new_line != line:
             item["line"] = new_line

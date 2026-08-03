@@ -299,9 +299,9 @@ def format_block_for_code(code: str) -> str:
         footer = "本场仅昭昭/灿灿出场；禁止妈妈。"
     elif code_u == "E":
         rows = (
-            '    {"speaker": "妈妈", "line": "台词（宜多）"},\n'
-            '    {"speaker": "昭昭", "line": "台词"},\n'
-            '    {"speaker": "灿灿", "line": "台词"}\n'
+            f'    {{"speaker": "妈妈", "line": "台词（{line.line_format_hint}）"}},\n'
+            f'    {{"speaker": "昭昭", "line": "台词（{line.line_format_hint}）"}},\n'
+            f'    {{"speaker": "灿灿", "line": "台词（{line.line_format_hint}）"}}\n'
         )
         footer = "本场妈妈为主戏角色，台词宜多；主回合是妈妈与孩子的交锋。"
     else:
