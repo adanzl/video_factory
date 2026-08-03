@@ -407,7 +407,8 @@ class DeepSeekClient(LLMClient):
                 json_mode=json_mode,
                 temperature=temperature,
             ),
-            timeout=180,
+            # 剧本/分镜生成长输出实测 103~181s，180s 超时贴线（超时重试成本更高），放宽到 300s
+            timeout=300,
         )
         resp.raise_for_status()
         choice = resp.json()["choices"][0]
