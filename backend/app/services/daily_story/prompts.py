@@ -247,11 +247,15 @@ def _daily_story_length_draft_for_type(type_code: str | None) -> str:
     lo, hi, _avg = _body_line_budget(type_code)
     if type_code and type_code.upper() == "E":
         return f"""\
-- 片长（正文硬卡，放最前）：{DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
+- 片长（E类正文，放最前）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
   每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
-  【E类·妈妈主戏】妈妈台词宜多（立论、否认、改口、越描越黑、破功），
-  笑点须在自相矛盾打脸，禁空说教连问。
-  发现开场系统另写另验，不计入正文硬卡。
+  【E类·首稿】写 {lo}–{hi} 句；**首稿也须一次写到 ≥{DAILY_STORY_BODY_CHARS_MIN} 字**
+  （瞄准 300–340：正文开头与开场重叠的发现句拼接时会被删约 30 字，须留出重叠余量，
+  删后仍 ≥{DAILY_STORY_BODY_CHARS_MIN}；上限勿超 {DAILY_STORY_BODY_CHARS_MAX}）；
+  每句带追问/开脱+可拍细节双信息，自然达到 17–20 字；禁单字/干问短句；
+  闭环+妈妈破功收束满 2–4 句、可短；
+  勿偏短指望补满，勿为凑字堆语气词尾巴。
+  系统另拼 2 句开场。发现开场另写另验。
 """
     if type_code and type_code.upper() == "D":
         return f"""\
@@ -305,8 +309,10 @@ def _daily_story_length_user_draft_for_type(type_code: str | None) -> str:
     lo, hi, _avg = _body_line_budget(type_code)
     if type_code and type_code.upper() == "E":
         return f"""\
-3. 【E类·字数硬卡】正文 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
-   妈妈为主戏台词宜多；每句 ≤{DAILY_STORY_LINE_CHARS_MAX} 字为宜。发现开场另计另验。speaker 仅昭昭/灿灿/妈妈。
+3. 【E类·首稿】写 **{lo}–{hi} 句**；**须一次写到 ≥{DAILY_STORY_BODY_CHARS_MIN} 字**
+   （瞄准 300–340），
+   每句带追问/开脱+可拍细节双信息，自然达到 17–20 字；勿交短稿。
+   发现开场另计另验。speaker 仅昭昭/灿灿/妈妈。
 """
     if type_code and type_code.upper() == "D":
         return f"""\
@@ -341,11 +347,14 @@ def _daily_story_length_user_draft_for_type(type_code: str | None) -> str:
 
 def _daily_story_length_revise_expand_for_type(type_code: str | None) -> str:
     if type_code and type_code.upper() == "E":
+        lo, hi, _avg = _body_line_budget(type_code)
         return f"""\
-- 片长（E类偏短重试）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
+- 片长（E类偏短重试·一次补满）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
   每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
-  可增句或句内扩字到硬卡；加妈妈开脱/孩子追问细节，勿空说教。
-  须轮流说话，禁止同人连说。发现开场另写另验。
+  **本轮必须一次写到 ≥{DAILY_STORY_BODY_CHARS_MIN} 字**（瞄准 {DAILY_STORY_BODY_RETRY_TARGET_MIN}–{DAILY_STORY_BODY_RETRY_TARGET_MAX}）。
+  保留上一稿立论→戳穿→假开脱→闭环→破功骨架：句数补到 {lo}–{hi}（勿超过 {hi}）；每句尽量 17–20 字；
+  只增不删、禁止整稿重写、禁止同型揭穿复读凑字、禁止为凑字堆语气词尾巴。
+  发现开场另写另验。
 """
     if type_code and type_code.upper() == "D":
         lo, hi, _avg = _body_line_budget(type_code)
@@ -394,7 +403,7 @@ def _daily_story_length_revise_patch_for_type(type_code: str | None) -> str:
         return f"""\
 - 片长（E类句内微调）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
   每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
-  **禁止增删句**；把偏短句各加 2–8 字（可拍细节/语气），写到 ≥265 即可；
+  **禁止增删句**；把偏短句各加 2–8 字（可拍细节/追问语气），写到 ≥{DAILY_STORY_BODY_CHARS_MIN}；
   末段闭环+妈妈破功原样保留。发现开场另写另验。
 """
     if type_code and type_code.upper() == "D":
@@ -440,8 +449,10 @@ def _daily_story_length_revise_trim_for_type(type_code: str | None) -> str:
 
 def _daily_story_length_user_revise_expand_for_type(type_code: str | None) -> str:
     if type_code and type_code.upper() == "E":
+        lo, hi, _avg = _body_line_budget(type_code)
         return f"""\
-3. 【E类·句内补字】偏短可增句或句内扩字，写到 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX}；
+3. 【E类·一次补满】本轮必须写到 ≥{DAILY_STORY_BODY_CHARS_MIN} 字；
+   句数 {lo}–{hi}；每句尽量 17–20 字（≤{DAILY_STORY_LINE_CHARS_MAX}）；保留骨架只增不删。
    发现开场另计另验。speaker 仅昭昭/灿灿/妈妈。
 """
     if type_code and type_code.upper() == "D":
@@ -464,7 +475,7 @@ def _daily_story_length_user_revise_expand_for_type(type_code: str | None) -> st
 def _daily_story_length_user_revise_patch_for_type(type_code: str | None) -> str:
     if type_code and type_code.upper() == "E":
         return f"""\
-3. 【E类·句内微调】禁止增删句；偏短句各加几个字（可拍细节），写到≥265；
+3. 【E类·句内微调】禁止增删句；偏短句各加几个字（可拍细节），写到≥{DAILY_STORY_BODY_CHARS_MIN}；
    闭环与妈妈末句破功勿动；发现开场另计另验。speaker 仅昭昭/灿灿/妈妈。
 """
     if type_code and type_code.upper() == "D":
@@ -2007,13 +2018,11 @@ def validate_daily_story_json(
                 + str(story.get("theme") or "")
                 + str(story.get("scene_title") or "")
             )
-            # 挑食宜短稿，勿与通用 ≥280/265 硬顶死
+            # E类挑食可略短（假开脱结构精简），其余走通用硬卡
             if type_code == "E" and re.search(
                 r"挑食|青菜|拨到碗边",
                 theme_ctx,
             ):
-                chars_min = 200
-            elif type_code == "E" and n_lines >= 10:
                 chars_min = 265
             if total_chars < chars_min:
                 deficit = chars_min - total_chars
@@ -2976,13 +2985,7 @@ def _patch_body_char_budget(story: dict) -> list[str]:
         + str(story.get("scene_title") or "")
     )
     if code == "E" and re.search(r"挑食|青菜|拨到碗边", theme_ctx):
-        chars_min = 200
-        max_pad = 48
-    elif code == "E" and 10 <= n_lines <= 16:
         chars_min = 265
-        max_pad = 72
-    elif code == "D":
-        # D 靠中段粒子垫字+升级兜底（16–17 句×18–20 字），小缺口全本地化
         max_pad = 48
     mid = dialogue[:-4] if len(dialogue) >= 8 else dialogue[1:]
     if total < chars_min:
@@ -3307,15 +3310,6 @@ def resolve_daily_story_retry_length_mode(
     chars = dialogue_total_chars(prev_story if isinstance(prev_story, dict) else None)
     if isinstance(prev_story, dict) and isinstance(prev_story.get("dialogue"), list):
         n_lines = len(prev_story["dialogue"])
-    e_chars_min = (
-        265
-        if type_code == "E" and n_lines >= 10
-        else DAILY_STORY_BODY_CHARS_MIN
-    )
-    if type_code == "E" and n_lines >= 10 and chars < e_chars_min:
-        gap = e_chars_min - chars
-        if gap <= 72:
-            return "revise_patch"
     if type_code == "D" and isinstance(prev_story, dict):
         dialogue = prev_story.get("dialogue")
         if isinstance(dialogue, list) and len(dialogue) > 16:
@@ -3328,8 +3322,6 @@ def resolve_daily_story_retry_length_mode(
     deficit = _parse_body_char_deficit(err)
     excess = _parse_body_char_excess(err)
     if "总字数须≥" in err:
-        if type_code == "E" and n_lines >= 10:
-            return "revise_patch"
         if deficit is not None and deficit <= DAILY_STORY_RETRY_PATCH_DEFICIT_MAX:
             return "revise_patch"
         # D 偏短：走 expand 在上一稿上一次补满，勿打回 draft 整开
@@ -3342,8 +3334,8 @@ def resolve_daily_story_retry_length_mode(
     if "引话" in err:
         return "revise_patch"
     chars = dialogue_total_chars(prev_story if isinstance(prev_story, dict) else None)
-    if chars < e_chars_min:
-        gap = e_chars_min - chars
+    if chars < DAILY_STORY_BODY_CHARS_MIN:
+        gap = DAILY_STORY_BODY_CHARS_MIN - chars
         if type_code == "E" and n_lines >= 10:
             return "revise_patch"
         if gap <= DAILY_STORY_RETRY_PATCH_DEFICIT_MAX:

@@ -29,16 +29,17 @@ _RE_MESS_BEAT = re.compile(
 # 破规动作认「方式」不认具体动词：我来X/我自己X/用力X/一把X 通用；
 # 另认「自我违规宣言」：我不X了 / 直接X行了吧（叮嘱方亲手违反自己的规矩）
 RE_FIX = re.compile(
-    r"我来[^，。！？]{1,3}|我自己[^，。！？]{1,3}|我解开|我抠|我擦|"
+    r"我来[^，。！？]{1,3}|我自己[^，。！？]{1,3}|我解开|我抠|我擦|我上手[^，。！？]{0,8}|"
     r"指甲抠|抠进去|拆平|掰开|掰掉|压平|拍平|"
     r"给你解|帮你解|赶紧解|赶紧拆|得解|去解|"
     r"只好|没办法|用力[^，。！？]{1,3}|夹紧|夹得?更?紧|"
-    r"擦地|抹布|扫进|抓进|抓起|一把抓|猛抓|扒拉|一把[^，。！？]{1,2}|"
-    r"上手[^，。！？]{0,4}[推塞扫压倒]|直接[^，。！？]{1,8}[推塞扫压倒]|"
-    r"(?:呼啦|哗啦)[^，。！？]{0,3}[推塞扫压倒]|"
+    r"擦地|扫进|抓进|抓起|一把抓|猛抓|扒拉|一把[^，。！？]{1,2}|"
+    r"上手[^，。！？]{0,4}(?:抠|拆|解|掰|拉|扯|推|塞|扫|压|倒|抓|按|拍|扶|拢|兜)|"
+    r"直接[^，。！？]{1,8}(?:抠|拆|解|掰|拉|扯|推|塞|扫|压|倒|抓|按|拍)|"
     r"我不[^，。！？]{1,6}了|直接[^，。！？]{1,6}(?:行了吧|得了|算了)|"
     # 水类主题的破规补救动作（浇花/擦桌水战等）：
     r"抢[过]|往[^，。！？]{0,4}泼|泼(?:掉|出去|过来)|端起[^，。！？]{0,4}|舀[^，。！？]{0,2}水|"
+    r"倒回|灌回|倒进|"
     # 拢/托/接/端/兜/抱 类「上手收拾」破规（叠衣拢塔、端走壶、兜住漏的等）：
     r"拢住|扶住|托住|接住|端走|端起来|拿走|抱走|抱进|兜住|"
     r"(?:两手|双手)[^，。！？]{0,4}(?:拢|抓|抱|托|端|压|按|扶|挡|拍|兜)",
@@ -46,12 +47,12 @@ RE_FIX = re.compile(
 # 收束回旋镖：勿用共享「你说的」，会误伤「按你说的」字面句
 RE_BOOM_CLOSE = re.compile(
     r"你自己说|你刚才说|你刚说|你现在也|你也碰了|你也动了|"
-    r"你[^，。！？]{0,4}也破",
+    r"你[^，。！？]{0,4}也破|你不是说",
 )
 # 回旋镖「点破当场矛盾」的特征：须指出她此刻的破规动作
 RE_BOOM_POINT = re.compile(
     r"上手|来解|又解|现在又|你却|自己却|自己倒|你现在也|怎么现在|现在你|"
-    r"大手|一挥|猛|全推|塞进|呼啦|[推塞扫压倒]",
+    r"大手|一挥|猛|全推|塞进|呼啦",
 )
 _A_STYLE = re.compile(r"那不一样.*哪里不一样|哪里不一样.*都是听")
 _EMPTY_DEBATE = re.compile(r"谁对谁错|到底谁有理|你赢了|我不听你的了")
@@ -87,12 +88,14 @@ _RE_ALARM_BEAT = re.compile(
 )
 # 回旋镖引的规矩，须能在叮嘱方补救动作里对上「她也破了」
 _BOOM_VIOLATION_PAIRS: tuple[tuple[re.Pattern[str], re.Pattern[str]], ...] = (
-    (re.compile(r"轻|慢"), re.compile(r"用力|重|猛|摔|砸|扯|拽|扫|挥")),
+    # 违犯侧勿裸「重」——「重新叠」不是用力重；用力/加重/太重/重重 才扣
+    # 慢→一把/撸/飞快/带风/甩 是急不是慢
+    (re.compile(r"轻|慢"), re.compile(r"用力|加重|太重|重重|猛|摔|砸|扯|拽|扫|挥|一把|撸|飞快|带风|甩")),
     (re.compile(r"别碰|不许碰|不准碰|别动"), re.compile(r"碰|扶|捡|拿|摸|弄")),
     (re.compile(r"别夹|太紧|夹紧"), re.compile(r"夹紧|夹得?更?紧|更紧|用力夹|用力扯|用力捏")),
     (re.compile(r"系紧|用力拉|拉紧|别老散"), re.compile(r"解|抠|拆|扯开")),
-    # 浇花类破规=继续浇/倒/灌（拿抹布拖地是收拾不是违犯，勿放行）
-    (re.compile(r"别浇|别多|一小口|倒一次"), re.compile(r"浇|倒|灌|冲")),
+    # 浇花类破规=往花盆/托盘加码浇灌（倒回喷壶是收拾不是违犯，勿放行）
+    (re.compile(r"别浇|别多|一小口|倒一次"), re.compile(r"浇[了进]|倒进|倒满|倒回(?!喷壶|壶|桶|杯)|灌进|灌回(?!喷壶|壶|桶|杯)|冲进|整壶|全倒|又[倒浇灌]")),
     (re.compile(r"别弄乱|整齐|平放|别乱翻"), re.compile(r"弄乱|乱了|乱成|扒乱|翻乱|扫乱|堆乱")),
     (re.compile(r"关.*轻|轻.*关|别响"), re.compile(r"用力关|摔门|砰|响")),
 )
@@ -188,10 +191,11 @@ def collect_humor_issues(
 
     boom_i = next((i for i, ln in enumerate(lines) if RE_BOOM_CLOSE.search(ln)), None)
     fix_i = None
-    for i, ln in enumerate(lines):
+    fix_start = max(0, boom_i - 5) if boom_i is not None else 0
+    for i in range(fix_start, len(lines)):
         if boom_i is not None and i >= boom_i:
             break
-        if not RE_FIX.search(ln):
+        if not RE_FIX.search(lines[i]):
             continue
         if speakers and len(speakers) == len(lines) and speakers[i] not in (
             "灿灿",
@@ -387,7 +391,7 @@ def collect_humor_issues(
         for rule_re, viol_re in _BOOM_VIOLATION_PAIRS:
             if rule_re.search(cite):
                 matched_rule = True
-                if viol_re.search(fix_window) or viol_re.search(boom_line):
+                if viol_re.search(fix_window):
                     violated = True
                 break
         if matched_rule and not violated:

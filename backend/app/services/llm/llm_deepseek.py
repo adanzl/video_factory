@@ -1854,8 +1854,10 @@ class DeepSeekClient(LLMClient):
     ) -> dict[str, Any]:
         if not story_type:
             story_type = _select_story_type(theme)
-        # 临时跳过 D1.5 骨架（Pro×2 太慢）；直接走纯 D2 验证质量
-        blueprint = None
+        blueprint = self._design_punchline_blueprint(
+            theme,
+            story_type=story_type,
+        )
         # 首稿 draft（含铺垫字数）；重试 revise（只走校验硬卡）
         system, user = build_daily_story_prompts(
             theme,

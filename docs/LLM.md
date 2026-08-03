@@ -1,6 +1,6 @@
 # LLM 调用配置
 
-> 审查日期：2026-07-21。  
+> 审查日期：2026-08-03。  
 > 相关：`docs/提示词构建.md`（提示词链路）。
 
 ## DeepSeek 配置
@@ -8,13 +8,18 @@
 | 环境变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `DEEPSEEK_MODEL` | `deepseek-v4-flash` | 默认模型 |
-| `DEEPSEEK_PRO_MODEL` | `deepseek-v4-pro` | A1/D2 失败重试；D1.5 骨架 |
+| `DEEPSEEK_PRO_MODEL` | `deepseek-v4-pro` | A1 失败重试；D1.5 骨架（若 ENABLED） |
 | `DEEPSEEK_MAX_TOKENS` | `32768` | 单次最大 token |
 | `DEEPSEEK_THINKING` | `true` | 全局深度思考开关 |
 
-**Pro 路由**：A1 口播、D2 正文（含质量修订）首稿走
-`DEEPSEEK_MODEL`；校验失败后的重试走 `DEEPSEEK_PRO_MODEL`。
-D1.5 笑点骨架（类型 `story_plan.ENABLED`）固定用 Pro。
+**Pro 路由（以代码为准）**：
+
+- **A1 口播**：首稿 Flash；校验失败后的重试升 Pro。
+- **日常故事 D2 正文 / 质量修订 / 开场**：全程 Flash + 关
+  thinking（高温）；**不再**升 Pro（Pro+thinking 又慢又短）。
+- **D1.5 笑点骨架**：仅当类型 `story_plan.ENABLED=True` 时固定用
+  Pro；失败降级纯 D2。D 类实测 ROI 偏低（常 fallback / 终稿不带
+  bp），校准不以 D1.5 为前提。
 
 ## Agnes 配置
 
@@ -58,9 +63,9 @@ temperature。
 | B1 素材口播 | ✅ 走配置 | — | 同 A1 |
 | C1/C2 选题 | ❌ 硬关 | 0.8 | 钩子创意 |
 | D1 主题 | ❌ 硬关 | 0.95 | 高创意 |
-| D1.5 笑点骨架 | ✅ 走配置 | — | 短 JSON；按类型 ENABLED |
-| D2 故事 | ❌ 首稿硬关；重试走配置 | 0.95/1.0 / — | 有骨架时首稿 1.0；重试修硬约束 |
-| D2b 发现开场 | ✅ 走配置 | — | 短约束：JSON/锚点/只发现不讲理 |
+| D1.5 笑点骨架 | ✅ 走配置 | — | 短 JSON；仅 ENABLED 类型；D 可选 |
+| D2 故事 | ❌ 硬关 | 0.95/1.0 | 全程 Flash；有骨架时首稿 1.0 |
+| D2b 发现开场 | ❌ 硬关 | — | 短约束；快失败快重试 |
 | D3 分镜 | ✅ 走配置 | — | 台词完整/切镜结构 |
 | D4 对话标题 | ❌ 硬关 | 0.8 | 标题创意 |
 | E1 标题优化 | ❌ 硬关 | 0.8 | 标题创意 |
