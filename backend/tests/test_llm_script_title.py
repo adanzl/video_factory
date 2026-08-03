@@ -586,6 +586,54 @@ def test_a_prompt_blocks_midbody_rehearsal_of_quote_beat():
     assert "同一引语中段演过、末四拍再引 = 审读判重复" in blk
 
 
+def test_a_prompt_includes_five_escalation_layers():
+    """A 类升级路线须含全部 5 个计分层（亮权威→追问→露馅→引先例→破功）。
+    缺引先例层导致审读判「冲突推进3层」，是 82–84 与 88–89 的分水岭。"""
+    from app.services.daily_story.story_types.a.line import LINE_A
+
+    blk = LINE_A.prompt_block
+    assert "5 阶段须到齐" in blk
+    assert "引先例" in blk
+    assert "上次你也" in blk
+    assert "亮权威" in blk and "一锤落地" in blk
+    assert "角色护栏" in blk
+    assert "一锤落地（中段第 6–15 句必出）" in blk
+    # 质量修订 hint 也点名引先例层
+    assert "引先例" in LINE_A.escalation_revision_hint
+    assert "冲突推进不足" in LINE_A.escalation_revision_hint
+
+
+def test_validate_rejects_role_swap_claims():
+    """身份自称只准按角色：昭昭=弟弟、灿灿=姐姐；互换即角色错乱。
+    （削铅笔 batch8：昭昭自称「我是哥哥/我说了算」成权威，旧校验没兜住）"""
+    import copy
+
+    base = _valid_story(n=18)
+    # 昭昭自称哥哥 → 拒绝
+    bad1 = copy.deepcopy(base)
+    for d in bad1["dialogue"]:
+        if d["speaker"] == "昭昭":
+            d["line"] = _pad_line("我是哥哥我说了算")
+            break
+    with pytest.raises(ValueError, match="角色反了"):
+        validate_daily_story_json(bad1, phase="body")
+    # 灿灿自称弟弟 → 拒绝
+    bad2 = copy.deepcopy(base)
+    for d in bad2["dialogue"]:
+        if d["speaker"] == "灿灿":
+            d["line"] = _pad_line("我是弟弟你别管")
+            break
+    with pytest.raises(ValueError, match="角色反了"):
+        validate_daily_story_json(bad2, phase="body")
+    # 灿灿自称姐姐 → 合法，不误伤
+    ok = copy.deepcopy(base)
+    for d in ok["dialogue"]:
+        if d["speaker"] == "灿灿":
+            d["line"] = _pad_line("我是姐姐我说了算")
+            break
+    validate_daily_story_json(ok, phase="body")
+
+
 def test_local_patch_pads_small_char_deficit():
     from app.services.daily_story.prompts import (
         dialogue_total_chars,
