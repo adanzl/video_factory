@@ -141,14 +141,14 @@ def score_scene_beat(
     full_text = "".join(lines)
     late6 = "".join(lines[-6:]) if len(lines) >= 6 else full_text
 
-    if text_has_hammer_beat(mid_text):
-        return 0, []
+    # 字面加赛（赛规引用/竞争升级/反悔指责/赛规自噬）——C 类核心好笑模式
     if RE_LITERAL_RULE_PLAY.search(mid_text):
-        return 4, ["字面加赛场面"]
-    if text_has_hammer_beat(full_text):
-        return 0, []
+        return 5, ["字面加赛场面"]
     if RE_LITERAL_RULE_PLAY.search(late6):
         return 3, ["字面加赛场面"]
+    # 可拍争法：争抢/占位/选/挪等通用竞争动作
+    if _FILMABLE_TWIST.search(full_text):
+        return 2, ["有可拍争法"]
     return 0, []
 
 
