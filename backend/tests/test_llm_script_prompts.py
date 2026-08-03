@@ -77,7 +77,9 @@ def test_build_image_prompts_life_keeps_no_spoil_ahead():
         content_style="life_experience",
         job={"pipeline": "standard", "content_style": "life_experience"},
     )
-    assert "禁提前画后续段落" in prompts["system"]
+    # 防剧透由 visual_brief 层承担（"禁止提前画后续段落情节"），
+    # image_prompt 层约束为仅表达本段 text（049b383 重构后同步断言）
+    assert "仅表达本段 text 与 visual_brief" in prompts["system"]
     assert "禁可读大段文字/水印/品牌Logo" in prompts["system"]
 
 
@@ -555,7 +557,7 @@ def test_build_daily_script_prompts_uses_cps_setting_and_no_appearance():
     assert "转折用特写，不拆碎" in system
     assert "特写数量·硬性" in system
     assert "实际切出的镜数" in system
-    assert "⌈N/4⌉" in system or "N/4" in system
+    assert "⌈N/3⌉" in system or "N/3" in system
     assert "开场首镜" in system
     assert "禁止一句一镜" in user
     assert "特写数量·硬性" in user
@@ -618,8 +620,8 @@ def test_daily_script_closeup_bounds_and_enforce():
         validate_daily_script_closeup_count,
     )
 
-    assert daily_script_closeup_bounds(11) == (3, 4)
-    assert daily_script_closeup_bounds(8) == (2, 3)
+    assert daily_script_closeup_bounds(11) == (4, 6)
+    assert daily_script_closeup_bounds(8) == (3, 4)
 
     scenes = [
         {"scene_id": 1, "shot_type": "特写", "dialogue": [{}, {}]},
