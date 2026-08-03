@@ -447,6 +447,19 @@ class AgnesImageProvider(ImageProvider):
     ) -> Path:
         size = size or self._default_size
         log_tag = f"[out={output_path.name}]"
+        # chat 有参考图时再钉发色：涂鸦高饱和易把灿灿马尾画成彩虹挑染
+        if (
+            ref_images
+            and content_style == CONTENT_STYLE_DAILY_STORY
+            and expected_speakers
+            and "灿灿" in expected_speakers
+            and "灿灿头发通体纯黑" not in prompt
+        ):
+            prompt = (
+                "严格保留参考图发色：灿灿头发通体纯黑"
+                "（禁止蓝粉黄绿霓虹条纹或彩色挑染）。"
+                + prompt
+            )
         keys = _agnes_image_gen_keys()
         if not keys:
             if get_settings().mock_mode:
@@ -715,10 +728,11 @@ class AgnesImageProvider(ImageProvider):
                 (
                     "can_hair",
                     "图中扎马尾的女孩即灿灿。"
-                    "其发型是否为黑色单侧高马尾"
-                    "（仅一根马尾，非双马尾/麻花辫/披肩长发；"
-                    "发色须为黑色或深黑棕，"
-                    "若马尾/头顶为蓝、金、粉、紫等明显异色则答「否」）？"
+                    "其发型与发色是否同时满足："
+                    "①单侧高马尾（仅一根，非双马尾/麻花辫/披肩长发）；"
+                    "②头发通体黑色或深黑棕，从头顶到马尾同一深色；"
+                    "若马尾、刘海或发丝出现蓝/粉/黄/绿等霓虹条纹、彩虹挑染、"
+                    "彩色高光块，即使发根偏黑也答「否」。"
                     "回答「是」或「否」；"
                     "仅当画面完全没有扎马尾女孩时才答「无灿灿」",
                 )

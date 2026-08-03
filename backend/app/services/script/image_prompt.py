@@ -34,6 +34,10 @@ _DAILY_CHAR_CANCAN = (
     "禁止蓝/金/粉/紫等异色马尾或挑染），"
     "粉色卫衣，蓝色长裤，两侧同色粉红运动鞋。"
 )
+# 涂鸦高饱和易把马尾画成彩虹挑染；句末再钉一次发色硬锁
+_DAILY_CANCAN_HAIR_LOCK = (
+    "灿灿头发通体纯黑（头顶到马尾同一黑色，禁止蓝/粉/黄/绿霓虹条纹或彩色挑染）。"
+)
 _DAILY_CHAR_MOM = (
     "妈妈：成年女性，黑色长发，米色上衣，蓝色牛仔裤，深色平底鞋。"
 )
@@ -251,6 +255,8 @@ def assemble_daily_t2i_prompt(
     parts.append(_daily_lighting(vb))
     layout = _daily_layout_speakers(seg, vb)
     parts.append(_daily_composition(shot, layout, vb=vb))
+    if "灿灿" in speakers:
+        parts.append(_DAILY_CANCAN_HAIR_LOCK)
     # 妈妈未入画时硬锁人数+空门口，压住「妈出来了/盯门口」诱出的路人
     if speakers and "妈妈" not in speakers:
         n = len(speakers)
