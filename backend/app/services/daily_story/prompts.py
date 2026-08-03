@@ -2002,14 +2002,23 @@ def validate_daily_story_json(
         for i, item in enumerate(dialogue):
             if not isinstance(item, dict):
                 continue
-            if item.get("speaker") == "昭昭" and re.search(
-                r"我是姐姐",
-                str(item.get("line") or ""),
-            ):
-                errors.append(
-                    f"dialogue[{i}] 角色反了：昭昭是弟弟，禁止自称姐姐"
-                )
-                break
+            sp = item.get("speaker")
+            line = str(item.get("line") or "")
+            # 身份自称只准按角色：昭昭=弟弟、灿灿=姐姐；互换即角色错乱
+            # （削铅笔 FAIL 实测：昭昭自称「我是哥哥/我说了算」成权威，校验没兜住）
+            m = re.search(r"我是(哥哥|姐姐|弟弟|妹妹)", line)
+            if m:
+                claim = m.group(1)
+                if sp == "昭昭" and claim in ("哥哥", "姐姐"):
+                    errors.append(
+                        f"dialogue[{i}] 角色反了：昭昭是弟弟，禁止自称{claim}"
+                    )
+                    break
+                if sp == "灿灿" and claim in ("哥哥", "弟弟"):
+                    errors.append(
+                        f"dialogue[{i}] 角色反了：灿灿是姐姐，禁止自称{claim}"
+                    )
+                    break
 
     if errors:
         raise ValueError("daily_story 校验失败: " + "; ".join(errors))
