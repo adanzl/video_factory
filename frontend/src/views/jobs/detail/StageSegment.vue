@@ -1,5 +1,5 @@
 <template>
-  <div>
+  <div :class="STAGE_ROOT_CLASS">
     <StageActionBar
       :loading="submitting"
       :disabled="actionDisabled"
@@ -12,6 +12,7 @@
       </span>
     </StageActionBar>
 
+    <div :class="STAGE_BODY_CLASS">
     <div :class="STAGE_BLOCK_CLASS">
       <el-descriptions :column="3" border label-width="100px" class="w-full">
         <el-descriptions-item label="重跑模式">
@@ -414,6 +415,9 @@
     </div>
     <div v-else :class="STAGE_EMPTY_CLASS">暂无分镜数据</div>
 
+    <StageLogsSection :logs="logs" />
+    </div>
+
     <SegmentClipSearchDialog
       v-model="clipSearchOpen"
       :job-id="job.id"
@@ -445,8 +449,6 @@
         </el-button>
       </template>
     </el-dialog>
-
-    <StageLogsSection :logs="logs" />
   </div>
 </template>
 
@@ -470,7 +472,7 @@ import { useErrorHandler } from "@/composables/useErrorHandler";
 import SegmentClipSearchDialog from "@/views/clips/SegmentClipSearchDialog.vue";
 import StageActionBar from "./StageActionBar.vue";
 import StageLogsSection from "./StageLogsSection.vue";
-import { STAGE_BLOCK_CLASS, STAGE_EMPTY_CLASS } from "./stageLayout";
+import { STAGE_BLOCK_CLASS, STAGE_BODY_CLASS, STAGE_EMPTY_CLASS, STAGE_ROOT_CLASS } from "./stageLayout";
 
 const props = defineProps<{
   job: JobDetail;

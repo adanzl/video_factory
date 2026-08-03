@@ -1,10 +1,10 @@
 <template>
-  <div>
-    <el-tabs v-model="activeTab">
-      <el-tab-pane label="任务列表" name="jobs">
+  <div class="job-page flex h-[calc(100vh-120px)] min-h-0 flex-col overflow-hidden">
+    <el-tabs v-model="activeTab" class="job-page-tabs flex min-h-0 flex-1 flex-col">
+      <el-tab-pane label="任务列表" name="jobs" class="h-full min-h-0 overflow-y-auto">
         <TabJobs ref="jobsTabRef" @view-detail="openJobDetail" />
       </el-tab-pane>
-      <el-tab-pane label="任务详情" name="detail">
+      <el-tab-pane label="任务详情" name="detail" class="h-full min-h-0 overflow-hidden">
         <TabJobDetail ref="detailTabRef" :job-id="selectedJobId" />
       </el-tab-pane>
     </el-tabs>
@@ -69,3 +69,23 @@ watch(activeTab, tab => {
   }
 });
 </script>
+
+<style scoped>
+.job-page-tabs :deep(> .el-tabs__header) {
+  flex-shrink: 0;
+}
+
+.job-page-tabs :deep(> .el-tabs__content) {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.job-page-tabs :deep(> .el-tabs__content > .el-tab-pane) {
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+}
+</style>

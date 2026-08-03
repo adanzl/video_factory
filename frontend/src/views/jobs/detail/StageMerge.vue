@@ -1,8 +1,9 @@
 <template>
-  <div>
+  <div :class="STAGE_ROOT_CLASS">
     <StageActionBar :loading="submitting" :disabled="actionDisabled" :disabled-reason="actionDisabledReason"
       @primary="handleRun(false)" @to-end="handleRun(true)" />
 
+    <div :class="STAGE_BODY_CLASS">
     <div :class="STAGE_TWO_COL_CLASS">
       <div :class="STAGE_COL_LEFT_CLASS" class="flex gap-2">
         <div :class="STAGE_PANEL_CLASS" class="basis-80">
@@ -97,6 +98,7 @@
     </div>
 
     <StageLogsSection :logs="logs" />
+    </div>
   </div>
 </template>
 
@@ -126,6 +128,7 @@ import { useErrorHandler } from "@/composables/useErrorHandler";
 import StageActionBar from "./StageActionBar.vue";
 import StageLogsSection from "./StageLogsSection.vue";
 import {
+  STAGE_BODY_CLASS,
   STAGE_COL_LEFT_CLASS,
   STAGE_COL_RIGHT_CLASS,
   STAGE_FORM_CLASS,
@@ -134,6 +137,7 @@ import {
   STAGE_PANEL_HEADER_CLASS,
   STAGE_PANEL_TITLE_CLASS,
   STAGE_PANEL_TITLE_TEXT_CLASS,
+  STAGE_ROOT_CLASS,
   STAGE_TWO_COL_CLASS,
 } from "./stageLayout";
 
