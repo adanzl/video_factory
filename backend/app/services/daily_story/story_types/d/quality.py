@@ -6,6 +6,7 @@ import re
 
 from app.services.daily_story.story_types.d import humor as d_humor
 from app.services.daily_story.story_types.d import opening as d_opening
+from app.services.daily_story.story_types.d import facts as d_facts
 from app.services.daily_story.story_types.quality import (
     RE_BOOMERANG_RULE,
     RE_SOFT_LAST,
@@ -100,6 +101,50 @@ def score_scene_beat(
     return 0, []
 
 
+def score_funniness_tail(
+    lines: list[str],
+    speakers: list[str] | None = None,
+) -> tuple[int, list[str]]:
+    """D 收束三拍好笑独立加分：破规具体 → 回旋镖点破 → 末句破功。
+
+    与 score_punchline 互补：punchline 侧重结构完整性，
+    本函数侧重尾段好笑密度（末四拍的画面/语感）。
+    """
+    _ = speakers
+    n = len(lines)
+    if n < 4:
+        return 0, []
+
+    tail4 = "".join(lines[-4:])
+    tail3 = "".join(lines[-3:])
+    late = "".join(lines[max(0, n - 8):])
+    points = 0
+    pros: list[str] = []
+
+    # 破规具体（指甲抠/赶紧解开→动作词+破规意图）
+    if RE_FIX.search(late):
+        points += 3
+        pros.append("破规具体好笑")
+
+    # 回旋镖点破（「怎么现在又上手来解了」）
+    if RE_BOOMERANG_RULE.search(tail4):
+        points += 4
+        pros.append("回旋镖点破好笑")
+
+    # 末句破功（哼/算了/随便）
+    last = lines[-1] if n >= 1 else ""
+    if RE_SOFT_LAST.search(last):
+        points += 2
+        pros.append("末句破功好笑")
+
+    # 字面执行走样的视觉好笑（塔倒/水溢）
+    if d_humor.RE_TWIST_VISUAL.search(late) and RE_MESS.search(late):
+        points += 2
+        pros.append("字面歪读收束好笑")
+
+    return points, pros
+
+
 def score_punchline(
     lines: list[str],
     speakers: list[str],
@@ -176,8 +221,10 @@ QUALITY_PROFILE = TypeQualityProfile(
         "你说别",
     ),
     collect_humor_issues=d_humor.collect_humor_issues,
+    collect_fact_issues=d_facts.collect_fact_issues,
     score_opening_quality=d_opening.score_opening_quality,
     score_scene_beat=score_scene_beat,
+    score_funniness_tail=score_funniness_tail,
     score_specificity_bonus=score_specificity_bonus,
     humor_issue_caps=d_humor.HUMOR_ISSUE_CAPS,
     humor_revision_hint=_d_revision_hint,

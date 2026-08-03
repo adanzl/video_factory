@@ -11,6 +11,9 @@ LINE_C = StoryTypeLine(
     label="公平执念",
     keywords=STORY_TYPE_KEYWORDS["C"],
     quality_ready=True,
+    body_lines_min=20,
+    body_lines_max=22,
+    line_format_hint="13–16字，动作/赛规+反噬双信息",
     punchline_example="C类公平执念，姐姐规则被字面戳穿",
     prompt_block="""\
 【本次类型：C 公平执念 — 专属线路】

@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 
 from app.services.daily_story.story_types import parse_story_type_code
+from app.services.daily_story.story_types.b.humor import RE_PLAN_FAIL
 
 RE_MOM_PUNISH = re.compile(
     r"站好|过来|罚|不许|今晚|检讨|说清楚|墙角|罚站|别想吃|偷吃|拿的什么",
@@ -118,7 +119,14 @@ def collect_fact_issues(story: dict) -> list[str]:
                 for m in RE_PACT_ROLE.finditer(later)
                 if m.group(2) in verbs
             )
-            if swaps >= 2 and "都怪你" in later and "走样" not in later:
+            # 后文只要出现真实走样（连锁意外），就不是「无走样却改口」；
+            # 字面「走样」常写成具体意外（掉了/洒了/卡住），勿按词穷举
+            if (
+                swaps >= 2
+                and "都怪你" in later
+                and "走样" not in later
+                and not RE_PLAN_FAIL.search(later)
+            ):
                 issues.append("B事实分工约定后无走样却改口")
 
     mom_i = next(

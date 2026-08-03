@@ -1390,6 +1390,73 @@ def test_b_chain_accepts_ye_with_antecedent():
     assert not collect_chain_anaphora_issues(lines, None)
 
 
+def test_b_ally_accepts_guard_post_pact():
+    """结盟用「站门口盯紧 / 一人一块」等语义表达也算约定，勿按词穷举。"""
+    from app.services.daily_story.story_types.b.humor import collect_humor_issues
+
+    lines = [
+        "姐，蛋糕切好没，我站门口盯紧。",
+        "嘘，妈在睡觉，你放轻点。",
+        "好，切两块，一人一块。",
+        "哎呀，奶油粘手上了！",
+        "快舔掉，别滴地上。",
+        "蛋糕歪了，快扶住！",
+    ]
+    issues = collect_humor_issues(lines, None)
+    assert not any("缺结盟约定" in i for i in issues)
+
+
+def test_b_huan_accepts_mid_chain_adversative():
+    """「你哭得还带响」是转折用法（还居然），连锁中已有动作则放过。"""
+    from app.services.daily_story.story_types.b.humor import _chain_anaphora_tag
+
+    line = "那我说你摔了，你哭得还带响。"
+    prev2 = "就说在草地上摔了个屁股蹲。你摔了还咧嘴笑。"
+    assert _chain_anaphora_tag(line, prev2) is None
+
+
+def test_b_huan_still_flags_ungrounded():
+    """「还踩了一脚」前句无动作仍判连说，未过宽。"""
+    from app.services.daily_story.story_types.b.humor import _chain_anaphora_tag
+
+    line = "他还踩了一脚泥。"
+    prev2 = "地上全是水。"
+    assert _chain_anaphora_tag(line, prev2) == "还字缺前句动作"
+
+
+def test_b_fact_accepts_mishap_chain_not_role_swap():
+    """约定分工后虽有角色词与甩锅，但正文有真实连环走样，不算「无走样却改口」。"""
+    from app.services.daily_story.story_types.b.facts import collect_fact_issues
+
+    story = {
+        "punchline_explain": "B类结盟翻车：姐弟联手偷吃，蛋糕掉地露馅",
+        "conflict_core": "姐弟联手偷吃蛋糕，望风失误露馅",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "我拿盘子，你盯门口"},
+            {"speaker": "灿灿", "line": "好，一人一块，我望风"},
+            {"speaker": "昭昭", "line": "嘘，妈在睡觉，放轻点"},
+            {"speaker": "灿灿", "line": "哎呀，奶油粘手上了！"},
+            {"speaker": "昭昭", "line": "快舔掉，别滴地上。"},
+            {"speaker": "灿灿", "line": "蛋糕歪了，快扶住！"},
+            {"speaker": "昭昭", "line": "扶住了，奶油蹭脸了。"},
+            {"speaker": "灿灿", "line": "别笑，快擦掉！"},
+            {"speaker": "昭昭", "line": "擦不掉，越擦越花。"},
+            {"speaker": "灿灿", "line": "用水冲，水声哗哗。"},
+            {"speaker": "昭昭", "line": "你手滑，碟子掉了！"},
+            {"speaker": "灿灿", "line": "我接住了，蛋糕掉地上！"},
+            {"speaker": "昭昭", "line": "别动，我拿纸，你踩到渣。"},
+            {"speaker": "灿灿", "line": "我不敢抬脚，怕滑倒。"},
+            {"speaker": "昭昭", "line": "都怪你没看好！"},
+            {"speaker": "灿灿", "line": "是你自己搞砸的！"},
+            {"speaker": "妈妈", "line": "你俩拿的什么！又偷吃！"},
+            {"speaker": "昭昭", "line": "被发现了！"},
+            {"speaker": "灿灿", "line": "这下死定了……"},
+        ],
+    }
+    issues = collect_fact_issues(story)
+    assert not any("无走样却改口" in i for i in issues)
+
+
 def test_b_freeze_rejects_double_side_ding():
     from app.services.daily_story.story_types.b.humor import _freeze_lines_issues
 

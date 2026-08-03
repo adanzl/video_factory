@@ -12,6 +12,12 @@ LINE_B = StoryTypeLine(
     keywords=STORY_TYPE_KEYWORDS["B"],
     quality_ready=True,
     punchline_example="B类结盟翻车，姐弟瞒妈结盟执行走样互甩锅一起露馅",
+    # 句数硬预算写进 JSON 模板（Flash 对可校验格式更听话）：23–24 句 × 每句 13–16 字
+    # 隐含约 300–380 字；拼接时正文开头与开场重叠的密谋句会被删掉（约 30 字），
+    # 故首稿瞄准 300–340，删后仍 ≥280 落在硬卡内
+    body_lines_min=23,
+    body_lines_max=24,
+    line_format_hint="13–16字，动作/分工+连锁结果双信息",
     prompt_block="""\
 【本次类型：B 结盟翻车 — 专属线路】
 - 核心：姐弟**联手**瞒妈妈或钻空子；好笑在**同盟裂了各自保命**，
