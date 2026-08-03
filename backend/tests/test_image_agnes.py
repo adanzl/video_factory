@@ -284,8 +284,9 @@ def test_build_verify_checklist_daily_includes_zhao() -> None:
     assert "男孩超短发" in user
     assert "波波头" in user
     assert "扎马尾的女孩即灿灿" in user
-    assert "黑色单侧高马尾" in user
-    assert "蓝、金、粉、紫" in user
+    assert "单侧高马尾" in user
+    assert "霓虹条纹" in user
+    assert "彩虹挑染" in user
     assert "最多 2 条" in user
     assert "照片墙" in user
 
@@ -349,7 +350,9 @@ def test_build_verify_checklist_daily_includes_zhao() -> None:
     assert max_can == 2
     assert "上限参考 2" in user_can
     assert "只数人头" in user_can
-    assert "黑色单侧高马尾" in user_can
+    assert "单侧高马尾" in user_can
+    assert "彩虹挑染" in user_can
+    assert "霓虹条纹" in user_can
 
     items_mom, user_mom, max_mom = AgnesImageProvider._build_verify_checklist(
         prompt="只有妈妈",

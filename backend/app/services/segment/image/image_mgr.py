@@ -24,7 +24,7 @@ def _greenlet_app_context():
 def _verify_prompt_regen_feedback(speakers: list[str]) -> str:
     look: list[str] = []
     if '灿灿' in speakers:
-        look.append('灿灿黑色单侧高马尾禁双马尾禁异色发')
+        look.append('灿灿黑色单侧高马尾禁彩虹挑染禁异色发')
     if '昭昭' in speakers:
         look.append('昭昭男孩超短发禁波波头')
     if '妈妈' in speakers:
