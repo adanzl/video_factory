@@ -322,16 +322,20 @@ def wrap_image_prompts(
 
 _IMAGE_PROMPT_DIMENSIONS_FULL = (
     "篇幅150-300字，连贯中文，禁用维度标签。"
-    "按风格→主体→场景→光照→构图→质量顺序："
+    "按风格→主体→场景→光照→构图→一致性→质量顺序："
     "①视觉风格（遵循 visual_style 定调，置于句首）；"
     "②主体（角色须写年龄/发型/脸型/服装/身高体型等外貌特征，与 visual_style 主角描述一致；表情扩张力、姿态、动作，至少2句细节）；"
     "③场景（前景/中景/背景，写至少 2 个具体物品）；"
     "④光照（主辅光方向、冷暖色调、明暗对比）；⑤构图（景别、占比、留白）；"
-    "⑥写材质纹理光影层次，禁4K/8K/分辨率套话与空话。"
+    "⑥视觉连续性（同场景多镜时，主体外貌/服装/发型须与相邻镜一致，"
+    "场景主要陈设与空间位置不跳变，光照方向与色温保持统一；"
+    "仅根据本镜景别调整构图与细节重点，不改变已建立的视觉元素）；"
+    "⑦写材质纹理光影层次，禁4K/8K/分辨率套话与空话。"
     "【约束】仅单帧静态，禁连续运动/时间推移，动态只放 motion_prompt；"
-    "仅表达本段 text 与 visual_brief，禁提前画后续段落。"
+    "仅表达本段 text 与 visual_brief，但须与相邻镜共享的背景元素保持一致。"
     "【时间约束】禁止使用「先是…接着…」「然后」「镜头切至」等描述时间推移或镜头切换的词语；整段仅描述一帧静态画面。"
-    "【逐段自检】每段 image_prompt 须独立覆盖全部六维，逐段对照六维清单自查，缺则补写，禁止省略任何维度。"
+    "【逐段自检】每段 image_prompt 须独立覆盖全部七维，逐段对照七维清单自查，缺则补写，禁止省略任何维度。"
+    "其中⑥视觉连续性须对照邻镜检查主体外貌/场景陈设/光照是否统一。"
     "【长度】若不足 150 字，需补充主体细节（外貌/姿态）、场景陈设、光照方向/色温或构图说明；不凑字数，按画面复杂度自然充分描述。"
 )
 
@@ -740,12 +744,27 @@ def _build_system_prompt(
     parts = [
         f"{role}输出JSON，字段：image_prompts。",
         f"image_prompts为数组，每项含segment_index{fields}。",
+    ]
+    if not is_daily:
+        parts.append(
+            "【全局视觉锚点】生成前先通读全片 visual_style 与 setting，"
+            "确定贯穿全片的视觉常量，确保相邻分镜画面衔接自然、视觉元素统一：\n"
+            "A. 主角标准外貌（年龄/发型/脸型/服装/身高体型），各镜人物描述保持一致；\n"
+            "B. 场景空间关系（房间布局、门窗位置、主要家具陈设），"
+            "同场景连续镜中背景元素不跳变、不凭空出现或消失；\n"
+            "C. 主光源方向与色调（窗光/顶灯/自然光及其方向、冷暖基调），"
+            "同场景光照逻辑统一。\n"
+            "每段 image_prompt 在七维展开时须以此为基准，"
+            "多镜同场景时仅根据景别变化调整构图与细节重点，"
+            "不改变已建立的视觉元素。"
+        )
+    parts.append(
         image_prompt_rule(
             orientation=orientation,
             content_style=content_style,
             sd15_mode=include_sd15_prompt and not is_daily,
         ),
-    ]
+    )
     if include_sd15_prompt and not is_daily:
         parts.append(_SD15_PROMPT_EN_RULE)
     parts.append(_coverage_clause(partial=partial))
@@ -772,11 +791,22 @@ def _build_user_prompt(
 ) -> str:
     setting = str(script.get("setting") or "").strip()
     setting_line = f"全片地点 setting：{setting}\n" if setting else ""
+    is_daily = content_style == CONTENT_STYLE_DAILY_STORY
+    anchor_hint = (
+        ""
+        if is_daily
+        else (
+            "【视觉一致性要求】同场景相邻分镜须保持主体外貌/场景陈设/光照方向一致，"
+            "仅根据景别调整构图与细节重点。请先生成全片视觉锚点（主角标准外貌、场景空间关系、主光源），"
+            "再逐镜以此展开。\n\n"
+        )
+    )
     user = append_supplementary_to_user(
         (
             f"视频标题：{script.get('title', '')}\n"
             f"{setting_line}"
-            f"全片画风定调 visual_style：{script.get('visual_style', '')}\n\n"
+            f"全片画风定调 visual_style：{script.get('visual_style', '')}\n"
+            f"{anchor_hint}"
             "各分镜口播与画面描述：\n"
             + "\n".join(lines)
             + _user_tail(
