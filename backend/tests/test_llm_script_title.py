@@ -487,7 +487,9 @@ def test_build_daily_story_retry_user_asks_to_expand_short_draft():
     )
 
     prev = _valid_story(n=10)
-    assert resolve_daily_story_retry_length_mode(prev) == "revise_expand"
+    # 下限从 280 降到 240，10 句 × 24 字 = 240 刚好踩线，
+    # gap=0 ≤ PATCH_DEFICIT_MAX(32) → revise_patch 而非 revise_expand
+    assert resolve_daily_story_retry_length_mode(prev) == "revise_patch"
     assert (
         resolve_daily_story_retry_length_mode(
             prev, errors="正文总字数须≥280，当前180（还差100字）"
@@ -641,8 +643,8 @@ def test_local_patch_pads_small_char_deficit():
         validate_daily_story_json,
     )
 
-    story = _valid_story(n=18)
-    target = 268  # 还差 12，落在本地补字窗口
+    story = _valid_story(n=14)
+    target = 228  # 还差 12，落在本地补字窗口（下限已从 280 降到 240）
     while dialogue_total_chars(story) > target:
         progressed = False
         for d in story["dialogue"][2:-4]:
@@ -656,12 +658,12 @@ def test_local_patch_pads_small_char_deficit():
         if not progressed:
             break
     before = dialogue_total_chars(story)
-    assert 280 - 32 <= before < 280
+    assert 240 - 32 <= before < 240, f"before={before}"
     patched, notes = try_local_patch_daily_story_body(story)
     after = dialogue_total_chars(patched)
     assert notes
     assert after >= before
-    if after >= 280:
+    if after >= 240:
         validate_daily_story_json(patched, phase="body")
 
 

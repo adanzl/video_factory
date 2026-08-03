@@ -303,13 +303,50 @@ def collect_humor_issues(
     return cons
 
 
-# ── 缺位补位（待 A 类另一台机器校准确认后填入真实逻辑）──
+# ── 好笑加分（A 类校准落地）──
 
-HUMOR_ISSUE_CAPS: tuple[tuple[str, int], ...] = ()
-"""A 类好笑维 cap 表（待另一台机器校准后补齐）。
+# 一锤可拍动作/器物词：当场看见灿灿犯规的可见细节
+_RE_HAMMER_COUNTABLE = re.compile(
+    r"第[一二三四五六七八九十\d]+[口下个次步粒颗块片根条只]|"
+    r"[一二三四五六七八九\d]+[口下个次步粒颗块片根条只]|"
+    r"几[口下个次步粒颗块片根条只]|哪个数|算错|得数|"
+    r"噗|咽下|咽了|吐出来|泡沫|腮帮|嘴角|牙签|汁水|果渣|"
+    r"断了|碎了|洒了|溅|散了|滑了|掉了|塞进|鼓鼓|油乎|黏黏",
+)
+_RE_HAMMER_EXPOSE = re.compile(
+    r"(?:你看|你听|你闻|你摸|你尝|瞧|听这|看这|"
+    r"你.*[自己也还就在].*[了着呢吧])",
+)
+_RE_CLOSING_GROUNDED_HAMMER = re.compile(
+    r"(?:吐水|停手|咽下|咽了|吐出来|吧唧|系反|系错|散了|"
+    r"断了|碎了|洒了|算错|写错|弹错|嚼|塞|噗|溅|掉了|滑了)",
+)
 
-填入格式：("issue_substring", max_penalty)，如 ("末四拍不完整", 5)。
-"""
+
+HUMOR_ISSUE_CAPS: tuple[tuple[str, int], ...] = (
+    ("末四拍不完整", 5),
+    ("追问闭环模板复读", 5),
+    ("偏C式争公平口号", 5),
+    ("末句哼完仍发指令", 4),
+    ("末句仍嘴硬甩权", 4),
+    ("收束空甩身份", 5),
+    ("收束借口复读中段", 5),
+    ("中段多套免责借口叠罗汉", 6),
+    ("质检说明书注水", 5),
+    ("催进度", 4),
+    ("咽下自相矛盾", 5),
+    ("检查样品复读", 5),
+    ("角色错位", 6),
+    ("偷吃权威过早", 4),
+    ("偷吃埋句过早", 5),
+    ("偷吃缺赖账", 4),
+    ("偷吃缺咽下一锤", 6),
+    ("咽下后质检注水", 4),
+    ("中段提前引话", 5),
+    ("偷吃语气词注水", 4),
+    ("刷牙缺可拍一锤声画", 6),
+    ("收束未扣一锤", 6),
+)
 
 
 def score_scene_beat(
@@ -317,16 +354,92 @@ def score_scene_beat(
     *,
     text_has_hammer_beat,
 ) -> tuple[int, list[str]]:
-    """A 类中段可拍场面加分（待校准后补齐）。
+    """A 类一锤场面分：中段 6–15 句必出可数可拍的犯规细节。
 
-    目标：中段 6–15 句必出「可数可拍」一锤（第几口/几下/哪个数），
-    露馅后 2 句内被点破。
+    一锤落地（当场看见灿灿犯规）+ 露馅后 2 句内被点破 = 满分。
     """
-    _ = lines, text_has_hammer_beat
-    # TODO: 另一台机器校准 A 5层到齐后，填入真实评分逻辑
+    _ = text_has_hammer_beat
+    n = len(lines)
+    if n < 8:
+        return 0, []
+
+    mid = "".join(lines[max(6, n // 3) : max(8, n - 6)])
+    mid_wide = "".join(lines[max(4, n // 4) : max(6, n - 4)])
+
+    has_countable = bool(_RE_HAMMER_COUNTABLE.search(mid_wide))
+    has_expose = bool(_RE_HAMMER_EXPOSE.search(mid_wide))
+
+    if has_countable and has_expose:
+        return 5, ["有一锤场面"]
+    elif has_countable:
+        return 3, ["有可拍细节"]
     return 0, []
 
 
+def score_funniness_tail(
+    lines: list[str],
+    speakers: list[str] | None = None,
+) -> tuple[int, list[str]]:
+    """A 类末四拍好笑加分：引话扣一锤 + 那不一样有新借口 + 软破功落点。
+
+    满分 13 分（引话扣锤4 + 那不一样新借口3 + 哪里不一样到位3 + 软破功甜3）。
+    """
+    n = len(lines)
+    if not speakers or len(speakers) != n or n < 8:
+        return 0, []
+
+    tail4 = lines[-4:] if n >= 4 else lines
+    tail4_text = "".join(tail4)
+    points = 0
+    pros: list[str] = []
+
+    # 1. 引话扣一锤：收束引用的话须扣住一锤动作词（吐水/咽下/系反等），非空规矩
+    if n >= 4:
+        cite_line = lines[-4] if speakers[-4] == "昭昭" else (
+            lines[-5] if n >= 5 and speakers[-5] == "昭昭" else ""
+        )
+        if cite_line and _RE_CLOSING_GROUNDED_HAMMER.search(cite_line):
+            points += 4
+            pros.append("引话扣一锤")
+        elif cite_line and _RE_DIRECT_QUOTE.search(cite_line):
+            points += 2
+            pros.append("引话有出处")
+
+    # 2. 那不一样有新借口（非空甩身份）
+    if n >= 3 and speakers[-3] == "灿灿":
+        bu_yi_yang = lines[-3]
+        if "那不一样" in bu_yi_yang:
+            # 有实质借口词（示范/教学/检样/开饭/样品/试吃/把关/特批）加分
+            if re.search(
+                r"示范|教学|检样|开饭|样品|试[吃尝]|把关|特批|检查|"
+                r"不算|不停|例外|咽下|吐水|系法|交叉|嚼",
+                bu_yi_yang,
+            ):
+                points += 3
+                pros.append("那不一样有新借口")
+            elif "我是姐姐" in bu_yi_yang or "我说了算" in bu_yi_yang:
+                # 空甩身份不加分
+                pass
+            else:
+                points += 1
+                pros.append("那不一样有区分")
+
+    # 3. 哪里不一样到位（全文仅此一处）
+    if n >= 2 and speakers[-2] == "昭昭" and "哪里不一样" in lines[-2]:
+        points += 3
+        pros.append("哪里不一样收束到位")
+
+    # 4. 软破功落点甜（给东西/认输 优于 干哼）
+    if speakers[-1] == "灿灿":
+        last = lines[-1]
+        if re.search(r"给[你我他]|吃吧|玩吧|去吧|算你对|你赢了", last):
+            points += 3
+            pros.append("软破功落点甜")
+        elif re.search(r"哼|行吧|算了|随便|好吧", last):
+            points += 1
+            pros.append("软破功收束")
+
+    return points, pros
 def score_funniness_tail(
     lines: list[str],
     speakers: list[str] | None = None,
