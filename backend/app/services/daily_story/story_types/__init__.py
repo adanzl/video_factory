@@ -244,6 +244,21 @@ def quality_ready_codes() -> list[str]:
     return [k for k, line in STORY_TYPE_LINES.items() if line.quality_ready]
 
 
+# A 类反向过滤：纯知识争议/口头辩论（无犯规行为）不适合权威翻车
+# 恐龙化石是鸟的祖先 → 知识争议，没有灿灿立规矩→犯规→被抓的链条
+_RE_A_REQUIRES_RULE = re.compile(
+    r"不能|不许|不准|不让|不可以|只能|必须|应该|要换|得换|要脱|得脱|"
+    r"别玩|别吃|别进|别碰|少玩|少吃|写完|做完|练完|刷满|刷够|"
+    r"系[好对紧]|叠[好齐整]|收拾|整理|关掉|放下|别[看玩碰拿]",
+)
+# 知识争议特征：学术话题 + 对错争论，没有行为规矩
+_RE_A_KNOWLEDGE_DISPUTE = re.compile(
+    r"恐龙|化石|祖先|进化|起源|科学|宇宙|星球|历史|古代|"
+    r"百科|书上[说写]|图鉴|真的[是嘛]|假的|不对|你错|"
+    r"说.{0,4}(?:是|不是|对|错)|争论|辩论|证明|证据",
+)
+
+
 def select_story_type_tag(theme: str) -> str:
     """按主题关键词选类型；无匹配时在 `quality_ready` 类型中随机。"""
     scores = {
@@ -256,6 +271,9 @@ def select_story_type_tag(theme: str) -> str:
         candidates = list(ready)
     else:
         candidates = [k for k, v in scores.items() if v >= max_score]
+    # A 类排除纯知识争议（无行为犯规链条）
+    if "A" in candidates and _RE_A_KNOWLEDGE_DISPUTE.search(theme) and not _RE_A_REQUIRES_RULE.search(theme):
+        candidates = [c for c in candidates if c != "A"]
     if not candidates:
         candidates = list(ready)
     selected = random.choice(candidates)
