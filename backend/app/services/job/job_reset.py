@@ -90,9 +90,6 @@ def _fs_clear_segment_clips(media_dir: Path) -> None:
         for clip in clips_dir.glob('*.mp4'):
             clip.unlink()
 
-def _db_clear_all_segment_media(job_id: int) -> None:
-    repo_segment.clear_segment_media(job_id, None)
-
 def _fs_clear_all_segment_media(media_dir: Path) -> None:
     _archive_wan_clips(media_dir)
     images_dir = media_dir / 'images'
@@ -196,10 +193,10 @@ def _db_clear_stage_self(job_id: int, stage: str, job: dict, *, segment_indices:
                 _db_clear_segment_clips(job_id)
         elif segment_scope == 'images':
             _db_clear_segment_images(job_id, segment_indices)
-        elif segment_indices:
-            _db_clear_partial_segment_media(job_id, segment_indices)
         else:
-            _db_clear_all_segment_media(job_id)
+            # segment/all：指定序号或全量都须清 image_path + clip_path
+            # （旧逻辑在有 segment_indices 时误走 clear_clips_only）
+            _db_clear_segment_images(job_id, segment_indices)
         return
     if stage == 'merge':
         repo_job.update_job(job_id, final_path=None)
@@ -238,10 +235,14 @@ def _fs_clear_stage_self(stage: str, media_dir: Path, job: dict, *, segment_indi
                 _fs_clear_segment_clips(media_dir)
         elif segment_scope == 'images':
             _fs_clear_segment_images(media_dir, segment_indices)
-        elif segment_indices:
-            _fs_clear_partial_segment_media(media_dir, segment_indices)
         else:
-            _fs_clear_all_segment_media(media_dir)
+            # segment/all：有序号时也删静图，避免只清 clip 导致 UI 仍显示旧图
+            if segment_indices:
+                clip_names = [f'{index}.mp4' for index in segment_indices]
+                _archive_wan_clips(media_dir, clip_names=clip_names)
+                _fs_clear_segment_images(media_dir, segment_indices)
+            else:
+                _fs_clear_all_segment_media(media_dir)
         return
     if stage == 'merge' and media_dir.exists():
         _fs_clear_merge_artifacts(media_dir)
