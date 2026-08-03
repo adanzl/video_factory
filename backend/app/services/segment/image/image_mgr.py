@@ -24,9 +24,9 @@ def _greenlet_app_context():
 def _verify_prompt_regen_feedback(speakers: list[str]) -> str:
     look: list[str] = []
     if '灿灿' in speakers:
-        look.append('灿灿黑色单侧高马尾禁彩虹挑染禁异色发')
+        look.append('灿灿黑色头发黑色单侧高马尾，头发通体纯黑')
     if '昭昭' in speakers:
-        look.append('昭昭男孩超短发禁波波头')
+        look.append('昭昭男孩超短发，露出双耳与后颈')
     if '妈妈' in speakers:
         look.append('妈妈须为成年女性黑长发米色上衣牛仔裤，禁止画成小孩')
     look_clause = f"；仍须保持：{'；'.join(look)}" if look else ''

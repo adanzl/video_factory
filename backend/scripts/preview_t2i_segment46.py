@@ -1,4 +1,4 @@
-"""预览 job 46 第 1 分镜文生图（默认带参考图）。
+"""预览 job 61 第 1 分镜文生图（默认带参考图）。
 
 用法（在 backend 目录）:
 
@@ -10,6 +10,8 @@
 输出: tmp/t2i_seg1_<ts>.png
 
 提示词与流水线共用 assemble_daily_t2i_prompt（规则拼装）。
+
+job 61 seg1（妈妈心里换过鞋）: 验证发色硬锁前置（首句注入 + 角色块后）能否压住彩虹挑染。
 """
 
 from __future__ import annotations
@@ -43,20 +45,27 @@ from app.utils.job_info import CONTENT_STYLE_DAILY_STORY
 logger = logging.getLogger(__name__)
 
 # ══════════════════════════════════════════════════════════════════════
-#  分镜数据（模拟 DB 中 job 46 seg1 的字段；改这里换分镜）
+#  分镜数据（模拟 DB 中 job 61 seg1 的字段；改这里换分镜）
 # ══════════════════════════════════════════════════════════════════════
 
 SEG1 = {
     "segment_index": 1,
-    "speakers": ["灿灿", "昭昭"],
+    "speakers": ["昭昭", "灿灿", "妈妈"],
     "shot_type": "特写",
-    # visual_brief: 对白「刚叠好的衣服皱成一团 / 只碰一下没弄皱」
+    # visual_brief: job 61「妈妈心里换过鞋」seg1（对白：进门必须换拖鞋）
     "visual_brief": (
-        "客厅沙发上，原本叠好的衣服已被揉皱成一团堆在灿灿面前；"
-        "灿灿右手食指指向那团皱衣服，左手叉腰，瞪圆眼睛嘴巴大张；"
-        "昭昭站旁边双手摊开耸肩，撇着嘴角一脸无辜。"
-        "茶几上放着空水杯，沙发扶手搭着叠衣板。"
+        "客厅门口，门垫歪斜，鞋柜敞开，柜面上整齐摆着一双室内拖鞋；"
+        "画面从左到右是昭昭、妈妈、灿灿：昭昭站在左边，左手叉腰，右手指向妈妈脚下，"
+        "瞪圆眼睛、嘴巴大张做出质问的夸张表情；"
+        "妈妈站在中间，一只脚正迈入客厅地板，另一只脚还踩在门垫上，"
+        "双手摊开耸着肩，眉毛高挑、撇嘴露出“这不重要”的神态；"
+        "灿灿站在右边，两手背在身后，好奇地歪头看向妈妈脚下。"
+        "地板上从门口延伸出几串带灰的大鞋印，鞋印清晰醒目，一直通到妈妈脚边。"
     ),
+    "dialogue": [
+        {"speaker": "昭昭", "text": "妈，不换拖鞋可以进客厅么？"},
+        {"speaker": "妈妈", "text": "不行，进门必须换拖鞋，鞋子放鞋柜上。"},
+    ],
 }
 
 # ── 默认 prompt: 与流水线同一套规则拼装 ──────────────────────────────
@@ -67,7 +76,8 @@ EXPECTED_SPEAKERS = SEG1["speakers"]
 
 
 def _size_from_env() -> str:
-    return "1280*720"
+    # 测试用小尺寸 640*360（16:9 同比例），生成快很多；流水线仍走 1280*720
+    return "640*360"
 
 
 def _resolve_ref_images(
@@ -92,6 +102,12 @@ def main() -> int:
         "--prompt",
         default=T2I_PROMPT,
         help="文生图提示词（默认已内置 job 46 seg1 提示词）",
+    )
+    parser.add_argument(
+        "--prompt-file",
+        type=Path,
+        default=None,
+        help="从文件读提示词（优先于 --prompt）",
     )
     parser.add_argument(
         "--size",
@@ -128,6 +144,9 @@ def main() -> int:
         help="打印 DEBUG 日志",
     )
     args = parser.parse_args()
+
+    if args.prompt_file is not None:
+        args.prompt = args.prompt_file.read_text(encoding="utf-8").strip()
 
     # ── 参考图 ────────────────────────────────────────────────────
     ref_images = _resolve_ref_images(args.ref, args.no_ref)
