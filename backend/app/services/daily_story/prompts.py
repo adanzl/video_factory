@@ -1387,7 +1387,7 @@ def build_daily_story_opening_prompts(
 
 # 特写镜（后续走 I2V）对白上限，图生视频口型轮次限制
 DAILY_SCRIPT_KEYFRAME_MAX_DIALOGUE_LINES = 2
-# 特写镜数量：约 1/4 下限、1/3 上限（关键帧 i2v 节奏）
+# 特写镜数量：约 1/3 下限、1/2 上限（关键帧 i2v 节奏）
 _CLOSEUP_TURNING_RE = re.compile(
     r"妈脚步声|站好|干什么|完蛋|破功|愣住|证据|翻出|拆穿|露馅|"
     r"啊呀|哎呀|不对|才怪|才不是"
@@ -1418,8 +1418,8 @@ DAILY_SCRIPT_SYSTEM_PROMPT = """\
    禁止为转折把短句单独拆成不足 {min_chars} 字的镜；
    若转折轮共 3 句：特写只留前 2 句，第 3 句进下一镜（可中景）。
 8. 【特写数量·硬性】按你**实际切出的镜数 N** 计（勿按估算偷懒）：
-   特写个数须落在 max(2, ⌈N/4⌉)–⌊N/3⌋，与程序校验一致。
-   参考：8 镜→2–3，10 镜→3–4，12 镜→3–4（约估 {scene_count} 镜时约
+   特写个数须落在 max(2, ⌈N/3⌉)–⌊N/2⌋，与程序校验一致。
+   参考：8 镜→3–4，10 镜→4–5，12 镜→4–6（约估 {scene_count} 镜时约
    {closeup_min}–{closeup_max}）。开场首镜 + 至少 1 个中段转折 +
    妈妈破功/收场镜须特写；**禁止** N≥8 时全文只有 1–2 个特写。
    凑特写只改 shot_type 或拆/并镜，**禁止为凑特写删改、遗漏原台词**。
@@ -1460,8 +1460,8 @@ DAILY_SCRIPT_USER_TEMPLATE = """\
    **特写镜硬性不得超过 2 句**（超了拆到下一镜，勿塞 3 句中景糊弄）
 2. 单镜 {min_chars}–{max_chars} 字（约 ≤{max_sec} 秒）；禁止一句一镜
 3. 转折句用特写并放在镜首，特写镜最多再跟 1 句回应；第 3 句须拆到下一镜
-4. 【特写数量·硬性】按实际镜数 N：特写须在 max(2,⌈N/4⌉)–⌊N/3⌋
-   （例 8→2–3、10→3–4；约估 {scene_count} 镜约 {closeup_min}–{closeup_max}）；
+4. 【特写数量·硬性】按实际镜数 N：特写须在 max(2,⌈N/3⌉)–⌊N/2⌋
+   （例 8→3–4、10→4–5；约估 {scene_count} 镜约 {closeup_min}–{closeup_max}）；
    首镜 + 中段转折 + 妈妈收场至少各 1 特写，禁止只标 1–2 个特写糊弄
 5. 原台词须全部分配到各镜 dialogue，措辞不得改；调特写/拆并镜时不得丢句
 
@@ -1475,11 +1475,11 @@ DAILY_SCRIPT_MIN_SEGMENT_SEC = 4.0
 
 
 def daily_script_closeup_bounds(scene_count: int) -> tuple[int, int]:
-    """特写镜数量上下限（约 1/4 下限、1/3 上限）。"""
+    """特写镜数量上下限（约 1/3 下限、1/2 上限）。"""
     if scene_count <= 0:
         return (0, 0)
-    min_cu = max(2, (scene_count + 3) // 4)
-    max_cu = max(min_cu, (scene_count + 2) // 3)
+    min_cu = max(2, (scene_count + 2) // 3)
+    max_cu = max(min_cu, (scene_count + 1) // 2)
     return (min_cu, max_cu)
 
 
