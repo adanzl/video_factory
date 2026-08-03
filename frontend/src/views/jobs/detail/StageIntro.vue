@@ -1,5 +1,5 @@
 <template>
-  <div>
+  <div :class="STAGE_ROOT_CLASS">
     <StageActionBar
       :loading="submitting"
       :disabled="actionDisabled"
@@ -8,6 +8,7 @@
       @to-end="handleRun(true)"
     />
 
+    <div :class="STAGE_BODY_CLASS">
     <div :class="STAGE_BLOCK_COMPACT_CLASS">
       <el-descriptions :column="3" border label-width="96px" class="w-full">
         <el-descriptions-item label="片头风格">
@@ -233,6 +234,7 @@
     </div>
 
     <StageLogsSection :logs="logs" />
+    </div>
   </div>
 </template>
 
@@ -248,12 +250,14 @@ import StageActionBar from "./StageActionBar.vue";
 import StageLogsSection from "./StageLogsSection.vue";
 import {
   STAGE_BLOCK_COMPACT_CLASS,
+  STAGE_BODY_CLASS,
   STAGE_COL_THIRD_CLASS,
   STAGE_EMPTY_CLASS,
   STAGE_PANEL_CLASS,
   STAGE_PANEL_HEADER_CLASS,
   STAGE_PANEL_TITLE_TEXT_CLASS,
   STAGE_RADIO_INLINE_CLASS,
+  STAGE_ROOT_CLASS,
 } from "./stageLayout";
 import {
   buildCover43GuideLineStyles,

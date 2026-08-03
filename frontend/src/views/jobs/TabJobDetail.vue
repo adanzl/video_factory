@@ -1,11 +1,11 @@
 <template>
-  <div v-loading="loading">
+  <div v-loading="loading" class="flex h-full min-h-0 flex-col">
     <div v-if="!jobId" class="py-12 text-center text-gray-400">
       请从任务列表点击「详情」查看任务
     </div>
 
     <template v-else-if="job">
-      <div class="mb-4 flex flex-wrap items-center gap-0">
+      <div class="mb-4 flex shrink-0 flex-wrap items-center gap-0">
         <el-button type="primary" :disabled="loading" @click="() => fetchDetail()" size="small" :icon="Refresh" />
         <span class="flex-1 flex gap-2 px-2" >
           <span class="text-gray-500">#{{ job.id }}</span>
@@ -57,15 +57,21 @@
         type="danger"
         :title="job.error_message"
         :closable="false"
-        class="mb-4"
+        class="mb-4 shrink-0"
       />
 
-      <el-tabs v-model="activeStage" type="border-card" lazy>
+      <el-tabs
+        v-model="activeStage"
+        type="border-card"
+        lazy
+        class="stage-tabs flex min-h-0 flex-1 flex-col overflow-hidden"
+      >
         <el-tab-pane
           v-for="stage in jobStages"
           :key="stage.name"
           :name="stage.name"
           :disabled="stage.disabled"
+          class="h-full min-h-0"
         >
           <template #label>
             <span>{{ stage.label }}</span>
@@ -394,3 +400,26 @@ defineExpose({
   refresh: () => fetchDetail(),
 });
 </script>
+
+<style scoped>
+.stage-tabs :deep(> .el-tabs__header) {
+  flex-shrink: 0;
+}
+
+.stage-tabs :deep(> .el-tabs__content) {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.stage-tabs :deep(> .el-tabs__content > .el-tab-pane) {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+</style>

@@ -1,6 +1,6 @@
 <template>
-  <div>
-
+  <div :class="STAGE_ROOT_CLASS">
+    <div :class="STAGE_BODY_CLASS">
     <div class="space-y-4">
       <!-- 标题 -->
       <section :class="STAGE_PANEL_CLASS">
@@ -239,6 +239,7 @@
     </div>
 
     <StageLogsSection :logs="logs" />
+    </div>
   </div>
 </template>
 
@@ -263,11 +264,13 @@ import { useErrorHandler } from "@/composables/useErrorHandler";
 import { copyText } from "@/utils/utils";
 import StageLogsSection from "./StageLogsSection.vue";
 import {
+  STAGE_BODY_CLASS,
   STAGE_COL_RIGHT_CLASS,
   STAGE_EMPTY_CLASS,
   STAGE_PANEL_CLASS,
   STAGE_PANEL_HEADER_CLASS,
   STAGE_PANEL_TITLE_TEXT_CLASS,
+  STAGE_ROOT_CLASS,
   STAGE_TWO_COL_CLASS,
 } from "./stageLayout";
 

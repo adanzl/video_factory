@@ -1,8 +1,9 @@
 <template>
-  <div>
+  <div :class="STAGE_ROOT_CLASS">
     <StageActionBar :loading="submitting" :disabled="actionDisabled" :disabled-reason="actionDisabledReason"
       @primary="handleRun(false)" @to-end="handleRun(true)" />
 
+    <div :class="STAGE_BODY_CLASS">
     <div class="mb-4 rounded-lg border border-gray-200 p-4">
       <el-descriptions :column="4" border label-width="100px">
         <el-descriptions-item label="原标题" :span="4">
@@ -334,6 +335,7 @@
     </div>
 
     <StageLogsSection :logs="logs" />
+    </div>
   </div>
 </template>
 
@@ -351,6 +353,7 @@ import { DEFAULT_CHAT_SPEECH_CHARS_PER_SEC } from "@/utils/media";
 import { useErrorHandler } from "@/composables/useErrorHandler";
 import StageActionBar from "../detail/StageActionBar.vue";
 import StageLogsSection from "../detail/StageLogsSection.vue";
+import { STAGE_BODY_CLASS, STAGE_ROOT_CLASS } from "../detail/stageLayout";
 
 const DESC_LABEL_WIDTH = "80px";
 

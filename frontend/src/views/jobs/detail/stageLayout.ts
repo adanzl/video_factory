@@ -1,7 +1,14 @@
 /** 阶段页签通用布局 class */
 
+/** 阶段根：填满页签高度，操作栏固定、下方可滚 */
+export const STAGE_ROOT_CLASS = "flex h-full min-h-0 flex-1 flex-col";
+
+/** 「生成 / 从此成片」下方可滚动内容区 */
+export const STAGE_BODY_CLASS =
+  "min-h-0 flex-1 overflow-y-auto scrollbar-overlay pr-1";
+
 export const STAGE_ACTION_BAR_CLASS =
-  "mb-4 flex flex-wrap items-center gap-2 border-b border-gray-200 pb-4";
+  "mb-4 flex shrink-0 flex-wrap items-center gap-2 border-b border-gray-200 pb-4";
 
 /** 带边框的内容卡片 */
 export const STAGE_PANEL_CLASS = "rounded-lg border border-gray-200 p-4";

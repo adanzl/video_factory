@@ -1,8 +1,9 @@
 <template>
-  <div>
+  <div :class="STAGE_ROOT_CLASS">
     <StageActionBar :loading="submitting" :disabled="actionDisabled" :disabled-reason="actionDisabledReason"
       @primary="handleRun(false)" @to-end="handleRun(true)" />
 
+    <div :class="STAGE_BODY_CLASS">
     <div :class="STAGE_BLOCK_CLASS">
       <el-form :label-width="FORM_LABEL_WIDTH"
         class="[&_.el-form-item]:mb-2 [&_.el-form-item__content]:min-w-0 [&_.el-form-item__content]:flex-1 [&_.el-form-item__label]:w-25 [&_.el-form-item__label]:min-w-25 [&_.el-form-item__label]:shrink-0 [&_.el-form-item__label]:justify-end">
@@ -287,6 +288,9 @@
       <div v-else :class="STAGE_EMPTY_CLASS">暂无数据</div>
     </div>
 
+    <StageLogsSection :logs="logs" />
+    </div>
+
     <el-dialog v-model="scriptEditDialogOpen" title="编辑分镜文案" width="560px" destroy-on-close>
       <div class="mb-2 text-sm text-gray-600">分镜 #{{ scriptEditSegmentIndex }}</div>
       <el-input
@@ -304,8 +308,6 @@
         </el-button>
       </template>
     </el-dialog>
-
-    <StageLogsSection :logs="logs" />
   </div>
 </template>
 
@@ -339,7 +341,7 @@ import { useErrorHandler } from "@/composables/useErrorHandler";
 import { copyText } from "@/utils/utils";
 import StageActionBar from "../detail/StageActionBar.vue";
 import StageLogsSection from "../detail/StageLogsSection.vue";
-import { STAGE_BLOCK_CLASS, STAGE_EMPTY_CLASS, STAGE_SECTION_TITLE_CLASS, STAGE_SUBSECTION_CLASS } from "../detail/stageLayout";
+import { STAGE_BLOCK_CLASS, STAGE_BODY_CLASS, STAGE_EMPTY_CLASS, STAGE_ROOT_CLASS, STAGE_SECTION_TITLE_CLASS, STAGE_SUBSECTION_CLASS } from "../detail/stageLayout";
 
 const FORM_LABEL_WIDTH = "100px";
 const SCRIPT_CONFIG_LABEL_WIDTH = "120px";
