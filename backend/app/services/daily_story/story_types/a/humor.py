@@ -70,14 +70,25 @@ def closing_quote_haystack(
     return cancan if cancan.strip() else body_text
 
 
-def _close_four_beat_complete(tail4: list[str]) -> bool:
+def _close_four_beat_complete(
+    tail4: list[str],
+    tail4_speakers: list[str] | None = None,
+) -> bool:
     if len(tail4) < 4:
         return False
-    return (
+    words_ok = (
         "那不一样" in tail4[-3]
         and ("哪里不一样" in tail4[-2] or "都是听" in tail4[-2])
         and any(m in tail4[-1] for m in ("哼", "行吧", "随便", "好吧", "算了"))
     )
+    if not words_ok:
+        return False
+    # speaker 顺序：昭昭引话(-4) → 灿灿那不一样(-3) → 昭昭哪里不一样(-2) → 灿灿软破功(-1)
+    if tail4_speakers and len(tail4_speakers) >= 4:
+        s = tail4_speakers[-4:]
+        if s != ["昭昭", "灿灿", "昭昭", "灿灿"]:
+            return False
+    return True
 
 
 def collect_humor_issues(
@@ -298,7 +309,8 @@ def collect_humor_issues(
                 and re.search(r"吐水|漱口|停手|连续", body_text)
             ):
                 cons.append("收束未扣一锤（应引吐水/停手类原话）")
-    if not _close_four_beat_complete(tail4):
+    tail4_speakers = speakers[-4:] if speakers and len(speakers) >= 4 else None
+    if not _close_four_beat_complete(tail4, tail4_speakers):
         cons.append("末四拍不完整")
     return cons
 
