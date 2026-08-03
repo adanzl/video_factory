@@ -275,6 +275,29 @@ def _daily_story_length_draft_for_type(type_code: str | None) -> str:
   勿偏短指望补满，勿为凑字堆语气词尾巴。
   系统另拼 2 句开场。发现开场另写另验。
 """
+    if type_code and type_code.upper() == "B":
+        return f"""\
+- 片长（B类正文，放最前）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
+  每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
+  【B类·首稿】写 {lo}–{hi} 句；**首稿也须一次写到 ≥{DAILY_STORY_BODY_CHARS_MIN} 字**
+  （瞄准 300–340：正文开头与开场重叠的密谋句拼接时会被删约 30 字，须留出重叠余量，
+  删后仍 ≥{DAILY_STORY_BODY_CHARS_MIN}；上限勿超 {DAILY_STORY_BODY_CHARS_MAX}）；
+  每句带动作/分工 + 连锁结果双信息，自然达到 13–16 字；禁单字/干喊短句；
+  段5收束（妈妈短令 + 姐弟各 1 句定格）满 2–4 句、可短；
+  勿偏短指望补满，勿为凑字堆「完了完了」语气词尾巴。
+  系统另拼 2 句开场。发现开场另写另验。
+"""
+    if type_code and type_code.upper() == "C":
+        return f"""\
+- 片长（C类正文，放最前）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
+  每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
+  【C类·首稿】写 {lo}–{hi} 句；**首稿也须一次写到 ≥{DAILY_STORY_BODY_CHARS_MIN} 字**
+  （瞄准 {DAILY_STORY_BODY_RETRY_TARGET_MIN}–{DAILY_STORY_BODY_RETRY_TARGET_MAX}）；
+  每句带动作/赛规+反噬双信息，自然达到 13–16 字；禁单字/干争短句；
+  回旋镖收束满 3–4 句、可短；被戳穿方末句嘴硬。
+  勿偏短指望补满，勿为凑字堆「你先/我先」复读。
+  系统另拼 2 句开场。发现开场另写另验。
+"""
     return _DAILY_STORY_LENGTH_DRAFT
 
 
@@ -298,6 +321,20 @@ def _daily_story_length_user_draft_for_type(type_code: str | None) -> str:
    （瞄准 {DAILY_STORY_BODY_RETRY_TARGET_MIN}–{DAILY_STORY_BODY_RETRY_TARGET_MAX}），
    每句带动作/表情+抬杠点双信息，自然达到 13–15 字；勿交短稿。
    发现开场另计另验。speaker 仅昭昭/灿灿/妈妈。
+"""
+    if type_code and type_code.upper() == "B":
+        return f"""\
+3. 【B类·首稿】写 **{lo}–{hi} 句**；**须一次写到 ≥{DAILY_STORY_BODY_CHARS_MIN} 字**
+   （瞄准 {DAILY_STORY_BODY_RETRY_TARGET_MIN}–{DAILY_STORY_BODY_RETRY_TARGET_MAX}），
+   每句带动作/分工+连锁结果双信息，自然达到 13–16 字；勿交短稿。
+   发现开场另计另验。speaker 仅昭昭/灿灿/妈妈。
+"""
+    if type_code and type_code.upper() == "C":
+        return f"""\
+3. 【C类·首稿】写 **{lo}–{hi} 句**；**须一次写到 ≥{DAILY_STORY_BODY_CHARS_MIN} 字**
+   （瞄准 {DAILY_STORY_BODY_RETRY_TARGET_MIN}–{DAILY_STORY_BODY_RETRY_TARGET_MAX}），
+   每句带动作/赛规+反噬双信息，自然达到 13–16 字；勿交短稿。
+   回旋镖收束，被戳穿方末句嘴硬。发现开场另计另验。speaker 仅昭昭/灿灿/妈妈。
 """
     return _DAILY_STORY_LENGTH_USER_DRAFT
 
@@ -329,6 +366,26 @@ def _daily_story_length_revise_expand_for_type(type_code: str | None) -> str:
   只增不删、禁止整稿重写、禁止轻轻放×N 凑字、禁止为凑字堆语气词尾巴。
   发现开场另写另验。
 """
+    if type_code and type_code.upper() == "B":
+        lo, hi, _avg = _body_line_budget(type_code)
+        return f"""\
+- 片长（B类偏短重试·一次补满）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
+  每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
+  **本轮必须一次写到 ≥{DAILY_STORY_BODY_CHARS_MIN} 字**（瞄准 {DAILY_STORY_BODY_RETRY_TARGET_MIN}–{DAILY_STORY_BODY_RETRY_TARGET_MAX}）。
+  保留上一稿结盟→意外→连锁→自保→受罚骨架：句数补到 {lo}–{hi}（勿超过 {hi}）；每句尽量 13–16 字；
+  只增不删、禁止整稿重写、禁止连锁复读凑字、禁止为凑字堆语气词尾巴。
+  发现开场另写另验。
+"""
+    if type_code and type_code.upper() == "C":
+        lo, hi, _avg = _body_line_budget(type_code)
+        return f"""\
+- 片长（C类偏短重试·一次补满）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
+  每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
+  **本轮必须一次写到 ≥{DAILY_STORY_BODY_CHARS_MIN} 字**（瞄准 {DAILY_STORY_BODY_RETRY_TARGET_MIN}–{DAILY_STORY_BODY_RETRY_TARGET_MAX}）。
+  保留上一稿立赛规→违规→双标→回旋镖→嘴硬骨架：句数补到 {lo}–{hi}（勿超过 {hi}）；每句尽量 13–16 字；
+  只增不删、禁止整稿重写、禁止先后争读凑字、禁止为凑字堆语气词尾巴。
+  发现开场另写另验。
+"""
     return _DAILY_STORY_LENGTH_REVISE_EXPAND
 
 
@@ -356,6 +413,14 @@ def _daily_story_length_revise_patch_for_type(type_code: str | None) -> str:
   改它或改被引的埋句，使其成为灿灿前文真实原话的逐字子串；
   其余三句（那不一样/哪里不一样/软破功）原样保留。
   发现开场系统另写另验，不计入正文硬卡。
+"""
+    if type_code and type_code.upper() == "C":
+        lo, hi, _avg = _body_line_budget(type_code)
+        return f"""\
+- 片长（C类偏长压缩）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
+  每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
+  压缩到 {lo}–{hi} 句；删赛规绕圈复读、删先后争读叠句；
+  压缩后仍须满足回旋镖收束 + 被戳穿方末句嘴硬结构。发现开场另写另验。
 """
     return _DAILY_STORY_LENGTH_REVISE_PATCH
 

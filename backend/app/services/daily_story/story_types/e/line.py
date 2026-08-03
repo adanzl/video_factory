@@ -11,6 +11,9 @@ LINE_E = StoryTypeLine(
     label="妈妈破功",
     keywords=STORY_TYPE_KEYWORDS["E"],
     quality_ready=False,
+    body_lines_min=10,
+    body_lines_max=14,
+    line_format_hint="13–16字，妈妈立论/破功+追问双信息",
     punchline_example="E类妈妈破功，妈妈讲理被孩子字面追问绕进去末句破功",
     prompt_block="""\
 【本次类型：E 妈妈破功 — 专属线路】

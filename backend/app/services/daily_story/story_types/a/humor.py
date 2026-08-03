@@ -301,3 +301,40 @@ def collect_humor_issues(
     if not _close_four_beat_complete(tail4):
         cons.append("末四拍不完整")
     return cons
+
+
+# ── 缺位补位（待 A 类另一台机器校准确认后填入真实逻辑）──
+
+HUMOR_ISSUE_CAPS: tuple[tuple[str, int], ...] = ()
+"""A 类好笑维 cap 表（待另一台机器校准后补齐）。
+
+填入格式：("issue_substring", max_penalty)，如 ("末四拍不完整", 5)。
+"""
+
+
+def score_scene_beat(
+    lines: list[str],
+    *,
+    text_has_hammer_beat,
+) -> tuple[int, list[str]]:
+    """A 类中段可拍场面加分（待校准后补齐）。
+
+    目标：中段 6–15 句必出「可数可拍」一锤（第几口/几下/哪个数），
+    露馅后 2 句内被点破。
+    """
+    _ = lines, text_has_hammer_beat
+    # TODO: 另一台机器校准 A 5层到齐后，填入真实评分逻辑
+    return 0, []
+
+
+def score_funniness_tail(
+    lines: list[str],
+    speakers: list[str] | None = None,
+) -> tuple[int, list[str]]:
+    """A 类收束好笑尾段独立加分（待校准后补齐）。
+
+    目标：末四拍（引话/那不一样/哪里不一样/破功）各有独立加权。
+    """
+    _ = lines, speakers
+    # TODO: 另一台机器校准后，填入真实评分逻辑
+    return 0, []

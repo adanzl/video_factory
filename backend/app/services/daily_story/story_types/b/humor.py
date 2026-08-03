@@ -6,7 +6,9 @@ import re
 
 RE_ALLY = re.compile(
     r"一起|咱俩|别告诉|瞒着|瞒妈|约定|联手|暗号|分工|你望风|你放风|"
-    r"放风|望风|说好了|盯门口|你盯|手快|别出声|一人一半|拆包|拆包装",
+    r"放风|望风|说好了|盯门口|盯门|站门口|看门|放哨|盯紧|打掩护|"
+    r"兜着|你盯|手快|别出声|别让妈|妈在|一人一半|一人一|拆包|拆包装|"
+    r"你切|我拿|你拿|你望|我望|你负责|我负责|你动手|下手",
 )
 RE_BLAME = re.compile(
     r"都怪你|是你先|你答应|不是我的|你先|赖我|你不是说好|才不是我的",
@@ -442,6 +444,9 @@ def _chain_anaphora_tag(line: str, prev2: str) -> str | None:
             continue
         stems = _stems_in(frag)
         if stems and not any(s in prev2 for s in stems):
+            # 「还」常接转折/意外（还咧嘴笑/还带响）；连锁中已动作则放过
+            if RE_CHAIN_ACTION.search(prev2) or RE_PLAN_FAIL.search(prev2):
+                continue
             return "还字缺前句动作"
 
     return None

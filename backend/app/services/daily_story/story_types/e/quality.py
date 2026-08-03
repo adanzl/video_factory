@@ -6,6 +6,7 @@ import re
 
 from app.services.daily_story.story_types.e import humor as e_humor
 from app.services.daily_story.story_types.e import opening as e_opening
+from app.services.daily_story.story_types.e import facts as e_facts
 from app.services.daily_story.story_types.quality import (
     SHARED_PUNCH_SOFT,
     TypeQualityProfile,
@@ -124,6 +125,7 @@ QUALITY_PROFILE = TypeQualityProfile(
     penalize_stubborn_end=False,
     penalize_mom_judge=True,
     collect_humor_issues=e_humor.collect_humor_issues,
+    collect_fact_issues=e_facts.collect_fact_issues,
     score_opening_quality=e_opening.score_opening_quality,
     score_scene_beat=score_scene_beat,
     score_funniness_tail=e_humor.score_funniness_tail,

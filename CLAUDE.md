@@ -27,7 +27,17 @@ B 站 AI 全自动科普视频量产系统。输入一个标题，自动完成�
 | `material` | 素材基底合成 | prepare → script → tts → intro → merge → publish |
 | `chat` (daily_story) | 日常故事对话 | script → tts → segment → intro → merge → publish |
 
-每条流水线是一串 `StageExecutor` 子类（`backend/worker/stages/`），每个 stage 有 `name` 和 `run(ctx: JobContext)` 方法。流水线执行逻辑在 `backend/worker/loop.py`，CLI 入口在 `backend/worker/cli.py`。
+每条流水线是一串 `StageExecutor` 子类（`backend/worker/stages/`），每个 stage 有 `name` 和 `run(ctx: JobContext)` 方法。流水线执行逻辑在 `backend/worker/loop.py`，CLI 入口在 `backend/worker/cli.py`。daily_story 使用 `worker/stages/daily_story/{script,tts}.py`，下游复用共享的 Segment / Intro / Merge / Publish。
+
+### 日常故事（`chat` 流水线，近期开发主线）
+
+业务在 `backend/app/services/daily_story/`：`daily_story_mgr.py` 组织「生成剧本 → 建 job」；LLM 故事生成在落 `daily_story` 表时完成，建任务只落 `pending`，需在任务页手动跑阶段（无独立 cron）。代码地图与五类叙事契约见 `docs/日常故事.md`、`docs/日常故事-类型.md`、`docs/提示词构建.md` §D。
+
+- **五类矛盾 A–E**：`story_types/{a,b,c,d,e}/`，每类含 `line.py`（提示词线路）、`validate.py`（硬卡）、`patch.py`（本地修稿）、`facts.py`、`opening.py`、`humor.py`、`quality.py`。类型选择用抽象不变量，**禁止**在 validate.py 按单篇剧情/词表写 regex（见 `.cursor/rules/daily-story-validate.mdc`）。
+- **三层分工**：叙事与措辞放 `line.py`/`prompts.py`；机读不变量放 `validate.py`（字数、speaker、末段结构槽位）；观感放 `quality.py`。「写得不好」走观感降分或改提示词，不做生成硬拦。
+- **选题门控**：`select_story_type_tag` 按主题关键词选类型，无匹配时在 `quality_ready=True` 的类型中随机（现 A/B/C）。
+- **D1.5 笑点骨架**：各类型 `story_plan.py` 的 `ENABLED` 决定是否走（现仅 D），统一入口 `story_design.py`，落库 `story.punchline_blueprint`。
+- **回归**：`backend/scripts/preview_daily_story_batch.py` 批量预览生成稿；文档不贴长对白正例，回归用脚本或线上稿。
 
 ### 关键服务目录 (`backend/app/services/`)
 
@@ -36,6 +46,7 @@ B 站 AI 全自动科普视频量产系统。输入一个标题，自动完成�
 - **tts/** — CosyVoice TTS（DashScope WebSocket 字级时间戳）
 - **segment/** — 分镜执行：出图 (`image/`) + 片段合成 (`clip/`)，含字幕叠加
 - **daily_story/** — 日常故事业务逻辑（A/B/C/D/E 类型），核心：`daily_story_mgr.py` + 各类型子目录 `story_types/{a,b,c,d,e}/`
+- **end_card/** — 片尾生成
 - **job/** — job 生命周期、锁、submit_action
 - **intro/** — 片头生成（多种 intro 策略：science / history_mystery）
 - **media/** — 媒体文件处理（motion_prompt 注入、片头叠加）
@@ -87,6 +98,10 @@ cd backend && python -m pytest tests/                     # 全量
 cd backend && python -m pytest tests/test_script_validation.py  # 单个文件
 ```
 
+## 文档
+
+`docs/` 是子系统权威文档，改动对应模块前先读：`需求.md`、`日常故事.md`、`日常故事-类型.md`、`提示词构建.md`（LLM 提示词阶段索引）、`LLM.md`、`成本.md`、`数据恢复.md`、`平台激励.md`。**日常故事 A–E 类型的校准进度先读 `docs/日常故事-校准.md`**（换机器/换会话继续协同的存档）。编辑 `.md` 文件遵守 `.cursor/rules/markdown-docs.mdc`（markdownlint），自检：`npx markdownlint-cli2 "docs/**/*.md"`。
+
 ## 远程服务器
 
 - **主机名优先级：** `mini`（局域网）> `vip.sy.frp.one:57904` > `57c42474b0ea.ofalias.net:58186`
@@ -102,3 +117,4 @@ cd backend && python -m pytest tests/test_script_validation.py  # 单个文件
 - 测试先本地测通过再推送；`push` = git commit + push
 - 不要用 PowerShell 执行远程查询（会拆坏远程 Python）
 - `ssh` 命令查远程数据
+- Always reply in Chinese.
