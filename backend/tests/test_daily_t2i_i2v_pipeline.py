@@ -39,7 +39,7 @@ def test_assemble_daily_t2i_prompt_structure():
     assert "中近景特写" in prompt
     # 昭昭+灿灿同框默认左昭昭右灿灿（不再按对白先发言者左右对调）
     assert "蓝T恤深蓝短裤短发男孩昭昭" in prompt
-    assert "粉卫衣蓝裤马尾女孩灿灿" in prompt
+    assert "粉卫衣蓝裤黑马尾女孩灿灿" in prompt
     assert "禁止左右对调" in prompt
     assert "画面左边是昭昭，右边是灿灿" in prompt
     assert "深蓝色短裤" in prompt
@@ -79,7 +79,7 @@ def test_assemble_daily_layout_from_visual_brief():
     }
     prompt = assemble_daily_t2i_prompt(seg)
     assert "蓝T恤深蓝短裤短发男孩昭昭" in prompt
-    assert "粉卫衣蓝裤马尾女孩灿灿" in prompt
+    assert "粉卫衣蓝裤黑马尾女孩灿灿" in prompt
     assert "禁止左右对调" in prompt
     assert "画面左边是昭昭，右边是灿灿" in prompt
     assert prompt.count("画面左边是昭昭，右边是灿灿") == 1
@@ -474,7 +474,7 @@ _KEYFRAME_LLM_MOTION = (
     "镜头固定，不推近不拉远，画面只有人物和场景，无任何文字叠加。"
 )
 _FORBIDDEN_INJECTED = re.compile(
-    r"粉色卫衣的马尾女孩|蓝色短袖T恤的短发男孩|嘴巴闭合不张嘴"
+    r"粉色卫衣的黑马尾女孩|蓝色短袖T恤的短发男孩|嘴巴闭合不张嘴"
 )
 _SPEAK_WINDOW_RE = re.compile(
     r"[\d.]+-[\d.]+秒(?:左侧|右侧)(?:男孩|女孩|妈妈)"
