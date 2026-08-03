@@ -284,7 +284,8 @@ def test_build_verify_checklist_daily_includes_zhao() -> None:
     assert "男孩超短发" in user
     assert "波波头" in user
     assert "扎马尾的女孩即灿灿" in user
-    assert "单侧高马尾" in user
+    assert "黑色单侧高马尾" in user
+    assert "蓝、金、粉、紫" in user
     assert "最多 2 条" in user
     assert "照片墙" in user
 
@@ -294,7 +295,7 @@ def test_build_verify_checklist_daily_includes_zhao() -> None:
         content_style="daily_story",
     )
     assert "lr_pos" in [cid for cid, _ in items_lr]
-    assert "粉色卫衣的马尾女孩（灿灿）" in user_lr
+    assert "粉色卫衣的黑马尾女孩（灿灿）" in user_lr
     assert "蓝色短袖T恤的短发男孩（昭昭）" in user_lr
     assert "左右人物对调" in user_lr
 
@@ -308,7 +309,7 @@ def test_build_verify_checklist_daily_includes_zhao() -> None:
         content_style="daily_story",
     )
     assert "mouth_first" in [cid for cid, _ in items_mouth]
-    assert "粉色卫衣的马尾女孩（灿灿）是否张着嘴" in user_mouth
+    assert "粉色卫衣的黑马尾女孩（灿灿）是否张着嘴" in user_mouth
     assert "其他人张嘴与否不影响本项" in user_mouth
     # 无张嘴标记时不加该项；单人有标记也查
     assert "mouth_first" not in [cid for cid, _ in items_lr]
@@ -348,7 +349,7 @@ def test_build_verify_checklist_daily_includes_zhao() -> None:
     assert max_can == 2
     assert "上限参考 2" in user_can
     assert "只数人头" in user_can
-    assert "单侧高马尾" in user_can
+    assert "黑色单侧高马尾" in user_can
 
     items_mom, user_mom, max_mom = AgnesImageProvider._build_verify_checklist(
         prompt="只有妈妈",
