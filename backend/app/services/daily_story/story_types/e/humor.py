@@ -60,7 +60,7 @@ RE_GARBAGE_FILLER = re.compile(
     r"(?:了呢|了呀|嘛了|呢吧|呀呢|呢嘛)$",
 )
 RE_SNACK_TOPIC = re.compile(r"零食|尝菜|偷吃|饭前不吃|试吃|试菜")
-RE_SLEEP_TOPIC = re.compile(r"睡觉|九点|早睡|刷手机|卧床|被窝|挂钟")
+RE_SLEEP_TOPIC = re.compile(r"睡觉|九点|早睡|卧床|挂钟")
 RE_WEAK_TASTE_EYE = re.compile(r"汤汁|舀汤|舔勺|喝了一口汤|偷尝了汤|尝了汤")
 RE_STRONG_TASTE_EYE = re.compile(
     r"勺子|勺上|尝菜|试吃|试菜|嘴角|油渍|油花|菜叶|三大勺|咽|黏黏",

@@ -26,6 +26,40 @@ from app.services.daily_story.story_types import (
     validate_type_opening,
 )
 
+# ── E 类核心词提取 ──
+# 从 theme 中提取妈妈立规矩的核心动作/概念词，贯穿生成与校验
+# "饭前不能吃零食妈妈自己尝菜" → "吃零食"
+# "九点了必须睡觉妈妈还在刷手机" → "睡觉"
+# "吃饭不许挑食妈妈把青菜拨到碗边" → "挑食"
+# "进门要换拖鞋妈妈自己穿着鞋进客厅" → "换拖鞋"
+# "说好不玩手机妈妈被窝屏幕亮" → "玩手机"
+_RE_E_RULE_MARKER = re.compile(
+    r"(?:不能|不许|不准|不要|不可以|不让|别|"
+    r"必须|要|得|应该|说好不|不许?|不让?)"
+    r"(.{1,10}?)(?:妈妈|自己|却|还|，|。|$)",
+)
+_RE_E_CORE_CLEAN = re.compile(r"[哦啊呀呢吧了吗的了]{1,2}$")
+
+
+def extract_e_core_word(theme: str) -> str:
+    """从 E 类主题中提取核心词。
+
+    取「妈妈」之前的规矩段，提取规则标记词后的动作/概念。
+    无法提取时返回空字符串。
+    """
+    if not theme:
+        return ""
+    # 截取妈妈之前的部分作为规矩段
+    rule_seg = theme.split("妈妈")[0] if "妈妈" in theme else theme
+    m = _RE_E_RULE_MARKER.search(rule_seg)
+    if m:
+        core = m.group(1).strip()
+        core = _RE_E_CORE_CLEAN.sub("", core)
+        if core and len(core) >= 2:
+            return core
+    return ""
+
+
 # 角色外貌固定描述，供 visual_style 和分镜生成共享
 # 昭昭与灿灿有参考图，妈妈无参考图独立定义
 DAILY_STORY_CHARACTERS = (
@@ -756,11 +790,18 @@ def _daily_story_user_template(
         anchor = (
             "1. 主题即冲突实物：setting、conflict_core、正文首句须锚定主题中的实物/动作。"
         )
+    core_hint = ""
+    if type_code and type_code.upper() == "E":
+        core_hint = (
+            "0. 【E类·核心词贯穿】本文核心词「{{core_word}}」——"
+            "妈妈规矩、孩子追问戳穿、闭环反问全部围绕核心词；"
+            "规矩句必须含核心词或其同义表述，禁偏离核心词另聊别事。\n"
+        )
     return f"""\
 请根据上述规则，生成一个昭昭和灿灿的日常对话场景。
 
 【本次场景主题（核心事件）】：{{theme}}
-
+{core_hint}
 【要求】：
 {anchor}
 2. {{type_instruction}}
@@ -1191,7 +1232,8 @@ def build_daily_story_prompts(
         length_mode=length_mode,
         type_code=type_code,
     )
-    user = user_tpl.format(theme=theme, type_instruction=type_instruction)
+    core_word = extract_e_core_word(theme) if type_code and type_code.upper() == "E" else ""
+    user = user_tpl.format(theme=theme, type_instruction=type_instruction, core_word=core_word)
     if punchline_blueprint:
         from app.services.daily_story.story_design import (
             expansion_outline_for,

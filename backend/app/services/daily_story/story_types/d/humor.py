@@ -86,17 +86,32 @@ _RE_MID_STOP_NAG = re.compile(
 _RE_ALARM_BEAT = re.compile(
     r"白印|勒红|鼓成|鼓起|麻了|麻花|陷进肉|焊死|脚背|脚趾|解不开",
 )
-# 回旋镖引的规矩，须能在叮嘱方补救动作里对上「她也破了」
+# 回旋镖模板（与 story_plan expansion_outline 第5步三模板对齐）
+# 提取 (key_line, fix_action)，用于验证「引的规矩 + 扣的破规动作」都对得上
+_RE_BOOM_TEMPLATES: tuple[re.Pattern[str], ...] = (
+    # A 直接指控：「你自己说叠整齐，怎么现在揉成团了？」
+    re.compile(r"你自己说(.+?)，怎么现在(.+?)[？]"),
+    # B 对比反打：「你让我叠整齐，你自己倒揉成团了！」
+    re.compile(r"你让我(.+?)，你自己倒(.+?)了[！]?"),
+    # C 说好挖苦：「说好叠整齐的，你倒揉成团起来了！」
+    re.compile(r"说好(.+?)的，你倒(.+?)起来了[！]?"),
+    # D 发现质疑：「咦，你刚才不是说叠整齐吗，怎么又揉成团？」
+    re.compile(r"咦，?你刚才不是说(.+?)吗，怎么又(.+?)[？]"),
+    # E 质疑效力：「那叠整齐还算数吗？你明明在揉成团！」
+    re.compile(r"那(.+?)还算数吗[？，]?你明明在(.+?)[！]"),
+)
+# 旧版：回旋镖引的规矩，须能在叮嘱方补救动作里对上「她也破了」
+# 模板匹配兜底用，逐步收窄
 _BOOM_VIOLATION_PAIRS: tuple[tuple[re.Pattern[str], re.Pattern[str]], ...] = (
     # 违犯侧勿裸「重」——「重新叠」不是用力重；用力/加重/太重/重重 才扣
     # 慢→一把/撸/飞快/带风/甩 是急不是慢
-    (re.compile(r"轻|慢"), re.compile(r"用力|加重|太重|重重|猛|摔|砸|扯|拽|扫|挥|一把|撸|飞快|带风|甩")),
+    (re.compile(r"轻|慢"), re.compile(r"用力|加重|太重|重重|猛|摔|砸|扯|拽|扫|挥|一把|撸|飞快|带风|甩|哗啦")),
     (re.compile(r"别碰|不许碰|不准碰|别动"), re.compile(r"碰|扶|捡|拿|摸|弄")),
     (re.compile(r"别夹|太紧|夹紧"), re.compile(r"夹紧|夹得?更?紧|更紧|用力夹|用力扯|用力捏")),
     (re.compile(r"系紧|用力拉|拉紧|别老散"), re.compile(r"解|抠|拆|扯开")),
     # 浇花类破规=往花盆/托盘加码浇灌（倒回喷壶是收拾不是违犯，勿放行）
     (re.compile(r"别浇|别多|一小口|倒一次"), re.compile(r"浇[了进]|倒进|倒满|倒回(?!喷壶|壶|桶|杯)|灌进|灌回(?!喷壶|壶|桶|杯)|冲进|整壶|全倒|又[倒浇灌]")),
-    (re.compile(r"别弄乱|整齐|平放|别乱翻"), re.compile(r"弄乱|乱了|乱成|扒乱|翻乱|扫乱|堆乱")),
+    (re.compile(r"别弄乱|整齐|平放|别乱翻"), re.compile(r"弄乱|乱了|乱成|扒乱|翻乱|扫乱|堆乱|揉|扫进|塞进")),
     (re.compile(r"关.*轻|轻.*关|别响"), re.compile(r"用力关|摔门|砰|响")),
 )
 
@@ -359,23 +374,10 @@ def collect_humor_issues(
         if re.search(r"拿剪刀|剪开|解开吧|下次|以后|你忍着", last):
             cons.append("末句发指令，不好笑")
 
-    # 回旋镖须点破「现在又上手破规」，不能只引原话
-    if boom_i is not None:
-        boom_ln = lines[boom_i]
-        if RE_BOOM_CLOSE.search(boom_ln) and not RE_BOOM_POINT.search(boom_ln):
-            cons.append("回旋镖未点破，不好笑")
-
-    # 回旋镖引的规矩，须对应叮嘱方补救时的破规动作
+    # ── 回旋镖验证（模板优先 → 旧 BOOM_VIOLATION_PAIRS 兜底）──
     if boom_i is not None:
         boom_line = lines[boom_i]
-        m = _RE_DIRECT_QUOTE.search(boom_line)
-        cite = m.group(1) if m else boom_line
-        # 只取引文本体，去掉「我照做了你却…」这类尾巴
-        cite = re.split(r"[，。！？]|你现在|你却|怎么|我照", cite)[0]
-        cite = re.sub(r"的$", "", cite.strip())
-        if len(cite) < 3:
-            cite = boom_line
-        # 看回旋镖前灿灿近几句补救，勿被开场「我帮你」带偏
+        # 计算 fix_window（boom 前灿灿/妈妈的补救句）
         start = max(0, boom_i - 5)
         if fix_i is not None:
             start = max(start, fix_i - 1)
@@ -386,16 +388,59 @@ def collect_humor_issues(
                     continue
             fix_window_lines.append(lines[i])
         fix_window = "".join(fix_window_lines) or "".join(tail4)
-        matched_rule = False
-        violated = False
-        for rule_re, viol_re in _BOOM_VIOLATION_PAIRS:
-            if rule_re.search(cite):
-                matched_rule = True
-                if viol_re.search(fix_window):
-                    violated = True
+
+        # 1) 尝试模板匹配（与 story_plan 第5步三模板对齐）
+        cited_rule = None
+        cited_fix = None
+        for tmpl in _RE_BOOM_TEMPLATES:
+            m = tmpl.search(boom_line)
+            if m:
+                cited_rule = m.group(1).strip()
+                cited_fix = m.group(2).strip()
                 break
-        if matched_rule and not violated:
-            cons.append("回旋镖未扣破规动作，不好笑")
+
+        if cited_rule and cited_fix:
+            # 模板命中 → 验证规则出处（早期叮嘱或前 1/3 正文）
+            early = "".join(lines[:min(6, len(lines))])
+            if cited_rule not in early and cited_rule not in "".join(
+                lines[:max(1, len(lines) // 3)],
+            ):
+                cons.append("回旋镖引话无出处，不好笑")
+
+            # 验证破规动作：cited_fix 的 2-3 字 n-gram 任一命中 fix_window
+            fix_matched = cited_fix in fix_window
+            if not fix_matched:
+                for i in range(len(cited_fix)):
+                    for L in (2, 3):
+                        chunk = cited_fix[i:i + L]
+                        if len(chunk) == L and chunk in fix_window:
+                            fix_matched = True
+                            break
+                    if fix_matched:
+                        break
+            if not fix_matched:
+                cons.append("回旋镖未扣破规动作，不好笑")
+        else:
+            # 2) 模板未命中 → 回退旧版检查
+            if RE_BOOM_CLOSE.search(boom_line) and not RE_BOOM_POINT.search(boom_line):
+                cons.append("回旋镖未点破，不好笑")
+
+            m_old = _RE_DIRECT_QUOTE.search(boom_line)
+            cite = m_old.group(1) if m_old else boom_line
+            cite = re.split(r"[，。！？]|你现在|你却|怎么|我照", cite)[0]
+            cite = re.sub(r"的$", "", cite.strip())
+            if len(cite) < 3:
+                cite = boom_line
+            matched_rule = False
+            violated = False
+            for rule_re, viol_re in _BOOM_VIOLATION_PAIRS:
+                if rule_re.search(cite):
+                    matched_rule = True
+                    if viol_re.search(fix_window):
+                        violated = True
+                    break
+            if matched_rule and not violated:
+                cons.append("回旋镖未扣破规动作，不好笑")
 
     return cons
 

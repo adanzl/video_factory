@@ -23,12 +23,13 @@ RE_KID_LOOP = re.compile(
 RE_MOM_WAFFLE = re.compile(
     r"不是|不一样|那是|总之|反正|不是那个|不算|尝咸淡|大人|工作需要",
 )
-RE_SLEEP_TOPIC = re.compile(r"睡觉|九点|早睡|刷手机|卧床|被窝|挂钟")
+RE_SLEEP_TOPIC = re.compile(r"睡觉|九点|早睡|卧床|挂钟")
 RE_SNACK_TOPIC = re.compile(r"零食|尝菜|偷吃|薯片|饭前不吃|瓜子|试吃|试菜")
 RE_PICKY_TOPIC = re.compile(r"挑食|青菜|拨到碗边|拨开青菜")
 RE_PICKY_MOM_RULE = re.compile(
-    r"不准挑食|不许挑食|不能挑食|别挑食|挑食不行|"
-    r"青菜.{0,6}(?:必须|得|要)吃|饭菜都得吃",
+    r"不(?:准|许|能|要|可以|让).{0,2}挑食|别挑食|挑食不行|"
+    r"青菜.{0,6}(?:必须|得|要|都)吃|饭菜都得吃|"
+    r"不许.{0,2}(?:挑|剩|拨|扔|倒)",
 )
 RE_PICKY_EYE = re.compile(r"拨到|拨开|碗边|拨了.{0,4}青菜")
 RE_PICKY_WAFFLE = re.compile(
@@ -38,7 +39,7 @@ RE_PICKY_RELECTURE = re.compile(
     r"一口.{0,4}不(?:动|吃)|怎么不吃|多吃青菜|你要多吃|青菜都不动",
 )
 RE_PICKY_PAD = re.compile(
-    r"数数看|蔫了|证明你不是|打自己脸|说话算话|夹一根青菜|叶子都",
+    r"证明你不是|打自己脸|说话算话",
 )
 RE_LIE_TOPIC = re.compile(r"说谎|撒谎|敷衍|诚实|假话|骗")
 RE_LIE_MOM_RULE = re.compile(r"不能说谎|不许说谎|要诚实|别说谎|老实")
@@ -161,11 +162,12 @@ def append_e_body_errors(story: dict, errors: list[str]) -> None:
             )
 
     if picky_t:
+        # 通用 RE_MOM_RULE 定位妈妈立规矩位置（不硬编码挑食词表）
         rule_i = next(
             (
                 i
                 for i, (sp, ln) in enumerate(zip(speakers, lines))
-                if sp == "妈妈" and RE_PICKY_MOM_RULE.search(ln)
+                if sp == "妈妈" and RE_MOM_RULE.search(ln)
             ),
             None,
         )
@@ -177,20 +179,11 @@ def append_e_body_errors(story: dict, errors: list[str]) -> None:
             ),
             None,
         )
-        if speakers[0] != "妈妈" or not RE_PICKY_MOM_RULE.search(lines[0]):
+        # 正文中 eye 须在 rule 之后（若正文无 rule，开场已立规矩也放行）
+        if eye_i is not None and rule_i is not None and eye_i < rule_i:
             errors.append(
-                "E类挑食须妈妈开场训孩子不能挑食"
-                "（如「菜吃太少了，不能挑食」），再抓拨开",
-            )
-        elif rule_i is None or rule_i > 5:
-            errors.append(
-                "E类挑食前段须妈妈亲口立规矩（不准挑食/青菜都得吃），"
-                "勿只说必须吃完却不点挑食",
-            )
-        elif eye_i is not None and eye_i < rule_i:
-            errors.append(
-                "E类挑食须先妈妈立「不许挑食」，再抓拨青菜现行；"
-                "勿先质问拨开再立同名规矩（因果反了）",
+                "E类挑食须先妈妈立规矩，再抓拨青菜现行；"
+                "勿先质问拨开再立规矩（因果反了）",
             )
         if eye_i is not None:
             for i in range(eye_i + 1, min(eye_i + 4, n - 1)):
@@ -227,8 +220,8 @@ def append_e_body_errors(story: dict, errors: list[str]) -> None:
         # 总句数/妈妈句数不再用「开脱≤2」这种口径硬卡，
         # 否则会误伤“句数略多但并未反复用晾着/配饭开脱”的好稿。
         # 保留极端上限防 runaway（仍以全局字数硬卡为主）。
-        if n > 20:
-            errors.append("E类挑食正文过长（不宜超 20 句）")
+        if n > 24:
+            errors.append("E类挑食正文过长（不宜超 24 句）")
         if any(
             sp == "妈妈" and "不一样" in ln
             for sp, ln in zip(speakers, lines)

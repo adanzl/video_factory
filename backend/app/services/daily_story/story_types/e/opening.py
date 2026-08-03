@@ -6,13 +6,14 @@ import re
 
 from app.services.daily_story.dialogue_text import score_opening_cinematic
 
-RE_SLEEP_TOPIC = re.compile(r"睡觉|九点|早睡|刷手机|卧床|被窝|挂钟")
+RE_SLEEP_TOPIC = re.compile(r"睡觉|九点|早睡|卧床|挂钟")
 RE_SLEEP_MOM_RULE = re.compile(r"必须睡觉|九点了|快去躺|得睡觉")
 RE_SNACK_TOPIC = re.compile(r"零食|尝菜|偷吃|饭前不吃|试吃|试菜")
 RE_PICKY_TOPIC = re.compile(r"挑食|青菜|拨到碗边|拨开青菜")
 RE_PICKY_MOM_RULE = re.compile(
-    r"不准挑食|不许挑食|不能挑食|别挑食|挑食不行|"
-    r"青菜.{0,6}(?:必须|得|要)吃|饭菜都得吃",
+    r"不(?:准|许|能|要|可以|让).{0,2}挑食|别挑食|挑食不行|"
+    r"青菜.{0,6}(?:必须|得|要|都)吃|饭菜都得吃|"
+    r"不许.{0,2}(?:挑|剩|拨|扔|倒)",
 )
 RE_PICKY_EYE = re.compile(r"拨到|拨开|碗边|拨了.{0,4}青菜")
 RE_LIE_TOPIC = re.compile(r"说谎|撒谎|敷衍|诚实|假话|骗")
@@ -121,19 +122,16 @@ def append_e_opening_errors(
     sleep_t = bool(RE_SLEEP_TOPIC.search(ctx))
     picky_t = bool(RE_PICKY_TOPIC.search(ctx)) and not snack_t
     if picky_t:
-        first = normalized[0] if normalized else {}
-        first_sp = first.get("speaker", "")
-        first_ln = first.get("line", "")
+        # 通用规则词定位（不硬编码挑食词表）
         rule_i = next(
             (
                 i
                 for i, d in enumerate(normalized)
                 if d.get("speaker") == "妈妈"
-                and RE_PICKY_MOM_RULE.search(d.get("line", ""))
+                and re.search(r"不能|不许|不准|不要|不可以|别|得|要|必须", d.get("line", ""))
             ),
             None,
         )
-        # 孩子点名妈妈拨青菜现行
         eye_i = next(
             (
                 i
@@ -143,15 +141,15 @@ def append_e_opening_errors(
             ),
             None,
         )
-        if first_sp != "妈妈" or not RE_PICKY_MOM_RULE.search(first_ln):
+        if rule_i is None:
             errors.append(
-                "E类挑食开场须妈妈先训孩子不能挑食"
-                "（如「菜吃太少了，不能挑食」），再孩子抓拨开",
+                "E类挑食开场须有妈妈立规矩，"
+                "可在孩子钓鱼式提问之后，勿缺",
             )
-        elif eye_i is not None and rule_i is not None and eye_i < rule_i:
+        elif eye_i is not None and eye_i < rule_i:
             errors.append(
-                "E类挑食开场须先立「不许挑食」，再点拨青菜；"
-                "勿先问拨开再答不许挑食（因果反了）",
+                "E类挑食开场须先妈妈立规矩，再点拨青菜；"
+                "勿先问拨开再立规矩（因果反了）",
             )
     if snack_t and not sleep_t:
         if RE_WEAK_TASTE_EYE.search(joined) and not RE_STRONG_TASTE_EYE.search(

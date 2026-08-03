@@ -96,10 +96,22 @@ def _conflict_anchor_tokens(blob: str) -> list[str]:
         "",
         blob,
     )
-    return [
-        t for t in re.findall(r"[\u4e00-\u9fff]{2,}", cleaned)
-        if len(t) >= 2
-    ][:8]
+    # 滑动窗口 2–3 字 n-gram 全量，优先 3 字词（更倾向实词）。
+    # 旧版 re.findall(r"[\u4e00-\u9fff]{2,}") 贪婪匹配会把整段中文
+    # 当成一个 token，导致 any(t in opening) 永远为 False
+    # （如 cleaned="争同一个蓝水杯客厅…" → 一个 token，而 opening
+    #  里的 "蓝水杯" 只是它的子串，不是它本身）。
+    tokens: list[str] = []
+    seen: set[str] = set()
+    for i in range(len(cleaned)):
+        for L in (2, 3):
+            chunk = cleaned[i:i + L]
+            if len(chunk) == L and chunk not in seen:
+                seen.add(chunk)
+                tokens.append(chunk)
+    # 3 字词优先（更可能命中实词如"蓝水杯"），最多保留 24 个
+    result = [t for t in tokens if len(t) == 3] + [t for t in tokens if len(t) == 2]
+    return result[:24]
 
 
 def score_opening_quality(story: dict) -> tuple[int, list[str], list[str]]:

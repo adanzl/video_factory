@@ -268,6 +268,15 @@ def _score_relevancy(story: dict, theme: str | None) -> tuple[int, list[str]]:
 
     matched_long = [w for w in theme_words if len(w) >= 3 and w in check_text]
     matched_any = [w for w in theme_words if w in check_text]
+    # 二字主题容易因语序不同而漏判（如「浇花」→ 文本写「把花浇透」），
+    # 补单字检查：主题每个字都出现在 check_text 即算命中
+    if not matched_any and 2 <= len(theme_words) <= 4:
+        singles = [w for w in theme_words if len(w) == 1]
+        if not singles:
+            # 主题 ≤4 字时，把每个汉字作为 1-gram 加入检查
+            singles = [c for c in theme_chars_raw]
+        if singles and all(s in check_text for s in singles):
+            return 0, []
     if not matched_any:
         return -30, [f"跑题：主题「{theme}」未在核心/开场中体现"]
     return 0, []
