@@ -41,7 +41,7 @@ def test_assemble_daily_t2i_prompt_structure():
     assert "蓝T恤深蓝短裤短发男孩昭昭" in prompt
     assert "粉卫衣蓝裤黑马尾女孩灿灿" in prompt
     assert "灿灿头发通体纯黑" in prompt
-    assert "禁止左右对调" in prompt
+    assert "左右位置固定不变" in prompt
     assert "画面左边是昭昭，右边是灿灿" in prompt
     assert "深蓝色短裤" in prompt
     assert "蓝色长裤" in prompt
@@ -81,7 +81,7 @@ def test_assemble_daily_layout_from_visual_brief():
     prompt = assemble_daily_t2i_prompt(seg)
     assert "蓝T恤深蓝短裤短发男孩昭昭" in prompt
     assert "粉卫衣蓝裤黑马尾女孩灿灿" in prompt
-    assert "禁止左右对调" in prompt
+    assert "左右位置固定不变" in prompt
     assert "画面左边是昭昭，右边是灿灿" in prompt
     assert prompt.count("画面左边是昭昭，右边是灿灿") == 1
 
@@ -128,8 +128,8 @@ def test_assemble_daily_ma_coming_keeps_empty_doorway():
     assert "妈妈：" not in prompt
     assert "瞟向厨房门口" not in prompt
     assert "厨房门口空无无人" in prompt
-    assert "恰好 2 个" in prompt
-    assert "禁止第三人脸" in prompt
+    assert "只有 2 个主体人物" in prompt
+    assert "画面中不出现其他人" in prompt
 
 
 def test_assemble_daily_hide_ma_keeps_two_person_cast():
@@ -167,7 +167,7 @@ def test_assemble_daily_hide_ma_keeps_two_person_cast():
     assert "妈妈：" not in p1
     assert "三人同框" not in p1
     assert "三人特写" not in p1
-    assert "恰好 2 个" in p1
+    assert "只有 2 个主体人物" in p1
     assert "灿灿：" in p1
     p2 = segs[1]["image_prompt"]
     assert "妈妈：" in p2
