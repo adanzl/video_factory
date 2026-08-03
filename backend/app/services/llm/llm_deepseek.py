@@ -699,6 +699,7 @@ class DeepSeekClient(LLMClient):
         payload, finish = self._chat_json(
             prompts["system"],
             prompts["user"],
+            thinking_enabled=False,
             temperature=_TEMP_CREATIVE_MID,
         )
         raise_if_job_cancelled(job)
@@ -1541,9 +1542,12 @@ class DeepSeekClient(LLMClient):
         for attempt in range(max_attempts):
             started = time.perf_counter()
             try:
+                # 切分镜是结构化分配任务，无需推理；开思考模式实测 181s→关后大幅下降（同 image_prompts 先例）
                 raw, finish = self._chat_json(
                     system,
                     user,
+                    thinking_enabled=False,
+                    temperature=_TEMP_CREATIVE_MID,
                 )
             except ValueError as exc:
                 last_exc = JobStageFailureError(str(exc))
