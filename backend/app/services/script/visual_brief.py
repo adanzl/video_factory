@@ -362,6 +362,18 @@ def build_visual_brief_prompts(
     setting_rule = (
         _DAILY_SETTING_RULE if profile_style == CONTENT_STYLE_DAILY_STORY else ""
     )
+    if profile_style == CONTENT_STYLE_DAILY_STORY:
+        setting_text = str(script.get("setting") or "").strip()
+        if setting_text:
+            # 本片物件锚点：setting 里出现的场景物件须每镜在场（状态可随剧情演变），
+            # 实测后段 brief 会丢道具（如月饼盒说着说着消失），显式清单压住
+            setting_rule += (
+                "【本片物件锚点】以下为本片 setting 全句，"
+                "其中出现的场景物件（茶几、月饼盒、水杯、扫帚等）"
+                "须在每镜画面中保持在场，状态可随剧情演变（被打开/翻倒/掉落/吃掉），"
+                "禁止无故消失或换成台词没有的新物件；"
+                f"「{setting_text}」"
+            )
     content_rule = (
         _DAILY_VISUAL_BRIEF_CONTENT_RULE
         if profile_style == CONTENT_STYLE_DAILY_STORY

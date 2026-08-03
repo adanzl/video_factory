@@ -158,13 +158,13 @@ def _daily_composition(
             return (
                 f"{lr}"
                 f"中近景三人特写，严格左{look.get(a, a)}、"
-                f"中{look.get(b, b)}、右{look.get(c, c)}，禁止左右对调。"
+                f"中{look.get(b, b)}、右{look.get(c, c)}，左右位置固定不变。"
             )
         return (
             f"{lr}"
             f"中景三人同框，严格左{look.get(a, a)}、"
             f"中{look.get(b, b)}、右{look.get(c, c)}，"
-            f"禁止漏人、禁止左右对调，全身可见。"
+            f"三人全部在场、左右位置固定不变，全身可见。"
         )
     if shot_type == "特写":
         if len(names) == 2:
@@ -173,7 +173,7 @@ def _daily_composition(
             return (
                 f"{lr}"
                 f"中近景特写，严格左侧{look.get(a, a)}占左半、"
-                f"右侧{look.get(b, b)}占右半，禁止左右对调。"
+                f"右侧{look.get(b, b)}占右半，左右位置固定不变。"
             )
         return "面部特写，占画面主体，背景虚化。"
     if shot_type == "中景":
@@ -183,7 +183,7 @@ def _daily_composition(
             return (
                 f"{lr}"
                 f"中景，严格左{look.get(a, a)}、右{look.get(b, b)}，"
-                f"禁止左右对调，全身可见。"
+                f"左右位置固定不变，全身可见。"
             )
         return "中景，人物全身，环境可见。"
     return "根据画面自然构图。"
@@ -264,8 +264,8 @@ def assemble_daily_t2i_prompt(
     if speakers and "妈妈" not in speakers:
         n = len(speakers)
         parts.append(
-            f"画面清晰主体人物恰好 {n} 个，门口与门外空无无人，"
-            "禁止第三人脸、半身或路人入画。"
+            f"画面中只有 {n} 个主体人物，门口与门外无人，"
+            "画面中不出现其他人。"
         )
     if extra and extra.strip():
         # 禁止把质检元指令当出图正文
