@@ -447,19 +447,17 @@ class AgnesImageProvider(ImageProvider):
     ) -> Path:
         size = size or self._default_size
         log_tag = f"[out={output_path.name}]"
-        # chat 有参考图时再钉发色：涂鸦高饱和易把灿灿马尾画成彩虹挑染。
-        # 无条件前置——LLM 已把硬锁写进提示词末尾时，句末权重最低等于没锁
+        # chat 有参考图时再钉发色：涂鸦高饱和易把灿灿马尾画成彩色。
+        # 无条件前置——LLM 已把硬锁写进提示词末尾时，句末权重最低等于没锁。
+        # 锁必须纯正面表述：图像模型把否定词当生成指令，
+        # "禁止蓝粉黄绿霓虹条纹或彩色挑染"会诱发全图彩虹化（实测连妈妈黑发都中招）
         if (
             ref_images
             and content_style == CONTENT_STYLE_DAILY_STORY
             and expected_speakers
             and "灿灿" in expected_speakers
         ):
-            prompt = (
-                "严格保留参考图发色：灿灿头发通体纯黑"
-                "（禁止蓝粉黄绿霓虹条纹或彩色挑染）。"
-                + prompt
-            )
+            prompt = "严格保留参考图发色：灿灿头发通体纯黑，头顶到马尾同一黑色。" + prompt
         keys = _agnes_image_gen_keys()
         if not keys:
             if get_settings().mock_mode:
