@@ -447,13 +447,13 @@ class AgnesImageProvider(ImageProvider):
     ) -> Path:
         size = size or self._default_size
         log_tag = f"[out={output_path.name}]"
-        # chat 有参考图时再钉发色：涂鸦高饱和易把灿灿马尾画成彩虹挑染
+        # chat 有参考图时再钉发色：涂鸦高饱和易把灿灿马尾画成彩虹挑染。
+        # 无条件前置——LLM 已把硬锁写进提示词末尾时，句末权重最低等于没锁
         if (
             ref_images
             and content_style == CONTENT_STYLE_DAILY_STORY
             and expected_speakers
             and "灿灿" in expected_speakers
-            and "灿灿头发通体纯黑" not in prompt
         ):
             prompt = (
                 "严格保留参考图发色：灿灿头发通体纯黑"

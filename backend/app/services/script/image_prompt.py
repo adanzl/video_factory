@@ -34,7 +34,7 @@ _DAILY_CHAR_CANCAN = (
     "禁止蓝/金/粉/紫等异色马尾或挑染），"
     "粉色卫衣，蓝色长裤，两侧同色粉红运动鞋。"
 )
-# 涂鸦高饱和易把马尾画成彩虹挑染；句末再钉一次发色硬锁
+# 涂鸦高饱和易把马尾画成彩虹挑染；发色硬锁紧跟角色块（句末权重最低）
 _DAILY_CANCAN_HAIR_LOCK = (
     "灿灿头发通体纯黑（头顶到马尾同一黑色，禁止蓝/粉/黄/绿霓虹条纹或彩色挑染）。"
 )
@@ -240,6 +240,10 @@ def assemble_daily_t2i_prompt(
     if char_parts:
         parts.append("".join(char_parts))
 
+    # 发色硬锁紧跟角色块：句末权重最低，写在末尾等于没写（实测彩虹挑染）
+    if "灿灿" in speakers:
+        parts.append(_DAILY_CANCAN_HAIR_LOCK)
+
     # 嘴型锁定：首帧里谁嘴张着 I2V 就让谁说话（实测压过文字指令），
     # 故张嘴只允许给第一句台词的说话人，其余人闭嘴防止 i2v 说话人反转
     first = _daily_first_speaker(seg)
@@ -255,8 +259,6 @@ def assemble_daily_t2i_prompt(
     parts.append(_daily_lighting(vb))
     layout = _daily_layout_speakers(seg, vb)
     parts.append(_daily_composition(shot, layout, vb=vb))
-    if "灿灿" in speakers:
-        parts.append(_DAILY_CANCAN_HAIR_LOCK)
     # 妈妈未入画时硬锁人数+空门口，压住「妈出来了/盯门口」诱出的路人
     if speakers and "妈妈" not in speakers:
         n = len(speakers)
