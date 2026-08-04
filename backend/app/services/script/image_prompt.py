@@ -190,13 +190,16 @@ def _daily_composition(
 
 
 def strip_verify_regen_leak(prompt: str) -> str:
-    """去掉误拼进 T2I 的质检改写元指令（历史污染 / 兜底）。"""
+    """去掉误拼进 T2I 的质检/内容策略改写元指令（历史污染 / 兜底）。"""
     text = (prompt or "").strip()
-    marker = "出图质检连续未通过"
-    idx = text.find(marker)
-    if idx < 0:
+    cut = -1
+    for marker in ("出图质检连续未通过", "出图被内容策略拦截"):
+        idx = text.find(marker)
+        if idx >= 0 and (cut < 0 or idx < cut):
+            cut = idx
+    if cut < 0:
         return text
-    return text[:idx].rstrip(" \n\t")
+    return text[:cut].rstrip(" \n\t")
 
 
 def assemble_daily_t2i_prompt(

@@ -64,6 +64,12 @@ def test_strip_verify_regen_leak():
     assert strip_verify_regen_leak(dirty) == clean
     assert strip_verify_regen_leak(clean) == clean
 
+    policy_dirty = (
+        clean
+        + "出图被内容策略拦截（content_policy_violation），请改写本段 visual_brief。"
+    )
+    assert strip_verify_regen_leak(policy_dirty) == clean
+
 
 def test_assemble_daily_layout_from_visual_brief():
     """visual_brief 明示左右时，构图跟 brief，不对白序。"""

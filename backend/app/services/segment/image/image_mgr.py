@@ -37,6 +37,23 @@ def _verify_visual_brief_regen_feedback(speakers: list[str]) -> str:
     cast = '、'.join(speakers) if speakers else '本段可入画角色'
     return f'出图质检连续未通过，请改写本段 visual_brief：换姿势与构图、冲突道具更大更醒目；站位与台词事实保持一致；禁止写发型/服装/鞋帽；画面人物必须含：{cast}（同场粘性角色不可漏画）；禁止新增未授权角色。'
 
+def _content_policy_prompt_regen_feedback(speakers: list[str]) -> str:
+    cast = '、'.join(speakers) if speakers else '本段对白角色'
+    return (
+        '出图被内容策略拦截（content_policy_violation），请改写本段 image_prompt：'
+        '去掉可能敏感/暴力/惊吓/不当暗示，改用温和日常表述，换姿势与构图、冲突道具更醒目；'
+        f'画面人物只能是：{cast}；禁止新增未出场角色。'
+    )
+
+def _content_policy_visual_brief_regen_feedback(speakers: list[str]) -> str:
+    cast = '、'.join(speakers) if speakers else '本段可入画角色'
+    return (
+        '出图被内容策略拦截（content_policy_violation），请改写本段 visual_brief：'
+        '去掉可能敏感/暴力/惊吓/不当暗示，改用温和日常冲突与道具；换姿势与构图；'
+        f'站位与台词事实保持一致；禁止写发型/服装/鞋帽；画面人物必须含：{cast}'
+        '（同场粘性角色不可漏画）；禁止新增未授权角色。'
+    )
+
 def _speakers_for_regen(seg: dict) -> list[str]:
     from app.services.script.image_prompt import _daily_speakers_of
     return _daily_speakers_of(seg)
@@ -86,8 +103,14 @@ class ImageMgr:
         return max(1, settings.image_max_workers)
 
     @staticmethod
-    def _regen_segment_image_prompt(seg: dict, *, job: dict[str, Any] | None, content_style: str | None) -> str:
-        """质检耗尽后，按单段重写 image_prompt（含 daily 规则拼装）。"""
+    def _regen_segment_image_prompt(
+        seg: dict,
+        *,
+        job: dict[str, Any] | None,
+        content_style: str | None,
+        reason: str = 'verify',
+    ) -> str:
+        """质检耗尽 / 内容策略拦截后，按单段重写 image_prompt（含 daily 规则拼装）。"""
         from app.services.llm.llm_mgr import llm_mgr
         from app.services.script.image_prompt import wrap_image_prompts
         from app.utils.job_info import CONTENT_STYLE_DAILY_STORY, resolve_include_sd15_prompt
@@ -122,11 +145,17 @@ class ImageMgr:
                 target,
             )
         speakers = _speakers_for_regen(target)
+        if reason == 'content_policy':
+            vb_feedback = _content_policy_visual_brief_regen_feedback(speakers)
+            ip_feedback = _content_policy_prompt_regen_feedback(speakers)
+        else:
+            vb_feedback = _verify_visual_brief_regen_feedback(speakers)
+            ip_feedback = _verify_prompt_regen_feedback(speakers)
         if content_style == CONTENT_STYLE_DAILY_STORY:
-            llm_mgr.fill_visual_briefs(script, feedback=_verify_visual_brief_regen_feedback(speakers), job=job, segment_indices=[index])
+            llm_mgr.fill_visual_briefs(script, feedback=vb_feedback, job=job, segment_indices=[index])
             llm_mgr.fill_image_prompts(script, job=job, segment_indices=[index], include_sd15_prompt=resolve_include_sd15_prompt(job))
         else:
-            llm_mgr.fill_image_prompts(script, feedback=_verify_prompt_regen_feedback(speakers), job=job, segment_indices=[index], include_sd15_prompt=resolve_include_sd15_prompt(job))
+            llm_mgr.fill_image_prompts(script, feedback=ip_feedback, job=job, segment_indices=[index], include_sd15_prompt=resolve_include_sd15_prompt(job))
         refreshed = next((s for s in script.get('segments') or [] if int(s.get('segment_index') or 0) == index), None)
         if refreshed is None:
             raise RuntimeError(f'image_prompt regen missing segment {index}')
@@ -140,8 +169,8 @@ class ImageMgr:
         new_prompt = str(refreshed.get('image_prompt') or '').strip()
         if not new_prompt:
             raise RuntimeError(f'image_prompt regen empty for segment {index}')
-        if '出图质检连续未通过' in new_prompt:
-            raise RuntimeError(f'image_prompt regen leaked verify feedback into T2I for segment {index}')
+        if '出图质检连续未通过' in new_prompt or '出图被内容策略拦截' in new_prompt:
+            raise RuntimeError(f'image_prompt regen leaked feedback into T2I for segment {index}')
         if refreshed.get('visual_brief') is not None:
             seg['visual_brief'] = refreshed.get('visual_brief')
         if refreshed.get('motion_prompt') is not None:
@@ -250,7 +279,9 @@ class ImageMgr:
             from app.services.script.image_prompt import strip_verify_regen_leak
             prompt = strip_verify_regen_leak(str(prompt))
             raw_ip = str(seg.get('image_prompt') or '').strip()
-            if raw_ip and prompt != raw_ip and ('出图质检连续未通过' in raw_ip):
+            if raw_ip and prompt != raw_ip and (
+                '出图质检连续未通过' in raw_ip or '出图被内容策略拦截' in raw_ip
+            ):
                 seg['image_prompt'] = prompt
                 self._persist_segment_prompt(seg)
             if _subject_has_map_keyword(prompt):
@@ -271,7 +302,9 @@ class ImageMgr:
                 return _render_one(seg)
 
         def _render_one(seg: dict) -> tuple[int, Path, float] | None:
+            from app.services.llm.llm_agnes import AgnesContentPolicyError
             from app.services.segment.image.image_agnes import AgnesImageVerifyFailed
+            _regen_exc = (AgnesImageVerifyFailed, AgnesContentPolicyError)
             nonlocal started
             started += 1
             seq = started
@@ -284,19 +317,53 @@ class ImageMgr:
             try:
                 try:
                     provider.generate(prompt, out, size=size, ref_images=ref_images, expected_speakers=expected_speakers, content_style=content_style)
-                except AgnesImageVerifyFailed as first_fail:
-                    logger.warning('image segment %s verify exhausted on current prompt; regenerating image_prompt then retry', index)
+                except _regen_exc as first_fail:
+                    regen_reason = (
+                        'content_policy'
+                        if isinstance(first_fail, AgnesContentPolicyError)
+                        else 'verify'
+                    )
+                    logger.warning(
+                        'image segment %s %s on current prompt; regenerating image_prompt then retry',
+                        index,
+                        'content_policy_violation'
+                        if regen_reason == 'content_policy'
+                        else 'verify exhausted',
+                    )
                     try:
-                        new_prompt = self._regen_segment_image_prompt(seg, job=job, content_style=content_style)
+                        new_prompt = self._regen_segment_image_prompt(
+                            seg,
+                            job=job,
+                            content_style=content_style,
+                            reason=regen_reason,
+                        )
                         self._persist_segment_prompt(seg)
                         prompt = _build_prompt(seg)
-                        logger.info('image segment %s prompt regenerated chars=%s; retry generate', index, len(new_prompt))
+                        logger.info(
+                            'image segment %s prompt regenerated chars=%s; retry generate',
+                            index,
+                            len(new_prompt),
+                        )
                     except Exception as regen_exc:
                         logger.error('image segment %s prompt regen failed: %s', index, regen_exc)
                         raise first_fail from regen_exc
                     provider.generate(prompt, out, size=size, ref_images=ref_images, expected_speakers=expected_speakers, content_style=content_style)
-            except AgnesImageVerifyFailed as exc:
-                logger.error('image %s/%s SKIP segment %s after verify fail (%.1fs) | %s | %s', seq, total, index, time.time() - t0, params_desc, exc)
+            except _regen_exc as exc:
+                kind = (
+                    'content_policy'
+                    if isinstance(exc, AgnesContentPolicyError)
+                    else 'verify'
+                )
+                logger.error(
+                    'image %s/%s SKIP segment %s after %s fail (%.1fs) | %s | %s',
+                    seq,
+                    total,
+                    index,
+                    kind,
+                    time.time() - t0,
+                    params_desc,
+                    exc,
+                )
                 if out.exists():
                     try:
                         out.unlink()
