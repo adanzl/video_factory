@@ -4,7 +4,7 @@ import logging
 import re
 from app.repositories import repo_daily_story, repo_job, repo_job_log, repo_segment
 from app.services.llm.llm_mgr import llm_mgr
-from app.services.script.optimize_title import CHAT_TITLE_MAX_LEN, build_chat_title_prompts, parse_title_optimize_payload
+from app.services.script.optimize_title import CHAT_TITLE_MAX_LEN, build_chat_title_prompts, parse_chat_title_candidates_payload, pick_best_chat_title
 from app.utils.job_cancel import job_cancel
 from app.utils.job_info import parse_job_info
 from worker.context import JobContext
@@ -118,14 +118,13 @@ class DailyScriptStage(StageExecutor):
             log_msg=f"daily story visual_brief ready: segments={len(script.get('segments') or [])}",
         )
         if not ctx.script_skip_title_optimize:
-            from app.utils.title_text import select_optimized_title
             max_len = CHAT_TITLE_MAX_LEN
             try:
                 prompts = build_chat_title_prompts(title, story_content, max_title_length=max_len)
                 client = llm_mgr._get_client()
                 raw, _ = client._chat_json(prompts['system'], prompts['user'], thinking_enabled=False, temperature=0.8)
-                optimized = parse_title_optimize_payload(raw, max_title_len=max_len)
-                final = select_optimized_title(title, optimized, max_len=max_len)
+                candidates = parse_chat_title_candidates_payload(raw, max_title_len=max_len)
+                final = pick_best_chat_title(title, candidates, max_len=max_len)
                 if final and final != title:
                     script['draft_title'] = title
                     script['title'] = final

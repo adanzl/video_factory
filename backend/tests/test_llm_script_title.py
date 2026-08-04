@@ -85,6 +85,122 @@ def test_chat_title_system_prompt_has_hook_templates_and_antitrunc():
     assert "16" not in prompts["system"]
 
 
+def test_chat_title_system_prompt_has_no_copyable_examples():
+    # 句式模板只讲结构不给成品例，防 LLM 把「越擦越花」这类例词原样抄给无关剧情
+    prompts = build_chat_title_prompts(
+        "藏玩具同盟",
+        {
+            "setting": "客厅",
+            "punchline_explain": "B类结盟翻车，整盒月饼滚出来被妈妈抓",
+            "dialogue": [{"speaker": "昭昭", "line": "快藏，妈来了"}],
+        },
+        max_title_length=16,
+    )
+    for kw in ("越擦越花", "老鼠会开柜子门吗", "自己不吃却管我", "妈妈藏的饼干"):
+        assert kw not in prompts["system"], kw
+    assert "成品例" in prompts["system"]
+    assert "禁止把别的故事" in prompts["system"]
+
+
+def test_chat_title_user_prompt_no_spoiler_and_avoid():
+    prompts = build_chat_title_prompts(
+        "月饼大作战",
+        {
+            "setting": "客厅",
+            "punchline_explain": "B类结盟翻车，连锁意外让整盒月饼全滚出来，妈妈抓个正着",
+            "dialogue": [{"speaker": "昭昭", "line": "妈，是月饼自己滚的"}],
+        },
+        max_title_length=16,
+    )
+    assert "别平铺直叙复述结局" in prompts["user"]
+    assert "3 个候选" in prompts["user"]
+    assert "已用过的标题" not in prompts["user"]
+
+    prompts_avoid = build_chat_title_prompts(
+        "月饼全滚出来了",
+        {
+            "setting": "客厅",
+            "punchline_explain": "B类结盟翻车，连锁意外让整盒月饼全滚出来，妈妈抓个正着",
+            "dialogue": [{"speaker": "昭昭", "line": "妈，是月饼自己滚的"}],
+        },
+        max_title_length=16,
+        avoid_titles=["月饼全滚出来了"],
+    )
+    assert "已用过的标题" in prompts_avoid["user"]
+    assert "月饼全滚出来了" in prompts_avoid["user"]
+    assert "换一个角度" in prompts_avoid["user"]
+
+
+def test_parse_chat_title_candidates_payload():
+    from app.services.script.optimize_title import parse_chat_title_candidates_payload
+
+    out = parse_chat_title_candidates_payload(
+        {"titles": ["妈，月饼不是我弄的", "月饼全滚出来了", "妈，月饼不是我弄的"]},
+        max_title_len=10,
+    )
+    assert out == ["妈，月饼不是我弄的", "月饼全滚出来了"]  # 去空去重保序
+
+    single = parse_chat_title_candidates_payload({"title": "谁踩的月饼印"}, max_title_len=10)
+    assert single == ["谁踩的月饼印"]
+
+    with pytest.raises(ValueError):
+        parse_chat_title_candidates_payload({}, max_title_len=10)
+    with pytest.raises(ValueError):
+        parse_chat_title_candidates_payload({"titles": ["   "]}, max_title_len=10)
+
+
+def test_pick_best_chat_title_prefers_hook_and_avoids_repeat():
+    from app.services.script.optimize_title import pick_best_chat_title
+
+    # 问句/称呼开头 + 甩锅口吻 优于平铺直叙的事件复述
+    best = pick_best_chat_title(
+        "月饼大作战",
+        ["月饼全滚出来了", "妈，月饼不是我弄的"],
+        max_len=10,
+    )
+    assert best == "妈，月饼不是我弄的"
+
+    # avoid 命中降权：手动重跑时避免重复上一个标题
+    best2 = pick_best_chat_title(
+        "月饼大作战",
+        ["妈，月饼不是我弄的", "月饼全滚出来了"],
+        max_len=10,
+        avoid_titles=["妈，月饼不是我弄的"],
+    )
+    assert best2 == "月饼全滚出来了"
+
+    # 标点变体也算重复：avoid 按 title_core 比对
+    best3 = pick_best_chat_title(
+        "月饼大作战",
+        ["妈，月饼不是我弄的！", "谁把月饼全滚了"],
+        max_len=10,
+        avoid_titles=["妈，月饼不是我弄的"],
+    )
+    assert best3 == "谁把月饼全滚了"
+
+    # 候选与初稿相同/命中 avoid → 回退初稿
+    assert pick_best_chat_title("月饼大作战", ["月饼大作战"], max_len=10) == "月饼大作战"
+
+
+def test_pick_best_chat_title_penalizes_outcome_reveal():
+    from app.services.script.optimize_title import pick_best_chat_title
+
+    # 具体甩锅画面/口吻 优于 结局播报（谁…全滚出来）
+    best = pick_best_chat_title(
+        "月饼大作战",
+        ["谁把月饼全滚出来", "不是我，月饼自己滚的"],
+        max_len=10,
+    )
+    assert best == "不是我，月饼自己滚的"
+    # 结局播报也不敌「具体道具+甩锅」问句
+    best2 = pick_best_chat_title(
+        "月饼大作战",
+        ["谁把月饼全滚出来", "谁先踩的渣"],
+        max_len=10,
+    )
+    assert best2 == "谁先踩的渣"
+
+
 def test_format_block_scene_title_requires_spoken_hook():
     for code in ("A", "B", "C", "D", "E"):
         blk = format_block_for_code(code)
@@ -106,6 +222,8 @@ def test_select_optimized_title_degraded_truncation_falls_back():
     assert select_optimized_title("月饼大作战全都滚出来了", "月饼大作战全都滚出来了呀", max_len=10) == "月饼大作战全都滚出来"
     # 仅标点/空白变化 → 保留来源标点
     assert select_optimized_title("检查不算吃！", "检查不算吃", max_len=10) == "检查不算吃！"
+    # 带逗号 11 字标题钻 title_core 去标点 ≤max_len 的空子 → 超长回退初稿
+    assert select_optimized_title("月饼大作战", "妈，月饼真不是我俩滚的", max_len=10) == "月饼大作战"
 
 
 def test_daily_story_prompts_share_contract():
