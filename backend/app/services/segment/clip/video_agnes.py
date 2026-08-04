@@ -86,6 +86,9 @@ _NAME_TO_SIDE_HINT = {"昭昭": "左侧", "灿灿": "右侧", "妈妈": "中间"
 # 口型开合有闭合瞬间，单帧易误判，窗口内多点抽帧对比口型变化
 _MOUTH_VERIFY_FRACTIONS = (0.15, 0.35, 0.5, 0.65, 0.85)
 _MOUTH_VERIFY_FRAME_WIDTH = 640
+# 多帧 VL + 强制思考；对齐 image_agnes 图文校验 300s（120s 实测易 Read timed out）
+_VL_READ_TIMEOUT_SEC = 300.0
+_VL_MAX_ATTEMPTS = 3
 # 强制选边比「他有没有说话」的是非题更有区分度（是非题易偏向答是）
 _MOUTH_VERIFY_SYSTEM = (
     "你是视频抽帧质检员。用户给出同一段视频某时间段按时间顺序抽取的几帧画面。"
@@ -885,42 +888,81 @@ class AgnesClipProvider(ClipProvider):
             "max_tokens": 16384,
         }
         for api_key in keys:
-            try:
-                resp = requests.post(
-                    url,
-                    headers=agnes_auth_header(api_key.value),
-                    json=payload,
-                    timeout=(self._connect_timeout, 120),
-                )
-                if not resp.ok:
-                    logger.warning(
-                        "mouth verify vl http %s (%s key)",
-                        resp.status_code,
-                        api_key.label,
+            for attempt in range(_VL_MAX_ATTEMPTS):
+                try:
+                    resp = requests.post(
+                        url,
+                        headers=agnes_auth_header(api_key.value),
+                        json=payload,
+                        timeout=(self._connect_timeout, _VL_READ_TIMEOUT_SEC),
                     )
-                    continue
-                msg = (
-                    resp.json().get("choices", [{}])[0].get("message", {})
-                )
-                reply = (msg.get("content") or "").strip()
-                if not reply:
-                    # agnes VL 常把短答案放进 reasoning_content；
-                    # 仅当它足够短（是直接答案而非思考链）才采信
-                    reasoning = (msg.get("reasoning_content") or "").strip()
-                    if len(reasoning) <= 20:
-                        reply = reasoning
-                sides = _parse_speaking_sides(reply)
-                if sides is None:
-                    logger.warning(
-                        "mouth verify vl reply unparsable (%s key): %s",
-                        api_key.label,
-                        str(reply)[:80],
+                    if not resp.ok:
+                        if resp.status_code in _RETRYABLE_HTTP and attempt + 1 < _VL_MAX_ATTEMPTS:
+                            wait = _backoff_seconds(attempt)
+                            logger.warning(
+                                "mouth verify vl http %s (%s key), retry %s/%s in %ss",
+                                resp.status_code,
+                                api_key.label,
+                                attempt + 1,
+                                _VL_MAX_ATTEMPTS,
+                                wait,
+                            )
+                            time.sleep(wait)
+                            continue
+                        logger.warning(
+                            "mouth verify vl http %s (%s key)",
+                            resp.status_code,
+                            api_key.label,
+                        )
+                        break
+                    msg = (
+                        resp.json().get("choices", [{}])[0].get("message", {})
                     )
-                return sides
-            except Exception as exc:
-                logger.warning(
-                    "mouth verify vl call failed (%s key): %s", api_key.label, exc
-                )
+                    reply = (msg.get("content") or "").strip()
+                    if not reply:
+                        # agnes VL 常把短答案放进 reasoning_content；
+                        # 仅当它足够短（是直接答案而非思考链）才采信
+                        reasoning = (msg.get("reasoning_content") or "").strip()
+                        if len(reasoning) <= 20:
+                            reply = reasoning
+                    sides = _parse_speaking_sides(reply)
+                    if sides is None:
+                        logger.warning(
+                            "mouth verify vl reply unparsable (%s key): %s",
+                            api_key.label,
+                            str(reply)[:80],
+                        )
+                    return sides
+                except requests.Timeout as exc:
+                    wait = _backoff_seconds(attempt)
+                    if attempt + 1 < _VL_MAX_ATTEMPTS:
+                        logger.warning(
+                            "mouth verify vl timeout (%s key), retry %s/%s "
+                            "in %ss (read=%ss): %s",
+                            api_key.label,
+                            attempt + 1,
+                            _VL_MAX_ATTEMPTS,
+                            wait,
+                            int(_VL_READ_TIMEOUT_SEC),
+                            exc,
+                        )
+                        time.sleep(wait)
+                        continue
+                    logger.warning(
+                        "mouth verify vl timeout exhausted (%s key, "
+                        "read=%ss, attempts=%s): %s",
+                        api_key.label,
+                        int(_VL_READ_TIMEOUT_SEC),
+                        _VL_MAX_ATTEMPTS,
+                        exc,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "mouth verify vl call failed (%s key): %s",
+                        api_key.label,
+                        exc,
+                    )
+                    break
         return None
 
     def _verify_mouth_motion(
