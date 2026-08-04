@@ -239,6 +239,18 @@ def regenerate_tags_route():
     return json_ok(result)
 
 
+@bp.post("/script/optimize-title")
+def optimize_script_title_route():
+    data = get_json_body()
+    job_id = parse_id(data)
+    max_title_length = parse_optional_int(data, "max_title_length", minimum=8, maximum=48)
+    try:
+        result = job_mgr.optimize_script_title(job_id, max_title_length=max_title_length)
+    except ValueError as exc:
+        raise APIError(str(exc)) from exc
+    return json_ok(result)
+
+
 @bp.post("/script/description")
 def regenerate_video_description_route():
     data = get_json_body()

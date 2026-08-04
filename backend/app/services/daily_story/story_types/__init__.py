@@ -333,7 +333,7 @@ def format_block_for_code(code: str) -> str:
 【格式要求】
 严格输出以下JSON结构：
 {{
-  "scene_title": "不超过10字，场记或口语钩子均可",
+  "scene_title": "不超过10字，口语钩子（孩子台词/反差疑问/带口吻动作），禁纯事件名如「藏玩具」「分蛋糕」；好例：「老鼠会开柜子门吗」「就一块，别告状」",
   "setting": "一句话说明地点和初始冲突动作",
   "conflict_core": "≤24字，谁vs谁争什么",
   "dialogue": [

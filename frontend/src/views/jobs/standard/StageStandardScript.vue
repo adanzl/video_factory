@@ -16,6 +16,11 @@
               @click="handleUpdateSourceTitle">
               更新
             </el-button>
+            <el-button :loading="optimizingTitle"
+              :disabled="actionDisabled || !canOptimizeTitle"
+              @click="handleOptimizeTitle">
+              优化
+            </el-button>
           </div>
         </el-form-item>
 
@@ -319,6 +324,7 @@ import { getMediaDuration } from "@/api/api-media";
 import {
   previewScriptPrompts,
   generateVideoDescription,
+  optimizeScriptTitle,
   generatePrompts,
   runJobStageAction,
   updateJob,
@@ -397,6 +403,7 @@ const { handleError } = useErrorHandler();
 
 const submitting = ref(false);
 const savingSourceTitle = ref(false);
+const optimizingTitle = ref(false);
 const regeneratingDescription = ref(false);
 const generatingImagePrompts = ref(false);
 const sourceTitle = ref("");
@@ -535,6 +542,8 @@ const script = computed<ScriptJson | null>(() => {
   }
   return value as ScriptJson;
 });
+
+const canOptimizeTitle = computed(() => Boolean(script.value?.narration?.trim()));
 
 /** 口播预计时长（秒）= 实际字数 / 预估语速 */
 const scriptEstimatedDurationSec = computed(() => {
@@ -852,6 +861,25 @@ const handleUpdateSourceTitle = async () => {
     handleError(error, "更新原标题失败");
   } finally {
     savingSourceTitle.value = false;
+  }
+};
+
+const handleOptimizeTitle = async () => {
+  if (!script.value?.narration?.trim()) {
+    ElMessage.warning("请先生成口播文案");
+    return;
+  }
+  optimizingTitle.value = true;
+  try {
+    const result = await optimizeScriptTitle(props.job.id, {
+      max_title_length: Number.isFinite(maxTitleLength.value) ? maxTitleLength.value : undefined,
+    });
+    ElMessage.success(`标题已优化：${result.title}`);
+    emit("refresh");
+  } catch (error) {
+    handleError(error, "优化标题失败");
+  } finally {
+    optimizingTitle.value = false;
   }
 };
 

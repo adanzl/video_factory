@@ -115,6 +115,25 @@ export async function generateVideoDescription(jobId: number): Promise<{
   return response.data;
 }
 
+export async function optimizeScriptTitle(
+  jobId: number,
+  options: { max_title_length?: number } = {}
+): Promise<{
+  title: string;
+  draft_title: string;
+  job: JobDetail;
+}> {
+  const payload: { id: number; max_title_length?: number } = { id: jobId };
+  if (options.max_title_length != null && Number.isFinite(options.max_title_length)) {
+    payload.max_title_length = options.max_title_length;
+  }
+  const response = await api.post<{ title: string; draft_title: string; job: JobDetail }>(
+    "/v_factory/api/jobs/script/optimize-title",
+    payload
+  );
+  return response.data;
+}
+
 export async function generateTags(jobId: number): Promise<{
   tags: string[];
   job: JobDetail;

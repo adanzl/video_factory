@@ -26,6 +26,8 @@ from app.services.script.optimize_title import (
     build_title_optimize_user_prompt,
     parse_title_optimize_payload,
 )
+from app.services.daily_story.story_types import format_block_for_code
+from app.utils.title_text import select_optimized_title
 
 
 def test_title_optimize_system_prompt_includes_hook_formulas():
@@ -65,6 +67,45 @@ def test_chat_title_clamps_to_ten_and_includes_punchline():
     assert "反差说明" in prompts["user"]
     assert "C类公平执念" in prompts["user"]
     assert "16" not in prompts["system"]
+
+
+def test_chat_title_system_prompt_has_hook_templates_and_antitrunc():
+    prompts = build_chat_title_prompts(
+        "藏玩具同盟",
+        {
+            "setting": "客厅",
+            "punchline_explain": "C类公平执念，姐姐权威被戳穿",
+            "dialogue": [{"speaker": "昭昭", "line": "你藏了我的橡皮"}],
+        },
+        max_title_length=16,
+    )
+    for kw in ("台词钩子", "反差设问", "意外后果", "悬念藏匿", "删掉钩子"):
+        assert kw in prompts["system"], kw
+    assert "宁可短" not in prompts["user"]
+    assert "16" not in prompts["system"]
+
+
+def test_format_block_scene_title_requires_spoken_hook():
+    for code in ("A", "B", "C", "D", "E"):
+        blk = format_block_for_code(code)
+        assert '"scene_title":' in blk
+        assert "口语钩子" in blk
+        assert "藏玩具" in blk or "分蛋糕" in blk
+        assert "老鼠会开柜子门吗" in blk
+        assert "场记或口语钩子均可" not in blk
+
+
+def test_select_optimized_title_degraded_truncation_falls_back():
+    # 优化只是初稿删字截断 → 回退初稿
+    assert select_optimized_title("藏玩具同盟", "藏玩具", max_len=10) == "藏玩具同盟"
+    # 正常优化保留
+    assert select_optimized_title("月饼大作战", "月饼全滚出来了", max_len=10) == "月饼全滚出来了"
+    # 超长且初稿合法 → 回退初稿
+    assert select_optimized_title("月饼大作战", "月饼大作战全都滚出来了", max_len=10) == "月饼大作战"
+    # 初稿也超长 → 截断兜底（optimized 截到 max_len）
+    assert select_optimized_title("月饼大作战全都滚出来了", "月饼大作战全都滚出来了呀", max_len=10) == "月饼大作战全都滚出来"
+    # 仅标点/空白变化 → 保留来源标点
+    assert select_optimized_title("检查不算吃！", "检查不算吃", max_len=10) == "检查不算吃！"
 
 
 def test_daily_story_prompts_share_contract():
