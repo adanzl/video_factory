@@ -71,8 +71,79 @@ def test_generate_segment_images_regens_prompt_after_verify_fail(tmp_path: Path)
     assert results == [(4, out)]
     assert provider.generate.call_count == 2
     mock_regen.assert_called_once()
+    assert mock_regen.call_args.kwargs.get("reason") == "verify"
     mock_persist.assert_called_once()
     assert "新提示词" in (seg.get("image_prompt") or "")
+
+
+def test_generate_segment_images_regens_prompt_after_content_policy(tmp_path: Path) -> None:
+    from app.services.llm.llm_agnes import AgnesContentPolicyError
+
+    mgr = ImageMgr()
+    images_dir = tmp_path / "images"
+    images_dir.mkdir()
+    seg = {
+        "id": 7,
+        "segment_index": 7,
+        "text": "别抢！",
+        "image_prompt": "旧提示词 " * 20,
+        "dialogue": [
+            {"speaker": "昭昭", "text": "别抢！"},
+            {"speaker": "灿灿", "text": "是我的！"},
+        ],
+    }
+    job = {
+        "id": 61,
+        "script_json": {
+            "title": "抢月饼",
+            "visual_style": "儿童情绪涂鸦",
+            "setting": "客厅",
+            "segments": [dict(seg)],
+        },
+    }
+
+    provider = MagicMock()
+    out = images_dir / "7.png"
+
+    def _gen(prompt, output_path, **kwargs):
+        output_path.write_bytes(b"png")
+        calls = getattr(_gen, "calls", 0)
+        _gen.calls = calls + 1
+        if calls == 0:
+            raise AgnesContentPolicyError(
+                "agnes api 400: {'error': {'code': 'content_policy_violation'}}"
+            )
+        return output_path
+
+    provider.generate.side_effect = _gen
+    provider.describe_params.return_value = "provider=mock"
+
+    def _fake_regen(seg_arg, **kwargs):
+        assert kwargs.get("reason") == "content_policy"
+        seg_arg["image_prompt"] = "温和新提示词 " * 20
+        return seg_arg["image_prompt"]
+
+    with (
+        patch.object(mgr, "_get_image_provider", return_value=provider),
+        patch.object(mgr, "_regen_segment_image_prompt", side_effect=_fake_regen) as mock_regen,
+        patch.object(mgr, "_persist_segment_prompt") as mock_persist,
+        patch("app.config.get_settings") as mock_settings,
+    ):
+        mock_settings.return_value.mock_mode = True
+        mock_settings.return_value.image_max_workers = 1
+        results = mgr.generate_segment_images(
+            [seg],
+            images_dir,
+            job=job,
+            content_style="daily_story",
+            on_image_done=lambda *_: None,
+        )
+
+    assert results == [(7, out)]
+    assert provider.generate.call_count == 2
+    mock_regen.assert_called_once()
+    mock_persist.assert_called_once()
+    assert "温和新提示词" in (seg.get("image_prompt") or "")
 
 
 def test_generate_segment_images_skips_after_prompt_regen_fail(
@@ -401,6 +472,75 @@ def test_regen_daily_rewrites_visual_brief_not_append_feedback() -> None:
     assert "脏衣篮" in new_prompt
     assert "灿灿" in (seg.get("visual_brief") or "")
     assert "妈妈" not in new_prompt
+    assert seg["image_prompt"] == new_prompt
+
+
+def test_regen_daily_content_policy_uses_policy_feedback() -> None:
+    mgr = ImageMgr()
+    seg = {
+        "id": 8,
+        "segment_index": 8,
+        "text": "抢",
+        "visual_brief": "客厅茶几上放着月饼盒。",
+        "shot_type": "中景",
+        "image_prompt": "旧提示",
+        "dialogue": [
+            {"speaker": "昭昭", "text": "给我！"},
+            {"speaker": "灿灿", "text": "不行！"},
+        ],
+    }
+    job = {
+        "id": 100,
+        "script_json": {
+            "title": "t",
+            "visual_style": "儿童情绪涂鸦",
+            "setting": "客厅",
+            "content_style": "daily_story",
+            "segments": [dict(seg)],
+        },
+    }
+
+    def _fake_vb(script, **kwargs):
+        fb = kwargs.get("feedback") or ""
+        assert "content_policy_violation" in fb
+        assert "出图被内容策略拦截" in fb
+        assert "温和" in fb
+        assert kwargs.get("segment_indices") == [8]
+        for s in script["segments"]:
+            if int(s["segment_index"]) == 8:
+                s["visual_brief"] = (
+                    "客厅茶几上放着月饼盒；画面左边是昭昭，右边是灿灿；"
+                    "昭昭伸手指向月饼盒，灿灿双手护住盒子。"
+                )
+        return script
+
+    def _fake_fill(script, **kwargs):
+        assert kwargs.get("feedback") is None
+        return script
+
+    with (
+        patch(
+            "app.services.llm.llm_mgr.llm_mgr.fill_visual_briefs",
+            side_effect=_fake_vb,
+        ),
+        patch(
+            "app.services.llm.llm_mgr.llm_mgr.fill_image_prompts",
+            side_effect=_fake_fill,
+        ),
+        patch(
+            "app.utils.job_info.resolve_include_sd15_prompt",
+            return_value=False,
+        ),
+    ):
+        new_prompt = mgr._regen_segment_image_prompt(
+            seg,
+            job=job,
+            content_style="daily_story",
+            reason="content_policy",
+        )
+
+    assert "出图被内容策略拦截" not in new_prompt
+    assert "月饼盒" in new_prompt
     assert seg["image_prompt"] == new_prompt
 
 
