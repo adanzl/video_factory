@@ -87,6 +87,7 @@ def _optimize_daily_story_title(draft: str, story_content: dict, *, max_len: int
     from app.services.llm.llm_mgr import llm_mgr
     from app.services.script.optimize_title import (
         build_chat_title_prompts,
+        extract_core_anchor_words,
         parse_chat_title_candidates_payload,
         pick_best_chat_title,
     )
@@ -94,7 +95,8 @@ def _optimize_daily_story_title(draft: str, story_content: dict, *, max_len: int
     client = llm_mgr._get_client()
     raw, _ = client._chat_json(prompts['system'], prompts['user'], thinking_enabled=False, temperature=0.8)
     candidates = parse_chat_title_candidates_payload(raw, max_title_len=max_len)
-    return pick_best_chat_title(draft, candidates, max_len=max_len, avoid_titles=avoid_titles)
+    anchors = extract_core_anchor_words(draft, story_content)
+    return pick_best_chat_title(draft, candidates, max_len=max_len, avoid_titles=avoid_titles, anchor_words=anchors)
 
 
 def _optimize_standard_title(draft: str, narration: str, *, max_len: int) -> str:
