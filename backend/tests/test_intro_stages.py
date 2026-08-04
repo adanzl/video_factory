@@ -111,9 +111,20 @@ def test_intro_title_normalize_keeps_other_punctuation() -> None:
     assert _normalize_title("秦陵,未解?") == "秦陵，未解？"
 
 
-def test_resolve_intro_title_uses_draft_when_only_punct_diff() -> None:
+def test_resolve_intro_title_prefers_job_title() -> None:
     job = {
-        "title": "秦陵未解之谜",
+        "title": "原标题钩子",
+        "script_json": {
+            "title": "脚本定稿标题",
+            "draft_title": "初稿标题",
+        },
+    }
+    assert resolve_intro_title(job) == "原标题钩子"
+
+
+def test_resolve_intro_title_falls_back_to_script_when_job_empty() -> None:
+    job = {
+        "title": "",
         "script_json": {
             "title": "秦陵未解之谜",
             "draft_title": "秦陵：未解之谜",

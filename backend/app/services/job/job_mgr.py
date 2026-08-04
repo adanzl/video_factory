@@ -68,10 +68,13 @@ def _load_script_meta(job_id: int) -> tuple[dict, dict]:
         return job, dict(script)
 
 
-def _persist_script(job_id: int, script: dict, *, log_msg: str) -> dict:
-    """写回 script_json 并追加脚本阶段日志。"""
+def _persist_script(job_id: int, script: dict, *, log_msg: str, title: str | None=None) -> dict:
+    """写回 script_json（可选同步 job.title）并追加脚本阶段日志。"""
     with atomic():
-        job = repo_job.update_job(job_id, script_json=script)
+        kwargs: dict = {'script_json': script}
+        if title is not None:
+            kwargs['title'] = title
+        job = repo_job.update_job(job_id, **kwargs)
         repo_job_log.append_log(job_id, 'script', log_msg)
         return job
 
@@ -644,16 +647,18 @@ class JobMgr:
         return [{'step': 'daily_script', 'system': system, 'user': user}]
 
     def optimize_script_title(self, job_id: int, *, max_title_length: int | None=None) -> dict:
-        """独立重跑标题优化，只更新 script_json.title / draft_title。
+        """独立重跑标题优化，写回原标题（job.title）并同步 script_json。
 
         优化结果经 ``select_optimized_title`` 做退化保护与长度硬截断，
         避免「藏玩具同盟→藏玩具」这类越优化越平淡的结果落库。
+        片头/封面读 ``job.title``（原标题）。
         """
         from app.core.pipelines import PIPELINE_DAILY_STORY, resolve_pipeline
         from app.utils.job_info import script_params_from_info
         from app.utils.title_text import collapse_title_whitespace
         job, script = _load_script_meta(job_id)
-        draft = str(script.get('draft_title') or script.get('title') or job.get('title') or '').strip()
+        # 以页面「原标题」为准；无则回退脚本稿
+        draft = str(job.get('title') or script.get('draft_title') or script.get('title') or '').strip()
         if not draft:
             raise ValueError('title is empty')
         pipeline = resolve_pipeline(job)
@@ -687,7 +692,12 @@ class JobMgr:
             final_title = _optimize_standard_title(draft, narration, max_len=max_len)
         script['draft_title'] = collapse_title_whitespace(draft)
         script['title'] = final_title
-        job = _persist_script(job_id, script, log_msg=f'title optimized: {draft!r} -> {final_title!r}')
+        job = _persist_script(
+            job_id,
+            script,
+            title=final_title,
+            log_msg=f'title optimized: {draft!r} -> {final_title!r}',
+        )
         return {'title': final_title, 'draft_title': script['draft_title'], 'job': job}
 
     def generate_video_description(self, job_id: int) -> dict:
