@@ -17,7 +17,10 @@ def _normalize_title(title: str) -> str:
     return re.sub('\\s+', '', (title or '').strip())
 
 def resolve_intro_title(job: dict) -> str:
-    """优先 script_json 定稿标题；若优化仅去掉标点则用 draft_title。"""
+    """优先原标题（job.title）；无则回退 script_json 定稿。"""
+    job_title = _normalize_title(str(job.get('title') or ''))
+    if job_title:
+        return job_title
     script = job.get('script_json')
     if isinstance(script, dict):
         script_title = _normalize_title(str(script.get('title') or ''))
@@ -26,8 +29,7 @@ def resolve_intro_title(job: dict) -> str:
             if draft_title:
                 return prefer_source_punctuation(draft_title, script_title)
             return script_title
-    job_title = _normalize_title(str(job.get('title') or ''))
-    return job_title or '未命名'
+    return '未命名'
 
 def _orientation_label(job: dict, *, intro_orientation: str | None, effective_orientation: str | None) -> str:
     if intro_orientation:
