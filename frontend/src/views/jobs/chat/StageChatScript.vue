@@ -15,6 +15,11 @@
               @click="handleUpdateSourceTitle">
               更新
             </el-button>
+            <el-button :loading="optimizingTitle"
+              :disabled="actionDisabled || !canOptimizeTitle"
+              @click="handleOptimizeTitle">
+              优化
+            </el-button>
           </div>
         </el-descriptions-item>
         <el-descriptions-item label="预计时间">
@@ -130,6 +135,12 @@
             </el-descriptions-item>
             <el-descriptions-item label="总字数">{{ totalChars }} 字</el-descriptions-item>
             <el-descriptions-item label="时长估算">{{ estimatedDuration }}</el-descriptions-item>
+            <el-descriptions-item v-if="script" label="脚本标题">
+              <span class="font-bold">{{ script.title || "-" }}</span>
+              <span v-if="script.draft_title && script.draft_title !== script.title" class="ml-2 text-xs text-gray-400">
+                初稿：{{ script.draft_title }}
+              </span>
+            </el-descriptions-item>
             <el-descriptions-item v-if="script" label="分镜数">{{ (script.segments || []).length }}</el-descriptions-item>
           </el-descriptions>
         </div>
@@ -342,7 +353,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { runJobStageAction, updateJob, updateJobInfo, previewDailyScriptPrompts, generatePrompts } from "@/api/api-jobs";
+import { runJobStageAction, updateJob, updateJobInfo, previewDailyScriptPrompts, generatePrompts, optimizeScriptTitle } from "@/api/api-jobs";
 import { getDailyStory, formatDailyStoryType } from "@/api/api-daily-story";
 import type { DailyStoryRecord } from "@/api/api-daily-story";
 import type { JobDetail, JobLog, JobSegment } from "@/types/jobs";
@@ -398,6 +409,7 @@ interface ChatSegment {
 
 interface ChatScript {
   title?: string;
+  draft_title?: string;
   narration?: string;
   word_count?: number;
   segments?: ChatSegment[];
@@ -424,6 +436,7 @@ const speechCharsPerSec = ref(DEFAULT_CHAT_SPEECH_CHARS_PER_SEC);
 const skipTitleOptimize = ref(false);
 const sourceTitle = ref("");
 const savingSourceTitle = ref(false);
+const optimizingTitle = ref(false);
 const jobOrientation = ref<"portrait" | "landscape">("portrait");
 const savingProfile = ref(false);
 
@@ -464,6 +477,10 @@ const script = computed<ChatScript | null>(() => {
   if (!raw || typeof raw !== "object") return null;
   return raw as ChatScript;
 });
+
+const canOptimizeTitle = computed(
+  () => Boolean(script.value) && Boolean(dailyStory.value?.story)
+);
 
 async function fetchDailyStory(storyId: number) {
   storyLoading.value = true;
@@ -649,6 +666,29 @@ async function handleUpdateSourceTitle() {
     ElMessage.error(e?.response?.data?.message || "更新失败");
   } finally {
     savingSourceTitle.value = false;
+  }
+}
+
+async function handleOptimizeTitle() {
+  if (!script.value) {
+    ElMessage.warning("请先生成分镜脚本");
+    return;
+  }
+  if (!dailyStory.value?.story) {
+    ElMessage.warning("故事数据未加载");
+    return;
+  }
+  optimizingTitle.value = true;
+  try {
+    const result = await optimizeScriptTitle(props.job.id, {
+      max_title_length: Number.isFinite(maxTitleLength.value) ? maxTitleLength.value : undefined,
+    });
+    ElMessage.success(`标题已优化：${result.title}`);
+    emit("refresh");
+  } catch (error) {
+    handleError(error, "优化标题失败");
+  } finally {
+    optimizingTitle.value = false;
   }
 }
 

@@ -29,3 +29,37 @@ def prefer_source_punctuation(source: str, optimized: str) -> str:
     if title_core(src) != title_core(opt):
         return opt
     return src if len(src) >= len(opt) else opt
+
+
+def title_degraded_by_truncation(draft: str, optimized: str) -> bool:
+    """优化结果若只是初稿的删字/截断版（如「藏玩具同盟」→「藏玩具」），视为退化。
+
+    只判定「截掉末尾若干字」这种机械删减；同义改写（「谁切蛋糕」→「分蛋糕」）
+    无法机读判定，靠 prompt 约束。
+    """
+    dc = title_core(draft)
+    oc = title_core(optimized)
+    if not dc or not oc:
+        return False
+    return len(oc) < len(dc) and dc.startswith(oc)
+
+
+def select_optimized_title(draft: str, optimized: str, *, max_len: int) -> str:
+    """从优化结果中选出最终标题。
+
+    - 优化只是初稿删字截断（如「藏玩具同盟」→「藏玩具」）视为退化，回退初稿；
+    - 超长硬卡：选择结果超长时，若初稿合法则回退初稿，否则截断到 max_len
+      （防 normalize_title 对 ≤12 字不截断的漏洞）；
+    - 仅标点/空白变化时保留来源标点。
+    """
+    draft_len = len(title_core(draft))
+    chosen = prefer_source_punctuation(draft, optimized)
+    if draft_len <= max_len and title_degraded_by_truncation(draft, chosen):
+        chosen = collapse_title_whitespace(draft)
+    if len(title_core(chosen)) > max_len:
+        chosen = (
+            collapse_title_whitespace(draft)
+            if draft_len <= max_len
+            else collapse_title_whitespace(chosen)[:max_len]
+        )
+    return collapse_title_whitespace(chosen)

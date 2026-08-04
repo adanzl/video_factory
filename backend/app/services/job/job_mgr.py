@@ -57,6 +57,48 @@ def _image_prompts_action_detail(job: dict, *, segment_indices: list[int] | None
     scope = f'segment_indices={segment_indices}' if segment_indices else f'segments={len(segments)}'
     return f'{scope}, image_provider={provider}, include_sd15_prompt={resolve_include_sd15_prompt(job)}'
 
+
+def _load_script_meta(job_id: int) -> tuple[dict, dict]:
+    """读 job 与 script_json（校验），返回 (job, script 浅拷贝)。"""
+    with atomic():
+        job = repo_job.get_job(job_id)
+        script = job.get('script_json')
+        if not isinstance(script, dict):
+            raise ValueError('script not ready')
+        return job, dict(script)
+
+
+def _persist_script(job_id: int, script: dict, *, log_msg: str) -> dict:
+    """写回 script_json 并追加脚本阶段日志。"""
+    with atomic():
+        job = repo_job.update_job(job_id, script_json=script)
+        repo_job_log.append_log(job_id, 'script', log_msg)
+        return job
+
+
+def _optimize_daily_story_title(draft: str, story_content: dict, *, max_len: int) -> str:
+    """chat 流水线标题优化：构建 prompt → 调用 → parse → 退化保护 + 长度硬截断。"""
+    from app.services.llm.llm_mgr import llm_mgr
+    from app.services.script.optimize_title import (
+        build_chat_title_prompts,
+        parse_title_optimize_payload,
+    )
+    from app.utils.title_text import select_optimized_title
+    prompts = build_chat_title_prompts(draft, story_content, max_title_length=max_len)
+    client = llm_mgr._get_client()
+    raw, _ = client._chat_json(prompts['system'], prompts['user'], thinking_enabled=False, temperature=0.8)
+    optimized = parse_title_optimize_payload(raw, max_title_len=max_len)
+    return select_optimized_title(draft, optimized, max_len=max_len)
+
+
+def _optimize_standard_title(draft: str, narration: str, *, max_len: int) -> str:
+    """standard 流水线标题优化：走 llm_mgr + 退化保护 + 长度硬截断。"""
+    from app.services.llm.llm_mgr import llm_mgr
+    from app.utils.title_text import select_optimized_title
+    optimized = llm_mgr.optimize_script_title(draft, narration, max_title_length=max_len)
+    return select_optimized_title(draft, optimized, max_len=max_len)
+
+
 class JobBusyError(Exception):
     """Job 正在执行，拒绝并发动作。"""
 
@@ -83,14 +125,12 @@ class JobMgr:
             return {'items': items, 'total': total}
 
     def get_job(self, job_id: int) -> dict:
-        from pathlib import Path
         with atomic():
             job = repo_job.get_job(job_id)
         audio_path = job.get('audio_path')
         if audio_path:
             clips_dir = Path(audio_path).parent / 'clips'
             if clips_dir.is_dir():
-                import re
                 clips = sorted((p.name for p in clips_dir.glob('*.mp3') if re.fullmatch('\\d+', p.stem)))
                 job['tts_clips'] = [str(clips_dir / name) for name in clips]
             else:
@@ -559,6 +599,10 @@ class JobMgr:
             supplementary_info = sp.get('supplementary_info')
         if video_timeline is None:
             video_timeline = sp.get('video_timeline')
+        if orientation is None:
+            orientation = info.get('orientation')
+        if content_style is None:
+            content_style = info.get('content_style')
         if orientation is not None or content_style is not None:
             job = dict(job)
             patch: dict[str, str] = {}
@@ -567,19 +611,6 @@ class JobMgr:
             if content_style is not None:
                 patch['content_style'] = content_style
             job['info'] = merge_job_info(job.get('info'), **patch)
-        else:
-            if orientation is None:
-                orientation = info.get('orientation')
-            if content_style is None:
-                content_style = info.get('content_style')
-            if orientation is not None or content_style is not None:
-                job = dict(job)
-                patch = {}
-                if orientation is not None:
-                    patch['orientation'] = orientation
-                if content_style is not None:
-                    patch['content_style'] = content_style
-                job['info'] = merge_job_info(job.get('info'), **patch)
         source_title = (title or job['title'] or '').strip()
         if not source_title:
             raise ValueError('title is empty')
@@ -612,53 +643,84 @@ class JobMgr:
         system, user = build_daily_script_prompts(story_content, chars_per_sec=resolve_speech_chars_per_sec(script_params_from_info(job.get('info')), content_style=content_style_from_job(job)))
         return [{'step': 'daily_script', 'system': system, 'user': user}]
 
+    def optimize_script_title(self, job_id: int, *, max_title_length: int | None=None) -> dict:
+        """独立重跑标题优化，只更新 script_json.title / draft_title。
+
+        优化结果经 ``select_optimized_title`` 做退化保护与长度硬截断，
+        避免「藏玩具同盟→藏玩具」这类越优化越平淡的结果落库。
+        """
+        from app.core.pipelines import PIPELINE_DAILY_STORY, resolve_pipeline
+        from app.utils.job_info import script_params_from_info
+        from app.utils.title_text import collapse_title_whitespace
+        job, script = _load_script_meta(job_id)
+        draft = str(script.get('draft_title') or script.get('title') or job.get('title') or '').strip()
+        if not draft:
+            raise ValueError('title is empty')
+        pipeline = resolve_pipeline(job)
+        sp = script_params_from_info(job.get('info'))
+        max_len = max_title_length
+        if max_len is None:
+            saved = sp.get('max_title_length')
+            if isinstance(saved, (int, float)) and saved > 0:
+                max_len = int(saved)
+        if pipeline == PIPELINE_DAILY_STORY:
+            from app.repositories import repo_daily_story
+            from app.services.script.optimize_title import CHAT_TITLE_MAX_LEN
+            from app.utils.job_info import parse_job_info
+            max_len = CHAT_TITLE_MAX_LEN if max_len is None else max_len
+            info = parse_job_info(job.get('info'))
+            daily_story_id = info.get('daily_story_id') or job.get('material_id')
+            if not daily_story_id:
+                raise ValueError('daily_story_id not found in job info')
+            story = repo_daily_story.get_story(daily_story_id)
+            story_content = story.get('story')
+            if not isinstance(story_content, dict):
+                raise ValueError('故事数据格式异常')
+            final_title = _optimize_daily_story_title(draft, story_content, max_len=max_len)
+        else:
+            narration = str(script.get('narration') or '').strip()
+            if not narration:
+                raise ValueError('narration is empty')
+            if max_len is None:
+                from app.config import get_settings
+                max_len = get_settings().max_title_length
+            final_title = _optimize_standard_title(draft, narration, max_len=max_len)
+        script['draft_title'] = collapse_title_whitespace(draft)
+        script['title'] = final_title
+        job = _persist_script(job_id, script, log_msg=f'title optimized: {draft!r} -> {final_title!r}')
+        return {'title': final_title, 'draft_title': script['draft_title'], 'job': job}
+
     def generate_video_description(self, job_id: int) -> dict:
         from app.services.llm.llm_mgr import llm_mgr
         from app.utils.job_info import content_style_from_job
-        with atomic():
-            job = repo_job.get_job(job_id)
-            script = job.get('script_json')
-            if not isinstance(script, dict):
-                raise ValueError('script not ready')
-            title = str(script.get('title') or job.get('title') or '').strip()
-            narration = str(script.get('narration') or '').strip()
-            if not title:
-                raise ValueError('title is empty')
-            if not narration:
-                raise ValueError('narration is empty')
-            content_style = content_style_from_job(job)
-            base_script = dict(script)
+        job, script = _load_script_meta(job_id)
+        title = str(script.get('title') or job.get('title') or '').strip()
+        narration = str(script.get('narration') or '').strip()
+        if not title:
+            raise ValueError('title is empty')
+        if not narration:
+            raise ValueError('narration is empty')
+        content_style = content_style_from_job(job)
         description = llm_mgr.generate_video_description(title, narration, content_style=content_style)
-        updated_script = base_script
-        updated_script['video_description'] = description
-        with atomic():
-            job = repo_job.update_job(job_id, script_json=updated_script)
-            repo_job_log.append_log(job_id, 'script', 'video description regenerated')
-            return {'video_description': description, 'job': job}
+        script['video_description'] = description
+        job = _persist_script(job_id, script, log_msg='video description regenerated')
+        return {'video_description': description, 'job': job}
 
     def generate_tags(self, job_id: int) -> dict:
         from app.services.llm.llm_mgr import llm_mgr
         from app.utils.job_info import content_style_from_job
-        with atomic():
-            job = repo_job.get_job(job_id)
-            script = job.get('script_json')
-            if not isinstance(script, dict):
-                raise ValueError('script not ready')
-            title = str(script.get('title') or job.get('title') or '').strip()
-            narration = str(script.get('narration') or '').strip()
-            if not title:
-                raise ValueError('title is empty')
-            if not narration:
-                raise ValueError('narration is empty')
-            content_style = content_style_from_job(job)
-            base_script = dict(script)
+        job, script = _load_script_meta(job_id)
+        title = str(script.get('title') or job.get('title') or '').strip()
+        narration = str(script.get('narration') or '').strip()
+        if not title:
+            raise ValueError('title is empty')
+        if not narration:
+            raise ValueError('narration is empty')
+        content_style = content_style_from_job(job)
         tags = llm_mgr.generate_tags(title, narration, content_style=content_style)
-        updated_script = base_script
-        updated_script['tags'] = tags
-        with atomic():
-            job = repo_job.update_job(job_id, script_json=updated_script)
-            repo_job_log.append_log(job_id, 'script', 'tags regenerated')
-            return {'tags': tags, 'job': job}
+        script['tags'] = tags
+        job = _persist_script(job_id, script, log_msg='tags regenerated')
+        return {'tags': tags, 'job': job}
 
     def run_intro(self, job_id: int, *, to_end: bool=False, hold_tail_sec: float | None=None, orientation: str | None=None, orientation_preference: str | None=None, intro_category: str | None=None) -> dict:
         """生成片头。实现：worker/loop.run_intro → worker/stages/intro/"""
