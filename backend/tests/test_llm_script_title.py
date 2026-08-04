@@ -172,11 +172,19 @@ def test_pick_best_chat_title_prefers_hook_and_avoids_repeat():
     # 标点变体也算重复：avoid 按 title_core 比对
     best3 = pick_best_chat_title(
         "月饼大作战",
-        ["妈，月饼不是我弄的！", "谁把月饼全滚了"],
+        ["妈，月饼不是我弄的！", "月饼渣，我踩的印"],
         max_len=10,
         avoid_titles=["妈，月饼不是我弄的"],
     )
-    assert best3 == "谁把月饼全滚了"
+    assert best3 == "月饼渣，我踩的印"
+
+    # 「谁…」不加分：甩锅声明/推锅给东西 与 谁问句同台竞争，避免谁字刷屏
+    best4 = pick_best_chat_title(
+        "月饼大作战",
+        ["谁把月饼抖一地", "妈，月饼是它自己滚的"],
+        max_len=10,
+    )
+    assert best4 == "妈，月饼是它自己滚的"
 
     # 候选与初稿相同/命中 avoid → 回退初稿
     assert pick_best_chat_title("月饼大作战", ["月饼大作战"], max_len=10) == "月饼大作战"
