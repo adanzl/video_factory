@@ -624,48 +624,57 @@ class MediaMgr:
                 if on_clip_done is not None:
                     on_clip_done(seg_id, clip_path, gen_sec)
         else:
-            import gevent
-            from gevent.pool import Pool
+            from gevent import iwait
+            from gevent.lock import Semaphore
+            from gevent.pool import Group
 
-            pool = Pool(size=max_workers)
-            green_lets = [
-                pool.spawn(build_one, seg, i) for i, seg in enumerate(targets, 1)
-            ]
-            pending = set(green_lets)
-            job_id = int(job["id"]) if job is not None and job.get("id") is not None else None
+            # Pool.spawn 在池满时会阻塞父协程。若用列表推导一次性 spawn，
+            # on_clip_done 要等 (n-workers) 路完成后才能开始，页面长时间看不到视频。
+            # Group + Semaphore：spawn 不阻塞，完成即回调落库。
+            sem = Semaphore(max_workers)
+            group = Group()
+            job_id = (
+                int(job["id"])
+                if job is not None and job.get("id") is not None
+                else None
+            )
             failures: list[BaseException] = []
+
+            def limited_build(seg: dict, ordinal: int) -> tuple[int, Path, float]:
+                with sem:
+                    if job_id is not None:
+                        job_cancel.raise_if_cancelled(job_id)
+                    return build_one(seg, ordinal)
+
+            green_lets = [
+                group.spawn(limited_build, seg, i)
+                for i, seg in enumerate(targets, 1)
+            ]
             try:
-                while pending:
+                for g in iwait(green_lets):
                     if job_id is not None and job_cancel.is_cancelled(job_id):
                         exc = JobCancelledError(f"job {job_id} aborted")
-                        for g in list(pending):
-                            g.kill(exc, block=False)
-                        pool.kill(exc, block=False)
+                        group.kill(exc, block=False)
                         raise exc
-                    ready = [g for g in pending if g.ready()]
-                    if not ready:
-                        gevent.wait(pending, count=1, timeout=1.0)
+                    try:
+                        seg_id, clip_path, gen_sec = g.get()
+                    except JobCancelledError:
+                        raise
+                    except BaseException as exc:
+                        failures.append(exc)
+                        still = sum(1 for x in green_lets if not x.ready())
+                        logger.warning(
+                            "clip worker failed (%s/%s still running): %s",
+                            still,
+                            total,
+                            exc,
+                        )
                         continue
-                    for g in ready:
-                        pending.discard(g)
-                        try:
-                            seg_id, clip_path, gen_sec = g.get()
-                        except BaseException as exc:
-                            failures.append(exc)
-                            logger.warning(
-                                "clip worker failed (%s/%s still running): %s",
-                                len(pending),
-                                total,
-                                exc,
-                            )
-                            continue
-                        segment_clips.append((seg_id, clip_path))
-                        if on_clip_done is not None:
-                            on_clip_done(seg_id, clip_path, gen_sec)
+                    segment_clips.append((seg_id, clip_path))
+                    if on_clip_done is not None:
+                        on_clip_done(seg_id, clip_path, gen_sec)
             except JobCancelledError:
-                for g in list(pending):
-                    g.kill(block=False)
-                pool.kill(block=False)
+                group.kill(block=False)
                 raise
             if failures:
                 logger.error(

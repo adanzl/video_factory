@@ -530,6 +530,87 @@ def test_clip_batch_waits_for_all_workers_before_raise_on_partial_failure(
     assert sorted(persisted) == [201, 203]
 
 
+def test_on_clip_done_fires_before_all_spawns_finish(tmp_path: Path) -> None:
+    """首个 clip 完成须立刻落库；不得等 Pool 列表推导把剩余任务都 spawn 完。"""
+    import gevent
+    from gevent.event import Event
+
+    from app.config import get_settings
+    from app.services.media import media_mgr as media_mgr_mod
+    from app.services.media.media_mgr import media_mgr
+
+    media_mgr_mod._reset_i2v_semaphore_for_tests()
+    settings = get_settings()
+
+    media_dir = tmp_path / "job"
+    images_dir = media_dir / "images"
+    images_dir.mkdir(parents=True)
+    image_path = images_dir / "1.png"
+    image_path.write_bytes(b"png")
+
+    segments = [
+        {
+            "id": 300 + i,
+            "segment_index": i,
+            "visual_mode": "wan_i2v",
+            "image_path": str(image_path),
+            "duration_sec": 3.0,
+            "text": f"分镜{i}",
+            "image_prompt": "test",
+            "motion_prompt": "slow pan",
+        }
+        for i in range(1, 7)
+    ]
+
+    first_callback = Event()
+    allow_slow = Event()
+    callbacks: list[int] = []
+
+    def fake_build_segment_clip(**kwargs):
+        index = int(kwargs["segment_index"])
+        if index <= 2:
+            gevent.sleep(0.05)
+            out = kwargs["output_path"]
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_bytes(b"mp4")
+            return
+        assert first_callback.wait(timeout=2), "on_clip_done never fired"
+        assert allow_slow.wait(timeout=2), "test did not release slow tasks"
+        out = kwargs["output_path"]
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(b"mp4")
+
+    def on_done(seg_id: int, *_args) -> None:
+        callbacks.append(seg_id)
+        if len(callbacks) == 1:
+            first_callback.set()
+
+    with (
+        patch.object(settings, "video_max_workers", 2),
+        patch.object(settings, "mock_mode", False),
+        patch.object(
+            media_mgr_mod.clip_mgr,
+            "build_segment_clip",
+            side_effect=fake_build_segment_clip,
+        ),
+        patch.object(media_mgr, "_load_subtitle_cues", return_value=[]),
+    ):
+        worker = gevent.spawn(
+            media_mgr.build_segment_clips,
+            media_dir=media_dir,
+            segments=segments,
+            on_clip_done=on_done,
+        )
+        assert first_callback.wait(timeout=2), "callback blocked by Pool.spawn"
+        allow_slow.set()
+        result = worker.get(timeout=5)
+
+    assert len(callbacks) == 6
+    assert sorted(seg_id for seg_id, _ in result.segment_clip_paths) == list(
+        range(301, 307)
+    )
+
+
 def test_agnes_i2v_poll_stops_on_job_abort(tmp_path: Path) -> None:
     """abort 后轮询应立刻抛 JobCancelledError，不再继续拉状态。"""
     from app.utils.job_cancel import JobCancelledError, job_cancel
