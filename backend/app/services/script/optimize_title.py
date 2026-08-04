@@ -194,6 +194,8 @@ def build_chat_title_system_prompt(*, max_title_len: int = CHAT_TITLE_MAX_LEN) -
         "换成孩子口吻（甩锅「不是我」/质问「谁…」/喊话「妈，…」）或留半截吊胃口"
         "\n- 钩子要落在具体好笑画面：把一个道具+动作（「擦」「踩」「摔」「翻」）放进标题，"
         "让读者能脑补画面，别写泛泛的结果；优先找「为偷吃一口赔上一整盒」式的荒谬反差账"
+        "\n- 主题不能丢（最高优先）：标题必须能看出本场核心在讲什么——偷吃的月饼/系的鞋带/"
+        "藏起的杯子——可以含蓄，但不能只留甩锅或问答口吻把主题甩掉（如「咱俩谁甩锅」没点出月饼，不合格）"
         "\n- 三个候选句式要拉开（一句孩子原话 / 一个具体道具意外 / 一个反差问句），"
         "别全是「谁…」「…怨谁」质问句"
         "\n- 坏标题示例：「姐弟偷吃饼干」「月饼全滚出来了」「被妈妈抓住」「孩子的选择」"
@@ -232,6 +234,9 @@ def build_chat_title_user_prompt(
     context_parts = []
     if setting:
         context_parts.append(f"场景：{setting}")
+    conflict_core = (story_content.get("conflict_core") or "").strip()
+    if conflict_core:
+        context_parts.append(f"冲突核心：{conflict_core}")
     if punchline:
         context_parts.append(f"反差说明：{punchline}")
     context_parts.append(f"对话（优先看结尾与冲突句）：\n{dialogue_text}")
@@ -250,6 +255,8 @@ def build_chat_title_user_prompt(
         "句式要拉开：一句孩子原话 / 一个具体道具意外 / 一个反差问句，别三个都一个方向）。"
         f"每个必须 ≤{max_title_len} 字：超字只删虚词/语气词，禁止删成事件名、禁止为了短丢钩子。"
         "钩子只从本剧本的冲突高潮台词/反差/核心道具里提炼，禁止套用与剧本无关的现成短句。"
+        "主题锚定（最高优先）：标题要让读者一眼看出本场在讲什么（偷吃月饼/系鞋带/藏杯子等核心），"
+        "不能只留甩锅或问答口吻丢掉主题。"
         "别平铺直叙复述结局；优先找一个具体好笑画面或「为偷吃一口赔上整盒」式的荒谬反差，"
         "用人物口吻、问句或留半截吊起来。"
         f"{avoid_note}"
