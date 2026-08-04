@@ -201,6 +201,66 @@ def test_pick_best_chat_title_penalizes_outcome_reveal():
     assert best2 == "谁先踩的渣"
 
 
+def test_extract_core_anchor_words():
+    from app.services.script.optimize_title import extract_core_anchor_words
+
+    story = {
+        "scene_title": "月饼大作战",
+        "conflict_core": "姐弟联手偷吃月饼，望风失误掉渣露馅",
+        "setting": "客厅茶几上放着一盒月饼",
+    }
+    assert extract_core_anchor_words("月饼大作战", story) == ["月饼"]
+    # 3 字优先：藏玩具同盟 → 藏玩具
+    assert extract_core_anchor_words("藏玩具同盟", {
+        "scene_title": "藏玩具同盟",
+        "conflict_core": "约好一起藏玩具别让妈妈发现",
+    }) == ["藏玩具"]
+    # 与冲突核心无交集 → 不强制
+    assert extract_core_anchor_words("月饼大作战", {"conflict_core": "姐弟吵架"}) == []
+
+
+def test_pick_best_chat_title_anchor_guard():
+    from app.services.script.optimize_title import pick_best_chat_title
+
+    # 含核心名词的候选胜出（哪怕口吻分略低）
+    best = pick_best_chat_title(
+        "月饼大作战",
+        ["谁踩的渣印", "妈，月饼自己滚的"],
+        max_len=10,
+        anchor_words=["月饼"],
+    )
+    assert best == "妈，月饼自己滚的"
+    # 全部不含核心名词 → 回退初稿，绝不写跑题标题
+    assert (
+        pick_best_chat_title(
+            "月饼大作战", ["谁踩的渣印", "渣印谁擦"], max_len=10, anchor_words=["月饼"]
+        )
+        == "月饼大作战"
+    )
+    # 不传 anchor_words 时行为不变
+    assert (
+        pick_best_chat_title("月饼大作战", ["谁踩的渣印", "渣印谁擦"], max_len=10)
+        == "谁踩的渣印"
+    )
+
+
+def test_chat_title_user_prompt_contains_core_noun_requirement():
+    prompts = build_chat_title_prompts(
+        "月饼大作战",
+        {
+            "scene_title": "月饼大作战",
+            "conflict_core": "姐弟联手偷吃月饼，望风失误掉渣露馅",
+            "setting": "客厅茶几上放着一盒月饼",
+            "punchline_explain": "B类结盟翻车",
+            "dialogue": [{"speaker": "昭昭", "line": "快藏，妈来了"}],
+        },
+        max_title_length=16,
+    )
+    assert "本场核心名词：月饼" in prompts["user"]
+    assert "必须包含" in prompts["user"]
+    assert "硬性" in prompts["system"]
+
+
 def test_format_block_scene_title_requires_spoken_hook():
     for code in ("A", "B", "C", "D", "E"):
         blk = format_block_for_code(code)

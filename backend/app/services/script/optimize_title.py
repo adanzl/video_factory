@@ -109,6 +109,27 @@ def parse_chat_title_candidates_payload(raw: dict[str, Any], *, max_title_len: i
 _OUTCOME_REVEAL_RE = re.compile(r"全滚|滚出来|滚出去|掉一地|全没了|全撒|弄翻|被抓住|被抓|掉地上")
 
 
+def extract_core_anchor_words(draft: str, story_content: dict) -> list[str]:
+    """提取本场核心名词（2–4 字）：原始 scene_title 与冲突核心/场景/主题共有的词。
+
+    用于「标题必须包含核心名词」的硬要求与 picker 兜底，防「鞋底渣印谁擦」式
+    盯住次级元素、把核心主题（月饼）丢掉。取不到交集时返回空列表 = 不强制。
+    """
+    scene = title_core(str(story_content.get('scene_title') or draft or ''))
+    if not scene:
+        return []
+    blob = ''.join(str(story_content.get(k) or '') for k in ('conflict_core', 'setting', 'theme'))
+    for n in (3, 2, 4):
+        found: list[str] = []
+        for i in range(len(scene) - n + 1):
+            w = scene[i:i + n]
+            if w in blob and w not in found:
+                found.append(w)
+        if found:
+            return found[:2]
+    return []
+
+
 def _chat_title_hook_score(title: str) -> int:
     """轻量钩子分：问号/叹号、甩锅口吻、称呼开头；扣结局播报分。
 
@@ -133,26 +154,36 @@ def _chat_title_hook_score(title: str) -> int:
     return score
 
 
-def pick_best_chat_title(draft: str, candidates: list[str], *, max_len: int, avoid_titles: list[str] | None=None) -> str:
+def pick_best_chat_title(draft: str, candidates: list[str], *, max_len: int, avoid_titles: list[str] | None=None, anchor_words: list[str] | None=None) -> str:
     """从多个候选中选最终标题：退化保护 + 长度硬截断 + 钩子分排序。
 
     - 命中初稿或 avoid_titles（已用过的标题）的候选降权，避免手动重跑输出同一个；
     - 问号/叹号/称呼开头/甩锅质问优先于平铺直叙的事件复述；
-    - 全部候选都差时回退初稿。
+    - anchor_words：本场核心名词（如「月饼」）。不含任一核心词的候选重罚；
+      全部候选都不含核心词时回退初稿，绝不写跑题标题。
     """
     avoid = [str(t).strip() for t in (avoid_titles or []) if str(t).strip()]
+    anchors = [str(a).strip() for a in (anchor_words or []) if str(a).strip()]
     draft_core = title_core(draft)
     avoid_cores = {title_core(t) for t in avoid}
     best = draft
     best_score = -10**9
+    any_anchored = False
     for cand in candidates:
         chosen = select_optimized_title(draft, cand, max_len=max_len)
         score = _chat_title_hook_score(chosen)
+        anchored = (not anchors) or any(a in title_core(chosen) for a in anchors)
+        if anchored:
+            any_anchored = True
+        else:
+            score -= 8
         if title_core(chosen) == draft_core or title_core(chosen) in avoid_cores:
             score -= 8
         if score > best_score:
             best_score = score
             best = chosen
+    if anchors and not any_anchored:
+        return draft
     return best
 
 # --------------- chat (daily_story) 标题优化 ---------------
@@ -194,8 +225,8 @@ def build_chat_title_system_prompt(*, max_title_len: int = CHAT_TITLE_MAX_LEN) -
         "换成孩子口吻（甩锅「不是我」/质问「谁…」/喊话「妈，…」）或留半截吊胃口"
         "\n- 钩子要落在具体好笑画面：把一个道具+动作（「擦」「踩」「摔」「翻」）放进标题，"
         "让读者能脑补画面，别写泛泛的结果；优先找「为偷吃一口赔上一整盒」式的荒谬反差账"
-        "\n- 主题不能丢（最高优先）：标题必须能看出本场核心在讲什么——偷吃的月饼/系的鞋带/"
-        "藏起的杯子——可以含蓄，但不能只留甩锅或问答口吻把主题甩掉（如「咱俩谁甩锅」没点出月饼，不合格）"
+        "\n- 主题不能丢（最高优先，硬性）：标题必须包含本场核心名词（user prompt 列出的「核心名词」），"
+        "不能只写具体画面/甩锅口吻而丢掉核心名词；不含核心名词的候选作废"
         "\n- 三个候选句式要拉开（一句孩子原话 / 一个具体道具意外 / 一个反差问句），"
         "别全是「谁…」「…怨谁」质问句"
         "\n- 坏标题示例：「姐弟偷吃饼干」「月饼全滚出来了」「被妈妈抓住」「孩子的选择」"
@@ -248,6 +279,11 @@ def build_chat_title_user_prompt(
         if seen:
             avoid_note = f"\n已用过的标题：{seen}。这次换一个角度，别和它们同方向。"
 
+    anchors = extract_core_anchor_words(draft_title, story_content)
+    anchor_note = ""
+    if anchors:
+        anchor_note = f"\n【硬性】标题必须包含本场核心名词：{'、'.join(anchors)}。不含核心名词的标题不合格，作废重写。"
+
     return (
         f"初稿标题：{draft_title}\n"
         f"剧本内容：\n{context}\n\n"
@@ -255,8 +291,8 @@ def build_chat_title_user_prompt(
         "句式要拉开：一句孩子原话 / 一个具体道具意外 / 一个反差问句，别三个都一个方向）。"
         f"每个必须 ≤{max_title_len} 字：超字只删虚词/语气词，禁止删成事件名、禁止为了短丢钩子。"
         "钩子只从本剧本的冲突高潮台词/反差/核心道具里提炼，禁止套用与剧本无关的现成短句。"
-        "主题锚定（最高优先）：标题要让读者一眼看出本场在讲什么（偷吃月饼/系鞋带/藏杯子等核心），"
-        "不能只留甩锅或问答口吻丢掉主题。"
+        "主题锚定（最高优先）：标题要落在本场核心上，不能只留甩锅或问答口吻丢掉主题。"
+        f"{anchor_note}"
         "别平铺直叙复述结局；优先找一个具体好笑画面或「为偷吃一口赔上整盒」式的荒谬反差，"
         "用人物口吻、问句或留半截吊起来。"
         f"{avoid_note}"
