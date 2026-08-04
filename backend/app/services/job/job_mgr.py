@@ -79,19 +79,22 @@ def _persist_script(job_id: int, script: dict, *, log_msg: str, title: str | Non
         return job
 
 
-def _optimize_daily_story_title(draft: str, story_content: dict, *, max_len: int) -> str:
-    """chat 流水线标题优化：构建 prompt → 调用 → parse → 退化保护 + 长度硬截断。"""
+def _optimize_daily_story_title(draft: str, story_content: dict, *, max_len: int, avoid_titles: list[str] | None=None) -> str:
+    """chat 流水线标题优化：多候选生成 → 钩子分选择 → 退化保护 + 长度硬截断。
+
+    avoid_titles：已用过的标题，让模型换角度写、选择时降权，避免手动重跑时每次输出同一个。
+    """
     from app.services.llm.llm_mgr import llm_mgr
     from app.services.script.optimize_title import (
         build_chat_title_prompts,
-        parse_title_optimize_payload,
+        parse_chat_title_candidates_payload,
+        pick_best_chat_title,
     )
-    from app.utils.title_text import select_optimized_title
-    prompts = build_chat_title_prompts(draft, story_content, max_title_length=max_len)
+    prompts = build_chat_title_prompts(draft, story_content, max_title_length=max_len, avoid_titles=avoid_titles)
     client = llm_mgr._get_client()
     raw, _ = client._chat_json(prompts['system'], prompts['user'], thinking_enabled=False, temperature=0.8)
-    optimized = parse_title_optimize_payload(raw, max_title_len=max_len)
-    return select_optimized_title(draft, optimized, max_len=max_len)
+    candidates = parse_chat_title_candidates_payload(raw, max_title_len=max_len)
+    return pick_best_chat_title(draft, candidates, max_len=max_len, avoid_titles=avoid_titles)
 
 
 def _optimize_standard_title(draft: str, narration: str, *, max_len: int) -> str:
@@ -681,7 +684,8 @@ class JobMgr:
             story_content = story.get('story')
             if not isinstance(story_content, dict):
                 raise ValueError('故事数据格式异常')
-            final_title = _optimize_daily_story_title(draft, story_content, max_len=max_len)
+            # 手动重跑优化 = 想换个更好/不同的标题：把当前标题列为已用过，逼模型换角度
+            final_title = _optimize_daily_story_title(draft, story_content, max_len=max_len, avoid_titles=[draft])
         else:
             narration = str(script.get('narration') or '').strip()
             if not narration:

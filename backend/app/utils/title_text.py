@@ -56,7 +56,9 @@ def select_optimized_title(draft: str, optimized: str, *, max_len: int) -> str:
     chosen = prefer_source_punctuation(draft, optimized)
     if draft_len <= max_len and title_degraded_by_truncation(draft, chosen):
         chosen = collapse_title_whitespace(draft)
-    if len(title_core(chosen)) > max_len:
+    # 硬上限按原文字数计（含标点，封面排版按原文字符数），防「妈，月饼真不是我俩滚的」
+    # 这类带逗号 11 字标题钻 title_core 去标点后 ≤max_len 的空子
+    if len(collapse_title_whitespace(chosen)) > max_len:
         chosen = (
             collapse_title_whitespace(draft)
             if draft_len <= max_len
