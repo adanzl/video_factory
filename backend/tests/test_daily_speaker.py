@@ -43,6 +43,44 @@ def test_present_cast_addressing_mom():
     assert "妈妈" in allowed_cast_from_dialogue(dialogue)
 
 
+def test_mom_heard_sound_stays_offscreen():
+    """「妈听见响声了」= 妈妈隔房听到动静还没到场，不得入画、不得粘性带入后续镜。
+
+    回归：job 62 分镜 8 台词「月饼全滚出来，妈听见响声了！」被误判在场，
+    粘性把妈妈带进分镜 9（三人同框），而妈妈真正出场是分镜 10 才发言。
+    """
+    dialogue = [{"speaker": "昭昭", "text": "月饼全滚出来，妈听见响声了！"}]
+    assert "妈妈" not in present_cast_from_dialogue(dialogue)
+    assert mom_should_stay_offscreen(dialogue)
+
+    segments = [
+        {
+            "segment_index": 8,
+            "dialogue": [
+                {"speaker": "灿灿", "text": "我滑了一跤，手扶茶几，盒子翻了！"},
+                {"speaker": "昭昭", "text": "月饼全滚出来，妈听见响声了！"},
+            ],
+        },
+        {
+            "segment_index": 9,
+            "dialogue": [
+                {"speaker": "灿灿", "text": "都怪你没盯紧门，光顾着吃！"},
+                {"speaker": "昭昭", "text": "你还怪我，你擦个地都能摔！"},
+            ],
+        },
+        {
+            "segment_index": 10,
+            "dialogue": [
+                {"speaker": "妈妈", "text": "一地月饼渣，你俩拿的什么！"},
+            ],
+        },
+    ]
+    annotate_sticky_stage_speakers(segments, setting=None)
+    assert segments[0]["speakers"] == ["昭昭", "灿灿"]
+    assert segments[1]["speakers"] == ["昭昭", "灿灿"]
+    assert segments[2]["speakers"] == ["昭昭", "灿灿", "妈妈"]
+
+
 def test_sticky_stage_keeps_mom_after_she_appears():
     from app.services.daily_story.speaker import annotate_sticky_stage_speakers
 
