@@ -67,7 +67,8 @@ def append_b_body_errors(story: dict, errors: list[str]) -> None:
     punish_i = None
     for i in range(len(lines) - 1, max(-1, len(lines) - 12), -1):
         if speakers[i] == "妈妈" and re.search(
-            r"站好|过来|罚|不许|今晚|检讨|说清楚|墙角|罚站|别想吃|偷吃|拿的什么",
+            r"站好|过来|罚|不许|今晚|检讨|说清楚|墙角|罚站|别想吃|偷吃|拿的什么|"
+            r"调皮|捣蛋|乱来|胡闹|惹事|闹腾|顽皮|淘气",
             lines[i],
         ):
             punish_i = i
