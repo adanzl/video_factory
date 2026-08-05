@@ -24,7 +24,8 @@ RE_PLAN_FAIL = re.compile(
 RE_BLAME_MID = re.compile(r"都怪你|是你先|你答应|赖我|你还怪")
 _A_STYLE_TAIL = re.compile(r"那不一样|哪里不一样|你刚才说|你自己说")
 RE_MOM_PUNISH = re.compile(
-    r"站好|过来|罚|不许|今晚|检讨|说清楚|墙角|罚站|别想吃|偷吃|拿的什么",
+    r"站好|过来|罚|不许|今晚|检讨|说清楚|墙角|罚站|别想吃|偷吃|拿的什么|"
+    r"调皮|捣蛋|乱来|胡闹|惹事|闹腾|顽皮|淘气",
 )
 RE_DOOM = re.compile(r"完蛋|完了|糟糕|死定了|藏不住|露馅")
 RE_REACT_ALT = re.compile(
