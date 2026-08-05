@@ -97,7 +97,8 @@ HUMOR_ISSUE_CAPS: tuple[tuple[str, int], ...] = (
 RE_FREEZE_REACT = re.compile(
     r"完蛋|完了|糟糕|死定了|死定|真倒霉|倒霉|惨了|糟了|惨喽|"
     r"被发现|露馅了|露馅|"
-    r"傻眼|愣住|僵住",
+    r"傻眼|愣住|僵住|"
+    r"妈都看见|看见了",
 )
 RE_FREEZE_SILENT = re.compile(
     r"低头不敢动|一动不敢动|傻眼对视|对视不敢|僵住不敢说话",
