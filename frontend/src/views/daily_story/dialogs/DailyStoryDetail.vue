@@ -9,6 +9,18 @@
           <div class="text-sm">{{ localStory.theme }}</div>
         </div>
         <div>
+          <div class="mb-1 text-xs text-gray-400">内容标签</div>
+          <el-input
+            v-if="editing"
+            v-model="editStory.key"
+            size="small"
+            maxlength="8"
+            show-word-limit
+            placeholder="如：饭前偷吃"
+          />
+          <div v-else class="text-sm">{{ editStory.key || localStory.key || "-" }}</div>
+        </div>
+        <div>
           <div class="mb-1 text-xs text-gray-400">矛盾类型</div>
           <div class="text-sm">{{ formatDailyStoryType(localStory.story_type) }}</div>
         </div>
@@ -249,6 +261,7 @@ const isProcessing = computed(() => localStory.value?.status === "processing");
 const editStory = ref<StoryContent>({
   scene_title: "",
   setting: "",
+  key: "",
   conflict_core: "",
   dialogue: [],
   punchline_explain: "",
@@ -259,6 +272,9 @@ watch(
   (story) => {
     if (story?.story) {
       editStory.value = JSON.parse(JSON.stringify(story.story));
+      if (!editStory.value.key && story.key) {
+        editStory.value.key = story.key;
+      }
     }
   },
   { immediate: true }

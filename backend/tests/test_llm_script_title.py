@@ -535,6 +535,7 @@ def _valid_story(*, line: str | None = None, n: int = 17) -> dict:
     return {
         "scene_title": "新橡皮",
         "setting": "客厅，姐弟抢新橡皮",
+        "key": "抢新橡皮",
         "conflict_core": "姐弟抢新橡皮",
         "dialogue": dialogue,
         "punchline_explain": "C类公平执念，姐姐规则被字面戳穿",
@@ -764,6 +765,20 @@ def test_validate_daily_story_json_rejects_missing_conflict_core():
         validate_daily_story_json(story)
 
 
+def test_validate_daily_story_json_rejects_missing_key():
+    story = _valid_story()
+    del story["key"]
+    with pytest.raises(ValueError, match="缺少必需字段: key"):
+        validate_daily_story_json(story)
+
+
+def test_validate_daily_story_json_rejects_long_key():
+    story = _valid_story()
+    story["key"] = "这是一个超过八个字的标签"
+    with pytest.raises(ValueError, match="key 须"):
+        validate_daily_story_json(story)
+
+
 def test_validate_daily_story_json_rejects_offtopic_latter():
     story = _valid_story()
     # 后 1/3 岔开体育课，且前文未出现
@@ -981,6 +996,7 @@ def test_local_patch_aligns_a_closing_quote():
     story = {
         "scene_title": "饭前检查",
         "setting": "厨房案板旁",
+        "key": "饭前偷吃",
         "conflict_core": "灿灿不许昭昭饭前偷吃自己却先捏",
         "dialogue": dlg,
         "punchline_explain": "A类权威翻车：检查不算吃",
@@ -1139,6 +1155,7 @@ def test_validate_allows_soon_time_up_with_duration_anchor():
     story = {
         "scene_title": "手机",
         "setting": "客厅玩手机到点",
+        "key": "玩手机到点",
         "conflict_core": "姐弟玩手机到点谁说了算",
         "dialogue": dialogue,
         "punchline_explain": "A类权威翻车，灿灿管手机双标",
@@ -1516,6 +1533,7 @@ def test_validate_rejects_brush_duration_inconsistency():
     story = {
         "scene_title": "刷牙快慢之争",
         "setting": "卫生间门口，昭昭刚刷完牙，灿灿拿着计时器拦住他。",
+        "key": "刷牙计时",
         "conflict_core": "灿灿嫌昭昭刷牙太快，立规矩却自己犯规",
         "punchline_explain": "A类权威翻车，时长前后不一",
         "discovery_opening": [
@@ -1943,6 +1961,7 @@ def test_validate_rejects_dangling_what_is_term():
     story = {
         "scene_title": "刷牙",
         "setting": "卫生间",
+        "key": "连续刷牙",
         "conflict_core": "灿灿规定连续刷自己却先停",
         "punchline_explain": "A类权威翻车",
         "discovery_opening": [{"speaker": "灿灿", "line": "你吐水了？才刷几下啊"}],
@@ -1972,6 +1991,7 @@ def test_validate_rejects_a_mid_rule_restatement():
     story = {
         "scene_title": "刷牙计时",
         "setting": "客厅刷牙",
+        "key": "刷牙计时",
         "conflict_core": "灿灿嫌昭昭刷牙太快立规矩反被打脸",
         "punchline_explain": "A类权威翻车",
         "discovery_opening": [{"speaker": "昭昭", "line": "姐你又拿秒表盯我刷牙"}],
@@ -2648,6 +2668,7 @@ def test_validate_e_lie_rejects_batch3_garbage():
         "_theme": "不许说谎妈妈刚才也敷衍奶奶",
         "scene_title": "不许说谎",
         "setting": "客厅，妈妈刚打完电话",
+        "key": "不许说谎",
         "conflict_core": "妈妈说不能说谎，自己却敷衍奶奶",
         "punchline_explain": "E类妈妈破功，不能说谎被闭环",
         "discovery_opening": [

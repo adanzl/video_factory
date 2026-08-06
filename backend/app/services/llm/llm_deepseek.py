@@ -2323,9 +2323,15 @@ class DeepSeekClient(LLMClient):
         except Exception as exc:  # noqa: BLE001 — 出题不因读库失败中断
             logger.warning("[DAILY_STORY] list_recent_themes failed: %s", exc)
 
+        recent_keys: list[str] = []
+        try:
+            recent_keys = repo_daily_story.list_recent_keys(40)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[DAILY_STORY] list_recent_keys failed: %s", exc)
+
         avoid_all: list[str] = []
         seen_avoid: set[str] = set()
-        for raw in [*(avoid or []), *recent]:
+        for raw in [*(avoid or []), *recent, *recent_keys]:
             t = str(raw or "").strip()
             if not t or t in seen_avoid:
                 continue

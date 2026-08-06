@@ -16,6 +16,8 @@ export interface StoryQuality {
 export interface StoryContent {
   scene_title: string;
   setting: string;
+  /** 内容标签：2–8 字，如「饭前偷吃」，防重复（旧稿可能缺失） */
+  key?: string;
   /** 单冲突摘要：谁 vs 谁争什么（旧稿可能缺失） */
   conflict_core?: string;
   dialogue: DialogueLine[];
@@ -28,6 +30,8 @@ export interface DailyStoryRecord {
   id: number;
   theme: string;
   story: StoryContent;
+  /** 内容标签，表列权威；与 story.key 同步 */
+  key: string | null;
   /** 矛盾类型代码 A–E，来自笑点解析 */
   story_type: string | null;
   job_id: number | null;

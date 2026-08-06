@@ -141,6 +141,9 @@ _MOM_JUDGE_PATTERNS = (
 )
 
 _CONFLICT_CORE_MAX_CHARS = 24
+# 内容标签：防重复用短词（如「饭前偷吃」），≠ conflict_core / scene_title
+DAILY_STORY_KEY_CHARS_MIN = 2
+DAILY_STORY_KEY_CHARS_MAX = 8
 _CONFLICT_ANCHOR_STOP = frozenset(
     {
         "昭昭", "灿灿", "妈妈", "姐弟", "我们", "什么", "怎么",
@@ -580,6 +583,8 @@ _DAILY_STORY_SYSTEM_SHARED = """\
 - 「上次你也…」只可当同一规则的证据，禁止借机开新仇（砸人、红抱枕、别的玩具）。
 - 必须输出 conflict_core：一句话写清「谁 vs 谁，争什么」（≤24 字），
   与 theme / setting / 前 2 句一致。
+- 必须输出 key：2–8 字内容标签（如「饭前偷吃」「偷看电视」），概括本场争什么事，
+  用于防重复；写事件短名，勿写成谁vs谁（那是 conflict_core），勿写成口语钩子标题。
 - 禁止岔开学校/体育课/告爸爸/老师/公园等与 conflict_core 无关的新主线。
 - 妈妈只点破，禁止由妈妈引入新冲突、新赛制或新事件（E 类立规矩除外）。
 - punchline_explain 须含类型标签（A–E）并说明末句如何收该 conflict_core。
@@ -652,6 +657,8 @@ _SHARED_GENERIC = """\
 - 「上次你也…」只可当同一规则的证据，禁止借机开新仇（砸人、红抱枕、别的玩具）。
 - 必须输出 conflict_core：一句话写清「谁 vs 谁，争什么」（≤24 字），
   与 theme / setting / 前 2 句一致。
+- 必须输出 key：2–8 字内容标签（如「饭前偷吃」「偷看电视」），概括本场争什么事，
+  用于防重复；写事件短名，勿写成谁vs谁（那是 conflict_core），勿写成口语钩子标题。
 - 禁止岔开学校/体育课/告爸爸/老师/公园等与 conflict_core 无关的新主线。
 - 妈妈只点破，禁止由妈妈引入新冲突、新赛制或新事件。
 - punchline_explain 须含类型标签并说明末句如何收该 conflict_core。
@@ -808,7 +815,8 @@ def _daily_story_user_template(
 {length_req}\
 4. 正文从互怼/讲理起笔，禁止发现现场开场（发现句系统另写）。
 {mom_role_note}
-6. 输出 conflict_core（≤24 字）；punchline_explain 须含类型标签并说明如何收该冲突。
+6. 输出 key（2–8 字内容标签，如饭前偷吃）与 conflict_core（≤24 字）；
+   punchline_explain 须含类型标签并说明如何收该冲突。
 7. 禁止中途换分法（剪刀石头布、轮流、另算谁先碰到等）或扯无关旧账。
 8. 立场须连贯：可软收，但须先破功再软收；禁无铺垫「给你/算了」；
    禁同人连说、禁对称复读注水；末句勿只甩「明天再战」。
@@ -1989,6 +1997,7 @@ def validate_daily_story_json(
     for field in (
         "scene_title",
         "setting",
+        "key",
         "conflict_core",
         "dialogue",
         "punchline_explain",
@@ -2004,6 +2013,21 @@ def validate_daily_story_json(
         errors.append("scene_title 必须是非空字符串")
     if not isinstance(story["setting"], str) or not story["setting"].strip():
         errors.append("setting 必须是非空字符串")
+    story_key = str(story.get("key") or "").strip()
+    if not story_key:
+        errors.append(
+            f"key 必须是非空字符串（{DAILY_STORY_KEY_CHARS_MIN}–"
+            f"{DAILY_STORY_KEY_CHARS_MAX}字内容标签）"
+        )
+    elif not (
+        DAILY_STORY_KEY_CHARS_MIN <= len(story_key) <= DAILY_STORY_KEY_CHARS_MAX
+    ):
+        errors.append(
+            f"key 须{DAILY_STORY_KEY_CHARS_MIN}–{DAILY_STORY_KEY_CHARS_MAX}字，"
+            f"当前{len(story_key)}字"
+        )
+    else:
+        story["key"] = story_key
     if (
         not isinstance(story.get("conflict_core"), str)
         or not str(story.get("conflict_core") or "").strip()

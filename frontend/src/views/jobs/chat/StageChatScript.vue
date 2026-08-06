@@ -102,6 +102,9 @@
             :style="{ '--desc-label-width': DESC_LABEL_WIDTH }"
           >
             <el-descriptions-item label="主题">{{ dailyStory.theme }}</el-descriptions-item>
+            <el-descriptions-item label="内容">
+              {{ dailyStory.key || dailyStory.story.key || "-" }}
+            </el-descriptions-item>
             <el-descriptions-item label="矛盾">
               {{ formatDailyStoryType(dailyStory.story_type) }}
             </el-descriptions-item>
