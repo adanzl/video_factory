@@ -277,68 +277,10 @@ def append_mid_restatement_errors(story: dict, errors: list[str]) -> None:
 
     full_mid = "".join(ln for _, ln in lines)
     if re.search(r"刷牙|漱口|牙刷", full_mid):
-        timer_pad = sum(
-            1
-            for _, ln in lines
-            if re.search(
-                r"默数|电子表|掐表|没带手机|计时器呢|用那个|我盯着表|帮你掐",
-                ln,
-            )
-        )
-        if timer_pad >= 3:
-            errors.append(
-                "刷牙中段禁止抠计时工具（默数/电子表/掐表），"
-                "立完规矩后立刻示范翻车",
-            )
-            return
-        # 一锤过晚：以「吐水算停」埋句为起点（勿用开场「两分钟」抬杠起算）
-        rule_i = next(
-            (
-                i
-                for i, (_, ln) in enumerate(lines)
-                if re.search(r"吐水.{0,4}停", ln)
-            ),
-            None,
-        )
-        if rule_i is None:
-            rule_i = next(
-                (
-                    i
-                    for i, (_, ln) in enumerate(lines)
-                    if "两分钟" in ln or "连续刷" in ln
-                ),
-                None,
-            )
-        hammer_i = next(
-            (
-                i
-                for i, (sp, ln) in enumerate(lines)
-                if i > (rule_i or 0)
-                and re.search(
-                    r"才刷|就吐|就停|就漱|玩手机|泡沫|几下|"
-                    r"[一二三四五六七八九十两\d]+下|示范.{0,6}吐|噗|"
-                    r"一[、,，]\s*二",
-                    ln,
-                )
-                and (sp == "昭昭" or sp == "灿灿")
-            ),
-            None,
-        )
-        if rule_i is not None and hammer_i is None:
-            errors.append(
-                "刷牙缺一锤场面：须有昭昭指出灿灿示范时"
-                "刷几下就吐/停/玩手机",
-            )
-            return
-        if (
-            rule_i is not None
-            and hammer_i is not None
-            and hammer_i - rule_i > 8
-        ):
-            errors.append(
-                "刷牙一锤过晚：埋「吐水算停」后勿再抬杠，立刻示范翻车",
-            )
-            return
+        # 节奏/趣味硬卡（缺一锤/一锤过晚/铺垫过长/抠计时）降级给 humor 质检扣分：
+        # 模型写不出示范动作时硬拦会反复重试烧空（实测 3 次全烧→主题 FAIL），
+        # humor 有「刷牙缺可拍一锤声画（噗/数下就吐）」兜底，留低分稿而非空转。
+        # 只保留机读矛盾硬卡：刷很多下 vs 才刷几下的次数自相矛盾。
         many = any(
             sp == "灿灿" and re.search(r"很多下|刷了好多|刷了不少", ln)
             for sp, ln in lines
@@ -350,36 +292,6 @@ def append_mid_restatement_errors(story: dict, errors: list[str]) -> None:
         if many and few:
             errors.append(
                 "刷牙次数自相矛盾：先说刷了很多下，后又才刷两三下，只留一套",
-            )
-            return
-        # 埋句取最后一次「吐水…停」（开场抬杠可先谈两分钟）
-        bury_idxs = [
-            i for i, (_, ln) in enumerate(lines) if re.search(r"吐水.{0,4}停", ln)
-        ]
-        bury_i = bury_idxs[-1] if bury_idxs else None
-        spit_hammer_i = next(
-            (
-                i
-                for i, (_, ln) in enumerate(lines)
-                if re.search(
-                    r"才.{0,6}下|才刷|就吐|噗|"
-                    r"一[、,，]\s*二|一\s*二\s*三",
-                    ln,
-                )
-                and i > (bury_i or -1)
-            ),
-            None,
-        )
-        if bury_i is not None and spit_hammer_i is not None and spit_hammer_i - bury_i > 6:
-            errors.append(
-                "刷牙不好玩：埋「吐水算停」后铺垫过长，"
-                "须很快出现数下就吐/噗",
-            )
-            return
-        if bury_i is not None and spit_hammer_i is None:
-            errors.append(
-                "刷牙不好玩：有吐水算停却无一锤"
-                "（才X下就吐 / 一、二、噗）",
             )
             return
 
