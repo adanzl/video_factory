@@ -31,17 +31,27 @@ def _verify_prompt_regen_feedback(speakers: list[str]) -> str:
         look.append('妈妈须为成年女性黑长发米色上衣牛仔裤，禁止画成小孩')
     look_clause = f"；仍须保持：{'；'.join(look)}" if look else ''
     cast = '、'.join(speakers) if speakers else '本段对白角色'
-    return f'出图质检连续未通过（发型/人数/肢体/场景等），请改写本段 image_prompt：换姿势与构图、冲突道具更醒目{look_clause}。画面人物只能是：{cast}；禁止新增未出场角色。'
+    return (
+        f'出图质检连续未通过（发型/人数/肢体/场景等），请改写本段 image_prompt：'
+        f'换姿势与构图、冲突道具用台词已有物件放大，禁止新编陈设{look_clause}。'
+        f'画面人物只能是：{cast}；禁止新增未出场角色。'
+    )
 
 def _verify_visual_brief_regen_feedback(speakers: list[str]) -> str:
     cast = '、'.join(speakers) if speakers else '本段可入画角色'
-    return f'出图质检连续未通过，请改写本段 visual_brief：换姿势与构图、冲突道具更大更醒目；站位与台词事实保持一致；禁止写发型/服装/鞋帽；画面人物必须含：{cast}（同场粘性角色不可漏画）；禁止新增未授权角色。'
+    return (
+        f'出图质检连续未通过，请改写本段 visual_brief：换姿势与构图、'
+        f'冲突道具用台词已有物件放大，禁止新编陈设；'
+        f'站位与台词事实保持一致；禁止写发型/服装/鞋帽；'
+        f'画面人物必须含：{cast}（同场粘性角色不可漏画）；禁止新增未授权角色。'
+    )
 
 def _content_policy_prompt_regen_feedback(speakers: list[str]) -> str:
     cast = '、'.join(speakers) if speakers else '本段对白角色'
     return (
         '出图被内容策略拦截（content_policy_violation），请改写本段 image_prompt：'
-        '去掉可能敏感/暴力/惊吓/不当暗示，改用温和日常表述，换姿势与构图、冲突道具更醒目；'
+        '去掉可能敏感/暴力/惊吓/不当暗示，改用温和日常表述，换姿势与构图、'
+        '冲突道具用台词已有物件放大，禁止新编陈设；'
         f'画面人物只能是：{cast}；禁止新增未出场角色。'
     )
 

@@ -72,9 +72,12 @@ _DAILY_VISUAL_BRIEF_CONTENT_RULE = (
     "【单帧定格】每角色仅写一组动作表情（一个姿势）；"
     "本镜有多句对白时，只取冲突最强的一瞬，禁止同一角色写两段动作"
     "（如先写昭昭比划再吃冰棍、又写昭昭双手叉腰）。"
+    "指物时写「左手叉腰，右手指着…」；禁止「双手叉腰」同时又写右手动作。"
     "【人物】只写动作姿态与面部表情"
     "（瞪圆眼、撇嘴、叉腰、身体前倾、摊手耸肩等），强度对标本段台词语气；"
-    "禁止面无表情站桩；禁止写发型/服装/鞋帽（外貌由系统硬编码注入）。"
+    "禁止写张嘴/闭嘴/口型/说话中（口型由系统按首句说话人注入）；"
+    "争吵用瞪圆眼、皱眉、撇嘴表达；禁止面无表情站桩；"
+    "禁止写发型/服装/鞋帽（外貌由系统硬编码注入）。"
     "【道具】冲突道具只能用台词已出现的物件与状态，禁止编造台词没有的衣物品类/颜色；"
     "例：台词说「刚叠好的衣服怎么皱成一团了」→ 画面写「沙发上原本叠好的衣服已被揉皱成一团」，"
     "禁止写成「皱成一团的刚叠好的衣服」（自相矛盾）；"
@@ -103,12 +106,12 @@ _DAILY_VISUAL_BRIEF_CONTENT_RULE = (
     "'客厅沙发上，原本叠好的衣服已被揉皱成一团；"
     "画面左边是昭昭，右边是灿灿；"
     "昭昭双手摊开耸肩，撇着嘴角一脸无辜；"
-    "灿灿右手食指指向身前那团皱衣服，左手叉腰，瞪圆眼睛嘴巴大张。"
+    "灿灿右手食指指向身前那团皱衣服，左手叉腰，瞪圆眼睛、皱着眉。"
     "茶几上放着遥控器和空水杯。'"
 )
 
 _EMOTION_RULE_DIALOGUE = (
-    "情绪须对标台词语气强度（争吵时表情激烈如瞪眼皱眉张嘴、温和平静时表情放松）。"
+    "情绪须对标台词语气强度（争吵时表情激烈如瞪眼皱眉撇嘴、温和平静时表情放松）。"
 )
 
 _EMOTION_RULE_NARRATION = (
@@ -171,6 +174,16 @@ _POSE_CLAUSE_START_RE = re.compile(
     r"^(昭昭|灿灿|妈妈)(?:[，,]|右手|左手|双手|身体|瞪|点|叉|摊|耸|仰头|点头|张嘴|比划)"
 )
 
+# brief 禁写口型（拼装层会硬加「微微张嘴」）；顺带剥语气词
+_MOUTH_AND_TONE_RE = re.compile(
+    r"(?:嘴巴大张|张着嘴|微微张嘴|正在开口说话|"
+    r"嘴巴闭合不露齿|嘴巴闭合|不露齿|"
+    r"语气\S{1,4})"
+)
+
+# 句内双手互斥：双手叉腰 + 右手指/比划 → 左手叉腰
+_RIGHT_HAND_ACTION_RE = re.compile(r"右手(?:指|食指|指向|比划)")
+
 
 def _collapse_duplicate_pose_clauses(body: str) -> str:
     """同一角色多段动作只保留首段（文生图为单帧）。"""
@@ -201,6 +214,25 @@ def _collapse_duplicate_pose_clauses(body: str) -> str:
     return "".join(out)
 
 
+def _fix_hands_on_hips_conflict(body: str) -> str:
+    """同一分句「双手叉腰」又写右手动作时，改为左手叉腰。"""
+    parts = re.split(r"([；;。])", body)
+    if not parts:
+        return body
+    out: list[str] = []
+    i = 0
+    while i < len(parts):
+        segment = parts[i]
+        delim = parts[i + 1] if i + 1 < len(parts) else ""
+        if "双手叉腰" in segment and _RIGHT_HAND_ACTION_RE.search(segment):
+            segment = segment.replace("双手叉腰", "左手叉腰")
+        out.append(segment)
+        if delim:
+            out.append(delim)
+        i += 2 if delim else 1
+    return "".join(out)
+
+
 def scrub_daily_visual_brief(text: str) -> str:
     """去掉 daily visual_brief 中易破坏拼装出图的标签与固定着装词。"""
     body = (text or "").strip()
@@ -218,7 +250,10 @@ def scrub_daily_visual_brief(text: str) -> str:
         "刚叠好的皱成一团的衣服",
         "原本叠好现已揉皱成一团的衣服",
     )
+    body = _MOUTH_AND_TONE_RE.sub("", body)
+    body = _fix_hands_on_hips_conflict(body)
     body = re.sub(r"[，,]{2,}", "，", body)
+    body = re.sub(r"[，,]\s*(?=[；;。]|$)", "", body)
     body = _collapse_duplicate_pose_clauses(body)
     return body.strip("，, ").strip()
 
