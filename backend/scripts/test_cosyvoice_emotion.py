@@ -117,7 +117,17 @@ def synthesize(text: str, instruction: str | None = None, timeout: float = 120) 
 
     api_key = os.getenv("DASHSCOPE_API_KEY") or os.getenv("TTS_API_KEY") or ""
     if not api_key:
-        raise RuntimeError("请设置 DASHSCOPE_API_KEY 环境变量")
+        # 从项目根 .env 读取
+        for candidate in (Path(__file__).parent.parent / ".env", Path.cwd() / ".env", Path.cwd().parent / ".env"):
+            if candidate.exists():
+                for line in candidate.read_text().splitlines():
+                    if line.startswith("DASHSCOPE_API_KEY="):
+                        api_key = line.split("=", 1)[1].strip().strip('"').strip("'")
+                        break
+            if api_key:
+                break
+    if not api_key:
+        raise RuntimeError("请设置 DASHSCOPE_API_KEY 环境变量，或在项目根 .env 中配置")
 
     text = _convert_single_digits(text)
     text = _disambiguate_dao(text)
