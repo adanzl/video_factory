@@ -11,6 +11,7 @@
           <span class="text-gray-500">#{{ job.id }}</span>
           <span class="font-medium">{{ job.title }}</span>
           <el-tag size="small" type="info">{{ pipelineLabel(job.pipeline) }}</el-tag>
+          <el-tag v-if="typeTagLabel" size="small" type="info">{{ typeTagLabel }}</el-tag>
           <el-tag :type="statusTagType(job.status)" size="small">{{ job.status }}</el-tag>
           <el-tag v-if="job.fail_stage" type="danger" size="small">失败于 {{ job.fail_stage }}</el-tag>
         </span>
@@ -101,6 +102,7 @@ import type { Component } from "vue";
 import { Refresh } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { getJob, getJobLogs, getJobSegments, abortJob, clearJobLogs, updateJob } from "@/api/api-jobs";
+import { formatDailyStoryType, getDailyStory } from "@/api/api-daily-story";
 import { JOB_STATUS_RUNNING, JOB_STATUS_DONE } from "@/constants/job";
 import { pipelineLabel, resolveActiveStageTab, stagesForJob, PIPELINE_CHAT } from "@/constants/jobStages";
 import type { JobDetail, JobLog, JobSegment } from "@/types/jobs";
@@ -114,6 +116,14 @@ import StageSegment from "./detail/StageSegment.vue";
 import StageTts from "./detail/StageTts.vue";
 import StageChatScript from "./chat/StageChatScript.vue";
 import StageChatTts from "./chat/StageChatTts.vue";
+
+const CONTENT_STYLE_LABELS: Record<string, string> = {
+  science_child: "童趣科普",
+  life_experience: "生活经验",
+  history_mystery: "历史谜案",
+  daily_story: "日常故事",
+  tech_science: "科技科普",
+};
 
 const STAGE_PANELS: Record<string, Component> = {
   prepare: StagePrepare,
@@ -148,8 +158,19 @@ const clearingLogs = ref(false);
 const publishing = ref(false);
 const doneLoading = ref(false);
 const activeStage = ref("script");
+/** chat 流水线：日常故事矛盾类型展示文案 */
+const chatStoryTypeLabel = ref<string | null>(null);
 
 const jobStages = computed(() => (job.value ? stagesForJob(job.value) : []));
+
+const typeTagLabel = computed(() => {
+  if (!job.value) return "";
+  if (job.value.pipeline === PIPELINE_CHAT) {
+    return chatStoryTypeLabel.value || "";
+  }
+  const style = job.value.info?.content_style;
+  return (style && CONTENT_STYLE_LABELS[style]) || "";
+});
 
 const RUNNING_POLL_INTERVAL_MS = 3000;
 let runningPollTimer: ReturnType<typeof setInterval> | null = null;
@@ -201,12 +222,32 @@ const syncActiveStage = (detail: JobDetail) => {
   activeStage.value = resolveActiveStageTab(detail, detail.stage);
 };
 
+async function loadChatStoryType(detail: JobDetail) {
+  if (detail.pipeline !== PIPELINE_CHAT) {
+    chatStoryTypeLabel.value = null;
+    return;
+  }
+  const storyId = detail.info?.daily_story_id ?? detail.material_id;
+  if (!storyId) {
+    chatStoryTypeLabel.value = null;
+    return;
+  }
+  try {
+    const story = await getDailyStory(storyId);
+    const label = formatDailyStoryType(story.story_type);
+    chatStoryTypeLabel.value = label === "-" ? null : label;
+  } catch {
+    chatStoryTypeLabel.value = null;
+  }
+}
+
 const fetchDetail = async (options: { silent?: boolean } = {}) => {
   const { silent = false } = options;
   if (!props.jobId) {
     job.value = undefined;
     segments.value = [];
     logs.value = [];
+    chatStoryTypeLabel.value = null;
     return;
   }
 
@@ -222,11 +263,13 @@ const fetchDetail = async (options: { silent?: boolean } = {}) => {
     job.value = detail;
     segments.value = segmentList;
     logs.value = logList;
+    await loadChatStoryType(detail);
   } catch (error) {
     if (!silent) {
       job.value = undefined;
       segments.value = [];
       logs.value = [];
+      chatStoryTypeLabel.value = null;
       handleError(error, "加载任务详情失败");
     }
   } finally {

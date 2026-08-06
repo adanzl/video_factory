@@ -1123,10 +1123,18 @@ def test_validate_allows_soon_time_up_with_duration_anchor():
         {"speaker": "灿灿", "line": line("马上到时间了别磨蹭")},
         {"speaker": "昭昭", "line": line("才十分钟说好十五分钟")},
     ]
+    # 中段交替补齐；末四拍走 A 收束（昭昭引原话→灿灿那不一样→昭昭哪里不一样→灿灿软破功）
     speakers = ("灿灿", "昭昭")
     dialogue += [
         {"speaker": speakers[i % 2], "line": line("一二三四五六七八")}
-        for i in range(2, 18)
+        for i in range(2, 12)
+    ]
+    dialogue += [
+        {"speaker": "灿灿", "line": line("那你现在说个准话")},
+        {"speaker": "昭昭", "line": line("你刚才说马上到时间了")},
+        {"speaker": "灿灿", "line": line("那不一样，我是说快到了")},
+        {"speaker": "昭昭", "line": line("哪里不一样都是时间没到")},
+        {"speaker": "灿灿", "line": line("哼行吧你说了算")},
     ]
     story = {
         "scene_title": "手机",
@@ -1992,6 +2000,171 @@ def test_validate_rejects_a_mid_rule_restatement():
         validate_daily_story_json(story, phase="full")
 
 
+def _a_valid_body() -> dict:
+    """A 类刷牙梗合法正文：末四拍 昭昭引原话→灿灿那不一样→昭昭哪里不一样→灿灿软破功。
+
+    append_a_body_errors 的四个子校验全部放行（引话有出处、末句非管人、非偷吃主题）。
+    """
+    return {
+        "scene_title": "刷牙",
+        "setting": "卫生间刷牙",
+        "conflict_core": "灿灿规定连续刷自己却先停",
+        "punchline_explain": "A类权威翻车",
+        "dialogue": [
+            {"speaker": "灿灿", "line": "你吐水了？才刷几下啊"},
+            {"speaker": "昭昭", "line": "什么叫连续"},
+            {"speaker": "灿灿", "line": "就是一直动，停手就重来"},
+            {"speaker": "昭昭", "line": "那吐水算不算停"},
+            {"speaker": "灿灿", "line": "吐水也算停"},
+            {"speaker": "昭昭", "line": "你示范给我看"},
+            {"speaker": "灿灿", "line": "看好了刷刷刷"},
+            {"speaker": "昭昭", "line": "你才刷了三下就吐水了"},
+            {"speaker": "灿灿", "line": "示范不算"},
+            {"speaker": "昭昭", "line": "你刚才说吐水也算停"},
+            {"speaker": "灿灿", "line": "那不一样，示范不算数"},
+            {"speaker": "昭昭", "line": "哪里不一样都是停"},
+            {"speaker": "灿灿", "line": "哼行吧"},
+        ],
+    }
+
+
+def _a_body_errors(story: dict) -> list[str]:
+    from app.services.daily_story.story_types.a.validate import append_a_body_errors
+
+    errors: list[str] = []
+    append_a_body_errors(story, errors)
+    return errors
+
+
+def test_a_closing_structure_accepts_full_tail():
+    """A 类完整末四拍（引原话→那不一样→哪里不一样→软破功）放行。"""
+    errors = _a_body_errors(_a_valid_body())
+    assert errors == []
+
+
+def test_a_closing_structure_rejects_beat1_without_quote():
+    """末四拍倒数第4句（昭昭）纯反问无引话：硬卡须拦。
+
+    反例来自回归实测（教作业 75 分稿）：「示范就能算错吗？」不是引前文原话。
+    """
+    story = _a_valid_body()
+    story["dialogue"][-4]["line"] = "示范就能算错吗？"
+    errors = _a_body_errors(story)
+    assert any("倒数第4句" in e and "引前文灿灿原话" in e for e in errors), errors
+
+
+def test_a_closing_structure_accepts_beat1_quote_with_comma():
+    """倒数第4句「你刚才说，检查不算吃对吧」带逗号也算引话，不误杀。
+
+    回归实测模型确实这样写；RE_CLOSING_QUOTE 要求引话紧贴「说」，
+    硬卡须放行「说，+引话」的合法变体。
+    """
+    story = _a_valid_body()
+    story["dialogue"][-4]["line"] = "你刚才说，检查不算吃对吧"
+    errors = _a_body_errors(story)
+    assert not any("倒数第4句" in e for e in errors), errors
+
+
+def test_a_closing_structure_rejects_missing_bu_yiyang():
+    """末四拍灿灿「那不一样」缺失：结构硬卡须拦（不该再只靠质检降分）。"""
+    story = _a_valid_body()
+    story["dialogue"][-3]["line"] = "示范不算数"
+    errors = _a_body_errors(story)
+    assert any("倒数第3句" in e and "那不一样" in e for e in errors), errors
+
+
+def test_a_closing_structure_rejects_missing_where_differs():
+    """末四拍昭昭「哪里不一样」缺失：结构硬卡须拦。"""
+    story = _a_valid_body()
+    story["dialogue"][-2]["line"] = "都是停"
+    errors = _a_body_errors(story)
+    assert any("倒数第2句" in e and "哪里不一样" in e for e in errors), errors
+
+
+def test_a_closing_structure_rejects_wrong_speaker_order():
+    """末 4 句 speaker 顺序不是 昭昭→灿灿→昭昭→灿灿：须拦。"""
+    story = _a_valid_body()
+    tail = story["dialogue"][-4:]
+    for item, sp in zip(tail, ("灿灿", "昭昭", "灿灿", "昭昭"), strict=True):
+        item["speaker"] = sp
+    errors = _a_body_errors(story)
+    assert any("末4句 speaker" in e for e in errors), errors
+
+
+def test_a_closing_rejects_last_line_command():
+    """末句管人（你改回来/重写）被末句词表拦下。"""
+    story = _a_valid_body()
+    story["dialogue"][-1]["line"] = "行吧你改回来吧"
+    errors = _a_body_errors(story)
+    assert any("末句禁止" in e for e in errors), errors
+
+
+def test_a_closing_structure_non_a_skipped():
+    """非 A 类末四拍不套 A 结构硬卡（避免误伤）。"""
+    from app.services.daily_story.story_types import parse_story_type_code
+
+    story = _a_valid_body()
+    story["punchline_explain"] = "C类公平执念"
+    assert parse_story_type_code(punchline="C类公平执念") == "C"
+    errors = _a_body_errors(story)
+    assert not any("末四拍" in e for e in errors), errors
+
+
+def _a_steal_body() -> dict:
+    """A 类偷吃合法正文：前 4 句纯反咬赖账，末四拍完整。
+
+    前 4 句灿灿只反咬（你嘴馋/果汁溅的），无检查/试甜字；
+    末四拍 昭昭引原话→那不一样→哪里不一样→软破功。
+    """
+    return {
+        "scene_title": "检查不算吃",
+        "setting": "客厅茶几，水果盘少了一块，灿灿嘴角有果渣",
+        "conflict_core": "灿灿偷吃苹果还立规矩",
+        "punchline_explain": "A类权威翻车",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "茶几上的苹果怎么少了一块"},
+            {"speaker": "灿灿", "line": "明明是你嘴馋，别赖我"},
+            {"speaker": "昭昭", "line": "你嘴里鼓鼓囊囊嚼的是啥"},
+            {"speaker": "灿灿", "line": "那是果汁溅的，我擦擦就行"},
+            {"speaker": "昭昭", "line": "上次你偷吃巧克力也这套话"},
+            {"speaker": "灿灿", "line": "我是姐姐，规矩我定的"},
+            {"speaker": "昭昭", "line": "那你这口怎么算"},
+            {"speaker": "灿灿", "line": "这是检查样品，特地挑的"},
+            {"speaker": "昭昭", "line": "检查样品就能整块吃掉？"},
+            {"speaker": "灿灿", "line": "检查不算吃，咽下去才算"},
+            {"speaker": "昭昭", "line": "那你吐出来给我看看"},
+            {"speaker": "灿灿", "line": "已经咽下去了，看不了"},
+            {"speaker": "昭昭", "line": "你刚才说检查不算吃"},
+            {"speaker": "灿灿", "line": "那不一样，检样不算开饭"},
+            {"speaker": "昭昭", "line": "哪里不一样，都进肚子了"},
+            {"speaker": "灿灿", "line": "行吧，给你一块，别哭了"},
+        ],
+    }
+
+
+def test_a_steal_rejects_check_word_in_first_four():
+    """偷吃对白前 4 句出现检查/试甜类字：硬卡须拦（模型实测反复违规）。"""
+    story = _a_steal_body()
+    story["dialogue"][3]["line"] = "我这是帮你试试苹果甜不甜"
+    errors = _a_body_errors(story)
+    assert any("检查线前置" in e for e in errors), errors
+
+
+def test_a_steal_accepts_clean_first_four_repel():
+    """偷吃前 4 句纯反咬赖账（你嘴馋/果汁溅的）：硬卡放行。"""
+    story = _a_steal_body()
+    errors = _a_body_errors(story)
+    assert not any("检查线前置" in e for e in errors), errors
+
+
+def test_a_steal_check_early_skips_non_steal():
+    """非偷吃主题（刷牙）前 4 句含检查字不套偷吃硬卡（避免误伤）。"""
+    story = _a_valid_body()
+    story["dialogue"][0]["line"] = "你检查牙呢？才刷几下啊"
+    errors = _a_body_errors(story)
+    assert not any("检查线前置" in e for e in errors), errors
+
+
 def test_score_c_boomerang_humor_not_flatlined():
     """C 回旋镖收束时好笑维不因同义引话被整维清零。"""
     from app.services.daily_story.quality import score_daily_story
@@ -2710,6 +2883,156 @@ def test_review_merge_issues_dedups_overlapping_lines():
     )
     assert len(merged) == 1
     assert merged[0]["lines"] == [3, 11, 14]
+
+
+def _review_mock_story() -> dict:
+    """A 类「开场副本与正文第3句换词复读」场景（local 检测器抓不到）。"""
+    return {
+        "scene_title": "抢遥控器",
+        "setting": "客厅",
+        "conflict_core": "灿灿立规矩管遥控器自己说错",
+        "punchline_explain": "A类权威翻车：灿灿说错动画片细节被昭昭戳穿",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "客厅沙发上遥控器怎么不在老位置"},
+            {"speaker": "灿灿", "line": "我正抱着它看动画片呢，别想拿走"},
+            {"speaker": "昭昭", "line": "客厅茶几上遥控器怎么攥你手里"},
+            {"speaker": "灿灿", "line": "我正看动画片呢，别跟我抢"},
+            {"speaker": "昭昭", "line": "那你先说说这部片叫啥名字"},
+            {"speaker": "灿灿", "line": "这有什么难，叫汪汪队立大功"},
+            {"speaker": "昭昭", "line": "你说说看，片里那只狗叫啥"},
+            {"speaker": "灿灿", "line": "行吧，遥控器给你，你看吧"},
+        ],
+        "discovery_opening": [
+            {"speaker": "昭昭", "line": "客厅沙发上遥控器怎么不在老位置"},
+            {"speaker": "灿灿", "line": "我正抱着它看动画片呢，别想拿走"},
+        ],
+        "quality": {"score": 80, "grade": "好", "reasons": []},
+    }
+
+
+class _ReviewMockClient:
+    """审读/定点修次数可控的 mock client。"""
+
+    def __init__(self, review_results, fix_responses):
+        self._reviews = list(review_results)
+        self._fixes = list(fix_responses)
+        self.review_calls = 0
+        self.fix_calls = 0
+
+    def review_daily_story_issues(self, theme, story):
+        self.review_calls += 1
+        return self._reviews.pop(0) if self._reviews else []
+
+    def spot_fix_daily_story(self, theme, story, issues):
+        self.fix_calls += 1
+        return self._fixes.pop(0) if self._fixes else {}
+
+
+def _patch_review_llm(monkeypatch):
+    """隔离定点修对 validate/patch/quality 的依赖，聚焦 review 流程行为。
+
+    validate/patch/quality 本身有独立测试，这里只验证
+    「remaining 触发第二轮、allowed 过滤设计行、修掉的不再扣分」。
+    """
+    from app.services.daily_story import prompts, quality
+
+    monkeypatch.setattr(prompts, "validate_daily_story_json", lambda *a, **k: None)
+    monkeypatch.setattr(
+        prompts,
+        "try_local_patch_daily_story_body",
+        lambda story, *a, **k: (story, []),
+    )
+    monkeypatch.setattr(quality, "attach_daily_story_quality", lambda *a, **k: None)
+
+
+def test_review_second_round_fixes_design_line_dup(monkeypatch):
+    """开场副本与正文第3句换词复读：复审才报出，第二轮应修掉而非只扣分。"""
+    _patch_review_llm(monkeypatch)
+    from app.services.daily_story.review import run_daily_story_review
+
+    client = _ReviewMockClient(
+        review_results=[
+            [{"lines": [5, 7], "kind": "重复", "desc": "正文重复", "fix": "改第7句"}],
+            [
+                {
+                    "lines": [1, 3],
+                    "kind": "重复",
+                    "desc": "第3句重复第1句问遥控器位置",
+                    "fix": "第3句改问别的",
+                },
+                {
+                    "lines": [2, 4],
+                    "kind": "重复",
+                    "desc": "第4句重复第2句",
+                    "fix": "第4句改问别的",
+                },
+            ],
+        ],
+        fix_responses=[
+            {},  # 首轮不修，让复审保留问题
+            {
+                "fixes": [
+                    {"no": 3, "line": "你手里拿的什么，给我看看"},
+                    {"no": 4, "line": "我正看到关键处，你等会儿"},
+                ]
+            },
+        ],
+    )
+    out = run_daily_story_review(client, "抢遥控器看动画片", _review_mock_story())
+
+    assert client.fix_calls == 2  # 第二轮定点修被触发
+    assert out["dialogue"][2]["line"] == "你手里拿的什么，给我看看"  # 第3句真被改
+    assert out["dialogue"][3]["line"] == "我正看到关键处，你等会儿"
+    # 开场片头副本（第1、2句）不能被动
+    assert out["dialogue"][0]["line"] == "客厅沙发上遥控器怎么不在老位置"
+    assert out["dialogue"][1]["line"] == "我正抱着它看动画片呢，别想拿走"
+    q = out["quality"]
+    assert q["score"] == 80  # 重复被修掉，不再扣分
+    assert not any(
+        1 in it.get("lines", []) or 2 in it.get("lines", [])
+        for it in q.get("review_issues", [])
+    )
+
+
+def test_review_second_round_skips_all_design_lines(monkeypatch):
+    """remaining 只剩开场片头（设计行）时不触发第二轮 spot fix。"""
+    _patch_review_llm(monkeypatch)
+    from app.services.daily_story.review import run_daily_story_review
+
+    client = _ReviewMockClient(
+        review_results=[
+            [{"lines": [5, 7], "kind": "重复", "desc": "正文重复", "fix": "改第7句"}],
+            [
+                {
+                    "lines": [1, 2],
+                    "kind": "重复",
+                    "desc": "开场两句重叠",
+                    "fix": "改第2句",
+                }
+            ],
+        ],
+        fix_responses=[{}],  # 首轮不修
+    )
+    out = run_daily_story_review(client, "抢遥控器看动画片", _review_mock_story())
+
+    assert client.fix_calls == 1  # 纯设计行不触发第二轮
+    assert out["quality"]["score"] == 80  # 全设计行重复不扣分
+    assert out["quality"]["review_issues"]  # 但仍记录在案
+
+
+def test_review_fixable_body_lines_skips_design_rows():
+    """第二轮可修行：排除开场片头副本与末段原话闭环，只留正文。"""
+    from app.services.daily_story.review import _fixable_body_lines
+
+    story = _review_mock_story()
+    story["dialogue"][5] = {"speaker": "灿灿", "line": "你自己说轮流看，怎么攥着不放"}
+    issues = [
+        {"lines": [1, 3], "kind": "重复", "desc": "开场vs正文", "fix": ""},
+        {"lines": [2, 4], "kind": "重复", "desc": "开场vs正文", "fix": ""},
+        {"lines": [6], "kind": "重复", "desc": "末段闭环", "fix": ""},
+        {"lines": [7], "kind": "重复", "desc": "正文可修", "fix": ""},
+    ]
+    assert _fixable_body_lines(issues, story) == {3, 4, 7}
 
 
 def test_review_parse_issues_drops_out_of_range_lines():
