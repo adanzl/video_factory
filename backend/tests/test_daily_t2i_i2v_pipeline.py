@@ -227,6 +227,24 @@ def test_scrub_daily_visual_brief_strips_mouth_and_fixes_hands():
     assert "左手叉腰" in prompt
 
 
+def test_scrub_daily_visual_brief_normalizes_default_table_set():
+    from app.services.script.visual_brief import scrub_daily_visual_brief
+
+    raw = (
+        "客厅沙发上，妈妈举着薯片袋；画面左边是昭昭，右边是灿灿；"
+        "茶几上放着一个月饼盒和两杯水，其中一杯水杯口有淡淡的水印。"
+    )
+    out = scrub_daily_visual_brief(raw)
+    assert "月饼" not in out
+    assert "水印" not in out
+    assert "茶几上放着遥控器和空水杯" in out
+    # 冲突物另写（摊开）不改
+    keep = scrub_daily_visual_brief(
+        "客厅沙发上；茶几上摊开一袋薯片；画面左边是昭昭，右边是灿灿。"
+    )
+    assert "茶几上摊开一袋薯片" in keep
+
+
 def test_assemble_daily_t2i_no_duplicate_lr_in_prompt():
     """visual_brief 已有左右时，构图段不再重复「画面左边…」。"""
     seg = {
