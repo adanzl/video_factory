@@ -88,6 +88,7 @@ def _optimize_daily_story_title(draft: str, story_content: dict, *, max_len: int
     from app.services.script.optimize_title import (
         build_chat_title_prompts,
         extract_core_anchor_words,
+        extract_theme_action_phrase,
         parse_chat_title_candidates_payload,
         pick_best_chat_title,
     )
@@ -96,7 +97,15 @@ def _optimize_daily_story_title(draft: str, story_content: dict, *, max_len: int
     raw, _ = client._chat_json(prompts['system'], prompts['user'], thinking_enabled=False, temperature=1.0)
     candidates = parse_chat_title_candidates_payload(raw, max_title_len=max_len)
     anchors = extract_core_anchor_words(draft, story_content)
-    return pick_best_chat_title(draft, candidates, max_len=max_len, avoid_titles=avoid_titles, anchor_words=anchors)
+    phrase = extract_theme_action_phrase(draft, story_content)
+    # 完整主题短语优先（要求标题含「偷看电视」，不只含「电视」），缺短语时退回核心名词
+    if phrase and phrase not in anchors:
+        anchors = [phrase, *anchors]
+    return pick_best_chat_title(
+        draft, candidates,
+        max_len=max_len, avoid_titles=avoid_titles, anchor_words=anchors,
+        story_type=story_content.get('story_type'),
+    )
 
 
 def _optimize_standard_title(draft: str, narration: str, *, max_len: int) -> str:
@@ -686,9 +695,13 @@ class JobMgr:
             story_content = story.get('story')
             if not isinstance(story_content, dict):
                 raise ValueError('故事数据格式异常')
-            # 主题在 story 顶层列，标题优化需要它做主题锚定（防止只抓局部画面）
-            if story.get('theme'):
-                story_content = dict(story_content, theme=story['theme'])
+            # 主题/类型在 story 顶层列，标题优化需要它们（主题锚定 + 类型骨架）
+            if story.get('theme') or story.get('story_type'):
+                story_content = dict(story_content)
+                if story.get('theme'):
+                    story_content['theme'] = story['theme']
+                if story.get('story_type'):
+                    story_content['story_type'] = story['story_type']
             # 手动重跑优化 = 想换个更好/不同的标题：把当前标题列为已用过，逼模型换角度
             final_title = _optimize_daily_story_title(draft, story_content, max_len=max_len, avoid_titles=[draft])
         else:

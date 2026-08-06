@@ -79,7 +79,7 @@ def test_chat_title_system_prompt_has_hook_templates_and_antitrunc():
         },
         max_title_length=16,
     )
-    for kw in ("荒谬反差账", "越补越糟", "台词钩子", "悬念藏匿", "删掉钩子", "谁干的"):
+    for kw in ("翻车记", "小队散伙了", "咋变这样", "手忙脚乱", "删掉钩子", "谁干的"):
         assert kw in prompts["system"], kw
     assert "宁可短" not in prompts["user"]
     assert "16" not in prompts["system"]
@@ -96,10 +96,14 @@ def test_chat_title_system_prompt_has_no_copyable_examples():
         },
         max_title_length=16,
     )
+    # 形态示例用 XX 占位（如「XX翻车记」），不出现具体故事成品
+    assert "XX翻车记" in prompts["system"]
+    assert "偷看电视翻车记" not in prompts["system"]
     for kw in ("越擦越花", "老鼠会开柜子门吗", "自己不吃却管我", "妈妈藏的饼干"):
         assert kw not in prompts["system"], kw
-    assert "成品例" in prompts["system"]
-    assert "禁止把别的故事" in prompts["system"]
+    # 形态示例带 XX 占位说明 + 禁止照抄别的故事
+    assert "XX" in prompts["system"]
+    assert "不要照抄成品短句" in prompts["system"]
 
 
 def test_chat_title_user_prompt_no_spoiler_and_avoid():
@@ -112,7 +116,7 @@ def test_chat_title_user_prompt_no_spoiler_and_avoid():
         },
         max_title_length=16,
     )
-    assert "别平铺直叙复述结局" in prompts["user"]
+    assert "别报流水账" in prompts["user"]
     assert "3 个候选" in prompts["user"]
     assert "已用过的标题" not in prompts["user"]
 
@@ -323,8 +327,9 @@ def test_chat_title_user_prompt_contains_core_noun_requirement():
         },
         max_title_length=16,
     )
-    assert "本场核心名词：月饼" in prompts["user"]
-    assert "必须包含" in prompts["user"]
+    # 专家要求：标题必须原样保留完整主题短语（偷吃月饼），不是只留核心名词
+    assert "本集主题短语（标题必须原样保留）：偷吃月饼" in prompts["user"]
+    assert "必须原样保留本集主题短语" in prompts["user"]
     assert "硬性" in prompts["system"]
 
 
