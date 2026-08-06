@@ -194,6 +194,39 @@ def test_scrub_daily_visual_brief_drops_duplicate_pose():
     assert "灿灿右手比划数字十" in out
 
 
+def test_scrub_daily_visual_brief_strips_mouth_and_fixes_hands():
+    from app.services.script.image_prompt import assemble_daily_t2i_prompt
+    from app.services.script.visual_brief import scrub_daily_visual_brief
+
+    raw = (
+        "客厅沙发上，茶几上摊开一袋薯片；画面从左到右是昭昭、妈妈、灿灿；"
+        "昭昭双手叉腰，身体前倾，瞪圆眼睛，嘴巴大张，右手指着薯片袋，语气得意；"
+        "妈妈耸肩；灿灿双手抱胸撇嘴。"
+    )
+    out = scrub_daily_visual_brief(raw)
+    assert "嘴巴大张" not in out
+    assert "语气得意" not in out
+    assert "双手叉腰" not in out
+    assert "左手叉腰" in out
+    assert "右手指着薯片袋" in out
+
+    prompt = assemble_daily_t2i_prompt(
+        {
+            "shot_type": "中景",
+            "visual_brief": raw,
+            "dialogue": [
+                {"speaker": "昭昭", "text": "那这半袋都空了？"},
+                {"speaker": "妈妈", "text": "我就尝了一片。"},
+            ],
+        }
+    )
+    assert "嘴巴大张" not in prompt
+    assert prompt.count("微微张嘴正在开口说话") == 1
+    assert "昭昭微微张嘴正在开口说话" in prompt
+    assert "双手叉腰" not in prompt
+    assert "左手叉腰" in prompt
+
+
 def test_assemble_daily_t2i_no_duplicate_lr_in_prompt():
     """visual_brief 已有左右时，构图段不再重复「画面左边…」。"""
     seg = {
