@@ -79,7 +79,7 @@ def test_chat_title_system_prompt_has_hook_templates_and_antitrunc():
         },
         max_title_length=16,
     )
-    for kw in ("翻车记", "小队散伙了", "咋变这样", "手忙脚乱", "删掉钩子", "谁干的"):
+    for kw in ("散伙了", "咋全露馅", "手忙脚乱", "删掉钩子", "谁干的", "三个全是翻车记"):
         assert kw in prompts["system"], kw
     assert "宁可短" not in prompts["user"]
     assert "16" not in prompts["system"]
@@ -96,13 +96,14 @@ def test_chat_title_system_prompt_has_no_copyable_examples():
         },
         max_title_length=16,
     )
-    # 形态示例用 XX 占位（如「XX翻车记」），不出现具体故事成品
-    assert "XX翻车记" in prompts["system"]
+    # 形态用 XX 占位；「翻车记」只作为坏例出现（禁止在形态①用），不出现具体故事成品
+    assert "XX" in prompts["system"]
+    assert "三个全是翻车记" in prompts["system"]
+    assert "翻车记" in prompts["system"]
     assert "偷看电视翻车记" not in prompts["system"]
     for kw in ("越擦越花", "老鼠会开柜子门吗", "自己不吃却管我", "妈妈藏的饼干"):
         assert kw not in prompts["system"], kw
-    # 形态示例带 XX 占位说明 + 禁止照抄别的故事
-    assert "XX" in prompts["system"]
+    # 禁止照抄别的故事成品
     assert "不要照抄成品短句" in prompts["system"]
 
 
