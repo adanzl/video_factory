@@ -222,6 +222,10 @@ def _chat_title_hook_score(title: str) -> int:
     # 或把笑点直接剧透（「露馅了/被抓了/满地都是」）——感叹号给 +1 救不回来
     if _SPOILER_RE.search(title) or _OUTCOME_REVEAL_RE.search(title):
         score -= 5
+    # 平铺罗列重罚：≥2 个逗号 = 在逐项列事件（「线缠脚上，电视黑了，水杯翻」），
+    # 像事故清单没有口吻/结构/账，比有口吻的候选弱
+    if title.count("，") + title.count(",") >= 2:
+        score -= 3
     return score
 
 
