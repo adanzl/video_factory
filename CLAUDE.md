@@ -118,3 +118,4 @@ cd backend && python -m pytest tests/test_script_validation.py  # 单个文件
 - 不要用 PowerShell 执行远程查询（会拆坏远程 Python）
 - `ssh` 命令查远程数据
 - Always reply in Chinese.
+- 每次查库可以通过 scripts/download_db.py 把数据库和日志同步到本地再查
