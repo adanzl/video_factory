@@ -91,6 +91,7 @@ HUMOR_ISSUE_CAPS: tuple[tuple[str, int], ...] = (
     ("B甩锅提暗号无前文约定", 8),
     ("B咳嗽暗号拖沓", 10),
     ("B定格啰嗦", 10),
+    ("B语气垫字", 12),
 )
 
 
@@ -106,6 +107,14 @@ RE_FREEZE_SILENT = re.compile(
 RE_FREEZE_SIDE_DING = re.compile(r"死定了|死定")
 RE_BLEED_CONTENT = re.compile(
     r"流血|出血|鲜血|血滴|血渗|血印|止血|还在流血|用嘴吸|创可贴",
+)
+# 无意义语气垫字后缀（对齐 E 类；B 额外加真的呀/好不好）：
+# 连锁/结盟里句尾叠「了呢了呀/嘛了呀/好不好/真的呀」= 注水，一句实词收尾才顺。
+RE_GARBAGE_FILLER = re.compile(
+    r"[呵哈]{2,}|(?:呢|吗|啊|呀|啦|吧|嘛){2,}$|对不对呀真的|"
+    r"了呢[了呀]|了呀[呢]|嘛了[呀]|了呢呀|"
+    r"(?:了呢|了呀|嘛了|呢吧|呀呢|呢嘛)$|"
+    r"真的呀|好不好$",
 )
 
 
@@ -735,6 +744,11 @@ def collect_humor_issues(
     if RE_BLEED_CONTENT.search(body_text):
         cons.append("B写实流血不宜")
 
+    for ln in lines:
+        if RE_GARBAGE_FILLER.search(ln):
+            cons.append("B语气垫字（句尾叠了呢了呀/好不好/真的呀等）")
+            break
+
     return cons
 
 
@@ -905,6 +919,12 @@ def humor_revision_hint(issue: str) -> str | None:
             f"【好笑·B】{issue}。"
             "段2/3写 3–5 句越补越糟连锁；段4惩罚令前互甩自保；"
             "段5妈妈短令→定格（完蛋了+真倒霉）戛然而止。"
+        )
+    if "语气垫字" in issue:
+        return (
+            f"【好笑·B】{issue}。"
+            "删句尾「了呢了呀/嘛了呀/好不好/真的呀/了你听」等垫字，"
+            "每句以实词收尾（如「奶油蹭你裤腿了！」而非「奶油蹭你裤腿了呢了呀」）。"
         )
     from app.services.daily_story.story_types.b.facts import fact_revision_hint
     from app.services.daily_story.story_types.b.opening import opening_revision_hint

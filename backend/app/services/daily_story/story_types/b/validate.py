@@ -35,6 +35,7 @@ def append_b_body_errors(story: dict, errors: list[str]) -> None:
 
     from app.services.daily_story.story_types.b.humor import (
         RE_BLEED_CONTENT,
+        RE_GARBAGE_FILLER,
         _freeze_lines_issues,
         _landing_doom_lines_repeat,
         _punish_freeze_react,
@@ -93,3 +94,8 @@ def append_b_body_errors(story: dict, errors: list[str]) -> None:
 
     if RE_BLEED_CONTENT.search("".join(lines)):
         errors.append("B类：勿写实流血/止血/创可贴，可说怕扎到不敢动")
+
+    for i, ln in enumerate(lines):
+        if RE_GARBAGE_FILLER.search(ln):
+            errors.append(f"B类对白[{i}]含无意义语气垫字（句尾叠了呢了呀/好不好/真的呀等）")
+            break
