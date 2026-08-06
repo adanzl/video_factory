@@ -105,10 +105,11 @@ def parse_chat_title_candidates_payload(raw: dict[str, Any], *, max_title_len: i
     return out
 
 
-# 结局播报词：平铺直叙复述结果（「全滚出来」「掉一地」「被抓住」），比有口吻的候选弱
-_OUTCOME_REVEAL_RE = re.compile(r"全滚|滚出来|滚出去|掉一地|全没了|全撒|弄翻|被抓住|被抓|掉地上|露馅|败露|被抓现行")
-# 复述剧情词：「露馅了/被抓了/满身渣/满地都是」这类把笑点直接剧透的结局复述，重罚
-_SPOILER_RE = re.compile(r"露馅|被抓|被抓住|满地都是|满身|全掉|全洒|全撒|散了一地|被抓现行|完了|死定了")
+# 结局播报词：平铺直叙复述结果（「全滚出来」「掉一地」），比有口吻的候选弱
+# 「被抓/被抓现行/露馅/翻车/散伙」不算：它们是 B 类结盟翻车的类型结局，孩子话，允许
+_OUTCOME_REVEAL_RE = re.compile(r"全滚|滚出来|滚出去|掉一地|全没了|全撒|弄翻|掉地上|败露")
+# 复述剧情词：纯负能量/报流水账的词重罚；「被抓/露馅/翻车/散伙」等类型结局词不罚
+_SPOILER_RE = re.compile(r"满地都是|满身|全掉|全洒|全撒|散了一地|完了|死定了")
 
 # 中文核心名词多为 2 字（月饼/电视/玩具/洗澡…）；4 字几乎都是动词+名词拼的整句
 _ANCHOR_NGRAM_ORDER = (2, 3, 4)
@@ -193,6 +194,49 @@ def extract_core_anchor_words(draft: str, story_content: dict) -> list[str]:
     return _extract_theme_fallback(str(story_content.get('theme') or ''), story_content)
 
 
+# 主题动作动词：用来拼「动作+核心名词」的完整主题短语（偷看电视/偷吃月饼/藏玩具）
+_THEME_ACTION_VERBS = frozenset(
+    "偷藏抢争系叠刷洗吃喝看切收开关拿拖浇穿脱端擦摆玩躲装翻摸掏塞摘扯踢吹按"
+)
+# 常见双字动作动词（动词+动词或副词+动词），如「偷看」「偷吃」「藏」——每个词单独一个元素
+_THEME_ACTION_2CHAR = frozenset(
+    {
+        "偷看", "偷吃", "偷藏", "偷拿", "偷玩", "偷翻", "偷喝", "偷用",
+        "抢着", "争着", "藏着", "躲着", "拖着", "端着", "擦着", "玩着", "翻着",
+        "系紧", "叠好", "刷完", "洗完", "吃完", "喝完", "看完", "切好",
+        "收好", "关好", "放好", "拖好", "浇好", "穿好", "脱好", "摆好", "摘好",
+    }
+)
+
+
+def extract_theme_action_phrase(draft: str, story_content: dict) -> str:
+    """提取本集「完整动作+核心名词」的主题短语（如「偷看电视」「偷吃月饼」「藏玩具」）。
+
+    专家要求标题必须原样保留这个完整动作短语（「偷看电视」绝不可缩成「偷电视」）。
+    从 theme / conflict_core / scene_title 里找「动作动词+紧邻核心名词」组合；
+    找不到就退回核心名词本身。
+    """
+    anchor = extract_core_anchor_words(draft, story_content)
+    if not anchor:
+        return ""
+    noun = anchor[0]
+    for src in (
+        str(story_content.get('theme') or ''),
+        str(story_content.get('conflict_core') or ''),
+        str(story_content.get('scene_title') or draft or ''),
+    ):
+        src = title_core(src)
+        i = src.find(noun)
+        if i > 0:
+            two = src[i - 2:i] if i >= 2 else ""
+            if two in _THEME_ACTION_2CHAR:
+                return two + noun  # 偷看+电视 → 偷看电视；偷吃+月饼 → 偷吃月饼
+            prev = src[i - 1]
+            if prev in _THEME_ACTION_VERBS:
+                return prev + noun  # 藏+玩具 → 藏玩具
+    return noun
+
+
 def _chat_title_hook_score(title: str) -> int:
     """轻量钩子分：问号/叹号、甩锅口吻、称呼开头；扣结局播报分。
 
@@ -229,13 +273,14 @@ def _chat_title_hook_score(title: str) -> int:
     return score
 
 
-def pick_best_chat_title(draft: str, candidates: list[str], *, max_len: int, avoid_titles: list[str] | None=None, anchor_words: list[str] | None=None) -> str:
+def pick_best_chat_title(draft: str, candidates: list[str], *, max_len: int, avoid_titles: list[str] | None=None, anchor_words: list[str] | None=None, story_type: str | None=None) -> str:
     """从多个候选中选最终标题：退化保护 + 长度硬截断 + 钩子分排序。
 
     - 命中初稿或 avoid_titles（已用过的标题）的候选降权，避免手动重跑输出同一个；
     - 问号/叹号/称呼开头/甩锅质问优先于平铺直叙的事件复述；
     - anchor_words：本场核心名词（如「月饼」）。含核心名词的候选 +2（贴主题），
       不含的 -8 重罚；全部候选都不含核心词时回退初稿，绝不写跑题标题；
+    - story_type：命中类型骨架关键词（B 类的「结盟/翻车/露馅」等）→ +2，贴「主题+类型」；
     - **防御当前标题**：以初稿自身的钩子分为基线，候选必须严格更高才替换。
       否则手动重跑会把「妈，月饼自己滚的」(3分) 换成「偷吃月饼翻车记」(0分)，
       越跑越差、来回跳。
@@ -244,13 +289,21 @@ def pick_best_chat_title(draft: str, candidates: list[str], *, max_len: int, avo
     anchors = [str(a).strip() for a in (anchor_words or []) if str(a).strip()]
     draft_core = title_core(draft)
     avoid_cores = {title_core(t) for t in avoid}
+    # 完整主题短语（≥3 字，如「偷看电视」）必须完整出现；2 字核心名词（电视）按子串即可
+    phrases = [a for a in anchors if len(a) >= 3]
+    nouns = [a for a in anchors if len(a) < 3]
     best = draft
     best_score = _chat_title_hook_score(draft)
     any_anchored = False
     for cand in candidates:
         chosen = select_optimized_title(draft, cand, max_len=max_len)
         score = _chat_title_hook_score(chosen)
-        anchored = (not anchors) or any(a in title_core(chosen) for a in anchors)
+        if not anchors:
+            anchored = True
+        elif phrases:
+            anchored = any(p in title_core(chosen) for p in phrases)
+        else:
+            anchored = any(a in title_core(chosen) for a in nouns)
         if anchored:
             any_anchored = True
             # 显式给了核心名词才加分：贴主题的候选该比 hook 同分的局部画面候选优
@@ -279,6 +332,22 @@ def _clamp_chat_title_len(max_title_len: int | None) -> int:
     return max(1, min(int(max_title_len), CHAT_TITLE_MAX_LEN))
 
 
+# 类型骨架：A–E 故事类型的核心结构，标题要突出「主题 + 类型」，而不是只抓局部画面/道具
+_STORY_TYPE_SKELETON = {
+    "A": "权威翻车——姐姐立规矩/教人，自己被同一规则戳穿，权威当场垮掉",
+    "B": "结盟翻车——俩孩子约好一起干（瞒着妈妈），中途走样连锁崩掉，互甩锅被抓现行",
+    "C": "公平执念——争同一资源，双规则互咬，谁先嘴硬谁先输",
+    "D": "字面执行——把大人的话抠字面执行到极端，反而把简单事搞砸",
+    "E": "妈妈破功——妈妈立规矩，自己先违反/双标，被孩子抓到现场",
+}
+
+
+def _story_type_skeleton(story_type: str | None) -> str:
+    """把 story_type（A–E）转成标题优化用的类型骨架描述；未知类型返回空。"""
+    key = str(story_type or "").strip().upper()
+    return _STORY_TYPE_SKELETON.get(key, "")
+
+
 def build_chat_title_system_prompt(*, max_title_len: int = CHAT_TITLE_MAX_LEN) -> str:
     """chat 流水线标题：面向孩子与有娃家长，硬上限 ≤10 字。"""
     max_title_len = _clamp_chat_title_len(max_title_len)
@@ -286,56 +355,53 @@ def build_chat_title_system_prompt(*, max_title_len: int = CHAT_TITLE_MAX_LEN) -
         "你是家庭日常对话短剧的标题编辑，面向孩子和有娃的大人。"
         "根据剧本输出 JSON，字段 title。"
         f"title：≤{max_title_len} 字，不含空格换行，适合短封面。"
-        "\n【最高优先：主题】标题必须让人一眼看出本集在讲什么，落在"
-        "user prompt 的「故事主题」上（如「约好一起藏玩具别让妈妈发现」→"
-        "标题要让人知道是藏玩具被发现的戏，不能只写「渣印谁踩的」这种和主题无关的局部画面）。"
-        "钩子（口吻/问句/反差）是为主题服务的，只能加在主题之上，不能把主题换掉。"
-        "\n【最高目标：让人想点开】标题要像家长刷到会停一下的亲子短视频——"
-        "有画面、有反差、有口吻，一看就想知道「然后呢」。"
-        "最忌讳的是把剧情复述一遍（「偷看电视露馅了」「月饼渣踩得满地都是」）——"
-        "那是剧情简介，不是标题。"
-        "\n【标题句式模板】围绕本集主题抓最强钩子（只讲句式，不给成品例："
-        "禁止把别的故事里的话/梗直接套用过来），按优先级："
-        "\n①荒谬反差账（最好）：为一点小事赔上很大代价的「账」，把悬殊说半截吊胃口——"
-        "句式骨架如「为[一小块]赔上[一整盒]」「[一点渣]换来[一屋乱]」，具体数字/数量放进去，"
-        "让「得不偿失」的荒诞自己说话。这是最想让人点开的一类。"
-        "\n②越补越糟：小动作引出连锁意外，把「怎么越弄越糟」的狼狈留半截，不报结局。"
-        "\n③台词钩子：冲突高潮里孩子针对本主题说的原话，稍压虚词，像在替孩子喊话"
-        "（可带甩锅「不是我」——但只能把锅甩给剧本里确实自发发生、或孩子原话里归咎的事："
-        "剧本写「手扶茶几盒子翻了」是孩子碰翻的，就绝不能写「月饼是它自己翻的/滚的」；"
-        "剧本写「线缠住脚」是线的问题，才能写「是线自己缠的」）。"
-        "\n④悬念藏匿：藏/偷/瞒 + 藏住的东西，勾起「后来呢」。"
+        "\n【标题 = 主题 + 类型结局，孩子话，极简】这是唯一标准，三条硬规矩："
+        "\n- 主题必须出现（user prompt 的「故事主题」），且必须原样保留该主题的动作+核心名词组合"
+        "（如「偷看电视」绝不可缩成「偷电视」）"
+        "\n- 类型结局用**孩子话**点出（不是书面术语）："
+        "B类是「俩孩子约好干坏事→搞砸→被抓」，孩子话结局词限定用："
+        "翻车/散伙/被抓包/搞砸/露馅/没看成/手忙脚乱——"
+        "**必须多样化，三个候选不能全押同一个词**"
+        "\n- 极简、干净、像孩子脱口而出的一句话，7–10 字，不堆画面"
+        "\n【三种形态，三个候选各套一种】用 XX 代表本集故事主题"
+        "（完整动作短语，严禁缩减）："
+        "\n①XX+结局词：可以写成「XX翻车记」「XX小队散伙了」「XX被抓包」「XX搞砸了」"
+        "「XX露馅了」「XX没看成」——**优先选「翻车记」之外的词**，"
+        "除非剧本冲突天然就是「翻车」感最强"
+        "\n②XX+孩子感叹：「XX咋变这样」「XX咋全露馅」「XX没看成还挨训」"
+        "——「挨训」偏成人，建议替换成「被抓包/露馅」"
+        "\n③状态词+XX：「手忙脚乱XX」「慌慌张张XX」「偷偷摸摸XX」"
+        "（XX 是占位示范，不要照抄成品短句，只套结构）"
         "\n【标题生成规则】"
-        f"\n- 硬性：标题必须 ≤{max_title_len} 字（最终上架字数以此为准）"
-        "\n- 主题锚定（最高优先，硬性）：标题必须能看出本集主题（user prompt 的「故事主题」），"
-        "并包含该主题的核心名词（user prompt 列出的「核心名词」）；"
-        "只写局部画面/道具/甩锅口吻而看不出主题的候选作废"
-        "\n- 优先来源：①punchline_explain 里的荒谬反差（浓缩成「为X赔上Y」的账）"
-        "②冲突高潮里孩子针对主题的甩锅/辩解台词；③核心道具+动作的具体画面；"
-        "④故事主题本身（浓缩成有口吻的短句，不是平铺复述）"
-        "\n- 要有口吻或轻反差，让家长一秒认出「自家日常笑点」"
+        f"\n- 硬性：标题必须 ≤{max_title_len} 字"
+        "\n- 主题锚定（最高优先，硬性）：标题必须能看出本集故事主题，"
+        "且包含该主题的完整动作+核心名词，写漏字变歧义就作废"
+        "\n- 口吻要像孩子：多用感叹号「！」、问号、口语虚词（咋/嘛/呀/呗/喽），"
+        "禁止书面词（瞒着/赔上/搭上/满屋/一番/之际/挨罚/受罚）"
         "\n- 不用描述性事件名（如「抢饼干」「姐弟吵架」）"
+        "\n- 禁止书面类型术语：不要出现「结盟/同盟/权威/公平/字面/破功」"
         "\n- 禁止为了短删掉钩子：超字只删虚词/语气词，保住钩子词"
-        "\n- 禁止复述剧情/报结局：不要把「露馅了」「被抓了」「满身渣」这类结局直接说出来"
-        "（那等于把笑点提前剧透）。要留半截：只说「越补越糟」的过程或荒谬的「账」，别说到头。"
+        "\n- 点结局但别报流水账：可以说「翻车了/散伙了/被抓了」这类类型结局词，"
+        "别罗列过程细节（「线缠脚，电视黑，水杯翻」=报流水账，差）"
         "\n- 推锅必须基于剧本真实意外：剧本写明是孩子碰翻的（手扶茶几盒子翻了），"
         "就绝不能写「月饼是它自己翻的/滚的」；剧本写「线缠住脚」才能写「是线自己缠的」"
         "\n- 称呼要符合剧本：只准用剧本里孩子原话出现过的称呼，且只在孩子真的"
         "对被瞒对象/在场角色说话时才用；瞒着妈妈藏/偷的戏（妈妈在厨房、孩子藏玩具），"
         "孩子不会开口叫妈妈，标题就绝不能开场写「妈妈，…」或「妈，…」来点破"
         "\n- 钩子要落在具体好笑画面：把一个道具+动作（「擦」「踩」「摔」「翻」）放进标题，"
-        "让读者能脑补画面，别写泛泛的结果；优先找「为偷吃一口赔上一整盒」式的荒谬反差账"
-        "\n- 三个候选句式要拉开（一句荒谬反差账 / 一个具体道具意外 / 一句孩子原话或悬念），"
-        "禁止用「谁…」「…怨谁」质问句——「谁干的/谁碰的/谁先露馅」已刷屏，"
-        "一律不用，换成荒谬账、孩子原话、具体道具+动作"
-        "\n- 钩子只准来自剧本实际内容（冲突核心/对话原话/反差说明/核心道具）："
-        "禁止给剧本编造剧本里没有的细节、道具或意外原因"
-        "（如剧本里电视是孩子开的，就绝不能写「电视自己开的」）；"
-        "禁止写一个完全脱离本剧本的现成短句"
-        "\n- 坏标题示例：「姐弟偷吃饼干」「月饼全滚出来了」「被妈妈抓住」「孩子的选择」"
-        "「偷看电视露馅了」「谁干的」"
+        "让读者能脑补画面，别写泛泛的结果"
+        "\n- 三个候选必须各套一种形态，禁止三个都套同一种；"
+        "禁止用「谁…」「…怨谁」质问句"
+        "\n- **结局词多样性（新增）**：三个候选中，「翻车记」最多只能出现一次，"
+        "尽量让结局词不重样（如第一个用「散伙了」，第二个用「被抓包」，第三个用「露馅」），"
+        "避免所有选题都变成「翻车记」"
+        "\n- 钩子只准来自剧本实际内容：禁止编造剧本里没有的细节、道具、意外原因或量词"
+        "（如剧本「满地水」绝不能写「满屋水」）"
+        "\n- 坏标题示例（书面/大人/复述，差）：「姐弟偷吃饼干」「月饼全滚出来了」"
+        "「被妈妈抓住」「偷看电视露馅了」「瞒着妈看个电视赔上满屋水」「谁干的」"
+        "「偷电视被抓包」「电视没看成还挨罚」"
         'JSON 输出样例：{"titles": ["候选1", "候选2", "候选3"]}。'
-        "三个候选句式/口吻尽量不同，最有钩子的放第一个；"
+        "三个候选口吻尽量不同，最有钩子的放第一个；"
         "只想出一个方向时也至少列 2 个不同角度的。"
         '（也可退化为 {"title": "单个"}）'
     )
@@ -370,6 +436,12 @@ def build_chat_title_user_prompt(
     context_parts = []
     if theme:
         context_parts.append(f"故事主题：{theme}")
+    theme_phrase = extract_theme_action_phrase(draft_title, story_content)
+    if theme_phrase:
+        context_parts.append(f"本集主题短语（标题必须原样保留）：{theme_phrase}")
+    skeleton = _story_type_skeleton(story_content.get("story_type"))
+    if skeleton:
+        context_parts.append(f"类型骨架：{skeleton}")
     if setting:
         context_parts.append(f"场景：{setting}")
     conflict_core = (story_content.get("conflict_core") or "").strip()
@@ -387,32 +459,42 @@ def build_chat_title_user_prompt(
             avoid_note = f"\n已用过的标题：{seen}。这次换一个角度，别和它们同方向。"
 
     anchors = extract_core_anchor_words(draft_title, story_content)
+    theme_phrase = extract_theme_action_phrase(draft_title, story_content)
     anchor_note = ""
-    if anchors:
+    if theme_phrase:
+        anchor_note = f"\n【硬性】标题必须原样保留本集主题短语「{theme_phrase}」"
+        f"（如「{theme_phrase}」不能缩成「{theme_phrase[-2:]}」或只留核心名词）。"
+        "不含完整主题短语的标题不合格，作废重写。"
+    elif anchors:
         anchor_note = f"\n【硬性】标题必须包含本场核心名词：{'、'.join(anchors)}。不含核心名词的标题不合格，作废重写。"
 
     return (
         f"初稿标题：{draft_title}\n"
         f"剧本内容：\n{context}\n\n"
-        "第一步，先用一句话写下本集最荒谬/反差最强的那个点"
-        "（如「为了偷吃一口月饼，赔上整盒」「藏个玩具，弄出满屋渣」，"
-        "一定要从剧本里的具体连锁/台词来，别凭空想）——这行写在 JSON 外面，不要进 JSON。"
-        "第二步，围绕这个点写 3 个候选 title（同一 JSON 数组，最有钩子的放第一个）："
-        "三个候选必须各自抓**三个不同画面/角度**——比如①荒谬反差账（为X赔上Y）、"
-        "②具体道具+动作的瞬间（渣印、线缠、水杯翻这种定格画面）、③孩子原话或悬念；"
-        "严禁三个都套同一句式（别全是「为X赔上Y」），严禁三个都说同一件事的不同说法。"
+        "第一步，先看清本集的「主题 + 类型结局」：本集主题短语是"
+        f"「{theme_phrase or draft_title}」，"
+        "类型结局要用**孩子话**表达（翻车/散伙/被抓包/搞砸/露馅/没看成/手忙脚乱）。"
+        "（这行写在 JSON 外面，不要进 JSON。）"
+        "第二步，写 3 个候选 title（同一 JSON 数组，最有钩子的放第一个），"
+        "**三个候选必须各套一种形态**（XX=本集主题短语，别照抄别的故事）："
+        "①XX+结局词（XX翻车记 / XX小队散伙了）；"
+        "②XX+孩子感叹（XX咋变这样）；"
+        "③状态词+XX（手忙脚乱XX / 慌慌张张XX）。"
+        "都落在「主题 + 类型结局」上，极简干净，别只抓一个局部道具/意外（「线缠脚电视黑」这种=没点出结局）。"
         f"每个必须 ≤{max_title_len} 字：超字只删虚词/语气词，禁止删成事件名、禁止为了短丢钩子。"
         "钩子只从本剧本的冲突高潮台词/反差/核心道具里提炼，禁止套用与剧本无关的现成短句；"
-        "禁止给剧本编造剧本里没有的细节、道具或意外原因；"
+        "禁止给剧本编造剧本里没有的细节、道具、意外原因或量词"
+        "（如剧本只说「满地水」就绝不能写「满屋水」）；"
         "推锅口吻只能指向剧本里确实自发发生或孩子原话归咎的事（如剧本写明是孩子手滑碰翻的，"
         "就绝不能写「是它自己翻的/滚的」）；"
         "称呼只准用剧本孩子原话里的，且只在孩子真对被瞒对象/在场角色说话时用——"
         "瞒着妈妈藏/偷的戏孩子不会喊妈妈，标题不能开场「妈妈，…」「妈，…」点破。"
-        "主题锚定（最高优先）：标题必须落在本集主题上（上面「故事主题」），"
-        "让人一眼看出这集在讲什么；可以含蓄，但不能只留一个局部画面/道具/甩锅口吻把主题丢掉。"
+        "主题锚定（最高优先，硬性）：标题必须原样保留本集主题短语（上面「本集主题短语」）"
+        "和类型结局（上面「类型骨架」的结局，用孩子话）——"
+        "禁止「结盟/同盟/权威/公平/字面/破功」这类书面术语，"
+        "但「翻车/散伙/搞砸/没看成/被抓包/露馅」这类孩子话结局词**允许并鼓励**。"
         f"{anchor_note}"
-        "别平铺直叙复述结局；优先找一个具体好笑画面或「为偷吃一口赔上整盒」式的荒谬反差，"
-        "用人物口吻、问句或留半截吊起来。"
+        "点结局但别报流水账；用孩子口吻、问句或留半截吊起来。"
         f"{avoid_note}"
     )
 
