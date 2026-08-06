@@ -178,6 +178,41 @@ def append_steal_single_line_errors(story: dict, errors: list[str]) -> None:
             )
 
 
+def append_steal_check_line_early_errors(story: dict, errors: list[str]) -> None:
+    """A 类偷吃：检查线禁止前置（硬卡）。
+
+    对白前 4 句禁「检查/样品/试甜/甜不甜/尝味/把关/新不新鲜/帮…尝」——
+    模型反复在第 4 句写「我这是检查水果新不新鲜」「帮你试试苹果甜不甜」
+    给灿灿找吃水果的理由（提示词禁词 4 轮不遵守，升格硬卡逼重试）。
+    合法前 4 句只准反咬赖账（你嘴馋/风刮走/果汁溅的），检查样品最早对白第 9 句。
+    """
+    punch = str(story.get("punchline_explain") or "")
+    code = parse_story_type_code(punchline=punch)
+    if code and code != "A":
+        return
+    blob = a_context_blob(story)
+    if not re.search(r"偷吃|饭前|水果|苹果|草莓|葡萄|西瓜|香蕉", blob):
+        return
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 4:
+        return
+    for i, d in enumerate(dialogue[:4]):
+        if not isinstance(d, dict):
+            return
+        line = str(d.get("line") or "")
+        if re.search(
+            r"检查|样品|试甜|甜不甜|替.{0,3}尝|尝味|把关|新不新鲜|帮.{0,3}尝",
+            line,
+        ):
+            errors.append(
+                "A类偷吃检查线前置：对白前4句禁「检查/样品/试甜/尝味/把关/新不新鲜」"
+                f"（实际第{i+1}句：{line[:14]}）；"
+                "灿灿被质疑只能反咬赖账（你嘴馋/风刮走/果汁溅的），"
+                "检查样品最早对白第9句",
+            )
+            return
+
+
 def append_mid_restatement_errors(story: dict, errors: list[str]) -> None:
     """A 类：中段同一规矩勿换措辞再立一遍。"""
     punch = str(story.get("punchline_explain") or "")
@@ -354,7 +389,7 @@ def append_mid_restatement_errors(story: dict, errors: list[str]) -> None:
             last_ln = str(last.get("line") or "")
             if re.search(
                 r"算你厉害|你赢了|算你赢|你厉害|你等着|"
-                r"你.{0,4}(?:重刷|再刷|过关)",
+                r"你.{0,4}(?:重刷|再刷|过关|改回来|重写)",
                 last_ln,
             ):
                 errors.append(
@@ -397,7 +432,67 @@ def append_mid_restatement_errors(story: dict, errors: list[str]) -> None:
 
 
 
+def append_closing_structure_errors(story: dict, errors: list[str]) -> None:
+    """A 类末四拍结构存在性硬卡。
+
+    末 4 句必须走 昭昭引原话 → 灿灿「那不一样」→ 昭昭「哪里不一样」→ 灿灿软破功。
+    只做槽位存在性，节奏交给质检（避免生成空转）；「引话有出处」交给
+    append_closing_quote_errors 兜底。
+    """
+    punch = str(story.get("punchline_explain") or "")
+    code = parse_story_type_code(punchline=punch)
+    if code and code != "A":
+        return
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 6:
+        return
+    tail = dialogue[-4:]
+    rows: list[tuple[str, str]] = []
+    for d in tail:
+        if not isinstance(d, dict):
+            return
+        rows.append(
+            (str(d.get("speaker") or "").strip(), str(d.get("line") or "").strip())
+        )
+    if len(rows) < 4:
+        return
+    sp4, ln4 = rows[0]
+    sp3, ln3 = rows[1]
+    sp2, ln2 = rows[2]
+    sp1, ln1 = rows[3]
+    if not (sp4 == "昭昭" and sp3 == "灿灿" and sp2 == "昭昭" and sp1 == "灿灿"):
+        errors.append(
+            "A类末四拍缺失：末4句 speaker 须昭昭→灿灿→昭昭→灿灿"
+            f"（实际{'→'.join([sp4, sp3, sp2, sp1])}）",
+        )
+        return
+    if not re.search(
+        r"(?:你刚才(?:明明|自己)?说|你自己(?:刚才)?说|你不是说|你刚说|你说的)"
+        r"[，。！？…、\s]*([^，。！？…]{3,})",
+        ln4,
+    ):
+        errors.append(
+            "A类末四拍缺失：倒数第4句（昭昭）须引前文灿灿原话"
+            "（你刚才说/你自己说/你不是说…），禁止只用反问顶替引话"
+            f"（如「示范就能算错吗？」，实际：{ln4[:16]}）",
+        )
+        return
+    if "那不一样" not in ln3:
+        errors.append(
+            "A类末四拍缺失：倒数第3句（灿灿）须含「那不一样」"
+            "（那不一样→哪里不一样→软破功三拍缺一即改）",
+        )
+        return
+    if "哪里不一样" not in ln2:
+        errors.append(
+            "A类末四拍缺失：倒数第2句（昭昭）须含「哪里不一样」（全文仅此一处）",
+        )
+        return
+
+
 def append_a_body_errors(story: dict, errors: list[str]) -> None:
     append_closing_quote_errors(story, errors)
+    append_closing_structure_errors(story, errors)
     append_mid_restatement_errors(story, errors)
+    append_steal_check_line_early_errors(story, errors)
     append_steal_single_line_errors(story, errors)

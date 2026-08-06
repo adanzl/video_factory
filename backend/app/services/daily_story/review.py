@@ -7,7 +7,8 @@
 1. `collect_local_issues` 程序先查同义重复句与两字空句；
 2. 审读 1 次（LLM 以读者身份逐句读）→ 结构化问题清单；
 3. 定点修 1 次（只回改动行，按行号替换，说话人与行数不动）；
-4. 再审读 1 次 → 剩余问题直接扣分并写进 quality，不再重生成。
+4. 再审读 1 次 → 剩余问题若含可修正文行（开场片头副本与末段
+   原话闭环除外）再补一轮定点修；修不掉的才扣分写进 quality。
 首轮不再双遍并集（双遍+thinking 曾把单稿拖到十几分钟）。
 """
 
@@ -529,22 +530,66 @@ def apply_review_to_quality(
     return story
 
 
+def _fixable_body_lines(
+    issues: list[dict[str, Any]],
+    story: dict,
+) -> set[int]:
+    """第二轮可修的行：跳过开场片头副本与末段原话闭环（设计行）。
+
+    开场片头是成片要播的定格、末段闭环是收束硬结构，都不是可改的重复；
+    只把真正的正文行交给第二轮定点修。
+    """
+    lines = [str(r.get("line") or "").strip() for r in _dialogue(story)]
+    n = len(lines)
+    open_len = len(story.get("discovery_opening") or [])
+    out: set[int] = set()
+    for it in issues:
+        for no in it.get("lines") or []:
+            if not _on_design_line(int(no), lines, n, open_len):
+                out.add(int(no))
+    return out
+
+
+def _issue_fully_fixed(
+    item: dict[str, Any],
+    accepted: set[int],
+    story: dict,
+) -> bool:
+    """该 issue 的非设计行是否全部被定点修接受（已修掉）。"""
+    lines = [str(r.get("line") or "").strip() for r in _dialogue(story)]
+    n = len(lines)
+    open_len = len(story.get("discovery_opening") or [])
+    non_design = [
+        no
+        for no in item.get("lines") or []
+        if not _on_design_line(int(no), lines, n, open_len)
+    ]
+    if not non_design:
+        return False
+    return all(int(no) in accepted for no in non_design)
+
+
 def _apply_fixes_greedily(
     story: dict,
     raw_fixes: Any,
     *,
     theme: str,
-) -> dict:
+    allowed: set[int] | None = None,
+) -> tuple[dict, set[int]]:
     """逐条试落定点修：能过硬卡的留下，会破结构的那条丢掉。
 
     审读只看读感，不知道各类的收束硬卡（如末段须扣原话闭环、
     说谎题须留实物反证），整批落盘常被硬卡整体打回，逐条试才留得下好的。
+    `allowed` 限定本次只试落这些行（第二轮只改正文可改行，防误伤开场片头
+    与末段原话闭环）。返回 (落盘后的故事, 被接受的行号集合)。
     """
     from app.services.daily_story.prompts import validate_daily_story_json
     from app.services.daily_story.quality import attach_daily_story_quality
 
     accepted: set[int] = set()
     for no in fix_line_numbers(raw_fixes):
+        if allowed is not None and no not in allowed:
+            continue
         trial = accepted | {no}
         condition, notes = apply_spot_fixes(story, raw_fixes, only=trial)
         if not notes:
@@ -562,7 +607,7 @@ def _apply_fixes_greedily(
 
     if not accepted:
         logger.warning("[DAILY_STORY] spot fix produced nothing usable")
-        return story
+        return story, accepted
 
     fixed, notes = apply_spot_fixes(story, raw_fixes, only=accepted)
     # 定点改句后可能又带回重复立规等；再跑一轮本地结构 patch
@@ -587,10 +632,10 @@ def _apply_fixes_greedily(
             "[DAILY_STORY] spot fix+patch still breaks hard card, keep pre-fix: %s",
             exc,
         )
-        return story
+        return story, accepted
     attach_daily_story_quality(fixed, theme=theme)
     logger.info("[DAILY_STORY] spot fix applied: %s", "，".join(notes))
-    return fixed
+    return fixed, accepted
 
 
 def run_daily_story_review(
@@ -598,7 +643,10 @@ def run_daily_story_review(
     theme: str,
     story: dict,
 ) -> dict:
-    """审读→定点修→复审，全程固定次数；客户端不支持则只走程序检查。"""
+    """审读→定点修→复审→（remaining 可修时）再补一轮定点修，全程固定次数。
+
+    客户端不支持审读则只走程序检查。
+    """
     if not isinstance(story, dict) or not _dialogue(story):
         return story
 
@@ -625,7 +673,7 @@ def run_daily_story_review(
     )
 
     if callable(spot_fix):
-        story = _apply_fixes_greedily(
+        story, _ = _apply_fixes_greedily(
             story,
             spot_fix(theme, story, issues),
             theme=theme,
@@ -640,4 +688,25 @@ def run_daily_story_review(
             "[DAILY_STORY] review remaining %d issue(s) after spot fix",
             len(remaining),
         )
+        # 第二轮定点修：remaining 含可修正文行（开场片头/末段闭环除外）时
+        # 再修一轮，修不掉的才扣分——避免「标了重复却只扣分不修」。
+        if callable(spot_fix):
+            allowed = _fixable_body_lines(remaining, story)
+            if allowed:
+                story, accepted = _apply_fixes_greedily(
+                    story,
+                    spot_fix(theme, story, remaining),
+                    theme=theme,
+                    allowed=allowed,
+                )
+                if accepted:
+                    kept = [
+                        it
+                        for it in remaining
+                        if not _issue_fully_fixed(it, accepted, story)
+                    ]
+                    remaining = merge_issues(
+                        collect_local_issues(story),
+                        kept,
+                    )
     return apply_review_to_quality(story, remaining)
