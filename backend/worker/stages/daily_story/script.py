@@ -120,11 +120,15 @@ class DailyScriptStage(StageExecutor):
         if not ctx.script_skip_title_optimize:
             max_len = CHAT_TITLE_MAX_LEN
             try:
-                prompts = build_chat_title_prompts(title, story_content, max_title_length=max_len)
+                # 主题在 story 顶层列，标题优化需要它做主题锚定（防止只抓局部画面）
+                title_content = dict(story_content)
+                if story.get('theme'):
+                    title_content['theme'] = story['theme']
+                prompts = build_chat_title_prompts(title, title_content, max_title_length=max_len)
                 client = llm_mgr._get_client()
-                raw, _ = client._chat_json(prompts['system'], prompts['user'], thinking_enabled=False, temperature=0.8)
+                raw, _ = client._chat_json(prompts['system'], prompts['user'], thinking_enabled=False, temperature=1.0)
                 candidates = parse_chat_title_candidates_payload(raw, max_title_len=max_len)
-                final = pick_best_chat_title(title, candidates, max_len=max_len, anchor_words=extract_core_anchor_words(title, story_content))
+                final = pick_best_chat_title(title, candidates, max_len=max_len, anchor_words=extract_core_anchor_words(title, title_content))
                 if final and final != title:
                     script['draft_title'] = title
                     script['title'] = final

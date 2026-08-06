@@ -93,7 +93,7 @@ def _optimize_daily_story_title(draft: str, story_content: dict, *, max_len: int
     )
     prompts = build_chat_title_prompts(draft, story_content, max_title_length=max_len, avoid_titles=avoid_titles)
     client = llm_mgr._get_client()
-    raw, _ = client._chat_json(prompts['system'], prompts['user'], thinking_enabled=False, temperature=0.8)
+    raw, _ = client._chat_json(prompts['system'], prompts['user'], thinking_enabled=False, temperature=1.0)
     candidates = parse_chat_title_candidates_payload(raw, max_title_len=max_len)
     anchors = extract_core_anchor_words(draft, story_content)
     return pick_best_chat_title(draft, candidates, max_len=max_len, avoid_titles=avoid_titles, anchor_words=anchors)
@@ -686,6 +686,9 @@ class JobMgr:
             story_content = story.get('story')
             if not isinstance(story_content, dict):
                 raise ValueError('故事数据格式异常')
+            # 主题在 story 顶层列，标题优化需要它做主题锚定（防止只抓局部画面）
+            if story.get('theme'):
+                story_content = dict(story_content, theme=story['theme'])
             # 手动重跑优化 = 想换个更好/不同的标题：把当前标题列为已用过，逼模型换角度
             final_title = _optimize_daily_story_title(draft, story_content, max_len=max_len, avoid_titles=[draft])
         else:

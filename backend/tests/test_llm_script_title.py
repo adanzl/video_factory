@@ -79,7 +79,7 @@ def test_chat_title_system_prompt_has_hook_templates_and_antitrunc():
         },
         max_title_length=16,
     )
-    for kw in ("台词钩子", "反差设问", "意外后果", "悬念藏匿", "删掉钩子"):
+    for kw in ("荒谬反差账", "越补越糟", "台词钩子", "悬念藏匿", "删掉钩子", "谁干的"):
         assert kw in prompts["system"], kw
     assert "宁可短" not in prompts["user"]
     assert "16" not in prompts["system"]
@@ -160,14 +160,15 @@ def test_pick_best_chat_title_prefers_hook_and_avoids_repeat():
     )
     assert best == "妈，月饼不是我弄的"
 
-    # avoid 命中降权：手动重跑时避免重复上一个标题
+    # avoid 命中降权：手动重跑时避免重复上一个标题；
+    # 但候选都不优于当前标题（hook 0）时，防御当前标题，不写更差/平的标题
     best2 = pick_best_chat_title(
         "月饼大作战",
         ["妈，月饼不是我弄的", "月饼全滚出来了"],
         max_len=10,
         avoid_titles=["妈，月饼不是我弄的"],
     )
-    assert best2 == "月饼全滚出来了"
+    assert best2 == "月饼大作战"
 
     # 标点变体也算重复：avoid 按 title_core 比对
     best3 = pick_best_chat_title(
@@ -176,7 +177,8 @@ def test_pick_best_chat_title_prefers_hook_and_avoids_repeat():
         max_len=10,
         avoid_titles=["妈，月饼不是我弄的"],
     )
-    assert best3 == "月饼渣，我踩的印"
+    # 「月饼渣，我踩的印」hook 0 不高于当前标题 → 保留当前
+    assert best3 == "月饼大作战"
 
     # 「谁…」不加分：甩锅声明/推锅给东西 与 谁问句同台竞争，避免谁字刷屏
     best4 = pick_best_chat_title(
@@ -206,7 +208,8 @@ def test_pick_best_chat_title_penalizes_outcome_reveal():
         ["谁把月饼全滚出来", "谁先踩的渣"],
         max_len=10,
     )
-    assert best2 == "谁先踩的渣"
+    # 两个候选都是谁字/结局播报（谁-2 / 全滚-3），均不高于当前标题 → 保留当前
+    assert best2 == "月饼大作战"
 
 
 def test_extract_core_anchor_words():
@@ -218,13 +221,19 @@ def test_extract_core_anchor_words():
         "setting": "客厅茶几上放着一盒月饼",
     }
     assert extract_core_anchor_words("月饼大作战", story) == ["月饼"]
-    # 3 字优先：藏玩具同盟 → 藏玩具
+    # 「玩具」在正文里前后都是汉字（藏玩具别），无独立词边界 → 不强制，宁可不锚定
     assert extract_core_anchor_words("藏玩具同盟", {
         "scene_title": "藏玩具同盟",
         "conflict_core": "约好一起藏玩具别让妈妈发现",
-    }) == ["藏玩具"]
+    }) == []
     # 与冲突核心无交集 → 不强制
     assert extract_core_anchor_words("月饼大作战", {"conflict_core": "姐弟吵架"}) == []
+    # 不产出跨词坏碎片：偷看电视 → 电视（绝不「偷看电」）
+    assert extract_core_anchor_words("偷看电视", {
+        "scene_title": "偷看电视",
+        "conflict_core": "姐弟趁妈妈洗澡偷看电视，约好轮班望风，结果露馅",
+        "setting": "客厅，电视还黑着",
+    }) == ["电视"]
 
 
 def test_pick_best_chat_title_anchor_guard():
@@ -245,11 +254,61 @@ def test_pick_best_chat_title_anchor_guard():
         )
         == "月饼大作战"
     )
-    # 不传 anchor_words 时行为不变
+    # 不传 anchor_words 时：候选全是谁字质问（-2），均不优于初稿 → 保留初稿
     assert (
         pick_best_chat_title("月饼大作战", ["谁踩的渣印", "渣印谁擦"], max_len=10)
-        == "谁踩的渣印"
+        == "月饼大作战"
     )
+
+
+def test_pick_best_chat_title_defends_current_title():
+    """好初稿不被更差候选顶掉：重跑时「妈，月饼自己滚的」(hook 3) 不被 0 分候选替换。"""
+    from app.services.script.optimize_title import pick_best_chat_title
+
+    assert (
+        pick_best_chat_title(
+            "妈，月饼自己滚的",
+            ["偷吃月饼翻车记", "月饼渣谁擦"],
+            max_len=10,
+            anchor_words=["月饼"],
+        )
+        == "妈，月饼自己滚的"
+    )
+    # 明显更优的候选（自己+称呼=3 > 3? 需严格更高；这里给 hook 4 的候选）
+    assert (
+        pick_best_chat_title(
+            "妈，月饼自己滚的",
+            ["妈，月饼自己掉的！"],
+            max_len=10,
+            anchor_words=["月饼"],
+        )
+        == "妈，月饼自己掉的！"
+    )
+
+
+def test_chat_title_hook_score_penalizes_who():
+    """谁字质问降 2 分，甩锅/推锅给东西压过谁问句。"""
+    from app.services.script.optimize_title import _chat_title_hook_score
+
+    assert _chat_title_hook_score("谁擦墙渣") < _chat_title_hook_score("妈，月饼是它自己滚的")
+    assert _chat_title_hook_score("渣印谁擦") < _chat_title_hook_score("妈，月饼是它自己滚的")
+    # 问号仍给分但被谁字压回：谁问句 < 甩锅+称呼
+    assert _chat_title_hook_score("谁偷看电视？") < _chat_title_hook_score("妈，电视自己开的")
+
+
+def test_pick_best_chat_title_rejects_broken_anchor_fragment():
+    """锚点不含跨词坏碎片：偷看电视 只产出「电视」，「偷看电」绝不出现在要求里。"""
+    from app.services.script.optimize_title import extract_core_anchor_words
+
+    story = {
+        "scene_title": "偷看电视",
+        "conflict_core": "姐弟趁妈妈洗澡偷看电视，约好轮班望风，结果露馅",
+        "setting": "客厅，电视还黑着，昭昭握着遥控器",
+        "theme": "姐弟趁妈妈洗澡偷看电视",
+    }
+    anchors = extract_core_anchor_words("偷看电视", story)
+    assert anchors == ["电视"]
+    assert "偷看电" not in anchors
 
 
 def test_chat_title_user_prompt_contains_core_noun_requirement():
