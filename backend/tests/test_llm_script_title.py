@@ -2788,3 +2788,54 @@ def test_review_applies_penalty_to_quality_score_and_grade():
     assert story["quality"]["score"] == 79
     assert "审读第10句示范" in story["quality"]["summary"]
     assert story["quality"]["review_issues"][0]["kind"] == "示范"
+
+
+def test_b_filler_detected_in_humor_regex():
+    """B 垫字检测：句尾叠了呢了呀/真的呀/好不好=注水，实词收尾=干净。"""
+    from app.services.daily_story.story_types.b.humor import RE_GARBAGE_FILLER
+
+    for bad in ("奶油蹭裤腿了呢了呀", "别弄出声真的呀", "你帮忙擦掉好不好"):
+        assert RE_GARBAGE_FILLER.search(bad), bad
+    for ok in ("奶油蹭你裤腿了", "妈在厨房别出声", "先把抱枕挡上"):
+        assert not RE_GARBAGE_FILLER.search(ok), ok
+
+
+def test_b_patch_strips_filler():
+    """B 一句一改：本地剥垫字，而非整段重试。"""
+    from app.services.daily_story.story_types.b.patch import patch_b_strip_filler
+
+    story = {
+        "punchline_explain": "B类结盟翻车，姐弟偷吃露馅互甩锅",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "你望风我下手真的呀"},
+            {"speaker": "灿灿", "line": "别弄出声好不好"},
+            {"speaker": "昭昭", "line": "奶油蹭裤腿了呢了呀"},
+        ],
+    }
+    notes = patch_b_strip_filler(story)
+    assert len(notes) == 3
+    assert story["dialogue"][0]["line"] == "你望风我下手"
+    assert story["dialogue"][1]["line"] == "别弄出声"
+    assert story["dialogue"][2]["line"] == "奶油蹭裤腿了"
+
+
+def test_c_patch_trims_soft_last_long_explanation():
+    """C 一句一改：末句「哼，+长解释/文字游戏」截到软收词即止。"""
+    from app.services.daily_story.prompts import try_local_patch_daily_story_body
+
+    story = _valid_story()
+    story["dialogue"][-1]["line"] = "哼，你那是碰，我这是拿，不一样！"
+    patched, notes = try_local_patch_daily_story_body(story)
+    assert any("软收截断" in n for n in notes)
+    assert patched["dialogue"][-1]["line"] == "哼。"
+
+
+def test_c_patch_keeps_short_soft_tail():
+    """C 短尾巴嘴硬（……哼，给你吧）是合理收束，不截断。"""
+    from app.services.daily_story.prompts import try_local_patch_daily_story_body
+
+    story = _valid_story()
+    story["dialogue"][-1]["line"] = "……哼，给你吧"
+    patched, notes = try_local_patch_daily_story_body(story)
+    assert not any("软收截断" in n for n in notes)
+    assert patched["dialogue"][-1]["line"] == "……哼，给你吧"

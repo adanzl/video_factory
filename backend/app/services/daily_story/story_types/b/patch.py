@@ -27,6 +27,16 @@ from app.services.daily_story.story_types.b.humor import (
 
 _MAX_CONSECUTIVE_FIXES = 4
 
+# 句尾/句内无意义语气垫字（对齐 E；B 额外含真的呀/好不好）——本地剥，不整段重试
+_RE_FILLER_TAIL = re.compile(
+    r"(?:[呵哈]{2,}|(?:呢|吗|啊|呀|啦|吧|嘛){2,}|"
+    r"了呢[了呀]|了呀[呢]|嘛了[呀]|了呢呀|"
+    r"了呢|了呀|嘛了|呢吧|呀呢|呢嘛|真的呀|好不好)$",
+)
+_RE_FILLER_INLINE = re.compile(
+    r"呢了呀|了呢呀|嘛了呀|了呀呢|真的呀",
+)
+
 
 def _is_b(story: dict) -> bool:
     punch = str(story.get("punchline_explain") or "")
@@ -237,6 +247,27 @@ def patch_b_shorten_freeze(story: dict) -> list[str]:
     return notes
 
 
+def patch_b_strip_filler(story: dict) -> list[str]:
+    """一句一改：剥句尾/句内无意义语气垫字（了呢了呀/真的呀/好不好等），
+    走本地修稿而非整段重试（整段重试失败率高且可能引入新伤）。"""
+    notes: list[str] = []
+    if not _is_b(story):
+        return notes
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list):
+        return notes
+    for i, item in enumerate(dialogue):
+        if not isinstance(item, dict):
+            continue
+        line = str(item.get("line") or "")
+        new_line = _RE_FILLER_INLINE.sub("", line)
+        new_line = _RE_FILLER_TAIL.sub("", new_line)
+        if new_line != line:
+            item["line"] = new_line
+            notes.append(f"B剥垫字[{i}]")
+    return notes
+
+
 def patch_b_body(story: dict) -> list[str]:
     notes: list[str] = []
     notes.extend(patch_b_split_consecutive(story))
@@ -244,4 +275,5 @@ def patch_b_body(story: dict) -> list[str]:
     notes.extend(patch_b_ensure_pre_punish_blame(story))
     notes.extend(patch_b_merge_mom_lines(story))
     notes.extend(patch_b_shorten_freeze(story))
+    notes.extend(patch_b_strip_filler(story))
     return notes
