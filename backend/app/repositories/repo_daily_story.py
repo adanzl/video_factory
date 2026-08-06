@@ -8,8 +8,13 @@ from app.repositories import sql_exec as sql
 _MISSING = object()
 
 _DAILY_STORY_COLUMNS = (
-    "id, theme, story_json, status, created_at, updated_at, job_id, story_type"
+    "id, theme, story_json, status, created_at, updated_at, job_id, story_type, key"
 )
+
+
+def _normalize_key(raw: Any) -> str | None:
+    k = str(raw or "").strip()
+    return k or None
 
 
 def _row_to_dict(row: dict) -> dict:
@@ -19,6 +24,18 @@ def _row_to_dict(row: dict) -> dict:
     else:
         data["story"] = {}
     data.pop("story_json", None)
+    # 表列 key 为权威；补进 story 便于前端编辑同一份 JSON
+    col_key = _normalize_key(data.get("key"))
+    story = data.get("story")
+    if isinstance(story, dict):
+        if col_key:
+            story["key"] = col_key
+            data["key"] = col_key
+        else:
+            nested = _normalize_key(story.get("key"))
+            data["key"] = nested
+    else:
+        data["key"] = col_key
     return data
 
 
@@ -102,6 +119,32 @@ def list_recent_themes(limit: int = 40) -> list[str]:
     return out
 
 
+def list_recent_keys(limit: int = 40) -> list[str]:
+    """最近入库内容标签 key（去重保序），做出题避重。"""
+    limit = max(1, min(limit, 100))
+    rows = sql.fetchall(
+        """
+        SELECT key FROM daily_story
+        WHERE key IS NOT NULL AND TRIM(key) != ''
+        ORDER BY id DESC
+        LIMIT ?
+        """,
+        (limit * 2,),
+    )
+    sql.commit()
+    out: list[str] = []
+    seen: set[str] = set()
+    for row in rows or []:
+        k = _normalize_key(row.get("key"))
+        if not k or k in seen:
+            continue
+        seen.add(k)
+        out.append(k)
+        if len(out) >= limit:
+            break
+    return out
+
+
 def get_story(story_id: int) -> dict:
     row = sql.fetchone(
         f"SELECT {_DAILY_STORY_COLUMNS} FROM daily_story WHERE id = ?",
@@ -119,13 +162,23 @@ def insert_story(
     story: dict[str, Any],
     status: str = "active",
     story_type: str | None = None,
+    key: str | None = None,
 ) -> int:
+    story_key = _normalize_key(key) or _normalize_key(
+        story.get("key") if isinstance(story, dict) else None
+    )
     cur = sql.execute(
         """
-        INSERT INTO daily_story (theme, story_json, status, story_type)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO daily_story (theme, story_json, status, story_type, key)
+        VALUES (?, ?, ?, ?, ?)
         """,
-        (theme, json.dumps(story, ensure_ascii=False), status, story_type),
+        (
+            theme,
+            json.dumps(story, ensure_ascii=False),
+            status,
+            story_type,
+            story_key,
+        ),
     )
     story_id = int(cur.lastrowid)
     sql.commit()
@@ -158,20 +211,34 @@ def update_story(
     story: dict[str, Any] | None = None,
     status: str | None = None,
     story_type: str | None | object = _MISSING,
+    key: str | None | object = _MISSING,
 ) -> dict:
-    if story is None and status is None and story_type is _MISSING:
+    if (
+        story is None
+        and status is None
+        and story_type is _MISSING
+        and key is _MISSING
+    ):
         return get_story(story_id)
     sets: list[str] = ["updated_at = datetime('now')"]
     params: list[Any] = []
     if story is not None:
         sets.append("story_json = ?")
         params.append(json.dumps(story, ensure_ascii=False))
+        # 写 story 时默认同步 key 列（除非显式传 key=）
+        if key is _MISSING:
+            nested = _normalize_key(story.get("key"))
+            sets.append("key = ?")
+            params.append(nested)
     if status is not None:
         sets.append("status = ?")
         params.append(status)
     if story_type is not _MISSING:
         sets.append("story_type = ?")
         params.append(story_type)
+    if key is not _MISSING:
+        sets.append("key = ?")
+        params.append(_normalize_key(key))
     params.append(story_id)
     sql.execute(
         f"UPDATE daily_story SET {', '.join(sets)} WHERE id = ?",

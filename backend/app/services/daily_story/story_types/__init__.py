@@ -335,6 +335,7 @@ def format_block_for_code(code: str) -> str:
 {{
   "scene_title": "不超过10字，口语钩子（孩子台词/反差疑问/带口吻动作），禁纯事件名如「藏玩具」「分蛋糕」；好例：「老鼠会开柜子门吗」「就一块，别告状」",
   "setting": "一句话说明地点和初始冲突动作",
+  "key": "2–8字内容标签，如饭前偷吃、偷看电视（防重复；勿写成谁vs谁）",
   "conflict_core": "≤24字，谁vs谁争什么",
   "dialogue": [
 {alternation_hard}{lines_hard}{rows}  ],

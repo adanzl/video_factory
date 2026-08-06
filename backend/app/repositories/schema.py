@@ -272,8 +272,39 @@ def apply_daily_story_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(_DAILY_STORY_DDL)
     _ensure_column(conn, "daily_story", "job_id", "INTEGER")
     _ensure_column(conn, "daily_story", "story_type", "TEXT")
+    _ensure_column(conn, "daily_story", "key", "TEXT")
     _backfill_daily_story_type(conn)
+    _backfill_daily_story_key(conn)
     _ensure_journal_mode_delete(conn)
+
+
+def _backfill_daily_story_key(conn: sqlite3.Connection) -> None:
+    """旧行：若列空且 story_json 有 key，回填到列。"""
+    import json
+
+    rows = conn.execute(
+        """
+        SELECT id, story_json
+        FROM daily_story
+        WHERE key IS NULL OR TRIM(key) = ''
+        """,
+    ).fetchall()
+    for row in rows:
+        story_id = int(row[0])
+        raw = row[1] or ""
+        try:
+            story = json.loads(raw) if raw else {}
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(story, dict):
+            continue
+        k = str(story.get("key") or "").strip()
+        if not k:
+            continue
+        conn.execute(
+            "UPDATE daily_story SET key = ? WHERE id = ?",
+            (k, story_id),
+        )
 
 
 def _ensure_column(

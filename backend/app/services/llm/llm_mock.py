@@ -538,6 +538,7 @@ class MockLLMClient(LLMClient):
         body = {
             "scene_title": "测试场景",
             "setting": f"家里客厅，姐弟俩围绕{theme}争新橡皮",
+            "key": "抢新橡皮",
             "conflict_core": f"姐弟争{theme}"[:24] if theme else "姐弟抢新橡皮",
             "dialogue": body_lines,
             "punchline_explain": "C类公平执念，弟弟戳穿双标规则",

@@ -40,6 +40,11 @@
       <el-table-column type="selection" width="48" />
       <el-table-column prop="id" label="ID" width="70" />
       <el-table-column prop="theme" label="主题" min-width="150" show-overflow-tooltip />
+      <el-table-column label="内容" width="100" show-overflow-tooltip>
+        <template #default="{ row }">
+          {{ row.key || row.story?.key || "-" }}
+        </template>
+      </el-table-column>
       <el-table-column label="矛盾类型" width="108" show-overflow-tooltip>
         <template #default="{ row }">
           {{ formatDailyStoryType(row.story_type) }}
