@@ -943,6 +943,44 @@ def test_validate_rejects_role_swap_claims():
     validate_daily_story_json(ok, phase="body")
 
 
+def test_validate_rejects_role_age_swap_claims():
+    """最小/最大自称：昭昭=弟弟（最小）、灿灿=姐姐（最大），互换即角色错乱。
+    （糖果稿 89 漏网：灿灿姐姐自称「我最小，我该先挑」——身份+年龄双错乱）"""
+    import copy
+
+    base = _valid_story(n=18)
+    # 灿灿自称最小 → 拒绝
+    bad1 = copy.deepcopy(base)
+    for d in bad1["dialogue"]:
+        if d["speaker"] == "灿灿":
+            d["line"] = _pad_line("我最小，我该先挑")
+            break
+    with pytest.raises(ValueError, match="角色反了"):
+        validate_daily_story_json(bad1, phase="body")
+    # 昭昭自称最大 → 拒绝
+    bad2 = copy.deepcopy(base)
+    for d in bad2["dialogue"]:
+        if d["speaker"] == "昭昭":
+            d["line"] = _pad_line("我最大，我说了算")
+            break
+    with pytest.raises(ValueError, match="角色反了"):
+        validate_daily_story_json(bad2, phase="body")
+    # 昭昭自称最小 → 合法（他真是最小的），不误伤
+    ok1 = copy.deepcopy(base)
+    for d in ok1["dialogue"]:
+        if d["speaker"] == "昭昭":
+            d["line"] = _pad_line("我最小，我先挑")
+            break
+    validate_daily_story_json(ok1, phase="body")
+    # 「我不是最小的」否定反驳 → 合法
+    ok2 = copy.deepcopy(base)
+    for d in ok2["dialogue"]:
+        if d["speaker"] == "灿灿":
+            d["line"] = _pad_line("我不是最小的，你别乱说")
+            break
+    validate_daily_story_json(ok2, phase="body")
+
+
 def test_local_patch_pads_small_char_deficit():
     from app.services.daily_story.prompts import (
         dialogue_total_chars,
@@ -2420,6 +2458,85 @@ def test_validate_c_body_allows_rule_drift_with_verdict():
     dialogue[4] = {"speaker": dialogue[4]["speaker"], "line": _pad_line("好咱们数到三一起拿呀")}
     dialogue[6] = {"speaker": dialogue[6]["speaker"], "line": _pad_line("那重来再比一次呀")}
     dialogue[9] = {"speaker": dialogue[9]["speaker"], "line": _pad_line("妈妈说定了先拿先选呀")}
+    validate_daily_story_json(story, phase="body")
+
+
+def test_validate_c_body_rejects_consume_criterion():
+    """C 稿把胜负系在消耗/破坏资源状态的动作上（谁先咬到谁吃）→ 判据漂移硬卡。
+    冰棍稿 63 漏网（专家评审）：咬一口后资源不可逆改变，「重来」物理上不成立。"""
+    story = _valid_story()
+    dialogue = story["dialogue"]
+    dialogue[4] = {"speaker": dialogue[4]["speaker"], "line": _pad_line("谁先咬到谁吃呀")}
+    with pytest.raises(ValueError, match="判据漂移"):
+        validate_daily_story_json(story, phase="body")
+
+
+def test_validate_c_body_rejects_state_hold_criterion():
+    """C 稿把胜负系在连续占有状态上（谁先攥住谁赢，与拿稳/拿住同类）→ 判据漂移硬卡。
+    草莓稿 67 漏网：提示词禁连续状态当判据，硬卡此前只匹配松手/放手/撒手。"""
+    story = _valid_story()
+    dialogue = story["dialogue"]
+    dialogue[4] = {"speaker": dialogue[4]["speaker"], "line": _pad_line("谁先攥住谁就赢了呀")}
+    with pytest.raises(ValueError, match="判据漂移"):
+        validate_daily_story_json(story, phase="body")
+
+
+def test_validate_c_body_accepts_possession_criterion():
+    """占有系判据（谁先拿到归谁吃）放行，不误伤。"""
+    story = _valid_story()
+    dialogue = story["dialogue"]
+    dialogue[4] = {"speaker": dialogue[4]["speaker"], "line": _pad_line("谁先拿到归谁吃呀")}
+    validate_daily_story_json(story, phase="body")
+
+
+def test_validate_c_body_accepts_criterion_pierce():
+    """接触系/消耗系抢占理由被「X到不算，拿到才算」当场击穿 → 放行。"""
+    story = _valid_story()
+    dialogue = story["dialogue"]
+    dialogue[4] = {"speaker": dialogue[4]["speaker"], "line": _pad_line("碰到不算拿到才算呀")}
+    validate_daily_story_json(story, phase="body")
+
+
+def test_validate_c_body_rejects_grading_bicker():
+    """分级杠精：「X不算，Y才算」逐级发明新判据词 ≥2 次 → 判据漂移硬卡（专家三轮）。
+    草莓/座位/蜡笔/酸奶 FAIL 稿共病——手部接触（碰→抓→攥→拿稳）与动作仪式
+    （坐→坐实、撕→撕多少、削→露五毫米、倒→戳进）都被模型展开成连续谱逐级杠。"""
+    story = _valid_story()
+    dialogue = story["dialogue"]
+    dialogue[4] = {"speaker": dialogue[4]["speaker"], "line": _pad_line("碰到不算搭上才算呀")}
+    dialogue[7] = {"speaker": dialogue[7]["speaker"], "line": _pad_line("搭上不算勾住才算呀")}
+    with pytest.raises(ValueError, match="分级杠精"):
+        validate_daily_story_json(story, phase="body")
+
+
+def test_validate_c_body_rejects_ritual_grading_bicker():
+    """动作仪式型也分级：坐→坐实 / 撕开→撕多少 逐级杠 ≥2 次 → 拦截。
+    蜡笔 42 稿「转三圈露出来→得露五毫米才算」、酸奶 73 稿「吸管碰到不算拿到杯子才算」
+    是动作仪式被分级的例证（专家三轮：分级杠精不挑判据类型）。"""
+    story = _valid_story()
+    dialogue = story["dialogue"]
+    dialogue[4] = {"speaker": dialogue[4]["speaker"], "line": _pad_line("碰一下不算坐稳了才算呀")}
+    dialogue[7] = {"speaker": dialogue[7]["speaker"], "line": _pad_line("坐稳不算坐实才算呀")}
+    with pytest.raises(ValueError, match="分级杠精"):
+        validate_daily_story_json(story, phase="body")
+
+
+def test_validate_c_body_accepts_single_pierce_not_grading():
+    """单次击穿（碰到不算，拿到才算）不算分级杠精 → 放行。"""
+    story = _valid_story()
+    dialogue = story["dialogue"]
+    dialogue[4] = {"speaker": dialogue[4]["speaker"], "line": _pad_line("碰到不算拿到才算呀")}
+    dialogue[7] = {"speaker": dialogue[7]["speaker"], "line": _pad_line("你刚说拿到归谁呀")}
+    validate_daily_story_json(story, phase="body")
+
+
+def test_validate_c_body_accepts_action_assign_theme():
+    """动作分派型（我切你选/我分你先挑/我搬你摆）对白不受分级杠精词表误伤。"""
+    story = _valid_story()
+    dialogue = story["dialogue"]
+    dialogue[4] = {"speaker": dialogue[4]["speaker"], "line": _pad_line("我切蛋糕你来选呀")}
+    dialogue[7] = {"speaker": dialogue[7]["speaker"], "line": _pad_line("你刚说我切你选，我先选呀")}
+    dialogue[9] = {"speaker": dialogue[9]["speaker"], "line": _pad_line("我分两堆你先挑呀")}
     validate_daily_story_json(story, phase="body")
 
 
