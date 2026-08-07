@@ -246,6 +246,119 @@ def _score_escalation(
     return bonus, []
 
 
+# 破坏类动词：被撞倒/砸碎/碰翻/带倒的受事故物，须在 setting 或正文前文出现过。
+# 这是「动作-受事一致性」的抽象不变量（查动词宾语是否先落地），非按单篇剧情的词表。
+_RE_ACCIDENT_VERBS = re.compile(
+    r"撞倒|撞翻|撞歪|撞碎|撞破|砸碎|砸倒|碰翻|碰倒|碰碎|碰倒|"
+    r"带倒|带翻|踩翻|踩倒|踢翻|踢倒|打翻|打碎|摔碎|摔破|弄倒|弄翻|"
+    r"推倒|扑倒|勾倒|勾翻|扯倒|拉倒|扫倒|绊倒|颠翻|掀翻|碰洒|弄洒|打洒"
+)
+
+
+# 事故物名词末尾常见语气词/助词（只剥末尾，勿伤词身）
+_RE_PROP_TAIL = re.compile(r"[啊呢呀吧嘛的着了]+$")
+# 非受事故物的动词后表达（应忽略，不当作「凭空道具」）：
+# 日常补救工具/常用物（扫帚/抹布/抱枕等）家家都有，观众不会问「哪来的」，
+# 用户痛批的是「易碎物凭空」（花瓶/水杯/颜料）——那才需要先落地。
+_RE_PROP_SKIP = re.compile(
+    r"^(挡一下|一下|开了|过来|过去|东西|身上|旁边|门|窗|柜|桌|地|"
+    r"在地上|在地|出声|出来|进来|飞|跑|摔|倒|碎|"
+    r"扫帚|扫把|簸箕|拖把|抹布|毛巾|抱枕|枕头|毯子|垫子|"
+    r"纸巾|报纸|桶|盆|筐|盒子|书包)$",
+)
+
+
+def _accident_props_from_line(line: str) -> list[str]:
+    """提取一句里被破坏类动词带出的受事故物名词。
+
+    优先取动词后的短名词短语（带倒水杯→水杯）；若动词后是补语/动词
+    （踢倒挡一下），回看动词前「把/将」之后的名词（把鞋架踢倒→鞋架）。
+    """
+    found: list[str] = []
+    for m in _RE_ACCIDENT_VERBS.finditer(line):
+        after = line[m.end():]
+        head = re.sub(r"^[了到在过上这那一个是把将]", "", after)
+        seg = re.match(r"[一-鿿]{1,6}", head)
+        cand = ""
+        if seg:
+            raw = seg.group(0)
+            if _RE_PROP_SKIP.match(raw):
+                cand = ""
+            else:
+                cand = _RE_PROP_TAIL.sub("", raw)
+        if not cand:
+            # 回看动词前的「把/将 + 名词」
+            before = line[: m.start()]
+            bm = re.search(r"[把将]([一-鿿]{1,6})[^一-鿿]*$", before)
+            if bm:
+                cand = _RE_PROP_TAIL.sub("", bm.group(1))
+        if cand and not _RE_PROP_SKIP.match(cand):
+            found.append(cand)
+    return found
+
+
+def _score_accident_prop_grounding(
+    story: dict,
+    lines: list[str],
+) -> tuple[int, list[str]]:
+    """B 类：事故物须先落地——正文被撞倒/砸碎/碰翻的物件，须在 setting 或该句之前的正文出现过。
+
+    返回 (bonus, details)，bonus ≤ 0（只扣分不加分）。命中凭空道具则每次扣分并出详情。
+    """
+    setting = str(story.get("setting") or "").strip()
+    known_so_far = setting
+    hits: list[str] = []
+    for i, ln in enumerate(lines):
+        for prop in _accident_props_from_line(ln):
+            if len(prop) < 2:
+                continue
+            if prop not in known_so_far:
+                hits.append(f"「{ln[:18]}」的「{prop}」前面没出现过")
+            else:
+                known_so_far += prop
+        known_so_far += ln
+    if not hits:
+        return 0, []
+    return -15, ["事故道具凭空（" + "；".join(hits[:2]) + "）"]
+
+
+# 说人话/儿童说话：对白里出现类型元语言或成人书面/网络职场词 = 掉书袋。
+# 类型元语言（剧本/类型术语泄漏进角色嘴里）：
+# 「规矩/规则」是孩子家常口语（「这是规矩」），不算掉书袋，排除。
+_RE_META_SPEECH = re.compile(
+    r"甩锅|结盟|翻车|露馅|分工|计划|策略|套路|秘密|诡计|目标|方案|"
+    r"收尾|补救|连锁"
+)
+# 成人书面/网络职场词（孩子不该这么说）：
+_RE_ADULT_SPEECH = re.compile(
+    r"搞定|总之|关键|情况|事情|绝对|毕竟|显然|坦白说|说实话|搞不好|"
+    r"性价比|靠谱|优化|及时止损|舍己为人|煞费苦心|感人肺腑|以身作则|"
+    r"归根结底|分析一下|关键问题是|失误在于|主要原因|根本原因"
+)
+
+
+def _score_childlike_diction(lines: list[str]) -> tuple[int, list[str]]:
+    """对白是否「说人话」：抓类型元语言与成人书面词泄漏。
+
+    开局（前 4 句）出现即扣（开场定观众观感，最不能掉书袋）；
+    全篇≥2 处也扣；仅正文零星 1 处不判（容忍孩子偶尔冒出）。
+    返回 (bonus, details)，bonus ≤ 0。
+    """
+    hits: list[str] = []
+    for i, ln in enumerate(lines):
+        for pat, kind in ((_RE_META_SPEECH, "类型术语"), (_RE_ADULT_SPEECH, "成人词")):
+            m = pat.search(ln)
+            if m:
+                hits.append((i, f"对白[{i}]「{m.group(0)}」（{kind}：{ln[:20]}）"))
+    if not hits:
+        return 0, []
+    opening_hits = [d for i, d in hits if i < 4]
+    if opening_hits or len(hits) >= 2:
+        shown = (opening_hits or [d for _, d in hits])[:2]
+        return -8, ["说人话：对白掉书袋（" + "；".join(shown) + "）"]
+    return 0, []
+
+
 def _score_relevancy(story: dict, theme: str | None) -> tuple[int, list[str]]:
     if not theme:
         return 0, []
@@ -637,6 +750,19 @@ def score_daily_story(
     if _has_consecutive_sibling(dialogue):
         score -= 15
         cons.append("存在同人连说")
+
+    # ── 事故道具凭空（B 类翻车连锁）──
+    if profile.code == "B":
+        prop_bonus, prop_details = _score_accident_prop_grounding(story, lines)
+        score += prop_bonus
+        if prop_bonus < 0:
+            cons.extend(prop_details)
+
+    # ── 说人话/儿童说话（类型元语言与成人词泄漏）──
+    child_bonus, child_details = _score_childlike_diction(lines)
+    score += child_bonus
+    if child_bonus < 0:
+        cons.extend(child_details)
 
     # ── 收束硬伤 ──
     weak_hit = False
