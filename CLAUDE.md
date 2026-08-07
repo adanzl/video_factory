@@ -71,6 +71,46 @@ SQLite，路径配置在 `SQLITE_PATH`（默认 `data/data.db`）。Repository �
 
 `/home`、`/jobs`（任务列表+详情）、`/materials/video`、`/materials/audio`、`/clips`（素材搜索）、`/topic`（选题）、`/daily-story`（日常故事管理）、`/config`
 
+### 「专家」
+
+DeepSeek 网页模拟 API，不是 Claude 子代理。涉及提示词方案评审时用户说「和专家商量/达成一致再落地」，指用它的专家模式评审。接口 `POST http://127.0.0.1:8765/api/deepseek/chat`，body `{"question":..., "mode":"expert", "deep_thinking":true}`；新对话不带 `conversation_id`，续聊带返回 id；服务未起先 `cd mock_agent/backend && python main.py`，状态查 `GET /api/deepseek/status`。
+127.0.0.1 不通则使用远程地址 `https://leo-zhao.natapp4.cc/mock_agent/api/deepseek/chat`
+
+专家模式 + 深度思考：
+
+```json
+{
+  "question": "证明根号2是无理数",
+  "mode": "expert",
+  "deep_thinking": true
+}
+```
+
+成功响应
+
+```json
+{
+  "ok": true,
+  "question": "...",
+  "answer": "...",
+  "conversation_id": "uuid",
+  "mode": "instant",
+  "deep_thinking": true,
+  "search": false,
+  "url": "https://chat.deepseek.com/a/chat/s/uuid"
+}
+```
+
+续聊并保持选项：
+
+```json
+{
+  "conversation_id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+  "question": "把证明写得更短一些",
+  "mode": "expert",
+  "deep_thinking": true
+}
+
 ## 常用操作
 
 ```bash

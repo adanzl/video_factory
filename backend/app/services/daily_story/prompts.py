@@ -1211,12 +1211,111 @@ def _extract_type_from_punchline(punchline: str) -> str | None:
     return None
 
 
+DAILY_STORY_FRAMEWORK_SYSTEM_APPEND = """\
+【本步只输出剧本框架 4 字段，不写正文、不写开场、不写 punchline】
+- scene_title：本场片名（短，8 字内，如「冰箱里的橙汁」）。
+- setting：地点 + 已发生的同一冲突动作（可拍），与 conflict_core 同一件实物/规则；
+  若提到妈妈做了某动作，正文须呼应（妈妈至少 1 句台词）。
+  若主题涉及「捡来/收留」的外来物（小狗/小猫/别的东西），地点须落在可解释
+  「捡到」的来路空间，且画面须写出「刚捡到」这一动作本身（如「家门口，门刚
+  打开，昭昭怀里抱着刚捡来的小狗」）；禁纯静态室内开局（「客厅，沙发旁」），
+  也禁只写「怀里抱着/手边趴着」而不带捡拾动作——否则开场只能说「怀里这只
+  小猫」，来路没来源。
+- conflict_core：一句话写清「谁 vs 谁，争什么」（≤24 字），
+  与 theme / setting 一致；全文只滚这一条冲突，禁止中途换裁决方式。
+- key：2–8 字内容标签（如「饭前偷吃」），概括本场争什么事；
+  写事件短名，勿写成谁vs谁（那是 conflict_core），勿写成口语钩子标题。
+
+上述 4 字段是整个故事的「定盘锚」：开场与正文都围绕它生成，
+任何后续改写不得另起冲突、不得换场地、不得换实物。
+"""
+
+DAILY_STORY_FRAMEWORK_USER_TEMPLATE = """\
+请为下面这场戏先定「剧本框架」，只输出 scene_title / setting / conflict_core / key 四个字段。
+
+【主题】{theme}
+
+要求：
+1. scene_title、setting、conflict_core、key 四个字段都填，勿省略；
+2. conflict_core 须 ≤24 字、一句话写清「谁 vs 谁，争什么」，与 theme/setting 同一件实物；
+3. setting 须写清地点 + 已发生的冲突动作，具体到可拍；
+4. key 用 2–8 字内容标签概括本场争事。
+
+直接输出 JSON，只含这四个键。
+"""
+
+
+def _daily_story_anchor_block(
+    *,
+    framework: dict | None = None,
+    opening: list[dict] | None = None,
+) -> str:
+    """构造 body 生成的「定盘锚」段：已定框架 + 已定开场。
+
+    2026-08-07 架构改造：框架先行后，body 不再自造 conflict_core/setting，
+    而是围绕框架展开、承接开场续写。此段注入 user 前置，提醒 body 锚定。
+    """
+    fw = framework or {}
+    sc = str(fw.get("scene_title") or "").strip()
+    st = str(fw.get("setting") or "").strip()
+    cc = str(fw.get("conflict_core") or "").strip()
+    op_txt = ""
+    if opening:
+        op_txt = " ／ ".join(
+            str(d.get("line") or "").strip()
+            for d in opening
+            if isinstance(d, dict) and str(d.get("line") or "").strip()
+        )
+    if not (sc or st or cc or op_txt):
+        # 无框架/无开场（旧路径）不注入锚块，避免空壳标题
+        return ""
+    lines: list[str] = ["【剧本框架（已定，正文必须围绕它展开）】"]
+    if sc:
+        lines.append(f"片名：{sc}")
+    if st:
+        lines.append(f"现场：{st}")
+    if cc:
+        lines.append(f"本场只争：{cc}")
+    if op_txt:
+        lines.append(f"开场（正文须承接此画面续写，勿重复开场）：{op_txt}")
+    lines.append(
+        "正文从开场之后的时间点开始写，承接同一冲突、同一实物/动作；"
+        "禁止另起冲突、换场地、换实物。"
+    )
+    return "\n".join(lines)
+
+
+def build_daily_story_framework_prompts(
+    theme: str,
+    *,
+    story_type: str | None = None,
+) -> tuple[str, str]:
+    """构造剧本框架（scene_title/setting/conflict_core/key）的 system + user。
+
+    框架先行（2026-08-07 架构改造）：先生成 4 字段定盘锚，
+    opening 与 body 都基于它生成，避免 body 自造冲突与 opening 脱锚。
+    """
+    type_code = (
+        parse_story_type_code(story_type=story_type) if story_type else None
+    )
+    system = _daily_story_system_prompt(length_mode="draft", type_code=type_code)
+    system = f"{system}\n{DAILY_STORY_FRAMEWORK_SYSTEM_APPEND}"
+    user = DAILY_STORY_FRAMEWORK_USER_TEMPLATE.format(theme=theme)
+    if type_code and type_code.upper() in STORY_TYPE_LINES:
+        append = STORY_TYPE_LINES[type_code.upper()].theme_user_append.strip()
+        if append:
+            user = f"{user}\n{append}"
+    return system, user
+
+
 def build_daily_story_prompts(
     theme: str,
     *,
     story_type: str | None = None,
     length_mode: str = "draft",
     punchline_blueprint: dict | None = None,
+    framework: dict | None = None,
+    opening: list[dict] | None = None,
 ) -> tuple[str, str]:
     """构造日常故事正文生成的 system + user 提示词。
 
@@ -1227,6 +1326,9 @@ def build_daily_story_prompts(
       - revise_trim：偏长重试，只删不增，瞄准中段
       - revise：非字数问题重试，勿故意改篇幅
     punchline_blueprint：D1.5 骨架；有则注入 user，要求按卡展开。
+    framework：剧本框架（scene_title/setting/conflict_core/key）——2026-08-07
+      架构改造后框架先生成，body 围绕它展开，不再自造冲突。
+    opening：已生成的开场 2 句；body 承接开场续写，不重复开场画面。
     """
     type_instruction = (
         f"本次矛盾类型必须用：{story_type}。禁止用其他类型。"
@@ -1242,6 +1344,9 @@ def build_daily_story_prompts(
     )
     core_word = extract_e_core_word(theme) if type_code and type_code.upper() == "E" else ""
     user = user_tpl.format(theme=theme, type_instruction=type_instruction, core_word=core_word)
+    anchor = _daily_story_anchor_block(framework=framework, opening=opening)
+    if anchor:
+        user = f"{anchor}\n\n{user}"
     if punchline_blueprint:
         from app.services.daily_story.story_design import (
             expansion_outline_for,
@@ -1291,11 +1396,15 @@ DAILY_STORY_OPENING_SYSTEM_PROMPT = f"""\
 - **指令/动作句宾语须完整可读**：「先倒满杯子吧」勿「先倒满吧」；
   「端着杯子」勿「端着」。「快见底了→倒满杯子/再开一瓶」成立，
   「快见底了→倒满橙汁」是动作对象与状态打架，禁止。
+- **发现句须带完整谓词**：「怎么…/咋…/谁把…/咦…」引导的发现句必须写完
+  动词或状态（怎么绕一块了/谁翻乱了/怎么瘪着），禁止「怎么+光名词」戛然而止
+  （「披萨盒怎么两双手」读不通，应「怎么搭着两双手」/「怎么压着两双手」/
+  「怎么有两双手」）。
 
 【双句分工】
 - 第1句：定场——环境 + 物/动作异常（观众脑内出画面）
 - 第2句：接住异常，点出马上要争什么（仍不展开辩论）
-须换人说，勿同人连说。可借用【现场】setting 里的地点词。
+须换人说，勿同人连说。从【现场】setting 的画面与地点词里取素材。
 
 【时间线（生成必守）】
 成片顺序是：**开场2句 → 正文第 1 句 → 正文第 2 句 → …**
@@ -1327,7 +1436,9 @@ DAILY_STORY_OPENING_SYSTEM_PROMPT = f"""\
 - 直接开辩：「规则是谁先看见谁拿」「我是姐姐我说了算」
 - 抽象空话：「这不公平」「你怎么这样」——没点出地点/实物/动作
 - 语病句式：「新橡皮怎么也有你的手」（「有你的手」缺谓词读不通；应写
-  「你手怎么也在旁边」/「你怎么也伸手」/「上面怎么有你的手印」）
+  「你手怎么也在旁边」/「你怎么也伸手」/「上面怎么有你的手印」）；
+  「披萨盒怎么两双手」（「怎么+光名词」缺动词读不通；应写
+  「披萨盒上怎么搭着两双手」/「怎么压着两双手」/「怎么有两双手」）
 - 把需要前文才成立的反击、双标对比、引用原话写在开场
 - 妈妈已破功（行行行）、复述正文已有句子、续写互怼第二回合
 
@@ -1345,11 +1456,13 @@ DAILY_STORY_OPENING_USER_TEMPLATE = """\
 【现场】{setting}
 【本场只争这一件】{conflict_core}
 
-【正文前两句】（**开场之后才发生**，勿复述、勿接下去顶嘴、勿用「还」接这里的词）：
+【正文】尚未生成：开场之后由系统承接展开，勿替正文开口。
 {body_head}
 
-要求：开场=正片第一镜，须有**背景地点 + 可拍画面**；
-从【现场】里借地点词；第1句定场，第2句点冲突；
+要求：开场=正片第一镜，从【现场】已给的画面展开（谁在场、手里/怀里/地上是什么、
+刚发生什么），勿凭空另造状态或新物；地点词顺动作自然带出即可
+（「我在门口捡了只小狗」——「门口」就在句子里），不必硬点；
+第1句定场，第2句点冲突；
 speaker 为昭昭/灿灿/妈妈（可孩子对说，也可孩子与妈妈对说）；
 正文第 1 句尚未发生，禁止开场预支其中的「磨蹭/不许/放下」等指责后再用「还说我…」；
 不要寒暄，不要只写一句干问。直接输出 JSON。
@@ -1358,37 +1471,32 @@ speaker 为昭昭/灿灿/妈妈（可孩子对说，也可孩子与妈妈对说�
 
 def build_daily_story_opening_prompts(
     theme: str,
-    story: dict,
+    framework: dict,
     *,
     type_code: str | None = None,
 ) -> tuple[str, str]:
-    """构造发现开场单抽的 system + user。"""
-    if not type_code and isinstance(story, dict):
+    """构造发现开场单抽的 system + user。
+
+    2026-08-07 架构改造：开场基于「剧本框架」（scene_title/setting/conflict_core）
+    生成，不再依赖 body（body 此时尚未生成）。body_head 字段移除——开场不再
+    参考正文前两句，改为 body 生成时承接开场（见 _generate_daily_story_body）。
+    """
+    framework = framework or {}
+    if not type_code and isinstance(framework, dict):
         type_code = parse_story_type_code(
-            punchline=str(story.get("punchline_explain") or ""),
+            punchline=str(framework.get("punchline_explain") or ""),
         )
     system = DAILY_STORY_OPENING_SYSTEM_PROMPT
     if type_code and type_code.upper() in STORY_TYPE_LINES:
         append = STORY_TYPE_LINES[type_code.upper()].opening_system_append
         if append.strip():
             system = f"{system}\n{append}"
-    dialogue = story.get("dialogue") if isinstance(story, dict) else None
-    head_lines: list[str] = []
-    if isinstance(dialogue, list):
-        for item in dialogue[:2]:
-            if not isinstance(item, dict):
-                continue
-            sp = str(item.get("speaker") or "").strip() or "?"
-            line = str(item.get("line") or "").strip()
-            if line:
-                head_lines.append(f"{sp}：{line}")
-    body_head = "\n".join(head_lines) if head_lines else "（正文暂无）"
     user = DAILY_STORY_OPENING_USER_TEMPLATE.format(
         theme=theme,
-        scene_title=str(story.get("scene_title") or "").strip() or "（无）",
-        setting=str(story.get("setting") or "").strip() or "（无）",
-        conflict_core=str(story.get("conflict_core") or "").strip() or "（无）",
-        body_head=body_head,
+        scene_title=str(framework.get("scene_title") or "").strip() or "（无）",
+        setting=str(framework.get("setting") or "").strip() or "（无）",
+        conflict_core=str(framework.get("conflict_core") or "").strip() or "（无）",
+        body_head="（正文尚未生成，开场须锚定框架中的实物与动作）",
     )
     if type_code and type_code.upper() in STORY_TYPE_LINES:
         ou = STORY_TYPE_LINES[type_code.upper()].opening_user_append.strip()
@@ -3597,14 +3705,24 @@ def build_daily_story_retry_user(
 
 def build_daily_story_opening_retry_user(
     theme: str,
-    body: dict,
+    framework: dict,
     *,
     errors: str,
     avoid_speaker: str | None = None,
+    type_code: str | None = None,
 ) -> str:
-    """开场重试：点名须出现的 conflict_core 锚点词；可选避开正文首句说话人。"""
-    base = build_daily_story_opening_prompts(theme, body)[1]
-    core = str(body.get("conflict_core") or "").strip()
+    """开场重试：点名须出现的 conflict_core 锚点词；可选避开正文首句说话人。
+
+    2026-08-07 架构改造：base 吃框架（scene_title/setting/conflict_core），
+    不再依赖 body 正文；type_code 须显式传入——框架无 punchline_explain，
+    不传会 fallback 到 C，误注入其他类型的开场约束。
+    """
+    base = build_daily_story_opening_prompts(
+        theme,
+        framework,
+        type_code=type_code,
+    )[1]
+    core = str(framework.get("conflict_core") or "").strip()
     must = _conflict_anchor_must_words(core)
     must_txt = "、".join(must) if must else core or "冲突实物/动作"
     avoid = (avoid_speaker or "").strip()

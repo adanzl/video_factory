@@ -50,6 +50,7 @@ from app.services.daily_story.prompts import (
     _correct_dialogue_speaker,
     _select_story_type,
     build_daily_script_prompts,
+    build_daily_story_framework_prompts,
     build_daily_story_opening_prompts,
     build_daily_story_prompts,
     build_daily_story_retry_user,
@@ -86,6 +87,21 @@ _TEMP_CREATIVE_HIGH = 0.95  # D1/D2 首稿
 _TEMP_CREATIVE_BLUEPRINT = 1.0  # D1.5 有骨架时的 D2 首稿
 _TEMP_CREATIVE_MID = 0.8  # A2/C/D4/E1
 _TEMP_UTILITY = 0.5  # E2/E3/E4/封面
+
+
+def _force_framework_fields(story: dict, framework: dict | None) -> None:
+    """把框架字段逐字覆写到正文 dict，保证框架是唯一权威锚。
+
+    2026-08-07 架构改造：scene_title/setting/conflict_core/key 由框架先生成，
+    正文围绕框架展开。正文自己输出的这几个字段可能措辞漂移，统一以框架为准，
+    开场/拼接/下游用到的冲突核心才与开场锚定一致。
+    """
+    if not framework or not isinstance(story, dict):
+        return
+    for field in ("scene_title", "setting", "conflict_core", "key"):
+        v = framework.get(field)
+        if v:
+            story[field] = v
 
 
 def _build_deepseek_chat_payload(
@@ -1684,8 +1700,35 @@ class DeepSeekClient(LLMClient):
         *,
         story_type: str | None = None,
     ) -> dict[str, Any]:
-        body = self._generate_daily_story_body(theme, story_type=story_type)
-        return self._stitch_daily_story_full(theme, body, story_type=story_type)
+        """2026-08-07 架构改造：框架先行 → 开场 → 正文 → 拼接。
+
+        先生成剧本框架（scene_title/setting/conflict_core/key）作定盘锚，
+        开场吃框架、正文吃框架+开场续写，避免 body 自造冲突与开场脱锚。
+        """
+        if not story_type:
+            story_type = _select_story_type(theme)
+        framework = self._generate_daily_story_framework(
+            theme,
+            story_type=story_type,
+        )
+        opening = self._generate_daily_story_opening(
+            theme,
+            framework,
+            story_type=story_type,
+        )
+        body = self._generate_daily_story_body(
+            theme,
+            story_type=story_type,
+            framework=framework,
+            opening=opening,
+        )
+        return self._stitch_daily_story_full(
+            theme,
+            body,
+            story_type=story_type,
+            framework=framework,
+            opening=opening,
+        )
 
     def refine_daily_story_for_quality(
         self,
@@ -1695,12 +1738,17 @@ class DeepSeekClient(LLMClient):
         *,
         story_type: str | None = None,
     ) -> dict[str, Any]:
-        """按观感短板定向修订正文并重新拼开场。"""
+        """按观感短板定向修订正文；开场保留、失配（连说等）才重拼。
+
+        2026-08-07 架构改造：不再每轮重抽开场——原稿 discovery_opening 先保留，
+        只有拼接硬伤（如修订后正文首句与开场末句连说）才在 _stitch 里重拼。
+        """
         from app.services.daily_story.story_types import parse_story_type_code
 
         hints = (revision_hints or "").strip()
         if not hints:
             return story
+        opening = story.get("discovery_opening")
         body = {
             k: v
             for k, v in story.items()
@@ -1711,10 +1759,19 @@ class DeepSeekClient(LLMClient):
             punchline=str(body.get("punchline_explain") or ""),
         )
         new_body = self._revise_daily_story_body(theme, body, hints)
+        # 正文已锚定框架字段（scene_title/setting/conflict_core/key），
+        # 取回作开场重拼时的锚
+        framework = {
+            f: body.get(f)
+            for f in ("scene_title", "setting", "conflict_core", "key")
+            if body.get(f)
+        }
         return self._stitch_daily_story_full(
             theme,
             new_body,
             story_type=rev_code,
+            framework=framework or None,
+            opening=opening,
         )
 
     def _stitch_daily_story_full(
@@ -1723,6 +1780,8 @@ class DeepSeekClient(LLMClient):
         body: dict[str, Any],
         *,
         story_type: str | None = None,
+        framework: dict | None = None,
+        opening: list[dict] | None = None,
     ) -> dict[str, Any]:
         from app.services.daily_story.prompts import (
             _patch_body_part_char_budget,
@@ -1732,16 +1791,22 @@ class DeepSeekClient(LLMClient):
 
         avoid = opening_avoid_speaker_from_body(body)
         last_exc: ValueError | None = None
-        # 开场重拼最多 2 轮：连说靠 avoid_speaker，别空烧额度
+        # 架构改造后开场先生成传入：优先用传入开场（round 0），拼接硬伤
+        # （连说）才在 round 1 重拼避连说；无传入时保持原行为，最多 2 轮重拼。
         max_open_rounds = 2
         for round_i in range(max_open_rounds):
-            opening = self._generate_daily_story_opening(
-                theme,
-                body,
-                avoid_speaker=avoid if round_i > 0 else None,
-                story_type=story_type,
-            )
-            story = stitch_daily_story_opening(body, opening)
+            if opening is not None and round_i == 0:
+                cur_opening = opening
+            else:
+                # 重拼轮：避开正文首句说话人；无传入开场时首轮不避（同旧行为）
+                use_avoid = avoid if (round_i > 0 or opening is not None) else None
+                cur_opening = self._generate_daily_story_opening(
+                    theme,
+                    framework if framework is not None else body,
+                    avoid_speaker=use_avoid,
+                    story_type=story_type,
+                )
+            story = stitch_daily_story_opening(body, cur_opening)
             # 拼接删正文开头发现句后 body-part 可能跌破 280：本地收口回硬卡内
             bp_notes = _patch_body_part_char_budget(story)
             if bp_notes:
@@ -1851,11 +1916,89 @@ class DeepSeekClient(LLMClient):
         )
         return None
 
+    def _generate_daily_story_framework(
+        self,
+        theme: str,
+        *,
+        story_type: str | None = None,
+    ) -> dict[str, Any]:
+        """先生成剧本框架（scene_title/setting/conflict_core/key）作定盘锚。
+
+        2026-08-07 架构改造：开场与正文都围绕框架生成。4 字段必须齐全，
+        conflict_core ≤24 字、key 2–8 字，失败重抽 1 次。
+        """
+        from app.services.daily_story.prompts import (
+            DAILY_STORY_KEY_CHARS_MAX,
+            DAILY_STORY_KEY_CHARS_MIN,
+        )
+
+        if not story_type:
+            story_type = _select_story_type(theme)
+        system, user = build_daily_story_framework_prompts(
+            theme,
+            story_type=story_type,
+        )
+        last_exc: ValueError | None = None
+        for attempt in range(2):
+            try:
+                raw, _ = self._chat_json(
+                    system,
+                    user,
+                    thinking_enabled=False,
+                    temperature=_TEMP_CREATIVE_HIGH,
+                )
+                if not isinstance(raw, dict):
+                    raise ValueError("框架须为 JSON 对象")
+                errors: list[str] = []
+                for field in ("scene_title", "setting", "conflict_core", "key"):
+                    v = str(raw.get(field) or "").strip()
+                    if not v:
+                        errors.append(f"缺少字段 {field}")
+                    else:
+                        raw[field] = v
+                cc = str(raw.get("conflict_core") or "").strip()
+                if cc and len(cc) > 24:
+                    errors.append(f"conflict_core 须≤24字（当前{len(cc)}字）")
+                key = str(raw.get("key") or "").strip()
+                if key and not (
+                    DAILY_STORY_KEY_CHARS_MIN
+                    <= len(key)
+                    <= DAILY_STORY_KEY_CHARS_MAX
+                ):
+                    errors.append(
+                        f"key 须{DAILY_STORY_KEY_CHARS_MIN}–"
+                        f"{DAILY_STORY_KEY_CHARS_MAX}字（当前{len(key)}字）"
+                    )
+                if errors:
+                    raise ValueError("; ".join(errors))
+                raw["_framework_type"] = story_type
+                return raw
+            except ValueError as exc:
+                last_exc = exc
+                if attempt + 1 >= 2:
+                    break
+                logger.warning(
+                    "[DAILY_STORY] framework generation failed "
+                    "attempt=%d/2: %s",
+                    attempt + 1,
+                    exc,
+                )
+                user = (
+                    f"{user}\n\n"
+                    f"【重试】上一轮框架未通过：{exc}\n"
+                    "补齐缺失字段；conflict_core ≤24 字；key 用 2–8 字标签；"
+                    "仍只输出 scene_title/setting/conflict_core/key 四字段 JSON。"
+                )
+        assert last_exc is not None
+        raise last_exc
+
     def _generate_daily_story_body(
         self,
         theme: str,
         *,
         story_type: str | None = None,
+        framework: dict | None = None,
+        opening: list[dict] | None = None,
     ) -> dict[str, Any]:
         if not story_type:
             story_type = _select_story_type(theme)
@@ -1869,6 +2012,8 @@ class DeepSeekClient(LLMClient):
             story_type=story_type,
             length_mode="draft",
             punchline_blueprint=blueprint,
+            framework=framework,
+            opening=opening,
         )
         last_exc: ValueError | None = None
         # 实验结论：关 thinking + 高温一次即达标（297 字/6.4s），开 thinking
@@ -1906,6 +2051,7 @@ class DeepSeekClient(LLMClient):
 
                 raw["_theme"] = theme
                 raw["_story_type"] = story_type
+                _force_framework_fields(raw, framework)
                 if blueprint:
                     apply_blueprint_to_story(
                         raw,
@@ -1920,6 +2066,7 @@ class DeepSeekClient(LLMClient):
                         ",".join(patch_notes),
                     )
                     raw = patched
+                    _force_framework_fields(raw, framework)
                     if blueprint:
                         apply_blueprint_to_story(
                             raw,
@@ -1956,6 +2103,7 @@ class DeepSeekClient(LLMClient):
 
                     prev_story["_theme"] = theme
                     prev_story["_story_type"] = story_type
+                    _force_framework_fields(prev_story, framework)
                     if blueprint:
                         apply_blueprint_to_story(
                             prev_story,
@@ -1971,6 +2119,7 @@ class DeepSeekClient(LLMClient):
                                     blueprint,
                                     story_type=story_type,
                                 )
+                            _force_framework_fields(patched2, framework)
                             validate_daily_story_json(patched2, phase="body")
                             logger.info(
                                 "[DAILY_STORY] local body patch saved LLM "
@@ -2026,6 +2175,8 @@ class DeepSeekClient(LLMClient):
                     story_type=story_type,
                     length_mode=length_mode,
                     punchline_blueprint=blueprint,
+                    framework=framework,
+                    opening=opening,
                 )
                 if isinstance(prev_story, dict):
                     user = build_daily_story_retry_user(
@@ -2035,6 +2186,17 @@ class DeepSeekClient(LLMClient):
                         phase="body",
                         story_type=story_type,
                     )
+                    if framework or opening:
+                        from app.services.daily_story.prompts import (
+                            _daily_story_anchor_block,
+                        )
+
+                        anchor = _daily_story_anchor_block(
+                            framework=framework,
+                            opening=opening,
+                        )
+                        if anchor:
+                            user = f"{anchor}\n\n{user}"
                     if blueprint:
                         from app.services.daily_story.story_design import (
                             expansion_outline_for,
@@ -2048,7 +2210,7 @@ class DeepSeekClient(LLMClient):
                         )
                 else:
                     user = (
-                        f"{build_daily_story_prompts(theme, story_type=story_type, length_mode=length_mode, punchline_blueprint=blueprint)[1]}\n\n"
+                        f"{build_daily_story_prompts(theme, story_type=story_type, length_mode=length_mode, punchline_blueprint=blueprint, framework=framework, opening=opening)[1]}\n\n"
                         f"【重试】上一轮校验未通过：{errors}\n"
                         "请直接输出符合硬约束的完整 JSON（正文勿写发现开场）。"
                     )
@@ -2125,6 +2287,7 @@ class DeepSeekClient(LLMClient):
             )
             if isinstance(raw, dict):
                 raw["_theme"] = theme
+                _force_framework_fields(raw, prev_story)
                 patched, notes = try_local_patch_daily_story_body(raw)
                 if notes:
                     logger.info(
@@ -2132,6 +2295,7 @@ class DeepSeekClient(LLMClient):
                         ",".join(notes),
                     )
                     raw = patched
+                    _force_framework_fields(raw, prev_story)
             try:
                 # _theme 留到校验后再弹出：贴题硬卡要用
                 validate_daily_story_json(raw, phase="body")
@@ -2141,9 +2305,11 @@ class DeepSeekClient(LLMClient):
             except ValueError as exc:
                 last_exc = exc
                 if isinstance(raw, dict):
+                    _force_framework_fields(raw, prev_story)
                     patched2, notes2 = try_local_patch_daily_story_body(raw)
                     if notes2:
                         try:
+                            _force_framework_fields(patched2, prev_story)
                             validate_daily_story_json(patched2, phase="body")
                             patched2.pop("_theme", None)
                             return patched2
@@ -2183,12 +2349,28 @@ class DeepSeekClient(LLMClient):
     def _generate_daily_story_opening(
         self,
         theme: str,
-        body: dict[str, Any],
+        framework: dict[str, Any],
         *,
         avoid_speaker: str | None = None,
         story_type: str | None = None,
     ) -> list[dict]:
-        system, user = build_daily_story_opening_prompts(theme, body)
+        """基于剧本框架生成开场 2 句。
+
+        2026-08-07 架构改造：开场吃 framework（scene_title/setting/
+        conflict_core），不再依赖 body——body 此时尚未生成。
+        """
+        from app.services.daily_story.story_types import parse_story_type_code
+
+        framework = framework or {}
+        open_type = parse_story_type_code(
+            story_type=story_type,
+            punchline=str(framework.get("punchline_explain") or ""),
+        )
+        system, user = build_daily_story_opening_prompts(
+            theme,
+            framework,
+            type_code=open_type,
+        )
         avoid = (avoid_speaker or "").strip() or None
         if avoid in ("昭昭", "灿灿"):
             other = "灿灿" if avoid == "昭昭" else "昭昭"
@@ -2199,14 +2381,8 @@ class DeepSeekClient(LLMClient):
             )
         last_exc: ValueError | None = None
         max_attempts = max(1, min(2, get_settings().script_qa_max_attempts))
-        core = str(body.get("conflict_core") or "")
-        setting = str(body.get("setting") or "")
-        from app.services.daily_story.story_types import parse_story_type_code
-
-        open_type = parse_story_type_code(
-            story_type=story_type,
-            punchline=str(body.get("punchline_explain") or ""),
-        )
+        core = str(framework.get("conflict_core") or "")
+        setting = str(framework.get("setting") or "")
         for attempt in range(max_attempts):
             try:
                 # 开场短约束：关 thinking，快失败快重试
@@ -2244,9 +2420,10 @@ class DeepSeekClient(LLMClient):
                 )
                 user = build_daily_story_opening_retry_user(
                     theme,
-                    body,
+                    framework,
                     errors=errors,
                     avoid_speaker=avoid,
+                    type_code=open_type,
                 )
         assert last_exc is not None
         raise last_exc
