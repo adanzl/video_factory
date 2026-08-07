@@ -1777,6 +1777,43 @@ def test_b_fact_accepts_mishap_chain_not_role_swap():
     assert not any("无走样却改口" in i for i in issues)
 
 
+def test_b_fact_rejects_division_flip():
+    """分工翻转：开场昭昭望风，正文变灿灿盯门 → 硬卡。"""
+    from app.services.daily_story.story_types.b.facts import _division_flip_error
+
+    # 一致：L0 灿灿「我望风」→ 归灿灿；L1 昭昭「你盯着门口」→ 归灿灿；L2 同
+    lines = [
+        "姐，你拧瓶盖我望风",
+        "嘘，我拧盖，你盯着门口",
+        "行，我望风，你下手",
+    ]
+    sps = ["灿灿", "昭昭", "灿灿"]
+    assert _division_flip_error(lines, sps) is None
+
+    # 翻转：开场昭昭望风（L0 灿灿说「你望风」），正文灿灿盯门（L1 灿灿「我盯着」）
+    lines2 = [
+        "姐，你望风，我拧盖",
+        "嘘，我盯着门口，你快点拧",
+        "行，你望风，我下手",
+    ]
+    sps2 = ["灿灿", "灿灿", "昭昭"]
+    err = _division_flip_error(lines2, sps2)
+    assert err is not None and "分工翻转" in err, err
+
+
+def test_b_fact_division_flip_ignores_blame_line():
+    """甩锅句「你没望风」是责备不是分工声明，不该判翻转。"""
+    from app.services.daily_story.story_types.b.facts import _division_flip_error
+
+    lines = [
+        "姐，你望风，我来拿",
+        "好，我盯着门口",
+        "都怪你没望风！",
+    ]
+    sps = ["昭昭", "灿灿", "昭昭"]
+    assert _division_flip_error(lines, sps) is None
+
+
 def test_b_freeze_rejects_double_side_ding():
     from app.services.daily_story.story_types.b.humor import _freeze_lines_issues
 
@@ -2364,6 +2401,65 @@ def test_validate_c_body_rejects_truncated_close_line():
         validate_daily_story_json(story, phase="body")
 
 
+def test_validate_c_body_rejects_rule_drift_no_verdict():
+    """C 稿换比法/重开 ≥3 次且无人宣判旧局 → 赛规漂移硬卡（稿B 型）。"""
+    story = _valid_story()
+    dialogue = story["dialogue"]
+    # 中段塞 3 句无宣判的换比法：数到三 / 重来 / 换一种，且避开末段收束
+    dialogue[4] = {"speaker": dialogue[4]["speaker"], "line": _pad_line("好咱们数到三一起拿呀")}
+    dialogue[6] = {"speaker": dialogue[6]["speaker"], "line": _pad_line("那重来再比一次呀")}
+    dialogue[9] = {"speaker": dialogue[9]["speaker"], "line": _pad_line("都不行换一种比法呀")}
+    with pytest.raises(ValueError, match="赛规漂移|规则被反复单方面推翻"):
+        validate_daily_story_json(story, phase="body")
+
+
+def test_validate_c_body_allows_rule_drift_with_verdict():
+    """换比法后有人宣判（妈妈裁定/明明说）→ 放行，不算漂移。"""
+    story = _valid_story()
+    dialogue = story["dialogue"]
+    dialogue[4] = {"speaker": dialogue[4]["speaker"], "line": _pad_line("好咱们数到三一起拿呀")}
+    dialogue[6] = {"speaker": dialogue[6]["speaker"], "line": _pad_line("那重来再比一次呀")}
+    dialogue[9] = {"speaker": dialogue[9]["speaker"], "line": _pad_line("妈妈说定了先拿先选呀")}
+    validate_daily_story_json(story, phase="body")
+
+
+def _mom_ruling_check(speakers, lines):
+    from app.services.daily_story.story_types.c.validate import _mom_ruling_ignored_error
+
+    return _mom_ruling_ignored_error(speakers, lines)
+
+
+def test_c_mom_ruling_ignored_rejects_stalemate():
+    """妈妈出场裁定后，末段双方各说「我先」僵局 → 妈妈裁定被无视硬卡（稿B 型）。"""
+    speakers = ["昭昭", "灿灿", "妈妈", "昭昭", "灿灿", "昭昭", "灿灿"]
+    lines = [
+        "a", "b", "c", "d", "e", "我先碰的", "我先碰的你碰晚了",
+    ]
+    err = _mom_ruling_check(speakers, lines)
+    assert err and "妈妈" in err and "僵局" in err
+
+
+def test_c_mom_ruling_ignored_accepts_mom_ref():
+    """末段引用妈妈原规（妈妈说/刚说）→ 放行。"""
+    speakers = ["昭昭", "妈妈", "灿灿", "昭昭", "灿灿"]
+    lines = ["a", "b", "c", "d", "妈妈刚说谁先碰到谁用呀"]
+    assert _mom_ruling_check(speakers, lines) is None
+
+
+def test_c_mom_ruling_ignored_accepts_mom_tail_verdict():
+    """妈妈本人末段判决收束 → 放行。"""
+    speakers = ["昭昭", "妈妈", "灿灿", "妈妈", "灿灿"]
+    lines = ["a", "b", "c", "昭昭先碰的用吧", "哼"]
+    assert _mom_ruling_check(speakers, lines) is None
+
+
+def test_c_mom_ruling_ignored_no_mom():
+    """无妈妈出场 → 不触发。"""
+    speakers = ["昭昭", "灿灿", "昭昭", "灿灿"]
+    lines = ["a", "b", "c", "d"]
+    assert _mom_ruling_check(speakers, lines) is None
+
+
 def test_build_quality_edit_scope_hint_for_c_closing():
     from app.services.daily_story.quality import (
         build_quality_edit_scope_hint,
@@ -2845,6 +2941,37 @@ def test_review_local_issues_catch_dup_and_empty_line():
     assert ("其他", (3,)) in kinds
 
 
+def test_review_short_tail_line_not_empty_response():
+    """各类型末句硬模板都允许「……哼/行/算了」短收场，不该判空应答。"""
+    from app.services.daily_story.review import collect_local_issues
+
+    story = {
+        "dialogue": [
+            {"speaker": "昭昭", "line": "你刚说谁先碰到谁切，我贴上了！"},
+            {"speaker": "灿灿", "line": "你作弊，我手还悬在上面呢！"},
+            {"speaker": "昭昭", "line": "哼。"},
+        ],
+    }
+    issues = collect_local_issues(story)
+    assert not any(it["kind"] == "其他" for it in issues), issues
+
+
+def test_review_mid_empty_line_still_caught():
+    """中段的「行！」式空应答仍要抓，只豁免末句。"""
+    from app.services.daily_story.review import collect_local_issues
+
+    story = {
+        "dialogue": [
+            {"speaker": "昭昭", "line": "你刚说谁先碰到谁切，我贴上了！"},
+            {"speaker": "灿灿", "line": "行！"},
+            {"speaker": "昭昭", "line": "哼。"},
+        ],
+    }
+    issues = collect_local_issues(story)
+    kinds = {(it["kind"], tuple(it["lines"])) for it in issues}
+    assert ("其他", (2,)) in kinds, issues
+
+
 def test_review_topic_cluster_catches_repeated_challenge():
     """同一质问换词三遍，近邻检测抓不到时靠话题聚类。"""
     from app.services.daily_story.review import collect_local_issues
@@ -3183,3 +3310,96 @@ def test_c_patch_keeps_short_soft_tail():
     patched, notes = try_local_patch_daily_story_body(story)
     assert not any("软收截断" in n for n in notes)
     assert patched["dialogue"][-1]["line"] == "……哼，给你吧"
+
+
+def test_c_humor_flags_inverted_quote_without_grounding():
+    """C2 倒装引话失据：引文在逗号前、正文没出现过 → 封顶好笑分。
+
+    「碰到就是咬到，你说的。」这种倒装伪引用（正文从未说过）
+    必须被标记为「回旋镖引话失据」，真实引用不误伤。
+    """
+    # 先初始化共享 quality（会注册全部类型 profile，含 c.quality→c.humor 链），
+    # 再 import c.humor，避免 c.humor 半初始化时被 c.quality 回引。
+    import app.services.daily_story.quality as _q  # noqa: F401
+
+    from app.services.daily_story.story_types.c.humor import collect_humor_issues
+
+    # 问题稿：末句倒装引「碰到就是咬到」，正文没有这句
+    bad_lines = [
+        "布丁就一块，我先看到的。",
+        "我先碰到的，归我。",
+        "你手比我长，不公平。",
+        "妈妈，你说谁先碰到的归谁。",
+        "哼，碰到就是咬到，你说的。",
+    ]
+    issues = collect_humor_issues(bad_lines, None)
+    assert any("回旋镖引话失据" in c for c in issues)
+    assert any("无出处" in c for c in issues)
+
+    # 正常稿：倒装引用的是正文真出现过的赛规原话 → 不标记
+    good_lines = [
+        "布丁就一块，我先看到的。",
+        "妈妈，谁先碰到归谁吃。",
+        "我先碰到的，归我。",
+        "你手比我长，不公平。",
+        "哼，谁先碰到归谁，你刚说的。",
+    ]
+    issues = collect_humor_issues(good_lines, None)
+    assert not any("回旋镖引话失据" in c for c in issues)
+
+
+def test_c_humor_flags_self_said_quote_and_rule_misattribution():
+    """C2 扩展：前置引话失据「自己说X」+ 规则错误归属「我说规则是X」。
+
+    L21「自己说数到二就伸手」——灿灿从没立这句规（L15 是昭昭自己的指责）；
+    L18「我说的规则是数到三一起碰」——立规人是昭昭（L11 我数到三），灿灿安到自己头上。
+    """
+    import app.services.daily_story.quality as _q  # noqa: F401
+
+    from app.services.daily_story.story_types.c.humor import collect_humor_issues
+
+    bad = [
+        "客厅茶几上最后一块西瓜，谁先碰到的？",
+        "我手已经搭上瓜皮了，你别抢！",
+        "我先碰到的，这块西瓜归我！",
+        "不对，我手先搭上瓜皮的，你才晚到！",
+        "规则说谁先碰到归谁，那咱们谁先碰到瓜皮？",
+        "那怎么证明？咱们现在重来，我数到三。",
+        "好，一、二、三！",
+        "哈哈，我碰到了，这次是我先",
+        "你作弊，你数到二就碰了，我听出来",
+        "你才作弊，你喊到三才碰，我比你快",
+        "我说的规则是数到三一起碰，你听错",
+        "你听错了？你刚才明明说“数到三一起碰”的。",
+        "我说的是数到三一起碰但你喊二时我手就伸出去了",
+        "你承认吧，自己说数到二就伸手了！",
+        "你……哼！算你赢！但下次我肯定先碰到！",
+    ]
+    sps = ["昭昭", "灿灿", "昭昭", "灿灿", "昭昭", "昭昭", "昭昭",
+           "灿灿", "昭昭", "灿灿", "灿灿", "昭昭", "灿灿", "昭昭", "灿灿"]
+    issues = collect_humor_issues(bad, sps)
+    assert any("自己说「数到二就伸手" in c and "无出处" in c for c in issues)
+    assert any("错误归属" in c and "数到三一起碰" in c for c in issues)
+
+    # 正常稿：回旋镖引对方真话、立规人引自己的规 → 不误伤
+    good = [
+        "布丁就一块，谁先碰到归谁，你说的。",
+        "好，谁先碰到归谁，我记下了。",
+        "我先碰到的，这块归我！",
+        "你耍赖，你自己说谁先碰到归谁的！",
+        "哼，算你赢。",
+    ]
+    gissues = collect_humor_issues(good, ["昭昭", "灿灿", "昭昭", "灿灿", "昭昭"])
+    assert not any("回旋镖引话失据" in c for c in gissues)
+    assert not any("回旋镖错误归属" in c for c in gissues)
+
+    good2 = [
+        "布丁就一块，我先说，谁先碰到归谁吃。",
+        "好，听你的，谁先碰到归谁。",
+        "我先碰到了！",
+        "你手比我快，我不服！",
+        "我说的是谁先碰到归谁，你自己慢了一步。",
+        "哼，行吧。",
+    ]
+    g2issues = collect_humor_issues(good2, ["灿灿", "昭昭", "灿灿", "昭昭", "灿灿", "昭昭"])
+    assert not any("回旋镖错误归属" in c for c in g2issues)

@@ -30,6 +30,25 @@ RE_LITERAL_RULE_PLAY = re.compile(
     r"(?:你自己|你刚才|你刚刚|你之前|你也).{0,10}(?:也|就|都|怎么|不是|干嘛|在|有|"
     r"碰|拿|抢|切|分|摆|放|喝|吃|坐|用|选|叠|收拾|弄|占)",
 )
+# 倒装引话：引文在前，引语动词在句尾（「碰到就是咬到，你说的」）
+# 句尾可有标点（。！？…），引语动词后必须结束
+_RE_INVERTED_QUOTE = re.compile(
+    r"([^，。！？…]{3,})\s*[，,]\s*(?:你刚才说|你自己说|你不是说|你刚说|你说的)[。！？…]?$",
+)
+# 前置引话失据：bare「自己说X」（无你字）——把对方的动作曲解成他立过的规。
+# 共享 _RE_DIRECT_QUOTE 只认「你…说」，漏「自己说X」（L21 型）。
+# (?<!我) 排除「我自己说X」反身用法（那种是说自己，不是归咎对方）。
+_RE_SELF_SAID_QUOTE = re.compile(r"(?<!我)自己说([^，。！？…]{2,})")
+# 规则错误归属：把对方立的规安到自己头上（「我说规则是X / 我说的是X」，L18/L20 型）。
+_RE_SELF_CLAIM_RULE = re.compile(
+    r"(?:我说|我说的|我定的|我立的|我定|我立)(?:的)?"
+    r"(?:规则是|规矩是|的是|是)?([^，。！？…]{2,})",
+)
+# 陈述/立规语境词：某句若含这些词且带被引规则子串，才算「有人立过这条规」。
+_RE_STMT_FRAME = re.compile(
+    r"说|规则|规矩|立|定|数到|说好|讲好|说定|承诺|说死|"
+    r"先到|先碰|先拿|先摸|谁先|归|该|应该|就得|才算|重来|重新",
+)
 _OWNERSHIP_CHATTER = re.compile(
     r"都是我的|你的没|各管各|叠了没|不公平|凭什么.*我的|"
     r"有没有我的一件|你没叠",
@@ -62,6 +81,10 @@ HUMOR_ISSUE_CAPS: tuple[tuple[str, int], ...] = (
     ("归属口水战", 5),
     ("偏A式那不一样", 6),
     ("缺可拍争法", 7),
+    # 2026-08-07 专家对齐 C2：回旋镖引话无出处 → 好笑分封顶 6
+    ("回旋镖引话失据", 6),
+    # 2026-08-07 专家对齐 C2 扩展：把对方立的规安到自己头上 → 好笑分封顶 6
+    ("回旋镖错误归属", 6),
 )
 
 
@@ -97,6 +120,7 @@ def collect_humor_issues(
 ) -> list[str]:
     _ = speakers
     cons: list[str] = []
+    sp_arr = list(speakers) if speakers else []
     tail4 = lines[-4:] if len(lines) >= 4 else lines
     tail_text = "".join(tail4)
     late6 = "".join(lines[-6:]) if len(lines) >= 6 else tail_text
@@ -127,6 +151,80 @@ def collect_humor_issues(
         filmable = bool(_FILMABLE_TWIST.search(late6))
         if not filmable and not RE_LITERAL_RULE_PLAY.search(late6):
             cons.append("C收束缺可拍争法")
+
+    # 2026-08-07 专家对齐 C2：回旋镖**倒装引话**出处检测。
+    # 共享 _RE_DIRECT_QUOTE 只认「你（刚/自己/不是）说X」前置形态；
+    # 「碰到就是咬到，你说的」这种引文在前、引语动词在句尾的倒装句漏检，
+    # 导致伪拼凑原话（正文没说过）也能当回旋镖收束。补一条倒装检测：
+    # 引语动词出现在句尾（…，你说的/你刚说/你刚才说/你不是说）时，
+    # 提取逗号前的引文，验证是否在正文出现过。
+    # 内联出处判定（不 import quality，避免循环依赖）：
+    # 连续 ≥3 字命中正文即认有出处；伪拼凑（片断不在正文）判失据。
+    body_text = "".join(lines[: max(0, len(lines) - 4)])
+    for ln in tail4:
+        for m in _RE_INVERTED_QUOTE.finditer(ln):
+            frag = re.sub(r"[的话呢呀嘛吧啊…\s「」『』“”\"'‘’：:，,]", "", m.group(1))
+            if len(frag) < 3:
+                continue
+            grounded = any(
+                frag[i:i + run] in body_text
+                for run in (6, 5, 4, 3)
+                for i in range(len(frag) - run + 1)
+            )
+            if not grounded:
+                cons.append(f"回旋镖引话失据（倒装「{frag[:12]}」无出处）")
+                break
+
+    # 2026-08-07 专家对齐 C2 扩展：前置引话失据（自己说X）+ 规则错误归属（我说规则是X）。
+    # 共享 _RE_DIRECT_QUOTE 只认「你…说」；「自己说X」把对方动作曲解成他立过的规，
+    # 「我说规则是X」把对方立的规安到自己头上。两条都需 speakers 才能判归属。
+    _STRIP = r"[的话呢呀嘛吧啊…\s「」『』“”\"'‘’：:，,是]"
+    for i, ln in enumerate(lines):
+        if i < 1:
+            continue
+        cur_sp = sp_arr[i] if i < len(sp_arr) else None
+        prior = lines[:i]
+        prior_sps = sp_arr[:i]
+        # ① 自己说X：X 须是「对方」（≠当前说话人）立过的规——同一句既含语境词又含子串，
+        #   且说话人是对方。当前说话人自己的指责句（「你数到二就碰了」）不算出处。
+        for m in _RE_SELF_SAID_QUOTE.finditer(ln):
+            frag = re.sub(_STRIP, "", m.group(1))
+            if len(frag) < 3:
+                continue
+            grounded = any(
+                (cur_sp is None or p_sp != cur_sp)
+                and _RE_STMT_FRAME.search(p_line)
+                and any(
+                    frag[k:k + run] in p_line
+                    for run in (6, 5, 4, 3)
+                    for k in range(len(frag) - run + 1)
+                )
+                for p_line, p_sp in zip(prior, prior_sps)
+            )
+            if not grounded:
+                cons.append(f"回旋镖引话失据（自己说「{frag[:12]}」无出处）")
+                break
+        # ② 我说规则是X：X 先前若由对方立规，判错误归属；X 无任何陈述出处则并入引话失据
+        for m in _RE_SELF_CLAIM_RULE.finditer(ln):
+            frag = re.sub(_STRIP, "", m.group(1))
+            if len(frag) < 3:
+                continue
+            rule_hits = [
+                (p_line, p_sp)
+                for p_line, p_sp in zip(prior, prior_sps)
+                if _RE_STMT_FRAME.search(p_line)
+                and any(
+                    frag[k:k + run] in p_line
+                    for run in (6, 5, 4, 3)
+                    for k in range(len(frag) - run + 1)
+                )
+            ]
+            if not rule_hits:
+                cons.append(f"回旋镖引话失据（我说规则「{frag[:12]}」无出处）")
+                break
+            if cur_sp is not None and rule_hits[0][1] != cur_sp:
+                cons.append(f"回旋镖错误归属（规则「{frag[:12]}」是对方立的）")
+                break
 
     return cons
 

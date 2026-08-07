@@ -24,6 +24,13 @@ RE_TAKE_N = re.compile(
 RE_EXECUTION_ONLY_CORE = re.compile(
     r"争谁负责|谁负责望风|谁望风谁动手|谁望风|谁动手|谁下手|谁负责藏|谁来望风",
 )
+# 分工翻转：望风/盯门类强分工词的所有者前后不一致（2026-08-07 专家 P1）。
+# 「谁望风」是 B 稿分工核心：开场昭昭望风→正文灿灿望风=分工翻转（观众出戏）。
+# (?<!没) 排除甩锅句「你没望风」（那是责备，不是分工声明）；
+# 只认「我/你+望风类词」的分工命令句，拧/拿/藏等执行动作可流转不查（防误伤）。
+# 望风/盯门/盯门口/看门/放哨 全归同一「望风」角色——它们是同一种分工的不同说法，
+# 「我望风」→「你盯着厨房门」就是翻转（稿B 型），不能因词不同漏检。
+RE_WATCH_DIVISION = re.compile(r"(?<!没)(我|你)(?:的)?(望风|放风|盯门|盯门口|盯人|看门|放哨|打掩护)")
 
 
 def _dialogue_blob(story: dict) -> tuple[list[str], list[str], str]:
@@ -46,13 +53,45 @@ def _is_b_story(story: dict) -> bool:
     ) == "B"
 
 
+def _division_flip_error(
+    lines: list[str],
+    speakers: list[str],
+) -> str | None:
+    """分工翻转：望风/盯门类词的所有者前后矛盾 → 硬卡。
+
+    开场「昭昭拧盖/灿灿望风」→ 正文「灿灿拧盖/昭昭盯门」=分工翻转。
+    只认「我/你+望风类词」的分工命令句；所有者取说话人（我）或对方（你）。
+    """
+    kids = [s for s in set(speakers) if s in ("昭昭", "灿灿")]
+    if len(kids) < 2:
+        return None
+    owner: dict[str, str] = {}
+    for ln, sp in zip(lines, speakers):
+        if sp not in kids:
+            continue
+        other = [k for k in kids if k != sp][0]
+        for m in RE_WATCH_DIVISION.finditer(ln):
+            who = m.group(1)
+            person = sp if who == "我" else other
+            if "望风" in owner and owner["望风"] != person:
+                return (
+                    f"B类分工翻转：望风/盯门前文归{owner['望风']}，"
+                    f"后文又归{person}，结盟分工定死后全文只认一套"
+                )
+            owner["望风"] = person
+    return None
+
+
 def append_b_fact_errors(story: dict, errors: list[str]) -> None:
-    """生成硬卡：同盟落槌与可核对定量。"""
+    """生成硬卡：同盟落槌、分工翻转、可核对定量。"""
     if not _is_b_story(story):
         return
     lines, speakers, full = _dialogue_blob(story)
     if not lines:
         return
+    drift = _division_flip_error(lines, speakers)
+    if drift:
+        errors.append(drift)
 
     mom_i = next(
         (i for i, sp in enumerate(speakers) if sp == "妈妈"),

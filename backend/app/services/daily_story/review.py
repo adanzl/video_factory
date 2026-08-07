@@ -194,7 +194,9 @@ def collect_local_issues(story: dict) -> list[dict[str, Any]]:
 
     for i, line in enumerate(lines, 1):
         # 「怎么办！」这类三字惊慌句是有效反应，只揪「行！」级别的空应答
-        if len(_norm(line)) <= 2:
+        # 末句豁免：各类型硬模板末句都是嘴硬/认输收场（「……哼/行/算了」），
+        # 1–2 字短收场是正常结构，不算占行不推进（2026-08-07 见 C 稿 L21「哼。」被误伤）。
+        if i < n and len(_norm(line)) <= 2:
             issues.append({
                 "lines": [i],
                 "kind": "其他",
