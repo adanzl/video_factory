@@ -37,6 +37,9 @@ RE_FIX = re.compile(
     r"上手[^，。！？]{0,4}(?:抠|拆|解|掰|拉|扯|推|塞|扫|压|倒|抓|按|拍|扶|拢|兜)|"
     r"直接[^，。！？]{1,8}(?:抠|拆|解|掰|拉|扯|推|塞|扫|压|倒|抓|按|拍)|"
     r"我不[^，。！？]{1,6}了|直接[^，。！？]{1,6}(?:行了吧|得了|算了)|"
+    # 2026-08-07 专家对齐：补物理收手词（治「随手一搭/不夹了」破规被误杀）。
+    # 只加明确放弃物理动作的词，勿加「算了不/管他呢/不管了」（C类嘴硬误报）：
+    r"随手一搭|随手[^，。！？]{0,3}(?:搭|扔|塞|放|甩)|不夹了|不擦了|松手|松开手|手一甩|"
     # 水类主题的破规补救动作（浇花/擦桌水战等）：
     r"抢[过]|往[^，。！？]{0,4}泼|泼(?:掉|出去|过来)|端起[^，。！？]{0,4}|舀[^，。！？]{0,2}水|"
     r"倒回|灌回|倒进|"
@@ -110,7 +113,7 @@ _BOOM_VIOLATION_PAIRS: tuple[tuple[re.Pattern[str], re.Pattern[str]], ...] = (
     (re.compile(r"别夹|太紧|夹紧"), re.compile(r"夹紧|夹得?更?紧|更紧|用力夹|用力扯|用力捏")),
     (re.compile(r"系紧|用力拉|拉紧|别老散"), re.compile(r"解|抠|拆|扯开")),
     # 浇花类破规=往花盆/托盘加码浇灌（倒回喷壶是收拾不是违犯，勿放行）
-    (re.compile(r"别浇|别多|一小口|倒一次"), re.compile(r"浇[了进]|倒进|倒满|倒回(?!喷壶|壶|桶|杯)|灌进|灌回(?!喷壶|壶|桶|杯)|冲进|整壶|全倒|又[倒浇灌]")),
+    (re.compile(r"别浇|别多|一小口|倒一次"), re.compile(r"浇[了进]|倒进|倒满|倒回(?!喷壶|壶|桶|杯)|灌进|灌回(?!喷壶|壶|桶|杯)|冲进|整壶|全倒|又[倒浇灌]|猛灌|灌了|灌满|一大壶|一壶")),
     (re.compile(r"别弄乱|整齐|平放|别乱翻"), re.compile(r"弄乱|乱了|乱成|扒乱|翻乱|扫乱|堆乱|揉|扫进|塞进")),
     (re.compile(r"关.*轻|轻.*关|别响"), re.compile(r"用力关|摔门|砰|响")),
 )
@@ -418,6 +421,20 @@ def collect_humor_issues(
                             break
                     if fix_matched:
                         break
+            if not fix_matched:
+                # n-gram 字面不一致 → 回退旧版语义对（rule=引的规，viol=破规动作词）。
+                # 水/家务类破规字面多变（「猛灌了一大壶」vs「整壶都倒进去了」是同一动作），
+                # 模板 n-gram 对不上但语义对命中 → 不判「未扣破规」。
+                pair_hit = next(
+                    (
+                        (rule_re, viol_re)
+                        for rule_re, viol_re in _BOOM_VIOLATION_PAIRS
+                        if rule_re.search(cited_rule)
+                    ),
+                    None,
+                )
+                if pair_hit is not None and pair_hit[1].search(fix_window):
+                    fix_matched = True
             if not fix_matched:
                 cons.append("回旋镖未扣破规动作，不好笑")
         else:
