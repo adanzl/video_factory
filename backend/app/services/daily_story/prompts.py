@@ -2272,6 +2272,25 @@ def validate_daily_story_json(
                         f"dialogue[{i}] 角色反了：灿灿是姐姐，禁止自称{claim}"
                     )
                     break
+            # 最小/最大自称：昭昭是弟弟（最小）、灿灿是姐姐（最大），互换即角色错乱
+            # （糖果稿 89 漏网：灿灿姐姐自称「我最小，我该先挑」——身份+年龄双错乱；
+            # 「我不是最小的」否定反驳合法；「最小的那个是弟弟」客观指代不拦）
+            m2 = re.search(
+                r"(?<!不是)(?:我是)?(?:最小的|我最小|最大的|我最大)",
+                line,
+            )
+            if m2:
+                size_claim = m2.group(0)
+                if sp == "昭昭" and "最大" in size_claim:
+                    errors.append(
+                        f"dialogue[{i}] 角色反了：昭昭是弟弟（最小），禁止自称最大"
+                    )
+                    break
+                if sp == "灿灿" and "最小" in size_claim:
+                    errors.append(
+                        f"dialogue[{i}] 角色反了：灿灿是姐姐（最大），禁止自称最小"
+                    )
+                    break
 
     if errors:
         raise ValueError("daily_story 校验失败: " + "; ".join(errors))

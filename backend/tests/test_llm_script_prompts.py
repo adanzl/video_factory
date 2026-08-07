@@ -492,16 +492,16 @@ def test_build_visual_brief_prompts_daily_story_role_and_cast():
     assert "dialogue=" in prompts["user"]
     assert "100-200" in prompts["system"]
     assert "直接拼入文生图" in prompts["system"]
-    assert "开场首镜" in prompts["system"]
+    assert "【开场】" in prompts["system"]
     assert "冲突峰值" in prompts["system"]
     assert "画风" in prompts["system"] or "笔触" in prompts["system"]
-    assert "冲突道具：" in prompts["system"] or "冒号小标题" in prompts["system"]
+    assert "冲突道具用台词已出现" in prompts["system"]
     assert "粉色卫衣" in prompts["system"]
     assert "人物关系" in prompts["system"]
     assert "站位" in prompts["system"]
     assert "画面左边是" in prompts["system"]
     assert "刚叠好" in prompts["system"]
-    assert "禁止编造" in prompts["system"] or "台词未点名" in prompts["system"]
+    assert "台词点名" in prompts["system"] or "台词已出现" in prompts["system"]
 
 
 def test_build_visual_brief_daily_includes_setting_anchor():
@@ -526,7 +526,7 @@ def test_build_visual_brief_daily_includes_setting_anchor():
     )
     assert "全片地点 setting：客厅" in prompts["user"]
     assert "地点锚点" in prompts["system"]
-    assert "蜡笔彩虹" in prompts["system"]
+    assert "与全片 setting 一致" in prompts["system"]
 
 
 def test_build_daily_script_prompts_uses_cps_setting_and_no_appearance():
