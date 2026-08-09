@@ -3414,7 +3414,7 @@ def test_parse_humor_accepts_valid_rejects_bad():
         "humor": {"funny_score": 7, "best_moment": "笑点那句", "humor_type": "natural"},
     })
     assert ok == {"funny_score": 7, "best_moment": "笑点那句", "humor_type": "natural"}
-    assert parse_humor({"humor": {"funny_score": 12, "humor_type": "x"}}) is None
+    assert parse_humor({"humor": {"funny_score": 21, "humor_type": "x"}}) is None
     assert parse_humor({"humor": {"funny_score": "高", "humor_type": "natural"}}) is None
     assert parse_humor({"issues": []}) is None
     assert parse_humor(None) is None
@@ -3431,12 +3431,12 @@ def test_apply_review_to_quality_injects_llm_humor_and_publish_line():
     apply_review_to_quality(
         story,
         [],
-        humor={"funny_score": 8, "best_moment": "那句", "humor_type": "natural"},
+        humor={"funny_score": 14, "best_moment": "那句", "humor_type": "natural"},
     )
     q = story["quality"]
-    assert q["score"] == 88  # 结构80 + LLM好笑8
+    assert q["score"] == 94  # 结构80 + LLM好笑14
     assert q["pass"] is True
-    assert q["humor"]["funny_score"] == 8
+    assert q["humor"]["funny_score"] == 14
     assert any("发布达标" in r for r in q["reasons"])
 
 
@@ -3455,7 +3455,7 @@ def test_apply_review_to_quality_publish_line_rejects_low_humor():
     q = story["quality"]
     assert q["score"] == 84
     assert q["pass"] is False
-    assert any("好笑4/10<6" in r for r in q["reasons"])
+    assert any("好笑4/20<12" in r for r in q["reasons"])
 
 
 def test_apply_review_to_quality_publish_line_rejects_low_structure():
@@ -3468,7 +3468,7 @@ def test_apply_review_to_quality_publish_line_rejects_low_structure():
     apply_review_to_quality(
         story,
         [],
-        humor={"funny_score": 9, "best_moment": "那句", "humor_type": "natural"},
+        humor={"funny_score": 14, "best_moment": "那句", "humor_type": "natural"},
     )
     q = story["quality"]
     assert q["pass"] is False
@@ -3500,11 +3500,11 @@ def test_review_passes_llm_humor_to_quality(monkeypatch):
         review_results=[
             (
                 [{"lines": [6], "kind": "重复", "desc": "正文重复", "fix": "改第6句"}],
-                {"funny_score": 8, "best_moment": "那句", "humor_type": "natural"},
+                {"funny_score": 14, "best_moment": "那句", "humor_type": "natural"},
             ),
             (
                 [],
-                {"funny_score": 7, "best_moment": "那句", "humor_type": "natural"},
+                {"funny_score": 13, "best_moment": "那句", "humor_type": "natural"},
             ),
         ],
         fix_responses=[{}],
@@ -3514,8 +3514,8 @@ def test_review_passes_llm_humor_to_quality(monkeypatch):
     out = run_daily_story_review(client, "抢遥控器看动画片", story)
     q = out["quality"]
     assert q["pass"] is True
-    assert q["humor"]["funny_score"] == 8  # 取首轮
-    assert q["score"] == 88
+    assert q["humor"]["funny_score"] == 14  # 取首轮
+    assert q["score"] == 94
 
 
 def test_b_filler_detected_in_humor_regex():

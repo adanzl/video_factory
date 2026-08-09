@@ -51,9 +51,14 @@ _REDUNDANCY_STOP_WORDS: frozenset[str] = frozenset({
 })
 _CONTENT_WORD_RE = re.compile(r"[\u4e00-\u9fff]{2,}")
 
-# 结构（格式/节奏/类型收束形态）满分上限；总分=结构+好笑，纯加法
-# 发布线 88（llm_mgr target）：格式齐只值 80，须好笑≥8 才够发布
+# 结构（格式/节奏/类型收束形态）满分 80（扣分制，未达标逐项扣）；总分 = 结构 + LLM 好笑
+# 发布线（llm_mgr target 结构 75）：结构≥75 且 LLM 好笑≥12（0-20 制）才够发布
 STRUCTURE_SCORE_CAP = 80
+# 扣分制各维度满分（结构分从 80 满分往下扣，未达标按维度扣分，cons 与分数对应）
+OPENING_SCORE_FULL = 6          # 开场：锚定3 + 双句1 + 背景1 + 可拍1
+ESCALATION_SCORE_FULL = 14      # 推进：4 层达标满分，3层-6 / 2层-12 / ≤1层-14
+PUNCHLINE_SCORE_FULL = 8        # 收束形态：回旋镖/反转/破功落位达标满分，未落位扣8
+# 节奏维度无独立满分：紧凑达标不减，绕圈/拖沓按 _score_redundancy 原扣分（-5~-12）
 # 好笑维度 0–20：达标=8（够发布线）；很好笑=15（仅标签）
 _HUMOR_POINTS_FOR_GOOD = 8
 _HUMOR_POINTS_FOR_GREAT = 15
@@ -232,7 +237,9 @@ def _score_escalation(
 
     layer_count = len(layer_first_seg)
 
-    layer_scores = {0: -12, 1: -6, 2: 2, 3: 8, 4: 14, 5: 18}
+    # 层数→推进分（2026-08-10 专家校准：3 层从 8 提为 10，使 3 层只扣 4 分，
+    # 发布线 75 下 80-4=76 仍可通过；4 层满分 14 扣 0、2 层扣 12、≤1 层扣 14）
+    layer_scores = {0: -12, 1: -6, 2: 2, 3: 10, 4: 14, 5: 18}
     bonus = layer_scores.get(layer_count, 18)
 
     if layer_count >= 4:
@@ -660,8 +667,9 @@ def score_daily_story(
     """给故事打观感分。
 
     评分模型：
-    - 结构分（格式、层数、收束形态、节奏）上限 80
-    - 好笑维度 0–20 直接相加：总分 = 结构 + 好笑（发布线 88 需好笑≥8）
+    - 结构分（格式、层数、收束形态、节奏）80 满分扣分制
+    - 正则好笑维度 0–20 仅作标签输出（2026-08-10 退役），发布线好笑由 LLM 审读
+      注入 funny_score（0-20），总分 = 结构 + LLM 好笑 − 审读硬伤（≤100）
     """
     if not isinstance(story, dict):
         return {
@@ -671,7 +679,9 @@ def score_daily_story(
             "reasons": ["故事为空"],
         }
 
-    score = 40
+    # 扣分制：结构满分 80，各维度未达标逐项扣分，cons 与分数严格对应。
+    # 不再有「40 基准 + 加分」，任何格式/节奏/收束形态缺陷都能在 reasons 里看到扣分。
+    score = STRUCTURE_SCORE_CAP
     pros: list[str] = []
     cons: list[str] = []
 
@@ -688,7 +698,7 @@ def score_daily_story(
     if rel_bonus < 0:
         cons.extend(rel_details)
 
-    # ── 结构：只扣不加 ──
+    # ── 必备字段 ──
     if not str(story.get("conflict_core") or "").strip():
         score -= 10
         cons.append("缺 conflict_core")
@@ -700,6 +710,7 @@ def score_daily_story(
         score -= 10
         cons.append("笑点解析缺类型")
 
+    # ── 开场维度（满分 6）：opening 净分为 -8~+8，未拿满按差扣分 ──
     opening = story.get("discovery_opening")
     if not isinstance(opening, list) or not (
         DAILY_STORY_OPENING_LINES_MIN
@@ -710,7 +721,13 @@ def score_daily_story(
         cons.append("缺发现开场")
     elif profile.score_opening_quality:
         op_pts, op_pros, op_cons = profile.score_opening_quality(story)
-        score += op_pts
+        opening_deduction = max(
+            0,
+            OPENING_SCORE_FULL - min(OPENING_SCORE_FULL, max(0, op_pts)),
+        )
+        if opening_deduction:
+            score -= opening_deduction
+            cons.append(f"开场未满（-{opening_deduction}）")
         pros.extend(op_pros)
         cons.extend(op_cons)
 
@@ -779,6 +796,7 @@ def score_daily_story(
         cons.append("耍赖软收")
         weak_hit = True
 
+    # ── 收束破功：达标制（先破功再软收 / 末句破功 = 达标不减分）──
     limp = any(m in last for m in _LIMP_SOFT_CLOSE_MARKERS)
     punched = any(m in prev2 for m in profile.punch_before_soft_markers) or any(
         m in prev2 or m in last for m in _STRONG_END_MARKERS
@@ -788,29 +806,31 @@ def score_daily_story(
         cons.append("无破功软收")
         weak_hit = True
     elif limp and punched:
-        score += 7
         pros.append("先破功再软收")
     elif any(m in last for m in _STRONG_END_MARKERS):
-        score += 14
         pros.append("末句有破功落点")
 
     layer_patterns = profile.layer_patterns()
 
-    # ── 核心质量维度 ──
+    # ── 推进维度（满分 14）：4 层达标；3层-6 / 2层-12 / ≤1层-14 ──
     esc_bonus, esc_details = _score_escalation(lines, layer_patterns=layer_patterns)
-    score += esc_bonus
-    if esc_bonus > 0:
+    esc_achieved = max(0, min(ESCALATION_SCORE_FULL, esc_bonus))
+    esc_deduction = ESCALATION_SCORE_FULL - esc_achieved
+    score -= esc_deduction
+    if esc_deduction:
+        cons.append(f"冲突推进不足（-{esc_deduction}）")
+    else:
         pros.extend(esc_details)
-    elif esc_bonus < 0:
-        cons.extend(esc_details)
 
+    # ── 节奏维度：紧凑达标不减；绕圈/拖沓按原扣分（-5~-12）──
     red_bonus, red_details = _score_redundancy(lines)
-    score += red_bonus
     if red_bonus < 0:
+        score += red_bonus
         cons.extend(red_details)
     elif red_bonus > 0:
         pros.extend(red_details)
 
+    # ── 收束形态（满分 8）：有回旋镖/反转/破功落点 = 达标；无 = 扣满 ──
     punch_bonus, punch_details = score_punchline_for_profile(
         profile, lines, speakers, prev2, last,
     )
@@ -826,15 +846,17 @@ def score_daily_story(
                 if "破功" in d or "闭环" in d
             ][:2]
 
-    score += punch_bonus
     if punch_bonus > 0:
         pros.extend(punch_details)
-    elif punch_bonus < 0:
-        cons.extend(punch_details)
+    else:
+        score -= PUNCHLINE_SCORE_FULL
+        cons.append(f"收束形态未落位：无回旋镖/反转/破功落点（-{PUNCHLINE_SCORE_FULL}）")
+        if punch_details:
+            cons.extend(punch_details)
 
     structure_score = max(0, min(STRUCTURE_SCORE_CAP, score))
     # 正则好笑分退役（2026-08-10）：不再计入总分。发布线好笑由 LLM 审读
-    # 阶段评定（review.apply_review_to_quality 注入 funny_score 0-10）。
+    # 阶段评定（review.apply_review_to_quality 注入 funny_score 0-20）。
     # 这里保留计算与 reasons 输出，仅作调试与阈值实验参考。
     humor_regex_points, humor_pros, humor_cons = _score_funniness(
         lines,
