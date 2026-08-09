@@ -2846,10 +2846,15 @@ class DeepSeekClient(LLMClient):
         self,
         theme: str,
         story: dict[str, Any],
-    ) -> list[dict[str, Any]]:
-        """审读一次：以读者身份逐句挑硬伤，返回结构化问题清单。"""
+    ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+        """审读一次：以读者身份逐句挑硬伤，同时评好笑分，合并一次调用。
+
+        返回 (issues, humor)；humor = {funny_score, best_moment, humor_type}
+        或 None（LLM 未给合法好笑字段时降级为旧行为）。
+        """
         from app.services.daily_story.review import (
             build_review_prompts,
+            parse_humor,
             parse_review_issues,
         )
 
@@ -2864,9 +2869,12 @@ class DeepSeekClient(LLMClient):
             )
         except ValueError as exc:
             logger.warning("[DAILY_STORY] review call failed: %s", exc)
-            return []
+            return [], None
         n_lines = len(story.get("dialogue") or [])
-        return parse_review_issues(raw, line_count=n_lines)
+        return (
+            parse_review_issues(raw, line_count=n_lines),
+            parse_humor(raw),
+        )
 
     def spot_fix_daily_story(
         self,

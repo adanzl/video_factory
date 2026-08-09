@@ -227,10 +227,15 @@ class JobMgr:
             return repo_job.get_job(job_id)
 
     def update_segment_info(self, job_id: int, segment_index: int, *, video_provider: str | None, clear_video_provider: bool=False) -> dict:
-        """更新分镜 info（当前仅 video_provider）；同步 script_json.segments[].info。"""
-        from app.utils.job_info import merge_job_info, normalize_video_provider
+        """更新分镜 info（当前仅 video_provider）；同步 script_json.segments[].info。
+
+        取消时写入空串 ``video_provider=""``（保留键），以便后续
+        ``apply_keyframe_video_providers`` 不把特写再次刷成 I2V。
+        """
+        from app.utils.job_info import merge_job_info, normalize_video_provider, parse_job_info
         if clear_video_provider:
-            provider_value: str | None = None
+            # 空串 = 显式取消（回落任务默认）；勿 pop 键
+            provider_value: str | None = ''
         else:
             provider_value = normalize_video_provider(video_provider)
             if provider_value is None:
@@ -241,7 +246,11 @@ class JobMgr:
             target = next((s for s in segments if int(s['segment_index']) == segment_index), None)
             if target is None:
                 raise KeyError(f'segment {segment_index} not found')
-            info = merge_job_info(target.get('info'), video_provider=provider_value)
+            if clear_video_provider:
+                info = parse_job_info(target.get('info'))
+                info['video_provider'] = ''
+            else:
+                info = merge_job_info(target.get('info'), video_provider=provider_value)
             repo_segment.update_segment(int(target['id']), info=info or None)
             script = dict(job.get('script_json') or {})
             script_segments = list(script.get('segments') or [])
@@ -250,7 +259,11 @@ class JobMgr:
                 if int(seg.get('segment_index', 0)) != segment_index:
                     continue
                 seg = dict(seg)
-                seg_info = merge_job_info(seg.get('info'), video_provider=provider_value)
+                if clear_video_provider:
+                    seg_info = parse_job_info(seg.get('info'))
+                    seg_info['video_provider'] = ''
+                else:
+                    seg_info = merge_job_info(seg.get('info'), video_provider=provider_value)
                 if seg_info:
                     seg['info'] = seg_info
                 else:

@@ -706,11 +706,13 @@ class LLMMgr:
         client = self._get_client()
         best_story: dict[str, Any] | None = None
         best_score = -1
-        target = 88
-        # 整稿 3 次（全 Flash 高温发散，多滚踩好笑分）+ refine 兜底；
+        target = 75
+        # 生成循环只追结构分（≤80 封顶）；好笑分由审读阶段 LLM 评定
+        # （review.apply_review_to_quality 注入 funny_score），最终发布线 =
+        # 结构≥75 且 LLM 好笑≥6。整稿 3 次（全 Flash 高温发散）+ refine 兜底；
         # refine 已切 Flash 关 thinking，总耗时可控。refine 一次只修一个主问题
-        # （build_quality_revision_hints 单主项），85 分稿常叠 2 个短板
-        # （口头禅复读+回旋镖未点破），留 2 轮让它连续补完到 88。
+        # （build_quality_revision_hints 单主项），结构短板常叠 2 个
+        # （口头禅复读+回旋镖未点破），留 2 轮补到 75。
         max_full = 3
         max_refine = 2
         last_exc: Exception | None = None

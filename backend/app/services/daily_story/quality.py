@@ -833,7 +833,10 @@ def score_daily_story(
         cons.extend(punch_details)
 
     structure_score = max(0, min(STRUCTURE_SCORE_CAP, score))
-    humor_points, humor_pros, humor_cons = _score_funniness(
+    # 正则好笑分退役（2026-08-10）：不再计入总分。发布线好笑由 LLM 审读
+    # 阶段评定（review.apply_review_to_quality 注入 funny_score 0-10）。
+    # 这里保留计算与 reasons 输出，仅作调试与阈值实验参考。
+    humor_regex_points, humor_pros, humor_cons = _score_funniness(
         lines,
         type_code=profile.code,
         humor_issues=humor_issues,
@@ -841,23 +844,18 @@ def score_daily_story(
     )
     pros.extend(humor_pros)
     cons.extend(humor_cons)
-
-    # 结构≤80（扣分制）+ 好笑 0–20（加分制），纯加法
-    score = max(0, min(100, structure_score + humor_points))
-    if structure_score >= 70 and humor_points < _HUMOR_POINTS_FOR_GOOD:
-        cons.append(
-            f"格式达标但好笑不足（好笑{humor_points}/20）",
-        )
     pros.append(f"结构{structure_score}")
-    pros.append(f"好笑{humor_points}")
-    grade = _grade_from_score(score)
+    pros.append(f"好笑{humor_regex_points}")
+    # 结构≤80（扣分制）为生成循环 target；审读后 total = 结构 + LLM 好笑
+    grade = _grade_from_score(structure_score)
     summary = _build_summary(
         pros, cons, grade, profile.summary_highlight_tokens,
     )
 
     return {
         "grade": grade,
-        "score": score,
+        "score": structure_score,
+        "structure_score": structure_score,
         "summary": summary,
         "reasons": [*pros, *cons],
     }
@@ -1036,7 +1034,7 @@ def build_quality_revision_hints(
     if not hints:
         if not layer_info or "2层" in layer_info or "偏少" in layer_info:
             need_esc = True
-        elif "3层" in layer_info and score < 88 and has_punch_ending:
+        elif "3层" in layer_info and score < 75 and has_punch_ending:
             need_esc = True
         if need_esc:
             primary_kind = primary_kind or "escalation"

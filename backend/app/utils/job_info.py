@@ -241,6 +241,10 @@ def apply_keyframe_video_providers(segments: list[dict[str, Any]]) -> list[int]:
     开场吸引力靠分镜提示强制 scene_id=1 用特写定格冲突峰值，
     从而仍走关键帧；不再无条件把 segment_index=1 标成关键帧。
 
+    尊重人工覆盖：info 已含 video_provider 键则不改（含显式取消的
+    空串，以及 Ken Burns/ffmpeg、手动 I2V）。避免补全提示词时把
+    「取消」又刷回 I2V。
+
     应在 fill_image_prompts 之前调用，以便关键帧走专用 motion 规则。
     返回被标为关键帧的 segment_index 列表（升序去重）。
     """
@@ -252,6 +256,9 @@ def apply_keyframe_video_providers(segments: list[dict[str, Any]]) -> list[int]:
         if shot not in KEYFRAME_SHOT_TYPES:
             continue
         info = parse_job_info(seg.get('info'))
+        # 键存在即视为已决策（含 ""=取消）；勿覆盖
+        if 'video_provider' in info:
+            continue
         info['video_provider'] = KEYFRAME_VIDEO_PROVIDER
         seg['info'] = info
         if index > 0 and index not in seen:

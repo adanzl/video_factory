@@ -310,6 +310,33 @@ def test_apply_keyframe_video_providers_skips_non_closeup_opening():
     )
 
 
+def test_apply_keyframe_video_providers_respects_cleared_and_manual():
+    """显式取消（空串）与手动 Ken Burns 不被自动关键帧覆盖。"""
+    from app.utils.job_info import apply_keyframe_video_providers
+
+    segments = [
+        {
+            "segment_index": 1,
+            "shot_type": "特写",
+            "info": {"video_provider": ""},
+        },
+        {
+            "segment_index": 2,
+            "shot_type": "特写",
+            "info": {"video_provider": "ffmpeg"},
+        },
+        {
+            "segment_index": 3,
+            "shot_type": "特写",
+        },
+    ]
+    marked = apply_keyframe_video_providers(segments)
+    assert marked == [3]
+    assert segments[0]["info"]["video_provider"] == ""
+    assert segments[1]["info"]["video_provider"] == "ffmpeg"
+    assert segments[2]["info"]["video_provider"] == "agnes_i2v"
+
+
 def test_is_keyframe_segment():
     from app.utils.job_info import is_keyframe_segment
 
@@ -317,6 +344,7 @@ def test_is_keyframe_segment():
     assert is_keyframe_segment({"info": {"video_provider": "agnes_i2v"}})
     assert is_keyframe_segment({"info": {"video_provider": "wan_i2v"}})
     assert not is_keyframe_segment({"info": {"video_provider": "ffmpeg"}})
+    assert not is_keyframe_segment({"info": {"video_provider": ""}})
 
 
 def test_resolve_video_provider_visual_mode_fallback():
