@@ -1259,14 +1259,12 @@ def _daily_story_anchor_block(
     sc = str(fw.get("scene_title") or "").strip()
     st = str(fw.get("setting") or "").strip()
     cc = str(fw.get("conflict_core") or "").strip()
-    op_txt = ""
-    if opening:
-        op_txt = " ／ ".join(
-            str(d.get("line") or "").strip()
-            for d in opening
-            if isinstance(d, dict) and str(d.get("line") or "").strip()
-        )
-    if not (sc or st or cc or op_txt):
+    opening_lines = [
+        d
+        for d in (opening or [])
+        if isinstance(d, dict) and str(d.get("line") or "").strip()
+    ]
+    if not (sc or st or cc or opening_lines):
         # 无框架/无开场（旧路径）不注入锚块，避免空壳标题
         return ""
     lines: list[str] = ["【剧本框架（已定，正文必须围绕它展开）】"]
@@ -1276,12 +1274,21 @@ def _daily_story_anchor_block(
         lines.append(f"现场：{st}")
     if cc:
         lines.append(f"本场只争：{cc}")
-    if op_txt:
-        lines.append(f"开场（正文须承接此画面续写，勿重复开场）：{op_txt}")
-    lines.append(
-        "正文从开场之后的时间点开始写，承接同一冲突、同一实物/动作；"
-        "禁止另起冲突、换场地、换实物。"
-    )
+    if opening_lines:
+        # 开场明确定位成「对话第 1–2 句」而非背景画面，否则 LLM 会把正文第 1 句
+        # 当新一轮对话从开场末句人继续写，造成跨段同人连说（2026-08-08 修复）。
+        lines.append("【已生成的开场 = 对话第 1–2 句（正文只许从第 3 句接着写）】")
+        for j, d in enumerate(opening_lines):
+            lines.append(f"第{j + 1}句 {d.get('speaker')}：{d.get('line')}")
+        last_op = str(opening_lines[-1].get("speaker") or "").strip()
+        alt = "灿灿" if last_op == "昭昭" else "昭昭" if last_op == "灿灿" else ""
+        if alt:
+            lines.append(
+                f"正文第 3 句（全场正文第 1 句）必须由 **{alt}** 开讲"
+                f"（与开场第 2 句的{last_op}换人），承接同一冲突/实物/动作，"
+                "禁止复述第 1–2 句已说的内容；此后全篇严格交替，"
+                "任意相邻两句 speaker 必须不同，禁止同人连说（连一句也不行）。"
+            )
     return "\n".join(lines)
 
 

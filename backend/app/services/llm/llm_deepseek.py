@@ -87,6 +87,60 @@ _TEMP_CREATIVE_HIGH = 0.95  # D1/D2 首稿
 _TEMP_CREATIVE_BLUEPRINT = 1.0  # D1.5 有骨架时的 D2 首稿
 _TEMP_CREATIVE_MID = 0.8  # A2/C/D4/E1
 _TEMP_UTILITY = 0.5  # E2/E3/E4/封面
+_TEMP_CRITERION_LOCKED = 0.4  # C 类台词锚定注入生效时的正文温度（专家定：降温度提遵从）
+
+# C 类判据链（2026-08-09 专家死磕重设计）：从「2 句固定台词硬锁」改为「占有系
+# 白名单 + 变体引导 + 允许干净仪式」。实测教训：v19-v22 两句锚定压不住中段自创
+# 判据（2 句覆盖不了 16 句争论），且 pro 硬锁重复锁死创造力更差（v21/v22 1/4）。
+# 专家结论：正确做法是给模型占有系白名单（拿到/抢到/攥在手里/举起/翻开/坐上）
+# +「每次宣示规则句式尽量与前次不同」的变体引导，允许附加纯时长/纯位置仪式
+# （坚持三秒/举过头顶/放桌上——仪式条件只许时间/位置词，正是回旋镖字面反噬的
+# 燃料），禁接触/状态/操作系动词混入；阶段三后处理把漏网漂移句单句重写回白名单。
+_C_CRITERION_PACKAGE_SYSTEM = """\
+你为「昭昭&灿灿」日常短剧的 C 类（公平执念）故事生成「判据链锚点」。C 类判据
+核心动词**只许用占有系白名单**：拿到/抢到/攥在手里/翻开/坐上/举起。孩子争某物
+归属，只许宣告「我先拿到的」「我攥在手里了」「我先抢到的」「谁先拿到归谁」这类
+占有宣言。
+
+**允许给占有判据附加纯时长/纯位置仪式（专家 2026-08-09 定）**：判据核心动词仍是
+占有系白名单，可附加「坚持三秒」「举过头顶」「放桌上」等时间/位置条件（正例：
+「谁先举过头顶坚持三秒才算」——核心动词「举」是占有系，「坚持三秒」是时间词，
+仪式正是回旋镖字面反噬的燃料）。**禁止仪式含接触/状态/操作系动词**——「数到三
+松手」（松手=状态系）、「掏出来」（操作系）、「撕开包装」（开系）、「掉/洒」
+（状态）一律禁用。
+
+为主题生成 JSON（只输出 JSON，不要多余解释）：
+1. zhaozhao_rule：昭昭（弟弟）抛出的规则台词，一句 8-24 字、核心动词用占有系
+   白名单、**可带纯时长/纯位置仪式**（谁先拿到归谁/我先攥手里了/谁先举过头顶
+   坚持三秒谁喝/谁先翻开谁先看/我先坐上了归我）；是可被抠字眼的占有判定。
+2. cancan_rule：灿灿（姐姐）抛出的规则台词，与昭昭的规则对立或加码，同样核心
+   用占有系白名单、可带干净仪式。
+3. boomerang_quote：将被反噬的原话——**必须与 zhaozhao_rule 或 cancan_rule
+   完全一致**（逐字复制其中一句，不能改动、不能另造）。
+4. boomerang_source：boomerang_quote 来自哪条，填 "zhaozhao_rule" 或
+   "cancan_rule"。
+
+禁止 碰/摸/够/搭/挨/蹭/伸/探/点（接触系）、按/打开/切换/调（操作系）、
+拧/撕/掰/揭（开系）、吃/咬/舔/喝/吞/尝/擦（消耗系）、松手/放手/攥住（状态系）、
+动/跑/先数到（时序系）当判据；禁止「X不算，Y才算」分级杠精句式；禁止仪式含
+数到三松手/掏出来/撕开包装/掉/洒等动作。
+示例（可化用勿照抄）：zhaozhao_rule「谁先拿到归谁」、cancan_rule「我先举过头顶
+坚持三秒才算，归我」，boomerang_quote 从其中逐字选一句。
+
+格式：{"zhaozhao_rule": "...", "cancan_rule": "...", "boomerang_quote": "...", "boomerang_source": "zhaozhao_rule|cancan_rule"}
+"""
+_C_CRITERION_INJECT_TEMPLATE = """\
+【判据链规则（最高优先级，比上面所有规则更硬）】
+- 判据核心动词只许占有系白名单：拿到/抢到/攥在手里/举起/翻开/坐上。
+- 允许给占有判据附加纯时长/纯位置仪式（举过头顶坚持三秒/放桌上才算/举起算），
+  仪式条件只许时间/位置词，不得引入接触/松手/打开/撕/掏/掉/洒等动作。
+- 每次角色提出/加码新规则，判据动词从白名单中选用，且句式尽量与前次不同，
+  形成围绕占有的递进争论（拿到→攥手里→举起→举过头顶坚持三秒）。
+- 本稿规则锚点（可逐字引用，也可在白名单内换句式）：昭昭「{zhaozhao_rule}」、
+  灿灿「{cancan_rule}」。
+- 结尾回旋镖，被戳穿方引用**正文真出现过的规则原话**反呛（可用 {boomerang_quote}，
+  须与前文逐字一致）。
+- 禁止其它动词当判据（碰/摸/按/拧/撕/喝/咬/动/跑/松手等一律禁用）。"""
 
 
 def _force_framework_fields(story: dict, framework: dict | None) -> None:
@@ -1707,6 +1761,16 @@ class DeepSeekClient(LLMClient):
         """
         if not story_type:
             story_type = _select_story_type(theme)
+        # C 类台词锚定：包先生成一次（开场与正文共用），开场也注入——
+        # 否则开场先于正文生成、不知规则，可能用禁用动词当判据（v19 开场
+        # 漂移[1]），注入开场后开场立的规自然用白名单台词。
+        from app.services.daily_story.story_types import parse_story_type_code
+
+        criterion_block = ""
+        if parse_story_type_code(story_type=story_type) == "C":
+            pkg = self._generate_c_criterion_package(theme)
+            if pkg:
+                criterion_block = _C_CRITERION_INJECT_TEMPLATE.format(**pkg)
         framework = self._generate_daily_story_framework(
             theme,
             story_type=story_type,
@@ -1715,12 +1779,14 @@ class DeepSeekClient(LLMClient):
             theme,
             framework,
             story_type=story_type,
+            criterion_block=criterion_block,
         )
         body = self._generate_daily_story_body(
             theme,
             story_type=story_type,
             framework=framework,
             opening=opening,
+            criterion_block=criterion_block,
         )
         return self._stitch_daily_story_full(
             theme,
@@ -1728,6 +1794,7 @@ class DeepSeekClient(LLMClient):
             story_type=story_type,
             framework=framework,
             opening=opening,
+            criterion_block=criterion_block,
         )
 
     def refine_daily_story_for_quality(
@@ -1782,6 +1849,7 @@ class DeepSeekClient(LLMClient):
         story_type: str | None = None,
         framework: dict | None = None,
         opening: list[dict] | None = None,
+        criterion_block: str = "",
     ) -> dict[str, Any]:
         from app.services.daily_story.prompts import (
             _patch_body_part_char_budget,
@@ -1805,6 +1873,7 @@ class DeepSeekClient(LLMClient):
                     framework if framework is not None else body,
                     avoid_speaker=use_avoid,
                     story_type=story_type,
+                    criterion_block=criterion_block,
                 )
             story = stitch_daily_story_opening(body, cur_opening)
             # 拼接删正文开头发现句后 body-part 可能跌破 280：本地收口回硬卡内
@@ -1819,6 +1888,30 @@ class DeepSeekClient(LLMClient):
                 return story
             except ValueError as exc:
                 last_exc = exc
+                # Stage 3 判据链安全网（phase=full 兜底）：拼开场后判据漂移索引含
+                # 开场 2 句，正文修复过但开场/拼接句漂移时在此单句重写再复检。
+                if "判据漂移" in str(exc):
+                    try:
+                        fixed = self._stage3_fix_c_criterion_drift(
+                            story,
+                            theme=theme,
+                        )
+                    except Exception as exc3:  # noqa: BLE001
+                        fixed = None
+                        logger.warning(
+                            "[DAILY_STORY] Stage3 full fix raised: %s",
+                            exc3,
+                        )
+                    if fixed is not None:
+                        try:
+                            validate_daily_story_json(fixed, phase="full")
+                            logger.info(
+                                "[DAILY_STORY] Stage3 fixed full criterion "
+                                "drift, saved opening regen"
+                            )
+                            return fixed
+                        except ValueError:
+                            pass
                 if "连说" not in str(exc) or round_i + 1 >= max_open_rounds:
                     break
                 logger.warning(
@@ -1992,6 +2085,138 @@ class DeepSeekClient(LLMClient):
         assert last_exc is not None
         raise last_exc
 
+    def _generate_c_criterion_package(
+        self,
+        theme: str,
+    ) -> dict[str, Any] | None:
+        """C 类台词锚定·第一阶段：生成「昭昭/灿灿各一条规则台词 + 回旋镖原话」。
+
+        专家 2026-08-09 重设计（白名单池 0/4 失败后的治本方案）：判据可选集合
+        坍缩到 2 句固定台词，正文强制一字不差说出。代码校验：
+        - 两条规则各含至少一个占有系动词，且不命中任何判据正则（接触/操作/
+          结果/状态/时序/消耗/开系）；
+        - boomerang_quote 必须与 boomerang_source 指向的那条规则**逐字相同**。
+        不合格低成本重试 3 次（小 JSON 比整稿快得多）；全败返回 None，正文
+        生成走原流程（不阻断）。返回 {"zhaozhao_rule", "cancan_rule",
+        "boomerang_quote", "boomerang_source"}。
+        """
+        from app.services.daily_story.story_types.c.validate import (
+            _RE_CONTACT_CRITERION,
+            _RE_CONSUME_CRITERION,
+            _RE_OPEN_CRITERION,
+            _RE_OPERATE_CRITERION,
+            _RE_RESULT_CRITERION,
+            _RE_SEQUENCE_CRITERION,
+            _RE_STATE_CRITERION,
+        )
+
+        _FORBIDDEN = (
+            _RE_CONTACT_CRITERION,
+            _RE_OPERATE_CRITERION,
+            _RE_RESULT_CRITERION,
+            _RE_STATE_CRITERION,
+            _RE_SEQUENCE_CRITERION,
+            _RE_CONSUME_CRITERION,
+            _RE_OPEN_CRITERION,
+        )
+        # 仪式白名单（专家 2026-08-09 死磕细化，替代一刀切禁仪式）：占有判据核心
+        # 动词仍是占有系白名单，允许附加纯时长/纯位置仪式（举过头顶坚持三秒/放桌上）
+        # ——仪式正是回旋镖字面反噬的燃料。只禁会拖出 接触/状态/操作系 动作的仪式词：
+        # 掏（操作）、坐稳/起身/松手/放手（状态）、掉/洒（状态，酸奶滴落）。「坚持」
+        # 「举过头顶」「数到三同时放」等纯时间/位置词不再禁用（合法启动/仪式条件）。
+        _RE_RITUAL_GATE = re.compile(r"掏出|坐稳|起身|松手|放手|掉|洒")
+        _POSSESSIVE = re.compile(r"拿|抢|攥|翻|坐|举|占|归")
+        user = (
+            f"主题：{theme}\n\n"
+            "输出昭昭/灿灿各一条规则台词 + 被反噬原话。"
+        )
+        for attempt in range(3):
+            raw, _ = self._chat_json(
+                _C_CRITERION_PACKAGE_SYSTEM,
+                user,
+                thinking_enabled=False,
+                # 包生成用中温求规则多样（正文才锁 0.4）；禁用动词由代码校验兜底
+                temperature=_TEMP_CREATIVE_MID,
+                model=self._model,
+            )
+            if not isinstance(raw, dict):
+                logger.warning(
+                    "[DAILY_STORY] C criterion package attempt=%d non-dict",
+                    attempt + 1,
+                )
+                continue
+            zz = str(raw.get("zhaozhao_rule") or "").strip()
+            cc = str(raw.get("cancan_rule") or "").strip()
+            bq = str(raw.get("boomerang_quote") or "").strip()
+            src = str(raw.get("boomerang_source") or "").strip()
+            if not (zz and cc and bq):
+                continue
+            if any(r.search(t) for r in _FORBIDDEN for t in (zz, cc)):
+                logger.info(
+                    "[DAILY_STORY] C criterion package attempt=%d forbidden "
+                    "rule: %s | %s",
+                    attempt + 1,
+                    zz,
+                    cc,
+                )
+                continue
+            if _RE_RITUAL_GATE.search(zz) or _RE_RITUAL_GATE.search(cc):
+                logger.info(
+                    "[DAILY_STORY] C criterion package attempt=%d ritual gate "
+                    "rule: %s | %s",
+                    attempt + 1,
+                    zz,
+                    cc,
+                )
+                continue
+            if zz == cc:
+                logger.info(
+                    "[DAILY_STORY] C criterion package attempt=%d identical "
+                    "rules: %s",
+                    attempt + 1,
+                    zz,
+                )
+                continue
+            if not _POSSESSIVE.search(zz) or not _POSSESSIVE.search(cc):
+                logger.info(
+                    "[DAILY_STORY] C criterion package attempt=%d rule missing "
+                    "possessive verb: %s | %s",
+                    attempt + 1,
+                    zz,
+                    cc,
+                )
+                continue
+            src_rule = {"zhaozhao_rule": zz, "cancan_rule": cc}.get(src)
+            if src_rule is None or bq != src_rule:
+                logger.info(
+                    "[DAILY_STORY] C criterion package attempt=%d boomerang "
+                    "mismatch src=%s bq=%s",
+                    attempt + 1,
+                    src,
+                    bq,
+                )
+                continue
+            logger.info(
+                "[DAILY_STORY] C criterion package ok attempt=%d zz=%s cc=%s "
+                "bq=%s src=%s",
+                attempt + 1,
+                zz,
+                cc,
+                bq,
+                src,
+            )
+            return {
+                "zhaozhao_rule": zz,
+                "cancan_rule": cc,
+                "boomerang_quote": bq,
+                "boomerang_source": src,
+            }
+        logger.warning(
+            "[DAILY_STORY] C criterion package failed after 3 attempts, "
+            "body generation proceeds without it"
+        )
+        return None
+
     def _generate_daily_story_body(
         self,
         theme: str,
@@ -1999,6 +2224,7 @@ class DeepSeekClient(LLMClient):
         story_type: str | None = None,
         framework: dict | None = None,
         opening: list[dict] | None = None,
+        criterion_block: str = "",
     ) -> dict[str, Any]:
         if not story_type:
             story_type = _select_story_type(theme)
@@ -2015,18 +2241,32 @@ class DeepSeekClient(LLMClient):
             framework=framework,
             opening=opening,
         )
+        # C 类台词锚定（2026-08-09 专家终极方案）：criterion_block 由
+        # generate_daily_story 层生成并传入（开场共用同一包），硬注入 user
+        # （重试各分支同样注入），并把正文温度降到 0.4 提高遵从。
+
+        def _inject_c_criterion(u: str) -> str:
+            return f"{u}\n\n{criterion_block}" if criterion_block else u
+
+        user = _inject_c_criterion(user)
         last_exc: ValueError | None = None
         # 实验结论：关 thinking + 高温一次即达标（297 字/6.4s），开 thinking
         # 虽更长但慢 36 倍。全部走关 thinking + 高温，靠次数+本地补字兜住。
+        # C 类台词锚定注入生效时降温度（专家定 0.4）：约束越硬温度越低，
+        # 否则闭集选择会被发散冲垮。
         max_attempts = 3
         prev_story: dict | None = None
         same_err_streak = 0
         prev_err_key = ""
         draft_temp = (
-            _TEMP_CREATIVE_BLUEPRINT if blueprint else _TEMP_CREATIVE_HIGH
+            _TEMP_CRITERION_LOCKED
+            if criterion_block
+            else (_TEMP_CREATIVE_BLUEPRINT if blueprint else _TEMP_CREATIVE_HIGH)
         )
         for attempt in range(max_attempts):
-            # 全程 Flash：关 thinking + 高温，不用 Pro/thinking（太慢）
+            # 全程 Flash：关 thinking + 高温，不用 Pro/thinking（太慢）。
+            # pro 两轮实测 1/4 更差（v21/v22：过稿质量 47/62 反而更低、慢 2-3 倍），
+            # 判据漂移不是换更强模型能解决的，回 flash（v20 基线 2/4、质量 83/84）。
             use_model = self._model
             if attempt > 0:
                 logger.info(
@@ -2133,6 +2373,30 @@ class DeepSeekClient(LLMClient):
                         except ValueError:
                             prev_story = patched2
                 errors = str(exc).removeprefix("daily_story 校验失败: ")
+                # Stage 3 判据链安全网（专家 2026-08-09）：判据漂移时先单句重写
+                # 漏网漂移句回白名单动词，成功即返回，不必整稿重抽。
+                if "判据漂移" in errors and isinstance(prev_story, dict):
+                    try:
+                        fixed = self._stage3_fix_c_criterion_drift(
+                            prev_story,
+                            theme=theme,
+                        )
+                    except Exception as exc3:  # noqa: BLE001
+                        fixed = None
+                        logger.warning(
+                            "[DAILY_STORY] Stage3 fix raised: %s",
+                            exc3,
+                        )
+                    if fixed is not None:
+                        if isinstance(fixed, dict):
+                            fixed.pop("_theme", None)
+                            fixed.pop("_story_type", None)
+                        logger.info(
+                            "[DAILY_STORY] Stage3 fixed criterion drift "
+                            "attempt=%d, saved full regen",
+                            attempt + 1,
+                        )
+                        return fixed
                 # 跑题稿是毒样本：丢掉上一稿，重试走全新首稿而非修订
                 if "正文跑题" in errors:
                     prev_story = None
@@ -2208,17 +2472,162 @@ class DeepSeekClient(LLMClient):
                             f"{expansion_outline_for(blueprint, story_type=story_type)}\n\n"
                             f"{user}"
                         )
+                    user = _inject_c_criterion(user)
                 else:
                     user = (
                         f"{build_daily_story_prompts(theme, story_type=story_type, length_mode=length_mode, punchline_blueprint=blueprint, framework=framework, opening=opening)[1]}\n\n"
                         f"【重试】上一轮校验未通过：{errors}\n"
                         "请直接输出符合硬约束的完整 JSON（正文勿写发现开场）。"
                     )
+                    user = _inject_c_criterion(user)
         assert last_exc is not None
         # 诊断：把最后一次被拒稿挂到异常上，便于上层/测试定位硬卡失败原因
         if isinstance(prev_story, dict):
             last_exc._failed_body = prev_story  # type: ignore[attr-defined]
         raise last_exc
+
+    def _stage3_fix_c_criterion_drift(
+        self,
+        story: dict[str, Any],
+        *,
+        theme: str = "",
+    ) -> dict[str, Any] | None:
+        """Stage 3 判据链安全网（专家 2026-08-09 死磕重设计）。
+
+        专家结论：两句固定台词锚定压不住中段自创判据（v19-v22 2/4 卡死在这），
+        阶段三不是「改回锚定台词」而是「判据链安全网」——把漏网的漂移判据句
+        单句重写为只用占有系白名单动词（可附加纯时长/纯位置仪式），替换后复检。
+
+        逻辑（对齐专家 4）：
+        1. 提取疑似判据句：含「谁先/归谁/才算/算你的」等宣示规则模式的句子。
+        2. 动词过滤：命中判据正则（接触/操作/结果/状态/时序/消耗/开系）即漂移句。
+        3. 单句重写：每句调 LLM 生成 3 个候选，正则选出完全无黑名单动词的替换原文。
+        4. 复检全文判据句 + validate phase=body，通过才返回。
+        任一失败返回 None（交由上层整稿重抽兜底）。
+        """
+        from app.services.daily_story.prompts import (
+            _clone_story,
+            validate_daily_story_json,
+        )
+        from app.services.daily_story.story_types.c.validate import (
+            _RE_CONTACT_CRITERION,
+            _RE_CONSUME_CRITERION,
+            _RE_OPEN_CRITERION,
+            _RE_OPERATE_CRITERION,
+            _RE_RESULT_CRITERION,
+            _RE_SEQUENCE_CRITERION,
+            _RE_STATE_CRITERION,
+        )
+
+        _FORBIDDEN = (
+            _RE_CONTACT_CRITERION,
+            _RE_OPERATE_CRITERION,
+            _RE_RESULT_CRITERION,
+            _RE_STATE_CRITERION,
+            _RE_SEQUENCE_CRITERION,
+            _RE_CONSUME_CRITERION,
+            _RE_OPEN_CRITERION,
+        )
+        # 疑似判据句：宣示归属/规则的句子里命中判据正则 → 漂移候选
+        _RE_CRITERION_LIKE = re.compile(
+            r"谁先|谁|归谁|归我|算我的|算你的|归你|才算|算数|算赢|"
+            r"该我|该你|赢|输|拿到|抢到|攥|翻开|坐上|举起|举过头顶",
+        )
+        _POSSESSIVE = re.compile(r"拿|抢|攥|翻|坐|举|占|归")
+
+        dialogue = story.get("dialogue")
+        if not isinstance(dialogue, list) or not dialogue:
+            return None
+
+        # 1+2：提取漂移判据句（命中判据正则是硬信号；「谁先」句漏判据正则也查白名单缺失）
+        drift_idxs: list[int] = []
+        for i, item in enumerate(dialogue):
+            if not isinstance(item, dict):
+                continue
+            ln = str(item.get("line") or "").strip()
+            if not ln:
+                continue
+            if not _RE_CRITERION_LIKE.search(ln):
+                continue
+            if any(r.search(ln) for r in _FORBIDDEN):
+                drift_idxs.append(i)
+                continue
+            # 明显宣示规则（谁先X归Y/得X才算）但没有任何占有系白名单动词 → 漂移
+            if re.search(r"(?:谁先.{0,8}归谁|得.{0,8}才算|先.{0,6}(?:的|了))", ln):
+                if not _POSSESSIVE.search(ln):
+                    drift_idxs.append(i)
+
+        if not drift_idxs:
+            return None
+
+        # 3：逐句单句重写（每句最多重写 3 次；一次成功即替换）
+        rewrite_system = """\
+你是「昭昭&灿灿」日常短剧 C 类（公平执念）的台词修稿器。只改一句对白中的
+「规则宣告/判定归属」部分：
+- 判据核心动词只用占有系白名单：拿到/抢到/攥在手里/举起/翻开/坐上。
+- 可附加纯时长/纯位置仪式（举过头顶坚持三秒/放桌上才算），仪式条件只许时间/位置词。
+- 不得引入 碰/摸/松手/掉/洒/打开/撕/掏/按/喝/咬/动/跑 等动作当判据。
+- 保持原句气势、角色立场、说话人语气；字数尽量相近（±4 字）。
+只输出改写后的完整一句对白，不要解释、不要 JSON。"""
+        out = _clone_story(story)
+        fixed_any = False
+        for idx in drift_idxs:
+            ln = str(out["dialogue"][idx].get("line") or "").strip()
+            candidate = None
+            for _ in range(3):
+                try:
+                    content, _ = self._chat(
+                        rewrite_system,
+                        f"原句：{ln}\n改写后：",
+                        json_mode=False,
+                        thinking_enabled=False,
+                        temperature=_TEMP_CRITERION_LOCKED,
+                        model=self._model,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "[DAILY_STORY] Stage3 rewrite llm fail idx=%d: %s",
+                        idx,
+                        exc,
+                    )
+                    break
+                cand = (content or "").strip().strip("「」\"'“”")
+                if not cand:
+                    continue
+                if any(r.search(cand) for r in _FORBIDDEN):
+                    continue
+                if not _POSSESSIVE.search(cand):
+                    continue
+                candidate = cand
+                break
+            if candidate:
+                out["dialogue"][idx]["line"] = candidate
+                fixed_any = True
+                logger.info(
+                    "[DAILY_STORY] Stage3 rewrite idx=%d: %r -> %r",
+                    idx,
+                    ln,
+                    candidate,
+                )
+        if not fixed_any:
+            return None
+
+        # 4：复检全文判据句 + 整稿 validate
+        for item in out["dialogue"]:
+            ln = str(item.get("line") or "").strip()
+            if ln and _RE_CRITERION_LIKE.search(ln) and any(
+                r.search(ln) for r in _FORBIDDEN
+            ):
+                return None
+        try:
+            validate_daily_story_json(out, phase="body")
+        except ValueError as exc:
+            logger.info(
+                "[DAILY_STORY] Stage3 fixed story still invalid: %s",
+                exc,
+            )
+            return None
+        return out
 
     def _revise_daily_story_body(
         self,
@@ -2353,11 +2762,14 @@ class DeepSeekClient(LLMClient):
         *,
         avoid_speaker: str | None = None,
         story_type: str | None = None,
+        criterion_block: str = "",
     ) -> list[dict]:
         """基于剧本框架生成开场 2 句。
 
         2026-08-07 架构改造：开场吃 framework（scene_title/setting/
         conflict_core），不再依赖 body——body 此时尚未生成。
+        criterion_block：C 类台词锚定注入块；开场也注入，开场立的规才
+        不会用禁用动词当判据（v19 开场漂移[1]教训）。
         """
         from app.services.daily_story.story_types import parse_story_type_code
 
@@ -2371,6 +2783,8 @@ class DeepSeekClient(LLMClient):
             framework,
             type_code=open_type,
         )
+        if criterion_block:
+            user = f"{user}\n\n{criterion_block}"
         avoid = (avoid_speaker or "").strip() or None
         if avoid in ("昭昭", "灿灿"):
             other = "灿灿" if avoid == "昭昭" else "昭昭"

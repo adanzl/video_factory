@@ -2443,8 +2443,10 @@ def test_validate_c_body_rejects_rule_drift_no_verdict():
     """C 稿换比法/重开 ≥3 次且无人宣判旧局 → 赛规漂移硬卡（稿B 型）。"""
     story = _valid_story()
     dialogue = story["dialogue"]
-    # 中段塞 3 句无宣判的换比法：数到三 / 重来 / 换一种，且避开末段收束
-    dialogue[4] = {"speaker": dialogue[4]["speaker"], "line": _pad_line("好咱们数到三一起拿呀")}
+    # 中段塞 3 句无宣判的换比法：重新 / 重来 / 换一种，且避开末段收束。
+    # 注意不用「数到三」——2026-08-09 修正：数到三是对启动方式提公平条件
+    # （接规三选一②），不是换比法，已移出 RE_RULE_SWITCH（见 validate.py 注释）。
+    dialogue[4] = {"speaker": dialogue[4]["speaker"], "line": _pad_line("好咱们重新开一局呀")}
     dialogue[6] = {"speaker": dialogue[6]["speaker"], "line": _pad_line("那重来再比一次呀")}
     dialogue[9] = {"speaker": dialogue[9]["speaker"], "line": _pad_line("都不行换一种比法呀")}
     with pytest.raises(ValueError, match="赛规漂移|规则被反复单方面推翻"):
@@ -2455,7 +2457,7 @@ def test_validate_c_body_allows_rule_drift_with_verdict():
     """换比法后有人宣判（妈妈裁定/明明说）→ 放行，不算漂移。"""
     story = _valid_story()
     dialogue = story["dialogue"]
-    dialogue[4] = {"speaker": dialogue[4]["speaker"], "line": _pad_line("好咱们数到三一起拿呀")}
+    dialogue[4] = {"speaker": dialogue[4]["speaker"], "line": _pad_line("好咱们重新开一局呀")}
     dialogue[6] = {"speaker": dialogue[6]["speaker"], "line": _pad_line("那重来再比一次呀")}
     dialogue[9] = {"speaker": dialogue[9]["speaker"], "line": _pad_line("妈妈说定了先拿先选呀")}
     validate_daily_story_json(story, phase="body")
@@ -2489,12 +2491,14 @@ def test_validate_c_body_accepts_possession_criterion():
     validate_daily_story_json(story, phase="body")
 
 
-def test_validate_c_body_accepts_criterion_pierce():
-    """接触系/消耗系抢占理由被「X到不算，拿到才算」当场击穿 → 放行。"""
+def test_validate_c_body_rejects_contact_criterion_anywhere():
+    """接触弱词零容忍（用户 2026-08-09 三连纠正）：「碰到不算拿到才算」击穿句也有
+    「碰」字——判据/击穿/自证里弱接触词一概不出现，命中即判据漂移重抽。"""
     story = _valid_story()
     dialogue = story["dialogue"]
     dialogue[4] = {"speaker": dialogue[4]["speaker"], "line": _pad_line("碰到不算拿到才算呀")}
-    validate_daily_story_json(story, phase="body")
+    with pytest.raises(ValueError, match="判据漂移"):
+        validate_daily_story_json(story, phase="body")
 
 
 def test_validate_c_body_rejects_grading_bicker():
@@ -2503,31 +2507,52 @@ def test_validate_c_body_rejects_grading_bicker():
     （坐→坐实、撕→撕多少、削→露五毫米、倒→戳进）都被模型展开成连续谱逐级杠。"""
     story = _valid_story()
     dialogue = story["dialogue"]
-    dialogue[4] = {"speaker": dialogue[4]["speaker"], "line": _pad_line("碰到不算搭上才算呀")}
-    dialogue[7] = {"speaker": dialogue[7]["speaker"], "line": _pad_line("搭上不算勾住才算呀")}
+    dialogue[4] = {"speaker": dialogue[4]["speaker"], "line": _pad_line("抓到手不算攥稳才算呀")}
+    dialogue[7] = {"speaker": dialogue[7]["speaker"], "line": _pad_line("攥稳不算握死才算呀")}
     with pytest.raises(ValueError, match="分级杠精"):
         validate_daily_story_json(story, phase="body")
 
 
 def test_validate_c_body_rejects_ritual_grading_bicker():
     """动作仪式型也分级：坐→坐实 / 撕开→撕多少 逐级杠 ≥2 次 → 拦截。
-    蜡笔 42 稿「转三圈露出来→得露五毫米才算」、酸奶 73 稿「吸管碰到不算拿到杯子才算」
+    蜡笔 42 稿「转三圈露出来→得露五毫米才算」、酸奶 73 稿「吸管…拿起杯子才算」
     是动作仪式被分级的例证（专家三轮：分级杠精不挑判据类型）。"""
     story = _valid_story()
     dialogue = story["dialogue"]
-    dialogue[4] = {"speaker": dialogue[4]["speaker"], "line": _pad_line("碰一下不算坐稳了才算呀")}
+    dialogue[4] = {"speaker": dialogue[4]["speaker"], "line": _pad_line("坐上去不算坐稳才算呀")}
     dialogue[7] = {"speaker": dialogue[7]["speaker"], "line": _pad_line("坐稳不算坐实才算呀")}
     with pytest.raises(ValueError, match="分级杠精"):
         validate_daily_story_json(story, phase="body")
 
 
-def test_validate_c_body_accepts_single_pierce_not_grading():
-    """单次击穿（碰到不算，拿到才算）不算分级杠精 → 放行。"""
+def test_validate_c_body_rejects_contact_claim_single_line():
+    """单句接触弱主张（我手已经搭上橡皮了）→ 判据漂移硬卡（用户 2026-08-09 零容忍）。
+    2026-08-09 专家+用户定：删弱主张→击穿，弱接触词一概不出现。"""
     story = _valid_story()
     dialogue = story["dialogue"]
-    dialogue[4] = {"speaker": dialogue[4]["speaker"], "line": _pad_line("碰到不算拿到才算呀")}
-    dialogue[7] = {"speaker": dialogue[7]["speaker"], "line": _pad_line("你刚说拿到归谁呀")}
-    validate_daily_story_json(story, phase="body")
+    dialogue[4] = {"speaker": dialogue[4]["speaker"], "line": _pad_line("我手已经搭上橡皮了呀")}
+    with pytest.raises(ValueError, match="判据漂移"):
+        validate_daily_story_json(story, phase="body")
+
+
+def test_validate_c_body_rejects_contact_claim_xian_peng_de():
+    """「我先碰的」——接触弱词「的」后缀漏网（2026-08-09 v10 酸奶稿第 12 句
+    「反正我先碰的」当自证）：先X碰/摸+的 命中即判据漂移。"""
+    story = _valid_story()
+    dialogue = story["dialogue"]
+    dialogue[4] = {"speaker": dialogue[4]["speaker"], "line": _pad_line("反正我先碰的呀")}
+    with pytest.raises(ValueError, match="判据漂移"):
+        validate_daily_story_json(story, phase="body")
+
+
+def test_validate_c_body_rejects_contact_claim_inserted_object():
+    """「碰我手了」——接触弱词插宾语后接「了」（2026-08-09 v10 酸奶稿第 12 句
+    「你碰我手了，你才不算」作击穿）：碰+宾语+了 命中即判据漂移。"""
+    story = _valid_story()
+    dialogue = story["dialogue"]
+    dialogue[4] = {"speaker": dialogue[4]["speaker"], "line": _pad_line("你碰我手了，你才不算呀")}
+    with pytest.raises(ValueError, match="判据漂移"):
+        validate_daily_story_json(story, phase="body")
 
 
 def test_validate_c_body_accepts_action_assign_theme():
@@ -3408,14 +3433,14 @@ def test_b_patch_strips_filler():
 
 
 def test_c_patch_trims_soft_last_long_explanation():
-    """C 一句一改：末句「哼，+长解释/文字游戏」截到软收词即止。"""
+    """C 一句一改：末句「哼，+长解释/文字游戏」截成完整嘴硬话，禁光杆叹词。"""
     from app.services.daily_story.prompts import try_local_patch_daily_story_body
 
     story = _valid_story()
     story["dialogue"][-1]["line"] = "哼，你那是碰，我这是拿，不一样！"
     patched, notes = try_local_patch_daily_story_body(story)
     assert any("软收截断" in n for n in notes)
-    assert patched["dialogue"][-1]["line"] == "哼。"
+    assert patched["dialogue"][-1]["line"] == "哼，明天我赢过你！"
 
 
 def test_c_patch_keeps_short_soft_tail():
@@ -3427,6 +3452,33 @@ def test_c_patch_keeps_short_soft_tail():
     patched, notes = try_local_patch_daily_story_body(story)
     assert not any("软收截断" in n for n in notes)
     assert patched["dialogue"][-1]["line"] == "……哼，给你吧"
+
+
+def test_c_humor_flags_tone_stack_ending():
+    """句尾语气词堆砌（拿到的好了呀/碰过了呢了呀/抢嘛了呀）→ 语病 cons。
+    v6 酸奶稿整串「了呢了呀/着了呀/嘛了呀/好了呀/呢呀」病句尾（用户 2026-08-09）。"""
+    import app.services.daily_story.quality as _q  # noqa: F401
+
+    from app.services.daily_story.story_types.c.humor import collect_humor_issues
+
+    bad = [
+        "我攥手里了，是我先拿到的好不好了呀",
+        "算我碰过了呢了呀",
+        "我攥着瓶没撒手了呢了呀",
+        "数到三咱俩同时抢嘛了呀",
+        "行，算你手快",
+    ]
+    issues = collect_humor_issues(bad, None)
+    assert any("句尾语气词堆砌" in c for c in issues)
+
+    good = [
+        "我先拿到的！",
+        "我攥手里了！",
+        "你手拿开！",
+        "哼，明天我比你早！",
+    ]
+    g = collect_humor_issues(good, None)
+    assert not any("句尾语气词堆砌" in c for c in g)
 
 
 def test_c_humor_flags_inverted_quote_without_grounding():
@@ -3520,3 +3572,214 @@ def test_c_humor_flags_self_said_quote_and_rule_misattribution():
     ]
     g2issues = collect_humor_issues(good2, ["灿灿", "昭昭", "灿灿", "昭昭", "灿灿", "昭昭"])
     assert not any("回旋镖错误归属" in c for c in g2issues)
+
+
+def test_patch_c_stray_rebuttal_drops_unfounded_prefix():
+    """C 类正文首句「我早就不疼了」须有前文指控，无指控删前缀（v23 主题1 抓）。
+
+    v23 主题 1：灿灿开场理由换「上次我让了你」（先后欠账），模型照抄示范句式
+    「我早就不疼了」顶回没人说过的理由 → 悬空自证；本地删前缀保留后半段抛判据。
+    有「你上次喝多肚子疼」指控时保留；占有宣告「我早就拿到了」不误删。
+    """
+    from app.services.daily_story.story_types.c.patch import patch_c_stray_rebuttal
+
+    def _story(d2: str, d3: str) -> dict:
+        dlg = [
+            {"speaker": "昭昭", "line": "姐姐，冰箱里最后一瓶酸奶，给我喝吧"},
+            {"speaker": "灿灿", "line": d2},
+            {"speaker": "昭昭", "line": d3},
+        ]
+        pad = "一二三四五六七八九十十一十二十三十四十五十六"
+        for i in range(20):
+            dlg.append({"speaker": "灿灿" if i % 2 else "昭昭", "line": pad})
+        return {
+            "punchline_explain": "C类公平执念，姐姐规则被字面戳穿",
+            "dialogue": dlg,
+        }
+
+    # 无指控（先后欠账理由）→ 删前缀
+    s = _story("不行，上次我让了你，这回该我先喝！", "我早就不疼了，酸奶没写你名字，谁先拿到归谁！")
+    notes = patch_c_stray_rebuttal(s)
+    assert notes
+    assert s["dialogue"][2]["line"] == "酸奶没写你名字，谁先拿到归谁！"
+
+    # 有指控（对方弱项）→ 保留
+    s2 = _story("不行，你上次喝多肚子疼，这回给我喝！", "我早就不疼了，果汁又没写你名字，谁先拿到归谁！")
+    assert not patch_c_stray_rebuttal(s2)
+    assert s2["dialogue"][2]["line"].startswith("我早就不疼了")
+
+    # 占有宣告「我早就拿到了」→ 不误删
+    s3 = _story("不行，上次我让了你", "我早就拿到了，酸奶归我！")
+    assert not patch_c_stray_rebuttal(s3)
+
+
+def test_c_humor_flags_stubborn_tail_not_echoing_ritual():
+    """C 类末句嘴硬比法须字面在本场立规句（用户 2026-08-09 v25/v27 抓）。
+
+    判据是时长/姿势仪式（举过头顶坚持三秒）时，末句发明立规句没有的比法 =
+    收束换赛规：「比你早/比你快」是时序（本场不比先后）、「比你举得久/比你高/
+    比你标准」是时长/质量比较（本场是达标制，不比谁久）。万能「赢过你」、
+    锚定仪式动词（抢先举过头顶）、认栽/退出都合法。先到先得判据（谁先拿到归谁）
+    无比仪式动词，本检测不触发，「比你早」合法不误伤。
+    """
+    from app.services.daily_story.story_types.c.humor import (
+        _closing_stubborn_echo_issue,
+    )
+
+    # 仪式判据 + 末句时序嘴硬「比你早」→ 比法漂移
+    bad = [
+        "我比你高，我先举过头顶坚持三秒才算，归我！",
+        "你那是偷懒，不算，得伸直胳膊才算！",
+        "你刚说举过头顶坚持三秒，没说伸直胳膊，我做到了",
+        "哼，你等着，明天我比你早！",
+    ]
+    issue = _closing_stubborn_echo_issue(bad)
+    assert issue and "比法漂移" in issue
+
+    # 仪式判据 + 末句「比你举得久」（v27 棒棒糖/巧克力稿，本场无比久维度）→ 漂移
+    bad_longer = [
+        "我比你高，我先举过头顶坚持三秒才算，归我！",
+        "你举啊，我数三秒，一秒，两秒……",
+        "你刚说举过头顶坚持三秒就算，我举得直直的",
+        "哼，明天我比你举得久！",
+    ]
+    issue = _closing_stubborn_echo_issue(bad_longer)
+    assert issue and "比法漂移" in issue
+
+    # 仪式判据 + 末句锚定仪式动词（抢先举过头顶）→ 放行
+    good = [
+        "我比你高，我先举过头顶坚持三秒才算，归我！",
+        "你强词夺理，反正我举了，巧克力归我！",
+        "你刚说谁先举过头顶坚持三秒谁吃，我举了你也举了",
+        "哼，明天我抢先举过头顶！",
+    ]
+    assert not _closing_stubborn_echo_issue(good)
+
+    # 先到先得判据（无仪式动词）+ 末句「比你早」→ 合法
+    first = [
+        "我比你高，我先拿到的，归我！",
+        "你抢什么，谁先拿到归谁！",
+        "我拿到的就是我的",
+        "哼，明天我比你早！",
+    ]
+    assert not _closing_stubborn_echo_issue(first)
+
+    # 仪式判据 + 末句「比你早抢到」（时序词，即便带抢）→ 比法漂移（v26 棒棒糖稿）
+    with_grab = [
+        "我比你高，我先举过头顶坚持三秒才算，归我！",
+        "你举啊，我数三秒，一秒，两秒……",
+        "你刚说举过头顶坚持三秒就算，我举得直直的",
+        "哼，明天我比你早抢到！",
+    ]
+    issue = _closing_stubborn_echo_issue(with_grab)
+    assert issue and "比法漂移" in issue
+
+    # 仪式判据 + 末句「明天我赢过你」（万能胜负指向）→ 合法（用户 2026-08-09 v26 定）
+    win = [
+        "我比你高，我先举过头顶坚持三秒才算，归我！",
+        "你举啊，我数三秒，一秒，两秒……",
+        "你刚说举过头顶坚持三秒就算，我举得直直的",
+        "哼，明天我赢过你！",
+    ]
+    assert not _closing_stubborn_echo_issue(win)
+
+    # 无仪式判据 + 末句情绪退出 → 合法
+    nofit = [
+        "我比你高，我先拿到的，归我！",
+        "你抢什么，谁先拿到归谁！",
+        "我拿到的就是我的",
+        "那我不玩了！",
+    ]
+    assert not _closing_stubborn_echo_issue(nofit)
+
+
+def test_c_validate_hardblocks_stubborn_dim_drift():
+    """C 硬卡：末句嘴硬比较维度须字面在本场立规句（用户 2026-08-09 v27 抓）。
+
+    v27 果汁「比你早」/棒棒糖「比你举得久」/巧克力「比你举得久」三篇都 PASS
+    交付了——观感降分拦不住，升格 validate 硬卡命中即整稿重抽。
+    立规是仪式判据（举过头顶坚持三秒）时，末句发明立规句没有的比法 = 收束换赛规。
+    """
+    from app.services.daily_story.story_types.c.validate import append_c_body_errors
+
+    def _story(dialogue: list[dict]) -> dict:
+        s = _valid_story()
+        s["dialogue"] = dialogue
+        s["punchline_explain"] = (
+            "C类公平执念，灿灿立规举过头顶坚持三秒，昭昭按字面执行，"
+            "灿灿赖账，昭昭用其原规反问，灿灿嘴硬收场"
+        )
+        return s
+
+    # v27 果汁稿：立规「举过头顶坚持三秒」，末句「比你早」（时序，本场无比早）→ 硬卡
+    juice = _story(
+        [
+            {"speaker": "昭昭", "line": "姐姐，冰箱里最后一杯果汁，给我喝吧。"},
+            {"speaker": "灿灿", "line": "不行，上次我让你了，这回该我了！"},
+            {"speaker": "昭昭", "line": "可谁先拿到归谁，我攥住了！"},
+            {"speaker": "灿灿", "line": "你攥住不算，得举过头顶坚持三秒才算！"},
+            {"speaker": "昭昭", "line": "举就举，我数三下，你看着表！"},
+            {"speaker": "灿灿", "line": "你数太快怎么办，我数，我数到三你才能动！"},
+            {"speaker": "昭昭", "line": "好，你数，我举过头顶，你数到三我就放下！"},
+            {"speaker": "灿灿", "line": "一，二，三！你举了，可你刚才先拿到，不算！"},
+            {"speaker": "昭昭", "line": "你刚说举过头顶坚持三秒才算，我举了，该我喝！"},
+            {"speaker": "灿灿", "line": "那是我说的，可你举的时候手抖了，不算！"},
+            {"speaker": "昭昭", "line": "我手没抖，你数到三我才放，你赖皮！"},
+            {"speaker": "灿灿", "line": "你举的时间不够，我数到二你就放了！"},
+            {"speaker": "昭昭", "line": "你数到三我才放，你数到二我还没动，你瞎说！"},
+            {"speaker": "灿灿", "line": "我不管，现在杯子在我手里，我先喝！"},
+            {"speaker": "昭昭", "line": "你刚说谁先举过头顶坚持三秒谁喝，我举了，你抢！"},
+            {"speaker": "灿灿", "line": "哼，明天我比你早！"},
+        ]
+    )
+    errs: list[str] = []
+    append_c_body_errors(juice, errs)
+    assert any("比法漂移" in e for e in errs), errs
+
+    # v27 棒棒糖稿：立规「举过头顶坚持三秒」，末句「比你举得久」（本场无比久）→ 硬卡
+    lollipop = _story(
+        [
+            {"speaker": "昭昭", "line": "姐姐，客厅茶几上最后一根棒棒糖，给我吃吧。"},
+            {"speaker": "灿灿", "line": "不行，你上次吃多牙疼，这次我先吃！"},
+            {"speaker": "昭昭", "line": "我早就不牙疼了，糖又没写你名字，谁先抢到归谁！"},
+            {"speaker": "灿灿", "line": "我先举过头顶坚持三秒才算，归我！"},
+            {"speaker": "昭昭", "line": "你举啊，我数三秒，一秒，两秒……"},
+            {"speaker": "灿灿", "line": "你数太快了，我还没站稳呢，重来！"},
+            {"speaker": "昭昭", "line": "你刚说举过头顶坚持三秒，我数到三你才举，不算！"},
+            {"speaker": "灿灿", "line": "那你也举啊，你举过头顶我也数三秒，看谁先坚持住！"},
+            {"speaker": "昭昭", "line": "好，我举，你数，我举过头顶了，你数啊！"},
+            {"speaker": "灿灿", "line": "一，二，三，你举过头顶三秒了，该我了！"},
+            {"speaker": "昭昭", "line": "你耍赖，我举的时候你数得快，你举的时候数得慢！"},
+            {"speaker": "灿灿", "line": "我数得慢是因为你举得歪，不算标准！"},
+            {"speaker": "昭昭", "line": "你刚说举过头顶坚持三秒就算，我举得直直的"},
+            {"speaker": "灿灿", "line": "那是我说的，可你举的时候我还没准备好呢！"},
+            {"speaker": "昭昭", "line": "你刚才说谁先抢到归谁，我抢到了，糖该归我！"},
+            {"speaker": "灿灿", "line": "哼，明天我比你举得久！"},
+        ]
+    )
+    errs = []
+    append_c_body_errors(lollipop, errs)
+    assert any("比法漂移" in e for e in errs), errs
+
+    # 仪式判据 + 万能「明天我赢过你」→ 硬卡放行
+    good = _story(
+        [
+            {"speaker": "昭昭", "line": "姐姐，茶几上最后一块巧克力，给我吃吧"},
+            {"speaker": "灿灿", "line": "不行，我先抢到的！归我！"},
+            {"speaker": "昭昭", "line": "你那是按住，我这是举过头顶，举得高才算好不好呀！"},
+            {"speaker": "灿灿", "line": "举过头顶当然算，可你手抖了，不算，重来你听着！"},
+            {"speaker": "昭昭", "line": "我手没抖，是你喊太快，我还没站定，再举一次呢！"},
+            {"speaker": "灿灿", "line": "好，那重来，你举过头顶，我数到三你举稳才算嘛！"},
+            {"speaker": "昭昭", "line": "好，你喊吧，我这次举得高高的，你数准点啊！"},
+            {"speaker": "灿灿", "line": "一、二、三，你举过头顶了，算你做到了，给呀！"},
+            {"speaker": "昭昭", "line": "那巧克力归我了，你松手！"},
+            {"speaker": "灿灿", "line": "你刚说谁先拿到归谁，可我先拿到的，我先吃！"},
+            {"speaker": "昭昭", "line": "你按住不算拿到，我举过头顶才是拿到，我赢了！"},
+            {"speaker": "灿灿", "line": "你举过头顶是我喊的，不算你本事！"},
+            {"speaker": "昭昭", "line": "你刚说举过头顶坚持三秒就算，我做到了，该我！"},
+            {"speaker": "灿灿", "line": "哼，明天我赢过你！"},
+        ]
+    )
+    errs = []
+    append_c_body_errors(good, errs)
+    assert not any("比法漂移" in e for e in errs), errs

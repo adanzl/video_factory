@@ -7,6 +7,7 @@ from app.services.daily_story.story_types.c import humor as c_humor
 from app.services.daily_story.story_types.c import opening as c_opening
 from app.services.daily_story.story_types.quality import (
     RE_BOOMERANG_RULE,
+    RE_C_STUBBORN_LAST,
     RE_REVELATION_PROP,
     RE_SURRENDER,
     RE_TWIST_SEGUE,
@@ -45,7 +46,7 @@ def score_punchline(
         if "实物真相反转" not in details:
             details.append("回旋镖收束")
 
-    if RE_SURRENDER.search(tail3):
+    if RE_SURRENDER.search(tail3) or RE_C_STUBBORN_LAST.search(tail3):
         if not RE_BOOMERANG_RULE.search(tail3) and not any(
             m in tail3 for m in STRONG_END_MARKERS
         ):
@@ -60,7 +61,9 @@ def score_punchline(
     if speakers and len(speakers) >= 2:
         last_sp = speakers[-1]
         prev_sp = speakers[-2]
-        if last_sp != prev_sp and RE_SURRENDER.search(last):
+        if last_sp != prev_sp and (
+            RE_SURRENDER.search(last) or RE_C_STUBBORN_LAST.search(last)
+        ):
             bonus += 3
 
     return bonus, details

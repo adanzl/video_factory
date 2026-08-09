@@ -500,6 +500,8 @@ _QUALITY_CON_PRIORITY: tuple[tuple[str, str], ...] = (
     ("C收束缺可拍争法", "c_filmable"),
     ("C中段归属口水战", "c_chatter"),
     ("C收束偏A", "c_de_a"),
+    # 2026-08-08 用户定「正文禁用开场用过的理由」：立理由人正文重申开场理由
+    ("开场理由复读", "c_reason_repeat"),
     ("好笑不足", "humor"),
     ("格式达标但好笑", "humor"),
     ("末四拍不完整", "humor"),
@@ -546,7 +548,7 @@ def revision_scope_kind(
     escalation: bool,
     closing: bool,
 ) -> str:
-    if primary_kind in ("c_filmable", "c_chatter", "redundancy"):
+    if primary_kind in ("c_filmable", "c_chatter", "redundancy", "c_reason_repeat"):
         return "mid"
     if primary_kind == "consecutive":
         return "mid"

@@ -9,6 +9,7 @@ from app.services.daily_story.story_types.quality import (
     RE_BOOMERANG_RULE,
     RE_REVELATION_PROP,
     RE_TWIST_SEGUE,
+    c_closing_echo_error,
 )
 
 RE_LITERAL_RULE_PLAY = re.compile(
@@ -54,6 +55,11 @@ _OWNERSHIP_CHATTER = re.compile(
     r"有没有我的一件|你没叠",
 )
 _RULE_LINE = re.compile(r"谁碰|碰了.*负责|弄乱.*负责|谁弄乱")
+# 句尾语气词堆砌（2026-08-09 用户 v6 酸奶稿：好不好了呀/听着了呀/碰过了呢了呀/
+# 没撒手了呢了呀/抢嘛了呀/准备好了呢呀——句尾连叠语气助词=病句，观感重罚）
+_RE_TONE_STACK = re.compile(
+    r"(?:[呢嘛的了着好]{2,}呀|呢了|呢呀)[！。！？]?$",
+)
 _FILMABLE_TWIST = re.compile(
     # 可拍争法动作（结构判定，禁主题词表）
     r"歪了|乱了|倒了|洒了|摔了|碰倒|多拿|偷拿|藏了|"
@@ -85,6 +91,15 @@ HUMOR_ISSUE_CAPS: tuple[tuple[str, int], ...] = (
     ("回旋镖引话失据", 6),
     # 2026-08-07 专家对齐 C2 扩展：把对方立的规安到自己头上 → 好笑分封顶 6
     ("回旋镖错误归属", 6),
+    # 2026-08-08 用户定「正文禁用开场用过的理由」：立理由人正文重申开场理由
+    # → 好笑分封顶 4（提示词约束 + validate 逐字复述硬卡都拦不住带变体的重申）
+    ("开场理由复读", 4),
+    # 2026-08-09 用户 v6 酸奶稿：句尾语气词堆砌=病句 → 好笑分封顶 4
+    ("句尾语气词堆砌", 4),
+    # 2026-08-09 用户 v25/v27：末句嘴硬话发明本场赛规没有的比较维度
+    # （判据「举过头顶坚持三秒」末句却「比你早」=时序 /「比你举得久」=时长）
+    # → 观感封顶 6（validate 同逻辑硬卡命中即重抽）
+    ("末句嘴硬比法漂移", 6),
 )
 
 
@@ -114,6 +129,70 @@ def ground_closing_quote(fragment: str, haystack: str) -> bool:
     return False
 
 
+def _opening_reason_repeat_issue(
+    lines: list[str],
+    speakers: list[str],
+) -> str | None:
+    """开场理由复读（用户定 2026-08-08）：正文禁用开场用过的理由。
+
+    C 类开场第 2 句（反对句）带「我先X」理由（书是我搬回来的/我求妈妈买的/
+    攒零花钱买的）。立理由人自己在正文重申同一理由 = 炒冷饭——validate 的逐字
+    复述硬卡拦不住「我搬回来的，我先翻开才对」这类带变体的重申，故在观感层压分。
+    检测：取开场第 2 句里「…的」结尾段作理由核心，正文中**同 speaker** 的句子
+    去虚字后含其 ≥3 字连续子串即判复读。只查立理由人（对方击穿「搬回来不算」
+    是合法回旋镖，不禁），不按单篇剧情词表。
+    """
+    if len(lines) < 3 or len(speakers) < 2:
+        return None
+    opp_sp = speakers[1]
+    if opp_sp not in ("昭昭", "灿灿"):
+        return None
+    segs = [s.strip() for s in re.split(r"[，,。]", lines[1]) if s.strip()]
+    reason = max(
+        (s for s in segs if s.endswith("的") and len(s) >= 4),
+        key=len,
+        default="",
+    )
+    if not reason:
+        return None
+    core = _RE_REASON_STRIP.sub("", reason)
+    # 只用 ≥4 字连续子串比对，避免泛化短语误杀：
+    # 「我求妈妈买」的 3 字片「妈妈买」会误中正文「等妈妈买新的」——
+    # 而真实复读（我搬回来的/我求妈妈买的）都能共享到 4 字片
+    if len(core) < 4:
+        return None
+    frags = {core[i:i + 4] for i in range(len(core) - 4 + 1)}
+    for ln, sp in zip(lines[2:], speakers[2:]):
+        if sp != opp_sp:
+            continue
+        txt = _RE_REASON_STRIP.sub("", ln)
+        if any(frag in txt for frag in frags):
+            shown = reason[:14]
+            return (
+                f"C中段·开场理由复读：正文{opp_sp}重申开场理由「{shown}」"
+                "（开场第2句已用过；同一理由全篇最多一次，正文顶嘴换新角度："
+                "谁先拿到/谁先翻开/书是大家的/你没看完别占着）"
+            )
+    return None
+
+
+_RE_REASON_STRIP = re.compile(r"[的话呢呀嘛吧啊哦嗯…\s「」『』“”\"'‘’：:，,、。！？是]")
+
+
+def _closing_stubborn_echo_issue(lines: list[str]) -> str | None:
+    """末句嘴硬话发明本场赛规没有的比较维度（用户 2026-08-09 v25/v27 抓）。
+
+    C 类收束末句嘴硬话的比较维度须字面出现在本场立规句里：赛规是
+    **时长/姿势仪式**（举过头顶坚持三秒/坐稳才算/稳住不放）时，末句只能
+    锚定仪式动词（「明天我抢先举过头顶」）或万能胜负（「明天我赢过你」），
+    禁发明立规句里没有的比法——「比你早/比你快」是时序（本场不比先后）、
+    「比你举得久/比你高/比你标准」是时长/质量比较（本场是达标制，不比谁久）。
+    与 validate 硬卡共用一个判定函数（quality.c_closing_echo_error），
+    避免观感层与硬卡逻辑漂移；此处命中即观感降分，validate 命中即整稿重抽。
+    """
+    return c_closing_echo_error(lines)
+
+
 def collect_humor_issues(
     lines: list[str],
     speakers: list[str] | None,
@@ -121,6 +200,14 @@ def collect_humor_issues(
     _ = speakers
     cons: list[str] = []
     sp_arr = list(speakers) if speakers else []
+    reason_issue = _opening_reason_repeat_issue(lines, sp_arr)
+    if reason_issue:
+        cons.append(reason_issue)
+    tone_hits = [i + 1 for i, ln in enumerate(lines) if _RE_TONE_STACK.search(ln)]
+    if tone_hits:
+        first = ",".join(str(i) for i in tone_hits[:4])
+        more = "…" if len(tone_hits) > 4 else ""
+        cons.append(f"句尾语气词堆砌（第{first}句{more}，禁叠「呢了呀/着了呀/嘛了呀」病句尾）")
     tail4 = lines[-4:] if len(lines) >= 4 else lines
     tail_text = "".join(tail4)
     late6 = "".join(lines[-6:]) if len(lines) >= 6 else tail_text
@@ -226,6 +313,12 @@ def collect_humor_issues(
                 cons.append(f"回旋镖错误归属（规则「{frag[:12]}」是对方立的）")
                 break
 
+    # 末句嘴硬话未呼应本场仪式判据（用户 2026-08-09 v25 抓）：本场判据是
+    # 「举过头顶坚持三秒」，末句却用「比你早」——「早」比先后，本场比时长。
+    echo = _closing_stubborn_echo_issue(lines)
+    if echo:
+        cons.append(echo)
+
     return cons
 
 
@@ -272,6 +365,14 @@ def score_funniness_tail(
 
 
 def humor_revision_hint(issue: str) -> str | None:
+    if "开场理由复读" in issue:
+        return (
+            f"【C·开场理由】{issue}。"
+            "正文禁用开场第 2 句已用过的理由：开场说过的理由全文不再重复，"
+            "立理由的人正文换新角度顶嘴（谁先拿到/谁先翻开/书是大家的/"
+            "你没看完别占着），禁止自己重申「搬回来的/买的/攒零花钱」；"
+            "对方击穿（搬回来不算，拿到才算）可以，但理由出处只讲一次。"
+        )
     if "归属口水战" in issue:
         return (
             f"【好笑·C】{issue}。"
@@ -285,6 +386,15 @@ def humor_revision_hint(issue: str) -> str | None:
             "收束前加一件能拍的动作（按赛规字面加赛、"
             "或实物状态变化），再回旋镖扣原话；"
             "勿只靠「指一下/不算」口头诡辩。"
+        )
+    if "末句嘴硬比法漂移" in issue:
+        return (
+            f"【好笑·C】{issue}。"
+            "末句嘴硬话锚定的比法必须字面在本场立规句里：最稳写「明天我赢过你！」"
+            "（任何赛规都成立）；想收出彩可锚定赛规动词——赛规「举过头顶坚持三秒」→"
+            "「明天我抢先举过头顶！」「明天我坚持到三秒给你看！」。"
+            "禁「比你早/比你快」（时序，本场不比先后）、禁「比你举得久/比你高/"
+            "比你标准」（时长/质量比较，本场是达标制，不比谁久/谁高）。"
         )
     if "偏A式那不一样" in issue:
         return (
