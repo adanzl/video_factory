@@ -119,17 +119,77 @@ C_OPENING_PRESS_RE = re.compile(
 )
 
 
+def _opening_setting_holder(setting: str) -> str | None:
+    """从 setting 提取**唯一**持有者（昭昭/灿灿），供占有宣告一致性比对。
+
+    setting 是自由文本（「昭昭手里攥着最后一瓶酸奶，灿灿伸手来抢」），只认
+    「人名 + 部位/持有动词」结构槽位——手里/攥着/握着/攥住等；「伸手来抢」
+    （伸手≠手里）不算持有，「想拿到」不算。双方都持（一人攥一角）或无持有者
+    返回 None（不判，避免误伤）。只做结构判定，不按单篇剧情词表。
+    """
+    if not setting:
+        return None
+    holders: list[str] = []
+    for name in ("昭昭", "灿灿"):
+        if re.search(
+            name + r"[^。！？]{0,24}?"
+            r"(?:手里|手上|手中|手已|攥着|拿着|握着|抱着|举着|端着|"
+            r"攥住|握住|拿住|抓住|拿到手|抢到手)",
+            setting,
+        ):
+            holders.append(name)
+    return holders[0] if len(holders) == 1 else None
+
+
+# 开场占有宣告（我先拿到/攥住/攥手里…）——须与 setting 持有者一致。失方自称
+# 「我先拿到的」抢对方手里正拿着的东西=与可见场景矛盾（用户 2026-08-09 v27 酸奶稿）。
+# 只匹配「我+占有系完成态」，不碰「我想喝/给我喝吧」等愿望/讨要。
+_C_OPENING_SELF_POSSESS_RE = re.compile(
+    r"我(?:先|就|都|已经|早就)?(?:拿到|攥住|攥着|攥手里|握着|抢到|抓住|拿到手|到手)",
+)
+# 失方抛占有判据/宣示能力（用户 2026-08-09 v29 酸奶稿抓）：setting 已写明 holder 正
+# 拿着该物，失方第 2 句却立「谁先拿到归谁」判据或宣示「我够得着」——先拿到者已是
+# holder，失方抛占有判据必对己不利（把东西判给对方），且与「伸手来抢」（够不着才有
+# 抢的张力）矛盾。只拦「谁先+占有系完成态+归属裁定」的判据结构与「我+够得着/拿得到」
+# 的能力宣示；持有者自己立判据不查（holder 检查块只对非 holder 生效）。
+_C_OPENING_LOSER_CRITERION_RE = re.compile(
+    r"谁先[^。！？]{0,6}(?:拿到|抢到|够到|拿到手|摸到|攥住|攥着)"
+    r"[^。！？]{0,4}(?:归|算|谁|才是)"
+    r"|我(?:够得着|拿得到|够得到|先够到)",
+)
+
+
 def append_c_opening_errors(
     normalized: list[dict],
     *,
     type_code: str | None,
     errors: list[str],
+    setting: str = "",
 ) -> None:
     code = (type_code or "").strip().upper()[:1]
     if code != "C":
         return
+    holder = _opening_setting_holder(setting)
     for i, item in enumerate(normalized):
         line = item["line"]
+        sp = str(item.get("speaker") or "").strip()
+        if holder and sp in ("昭昭", "灿灿") and sp != holder:
+            if _C_OPENING_SELF_POSSESS_RE.search(line):
+                errors.append(
+                    f"opening[{i}] C类开场占有宣告与 setting 矛盾：场景已写明"
+                    f"「{holder}」正拿着该物，{sp}却自称「我先拿到/攥住」——与可见"
+                    "场景冲突；失方第 2 句只能孩子气理由反对（你上次喝多闹肚子/我"
+                    "搬回来的），占有宣告只许真正持有者",
+                )
+                break
+            if _C_OPENING_LOSER_CRITERION_RE.search(line):
+                errors.append(
+                    f"opening[{i}] C类开场失方抛占有判据：场景已写明「{holder}」正拿着"
+                    f"该物，{sp}却立「谁先拿到归谁」判据/宣示「我够得着」——先拿到者"
+                    "已是对方，判据必对己不利；失方第 2 句只能孩子气理由反对"
+                    "（你上次喝多闹肚子/我搬回来的），抛占有判据是正文首句的活",
+                )
+                break
         if C_OPENING_RESOLVED_RE.search(line):
             errors.append(
                 f"opening[{i}] C类开场禁止已分胜负或已收束"
