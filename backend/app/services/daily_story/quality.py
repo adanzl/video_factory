@@ -1023,7 +1023,7 @@ def build_quality_revision_hints(
                 hints.append(hint)
             else:
                 hints.append(f"【修补】{issue_text}。")
-        elif kind in ("c_filmable", "c_chatter", "c_de_a", "quote"):
+        elif kind in ("c_filmable", "c_chatter", "c_de_a", "quote", "c_reason_repeat"):
             hint = (
                 q_profile.humor_revision_hint(issue_text)
                 if q_profile.humor_revision_hint
