@@ -1231,9 +1231,9 @@ def test_score_daily_story_rewards_punch_ending():
     assert any("回旋镖" in d for d in details)
 
     q = score_daily_story(story)
-    assert q["score"] >= 35
+    assert q["score"] >= 30
     attach_daily_story_quality(story)
-    assert story["quality"]["score"] >= 35
+    assert story["quality"]["score"] >= 30
 
 
 def test_stitch_daily_story_opening_dedupes_overlapping_body_start():
@@ -2337,7 +2337,8 @@ def test_score_c_folding_literal_play_not_flatlined():
         None,
     )
     assert humor_pts is not None and humor_pts >= 9, q["reasons"]
-    assert q["score"] >= 78, q["reasons"]
+    # 正则好笑退役后 score=纯结构分，不再叠加正则好笑
+    assert q["score"] == q.get("structure_score"), q["reasons"]
 
 
 def test_infer_story_type_and_normalize_punchline():
@@ -3211,7 +3212,10 @@ class _ReviewMockClient:
 
     def review_daily_story_issues(self, theme, story):
         self.review_calls += 1
-        return self._reviews.pop(0) if self._reviews else []
+        item = self._reviews.pop(0) if self._reviews else []
+        if isinstance(item, tuple):  # (issues, humor) 显式带好笑评估
+            return item
+        return item, None
 
     def spot_fix_daily_story(self, theme, story, issues):
         self.fix_calls += 1
@@ -3403,6 +3407,117 @@ def test_review_applies_penalty_to_quality_score_and_grade():
     assert story["quality"]["review_issues"][0]["kind"] == "示范"
 
 
+def test_parse_humor_accepts_valid_rejects_bad():
+    from app.services.daily_story.review import parse_humor
+
+    ok = parse_humor({
+        "humor": {"funny_score": 7, "best_moment": "笑点那句", "humor_type": "natural"},
+    })
+    assert ok == {"funny_score": 7, "best_moment": "笑点那句", "humor_type": "natural"}
+    assert parse_humor({"humor": {"funny_score": 12, "humor_type": "x"}}) is None
+    assert parse_humor({"humor": {"funny_score": "高", "humor_type": "natural"}}) is None
+    assert parse_humor({"issues": []}) is None
+    assert parse_humor(None) is None
+    assert parse_humor("not a dict") is None
+
+
+def test_apply_review_to_quality_injects_llm_humor_and_publish_line():
+    from app.services.daily_story.review import apply_review_to_quality
+
+    story = {
+        "dialogue": [{"speaker": "昭昭", "line": "话"}],
+        "quality": {"grade": "好", "score": 80, "structure_score": 80, "reasons": []},
+    }
+    apply_review_to_quality(
+        story,
+        [],
+        humor={"funny_score": 8, "best_moment": "那句", "humor_type": "natural"},
+    )
+    q = story["quality"]
+    assert q["score"] == 88  # 结构80 + LLM好笑8
+    assert q["pass"] is True
+    assert q["humor"]["funny_score"] == 8
+    assert any("发布达标" in r for r in q["reasons"])
+
+
+def test_apply_review_to_quality_publish_line_rejects_low_humor():
+    from app.services.daily_story.review import apply_review_to_quality
+
+    story = {
+        "dialogue": [{"speaker": "昭昭", "line": "话"}],
+        "quality": {"grade": "中", "score": 80, "structure_score": 80, "reasons": []},
+    }
+    apply_review_to_quality(
+        story,
+        [],
+        humor={"funny_score": 4, "best_moment": "那句", "humor_type": "formulaic"},
+    )
+    q = story["quality"]
+    assert q["score"] == 84
+    assert q["pass"] is False
+    assert any("好笑4/10<6" in r for r in q["reasons"])
+
+
+def test_apply_review_to_quality_publish_line_rejects_low_structure():
+    from app.services.daily_story.review import apply_review_to_quality
+
+    story = {
+        "dialogue": [{"speaker": "昭昭", "line": "话"}],
+        "quality": {"grade": "中", "score": 70, "structure_score": 70, "reasons": []},
+    }
+    apply_review_to_quality(
+        story,
+        [],
+        humor={"funny_score": 9, "best_moment": "那句", "humor_type": "natural"},
+    )
+    q = story["quality"]
+    assert q["pass"] is False
+    assert any("结构70<75" in r for r in q["reasons"])
+
+
+def test_apply_review_to_quality_deducts_penalty_with_humor():
+    """LLM 好笑分注入后，审读硬伤扣分仍生效（结构+好笑−硬伤）。"""
+    from app.services.daily_story.review import apply_review_to_quality
+
+    story = {
+        "dialogue": [{"speaker": "昭昭", "line": "话"}],
+        "quality": {"grade": "好", "score": 80, "structure_score": 80, "reasons": []},
+    }
+    apply_review_to_quality(
+        story,
+        [{"lines": [10], "kind": "示范", "desc": "妈妈教孩子隐瞒", "fix": ""}],
+        humor={"funny_score": 8, "best_moment": "那句", "humor_type": "natural"},
+    )
+    assert story["quality"]["score"] == 78  # 80 + 8 − 10
+
+
+def test_review_passes_llm_humor_to_quality(monkeypatch):
+    """审读返回 (issues, humor) 时，首轮好笑分落进 quality 并判发布线。"""
+    _patch_review_llm(monkeypatch)
+    from app.services.daily_story.review import run_daily_story_review
+
+    client = _ReviewMockClient(
+        review_results=[
+            (
+                [{"lines": [6], "kind": "重复", "desc": "正文重复", "fix": "改第6句"}],
+                {"funny_score": 8, "best_moment": "那句", "humor_type": "natural"},
+            ),
+            (
+                [],
+                {"funny_score": 7, "best_moment": "那句", "humor_type": "natural"},
+            ),
+        ],
+        fix_responses=[{}],
+    )
+    story = _review_mock_story()
+    story["quality"]["structure_score"] = 80
+    out = run_daily_story_review(client, "抢遥控器看动画片", story)
+    q = out["quality"]
+    assert q["pass"] is True
+    assert q["humor"]["funny_score"] == 8  # 取首轮
+    assert q["score"] == 88
+
+
 def test_b_filler_detected_in_humor_regex():
     """B 垫字检测：句尾叠了呢了呀/真的呀/好不好=注水，实词收尾=干净。"""
     from app.services.daily_story.story_types.b.humor import RE_GARBAGE_FILLER
@@ -3440,7 +3555,7 @@ def test_c_patch_trims_soft_last_long_explanation():
     story["dialogue"][-1]["line"] = "哼，你那是碰，我这是拿，不一样！"
     patched, notes = try_local_patch_daily_story_body(story)
     assert any("软收截断" in n for n in notes)
-    assert patched["dialogue"][-1]["line"] == "哼，明天我赢过你！"
+    assert patched["dialogue"][-1]["line"] == "哼，明天我一定赢过你！"
 
 
 def test_c_patch_keeps_short_soft_tail():
@@ -3674,12 +3789,12 @@ def test_c_humor_flags_stubborn_tail_not_echoing_ritual():
     issue = _closing_stubborn_echo_issue(with_grab)
     assert issue and "比法漂移" in issue
 
-    # 仪式判据 + 末句「明天我赢过你」（万能胜负指向）→ 合法（用户 2026-08-09 v26 定）
+    # 仪式判据 + 末句「明天我一定赢过你」（万能胜负指向）→ 合法（用户 2026-08-09 v26 定）
     win = [
         "我比你高，我先举过头顶坚持三秒才算，归我！",
         "你举啊，我数三秒，一秒，两秒……",
         "你刚说举过头顶坚持三秒就算，我举得直直的",
-        "哼，明天我赢过你！",
+        "哼，明天我一定赢过你！",
     ]
     assert not _closing_stubborn_echo_issue(win)
 
@@ -3761,7 +3876,7 @@ def test_c_validate_hardblocks_stubborn_dim_drift():
     append_c_body_errors(lollipop, errs)
     assert any("比法漂移" in e for e in errs), errs
 
-    # 仪式判据 + 万能「明天我赢过你」→ 硬卡放行
+    # 仪式判据 + 万能「明天我一定赢过你」→ 硬卡放行
     good = _story(
         [
             {"speaker": "昭昭", "line": "姐姐，茶几上最后一块巧克力，给我吃吧"},
@@ -3777,7 +3892,7 @@ def test_c_validate_hardblocks_stubborn_dim_drift():
             {"speaker": "昭昭", "line": "你按住不算拿到，我举过头顶才是拿到，我赢了！"},
             {"speaker": "灿灿", "line": "你举过头顶是我喊的，不算你本事！"},
             {"speaker": "昭昭", "line": "你刚说举过头顶坚持三秒就算，我做到了，该我！"},
-            {"speaker": "灿灿", "line": "哼，明天我赢过你！"},
+            {"speaker": "灿灿", "line": "哼，明天我一定赢过你！"},
         ]
     )
     errs = []
@@ -3924,7 +4039,7 @@ def test_c_validate_hardblocks_agree_contest_without_proposal():
             {"speaker": "昭昭", "line": "你刚说举过头顶坚持三秒才算，你才两秒！"},
             {"speaker": "灿灿", "line": "我不管，我举了，酸奶该我喝！"},
             {"speaker": "昭昭", "line": "你定的规则自己都不守，还想要酸奶？"},
-            {"speaker": "灿灿", "line": "哼，明天我赢过你！"},
+            {"speaker": "灿灿", "line": "哼，明天我一定赢过你！"},
         ]
     )
     errs: list[str] = []
@@ -3947,7 +4062,7 @@ def test_c_validate_hardblocks_agree_contest_without_proposal():
             {"speaker": "昭昭", "line": "你刚说举过头顶坚持三秒才算，你才两秒！"},
             {"speaker": "灿灿", "line": "我不管，我举了，果汁该我喝！"},
             {"speaker": "昭昭", "line": "你定的规则自己都不守，还想要果汁？"},
-            {"speaker": "灿灿", "line": "哼，明天我赢过你！"},
+            {"speaker": "灿灿", "line": "哼，明天我一定赢过你！"},
         ]
     )
     errs = []
@@ -3980,7 +4095,7 @@ def test_c_facts_referential_boomerang_quote_not_flagged():
         {"speaker": "昭昭", "line": "我手没抖，是你喊太快，你赖皮！"},
         {"speaker": "灿灿", "line": "你刚说拿我定的规则，现在自己又不认！"},
         {"speaker": "昭昭", "line": "我没不认，是你不守时，我举够三秒了！"},
-        {"speaker": "灿灿", "line": "哼，明天我赢过你！"},
+        {"speaker": "灿灿", "line": "哼，明天我一定赢过你！"},
     ]
     issues = collect_fact_issues({"dialogue": dialogue})
     assert not any("扣话无前文" in i for i in issues), issues

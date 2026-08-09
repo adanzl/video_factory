@@ -175,6 +175,9 @@ def _run_image_prompts(job_id: int, *, segment_indices: list[int] | None=None) -
             info = parse_job_info(item.get('info'))
             db_info = parse_job_info(db.get('info'))
             merged = {**db_info, **info}
+            # 帧类型以 DB 为准（含 ""=取消），避免 script 残留盖掉人工取消
+            if 'video_provider' in db_info:
+                merged['video_provider'] = db_info['video_provider']
             if merged:
                 item['info'] = merged
         merged_segments.append(item)

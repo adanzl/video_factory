@@ -227,7 +227,9 @@ def build_review_prompts(theme: str, story: dict) -> tuple[str, str]:
         "4 重复：同一件事换词说两遍以上，或同一个质问反复问；"
         "帮腔开脱用同一个理由说两遍也算。\n"
         "5 塑料：不像真人会说的话"
-        "（例：被当场抓住的人不接话，张口先讲道理教育对方）。\n"
+        "（例：被当场抓住的人不接话，张口先讲道理教育对方；"
+        "或 10 岁孩子嘴硬说「买新的/我明天买/攒钱买」——孩子没有购买力，"
+        "要说就「找妈妈要/让妈妈买」，自己出钱买超龄）。\n"
         "6 接不上：回句没接住上一句的话头，答非所问或训错对象"
         "（例：孩子说「你自己没换鞋就进来了」，"
         "大人却回头命令孩子「赶紧脱了放鞋柜上」——孩子并没穿着鞋）。\n"
@@ -276,9 +278,20 @@ def build_review_prompts(theme: str, story: dict) -> tuple[str, str]:
         '"接不上":"无","无效证据":"第8句"},'
         '"issues":[{"lines":[5,6],"kind":"矛盾",'
         '"desc":"第5句说锅里一粒米都没有，第6句又说把剩饭倒掉了",'
-        '"fix":"第6句改成…"}]}\n'
+        '"fix":"第6句改成…"}],'
+        '"humor":{"funny_score":7,"best_moment":"我正看到关键处，你等会儿",'
+        '"humor_type":"natural"}}\n'
         f"lines 用左侧行号；最多报 {REVIEW_MAX_ISSUES} 条，按严重度排序；"
-        "fix 写一句具体怎么改，别写空话。"
+        "fix 写一句具体怎么改，别写空话。\n\n"
+        "全部硬伤检查做完后，**换一种心态**，别再当挑错的审稿人，"
+        "当一名普通读者，为整篇故事的「好笑/有趣程度」打一个 0-10 分"
+        "（这部分与硬伤数量完全无关，别因硬伤多就打低，也别因没硬伤就偏高）：\n"
+        "- 0-2 完全不好笑；3-5 偶尔莞尔；6-7 有明显笑点；8-10 笑出声或想再看一遍。\n"
+        "- 必须先在 best_moment 里引原文那句最会心一笑的话（≤40 字，须原句），"
+        "再给分——不许说不出哪里好笑就喊高分。\n"
+        "- humor_type 三选一：natural 自然好笑（源于人物性格/情境反差）/ "
+        "formulaic 套路好笑（抛判据→加赛→扣原话这种能套进模板的笑点）/ "
+        "none 无明显好笑点。"
     )
     user = (
         f"主题：{theme}\n"
@@ -328,6 +341,30 @@ def parse_review_issues(raw: Any, *, line_count: int) -> list[dict[str, Any]]:
         if len(out) >= REVIEW_MAX_ISSUES:
             break
     return out
+
+
+def parse_humor(raw: Any) -> dict[str, Any] | None:
+    """解析审读输出的好笑评估字段；格式不符返回 None（沿用旧逻辑）。"""
+    if not isinstance(raw, dict):
+        return None
+    h = raw.get("humor")
+    if not isinstance(h, dict):
+        return None
+    try:
+        fs = int(h.get("funny_score"))
+    except (TypeError, ValueError):
+        return None
+    if not (0 <= fs <= 10):
+        return None
+    best = str(h.get("best_moment") or "").strip()
+    htype = str(h.get("humor_type") or "").strip()
+    if htype not in ("natural", "formulaic", "none"):
+        htype = "none"
+    return {
+        "funny_score": fs,
+        "best_moment": best[:40],
+        "humor_type": htype,
+    }
 
 
 def merge_issues(*groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -495,8 +532,14 @@ def _on_design_line(
 def apply_review_to_quality(
     story: dict,
     issues: list[dict[str, Any]],
+    humor: dict[str, Any] | None = None,
 ) -> dict:
-    """把审读结果落到 quality：扣分、记原因、存清单。"""
+    """把审读结果落到 quality：扣硬伤分、写入 LLM 好笑分、判定发布线。
+
+    humor 为审读同批输出的好笑评估 {funny_score, best_moment, humor_type}。
+    有 humor：总分 = 结构分（正则，≤80）+ LLM 好笑（0-10）− 审读硬伤；
+    发布线 = 结构≥75 且 好笑≥6。无 humor：保持旧扣分逻辑（兼容 mock）。
+    """
     from app.services.daily_story.quality import _grade_from_score
 
     quality = story.get("quality")
@@ -519,6 +562,37 @@ def apply_review_to_quality(
     ]
     quality["review_issues"] = issues
     points, reasons = review_penalty(penalized)
+
+    if humor and isinstance(humor, dict):
+        quality["humor"] = humor
+        funny = max(0, min(10, int(humor.get("funny_score") or 0)))
+        structure = int(quality.get("structure_score") or 0)
+        score = max(0, min(90, structure + funny - points))
+        quality["score"] = score
+        quality["grade"] = _grade_from_score(score)
+        pass_ok = structure >= 75 and funny >= 6
+        quality["pass"] = pass_ok
+        if pass_ok:
+            line_reason = f"发布达标：结构{structure}≥75，LLM好笑{funny}/10≥6"
+        else:
+            misses = []
+            if structure < 75:
+                misses.append(f"结构{structure}<75")
+            if funny < 6:
+                misses.append(f"好笑{funny}/10<6")
+            line_reason = (
+                f"未达发布线（{'，'.join(misses)}，须结构≥75且好笑≥6）"
+            )
+        all_reasons = [*reasons, line_reason]
+        quality["reasons"] = [*(quality.get("reasons") or []), *all_reasons]
+        head = all_reasons[0]
+        quality["summary"] = (
+            f"{head}，另有{len(all_reasons) - 1}项"
+            if len(all_reasons) > 1
+            else head
+        )
+        return story
+
     if not points:
         return story
     score = max(0, int(quality.get("score") or 0) - points)
@@ -647,7 +721,9 @@ def run_daily_story_review(
 ) -> dict:
     """审读→定点修→复审→（remaining 可修时）再补一轮定点修，全程固定次数。
 
-    客户端不支持审读则只走程序检查。
+    审读与好笑评估合并为一次 LLM 调用（review_daily_story_issues 返回
+    (issues, humor)）；好笑分取首轮审读结果，最后随 remaining 一起落进
+    quality。客户端不支持审读则只走程序检查。
     """
     if not isinstance(story, dict) or not _dialogue(story):
         return story
@@ -655,18 +731,24 @@ def run_daily_story_review(
     review = getattr(client, "review_daily_story_issues", None)
     spot_fix = getattr(client, "spot_fix_daily_story", None)
 
-    # 首轮审读跑两遍取并集：单遍召回会漏，两遍能稳住明显硬伤
-    issues = merge_issues(
-        collect_local_issues(story),
-        *(
-            [review(theme, story) for _ in range(REVIEW_FIRST_PASSES)]
-            if callable(review)
-            else []
-        ),
-    )
+    humor_seen: dict[str, Any] | None = None
+
+    def _run_review(s: dict) -> list[dict[str, Any]]:
+        nonlocal humor_seen
+        issues: list[dict[str, Any]] = []
+        for _ in range(REVIEW_FIRST_PASSES):
+            if not callable(review):
+                continue
+            issues_, humor_ = review(theme, s)
+            issues = merge_issues(issues, issues_)
+            if humor_seen is None and humor_:
+                humor_seen = humor_
+        return merge_issues(collect_local_issues(s), issues)
+
+    issues = _run_review(story)
     if not issues:
         logger.info("[DAILY_STORY] review clean, no spot fix")
-        return apply_review_to_quality(story, [])
+        return apply_review_to_quality(story, [], humor=humor_seen)
 
     logger.info(
         "[DAILY_STORY] review found %d issue(s): %s",
@@ -681,10 +763,7 @@ def run_daily_story_review(
             theme=theme,
         )
 
-    remaining = merge_issues(
-        collect_local_issues(story),
-        review(theme, story) if callable(review) else [],
-    )
+    remaining = _run_review(story)
     if remaining:
         logger.warning(
             "[DAILY_STORY] review remaining %d issue(s) after spot fix",
@@ -711,4 +790,4 @@ def run_daily_story_review(
                         collect_local_issues(story),
                         kept,
                     )
-    return apply_review_to_quality(story, remaining)
+    return apply_review_to_quality(story, remaining, humor=humor_seen)
