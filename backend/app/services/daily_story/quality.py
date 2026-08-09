@@ -855,9 +855,8 @@ def score_daily_story(
             cons.extend(punch_details)
 
     structure_score = max(0, min(STRUCTURE_SCORE_CAP, score))
-    # 正则好笑分退役（2026-08-10）：不再计入总分。发布线好笑由 LLM 审读
-    # 阶段评定（review.apply_review_to_quality 注入 funny_score 0-20）。
-    # 这里保留计算与 reasons 输出，仅作调试与阈值实验参考。
+    # 正则好笑：生成循环不计入 score（只追结构）；保存/预览经
+    # finalize_daily_story_total 与结构相加；正式发布线以 LLM 审读为准。
     humor_regex_points, humor_pros, humor_cons = _score_funniness(
         lines,
         type_code=profile.code,
@@ -867,8 +866,8 @@ def score_daily_story(
     pros.extend(humor_pros)
     cons.extend(humor_cons)
     pros.append(f"结构{structure_score}")
-    pros.append(f"好笑{humor_regex_points}")
-    # 结构≤80（扣分制）为生成循环 target；审读后 total = 结构 + LLM 好笑
+    pros.append(f"正则好笑{humor_regex_points}")
+    # score 暂=结构分，供生成循环；attach/保存会 finalize 成结构+好笑
     grade = _grade_from_score(structure_score)
     summary = _build_summary(
         pros, cons, grade, profile.summary_highlight_tokens,
@@ -878,6 +877,7 @@ def score_daily_story(
         "grade": grade,
         "score": structure_score,
         "structure_score": structure_score,
+        "humor_regex_points": humor_regex_points,
         "summary": summary,
         "reasons": [*pros, *cons],
     }
@@ -936,14 +936,126 @@ def _build_summary(
     return "结构完整，收束一般"
 
 
+def structure_score_of(quality: dict[str, Any] | None) -> int:
+    """读取结构分（生成循环 target 用这个，勿用含好笑的总分）。"""
+    if not isinstance(quality, dict):
+        return 0
+    if quality.get("structure_score") is not None:
+        try:
+            return int(quality["structure_score"])
+        except (TypeError, ValueError):
+            pass
+    try:
+        return int(quality.get("score") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def finalize_daily_story_total(
+    quality: dict[str, Any],
+    *,
+    humor: dict[str, Any] | None = None,
+    review_penalty_points: int = 0,
+) -> dict[str, Any]:
+    """总分 = 结构 + 好笑 − 审读硬伤。
+
+    优先沿用 LLM ``humor.funny_score``（0-20）；否则用正则
+    ``humor_regex_points``。保存故事时走这条，避免只剩结构分。
+    """
+    structure = structure_score_of(quality)
+    funny = 0
+    source = "regex"
+    if isinstance(humor, dict) and humor.get("funny_score") is not None:
+        try:
+            funny = max(0, min(20, int(humor.get("funny_score"))))
+            source = "llm"
+            htype = humor.get("humor_type")
+            if htype not in ("natural", "formulaic", "none"):
+                htype = "none"
+            quality["humor"] = {
+                "funny_score": funny,
+                "best_moment": str(humor.get("best_moment") or "").strip()[:40],
+                "humor_type": htype,
+            }
+        except (TypeError, ValueError):
+            source = "regex"
+    if source == "regex":
+        try:
+            funny = max(0, min(20, int(quality.get("humor_regex_points") or 0)))
+        except (TypeError, ValueError):
+            funny = 0
+        quality.pop("humor", None)
+
+    points = max(0, int(review_penalty_points or 0))
+    total = max(0, min(100, structure + funny - points))
+    quality["score"] = total
+    quality["grade"] = _grade_from_score(total)
+
+    reasons = [
+        r
+        for r in (quality.get("reasons") or [])
+        if not str(r).startswith("总分")
+        and not str(r).startswith("发布达标")
+        and not str(r).startswith("未达发布线")
+        and not str(r).startswith("LLM好笑")
+    ]
+    normalized: list[str] = []
+    for r in reasons:
+        s = str(r)
+        if s.startswith("正则好笑"):
+            normalized.append(f"好笑{funny}")
+        else:
+            normalized.append(r)
+    reasons = normalized
+    if source == "llm":
+        if not any(str(r).startswith("好笑") and str(r)[2:].isdigit() for r in reasons):
+            reasons.append(f"好笑{funny}")
+        pass_ok = structure >= 75 and funny >= 12
+        quality["pass"] = pass_ok
+        if pass_ok:
+            reasons.append(f"发布达标：结构{structure}≥75，LLM好笑{funny}/20≥12")
+        else:
+            misses = []
+            if structure < 75:
+                misses.append(f"结构{structure}<75")
+            if funny < 12:
+                misses.append(f"好笑{funny}/20<12")
+            reasons.append(
+                f"未达发布线（{'，'.join(misses)}，须结构≥75且好笑≥12）"
+            )
+        tail = f"-硬伤{points}" if points else ""
+        reasons.append(f"总分{total}=结构{structure}+LLM好笑{funny}{tail}")
+    else:
+        tail = f"-硬伤{points}" if points else ""
+        reasons.append(f"总分{total}=结构{structure}+好笑{funny}{tail}")
+        quality.pop("pass", None)
+    quality["reasons"] = reasons
+    quality["summary"] = f"结构{structure}，好笑{funny}，总分{total}"
+    return quality
+
+
 def attach_daily_story_quality(
     story: dict[str, Any],
     *,
     theme: str | None = None,
+    finalize: bool = True,
 ) -> dict[str, Any]:
+    """重算观感分。默认 finalize=True：总分=结构+好笑（保存/列表用）。
+
+    生成循环比较结构分请用 ``structure_score_of(quality)``，不要看总分。
+    若稿上已有 LLM ``quality.humor``，finalize 时保留并优先用它。
+    """
     if not isinstance(story, dict):
         return story
-    story["quality"] = score_daily_story(story, theme=theme)
+    prev = story.get("quality") if isinstance(story.get("quality"), dict) else None
+    prev_humor = prev.get("humor") if isinstance(prev, dict) else None
+    quality = score_daily_story(story, theme=theme)
+    if finalize:
+        finalize_daily_story_total(
+            quality,
+            humor=prev_humor if isinstance(prev_humor, dict) else None,
+        )
+    story["quality"] = quality
     return story
 
 
@@ -973,7 +1085,7 @@ def build_quality_revision_hints(
     profile = resolve_quality_profile(story)
     esc_type_hint, close_type_hint = profile.revision_hints()
     has_punch_ending = closing_satisfied(pros, profile)
-    score = int(quality.get("score") or 0)
+    score = structure_score_of(quality)
 
     hints: list[str] = []
     primary_kind: str | None = None
