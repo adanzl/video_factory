@@ -279,14 +279,14 @@ def build_review_prompts(theme: str, story: dict) -> tuple[str, str]:
         '"issues":[{"lines":[5,6],"kind":"矛盾",'
         '"desc":"第5句说锅里一粒米都没有，第6句又说把剩饭倒掉了",'
         '"fix":"第6句改成…"}],'
-        '"humor":{"funny_score":7,"best_moment":"我正看到关键处，你等会儿",'
+        '"humor":{"funny_score":14,"best_moment":"我正看到关键处，你等会儿",'
         '"humor_type":"natural"}}\n'
         f"lines 用左侧行号；最多报 {REVIEW_MAX_ISSUES} 条，按严重度排序；"
         "fix 写一句具体怎么改，别写空话。\n\n"
         "全部硬伤检查做完后，**换一种心态**，别再当挑错的审稿人，"
-        "当一名普通读者，为整篇故事的「好笑/有趣程度」打一个 0-10 分"
+        "当一名普通读者，为整篇故事的「好笑/有趣程度」打一个 0-20 分"
         "（这部分与硬伤数量完全无关，别因硬伤多就打低，也别因没硬伤就偏高）：\n"
-        "- 0-2 完全不好笑；3-5 偶尔莞尔；6-7 有明显笑点；8-10 笑出声或想再看一遍。\n"
+        "- 0-4 完全不好笑；5-9 偶尔莞尔；10-14 有明显笑点；15-20 笑出声或想再看一遍。\n"
         "- 必须先在 best_moment 里引原文那句最会心一笑的话（≤40 字，须原句），"
         "再给分——不许说不出哪里好笑就喊高分。\n"
         "- humor_type 三选一：natural 自然好笑（源于人物性格/情境反差）/ "
@@ -354,7 +354,7 @@ def parse_humor(raw: Any) -> dict[str, Any] | None:
         fs = int(h.get("funny_score"))
     except (TypeError, ValueError):
         return None
-    if not (0 <= fs <= 10):
+    if not (0 <= fs <= 20):
         return None
     best = str(h.get("best_moment") or "").strip()
     htype = str(h.get("humor_type") or "").strip()
@@ -537,8 +537,8 @@ def apply_review_to_quality(
     """把审读结果落到 quality：扣硬伤分、写入 LLM 好笑分、判定发布线。
 
     humor 为审读同批输出的好笑评估 {funny_score, best_moment, humor_type}。
-    有 humor：总分 = 结构分（正则，≤80）+ LLM 好笑（0-10）− 审读硬伤；
-    发布线 = 结构≥75 且 好笑≥6。无 humor：保持旧扣分逻辑（兼容 mock）。
+    有 humor：总分 = 结构分（正则，≤80）+ LLM 好笑（0-20）− 审读硬伤；
+    发布线 = 结构≥75 且 好笑≥12。无 humor：保持旧扣分逻辑（兼容 mock）。
     """
     from app.services.daily_story.quality import _grade_from_score
 
@@ -565,23 +565,23 @@ def apply_review_to_quality(
 
     if humor and isinstance(humor, dict):
         quality["humor"] = humor
-        funny = max(0, min(10, int(humor.get("funny_score") or 0)))
+        funny = max(0, min(20, int(humor.get("funny_score") or 0)))
         structure = int(quality.get("structure_score") or 0)
-        score = max(0, min(90, structure + funny - points))
+        score = max(0, min(100, structure + funny - points))
         quality["score"] = score
         quality["grade"] = _grade_from_score(score)
-        pass_ok = structure >= 75 and funny >= 6
+        pass_ok = structure >= 75 and funny >= 12
         quality["pass"] = pass_ok
         if pass_ok:
-            line_reason = f"发布达标：结构{structure}≥75，LLM好笑{funny}/10≥6"
+            line_reason = f"发布达标：结构{structure}≥75，LLM好笑{funny}/20≥12"
         else:
             misses = []
             if structure < 75:
                 misses.append(f"结构{structure}<75")
-            if funny < 6:
-                misses.append(f"好笑{funny}/10<6")
+            if funny < 12:
+                misses.append(f"好笑{funny}/20<12")
             line_reason = (
-                f"未达发布线（{'，'.join(misses)}，须结构≥75且好笑≥6）"
+                f"未达发布线（{'，'.join(misses)}，须结构≥75且好笑≥12）"
             )
         all_reasons = [*reasons, line_reason]
         quality["reasons"] = [*(quality.get("reasons") or []), *all_reasons]

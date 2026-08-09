@@ -30,6 +30,10 @@ def score_punchline(
 
     tail4 = "".join(lines[-4:])
     tail3 = "".join(lines[-3:])
+    # 回旋镖窗口扩大到末 5 句（2026-08-10 专家确认）：C 类末 4 句硬模板本就是
+    # 「加赛动作（倒数第4句）→ 喊不算 → 赢方反问 → 嘴硬」，回旋镖/加赛在倒数
+    # 第 4 句是契约设计，只搜 tail3 会漏掉并误扣收束形态分（巧克力稿 v33 即死这）。
+    tail5 = "".join(lines[-5:])
     bonus = 0
     details: list[str] = []
 
@@ -41,20 +45,20 @@ def score_punchline(
         bonus += 10
         details.append("实物真相反转")
 
-    if RE_BOOMERANG_RULE.search(tail3):
+    if RE_BOOMERANG_RULE.search(tail5):
         bonus += 8
         if "实物真相反转" not in details:
             details.append("回旋镖收束")
 
     if RE_SURRENDER.search(tail3) or RE_C_STUBBORN_LAST.search(tail3):
-        if not RE_BOOMERANG_RULE.search(tail3) and not any(
+        if not RE_BOOMERANG_RULE.search(tail5) and not any(
             m in tail3 for m in STRONG_END_MARKERS
         ):
             bonus -= 3
 
     twist_matches = RE_TWIST_SEGUE.findall(tail3)
     if twist_matches and (
-        RE_REVELATION_PROP.search(tail4) or RE_BOOMERANG_RULE.search(tail4)
+        RE_REVELATION_PROP.search(tail4) or RE_BOOMERANG_RULE.search(tail5)
     ):
         bonus += 3
 

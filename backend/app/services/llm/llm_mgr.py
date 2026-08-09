@@ -708,8 +708,8 @@ class LLMMgr:
         best_score = -1
         target = 75
         # 生成循环只追结构分（≤80 封顶）；好笑分由审读阶段 LLM 评定
-        # （review.apply_review_to_quality 注入 funny_score），最终发布线 =
-        # 结构≥75 且 LLM 好笑≥6。整稿 3 次（全 Flash 高温发散）+ refine 兜底；
+        # （review.apply_review_to_quality 注入 funny_score 0-20），最终发布线 =
+        # 结构≥75 且 LLM 好笑≥12。整稿 3 次（全 Flash 高温发散）+ refine 兜底；
         # refine 已切 Flash 关 thinking，总耗时可控。refine 一次只修一个主问题
         # （build_quality_revision_hints 单主项），结构短板常叠 2 个
         # （口头禅复读+回旋镖未点破），留 2 轮补到 75。
