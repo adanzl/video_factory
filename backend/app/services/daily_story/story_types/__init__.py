@@ -423,7 +423,12 @@ def validate_type_opening(
     append_b_opening_errors(normalized, type_code=type_code, errors=errors)
     from app.services.daily_story.story_types.c.opening import append_c_opening_errors
 
-    append_c_opening_errors(normalized, type_code=type_code, errors=errors)
+    append_c_opening_errors(
+        normalized,
+        type_code=type_code,
+        errors=errors,
+        setting=setting,
+    )
     from app.services.daily_story.story_types.d.opening import append_d_opening_errors
     from app.services.daily_story.story_types.e.opening import append_e_opening_errors
 

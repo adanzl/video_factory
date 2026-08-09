@@ -16,6 +16,15 @@ _RULE_DECLARE = re.compile(
     r"(?:规矩|规则|赛规|负责|收拾|定规则|谁先)",
 )
 _NEW_RULE = re.compile(r"改规矩|不算|另外|重新比|再来|换一条")
+# 指代式回旋镖引话（用户 2026-08-09 定）：「你刚说拿我定的规则」「用我的规矩」——
+# 指向说话人自己立过的规则，不是「我说规则是X」/「你刚说举过头顶才算」式逐字引用
+# 规则内容；指代式引话无需前文逐字出处，回旋镖引话失据不拦。只匹配「我+定/立/设/
+# 说了算/的 + 规则/规矩/赛规」的指代结构（「的」会被虚字 strip 掉，故定/立/设不带
+# 必选「的」）；「我说规则是X」用「我说」不用「我定/我立」，不命中。
+_RE_C_REFERENTIAL_BOOMERANG = re.compile(
+    r"(?:拿|用|按|照|守|听)?我(?:定|立|设|说了算|的)?"
+    r"(?:规则|规矩|赛规)",
+)
 
 _CN: dict[str, int] = {
     "一": 1,
@@ -93,6 +102,10 @@ def collect_fact_issues(story: dict) -> list[str]:
         for frag in quoted:
             core = re.sub(r"[的话呢呀嘛吧啊…\s「」]", "", frag)
             if len(core) < 4:
+                continue
+            # 指代式引话（拿我定的规则/用我的规矩/照我说的赛规）指向自己立过的规则，
+            # 非逐字引用，无需前文逐字出处（用户 2026-08-09 定：非「我说规则是X」式）
+            if _RE_C_REFERENTIAL_BOOMERANG.search(core):
                 continue
             from app.services.daily_story.story_types.c.humor import (
                 ground_closing_quote,

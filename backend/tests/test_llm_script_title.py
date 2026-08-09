@@ -3783,3 +3783,210 @@ def test_c_validate_hardblocks_stubborn_dim_drift():
     errs = []
     append_c_body_errors(good, errs)
     assert not any("比法漂移" in e for e in errs), errs
+
+
+def test_c_validate_hardblocks_opening_possession_contradicts_setting():
+    """C 硬卡：开场占有宣告须与 setting 持有者一致（用户 2026-08-09 v27 酸奶稿抓）。
+
+    setting「昭昭手里攥着最后一瓶酸奶」，开场第 2 句灿灿却自称「我先拿到的」——
+    与可见场景矛盾；失方第 2 句只能孩子气理由反对（你上次喝多闹肚子/我搬回来的）。
+    己方=setting 持有者时开场直接宣示占有才合法。
+    """
+    from app.services.daily_story.story_types.c.opening import append_c_opening_errors
+
+    # v27 酸奶稿：setting 昭昭持有，灿灿自称我先拿到 → 矛盾
+    bad_opening = [
+        {"speaker": "昭昭", "line": "冰箱里最后一瓶酸奶，我想喝。"},
+        {"speaker": "灿灿", "line": "不行，我先拿到的，归我！"},
+    ]
+    errs: list[str] = []
+    append_c_opening_errors(
+        bad_opening,
+        type_code="C",
+        errors=errs,
+        setting="客厅，冰箱门开着，昭昭手里攥着最后一瓶酸奶，灿灿伸手来抢。",
+    )
+    assert any("与 setting 矛盾" in e for e in errs), errs
+
+    # v28 酸奶稿：setting 灿灿持有，灿灿开场第 2 句用理由反对 → 放行
+    good_opening = [
+        {"speaker": "昭昭", "line": "姐姐，冰箱里最后一瓶酸奶，给我喝吧"},
+        {"speaker": "灿灿", "line": "不行，你上次喝多闹肚子，这次我先喝！"},
+    ]
+    errs = []
+    append_c_opening_errors(
+        good_opening,
+        type_code="C",
+        errors=errs,
+        setting="客厅冰箱前，灿灿刚打开冰箱门，手已握住最后一瓶酸奶的瓶身。",
+    )
+    assert not any("与 setting 矛盾" in e for e in errs), errs
+
+    # 己方=setting 持有者，开场直接宣示占有 → 放行
+    owner_opening = [
+        {"speaker": "灿灿", "line": "这瓶酸奶我先拿到的，归我！"},
+        {"speaker": "昭昭", "line": "你上次喝多闹肚子，这次让我喝！"},
+    ]
+    errs = []
+    append_c_opening_errors(
+        owner_opening,
+        type_code="C",
+        errors=errs,
+        setting="客厅，灿灿手里攥着最后一瓶酸奶，昭昭伸手来抢。",
+    )
+    assert not any("与 setting 矛盾" in e for e in errs), errs
+
+
+def test_c_validate_hardblocks_opening_loser_criterion():
+    """C 硬卡：开场失方禁抛占有判据/宣示能力（用户 2026-08-09 v29 酸奶稿抓）。
+
+    setting 明写灿灿正拿在手里、昭昭伸手来抢，昭昭第 2 句却立「谁先拿到归谁」
+    判据/宣示「我够得着」——先拿到者已是灿灿，判据必对己不利，且「够得着」与
+    「伸手来抢」（够不着才有抢的张力）矛盾；失方第 2 句只能孩子气理由反对。
+    持有者本人抛判据不查（sp==holder）。
+    """
+    from app.services.daily_story.story_types.c.opening import append_c_opening_errors
+
+    # v29 酸奶稿：setting 灿灿持有，失方昭昭抛「谁先拿到归谁」判据+「我够得着」→ 拦
+    bad_opening = [
+        {"speaker": "灿灿", "line": "冰箱里最后一瓶酸奶，在我手里呢"},
+        {"speaker": "昭昭", "line": "谁先拿到归谁，我够得着！"},
+    ]
+    errs: list[str] = []
+    append_c_opening_errors(
+        bad_opening,
+        type_code="C",
+        errors=errs,
+        setting="冰箱前，灿灿刚打开冰箱门，最后一瓶酸奶正拿在手里，昭昭伸手来抢。",
+    )
+    assert any("失方抛占有判据" in e for e in errs), errs
+
+    # 对照：失方第 2 句孩子气理由反对 → 放行
+    good_opening = [
+        {"speaker": "灿灿", "line": "冰箱里最后一瓶酸奶，在我手里呢"},
+        {"speaker": "昭昭", "line": "不行，你上次喝多闹肚子，这次该我喝！"},
+    ]
+    errs = []
+    append_c_opening_errors(
+        good_opening,
+        type_code="C",
+        errors=errs,
+        setting="冰箱前，灿灿刚打开冰箱门，最后一瓶酸奶正拿在手里，昭昭伸手来抢。",
+    )
+    assert not any("失方抛占有判据" in e for e in errs), errs
+
+    # 持有者本人立判据不查（sp==holder 跳过失方检查）→ 放行
+    owner_criterion = [
+        {"speaker": "灿灿", "line": "谁先拿到归谁，我已经拿到了！"},
+        {"speaker": "昭昭", "line": "你上次喝多闹肚子，这次让我喝！"},
+    ]
+    errs = []
+    append_c_opening_errors(
+        owner_criterion,
+        type_code="C",
+        errors=errs,
+        setting="客厅，灿灿手里攥着最后一瓶酸奶，昭昭伸手来抢。",
+    )
+    assert not any("失方抛占有判据" in e for e in errs), errs
+
+
+def test_c_validate_hardblocks_agree_contest_without_proposal():
+    """C 硬卡：正文首句「X就X」接招须有开场提议（用户 2026-08-09 v27 酸奶稿抓）。
+
+    v27 酸奶稿开场末句灿灿只做占有宣告「我先拿到的，归我」，正文首句昭昭
+    「举就举，我举过头顶了」——接招回应一个开场从没提议过的比赛（举），凭空
+    进入未立赛规。只有 X 字面出现在开场两句（真提议过该动作）才放行。
+    """
+    from app.services.daily_story.story_types.c.validate import append_c_body_errors
+
+    def _story(dialogue: list[dict]) -> dict:
+        s = _valid_story()
+        s["dialogue"] = dialogue
+        s["punchline_explain"] = (
+            "C类公平执念，灿灿立规举过头顶坚持三秒，昭昭按字面执行，"
+            "灿灿赖账，昭昭用其原规反问，灿灿嘴硬收场"
+        )
+        return s
+
+    # v27 酸奶稿：开场末句只占有宣告，正文首句接招「举就举」→ 凭空进入未立赛规
+    bad = _story(
+        [
+            {"speaker": "昭昭", "line": "冰箱里最后一瓶酸奶，我想喝。"},
+            {"speaker": "灿灿", "line": "不行，我先拿到的，归我！"},
+            {"speaker": "昭昭", "line": "举就举，我举过头顶了，你数真的呀！"},
+            {"speaker": "灿灿", "line": "一、二、三，好了，你放下，该我了呢了呀！"},
+            {"speaker": "昭昭", "line": "我举完了，酸奶还是我的，你刚说的了吧！"},
+            {"speaker": "灿灿", "line": "我说的是我先举才算，你举了不算嘛了呀！"},
+            {"speaker": "昭昭", "line": "你耍赖，规则是你定的，我照做了啊！"},
+            {"speaker": "灿灿", "line": "那我也举，我举得比你久，归我了呀！"},
+            {"speaker": "昭昭", "line": "你举吧，我数着，三秒不到就放下好不好呀！"},
+            {"speaker": "灿灿", "line": "我举过头顶了，你数到三了吗你听着呀？"},
+            {"speaker": "昭昭", "line": "你刚说举过头顶坚持三秒才算，你才两秒！"},
+            {"speaker": "灿灿", "line": "我不管，我举了，酸奶该我喝！"},
+            {"speaker": "昭昭", "line": "你定的规则自己都不守，还想要酸奶？"},
+            {"speaker": "灿灿", "line": "哼，明天我赢过你！"},
+        ]
+    )
+    errs: list[str] = []
+    append_c_body_errors(bad, errs)
+    assert any("凭空进入未立赛规" in e for e in errs), errs
+
+    # 开场第 2 句真提议过「举」→ 接招合法放行
+    good = _story(
+        [
+            {"speaker": "昭昭", "line": "冰箱里最后一瓶果汁，给我喝吧。"},
+            {"speaker": "灿灿", "line": "行，要比举过头顶才给，敢不敢？"},
+            {"speaker": "昭昭", "line": "举就举，我举过头顶了，你数啊！"},
+            {"speaker": "灿灿", "line": "一、二、三，好了，你放下，该我了！"},
+            {"speaker": "昭昭", "line": "我举完了，果汁还是我的，你刚说的了吧！"},
+            {"speaker": "灿灿", "line": "我说的是我先举才算，你举了不算嘛！"},
+            {"speaker": "昭昭", "line": "你耍赖，规则是你定的，我照做了啊！"},
+            {"speaker": "灿灿", "line": "那我也举，我举得比你久，归我了呀！"},
+            {"speaker": "昭昭", "line": "你举吧，我数着，三秒不到就放下好不好呀！"},
+            {"speaker": "灿灿", "line": "我举过头顶了，你数到三了吗你听着呀？"},
+            {"speaker": "昭昭", "line": "你刚说举过头顶坚持三秒才算，你才两秒！"},
+            {"speaker": "灿灿", "line": "我不管，我举了，果汁该我喝！"},
+            {"speaker": "昭昭", "line": "你定的规则自己都不守，还想要果汁？"},
+            {"speaker": "灿灿", "line": "哼，明天我赢过你！"},
+        ]
+    )
+    errs = []
+    append_c_body_errors(good, errs)
+    assert not any("凭空进入未立赛规" in e for e in errs), errs
+
+
+def test_c_facts_referential_boomerang_quote_not_flagged():
+    """C 事实：指代式回旋镖引话（你刚说拿我定的规则）不需逐字前文出处。
+
+    末段「你刚说拿我定的规则，现在自己又不认」——「拿我定的规则」指向说话人
+    自己立过的规则（正文立规句已定「谁先举过头顶坚持三秒」），是**指代式**引话，
+    不是「我说规则是X」/「你刚说举过头顶才算」式逐字引用；回旋镖引话失据只拦
+    逐字引话前文无出处，指代式引话放行（用户 2026-08-09 定）。
+    """
+    # 先 import c.validate 预热完整导入链（story_types.quality → c.quality → c.facts），
+    # 避免 c.facts 作为入口触发既有循环导入（c.facts 在 c.quality 注册时还在半初始化）。
+    from app.services.daily_story.story_types.c.validate import (  # noqa: F401
+        append_c_body_errors,
+    )
+    from app.services.daily_story.story_types.c.facts import collect_fact_issues
+
+    dialogue = [
+        {"speaker": "昭昭", "line": "姐姐，冰箱里最后一杯果汁，给我喝吧。"},
+        {"speaker": "灿灿", "line": "不行，谁先举过头顶坚持三秒才算，归我！"},
+        {"speaker": "昭昭", "line": "好，举就举，我举过头顶了，你数三秒！"},
+        {"speaker": "灿灿", "line": "一，二，三，你举够了，可果汁还是我的！"},
+        {"speaker": "昭昭", "line": "你耍赖，我举过头顶三秒了，该我喝！"},
+        {"speaker": "灿灿", "line": "你举的时候手抖了，不算数！"},
+        {"speaker": "昭昭", "line": "我手没抖，是你喊太快，你赖皮！"},
+        {"speaker": "灿灿", "line": "你刚说拿我定的规则，现在自己又不认！"},
+        {"speaker": "昭昭", "line": "我没不认，是你不守时，我举够三秒了！"},
+        {"speaker": "灿灿", "line": "哼，明天我赢过你！"},
+    ]
+    issues = collect_fact_issues({"dialogue": dialogue})
+    assert not any("扣话无前文" in i for i in issues), issues
+
+    # 对照：逐字引话前文无出处（编造规则）仍拦
+    invented = dialogue[:]  # 末段引话改成「你刚说谁先喝完归谁」，正文没立过这条
+    invented[-3] = {"speaker": "灿灿", "line": "你刚说谁先喝完归谁，现在又不认！"}
+    issues2 = collect_fact_issues({"dialogue": invented})
+    assert any("扣话无前文" in i for i in issues2), issues2
