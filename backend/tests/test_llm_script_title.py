@@ -2337,8 +2337,87 @@ def test_score_c_folding_literal_play_not_flatlined():
         None,
     )
     assert humor_pts is not None and humor_pts >= 9, q["reasons"]
-    # 正则好笑退役后 score=纯结构分，不再叠加正则好笑
+    # 正则好笑在 score_daily_story 里不叠加；attach finalize 后才会进总分
     assert q["score"] == q.get("structure_score"), q["reasons"]
+
+
+def test_attach_daily_story_quality_finalizes_structure_plus_regex_humor():
+    """保存路径：attach 后总分 = 结构 + 正则好笑。"""
+    from app.services.daily_story.quality import (
+        attach_daily_story_quality,
+        score_daily_story,
+    )
+
+    story = {
+        "scene_title": "叠好的衣服",
+        "setting": "客厅沙发衣服被翻乱",
+        "conflict_core": "姐弟争谁收拾叠好的衣服",
+        "dialogue": [
+            {"speaker": "灿灿", "line": "沙发上那堆衣服谁弄乱的"},
+            {"speaker": "昭昭", "line": "不是我呀，我刚从房间出来"},
+            {"speaker": "灿灿", "line": "你脚边全是皱的，肯定你翻过"},
+            {"speaker": "昭昭", "line": "那是猫弄的，你看这爪印"},
+            {"speaker": "灿灿", "line": "猫不会把叠好的翻开，你弄乱谁收拾"},
+            {"speaker": "昭昭", "line": "谁弄乱谁收拾？你刚才也伸手碰了"},
+            {"speaker": "灿灿", "line": "我碰一下怎么算翻"},
+            {"speaker": "昭昭", "line": "你说的谁弄乱谁收拾呢"},
+            {"speaker": "灿灿", "line": "哼算你狠我自己来"},
+        ],
+        "punchline_explain": "C类公平执念，赛规字面回旋镖",
+        "discovery_opening": [
+            {"speaker": "灿灿", "line": "沙发上那堆衣服谁弄乱的"},
+            {"speaker": "昭昭", "line": "不是我呀，我刚从房间出来"},
+        ],
+    }
+    raw = score_daily_story(story, theme="弄乱叠好的衣服")
+    attach_daily_story_quality(story, theme="弄乱叠好的衣服")
+    q = story["quality"]
+    structure = int(q["structure_score"])
+    humor = int(q["humor_regex_points"])
+    assert q["score"] == min(100, structure + humor), q
+    assert q["score"] >= structure
+    assert raw["score"] == structure
+
+
+def test_attach_preserves_llm_humor_on_resave():
+    from app.services.daily_story.quality import attach_daily_story_quality
+
+    story = {
+        "scene_title": "叠好的衣服",
+        "setting": "客厅沙发",
+        "conflict_core": "姐弟争谁收拾",
+        "dialogue": [
+            {"speaker": "灿灿", "line": "沙发上那堆衣服谁弄乱的"},
+            {"speaker": "昭昭", "line": "不是我呀，我刚从房间出来"},
+            {"speaker": "灿灿", "line": "你脚边全是皱的，肯定你翻过"},
+            {"speaker": "昭昭", "line": "那是猫弄的，你看这爪印"},
+            {"speaker": "灿灿", "line": "猫不会把叠好的翻开，你弄乱谁收拾"},
+            {"speaker": "昭昭", "line": "谁弄乱谁收拾？你刚才也伸手碰了"},
+            {"speaker": "灿灿", "line": "我碰一下怎么算翻"},
+            {"speaker": "昭昭", "line": "你说的谁弄乱谁收拾呢"},
+            {"speaker": "灿灿", "line": "哼算你狠我自己来"},
+        ],
+        "punchline_explain": "C类公平执念，赛规字面回旋镖",
+        "discovery_opening": [
+            {"speaker": "灿灿", "line": "沙发上那堆衣服谁弄乱的"},
+            {"speaker": "昭昭", "line": "不是我呀，我刚从房间出来"},
+        ],
+        "quality": {
+            "grade": "好",
+            "score": 90,
+            "structure_score": 80,
+            "humor": {
+                "funny_score": 14,
+                "best_moment": "你说的谁弄乱谁收拾呢",
+                "humor_type": "natural",
+            },
+            "reasons": [],
+        },
+    }
+    attach_daily_story_quality(story, theme="弄乱叠好的衣服")
+    q = story["quality"]
+    assert q["humor"]["funny_score"] == 14
+    assert q["score"] == min(100, int(q["structure_score"]) + 14)
 
 
 def test_infer_story_type_and_normalize_punchline():

@@ -701,6 +701,7 @@ class LLMMgr:
         from app.services.daily_story.quality import (
             attach_daily_story_quality,
             build_quality_revision_hints,
+            structure_score_of,
         )
 
         client = self._get_client()
@@ -713,6 +714,7 @@ class LLMMgr:
         # refine 已切 Flash 关 thinking，总耗时可控。refine 一次只修一个主问题
         # （build_quality_revision_hints 单主项），结构短板常叠 2 个
         # （口头禅复读+回旋镖未点破），留 2 轮补到 75。
+        # attach 默认会 finalize 总分=结构+好笑，比较 target 必须用 structure_score。
         max_full = 3
         max_refine = 2
         last_exc: Exception | None = None
@@ -734,7 +736,7 @@ class LLMMgr:
             except Exception:
                 raise
 
-            score = story.get("quality", {}).get("score", 0)
+            score = structure_score_of(story.get("quality"))
             if score > best_score:
                 best_score = score
                 best_story = story
@@ -742,7 +744,7 @@ class LLMMgr:
             if score >= target:
                 elapsed = time.perf_counter() - started
                 logger.info(
-                    "[DAILY_STORY] hit target score=%d >= %d "
+                    "[DAILY_STORY] hit target structure=%d >= %d "
                     "attempt=%d/%d elapsed=%.1fs",
                     score, target, attempt + 1, max_full, elapsed,
                 )
@@ -764,14 +766,14 @@ class LLMMgr:
                         story_type=story_type,
                     )
                     attach_daily_story_quality(refined, theme=theme)
-                    r_score = refined.get("quality", {}).get("score", 0)
+                    r_score = structure_score_of(refined.get("quality"))
                     if r_score > best_score:
                         best_score = r_score
                         best_story = refined
                     if r_score >= target:
                         elapsed = time.perf_counter() - started
                         logger.info(
-                            "[DAILY_STORY] quality refine hit score=%d "
+                            "[DAILY_STORY] quality refine hit structure=%d "
                             "attempt=%d/%d elapsed=%.1fs",
                             r_score, attempt + 1, max_full, elapsed,
                         )
@@ -789,7 +791,7 @@ class LLMMgr:
         elapsed = time.perf_counter() - started
         if best_story is not None:
             logger.warning(
-                "[DAILY_STORY] best score=%d < %d after %d full attempts "
+                "[DAILY_STORY] best structure=%d < %d after %d full attempts "
                 "elapsed=%.1fs",
                 best_score, target, max_full, elapsed,
             )
