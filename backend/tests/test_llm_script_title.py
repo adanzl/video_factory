@@ -3424,6 +3424,89 @@ def test_review_parse_issues_drops_out_of_range_lines():
     assert [it["desc"] for it in parsed] == ["有效"]
 
 
+def test_review_parse_accepts_written_style_kind():
+    from app.services.daily_story.review import parse_review_issues
+
+    parsed = parse_review_issues(
+        {
+            "issues": [
+                {
+                    "lines": [4],
+                    "kind": "书面",
+                    "desc": "绕口长问，不像孩子说话",
+                    "fix": "改成短口语",
+                },
+            ],
+        },
+        line_count=5,
+    )
+    assert parsed[0]["kind"] == "书面"
+    assert parsed[0]["lines"] == [4]
+
+
+def test_review_parse_accepts_unintelligible_kind():
+    from app.services.daily_story.review import parse_review_issues
+
+    parsed = parse_review_issues(
+        {
+            "issues": [
+                {
+                    "lines": [4],
+                    "kind": "语病",
+                    "desc": "句子读不懂，不知道在问什么",
+                    "fix": "改成一句能读懂的话",
+                },
+            ],
+        },
+        line_count=5,
+    )
+    assert parsed[0]["kind"] == "语病"
+    assert parsed[0]["lines"] == [4]
+
+
+def test_review_prompt_includes_written_style_rule():
+    from app.services.daily_story.review import build_review_prompts
+
+    system, _ = build_review_prompts("关门", {"dialogue": []})
+    assert "书面/绕口/旁白感" in system
+    assert "语病/看不懂" in system
+    assert "前 9 类" in system
+
+
+def test_review_parse_issues_prioritizes_severity_and_caps_style():
+    from app.services.daily_story.review import parse_review_issues
+
+    parsed = parse_review_issues(
+        {
+            "issues": [
+                {"lines": [1], "kind": "书面", "desc": "风格1", "fix": ""},
+                {"lines": [2], "kind": "书面", "desc": "风格2", "fix": ""},
+                {"lines": [3], "kind": "书面", "desc": "风格3", "fix": ""},
+                {"lines": [4], "kind": "矛盾", "desc": "硬伤", "fix": ""},
+            ],
+        },
+        line_count=5,
+    )
+    assert parsed[0]["kind"] == "矛盾"
+    assert sum(1 for it in parsed if it["kind"] == "书面") <= 2
+
+
+def test_review_local_coherence_prompt_contains_neighbors():
+    from app.services.daily_story.review import build_local_coherence_prompts
+
+    system, user = build_local_coherence_prompts("上一句", "修改句", "下一句")
+    assert "上一句" in user
+    assert "修改句" in user
+    assert "下一句" in user
+    assert '"coherent"' in system
+
+
+def test_d_soft_last_accepts_unclear_close():
+    from app.services.daily_story.story_types.quality import RE_SOFT_LAST
+
+    assert RE_SOFT_LAST.search("哎，和你说不清楚，反正门关了。")
+
+
 def test_review_apply_spot_fixes_strips_prefix_and_syncs_opening():
     from app.services.daily_story.review import apply_spot_fixes
 

@@ -2899,6 +2899,36 @@ class DeepSeekClient(LLMClient):
             return {}
         return raw
 
+    def check_local_coherence(
+        self,
+        prev: str,
+        revised: str,
+        next_line: str,
+    ) -> bool:
+        """定点修后的局部衔接快验：返回 False 表示修改句与前后句断裂。"""
+        from app.services.daily_story.review import (
+            build_local_coherence_prompts,
+        )
+
+        system, user = build_local_coherence_prompts(
+            prev,
+            revised,
+            next_line,
+        )
+        try:
+            raw, _ = self._chat_json(
+                system,
+                user,
+                thinking_enabled=False,
+                temperature=0.0,
+            )
+        except ValueError as exc:
+            logger.warning("[DAILY_STORY] local coherence check failed: %s", exc)
+            return True
+        if isinstance(raw, dict):
+            return bool(raw.get("coherent", True))
+        return True
+
     def generate_daily_story_themes(
         self,
         count: int = 15,
