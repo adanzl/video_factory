@@ -51,6 +51,20 @@ REVIEW_MAX_ISSUES = 10
 # 首轮单遍：召回靠本地检 + 复审，禁止双遍 LLM 把单稿拖长
 REVIEW_FIRST_PASSES = 1
 
+# 独立「童语化润色」用的书面信号：通用词表，不按主题穷举。
+# 只做疑似标记，最终改写交给 Flash，命中后走定点修+硬卡+回滚。
+_WRITTEN_SIGNAL_RES: tuple[re.Pattern[str], ...] = (
+    re.compile(
+        r"(?:两|一|几|半)成力|半指宽|一指宽|\d+\s*(?:厘米|毫米|米|毫升)",
+    ),
+    re.compile(
+        r"深痕|锯齿状|证据|亲手|松半分|印上|加力|拿给[^，。！？]{0,6}看",
+    ),
+    re.compile(
+        r"进行|完成|非常|十分|迅速|立刻|由于|因此|从而|以及",
+    ),
+)
+
 _RE_PUNCT = re.compile(r"[，。！？…、：；~—\s·「」“”\"'?!.,]")
 # 末段结构句：引用原话闭环，跟前面质问像也不算复读
 _RE_STRUCT_CLOSE = re.compile(r"你自己说|那你刚才算不算|那你刚才也")
@@ -209,6 +223,36 @@ def collect_local_issues(story: dict) -> list[dict[str, Any]]:
             })
 
     return issues
+
+
+def collect_wording_issues(
+    story: dict,
+    *,
+    type_code: str | None = None,
+) -> list[dict[str, Any]]:
+    """规则扫疑似成人书面措辞，交给独立润色环节处理。"""
+    rows = _dialogue(story)
+    lines = [str(r.get("line") or "").strip() for r in rows]
+    n = len(lines)
+    open_len = len(story.get("discovery_opening") or [])
+    out: list[dict[str, Any]] = []
+    for i, row in enumerate(rows, 1):
+        line = str(row.get("line") or "").strip()
+        if not line:
+            continue
+        # 开场片头与末段原话闭环是结构设计行，润色跳过，避免拆掉收束。
+        if _on_design_line(i, lines, n, open_len):
+            continue
+        matched = [pat for pat in _WRITTEN_SIGNAL_RES if pat.search(line)]
+        if not matched:
+            continue
+        out.append({
+            "lines": [i],
+            "kind": "书面",
+            "desc": f"疑似成人书面措辞：{line}",
+            "fix": "改成孩子口语，保持原意与信息量",
+        })
+    return out[:REVIEW_MAX_ISSUES]
 
 
 def build_review_prompts(theme: str, story: dict) -> tuple[str, str]:
@@ -438,6 +482,56 @@ def build_spot_fix_prompts(
         f"矛盾内核：{story.get('conflict_core') or ''}\n\n"
         f"对白：\n{numbered_dialogue(story)}\n\n"
         f"审稿人挑出的问题：\n{issue_text}\n\n"
+        "只输出需要改的行（no 用左侧行号）。"
+    )
+    return system, user
+
+
+def build_wording_polish_prompts(
+    theme: str,
+    story: dict,
+    issues: list[dict[str, Any]],
+    *,
+    type_code: str | None = None,
+    line_chars_max: int,
+) -> tuple[str, str]:
+    """童语化润色提示：只改被点行的措辞，结构/说话人/行数不动。"""
+    from app.services.daily_story.story_types import story_type_tag
+
+    type_line = ""
+    if type_code:
+        type_line = f"当前类型：{story_type_tag(type_code)}。"
+    system = (
+        "你是儿童短视频台词的口语化修订者。只重写被点到的行，其余一字不动。\n"
+        f"{type_line}\n"
+        "硬要求：\n"
+        f"- 行数不变、说话人不变、每行≤{line_chars_max}字；\n"
+        "- line 只写台词本身，**不要带「昭昭：」这种说话人前缀**；\n"
+        "- 只改被点到的行号，勿顺手改别处，勿新增或删除行；\n"
+        "- 孩子台词改成小孩会说的口语；妈妈台词只去掉书面/旁白，保持大人语气；\n"
+        "- 保持原意、信息量、事实与前后句衔接；\n"
+        "- **不改收束结构、回旋镖引话、开场片头**。\n"
+        "对照示例：\n"
+        "- 深痕 → 深印子\n"
+        "- 加力 → 加点力\n"
+        "- 拿给风看看 → 让风吹吹\n"
+        "- 亲手把夹子拆了 → 把夹子拆了\n"
+        "- 两成力/半指宽 → 一点点/一丢丢\n"
+        "只输出 JSON：\n"
+        '{"fixes":[{"no":5,"line":"改好的这一句"}]}'
+    )
+    issue_text = "\n".join(
+        f"- 第{'、'.join(str(n) for n in it['lines'])}句"
+        f"（{it['kind']}）：{it['desc']}"
+        + (f" 建议：{it['fix']}" if it.get("fix") else "")
+        for it in issues
+    )
+    user = (
+        f"主题：{theme}\n"
+        f"场景：{story.get('setting') or ''}\n"
+        f"矛盾内核：{story.get('conflict_core') or ''}\n\n"
+        f"对白：\n{numbered_dialogue(story)}\n\n"
+        f"疑似成人书面措辞的行：\n{issue_text}\n\n"
         "只输出需要改的行（no 用左侧行号）。"
     )
     return system, user
@@ -767,6 +861,46 @@ def _apply_fixes_greedily(
     return fixed, accepted
 
 
+def polish_daily_story_wording_iteratively(
+    story: dict,
+    client: Any,
+    theme: str,
+    *,
+    type_code: str | None = None,
+    max_rounds: int = 3,
+    coherence_checker: Callable[[dict, int], bool] | None = None,
+) -> tuple[dict, int]:
+    """独立童语化润色：规则检测→Flash 改措辞→硬卡/衔接/回滚，可反复多轮。
+
+    返回 (润色后的故事, 接受的行数合计)。可单独调用，也会被
+    run_daily_story_review 在正式审读前调用一次。
+    """
+    polish = getattr(client, "polish_daily_story_wording", None)
+    if not callable(polish):
+        return story, 0
+    total_accepted = 0
+    for _ in range(max(1, max_rounds)):
+        issues = collect_wording_issues(story, type_code=type_code)
+        if not issues:
+            break
+        raw = polish(theme, story, issues, type_code=type_code)
+        story, accepted = _apply_fixes_greedily(
+            story,
+            raw,
+            theme=theme,
+            coherence_checker=coherence_checker,
+        )
+        if not accepted:
+            break
+        total_accepted += len(accepted)
+        logger.info(
+            "[DAILY_STORY] wording polish round accepted=%d total=%d",
+            len(accepted),
+            total_accepted,
+        )
+    return story, total_accepted
+
+
 def run_daily_story_review(
     client: Any,
     theme: str,
@@ -801,6 +935,23 @@ def run_daily_story_review(
             else ""
         )
         return bool(coherence(prev, revised, next_line))
+
+    from app.services.daily_story.story_types import resolve_story_type_code
+
+    type_code = resolve_story_type_code(story, theme=theme)
+    story, polish_n = polish_daily_story_wording_iteratively(
+        story,
+        client,
+        theme,
+        type_code=type_code,
+        max_rounds=2,
+        coherence_checker=_coherence_ok,
+    )
+    if polish_n:
+        logger.info(
+            "[DAILY_STORY] wording polish applied %d line(s) before review",
+            polish_n,
+        )
 
     humor_seen: dict[str, Any] | None = None
 
