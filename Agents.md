@@ -40,6 +40,63 @@ CPU: AMD Ryzen 9 7940HS w/ Radeon 780M Graphics
 
 使用 **conda**，env: flask_env，不要再说本地没python了
 
+## 「专家」
+
+DeepSeek 网页模拟 API，不是 Claude 子代理。涉及提示词方案评审时用户说「和专家商量/达成一致再落地」，指用它的专家模式评审。body `{"question":..., "mode":"expert", "deep_thinking":true}`；新对话不带 `conversation_id`，续聊带返回 id；
+
+### 接口
+
+- Deepseek `POST http://xxx/api/deepseek/chat`
+- 千问 `POST http://xxx/api/qwen/chat`
+
+### 状态查
+
+ `GET /api/deepseek/status`
+ `GET /api/qwen/status`
+
+### 地址
+
+- 优先级从上到下
+<!-- - 127.0.0.1  -->
+- <http://192.168.50.172:8848/mock_agent>
+- <https://leo-zhao.natapp4.cc/mock_agent>
+
+### 专家模式 + 深度思考 （千问没有专家模式）
+
+```json
+{
+  "question": "证明根号2是无理数",
+  "mode": "expert",  // 千问 不传
+  "deep_thinking": true,
+  "timeout": 600   // 超时【秒】
+}
+```
+
+### 成功响应
+
+```json
+{
+  "ok": true,
+  "question": "...",
+  "answer": "...",
+  "conversation_id": "uuid",
+  "mode": "instant",
+  "deep_thinking": true,
+  "search": false,
+  "url": "https://chat.deepseek.com/a/chat/s/uuid"
+}
+```
+
+### 续聊并保持选项
+
+```json
+{
+  "conversation_id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+  "question": "把证明写得更短一些",
+  "mode": "expert",
+  "deep_thinking": true
+}
+
 ## 注意
 
 - 重跑任务需要我明确提出了才进行，如果你想重跑需要我二次确认
@@ -55,6 +112,7 @@ CPU: AMD Ryzen 9 7940HS w/ Radeon 780M Graphics
 - 不要用powershell命令执行远程查询
 - 要测试先本地测通过了再推送，除非我要求，不要远程测试
 - PowerShell 会拆坏远程 Python，不要直接用
+- 生成故事要和DB已有作比较，避免重复
 
 ## 快捷命令
 

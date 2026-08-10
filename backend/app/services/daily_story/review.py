@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any
+from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +26,8 @@ REVIEW_KINDS: tuple[str, ...] = (
     "示范",
     "重复",
     "塑料",
+    "语病",
+    "书面",
     "接不上",
     "无效证据",
     "其他",
@@ -38,12 +40,14 @@ _KIND_PENALTY: dict[str, int] = {
     "示范": 10,
     "重复": 5,
     "塑料": 5,
+    "语病": 8,
+    "书面": 5,
     "接不上": 8,
     "无效证据": 8,
     "其他": 3,
 }
 REVIEW_PENALTY_CAP = 25
-REVIEW_MAX_ISSUES = 6
+REVIEW_MAX_ISSUES = 10
 # 首轮单遍：召回靠本地检 + 复审，禁止双遍 LLM 把单稿拖长
 REVIEW_FIRST_PASSES = 1
 
@@ -208,11 +212,11 @@ def collect_local_issues(story: dict) -> list[dict[str, Any]]:
 
 
 def build_review_prompts(theme: str, story: dict) -> tuple[str, str]:
-    """审读提示：读者视角挑硬伤，不做风格建议。"""
+    """审读提示：读者视角挑硬伤与口语感（书面/绕口/旁白腔）。"""
     system = (
         "你是儿童短视频文案的审稿人，不是作者。"
         "你的唯一任务是像观众一样逐句读这段对白，挑出「读着出戏」的硬伤。\n"
-        "只报下面 8 类，别报风格偏好、别夸、别改写全文：\n"
+        "只报下面 10 类，别夸、别改写全文：\n"
         "1 矛盾：前后事实打架"
         "（例：说「锅里一粒米都没有」，后面又说「你把剩饭倒掉了」；"
         "或同一件道具的位置/状态打架：钥匙一会儿还挂在门口钩上，"
@@ -230,16 +234,23 @@ def build_review_prompts(theme: str, story: dict) -> tuple[str, str]:
         "（例：被当场抓住的人不接话，张口先讲道理教育对方；"
         "或 10 岁孩子嘴硬说「买新的/我明天买/攒钱买」——孩子没有购买力，"
         "要说就「找妈妈要/让妈妈买」，自己出钱买超龄）。\n"
-        "6 接不上：回句没接住上一句的话头，答非所问或训错对象"
+        "6 书面/绕口/旁白感：不像孩子会对人说的话，或在念旁白/舞台说明"
+        "（例：昭昭自述「我轻轻推门，客厅门缝还开着」；"
+        "或「只用了两成力，门缝变小了半指宽」这类成人精确计量）。"
+        "孩子台词要能直接对另一个角色说，禁止自述动作、精确计量、书面连接词。\n"
+        "7 语病/看不懂：句子读一遍读不懂，结构断裂、指代不清、语义混乱"
+        "（例：「你说轻点，我就轻轻推，没使劲，门合不上吗？」——"
+        "不知道他在问什么）。这不是风格问题，是硬伤，必须改。\n"
+        "8 接不上：回句没接住上一句的话头，答非所问或训错对象"
         "（例：孩子说「你自己没换鞋就进来了」，"
         "大人却回头命令孩子「赶紧脱了放鞋柜上」——孩子并没穿着鞋）。\n"
-        "7 无效证据：追问方摆出的证据在证明一个没人否认的事，"
+        "9 无效证据：追问方摆出的证据在证明一个没人否认的事，"
         "没打在对方刚说的开脱上"
         "（例：大人已承认没换鞋、只辩称「拿个东西不算」，"
         "孩子却还在花几句证明「这双就是出门的鞋」——该拆的是「不算」）。\n"
         "  故意荒诞的开脱（钥匙会跑、地板长花纹）是笑点设定，"
         "只要接住了话头就别报。\n"
-        "8 其他：上面装不下但确实读着出戏的。\n\n"
+        "10 其他：上面装不下但确实读着出戏的。\n\n"
         "下面几处是本类结构设计，即使看着像重复也别报：\n"
         "- 开场两句是片头定格，与正文开头重合是正常拼接；\n"
         "- 最后一句大人认输软收，倒数第二句孩子引用大人原话闭环。\n"
@@ -265,7 +276,7 @@ def build_review_prompts(theme: str, story: dict) -> tuple[str, str]:
         "孩子摆的证据落在「已承认」一侧而不是争议点上，就是「无效证据」；"
         "开脱句与前面记下的实物状态硬碰（钥匙明明还挂着却说跑了），"
         "就是「矛盾」。\n"
-        "第三步 checks：前 7 类**每一类都必须表态**，"
+        "第三步 checks：前 9 类**每一类都必须表态**，"
         "写「无」或写清哪几句有问题，不许省略某一类。\n"
         "第四步 issues：把 checks 里判「有」的逐条展开。\n\n"
         "只输出 JSON：\n"
@@ -274,8 +285,8 @@ def build_review_prompts(theme: str, story: dict) -> tuple[str, str]:
         '"标注":["4回应3的抓现行:辩拿钥匙","5回应4:帮腔不算",'
         '"8回应不了7:在证明已承认的事→无效证据"]},'
         '"checks":{"矛盾":"第5句锅里没米，第6句又倒剩饭","错位":"无",'
-        '"示范":"无","重复":"第5句与第8句都说碗干","塑料":"无",'
-        '"接不上":"无","无效证据":"第8句"},'
+        '"示范":"无","重复":"第5句与第8句都说碗干","塑料":"无","语病":"无",'
+        '"书面":"无","接不上":"无","无效证据":"第8句"},'
         '"issues":[{"lines":[5,6],"kind":"矛盾",'
         '"desc":"第5句说锅里一粒米都没有，第6句又说把剩饭倒掉了",'
         '"fix":"第6句改成…"}],'
@@ -298,7 +309,7 @@ def build_review_prompts(theme: str, story: dict) -> tuple[str, str]:
         f"场景：{story.get('setting') or ''}\n"
         f"矛盾内核：{story.get('conflict_core') or ''}\n\n"
         f"对白：\n{numbered_dialogue(story)}\n\n"
-        "逐句读一遍，按上面 8 类输出 JSON。"
+        "逐句读一遍，按上面 10 类输出 JSON。"
     )
     return system, user
 
@@ -338,9 +349,20 @@ def parse_review_issues(raw: Any, *, line_count: int) -> list[dict[str, Any]]:
             "desc": desc,
             "fix": str(item.get("fix") or "").strip(),
         })
-        if len(out) >= REVIEW_MAX_ISSUES:
+    # 严重度优先：避免「书面」等轻问题先占满名额，把「矛盾/语病」挤掉；
+    # 风格类「书面」最多计 2 条，其余类型仍受 REVIEW_MAX_ISSUES 总控。
+    out.sort(key=lambda it: -_KIND_PENALTY.get(it["kind"], 0))
+    kept: list[dict[str, Any]] = []
+    style_seen = 0
+    for it in out:
+        if it["kind"] == "书面":
+            if style_seen >= 2:
+                continue
+            style_seen += 1
+        kept.append(it)
+        if len(kept) >= REVIEW_MAX_ISSUES:
             break
-    return out
+    return kept
 
 
 def parse_humor(raw: Any) -> dict[str, Any] | None:
@@ -417,6 +439,27 @@ def build_spot_fix_prompts(
         f"对白：\n{numbered_dialogue(story)}\n\n"
         f"审稿人挑出的问题：\n{issue_text}\n\n"
         "只输出需要改的行（no 用左侧行号）。"
+    )
+    return system, user
+
+
+def build_local_coherence_prompts(
+    prev: str,
+    revised: str,
+    next_line: str,
+) -> tuple[str, str]:
+    """局部衔接快验：只判断修改句与前后句是否自然接上。"""
+    system = (
+        "你是儿童短视频对话的衔接检查员。"
+        "只判断修改后的台词和前后句是否自然接上，不改写台词。\n"
+        "只输出 JSON：{\"coherent\": true} 或 {\"coherent\": false}。"
+    )
+    user = (
+        f"上一句（原文未改）：{prev or '（无）'}\n"
+        f"修改句：{revised}\n"
+        f"下一句（原文未改）：{next_line or '（无）'}\n\n"
+        "这三句是同一段儿童对话。判断修改句与前后句是否自然衔接；"
+        "话题延续、语气接得上、没有突然跳走，就输出 true，否则输出 false。"
     )
     return system, user
 
@@ -651,6 +694,7 @@ def _apply_fixes_greedily(
     *,
     theme: str,
     allowed: set[int] | None = None,
+    coherence_checker: Callable[[dict, int], bool] | None = None,
 ) -> tuple[dict, set[int]]:
     """逐条试落定点修：能过硬卡的留下，会破结构的那条丢掉。
 
@@ -677,6 +721,15 @@ def _apply_fixes_greedily(
                 "[DAILY_STORY] spot fix line %d dropped (breaks hard card): %s",
                 no,
                 exc,
+            )
+            continue
+        if coherence_checker is not None and not coherence_checker(
+            condition,
+            no,
+        ):
+            logger.info(
+                "[DAILY_STORY] spot fix line %d dropped (local coherence)",
+                no,
             )
             continue
         accepted = trial
@@ -730,6 +783,24 @@ def run_daily_story_review(
 
     review = getattr(client, "review_daily_story_issues", None)
     spot_fix = getattr(client, "spot_fix_daily_story", None)
+    coherence = getattr(client, "check_local_coherence", None)
+
+    def _coherence_ok(s: dict, no: int) -> bool:
+        if not callable(coherence):
+            return True
+        rows = _dialogue(s)
+        prev = str(rows[no - 2].get("line") or "").strip() if no >= 2 else ""
+        revised = (
+            str(rows[no - 1].get("line") or "").strip()
+            if 1 <= no <= len(rows)
+            else ""
+        )
+        next_line = (
+            str(rows[no].get("line") or "").strip()
+            if no < len(rows)
+            else ""
+        )
+        return bool(coherence(prev, revised, next_line))
 
     humor_seen: dict[str, Any] | None = None
 
@@ -761,6 +832,7 @@ def run_daily_story_review(
             story,
             spot_fix(theme, story, issues),
             theme=theme,
+            coherence_checker=_coherence_ok,
         )
 
     remaining = _run_review(story)
@@ -779,6 +851,7 @@ def run_daily_story_review(
                     spot_fix(theme, story, remaining),
                     theme=theme,
                     allowed=allowed,
+                    coherence_checker=_coherence_ok,
                 )
                 if accepted:
                     kept = [

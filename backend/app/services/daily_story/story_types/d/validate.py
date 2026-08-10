@@ -311,7 +311,7 @@ def append_d_body_errors(story: dict, errors: list[str]) -> None:
     last_sp = speakers[-1] if speakers else ""
     if last_sp == "灿灿":
         if not RE_SOFT_LAST.search(last) and not re.search(
-            r"哼|算了|行吧", last,
+            r"哼|算了|行吧|说不清", last,
         ):
             errors.append("D类末句须灿灿嘴硬（哼/行吧/算了），勿发新指令")
             return

@@ -76,15 +76,17 @@ SQLite，路径配置在 `SQLITE_PATH`（默认 `data/data.db`）。Repository �
 DeepSeek 网页模拟 API，不是 Claude 子代理。涉及提示词方案评审时用户说「和专家商量/达成一致再落地」，指用它的专家模式评审。接口 `POST http://127.0.0.1:8765/api/deepseek/chat`，body `{"question":..., "mode":"expert", "deep_thinking":true}`；新对话不带 `conversation_id`，续聊带返回 id；
 
 #### 状态查
+
  `GET /api/deepseek/status`
 
 #### 地址
+
 - 优先级从上到下
 <!-- - 127.0.0.1  -->
-- http://192.168.50.172:8848/mock_agent
-- https://leo-zhao.natapp4.cc/mock_agent
+- <http://192.168.50.172:8848/mock_agent>
+- <https://leo-zhao.natapp4.cc/mock_agent>
 
-#### 专家模式 + 深度思考：
+#### 专家模式 + 深度思考
 
 ```json
 {
@@ -109,7 +111,7 @@ DeepSeek 网页模拟 API，不是 Claude 子代理。涉及提示词方案评�
 }
 ```
 
-#### 续聊并保持选项：
+#### 续聊并保持选项
 
 ```json
 {
