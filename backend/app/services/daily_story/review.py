@@ -240,6 +240,19 @@ def collect_wording_issues(
         line = str(row.get("line") or "").strip()
         if not line:
             continue
+        # 称谓性别校验：本故事只有昭昭（7岁弟弟/男孩）、灿灿（10岁姐姐/女孩），
+        # 没有其他称谓对象——台词出现「哥哥」必是错把灿灿当哥哥、「妹妹」必是
+        # 错把昭昭当妹妹。属不动结构的原地改字，开场片头也查（_on_design_line
+        # 会跳过开场，而 v35 酸奶稿开场昭昭把灿灿喊成「哥哥」就发生在开场）。
+        if "哥哥" in line or "妹妹" in line:
+            out.append({
+                "lines": [i],
+                "kind": "称谓",
+                "desc": f"称谓性别不符：{line}",
+                "fix": "「哥哥」改成「姐姐」（灿灿是姐姐，昭昭喊她）；"
+                       "「妹妹」改成「弟弟」（昭昭是弟弟）；别把姐姐叫哥哥、"
+                       "弟弟叫妹妹",
+            })
         # 开场片头与末段原话闭环是结构设计行，润色跳过，避免拆掉收束。
         if _on_design_line(i, lines, n, open_len):
             continue

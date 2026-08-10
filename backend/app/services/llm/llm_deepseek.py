@@ -93,26 +93,30 @@ _TEMP_CRITERION_LOCKED = 0.4  # C 类台词锚定注入生效时的正文温度�
 # 白名单 + 变体引导 + 允许干净仪式」。实测教训：v19-v22 两句锚定压不住中段自创
 # 判据（2 句覆盖不了 16 句争论），且 pro 硬锁重复锁死创造力更差（v21/v22 1/4）。
 # 专家结论：正确做法是给模型占有系白名单（拿到/抢到/攥在手里/举起/翻开/坐上）
-# +「每次宣示规则句式尽量与前次不同」的变体引导，允许附加纯时长/纯位置仪式
-# （坚持三秒/举过头顶/放桌上——仪式条件只许时间/位置词，正是回旋镖字面反噬的
-# 燃料），禁接触/状态/操作系动词混入；阶段三后处理把漏网漂移句单句重写回白名单。
+# +「每次宣示规则句式尽量与前次不同」的变体引导，允许附加孩子气赌约仪式
+# （单脚站满十秒/举过头顶坚持三秒——正是回旋镖字面反噬的燃料；用户 2026-08-11
+# 点名禁「放桌上三秒」这类无张力仪式），禁接触/状态/操作系动词混入；阶段三后处理
+# 把漏网漂移句单句重写回白名单。
 _C_CRITERION_PACKAGE_SYSTEM = """\
 你为「昭昭&灿灿」日常短剧的 C 类（公平执念）故事生成「判据链锚点」。C 类判据
 核心动词**只许用占有系白名单**：拿到/抢到/攥在手里/翻开/坐上/举起。孩子争某物
 归属，只许宣告「我先拿到的」「我攥在手里了」「我先抢到的」「谁先拿到归谁」这类
 占有宣言。
 
-**允许给占有判据附加纯时长/纯位置仪式（专家 2026-08-09 定）**：判据核心动词仍是
-占有系白名单，可附加「坚持三秒」「举过头顶」「放桌上」等时间/位置条件（正例：
-「谁先举过头顶坚持三秒才算」——核心动词「举」是占有系，「坚持三秒」是时间词，
-仪式正是回旋镖字面反噬的燃料）。**禁止仪式含接触/状态/操作系动词**——「数到三
-松手」（松手=状态系）、「掏出来」（操作系）、「撕开包装」（开系）、「掉/洒」
-（状态）一律禁用。
+**允许给孩子气赌约仪式（专家 2026-08-09 细化 + 用户 2026-08-11 定「判据要有张力」）**：
+判据核心动词仍是占有系白名单，可附加**有失败风险的孩子气赌约**——「单脚站满十秒」
+「金鸡独立站满十秒」「举过头顶坚持三秒」（正例：「谁先攥在手里再单脚站满十秒谁喝」
+——核心动词「攥」是占有系，「单脚站满十秒」是赌约仪式，站不住会晃会倒，正是回旋镖
+字面反噬的燃料）。**禁无趣位置仪式**——「放桌上三秒」这类谁都能做到的条件没张力、
+回旋镖不炸（用户 2026-08-11 点名否决）。**禁止仪式含接触/状态/操作系动词**——
+「数到三松手」（松手=状态系）、「掏出来」（操作系）、「撕开包装」（开系）、「掉/洒」
+（状态）一律禁用；别写「站够十秒」的「够」（够字易误判接触系，用「站满」）。
 
 为主题生成 JSON（只输出 JSON，不要多余解释）：
 1. zhaozhao_rule：昭昭（弟弟）抛出的规则台词，一句 8-24 字、核心动词用占有系
-   白名单、**可带纯时长/纯位置仪式**（谁先拿到归谁/我先攥手里了/谁先举过头顶
-   坚持三秒谁喝/谁先翻开谁先看/我先坐上了归我）；是可被抠字眼的占有判定。
+   白名单、**可带孩子气赌约仪式**（谁先拿到归谁/我先攥手里了/谁先攥在手里再单脚
+   站满十秒谁喝/谁先举过头顶坚持三秒谁喝/谁先翻开谁先看/我先坐上了归我）；是可被
+   抠字眼的占有判定，别用「放桌上三秒」这类没张力的仪式。
 2. cancan_rule：灿灿（姐姐）抛出的规则台词，与昭昭的规则对立或加码，同样核心
    用占有系白名单、可带干净仪式。
 3. boomerang_quote：将被反噬的原话——**必须与 zhaozhao_rule 或 cancan_rule
@@ -124,16 +128,18 @@ _C_CRITERION_PACKAGE_SYSTEM = """\
 拧/撕/掰/揭（开系）、吃/咬/舔/喝/吞/尝/擦（消耗系）、松手/放手/攥住（状态系）、
 动/跑/先数到（时序系）当判据；禁止「X不算，Y才算」分级杠精句式；禁止仪式含
 数到三松手/掏出来/撕开包装/掉/洒等动作。
-示例（可化用勿照抄）：zhaozhao_rule「谁先拿到归谁」、cancan_rule「我先举过头顶
-坚持三秒才算，归我」，boomerang_quote 从其中逐字选一句。
+示例（可化用勿照抄）：zhaozhao_rule「谁先拿到归谁」、cancan_rule「我先攥在手里再
+单脚站满十秒才算，归我」，boomerang_quote 从其中逐字选一句。
 
 格式：{"zhaozhao_rule": "...", "cancan_rule": "...", "boomerang_quote": "...", "boomerang_source": "zhaozhao_rule|cancan_rule"}
 """
 _C_CRITERION_INJECT_TEMPLATE = """\
 【判据链规则（最高优先级，比上面所有规则更硬）】
 - 判据核心动词只许占有系白名单：拿到/抢到/攥在手里/举起/翻开/坐上。
-- 允许给占有判据附加纯时长/纯位置仪式（举过头顶坚持三秒/放桌上才算/举起算），
-  仪式条件只许时间/位置词，不得引入接触/松手/打开/撕/掏/掉/洒等动作。
+- 允许给占有判据附加**孩子气赌约仪式**（单脚站满十秒/金鸡独立站满十秒/举过头顶
+  坚持三秒）；**禁「放桌上三秒」这类没张力的位置仪式**（用户 2026-08-11 点名）。
+  仪式不得引入接触/松手/打开/撕/掏/掉/洒等动作；别写「站够」（够字易误判，用
+  「站满」）。
 - 每次角色提出/加码新规则，判据动词从白名单中选用，且句式尽量与前次不同，
   形成围绕占有的递进争论（拿到→攥手里→举起→举过头顶坚持三秒）。
 - 本稿规则锚点（可逐字引用，也可在白名单内换句式）：昭昭「{zhaozhao_rule}」、
@@ -141,6 +147,24 @@ _C_CRITERION_INJECT_TEMPLATE = """\
 - 结尾回旋镖，被戳穿方引用**正文真出现过的规则原话**反呛（可用 {boomerang_quote}，
   须与前文逐字一致）。
 - 禁止其它动词当判据（碰/摸/按/拧/撕/喝/咬/动/跑/松手等一律禁用）。"""
+
+
+def _build_story_avoid_block(avoid: list[str] | None) -> str:
+    """正文层避雷块：把与库内已有稿撞车的元素（判据/开场理由/挑刺动作）逐条
+    钉进 user 提示词，生成各环节（判据包/框架/开场/正文/修订）都不得使用。
+
+    2026-08-10：preview 生成新稿时显式避开库里旧稿（如 id48 的「举过头顶」）
+    ——theme 塞约束会破坏「跑题」校验（校验要求主题实词落正文，避雷要求不出现，
+    自相矛盾），故走独立注入通道。
+    """
+    items = "、".join(str(x).strip() for x in (avoid or []) if str(x).strip())
+    if not items:
+        return ""
+    return (
+        "\n\n【避雷】本故事禁止出现以下元素——判据、开场理由、挑刺动作及任何台词"
+        "都不得使用，须另想别的玩法：\n"
+        f"- {items}"
+    )
 
 
 def _force_framework_fields(story: dict, framework: dict | None) -> None:
@@ -1753,11 +1777,15 @@ class DeepSeekClient(LLMClient):
         theme: str,
         *,
         story_type: str | None = None,
+        avoid: list[str] | None = None,
     ) -> dict[str, Any]:
         """2026-08-07 架构改造：框架先行 → 开场 → 正文 → 拼接。
 
         先生成剧本框架（scene_title/setting/conflict_core/key）作定盘锚，
         开场吃框架、正文吃框架+开场续写，避免 body 自造冲突与开场脱锚。
+
+        avoid：正文层避雷（避免与库内已有稿撞车的判据/开场理由/挑刺动作），
+        各生成环节统一注入 _build_story_avoid_block。
         """
         if not story_type:
             story_type = _select_story_type(theme)
@@ -1766,20 +1794,26 @@ class DeepSeekClient(LLMClient):
         # 漂移[1]），注入开场后开场立的规自然用白名单台词。
         from app.services.daily_story.story_types import parse_story_type_code
 
+        avoid_block = _build_story_avoid_block(avoid)
         criterion_block = ""
         if parse_story_type_code(story_type=story_type) == "C":
-            pkg = self._generate_c_criterion_package(theme)
+            pkg = self._generate_c_criterion_package(
+                theme,
+                avoid_block=avoid_block,
+            )
             if pkg:
                 criterion_block = _C_CRITERION_INJECT_TEMPLATE.format(**pkg)
         framework = self._generate_daily_story_framework(
             theme,
             story_type=story_type,
+            avoid_block=avoid_block,
         )
         opening = self._generate_daily_story_opening(
             theme,
             framework,
             story_type=story_type,
             criterion_block=criterion_block,
+            avoid_block=avoid_block,
         )
         body = self._generate_daily_story_body(
             theme,
@@ -1787,6 +1821,7 @@ class DeepSeekClient(LLMClient):
             framework=framework,
             opening=opening,
             criterion_block=criterion_block,
+            avoid_block=avoid_block,
         )
         return self._stitch_daily_story_full(
             theme,
@@ -1804,6 +1839,7 @@ class DeepSeekClient(LLMClient):
         revision_hints: str,
         *,
         story_type: str | None = None,
+        avoid: list[str] | None = None,
     ) -> dict[str, Any]:
         """按观感短板定向修订正文；开场保留、失配（连说等）才重拼。
 
@@ -1825,7 +1861,10 @@ class DeepSeekClient(LLMClient):
             story_type=story_type,
             punchline=str(body.get("punchline_explain") or ""),
         )
-        new_body = self._revise_daily_story_body(theme, body, hints)
+        avoid_block = _build_story_avoid_block(avoid)
+        new_body = self._revise_daily_story_body(
+            theme, body, hints, avoid_block=avoid_block
+        )
         # 正文已锚定框架字段（scene_title/setting/conflict_core/key），
         # 取回作开场重拼时的锚
         framework = {
@@ -2014,6 +2053,7 @@ class DeepSeekClient(LLMClient):
         theme: str,
         *,
         story_type: str | None = None,
+        avoid_block: str = "",
     ) -> dict[str, Any]:
         """先生成剧本框架（scene_title/setting/conflict_core/key）作定盘锚。
 
@@ -2031,6 +2071,8 @@ class DeepSeekClient(LLMClient):
             theme,
             story_type=story_type,
         )
+        if avoid_block:
+            user = f"{user}\n\n{avoid_block}"
         last_exc: ValueError | None = None
         for attempt in range(2):
             try:
@@ -2088,6 +2130,8 @@ class DeepSeekClient(LLMClient):
     def _generate_c_criterion_package(
         self,
         theme: str,
+        *,
+        avoid_block: str = "",
     ) -> dict[str, Any] | None:
         """C 类台词锚定·第一阶段：生成「昭昭/灿灿各一条规则台词 + 回旋镖原话」。
 
@@ -2119,17 +2163,20 @@ class DeepSeekClient(LLMClient):
             _RE_CONSUME_CRITERION,
             _RE_OPEN_CRITERION,
         )
-        # 仪式白名单（专家 2026-08-09 死磕细化，替代一刀切禁仪式）：占有判据核心
-        # 动词仍是占有系白名单，允许附加纯时长/纯位置仪式（举过头顶坚持三秒/放桌上）
-        # ——仪式正是回旋镖字面反噬的燃料。只禁会拖出 接触/状态/操作系 动作的仪式词：
+        # 仪式白名单（专家 2026-08-09 死磕细化 + 用户 2026-08-11 定「判据要有张力」）：
+        # 占有判据核心动词仍是占有系白名单，允许附加有失败风险的孩子气赌约仪式（单脚站
+        # 满十秒/金鸡独立/举过头顶坚持三秒）——正是回旋镖字面反噬的燃料；用户点名禁
+        # 「放桌上三秒」这类无张力位置仪式。只禁会拖出 接触/状态/操作系 动作的仪式词：
         # 掏（操作）、坐稳/起身/松手/放手（状态）、掉/洒（状态，酸奶滴落）。「坚持」
-        # 「举过头顶」「数到三同时放」等纯时间/位置词不再禁用（合法启动/仪式条件）。
+        # 「举过头顶」「单脚站满十秒」等时间/身体词不再禁用（合法启动/仪式条件）。
         _RE_RITUAL_GATE = re.compile(r"掏出|坐稳|起身|松手|放手|掉|洒")
         _POSSESSIVE = re.compile(r"拿|抢|攥|翻|坐|举|占|归")
         user = (
             f"主题：{theme}\n\n"
             "输出昭昭/灿灿各一条规则台词 + 被反噬原话。"
         )
+        if avoid_block:
+            user = f"{user}\n\n{avoid_block}"
         for attempt in range(3):
             raw, _ = self._chat_json(
                 _C_CRITERION_PACKAGE_SYSTEM,
@@ -2225,6 +2272,7 @@ class DeepSeekClient(LLMClient):
         framework: dict | None = None,
         opening: list[dict] | None = None,
         criterion_block: str = "",
+        avoid_block: str = "",
     ) -> dict[str, Any]:
         if not story_type:
             story_type = _select_story_type(theme)
@@ -2246,7 +2294,13 @@ class DeepSeekClient(LLMClient):
         # （重试各分支同样注入），并把正文温度降到 0.4 提高遵从。
 
         def _inject_c_criterion(u: str) -> str:
-            return f"{u}\n\n{criterion_block}" if criterion_block else u
+            # criterion_block + avoid_block 统一注入：首稿与所有重试分支共用，
+            # 重试重建 user 时不会再丢锚定块（v35 开场「闹肚子」即漏注入）
+            if criterion_block:
+                u = f"{u}\n\n{criterion_block}"
+            if avoid_block:
+                u = f"{u}\n\n{avoid_block}"
+            return u
 
         user = _inject_c_criterion(user)
         last_exc: ValueError | None = None
@@ -2380,6 +2434,7 @@ class DeepSeekClient(LLMClient):
                         fixed = self._stage3_fix_c_criterion_drift(
                             prev_story,
                             theme=theme,
+                            avoid_block=avoid_block,
                         )
                     except Exception as exc3:  # noqa: BLE001
                         fixed = None
@@ -2491,6 +2546,7 @@ class DeepSeekClient(LLMClient):
         story: dict[str, Any],
         *,
         theme: str = "",
+        avoid_block: str = "",
     ) -> dict[str, Any] | None:
         """Stage 3 判据链安全网（专家 2026-08-09 死磕重设计）。
 
@@ -2565,10 +2621,18 @@ class DeepSeekClient(LLMClient):
 你是「昭昭&灿灿」日常短剧 C 类（公平执念）的台词修稿器。只改一句对白中的
 「规则宣告/判定归属」部分：
 - 判据核心动词只用占有系白名单：拿到/抢到/攥在手里/举起/翻开/坐上。
-- 可附加纯时长/纯位置仪式（举过头顶坚持三秒/放桌上才算），仪式条件只许时间/位置词。
-- 不得引入 碰/摸/松手/掉/洒/打开/撕/掏/按/喝/咬/动/跑 等动作当判据。
+- 可附加孩子气赌约仪式（单脚站满十秒/金鸡独立站满十秒/举过头顶坚持三秒）；
+  **禁「放桌上三秒」这类没张力的仪式**（用户 2026-08-11 点名）。
+- 不得引入 碰/摸/松手/掉/洒/打开/撕/掏/按/喝/咬/动/跑 等动作当判据；别写「站够」。
 - 保持原句气势、角色立场、说话人语气；字数尽量相近（±4 字）。
 只输出改写后的完整一句对白，不要解释、不要 JSON。"""
+        if avoid_block:
+            rewrite_system = f"{rewrite_system}\n{avoid_block.strip()}"
+        # 避雷词表：与 _build_story_avoid_block 的「- A、B、C」行同格式解析
+        _avoid_items: list[str] = []
+        m = re.search(r"\n- (.+)$", avoid_block)
+        if m:
+            _avoid_items = [x.strip() for x in m.group(1).split("、") if x.strip()]
         out = _clone_story(story)
         fixed_any = False
         for idx in drift_idxs:
@@ -2597,6 +2661,8 @@ class DeepSeekClient(LLMClient):
                 if any(r.search(cand) for r in _FORBIDDEN):
                     continue
                 if not _POSSESSIVE.search(cand):
+                    continue
+                if any(a and a in cand for a in _avoid_items):
                     continue
                 candidate = cand
                 break
@@ -2636,6 +2702,7 @@ class DeepSeekClient(LLMClient):
         revision_hints: str,
         *,
         max_attempts: int = 2,
+        avoid_block: str = "",
     ) -> dict[str, Any]:
         """定向修订：保持骨架，只修补短板。"""
         from app.services.daily_story.prompts import (
@@ -2677,6 +2744,8 @@ class DeepSeekClient(LLMClient):
             f"【上一稿】\n{json.dumps(prev_story, ensure_ascii=False)}\n\n"
             "请输出修订后的完整 JSON，格式与上一稿一致。"
         )
+        if avoid_block:
+            base_user = f"{base_user}\n\n{avoid_block}"
         user = base_user
         last_exc: ValueError | None = None
 
@@ -2763,6 +2832,7 @@ class DeepSeekClient(LLMClient):
         avoid_speaker: str | None = None,
         story_type: str | None = None,
         criterion_block: str = "",
+        avoid_block: str = "",
     ) -> list[dict]:
         """基于剧本框架生成开场 2 句。
 
@@ -2785,6 +2855,8 @@ class DeepSeekClient(LLMClient):
         )
         if criterion_block:
             user = f"{user}\n\n{criterion_block}"
+        if avoid_block:
+            user = f"{user}\n\n{avoid_block}"
         avoid = (avoid_speaker or "").strip() or None
         if avoid in ("昭昭", "灿灿"):
             other = "灿灿" if avoid == "昭昭" else "昭昭"
@@ -2839,6 +2911,12 @@ class DeepSeekClient(LLMClient):
                     avoid_speaker=avoid,
                     type_code=open_type,
                 )
+                # 重试重建 user 会丢锚定块，重新注入（否则重试稿可能用禁用
+                # 动词当判据 / 撞避雷元素，v35 开场「闹肚子」即此漏）
+                if criterion_block:
+                    user = f"{user}\n\n{criterion_block}"
+                if avoid_block:
+                    user = f"{user}\n\n{avoid_block}"
         assert last_exc is not None
         raise last_exc
 
