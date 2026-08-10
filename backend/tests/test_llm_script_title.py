@@ -4347,3 +4347,266 @@ def test_c_facts_referential_boomerang_quote_not_flagged():
     invented[-3] = {"speaker": "灿灿", "line": "你刚说谁先喝完归谁，现在又不认！"}
     issues2 = collect_fact_issues({"dialogue": invented})
     assert any("扣话无前文" in i for i in issues2), issues2
+
+
+def test_c_closing_echo_flags_ritual_switch_last():
+    """C 末句硬卡：仪式判据场（单脚站/站满十秒）末句换赛规话拦截（v46 酸奶稿抓）。
+
+    v46 酸奶稿：立规「谁攥着酸奶再单脚站满十秒，酸奶归谁」，末句却
+    「明天我肯定先抢到」——把达标制仪式赛规换回先到先得（比先后）。锚定仪式动词
+    （抢先单脚站）、认栽不认输、先到先得场「先抢到」都放行。
+    """
+    from app.services.daily_story.story_types.quality import c_closing_echo_error
+
+    ritual_lines = [
+        "姐姐，冰箱里最后一瓶酸奶，让我先喝吧",
+        "不行，这瓶是我昨天先瞧见的，我先喝",
+        "你瞧见又不算，谁先攥在手里归谁喝！",
+        "我早攥住了，你才刚拿到瓶身呢！",
+        "那咱俩说好，谁攥着酸奶再单脚站满十秒，酸奶归谁！",
+        "行！你先站，我数着，数满十秒才算你的！",
+        "我站好了，你快数，我稳着呢！",
+        "一……二……三……",
+        "你数快点！我腿都酸了！",
+        "四……五……你刚说站满十秒，又没说数数要多快！",
+        "你这是耍赖，我站不住了！",
+        "六……你脚落地了，没站满十秒！",
+        "是你数太慢我才倒的，不算！",
+        "你刚说谁攥着酸奶单脚站满十秒归谁，你输了，酸奶归我！",
+        "哼，明天我肯定先抢到！",
+    ]
+    issue = c_closing_echo_error(ritual_lines)
+    assert issue and "比法漂移" in issue and "先抢到" in issue
+
+    # 末句锚定仪式动词 → 放行
+    ritual_lines[-1] = "哼，明天我抢先单脚站，你别赖！"
+    assert not c_closing_echo_error(ritual_lines)
+
+    # 末句认栽不认输 → 放行
+    ritual_lines[-1] = "行，算你站得稳！"
+    assert not c_closing_echo_error(ritual_lines)
+
+    # 先到先得场（无仪式判据）末句「先抢到」→ 放行
+    first_come = [
+        "姐姐，冰箱里最后一瓶酸奶，让我先喝吧",
+        "不行，这瓶是我昨天先瞧见的，我先喝",
+        "你瞧见又不算，谁先攥在手里归谁喝！",
+        "我早攥住了，你才刚拿到瓶身呢！",
+        "行，算你手快，明天我肯定先抢到！",
+    ]
+    assert not c_closing_echo_error(first_come)
+
+
+def test_c_humor_flags_pseudo_boomerang():
+    """C 好笑：伪回旋镖——仪式场末段只是「对方复制仪式+立规人赖账」。
+
+    v46 酸奶稿（单脚站十秒）：灿灿「我也站满了」，昭昭「你站的时候我数了吗」，
+    末句「算你站得稳」——立规人没输在规则字面上，判伪回旋镖（好笑封顶 6）。
+    真回旋镖带「又没说数数要多快」漏字标记 → 不误伤。
+    """
+    from app.services.daily_story.story_types.c.humor import collect_humor_issues
+
+    # v46 伪回旋镖：仪式场 + 对方复制 + 赖账认栽，无漏字标记
+    pseudo = [
+        "姐姐，冰箱里最后一瓶酸奶，让我先喝吧",
+        "不行，这瓶是我昨天先瞧见的，我先喝",
+        "你昨天瞧见又不算，谁先攥在手里归谁喝！",
+        "我早攥住了，你才刚拿到瓶身呢！",
+        "那咱俩说好，谁攥在手里再单脚站满十秒，酸奶归谁！",
+        "行，谁站满归谁，你先站，我数着！",
+        "我站好了，一，二……十，归我了！",
+        "你脚落地了，不算单脚站！",
+        "我脚没落地，你看，我站得稳稳的！",
+        "那我也单脚站，我也站满十秒！",
+        "你先别站，我还没喝呢，你站什么站！",
+        "你刚说谁攥在手里再单脚站满十秒归谁，我也站满了！",
+        "你站的时候我数了吗？你耍赖！",
+        "你刚说站满十秒就算，我站了，你数啊！",
+        "行，算你站得稳，明天我肯定先抢到！",
+    ]
+    sps = ["昭昭", "灿灿"] * 7 + ["昭昭"]
+    issues = collect_humor_issues(pseudo, sps)
+    assert any("伪回旋镖" in c for c in issues), issues
+
+    # 真回旋镖（规则漏字反噬）：末段带「又没说数数要多快」→ 不误伤
+    real = [
+        "姐姐，冰箱里最后一瓶酸奶，让我先喝吧",
+        "不行，这瓶是我昨天先瞧见的，我先喝",
+        "你瞧见又不算，谁先攥在手里归谁喝！",
+        "我早攥住了，你才刚拿到瓶身呢！",
+        "那咱俩说好，谁攥着酸奶再单脚站满十秒，酸奶归谁！",
+        "行！你先站，我数着，数满十秒才算你的！",
+        "我站好了，你快数，我稳着呢！",
+        "一……二……三……",
+        "你数快点！我腿都酸了！",
+        "四……五……你刚说站满十秒，又没说数数要多快！",
+        "你这是耍赖，我站不住了！",
+        "六……你脚落地了，没站满十秒！",
+        "是你数太慢我才倒的，不算！",
+        "你刚说谁攥着酸奶单脚站满十秒归谁，你输了，酸奶归我！",
+        "哼，明天我定规矩必须快数，你一个字也别想拖！",
+    ]
+    sps2 = ["昭昭", "灿灿"] * 7 + ["昭昭"]
+    issues2 = collect_humor_issues(real, sps2)
+    assert not any("伪回旋镖" in c for c in issues2), issues2
+
+
+def test_c_criterion_package_requires_trap(monkeypatch):
+    """C 判据包：缺 trap（规则漏字反噬点）重试，带 trap 才通过。"""
+    from app.services.llm.llm_deepseek import DeepSeekClient
+
+    calls = {"n": 0}
+
+    def fake_chat(*_args, **_kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            # 缺 trap → 该轮作废重试
+            return (
+                {
+                    "zhaozhao_rule": "谁先拿到归谁",
+                    "cancan_rule": "我先攥在手里再单脚站满十秒才算，归我",
+                    "boomerang_quote": "谁先拿到归谁",
+                    "boomerang_source": "zhaozhao_rule",
+                },
+                "stop",
+            )
+        return (
+            {
+                "zhaozhao_rule": "谁先拿到归谁",
+                "cancan_rule": "我先攥在手里再单脚站满十秒才算，归我",
+                "boomerang_quote": "谁先拿到归谁",
+                "boomerang_source": "zhaozhao_rule",
+                "trap": "没规定数数要多快，数数人拖长音，立规人先落地",
+            },
+            "stop",
+        )
+
+    monkeypatch.setattr(DeepSeekClient, "_chat_json", fake_chat)
+    client = DeepSeekClient()
+    pkg = client._generate_c_criterion_package("酸奶")
+    assert pkg and pkg["trap"].startswith("没规定")
+    assert calls["n"] == 2
+
+
+def test_c_validate_hardblocks_rule_maker_must_lose():
+    """C 硬卡：立规人必须输——仪式立规句提出者须是末句说话人（被戳穿方）。
+
+    v47 酸奶稿：灿灿立规「谁先拿到再单脚站满十秒谁喝」，但灿灿自己站满赢、
+    末句昭昭嘴硬——立规人赢任何一轮判定，方向反了 → 整稿重抽。
+    正确稿：立规人=输家=末句说话人 → 放行。
+    """
+    from app.services.daily_story.story_types.c.validate import append_c_body_errors
+
+    def _story(dlg: list[dict]) -> dict:
+        s = _valid_story()
+        s["dialogue"] = dlg
+        s["punchline_explain"] = "C类公平执念，姐姐规则被字面戳穿"
+        return s
+
+    # v47 形态（去语气词堆砌干扰）：规则是灿灿说的（第2句），末句却是昭昭嘴硬
+    bad = _story(
+        [
+            {"speaker": "昭昭", "line": "冰箱里最后一瓶酸奶，我先抢到了！"},
+            {"speaker": "灿灿", "line": "你放下！谁先拿到再单脚站满十秒谁喝！"},
+            {"speaker": "昭昭", "line": "我先抢到的，酸奶归我，你松手！"},
+            {"speaker": "灿灿", "line": "谁先拿到再单脚站满十秒谁喝，你敢比吗？"},
+            {"speaker": "昭昭", "line": "我单脚站满十秒，你可别耍赖！"},
+            {"speaker": "灿灿", "line": "我数数，你站好，一、二、三……十！"},
+            {"speaker": "昭昭", "line": "你数太快了，我还没站稳呢！"},
+            {"speaker": "灿灿", "line": "规则又没说数多快，我数到十你就得站住！"},
+            {"speaker": "昭昭", "line": "那你数慢点，我扶一下墙总行了吧？"},
+            {"speaker": "灿灿", "line": "扶墙也算站？那我也扶，看谁先倒！"},
+            {"speaker": "昭昭", "line": "我扶墙站好了，你数到十了吗？"},
+            {"speaker": "灿灿", "line": "我早数完了，你扶墙不算，我赢了！"},
+            {"speaker": "昭昭", "line": "你耍赖，你刚才也扶墙了！"},
+            {"speaker": "灿灿", "line": "你刚说谁先拿到再单脚站满十秒谁喝，我站满了！"},
+            {"speaker": "昭昭", "line": "哼，明天我抢先单脚站，你数数慢死了！"},
+        ]
+    )
+    errs: list[str] = []
+    append_c_body_errors(bad, errs)
+    assert any("立规人必须输" in e for e in errs), errs
+
+    # 正确形态：灿灿立规（第2句）、灿灿输、末句灿灿嘴硬
+    good = _story(
+        [
+            {"speaker": "昭昭", "line": "冰箱里最后一瓶酸奶，我先抢到了！"},
+            {"speaker": "灿灿", "line": "你放下！得单脚站满十秒才能喝，我定的规矩！"},
+            {"speaker": "昭昭", "line": "行，比就比，你先站，我来数！"},
+            {"speaker": "灿灿", "line": "我单脚站好了，你数吧！"},
+            {"speaker": "昭昭", "line": "一、二、三、四、五、六、七、八、九、十，到了！"},
+            {"speaker": "灿灿", "line": "等等！我单脚还没抬稳你就数完了！"},
+            {"speaker": "昭昭", "line": "你的规矩是站满十秒，我数到十了你两只脚还踩地上，你输。"},
+            {"speaker": "灿灿", "line": "你数那么快，谁来得及站稳！不算不算！"},
+            {"speaker": "昭昭", "line": "那按规矩，该我站了，你数！"},
+            {"speaker": "灿灿", "line": "行，你站好，我数，一……二……"},
+            {"speaker": "昭昭", "line": "我站得稳稳的，你快数！"},
+            {"speaker": "灿灿", "line": "三……四……五……"},
+            {"speaker": "昭昭", "line": "十！我站满了，酸奶归我！"},
+            {"speaker": "灿灿", "line": "你耍赖，你自己数的不算！"},
+            {"speaker": "昭昭", "line": "你刚说得单脚站满十秒才能喝，我站满了，酸奶归我！"},
+            {"speaker": "灿灿", "line": "哼，明天我肯定能站满十秒，你等着！"},
+        ]
+    )
+    errs = []
+    append_c_body_errors(good, errs)
+    assert not any("回旋镖引话归属错误" in e for e in errs), errs
+
+
+def test_c_validate_hardblocks_tone_stack():
+    """C 硬卡：句尾语气词堆砌（v47 酸奶稿第 3/4/7/10 句病句尾）≥2 句重抽。"""
+    from app.services.daily_story.story_types.c.validate import append_c_body_errors
+
+    def _story(dlg: list[dict]) -> dict:
+        s = _valid_story()
+        s["dialogue"] = dlg
+        s["punchline_explain"] = "C类公平执念，姐姐规则被字面戳穿"
+        return s
+
+    bad = _story(
+        [
+            {"speaker": "昭昭", "line": "冰箱里最后一瓶酸奶，我先抢到了！"},
+            {"speaker": "灿灿", "line": "你放下！谁先拿到再单脚站满十秒谁喝！"},
+            {"speaker": "昭昭", "line": "我先抢到的，酸奶归我，你松手好不好了呀！"},
+            {"speaker": "灿灿", "line": "谁先拿到再单脚站满十秒谁喝，你敢比吗你听着了呀？"},
+            {"speaker": "昭昭", "line": "比就比，我单脚站满十秒，你可别耍赖真的呀！"},
+            {"speaker": "灿灿", "line": "我数数，你站好，一、二、三…了呢了呀…"},
+            {"speaker": "昭昭", "line": "你数太快了，我还没站稳了呢了呀！"},
+            {"speaker": "灿灿", "line": "规则又没说数多快，我数到十你就得站住了吧。"},
+            {"speaker": "昭昭", "line": "那你数慢点，我扶一下墙总行了吧？"},
+            {"speaker": "灿灿", "line": "扶墙也算站？那我也扶，看谁先倒嘛了呀！"},
+            {"speaker": "昭昭", "line": "我扶墙站好了，你数到十了吗了啊？"},
+            {"speaker": "灿灿", "line": "我早数完了，你扶墙不算，我赢了！"},
+            {"speaker": "昭昭", "line": "你耍赖，你刚才也扶墙了！"},
+            {"speaker": "灿灿", "line": "你刚说谁先拿到再单脚站满十秒谁喝，我站满了！"},
+            {"speaker": "昭昭", "line": "哼，明天我抢先单脚站，你数数慢死了！"},
+        ]
+    )
+    errs: list[str] = []
+    append_c_body_errors(bad, errs)
+    assert any("句尾语气词堆砌" in e for e in errs), errs
+
+    # 单句语气词（每句最多一个）不误伤
+    good = _story(
+        [
+            {"speaker": "昭昭", "line": "冰箱里最后一瓶酸奶，我先抢到了！"},
+            {"speaker": "灿灿", "line": "你放下！得单脚站满十秒才能喝，我定的规矩！"},
+            {"speaker": "昭昭", "line": "行，比就比，你先站，我来数！"},
+            {"speaker": "灿灿", "line": "我单脚站好了，你数吧！"},
+            {"speaker": "昭昭", "line": "一、二、三、四、五、六、七、八、九、十，到了！"},
+            {"speaker": "灿灿", "line": "等等！我单脚还没抬稳你就数完了！"},
+            {"speaker": "昭昭", "line": "你的规矩是站满十秒，我数到十了你两只脚还踩地上，你输。"},
+            {"speaker": "灿灿", "line": "你数那么快，谁来得及站稳！不算不算！"},
+            {"speaker": "昭昭", "line": "那按规矩，该我站了，你数！"},
+            {"speaker": "灿灿", "line": "行，你站好，我数，一……二……"},
+            {"speaker": "昭昭", "line": "我站得稳稳的，你快数！"},
+            {"speaker": "灿灿", "line": "三……四……五……"},
+            {"speaker": "昭昭", "line": "十！我站满了，酸奶归我！"},
+            {"speaker": "灿灿", "line": "你耍赖，你自己数的不算！"},
+            {"speaker": "昭昭", "line": "你刚说得单脚站满十秒才能喝，我站满了，酸奶归我！"},
+            {"speaker": "灿灿", "line": "哼，明天我肯定能站满十秒，你等着！"},
+        ]
+    )
+    errs = []
+    append_c_body_errors(good, errs)
+    assert not any("句尾语气词堆砌" in e for e in errs), errs

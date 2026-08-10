@@ -50,6 +50,18 @@ _C_EXAMPLE_PHARASES_NORM = {
         "那是我说的可你也没按规矩来你赖皮",
         "反正我先拿到的你抢了不算酸奶归我",
         "哼明天我比你早",
+        # 2026-08-11 三方定稿 v52（慢数漏字反噬）中后段招牌句——禁逐字照抄
+        "那咱俩说好谁攥着酸奶再单脚站满十秒酸奶归谁",
+        "行你先站我数着数满十秒才算你",
+        "一二三你腿别抖我慢慢数",
+        "四五你只说站满十秒又没说数数要多快",
+        "你这是耍赖我站不住快数到十",
+        "六七八你脚落地没站满十秒",
+        "是你数太慢我才倒不算",
+        "你刚说站满十秒就算慢数也是数你输",
+        "可你那是故意拖长音赖皮",
+        "你刚说谁攥着酸奶单脚站满十秒归谁你输归我",
+        "明天我定规矩必须快数你一个字也别想拖",
     )
 }
 
@@ -79,6 +91,21 @@ _RE_RULE_VERDICT = re.compile(r"明明说|作废|重赛|妈妈|大人|宣判|点
 _RE_MOM_RULING_REF = re.compile(
     r"妈妈(?:刚说|刚才说|说的|说的话|定的|定了|的话)|"
     r"妈(?:说|刚说|说的|定的)|按妈妈|听妈妈的|妈妈说的",
+)
+# 立规人必须输硬卡（2026-08-11 专家/千问共识）：仪式判据场（单脚站/金鸡独立/
+# 举过头顶/坚持X秒/站满十秒），找到第一条「仪式+胜负判定」立规句，其说话人
+# 就是立规人（被戳穿方）——末句必须由 TA 嘴硬收场。v47 酸奶稿死这：灿灿立规
+# 却灿灿赢、末句昭昭嘴硬，方向反了。转述式引话（你刚说谁先举过头顶坚持三秒
+# 谁喝）的逐字出处由 facts 层兜底，这里只卡归属方向。
+_RE_C_RITUAL_RULE_LINE = re.compile(
+    r"(?:单脚站|金鸡独立|举过头顶|坚持.{0,4}秒|站满十秒|数满十秒).{0,8}"
+    r"(?:归|算|才|谁|该)",
+)
+# 句尾语气词堆砌硬卡（2026-08-11 专家/千问共识：v47 第 3/4/7/10 句病句尾）：
+# 与 c/humor 的 _RE_TONE_STACK 同源——「了呢了呀/着了呀/嘛了呀/好了呀/呢呀」
+# 是病句尾，每句结尾语气词最多一个，全篇 ≥2 句命中即整稿重抽。
+_RE_C_TONE_STACK_HARD = re.compile(
+    r"(?:[呢嘛的了着好]{2,}呀|呢了|呢呀)[！。！？…]?$",
 )
 # 判据动词白名单（专家六轮 2026-08-07；2026-08-09 用户三连纠正定「接触弱词零容忍」）。
 # 接触系（碰/摸/够/搭/挨/蹭/伸/探/点）接动作完成态（到/着/了/一下/上）**出现即漂移**——
@@ -426,6 +453,22 @@ def append_c_body_errors(story: dict, errors: list[str]) -> None:
         errors.append(reason_repeat)
         return
 
+    # 句尾语气词堆砌（用户 2026-08-09 v6 病句尾；2026-08-11 升硬卡，v47 酸奶稿
+    # 第 3/4/7/10 句「了呢了呀/嘛了呀/了吗了啊」）：每句结尾语气词最多一个，
+    # 全篇 ≥2 句连叠即病句，整稿重抽（观感层 humor 已有同源检测兜底）。
+    tone_hits = [
+        i + 1 for i, ln in enumerate(lines) if _RE_C_TONE_STACK_HARD.search(ln)
+    ]
+    if len(tone_hits) >= 2:
+        shown = ",".join(str(i) for i in tone_hits[:4])
+        more = "…" if len(tone_hits) > 4 else ""
+        errors.append(
+            f"C类句尾语气词堆砌（第{shown}句{more}）：「了呢了呀/着了呀/嘛了呀/"
+            "好了呀/呢呀」是病句尾——每句结尾语气词最多一个（我先拿到的！/我攥手里"
+            "了！/该我！），全篇禁连叠堆砌，整稿重抽",
+        )
+        return
+
     criterion_drift = _criterion_drift_error(lines)
     if criterion_drift:
         errors.append(criterion_drift)
@@ -483,6 +526,23 @@ def append_c_body_errors(story: dict, errors: list[str]) -> None:
             "或实物真相反转收束",
         )
         return
+
+    # 立规人必须输（2026-08-11 硬卡）：仪式判据场，第一条「仪式+判定」立规句的
+    # 说话人 = 立规人 = 被戳穿方 = 末句嘴硬的人；立规人赢任何一轮判定即方向反了
+    # （酸奶稿 v47 死这：灿灿立规却末句昭昭嘴硬）。
+    if last_sp in ("昭昭", "灿灿"):
+        for _i, _ln in enumerate(lines):
+            if _RE_C_RITUAL_RULE_LINE.search(_ln):
+                _maker = speakers[_i] if _i < len(speakers) else ""
+                if _maker and _maker != last_sp:
+                    errors.append(
+                        f"C类立规人必须输：仪式立规句（第{_i + 1}句「{_ln[:14]}」）"
+                        f"由「{_maker}」提出，末句却由「{last_sp}」嘴硬收场——"
+                        "立规人（被戳穿方）须是末句说话人；立规人赢任何一轮判定"
+                        "即方向反了（酸奶稿 v47 死这：灿灿立规却末句昭昭嘴硬）",
+                    )
+                    return
+                break
 
     if _line_incomplete(last) and not (
         RE_SOFT_LAST.search(last)

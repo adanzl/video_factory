@@ -123,15 +123,23 @@ _C_CRITERION_PACKAGE_SYSTEM = """\
    完全一致**（逐字复制其中一句，不能改动、不能另造）。
 4. boomerang_source：boomerang_quote 来自哪条，填 "zhaozhao_rule" 或
    "cancan_rule"。
+5. trap：**立规人被反噬的规则漏字点 + 立规人自己怎么输**，一句话 6-40 字——
+   **主语必须是立规人自己**：TA 定的规则没规定数数要多快→对方快数/慢数让 TA 站不住；
+   TA 没说不许扶墙→TA 自己扶墙被抓；TA 自设的条件反噬 TA 自己。例如「没规定数数要
+   多快，数数人拖长音，立规人先落地」「没说不许扶墙，立规人自己扶墙被抓」。
+   破段必须落在这个漏字点上：**立规人必须输**，末句由立规人嘴硬收场；
+   禁止写「对手犯规/对手输/对方也做到了」——立规人赢任何一轮判定即方向反了
+   （酸奶稿 v47 死这）。
 
 禁止 碰/摸/够/搭/挨/蹭/伸/探/点（接触系）、按/打开/切换/调（操作系）、
 拧/撕/掰/揭（开系）、吃/咬/舔/喝/吞/尝/擦（消耗系）、松手/放手/攥住（状态系）、
 动/跑/先数到（时序系）当判据；禁止「X不算，Y才算」分级杠精句式；禁止仪式含
 数到三松手/掏出来/撕开包装/掉/洒等动作。
 示例（可化用勿照抄）：zhaozhao_rule「谁先拿到归谁」、cancan_rule「我先攥在手里再
-单脚站满十秒才算，归我」，boomerang_quote 从其中逐字选一句。
+单脚站满十秒才算，归我」，boomerang_quote 从其中逐字选一句，trap「没规定数数要多快，
+数数人拖长音，立规人站不住先落地」。
 
-格式：{"zhaozhao_rule": "...", "cancan_rule": "...", "boomerang_quote": "...", "boomerang_source": "zhaozhao_rule|cancan_rule"}
+格式：{"zhaozhao_rule": "...", "cancan_rule": "...", "boomerang_quote": "...", "boomerang_source": "zhaozhao_rule|cancan_rule", "trap": "..."}
 """
 _C_CRITERION_INJECT_TEMPLATE = """\
 【判据链规则（最高优先级，比上面所有规则更硬）】
@@ -144,6 +152,13 @@ _C_CRITERION_INJECT_TEMPLATE = """\
   形成围绕占有的递进争论（拿到→攥手里→举起→举过头顶坚持三秒）。
 - 本稿规则锚点（可逐字引用，也可在白名单内换句式）：昭昭「{zhaozhao_rule}」、
   灿灿「{cancan_rule}」。
+- 本稿反噬点（破段必须落在这，禁「对方也做到了」式平手）：{trap}
+- **破段剧本（按此骨架写，勿另起炉灶）**：立规人提出仪式规则后，由对方负责数数；
+  数数人故意拖长音（一……二……三……），立规人单脚站不住、脚落地；对方用原规
+  反问「你刚说站满十秒，又没说数数要多快」当场判输；末句由立规人嘴硬收场并锚定
+  仪式动词（明天我定规矩必须快数）。**立规人必须输，禁立规人宣布自己赢/站满/酸奶归我**；
+  执行纠纷只用 数快慢/脚落地/扶墙，禁 松手/放手/拽/拉扯/碰 当判据。
+- 正文 14-16 句、每句 14-18 字、全篇 ≥280 字；写不满 280 字直接不合格。
 - 结尾回旋镖，被戳穿方引用**正文真出现过的规则原话**反呛（可用 {boomerang_quote}，
   须与前文逐字一致）。
 - 禁止其它动词当判据（碰/摸/按/拧/撕/喝/咬/动/跑/松手等一律禁用）。"""
@@ -2142,7 +2157,7 @@ class DeepSeekClient(LLMClient):
         - boomerang_quote 必须与 boomerang_source 指向的那条规则**逐字相同**。
         不合格低成本重试 3 次（小 JSON 比整稿快得多）；全败返回 None，正文
         生成走原流程（不阻断）。返回 {"zhaozhao_rule", "cancan_rule",
-        "boomerang_quote", "boomerang_source"}。
+        "boomerang_quote", "boomerang_source", "trap"}。
         """
         from app.services.daily_story.story_types.c.validate import (
             _RE_CONTACT_CRITERION,
@@ -2196,7 +2211,17 @@ class DeepSeekClient(LLMClient):
             cc = str(raw.get("cancan_rule") or "").strip()
             bq = str(raw.get("boomerang_quote") or "").strip()
             src = str(raw.get("boomerang_source") or "").strip()
-            if not (zz and cc and bq):
+            trap = str(raw.get("trap") or "").strip()
+            if not (zz and cc and bq and trap):
+                logger.info(
+                    "[DAILY_STORY] C criterion package attempt=%d missing "
+                    "fields zz=%r cc=%r bq=%r trap=%r",
+                    attempt + 1,
+                    zz,
+                    cc,
+                    bq,
+                    trap,
+                )
                 continue
             if any(r.search(t) for r in _FORBIDDEN for t in (zz, cc)):
                 logger.info(
@@ -2257,6 +2282,7 @@ class DeepSeekClient(LLMClient):
                 "cancan_rule": cc,
                 "boomerang_quote": bq,
                 "boomerang_source": src,
+                "trap": trap,
             }
         logger.warning(
             "[DAILY_STORY] C criterion package failed after 3 attempts, "
