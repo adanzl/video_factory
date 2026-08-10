@@ -120,6 +120,7 @@ def _run_one(
     total: int,
     locked: str | None,
     review: bool,
+    avoid: list[str] | None = None,
 ) -> dict:
     """跑单个主题：生成→校验→汇总→打印。线程安全（打印加锁防互相撕）。"""
     with _PRINT_LOCK:
@@ -130,6 +131,7 @@ def _run_one(
             theme,
             story_type=locked,
             review=review,
+            avoid=avoid,
         )
         validate_daily_story_json(story, phase="full")
         item = _summarize(theme, story, time.perf_counter() - started)
@@ -183,12 +185,15 @@ def run_batch(
     story_type: str | None = None,
     review: bool = True,
     parallel: int = 1,
+    avoid: list[str] | None = None,
 ) -> list[dict]:
     locked = story_type_tag(story_type) if story_type else None
     if locked:
         print(f"[batch] locked story_type={locked}", flush=True)
     if not review:
         print("[batch] skip LLM review (fast preview)", flush=True)
+    if avoid:
+        print(f"[batch] avoid={avoid}", flush=True)
     if parallel > 1:
         print(f"[batch] parallel={parallel} workers", flush=True)
     results: list[dict] = []
@@ -204,6 +209,7 @@ def run_batch(
                     len(themes),
                     locked,
                     review,
+                    avoid,
                 ): theme
                 for i, theme in enumerate(themes, 1)
             }
@@ -214,7 +220,7 @@ def run_batch(
         results = [done[t] for t in themes]
     else:
         for i, theme in enumerate(themes, 1):
-            results.append(_run_one(theme, i, len(themes), locked, review))
+            results.append(_run_one(theme, i, len(themes), locked, review, avoid))
     return results
 
 
@@ -249,6 +255,13 @@ def main() -> None:
         default=4,
         help="并发主题数（默认 4；注意 LLM 限流，太高会触发重试）",
     )
+    parser.add_argument(
+        "--avoid",
+        nargs="+",
+        default=None,
+        help="正文层避雷：与库内已有稿撞车的判据/开场理由/挑刺动作，"
+        "逐项传入（如 --avoid 举过头顶 闹肚子 手抖），生成各环节都禁用",
+    )
     args = parser.parse_args()
 
     results = run_batch(
@@ -256,6 +269,7 @@ def main() -> None:
         story_type=args.story_type,
         review=not args.skip_review,
         parallel=args.parallel,
+        avoid=list(args.avoid) if args.avoid else None,
     )
     out = args.out
     if out is None:

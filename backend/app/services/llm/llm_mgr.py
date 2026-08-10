@@ -175,6 +175,7 @@ class LLMClient:
         theme: str,
         *,
         story_type: str | None = None,
+        avoid: list[str] | None = None,
     ) -> dict[str, Any]:
         raise NotImplementedError
 
@@ -678,14 +679,21 @@ class LLMMgr:
         *,
         story_type: str | None = None,
         review: bool = True,
+        avoid: list[str] | None = None,
     ) -> dict[str, Any]:
         """出稿后固定走一遍人读审稿：审读→定点修→复审，不回环重生成。
 
         review=False 仅给本地预览调提示用，跳过慢审读。
+        avoid：正文层避雷（与库内已有稿撞车的判据/开场理由/挑刺动作），
+        生成与修订环节都注入提示词。
         """
         from app.services.daily_story.review import run_daily_story_review
 
-        story = self._generate_daily_story_scored(theme, story_type=story_type)
+        story = self._generate_daily_story_scored(
+            theme,
+            story_type=story_type,
+            avoid=avoid,
+        )
         if not review:
             return story
         return run_daily_story_review(self._get_client(), theme, story)
@@ -695,6 +703,7 @@ class LLMMgr:
         theme: str,
         *,
         story_type: str | None = None,
+        avoid: list[str] | None = None,
     ) -> dict[str, Any]:
         logger.info("[DAILY_STORY] generate start theme=%r", theme)
         started = time.perf_counter()
@@ -724,6 +733,7 @@ class LLMMgr:
                 story = client.generate_daily_story(
                     theme,
                     story_type=story_type,
+                    avoid=avoid,
                 )
                 attach_daily_story_quality(story, theme=theme)
             except ValueError as exc:
@@ -764,6 +774,7 @@ class LLMMgr:
                         story,
                         revision_hints,
                         story_type=story_type,
+                        avoid=avoid,
                     )
                     attach_daily_story_quality(refined, theme=theme)
                     r_score = structure_score_of(refined.get("quality"))

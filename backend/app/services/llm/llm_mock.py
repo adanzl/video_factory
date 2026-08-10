@@ -498,6 +498,7 @@ class MockLLMClient(LLMClient):
         theme: str,
         *,
         story_type: str | None = None,
+        avoid: list[str] | None = None,
     ) -> dict[str, Any]:
         from app.services.daily_story.prompts import (
             DAILY_STORY_BODY_CHARS_MIN,
