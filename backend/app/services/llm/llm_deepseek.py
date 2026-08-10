@@ -2929,6 +2929,34 @@ class DeepSeekClient(LLMClient):
             return bool(raw.get("coherent", True))
         return True
 
+    def polish_daily_story_wording(
+        self,
+        theme: str,
+        story: dict[str, Any],
+        issues: list[dict[str, Any]],
+        *,
+        type_code: str | None = None,
+    ) -> dict[str, Any]:
+        """童语化润色一次：只回被点行的口语化改写，落盘由 review 模块决定。"""
+        from app.services.daily_story.prompts import DAILY_STORY_LINE_CHARS_MAX
+        from app.services.daily_story.review import (
+            build_wording_polish_prompts,
+        )
+
+        system, user = build_wording_polish_prompts(
+            theme,
+            story,
+            issues,
+            type_code=type_code,
+            line_chars_max=DAILY_STORY_LINE_CHARS_MAX,
+        )
+        try:
+            raw, _ = self._chat_json(system, user)
+        except ValueError as exc:
+            logger.warning("[DAILY_STORY] wording polish call failed: %s", exc)
+            return {}
+        return raw
+
     def generate_daily_story_themes(
         self,
         count: int = 15,

@@ -1360,6 +1360,38 @@ def test_validate_daily_story_opening_requires_conflict_anchor():
     )
     assert len(ok) == 2
 
+
+def test_daily_story_opening_prompt_includes_punchline():
+    from app.services.daily_story.prompts import build_daily_story_opening_prompts
+
+    _, user = build_daily_story_opening_prompts(
+        "晾衣服要夹紧",
+        {
+            "scene_title": "晾衣夹紧",
+            "setting": "客厅晾衣架旁晾袜子",
+            "conflict_core": "夹紧被读成夹出印子",
+            "punchline_explain": "D类字面执行：夹紧被读成夹出印子，灿灿扯夹子被回旋镖",
+        },
+        type_code="D",
+    )
+    assert "夹紧" in user
+    assert "夹出印子" not in user
+    assert "铺垫靶点" in user
+
+
+def test_validate_daily_story_opening_rejects_unrelated_obstacle():
+    with pytest.raises(ValueError, match="无关的障碍"):
+        validate_daily_story_opening(
+            [
+                {"speaker": "灿灿", "line": "昭昭，咱俩一起把袜子晾上吧"},
+                {"speaker": "昭昭", "line": "好啊，客厅晾衣架的夹子我掰不动"},
+            ],
+            conflict_core="夹紧被读成夹出印子",
+            setting="客厅晾衣架旁晾袜子",
+            type_code="D",
+        )
+
+
 def test_validate_daily_story_opening_coerces_name_key_shorthand():
     ok = validate_daily_story_opening(
         [
@@ -3499,6 +3531,54 @@ def test_review_local_coherence_prompt_contains_neighbors():
     assert "修改句" in user
     assert "下一句" in user
     assert '"coherent"' in system
+
+
+def test_collect_wording_issues_flags_written_lines():
+    from app.services.daily_story.review import collect_wording_issues
+
+    story = {
+        "dialogue": [
+            {"speaker": "昭昭", "line": "你说要夹紧，让袜子印上深痕。"},
+        ],
+        "discovery_opening": [],
+    }
+    issues = collect_wording_issues(story)
+    assert issues
+    assert issues[0]["lines"] == [1]
+    assert issues[0]["kind"] == "书面"
+
+
+def test_collect_wording_issues_skips_design_lines():
+    from app.services.daily_story.review import collect_wording_issues
+
+    opening = [
+        {"speaker": "灿灿", "line": "你去门口把门关上，别吵到妈"},
+        {"speaker": "昭昭", "line": "好的，我这就去关"},
+    ]
+    story = {
+        "discovery_opening": opening,
+        "dialogue": [
+            *opening,
+            {"speaker": "灿灿", "line": "关门要轻点，别让风把门撞得哐当响。"},
+            {"speaker": "昭昭", "line": "你自己说轻点，怎么亲手把门关得砰一声响？"},
+            {"speaker": "灿灿", "line": "哼，行吧。"},
+        ],
+    }
+    issues = collect_wording_issues(story)
+    assert all(it["lines"] != [4] for it in issues)
+
+
+def test_build_wording_polish_prompts_contains_examples():
+    from app.services.daily_story.review import build_wording_polish_prompts
+
+    system, _ = build_wording_polish_prompts(
+        "关门",
+        {"dialogue": []},
+        [{"lines": [4], "kind": "书面", "desc": "书面", "fix": "改口语"}],
+        line_chars_max=24,
+    )
+    assert "深印子" in system
+    assert "让风吹吹" in system
 
 
 def test_d_soft_last_accepts_unclear_close():

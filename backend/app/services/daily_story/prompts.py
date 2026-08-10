@@ -1462,6 +1462,7 @@ DAILY_STORY_OPENING_USER_TEMPLATE = """\
 【场记】{scene_title}
 【现场】{setting}
 【本场只争这一件】{conflict_core}
+【铺垫靶点】{premise}（只写孩子面对该规矩/物件的困难，禁止提及歪读结果/笑点）
 
 【正文】尚未生成：开场之后由系统承接展开，勿替正文开口。
 {body_head}
@@ -1493,6 +1494,13 @@ def build_daily_story_opening_prompts(
         type_code = parse_story_type_code(
             punchline=str(framework.get("punchline_explain") or ""),
         )
+    core = str(framework.get("conflict_core") or "").strip()
+    premise = core.split("被读成")[0].strip() if "被读成" in core else core
+    user_core = (
+        premise
+        if type_code and type_code.upper() == "D"
+        else core
+    )
     system = DAILY_STORY_OPENING_SYSTEM_PROMPT
     if type_code and type_code.upper() in STORY_TYPE_LINES:
         append = STORY_TYPE_LINES[type_code.upper()].opening_system_append
@@ -1502,13 +1510,25 @@ def build_daily_story_opening_prompts(
         theme=theme,
         scene_title=str(framework.get("scene_title") or "").strip() or "（无）",
         setting=str(framework.get("setting") or "").strip() or "（无）",
-        conflict_core=str(framework.get("conflict_core") or "").strip() or "（无）",
+        conflict_core=user_core or "（无）",
+        premise=premise or "（无）",
         body_head="（正文尚未生成，开场须锚定框架中的实物与动作）",
     )
     if type_code and type_code.upper() in STORY_TYPE_LINES:
         ou = STORY_TYPE_LINES[type_code.upper()].opening_user_append.strip()
         if ou:
             user = f"{user}\n{ou}"
+    if type_code and type_code.upper() == "D":
+        user = (
+            f"{user}\n\n"
+            "【D类·答应句硬约束（最高优先级）】"
+            "- 第2句默认只写短答应（好的，我这就去关／我这就去拿水壶）；\n"
+            "- 禁止硬接可有可无的状态尾巴（托盘还空着、小心轻放）；\n"
+            "- 只有状态直接通向 punchline 才允许带半句（晾衣：袜子洗好没晾）；\n"
+            "- 关门场景第2句标准写法是「好的，我这就去关」"
+            "（必须含「关」，禁止省略成「我这就去」）；\n"
+            "- 不要重复第1句里的修饰词（轻点/慢慢）。"
+        )
     return system, user
 
 

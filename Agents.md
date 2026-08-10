@@ -46,8 +46,8 @@ DeepSeek 网页模拟 API，不是 Claude 子代理。涉及提示词方案评�
 
 ### 接口
 
-- Deepseek `POST http://xxx/api/deepseek/chat`
-- 千问 `POST http://xxx/api/qwen/chat`
+- Deepseek 说明 `POST http://xxx/api/deepseek/doc`
+- 千问 说明 `POST http://xxx/api/qwen/doc`
 
 ### 状态查
 

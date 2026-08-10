@@ -43,6 +43,25 @@ _RE_BARE_PLACE_CLAUSE = re.compile(
     r"[^，,。！？]{0,4}[，,]",
 )
 
+# 开场凭空新造、与 punchline 无关的障碍（不在 conflict_core/setting 里）。
+_UNRELATED_OBSTACLES = (
+    "掰不动",
+    "掰不开",
+    "打不开",
+    "找不到",
+    "够到",
+    "够不着",
+    "不见了",
+    "卡住了",
+    "够不着",
+    "坏了",
+)
+# 歪读动作级泄底：core 尾段有「码/叠/垒/堆」类动作时，
+# 开场若出现「码个塔/码起来/叠起来/垒好」等动作预告，直接重试。
+_RE_TWIST_ACTION_PREVIEW = re.compile(
+    r"[码叠垒堆](?:个|起|成|好|了)|[码叠垒堆].{0,2}塔",
+)
+
 
 def _twist_tail(conflict_core: str) -> str:
     """core「X被读成Y」的 Y——歪读做法，开场说破=剧透。"""
@@ -79,6 +98,7 @@ def append_d_opening_errors(
     type_code: str | None,
     errors: list[str],
     conflict_core: str = "",
+    setting: str = "",
 ) -> None:
     code = (type_code or "").strip().upper()[:1]
     if code != "D":
@@ -130,6 +150,24 @@ def append_d_opening_errors(
     # 词表命不中时，与 conflict_core 共享片段同样算点到（主题勿枚举）
     if normalized:
         joined = "".join(item["line"] for item in normalized)
+        ctx = f"{conflict_core} {setting}"
+        for phrase in _UNRELATED_OBSTACLES:
+            if phrase in joined and phrase not in ctx:
+                errors.append(
+                    f"opening 新造与 punchline 无关的障碍「{phrase}」；"
+                    "开场场面须从 setting/punchline 同一物件展开，"
+                    "禁止凭空写掰不动/找不到/卡住这类旁支状态",
+                )
+                break
+        twist_tail = _twist_tail(conflict_core)
+        if (
+            any(ch in twist_tail for ch in "码叠垒堆")
+            and _RE_TWIST_ACTION_PREVIEW.search(joined)
+        ):
+            errors.append(
+                "opening 疑似提前泄露歪读动作（码塔/叠起来等），"
+                "歪读留给正文由昭昭逐步演",
+            )
         if _leaks_twist(joined, conflict_core):
             errors.append(
                 "opening 泄歪读（开场就把读歪的做法说破），"
@@ -265,7 +303,7 @@ def opening_revision_hint(issue: str) -> str | None:
         f"【开场·D】{issue}。"
         "须 2 句：第1句一方**发起邀约交代起因**（这次出门再教你系/咱俩一起挂衣服吧），"
         "第2句另一方**答应+报地点与眼前场面**（地点已由第1句交代时，"
-        "可直接表动作意图，如「好的，我这就去关」）；"
+        "可直接表动作意图，如「好的，我这就去关」；此时勿硬接场景尾巴）；"
         "逻辑优先：活须交到昭昭手里（禁灿灿「看我做」）；"
         "地点嵌进物件短语，禁裸地点小句报幕；隐患须真隐患；"
         "两句同一时间线：将要做 ≠ 已经做过；隐患用「还没/又/一…就」；"
