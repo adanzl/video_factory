@@ -106,7 +106,8 @@ def test_build_image_prompts_door_single_leaf_rule():
             job={"pipeline": "standard", "content_style": style},
         )
         assert "单扇门" in prompts["system"]
-        assert "双开门/对开门" in prompts["system"]
+        # 纯正面表述：图像模型会把否定词当生成指令
+        assert "双开门/对开门" not in prompts["system"]
 
 
 def test_build_voiceover_standard_prompts_science_child_skips_visual_style():
