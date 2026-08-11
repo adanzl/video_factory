@@ -3040,6 +3040,7 @@ class DeepSeekClient(LLMClient):
         issues: list[dict[str, Any]],
         *,
         type_code: str | None = None,
+        full_scan: bool = False,
     ) -> dict[str, Any]:
         """童语化润色一次：只回被点行的口语化改写，落盘由 review 模块决定。"""
         from app.services.daily_story.prompts import DAILY_STORY_LINE_CHARS_MAX
@@ -3053,6 +3054,7 @@ class DeepSeekClient(LLMClient):
             issues,
             type_code=type_code,
             line_chars_max=DAILY_STORY_LINE_CHARS_MAX,
+            full_scan=full_scan,
         )
         try:
             raw, _ = self._chat_json(system, user)

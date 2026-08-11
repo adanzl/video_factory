@@ -300,7 +300,8 @@ def _daily_story_length_draft_for_type(type_code: str | None) -> str:
   每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
   【D类·首稿】先钉「规矩词 + 歪读点 + 必然后果」，写清 {lo}–{hi} 句节奏；
   **首稿也须一次写到 ≥{DAILY_STORY_BODY_CHARS_MIN} 字**（瞄准 {DAILY_STORY_BODY_RETRY_TARGET_MIN}–{DAILY_STORY_BODY_RETRY_TARGET_MAX}）；
-  每句须有动作+结果/位置/理由双信息块，自然达到 18–24 字；禁单动作句；
+  每句一句一意，自然表达，12–24 字即可（上限 24）；有动作/结果/位置/理由就报，
+  **不必硬凑**；禁单字/干短句；
   勿偏短指望补满，勿为凑字堆轻轻放×N。
   系统另拼 2 句开场。发现开场另写另验。
 """
@@ -355,7 +356,8 @@ def _daily_story_length_user_draft_for_type(type_code: str | None) -> str:
         return f"""\
 3. 【D类·首稿】写 **{lo}–{hi} 句**，先钉歪读点再写对白；
    **须一次写到 ≥{DAILY_STORY_BODY_CHARS_MIN} 字**（瞄准 {DAILY_STORY_BODY_RETRY_TARGET_MIN}–{DAILY_STORY_BODY_RETRY_TARGET_MAX}），
-   每句须有动作+结果/位置/理由双信息块，自然达到 18–24 字；禁单动作句；勿交短稿。
+   每句一句一意，自然表达，12–24 字即可（上限 24）；有动作/结果/位置/理由就报，
+   **不必硬凑**；禁单字/干短句；勿交短稿。
    发现开场另计另验。speaker 仅昭昭/灿灿。
 """
     if type_code and type_code.upper() == "A":
