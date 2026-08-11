@@ -97,6 +97,18 @@ def test_build_image_prompts_sd15_keeps_style_body():
     assert "实际 SD1.5 出图以 sd15_prompt_en 为准" in prompts["system"]
 
 
+def test_build_image_prompts_door_single_leaf_rule():
+    """文生图含门时须强调单扇门，防止模型画成双开门/对开门。"""
+    for style in ("science_child", "life_experience", "history_mystery"):
+        prompts = build_image_prompts(
+            _minimal_image_script(),
+            content_style=style,
+            job={"pipeline": "standard", "content_style": style},
+        )
+        assert "单扇门" in prompts["system"]
+        assert "双开门/对开门" in prompts["system"]
+
+
 def test_build_voiceover_standard_prompts_science_child_skips_visual_style():
     """A1 不再注入 visual_style；画风由后端硬编码写入后续步骤。"""
     prompts = build_voiceover_standard_prompts(
@@ -498,6 +510,7 @@ def test_build_visual_brief_prompts_daily_story_role_and_cast():
     assert "冲突道具用台词已出现" in prompts["system"]
     assert "粉色卫衣" in prompts["system"]
     assert "人物关系" in prompts["system"]
+    assert "单扇门" in prompts["system"]
     assert "站位" in prompts["system"]
     assert "画面左边是" in prompts["system"]
     assert "刚叠好" in prompts["system"]
