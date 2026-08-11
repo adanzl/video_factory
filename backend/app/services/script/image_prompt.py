@@ -232,6 +232,19 @@ def assemble_daily_t2i_prompt(
     parts = [_DAILY_T2I_STYLE]
     if vb:
         parts.append(_strip_style_suffix(vb))
+        # 拼装硬锁：门只允许单扇（单开门），风吹头发必须连着头皮，
+        # 不依赖 LLM 是否照写规则，防止双开门/独立飘发进入最终提示词
+        if "门" in vb and "完整门板" not in vb:
+            parts.append(
+                "画面中的门是一扇单开门，只有一块完整门板，没有分成两扇。"
+            )
+        if ("风" in vb or "吹" in vb) and ("头发" in vb or "马尾" in vb):
+            if "连着头皮" not in vb:
+                parts.append("发丝连着头皮。")
+            if "门" in vb and not any(
+                w in vb for w in ("背离", "飘离门口", "远离门")
+            ):
+                parts.append("风从门口吹向室内，头发顺风飘离门口。")
 
     char_parts: list[str] = []
     for name in speakers:
@@ -332,7 +345,8 @@ _IMAGE_PROMPT_DIMENSIONS_FULL = (
     "①视觉风格（遵循 visual_style 定调，置于句首）；"
     "②主体（角色须写年龄/发型/脸型/服装/身高体型等外貌特征，与 visual_style 主角描述一致；表情扩张力、姿态、动作，至少2句细节）；"
     "③场景（前景/中景/背景，写至少 2 个具体物品；"
-    "画面含门时须写明「单扇门」，门外是白色）；"
+    "画面含门时须写明「一扇单开门」（单扇门：只有一块完整门板，没有分成两扇），"
+    "门外是柔和的白色亮光）；"
     "④光照（主辅光方向、冷暖色调、明暗对比）；⑤构图（景别、占比、留白）；"
     "⑥视觉连续性（同场景多镜时，主体外貌/服装/发型须与相邻镜一致，"
     "场景主要陈设与空间位置不跳变，光照方向与色温保持统一；"

@@ -376,6 +376,66 @@ def test_build_verify_checklist_daily_includes_zhao() -> None:
     assert "昭昭" not in user2
 
 
+def test_build_verify_checklist_door_and_float_hair() -> None:
+    """提示词含门/风吹头发时，质检须加单扇门与无独立飘发检查项。"""
+    items, user, _ = AgnesImageProvider._build_verify_checklist(
+        prompt=(
+            "客厅门边，门半掩着，风将灿灿的马尾吹起。"
+            "画面左边是昭昭，右边是灿灿。"
+        ),
+        expected_speakers=["昭昭", "灿灿"],
+        content_style="daily_story",
+    )
+    ids = [cid for cid, _ in items]
+    assert "door_single" in ids
+    assert "no_float_hair" in ids
+    assert "hair_wind_dir" in ids
+    assert "是否只有一个门扇" in user
+    assert "双开门/对开门" in user
+    assert "独立马尾/发束/一绺头发" in user
+    assert "从门口/门缝飘入" in user
+    assert "背离门口" in user
+
+    items2, user2, _ = AgnesImageProvider._build_verify_checklist(
+        prompt="客厅对峙",
+        expected_speakers=["昭昭", "灿灿"],
+        content_style="daily_story",
+    )
+    ids2 = [cid for cid, _ in items2]
+    assert "door_single" not in ids2
+    assert "no_float_hair" not in ids2
+    assert "hair_wind_dir" not in ids2
+
+
+def test_evaluate_verify_response_door_and_float_hair() -> None:
+    """单扇门/无飘发/风向项答「否」时出图质检必须判失败。"""
+    ids = [
+        "scene",
+        "door_single",
+        "no_float_hair",
+        "hair_wind_dir",
+        "extra_arms",
+        "cast_count",
+    ]
+    ok = "项1: 是\n项2: 是\n项3: 是\n项4: 是\n项5: 是\n项6: 2\n"
+    assert AgnesImageProvider._evaluate_verify_response(ok, ids, cast_max=2)
+
+    bad_door = "项1: 是\n项2: 否\n项3: 是\n项4: 是\n项5: 是\n项6: 2\n"
+    assert not AgnesImageProvider._evaluate_verify_response(
+        bad_door, ids, cast_max=2
+    )
+
+    bad_hair = "项1: 是\n项2: 是\n项3: 否\n项4: 是\n项5: 是\n项6: 2\n"
+    assert not AgnesImageProvider._evaluate_verify_response(
+        bad_hair, ids, cast_max=2
+    )
+
+    bad_dir = "项1: 是\n项2: 是\n项3: 是\n项4: 否\n项5: 是\n项6: 2\n"
+    assert not AgnesImageProvider._evaluate_verify_response(
+        bad_dir, ids, cast_max=2
+    )
+
+
 def test_strip_prompt_for_verify_drops_daily_wrap() -> None:
     wrapped = (
         "基于参考图调整人物动作，保留昭昭：7岁男孩。"

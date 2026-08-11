@@ -106,7 +106,9 @@ def test_build_image_prompts_door_single_leaf_rule():
             job={"pipeline": "standard", "content_style": style},
         )
         assert "单扇门" in prompts["system"]
-        assert "门外是白色" in prompts["system"]
+        assert "一扇单开门" in prompts["system"]
+        assert "只有一块完整门板" in prompts["system"]
+        assert "门外是柔和的白色亮光" in prompts["system"]
         # 纯正面表述：图像模型会把否定词当生成指令
         assert "双开门/对开门" not in prompts["system"]
 
@@ -309,6 +311,46 @@ def test_assemble_daily_t2i_prompt_only_speakers():
     assert "昭昭" not in prompt
     assert "妈妈" not in prompt
     assert "中景，人物全身" in prompt
+
+
+def test_assemble_daily_t2i_prompt_door_and_hair_locks():
+    """拼装层硬锁：门必须单扇、风吹头发必须连头皮，不依赖 LLM 照写。"""
+    from app.services.script.image_prompt import assemble_daily_t2i_prompt
+
+    prompt = assemble_daily_t2i_prompt(
+        {
+            "visual_brief": (
+                "客厅门边，门半掩着，门缝被风吹得更开，风将灿灿的马尾吹起。"
+                "画面左边是昭昭，右边是灿灿。"
+            ),
+            "dialogue": [
+                {"speaker": "灿灿", "text": "你搭着门，门缝却越开越大"},
+                {"speaker": "昭昭", "text": "风把头发吹乱了！"},
+            ],
+            "shot_type": "中景",
+        }
+    )
+    assert "画面中的门是一扇单开门，只有一块完整门板，没有分成两扇。" in prompt
+    assert "门缝" not in prompt
+    assert "门与门框的空隙" in prompt
+    assert "发丝连着头皮。" in prompt
+    assert "风从门口吹向室内，头发顺风飘离门口。" in prompt
+
+
+def test_assemble_daily_t2i_prompt_skips_locks_when_absent():
+    """无门/无风时拼装层不注入多余硬锁。"""
+    from app.services.script.image_prompt import assemble_daily_t2i_prompt
+
+    prompt = assemble_daily_t2i_prompt(
+        {
+            "visual_brief": "厨房里灿灿叉腰瞪眼。",
+            "dialogue": [{"speaker": "灿灿", "text": "不许动！"}],
+            "shot_type": "中景",
+        }
+    )
+    assert "一扇单开门" not in prompt
+    assert "发丝连着头皮" not in prompt
+
 
 def test_build_voiceover_standard_prompts_focuses_on_total_length():
     target = 1318
@@ -513,7 +555,10 @@ def test_build_visual_brief_prompts_daily_story_role_and_cast():
     assert "粉色卫衣" in prompts["system"]
     assert "人物关系" in prompts["system"]
     assert "单扇门" in prompts["system"]
-    assert "门外是白色" in prompts["system"]
+    assert "一扇单开门" in prompts["system"]
+    assert "柔和的白色亮光" in prompts["system"]
+    assert "门板边缘与门框之间露出一道空隙" in prompts["system"]
+    assert "禁止写「门缝」" in prompts["system"]
     assert "站位" in prompts["system"]
     assert "画面左边是" in prompts["system"]
     assert "刚叠好" in prompts["system"]
@@ -548,7 +593,9 @@ def test_build_visual_brief_daily_wind_blows_speaker_hair():
     assert "【风与头发】" in prompts["system"]
     assert "风只吹本镜在场角色的头发" in prompts["system"]
     assert "谁说头发被风吹乱，风就吹谁的头发" in prompts["system"]
+    assert "台词未提头发时" in prompts["system"]
     assert "门外的风吹起昭昭的黑色短发" in prompts["system"]
+    assert "背离门口" in prompts["system"]
     assert "发丝必须连着头皮" in prompts["system"]
     assert "马尾被吹起" in prompts["system"]
     assert "碎发乱飞" in prompts["system"]
