@@ -227,6 +227,16 @@ def test_scrub_daily_visual_brief_strips_mouth_and_fixes_hands():
     assert "左手叉腰" in prompt
 
 
+def test_scrub_daily_visual_brief_rewrites_door_gap():
+    """「门缝」诱发双开门中缝，统一改写为门与门框的空隙。"""
+    from app.services.script.visual_brief import scrub_daily_visual_brief
+
+    raw = "客厅门边，门半掩着，门缝被风吹得更开。"
+    out = scrub_daily_visual_brief(raw)
+    assert "门缝" not in out
+    assert "门与门框的空隙" in out
+
+
 def test_scrub_daily_visual_brief_normalizes_default_table_set():
     from app.services.script.visual_brief import scrub_daily_visual_brief
 

@@ -600,6 +600,12 @@ class AgnesImageProvider(ImageProvider):
         "不判断是谁；两个相同服装/双胞胎/额外漂浮人头各算一人；"
         "背景照片墙/镜子虚影/玩具人脸/远处剪影一律不算。"
         "项「粉卫衣」：穿粉色卫衣的女孩是否恰好 1 个；多了（含漂浮头）答否。"
+        "项「单扇门」：门是否只有一个门扇（单开门）；"
+        "左右各一扇的双开门/对开门答「否」。"
+        "项「无飘发」：画面里是否没有不连在任何人头上的独立马尾/发束/一绺头发"
+        "（含从门缝/门外飘入的）；有则答「否」，没有答「是」。"
+        "项「风向」：风吹头发时，发丝是否顺着风背离门口飘（不朝门口方向）；"
+        "朝门口方向飘答「否」。"
     )
 
     @staticmethod
@@ -790,6 +796,42 @@ class AgnesImageProvider(ImageProvider):
                 "正常答「是」；有任何人超过 2 条答「否」",
             )
         )
+        # 单扇门：提示词写门时校验，防 T2I 画成双开门/对开门
+        if "门" in scene_prompt:
+            items.append(
+                (
+                    "door_single",
+                    "画面中的门是否只有一个门扇（单扇门/单开门）？"
+                    "若为双开门/对开门（左右各一个门扇）答「否」。"
+                    "回答「是」或「否」",
+                )
+            )
+        # 无独立飘发：提示词写风吹头发时校验，防独立马尾/发丝从门外飘入
+        if any(w in scene_prompt for w in ("风", "吹")) and any(
+            w in scene_prompt for w in ("头发", "马尾")
+        ):
+            items.append(
+                (
+                    "no_float_hair",
+                    "画面中是否没有不连在任何人头上的独立马尾/发束/一绺头发"
+                    "（尤其从门口/门缝飘入的）？没有答「是」，有则答「否」。"
+                    "回答「是」或「否」",
+                )
+            )
+        # 风向：门+风吹头发时，发丝须背离门口（顺风），防逆风朝门飘
+        if (
+            "门" in scene_prompt
+            and any(w in scene_prompt for w in ("风", "吹"))
+            and any(w in scene_prompt for w in ("头发", "马尾"))
+        ):
+            items.append(
+                (
+                    "hair_wind_dir",
+                    "画面中头发被风吹起时，发丝是否顺着风背离门口方向飘动"
+                    "（不朝门口方向）？若发丝朝门口方向飘答「否」。"
+                    "回答「是」或「否」",
+                )
+            )
         allowed = AgnesImageProvider._allowed_cast_for_verify(
             speakers=speakers,
             content_style=content_style,
@@ -904,6 +946,9 @@ class AgnesImageProvider(ImageProvider):
                 "lr_pos",
                 "mouth_first",
                 "extra_arms",
+                "door_single",
+                "no_float_hair",
+                "hair_wind_dir",
             }:
                 return False
         return parsed_any
