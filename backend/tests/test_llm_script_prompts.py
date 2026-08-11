@@ -98,7 +98,7 @@ def test_build_image_prompts_sd15_keeps_style_body():
 
 
 def test_build_image_prompts_door_single_leaf_rule():
-    """文生图含门时须强调单扇门，防止模型画成双开门/对开门。"""
+    """文生图含门时须写明单扇门与门外景象，防止跨镜穿帮。"""
     for style in ("science_child", "life_experience", "history_mystery"):
         prompts = build_image_prompts(
             _minimal_image_script(),
@@ -106,6 +106,7 @@ def test_build_image_prompts_door_single_leaf_rule():
             job={"pipeline": "standard", "content_style": style},
         )
         assert "单扇门" in prompts["system"]
+        assert "门外是白色" in prompts["system"]
         # 纯正面表述：图像模型会把否定词当生成指令
         assert "双开门/对开门" not in prompts["system"]
 
@@ -512,6 +513,7 @@ def test_build_visual_brief_prompts_daily_story_role_and_cast():
     assert "粉色卫衣" in prompts["system"]
     assert "人物关系" in prompts["system"]
     assert "单扇门" in prompts["system"]
+    assert "门外是白色" in prompts["system"]
     assert "站位" in prompts["system"]
     assert "画面左边是" in prompts["system"]
     assert "刚叠好" in prompts["system"]
