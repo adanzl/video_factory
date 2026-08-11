@@ -3489,7 +3489,9 @@ def test_review_prompt_includes_written_style_rule():
     system, _ = build_review_prompts("关门", {"dialogue": []})
     assert "书面/绕口/旁白感" in system
     assert "语病/看不懂" in system
-    assert "前 9 类" in system
+    assert "引用无据" in system
+    assert "动作误说" in system
+    assert "前 11 类" in system
 
 
 def test_review_parse_issues_prioritizes_severity_and_caps_style():
@@ -3533,6 +3535,16 @@ def test_strip_action_declaration_removes_verbose_announcement():
     )
     assert _strip_action_declaration("我来关！") == "我来关！"
     assert _strip_action_declaration("我来帮你拿东西") == "我来帮你拿东西"
+    assert (
+        _strip_action_declaration("整个托盘汪着水，花根都要泡烂了，我抢过壶。")
+        == "整个托盘汪着水，花根都要泡烂了。"
+    )
+    assert (
+        _strip_action_declaration(
+            "我举壶猛灌到托盘溢满，这不就是你之前说的效果。"
+        )
+        == "这不就是你之前说的效果。"
+    )
 
 
 def test_collect_wording_issues_flags_written_lines():
@@ -3598,6 +3610,8 @@ def test_build_wording_polish_prompts_full_scan_contains_sentence_checks():
     assert "比喻混搭" in system
     assert "施动者/被动句" in system
     assert "叠词/重复试探" in system
+    assert "引用无据" in system
+    assert "动作误说" in system
 
 
 def test_d_soft_last_accepts_unclear_close():

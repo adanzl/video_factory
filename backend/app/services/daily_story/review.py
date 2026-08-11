@@ -28,6 +28,8 @@ REVIEW_KINDS: tuple[str, ...] = (
     "塑料",
     "语病",
     "书面",
+    "引用无据",
+    "动作误说",
     "接不上",
     "无效证据",
     "其他",
@@ -42,6 +44,8 @@ _KIND_PENALTY: dict[str, int] = {
     "塑料": 5,
     "语病": 8,
     "书面": 5,
+    "引用无据": 8,
+    "动作误说": 5,
     "接不上": 8,
     "无效证据": 8,
     "其他": 3,
@@ -50,6 +54,14 @@ REVIEW_PENALTY_CAP = 25
 REVIEW_MAX_ISSUES = 10
 # 首轮单遍：召回靠本地检 + 复审，禁止双遍 LLM 把单稿拖长
 REVIEW_FIRST_PASSES = 1
+
+# 过去式自述段：孩子不会把自己刚做完的动作当旁白念出来（「我抢过壶」）。
+_SELF_REPORT_RE = re.compile(
+    r"我(?:抢|拿|抓|端|抱|举|接|扫|擦|关|开|浇|倒|扯|拆|解)"
+    r"[^，。！？]{0,6}过[^，。！？]{0,8}|"
+    r"我(?:举|端|抬|抱|拿|抢|抓|接|浇|倒)"
+    r"[^，。！？]{0,8}到[^，。！？]{0,8}",
+)
 
 # 独立「童语化润色」用的书面信号：通用词表，不按主题穷举。
 # 只做疑似标记，最终改写交给 Flash，命中后走定点修+硬卡+回滚。
@@ -69,6 +81,7 @@ _WRITTEN_SIGNAL_RES: tuple[re.Pattern[str], ...] = (
         r"(?:我来|我要)(?:扯|拆|拿|搬|端|抬|扫|浇|推|夹|解|关|揉|拍|抓)"
         r"(?:下来|下去|起来|掉|开|走|出|进|上|下|住)?[^，。！？]{1,8}",
     ),
+    _SELF_REPORT_RE,
     re.compile(
         r"进行|完成|非常|十分|迅速|立刻|由于|因此|从而|以及",
     ),
@@ -291,7 +304,7 @@ def build_review_prompts(theme: str, story: dict) -> tuple[str, str]:
     system = (
         "你是儿童短视频文案的审稿人，不是作者。"
         "你的唯一任务是像观众一样逐句读这段对白，挑出「读着出戏」的硬伤。\n"
-        "只报下面 10 类，别夸、别改写全文：\n"
+        "只报下面 12 类，别夸、别改写全文：\n"
         "1 矛盾：前后事实打架"
         "（例：说「锅里一粒米都没有」，后面又说「你把剩饭倒掉了」；"
         "或同一件道具的位置/状态打架：钥匙一会儿还挂在门口钩上，"
@@ -316,16 +329,20 @@ def build_review_prompts(theme: str, story: dict) -> tuple[str, str]:
         "7 语病/看不懂：句子读一遍读不懂，结构断裂、指代不清、语义混乱"
         "（例：「你说轻点，我就轻轻推，没使劲，门合不上吗？」——"
         "不知道他在问什么）。这不是风格问题，是硬伤，必须改。\n"
-        "8 接不上：回句没接住上一句的话头，答非所问或训错对象"
+        "8 引用无据：孩子引用大人没说过的话"
+        "（例：灿灿只说过「土湿透就行」，昭昭却说「这不就是你之前说的效果」）。\n"
+        "9 动作误说：把大人的动作说成“说”"
+        "（例：灿灿把托盘浇满，昭昭却说「怎么现在又说托盘浇满了」）。\n"
+        "10 接不上：回句没接住上一句的话头，答非所问或训错对象"
         "（例：孩子说「你自己没换鞋就进来了」，"
         "大人却回头命令孩子「赶紧脱了放鞋柜上」——孩子并没穿着鞋）。\n"
-        "9 无效证据：追问方摆出的证据在证明一个没人否认的事，"
+        "11 无效证据：追问方摆出的证据在证明一个没人否认的事，"
         "没打在对方刚说的开脱上"
         "（例：大人已承认没换鞋、只辩称「拿个东西不算」，"
         "孩子却还在花几句证明「这双就是出门的鞋」——该拆的是「不算」）。\n"
         "  故意荒诞的开脱（钥匙会跑、地板长花纹）是笑点设定，"
         "只要接住了话头就别报。\n"
-        "10 其他：上面装不下但确实读着出戏的。\n\n"
+        "12 其他：上面装不下但确实读着出戏的。\n\n"
         "下面几处是本类结构设计，即使看着像重复也别报：\n"
         "- 开场两句是片头定格，与正文开头重合是正常拼接；\n"
         "- 最后一句大人认输软收，倒数第二句孩子引用大人原话闭环。\n"
@@ -351,7 +368,7 @@ def build_review_prompts(theme: str, story: dict) -> tuple[str, str]:
         "孩子摆的证据落在「已承认」一侧而不是争议点上，就是「无效证据」；"
         "开脱句与前面记下的实物状态硬碰（钥匙明明还挂着却说跑了），"
         "就是「矛盾」。\n"
-        "第三步 checks：前 9 类**每一类都必须表态**，"
+        "第三步 checks：前 11 类**每一类都必须表态**，"
         "写「无」或写清哪几句有问题，不许省略某一类。\n"
         "第四步 issues：把 checks 里判「有」的逐条展开。\n\n"
         "只输出 JSON：\n"
@@ -361,7 +378,8 @@ def build_review_prompts(theme: str, story: dict) -> tuple[str, str]:
         '"8回应不了7:在证明已承认的事→无效证据"]},'
         '"checks":{"矛盾":"第5句锅里没米，第6句又倒剩饭","错位":"无",'
         '"示范":"无","重复":"第5句与第8句都说碗干","塑料":"无","语病":"无",'
-        '"书面":"无","接不上":"无","无效证据":"第8句"},'
+        '"书面":"无","引用无据":"无","动作误说":"无",'
+        '"接不上":"无","无效证据":"第8句"},'
         '"issues":[{"lines":[5,6],"kind":"矛盾",'
         '"desc":"第5句说锅里一粒米都没有，第6句又说把剩饭倒掉了",'
         '"fix":"第6句改成…"}],'
@@ -562,6 +580,8 @@ def build_wording_polish_prompts(
             "- 表态句无新动作：只有表态没有推进，改成同一条歪读的新动作。\n"
             "- 施动者/被动句：动作发出者和承受者写反或主语不清；\n"
             "- 叠词/重复试探：连续两个试探/验证口气，读着绕口；\n"
+            "- 引用无据：孩子引用大人没说过的话，改成有出处的说法；\n"
+            "- 动作误说：把大人的动作写成“说”，改成动作表达（说→把/做）。\n"
             "- 行动宣言/预告：角色先大声宣布自己将做的动作"
             "（如「我来X/我要X」）再执行，不像真孩子；"
             "**直接删掉「我来/我要+动作」段**，只留短命令或惊呼"
@@ -617,13 +637,66 @@ def _strip_speaker_prefix(line: str, *, speaker: str) -> str:
 
 
 def _strip_action_declaration(line: str) -> str:
-    """剥掉「我来/我要+具体动作」段，只留短命令/惊呼/反应。"""
-    if not line or not _ACTION_DECL_RE.search(line):
+    """剥掉「我来/我要+具体动作」和「我+动作+过」自述段，只留短命令/惊呼/反应。"""
+    if not line or not (
+        _ACTION_DECL_RE.search(line) or _SELF_REPORT_RE.search(line)
+    ):
         return line
     cleaned = _ACTION_DECL_RE.sub("", line)
+    cleaned = _SELF_REPORT_RE.sub("", cleaned)
     cleaned = re.sub(r"[，,]{1,}", "，", cleaned)
+    cleaned = re.sub(r"[，,]+([。！？])", r"\1", cleaned)
     cleaned = re.sub(r"^[，,\s]+|[，,\s]+$", "", cleaned)
     return cleaned
+
+
+def apply_local_wording_sanitization(
+    story: dict,
+    *,
+    theme: str,
+    type_code: str | None = None,
+) -> dict:
+    """本地确定性清理：剥掉自述动作段，不依赖 LLM；每处都过硬卡再落。"""
+    import copy
+
+    from app.services.daily_story.prompts import validate_daily_story_json
+
+    rows = _dialogue(story)
+    lines = [str(r.get("line") or "").strip() for r in rows]
+    n = len(lines)
+    open_len = len(story.get("discovery_opening") or [])
+    changed = False
+    for i, row in enumerate(rows, 1):
+        if _on_design_line(i, lines, n, open_len):
+            continue
+        line = str(row.get("line") or "").strip()
+        cleaned = _strip_action_declaration(line)
+        if not cleaned or cleaned == line:
+            continue
+        trial = copy.deepcopy(story)
+        trial["dialogue"][i - 1]["line"] = cleaned
+        trial["_theme"] = theme
+        try:
+            validate_daily_story_json(trial, phase="full")
+        except ValueError as exc:
+            logger.info(
+                "[DAILY_STORY] local wording sanitize line %d dropped: %s",
+                i,
+                exc,
+            )
+            continue
+        story = trial
+        lines[i - 1] = cleaned
+        changed = True
+        logger.info(
+            "[DAILY_STORY] local wording sanitize line %d: %s -> %s",
+            i,
+            line,
+            cleaned,
+        )
+    if story.get("_theme") is not None:
+        story.pop("_theme", None)
+    return story
 
 
 def fix_line_numbers(raw: Any) -> list[int]:
@@ -1021,6 +1094,11 @@ def run_daily_story_review(
     from app.services.daily_story.story_types import resolve_story_type_code
 
     type_code = resolve_story_type_code(story, theme=theme)
+    story = apply_local_wording_sanitization(
+        story,
+        theme=theme,
+        type_code=type_code,
+    )
     story, polish_n = polish_daily_story_wording_iteratively(
         story,
         client,
