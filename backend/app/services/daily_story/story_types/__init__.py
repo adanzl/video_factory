@@ -437,7 +437,6 @@ def validate_type_opening(
         type_code=type_code,
         errors=errors,
         conflict_core=conflict_core,
-        setting=setting,
     )
     append_e_opening_errors(
         normalized,

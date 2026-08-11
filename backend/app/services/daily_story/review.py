@@ -58,7 +58,16 @@ _WRITTEN_SIGNAL_RES: tuple[re.Pattern[str], ...] = (
         r"(?:两|一|几|半)成力|半指宽|一指宽|\d+\s*(?:厘米|毫米|米|毫升)",
     ),
     re.compile(
-        r"深痕|锯齿状|证据|亲手|松半分|印上|加力|拿给[^，。！？]{0,6}看",
+        r"深痕|锯齿状|证据|亲手|松半分|加力|超标|按规矩|够数|补救|叮嘱的效果",
+    ),
+    # 行动宣言：孩子不会先大喊自己要做的具体动作（「我来扯掉这夹子」）。
+    # 只认「我来/我要 + 具体动词 + 后续内容」，短命令「我来关！」不误伤。
+    re.compile(
+        r"(?:我来|我要)把[^，。！？]{1,8}"
+        r"(?:扯|拆|拿|搬|端|抬|扫|浇|推|夹|解|关|揉|拍|抓)"
+        r"(?:下来|下去|起来|掉|开|走|出|进|上|下|住)?[^，。！？]{0,8}|"
+        r"(?:我来|我要)(?:扯|拆|拿|搬|端|抬|扫|浇|推|夹|解|关|揉|拍|抓)"
+        r"(?:下来|下去|起来|掉|开|走|出|进|上|下|住)?[^，。！？]{1,8}",
     ),
     re.compile(
         r"进行|完成|非常|十分|迅速|立刻|由于|因此|从而|以及",
@@ -66,6 +75,15 @@ _WRITTEN_SIGNAL_RES: tuple[re.Pattern[str], ...] = (
 )
 
 _RE_PUNCT = re.compile(r"[，。！？…、：；~—\s·「」“”\"'?!.,]")
+# 行动宣言段：孩子不会先大喊自己将做的具体动作（「我来扯掉这夹子」）。
+# 只认「我来/我要 + 具体动词 + 后续内容」；短命令「我来关！」不误伤。
+_ACTION_DECL_RE = re.compile(
+    r"(?:我来|我要)把[^，。！？]{1,8}"
+    r"(?:扯|拆|拿|搬|端|抬|扫|浇|推|夹|解|关|揉|拍|抓)"
+    r"(?:下来|下去|起来|掉|开|走|出|进|上|下|住)?[^，。！？]{0,12}|"
+    r"(?:我来|我要)(?:扯|拆|拿|搬|端|抬|扫|浇|推|夹|解|关|揉|拍|抓)"
+    r"(?:下来|下去|起来|掉|开|走|出|进|上|下|住)?[^，。！？]{1,12}",
+)
 # 末段结构句：引用原话闭环，跟前面质问像也不算复读
 _RE_STRUCT_CLOSE = re.compile(r"你自己说|那你刚才算不算|那你刚才也")
 
@@ -507,6 +525,7 @@ def build_wording_polish_prompts(
     *,
     type_code: str | None = None,
     line_chars_max: int,
+    full_scan: bool = False,
 ) -> tuple[str, str]:
     """童语化润色提示：只改被点行的措辞，结构/说话人/行数不动。"""
     from app.services.daily_story.story_types import story_type_tag
@@ -527,18 +546,36 @@ def build_wording_polish_prompts(
         "对照示例：\n"
         "- 深痕 → 深印子\n"
         "- 加力 → 加点力\n"
-        "- 拿给风看看 → 让风吹吹\n"
         "- 亲手把夹子拆了 → 把夹子拆了\n"
         "- 两成力/半指宽 → 一点点/一丢丢\n"
         "只输出 JSON：\n"
         '{"fixes":[{"no":5,"line":"改好的这一句"}]}'
     )
+    if full_scan or not issues:
+        system += (
+            "\n【语句层检查（全句扫描）】逐句检查三类问题：\n"
+            "- 语序绕：主语/动作顺序拧、气口乱；\n"
+            "- 搭配错：动词和宾语搭配不自然；\n"
+            "- 比喻混搭：同一句比较维度不一致；\n"
+            "- 动作/物件不匹配：动作和道具/场景对不上；\n"
+            "- 旁白式概括：像在念画面/总结，不像对角色说话；\n"
+            "- 表态句无新动作：只有表态没有推进，改成同一条歪读的新动作。\n"
+            "- 施动者/被动句：动作发出者和承受者写反或主语不清；\n"
+            "- 叠词/重复试探：连续两个试探/验证口气，读着绕口；\n"
+            "- 行动宣言/预告：角色先大声宣布自己将做的动作"
+            "（如「我来X/我要X」）再执行，不像真孩子；"
+            "**直接删掉「我来/我要+动作」段**，只留短命令或惊呼"
+            "（如「让开，袜子都被你毁了！」），动作留给画面。\n"
+            "只改确有问题的行，其余一字不动。"
+        )
     issue_text = "\n".join(
         f"- 第{'、'.join(str(n) for n in it['lines'])}句"
         f"（{it['kind']}）：{it['desc']}"
         + (f" 建议：{it['fix']}" if it.get("fix") else "")
         for it in issues
     )
+    if not issue_text:
+        issue_text = "（无规则命中，做全句语句层扫描）"
     user = (
         f"主题：{theme}\n"
         f"场景：{story.get('setting') or ''}\n"
@@ -577,6 +614,16 @@ def _strip_speaker_prefix(line: str, *, speaker: str) -> str:
         if name and line.startswith(name):
             return line[len(name) :].lstrip("：:").strip()
     return line
+
+
+def _strip_action_declaration(line: str) -> str:
+    """剥掉「我来/我要+具体动作」段，只留短命令/惊呼/反应。"""
+    if not line or not _ACTION_DECL_RE.search(line):
+        return line
+    cleaned = _ACTION_DECL_RE.sub("", line)
+    cleaned = re.sub(r"[，,]{1,}", "，", cleaned)
+    cleaned = re.sub(r"^[，,\s]+|[，,\s]+$", "", cleaned)
+    return cleaned
 
 
 def fix_line_numbers(raw: Any) -> list[int]:
@@ -631,6 +678,7 @@ def apply_spot_fixes(
             if 1 <= no <= len(rows)
             else "",
         )
+        new_line = _strip_action_declaration(new_line)
         if not new_line or not (1 <= no <= len(rows)):
             continue
         if only is not None and no not in only:
@@ -892,11 +940,32 @@ def polish_daily_story_wording_iteratively(
     if not callable(polish):
         return story, 0
     total_accepted = 0
-    for _ in range(max(1, max_rounds)):
+    # 第一轮：无论规则是否命中，都做全句语句层扫描（语序/搭配/比喻混搭）。
+    raw = polish(theme, story, [], type_code=type_code, full_scan=True)
+    story, accepted = _apply_fixes_greedily(
+        story,
+        raw,
+        theme=theme,
+        coherence_checker=coherence_checker,
+    )
+    total_accepted += len(accepted)
+    if accepted:
+        logger.info(
+            "[DAILY_STORY] wording full-scan polish accepted=%d",
+            len(accepted),
+        )
+    # 后续轮：规则信号词命中时继续收口。
+    for _ in range(max(0, max_rounds - 1)):
         issues = collect_wording_issues(story, type_code=type_code)
         if not issues:
             break
-        raw = polish(theme, story, issues, type_code=type_code)
+        raw = polish(
+            theme,
+            story,
+            issues,
+            type_code=type_code,
+            full_scan=False,
+        )
         story, accepted = _apply_fixes_greedily(
             story,
             raw,

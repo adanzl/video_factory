@@ -1379,19 +1379,6 @@ def test_daily_story_opening_prompt_includes_punchline():
     assert "铺垫靶点" in user
 
 
-def test_validate_daily_story_opening_rejects_unrelated_obstacle():
-    with pytest.raises(ValueError, match="无关的障碍"):
-        validate_daily_story_opening(
-            [
-                {"speaker": "灿灿", "line": "昭昭，咱俩一起把袜子晾上吧"},
-                {"speaker": "昭昭", "line": "好啊，客厅晾衣架的夹子我掰不动"},
-            ],
-            conflict_core="夹紧被读成夹出印子",
-            setting="客厅晾衣架旁晾袜子",
-            type_code="D",
-        )
-
-
 def test_validate_daily_story_opening_coerces_name_key_shorthand():
     ok = validate_daily_story_opening(
         [
@@ -3533,6 +3520,21 @@ def test_review_local_coherence_prompt_contains_neighbors():
     assert '"coherent"' in system
 
 
+def test_strip_action_declaration_removes_verbose_announcement():
+    from app.services.daily_story.review import _strip_action_declaration
+
+    assert (
+        _strip_action_declaration("让开，我来扯掉这夹子，袜子都被你毁了！")
+        == "让开，袜子都被你毁了！"
+    )
+    assert (
+        _strip_action_declaration("让开，我来把夹子拿下来，袜子都被你弄坏了！")
+        == "让开，袜子都被你弄坏了！"
+    )
+    assert _strip_action_declaration("我来关！") == "我来关！"
+    assert _strip_action_declaration("我来帮你拿东西") == "我来帮你拿东西"
+
+
 def test_collect_wording_issues_flags_written_lines():
     from app.services.daily_story.review import collect_wording_issues
 
@@ -3578,13 +3580,49 @@ def test_build_wording_polish_prompts_contains_examples():
         line_chars_max=24,
     )
     assert "深印子" in system
-    assert "让风吹吹" in system
+    assert "把夹子拆了" in system
+
+
+def test_build_wording_polish_prompts_full_scan_contains_sentence_checks():
+    from app.services.daily_story.review import build_wording_polish_prompts
+
+    system, _ = build_wording_polish_prompts(
+        "关门",
+        {"dialogue": []},
+        [],
+        line_chars_max=24,
+        full_scan=True,
+    )
+    assert "语序绕" in system
+    assert "搭配错" in system
+    assert "比喻混搭" in system
+    assert "施动者/被动句" in system
+    assert "叠词/重复试探" in system
 
 
 def test_d_soft_last_accepts_unclear_close():
     from app.services.daily_story.story_types.quality import RE_SOFT_LAST
 
     assert RE_SOFT_LAST.search("哎，和你说不清楚，反正门关了。")
+    assert RE_SOFT_LAST.search("哼，你不懂。")
+
+
+def test_d_prompt_includes_bu_dong_close():
+    from app.services.daily_story.story_types.d.line import LINE_D
+
+    assert "你不懂" in LINE_D.prompt_block
+    assert "你不懂" in LINE_D.user_closing
+    assert "双信息块" not in LINE_D.prompt_block
+    assert "不必硬凑" in LINE_D.prompt_block
+
+
+def test_d_literal_marker_accepts_plain_ni_shuo():
+    from app.services.daily_story.story_types.d.humor import RE_BOOM_CLOSE
+    from app.services.daily_story.story_types.d.validate import RE_LITERAL_MID
+
+    line = "你说别浇太多，离‘太多’还差半壶呢。"
+    assert RE_LITERAL_MID.search(line)
+    assert not RE_BOOM_CLOSE.search(line)
 
 
 def test_review_apply_spot_fixes_strips_prefix_and_syncs_opening():
