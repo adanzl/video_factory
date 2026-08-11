@@ -518,6 +518,41 @@ def test_build_visual_brief_prompts_daily_story_role_and_cast():
     assert "台词点名" in prompts["system"] or "台词已出现" in prompts["system"]
 
 
+def test_build_visual_brief_daily_wind_blows_speaker_hair():
+    """风吹头发须落在台词对应的角色头上，正向表述且发丝连头皮。"""
+    script = {
+        "title": "关门关到门更开",
+        "narration": "风把头发吹乱了！",
+        "visual_style": "日常写实",
+        "segments": [
+            {
+                "segment_index": 6,
+                "text": "你搭着门，门缝却越开越大。风把头发吹乱了！",
+                "dialogue": [
+                    {"speaker": "灿灿", "text": "你搭着门，门缝却越开越大"},
+                    {
+                        "speaker": "昭昭",
+                        "text": "风把头发吹乱了！我不敢使劲，你说轻点我就轻到底。",
+                    },
+                ],
+                "shot_type": "中景",
+            },
+        ],
+    }
+    prompts = build_visual_brief_prompts(
+        script,
+        job={"pipeline": "chat", "content_style": "daily_story"},
+    )
+    assert "【风与头发】" in prompts["system"]
+    assert "风只吹本镜在场角色的头发" in prompts["system"]
+    assert "谁说头发被风吹乱，风就吹谁的头发" in prompts["system"]
+    assert "门外的风吹起昭昭的黑色短发" in prompts["system"]
+    assert "发丝必须连着头皮" in prompts["system"]
+    assert "马尾被吹起" in prompts["system"]
+    assert "碎发乱飞" in prompts["system"]
+    assert "单扇门" in prompts["system"]
+
+
 def test_build_visual_brief_daily_includes_setting_anchor():
     from app.services.script.visual_brief import build_visual_brief_prompts
 
