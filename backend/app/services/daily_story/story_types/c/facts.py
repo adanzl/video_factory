@@ -16,6 +16,12 @@ _RULE_DECLARE = re.compile(
     r"(?:规矩|规则|赛规|负责|收拾|定规则|谁先)",
 )
 _NEW_RULE = re.compile(r"改规矩|不算|另外|重新比|再来|换一条")
+_DEMONSTRATIVE_CONTAINER = re.compile(r"这(?:盘|碟|杯|盒|瓶|碗)")
+_CONTAINER_NOUN = re.compile(r"盘|碟|杯|盒|瓶|碗")
+# 自信与留块矛盾（2026-08-12 定）：立规人说过「一样大/挑哪块都一样」后，
+# 禁再写「特意留/留给自己」——前后自相矛盾，观众立刻出戏。
+_EVEN_CLAIM = re.compile(r"一样大|挑哪块都一样|都一样大|绝对公平|不会偏心")
+_LEAVE_CLAIM = re.compile(r"特意留|留给自己|专门留|我留的|留的这块")
 # 指代式回旋镖引话（用户 2026-08-09 定）：「你刚说拿我定的规则」「用我的规矩」——
 # 指向说话人自己立过的规则，不是「我说规则是X」/「你刚说举过头顶才算」式逐字引用
 # 规则内容；指代式引话无需前文逐字出处，回旋镖引话失据不拦。只匹配「我+定/立/设/
@@ -69,7 +75,25 @@ def collect_fact_issues(story: dict) -> list[str]:
     if len(lines) < 6:
         return issues
 
+    # 量词落地（2026-08-12 定）：「这盘/这杯」等所指容器须在 setting 或前文出现过；
+    # 未交代分盘/分碟前禁写「这盘归我」，统一写「这块/大的」。
+    known = str(story.get("setting") or "")
+    for i, ln in enumerate(lines):
+        if _DEMONSTRATIVE_CONTAINER.search(ln) and not _CONTAINER_NOUN.search(known):
+            issues.append(
+                f"C事实量词悬空：第{i + 1}句「{ln[:14]}」用「这盘/这杯」"
+                "但 setting/前文没交代容器；未分盘就写「这块/大的」"
+            )
+            break
+        known += ln
+
     full = "".join(lines)
+    if _EVEN_CLAIM.search(full) and _LEAVE_CLAIM.search(full):
+        issues.append(
+            "C事实自信与留块矛盾：说过「一样大/挑哪块都一样」后禁再写"
+            "「特意留/留给自己」——立规人不能同时承认切得均匀又故意留大块"
+        )
+
     head = "".join(lines[: max(1, len(lines) * 2 // 5)])
     tail = "".join(lines[-6:])
 

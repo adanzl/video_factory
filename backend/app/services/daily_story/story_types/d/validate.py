@@ -23,6 +23,13 @@ RE_LITERAL_MID = re.compile(
     r"照做|按你说的|你不是说|字面|按规矩|你说|你让我|照你说的|"
     r"你说[^，。！？]{1,8}，?我就|我按你|你叫我|你要我|我照你",
 )
+# 嘴硬半句负面清单：出现即判非法（新指令/未来/归因/第二场）。
+_RE_SOFT_TAIL_BANNED = re.compile(
+    r"以后|下次|明天|再也不|自己弄|你赢了|拿剪刀|重新|谁让你|都怪|"
+    r"反正不是|因为|给我|走吧|再来|自己去",
+)
+# 合法半句的强闭合结尾：允许情绪词/吐槽/认输式评价。
+_RE_SOFT_TAIL_OK_END = re.compile(r"(?:了|呗|吧|啊|厉害|不懂|关)[。！]?$")
 # 后果场面词表与好笑侧同源（含 满/漫/泡/漂 等水类惨状），
 # 勿用收玩具/叠衣专属窄表——浇花主题的惨状全是水词，窄表会把中段惨状看漏
 _RE_MESS_BEAT = re.compile(
@@ -321,6 +328,22 @@ def append_d_body_errors(story: dict, errors: list[str]) -> None:
                 "D类末句叮嘱方（若由妈妈收束）须嘴硬或软破功（哼/行吧/算了等）",
             )
             return
+
+    if _RE_SOFT_TAIL_BANNED.search(last):
+        errors.append(
+            "D类末句半句非法：短词后可带情绪半句，但禁止新指令/未来承诺/"
+            "归因解释/第二场动作（以后/下次/自己弄/重新/因为/给我等）",
+        )
+        return
+    if not _RE_SOFT_TAIL_OK_END.search(last) and not re.fullmatch(
+        r"[哼行吧算了服了切得，。！？\s]*",
+        last,
+    ):
+        errors.append(
+            "D类末句半句须以闭合语气收尾（了/呗/吧/啊/厉害/不懂/关），"
+            "禁止问号或开放式结尾",
+        )
+        return
 
     if RE_MESS.search(tail4) and not RE_MESS.search(body):
         errors.append(

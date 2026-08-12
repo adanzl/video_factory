@@ -62,6 +62,10 @@ _SELF_REPORT_RE = re.compile(
     r"我(?:举|端|抬|抱|拿|抢|抓|接|浇|倒)"
     r"[^，。！？]{0,8}到[^，。！？]{0,8}",
 )
+# 嘲讽确认句缺语气词：如「你满意了」→「你满意了吧」。
+_TONE_PARTICLE_FIXES: tuple[tuple[str, str], ...] = (
+    ("你满意了", "你满意了吧"),
+)
 
 # 独立「童语化润色」用的书面信号：通用词表，不按主题穷举。
 # 只做疑似标记，最终改写交给 Flash，命中后走定点修+硬卡+回滚。
@@ -642,6 +646,8 @@ def build_wording_polish_prompts(
             "- 叠词/重复试探：连续两个试探/验证口气，读着绕口；\n"
             "- 引用无据：孩子引用大人没说过的话，改成有出处的说法；\n"
             "- 动作误说：把大人的动作写成“说”，改成动作表达（说→把/做）。\n"
+            "- 语气/反问缺失：该带语气词或反问的地方太干"
+            "（如「你满意了」→「你满意了吧」），补上但别堆语气词。\n"
             "- 行动宣言/预告：角色先大声宣布自己将做的动作"
             "（如「我来X/我要X」）再执行，不像真孩子；"
             "**直接删掉「我来/我要+动作」段**，只留短命令或惊呼"
@@ -710,6 +716,16 @@ def _strip_action_declaration(line: str) -> str:
     return cleaned
 
 
+def _fix_missing_tone_particle(line: str) -> str:
+    """给嘲讽确认句补语气词，避免干收。"""
+    if not line:
+        return line
+    for old, new in _TONE_PARTICLE_FIXES:
+        if old in line and old + "吧" not in line and old + "？" not in line:
+            line = line.replace(old, new, 1)
+    return line
+
+
 def apply_local_wording_sanitization(
     story: dict,
     *,
@@ -730,7 +746,7 @@ def apply_local_wording_sanitization(
         if _on_design_line(i, lines, n, open_len):
             continue
         line = str(row.get("line") or "").strip()
-        cleaned = _strip_action_declaration(line)
+        cleaned = _fix_missing_tone_particle(_strip_action_declaration(line))
         if not cleaned or cleaned == line:
             continue
         trial = copy.deepcopy(story)
