@@ -113,8 +113,6 @@ _DAILY_SPEAKER_RULE = (
     "只画空门口（门口无人），禁止画路人/半张脸；"
     "禁止写「盯/瞟/望向门口等人」——改写角色互看或看向道具。"
     "若该段无人发言且 speakers 为空，禁止出现昭昭/灿灿/妈妈等人像，只写场景。"
-    "【角色事实】昭昭=7岁弟弟（男孩）、灿灿=10岁姐姐（女孩）、妈妈=成年女性；"
-    "描述中禁止把昭昭写成妹妹/女孩、把灿灿写成弟弟/男孩、把妈妈写成阿姨等错配称呼。"
 )
 
 _DAILY_SETTING_RULE = (
@@ -171,6 +169,14 @@ _DEFAULT_TABLE_SET = "茶几上放着遥控器和空水杯"
 _TABLE_SET_CLAUSE_RE = re.compile(r"茶几上(?:放着|摆着)[^。；]*")
 # 默认陈设槽位值（来自 prompt 默认模板，非开放词表，不随主题扩展）
 _DEFAULT_TABLE_ITEMS = ("遥控器", "空水杯")
+# 陈设句框架词（短语级剥离，勿用单字字符类——会把「茶」等道具字误删）
+_TABLE_FRAME_RE = re.compile(r"茶几上|放着|摆着|和|与|及|、|，|。|；|：|\s")
+
+# 日故事全局角色事实（story 提示词已有，visual_brief 补齐，防性别/称呼错配）
+_DAILY_CHARACTER_FACTS = (
+    "【角色事实】昭昭=7岁弟弟（男孩）、灿灿=10岁姐姐（女孩）、妈妈=成年女性；"
+    "描述中禁止把昭昭写成妹妹/女孩、把灿灿写成弟弟/男孩、把妈妈写成阿姨等错配称呼。"
+)
 
 
 def _collapse_duplicate_pose_clauses(body: str) -> str:
@@ -222,11 +228,15 @@ def _fix_hands_on_hips_conflict(body: str) -> str:
 
 
 def _only_default_table_items(clause: str) -> bool:
-    """陈设句去掉默认项后无其他实质内容才算纯默认（不做道具词表判断）。"""
+    """陈设句去掉默认项+框架词后无其他实质内容才算纯默认（不做道具词表判断）。
+
+    注意：仅出现默认项子集（如只有「空水杯」）时也会归一到默认全集，
+    这是兜底策略的一部分（补齐缺失默认项）。
+    """
     remaining = clause
     for item in _DEFAULT_TABLE_ITEMS:
         remaining = remaining.replace(item, "")
-    remaining = re.sub(r"[茶几上放着摆着和与及、\s，。；：]", "", remaining)
+    remaining = _TABLE_FRAME_RE.sub("", remaining)
     return remaining == ""
 
 
@@ -441,6 +451,7 @@ def build_visual_brief_prompts(
         f"{content_rule}"
         f"{emotion_rule}"
         f"{cast_rule}"
+        f"{_DAILY_CHARACTER_FACTS if profile_style == CONTENT_STYLE_DAILY_STORY else ''}"
         f"{setting_rule}"
         "须通读全文 narration，保证相邻分镜画面衔接自然、叙事节奏连贯，"
         "避免前后镜主体/场景毫无关联的跳跃；"
