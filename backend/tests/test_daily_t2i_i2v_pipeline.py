@@ -240,15 +240,23 @@ def test_scrub_daily_visual_brief_rewrites_door_gap():
 def test_scrub_daily_visual_brief_normalizes_default_table_set():
     from app.services.script.visual_brief import scrub_daily_visual_brief
 
-    raw = (
+    # 纯默认陈设句保持归一（幂等）
+    out = scrub_daily_visual_brief(
         "客厅沙发上，妈妈举着薯片袋；画面左边是昭昭，右边是灿灿；"
-        "茶几上放着一个月饼盒和两杯水，其中一杯水杯口有淡淡的水印。"
+        "茶几上放着遥控器和空水杯。"
     )
-    out = scrub_daily_visual_brief(raw)
-    assert "月饼" not in out
-    assert "水印" not in out
     assert "茶几上放着遥控器和空水杯" in out
-    # 冲突物另写（摊开）不改
+    # 非默认道具（月饼/蛋糕）一律保留，不再靠词表删（回归：job45 蛋糕被删）
+    cake = scrub_daily_visual_brief(
+        "客厅茶几上放着一块圆形蛋糕，灿灿手拿餐刀正准备切；"
+        "画面左边是昭昭，右边是灿灿。"
+    )
+    assert "蛋糕" in cake
+    moon = scrub_daily_visual_brief(
+        "客厅茶几上放着一个月饼盒；画面左边是昭昭，右边是灿灿。"
+    )
+    assert "月饼" in moon
+    # 冲突物摊开也保留
     keep = scrub_daily_visual_brief(
         "客厅沙发上；茶几上摊开一袋薯片；画面左边是昭昭，右边是灿灿。"
     )

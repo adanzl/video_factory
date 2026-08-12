@@ -164,15 +164,11 @@ _MOUTH_AND_TONE_RE = re.compile(
 # 句内双手互斥：双手叉腰 + 右手指/比划 → 左手叉腰
 _RIGHT_HAND_ACTION_RE = re.compile(r"右手(?:指|食指|指向|比划)")
 
-# 默认背景陈设；茶几「放着/摆着」句若无遥控器则归一（冲突物摊开等另句保留）
+# 默认背景陈设：仅归一「纯默认陈设」句，其余（含冲突/装饰道具）一律保留
 _DEFAULT_TABLE_SET = "茶几上放着遥控器和空水杯"
 _TABLE_SET_CLAUSE_RE = re.compile(r"茶几上(?:放着|摆着)[^。；]*")
-_TABLE_CONFLICT_KEEP_RE = re.compile(
-    r"薯片|衣服|衣物|零食|饼干|酸奶|冰棍|拖把|皱成一团"
-)
-_TABLE_STRAY_DECOR_RE = re.compile(
-    r"月饼|杂志|书堆|扫帚|花瓶|果盘|纸巾盒|零食罐|蜡笔"
-)
+# 默认陈设槽位值（来自 prompt 默认模板，非开放词表，不随主题扩展）
+_DEFAULT_TABLE_ITEMS = ("遥控器", "空水杯")
 
 
 def _collapse_duplicate_pose_clauses(body: str) -> str:
@@ -223,21 +219,29 @@ def _fix_hands_on_hips_conflict(body: str) -> str:
     return "".join(out)
 
 
+def _only_default_table_items(clause: str) -> bool:
+    """陈设句去掉默认项后无其他实质内容才算纯默认（不做道具词表判断）。"""
+    remaining = clause
+    for item in _DEFAULT_TABLE_ITEMS:
+        remaining = remaining.replace(item, "")
+    remaining = re.sub(r"[茶几上放着摆着和与及、\s，。；：]", "", remaining)
+    return remaining == ""
+
+
 def _normalize_default_table_set(body: str) -> str:
-    """茶几背景陈设归一为遥控器+空水杯；台词冲突物另句不改。"""
+    """茶几背景陈设：仅归一「纯默认陈设」句，其余一律保留。
 
-    def _repl(m: re.Match[str]) -> str:
-        clause = m.group(0)
-        if "遥控器" in clause and ("水杯" in clause or "杯子" in clause):
-            return _DEFAULT_TABLE_SET
-        if _TABLE_STRAY_DECOR_RE.search(clause):
-            return _DEFAULT_TABLE_SET
-        if _TABLE_CONFLICT_KEEP_RE.search(clause):
-            return clause
-        # 普通「放着A和B」类背景句 → 默认陈设
-        return _DEFAULT_TABLE_SET
-
-    return _TABLE_SET_CLAUSE_RE.sub(_repl, body)
+    不做「哪些道具算冲突道具」的词表判断——任何非默认道具
+    （蛋糕/花瓶/杂志等）都保留；去杂物职责在生成端 prompt。
+    """
+    return _TABLE_SET_CLAUSE_RE.sub(
+        lambda m: (
+            _DEFAULT_TABLE_SET
+            if _only_default_table_items(m.group(0))
+            else m.group(0)
+        ),
+        body,
+    )
 
 
 def scrub_daily_visual_brief(text: str) -> str:
