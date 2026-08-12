@@ -1672,6 +1672,92 @@ def test_b_opening_score_skips_prepended_discovery_block():
     assert "B开场与正文首句重复" not in cons
 
 
+def test_b_opening_rejects_fixup_lead_first_line():
+    """B 开场首句禁止补救中段指令（快把/盖好），须先给发现/现状拍。"""
+    from app.services.daily_story.story_types.b.opening import (
+        append_b_opening_errors,
+    )
+
+    opening = [
+        {"speaker": "昭昭", "line": "姐，快把裂口转过去，胶水瓶盖好。"},
+        {"speaker": "灿灿", "line": "小声点，藏好别让妈看见。"},
+    ]
+    errors: list[str] = []
+    append_b_opening_errors(opening, type_code="B", errors=errors)
+    assert any("补救" in e for e in errors), errors
+
+
+def test_b_opening_accepts_premise_openings():
+    """高分 B 稿开场（发现/现状/来路/欲望拍 + 分工）不误伤。"""
+    from app.services.daily_story.story_types.b.opening import (
+        append_b_opening_errors,
+    )
+
+    good = [
+        [
+            {"speaker": "昭昭", "line": "姐姐，我发现客厅茶几下有一包饼干。"},
+            {"speaker": "灿灿", "line": "嘘，趁妈还在厨房，快拆开。"},
+        ],
+        [
+            {"speaker": "昭昭", "line": "姐姐，客厅地上怎么这么多碎片啊。"},
+            {"speaker": "灿灿", "line": "我打碎了杯子，别告诉妈妈，一会我给你块橡皮。"},
+        ],
+        [
+            {"speaker": "昭昭", "line": "姐，冰箱里蛋糕好香啊，要不要吃？"},
+            {"speaker": "灿灿", "line": "小声点，吃完把盘子藏好别让妈发现。"},
+        ],
+        [
+            {"speaker": "昭昭", "line": "姐姐，我门口捡的猫，好想留下养它"},
+            {"speaker": "灿灿", "line": "我们藏到房间里，别让妈妈看见"},
+        ],
+        [
+            {"speaker": "昭昭", "line": "姐，我把相框碰裂了！妈回来会骂的"},
+            {"speaker": "灿灿", "line": "嘘！你去找胶水粘，我盯着门口！"},
+        ],
+    ]
+    for opening in good:
+        errors: list[str] = []
+        append_b_opening_errors(opening, type_code="B", errors=errors)
+        assert not errors, (opening, errors)
+
+
+def test_b_opening_score_flags_fixup_lead():
+    """补救中段开场在质量分里压分（防硬卡漏网的旧稿）。"""
+    from app.services.daily_story.story_types.b.opening import (
+        score_opening_quality,
+    )
+
+    story = {
+        "discovery_opening": [
+            {"speaker": "昭昭", "line": "姐，快把裂口转过去，胶水瓶盖好。"},
+            {"speaker": "灿灿", "line": "小声点，藏好别让妈看见。"},
+        ],
+        "dialogue": [],
+    }
+    pts, _pros, cons = score_opening_quality(story)
+    assert any("补救中段开场" in c for c in cons)
+    assert pts < 0
+
+
+def test_b_opening_score_rewards_premise_and_division():
+    """发现拍 + 分工钉死的开场应得正分。"""
+    from app.services.daily_story.story_types.b.opening import (
+        score_opening_quality,
+    )
+
+    story = {
+        "discovery_opening": [
+            {"speaker": "昭昭", "line": "姐，我把相框碰裂了！妈回来会骂的"},
+            {"speaker": "灿灿", "line": "嘘！你去找胶水粘，我盯着门口！"},
+        ],
+        "dialogue": [],
+    }
+    pts, pros, cons = score_opening_quality(story)
+    assert "B开场发现拍" in pros
+    assert "B开场分工钉死" in pros
+    assert pts >= 0
+
+
 def test_b_freeze_only_ending_accepted():
     from app.services.daily_story.story_types.b.humor import (
         analyze_post_freeze_bloat,
@@ -1871,10 +1957,160 @@ def test_b_fact_division_flip_ignores_blame_line():
     assert _division_flip_error(lines, sps) is None
 
 
-def test_b_freeze_rejects_double_side_ding():
+def test_b_blame_round_capped():
+    """段4互甩只许一轮（≤2句），超过报硬卡。"""
+    from app.services.daily_story.story_types.b.validate import (
+        append_b_body_errors,
+    )
+
+    story = {
+        "punchline_explain": "B类结盟翻车",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "嘘，咱俩藏相框。"},
+            {"speaker": "灿灿", "line": "我望风，你粘。"},
+            {"speaker": "昭昭", "line": "胶水挤多了。"},
+            {"speaker": "灿灿", "line": "你光顾着粘，没看妈！"},
+            {"speaker": "昭昭", "line": "你也没喊我！"},
+            {"speaker": "灿灿", "line": "都怪你乱动！"},
+            {"speaker": "昭昭", "line": "是你自己搞砸的！"},
+            {"speaker": "妈妈", "line": "满地胶水，站好！"},
+            {"speaker": "昭昭", "line": "完蛋了。"},
+            {"speaker": "灿灿", "line": "死定了。"},
+        ],
+    }
+    errors: list[str] = []
+    append_b_body_errors(story, errors)
+    assert any("互甩只许一轮" in e for e in errors), errors
+
+
+def test_b_blame_round_two_lines_ok():
+    """段4互甩一轮（2句）不误伤。"""
+    from app.services.daily_story.story_types.b.validate import (
+        append_b_body_errors,
+    )
+
+    story = {
+        "punchline_explain": "B类结盟翻车",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "嘘，咱俩藏相框。"},
+            {"speaker": "灿灿", "line": "我望风，你粘。"},
+            {"speaker": "昭昭", "line": "胶水挤多了。"},
+            {"speaker": "灿灿", "line": "都怪你没望风，妈都到客厅了！"},
+            {"speaker": "昭昭", "line": "怪你挤那么多胶水！"},
+            {"speaker": "妈妈", "line": "满地胶水，站好！"},
+            {"speaker": "昭昭", "line": "完蛋了。"},
+            {"speaker": "灿灿", "line": "死定了。"},
+        ],
+    }
+    errors: list[str] = []
+    append_b_body_errors(story, errors)
+    assert not any("互甩只许一轮" in e for e in errors), errors
+
+
+def test_b_blame_round_counts_deflect_returns():
+    """回敬式（你还怪我/你还说我）也算甩锅轮数。"""
+    from app.services.daily_story.story_types.b.validate import (
+        append_b_body_errors,
+    )
+
+    story = {
+        "punchline_explain": "B类结盟翻车",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "嘘，咱俩藏相框。"},
+            {"speaker": "灿灿", "line": "我望风，你粘。"},
+            {"speaker": "昭昭", "line": "胶水挤多了。"},
+            {"speaker": "灿灿", "line": "都怪你没望风！"},
+            {"speaker": "昭昭", "line": "你还怪我，你塞相框手抖！"},
+            {"speaker": "灿灿", "line": "你还说我，你倒是扫啊！"},
+            {"speaker": "妈妈", "line": "满地胶水，站好！"},
+            {"speaker": "昭昭", "line": "完蛋了。"},
+            {"speaker": "灿灿", "line": "死定了。"},
+        ],
+    }
+    errors: list[str] = []
+    append_b_body_errors(story, errors)
+    assert any("互甩只许一轮" in e for e in errors), errors
+
+
+def test_b_watch_blame_flags_owner_deflect():
+    """望风人自己反咬别人没望风 → 硬卡。"""
+    from app.services.daily_story.story_types.b.facts import append_b_fact_errors
+
+    story = {
+        "punchline_explain": "B类结盟翻车",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "姐，相框裂了。"},
+            {"speaker": "灿灿", "line": "嘘，你拿着扫帚，我看着门。"},
+            {"speaker": "昭昭", "line": "胶水挤多了。"},
+            {"speaker": "灿灿", "line": "都怪你没望风，门都没关紧！"},
+            {"speaker": "妈妈", "line": "站好！"},
+            {"speaker": "昭昭", "line": "完蛋了。"},
+            {"speaker": "灿灿", "line": "死定了。"},
+        ],
+    }
+    errors: list[str] = []
+    append_b_fact_errors(story, errors)
+    assert any("望风" in e and "错位" in e for e in errors), errors
+
+
+def test_b_watch_blame_accepts_targeting_owner():
+    """甩锅指向望风人本身（昭昭怪灿灿没望风）→ 配套成立不误伤。"""
+    from app.services.daily_story.story_types.b.facts import append_b_fact_errors
+
+    story = {
+        "punchline_explain": "B类结盟翻车",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "姐，相框裂了。"},
+            {"speaker": "灿灿", "line": "嘘，你粘，我看着门。"},
+            {"speaker": "昭昭", "line": "胶水挤多了。"},
+            {"speaker": "昭昭", "line": "都怪你没望风，妈都到客厅了！"},
+            {"speaker": "妈妈", "line": "站好！"},
+            {"speaker": "昭昭", "line": "完蛋了。"},
+            {"speaker": "灿灿", "line": "死定了。"},
+        ],
+    }
+    errors: list[str] = []
+    append_b_fact_errors(story, errors)
+    assert not any("错位" in e for e in errors), errors
+
+
+def test_b_watch_blame_flags_warned_then_blamed():
+    """提醒过妈妈来了的人不能再被怪没望风（甩锅无据）。"""
+    from app.services.daily_story.story_types.b.facts import append_b_fact_errors
+
+    story = {
+        "punchline_explain": "B类结盟翻车",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "姐，相框裂了。"},
+            {"speaker": "灿灿", "line": "嘘，你粘，我看着门。"},
+            {"speaker": "昭昭", "line": "胶水挤多了。"},
+            {"speaker": "灿灿", "line": "快捡起来，妈好像往这边走了！"},
+            {"speaker": "昭昭", "line": "都怪你没望风，妈都到门口了！"},
+            {"speaker": "妈妈", "line": "站好！"},
+            {"speaker": "昭昭", "line": "完蛋了。"},
+            {"speaker": "灿灿", "line": "死定了。"},
+        ],
+    }
+    errors: list[str] = []
+    append_b_fact_errors(story, errors)
+    assert any("望风甩锅无据" in e for e in errors), errors
+
+
+def test_beats_watcher_from_division_both_word_orders():
+    """分工句两种语序（灿灿望风 / 望风的是灿灿）都能解析望风人。"""
+    from app.services.daily_story.prompts import _watcher_from_division
+
+    assert _watcher_from_division("灿灿望风，昭昭下手") == "灿灿"
+    assert _watcher_from_division("望风的是灿灿，昭昭下手") == "灿灿"
+    assert _watcher_from_division("昭昭盯着门口") == "昭昭"
+
+
+def test_b_freeze_rejects_triple_side_ding():
     from app.services.daily_story.story_types.b.humor import _freeze_lines_issues
 
-    assert _freeze_lines_issues(["这下死定了……", "死定了死定了！"]) == "死定了句式重复"
+    assert _freeze_lines_issues(
+        ["这下死定了……", "死定了死定了！", "死定了！"],
+    ) == "死定了句式重复"
 
 
 def test_b_validate_rejects_blood_content():
@@ -1954,12 +2190,13 @@ def test_b_landing_flags_doom_phrase_repeat():
         "妈妈：你俩，过来站好！",
         "昭昭：完蛋了。",
         "灿灿：我也完了。",
+        "昭昭：全完了！",
         "昭昭：都怪你！",
         "灿灿：是你先！",
         "昭昭：哼，才不是。",
     ]
     speakers = [
-        "昭昭", "灿灿", "妈妈", "昭昭", "灿灿", "昭昭", "灿灿", "昭昭",
+        "昭昭", "灿灿", "妈妈", "昭昭", "灿灿", "昭昭", "昭昭", "灿灿", "昭昭",
     ]
     weak, _ = analyze_punish_landing(lines, speakers)
     assert not weak

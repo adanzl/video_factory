@@ -1314,6 +1314,13 @@ def build_daily_story_framework_prompts(
         append = STORY_TYPE_LINES[type_code.upper()].theme_user_append.strip()
         if append:
             user = f"{user}\n{append}"
+    if type_code and type_code.upper() == "B":
+        user = (
+            f"{user}\n"
+            "【B 类冲突内核】conflict_core 写「姐弟联手瞒妈妈做什么」"
+            "（如『姐弟偷喝橙汁瞒妈妈』），禁写「谁望风/谁下手/谁来X」这类"
+            "局部分工问句——分工是执行细节，不是冲突内核。"
+        )
     return system, user
 
 
@@ -1325,6 +1332,7 @@ def build_daily_story_prompts(
     punchline_blueprint: dict | None = None,
     framework: dict | None = None,
     opening: list[dict] | None = None,
+    beats: dict | None = None,
 ) -> tuple[str, str]:
     """构造日常故事正文生成的 system + user 提示词。
 
@@ -1338,6 +1346,7 @@ def build_daily_story_prompts(
     framework：剧本框架（scene_title/setting/conflict_core/key）——2026-08-07
       架构改造后框架先生成，body 围绕它展开，不再自造冲突。
     opening：已生成的开场 2 句；body 承接开场续写，不重复开场画面。
+    beats：节拍表（骨架师先出，质量门通过后注入正文，锁分工/主题物/甩锅/妈妈句）。
     """
     type_instruction = (
         f"本次矛盾类型必须用：{story_type}。禁止用其他类型。"
@@ -1356,6 +1365,8 @@ def build_daily_story_prompts(
     anchor = _daily_story_anchor_block(framework=framework, opening=opening)
     if anchor:
         user = f"{anchor}\n\n{user}"
+    if beats:
+        user = f"{format_beats_block(beats)}\n\n{user}"
     if punchline_blueprint:
         from app.services.daily_story.story_design import (
             expansion_outline_for,
@@ -1379,6 +1390,186 @@ def build_daily_story_prompts(
         ),
         user,
     )
+
+
+def build_daily_story_beats_prompts(
+    theme: str,
+    *,
+    story_type: str | None = None,
+    framework: dict | None = None,
+) -> tuple[str, str]:
+    """B 类节拍表提示：先锁骨架（主题物/分工/意外/连锁/甩锅/妈妈句/定格）。"""
+    fw = framework or {}
+    system = (
+        "你是儿童短剧的故事骨架师。只输出节拍表 JSON，不写正文、不写对白展开。\n"
+        "本场为 B 类结盟翻车：姐弟联手瞒妈妈做一件事，执行翻车，"
+        "段4只互甩一轮，妈妈抓包收束。\n"
+        "节拍表 JSON 键：\n"
+        '- "theme_object"：主题物（开场被弄坏/弄洒/藏起的那件东西，2-6字）\n'
+        '- "division"：谁望风、谁动手（一句话，必须含望风/盯门/看门/放风等词）\n'
+        '- "warn_line"：望风人中途提醒妈妈来了的那句（含「妈/脚步/来了」，格式「说话人：台词」）\n'
+        '- "accident"：意外一句话（只写触发动作）\n'
+        '- "chain_steps"：连锁 3-5 条，每条=「说话人：当场惊呼/单动作」，禁旁白/结果解说/多步因果\n'
+        '- "blame"：恰好 2 条甩锅（昭昭/灿灿各一句），须扣分工，望风人提醒过就不能被怪没望风\n'
+        '- "mom_line"：妈妈 1 句短惩罚令，只提 theme_object，禁提花瓶/垫子等旁支道具；'
+        '惩罚令须为直接祈使（站好/过来/罚/今晚别想/交出来/端过来等同类短命令）\n'
+        '- "freeze"：定格数组，**必须 ≥2 个对象**，每对象 '
+        '{"speaker": "昭昭/灿灿/妈妈", "line": "台词"}，speaker 互不相同\n'
+        'freeze 正例："freeze": [{"speaker": "昭昭", "line": "被发现了！"}, '
+        '{"speaker": "灿灿", "line": "这下死定了……"}]\n'
+        'freeze 反例（拒稿）："freeze": "两人呆住"（非数组）；'
+        '[{"speaker": "昭昭", "line": "完了"}]（只有一人）\n'
+        'warn-blame 一致性：若 warn_line 非空（已提醒过），blame 里**禁止**'
+        '「你没提醒/你没喊/你早不说/怎么不说」等否定提醒表述——已提醒只能怪'
+        '「提醒太晚/没拦住」，不能怪「没提醒」\n'
+        'blame 格式正例："blame": {"昭昭": "都怪你没望风！", '
+        '"灿灿": "你塞相框塞不利索，怪我？"}——恰好两个键，键只能是昭昭/灿灿\n'
+        "严格只输出这个 JSON。"
+    )
+    user = (
+        f"主题：{theme}\n"
+        f"片名：{fw.get('scene_title') or ''}\n"
+        f"现场：{fw.get('setting') or ''}\n"
+        f"本场只争：{fw.get('conflict_core') or ''}\n\n"
+        "输出节拍表 JSON。"
+    )
+    return system, user
+
+
+def _watcher_from_division(division: str) -> str | None:
+    """从分工句解析望风人（昭昭/灿灿）。"""
+    if not division:
+        return None
+    for m in re.finditer(
+        r"(昭昭|灿灿).{0,4}(?:望风|盯门|盯门口|盯着门|盯着门口|"
+        r"看门|看门口|看着门|看着门口|放风|放哨|打掩护)",
+        division,
+    ):
+        return m.group(1)
+    for m in re.finditer(
+        r"(?:望风|盯门|盯门口|盯着门|盯着门口|看门|看门口|看着门|看着门口|"
+        r"放风|放哨|打掩护).{0,4}(昭昭|灿灿)",
+        division,
+    ):
+        return m.group(1)
+    return None
+
+
+def validate_daily_story_beats(beats: dict, theme: str) -> None:
+    """节拍表质量门：不合格抛 ValueError，生成侧重出。"""
+    errors: list[str] = []
+    chain = beats.get("chain_steps")
+    if not isinstance(chain, list) or not (3 <= len(chain) <= 5):
+        errors.append(
+            f"chain_steps 须 3-5 条，当前 "
+            f"{len(chain) if isinstance(chain, list) else '非数组'}"
+        )
+    blame = beats.get("blame")
+    if not isinstance(blame, dict):
+        errors.append("blame 须为 {昭昭: 句, 灿灿: 句}")
+    else:
+        kids = sorted(k for k in blame if k in ("昭昭", "灿灿"))
+        if kids != ["昭昭", "灿灿"]:
+            errors.append("blame 须恰好昭昭/灿灿各一句")
+    obj = str(beats.get("theme_object") or "").strip()
+    mom = str(beats.get("mom_line") or "").strip()
+    if not obj:
+        errors.append("theme_object 为空")
+    elif not mom:
+        errors.append("mom_line 为空")
+    elif obj not in mom:
+        errors.append(f"mom_line 未提主题物 {obj!r}：{mom!r}")
+    elif not re.search(r"站好|过来|罚|今晚|别想|拿的什么|交出来|端过来", mom):
+        errors.append(f"mom_line 缺短惩罚令（站好/过来/罚等）：{mom!r}")
+    division = str(beats.get("division") or "").strip()
+    watcher = _watcher_from_division(division)
+    if watcher is None:
+        errors.append("division 未写清谁望风")
+    warn_line = str(beats.get("warn_line") or "").strip()
+    _DENY_REMIND = re.compile(
+        r"没(?:提醒|喊|叫|告诉|说)|早不说|怎么不(?:说|喊|提醒)",
+    )
+    if isinstance(blame, dict) and watcher:
+        warn_sp = (
+            warn_line.split("：", 1)[0].strip()
+            if "：" in warn_line
+            else warn_line.split(":", 1)[0].strip()
+        )
+        for sp, ln in blame.items():
+            other = "灿灿" if sp == "昭昭" else "昭昭"
+            if re.search(r"没(?:望风|看门|盯|喊|提醒)|望风|看门", ln):
+                if other != watcher:
+                    errors.append(
+                        f"甩锅 {sp!r} 把望风失职扣给 {other}，但望风人是 {watcher}"
+                    )
+                if warn_line and warn_sp == other:
+                    errors.append(
+                        f"{other} 已提醒（{warn_line!r}），{sp} 还怪TA没望风"
+                    )
+                if warn_line and _DENY_REMIND.search(str(ln)):
+                    errors.append(
+                        f"blame[{sp}] 否定提醒过（{ln}），但 warn_line 已提醒"
+                        f"（{warn_line!r}）——只能怪提醒太晚，不能怪没提醒"
+                    )
+    freeze = beats.get("freeze")
+    if not isinstance(freeze, list) or len(freeze) < 2:
+        errors.append("freeze 须为数组且至少 2 项")
+    else:
+        f_speakers: list[str] = []
+        for item in freeze:
+            if (
+                not isinstance(item, dict)
+                or not item.get("speaker")
+                or not str(item.get("line") or "").strip()
+            ):
+                errors.append("freeze 每项须为 {speaker, line}")
+                break
+            f_speakers.append(str(item["speaker"]).strip())
+        if len(set(f_speakers)) < 2:
+            errors.append("freeze 须至少 2 个不同 speaker")
+    if errors:
+        raise ValueError("节拍表校验失败: " + "; ".join(errors))
+
+
+def format_beats_block(beats: dict) -> str:
+    """节拍表注入正文 user 的锚块。"""
+    blame = beats.get("blame") or {}
+    blame_block = "\n".join(f"{k}：{v}" for k, v in blame.items())
+    chain = "\n".join(f"- {s}" for s in (beats.get("chain_steps") or []))
+    block = (
+        "【节拍表（硬骨架，展开时逐项照做：分工/主题物/甩锅两句/妈妈句不许改）】\n"
+        f"主题物：{beats.get('theme_object')}\n"
+        f"分工：{beats.get('division')}\n"
+        f"望风提醒：{beats.get('warn_line')}\n"
+        f"意外：{beats.get('accident')}\n"
+        f"连锁步骤（按顺序展开成一段一句一动作的当场惊呼，禁旁白/结果解说）：\n"
+        f"{chain}\n"
+        "段4（照抄块，禁止增删/改写/额外互怼）：\n"
+        f"【段4开始】\n{blame_block}\n【段4结束】\n"
+        f"妈妈句（照主题物，短惩罚令，勿提旁支道具）：{beats.get('mom_line')}\n"
+        "定格（照抄块，原样保留，段落后故事即结束）：\n"
+        f"【定格开始】\n"
+        + "\n".join(
+            f"{x.get('speaker')}：{x.get('line')}"
+            for x in (beats.get("freeze") or [])
+            if isinstance(x, dict)
+        )
+        + "\n【定格结束】"
+    )
+    block += (
+        "\n\n【展开预算（硬性）】\n"
+        "- 正文（不含开场）须 21–24 句、≥240 字，一句一动作。\n"
+        "- 前 6 句结盟段须含「咱俩/一起/别告诉/你望风/我望风/你放风」"
+        "之一（亲口约定+分工），否则结盟层不算数；\n"
+        "- 冲突推进须满 4 层：结盟分工→走样→甩锅→暴露"
+        "（妈妈起疑/发现证据/人赃并获），每一层都要有信号；\n"
+        "- 段3 连锁至少 6 句、每句 ≥8 字，至少 1 个「一锤可拍」的荒谬细节"
+        "（渣粘鞋底/手指黏住/兜撑破/瓶盖滚飞等）；字数不足优先扩连锁细节"
+        "（每句一个新动作/惊呼），禁止新增事件或道具；"
+        "连锁 6 句导致总句数超 24 时，压缩结盟/收束段保持总预算。\n"
+        "- 段4 甩锅、段5 妈妈句与定格照抄节拍表，一字不多。"
+    )
+    return block
 
 
 DAILY_STORY_OPENING_SYSTEM_PROMPT = f"""\

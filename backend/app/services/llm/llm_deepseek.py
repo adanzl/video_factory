@@ -1830,6 +1830,13 @@ class DeepSeekClient(LLMClient):
             criterion_block=criterion_block,
             avoid_block=avoid_block,
         )
+        beats = None
+        if parse_story_type_code(story_type=story_type) == "B":
+            beats = self._generate_daily_story_beats(
+                theme,
+                story_type=story_type,
+                framework=framework,
+            )
         body = self._generate_daily_story_body(
             theme,
             story_type=story_type,
@@ -1837,8 +1844,9 @@ class DeepSeekClient(LLMClient):
             opening=opening,
             criterion_block=criterion_block,
             avoid_block=avoid_block,
+            beats=beats,
         )
-        return self._stitch_daily_story_full(
+        story = self._stitch_daily_story_full(
             theme,
             body,
             story_type=story_type,
@@ -1846,6 +1854,11 @@ class DeepSeekClient(LLMClient):
             opening=opening,
             criterion_block=criterion_block,
         )
+        if beats and isinstance(beats, dict) and beats.get("theme_object"):
+            # 节拍表主题物随稿带走，供润色定向修「妈妈句未点名主题物」；
+            # 入库前由 llm_mgr 剥掉，不落库。
+            story["_beats_theme_object"] = str(beats["theme_object"]).strip()
+        return story
 
     def refine_daily_story_for_quality(
         self,
@@ -2290,6 +2303,49 @@ class DeepSeekClient(LLMClient):
         )
         return None
 
+    def _generate_daily_story_beats(
+        self,
+        theme: str,
+        *,
+        story_type: str | None,
+        framework: dict | None,
+    ) -> dict:
+        """节拍表先导（B 类）：先锁骨架，质量门通过后才进正文展开。"""
+        from app.services.daily_story.prompts import (
+            build_daily_story_beats_prompts,
+            validate_daily_story_beats,
+        )
+
+        system, user = build_daily_story_beats_prompts(
+            theme,
+            story_type=story_type,
+            framework=framework,
+        )
+        last_exc: ValueError | None = None
+        for attempt in range(3):
+            raw, _ = self._chat_json(
+                system,
+                user,
+                thinking_enabled=False,
+                temperature=_TEMP_CRITERION_LOCKED,
+            )
+            if not isinstance(raw, dict):
+                last_exc = ValueError("节拍表不是 JSON 对象")
+                user = f"{user}\n\n上一版不是 JSON，请严格按键输出。"
+                continue
+            try:
+                validate_daily_story_beats(raw, theme)
+                return raw
+            except ValueError as exc:
+                last_exc = exc
+                logger.warning(
+                    "[DAILY_STORY] beats gate failed attempt=%d: %s",
+                    attempt + 1,
+                    exc,
+                )
+                user = f"{user}\n\n上一版不合格：{exc}\n请修正后重出节拍表。"
+        raise last_exc or ValueError("节拍表 3 次未过质量门")
+
     def _generate_daily_story_body(
         self,
         theme: str,
@@ -2299,6 +2355,7 @@ class DeepSeekClient(LLMClient):
         opening: list[dict] | None = None,
         criterion_block: str = "",
         avoid_block: str = "",
+        beats: dict | None = None,
     ) -> dict[str, Any]:
         if not story_type:
             story_type = _select_story_type(theme)
@@ -2314,6 +2371,7 @@ class DeepSeekClient(LLMClient):
             punchline_blueprint=blueprint,
             framework=framework,
             opening=opening,
+            beats=beats,
         )
         # C 类台词锚定（2026-08-09 专家终极方案）：criterion_block 由
         # generate_daily_story 层生成并传入（开场共用同一包），硬注入 user
@@ -2372,6 +2430,65 @@ class DeepSeekClient(LLMClient):
                 raw["_theme"] = theme
                 raw["_story_type"] = story_type
                 _force_framework_fields(raw, framework)
+                # 妈妈句照抄节拍表：正文妈妈句缺短惩罚令时，用 beats.mom_line 覆盖
+                if beats and isinstance(raw.get("dialogue"), list):
+                    mom_target = str(beats.get("mom_line") or "").strip()
+                    if mom_target:
+                        for d in reversed(raw.get("dialogue") or []):
+                            if isinstance(d, dict) and d.get("speaker") == "妈妈":
+                                if not re.search(
+                                    r"站好|过来|罚|今晚|别想|拿的什么|交出来|端过来",
+                                    str(d.get("line") or ""),
+                                ):
+                                    d["line"] = mom_target
+                                    logger.info(
+                                        "[DAILY_STORY] mom line patched from "
+                                        "beats (punish missing)",
+                                    )
+                                break
+                # 双人定格确定性补丁：妈妈句（最后一处）之后若无两个不同
+                # 姐弟角色的反应，用节拍表 freeze 覆盖收尾（防止仅单人定格）
+                if beats and isinstance(raw.get("dialogue"), list):
+                    freeze = beats.get("freeze") or []
+                    if isinstance(freeze, list) and len(freeze) >= 2:
+                        mom_idx = None
+                        for i, d in enumerate(raw["dialogue"]):
+                            if (
+                                isinstance(d, dict)
+                                and d.get("speaker") == "妈妈"
+                            ):
+                                mom_idx = i
+                        if mom_idx is not None:
+                            after = raw["dialogue"][mom_idx + 1 :]
+                            sib = [
+                                d
+                                for d in after
+                                if isinstance(d, dict)
+                                and d.get("speaker") in ("昭昭", "灿灿")
+                            ]
+                            sib_speakers = {
+                                d.get("speaker") for d in sib
+                            }
+                            if len(sib) < 2 or len(sib_speakers) < 2:
+                                new_after = [
+                                    {
+                                        "speaker": x.get("speaker"),
+                                        "line": str(x.get("line") or "").strip(),
+                                    }
+                                    for x in freeze[:2]
+                                    if isinstance(x, dict)
+                                    and x.get("speaker") in ("昭昭", "灿灿")
+                                    and str(x.get("line") or "").strip()
+                                ]
+                                if len(new_after) >= 2:
+                                    raw["dialogue"] = (
+                                        raw["dialogue"][: mom_idx + 1]
+                                        + new_after
+                                    )
+                                    logger.info(
+                                        "[DAILY_STORY] freeze patched from "
+                                        "beats (double-landing missing)",
+                                    )
                 if blueprint:
                     apply_blueprint_to_story(
                         raw,
@@ -2522,6 +2639,7 @@ class DeepSeekClient(LLMClient):
                     punchline_blueprint=blueprint,
                     framework=framework,
                     opening=opening,
+                    beats=beats,
                 )
                 if isinstance(prev_story, dict):
                     user = build_daily_story_retry_user(
@@ -2531,6 +2649,13 @@ class DeepSeekClient(LLMClient):
                         phase="body",
                         story_type=story_type,
                     )
+                    if beats and beats.get("division"):
+                        user = (
+                            f"【分工钉死（不许换手）】{beats.get('division')}"
+                            "——可围绕该分工自然化表达，但角色与任务对应关系"
+                            "必须完全保持\n\n"
+                            f"{user}"
+                        )
                     if framework or opening:
                         from app.services.daily_story.prompts import (
                             _daily_story_anchor_block,
@@ -2556,7 +2681,7 @@ class DeepSeekClient(LLMClient):
                     user = _inject_c_criterion(user)
                 else:
                     user = (
-                        f"{build_daily_story_prompts(theme, story_type=story_type, length_mode=length_mode, punchline_blueprint=blueprint, framework=framework, opening=opening)[1]}\n\n"
+                        f"{build_daily_story_prompts(theme, story_type=story_type, length_mode=length_mode, punchline_blueprint=blueprint, framework=framework, opening=opening, beats=beats)[1]}\n\n"
                         f"【重试】上一轮校验未通过：{errors}\n"
                         "请直接输出符合硬约束的完整 JSON（正文勿写发现开场）。"
                     )

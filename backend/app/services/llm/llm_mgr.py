@@ -695,8 +695,11 @@ class LLMMgr:
             avoid=avoid,
         )
         if not review:
+            story.pop("_beats_theme_object", None)
             return story
-        return run_daily_story_review(self._get_client(), theme, story)
+        result = run_daily_story_review(self._get_client(), theme, story)
+        result.pop("_beats_theme_object", None)
+        return result
 
     def _generate_daily_story_scored(
         self,
@@ -738,6 +741,25 @@ class LLMMgr:
                 attach_daily_story_quality(story, theme=theme)
             except ValueError as exc:
                 last_exc = exc
+                # 降级安全网：正文 3 次全败时，把最后一次被拒稿当候选保留，
+                # 避免整条 FAIL（宁可给低分稿，不给 0 产出）。
+                failed_body = getattr(exc, "_failed_body", None)
+                if isinstance(failed_body, dict):
+                    try:
+                        attach_daily_story_quality(failed_body, theme=theme)
+                        f_score = structure_score_of(
+                            failed_body.get("quality"),
+                        )
+                        if f_score > best_score:
+                            best_score = f_score
+                            best_story = failed_body
+                            logger.warning(
+                                "[DAILY_STORY] degraded fallback candidate "
+                                "structure=%d (kept instead of FAIL)",
+                                f_score,
+                            )
+                    except Exception:
+                        pass
                 logger.warning(
                     "[DAILY_STORY] attempt %d/%d validation failed: %s",
                     attempt + 1, max_full, exc,

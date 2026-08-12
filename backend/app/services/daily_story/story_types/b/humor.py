@@ -106,7 +106,9 @@ RE_FREEZE_SILENT = re.compile(
 )
 RE_FREEZE_SIDE_DING = re.compile(r"死定了|死定")
 RE_BLEED_CONTENT = re.compile(
-    r"流血|出血|鲜血|血滴|血渗|血印|止血|还在流血|用嘴吸|创可贴",
+    r"流血|出血|鲜血|血滴|血渗|血印|止血|还在流血|用嘴吸|创可贴|"
+    r"扎手|扎破|扎出血|割破|割到|划破|划伤|擦破|磕破|"
+    r"手疼|手指疼|脚疼|受伤|被扎",
 )
 # 无意义语气垫字后缀（对齐 E 类；B 额外加真的呀/好不好）：
 # 连锁/结盟里句尾叠「了呢了呀/嘛了呀/好不好/真的呀」= 注水，一句实词收尾才顺。
@@ -133,7 +135,7 @@ def _punish_freeze_react(line: str) -> bool:
 
 def _landing_doom_lines_repeat(lines: list[str]) -> bool:
     doomish = [ln for ln in lines if RE_DOOM_CLUSTER.search(ln)]
-    return len(doomish) >= 2
+    return len(doomish) >= 3
 
 
 def _freeze_lines_issues(react_lines: list[str]) -> str | None:
@@ -141,9 +143,9 @@ def _freeze_lines_issues(react_lines: list[str]) -> str | None:
         return None
     if any(RE_FREEZE_SILENT.search(ln) for ln in react_lines):
         return "定格须说话勿动作描写"
-    if sum(1 for ln in react_lines if RE_FREEZE_SIDE_DING.search(ln)) >= 2:
+    if sum(1 for ln in react_lines if RE_FREEZE_SIDE_DING.search(ln)) >= 3:
         return "死定了句式重复"
-    if sum(1 for ln in react_lines if RE_DOOM_CLUSTER.search(ln)) >= 2:
+    if sum(1 for ln in react_lines if RE_DOOM_CLUSTER.search(ln)) >= 3:
         return "完蛋完了句式重复"
     return None
 
@@ -236,6 +238,14 @@ def analyze_post_freeze_bloat(
         return False, ""
 
     extra_text = "".join(extra)
+    # 放宽：定格后允许一句 ≤10 字的纯收尾（非甩锅/非嘴硬）
+    if (
+        len(extra) == 1
+        and len(extra[0]) <= 10
+        and not RE_BLAME.search(extra[0])
+        and not RE_STUBBORN_LAST.search(extra[0])
+    ):
+        return False, ""
     if RE_BLAME.search(extra_text):
         return True, "定格后仍甩锅"
     if RE_STUBBORN_LAST.search(extra_text):

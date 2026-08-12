@@ -30,7 +30,19 @@ RE_EXECUTION_ONLY_CORE = re.compile(
 # 只认「我/你+望风类词」的分工命令句，拧/拿/藏等执行动作可流转不查（防误伤）。
 # 望风/盯门/盯门口/看门/放哨 全归同一「望风」角色——它们是同一种分工的不同说法，
 # 「我望风」→「你盯着厨房门」就是翻转（稿B 型），不能因词不同漏检。
-RE_WATCH_DIVISION = re.compile(r"(?<!没)(我|你)(?:的)?(望风|放风|盯门|盯门口|盯人|看门|放哨|打掩护)")
+RE_WATCH_DIVISION = re.compile(
+    r"(?<!没)(我|你)(?:的)?"
+    r"(望风|放风|盯门|盯门口|盯人|看门|看门口|看着门|看着门口|"
+    r"盯着门|盯着门口|放哨|打掩护)",
+)
+# 甩锅里指责「望风/提醒失职」：谁望风锅甩给谁，望风人自己反咬别人也没用
+RE_WATCH_BLAME = re.compile(
+    r"你(?:也没|没)(?:望风|放风|看门|看门口|看着门|看着门口|盯门|盯门口|"
+    r"盯着门|盯着门口|盯人|看住|放哨|打掩护|喊|提醒)"
+    r"|你光顾着[^。！？]{0,10}?(?:没|也不)(?:看|盯|喊|提醒|望风|放风|看门)"
+)
+# 提醒过（妈来了/脚步声）的人不能再被怪没望风
+RE_WARN = re.compile(r"妈.{0,8}(?:来|到|往|进|回)|脚步声|听见|到门口|回来了|来了")
 
 
 def _dialogue_blob(story: dict) -> tuple[list[str], list[str], str]:
@@ -82,6 +94,67 @@ def _division_flip_error(
     return None
 
 
+def _watch_owner(lines: list[str], speakers: list[str]) -> str | None:
+    """望风分工确定的所有者（无望风分工返回 None）。"""
+    kids = [s for s in set(speakers) if s in ("昭昭", "灿灿")]
+    if len(kids) < 2:
+        return None
+    owner: str | None = None
+    for ln, sp in zip(lines, speakers):
+        if sp not in kids:
+            continue
+        other = [k for k in kids if k != sp][0]
+        for m in RE_WATCH_DIVISION.finditer(ln):
+            person = sp if m.group(1) == "我" else other
+            owner = person
+    return owner
+
+
+def _watch_blame_mismatch_error(
+    lines: list[str],
+    speakers: list[str],
+) -> str | None:
+    """望风甩锅错位：指责「没望风/没提醒」须指向望风人，且望风人不能反咬别人。"""
+    kids = [s for s in set(speakers) if s in ("昭昭", "灿灿")]
+    if len(kids) < 2:
+        return None
+    owner = _watch_owner(lines, speakers)
+    for ln, sp in zip(lines, speakers):
+        if sp not in kids or not RE_WATCH_BLAME.search(ln):
+            continue
+        other = [k for k in kids if k != sp][0]
+        if owner is None:
+            return (
+                f"B类甩锅提望风失职（{ln!r}）但前文未定望风分工；"
+                "结盟须写清谁望风，甩锅才扣得起"
+            )
+        if sp == owner:
+            return (
+                f"B类望风甩锅错位：望风人是{owner}（{sp}自己），"
+                f"却怪别人没望风（{ln!r}）；谁望风锅甩给谁"
+            )
+        if other != owner:
+            return (
+                f"B类望风甩锅错位：望风人是{owner}，"
+                f"{sp}却把望风失职扣到{other}头上（{ln!r}）"
+            )
+        # 目标确实是望风人，但对方在甩锅前已经提醒过妈妈来了 → 甩锅无据
+        warn_line = None
+        for prev, psp in zip(lines, speakers):
+            if prev == ln:
+                break
+            if psp == other and RE_WARN.search(prev):
+                warn_line = prev
+                break
+        if warn_line is not None:
+            return (
+                f"B类望风甩锅无据：{other}已经提醒过"
+                f"（{warn_line!r}），{sp}还怪TA没望风（{ln!r}）；"
+                "提醒过的人不能被怪没望风"
+            )
+    return None
+
+
 def append_b_fact_errors(story: dict, errors: list[str]) -> None:
     """生成硬卡：同盟落槌、分工翻转、可核对定量。"""
     if not _is_b_story(story):
@@ -92,6 +165,9 @@ def append_b_fact_errors(story: dict, errors: list[str]) -> None:
     drift = _division_flip_error(lines, speakers)
     if drift:
         errors.append(drift)
+    blame_drift = _watch_blame_mismatch_error(lines, speakers)
+    if blame_drift:
+        errors.append(blame_drift)
 
     mom_i = next(
         (i for i, sp in enumerate(speakers) if sp == "妈妈"),
