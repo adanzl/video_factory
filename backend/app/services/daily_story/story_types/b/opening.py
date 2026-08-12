@@ -24,6 +24,24 @@ B_OPENING_ALLY_RE = re.compile(
     r"嘘|小声|别告诉|咱俩|我俩|一起|暗号|望风|放风|盯门|拆包|"
     r"别出声|瞒|悄悄",
 )
+# 分工钉死（谁望风/谁动手）——密谋加分的强档
+B_OPENING_WATCH_RE = re.compile(
+    r"望风|放风|盯门|看门|门缝|负责|你来|我去|你盯|我盯|你望|我望",
+)
+# 开场首句＝发现/现状/来路/欲望/提议拍（正向）
+B_OPENING_PREMISE_RE = re.compile(
+    r"发现|怎么|捡|碰|摔|打翻|打碎|打裂|撞|掉|少|不见|"
+    r"好香|好想|想喝|想吃|要不要|吧|"
+    r"妈.*(回来|看见|发现|要骂|会骂|来了)|"
+    r"地上|门口|茶几|冰箱|沙发上|桌上|柜子|书包|床底|"
+    r"一包|一块|一堆|咱俩|我俩|咱们",
+)
+# 首句禁止直接进补救中段（快把/盖好等是正文段2/3的台词）
+B_OPENING_FIXUP_LEAD_RE = re.compile(
+    r"快把|快去|快给|快拿|快点|快藏|快关|快跑|快塞|"
+    r"扶住|按住|压住|稳住|接住|盖好|塞进|塞到|塞回|"
+    r"转过去|转过来|别动|松手|拿纸|拿抹布|擦掉|捡起|放回去",
+)
 
 
 def append_b_opening_errors(
@@ -35,6 +53,13 @@ def append_b_opening_errors(
     code = (type_code or "").strip().upper()[:1]
     if code != "B":
         return
+    if normalized and B_OPENING_FIXUP_LEAD_RE.search(normalized[0]["line"]):
+        errors.append(
+            f"opening[0] B类开场首句是补救中段指令"
+            f"（快把/盖好/扶住等）：{normalized[0]['line']!r}；"
+            "首句须先给发现/现状/来路拍（怎么坏的/发现了什么/想干什么），"
+            "补救动作留给正文连锁"
+        )
     for i, item in enumerate(normalized):
         line = item["line"]
         if B_OPENING_CAUGHT_RE.search(line):
@@ -109,6 +134,13 @@ def score_opening_quality(story: dict) -> tuple[int, list[str], list[str]]:
     joined = "".join(lines_o)
     pts = 0
 
+    first = lines_o[0] if lines_o else ""
+    if B_OPENING_FIXUP_LEAD_RE.search(first):
+        cons.append("B开场补救中段开场（首句快把/盖好等）")
+        pts -= 4
+    elif B_OPENING_PREMISE_RE.search(first):
+        pts += 2
+        pros.append("B开场发现拍")
     if B_OPENING_CAUGHT_RE.search(joined):
         cons.append("B开场已露馅不好看")
         pts -= 5
@@ -118,9 +150,16 @@ def score_opening_quality(story: dict) -> tuple[int, list[str], list[str]]:
     elif B_OPENING_A_RULE_RE.search(joined):
         cons.append("B开场偏管教")
         pts -= 4
-    elif B_OPENING_ALLY_RE.search(joined):
-        pts += 3
-        pros.append("B开场密谋片头")
+    else:
+        if B_OPENING_WATCH_RE.search(joined):
+            pts += 3
+            pros.append("B开场分工钉死")
+        elif B_OPENING_ALLY_RE.search(joined):
+            pts += 2
+            pros.append("B开场密谋片头")
+        else:
+            cons.append("B开场缺密谋感")
+            pts -= 2
 
     cin_pts, cin_pros, cin_cons = score_opening_cinematic(lines_o)
     pts += cin_pts
@@ -132,10 +171,6 @@ def score_opening_quality(story: dict) -> tuple[int, list[str], list[str]]:
         cons.append("B开场与正文首句重复")
         pts -= 3
 
-    if not B_OPENING_ALLY_RE.search(joined) and pts >= 0:
-        cons.append("B开场缺密谋感")
-        pts -= 2
-
     return max(-8, min(8, pts)), pros, cons
 
 
@@ -144,7 +179,10 @@ def opening_revision_hint(issue: str) -> str | None:
         return None
     return (
         f"【开场·B】{issue}。"
-        "须 2 句正片第一镜：地点+密谋零食/物+姐弟对话"
-        "（姐姐，我发现客厅茶几下有一包饼干）；"
-        "嘘/别告诉/你望风；勿完蛋/勿不公平；勿单句干问。"
+        "须 2 句正片第一镜：首句=发现/现状/来路/欲望拍"
+        "（姐，我把相框碰裂了！/我发现茶几下有包饼干），"
+        "禁首句补救祈使（快把/盖好/快去）；"
+        "开场只写起因+分工，不写无关内容（受伤/收拾/讲道理等）；"
+        "次句=密谋+分工（嘘，你望风我下手/你找胶水粘我盯门口）；"
+        "勿完蛋/勿不公平；勿单句干问。"
     )

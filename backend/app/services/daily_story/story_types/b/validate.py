@@ -25,6 +25,15 @@ def _lines_and_speakers(story: dict) -> tuple[list[str], list[str]]:
     return lines, speakers
 
 
+# 段4互甩只许一轮（各1句共2句）；甩锅句结构判定（非主题词）
+RE_BLAME_TURN = re.compile(
+    r"都怪|全怪|怪你|怪我|赖你|赖我|是你|你光|你也没|你倒是|"
+    r"你答应|你先|还说|还怪|还赖|都赖|说我",
+)
+# 对白禁术语（成人/编剧词，孩子不说）：出现即硬卡
+RE_DIALOGUE_JARGON = re.compile(r"露馅|甩锅|结盟|翻车|分工|计划")
+
+
 def append_b_body_errors(story: dict, errors: list[str]) -> None:
     punch = str(story.get("punchline_explain") or "")
     if parse_story_type_code(punchline=punch) != "B":
@@ -75,6 +84,12 @@ def append_b_body_errors(story: dict, errors: list[str]) -> None:
             punish_i = i
             break
     if punish_i is not None:
+        pre_punish = lines[max(0, punish_i - 4) : punish_i]
+        blame_n = sum(1 for ln in pre_punish if RE_BLAME_TURN.search(ln))
+        if blame_n > 2:
+            errors.append(
+                f"B类：段4互甩只许一轮（≤2句），当前{blame_n}句"
+            )
         post_lines = lines[punish_i + 1 :]
         post_speakers = speakers[punish_i + 1 :]
         react_lines = [
@@ -98,4 +113,10 @@ def append_b_body_errors(story: dict, errors: list[str]) -> None:
     for i, ln in enumerate(lines):
         if RE_GARBAGE_FILLER.search(ln):
             errors.append(f"B类对白[{i}]含无意义语气垫字（句尾叠了呢了呀/好不好/真的呀等）")
+            break
+    for i, ln in enumerate(lines):
+        if RE_DIALOGUE_JARGON.search(ln):
+            errors.append(
+                f"B类对白[{i}]含成人/编剧术语（露馅/甩锅/结盟/翻车/分工/计划）：{ln!r}"
+            )
             break
