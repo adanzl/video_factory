@@ -656,6 +656,8 @@ def test_build_daily_script_prompts_uses_cps_setting_and_no_appearance():
     assert "特写数量·硬性" in system
     assert "实际切出的镜数" in system
     assert "⌈N/3⌉" in system or "N/3" in system
+    assert "⌈N/2⌉" in system
+    assert "进一法" in system
     assert "开场首镜" in system
     assert "禁止一句一镜" in user
     assert "特写数量·硬性" in user
@@ -718,8 +720,10 @@ def test_daily_script_closeup_bounds_and_enforce():
         validate_daily_script_closeup_count,
     )
 
-    assert daily_script_closeup_bounds(11) == (4, 6)
+    assert daily_script_closeup_bounds(11) == (4, 6)  # ⌈11/3⌉–⌈11/2⌉
     assert daily_script_closeup_bounds(8) == (3, 4)
+    assert daily_script_closeup_bounds(9) == (3, 5)  # ⌈9/3⌉–⌈9/2⌉ 进一
+    assert daily_script_closeup_bounds(7) == (3, 4)
 
     scenes = [
         {"scene_id": 1, "shot_type": "特写", "dialogue": [{}, {}]},

@@ -39,10 +39,23 @@ def _row_to_dict(row: dict) -> dict:
     return data
 
 
+def _like_contains(raw: str) -> str:
+    """构造 LIKE '%q%'，转义 \\ % _，配合 ESCAPE '\\'。"""
+    s = (
+        str(raw)
+        .replace("\\", "\\\\")
+        .replace("%", "\\%")
+        .replace("_", "\\_")
+    )
+    return f"%{s}%"
+
+
 def _list_where(
     *,
     status: str | None = None,
     story_type: str | None = None,
+    key: str | None = None,
+    has_job: bool | None = None,
 ) -> tuple[str, list[Any]]:
     clauses: list[str] = []
     params: list[Any] = []
@@ -52,6 +65,14 @@ def _list_where(
     if story_type:
         clauses.append("story_type = ?")
         params.append(story_type)
+    key_q = str(key or "").strip()
+    if key_q:
+        clauses.append("key LIKE ? ESCAPE '\\'")
+        params.append(_like_contains(key_q))
+    if has_job is True:
+        clauses.append("job_id IS NOT NULL")
+    elif has_job is False:
+        clauses.append("job_id IS NULL")
     if not clauses:
         return "", []
     return " WHERE " + " AND ".join(clauses), params
@@ -61,8 +82,15 @@ def count_stories(
     *,
     status: str | None = None,
     story_type: str | None = None,
+    key: str | None = None,
+    has_job: bool | None = None,
 ) -> int:
-    where, params = _list_where(status=status, story_type=story_type)
+    where, params = _list_where(
+        status=status,
+        story_type=story_type,
+        key=key,
+        has_job=has_job,
+    )
     row = sql.fetchone(
         f"SELECT COUNT(*) AS cnt FROM daily_story{where}",
         tuple(params) if params else None,
@@ -75,12 +103,19 @@ def list_stories(
     *,
     status: str | None = None,
     story_type: str | None = None,
+    key: str | None = None,
+    has_job: bool | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> list[dict]:
     limit = max(1, min(limit, 200))
     offset = max(0, offset)
-    where, params = _list_where(status=status, story_type=story_type)
+    where, params = _list_where(
+        status=status,
+        story_type=story_type,
+        key=key,
+        has_job=has_job,
+    )
     rows = sql.fetchall(
         f"""
         SELECT {_DAILY_STORY_COLUMNS}
@@ -191,6 +226,20 @@ def set_job_id(story_id: int, job_id: int) -> None:
         (job_id, story_id),
     )
     sql.commit()
+
+
+def clear_job_id_by_job(job_id: int) -> int:
+    """删除视频任务时解除故事绑定（job_id → NULL）。"""
+    cur = sql.execute(
+        """
+        UPDATE daily_story
+        SET job_id = NULL, updated_at = datetime('now')
+        WHERE job_id = ?
+        """,
+        (job_id,),
+    )
+    sql.commit()
+    return int(cur.rowcount or 0)
 
 
 def delete_stories(ids: list[int]) -> int:

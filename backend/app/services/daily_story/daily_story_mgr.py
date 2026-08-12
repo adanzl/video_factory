@@ -146,6 +146,8 @@ class DailyStoryMgr:
         *,
         status: str | None = None,
         story_type: str | None = None,
+        key: str | None = None,
+        has_job: bool | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> dict:
@@ -154,12 +156,16 @@ class DailyStoryMgr:
             items = repo_daily_story.list_stories(
                 status=status,
                 story_type=story_type,
+                key=key,
+                has_job=has_job,
                 limit=limit,
                 offset=offset,
             )
             total = repo_daily_story.count_stories(
                 status=status,
                 story_type=story_type,
+                key=key,
+                has_job=has_job,
             )
             items = [_ensure_story_quality(item) for item in items]
             return {'items': items, 'total': total}

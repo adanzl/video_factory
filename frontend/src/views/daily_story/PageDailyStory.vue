@@ -9,7 +9,7 @@
         v-model="filterStoryType"
         placeholder="矛盾类型"
         clearable
-        class="w-36!"
+        class="w-30!"
         @change="onFilterStoryTypeChange"
       >
         <el-option
@@ -19,6 +19,20 @@
           :value="opt.value"
         />
       </el-select>
+      <el-input
+        v-model="filterKey"
+        placeholder="搜索关键字"
+        clearable
+        class="w-48!"
+        @keyup.enter="onSearchKey"
+        @clear="onSearchKey"
+      />
+      <el-button type="primary" @click="onSearchKey">搜索</el-button>
+      <el-radio-group v-model="filterHasJob" @change="onFilterHasJobChange">
+        <el-radio-button value="">不限</el-radio-button>
+        <el-radio-button value="yes">有任务</el-radio-button>
+        <el-radio-button value="no">无任务</el-radio-button>
+      </el-radio-group>
       <el-button
         type="danger"
         :disabled="!selectedIds.length"
@@ -38,36 +52,36 @@
       @row-dblclick="viewStory"
     >
       <el-table-column type="selection" width="48" />
-      <el-table-column prop="id" label="ID" width="70" />
+      <el-table-column prop="id" label="ID" width="60" />
       <el-table-column prop="theme" label="主题" min-width="150" show-overflow-tooltip />
-      <el-table-column label="内容" width="100" show-overflow-tooltip>
+      <el-table-column label="关键字" width="100" show-overflow-tooltip>
         <template #default="{ row }">
           {{ row.key || row.story?.key || "-" }}
         </template>
       </el-table-column>
-      <el-table-column label="矛盾类型" width="108" show-overflow-tooltip>
+      <el-table-column label="矛盾类型" width="100" show-overflow-tooltip>
         <template #default="{ row }">
           {{ formatDailyStoryType(row.story_type) }}
         </template>
       </el-table-column>
-      <el-table-column label="状态" width="90" align="center">
+      <el-table-column label="状态" width="80" align="center">
         <template #default="{ row }">
           <el-tag v-if="row.status === 'processing'" type="warning" size="small">生成中</el-tag>
           <el-tag v-else-if="row.status === 'failed'" type="danger" size="small">失败</el-tag>
           <el-tag v-else type="success" size="small">就绪</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="设定" min-width="200" show-overflow-tooltip>
+      <el-table-column label="设定" min-width="150" show-overflow-tooltip>
         <template #default="{ row }">
           {{ row.story?.setting || "-" }}
         </template>
       </el-table-column>
-      <el-table-column label="对话" width="90" align="center">
+      <el-table-column label="对话" width="60" align="center">
         <template #default="{ row }">
           {{ row.story?.dialogue?.length || 0 }}
         </template>
       </el-table-column>
-      <el-table-column label="评价" width="80" align="center">
+      <el-table-column label="评价" width="60" align="center">
         <template #default="{ row }">
           <el-tag
             v-if="row.story?.quality?.score != null"
@@ -81,7 +95,7 @@
           <span v-else class="text-gray-400">-</span>
         </template>
       </el-table-column>
-      <el-table-column label="字数" width="70" align="center">
+      <el-table-column label="字数" width="60" align="center">
         <template #default="{ row }">
           {{ calcWordCount(row.story?.dialogue) }}
         </template>
@@ -156,8 +170,26 @@ const page = ref(1);
 const pageSize = ref(parseInt(localStorage.getItem("dailyStoryPageSize") || "15", 10));
 const total = ref(0);
 const filterStoryType = ref<string>("");
+const filterKey = ref("");
+/** 已生效的搜索词（回车/点搜索后才带入请求） */
+const appliedKey = ref("");
+/** ""=不限, yes=有任务, no=无任务 */
+const filterHasJob = ref<"" | "yes" | "no">("");
 
 function onFilterStoryTypeChange() {
+  page.value = 1;
+  selectedIds.value = [];
+  void fetchStories();
+}
+
+function onSearchKey() {
+  appliedKey.value = filterKey.value.trim();
+  page.value = 1;
+  selectedIds.value = [];
+  void fetchStories();
+}
+
+function onFilterHasJobChange() {
   page.value = 1;
   selectedIds.value = [];
   void fetchStories();
@@ -199,6 +231,12 @@ async function fetchStories(opts?: { quiet?: boolean }) {
       limit: pageSize.value,
       offset: (page.value - 1) * pageSize.value,
       ...(filterStoryType.value ? { story_type: filterStoryType.value } : {}),
+      ...(appliedKey.value ? { key: appliedKey.value } : {}),
+      ...(filterHasJob.value === "yes"
+        ? { has_job: true }
+        : filterHasJob.value === "no"
+          ? { has_job: false }
+          : {}),
     });
     stories.value = res.items;
     total.value = res.total;

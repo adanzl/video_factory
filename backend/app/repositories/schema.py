@@ -273,6 +273,9 @@ def apply_daily_story_schema(conn: sqlite3.Connection) -> None:
     _ensure_column(conn, "daily_story", "job_id", "INTEGER")
     _ensure_column(conn, "daily_story", "story_type", "TEXT")
     _ensure_column(conn, "daily_story", "key", "TEXT")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_daily_story_job ON daily_story(job_id)"
+    )
     _backfill_daily_story_type(conn)
     _backfill_daily_story_key(conn)
     _ensure_journal_mode_delete(conn)
