@@ -256,6 +256,23 @@ def test_scrub_daily_visual_brief_normalizes_default_table_set():
         "客厅茶几上放着一个月饼盒；画面左边是昭昭，右边是灿灿。"
     )
     assert "月饼" in moon
+    # 专家边界：茶/量词不被误删，杂物保留，纯默认归一，子集补齐
+    tea = scrub_daily_visual_brief(
+        "客厅茶几上放着茶和空水杯；画面左边是昭昭，右边是灿灿。"
+    )
+    assert "茶" in tea and "空水杯" in tea
+    plain_tea = scrub_daily_visual_brief(
+        "客厅茶几上放着茶；画面左边是昭昭，右边是灿灿。"
+    )
+    assert "茶" in plain_tea
+    one_cup = scrub_daily_visual_brief(
+        "客厅茶几上放着一个空水杯；画面左边是昭昭，右边是灿灿。"
+    )
+    assert "一个空水杯" in one_cup
+    default_full = scrub_daily_visual_brief(
+        "客厅茶几上摆着空水杯、遥控器；画面左边是昭昭，右边是灿灿。"
+    )
+    assert "茶几上放着遥控器和空水杯" in default_full
     # 冲突物摊开也保留
     keep = scrub_daily_visual_brief(
         "客厅沙发上；茶几上摊开一袋薯片；画面左边是昭昭，右边是灿灿。"
