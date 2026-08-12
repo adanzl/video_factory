@@ -60,6 +60,11 @@ _RULE_LINE = re.compile(r"谁碰|碰了.*负责|弄乱.*负责|谁弄乱")
 _RE_TONE_STACK = re.compile(
     r"(?:[呢嘛的了着好]{2,}呀|呢了|呢呀)[！。！？]?$",
 )
+# 回旋镖引话标记（2026-08-12 定）：全文「你刚说/你说的+原话」最多 2 次，
+# 中段 1 次、末段 1 次；同一承诺只许引 1 遍。
+_RE_BOOMERANG_QUOTE = re.compile(
+    r"你刚说|你说的|你不是说|你自己说|你刚才说",
+)
 _FILMABLE_TWIST = re.compile(
     # 可拍争法动作（结构判定，禁主题词表）
     r"歪了|乱了|倒了|洒了|摔了|碰倒|多拿|偷拿|藏了|"
@@ -119,31 +124,44 @@ HUMOR_ISSUE_CAPS: tuple[tuple[str, int], ...] = (
     # 2026-08-11 用户/专家/千问共识：伪回旋镖（对方复制仪式+立规人赖账，规则字面
     # 没反噬立规人，酸奶 v46）→ 好笑封顶 6，只观感压分不硬拦
     ("伪回旋镖", 6),
+    # 2026-08-12 用户定：回旋镖重复（同一承诺/同一句引 ≥3 次）→ 好笑封顶 4
+    ("回旋镖重复", 4),
 )
 
 
 def ground_closing_quote(fragment: str, haystack: str) -> bool:
     frag = re.sub(r"[的话呢呀嘛吧啊…\s「」『』“”\"'‘’：:，,]", "", fragment)
     hay = re.sub(r"[的话呢呀嘛吧啊…\s「」『』“”\"'‘’：:，,]", "", haystack)
+    # 回旋镖引话允许视角互换（2026-08-12 定）：「歪了算我输」被对方引作
+    # 「歪了算你输」是同一承诺，校验按人称归一后比对。
+    frag_norm = frag.replace("我", "X").replace("你", "X")
+    hay_norm = hay.replace("我", "X").replace("你", "X")
     if len(frag) < 3:
         return True
-    if "更急" in frag and "更急" in hay:
+    if "更急" in frag_norm and "更急" in hay_norm:
         return True
-    if "先选" in frag and "先选" in hay:
+    if "先选" in frag_norm and "先选" in hay_norm:
         return True
-    if "公平" in frag and "公平" in hay:
+    if "公平" in frag_norm and "公平" in hay_norm:
         return True
-    if "先到" in frag and ("先到" in hay or "先拿" in hay):
+    if "先到" in frag_norm and ("先到" in hay_norm or "先拿" in hay_norm):
         return True
-    if re.search(r"碰|弄乱|收拾|叠", frag) and re.search(
-        r"碰|弄乱|收拾|叠|规矩|赛规", hay,
+    if re.search(r"碰|弄乱|收拾|叠", frag_norm) and re.search(
+        r"碰|弄乱|收拾|叠|规矩|赛规", hay_norm,
     ):
         return True
-    if ("就算" in frag or "不算" in frag) and ("规矩" in hay or "算" in hay):
+    if ("就算" in frag_norm or "不算" in frag_norm) and (
+        "规矩" in hay_norm or "算" in hay_norm
+    ):
         return True
-    run = min(6, len(frag))
-    for i in range(len(frag) - run + 1):
-        if frag[i:i + run] in hay:
+    run = min(6, len(frag_norm))
+    for i in range(len(frag_norm) - run + 1):
+        if frag_norm[i:i + run] in hay_norm:
+            return True
+    # 引话可能是「规则原话 + 后续动作」拼成一句：只要前缀能对上原话就算有出处
+    # （2026-08-12 定，修复「切完我先挑，那我挑了大的」被误判无前文）。
+    for n in (6, 5, 4, 3):
+        if len(frag_norm) >= n and frag_norm[:n] in hay_norm:
             return True
     return False
 
@@ -227,6 +245,15 @@ def collect_humor_issues(
         first = ",".join(str(i) for i in tone_hits[:4])
         more = "…" if len(tone_hits) > 4 else ""
         cons.append(f"句尾语气词堆砌（第{first}句{more}，禁叠「呢了呀/着了呀/嘛了呀」病句尾）")
+    boom_hits = [i + 1 for i, ln in enumerate(lines) if _RE_BOOMERANG_QUOTE.search(ln)]
+    if len(boom_hits) >= 3:
+        shown = ",".join(str(i) for i in boom_hits[:4])
+        more = "…" if len(boom_hits) > 4 else ""
+        cons.append(
+            f"C回旋镖重复（第{shown}句{more}共{len(boom_hits)}次）："
+            "全文「你刚说/你说的」最多 2 次，中段最多 1 次、末段收束 1 次；"
+            "同一承诺/同一句原话只许引 1 遍"
+        )
     tail4 = lines[-4:] if len(lines) >= 4 else lines
     tail_text = "".join(tail4)
     late6 = "".join(lines[-6:]) if len(lines) >= 6 else tail_text

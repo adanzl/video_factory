@@ -221,6 +221,17 @@ _RE_OPEN_CRITERION = re.compile(
     r"(?:拧|撕|掰|揭)(?:开|掉|下来|完)?"
     r"[^。！？]{0,6}(?:(?<!不)(?:算|就算|算数)|该|归|赢|谁)",
 )
+# 切分/拆封即终结（2026-08-12 用户定）：蛋糕/食物等资源一旦切好/拆封，
+# 禁止重切/恢复/重新比——切完的蛋糕物理上无法恢复，正文出现即重抽。
+_RE_C_RECUT = re.compile(
+    r"重新切|再切(?:一刀|一次|一回)?|切回来|恢复原样|重新比|重切一",
+)
+# 回旋镖直接引话（2026-08-12 定）：全文「你刚说/你刚才说/你自己说/你不是说」
+# 式原话反问最多 2 次——中段最多 1 次、末段收束 1 次；「你说的」语义太泛不硬卡，
+# 由 c/humor 观感层兜底。
+_RE_C_BOOMERANG_QUOTE = re.compile(
+    r"你刚说|你刚才说|你自己说|你不是说",
+)
 # 分级杠精（专家三轮，2026-08-07）：模型把任何「双方同时执行、争完成度」的动作展开成
 # 连续谱（碰→抓→攥→拿稳；坐到→坐稳→坐实；撕开→撕多少；倒满→戳进→接着），逐级发明
 # 新判据词。结构特征 = 「X不算，Y才算」（或倒装「Y才算，X不算」）比较型杠精句成对出现。
@@ -474,6 +485,19 @@ def append_c_body_errors(story: dict, errors: list[str]) -> None:
         errors.append(criterion_drift)
         return
 
+    recut_hits = [
+        i + 1 for i, ln in enumerate(lines) if _RE_C_RECUT.search(ln)
+    ]
+    if recut_hits:
+        shown = ",".join(str(i) for i in recut_hits[:4])
+        more = "…" if len(recut_hits) > 4 else ""
+        errors.append(
+            f"C类切分即终结（第{shown}句{more}）：资源一旦切好/拆封，"
+            "禁止重切/恢复/重新比——切完的蛋糕物理上无法恢复；"
+            "开篇已切好只能争「谁先挑/拿哪块」，回旋镖扣「切完你先挑」"
+        )
+        return
+
     # 逐字照抄正例（v35 酸奶稿抓）：≥2 句与 line.py 酸奶合规示范逐字重复即整段复刻。
     # 开场两句（场景定格）除外——「姐姐，冰箱里最后一瓶酸奶给我喝吧」式开场是通用模板。
     copy_hits = [
@@ -589,3 +613,15 @@ def append_c_body_errors(story: dict, errors: list[str]) -> None:
     closing_echo = c_closing_echo_error(lines)
     if closing_echo:
         errors.append(closing_echo)
+
+    boom_hits = [
+        i + 1 for i, ln in enumerate(lines) if _RE_C_BOOMERANG_QUOTE.search(ln)
+    ]
+    if len(boom_hits) >= 3:
+        shown = ",".join(str(i) for i in boom_hits[:4])
+        more = "…" if len(boom_hits) > 4 else ""
+        errors.append(
+            f"C类回旋镖重复（第{shown}句{more}共{len(boom_hits)}次）："
+            "全文「你刚说/你刚才说/你自己说/你不是说」式原话反问最多 2 次，"
+            "中段最多 1 次、末段收束 1 次；同一承诺只许引 1 遍"
+        )

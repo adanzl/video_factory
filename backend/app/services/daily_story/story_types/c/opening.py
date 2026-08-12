@@ -118,6 +118,12 @@ C_OPENING_CONTACT_CLAIM_RE = re.compile(
 C_OPENING_PRESS_RE = re.compile(
     r"(?:我|你)(?:手|脚|指)?[^。！？]{0,6}按(?:电视|按钮|遥控|屏幕|到|着|了|的|上)",
 )
+# 说明文式开场（2026-08-12 定）：地点+整体要说，但禁「X还在Y上/正放着」这类
+# 念场景卡的句式——孩子开口要像真说话（「姐，餐桌上的蛋糕切好了！大的给我」）。
+C_OPENING_SCENE_CARD_RE = re.compile(
+    r"还在.{0,6}(?:桌|沙发|柜|台|冰箱|地|旁边|门口)|"
+    r"正(?:放|摆|搁)在|还(?:放|摆|搁)在",
+)
 
 
 def _opening_setting_holder(setting: str) -> str | None:
@@ -414,6 +420,12 @@ def score_opening_quality(story: dict) -> tuple[int, list[str], list[str]]:
         cons.append("C开场废话状态（我还没碰呢）：不是愿望不是主张，观众不知道孩子"
                     "想要什么——改愿望式「我想先看」直说自己的愿望")
         pts -= 4
+
+    if C_OPENING_SCENE_CARD_RE.search(joined):
+        cons.append("C开场说明文（X还在Y上/正放着）：由头要说，但别念场景卡——"
+                    "改成孩子口头语+主张（「姐，餐桌上的蛋糕切好了！大的给我，"
+                    "我想先挑！」）")
+        pts -= 1
 
     # 换词躲（同物对齐，2026-08-08 用户）：第 1 句争「挑零件」、第 2 句回「清点/整理」
     # ——归类管理词不是孩子抢东西会说的话，各说各话。第 2 句须抢同一样东西、用词对齐。

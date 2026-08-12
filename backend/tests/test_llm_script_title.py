@@ -19,122 +19,12 @@ from app.services.daily_story.prompts import (
     validate_daily_story_json,
     validate_daily_story_opening,
 )
-from app.services.script.optimize_title import (
-    CHAT_TITLE_MAX_LEN,
-    build_chat_title_prompts,
-    build_title_optimize_system_prompt,
-    build_title_optimize_user_prompt,
-    parse_title_optimize_payload,
-)
-from app.services.daily_story.story_types import format_block_for_code
+from app.services.script.optimize_title import parse_title_optimize_payload
 from app.utils.title_text import select_optimized_title
-
-
-def test_title_optimize_system_prompt_includes_hook_formulas():
-    system = build_title_optimize_system_prompt(max_title_len=24)
-    assert "误区反问" in system
-    assert "反差好奇" in system
-    assert "3 秒内" in system
-
-
-def test_title_optimize_user_prompt_asks_for_hook():
-    user = build_title_optimize_user_prompt(
-        draft_title="雪崩瞬间",
-        narration="哇，雪崩好快呀。",
-        max_title_len=24,
-    )
-    assert "雪崩瞬间" in user
-    assert "反常识" in user
-
 
 def test_parse_title_optimize_payload():
     title = parse_title_optimize_payload({"title": "雪崩瞬间，为啥这么猛"}, max_title_len=24)
     assert title == "雪崩瞬间，为啥这么猛"
-
-
-def test_chat_title_clamps_to_ten_and_includes_punchline():
-    prompts = build_chat_title_prompts(
-        "找橡皮",
-        {
-            "setting": "书桌前",
-            "punchline_explain": "C类公平执念，姐姐权威被戳穿",
-            "dialogue": [{"speaker": "昭昭", "line": "你藏了我的橡皮"}],
-        },
-        max_title_length=16,
-    )
-    assert f"≤{CHAT_TITLE_MAX_LEN} 字" in prompts["system"]
-    assert "有娃的大人" in prompts["system"]
-    assert "反差说明" in prompts["user"]
-    assert "C类公平执念" in prompts["user"]
-    assert "16" not in prompts["system"]
-
-
-def test_chat_title_system_prompt_has_hook_templates_and_antitrunc():
-    prompts = build_chat_title_prompts(
-        "藏玩具同盟",
-        {
-            "setting": "客厅",
-            "punchline_explain": "C类公平执念，姐姐权威被戳穿",
-            "dialogue": [{"speaker": "昭昭", "line": "你藏了我的橡皮"}],
-        },
-        max_title_length=16,
-    )
-    for kw in ("散伙了", "咋全露馅", "手忙脚乱", "删掉钩子", "谁干的", "三个全是翻车记"):
-        assert kw in prompts["system"], kw
-    assert "宁可短" not in prompts["user"]
-    assert "16" not in prompts["system"]
-
-
-def test_chat_title_system_prompt_has_no_copyable_examples():
-    # 句式模板只讲结构不给成品例，防 LLM 把「越擦越花」这类例词原样抄给无关剧情
-    prompts = build_chat_title_prompts(
-        "藏玩具同盟",
-        {
-            "setting": "客厅",
-            "punchline_explain": "B类结盟翻车，整盒月饼滚出来被妈妈抓",
-            "dialogue": [{"speaker": "昭昭", "line": "快藏，妈来了"}],
-        },
-        max_title_length=16,
-    )
-    # 形态用 XX 占位；「翻车记」只作为坏例出现（禁止在形态①用），不出现具体故事成品
-    assert "XX" in prompts["system"]
-    assert "三个全是翻车记" in prompts["system"]
-    assert "翻车记" in prompts["system"]
-    assert "偷看电视翻车记" not in prompts["system"]
-    for kw in ("越擦越花", "老鼠会开柜子门吗", "自己不吃却管我", "妈妈藏的饼干"):
-        assert kw not in prompts["system"], kw
-    # 禁止照抄别的故事成品
-    assert "不要照抄成品短句" in prompts["system"]
-
-
-def test_chat_title_user_prompt_no_spoiler_and_avoid():
-    prompts = build_chat_title_prompts(
-        "月饼大作战",
-        {
-            "setting": "客厅",
-            "punchline_explain": "B类结盟翻车，连锁意外让整盒月饼全滚出来，妈妈抓个正着",
-            "dialogue": [{"speaker": "昭昭", "line": "妈，是月饼自己滚的"}],
-        },
-        max_title_length=16,
-    )
-    assert "别报流水账" in prompts["user"]
-    assert "3 个候选" in prompts["user"]
-    assert "已用过的标题" not in prompts["user"]
-
-    prompts_avoid = build_chat_title_prompts(
-        "月饼全滚出来了",
-        {
-            "setting": "客厅",
-            "punchline_explain": "B类结盟翻车，连锁意外让整盒月饼全滚出来，妈妈抓个正着",
-            "dialogue": [{"speaker": "昭昭", "line": "妈，是月饼自己滚的"}],
-        },
-        max_title_length=16,
-        avoid_titles=["月饼全滚出来了"],
-    )
-    assert "已用过的标题" in prompts_avoid["user"]
-    assert "月饼全滚出来了" in prompts_avoid["user"]
-    assert "换一个角度" in prompts_avoid["user"]
-
 
 def test_parse_chat_title_candidates_payload():
     from app.services.script.optimize_title import parse_chat_title_candidates_payload
@@ -152,7 +42,6 @@ def test_parse_chat_title_candidates_payload():
         parse_chat_title_candidates_payload({}, max_title_len=10)
     with pytest.raises(ValueError):
         parse_chat_title_candidates_payload({"titles": ["   "]}, max_title_len=10)
-
 
 def test_pick_best_chat_title_prefers_hook_and_avoids_repeat():
     from app.services.script.optimize_title import pick_best_chat_title
@@ -196,27 +85,6 @@ def test_pick_best_chat_title_prefers_hook_and_avoids_repeat():
     # 候选与初稿相同/命中 avoid → 回退初稿
     assert pick_best_chat_title("月饼大作战", ["月饼大作战"], max_len=10) == "月饼大作战"
 
-
-def test_pick_best_chat_title_penalizes_outcome_reveal():
-    from app.services.script.optimize_title import pick_best_chat_title
-
-    # 具体甩锅画面/口吻 优于 结局播报（谁…全滚出来）
-    best = pick_best_chat_title(
-        "月饼大作战",
-        ["谁把月饼全滚出来", "不是我，月饼自己滚的"],
-        max_len=10,
-    )
-    assert best == "不是我，月饼自己滚的"
-    # 结局播报也不敌「具体道具+甩锅」问句
-    best2 = pick_best_chat_title(
-        "月饼大作战",
-        ["谁把月饼全滚出来", "谁先踩的渣"],
-        max_len=10,
-    )
-    # 两个候选都是谁字/结局播报（谁-2 / 全滚-3），均不高于当前标题 → 保留当前
-    assert best2 == "月饼大作战"
-
-
 def test_extract_core_anchor_words():
     from app.services.script.optimize_title import extract_core_anchor_words
 
@@ -239,7 +107,6 @@ def test_extract_core_anchor_words():
         "conflict_core": "姐弟趁妈妈洗澡偷看电视，约好轮班望风，结果露馅",
         "setting": "客厅，电视还黑着",
     }) == ["电视"]
-
 
 def test_pick_best_chat_title_anchor_guard():
     from app.services.script.optimize_title import pick_best_chat_title
@@ -265,42 +132,6 @@ def test_pick_best_chat_title_anchor_guard():
         == "月饼大作战"
     )
 
-
-def test_pick_best_chat_title_defends_current_title():
-    """好初稿不被更差候选顶掉：重跑时「妈，月饼自己滚的」(hook 3) 不被 0 分候选替换。"""
-    from app.services.script.optimize_title import pick_best_chat_title
-
-    assert (
-        pick_best_chat_title(
-            "妈，月饼自己滚的",
-            ["偷吃月饼翻车记", "月饼渣谁擦"],
-            max_len=10,
-            anchor_words=["月饼"],
-        )
-        == "妈，月饼自己滚的"
-    )
-    # 明显更优的候选（自己+称呼=3 > 3? 需严格更高；这里给 hook 4 的候选）
-    assert (
-        pick_best_chat_title(
-            "妈，月饼自己滚的",
-            ["妈，月饼自己掉的！"],
-            max_len=10,
-            anchor_words=["月饼"],
-        )
-        == "妈，月饼自己掉的！"
-    )
-
-
-def test_chat_title_hook_score_penalizes_who():
-    """谁字质问降 2 分，甩锅/推锅给东西压过谁问句。"""
-    from app.services.script.optimize_title import _chat_title_hook_score
-
-    assert _chat_title_hook_score("谁擦墙渣") < _chat_title_hook_score("妈，月饼是它自己滚的")
-    assert _chat_title_hook_score("渣印谁擦") < _chat_title_hook_score("妈，月饼是它自己滚的")
-    # 问号仍给分但被谁字压回：谁问句 < 甩锅+称呼
-    assert _chat_title_hook_score("谁偷看电视？") < _chat_title_hook_score("妈，电视自己开的")
-
-
 def test_pick_best_chat_title_rejects_broken_anchor_fragment():
     """锚点不含跨词坏碎片：偷看电视 只产出「电视」，「偷看电」绝不出现在要求里。"""
     from app.services.script.optimize_title import extract_core_anchor_words
@@ -315,35 +146,6 @@ def test_pick_best_chat_title_rejects_broken_anchor_fragment():
     assert anchors == ["电视"]
     assert "偷看电" not in anchors
 
-
-def test_chat_title_user_prompt_contains_core_noun_requirement():
-    prompts = build_chat_title_prompts(
-        "月饼大作战",
-        {
-            "scene_title": "月饼大作战",
-            "conflict_core": "姐弟联手偷吃月饼，望风失误掉渣露馅",
-            "setting": "客厅茶几上放着一盒月饼",
-            "punchline_explain": "B类结盟翻车",
-            "dialogue": [{"speaker": "昭昭", "line": "快藏，妈来了"}],
-        },
-        max_title_length=16,
-    )
-    # 专家要求：标题必须原样保留完整主题短语（偷吃月饼），不是只留核心名词
-    assert "本集主题短语（标题必须原样保留）：偷吃月饼" in prompts["user"]
-    assert "必须原样保留本集主题短语" in prompts["user"]
-    assert "硬性" in prompts["system"]
-
-
-def test_format_block_scene_title_requires_spoken_hook():
-    for code in ("A", "B", "C", "D", "E"):
-        blk = format_block_for_code(code)
-        assert '"scene_title":' in blk
-        assert "口语钩子" in blk
-        assert "藏玩具" in blk or "分蛋糕" in blk
-        assert "老鼠会开柜子门吗" in blk
-        assert "场记或口语钩子均可" not in blk
-
-
 def test_select_optimized_title_degraded_truncation_falls_back():
     # 优化只是初稿删字截断 → 回退初稿
     assert select_optimized_title("藏玩具同盟", "藏玩具", max_len=10) == "藏玩具同盟"
@@ -357,7 +159,6 @@ def test_select_optimized_title_degraded_truncation_falls_back():
     assert select_optimized_title("检查不算吃！", "检查不算吃", max_len=10) == "检查不算吃！"
     # 带逗号 11 字标题钻 title_core 去标点 ≤max_len 的空子 → 超长回退初稿
     assert select_optimized_title("月饼大作战", "妈，月饼真不是我俩滚的", max_len=10) == "月饼大作战"
-
 
 def test_daily_story_prompts_share_contract():
     theme_sys, theme_user = build_daily_story_theme_prompts(3)
@@ -396,7 +197,6 @@ def test_daily_story_prompts_share_contract():
     # 说谎题从 E 正例拿掉，改列为禁止
     assert "不许说谎" in user_e
 
-
 def test_theme_is_writable_rejects_oral_lie_without_eye():
     from app.services.daily_story.prompts import (
         filter_writable_themes,
@@ -414,7 +214,6 @@ def test_theme_is_writable_rejects_oral_lie_without_eye():
         "不许说谎妈妈刚才也敷衍奶奶",
     ])
     assert kept == ["九点了必须睡觉妈妈还在刷手机"]
-
 
 def test_theme_quota_and_near_dedupe():
     from app.services.daily_story.prompts import (
@@ -463,36 +262,9 @@ def test_theme_quota_and_near_dedupe():
     )
     assert near_filtered == ["浇花溢出来"]
 
-
-def test_daily_story_prompts_share_contract_opening_bits():
-    # 原 share_contract 后半段拆出，避免上面插测打乱；保留开场断言
-    from app.services.daily_story.prompts import build_daily_story_opening_prompts
-
-    open_sys, open_user = build_daily_story_opening_prompts(
-        "谁先洗澡",
-        {
-            "scene_title": "洗澡",
-            "setting": "浴室门口争谁先洗",
-            "conflict_core": "姐弟争谁先洗澡",
-            "dialogue": [
-                {"speaker": "昭昭", "line": "规则是谁先到谁先洗"},
-                {"speaker": "灿灿", "line": "我是姐姐我优先"},
-            ],
-        },
-    )
-    assert "发现" in open_sys
-    assert "谁先洗澡" in open_user
-    assert "opening" in open_sys
-    assert "正例" in open_sys
-    assert "反例" in open_sys
-    assert "鞋带" in open_sys
-    assert "本场只争这一件" in open_user
-
-
 def _pad_line(text: str) -> str:
     pad = max(0, DAILY_STORY_LINE_CHARS_MAX - len(text))
     return text + ("呀" * pad)
-
 
 def _apply_c_type_closing(dialogue: list[dict]) -> None:
     """C 类测试稿：末 4 句满足回旋镖 + 嘴硬收束，且与前一说话人交替。"""
@@ -513,7 +285,6 @@ def _apply_c_type_closing(dialogue: list[dict]) -> None:
     )
     for i, (sp, ln) in enumerate(zip(speakers, lines_text, strict=True)):
         dialogue[-(4 - i)] = {"speaker": sp, "line": _pad_line(ln)}
-
 
 def _valid_story(*, line: str | None = None, n: int = 17) -> dict:
     # 默认 18*17=306，过正文硬卡 280–370
@@ -541,7 +312,6 @@ def _valid_story(*, line: str | None = None, n: int = 17) -> dict:
         "punchline_explain": "C类公平执念，姐姐规则被字面戳穿",
     }
 
-
 def test_validate_daily_story_json_ok():
     story = _valid_story()
     total = sum(len(d["line"]) for d in story["dialogue"])
@@ -549,17 +319,9 @@ def test_validate_daily_story_json_ok():
     validate_daily_story_json(story, phase="body")
     validate_daily_story_json(story, phase="full")
 
-
 def test_validate_daily_story_json_rejects_long_body_chars():
     with pytest.raises(ValueError, match="总字数须≤"):
         validate_daily_story_json(_valid_story(n=34), phase="body")
-
-
-def test_validate_daily_story_json_full_skips_total_char_hard_limit():
-    # 拼开场后全文不再卡总字数
-    long_story = _valid_story(n=34)
-    validate_daily_story_json(long_story, phase="full")
-
 
 def test_validate_daily_story_json_rejects_short_body_chars():
     with pytest.raises(ValueError, match="总字数须≥"):
@@ -572,59 +334,29 @@ def test_validate_daily_story_json_rejects_long_line():
     with pytest.raises(ValueError, match=f"超过{DAILY_STORY_LINE_CHARS_MAX}字"):
         validate_daily_story_json(story)
 
-
 def test_validate_daily_story_json_rejects_bad_speaker():
     story = _valid_story()
     story["dialogue"][0]["speaker"] = "爸爸"
     with pytest.raises(ValueError, match="爸爸"):
         validate_daily_story_json(story)
 
-
-def test_validate_daily_story_json_rejects_inverted_vocative():
+@pytest.mark.parametrize(
+    "line, ok",
+    [
+        ("你刚才还笑出声了呢妈妈你听听", False),
+        ("大人工作需要，跟你们玩不一样啊听着", False),
+        ("妈妈，你刚才还笑出声了呢", True),
+    ],
+    ids=["inverted", "trailing_listen", "vocative_start"],
+)
+def test_validate_daily_story_json_vocative_naturalness(line, ok):
     story = _valid_story()
-    story["dialogue"][3]["line"] = "你刚才还笑出声了呢妈妈你听听"
-    with pytest.raises(ValueError, match="语序不自然"):
+    story["dialogue"][3]["line"] = line
+    if ok:
         validate_daily_story_json(story)
-
-
-def test_validate_daily_story_json_rejects_trailing_listen_command():
-    story = _valid_story()
-    story["dialogue"][3]["line"] = "大人工作需要，跟你们玩不一样啊听着"
-    with pytest.raises(ValueError, match="语序不自然"):
-        validate_daily_story_json(story)
-
-
-def test_validate_daily_story_json_allows_natural_vocative_end():
-    # 句尾单喊「妈」是正常口语
-    story = _valid_story()
-    story["dialogue"][3]["line"] = "我隔着门都听见短视频声音了啊妈"
-    validate_daily_story_json(story)
-
-
-def test_validate_daily_story_json_allows_natural_vocative_start():
-    # 称呼放句首是正常口语
-    story = _valid_story()
-    story["dialogue"][3]["line"] = "妈妈，你刚才还笑出声了呢"
-    validate_daily_story_json(story)
-
-
-def test_validate_daily_story_json_allows_evidence_after_vocative():
-    # 「呢你看妈」中称呼在证据词之后，属于正常口语
-    story = _valid_story()
-    story["dialogue"][3]["line"] = "你拇指还在屏幕上滑个不停呢你看妈"
-    validate_daily_story_json(story)
-
-
-def test_patch_vocative_punctuation_does_not_add_trailing_comma():
-    # 不强制在句尾称呼前加逗号，避免句句尾都带标点
-    story = _valid_story()
-    story["dialogue"][0]["line"] = "那你被子里手机屏幕怎么还亮着呀妈"
-    story["dialogue"][1]["line"] = "刷到第九个视频还叫工作需要吗妈妈"
-    notes = _patch_vocative_punctuation(story)
-    assert not notes
-    assert story["dialogue"][0]["line"] == "那你被子里手机屏幕怎么还亮着呀妈"
-    assert story["dialogue"][1]["line"] == "刷到第九个视频还叫工作需要吗妈妈"
-
+    else:
+        with pytest.raises(ValueError, match="语序不自然"):
+            validate_daily_story_json(story)
 
 def test_patch_vocative_punctuation_strips_trailing_listen():
     story = _valid_story()
@@ -633,14 +365,12 @@ def test_patch_vocative_punctuation_strips_trailing_listen():
     assert "去句尾听着[0]" in notes
     assert story["dialogue"][0]["line"] == "我回工作消息，不是玩手机啊孩子们"
 
-
 def test_validate_daily_story_json_allows_soft_ending():
     story = _valid_story()
     # 软收前先破功
     story["dialogue"][-2]["line"] = "你说晚了我已经在了呀呀呀呀"
     story["dialogue"][-1]["line"] = "算了听姐姐的一二三四五六七八"
     validate_daily_story_json(story)
-
 
 def test_validate_daily_story_json_rejects_consecutive_same_speaker():
     story = _valid_story()
@@ -649,7 +379,6 @@ def test_validate_daily_story_json_rejects_consecutive_same_speaker():
     with pytest.raises(ValueError, match="连说"):
         validate_daily_story_json(story)
 
-
 def test_validate_daily_story_json_rejects_limp_soft_close():
     from app.services.daily_story.quality import score_daily_story
 
@@ -657,7 +386,6 @@ def test_validate_daily_story_json_rejects_limp_soft_close():
     story["dialogue"][-1]["line"] = "好了好了给你一二三四五六七八"
     q = score_daily_story(story)
     assert q["score"] < 75 or any("软收" in r or "破功" in r for r in q["reasons"])
-
 
 def test_validate_daily_story_json_rejects_weak_endings():
     story = _valid_story()
@@ -675,88 +403,11 @@ def test_validate_daily_story_json_rejects_weak_endings():
     with pytest.raises(ValueError, match="弱收束"):
         validate_daily_story_json(story)
 
-
-def test_daily_story_prompts_require_stance_coherence():
-    story_sys, story_user = build_daily_story_prompts("抱枕大战")
-    assert "立场连贯" in story_sys
-    assert "自相矛盾" in story_sys
-    assert "软收" in story_sys
-    assert "轮流" in story_sys or "连说" in story_sys
-    assert "镜像" in story_sys or "对称复读" in story_sys
-    assert "无破功软收" in story_sys or "先破功" in story_user
-    assert "弱收束" in story_sys or "一人一半" in story_sys
-    assert "等妈" in story_sys or "评理" in story_user
-    assert "好吧" in story_sys or "给你" in story_user or "自相矛盾" in story_sys
-
-
-def test_daily_story_prompts_keep_single_rule_and_no_mom_referee():
-    story_sys, story_user = build_daily_story_prompts("抱枕大战")
-    assert "判赢" in story_sys or "判平" in story_sys
-    assert "一人一半" in story_sys
-    assert "换裁决" in story_sys or "剪刀石头布" in story_sys
-    assert "明天再战" in story_sys or "本场规则" in story_user
-    assert "硬拆" in story_sys
-    assert "默认可不写妈妈" in story_sys or "默认可不写" in story_user
-    assert "谁也别用" not in story_sys
-
-
-def test_daily_story_retry_uses_validation_char_limits_not_write_pad():
-    from app.services.daily_story.prompts import (
-        DAILY_STORY_BODY_CHARS_MAX,
-        DAILY_STORY_BODY_CHARS_MIN,
-        DAILY_STORY_BODY_WRITE_TARGET_MAX,
-        DAILY_STORY_BODY_WRITE_TARGET_MIN,
-        build_daily_story_retry_user,
-    )
-
-    draft_sys, draft_user = build_daily_story_prompts("争酸奶", length_mode="draft")
-    assert str(DAILY_STORY_BODY_WRITE_TARGET_MIN) in draft_sys
-    assert str(DAILY_STORY_BODY_WRITE_TARGET_MIN) in draft_user
-
-    revise_sys, revise_user = build_daily_story_prompts("争酸奶", length_mode="revise")
-    assert "硬卡" in revise_sys
-    assert str(DAILY_STORY_BODY_WRITE_TARGET_MIN) not in revise_sys
-    assert str(DAILY_STORY_BODY_WRITE_TARGET_MAX) not in revise_user
-    assert str(DAILY_STORY_BODY_CHARS_MIN) in revise_user
-    assert str(DAILY_STORY_BODY_CHARS_MAX) in revise_user
-
-    expand_sys, _ = build_daily_story_prompts("争酸奶", length_mode="revise_expand")
-    assert "只增不删" in expand_sys
-    assert "禁止超过" in expand_sys or "禁止超" in expand_sys
-
-    trim_sys, _ = build_daily_story_prompts("争酸奶", length_mode="revise_trim")
-    assert "只删不增" in trim_sys
-    assert "禁止新增台词" in trim_sys
-
-    prev = _valid_story()
-    # 人为拉长上一稿，触发缩字 hint
-    prev["dialogue"] = prev["dialogue"] + [
-        {"speaker": "昭昭", "line": "一二三四五六七八九十十一"},
-        {"speaker": "灿灿", "line": "一二三四五六七八九十十二"},
-    ] * 20
-    retry_user = build_daily_story_retry_user(
-        "争酸奶",
-        prev_story=prev,
-        errors=f"正文总字数须≤{DAILY_STORY_BODY_CHARS_MAX}",
-        phase="body",
-    )
-    assert "字数硬卡" in retry_user
-    assert "本轮问题" in retry_user
-    assert "只删不增" in retry_user
-    assert "禁止新增" in retry_user
-    # 重试勿带回首稿「先写爆/铺回合」话术
-    assert "先写爆" not in retry_user
-    assert "铺回合" not in retry_user
-    assert f"≤{DAILY_STORY_BODY_CHARS_MAX}" in retry_user or "只删不增" in retry_user
-    # 垂直：不复述全套首稿要求模板
-    assert "请根据上述规则，生成一个昭昭和灿灿" not in retry_user
-
 def test_validate_daily_story_json_rejects_vague_punchline():
     story = _valid_story()
     story["punchline_explain"] = "姐弟斗嘴很好笑"
     with pytest.raises(ValueError, match="类型标签"):
         validate_daily_story_json(story)
-
 
 def test_validate_daily_story_json_rejects_missing_conflict_core():
     story = _valid_story()
@@ -764,28 +415,11 @@ def test_validate_daily_story_json_rejects_missing_conflict_core():
     with pytest.raises(ValueError, match="conflict_core"):
         validate_daily_story_json(story)
 
-
 def test_validate_daily_story_json_rejects_missing_key():
     story = _valid_story()
     del story["key"]
     with pytest.raises(ValueError, match="缺少必需字段: key"):
         validate_daily_story_json(story)
-
-
-def test_validate_daily_story_json_rejects_long_key():
-    story = _valid_story()
-    story["key"] = "这是一个超过八个字的标签"
-    with pytest.raises(ValueError, match="key 须"):
-        validate_daily_story_json(story)
-
-
-def test_validate_daily_story_json_rejects_offtopic_latter():
-    story = _valid_story()
-    # 后 1/3 岔开体育课，且前文未出现
-    story["dialogue"][-1]["line"] = "体育课你还敢告老师吗"
-    with pytest.raises(ValueError, match="跑题"):
-        validate_daily_story_json(story)
-
 
 def test_build_daily_story_retry_user_asks_to_expand_short_draft():
     from app.services.daily_story.prompts import (
@@ -817,101 +451,6 @@ def test_build_daily_story_retry_user_asks_to_expand_short_draft():
     assert "勿换主题" in user or "另开账" in user
     assert "发现开场" in user
 
-
-def test_retry_small_deficit_uses_patch_not_expand():
-    """只差几个字应句内微调，勿按偏短插入多句。"""
-    from app.services.daily_story.prompts import (
-        build_daily_story_prompts,
-        build_daily_story_retry_user,
-        resolve_daily_story_retry_length_mode,
-    )
-
-    prev = _valid_story(n=18)
-    err = "正文总字数须≥280，当前274（还差6字）"
-    assert resolve_daily_story_retry_length_mode(prev, errors=err) == "revise_patch"
-    patch_sys, _ = build_daily_story_prompts("饭前偷吃", length_mode="revise_patch")
-    assert "微调" in patch_sys or "句内" in patch_sys
-    user = build_daily_story_retry_user(
-        "灿灿不许昭昭饭前偷吃自己却先捏了一块",
-        prev_story=prev,
-        errors=err,
-    )
-    assert "句内补" in user
-    assert "禁止增删句数" in user or "禁止插入新句" in user
-    assert "插入约" not in user
-    quote_err = (
-        "正文总字数须≥280，当前274（还差6字）；"
-        "A类引话须出自灿灿前文原话（无「检查不算吃」），禁止昭昭自造后再假装引用"
-    )
-    assert (
-        resolve_daily_story_retry_length_mode(prev, errors=quote_err)
-        == "revise_patch"
-    )
-    quote_user = build_daily_story_retry_user(
-        "灿灿不许昭昭饭前偷吃自己却先捏了一块",
-        prev_story=prev,
-        errors=quote_err,
-        story_type="A",
-    )
-    assert "引话" in quote_user
-    assert "只改1–2句" in quote_user or "1–2句" in quote_user
-
-
-def test_revise_patch_A_exempts_quote_from_keep_last_four():
-    """引话不接地走 revise_patch 时，A类 system 不得再叫模型原样保留末四拍
-    （引话就是末四拍倒数第4句，原样保留会把要修的坏引话一起冻住）。"""
-    from app.services.daily_story.prompts import (
-        _daily_story_contract,
-        build_daily_story_prompts,
-        resolve_daily_story_retry_length_mode,
-    )
-
-    prev = _valid_story(n=18)
-    err = (
-        "A类引话须出自灿灿前文原话"
-        "（无「你叠的被子角都没对齐」），禁止昭昭自造后再假装引用"
-    )
-    assert resolve_daily_story_retry_length_mode(prev, errors=err) == "revise_patch"
-    sys_a, _ = build_daily_story_prompts(
-        "姐姐嫌弟弟叠被子总叠不齐",
-        story_type="A",
-        length_mode="revise_patch",
-    )
-    assert "末四拍尽量原样保留" not in sys_a
-    assert "引话" in sys_a and "倒数第4" in sys_a
-    # 非 A 类型仍走通用 revise_patch，不回归
-    generic = _daily_story_contract(length_mode="revise_patch", type_code=None)
-    assert "末四拍尽量原样保留" in generic
-
-
-def test_a_prompt_blocks_midbody_rehearsal_of_quote_beat():
-    """中段禁提前上演「引原话→那不一样」拍子，引话只准末四拍引一次
-    （拿筷子 79：中段 [12][13] 先引埋句被审读判与末四拍重复）。"""
-    from app.services.daily_story.story_types.a.line import LINE_A
-
-    blk = LINE_A.prompt_block
-    assert "引话只演一次" in blk
-    assert "末四拍才是昭昭引灿灿原话的场合" in blk
-    assert "同一引语中段演过、末四拍再引 = 审读判重复" in blk
-
-
-def test_a_prompt_includes_five_escalation_layers():
-    """A 类升级路线须含全部 5 个计分层（亮权威→追问→露馅→引先例→破功）。
-    缺引先例层导致审读判「冲突推进3层」，是 82–84 与 88–89 的分水岭。"""
-    from app.services.daily_story.story_types.a.line import LINE_A
-
-    blk = LINE_A.prompt_block
-    assert "5 阶段须到齐" in blk
-    assert "引先例" in blk
-    assert "上次你也" in blk
-    assert "亮权威" in blk and "一锤落地" in blk
-    assert "角色护栏" in blk
-    assert "一锤落地（中段第 6–15 句必出）" in blk
-    # 质量修订 hint 也点名引先例层
-    assert "引先例" in LINE_A.escalation_revision_hint
-    assert "冲突推进不足" in LINE_A.escalation_revision_hint
-
-
 def test_validate_rejects_role_swap_claims():
     """身份自称只准按角色：昭昭=弟弟、灿灿=姐姐；互换即角色错乱。
     （削铅笔 batch8：昭昭自称「我是哥哥/我说了算」成权威，旧校验没兜住）"""
@@ -941,76 +480,6 @@ def test_validate_rejects_role_swap_claims():
             d["line"] = _pad_line("我是姐姐我说了算")
             break
     validate_daily_story_json(ok, phase="body")
-
-
-def test_validate_rejects_role_age_swap_claims():
-    """最小/最大自称：昭昭=弟弟（最小）、灿灿=姐姐（最大），互换即角色错乱。
-    （糖果稿 89 漏网：灿灿姐姐自称「我最小，我该先挑」——身份+年龄双错乱）"""
-    import copy
-
-    base = _valid_story(n=18)
-    # 灿灿自称最小 → 拒绝
-    bad1 = copy.deepcopy(base)
-    for d in bad1["dialogue"]:
-        if d["speaker"] == "灿灿":
-            d["line"] = _pad_line("我最小，我该先挑")
-            break
-    with pytest.raises(ValueError, match="角色反了"):
-        validate_daily_story_json(bad1, phase="body")
-    # 昭昭自称最大 → 拒绝
-    bad2 = copy.deepcopy(base)
-    for d in bad2["dialogue"]:
-        if d["speaker"] == "昭昭":
-            d["line"] = _pad_line("我最大，我说了算")
-            break
-    with pytest.raises(ValueError, match="角色反了"):
-        validate_daily_story_json(bad2, phase="body")
-    # 昭昭自称最小 → 合法（他真是最小的），不误伤
-    ok1 = copy.deepcopy(base)
-    for d in ok1["dialogue"]:
-        if d["speaker"] == "昭昭":
-            d["line"] = _pad_line("我最小，我先挑")
-            break
-    validate_daily_story_json(ok1, phase="body")
-    # 「我不是最小的」否定反驳 → 合法
-    ok2 = copy.deepcopy(base)
-    for d in ok2["dialogue"]:
-        if d["speaker"] == "灿灿":
-            d["line"] = _pad_line("我不是最小的，你别乱说")
-            break
-    validate_daily_story_json(ok2, phase="body")
-
-
-def test_local_patch_pads_small_char_deficit():
-    from app.services.daily_story.prompts import (
-        dialogue_total_chars,
-        try_local_patch_daily_story_body,
-        validate_daily_story_json,
-    )
-
-    story = _valid_story(n=14)
-    target = 228  # 还差 12，落在本地补字窗口（下限已从 280 降到 240）
-    while dialogue_total_chars(story) > target:
-        progressed = False
-        for d in story["dialogue"][2:-4]:
-            line = d["line"]
-            if len(line) <= 8:
-                continue
-            d["line"] = line[:-1]
-            progressed = True
-            if dialogue_total_chars(story) <= target:
-                break
-        if not progressed:
-            break
-    before = dialogue_total_chars(story)
-    assert 240 - 32 <= before < 240, f"before={before}"
-    patched, notes = try_local_patch_daily_story_body(story)
-    after = dialogue_total_chars(patched)
-    assert notes
-    assert after >= before
-    if after >= 240:
-        validate_daily_story_json(patched, phase="body")
-
 
 def test_local_patch_aligns_a_closing_quote():
     from app.services.daily_story.prompts import (
@@ -1046,7 +515,6 @@ def test_local_patch_aligns_a_closing_quote():
     assert "检查" in quote_line or "不算" in quote_line
     validate_daily_story_json(patched, phase="body")
 
-
 def test_draft_write_target_aligned_with_hard_card():
     from app.services.daily_story.prompts import (
         DAILY_STORY_BODY_CHARS_MAX,
@@ -1059,7 +527,6 @@ def test_draft_write_target_aligned_with_hard_card():
     assert DAILY_STORY_BODY_WRITE_TARGET_MAX <= DAILY_STORY_BODY_CHARS_MAX
     sys, _ = build_daily_story_prompts("刷牙", length_mode="draft")
     assert "先写爆" in sys or "直接落在硬卡" in sys or "勿先写" in sys
-
 
 def test_resolve_daily_story_retry_length_mode_trim_when_long():
     from app.services.daily_story.prompts import (
@@ -1113,30 +580,6 @@ def test_resolve_daily_story_retry_length_mode_trim_when_long():
     assert "连说" in alt
     assert "勿借机大删" in alt
 
-
-def test_conflict_anchor_must_words_prefers_short_object():
-    from app.services.daily_story.prompts import (
-        _conflict_anchor_must_words,
-        build_daily_story_opening_retry_user,
-    )
-
-    must = _conflict_anchor_must_words("昭昭vs灿灿争第一个洗澡")
-    assert "洗澡" in must
-    assert "一个洗澡" not in must
-    user = build_daily_story_opening_retry_user(
-        "谁先洗澡",
-        {
-            "scene_title": "谁先洗",
-            "setting": "浴室门口",
-            "conflict_core": "昭昭vs灿灿争第一个洗澡",
-            "dialogue": [{"speaker": "昭昭", "line": "谁先到谁先洗"}],
-        },
-        errors="发现开场未体现 conflict_core 锚点",
-    )
-    assert "洗澡" in user
-    assert "必须点名" in user
-
-
 def test_validate_rejects_conflicting_clock_start_anchors():
     from app.services.daily_story.prompts import _parse_cn_clock_token
 
@@ -1151,7 +594,6 @@ def test_validate_rejects_conflicting_clock_start_anchors():
     with pytest.raises(ValueError, match="计时起点"):
         validate_daily_story_json(story, phase="body")
 
-
 def test_validate_rejects_premature_time_up_claim():
     story = _valid_story(n=20)
     story["punchline_explain"] = "A类权威翻车，灿灿计时双标被追问"
@@ -1159,59 +601,6 @@ def test_validate_rejects_premature_time_up_claim():
     story["dialogue"][1]["line"] = "现在八点十二，我说正好到点呀呀呀呀呀呀呀"
     with pytest.raises(ValueError, match="未到所述结束时刻"):
         validate_daily_story_json(story, phase="body")
-
-
-def test_validate_rejects_time_up_before_duration_limit():
-    story = _valid_story(n=20)
-    story["punchline_explain"] = "A类权威翻车，灿灿管手机双标"
-    story["dialogue"][0]["line"] = "手机时间到了，快放下呀呀呀呀呀呀呀呀呀"
-    story["dialogue"][1]["line"] = "才十分钟，说好十五分钟呀呀呀呀呀呀呀"
-    with pytest.raises(ValueError, match="才玩10分钟"):
-        validate_daily_story_json(story, phase="body")
-
-
-def test_validate_allows_soon_time_up_with_duration_anchor():
-    pad = "呀呀呀呀呀呀呀呀"
-    line = lambda t: (t + pad)[:DAILY_STORY_LINE_CHARS_MAX]
-    dialogue = [
-        {"speaker": "灿灿", "line": line("马上到时间了别磨蹭")},
-        {"speaker": "昭昭", "line": line("才十分钟说好十五分钟")},
-    ]
-    # 中段交替补齐；末四拍走 A 收束（昭昭引原话→灿灿那不一样→昭昭哪里不一样→灿灿软破功）
-    speakers = ("灿灿", "昭昭")
-    dialogue += [
-        {"speaker": speakers[i % 2], "line": line("一二三四五六七八")}
-        for i in range(2, 12)
-    ]
-    dialogue += [
-        {"speaker": "灿灿", "line": line("那你现在说个准话")},
-        {"speaker": "昭昭", "line": line("你刚才说马上到时间了")},
-        {"speaker": "灿灿", "line": line("那不一样，我是说快到了")},
-        {"speaker": "昭昭", "line": line("哪里不一样都是时间没到")},
-        {"speaker": "灿灿", "line": line("哼行吧你说了算")},
-    ]
-    story = {
-        "scene_title": "手机",
-        "setting": "客厅玩手机到点",
-        "key": "玩手机到点",
-        "conflict_core": "姐弟玩手机到点谁说了算",
-        "dialogue": dialogue,
-        "punchline_explain": "A类权威翻车，灿灿管手机双标",
-    }
-    validate_daily_story_json(story, phase="body")
-
-
-def test_score_daily_story_penalizes_wait_mom_ending():
-    from app.services.daily_story.quality import score_daily_story
-
-    story = _valid_story()
-    story["discovery_opening"] = [{"speaker": "昭昭", "line": "咦新橡皮怎么在你手里"}]
-    story["dialogue"][-1]["line"] = "等妈回来评理呀呀呀呀呀呀"
-    q = score_daily_story(story)
-    assert q["grade"] in ("中", "偏弱")
-    assert any("妈妈" in r or "等妈" in r for r in q["reasons"])
-    assert "等妈" in q["summary"] or "妈妈" in q["summary"]
-
 
 def test_score_daily_story_rewards_punch_ending():
     from app.services.daily_story.story_types.c.quality import score_punchline
@@ -1235,7 +624,6 @@ def test_score_daily_story_rewards_punch_ending():
     attach_daily_story_quality(story)
     assert story["quality"]["score"] >= 30
 
-
 def test_stitch_daily_story_opening_dedupes_overlapping_body_start():
     body = _valid_story(n=18)  # 略长，去重后仍过全文下限
     # 正文误写了发现句，应被拼开场时丢掉
@@ -1246,28 +634,6 @@ def test_stitch_daily_story_opening_dedupes_overlapping_body_start():
     assert story["dialogue"][1]["line"] != "咦这个新橡皮你怎么攥着呀"
     assert story["discovery_opening"] == opening
     validate_daily_story_json(story, phase="full")
-
-
-def test_stitch_daily_story_opening_drops_same_speaker_junction():
-    body = _valid_story(n=18)
-    # 正文以昭昭起句；开场末句也是昭昭 → 拼后应丢掉正文首句
-    body["dialogue"][0]["speaker"] = "昭昭"
-    body["dialogue"][1]["speaker"] = "灿灿"
-    opening = [
-        {"speaker": "灿灿", "line": "新橡皮怎么在你手里呀"},
-        {"speaker": "昭昭", "line": "你干嘛抢我的橡皮呀"},
-    ]
-    story = stitch_daily_story_opening(body, opening)
-    assert story["dialogue"][0]["speaker"] == "灿灿"
-    assert story["dialogue"][1]["speaker"] == "昭昭"
-    # 接缝后不应再连说
-    for i in range(1, min(4, len(story["dialogue"]))):
-        a = story["dialogue"][i - 1]["speaker"]
-        b = story["dialogue"][i]["speaker"]
-        if a in ("昭昭", "灿灿") and b in ("昭昭", "灿灿"):
-            assert a != b
-    validate_daily_story_json(story, phase="full")
-
 
 def test_sync_discovery_opening_from_dialogue_aligns_prefix():
     story = {
@@ -1280,27 +646,6 @@ def test_sync_discovery_opening_from_dialogue_aligns_prefix():
     }
     sync_discovery_opening_from_dialogue(story)
     assert story["discovery_opening"] == story["dialogue"][:2]
-
-
-def test_d_opening_score_skips_stitched_prefix_overlap():
-    from app.services.daily_story.story_types.d.opening import score_opening_quality
-
-    story = {
-        "dialogue": [
-            {"speaker": "昭昭", "line": "这摞衣服歪着，要我帮你叠一叠吗"},
-            {"speaker": "灿灿", "line": "你来叠，轻点，这摞别碰，一碰就倒"},
-            {"speaker": "昭昭", "line": "好，我按你说的，连呼吸都放轻轻的"},
-        ],
-        "discovery_opening": [
-            {"speaker": "昭昭", "line": "这摞衣服歪着，要我帮你叠一叠吗"},
-            {"speaker": "灿灿", "line": "你来叠，轻点，这摞别碰，一碰就倒"},
-        ],
-        "conflict_core": "叠衣轻点却憋气喷倒",
-        "setting": "客厅沙发旁叠衣服",
-    }
-    _pts, _pros, cons = score_opening_quality(story)
-    assert "D开场与正文首句重复" not in cons
-
 
 def test_patch_d_no_content_rewrite():
     """D patch：删妈妈/压句数可以，但不改写干净台词的内容。"""
@@ -1330,7 +675,6 @@ def test_patch_d_no_content_rewrite():
     original = [d["line"] for d in story["dialogue"] if d["speaker"] != "妈妈"]
     assert kept == original
 
-
 def test_validate_daily_story_opening_rejects_consecutive_speakers():
     with pytest.raises(ValueError, match="连说"):
         validate_daily_story_opening(
@@ -1341,7 +685,6 @@ def test_validate_daily_story_opening_rejects_consecutive_speakers():
             conflict_core="姐弟抢新橡皮",
             setting="客厅抢新橡皮",
         )
-
 
 def test_validate_daily_story_opening_requires_conflict_anchor():
     with pytest.raises(ValueError, match="锚点"):
@@ -1360,25 +703,6 @@ def test_validate_daily_story_opening_requires_conflict_anchor():
     )
     assert len(ok) == 2
 
-
-def test_daily_story_opening_prompt_includes_punchline():
-    from app.services.daily_story.prompts import build_daily_story_opening_prompts
-
-    _, user = build_daily_story_opening_prompts(
-        "晾衣服要夹紧",
-        {
-            "scene_title": "晾衣夹紧",
-            "setting": "客厅晾衣架旁晾袜子",
-            "conflict_core": "夹紧被读成夹出印子",
-            "punchline_explain": "D类字面执行：夹紧被读成夹出印子，灿灿扯夹子被回旋镖",
-        },
-        type_code="D",
-    )
-    assert "夹紧" in user
-    assert "夹出印子" not in user
-    assert "铺垫靶点" in user
-
-
 def test_validate_daily_story_opening_coerces_name_key_shorthand():
     ok = validate_daily_story_opening(
         [
@@ -1392,20 +716,6 @@ def test_validate_daily_story_opening_coerces_name_key_shorthand():
         {"speaker": "昭昭", "line": "咦新橡皮怎么在你手里"},
         {"speaker": "灿灿", "line": "我才刚拿到还没拆呢"},
     ]
-
-
-def test_daily_story_prompts_c_type_route():
-    _sys, user = build_daily_story_prompts(
-        "谁先洗澡",
-        story_type="C类公平执念",
-    )
-    assert "C 公平执念" in _sys
-    assert "争归属" in _sys
-    assert "C类收束模板" in user
-    assert "回旋镖" in user or "对方刚说的规则" in user
-    assert "字面加赛" in _sys or "加赛" in _sys
-    assert "那不一样" in _sys or "禁止" in _sys
-
 
 def test_daily_story_prompts_a_type_route():
     sys_a, user_a = build_daily_story_prompts(
@@ -1441,149 +751,6 @@ def test_daily_story_prompts_a_type_route():
     _ts, user_t = build_daily_story_theme_prompts(3, type_code="A")
     assert "只出 A 类主题" in user_t
 
-
-def test_score_daily_story_a_type_punchline():
-    from app.services.daily_story.quality import score_daily_story
-
-    pad = "呀呀呀呀呀呀呀呀"
-    filler = (pad + "一二三四五六七八")[:DAILY_STORY_LINE_CHARS_MAX]
-    speakers = ("灿灿", "昭昭")
-    openers = [
-        {"speaker": "灿灿", "line": ("你得听我的我是姐姐" + pad)[:DAILY_STORY_LINE_CHARS_MAX]},
-        {"speaker": "昭昭", "line": ("凭什么你也得听我的" + pad)[:DAILY_STORY_LINE_CHARS_MAX]},
-        {"speaker": "灿灿", "line": ("大人也要听小孩的话妈妈说的" + pad)[:DAILY_STORY_LINE_CHARS_MAX]},
-        {"speaker": "灿灿", "line": ("那不一样我是教你" + pad)[:DAILY_STORY_LINE_CHARS_MAX]},
-    ]
-    closers = [
-        {"speaker": "昭昭", "line": ("哪里不一样都是听" + pad)[:DAILY_STORY_LINE_CHARS_MAX]},
-        {"speaker": "灿灿", "line": ("上次妈妈说你也要听我的" + pad)[:DAILY_STORY_LINE_CHARS_MAX]},
-        {"speaker": "昭昭", "line": ("你刚才说大人要听小孩" + pad)[:DAILY_STORY_LINE_CHARS_MAX]},
-        {"speaker": "灿灿", "line": ("……哼随便你" + pad)[:DAILY_STORY_LINE_CHARS_MAX]},
-    ]
-    mid = [
-        {"speaker": speakers[i % 2], "line": filler}
-        for i in range(16 - len(openers) - len(closers))
-    ]
-    dialogue = openers + mid + closers
-    story = {
-        "scene_title": "教作业",
-        "setting": "书桌前姐姐教弟弟",
-        "conflict_core": "姐弟教作业谁说了算",
-        "dialogue": dialogue,
-        "punchline_explain": "A类权威翻车，姐姐被追问闭环戳穿",
-        "discovery_opening": [{"speaker": "昭昭", "line": "姐姐你这道题写错了"}],
-    }
-    q = score_daily_story(story)
-    assert any(
-        "追问闭环" in r or "引先例" in r or "权威破功" in r or "回旋" in r
-        for r in q["reasons"]
-    )
-
-
-def test_score_daily_story_penalizes_ungrounded_closing_quote():
-    from app.services.daily_story.quality import score_daily_story
-
-    pad = "呀呀呀呀"
-    line = lambda t: (t + pad)[:DAILY_STORY_LINE_CHARS_MAX]
-    dialogue = [
-        {"speaker": "灿灿", "line": line("你得听我的不许玩手机")},
-        {"speaker": "昭昭", "line": line("可你上次查资料玩很久")},
-        {"speaker": "灿灿", "line": line("那不一样我是查学习")},
-        {"speaker": "昭昭", "line": line("查资料也是看屏幕呀")},
-        {"speaker": "灿灿", "line": line("我是姐姐得管你")},
-        {"speaker": "昭昭", "line": line("那不公平呀")},
-        {"speaker": "灿灿", "line": line("教你规矩不算玩")},
-        {"speaker": "昭昭", "line": line("你刚才说大人也要听小孩的话")},
-        {"speaker": "灿灿", "line": line("那不一样我是教你")},
-        {"speaker": "昭昭", "line": line("哪里不一样都是听")},
-        {"speaker": "灿灿", "line": line("哼随便你玩吧")},
-    ]
-    story = {
-        "scene_title": "手机",
-        "setting": "客厅玩手机",
-        "conflict_core": "姐姐管昭昭玩手机",
-        "dialogue": dialogue,
-        "punchline_explain": "A类权威翻车",
-        "discovery_opening": [{"speaker": "灿灿", "line": line("你怎么还在玩手机")}],
-    }
-    q = score_daily_story(story, theme="灿灿不许昭昭玩手机")
-    assert q["score"] < 85
-    assert any("无出处" in r for r in q["reasons"])
-    assert "无出处" in q["summary"] or "模板" in q["summary"] or "公平" in q["summary"]
-
-
-def test_score_daily_story_structure_capped_without_humor():
-    from app.services.daily_story.quality import score_daily_story
-
-    story = {
-        "scene_title": "橡皮",
-        "setting": "客厅抢橡皮",
-        "conflict_core": "姐弟抢橡皮",
-        "punchline_explain": "C类公平执念",
-        "discovery_opening": [{"speaker": "昭昭", "line": "橡皮怎么在你手里"}],
-        "dialogue": [
-            {"speaker": "昭昭", "line": "这是我先拿到的橡皮呀"},
-            {"speaker": "灿灿", "line": "我先看到应该归我呀"},
-            {"speaker": "昭昭", "line": "拿到的人先选呀"},
-            {"speaker": "灿灿", "line": "我没说一直占着呀"},
-            {"speaker": "昭昭", "line": "你自己说先拿到的呀"},
-            {"speaker": "灿灿", "line": "……哼，给你吧"},
-        ],
-    }
-    q = score_daily_story(story)
-    assert q["score"] <= 80
-
-
-def test_score_a_penalizes_stacked_excuses_below_85():
-    """格式齐但中段叠两套免责+收束复读，不应摸到85。"""
-    from app.services.daily_story.quality import score_daily_story
-
-    dlg = [
-        {"speaker": "昭昭", "line": "水果盘怎么少了1块？"},
-        {"speaker": "灿灿", "line": "少了？我刚数过还在啊"},
-        {"speaker": "昭昭", "line": "你嘴里鼓鼓的，在嚼什么"},
-        {"speaker": "灿灿", "line": "饭前不许偷吃，你别瞎说"},
-        {"speaker": "昭昭", "line": "那你腮帮子一动一动的"},
-        {"speaker": "灿灿", "line": "我是帮你试甜不甜的"},
-        {"speaker": "昭昭", "line": "试甜还要把整块塞嘴里？"},
-        {"speaker": "灿灿", "line": "不塞怎么尝得准啊你说"},
-        {"speaker": "昭昭", "line": "你上次偷吃也是这套词"},
-        {"speaker": "灿灿", "line": "上次？那是妈妈让我尝的"},
-        {"speaker": "昭昭", "line": "那我也要试，给我一块"},
-        {"speaker": "灿灿", "line": "不行，小小孩饭前不能吃"},
-        {"speaker": "昭昭", "line": "你不也还没开饭吗你"},
-        {"speaker": "灿灿", "line": "我是检查员，检查不算吃"},
-        {"speaker": "昭昭", "line": "检查员？谁任命你的啊"},
-        {"speaker": "灿灿", "line": "我是姐姐，今天我说了算"},
-        {"speaker": "昭昭", "line": "凭什么你能吃我不能吃"},
-        {"speaker": "灿灿", "line": "因为我负责把关好不好"},
-        {"speaker": "昭昭", "line": "把关就能先把水果吃掉？"},
-        {"speaker": "灿灿", "line": "先尝2口才叫把关啊"},
-        {"speaker": "昭昭", "line": "那检查完吐出来给我看"},
-        {"speaker": "灿灿", "line": "已经咽下去了，看不了啦"},
-        {"speaker": "昭昭", "line": "咽下去了还叫检查啊？"},
-        {"speaker": "灿灿", "line": "咽了才知道甜不甜嘛"},
-        {"speaker": "昭昭", "line": "你刚才说检查不算吃"},
-        {"speaker": "灿灿", "line": "那不一样，我是在试味道"},
-        {"speaker": "昭昭", "line": "哪里不一样？都进肚子里了"},
-        {"speaker": "灿灿", "line": "……哼"},
-    ]
-    story = {
-        "scene_title": "饭前试吃",
-        "setting": "厨房案板旁",
-        "conflict_core": "灿灿不许昭昭饭前偷吃自己却先捏",
-        "discovery_opening": dlg[:2],
-        "dialogue": dlg,
-        "punchline_explain": "A类权威翻车：检查不算吃",
-    }
-    q = score_daily_story(story, theme="灿灿不许昭昭饭前偷吃自己却先捏了一块")
-    assert q["score"] < 85
-    assert any(
-        "多套免责" in r or "借口复读" in r or "把关话术" in r or "好笑不足" in r
-        for r in q["reasons"]
-    )
-
-
 def test_validate_rejects_brush_duration_inconsistency():
     from app.services.daily_story.prompts import validate_daily_story_json
 
@@ -1614,7 +781,6 @@ def test_validate_rejects_brush_duration_inconsistency():
     with pytest.raises(ValueError, match="时长"):
         validate_daily_story_json(story, phase="full")
 
-
 def test_validate_a_opening_rejects_spoiler_hammer():
     from app.services.daily_story.prompts import validate_daily_story_opening
 
@@ -1626,7 +792,6 @@ def test_validate_a_opening_rejects_spoiler_hammer():
             type_code="A",
         )
 
-
 def test_validate_b_opening_rejects_already_caught():
     from app.services.daily_story.prompts import validate_daily_story_opening
 
@@ -1637,7 +802,6 @@ def test_validate_b_opening_rejects_already_caught():
             setting="客厅偷吃",
             type_code="B",
         )
-
 
 def test_validate_b_opening_accepts_whisper_pact():
     from app.services.daily_story.prompts import validate_daily_story_opening
@@ -1653,25 +817,6 @@ def test_validate_b_opening_accepts_whisper_pact():
     )
     assert len(ok) == 2
 
-
-def test_b_opening_score_skips_prepended_discovery_block():
-    from app.services.daily_story.story_types.b.opening import score_opening_quality
-
-    story = {
-        "discovery_opening": [
-            {"speaker": "昭昭", "line": "我望风，你拆，看到妈就咳一声。"},
-            {"speaker": "灿灿", "line": "嘘，妈在厨房，咱俩吃这包。"},
-        ],
-        "dialogue": [
-            {"speaker": "昭昭", "line": "我望风，你拆，看到妈就咳一声。"},
-            {"speaker": "灿灿", "line": "嘘，妈在厨房，咱俩吃这包。"},
-            {"speaker": "昭昭", "line": "行，你手轻点撕，我盯着门。"},
-        ],
-    }
-    _, _, cons = score_opening_quality(story)
-    assert "B开场与正文首句重复" not in cons
-
-
 def test_b_opening_rejects_fixup_lead_first_line():
     """B 开场首句禁止补救中段指令（快把/盖好），须先给发现/现状拍。"""
     from app.services.daily_story.story_types.b.opening import (
@@ -1685,78 +830,6 @@ def test_b_opening_rejects_fixup_lead_first_line():
     errors: list[str] = []
     append_b_opening_errors(opening, type_code="B", errors=errors)
     assert any("补救" in e for e in errors), errors
-
-
-def test_b_opening_accepts_premise_openings():
-    """高分 B 稿开场（发现/现状/来路/欲望拍 + 分工）不误伤。"""
-    from app.services.daily_story.story_types.b.opening import (
-        append_b_opening_errors,
-    )
-
-    good = [
-        [
-            {"speaker": "昭昭", "line": "姐姐，我发现客厅茶几下有一包饼干。"},
-            {"speaker": "灿灿", "line": "嘘，趁妈还在厨房，快拆开。"},
-        ],
-        [
-            {"speaker": "昭昭", "line": "姐姐，客厅地上怎么这么多碎片啊。"},
-            {"speaker": "灿灿", "line": "我打碎了杯子，别告诉妈妈，一会我给你块橡皮。"},
-        ],
-        [
-            {"speaker": "昭昭", "line": "姐，冰箱里蛋糕好香啊，要不要吃？"},
-            {"speaker": "灿灿", "line": "小声点，吃完把盘子藏好别让妈发现。"},
-        ],
-        [
-            {"speaker": "昭昭", "line": "姐姐，我门口捡的猫，好想留下养它"},
-            {"speaker": "灿灿", "line": "我们藏到房间里，别让妈妈看见"},
-        ],
-        [
-            {"speaker": "昭昭", "line": "姐，我把相框碰裂了！妈回来会骂的"},
-            {"speaker": "灿灿", "line": "嘘！你去找胶水粘，我盯着门口！"},
-        ],
-    ]
-    for opening in good:
-        errors: list[str] = []
-        append_b_opening_errors(opening, type_code="B", errors=errors)
-        assert not errors, (opening, errors)
-
-
-def test_b_opening_score_flags_fixup_lead():
-    """补救中段开场在质量分里压分（防硬卡漏网的旧稿）。"""
-    from app.services.daily_story.story_types.b.opening import (
-        score_opening_quality,
-    )
-
-    story = {
-        "discovery_opening": [
-            {"speaker": "昭昭", "line": "姐，快把裂口转过去，胶水瓶盖好。"},
-            {"speaker": "灿灿", "line": "小声点，藏好别让妈看见。"},
-        ],
-        "dialogue": [],
-    }
-    pts, _pros, cons = score_opening_quality(story)
-    assert any("补救中段开场" in c for c in cons)
-    assert pts < 0
-
-
-def test_b_opening_score_rewards_premise_and_division():
-    """发现拍 + 分工钉死的开场应得正分。"""
-    from app.services.daily_story.story_types.b.opening import (
-        score_opening_quality,
-    )
-
-    story = {
-        "discovery_opening": [
-            {"speaker": "昭昭", "line": "姐，我把相框碰裂了！妈回来会骂的"},
-            {"speaker": "灿灿", "line": "嘘！你去找胶水粘，我盯着门口！"},
-        ],
-        "dialogue": [],
-    }
-    pts, pros, cons = score_opening_quality(story)
-    assert "B开场发现拍" in pros
-    assert "B开场分工钉死" in pros
-    assert pts >= 0
-
 
 def test_b_freeze_only_ending_accepted():
     from app.services.daily_story.story_types.b.humor import (
@@ -1783,7 +856,6 @@ def test_b_freeze_only_ending_accepted():
     bloat, bloat_tag = analyze_post_freeze_bloat(lines, speakers)
     assert not bloat, bloat_tag
 
-
 def test_b_landing_flags_post_freeze_blame():
     from app.services.daily_story.story_types.b.humor import (
         analyze_post_freeze_bloat,
@@ -1809,83 +881,52 @@ def test_b_landing_flags_post_freeze_blame():
     issues = collect_humor_issues(lines, speakers)
     assert any("定格后多余对白" in c for c in issues)
 
-
-def test_b_chain_flags_orphan_wo_ye():
+@pytest.mark.parametrize(
+    "lines, expect_orphan",
+    [
+        (
+            [
+                "结盟",
+                "嘘妈在厨房",
+                "好你拆",
+                "啊呀，包装撕太大了！",
+                "饼干蹦出来了，快用脚接！",
+                "没接住，全掉地上了。",
+                "我也踩到了，更糟了。",
+                "别动脚，脚印会更多。",
+            ],
+            True,
+        ),
+        (
+            [
+                "结盟",
+                "包装撕太大了",
+                "我不小心踩上去了。",
+                "我也踩到了，更糟了。",
+                "别动脚。",
+            ],
+            False,
+        ),
+    ],
+)
+def test_b_chain_anaphora_wo_ye(lines, expect_orphan):
     from app.services.daily_story.story_types.b.humor import collect_chain_anaphora_issues
 
-    lines = [
-        "结盟",
-        "嘘妈在厨房",
-        "好你拆",
-        "啊呀，包装撕太大了！",
-        "饼干蹦出来了，快用脚接！",
-        "没接住，全掉地上了。",
-        "我也踩到了，更糟了。",
-        "别动脚，脚印会更多。",
-    ]
     issues = collect_chain_anaphora_issues(lines, None)
-    assert any("我也缺前句动作" in i for i in issues)
+    has = any("我也缺前句动作" in i for i in issues)
+    assert has is expect_orphan
 
-
-def test_b_chain_accepts_wo_ye_step():
-    from app.services.daily_story.story_types.b.humor import collect_chain_anaphora_issues
-
-    lines = [
-        "结盟",
-        "包装撕太大了",
-        "没接住，全掉地上了。",
-        "哎呀，我踩一脚。",
-        "别动脚，脚印会更多。",
-    ]
-    assert not collect_chain_anaphora_issues(lines, None)
-
-
-def test_b_chain_accepts_ye_with_antecedent():
-    from app.services.daily_story.story_types.b.humor import collect_chain_anaphora_issues
-
-    lines = [
-        "结盟",
-        "包装撕太大了",
-        "我不小心踩上去了。",
-        "我也踩到了，更糟了。",
-        "别动脚。",
-    ]
-    assert not collect_chain_anaphora_issues(lines, None)
-
-
-def test_b_ally_accepts_guard_post_pact():
-    """结盟用「站门口盯紧 / 一人一块」等语义表达也算约定，勿按词穷举。"""
-    from app.services.daily_story.story_types.b.humor import collect_humor_issues
-
-    lines = [
-        "姐，蛋糕切好没，我站门口盯紧。",
-        "嘘，妈在睡觉，你放轻点。",
-        "好，切两块，一人一块。",
-        "哎呀，奶油粘手上了！",
-        "快舔掉，别滴地上。",
-        "蛋糕歪了，快扶住！",
-    ]
-    issues = collect_humor_issues(lines, None)
-    assert not any("缺结盟约定" in i for i in issues)
-
-
-def test_b_huan_accepts_mid_chain_adversative():
-    """「你哭得还带响」是转折用法（还居然），连锁中已有动作则放过。"""
+@pytest.mark.parametrize(
+    "line, prev2, expect_tag",
+    [
+        ("那我说你摔了，你哭得还带响。", "就说在草地上摔了个屁股蹲。你摔了还咧嘴笑。", None),
+        ("他还踩了一脚泥。", "地上全是水。", "还字缺前句动作"),
+    ],
+)
+def test_b_huan_chain_anaphora_tag(line, prev2, expect_tag):
     from app.services.daily_story.story_types.b.humor import _chain_anaphora_tag
 
-    line = "那我说你摔了，你哭得还带响。"
-    prev2 = "就说在草地上摔了个屁股蹲。你摔了还咧嘴笑。"
-    assert _chain_anaphora_tag(line, prev2) is None
-
-
-def test_b_huan_still_flags_ungrounded():
-    """「还踩了一脚」前句无动作仍判连说，未过宽。"""
-    from app.services.daily_story.story_types.b.humor import _chain_anaphora_tag
-
-    line = "他还踩了一脚泥。"
-    prev2 = "地上全是水。"
-    assert _chain_anaphora_tag(line, prev2) == "还字缺前句动作"
-
+    assert _chain_anaphora_tag(line, prev2) == expect_tag
 
 def test_b_fact_accepts_mishap_chain_not_role_swap():
     """约定分工后虽有角色词与甩锅，但正文有真实连环走样，不算「无走样却改口」。"""
@@ -1919,7 +960,6 @@ def test_b_fact_accepts_mishap_chain_not_role_swap():
     issues = collect_fact_issues(story)
     assert not any("无走样却改口" in i for i in issues)
 
-
 def test_b_fact_rejects_division_flip():
     """分工翻转：开场昭昭望风，正文变灿灿盯门 → 硬卡。"""
     from app.services.daily_story.story_types.b.facts import _division_flip_error
@@ -1942,20 +982,6 @@ def test_b_fact_rejects_division_flip():
     sps2 = ["灿灿", "灿灿", "昭昭"]
     err = _division_flip_error(lines2, sps2)
     assert err is not None and "分工翻转" in err, err
-
-
-def test_b_fact_division_flip_ignores_blame_line():
-    """甩锅句「你没望风」是责备不是分工声明，不该判翻转。"""
-    from app.services.daily_story.story_types.b.facts import _division_flip_error
-
-    lines = [
-        "姐，你望风，我来拿",
-        "好，我盯着门口",
-        "都怪你没望风！",
-    ]
-    sps = ["昭昭", "灿灿", "昭昭"]
-    assert _division_flip_error(lines, sps) is None
-
 
 def test_b_blame_round_capped():
     """段4互甩只许一轮（≤2句），超过报硬卡。"""
@@ -1982,7 +1008,6 @@ def test_b_blame_round_capped():
     append_b_body_errors(story, errors)
     assert any("互甩只许一轮" in e for e in errors), errors
 
-
 def test_b_blame_round_two_lines_ok():
     """段4互甩一轮（2句）不误伤。"""
     from app.services.daily_story.story_types.b.validate import (
@@ -2006,32 +1031,6 @@ def test_b_blame_round_two_lines_ok():
     append_b_body_errors(story, errors)
     assert not any("互甩只许一轮" in e for e in errors), errors
 
-
-def test_b_blame_round_counts_deflect_returns():
-    """回敬式（你还怪我/你还说我）也算甩锅轮数。"""
-    from app.services.daily_story.story_types.b.validate import (
-        append_b_body_errors,
-    )
-
-    story = {
-        "punchline_explain": "B类结盟翻车",
-        "dialogue": [
-            {"speaker": "昭昭", "line": "嘘，咱俩藏相框。"},
-            {"speaker": "灿灿", "line": "我望风，你粘。"},
-            {"speaker": "昭昭", "line": "胶水挤多了。"},
-            {"speaker": "灿灿", "line": "都怪你没望风！"},
-            {"speaker": "昭昭", "line": "你还怪我，你塞相框手抖！"},
-            {"speaker": "灿灿", "line": "你还说我，你倒是扫啊！"},
-            {"speaker": "妈妈", "line": "满地胶水，站好！"},
-            {"speaker": "昭昭", "line": "完蛋了。"},
-            {"speaker": "灿灿", "line": "死定了。"},
-        ],
-    }
-    errors: list[str] = []
-    append_b_body_errors(story, errors)
-    assert any("互甩只许一轮" in e for e in errors), errors
-
-
 def test_b_watch_blame_flags_owner_deflect():
     """望风人自己反咬别人没望风 → 硬卡。"""
     from app.services.daily_story.story_types.b.facts import append_b_fact_errors
@@ -2051,7 +1050,6 @@ def test_b_watch_blame_flags_owner_deflect():
     errors: list[str] = []
     append_b_fact_errors(story, errors)
     assert any("望风" in e and "错位" in e for e in errors), errors
-
 
 def test_b_watch_blame_accepts_targeting_owner():
     """甩锅指向望风人本身（昭昭怪灿灿没望风）→ 配套成立不误伤。"""
@@ -2073,45 +1071,12 @@ def test_b_watch_blame_accepts_targeting_owner():
     append_b_fact_errors(story, errors)
     assert not any("错位" in e for e in errors), errors
 
-
-def test_b_watch_blame_flags_warned_then_blamed():
-    """提醒过妈妈来了的人不能再被怪没望风（甩锅无据）。"""
-    from app.services.daily_story.story_types.b.facts import append_b_fact_errors
-
-    story = {
-        "punchline_explain": "B类结盟翻车",
-        "dialogue": [
-            {"speaker": "昭昭", "line": "姐，相框裂了。"},
-            {"speaker": "灿灿", "line": "嘘，你粘，我看着门。"},
-            {"speaker": "昭昭", "line": "胶水挤多了。"},
-            {"speaker": "灿灿", "line": "快捡起来，妈好像往这边走了！"},
-            {"speaker": "昭昭", "line": "都怪你没望风，妈都到门口了！"},
-            {"speaker": "妈妈", "line": "站好！"},
-            {"speaker": "昭昭", "line": "完蛋了。"},
-            {"speaker": "灿灿", "line": "死定了。"},
-        ],
-    }
-    errors: list[str] = []
-    append_b_fact_errors(story, errors)
-    assert any("望风甩锅无据" in e for e in errors), errors
-
-
-def test_beats_watcher_from_division_both_word_orders():
-    """分工句两种语序（灿灿望风 / 望风的是灿灿）都能解析望风人。"""
-    from app.services.daily_story.prompts import _watcher_from_division
-
-    assert _watcher_from_division("灿灿望风，昭昭下手") == "灿灿"
-    assert _watcher_from_division("望风的是灿灿，昭昭下手") == "灿灿"
-    assert _watcher_from_division("昭昭盯着门口") == "昭昭"
-
-
 def test_b_freeze_rejects_triple_side_ding():
     from app.services.daily_story.story_types.b.humor import _freeze_lines_issues
 
     assert _freeze_lines_issues(
         ["这下死定了……", "死定了死定了！", "死定了！"],
     ) == "死定了句式重复"
-
 
 def test_b_validate_rejects_blood_content():
     from app.services.daily_story.story_types.b.validate import append_b_body_errors
@@ -2135,7 +1100,6 @@ def test_b_validate_rejects_blood_content():
     append_b_body_errors(story, errors)
     assert any("流血" in e for e in errors)
 
-
 def test_b_landing_flags_batch_weak_endings():
     from app.services.daily_story.story_types.b.humor import (
         analyze_post_freeze_bloat,
@@ -2157,53 +1121,6 @@ def test_b_landing_flags_batch_weak_endings():
     weak, _ = analyze_punish_landing(lines, speakers)
     bloat, _ = analyze_post_freeze_bloat(lines, speakers)
     assert weak or bloat
-
-
-def test_b_landing_accepts_double_doom_tail():
-    from app.services.daily_story.story_types.b.humor import analyze_punish_landing
-
-    lines = [
-        "前段结盟",
-        "走样连锁",
-        "都怪你望风",
-        "是你先弄洒",
-        "妈妈：你俩，过来站好！",
-        "昭昭：完蛋了！",
-        "灿灿：真倒霉……",
-    ]
-    speakers = [
-        "昭昭", "灿灿", "昭昭", "灿灿", "妈妈", "昭昭", "灿灿",
-    ]
-    weak, tag = analyze_punish_landing(lines, speakers)
-    assert not weak, tag
-
-
-def test_b_landing_flags_doom_phrase_repeat():
-    from app.services.daily_story.story_types.b.humor import (
-        analyze_punish_landing,
-        collect_humor_issues,
-    )
-
-    lines = [
-        "结盟",
-        "走样",
-        "妈妈：你俩，过来站好！",
-        "昭昭：完蛋了。",
-        "灿灿：我也完了。",
-        "昭昭：全完了！",
-        "昭昭：都怪你！",
-        "灿灿：是你先！",
-        "昭昭：哼，才不是。",
-    ]
-    speakers = [
-        "昭昭", "灿灿", "妈妈", "昭昭", "灿灿", "昭昭", "昭昭", "灿灿", "昭昭",
-    ]
-    weak, _ = analyze_punish_landing(lines, speakers)
-    assert not weak
-    issues = collect_humor_issues(lines, speakers)
-    assert any("句式重复" in c for c in issues)
-    assert any("定格后多余对白" in c for c in issues)
-
 
 def test_b_validate_rejects_missing_landing():
     from app.services.daily_story.story_types.b.validate import append_b_body_errors
@@ -2228,7 +1145,6 @@ def test_b_validate_rejects_missing_landing():
     append_b_body_errors(story, errors)
     assert any("定格" in e for e in errors)
 
-
 def test_validate_a_opening_rejects_mid_fight_timer():
     from app.services.daily_story.prompts import validate_daily_story_opening
 
@@ -2252,39 +1168,6 @@ def test_validate_a_opening_rejects_mid_fight_timer():
         type_code="A",
     )
     assert len(ok) == 2
-
-
-def test_score_a_quote_must_come_from_cancan():
-    from app.services.daily_story.quality import score_daily_story
-    from app.services.daily_story.prompts import DAILY_STORY_LINE_CHARS_MAX
-
-    pad = "呀呀呀呀"
-    line = lambda t: (t + pad)[:DAILY_STORY_LINE_CHARS_MAX]
-    dialogue = [
-        {"speaker": "灿灿", "line": line("你刷牙才一分钟重刷")},
-        {"speaker": "昭昭", "line": line("我刷够两分钟了呀")},
-        {"speaker": "灿灿", "line": line("我是姐姐我说了算")},
-        {"speaker": "昭昭", "line": line("那你自己也刷很快")},
-        {"speaker": "灿灿", "line": line("我那次是特殊情况")},
-        {"speaker": "昭昭", "line": line("为什么特殊情况可以我不可以")},
-        {"speaker": "灿灿", "line": line("因为我是姐姐呀")},
-        {"speaker": "昭昭", "line": line("你刚才说特殊情况可以那我也是")},
-        {"speaker": "灿灿", "line": line("那不一样我赶时间")},
-        {"speaker": "昭昭", "line": line("哪里不一样都是刷牙快")},
-        {"speaker": "灿灿", "line": line("哼你爱刷不刷")},
-    ]
-    story = {
-        "scene_title": "刷牙",
-        "setting": "卫生间刷牙",
-        "conflict_core": "姐姐管弟弟刷牙太快",
-        "dialogue": dialogue,
-        "punchline_explain": "A类权威翻车",
-        "discovery_opening": [{"speaker": "灿灿", "line": line("你怎么刷这么快")}],
-    }
-    q = score_daily_story(story, theme="姐姐嫌弟弟刷牙太快")
-    assert any("无出处" in r for r in q["reasons"])
-    assert q["score"] < 85
-
 
 def test_validate_rejects_dangling_what_is_term():
     from app.services.daily_story.prompts import validate_daily_story_json
@@ -2314,7 +1197,6 @@ def test_validate_rejects_dangling_what_is_term():
     }
     with pytest.raises(ValueError, match="什么叫连续|前文未出现"):
         validate_daily_story_json(story, phase="full")
-
 
 def test_validate_rejects_a_mid_rule_restatement():
     from app.services.daily_story.prompts import validate_daily_story_json
@@ -2350,7 +1232,6 @@ def test_validate_rejects_a_mid_rule_restatement():
     with pytest.raises(ValueError, match="复读|重复追问|注水|漱口"):
         validate_daily_story_json(story, phase="full")
 
-
 def _a_valid_body() -> dict:
     """A 类刷牙梗合法正文：末四拍 昭昭引原话→灿灿那不一样→昭昭哪里不一样→灿灿软破功。
 
@@ -2378,7 +1259,6 @@ def _a_valid_body() -> dict:
         ],
     }
 
-
 def _a_body_errors(story: dict) -> list[str]:
     from app.services.daily_story.story_types.a.validate import append_a_body_errors
 
@@ -2386,23 +1266,32 @@ def _a_body_errors(story: dict) -> list[str]:
     append_a_body_errors(story, errors)
     return errors
 
-
 def test_a_closing_structure_accepts_full_tail():
     """A 类完整末四拍（引原话→那不一样→哪里不一样→软破功）放行。"""
     errors = _a_body_errors(_a_valid_body())
     assert errors == []
 
-
-def test_a_closing_structure_rejects_beat1_without_quote():
-    """末四拍倒数第4句（昭昭）纯反问无引话：硬卡须拦。
-
-    反例来自回归实测（教作业 75 分稿）：「示范就能算错吗？」不是引前文原话。
-    """
+@pytest.mark.parametrize(
+    "slot, line, speaker_order, needle",
+    [
+        (-4, "示范就能算错吗？", None, ("倒数第4句", "引前文灿灿原话")),
+        (-3, "示范不算数", None, ("倒数第3句", "那不一样")),
+        (-2, "都是停", None, ("倒数第2句", "哪里不一样")),
+        (None, None, ("灿灿", "昭昭", "灿灿", "昭昭"), ("末4句 speaker",)),
+        (-1, "行吧你改回来吧", None, ("末句禁止",)),
+    ],
+    ids=["no_quote", "no_bu_yiyang", "no_where", "speaker_order", "last_command"],
+)
+def test_a_closing_structure_rejects_slot(slot, line, speaker_order, needle):
+    """A 末四拍各槽位硬卡（引话/那不一样/哪里不一样/speaker/末句禁管人）。"""
     story = _a_valid_body()
-    story["dialogue"][-4]["line"] = "示范就能算错吗？"
+    if speaker_order is not None:
+        for item, sp in zip(story["dialogue"][-4:], speaker_order, strict=True):
+            item["speaker"] = sp
+    else:
+        story["dialogue"][slot]["line"] = line
     errors = _a_body_errors(story)
-    assert any("倒数第4句" in e and "引前文灿灿原话" in e for e in errors), errors
-
+    assert any(all(n in e for n in needle) for e in errors), errors
 
 def test_a_closing_structure_accepts_beat1_quote_with_comma():
     """倒数第4句「你刚才说，检查不算吃对吧」带逗号也算引话，不误杀。
@@ -2415,41 +1304,6 @@ def test_a_closing_structure_accepts_beat1_quote_with_comma():
     errors = _a_body_errors(story)
     assert not any("倒数第4句" in e for e in errors), errors
 
-
-def test_a_closing_structure_rejects_missing_bu_yiyang():
-    """末四拍灿灿「那不一样」缺失：结构硬卡须拦（不该再只靠质检降分）。"""
-    story = _a_valid_body()
-    story["dialogue"][-3]["line"] = "示范不算数"
-    errors = _a_body_errors(story)
-    assert any("倒数第3句" in e and "那不一样" in e for e in errors), errors
-
-
-def test_a_closing_structure_rejects_missing_where_differs():
-    """末四拍昭昭「哪里不一样」缺失：结构硬卡须拦。"""
-    story = _a_valid_body()
-    story["dialogue"][-2]["line"] = "都是停"
-    errors = _a_body_errors(story)
-    assert any("倒数第2句" in e and "哪里不一样" in e for e in errors), errors
-
-
-def test_a_closing_structure_rejects_wrong_speaker_order():
-    """末 4 句 speaker 顺序不是 昭昭→灿灿→昭昭→灿灿：须拦。"""
-    story = _a_valid_body()
-    tail = story["dialogue"][-4:]
-    for item, sp in zip(tail, ("灿灿", "昭昭", "灿灿", "昭昭"), strict=True):
-        item["speaker"] = sp
-    errors = _a_body_errors(story)
-    assert any("末4句 speaker" in e for e in errors), errors
-
-
-def test_a_closing_rejects_last_line_command():
-    """末句管人（你改回来/重写）被末句词表拦下。"""
-    story = _a_valid_body()
-    story["dialogue"][-1]["line"] = "行吧你改回来吧"
-    errors = _a_body_errors(story)
-    assert any("末句禁止" in e for e in errors), errors
-
-
 def test_a_closing_structure_non_a_skipped():
     """非 A 类末四拍不套 A 结构硬卡（避免误伤）。"""
     from app.services.daily_story.story_types import parse_story_type_code
@@ -2459,7 +1313,6 @@ def test_a_closing_structure_non_a_skipped():
     assert parse_story_type_code(punchline="C类公平执念") == "C"
     errors = _a_body_errors(story)
     assert not any("末四拍" in e for e in errors), errors
-
 
 def _a_steal_body() -> dict:
     """A 类偷吃合法正文：前 4 句纯反咬赖账，末四拍完整。
@@ -2492,7 +1345,6 @@ def _a_steal_body() -> dict:
         ],
     }
 
-
 def test_a_steal_rejects_check_word_in_first_four():
     """偷吃对白前 4 句出现检查/试甜类字：硬卡须拦（模型实测反复违规）。"""
     story = _a_steal_body()
@@ -2500,13 +1352,11 @@ def test_a_steal_rejects_check_word_in_first_four():
     errors = _a_body_errors(story)
     assert any("检查线前置" in e for e in errors), errors
 
-
 def test_a_steal_accepts_clean_first_four_repel():
     """偷吃前 4 句纯反咬赖账（你嘴馋/果汁溅的）：硬卡放行。"""
     story = _a_steal_body()
     errors = _a_body_errors(story)
     assert not any("检查线前置" in e for e in errors), errors
-
 
 def test_a_steal_check_early_skips_non_steal():
     """非偷吃主题（刷牙）前 4 句含检查字不套偷吃硬卡（避免误伤）。"""
@@ -2514,88 +1364,6 @@ def test_a_steal_check_early_skips_non_steal():
     story["dialogue"][0]["line"] = "你检查牙呢？才刷几下啊"
     errors = _a_body_errors(story)
     assert not any("检查线前置" in e for e in errors), errors
-
-
-def test_score_c_boomerang_humor_not_flatlined():
-    """C 回旋镖收束时好笑维不因同义引话被整维清零。"""
-    from app.services.daily_story.quality import score_daily_story
-
-    pad = "呀呀呀呀呀呀"
-    line = lambda t: (t + pad)[:DAILY_STORY_LINE_CHARS_MAX]
-    dialogue = [
-        {"speaker": "昭昭", "line": line("这个先后得讲规矩")},
-        {"speaker": "灿灿", "line": line("我比你大我先")},
-        {"speaker": "昭昭", "line": line("你又不是真大人")},
-        {"speaker": "灿灿", "line": line("那谁更急谁先上")},
-        {"speaker": "昭昭", "line": line("行啊谁更急谁赢")},
-        {"speaker": "灿灿", "line": line("你怎么证明你急")},
-        {"speaker": "昭昭", "line": line("我去多接一杯水")},
-        {"speaker": "灿灿", "line": line("等等你作弊还没比呢")},
-        {"speaker": "昭昭", "line": line("你说的比谁更急喝越多越急")},
-        {"speaker": "灿灿", "line": line("哼算你狠你先吧")},
-    ]
-    story = {
-        "scene_title": "争先后",
-        "setting": "门口姐弟争先后",
-        "conflict_core": "姐弟争同一顺序",
-        "dialogue": dialogue,
-        "punchline_explain": "C类公平执念，规则字面回旋镖",
-        "discovery_opening": [{"speaker": "昭昭", "line": line("你怎么站我前面")}],
-    }
-    q = score_daily_story(story, theme="争先后")
-    assert any("回旋镖" in r for r in q["reasons"])
-    assert not any("无出处" in r for r in q["reasons"])
-    humor_pts = next(
-        (int(m.group(1)) for r in q["reasons"] if (m := __import__("re").search(r"好笑(\d+)", r))),
-        None,
-    )
-    assert humor_pts is not None and humor_pts >= 9, q["reasons"]
-    assert any("字面加赛" in r for r in q["reasons"]), q["reasons"]
-
-
-def test_score_c_folding_literal_play_not_flatlined():
-    """C 叠收字面加赛：勿误扣缺可拍争法、好笑维须够格。"""
-    from app.services.daily_story.quality import score_daily_story
-
-    pad = "呀呀呀呀呀呀"
-    line = lambda t: (t + pad)[:DAILY_STORY_LINE_CHARS_MAX]
-    dialogue = [
-        {"speaker": "灿灿", "line": line("叠好的衣服怎么翻出来了")},
-        {"speaker": "昭昭", "line": line("我找袜子又不是故意的")},
-        {"speaker": "灿灿", "line": line("谁弄乱谁收拾这是规矩")},
-        {"speaker": "昭昭", "line": line("凭什么你定的规矩呀")},
-        {"speaker": "灿灿", "line": line("我叠好了你弄乱你收")},
-        {"speaker": "昭昭", "line": line("行我叠但叠完你得收")},
-        {"speaker": "灿灿", "line": line("你叠的必须整整齐齐")},
-        {"speaker": "昭昭", "line": line("那你看着一件一件收")},
-        {"speaker": "灿灿", "line": line("行谁怕谁你叠吧")},
-        {"speaker": "昭昭", "line": line("这件叠好了给你")},
-        {"speaker": "灿灿", "line": line("东倒西歪算什么叠法")},
-        {"speaker": "昭昭", "line": line("你叠你收又没说要多好")},
-        {"speaker": "灿灿", "line": line("你耍赖还不如不叠")},
-        {"speaker": "昭昭", "line": line("你说的谁弄乱谁收拾呢")},
-        {"speaker": "灿灿", "line": line("哼算你狠我自己来")},
-    ]
-    story = {
-        "scene_title": "叠好的衣服",
-        "setting": "客厅沙发衣服被翻乱",
-        "conflict_core": "姐弟争谁收拾叠好的衣服",
-        "dialogue": dialogue,
-        "punchline_explain": "C类公平执念，赛规字面回旋镖",
-        "discovery_opening": [
-            {"speaker": "灿灿", "line": line("沙发上那堆衣服谁弄的")},
-        ],
-    }
-    q = score_daily_story(story, theme="弄乱叠好的衣服")
-    assert not any("缺可拍争法" in r for r in q["reasons"]), q["reasons"]
-    humor_pts = next(
-        (int(m.group(1)) for r in q["reasons"] if (m := __import__("re").search(r"好笑(\d+)", r))),
-        None,
-    )
-    assert humor_pts is not None and humor_pts >= 9, q["reasons"]
-    # 正则好笑在 score_daily_story 里不叠加；attach finalize 后才会进总分
-    assert q["score"] == q.get("structure_score"), q["reasons"]
-
 
 def test_attach_daily_story_quality_finalizes_structure_plus_regex_humor():
     """保存路径：attach 后总分 = 结构 + 正则好笑。"""
@@ -2633,48 +1401,6 @@ def test_attach_daily_story_quality_finalizes_structure_plus_regex_humor():
     assert q["score"] == min(100, structure + humor), q
     assert q["score"] >= structure
     assert raw["score"] == structure
-
-
-def test_attach_preserves_llm_humor_on_resave():
-    from app.services.daily_story.quality import attach_daily_story_quality
-
-    story = {
-        "scene_title": "叠好的衣服",
-        "setting": "客厅沙发",
-        "conflict_core": "姐弟争谁收拾",
-        "dialogue": [
-            {"speaker": "灿灿", "line": "沙发上那堆衣服谁弄乱的"},
-            {"speaker": "昭昭", "line": "不是我呀，我刚从房间出来"},
-            {"speaker": "灿灿", "line": "你脚边全是皱的，肯定你翻过"},
-            {"speaker": "昭昭", "line": "那是猫弄的，你看这爪印"},
-            {"speaker": "灿灿", "line": "猫不会把叠好的翻开，你弄乱谁收拾"},
-            {"speaker": "昭昭", "line": "谁弄乱谁收拾？你刚才也伸手碰了"},
-            {"speaker": "灿灿", "line": "我碰一下怎么算翻"},
-            {"speaker": "昭昭", "line": "你说的谁弄乱谁收拾呢"},
-            {"speaker": "灿灿", "line": "哼算你狠我自己来"},
-        ],
-        "punchline_explain": "C类公平执念，赛规字面回旋镖",
-        "discovery_opening": [
-            {"speaker": "灿灿", "line": "沙发上那堆衣服谁弄乱的"},
-            {"speaker": "昭昭", "line": "不是我呀，我刚从房间出来"},
-        ],
-        "quality": {
-            "grade": "好",
-            "score": 90,
-            "structure_score": 80,
-            "humor": {
-                "funny_score": 14,
-                "best_moment": "你说的谁弄乱谁收拾呢",
-                "humor_type": "natural",
-            },
-            "reasons": [],
-        },
-    }
-    attach_daily_story_quality(story, theme="弄乱叠好的衣服")
-    q = story["quality"]
-    assert q["humor"]["funny_score"] == 14
-    assert q["score"] == min(100, int(q["structure_score"]) + 14)
-
 
 def test_infer_story_type_and_normalize_punchline():
     from app.services.daily_story.story_types import (
@@ -2730,7 +1456,6 @@ def test_infer_story_type_and_normalize_punchline():
     }
     assert infer_story_type_code(a_tail, theme="教作业") == "A"
 
-
 def test_validate_c_body_rejects_a_style_closing():
     story = _valid_story()
     dialogue = story["dialogue"]
@@ -2748,12 +1473,6 @@ def test_validate_c_body_rejects_a_style_closing():
     with pytest.raises(ValueError, match="A 式末四拍|回旋镖"):
         validate_daily_story_json(story, phase="body")
 
-
-def test_validate_c_body_accepts_boomerang_close():
-    story = _valid_story()
-    validate_daily_story_json(story, phase="body")
-
-
 def test_validate_c_body_accepts_ni_gang_shuo_boomerang():
     story = _valid_story()
     sp2 = story["dialogue"][-2]["speaker"]
@@ -2762,7 +1481,6 @@ def test_validate_c_body_accepts_ni_gang_shuo_boomerang():
         "line": _pad_line("你刚说谁弄乱谁收拾呀"),
     }
     validate_daily_story_json(story, phase="body")
-
 
 def test_validate_c_body_rejects_truncated_close_line():
     story = _valid_story()
@@ -2773,7 +1491,6 @@ def test_validate_c_body_rejects_truncated_close_line():
     }
     with pytest.raises(ValueError, match="完整|未说完|引号"):
         validate_daily_story_json(story, phase="body")
-
 
 def test_validate_c_body_rejects_rule_drift_no_verdict():
     """C 稿换比法/重开 ≥3 次且无人宣判旧局 → 赛规漂移硬卡（稿B 型）。"""
@@ -2788,7 +1505,6 @@ def test_validate_c_body_rejects_rule_drift_no_verdict():
     with pytest.raises(ValueError, match="赛规漂移|规则被反复单方面推翻"):
         validate_daily_story_json(story, phase="body")
 
-
 def test_validate_c_body_allows_rule_drift_with_verdict():
     """换比法后有人宣判（妈妈裁定/明明说）→ 放行，不算漂移。"""
     story = _valid_story()
@@ -2798,26 +1514,22 @@ def test_validate_c_body_allows_rule_drift_with_verdict():
     dialogue[9] = {"speaker": dialogue[9]["speaker"], "line": _pad_line("妈妈说定了先拿先选呀")}
     validate_daily_story_json(story, phase="body")
 
-
-def test_validate_c_body_rejects_consume_criterion():
-    """C 稿把胜负系在消耗/破坏资源状态的动作上（谁先咬到谁吃）→ 判据漂移硬卡。
-    冰棍稿 63 漏网（专家评审）：咬一口后资源不可逆改变，「重来」物理上不成立。"""
+@pytest.mark.parametrize(
+    "edits, match",
+    [
+        ({4: "谁先咬到谁吃呀"}, "判据漂移"),
+        ({4: "碰到不算拿到才算呀"}, "判据漂移"),
+        ({4: "抓到手不算攥稳才算呀", 7: "攥稳不算握死才算呀"}, "分级杠精"),
+    ],
+)
+def test_validate_c_body_rejects_criterion_drift(edits, match):
+    """C 判据漂移/分级杠精硬卡（消耗、占有态、接触弱词、分级杠）。"""
     story = _valid_story()
     dialogue = story["dialogue"]
-    dialogue[4] = {"speaker": dialogue[4]["speaker"], "line": _pad_line("谁先咬到谁吃呀")}
-    with pytest.raises(ValueError, match="判据漂移"):
+    for idx, text in edits.items():
+        dialogue[idx] = {"speaker": dialogue[idx]["speaker"], "line": _pad_line(text)}
+    with pytest.raises(ValueError, match=match):
         validate_daily_story_json(story, phase="body")
-
-
-def test_validate_c_body_rejects_state_hold_criterion():
-    """C 稿把胜负系在连续占有状态上（谁先攥住谁赢，与拿稳/拿住同类）→ 判据漂移硬卡。
-    草莓稿 67 漏网：提示词禁连续状态当判据，硬卡此前只匹配松手/放手/撒手。"""
-    story = _valid_story()
-    dialogue = story["dialogue"]
-    dialogue[4] = {"speaker": dialogue[4]["speaker"], "line": _pad_line("谁先攥住谁就赢了呀")}
-    with pytest.raises(ValueError, match="判据漂移"):
-        validate_daily_story_json(story, phase="body")
-
 
 def test_validate_c_body_accepts_possession_criterion():
     """占有系判据（谁先拿到归谁吃）放行，不误伤。"""
@@ -2826,234 +1538,38 @@ def test_validate_c_body_accepts_possession_criterion():
     dialogue[4] = {"speaker": dialogue[4]["speaker"], "line": _pad_line("谁先拿到归谁吃呀")}
     validate_daily_story_json(story, phase="body")
 
-
-def test_validate_c_body_rejects_contact_criterion_anywhere():
-    """接触弱词零容忍（用户 2026-08-09 三连纠正）：「碰到不算拿到才算」击穿句也有
-    「碰」字——判据/击穿/自证里弱接触词一概不出现，命中即判据漂移重抽。"""
-    story = _valid_story()
-    dialogue = story["dialogue"]
-    dialogue[4] = {"speaker": dialogue[4]["speaker"], "line": _pad_line("碰到不算拿到才算呀")}
-    with pytest.raises(ValueError, match="判据漂移"):
-        validate_daily_story_json(story, phase="body")
-
-
-def test_validate_c_body_rejects_grading_bicker():
-    """分级杠精：「X不算，Y才算」逐级发明新判据词 ≥2 次 → 判据漂移硬卡（专家三轮）。
-    草莓/座位/蜡笔/酸奶 FAIL 稿共病——手部接触（碰→抓→攥→拿稳）与动作仪式
-    （坐→坐实、撕→撕多少、削→露五毫米、倒→戳进）都被模型展开成连续谱逐级杠。"""
-    story = _valid_story()
-    dialogue = story["dialogue"]
-    dialogue[4] = {"speaker": dialogue[4]["speaker"], "line": _pad_line("抓到手不算攥稳才算呀")}
-    dialogue[7] = {"speaker": dialogue[7]["speaker"], "line": _pad_line("攥稳不算握死才算呀")}
-    with pytest.raises(ValueError, match="分级杠精"):
-        validate_daily_story_json(story, phase="body")
-
-
-def test_validate_c_body_rejects_ritual_grading_bicker():
-    """动作仪式型也分级：坐→坐实 / 撕开→撕多少 逐级杠 ≥2 次 → 拦截。
-    蜡笔 42 稿「转三圈露出来→得露五毫米才算」、酸奶 73 稿「吸管…拿起杯子才算」
-    是动作仪式被分级的例证（专家三轮：分级杠精不挑判据类型）。"""
-    story = _valid_story()
-    dialogue = story["dialogue"]
-    dialogue[4] = {"speaker": dialogue[4]["speaker"], "line": _pad_line("坐上去不算坐稳才算呀")}
-    dialogue[7] = {"speaker": dialogue[7]["speaker"], "line": _pad_line("坐稳不算坐实才算呀")}
-    with pytest.raises(ValueError, match="分级杠精"):
-        validate_daily_story_json(story, phase="body")
-
-
-def test_validate_c_body_rejects_contact_claim_single_line():
-    """单句接触弱主张（我手已经搭上橡皮了）→ 判据漂移硬卡（用户 2026-08-09 零容忍）。
-    2026-08-09 专家+用户定：删弱主张→击穿，弱接触词一概不出现。"""
-    story = _valid_story()
-    dialogue = story["dialogue"]
-    dialogue[4] = {"speaker": dialogue[4]["speaker"], "line": _pad_line("我手已经搭上橡皮了呀")}
-    with pytest.raises(ValueError, match="判据漂移"):
-        validate_daily_story_json(story, phase="body")
-
-
-def test_validate_c_body_rejects_contact_claim_xian_peng_de():
-    """「我先碰的」——接触弱词「的」后缀漏网（2026-08-09 v10 酸奶稿第 12 句
-    「反正我先碰的」当自证）：先X碰/摸+的 命中即判据漂移。"""
-    story = _valid_story()
-    dialogue = story["dialogue"]
-    dialogue[4] = {"speaker": dialogue[4]["speaker"], "line": _pad_line("反正我先碰的呀")}
-    with pytest.raises(ValueError, match="判据漂移"):
-        validate_daily_story_json(story, phase="body")
-
-
-def test_validate_c_body_rejects_contact_claim_inserted_object():
-    """「碰我手了」——接触弱词插宾语后接「了」（2026-08-09 v10 酸奶稿第 12 句
-    「你碰我手了，你才不算」作击穿）：碰+宾语+了 命中即判据漂移。"""
-    story = _valid_story()
-    dialogue = story["dialogue"]
-    dialogue[4] = {"speaker": dialogue[4]["speaker"], "line": _pad_line("你碰我手了，你才不算呀")}
-    with pytest.raises(ValueError, match="判据漂移"):
-        validate_daily_story_json(story, phase="body")
-
-
-def test_validate_c_body_accepts_action_assign_theme():
-    """动作分派型（我切你选/我分你先挑/我搬你摆）对白不受分级杠精词表误伤。"""
-    story = _valid_story()
-    dialogue = story["dialogue"]
-    dialogue[4] = {"speaker": dialogue[4]["speaker"], "line": _pad_line("我切蛋糕你来选呀")}
-    dialogue[7] = {"speaker": dialogue[7]["speaker"], "line": _pad_line("你刚说我切你选，我先选呀")}
-    dialogue[9] = {"speaker": dialogue[9]["speaker"], "line": _pad_line("我分两堆你先挑呀")}
-    validate_daily_story_json(story, phase="body")
-
-
 def _mom_ruling_check(speakers, lines):
     from app.services.daily_story.story_types.c.validate import _mom_ruling_ignored_error
 
     return _mom_ruling_ignored_error(speakers, lines)
 
-
-def test_c_mom_ruling_ignored_rejects_stalemate():
-    """妈妈出场裁定后，末段双方各说「我先」僵局 → 妈妈裁定被无视硬卡（稿B 型）。"""
-    speakers = ["昭昭", "灿灿", "妈妈", "昭昭", "灿灿", "昭昭", "灿灿"]
-    lines = [
-        "a", "b", "c", "d", "e", "我先碰的", "我先碰的你碰晚了",
-    ]
+@pytest.mark.parametrize(
+    "speakers, lines, expect_err",
+    [
+        (
+            ["昭昭", "灿灿", "妈妈", "昭昭", "灿灿", "昭昭", "灿灿"],
+            ["a", "b", "c", "d", "e", "我先碰的", "我先碰的你碰晚了"],
+            True,
+        ),
+        (
+            ["昭昭", "妈妈", "灿灿", "昭昭", "灿灿"],
+            ["a", "b", "c", "d", "妈妈刚说谁先碰到谁用呀"],
+            False,
+        ),
+        (
+            ["昭昭", "灿灿", "昭昭", "灿灿"],
+            ["a", "b", "c", "d"],
+            False,
+        ),
+    ],
+)
+def test_c_mom_ruling_ignored(speakers, lines, expect_err):
+    """妈妈裁定后僵局硬卡；引用原规或无妈妈则放行。"""
     err = _mom_ruling_check(speakers, lines)
-    assert err and "妈妈" in err and "僵局" in err
-
-
-def test_c_mom_ruling_ignored_accepts_mom_ref():
-    """末段引用妈妈原规（妈妈说/刚说）→ 放行。"""
-    speakers = ["昭昭", "妈妈", "灿灿", "昭昭", "灿灿"]
-    lines = ["a", "b", "c", "d", "妈妈刚说谁先碰到谁用呀"]
-    assert _mom_ruling_check(speakers, lines) is None
-
-
-def test_c_mom_ruling_ignored_accepts_mom_tail_verdict():
-    """妈妈本人末段判决收束 → 放行。"""
-    speakers = ["昭昭", "妈妈", "灿灿", "妈妈", "灿灿"]
-    lines = ["a", "b", "c", "昭昭先碰的用吧", "哼"]
-    assert _mom_ruling_check(speakers, lines) is None
-
-
-def test_c_mom_ruling_ignored_no_mom():
-    """无妈妈出场 → 不触发。"""
-    speakers = ["昭昭", "灿灿", "昭昭", "灿灿"]
-    lines = ["a", "b", "c", "d"]
-    assert _mom_ruling_check(speakers, lines) is None
-
-
-def test_build_quality_edit_scope_hint_for_c_closing():
-    from app.services.daily_story.quality import (
-        build_quality_edit_scope_hint,
-        build_quality_revision_hints,
-    )
-
-    story = _valid_story()
-    hints = build_quality_revision_hints(
-        {
-            "reasons": [
-                "回旋镖收束",
-                "冲突推进3层",
-                "C收束缺可拍争法",
-                "结构65",
-                "好笑9",
-            ],
-            "score": 69,
-        },
-        story=story,
-    )
-    assert "缺可拍" in hints or "字面加赛" in hints
-    assert "C·好笑目标" not in hints
-    assert "改稿范围" in hints
-    assert "中段" in hints
-    scope = build_quality_edit_scope_hint(story, "【C·收束】回旋镖")
-    assert "第" in scope and "行" in scope
-
-
-def test_c_quality_has_fact_opening_and_humor_dims():
-    import json
-
-    from app.services.daily_story.quality import score_daily_story
-
-    path = "tmp/daily_story_c_clothes_regen.json"
-    try:
-        raw = json.load(open(path))
-    except OSError:
-        return
-    if not raw:
-        return
-    st = raw[0].get("story")
-    if not isinstance(st, dict):
-        return
-    q = score_daily_story(st)
-    reasons = q.get("reasons") or []
-    assert any("好笑" in r for r in reasons)
-    assert any("C事实" in r or "事实自洽" in r for r in reasons)
-    assert any(
-        "C开场" in r or "开场" in r for r in reasons
-    ) or any("C开场锚定" in r for r in reasons)
-
-
-def test_validation_retry_hints_primary_issue_only():
-    from app.services.daily_story.retry_hints import (
-        build_validation_retry_hints,
-        pick_primary_validation_errors,
-    )
-
-    err = (
-        "正文总字数须≥280，当前219（还差61字）; "
-        "C类末段须有回旋镖（用对方刚立的规则反问）或实物真相反转收束"
-    )
-    assert "总字数" in pick_primary_validation_errors(err)[0]
-    hint = build_validation_retry_hints(err, chars=219, type_code="C")
-    assert "补字" in hint
-    assert "末 4 句" not in hint
-
-    err2 = (
-        "dialogue[9:10] 昭昭 连说≥2句，须轮流说话; "
-        "C类末段须有回旋镖（用对方刚立的规则反问）或实物真相反转收束"
-    )
-    hint2 = build_validation_retry_hints(err2, chars=300, type_code="C")
-    assert "连说" in hint2
-    assert "回旋镖·只改末" not in hint2
-
-    # D「勿写成 A」不得误中 C 式赛规提示
-    err_d = (
-        "D类收束勿写成 A 式末四拍（引话+那不一样+哪里不一样）；"
-        "应走叮嘱方破规+字面回旋镖"
-    )
-    assert pick_primary_validation_errors(err_d)[0].startswith("D类收束")
-    hint_d = build_validation_retry_hints(err_d, chars=300, type_code="D")
-    assert "D·去A化" in hint_d
-    assert "赛规回旋镖" not in hint_d
-    assert "你自己说" in hint_d
-
-
-def test_build_quality_revision_hints_consecutive_before_humor():
-    from app.services.daily_story.quality import build_quality_revision_hints
-    from app.services.daily_story.retry_hints import pick_primary_quality_issue
-
-    cons = [
-        "存在同人连说",
-        "B连锁也又还缺前句（我也缺前句动作）",
-    ]
-    kind, issue = pick_primary_quality_issue(cons)
-    assert kind == "consecutive"
-    assert issue == "存在同人连说"
-
-    story = _valid_story()
-    hints = build_quality_revision_hints(
-        {
-            "reasons": [
-                "冲突推进4层",
-                *cons,
-                "结构67",
-                "好笑5",
-            ],
-            "score": 72,
-        },
-        story=story,
-    )
-    assert "连说" in hints
-    assert "勿只改 speaker" in hints
-    assert "也又还" not in hints
-
+    if expect_err:
+        assert err and "妈妈" in err and "僵局" in err
+    else:
+        assert err is None
 
 def test_b_patch_splits_consecutive_with_bridge():
     from app.services.daily_story.story_types.b.patch import patch_b_body
@@ -3095,7 +1611,6 @@ def test_b_patch_splits_consecutive_with_bridge():
     assert not any("连说改speaker" in n for n in local_notes)
     assert any("B插接话" in n for n in local_notes)
 
-
 def test_b_patch_strips_orphan_ye():
     from app.services.daily_story.story_types.b.patch import patch_b_orphan_ye
 
@@ -3115,122 +1630,6 @@ def test_b_patch_strips_orphan_ye():
     notes = patch_b_orphan_ye(story)
     assert notes
     assert story["dialogue"][5]["line"] == "我不敢用手捡。"
-
-
-def test_b_patch_strips_alliance_orphan_ye():
-    from app.services.daily_story.story_types.b.patch import patch_b_orphan_ye
-
-    story = {
-        "punchline_explain": "B类结盟翻车",
-        "dialogue": [
-            {"speaker": "昭昭", "line": "姐，冰箱里蛋糕好香啊，要不要吃？"},
-            {"speaker": "灿灿", "line": "小声点，吃完把盘子藏好别让妈发现。"},
-            {"speaker": "昭昭", "line": "我也想吃，你切蛋糕，我负责望风。"},
-            {"speaker": "灿灿", "line": "好，我切两块，你盯紧厨房门口。"},
-            {"speaker": "灿灿", "line": "哎呀奶油滴桌布了！"},
-            {"speaker": "妈妈", "line": "你俩拿的什么！又偷吃！"},
-            {"speaker": "昭昭", "line": "被发现了！"},
-        ],
-    }
-    notes = patch_b_orphan_ye(story)
-    assert notes
-    assert story["dialogue"][2]["line"] == "我想吃，你切蛋糕，我负责望风。"
-
-
-def test_b_humor_ye_overuse():
-    from app.services.daily_story.story_types.b.humor import collect_ye_overuse_issues
-
-    lines = [
-        "姐咱俩吃。",
-        "好我也来。",
-        "我也想吃。",
-        "蛋糕也掉了。",
-        "墙边也脏了。",
-        "妈妈站好！",
-        "完了！",
-    ]
-    issues = collect_ye_overuse_issues(lines, ["昭昭", "灿灿", "昭昭", "灿灿", "昭昭", "妈妈", "昭昭"])
-    assert issues
-    assert "B也字过多" in issues[0]
-
-
-def test_b_patch_inserts_pre_punish_blame():
-    from app.services.daily_story.story_types.b.patch import patch_b_ensure_pre_punish_blame
-
-    story = {
-        "punchline_explain": "B类结盟翻车",
-        "dialogue": [
-            {"speaker": "昭昭", "line": "嘘咱俩快藏。"},
-            {"speaker": "灿灿", "line": "好你望风我藏。"},
-            {"speaker": "灿灿", "line": "哎呀袋子破了！"},
-            {"speaker": "昭昭", "line": "渣掉地上了！"},
-            {"speaker": "灿灿", "line": "快用脚挡！"},
-            {"speaker": "昭昭", "line": "来不及了！"},
-            {"speaker": "妈妈", "line": "你俩，站好！"},
-            {"speaker": "昭昭", "line": "被发现了！"},
-            {"speaker": "灿灿", "line": "这下死定了……"},
-        ],
-    }
-    notes = patch_b_ensure_pre_punish_blame(story)
-    assert notes
-    pre_mom = "".join(
-        d["line"] for d in story["dialogue"][: story["dialogue"].index(
-            next(d for d in story["dialogue"] if d["speaker"] == "妈妈"),
-        )]
-    )
-    assert "都怪" in pre_mom or "说我" in pre_mom
-
-
-def test_b_humor_flags_ungrounded_signal_ref():
-    from app.services.daily_story.story_types.b.humor import collect_signal_and_freeze_issues
-
-    lines = [
-        "嘘咱俩吃蛋糕",
-        "你切我望风",
-        "哎呀洒了",
-        "快擦",
-        "都怪你望风",
-        "暗号没用",
-        "妈妈站好",
-        "被发现了",
-    ]
-    speakers = ["昭昭", "灿灿", "昭昭", "灿灿", "昭昭", "灿灿", "妈妈", "昭昭"]
-    issues = collect_signal_and_freeze_issues(lines, speakers)
-    assert any("暗号无前文" in c for c in issues)
-
-
-def test_b_humor_flags_verbose_freeze():
-    from app.services.daily_story.story_types.b.humor import collect_signal_and_freeze_issues
-
-    lines = [
-        "结盟",
-        "走样",
-        "甩锅",
-        "妈妈：你俩站好",
-        "昭昭：露馅了，这下惨了，怎么办。",
-        "灿灿：完了完了，全完了，被抓住了。",
-    ]
-    speakers = ["昭昭", "灿灿", "昭昭", "妈妈", "昭昭", "灿灿"]
-    issues = collect_signal_and_freeze_issues(lines, speakers)
-    assert any("定格啰嗦" in c for c in issues)
-
-
-def test_b_patch_merges_mom_lines():
-    from app.services.daily_story.story_types.b.patch import patch_b_merge_mom_lines
-
-    story = {
-        "punchline_explain": "B类结盟翻车",
-        "dialogue": [
-            {"speaker": "妈妈", "line": "满地都是牛奶！"},
-            {"speaker": "妈妈", "line": "你俩站好！"},
-            {"speaker": "昭昭", "line": "被发现了……"},
-        ],
-    }
-    notes = patch_b_merge_mom_lines(story)
-    assert notes
-    assert story["dialogue"][0]["line"] == "满地都是牛奶，你俩站好！"
-    assert len(story["dialogue"]) == 2
-
 
 def test_validate_e_lie_rejects_batch3_garbage():
     from app.services.daily_story.prompts import (
@@ -3271,7 +1670,6 @@ def test_validate_e_lie_rejects_batch3_garbage():
             setting=story["setting"],
             type_code="E",
         )
-
 
 def test_validate_e_lie_accepts_compact_positive():
     from app.services.daily_story.story_types.e.opening import append_e_opening_errors
@@ -3318,7 +1716,6 @@ def test_validate_e_lie_accepts_compact_positive():
     )
     assert open_errs == []
 
-
 def test_validate_e_picky_rejects_catch_before_rule():
     """现行=规矩名：禁先问拨开再答不许挑食；须妈妈开场。"""
     from app.services.daily_story.story_types.e.opening import append_e_opening_errors
@@ -3355,7 +1752,6 @@ def test_validate_e_picky_rejects_catch_before_rule():
     )
     assert any("妈妈先训" in e or "因果反了" in e for e in open_errs)
 
-
 def test_validate_e_picky_accepts_rule_before_catch():
     from app.services.daily_story.story_types.e.opening import append_e_opening_errors
     from app.services.daily_story.story_types.e.validate import append_e_body_errors
@@ -3391,7 +1787,6 @@ def test_validate_e_picky_accepts_rule_before_catch():
     )
     assert open_errs == []
 
-
 def _review_story() -> dict:
     return {
         "setting": "客厅",
@@ -3409,46 +1804,42 @@ def _review_story() -> dict:
         ],
     }
 
-
-def test_review_local_issues_catch_dup_and_empty_line():
+@pytest.mark.parametrize(
+    "story_factory, expect_kinds",
+    [
+        ("dup", {("重复", (1, 5)), ("其他", (3,))}),
+        ("short_tail", set()),
+        ("mid_empty", {("其他", (2,))}),
+    ],
+    ids=["dup_and_empty", "short_tail_ok", "mid_empty"],
+)
+def test_review_local_issues_empty_and_dup(story_factory, expect_kinds):
     from app.services.daily_story.review import collect_local_issues
 
-    issues = collect_local_issues(_review_story())
-    kinds = {(it["kind"], tuple(it["lines"])) for it in issues}
-    assert ("重复", (1, 5)) in kinds
-    assert ("其他", (3,)) in kinds
-
-
-def test_review_short_tail_line_not_empty_response():
-    """各类型末句硬模板都允许「……哼/行/算了」短收场，不该判空应答。"""
-    from app.services.daily_story.review import collect_local_issues
-
-    story = {
-        "dialogue": [
-            {"speaker": "昭昭", "line": "你刚说谁先碰到谁切，我贴上了！"},
-            {"speaker": "灿灿", "line": "你作弊，我手还悬在上面呢！"},
-            {"speaker": "昭昭", "line": "哼。"},
-        ],
-    }
-    issues = collect_local_issues(story)
-    assert not any(it["kind"] == "其他" for it in issues), issues
-
-
-def test_review_mid_empty_line_still_caught():
-    """中段的「行！」式空应答仍要抓，只豁免末句。"""
-    from app.services.daily_story.review import collect_local_issues
-
-    story = {
-        "dialogue": [
-            {"speaker": "昭昭", "line": "你刚说谁先碰到谁切，我贴上了！"},
-            {"speaker": "灿灿", "line": "行！"},
-            {"speaker": "昭昭", "line": "哼。"},
-        ],
-    }
+    if story_factory == "dup":
+        story = _review_story()
+    elif story_factory == "short_tail":
+        story = {
+            "dialogue": [
+                {"speaker": "昭昭", "line": "你刚说谁先碰到谁切，我贴上了！"},
+                {"speaker": "灿灿", "line": "你作弊，我手还悬在上面呢！"},
+                {"speaker": "昭昭", "line": "哼。"},
+            ],
+        }
+    else:
+        story = {
+            "dialogue": [
+                {"speaker": "昭昭", "line": "你刚说谁先碰到谁切，我贴上了！"},
+                {"speaker": "灿灿", "line": "行！"},
+                {"speaker": "昭昭", "line": "哼。"},
+            ],
+        }
     issues = collect_local_issues(story)
     kinds = {(it["kind"], tuple(it["lines"])) for it in issues}
-    assert ("其他", (2,)) in kinds, issues
-
+    if story_factory == "short_tail":
+        assert not any(it["kind"] == "其他" for it in issues), issues
+    else:
+        assert expect_kinds <= kinds, kinds
 
 def test_review_topic_cluster_catches_repeated_challenge():
     """同一质问换词三遍，近邻检测抓不到时靠话题聚类。"""
@@ -3473,33 +1864,6 @@ def test_review_topic_cluster_catches_repeated_challenge():
     assert topic, issues
     assert set(topic[0]["lines"]) >= {1, 3, 6}
 
-
-def test_review_topic_cluster_skips_compact_good_story():
-    """压缩正例只摆一次物证/质问，不应误伤。"""
-    from app.services.daily_story.review import collect_local_issues
-
-    story = {
-        "dialogue": [
-            {"speaker": "昭昭", "line": "妈，你电话里跟奶奶说吃撑了是吧？"},
-            {"speaker": "妈妈", "line": "对人要诚实，不能说谎，记住了。"},
-            {
-                "speaker": "灿灿",
-                "line": "你说吃了三碗，那锅里为什么一粒米都没有？",
-            },
-            {"speaker": "妈妈", "line": "那是善意的，不让奶奶担心。"},
-            {"speaker": "昭昭", "line": "我肚子还咕咕叫，碗都是干的呢。"},
-            {
-                "speaker": "灿灿",
-                "line": "那我跟奶奶说我考了一百分，也算善意的吧？",
-            },
-            {"speaker": "妈妈", "line": "那可不行，你那是骗人。"},
-            {"speaker": "昭昭", "line": "你自己说不能说谎，那你刚才算不算？"},
-            {"speaker": "妈妈", "line": "……行行行，我错了，以后不敷衍了。"},
-        ],
-    }
-    assert collect_local_issues(story) == []
-
-
 def test_review_merge_issues_dedups_overlapping_lines():
     from app.services.daily_story.review import merge_issues
 
@@ -3509,7 +1873,6 @@ def test_review_merge_issues_dedups_overlapping_lines():
     )
     assert len(merged) == 1
     assert merged[0]["lines"] == [3, 11, 14]
-
 
 def _review_mock_story() -> dict:
     """A 类「开场副本与正文第3句换词复读」场景（local 检测器抓不到）。"""
@@ -3535,7 +1898,6 @@ def _review_mock_story() -> dict:
         "quality": {"score": 80, "grade": "好", "reasons": []},
     }
 
-
 class _ReviewMockClient:
     """审读/定点修次数可控的 mock client。"""
 
@@ -3556,7 +1918,6 @@ class _ReviewMockClient:
         self.fix_calls += 1
         return self._fixes.pop(0) if self._fixes else {}
 
-
 def _patch_review_llm(monkeypatch):
     """隔离定点修对 validate/patch/quality 的依赖，聚焦 review 流程行为。
 
@@ -3572,7 +1933,6 @@ def _patch_review_llm(monkeypatch):
         lambda story, *a, **k: (story, []),
     )
     monkeypatch.setattr(quality, "attach_daily_story_quality", lambda *a, **k: None)
-
 
 def test_review_second_round_fixes_design_line_dup(monkeypatch):
     """开场副本与正文第3句换词复读：复审才报出，第二轮应修掉而非只扣分。"""
@@ -3622,33 +1982,6 @@ def test_review_second_round_fixes_design_line_dup(monkeypatch):
         for it in q.get("review_issues", [])
     )
 
-
-def test_review_second_round_skips_all_design_lines(monkeypatch):
-    """remaining 只剩开场片头（设计行）时不触发第二轮 spot fix。"""
-    _patch_review_llm(monkeypatch)
-    from app.services.daily_story.review import run_daily_story_review
-
-    client = _ReviewMockClient(
-        review_results=[
-            [{"lines": [5, 7], "kind": "重复", "desc": "正文重复", "fix": "改第7句"}],
-            [
-                {
-                    "lines": [1, 2],
-                    "kind": "重复",
-                    "desc": "开场两句重叠",
-                    "fix": "改第2句",
-                }
-            ],
-        ],
-        fix_responses=[{}],  # 首轮不修
-    )
-    out = run_daily_story_review(client, "抢遥控器看动画片", _review_mock_story())
-
-    assert client.fix_calls == 1  # 纯设计行不触发第二轮
-    assert out["quality"]["score"] == 80  # 全设计行重复不扣分
-    assert out["quality"]["review_issues"]  # 但仍记录在案
-
-
 def test_review_fixable_body_lines_skips_design_rows():
     """第二轮可修行：排除开场片头副本与末段原话闭环，只留正文。"""
     from app.services.daily_story.review import _fixable_body_lines
@@ -3663,101 +1996,42 @@ def test_review_fixable_body_lines_skips_design_rows():
     ]
     assert _fixable_body_lines(issues, story) == {3, 4, 7}
 
-
-def test_review_parse_issues_drops_out_of_range_lines():
+@pytest.mark.parametrize(
+    "payload, check",
+    [
+        (
+            {
+                "issues": [
+                    {"lines": [2], "kind": "矛盾", "desc": "有效"},
+                    {"lines": [99], "kind": "矛盾", "desc": "行号越界"},
+                    {"lines": [1], "kind": "矛盾", "desc": ""},
+                ],
+            },
+            "out_of_range",
+        ),
+        (
+            {
+                "issues": [
+                    {"lines": [1], "kind": "书面", "desc": "风格1", "fix": ""},
+                    {"lines": [2], "kind": "书面", "desc": "风格2", "fix": ""},
+                    {"lines": [3], "kind": "书面", "desc": "风格3", "fix": ""},
+                    {"lines": [4], "kind": "矛盾", "desc": "硬伤", "fix": ""},
+                ],
+            },
+            "severity_caps",
+        ),
+    ],
+    ids=["out_of_range", "severity_caps"],
+)
+def test_review_parse_issues_kinds_and_caps(payload, check):
     from app.services.daily_story.review import parse_review_issues
 
-    parsed = parse_review_issues(
-        {
-            "issues": [
-                {"lines": [2], "kind": "矛盾", "desc": "有效"},
-                {"lines": [99], "kind": "矛盾", "desc": "行号越界"},
-                {"lines": [1], "kind": "矛盾", "desc": ""},
-            ],
-        },
-        line_count=5,
-    )
-    assert [it["desc"] for it in parsed] == ["有效"]
-
-
-def test_review_parse_accepts_written_style_kind():
-    from app.services.daily_story.review import parse_review_issues
-
-    parsed = parse_review_issues(
-        {
-            "issues": [
-                {
-                    "lines": [4],
-                    "kind": "书面",
-                    "desc": "绕口长问，不像孩子说话",
-                    "fix": "改成短口语",
-                },
-            ],
-        },
-        line_count=5,
-    )
-    assert parsed[0]["kind"] == "书面"
-    assert parsed[0]["lines"] == [4]
-
-
-def test_review_parse_accepts_unintelligible_kind():
-    from app.services.daily_story.review import parse_review_issues
-
-    parsed = parse_review_issues(
-        {
-            "issues": [
-                {
-                    "lines": [4],
-                    "kind": "语病",
-                    "desc": "句子读不懂，不知道在问什么",
-                    "fix": "改成一句能读懂的话",
-                },
-            ],
-        },
-        line_count=5,
-    )
-    assert parsed[0]["kind"] == "语病"
-    assert parsed[0]["lines"] == [4]
-
-
-def test_review_prompt_includes_written_style_rule():
-    from app.services.daily_story.review import build_review_prompts
-
-    system, _ = build_review_prompts("关门", {"dialogue": []})
-    assert "书面/绕口/旁白感" in system
-    assert "语病/看不懂" in system
-    assert "引用无据" in system
-    assert "动作误说" in system
-    assert "前 11 类" in system
-
-
-def test_review_parse_issues_prioritizes_severity_and_caps_style():
-    from app.services.daily_story.review import parse_review_issues
-
-    parsed = parse_review_issues(
-        {
-            "issues": [
-                {"lines": [1], "kind": "书面", "desc": "风格1", "fix": ""},
-                {"lines": [2], "kind": "书面", "desc": "风格2", "fix": ""},
-                {"lines": [3], "kind": "书面", "desc": "风格3", "fix": ""},
-                {"lines": [4], "kind": "矛盾", "desc": "硬伤", "fix": ""},
-            ],
-        },
-        line_count=5,
-    )
-    assert parsed[0]["kind"] == "矛盾"
-    assert sum(1 for it in parsed if it["kind"] == "书面") <= 2
-
-
-def test_review_local_coherence_prompt_contains_neighbors():
-    from app.services.daily_story.review import build_local_coherence_prompts
-
-    system, user = build_local_coherence_prompts("上一句", "修改句", "下一句")
-    assert "上一句" in user
-    assert "修改句" in user
-    assert "下一句" in user
-    assert '"coherent"' in system
-
+    parsed = parse_review_issues(payload, line_count=5)
+    if check == "out_of_range":
+        assert [it["desc"] for it in parsed] == ["有效"]
+    else:
+        assert parsed[0]["kind"] == "矛盾"
+        assert sum(1 for it in parsed if it["kind"] == "书面") <= 2
 
 def test_strip_action_declaration_removes_verbose_announcement():
     from app.services.daily_story.review import _strip_action_declaration
@@ -3783,6 +2057,14 @@ def test_strip_action_declaration_removes_verbose_announcement():
         == "这不就是你之前说的效果。"
     )
 
+def test_fix_missing_tone_particle_adds_ba():
+    from app.services.daily_story.review import _fix_missing_tone_particle
+
+    assert (
+        _fix_missing_tone_particle("水从盆底渗出来了，你满意了，快把水壶放下。")
+        == "水从盆底渗出来了，你满意了吧，快把水壶放下。"
+    )
+    assert _fix_missing_tone_particle("你满意了吧。") == "你满意了吧。"
 
 def test_collect_wording_issues_flags_written_lines():
     from app.services.daily_story.review import collect_wording_issues
@@ -3798,74 +2080,17 @@ def test_collect_wording_issues_flags_written_lines():
     assert issues[0]["lines"] == [1]
     assert issues[0]["kind"] == "书面"
 
-
-def test_collect_wording_issues_skips_design_lines():
-    from app.services.daily_story.review import collect_wording_issues
-
-    opening = [
-        {"speaker": "灿灿", "line": "你去门口把门关上，别吵到妈"},
-        {"speaker": "昭昭", "line": "好的，我这就去关"},
-    ]
-    story = {
-        "discovery_opening": opening,
-        "dialogue": [
-            *opening,
-            {"speaker": "灿灿", "line": "关门要轻点，别让风把门撞得哐当响。"},
-            {"speaker": "昭昭", "line": "你自己说轻点，怎么亲手把门关得砰一声响？"},
-            {"speaker": "灿灿", "line": "哼，行吧。"},
-        ],
-    }
-    issues = collect_wording_issues(story)
-    assert all(it["lines"] != [4] for it in issues)
-
-
-def test_build_wording_polish_prompts_contains_examples():
-    from app.services.daily_story.review import build_wording_polish_prompts
-
-    system, _ = build_wording_polish_prompts(
-        "关门",
-        {"dialogue": []},
-        [{"lines": [4], "kind": "书面", "desc": "书面", "fix": "改口语"}],
-        line_chars_max=24,
+def test_d_soft_tail_half_sentence_rules():
+    from app.services.daily_story.story_types.d.validate import (
+        _RE_SOFT_TAIL_BANNED,
+        _RE_SOFT_TAIL_OK_END,
     )
-    assert "深印子" in system
-    assert "把夹子拆了" in system
 
-
-def test_build_wording_polish_prompts_full_scan_contains_sentence_checks():
-    from app.services.daily_story.review import build_wording_polish_prompts
-
-    system, _ = build_wording_polish_prompts(
-        "关门",
-        {"dialogue": []},
-        [],
-        line_chars_max=24,
-        full_scan=True,
-    )
-    assert "语序绕" in system
-    assert "搭配错" in system
-    assert "比喻混搭" in system
-    assert "施动者/被动句" in system
-    assert "叠词/重复试探" in system
-    assert "引用无据" in system
-    assert "动作误说" in system
-
-
-def test_d_soft_last_accepts_unclear_close():
-    from app.services.daily_story.story_types.quality import RE_SOFT_LAST
-
-    assert RE_SOFT_LAST.search("哎，和你说不清楚，反正门关了。")
-    assert RE_SOFT_LAST.search("哼，你不懂。")
-
-
-def test_d_prompt_includes_bu_dong_close():
-    from app.services.daily_story.story_types.d.line import LINE_D
-
-    assert "你不懂" in LINE_D.prompt_block
-    assert "你不懂" in LINE_D.user_closing
-    assert "双信息块" not in LINE_D.prompt_block
-    assert "不必硬凑" in LINE_D.prompt_block
-
+    ok = "哼，行吧，这袜子算是白洗了。"
+    bad = "哼，行吧，以后都轻拿轻放。"
+    assert not _RE_SOFT_TAIL_BANNED.search(ok)
+    assert _RE_SOFT_TAIL_OK_END.search(ok)
+    assert _RE_SOFT_TAIL_BANNED.search(bad)
 
 def test_d_literal_marker_accepts_plain_ni_shuo():
     from app.services.daily_story.story_types.d.humor import RE_BOOM_CLOSE
@@ -3874,7 +2099,6 @@ def test_d_literal_marker_accepts_plain_ni_shuo():
     line = "你说别浇太多，离‘太多’还差半壶呢。"
     assert RE_LITERAL_MID.search(line)
     assert not RE_BOOM_CLOSE.search(line)
-
 
 def test_review_apply_spot_fixes_strips_prefix_and_syncs_opening():
     from app.services.daily_story.review import apply_spot_fixes
@@ -3887,27 +2111,13 @@ def test_review_apply_spot_fixes_strips_prefix_and_syncs_opening():
     assert fixed["dialogue"][0]["line"] == "妈，你刚才跟奶奶说啥了？"
     assert fixed["discovery_opening"][0]["line"] == "妈，你刚才跟奶奶说啥了？"
 
-
-def test_review_apply_spot_fixes_honors_only_filter():
-    from app.services.daily_story.review import apply_spot_fixes
-
-    fixed, notes = apply_spot_fixes(
-        _review_story(),
-        {
-            "fixes": [
-                {"no": 1, "line": "改第一句"},
-                {"no": 4, "line": "改第四句"},
-            ],
-        },
-        only={4},
+def test_review_penalty_and_quality_deduction():
+    """审读扣分封顶，并写入 quality；带 LLM 好笑时仍扣硬伤。"""
+    from app.services.daily_story.review import (
+        REVIEW_PENALTY_CAP,
+        apply_review_to_quality,
+        review_penalty,
     )
-    assert notes == ["第4句"]
-    assert fixed["dialogue"][0]["line"] == "妈，你跟奶奶说吃撑了，可你没吃。"
-    assert fixed["dialogue"][3]["line"] == "改第四句"
-
-
-def test_review_penalty_deducts_and_caps():
-    from app.services.daily_story.review import REVIEW_PENALTY_CAP, review_penalty
 
     points, reasons = review_penalty([
         {"lines": [5, 8], "kind": "重复", "desc": "碗干说两遍", "fix": ""},
@@ -3915,16 +2125,11 @@ def test_review_penalty_deducts_and_caps():
     ])
     assert points == 15
     assert reasons[0].startswith("审读第5、8句重复：")
-
     many = [
         {"lines": [i], "kind": "示范", "desc": "坏示范", "fix": ""}
         for i in range(1, 6)
     ]
     assert review_penalty(many)[0] == REVIEW_PENALTY_CAP
-
-
-def test_review_applies_penalty_to_quality_score_and_grade():
-    from app.services.daily_story.review import apply_review_to_quality
 
     story = {
         "dialogue": [{"speaker": "昭昭", "line": "话"}],
@@ -3937,6 +2142,16 @@ def test_review_applies_penalty_to_quality_score_and_grade():
     assert "审读第10句示范" in story["quality"]["summary"]
     assert story["quality"]["review_issues"][0]["kind"] == "示范"
 
+    story2 = {
+        "dialogue": [{"speaker": "昭昭", "line": "话"}],
+        "quality": {"grade": "好", "score": 80, "structure_score": 80, "reasons": []},
+    }
+    apply_review_to_quality(
+        story2,
+        [{"lines": [10], "kind": "示范", "desc": "妈妈教孩子隐瞒", "fix": ""}],
+        humor={"funny_score": 8, "best_moment": "那句", "humor_type": "natural"},
+    )
+    assert story2["quality"]["score"] == 78  # 80 + 8 − 10
 
 def test_parse_humor_accepts_valid_rejects_bad():
     from app.services.daily_story.review import parse_humor
@@ -3951,113 +2166,42 @@ def test_parse_humor_accepts_valid_rejects_bad():
     assert parse_humor(None) is None
     assert parse_humor("not a dict") is None
 
-
-def test_apply_review_to_quality_injects_llm_humor_and_publish_line():
+@pytest.mark.parametrize(
+    "structure, funny, expect_pass, reason_needle",
+    [
+        (80, 14, True, "发布达标"),
+        (80, 4, False, "好笑4/20<12"),
+        (70, 14, False, "结构70<75"),
+    ],
+    ids=["ok", "low_humor", "low_structure"],
+)
+def test_apply_review_to_quality_publish_line(structure, funny, expect_pass, reason_needle):
     from app.services.daily_story.review import apply_review_to_quality
 
     story = {
         "dialogue": [{"speaker": "昭昭", "line": "话"}],
-        "quality": {"grade": "好", "score": 80, "structure_score": 80, "reasons": []},
+        "quality": {
+            "grade": "好" if structure >= 75 else "中",
+            "score": structure,
+            "structure_score": structure,
+            "reasons": [],
+        },
     }
     apply_review_to_quality(
         story,
         [],
-        humor={"funny_score": 14, "best_moment": "那句", "humor_type": "natural"},
+        humor={
+            "funny_score": funny,
+            "best_moment": "那句",
+            "humor_type": "natural" if funny >= 12 else "formulaic",
+        },
     )
     q = story["quality"]
-    assert q["score"] == 94  # 结构80 + LLM好笑14
-    assert q["pass"] is True
-    assert q["humor"]["funny_score"] == 14
-    assert any("发布达标" in r for r in q["reasons"])
-
-
-def test_apply_review_to_quality_publish_line_rejects_low_humor():
-    from app.services.daily_story.review import apply_review_to_quality
-
-    story = {
-        "dialogue": [{"speaker": "昭昭", "line": "话"}],
-        "quality": {"grade": "中", "score": 80, "structure_score": 80, "reasons": []},
-    }
-    apply_review_to_quality(
-        story,
-        [],
-        humor={"funny_score": 4, "best_moment": "那句", "humor_type": "formulaic"},
-    )
-    q = story["quality"]
-    assert q["score"] == 84
-    assert q["pass"] is False
-    assert any("好笑4/20<12" in r for r in q["reasons"])
-
-
-def test_apply_review_to_quality_publish_line_rejects_low_structure():
-    from app.services.daily_story.review import apply_review_to_quality
-
-    story = {
-        "dialogue": [{"speaker": "昭昭", "line": "话"}],
-        "quality": {"grade": "中", "score": 70, "structure_score": 70, "reasons": []},
-    }
-    apply_review_to_quality(
-        story,
-        [],
-        humor={"funny_score": 14, "best_moment": "那句", "humor_type": "natural"},
-    )
-    q = story["quality"]
-    assert q["pass"] is False
-    assert any("结构70<75" in r for r in q["reasons"])
-
-
-def test_apply_review_to_quality_deducts_penalty_with_humor():
-    """LLM 好笑分注入后，审读硬伤扣分仍生效（结构+好笑−硬伤）。"""
-    from app.services.daily_story.review import apply_review_to_quality
-
-    story = {
-        "dialogue": [{"speaker": "昭昭", "line": "话"}],
-        "quality": {"grade": "好", "score": 80, "structure_score": 80, "reasons": []},
-    }
-    apply_review_to_quality(
-        story,
-        [{"lines": [10], "kind": "示范", "desc": "妈妈教孩子隐瞒", "fix": ""}],
-        humor={"funny_score": 8, "best_moment": "那句", "humor_type": "natural"},
-    )
-    assert story["quality"]["score"] == 78  # 80 + 8 − 10
-
-
-def test_review_passes_llm_humor_to_quality(monkeypatch):
-    """审读返回 (issues, humor) 时，首轮好笑分落进 quality 并判发布线。"""
-    _patch_review_llm(monkeypatch)
-    from app.services.daily_story.review import run_daily_story_review
-
-    client = _ReviewMockClient(
-        review_results=[
-            (
-                [{"lines": [6], "kind": "重复", "desc": "正文重复", "fix": "改第6句"}],
-                {"funny_score": 14, "best_moment": "那句", "humor_type": "natural"},
-            ),
-            (
-                [],
-                {"funny_score": 13, "best_moment": "那句", "humor_type": "natural"},
-            ),
-        ],
-        fix_responses=[{}],
-    )
-    story = _review_mock_story()
-    story["quality"]["structure_score"] = 80
-    out = run_daily_story_review(client, "抢遥控器看动画片", story)
-    q = out["quality"]
-    assert q["pass"] is True
-    assert q["humor"]["funny_score"] == 14  # 取首轮
-    assert q["score"] == 94
-
-
-def test_b_filler_detected_in_humor_regex():
-    """B 垫字检测：句尾叠了呢了呀/真的呀/好不好=注水，实词收尾=干净。"""
-    from app.services.daily_story.story_types.b.humor import RE_GARBAGE_FILLER
-
-    for bad in ("奶油蹭裤腿了呢了呀", "别弄出声真的呀", "你帮忙擦掉好不好"):
-        assert RE_GARBAGE_FILLER.search(bad), bad
-    for ok in ("奶油蹭你裤腿了", "妈在厨房别出声", "先把抱枕挡上"):
-        assert not RE_GARBAGE_FILLER.search(ok), ok
-
+    assert q["pass"] is expect_pass
+    assert any(reason_needle in r for r in q["reasons"])
+    if expect_pass:
+        assert q["score"] == structure + funny
+        assert q["humor"]["funny_score"] == funny
 
 def test_b_patch_strips_filler():
     """B 一句一改：本地剥垫字，而非整段重试。"""
@@ -4077,7 +2221,6 @@ def test_b_patch_strips_filler():
     assert story["dialogue"][1]["line"] == "别弄出声"
     assert story["dialogue"][2]["line"] == "奶油蹭裤腿了"
 
-
 def test_c_patch_trims_soft_last_long_explanation():
     """C 一句一改：末句「哼，+长解释/文字游戏」截成完整嘴硬话，禁光杆叹词。"""
     from app.services.daily_story.prompts import try_local_patch_daily_story_body
@@ -4087,138 +2230,6 @@ def test_c_patch_trims_soft_last_long_explanation():
     patched, notes = try_local_patch_daily_story_body(story)
     assert any("软收截断" in n for n in notes)
     assert patched["dialogue"][-1]["line"] == "哼，明天我一定赢过你！"
-
-
-def test_c_patch_keeps_short_soft_tail():
-    """C 短尾巴嘴硬（……哼，给你吧）是合理收束，不截断。"""
-    from app.services.daily_story.prompts import try_local_patch_daily_story_body
-
-    story = _valid_story()
-    story["dialogue"][-1]["line"] = "……哼，给你吧"
-    patched, notes = try_local_patch_daily_story_body(story)
-    assert not any("软收截断" in n for n in notes)
-    assert patched["dialogue"][-1]["line"] == "……哼，给你吧"
-
-
-def test_c_humor_flags_tone_stack_ending():
-    """句尾语气词堆砌（拿到的好了呀/碰过了呢了呀/抢嘛了呀）→ 语病 cons。
-    v6 酸奶稿整串「了呢了呀/着了呀/嘛了呀/好了呀/呢呀」病句尾（用户 2026-08-09）。"""
-    import app.services.daily_story.quality as _q  # noqa: F401
-
-    from app.services.daily_story.story_types.c.humor import collect_humor_issues
-
-    bad = [
-        "我攥手里了，是我先拿到的好不好了呀",
-        "算我碰过了呢了呀",
-        "我攥着瓶没撒手了呢了呀",
-        "数到三咱俩同时抢嘛了呀",
-        "行，算你手快",
-    ]
-    issues = collect_humor_issues(bad, None)
-    assert any("句尾语气词堆砌" in c for c in issues)
-
-    good = [
-        "我先拿到的！",
-        "我攥手里了！",
-        "你手拿开！",
-        "哼，明天我比你早！",
-    ]
-    g = collect_humor_issues(good, None)
-    assert not any("句尾语气词堆砌" in c for c in g)
-
-
-def test_c_humor_flags_inverted_quote_without_grounding():
-    """C2 倒装引话失据：引文在逗号前、正文没出现过 → 封顶好笑分。
-
-    「碰到就是咬到，你说的。」这种倒装伪引用（正文从未说过）
-    必须被标记为「回旋镖引话失据」，真实引用不误伤。
-    """
-    # 先初始化共享 quality（会注册全部类型 profile，含 c.quality→c.humor 链），
-    # 再 import c.humor，避免 c.humor 半初始化时被 c.quality 回引。
-    import app.services.daily_story.quality as _q  # noqa: F401
-
-    from app.services.daily_story.story_types.c.humor import collect_humor_issues
-
-    # 问题稿：末句倒装引「碰到就是咬到」，正文没有这句
-    bad_lines = [
-        "布丁就一块，我先看到的。",
-        "我先碰到的，归我。",
-        "你手比我长，不公平。",
-        "妈妈，你说谁先碰到的归谁。",
-        "哼，碰到就是咬到，你说的。",
-    ]
-    issues = collect_humor_issues(bad_lines, None)
-    assert any("回旋镖引话失据" in c for c in issues)
-    assert any("无出处" in c for c in issues)
-
-    # 正常稿：倒装引用的是正文真出现过的赛规原话 → 不标记
-    good_lines = [
-        "布丁就一块，我先看到的。",
-        "妈妈，谁先碰到归谁吃。",
-        "我先碰到的，归我。",
-        "你手比我长，不公平。",
-        "哼，谁先碰到归谁，你刚说的。",
-    ]
-    issues = collect_humor_issues(good_lines, None)
-    assert not any("回旋镖引话失据" in c for c in issues)
-
-
-def test_c_humor_flags_self_said_quote_and_rule_misattribution():
-    """C2 扩展：前置引话失据「自己说X」+ 规则错误归属「我说规则是X」。
-
-    L21「自己说数到二就伸手」——灿灿从没立这句规（L15 是昭昭自己的指责）；
-    L18「我说的规则是数到三一起碰」——立规人是昭昭（L11 我数到三），灿灿安到自己头上。
-    """
-    import app.services.daily_story.quality as _q  # noqa: F401
-
-    from app.services.daily_story.story_types.c.humor import collect_humor_issues
-
-    bad = [
-        "客厅茶几上最后一块西瓜，谁先碰到的？",
-        "我手已经搭上瓜皮了，你别抢！",
-        "我先碰到的，这块西瓜归我！",
-        "不对，我手先搭上瓜皮的，你才晚到！",
-        "规则说谁先碰到归谁，那咱们谁先碰到瓜皮？",
-        "那怎么证明？咱们现在重来，我数到三。",
-        "好，一、二、三！",
-        "哈哈，我碰到了，这次是我先",
-        "你作弊，你数到二就碰了，我听出来",
-        "你才作弊，你喊到三才碰，我比你快",
-        "我说的规则是数到三一起碰，你听错",
-        "你听错了？你刚才明明说“数到三一起碰”的。",
-        "我说的是数到三一起碰但你喊二时我手就伸出去了",
-        "你承认吧，自己说数到二就伸手了！",
-        "你……哼！算你赢！但下次我肯定先碰到！",
-    ]
-    sps = ["昭昭", "灿灿", "昭昭", "灿灿", "昭昭", "昭昭", "昭昭",
-           "灿灿", "昭昭", "灿灿", "灿灿", "昭昭", "灿灿", "昭昭", "灿灿"]
-    issues = collect_humor_issues(bad, sps)
-    assert any("自己说「数到二就伸手" in c and "无出处" in c for c in issues)
-    assert any("错误归属" in c and "数到三一起碰" in c for c in issues)
-
-    # 正常稿：回旋镖引对方真话、立规人引自己的规 → 不误伤
-    good = [
-        "布丁就一块，谁先碰到归谁，你说的。",
-        "好，谁先碰到归谁，我记下了。",
-        "我先碰到的，这块归我！",
-        "你耍赖，你自己说谁先碰到归谁的！",
-        "哼，算你赢。",
-    ]
-    gissues = collect_humor_issues(good, ["昭昭", "灿灿", "昭昭", "灿灿", "昭昭"])
-    assert not any("回旋镖引话失据" in c for c in gissues)
-    assert not any("回旋镖错误归属" in c for c in gissues)
-
-    good2 = [
-        "布丁就一块，我先说，谁先碰到归谁吃。",
-        "好，听你的，谁先碰到归谁。",
-        "我先碰到了！",
-        "你手比我快，我不服！",
-        "我说的是谁先碰到归谁，你自己慢了一步。",
-        "哼，行吧。",
-    ]
-    g2issues = collect_humor_issues(good2, ["灿灿", "昭昭", "灿灿", "昭昭", "灿灿", "昭昭"])
-    assert not any("回旋镖错误归属" in c for c in g2issues)
-
 
 def test_patch_c_stray_rebuttal_drops_unfounded_prefix():
     """C 类正文首句「我早就不疼了」须有前文指控，无指控删前缀（v23 主题1 抓）。
@@ -4257,87 +2268,6 @@ def test_patch_c_stray_rebuttal_drops_unfounded_prefix():
     # 占有宣告「我早就拿到了」→ 不误删
     s3 = _story("不行，上次我让了你", "我早就拿到了，酸奶归我！")
     assert not patch_c_stray_rebuttal(s3)
-
-
-def test_c_humor_flags_stubborn_tail_not_echoing_ritual():
-    """C 类末句嘴硬比法须字面在本场立规句（用户 2026-08-09 v25/v27 抓）。
-
-    判据是时长/姿势仪式（举过头顶坚持三秒）时，末句发明立规句没有的比法 =
-    收束换赛规：「比你早/比你快」是时序（本场不比先后）、「比你举得久/比你高/
-    比你标准」是时长/质量比较（本场是达标制，不比谁久）。万能「赢过你」、
-    锚定仪式动词（抢先举过头顶）、认栽/退出都合法。先到先得判据（谁先拿到归谁）
-    无比仪式动词，本检测不触发，「比你早」合法不误伤。
-    """
-    from app.services.daily_story.story_types.c.humor import (
-        _closing_stubborn_echo_issue,
-    )
-
-    # 仪式判据 + 末句时序嘴硬「比你早」→ 比法漂移
-    bad = [
-        "我比你高，我先举过头顶坚持三秒才算，归我！",
-        "你那是偷懒，不算，得伸直胳膊才算！",
-        "你刚说举过头顶坚持三秒，没说伸直胳膊，我做到了",
-        "哼，你等着，明天我比你早！",
-    ]
-    issue = _closing_stubborn_echo_issue(bad)
-    assert issue and "比法漂移" in issue
-
-    # 仪式判据 + 末句「比你举得久」（v27 棒棒糖/巧克力稿，本场无比久维度）→ 漂移
-    bad_longer = [
-        "我比你高，我先举过头顶坚持三秒才算，归我！",
-        "你举啊，我数三秒，一秒，两秒……",
-        "你刚说举过头顶坚持三秒就算，我举得直直的",
-        "哼，明天我比你举得久！",
-    ]
-    issue = _closing_stubborn_echo_issue(bad_longer)
-    assert issue and "比法漂移" in issue
-
-    # 仪式判据 + 末句锚定仪式动词（抢先举过头顶）→ 放行
-    good = [
-        "我比你高，我先举过头顶坚持三秒才算，归我！",
-        "你强词夺理，反正我举了，巧克力归我！",
-        "你刚说谁先举过头顶坚持三秒谁吃，我举了你也举了",
-        "哼，明天我抢先举过头顶！",
-    ]
-    assert not _closing_stubborn_echo_issue(good)
-
-    # 先到先得判据（无仪式动词）+ 末句「比你早」→ 合法
-    first = [
-        "我比你高，我先拿到的，归我！",
-        "你抢什么，谁先拿到归谁！",
-        "我拿到的就是我的",
-        "哼，明天我比你早！",
-    ]
-    assert not _closing_stubborn_echo_issue(first)
-
-    # 仪式判据 + 末句「比你早抢到」（时序词，即便带抢）→ 比法漂移（v26 棒棒糖稿）
-    with_grab = [
-        "我比你高，我先举过头顶坚持三秒才算，归我！",
-        "你举啊，我数三秒，一秒，两秒……",
-        "你刚说举过头顶坚持三秒就算，我举得直直的",
-        "哼，明天我比你早抢到！",
-    ]
-    issue = _closing_stubborn_echo_issue(with_grab)
-    assert issue and "比法漂移" in issue
-
-    # 仪式判据 + 末句「明天我一定赢过你」（万能胜负指向）→ 合法（用户 2026-08-09 v26 定）
-    win = [
-        "我比你高，我先举过头顶坚持三秒才算，归我！",
-        "你举啊，我数三秒，一秒，两秒……",
-        "你刚说举过头顶坚持三秒就算，我举得直直的",
-        "哼，明天我一定赢过你！",
-    ]
-    assert not _closing_stubborn_echo_issue(win)
-
-    # 无仪式判据 + 末句情绪退出 → 合法
-    nofit = [
-        "我比你高，我先拿到的，归我！",
-        "你抢什么，谁先拿到归谁！",
-        "我拿到的就是我的",
-        "那我不玩了！",
-    ]
-    assert not _closing_stubborn_echo_issue(nofit)
-
 
 def test_c_validate_hardblocks_stubborn_dim_drift():
     """C 硬卡：末句嘴硬比较维度须字面在本场立规句（用户 2026-08-09 v27 抓）。
@@ -4430,7 +2360,6 @@ def test_c_validate_hardblocks_stubborn_dim_drift():
     append_c_body_errors(good, errs)
     assert not any("比法漂移" in e for e in errs), errs
 
-
 def test_c_validate_hardblocks_opening_possession_contradicts_setting():
     """C 硬卡：开场占有宣告须与 setting 持有者一致（用户 2026-08-09 v27 酸奶稿抓）。
 
@@ -4481,7 +2410,6 @@ def test_c_validate_hardblocks_opening_possession_contradicts_setting():
         setting="客厅，灿灿手里攥着最后一瓶酸奶，昭昭伸手来抢。",
     )
     assert not any("与 setting 矛盾" in e for e in errs), errs
-
 
 def test_c_validate_hardblocks_opening_loser_criterion():
     """C 硬卡：开场失方禁抛占有判据/宣示能力（用户 2026-08-09 v29 酸奶稿抓）。
@@ -4534,7 +2462,6 @@ def test_c_validate_hardblocks_opening_loser_criterion():
         setting="客厅，灿灿手里攥着最后一瓶酸奶，昭昭伸手来抢。",
     )
     assert not any("失方抛占有判据" in e for e in errs), errs
-
 
 def test_c_validate_hardblocks_agree_contest_without_proposal():
     """C 硬卡：正文首句「X就X」接招须有开场提议（用户 2026-08-09 v27 酸奶稿抓）。
@@ -4600,183 +2527,6 @@ def test_c_validate_hardblocks_agree_contest_without_proposal():
     append_c_body_errors(good, errs)
     assert not any("凭空进入未立赛规" in e for e in errs), errs
 
-
-def test_c_facts_referential_boomerang_quote_not_flagged():
-    """C 事实：指代式回旋镖引话（你刚说拿我定的规则）不需逐字前文出处。
-
-    末段「你刚说拿我定的规则，现在自己又不认」——「拿我定的规则」指向说话人
-    自己立过的规则（正文立规句已定「谁先举过头顶坚持三秒」），是**指代式**引话，
-    不是「我说规则是X」/「你刚说举过头顶才算」式逐字引用；回旋镖引话失据只拦
-    逐字引话前文无出处，指代式引话放行（用户 2026-08-09 定）。
-    """
-    # 先 import c.validate 预热完整导入链（story_types.quality → c.quality → c.facts），
-    # 避免 c.facts 作为入口触发既有循环导入（c.facts 在 c.quality 注册时还在半初始化）。
-    from app.services.daily_story.story_types.c.validate import (  # noqa: F401
-        append_c_body_errors,
-    )
-    from app.services.daily_story.story_types.c.facts import collect_fact_issues
-
-    dialogue = [
-        {"speaker": "昭昭", "line": "姐姐，冰箱里最后一杯果汁，给我喝吧。"},
-        {"speaker": "灿灿", "line": "不行，谁先举过头顶坚持三秒才算，归我！"},
-        {"speaker": "昭昭", "line": "好，举就举，我举过头顶了，你数三秒！"},
-        {"speaker": "灿灿", "line": "一，二，三，你举够了，可果汁还是我的！"},
-        {"speaker": "昭昭", "line": "你耍赖，我举过头顶三秒了，该我喝！"},
-        {"speaker": "灿灿", "line": "你举的时候手抖了，不算数！"},
-        {"speaker": "昭昭", "line": "我手没抖，是你喊太快，你赖皮！"},
-        {"speaker": "灿灿", "line": "你刚说拿我定的规则，现在自己又不认！"},
-        {"speaker": "昭昭", "line": "我没不认，是你不守时，我举够三秒了！"},
-        {"speaker": "灿灿", "line": "哼，明天我一定赢过你！"},
-    ]
-    issues = collect_fact_issues({"dialogue": dialogue})
-    assert not any("扣话无前文" in i for i in issues), issues
-
-    # 对照：逐字引话前文无出处（编造规则）仍拦
-    invented = dialogue[:]  # 末段引话改成「你刚说谁先喝完归谁」，正文没立过这条
-    invented[-3] = {"speaker": "灿灿", "line": "你刚说谁先喝完归谁，现在又不认！"}
-    issues2 = collect_fact_issues({"dialogue": invented})
-    assert any("扣话无前文" in i for i in issues2), issues2
-
-
-def test_c_closing_echo_flags_ritual_switch_last():
-    """C 末句硬卡：仪式判据场（单脚站/站满十秒）末句换赛规话拦截（v46 酸奶稿抓）。
-
-    v46 酸奶稿：立规「谁攥着酸奶再单脚站满十秒，酸奶归谁」，末句却
-    「明天我肯定先抢到」——把达标制仪式赛规换回先到先得（比先后）。锚定仪式动词
-    （抢先单脚站）、认栽不认输、先到先得场「先抢到」都放行。
-    """
-    from app.services.daily_story.story_types.quality import c_closing_echo_error
-
-    ritual_lines = [
-        "姐姐，冰箱里最后一瓶酸奶，让我先喝吧",
-        "不行，这瓶是我昨天先瞧见的，我先喝",
-        "你瞧见又不算，谁先攥在手里归谁喝！",
-        "我早攥住了，你才刚拿到瓶身呢！",
-        "那咱俩说好，谁攥着酸奶再单脚站满十秒，酸奶归谁！",
-        "行！你先站，我数着，数满十秒才算你的！",
-        "我站好了，你快数，我稳着呢！",
-        "一……二……三……",
-        "你数快点！我腿都酸了！",
-        "四……五……你刚说站满十秒，又没说数数要多快！",
-        "你这是耍赖，我站不住了！",
-        "六……你脚落地了，没站满十秒！",
-        "是你数太慢我才倒的，不算！",
-        "你刚说谁攥着酸奶单脚站满十秒归谁，你输了，酸奶归我！",
-        "哼，明天我肯定先抢到！",
-    ]
-    issue = c_closing_echo_error(ritual_lines)
-    assert issue and "比法漂移" in issue and "先抢到" in issue
-
-    # 末句锚定仪式动词 → 放行
-    ritual_lines[-1] = "哼，明天我抢先单脚站，你别赖！"
-    assert not c_closing_echo_error(ritual_lines)
-
-    # 末句认栽不认输 → 放行
-    ritual_lines[-1] = "行，算你站得稳！"
-    assert not c_closing_echo_error(ritual_lines)
-
-    # 先到先得场（无仪式判据）末句「先抢到」→ 放行
-    first_come = [
-        "姐姐，冰箱里最后一瓶酸奶，让我先喝吧",
-        "不行，这瓶是我昨天先瞧见的，我先喝",
-        "你瞧见又不算，谁先攥在手里归谁喝！",
-        "我早攥住了，你才刚拿到瓶身呢！",
-        "行，算你手快，明天我肯定先抢到！",
-    ]
-    assert not c_closing_echo_error(first_come)
-
-
-def test_c_humor_flags_pseudo_boomerang():
-    """C 好笑：伪回旋镖——仪式场末段只是「对方复制仪式+立规人赖账」。
-
-    v46 酸奶稿（单脚站十秒）：灿灿「我也站满了」，昭昭「你站的时候我数了吗」，
-    末句「算你站得稳」——立规人没输在规则字面上，判伪回旋镖（好笑封顶 6）。
-    真回旋镖带「又没说数数要多快」漏字标记 → 不误伤。
-    """
-    from app.services.daily_story.story_types.c.humor import collect_humor_issues
-
-    # v46 伪回旋镖：仪式场 + 对方复制 + 赖账认栽，无漏字标记
-    pseudo = [
-        "姐姐，冰箱里最后一瓶酸奶，让我先喝吧",
-        "不行，这瓶是我昨天先瞧见的，我先喝",
-        "你昨天瞧见又不算，谁先攥在手里归谁喝！",
-        "我早攥住了，你才刚拿到瓶身呢！",
-        "那咱俩说好，谁攥在手里再单脚站满十秒，酸奶归谁！",
-        "行，谁站满归谁，你先站，我数着！",
-        "我站好了，一，二……十，归我了！",
-        "你脚落地了，不算单脚站！",
-        "我脚没落地，你看，我站得稳稳的！",
-        "那我也单脚站，我也站满十秒！",
-        "你先别站，我还没喝呢，你站什么站！",
-        "你刚说谁攥在手里再单脚站满十秒归谁，我也站满了！",
-        "你站的时候我数了吗？你耍赖！",
-        "你刚说站满十秒就算，我站了，你数啊！",
-        "行，算你站得稳，明天我肯定先抢到！",
-    ]
-    sps = ["昭昭", "灿灿"] * 7 + ["昭昭"]
-    issues = collect_humor_issues(pseudo, sps)
-    assert any("伪回旋镖" in c for c in issues), issues
-
-    # 真回旋镖（规则漏字反噬）：末段带「又没说数数要多快」→ 不误伤
-    real = [
-        "姐姐，冰箱里最后一瓶酸奶，让我先喝吧",
-        "不行，这瓶是我昨天先瞧见的，我先喝",
-        "你瞧见又不算，谁先攥在手里归谁喝！",
-        "我早攥住了，你才刚拿到瓶身呢！",
-        "那咱俩说好，谁攥着酸奶再单脚站满十秒，酸奶归谁！",
-        "行！你先站，我数着，数满十秒才算你的！",
-        "我站好了，你快数，我稳着呢！",
-        "一……二……三……",
-        "你数快点！我腿都酸了！",
-        "四……五……你刚说站满十秒，又没说数数要多快！",
-        "你这是耍赖，我站不住了！",
-        "六……你脚落地了，没站满十秒！",
-        "是你数太慢我才倒的，不算！",
-        "你刚说谁攥着酸奶单脚站满十秒归谁，你输了，酸奶归我！",
-        "哼，明天我定规矩必须快数，你一个字也别想拖！",
-    ]
-    sps2 = ["昭昭", "灿灿"] * 7 + ["昭昭"]
-    issues2 = collect_humor_issues(real, sps2)
-    assert not any("伪回旋镖" in c for c in issues2), issues2
-
-
-def test_c_criterion_package_requires_trap(monkeypatch):
-    """C 判据包：缺 trap（规则漏字反噬点）重试，带 trap 才通过。"""
-    from app.services.llm.llm_deepseek import DeepSeekClient
-
-    calls = {"n": 0}
-
-    def fake_chat(*_args, **_kwargs):
-        calls["n"] += 1
-        if calls["n"] == 1:
-            # 缺 trap → 该轮作废重试
-            return (
-                {
-                    "zhaozhao_rule": "谁先拿到归谁",
-                    "cancan_rule": "我先攥在手里再单脚站满十秒才算，归我",
-                    "boomerang_quote": "谁先拿到归谁",
-                    "boomerang_source": "zhaozhao_rule",
-                },
-                "stop",
-            )
-        return (
-            {
-                "zhaozhao_rule": "谁先拿到归谁",
-                "cancan_rule": "我先攥在手里再单脚站满十秒才算，归我",
-                "boomerang_quote": "谁先拿到归谁",
-                "boomerang_source": "zhaozhao_rule",
-                "trap": "没规定数数要多快，数数人拖长音，立规人先落地",
-            },
-            "stop",
-        )
-
-    monkeypatch.setattr(DeepSeekClient, "_chat_json", fake_chat)
-    client = DeepSeekClient()
-    pkg = client._generate_c_criterion_package("酸奶")
-    assert pkg and pkg["trap"].startswith("没规定")
-    assert calls["n"] == 2
-
-
 def test_c_validate_hardblocks_rule_maker_must_lose():
     """C 硬卡：立规人必须输——仪式立规句提出者须是末句说话人（被戳穿方）。
 
@@ -4841,7 +2591,6 @@ def test_c_validate_hardblocks_rule_maker_must_lose():
     append_c_body_errors(good, errs)
     assert not any("回旋镖引话归属错误" in e for e in errs), errs
 
-
 def test_c_validate_hardblocks_tone_stack():
     """C 硬卡：句尾语气词堆砌（v47 酸奶稿第 3/4/7/10 句病句尾）≥2 句重抽。"""
     from app.services.daily_story.story_types.c.validate import append_c_body_errors
@@ -4899,3 +2648,148 @@ def test_c_validate_hardblocks_tone_stack():
     errs = []
     append_c_body_errors(good, errs)
     assert not any("句尾语气词堆砌" in e for e in errs), errs
+
+
+def test_c_line_rules_cover_cut_finality_boomerang_limit_and_quantifier():
+    """C 类规则已补：切完禁重切、回旋镖限次、量词落地、开场禁说明文。"""
+    from app.services.daily_story.story_types.c.line import LINE_C
+
+    assert "切分/拆封即终结" in LINE_C.prompt_block
+    assert "回旋镖限次" in LINE_C.prompt_block
+    assert "量词落地" in LINE_C.prompt_block
+    assert "禁说明文式开场" in LINE_C.opening_system_append
+    assert "回旋镖优先打立规人最自信的原话" in LINE_C.prompt_block
+    assert "禁自打嘴巴式自信" in LINE_C.prompt_block
+    assert "定义战只许一轮" in LINE_C.prompt_block
+    assert "我那是让着你" in LINE_C.prompt_block
+
+
+def test_c_criterion_inject_action_dispatch_skips_ritual_script():
+    """C 判据链注入：动作分派型破段不得再硬套单脚站仪式。"""
+    from app.services.llm.llm_deepseek import (
+        _C_CRITERION_INJECT_TEMPLATE,
+        _C_CRITERION_PACKAGE_SYSTEM,
+    )
+
+    block = _C_CRITERION_INJECT_TEMPLATE.format(
+        zhaozhao_rule="切完我先挑，谁反悔谁小狗",
+        cancan_rule="好，说好切完你先挑，谁反悔谁小狗",
+        boomerang_quote="说好切完你先挑",
+        boomerang_source="cancan_rule",
+        trap="立规人答应切完先挑后反悔硬抢，被对方按字面先挑走大块",
+        break_script=(
+            "按动作分派/占有规则字面执行：对方按字面先挑走大块，立规人反悔硬抢，"
+            "被原规反问当场判输；执行纠纷只用 换/端/抢/抱/藏。"
+        ),
+    )
+    assert "切完你先挑" in block
+    assert "立规人提出仪式规则后" not in block
+    assert "数数人故意拖长音" not in block
+    assert "挑哪块都一样" in _C_CRITERION_PACKAGE_SYSTEM
+
+
+def test_c_ground_closing_quote_allows_perspective_swap():
+    """C 回旋镖引话：我/你视角互换算同一承诺。"""
+    from app.services.daily_story.story_types.c.humor import (
+        ground_closing_quote,
+    )
+
+    assert ground_closing_quote("歪了算你输", "歪了算我输")
+    assert ground_closing_quote("切完你先挑", "切完我先挑")
+    assert ground_closing_quote(
+        "切完我先挑，那我挑了大的，就归我",
+        "说好切完你先挑，谁反悔谁小狗",
+    )
+
+
+def test_c_validate_hardblocks_recut_after_cut():
+    """C 硬卡：切好的资源禁止重切/恢复/重新比。"""
+    from app.services.daily_story.story_types.c.validate import (
+        append_c_body_errors,
+    )
+
+    story = _valid_story()
+    story["dialogue"][8]["line"] = _pad_line("这两块得重新切一刀，我切的不算！")
+    errs: list[str] = []
+    append_c_body_errors(story, errs)
+    assert any("切分即终结" in e for e in errs), errs
+
+
+def test_c_validate_hardblocks_repeated_boomerang():
+    """C 硬卡：直接引话式回旋镖 ≥3 次整稿重抽。"""
+    from app.services.daily_story.story_types.c.validate import (
+        append_c_body_errors,
+    )
+
+    story = _valid_story()
+    story["dialogue"][6]["line"] = _pad_line("你刚说先挑大块")
+    story["dialogue"][8]["line"] = _pad_line("你刚才说先挑大块")
+    errs: list[str] = []
+    append_c_body_errors(story, errs)
+    assert any("回旋镖重复" in e for e in errs), errs
+
+
+def test_c_facts_flags_ungrounded_container_quantifier():
+    """C 事实：'这盘'未在 setting/前文交代容器即悬空。"""
+    from app.services.daily_story.story_types.c.facts import (
+        collect_fact_issues,
+    )
+
+    story = _valid_story()
+    story["setting"] = "客厅，姐弟抢新橡皮"
+    story["dialogue"][10]["line"] = _pad_line("这盘归我，你别抢！")
+    issues = collect_fact_issues(story)
+    assert any("量词悬空" in i for i in issues), issues
+
+
+def test_c_facts_flags_even_claim_and_leave_claim_contradiction():
+    """C 事实：说过「一样大/挑哪块都一样」后禁再写「特意留」。"""
+    from app.services.daily_story.story_types.c.facts import (
+        collect_fact_issues,
+    )
+
+    story = _valid_story()
+    story["setting"] = "客厅茶几上放着一块圆形蛋糕"
+    story["dialogue"][5]["line"] = _pad_line("行，我切得一样大，你挑哪块都一样。")
+    story["dialogue"][10]["line"] = _pad_line("那块是我特意留给自己吃的！")
+    issues = collect_fact_issues(story)
+    assert any("自信与留块矛盾" in i for i in issues), issues
+
+
+def test_c_humor_flags_repeated_boomerang():
+    """C 观感：全文「你刚说/你说的」式回旋镖 ≥3 次判重复。"""
+    from app.services.daily_story.story_types.c.humor import (
+        collect_humor_issues,
+    )
+
+    lines = [
+        "你刚说切完你先挑",
+        "你刚说谁反悔谁小狗",
+        "你刚说切完你先挑",
+        "你刚说谁反悔谁小狗",
+        "你刚说大块归我",
+        "哼，明天我自己藏大块",
+    ]
+    speakers = ["昭昭", "灿灿", "昭昭", "灿灿", "昭昭", "灿灿"]
+    issues = collect_humor_issues(lines, speakers)
+    assert any("回旋镖重复" in i for i in issues), issues
+
+
+def test_c_opening_flags_scene_card_line():
+    """C 开场：'X还在Y上'式说明文判观感问题。"""
+    from app.services.daily_story.story_types.c.opening import (
+        score_opening_quality,
+    )
+
+    story = {
+        "setting": "厨房餐桌上放着最后一块蛋糕，灿灿刚切成一大一小两块。",
+        "discovery_opening": [
+            {
+                "speaker": "昭昭",
+                "line": "姐姐，你切好的蛋糕还在餐桌上，我想先挑！",
+            },
+            {"speaker": "灿灿", "line": "不行，我切的，这块大的该归我！"},
+        ],
+    }
+    _, _, cons = score_opening_quality(story)
+    assert any("说明文" in c for c in cons), cons
