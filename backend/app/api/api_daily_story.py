@@ -33,12 +33,24 @@ def list_stories_route():
         if code not in ("A", "B", "C", "D", "E"):
             raise APIError("story_type 须为 A–E", status_code=400)
         story_type = code
+    key_raw = get_query("key")
+    key = key_raw.strip() if key_raw else None
+    if key == "":
+        key = None
+    has_job_raw = (get_query("has_job") or "").strip().lower()
+    has_job: bool | None = None
+    if has_job_raw in ("1", "true", "yes"):
+        has_job = True
+    elif has_job_raw in ("0", "false", "no"):
+        has_job = False
     limit = parse_query_int("limit", 15, required=False, minimum=1, maximum=200)
     offset = parse_query_int("offset", 0, required=False, minimum=0)
     return json_ok(
         daily_story_mgr.list_stories(
             status=status,
             story_type=story_type,
+            key=key,
+            has_job=has_job,
             limit=limit,
             offset=offset,
         ),

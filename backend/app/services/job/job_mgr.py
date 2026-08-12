@@ -423,8 +423,11 @@ class JobMgr:
             return repo_job.update_job(job_id, status='pending', fail_stage=None, error_message=None)
 
     def delete_job(self, job_id: int, *, delete_files: bool = False) -> None:
+        from app.repositories import repo_daily_story
+
         if not delete_files:
             with atomic():
+                repo_daily_story.clear_job_id_by_job(job_id)
                 repo_job.delete_job(job_id)
             return
         lock = self._job_lock(job_id)
@@ -437,6 +440,7 @@ class JobMgr:
             from app.config import get_settings
             media_dir: Path = get_settings().video_data_dir / str(job_id)
             with atomic():
+                repo_daily_story.clear_job_id_by_job(job_id)
                 repo_job.delete_job(job_id)
             if media_dir.exists():
                 shutil.rmtree(media_dir)

@@ -84,6 +84,10 @@ function sleep(ms: number): Promise<void> {
 export async function listDailyStories(params: {
   status?: string;
   story_type?: string;
+  /** 按 key 模糊搜索（后端 LIKE） */
+  key?: string;
+  /** true=仅有关联任务；false=仅无任务 */
+  has_job?: boolean;
   limit?: number;
   offset?: number;
 } = {}): Promise<DailyStoryListResponse> {
