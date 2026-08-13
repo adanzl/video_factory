@@ -158,7 +158,13 @@
                   class="block h-full w-full [&_.el-image__inner]:block [&_.el-image__inner]:h-full [&_.el-image__inner]:w-full [&_.el-image__inner]:object-contain"
                   @load="onCoverLoad"
                   @error="coverLoadError = true"
-                />
+                >
+                  <template #error>
+                    <div class="flex size-full items-center justify-center text-sm text-gray-400">
+                      封面加载失败
+                    </div>
+                  </template>
+                </el-image>
                 <div v-if="showCover43Guide" class="pointer-events-none absolute inset-0 z-10">
                   <template v-if="cover43Guide.mode === 'horizontal'">
                     <div
