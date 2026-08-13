@@ -85,6 +85,20 @@ def test_pick_best_chat_title_prefers_hook_and_avoids_repeat():
     # 候选与初稿相同/命中 avoid → 回退初稿
     assert pick_best_chat_title("月饼大作战", ["月饼大作战"], max_len=10) == "月饼大作战"
 
+def test_pick_best_chat_title_avoid_prevents_punctuation_variant_repeat():
+    """重跑时标点/叹号变体也算重复：命中 avoid_titles 的候选降权，换角度候选胜出。"""
+    from app.services.script.optimize_title import pick_best_chat_title
+
+    best = pick_best_chat_title(
+        "分蛋糕",
+        ["分蛋糕先挑，咋还输了！", "分蛋糕先挑大的，凭啥还亏我"],
+        max_len=15,
+        anchor_words=["分蛋糕"],
+        story_type="C",
+        avoid_titles=["分蛋糕先挑咋还输了"],
+    )
+    assert best == "分蛋糕先挑大的，凭啥还亏我"
+
 def test_extract_core_anchor_words():
     from app.services.script.optimize_title import extract_core_anchor_words
 
@@ -101,12 +115,29 @@ def test_extract_core_anchor_words():
     }) == []
     # 与冲突核心无交集 → 不强制
     assert extract_core_anchor_words("月饼大作战", {"conflict_core": "姐弟吵架"}) == []
-    # 不产出跨词坏碎片：偷看电视 → 电视（绝不「偷看电」）
+    # 不产出跨词坏碎片：最长优先取完整短语「偷看电视」（绝不「偷看电」/「偷看」）
     assert extract_core_anchor_words("偷看电视", {
         "scene_title": "偷看电视",
         "conflict_core": "姐弟趁妈妈洗澡偷看电视，约好轮班望风，结果露馅",
         "setting": "客厅，电视还黑着",
-    }) == ["电视"]
+    }) == ["偷看电视"]
+    # 3 字 scene_title 取完整短语，杜绝「分蛋」这种前缀碎片
+    assert extract_core_anchor_words("分蛋糕", {
+        "scene_title": "分蛋糕",
+        "conflict_core": "姐弟争切蛋糕，谁切谁先选",
+        "setting": "客厅茶几上放着一块圆形蛋糕，灿灿手拿餐刀正准备切，昭昭伸手要抢刀。",
+        "theme": "分蛋糕大小不均",
+    }) == ["分蛋糕"]
+    # 4 字 scene_title 取完整短语，杜绝「抢遥」「控器」这种前后缀碎片
+    anchors = extract_core_anchor_words("抢遥控器", {
+        "scene_title": "抢遥控器",
+        "conflict_core": "姐弟抢遥控器，谁也不让谁",
+        "setting": "客厅，电视开着。",
+        "theme": "抢遥控器谁都不让",
+    })
+    assert anchors == ["抢遥控器"]
+    assert "抢遥" not in anchors
+    assert "控器" not in anchors
 
 def test_pick_best_chat_title_anchor_guard():
     from app.services.script.optimize_title import pick_best_chat_title
@@ -133,7 +164,7 @@ def test_pick_best_chat_title_anchor_guard():
     )
 
 def test_pick_best_chat_title_rejects_broken_anchor_fragment():
-    """锚点不含跨词坏碎片：偷看电视 只产出「电视」，「偷看电」绝不出现在要求里。"""
+    """锚点不含跨词坏碎片：偷看电视 取完整短语，「偷看」「偷看电」绝不出现在要求里。"""
     from app.services.script.optimize_title import extract_core_anchor_words
 
     story = {
@@ -143,8 +174,506 @@ def test_pick_best_chat_title_rejects_broken_anchor_fragment():
         "theme": "姐弟趁妈妈洗澡偷看电视",
     }
     anchors = extract_core_anchor_words("偷看电视", story)
-    assert anchors == ["电视"]
+    assert anchors == ["偷看电视"]
+    assert "偷看" not in anchors
     assert "偷看电" not in anchors
+
+def test_pick_best_chat_title_rejects_broken_prefix_fragment():
+    """锚词为完整短语「分蛋糕」时，「分蛋翻车记」必须被拒，完整短语候选被接受。"""
+    from app.services.script.optimize_title import (
+        extract_core_anchor_words,
+        extract_theme_action_phrase,
+        pick_best_chat_title,
+    )
+
+    story = {
+        "scene_title": "分蛋糕",
+        "conflict_core": "姐弟争切蛋糕，谁切谁先选",
+        "setting": "客厅茶几上放着一块圆形蛋糕，灿灿手拿餐刀正准备切，昭昭伸手要抢刀。",
+        "theme": "分蛋糕大小不均",
+        "story_type": "C",
+    }
+    anchors = extract_core_anchor_words("分蛋糕", story)
+    assert anchors == ["分蛋糕"]
+    assert "分蛋" not in anchors
+    phrase = extract_theme_action_phrase("分蛋糕", story)
+    assert phrase == "分蛋糕"
+    # 坏碎片候选不含完整主题短语 → -8 分，回退初稿
+    assert (
+        pick_best_chat_title("分蛋糕", ["分蛋翻车记"], max_len=15, anchor_words=anchors)
+        == "分蛋糕"
+    )
+    # 含完整主题短语的候选正常通过
+    assert (
+        pick_best_chat_title("分蛋糕", ["分蛋糕咋就散伙了"], max_len=15, anchor_words=anchors)
+        == "分蛋糕咋就散伙了"
+    )
+
+def test_chat_title_prompt_uses_full_theme_phrase():
+    """标题优化提示词必须写「分蛋糕」，绝不能把「分蛋」当硬性保留短语。"""
+    from app.services.script.optimize_title import build_chat_title_user_prompt
+
+    story = {
+        "scene_title": "分蛋糕",
+        "conflict_core": "姐弟争切蛋糕，谁切谁先选",
+        "setting": "客厅茶几上放着一块圆形蛋糕，灿灿手拿餐刀正准备切，昭昭伸手要抢刀。",
+        "theme": "分蛋糕大小不均",
+        "story_type": "C",
+    }
+    prompt = build_chat_title_user_prompt(draft_title="分蛋糕", story_content=story, max_title_len=15)
+    assert "「分蛋」" not in prompt
+    assert "「分蛋糕」" in prompt
+    assert "本次类型硬规则" in prompt
+    assert "黑名单词禁用" in prompt
+    assert "候选1也不允许省略" in prompt
+    assert "禁止放在句尾倒装" in prompt
+    assert "同一句式结构也最多出现 1 次" in prompt
+    assert "孩子气硬规则" in prompt or "孩子当场脱口而出的话" in prompt
+    assert "不能有语病" in prompt
+    assert "语病自检" in prompt
+    assert "说好分蛋糕先挑" in prompt
+    assert "封面感硬规则" in prompt
+    assert "大块归你？分蛋糕我先挑，赖皮" in prompt
+
+def test_pick_best_chat_title_c_type_prefers_rule_reversal():
+    """C 类公平执念：规则反噬候选应压过泛化「翻车记」，黑名单「露馅」直接拒收。"""
+    from app.services.script.optimize_title import pick_best_chat_title
+
+    best = pick_best_chat_title(
+        "分蛋糕",
+        ["分蛋糕翻车记！", "分蛋糕先挑咋还输了？", "分蛋糕咋全露馅了？"],
+        max_len=15,
+        anchor_words=["分蛋糕"],
+        story_type="C",
+    )
+    assert best == "分蛋糕先挑咋还输了？"
+
+def test_pick_best_chat_title_c_type_rejects_blacklist_word():
+    """C 类出现 B 类词「露馅」时，候选直接拒收，回退初稿。"""
+    from app.services.script.optimize_title import pick_best_chat_title
+
+    assert (
+        pick_best_chat_title(
+            "分蛋糕",
+            ["分蛋糕咋全露馅了？"],
+            max_len=15,
+            anchor_words=["分蛋糕"],
+            story_type="C",
+        )
+        == "分蛋糕"
+    )
+
+def test_pick_best_chat_title_c_type_rejects_written_inversion():
+    """C 类书面倒装（反被挑走大块/被大块走）直接拒收，自然语序胜出。"""
+    from app.services.script.optimize_title import pick_best_chat_title
+
+    best = pick_best_chat_title(
+        "分蛋糕",
+        ["分蛋糕先挑反被挑走大块", "分蛋糕我先挑，大块被挑走"],
+        max_len=15,
+        anchor_words=["分蛋糕"],
+        story_type="C",
+    )
+    assert best == "分蛋糕我先挑，大块被挑走"
+
+def test_pick_best_chat_title_c_type_requires_info_anchor():
+    """C 类缺信息锚词（只有语气词）的候选直接拒收。"""
+    from app.services.script.optimize_title import pick_best_chat_title
+
+    assert (
+        pick_best_chat_title(
+            "分蛋糕",
+            ["分蛋糕咋这样呀？"],
+            max_len=15,
+            anchor_words=["分蛋糕"],
+            story_type="C",
+        )
+        == "分蛋糕"
+    )
+
+def test_pick_best_chat_title_c_type_style_word_bonus():
+    """孩子话风格词（说好/凭啥/明明）在信息锚词之上额外加分。"""
+    from app.services.script.optimize_title import pick_best_chat_title
+
+    best = pick_best_chat_title(
+        "分蛋糕",
+        ["分蛋糕大块被挑走", "分蛋糕说好我先挑，大块被挑走"],
+        max_len=15,
+        anchor_words=["分蛋糕"],
+        story_type="C",
+    )
+    assert best == "分蛋糕说好我先挑，大块被挑走"
+
+def test_pick_best_chat_title_tie_prefers_shorter():
+    """同分候选优先更短，封面感更强的胜出。"""
+    from app.services.script.optimize_title import pick_best_chat_title
+
+    best = pick_best_chat_title(
+        "分蛋糕",
+        ["分蛋糕大块咋也没了？", "分蛋糕大块没了？"],
+        max_len=15,
+        anchor_words=["分蛋糕"],
+        story_type="C",
+    )
+    assert best == "分蛋糕大块没了？"
+
+def test_pick_best_chat_title_penalizes_tail_theme_phrase():
+    """主题短语放句尾的候选应被扣分，让「主题短语在句首/中段」的候选胜出。"""
+    from app.services.script.optimize_title import pick_best_chat_title
+
+    best = pick_best_chat_title(
+        "分蛋糕",
+        ["先挑咋还输了，分蛋糕", "分蛋糕先挑，咋还输了"],
+        max_len=15,
+        anchor_words=["分蛋糕"],
+        story_type="C",
+    )
+    assert best == "分蛋糕先挑，咋还输了"
+
+def test_pick_best_chat_title_hard_drops_missing_anchor():
+    """缺主题短语/核心名词的候选直接作废，不参与选择。"""
+    from app.services.script.optimize_title import pick_best_chat_title
+
+    # 候选1缺「分蛋糕」，即使有类型钩子+问号也必须被跳过
+    best = pick_best_chat_title(
+        "分蛋糕",
+        ["先挑咋还输了？", "分蛋糕先挑白忙一场"],
+        max_len=15,
+        anchor_words=["分蛋糕"],
+        story_type="C",
+    )
+    assert best == "分蛋糕先挑白忙一场"
+    # 全部候选都缺主题短语 → 回退初稿
+    assert (
+        pick_best_chat_title(
+            "分蛋糕",
+            ["先挑咋还输了？", "按字面白忙一场"],
+            max_len=15,
+            anchor_words=["分蛋糕"],
+            story_type="C",
+        )
+        == "分蛋糕"
+    )
+
+def test_filter_chat_title_candidates_drops_missing_anchor():
+    """候选层硬过滤：缺主题短语的候选被丢弃，空锚词时不过滤。"""
+    from app.services.script.optimize_title import filter_chat_title_candidates
+
+    candidates = ["分蛋糕先挑咋还输了", "先挑反被挑走大块", "分蛋糕按字面白忙"]
+    assert filter_chat_title_candidates(candidates, ["分蛋糕"]) == [
+        "分蛋糕先挑咋还输了",
+        "分蛋糕按字面白忙",
+    ]
+    assert filter_chat_title_candidates(candidates, []) == candidates
+
+def test_ensure_chat_title_candidates_refills_missing():
+    """有效候选不足 3 个时，重生成补足到 3 个，缺锚词的候选不进入结果。"""
+    from app.services.script.optimize_title import ensure_chat_title_candidates
+
+    fetch = iter([
+        ["先挑咋还输了", "分蛋糕按字面白忙", "分蛋糕大小不均亏"],
+        ["分蛋糕先挑反被挑走大块", "分蛋糕咋还输了", "分蛋糕立规反被挑"],
+    ])
+    out = ensure_chat_title_candidates(
+        ["分蛋糕先挑咋还输了", "先挑反被挑走大块"],
+        ["分蛋糕"],
+        fetch_candidates=lambda: next(fetch),
+        max_attempts=2,
+    )
+    assert len(out) == 3
+    assert all("分蛋糕" in c for c in out)
+    assert "先挑反被挑走大块" not in out
+
+def test_ensure_chat_title_candidates_keeps_partial_on_fetch_error():
+    """重生成失败时保留已有有效候选，不因异常丢掉全部。"""
+    from app.services.script.optimize_title import ensure_chat_title_candidates
+
+    def fetch_candidates():
+        raise RuntimeError("fetch failed")
+
+    out = ensure_chat_title_candidates(
+        ["分蛋糕先挑咋还输了"],
+        ["分蛋糕"],
+        fetch_candidates=fetch_candidates,
+        max_attempts=1,
+    )
+    assert out == ["分蛋糕先挑咋还输了"]
+
+def test_build_chat_title_polish_prompts():
+    """润色提示词包含主题短语、位置约束和类型黑名单。"""
+    from app.services.script.optimize_title import build_chat_title_polish_prompts
+
+    story = {
+        "scene_title": "分蛋糕",
+        "conflict_core": "姐弟争切蛋糕，谁切谁先选",
+        "setting": "客厅茶几上放着一块圆形蛋糕。",
+        "theme": "分蛋糕大小不均",
+        "story_type": "C",
+    }
+    prompts = build_chat_title_polish_prompts(
+        "分蛋糕先挑反被大块走",
+        "分蛋糕",
+        story,
+        max_title_len=15,
+    )
+    assert prompts["step"] == "chat_title_polish"
+    assert "主题短语（必须原样保留）：分蛋糕" in prompts["user"]
+    assert "禁止放在句尾倒装" in prompts["user"]
+    assert "禁止删掉原标题里的任何内容字" in prompts["user"]
+    assert "不能有语病" in prompts["user"]
+    assert "孩子气" in prompts["user"]
+    assert "专门修语病" in prompts["user"]
+    assert "说好先挑" in prompts["user"]
+    assert "保持短促封面感" in prompts["user"]
+    assert "黑名单词" in prompts["user"]
+    assert "露馅" in prompts["user"]
+
+def test_parse_chat_title_polish_payload():
+    from app.services.script.optimize_title import parse_chat_title_polish_payload
+
+    assert (
+        parse_chat_title_polish_payload(
+            {"title": "分蛋糕先挑，反被拿走大块"},
+            max_title_len=15,
+        )
+        == "分蛋糕先挑，反被拿走大块"
+    )
+    with pytest.raises(ValueError):
+        parse_chat_title_polish_payload({}, max_title_len=15)
+
+def test_polish_chat_title_valid_and_fallback():
+    """润色结果通过硬校验才采用；缺短语/黑名单/句尾倒装/请求异常都回退原标题。"""
+    from app.services.script.optimize_title import polish_chat_title
+
+    story = {
+        "scene_title": "分蛋糕",
+        "conflict_core": "姐弟争切蛋糕，谁切谁先选",
+        "setting": "客厅茶几上放着一块圆形蛋糕。",
+        "theme": "分蛋糕大小不均",
+        "story_type": "C",
+    }
+    source = "分蛋糕先挑反被大块走"
+    assert (
+        polish_chat_title(
+            source,
+            "分蛋糕",
+            story,
+            max_len=15,
+            fetch_json=lambda p: {"title": "分蛋糕先挑，反被拿走大块"},
+        )
+        == "分蛋糕先挑，反被拿走大块"
+    )
+    # 润色删掉原标题的内容字（如「挑」）→ 回退
+    assert (
+        polish_chat_title(
+            "按字面挑，分蛋糕白忙",
+            "分蛋糕",
+            story,
+            max_len=15,
+            fetch_json=lambda p: {"title": "分蛋糕，按字面白忙"},
+        )
+        == "按字面挑，分蛋糕白忙"
+    )
+    # 缺主题短语 → 回退
+    assert (
+        polish_chat_title(
+            source,
+            "分蛋糕",
+            story,
+            max_len=15,
+            fetch_json=lambda p: {"title": "先挑反被拿走大块"},
+        )
+        == source
+    )
+    # 含黑名单词 → 回退
+    assert (
+        polish_chat_title(
+            source,
+            "分蛋糕",
+            story,
+            max_len=15,
+            fetch_json=lambda p: {"title": "分蛋糕先挑咋全露馅了"},
+        )
+        == source
+    )
+    # 句尾倒装 → 回退
+    assert (
+        polish_chat_title(
+            source,
+            "分蛋糕",
+            story,
+            max_len=15,
+            fetch_json=lambda p: {"title": "先挑反被拿走，分蛋糕"},
+        )
+        == source
+    )
+    # 请求异常 → 回退
+    def boom(p):
+        raise RuntimeError("fetch failed")
+
+    assert polish_chat_title(source, "分蛋糕", story, max_len=15, fetch_json=boom) == source
+
+def test_parse_chat_title_grammar_check_payload():
+    from app.services.script.optimize_title import parse_chat_title_grammar_check_payload
+
+    assert parse_chat_title_grammar_check_payload({"ok": True, "reason": ""}) == (True, "")
+    assert parse_chat_title_grammar_check_payload({"ok": False, "reason": "缺主语"}) == (False, "缺主语")
+    with pytest.raises(ValueError):
+        parse_chat_title_grammar_check_payload({})
+
+def test_build_chat_title_grammar_prompts():
+    from app.services.script.optimize_title import (
+        build_chat_title_grammar_check_prompt,
+        build_chat_title_grammar_fix_prompts,
+    )
+
+    story = {
+        "scene_title": "分蛋糕",
+        "conflict_core": "姐弟争切蛋糕，谁切谁先选",
+        "setting": "客厅茶几上放着一块圆形蛋糕。",
+        "theme": "分蛋糕大小不均",
+        "story_type": "C",
+    }
+    check = build_chat_title_grammar_check_prompt(
+        "分蛋糕说好先挑，咋亏了",
+        story,
+        max_title_len=15,
+    )
+    assert "语序自然" in check["user"]
+    assert "缺主语" in check["user"]
+    assert "赖皮大的归你" in check["user"]
+    assert "分蛋糕凭啥先挑大的亏了" in check["user"]
+    assert "分蛋糕先挑，大块咋归你？" in check["user"]
+    fix = build_chat_title_grammar_fix_prompts(
+        "分蛋糕说好先挑，咋亏了",
+        "分蛋糕",
+        story,
+        "缺主语，应为「分蛋糕说好我先挑」",
+        max_title_len=15,
+    )
+    assert "语病审核意见" in fix["user"]
+    assert "缺主语" in fix["user"]
+    assert "以修好语病为准" in fix["user"]
+    assert "赖皮大的归你" in fix["user"]
+    assert "分蛋糕凭啥先挑大的亏了" in fix["user"]
+    assert "分蛋糕先挑，大块咋归你？" in fix["user"]
+
+def test_polish_chat_title_grammar_gate():
+    """语病审核不过时回喂意见修复；修复通过才采用，否则回退。"""
+    from app.services.script.optimize_title import polish_chat_title
+
+    story = {
+        "scene_title": "分蛋糕",
+        "conflict_core": "姐弟争切蛋糕，谁切谁先选",
+        "setting": "客厅茶几上放着一块圆形蛋糕。",
+        "theme": "分蛋糕大小不均",
+        "story_type": "C",
+    }
+    source = "分蛋糕说好先挑，咋亏了"
+    fixed = "分蛋糕说好我先挑，咋亏了"
+
+    def fetch_json(p):
+        if p["step"] == "chat_title_grammar_fix":
+            return {"title": fixed}
+        return {"title": source}
+
+    def check_json(p):
+        title = p["user"].split("标题：")[1].split("\n")[0]
+        return {"ok": title == fixed, "reason": "" if title == fixed else "缺主语"}
+
+    assert (
+        polish_chat_title(
+            source,
+            "分蛋糕",
+            story,
+            max_len=15,
+            fetch_json=fetch_json,
+            check_json=check_json,
+        )
+        == fixed
+    )
+
+    # 修复结果仍不合格（缺主题短语）→ 回退原标题
+    def fetch_json_bad(p):
+        if p["step"] == "chat_title_grammar_fix":
+            return {"title": "说好我先挑，咋亏了"}
+        return {"title": source}
+
+    assert (
+        polish_chat_title(
+            source,
+            "分蛋糕",
+            story,
+            max_len=15,
+            fetch_json=fetch_json_bad,
+            check_json=lambda p: {"ok": False, "reason": "还是缺主语"},
+        )
+        == source
+    )
+
+def test_pick_best_chat_title_c_type_rejects_compressed_grammar():
+    """压缩过度语病（赖皮大的归你）直接拒收，通顺候选胜出。"""
+    from app.services.script.optimize_title import pick_best_chat_title
+
+    best = pick_best_chat_title(
+        "分蛋糕",
+        ["分蛋糕说好我先挑，赖皮大的归你", "分蛋糕说好我先挑，凭啥大的归你"],
+        max_len=15,
+        anchor_words=["分蛋糕"],
+        story_type="C",
+    )
+    assert best == "分蛋糕说好我先挑，凭啥大的归你"
+
+def test_pick_best_chat_title_c_type_rejects_missing_subject_compression():
+    """缺主语压缩（凭啥先挑/让大块/明明先挑/先挑大块）直接拒收。"""
+    from app.services.script.optimize_title import pick_best_chat_title
+
+    best = pick_best_chat_title(
+        "分蛋糕",
+        [
+            "分蛋糕凭啥先挑大的亏了",
+            "分蛋糕说好我先挑，亏我让大块",
+            "分蛋糕明明先挑，白忙一场",
+            "分蛋糕先挑，大块咋归你？",
+            "分蛋糕我先挑大的，凭啥还亏了",
+        ],
+        max_len=15,
+        anchor_words=["分蛋糕"],
+        story_type="C",
+    )
+    assert best == "分蛋糕我先挑大的，凭啥还亏了"
+
+def test_polish_chat_title_grammar_bad_pattern_forces_deletion_fix():
+    """语病审核误判通过时，规则兜底强制进入修复；修复可删错位字。"""
+    from app.services.script.optimize_title import polish_chat_title
+
+    story = {
+        "scene_title": "分蛋糕",
+        "conflict_core": "姐弟争切蛋糕，谁切谁先选",
+        "setting": "客厅茶几上放着一块圆形蛋糕。",
+        "theme": "分蛋糕大小不均",
+        "story_type": "C",
+    }
+    source = "分蛋糕说好我先挑，赖皮大的归你"
+    fixed = "分蛋糕说好我先挑，凭啥大的归你"
+
+    def fetch_json(p):
+        if p["step"] == "chat_title_grammar_fix":
+            return {"title": fixed}
+        return {"title": source}
+
+    # 审核模型误判为通过；规则兜底仍应触发修复
+    assert (
+        polish_chat_title(
+            source,
+            "分蛋糕",
+            story,
+            max_len=15,
+            fetch_json=fetch_json,
+            check_json=lambda p: {"ok": True, "reason": ""},
+        )
+        == fixed
+    )
 
 def test_select_optimized_title_degraded_truncation_falls_back():
     # 优化只是初稿删字截断 → 回退初稿

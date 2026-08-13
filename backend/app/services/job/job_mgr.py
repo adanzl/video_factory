@@ -87,10 +87,12 @@ def _optimize_daily_story_title(draft: str, story_content: dict, *, max_len: int
     from app.services.llm.llm_mgr import llm_mgr
     from app.services.script.optimize_title import (
         build_chat_title_prompts,
+        ensure_chat_title_candidates,
         extract_core_anchor_words,
         extract_theme_action_phrase,
         parse_chat_title_candidates_payload,
         pick_best_chat_title,
+        polish_chat_title,
     )
     prompts = build_chat_title_prompts(draft, story_content, max_title_length=max_len, avoid_titles=avoid_titles)
     client = llm_mgr._get_client()
@@ -101,10 +103,30 @@ def _optimize_daily_story_title(draft: str, story_content: dict, *, max_len: int
     # 完整主题短语优先（要求标题含「偷看电视」，不只含「电视」），缺短语时退回核心名词
     if phrase and phrase not in anchors:
         anchors = [phrase, *anchors]
-    return pick_best_chat_title(
+    candidates = ensure_chat_title_candidates(
+        candidates,
+        anchors,
+        fetch_candidates=lambda: parse_chat_title_candidates_payload(
+            client._chat_json(prompts['system'], prompts['user'], thinking_enabled=False, temperature=1.0)[0],
+            max_title_len=max_len,
+        ),
+    )
+    final_title = pick_best_chat_title(
         draft, candidates,
         max_len=max_len, avoid_titles=avoid_titles, anchor_words=anchors,
         story_type=story_content.get('story_type'),
+    )
+    return polish_chat_title(
+        final_title,
+        draft,
+        story_content,
+        max_len=max_len,
+        fetch_json=lambda p: client._chat_json(
+            p['system'], p['user'], thinking_enabled=False, temperature=0.3
+        )[0],
+        check_json=lambda p: client._chat_json(
+            p['system'], p['user'], thinking_enabled=False, temperature=0.3
+        )[0],
     )
 
 
