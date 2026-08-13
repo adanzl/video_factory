@@ -49,6 +49,8 @@ _DEFAULT_NEGATIVE_PROMPT = (
     "字幕, 文字, 水印, 弹幕, 对白气泡, "
     "微笑, 大笑, 露齿笑, 开心, 嬉笑, 表情突变, 换脸, 脸部变形, "
     "扭曲, 多手指, "
+    "knife, sharp blade, sharp tool, real knife, knife in child's hand, "
+    "刀具, 锋利刀具, 儿童持刀, 餐刀, "
     "crowd, duplicate character, cloned person, extra stranger, "
     "路人, 多余路人, 复制人物, 克隆角色, "
     "快速推进, 大幅推进, 强烈变焦, 画面放大, 裁切脸部, zoom in, dolly in"

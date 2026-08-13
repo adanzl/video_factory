@@ -131,10 +131,12 @@ def _strip_style_suffix(vb: str) -> str:
 
 
 def _daily_lighting(vb: str) -> str:
-    indoor = any(w in vb for w in ("客厅", "卧室", "厨房", "房间", "室内", "书房"))
-    if indoor:
-        return "窗光从一侧斜照，在墙面和地面投下柔和光影。"
-    return "室外自然光，柔和散射，画面明亮。"
+    outdoor = any(
+        w in vb for w in ("室外", "户外", "院子", "阳台", "楼下", "公园", "小区", "马路")
+    )
+    if outdoor:
+        return "室外自然光，柔和散射，画面明亮。"
+    return "窗光从一侧斜照，在墙面和地面投下柔和光影。"
 
 
 def _daily_composition(
@@ -225,6 +227,10 @@ def assemble_daily_t2i_prompt(
         vb = strip_verify_regen_leak(vb)
         vb = scrub_leaked_speaker_names(vb, set(speakers))
         vb = scrub_offscreen_doorway_cues(vb, allowed=set(speakers))
+        # 默认陈设只在首镜保留：非首镜去除重复的「茶几上放着遥控器和空水杯」
+        if int(seg.get("segment_index") or 0) > 1:
+            vb = re.sub(r"[，,]\s*茶几上放着遥控器和空水杯\s*", "", vb)
+            vb = vb.replace("茶几上放着遥控器和空水杯", "").strip("，, ")
     else:
         vb = strip_verify_regen_leak(vb)
     shot = str(seg.get("shot_type") or "").strip()
@@ -261,15 +267,15 @@ def assemble_daily_t2i_prompt(
     if "灿灿" in speakers:
         parts.append(_DAILY_CANCAN_HAIR_LOCK)
 
-    # 嘴型锁定：首帧里谁嘴张着 I2V 就让谁说话（实测压过文字指令），
-    # 故张嘴只允许给第一句台词的说话人，其余人闭嘴防止 i2v 说话人反转
+    # 嘴型锁定：先开口说话的孩子在静帧里必须处于说话状态，
+    # 其余人完全闭嘴，防止 I2V 说话人反转
     first = _daily_first_speaker(seg)
     if first and first in speakers:
         others = [n for n in speakers if n != first]
-        mouth = f"{first}微微张嘴正在开口说话"
+        mouth = f"{first}正在开口说话"
         if others:
             mouth += (
-                f"；{'、'.join(others)}嘴巴闭合不露齿，情绪只用眉眼和肢体表达"
+                f"；{'、'.join(others)}嘴巴完全闭合不露齿，情绪只用眉眼和肢体表达"
             )
         parts.append(mouth + "。")
 
@@ -403,9 +409,12 @@ _IMAGE_PROMPT_MOTION_TAIL = (
 )
 
 _IMAGE_PROMPT_MOTION_TAIL_DAILY_AMBIENT = (
-    "【ambient】40-200字，上限 600 字，只写画面内无生命元素微动（光影、纱帘、尘埃、蜡笔屑等），"
-    "须写方向、速度、幅度细节；禁人物/有生命体动作；末尾须写「人物姿势保持不变」。"
-    "正例：窗边纱帘被风轻轻掀起又落下，窗帘下摆向右飘动约10厘米后回摆，人物姿势保持不变。"
+    "【ambient】40-200字，上限 600 字，只能从本段 image_prompt 已明确出现的无生命物体中"
+    "选 1-2 个写微动（如纱帘、遥控器、空水杯、蛋糕奶油高光）；"
+    "禁止新造画面外物体（如蛋糕盒、丝带、蜡笔屑、灰尘、水渍）；"
+    "须写方向、速度、幅度细节，但幅度用「轻微/极小」等相对词，禁止写具体厘米/角度数字；"
+    "禁人物/有生命体动作；末尾须写「人物姿势保持不变」。"
+    "正例：窗边纱帘被风轻轻掀起又落下，窗帘下摆轻微向右飘动后回摆，人物姿势保持不变。"
 )
 
 _IMAGE_PROMPT_MOTION_TAIL_DAILY_KEYFRAME = (
@@ -416,6 +425,10 @@ _IMAGE_PROMPT_MOTION_TAIL_DAILY_KEYFRAME = (
     "句间格式完全相同，微动作须贴合本镜画面；"
     "同人说多句就要写多行，禁止合并、漏句或打乱对白顺序。"
     "禁止写「后定格」（末句由系统在 TTS 后改为定格）。\n"
+    "【动作限幅】说话人只动嘴+一个幅度极小（不超过手指长度）的手部/头部微动作；"
+    "身体姿态、站姿、头部朝向保持不变；"
+    "禁止写具体厘米/角度数字，禁止「身体前倾幅度增大」「双手叉腰撑开」「大幅耸肩」等动作；"
+    "非说话方保持静图姿势，不写主动作。\n"
     "【站位】左右必须与本段 image_prompt/visual_brief 中"
     "「画面左边是…，右边是…」完全一致，禁止对调。\n"
     "【时间轴】禁止自编起止秒数；写成「{角色}说话，同时…」即可，"
@@ -577,8 +590,10 @@ _MOTION_USER_RULE = (
 
 _MOTION_USER_RULE_DAILY = (
     "motion_prompt 须按该段 motion_mode："
-    "ambient 只写无生命微动且末尾写人物姿势保持不变；"
+    "ambient 只能从本镜 image_prompt 已出现的无生命物体中选 1-2 个写微动，"
+    "禁止新造画面外物体，末尾写人物姿势保持不变；"
     "keyframe 写成「{角色}说话，同时…」微动作并锁住面部表情与静图一致（不微笑），"
+    "说话人身体姿态/站姿/头部朝向保持不变，动作幅度极小，禁止写具体厘米/角度；"
     "禁止自编起止秒数（系统按 TTS 注入），"
     "末尾镜头固定不推近不拉远（禁止变焦放大），禁大位移、禁纯环境晃动套话；"
     "各段互不重复，禁止套话。"

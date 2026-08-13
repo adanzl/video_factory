@@ -269,6 +269,11 @@ def _run_visual_brief(job_id: int, *, segment_indices: list[int] | None=None) ->
             cleaned = scrub_leaked_speaker_names(str(seg.get('visual_brief') or ''), allowed)
             if cleaned != seg.get('visual_brief'):
                 seg['visual_brief'] = cleaned
+        from app.services.script.visual_brief import (
+            normalize_daily_visual_brief_sequence,
+        )
+
+        normalize_daily_visual_brief_sequence(updated.get('segments') or [])
     with atomic():
         repo_job.update_job(job_id, script_json=updated)
         repo_segment.insert_segments(job_id, updated.get('segments', []))

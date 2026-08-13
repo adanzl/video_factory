@@ -48,8 +48,8 @@ def test_assemble_daily_t2i_prompt_structure():
     assert "占左半" in prompt and "占右半" in prompt
     assert "蜡笔" in prompt
     # 嘴型锁定：首个说话人（灿灿）张嘴，其余闭嘴，防 i2v 说话人反转
-    assert "灿灿微微张嘴正在开口说话" in prompt
-    assert "昭昭嘴巴闭合不露齿" in prompt
+    assert "灿灿正在开口说话" in prompt
+    assert "昭昭嘴巴完全闭合不露齿" in prompt
 
 
 def test_strip_verify_regen_leak():
@@ -221,8 +221,9 @@ def test_scrub_daily_visual_brief_strips_mouth_and_fixes_hands():
         }
     )
     assert "嘴巴大张" not in prompt
-    assert prompt.count("微微张嘴正在开口说话") == 1
-    assert "昭昭微微张嘴正在开口说话" in prompt
+    assert "嘴巴大张" not in prompt
+    assert prompt.count("正在开口说话") == 1
+    assert "昭昭正在开口说话" in prompt
     assert "双手叉腰" not in prompt
     assert "左手叉腰" in prompt
 

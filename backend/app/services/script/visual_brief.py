@@ -54,9 +54,29 @@ _DAILY_VISUAL_BRIEF_CONTENT_RULE = (
     "visual_brief 为该镜核心场景描述（100-200 字），将直接拼入文生图提示词，"
     "写成一段连贯中文，写满可出图细节（地点陈设、人物动作表情、冲突道具融在正文里）。"
     "画风/外貌/口型/光线/景别由系统补全，brief 只写本镜可见的场景与动作。"
-    "【地点与陈设】开头写清室内地点（与全片 setting 一致，如客厅沙发/茶几旁）；"
-    "背景陈设默认「茶几上放着遥控器和空水杯」，全片镜间沿用；"
+    "【地点与陈设】每镜开头必须写清室内地点（与全片 setting 一致，如客厅茶几上…），"
+    "即使写接上一镜也要先写地点，茶几必须入画；"
+    "背景陈设默认「茶几上放着遥控器和空水杯」，只首镜写全，"
+    "后续镜写「茶几同前/背景同分镜1」，不重复遥控器和空水杯；"
     "仅当本段台词点名其他背景物件时再改写陈设。"
+    "【冲突道具状态】本片 setting 与台词点名的核心冲突道具（如蛋糕、薯片、玩具）"
+    "必须每镜写清当前状态，状态随剧情单向推进，禁止所有分镜写成同一状态；"
+    "台词出现切/切开/刀歪/大块/小块等词时，该镜及之后状态必须已变化"
+    "（如：完整圆形蛋糕 → 已被切成一大一小两块，左边大、右边小）；"
+    "状态句放在地点句之后。"
+    "蛋糕类统一为单层圆形蛋糕；切分状态写「单层圆形蛋糕被切下一块，蛋糕主体仍大、"
+    "切下的小块放在旁边（左大右小）」，禁止多层蛋糕、禁止把蛋糕画成两个独立蛋糕；"
+    "切分后的左右必须固定为左大右小（左边蛋糕主体/大块，右边切下的小块），"
+    "禁止左小右大，禁止把大块写成小块。"
+    "【剧情连续性】先按全片 narration 明确本镜剧情拍"
+    "（如：立规矩→切好→挑大块→反悔→嘴硬），再写画面；"
+    "相邻镜须因果承接：上一镜的持物/手势/蛋糕状态本镜要延续或明确变化，"
+    "禁止道具凭空出现/消失；全片固定左昭昭右灿灿、客厅茶几；"
+    "每镜开头可用「接上一镜/此时」承接，避免每镜都像独立截图；"
+    "两人始终同框清晰入画，禁止把其中一人写成背景模糊/远景；"
+    "禁止括号内心理/解释说明（如「其实是小块，但昭昭认为大」），只写可见画面。"
+    "【安全】儿童角色不得持真实刀具/锐器；剧情涉及刀时统一写「塑料蛋糕刀」"
+    "（蛋糕刀样式，非水果刀/餐刀），禁止「水果刀」「餐刀」「锋利刀具」等表述。"
     "画面涉及门（含门口/门外）时，门一律写成「一扇单开门」"
     "（单扇门：只有一块完整门板，没有分成两扇），"
     "门外是柔和的白色亮光；门被风吹得更开时须写明向内开；"
@@ -77,8 +97,23 @@ _DAILY_VISUAL_BRIEF_CONTENT_RULE = (
     "speakers 列出的角色都要入画，未发言者写旁听姿态。"
     "【人物关系】对标本段 dialogue：质问方进攻（指/瞪/左手叉腰+右手指），"
     "辩解方防御（摊手/耸肩/撇嘴）；每人只定格一组姿势（冲突最强一瞬）。"
+    "【手部总账与互斥】本镜角色数×2=可见手总数，每角色恰好两只手。"
+    "每个角色必须写明两只手各自的动作，禁止只写一只手；"
+    "手部动作按角色逐一写清：持物角色写明哪只手拿、另一只手做什么；"
+    "无持物/无手势需求时明确写「双手背在身后/自然下垂/放在身侧」，"
+    "不要写易诱发多手的撑桌/抱胸/交叉等动作；"
+    "禁止同一角色同时出现两组手部动作（如双手撑桌又另有手拿刀）；"
+    "禁止把 A 角色的动作写成 B 角色的动作；"
+    "持刀人与伸手人必须分离：非持刀角色伸向刀时写明「手指悬空，未接触刀柄」，"
+    "持刀角色写明「手指包裹刀柄」。"
     "【人物】写眉眼与肢体（瞪圆眼、皱眉、撇嘴、前倾、摊手等），强度对齐台词语气；"
-    "口型由系统注入，brief 用眉眼肢体表达情绪即可。"
+    "口型由系统注入，但 brief 的表情须与说话兼容："
+    "首说话人（dialogue 第一句）正在说话，可写「撇嘴说话」「咧嘴笑着说」「笑眯眯地说话」等，"
+    "禁止写「闭嘴」「不开口」「光笑不说话」等与说话冲突的表情；"
+    "其他角色禁止写说话/反驳/大喊/开口等，只用眉眼肢体表达情绪；"
+    "【硬性】非首说话人出现「说话/反驳/大喊/开口/嘴巴张开」任一词汇即整段不合格，必须重写。"
+    "【持物一致性】同一道具的持物手全片统一（默认右手持刀），禁止左右手跳变；"
+    "持物手与相邻镜保持一致。"
     "【道具】冲突道具用台词已出现的物件与状态；"
     "衣物类用「衣服/衣物堆/皱成一团的衣服」泛称（粉色卫衣/蓝色T恤是角色身上穿的，不当道具）。"
     "事实对齐台词：说皱就画「原本叠好、现已揉皱」；说只碰一下就画无辜摊手。"
@@ -156,8 +191,8 @@ _POSE_CLAUSE_START_RE = re.compile(
 
 # brief 禁写口型（拼装层会硬加「微微张嘴」）；顺带剥语气词
 _MOUTH_AND_TONE_RE = re.compile(
-    r"(?:嘴巴大张|张着嘴|微微张嘴|正在开口说话|"
-    r"嘴巴闭合不露齿|嘴巴闭合|不露齿|"
+    r"(?:嘴巴大张|张大嘴|嘴巴张开|嘴巴明显张开|嘴巴微张|张着嘴|微微张嘴|正在开口说话|"
+    r"嘴巴闭合不露齿|嘴巴完全闭合不露齿|嘴巴闭合|不露齿|"
     r"语气\S{1,4})"
 )
 
@@ -256,6 +291,78 @@ def _normalize_default_table_set(body: str) -> str:
     )
 
 
+def _dedupe_default_table_set(body: str) -> str:
+    """默认陈设句全片只保留第一次出现，删除后续重复。"""
+    marker = _DEFAULT_TABLE_SET
+    first = body.find(marker)
+    if first < 0:
+        return body
+    head = body[: first + len(marker)]
+    tail = body[first + len(marker) :]
+    return head + tail.replace(marker, "")
+
+
+_DEFAULT_TABLE_TAIL_RE = re.compile(
+    r"[，,]\s*(?:茶几上放着|旁边是)遥控器和空水杯\s*"
+)
+
+
+def normalize_daily_visual_brief_sequence(segments: list[dict]) -> list[dict]:
+    """非首镜去掉重复默认陈设句，避免每镜都写「遥控器和空水杯」。"""
+    for seg in segments:
+        idx = int(seg.get("segment_index") or 0)
+        vb = str(seg.get("visual_brief") or "")
+        vb = _strip_non_first_speaker_speech(vb, seg.get("dialogue") or [])
+        if idx > 1:
+            vb = _DEFAULT_TABLE_TAIL_RE.sub("", vb)
+            vb = vb.replace("茶几上放着遥控器和空水杯", "")
+            vb = vb.replace("旁边是遥控器和空水杯", "")
+        if "茶几" not in vb:
+            vb = "客厅茶几上，" + vb
+        elif "客厅" not in vb:
+            vb = vb.replace("茶几", "客厅茶几", 1)
+        vb = re.sub(r"神情[，,]+神情(不悦)?", r"神情\1", vb)
+        vb = re.sub(r"神情[，,]+神情", "神情", vb)
+        vb = re.sub(r"神情{2,}", "神情", vb)
+        vb = re.sub(r"[，,]{2,}", "，", vb).strip("，, ")
+        seg["visual_brief"] = vb
+    return segments
+
+
+def _strip_non_first_speaker_speech(body: str, dialogue: list) -> str:
+    """非首说话人只保留眉眼情绪，去掉说话/反驳/开口/嘴巴张开等口型描述。"""
+    speakers: list[str] = []
+    for item in dialogue or []:
+        name = str(item.get("speaker") or "").strip()
+        if name:
+            speakers.append(name)
+    if len(speakers) < 2:
+        return body
+    first = speakers[0]
+    non_first = list(dict.fromkeys(speakers[1:]))
+    if not non_first:
+        return body
+    clauses = re.split(r"(?<=[。；])", body)
+    out: list[str] = []
+    for clause in clauses:
+        if any(name in clause for name in non_first):
+            clause = re.sub(
+                r"嘴巴(?:张开|微张|大张)(?:说话|反驳|大吼|正要反驳|正在反驳)?",
+                "神情",
+                clause,
+            )
+            clause = re.sub(
+                r"(?:正在)?(?:说话|反驳|大喊|开口|大吼|抱怨|阻止|同意|辩解|抗议|怒吼|喊话|争辩)",
+                "神情",
+                clause,
+            )
+            clause = re.sub(r"神情(?=[。；]|$)", "神情不悦", clause)
+            clause = re.sub(r"神情[，,，]{1,}", "神情，", clause)
+            clause = re.sub(r"[，,]{2,}", "，", clause)
+        out.append(clause)
+    return "".join(out)
+
+
 def scrub_daily_visual_brief(text: str) -> str:
     """去掉 daily visual_brief 中易破坏拼装出图的标签与固定着装词。"""
     body = (text or "").strip()
@@ -275,9 +382,18 @@ def scrub_daily_visual_brief(text: str) -> str:
     )
     # 「门缝」会诱发双开门中缝，统一改写成单开门与门框的空隙
     body = body.replace("门缝", "门与门框的空隙")
+    # 儿童安全+刀型统一：一律写成塑料蛋糕刀（非水果刀）
+    body = body.replace("塑料刀", "塑料蛋糕刀")
+    body = body.replace("餐刀", "塑料蛋糕刀")
+    body = body.replace("水果刀", "塑料蛋糕刀")
+    body = body.replace("小刀", "塑料蛋糕刀")
+    body = body.replace("拿刀", "拿塑料蛋糕刀")
+    body = body.replace("持刀", "持塑料蛋糕刀")
+    body = body.replace("握刀", "握塑料蛋糕刀")
     body = _MOUTH_AND_TONE_RE.sub("", body)
     body = _fix_hands_on_hips_conflict(body)
     body = _normalize_default_table_set(body)
+    body = _dedupe_default_table_set(body)
     body = re.sub(r"[，,]{2,}", "，", body)
     body = re.sub(r"[，,]\s*(?=[；;。]|$)", "", body)
     body = _collapse_duplicate_pose_clauses(body)
