@@ -55,7 +55,14 @@ _DAILY_LOOK = {
     "妈妈": "米色上衣的黑长发成年女性（妈妈）",
 }
 # 拼装器写入 image_prompt 的首个说话人张嘴标记（须与 image_prompt.py 一致）
-_MOUTH_FIRST_SPEAKER_RE = re.compile(r"(昭昭|灿灿|妈妈)微微张嘴正在开口说话")
+_MOUTH_FIRST_SPEAKER_RE = re.compile(
+    r"(昭昭|灿灿|妈妈)(?:嘴巴明显张开|微微张嘴|嘴巴微张)?正在开口说话"
+)
+_PROP_HOLDER_RE = re.compile(
+    r"(?P<hand>右手|左手)?"
+    r"(?:握着|握|拿着|持着|持|举着|抓住|拿起|紧握)"
+    r"(?P<prop>塑料蛋糕刀|塑料刀|餐刀|蛋糕刀|刀)"
+)
 
 
 class AgnesImageVerifyFailed(RuntimeError):
@@ -789,11 +796,40 @@ class AgnesImageProvider(ImageProvider):
                     "回答「是」或「否」",
                 )
             )
+        # 道具归属：提示词写「XX手持道具」时，校验道具在该角色手里且其他人没拿
+        prop_match = None
+        for clause in re.split(r"[；;。]", scene_prompt):
+            m = _PROP_HOLDER_RE.search(clause)
+            if not m:
+                continue
+            roles = re.findall(r"昭昭|灿灿|妈妈", clause[: m.start()])
+            if roles:
+                prop_match = (roles[-1], m.group("hand") or "手中", m.group("prop"))
+                break
+        if content_style == CONTENT_STYLE_DAILY_STORY and prop_match:
+            holder, hand, prop = prop_match
+            others = [
+                name
+                for name in ("昭昭", "灿灿", "妈妈")
+                if name in speakers and name != holder
+            ]
+            question = (
+                f"画面中{prop}是否被{_DAILY_LOOK.get(holder, holder)}的{hand}握住"
+                f"（手指接触/包裹{prop}柄），不是悬空或放在桌面上？"
+            )
+            if others:
+                question += (
+                    "、".join(_DAILY_LOOK.get(name, name) for name in others)
+                    + f"手里是否没有{prop}？"
+                )
+            question += "回答「是」或「否」"
+            items.append(("prop_holder", question))
         items.append(
             (
                 "extra_arms",
-                "画面中每人可见胳膊/手臂是否最多 2 条？"
-                "正常答「是」；有任何人超过 2 条答「否」",
+                "画面中每个人可见手臂是否恰好 2 条（从肩膀到手腕各算一条）？"
+                "若任何人出现第 3 条手臂或多出的手，答「否」。"
+                "回答「是」或「否」",
             )
         )
         # 单扇门：提示词写门时校验，防 T2I 画成双开门/对开门
@@ -945,6 +981,7 @@ class AgnesImageProvider(ImageProvider):
                 "mom_adult",
                 "lr_pos",
                 "mouth_first",
+                "prop_holder",
                 "extra_arms",
                 "door_single",
                 "no_float_hair",
