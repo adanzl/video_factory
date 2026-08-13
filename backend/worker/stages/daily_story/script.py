@@ -4,7 +4,7 @@ import logging
 import re
 from app.repositories import repo_daily_story, repo_job, repo_job_log, repo_segment
 from app.services.llm.llm_mgr import llm_mgr
-from app.services.script.optimize_title import CHAT_TITLE_MAX_LEN, build_chat_title_prompts, extract_core_anchor_words, extract_theme_action_phrase, parse_chat_title_candidates_payload, pick_best_chat_title
+from app.services.script.optimize_title import CHAT_TITLE_MAX_LEN, build_chat_title_prompts, ensure_chat_title_candidates, extract_core_anchor_words, extract_theme_action_phrase, parse_chat_title_candidates_payload, pick_best_chat_title, polish_chat_title
 from app.utils.job_cancel import job_cancel
 from app.utils.job_info import parse_job_info
 from worker.context import JobContext
@@ -126,7 +126,17 @@ class DailyScriptStage(StageExecutor):
                     title_content['theme'] = story['theme']
                 if story.get('story_type'):
                     title_content['story_type'] = story['story_type']
-                prompts = build_chat_title_prompts(title, title_content, max_title_length=max_len)
+                # 重复降权：上一轮已落库的优化标题作为 avoid_titles，重跑时换角度避免重复
+                avoid_titles: list[str] = []
+                prev_title = str(ctx.job.get('title') or '').strip()
+                if prev_title and prev_title != title:
+                    avoid_titles.append(prev_title)
+                prompts = build_chat_title_prompts(
+                    title,
+                    title_content,
+                    max_title_length=max_len,
+                    avoid_titles=avoid_titles,
+                )
                 client = llm_mgr._get_client()
                 raw, _ = client._chat_json(prompts['system'], prompts['user'], thinking_enabled=False, temperature=1.0)
                 candidates = parse_chat_title_candidates_payload(raw, max_title_len=max_len)
@@ -134,17 +144,39 @@ class DailyScriptStage(StageExecutor):
                 phrase = extract_theme_action_phrase(title, title_content)
                 if phrase and phrase not in anchors:
                     anchors = [phrase, *anchors]
+                candidates = ensure_chat_title_candidates(
+                    candidates,
+                    anchors,
+                    fetch_candidates=lambda: parse_chat_title_candidates_payload(
+                        client._chat_json(prompts['system'], prompts['user'], thinking_enabled=False, temperature=1.0)[0],
+                        max_title_len=max_len,
+                    ),
+                )
                 final = pick_best_chat_title(
                     title, candidates,
                     max_len=max_len,
+                    avoid_titles=avoid_titles,
                     anchor_words=anchors,
                     story_type=title_content.get('story_type'),
                 )
                 if final and final != title:
+                    polished = polish_chat_title(
+                        final,
+                        title,
+                        title_content,
+                        max_len=max_len,
+                        fetch_json=lambda p: client._chat_json(
+                            p['system'], p['user'], thinking_enabled=False, temperature=0.3
+                        )[0],
+                        check_json=lambda p: client._chat_json(
+                            p['system'], p['user'], thinking_enabled=False, temperature=0.3
+                        )[0],
+                    )
                     script['draft_title'] = title
-                    script['title'] = final
+                    script['title'] = polished
                     with atomic():
-                        repo_job_log.append_log(job_id, self.name, f"chat title optimized: {title!r} -> {script['title']!r}")
+                        suffix = " (polished)" if polished != final else ""
+                        repo_job_log.append_log(job_id, self.name, f"chat title optimized: {title!r} -> {script['title']!r}{suffix}")
             except Exception as exc:
                 with atomic():
                     repo_job_log.append_log(job_id, self.name, f'chat title optimize failed, keep draft: {exc}', level='warning')
