@@ -113,7 +113,13 @@
                 class="block size-full [&_.el-image__inner]:block [&_.el-image__inner]:size-full [&_.el-image__inner]:object-contain"
                 @load="onCoverLoad"
                 @error="onCoverError"
-              />
+              >
+                <template #error>
+                  <div class="flex size-full items-center justify-center text-sm text-gray-400">
+                    封面加载失败
+                  </div>
+                </template>
+              </el-image>
               <div v-if="showCover43Guide" class="pointer-events-none absolute inset-0 z-10">
                 <div
                   v-for="(line, index) in cover43GuideLines"
@@ -241,9 +247,10 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { runJobStageAction, updateJobInfo } from "@/api/api-jobs";
+import { getJob, runJobStageAction, updateJobInfo } from "@/api/api-jobs";
 import { getMediaDuration, getMediaFileUrl, getMediaPicViewUrl } from "@/api/api-media";
 import type { IntroCategory, JobDetail, JobLog } from "@/types/jobs";
+import { JOB_STATUS_RUNNING } from "@/constants/job";
 import { INTRO_CATEGORY_OPTIONS, isIntroCategory } from "@/constants/introCategory";
 import { defaultIntroCategoryFromJob } from "@/utils/introCategory";
 import StageActionBar from "./StageActionBar.vue";
@@ -499,6 +506,21 @@ const handleRun = async (toEnd: boolean) => {
   }
 };
 
+async function waitCoverReady(jobId: number): Promise<JobDetail> {
+  const started = Date.now();
+  const intervalMs = 800;
+  const maxWaitMs = 60_000;
+  let latest = await getJob(jobId);
+  while (
+    latest.status === JOB_STATUS_RUNNING &&
+    Date.now() - started < maxWaitMs
+  ) {
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    latest = await getJob(jobId);
+  }
+  return latest;
+}
+
 const handleReGenCover = async () => {
   try {
     await ElMessageBox.confirm("确定重新生成封面吗？", "确认", {
@@ -512,6 +534,13 @@ const handleReGenCover = async () => {
   regeneratingCover.value = true;
   try {
     await runJobStageAction("cover", { id: props.job.id, to_end: false });
+    emit("refresh");
+    // 等后台写完再 bust 缓存，避免请求已删/未写完的封面导致 el-image 卡 FAILED
+    const ready = await waitCoverReady(props.job.id);
+    if (!ready.cover_path?.trim()) {
+      throw new Error("封面尚未生成，请稍后刷新");
+    }
+    coverLoadError.value = "";
     coverCacheVer.value++;
     ElMessage.success("封面已重新生成");
     emit("refresh");
