@@ -204,10 +204,30 @@ def strip_verify_regen_leak(prompt: str) -> str:
     return text[:cut].rstrip(" \n\t")
 
 
+def _strip_vb_narrative_continuity(vb: str) -> str:
+    """去掉会诱导模型画多格/多角色的叙事延续词，只留当前单幅画面。"""
+    text = (vb or "").strip()
+    for phrase in (
+        "接上一镜，场景同前",
+        "接上一镜",
+        "场景同前",
+        "背景同分镜1",
+        "背景同设定",
+        "同上",
+        "全片为同一场景连续发生的同一故事",
+        "仅动作、表情与道具状态变化",
+    ):
+        text = text.replace(phrase, "")
+    text = re.sub(r"[，,]\s*[。.]", "。", text)
+    text = re.sub(r"，\s*，", "，", text)
+    return text.strip("，,。. ")
+
+
 def assemble_daily_t2i_prompt(
     seg: dict,
     *,
     extra: str | None = None,
+    scene_anchor: str | None = None,
 ) -> str:
     """规则拼装 daily_story image_prompt。
 
@@ -215,6 +235,8 @@ def assemble_daily_t2i_prompt(
     extra 仅用于显式附加的出图正文（勿传入质检/改写元指令）。
     """
     vb = str(seg.get("visual_brief") or "").strip()
+    idx = int(seg.get("segment_index") or 0)
+    has_scene_anchor = False
     speakers = _daily_speakers_of(seg)
     if vb:
         from app.services.daily_story.speaker import (
@@ -231,6 +253,11 @@ def assemble_daily_t2i_prompt(
         if int(seg.get("segment_index") or 0) > 1:
             vb = re.sub(r"[，,]\s*茶几上放着遥控器和空水杯\s*", "", vb)
             vb = vb.replace("茶几上放着遥控器和空水杯", "").strip("，, ")
+        vb = _strip_vb_narrative_continuity(vb)
+        # LLM 已写「场景定稿」时去掉标签；代码只在缺失时兜底注入
+        has_scene_anchor = "场景定稿" in vb
+        if has_scene_anchor:
+            vb = vb.replace("场景定稿：", "").strip("，,。. ")
     else:
         vb = strip_verify_regen_leak(vb)
     shot = str(seg.get("shot_type") or "").strip()
@@ -251,6 +278,12 @@ def assemble_daily_t2i_prompt(
                 w in vb for w in ("背离", "飘离门口", "远离门")
             ):
                 parts.append("风从门口吹向室内，头发顺风飘离门口。")
+
+    # 场景定稿：分镜1定义地点/陈设/样式，后续镜缺省时原样注入；
+    # LLM 已重复场景时（含花盆/托盘/背景）不再重复注入
+    has_scene = all(k in vb for k in ("花盆", "托盘", "背景"))
+    if scene_anchor and idx > 1 and not has_scene_anchor and not has_scene:
+        parts.append(scene_anchor)
 
     char_parts: list[str] = []
     for name in speakers:
@@ -312,6 +345,27 @@ def assemble_daily_image_prompts(
     from app.services.daily_story.speaker import annotate_sticky_stage_speakers
 
     annotate_sticky_stage_speakers(segments, setting=setting)
+    # 分镜1 的场景定稿句：含花盆/托盘/背景/阳台且不含角色的句子
+    scene_anchor = ""
+    for seg in segments:
+        if int(seg.get("segment_index") or 0) != 1:
+            continue
+        vb1 = str(seg.get("visual_brief") or "")
+        sentences = [
+            s.strip()
+            for s in re.split(r"(?<=[。；;])", vb1)
+            if s.strip()
+        ]
+        anchor_sents = [
+            s
+            for s in sentences
+            if any(k in s for k in ("花盆", "托盘", "背景", "阳台"))
+            and not any(n in s for n in ("昭昭", "灿灿", "妈妈"))
+        ]
+        scene_anchor = "".join(anchor_sents).replace(
+            "场景定稿：", ""
+        ).strip("，,。. ")
+        break
     wanted = (
         {int(i) for i in segment_indices} if segment_indices is not None else None
     )
@@ -319,7 +373,11 @@ def assemble_daily_image_prompts(
         idx = int(seg.get("segment_index") or 0)
         if wanted is not None and idx not in wanted:
             continue
-        seg["image_prompt"] = assemble_daily_t2i_prompt(seg, extra=extra)
+        seg["image_prompt"] = assemble_daily_t2i_prompt(
+            seg,
+            extra=extra,
+            scene_anchor=scene_anchor,
+        )
     return segments
 
 
