@@ -190,7 +190,7 @@ class Config:
         self.z_image_prompt_extend: bool = _bool("Z_IMAGE_PROMPT_EXTEND")
         self.agnes_api_key: str | None = _opt("AGNES_API_KEY")
         self.agnes_free_api_key: str | None = _opt("AGNES_FREE_API_KEY")
-        self.agnes_api_base_url: str = os.getenv("AGNES_API_BASE_URL", "https://apihub.agnes-ai.cn/v1")
+        self.agnes_api_base_url: str = os.getenv("AGNES_API_BASE_URL", "https://apihub.agnes-ai.com/v1")
         self.agnes_image_model: str = os.getenv("AGNES_IMAGE_MODEL", "agnes-image-2.1-flash")
         self.agnes_image_size: str = os.getenv("AGNES_IMAGE_SIZE", "1K")
         self.agnes_image_ratio: str = os.getenv("AGNES_IMAGE_RATIO", "")
