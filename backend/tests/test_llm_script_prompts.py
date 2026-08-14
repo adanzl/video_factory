@@ -143,7 +143,7 @@ def test_assemble_daily_t2i_prompt_door_and_hair_locks():
             "shot_type": "中景",
         }
     )
-    assert "画面中的门是一扇单开门，只有一块完整门板。" in prompt
+    assert "画面中的门是一扇单开门，只有一块完整门板，没有分成两扇。" in prompt
     assert "门缝" not in prompt
     assert "门与门框的空隙" in prompt
     assert "发丝连着头皮。" in prompt
