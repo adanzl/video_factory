@@ -73,7 +73,7 @@ class ImageProvider(ABC):
     """批量出图并发上限；None 表示跟随 IMAGE_MAX_WORKERS。本地推理类 provider 独占显存，须覆写为 1。"""
 
     @abstractmethod
-    def generate(self, prompt: str, output_path: Path, *, size: str | None=None, ref_images: list[Path | str] | None=None, expected_speakers: list[str] | None=None, content_style: str | None=None) -> Path:
+    def generate(self, prompt: str, output_path: Path, *, size: str | None=None, ref_images: list[Path | str] | None=None, base_image: Path | str | None=None, expected_speakers: list[str] | None=None, content_style: str | None=None) -> Path:
         ...
 
     def describe_params(self, *, size: str | None=None) -> str:
@@ -163,6 +163,11 @@ class ImageMgr:
             ip_feedback = _verify_prompt_regen_feedback(speakers)
         if content_style == CONTENT_STYLE_DAILY_STORY:
             llm_mgr.fill_visual_briefs(script, feedback=vb_feedback, job=job, segment_indices=[index])
+            from app.services.script.visual_brief import (
+                normalize_daily_visual_brief_sequence,
+            )
+
+            normalize_daily_visual_brief_sequence(script.get('segments') or [])
             llm_mgr.fill_image_prompts(script, job=job, segment_indices=[index], include_sd15_prompt=resolve_include_sd15_prompt(job))
         else:
             llm_mgr.fill_image_prompts(script, feedback=ip_feedback, job=job, segment_indices=[index], include_sd15_prompt=resolve_include_sd15_prompt(job))
@@ -323,10 +328,11 @@ class ImageMgr:
             out = images_dir / f'{index}.png'
             prompt = _build_prompt(seg)
             expected_speakers = _speakers(seg)
+            chain_refs = list(ref_images or [])
             logger.info('image %s/%s generating segment %s | %s | prompt_chars=%s | speakers=%s | out=%s', seq, total, index, params_desc, len(prompt), expected_speakers, out.name)
             try:
                 try:
-                    provider.generate(prompt, out, size=size, ref_images=ref_images, expected_speakers=expected_speakers, content_style=content_style)
+                    provider.generate(prompt, out, size=size, ref_images=chain_refs, expected_speakers=expected_speakers, content_style=content_style)
                 except _regen_exc as first_fail:
                     regen_reason = (
                         'content_policy'
@@ -357,7 +363,7 @@ class ImageMgr:
                     except Exception as regen_exc:
                         logger.error('image segment %s prompt regen failed: %s', index, regen_exc)
                         raise first_fail from regen_exc
-                    provider.generate(prompt, out, size=size, ref_images=ref_images, expected_speakers=expected_speakers, content_style=content_style)
+                    provider.generate(prompt, out, size=size, ref_images=chain_refs, expected_speakers=expected_speakers, content_style=content_style)
             except _regen_exc as exc:
                 kind = (
                     'content_policy'

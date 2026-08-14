@@ -24,20 +24,38 @@ _DAILY_T2I_STYLE = (
     "儿童情绪涂鸦风格，彩铅和蜡笔混合笔触，线条用力不均，"
     "高饱和色彩，涂色出界，橡皮擦拭痕迹，手工感。"
 )
+# 结尾风格收束：Agnes 建议用正面句重置注意力权重，压住长序列画风漂移
+_DAILY_T2I_STYLE_TAIL = (
+    "整体保持儿童情绪涂鸦手绘质感，彩铅与蜡笔层次清晰，"
+    "涂色出界，手工感。"
+)
+# 预制物品表（可逐步扩容）
+# ------------------------------------------------------------
+# 用途：保证同一道具跨分镜的颜色/材质/形状/数量一致（纯文生图没有跨图记忆，
+#       只能靠每镜重复同一段文字描述来锁住外观）。
+# 用法：image_prompt 拼装时，按 visual_brief 里出现的道具词查表取描述，
+#       写入固定场景句；后续分镜自动继承同一描述。
+# 结构：key = visual_brief 里的道具词；value = {"desc": 完整正面介绍, "count": 个数上限}
+# 扩容规则：
+#   1. key 用 visual_brief 里出现的道具词（如「浇花水壶」「托盘」「花盆」）；
+#   2. desc 写颜色 + 材质 + 形状特征，8~20 字，不要用否定词
+#      （模型会把「没有/不要」当生成指令）；
+#   3. count 写该道具在全片出现的个数上限（如 1 = 只能出现一个），
+#      拼装时自动生成「画面中只此一把/共 N 个」；
+#   4. 同一道具只维护一行，改这一行即全片生效；
+#   5. 新道具直接加一行即可，无需改拼装逻辑。
+_DAILY_PROP_CATALOG: dict[str, dict[str, object]] = {
+    "浇花水壶": {"desc": "蓝色塑料浇花水壶（宽口短嘴）", "count": 1},
+}
 
 _DAILY_CHAR_ZHAO = (
     "昭昭：7岁男孩，黑色超短发露耳露后颈，圆脸，"
     "蓝色短袖T恤，深蓝色短裤，两侧同色蓝白运动鞋。"
 )
 _DAILY_CHAR_CANCAN = (
-    "灿灿：10岁女孩，黑色头发，黑色单侧高马尾，"
+    "灿灿：10岁女孩，黑色头发通体纯黑，黑色单侧高马尾"
+    "（头顶到马尾同一黑色），"
     "粉色卫衣，蓝色长裤，两侧同色粉红运动鞋。"
-)
-# 涂鸦高饱和易把马尾画成彩色；发色硬锁紧跟角色块（句末权重最低）。
-# 必须纯正面表述——图像模型把否定词当生成指令，
-# "禁止…挑染/彩色"会诱发彩虹发（实测），故不写任何颜色禁止词。
-_DAILY_CANCAN_HAIR_LOCK = (
-    "灿灿头发通体纯黑，头顶到马尾同一黑色。"
 )
 _DAILY_CHAR_MOM = (
     "妈妈：成年女性，黑色长发，米色上衣，蓝色牛仔裤，深色平底鞋。"
@@ -130,9 +148,10 @@ def _strip_style_suffix(vb: str) -> str:
     return vb + "。" if vb else ""
 
 
-def _daily_lighting(vb: str) -> str:
+def _daily_lighting(vb: str, setting: str | None = None) -> str:
     outdoor = any(
-        w in vb for w in ("室外", "户外", "院子", "阳台", "楼下", "公园", "小区", "马路")
+        w in f"{vb} {setting or ''}"
+        for w in ("室外", "户外", "院子", "阳台", "楼下", "公园", "小区", "马路")
     )
     if outdoor:
         return "室外自然光，柔和散射，画面明亮。"
@@ -159,33 +178,29 @@ def _daily_composition(
         if shot_type == "特写":
             return (
                 f"{lr}"
-                f"中近景三人特写，严格左{look.get(a, a)}、"
+                f"中近景三人特写，左{look.get(a, a)}、"
                 f"中{look.get(b, b)}、右{look.get(c, c)}，左右位置固定不变。"
             )
         return (
             f"{lr}"
-            f"中景三人同框，严格左{look.get(a, a)}、"
+            f"中景三人同框，左{look.get(a, a)}、"
             f"中{look.get(b, b)}、右{look.get(c, c)}，"
             f"三人全部在场、左右位置固定不变，全身可见。"
         )
     if shot_type == "特写":
         if len(names) == 2:
-            a, b = names[0], names[1]
-            lr = "" if has_lr else f"画面左边是{a}，右边是{b}。"
+            lr = ""
             return (
                 f"{lr}"
-                f"中近景特写，严格左侧{look.get(a, a)}占左半、"
-                f"右侧{look.get(b, b)}占右半，左右位置固定不变。"
+                "中近景特写，两人左右分立，站位固定。"
             )
         return "面部特写，占画面主体，背景虚化。"
     if shot_type == "中景":
         if len(names) == 2:
-            a, b = names[0], names[1]
-            lr = "" if has_lr else f"画面左边是{a}，右边是{b}。"
+            lr = ""
             return (
                 f"{lr}"
-                f"中景，严格左{look.get(a, a)}、右{look.get(b, b)}，"
-                f"左右位置固定不变，全身可见。"
+                "中景，两人左右分立，站位固定，全身可见。"
             )
         return "中景，人物全身，环境可见。"
     return "根据画面自然构图。"
@@ -204,10 +219,77 @@ def strip_verify_regen_leak(prompt: str) -> str:
     return text[:cut].rstrip(" \n\t")
 
 
+def _strip_vb_narrative_continuity(vb: str) -> str:
+    """去掉会诱导模型画多格/多角色的叙事延续词，只留当前单幅画面。"""
+    text = (vb or "").strip()
+    for phrase in (
+        "接上一镜，场景同前",
+        "接上一镜",
+        "场景同前",
+        "同上",
+        "全片为同一场景连续发生的同一故事",
+        "仅动作、表情与道具状态变化",
+    ):
+        text = text.replace(phrase, "")
+    text = re.sub(r"[，,]\s*[。.]", "。", text)
+    text = re.sub(r"，\s*，", "，", text)
+    return text.strip("，,。. ")
+
+
+def _daily_prop_holder(vb: str, prop: str) -> str | None:
+    """从 visual_brief 中找道具当前持有者（只认持物句，不认对视/旁观句）。"""
+    if prop not in (vb or ""):
+        return None
+    verbs = "握着|握住|拿着|持着|持|举着|提着|端着|托着|夺过|接过|拿起|拎着|捧着|握"
+    not_other = r"(?:(?!昭昭|灿灿|妈妈).)"
+    for name in ("昭昭", "灿灿", "妈妈"):
+        if re.search(
+            rf"{name}{not_other}{{0,16}}?(?:{verbs}){not_other}{{0,8}}?{prop}",
+            vb,
+        ):
+            return name
+        if re.search(rf"{prop}.{{0,20}}?{name}手中", vb):
+            return name
+    # 兜底：「拿着水壶的灿灿」这类后置持有者
+    for name in ("昭昭", "灿灿", "妈妈"):
+        if re.search(
+            rf"(?:{verbs}){not_other}{{0,8}}?{prop}的?{name}",
+            vb,
+        ):
+            return name
+    return None
+
+
+def _daily_location(setting: str | None) -> str:
+    """从 setting 首句提取地点词（如「阳台花盆旁」→「阳台」）。"""
+    text = (setting or "").strip()
+    if not text:
+        return ""
+    first = re.split(r"[，,]", text, maxsplit=1)[0].strip()
+    m = re.match(r"^(.+?)(?:花盆旁|旁|边|里|前|外|附近)", first)
+    return m.group(1) if m else first
+
+
+def _transform_visible_hands(text: str) -> str:
+    """把容易诱发多臂/藏手/道具误持的姿势改成可见且空手。"""
+    for old, new in (
+        ("双手背在身后", "双手自然垂在身侧，手掌张开"),
+        ("双臂抱胸", "双手叉腰"),
+        ("双手交叉抱胸", "双手叉腰"),
+        ("双手交叉放在胸前", "双手叉腰"),
+        ("双手交叉胸前", "双手叉腰"),
+        ("双手抱臂", "双手叉腰"),
+    ):
+        text = text.replace(old, new)
+    return text
+
+
 def assemble_daily_t2i_prompt(
     seg: dict,
     *,
     extra: str | None = None,
+    setting: str | None = None,
+    scene_anchor: str | None = None,
 ) -> str:
     """规则拼装 daily_story image_prompt。
 
@@ -236,22 +318,13 @@ def assemble_daily_t2i_prompt(
     shot = str(seg.get("shot_type") or "").strip()
 
     parts = [_DAILY_T2I_STYLE]
-    if vb:
-        parts.append(_strip_style_suffix(vb))
-        # 拼装硬锁：门只允许单扇（单开门），风吹头发必须连着头皮，
-        # 不依赖 LLM 是否照写规则，防止双开门/独立飘发进入最终提示词
-        if "门" in vb and "完整门板" not in vb:
-            parts.append(
-                "画面中的门是一扇单开门，只有一块完整门板，没有分成两扇。"
-            )
-        if ("风" in vb or "吹" in vb) and ("头发" in vb or "马尾" in vb):
-            if "连着头皮" not in vb:
-                parts.append("发丝连着头皮。")
-            if "门" in vb and not any(
-                w in vb for w in ("背离", "飘离门口", "远离门")
-            ):
-                parts.append("风从门口吹向室内，头发顺风飘离门口。")
-
+    layout = _daily_layout_speakers(seg, vb)
+    # 双人构图：一次说清人数与左右站位，替代重复的“只有两个人/站位句/人数硬锁”
+    if len(layout) == 2 and all(n in _DAILY_CHAR_MAP for n in layout):
+        parts.append(
+            f"双人固定机位构图，画面左侧是{layout[0]}，画面右侧是{layout[1]}，"
+            "两人占据画面全部主体空间。"
+        )
     char_parts: list[str] = []
     for name in speakers:
         if name in _DAILY_CHAR_MAP:
@@ -262,33 +335,150 @@ def assemble_daily_t2i_prompt(
         char_parts.append(_DAILY_CHAR_HEIGHT)
     if char_parts:
         parts.append("".join(char_parts))
-
-    # 发色硬锁紧跟角色块：句末权重最低，写在末尾等于没写（实测彩色化）
-    if "灿灿" in speakers:
-        parts.append(_DAILY_CANCAN_HAIR_LOCK)
+    action = _strip_vb_narrative_continuity(vb) if vb else ""
+    action = _transform_visible_hands(action)
+    has_water_can = "水壶" in action
+    # 解剖安全：不写「哪只手拿壶/浇水」，避免模型复制右手；
+    # 另一只手只写「自然垂在身侧」这种可见空手姿态
+    action = re.sub(r"，左手扶(?:着)?壶嘴", "，另一只手自然垂在身侧", action)
+    # Agnes 建议：双手分工改成「一手一位置」并列句，避免复制右手
+    action = action.replace(
+        "右手握住壶柄，左手托住壶底",
+        "左手掌心贴着壶底支撑重量，右手虎口卡住壶把维持平衡",
+    )
+    # 握壶姿势：写清「身体部位 + 壶的部位 + 接触方式」，
+    # 替代「捧着/拿着/高举」这些容易渲染成手壶分离的弱指令
+    action = re.sub(
+        r"(?P<holder>昭昭|灿灿|妈妈)右手(?:拿着|持)(?:浇花)?水壶",
+        r"\g<holder>右手五指环绕包裹壶把，左手掌心贴靠壶腹",
+        action,
+    )
+    action = re.sub(
+        r"(?P<holder>昭昭|灿灿|妈妈)右手(?:夺过|接过)(?:浇花)?水壶",
+        r"\g<holder>右手五指环绕包裹壶把，左手掌心贴靠壶腹",
+        action,
+    )
+    # 双手捧壶后，清掉原先单手姿势的残留（左手叉腰/摊开/垂放等）
+    for clause in (
+        "，左手叉腰",
+        "，左手摊开",
+        "，左手自然垂在身侧",
+        "，另一只手自然垂在身侧",
+    ):
+        action = action.replace(clause, "")
+    # 场景句：固定地点 + 花盆/托盘 + 首镜背景句，逐镜完整重复
+    scene_bits: list[str] = []
+    loc = _daily_location(setting)
+    if loc:
+        scene_bits.append(f"场景为{loc}")
+    if "托盘" in action and "花盆放在地面，花盆下方有托盘" not in action:
+        scene_bits.append("花盆放在地面，花盆下方有托盘")
+    if has_water_can:
+        entry = _DAILY_PROP_CATALOG.get("浇花水壶")
+        if entry:
+            desc = str(entry["desc"])
+            count = int(entry.get("count", 1) or 1)
+            scene_bits.append(
+                f"{desc}为常驻道具，画面中只此一把"
+                if count == 1
+                else f"{desc}为常驻道具，画面中恰好 {count} 个"
+            )
+        else:
+            scene_bits.append("浇花水壶为常驻道具，画面中只此一把")
+    if scene_anchor:
+        scene_bits.append(scene_anchor.rstrip("。"))
+    if scene_bits:
+        parts.append("，".join(scene_bits) + "。")
+    if "托盘在花盆正下方" in action:
+        action = action.replace("托盘在花盆正下方。", "")
+        action = action.replace("托盘在花盆正下方", "")
+    holder = None
+    if "水壶" in action:
+        holder = _daily_prop_holder(action, "水壶")
+        if holder and re.search(rf"{holder}右手拿着(?:浇花)?水壶", action):
+            action = action.replace(
+                f"{holder}右手拿着浇花水壶",
+                f"{holder}右手五指环绕包裹壶把，左手掌心贴靠壶腹",
+            )
+            action = action.replace(
+                f"{holder}右手拿着水壶",
+                f"{holder}右手五指环绕包裹壶把，左手掌心贴靠壶腹",
+            )
+    if action:
+        parts.append(_strip_style_suffix(action))
+        # 拼装硬锁：门只允许单扇（单开门），风吹头发必须连着头皮，
+        # 不依赖 LLM 是否照写规则，防止双开门/独立飘发进入最终提示词
+        if "门" in vb and "完整门板" not in vb:
+            parts.append(
+                "画面中的门是一扇单开门，只有一块完整门板。"
+            )
+        if ("风" in vb or "吹" in vb) and ("头发" in vb or "马尾" in vb):
+            if "连着头皮" not in vb:
+                parts.append("发丝连着头皮。")
+            if "门" in vb and not any(
+                w in vb for w in ("背离", "飘离门口", "远离门")
+            ):
+                parts.append("风从门口吹向室内，头发顺风飘离门口。")
 
     # 嘴型锁定：先开口说话的孩子在静帧里必须处于说话状态，
     # 其余人完全闭嘴，防止 I2V 说话人反转
     first = _daily_first_speaker(seg)
     if first and first in speakers:
         others = [n for n in speakers if n != first]
-        mouth = f"{first}正在开口说话"
-        if others:
-            mouth += (
-                f"；{'、'.join(others)}嘴巴完全闭合不露齿，情绪只用眉眼和肢体表达"
-            )
-        parts.append(mouth + "。")
-
-    parts.append(_daily_lighting(vb))
-    layout = _daily_layout_speakers(seg, vb)
-    parts.append(_daily_composition(shot, layout, vb=vb))
-    # 妈妈未入画时硬锁人数+空门口，压住「妈出来了/盯门口」诱出的路人
-    if speakers and "妈妈" not in speakers:
-        n = len(speakers)
-        parts.append(
-            f"画面中只有 {n} 个主体人物，门口与门外无人，"
-            "画面中不出现其他人。"
+        silent_hints = (
+            f"{first}未发声",
+            f"{first}不说话",
+            "不说话",
+            "闭眼不说话",
+            f"{first}闭嘴",
+            f"{first}嘴巴紧闭",
+            f"{first}不开口",
+            f"{first}闭上嘴",
+            "抿成一条线",
         )
+        speak_hints = (
+            f"{first}说话",
+            f"{first}开口",
+            f"{first}大喊",
+            f"{first}喊",
+            f"{first}叫",
+            f"{first}张嘴",
+            f"{first}嘴巴大张",
+            f"{first}嘴唇微张",
+            f"{first}嘴巴微张",
+            "说话",
+            "开口",
+            "大喊",
+            "喊",
+            "叫",
+            "张嘴",
+            "嘴巴大张",
+            "嘴唇微张",
+            "嘴巴微张",
+        )
+        if any(hint in vb for hint in silent_hints):
+            mouth = (
+                f"{first}嘴巴微张但不发声"
+                if f"{first}未发声" in vb
+                else f"{first}嘴巴闭合不露齿"
+            )
+        elif any(hint in vb for hint in speak_hints):
+            mouth = f"{first}正在开口说话"
+        else:
+            mouth = None
+        if mouth is None:
+            pass
+        else:
+            if others:
+                mouth += (
+                    f"；{'、'.join(others)}嘴巴完全闭合不露齿，情绪只用眉眼和肢体表达"
+                )
+            parts.append(mouth + "。")
+
+    parts.append(_daily_lighting(vb, setting=setting))
+    parts.append(_daily_composition(shot, layout, vb=vb))
+    # 结尾风格收束：正面句重置注意力，压住长序列画风漂移
+    parts.append(_DAILY_T2I_STYLE_TAIL)
     if extra and extra.strip():
         # 禁止把质检元指令当出图正文
         cleaned = strip_verify_regen_leak(extra.strip())
@@ -305,11 +495,23 @@ def assemble_daily_image_prompts(
     segment_indices: list[int] | None = None,
     extra: str | None = None,
     setting: str | None = None,
+    scene_anchor: str | None = None,
 ) -> list[dict]:
     """原地为 daily 分镜写入规则拼装的 image_prompt。"""
     from app.services.daily_story.speaker import annotate_sticky_stage_speakers
 
     annotate_sticky_stage_speakers(segments, setting=setting)
+    if not scene_anchor:
+        # 取首镜 vb 里的背景句作为全片固定场景锚点
+        for seg in segments:
+            if int(seg.get("segment_index") or 0) != 1:
+                continue
+            for sentence in re.split(r"[。；;]", str(seg.get("visual_brief") or "")):
+                sentence = sentence.strip()
+                if "背景" in sentence and len(sentence) >= 4:
+                    scene_anchor = sentence + "。"
+                    break
+            break
     wanted = (
         {int(i) for i in segment_indices} if segment_indices is not None else None
     )
@@ -317,7 +519,12 @@ def assemble_daily_image_prompts(
         idx = int(seg.get("segment_index") or 0)
         if wanted is not None and idx not in wanted:
             continue
-        seg["image_prompt"] = assemble_daily_t2i_prompt(seg, extra=extra)
+        seg["image_prompt"] = assemble_daily_t2i_prompt(
+            seg,
+            extra=extra,
+            setting=setting,
+            scene_anchor=scene_anchor,
+        )
     return segments
 
 
