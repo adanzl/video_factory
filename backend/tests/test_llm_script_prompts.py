@@ -313,7 +313,7 @@ def test_build_visual_brief_daily_includes_setting_anchor():
     )
     assert "全片地点 setting：客厅" in prompts["user"]
     assert "地点锚点" in prompts["system"]
-    assert "与全片 setting 一致" in prompts["system"]
+    assert "地点与 setting 一致" in prompts["system"]
 
 def test_build_daily_script_prompts_uses_cps_setting_and_no_appearance():
     from app.services.daily_story.prompts import build_daily_script_prompts
