@@ -48,11 +48,13 @@ DeepSeek 网页模拟 API，不是 Claude 子代理。涉及提示词方案评�
 
 - Deepseek 说明 `POST http://xxx/api/deepseek/doc`
 - 千问 说明 `POST http://xxx/api/qwen/doc`
+- Agnes 说明 `POST http://xxx/api/agnes/doc`
 
 ### 状态查
 
  `GET /api/deepseek/status`
  `GET /api/qwen/status`
+ `GET /api/agnes/status`
 
 ### 地址
 

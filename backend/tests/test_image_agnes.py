@@ -44,13 +44,14 @@ def test_generate_downloads_url(tmp_path: Path) -> None:
     assert mock_request.call_args.kwargs["api_key"] == "test-key"
     payload = mock_request.call_args.kwargs["json"]
     assert payload["model"] == provider._model  # noqa: SLF001
-    assert payload["size"] == "720x1280"
+    assert payload["size"] == "1K"
+    assert payload["ratio"] == "9:16"
     assert payload["extra_body"] == {"response_format": "url"}
     assert output.read_bytes() == b"png-bytes"
 
 
-def test_generate_puts_http_ref_into_ref_images_not_image(tmp_path: Path) -> None:
-    """GitHub URL 须进 ref_images（角色参考），禁止误入 image（i2i 底图）。"""
+def test_generate_ignores_ref_images_for_text_only(tmp_path: Path) -> None:
+    """Agnes 文生图纯文字：ref_images 非官方参数，一律不发送、不进 image。"""
     provider = AgnesImageProvider()
     output = tmp_path / "1.png"
     ref_url = (
@@ -83,7 +84,7 @@ def test_generate_puts_http_ref_into_ref_images_not_image(tmp_path: Path) -> Non
 
     payload = mock_request.call_args.kwargs["json"]
     extra = payload["extra_body"]
-    assert extra["ref_images"] == [ref_url]
+    assert "ref_images" not in extra
     assert "image" not in extra
 
 
@@ -287,7 +288,8 @@ def test_build_verify_checklist_daily_includes_zhao() -> None:
     assert "单侧高马尾" in user
     assert "霓虹条纹" in user
     assert "彩虹挑染" in user
-    assert "最多 2 条" in user
+    assert "恰好 2 条" in user
+    assert "左右手各一只" in user
     assert "照片墙" in user
 
     items_lr, user_lr, _ = AgnesImageProvider._build_verify_checklist(

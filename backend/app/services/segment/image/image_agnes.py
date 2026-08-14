@@ -60,8 +60,8 @@ _MOUTH_FIRST_SPEAKER_RE = re.compile(
 )
 _PROP_HOLDER_RE = re.compile(
     r"(?P<hand>右手|左手)?"
-    r"(?:握着|握|拿着|持着|持|举着|抓住|拿起|紧握)"
-    r"(?P<prop>塑料蛋糕刀|塑料刀|餐刀|蛋糕刀|刀)"
+    r"(?:握着|握住|握|拿着|持着|持|举着|端着|托着|托住|提着|接过|递出|抓住|抓着|拿起|紧握)"
+    r"(?P<prop>[^，。；、]{1,8})"
 )
 
 
@@ -100,8 +100,25 @@ def _agnes_image_gen_keys(settings=None) -> list[AgnesApiKey]:
 
 
 def _to_agnes_size(size: str) -> str:
-    """项目内 720*1280 → Agnes API 720x1280。"""
-    return size.strip().lower().replace("*", "x")
+    """项目内 720*1280 → Agnes API 720x1280；档位 2K 保留大小写。"""
+    text = size.strip()
+    if re.fullmatch(r"[1-4][Kk]", text):
+        return text.upper()
+    return text.lower().replace("*", "x")
+
+
+def _guess_agnes_ratio(size: str) -> str:
+    """按请求尺寸推断宽高比；横屏 16:9，竖屏 9:16。"""
+    text = size.strip().lower().replace("*", "x")
+    if "x" in text:
+        try:
+            w, h = text.split("x", 1)[:2]
+            width = int(float(w))
+            height = int(float(h))
+            return "16:9" if width > height else "9:16"
+        except (ValueError, TypeError):
+            pass
+    return "16:9"
 
 
 def _resp_body_summary(resp: requests.Response, *, limit: int = 500) -> str:
@@ -346,47 +363,69 @@ class AgnesImageProvider(ImageProvider):
         *,
         size: str,
         ref_images: list[Path | str] | None = None,
+        base_image: Path | str | list[Path | str] | None = None,
         max_retries: int | None = None,
     ) -> Path:
-        agnes_size = _to_agnes_size(size)
+        settings = get_settings()
+        cfg_size = settings.agnes_image_size.strip()
+        if re.fullmatch(r"[1-4][Kk]", cfg_size):
+            agnes_size = cfg_size.upper()
+            ratio = settings.agnes_image_ratio.strip() or _guess_agnes_ratio(size)
+        else:
+            agnes_size = _to_agnes_size(size)
+            ratio = ""
         log_tag = f"[out={output_path.name}]"
         t0 = time.monotonic()
         self._acquire_submit_slot()
         try:
             extra_body: dict = {"response_format": "url"}
-            ref_names: list[str] = []
-            if ref_images:
-                # URL / 本地 base64 一律进 ref_images（角色参考）；勿用 image（那是 i2i 底图）
-                ref_payload: list[str] = []
-                for ref in ref_images:
-                    if isinstance(ref, str) and ref.startswith(("http://", "https://")):
-                        ref_payload.append(ref)
-                        ref_names.append(ref)
-                        logger.info("%s agnes ref_image url: %s", log_tag, ref)
-                        continue
-                    ref_path = Path(ref)
-                    if ref_path.exists():
-                        ref_b64 = base64.b64encode(ref_path.read_bytes()).decode("ascii")
-                        ref_payload.append(ref_b64)
-                        ref_names.append(ref_path.name)
-                        logger.info(
-                            "%s agnes ref_image: %s, size=%s bytes",
-                            log_tag,
-                            ref_path.name,
-                            ref_path.stat().st_size,
+            if base_image is not None:
+                if not isinstance(base_image, list):
+                    base_image = [base_image]
+                image_refs: list[str] = []
+                for item in base_image:
+                    if isinstance(item, str) and item.startswith(("http://", "https://")):
+                        image_refs.append(item)
+                    else:
+                        base_path = Path(item)
+                        if base_path.exists():
+                            base_b64 = base64.b64encode(
+                                base_path.read_bytes()
+                            ).decode("ascii")
+                            image_refs.append(f"data:image/png;base64,{base_b64}")
+                        else:
+                            logger.warning(
+                                "%s agnes base_image not found: %s",
+                                log_tag,
+                                base_path,
+                            )
+                if image_refs:
+                    extra_body["image"] = image_refs
+                    if len(image_refs) >= 2:
+                        prompt = (
+                            "画面内容与第一张参考图一致，"
+                            "画风与人物外观与第二张参考图一致，"
+                            "只改变动作与道具状态。"
+                            + prompt
                         )
                     else:
-                        logger.warning(
-                            "%s agnes ref_image not found: %s", log_tag, ref_path
+                        prompt = (
+                            "保持参考图的画风与人物外观，"
+                            "画面内容按输入图推进，"
+                            "只改变动作与道具状态。"
+                            + prompt
                         )
-                if ref_payload:
-                    extra_body["ref_images"] = ref_payload
+            # Agnes 文生图走纯文字：ref_images 不在官方参数表里会被忽略，
+            # 且提示词里提及“参考图”反而误导模型，故一律不发送。
+            ref_names: list[str] = []
             payload = {
                 "model": self._model,
                 "prompt": prompt,
                 "size": agnes_size,
                 "extra_body": extra_body,
             }
+            if ratio:
+                payload["ratio"] = ratio
             logger.info(
                 "%s agnes request (%s key): %s, refs=%s, prompt_chars=%s, %s",
                 log_tag,
@@ -449,6 +488,7 @@ class AgnesImageProvider(ImageProvider):
         *,
         size: str | None = None,
         ref_images: list[Path | str] | None = None,
+        base_image: Path | str | list[Path | str] | None = None,
         expected_speakers: list[str] | None = None,
         content_style: str | None = None,
     ) -> Path:
@@ -506,6 +546,7 @@ class AgnesImageProvider(ImageProvider):
                         output_path,
                         size=size,
                         ref_images=ref_images,
+                        base_image=base_image,
                         max_retries=key_retries,
                     )
                     generated = True
@@ -543,6 +584,14 @@ class AgnesImageProvider(ImageProvider):
             if not generated:
                 break
             if result is None or not result.exists():
+                return result
+
+            if not get_settings().agnes_image_verify:
+                logger.info(
+                    "%s agnes generate ok (%s key, verify disabled)",
+                    log_tag,
+                    last_key.label if last_key else "?",
+                )
                 return result
 
             verified = self._verify_image(
@@ -827,11 +876,21 @@ class AgnesImageProvider(ImageProvider):
         items.append(
             (
                 "extra_arms",
-                "画面中每个人可见手臂是否恰好 2 条（从肩膀到手腕各算一条）？"
-                "若任何人出现第 3 条手臂或多出的手，答「否」。"
+                "画面中每个人可见手臂是否恰好 2 条，且左右手各一只（能区分左右）？"
+                "若任何人出现第 3 条手臂、两只右手、两只左手或多出的手，答「否」。"
                 "回答「是」或「否」",
             )
         )
+        # 承托物/关键道具在场：提示词写了托盘等就必须可见，防止道具凭空消失
+        if "托盘" in scene_prompt:
+            items.append(
+                (
+                    "prop_present",
+                    "画面中场景里的托盘是否清晰可见？"
+                    "若托盘缺失、被完全遮挡或画成其他物体答「否」。"
+                    "回答「是」或「否」",
+                )
+            )
         # 单扇门：提示词写门时校验，防 T2I 画成双开门/对开门
         if "门" in scene_prompt:
             items.append(
@@ -983,6 +1042,7 @@ class AgnesImageProvider(ImageProvider):
                 "mouth_first",
                 "prop_holder",
                 "extra_arms",
+                "prop_present",
                 "door_single",
                 "no_float_hair",
                 "hair_wind_dir",

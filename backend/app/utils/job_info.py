@@ -1,6 +1,7 @@
 """video_job.info JSON 字段解析与合并。"""
 from __future__ import annotations
 import json
+import re
 from pathlib import Path
 from typing import Any
 from app.utils.media import DEFAULT_HISTORY_VIDEO_MINUTES, DEFAULT_SPEECH_CHARS_PER_SEC, DEFAULT_STANDARD_VIDEO_MINUTES, default_narration_target_words, narration_target_for_minutes
@@ -145,6 +146,8 @@ def resolve_segment_image_size(job: dict | None=None, *, settings: Any | None=No
     cfg = settings or get_settings()
     provider = resolve_image_provider(job, settings=cfg)
     default = cfg.z_image_size if provider == 'z_image_t2i' else cfg.sd_image_size if provider == 'sd15_t2i' else cfg.agnes_image_size if provider == 'agnes_t2i' else cfg.wan_image_size
+    if re.fullmatch(r"[1-4][Kk]", default.strip()):
+        return default.strip().upper()
     normalized = default.strip().lower().replace('x', '*')
     w_str, h_str = normalized.split('*', 1)
     width, height = (int(w_str.strip()), int(h_str.strip()))
