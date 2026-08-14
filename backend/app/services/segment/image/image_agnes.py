@@ -363,7 +363,6 @@ class AgnesImageProvider(ImageProvider):
         *,
         size: str,
         ref_images: list[Path | str] | None = None,
-        base_image: Path | str | list[Path | str] | None = None,
         max_retries: int | None = None,
     ) -> Path:
         settings = get_settings()
@@ -379,45 +378,37 @@ class AgnesImageProvider(ImageProvider):
         self._acquire_submit_slot()
         try:
             extra_body: dict = {"response_format": "url"}
-            if base_image is not None:
-                if not isinstance(base_image, list):
-                    base_image = [base_image]
-                image_refs: list[str] = []
-                for item in base_image:
-                    if isinstance(item, str) and item.startswith(("http://", "https://")):
-                        image_refs.append(item)
-                    else:
-                        base_path = Path(item)
-                        if base_path.exists():
-                            base_b64 = base64.b64encode(
-                                base_path.read_bytes()
-                            ).decode("ascii")
-                            image_refs.append(f"data:image/png;base64,{base_b64}")
-                        else:
-                            logger.warning(
-                                "%s agnes base_image not found: %s",
-                                log_tag,
-                                base_path,
-                            )
-                if image_refs:
-                    extra_body["image"] = image_refs
-                    if len(image_refs) >= 2:
-                        prompt = (
-                            "画面内容与第一张参考图一致，"
-                            "画风与人物外观与第二张参考图一致，"
-                            "只改变动作与道具状态。"
-                            + prompt
-                        )
-                    else:
-                        prompt = (
-                            "保持参考图的画风与人物外观，"
-                            "画面内容按输入图推进，"
-                            "只改变动作与道具状态。"
-                            + prompt
-                        )
-            # Agnes 文生图走纯文字：ref_images 不在官方参数表里会被忽略，
-            # 且提示词里提及“参考图”反而误导模型，故一律不发送。
             ref_names: list[str] = []
+            if ref_images:
+                # URL / 本地 base64 一律进 ref_images（角色参考）；勿用 image（那是 i2i 底图）
+                ref_payload: list[str] = []
+                for ref in ref_images:
+                    if isinstance(ref, str) and ref.startswith(("http://", "https://")):
+                        ref_payload.append(ref)
+                        ref_names.append(ref)
+                        logger.info("%s agnes ref_image url: %s", log_tag, ref)
+                        continue
+                    ref_path = Path(ref)
+                    if ref_path.exists():
+                        ref_b64 = base64.b64encode(
+                            ref_path.read_bytes()
+                        ).decode("ascii")
+                        ref_payload.append(ref_b64)
+                        ref_names.append(ref_path.name)
+                        logger.info(
+                            "%s agnes ref_image: %s, size=%s bytes",
+                            log_tag,
+                            ref_path.name,
+                            ref_path.stat().st_size,
+                        )
+                    else:
+                        logger.warning(
+                            "%s agnes ref_image not found: %s",
+                            log_tag,
+                            ref_path,
+                        )
+                if ref_payload:
+                    extra_body["ref_images"] = ref_payload
             payload = {
                 "model": self._model,
                 "prompt": prompt,
@@ -488,7 +479,6 @@ class AgnesImageProvider(ImageProvider):
         *,
         size: str | None = None,
         ref_images: list[Path | str] | None = None,
-        base_image: Path | str | list[Path | str] | None = None,
         expected_speakers: list[str] | None = None,
         content_style: str | None = None,
     ) -> Path:
@@ -546,7 +536,6 @@ class AgnesImageProvider(ImageProvider):
                         output_path,
                         size=size,
                         ref_images=ref_images,
-                        base_image=base_image,
                         max_retries=key_retries,
                     )
                     generated = True

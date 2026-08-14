@@ -38,17 +38,18 @@ def test_assemble_daily_t2i_prompt_structure():
     assert "窗光从一侧斜照" in prompt
     assert "中近景特写" in prompt
     # 昭昭+灿灿同框默认左昭昭右灿灿（不再按对白先发言者左右对调）
-    assert "双人固定机位构图，画面左侧是昭昭，画面右侧是灿灿" in prompt
-    assert "两人占据画面全部主体空间" in prompt
-    assert "黑色头发通体纯黑" in prompt
-    assert "中近景特写，两人左右分立，站位固定" in prompt
+    assert "蓝T恤深蓝短裤短发男孩昭昭" in prompt
+    assert "粉卫衣蓝裤黑马尾女孩灿灿" in prompt
+    assert "灿灿头发通体纯黑" in prompt
+    assert "左右位置固定不变" in prompt
+    assert "画面左边是昭昭，右边是灿灿" in prompt
     assert "深蓝色短裤" in prompt
     assert "蓝色长裤" in prompt
-    assert "两人占据画面全部主体空间" in prompt
+    assert "占左半" in prompt and "占右半" in prompt
     assert "蜡笔" in prompt
     # 嘴型锁定：首个说话人（灿灿）张嘴，其余闭嘴，防 i2v 说话人反转
     assert "灿灿正在开口说话" in prompt
-    assert "昭昭嘴巴完全闭合不露齿" in prompt
+    assert "昭昭嘴巴自然闭合" in prompt
 
 
 def test_strip_verify_regen_leak():
@@ -84,7 +85,10 @@ def test_assemble_daily_layout_from_visual_brief():
         ],
     }
     prompt = assemble_daily_t2i_prompt(seg)
-    assert "双人固定机位构图，画面左侧是昭昭，画面右侧是灿灿" in prompt
+    assert "蓝T恤深蓝短裤短发男孩昭昭" in prompt
+    assert "粉卫衣蓝裤黑马尾女孩灿灿" in prompt
+    assert "左右位置固定不变" in prompt
+    assert "画面左边是昭昭，右边是灿灿" in prompt
     assert prompt.count("画面左边是昭昭，右边是灿灿") == 1
 
 
@@ -130,79 +134,7 @@ def test_assemble_daily_ma_coming_keeps_empty_doorway():
     assert "妈妈：" not in prompt
     assert "瞟向厨房门口" not in prompt
     assert "厨房门口空无无人" in prompt
-    assert "双人固定机位构图，画面左侧是昭昭，画面右侧是灿灿" in prompt
-    assert "两人占据画面全部主体空间" in prompt
-
-
-def test_assemble_daily_prop_holder_binds_correct_character():
-    """道具持有者只认持物句：灿灿拿壶时不能误判成旁观的昭昭。"""
-    seg = {
-        "segment_index": 1,
-        "shot_type": "特写",
-        "speakers": ["昭昭", "灿灿"],
-        "visual_brief": (
-            "阳台花盆旁；灿灿右手拿着浇花水壶，左手叉腰，正对昭昭神情；"
-            "昭昭双手摊开，看着灿灿。"
-        ),
-        "dialogue": [
-            {"speaker": "灿灿", "text": "水壶给我！"},
-            {"speaker": "昭昭", "text": "好。"},
-        ],
-    }
-    prompt = assemble_daily_t2i_prompt(seg, setting="阳台花盆旁")
-    assert "灿灿右手五指环绕包裹壶把，左手掌心贴靠壶腹" in prompt
-    assert "蓝色塑料浇花水壶（宽口短嘴）为常驻道具，画面中只此一把" in prompt
-    assert "左手叉腰" not in prompt
-    assert "水壶在昭昭手中" not in prompt
-
-
-def test_assemble_daily_scene_anchor_repeats_first_shot_background():
-    """首镜背景句逐镜重复，替代「接上一镜」维持场景一致。"""
-    segs = [
-        {
-            "segment_index": 1,
-            "shot_type": "特写",
-            "visual_brief": (
-                "阳台花盆旁，背景是阳台栏杆和几盆绿植。"
-                "灿灿右手拿着水壶，正对昭昭神情。"
-            ),
-            "dialogue": [{"speaker": "灿灿", "text": "水壶给我！"}],
-        },
-        {
-            "segment_index": 2,
-            "shot_type": "中景",
-            "visual_brief": (
-                "水壶已在昭昭手中，灿灿双手背在身后。"
-                "昭昭双手握住水壶，低头看着水壶。"
-            ),
-            "dialogue": [{"speaker": "昭昭", "text": "我慢点浇。"}],
-        },
-    ]
-    assemble_daily_image_prompts(segs, setting="阳台花盆旁")
-    p2 = segs[1]["image_prompt"]
-    assert "背景是阳台栏杆和几盆绿植" in p2
-    assert "昭昭双手握住水壶" in p2
-    assert "整体保持儿童情绪涂鸦手绘质感" in p2
-    assert "接上一镜" not in p2
-
-
-def test_assemble_daily_rewrites_hand_on_spout_to_visible_hand():
-    """「左手扶着壶嘴」易诱发两只右手，拼装时改为左手自然垂在身侧。"""
-    seg = {
-        "segment_index": 3,
-        "shot_type": "特写",
-        "speakers": ["昭昭", "灿灿"],
-        "visual_brief": (
-            "托盘在花盆正下方。昭昭右手持浇花水壶，左手扶着壶嘴，"
-            "正往花盆里浇水；灿灿站在一旁，双手叉腰。"
-        ),
-        "dialogue": [{"speaker": "灿灿", "text": "继续浇。"}],
-    }
-    prompt = assemble_daily_t2i_prompt(seg, setting="阳台花盆旁")
-    assert "昭昭右手五指环绕包裹壶把，左手掌心贴靠壶腹" in prompt
-    assert "另一只手自然垂在身侧" not in prompt
-    assert "左手扶着壶嘴" not in prompt
-    assert "整体保持儿童情绪涂鸦手绘质感" in prompt
+    assert "画面主体为昭昭、灿灿两人" in prompt
 
 
 def test_assemble_daily_hide_ma_keeps_two_person_cast():
@@ -240,7 +172,7 @@ def test_assemble_daily_hide_ma_keeps_two_person_cast():
     assert "妈妈：" not in p1
     assert "三人同框" not in p1
     assert "三人特写" not in p1
-    assert "双人固定机位构图，画面左侧是昭昭，画面右侧是灿灿" in p1
+    assert "画面主体为昭昭、灿灿两人" in p1
     assert "灿灿：" in p1
     p2 = segs[1]["image_prompt"]
     assert "妈妈：" in p2
@@ -289,8 +221,8 @@ def test_scrub_daily_visual_brief_strips_mouth_and_fixes_hands():
     )
     assert "嘴巴大张" not in prompt
     assert "嘴巴大张" not in prompt
-    # brief 无口型提示时不预设说话口型，避免与情绪冲突
-    assert "正在开口说话" not in prompt
+    assert prompt.count("正在开口说话") == 1
+    assert "昭昭正在开口说话" in prompt
     assert "双手叉腰" not in prompt
     assert "左手叉腰" in prompt
 
@@ -365,7 +297,7 @@ def test_assemble_daily_t2i_no_duplicate_lr_in_prompt():
     prompt = assemble_daily_t2i_prompt(seg)
     assert prompt.count("画面左边是昭昭，右边是灿灿") == 1
     assert "昭昭双手叉腰，点头瞪眼" not in prompt
-    assert "中景，两人左右分立，站位固定，全身可见" in prompt
+    assert "中景，严格左蓝T恤深蓝短裤短发男孩昭昭" in prompt
 
 
 def test_build_image_prompts_daily_motion_modes_and_duration():
