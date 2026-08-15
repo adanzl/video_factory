@@ -11,7 +11,7 @@ from pathlib import Path
 from PIL import Image, ImageChops, ImageDraw
 
 from app.config import get_settings
-from app.services.intro.title_layout import render_feed_title
+from app.services.intro.title_layout import render_feed_title, title_font_range
 from app.services.intro.themes import get_intro_theme
 from app.services.media.ffmpeg_utils import (
     OUTPUT_AUDIO_SAMPLE_RATE,
@@ -45,9 +45,6 @@ class _IntroLayout:
     host_right_ratio: float | None
     host_bottom_ratio: float
     host_visible_fraction: float
-    episode_font_max: int
-    episode_font_min: int
-    episode_max_lines: int
     accent_width_ratio: float
     title_text_moon_width_ratio: float
 
@@ -67,9 +64,6 @@ _PORTRAIT_LAYOUT = _IntroLayout(
     host_right_ratio=None,
     host_bottom_ratio=0.02,
     host_visible_fraction=1.0,
-    episode_font_max=120,
-    episode_font_min=96,
-    episode_max_lines=3,
     accent_width_ratio=0.55,
     title_text_moon_width_ratio=0.88,
 )
@@ -89,9 +83,6 @@ _LANDSCAPE_LAYOUT = _IntroLayout(
     host_right_ratio=None,
     host_bottom_ratio=0.0,
     host_visible_fraction=0.58,
-    episode_font_max=184,
-    episode_font_min=100,
-    episode_max_lines=2,
     accent_width_ratio=0.0,
     title_text_moon_width_ratio=1.28,
 )
@@ -325,14 +316,15 @@ def _build_title_layers(
         text_max_w = int(width * layout.title_text_width_ratio)
         text_max_w = min(text_max_w, int(diameter * layout.title_text_moon_width_ratio))
     text_max_h = int(diameter * 0.68)
+    max_size, min_size = title_font_range(width=width, height=height)
 
     text_block = render_feed_title(
         title,
         theme,
         text_max_w,
-        max_size=layout.episode_font_max,
-        min_size=layout.episode_font_min,
-        max_lines=layout.episode_max_lines,
+        max_size=max_size,
+        min_size=min_size,
+        max_lines=2,
         max_height=text_max_h,
     )
 

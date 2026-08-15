@@ -26,3 +26,22 @@ def test_split_cover_title_lines_by_space() -> None:
 
 def test_split_cover_title_lines_short() -> None:
     assert split_cover_title_lines("秦陵编钟谜") == ["秦陵编钟谜"]
+
+
+def test_split_cover_title_lines_over_eight_even_split() -> None:
+    title = "明明酸奶我先抢，白忙了"
+    lines = split_cover_title_lines(title)
+    assert lines == ["明明酸奶我先", "抢，白忙了"]
+
+
+def test_title_font_range_matches_cover_and_scales_1080p() -> None:
+    from app.services.intro.title_layout import title_font_range
+
+    assert title_font_range(width=1280, height=720) == (135, 100)
+    assert title_font_range(width=1920, height=1080) == (
+        round(135 * 1080 / 720),
+        round(100 * 1080 / 720),
+    )
+    max_size, min_size = title_font_range(width=1920, height=1080)
+    assert max_size > 135
+    assert min_size >= 100
