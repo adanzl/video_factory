@@ -811,6 +811,64 @@ class JobMgr:
                 repo_job.update_job(job_id, info=merge_job_info(job.get('info'), **info_patch))
         return self._run_in_background(job_id, 'intro', lambda: run_intro(job_id, to_end=to_end, hold_tail_sec=hold_tail_sec, orientation=orientation))
 
+    def run_intro_video(self, job_id: int, *, hold_tail_sec: float | None=None, orientation: str | None=None, orientation_preference: str | None=None, intro_category: str | None=None) -> dict:
+        """仅重新生成片头视频，不动封面/片尾。"""
+        from app.config import get_settings
+        from app.services.intro import generate_intro
+        from app.services.intro.size import resolve_intro_size
+        from app.utils.job_info import intro_generate_category
+        from worker.stages.intro.base import resolve_intro_title
+
+        info_patch: dict = {}
+        if orientation_preference is not None:
+            info_patch['orientation'] = orientation_preference
+        if intro_category is not None:
+            from app.utils.job_info import normalize_intro_category
+            normalized = normalize_intro_category(intro_category)
+            if normalized is None:
+                raise ValueError('intro_category must be 百科, 童趣日常 or 历史悬案')
+            info_patch['intro_category'] = normalized
+        if info_patch:
+            with atomic():
+                job = repo_job.get_job(job_id)
+                repo_job.update_job(job_id, info=merge_job_info(job.get('info'), **info_patch))
+
+        def _generate() -> None:
+            settings = get_settings()
+            with atomic():
+                job = repo_job.get_job(job_id)
+            title = resolve_intro_title(job)
+            media_dir = settings.video_data_dir / str(job_id)
+            effective_orientation = orientation
+            if effective_orientation is None:
+                effective_orientation = orientation_for_resolve(job)
+            width, height = resolve_intro_size(
+                settings=settings,
+                orientation=effective_orientation,
+                job=job,
+                media_dir=media_dir,
+            )
+            intro_path = media_dir / 'intro.mp4'
+            generate_intro(
+                title,
+                intro_path,
+                category=intro_generate_category(job),
+                hold_tail_sec=hold_tail_sec,
+                width=width,
+                height=height,
+                pipeline=job.get('pipeline'),
+            )
+            with atomic():
+                repo_job.update_job(job_id, intro_path=str(intro_path.resolve()))
+                repo_job_log.append_log(
+                    job_id,
+                    'intro',
+                    f'intro regenerated: {intro_path} ({width}x{height})',
+                )
+            self.mark_done(job_id)
+
+        return self._run_in_background(job_id, 'intro_video', _generate)
+
     def run_cover(self, job_id: int, *, to_end: bool=False) -> dict:
         """仅重新生成封面，不动片头视频。"""
         import tempfile

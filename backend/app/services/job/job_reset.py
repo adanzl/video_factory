@@ -248,14 +248,14 @@ def _fs_clear_stage_self(stage: str, media_dir: Path, job: dict, *, segment_indi
         _fs_clear_merge_artifacts(media_dir)
 
 def _resolve_action(action: str) -> tuple[str, str | None] | tuple[None, None]:
-    """解析 action → (stage, segment_scope)。cover/end 返回 (None, None)。"""
+    """解析 action → (stage, segment_scope)。cover/end/intro_video 返回 (None, None)。"""
     if action == 'segment/images':
         return ('segment', 'images')
     if action == 'segment/clips':
         return ('segment', 'clips')
     if action == 'segment/all':
         return ('segment', None)
-    if action in {'cover', 'end'}:
+    if action in {'cover', 'end', 'intro_video'}:
         return (None, None)
     return (normalize_stage(action), None)
 
@@ -267,14 +267,18 @@ def _prepare_cover_or_end(job_id: int, action: str) -> dict:
         if action == 'cover':
             repo_job.update_job(job_id, cover_path=None)
             log_msg = f'action={action} (cover only)'
-            delete_path = media_dir / 'cover.jpg'
+            delete_paths = [media_dir / 'cover.jpg']
+        elif action == 'intro_video':
+            repo_job.update_job(job_id, intro_path=None)
+            log_msg = f'action={action} (intro only)'
+            delete_paths = [media_dir / 'intro.mp4', media_dir / 'intro.png']
         else:
             repo_job.update_job(job_id, end_path=None)
             log_msg = f'action={action}'
-            delete_path = media_dir / 'end.mp4'
+            delete_paths = [media_dir / 'end.mp4']
         repo_job_log.append_log(job_id, 'intro', log_msg)
         job = repo_job.update_job(job_id, status='pending', fail_stage=None, error_message=None)
-    _delete_files([delete_path])
+    _delete_files(delete_paths)
     return job
 
 def prepare_rerun(job_id: int, action: str, *, segment_indices: list[int] | None=None, mode: str='from') -> dict:
@@ -282,16 +286,16 @@ def prepare_rerun(job_id: int, action: str, *, segment_indices: list[int] | None
 
     ``action`` 与 API 一致，支持 ``script`` / ``tts`` / ``segment`` /
     ``segment/images`` / ``segment/clips`` / ``segment/all`` / ``cover`` /
-    ``end`` 等。
+    ``intro_video`` / ``end`` 等。
 
     ``mode`` 仅写入日志（``from`` / ``only``）；清理始终为本 stage + 下游。
-    ``cover`` / ``end`` 只清文件，不改 stage 指针。
+    ``cover`` / ``intro_video`` / ``end`` 只清文件，不改 stage 指针。
     """
     if mode not in {'from', 'only'}:
         raise ValueError(f'invalid rerun mode: {mode}')
-    if action in {'cover', 'end'}:
+    if action in {'cover', 'end', 'intro_video'}:
         if segment_indices is not None:
-            raise ValueError('segments 不可用于 cover/end')
+            raise ValueError('segments 不可用于 cover/end/intro_video')
         return _prepare_cover_or_end(job_id, action)
     stage, segment_scope = _resolve_action(action)
     assert stage is not None
