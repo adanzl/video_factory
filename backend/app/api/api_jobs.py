@@ -307,6 +307,23 @@ def run_intro_route():
     )
 
 
+@bp.post("/intro_video")
+def run_intro_video_route():
+    job_id, _to_end, hold_tail_sec, orientation, orientation_preference, intro_category = (
+        _parse_intro_body()
+    )
+    return _accept_stage(
+        job_id,
+        lambda: job_mgr.run_intro_video(
+            job_id,
+            hold_tail_sec=hold_tail_sec,
+            orientation=orientation,
+            orientation_preference=orientation_preference,
+            intro_category=intro_category,
+        ),
+    )
+
+
 @bp.post("/cover")
 def run_cover_route():
     job_id, to_end = _parse_stage_body()

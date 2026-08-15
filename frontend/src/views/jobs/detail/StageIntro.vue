@@ -148,7 +148,27 @@
         <div :class="STAGE_PANEL_CLASS">
           <div :class="STAGE_PANEL_HEADER_CLASS">
             <span :class="STAGE_PANEL_TITLE_TEXT_CLASS">片头预览</span>
-            <span class="text-xs text-gray-400">{{ introResolutionText }}</span>
+            <div class="flex items-center gap-2">
+              <el-button
+                v-if="!videoUrl"
+                size="small"
+                type="primary"
+                :loading="regeneratingIntro"
+                :disabled="actionDisabled"
+                @click="handleReGenIntro"
+              >
+                生成
+              </el-button>
+              <el-button
+                v-if="videoUrl"
+                size="small"
+                :loading="regeneratingIntro"
+                @click="handleReGenIntro"
+              >
+                重新生成
+              </el-button>
+              <span class="text-xs text-gray-400">{{ introResolutionText }}</span>
+            </div>
           </div>
           <div v-if="videoUrl" class="flex justify-center">
             <div
@@ -306,6 +326,7 @@ const videoMeta = ref<{ width: number; height: number } | null>(null);
 const coverMeta = ref<{ width: number; height: number } | null>(null);
 const showCover43Guide = ref(false);
 const regeneratingCover = ref(false);
+const regeneratingIntro = ref(false);
 const coverCacheVer = ref(0);
 const introCacheVer = ref(0);
 const generatingEnd = ref(false);
@@ -506,10 +527,10 @@ const handleRun = async (toEnd: boolean) => {
   }
 };
 
-async function waitCoverReady(jobId: number): Promise<JobDetail> {
+async function waitJobIdle(jobId: number): Promise<JobDetail> {
   const started = Date.now();
   const intervalMs = 800;
-  const maxWaitMs = 60_000;
+  const maxWaitMs = 120_000;
   let latest = await getJob(jobId);
   while (
     latest.status === JOB_STATUS_RUNNING &&
@@ -520,6 +541,53 @@ async function waitCoverReady(jobId: number): Promise<JobDetail> {
   }
   return latest;
 }
+
+const handleReGenIntro = async () => {
+  const actionLabel = videoUrl.value ? "重新生成片头" : "生成片头";
+  try {
+    await ElMessageBox.confirm(`确定${actionLabel}吗？封面和片尾不会改动。`, "确认", {
+      type: "warning",
+      confirmButtonText: "确定",
+      cancelButtonText: "取消",
+    });
+  } catch {
+    return;
+  }
+  regeneratingIntro.value = true;
+  try {
+    const payload: {
+      id: number;
+      to_end: boolean;
+      hold_tail_sec?: number;
+      orientation: "auto" | "portrait" | "landscape";
+      intro_category: IntroCategory;
+    } = {
+      id: props.job.id,
+      to_end: false,
+      orientation: introOrientation.value,
+      intro_category: introCategory.value,
+    };
+    if (Number.isFinite(holdTailSec.value) && holdTailSec.value >= 0) {
+      payload.hold_tail_sec = holdTailSec.value;
+    }
+    await runJobStageAction("intro_video", payload);
+    emit("refresh");
+    const ready = await waitJobIdle(props.job.id);
+    if (!ready.intro_path?.trim()) {
+      throw new Error("片头尚未生成，请稍后刷新");
+    }
+    loadError.value = "";
+    introCacheVer.value++;
+    videoMeta.value = null;
+    ElMessage.success("片头已重新生成");
+    emit("refresh");
+    void loadDuration();
+  } catch (error) {
+    handleError(error, `${actionLabel}失败`);
+  } finally {
+    regeneratingIntro.value = false;
+  }
+};
 
 const handleReGenCover = async () => {
   try {
@@ -536,7 +604,7 @@ const handleReGenCover = async () => {
     await runJobStageAction("cover", { id: props.job.id, to_end: false });
     emit("refresh");
     // 等后台写完再 bust 缓存，避免请求已删/未写完的封面导致 el-image 卡 FAILED
-    const ready = await waitCoverReady(props.job.id);
+    const ready = await waitJobIdle(props.job.id);
     if (!ready.cover_path?.trim()) {
       throw new Error("封面尚未生成，请稍后刷新");
     }

@@ -145,3 +145,39 @@ def test_segment_clips_with_indices_keeps_image_path(app_ctx) -> None:
     updated = repo_segment.list_segments(job_id)[0]
     assert updated["image_path"] == "/data/1.png"
     assert updated["clip_path"] is None
+
+
+def test_prepare_intro_video_keeps_cover_and_end(
+    app_ctx, tmp_path: Path, monkeypatch
+) -> None:
+    from app.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "video_data_dir", tmp_path)
+    job = repo_job.create_job("intro video only", stage="intro", status="done")
+    job_id = int(job["id"])
+    media_dir = tmp_path / str(job_id)
+    media_dir.mkdir()
+    intro = media_dir / "intro.mp4"
+    intro_png = media_dir / "intro.png"
+    cover = media_dir / "cover.jpg"
+    end = media_dir / "end.mp4"
+    for path in (intro, intro_png, cover, end):
+        path.write_bytes(b"x")
+    repo_job.update_job(
+        job_id,
+        intro_path=str(intro),
+        cover_path=str(cover),
+        end_path=str(end),
+    )
+
+    job_reset.prepare_rerun(job_id, "intro_video")
+
+    updated = repo_job.get_job(job_id)
+    assert updated["intro_path"] is None
+    assert updated["cover_path"] == str(cover)
+    assert updated["end_path"] == str(end)
+    assert not intro.exists()
+    assert not intro_png.exists()
+    assert cover.exists()
+    assert end.exists()
+
