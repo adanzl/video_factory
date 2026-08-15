@@ -11,7 +11,12 @@ from pathlib import Path
 from PIL import Image
 
 from app.services.intro.generator import central_43_bounds
-from app.services.render.text_render import balance_title_lines, load_cjk_font
+from app.services.intro.title_layout import (
+    TITLE_MAX_CHARS,
+    split_title_lines,
+    title_font_range,
+)
+from app.services.render.text_render import load_cjk_font
 from app.services.render.title_render import (
     STROKE_WIDTH,
     compose_vstack,
@@ -19,12 +24,12 @@ from app.services.render.title_render import (
     text_bbox,
 )
 
-# 与 MAX_TITLE_LENGTH 一致；封面渲染时超长会截断到此长度
-COVER_TITLE_MAX_CHARS = 18
+# 兼容 tests / preview_cover 从本模块导入
+COVER_TITLE_MAX_CHARS = TITLE_MAX_CHARS
+split_cover_title_lines = split_title_lines
+
 _COVER_TITLE_FILL = (255, 210, 50, 255)
 _COVER_TITLE_STROKE = (60, 30, 15, 255)
-# 无空格时单行上限；超过则 balance_title_lines 均分两行
-_COVER_SINGLE_LINE_MAX = 8
 
 
 def cover_canvas_size(width: int, height: int) -> tuple[int, int, bool]:
@@ -98,31 +103,6 @@ def build_cover_image_prompt(*, cw: int, ch: int, subject: str) -> str:
     return base + f"画面内容与视频一致：{resolved}"
 
 
-def split_cover_title_lines(title: str, *, max_lines: int = 2) -> list[str]:
-    """封面标题折行：16 字以内；冒号变空格后优先按空格分两行，否则超过 8 字均分两行。"""
-    # 冒号在封面上不单独占行，转为空格以便「烛影斧声：赵匡胤…」→ 两行
-    display = title.replace("：", " ").replace(":", " ").strip()
-    if not display:
-        return [""]
-    compact = display.replace(" ", "")
-    if len(compact) > COVER_TITLE_MAX_CHARS:
-        compact = compact[:COVER_TITLE_MAX_CHARS]
-    if " " in display:
-        parts = display.split(" ", 1)
-        line1 = parts[0].strip()[:COVER_TITLE_MAX_CHARS]
-        line2 = (
-            parts[1].strip()[: COVER_TITLE_MAX_CHARS - len(line1)]
-            if len(parts) > 1
-            else ""
-        )
-        if line2:
-            return [line1, line2]
-        return [line1] if line1 else [compact]
-    if len(compact) <= _COVER_SINGLE_LINE_MAX:
-        return [compact]
-    return balance_title_lines(compact, max_lines)
-
-
 def render_cover_title_block(
     title: str,
     *,
@@ -141,9 +121,9 @@ def render_cover_title_block(
 
     title_max_w = int(safe_w * 0.92)
     title_max_h = int(safe_h * 0.34) if is_landscape else int(safe_h * 0.24)
-    # 横屏投稿封面实测：最大 135px，放不下时逐步缩小至 100px
-    title_max_size = 135 if is_landscape else 120
-    title_min_size = 100 if is_landscape else 96
+    # 与片头共用封面基准字号（横屏 135–100 / 竖屏 120–96）
+    ref_w, ref_h = (1280, 720) if is_landscape else (720, 1280)
+    title_max_size, title_min_size = title_font_range(width=ref_w, height=ref_h)
     line_gap = 10
     font = load_cjk_font(title_min_size)
     font_size = title_min_size
