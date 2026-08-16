@@ -75,3 +75,19 @@ def compile_layers(
     return tuple((label, re.compile(pat)) for label, pat in pairs)
 
 
+def format_story_type_brief(code: str | None) -> str:
+    """任务信息栏用：A权威翻车。无效码返回空。"""
+    c = str(code or "").strip().upper()[:1]
+    label = STORY_TYPE_LABELS.get(c)
+    return f"{c}{label}" if label else ""
+
+
+def chat_type_info_message(code: str | None, *, success: bool = False) -> str | None:
+    """chat 任务 error_message：`[A权威翻车]`，成功则追加 SUCCESS。"""
+    brief = format_story_type_brief(code)
+    if not brief:
+        return None
+    tag = f"[{brief}]"
+    return f"{tag} SUCCESS" if success else tag
+
+

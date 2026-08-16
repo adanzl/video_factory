@@ -47,6 +47,7 @@ def create_job(
     material_id: int | None = None,
     script_json: dict | None = None,
     info: dict | None = None,
+    error_message: str | None = None,
 ) -> dict:
     script_payload = None
     if script_json is not None:
@@ -57,9 +58,10 @@ def create_job(
     cur = sql.execute(
         """
         INSERT INTO video_job (
-            title, stage, status, skip_publish, pipeline, material_id, script_json, info
+            title, stage, status, skip_publish, pipeline, material_id,
+            script_json, info, error_message
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             title,
@@ -70,6 +72,7 @@ def create_job(
             material_id,
             script_payload,
             info_payload,
+            error_message,
         ),
     )
     job_id = cur.lastrowid

@@ -252,7 +252,18 @@ class DailyStoryMgr:
             speaker_configs = {name: dict(cfg) for name, cfg in DEFAULT_DAILY_SPEAKER_CONFIGS.items()}
             speaker_configs['phrase_gap_sec'] = gap
             info['tts'] = {'speaker_configs': speaker_configs}
-            job = repo_job.create_job(title, skip_publish=skip_publish, stage='script', status='pending', pipeline='chat', material_id=story_id, info=info)
+            from app.services.daily_story.story_types import chat_type_info_message
+            type_info = chat_type_info_message(story.get('story_type'))
+            job = repo_job.create_job(
+                title,
+                skip_publish=skip_publish,
+                stage='script',
+                status='pending',
+                pipeline='chat',
+                material_id=story_id,
+                info=info,
+                error_message=type_info,
+            )
             repo_job_log.append_log(job['id'], 'api', f'created daily story job: story_id={story_id}, title={title!r}')
             repo_daily_story.set_job_id(story_id, job['id'])
             return job
@@ -302,7 +313,16 @@ class DailyStoryMgr:
                 repo_daily_story.update_story(story_id, story=story)
             job = repo_job.get_job(job_id)
             title = (story or {}).get('scene_title', '') or old.get('story', {}).get('scene_title', '') or job['title']
-            repo_job.update_job(job_id, title=title.strip(), stage='script', status='pending', script_json=None)
+            from app.services.daily_story.story_types import chat_type_info_message
+            type_info = chat_type_info_message(old.get('story_type'))
+            repo_job.update_job(
+                job_id,
+                title=title.strip(),
+                stage='script',
+                status='pending',
+                script_json=None,
+                error_message=type_info,
+            )
             repo_segment.delete_segments(job_id)
             repo_job_log.append_log(job_id, 'api', f'synced daily story #{story_id} to job #{job_id}, stage reset to script')
             return repo_job.get_job(job_id)
