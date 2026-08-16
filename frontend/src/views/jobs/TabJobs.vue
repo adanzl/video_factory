@@ -60,7 +60,7 @@
           {{ formatDateTime(row.updated_at) }}
         </template>
       </el-table-column>
-      <el-table-column prop="error_message" label="错误信息" width="100" show-overflow-tooltip />
+      <el-table-column prop="error_message" label="信息" width="200" show-overflow-tooltip />
       <el-table-column label="操作" width="180">
         <template #default="{ row }">
           <el-button type="primary" link size="small" @click="handleViewDetail(row.id)">

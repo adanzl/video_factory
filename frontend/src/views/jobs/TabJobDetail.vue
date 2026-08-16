@@ -54,7 +54,7 @@
       </div>
 
       <el-alert
-        v-if="job.error_message"
+        v-if="job.error_message && job.status === 'failed'"
         type="danger"
         :title="job.error_message"
         :closable="false"

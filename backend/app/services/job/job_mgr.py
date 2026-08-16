@@ -17,6 +17,11 @@ logger = logging.getLogger(__name__)
 _API_UPDATABLE = frozenset({'title', 'skip_publish', 'publish', 'status', 'stage'})
 _VALID_STATUSES = frozenset({'pending', 'running', 'done', 'failed'})
 
+def _pending_chat_info(job: dict) -> str | None:
+    """chat 任务回 pending 时保留矛盾类型，不留 SUCCESS。"""
+    from app.services.daily_story.story_types import job_chat_type_info
+    return job_chat_type_info(job, success=False)
+
 def _script_action_detail(*, job: dict, to_end: bool, title: str | None, segment_target_sec: float | None, max_title_length: int | None, estimated_duration_min: float | None, narration_target_words: int | None, speech_chars_per_sec: float | None, skip_title_optimize: bool, generate_image_prompts: bool, supplementary_info: str | None, video_timeline: str | None, orientation: str | None, content_style: str | None) -> str:
     from app.utils.job_info import content_style_from_job, orientation_for_resolve
     effective_title = (title or job.get('title') or '').strip()
@@ -381,6 +386,10 @@ class JobMgr:
             if updates.get('publish') is True and job.get('status') != 'running':
                 updates['stage'] = 'done'
                 updates['status'] = 'done'
+                from app.services.daily_story.story_types import job_chat_type_info
+                type_info = job_chat_type_info(job, success=True)
+                if type_info:
+                    updates['error_message'] = type_info
             job = repo_job.update_job(job_id, **updates)
             repo_job_log.append_log(job_id, 'api', f"updated fields: {', '.join(updates)}")
             return job
@@ -398,7 +407,7 @@ class JobMgr:
         if not was_running:
             job_cancel.clear(job_id)
             with atomic():
-                job = repo_job.update_job(job_id, status='pending', fail_stage=None, error_message=None)
+                job = repo_job.update_job(job_id, status='pending', fail_stage=None, error_message=_pending_chat_info(job))
                 repo_job_log.append_log(job_id, 'api', 'job aborted to pending')
                 return job
         job_cancel.request(job_id)
@@ -407,13 +416,13 @@ class JobMgr:
             try:
                 job_cancel.clear(job_id)
                 with atomic():
-                    job = repo_job.update_job(job_id, status='pending', fail_stage=None, error_message=None)
+                    job = repo_job.update_job(job_id, status='pending', fail_stage=None, error_message=_pending_chat_info(job))
                     repo_job_log.append_log(job_id, 'api', 'abort: no active worker, reset to pending')
                     return job
             finally:
                 lock.release()
         with atomic():
-            repo_job.update_job(job_id, status='pending', fail_stage=None, error_message=None, fetch=False)
+            repo_job.update_job(job_id, status='pending', fail_stage=None, error_message=_pending_chat_info(job), fetch=False)
             repo_job_log.append_log(job_id, 'api', 'abort requested; reset to pending and waiting for worker to stop')
             return repo_job.get_job(job_id)
 
@@ -432,7 +441,13 @@ class JobMgr:
         if job_cancel.is_cancelled(job_id):
             job = self.get_job(job_id)
             return self.mark_aborted(job_id, job.get('stage') or 'done')
-        return repo_job.update_job(job_id, stage='done', status='done')
+        job = self.get_job(job_id)
+        extras: dict = {}
+        from app.services.daily_story.story_types import job_chat_type_info
+        type_info = job_chat_type_info(job, success=True)
+        if type_info:
+            extras['error_message'] = type_info
+        return repo_job.update_job(job_id, stage='done', status='done', **extras)
 
     def mark_failed(self, job_id: int, stage: str, message: str) -> dict:
         if job_cancel.is_cancelled(job_id):
@@ -445,7 +460,7 @@ class JobMgr:
         job_cancel.clear(job_id)
         with atomic():
             repo_job_log.append_log(job_id, stage, '任务已中止', level='warning')
-            return repo_job.update_job(job_id, status='pending', fail_stage=None, error_message=None)
+            return repo_job.update_job(job_id, status='pending', fail_stage=None, error_message=_pending_chat_info(self.get_job(job_id)))
 
     def delete_job(self, job_id: int, *, delete_files: bool = False) -> None:
         from app.repositories import repo_daily_story

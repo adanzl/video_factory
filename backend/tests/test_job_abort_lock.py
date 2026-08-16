@@ -233,3 +233,86 @@ def test_advance_after_merge_marks_done_without_skip_publish(app_ctx) -> None:
     assert result is not None
     assert result["stage"] == "done"
     assert result["status"] == "done"
+
+
+def test_chat_type_info_message_format() -> None:
+    from app.services.daily_story.story_types import chat_type_info_message
+
+    assert chat_type_info_message("A") == "[A权威翻车]"
+    assert chat_type_info_message("A", success=True) == "[A权威翻车] SUCCESS"
+    assert chat_type_info_message("C", success=True) == "[C公平执念] SUCCESS"
+    assert chat_type_info_message(None) is None
+    assert chat_type_info_message("Z") is None
+
+
+def test_create_chat_job_writes_type_info(app_ctx) -> None:
+    """chat 建任务时信息栏写入矛盾类型。"""
+    from app.repositories import repo_daily_story
+    from app.services.daily_story.daily_story_mgr import daily_story_mgr
+
+    story_id = repo_daily_story.insert_story(
+        theme="抢酸奶",
+        story={
+            "scene_title": "明明酸奶我先抢",
+            "dialogue": [{"speaker": "昭昭", "line": "给我"}],
+        },
+        story_type="A",
+        status="active",
+    )
+    job = daily_story_mgr.create_job(story_id)
+    assert job["pipeline"] == "chat"
+    assert job["error_message"] == "[A权威翻车]"
+    assert job["status"] == "pending"
+
+
+def test_mark_done_chat_writes_success_info(app_ctx) -> None:
+    """chat 成功完成时信息栏写成 [类型] SUCCESS。"""
+    from app.repositories import repo_daily_story, repo_job
+    from app.services.job.job_mgr import job_mgr
+
+    story_id = repo_daily_story.insert_story(
+        theme="抢酸奶",
+        story={
+            "scene_title": "测试",
+            "dialogue": [{"speaker": "昭昭", "line": "给我"}],
+        },
+        story_type="C",
+        status="active",
+    )
+    job = repo_job.create_job(
+        "测试",
+        pipeline="chat",
+        material_id=story_id,
+        info={"daily_story_id": story_id},
+        error_message="[C公平执念]",
+    )
+    done = job_mgr.mark_done(int(job["id"]))
+    assert done["error_message"] == "[C公平执念] SUCCESS"
+
+
+def test_update_job_publish_true_writes_chat_success_info(app_ctx) -> None:
+    """标记已发布时，chat 任务信息栏同步 SUCCESS。"""
+    from app.repositories import repo_daily_story, repo_job
+    from app.services.job.job_mgr import job_mgr
+
+    story_id = repo_daily_story.insert_story(
+        theme="抢酸奶",
+        story={
+            "scene_title": "测试",
+            "dialogue": [{"speaker": "昭昭", "line": "给我"}],
+        },
+        story_type="A",
+        status="active",
+    )
+    job = repo_job.create_job(
+        "测试",
+        pipeline="chat",
+        stage="publish",
+        status="pending",
+        material_id=story_id,
+        info={"daily_story_id": story_id},
+        error_message="[A权威翻车]",
+    )
+    updated = job_mgr.update_job(int(job["id"]), publish=True)
+    assert updated["status"] == "done"
+    assert updated["error_message"] == "[A权威翻车] SUCCESS"

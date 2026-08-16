@@ -10,6 +10,7 @@ from app.core.pipelines import PIPELINE_MATERIAL, is_material_job, resolve_pipel
 from app.utils.stage_names import normalize_stage
 from app.repositories import repo_job_log, repo_job, repo_segment
 from app.repositories.sql_exec import atomic
+from app.services.daily_story.story_types import job_chat_type_info
 __all__ = ['prepare_rerun', 'prepare_for_action', 'prepare_job_rerun', 'reset_job_from_stage']
 _STAGES_SKIP_DOWNSTREAM_CLEAR = frozenset({'publish', 'tts'})
 
@@ -277,7 +278,13 @@ def _prepare_cover_or_end(job_id: int, action: str) -> dict:
             log_msg = f'action={action}'
             delete_paths = [media_dir / 'end.mp4']
         repo_job_log.append_log(job_id, 'intro', log_msg)
-        job = repo_job.update_job(job_id, status='pending', fail_stage=None, error_message=None)
+        job = repo_job.get_job(job_id)
+        job = repo_job.update_job(
+            job_id,
+            status='pending',
+            fail_stage=None,
+            error_message=job_chat_type_info(job, success=False),
+        )
     _delete_files(delete_paths)
     return job
 
@@ -315,7 +322,13 @@ def prepare_rerun(job_id: int, action: str, *, segment_indices: list[int] | None
             raise ValueError(f'action not supported for material pipeline: {action}')
         _db_clear_stage_self(job_id, stage, job, segment_indices=segment_indices, segment_scope=segment_scope)
         _db_clear_downstream(job_id, stage, job)
-        job = repo_job.update_job(job_id, stage=stage, status='pending', fail_stage=None, error_message=None)
+        job = repo_job.update_job(
+            job_id,
+            stage=stage,
+            status='pending',
+            fail_stage=None,
+            error_message=job_chat_type_info(job, success=False),
+        )
         detail = f'rerun [{mode}] action={action}'
         if segment_indices:
             detail += f', segments={segment_indices}'

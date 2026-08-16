@@ -10,6 +10,8 @@ from app.services.daily_story.story_types.model import (
     STORY_TYPE_LABELS,
     TYPE_CATALOG_LINE,
     StoryTypeLine,
+    chat_type_info_message,
+    format_story_type_brief,
 )
 from app.services.daily_story.story_types.a.line import LINE_A
 from app.services.daily_story.story_types.b.line import LINE_B
@@ -24,7 +26,10 @@ __all__ = [
     "STORY_TYPE_LINES",
     "StoryTypeLine",
     "append_type_body_validation_errors",
+    "chat_type_info_message",
     "format_block_for_code",
+    "format_story_type_brief",
+    "job_chat_type_info",
     "layer_patterns_for_story",
     "infer_story_type_code",
     "normalize_punchline_explain",
@@ -237,6 +242,23 @@ def resolve_story_type_code(
 def story_type_tag(code: str) -> str:
     c = code.upper()
     return f"{c}类{STORY_TYPE_LABELS[c]}"
+
+
+def job_chat_type_info(job: dict, *, success: bool = False) -> str | None:
+    """chat 任务信息栏文案；非 chat 或没有类型时返回 None。"""
+    if (job.get("pipeline") or "") != "chat":
+        return None
+    from app.repositories import repo_daily_story
+
+    info = job.get("info") if isinstance(job.get("info"), dict) else {}
+    raw_id = info.get("daily_story_id") or job.get("material_id")
+    if not raw_id:
+        return None
+    try:
+        story = repo_daily_story.get_story(int(raw_id))
+    except (KeyError, TypeError, ValueError):
+        return None
+    return chat_type_info_message(story.get("story_type"), success=success)
 
 
 def quality_ready_codes() -> list[str]:
