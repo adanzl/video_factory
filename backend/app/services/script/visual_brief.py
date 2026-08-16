@@ -86,6 +86,14 @@ _DAILY_VISUAL_BRIEF_CONTENT_RULE = (
     "掉落/破碎类示例：相框滑落镜写「客厅，摔裂的相框从昭昭手中滑落摔向地面，旁边是扫帚和簸箕」，"
     "落地后写「客厅，摔裂的相框掉在地上，旁边是扫帚和簸箕」，"
     "后续保持地上/碎片状态，禁止回写「茶几上立着…」。"
+    "【场景分层】固定家具与地面道具分层写：家具句只写台面状态"
+    "（如「沙发和茶几上没有任何物品，表面整洁」），"
+    "道具位置句单独锚定地面（如「木地板上散落着摔裂的相框和玻璃碎片，扫帚和簸箕倒在一旁」）；"
+    "道具已掉落/破碎时，禁止写「A和B之间+道具名」这类把道具引向家具台面的措辞；"
+    "用强状态动词（散落、倒在一旁、翻倒在地、横卧）代替「在」。"
+    "冲突道具全片只有一件：写「一个/唯一一个」限定（如「一个摔裂的相框」），"
+    "禁止出现多个同款（如满地都是相框、相框们）；玻璃碎片等残骸是同一件道具的附属，"
+    "不构成第二件。"
     "只有台词或 setting 点名的道具才写，"
     "禁止新增第二件同款道具或无关杂物。"
     "【剧情连续性】先按全片 narration 明确本镜剧情拍"
@@ -421,6 +429,33 @@ def _resolve_stale_prop_position_conflict(body: str) -> str:
     return changed
 
 
+# 「A和B之间」会把模型注意力引向家具台面上方；道具已落地时改写为分层写法
+_FURNITURE_PAIR_BETWEEN_RE = re.compile(
+    r"(^|[，,。；;])"
+    r"(沙发|茶几|餐桌|书桌|柜子|书架|电视柜|床头柜|鞋柜|凳子|椅子)"
+    r"(?:和|与)"
+    r"(沙发|茶几|餐桌|书桌|柜子|书架|电视柜|床头柜|鞋柜|凳子|椅子)"
+    r"之间(?=[，,；;。])"
+)
+# 道具已落地的强状态句（散落/摔/掉/躺 + 地面）
+_GROUND_STATE_RE = re.compile(
+    r"(?:散落|掉在|摔在|躺在地|落在地|摔落地|散落一地|碎在地).{0,6}(?:地上|地面|地板)"
+    r"|(?:地上|地面|地板).{0,6}(?:散落|碎片|碎玻璃)"
+)
+
+
+def _resolve_furniture_between_conflict(body: str) -> str:
+    """道具已落地时，「沙发和茶几之间」会诱导模型把道具画上台面，
+    改写为「沙发、茶几上没有任何物品，表面整洁」+ 地面状态句保留。"""
+    if "之间" not in body or not _GROUND_STATE_RE.search(body):
+        return body
+
+    def _repl(m: re.Match) -> str:
+        return f"{m.group(1)}{m.group(2)}、{m.group(3)}上没有任何物品，表面整洁"
+
+    return _FURNITURE_PAIR_BETWEEN_RE.sub(_repl, body)
+
+
 def normalize_daily_visual_brief_sequence(segments: list[dict]) -> list[dict]:
     """非首镜去掉重复默认陈设句，避免每镜都写「遥控器和空水杯」。"""
     fixed = _daily_fixed_furniture(segments)
@@ -429,6 +464,7 @@ def normalize_daily_visual_brief_sequence(segments: list[dict]) -> list[dict]:
         vb = str(seg.get("visual_brief") or "")
         vb = _strip_non_first_speaker_speech(vb, seg.get("dialogue") or [])
         vb = _resolve_stale_prop_position_conflict(vb)
+        vb = _resolve_furniture_between_conflict(vb)
         if idx > 1:
             vb = _DEFAULT_TABLE_TAIL_RE.sub("", vb)
             vb = vb.replace("茶几上放着遥控器和空水杯", "")
@@ -542,6 +578,7 @@ def scrub_daily_visual_brief(text: str) -> str:
     body = _normalize_default_table_set(body)
     body = _dedupe_default_table_set(body)
     body = _resolve_stale_prop_position_conflict(body)
+    body = _resolve_furniture_between_conflict(body)
     body = re.sub(r"[，,]{2,}", "，", body)
     body = re.sub(r"[，,]\s*(?=[；;。]|$)", "", body)
     body = _collapse_duplicate_pose_clauses(body)
