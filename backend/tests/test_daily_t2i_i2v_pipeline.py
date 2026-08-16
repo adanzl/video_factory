@@ -419,6 +419,35 @@ def test_normalize_daily_visual_brief_sequence_injects_fixed_furniture():
     assert "簸箕" in vb6
 
 
+def test_scrub_daily_visual_brief_layers_furniture_when_prop_on_ground():
+    """道具已落地时，「沙发和茶几之间」改写为家具台面整洁+地面分层写法。"""
+    from app.services.script.visual_brief import scrub_daily_visual_brief
+
+    raw = (
+        "客厅，沙发和茶几之间，摔裂的相框和碎片散落在地上，旁边是扫帚和簸箕；"
+        "画面左边是昭昭，右边是灿灿；妈妈站在中间；昭昭双手摊开，表情委屈。"
+    )
+    out = scrub_daily_visual_brief(raw)
+    assert "沙发和茶几之间" not in out
+    assert "沙发、茶几上没有任何物品，表面整洁" in out
+    assert "散落在地上" in out
+
+
+def test_scrub_daily_visual_brief_keeps_between_for_people_or_no_ground_state():
+    """人物站位或道具仍在原位时，「之间」不动，避免误改写。"""
+    from app.services.script.visual_brief import scrub_daily_visual_brief
+
+    people = scrub_daily_visual_brief(
+        "客厅，沙发和茶几之间，妈妈站在中间；画面左边是昭昭，右边是灿灿。"
+    )
+    assert "沙发和茶几之间" in people
+    fell = scrub_daily_visual_brief(
+        "客厅，相框掉在沙发和茶几之间；画面左边是昭昭，右边是灿灿。"
+    )
+    assert "掉在沙发和茶几之间" in fell
+    assert "没有任何物品" not in fell
+
+
 def test_assemble_daily_t2i_no_duplicate_lr_in_prompt():
     """visual_brief 已有左右时，构图段不再重复「画面左边…」。"""
     seg = {
