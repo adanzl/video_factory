@@ -442,6 +442,10 @@ _GROUND_STATE_RE = re.compile(
     r"(?:散落|掉在|摔在|躺在地|落在地|摔落地|散落一地|碎在地).{0,6}(?:地上|地面|地板)"
     r"|(?:地上|地面|地板).{0,6}(?:散落|碎片|碎玻璃)"
 )
+# 跨镜状态追踪用：道具已落地的宽松标志（碎片/散落/掉/摔/躺 + 地面）
+_PROP_GROUND_MARK_RE = re.compile(
+    r"碎片|碎玻璃|散落|掉在|摔在|躺在地|落在地|碎在地|地上|地面|脚下"
+)
 
 
 def _resolve_furniture_between_conflict(body: str) -> str:
@@ -456,8 +460,67 @@ def _resolve_furniture_between_conflict(body: str) -> str:
     return _FURNITURE_PAIR_BETWEEN_RE.sub(_repl, body)
 
 
+def _daily_conflict_prop_key(segments: list[dict]) -> str:
+    """识别本片冲突道具名：取首个「X上立着/放着/摆着Y」陈设句里的道具名词。"""
+    for seg in segments:
+        vb = str(seg.get("visual_brief") or "")
+        for m in _POSITION_CLAUSE_RE.finditer(vb):
+            prop = m.group(2)
+            if "遥控器" in prop or "空水杯" in prop:
+                continue
+            key = _prop_key(prop)
+            if key:
+                return key
+    return ""
+
+
+def _prop_is_grounded(vb: str, key: str) -> bool:
+    """本镜是否已把冲突道具写到地面（道具名与地面标志须同句）。"""
+    for clause in re.split(r"[；;。]", vb):
+        if not _key_means_same_prop(clause, key):
+            continue
+        if _PROP_GROUND_MARK_RE.search(clause):
+            return True
+    return False
+
+
+def _resolve_prop_state_regression(segments: list[dict]) -> list[dict]:
+    """跨镜道具状态保护：一旦冲突道具已落地，后续镜禁止再写回家具台面。
+
+    出图质检兜底重写 visual_brief 时，LLM 可能照抄旧 setting
+    （如「茶几上立着摔裂的相框」），单镜兜底抓不到这种无同镜矛盾的回归，
+    这里按分镜顺序追踪：落地后任何「X上立着/放着/摆着<道具>」改写回地上。
+    """
+    key = _daily_conflict_prop_key(segments)
+    if not key:
+        return segments
+    grounded = False
+    for seg in sorted(
+        segments, key=lambda s: int(s.get("segment_index") or 0)
+    ):
+        vb = str(seg.get("visual_brief") or "")
+        if not grounded:
+            grounded = _prop_is_grounded(vb, key)
+            continue
+        for m in list(_POSITION_CLAUSE_RE.finditer(vb)):
+            prop = m.group(2)
+            if "遥控器" in prop or "空水杯" in prop:
+                continue
+            if not _key_means_same_prop(prop, key):
+                continue
+            repl = (
+                f"地上散落着{prop}碎片"
+                if f"{key}碎片" in vb
+                else f"{prop}掉在地上"
+            )
+            vb = vb.replace(m.group(0), repl, 1)
+        seg["visual_brief"] = vb
+    return segments
+
+
 def normalize_daily_visual_brief_sequence(segments: list[dict]) -> list[dict]:
     """非首镜去掉重复默认陈设句，避免每镜都写「遥控器和空水杯」。"""
+    _resolve_prop_state_regression(segments)
     fixed = _daily_fixed_furniture(segments)
     for seg in segments:
         idx = int(seg.get("segment_index") or 0)

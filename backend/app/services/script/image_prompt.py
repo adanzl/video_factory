@@ -353,8 +353,14 @@ def assemble_daily_image_prompts(
     from app.services.daily_story.speaker import annotate_sticky_stage_speakers
 
     annotate_sticky_stage_speakers(segments, setting=setting)
-    from app.services.script.visual_brief import _daily_fixed_furniture
+    from app.services.script.visual_brief import (
+        _daily_fixed_furniture,
+        _resolve_prop_state_regression,
+    )
 
+    # 跨镜状态保护：已落地的冲突道具不得在后续镜写回家具台面
+    # （覆盖出图质检兜底重写 visual_brief 的路径）
+    _resolve_prop_state_regression(segments)
     fixed_furniture = _daily_fixed_furniture(segments)
     # 分镜1 的场景定稿句：含花盆/托盘/背景/阳台且不含角色的句子
     scene_anchor = ""

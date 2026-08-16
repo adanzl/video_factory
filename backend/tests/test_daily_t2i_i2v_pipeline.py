@@ -448,6 +448,62 @@ def test_scrub_daily_visual_brief_keeps_between_for_people_or_no_ground_state():
     assert "没有任何物品" not in fell
 
 
+def test_normalize_daily_visual_brief_sequence_blocks_prop_state_regression():
+    """冲突道具落地后，后续镜不得再写回家具台面（跨镜状态保护）。"""
+    from app.services.script.visual_brief import normalize_daily_visual_brief_sequence
+
+    segs = [
+        {"segment_index": 1, "visual_brief": "客厅，茶几上立着摔裂的相框，旁边是扫帚和簸箕；昭昭指着相框。"},
+        {"segment_index": 5, "visual_brief": "客厅，摔裂的相框掉在地上；昭昭双手张开向前扑。"},
+        {"segment_index": 12, "visual_brief": "客厅，茶几上立着摔裂的相框，昭昭正把相框往沙发垫下塞，灿灿在门口望风。"},
+    ]
+    normalize_daily_visual_brief_sequence(segs)
+    vb1, vb5, vb12 = (s["visual_brief"] for s in segs)
+    assert "茶几上立着" in vb1  # 分镜1 原位保留
+    assert "掉在地上" in vb5
+    assert "茶几上立着" not in vb12  # 落地后回归被改回
+    assert "掉在地上" in vb12
+
+
+def test_assemble_daily_image_prompts_blocks_prop_state_regression():
+    """出图质检兜底重写路径同样受跨镜状态保护。"""
+    from app.services.script.image_prompt import assemble_daily_image_prompts
+
+    segs = [
+        {
+            "segment_index": 1,
+            "shot_type": "中景",
+            "visual_brief": "客厅，茶几上立着摔裂的相框，旁边是扫帚和簸箕；画面左边是昭昭，右边是灿灿。",
+            "dialogue": [
+                {"speaker": "昭昭", "text": "姐，我把相框碰裂了！"},
+                {"speaker": "灿灿", "text": "妈回来会骂的！"},
+            ],
+        },
+        {
+            "segment_index": 5,
+            "shot_type": "中景",
+            "visual_brief": "客厅，摔裂的相框掉在地上；画面左边是昭昭，右边是灿灿。",
+            "dialogue": [
+                {"speaker": "昭昭", "text": "哎呀！相框滑了！"},
+                {"speaker": "灿灿", "text": "快接住它！"},
+            ],
+        },
+        {
+            "segment_index": 12,
+            "shot_type": "中景",
+            "visual_brief": "客厅，茶几上立着摔裂的相框，昭昭正把相框往沙发垫下塞，灿灿在门口望风；画面左边是昭昭，右边是灿灿。",
+            "dialogue": [
+                {"speaker": "昭昭", "text": "被发现了！"},
+                {"speaker": "灿灿", "text": "这下死定了……"},
+            ],
+        },
+    ]
+    assemble_daily_image_prompts(segs, setting="客厅。")
+    ip12 = segs[2]["image_prompt"]
+    assert "茶几上立着" not in ip12
+    assert "掉在地上" in ip12
+
+
 def test_assemble_daily_t2i_no_duplicate_lr_in_prompt():
     """visual_brief 已有左右时，构图段不再重复「画面左边…」。"""
     seg = {
