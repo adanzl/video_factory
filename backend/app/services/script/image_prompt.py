@@ -228,6 +228,7 @@ def assemble_daily_t2i_prompt(
     *,
     extra: str | None = None,
     scene_anchor: str | None = None,
+    fixed_furniture: tuple[str, ...] | None = None,
 ) -> str:
     """规则拼装 daily_story image_prompt。
 
@@ -284,6 +285,13 @@ def assemble_daily_t2i_prompt(
     has_scene = all(k in vb for k in ("花盆", "托盘", "背景"))
     if scene_anchor and idx > 1 and not has_scene_anchor and not has_scene:
         parts.append(scene_anchor)
+
+    # 固定陈设强制在场：分镜1 出现过的家具/常驻道具，本镜缺失时补回，
+    # 防出图质检兜底重写 visual_brief 时把沙发/茶几等固定家具写丢
+    if fixed_furniture:
+        missing = [f for f in fixed_furniture if f not in vb]
+        if missing:
+            parts.append("画面中有" + "、".join(missing) + "。")
 
     char_parts: list[str] = []
     for name in speakers:
@@ -345,6 +353,9 @@ def assemble_daily_image_prompts(
     from app.services.daily_story.speaker import annotate_sticky_stage_speakers
 
     annotate_sticky_stage_speakers(segments, setting=setting)
+    from app.services.script.visual_brief import _daily_fixed_furniture
+
+    fixed_furniture = _daily_fixed_furniture(segments)
     # 分镜1 的场景定稿句：含花盆/托盘/背景/阳台且不含角色的句子
     scene_anchor = ""
     for seg in segments:
@@ -377,6 +388,7 @@ def assemble_daily_image_prompts(
             seg,
             extra=extra,
             scene_anchor=scene_anchor,
+            fixed_furniture=fixed_furniture,
         )
     return segments
 
