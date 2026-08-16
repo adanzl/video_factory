@@ -233,6 +233,24 @@ _DAILY_CHARACTER_FACTS = (
     "描述中禁止把昭昭写成妹妹/女孩、把灿灿写成弟弟/男孩、把妈妈写成阿姨等错配称呼。"
 )
 
+# 固定陈设词表：分镜1 出现过即视为本片常驻陈设，后续镜缺失时强制补回，
+# 防止出图质检兜底重写 visual_brief 时把沙发/茶几等固定家具写丢
+_DAILY_FIXED_FURNITURE = (
+    "沙发", "茶几", "餐桌", "书桌", "柜子", "柜顶", "书架", "电视柜",
+    "床头柜", "鞋柜", "凳子", "椅子", "床", "花盆", "托盘",
+    "扫帚", "簸箕", "水桶", "拖把", "垃圾桶",
+)
+
+
+def _daily_fixed_furniture(segments: list[dict]) -> tuple[str, ...]:
+    """取分镜1 已建立的固定陈设（家具/常驻道具），只含词表内名词。"""
+    for seg in segments:
+        if int(seg.get("segment_index") or 0) != 1:
+            continue
+        vb = str(seg.get("visual_brief") or "")
+        return tuple(f for f in _DAILY_FIXED_FURNITURE if f in vb)
+    return ()
+
 
 def _collapse_duplicate_pose_clauses(body: str) -> str:
     """同一角色多段动作只保留首段（文生图为单帧）。"""
@@ -405,6 +423,7 @@ def _resolve_stale_prop_position_conflict(body: str) -> str:
 
 def normalize_daily_visual_brief_sequence(segments: list[dict]) -> list[dict]:
     """非首镜去掉重复默认陈设句，避免每镜都写「遥控器和空水杯」。"""
+    fixed = _daily_fixed_furniture(segments)
     for seg in segments:
         idx = int(seg.get("segment_index") or 0)
         vb = str(seg.get("visual_brief") or "")
@@ -448,6 +467,11 @@ def normalize_daily_visual_brief_sequence(segments: list[dict]) -> list[dict]:
         vb = re.sub(r"神情[，,]+神情", "神情", vb)
         vb = re.sub(r"神情{2,}", "神情", vb)
         vb = re.sub(r"[，,]{2,}", "，", vb).strip("，, ")
+        # 固定陈设强制在场：分镜1 出现过的家具/常驻道具，本镜缺失时补回
+        missing = [f for f in fixed if f not in vb]
+        if missing:
+            clause = "画面中有" + "、".join(missing) + "。"
+            vb = f"{clause}{vb}" if not vb else f"{vb}{clause}"
         seg["visual_brief"] = vb
     return segments
 

@@ -356,6 +356,69 @@ def test_scrub_daily_visual_brief_keeps_prop_when_no_position_conflict():
     assert "茶几上立着摔裂的相框" in pointing
 
 
+def test_assemble_daily_image_prompts_injects_fixed_furniture_when_missing():
+    """分镜1 建立的固定陈设（沙发/茶几/扫帚/簸箕）后续镜缺失时强制补回。"""
+    from app.services.script.image_prompt import assemble_daily_image_prompts
+
+    segs = [
+        {
+            "segment_index": 1,
+            "shot_type": "中景",
+            "visual_brief": (
+                "客厅，茶几上立着摔裂的相框，旁边是扫帚和簸箕；"
+                "画面左边是昭昭，右边是灿灿；"
+                "昭昭身后的沙发上有一团揉皱的衣服；昭昭右手食指指向茶几上的相框。"
+            ),
+            "dialogue": [{"speaker": "昭昭", "text": "姐，我把相框碰裂了！"}],
+        },
+        {
+            "segment_index": 6,
+            "shot_type": "特写",
+            "visual_brief": (
+                "客厅，摔裂的相框掉在地上；画面左边是昭昭，右边是灿灿；"
+                "昭昭双手摊开，表情懊恼。"
+            ),
+            "dialogue": [{"speaker": "昭昭", "text": "哎呀！手滑——！"}],
+        },
+    ]
+    assemble_daily_image_prompts(segs, setting="客厅。")
+    ip6 = segs[1]["image_prompt"]
+    assert "画面中有沙发、茶几、扫帚、簸箕。" in ip6
+    assert "茶几上立着摔裂的相框" not in ip6
+    # 幂等：重复拼装不会二次注入
+    ip6_before = ip6
+    assemble_daily_image_prompts(segs, setting="客厅。")
+    assert segs[1]["image_prompt"] == ip6_before
+
+
+def test_normalize_daily_visual_brief_sequence_injects_fixed_furniture():
+    """visual_brief 归一同样补回分镜1 的固定陈设，供前端画面描述一致。"""
+    from app.services.script.visual_brief import normalize_daily_visual_brief_sequence
+
+    segs = [
+        {
+            "segment_index": 1,
+            "visual_brief": (
+                "客厅，茶几上立着摔裂的相框，旁边是扫帚和簸箕；"
+                "昭昭身后的沙发上有一团揉皱的衣服。"
+            ),
+        },
+        {
+            "segment_index": 6,
+            "visual_brief": (
+                "客厅，摔裂的相框掉在地上；"
+                "画面左边是昭昭，右边是灿灿；昭昭双手摊开，表情懊恼。"
+            ),
+        },
+    ]
+    normalize_daily_visual_brief_sequence(segs)
+    vb6 = segs[1]["visual_brief"]
+    assert "沙发" in vb6
+    assert "茶几" in vb6
+    assert "扫帚" in vb6
+    assert "簸箕" in vb6
+
+
 def test_assemble_daily_t2i_no_duplicate_lr_in_prompt():
     """visual_brief 已有左右时，构图段不再重复「画面左边…」。"""
     seg = {
