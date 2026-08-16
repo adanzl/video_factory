@@ -378,6 +378,9 @@ class JobMgr:
                     synced = dict(script)
                     synced['title'] = re.sub('\\s+', '', updates['title'].strip())
                     updates['script_json'] = synced
+            if updates.get('publish') is True and job.get('status') != 'running':
+                updates['stage'] = 'done'
+                updates['status'] = 'done'
             job = repo_job.update_job(job_id, **updates)
             repo_job_log.append_log(job_id, 'api', f"updated fields: {', '.join(updates)}")
             return job

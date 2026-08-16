@@ -1,7 +1,6 @@
 from __future__ import annotations
 import logging
 import time
-from app.core import pipeline
 from app.core.pipelines import executor_for_stage, is_material_job, next_stage_class, stage_class_for
 from app.utils.job_cancel import JobCancelledError, job_cancel
 from app.services.job.job_mgr import job_mgr
@@ -37,9 +36,9 @@ def _advance_after_stage(job_id: int, stage_cls: type[StageExecutor], *, status:
     job_cancel.raise_if_cancelled(job_id)
     job = _reload_job(job_id)
     next_cls = next_stage_class(stage_cls, job)
-    if next_cls is not None and next_cls.name == 'publish' and pipeline.should_stop_before_publish(job):
-        return job_mgr.mark_done(job_id)
-    if next_cls is None:
+    # 成片完成后下一跳是 publish：自动 done，不再停在 publish/pending。
+    # 投稿是手动标记（publish=1），不占用流水线当前阶段。
+    if next_cls is None or next_cls.name == 'publish':
         return job_mgr.mark_done(job_id)
     next_name = next_cls.name
     with atomic():

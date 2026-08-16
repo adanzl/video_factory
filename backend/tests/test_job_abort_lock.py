@@ -178,3 +178,58 @@ def test_mark_done_while_cancelled_becomes_aborted(monkeypatch, noop_atomic):
     assert result["status"] == "pending"
     assert updates and updates[0].get("status") == "pending"
     assert not job_cancel.is_cancelled(job_id)
+
+
+def test_update_job_publish_true_marks_done(app_ctx) -> None:
+    """标记已发布时，未在跑的任务自动切到 done。"""
+    from app.repositories import repo_job
+    from app.services.job.job_mgr import job_mgr
+
+    job = repo_job.create_job(
+        "publish marks done",
+        skip_publish=False,
+        stage="publish",
+        status="pending",
+        pipeline="chat",
+    )
+    job_id = int(job["id"])
+    updated = job_mgr.update_job(job_id, publish=True)
+    assert updated["publish"] is True
+    assert updated["stage"] == "done"
+    assert updated["status"] == "done"
+
+
+def test_update_job_publish_true_keeps_running(app_ctx) -> None:
+    """运行中标记已发布，不打断 worker。"""
+    from app.repositories import repo_job
+    from app.services.job.job_mgr import job_mgr
+
+    job = repo_job.create_job(
+        "publish while running",
+        stage="merge",
+        status="running",
+    )
+    job_id = int(job["id"])
+    updated = job_mgr.update_job(job_id, publish=True)
+    assert updated["publish"] is True
+    assert updated["stage"] == "merge"
+    assert updated["status"] == "running"
+
+
+def test_advance_after_merge_marks_done_without_skip_publish(app_ctx) -> None:
+    """merge 完成后即使 skip_publish=0，也不停在 publish/pending。"""
+    from app.repositories import repo_job
+    from worker.loop import _advance_after_stage
+    from worker.stages.standard.merge import MergeStage
+
+    job = repo_job.create_job(
+        "merge then done",
+        skip_publish=False,
+        stage="merge",
+        status="pending",
+        pipeline="chat",
+    )
+    result = _advance_after_stage(int(job["id"]), MergeStage, status="pending")
+    assert result is not None
+    assert result["stage"] == "done"
+    assert result["status"] == "done"
