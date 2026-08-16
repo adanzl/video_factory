@@ -26,7 +26,7 @@ class SegmentProduceResult:
     clips: SegmentClipsResult
 
 
-# 昭昭+灿灿并排参考图；公开 raw URL，塞进 Agnes ref_images（角色参考，非 i2i 底图）
+# 探测脚本可选用的角色参考图 URL；正式出图不再传 ref_images。
 _CHAT_HOSTS_REF_URL = (
     "https://raw.githubusercontent.com/adanzl/video_factory/main/"
     "backend/res/host/crayon/hosts.png"
@@ -34,7 +34,7 @@ _CHAT_HOSTS_REF_URL = (
 
 
 def _resolve_chat_ref_images() -> list[Path | str]:
-    """解析 chat 流水线角色参考图：GitHub raw URL → Agnes ref_images。"""
+    """探测脚本用的 hosts.png URL；produce_segments 不再调用。"""
     return [_CHAT_HOSTS_REF_URL]
 
 
@@ -162,18 +162,6 @@ class SegmentMgr:
             image_provider = resolve_image_provider(job)
             style = content_style_from_job(job) if job else None
 
-            # chat 流水线传入角色参考图
-            ref_images: list[Path | str] | None = None
-            if job and job.get("pipeline") == "chat":
-                ref_images = _resolve_chat_ref_images()
-                logger.info(
-                    "produce_segments: chat pipeline, ref_images=%s",
-                    [
-                        p.name if isinstance(p, Path) else p
-                        for p in ref_images
-                    ],
-                )
-
             generated = image_mgr.generate_segment_images(
                 image_targets,
                 images_dir,
@@ -182,7 +170,6 @@ class SegmentMgr:
                 on_image_done=on_image_done,
                 job_id=job_id,
                 job=job,
-                ref_images=ref_images,
                 content_style=style,
             )
         for seg_id, path in generated:
