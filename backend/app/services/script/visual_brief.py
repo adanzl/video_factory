@@ -62,11 +62,13 @@ _DAILY_VISUAL_BRIEF_CONTENT_RULE = (
     "大朵饱满、花瓣层叠、叶片翠绿完整」），禁止只写「红花/花/植物」；"
     "托盘等承托物写明位于正下方（如「花盆正下方是浅灰色圆形托盘」）；"
     "背景写明可见陈设（如「背景是阳台栏杆和几盆绿植」）；"
-    "核心道具浇花水壶不写在场景定稿里，"
-    "只在持物角色的动作句里写且只写一次："
-    "「昭昭右手握着一把蓝色塑料浇花水壶（宽口短嘴）」；"
+    "会移动/被拿起的核心冲突道具（浇花水壶、相框、蛋糕、薯片等）"
+    "不写在场景定稿的主体陈设句里，只写在状态句/持物动作句；"
+    "固定陈设（花盆、托盘、沙发、茶几等）才进场景定稿句。"
+    "浇花水壶示例：只在持物角色动作句写「昭昭右手握着一把蓝色塑料浇花水壶（宽口短嘴）」；"
     "场景句只写花盆、托盘、水渍、背景，禁止再出现「水壶」字样。"
-    "后续分镜必须原样重复分镜1的场景定稿句，只改写动作与道具/托盘状态变化，"
+    "后续分镜沿用分镜1定稿的地点、固定陈设样式与背景（文字保持一致），"
+    "但冲突道具的状态/位置句必须按本镜剧情重写，禁止整句照抄分镜1；"
     "禁止用「背景同分镜1/场景同前」等引用句代替。"
     "【道具接触】道具必须与手或承托面明确接触，禁止悬空/漂浮/停在半空："
     "浇花水壶只允许在持物角色动作句中出现一次，"
@@ -77,6 +79,13 @@ _DAILY_VISUAL_BRIEF_CONTENT_RULE = (
     "（如浇花水壶、蛋糕、薯片）必须每镜写清当前状态，"
     "状态随剧情单向推进，禁止所有分镜写成同一状态；"
     "状态句放在地点句之后；"
+    "道具在本镜发生位移/状态变化时，本镜必须写变化后的新状态，"
+    "禁止沿用上一镜或分镜1的旧状态句；"
+    "同一镜内道具只能有一种位置/状态，禁止场景句与动作句自相矛盾"
+    "（如场景句写「茶几上立着摔裂的相框」、动作句又写「相框摔在地上」）；"
+    "掉落/破碎类示例：相框滑落镜写「客厅，摔裂的相框从昭昭手中滑落摔向地面，旁边是扫帚和簸箕」，"
+    "落地后写「客厅，摔裂的相框掉在地上，旁边是扫帚和簸箕」，"
+    "后续保持地上/碎片状态，禁止回写「茶几上立着…」。"
     "只有台词或 setting 点名的道具才写，"
     "禁止新增第二件同款道具或无关杂物。"
     "【剧情连续性】先按全片 narration 明确本镜剧情拍"
@@ -317,6 +326,82 @@ _DEFAULT_TABLE_TAIL_RE = re.compile(
     r"[，,]\s*(?:茶几上放着|旁边是)遥控器和空水杯\s*"
 )
 
+# 冲突道具被误写进固定陈设句（X上立着Y），但本镜 Y 已位移/状态变化时兜底归一
+_POSITION_CLAUSE_RE = re.compile(
+    r"([\u4e00-\u9fa5]{1,8}?)(?:上)(?:立着|放着|摆着|摊着|搁着)"
+    r"([\u4e00-\u9fa5A-Za-z0-9]{2,14})"
+)
+# 关键道具词后面接这些字时多半是另一物件（蛋糕刀/月饼盒/薯片袋），不算道具位移
+_PROP_COMPOUND_SUFFIXES = ("刀", "盒", "袋", "盘", "罐", "瓶", "碗", "杯", "架")
+# 位移/状态变化动词（含「扫」：相框被扫帚推远）
+_MOVED_STATE_RE = re.compile(r"(?:摔|掉|落|躺|滚|滑|脱手|踩|扫|捡|碎|散)")
+_HAND_HOLD_RE = re.compile(
+    r"([\u4e00-\u9fa5]{2,3})(?:右手|左手|双手)?(?:拿|捧|握|抱)着?"
+)
+
+
+def _prop_key(prop: str) -> str:
+    """取道具名最后的名词（「摔裂的相框」→「相框」，不带形容词）。"""
+    if "的" in prop:
+        return prop.rsplit("的", 1)[1]
+    return prop[-2:]
+
+
+def _key_means_same_prop(clause: str, key: str) -> bool:
+    """clause 里 key 是否指同一道具（「蛋糕刀/薯片袋」这类同前缀别物不算）。"""
+    start = 0
+    while True:
+        i = clause.find(key, start)
+        if i < 0:
+            return False
+        nxt = clause[i + len(key) : i + len(key) + 1]
+        if nxt and nxt in _PROP_COMPOUND_SUFFIXES:
+            start = i + len(key)
+            continue
+        return True
+
+
+def _resolve_stale_prop_position_conflict(body: str) -> str:
+    """冲突道具被写进固定陈设句、本镜又发生位移/状态变化时，
+    把陈设句改写为当前位置，消除「茶几上立着X」与「X摔在地上」并存矛盾。"""
+    if not any(v in body for v in ("上立着", "上放着", "上摆着", "上摊着", "上搁着")):
+        return body
+    changed = body
+    for m in _POSITION_CLAUSE_RE.finditer(body):
+        prop = m.group(2)
+        if "遥控器" in prop or "空水杯" in prop:
+            continue
+        key = _prop_key(prop)
+        moved = False
+        holder = ""
+        for clause in re.split(r"[；;。]", body):
+            if not _key_means_same_prop(clause, key):
+                continue
+            # 跳过陈设句本身（道具名里可能带「摔/碎」等字，如「摔裂的相框」）
+            if m.group(0) in clause:
+                continue
+            if any(v in clause for v in ("碎片", "散落", "地上", "地面", "脚下")):
+                moved = True
+                break
+            if _MOVED_STATE_RE.search(clause):
+                moved = True
+                break
+            hm = _HAND_HOLD_RE.search(clause)
+            if hm:
+                moved = True
+                holder = hm.group(1)
+                break
+        if not moved:
+            continue
+        if f"{key}碎片" in body:
+            repl = f"地上散落着{prop}碎片"
+        elif holder:
+            repl = f"{prop}被{holder}拿在手中"
+        else:
+            repl = f"{prop}掉在地上"
+        changed = changed.replace(m.group(0), repl, 1)
+    return changed
+
 
 def normalize_daily_visual_brief_sequence(segments: list[dict]) -> list[dict]:
     """非首镜去掉重复默认陈设句，避免每镜都写「遥控器和空水杯」。"""
@@ -324,6 +409,7 @@ def normalize_daily_visual_brief_sequence(segments: list[dict]) -> list[dict]:
         idx = int(seg.get("segment_index") or 0)
         vb = str(seg.get("visual_brief") or "")
         vb = _strip_non_first_speaker_speech(vb, seg.get("dialogue") or [])
+        vb = _resolve_stale_prop_position_conflict(vb)
         if idx > 1:
             vb = _DEFAULT_TABLE_TAIL_RE.sub("", vb)
             vb = vb.replace("茶几上放着遥控器和空水杯", "")
@@ -431,6 +517,7 @@ def scrub_daily_visual_brief(text: str) -> str:
     body = _fix_hands_on_hips_conflict(body)
     body = _normalize_default_table_set(body)
     body = _dedupe_default_table_set(body)
+    body = _resolve_stale_prop_position_conflict(body)
     body = re.sub(r"[，,]{2,}", "，", body)
     body = re.sub(r"[，,]\s*(?=[；;。]|$)", "", body)
     body = _collapse_duplicate_pose_clauses(body)

@@ -280,6 +280,82 @@ def test_scrub_daily_visual_brief_normalizes_default_table_set():
     assert "茶几上摊开一袋薯片" in keep
 
 
+def test_scrub_daily_visual_brief_resolves_prop_ground_conflict():
+    """冲突道具已摔落在地，陈设句仍写「茶几上立着」→ 归一为落地状态。"""
+    from app.services.script.visual_brief import scrub_daily_visual_brief
+
+    raw = (
+        "客厅，茶几上立着摔裂的相框，旁边是扫帚和簸箕；"
+        "画面左边是昭昭，右边是灿灿；昭昭双手摊开，表情懊恼，相框摔在地上；"
+        "灿灿蹲下，双手伸向相框，手指悬空未接触，表情紧张。"
+    )
+    out = scrub_daily_visual_brief(raw)
+    assert "茶几上立着摔裂的相框" not in out
+    assert "相框掉在地上" in out
+
+
+def test_scrub_daily_visual_brief_resolves_prop_slip_conflict():
+    """相框滑落镜：陈设句不得再写「茶几上立着」。"""
+    from app.services.script.visual_brief import scrub_daily_visual_brief
+
+    raw = (
+        "客厅，茶几上立着摔裂的相框，旁边是扫帚和簸箕；"
+        "画面左边是昭昭，右边是灿灿；昭昭双手张开向前扑，相框从手中滑落，表情惊慌；"
+        "灿灿双手向前伸出试图接住，身体前倾，表情焦急。"
+    )
+    out = scrub_daily_visual_brief(raw)
+    assert "茶几上立着摔裂的相框" not in out
+    assert "相框掉在地上" in out
+
+
+def test_scrub_daily_visual_brief_resolves_prop_fragment_conflict():
+    """相框已成碎片，陈设句归一为碎片散落在地上。"""
+    from app.services.script.visual_brief import scrub_daily_visual_brief
+
+    raw = (
+        "客厅，茶几上立着摔裂的相框，旁边是扫帚和簸箕；"
+        "画面左边是昭昭，右边是灿灿；昭昭右脚踩在相框碎片上，双手扶住沙发，表情疼痛。"
+    )
+    out = scrub_daily_visual_brief(raw)
+    assert "茶几上立着摔裂的相框" not in out
+    assert "地上散落着摔裂的相框碎片" in out
+
+
+def test_scrub_daily_visual_brief_resolves_prop_hand_conflict():
+    """相框已被妈妈拿起，陈设句归一为被拿在手中。"""
+    from app.services.script.visual_brief import scrub_daily_visual_brief
+
+    raw = (
+        "客厅，茶几上立着摔裂的相框，旁边是扫帚和簸箕；"
+        "画面左边是昭昭，右边是灿灿，妈妈站在中间；"
+        "妈妈右手拿着相框，左手叉腰，皱着眉。"
+    )
+    out = scrub_daily_visual_brief(raw)
+    assert "茶几上立着摔裂的相框" not in out
+    assert "摔裂的相框被妈妈拿在手中" in out
+
+
+def test_scrub_daily_visual_brief_keeps_prop_when_no_position_conflict():
+    """道具仍在原位时不改写；「蛋糕刀/薯片袋」同前缀别物不得误判为位移。"""
+    from app.services.script.visual_brief import scrub_daily_visual_brief
+
+    cake = scrub_daily_visual_brief(
+        "客厅茶几上放着一块圆形蛋糕；画面左边是昭昭，右边是灿灿；"
+        "灿灿右手握着塑料蛋糕刀正准备切。"
+    )
+    assert "茶几上放着一块圆形蛋糕" in cake
+    chips = scrub_daily_visual_brief(
+        "客厅沙发上；茶几上摊开一袋薯片；画面左边是昭昭，右边是灿灿；"
+        "昭昭指着薯片袋，撇着嘴。"
+    )
+    assert "茶几上摊开一袋薯片" in chips
+    pointing = scrub_daily_visual_brief(
+        "客厅，茶几上立着摔裂的相框，旁边是扫帚和簸箕；"
+        "画面左边是昭昭，右边是灿灿；昭昭右手食指指向茶几上的相框，瞪圆眼睛。"
+    )
+    assert "茶几上立着摔裂的相框" in pointing
+
+
 def test_assemble_daily_t2i_no_duplicate_lr_in_prompt():
     """visual_brief 已有左右时，构图段不再重复「画面左边…」。"""
     seg = {
