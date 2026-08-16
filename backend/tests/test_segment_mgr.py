@@ -97,6 +97,43 @@ def test_produce_images_persists_each_image_via_callback(tmp_path: Path) -> None
     assert result.image_paths == persisted
 
 
+def test_produce_chat_does_not_pass_ref_images(tmp_path: Path) -> None:
+    """chat 流水线纯文生图，不再把 hosts.png 塞进 Agnes ref_images。"""
+    media_dir = tmp_path / "75"
+    images_dir = media_dir / "images"
+    images_dir.mkdir(parents=True)
+
+    segments = [
+        {"id": 201, "segment_index": 1, "image_prompt": "prompt one " * 40},
+    ]
+    captured: dict = {}
+
+    def _fake_generate(
+        targets: list[dict],
+        out_dir: Path,
+        *,
+        size: str | None = None,
+        image_provider: str | None = None,
+        on_image_done=None,
+        job_id: int | None = None,
+        job=None,
+        ref_images: list[Path] | None = None,
+        content_style: str | None = None,
+    ) -> list[tuple[int, Path]]:
+        captured["ref_images"] = ref_images
+        return [(seg["id"], out_dir / f"{seg['segment_index']}.png") for seg in targets]
+
+    with patch.object(image_mgr, "generate_segment_images", side_effect=_fake_generate):
+        segment_mgr.produce_segments(
+            segments=segments,
+            media_dir=media_dir,
+            scope="images",
+            job={"pipeline": "chat", "info": {"orientation": "landscape"}},
+        )
+
+    assert captured["ref_images"] is None
+
+
 def test_produce_clips_partial_skips_unselected_without_image(tmp_path: Path) -> None:
     """部分图生视频时，未选中分镜缺少静图不应阻断。"""
     from app.services.media.media_mgr import SegmentClipsResult, media_mgr
