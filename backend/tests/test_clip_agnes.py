@@ -166,6 +166,7 @@ def test_stabilize_motion_prompt() -> None:
         "面部表情与静图一致不微笑"
     )
     assert "有且仅有3人" in with_mom and "妈妈" in with_mom
+    assert "从左到右是灿灿、昭昭、妈妈" in with_mom
     assert "禁止妈妈入画" not in with_mom
     assert "禁止任何成年男性" not in with_mom
     assert "禁止任何人消失" in with_mom
@@ -184,8 +185,7 @@ def test_stabilize_uses_three_person_still_when_motion_is_two() -> None:
         "中近景三人特写，严格左蓝T恤男孩昭昭、中妈妈、右粉卫衣女孩灿灿。"
     )
     out = _stabilize_motion_prompt(motion, image_prompt=still)
-    assert "有且仅有3人" in out
-    assert "妈妈" in out.split("画面左边是")[0]
+    assert "从左到右是昭昭、妈妈、灿灿" in out.split("画面左边是")[0]
     assert "禁止任何人消失" in out
     assert "禁止妈妈入画" not in out
     assert "额外小孩" not in out.split("画面左边是")[0]
@@ -205,7 +205,7 @@ def test_cast_names_from_mom_in_middle() -> None:
     names = _cast_names_from_text(
         "画面左边是昭昭，右边是灿灿，妈妈在中间。"
     )
-    assert names == ["昭昭", "灿灿", "妈妈"]
+    assert names == ["昭昭", "妈妈", "灿灿"]
 
 
 def test_stabilize_e_speakers_keep_mom_despite_two_person_motion() -> None:
@@ -219,7 +219,7 @@ def test_stabilize_e_speakers_keep_mom_despite_two_person_motion() -> None:
         motion,
         speakers=["昭昭", "灿灿", "妈妈"],
     )
-    assert "有且仅有3人：昭昭、灿灿、妈妈" in out
+    assert "有且仅有3人，从左到右是昭昭、妈妈、灿灿" in out
     assert "禁止妈妈入画" not in out
     two = AgnesClipProvider()._build_i2v_payload(  # noqa: SLF001
         prompt=out,
