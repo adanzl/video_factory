@@ -289,10 +289,17 @@ def _cast_names_from_text(text: str) -> list[str]:
         _add(lr.group(1))
         _add(lr.group(2))
     if "妈妈在中间" in text:
-        _add("妈妈")
+        if len(ordered) == 2 and "妈妈" not in ordered:
+            ordered = [ordered[0], "妈妈", ordered[1]]
+        else:
+            _add("妈妈")
     mid = re.search(r"中间是\s*(昭昭|灿灿|妈妈)", text)
     if mid:
-        _add(mid.group(1))
+        name = mid.group(1)
+        if len(ordered) == 2 and name not in ordered:
+            ordered = [ordered[0], name, ordered[1]]
+        else:
+            _add(name)
     for sm in _CAST_SPEAK_RE.finditer(text):
         _add(sm.group(1))
     if only:
@@ -311,17 +318,32 @@ def _cast_names_from_motion(
     image_prompt: str | None = None,
     speakers: list[str] | None = None,
 ) -> list[str]:
-    """入画名单优先（E 粘性三人）；否则运动站位，静图三人构图可补齐。"""
+    """谁在场看 speakers；左右中顺序看构图/站位，避免把灿灿锁到妈妈的位置。"""
     speaker_names = _cast_names_from_speakers(speakers)
     motion_names = _cast_names_from_text(text)
     image_names = _cast_names_from_text(image_prompt or "")
-    # E：妈妈在 speakers 里就必须锁三人，不能被「左边昭昭右边灿灿」锁成共2人
-    if "妈妈" in speaker_names and len(speaker_names) >= 2:
+    layout = None
+    if len(motion_names) >= 3:
+        layout = motion_names
+    elif len(image_names) >= 3:
+        layout = image_names
+
+    if "妈妈" in speaker_names:
+        if layout and "妈妈" in layout:
+            ordered = list(layout)
+            for name in speaker_names:
+                if name not in ordered:
+                    ordered.append(name)
+            return ordered
+        pair = motion_names if len(motion_names) == 2 else image_names
+        if len(pair) == 2 and "妈妈" not in pair:
+            return [pair[0], "妈妈", pair[1]]
+        if set(speaker_names) >= {"昭昭", "灿灿", "妈妈"}:
+            return ["昭昭", "妈妈", "灿灿"]
         return speaker_names
-    if len(speaker_names) >= 3:
-        return speaker_names
-    if len(image_names) >= 3 and len(motion_names) < 3:
-        return image_names
+
+    if layout:
+        return layout
     return motion_names or image_names or speaker_names
 
 
@@ -330,14 +352,18 @@ def _cast_lock_hint(
     image_prompt: str | None = None,
     speakers: list[str] | None = None,
 ) -> str | None:
-    """按本段入画角色锁定。E 有妈妈同框时枚举三人；无妈妈才禁第三人。"""
+    """按本段入画角色锁定。E 有妈妈同框时按从左到右枚举；无妈妈才禁第三人。"""
     names = _cast_names_from_motion(text, image_prompt, speakers)
     if not names:
         return None
     cast = "、".join(names)
     n = len(names)
+    if n >= 3:
+        who = f"画面中有且仅有{n}人，从左到右是{cast}，人数与静图完全一致"
+    else:
+        who = f"画面中有且仅有{n}人：{cast}，人数与静图完全一致"
     parts = [
-        f"画面中有且仅有{n}人：{cast}，人数与静图完全一致",
+        who,
         f"{n}人全部在场全程可见，禁止任何人消失、出画、被裁切或融合成一人",
         "禁止路人、禁止复制角色、禁止未列出的人物",
     ]
