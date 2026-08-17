@@ -116,6 +116,32 @@ def test_assemble_daily_lr_brief_not_force_mom_mid():
     assert "画面左边是昭昭，右边是灿灿" in prompt
 
 
+def test_assemble_daily_e_sticky_mom_not_dropped_by_lr_brief():
+    """E 类妈妈在场：vb 只写左右姐弟时仍须三人构图，不能挤掉妈妈。"""
+    from app.services.script.image_prompt import _daily_layout_speakers
+
+    seg = {
+        "shot_type": "特写",
+        "speakers": ["昭昭", "灿灿", "妈妈"],
+        "visual_brief": (
+            "洗手间水槽边，画面左边是昭昭，右边是灿灿；"
+            "昭昭指向水槽，灿灿摊手。"
+        ),
+        "dialogue": [
+            {"speaker": "昭昭", "text": "那是下水道沫，手上还滴水呢。"},
+            {"speaker": "灿灿", "text": "赶时间，冲得急。"},
+        ],
+    }
+    assert _daily_layout_speakers(seg, seg["visual_brief"]) == [
+        "昭昭",
+        "妈妈",
+        "灿灿",
+    ]
+    prompt = assemble_daily_t2i_prompt(seg)
+    assert "三人特写" in prompt
+    assert "从左到右是昭昭、妈妈、灿灿" in prompt
+
+
 def test_assemble_daily_ma_coming_keeps_empty_doorway():
     """「妈出来了」但未入画：盯门口改空门口，并硬锁恰好两人。"""
     seg = {
@@ -639,6 +665,28 @@ def test_inject_mouth_motion_three_person_stand():
     assert "5.3-8.7秒右侧女孩开口说话，口型自然开合，说完即闭嘴，同时" in out
     assert "中间妈妈嘴巴闭合不动" in out
     assert "昭昭开口说话" not in out
+
+
+def test_inject_mouth_motion_mom_in_middle_after_lr():
+    """LLM 写成「左右 + 妈妈在中间」时，闭嘴锁也要落到中间人。"""
+    seg = {
+        "dialogue": [
+            {"speaker": "昭昭", "text": "那泡泡呢？"},
+            {"speaker": "灿灿", "text": "水一冲就没了。"},
+        ],
+    }
+    mp = (
+        "画面左边是昭昭，右边是灿灿，妈妈在中间。"
+        "昭昭说话，同时双手摊开后停止；"
+        "灿灿说话，同时轻轻耸肩后定格。"
+        "服装发型稳定。镜头固定，不推近不拉远。"
+    )
+    out = _inject_mouth_motion(
+        mp, seg, [("那泡泡呢？", 5.2), ("水一冲就没了。", 4.6)]
+    )
+    assert "中间妈妈嘴巴闭合不动" in out
+    assert "0.0-5.2秒左侧男孩开口说话" in out
+    assert "5.2-9.8秒右侧女孩开口说话" in out
 
 
 def test_inject_mouth_motion_zeros_min_start():

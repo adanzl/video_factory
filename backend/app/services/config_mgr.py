@@ -184,7 +184,7 @@ CONFIG_GROUPS: tuple[ConfigGroupDef, ...] = (
             _f(
                 "agnes_submit_interval_sec",
                 "AGNES_SUBMIT_INTERVAL_SEC",
-                "Agnes 付费 Key 提交间隔 (秒，enterprise≈2 RPM)",
+                "Agnes 付费 Key 提交间隔 (秒，视频 1 RPM→60)",
                 "number",
                 min_value=0,
                 max_value=120,

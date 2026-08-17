@@ -20,12 +20,14 @@ class FfmpegClipProvider(ClipProvider):
         segment_index: int,
         motion_prompt: str | None = None,
         image_prompt: str | None = None,
+        speakers: list[str] | None = None,
         width: int | None = None,
         height: int | None = None,
         job_id: int | None = None,
     ) -> Path:
         _ = motion_prompt
         _ = image_prompt
+        _ = speakers
         _ = work_dir
         _ = job_id
         total_duration = clip_mgr.cue_total_duration(subtitle_cues)

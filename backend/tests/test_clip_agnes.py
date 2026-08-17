@@ -18,7 +18,7 @@ from app.services.segment.clip.video_agnes import (
     _resolve_i2v_image,
     _stabilize_motion_prompt,
 )
-from app.services.llm.llm_agnes import AgnesApiKey
+from app.services.llm.llm_agnes import AgnesApiKey, AgnesQuotaExceeded
 from app.utils.job_info import normalize_video_provider, resolve_video_provider
 from app.utils.media_path import resolve_media_public_base_url
 
@@ -157,7 +157,7 @@ def test_stabilize_motion_prompt() -> None:
         "画面左边是灿灿，右边是昭昭。灿灿说话，同时点头。镜头固定不推近不拉远，"
         "面部表情与静图一致不微笑"
     )
-    assert casted.startswith("画面清晰主体人物只能是灿灿、昭昭共2人")
+    assert casted.startswith("画面中有且仅有2人：灿灿、昭昭")
     assert "成年男性" in casted
     assert "禁止妈妈入画" in casted
     assert "禁止路人" in casted
@@ -165,9 +165,68 @@ def test_stabilize_motion_prompt() -> None:
         "画面左边是灿灿，右边是昭昭。妈妈说话，同时点头。镜头固定不推近不拉远，"
         "面部表情与静图一致不微笑"
     )
-    assert "共3人" in with_mom and "妈妈" in with_mom
+    assert "有且仅有3人" in with_mom and "妈妈" in with_mom
     assert "禁止妈妈入画" not in with_mom
     assert "禁止任何成年男性" not in with_mom
+    assert "禁止任何人消失" in with_mom
+
+
+def test_stabilize_uses_three_person_still_when_motion_is_two() -> None:
+    """静图三人、运动写成左右两人时，不得锁成共2人把边上人吃掉。"""
+    motion = (
+        "画面左边是昭昭，右边是灿灿。"
+        "0.0-5.7秒左侧男孩开口说话，口型自然开合，说完即闭嘴，同时点头后停止，"
+        "此时右侧女孩嘴巴闭合不动。"
+        "镜头固定，不推近不拉远，面部表情与静图一致不微笑"
+    )
+    still = (
+        "画面从左到右是昭昭、妈妈、灿灿。"
+        "中近景三人特写，严格左蓝T恤男孩昭昭、中妈妈、右粉卫衣女孩灿灿。"
+    )
+    out = _stabilize_motion_prompt(motion, image_prompt=still)
+    assert "有且仅有3人" in out
+    assert "妈妈" in out.split("画面左边是")[0]
+    assert "禁止任何人消失" in out
+    assert "禁止妈妈入画" not in out
+    assert "额外小孩" not in out.split("画面左边是")[0]
+
+    two = AgnesClipProvider()._build_i2v_payload(  # noqa: SLF001
+        prompt=out,
+        image_ref="https://example.com/a.png",
+        num_frames=81,
+    )
+    assert "多余小孩" not in two["negative_prompt"]
+    assert "第三个小孩" not in two["negative_prompt"]
+
+
+def test_cast_names_from_mom_in_middle() -> None:
+    from app.services.segment.clip.video_agnes import _cast_names_from_text
+
+    names = _cast_names_from_text(
+        "画面左边是昭昭，右边是灿灿，妈妈在中间。"
+    )
+    assert names == ["昭昭", "灿灿", "妈妈"]
+
+
+def test_stabilize_e_speakers_keep_mom_despite_two_person_motion() -> None:
+    """E 粘性三人：运动写成左右两人时仍按 speakers 锁妈妈，禁止共2人。"""
+    motion = (
+        "画面左边是昭昭，右边是灿灿。"
+        "0.0-5.7秒左侧男孩开口说话，口型自然开合，说完即闭嘴。"
+        "镜头固定，不推近不拉远，面部表情与静图一致不微笑"
+    )
+    out = _stabilize_motion_prompt(
+        motion,
+        speakers=["昭昭", "灿灿", "妈妈"],
+    )
+    assert "有且仅有3人：昭昭、灿灿、妈妈" in out
+    assert "禁止妈妈入画" not in out
+    two = AgnesClipProvider()._build_i2v_payload(  # noqa: SLF001
+        prompt=out,
+        image_ref="https://example.com/a.png",
+        num_frames=81,
+    )
+    assert "多余小孩" not in two["negative_prompt"]
 
 
 def test_build_i2v_payload_includes_negative_prompt() -> None:
@@ -307,6 +366,75 @@ def test_agnes_i2v_submit_interval_by_key() -> None:
 
     assert len(sleeps) == 1
     assert abs(sleeps[0] - 45.0) < 0.01
+
+
+def test_agnes_i2v_submit_retries_http_429() -> None:
+    """提交 429 是 RPM 窗口，应等满 1 分钟再试，不能当配额立刻失败。"""
+    provider = AgnesClipProvider()
+    provider._submit_max_retries = 2  # noqa: SLF001
+
+    limited = MagicMock()
+    limited.status_code = 429
+    limited.ok = False
+    limited.json.return_value = {
+        "error": {
+            "message": (
+                "video generation rate limit exceeded: "
+                "allows 1 requests per 1 minute(s)"
+            ),
+            "code": "rate_limit_exceeded",
+        }
+    }
+
+    ok = MagicMock()
+    ok.status_code = 200
+    ok.ok = True
+    ok.raise_for_status = MagicMock()
+
+    sleeps: list[float] = []
+
+    with (
+        patch(
+            "app.services.segment.clip.video_agnes.requests.request",
+            side_effect=[limited, ok],
+        ) as mock_req,
+        patch(
+            "app.services.segment.clip.video_agnes.time.sleep",
+            side_effect=lambda sec: sleeps.append(sec),
+        ),
+    ):
+        resp = provider._request(  # noqa: SLF001
+            "POST", "https://example.com/videos", label="submit"
+        )
+
+    assert resp is ok
+    assert mock_req.call_count == 2
+    assert sleeps and sleeps[0] >= 60.0
+
+
+def test_agnes_i2v_submit_429_exhausted_raises_quota() -> None:
+    """提交 429 重试耗尽后再当配额，交给备用 Key。"""
+    provider = AgnesClipProvider()
+    provider._submit_max_retries = 2  # noqa: SLF001
+
+    limited = MagicMock()
+    limited.status_code = 429
+    limited.ok = False
+    limited.json.return_value = {
+        "error": {"message": "rate limit", "code": "rate_limit_exceeded"}
+    }
+
+    with (
+        patch(
+            "app.services.segment.clip.video_agnes.requests.request",
+            return_value=limited,
+        ),
+        patch("app.services.segment.clip.video_agnes.time.sleep"),
+        pytest.raises(AgnesQuotaExceeded),
+    ):
+        provider._request(  # noqa: SLF001
+            "POST", "https://example.com/videos", label="submit"
+        )
 
 
 def test_agnes_clip_provider_submits_i2v_payload(tmp_path: Path) -> None:
