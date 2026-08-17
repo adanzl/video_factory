@@ -26,6 +26,10 @@ from app.services.daily_story.story_types.e.humor import (
     RE_MOM_SOFT,
     RE_MOM_WAFFLE,
 )
+from app.services.daily_story.story_types.e.validate import (
+    RE_ADULT_EXCEPTION,
+    is_cancan_adult_exception_line,
+)
 
 _A_TAIL = re.compile(r"哪里不一样|都是听|那不一样")
 _MOM_LINE_CAP = 8
@@ -81,6 +85,100 @@ def _next_kid_speaker(dialogue: list, before_i: int) -> str:
         if sp == "灿灿":
             return "昭昭"
     return "昭昭"
+
+
+# 削不干净时的类型级帮腔（赶时间/别较真），禁止空指代物证谜语
+_ADULT_REWRITE = (
+    "赶时间，这样就行了",
+    "她急着干活，算过了啦",
+    "偶尔一次，别较真嘛",
+    "你不懂，这样就够了",
+)
+_SALVAGE_MIN_CHARS = 8
+
+
+def _strip_adult_exception_text(ln: str) -> str:
+    """去掉「大人…」开脱，留下原句后半帮腔。"""
+    s = RE_ADULT_EXCEPTION.sub("，", ln)
+    s = re.sub(r"大人[^，。！？!?,]*", "", s)
+    s = re.sub(r"[，,]{2,}", "，", s)
+    s = re.sub(r"^[，,。；;\s]+|[，,；;\s]+$", "", s).strip()
+    return s
+
+
+def _adult_rewrite_ok(line: str, used: set[str]) -> bool:
+    if not line or line in used:
+        return False
+    if is_cancan_adult_exception_line("灿灿", line):
+        return False
+    return dialogue_char_count(line) <= DAILY_STORY_LINE_CHARS_MAX
+
+
+def patch_e_adult_exception_overrun(story: dict) -> list[str]:
+    """大人例外超标或中段后复读时，定点改灿灿句。
+
+    优先削掉原句「大人…」留下后半帮腔；削不干净再用赶时间类短句。
+    禁止写成「当场那个还在」这类空指代。
+    """
+    notes: list[str] = []
+    if not _is_e(story):
+        return notes
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 4:
+        return notes
+    speakers = _speakers(dialogue)
+    lines = _lines(dialogue)
+    adult_hits = [
+        i
+        for i, (sp, ln) in enumerate(zip(speakers, lines))
+        if is_cancan_adult_exception_line(sp, ln)
+    ]
+    if not adult_hits:
+        return notes
+    mom_idx = [i for i, sp in enumerate(speakers) if sp == "妈妈"]
+    mid_mom = mom_idx[-2] if len(mom_idx) >= 3 else None
+    keep: set[int] = set()
+    kept = 0
+    for i in adult_hits:
+        if mid_mom is not None and i > mid_mom:
+            continue
+        if kept < 2:
+            keep.add(i)
+            kept += 1
+    rewrite_idxs = [i for i in adult_hits if i not in keep]
+    if not rewrite_idxs:
+        return notes
+    used = {
+        str(dialogue[j].get("line") or "")
+        for j in range(len(dialogue))
+        if j not in rewrite_idxs and isinstance(dialogue[j], dict)
+    }
+    t = 0
+    for i in rewrite_idxs:
+        d = dialogue[i]
+        if not isinstance(d, dict):
+            continue
+        orig = str(d.get("line") or "")
+        salvage = _strip_adult_exception_text(orig)
+        new_line = None
+        if (
+            dialogue_char_count(salvage) >= _SALVAGE_MIN_CHARS
+            and _adult_rewrite_ok(salvage, used)
+        ):
+            new_line = salvage
+        else:
+            while t < 8:
+                cand = _ADULT_REWRITE[t % len(_ADULT_REWRITE)]
+                t += 1
+                if _adult_rewrite_ok(cand, used):
+                    new_line = cand
+                    break
+        if not new_line:
+            continue
+        d["line"] = new_line
+        used.add(new_line)
+        notes.append(f"E换大人例外[{i}]")
+    return notes
 
 
 def patch_e_strip_a_close(story: dict) -> list[str]:
@@ -463,4 +561,5 @@ def patch_e_body(story: dict) -> list[str]:
     notes.extend(patch_e_loop_speaker(story))
     notes.extend(patch_e_trim_mom_lecture(story))
     notes.extend(patch_e_closing_mom_soft(story))
+    notes.extend(patch_e_adult_exception_overrun(story))
     return notes

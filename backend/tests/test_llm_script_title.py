@@ -2441,6 +2441,391 @@ def test_validate_e_rejects_adult_exception_over_twice():
     assert any("大人例外" in e or "大人" in e for e in errs)
 
 
+def test_patch_speaker_alias_traditional_cancan_and_mom():
+    from app.services.daily_story.prompts import (
+        _coerce_opening_item,
+        canonical_speaker_name,
+        try_local_patch_daily_story_body,
+    )
+
+    assert canonical_speaker_name("燦燦") == "灿灿"
+    assert canonical_speaker_name("媽媽") == "妈妈"
+    story = {
+        "_story_type": "E",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "你手还滴水没搓泡泡吧？"},
+            {"speaker": "燦燦", "line": "冲两下就算洗过了呀。"},
+        ],
+        "discovery_opening": [
+            {"speaker": "昭昭", "line": "妈妈，饭前洗手是不是得搓出泡泡才算干净"},
+            {"speaker": "媽媽", "line": "对呀，搓出泡泡才算洗干净"},
+        ],
+    }
+    patched, notes = try_local_patch_daily_story_body(story)
+    assert patched["dialogue"][1]["speaker"] == "灿灿"
+    assert patched["discovery_opening"][1]["speaker"] == "妈妈"
+    assert any("燦燦→灿灿" in n for n in notes)
+    assert any("媽媽→妈妈" in n for n in notes)
+    coerced, err = _coerce_opening_item(
+        {"speaker": "燦燦", "line": "洗手液瓶子怎么还是满的呢？"},
+        index=0,
+    )
+    assert err is None
+    assert coerced is not None
+    assert coerced["speaker"] == "灿灿"
+
+
+def test_patch_e_rewrites_adult_exception_overrun():
+    from app.services.daily_story.prompts import try_local_patch_daily_story_body
+    from app.services.daily_story.story_types.e.validate import (
+        append_e_body_errors,
+        is_cancan_adult_exception_line,
+    )
+
+    story = {
+        "_story_type": "E",
+        "_theme": "说洗手要搓泡泡妈妈冲两下就走",
+        "scene_title": "洗手",
+        "setting": "厨房水槽边，妈妈湿着手",
+        "conflict_core": "妈妈说搓泡泡自己冲两下",
+        "punchline_explain": "E类妈妈破功",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "妈妈，饭前洗手是不是得搓出泡泡才算干净？"},
+            {"speaker": "妈妈", "line": "对呀，得搓出泡泡才算洗干净。"},
+            {"speaker": "昭昭", "line": "你手还滴水，没搓泡泡吧？"},
+            {"speaker": "灿灿", "line": "大人手不脏，冲两下就算洗过。"},
+            {"speaker": "昭昭", "line": "洗手液瓶子还是满的。"},
+            {"speaker": "灿灿", "line": "大人手皮厚，细菌钻不进去。"},
+            {"speaker": "妈妈", "line": "急着做饭，冲两下就行。"},
+            {"speaker": "昭昭", "line": "你刚拿过油瓶，手上还亮。"},
+            {"speaker": "灿灿", "line": "大人免疫力强，用不着搓。"},
+            {"speaker": "昭昭", "line": "你自己说搓泡泡才算干净。"},
+            {"speaker": "妈妈", "line": "……行行行，我再搓一遍。"},
+        ],
+    }
+    patched, notes = try_local_patch_daily_story_body(story)
+    assert any("E换大人例外" in n for n in notes)
+    after_mom = patched["dialogue"][8]["line"]
+    assert not is_cancan_adult_exception_line("灿灿", after_mom)
+    joined = "".join(
+        str(d.get("line") or "") for d in patched["dialogue"] if isinstance(d, dict)
+    )
+    assert "当场那个还在" not in joined
+    assert "痕迹还在呢" not in joined
+    errs: list[str] = []
+    append_e_body_errors(patched, errs)
+    assert not any("大人例外" in e or "复读大人" in e for e in errs)
+
+
+def test_validate_e_rejects_mid_old_account():
+    from app.services.daily_story.story_types.e.validate import append_e_body_errors
+
+    story = _e_compact_ok_story()
+    story["dialogue"][4]["line"] = "你上次还说要对人诚实。"
+    errs: list[str] = []
+    append_e_body_errors(story, errs)
+    assert any("禁翻旧账" in e for e in errs)
+
+
+def test_patch_e_adult_exception_keeps_remainder():
+    from app.services.daily_story.prompts import try_local_patch_daily_story_body
+    from app.services.daily_story.story_types.e.validate import (
+        is_cancan_adult_exception_line,
+    )
+
+    story = {
+        "_story_type": "E",
+        "_theme": "说洗手要搓泡泡妈妈冲两下就走",
+        "scene_title": "洗手",
+        "setting": "厨房水槽边，妈妈湿着手",
+        "conflict_core": "妈妈说搓泡泡自己冲两下",
+        "punchline_explain": "E类妈妈破功",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "妈妈，饭前洗手是不是得搓出泡泡才算干净？"},
+            {"speaker": "妈妈", "line": "对呀，得搓出泡泡才算洗干净。"},
+            {"speaker": "昭昭", "line": "你手还滴水，没搓泡泡吧？"},
+            {"speaker": "灿灿", "line": "冲两下就算洗过了，赶时间嘛。"},
+            {"speaker": "妈妈", "line": "急着做饭，冲两下就行。"},
+            {"speaker": "昭昭", "line": "你刚拿过油瓶，手上还亮。"},
+            {"speaker": "灿灿", "line": "大人手不脏，冲两下就算洗过。"},
+            {"speaker": "昭昭", "line": "你自己说搓泡泡才算干净。"},
+            {"speaker": "妈妈", "line": "……行行行，我再搓一遍。"},
+        ],
+    }
+    patched, notes = try_local_patch_daily_story_body(story)
+    assert any("E换大人例外" in n for n in notes)
+    after = patched["dialogue"][6]["line"]
+    assert "冲两下就算洗过" in after
+    assert "大人" not in after
+    assert not is_cancan_adult_exception_line("灿灿", after)
+
+
+def test_line_e_wash_example_avoids_adult_exception():
+    from app.services.daily_story.story_types.e.line import LINE_E
+
+    block = LINE_E.prompt_block
+    assert "【节拍表·假开脱" in block
+    assert "【压缩正例·洗手" not in block
+    assert "昭昭：你" not in block
+    assert "灿灿：你" not in block
+    assert "大人手不脏" not in block
+    assert "跟我们不一样" not in block
+    assert "备用的" not in block
+    assert "你刚说搓出泡泡" not in block
+    assert "泡泡都没见着" not in block
+    assert "肚子疼" not in block
+    assert "切辣椒" not in block
+    assert "写前先定 2 个不同开脱槽" in block
+    assert "禁中段另起感官鉴定" in block
+
+
+def test_line_e_wash_opening_not_kitchen_recall():
+    from app.services.daily_story.story_types.e.line import LINE_E
+
+    op = LINE_E.opening_system_append
+    user = LINE_E.opening_user_append
+    assert "【E 开场槽位" in op
+    assert "昭昭「" not in op
+    assert "妈，饭前在洗手台得搓出泡泡才算干净吗" not in op
+    assert "刚才在厨房" not in op
+    assert "刚才在厨房" not in user
+    assert "洗手台" in user
+
+
+def test_validate_e_rejects_example_copy():
+    from app.services.daily_story.story_types.e.validate import append_e_body_errors
+
+    story = _e_compact_ok_story()
+    story["dialogue"][2]["line"] = "那是备用的，她用的是别的瓶子。"
+    errs: list[str] = []
+    append_e_body_errors(story, errs)
+    assert any("照抄旧正例" in e for e in errs)
+
+
+def test_collect_wording_flags_e_first_body_rule_echo():
+    from app.services.daily_story.review import collect_wording_issues
+
+    story = {
+        "_story_type": "E",
+        "discovery_opening": [
+            {"speaker": "昭昭", "line": "妈，饭前在洗手台得搓出泡泡才算干净吗？"},
+            {"speaker": "妈妈", "line": "对呀，得搓出泡泡才算洗干净呢。"},
+        ],
+        "dialogue": [
+            {"speaker": "昭昭", "line": "妈，饭前在洗手台得搓出泡泡才算干净吗？"},
+            {"speaker": "妈妈", "line": "对呀，得搓出泡泡才算洗干净呢。"},
+            {"speaker": "昭昭", "line": "妈，你刚说搓泡泡才算干净，手还滴着水呢？"},
+            {"speaker": "灿灿", "line": "你不懂，水冲一下就是洗过了呀。"},
+            {"speaker": "昭昭", "line": "那洗手液瓶子怎么还是满的？"},
+            {"speaker": "灿灿", "line": "那是备用的。"},
+            {"speaker": "妈妈", "line": "急着吃饭，冲两下就行。"},
+            {"speaker": "昭昭", "line": "你自己说搓泡泡才算干净。"},
+            {"speaker": "妈妈", "line": "……行行行，我再搓一遍。"},
+        ],
+    }
+    issues = collect_wording_issues(story, type_code="E")
+    assert any(it.get("kind") == "复读立规" and it.get("lines") == [3] for it in issues)
+
+
+def test_collect_wording_flags_e_sense_drift():
+    from app.services.daily_story.review import collect_wording_issues
+
+    story = {
+        "_story_type": "E",
+        "discovery_opening": [
+            {"speaker": "昭昭", "line": "妈，饭前洗手是不是要搓出泡泡才算洗完？"},
+            {"speaker": "妈妈", "line": "当然啦，搓出泡泡冲干净才算洗完手。"},
+        ],
+        "dialogue": [
+            {"speaker": "昭昭", "line": "妈，饭前洗手是不是要搓出泡泡才算洗完？"},
+            {"speaker": "妈妈", "line": "当然啦，搓出泡泡冲干净才算洗完手。"},
+            {"speaker": "昭昭", "line": "可你刚才水一冲就走，手上都没泡。"},
+            {"speaker": "灿灿", "line": "妈妈肯定搓啦，你低头看下水槽里还有沫呢。"},
+            {"speaker": "昭昭", "line": "水槽里的是下水道沫，手上明明干干的。"},
+            {"speaker": "灿灿", "line": "赶时间，冲得急，算洗完了吧？"},
+            {"speaker": "妈妈", "line": "我按了两泵，冲水也冲得挺快。"},
+            {"speaker": "灿灿", "line": "对啊，冲得够快，细菌都冲跑了。"},
+            {"speaker": "昭昭", "line": "那泡泡呢？你说搓出泡泡才算完，你一个泡都没有。"},
+            {"speaker": "灿灿", "line": "水冲得哗哗响，沫子都溅走了，这不赖妈妈。"},
+            {"speaker": "昭昭", "line": "手伸出来，我看有没有泡泡印？"},
+            {"speaker": "灿灿", "line": "手都冲干净了，油皮都没了，哪还有印？"},
+            {"speaker": "昭昭", "line": "油皮才搓不掉，泡泡印是滑滑的，你手不滑。"},
+            {"speaker": "灿灿", "line": "滑不滑得摸才知道，你摸下试试？"},
+            {"speaker": "昭昭", "line": "我摸过啦，一点都不滑，比纸还糙。"},
+            {"speaker": "灿灿", "line": "那是冬天干，跟洗没洗没关系。"},
+            {"speaker": "昭昭", "line": "自己说搓泡泡才算洗完，现在水一冲就走。"},
+            {"speaker": "妈妈", "line": "行行行，我回去再搓一遍。"},
+        ],
+    }
+    issues = collect_wording_issues(story, type_code="E")
+    flagged = {
+        no
+        for it in issues
+        if it.get("kind") == "感官换判据"
+        for no in it.get("lines") or []
+    }
+    assert 5 in flagged
+    assert 11 in flagged
+    assert 14 in flagged
+    assert 16 in flagged
+    assert 1 not in flagged
+    assert 3 not in flagged
+    assert 7 not in flagged
+    assert 17 not in flagged
+    assert 18 not in flagged
+
+
+def test_collect_wording_flags_kid_halt_mom():
+    from app.services.daily_story.review import collect_wording_issues
+
+    story = {
+        "discovery_opening": [
+            {"speaker": "昭昭", "line": "妈，饭前洗手是不是要搓出泡泡才算洗完？"},
+            {"speaker": "妈妈", "line": "当然啦，搓出泡泡冲干净才算洗完手。"},
+        ],
+        "dialogue": [
+            {"speaker": "昭昭", "line": "妈，饭前洗手是不是要搓出泡泡才算洗完？"},
+            {"speaker": "妈妈", "line": "当然啦，搓出泡泡冲干净才算洗完手。"},
+            {"speaker": "昭昭", "line": "可你刚才水一冲就走，手上都没泡。"},
+            {"speaker": "灿灿", "line": "妈妈肯定搓啦，水槽里还有沫呢。"},
+            {"speaker": "昭昭", "line": "那你站住，手还没搓完呢！"},
+            {"speaker": "灿灿", "line": "冲都冲完了，还搓什么呀？"},
+            {"speaker": "妈妈", "line": "我按了两泵，冲得也挺快。"},
+            {"speaker": "昭昭", "line": "自己说搓泡泡才算洗完，现在水一冲就走。"},
+            {"speaker": "妈妈", "line": "行行行，我回去再搓一遍。"},
+        ],
+    }
+    issues = collect_wording_issues(story, type_code="E")
+    assert any(
+        it.get("kind") == "塑料" and it.get("lines") == [5]
+        for it in issues
+    )
+
+
+def test_collect_wording_flags_e_you_to_mom():
+    from app.services.daily_story.review import collect_wording_issues
+
+    story = {
+        "discovery_opening": [
+            {"speaker": "昭昭", "line": "妈，饭前洗手是不是要搓出泡泡才算洗完？"},
+            {"speaker": "妈妈", "line": "当然啦，搓出泡泡冲干净才算洗完手。"},
+        ],
+        "dialogue": [
+            {"speaker": "昭昭", "line": "妈，饭前洗手是不是要搓出泡泡才算洗完？"},
+            {"speaker": "妈妈", "line": "当然啦，搓出泡泡冲干净才算洗完手。"},
+            {"speaker": "昭昭", "line": "可你刚才水一冲就走，手上都没泡。"},
+            {"speaker": "灿灿", "line": "妈妈肯定搓啦，你低头看下水槽里还有沫呢。"},
+            {"speaker": "昭昭", "line": "那是下水道沫，你手上还滴水呢，哪有泡？"},
+            {"speaker": "灿灿", "line": "赶时间，冲得急，算洗完了吧？"},
+            {"speaker": "妈妈", "line": "我按了两泵，冲得也挺快。"},
+            {"speaker": "昭昭", "line": "那泡泡呢？你说搓出泡泡才算完，你一个泡都没有。"},
+            {"speaker": "灿灿", "line": "冲都冲完了，还搓什么呀？"},
+            {"speaker": "昭昭", "line": "你手背还黏着洗手液呢，没冲干净！"},
+            {"speaker": "灿灿", "line": "那是溅上去的水珠，才不是沫呢！"},
+            {"speaker": "昭昭", "line": "就是沫！你看还起泡呢！"},
+            {"speaker": "灿灿", "line": "泡泡也是水冲出来的，不是没冲净！"},
+            {"speaker": "昭昭", "line": "自己说搓泡泡才算洗完，现在水一冲就走。"},
+            {"speaker": "妈妈", "line": "行行行，我回去再搓一遍。"},
+        ],
+    }
+    issues = collect_wording_issues(story, type_code="E")
+    flagged = {
+        no
+        for it in issues
+        if it.get("kind") == "对妈硬质问"
+        for no in it.get("lines") or []
+    }
+    assert 3 in flagged
+    assert 5 in flagged
+    assert 8 in flagged
+    assert 10 in flagged
+    assert 4 not in flagged
+    assert 12 not in flagged
+    assert 14 not in flagged
+
+
+def test_wording_polish_prompt_mentions_e_sense_drift():
+    from app.services.daily_story.review import build_wording_polish_prompts
+
+    system, _user = build_wording_polish_prompts(
+        "说洗手要搓泡泡妈妈冲两下就走",
+        {"dialogue": [], "setting": "", "conflict_core": ""},
+        [],
+        type_code="E",
+        line_chars_max=24,
+    )
+    assert "感官鉴定" in system
+    assert "站住" in system
+    assert "硬质问" in system
+    assert "末两句闭环破功" in system
+
+
+def test_generate_daily_story_reuses_cached_framework(monkeypatch):
+    from app.services.llm.llm_deepseek import DeepSeekClient
+
+    client = DeepSeekClient.__new__(DeepSeekClient)
+    calls = {"fw": 0, "op": 0, "body": 0}
+
+    def fw(*_a, **_k):
+        calls["fw"] += 1
+        return {
+            "scene_title": "洗手",
+            "setting": "厨房水槽边，妈妈湿着手",
+            "conflict_core": "妈妈说搓泡泡自己冲",
+            "key": "洗手搓泡",
+        }
+
+    def op(*_a, **_k):
+        calls["op"] += 1
+        return [
+            {"speaker": "昭昭", "line": "妈妈，饭前洗手是不是得搓出泡泡才算干净"},
+            {"speaker": "妈妈", "line": "对呀，搓出泡泡才算洗干净"},
+        ]
+
+    def body(*_a, **_k):
+        calls["body"] += 1
+        raise ValueError(
+            "daily_story 校验失败: E类灿灿「大人例外/规矩给小孩」"
+            "全篇最多 2 次，须换新开脱"
+        )
+
+    monkeypatch.setattr(client, "_generate_daily_story_framework", fw)
+    monkeypatch.setattr(client, "_generate_daily_story_opening", op)
+    monkeypatch.setattr(client, "_generate_daily_story_body", body)
+
+    theme = "说洗手要搓泡泡妈妈冲两下就走"
+    with pytest.raises(ValueError) as first:
+        client.generate_daily_story(theme, story_type="E")
+    cached_fw = first.value._framework
+    cached_op = first.value._opening
+    with pytest.raises(ValueError):
+        client.generate_daily_story(
+            theme,
+            story_type="E",
+            framework=cached_fw,
+            opening=cached_op,
+        )
+    assert calls["fw"] == 1
+    assert calls["op"] == 1
+    assert calls["body"] == 2
+
+
+def test_llm_mgr_skips_review_when_hard_card_failed():
+    from app.services.llm.llm_mgr import LLMMgr
+
+    mgr = LLMMgr()
+    flagged = {
+        "scene_title": "洗手",
+        "dialogue": [{"speaker": "昭昭", "line": "dummy"}],
+        "_hard_card_failed": True,
+        "_beats_theme_object": "x",
+    }
+    mgr._generate_daily_story_scored = lambda *a, **k: flagged  # type: ignore[method-assign]
+    out = mgr.generate_daily_story("说洗手要搓泡泡妈妈冲两下就走", review=True)
+    assert out.get("_hard_card_failed") is None
+    assert "_beats_theme_object" not in out
+
+
 def test_validate_e_rejects_empty_mom_soft_close():
     from app.services.daily_story.story_types.e.validate import append_e_body_errors
 

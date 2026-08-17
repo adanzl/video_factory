@@ -34,6 +34,25 @@ RE_MOM_RULE = re.compile(
 RE_KID_LOOP = re.compile(
     r"你自己说|自己说|你刚才|那你也是|你也这样|那你现在|妈妈你也",
 )
+# 中段翻旧账：类型不变量，不写单篇旧事词
+RE_OLD_ACCOUNT = re.compile(r"上次|上回|那次是")
+# 旧压缩正例招牌帮腔/开场句（去语气后）。拦照抄，不拦题面词「搓泡泡/冲两下」
+_EXAMPLE_NORM_SKIP = re.compile(r"[的了吗呢啊呀哼！？。，、…\s「」“”\"'‘’：:]")
+_E_EXAMPLE_PHRASES_NORM = {
+    _EXAMPLE_NORM_SKIP.sub("", s)
+    for s in (
+        "那是备用的她用的是别的瓶子",
+        "她用的是别的瓶子",
+        "那油水一冲就没了当然不算脏",
+        "油水一冲就没了当然不算脏",
+        "那油一冲就没了当然不算脏",
+        "你不懂冲两下就算洗过了",
+        "你手还滴着水呢泡泡都没见着",
+        "泡泡都没见着",
+        "妈饭前在洗手台得搓出泡泡才算干净吗",
+        "刚才在厨房饭前洗手是不是得搓出泡泡才算干净",
+    )
+}
 RE_MOM_WAFFLE = re.compile(
     r"不是|不一样|那是|总之|反正|不是那个|不算|尝咸淡|大人|工作需要",
 )
@@ -104,6 +123,15 @@ RE_WEAK_TASTE_EYE = re.compile(r"汤汁|舀汤|舔勺|喝了一口汤|偷尝了�
 RE_STRONG_TASTE_EYE = re.compile(
     r"勺子|勺上|尝菜|试吃|试菜|嘴角|油渍|油花|菜叶|三大勺|咽|黏黏",
 )
+
+def is_cancan_adult_exception_line(speaker: str, line: str) -> bool:
+    """灿灿假帮腔是否落在「大人例外/规矩给小孩」槽。"""
+    sp = (speaker or "").strip()
+    ln = (line or "").strip()
+    if sp != "灿灿" or not ln:
+        return False
+    return "大人" in ln or bool(RE_ADULT_EXCEPTION.search(ln))
+
 
 def _dialogue_lines(story: dict) -> tuple[list[str], list[str]]:
     dialogue = story.get("dialogue")
@@ -404,10 +432,35 @@ def append_e_body_errors(story: dict, errors: list[str]) -> None:
         )
         return
 
+    mid = lines[: max(0, n - 3)]
+    if any(RE_OLD_ACCOUNT.search(ln) for ln in mid):
+        errors.append(
+            "E类中段禁翻旧账（上次/那次），只扣当场现行",
+        )
+        return
+
+    # 短招牌句须整句归一化命中；长句允许子串
+    copy_hits = []
+    for j, ln in enumerate(lines):
+        norm = _EXAMPLE_NORM_SKIP.sub("", ln)
+        if not norm:
+            continue
+        if norm in _E_EXAMPLE_PHRASES_NORM:
+            copy_hits.append(f"第{j + 1}句「{ln}」")
+            continue
+        if any(p in norm for p in _E_EXAMPLE_PHRASES_NORM if len(p) >= 12):
+            copy_hits.append(f"第{j + 1}句「{ln}」")
+    if copy_hits:
+        errors.append(
+            "E类正文照抄旧正例（" + "；".join(copy_hits[:4]) + "）："
+            "节拍只许学分工，禁搬旧示范原句",
+        )
+        return
+
     adult_hits = [
         i
         for i, (sp, ln) in enumerate(zip(speakers, lines))
-        if sp == "灿灿" and ("大人" in ln or RE_ADULT_EXCEPTION.search(ln))
+        if is_cancan_adult_exception_line(sp, ln)
     ]
     if len(adult_hits) > 2:
         errors.append(

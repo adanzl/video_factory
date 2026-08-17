@@ -1805,6 +1805,8 @@ class DeepSeekClient(LLMClient):
         *,
         story_type: str | None = None,
         avoid: list[str] | None = None,
+        framework: dict | None = None,
+        opening: list[dict] | None = None,
     ) -> dict[str, Any]:
         """2026-08-07 架构改造：框架先行 → 开场 → 正文 → 拼接。
 
@@ -1813,6 +1815,7 @@ class DeepSeekClient(LLMClient):
 
         avoid：正文层避雷（避免与库内已有稿撞车的判据/开场理由/挑刺动作），
         各生成环节统一注入 _build_story_avoid_block。
+        framework / opening：外层重试时传入，避免整条重跑。
         """
         if not story_type:
             story_type = _select_story_type(theme)
@@ -1830,18 +1833,20 @@ class DeepSeekClient(LLMClient):
             )
             if pkg:
                 criterion_block = _C_CRITERION_INJECT_TEMPLATE.format(**pkg)
-        framework = self._generate_daily_story_framework(
-            theme,
-            story_type=story_type,
-            avoid_block=avoid_block,
-        )
-        opening = self._generate_daily_story_opening(
-            theme,
-            framework,
-            story_type=story_type,
-            criterion_block=criterion_block,
-            avoid_block=avoid_block,
-        )
+        if not isinstance(framework, dict) or not framework:
+            framework = self._generate_daily_story_framework(
+                theme,
+                story_type=story_type,
+                avoid_block=avoid_block,
+            )
+        if not isinstance(opening, list) or not opening:
+            opening = self._generate_daily_story_opening(
+                theme,
+                framework,
+                story_type=story_type,
+                criterion_block=criterion_block,
+                avoid_block=avoid_block,
+            )
         beats = None
         if parse_story_type_code(story_type=story_type) == "B":
             beats = self._generate_daily_story_beats(
@@ -1849,23 +1854,30 @@ class DeepSeekClient(LLMClient):
                 story_type=story_type,
                 framework=framework,
             )
-        body = self._generate_daily_story_body(
-            theme,
-            story_type=story_type,
-            framework=framework,
-            opening=opening,
-            criterion_block=criterion_block,
-            avoid_block=avoid_block,
-            beats=beats,
-        )
-        story = self._stitch_daily_story_full(
-            theme,
-            body,
-            story_type=story_type,
-            framework=framework,
-            opening=opening,
-            criterion_block=criterion_block,
-        )
+        try:
+            body = self._generate_daily_story_body(
+                theme,
+                story_type=story_type,
+                framework=framework,
+                opening=opening,
+                criterion_block=criterion_block,
+                avoid_block=avoid_block,
+                beats=beats,
+            )
+            story = self._stitch_daily_story_full(
+                theme,
+                body,
+                story_type=story_type,
+                framework=framework,
+                opening=opening,
+                criterion_block=criterion_block,
+            )
+        except ValueError as exc:
+            if not getattr(exc, "_framework", None):
+                exc._framework = framework  # type: ignore[attr-defined]
+            if not getattr(exc, "_opening", None):
+                exc._opening = opening  # type: ignore[attr-defined]
+            raise
         if beats and isinstance(beats, dict) and beats.get("theme_object"):
             # 节拍表主题物随稿带走，供润色定向修「妈妈句未点名主题物」；
             # 入库前由 llm_mgr 剥掉，不落库。
@@ -2641,10 +2653,32 @@ class DeepSeekClient(LLMClient):
                             attempt + 1,
                         )
                         return fixed
+                if "大人例外" in errors and isinstance(prev_story, dict):
+                    try:
+                        fixed_e = self._stage3_fix_e_adult_exception(
+                            prev_story,
+                            theme=theme,
+                        )
+                    except Exception as exc_e:  # noqa: BLE001
+                        fixed_e = None
+                        logger.warning(
+                            "[DAILY_STORY] E adult-exception fix raised: %s",
+                            exc_e,
+                        )
+                    if fixed_e is not None:
+                        if isinstance(fixed_e, dict):
+                            fixed_e.pop("_theme", None)
+                            fixed_e.pop("_story_type", None)
+                        logger.info(
+                            "[DAILY_STORY] Stage3 fixed E adult exception "
+                            "attempt=%d, saved full regen",
+                            attempt + 1,
+                        )
+                        return fixed_e
                 # 跑题稿是毒样本：丢掉上一稿，重试走全新首稿而非修订
                 if "正文跑题" in errors:
                     prev_story = None
-                # 同一硬伤连撞 3 次再停：首稿短→thinking 修订有时仍差一点，留满 3 次
+                # 同一硬伤连撞 2 次即停：整稿重抽对大人例外这类槽位错误收益低
                 err_key = (
                     "A偷吃"
                     if "A类偷吃" in errors or "检样不算开饭" in errors
@@ -2655,7 +2689,7 @@ class DeepSeekClient(LLMClient):
                 else:
                     same_err_streak = 1
                     prev_err_key = err_key
-                if attempt + 1 >= max_attempts or same_err_streak >= 3:
+                if attempt + 1 >= max_attempts or same_err_streak >= 2:
                     logger.warning(
                         "[DAILY_STORY] generate story body validation failed "
                         "attempt=%d/%d streak=%d: %s",
@@ -2887,6 +2921,121 @@ class DeepSeekClient(LLMClient):
         except ValueError as exc:
             logger.info(
                 "[DAILY_STORY] Stage3 fixed story still invalid: %s",
+                exc,
+            )
+            return None
+        return out
+
+    def _stage3_fix_e_adult_exception(
+        self,
+        story: dict[str, Any],
+        *,
+        theme: str = "",
+    ) -> dict[str, Any] | None:
+        """E 大人例外超标：先本地定点改，仍不过再单句 LLM，禁止整稿重抽。"""
+        from app.services.daily_story.prompts import (
+            _clone_story,
+            validate_daily_story_json,
+        )
+        from app.services.daily_story.story_types.e.patch import (
+            patch_e_adult_exception_overrun,
+        )
+        from app.services.daily_story.story_types.e.validate import (
+            is_cancan_adult_exception_line,
+        )
+
+        out = _clone_story(story)
+        notes = patch_e_adult_exception_overrun(out)
+        if notes:
+            try:
+                validate_daily_story_json(out, phase="body")
+                logger.info(
+                    "[DAILY_STORY] E adult-exception local patch: %s",
+                    ",".join(notes),
+                )
+                return out
+            except ValueError:
+                pass
+
+        dialogue = out.get("dialogue")
+        if not isinstance(dialogue, list):
+            return None
+        speakers = [
+            str(d.get("speaker") or "") if isinstance(d, dict) else ""
+            for d in dialogue
+        ]
+        lines = [
+            str(d.get("line") or "") if isinstance(d, dict) else ""
+            for d in dialogue
+        ]
+        adult_hits = [
+            i
+            for i, (sp, ln) in enumerate(zip(speakers, lines))
+            if is_cancan_adult_exception_line(sp, ln)
+        ]
+        mom_idx = [i for i, sp in enumerate(speakers) if sp == "妈妈"]
+        mid_mom = mom_idx[-2] if len(mom_idx) >= 3 else None
+        keep: set[int] = set()
+        kept = 0
+        for i in adult_hits:
+            if mid_mom is not None and i > mid_mom:
+                continue
+            if kept < 2:
+                keep.add(i)
+                kept += 1
+        rewrite_idxs = [i for i in adult_hits if i not in keep]
+        if not rewrite_idxs:
+            return None
+
+        rewrite_system = """\
+你是日常短剧 E 类台词修稿器。只改这一句灿灿假帮腔：
+- 禁止出现「大人」「小孩」「孩子不一样」「规矩给小孩」。
+- 优先删掉原句里「大人…」那截，留下后半句帮腔；后半不够再重写。
+- 重写须接上一句孩子的物证做轻描开脱；禁止空指代套话
+  （勿「当场那个还在」「痕迹还在呢」「哪能算按规矩做完」）。
+- 保持讽刺帮腔口吻，不要训妈妈，不要抢闭环。
+只输出改写后的完整一句，不要解释。"""
+        if theme:
+            rewrite_system = f"{rewrite_system}\n主题：{theme}"
+        for idx in rewrite_idxs:
+            ln = str(out["dialogue"][idx].get("line") or "").strip()
+            prev = ""
+            if idx > 0 and isinstance(out["dialogue"][idx - 1], dict):
+                prev = str(out["dialogue"][idx - 1].get("line") or "").strip()
+            candidate = None
+            for _ in range(2):
+                try:
+                    user = f"原句：{ln}\n改写后："
+                    if prev:
+                        user = f"上一句：{prev}\n{user}"
+                    content, _ = self._chat(
+                        rewrite_system,
+                        user,
+                        json_mode=False,
+                        thinking_enabled=False,
+                        temperature=_TEMP_CREATIVE_HIGH,
+                        model=self._model,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "[DAILY_STORY] E adult rewrite llm fail idx=%d: %s",
+                        idx,
+                        exc,
+                    )
+                    break
+                cand = str(content or "").strip().splitlines()[0].strip(" \"'")
+                if not cand or is_cancan_adult_exception_line("灿灿", cand):
+                    continue
+                candidate = cand
+                break
+            if not candidate:
+                return None
+            out["dialogue"][idx]["line"] = candidate
+        try:
+            validate_daily_story_json(out, phase="body")
+        except ValueError as exc:
+            logger.info(
+                "[DAILY_STORY] E adult-exception rewrite still invalid: %s",
                 exc,
             )
             return None

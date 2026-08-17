@@ -176,6 +176,8 @@ class LLMClient:
         *,
         story_type: str | None = None,
         avoid: list[str] | None = None,
+        framework: dict | None = None,
+        opening: list | None = None,
     ) -> dict[str, Any]:
         raise NotImplementedError
 
@@ -694,8 +696,16 @@ class LLMMgr:
             story_type=story_type,
             avoid=avoid,
         )
-        if not review:
-            story.pop("_beats_theme_object", None)
+        hard_fail = bool(
+            isinstance(story, dict) and story.pop("_hard_card_failed", False)
+        )
+        if not review or hard_fail:
+            if hard_fail:
+                logger.warning(
+                    "[DAILY_STORY] review skipped (hard card failed)",
+                )
+            if isinstance(story, dict):
+                story.pop("_beats_theme_object", None)
             return story
         result = run_daily_story_review(self._get_client(), theme, story)
         result.pop("_beats_theme_object", None)
@@ -723,24 +733,60 @@ class LLMMgr:
         # 生成循环只追结构分（≤80 封顶）；好笑分由审读阶段 LLM 评定
         # （review.apply_review_to_quality 注入 funny_score 0-20），最终发布线 =
         # 结构≥75 且 LLM 好笑≥12。整稿 3 次（全 Flash 高温发散）+ refine 兜底；
-        # refine 已切 Flash 关 thinking，总耗时可控。refine 一次只修一个主问题
-        # （build_quality_revision_hints 单主项），结构短板常叠 2 个
-        # （口头禅复读+回旋镖未点破），留 2 轮补到 75。
+        # 外层失败缓存框架+开场，只重抽正文。refine 已切 Flash 关 thinking。
         # attach 默认会 finalize 总分=结构+好笑，比较 target 必须用 structure_score。
         max_full = 3
         max_refine = 2
         last_exc: Exception | None = None
+        cached_framework: dict[str, Any] | None = None
+        cached_opening: list | None = None
+
+        def _cache_from_story(payload: dict[str, Any] | None) -> None:
+            nonlocal cached_framework, cached_opening
+            if not isinstance(payload, dict):
+                return
+            fw = {
+                k: payload.get(k)
+                for k in ("scene_title", "setting", "conflict_core", "key")
+                if payload.get(k)
+            }
+            if fw:
+                cached_framework = fw
+            opening = payload.get("discovery_opening")
+            if isinstance(opening, list) and opening:
+                cached_opening = opening
+
+        def _cache_from_exc(exc: BaseException) -> None:
+            nonlocal cached_framework, cached_opening
+            fw = getattr(exc, "_framework", None)
+            op = getattr(exc, "_opening", None)
+            if isinstance(fw, dict) and fw:
+                cached_framework = fw
+            if isinstance(op, list) and op:
+                cached_opening = op
+            _cache_from_story(getattr(exc, "_failed_body", None))
 
         for attempt in range(max_full):
             try:
+                if cached_framework or cached_opening:
+                    logger.info(
+                        "[DAILY_STORY] reuse cached framework+opening "
+                        "attempt=%d/%d",
+                        attempt + 1,
+                        max_full,
+                    )
                 story = client.generate_daily_story(
                     theme,
                     story_type=story_type,
                     avoid=avoid,
+                    framework=cached_framework,
+                    opening=cached_opening,
                 )
+                _cache_from_story(story)
                 attach_daily_story_quality(story, theme=theme)
             except ValueError as exc:
                 last_exc = exc
+                _cache_from_exc(exc)
                 # 降级安全网：正文 3 次全败时，把最后一次被拒稿当候选保留，
                 # 避免整条 FAIL（宁可给低分稿，不给 0 产出）。
                 failed_body = getattr(exc, "_failed_body", None)
@@ -752,6 +798,7 @@ class LLMMgr:
                         )
                         if f_score > best_score:
                             best_score = f_score
+                            failed_body["_hard_card_failed"] = True
                             best_story = failed_body
                             logger.warning(
                                 "[DAILY_STORY] degraded fallback candidate "
