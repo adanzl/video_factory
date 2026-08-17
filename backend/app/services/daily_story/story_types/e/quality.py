@@ -28,10 +28,13 @@ _RE_PICKY_RULE_TOKEN = re.compile(r"(?:不准|不许|不能|别)挑食")
 
 
 def ground_closing_quote(fragment: str, haystack: str) -> bool:
-    """挑食规矩词不许/不能视为同出；其余走默认连续子串。"""
+    """挑食规矩词不许/不能视为同出；「不算数」类出尔反尔质问不算假引话。"""
     frag = (fragment or "").strip()
     hay = haystack or ""
     if _RE_PICKY_RULE_TOKEN.search(frag) and _RE_PICKY_RULE_TOKEN.search(hay):
+        return True
+    # 「你自己说的不算数啦」= 你出尔反尔，不是声称妈妈说过「不算数」。
+    if "不算数" in frag and "不算数" not in hay:
         return True
     return False
 
