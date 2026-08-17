@@ -102,6 +102,12 @@ _LCR_STAND_RE = re.compile(
     r"中间是\s*(昭昭|灿灿|妈妈)\s*[，,；;]?\s*"
     r"右边是\s*(昭昭|灿灿|妈妈)"
 )
+# 二人站位后补「妈妈在中间」（LLM 常写成这个顺序）
+_LR_MID_STAND_RE = re.compile(
+    r"画面左边是\s*(昭昭|灿灿|妈妈)\s*[，,；;]?\s*"
+    r"右边是\s*(昭昭|灿灿|妈妈)"
+    r"\s*[，,；;]\s*(?:妈妈在中间|中间是\s*(昭昭|灿灿|妈妈))"
+)
 _STAND_END_RE = re.compile(
     r"画面左边是\s*(?:昭昭|灿灿|妈妈)\s*[，,；;]?\s*"
     r"(?:中间是\s*(?:昭昭|灿灿|妈妈)\s*[，,；;]?\s*)?"
@@ -140,6 +146,14 @@ def _parse_stand_layout(prompt: str) -> list[tuple[str, str]]:
             ("左侧", lcr.group(1)),
             ("中间", lcr.group(2)),
             ("右侧", lcr.group(3)),
+        ]
+    lr_mid = _LR_MID_STAND_RE.search(prompt or "")
+    if lr_mid:
+        mid = lr_mid.group(3) or "妈妈"
+        return [
+            ("左侧", lr_mid.group(1)),
+            ("中间", mid),
+            ("右侧", lr_mid.group(2)),
         ]
     lr = _LR_STAND_RE.search(prompt or "")
     if lr:
@@ -596,6 +610,7 @@ class MediaMgr:
                     segment_index=index,
                     motion_prompt=motion_prompt,
                     image_prompt=image_prompt or None,
+                    speakers=seg.get("speakers") if isinstance(seg.get("speakers"), list) else None,
                     width=clip_width,
                     height=clip_height,
                     job_id=job_id,

@@ -101,9 +101,16 @@ def _daily_layout_speakers(seg: dict, vb: str) -> list[str]:
     if m:
         left, right = m.group(1), m.group(2)
         pair = _keep([left, right])
-        # vb 明示左右两人时尊重 brief，勿因 sticky cast 含妈妈再强插中间人；
-        # 真要三人同框应由 vb 写「从左到右是A、B、C」（上面 LCR 分支）。
-        if len(pair) == 2 and pair[0] != pair[1]:
+        # 妈妈须离场（躲着/别让看见）或本段根本没有妈妈时，才尊重二人 brief。
+        # E 类粘性三人：台词可以少、画面不能缺席，勿因 vb 只写左右把妈妈挤出构图。
+        from app.services.daily_story.speaker import mom_should_stay_offscreen
+
+        hide_mom = mom_should_stay_offscreen(seg.get("dialogue"))
+        if (
+            len(pair) == 2
+            and pair[0] != pair[1]
+            and ("妈妈" not in allowed or hide_mom)
+        ):
             return pair
     speakers = _daily_speakers_of(seg)
     if set(speakers) >= {"昭昭", "灿灿", "妈妈"}:
@@ -497,7 +504,12 @@ _IMAGE_PROMPT_MOTION_TAIL_DAILY_AMBIENT = (
 
 _IMAGE_PROMPT_MOTION_TAIL_DAILY_KEYFRAME = (
     "【keyframe】按以下模板输出 motion_prompt（120-280 字）：\n"
-    "画面左边是{角色A}，右边是{角色B}。\n"
+    "【站位】必须与本段 image_prompt 构图句一致，禁止自行改成两人：\n"
+    "若 image_prompt 有「画面从左到右是A、B、C」或"
+    "「左边是A，中间是B，右边是C」，开头必须抄这句三人站位；"
+    "未说话的中间人（常为妈妈）也要写进站位，并补"
+    "「{中间人}保持静图姿势，全程在画面内，不消失」。\n"
+    "若只有「画面左边是A，右边是B」，则抄二人站位：画面左边是{角色A}，右边是{角色B}。\n"
     "【说话句】必须按本段 dialogue 顺序，每一句台词各写一行"
     "「{该句说话人}说话，同时{微动作}后停止」；"
     "句间格式完全相同，微动作须贴合本镜画面；"
@@ -507,8 +519,7 @@ _IMAGE_PROMPT_MOTION_TAIL_DAILY_KEYFRAME = (
     "身体姿态、站姿、头部朝向保持不变；"
     "禁止写具体厘米/角度数字，禁止「身体前倾幅度增大」「双手叉腰撑开」「大幅耸肩」等动作；"
     "非说话方保持静图姿势，不写主动作。\n"
-    "【站位】左右必须与本段 image_prompt/visual_brief 中"
-    "「画面左边是…，右边是…」完全一致，禁止对调。\n"
+    "站位左右/中间禁止与 image_prompt 对调。\n"
     "【时间轴】禁止自编起止秒数；写成「{角色}说话，同时…」即可，"
     "出片前系统按 TTS 句时长自动写入「X.X-Y.Y秒」。\n"
     "有台词角色必须含「说话，同时」；无台词角色可不写「说话，同时」，只写微动作。\n"
@@ -534,7 +545,8 @@ _IMAGE_PROMPT_MOTION_TAIL_DAILY_KEYFRAME = (
     "镜头固定，不推近不拉远，画面只有人物和场景，无任何文字叠加。\n"
     "反例：0.0-1.5秒灿灿说话…（禁止自编秒数）；"
     "只写两句说话但 dialogue 有三句（漏句）；"
-    "灿灿右手点动持续0.5秒（缺「说话，同时」，系统无法注入时间）。\n"
+    "灿灿右手点动持续0.5秒（缺「说话，同时」，系统无法注入时间）；"
+    "静图三人同框却只写「画面左边是昭昭，右边是灿灿」（漏中间人，出片易把边上人吃掉）。\n"
 )
 
 _IMAGE_PROMPT_MOTION_TAIL_DAILY = (

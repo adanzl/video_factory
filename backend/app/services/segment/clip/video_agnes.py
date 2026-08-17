@@ -35,6 +35,8 @@ logger = logging.getLogger(__name__)
 
 # 含 Cloudflare 源站错误 52x（如 520 unknown error）
 _RETRYABLE_HTTP = frozenset({500, 502, 503, 504, 520, 521, 522, 523, 524, 525, 526, 527})
+# Agnes 视频提交限额：allows 1 requests per 1 minute(s)
+_RATE_LIMIT_WAIT_SEC = 60.0
 _TASK_RETRY_TOKENS = ("failed", "timeout", "429", "rate limit", "too many")
 _TERMINAL_POLL_STATES = frozenset({"completed", "failed"})
 _I2V_MODE = "ti2vid"
@@ -57,6 +59,19 @@ _DEFAULT_NEGATIVE_PROMPT = (
 )
 _CAST_LR_RE = re.compile(
     r"画面左边是\s*(昭昭|灿灿|妈妈)\s*[，,；;]?\s*右边是\s*(昭昭|灿灿|妈妈)"
+)
+_CAST_LCR_RE = re.compile(
+    r"画面左边是\s*(昭昭|灿灿|妈妈)\s*[，,；;]?\s*"
+    r"中间是\s*(昭昭|灿灿|妈妈)\s*[，,；;]?\s*"
+    r"右边是\s*(昭昭|灿灿|妈妈)"
+)
+_CAST_LTR_RE = re.compile(
+    r"(?:画面)?从左到右是\s*(昭昭|灿灿|妈妈)\s*[、,，]\s*"
+    r"(昭昭|灿灿|妈妈)\s*[、,，]\s*(昭昭|灿灿|妈妈)"
+)
+_CAST_ONLY_RE = re.compile(
+    r"(?:只能是|有且仅有\d+人[：:])"
+    r"((?:昭昭|灿灿|妈妈)(?:、(?:昭昭|灿灿|妈妈))+)"
 )
 _CAST_SPEAK_RE = re.compile(r"(昭昭|灿灿|妈妈)说话")
 # 提交前去掉旧稿里的推近用语，避免 I2V 猛 zoom（勿误伤「不推近」）
@@ -203,6 +218,11 @@ def _backoff_seconds(attempt: int, *, is_timeout: bool = False) -> float:
     return min(2**attempt * 2, 60.0)
 
 
+def _rate_limit_wait_seconds(attempt: int) -> float:
+    """提交 429：按 1 RPM 等满一分钟，后续加倍，上限 3 分钟。"""
+    return min(_RATE_LIMIT_WAIT_SEC * (attempt + 1), 180.0)
+
+
 def _inject_mouth_motion(prompt: str, subtitle_cues: list[tuple[str, float]]) -> str:
     """如有对话，在 motion_prompt 前注入开口说话动作。
 
@@ -236,30 +256,89 @@ def _inject_mouth_motion(prompt: str, subtitle_cues: list[tuple[str, float]]) ->
     return mouth + prompt
 
 
-def _cast_names_from_motion(text: str) -> list[str]:
-    """从站位/说话句收集本段允许角色（可含妈妈）。"""
+def _unique_cast_names(*names: str | None) -> list[str]:
     ordered: list[str] = []
-    m = _CAST_LR_RE.search(text or "")
-    if m:
-        for name in (m.group(1), m.group(2)):
-            if name not in ordered:
-                ordered.append(name)
-    for sm in _CAST_SPEAK_RE.finditer(text or ""):
-        name = sm.group(1)
-        if name not in ordered:
+    for name in names:
+        if name and name not in ordered:
             ordered.append(name)
     return ordered
 
 
-def _cast_lock_hint(text: str) -> str | None:
-    """按本段出场角色锁定；有妈妈时允许 3 人，无妈妈时禁成年男/第三人。"""
-    names = _cast_names_from_motion(text)
+def _cast_names_from_text(text: str) -> list[str]:
+    """从构图/站位/人数锁收集角色；不扫外貌小传，避免两人镜误吞妈妈。"""
+    text = text or ""
+    ltr = _CAST_LTR_RE.search(text)
+    if ltr:
+        return _unique_cast_names(*ltr.groups())
+    lcr = _CAST_LCR_RE.search(text)
+    if lcr:
+        return _unique_cast_names(*lcr.groups())
+    only = _CAST_ONLY_RE.search(text)
+    if only:
+        locked = _unique_cast_names(*only.group(1).split("、"))
+        if len(locked) >= 3:
+            return locked
+    ordered: list[str] = []
+
+    def _add(name: str | None) -> None:
+        if name and name not in ordered:
+            ordered.append(name)
+
+    lr = _CAST_LR_RE.search(text)
+    if lr:
+        _add(lr.group(1))
+        _add(lr.group(2))
+    if "妈妈在中间" in text:
+        _add("妈妈")
+    mid = re.search(r"中间是\s*(昭昭|灿灿|妈妈)", text)
+    if mid:
+        _add(mid.group(1))
+    for sm in _CAST_SPEAK_RE.finditer(text):
+        _add(sm.group(1))
+    if only:
+        for name in only.group(1).split("、"):
+            _add(name)
+    return ordered
+
+
+def _cast_names_from_speakers(speakers: list[str] | None) -> list[str]:
+    allowed = {str(s).strip() for s in (speakers or []) if str(s).strip()}
+    return [n for n in ("昭昭", "灿灿", "妈妈") if n in allowed]
+
+
+def _cast_names_from_motion(
+    text: str,
+    image_prompt: str | None = None,
+    speakers: list[str] | None = None,
+) -> list[str]:
+    """入画名单优先（E 粘性三人）；否则运动站位，静图三人构图可补齐。"""
+    speaker_names = _cast_names_from_speakers(speakers)
+    motion_names = _cast_names_from_text(text)
+    image_names = _cast_names_from_text(image_prompt or "")
+    # E：妈妈在 speakers 里就必须锁三人，不能被「左边昭昭右边灿灿」锁成共2人
+    if "妈妈" in speaker_names and len(speaker_names) >= 2:
+        return speaker_names
+    if len(speaker_names) >= 3:
+        return speaker_names
+    if len(image_names) >= 3 and len(motion_names) < 3:
+        return image_names
+    return motion_names or image_names or speaker_names
+
+
+def _cast_lock_hint(
+    text: str,
+    image_prompt: str | None = None,
+    speakers: list[str] | None = None,
+) -> str | None:
+    """按本段入画角色锁定。E 有妈妈同框时枚举三人；无妈妈才禁第三人。"""
+    names = _cast_names_from_motion(text, image_prompt, speakers)
     if not names:
         return None
     cast = "、".join(names)
     n = len(names)
     parts = [
-        f"画面清晰主体人物只能是{cast}共{n}人，人数与静图完全一致",
+        f"画面中有且仅有{n}人：{cast}，人数与静图完全一致",
+        f"{n}人全部在场全程可见，禁止任何人消失、出画、被裁切或融合成一人",
         "禁止路人、禁止复制角色、禁止未列出的人物",
     ]
     if "妈妈" not in names:
@@ -282,7 +361,11 @@ def _negative_prompt_for_motion(text: str) -> str:
     return f"{_DEFAULT_NEGATIVE_PROMPT}, {', '.join(extra)}"
 
 
-def _stabilize_motion_prompt(prompt: str) -> str:
+def _stabilize_motion_prompt(
+    prompt: str,
+    image_prompt: str | None = None,
+    speakers: list[str] | None = None,
+) -> str:
     """补齐 I2V 稳定性与面部锁定，并压掉推近/变焦（易裁脸）。"""
     text = prompt.strip() or _DEFAULT_MOTION_PROMPT
     text = _CAMERA_ZOOM_RE.sub("", text)
@@ -303,9 +386,14 @@ def _stabilize_motion_prompt(prompt: str) -> str:
         word in text for word in ("镜头固定", "不推近", "不拉远", "不放大")
     ):
         extras.append(_CAMERA_LOCK_HINT)
-    cast_hint = _cast_lock_hint(text)
+    cast_hint = _cast_lock_hint(text, image_prompt, speakers)
     # 人数锁定前置：I2V 对前缀更敏感
-    if cast_hint and "人数与静图" not in text and "只能是" not in text:
+    if (
+        cast_hint
+        and "人数与静图" not in text
+        and "只能是" not in text
+        and "有且仅有" not in text
+    ):
         chunks = [cast_hint, text, *extras]
     else:
         chunks = [text, *extras]
@@ -467,7 +555,7 @@ class AgnesClipProvider(ClipProvider):
             job_cancel.raise_if_cancelled(self._active_job_id)
 
     def _submit_interval_for_key(self, key_label: str) -> float:
-        """Agnes 视频：free≈1 RPM，付费 enterprise≈2 RPM（可配）。"""
+        """Agnes 视频提交间隔：接口现为 1 RPM，付费/免费默认都按 60s（可配）。"""
         if key_label == "free":
             return max(0.0, self._free_submit_interval)
         return max(0.0, self._submit_interval)
@@ -543,7 +631,23 @@ class AgnesClipProvider(ClipProvider):
                     )
                     time.sleep(wait)
                     continue
-                if resp.status_code == 429 or not resp.ok:
+                if resp.status_code == 429:
+                    body = _response_body(resp)
+                    # 提交 RPM 限流：等满窗口再试；轮询 429 仍抛给 poll 循环退避
+                    if label == "submit" and attempt + 1 < retries:
+                        wait = _rate_limit_wait_seconds(attempt)
+                        logger.warning(
+                            "agnes %s %s rate limited, retry %s/%s in %ss",
+                            label,
+                            url,
+                            attempt + 1,
+                            retries,
+                            wait,
+                        )
+                        time.sleep(wait)
+                        continue
+                    raise_if_agnes_quota(status_code=resp.status_code, body=body)
+                if not resp.ok:
                     raise_if_agnes_quota(
                         status_code=resp.status_code,
                         body=_response_body(resp),
@@ -1048,12 +1152,12 @@ class AgnesClipProvider(ClipProvider):
         segment_index: int,
         motion_prompt: str | None = None,
         image_prompt: str | None = None,
+        speakers: list[str] | None = None,
         width: int | None = None,
         height: int | None = None,
         job_id: int | None = None,
     ) -> Path:
         _ = motion_preset
-        _ = image_prompt
         self._active_job_id = job_id
         t0 = time.time()
         try:
@@ -1064,7 +1168,11 @@ class AgnesClipProvider(ClipProvider):
             clip_width = width or get_settings().video_width
             clip_height = height or get_settings().video_height
             api_w, api_h = _resolve_api_dimensions(clip_width, clip_height)
-            prompt = _stabilize_motion_prompt(motion_prompt or "")
+            prompt = _stabilize_motion_prompt(
+                motion_prompt or "",
+                image_prompt=image_prompt,
+                speakers=speakers,
+            )
             num_frames = _pick_num_frames(total_duration, self._frame_rate)
             raw_path = work_dir / f"{segment_index}.agnes_raw.mp4"
 

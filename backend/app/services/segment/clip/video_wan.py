@@ -238,12 +238,14 @@ class WanClipProvider(ClipProvider):
         segment_index: int,
         motion_prompt: str | None = None,
         image_prompt: str | None = None,
+        speakers: list[str] | None = None,
         width: int | None = None,
         height: int | None = None,
         job_id: int | None = None,
     ) -> Path:
         _ = motion_preset
         _ = image_prompt
+        _ = speakers
         self._active_job_id = job_id
         t0 = time.time()
         try:
