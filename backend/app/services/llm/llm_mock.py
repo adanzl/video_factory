@@ -499,6 +499,8 @@ class MockLLMClient(LLMClient):
         *,
         story_type: str | None = None,
         avoid: list[str] | None = None,
+        framework: dict | None = None,
+        opening: list | None = None,
     ) -> dict[str, Any]:
         from app.services.daily_story.prompts import (
             DAILY_STORY_BODY_CHARS_MIN,
@@ -507,6 +509,8 @@ class MockLLMClient(LLMClient):
             stitch_daily_story_opening,
             validate_daily_story_json,
         )
+
+        _ = (framework, opening)
 
         pad = "一二三四五六七八九十一二三四五六七八"[:DAILY_STORY_LINE_CHARS_MAX]
         speakers = ("昭昭", "灿灿")

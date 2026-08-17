@@ -103,6 +103,18 @@ _ACTION_DECL_RE = re.compile(
 )
 # 末段结构句：引用原话闭环，跟前面质问像也不算复读
 _RE_STRUCT_CLOSE = re.compile(r"你自己说|那你刚才算不算|那你刚才也")
+# E 中段感官换判据：另立摸/滑/糙/干当新标准，离开当场没做完的动作。
+# 观感问题走润色，不做生成硬拦；不写单篇题面词。
+_RE_E_SENSE_DRIFT = re.compile(
+    r"滑不滑|摸下试试|我摸过|比纸还|"
+    r"油皮|泡泡印|冬天干|干干的",
+)
+# E 孩子对妈当面「你」硬质问；灿灿对弟弟的你（你看/低头）不拦。
+_RE_E_YOU_TO_MOM = re.compile(
+    r"可你|你刚才|你说(?!得)|你一个|你手|你就走|"
+    r"那你(?!看|低头|摸|别)",
+)
+_RE_KID_YOU_TO_SIB = re.compile(r"你低头|你看|你摸|你别|你听")
 
 # 话题聚类：换词复读近邻检测抓不到时，按话题打标签计数
 # (标签, 正则, 触发阈值) —— ≥阈值才报，末 2 句不计入质问类
@@ -312,6 +324,62 @@ def collect_wording_issues(
                     break
         # 开场片头与末段原话闭环是结构设计行，润色跳过，避免拆掉收束。
         if _on_design_line(i, lines, n, open_len):
+            continue
+        if (
+            (type_code or "").upper()[:1] == "E"
+            and open_len
+            and i == open_len + 1
+            and re.search(r"你刚说.{2,20}[，,]", line)
+        ):
+            out.append({
+                "lines": [i],
+                "kind": "复读立规",
+                "desc": f"正文首句复读开场立规：{line}",
+                "fix": "改成当场指物证抓现行，勿「你刚说X，Y呢」；"
+                       "引原话留给末段闭环",
+            })
+            continue
+        speaker = str(row.get("speaker") or "").strip()
+        if speaker in ("昭昭", "灿灿") and "站住" in line:
+            out.append({
+                "lines": [i],
+                "kind": "塑料",
+                "desc": f"孩子对大人喊站住：{line}",
+                "fix": "改成还没做完就走，勿像警察喊站住，对妈勿用你硬质问",
+            })
+            continue
+        if (
+            (type_code or "").upper()[:1] == "E"
+            and speaker in ("昭昭", "灿灿")
+            and i <= n - 2
+            and _RE_E_YOU_TO_MOM.search(line)
+            and not (
+                _RE_KID_YOU_TO_SIB.search(line)
+                and not _RE_E_YOU_TO_MOM.search(
+                    _RE_KID_YOU_TO_SIB.sub("", line),
+                )
+            )
+        ):
+            out.append({
+                "lines": [i],
+                "kind": "对妈硬质问",
+                "desc": f"孩子对妈用你硬质问：{line}",
+                "fix": "去掉对妈的「你」，改成刚才/手上/自己说；"
+                       "灿灿对弟弟的你保留",
+            })
+            continue
+        if (
+            (type_code or "").upper()[:1] == "E"
+            and i <= n - 2
+            and _RE_E_SENSE_DRIFT.search(line)
+        ):
+            out.append({
+                "lines": [i],
+                "kind": "感官换判据",
+                "desc": f"中段另起感官鉴定：{line}",
+                "fix": "改回当场没做完的动作，勿用摸/滑/干另立标准；"
+                       "灿灿继续假开脱，勿训弟",
+            })
             continue
         matched = [pat for pat in _WRITTEN_SIGNAL_RES if pat.search(line)]
         if not matched:
@@ -599,7 +667,21 @@ def build_wording_polish_prompts(
         "- 只改被点到的行号，勿顺手改别处，勿新增或删除行；\n"
         "- 孩子台词改成小孩会说的口语；妈妈台词只去掉书面/旁白，保持大人语气；\n"
         "- 保持原意、信息量、事实与前后句衔接；\n"
-        "- **不改收束结构、回旋镖引话、开场片头**。\n"
+        "- **不改收束结构、末段回旋镖引话、开场片头**"
+        "（正文首句不是闭环，可以改）。\n"
+    )
+    if (type_code or "").upper()[:1] == "E":
+        system += (
+            "【E类中段】禁另起摸/滑/干/印的感官鉴定支线。"
+            "被点到的行改回当场没做完的动作（没搓完、只冲了两下、"
+            "没按规矩做完），灿灿继续假开脱，勿训弟。"
+            "妈妈中段那一句短开脱可压短勿删。"
+            "孩子对妈妈禁喊「站住」（像警察），改成还没做完就走。"
+            "昭昭对妈禁「你刚才/你说/你手」硬质问，改成刚才/手上/自己说；"
+            "灿灿对弟弟的「你看/你低头」保留。"
+            "勿改开场与末两句闭环破功。\n"
+        )
+    system += (
         "对照示例：\n"
         "- 深痕 → 深印子\n"
         "- 加力 → 加点力\n"
@@ -652,6 +734,8 @@ def build_wording_polish_prompts(
             "（如「我来X/我要X」）再执行，不像真孩子；"
             "**直接删掉「我来/我要+动作」段**，只留短命令或惊呼"
             "（如「让开，袜子都被你毁了！」），动作留给画面。\n"
+            "- 开场刚立规后的正文首句：勿「你刚说X，Y呢」把规矩再念一遍；"
+            "先指当场物证抓现行，引原话留给末段闭环。\n"
             "只改确有问题的行，其余一字不动。"
         )
     issue_text = "\n".join(
@@ -999,6 +1083,7 @@ def _apply_fixes_greedily(
     theme: str,
     allowed: set[int] | None = None,
     coherence_checker: Callable[[dict, int], bool] | None = None,
+    skip_coherence: set[int] | None = None,
 ) -> tuple[dict, set[int]]:
     """逐条试落定点修：能过硬卡的留下，会破结构的那条丢掉。
 
@@ -1006,11 +1091,14 @@ def _apply_fixes_greedily(
     说谎题须留实物反证），整批落盘常被硬卡整体打回，逐条试才留得下好的。
     `allowed` 限定本次只试落这些行（第二轮只改正文可改行，防误伤开场片头
     与末段原话闭环）。返回 (落盘后的故事, 被接受的行号集合)。
+    `skip_coherence`：连续几句一条链（如 E 感官换判据）逐句过衔接
+    会被未改的邻句卡死，这些行只过硬卡。
     """
     from app.services.daily_story.prompts import validate_daily_story_json
     from app.services.daily_story.quality import attach_daily_story_quality
 
     accepted: set[int] = set()
+    skip_coh = skip_coherence or set()
     for no in fix_line_numbers(raw_fixes):
         if allowed is not None and no not in allowed:
             continue
@@ -1027,9 +1115,10 @@ def _apply_fixes_greedily(
                 exc,
             )
             continue
-        if coherence_checker is not None and not coherence_checker(
-            condition,
-            no,
+        if (
+            coherence_checker is not None
+            and no not in skip_coh
+            and not coherence_checker(condition, no)
         ):
             logger.info(
                 "[DAILY_STORY] spot fix line %d dropped (local coherence)",
@@ -1088,6 +1177,15 @@ def polish_daily_story_wording_iteratively(
     polish = getattr(client, "polish_daily_story_wording", None)
     if not callable(polish):
         return story, 0
+
+    def _sense_drift_lines(s: dict) -> set[int]:
+        return {
+            int(no)
+            for it in collect_wording_issues(s, type_code=type_code)
+            if it.get("kind") in ("感官换判据", "对妈硬质问")
+            for no in it.get("lines") or []
+        }
+
     total_accepted = 0
     # 第一轮：无论规则是否命中，都做全句语句层扫描（语序/搭配/比喻混搭）。
     raw = polish(theme, story, [], type_code=type_code, full_scan=True)
@@ -1096,6 +1194,7 @@ def polish_daily_story_wording_iteratively(
         raw,
         theme=theme,
         coherence_checker=coherence_checker,
+        skip_coherence=_sense_drift_lines(story),
     )
     total_accepted += len(accepted)
     if accepted:
@@ -1120,6 +1219,12 @@ def polish_daily_story_wording_iteratively(
             raw,
             theme=theme,
             coherence_checker=coherence_checker,
+            skip_coherence={
+                int(no)
+                for it in issues
+                if it.get("kind") in ("感官换判据", "对妈硬质问")
+                for no in it.get("lines") or []
+            },
         )
         if not accepted:
             break

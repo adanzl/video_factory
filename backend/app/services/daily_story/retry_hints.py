@@ -34,6 +34,8 @@ _VALIDATION_PRIORITY: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"总字数须≤"), "body_too_long"),
     (re.compile(r"E类正文过长"), "e_body_too_long"),
     (re.compile(r"大人例外|规矩给小孩"), "e_adult_exception"),
+    (re.compile(r"禁翻旧账|上次/那次"), "e_old_account"),
+    (re.compile(r"照抄旧正例"), "e_example_copy"),
     (re.compile(r"口头「算你说得对」|把规矩做回去"), "e_empty_soft"),
     (re.compile(r"汤汁太弱|尝菜眼"), "e_weak_taste_eye"),
     # 因果顺序优先于其他挑食软伤：先立规再抓现行
@@ -362,6 +364,18 @@ def _register_validation_hints() -> None:
             "妈妈出声之后灿灿禁止再出现「大人」，改写油还在/瓶子满/没搓开。"
         )
 
+    def e_old_account(**_kw: Any) -> str:
+        return (
+            "【E·旧账】删掉「上次/那次还说」整句，只扣当场现行"
+            "（湿手、瓶子、没搓完）；禁止另起一场旧事。"
+        )
+
+    def e_example_copy(**_kw: Any) -> str:
+        return (
+            "【E·照抄】删掉命中的旧示范原句，按节拍用本场 theme 现造；"
+            "只学分工，禁止搬示范台词。"
+        )
+
     def e_empty_soft(**_kw: Any) -> str:
         return (
             "【E·破功】只改末句：妈妈行行行之后须当场把规矩做回去"
@@ -425,6 +439,8 @@ def _register_validation_hints() -> None:
         "body_too_long": lambda frag, **_kw: _hint_body_too_long(frag),
         "e_body_too_long": e_body_too_long,
         "e_adult_exception": e_adult_exception,
+        "e_old_account": e_old_account,
+        "e_example_copy": e_example_copy,
         "e_empty_soft": e_empty_soft,
         "e_weak_taste_eye": e_weak_taste_eye,
         "e_picky_causal": e_picky_causal,

@@ -4,6 +4,7 @@ import copy
 import json
 import math
 import re
+import unicodedata
 from collections.abc import Sequence
 
 from app.services.daily_story.dialogue_text import (
@@ -2879,14 +2880,24 @@ def _coerce_opening_item(item: object, *, index: int) -> tuple[dict | None, str 
     """把开场单句规范成 {speaker,line}；无法识别则返回错误信息。"""
     if not isinstance(item, dict):
         return None, f"opening[{index}] 不是字典"
-    speaker = str(item.get("speaker") or "").strip()
+    speaker = canonical_speaker_name(str(item.get("speaker") or "").strip())
     line = str(item.get("line") or "").strip()
     if speaker and line:
         return {"speaker": speaker, "line": line}, None
-    # {"昭昭":"台词"} 简写
-    for name in ("昭昭", "灿灿", "妈妈"):
-        if name in item and isinstance(item.get(name), str):
-            text = str(item.get(name) or "").strip()
+    # {"昭昭":"台词"} 简写（含繁体键）
+    for name in DAILY_STORY_SPEAKER_NAMES:
+        raw_key = None
+        if name in item:
+            raw_key = name
+        else:
+            for k in item:
+                if canonical_speaker_name(str(k)) == name:
+                    raw_key = k
+                    break
+        if raw_key is None:
+            continue
+        if isinstance(item.get(raw_key), str):
+            text = str(item.get(raw_key) or "").strip()
             if text:
                 return {"speaker": name, "line": text}, None
     return None, f"opening[{index}] 缺少 speaker/line"
@@ -3094,10 +3105,45 @@ def opening_avoid_speaker_from_body(body: dict | None) -> str | None:
 
 
 _KNOWN_SPEAKER_TYPOS = frozenset({"speayer", "speeker", "spaker"})
+# 繁简/口语别名：只映射到三人定名，不把姐姐/弟弟当 speaker
+_SPEAKER_CHAR_FOLD = str.maketrans({"燦": "灿", "媽": "妈"})
+_SPEAKER_VALUE_ALIASES = {
+    "灿灿": "灿灿",
+    "昭昭": "昭昭",
+    "妈妈": "妈妈",
+    "妈": "妈妈",
+}
+
+
+def canonical_speaker_name(raw: str) -> str:
+    """speaker 繁简与口语别名归一。未识别则原样返回。"""
+    s = unicodedata.normalize("NFKC", str(raw or "")).strip()
+    s = s.translate(_SPEAKER_CHAR_FOLD)
+    return _SPEAKER_VALUE_ALIASES.get(s, s)
+
+
+def _patch_speaker_aliases(story: dict) -> list[str]:
+    """对白/开场 speaker 繁体与笔误归一，避免整稿重抽。"""
+    notes: list[str] = []
+    for key in ("dialogue", "discovery_opening"):
+        rows = story.get(key)
+        if not isinstance(rows, list):
+            continue
+        for i, item in enumerate(rows):
+            if not isinstance(item, dict):
+                continue
+            old = str(item.get("speaker") or "")
+            new = canonical_speaker_name(old)
+            if new != old and new in DAILY_STORY_SPEAKER_NAMES:
+                item["speaker"] = new
+                notes.append(f"speaker别名[{key}:{i}]{old}→{new}")
+    return notes
 
 
 def _correct_dialogue_speaker(dialogue: list) -> None:
     """原地修正 dialogue 列表中 speaker 字段的常见 LLM 拼写错误。"""
+    if not isinstance(dialogue, list):
+        return
     for item in dialogue:
         if not isinstance(item, dict):
             continue
@@ -3106,6 +3152,10 @@ def _correct_dialogue_speaker(dialogue: list) -> None:
                 if typo in item:
                     item["speaker"] = item.pop(typo)
                     break
+        if "speaker" in item and isinstance(item.get("speaker"), str):
+            folded = canonical_speaker_name(item["speaker"])
+            if folded in DAILY_STORY_SPEAKER_NAMES:
+                item["speaker"] = folded
 
 
 def build_daily_story_theme_prompts(
@@ -3706,6 +3756,7 @@ def try_local_patch_daily_story_body(story: dict) -> tuple[dict, list[str]]:
         return story, []
     out = _clone_story(story)
     notes: list[str] = []
+    notes.extend(_patch_speaker_aliases(out))
     notes.extend(_patch_overlong_lines(out))
     notes.extend(_patch_setting_mom_without_line(out))
     notes.extend(_patch_consecutive_speakers(out))
