@@ -7,6 +7,20 @@ import re
 from app.services.daily_story.story_types import parse_story_type_code, resolve_story_type_code
 
 RE_SOFT_LAST = re.compile(r"哼|行吧|随便|好吧|算了|认栽|说不通|行行行")
+# 孩子假帮腔把规矩推给「大人例外」：类型不变量，非单篇词表
+RE_ADULT_EXCEPTION = re.compile(
+    r"大人.{0,16}(?:小孩|孩子|跟我们|跟咱们|不用|例外|不脏)|"
+    r"(?:小孩|孩子).{0,16}大人|"
+    r"说给(?:小孩|孩子)|"
+    r"(?:规矩|规则).{0,8}(?:小孩|孩子)|"
+    r"跟(?:我们|咱们).{0,8}不一样|"
+    r"(?:小孩|孩子).{0,8}不一样",
+)
+# 破功套话但没有当场把规矩做回去
+RE_EMPTY_MOM_SOFT = re.compile(
+    r"^[…\s]*(?:行行行|行了行了|好吧|算了|唉)"
+    r"[，,\s]*(?:算你(?:说得|说的)对)?[。！.!?]*$",
+)
 
 RE_A_WHERE_DIFF = re.compile(r"哪里不一样|都是听|大人也要听小孩")
 RE_A_CITE_CLOSE = re.compile(
@@ -14,7 +28,7 @@ RE_A_CITE_CLOSE = re.compile(
 )
 RE_MOM_RULE = re.compile(
     r"应该|必须|规矩|听我的|我说|不行|不能|不许|不准|别吃|得睡|别玩|"
-    r"得换|要换|得脱|要脱|得吃|要吃|得睡|要睡|"
+    r"得换|要换|得脱|要脱|得吃|要吃|得睡|要睡|才算|"
     r"不(?:能|许|准|让|可以).{0,4}(?:进|玩|吃|睡|挑|看|换|脱)",
 )
 RE_KID_LOOP = re.compile(
@@ -83,7 +97,8 @@ RE_LIE_SIDE_PLOT = re.compile(
 RE_GARBAGE_FILLER = re.compile(
     r"[呵哈]{2,}|(?:呢|吗|啊|呀|啦|吧|嘛){2,}$|对不对呀真的|"
     r"了呢[了呀]|了呀[呢]|嘛了[呀]|了呢呀|"
-    r"(?:了呢|了呀|嘛了|呢吧|呀呢|呢嘛)$",
+    r"(?:了呢|了呀|嘛了|呢吧|呀呢|呢嘛)$|"
+    r"[^\s，。！？!?,]{4,}你听着[。！?]?$",
 )
 RE_WEAK_TASTE_EYE = re.compile(r"汤汁|舀汤|舔勺|喝了一口汤|偷尝了汤|尝了汤")
 RE_STRONG_TASTE_EYE = re.compile(
@@ -117,6 +132,17 @@ def append_e_body_errors(story: dict, errors: list[str]) -> None:
     if n < 8:
         errors.append("E类正文过短，不足以完成妈妈破功收束（至少约 8 句对白）")
         return
+
+    # 整篇交替（含妈妈）。钓鱼开场末句是妈妈立规时，正文第 1 句常被写成
+    # 妈妈再开脱，拼缝只拦姐弟连说，这里把妈妈连说一并拦住。
+    for i in range(1, n):
+        if speakers[i] and speakers[i] == speakers[i - 1]:
+            errors.append(
+                f"E类对白须交替发言[{i}]：{speakers[i]}连说两句"
+                "（含正文第1句与开场末句衔接处）；"
+                "开场末句妈妈立规后下一句须孩子抓现行，禁止妈妈连说开脱",
+            )
+            return
 
     topic_anchor = (
         str(story.get("conflict_core") or "")
@@ -378,6 +404,27 @@ def append_e_body_errors(story: dict, errors: list[str]) -> None:
         )
         return
 
+    adult_hits = [
+        i
+        for i, (sp, ln) in enumerate(zip(speakers, lines))
+        if sp == "灿灿" and ("大人" in ln or RE_ADULT_EXCEPTION.search(ln))
+    ]
+    if len(adult_hits) > 2:
+        errors.append(
+            "E类灿灿「大人例外/规矩给小孩」全篇最多 2 次，须换新开脱",
+        )
+        return
+    mom_idx = [i for i, sp in enumerate(speakers) if sp == "妈妈"]
+    if len(mom_idx) >= 3:
+        mid_mom = mom_idx[-2]
+        before = [i for i in adult_hits if i < mid_mom]
+        after = [i for i in adult_hits if i > mid_mom]
+        if before and after:
+            errors.append(
+                "E类中段妈妈出声后禁再复读大人例外，须换新开脱",
+            )
+            return
+
     last = lines[-1]
     last_sp = speakers[-1] if speakers else ""
     if last_sp != "妈妈":
@@ -390,6 +437,12 @@ def append_e_body_errors(story: dict, errors: list[str]) -> None:
     ):
         errors.append(
             "E类末句妈妈须破功（唉/行了/好吧/随便/说不通等）",
+        )
+        return
+
+    if RE_EMPTY_MOM_SOFT.search(last.strip()):
+        errors.append(
+            "E类末句破功须当场把规矩做回去，禁只口头「算你说得对」",
         )
         return
 

@@ -528,7 +528,7 @@ def _daily_story_length_user_revise_patch_for_type(type_code: str | None) -> str
 
 _SPEAKER_BY_TYPE = {
     "D": "昭昭、灿灿（本场禁止妈妈出场）",
-    "E": "昭昭、灿灿、妈妈（本场妈妈为主戏角色）",
+    "E": "昭昭、灿灿、妈妈（立规+中段1句短反应+末句破功）",
 }
 
 
@@ -566,8 +566,11 @@ _DAILY_STORY_SYSTEM_SHARED = """\
 - 关系：亲姐弟，住在一起；主戏是姐弟斗嘴/较真/互相带偏，不是被妈妈教育。
 
 【妈妈戏份（硬约束）】
-- A/C/D 默认可不写妈妈；主戏与破功优先纯姐弟完成；**E 类妈妈为主戏**。
-- 若出场：A/C/D 建议全程 ≤2 句；**E 类妈妈宜多句**（立论、否认、改口、破功）。
+- A/C/D 默认可不写妈妈；主戏与破功优先纯姐弟完成。
+- 若出场：A/C/D 建议全程 ≤2 句。
+- **E 类**：妈妈三拍=开场立规 + 中段恰好 1 句短反应 + 末句破功
+  （须当场把规矩做回去，禁只「算你说得对」）；
+  假开脱由灿灿扛，禁妈妈只首尾出声。
 - 禁止明确判赢/判平/另开赛制（如「算你赢」「一人一半」「谁先放好谁先选」）。
 - 日常口气可以（叮嘱、谁也别乱动、别吵了）：但不应用一句掐灭尚未落地的破功。
 - 破功/软收：A/B/C/D 优先姐弟对白；**E 类末句妈妈破功收场**。
@@ -639,7 +642,7 @@ _DAILY_STORY_SYSTEM_SHARED = """\
 
 
 # 类型化共享段：锁定类型时按需裁剪，不再把五类交叉规则全量灌给单一类型。
-# 妈妈的角色定义与戏份规则随类型切换（D 禁妈妈、E 妈妈主戏、A/B/C 可少出场）。
+# 妈妈的角色定义与戏份规则随类型切换（D 禁妈妈、E 立规+破功、A/B/C 可少出场）。
 _SHARED_GENERIC = """\
 【角色设定】
 - 昭昭：弟弟，男孩，7岁。好奇心强，喜欢追问，擅长用现实经验挑战抽象规则，经常把简单的事越问越复杂。天真且固执。
@@ -729,7 +732,9 @@ _MOM_BLOCK_D = """\
 
 _MOM_BLOCK_E = """\
 【妈妈戏份（E类硬约束）】
-- 妈妈：本场主戏角色，台词宜多；妈妈立规矩/讲理，孩子追问反驳，末句妈妈破功。
+- 妈妈三拍：开场立规 + 中段恰好 1 句短反应（心虚/短开脱）+ 末句破功
+  （须当场把规矩做回去，禁只「算你说得对」）；
+  假开脱由灿灿扛。禁止只首尾出声、禁止中段连辩。
 - 禁止明确判赢/判平/另开赛制（如「算你赢」「一人一半」「谁先放好谁先选」）。
 - 妈妈情绪须有层次：从「解释/管教」→「心虚/语塞」→「认输/投降」。
 """
@@ -782,7 +787,7 @@ def _daily_story_user_template(
     mom_role_note = (
         "5. 妈妈严禁出场（D类硬约束）；主戏仅昭昭/灿灿，规矩由灿灿立。"
         if type_code and type_code.upper() == "D"
-        else "5. E类妈妈为主戏，台词宜多、末句妈妈破功；禁空说教连问。"
+        else "5. E类妈妈三拍：开场立规+中段恰好1句短反应+末句破功并当场做回去；假开脱由灿灿扛；大人例外最多2次。"
         if type_code and type_code.upper() == "E"
         else "5. 妈妈默认可不写；若出场宜少；禁止「算你赢/一人一半」类判赢判平。"
     )
@@ -1284,11 +1289,28 @@ def _daily_story_anchor_block(
         for j, d in enumerate(opening_lines):
             lines.append(f"第{j + 1}句 {d.get('speaker')}：{d.get('line')}")
         last_op = str(opening_lines[-1].get("speaker") or "").strip()
-        alt = "灿灿" if last_op == "昭昭" else "昭昭" if last_op == "灿灿" else ""
+        first_op = str(opening_lines[0].get("speaker") or "").strip()
+        if last_op == "昭昭":
+            alt = "灿灿"
+        elif last_op == "灿灿":
+            alt = "昭昭"
+        elif last_op == "妈妈":
+            # E 钓鱼开场末句常是妈妈立规；旧逻辑只在姐弟之间算对立方，
+            # alt 变空，正文第 3 句换人约束整段不注入，模型就会让妈妈连说开脱。
+            alt = first_op if first_op in ("昭昭", "灿灿") else "昭昭"
+        else:
+            alt = ""
         if alt:
+            extra = ""
+            if last_op == "妈妈":
+                extra = (
+                    "禁止妈妈在第 3 句接着开脱或改口；"
+                    "第 3 句须孩子引用开场规矩抓现行。"
+                )
             lines.append(
                 f"正文第 3 句（全场正文第 1 句）必须由 **{alt}** 开讲"
                 f"（与开场第 2 句的{last_op}换人），承接同一冲突/实物/动作，"
+                f"{extra}"
                 "禁止复述第 1–2 句已说的内容；此后全篇严格交替，"
                 "任意相邻两句 speaker 必须不同，禁止同人连说（连一句也不行）。"
             )
@@ -1315,6 +1337,12 @@ def build_daily_story_framework_prompts(
         append = STORY_TYPE_LINES[type_code.upper()].theme_user_append.strip()
         if append:
             user = f"{user}\n{append}"
+    if type_code and type_code.upper() == "E":
+        user = (
+            f"{user}\n"
+            "【E 类画面】setting 必须写出妈妈在镜头里（站哪、手上/身上现行），"
+            "禁只写姐弟现场、妈妈只在对白里被提到。"
+        )
     if type_code and type_code.upper() == "B":
         user = (
             f"{user}\n"
@@ -2209,7 +2237,8 @@ def _append_dialogue_rhythm_errors(story: dict, errors: list[str]) -> None:
 def _append_mom_line_errors(story: dict, errors: list[str]) -> None:
     """校验妈妈台词：句数上限、禁止裁判式收场。
 
-    E 类妈妈为主戏，不设句数上限；其它类型主戏在姐弟，≤3。
+    E 类不设妈妈句数硬上限（立规+中段1句+破功靠提示词）；
+    其它类型主戏在姐弟，≤3。
     """
     from app.services.daily_story.story_types import resolve_story_type_code
 
@@ -3004,8 +3033,10 @@ def stitch_daily_story_opening(
             dropped += 1
             continue
         break
-    # 接缝同人：孩子连说直接丢；妈妈连说仅当近重复（复读立规）才丢
+    # 接缝同人：孩子连说直接丢；妈妈连说默认仅近重复（复读立规）才丢。
+    # E 开场末句常是妈妈立规，正文必须孩子抓现行——妈妈连说开脱一律丢掉。
     speaker_drops = 0
+    e_seam = resolve_story_type_code(out) == "E"
     while body and opening_norm and speaker_drops < 2:
         first = body[0] if isinstance(body[0], dict) else None
         first_sp = str((first or {}).get("speaker") or "").strip()
@@ -3017,9 +3048,9 @@ def stitch_daily_story_opening(
             body.pop(0)
             speaker_drops += 1
             continue
-        if (
-            first_sp == "妈妈"
-            and _line_bigram_overlap(opening_norm[-1]["line"], first_ln) >= 0.45
+        if first_sp == "妈妈" and (
+            e_seam
+            or _line_bigram_overlap(opening_norm[-1]["line"], first_ln) >= 0.45
         ):
             body.pop(0)
             speaker_drops += 1

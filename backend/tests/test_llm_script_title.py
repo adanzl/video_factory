@@ -1280,6 +1280,39 @@ def test_daily_story_prompts_a_type_route():
     _ts, user_t = build_daily_story_theme_prompts(3, type_code="A")
     assert "只出 A 类主题" in user_t
 
+
+def test_body_anchor_requires_kid_after_mom_opening():
+    """开场末句是妈妈时，正文第 3 句须点名孩子，禁止妈妈连说。"""
+    from app.services.daily_story.prompts import _daily_story_anchor_block
+
+    block = _daily_story_anchor_block(
+        framework={
+            "scene_title": "洗手要搓泡泡",
+            "setting": "厨房水槽边",
+            "conflict_core": "洗手要不要搓泡泡",
+        },
+        opening=[
+            {
+                "speaker": "昭昭",
+                "line": "妈妈，洗手是不是要搓出泡泡才算干净呀？",
+            },
+            {"speaker": "妈妈", "line": "对呀，搓泡泡才能冲掉脏东西。"},
+        ],
+    )
+    assert "必须由 **昭昭** 开讲" in block
+    assert "禁止妈妈在第 3 句接着开脱" in block
+    assert "与开场第 2 句的妈妈换人" in block
+
+    sib = _daily_story_anchor_block(
+        opening=[
+            {"speaker": "昭昭", "line": "姐姐这块大"},
+            {"speaker": "灿灿", "line": "我切你选"},
+        ],
+    )
+    assert "必须由 **昭昭** 开讲" in sib
+    assert "禁止妈妈在第 3 句" not in sib
+
+
 def test_validate_rejects_brush_duration_inconsistency():
     from app.services.daily_story.prompts import validate_daily_story_json
 
@@ -2180,6 +2213,7 @@ def test_validate_e_lie_rejects_batch3_garbage():
         "dialogue": [
             {"speaker": "昭昭", "line": "妈，你电话里跟奶奶说吃撑了是吧？"},
             {"speaker": "妈妈", "line": "我这不是敷衍，是让奶奶放心。"},
+            {"speaker": "灿灿", "line": "那你到底吃了没呀？"},
             {"speaker": "妈妈", "line": "对人要诚实，不能说谎，记住了吗？"},
             {"speaker": "灿灿", "line": "奶奶问你吃饭没，你说吃了好多好吃的呢。"},
             {"speaker": "昭昭", "line": "那你刚才那一口算不算啊"},
@@ -2315,6 +2349,167 @@ def test_validate_e_picky_accepts_rule_before_catch():
         setting=story["setting"],
     )
     assert open_errs == []
+
+
+def _e_compact_ok_story() -> dict:
+    return {
+        "_story_type": "E",
+        "_theme": "不许说谎妈妈刚才也敷衍奶奶",
+        "scene_title": "不许说谎",
+        "setting": "客厅，妈妈刚打完电话",
+        "conflict_core": "妈妈说不能说谎，自己却敷衍奶奶",
+        "punchline_explain": "E类妈妈破功，不能说谎被闭环",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "妈，你电话里跟奶奶说吃撑了是吧？"},
+            {"speaker": "妈妈", "line": "对人要诚实，不能说谎，记住了。"},
+            {
+                "speaker": "灿灿",
+                "line": "你说吃了三碗，那锅里为什么一粒米都没有？",
+            },
+            {"speaker": "妈妈", "line": "那是善意的，不让奶奶担心。"},
+            {"speaker": "昭昭", "line": "我肚子还咕咕叫，碗都是干的呢。"},
+            {
+                "speaker": "灿灿",
+                "line": "那我跟奶奶说我考了一百分，也算善意的吧？",
+            },
+            {"speaker": "妈妈", "line": "那可不行，你那是骗人。"},
+            {"speaker": "昭昭", "line": "你自己说不能说谎，那你刚才算不算？"},
+            {"speaker": "妈妈", "line": "……行行行，我错了，以后不敷衍了。"},
+        ],
+    }
+
+
+def test_validate_e_rejects_mom_consecutive_after_opening():
+    from app.services.daily_story.story_types.e.validate import append_e_body_errors
+
+    story = _e_compact_ok_story()
+    story["dialogue"].insert(
+        2,
+        {"speaker": "妈妈", "line": "我随口说说，不用那么较真好不好。"},
+    )
+    errs: list[str] = []
+    append_e_body_errors(story, errs)
+    assert any("交替发言" in e and "连说" in e for e in errs)
+
+
+def test_validate_e_rejects_listen_filler():
+    from app.services.daily_story.story_types.e.validate import append_e_body_errors
+
+    story = _e_compact_ok_story()
+    story["dialogue"][2]["line"] = "锅里一粒米都没有你听着。"
+    errs: list[str] = []
+    append_e_body_errors(story, errs)
+    assert any("语气垫字" in e for e in errs)
+
+
+def test_validate_e_accepts_natural_loop_close():
+    from app.services.daily_story.story_types.e.validate import append_e_body_errors
+
+    story = _e_compact_ok_story()
+    story["dialogue"][-2]["line"] = "你自己说的不算数啦？"
+    errs: list[str] = []
+    append_e_body_errors(story, errs)
+    assert not any("无出处" in e or "闭环须引用" in e for e in errs)
+
+
+def test_validate_e_rejects_adult_exception_over_twice():
+    from app.services.daily_story.story_types.e.validate import append_e_body_errors
+
+    story = {
+        "_story_type": "E",
+        "_theme": "说洗手要搓泡泡妈妈冲两下就走",
+        "scene_title": "洗手",
+        "setting": "厨房水槽边，妈妈湿着手",
+        "conflict_core": "妈妈说搓泡泡自己冲两下",
+        "punchline_explain": "E类妈妈破功",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "妈妈，饭前洗手是不是得搓出泡泡才算干净？"},
+            {"speaker": "妈妈", "line": "对呀，得搓出泡泡才算洗干净。"},
+            {"speaker": "昭昭", "line": "你手还滴水，没搓泡泡吧？"},
+            {"speaker": "灿灿", "line": "大人手不脏，冲两下就算洗过。"},
+            {"speaker": "昭昭", "line": "洗手液瓶子还是满的。"},
+            {"speaker": "灿灿", "line": "大人手皮厚，细菌钻不进去。"},
+            {"speaker": "妈妈", "line": "急着做饭，冲两下就行。"},
+            {"speaker": "昭昭", "line": "你刚拿过油瓶，手上还亮。"},
+            {"speaker": "灿灿", "line": "大人免疫力强，用不着搓。"},
+            {"speaker": "昭昭", "line": "你自己说搓泡泡才算干净。"},
+            {"speaker": "妈妈", "line": "……行行行，我再搓一遍。"},
+        ],
+    }
+    errs: list[str] = []
+    append_e_body_errors(story, errs)
+    assert any("大人例外" in e or "大人" in e for e in errs)
+
+
+def test_validate_e_rejects_empty_mom_soft_close():
+    from app.services.daily_story.story_types.e.validate import append_e_body_errors
+
+    story = _e_compact_ok_story()
+    story["dialogue"][-1]["line"] = "……行行行，算你说得对"
+    errs: list[str] = []
+    append_e_body_errors(story, errs)
+    assert any("把规矩做回去" in e or "算你说得对" in e for e in errs)
+
+
+def test_patch_e_keeps_mom_soft_action_close():
+    from app.services.daily_story.story_types.e.patch import patch_e_closing_mom_soft
+
+    story = {
+        "_story_type": "E",
+        "punchline_explain": "E类妈妈破功",
+        "dialogue": [
+            {"speaker": "妈妈", "line": "搓出泡泡才算干净。"},
+            {"speaker": "昭昭", "line": "你自己说的规矩，自己先破了！"},
+            {"speaker": "妈妈", "line": "……行行行，我再搓一遍。"},
+        ],
+    }
+    notes = patch_e_closing_mom_soft(story)
+    assert story["dialogue"][-1]["line"] == "……行行行，我再搓一遍。"
+    assert not any("补妈妈破功词" in n or n == "E末句改妈妈破功" for n in notes)
+
+
+def test_patch_e_moves_loop_off_can_can():
+    from app.services.daily_story.story_types.e.patch import patch_e_loop_speaker
+
+    story = {
+        "_story_type": "E",
+        "punchline_explain": "E类妈妈破功",
+        "dialogue": [
+            {"speaker": "妈妈", "line": "搓出泡泡才算干净。"},
+            {"speaker": "昭昭", "line": "你手还滴水呢。"},
+            {"speaker": "灿灿", "line": "冲两下就算洗过了。"},
+            {"speaker": "昭昭", "line": "洗手液瓶子还是满的。"},
+            {"speaker": "灿灿", "line": "水一冲油就没了。"},
+            {"speaker": "昭昭", "line": "可你就是没搓泡泡才拉肚子的，忘了？"},
+            {"speaker": "灿灿", "line": "你自己说的规矩，自己先破了。"},
+            {"speaker": "妈妈", "line": "……行行行，我再搓一遍。"},
+        ],
+    }
+    notes = patch_e_loop_speaker(story)
+    assert any("闭环换戳穿方" in n for n in notes)
+    assert story["dialogue"][-2]["speaker"] == "昭昭"
+    assert story["dialogue"][-2]["line"] == "你自己说的规矩，自己先破了。"
+    assert story["dialogue"][-3]["speaker"] == "灿灿"
+
+
+def test_stitch_e_drops_mom_consecutive_at_seam():
+    body = {
+        "_story_type": "E",
+        "punchline_explain": "E类妈妈破功，洗手搓泡泡被闭环",
+        "dialogue": [
+            {"speaker": "妈妈", "line": "我冲两下就干净，不用搓泡泡好不好。"},
+            {"speaker": "昭昭", "line": "可你刚说搓泡泡才干净了呀。"},
+        ],
+    }
+    opening = [
+        {"speaker": "昭昭", "line": "妈妈，洗手是不是要搓出泡泡才算干净呀？"},
+        {"speaker": "妈妈", "line": "对呀，搓泡泡才能冲掉脏东西。"},
+    ]
+    story = stitch_daily_story_opening(body, opening)
+    speakers = [d["speaker"] for d in story["dialogue"]]
+    assert speakers[:3] == ["昭昭", "妈妈", "昭昭"]
+    assert "不用搓泡泡" not in story["dialogue"][2]["line"]
+
 
 def _review_story() -> dict:
     return {

@@ -52,12 +52,11 @@ def _speakers(dialogue: list) -> list[str]:
 
 
 def _kid_roles(dialogue: list) -> tuple[str, str, dict[str, int]]:
-    """按假开脱帮腔命中数判 (戳穿方, 帮腔方, 命中表)。
+    """E 写死：昭昭=戳穿方，灿灿=帮腔方。假开脱命中仅作记录。
 
-    帮腔命中相同则看谁追问多（追问多者为戳穿方）；默认 (昭昭, 灿灿)。
+    闭环是戳穿槽，禁止按命中数把闭环判给灿灿。
     """
     fake = {"昭昭": 0, "灿灿": 0}
-    ask = {"昭昭": 0, "灿灿": 0}
     for d in dialogue:
         if not isinstance(d, dict):
             continue
@@ -67,21 +66,7 @@ def _kid_roles(dialogue: list) -> tuple[str, str, dict[str, int]]:
         ln = str(d.get("line") or "")
         if RE_KID_FAKE_OPEN.search(ln):
             fake[sp] += 1
-        if RE_KID_ASK.search(ln):
-            ask[sp] += 1
-    if fake["昭昭"] == fake["灿灿"]:
-        prober = "昭昭" if ask["昭昭"] >= ask["灿灿"] else "灿灿"
-    else:
-        prober = "昭昭" if fake["昭昭"] < fake["灿灿"] else "灿灿"
-    return prober, ("灿灿" if prober == "昭昭" else "昭昭"), fake
-
-
-def _adjacent_speaker(dialogue: list, i: int, name: str) -> bool:
-    for j in (i - 1, i + 1):
-        if 0 <= j < len(dialogue) and isinstance(dialogue[j], dict):
-            if str(dialogue[j].get("speaker") or "").strip() == name:
-                return True
-    return False
+    return "昭昭", "灿灿", fake
 
 
 def _next_kid_speaker(dialogue: list, before_i: int) -> str:
@@ -117,7 +102,7 @@ def patch_e_strip_a_close(story: dict) -> list[str]:
             continue
         if i == len(dialogue) - 1:
             d["speaker"] = "妈妈"
-            new_line = "……行行行，算你说得对"
+            new_line = "……行行行，我这就按刚才说的做"
         elif i == len(dialogue) - 2:
             d["speaker"] = prober
             new_line = "你自己说的，你现在也这样"
@@ -149,7 +134,8 @@ def patch_e_ensure_kid_ask(story: dict) -> list[str]:
     if RE_KID_ASK.search(text):
         return notes
     new_line = "那我也可以照你这样？"
-    for d in mid:
+    # 勿覆盖正文前两句（抓现行/首轮帮腔）
+    for d in mid[1:]:
         if not isinstance(d, dict):
             continue
         if str(d.get("speaker") or "") not in ("昭昭", "灿灿"):
@@ -222,28 +208,21 @@ def patch_e_ensure_loop(story: dict) -> list[str]:
     d = dialogue[-2]
     if not isinstance(d, dict):
         return notes
-    prober, _, _ = _kid_roles(dialogue)
-    d["speaker"] = prober
+    d["speaker"] = "昭昭"
     d["line"] = "自己说的规矩，自己先破了"
     notes.append("E补追问闭环")
     return notes
 
 
 def patch_e_loop_speaker(story: dict) -> list[str]:
-    """闭环句主体修正：帮腔孩子说闭环属角色断裂，只改 speaker 给戳穿方。
-
-    仅在帮腔线清晰（假开脱命中≥2 且比另一孩子多≥2）且不造成
-    相邻同人时动手；单句局部修，不动台词内容。
-    """
+    """闭环句给昭昭；灿灿假帮腔勿抢闭环。相邻同人则改上一句孩子。"""
     notes: list[str] = []
     if not _is_e(story):
         return notes
     dialogue = story.get("dialogue")
     if not isinstance(dialogue, list) or len(dialogue) < 6:
         return notes
-    prober, defender, fake = _kid_roles(dialogue)
-    if fake[defender] < 2 or fake[defender] - fake[prober] < 2:
-        return notes
+    prober, defender, _ = _kid_roles(dialogue)
     for i in range(len(dialogue) - 1, max(len(dialogue) - 5, -1), -1):
         d = dialogue[i]
         if not isinstance(d, dict):
@@ -255,16 +234,18 @@ def patch_e_loop_speaker(story: dict) -> list[str]:
         # 帮腔句本身（大人/不一样）不算闭环错位
         if RE_KID_FAKE_OPEN.search(ln):
             continue
-        if _adjacent_speaker(dialogue, i, prober):
-            break
         d["speaker"] = prober
+        prev = dialogue[i - 1] if i > 0 and isinstance(dialogue[i - 1], dict) else None
+        if prev is not None and str(prev.get("speaker") or "").strip() == prober:
+            prev["speaker"] = defender
+            notes.append(f"E闭环前换帮腔方[{i - 1}]")
         notes.append(f"E闭环换戳穿方[{i}]")
         break
     return notes
 
 
 def patch_e_closing_mom_soft(story: dict) -> list[str]:
-    """末句须妈妈破功。"""
+    """末句须妈妈破功。已有破功词则只改 speaker，不覆盖动作收场。"""
     notes: list[str] = []
     if not _is_e(story):
         return notes
@@ -274,7 +255,6 @@ def patch_e_closing_mom_soft(story: dict) -> list[str]:
     last = dialogue[-1]
     if not isinstance(last, dict):
         return notes
-    soft = "……行行行，算你说得对"
     loop_line = "自己说的规矩，自己先破了"
     last_sp = str(last.get("speaker") or "").strip()
     last_ln = str(last.get("line") or "")
@@ -282,43 +262,25 @@ def patch_e_closing_mom_soft(story: dict) -> list[str]:
     prev_sp = str(prev.get("speaker") or "").strip()
     prev_ln = str(prev.get("line") or "")
 
-    # 末两句同人（孩子连说）时，倒数第二改闭环，末句改妈妈破功
-    if (
-        last_sp == prev_sp
-        and last_sp in ("昭昭", "灿灿")
-        and dialogue_char_count(soft) <= DAILY_STORY_LINE_CHARS_MAX
-    ):
+    # 已有破功词：只保证 speaker 是妈妈，保留「再搓一遍」等动作
+    if RE_MOM_SOFT.search(last_ln):
+        if last_sp != "妈妈":
+            last["speaker"] = "妈妈"
+            notes.append("E末句改妈妈破功")
+    elif last_sp == prev_sp and last_sp in ("昭昭", "灿灿"):
+        # 末两句孩子连说：只补闭环，末句动作收场交给重抽，勿造空口认输
         if not RE_LOOP.search(prev_ln):
             prev["line"] = loop_line
             notes.append("E末前补闭环")
-        last["speaker"] = "妈妈"
-        last["line"] = soft
-        notes.append("E末句改妈妈破功")
-    else:
-        soft_norm = soft.strip().rstrip("。！？")
-        last_norm = last_ln.strip().rstrip("。！？")
-        if last_sp == "妈妈" and RE_MOM_SOFT.search(last_ln) and last_norm == soft_norm:
-            pass
-        elif not RE_LOOP.search(prev_ln) and last_sp == "妈妈":
-            if dialogue_char_count(soft) <= DAILY_STORY_LINE_CHARS_MAX:
-                last["line"] = soft
-                notes.append("E末句补妈妈破功词")
-        elif not RE_LOOP.search(prev_ln):
-            if dialogue_char_count(soft) <= DAILY_STORY_LINE_CHARS_MAX:
-                if last_sp != "妈妈":
-                    if isinstance(prev, dict) and prev_sp == "妈妈":
-                        dialogue[-2], dialogue[-1] = dialogue[-1], dialogue[-2]
-                        dialogue[-1]["speaker"] = "妈妈"
-                        dialogue[-1]["line"] = soft
-                        notes.append("E末句对调妈妈破功")
-                    else:
-                        last["speaker"] = "妈妈"
-                        last["line"] = soft
-                        notes.append("E末句改妈妈破功")
-        elif dialogue_char_count(soft) <= DAILY_STORY_LINE_CHARS_MAX:
-            last["speaker"] = "妈妈"
-            last["line"] = soft
-            notes.append("E末句改妈妈破功")
+    elif (
+        last_sp != "妈妈"
+        and isinstance(prev, dict)
+        and prev_sp == "妈妈"
+        and RE_MOM_SOFT.search(prev_ln)
+        and not RE_LOOP.search(last_ln)
+    ):
+        dialogue[-2], dialogue[-1] = dialogue[-1], dialogue[-2]
+        notes.append("E末句对调妈妈破功")
 
     # 兜底：正文里末两句「孩子」若同人，改倒数第二孩子为另一人
     # （硬卡看的是孩子序列末两人，不是对白末两句）
@@ -334,7 +296,16 @@ def patch_e_closing_mom_soft(story: dict) -> list[str]:
         sa = str(a.get("speaker") or "").strip()
         sb = str(b.get("speaker") or "").strip()
         if sa == sb:
-            a["speaker"] = "灿灿" if sa == "昭昭" else "昭昭"
+            # 闭环句留给昭昭，只改另一句孩子
+            loop_on_b = RE_LOOP.search(str(b.get("line") or "") or "")
+            if loop_on_b and sb == "昭昭":
+                a["speaker"] = "灿灿"
+            elif loop_on_b and sb == "灿灿":
+                b["speaker"] = "昭昭"
+                if sa == "昭昭":
+                    a["speaker"] = "灿灿"
+            else:
+                a["speaker"] = "灿灿" if sa == "昭昭" else "昭昭"
             notes.append(f"E末两孩换人[{i_a}]")
     return notes
 
@@ -450,7 +421,7 @@ _RE_PATCH_GARBAGE = re.compile(
 _RE_FILLER_TAIL = re.compile(
     r"(?:[呵哈]{2,}|(?:呢|吗|啊|呀|啦|吧|嘛){2,}|"
     r"了呢[了呀]|了呀[呢]|嘛了[呀]|了呢呀|"
-    r"了呢|了呀|嘛了|呢吧|呀呢|呢嘛)$",
+    r"了呢|了呀|嘛了|呢吧|呀呢|呢嘛|你听着)$",
 )
 _RE_FILLER_INLINE = re.compile(
     r"了呢了呀|了呢呀|嘛了呀|了呢了|了呀呢",

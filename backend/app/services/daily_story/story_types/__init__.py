@@ -343,7 +343,10 @@ def format_block_for_code(code: str) -> str:
             f'    {{"speaker": "昭昭", "line": "台词（{line.line_format_hint}）"}},\n'
             f'    {{"speaker": "灿灿", "line": "台词（{line.line_format_hint}）"}}\n'
         )
-        footer = "本场妈妈为主戏角色，台词宜多；主回合是妈妈与孩子的交锋。"
+        footer = (
+            "妈妈三拍：开场立规+中段恰好1句短反应+末句破功并当场做回去；"
+            "假开脱由灿灿扛，昭昭只戳穿追问；大人例外最多2次。"
+        )
     else:
         rows = (
             f'    {{"speaker": "昭昭", "line": "台词（{line.line_format_hint}）"}},\n'

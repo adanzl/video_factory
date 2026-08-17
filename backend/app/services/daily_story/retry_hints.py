@@ -28,10 +28,13 @@ def _parse_body_char_excess(errors: str) -> int | None:
 _VALIDATION_PRIORITY: tuple[tuple[re.Pattern[str], str], ...] = (
     # 跑题最优先：主题都写错时，其余项修了也白修
     (re.compile(r"正文跑题"), "theme_drift"),
+    (re.compile(r"无意义语气垫字"), "e_garbage_filler"),
     (re.compile(r"连说"), "consecutive"),
     (re.compile(rf"超过.*{DAILY_STORY_LINE_CHARS_MAX}字"), "line_too_long"),
     (re.compile(r"总字数须≤"), "body_too_long"),
     (re.compile(r"E类正文过长"), "e_body_too_long"),
+    (re.compile(r"大人例外|规矩给小孩"), "e_adult_exception"),
+    (re.compile(r"口头「算你说得对」|把规矩做回去"), "e_empty_soft"),
     (re.compile(r"汤汁太弱|尝菜眼"), "e_weak_taste_eye"),
     # 因果顺序优先于其他挑食软伤：先立规再抓现行
     (
@@ -191,6 +194,12 @@ def _register_validation_hints() -> None:
                 "② 把连说的前一句改写成昭昭视角的台词（保留原句细节词）。"
                 "只许加/改这 1 句；破规句、回旋镖、末句「哼/算了」原样保留。"
             )
+        if type_code == "E":
+            return (
+                "【E·连说】开场末句妈妈立完规矩后，下一句必须孩子抓现行"
+                "（引用刚立的规矩 + 可拍细节）；禁止妈妈再连说自我开脱"
+                "（如「冲两下就干净，不用搓了」）。只改接缝这 1 句。"
+            )
         return (
             "【连说】把连说拆开：交替 speaker 或合并为一人一句；"
             f"保持约 {chars} 字，勿借机大删末四拍。"
@@ -346,6 +355,20 @@ def _register_validation_hints() -> None:
         )
         return f"{base} {soft}" if soft else base
 
+    def e_adult_exception(**_kw: Any) -> str:
+        return (
+            "【E·大人例外】只改灿灿帮腔：全文最多 2 句带「大人」；"
+            "这两句须放在中段妈妈出声之前；"
+            "妈妈出声之后灿灿禁止再出现「大人」，改写油还在/瓶子满/没搓开。"
+        )
+
+    def e_empty_soft(**_kw: Any) -> str:
+        return (
+            "【E·破功】只改末句：妈妈行行行之后须当场把规矩做回去"
+            "（再搓/去睡/现在吃/不尝了）；禁止只写「算你说得对」。"
+            "punchline_explain 末句动作与对白末句保持一致。"
+        )
+
     def e_weak_taste_eye(**_kw: Any) -> str:
         return (
             "【E·尝菜眼】开场/前段须可拍试吃：勺上沾菜、嘴角油渍、"
@@ -362,11 +385,12 @@ def _register_validation_hints() -> None:
 
     def e_picky_theme(**_kw: Any) -> str:
         return (
-            "【E·挑食·假开脱】妈妈开场训「不能挑食」→孩子1抓拨到碗边→"
-            "孩子2假替妈解释（你不懂/放凉/大人/不算，主语用妈妈，"
+            "【E·挑食·假开脱】妈妈开场训「不能挑食」→昭昭抓拨到碗边→"
+            "灿灿假替妈解释（你不懂/放凉/大人/不算，主语用妈妈，"
             "如「妈妈会吃的，上次是意外」；禁「你别翻旧账」）→"
-            "孩子1再追→孩子2继续越帮越黑→verbatim 闭环→妈妈末句破功。"
-            "中段妈妈少说话；禁妈妈当真用不一样；禁回训；全文宜8–12句。"
+            "昭昭再追→灿灿继续越帮越黑→verbatim 闭环→妈妈末句破功。"
+            "中段恰好1句妈妈短反应；禁只首尾出声；禁妈妈当真用不一样；"
+            "禁回训；灿灿「大人例外」最多2次；全文 18–22 句。"
         )
 
     def e_lie_theme(**_kw: Any) -> str:
@@ -400,6 +424,8 @@ def _register_validation_hints() -> None:
         ),
         "body_too_long": lambda frag, **_kw: _hint_body_too_long(frag),
         "e_body_too_long": e_body_too_long,
+        "e_adult_exception": e_adult_exception,
+        "e_empty_soft": e_empty_soft,
         "e_weak_taste_eye": e_weak_taste_eye,
         "e_picky_causal": e_picky_causal,
         "e_picky_theme": e_picky_theme,
@@ -432,8 +458,18 @@ def _register_validation_hints() -> None:
             "若引语不是原话子串，把要引的那句逐字写进灿灿台词（埋句），"
             "或把引话改成灿灿真实说过的子串；只改埋句或引话1–2句。"
             if type_code == "A"
-            else "【引话·只改1–2句】引话须是前文真实子串；"
-            "改埋句或改引话，禁止整篇重写。"
+            else (
+                "【E·闭环】倒数第 2 句须有「自己说/你刚才」槽位；"
+                "能逐字扣妈妈立规原话更好，但「你自己说的不算数啦」"
+                "这类出尔反尔收束可过；只改闭环 1 句。"
+                if type_code == "E"
+                else "【引话·只改1–2句】引话须是前文真实子串；"
+                "改埋句或改引话，禁止整篇重写。"
+            )
+        ),
+        "e_garbage_filler": lambda **_kw: (
+            "【E·垫字】删句尾「你听着/了呢了呀」等垫字，用实词收尾；"
+            "勿改情节。"
         ),
         "padding": lambda **_kw: (
             "【删注水】删三十下/认真数/帮你盯；用抬杠补字，只留一套免责。"
