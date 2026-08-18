@@ -303,18 +303,27 @@ def daily_locked_inventory(
         if int(seg.get("segment_index") or 0) == 1:
             vb1 = str(seg.get("visual_brief") or "")
             break
-    locked = {n for n in _LOCKABLE_PROPS if n in spoken}
-    # 分镜1 已落地的冲突道具可锁；尺子/铅笔等杂物必须 setting/台词点名。
-    locked |= {
+    # 冲突道具：setting / 台词 / 分镜1 任一出现即可锁。
+    # 尺子/铅笔等杂物只认 setting 与分镜1 画面，避免台词「拿尺子比」误锁实物。
+    locked = {
         n
         for n in _LOCKABLE_PROPS
-        if n in vb1 and n not in _CLUTTER_ONLY_PROPS
+        if n not in _CLUTTER_ONLY_PROPS and (n in spoken or n in vb1)
+    }
+    locked |= {
+        n for n in _CLUTTER_ONLY_PROPS if n in setting_text or n in vb1
     }
     locked |= {n for n in _DAILY_FIXED_FURNITURE if n in spoken or n in vb1}
     for n in ("遥控器", "空水杯"):
         if n in vb1 or n in spoken:
             locked.add(n)
     return locked
+
+
+_BARE_DELETE_SKIP = frozenset({"橡皮"})  # 避免误伤「橡皮擦拭痕迹」
+_CORE_LOCK_PROPS = (
+    "剪刀", "纸", "相框", "水壶", "蛋糕", "薯片", "酸奶", "衣服",
+)
 
 
 def _drop_unlocked_name(body: str, name: str, locked: set[str]) -> str:
@@ -329,7 +338,11 @@ def _drop_unlocked_name(body: str, name: str, locked: set[str]) -> str:
         rf"{name}和",
     ]
     # 短名可能嵌在已锁定长名里（床⊂床头柜），此时不裸删。
-    if not any(name != other and name in other for other in locked):
+    # 橡皮不裸删，避免涂鸦风格句「橡皮擦拭」被拆开。
+    if (
+        name not in _BARE_DELETE_SKIP
+        and not any(name != other and name in other for other in locked)
+    ):
         patterns.append(name)
     out = body
     for pat in patterns:
@@ -353,6 +366,9 @@ def strip_unlocked_inventory(body: str, locked: set[str]) -> str:
     )
     for name in names:
         out = _drop_unlocked_name(out, name, locked)
+    missing = [n for n in _CORE_LOCK_PROPS if n in locked and n not in out]
+    if missing:
+        out = out.rstrip("，,；;。 ") + "。画面中有" + "、".join(missing) + "。"
     out = re.sub(r"[，,]{2,}", "，", out)
     out = re.sub(r"[；;]{2,}", "；", out)
     out = re.sub(r"。{2,}", "。", out)
