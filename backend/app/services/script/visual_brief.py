@@ -149,6 +149,9 @@ _DAILY_VISUAL_BRIEF_CONTENT_RULE = (
     "【硬性】非首说话人出现「说话/反驳/大喊/开口/嘴巴张开」任一词汇即整段不合格，必须重写。"
     "【持物一致性】同一道具的持物手全片统一（默认右手持物），禁止左右手跳变；"
     "持物手与相邻镜保持一致。"
+    "已握在手里的道具不要再写桌上/纸旁/旁边还有该物，桌上只写未持物的陈设；"
+    "道具名优先只在持物句出现一次；先写「画面左边/右边是谁」，再写持物人动作；"
+    "非持物人看向持物人，禁止写「盯着剪刀/看着水壶」等盯着物。"
     "【道具】冲突道具用台词已出现的物件与状态；"
     "衣物类用「衣服/衣物堆/皱成一团的衣服」泛称（粉色卫衣/蓝色T恤是角色身上穿的，不当道具）。"
     "事实对齐台词：说皱就画「原本叠好、现已揉皱」；说只碰一下就画无辜摊手。"
@@ -571,9 +574,23 @@ _RELATIVE_STAND_RE = re.compile(
     r"(左侧|右边|右侧|左边)"
 )
 _SURFACE_PLACE_RE = re.compile(
-    r"(桌上|桌面上|茶几上|沙发上|餐桌上|书桌上|旁边)"
+    r"(桌上|桌面上|茶几上|沙发上|餐桌上|书桌上|旁边|纸旁|身旁|旁)"
     r"(?:还)?"
-    r"(?:摊着|放着|立着|摆着|搁着|摊开)"
+    r"(?:摊着|放着|立着|摆着|搁着|摊开|是)"
+)
+_HELD_BY_RE = re.compile(
+    r"([^，。；、]{1,12}?)由(昭昭|灿灿|妈妈)"
+    r"(右手|左手|双手)?"
+    r"(握着|握住|拿着|持着|举着|端着|托着|托住|提着|接过|"
+    r"递给|递出|抓住|抓着|拿起|紧握)"
+)
+_NAMED_GAZE_PROP_RE = re.compile(
+    r"(昭昭|灿灿|妈妈)"
+    r"([^。；]{0,24}?)"
+    r"(?:眼睛)?"
+    r"(?:盯着|看着|看向)"
+    r"(?:那把|一把|这把)?"
+    r"([\u4e00-\u9fa5]{2,8})"
 )
 _SURFACE_ITEM_SPLIT_RE = re.compile(r"和|与|及|、")
 
@@ -605,8 +622,10 @@ def _held_prop_keys(body: str) -> set[str]:
     for clause in re.split(r"[；;。]", body):
         if not any(n in clause for n in ("昭昭", "灿灿", "妈妈")):
             continue
-        if _SURFACE_PLACE_RE.search(clause) and not _HOLD_OBJECT_RE.search(
-            clause
+        if (
+            _SURFACE_PLACE_RE.search(clause)
+            and not _HOLD_OBJECT_RE.search(clause)
+            and not _HELD_BY_RE.search(clause)
         ):
             continue
         for m in _HOLD_OBJECT_RE.finditer(clause):
@@ -617,6 +636,11 @@ def _held_prop_keys(body: str) -> set[str]:
             if len(key) < 2:
                 continue
             keys.add(key)
+        for m in _HELD_BY_RE.finditer(clause):
+            raw = (m.group(1) or "").strip()
+            key = _prop_key(raw)
+            if len(key) >= 2:
+                keys.add(key)
     return keys
 
 
@@ -645,8 +669,8 @@ def _strip_held_from_surface_clause(clause: str, keys: set[str]) -> str:
         if not any(_key_means_same_prop(p, k) for k in keys)
     ]
     if not kept:
-        # 陈设句只剩这一件时交给后续位移归一（改成「被X拿在手中」）。
-        return clause
+        # 已持物时不要留「纸旁放着剪刀」，否则 T2I 把剪刀画回桌上。
+        return extra.lstrip("，, ") if extra else ""
     if len(kept) == 1:
         items = kept[0]
     elif len(kept) == 2:
@@ -665,6 +689,12 @@ def held_prop_owners(body: str) -> dict[str, str]:
         if len(key) < 2:
             continue
         owners[key] = m.group(1)
+    for m in _HELD_BY_RE.finditer(body or ""):
+        raw = (m.group(1) or "").strip()
+        key = _prop_key(raw)
+        if len(key) < 2:
+            continue
+        owners[key] = m.group(2)
     return owners
 
 
@@ -691,7 +721,28 @@ def restore_held_prop_owners(new: str, old: str) -> str:
             return locked + m.group(0)[len(who) :]
         return m.group(0)
 
-    return _NAMED_HOLD_RE.sub(_repl, new)
+    text = _NAMED_HOLD_RE.sub(_repl, new)
+
+    def _repl_by(m: re.Match) -> str:
+        raw = (m.group(1) or "").strip()
+        who = m.group(2)
+        key = _prop_key(raw)
+        locked = ""
+        for old_key, holder in owners.items():
+            if (
+                key == old_key
+                or _key_means_same_prop(raw, old_key)
+                or _key_means_same_prop(old_key, key)
+            ):
+                locked = holder
+                break
+        if locked and who != locked:
+            prefix = f"{m.group(1)}由"
+            suffix = m.group(0)[len(prefix) + len(who) :]
+            return prefix + locked + suffix
+        return m.group(0)
+
+    return _HELD_BY_RE.sub(_repl_by, text)
 
 
 def _resolve_relative_lr_conflict(body: str) -> str:
@@ -713,6 +764,32 @@ def _resolve_relative_lr_conflict(body: str) -> str:
         return m.group(0)
 
     return _RELATIVE_STAND_RE.sub(_repl, body)
+
+
+def _retarget_gaze_from_held_prop(body: str) -> str:
+    """非持物人「盯着剪刀」会诱发剪刀画到他眼前/手里，改成看向持物人。"""
+    owners = held_prop_owners(body)
+    if not owners:
+        return body
+
+    def _repl(m: re.Match) -> str:
+        gazer = m.group(1)
+        mid = m.group(2) or ""
+        raw = m.group(3) or ""
+        key = _prop_key(raw)
+        holder = owners.get(key)
+        if not holder:
+            for old_key, who in owners.items():
+                if _key_means_same_prop(raw, old_key) or _key_means_same_prop(
+                    old_key, key
+                ):
+                    holder = who
+                    break
+        if not holder or gazer == holder:
+            return m.group(0)
+        return f"{gazer}{mid}看向{holder}"
+
+    return _NAMED_GAZE_PROP_RE.sub(_repl, body)
 
 
 def strip_held_prop_from_surface(body: str) -> str:
@@ -1003,6 +1080,7 @@ def scrub_daily_visual_brief(text: str) -> str:
     body = _normalize_default_table_set(body)
     body = _dedupe_default_table_set(body)
     body = strip_held_prop_from_surface(body)
+    body = _retarget_gaze_from_held_prop(body)
     body = _resolve_relative_lr_conflict(body)
     body = _resolve_stale_prop_position_conflict(body)
     body = _resolve_furniture_between_conflict(body)

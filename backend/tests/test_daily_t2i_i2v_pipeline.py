@@ -351,7 +351,7 @@ def test_scrub_daily_visual_brief_resolves_prop_fragment_conflict():
 
 
 def test_scrub_daily_visual_brief_resolves_prop_hand_conflict():
-    """相框已被妈妈拿起，陈设句归一为被拿在手中。"""
+    """相框已被妈妈拿起，桌上陈设句去掉该物，只留手里。"""
     from app.services.script.visual_brief import scrub_daily_visual_brief
 
     raw = (
@@ -361,7 +361,8 @@ def test_scrub_daily_visual_brief_resolves_prop_hand_conflict():
     )
     out = scrub_daily_visual_brief(raw)
     assert "茶几上立着摔裂的相框" not in out
-    assert "摔裂的相框被妈妈拿在手中" in out
+    assert "拿着相框" in out
+    assert "旁边是扫帚和簸箕" in out
 
 
 def test_scrub_strips_held_prop_from_table_keeps_other_items():
@@ -388,6 +389,18 @@ def test_scrub_strips_held_prop_from_table_keeps_other_items():
         "昭昭双手自然下垂，看着纸边。"
     )
     assert "桌上摊着一把剪刀" in table_only
+
+    beside = scrub_daily_visual_brief(
+        "客厅，画面左边是昭昭，右边是灿灿。"
+        "纸旁放着一把剪刀，剪刀由灿灿右手握着，刀刃张开，她左手自然下垂。"
+        "昭昭眼睛盯着剪刀，双手空着摊开耸肩。"
+    )
+    assert "纸旁放着" not in beside
+    assert "握着" in beside
+    assert "剪刀" in beside
+    assert "盯着剪刀" not in beside
+    assert "看向灿灿" in beside
+    assert beside.count("剪刀") == 1
 
 
 def test_scrub_daily_visual_brief_keeps_one_active_hand():
