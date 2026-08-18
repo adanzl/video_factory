@@ -11,6 +11,7 @@ from app.services.daily_story.prompts import (
     DAILY_STORY_BODY_WRITE_TARGET_MIN,
     DAILY_STORY_LINE_CHARS_MAX,
     _patch_vocative_punctuation,
+    build_daily_story_framework_prompts,
     build_daily_story_opening_prompts,
     build_daily_story_prompts,
     build_daily_story_theme_prompts,
@@ -1260,6 +1261,29 @@ def test_daily_story_prompts_a_type_route():
     assert "末四拍" in user_a or "埋句" in user_a
     assert "哪里不一样" in user_a
     assert "本场一锤" in sys_a
+    # 正向为主：节拍表/句位库/递进层给足「该写什么」，而非罗列禁令
+    assert "24 句节拍表" in sys_a
+    assert "一锤后的句位库" in sys_a
+    assert "昭昭追问的四层递进" in sys_a
+    assert "动作 → 当场失误" in sys_a
+    assert "手上第一下" in sys_a
+    assert "你刚剪的这一刀" in sys_a
+    assert "同一次动作只认这一个结果" in user_a
+    assert "你刚剪的这一刀" in user_a
+    assert "让出/不再教" in sys_a
+    assert "剪刀给你" in sys_a
+    assert "标准仍成立" not in sys_a
+    assert "这一刀还没到" not in sys_a
+    assert "quote_anchor" in sys_a
+    assert "quote_anchor" in user_a
+    assert "3–10 字连续原文片段" in user_a
+    assert "折纸=示范不算真做" not in sys_a
+    assert "抽象词（示范/检查/教学" not in sys_a
+    assert "豁免落成动作" not in sys_a
+    # 正向密度：正向标记应多于禁令标记
+    neg = sum(sys_a.count(k) for k in ("禁止", "不许", "不得", "不准"))
+    pos = sum(sys_a.count(k) for k in ("须", "正例", "节拍", "句位库", "递进"))
+    assert pos > neg, (pos, neg)
 
     os_a, user_o = build_daily_story_opening_prompts(
         "姐姐教弟弟写作业自己写错",
@@ -1275,10 +1299,133 @@ def test_daily_story_prompts_a_type_route():
         },
     )
     assert "A 类开场补充" in os_a
+    assert "第 1 句＝灿灿亮权威" in os_a
+    assert "地点嵌进痕迹" in os_a
+    assert "茶几上你剪的纸边都成锯齿了" in os_a
+    assert "我再来一次" not in os_a
+    assert "你先刷一个给我看" in os_a
     assert "权威翻车" in user_o
+    assert "第 1 句＝灿灿亮权威" in user_o
+    assert "地点嵌进痕迹" in user_o
+
+    _fs, fw_user = build_daily_story_framework_prompts(
+        "教弟弟用剪刀自己剪歪了纸边",
+        story_type="A类权威翻车",
+    )
+    assert "A 类画面" in fw_user
+    assert "规矩刚立起来" in fw_user
+    assert "可拍问题痕迹" in fw_user
 
     _ts, user_t = build_daily_story_theme_prompts(3, type_code="A")
     assert "只出 A 类主题" in user_t
+    assert "A 类画面" not in user_t
+
+
+def test_a_framework_rejects_punchline_already_happened():
+    from app.services.daily_story.story_types.a.opening import (
+        append_a_framework_errors,
+    )
+
+    leaked: list[str] = []
+    append_a_framework_errors(
+        {
+            "setting": "客厅茶几旁，灿灿正教昭昭剪纸",
+            "conflict_core": "灿灿教昭昭剪纸边，自己示范时剪歪",
+        },
+        type_code="A",
+        errors=leaked,
+    )
+    assert leaked and "一锤留给正文中段" in leaked[0]
+
+    setting_leak: list[str] = []
+    append_a_framework_errors(
+        {
+            "setting": "灿灿自己先剪歪了一条，昭昭指着那条歪边",
+            "conflict_core": "灿灿教昭昭剪纸边",
+        },
+        type_code="A",
+        errors=setting_leak,
+    )
+    assert setting_leak
+
+    ok: list[str] = []
+    append_a_framework_errors(
+        {
+            "setting": "昭昭剪出一条斜边，灿灿正要示范怎么剪",
+            "conflict_core": "灿灿教昭昭剪纸边",
+        },
+        type_code="A",
+        errors=ok,
+    )
+    assert ok == []
+
+
+def test_a_opening_zhao_first_cannot_state_cancan_mistake():
+    with pytest.raises(ValueError, match="昭昭首句"):
+        validate_daily_story_opening(
+            [
+                {"speaker": "昭昭", "line": "你剪歪了，纸边都弯了"},
+                {"speaker": "灿灿", "line": "我再来一次，看好了"},
+            ],
+            conflict_core="灿灿教昭昭剪纸",
+            setting="客厅茶几旁剪纸",
+            type_code="A",
+        )
+    with pytest.raises(ValueError, match="昭昭首句"):
+        validate_daily_story_opening(
+            [
+                {"speaker": "昭昭", "line": "你剪的这条边怎么弯弯扭扭的"},
+                {"speaker": "灿灿", "line": "我这是示范，你再看我剪一次"},
+            ],
+            conflict_core="灿灿教昭昭剪纸",
+            setting="客厅茶几旁剪纸",
+            type_code="A",
+        )
+    ok_ask = validate_daily_story_opening(
+        [
+            {"speaker": "昭昭", "line": "姐，这剪刀怎么拿，我总剪不直"},
+            {"speaker": "灿灿", "line": "茶几上这条要先对齐再下剪"},
+        ],
+        conflict_core="灿灿教昭昭剪纸",
+        setting="客厅茶几旁剪纸",
+        type_code="A",
+    )
+    assert ok_ask[0]["speaker"] == "昭昭"
+    ok_lead = validate_daily_story_opening(
+        [
+            {"speaker": "灿灿", "line": "茶几上你这条边都剪成波浪了，要对齐再剪"},
+            {"speaker": "昭昭", "line": "那你剪一条给我看"},
+        ],
+        conflict_core="灿灿教昭昭剪纸",
+        setting="客厅茶几旁剪纸",
+        type_code="A",
+    )
+    assert ok_lead[0]["speaker"] == "灿灿"
+
+
+def test_a_opening_requires_setting_place_word():
+    from app.services.daily_story.prompts import validate_daily_story_opening
+
+    with pytest.raises(ValueError, match="地点词"):
+        validate_daily_story_opening(
+            [
+                {"speaker": "灿灿", "line": "剪刀歪着捅，纸边剪成锯齿了"},
+                {"speaker": "昭昭", "line": "那你剪一条给我看"},
+            ],
+            conflict_core="灿灿教昭昭剪纸边",
+            setting="客厅茶几旁，昭昭纸边剪歪，灿灿正教",
+            type_code="A",
+        )
+    ok = validate_daily_story_opening(
+        [
+            {"speaker": "灿灿", "line": "茶几上你剪的纸边都成锯齿了，得顺着线走"},
+            {"speaker": "昭昭", "line": "那你剪一条给我看"},
+        ],
+        conflict_core="灿灿教昭昭剪纸边",
+        setting="客厅茶几旁，昭昭纸边剪歪，灿灿正教",
+        type_code="A",
+    )
+    assert "茶几" in ok[0]["line"]
 
 
 def test_body_anchor_requires_kid_after_mom_opening():
@@ -1713,7 +1860,7 @@ def test_validate_a_opening_rejects_mid_fight_timer():
     with pytest.raises(ValueError, match="发现现场|读秒"):
         validate_daily_story_opening(
             [
-                {"speaker": "灿灿", "line": "你牙刷上的沫还挂那儿呢"},
+                {"speaker": "灿灿", "line": "卫生间沫还挂那儿呢"},
                 {"speaker": "昭昭", "line": "计时器才走了30秒"},
             ],
             conflict_core="灿灿嫌昭昭刷牙太快立规矩却自己犯规",
@@ -1722,7 +1869,7 @@ def test_validate_a_opening_rejects_mid_fight_timer():
         )
     ok = validate_daily_story_opening(
         [
-            {"speaker": "灿灿", "line": "你牙刷上的沫还挂那儿呢"},
+            {"speaker": "灿灿", "line": "卫生间沫还挂那儿呢"},
             {"speaker": "昭昭", "line": "我才刷了几下呀"},
         ],
         conflict_core="灿灿嫌昭昭刷牙太快立规矩却自己犯规",
@@ -2742,6 +2889,162 @@ def test_collect_wording_flags_e_you_to_mom():
     assert 4 not in flagged
     assert 12 not in flagged
     assert 14 not in flagged
+
+
+def test_a_wording_flags_named_excuse_and_polish_prompt():
+    from app.services.daily_story.review import (
+        build_wording_polish_prompts,
+        collect_wording_issues,
+    )
+
+    story = {
+        "discovery_opening": [
+            {"speaker": "灿灿", "line": "你这条边剪歪了，要先对齐再下剪"},
+            {"speaker": "昭昭", "line": "你剪一条我看看"},
+        ],
+        "dialogue": [
+            {"speaker": "灿灿", "line": "你这条边剪歪了，要先对齐再下剪"},
+            {"speaker": "昭昭", "line": "你剪一条我看看"},
+            {"speaker": "灿灿", "line": "看好了，剪刀顺着这条线走"},
+            {"speaker": "昭昭", "line": "你手抖了一下，那边也歪了"},
+            {"speaker": "灿灿", "line": "我这是示范，故意留点余地"},
+            {"speaker": "昭昭", "line": "你刚才说剪直了才算本事，对吧"},
+            {"speaker": "灿灿", "line": "那不一样，我这是教学，可以歪一点"},
+            {"speaker": "昭昭", "line": "哪里不一样？都是剪直线"},
+            {"speaker": "灿灿", "line": "行吧，给你剪"},
+        ],
+    }
+    issues = collect_wording_issues(story, type_code="A")
+    kinds = {it["kind"] for it in issues}
+    assert "起名开脱" in kinds
+    flagged = {n for it in issues for n in it["lines"]}
+    assert 5 in flagged
+    assert 7 in flagged
+    system, _user = build_wording_polish_prompts(
+        "教弟弟用剪刀自己剪歪了纸边",
+        story,
+        issues,
+        type_code="A",
+        line_chars_max=24,
+    )
+    assert "A类口径" in system
+    assert "这刀不算" in system
+    assert "剪刀给你" in system
+    assert "手上第一下" in system
+    assert "标准仍成立" not in system
+
+
+def test_a_wording_flags_body_rehash_and_slip():
+    from app.services.daily_story.review import collect_wording_issues
+
+    story = {
+        "discovery_opening": [
+            {"speaker": "灿灿", "line": "茶几上你剪的纸边都成锯齿了，得顺着线走"},
+            {"speaker": "昭昭", "line": "那你剪一条给我看"},
+        ],
+        "dialogue": [
+            {"speaker": "灿灿", "line": "茶几上你剪的纸边都成锯齿了，得顺着线走"},
+            {"speaker": "昭昭", "line": "那你剪一条给我看"},
+            {"speaker": "灿灿", "line": "看好了，我剪一条给你当标准好不好呀。"},
+            {"speaker": "昭昭", "line": "你这条边怎么往外弯了"},
+            {"speaker": "灿灿", "line": "这刀不算，我手滑了一下。"},
+        ],
+    }
+    issues = collect_wording_issues(story, type_code="A")
+    kinds = {it["kind"] for it in issues}
+    flagged = {n for it in issues for n in it["lines"]}
+    assert "复读开场" in kinds
+    assert "起名开脱" in kinds
+    assert 3 in flagged
+    assert 5 in flagged
+
+
+def test_a_full_scan_prompt_omits_slot_rewrite():
+    from app.services.daily_story.review import build_wording_polish_prompts
+
+    system, _user = build_wording_polish_prompts(
+        "教弟弟用剪刀自己剪歪了纸边",
+        {"dialogue": [], "setting": "", "conflict_core": ""},
+        [],
+        type_code="A",
+        line_chars_max=24,
+        full_scan=True,
+    )
+    assert "手上第一下" not in system
+    assert "这刀不算" not in system
+
+
+def test_full_scan_edit_too_heavy_blocks_slot_swap():
+    from app.services.daily_story.review import _full_scan_edit_too_heavy
+
+    assert _full_scan_edit_too_heavy(
+        "我是姐姐，我说不算就不算了呀。",
+        "这刀不算，我把纸压平。",
+    )
+    assert not _full_scan_edit_too_heavy(
+        "你这条边怎么往外弯了你听着呀？",
+        "你这条边怎么往外弯了？你看！",
+    )
+
+
+def test_polish_iteratively_only_touches_flagged_lines(monkeypatch):
+    from app.services.daily_story.review import (
+        polish_daily_story_wording_iteratively,
+    )
+
+    monkeypatch.setattr(
+        "app.services.daily_story.prompts.validate_daily_story_json",
+        lambda *_a, **_k: None,
+    )
+    monkeypatch.setattr(
+        "app.services.daily_story.quality.attach_daily_story_quality",
+        lambda story, **_k: story,
+    )
+    monkeypatch.setattr(
+        "app.services.daily_story.prompts.try_local_patch_daily_story_body",
+        lambda story: (story, []),
+    )
+
+    story = {
+        "discovery_opening": [
+            {"speaker": "灿灿", "line": "茶几上你剪的纸边都成锯齿了，得顺着线走"},
+            {"speaker": "昭昭", "line": "那你剪一条给我看"},
+        ],
+        "dialogue": [
+            {"speaker": "灿灿", "line": "茶几上你剪的纸边都成锯齿了，得顺着线走"},
+            {"speaker": "昭昭", "line": "那你剪一条给我看"},
+            {"speaker": "灿灿", "line": "看好了，我剪一条给你当标准好不好呀。"},
+            {"speaker": "昭昭", "line": "你这条边怎么往外弯了你听着呀？"},
+            {"speaker": "灿灿", "line": "这刀不算，我手滑了一下。"},
+            {"speaker": "昭昭", "line": "你剪了三次，没一条是直的。"},
+            {"speaker": "灿灿", "line": "我是姐姐，我说不算就不算了呀。"},
+        ],
+    }
+
+    class _Fake:
+        def polish_daily_story_wording(self, *_a, **_k):
+            return {
+                "fixes": [
+                    {"no": 3, "line": "我压着线顺着剪，看好了。"},
+                    {"no": 4, "line": "你这条边怎么往外弯了？你看！"},
+                    {"no": 5, "line": "这刀不算，我没压住纸。"},
+                    {"no": 7, "line": "这刀不算，我把纸压平。"},
+                ]
+            }
+
+    out, n = polish_daily_story_wording_iteratively(
+        story,
+        _Fake(),
+        "教弟弟用剪刀自己剪歪了纸边",
+        type_code="A",
+        max_rounds=1,
+    )
+    lines = [str(d.get("line") or "") for d in out["dialogue"]]
+    assert n == 2
+    assert lines[2] == "我压着线顺着剪，看好了。"
+    assert lines[3] == "你这条边怎么往外弯了你听着呀？"
+    assert lines[4] == "这刀不算，我没压住纸。"
+    assert lines[6] == "我是姐姐，我说不算就不算了呀。"
 
 
 def test_wording_polish_prompt_mentions_e_sense_drift():

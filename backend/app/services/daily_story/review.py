@@ -109,6 +109,14 @@ _RE_E_SENSE_DRIFT = re.compile(
     r"滑不滑|摸下试试|我摸过|比纸还|"
     r"油皮|泡泡印|冬天干|干干的",
 )
+# A 灿灿给失误起名或另开目的（抽象句式，不按主题穷举）。
+_RE_A_NAME_EXCUSE = re.compile(r"我这是|这叫|故意|为了给你看")
+_RE_A_NA_NEW_NAME = re.compile(r"那不一样.{0,16}(?:教学|风格|可以歪|艺术)")
+# 正文接开场后第一句还在应答「剪一条给你看」，没写手上第一下。
+_RE_A_BODY_REHASH = re.compile(r"给你看|当标准|剪一条")
+# 句位库之外另起物理开脱（手滑），与「这刀不算 + 手上动作」打架。
+_RE_A_SLIP_EXCUSE = re.compile(r"手滑")
+
 # E 孩子对妈当面「你」硬质问；灿灿对弟弟的你（你看/低头）不拦。
 _RE_E_YOU_TO_MOM = re.compile(
     r"可你|你刚才|你说(?!得)|你一个|你手|你就走|"
@@ -366,6 +374,39 @@ def collect_wording_issues(
                 "desc": f"孩子对妈用你硬质问：{line}",
                 "fix": "去掉对妈的「你」，改成刚才/手上/自己说；"
                        "灿灿对弟弟的你保留",
+            })
+            continue
+        if (
+            (type_code or "").upper()[:1] == "A"
+            and speaker == "灿灿"
+            and open_len
+            and i == open_len + 1
+            and _RE_A_BODY_REHASH.search(line)
+        ):
+            out.append({
+                "lines": [i],
+                "kind": "复读开场",
+                "desc": f"正文首句复读开场要示范：{line}",
+                "fix": "改成手上第一下（下剪/顺着推/压着剪），"
+                       "勿再说剪一条给你看/当标准",
+            })
+            continue
+        if (
+            (type_code or "").upper()[:1] == "A"
+            and speaker == "灿灿"
+            and i > open_len
+            and (
+                _RE_A_NAME_EXCUSE.search(line)
+                or _RE_A_NA_NEW_NAME.search(line)
+                or _RE_A_SLIP_EXCUSE.search(line)
+            )
+        ):
+            out.append({
+                "lines": [i],
+                "kind": "起名开脱",
+                "desc": f"灿灿给失误起名或另开目的：{line}",
+                "fix": "改回「这刀不算」加一个手上动作（转纸、对线、翻面）；"
+                       "勿另起手滑/示范/教学",
             })
             continue
         if (
@@ -670,6 +711,23 @@ def build_wording_polish_prompts(
         "- **不改收束结构、末段回旋镖引话、开场片头**"
         "（正文首句不是闭环，可以改）。\n"
     )
+    issue_kinds = {str(it.get("kind") or "") for it in issues}
+    if (
+        (type_code or "").upper()[:1] == "A"
+        and issue_kinds & {"起名开脱", "复读开场"}
+    ):
+        system += (
+            "【A类口径】只改被点到的行。"
+            "灿灿给失误起名、另开目的、手滑或甩锅道具时，"
+            "改回「这刀不算 / 我还没认真剪」加一个手上动作"
+            "（转纸、对线、翻面、压线）。"
+            "正文开场后第一句只写手上第一下（下剪/顺着推/压着剪），"
+            "勿再说剪一条给你看/当标准。"
+            "「那不一样」只把刚才那一刀划出去（这刀不算 / 检样不算开饭）；"
+            "末句改成让出道具或收手（剪刀给你 / 我不教了）。"
+            "开场两句、昭昭引话、未点到的性格口（如我是姐姐）一字不动，"
+            "勿把它们改成句位库。\n"
+        )
     if (type_code or "").upper()[:1] == "E":
         system += (
             "【E类中段】禁另起摸/滑/干/印的感官鉴定支线。"
@@ -1076,6 +1134,25 @@ def _issue_fully_fixed(
     return all(int(no) in accepted for no in non_design)
 
 
+def _cjk_overlap_ratio(old: str, new: str) -> float:
+    """旧句汉字有多少出现在新句里；全句扫描用，挡整句换槽。"""
+    old_chars = {ch for ch in old if "\u4e00" <= ch <= "\u9fff"}
+    if not old_chars:
+        return 1.0
+    new_chars = {ch for ch in new if "\u4e00" <= ch <= "\u9fff"}
+    return len(old_chars & new_chars) / len(old_chars)
+
+
+def _full_scan_edit_too_heavy(old: str, new: str) -> bool:
+    """全句扫描只许小改；整句换成句位库或换意算误伤。"""
+    if not old or not new or old == new:
+        return False
+    for slot in ("这刀不算", "我还没认真剪"):
+        if slot in new and slot not in old:
+            return True
+    return _cjk_overlap_ratio(old, new) < 0.5
+
+
 def _apply_fixes_greedily(
     story: dict,
     raw_fixes: Any,
@@ -1084,6 +1161,7 @@ def _apply_fixes_greedily(
     allowed: set[int] | None = None,
     coherence_checker: Callable[[dict, int], bool] | None = None,
     skip_coherence: set[int] | None = None,
+    conservative: bool = False,
 ) -> tuple[dict, set[int]]:
     """逐条试落定点修：能过硬卡的留下，会破结构的那条丢掉。
 
@@ -1093,12 +1171,14 @@ def _apply_fixes_greedily(
     与末段原话闭环）。返回 (落盘后的故事, 被接受的行号集合)。
     `skip_coherence`：连续几句一条链（如 E 感官换判据）逐句过衔接
     会被未改的邻句卡死，这些行只过硬卡。
+    `conservative`：全句扫描用，整句换槽/换意的改动丢掉。
     """
     from app.services.daily_story.prompts import validate_daily_story_json
     from app.services.daily_story.quality import attach_daily_story_quality
 
     accepted: set[int] = set()
     skip_coh = skip_coherence or set()
+    old_rows = _dialogue(story)
     for no in fix_line_numbers(raw_fixes):
         if allowed is not None and no not in allowed:
             continue
@@ -1106,6 +1186,20 @@ def _apply_fixes_greedily(
         condition, notes = apply_spot_fixes(story, raw_fixes, only=trial)
         if not notes:
             continue
+        if conservative and 1 <= no <= len(old_rows):
+            old_line = str(old_rows[no - 1].get("line") or "").strip()
+            new_rows = _dialogue(condition)
+            new_line = (
+                str(new_rows[no - 1].get("line") or "").strip()
+                if 1 <= no <= len(new_rows)
+                else ""
+            )
+            if _full_scan_edit_too_heavy(old_line, new_line):
+                logger.info(
+                    "[DAILY_STORY] spot fix line %d dropped (too heavy)",
+                    no,
+                )
+                continue
         try:
             validate_daily_story_json(condition, phase="full")
         except ValueError as exc:
@@ -1182,30 +1276,55 @@ def polish_daily_story_wording_iteratively(
         return {
             int(no)
             for it in collect_wording_issues(s, type_code=type_code)
-            if it.get("kind") in ("感官换判据", "对妈硬质问")
+            if it.get("kind") in (
+                "感官换判据",
+                "对妈硬质问",
+                "复读开场",
+                "起名开脱",
+            )
+            for no in it.get("lines") or []
+        }
+
+    def _skip_coh(issues: list[dict[str, Any]]) -> set[int]:
+        return {
+            int(no)
+            for it in issues
+            if it.get("kind") in (
+                "感官换判据",
+                "对妈硬质问",
+                "复读开场",
+                "起名开脱",
+            )
             for no in it.get("lines") or []
         }
 
     total_accepted = 0
-    # 第一轮：无论规则是否命中，都做全句语句层扫描（语序/搭配/比喻混搭）。
-    raw = polish(theme, story, [], type_code=type_code, full_scan=True)
-    story, accepted = _apply_fixes_greedily(
-        story,
-        raw,
-        theme=theme,
-        coherence_checker=coherence_checker,
-        skip_coherence=_sense_drift_lines(story),
-    )
-    total_accepted += len(accepted)
-    if accepted:
-        logger.info(
-            "[DAILY_STORY] wording full-scan polish accepted=%d",
-            len(accepted),
+    issues = collect_wording_issues(story, type_code=type_code)
+    # 有规则命中：只改被点行。先全句扫描会把性格口改成句位库。
+    if not issues:
+        raw = polish(theme, story, [], type_code=type_code, full_scan=True)
+        story, accepted = _apply_fixes_greedily(
+            story,
+            raw,
+            theme=theme,
+            coherence_checker=coherence_checker,
+            skip_coherence=_sense_drift_lines(story),
+            conservative=True,
         )
-    # 后续轮：规则信号词命中时继续收口。
-    for _ in range(max(0, max_rounds - 1)):
+        total_accepted += len(accepted)
+        if accepted:
+            logger.info(
+                "[DAILY_STORY] wording full-scan polish accepted=%d",
+                len(accepted),
+            )
+        return story, total_accepted
+
+    for _ in range(max(1, max_rounds)):
         issues = collect_wording_issues(story, type_code=type_code)
         if not issues:
+            break
+        allowed = _fixable_body_lines(issues, story)
+        if not allowed:
             break
         raw = polish(
             theme,
@@ -1218,13 +1337,9 @@ def polish_daily_story_wording_iteratively(
             story,
             raw,
             theme=theme,
+            allowed=allowed,
             coherence_checker=coherence_checker,
-            skip_coherence={
-                int(no)
-                for it in issues
-                if it.get("kind") in ("感官换判据", "对妈硬质问")
-                for no in it.get("lines") or []
-            },
+            skip_coherence=_skip_coh(issues),
         )
         if not accepted:
             break

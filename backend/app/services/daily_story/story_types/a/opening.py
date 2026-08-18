@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import re
 
-from app.services.daily_story.dialogue_text import score_opening_cinematic
+from app.services.daily_story.dialogue_text import (
+    OPENING_PLACE_RE,
+    score_opening_cinematic,
+)
 
 # A 开场禁止先揭穿一锤（灿灿已翻车/双标）
 A_OPENING_SPOILER_RE = re.compile(
@@ -17,6 +20,39 @@ A_OPENING_MID_FIGHT_RE = re.compile(
     r"计时器才走|才走了\s*\d+\s*秒|才走了\s*[一二三四五六七八九十两半]+\s*秒|"
     r"至少两分钟|牙医说的|重刷|时间到了|到点了",
 )
+# 昭昭开场首句把灿灿当前失误说成事实（抽象语法，不锁说话人顺序）
+A_OPENING_ZHAO_ACCUSE_RE = re.compile(
+    r"^你.{0,20}(?:了|得|成|出|着)|"
+    r"^你.{0,16}怎么.{0,12}(?:的|了|着)"
+)
+# A 类框架把一锤写成既成事实（自己示范失败 / 示范时已经翻车）
+A_FRAMEWORK_PUNCH_LEAK_RE = re.compile(
+    r"自己.{0,8}(?:示范|剪歪|写错|算错|弹错|刷错)|"
+    r"示范时|示范也"
+)
+
+
+def append_a_framework_errors(
+    framework: dict,
+    *,
+    type_code: str | None,
+    errors: list[str],
+) -> None:
+    code = (type_code or "").strip().upper()[:1]
+    if code != "A" or not isinstance(framework, dict):
+        return
+    for field in ("setting", "conflict_core"):
+        text = str(framework.get(field) or "").strip()
+        if text and A_FRAMEWORK_PUNCH_LEAK_RE.search(text):
+            errors.append(
+                f"{field} A类只写「灿灿在教 + 昭昭留下的痕迹」，"
+                "一锤留给正文中段（勿写自己示范失败/示范时已翻车）"
+            )
+
+
+def setting_place_tokens(setting: str) -> list[str]:
+    """从 setting 抽出地点词；无地点则空，不做主题词穷举。"""
+    return list(dict.fromkeys(OPENING_PLACE_RE.findall(setting or "")))
 
 
 def append_a_opening_errors(
@@ -24,10 +60,22 @@ def append_a_opening_errors(
     *,
     type_code: str | None,
     errors: list[str],
+    setting: str = "",
 ) -> None:
     code = (type_code or "").strip().upper()[:1]
     if code != "A":
         return
+    first = normalized[0] if normalized else None
+    if (
+        first
+        and first.get("speaker") == "昭昭"
+        and A_OPENING_ZHAO_ACCUSE_RE.search(str(first.get("line") or "").strip())
+    ):
+        errors.append(
+            "opening[0] A类昭昭首句只问由头/抱怨规矩/求教，"
+            "不得把灿灿当前失误说成事实（你…了/得/成/出/怎么…的）",
+        )
+
     for i, item in enumerate(normalized):
         line = item["line"]
         if A_OPENING_SPOILER_RE.search(line):
@@ -42,6 +90,15 @@ def append_a_opening_errors(
                 "禁止读秒宣判或直接立规（如「计时器才走了30秒」）",
             )
             break
+
+    places = setting_place_tokens(setting)
+    if places:
+        joined = "".join(str(item.get("line") or "") for item in normalized)
+        if not any(place in joined for place in places):
+            errors.append(
+                "opening A类须带出 setting 地点词"
+                f"（本场有：{'/'.join(places)}），嵌进痕迹短语",
+            )
 
 
 def _opening_body_overlap(a: str, b: str) -> bool:
@@ -124,6 +181,8 @@ def opening_revision_hint(issue: str) -> str | None:
         return None
     return (
         f"【开场·A】{issue}。"
-        "须 2 句正片第一镜：地点+物/动作（洗手台牙膏沫、餐桌水果盘）；"
-        "勿自己才刷/算错/到点了；勿单句干问。"
+        "第 1 句四件套：setting地点嵌进痕迹 + 你/昭昭 + 痕迹 + 标准；"
+        "第 2 句昭昭把球踢回；"
+        "昭昭先开口只问由头/抱怨规矩/求教，不把灿灿当前失误说成事实；"
+        "一锤留给正文中段她自己示范时发生。"
     )
