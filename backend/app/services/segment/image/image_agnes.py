@@ -54,6 +54,10 @@ _DAILY_LOOK = {
     "灿灿": "粉色卫衣的黑马尾女孩（灿灿）",
     "妈妈": "米色上衣的黑长发成年女性（妈妈）",
 }
+# 拼装器写入 image_prompt 的首个说话人张嘴标记（须与 image_prompt.py 一致）
+_MOUTH_FIRST_SPEAKER_RE = re.compile(
+    r"(昭昭|灿灿|妈妈)(?:嘴巴明显张开|微微张嘴|嘴巴微张)?正在开口说话"
+)
 _PROP_HOLDER_RE = re.compile(
     r"(?P<hand>右手|左手)?"
     r"(?:握着|握住|握|拿着|持着|持|举着|端着|托着|托住|提着|接过|递出|抓住|抓着|拿起|紧握)"
@@ -816,7 +820,20 @@ class AgnesImageProvider(ImageProvider):
                     "回答「是」或「否」",
                 )
             )
-        # 嘴型不做出图硬卡：涂鸦静帧常画成撇嘴/闭嘴，口型交给 I2V 时间轴。
+        # 嘴型：首个说话人必须张嘴；完全闭合（闭嘴）硬失败。
+        mouth = _MOUTH_FIRST_SPEAKER_RE.search(scene_prompt)
+        if content_style == CONTENT_STYLE_DAILY_STORY and mouth:
+            first = mouth.group(1)
+            items.append(
+                (
+                    "mouth_first",
+                    f"{_DAILY_LOOK.get(first, first)}是否张着嘴"
+                    "（微张/张开做说话状都算「是」）？"
+                    "只看该角色本人，其他人张嘴与否不影响本项；"
+                    "该角色嘴巴完全闭合才答「否」。"
+                    "回答「是」或「否」",
+                )
+            )
         # 道具归属：提示词写「XX手持道具」时只拦「不见了 / 别人拿着」。
         # 涂鸦风经常把小物件画到持物人身前桌上，不当硬失败。
         prop_match = None
@@ -1015,6 +1032,7 @@ class AgnesImageProvider(ImageProvider):
                 "can_one",
                 "mom_adult",
                 "lr_pos",
+                "mouth_first",
                 "prop_holder",
                 "extra_arms",
                 "prop_present",
