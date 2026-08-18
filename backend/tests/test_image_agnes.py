@@ -172,32 +172,35 @@ def test_parse_item_answer_handles_bu_shi() -> None:
 
 
 def test_evaluate_verify_response_zhao_hair_and_cast() -> None:
-    ids = ["scene", "zhao_hair", "can_hair", "can_one", "mom_adult", "extra_arms", "cast_count"]
-    ok = "项1: 是\n项2: 是\n项3: 是\n项4: 是\n项5: 是\n项6: 是\n项7: 3\n"
+    ids = ["scene", "zhao_hair", "can_hair", "can_one", "mom_adult", "zhao_arms", "cast_count"]
+    ok = "项1: 是\n项2: 是\n项3: 是\n项4: 是\n项5: 是\n项6: 2\n项7: 3\n"
     assert AgnesImageProvider._evaluate_verify_response(ok, ids, cast_max=3)
 
-    bad_zhao = "项1: 是\n项2: 否\n项3: 是\n项4: 是\n项5: 是\n项6: 是\n项7: 3\n"
+    bad_zhao = "项1: 是\n项2: 否\n项3: 是\n项4: 是\n项5: 是\n项6: 2\n项7: 3\n"
     assert not AgnesImageProvider._evaluate_verify_response(bad_zhao, ids, cast_max=3)
 
-    bad_can = "项1: 是\n项2: 是\n项3: 否\n项4: 是\n项5: 是\n项6: 是\n项7: 3\n"
+    bad_can = "项1: 是\n项2: 是\n项3: 否\n项4: 是\n项5: 是\n项6: 2\n项7: 3\n"
     assert not AgnesImageProvider._evaluate_verify_response(bad_can, ids, cast_max=3)
 
-    bad_can_one = "项1: 是\n项2: 是\n项3: 是\n项4: 否\n项5: 是\n项6: 是\n项7: 3\n"
+    bad_can_one = "项1: 是\n项2: 是\n项3: 是\n项4: 否\n项5: 是\n项6: 2\n项7: 3\n"
     assert not AgnesImageProvider._evaluate_verify_response(
         bad_can_one, ids, cast_max=3
     )
 
-    bad_mom = "项1: 是\n项2: 是\n项3: 是\n项4: 是\n项5: 否\n项6: 是\n项7: 3\n"
+    bad_mom = "项1: 是\n项2: 是\n项3: 是\n项4: 是\n项5: 否\n项6: 2\n项7: 3\n"
     assert not AgnesImageProvider._evaluate_verify_response(bad_mom, ids, cast_max=3)
 
-    bad_arms = "项1: 是\n项2: 是\n项3: 是\n项4: 是\n项5: 是\n项6: 否\n项7: 3\n"
+    bad_arms = "项1: 是\n项2: 是\n项3: 是\n项4: 是\n项5: 是\n项6: 3\n项7: 3\n"
     assert not AgnesImageProvider._evaluate_verify_response(bad_arms, ids, cast_max=3)
 
-    bad_cast = "项1: 是\n项2: 是\n项3: 是\n项4: 是\n项5: 是\n项6: 是\n项7: 4\n"
+    arms_yes = "项1: 是\n项2: 是\n项3: 是\n项4: 是\n项5: 是\n项6: 是\n项7: 3\n"
+    assert not AgnesImageProvider._evaluate_verify_response(arms_yes, ids, cast_max=3)
+
+    bad_cast = "项1: 是\n项2: 是\n项3: 是\n项4: 是\n项5: 是\n项6: 2\n项7: 4\n"
     assert not AgnesImageProvider._evaluate_verify_response(bad_cast, ids, cast_max=3)
 
     # 人数项答「是」不可靠 → 失败
-    cast_yes = "项1: 是\n项2: 是\n项3: 是\n项4: 是\n项5: 是\n项6: 是\n项7: 是\n"
+    cast_yes = "项1: 是\n项2: 是\n项3: 是\n项4: 是\n项5: 是\n项6: 2\n项7: 是\n"
     assert not AgnesImageProvider._evaluate_verify_response(cast_yes, ids, cast_max=3)
 
     # 「不是」= 否 → 短发项失败
@@ -207,7 +210,7 @@ def test_evaluate_verify_response_zhao_hair_and_cast() -> None:
     )
 
     # 无昭昭 / 无灿灿 / 无妈妈 → 对应项放行
-    na = "项1: 是\n项2: 无昭昭\n项3: 无灿灿\n项4: 是\n项5: 无妈妈\n项6: 是\n项7: 3\n"
+    na = "项1: 是\n项2: 无昭昭\n项3: 无灿灿\n项4: 是\n项5: 无妈妈\n项6: 2\n项7: 3\n"
     assert AgnesImageProvider._evaluate_verify_response(na, ids, cast_max=3)
 
     # 正文空 / 全项解析失败 → 质检失效，不得放行
@@ -268,7 +271,9 @@ def test_build_verify_checklist_daily_includes_zhao() -> None:
         "can_hair",
         "can_one",
         "mom_adult",
-        "extra_arms",
+        "zhao_arms",
+        "can_arms",
+        "mom_arms",
         "cast_count",
     ]
     assert cast_max == 3
@@ -289,7 +294,9 @@ def test_build_verify_checklist_daily_includes_zhao() -> None:
     assert "单侧高马尾" in user
     assert "霓虹条纹" in user
     assert "彩虹挑染" in user
-    assert "恰好 2 条" in user
+    assert "从肩膀或躯干连出来的可见手臂一共几条" in user
+    assert "第三只手也要数" in user
+    assert "只回答阿拉伯数字" in user
     assert "照片墙" in user
 
     items_lr, user_lr, _ = AgnesImageProvider._build_verify_checklist(
@@ -352,6 +359,7 @@ def test_build_verify_checklist_daily_includes_zhao() -> None:
     assert "can_one" not in [cid for cid, _ in items_one]
     assert "mom_adult" not in [cid for cid, _ in items_one]
     assert "cast_count" in [cid for cid, _ in items_one]
+    assert "zhao_arms" in [cid for cid, _ in items_one]
     assert max_one == 2
     assert "上限参考 2" in user_one
     assert "只数人头" in user_one
@@ -438,20 +446,20 @@ def test_evaluate_verify_response_door_and_float_hair() -> None:
         "extra_arms",
         "cast_count",
     ]
-    ok = "项1: 是\n项2: 是\n项3: 是\n项4: 是\n项5: 是\n项6: 2\n"
+    ok = "项1: 是\n项2: 是\n项3: 是\n项4: 是\n项5: 2\n项6: 2\n"
     assert AgnesImageProvider._evaluate_verify_response(ok, ids, cast_max=2)
 
-    bad_door = "项1: 是\n项2: 否\n项3: 是\n项4: 是\n项5: 是\n项6: 2\n"
+    bad_door = "项1: 是\n项2: 否\n项3: 是\n项4: 是\n项5: 2\n项6: 2\n"
     assert not AgnesImageProvider._evaluate_verify_response(
         bad_door, ids, cast_max=2
     )
 
-    bad_hair = "项1: 是\n项2: 是\n项3: 否\n项4: 是\n项5: 是\n项6: 2\n"
+    bad_hair = "项1: 是\n项2: 是\n项3: 否\n项4: 是\n项5: 2\n项6: 2\n"
     assert not AgnesImageProvider._evaluate_verify_response(
         bad_hair, ids, cast_max=2
     )
 
-    bad_dir = "项1: 是\n项2: 是\n项3: 是\n项4: 否\n项5: 是\n项6: 2\n"
+    bad_dir = "项1: 是\n项2: 是\n项3: 是\n项4: 否\n项5: 2\n项6: 2\n"
     assert not AgnesImageProvider._evaluate_verify_response(
         bad_dir, ids, cast_max=2
     )
