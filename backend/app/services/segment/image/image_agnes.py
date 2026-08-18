@@ -836,7 +836,6 @@ class AgnesImageProvider(ImageProvider):
             )
         # 道具归属：提示词写「XX手持道具」时，校验道具在该角色手里且其他人没拿
         prop_match = None
-        hold_clause = ""
         for clause in re.split(r"[；;。]", scene_prompt):
             m = _PROP_HOLDER_RE.search(clause)
             if not m:
@@ -844,7 +843,6 @@ class AgnesImageProvider(ImageProvider):
             roles = re.findall(r"昭昭|灿灿|妈妈", clause[: m.start()])
             if roles:
                 prop_match = (roles[-1], m.group("hand") or "手中", m.group("prop"))
-                hold_clause = clause
                 break
         if content_style == CONTENT_STYLE_DAILY_STORY and prop_match:
             holder, hand, prop = prop_match
@@ -853,18 +851,11 @@ class AgnesImageProvider(ImageProvider):
                 for name in ("昭昭", "灿灿", "妈妈")
                 if name in speakers and name != holder
             ]
-            transfer = bool(re.search(r"递出|递给|交接", hold_clause))
-            if transfer:
-                question = (
-                    f"画面中{prop}是否仍与{_DAILY_LOOK.get(holder, holder)}的"
-                    f"{hand}接触（手指碰到即可，不要求紧握），"
-                    "不是悬空或放在桌面上？"
-                )
-            else:
-                question = (
-                    f"画面中{prop}是否被{_DAILY_LOOK.get(holder, holder)}的{hand}握住"
-                    f"（手指接触/包裹{prop}柄），不是悬空或放在桌面上？"
-                )
+            question = (
+                f"画面中{prop}是否在{_DAILY_LOOK.get(holder, holder)}的"
+                f"{hand}里或与该手接触（手指碰到即可，不要求包裹/紧握），"
+                "不是悬空或单独放在桌面上？"
+            )
             if others:
                 question += (
                     "、".join(_DAILY_LOOK.get(name, name) for name in others)

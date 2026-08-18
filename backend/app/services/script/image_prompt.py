@@ -366,6 +366,7 @@ def assemble_daily_image_prompts(
         _daily_fixed_furniture,
         _resolve_prop_state_regression,
         daily_locked_inventory,
+        scrub_daily_visual_brief,
         strip_unlocked_inventory,
     )
 
@@ -375,7 +376,7 @@ def assemble_daily_image_prompts(
     locked = daily_locked_inventory(segments, setting)
     for seg in segments:
         vb = str(seg.get("visual_brief") or "")
-        cleaned = strip_unlocked_inventory(vb, locked)
+        cleaned = strip_unlocked_inventory(scrub_daily_visual_brief(vb), locked)
         if cleaned != vb:
             seg["visual_brief"] = cleaned
     fixed_furniture = _daily_fixed_furniture(segments)
