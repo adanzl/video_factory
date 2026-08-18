@@ -346,7 +346,9 @@ def assemble_daily_t2i_prompt(
             cleaned = ""
         if cleaned:
             parts.append(cleaned)
-    return "".join(parts)
+    from app.services.script.visual_brief import strip_held_prop_from_surface
+
+    return strip_held_prop_from_surface("".join(parts))
 
 
 def assemble_daily_image_prompts(

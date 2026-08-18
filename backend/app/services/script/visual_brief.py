@@ -65,6 +65,8 @@ _DAILY_VISUAL_BRIEF_CONTENT_RULE = (
     "会移动/被拿起的核心冲突道具（浇花水壶、相框、蛋糕、薯片等）"
     "不写在场景定稿的主体陈设句里，只写在状态句/持物动作句；"
     "固定陈设（花盆、托盘、沙发、茶几等）才进场景定稿句。"
+    "本镜已写人手持/递出某物时，场景陈设句禁止再出现同一物"
+    "（禁止「桌上摊着A和B」同时又「右手握着B」；桌上只留未被拿起的物件）。"
     "浇花水壶示例：只在持物角色动作句写「昭昭右手握着一把蓝色塑料浇花水壶（宽口短嘴）」；"
     "场景句只写花盆、托盘、水渍、背景，禁止再出现「水壶」字样。"
     "后续分镜沿用分镜1定稿的地点、固定陈设样式与背景（文字保持一致），"
@@ -135,7 +137,8 @@ _DAILY_VISUAL_BRIEF_CONTENT_RULE = (
     "禁止同一角色同时出现两组手部动作（如双手撑桌又另有手拿道具）；"
     "禁止把 A 角色的动作写成 B 角色的动作；"
     "持物人与伸手人必须分离：非持物角色伸向道具时写明「手指悬空，未接触道具」，"
-    "持物角色写明「手指包裹道具」。"
+    "持物角色写明「手指包裹道具」；"
+    "递出/递给须写「手指仍接触该物」，禁止写成已离手或回到桌上。"
     "【人物】写眉眼与肢体（瞪圆眼、皱眉、撇嘴、前倾、摊手等），强度对齐台词语气；"
     "口型由系统注入，但 brief 的表情须与说话兼容："
     "首说话人（dialogue 第一句）正在说话，可写「撇嘴说话」「咧嘴笑着说」「笑眯眯地说话」等，"
@@ -480,6 +483,20 @@ _MOVED_STATE_RE = re.compile(r"(?:摔|掉|落|躺|滚|滑|脱手|踩|扫|捡|碎
 _HAND_HOLD_RE = re.compile(
     r"([\u4e00-\u9fa5]{2,3})(?:右手|左手|双手)?(?:拿|捧|握|抱)着?"
 )
+# 从动作句抽出被拿起的物件（不按主题词表枚举）。
+_HOLD_OBJECT_RE = re.compile(
+    r"(?:右手|左手|双手)?"
+    r"(?:握着|握住|拿着|持着|举着|端着|托着|托住|提着|接过|"
+    r"递出|递给|抓住|抓着|拿起|紧握)"
+    r"(?:一把|一支|一张|一条|一个)?"
+    r"([^，。；、（(\n]{1,12})"
+)
+_SURFACE_PLACE_RE = re.compile(
+    r"(桌上|桌面上|茶几上|沙发上|餐桌上|书桌上|旁边)"
+    r"(?:还)?"
+    r"(?:摊着|放着|立着|摆着|搁着|摊开)"
+)
+_SURFACE_ITEM_SPLIT_RE = re.compile(r"和|与|及|、")
 
 
 def _prop_key(prop: str) -> str:
@@ -501,6 +518,85 @@ def _key_means_same_prop(clause: str, key: str) -> bool:
             start = i + len(key)
             continue
         return True
+
+
+def _held_prop_keys(body: str) -> set[str]:
+    """本镜动作句里被拿起/递出的物件名词（由持物动词抽出，不查词表）。"""
+    keys: set[str] = set()
+    for clause in re.split(r"[；;。]", body):
+        if not any(n in clause for n in ("昭昭", "灿灿", "妈妈")):
+            continue
+        if _SURFACE_PLACE_RE.search(clause) and not _HOLD_OBJECT_RE.search(
+            clause
+        ):
+            continue
+        for m in _HOLD_OBJECT_RE.finditer(clause):
+            raw = (m.group(1) or "").strip()
+            if not raw:
+                continue
+            key = _prop_key(raw)
+            if len(key) < 2:
+                continue
+            keys.add(key)
+    return keys
+
+
+def _strip_held_from_surface_clause(clause: str, keys: set[str]) -> str:
+    """陈设句里删掉已被拿起的并列项，保留桌上其余物件。"""
+    m = _SURFACE_PLACE_RE.search(clause)
+    if not m:
+        return clause
+    head = clause[: m.end()]
+    rest = clause[m.end() :]
+    extra = ""
+    comma = re.search(r"[，,]", rest)
+    if comma:
+        items_blob = rest[: comma.start()]
+        extra = rest[comma.start() :]
+    else:
+        items_blob = rest
+    parts = [
+        p.strip()
+        for p in _SURFACE_ITEM_SPLIT_RE.split(items_blob)
+        if p.strip()
+    ]
+    kept = [
+        p
+        for p in parts
+        if not any(_key_means_same_prop(p, k) for k in keys)
+    ]
+    if not kept:
+        # 陈设句只剩这一件时交给后续位移归一（改成「被X拿在手中」）。
+        return clause
+    if len(kept) == 1:
+        items = kept[0]
+    elif len(kept) == 2:
+        items = "和".join(kept)
+    else:
+        items = "、".join(kept)
+    return head + items + extra
+
+
+def strip_held_prop_from_surface(body: str) -> str:
+    """同镜已持物/递出时，从桌上/茶几上陈设句剥掉同一物件。
+
+    不枚举剪刀/水壶：持物动词命中什么，就剥什么。
+    无人持物的「桌上只有该物」原样保留。
+    """
+    keys = _held_prop_keys(body)
+    if not keys:
+        return body
+    out: list[str] = []
+    for part in re.split(r"([；;。])", body):
+        if part in {"；", ";", "。"} or not part:
+            out.append(part)
+            continue
+        out.append(_strip_held_from_surface_clause(part, keys))
+    text = "".join(out)
+    text = re.sub(r"[，,]{2,}", "，", text)
+    text = re.sub(r"[，,]\s*(?=[；;。]|$)", "", text)
+    text = re.sub(r"[；;]{2,}", "；", text)
+    return text.strip("，,；; ")
 
 
 def _resolve_stale_prop_position_conflict(body: str) -> str:
@@ -528,10 +624,14 @@ def _resolve_stale_prop_position_conflict(body: str) -> str:
             if _MOVED_STATE_RE.search(clause):
                 moved = True
                 break
-            hm = _HAND_HOLD_RE.search(clause)
-            if hm:
+            held_here = _held_prop_keys(clause)
+            if any(
+                k == key or _key_means_same_prop(k, key)
+                for k in held_here
+            ):
                 moved = True
-                holder = hm.group(1)
+                hm = _HAND_HOLD_RE.search(clause)
+                holder = hm.group(1) if hm else ""
                 break
         if not moved:
             continue
@@ -762,6 +862,7 @@ def scrub_daily_visual_brief(text: str) -> str:
     body = _fix_hands_on_hips_conflict(body)
     body = _normalize_default_table_set(body)
     body = _dedupe_default_table_set(body)
+    body = strip_held_prop_from_surface(body)
     body = _resolve_stale_prop_position_conflict(body)
     body = _resolve_furniture_between_conflict(body)
     body = re.sub(r"[，,]{2,}", "，", body)
