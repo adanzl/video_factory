@@ -54,6 +54,19 @@ _DAILY_LOOK = {
     "灿灿": "粉色卫衣的黑马尾女孩（灿灿）",
     "妈妈": "米色上衣的黑长发成年女性（妈妈）",
 }
+_DAILY_ARM_IDS = {"昭昭": "zhao_arms", "灿灿": "can_arms", "妈妈": "mom_arms"}
+_ARM_COUNT_IDS = frozenset({"zhao_arms", "can_arms", "mom_arms", "extra_arms"})
+_MAX_ARMS_PER_PERSON = 2
+
+
+def _arm_count_question(look: str) -> str:
+    """手臂条数问法：要数字。是/否会把三臂漏过去。"""
+    return (
+        f"{look}身上，从肩膀或躯干连出来的可见手臂一共几条？"
+        "叉腰、指向、握物的手都要分别数；"
+        "胸口/腰侧/身前多长出来的第三只手也要数。"
+        "只回答阿拉伯数字"
+    )
 # 拼装器写入 image_prompt 的首个说话人张嘴标记（须与 image_prompt.py 一致）
 _MOUTH_FIRST_SPEAKER_RE = re.compile(
     r"(昭昭|灿灿|妈妈)(?:嘴巴明显张开|微微张嘴|嘴巴微张)?正在开口说话"
@@ -638,7 +651,9 @@ class AgnesImageProvider(ImageProvider):
         "不要解释、不要编号列表外的文字、不要复述提示词。"
         "项「场景」：只看主场景/主体是否明显跑偏；"
         "画风套话、参考图指令前缀、次要细节差异一律算通过（答是）。"
-        "项「胳膊」：每人可见胳膊是否最多 2 条；正常答「是」，多肢答「否」。"
+        "项「手臂」：只报从该角色肩膀或躯干连出的可见手臂条数，只答阿拉伯数字；"
+        "叉腰/指向/握物的手都要数，胸口或身前多长出来的第三只手也要数；"
+        "不要用是/否。"
         "项「嘴型」：只看该项写明角色本人是否张着嘴，微张即算张（答是）；"
         "完全闭合才答「否」；其他人物的嘴型与本项无关。"
         "项「人数」：数清晰完整的主体人头，只回答阿拉伯数字；"
@@ -866,14 +881,6 @@ class AgnesImageProvider(ImageProvider):
                 )
             question += "回答「是」或「否」"
             items.append(("prop_holder", question))
-        items.append(
-            (
-                "extra_arms",
-                "画面中每个人可见手臂是否恰好 2 条，且左右手各一只（能区分左右）？"
-                "若任何人出现第 3 条手臂、两只右手、两只左手或多出的手，答「否」。"
-                "回答「是」或「否」",
-            )
-        )
         # 承托物/关键道具在场：提示词写了托盘等就必须可见，防止道具凭空消失
         if "托盘" in scene_prompt:
             items.append(
@@ -924,6 +931,25 @@ class AgnesImageProvider(ImageProvider):
             speakers=speakers,
             content_style=content_style,
         )
+        # 手臂条数：是/否不可靠（分镜2 昭昭三臂仍答「是」）。按人报数字。
+        if content_style == CONTENT_STYLE_DAILY_STORY:
+            for name in _DAILY_SPEAKER_ORDER:
+                if name in allowed and name in _DAILY_ARM_IDS:
+                    items.append(
+                        (
+                            _DAILY_ARM_IDS[name],
+                            _arm_count_question(_DAILY_LOOK[name]),
+                        )
+                    )
+        else:
+            items.append(
+                (
+                    "extra_arms",
+                    "画面中手臂最多的那个人，从肩膀或躯干连出的可见手臂一共几条？"
+                    "胸口/身前多长出来的手也要数。"
+                    "只回答阿拉伯数字",
+                )
+            )
         cast_max: int | None = None
         if allowed:
             cast_max = len(allowed)
@@ -1015,6 +1041,14 @@ class AgnesImageProvider(ImageProvider):
                 if cast_max is not None and n > cast_max:
                     return False
                 continue
+            if cid in _ARM_COUNT_IDS:
+                n = AgnesImageProvider._parse_person_count(raw)
+                if n is None:
+                    return False
+                parsed_any = True
+                if n > _MAX_ARMS_PER_PERSON:
+                    return False
+                continue
             verdict = AgnesImageProvider._parse_item_answer(raw)
             if verdict == "unknown":
                 continue
@@ -1034,7 +1068,6 @@ class AgnesImageProvider(ImageProvider):
                 "lr_pos",
                 "mouth_first",
                 "prop_holder",
-                "extra_arms",
                 "prop_present",
                 "door_single",
                 "no_float_hair",
@@ -1061,7 +1094,7 @@ class AgnesImageProvider(ImageProvider):
             if raw is None:
                 parts.append(f"{cid}=unknown")
                 continue
-            if cid == "cast_count":
+            if cid == "cast_count" or cid in _ARM_COUNT_IDS:
                 n = AgnesImageProvider._parse_person_count(raw)
                 parts.append(f"{cid}={n if n is not None else 'unknown'}")
                 continue
