@@ -361,6 +361,58 @@ def test_scrub_daily_visual_brief_resolves_prop_hand_conflict():
     assert "摔裂的相框被妈妈拿在手中" in out
 
 
+def test_scrub_strips_held_prop_from_table_keeps_other_items():
+    """同镜已握着某物时，桌上并列项只去掉该物，不靠剪刀/水壶词表。"""
+    from app.services.script.visual_brief import scrub_daily_visual_brief
+
+    scissors = scrub_daily_visual_brief(
+        "客厅，桌上摊着剪坏的纸和剪刀；画面左边是昭昭，右边是灿灿；"
+        "灿灿右手握着剪刀（手指包裹剪刀柄），左手按在纸上。"
+    )
+    assert "桌上摊着剪坏的纸" in scissors
+    assert "纸和剪刀" not in scissors
+    assert "握着剪刀" in scissors
+
+    kettle = scrub_daily_visual_brief(
+        "阳台，桌上放着托盘和水壶；昭昭右手握着一把蓝色塑料浇花水壶。"
+    )
+    assert "桌上放着托盘" in kettle
+    assert "托盘和水壶" not in kettle
+    assert "握着一把蓝色塑料浇花水壶" in kettle
+
+    table_only = scrub_daily_visual_brief(
+        "客厅，桌上摊着一把剪刀，纸边歪歪扭扭；画面左边是昭昭，右边是灿灿；"
+        "昭昭双手自然下垂，看着纸边。"
+    )
+    assert "桌上摊着一把剪刀" in table_only
+
+
+def test_assemble_daily_image_prompts_drops_table_scissors_when_held():
+    """拼装后的 image_prompt 不得同时写桌上剪刀和手里握着剪刀。"""
+    from app.services.script.image_prompt import assemble_daily_image_prompts
+
+    segs = [
+        {
+            "segment_index": 1,
+            "shot_type": "中景",
+            "visual_brief": (
+                "客厅，桌上摊着剪坏的纸和剪刀；画面左边是昭昭，右边是灿灿；"
+                "灿灿右手握着剪刀（手指包裹剪刀柄），左手叉腰。"
+            ),
+            "dialogue": [
+                {"speaker": "灿灿", "line": "我压着线顺着推，你看仔细啊。"},
+            ],
+        }
+    ]
+    assemble_daily_image_prompts(
+        segs,
+        setting="客厅，桌上摊着一张刚剪坏的纸。",
+    )
+    ip = segs[0]["image_prompt"]
+    assert "握着剪刀" in ip
+    assert not re.search(r"桌上[^。；]*剪刀", ip)
+
+
 def test_scrub_daily_visual_brief_keeps_prop_when_no_position_conflict():
     """道具仍在原位时不改写；「蛋糕刀/薯片袋」同前缀别物不得误判为位移。"""
     from app.services.script.visual_brief import scrub_daily_visual_brief
