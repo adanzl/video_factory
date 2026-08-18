@@ -577,6 +577,75 @@ def test_assemble_daily_image_prompts_locks_inventory_from_setting():
     assert "两张" not in ip2
 
 
+def test_clutter_prop_not_locked_from_dialogue_metaphor():
+    """台词说「拿尺子比」不是把尺子锁进画面。"""
+    from app.services.script.visual_brief import (
+        daily_locked_inventory,
+        strip_unlocked_inventory,
+    )
+
+    segs = [
+        {
+            "segment_index": 1,
+            "visual_brief": "客厅，桌上摊着一张剪坏的纸和一把剪刀。",
+            "dialogue": [
+                {"speaker": "昭昭", "line": "你拿尺子比着，边都扭成麻花了啊。"},
+            ],
+        }
+    ]
+    locked = daily_locked_inventory(
+        segs,
+        "客厅，教他剪刀要拿正；桌上摊着一张刚剪坏的纸。",
+    )
+    assert "剪刀" in locked
+    assert "纸" in locked
+    assert "尺子" not in locked
+    out = strip_unlocked_inventory("桌上还放着一把尺子和半张纸。", locked)
+    assert "尺子" not in out
+
+
+def test_strip_unlocked_inventory_remote_job79_dirty_brief():
+    """远程 job79 质检重写原文：尺子/沙发/第二张纸必须剥掉，剪刀要补回。"""
+    from app.services.script.visual_brief import (
+        daily_locked_inventory,
+        strip_unlocked_inventory,
+    )
+
+    setting = (
+        "客厅，灿灿正指着昭昭剪得歪歪扭扭的纸边，教他剪刀要拿正、沿直线剪；"
+        "桌上还摊着一张昭昭刚剪坏的纸。"
+    )
+    segs = [
+        {
+            "segment_index": 1,
+            "visual_brief": (
+                "客厅，桌上摊着一张刚剪坏的纸和一把剪刀，纸边歪歪扭扭呈锯齿状；"
+                "桌上还放着遥控器和空水杯。"
+            ),
+            "dialogue": [
+                {"speaker": "灿灿", "line": "你剪的纸边都歪成锯齿了"},
+                {"speaker": "昭昭", "line": "那你剪一条给我看"},
+            ],
+        }
+    ]
+    locked = daily_locked_inventory(segs, setting)
+    dirty4 = (
+        "儿童情绪涂鸦风格，橡皮擦拭痕迹。客厅桌上摊着一张剪坏的纸和一把剪刀；"
+        "桌上还放着一把尺子和半张被剪坏的纸；昭昭手指悬空未接触剪刀。"
+    )
+    out4 = strip_unlocked_inventory(dirty4, locked)
+    assert "尺子" not in out4
+    assert "橡皮擦拭" in out4
+    assert "剪刀" in out4
+    dirty7 = (
+        "客厅桌上，一张被剪成波浪形的纸摊开，纸边歪扭如锯齿；"
+        "桌上还摊着另一张剪坏的纸，边缘破损。"
+    )
+    out7 = strip_unlocked_inventory(dirty7, locked)
+    assert "另一张" not in out7
+    assert "剪刀" in out7
+
+
 def test_locked_inventory_keeps_shot1_furniture():
     """分镜1 已有的沙发/茶几仍锁定，不能当杂物删掉。"""
     from app.services.script.visual_brief import (
