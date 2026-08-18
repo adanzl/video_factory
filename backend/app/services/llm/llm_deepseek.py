@@ -2116,6 +2116,7 @@ class DeepSeekClient(LLMClient):
             DAILY_STORY_KEY_CHARS_MAX,
             DAILY_STORY_KEY_CHARS_MIN,
         )
+        from app.services.daily_story.story_types import parse_story_type_code
 
         if not story_type:
             story_type = _select_story_type(theme)
@@ -2156,6 +2157,15 @@ class DeepSeekClient(LLMClient):
                         f"key 须{DAILY_STORY_KEY_CHARS_MIN}–"
                         f"{DAILY_STORY_KEY_CHARS_MAX}字（当前{len(key)}字）"
                     )
+                from app.services.daily_story.story_types.a.opening import (
+                    append_a_framework_errors,
+                )
+
+                append_a_framework_errors(
+                    raw,
+                    type_code=parse_story_type_code(story_type=story_type),
+                    errors=errors,
+                )
                 if errors:
                     raise ValueError("; ".join(errors))
                 raw["_framework_type"] = story_type
