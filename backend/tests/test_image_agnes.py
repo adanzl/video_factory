@@ -294,8 +294,9 @@ def test_build_verify_checklist_daily_includes_zhao() -> None:
     assert "单侧高马尾" in user
     assert "霓虹条纹" in user
     assert "彩虹挑染" in user
-    assert "从肩膀或躯干连出来的可见手臂一共几条" in user
-    assert "第三只手也要数" in user
+    assert "末端呈人手形态的肢端都算一条手臂" in user
+    assert "腋下、腰侧、胸口" in user
+    assert "不要用「人只有两只胳膊」的常识改口" in user
     assert "只回答阿拉伯数字" in user
     assert "照片墙" in user
 

@@ -182,7 +182,8 @@ def _daily_composition(
             return (
                 f"{lr}"
                 f"中近景特写，严格左侧{look.get(a, a)}占左半、"
-                f"右侧{look.get(b, b)}占右半，左右位置固定不变。"
+                f"右侧{look.get(b, b)}占右半，左右位置固定不变，"
+                f"每人只显示2条手臂。"
             )
         return "面部特写，占画面主体，背景虚化。"
     if shot_type == "中景":
@@ -192,7 +193,7 @@ def _daily_composition(
             return (
                 f"{lr}"
                 f"中景，严格左{look.get(a, a)}、右{look.get(b, b)}，"
-                f"左右位置固定不变，全身可见。"
+                f"左右位置固定不变，全身可见，每人只显示2条手臂。"
             )
         return "中景，人物全身，环境可见。"
     return "根据画面自然构图。"

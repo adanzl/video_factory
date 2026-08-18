@@ -126,13 +126,15 @@ _DAILY_VISUAL_BRIEF_CONTENT_RULE = (
     "【站位】两人：「画面左边是A，右边是B」，再按左→右写动作；"
     "三人默认「从左到右是昭昭、妈妈、灿灿」并写清每人动作；"
     "昭昭与灿灿同框默认左昭昭、右灿灿，全片尽量固定；"
+    "禁止「站在她右侧/他左侧」等相对站位（会和画面左右打架）；"
     "speakers 列出的角色都要入画，未发言者写旁听姿态。"
-    "【人物关系】对标本段 dialogue：质问方进攻（指/瞪/左手叉腰+右手指），"
-    "辩解方防御（摊手/耸肩/撇嘴）；每人只定格一组姿势（冲突最强一瞬）。"
+    "【人物关系】对标本段 dialogue：质问方进攻（瞪/皱眉 + 指或叉腰二选一），"
+    "辩解方防御（摊手/耸肩/撇嘴）；每人只定格一组姿势（冲突最强一瞬）；"
+    "禁止同一人同时写「左手叉腰+右手指」。"
     "【手部总账与互斥】本镜角色数×2=可见手总数，每角色恰好两只手。"
-    "每个角色必须写明两只手各自的动作，禁止只写一只手；"
-    "手部动作按角色逐一写清：持物角色写明哪只手拿、另一只手做什么；"
-    "无持物/无手势需求时明确写「双手背在身后/自然下垂/放在身侧」，"
+    "每人只准一个主动手部动作，另一只必须写「自然下垂/放在身侧」；"
+    "持物角色：一只手握物，另一只下垂，禁止再写指/叉腰/按纸；"
+    "无持物时指、叉腰、摊手三选一，不要叠「身体前倾」；"
     "不要写易诱发多手的撑桌/抱胸/交叉等动作；"
     "禁止同一角色同时出现两组手部动作（如双手撑桌又另有手拿道具）；"
     "禁止把 A 角色的动作写成 B 角色的动作；"
@@ -408,6 +410,66 @@ def _collapse_duplicate_pose_clauses(body: str) -> str:
     return "".join(out)
 
 
+def _collapse_dual_active_hands(body: str) -> str:
+    """同一人指+叉腰/握+指等会诱发第三只手：只留一个主动手，另一只下垂。"""
+    parts = re.split(r"([；;。])", body)
+    if not parts:
+        return body
+    hold_re = re.compile(r"(?:右手|左手)?(?:握着|握住|拿着|持着)")
+    point_re = re.compile(r"(?:右手|左手)?(?:食指)?(?:指着|指向|比划)")
+    press_re = re.compile(r"(?:右手|左手)?(?:按在|压着|压住)")
+    out: list[str] = []
+    i = 0
+    while i < len(parts):
+        segment = parts[i]
+        delim = parts[i + 1] if i + 1 < len(parts) else ""
+        for name in ("昭昭", "灿灿", "妈妈"):
+            if name not in segment:
+                continue
+            has_hold = bool(hold_re.search(segment))
+            has_point = bool(point_re.search(segment))
+            has_hip = "叉腰" in segment
+            has_press = bool(press_re.search(segment))
+            if sum([has_hold, has_point, has_hip, has_press]) < 2:
+                continue
+            if has_hold:
+                segment = re.sub(
+                    r"(左手|右手|双手)叉腰", r"\1自然下垂", segment
+                )
+                segment = re.sub(
+                    r"(左手|右手)(?:食指)?(?:指着|指向|比划)[^，。；]{0,16}",
+                    r"\1自然下垂",
+                    segment,
+                )
+                segment = re.sub(
+                    r"(左手|右手)(?:按在|压着|压住)[^，。；]{0,16}",
+                    r"\1自然下垂",
+                    segment,
+                )
+            elif has_point and has_hip:
+                segment = re.sub(
+                    r"(左手|右手|双手)叉腰", r"\1自然下垂", segment
+                )
+            elif has_point and has_press:
+                segment = re.sub(
+                    r"(左手|右手)(?:按在|压着|压住)[^，。；]{0,16}",
+                    r"\1自然下垂",
+                    segment,
+                )
+            elif has_hip and has_press:
+                segment = re.sub(
+                    r"(左手|右手)(?:按在|压着|压住)[^，。；]{0,16}",
+                    r"\1自然下垂",
+                    segment,
+                )
+            segment = segment.replace("身体前倾，", "").replace("身体前倾", "")
+        out.append(segment)
+        if delim:
+            out.append(delim)
+        i += 2 if delim else 1
+    return "".join(out)
+
+
 def _fix_hands_on_hips_conflict(body: str) -> str:
     """同一分句「双手叉腰」又写右手动作时，改为左手叉腰。"""
     parts = re.split(r"([；;。])", body)
@@ -490,6 +552,23 @@ _HOLD_OBJECT_RE = re.compile(
     r"递出|递给|抓住|抓着|拿起|紧握)"
     r"(?:一把|一支|一张|一条|一个)?"
     r"([^，。；、（(\n]{1,12})"
+)
+_NAMED_HOLD_RE = re.compile(
+    r"(昭昭|灿灿|妈妈)"
+    r"([^。；]{0,24}?)"
+    r"(右手|左手|双手)?"
+    r"(握着|握住|拿着|持着|举着|端着|托着|托住|提着|接过|"
+    r"递给|递出|抓住|抓着|拿起|紧握)"
+    r"(?:一把|一支|一张|一条|一个)?"
+    r"([^，。；、（(\n]{1,12})"
+)
+_DAILY_LR_LOCK_RE = re.compile(
+    r"画面左边是\s*(昭昭|灿灿|妈妈)\s*[，,；;]?\s*右边是\s*(昭昭|灿灿|妈妈)"
+)
+_RELATIVE_STAND_RE = re.compile(
+    r"(昭昭|灿灿|妈妈)站在"
+    r"(?:她|他|(?:昭昭|灿灿|妈妈))(?:的)?"
+    r"(左侧|右边|右侧|左边)"
 )
 _SURFACE_PLACE_RE = re.compile(
     r"(桌上|桌面上|茶几上|沙发上|餐桌上|书桌上|旁边)"
@@ -575,6 +654,65 @@ def _strip_held_from_surface_clause(clause: str, keys: set[str]) -> str:
     else:
         items = "、".join(kept)
     return head + items + extra
+
+
+def held_prop_owners(body: str) -> dict[str, str]:
+    """本镜「谁握着哪件」：prop_key → 持物人。"""
+    owners: dict[str, str] = {}
+    for m in _NAMED_HOLD_RE.finditer(body or ""):
+        raw = (m.group(5) or "").strip()
+        key = _prop_key(raw)
+        if len(key) < 2:
+            continue
+        owners[key] = m.group(1)
+    return owners
+
+
+def restore_held_prop_owners(new: str, old: str) -> str:
+    """质检重写若把持物人改给别人，拨回旧 brief 的持物人。"""
+    owners = held_prop_owners(old)
+    if not owners:
+        return new
+
+    def _repl(m: re.Match) -> str:
+        who = m.group(1)
+        raw = (m.group(5) or "").strip()
+        key = _prop_key(raw)
+        locked = ""
+        for old_key, holder in owners.items():
+            if (
+                key == old_key
+                or _key_means_same_prop(raw, old_key)
+                or _key_means_same_prop(old_key, key)
+            ):
+                locked = holder
+                break
+        if locked and who != locked:
+            return locked + m.group(0)[len(who) :]
+        return m.group(0)
+
+    return _NAMED_HOLD_RE.sub(_repl, new)
+
+
+def _resolve_relative_lr_conflict(body: str) -> str:
+    """「画面左边是A」与「A站在她右侧」并存时，相对站位改成画面左右。"""
+    lock = _DAILY_LR_LOCK_RE.search(body)
+    if not lock:
+        return body
+    left, right = lock.group(1), lock.group(2)
+    side_of = {left: "左边", right: "右边"}
+
+    def _repl(m: re.Match) -> str:
+        who = m.group(1)
+        locked = side_of.get(who)
+        if not locked:
+            return m.group(0)
+        rel_is_right = "右" in m.group(2)
+        if rel_is_right != (locked == "右边"):
+            return f"{who}站在画面{locked}"
+        return m.group(0)
+
+    return _RELATIVE_STAND_RE.sub(_repl, body)
 
 
 def strip_held_prop_from_surface(body: str) -> str:
@@ -763,6 +901,7 @@ def normalize_daily_visual_brief_sequence(
             "画面左边是昭昭，右边是灿灿",
             vb,
         )
+        vb = _resolve_relative_lr_conflict(vb)
         if "花盆" in vb and "一株" not in vb and "红花" not in vb:
             plant = "花盆里有一株盛开的红花，花朵明显可见，枝叶完整。"
             if vb.endswith(("。", "；", ";")):
@@ -860,9 +999,11 @@ def scrub_daily_visual_brief(text: str) -> str:
     body = body.replace("握刀", "握塑料蛋糕刀")
     body = _MOUTH_AND_TONE_RE.sub("", body)
     body = _fix_hands_on_hips_conflict(body)
+    body = _collapse_dual_active_hands(body)
     body = _normalize_default_table_set(body)
     body = _dedupe_default_table_set(body)
     body = strip_held_prop_from_surface(body)
+    body = _resolve_relative_lr_conflict(body)
     body = _resolve_stale_prop_position_conflict(body)
     body = _resolve_furniture_between_conflict(body)
     body = re.sub(r"[，,]{2,}", "，", body)

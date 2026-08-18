@@ -161,8 +161,12 @@ class ImageMgr:
         else:
             vb_feedback = _verify_visual_brief_regen_feedback(speakers)
             ip_feedback = _verify_prompt_regen_feedback(speakers)
+        old_brief = str(target.get('visual_brief') or '')
         if content_style == CONTENT_STYLE_DAILY_STORY:
-            from app.services.script.visual_brief import daily_locked_inventory
+            from app.services.script.visual_brief import (
+                daily_locked_inventory,
+                held_prop_owners,
+            )
 
             locked = daily_locked_inventory(
                 script.get('segments') or [],
@@ -175,8 +179,31 @@ class ImageMgr:
                 )
                 vb_feedback = f'{vb_feedback}{lock_note}'
                 ip_feedback = f'{ip_feedback}{lock_note}'
+            vb_feedback = (
+                f'{vb_feedback}'
+                '左右已写「画面左边/右边是谁」时只改姿势，'
+                '禁止再写「站在她右侧/他左侧」等相对站位。'
+            )
+            owners = held_prop_owners(old_brief)
+            if owners:
+                bits = [f'{holder}持{prop}' for prop, holder in owners.items()]
+                vb_feedback = (
+                    f'{vb_feedback}'
+                    f'本镜持物锁定：{"、".join(bits)}。'
+                    '禁止换人；未持物角色写空手。'
+                )
         if content_style == CONTENT_STYLE_DAILY_STORY:
             llm_mgr.fill_visual_briefs(script, feedback=vb_feedback, job=job, segment_indices=[index])
+            from app.services.script.visual_brief import restore_held_prop_owners
+
+            for item in script.get('segments') or []:
+                if int(item.get('segment_index') or 0) != index:
+                    continue
+                item['visual_brief'] = restore_held_prop_owners(
+                    str(item.get('visual_brief') or ''),
+                    old_brief,
+                )
+                break
             llm_mgr.fill_image_prompts(script, job=job, segment_indices=[index], include_sd15_prompt=resolve_include_sd15_prompt(job))
         else:
             llm_mgr.fill_image_prompts(script, feedback=ip_feedback, job=job, segment_indices=[index], include_sd15_prompt=resolve_include_sd15_prompt(job))
