@@ -530,6 +530,85 @@ def test_assemble_daily_image_prompts_blocks_prop_state_regression():
     assert "掉在地上" in ip12
 
 
+def test_assemble_daily_image_prompts_locks_inventory_from_setting():
+    """质检重写爱编尺子/沙发/第二张纸，锁定后只能留 setting 里的剪刀和纸。"""
+    from app.services.script.image_prompt import assemble_daily_image_prompts
+
+    setting = (
+        "客厅，灿灿正指着昭昭剪得歪歪扭扭的纸边，教他剪刀要拿正、沿直线剪；"
+        "桌上还摊着一张昭昭刚剪坏的纸。"
+    )
+    segs = [
+        {
+            "segment_index": 1,
+            "shot_type": "中近景特写",
+            "visual_brief": (
+                "客厅，桌上摊着一张刚剪坏的纸和一把剪刀，纸边歪歪扭扭呈锯齿状；"
+                "画面左边是昭昭，右边是灿灿；桌上还放着遥控器和空水杯。"
+            ),
+            "dialogue": [
+                {"speaker": "灿灿", "line": "客厅桌上你剪的纸边都歪成锯齿了，得顺着线走"},
+                {"speaker": "昭昭", "line": "那你剪一条给我看"},
+            ],
+        },
+        {
+            "segment_index": 2,
+            "shot_type": "中景",
+            "visual_brief": (
+                "客厅，灿灿右手握着一把儿童安全剪刀，左手压在白纸上；"
+                "两张剪坏的纸被灿灿拿在手中；背景是沙发和茶几；"
+                "桌上还放着一把尺子和一支铅笔。"
+            ),
+            "dialogue": [
+                {"speaker": "灿灿", "line": "我压着线顺着推，你看仔细啊。"},
+                {"speaker": "昭昭", "line": "你这条边怎么往外弯了你听着呀？"},
+            ],
+        },
+    ]
+    assemble_daily_image_prompts(segs, setting=setting)
+    ip2 = segs[2 - 1]["image_prompt"]
+    assert "剪刀" in ip2
+    assert "纸" in ip2
+    assert "儿童安全剪刀" not in ip2
+    assert "尺子" not in ip2
+    assert "铅笔" not in ip2
+    assert "沙发" not in ip2
+    assert "茶几" not in ip2
+    assert "两张" not in ip2
+
+
+def test_locked_inventory_keeps_shot1_furniture():
+    """分镜1 已有的沙发/茶几仍锁定，不能当杂物删掉。"""
+    from app.services.script.visual_brief import (
+        daily_locked_inventory,
+        strip_unlocked_inventory,
+    )
+
+    segs = [
+        {
+            "segment_index": 1,
+            "visual_brief": (
+                "客厅，茶几上立着摔裂的相框，旁边是扫帚和簸箕；"
+                "昭昭身后的沙发上有一团揉皱的衣服。"
+            ),
+            "dialogue": [{"speaker": "昭昭", "line": "姐，我把相框碰裂了！"}],
+        },
+        {
+            "segment_index": 2,
+            "visual_brief": "客厅，沙发和茶几还在，相框掉在地上。",
+            "dialogue": [{"speaker": "灿灿", "line": "快捡起来"}],
+        },
+    ]
+    locked = daily_locked_inventory(segs, "客厅，茶几上摔裂的相框。")
+    assert "相框" in locked
+    assert "沙发" in locked
+    assert "茶几" in locked
+    out = strip_unlocked_inventory(segs[1]["visual_brief"], locked)
+    assert "沙发" in out
+    assert "茶几" in out
+    assert "相框" in out
+
+
 def test_assemble_daily_t2i_no_duplicate_lr_in_prompt():
     """visual_brief 已有左右时，构图段不再重复「画面左边…」。"""
     seg = {

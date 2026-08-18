@@ -363,11 +363,19 @@ def assemble_daily_image_prompts(
     from app.services.script.visual_brief import (
         _daily_fixed_furniture,
         _resolve_prop_state_regression,
+        daily_locked_inventory,
+        strip_unlocked_inventory,
     )
 
     # 跨镜状态保护：已落地的冲突道具不得在后续镜写回家具台面
     # （覆盖出图质检兜底重写 visual_brief 的路径）
     _resolve_prop_state_regression(segments)
+    locked = daily_locked_inventory(segments, setting)
+    for seg in segments:
+        vb = str(seg.get("visual_brief") or "")
+        cleaned = strip_unlocked_inventory(vb, locked)
+        if cleaned != vb:
+            seg["visual_brief"] = cleaned
     fixed_furniture = _daily_fixed_furniture(segments)
     # 分镜1 的场景定稿句：含花盆/托盘/背景/阳台且不含角色的句子
     scene_anchor = ""

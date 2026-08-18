@@ -104,7 +104,9 @@ _DAILY_VISUAL_BRIEF_CONTENT_RULE = (
     "两人始终同框清晰入画，禁止把其中一人写成背景模糊/远景；"
     "禁止括号内心理/解释说明（如「其实是小块，但昭昭认为大」），只写可见画面。"
     "【安全】儿童角色不得持真实刀具/锐器；剧情涉及刀时统一写「塑料蛋糕刀」"
-    "（蛋糕刀样式，非水果刀/餐刀），禁止「水果刀」「餐刀」「锋利刀具」等表述。"
+    "（蛋糕刀样式，非水果刀/餐刀），禁止「水果刀」「餐刀」「锋利刀具」等表述；"
+    "剧情涉及剪刀时全片同一把，写「剪刀」（儿童塑料圆头），"
+    "禁止改写成金属锋利剪或另编尺子/铅笔。"
     "画面涉及门（含门口/门外）时，门一律写成「一扇单开门」"
     "（单扇门：只有一块完整门板，没有分成两扇），"
     "门外是柔和的白色亮光；门被风吹得更开时须写明向内开；"
@@ -258,6 +260,104 @@ def _daily_fixed_furniture(segments: list[dict]) -> tuple[str, ...]:
         vb = str(seg.get("visual_brief") or "")
         return tuple(f for f in _DAILY_FIXED_FURNITURE if f in vb)
     return ()
+
+
+# 可锁定的活动道具 + 质检重写爱编的杂物。未在 setting/台词/分镜1 出现则删。
+_LOCKABLE_PROPS: tuple[str, ...] = (
+    "剪刀", "纸", "水壶", "相框", "蛋糕", "薯片", "酸奶",
+    "饼干", "衣服", "衣物", "袜子", "鞋带", "洗手液",
+    "尺子", "直尺", "铅笔", "橡皮", "文具", "彩笔",
+    "书包", "本子", "书本", "杂志", "抱枕", "靠垫", "废纸",
+)
+_CLUTTER_ONLY_PROPS = frozenset(
+    (
+        "尺子", "直尺", "铅笔", "橡皮", "文具", "彩笔",
+        "书包", "本子", "书本", "杂志", "抱枕", "靠垫", "废纸",
+    )
+)
+_SCISSOR_ALIAS_RE = re.compile(r"(?:儿童)?(?:安全|塑料)?剪刀")
+_EXTRA_PAPER_RE = re.compile(
+    r"两张[^，。；;]{0,10}纸|另一张[^，。；;]{0,10}纸|几张废纸|几段剪下的纸边"
+)
+
+
+def _dialogue_blob(segments: list[dict]) -> str:
+    parts: list[str] = []
+    for seg in segments:
+        for row in seg.get("dialogue") or []:
+            if not isinstance(row, dict):
+                continue
+            parts.append(str(row.get("text") or row.get("line") or ""))
+    return "".join(parts)
+
+
+def daily_locked_inventory(
+    segments: list[dict],
+    setting: str | None = None,
+) -> set[str]:
+    """本片允许入画的物品：setting/台词里的活动道具 + 分镜1 家具/默认陈设。"""
+    setting_text = str(setting or "")
+    spoken = setting_text + _dialogue_blob(segments)
+    vb1 = ""
+    for seg in segments:
+        if int(seg.get("segment_index") or 0) == 1:
+            vb1 = str(seg.get("visual_brief") or "")
+            break
+    locked = {n for n in _LOCKABLE_PROPS if n in spoken}
+    # 分镜1 已落地的冲突道具可锁；尺子/铅笔等杂物必须 setting/台词点名。
+    locked |= {
+        n
+        for n in _LOCKABLE_PROPS
+        if n in vb1 and n not in _CLUTTER_ONLY_PROPS
+    }
+    locked |= {n for n in _DAILY_FIXED_FURNITURE if n in spoken or n in vb1}
+    for n in ("遥控器", "空水杯"):
+        if n in vb1 or n in spoken:
+            locked.add(n)
+    return locked
+
+
+def _drop_unlocked_name(body: str, name: str, locked: set[str]) -> str:
+    """去掉未锁定物品的短词组，尽量不拆掉整句锁定道具。"""
+    if name not in body:
+        return body
+    patterns = [
+        rf"背景是{name}和[\u4e00-\u9fa5]{{1,6}}",
+        rf"背景是[\u4e00-\u9fa5]{{1,6}}和{name}",
+        rf"(?:一把|一支|一张|一条|一个|几张|几把)(?:塑料|儿童|安全)?{name}",
+        rf"和{name}",
+        rf"{name}和",
+    ]
+    # 短名可能嵌在已锁定长名里（床⊂床头柜），此时不裸删。
+    if not any(name != other and name in other for other in locked):
+        patterns.append(name)
+    out = body
+    for pat in patterns:
+        out = re.sub(pat, "", out)
+    return out
+
+
+def strip_unlocked_inventory(body: str, locked: set[str]) -> str:
+    """后续镜/质检重写不得新增未锁定家具和杂物；剪刀别名收回「剪刀」。"""
+    if not body:
+        return body
+    out = body
+    if "剪刀" in locked:
+        out = _SCISSOR_ALIAS_RE.sub("剪刀", out)
+    if "纸" in locked:
+        out = _EXTRA_PAPER_RE.sub("一张剪坏的纸", out)
+    names = sorted(
+        [n for n in (*_DAILY_FIXED_FURNITURE, *_LOCKABLE_PROPS) if n not in locked],
+        key=len,
+        reverse=True,
+    )
+    for name in names:
+        out = _drop_unlocked_name(out, name, locked)
+    out = re.sub(r"[，,]{2,}", "，", out)
+    out = re.sub(r"[；;]{2,}", "；", out)
+    out = re.sub(r"。{2,}", "。", out)
+    out = re.sub(r"（）|\(\)", "", out)
+    return out.strip("，,；;。 ")
 
 
 def _collapse_duplicate_pose_clauses(body: str) -> str:
@@ -518,13 +618,19 @@ def _resolve_prop_state_regression(segments: list[dict]) -> list[dict]:
     return segments
 
 
-def normalize_daily_visual_brief_sequence(segments: list[dict]) -> list[dict]:
+def normalize_daily_visual_brief_sequence(
+    segments: list[dict],
+    *,
+    setting: str | None = None,
+) -> list[dict]:
     """非首镜去掉重复默认陈设句，避免每镜都写「遥控器和空水杯」。"""
     _resolve_prop_state_regression(segments)
+    locked = daily_locked_inventory(segments, setting)
     fixed = _daily_fixed_furniture(segments)
     for seg in segments:
         idx = int(seg.get("segment_index") or 0)
         vb = str(seg.get("visual_brief") or "")
+        vb = strip_unlocked_inventory(vb, locked)
         vb = _strip_non_first_speaker_speech(vb, seg.get("dialogue") or [])
         vb = _resolve_stale_prop_position_conflict(vb)
         vb = _resolve_furniture_between_conflict(vb)
@@ -793,10 +899,19 @@ def build_visual_brief_prompts(
             # 本片物件锚点：setting 里出现的场景物件须每镜在场（状态可随剧情演变）
             setting_rule += (
                 "【本片物件锚点】以下为本片 setting 全句，"
-                "其中出现的冲突相关物件（如薯片袋、衣服）每镜保持在场，状态可随剧情演变；"
-                "背景陈设仍用默认遥控器和空水杯："
+                "其中出现的冲突相关物件（如薯片袋、衣服、剪刀、纸）每镜保持在场，"
+                "状态可随剧情演变；背景陈设仍用默认遥控器和空水杯："
                 f"「{setting_text}」"
             )
+            locked = daily_locked_inventory(segments, setting_text)
+            if locked:
+                names = "、".join(sorted(locked, key=len, reverse=True))
+                setting_rule += (
+                    f"【物品锁定】本片只允许这些物品入画：{names}。"
+                    "禁止新增分镜1/setting/台词没有的家具、文具或第二件同款"
+                    "（如尺子、铅笔、沙发、另一张纸）；"
+                    "剪刀全片同一把，写「剪刀」，勿改成安全剪/金属锋利剪。"
+                )
     content_rule = (
         _DAILY_VISUAL_BRIEF_CONTENT_RULE
         if profile_style == CONTENT_STYLE_DAILY_STORY

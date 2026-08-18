@@ -162,6 +162,20 @@ class ImageMgr:
             vb_feedback = _verify_visual_brief_regen_feedback(speakers)
             ip_feedback = _verify_prompt_regen_feedback(speakers)
         if content_style == CONTENT_STYLE_DAILY_STORY:
+            from app.services.script.visual_brief import daily_locked_inventory
+
+            locked = daily_locked_inventory(
+                script.get('segments') or [],
+                str(script.get('setting') or '').strip() or None,
+            )
+            if locked:
+                names = '、'.join(sorted(locked, key=len, reverse=True))
+                lock_note = (
+                    f'本片锁定物品：{names}。禁止新增未锁定的家具/文具/第二件同款。'
+                )
+                vb_feedback = f'{vb_feedback}{lock_note}'
+                ip_feedback = f'{ip_feedback}{lock_note}'
+        if content_style == CONTENT_STYLE_DAILY_STORY:
             llm_mgr.fill_visual_briefs(script, feedback=vb_feedback, job=job, segment_indices=[index])
             llm_mgr.fill_image_prompts(script, job=job, segment_indices=[index], include_sd15_prompt=resolve_include_sd15_prompt(job))
         else:

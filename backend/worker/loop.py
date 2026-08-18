@@ -272,7 +272,10 @@ def _run_visual_brief(job_id: int, *, segment_indices: list[int] | None=None) ->
             normalize_daily_visual_brief_sequence,
         )
 
-        normalize_daily_visual_brief_sequence(updated.get('segments') or [])
+        normalize_daily_visual_brief_sequence(
+            updated.get('segments') or [],
+            setting=str(updated.get('setting') or '').strip() or None,
+        )
     with atomic():
         repo_job.update_job(job_id, script_json=updated)
         repo_segment.insert_segments(job_id, updated.get('segments', []))
