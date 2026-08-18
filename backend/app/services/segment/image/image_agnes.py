@@ -834,7 +834,8 @@ class AgnesImageProvider(ImageProvider):
                     "回答「是」或「否」",
                 )
             )
-        # 道具归属：提示词写「XX手持道具」时，校验道具在该角色手里且其他人没拿
+        # 道具归属：提示词写「XX手持道具」时只拦「不见了 / 别人拿着」。
+        # 涂鸦风经常把小物件画到持物人身前桌上，不当硬失败。
         prop_match = None
         for clause in re.split(r"[；;。]", scene_prompt):
             m = _PROP_HOLDER_RE.search(clause)
@@ -851,15 +852,17 @@ class AgnesImageProvider(ImageProvider):
                 for name in ("昭昭", "灿灿", "妈妈")
                 if name in speakers and name != holder
             ]
+            look = _DAILY_LOOK.get(holder, holder)
             question = (
-                f"画面中{prop}是否在{_DAILY_LOOK.get(holder, holder)}的"
-                f"{hand}里或与该手接触（手指碰到即可，不要求包裹/紧握），"
-                "不是悬空或单独放在桌面上？"
+                f"画面中是否能看到{prop}？"
+                f"在{look}的{hand}里、碰到该手，或就在其身前桌面上，都算「是」。"
+                f"仅当完全看不到{prop}，或明显在其他人手里时答「否」。"
             )
             if others:
                 question += (
-                    "、".join(_DAILY_LOOK.get(name, name) for name in others)
-                    + f"手里是否没有{prop}？"
+                    "其他人指"
+                    + "、".join(_DAILY_LOOK.get(name, name) for name in others)
+                    + "。"
                 )
             question += "回答「是」或「否」"
             items.append(("prop_holder", question))
