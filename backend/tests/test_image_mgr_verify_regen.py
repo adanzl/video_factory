@@ -682,11 +682,14 @@ def test_regen_restores_holder_and_locks_feedback(noop_atomic) -> None:
         assert "持物锁定" in fb
         assert "灿灿持剪刀" in fb
         assert "相对站位" in fb
+        assert "纸旁" in fb
+        assert "盯着物" in fb
         for item in script["segments"]:
             if int(item["segment_index"]) == 2:
                 item["visual_brief"] = (
                     "画面左边是昭昭，右边是灿灿。"
-                    "昭昭右手握着剪刀，灿灿左手叉腰。"
+                    "纸旁放着一把剪刀，昭昭右手握着剪刀，"
+                    "灿灿左手叉腰。昭昭眼睛盯着剪刀。"
                 )
         return script
 
@@ -718,3 +721,6 @@ def test_regen_restores_holder_and_locks_feedback(noop_atomic) -> None:
     brief = str(seg.get("visual_brief") or "")
     assert "灿灿右手握着剪刀" in brief
     assert "昭昭右手握着剪刀" not in brief
+    assert "纸旁放着" not in brief
+    assert "盯着剪刀" not in brief
+    assert "看向灿灿" in brief

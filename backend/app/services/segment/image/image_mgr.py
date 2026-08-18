@@ -191,17 +191,24 @@ class ImageMgr:
                     f'{vb_feedback}'
                     f'本镜持物锁定：{"、".join(bits)}。'
                     '禁止换人；未持物角色写空手。'
+                    '已持物不要再写桌上/纸旁还有该物；'
+                    '非持物人看人，不要盯着物。'
                 )
         if content_style == CONTENT_STYLE_DAILY_STORY:
             llm_mgr.fill_visual_briefs(script, feedback=vb_feedback, job=job, segment_indices=[index])
-            from app.services.script.visual_brief import restore_held_prop_owners
+            from app.services.script.visual_brief import (
+                restore_held_prop_owners,
+                scrub_daily_visual_brief,
+            )
 
             for item in script.get('segments') or []:
                 if int(item.get('segment_index') or 0) != index:
                     continue
-                item['visual_brief'] = restore_held_prop_owners(
-                    str(item.get('visual_brief') or ''),
-                    old_brief,
+                item['visual_brief'] = scrub_daily_visual_brief(
+                    restore_held_prop_owners(
+                        str(item.get('visual_brief') or ''),
+                        old_brief,
+                    )
                 )
                 break
             llm_mgr.fill_image_prompts(script, job=job, segment_indices=[index], include_sd15_prompt=resolve_include_sd15_prompt(job))
