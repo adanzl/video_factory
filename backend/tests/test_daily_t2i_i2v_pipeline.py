@@ -408,6 +408,10 @@ def test_assemble_daily_image_prompts_drops_table_scissors_when_held():
         segs,
         setting="客厅，桌上摊着一张刚剪坏的纸。",
     )
+    vb = segs[0]["visual_brief"]
+    assert "桌上摊着剪坏的纸" in vb
+    assert "纸和剪刀" not in vb
+    assert "握着剪刀" in vb
     ip = segs[0]["image_prompt"]
     assert "握着剪刀" in ip
     assert not re.search(r"桌上[^。；]*剪刀", ip)

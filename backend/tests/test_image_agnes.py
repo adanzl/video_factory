@@ -321,8 +321,8 @@ def test_build_verify_checklist_daily_includes_zhao() -> None:
         content_style="daily_story",
     )
     assert "prop_holder" in [cid for cid, _ in items_hold]
-    assert "握住" in user_hold
-    assert "不要求紧握" not in user_hold
+    assert "不要求包裹/紧握" in user_hold
+    assert "包裹剪刀柄" not in user_hold
 
     items_pass, user_pass, _ = AgnesImageProvider._build_verify_checklist(
         prompt="画面左边是昭昭，右边是灿灿。灿灿右手递出剪刀。",
@@ -330,7 +330,7 @@ def test_build_verify_checklist_daily_includes_zhao() -> None:
         content_style="daily_story",
     )
     assert "prop_holder" in [cid for cid, _ in items_pass]
-    assert "不要求紧握" in user_pass
+    assert "不要求包裹/紧握" in user_pass
     # 无张嘴标记时不加该项；单人有标记也查
     assert "mouth_first" not in [cid for cid, _ in items_lr]
     items_solo, _, _ = AgnesImageProvider._build_verify_checklist(

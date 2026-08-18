@@ -197,6 +197,11 @@ class ImageMgr:
             raise RuntimeError(f'image_prompt regen leaked feedback into T2I for segment {index}')
         if refreshed.get('visual_brief') is not None:
             seg['visual_brief'] = refreshed.get('visual_brief')
+            if job is not None and job.get('id') is not None:
+                from app.repositories import repo_job
+                from app.repositories.sql_exec import atomic
+                with atomic():
+                    repo_job.update_job(int(job['id']), script_json=script)
         if refreshed.get('motion_prompt') is not None:
             seg['motion_prompt'] = refreshed.get('motion_prompt')
             ImageMgr._inject_speaking_times_for_segment(seg, job=job)
