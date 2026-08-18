@@ -396,7 +396,7 @@ def test_concurrent_prompt_persist_is_safe(app_ctx) -> None:
     assert saved == {i: f"新提示词{i}" for i in range(1, 5)}
 
 
-def test_regen_daily_rewrites_visual_brief_not_append_feedback() -> None:
+def test_regen_daily_rewrites_visual_brief_not_append_feedback(noop_atomic) -> None:
     """daily 质检重写应改 visual_brief 再拼装，禁止把改写说明塞进 T2I。"""
     mgr = ImageMgr()
     seg = {
@@ -428,6 +428,7 @@ def test_regen_daily_rewrites_visual_brief_not_append_feedback() -> None:
         assert "昭昭" in fb and "灿灿" in fb
         assert "同场粘性角色不可漏画" in fb
         assert "禁止新增未授权角色" in fb
+        assert "相对站位" in fb
         # 本段无妈妈，反馈不得写妈妈外貌约束
         assert "米色上衣" not in fb
         assert kwargs.get("segment_indices") == [6]
@@ -458,6 +459,7 @@ def test_regen_daily_rewrites_visual_brief_not_append_feedback() -> None:
             "app.utils.job_info.resolve_include_sd15_prompt",
             return_value=False,
         ),
+        patch("app.repositories.repo_job.update_job"),
     ):
         new_prompt = mgr._regen_segment_image_prompt(
             seg,
@@ -475,7 +477,7 @@ def test_regen_daily_rewrites_visual_brief_not_append_feedback() -> None:
     assert seg["image_prompt"] == new_prompt
 
 
-def test_regen_daily_content_policy_uses_policy_feedback() -> None:
+def test_regen_daily_content_policy_uses_policy_feedback(noop_atomic) -> None:
     mgr = ImageMgr()
     seg = {
         "id": 8,
@@ -531,6 +533,7 @@ def test_regen_daily_content_policy_uses_policy_feedback() -> None:
             "app.utils.job_info.resolve_include_sd15_prompt",
             return_value=False,
         ),
+        patch("app.repositories.repo_job.update_job"),
     ):
         new_prompt = mgr._regen_segment_image_prompt(
             seg,
@@ -544,7 +547,7 @@ def test_regen_daily_content_policy_uses_policy_feedback() -> None:
     assert seg["image_prompt"] == new_prompt
 
 
-def test_regen_segment_reinjects_speaking_times_into_motion() -> None:
+def test_regen_segment_reinjects_speaking_times_into_motion(noop_atomic) -> None:
     """质检重生 motion 后须按对白估时写入说话时间轴，避免落库无秒数原文。"""
     mgr = ImageMgr()
     seg = {
@@ -608,6 +611,7 @@ def test_regen_segment_reinjects_speaking_times_into_motion() -> None:
             "app.services.tts.tts_mgr.tts_mgr.subtitle_cues_path_for",
             return_value=Path("/tmp/missing_cues.json"),
         ),
+        patch("app.repositories.repo_job.update_job"),
     ):
         mgr._regen_segment_image_prompt(
             seg,
@@ -641,3 +645,76 @@ def test_verify_regen_feedback_cast_aware() -> None:
     assert "昭昭、灿灿" in vb
     assert "同场粘性角色不可漏画" in vb
     assert "米色上衣" not in vb
+
+
+def test_regen_restores_holder_and_locks_feedback(noop_atomic) -> None:
+    """质检重写若把持物人改给昭昭，落库前拨回；反馈须锁持物人。"""
+    mgr = ImageMgr()
+    seg = {
+        "id": 2,
+        "segment_index": 2,
+        "text": "压着线",
+        "visual_brief": (
+            "画面左边是昭昭，右边是灿灿。"
+            "灿灿右手握着那把剪刀，左手食指指着纸边。"
+            "昭昭双手摊开耸肩。"
+        ),
+        "shot_type": "中景",
+        "image_prompt": "旧提示",
+        "dialogue": [
+            {"speaker": "灿灿", "text": "你看仔细啊。"},
+            {"speaker": "昭昭", "text": "往外弯了。"},
+        ],
+    }
+    job = {
+        "id": 79,
+        "script_json": {
+            "title": "t",
+            "visual_style": "儿童情绪涂鸦",
+            "setting": "客厅，桌上摊着昭昭刚剪坏的纸和剪刀。",
+            "content_style": "daily_story",
+            "segments": [dict(seg)],
+        },
+    }
+
+    def _fake_vb(script, **kwargs):
+        fb = kwargs.get("feedback") or ""
+        assert "持物锁定" in fb
+        assert "灿灿持剪刀" in fb
+        assert "相对站位" in fb
+        for item in script["segments"]:
+            if int(item["segment_index"]) == 2:
+                item["visual_brief"] = (
+                    "画面左边是昭昭，右边是灿灿。"
+                    "昭昭右手握着剪刀，灿灿左手叉腰。"
+                )
+        return script
+
+    def _fake_fill(script, **kwargs):
+        assert kwargs.get("feedback") is None
+        return script
+
+    with (
+        patch(
+            "app.services.llm.llm_mgr.llm_mgr.fill_visual_briefs",
+            side_effect=_fake_vb,
+        ),
+        patch(
+            "app.services.llm.llm_mgr.llm_mgr.fill_image_prompts",
+            side_effect=_fake_fill,
+        ),
+        patch(
+            "app.utils.job_info.resolve_include_sd15_prompt",
+            return_value=False,
+        ),
+        patch("app.repositories.repo_job.update_job"),
+    ):
+        mgr._regen_segment_image_prompt(
+            seg,
+            job=job,
+            content_style="daily_story",
+        )
+
+    brief = str(seg.get("visual_brief") or "")
+    assert "灿灿右手握着剪刀" in brief
+    assert "昭昭右手握着剪刀" not in brief

@@ -232,8 +232,10 @@ def test_scrub_daily_visual_brief_strips_mouth_and_fixes_hands():
     assert "嘴巴大张" not in out
     assert "语气得意" not in out
     assert "双手叉腰" not in out
-    assert "左手叉腰" in out
+    assert "叉腰" not in out
+    assert "左手自然下垂" in out
     assert "右手指着薯片袋" in out
+    assert "身体前倾" not in out
 
     prompt = assemble_daily_t2i_prompt(
         {
@@ -250,7 +252,8 @@ def test_scrub_daily_visual_brief_strips_mouth_and_fixes_hands():
     assert prompt.count("正在开口说话") == 1
     assert "昭昭正在开口说话" in prompt
     assert "双手叉腰" not in prompt
-    assert "左手叉腰" in prompt
+    assert "叉腰" not in prompt
+    assert "左手自然下垂" in prompt
 
 
 def test_scrub_daily_visual_brief_rewrites_door_gap():
@@ -385,6 +388,44 @@ def test_scrub_strips_held_prop_from_table_keeps_other_items():
         "昭昭双手自然下垂，看着纸边。"
     )
     assert "桌上摊着一把剪刀" in table_only
+
+
+def test_scrub_daily_visual_brief_keeps_one_active_hand():
+    """指+叉腰会诱发第三只手，scrub 只留一个主动手。"""
+    from app.services.script.visual_brief import scrub_daily_visual_brief
+
+    out = scrub_daily_visual_brief(
+        "画面左边是昭昭，右边是灿灿。"
+        "灿灿左手指着纸边，右手叉腰，身体前倾，正在说话。"
+        "昭昭双手摊开耸肩。"
+    )
+    assert "右手自然下垂" in out
+    assert "左手指着纸边" in out
+    assert "叉腰" not in out
+    assert "身体前倾" not in out
+
+
+def test_scrub_daily_visual_brief_fixes_relative_lr_conflict():
+    """质检重写「站在她右侧」不得和「左边是昭昭」并存。"""
+    from app.services.script.visual_brief import scrub_daily_visual_brief
+
+    out = scrub_daily_visual_brief(
+        "画面左边是昭昭，右边是灿灿。灿灿右手握着那把剪刀。"
+        "昭昭站在她右侧，双手摊开耸肩。"
+    )
+    assert "昭昭站在画面左边" in out
+    assert "站在她右侧" not in out
+
+
+def test_restore_held_prop_owners_keeps_original_holder():
+    """质检重写把剪刀改到昭昭手里时，拨回灿灿。"""
+    from app.services.script.visual_brief import restore_held_prop_owners
+
+    old = "画面左边是昭昭，右边是灿灿。灿灿右手握着那把剪刀。"
+    new = "画面左边是昭昭，右边是灿灿。昭昭右手握着剪刀，灿灿左手叉腰。"
+    out = restore_held_prop_owners(new, old)
+    assert "灿灿右手握着剪刀" in out
+    assert "昭昭右手握着剪刀" not in out
 
 
 def test_assemble_daily_image_prompts_drops_table_scissors_when_held():
