@@ -907,6 +907,10 @@ def test_assemble_daily_t2i_floor_shoe_seg6_cancan_lift():
     assert "散开的鞋带" not in prompt
     assert "双手手指只捏" not in prompt
     assert "双手拎起" not in prompt
+    assert "带。" not in prompt
+    assert "粉运动鞋总数恰好两只" in prompt
+    assert "粉鞋全部在灿灿手中" in prompt
+    assert "咧嘴得意" in prompt
 
 
 def test_assemble_daily_t2i_floor_shoe_seg7_cancan_flip():
@@ -961,6 +965,8 @@ def test_assemble_daily_t2i_floor_shoe_seg9_aftermath():
     assert "双手手指只捏" not in prompt
     assert "双手自然下垂" not in prompt
     assert "鞋带散开；" not in prompt
+    assert "粉运动鞋总数恰好两只" in prompt
+    assert "无人手中另有粉鞋" in prompt
 
 
 def test_assemble_daily_t2i_no_duplicate_lr_in_prompt():

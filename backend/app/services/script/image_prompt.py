@@ -41,6 +41,10 @@ _FLOOR_SHOE_MAT_ANTI_PICKUP = (
     "无人拿在手中，无人往脚上套粉鞋，全画面仅这两只粉鞋。"
 )
 _FLOOR_SHOE_ANTI_EXTRA = "全画面地垫上仅此一双粉红运动鞋共两只，禁止第三只鞋或第二双粉鞋。"
+_FLOOR_SHOE_COUNT_LEAD = (
+    "全画面粉运动鞋总数恰好两只，是灿灿刚脱下的同一双；"
+    "昭昭脚上是蓝白运动鞋，与粉鞋不是同一双。"
+)
 # brief 里「指鞋/伸手向鞋带/托鞋帮」与硬锁打架，会诱发第三只鞋或套鞋
 _FLOOR_SHOE_HAND_SCRUB_RE = re.compile(
     r"(?:，|^)"
@@ -153,6 +157,45 @@ def _daily_floor_shoe_aftermath(vb: str) -> bool:
     return any(k in text for k in ("白系", "彻底", "沮丧", "叹气", "散乱"))
 
 
+def _daily_floor_shoe_lead_anchor(vb: str) -> str:
+    """地垫鞋场：句首前置鞋数锚点（T2I 句首权重高）。"""
+    text = vb or ""
+    if _daily_cancan_lifts_floor_shoes(text):
+        flip = "鞋子翻了个个儿，" if any(k in text for k in ("翻", "哗啦")) else ""
+        return (
+            f"{_FLOOR_SHOE_COUNT_LEAD}"
+            f"粉鞋两只都在灿灿双手里{flip}地垫上无单独散落的粉鞋。"
+        )
+    if _daily_floor_shoe_aftermath(text):
+        return (
+            f"{_FLOOR_SHOE_COUNT_LEAD}"
+            "粉鞋两只平放地垫中央，无人手中另有粉鞋。"
+        )
+    return _FLOOR_SHOE_COUNT_LEAD
+
+
+def _scrub_floor_shoe_orphan_fragments(vb: str) -> str:
+    """清洗 brief 里 scrub 后残留的断句（带/叉腰/勒痕等）。"""
+    text = (vb or "").strip()
+    if not text:
+        return text
+    text = re.sub(r"，带[，。；]?|^带[，。；]?", "，", text)
+    text = re.sub(r"^双手(?:叉腰|摊开)[^，。；]{0,40}[，。；]?", "", text)
+    text = re.sub(r"仰头看着灿灿[^，。；]{0,24}[，。；]?", "", text)
+    text = re.sub(r"咧嘴得意[^，。；]{0,24}[，。；]?", "", text)
+    text = re.sub(r"出深深的印痕[^，。；]*[，。；]?", "", text)
+    if _daily_cancan_lifts_floor_shoes(text) and "画面左边是昭昭，右边是灿灿" in text:
+        text = re.sub(
+            r"(画面左边是昭昭，右边是灿灿。)[^。；]*(?=[。；]|$)",
+            r"\1",
+            text,
+            count=1,
+        )
+    text = re.sub(r"[，,]{2,}", "，", text)
+    text = re.sub(r"，(?=[；;。]|$)", "", text)
+    return text.strip("，,；;。 ")
+
+
 def _scrub_floor_shoe_wear_verbs(text: str) -> str:
     """「穿进鞋眼」易被画成往脚上套鞋，改为「穿过鞋眼」。"""
     return _FLOOR_SHOE_EYELET_RE.sub(r"穿过\1", text or "")
@@ -215,12 +258,12 @@ def _scrub_floor_shoe_state_conflicts(vb: str) -> str:
         text = re.sub(r"鞋带松散(?:摇晃)?[^，。；]*[，。；]?", "", text)
     if _daily_cancan_lifts_floor_shoes(text):
         text = re.sub(
-            r"灿灿[^。；]{0,16}(?:弯腰)?(?:用(?:右|左)手)?[^。；]{0,8}(?:拎|提|拎起)[^。；]{0,48}[，。；]?",
+            r"灿灿[^。；]{0,16}双手拎起[^。；]+?[，。；]",
             "灿灿在地垫上，",
             text,
         )
         text = re.sub(
-            r"灿灿[^。；]{0,12}双手拎起[^。；]{0,48}[，。；]?",
+            r"灿灿[^。；]{0,16}(?:弯腰)?(?:用(?:右|左)手)?[^。；]{0,8}(?:拎|提|拎起)[^。；]+?[，。；]",
             "灿灿在地垫上，",
             text,
         )
@@ -289,8 +332,11 @@ def _daily_zhao_floor_shoe_watch_action(vb: str, zhao_feet: str) -> str:
             "不碰粉鞋、不拿粉鞋、不往脚上套粉鞋。"
         )
     if re.search(r"昭昭[^。；]{0,24}双手叉腰", text):
+        extra = ""
+        if re.search(r"昭昭[^。；]{0,40}咧嘴得意", text):
+            extra = "咧嘴得意地笑，"
         return (
-            f"{zhao_feet}昭昭蹲在灿灿对面，双手叉腰，"
+            f"{zhao_feet}昭昭蹲在灿灿对面，双手叉腰，{extra}"
             "不碰粉鞋、不拿粉鞋、不往脚上套粉鞋。"
         )
     return (
@@ -352,7 +398,8 @@ def _daily_floor_shoe_lock(vb: str, speakers: list[str]) -> str | None:
         cancan = (
             "灿灿赤脚仅穿白袜子蹲在地垫上，"
             f"双手拎着系成死结串在一起的一双粉鞋（共两只）{flip}，"
-            "两只鞋底贴在一起；不往脚上套粉鞋。"
+            "两只鞋底贴在一起，粉鞋全部在灿灿手中、地垫上无第三只粉鞋；"
+            "不往脚上套粉鞋。"
         )
     elif "灿灿" in speakers:
         cancan = _daily_cancan_floor_shoe_idle_clause(vb)
@@ -612,8 +659,11 @@ def assemble_daily_t2i_prompt(
         vb = _scrub_floor_shoe_state_conflicts(vb)
         vb = _scrub_floor_shoe_hand_actions(vb)
         vb = _scrub_floor_shoe_idle_actions(vb)
+        vb = _scrub_floor_shoe_orphan_fragments(vb)
 
     parts = [_DAILY_T2I_STYLE]
+    if floor_shoe_scene:
+        parts.append(_daily_floor_shoe_lead_anchor(vb_for_shoe_lock))
     if vb:
         parts.append(_strip_style_suffix(vb))
         # 拼装硬锁：门只允许单扇（单开门），风吹头发必须连着头皮，
