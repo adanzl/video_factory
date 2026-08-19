@@ -216,21 +216,93 @@ def test_update_job_publish_true_keeps_running(app_ctx) -> None:
     assert updated["status"] == "running"
 
 
-def test_advance_after_merge_marks_done_without_skip_publish(app_ctx) -> None:
-    """merge 完成后即使 skip_publish=0，也不停在 publish/pending。"""
+def test_advance_after_merge_enters_publish(app_ctx) -> None:
+    """merge 完成后进入 publish/pending，可单独执行发布。"""
     from app.repositories import repo_job
-    from worker.loop import _advance_after_stage
+    from worker.loop import _advance_after_stage, _reload_job
     from worker.stages.standard.merge import MergeStage
 
     job = repo_job.create_job(
-        "merge then done",
-        skip_publish=False,
+        "merge then publish",
         stage="merge",
         status="pending",
         pipeline="chat",
     )
     result = _advance_after_stage(int(job["id"]), MergeStage, status="pending")
-    assert result is not None
+    assert result is None
+    updated = _reload_job(int(job["id"]))
+    assert updated["stage"] == "publish"
+    assert updated["status"] == "pending"
+
+
+def test_run_one_stage_merge_lands_on_publish(app_ctx, monkeypatch) -> None:
+    """单步 merge 只执行合成，然后停在发布阶段。"""
+    from app.repositories import repo_job
+    from worker import loop
+    from worker.stages.standard.merge import MergeStage
+
+    executed: list[str] = []
+
+    def fake_execute(job_id: int, stage_cls, ctx) -> None:
+        executed.append(stage_cls.name)
+
+    monkeypatch.setattr(loop, "_execute_stage", fake_execute)
+    job = repo_job.create_job(
+        "one stage merge",
+        stage="merge",
+        status="pending",
+        pipeline="chat",
+    )
+    result = loop._run_one_stage(int(job["id"]), MergeStage, hold=True)
+    assert executed == ["merge"]
+    assert result["stage"] == "publish"
+    assert result["status"] == "pending"
+
+
+def test_run_one_stage_publish_marks_done(app_ctx, monkeypatch) -> None:
+    """单独执行发布后标记 done。"""
+    from app.repositories import repo_job
+    from worker import loop
+    from worker.stages.common.publish import PublishStage
+
+    executed: list[str] = []
+
+    def fake_execute(job_id: int, stage_cls, ctx) -> None:
+        executed.append(stage_cls.name)
+
+    monkeypatch.setattr(loop, "_execute_stage", fake_execute)
+    job = repo_job.create_job(
+        "one stage publish",
+        stage="publish",
+        status="pending",
+        pipeline="chat",
+    )
+    result = loop._run_one_stage(int(job["id"]), PublishStage, hold=True)
+    assert executed == ["publish"]
+    assert result["stage"] == "done"
+    assert result["status"] == "done"
+
+
+def test_run_from_merge_executes_publish(app_ctx, monkeypatch) -> None:
+    """连续跑时 merge 之后会执行发布阶段。"""
+    from app.repositories import repo_job
+    from worker import loop
+    from worker.stages.standard.merge import MergeStage
+
+    executed: list[str] = []
+
+    def fake_execute(job_id: int, stage_cls, ctx) -> None:
+        executed.append(stage_cls.name)
+
+    monkeypatch.setattr(loop, "_execute_stage", fake_execute)
+    job = repo_job.create_job(
+        "run from merge",
+        stage="merge",
+        status="pending",
+        pipeline="chat",
+    )
+    result = loop._run_from(int(job["id"]), MergeStage)
+    assert executed == ["merge", "publish"]
     assert result["stage"] == "done"
     assert result["status"] == "done"
 
