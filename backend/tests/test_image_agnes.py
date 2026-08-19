@@ -8,6 +8,7 @@ from app.services.segment.image.image_agnes import (
     AgnesImageProvider,
     AgnesImageVerifyFailed,
     _VERIFY_MAX_ATTEMPTS,
+    _agnes_alternate_host_url,
     _to_agnes_size,
 )
 
@@ -15,6 +16,87 @@ from app.services.segment.image.image_agnes import (
 def test_to_agnes_size() -> None:
     assert _to_agnes_size("720*1280") == "720x1280"
     assert _to_agnes_size("1920x1080") == "1920x1080"
+
+
+def test_agnes_alternate_host_url() -> None:
+    com = "https://apihub.agnes-ai.com/v1/images/generations"
+    cn = "https://apihub.agnes-ai.cn/v1/images/generations"
+    assert _agnes_alternate_host_url(com) == cn
+    assert _agnes_alternate_host_url(cn) == com
+    assert _agnes_alternate_host_url("https://example.com/v1") is None
+
+
+def test_request_failover_to_cn_on_503() -> None:
+    provider = AgnesImageProvider()
+    com_url = "https://apihub.agnes-ai.com/v1/images/generations"
+    cn_url = "https://apihub.agnes-ai.cn/v1/images/generations"
+
+    resp_503 = MagicMock()
+    resp_503.status_code = 503
+    resp_503.ok = False
+    resp_503.content = b""
+    resp_503.json = MagicMock(return_value={})
+
+    resp_ok = MagicMock()
+    resp_ok.status_code = 200
+    resp_ok.ok = True
+    resp_ok.content = b"{}"
+    resp_ok.json = MagicMock(return_value={"data": [{"url": "https://example.com/x.png"}]})
+
+    with patch(
+        "app.services.segment.image.image_agnes.requests.request",
+        side_effect=[resp_503, resp_ok],
+    ) as mock_request:
+        result = provider._request(  # noqa: SLF001
+            "POST",
+            com_url,
+            api_key="k",
+            json={"model": "m"},
+            max_retries=2,
+        )
+
+    assert result is resp_ok
+    assert mock_request.call_count == 2
+    assert mock_request.call_args_list[0].args[1] == com_url
+    assert mock_request.call_args_list[1].args[1] == cn_url
+    assert provider._generation_url == cn_url  # noqa: SLF001
+
+
+def test_request_failover_to_com_on_503() -> None:
+    provider = AgnesImageProvider()
+    provider._generation_url = "https://apihub.agnes-ai.cn/v1/images/generations"  # noqa: SLF001
+    cn_url = provider._generation_url
+    com_url = "https://apihub.agnes-ai.com/v1/images/generations"
+
+    resp_503 = MagicMock()
+    resp_503.status_code = 503
+    resp_503.ok = False
+    resp_503.content = b""
+    resp_503.json = MagicMock(return_value={})
+
+    resp_ok = MagicMock()
+    resp_ok.status_code = 200
+    resp_ok.ok = True
+    resp_ok.content = b"{}"
+    resp_ok.json = MagicMock(return_value={"data": [{"url": "https://example.com/x.png"}]})
+
+    with patch(
+        "app.services.segment.image.image_agnes.requests.request",
+        side_effect=[resp_503, resp_ok],
+    ) as mock_request:
+        result = provider._request(  # noqa: SLF001
+            "POST",
+            cn_url,
+            api_key="k",
+            json={"model": "m"},
+            max_retries=2,
+        )
+
+    assert result is resp_ok
+    assert mock_request.call_count == 2
+    assert mock_request.call_args_list[0].args[1] == cn_url
+    assert mock_request.call_args_list[1].args[1] == com_url
+    assert provider._generation_url == com_url  # noqa: SLF001
 
 
 def test_generate_downloads_url(tmp_path: Path) -> None:

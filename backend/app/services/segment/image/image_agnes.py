@@ -33,6 +33,8 @@ logger = logging.getLogger(__name__)
 
 # 含 Cloudflare 源站错误 52x（如 520 unknown error）
 _RETRYABLE = frozenset({500, 502, 503, 504, 520, 521, 522, 523, 524, 525, 526, 527})
+_AGNES_COM_HOST = "apihub.agnes-ai.com"
+_AGNES_CN_HOST = "apihub.agnes-ai.cn"
 # 有备用 Key 时，5xx 同 Key 只打 1 次，失败立刻切
 _FAILOVER_HTTP_RETRIES = 1
 # 同一文生图提示词的质检重试次数；耗尽后由上层重生提示词再开一轮
@@ -113,6 +115,15 @@ def _should_switch_image_key(exc: BaseException) -> bool:
 def _agnes_image_gen_keys(settings=None) -> list[AgnesApiKey]:
     """生图 Key 顺序：与全局一致（收费优先，失败再切 free）。"""
     return agnes_api_keys(settings)
+
+
+def _agnes_alternate_host_url(url: str) -> str | None:
+    """503 时在 .com ↔ .cn 间切换；其它域名不变。"""
+    if _AGNES_COM_HOST in url:
+        return url.replace(_AGNES_COM_HOST, _AGNES_CN_HOST, 1)
+    if _AGNES_CN_HOST in url:
+        return url.replace(_AGNES_CN_HOST, _AGNES_COM_HOST, 1)
+    return None
 
 
 def _to_agnes_size(size: str) -> str:
@@ -237,6 +248,7 @@ class AgnesImageProvider(ImageProvider):
         last_exc: Exception | None = None
         last_status: int | None = None
         last_body: str | None = None
+        host_failover_tried = {url}
         for attempt in range(retries):
             t0 = time.monotonic()
             try:
@@ -250,6 +262,18 @@ class AgnesImageProvider(ImageProvider):
                 elapsed = time.monotonic() - t0
                 last_status = resp.status_code
                 last_body = _resp_body_summary(resp)
+                if resp.status_code == 503 and "/images/generations" in url:
+                    alt_url = _agnes_alternate_host_url(url)
+                    if alt_url and alt_url not in host_failover_tried:
+                        logger.warning(
+                            "%sagnes 503 on %s, failover to alternate domain",
+                            tag,
+                            url,
+                        )
+                        url = alt_url
+                        host_failover_tried.add(alt_url)
+                        self._generation_url = alt_url
+                        continue
                 if resp.status_code in _RETRYABLE:
                     if attempt + 1 >= retries:
                         # 最后一次仍 5xx：不再 sleep，交给上层切 Key / 失败
