@@ -45,6 +45,7 @@ _FLOOR_SHOE_COUNT_LEAD = (
     "全画面粉运动鞋总数恰好两只，是灿灿刚脱下的同一双；"
     "昭昭脚上是蓝白运动鞋，与粉鞋不是同一双。"
 )
+_FLOOR_SHOE_CAST_LOCK = "全画面仅昭昭、灿灿两个小孩，禁止第三个人物或路人。"
 # brief 里「指鞋/伸手向鞋带/托鞋帮」与硬锁打架，会诱发第三只鞋或套鞋
 _FLOOR_SHOE_HAND_SCRUB_RE = re.compile(
     r"(?:，|^)"
@@ -174,15 +175,15 @@ def _daily_floor_shoe_lead_anchor(vb: str, seg: dict | None = None) -> str:
     if _daily_cancan_lifts_floor_shoes(text):
         flip = "，鞋子翻了个个儿，" if any(k in text for k in ("翻", "哗啦")) else ""
         return (
-            f"{_FLOOR_SHOE_COUNT_LEAD}"
+            f"{_FLOOR_SHOE_COUNT_LEAD}{_FLOOR_SHOE_CAST_LOCK}"
             f"粉鞋两只都在灿灿双手里{flip}地垫上零只粉鞋、无单独散落的粉鞋。"
         )
     if _daily_floor_shoe_aftermath(text, seg):
         return (
-            f"{_FLOOR_SHOE_COUNT_LEAD}"
+            f"{_FLOOR_SHOE_COUNT_LEAD}{_FLOOR_SHOE_CAST_LOCK}"
             "粉鞋两只平放地垫中央，无人手中另有粉鞋。"
         )
-    return _FLOOR_SHOE_COUNT_LEAD
+    return f"{_FLOOR_SHOE_COUNT_LEAD}{_FLOOR_SHOE_CAST_LOCK}"
 
 
 def _daily_floor_shoe_tail_anchor(vb: str, seg: dict | None = None) -> str:
@@ -192,7 +193,7 @@ def _daily_floor_shoe_tail_anchor(vb: str, seg: dict | None = None) -> str:
         return "重申：全画面仅两只粉运动鞋，均在灿灿双手中，地垫上零只粉鞋。"
     if _daily_floor_shoe_aftermath(text, seg):
         return "重申：全画面仅两只粉运动鞋，平放地垫中央，无人手中另有粉鞋。"
-    return "重申：全画面粉运动鞋恰好两只，禁止第三只鞋。"
+    return f"{_FLOOR_SHOE_CAST_LOCK}重申：全画面粉运动鞋恰好两只，禁止第三只鞋。"
 
 
 def _scrub_floor_shoe_orphan_fragments(vb: str) -> str:

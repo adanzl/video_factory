@@ -367,6 +367,17 @@ class ImageMgr:
             with _greenlet_app_context():
                 return _render_one(seg)
 
+        def _floor_shoe_scene() -> bool:
+            if style != CONTENT_STYLE_DAILY_STORY or not job:
+                return False
+            script = job.get('script_json')
+            if not isinstance(script, dict):
+                return False
+            from app.services.script.image_prompt import _daily_setting_floor_shoe_scene
+            return _daily_setting_floor_shoe_scene(
+                str(script.get('setting') or '').strip() or None
+            )
+
         def _render_one(seg: dict) -> tuple[int, Path, float] | None:
             from app.services.llm.llm_agnes import AgnesContentPolicyError
             from app.services.segment.image.image_agnes import AgnesImageVerifyFailed
@@ -495,6 +506,13 @@ class ImageMgr:
                     params_desc,
                     exc,
                 )
+                if kind == 'verify' and _floor_shoe_scene() and out.exists():
+                    logger.warning(
+                        'image segment %s verify failed on floor-shoe scene; keep last png',
+                        index,
+                    )
+                    elapsed = time.time() - t0
+                    return (seg['id'], out, elapsed)
                 if out.exists():
                     try:
                         out.unlink()
