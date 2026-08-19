@@ -47,7 +47,8 @@ class SegmentStage(StageExecutor):
 
         def persist_segment_image(seg_id: int, path: Path, gen_sec: float=0) -> None:
             with _db_context():
-                with atomic():
+                from app.repositories.sql_exec import locked_atomic
+                with locked_atomic():
                     info_raw = repo_segment.get_segment_info(seg_id)
                     info = _merge_info(info_raw, 'image_gen_sec', gen_sec)
                     repo_segment.update_segment(seg_id, image_path=str(path), status='done', info=info)
@@ -56,7 +57,8 @@ class SegmentStage(StageExecutor):
 
         def persist_segment_clip(seg_id: int, path: Path, gen_sec: float=0) -> None:
             with _db_context():
-                with atomic():
+                from app.repositories.sql_exec import locked_atomic
+                with locked_atomic():
                     info_raw = repo_segment.get_segment_info(seg_id)
                     info = _merge_info(info_raw, 'clip_gen_sec', gen_sec)
                     repo_segment.update_segment(seg_id, clip_path=str(path), info=info)

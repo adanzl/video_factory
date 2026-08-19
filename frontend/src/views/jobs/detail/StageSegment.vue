@@ -710,10 +710,18 @@ const handleSaveSegmentText = async () => {
   }
 };
 
-const actionDisabled = computed(() => props.job.status === "running");
-const actionDisabledReason = computed(() =>
-  props.job.status === "running" ? "任务运行中，请稍后再试" : ""
+const actionDisabled = computed(
+  () => props.job.status === "running" || props.job.worker_busy === true
 );
+const actionDisabledReason = computed(() => {
+  if (props.job.worker_busy && props.job.status !== "running") {
+    return "后台仍在执行，请稍候";
+  }
+  if (props.job.status === "running") {
+    return "任务运行中，请稍后再试";
+  }
+  return "";
+});
 
 const isSegmentImageActionDisabled = (segmentIndex: number) =>
   actionDisabled.value ||

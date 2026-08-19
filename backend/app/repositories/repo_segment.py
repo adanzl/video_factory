@@ -45,9 +45,10 @@ def insert_segments(
     existing_by_index = {
         int(row["segment_index"]): row for row in list_segments(job_id)
     }
-    delete_segments(job_id)
+    seen: set[int] = set()
     for seg in segments:
         index = int(seg["segment_index"])
+        seen.add(index)
         prev = existing_by_index.get(index)
         image_path = seg.get("image_path")
         if image_path is None and prev is not None:
@@ -63,13 +64,43 @@ def insert_segments(
             status = prev.get("status")
         if not status:
             status = "pending"
-        version = int(prev["version"]) if prev is not None else 0
         if "info" in seg:
             info_raw = _serialize_info(seg.get("info"))
         elif prev is not None:
             info_raw = _serialize_info(prev.get("info"))
         else:
             info_raw = None
+        dialogue_raw = (
+            json.dumps(seg["dialogue"], ensure_ascii=False)
+            if seg.get("dialogue")
+            else None
+        )
+        if prev is not None:
+            sql.execute(
+                """
+                UPDATE video_segment SET
+                    text = ?, image_prompt = ?, motion_prompt = ?, visual_mode = ?,
+                    duration_sec = ?, sd15_prompt_en = ?, image_path = ?, clip_path = ?,
+                    status = ?, dialogue = ?, info = ?
+                WHERE id = ?
+                """,
+                (
+                    seg["text"],
+                    seg.get("image_prompt"),
+                    seg.get("motion_prompt"),
+                    seg.get("visual_mode", "static_motion"),
+                    duration_sec,
+                    seg.get("sd15_prompt_en"),
+                    image_path,
+                    clip_path,
+                    status,
+                    dialogue_raw,
+                    info_raw,
+                    int(prev["id"]),
+                ),
+            )
+            continue
+        version = 0
         sql.execute(
             """
             INSERT INTO video_segment (
@@ -90,12 +121,43 @@ def insert_segments(
                 image_path,
                 clip_path,
                 status,
-                json.dumps(seg["dialogue"], ensure_ascii=False) if seg.get("dialogue") else None,
+                dialogue_raw,
                 info_raw,
                 version,
             ),
         )
+    for index, row in existing_by_index.items():
+        if index not in seen:
+            sql.execute("DELETE FROM video_segment WHERE id = ?", (int(row["id"]),))
     sql.commit()
+
+
+def sync_image_paths_from_disk(job_id: int, images_dir) -> int:
+    """磁盘已有 png 但 DB 缺 image_path 时补写（防 session 竞态丢字段）。"""
+    from pathlib import Path
+
+    root = Path(images_dir)
+    if not root.is_dir():
+        return 0
+    fixed = 0
+    for row in list_segments(job_id):
+        recorded = row.get("image_path")
+        if recorded:
+            try:
+                if Path(str(recorded)).is_file():
+                    continue
+            except OSError:
+                pass
+        fallback = root / f"{int(row['segment_index'])}.png"
+        if not fallback.is_file():
+            continue
+        update_segment(
+            int(row["id"]),
+            image_path=str(fallback.resolve()),
+            status="done",
+        )
+        fixed += 1
+    return fixed
 
 
 def list_segments(job_id: int) -> list[dict]:

@@ -143,3 +143,28 @@ def test_insert_segments_preserves_tts_duration_sec(app_ctx) -> None:
     updated = repo_segment.list_segments(job_id)[0]
     assert updated["duration_sec"] == 9.795
     assert updated["image_prompt"] == "new prompt"
+
+
+def test_sync_image_paths_from_disk(app_ctx, tmp_path) -> None:
+    job = repo_job.create_job("test sync image path")
+    job_id = job["id"]
+    repo_segment.insert_segments(
+        job_id,
+        [
+            {
+                "segment_index": 1,
+                "text": "a",
+                "visual_mode": "static_motion",
+                "info": {"image_gen_sec": 12.3},
+            },
+        ],
+    )
+    images_dir = tmp_path / "images"
+    images_dir.mkdir()
+    png = images_dir / "1.png"
+    png.write_bytes(b"fake")
+    fixed = repo_segment.sync_image_paths_from_disk(job_id, images_dir)
+    assert fixed == 1
+    row = repo_segment.list_segments(job_id)[0]
+    assert row["image_path"] == str(png.resolve())
+    assert row["status"] == "done"
