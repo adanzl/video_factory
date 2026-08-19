@@ -247,19 +247,6 @@ const introLogs = computed(() => {
 const logsForStage = (stageName: string) =>
   stageName === "intro" ? introLogs.value : logsByStage.value[stageName] ?? [];
 
-const statusTagType = (status: string) => {
-  switch (status) {
-    case "done":
-      return "success";
-    case "running":
-      return "warning";
-    case "failed":
-      return "danger";
-    default:
-      return "info";
-  }
-};
-
 const syncActiveStage = (detail: JobDetail) => {
   activeStage.value = resolveActiveStageTab(detail, detail.stage);
 };
