@@ -261,7 +261,10 @@ api.interceptors.request.use(config => {
 api.interceptors.response.use(
   response => response,
   (error: AxiosError<{ error?: string; msg?: string }>) => {
-    logAndNoticeError(error, "请求失败");
+    const silent = Boolean(error.config && (error.config as { skipErrorNotice?: boolean }).skipErrorNotice);
+    if (!silent) {
+      logAndNoticeError(error, "请求失败");
+    }
     return Promise.reject(error);
   }
 );

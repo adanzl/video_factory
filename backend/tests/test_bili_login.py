@@ -59,7 +59,45 @@ def test_session_check_missing_cookie(tmp_path) -> None:
     session = BiliSession(tmp_path / "missing.json")
     status = session.check()
     assert status["ok"] is False
-    assert status["message"] == "cookie missing"
+    assert status["code"] == "bili_cookie_expired"
+    assert "扫码登录" in status["message"]
+    assert status["reason"] == "cookie missing"
+
+
+def test_session_check_not_logged_in(tmp_path, monkeypatch) -> None:
+    session = BiliSession(tmp_path / "cookies.json")
+    session.save(_cookie_items())
+    resp = MagicMock()
+    resp.json.return_value = {"code": -101, "message": "账号未登录", "data": {"isLogin": False}}
+    monkeypatch.setattr(
+        "app.services.publish.bilibili.session.requests.get",
+        lambda *args, **kwargs: resp,
+    )
+    status = session.check()
+    assert status["ok"] is False
+    assert status["code"] == "bili_cookie_expired"
+    assert "扫码登录" in status["message"]
+    assert status["reason"] == "账号未登录"
+
+
+def test_publish_mgr_require_session_expired(tmp_path, monkeypatch) -> None:
+    from app.services.publish.publish_mgr import BiliCookieExpired, PublishMgr
+
+    session = BiliSession(tmp_path / "missing.json")
+    mgr = PublishMgr()
+    monkeypatch.setattr(mgr, "session_status", session.check)
+    with pytest.raises(BiliCookieExpired, match="扫码登录"):
+        mgr.require_session()
+
+
+def test_bili_session_route_expired(app_ctx, tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(config, "bili_cookie_path", tmp_path / "missing.json")
+    client = app_ctx.test_client()
+    resp = client.get("/v_factory/api/publish/bili/session")
+    assert resp.status_code == 401
+    body = resp.get_json()
+    assert body["code"] == "bili_cookie_expired"
+    assert "扫码登录" in body["error"]
 
 
 def test_login_skips_when_session_valid(tmp_path, monkeypatch) -> None:

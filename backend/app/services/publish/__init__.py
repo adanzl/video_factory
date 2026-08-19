@@ -1,3 +1,3 @@
-from app.services.publish.publish_mgr import PublishMgr, publish_mgr
+from app.services.publish.publish_mgr import BiliCookieExpired, PublishMgr, publish_mgr
 
-__all__ = ["PublishMgr", "publish_mgr"]
+__all__ = ["BiliCookieExpired", "PublishMgr", "publish_mgr"]
