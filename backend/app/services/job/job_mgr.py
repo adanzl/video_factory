@@ -167,6 +167,14 @@ class JobMgr:
                 self._locks[job_id] = lock
             return lock
 
+    def is_worker_active(self, job_id: int) -> bool:
+        """后台 worker 是否仍持锁（含中止后等待当前步骤结束）。"""
+        lock = self._job_lock(job_id)
+        if lock.acquire(blocking=False):
+            lock.release()
+            return False
+        return True
+
     def list_jobs(self, *, condition: dict | None=None, limit: int=50, offset: int=0) -> dict:
         """返回 {items: [...], total: N}。"""
         with atomic():
@@ -187,6 +195,7 @@ class JobMgr:
                 job['tts_clips'] = []
         else:
             job['tts_clips'] = []
+        job['worker_busy'] = self.is_worker_active(job_id)
         return job
 
     def get_segments(self, job_id: int) -> list[dict]:

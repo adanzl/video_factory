@@ -14,10 +14,15 @@ from gevent.lock import Semaphore
 import requests
 from PIL import Image
 
+from gevent import sleep as gevent_sleep
+from gevent import spawn as gevent_spawn
+from gevent.event import AsyncResult
+
 from app.config import get_settings
 from app.services.llm.llm_mgr import llm_mgr
 from app.services.segment.image.image_mock import MockImageProvider
 from app.services.segment.image.image_mgr import ImageProvider
+from app.utils.job_cancel import job_cancel
 
 logger = logging.getLogger(__name__)
 
@@ -1154,6 +1159,27 @@ class Sd15ImageProvider(ImageProvider):
         self._timeout_sec = settings.sd_timeout_sec
         self._fallback = MockImageProvider()
         self._current_checkpoint: str | None = None
+        self._active_job_id: int | None = None
+
+    def _raise_if_job_cancelled(self) -> None:
+        if self._active_job_id is not None:
+            job_cancel.raise_if_cancelled(self._active_job_id)
+
+    def _run_blocking_cancellable(self, fn):
+        """在子 greenlet 跑阻塞 IO，主 greenlet 轮询中止信号。"""
+        result = AsyncResult()
+
+        def _worker() -> None:
+            try:
+                result.set(fn())
+            except Exception as exc:
+                result.set_exception(exc)
+
+        gevent_spawn(_worker)
+        while not result.ready():
+            self._raise_if_job_cancelled()
+            gevent_sleep(0.3)
+        return result.get()
 
     def describe_params(self, *, size: str | None = None) -> str:
         business = self._business_override or "prompt_infer"
@@ -1180,12 +1206,16 @@ class Sd15ImageProvider(ImageProvider):
         with self._checkpoint_lock:
             if self._current_checkpoint == checkpoint:
                 return
-            resp = requests.post(
-                f"{self._api_url}/sdapi/v1/options",
-                json={"sd_model_checkpoint": checkpoint},
-                timeout=60,
-            )
-            resp.raise_for_status()
+
+            def _post() -> None:
+                resp = requests.post(
+                    f"{self._api_url}/sdapi/v1/options",
+                    json={"sd_model_checkpoint": checkpoint},
+                    timeout=60,
+                )
+                resp.raise_for_status()
+
+            self._run_blocking_cancellable(_post)
             self._current_checkpoint = checkpoint
 
     def _txt2img(
@@ -1216,14 +1246,17 @@ class Sd15ImageProvider(ImageProvider):
             "enable_hr": False,
             "override_settings": {"CLIP_stop_at_last_layers": 2},
         }
-        resp = requests.post(
-            f"{self._api_url}/sdapi/v1/txt2img",
-            json=payload,
-            timeout=self._timeout_sec,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        return base64.b64decode(data["images"][0])
+        def _post() -> bytes:
+            resp = requests.post(
+                f"{self._api_url}/sdapi/v1/txt2img",
+                json=payload,
+                timeout=self._timeout_sec,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return base64.b64decode(data["images"][0])
+
+        return self._run_blocking_cancellable(_post)
 
     def _generate_split(
         self,
@@ -1307,12 +1340,14 @@ class Sd15ImageProvider(ImageProvider):
         return buf.getvalue()
 
     def generate(self, prompt: str, output_path: Path, *, size: str | None = None, ref_images: list[Path] | None = None, expected_speakers: list[str] | None = None, content_style: str | None = None) -> Path:
+        self._raise_if_job_cancelled()
         size = size or self._default_size
         prep = _prepare_sd15_prompt(
             prompt,
             size_hint=size,
             business_override=self._business_override,
         )
+        self._raise_if_job_cancelled()
         business = prep.business
         lora = prep.lora
         cfg = self._cfg_for_business(business, lora=lora)

@@ -788,6 +788,28 @@ def test_locked_inventory_keeps_shot1_furniture():
     assert "相框" in out
 
 
+def test_assemble_daily_t2i_floor_shoe_lace_lock():
+    """地垫系带场面：昭昭赤脚操作地垫上的鞋，避免画成系自己脚上鞋带。"""
+    setting = "客厅地垫上，一双运动鞋鞋带散开摆着，昭昭蹲在鞋边准备系带"
+    seg = {
+        "segment_index": 1,
+        "shot_type": "中景",
+        "visual_brief": (
+            "昭昭蹲着，双手伸向鞋带，抬头看向灿灿；"
+            "灿灿站着，右手食指指向地面上的鞋，皱眉瞪眼，说话。"
+        ),
+        "dialogue": [
+            {"speaker": "灿灿", "line": "昭昭，地垫上这双鞋鞋带又散了，你来帮我系。"},
+            {"speaker": "昭昭", "line": "好嘞，我这就蹲下来系。"},
+        ],
+    }
+    prompt = assemble_daily_t2i_prompt(seg, setting=setting)
+    assert "赤脚仅穿白袜子" in prompt
+    assert "两侧同色蓝白运动鞋" not in prompt
+    assert "地垫中央平放着一双无人穿着的蓝白运动鞋" in prompt
+    assert "不是给自己脚上穿鞋系带" in prompt
+
+
 def test_assemble_daily_t2i_no_duplicate_lr_in_prompt():
     """visual_brief 已有左右时，构图段不再重复「画面左边…」。"""
     seg = {

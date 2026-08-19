@@ -154,6 +154,7 @@ const segments = ref<JobSegment[]>([]);
 const logs = ref<JobLog[]>([]);
 const loading = ref(false);
 const aborting = ref(false);
+const stoppingWorker = ref(false);
 const clearingLogs = ref(false);
 const publishing = ref(false);
 const doneLoading = ref(false);
@@ -264,6 +265,7 @@ const fetchDetail = async (options: { silent?: boolean } = {}) => {
     segments.value = segmentList;
     logs.value = logList;
     await loadChatStoryType(detail);
+    syncRunningPoll(detail);
   } catch (error) {
     if (!silent) {
       job.value = undefined;
@@ -378,13 +380,15 @@ const handleAbort = async () => {
 
   aborting.value = true;
   try {
+    const wasRunning = isRunning;
     job.value = await abortJob(job.value.id);
-    if (job.value.status === JOB_STATUS_RUNNING) {
+    if (wasRunning) {
+      stoppingWorker.value = true;
       ElMessage.success("已请求中止，等待当前步骤结束");
       startRunningPoll();
     } else {
       ElMessage.success("任务已中止");
-      stopRunningPoll();
+      syncRunningPoll();
     }
     await fetchDetail({ silent: true });
   } catch (error) {
@@ -392,6 +396,25 @@ const handleAbort = async () => {
   } finally {
     aborting.value = false;
   }
+};
+
+const shouldKeepPolling = (detail: JobDetail) =>
+  detail.status === JOB_STATUS_RUNNING ||
+  detail.worker_busy === true ||
+  stoppingWorker.value;
+
+const syncRunningPoll = (detail?: JobDetail) => {
+  const current = detail ?? job.value;
+  if (!current) {
+    stopRunningPoll();
+    return;
+  }
+  if (shouldKeepPolling(current)) {
+    startRunningPoll();
+    return;
+  }
+  stopRunningPoll();
+  stoppingWorker.value = false;
 };
 
 const stopRunningPoll = () => {
@@ -409,13 +432,9 @@ const startRunningPoll = () => {
 };
 
 watch(
-  () => job.value?.status,
-  status => {
-    if (status === JOB_STATUS_RUNNING) {
-      startRunningPoll();
-    } else {
-      stopRunningPoll();
-    }
+  () => [job.value?.status, job.value?.worker_busy, stoppingWorker.value] as const,
+  () => {
+    syncRunningPoll();
   }
 );
 
@@ -432,9 +451,7 @@ watch(
 );
 
 onActivated(() => {
-  if (job.value?.status === JOB_STATUS_RUNNING) {
-    startRunningPoll();
-  }
+  syncRunningPoll();
 });
 onDeactivated(stopRunningPoll);
 onUnmounted(stopRunningPoll);

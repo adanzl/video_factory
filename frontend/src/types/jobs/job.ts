@@ -94,6 +94,8 @@ export interface JobDetail extends JobListItem {
   tts_usage_json?: unknown;
   tts_clips?: string[];
   created_at?: string | null;
+  /** 后台 worker 仍持锁（含中止后等待当前步骤结束） */
+  worker_busy?: boolean;
 }
 
 export type Job = JobDetail;
