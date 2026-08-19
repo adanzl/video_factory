@@ -899,7 +899,7 @@ def test_assemble_daily_t2i_floor_shoe_seg6_cancan_lift():
         "speakers": ["昭昭", "灿灿"],
     }
     prompt = assemble_daily_t2i_prompt(seg, setting=setting)
-    assert "被灿灿双手拎离地面" in prompt
+    assert "被拎离地面" in prompt
     assert "双手拎着系成死结串在一起" in prompt
     assert "昭昭蹲在灿灿对面，双手叉腰" in prompt
     assert "无人拿在手中" not in prompt
@@ -910,6 +910,7 @@ def test_assemble_daily_t2i_floor_shoe_seg6_cancan_lift():
     assert "带。" not in prompt
     assert "粉运动鞋总数恰好两只" in prompt
     assert "粉鞋全部在灿灿手中" in prompt
+    assert "地垫上没有任何粉运动鞋" in prompt or "地垫上零只粉鞋" in prompt
     assert "咧嘴得意" in prompt
 
 
@@ -966,6 +967,29 @@ def test_assemble_daily_t2i_floor_shoe_seg9_aftermath():
     assert "双手自然下垂" not in prompt
     assert "鞋带散开；" not in prompt
     assert "粉运动鞋总数恰好两只" in prompt
+    assert "无人手中另有粉鞋" in prompt
+    assert "重申：全画面仅两只粉运动鞋" in prompt
+
+
+def test_assemble_daily_t2i_floor_shoe_seg9_corrupted_vb_dialogue_aftermath():
+    """分镜9：visual_brief 被质检 LLM 改坏时，台词「彻底白系」仍走沮丧旁观硬锁。"""
+    setting = "客厅地垫上，灿灿脱下的粉红运动鞋鞋带散开摆着，昭昭蹲在鞋边准备系带"
+    seg = {
+        "segment_index": 9,
+        "shot_type": "中近景特写",
+        "visual_brief": (
+            "客厅地垫上，画面左边是昭昭，右边是灿灿；灿灿蹲在地上，"
+            "双手各捏住一只鞋的鞋带末端，用力向外拉扯；昭昭双手摊开耸肩。"
+        ),
+        "dialogue": [{"speaker": "灿灿", "line": "行吧，这鞋带是彻底白系了。"}],
+        "speakers": ["昭昭", "灿灿"],
+    }
+    prompt = assemble_daily_t2i_prompt(seg, setting=setting)
+    assert "各捏住一只鞋的鞋带" not in prompt
+    assert "向外拉扯" not in prompt
+    assert "双手垂在身侧" in prompt
+    assert "灿灿双手叉腰" in prompt
+    assert "鞋带纠缠散乱" in prompt
     assert "无人手中另有粉鞋" in prompt
 
 
