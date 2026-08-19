@@ -971,6 +971,32 @@ def test_assemble_daily_t2i_floor_shoe_seg9_aftermath():
     assert "重申：全画面仅两只粉运动鞋" in prompt
 
 
+def test_assemble_daily_t2i_floor_shoe_seg8_cancan_untie():
+    """分镜8：灿灿抠死结、昭昭摊手旁观；左右互换；禁止硬锁写成灿灿垂手/昭昭蹲看。"""
+    setting = "客厅地垫上，灿灿脱下的粉红运动鞋鞋带散开摆着，昭昭蹲在鞋边准备系带"
+    seg = {
+        "segment_index": 8,
+        "shot_type": "中景",
+        "visual_brief": (
+            "客厅地垫上，两只粉红运动鞋鞋带系成死结、鞋底相对贴在一起；"
+            "画面左边是灿灿，右边是昭昭；灿灿蹲在鞋旁，双手手指正用力抠鞋带死结，"
+            "眉头紧皱、撇嘴；昭昭站在旁边，双手摊开耸肩，歪头皱眉，一脸不解地看向灿灿。"
+        ),
+        "dialogue": [
+            {"speaker": "灿灿", "text": "别夸了，我蹲地上，上手抠都解不开这死结。"},
+            {"speaker": "昭昭", "text": "可你刚才明明说鞋带系一起，怎么现在又上手来解了？"},
+        ],
+        "speakers": ["昭昭", "灿灿"],
+    }
+    prompt = assemble_daily_t2i_prompt(seg, setting=setting)
+    assert "灿灿双手手指只抠地垫上一双粉鞋的鞋带死结" in prompt
+    assert "昭昭站在地垫旁，双手摊开耸肩" in prompt
+    assert "灿灿双手自然下垂" not in prompt
+    assert "昭昭蹲在地垫旁看着地垫上的粉鞋" not in prompt
+    assert "严格左粉卫衣蓝裤黑马尾女孩灿灿、右蓝T恤深蓝短裤短发男孩昭昭" in prompt
+    assert "粉运动鞋总数恰好两只" in prompt
+
+
 def test_assemble_daily_t2i_floor_shoe_seg9_corrupted_vb_dialogue_aftermath():
     """分镜9：visual_brief 被质检 LLM 改坏时，台词「彻底白系」仍走沮丧旁观硬锁。"""
     setting = "客厅地垫上，灿灿脱下的粉红运动鞋鞋带散开摆着，昭昭蹲在鞋边准备系带"
