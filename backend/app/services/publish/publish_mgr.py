@@ -2,10 +2,19 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.config import get_settings
+from app.services.publish.bilibili.dynamic import build_fan_dynamic
+from app.services.publish.bilibili.schedule import resolve_publish_dtime_from_job
 from app.services.publish.bilibili.session import BiliSession, cookie_expired_message
+from app.services.publish.bilibili.tags import build_publish_tags
+from app.services.publish.bilibili.tid import resolve_tid
+from app.services.publish.bilibili.uploader import BiliUploader
+from app.utils.final_asset import resolve_final_path_file
+from app.utils.job_info import merge_job_info, parse_job_info
 
 __all__ = ["BiliCookieExpired", "PublishMgr", "publish_mgr"]
 
@@ -33,18 +42,75 @@ class PublishMgr:
             raise BiliCookieExpired(status)
         return status
 
+    def publish_for_job(self, job: dict[str, Any]) -> dict[str, Any]:
+        settings = get_settings()
+        if settings.mock_mode:
+            return {
+                "platform": "bilibili",
+                "status": "skipped",
+                "message": "MOCK_MODE，跳过实际上传",
+            }
+        if job.get("skip_publish"):
+            return {
+                "platform": "bilibili",
+                "status": "skipped",
+                "message": "skip_publish=true，跳过上传",
+            }
+        existing = parse_job_info(job.get("info")).get("publish_result")
+        if isinstance(existing, dict) and existing.get("status") == "success" and existing.get("bvid"):
+            return {**existing, "message": "already published"}
+
+        script = job.get("script_json") if isinstance(job.get("script_json"), dict) else {}
+        title = str(job.get("title") or script.get("title") or "").strip()
+        description = str(script.get("video_description") or "").strip()
+        tags = build_publish_tags(job)
+        video_raw = resolve_final_path_file(job.get("final_path"))
+        cover_raw = str(job.get("cover_path") or "").strip()
+        if not title:
+            raise ValueError("title empty")
+        if not video_raw:
+            raise FileNotFoundError("final video missing")
+        video_path = Path(video_raw)
+        cover_path = Path(cover_raw) if cover_raw else None
+        tid = resolve_tid(job.get("pipeline"))
+        dtime, planned_at = resolve_publish_dtime_from_job(job)
+        dynamic = build_fan_dynamic(title, pipeline=job.get("pipeline"))
+        result = self.publish(
+            title=title,
+            video_path=video_path,
+            cover_path=cover_path,
+            description=description,
+            tags=tags,
+            tid=tid,
+            dtime=dtime,
+            dynamic=dynamic,
+        )
+        if planned_at is not None:
+            result["scheduled_at"] = planned_at.isoformat()
+        return result
+
     def publish(
         self,
         *,
         title: str,
         video_path: Path,
         cover_path: Path | None,
+        description: str = "",
+        tags: list[str] | None = None,
+        tid: int | None = None,
+        dtime: int | None = None,
+        dynamic: str = "",
     ) -> dict:
         self.require_session()
         return self._publish_bili(
             title=title,
             video_path=video_path,
             cover_path=cover_path,
+            description=description,
+            tags=tags or [],
+            tid=tid if tid is not None else resolve_tid(None),
+            dtime=dtime,
+            dynamic=dynamic,
         )
 
     def _publish_bili(
@@ -53,16 +119,34 @@ class PublishMgr:
         title: str,
         video_path: Path,
         cover_path: Path | None,
+        description: str,
+        tags: list[str],
+        tid: int,
+        dtime: int | None = None,
+        dynamic: str = "",
     ) -> dict:
-        """B 站投稿（浏览器 Cookie，待接入上传）。"""
-        return {
-            "platform": "bilibili",
-            "status": "skipped",
-            "message": "publish adapter not configured",
-            "title": title,
-            "video_path": str(video_path),
-            "cover_path": str(cover_path) if cover_path else None,
-        }
+        result = BiliUploader(self.session_store()).publish(
+            title=title,
+            description=description,
+            tags=tags,
+            video_path=video_path,
+            cover_path=cover_path,
+            tid=tid,
+            dtime=dtime,
+            dynamic=dynamic,
+        )
+        result["at"] = datetime.now(timezone.utc).isoformat()
+        return result
+
+    def save_job_result(self, job: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
+        from app.repositories import repo_job
+
+        job_id = int(job["id"])
+        info = merge_job_info(job.get("info"), publish_result=result)
+        updates: dict[str, Any] = {"info": info}
+        if result.get("status") == "success" and result.get("bvid"):
+            updates["publish"] = True
+        return repo_job.update_job(job_id, **updates)
 
 
 publish_mgr = PublishMgr()

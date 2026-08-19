@@ -455,10 +455,64 @@ def run_merge_route():
         raise APIError(str(exc), status_code=400) from exc
 
 
+@bp.post("/publish/meta")
+def generate_publish_meta_route():
+    job_id = parse_id(get_json_body())
+    try:
+        job = job_mgr.generate_publish_meta(job_id)
+    except (RuntimeError, ValueError) as exc:
+        raise APIError(str(exc), status_code=400) from exc
+    return json_ok(job)
+
+
+@bp.post("/publish/submit")
+def submit_bili_publish_route():
+    data = get_json_body()
+    job_id = parse_id(data)
+    publish_schedule = None
+    if "publish_schedule" in data:
+        from app.services.publish.bilibili.schedule import parse_publish_schedule
+
+        try:
+            publish_schedule = parse_publish_schedule(data.get("publish_schedule"))
+        except ValueError as exc:
+            raise APIError(str(exc), status_code=400) from exc
+    try:
+        return _accept_stage(
+            job_id,
+            lambda: job_mgr.submit_bili_publish(
+                job_id,
+                publish_schedule=publish_schedule,
+            ),
+        )
+    except ValueError as exc:
+        raise APIError(str(exc), status_code=400) from exc
+
+
 @bp.post("/publish")
 def run_publish_route():
-    job_id, to_end = _parse_stage_body()
-    return _accept_stage(job_id, lambda: job_mgr.run_publish(job_id, to_end=to_end))
+    data = get_json_body()
+    job_id = parse_id(data)
+    to_end = parse_bool(data, "to_end", default=False)
+    publish_schedule = None
+    if "publish_schedule" in data:
+        from app.services.publish.bilibili.schedule import parse_publish_schedule
+
+        try:
+            publish_schedule = parse_publish_schedule(data.get("publish_schedule"))
+        except ValueError as exc:
+            raise APIError(str(exc), status_code=400) from exc
+    try:
+        return _accept_stage(
+            job_id,
+            lambda: job_mgr.run_publish(
+                job_id,
+                to_end=to_end,
+                publish_schedule=publish_schedule,
+            ),
+        )
+    except ValueError as exc:
+        raise APIError(str(exc), status_code=400) from exc
 
 
 @bp.get("/list")

@@ -60,6 +60,10 @@ export interface RunStageActionPayload {
     transition?: string;
     duration_sec?: number;
   };
+  publish_schedule?: {
+    enabled?: boolean;
+    time?: string | null;
+  };
 }
 
 export interface PreviewScriptPromptsPayload {

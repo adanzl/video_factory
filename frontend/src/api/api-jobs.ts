@@ -115,6 +115,29 @@ export async function generateVideoDescription(jobId: number): Promise<{
   return response.data;
 }
 
+export async function generatePublishMeta(jobId: number): Promise<JobDetail> {
+  const response = await api.post<JobDetail>("/v_factory/api/jobs/publish/meta", {
+    id: jobId,
+  });
+  return response.data;
+}
+
+export async function submitBiliPublish(
+  jobId: number,
+  params: {
+    publish_schedule?: {
+      enabled?: boolean;
+      time?: string | null;
+    };
+  } = {}
+): Promise<JobDetail> {
+  const response = await api.post<JobDetail>("/v_factory/api/jobs/publish/submit", {
+    id: jobId,
+    publish_schedule: params.publish_schedule,
+  });
+  return response.data;
+}
+
 export async function optimizeScriptTitle(
   jobId: number,
   options: { max_title_length?: number } = {}

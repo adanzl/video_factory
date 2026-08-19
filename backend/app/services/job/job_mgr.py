@@ -1033,10 +1033,57 @@ class JobMgr:
         from worker.loop import run_prepare
         return self._run_in_background(job_id, 'prepare', lambda: run_prepare(job_id, to_end=to_end))
 
-    def run_publish(self, job_id: int, *, to_end: bool=False) -> dict:
-        """发布。实现：worker/loop.run_publish → worker/stages/common/publish.py"""
+    def generate_publish_meta(self, job_id: int) -> dict:
+        from worker.stages.common.publish import ensure_publish_meta
+
+        ensure_publish_meta(job_id)
+        return repo_job.get_job(job_id)
+
+    def run_publish(
+        self,
+        job_id: int,
+        *,
+        to_end: bool = False,
+        publish_schedule: dict | None = None,
+    ) -> dict:
+        """流水线发布阶段：生成元数据 + 上传。"""
         from worker.loop import run_publish
-        return self._run_in_background(job_id, 'publish', lambda: run_publish(job_id, to_end=to_end))
+
+        if publish_schedule is not None:
+            self._save_publish_schedule(job_id, publish_schedule)
+        return self._run_in_background(
+            job_id,
+            "publish",
+            lambda: run_publish(job_id, to_end=to_end),
+        )
+
+    def submit_bili_publish(
+        self,
+        job_id: int,
+        *,
+        publish_schedule: dict | None = None,
+    ) -> dict:
+        """仅上传 B 站，不重新生成简介/标签。"""
+        from worker.loop import run_publish_upload
+
+        if publish_schedule is not None:
+            self._save_publish_schedule(job_id, publish_schedule)
+        return self._run_in_background(
+            job_id,
+            "publish",
+            lambda: run_publish_upload(job_id),
+        )
+
+    def _save_publish_schedule(self, job_id: int, publish_schedule: dict) -> None:
+        with atomic():
+            job = repo_job.get_job(job_id)
+            info = merge_job_info(job.get("info"), publish_schedule=publish_schedule)
+            repo_job.update_job(job_id, info=info)
+            repo_job_log.append_log(
+                job_id,
+                "api",
+                f"publish schedule saved: {publish_schedule}",
+            )
 
     def prepare_rerun(self, job_id: int, stage: str, *, segment_indices: list[int] | None=None, mode: str='from') -> dict:
         return prepare_rerun_artifacts(job_id, stage, segment_indices=segment_indices, mode=mode)

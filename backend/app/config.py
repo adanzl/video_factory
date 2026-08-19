@@ -288,6 +288,9 @@ class Config:
         self.bili_browser_timeout_sec: int = int(os.getenv("BILI_BROWSER_TIMEOUT_SEC", "180"))
         self.bili_tid: int = int(os.getenv("BILI_TID", "201"))
         self.bili_tid_chat: int = int(os.getenv("BILI_TID_CHAT", "164"))
+        self.bili_activity_tag: str = os.getenv(
+            "BILI_ACTIVITY_TAG", "闪闪发光的家庭日"
+        ).strip()
 
         self.pexels_api_key: str | None = _opt("PEXELS_API_KEY")
         self.pixabay_api_key: str | None = _opt("PIXABAY_API_KEY")

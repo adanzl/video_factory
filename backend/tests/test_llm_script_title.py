@@ -3542,6 +3542,53 @@ def test_fix_missing_tone_particle_adds_ba():
     )
     assert _fix_missing_tone_particle("你满意了吧。") == "你满意了吧。"
 
+
+def test_strip_cancan_mid_zhaozhao_vocatives_keeps_opening():
+    from app.services.daily_story.review import (
+        build_wording_polish_prompts,
+        strip_cancan_mid_zhaozhao_vocatives,
+    )
+
+    story = {
+        "discovery_opening": [
+            {"speaker": "灿灿", "line": "昭昭，我鞋带又散了，你来帮我系。"},
+            {"speaker": "昭昭", "line": "好嘞，我这就蹲下来系。"},
+        ],
+        "dialogue": [
+            {"speaker": "灿灿", "line": "昭昭，我鞋带又散了，你来帮我系。"},
+            {"speaker": "昭昭", "line": "好嘞，我这就蹲下来系。"},
+            {"speaker": "灿灿", "line": "昭昭，系鞋带要两根带子系一起。"},
+            {"speaker": "昭昭", "line": "好嘞，够紧吧。"},
+            {"speaker": "灿灿", "line": "哎，你干嘛把左带子弄到右边去。"},
+        ],
+    }
+    out = strip_cancan_mid_zhaozhao_vocatives(story)
+    lines = [d["line"] for d in out["dialogue"]]
+    assert lines[0] == "昭昭，我鞋带又散了，你来帮我系。"
+    assert lines[2] == "系鞋带要两根带子系一起。"
+    assert lines[4] == "哎，你干嘛把左带子弄到右边去。"
+
+    no_open = {
+        "dialogue": [
+            {"speaker": "灿灿", "line": "昭昭，把鞋带系一起。"},
+            {"speaker": "昭昭", "line": "好嘞。"},
+            {"speaker": "灿灿", "line": "昭昭，那能对吗？"},
+        ],
+    }
+    out2 = strip_cancan_mid_zhaozhao_vocatives(no_open)
+    assert out2["dialogue"][0]["line"] == "昭昭，把鞋带系一起。"
+    assert out2["dialogue"][2]["line"] == "那能对吗？"
+
+    system, _user = build_wording_polish_prompts(
+        "把姐姐的鞋带系一起",
+        story,
+        [],
+        type_code="D",
+        line_chars_max=24,
+    )
+    assert "灿灿除开场外禁止喊「昭昭，」" in system
+
+
 def test_collect_wording_issues_flags_written_lines():
     from app.services.daily_story.review import collect_wording_issues
 

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import base64
-import io
 import logging
 import time
 import uuid
@@ -11,8 +9,6 @@ from dataclasses import dataclass
 from threading import Lock
 from typing import Any
 
-import qrcode
-import qrcode.image.svg
 import requests
 
 from app.services.publish.bilibili.session import BiliSession, USER_AGENT
@@ -165,6 +161,14 @@ class BiliQrLoginMgr:
 
     @staticmethod
     def _build_qrcode_svg_data_url(content: str) -> str:
+        import base64
+        import io
+
+        try:
+            import qrcode
+            import qrcode.image.svg
+        except ImportError as exc:
+            raise RuntimeError("缺少 qrcode 依赖：pip install qrcode") from exc
         image = qrcode.make(content, image_factory=qrcode.image.svg.SvgImage)
         buf = io.BytesIO()
         image.save(buf)
