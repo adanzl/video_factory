@@ -30,7 +30,7 @@ class PublishMgr:
         video_path: Path,
         cover_path: Path | None,
     ) -> dict:
-        """B 站开放平台投稿（待接入）。"""
+        """B 站投稿（浏览器 Cookie，待接入上传）。"""
         return {
             "platform": "bilibili",
             "status": "skipped",

@@ -95,10 +95,16 @@ def _optimize_daily_story_title(draft: str, story_content: dict, *, max_len: int
         ensure_chat_title_candidates,
         extract_core_anchor_words,
         extract_theme_action_phrase,
+        maybe_keep_cover_draft,
         parse_chat_title_candidates_payload,
         pick_best_chat_title,
         polish_chat_title,
     )
+    kept = maybe_keep_cover_draft(
+        draft, story_content, max_len=max_len, avoid_titles=avoid_titles,
+    )
+    if kept:
+        return kept
     prompts = build_chat_title_prompts(draft, story_content, max_title_length=max_len, avoid_titles=avoid_titles)
     client = llm_mgr._get_client()
     raw, _ = client._chat_json(prompts['system'], prompts['user'], thinking_enabled=False, temperature=1.0)
