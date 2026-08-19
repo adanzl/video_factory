@@ -279,9 +279,15 @@ class Config:
         self.intro_tts_rate: float = float(os.getenv("INTRO_TTS_RATE", "1.25"))
         self.intro_tts_pitch: float = float(os.getenv("INTRO_TTS_PITCH", "1.15"))
 
-        self.bili_client_id: str | None = _opt("BILI_CLIENT_ID")
-        self.bili_client_secret: str | None = _opt("BILI_CLIENT_SECRET")
-        self.bili_access_token: str | None = _opt("BILI_ACCESS_TOKEN")
+        self.bili_username: str | None = _opt("BILI_USERNAME")
+        self.bili_password: str | None = _opt("BILI_PASSWORD")
+        self.bili_cookie_path: Path = _path(
+            "BILI_COOKIE_PATH", ROOT_DIR / "data/secrets/bilibili/cookies.json"
+        )
+        self.bili_browser_headless: bool = _bool("BILI_BROWSER_HEADLESS", False)
+        self.bili_browser_timeout_sec: int = int(os.getenv("BILI_BROWSER_TIMEOUT_SEC", "180"))
+        self.bili_tid: int = int(os.getenv("BILI_TID", "201"))
+        self.bili_tid_chat: int = int(os.getenv("BILI_TID_CHAT", "164"))
 
         self.pexels_api_key: str | None = _opt("PEXELS_API_KEY")
         self.pixabay_api_key: str | None = _opt("PIXABAY_API_KEY")

@@ -318,6 +318,48 @@ CONFIG_GROUPS: tuple[ConfigGroupDef, ...] = (
             _f("clip_search_timeout_sec", "CLIP_SEARCH_TIMEOUT_SEC", "搜索超时 (秒)", "number", min_value=3, max_value=60),
         ),
     ),
+    ConfigGroupDef(
+        id="bilibili",
+        label="B 站投稿",
+        items=(
+            _f("bili_username", "BILI_USERNAME", "账号", "secret"),
+            _f("bili_password", "BILI_PASSWORD", "密码", "secret"),
+            _f("bili_cookie_path", "BILI_COOKIE_PATH", "Cookie 文件"),
+            _f(
+                "bili_browser_headless",
+                "BILI_BROWSER_HEADLESS",
+                "无头登录",
+                "bool",
+                description="验证码/短信时请保持关闭（有头窗口）",
+            ),
+            _f(
+                "bili_browser_timeout_sec",
+                "BILI_BROWSER_TIMEOUT_SEC",
+                "登录超时 (秒)",
+                "number",
+                min_value=30,
+                max_value=600,
+            ),
+            _f(
+                "bili_tid",
+                "BILI_TID",
+                "默认分区 tid",
+                "number",
+                min_value=1,
+                max_value=9999,
+                description="非 chat 流水线；默认 201 科学科普",
+            ),
+            _f(
+                "bili_tid_chat",
+                "BILI_TID_CHAT",
+                "chat 分区 tid",
+                "number",
+                min_value=1,
+                max_value=9999,
+                description="chat 流水线；默认 164 亲子",
+            ),
+        ),
+    ),
 )
 _FIELD_BY_ATTR: dict[str, ConfigFieldDef] = {
     field.attr: field for group in CONFIG_GROUPS for field in group.items

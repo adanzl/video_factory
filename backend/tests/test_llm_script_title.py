@@ -47,13 +47,15 @@ def test_parse_chat_title_candidates_payload():
 def test_pick_best_chat_title_prefers_hook_and_avoids_repeat():
     from app.services.script.optimize_title import pick_best_chat_title
 
-    # 问句/称呼开头 + 甩锅口吻 优于平铺直叙的事件复述
-    best = pick_best_chat_title(
-        "月饼大作战",
-        ["月饼全滚出来了", "妈，月饼不是我弄的"],
-        max_len=10,
+    # 好封面初稿（画面短语）不再被口述甩锅句替换
+    assert (
+        pick_best_chat_title(
+            "月饼大作战",
+            ["月饼全滚出来了", "妈，月饼不是我弄的"],
+            max_len=10,
+        )
+        == "月饼大作战"
     )
-    assert best == "妈，月饼不是我弄的"
 
     # avoid 命中降权：手动重跑时避免重复上一个标题；
     # 但候选都不优于当前标题（hook 0）时，防御当前标题，不写更差/平的标题
@@ -72,14 +74,15 @@ def test_pick_best_chat_title_prefers_hook_and_avoids_repeat():
         max_len=10,
         avoid_titles=["妈，月饼不是我弄的"],
     )
-    # 「月饼渣，我踩的印」hook 0 不高于当前标题 → 保留当前
+    # 「月饼渣，我踩的印」不高于画面初稿 → 保留当前
     assert best3 == "月饼大作战"
 
-    # 「谁…」不加分：甩锅声明/推锅给东西 与 谁问句同台竞争，避免谁字刷屏
+    # 坏初稿（剧透口述）时：甩锅声明仍压过「谁…」质问
     best4 = pick_best_chat_title(
-        "月饼大作战",
+        "剪刀剪歪了，还咋教弟弟？",
         ["谁把月饼抖一地", "妈，月饼是它自己滚的"],
-        max_len=10,
+        max_len=12,
+        anchor_words=["月饼"],
     )
     assert best4 == "妈，月饼是它自己滚的"
 
@@ -199,15 +202,17 @@ def test_pick_best_chat_title_rejects_broken_prefix_fragment():
     assert "分蛋" not in anchors
     phrase = extract_theme_action_phrase("分蛋糕", story)
     assert phrase == "分蛋糕"
-    # 坏碎片候选不含完整主题短语 → -8 分，回退初稿
+    # 坏碎片候选不含完整主题短语 → 作废，回退初稿
     assert (
         pick_best_chat_title("分蛋糕", ["分蛋翻车记"], max_len=15, anchor_words=anchors)
         == "分蛋糕"
     )
-    # 含完整主题短语的候选正常通过
+    # 含完整主题短语的画面候选正常通过
     assert (
-        pick_best_chat_title("分蛋糕", ["分蛋糕咋就散伙了"], max_len=15, anchor_words=anchors)
-        == "分蛋糕咋就散伙了"
+        pick_best_chat_title(
+            "分蛋糕", ["分蛋糕先切一刀"], max_len=15, anchor_words=anchors,
+        )
+        == "分蛋糕先切一刀"
     )
 
 def test_chat_title_prompt_uses_full_theme_phrase():
@@ -235,6 +240,65 @@ def test_chat_title_prompt_uses_full_theme_phrase():
     assert "说好分蛋糕先挑" in prompt
     assert "封面感硬规则" in prompt
     assert "大块归你？分蛋糕我先挑，赖皮" in prompt
+
+
+def test_cover_draft_kept_for_visual_a_title():
+    """A 类画面初稿直接保留；口述剧透句不该压过它。"""
+    from app.services.script.optimize_title import (
+        maybe_keep_cover_draft,
+        pick_best_chat_title,
+        build_chat_title_user_prompt,
+        build_chat_title_system_prompt,
+    )
+
+    story = {
+        "scene_title": "剪刀下的直线",
+        "conflict_core": "灿灿教昭昭剪纸边，昭昭要她先示范",
+        "setting": "客厅，灿灿正指着昭昭剪得歪歪扭扭的纸边",
+        "theme": "教弟弟用剪刀自己剪歪了纸边",
+        "story_type": "A",
+    }
+    assert maybe_keep_cover_draft(
+        "剪刀下的直线", story, max_len=15,
+    ) == "剪刀下的直线"
+    assert maybe_keep_cover_draft(
+        "剪刀下的直线", story, max_len=15,
+        avoid_titles=["剪刀下的直线"],
+    ) is None
+    assert maybe_keep_cover_draft(
+        "分蛋糕说好我先挑",
+        {"scene_title": "分蛋糕", "theme": "分蛋糕", "story_type": "C",
+         "conflict_core": "姐弟争切蛋糕", "setting": "客厅茶几上放着蛋糕"},
+        max_len=15,
+    ) is None
+
+    best = pick_best_chat_title(
+        "剪刀下的直线",
+        ["剪刀剪歪了，还咋教弟弟？", "剪纸边翻车记"],
+        max_len=15,
+        anchor_words=["剪刀"],
+        story_type="A",
+    )
+    assert best == "剪刀下的直线"
+
+    user = build_chat_title_user_prompt(
+        draft_title="剪刀下的直线", story_content=story, max_title_len=15,
+    )
+    system = build_chat_title_system_prompt(max_title_len=15, story_type="A")
+    assert "画面物件型" in system
+    assert "翻车记 / 散伙了" not in system
+    assert "封面不剧透" in user
+    assert "允许画面化改写" in user
+    assert "必须原样保留" not in user
+
+
+def test_c_title_prompt_still_requires_theme_phrase():
+    """C 类提示词仍强制主题短语原文，不被封面标准带偏。"""
+    from app.services.script.optimize_title import build_chat_title_system_prompt
+
+    system = build_chat_title_system_prompt(max_title_len=15, story_type="C")
+    assert "必须原样保留该主题的动作+核心名词组合" in system
+    assert "翻车记 / 散伙了" in system
 
 def test_pick_best_chat_title_c_type_prefers_rule_reversal():
     """C 类公平执念：规则反噬候选应压过泛化「翻车记」，黑名单「露馅」直接拒收。"""
