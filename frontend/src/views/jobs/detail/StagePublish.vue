@@ -13,15 +13,45 @@
       <!-- 投稿信息：标题 / 视频介绍 / 推荐标签 -->
       <section :class="STAGE_PANEL_CLASS">
         <div :class="STAGE_PANEL_HEADER_CLASS">
-          <div :class="STAGE_PANEL_TITLE_TEXT_CLASS">投稿信息</div>
-          <el-button
-            v-if="publishTitle"
-            size="small"
-            @click="openUploadPage"
-          >
-            B站上传
-          </el-button>
+          <div class="flex items-center gap-2">
+            <div :class="STAGE_PANEL_TITLE_TEXT_CLASS">投稿信息</div>
+            <el-tag v-if="biliSessionUser" size="small" type="success" effect="plain">
+              {{ biliSessionUser }}
+            </el-tag>
+          </div>
+          <div class="flex items-center gap-2">
+            <el-button
+              size="small"
+              :loading="qrLoading"
+              @click="handleOpenQrLogin"
+            >
+              {{ biliSessionUser ? "重新扫码" : "扫码登录" }}
+            </el-button>
+            <el-button
+              v-if="publishTitle"
+              size="small"
+              @click="openUploadPage"
+            >
+              B站上传
+            </el-button>
+          </div>
         </div>
+        <el-alert
+          v-if="biliSessionError"
+          type="error"
+          :closable="false"
+          show-icon
+          class="mb-3"
+          :title="biliSessionError"
+        />
+        <el-alert
+          v-if="biliLoginHint"
+          type="info"
+          :closable="false"
+          show-icon
+          class="mb-3"
+          :title="biliLoginHint"
+        />
         <el-table
           :data="publishMetaRows"
           border
@@ -257,15 +287,45 @@
     </div>
 
     <StageLogsSection :logs="logs" />
+
+    <el-dialog
+      v-model="qrDialogVisible"
+      title="B站扫码登录"
+      width="360px"
+      destroy-on-close
+    >
+      <div class="space-y-3">
+        <el-alert
+          type="warning"
+          :closable="false"
+          show-icon
+          title="扫码后若手机端继续要求短信验证码或安全确认，请在手机上完成；未完成前不会判定为已登录。"
+        />
+        <div v-if="qrSvg" class="flex justify-center">
+          <img :src="qrSvg" alt="B站扫码登录二维码" class="h-60 w-60 rounded border border-gray-200" />
+        </div>
+        <div v-else class="text-center text-sm text-gray-500">二维码生成中...</div>
+        <div class="text-center text-sm text-gray-600">{{ qrStatusMessage }}</div>
+      </div>
+      <template #footer>
+        <div class="flex justify-end gap-2">
+          <el-button @click="qrDialogVisible = false">关闭</el-button>
+          <el-button type="primary" :loading="qrLoading" @click="handleOpenQrLogin">
+            刷新二维码
+          </el-button>
+        </div>
+      </template>
+    </el-dialog>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { DocumentCopy } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { generateVideoDescription, generateTags, runJobStageAction } from "@/api/api-jobs";
+import { createBiliLoginQr, getBiliSession, pollBiliLoginQr } from "@/api/api-publish";
 import { downloadMediaFile, getMediaFileUrl, getMediaPicViewUrl } from "@/api/api-media";
 import type { JobDetail, JobLog } from "@/types/jobs";
 import type { ScriptJson } from "@/types/jobs/script";
@@ -313,6 +373,15 @@ const downloadingFinal = ref(false);
 const coverLoadError = ref(false);
 const finalLoadError = ref(false);
 const showCover43Guide = ref(false);
+const biliSessionError = ref("");
+const biliSessionUser = ref("");
+const biliLoginHint = ref("");
+const qrDialogVisible = ref(false);
+const qrLoading = ref(false);
+const qrSvg = ref("");
+const qrSessionId = ref("");
+const qrStatusMessage = ref("请使用哔哩哔哩 App 扫码");
+let qrPollTimer: ReturnType<typeof setInterval> | null = null;
 
 const COVER_PREVIEW_OPTIONS = {
   maxWidthPx: 560,
@@ -328,6 +397,86 @@ const actionDisabled = computed(() => props.job.status === "running");
 const actionDisabledReason = computed(() =>
   props.job.status === "running" ? "任务运行中，请稍后再试" : ""
 );
+
+const stopQrPolling = () => {
+  if (qrPollTimer) {
+    clearInterval(qrPollTimer);
+    qrPollTimer = null;
+  }
+};
+
+const refreshBiliSession = async () => {
+  try {
+    const session = await getBiliSession();
+    biliSessionError.value = "";
+    biliSessionUser.value = session.uname || "";
+    biliLoginHint.value = biliSessionUser.value ? `当前远程登录账号：${biliSessionUser.value}` : "";
+  } catch (error) {
+    const axiosError = error as { response?: { data?: { error?: string } } };
+    biliSessionError.value =
+      axiosError.response?.data?.error ||
+      "B 站 Cookie 已过期或未登录，请在本页重新扫码登录";
+    biliSessionUser.value = "";
+    biliLoginHint.value = "";
+  }
+};
+
+onMounted(refreshBiliSession);
+onBeforeUnmount(stopQrPolling);
+watch(qrDialogVisible, visible => {
+  if (!visible) {
+    stopQrPolling();
+  }
+});
+
+const pollQrStatus = async () => {
+  if (!qrSessionId.value) {
+    return;
+  }
+  try {
+    const result = await pollBiliLoginQr(qrSessionId.value);
+    qrStatusMessage.value = result.message;
+    if (result.status === "confirmed") {
+      ElMessage.success("B站扫码登录成功");
+      stopQrPolling();
+      qrDialogVisible.value = false;
+      await refreshBiliSession();
+      return;
+    }
+    if (result.status === "need_verify") {
+      qrStatusMessage.value =
+        result.message || "扫码后还需要短信/验证码，请在手机端完成后再刷新二维码";
+    }
+  } catch (error) {
+    const axiosError = error as { response?: { data?: { error?: string; code?: string } } };
+    const code = axiosError.response?.data?.code || "";
+    const message = axiosError.response?.data?.error || "查询扫码状态失败";
+    qrStatusMessage.value = message;
+    if (code === "bili_qrcode_expired") {
+      stopQrPolling();
+    }
+  }
+};
+
+const handleOpenQrLogin = async () => {
+  qrLoading.value = true;
+  stopQrPolling();
+  try {
+    const result = await createBiliLoginQr();
+    qrDialogVisible.value = true;
+    qrSvg.value = result.qrcode_svg;
+    qrSessionId.value = result.session_id;
+    qrStatusMessage.value = "请使用哔哩哔哩 App 扫码；若手机端继续要求短信验证码或安全确认，也请在手机端完成";
+    qrPollTimer = setInterval(() => {
+      void pollQrStatus();
+    }, 2000);
+    await pollQrStatus();
+  } catch (error) {
+    handleError(error, "生成扫码二维码失败");
+  } finally {
+    qrLoading.value = false;
+  }
+};
 
 const script = computed(() => {
   const value = props.job.script_json;

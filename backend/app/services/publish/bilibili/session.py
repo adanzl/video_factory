@@ -22,6 +22,24 @@ USER_AGENT = (
 COOKIE_SESSDATA = "SESSDATA"
 COOKIE_BILI_JCT = "bili_jct"
 _REQUIRED_COOKIES = (COOKIE_SESSDATA, COOKIE_BILI_JCT)
+COOKIE_EXPIRED_CODE = "bili_cookie_expired"
+SYNC_COOKIE_CMD = "请在投稿页重新扫码登录"
+
+
+def cookie_expired_message() -> str:
+    return f"B 站 Cookie 已过期或未登录，{SYNC_COOKIE_CMD}"
+
+
+def _expired_status(*, reason: str, code: object = None) -> dict[str, Any]:
+    status: dict[str, Any] = {
+        "ok": False,
+        "code": COOKIE_EXPIRED_CODE,
+        "message": cookie_expired_message(),
+        "reason": reason,
+    }
+    if code is not None:
+        status["nav_code"] = code
+    return status
 
 
 def cookie_path_from_settings() -> Path:
@@ -95,7 +113,7 @@ class BiliSession:
         """请求 nav，确认 SESSDATA 仍有效。"""
         cookies = self.cookie_dict()
         if not all(cookies.get(name) for name in _REQUIRED_COOKIES):
-            return {"ok": False, "message": "cookie missing"}
+            return _expired_status(reason="cookie missing")
         try:
             resp = requests.get(
                 NAV_URL,
@@ -112,10 +130,13 @@ class BiliSession:
             return {"ok": False, "message": f"nav request failed: {exc}"}
         data = payload.get("data") if isinstance(payload, dict) else None
         if not isinstance(data, dict) or not data.get("isLogin"):
-            message = "not logged in"
+            reason = "not logged in"
             if isinstance(payload, dict) and payload.get("message"):
-                message = str(payload["message"])
-            return {"ok": False, "message": message, "code": payload.get("code") if isinstance(payload, dict) else None}
+                reason = str(payload["message"])
+            return _expired_status(
+                reason=reason,
+                code=payload.get("code") if isinstance(payload, dict) else None,
+            )
         mid = data.get("mid")
         uname = str(data.get("uname") or "").strip()
         return {
