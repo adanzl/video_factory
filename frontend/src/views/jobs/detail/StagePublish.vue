@@ -1,12 +1,19 @@
 <template>
   <div :class="STAGE_ROOT_CLASS">
+    <StageActionBar
+      :loading="submitting"
+      :disabled="actionDisabled"
+      :disabled-reason="actionDisabledReason"
+      primary-label="生成"
+      :show-to-end="false"
+      @primary="handleRun"
+    />
     <div :class="STAGE_BODY_CLASS">
     <div class="space-y-4">
-      <!-- 标题 -->
+      <!-- 投稿信息：标题 / 视频介绍 / 推荐标签 -->
       <section :class="STAGE_PANEL_CLASS">
         <div :class="STAGE_PANEL_HEADER_CLASS">
-          <div :class="STAGE_PANEL_TITLE_TEXT_CLASS">标题</div>
-          <span class="flex-1" />
+          <div :class="STAGE_PANEL_TITLE_TEXT_CLASS">投稿信息</div>
           <el-button
             v-if="publishTitle"
             size="small"
@@ -14,109 +21,114 @@
           >
             B站上传
           </el-button>
-          <el-button
-            v-if="publishTitle"
-            size="small"
-            type="primary"
-            plain
-            :icon="DocumentCopy"
-            @click="copyPublishTitle"
-          >
-          </el-button>
         </div>
-        <div
-          v-if="publishTitle"
-          class="rounded bg-gray-50 px-4 py-3 text-base leading-relaxed wrap-break-word"
+        <el-table
+          :data="publishMetaRows"
+          border
+          class="publish-meta-table w-full"
+          :show-header="false"
         >
-          {{ publishTitle }}
-        </div>
-        <div v-else :class="STAGE_EMPTY_CLASS">暂无标题</div>
-      </section>
-
-      <!-- 视频介绍 -->
-      <section :class="STAGE_PANEL_CLASS">
-        <div :class="STAGE_PANEL_HEADER_CLASS">
-          <div :class="STAGE_PANEL_TITLE_TEXT_CLASS">视频介绍</div>
-          <div class="flex flex-wrap items-center gap-2">
-            <el-button
-              v-if="canRegenerateDescription"
-              type="primary"
-              plain
-              size="small"
-              :loading="regeneratingDescription"
-              :disabled="actionDisabled"
-              @click="handleRegenerateDescription"
-            >
-              生成
-            </el-button>
-            <el-button
-              v-if="videoDescription"
-              size="small"
-              type="primary"
-              :icon="DocumentCopy"
-              plain
-              @click="copyVideoDescription"
-            >
-            </el-button>
-
-          </div>
-        </div>
-        <div
-          v-if="videoDescription"
-          class="rounded bg-gray-50 px-4 py-3 leading-relaxed wrap-break-word whitespace-pre-wrap"
-        >
-          {{ videoDescription }}
-        </div>
-        <div v-else :class="STAGE_EMPTY_CLASS">
-          暂无视频介绍
-          <span v-if="canRegenerateDescription">，可点击「重新生成」</span>
-        </div>
-      </section>
-
-      <!-- 推荐标签 -->
-      <section :class="STAGE_PANEL_CLASS">
-        <div :class="STAGE_PANEL_HEADER_CLASS">
-          <div :class="STAGE_PANEL_TITLE_TEXT_CLASS">推荐标签</div>
-          <div class="flex flex-wrap items-center gap-2">
-            <el-button
-              v-if="canRegenerateTags"
-              type="primary"
-              plain
-              size="small"
-              :loading="regeneratingTags"
-              :disabled="actionDisabled"
-              @click="handleRegenerateTags"
-            >
-              生成
-            </el-button>
-            <el-button
-              v-if="tags.length"
-              size="small"
-              type="primary"
-              :icon="DocumentCopy"
-              plain
-              @click="copyTags"
-            >
-            </el-button>
-          </div>
-        </div>
-        <div
-          v-if="tags.length"
-          class="flex flex-wrap gap-2 rounded bg-gray-50 px-4 py-3"
-        >
-          <el-tag
-            v-for="tag in tags"
-            :key="tag"
-            type="warning"
-            effect="plain"
-          >
-            {{ tag }}
-          </el-tag>
-        </div>
-        <div v-else :class="STAGE_EMPTY_CLASS">
-          暂无推荐标签
-          <span v-if="canRegenerateTags">，可点击「生成」</span>
-        </div>
+          <el-table-column label="字段" prop="label" width="96" align="center" />
+          <el-table-column label="内容" min-width="240">
+            <template #default="{ row }">
+              <template v-if="row.key === 'title'">
+                <span
+                  v-if="publishTitle"
+                  class="block text-base leading-relaxed wrap-break-word"
+                >
+                  {{ publishTitle }}
+                </span>
+                <span v-else class="text-sm text-gray-400">暂无标题</span>
+              </template>
+              <template v-else-if="row.key === 'description'">
+                <span
+                  v-if="videoDescription"
+                  class="block leading-relaxed wrap-break-word whitespace-pre-wrap"
+                >
+                  {{ videoDescription }}
+                </span>
+                <span v-else class="text-sm text-gray-400">
+                  暂无视频介绍
+                  <span v-if="canRegenerateDescription">，可点击「生成」</span>
+                </span>
+              </template>
+              <template v-else>
+                <div v-if="tags.length" class="flex flex-wrap gap-2">
+                  <el-tag
+                    v-for="tag in tags"
+                    :key="tag"
+                    type="warning"
+                    effect="plain"
+                  >
+                    {{ tag }}
+                  </el-tag>
+                </div>
+                <span v-else class="text-sm text-gray-400">
+                  暂无推荐标签
+                  <span v-if="canRegenerateTags">，可点击「生成」</span>
+                </span>
+              </template>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="220" align="right">
+            <template #default="{ row }">
+              <div class="flex flex-wrap justify-end gap-1">
+                <template v-if="row.key === 'title'">
+                  <el-button
+                    v-if="publishTitle"
+                    size="small"
+                    type="primary"
+                    plain
+                    :icon="DocumentCopy"
+                    @click="copyPublishTitle"
+                  />
+                </template>
+                <template v-else-if="row.key === 'description'">
+                  <el-button
+                    v-if="canRegenerateDescription"
+                    type="primary"
+                    plain
+                    size="small"
+                    :loading="regeneratingDescription"
+                    :disabled="actionDisabled"
+                    @click="handleRegenerateDescription"
+                  >
+                    生成
+                  </el-button>
+                  <el-button
+                    v-if="videoDescription"
+                    size="small"
+                    type="primary"
+                    plain
+                    :icon="DocumentCopy"
+                    @click="copyVideoDescription"
+                  />
+                </template>
+                <template v-else>
+                  <el-button
+                    v-if="canRegenerateTags"
+                    type="primary"
+                    plain
+                    size="small"
+                    :loading="regeneratingTags"
+                    :disabled="actionDisabled"
+                    @click="handleRegenerateTags"
+                  >
+                    生成
+                  </el-button>
+                  <el-button
+                    v-if="tags.length"
+                    size="small"
+                    type="primary"
+                    plain
+                    :icon="DocumentCopy"
+                    @click="copyTags"
+                  />
+                </template>
+              </div>
+            </template>
+          </el-table-column>
+        </el-table>
       </section>
 
       <!-- 封面 / 成片 -->
@@ -252,8 +264,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { DocumentCopy } from "@element-plus/icons-vue";
-import { ElMessage } from "element-plus";
-import { generateVideoDescription, generateTags } from "@/api/api-jobs";
+import { ElMessage, ElMessageBox } from "element-plus";
+import { generateVideoDescription, generateTags, runJobStageAction } from "@/api/api-jobs";
 import { downloadMediaFile, getMediaFileUrl, getMediaPicViewUrl } from "@/api/api-media";
 import type { JobDetail, JobLog } from "@/types/jobs";
 import type { ScriptJson } from "@/types/jobs/script";
@@ -268,6 +280,7 @@ import {
 } from "@/utils/media";
 import { useErrorHandler } from "@/composables/useErrorHandler";
 import { copyText } from "@/utils/utils";
+import StageActionBar from "./StageActionBar.vue";
 import StageLogsSection from "./StageLogsSection.vue";
 import {
   STAGE_BODY_CLASS,
@@ -292,6 +305,7 @@ const emit = defineEmits<{
 
 const { handleError } = useErrorHandler();
 
+const submitting = ref(false);
 const regeneratingDescription = ref(false);
 const regeneratingTags = ref(false);
 const downloadingCover = ref(false);
@@ -311,6 +325,9 @@ const PUBLISH_PREVIEW_OPTIONS = {
 } as const;
 
 const actionDisabled = computed(() => props.job.status === "running");
+const actionDisabledReason = computed(() =>
+  props.job.status === "running" ? "任务运行中，请稍后再试" : ""
+);
 
 const script = computed(() => {
   const value = props.job.script_json;
@@ -331,6 +348,12 @@ const publishTitle = computed(() => {
 const videoDescription = computed(() => script.value?.video_description?.trim() || "");
 
 const tags = computed(() => script.value?.tags || []);
+
+const publishMetaRows = [
+  { key: "title", label: "标题" },
+  { key: "description", label: "视频介绍" },
+  { key: "tags", label: "推荐标签" },
+] as const;
 
 const canRegenerateDescription = computed(() => Boolean(script.value?.narration?.trim()));
 
@@ -468,6 +491,29 @@ const copyTags = async () => {
     ElMessage.success("已复制标签");
   } catch (error) {
     handleError(error, "复制失败");
+  }
+};
+
+const handleRun = async () => {
+  try {
+    await ElMessageBox.confirm("确定执行「发布」阶段，生成视频介绍和推荐标签吗？", "确认执行", {
+      type: "warning",
+      confirmButtonText: "执行",
+      cancelButtonText: "取消",
+    });
+  } catch {
+    return;
+  }
+
+  submitting.value = true;
+  try {
+    await runJobStageAction("publish", { id: props.job.id, to_end: false });
+    ElMessage.success("已提交发布，任务已开始执行");
+    emit("refresh");
+  } catch (error) {
+    handleError(error, "发布失败");
+  } finally {
+    submitting.value = false;
   }
 };
 
