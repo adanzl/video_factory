@@ -789,8 +789,8 @@ def test_locked_inventory_keeps_shot1_furniture():
 
 
 def test_assemble_daily_t2i_floor_shoe_lace_lock():
-    """地垫系带场面：昭昭赤脚操作地垫上的鞋，避免画成系自己脚上鞋带。"""
-    setting = "客厅地垫上，一双运动鞋鞋带散开摆着，昭昭蹲在鞋边准备系带"
+    """地垫系带：灿灿粉鞋在垫上、昭昭蓝白鞋在脚上，硬锁两只鞋。"""
+    setting = "客厅地垫上，灿灿脱下的粉红运动鞋鞋带散开摆着，昭昭蹲在鞋边准备系带"
     seg = {
         "segment_index": 1,
         "shot_type": "中景",
@@ -804,10 +804,12 @@ def test_assemble_daily_t2i_floor_shoe_lace_lock():
         ],
     }
     prompt = assemble_daily_t2i_prompt(seg, setting=setting)
-    assert "赤脚仅穿白袜子" in prompt
-    assert "两侧同色蓝白运动鞋" not in prompt
-    assert "地垫中央平放着一双无人穿着的蓝白运动鞋" in prompt
-    assert "不是给自己脚上穿鞋系带" in prompt
+    assert "两侧同色蓝白运动鞋" in prompt
+    assert "赤脚仅穿白袜子" not in prompt.split("灿灿")[1].split("昭昭")[0]
+    assert "粉红运动鞋左右两只并排" in prompt
+    assert "共两只鞋" in prompt
+    assert "双手捏住粉红运动鞋鞋带正在系带" in prompt
+    assert "灿灿脚穿白袜子" in prompt
 
 
 def test_assemble_daily_t2i_no_duplicate_lr_in_prompt():

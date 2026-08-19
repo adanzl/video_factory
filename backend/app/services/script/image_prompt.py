@@ -29,13 +29,13 @@ _DAILY_CHAR_ZHAO = (
     "昭昭：7岁男孩，黑色超短发露耳露后颈，圆脸，"
     "蓝色短袖T恤，深蓝色短裤，两侧同色蓝白运动鞋。"
 )
-_DAILY_CHAR_ZHAO_BAREFOOT = (
-    "昭昭：7岁男孩，黑色超短发露耳露后颈，圆脸，"
-    "蓝色短袖T恤，深蓝色短裤，赤脚仅穿白袜子。"
-)
 _DAILY_CHAR_CANCAN = (
     "灿灿：10岁女孩，黑色头发，黑色单侧高马尾，"
     "粉色卫衣，蓝色长裤，两侧同色粉红运动鞋。"
+)
+_DAILY_CHAR_CANCAN_SOCKS = (
+    "灿灿：10岁女孩，黑色头发，黑色单侧高马尾，"
+    "粉色卫衣，蓝色长裤，赤脚仅穿白袜子。"
 )
 # 涂鸦高饱和易把马尾画成彩色；发色硬锁紧跟角色块（句末权重最低）。
 # 必须纯正面表述——图像模型把否定词当生成指令，
@@ -65,6 +65,25 @@ def _daily_setting_floor_shoe_scene(setting: str | None) -> bool:
     if not setting:
         return False
     return bool(_FLOOR_SHOE_SETTING_RE.search(setting))
+
+
+def _daily_floor_shoe_lock(vb: str, speakers: list[str]) -> str | None:
+    """地垫系带场面：灿灿粉鞋在垫上、昭昭蓝白鞋在脚上，硬锁鞋数与动作。"""
+    tying = _daily_zhao_handles_floor_shoelaces(vb)
+    if "昭昭" in speakers and tying:
+        action = "昭昭脚穿蓝白运动鞋蹲在地垫旁，双手捏住粉红运动鞋鞋带正在系带。"
+    elif "昭昭" in speakers:
+        action = "昭昭脚穿蓝白运动鞋蹲在地垫旁看着鞋。"
+    else:
+        action = ""
+    if "灿灿" in speakers:
+        cancan = "灿灿脚穿白袜子站在一旁。"
+    else:
+        cancan = ""
+    return (
+        "地垫中央一双粉红运动鞋左右两只并排平放，鞋带散开，共两只鞋；"
+        f"{action}{cancan}"
+    )
 
 
 def _daily_zhao_handles_floor_shoelaces(vb: str) -> bool:
@@ -338,8 +357,8 @@ def assemble_daily_t2i_prompt(
     char_parts: list[str] = []
     floor_shoe_scene = _daily_setting_floor_shoe_scene(setting)
     for name in speakers:
-        if name == "昭昭" and floor_shoe_scene:
-            char_parts.append(_DAILY_CHAR_ZHAO_BAREFOOT)
+        if name == "灿灿" and floor_shoe_scene:
+            char_parts.append(_DAILY_CHAR_CANCAN_SOCKS)
         elif name in _DAILY_CHAR_MAP:
             char_parts.append(_DAILY_CHAR_MAP[name])
     if set(speakers) >= {"昭昭", "灿灿", "妈妈"}:
@@ -353,16 +372,10 @@ def assemble_daily_t2i_prompt(
     if "灿灿" in speakers:
         parts.append(_DAILY_CANCAN_HAIR_LOCK)
 
-    if (
-        floor_shoe_scene
-        and "昭昭" in speakers
-        and _daily_zhao_handles_floor_shoelaces(vb)
-    ):
-        parts.append(
-            "地垫中央平放着一双无人穿着的蓝白运动鞋；"
-            "昭昭赤脚蹲在鞋旁，双手正在操作地垫上那双鞋的鞋带，"
-            "不是给自己脚上穿鞋系带。"
-        )
+    if floor_shoe_scene and speakers:
+        lock = _daily_floor_shoe_lock(vb, speakers)
+        if lock:
+            parts.append(lock)
 
     # 嘴型锁定：先开口说话的孩子在静帧里必须处于说话状态，
     # 其余人完全闭嘴，防止 I2V 说话人反转
