@@ -392,31 +392,93 @@ class ImageMgr:
                         if isinstance(first_fail, AgnesContentPolicyError)
                         else 'verify'
                     )
-                    logger.warning(
-                        'image segment %s %s on current prompt; regenerating image_prompt then retry',
-                        index,
-                        'content_policy_violation'
-                        if regen_reason == 'content_policy'
-                        else 'verify exhausted',
+                    script = job.get('script_json') if job else None
+                    setting = (
+                        str(script.get('setting') or '').strip() or None
+                        if isinstance(script, dict)
+                        else None
                     )
-                    try:
-                        new_prompt = self._regen_segment_image_prompt(
-                            seg,
-                            job=job,
-                            content_style=content_style,
-                            reason=regen_reason,
-                        )
-                        self._persist_segment_prompt(seg)
-                        prompt = _build_prompt(seg)
-                        logger.info(
-                            'image segment %s prompt regenerated chars=%s; retry generate',
+                    from app.services.script.image_prompt import (
+                        _daily_setting_floor_shoe_scene,
+                        wrap_image_prompts,
+                    )
+                    floor_shoe_scene = (
+                        style == CONTENT_STYLE_DAILY_STORY
+                        and _daily_setting_floor_shoe_scene(setting)
+                    )
+                    if floor_shoe_scene and regen_reason == 'verify':
+                        logger.warning(
+                            'image segment %s verify exhausted on floor-shoe scene; '
+                            'skip LLM visual_brief regen, rebuild rule-based prompt only',
                             index,
-                            len(new_prompt),
                         )
-                    except Exception as regen_exc:
-                        logger.error('image segment %s prompt regen failed: %s', index, regen_exc)
-                        raise first_fail from regen_exc
-                    provider.generate(prompt, out, size=size, ref_images=ref_images, expected_speakers=expected_speakers, content_style=content_style)
+                        try:
+                            wrap_image_prompts(
+                                script.get('segments') or [],
+                                content_style=style,
+                                setting=setting,
+                                segment_indices=[index],
+                            )
+                            refreshed = next(
+                                (
+                                    s
+                                    for s in (script.get('segments') or [])
+                                    if int(s.get('segment_index') or 0) == index
+                                ),
+                                None,
+                            )
+                            if refreshed and refreshed.get('image_prompt'):
+                                seg['image_prompt'] = refreshed.get('image_prompt')
+                                self._persist_segment_prompt(seg)
+                                prompt = _build_prompt(seg)
+                                logger.info(
+                                    'image segment %s rule-based prompt rebuilt chars=%s; retry generate',
+                                    index,
+                                    len(prompt),
+                                )
+                            else:
+                                raise first_fail
+                        except Exception as rebuild_exc:
+                            logger.error(
+                                'image segment %s floor-shoe prompt rebuild failed: %s',
+                                index,
+                                rebuild_exc,
+                            )
+                            raise first_fail from rebuild_exc
+                        provider.generate(
+                            prompt,
+                            out,
+                            size=size,
+                            ref_images=ref_images,
+                            expected_speakers=expected_speakers,
+                            content_style=content_style,
+                        )
+                    else:
+                        logger.warning(
+                            'image segment %s %s on current prompt; regenerating image_prompt then retry',
+                            index,
+                            'content_policy_violation'
+                            if regen_reason == 'content_policy'
+                            else 'verify exhausted',
+                        )
+                        try:
+                            new_prompt = self._regen_segment_image_prompt(
+                                seg,
+                                job=job,
+                                content_style=content_style,
+                                reason=regen_reason,
+                            )
+                            self._persist_segment_prompt(seg)
+                            prompt = _build_prompt(seg)
+                            logger.info(
+                                'image segment %s prompt regenerated chars=%s; retry generate',
+                                index,
+                                len(new_prompt),
+                            )
+                        except Exception as regen_exc:
+                            logger.error('image segment %s prompt regen failed: %s', index, regen_exc)
+                            raise first_fail from regen_exc
+                        provider.generate(prompt, out, size=size, ref_images=ref_images, expected_speakers=expected_speakers, content_style=content_style)
             except _regen_exc as exc:
                 kind = (
                     'content_policy'
