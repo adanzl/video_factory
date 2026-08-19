@@ -358,6 +358,13 @@ CONFIG_GROUPS: tuple[ConfigGroupDef, ...] = (
                 max_value=9999,
                 description="chat 流水线；默认 164 亲子",
             ),
+            _f(
+                "bili_activity_tag",
+                "BILI_ACTIVITY_TAG",
+                "活动标签",
+                "text",
+                description="chat 投稿预留 1 个活动 tag；默认「闪闪发光的家庭日」",
+            ),
         ),
     ),
 )

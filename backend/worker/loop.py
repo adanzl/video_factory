@@ -332,6 +332,17 @@ def run_publish(job_id: int, *, to_end: bool=False) -> dict:
         return _run_from(job_id, publish_cls)
     return _run_one_stage(job_id, publish_cls, hold=True)
 
+
+def run_publish_upload(job_id: int) -> dict:
+    from worker.stages.common.publish import PublishStage, upload_bili_publish
+
+    job_mgr.mark_running(job_id)
+    upload_bili_publish(job_id)
+    done = _advance_after_stage(job_id, PublishStage, status='pending')
+    if done is not None:
+        return done
+    return _reload_job(job_id)
+
 def run_segment_all(job_id: int, *, to_end: bool=False, segment_indices: list[int] | None=None) -> dict:
     job = _reload_job(job_id)
     if is_material_job(job):

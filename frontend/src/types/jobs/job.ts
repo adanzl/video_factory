@@ -47,6 +47,21 @@ export interface JobInfo {
     transition?: string;
     duration_sec?: number;
   };
+  publish_result?: {
+    platform?: string;
+    status?: string;
+    bvid?: string | null;
+    aid?: number | null;
+    url?: string | null;
+    tid?: number | null;
+    message?: string;
+    at?: string;
+    scheduled_at?: string;
+  };
+  publish_schedule?: {
+    enabled?: boolean;
+    time?: string | null;
+  };
 }
 
 export interface JobListItem {

@@ -705,6 +705,8 @@ def build_wording_polish_prompts(
         "硬要求：\n"
         f"- 行数不变、说话人不变、每行≤{line_chars_max}字；\n"
         "- line 只写台词本身，**不要带「昭昭：」这种说话人前缀**；\n"
+        "- 灿灿除开场外禁止喊「昭昭，」；出现则直接删掉「昭昭」和后面的逗号，"
+        "勿改成别的称呼；\n"
         "- 只改被点到的行号，勿顺手改别处，勿新增或删除行；\n"
         "- 孩子台词改成小孩会说的口语；妈妈台词只去掉书面/旁白，保持大人语气；\n"
         "- 保持原意、信息量、事实与前后句衔接；\n"
@@ -868,6 +870,36 @@ def _fix_missing_tone_particle(line: str) -> str:
     return line
 
 
+_RE_CANCAN_ZHAO_VOCATIVE = re.compile(r"昭昭[，,]\s*")
+
+
+def _cancan_zhao_vocative_allowed(index0: int, story: dict) -> bool:
+    """灿灿只许在开场喊「昭昭，」；无开场时仅首句灿灿可喊。"""
+    rows = _dialogue(story)
+    open_len = len(story.get("discovery_opening") or [])
+    if open_len:
+        return index0 < open_len
+    for i, row in enumerate(rows):
+        if str(row.get("speaker") or "").strip() == "灿灿":
+            return index0 == i
+    return False
+
+
+def strip_cancan_mid_zhaozhao_vocatives(story: dict) -> dict:
+    """润色规则：灿灿开场外删除「昭昭」及紧跟逗号，不改其余字。"""
+    rows = _dialogue(story)
+    for i, row in enumerate(rows):
+        if str(row.get("speaker") or "").strip() != "灿灿":
+            continue
+        if _cancan_zhao_vocative_allowed(i, story):
+            continue
+        line = str(row.get("line") or "")
+        cleaned = _RE_CANCAN_ZHAO_VOCATIVE.sub("", line).lstrip()
+        if cleaned and cleaned != line:
+            row["line"] = cleaned
+    return story
+
+
 def apply_local_wording_sanitization(
     story: dict,
     *,
@@ -879,6 +911,7 @@ def apply_local_wording_sanitization(
 
     from app.services.daily_story.prompts import validate_daily_story_json
 
+    story = strip_cancan_mid_zhaozhao_vocatives(story)
     rows = _dialogue(story)
     lines = [str(r.get("line") or "").strip() for r in rows]
     n = len(lines)
@@ -1270,7 +1303,7 @@ def polish_daily_story_wording_iteratively(
     """
     polish = getattr(client, "polish_daily_story_wording", None)
     if not callable(polish):
-        return story, 0
+        return strip_cancan_mid_zhaozhao_vocatives(story), 0
 
     def _sense_drift_lines(s: dict) -> set[int]:
         return {
@@ -1317,6 +1350,7 @@ def polish_daily_story_wording_iteratively(
                 "[DAILY_STORY] wording full-scan polish accepted=%d",
                 len(accepted),
             )
+        story = strip_cancan_mid_zhaozhao_vocatives(story)
         return story, total_accepted
 
     for _ in range(max(1, max_rounds)):
@@ -1349,6 +1383,7 @@ def polish_daily_story_wording_iteratively(
             len(accepted),
             total_accepted,
         )
+    story = strip_cancan_mid_zhaozhao_vocatives(story)
     return story, total_accepted
 
 

@@ -44,8 +44,39 @@
           class="mb-3"
           :title="biliSessionError"
         />
+        <div
+          v-else-if="biliSessionUser"
+          class="mb-3 flex flex-wrap items-center justify-between gap-3 rounded border border-blue-100 bg-blue-50/60 px-3 py-1"
+        >
+          <span class="text-sm text-gray-700">{{ biliLoginHint }}</span>
+          <div class="flex flex-wrap items-center gap-2">
+            <el-checkbox v-model="scheduleEnabled">定时发布</el-checkbox>
+            <el-time-picker
+              v-if="scheduleEnabled"
+              v-model="scheduleTime"
+              format="HH:mm"
+              value-format="HH:mm"
+              placeholder="选择时分"
+              :clearable="false"
+              size="small"
+              class="w-40!"
+            />
+            <span v-if="scheduleEnabled && schedulePreview" class="text-sm text-gray-500">
+              将于 {{ schedulePreview }} 发布
+            </span>
+            <el-button
+              type="primary"
+              size="small"
+              :loading="publishing"
+              :disabled="publishActionDisabled"
+              @click="handleSubmit"
+            >
+              投稿
+            </el-button>
+          </div>
+        </div>
         <el-alert
-          v-if="biliLoginHint"
+          v-else-if="biliLoginHint"
           type="info"
           :closable="false"
           show-icon
@@ -82,21 +113,31 @@
                   <span v-if="canRegenerateDescription">，可点击「生成」</span>
                 </span>
               </template>
-              <template v-else>
-                <div v-if="tags.length" class="flex flex-wrap gap-2">
+              <template v-else-if="row.key === 'tags'">
+                <div v-if="publishTags.length" class="flex flex-wrap gap-2">
                   <el-tag
-                    v-for="tag in tags"
-                    :key="tag"
-                    type="warning"
+                    v-for="tag in publishTags"
+                    :key="tag.name"
+                    :type="tag.type"
                     effect="plain"
                   >
-                    {{ tag }}
+                    {{ tag.name }}
+                    <span v-if="tag.hint" class="ml-1 text-xs opacity-70">{{ tag.hint }}</span>
                   </el-tag>
                 </div>
                 <span v-else class="text-sm text-gray-400">
-                  暂无推荐标签
+                  暂无标签
                   <span v-if="canRegenerateTags">，可点击「生成」</span>
                 </span>
+              </template>
+              <template v-else-if="row.key === 'dynamic'">
+                <span
+                  v-if="fanDynamic"
+                  class="block leading-relaxed wrap-break-word whitespace-pre-wrap"
+                >
+                  {{ fanDynamic }}
+                </span>
+                <span v-else class="text-sm text-gray-400">暂无粉丝动态</span>
               </template>
             </template>
           </el-table-column>
@@ -134,7 +175,7 @@
                     @click="copyVideoDescription"
                   />
                 </template>
-                <template v-else>
+                <template v-else-if="row.key === 'tags'">
                   <el-button
                     v-if="canRegenerateTags"
                     type="primary"
@@ -147,7 +188,7 @@
                     生成
                   </el-button>
                   <el-button
-                    v-if="tags.length"
+                    v-if="publishTags.length"
                     size="small"
                     type="primary"
                     plain
@@ -155,10 +196,48 @@
                     @click="copyTags"
                   />
                 </template>
+                <template v-else-if="row.key === 'dynamic'">
+                  <el-button
+                    v-if="fanDynamic"
+                    size="small"
+                    type="primary"
+                    plain
+                    :icon="DocumentCopy"
+                    @click="copyFanDynamic"
+                  />
+                </template>
               </div>
             </template>
           </el-table-column>
         </el-table>
+        <el-alert
+          v-if="publishResult"
+          class="mt-3"
+          :type="publishResultAlertType"
+          :closable="false"
+          show-icon
+        >
+          <template #title>
+            <span>{{ publishResultTitle }}</span>
+            <a
+              v-if="publishResult.url"
+              :href="publishResult.url"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="ml-2 text-blue-600 underline"
+            >
+              {{ publishResult.bvid || "打开稿件" }}
+            </a>
+          </template>
+        </el-alert>
+        <el-alert
+          v-else-if="job.skip_publish"
+          class="mt-3"
+          type="info"
+          :closable="false"
+          show-icon
+          title="当前任务勾选了跳过投稿，「投稿」按钮不可用；可先「生成」补齐简介。"
+        />
       </section>
 
       <!-- 封面 / 成片 -->
@@ -324,8 +403,14 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { DocumentCopy } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { generateVideoDescription, generateTags, runJobStageAction } from "@/api/api-jobs";
+import {
+  generatePublishMeta,
+  generateVideoDescription,
+  generateTags,
+  submitBiliPublish,
+} from "@/api/api-jobs";
 import { createBiliLoginQr, getBiliSession, pollBiliLoginQr } from "@/api/api-publish";
+import { getDailyStory } from "@/api/api-daily-story";
 import { downloadMediaFile, getMediaFileUrl, getMediaPicViewUrl } from "@/api/api-media";
 import type { JobDetail, JobLog } from "@/types/jobs";
 import type { ScriptJson } from "@/types/jobs/script";
@@ -353,6 +438,18 @@ import {
   STAGE_TWO_COL_CLASS,
 } from "./stageLayout";
 
+const CHAT_FIXED_TAGS = [
+  "姐弟日常",
+  "生活记录",
+  "亲子日常",
+  "搞笑对话",
+  "育儿",
+  "家庭搞笑",
+  "儿童对话",
+] as const;
+
+const CHAT_ACTIVITY_TAG = "闪闪发光的家庭日";
+
 const props = defineProps<{
   job: JobDetail;
   logs: JobLog[];
@@ -366,6 +463,7 @@ const emit = defineEmits<{
 const { handleError } = useErrorHandler();
 
 const submitting = ref(false);
+const publishing = ref(false);
 const regeneratingDescription = ref(false);
 const regeneratingTags = ref(false);
 const downloadingCover = ref(false);
@@ -381,6 +479,9 @@ const qrLoading = ref(false);
 const qrSvg = ref("");
 const qrSessionId = ref("");
 const qrStatusMessage = ref("请使用哔哩哔哩 App 扫码");
+const scheduleEnabled = ref(true);
+const scheduleTime = ref("07:00");
+const dailyStoryKey = ref("");
 let qrPollTimer: ReturnType<typeof setInterval> | null = null;
 
 const COVER_PREVIEW_OPTIONS = {
@@ -421,7 +522,36 @@ const refreshBiliSession = async () => {
   }
 };
 
-onMounted(refreshBiliSession);
+const refreshDailyStoryKey = async () => {
+  if (!isChatPipeline.value) {
+    dailyStoryKey.value = "";
+    return;
+  }
+  const storyId = props.job.info?.daily_story_id ?? props.job.material_id;
+  if (!storyId) {
+    dailyStoryKey.value = "";
+    return;
+  }
+  try {
+    const story = await getDailyStory(Number(storyId));
+    dailyStoryKey.value =
+      story.key?.trim() || story.story?.key?.trim() || "";
+  } catch {
+    dailyStoryKey.value = "";
+  }
+};
+
+onMounted(() => {
+  void refreshBiliSession();
+  void refreshDailyStoryKey();
+  const saved = props.job.info?.publish_schedule;
+  if (saved) {
+    scheduleEnabled.value = Boolean(saved.enabled);
+    if (saved.time) {
+      scheduleTime.value = saved.time;
+    }
+  }
+});
 onBeforeUnmount(stopQrPolling);
 watch(qrDialogVisible, visible => {
   if (!visible) {
@@ -486,27 +616,106 @@ const script = computed(() => {
   return value as ScriptJson;
 });
 
-const publishTitle = computed(() => {
-  const fromScript = script.value?.title?.trim();
-  if (fromScript) {
-    return fromScript;
-  }
-  return props.job.title?.trim() || "";
-});
+const publishTitle = computed(() => props.job.title?.trim() || script.value?.title?.trim() || "");
+
+const isChatPipeline = computed(() => props.job.pipeline === "chat");
 
 const videoDescription = computed(() => script.value?.video_description?.trim() || "");
 
-const tags = computed(() => script.value?.tags || []);
+const fanDynamic = computed(() => {
+  const title = publishTitle.value;
+  if (isChatPipeline.value) {
+    return title
+      ? `《${title}》｜姐弟日常小剧场，昭昭灿灿又整活了。`
+      : "姐弟日常小剧场更新啦，昭昭灿灿的日常对话。";
+  }
+  return title ? `${title}｜新视频已发布，欢迎收看。` : "";
+});
+
+type PublishTagItem = {
+  name: string;
+  type?: "success" | "warning" | "info" | "danger";
+  hint?: string;
+};
+
+const publishTags = computed((): PublishTagItem[] => {
+  if (isChatPipeline.value) {
+    const items: PublishTagItem[] = CHAT_FIXED_TAGS.map(name => ({
+      name,
+      type: "warning",
+    }));
+    if (dailyStoryKey.value) {
+      items.push({ name: dailyStoryKey.value, type: "success", hint: "主题" });
+    } else {
+      items.push({ name: "待取故事 key", type: "info", hint: "主题" });
+    }
+    items.push({ name: CHAT_ACTIVITY_TAG, type: "danger", hint: "活动" });
+    return items;
+  }
+  return (script.value?.tags || []).map(raw => ({
+    name: String(raw).replace(/^#/, "").trim(),
+    type: "warning" as const,
+  }));
+});
+
+const publishResult = computed(() => props.job.info?.publish_result ?? null);
+
+const publishResultAlertType = computed(() => {
+  const status = publishResult.value?.status;
+  if (status === "success") return "success";
+  if (status === "failed") return "error";
+  return "info";
+});
+
+const publishResultTitle = computed(() => {
+  const result = publishResult.value;
+  if (!result) return "";
+  const parts = [
+    result.status === "success"
+      ? "已投稿 B 站"
+      : result.status === "skipped"
+        ? "已跳过上传"
+        : "投稿未完成",
+    result.message,
+  ].filter(Boolean);
+  return parts.join("：");
+});
 
 const publishMetaRows = [
   { key: "title", label: "标题" },
   { key: "description", label: "视频介绍" },
-  { key: "tags", label: "推荐标签" },
+  { key: "tags", label: "标签" },
+  { key: "dynamic", label: "粉丝动态" },
 ] as const;
 
 const canRegenerateDescription = computed(() => Boolean(script.value?.narration?.trim()));
 
-const canRegenerateTags = computed(() => Boolean(script.value?.narration?.trim()));
+const canRegenerateTags = computed(
+  () => !isChatPipeline.value && Boolean(script.value?.narration?.trim())
+);
+
+const schedulePreview = computed(() => {
+  if (!scheduleEnabled.value || !scheduleTime.value) {
+    return "";
+  }
+  const [hourText, minuteText] = scheduleTime.value.split(":");
+  const hour = Number(hourText);
+  const minute = Number(minuteText);
+  if (Number.isNaN(hour) || Number.isNaN(minute)) {
+    return "";
+  }
+  const now = new Date();
+  const candidate = new Date(now);
+  candidate.setHours(hour, minute, 0, 0);
+  if (candidate <= now) {
+    candidate.setDate(candidate.getDate() + 1);
+  }
+  const month = candidate.getMonth() + 1;
+  const day = candidate.getDate();
+  const hh = String(candidate.getHours()).padStart(2, "0");
+  const mm = String(candidate.getMinutes()).padStart(2, "0");
+  return `${month}月${day}日 ${hh}:${mm}`;
+});
 
 const coverPath = computed(() => props.job.cover_path?.trim() || "");
 const coverUrl = computed(() => {
@@ -517,6 +726,24 @@ const coverUrl = computed(() => {
 });
 
 const finalFilePath = computed(() => resolveFinalPath(props.job.final_path));
+
+const publishActionDisabled = computed(
+  () =>
+    actionDisabled.value ||
+    Boolean(props.job.skip_publish) ||
+    !finalFilePath.value ||
+    Boolean(biliSessionError.value) ||
+    !biliSessionUser.value
+);
+
+const publishActionDisabledReason = computed(() => {
+  if (props.job.skip_publish) return "任务已勾选跳过投稿";
+  if (!finalFilePath.value) return "请先在「合成」阶段生成成片";
+  if (biliSessionError.value || !biliSessionUser.value) return "请先扫码登录 B 站";
+  if (props.job.status === "running") return "任务运行中，请稍后再试";
+  return "";
+});
+
 const videoUrl = computed(() =>
   getMediaFileUrl(finalFilePath.value, props.job.version)
 );
@@ -632,12 +859,25 @@ const copyVideoDescription = async () => {
 };
 
 const copyTags = async () => {
-  if (!tags.value.length) {
+  const text = publishTags.value.map(tag => tag.name).join(" ");
+  if (!text) {
     return;
   }
   try {
-    await copyText(tags.value.join(" "));
+    await copyText(text);
     ElMessage.success("已复制标签");
+  } catch (error) {
+    handleError(error, "复制失败");
+  }
+};
+
+const copyFanDynamic = async () => {
+  if (!fanDynamic.value) {
+    return;
+  }
+  try {
+    await copyText(fanDynamic.value);
+    ElMessage.success("已复制粉丝动态");
   } catch (error) {
     handleError(error, "复制失败");
   }
@@ -645,24 +885,67 @@ const copyTags = async () => {
 
 const handleRun = async () => {
   try {
-    await ElMessageBox.confirm("确定执行「发布」阶段，生成视频介绍和推荐标签吗？", "确认执行", {
-      type: "warning",
-      confirmButtonText: "执行",
-      cancelButtonText: "取消",
-    });
+    await ElMessageBox.confirm(
+      "确定生成投稿信息？将补齐缺失的视频介绍（chat 流水线标签为固定规则，无需生成）。",
+      "确认生成",
+      {
+        type: "warning",
+        confirmButtonText: "生成",
+        cancelButtonText: "取消",
+      }
+    );
   } catch {
     return;
   }
 
   submitting.value = true;
   try {
-    await runJobStageAction("publish", { id: props.job.id, to_end: false });
-    ElMessage.success("已提交发布，任务已开始执行");
+    await generatePublishMeta(props.job.id);
+    ElMessage.success("投稿信息已生成");
     emit("refresh");
   } catch (error) {
-    handleError(error, "发布失败");
+    handleError(error, "生成失败");
   } finally {
     submitting.value = false;
+  }
+};
+
+const handleSubmit = async () => {
+  if (publishActionDisabled.value) {
+    ElMessage.warning(publishActionDisabledReason.value || "当前无法投稿");
+    return;
+  }
+  const scheduleHint = scheduleEnabled.value
+    ? `，定时于 ${schedulePreview.value || scheduleTime.value} 发布`
+    : "，立即发布";
+  try {
+    await ElMessageBox.confirm(
+      `确定投稿到 B 站？将上传成片与封面，并使用当前登录账号提交（公开浏览${scheduleHint}）。失败只记日志，任务不会标失败。`,
+      "确认投稿",
+      {
+        type: "warning",
+        confirmButtonText: "投稿",
+        cancelButtonText: "取消",
+      }
+    );
+  } catch {
+    return;
+  }
+
+  publishing.value = true;
+  try {
+    await submitBiliPublish(props.job.id, {
+      publish_schedule: {
+        enabled: scheduleEnabled.value,
+        time: scheduleEnabled.value ? scheduleTime.value : null,
+      },
+    });
+    ElMessage.success("已提交 B 站投稿，任务已开始执行");
+    emit("refresh");
+  } catch (error) {
+    handleError(error, "投稿失败");
+  } finally {
+    publishing.value = false;
   }
 };
 
@@ -721,6 +1004,26 @@ const handleDownloadFinal = async () => {
     downloadingFinal.value = false;
   }
 };
+
+watch(
+  () => [props.job.info?.daily_story_id, props.job.material_id, props.job.pipeline],
+  () => {
+    void refreshDailyStoryKey();
+  }
+);
+
+watch(
+  () => props.job.info?.publish_schedule,
+  saved => {
+    if (!saved) {
+      return;
+    }
+    scheduleEnabled.value = Boolean(saved.enabled);
+    if (saved.time) {
+      scheduleTime.value = saved.time;
+    }
+  }
+);
 
 watch(coverPath, () => {
   coverLoadError.value = false;

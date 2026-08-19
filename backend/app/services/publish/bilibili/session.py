@@ -144,3 +144,19 @@ class BiliSession:
             "mid": int(mid) if mid is not None else None,
             "uname": uname,
         }
+
+    def csrf(self) -> str:
+        return self.cookie_dict().get(COOKIE_BILI_JCT, "")
+
+    def http(self) -> requests.Session:
+        session = requests.Session()
+        session.headers.update(
+            {
+                "User-Agent": USER_AGENT,
+                "Origin": "https://member.bilibili.com",
+                "Referer": "https://member.bilibili.com/platform/upload/video/frame",
+            }
+        )
+        for name, value in self.cookie_dict().items():
+            session.cookies.set(name, value, domain=".bilibili.com")
+        return session
