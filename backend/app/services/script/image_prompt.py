@@ -29,6 +29,11 @@ _DAILY_CHAR_ZHAO = (
     "昭昭：7岁男孩，黑色超短发露耳露后颈，圆脸，"
     "蓝色短袖T恤，深蓝色短裤，两侧同色蓝白运动鞋。"
 )
+# 地垫系带场面：「两侧」易被 T2I 画成额外鞋，改明确写脚上那一双
+_DAILY_CHAR_ZHAO_FLOOR = (
+    "昭昭：7岁男孩，黑色超短发露耳露后颈，圆脸，"
+    "蓝色短袖T恤，深蓝色短裤，脚上穿一双蓝白运动鞋。"
+)
 _DAILY_CHAR_CANCAN = (
     "灿灿：10岁女孩，黑色头发，黑色单侧高马尾，"
     "粉色卫衣，蓝色长裤，两侧同色粉红运动鞋。"
@@ -67,23 +72,77 @@ def _daily_setting_floor_shoe_scene(setting: str | None) -> bool:
     return bool(_FLOOR_SHOE_SETTING_RE.search(setting))
 
 
+def _daily_floor_shoe_mat_clause(vb: str) -> str:
+    """按本镜剧情写地垫上一双粉鞋的状态（始终共两只，禁止第三只）。"""
+    text = vb or ""
+    anti_extra = "全画面地垫上仅此一双粉红运动鞋共两只，禁止第三只鞋或第二双粉鞋。"
+    if any(k in text for k in ("拎", "提起", "翻过去", "哗啦")):
+        return (
+            "地垫中央仅有一双粉红运动鞋共两只，鞋带已系成死结串在一起，"
+            f"正被拎起或翻倒；{anti_extra}"
+        )
+    if any(
+        k in text
+        for k in ("死结", "系成死", "贴一块", "串一块", "串在一", "鞋底贴", "鞋底紧紧")
+    ):
+        return (
+            "地垫中央仅有一双粉红运动鞋共两只，鞋带系成死结，"
+            f"两只鞋底紧紧贴在一起；{anti_extra}"
+        )
+    if any(k in text for k in ("连环扣", "缠绕", "勒出印", "勒出")):
+        return (
+            "地垫中央仅有一双粉红运动鞋共两只，鞋带相互缠绕成连环扣；"
+            f"{anti_extra}"
+        )
+    if any(k in text for k in ("交叉", "穿进", "鞋眼")):
+        return (
+            "地垫中央仅有一双粉红运动鞋共两只，两只鞋带正交叉穿进对方鞋眼；"
+            f"{anti_extra}"
+        )
+    return (
+        "地垫中央仅有一双粉红运动鞋共两只，左右并排平放，鞋带散开；"
+        f"{anti_extra}"
+    )
+
+
+def _scrub_floor_shoe_vb_redundancy(vb: str) -> str:
+    """地垫系带场面：鞋位/鞋数由硬锁统一写，去掉 brief 里重复的垫鞋描述。"""
+    text = (vb or "").strip()
+    if not text:
+        return text
+    for pat in (
+        r"客厅地垫上，灿灿脱下的(?:粉红)?运动鞋[^，。；]*[，。；]",
+        r"地垫(?:上|中央|旁)[^。；]*?(?:一双|两只)(?:粉红)?运动鞋[^。；]*[。；]",
+        r"[^。；]*?灿灿脱下的(?:粉红)?运动鞋[^。；]*[。；]",
+        r"[^。；]*?一双(?:粉红)?运动鞋(?:左右)?(?:两只)?并排[^。；]*[。；]",
+        r"地垫上(?:只有|仅有)?(?:那双|一双)[^。；]*[。；]",
+        r"[^。；]*?两只(?:粉红)?运动鞋(?:并排|串在一|贴在一)[^。；]*[。；]",
+    ):
+        text = re.sub(pat, "", text)
+    text = re.sub(r"[，,]{2,}", "，", text)
+    text = re.sub(r"[；;]{2,}", "；", text)
+    text = re.sub(r"。{2,}", "。", text)
+    return text.strip("，,；;。 ")
+
+
 def _daily_floor_shoe_lock(vb: str, speakers: list[str]) -> str | None:
     """地垫系带场面：灿灿粉鞋在垫上、昭昭蓝白鞋在脚上，硬锁鞋数与动作。"""
     tying = _daily_zhao_handles_floor_shoelaces(vb)
+    foot_note = "（与地垫粉鞋不是同一双）"
     if "昭昭" in speakers and tying:
-        action = "昭昭脚穿蓝白运动鞋蹲在地垫旁，双手捏住粉红运动鞋鞋带正在系带。"
+        action = (
+            f"昭昭脚上穿蓝白运动鞋{foot_note}蹲在地垫旁，"
+            "双手捏住地垫那双粉红运动鞋的鞋带正在系带。"
+        )
     elif "昭昭" in speakers:
-        action = "昭昭脚穿蓝白运动鞋蹲在地垫旁看着鞋。"
+        action = f"昭昭脚上穿蓝白运动鞋{foot_note}蹲在地垫旁看着地垫上的鞋。"
     else:
         action = ""
     if "灿灿" in speakers:
-        cancan = "灿灿脚穿白袜子站在一旁。"
+        cancan = "灿灿赤脚仅穿白袜子站在一旁，脚上不穿粉运动鞋。"
     else:
         cancan = ""
-    return (
-        "地垫中央一双粉红运动鞋左右两只并排平放，鞋带散开，共两只鞋；"
-        f"{action}{cancan}"
-    )
+    return f"{_daily_floor_shoe_mat_clause(vb)}{action}{cancan}"
 
 
 def _daily_zhao_handles_floor_shoelaces(vb: str) -> bool:
@@ -323,6 +382,10 @@ def assemble_daily_t2i_prompt(
     else:
         vb = strip_verify_regen_leak(vb)
     shot = str(seg.get("shot_type") or "").strip()
+    floor_shoe_scene = _daily_setting_floor_shoe_scene(setting)
+    vb_for_shoe_lock = vb
+    if floor_shoe_scene and vb:
+        vb = _scrub_floor_shoe_vb_redundancy(vb)
 
     parts = [_DAILY_T2I_STYLE]
     if vb:
@@ -355,9 +418,10 @@ def assemble_daily_t2i_prompt(
             parts.append("画面中有" + "、".join(missing) + "。")
 
     char_parts: list[str] = []
-    floor_shoe_scene = _daily_setting_floor_shoe_scene(setting)
     for name in speakers:
-        if name == "灿灿" and floor_shoe_scene:
+        if name == "昭昭" and floor_shoe_scene:
+            char_parts.append(_DAILY_CHAR_ZHAO_FLOOR)
+        elif name == "灿灿" and floor_shoe_scene:
             char_parts.append(_DAILY_CHAR_CANCAN_SOCKS)
         elif name in _DAILY_CHAR_MAP:
             char_parts.append(_DAILY_CHAR_MAP[name])
@@ -373,7 +437,7 @@ def assemble_daily_t2i_prompt(
         parts.append(_DAILY_CANCAN_HAIR_LOCK)
 
     if floor_shoe_scene and speakers:
-        lock = _daily_floor_shoe_lock(vb, speakers)
+        lock = _daily_floor_shoe_lock(vb_for_shoe_lock, speakers)
         if lock:
             parts.append(lock)
 

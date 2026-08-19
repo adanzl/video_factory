@@ -804,12 +804,33 @@ def test_assemble_daily_t2i_floor_shoe_lace_lock():
         ],
     }
     prompt = assemble_daily_t2i_prompt(seg, setting=setting)
-    assert "两侧同色蓝白运动鞋" in prompt
-    assert "赤脚仅穿白袜子" not in prompt.split("灿灿")[1].split("昭昭")[0]
-    assert "粉红运动鞋左右两只并排" in prompt
-    assert "共两只鞋" in prompt
-    assert "双手捏住粉红运动鞋鞋带正在系带" in prompt
-    assert "灿灿脚穿白袜子" in prompt
+    assert "脚上穿一双蓝白运动鞋" in prompt
+    assert "两侧同色蓝白运动鞋" not in prompt
+    assert "赤脚仅穿白袜子" in prompt
+    assert "仅有一双粉红运动鞋共两只" in prompt
+    assert "禁止第三只鞋" in prompt
+    assert "双手捏住地垫那双粉红运动鞋的鞋带正在系带" in prompt
+    assert "灿灿赤脚仅穿白袜子" in prompt
+    assert prompt.count("鞋带散开") == 1
+
+
+def test_assemble_daily_t2i_floor_shoe_dead_knot_state():
+    """后续镜鞋带系死结时，硬锁须写贴底/死结，禁止仍写鞋带散开并排。"""
+    setting = "客厅地垫上，灿灿脱下的粉红运动鞋鞋带散开摆着，昭昭蹲在鞋边准备系带"
+    seg = {
+        "segment_index": 6,
+        "shot_type": "中景",
+        "visual_brief": (
+            "客厅地垫上，一双运动鞋的鞋带被系成死结，两只鞋底紧紧贴在一起；"
+            "昭昭蹲在鞋边，双手握着鞋带用力向上提。"
+        ),
+        "dialogue": [{"speaker": "灿灿", "line": "我才一提，两只鞋哗啦全翻过去了！"}],
+    }
+    prompt = assemble_daily_t2i_prompt(seg, setting=setting)
+    assert "鞋带系成死结" in prompt
+    assert "鞋底紧紧贴在一起" in prompt
+    assert "鞋带散开" not in prompt
+    assert "并排平放" not in prompt
 
 
 def test_assemble_daily_t2i_no_duplicate_lr_in_prompt():
