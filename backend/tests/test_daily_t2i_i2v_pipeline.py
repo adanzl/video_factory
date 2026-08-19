@@ -809,12 +809,39 @@ def test_assemble_daily_t2i_floor_shoe_lace_lock():
     assert "赤脚仅穿白袜子" in prompt
     assert "仅有一双粉红运动鞋共两只" in prompt
     assert "禁止第三只鞋" in prompt
-    assert "只用手指捏住平放在地垫上的粉鞋鞋带" in prompt
-    assert "不拿起粉鞋" in prompt
+    assert "双手手指只捏地垫上一双粉鞋的鞋带结" in prompt
+    assert "不往自己脚上套" in prompt
     assert "鞋帮贴地" in prompt
     assert "穿进" not in prompt
     assert "灿灿赤脚仅穿白袜子" in prompt
     assert prompt.count("鞋带散开") == 1
+
+
+def test_assemble_daily_t2i_floor_shoe_seg1_no_hand_conflict():
+    """分镜1：brief 里「双手伸向鞋带/指向鞋」须剥掉，避免与硬锁打架诱发套鞋。"""
+    setting = "客厅地垫上，灿灿脱下的粉红运动鞋鞋带散开摆着，昭昭蹲在鞋边准备系带"
+    seg = {
+        "segment_index": 1,
+        "shot_type": "特写",
+        "visual_brief": (
+            "昭昭蹲在鞋边准备系带。画面左边是昭昭，右边是灿灿。"
+            "昭昭蹲着，双手伸向鞋带，抬头看向灿灿；"
+            "灿灿站着，右手食指指向地面上的鞋，左手自然下垂，皱眉瞪眼，说话。"
+            "客厅地垫是浅灰色圆形编织地垫。"
+        ),
+        "dialogue": [
+            {"speaker": "灿灿", "line": "昭昭，地垫上这双鞋鞋带又散了，你来帮我系。"},
+            {"speaker": "昭昭", "line": "好嘞，我这就蹲下来系。"},
+        ],
+    }
+    prompt = assemble_daily_t2i_prompt(seg, setting=setting)
+    assert "双手伸向鞋带" not in prompt
+    assert "指向地面上的鞋" not in prompt
+    assert "指向地垫上的鞋带" not in prompt
+    assert "蹲在鞋边准备系带" not in prompt
+    assert "双手手指只捏地垫上一双粉鞋的鞋带结" in prompt
+    assert "不往自己脚上套" in prompt
+    assert "灿灿刚脱下的唯一一双" in prompt
 
 
 def test_assemble_daily_t2i_floor_shoe_scrubs_chuanjin():
@@ -851,6 +878,89 @@ def test_assemble_daily_t2i_floor_shoe_dead_knot_state():
     assert "鞋底紧紧贴在一起" in prompt
     assert "鞋带散开" not in prompt
     assert "并排平放" not in prompt
+
+
+def test_assemble_daily_t2i_floor_shoe_seg6_cancan_lift():
+    """分镜6：灿灿拎死结鞋、昭昭叉腰旁观；禁止误判为昭昭系带或鞋平放垫上。"""
+    setting = "客厅地垫上，灿灿脱下的粉红运动鞋鞋带散开摆着，昭昭蹲在鞋边准备系带"
+    seg = {
+        "segment_index": 6,
+        "shot_type": "中景",
+        "visual_brief": (
+            "客厅地垫上，画面左边是昭昭，右边是灿灿。灿灿蹲在地垫上，"
+            "双手拎起两只系在一起的粉红运动鞋，鞋底紧紧贴在一起，鞋带勒出深深的印痕，"
+            "她皱着眉、撇着嘴，费力地拎着鞋带。昭昭蹲在灿灿对面，双手叉腰，"
+            "仰头看着灿灿，咧嘴得意地笑，眼睛眯成缝。地垫上散落着散开的鞋带。"
+        ),
+        "dialogue": [
+            {"speaker": "灿灿", "line": "两只鞋底都贴一块儿了，我拎都拎不起来。"},
+            {"speaker": "昭昭", "line": "大功告成，像手铐一样严实，你提起来试试。"},
+        ],
+        "speakers": ["昭昭", "灿灿"],
+    }
+    prompt = assemble_daily_t2i_prompt(seg, setting=setting)
+    assert "被灿灿双手拎离地面" in prompt
+    assert "双手拎着系成死结串在一起" in prompt
+    assert "昭昭蹲在灿灿对面，双手叉腰" in prompt
+    assert "无人拿在手中" not in prompt
+    assert "鞋带散开" not in prompt
+    assert "散开的鞋带" not in prompt
+    assert "双手手指只捏" not in prompt
+    assert "双手拎起" not in prompt
+
+
+def test_assemble_daily_t2i_floor_shoe_seg7_cancan_flip():
+    """分镜7：灿灿拎鞋翻个儿、昭昭摊手惊讶；禁止鞋带松散或昭昭叉腰/捏鞋带。"""
+    setting = "客厅地垫上，灿灿脱下的粉红运动鞋鞋带散开摆着，昭昭蹲在鞋边准备系带"
+    seg = {
+        "segment_index": 7,
+        "shot_type": "中近景特写",
+        "visual_brief": (
+            "接上一镜，灿灿弯腰用右手提起两只串在一起的鞋，鞋子翻了个个儿，"
+            "鞋带松散摇晃。昭昭蹲在一旁，抬头看着鞋子，双手摊开，表情惊讶。"
+            "场景定稿：客厅地垫上，两只粉红运动鞋被拎起，鞋带缠绕；"
+            "背景是沙发和茶几，茶几上放着遥控器和空水杯"
+        ),
+        "dialogue": [
+            {"speaker": "灿灿", "line": "我才一提，两只鞋哗啦全翻过去了！"},
+            {"speaker": "昭昭", "line": "多稳当，我绑得连蚂蚁都钻不过去。"},
+        ],
+        "speakers": ["昭昭", "灿灿"],
+    }
+    prompt = assemble_daily_t2i_prompt(seg, setting=setting)
+    assert "鞋子翻了个个儿" in prompt
+    assert "双手摊开，表情惊讶" in prompt
+    assert "鞋带松散" not in prompt
+    assert "鞋带散开" not in prompt
+    assert "双手叉腰" not in prompt
+    assert "双手手指只捏" not in prompt
+    assert "无人拿在手中" not in prompt
+    assert "用右手提起" not in prompt
+
+
+def test_assemble_daily_t2i_floor_shoe_seg9_aftermath():
+    """分镜9：系带失败旁观镜，昭昭垂手沮丧、灿灿叉腰叹气，禁止捏鞋带。"""
+    setting = "客厅地垫上，灿灿脱下的粉红运动鞋鞋带散开摆着，昭昭蹲在鞋边准备系带"
+    seg = {
+        "segment_index": 9,
+        "shot_type": "中近景特写",
+        "visual_brief": (
+            "接上一镜，昭昭蹲着，双手垂在身侧，低头看着地上的鞋，表情沮丧。"
+            "灿灿站在旁边，双手叉腰，低头看着鞋，叹了口气。"
+            "场景定稿：客厅地垫上，两只粉红运动鞋并排放在地上，鞋带散乱；"
+            "背景是沙发和茶几，茶几上放着遥控器和空水杯"
+        ),
+        "dialogue": [{"speaker": "灿灿", "line": "行吧，这鞋带是彻底白系了。"}],
+        "speakers": ["昭昭", "灿灿"],
+    }
+    prompt = assemble_daily_t2i_prompt(seg, setting=setting)
+    assert "双手垂在身侧" in prompt
+    assert "表情沮丧" in prompt
+    assert "灿灿双手叉腰" in prompt
+    assert "鞋带纠缠散乱" in prompt
+    assert "双手手指只捏" not in prompt
+    assert "双手自然下垂" not in prompt
+    assert "鞋带散开；" not in prompt
 
 
 def test_assemble_daily_t2i_no_duplicate_lr_in_prompt():
