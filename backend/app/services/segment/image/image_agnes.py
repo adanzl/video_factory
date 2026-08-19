@@ -38,7 +38,7 @@ _AGNES_CN_HOST = "apihub.agnes-ai.cn"
 # 有备用 Key 时，5xx 同 Key 只打 1 次，失败立刻切
 _FAILOVER_HTTP_RETRIES = 1
 # 同一文生图提示词的质检重试次数；耗尽后由上层重生提示词再开一轮
-_VERIFY_MAX_ATTEMPTS = 3
+_VERIFY_MAX_ATTEMPTS = 5
 # 验证接口超时/网络失败时的重试次数（不重生图，只重试验证）
 _VERIFY_RETRY_COUNT = 2
 _VERIFY_RETRY_DELAY = 10

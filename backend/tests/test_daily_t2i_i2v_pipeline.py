@@ -995,6 +995,7 @@ def test_assemble_daily_t2i_floor_shoe_seg8_cancan_untie():
     assert "昭昭蹲在地垫旁看着地垫上的粉鞋" not in prompt
     assert "严格左粉卫衣蓝裤黑马尾女孩灿灿、右蓝T恤深蓝短裤短发男孩昭昭" in prompt
     assert "粉运动鞋总数恰好两只" in prompt
+    assert "仅昭昭、灿灿两个小孩" in prompt
 
 
 def test_assemble_daily_t2i_floor_shoe_seg9_corrupted_vb_dialogue_aftermath():
