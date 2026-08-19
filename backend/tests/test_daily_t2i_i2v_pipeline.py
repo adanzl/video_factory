@@ -804,14 +804,34 @@ def test_assemble_daily_t2i_floor_shoe_lace_lock():
         ],
     }
     prompt = assemble_daily_t2i_prompt(seg, setting=setting)
-    assert "脚上穿一双蓝白运动鞋" in prompt
+    assert "双脚均已穿好一双蓝白运动鞋" in prompt
     assert "两侧同色蓝白运动鞋" not in prompt
     assert "赤脚仅穿白袜子" in prompt
     assert "仅有一双粉红运动鞋共两只" in prompt
     assert "禁止第三只鞋" in prompt
-    assert "双手捏住地垫那双粉红运动鞋的鞋带正在系带" in prompt
+    assert "只用手指捏住平放在地垫上的粉鞋鞋带" in prompt
+    assert "不拿起粉鞋" in prompt
+    assert "鞋帮贴地" in prompt
+    assert "穿进" not in prompt
     assert "灿灿赤脚仅穿白袜子" in prompt
     assert prompt.count("鞋带散开") == 1
+
+
+def test_assemble_daily_t2i_floor_shoe_scrubs_chuanjin():
+    """brief 里「穿进鞋眼」须改成「穿过鞋眼」，避免 T2I 画成往脚上套鞋。"""
+    setting = "客厅地垫上，灿灿脱下的粉红运动鞋鞋带散开摆着，昭昭蹲在鞋边准备系带"
+    seg = {
+        "segment_index": 3,
+        "shot_type": "中景",
+        "visual_brief": "昭昭将右鞋带穿进左边鞋眼，灿灿右手食指指着鞋带。",
+        "dialogue": [
+            {"speaker": "灿灿", "text": "哎，你干嘛把左带子弄到右边去"},
+            {"speaker": "昭昭", "text": "你说系一起嘛"},
+        ],
+    }
+    prompt = assemble_daily_t2i_prompt(seg, setting=setting)
+    assert "穿过左边鞋眼" in prompt
+    assert "穿进" not in prompt
 
 
 def test_assemble_daily_t2i_floor_shoe_dead_knot_state():

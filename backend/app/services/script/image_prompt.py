@@ -32,7 +32,13 @@ _DAILY_CHAR_ZHAO = (
 # 地垫系带场面：「两侧」易被 T2I 画成额外鞋，改明确写脚上那一双
 _DAILY_CHAR_ZHAO_FLOOR = (
     "昭昭：7岁男孩，黑色超短发露耳露后颈，圆脸，"
-    "蓝色短袖T恤，深蓝色短裤，脚上穿一双蓝白运动鞋。"
+    "蓝色短袖T恤，深蓝色短裤，双脚均已穿好一双蓝白运动鞋。"
+)
+# 地垫粉鞋：T2I 把「穿进鞋眼」理解成往脚上套鞋，统一用「穿过」
+_FLOOR_SHOE_EYELET_RE = re.compile(r"穿进(.{0,4}鞋眼)")
+_FLOOR_SHOE_MAT_ANTI_PICKUP = (
+    "地垫粉鞋两只始终平放接触地垫，鞋帮贴地，无人拿在手中，"
+    "无人往脚上套粉鞋，全画面仅这两只粉鞋。"
 )
 _DAILY_CHAR_CANCAN = (
     "灿灿：10岁女孩，黑色头发，黑色单侧高马尾，"
@@ -79,7 +85,7 @@ def _daily_floor_shoe_mat_clause(vb: str) -> str:
     if any(k in text for k in ("拎", "提起", "翻过去", "哗啦")):
         return (
             "地垫中央仅有一双粉红运动鞋共两只，鞋带已系成死结串在一起，"
-            f"正被拎起或翻倒；{anti_extra}"
+            f"正被拎起或翻倒；{_FLOOR_SHOE_MAT_ANTI_PICKUP}{anti_extra}"
         )
     if any(
         k in text
@@ -87,27 +93,32 @@ def _daily_floor_shoe_mat_clause(vb: str) -> str:
     ):
         return (
             "地垫中央仅有一双粉红运动鞋共两只，鞋带系成死结，"
-            f"两只鞋底紧紧贴在一起；{anti_extra}"
+            f"两只鞋底紧紧贴在一起；{_FLOOR_SHOE_MAT_ANTI_PICKUP}{anti_extra}"
         )
     if any(k in text for k in ("连环扣", "缠绕", "勒出印", "勒出")):
         return (
             "地垫中央仅有一双粉红运动鞋共两只，鞋带相互缠绕成连环扣；"
-            f"{anti_extra}"
+            f"{_FLOOR_SHOE_MAT_ANTI_PICKUP}{anti_extra}"
         )
-    if any(k in text for k in ("交叉", "穿进", "鞋眼")):
+    if any(k in text for k in ("交叉", "鞋眼")) or "穿过" in text:
         return (
-            "地垫中央仅有一双粉红运动鞋共两只，两只鞋带正交叉穿进对方鞋眼；"
-            f"{anti_extra}"
+            "地垫中央仅有一双粉红运动鞋共两只，两只鞋带在平放的粉鞋上交叉穿过鞋眼；"
+            f"{_FLOOR_SHOE_MAT_ANTI_PICKUP}{anti_extra}"
         )
     return (
-        "地垫中央仅有一双粉红运动鞋共两只，左右并排平放，鞋带散开；"
-        f"{anti_extra}"
+        "地垫中央仅有一双粉红运动鞋共两只，左右并排平放接触地垫，鞋带散开；"
+        f"{_FLOOR_SHOE_MAT_ANTI_PICKUP}{anti_extra}"
     )
+
+
+def _scrub_floor_shoe_wear_verbs(text: str) -> str:
+    """「穿进鞋眼」易被画成往脚上套鞋，改为「穿过鞋眼」。"""
+    return _FLOOR_SHOE_EYELET_RE.sub(r"穿过\1", text or "")
 
 
 def _scrub_floor_shoe_vb_redundancy(vb: str) -> str:
     """地垫系带场面：鞋位/鞋数由硬锁统一写，去掉 brief 里重复的垫鞋描述。"""
-    text = (vb or "").strip()
+    text = _scrub_floor_shoe_wear_verbs((vb or "").strip())
     if not text:
         return text
     for pat in (
@@ -128,14 +139,14 @@ def _scrub_floor_shoe_vb_redundancy(vb: str) -> str:
 def _daily_floor_shoe_lock(vb: str, speakers: list[str]) -> str | None:
     """地垫系带场面：灿灿粉鞋在垫上、昭昭蓝白鞋在脚上，硬锁鞋数与动作。"""
     tying = _daily_zhao_handles_floor_shoelaces(vb)
-    foot_note = "（与地垫粉鞋不是同一双）"
+    zhao_feet = "昭昭双脚均已穿好蓝白运动鞋，与地垫粉鞋是不同的一双。"
     if "昭昭" in speakers and tying:
         action = (
-            f"昭昭脚上穿蓝白运动鞋{foot_note}蹲在地垫旁，"
-            "双手捏住地垫那双粉红运动鞋的鞋带正在系带。"
+            f"{zhao_feet}昭昭蹲在地垫旁，"
+            "只用手指捏住平放在地垫上的粉鞋鞋带，不握鞋帮、不拿起粉鞋。"
         )
     elif "昭昭" in speakers:
-        action = f"昭昭脚上穿蓝白运动鞋{foot_note}蹲在地垫旁看着地垫上的鞋。"
+        action = f"{zhao_feet}昭昭蹲在地垫旁看着地垫上的粉鞋。"
     else:
         action = ""
     if "灿灿" in speakers:
