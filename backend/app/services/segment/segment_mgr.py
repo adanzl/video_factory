@@ -172,6 +172,15 @@ class SegmentMgr:
                 job=job,
                 content_style=style,
             )
+            if job_id is not None:
+                from app.repositories import repo_segment
+
+                repaired = repo_segment.sync_image_paths_from_disk(job_id, images_dir)
+                if repaired:
+                    logger.info(
+                        "produce_segments: repaired %s image_path(s) from disk",
+                        repaired,
+                    )
         for seg_id, path in generated:
             path_by_id[seg_id] = path
 

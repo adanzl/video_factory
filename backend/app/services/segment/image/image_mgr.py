@@ -294,7 +294,8 @@ class ImageMgr:
             payload['motion_prompt'] = seg.get('motion_prompt')
         if seg.get('sd15_prompt_en') is not None:
             payload['sd15_prompt_en'] = seg.get('sd15_prompt_en')
-        with atomic():
+        from app.repositories.sql_exec import locked_atomic
+        with locked_atomic():
             repo_segment.update_segment(int(seg_id), **payload)
 
     def generate_segment_images(self, segments: list[dict], images_dir: Path, *, size: str | None=None, image_provider: str | None=None, on_image_done: Callable[[int, Path, float], None] | None=None, job_id: int | None=None, job: dict[str, Any] | None=None, ref_images: list[Path | str] | None=None, content_style: str | None=None) -> list[tuple[int, Path]]:

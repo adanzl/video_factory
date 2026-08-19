@@ -547,6 +547,7 @@ class JobMgr:
             if prepare:
                 prepare_rerun_artifacts(job_id, action, segment_indices=segment_indices, mode=prepare_mode)
             job_cancel.clear(job_id)
+            job = self.get_job(job_id)
             if job['status'] != 'running':
                 self.mark_running(job_id)
             fail_stage = action.split('/')[0]

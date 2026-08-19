@@ -12,7 +12,7 @@
           <span class="font-medium">{{ job.title }}</span>
           <el-tag size="small" type="info">{{ pipelineLabel(job.pipeline) }}</el-tag>
           <el-tag v-if="typeTagLabel" size="small" type="info">{{ typeTagLabel }}</el-tag>
-          <el-tag :type="statusTagType(job.status)" size="small">{{ job.status }}</el-tag>
+          <el-tag :type="statusTagType(displayStatus)" size="small">{{ statusLabel(displayStatus) }}</el-tag>
           <el-tag v-if="job.fail_stage" type="danger" size="small">失败于 {{ job.fail_stage }}</el-tag>
         </span>
         <el-button
@@ -172,6 +172,47 @@ const typeTagLabel = computed(() => {
   const style = job.value.info?.content_style;
   return (style && CONTENT_STYLE_LABELS[style]) || "";
 });
+
+/** worker 持锁时 UI 也显示运行中（segment/images 结束后 status 可能先变 pending） */
+const displayStatus = computed(() => {
+  if (!job.value) return "";
+  if (job.value.worker_busy && job.value.status !== JOB_STATUS_RUNNING) {
+    return JOB_STATUS_RUNNING;
+  }
+  return job.value.status;
+});
+
+const statusTagType = (status: string) => {
+  switch (status) {
+    case "done":
+      return "success";
+    case "running":
+      return "warning";
+    case "failed":
+      return "danger";
+    case "idle":
+    case "pending":
+      return "info";
+    default:
+      return "info";
+  }
+};
+
+const statusLabel = (status: string) => {
+  switch (status) {
+    case "pending":
+    case "idle":
+      return "待处理";
+    case "running":
+      return "运行中";
+    case "done":
+      return "已完成";
+    case "failed":
+      return "失败";
+    default:
+      return status;
+  }
+};
 
 const RUNNING_POLL_INTERVAL_MS = 3000;
 let runningPollTimer: ReturnType<typeof setInterval> | null = null;

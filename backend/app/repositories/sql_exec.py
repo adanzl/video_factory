@@ -10,6 +10,22 @@ from typing import Any, Iterator, Mapping, Sequence
 from app.repositories.db_obj import db
 
 _in_atomic: ContextVar[bool] = ContextVar("_in_atomic", default=False)
+_db_write_lock: object | None = None
+
+
+def _get_db_write_lock():
+    """gevent 同线程多 greenlet 共享 SQLAlchemy session，写库须串行。"""
+    global _db_write_lock
+    if _db_write_lock is None:
+        try:
+            from gevent.lock import Semaphore
+
+            _db_write_lock = Semaphore(1)
+        except ImportError:
+            import threading
+
+            _db_write_lock = threading.Lock()
+    return _db_write_lock
 
 
 class _DriverResult:
@@ -91,6 +107,18 @@ def atomic() -> Iterator[None]:
         raise
     finally:
         _in_atomic.reset(token)
+
+
+@contextmanager
+def locked_atomic() -> Iterator[None]:
+    """串行 + 短事务：出图 batch 多 greenlet 写分镜时用。"""
+    lock = _get_db_write_lock()
+    lock.acquire()
+    try:
+        with atomic():
+            yield
+    finally:
+        lock.release()
 
 
 def get_dbapi_connection() -> sqlite3.Connection:
