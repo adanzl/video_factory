@@ -307,6 +307,8 @@ class ImageMgr:
         start = time.time()
         params_desc = provider.describe_params(size=size)
         logger.info('image batch start: count=%s, workers=%s, %s', total, max_workers, params_desc)
+        if hasattr(provider, '_active_job_id'):
+            provider._active_job_id = job_id
 
         from app.utils.job_info import CONTENT_STYLE_DAILY_STORY, content_style_from_job
         style = content_style or (content_style_from_job(job) if job else None)
@@ -367,8 +369,11 @@ class ImageMgr:
         def _render_one(seg: dict) -> tuple[int, Path, float] | None:
             from app.services.llm.llm_agnes import AgnesContentPolicyError
             from app.services.segment.image.image_agnes import AgnesImageVerifyFailed
+            from app.utils.job_cancel import JobCancelledError
             _regen_exc = (AgnesImageVerifyFailed, AgnesContentPolicyError)
             nonlocal started
+            if job_id is not None:
+                job_cancel.raise_if_cancelled(job_id)
             started += 1
             seq = started
             index = seg['segment_index']
@@ -433,6 +438,8 @@ class ImageMgr:
                     except OSError:
                         pass
                 return None
+            except JobCancelledError:
+                raise
             except Exception as exc:
                 logger.error('image %s/%s FAILED segment %s after %.1fs | %s | err=%s', seq, total, index, time.time() - t0, params_desc, exc)
                 raise
@@ -471,6 +478,8 @@ class ImageMgr:
                     on_image_done(seg_id, path, gen_sec)
         finally:
             group.kill(block=False)
+            if hasattr(provider, '_active_job_id'):
+                provider._active_job_id = None
         elapsed = time.time() - start
         logger.info('image batch done: %s/%s ok, skipped=%s in %.1fs | %s', len(results), total, skipped, elapsed, params_desc)
         return results

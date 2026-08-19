@@ -29,6 +29,10 @@ _DAILY_CHAR_ZHAO = (
     "昭昭：7岁男孩，黑色超短发露耳露后颈，圆脸，"
     "蓝色短袖T恤，深蓝色短裤，两侧同色蓝白运动鞋。"
 )
+_DAILY_CHAR_ZHAO_BAREFOOT = (
+    "昭昭：7岁男孩，黑色超短发露耳露后颈，圆脸，"
+    "蓝色短袖T恤，深蓝色短裤，赤脚仅穿白袜子。"
+)
 _DAILY_CHAR_CANCAN = (
     "灿灿：10岁女孩，黑色头发，黑色单侧高马尾，"
     "粉色卫衣，蓝色长裤，两侧同色粉红运动鞋。"
@@ -50,6 +54,35 @@ _DAILY_CHAR_MAP: dict[str, str] = {
     "灿灿": _DAILY_CHAR_CANCAN,
     "妈妈": _DAILY_CHAR_MOM,
 }
+
+_FLOOR_SHOE_SETTING_RE = re.compile(
+    r"地垫.{0,24}鞋|鞋.{0,16}地垫|鞋边.*系带|鞋带散开摆着"
+)
+
+
+def _daily_setting_floor_shoe_scene(setting: str | None) -> bool:
+    """全片设定是否为「地垫上无人穿着的鞋、昭昭蹲旁系带」类场面。"""
+    if not setting:
+        return False
+    return bool(_FLOOR_SHOE_SETTING_RE.search(setting))
+
+
+def _daily_zhao_handles_floor_shoelaces(vb: str) -> bool:
+    """本镜昭昭是否在操作鞋带（非仅旁观）。"""
+    return any(
+        k in vb
+        for k in (
+            "鞋带",
+            "鞋眼",
+            "系带",
+            "打结",
+            "抽紧",
+            "抠着鞋带",
+            "伸向",
+            "握着鞋带",
+            "穿进",
+        )
+    )
 
 
 def _daily_speakers_of(seg: dict) -> list[str]:
@@ -237,6 +270,7 @@ def assemble_daily_t2i_prompt(
     extra: str | None = None,
     scene_anchor: str | None = None,
     fixed_furniture: tuple[str, ...] | None = None,
+    setting: str | None = None,
 ) -> str:
     """规则拼装 daily_story image_prompt。
 
@@ -302,8 +336,11 @@ def assemble_daily_t2i_prompt(
             parts.append("画面中有" + "、".join(missing) + "。")
 
     char_parts: list[str] = []
+    floor_shoe_scene = _daily_setting_floor_shoe_scene(setting)
     for name in speakers:
-        if name in _DAILY_CHAR_MAP:
+        if name == "昭昭" and floor_shoe_scene:
+            char_parts.append(_DAILY_CHAR_ZHAO_BAREFOOT)
+        elif name in _DAILY_CHAR_MAP:
             char_parts.append(_DAILY_CHAR_MAP[name])
     if set(speakers) >= {"昭昭", "灿灿", "妈妈"}:
         char_parts.append(_DAILY_CHAR_HEIGHT_3)
@@ -315,6 +352,17 @@ def assemble_daily_t2i_prompt(
     # 发色硬锁紧跟角色块：句末权重最低，写在末尾等于没写（实测彩色化）
     if "灿灿" in speakers:
         parts.append(_DAILY_CANCAN_HAIR_LOCK)
+
+    if (
+        floor_shoe_scene
+        and "昭昭" in speakers
+        and _daily_zhao_handles_floor_shoelaces(vb)
+    ):
+        parts.append(
+            "地垫中央平放着一双无人穿着的蓝白运动鞋；"
+            "昭昭赤脚蹲在鞋旁，双手正在操作地垫上那双鞋的鞋带，"
+            "不是给自己脚上穿鞋系带。"
+        )
 
     # 嘴型锁定：先开口说话的孩子在静帧里必须处于说话状态，
     # 其余人完全闭嘴，防止 I2V 说话人反转
@@ -414,6 +462,7 @@ def assemble_daily_image_prompts(
             extra=extra,
             scene_anchor=scene_anchor,
             fixed_furniture=fixed_furniture,
+            setting=setting,
         )
     return segments
 

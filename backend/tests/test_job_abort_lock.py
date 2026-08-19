@@ -73,6 +73,20 @@ def test_run_in_background_holds_lock_until_worker_done(monkeypatch):
     assert not mgr._job_lock(job_id).locked()
 
 
+def test_is_worker_active_reflects_lock(monkeypatch):
+    mgr = JobMgr()
+    job_id = 79
+    job_cancel.clear(job_id)
+    assert not mgr.is_worker_active(job_id)
+    lock = mgr._job_lock(job_id)
+    assert lock.acquire(blocking=False)
+    try:
+        assert mgr.is_worker_active(job_id)
+    finally:
+        lock.release()
+        assert not mgr.is_worker_active(job_id)
+
+
 def test_abort_with_active_worker_resets_pending_but_keeps_cancel(monkeypatch, noop_atomic):
     mgr = JobMgr()
     job_id = 77
