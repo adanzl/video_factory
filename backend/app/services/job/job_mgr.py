@@ -11,7 +11,7 @@ from app.utils.job_cancel import JobCancelledError, job_cancel
 from app.services.job.job_reset import prepare_rerun as prepare_rerun_artifacts
 from app.repositories import repo_job_log, repo_job, repo_segment
 from app.utils.async_util import run_in_background
-from app.utils.job_info import default_orientation_for_pipeline, merge_job_info, merge_job_script_params, orientation_for_resolve, resolve_image_provider, resolve_include_sd15_prompt
+from app.utils.job_info import default_orientation_for_pipeline, job_abort_hold, merge_job_info, merge_job_script_params, orientation_for_resolve, resolve_image_provider, resolve_include_sd15_prompt
 from app.repositories.sql_exec import atomic
 logger = logging.getLogger(__name__)
 _API_UPDATABLE = frozenset({'title', 'skip_publish', 'publish', 'status', 'stage'})
@@ -174,6 +174,15 @@ class JobMgr:
             lock.release()
             return False
         return True
+
+    def _persist_abort_hold(self, job_id: int, *, hold: bool) -> None:
+        with atomic():
+            job = repo_job.get_job(job_id)
+            repo_job.update_job(
+                job_id,
+                info=merge_job_info(job.get("info"), abort_hold=True if hold else None),
+                fetch=False,
+            )
 
     def list_jobs(self, *, condition: dict | None=None, limit: int=50, offset: int=0) -> dict:
         """返回 {items: [...], total: N}。"""
@@ -422,7 +431,13 @@ class JobMgr:
         if not worker_active and job['status'] != 'running':
             job_cancel.clear(job_id)
             with atomic():
-                job = repo_job.update_job(job_id, status='pending', fail_stage=None, error_message=_pending_chat_info(job))
+                job = repo_job.update_job(
+                    job_id,
+                    status='pending',
+                    fail_stage=None,
+                    error_message=_pending_chat_info(job),
+                    info=merge_job_info(job.get('info'), abort_hold=True),
+                )
                 repo_job_log.append_log(job_id, 'api', 'job aborted to pending')
                 return job
         job_cancel.request(job_id)
@@ -431,13 +446,27 @@ class JobMgr:
             try:
                 job_cancel.clear(job_id)
                 with atomic():
-                    job = repo_job.update_job(job_id, status='pending', fail_stage=None, error_message=_pending_chat_info(job))
+                    job = repo_job.update_job(
+                        job_id,
+                        status='pending',
+                        fail_stage=None,
+                        error_message=_pending_chat_info(job),
+                        info=merge_job_info(job.get('info'), abort_hold=True),
+                    )
                     repo_job_log.append_log(job_id, 'api', 'abort: no active worker, reset to pending')
                     return job
             finally:
                 lock.release()
         with atomic():
-            repo_job.update_job(job_id, status='pending', fail_stage=None, error_message=_pending_chat_info(job), fetch=False)
+            job = repo_job.get_job(job_id)
+            repo_job.update_job(
+                job_id,
+                status='pending',
+                fail_stage=None,
+                error_message=_pending_chat_info(job),
+                info=merge_job_info(job.get('info'), abort_hold=True),
+                fetch=False,
+            )
             repo_job_log.append_log(job_id, 'api', 'abort requested; reset to pending and waiting for worker to stop')
             return repo_job.get_job(job_id)
 
@@ -474,8 +503,15 @@ class JobMgr:
     def mark_aborted(self, job_id: int, stage: str) -> dict:
         job_cancel.clear(job_id)
         with atomic():
+            job = self.get_job(job_id)
             repo_job_log.append_log(job_id, stage, '任务已中止', level='warning')
-            return repo_job.update_job(job_id, status='pending', fail_stage=None, error_message=_pending_chat_info(self.get_job(job_id)))
+            return repo_job.update_job(
+                job_id,
+                status='pending',
+                fail_stage=None,
+                error_message=_pending_chat_info(job),
+                info=merge_job_info(job.get('info'), abort_hold=True),
+            )
 
     def delete_job(self, job_id: int, *, delete_files: bool = False) -> None:
         from app.repositories import repo_daily_story
@@ -523,12 +559,25 @@ class JobMgr:
         finally:
             lock.release()
 
-    def submit_action(self, job_id: int, action: str, run: Callable[[], None], *, prepare: bool=True, segment_indices: list[int] | None=None, action_detail: str | None=None, sync: bool=False, allow_running: bool=False, prepare_mode: str='from') -> dict:
+    def submit_action(
+        self,
+        job_id: int,
+        action: str,
+        run: Callable[[], None],
+        *,
+        prepare: bool = True,
+        segment_indices: list[int] | None = None,
+        action_detail: str | None = None,
+        sync: bool = False,
+        allow_running: bool = False,
+        prepare_mode: str = 'from',
+        resume_after_abort: bool = True,
+    ) -> dict:
         """统一提交：锁 · prepare · cancel · mark_running · sync|async。
 
         API 默认 ``sync=False``（后台）；CLI 用 ``sync=True``。
         drain（已 claim 为 running）用 ``prepare=False, allow_running=True``。
-        recovery / 续跑用 ``prepare=False``。
+        recovery / 续跑用 ``prepare=False``、``resume_after_abort=False``。
         """
         lock = self._job_lock(job_id)
         if not lock.acquire(blocking=False):
@@ -542,12 +591,32 @@ class JobMgr:
                 lock.release()
         try:
             job = self.get_job(job_id)
+            if job_abort_hold(job):
+                if not resume_after_abort:
+                    logger.warning(
+                        'job %s action %s skipped: abort_hold',
+                        job_id,
+                        action,
+                    )
+                    _release_lock()
+                    return job
+                self._persist_abort_hold(job_id, hold=False)
+                job = self.get_job(job_id)
             if job['status'] == 'running' and (not allow_running):
                 raise JobBusyError(f'job {job_id} is running')
             if prepare:
                 prepare_rerun_artifacts(job_id, action, segment_indices=segment_indices, mode=prepare_mode)
-            job_cancel.clear(job_id)
             job = self.get_job(job_id)
+            if job_cancel.is_cancelled(job_id) or job_abort_hold(job):
+                logger.info(
+                    'job %s action %s skipped before start: %s',
+                    job_id,
+                    action,
+                    'abort_hold' if job_abort_hold(job) else 'cancelled',
+                )
+                _release_lock()
+                return job
+            job_cancel.clear(job_id)
             if job['status'] != 'running':
                 self.mark_running(job_id)
             fail_stage = action.split('/')[0]
@@ -590,8 +659,15 @@ class JobMgr:
                                 if job['status'] == 'running':
                                     self.mark_aborted(job_id, fail_stage)
                                 else:
+                                    job = self.get_job(job_id)
                                     with atomic():
                                         repo_job_log.append_log(job_id, fail_stage, '任务已中止', level='warning')
+                                        if not job_abort_hold(job):
+                                            repo_job.update_job(
+                                                job_id,
+                                                info=merge_job_info(job.get('info'), abort_hold=True),
+                                                fetch=False,
+                                            )
                                     job_cancel.clear(job_id)
                         except Exception:
                             logger.exception('job %s abort finalize failed', job_id)
@@ -628,8 +704,19 @@ class JobMgr:
         """从当前 stage 续跑（不 prepare）。drain / recovery 用。"""
         from worker.loop import run_job
         job = self.get_job(job_id)
+        if job_abort_hold(job):
+            logger.warning('continue skipped job %s: abort_hold', job_id)
+            return job
         action = str(job.get('stage') or 'script')
-        return self.submit_action(job_id, action, lambda: run_job(job_id), prepare=False, sync=sync, allow_running=allow_running)
+        return self.submit_action(
+            job_id,
+            action,
+            lambda: run_job(job_id),
+            prepare=False,
+            sync=sync,
+            allow_running=allow_running,
+            resume_after_abort=False,
+        )
 
     def _persist_image_provider(self, job_id: int, image_provider: str | None) -> None:
         if image_provider is None:

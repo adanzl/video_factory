@@ -132,6 +132,38 @@ def test_abort_with_active_worker_resets_pending_but_keeps_cancel(monkeypatch, n
         job_cancel.clear(job_id)
 
 
+def test_abort_zombie_running_sets_abort_hold(monkeypatch, noop_atomic):
+    from app.utils.job_info import job_abort_hold
+
+    mgr = JobMgr()
+    job_id = 78
+    logged: list[str] = []
+    updates: list[dict] = []
+
+    monkeypatch.setattr(
+        mgr,
+        "get_job",
+        lambda jid: {"id": jid, "status": "running", "stage": "tts", "info": {}},
+    )
+
+    monkeypatch.setattr(
+        _job_mgr_mod.repo_job_log,
+        "append_log",
+        lambda _jid, _stage, msg, **_k: logged.append(msg),
+    )
+
+    def _update(jid, **fields):
+        updates.append(fields)
+        return {"id": jid, "status": fields.get("status"), **fields}
+
+    monkeypatch.setattr(_job_mgr_mod.repo_job, "update_job", _update)
+
+    job_cancel.clear(job_id)
+    result = mgr.abort_job(job_id)
+    assert result["status"] == "pending"
+    assert updates and updates[0].get("info", {}).get("abort_hold") is True
+
+
 def test_abort_zombie_running_resets_to_pending(monkeypatch, noop_atomic):
     mgr = JobMgr()
     job_id = 78
@@ -206,6 +238,65 @@ def test_abort_while_worker_busy_but_pending_keeps_cancel(monkeypatch, noop_atom
     finally:
         lock.release()
         job_cancel.clear(job_id)
+
+
+def test_submit_action_respects_abort_during_prepare(monkeypatch, noop_atomic):
+    """prepare 期间用户点中止，submit 不得 clear cancel 后 mark_running。"""
+    mgr = JobMgr()
+    job_id = 80
+    status = {"v": "pending"}
+    mark_running_calls: list[int] = []
+    workers: list = []
+
+    monkeypatch.setattr(
+        mgr,
+        "get_job",
+        lambda jid: {"id": jid, "status": status["v"], "stage": "segment", "info": {}},
+    )
+    monkeypatch.setattr(
+        _job_mgr_mod,
+        "run_in_background",
+        lambda fn, **_k: workers.append(fn),
+    )
+
+    def _mark_running(jid: int) -> dict:
+        mark_running_calls.append(jid)
+        status["v"] = "running"
+        return {"id": jid, "status": "running"}
+
+    monkeypatch.setattr(mgr, "mark_running", _mark_running)
+
+    prepare_started = threading.Event()
+    release_prepare = threading.Event()
+
+    def slow_prepare(*_a, **_k) -> None:
+        prepare_started.set()
+        assert release_prepare.wait(timeout=5)
+        job_cancel.request(job_id)
+
+    monkeypatch.setattr(_job_mgr_mod, "prepare_rerun_artifacts", slow_prepare)
+
+    job_cancel.clear(job_id)
+    thread = threading.Thread(
+        target=lambda: mgr.submit_action(
+            job_id,
+            "segment/images",
+            lambda: None,
+            prepare=True,
+            sync=False,
+        )
+    )
+    thread.start()
+    assert prepare_started.wait(timeout=2)
+
+    release_prepare.set()
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+    assert mark_running_calls == []
+    assert workers == []
+    assert status["v"] == "pending"
+    assert job_cancel.is_cancelled(job_id)
+    job_cancel.clear(job_id)
 
 
 def test_mark_done_while_cancelled_becomes_aborted(monkeypatch, noop_atomic):

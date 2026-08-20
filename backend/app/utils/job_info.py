@@ -226,6 +226,13 @@ def merge_job_info(existing: str | dict | None, **updates: Any) -> dict[str, Any
         else:
             merged[key] = value
     return merged
+
+
+def job_abort_hold(job: dict | None) -> bool:
+    """用户点过中止后置位，阻止 recovery/续跑；显式提交 stage 时清掉。"""
+    if not isinstance(job, dict):
+        return False
+    return bool(parse_job_info(job.get("info")).get("abort_hold"))
 KEYFRAME_SHOT_TYPES = frozenset({'特写'})
 KEYFRAME_VIDEO_PROVIDER = 'agnes_i2v'
 _KEYFRAME_VIDEO_PROVIDERS = frozenset({'agnes_i2v', 'wan_i2v'})

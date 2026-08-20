@@ -10,12 +10,16 @@ import time
 from pathlib import Path
 
 from gevent.lock import Semaphore
+from gevent import sleep as gevent_sleep
+from gevent import spawn as gevent_spawn
+from gevent.event import AsyncResult
 from PIL import Image as PILImage
 
 import requests
 
 from app.config import get_settings
 from app.services.daily_story.speaker import DAILY_STORY_SPEAKER_NAMES
+from app.utils.job_cancel import job_cancel
 from app.services.llm.llm_agnes import (
     AgnesApiKey,
     AgnesImageError,
@@ -197,7 +201,36 @@ class AgnesImageProvider(ImageProvider):
         self._default_size = settings.agnes_image_size
         self._fallback = MockImageProvider()
         self._http_max_retries = settings.agnes_http_max_retries
+        self._active_job_id: int | None = None
         self._ensure_concurrency()
+
+    def _raise_if_job_cancelled(self) -> None:
+        if self._active_job_id is not None:
+            job_cancel.raise_if_cancelled(self._active_job_id)
+
+    def _run_blocking_cancellable(self, fn):
+        """在子 greenlet 跑阻塞 HTTP，主 greenlet 轮询中止。"""
+        result = AsyncResult()
+
+        def _worker() -> None:
+            try:
+                result.set(fn())
+            except Exception as exc:
+                result.set_exception(exc)
+
+        gevent_spawn(_worker)
+        while not result.ready():
+            self._raise_if_job_cancelled()
+            gevent_sleep(0.3)
+        return result.get()
+
+    def _sleep_cancellable(self, seconds: float) -> None:
+        if seconds <= 0:
+            return
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            self._raise_if_job_cancelled()
+            gevent_sleep(min(0.3, max(0.0, deadline - time.monotonic())))
 
     @classmethod
     def _ensure_concurrency(cls) -> None:
@@ -232,7 +265,7 @@ class AgnesImageProvider(ImageProvider):
                 wait = max(0.0, self._next_submit_at - now)
                 self._next_submit_at = max(now, self._next_submit_at) + self._stagger_sec
             if wait:
-                time.sleep(wait)
+                self._sleep_cancellable(wait)
         except Exception:
             self._inflight.release()
             raise
@@ -261,14 +294,17 @@ class AgnesImageProvider(ImageProvider):
         last_body: str | None = None
         host_failover_tried = {url}
         for attempt in range(retries):
+            self._raise_if_job_cancelled()
             t0 = time.monotonic()
             try:
-                resp = requests.request(
-                    method,
-                    url,
-                    headers=headers,
-                    json=json,
-                    timeout=timeout,
+                resp = self._run_blocking_cancellable(
+                    lambda: requests.request(
+                        method,
+                        url,
+                        headers=headers,
+                        json=json,
+                        timeout=timeout,
+                    )
                 )
                 elapsed = time.monotonic() - t0
                 last_status = resp.status_code
@@ -310,7 +346,7 @@ class AgnesImageProvider(ImageProvider):
                         retries,
                         wait,
                     )
-                    time.sleep(wait)
+                    self._sleep_cancellable(wait)
                     continue
                 if resp.status_code == 429:
                     body: dict | str | None = None
@@ -377,7 +413,7 @@ class AgnesImageProvider(ImageProvider):
                     retries,
                     wait,
                 )
-                time.sleep(wait)
+                self._sleep_cancellable(wait)
         detail_parts = [f"after {retries} retries", f"url={url}"]
         if last_status is not None:
             detail_parts.append(f"last_status={last_status}")
@@ -516,7 +552,11 @@ class AgnesImageProvider(ImageProvider):
                 api_key.label,
                 image_url[:120],
             )
-            img = requests.get(image_url, timeout=get_settings().agnes_image_timeout_sec)
+            img = self._run_blocking_cancellable(
+                lambda: requests.get(
+                    image_url, timeout=get_settings().agnes_image_timeout_sec
+                )
+            )
             img.raise_for_status()
             output_path.write_bytes(img.content)
             sidecar = output_path.with_name(output_path.name + ".agnes_source_url")
@@ -571,6 +611,7 @@ class AgnesImageProvider(ImageProvider):
         last_key: AgnesApiKey | None = None
 
         for attempt in range(_VERIFY_MAX_ATTEMPTS):
+            self._raise_if_job_cancelled()
             usable = [k for k in keys if k.value not in exhausted]
             if not usable:
                 break
@@ -1149,8 +1190,8 @@ class AgnesImageProvider(ImageProvider):
             parts.append(f"{cid}={AgnesImageProvider._parse_item_answer(raw)}")
         return " ".join(parts)
 
-    @staticmethod
     def _verify_image(
+        self,
         prompt: str,
         image_path: Path,
         *,
@@ -1202,6 +1243,7 @@ class AgnesImageProvider(ImageProvider):
             verify_url = f"{settings.agnes_api_base_url.rstrip('/')}/chat/completions"
             host_failover_tried: set[str] = {verify_url}
             for retry in range(_VERIFY_RETRY_COUNT + 1):
+                self._raise_if_job_cancelled()
                 for api_key in keys:
                     try:
                         headers = agnes_auth_header(api_key.value)
@@ -1228,20 +1270,30 @@ class AgnesImageProvider(ImageProvider):
                             # 否则正文为空 → 全项 unknown → 质检形同虚设
                             "max_tokens": 16384,
                         }
-                        resp = requests.post(url, headers=headers, json=payload, timeout=300)
-                        if resp.status_code == 503:
-                            alt = agnes_apply_host_failover(
-                                url,
-                                host_failover_tried,
-                                reason="503",
-                                tag=f"{log_tag} verify",
+
+                        def _post_verify() -> requests.Response:
+                            resp = requests.post(
+                                url, headers=headers, json=payload, timeout=300
                             )
-                            if alt:
-                                verify_url = alt
-                                url = alt
-                                resp = requests.post(
-                                    url, headers=headers, json=payload, timeout=300
+                            if resp.status_code == 503:
+                                alt = agnes_apply_host_failover(
+                                    url,
+                                    host_failover_tried,
+                                    reason="503",
+                                    tag=f"{log_tag} verify",
                                 )
+                                if alt:
+                                    nonlocal verify_url
+                                    verify_url = alt
+                                    url = alt
+                                    resp = requests.post(
+                                        url, headers=headers, json=payload, timeout=300
+                                    )
+                            return resp
+
+                        resp = self._run_blocking_cancellable(_post_verify)
+                        if resp.status_code == 503:
+                            continue
                         if resp.ok:
                             msg = (
                                 resp.json()
@@ -1307,7 +1359,7 @@ class AgnesImageProvider(ImageProvider):
                         retry + 1,
                         _VERIFY_RETRY_COUNT,
                     )
-                    time.sleep(_VERIFY_RETRY_DELAY)
+                    self._sleep_cancellable(_VERIFY_RETRY_DELAY)
             logger.warning(
                 "%s agnes verify exhausted (all keys failed after %s retries)",
                 log_tag,

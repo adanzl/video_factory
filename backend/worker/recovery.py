@@ -7,6 +7,7 @@ import logging
 from app.repositories import repo_job, repo_job_log
 from app.repositories import sql_exec as sql
 from app.repositories.sql_exec import atomic
+from app.utils.job_info import job_abort_hold
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,21 @@ def recover_stuck_jobs() -> int:
                 continue
 
             job_id = int(row["id"])
+            job = repo_job.get_job(job_id)
+            if job_abort_hold(job):
+                logger.warning(
+                    "recovery skipped job %s: user aborted (abort_hold)",
+                    job_id,
+                )
+                repo_job.update_job(job_id, status="pending", error_message=None)
+                repo_job_log.append_log(
+                    job_id,
+                    stage,
+                    "skipped auto-recover: user aborted",
+                    level="warning",
+                )
+                continue
+
             title_preview = (row["title"] or "")[:40]
             logger.warning(
                 "recovering stuck job %s (stage=%s, pipeline=%s, title=%s...)",
@@ -67,6 +83,12 @@ def recover_stuck_jobs() -> int:
             if job_cancel.is_cancelled(job_id):
                 logger.warning(
                     "recovery skipped job %s: user aborted (cancel pending)",
+                    job_id,
+                )
+                continue
+            if job_abort_hold(repo_job.get_job(job_id)):
+                logger.warning(
+                    "recovery skipped job %s: user aborted (abort_hold)",
                     job_id,
                 )
                 continue

@@ -76,3 +76,24 @@ def test_recover_skips_busy_job(app_ctx) -> None:
 
     assert count == 1
     assert repo_job.get_job(job_id)["status"] == "pending"
+
+
+def test_recover_skips_abort_hold(app_ctx) -> None:
+    from app.utils.job_info import merge_job_info
+
+    job_id = _insert_job(title="aborted", stage="segment", status="running")
+    repo_job.update_job(
+        job_id,
+        info=merge_job_info(None, abort_hold=True),
+    )
+
+    with patch.object(job_mgr, "continue_job") as mock_continue:
+        from worker.recovery import recover_stuck_jobs
+
+        count = recover_stuck_jobs()
+
+    assert count == 0
+    mock_continue.assert_not_called()
+    assert repo_job.get_job(job_id)["status"] == "pending"
+    logs = repo_job_log.list_logs(job_id)
+    assert any("skipped auto-recover: user aborted" in log["message"] for log in logs)
