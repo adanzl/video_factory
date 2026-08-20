@@ -21,18 +21,17 @@ from app.utils.job_info import (
 # ══════════════════════════════════════════════════════════════════════
 
 _DAILY_T2I_STYLE = (
-    "儿童情绪涂鸦风格，彩铅和蜡笔混合笔触，线条用力不均，"
-    "高饱和色彩，涂色出界，橡皮擦拭痕迹，手工感。"
+    "儿童情绪涂鸦风，彩铅蜡笔混合笔触，高饱和色彩，涂色出界，手工感。"
 )
 
 _DAILY_CHAR_ZHAO = (
     "昭昭：7岁男孩，黑色超短发露耳露后颈，圆脸，"
-    "蓝色短袖T恤，深蓝色短裤，两侧同色蓝白运动鞋。"
+    "蓝色短袖T恤深蓝色短裤，蓝白运动鞋。"
 )
-# 地垫系带场面：「两侧」易被 T2I 画成额外鞋，改明确写脚上那一双
+# 地垫系带场面：明确写脚上那一双，防 T2I 画成额外鞋
 _DAILY_CHAR_ZHAO_FLOOR = (
     "昭昭：7岁男孩，黑色超短发露耳露后颈，圆脸，"
-    "蓝色短袖T恤，深蓝色短裤，双脚均已穿好一双蓝白运动鞋。"
+    "蓝色短袖T恤深蓝色短裤，双脚均已穿好一双蓝白运动鞋。"
 )
 # 地垫粉鞋：T2I 把「穿进鞋眼」理解成往脚上套鞋，统一用「穿过」
 _FLOOR_SHOE_EYELET_RE = re.compile(r"穿进(.{0,4}鞋眼)")
@@ -50,25 +49,25 @@ _FLOOR_SHOE_CAST_LOCK = "全画面仅有昭昭、灿灿两位儿童。"
 _FLOOR_SHOE_HAND_SCRUB_RE = re.compile(
     r"(?:，|^)"
     r"(?:"
-    r"双手(?:伸向|各握|用力向外抽紧|握着|捏着)[^，。；]{0,20}|"
+    r"双手(?:伸向|各握|各捏|各捏住|用力向外抽紧|握着|捏着)[^，。；]{0,20}|"
     r"(?:右手|左手)[^，。；]{0,8}(?:捏|握|托|抽|穿)[^，。；]{0,20}|"
-    r"正(?:把|将)[^，。；]{0,20}鞋带[^，。；]{0,16}|"
-    r"准备系带|托着鞋帮"
+    r"正(?:在)?(?:把|将)[^，。；]{0,20}鞋带[^，。；]{0,16}|"
+    r"准备系带|托着鞋帮|手指包裹[^，。；]{0,10}|"
+    r"手指关节[^，。；]{0,12}|青筋[^，。；]{0,10}|"
+    r"另一只手自然下垂"
     r")"
 )
 _DAILY_CHAR_CANCAN = (
-    "灿灿：10岁女孩，黑色头发，黑色单侧高马尾，"
-    "粉色卫衣，蓝色长裤，两侧同色粉红运动鞋。"
+    "灿灿：10岁女孩，黑色单侧高马尾，粉色卫衣蓝色长裤，粉红运动鞋。"
 )
 _DAILY_CHAR_CANCAN_SOCKS = (
-    "灿灿：10岁女孩，黑色头发，黑色单侧高马尾，"
-    "粉色卫衣，蓝色长裤，赤脚仅穿白袜子。"
+    "灿灿：10岁女孩，黑色单侧高马尾，粉色卫衣蓝色长裤，赤脚仅穿白袜子。"
 )
 # 涂鸦高饱和易把马尾画成彩色；发色硬锁紧跟角色块（句末权重最低）。
 # 必须纯正面表述——图像模型把否定词当生成指令，
 # "禁止…挑染/彩色"会诱发彩虹发（实测），故不写任何颜色禁止词。
 _DAILY_CANCAN_HAIR_LOCK = (
-    "灿灿头发通体纯黑，头顶到马尾同一黑色。"
+    "灿灿头发通体纯黑。"
 )
 _DAILY_CHAR_MOM = (
     "妈妈：成年女性，黑色长发，米色上衣，蓝色牛仔裤，深色平底鞋。"
@@ -85,6 +84,92 @@ _DAILY_CHAR_MAP: dict[str, str] = {
 _FLOOR_SHOE_SETTING_RE = re.compile(
     r"地垫.{0,24}鞋|鞋.{0,16}地垫|鞋边.*系带|鞋带散开摆着"
 )
+
+# ── S2 场景锚点：地点 + 硬锚点（面积从大到小），唯一可写家具/陈设处 ──
+_SCENE_LOCATION_WORDS = (
+    "小区公园", "公园", "厨房", "卧室", "客厅", "阳台", "院子",
+    "操场", "餐厅", "书房", "浴室", "楼下", "户外",
+)
+_SCENE_OUTDOOR_WORDS = ("公园", "操场", "楼下", "马路", "户外", "院子", "阳台")
+# 按面积/定位权重从大到小；地面锚点单独处理
+_SCENE_ANCHOR_ORDER = (
+    "沙发", "茶几", "餐桌", "书桌", "水槽", "窗户", "书架", "电视柜",
+    "床", "衣柜", "冰箱", "灶台", "滑梯", "沙坑", "长椅",
+)
+
+
+def _daily_scene_anchor(
+    setting: str | None,
+    seg1_vb: str,
+    scene_anchors: list | None = None,
+) -> str:
+    """压缩版场景锚点：地点 + 硬锚点名词，室内≤3、户外≤5，只写一个辨识形容词。
+
+    硬锚点优先取 LLM 输出的 scene_anchors（结构化），否则扫 setting/分镜1 vb。
+    """
+    blob = f"{setting or ''}{seg1_vb or ''}"
+    loc = next((w for w in _SCENE_LOCATION_WORDS if w in blob), None)
+    if not loc:
+        loc = (setting or "").strip("，。; ；")
+        if len(loc) > 4:
+            loc = loc[:4]
+    if not loc:
+        loc = "室内"
+    outdoor = any(w in blob for w in _SCENE_OUTDOOR_WORDS)
+    anchors: list[str] = []
+    # 地面锚点（地垫/地毯）优先，带辨识形容词
+    if "圆形" in blob and "地垫" in blob:
+        anchors.append("圆形地垫")
+    elif "地垫" in blob or (scene_anchors and "地垫" in scene_anchors):
+        anchors.append("地垫")
+    elif "地毯" in blob or (scene_anchors and "地毯" in scene_anchors):
+        anchors.append("地毯")
+    if scene_anchors:
+        for a in scene_anchors:
+            a = str(a).strip()
+            if a and a not in anchors and any(a in k or k in a for k in _SCENE_ANCHOR_ORDER):
+                anchors.append(a)
+    for k in _SCENE_ANCHOR_ORDER:
+        if k in blob and k not in anchors:
+            anchors.append(k)
+    cap = 5 if outdoor else 3
+    parts = [loc] + anchors[:cap]
+    return "，".join(p for p in parts if p)
+
+
+def _join_slots(parts: list[str]) -> str:
+    """槽位拼装：每个槽位去掉首尾标点，用「；」连接，零判断。"""
+    out: list[str] = []
+    for p in parts:
+        p = (p or "").strip("，,；;。. ")
+        if p:
+            out.append(p)
+    return "；".join(out)
+
+
+def _render_object_states(states: list) -> str:
+    """把结构化 object_states 渲染成道具状态句（S5）。"""
+    parts: list[str] = []
+    for st in states:
+        if not isinstance(st, dict):
+            continue
+        obj = str(st.get("object") or "").strip()
+        if not obj:
+            continue
+        count = str(st.get("count") or "").strip()
+        form = str(st.get("form") or "").strip()
+        holder = str(st.get("holder") or "").strip()
+        pos = str(st.get("position") or "").strip()
+        if holder and holder != "无":
+            clause = f"{count}{obj}在{holder}手中"
+        elif pos:
+            clause = f"{count}{obj}在{pos}"
+        else:
+            clause = f"{count}{obj}"
+        if form:
+            clause += f"，{form}"
+        parts.append(clause)
+    return "；".join(p for p in parts if p)
 
 
 def _daily_cancan_lifts_floor_shoes(vb: str) -> bool:
@@ -108,23 +193,20 @@ def _daily_setting_floor_shoe_scene(setting: str | None) -> bool:
 def _daily_floor_shoe_mat_clause(vb: str, seg: dict | None = None) -> str:
     """按本镜剧情写地垫上一双粉鞋的状态（始终共两只，禁止第三只）。"""
     text = vb or ""
-    anti_extra = _FLOOR_SHOE_ANTI_EXTRA
     if _daily_cancan_lifts_floor_shoes(text):
         flip = "，鞋子翻了个个儿" if any(k in text for k in ("翻", "哗啦")) else ""
         return (
             "全画面仅有两只粉红运动鞋，均在灿灿双手中，"
-            f"鞋带系成死结串在一起，被拎离地面{flip}，两只鞋底贴在一起；"
-            "粉鞋全部在灿灿双手中。"
+            f"鞋带系成死结串在一起，被拎离地面{flip}，两只鞋底贴在一起。"
         )
     if any(k in text for k in ("拎", "提起", "翻过去", "哗啦")):
         return (
-            "全画面仅有两只粉红运动鞋，均在灿灿双手中，鞋带已系成死结串在一起；"
-            "粉鞋全部在灿灿双手中。"
+            "全画面仅有两只粉红运动鞋，均在灿灿双手中，鞋带已系成死结串在一起。"
         )
     if _daily_floor_shoe_aftermath(text, seg):
         return (
             "地垫中央仅有一双粉红运动鞋共两只，左右并排平放接触地垫，"
-            f"鞋带纠缠散乱打结难解；{_FLOOR_SHOE_MAT_ANTI_PICKUP}{anti_extra}"
+            f"鞋带纠缠散乱打结难解；{_FLOOR_SHOE_MAT_ANTI_PICKUP}"
         )
     if any(
         k in text
@@ -132,21 +214,21 @@ def _daily_floor_shoe_mat_clause(vb: str, seg: dict | None = None) -> str:
     ):
         return (
             "地垫中央仅有一双粉红运动鞋共两只，鞋带系成死结，"
-            f"两只鞋底紧紧贴在一起；{_FLOOR_SHOE_MAT_ANTI_PICKUP}{anti_extra}"
+            f"两只鞋底紧紧贴在一起；{_FLOOR_SHOE_MAT_ANTI_PICKUP}"
         )
     if any(k in text for k in ("连环扣", "缠绕", "勒出印", "勒出")):
         return (
             "地垫中央仅有一双粉红运动鞋共两只，鞋带相互缠绕成连环扣；"
-            f"{_FLOOR_SHOE_MAT_ANTI_PICKUP}{anti_extra}"
+            f"{_FLOOR_SHOE_MAT_ANTI_PICKUP}"
         )
     if any(k in text for k in ("交叉", "鞋眼")) or "穿过" in text:
         return (
             "地垫中央仅有一双粉红运动鞋共两只，两只鞋带在平放的粉鞋上交叉穿过鞋眼；"
-            f"{_FLOOR_SHOE_MAT_ANTI_PICKUP}{anti_extra}"
+            f"{_FLOOR_SHOE_MAT_ANTI_PICKUP}"
         )
     return (
         "地垫中央仅有一双粉红运动鞋共两只，左右并排平放接触地垫，鞋带散开；"
-        f"{_FLOOR_SHOE_MAT_ANTI_PICKUP}{anti_extra}"
+        f"{_FLOOR_SHOE_MAT_ANTI_PICKUP}"
     )
 
 
@@ -205,6 +287,7 @@ def _scrub_floor_shoe_orphan_fragments(vb: str) -> str:
     text = re.sub(r"^双手(?:叉腰|摊开)[^，。；]{0,40}[，。；]?", "", text)
     text = re.sub(r"仰头看着灿灿[^，。；]{0,24}[，。；]?", "", text)
     text = re.sub(r"咧嘴得意[^，。；]{0,24}[，。；]?", "", text)
+    text = re.sub(r"眼睛眯成缝[^，。；]*[，。；]?", "", text)
     text = re.sub(r"出深深的印痕[^，。；]*[，。；]?", "", text)
     if _daily_cancan_lifts_floor_shoes(text) and "画面左边是昭昭，右边是灿灿" in text:
         text = re.sub(
@@ -354,6 +437,9 @@ def _scrub_floor_shoe_state_conflicts(vb: str) -> str:
     text = (vb or "").strip()
     if not text:
         return text
+    # 鞋状态由 S5 唯一负责：S4 不得写鞋帮翘起/扯起等与「鞋帮贴地」互斥的描述
+    text = re.sub(r"鞋帮被扯得?[^，。；]*[，。；]?", "", text)
+    text = re.sub(r"翘起[^，。；]*[，。；]?", "", text)
     if any(k in text for k in ("死结", "系在一起", "串在一起", "系成死", "贴在一起", "拎", "提", "翻")):
         text = re.sub(r"地垫上散落着散开的鞋带[^，。；]*[，。；]?", "", text)
         text = re.sub(r"鞋带松散(?:摇晃)?[^，。；]*[，。；]?", "", text)
@@ -435,7 +521,7 @@ def _daily_zhao_floor_shoe_watch_action(vb: str, zhao_feet: str) -> str:
     if re.search(r"昭昭[^。；]{0,24}双手叉腰", text):
         extra = ""
         if re.search(r"昭昭[^。；]{0,40}咧嘴得意", text):
-            extra = "咧嘴得意地笑，"
+            extra = "得意地笑，"
         return (
             f"{zhao_feet}昭昭蹲在灿灿对面，双手叉腰，{extra}"
             "昭昭双手空着、只看灿灿手中的粉鞋。"
@@ -523,8 +609,8 @@ def _daily_cancan_floor_shoe_untie_clause(vb: str) -> str:
     )
 
 
-def _daily_floor_shoe_lock(vb: str, speakers: list[str], seg: dict | None = None) -> str | None:
-    """地垫系带场面：灿灿粉鞋在垫上、昭昭蓝白鞋在脚上，硬锁鞋数与动作。"""
+def _daily_floor_shoe_cast_poses(vb: str, speakers: list[str], seg: dict | None = None) -> str:
+    """地垫系带场面的角色姿态（昭昭/灿灿），属 S4 画面而非道具状态。"""
     cancan_lift = _daily_cancan_lifts_floor_shoes(vb)
     cancan_untie = _daily_cancan_handles_floor_shoelaces(vb, seg)
     tying = _daily_zhao_handles_floor_shoelaces(vb)
@@ -556,7 +642,12 @@ def _daily_floor_shoe_lock(vb: str, speakers: list[str], seg: dict | None = None
         cancan = _daily_cancan_floor_shoe_idle_clause(vb, seg)
     else:
         cancan = ""
-    return f"{_daily_floor_shoe_mat_clause(vb, seg)}{action}{cancan}"
+    return f"{action}{cancan}"
+
+
+def _daily_floor_shoe_lock(vb: str, speakers: list[str], seg: dict | None = None) -> str | None:
+    """地垫系带场面：道具状态（mat_clause）+ 角色姿态，硬锁鞋数与动作。"""
+    return f"{_daily_floor_shoe_mat_clause(vb, seg)}{_daily_floor_shoe_cast_poses(vb, speakers, seg)}"
 
 
 def _daily_cancan_floor_shoe_idle_clause(vb: str, seg: dict | None = None) -> str:
@@ -826,12 +917,50 @@ def _strip_vb_narrative_continuity(vb: str) -> str:
     return text.strip("，,。. ")
 
 
+_SCENE_SENTENCE_WORDS = (
+    "背景", "客厅", "茶几", "沙发", "靠垫", "地垫", "餐桌", "书桌", "花盆",
+    "托盘", "阳台", "厨房", "卧室", "遥控器", "空水杯", "场景定稿",
+)
+
+_MOUTH_ACTION_RE = re.compile(
+    r"(?:龇牙咧嘴|龇牙|咧嘴|露齿|吐舌|张嘴|张口|大笑|咧开嘴)"
+)
+
+
+def _strip_vb_scene_anchor_sentences(vb: str) -> str:
+    """S4 不得重复 S2 场景锚点：剔除无角色、只写场景陈设的句子。"""
+    text = (vb or "").strip()
+    if not text:
+        return text
+    kept: list[str] = []
+    for part in re.split(r"(?<=[。；;])", text):
+        sentence = part.strip()
+        if not sentence:
+            continue
+        has_char = any(n in sentence for n in ("昭昭", "灿灿", "妈妈"))
+        scene_hits = [w for w in _SCENE_SENTENCE_WORDS if w in sentence]
+        if not has_char and len(scene_hits) >= 2:
+            continue
+        kept.append(sentence)
+    return "".join(kept).strip("，,；;。. ")
+
+
+def _scrub_vb_mouth_words(vb: str) -> str:
+    """S4 禁写嘴部动作，口型由 S6 唯一负责（张嘴词与闭嘴锁矛盾）。"""
+    text = (vb or "").strip()
+    if not text:
+        return text
+    text = _MOUTH_ACTION_RE.sub("", text)
+    text = re.sub(r"[，,]{2,}", "，", text)
+    text = re.sub(r"，(?=[。；;]|$)", "", text)
+    return text.strip("，,；;。. ")
+
+
 def assemble_daily_t2i_prompt(
     seg: dict,
     *,
     extra: str | None = None,
     scene_anchor: str | None = None,
-    fixed_furniture: tuple[str, ...] | None = None,
     setting: str | None = None,
 ) -> str:
     """规则拼装 daily_story image_prompt。
@@ -840,8 +969,6 @@ def assemble_daily_t2i_prompt(
     extra 仅用于显式附加的出图正文（勿传入质检/改写元指令）。
     """
     vb = str(seg.get("visual_brief") or "").strip()
-    idx = int(seg.get("segment_index") or 0)
-    has_scene_anchor = False
     speakers = _daily_speakers_of(seg)
     if vb:
         from app.services.daily_story.speaker import (
@@ -859,16 +986,17 @@ def assemble_daily_t2i_prompt(
             vb = re.sub(r"[，,]\s*茶几上放着遥控器和空水杯\s*", "", vb)
             vb = vb.replace("茶几上放着遥控器和空水杯", "").strip("，, ")
         vb = _strip_vb_narrative_continuity(vb)
-        # LLM 已写「场景定稿」时去掉标签；代码只在缺失时兜底注入
-        has_scene_anchor = "场景定稿" in vb
-        if has_scene_anchor:
-            vb = vb.replace("场景定稿：", "").strip("，,。. ")
+        # LLM 已写「场景定稿」时去掉标签（场景锚点由 S2 统一负责）
+        vb = vb.replace("场景定稿：", "").strip("，,。. ")
     else:
         vb = strip_verify_regen_leak(vb)
     shot = str(seg.get("shot_type") or "").strip()
     floor_shoe_scene = _daily_setting_floor_shoe_scene(setting)
     vb_for_shoe_lock = vb
-    if floor_shoe_scene and vb:
+    # 结构化路径：visual_subjects + object_states 齐备时，动作/状态由结构化字段负责，
+    # 跳过为自由文本设计的清洗链与姿态锁，消除跨槽位重复
+    structured = bool(seg.get("visual_subjects")) and bool(seg.get("object_states"))
+    if floor_shoe_scene and vb and not structured:
         vb = _scrub_floor_shoe_vb_redundancy(vb)
         vb = _scrub_floor_shoe_state_conflicts(vb)
         vb = _scrub_floor_shoe_hand_actions(vb)
@@ -876,43 +1004,23 @@ def assemble_daily_t2i_prompt(
         vb = _scrub_floor_shoe_orphan_fragments(vb)
         vb = _scrub_floor_shoe_brief_actions(vb, seg)
 
-    if floor_shoe_scene and _daily_cancan_handles_floor_shoelaces(
-        vb_for_shoe_lock, seg
+    if (
+        floor_shoe_scene
+        and not structured
+        and _daily_cancan_handles_floor_shoelaces(vb_for_shoe_lock, seg)
     ):
         return _daily_floor_shoe_untie_compact_prompt(seg, vb=vb_for_shoe_lock)
 
-    parts = [_DAILY_T2I_STYLE]
-    if floor_shoe_scene:
-        parts.append(_daily_floor_shoe_lead_anchor(vb_for_shoe_lock, seg))
+    first = _daily_first_speaker(seg)
     if vb:
-        parts.append(_strip_style_suffix(vb))
-        # 拼装硬锁：门只允许单扇（单开门），风吹头发必须连着头皮，
-        # 不依赖 LLM 是否照写规则，防止双开门/独立飘发进入最终提示词
-        if "门" in vb and "完整门板" not in vb:
-            parts.append(
-                "画面中的门是一扇单开门，只有一块完整门板，没有分成两扇。"
-            )
-        if ("风" in vb or "吹" in vb) and ("头发" in vb or "马尾" in vb):
-            if "连着头皮" not in vb:
-                parts.append("发丝连着头皮。")
-            if "门" in vb and not any(
-                w in vb for w in ("背离", "飘离门口", "远离门")
-            ):
-                parts.append("风从门口吹向室内，头发顺风飘离门口。")
+        vb = _strip_vb_scene_anchor_sentences(vb)
+        vb = _scrub_vb_mouth_words(vb)
+        vb = _strip_style_suffix(vb)
 
-    # 场景定稿：分镜1定义地点/陈设/样式，后续镜缺省时原样注入；
-    # LLM 已重复场景时（含花盆/托盘/背景）不再重复注入
-    has_scene = all(k in vb for k in ("花盆", "托盘", "背景"))
-    if scene_anchor and idx > 1 and not has_scene_anchor and not has_scene:
-        parts.append(scene_anchor)
+    # S1 风格（常量）
+    s1 = _DAILY_T2I_STYLE
 
-    # 固定陈设强制在场：分镜1 出现过的家具/常驻道具，本镜缺失时补回，
-    # 防出图质检兜底重写 visual_brief 时把沙发/茶几等固定家具写丢
-    if fixed_furniture:
-        missing = [f for f in fixed_furniture if f not in vb]
-        if missing:
-            parts.append("画面中有" + "、".join(missing) + "。")
-
+    # S3 角色外貌（子块拼装：基块 + 身高锁 + 发色锁 + 地垫变体）
     char_parts: list[str] = []
     for name in speakers:
         if name == "昭昭" and floor_shoe_scene:
@@ -925,54 +1033,82 @@ def assemble_daily_t2i_prompt(
         char_parts.append(_DAILY_CHAR_HEIGHT_3)
     elif "昭昭" in speakers and "灿灿" in speakers:
         char_parts.append(_DAILY_CHAR_HEIGHT)
-    if char_parts:
-        parts.append("".join(char_parts))
-
-    # 发色硬锁紧跟角色块：句末权重最低，写在末尾等于没写（实测彩色化）
     if "灿灿" in speakers:
-        parts.append(_DAILY_CANCAN_HAIR_LOCK)
+        char_parts.append(_DAILY_CANCAN_HAIR_LOCK)
+    s3 = "".join(char_parts)
 
-    if floor_shoe_scene and speakers:
-        lock = _daily_floor_shoe_lock(vb_for_shoe_lock, speakers, seg)
-        if lock:
-            parts.append(lock)
+    # S4 本镜画面（唯一 LLM 入口，已清洗；场景/陈设归 S2，不重复）
+    s4_parts: list[str] = []
+    if vb:
+        s4_parts.append(vb)
+        if "门" in vb and "完整门板" not in vb:
+            s4_parts.append("画面中的门是一扇单开门，只有一块完整门板，没有分成两扇")
+        if ("风" in vb or "吹" in vb) and ("头发" in vb or "马尾" in vb):
+            if "连着头皮" not in vb:
+                s4_parts.append("发丝连着头皮")
+            if "门" in vb and not any(
+                w in vb for w in ("背离", "飘离门口", "远离门")
+            ):
+                s4_parts.append("风从门口吹向室内，头发顺风飘离门口")
+    s4 = "；".join(
+        p.strip("，,；;。. ") for p in s4_parts if p.strip("，,；;。. ")
+    )
 
-    # 嘴型锁定：先开口说话的孩子在静帧里必须处于说话状态，
-    # 其余人完全闭嘴，防止 I2V 说话人反转
-    first = _daily_first_speaker(seg)
+    # S5 道具状态：优先结构化 object_states（状态机已归一），否则 vb 关键词推导兜底
+    s5 = ""
+    obj_states = seg.get("object_states")
+    if isinstance(obj_states, list) and obj_states:
+        rendered = _render_object_states(obj_states)
+        if rendered:
+            s5 = rendered
+            if floor_shoe_scene and (
+                "粉鞋" in rendered or "粉红运动鞋" in rendered
+            ):
+                s5 += "。全画面粉运动鞋只有一双两只。"
+            # 无结构化 subjects 的老数据：角色姿态仍由姿态锁补；结构化时跳过（动作已在 S4）
+            if floor_shoe_scene and speakers and not seg.get("visual_subjects"):
+                s5 += _daily_floor_shoe_cast_poses(vb_for_shoe_lock, speakers, seg)
+    elif floor_shoe_scene and speakers:
+        s5 = _daily_floor_shoe_lock(vb_for_shoe_lock, speakers, seg) or ""
+
+    # S6 口型锁（dialogue 推导）
+    s6 = ""
     if first and first in speakers:
         others = [n for n in speakers if n != first]
         mouth = f"{first}正在开口说话"
         if others:
-            mouth += (
-                f"；{'、'.join(others)}嘴巴自然闭合，情绪通过眉眼和肢体表达"
-            )
-        parts.append(mouth + "。")
+            mouth += f"，{'、'.join(others)}嘴巴自然闭合"
+        s6 = mouth
 
-    parts.append(_daily_lighting(vb))
+    # S7+8 镜头参数（光照 + 构图站位合并）
     layout = _daily_layout_speakers(seg, vb)
-    parts.append(_daily_composition(shot, layout, vb=vb))
-    if floor_shoe_scene:
-        parts.append(_daily_floor_shoe_tail_anchor(vb_for_shoe_lock, seg))
-    # 妈妈未入画时硬锁人数+空门口，压住「妈出来了/盯门口」诱出的路人
+    s78 = _daily_lighting(vb) + _daily_composition(shot, layout, vb=vb)
+
+    # 妈妈未入画时硬锁人数
+    cast_lock = ""
     if speakers and "妈妈" not in speakers:
         n = len(speakers)
         if n == 2:
-            parts.append(f"画面主体为{'、'.join(speakers)}两人。")
+            cast_lock = f"画面主体为{'、'.join(speakers)}两人"
         elif n == 1:
-            parts.append(f"画面主体为{speakers[0]}一人。")
+            cast_lock = f"画面主体为{speakers[0]}一人"
         else:
-            parts.append(f"画面主体为{'、'.join(speakers)}。")
+            cast_lock = f"画面主体为{'、'.join(speakers)}"
+
+    # S2 场景锚点按景别裁剪：特写背景虚化，完整锚点是噪音，只留地点
+    s2 = scene_anchor or ""
+    if s2 and shot == "特写":
+        s2 = s2.split("，")[0]
+
+    parts = [s1, s3, s2, s4, s5, s6, s78, cast_lock]
     if extra and extra.strip():
-        # 禁止把质检元指令当出图正文
         cleaned = strip_verify_regen_leak(extra.strip())
-        if cleaned and cleaned != extra.strip():
-            cleaned = ""
-        if cleaned:
+        if cleaned and cleaned == extra.strip():
             parts.append(cleaned)
+
     from app.services.script.visual_brief import strip_held_prop_from_surface
 
-    return strip_held_prop_from_surface("".join(parts))
+    return strip_held_prop_from_surface(_join_slots(parts))
 
 
 def assemble_daily_image_prompts(
@@ -987,7 +1123,6 @@ def assemble_daily_image_prompts(
 
     annotate_sticky_stage_speakers(segments, setting=setting)
     from app.services.script.visual_brief import (
-        _daily_fixed_furniture,
         _resolve_prop_state_regression,
         daily_locked_inventory,
         scrub_daily_visual_brief,
@@ -997,34 +1132,31 @@ def assemble_daily_image_prompts(
     # 跨镜状态保护：已落地的冲突道具不得在后续镜写回家具台面
     # （覆盖出图质检兜底重写 visual_brief 的路径）
     _resolve_prop_state_regression(segments)
+    # object_states 状态机：跨镜继承 + 去重 + 校验矛盾/回归
+    from app.services.script.visual_brief import normalize_object_states
+
+    obj_issues = normalize_object_states(segments)
+    if obj_issues:
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "object_states issues: %s", "; ".join(obj_issues[:5])
+        )
     locked = daily_locked_inventory(segments, setting)
     for seg in segments:
         vb = str(seg.get("visual_brief") or "")
         cleaned = strip_unlocked_inventory(scrub_daily_visual_brief(vb), locked)
         if cleaned != vb:
             seg["visual_brief"] = cleaned
-    fixed_furniture = _daily_fixed_furniture(segments)
-    # 分镜1 的场景定稿句：含花盆/托盘/背景/阳台且不含角色的句子
-    scene_anchor = ""
+    # S2 场景锚点：按本片 setting + 分镜1 scene_anchors/画面，用模板压缩
+    seg1_vb = ""
+    seg1_anchors: list | None = None
     for seg in segments:
-        if int(seg.get("segment_index") or 0) != 1:
-            continue
-        vb1 = str(seg.get("visual_brief") or "")
-        sentences = [
-            s.strip()
-            for s in re.split(r"(?<=[。；;])", vb1)
-            if s.strip()
-        ]
-        anchor_sents = [
-            s
-            for s in sentences
-            if any(k in s for k in ("花盆", "托盘", "背景", "阳台"))
-            and not any(n in s for n in ("昭昭", "灿灿", "妈妈"))
-        ]
-        scene_anchor = "".join(anchor_sents).replace(
-            "场景定稿：", ""
-        ).strip("，,。. ")
-        break
+        if int(seg.get("segment_index") or 0) == 1:
+            seg1_vb = str(seg.get("visual_brief") or "")
+            seg1_anchors = seg.get("scene_anchors") or None
+            break
+    scene_anchor = _daily_scene_anchor(setting, seg1_vb, seg1_anchors)
     wanted = (
         {int(i) for i in segment_indices} if segment_indices is not None else None
     )
@@ -1036,7 +1168,6 @@ def assemble_daily_image_prompts(
             seg,
             extra=extra,
             scene_anchor=scene_anchor,
-            fixed_furniture=fixed_furniture,
             setting=setting,
         )
     return segments
@@ -1327,6 +1458,50 @@ _MOTION_USER_RULE_DAILY = (
     "末尾镜头固定不推近不拉远（禁止变焦放大），禁大位移、禁纯环境晃动套话；"
     "各段互不重复，禁止套话。"
 )
+
+
+# ── L2 语义审核 prompt（LLM reviewer） ──
+
+_IMAGE_PROMPT_REVIEW_SYSTEM = (
+    "你是文生图(T2I)提示词审核员。逐条审查每段提示词，只报告确定存在的问题，"
+    "不确定的一律不报（宁少勿乱）。"
+    "审查维度："
+    "①contradictions 自相矛盾（同一物体两处描述状态/位置/数量不一致，"
+    "如甲处说X在A处、乙处说X在B处；甲处说散开、乙处说打死结）；"
+    "②redundancies 冗余（同一短语重复 3 次以上）；"
+    "③unpaintable 不可画（抽象指令/时间推移/多格叙事等无法画成单帧的内容）。"
+    "输出 JSON：{\"reviews\": [...]}，每项含 segment_index、issues；"
+    "issues 每项含 kind(contradiction/redundancy/unpaintable)、detail（引用原文短语）、"
+    "contradiction 时另含 pair=[甲短语,乙短语]。没有问题的段落不要输出。"
+)
+
+
+def build_image_prompt_review_prompts(
+    script: dict[str, Any],
+    *,
+    segment_indices: list[int] | None = None,
+) -> dict[str, str]:
+    """L2 审核：拼装好的 image_prompt + 本段台词，交 LLM reviewer 找语义矛盾。"""
+    segments = script.get("segments") or []
+    wanted = (
+        {int(i) for i in segment_indices} if segment_indices is not None else None
+    )
+    lines: list[str] = []
+    for seg in segments:
+        idx = int(seg.get("segment_index") or 0)
+        if wanted is not None and idx not in wanted:
+            continue
+        dialogue = " ".join(
+            f'{d.get("speaker")}:"{d.get("text")}"'
+            for d in (seg.get("dialogue") or [])
+            if d.get("speaker") and d.get("text")
+        )
+        prompt = str(seg.get("image_prompt") or "")
+        lines.append(
+            f"segment {idx}: dialogue={dialogue!r}; image_prompt={prompt!r}"
+        )
+    user = "请审查以下各段文生图提示词：\n" + "\n".join(lines)
+    return prompt_step("image_prompt_review", _IMAGE_PROMPT_REVIEW_SYSTEM, user)
 
 
 def _image_prompt_role(content_style: str) -> str:

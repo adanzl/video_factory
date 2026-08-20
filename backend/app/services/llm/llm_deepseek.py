@@ -463,11 +463,36 @@ def _merge_visual_briefs(
         if idx not in required_set:
             continue
         item = by_index[idx]
+        subjects = item.get("visual_subjects")
         brief = str(item.get("visual_brief") or "").strip()
-        if not brief:
+        if isinstance(subjects, list) and subjects:
+            from app.services.script.visual_brief import render_visual_subjects
+
+            rendered = render_visual_subjects(subjects)
+            if not rendered:
+                raise ValueError(f"visual_subjects empty for segment {idx}")
+            seg["visual_subjects"] = [
+                s for s in subjects if isinstance(s, dict)
+            ]
+            seg["visual_brief"] = rendered
+        elif brief:
+            seg["visual_brief"] = brief
+            seg.pop("visual_subjects", None)
+        else:
             raise ValueError(f"visual_brief empty for segment {idx}")
-        seg["visual_brief"] = brief
         seg["visual_mode"] = item.get("visual_mode") or seg.get("visual_mode") or "static_motion"
+        # object_states：结构化道具状态（S5 状态机输入）
+        obj_states = item.get("object_states")
+        if isinstance(obj_states, list):
+            seg["object_states"] = [
+                st for st in obj_states if isinstance(st, dict)
+            ]
+        # scene_anchors：场景硬锚点名词（S2 输入，代码负责压缩裁剪）
+        anchors = item.get("scene_anchors")
+        if isinstance(anchors, list):
+            seg["scene_anchors"] = [
+                str(a).strip() for a in anchors if str(a).strip()
+            ]
 
 
 def _truncation_feedback() -> str:
@@ -932,6 +957,33 @@ class DeepSeekClient(LLMClient):
         if not prompt_items:
             raise ValueError("LLM image prompt response missing image_prompts")
         return {"image_prompts": prompt_items}
+
+    def review_image_prompts(
+        self,
+        script: dict[str, Any],
+        *,
+        job: dict | None = None,
+        segment_indices: list[int] | None = None,
+    ) -> list[dict]:
+        """L2 语义审核：LLM reviewer 审查已拼装的 image_prompt，返回 issues。"""
+        from app.services.script.image_prompt import build_image_prompt_review_prompts
+
+        prompts = build_image_prompt_review_prompts(
+            script,
+            segment_indices=segment_indices,
+        )
+        # 审核任务是模式识别，无需深度推理；不传 thinking/temperature 以兼容各 provider
+        raw, finish = self._chat_json(
+            prompts["system"],
+            prompts["user"],
+        )
+        raise_if_job_cancelled(job)
+        if finish == "length":
+            raise ValueError("LLM image_prompt_review 被截断 (finish_reason=length)")
+        if not isinstance(raw, dict):
+            return []
+        reviews = raw.get("reviews") or []
+        return [r for r in reviews if isinstance(r, dict)]
 
     def _merge_image_prompts(
         self,

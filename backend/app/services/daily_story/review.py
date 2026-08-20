@@ -124,6 +124,35 @@ _RE_E_YOU_TO_MOM = re.compile(
 )
 _RE_KID_YOU_TO_SIB = re.compile(r"你低头|你看|你摸|你别|你听")
 
+# B 段4甩锅：童语宜短（≤10 字），禁大人问责腔（提醒太晚/没拦住等）。
+_RE_B_BLAME_ADULT = re.compile(
+    r"提醒太晚|没拦住|来不及|提醒不及时|没来及|幸亏|要不是|"
+    r"疏忽|责任在你|没提醒好",
+)
+_B_BLAME_CORE_MAX = 10
+# 甩锅句里已点名的物证/翻车动作：润色只删冗词，禁改成「明明是你」空泛句。
+_RE_B_BLAME_CONCRETE = re.compile(
+    r"弄撒|洒|破|裂|喷|撒|踩|粘|塞|拽|踢|倒|掉|湿|渣|袋|薯|饼|糖|酱|水|胶|线|袜|鞋",
+)
+
+
+def _b_blame_wording_fix(line: str, *, adult_blame: bool) -> str:
+    if adult_blame:
+        return (
+            "改成≤10字短句，如「都怪你！」「都怪你让我踢！」；"
+            "禁提醒太晚/没拦住/来不及；一句一气口，勿逗号连两拍"
+        )
+    if _RE_B_BLAME_CONCRETE.search(line):
+        return (
+            "删冗词和大人生腔（如手忙脚乱），保留当场物证/动作；"
+            "如「你手忙脚乱弄撒薯片，还怪我？」→「你弄撒的薯片，还怪我？」；"
+            "禁改成「明明是你/都怪你」这类空泛甩锅"
+        )
+    return (
+        "压短到≤10字，保留具体物证或动作，"
+        "勿改成「明明是你/都怪你」这类空泛句"
+    )
+
 # 话题聚类：换词复读近邻检测抓不到时，按话题打标签计数
 # (标签, 正则, 触发阈值) —— ≥阈值才报，末 2 句不计入质问类
 _TOPIC_SPECS: tuple[tuple[str, re.Pattern[str], int], ...] = (
@@ -422,6 +451,32 @@ def collect_wording_issues(
                        "灿灿继续假开脱，勿训弟",
             })
             continue
+        if (type_code or "").upper()[:1] == "B":
+            from app.services.daily_story.story_types.b.validate import (
+                RE_BLAME_TURN,
+            )
+
+            if RE_BLAME_TURN.search(line):
+                core_len = len(_norm(line))
+                two_clause = "，" in line or "," in line
+                adult_blame = bool(_RE_B_BLAME_ADULT.search(line))
+                if (
+                    adult_blame
+                    or core_len > _B_BLAME_CORE_MAX
+                    or (two_clause and core_len > 8)
+                ):
+                    out.append({
+                        "lines": [i],
+                        "kind": "甩锅书面",
+                        "desc": (
+                            f"甩锅句太长或像大人问责，不像小孩抢话：{line}"
+                        ),
+                        "fix": _b_blame_wording_fix(
+                            line,
+                            adult_blame=adult_blame,
+                        ),
+                    })
+                    continue
         matched = [pat for pat in _WRITTEN_SIGNAL_RES if pat.search(line)]
         if not matched:
             continue
@@ -740,6 +795,14 @@ def build_wording_polish_prompts(
             "昭昭对妈禁「你刚才/你说/你手」硬质问，改成刚才/手上/自己说；"
             "灿灿对弟弟的「你看/你低头」保留。"
             "勿改开场与末两句闭环破功。\n"
+        )
+    if (type_code or "").upper()[:1] == "B" and issue_kinds & {"甩锅书面"}:
+        system += (
+            "【B类甩锅】段4互甩每句≤10字，像小孩抢话，勿写大人问责腔。"
+            "「都怪你提醒太晚，没拦住我」→「都怪你！」（本就抽象可压短）；"
+            "「你手忙脚乱弄撒薯片，还怪我？」→「你弄撒的薯片，还怪我？」"
+            "（删手忙脚乱，保留薯片物证，勿改成「明明是你」）；"
+            "禁提醒太晚/没拦住/来不及；一句一气口，勿逗号连两拍。\n"
         )
     system += (
         "对照示例：\n"
@@ -1060,9 +1123,9 @@ def apply_review_to_quality(
 
     humor 为审读同批输出的好笑评估 {funny_score, best_moment, humor_type}。
     有 humor：总分 = 结构分（正则，≤80）+ LLM 好笑（0-20）− 审读硬伤；
-    发布线 = 结构≥75 且 好笑≥12。无 humor：保持旧扣分逻辑（兼容 mock）。
+    发布线 = 结构≥75 且 好笑≥HUMOR_PUBLISH_MIN。无 humor：保持旧扣分逻辑（兼容 mock）。
     """
-    from app.services.daily_story.quality import _grade_from_score
+    from app.services.daily_story.quality import HUMOR_PUBLISH_MIN, _grade_from_score
 
     quality = story.get("quality")
     if not isinstance(quality, dict):
@@ -1092,18 +1155,22 @@ def apply_review_to_quality(
         score = max(0, min(100, structure + funny - points))
         quality["score"] = score
         quality["grade"] = _grade_from_score(score)
-        pass_ok = structure >= 75 and funny >= 12
+        pass_ok = structure >= 75 and funny >= HUMOR_PUBLISH_MIN
         quality["pass"] = pass_ok
         if pass_ok:
-            line_reason = f"发布达标：结构{structure}≥75，LLM好笑{funny}/20≥12"
+            line_reason = (
+                f"发布达标：结构{structure}≥75，"
+                f"LLM好笑{funny}/20≥{HUMOR_PUBLISH_MIN}"
+            )
         else:
             misses = []
             if structure < 75:
                 misses.append(f"结构{structure}<75")
-            if funny < 12:
-                misses.append(f"好笑{funny}/20<12")
+            if funny < HUMOR_PUBLISH_MIN:
+                misses.append(f"好笑{funny}/20<{HUMOR_PUBLISH_MIN}")
             line_reason = (
-                f"未达发布线（{'，'.join(misses)}，须结构≥75且好笑≥12）"
+                f"未达发布线（{'，'.join(misses)}，"
+                f"须结构≥75且好笑≥{HUMOR_PUBLISH_MIN}）"
             )
         all_reasons = [*reasons, line_reason]
         quality["reasons"] = [*(quality.get("reasons") or []), *all_reasons]

@@ -3111,6 +3111,43 @@ def test_polish_iteratively_only_touches_flagged_lines(monkeypatch):
     assert lines[6] == "我是姐姐，我说不算就不算了呀。"
 
 
+def test_collect_wording_issues_flags_b_blame_adult():
+    from app.services.daily_story.review import collect_wording_issues
+
+    story = {
+        "dialogue": [
+            {"speaker": "昭昭", "line": "都怪你！"},
+            {"speaker": "昭昭", "line": "都怪你提醒太晚，没拦住我！"},
+            {"speaker": "灿灿", "line": "你手忙脚乱弄撒薯片，还怪我？"},
+        ],
+        "discovery_opening": [],
+    }
+    issues = collect_wording_issues(story, type_code="B")
+    by_line = {it["lines"][0]: it for it in issues}
+    assert 2 in by_line
+    assert 3 in by_line
+    assert (1,) not in {tuple(it["lines"]) for it in issues}
+    assert "都怪你！" in by_line[2]["fix"]
+    assert "你弄撒的薯片" in by_line[3]["fix"]
+    assert "明明是你" in by_line[3]["fix"]
+
+
+def test_wording_polish_prompt_mentions_b_blame_wording():
+    from app.services.daily_story.review import build_wording_polish_prompts
+
+    system, _user = build_wording_polish_prompts(
+        "偷吃零食被爸妈抓",
+        {"dialogue": [], "setting": "", "conflict_core": ""},
+        [{"lines": [21], "kind": "甩锅书面", "desc": "test"}],
+        type_code="B",
+        line_chars_max=24,
+    )
+    assert "B类甩锅" in system
+    assert "提醒太晚" in system
+    assert "你弄撒的薯片" in system
+    assert "明明是你" in system
+
+
 def test_wording_polish_prompt_mentions_e_sense_drift():
     from app.services.daily_story.review import build_wording_polish_prompts
 
@@ -3693,7 +3730,7 @@ def test_parse_humor_accepts_valid_rejects_bad():
     "structure, funny, expect_pass, reason_needle",
     [
         (80, 14, True, "发布达标"),
-        (80, 4, False, "好笑4/20<12"),
+        (80, 4, False, "好笑4/20<10"),
         (70, 14, False, "结构70<75"),
     ],
     ids=["ok", "low_humor", "low_structure"],
@@ -3716,7 +3753,7 @@ def test_apply_review_to_quality_publish_line(structure, funny, expect_pass, rea
         humor={
             "funny_score": funny,
             "best_moment": "那句",
-            "humor_type": "natural" if funny >= 12 else "formulaic",
+            "humor_type": "natural" if funny >= 10 else "formulaic",
         },
     )
     q = story["quality"]

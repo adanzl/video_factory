@@ -90,6 +90,16 @@ class LLMClient:
     ) -> dict[str, Any]:
         raise NotImplementedError
 
+    def review_image_prompts(
+        self,
+        script: dict[str, Any],
+        *,
+        job: dict | None = None,
+        segment_indices: list[int] | None = None,
+    ) -> list[dict]:
+        """L2 语义审核：LLM reviewer 审查已拼装的 image_prompt。"""
+        raise NotImplementedError
+
     def shrink_segment_texts(
         self,
         script: dict[str, Any],
@@ -325,6 +335,20 @@ class LLMMgr:
             segment_indices=segment_indices,
         )
 
+    def review_image_prompts(
+        self,
+        script: dict[str, Any],
+        *,
+        job: dict | None = None,
+        segment_indices: list[int] | None = None,
+    ) -> list[dict]:
+        """L2 语义审核入口（provider 无关）。"""
+        return self._get_client().review_image_prompts(
+            script,
+            job=job,
+            segment_indices=segment_indices,
+        )
+
     def shrink_segment_texts(
         self,
         script: dict[str, Any],
@@ -403,7 +427,25 @@ class LLMMgr:
                 content_style=style,
             )
             if report.level != "major":
-                return script
+                l2 = self._run_image_prompt_l2(
+                    script,
+                    job=job,
+                    segment_indices=segment_indices,
+                    l1_level=report.level,
+                )
+                if l2 is None:
+                    return script
+                l2_feedback, l2_indices = l2
+                if not l2_indices or attempt + 1 >= attempts:
+                    return script
+                feedback = l2_feedback
+                target_indices = l2_indices
+                logger.warning(
+                    "[SCRIPT] image_prompt L2 retry attempt=%d segments=%s",
+                    attempt + 1,
+                    l2_indices,
+                )
+                continue
             too_short = report.details.get("segments") or []
             target_indices = [
                 int(item["segment_index"])
@@ -447,6 +489,65 @@ class LLMMgr:
                 ),
             )
         return script
+
+    def _run_image_prompt_l2(
+        self,
+        script: dict[str, Any],
+        *,
+        job: dict | None = None,
+        segment_indices: list[int] | None = None,
+        l1_level: str = "pass",
+    ) -> tuple[str, list[int]] | None:
+        """L2 语义审核档位。返回 None=放行；(feedback, indices)=发现矛盾需重试。"""
+        import random
+
+        from app.quality.image_prompt import register_opposite_pair
+
+        mode = get_settings().image_prompt_l2_mode
+        if mode == "off":
+            return None
+        if mode == "on_l1_hit" and l1_level == "pass":
+            return None
+        if mode == "sample":
+            if random.random() >= get_settings().image_prompt_l2_sample_ratio:
+                return None
+        try:
+            reviews = self.review_image_prompts(
+                script,
+                job=job,
+                segment_indices=segment_indices,
+            )
+        except Exception as exc:  # reviewer 故障不阻断主流水线
+            logger.warning("image_prompt L2 reviewer failed, skip: %s", exc)
+            return None
+        indices: list[int] = []
+        details: list[str] = []
+        for r in reviews:
+            idx = r.get("segment_index")
+            for issue in r.get("issues") or []:
+                if not isinstance(issue, dict):
+                    continue
+                kind = str(issue.get("kind") or "")
+                detail = str(issue.get("detail") or "")
+                if kind == "contradiction":
+                    pair = issue.get("pair")
+                    if (
+                        isinstance(pair, list)
+                        and len(pair) == 2
+                        and all(isinstance(p, str) and p for p in pair)
+                    ):
+                        register_opposite_pair(pair[0], pair[1])
+                    if idx is not None:
+                        indices.append(int(idx))
+                        details.append(f"segment {idx}: {kind} {detail}")
+        if not indices:
+            return None
+        feedback = (
+            "上次审核发现自相矛盾，请修正后重写："
+            + "；".join(details[:5])
+            + "。同一物体的状态/位置/数量须全句一致，不要自相矛盾。"
+        )
+        return feedback, sorted(set(indices))
 
     def generate_topics(
         self,
@@ -732,7 +833,7 @@ class LLMMgr:
         target = 75
         # 生成循环只追结构分（≤80 封顶）；好笑分由审读阶段 LLM 评定
         # （review.apply_review_to_quality 注入 funny_score 0-20），最终发布线 =
-        # 结构≥75 且 LLM 好笑≥12。整稿 3 次（全 Flash 高温发散）+ refine 兜底；
+        # 结构≥75 且 LLM 好笑≥HUMOR_PUBLISH_MIN（10）。整稿 3 次（全 Flash 高温发散）+ refine 兜底；
         # 外层失败缓存框架+开场，只重抽正文。refine 已切 Flash 关 thinking。
         # attach 默认会 finalize 总分=结构+好笑，比较 target 必须用 structure_score。
         max_full = 3

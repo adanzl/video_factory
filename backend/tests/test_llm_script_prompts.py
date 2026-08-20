@@ -67,7 +67,7 @@ def test_wrap_image_prompts_daily_assembles_from_visual_brief():
     ]
     wrap_image_prompts(segments, content_style="daily_story")
     prompt = segments[0]["image_prompt"]
-    assert prompt.startswith("儿童情绪涂鸦风格")
+    assert prompt.startswith("儿童情绪涂鸦风")
     assert "昭昭：7岁男孩" in prompt
     assert "灿灿：10岁女孩" in prompt
     assert "昭昭比灿灿矮约半个头" in prompt
@@ -143,11 +143,11 @@ def test_assemble_daily_t2i_prompt_door_and_hair_locks():
             "shot_type": "中景",
         }
     )
-    assert "画面中的门是一扇单开门，只有一块完整门板，没有分成两扇。" in prompt
+    assert "画面中的门是一扇单开门，只有一块完整门板，没有分成两扇" in prompt
     assert "门缝" not in prompt
     assert "门与门框的空隙" in prompt
-    assert "发丝连着头皮。" in prompt
-    assert "风从门口吹向室内，头发顺风飘离门口。" in prompt
+    assert "发丝连着头皮" in prompt
+    assert "风从门口吹向室内，头发顺风飘离门口" in prompt
 
 def test_assemble_daily_t2i_prompt_skips_locks_when_absent():
     """无门/无风时拼装层不注入多余硬锁。"""
@@ -237,12 +237,11 @@ def test_build_visual_brief_prompts_daily_story_role_and_cast():
     assert "粘性" in prompts["system"] or "speakers" in prompts["system"]
     assert "三人同框" in prompts["system"] or "从左到右" in prompts["system"]
     assert "dialogue=" in prompts["user"]
-    assert "100-200" in prompts["system"]
-    assert "直接拼入文生图" in prompts["system"]
+    assert "visual_subjects" in prompts["system"]
+    assert "object_states" in prompts["system"]
     assert "【开场】" in prompts["system"]
     assert "冲突峰值" in prompts["system"]
-    assert "画风" in prompts["system"] or "笔触" in prompts["system"]
-    assert "冲突道具用台词已出现" in prompts["system"]
+    assert "物品锁定" in prompts["system"] or "物品锁定" in prompts["user"]
     assert "粉色卫衣" in prompts["system"]
     assert "人物关系" in prompts["system"]
     assert "单扇门" in prompts["system"]
