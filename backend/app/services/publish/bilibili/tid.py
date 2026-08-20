@@ -11,7 +11,9 @@ CHAT_PIPELINE = "chat"
 DEFAULT_TID = 201  # 知识 → 科学科普（旧 tid，与 human_type2 配合）
 CHAT_TID = 201  # chat 旧 tid 占位；分区展示靠 human_type2
 CHAT_HUMAN_TYPE2 = 1025  # 新分区 → 亲子
-CHAT_NEUTRAL_MARK = "含虚构演绎内容"
+# 创作声明（mark_list id，勿把 label 塞进 neutral_mark）
+CHAT_CONTENT_MARK_ID = 2
+CHAT_CONTENT_MARK_LABEL = "含虚构演绎内容"
 
 # 新分区 human_type2（投稿页展示用）
 HUMAN_TYPE2_LABELS: dict[int, str] = {
@@ -47,10 +49,21 @@ def resolve_human_type2(pipeline: str | None, *, settings: Any | None = None) ->
     return int(cfg.bili_human_type2_chat)
 
 
-def resolve_neutral_mark(pipeline: str | None) -> str | None:
+def resolve_content_mark_id(pipeline: str | None) -> int | None:
     if (pipeline or "").strip() == CHAT_PIPELINE:
-        return CHAT_NEUTRAL_MARK
+        return CHAT_CONTENT_MARK_ID
     return None
+
+
+def resolve_content_mark_label(pipeline: str | None) -> str | None:
+    if (pipeline or "").strip() == CHAT_PIPELINE:
+        return CHAT_CONTENT_MARK_LABEL
+    return None
+
+
+def resolve_neutral_mark(pipeline: str | None) -> str | None:
+    """展示用创作声明文案（submit 走 mark_id）。"""
+    return resolve_content_mark_label(pipeline)
 
 
 def describe_publish_partition(

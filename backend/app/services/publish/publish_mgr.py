@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from app.config import get_settings
+from app.repositories import repo_job_log
 from app.services.publish.bilibili.dynamic import build_fan_dynamic
 from app.services.publish.bilibili.schedule import resolve_publish_dtime_from_job
 from app.services.publish.bilibili.session import BiliSession, cookie_expired_message
@@ -16,8 +18,10 @@ from app.services.publish.bilibili.tags import (
     resolve_activity_topic,
 )
 from app.services.publish.bilibili.tid import (
+    describe_publish_partition,
+    resolve_content_mark_id,
+    resolve_content_mark_label,
     resolve_human_type2,
-    resolve_neutral_mark,
     resolve_tid,
 )
 from app.services.publish.bilibili.uploader import BiliUploader
@@ -26,6 +30,8 @@ from app.utils.job_info import merge_job_info, parse_job_info
 
 __all__ = ["BiliCookieExpired", "PublishMgr", "publish_mgr"]
 
+logger = logging.getLogger(__name__)
+
 
 class BiliCookieExpired(RuntimeError):
     """远程 Cookie 缺失或失效，需本机同步。"""
@@ -33,6 +39,84 @@ class BiliCookieExpired(RuntimeError):
     def __init__(self, status: dict[str, Any] | None = None) -> None:
         self.status = status or {}
         super().__init__(str(self.status.get("message") or cookie_expired_message()))
+
+
+def _format_publish_plan(
+    *,
+    job_id: int,
+    manual: bool,
+    pipeline: str,
+    title: str,
+    tid: int,
+    human_type2: int | None,
+    mark_id: int | None,
+    content_mark_label: str | None,
+    topic_name: str | None,
+    topic_id: int | None,
+    mission_id: int | None,
+    tags: list[str],
+    dtime: int | None,
+    video_path: Path,
+    cover_path: Path | None,
+) -> str:
+    partition = describe_publish_partition(pipeline).get("display") or f"tid={tid}"
+    parts = [
+        f"job={job_id}",
+        f"manual={manual}",
+        f"pipeline={pipeline or 'standard'}",
+        f"title={title[:40]!r}",
+        f"partition={partition}(tid={tid}"
+        + (f",human_type2={human_type2}" if human_type2 is not None else "")
+        + ")",
+    ]
+    if mark_id is not None:
+        mark = content_mark_label or str(mark_id)
+        parts.append(f"mark_id={mark_id}({mark})")
+    elif content_mark_label:
+        parts.append(f"mark={content_mark_label!r}")
+    if topic_id:
+        topic = topic_name or "?"
+        parts.append(f"topic={topic!r}/{topic_id}/{mission_id or 0}")
+    tag_preview = ",".join(tags[:5])
+    if len(tags) > 5:
+        tag_preview += ",..."
+    parts.append(f"tags=[{tag_preview}] ({len(tags)})")
+    parts.append(f"dtime={dtime if dtime is not None else 'now'}")
+    parts.append(f"video={video_path.name}")
+    if cover_path:
+        parts.append(f"cover={cover_path.name}")
+    return "bili publish plan: " + " ".join(parts)
+
+
+def _format_publish_result(result: dict[str, Any]) -> str:
+    status = result.get("status") or "unknown"
+    msg = result.get("message") or ""
+    bits = [f"bili publish {status}"]
+    if result.get("bvid"):
+        bits.append(str(result["bvid"]))
+    if result.get("tid") is not None:
+        bits.append(f"tid={result['tid']}")
+    if result.get("human_type2") is not None:
+        bits.append(f"human_type2={result['human_type2']}")
+    if result.get("mark_id") is not None:
+        label = result.get("neutral_mark") or ""
+        bits.append(
+            f"mark_id={result['mark_id']}"
+            + (f"({label})" if label else "")
+        )
+    if result.get("topic_id"):
+        bits.append(
+            f"topic_id={result['topic_id']}/{result.get('mission_id') or 0}"
+        )
+    if msg and status != "success":
+        bits.append(f"msg={msg}")
+    return " ".join(bits)
+
+
+def _log_publish_plan(job_id: int | None, message: str) -> None:
+    logger.info(message)
+    if job_id is not None:
+        repo_job_log.append_log(job_id, "publish", message)
 
 
 class PublishMgr:
@@ -88,19 +172,45 @@ class PublishMgr:
         cover_path = Path(cover_raw) if cover_raw else None
         tid = resolve_tid(pipeline)
         human_type2 = resolve_human_type2(pipeline)
-        neutral_mark = resolve_neutral_mark(pipeline)
+        mark_id = resolve_content_mark_id(pipeline)
+        content_mark_label = resolve_content_mark_label(pipeline)
         topic_id: int | None = None
         mission_id: int | None = None
+        topic_name: str | None = None
         if pipeline == "chat":
+            topic_name = resolve_activity_tag()
             topic = resolve_activity_topic(
                 self.session_store().http(),
-                resolve_activity_tag(),
+                topic_name,
             )
             if topic:
                 topic_id = int(topic["topic_id"])
                 mission_id = int(topic.get("mission_id") or 0)
+                topic_name = str(topic.get("topic_name") or topic_name)
         dtime, planned_at = resolve_publish_dtime_from_job(job)
         dynamic = build_fan_dynamic(title, pipeline=pipeline)
+        job_id_raw = job.get("id")
+        job_id = int(job_id_raw) if job_id_raw is not None else None
+        _log_publish_plan(
+            job_id,
+            _format_publish_plan(
+                job_id=job_id or 0,
+                manual=manual,
+                pipeline=pipeline,
+                title=title,
+                tid=tid,
+                human_type2=human_type2,
+                mark_id=mark_id,
+                content_mark_label=content_mark_label,
+                topic_name=topic_name,
+                topic_id=topic_id,
+                mission_id=mission_id,
+                tags=tags,
+                dtime=dtime,
+                video_path=video_path,
+                cover_path=cover_path,
+            ),
+        )
         result = self.publish(
             title=title,
             video_path=video_path,
@@ -111,10 +221,12 @@ class PublishMgr:
             dtime=dtime,
             dynamic=dynamic,
             human_type2=human_type2,
-            neutral_mark=neutral_mark,
+            mark_id=mark_id,
             topic_id=topic_id,
             mission_id=mission_id,
         )
+        if content_mark_label:
+            result["neutral_mark"] = content_mark_label
         if planned_at is not None:
             result["scheduled_at"] = planned_at.isoformat()
         return result
@@ -131,6 +243,7 @@ class PublishMgr:
         dtime: int | None = None,
         dynamic: str = "",
         human_type2: int | None = None,
+        mark_id: int | None = None,
         neutral_mark: str | None = None,
         topic_id: int | None = None,
         mission_id: int | None = None,
@@ -146,6 +259,7 @@ class PublishMgr:
             dtime=dtime,
             dynamic=dynamic,
             human_type2=human_type2,
+            mark_id=mark_id,
             neutral_mark=neutral_mark,
             topic_id=topic_id,
             mission_id=mission_id,
@@ -163,6 +277,7 @@ class PublishMgr:
         dtime: int | None = None,
         dynamic: str = "",
         human_type2: int | None = None,
+        mark_id: int | None = None,
         neutral_mark: str | None = None,
         topic_id: int | None = None,
         mission_id: int | None = None,
@@ -177,6 +292,7 @@ class PublishMgr:
             dtime=dtime,
             dynamic=dynamic,
             human_type2=human_type2,
+            mark_id=mark_id,
             neutral_mark=neutral_mark,
             topic_id=topic_id,
             mission_id=mission_id,

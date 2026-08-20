@@ -14,6 +14,7 @@ from app.services.publish.bilibili.tags import (
 from app.services.publish.bilibili.tid import (
     CHAT_PIPELINE,
     describe_publish_partition,
+    resolve_content_mark_id,
     resolve_neutral_mark,
 )
 
@@ -33,6 +34,7 @@ def describe_publish_config(
         "pipeline": pipe,
         "partition": describe_publish_partition(pipe, settings=cfg),
         "neutral_mark": resolve_neutral_mark(pipe),
+        "mark_id": resolve_content_mark_id(pipe),
         "copyright": 1,
         "topic": None,
         "fixed_tags": None,
