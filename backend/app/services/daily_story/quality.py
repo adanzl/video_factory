@@ -593,7 +593,15 @@ def _score_funniness(
     points = 0
     # 模板复读等：不是扣结构，而是好笑加分项一律不计（无“有意思的点”）
     humor_blocked = any(
-        any(k in c for k in ("模板复读", "中段动作复读", "缺字面歪读点"))
+        any(
+            k in c
+            for k in (
+                "模板复读",
+                "中段动作复读",
+                "缺字面歪读点",
+                "肢体抢物复读",
+            )
+        )
         for c in cons
     )
     scene_pts, scene_pros = 0, []

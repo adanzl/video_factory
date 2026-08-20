@@ -126,6 +126,7 @@ def _run_one(
     with _PRINT_LOCK:
         print(f"\n===== [{idx}/{total}] {theme} =====", flush=True)
     started = time.perf_counter()
+    story: dict | None = None
     try:
         story = llm_mgr.generate_daily_story(
             theme,
@@ -135,6 +136,7 @@ def _run_one(
         )
         validate_daily_story_json(story, phase="full")
         item = _summarize(theme, story, time.perf_counter() - started)
+        item["ok"] = True
         with _PRINT_LOCK:
             print(
                 f"ok chars={item['chars']} lines={item['lines']} "
@@ -168,14 +170,27 @@ def _run_one(
                     print(f"  {line}", flush=True)
             print(f"punchline={item['punchline_explain']}", flush=True)
     except Exception as exc:
-        item = {
-            "theme": theme,
-            "ok": False,
-            "elapsed_sec": round(time.perf_counter() - started, 1),
-            "error": str(exc),
-        }
+        elapsed = time.perf_counter() - started
+        if isinstance(story, dict):
+            item = _summarize(theme, story, elapsed)
+            item["ok"] = False
+            item["error"] = str(exc)
+            item["degraded"] = bool(story.get("_hard_card_failed"))
+        else:
+            item = {
+                "theme": theme,
+                "ok": False,
+                "elapsed_sec": round(elapsed, 1),
+                "error": str(exc),
+            }
         with _PRINT_LOCK:
             print(f"FAIL elapsed={item['elapsed_sec']}s: {exc}", flush=True)
+            if item.get("degraded") and item.get("setting"):
+                print(
+                    f"  (degraded draft saved: core={item.get('conflict_core')} "
+                    f"grade={item.get('quality_grade')}({item.get('quality_score')}))",
+                    flush=True,
+                )
     return item
 
 

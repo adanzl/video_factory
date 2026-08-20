@@ -826,6 +826,27 @@ class LLMMgr:
             build_quality_revision_hints,
             structure_score_of,
         )
+        from app.services.daily_story.prompts import DAILY_STORY_BODY_CHARS_MIN
+        from app.services.daily_story.story_types import parse_story_type_code
+
+        def _dialogue_char_count(payload: dict) -> int:
+            dialogue = payload.get("dialogue")
+            if not isinstance(dialogue, list):
+                return 0
+            return sum(
+                len(str(d.get("line") or ""))
+                for d in dialogue
+                if isinstance(d, dict)
+            )
+
+        type_code = (
+            parse_story_type_code(story_type=story_type)
+            if story_type
+            else ""
+        )
+        c_strict = type_code == "C"
+        # 结构残缺稿不入 degraded 池（GPT P2 2026-08-21）
+        degraded_min_chars = 220
 
         client = self._get_client()
         best_story: dict[str, Any] | None = None
@@ -836,7 +857,7 @@ class LLMMgr:
         # 结构≥75 且 LLM 好笑≥HUMOR_PUBLISH_MIN（10）。整稿 3 次（全 Flash 高温发散）+ refine 兜底；
         # 外层失败缓存框架+开场，只重抽正文。refine 已切 Flash 关 thinking。
         # attach 默认会 finalize 总分=结构+好笑，比较 target 必须用 structure_score。
-        max_full = 3
+        max_full = 4 if c_strict else 3
         max_refine = 2
         last_exc: Exception | None = None
         cached_framework: dict[str, Any] | None = None
@@ -892,22 +913,36 @@ class LLMMgr:
                 # 避免整条 FAIL（宁可给低分稿，不给 0 产出）。
                 failed_body = getattr(exc, "_failed_body", None)
                 if isinstance(failed_body, dict):
-                    try:
-                        attach_daily_story_quality(failed_body, theme=theme)
-                        f_score = structure_score_of(
-                            failed_body.get("quality"),
+                    char_n = _dialogue_char_count(failed_body)
+                    if char_n < degraded_min_chars:
+                        logger.warning(
+                            "[DAILY_STORY] skip degraded candidate "
+                            "chars=%d < %d (结构残缺)",
+                            char_n,
+                            degraded_min_chars,
                         )
-                        if f_score > best_score:
-                            best_score = f_score
-                            failed_body["_hard_card_failed"] = True
-                            best_story = failed_body
-                            logger.warning(
-                                "[DAILY_STORY] degraded fallback candidate "
-                                "structure=%d (kept instead of FAIL)",
-                                f_score,
+                    elif c_strict:
+                        logger.warning(
+                            "[DAILY_STORY] C类 skip degraded fallback "
+                            "(validate FAIL=FAIL)",
+                        )
+                    else:
+                        try:
+                            attach_daily_story_quality(failed_body, theme=theme)
+                            f_score = structure_score_of(
+                                failed_body.get("quality"),
                             )
-                    except Exception:
-                        pass
+                            if f_score > best_score:
+                                best_score = f_score
+                                failed_body["_hard_card_failed"] = True
+                                best_story = failed_body
+                                logger.warning(
+                                    "[DAILY_STORY] degraded fallback candidate "
+                                    "structure=%d (kept instead of FAIL)",
+                                    f_score,
+                                )
+                        except Exception:
+                            pass
                 logger.warning(
                     "[DAILY_STORY] attempt %d/%d validation failed: %s",
                     attempt + 1, max_full, exc,
@@ -971,6 +1006,26 @@ class LLMMgr:
 
         elapsed = time.perf_counter() - started
         if best_story is not None:
+            if c_strict and best_story.get("_hard_card_failed"):
+                logger.warning(
+                    "[DAILY_STORY] C类无合格候选（degraded 已关闭）"
+                    " best_structure=%d elapsed=%.1fs",
+                    best_score,
+                    elapsed,
+                )
+                raise last_exc or ValueError(
+                    "C类日常故事生成失败：无通过 validate 的候选稿",
+                )
+            if c_strict and _dialogue_char_count(best_story) < DAILY_STORY_BODY_CHARS_MIN:
+                logger.warning(
+                    "[DAILY_STORY] C类 skip best candidate "
+                    "chars=%d < %d",
+                    _dialogue_char_count(best_story),
+                    DAILY_STORY_BODY_CHARS_MIN,
+                )
+                raise last_exc or ValueError(
+                    "C类日常故事生成失败：最佳稿未达字数硬卡",
+                )
             logger.warning(
                 "[DAILY_STORY] best structure=%d < %d after %d full attempts "
                 "elapsed=%.1fs",

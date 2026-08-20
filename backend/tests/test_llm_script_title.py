@@ -2328,6 +2328,53 @@ def test_validate_c_body_rejects_release_hand_ritual():
     with pytest.raises(ValueError, match="松手仪式判据"):
         validate_daily_story_json(story, phase="body")
 
+
+def test_validate_c_body_rejects_dispatch_on_whole_item():
+    """整件物（遥控器/抱枕等）误套分派型赛规硬卡。"""
+    story = _valid_story()
+    story["conflict_core"] = "姐弟争遥控器"
+    story["setting"] = "客厅，姐弟抢遥控器"
+    story["dialogue"][8]["line"] = _pad_line("好，我分你挑，谁反悔谁小狗")
+    with pytest.raises(ValueError, match="整件物误用分派型"):
+        validate_daily_story_json(story, phase="body")
+
+
+def test_c_framework_rejects_mom_cut_cake():
+    from app.services.daily_story.story_types.c.opening import append_c_framework_errors
+
+    errors: list[str] = []
+    append_c_framework_errors(
+        {
+            "scene_title": "分蛋糕",
+            "setting": "餐桌，妈妈切好两块蛋糕",
+            "conflict_core": "姐弟争蛋糕大小",
+            "key": "分蛋糕",
+        },
+        type_code="C",
+        errors=errors,
+        theme="分蛋糕大小不均",
+    )
+    assert errors
+    assert "妈妈切好蛋糕" in errors[0]
+
+
+def test_c_framework_accepts_sibling_cut_cake():
+    from app.services.daily_story.story_types.c.opening import append_c_framework_errors
+
+    errors: list[str] = []
+    append_c_framework_errors(
+        {
+            "scene_title": "分蛋糕",
+            "setting": "餐桌，灿灿切好两块蛋糕",
+            "conflict_core": "姐弟争蛋糕大小",
+            "key": "分蛋糕",
+        },
+        type_code="C",
+        errors=errors,
+        theme="分蛋糕大小不均",
+    )
+    assert not errors
+
 def _mom_ruling_check(speakers, lines):
     from app.services.daily_story.story_types.c.validate import _mom_ruling_ignored_error
 
@@ -3247,7 +3294,68 @@ def test_llm_mgr_skips_review_when_hard_card_failed():
     assert "_beats_theme_object" not in out
 
 
-def test_validate_e_rejects_empty_mom_soft_close():
+def test_llm_mgr_c_skips_degraded_fallback(monkeypatch):
+    """C 类 validate FAIL 时不保留 degraded 候选，直接失败。"""
+    from app.services.llm.llm_mgr import LLMMgr
+
+    failed = {
+        "scene_title": "抱枕",
+        "setting": "沙发抢抱枕",
+        "conflict_core": "争抱枕",
+        "punchline_explain": "C类公平执念，回旋镖",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "我先拿到的归我呀"},
+            {"speaker": "灿灿", "line": "你松手才算我拿到呀"},
+        ],
+    }
+    exc = ValueError("daily_story 校验失败: 测试")
+    exc._failed_body = failed  # type: ignore[attr-defined]
+
+    class _Client:
+        def generate_daily_story(self, *args, **kwargs):
+            raise exc
+
+    mgr = LLMMgr()
+    monkeypatch.setattr(mgr, "_get_client", lambda: _Client())
+
+    with pytest.raises(ValueError, match="校验失败"):
+        mgr._generate_daily_story_scored(
+            "沙发上的抱枕大战",
+            story_type="C类公平执念",
+        )
+
+
+def test_llm_mgr_non_c_keeps_degraded_fallback(monkeypatch):
+    """非 C 类仍可保留 degraded 候选（字数够）。"""
+    from app.services.daily_story.prompts import DAILY_STORY_BODY_CHARS_MIN
+    from app.services.llm.llm_mgr import LLMMgr
+
+    line = "x" * 20
+    failed = {
+        "scene_title": "洗手",
+        "setting": "卫生间",
+        "conflict_core": "洗手",
+        "punchline_explain": "B类甩锅",
+        "dialogue": [
+            {"speaker": "昭昭", "line": line},
+            {"speaker": "灿灿", "line": line},
+        ]
+        * 14,
+    }
+    assert sum(len(d["line"]) for d in failed["dialogue"]) >= DAILY_STORY_BODY_CHARS_MIN
+    exc = ValueError("daily_story 校验失败: 测试")
+    exc._failed_body = failed  # type: ignore[attr-defined]
+
+    class _Client:
+        def generate_daily_story(self, *args, **kwargs):
+            raise exc
+
+    mgr = LLMMgr()
+    monkeypatch.setattr(mgr, "_get_client", lambda: _Client())
+
+    out = mgr._generate_daily_story_scored("测试主题", story_type="B类")
+    assert out.get("_hard_card_failed") is True
+
     from app.services.daily_story.story_types.e.validate import append_e_body_errors
 
     story = _e_compact_ok_story()
@@ -4241,6 +4349,364 @@ def test_c_line_rules_cover_cut_finality_boomerang_limit_and_quantifier():
     assert "我那是让着你" in LINE_C.prompt_block
 
 
+def test_c_criterion_theme_profile_whole_item():
+    from app.services.daily_story.story_types.c.validate import (
+        c_criterion_rule_reject_reason,
+        c_criterion_theme_profile,
+    )
+
+    assert c_criterion_theme_profile("沙发上的抱枕大战") == "whole_item"
+    assert c_criterion_theme_profile("分蛋糕大小不均") == "cut_food"
+    assert c_criterion_rule_reject_reason(
+        "whole_item",
+        "好，我分你挑，谁反悔谁小狗",
+    ) == "whole_item_dispatch"
+    assert c_criterion_rule_reject_reason(
+        "whole_item",
+        "谁先拿到抱枕归谁",
+    ) is None
+    assert c_criterion_rule_reject_reason(
+        "whole_item",
+        "谁先单脚站满十秒归谁",
+    ) == "whole_item_ritual"
+    assert c_criterion_rule_reject_reason(
+        "cut_food",
+        "谁先单脚站满十秒归谁",
+    ) == "cut_food_ritual"
+
+
+def test_c_whole_item_ritual_in_line():
+    from app.services.daily_story.story_types.c.validate import (
+        c_whole_item_ritual_in_line,
+    )
+
+    assert c_whole_item_ritual_in_line("谁先单脚站满十秒归谁")
+    assert c_whole_item_ritual_in_line("好，我数到三，谁先抢到归谁")
+    assert not c_whole_item_ritual_in_line("谁先抢到抱枕归谁")
+
+
+def test_resolve_daily_story_retry_length_mode_whole_item_expand():
+    from app.services.daily_story.prompts import (
+        build_daily_story_retry_user,
+        resolve_daily_story_retry_length_mode,
+    )
+
+    prev = _valid_story(n=10)
+    prev["_theme"] = "沙发上的抱枕大战"
+    prev["conflict_core"] = "姐弟争同一个蓝抱枕"
+    prev["setting"] = "客厅沙发抢抱枕"
+    prev["dialogue"][-1]["line"] = prev["dialogue"][-1]["line"][:-1]
+    assert (
+        resolve_daily_story_retry_length_mode(
+            prev,
+            errors="正文总字数须≥240，当前239（还差1字）",
+            story_type="C",
+        )
+        == "revise_expand"
+    )
+    user = build_daily_story_retry_user(
+        "沙发上的抱枕大战",
+        prev_story=prev,
+        errors="正文总字数须≥240，当前239（还差1字）",
+        story_type="C",
+    )
+    assert "C·整件物·扩写重写" in user or "C·整件物·完全重写" in user
+    assert "【上一稿】" not in user
+    assert "dialogue" not in user or '"dialogue"' not in user.split("禁止附带")[0][-200:]
+
+
+def test_build_c_whole_item_short_retry_rewrite_tier2():
+    from app.services.daily_story.prompts import build_daily_story_retry_user
+
+    prev = _valid_story(n=10)
+    prev["_theme"] = "沙发上的抱枕大战"
+    prev["conflict_core"] = "姐弟争同一个蓝抱枕"
+    prev["setting"] = "客厅沙发抢抱枕"
+    user = build_daily_story_retry_user(
+        "沙发上的抱枕大战",
+        prev_story=prev,
+        errors="正文总字数须≥240，当前180（还差60字）",
+        story_type="C",
+        c_wi_rewrite_tier=2,
+    )
+    assert "完全重写" in user
+    assert "【上一稿】" not in user
+
+
+def test_patch_c_whole_item_semantic_expand_near_miss():
+    from app.services.daily_story.prompts import (
+        c_whole_item_char_deficit_to_validate,
+        dialogue_total_chars,
+    )
+    from app.services.daily_story.story_types.c.patch import (
+        patch_c_whole_item_semantic_expand,
+    )
+
+    story = _valid_story(n=17)
+    story["_theme"] = "沙发上的抱枕大战"
+    story["conflict_core"] = "姐弟争同一个蓝抱枕"
+    story["setting"] = "客厅沙发抢抱枕"
+    story["punchline_explain"] = "C类公平执念"
+    filler = "我攥住抱枕一角，谁也不让。"
+    for item in story["dialogue"]:
+        item["line"] = filler
+    story["dialogue"][10] = {
+        "speaker": "灿灿",
+        "line": "那现在到底按哪条？你一条接一条说的。",
+    }
+    while dialogue_total_chars(story) > 235:
+        for item in story["dialogue"]:
+            if len(item["line"]) > 8:
+                item["line"] = item["line"][:-1]
+                break
+    before = dialogue_total_chars(story)
+    assert c_whole_item_char_deficit_to_validate(story) <= 15
+    assert len(story["dialogue"]) >= 17
+    notes = patch_c_whole_item_semantic_expand(story)
+    assert notes
+    assert dialogue_total_chars(story) > before
+
+
+def test_body_line_budget_whole_item_theme():
+    from app.services.daily_story.prompts import _body_line_budget
+
+    lo, hi, _ = _body_line_budget(
+        "C",
+        theme="沙发上的抱枕大战",
+    )
+    assert lo == 19
+    assert hi == 22
+
+
+def test_build_daily_story_prompts_whole_item_injects_beats():
+    from app.services.daily_story.prompts import build_daily_story_prompts
+
+    system, user = build_daily_story_prompts(
+        "沙发上的抱枕大战",
+        story_type="C类公平执念",
+        length_mode="draft",
+        framework={
+            "conflict_core": "姐弟争同一个蓝抱枕",
+            "setting": "客厅沙发抢抱枕",
+        },
+    )
+    assert "beats 状态机" in user
+    assert "300–340" in system or "300-340" in system.replace("-", "–")
+    assert "19–22" in system or "18–22" in system or "18-22" in system.replace("-", "–")
+
+
+def test_c_whole_item_body_too_short():
+    from app.services.daily_story.prompts import c_whole_item_body_too_short
+
+    story = {
+        "conflict_core": "姐弟争同一个蓝抱枕",
+        "dialogue": [{"speaker": "昭昭", "line": "短"}] * 10,
+    }
+    err = c_whole_item_body_too_short(
+        story,
+        theme="沙发上的抱枕大战",
+        framework={"setting": "客厅沙发抢抱枕"},
+    )
+    assert err
+    assert "总字数须≥" in err
+    assert "C整件物句数须≥" in err
+
+
+def test_is_short_body_only_error():
+    from app.services.daily_story.prompts import is_short_body_only_error
+
+    assert is_short_body_only_error("正文总字数须≥240，当前209（还差31字）")
+    assert not is_short_body_only_error(
+        "正文总字数须≥240，当前209（还差31字）; C类判据漂移[6]"
+    )
+
+
+def test_patch_body_char_budget_skips_c_whole_item_large_gap():
+    """整件物：句数不足或大缺口仍 skip 本地补字。"""
+    from app.services.daily_story.prompts import (
+        _patch_body_char_budget,
+        dialogue_total_chars,
+    )
+
+    story = _valid_story(n=10)
+    story["_theme"] = "沙发上的抱枕大战"
+    story["conflict_core"] = "姐弟争同一个蓝抱枕"
+    story["setting"] = "客厅沙发抢抱枕"
+    story["dialogue"][2]["line"] = "短句测试"
+    assert dialogue_total_chars(story) < 240
+    before = [str(x.get("line") or "") for x in story["dialogue"]]
+    notes = _patch_body_char_budget(story)
+    assert notes == []
+    after = [str(x.get("line") or "") for x in story["dialogue"]]
+    assert after == before
+
+
+def test_patch_body_char_budget_pads_c_whole_item_small_gap():
+    """整件物：句数≥17 且差≤15 字时允许本地补字（专家 P1）。"""
+    from app.services.daily_story.prompts import (
+        DAILY_STORY_BODY_CHARS_MIN,
+        _patch_body_char_budget,
+        dialogue_total_chars,
+    )
+
+    story = _valid_story(n=17)
+    story["_theme"] = "沙发上的抱枕大战"
+    story["conflict_core"] = "姐弟争同一个蓝抱枕"
+    story["setting"] = "客厅沙发抢抱枕"
+    total = dialogue_total_chars(story)
+    assert total > DAILY_STORY_BODY_CHARS_MIN
+    # 削到差 10 字（仍 ≥17 句）
+    trim = total - (DAILY_STORY_BODY_CHARS_MIN - 10)
+    for item in story["dialogue"][2:-4]:
+        if trim <= 0:
+            break
+        line = str(item.get("line") or "")
+        cut = min(trim, max(1, len(line) - 8))
+        item["line"] = line[:-cut]
+        trim -= cut
+    deficit = DAILY_STORY_BODY_CHARS_MIN - dialogue_total_chars(story)
+    assert 0 < deficit <= 15
+    notes = _patch_body_char_budget(story)
+    assert notes
+    assert dialogue_total_chars(story) >= DAILY_STORY_BODY_CHARS_MIN
+
+
+def test_patch_c_whole_item_contact_sanitize():
+    from app.services.daily_story.story_types.c.patch import patch_c_whole_item_contact
+
+    story = _valid_story()
+    story["conflict_core"] = "姐弟争遥控器"
+    story["setting"] = "客厅抢遥控器"
+    story["dialogue"][1]["line"] = _pad_line("我手都碰到了，该我拿")
+    notes = patch_c_whole_item_contact(story)
+    assert notes
+    assert "碰到" not in story["dialogue"][1]["line"]
+    assert "抢到" in story["dialogue"][1]["line"]
+
+
+def test_patch_c_whole_item_contact_replaces_gou_and_bian():
+    from app.services.daily_story.story_types.c.patch import patch_c_whole_item_contact
+
+    story = _valid_story()
+    story["conflict_core"] = "姐弟争同一个蓝抱枕"
+    story["setting"] = "客厅沙发抢抱枕"
+    story["dialogue"][5]["line"] = _pad_line("我整个抱怀里了，你还没够着边呢")
+    notes = patch_c_whole_item_contact(story)
+    assert notes
+    line = story["dialogue"][5]["line"]
+    assert "够着" not in line
+    assert "边" not in line or "抢到" in line
+
+
+def test_patch_c_whole_item_tone_tail():
+    from app.services.daily_story.story_types.c.patch import patch_c_whole_item_tone_tail
+
+    story = _valid_story()
+    story["conflict_core"] = "姐弟争同一个蓝抱枕"
+    story["setting"] = "客厅沙发抢抱枕"
+    story["dialogue"][3]["line"] = "你手还悬着了呢呀！"
+    notes = patch_c_whole_item_tone_tail(story)
+    assert notes
+    assert story["dialogue"][3]["line"].endswith("呢！") or story["dialogue"][3]["line"].endswith("呢")
+    assert "呢呀" not in story["dialogue"][3]["line"]
+
+
+def test_validate_c_body_allows_reach_without_criterion():
+    """冲突动作「伸手了」不带裁定词 → 放行（Run2 第6句误触修复）。"""
+    story = _valid_story()
+    story["dialogue"][6] = {
+        "speaker": story["dialogue"][6]["speaker"],
+        "line": _pad_line("你耍赖，你数到二就伸手了啊"),
+    }
+    validate_daily_story_json(story, phase="body")
+
+
+def test_validate_c_body_rejects_implicit_release_state():
+    """「还没松手」作判据 → 状态系漂移。"""
+    story = _valid_story()
+    story["conflict_core"] = "姐弟争同一个蓝抱枕"
+    story["setting"] = "客厅沙发抢抱枕"
+    story["dialogue"][6] = {
+        "speaker": story["dialogue"][6]["speaker"],
+        "line": _pad_line("可你抢的时候我还没松手了呢"),
+    }
+    with pytest.raises(ValueError, match="状态系判据"):
+        validate_daily_story_json(story, phase="body")
+
+
+def test_patch_c_whole_item_near_miss_repairs_release_and_count():
+    from app.services.daily_story.story_types.c.patch import patch_c_whole_item_near_miss
+
+    story = _valid_story()
+    story["conflict_core"] = "姐弟争同一个蓝抱枕"
+    story["setting"] = "客厅沙发抢抱枕"
+    story["dialogue"][4] = {
+        "speaker": story["dialogue"][4]["speaker"],
+        "line": _pad_line("好，我数三下，谁先抢到归谁了吧"),
+    }
+    story["dialogue"][6] = {
+        "speaker": story["dialogue"][6]["speaker"],
+        "line": _pad_line("可你抢的时候我还没松手了呢"),
+    }
+    notes = patch_c_whole_item_near_miss(story)
+    assert notes
+    assert "数三下" not in story["dialogue"][4]["line"]
+    assert "松手" not in story["dialogue"][6]["line"]
+    assert "攥" in story["dialogue"][6]["line"]
+    validate_daily_story_json(story, phase="body")
+
+
+def test_c_framework_rejects_multi_pillow_setting():
+    from app.services.daily_story.story_types.c.opening import append_c_framework_errors
+
+    errors: list[str] = []
+    append_c_framework_errors(
+        {
+            "scene_title": "抱枕大战",
+            "setting": "客厅沙发，两个抱枕并排，姐弟各抓一个",
+            "conflict_core": "姐弟争同一个蓝抱枕",
+            "key": "争抱枕",
+        },
+        type_code="C",
+        errors=errors,
+        theme="沙发上的抱枕大战",
+    )
+    assert errors
+    assert "同物同数" in errors[0]
+
+
+def test_format_c_criterion_block_whole_item_append():
+    from app.services.llm.llm_deepseek import (
+        _format_c_criterion_block_full,
+        _format_c_criterion_body_block,
+        _format_c_criterion_opening_block,
+    )
+
+    pkg = {
+        "zhaozhao_rule": "谁先拿到归谁",
+        "cancan_rule": "我先攥在手里归我",
+        "boomerang_quote": "谁先拿到归谁",
+        "boomerang_source": "zhaozhao_rule",
+        "trap": "立规人反悔硬抢",
+        "break_script": "按占有规则执行",
+        "profile": "whole_item",
+    }
+    full = _format_c_criterion_block_full(pkg)
+    assert "占有专锁" in full
+    assert "禁止另立新赛规" in full
+    assert "昭昭（弟弟）" in full
+
+    opening = _format_c_criterion_opening_block(pkg)
+    assert "开场判据锚" in opening
+    assert "占有专锁" not in opening or "开场判据锚" in opening
+    assert "break_script" not in opening
+
+    body = _format_c_criterion_body_block(pkg)
+    assert "判据链要点" in body
+    assert "勿照抄须扩写" in body
+    assert "占有专锁" not in body
+
+
 def test_c_criterion_inject_action_dispatch_skips_ritual_script():
     """C 判据链注入：动作分派型破段不得再硬套单脚站仪式。"""
     from app.services.llm.llm_deepseek import (
@@ -4331,6 +4797,216 @@ def test_c_facts_flags_even_claim_and_leave_claim_contradiction():
     story["dialogue"][10]["line"] = _pad_line("那块是我特意留给自己吃的！")
     issues = collect_fact_issues(story)
     assert any("自信与留块矛盾" in i for i in issues), issues
+
+
+def test_c_whole_item_prompt_skips_yogurt_demo():
+    """整件物题 system 走精简专属块，不含酸奶/单脚站大段。"""
+    from app.services.daily_story.story_types.c.line import c_prompt_block_for_theme
+
+    yogurt = c_prompt_block_for_theme("争最后一瓶酸奶")
+    whole = c_prompt_block_for_theme("沙发上的抱枕大战")
+    assert "【消耗品合规示范" in yogurt
+    assert "单脚站满十秒" in yogurt
+    assert "【消耗品合规示范" not in whole
+    assert "整件物专属线路" in whole
+    assert "【整件物结构正例" in whole
+    assert "哪条作数" in whole
+    assert "抢到、攥住、抱住" in whole or "抢到" in whole
+    assert "灿灿：我先拿到的！遥控器归我" not in whole
+    assert len(whole.splitlines()) < 120
+
+
+def test_c_humor_caps_rule_mechanism_checklist_like_20f():
+    """GPT：4层改定义清单应触发机制复读；20f _fixture 总分落到 80 出头。"""
+    import json
+    from pathlib import Path
+
+    import pytest
+
+    from app.services.daily_story.quality import attach_daily_story_quality
+    from app.services.daily_story.story_types.c.humor import collect_humor_issues
+
+    fixture = (
+        Path(__file__).resolve().parents[2] / "tmp" / "daily_c_pillow_20f.json"
+    )
+    if not fixture.is_file():
+        pytest.skip("tmp/daily_c_pillow_20f.json 不存在")
+
+    payload = json.loads(fixture.read_text(encoding="utf-8"))
+    story = payload[0]["story"]
+    lines = [str(d.get("line") or "") for d in story.get("dialogue") or []]
+    speakers = [str(d.get("speaker") or "") for d in story.get("dialogue") or []]
+    issues = collect_humor_issues(lines, speakers)
+    assert any("C规则机制复读" in i for i in issues), issues
+
+    attach_daily_story_quality(story, theme="沙发上的抱枕大战")
+    q = story["quality"]
+    assert q.get("humor_regex_points", 99) <= 7, q
+    assert 78 <= q.get("score", 0) <= 84, q
+
+
+def test_c_humor_rewards_power_flip_haiyouma():
+    """「还有吗」式权力翻转应比纯规则清单高分。"""
+    from app.services.daily_story.quality import score_daily_story
+
+    checklist = {
+        "dialogue": [
+            {"speaker": "昭昭", "line": "借我抱！"},
+            {"speaker": "灿灿", "line": "不行！"},
+            {"speaker": "昭昭", "line": "谁先拿到归谁！"},
+            {"speaker": "灿灿", "line": "我抱紧了！"},
+            {"speaker": "昭昭", "line": "靠着不算得抱怀里才算！"},
+            {"speaker": "灿灿", "line": "行抱怀里啦！"},
+            {"speaker": "昭昭", "line": "得抱离沙发才算！"},
+            {"speaker": "灿灿", "line": "抱起来啦！"},
+            {"speaker": "昭昭", "line": "双脚离地才算！"},
+            {"speaker": "灿灿", "line": "单脚蹦算不算！"},
+            {"speaker": "灿灿", "line": "你刚说谁先拿到我先抱到的！"},
+            {"speaker": "昭昭", "line": "哼你赢规则不算赢我！"},
+        ],
+        "_story_type": "C类公平执念",
+    }
+    power_flip = {
+        "dialogue": [
+            {"speaker": "昭昭", "line": "借我抱！"},
+            {"speaker": "灿灿", "line": "不行！"},
+            {"speaker": "昭昭", "line": "谁先拿到归谁！"},
+            {"speaker": "灿灿", "line": "我抱紧了！"},
+            {"speaker": "昭昭", "line": "靠着不算得抱怀里才算！"},
+            {"speaker": "灿灿", "line": "行，抱怀里啦！"},
+            {"speaker": "昭昭", "line": "得连续抱满三秒才算！"},
+            {"speaker": "灿灿", "line": "一、二、三，还有吗？"},
+            {"speaker": "昭昭", "line": "不算你在耍赖！"},
+            {"speaker": "灿灿", "line": "那到底按哪条？"},
+            {"speaker": "昭昭", "line": "按最开始谁先拿到！"},
+            {"speaker": "灿灿", "line": "你刚说谁先拿到我先抱到的！"},
+            {"speaker": "昭昭", "line": "哼你赢规则不算赢我！"},
+        ],
+        "_story_type": "C类公平执念",
+    }
+    q_list = score_daily_story(checklist)
+    q_flip = score_daily_story(power_flip)
+    assert q_flip.get("score", 0) > q_list.get("score", 0), (q_list, q_flip)
+
+
+def test_c_humor_flags_physical_repeat_without_rule_escalation():
+    """C 观感：中段堆抢/掉/捡无新赛规 → 肢体抢物复读。"""
+    from app.services.daily_story.story_types.c.humor import collect_humor_issues
+
+    lines = [
+        "借我抱一会儿",
+        "不行你手拿开",
+        "谁先拿到归谁",
+        "我抱得紧紧的",
+        "昭昭一把拽，抱枕掉地上",
+        "灿灿赶紧捡起抱怀里",
+        "昭昭又抢，抱枕卡沙发缝里",
+        "灿灿抠出来又抱紧",
+        "你刚说谁先拿到归谁",
+        "哼明天我抢先",
+    ]
+    speakers = ["昭昭"] * len(lines)
+    speakers[1] = speakers[3] = speakers[5] = speakers[7] = "灿灿"
+    issues = collect_humor_issues(lines, speakers)
+    assert any("肢体抢物复读" in i for i in issues), issues
+
+
+def test_c_humor_flags_opponent_void_rule():
+    """C 观感：非立规人作废赛规 → 对方擅自改规。"""
+    from app.services.daily_story.story_types.c.humor import collect_humor_issues
+
+    lines = [
+        "借我抱",
+        "不行",
+        "谁先拿到归谁",
+        "我抱紧了",
+        "你乱拽，这局作废",
+        "你刚说谁先拿到",
+        "哼明天我抢先",
+    ]
+    speakers = ["昭昭", "灿灿", "昭昭", "灿灿", "灿灿", "灿灿", "昭昭"]
+    issues = collect_humor_issues(lines, speakers)
+    assert any("对方擅自改规" in i for i in issues), issues
+
+
+def test_c_humor_rule_round_escalation_scores_higher_than_physical_loop():
+    """C 规则三轮升级稿好笑分应高于肢体循环稿。"""
+    from app.services.daily_story.quality import score_daily_story
+
+    physical = {
+        "dialogue": [
+            {"speaker": "昭昭", "line": "借我抱一会儿嘛！"},
+            {"speaker": "灿灿", "line": "不行你手拿开！"},
+            {"speaker": "昭昭", "line": "谁先拿到归谁！"},
+            {"speaker": "灿灿", "line": "我抱得紧紧的！"},
+            {"speaker": "昭昭", "line": "昭昭一把拽抱枕掉地上！"},
+            {"speaker": "灿灿", "line": "灿灿赶紧捡起抱怀里！"},
+            {"speaker": "昭昭", "line": "昭昭又抢抱枕卡缝里！"},
+            {"speaker": "灿灿", "line": "灿灿抠出来又抱紧！"},
+            {"speaker": "昭昭", "line": "不算你耍赖！"},
+            {"speaker": "灿灿", "line": "你刚说谁先拿到归谁！"},
+            {"speaker": "昭昭", "line": "哼明天我抢先！"},
+        ],
+        "_story_type": "C类公平执念",
+    }
+    rule_round = {
+        "dialogue": [
+            {"speaker": "昭昭", "line": "借我抱一会儿嘛！"},
+            {"speaker": "灿灿", "line": "不行你手拿开！"},
+            {"speaker": "昭昭", "line": "谁先拿到归谁！"},
+            {"speaker": "灿灿", "line": "我早抱得紧紧的！"},
+            {"speaker": "昭昭", "line": "靠着不算得整个抱在怀里才算！"},
+            {"speaker": "灿灿", "line": "行我整个抱怀里啦算不算？"},
+            {"speaker": "昭昭", "line": "那得抱离了沙发才算数！"},
+            {"speaker": "灿灿", "line": "我抱起来啦你也没说不准落地！"},
+            {"speaker": "昭昭", "line": "双脚都得离地才算真正拿到！"},
+            {"speaker": "灿灿", "line": "那我单脚蹦一下还算不算？"},
+            {"speaker": "昭昭", "line": "不算你在钻空子耍赖！"},
+            {"speaker": "灿灿", "line": "哪条规定钻空子你一条接一条说的。"},
+            {"speaker": "昭昭", "line": "追加一条怎么了我说了算！"},
+            {"speaker": "灿灿", "line": "那现在到底按哪条？"},
+            {"speaker": "昭昭", "line": "按最开始那条谁先拿到！"},
+            {"speaker": "灿灿", "line": "你刚说谁先拿到归谁我先抱到的！"},
+            {"speaker": "昭昭", "line": "哼我那是让着你明天我抢先！"},
+        ],
+        "_story_type": "C类公平执念",
+    }
+    q_phys = score_daily_story(physical)
+    q_rule = score_daily_story(rule_round)
+    assert any("肢体抢物复读" in r for r in q_phys.get("reasons", [])), q_phys
+    assert q_rule.get("humor_regex_points", 0) > q_phys.get("humor_regex_points", 0)
+
+
+def test_c_humor_tail_dedupes_when_rule_round_escalation():
+    """规则清单稿 scene/tail 不叠满分。"""
+    from app.services.daily_story.story_types.c.humor import (
+        _rule_round_escalation_score,
+        score_funniness_tail,
+    )
+
+    lines = [
+        "借我抱",
+        "不行",
+        "谁先拿到归谁",
+        "我抱紧了",
+        "靠着不算得整个抱才算",
+        "行我整个抱怀里啦算不算",
+        "那得抱离沙发才算数",
+        "我抱起来啦你也没说不准落地",
+        "双脚都得离地才算真正拿到",
+        "那我单脚蹦一下还算不算",
+        "不算你在耍赖",
+        "哪条你一条接一条说的",
+        "我又加一条我说了算",
+        "那现在到底按哪条",
+        "按最开始那条谁先拿到",
+        "你刚说谁先拿到归谁我先抱到的",
+        "哼我那是让着你明天我抢先",
+    ]
+    rr_pts, _ = _rule_round_escalation_score(lines)
+    tail_pts, _ = score_funniness_tail(lines)
+    assert rr_pts <= 3, rr_pts
+    assert tail_pts <= 6, tail_pts
 
 
 def test_c_humor_flags_repeated_boomerang():

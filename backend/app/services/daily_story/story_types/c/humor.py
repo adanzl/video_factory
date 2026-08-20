@@ -5,13 +5,6 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 
-from app.services.daily_story.story_types.quality import (
-    RE_BOOMERANG_RULE,
-    RE_REVELATION_PROP,
-    RE_TWIST_SEGUE,
-    c_closing_echo_error,
-)
-
 RE_LITERAL_RULE_PLAY = re.compile(
     # 赛规引用（结构判定，禁主题词表——主题词只认旧主题，新主题全漏）
     r"(?:你刚说|你说的|你定的|你自己说).{0,20}(?:先|后|谁|归|应该|就得|才算|负责|收拾|"
@@ -103,6 +96,34 @@ _RE_PSEUDO_IMITATE = re.compile(
     r"我也|我都|我站了|我做到了|我举了|我放好了|你数啊|我也站满",
 )
 _RE_PSEUDO_CONCEDE = re.compile(r"算你|行吧|算了|哼|明天我")
+# 中段肢体抢物链（抢/掉/捡/怀里/卡缝）——无新赛规判据时 comedy 信息不升级
+_RE_PHYSICAL_POSSESSION = re.compile(
+    r"掉地|捡起|抠出|拽|夺|怀里|抱得|卡.{0,4}缝|再抢|啪嗒|抢到|抱紧|搂住|"
+    r"松手|砸|掉下|夺下|抢过来",
+)
+# 规则轮次升级：新判据追加 + 对方照字面追问（C 整件物优先好笑模式）
+_RE_RULE_ESCALATION = re.compile(
+    r"才算|不算|得.{0,8}才算|追加|又说|离地|着地|单脚|整个抱|立着不算|"
+    r"按哪条|哪条|一条接一条|你也没说|到底按|钻空子",
+)
+_RE_ESTABLISH_RULE = re.compile(
+    r"归谁|谁先|我定|规则|才公平|算算",
+)
+_RE_OPPONENT_VOID = re.compile(
+    r"作废|这局不算|不算数了|重新来一局|你乱拽",
+)
+# 立规人连续「改定义式加赛」（同一喜剧机制：不断重写「拿到」标准）
+_RE_RULE_DEFINITION_APPEND = re.compile(
+    r"靠着不算|得.{0,8}才算|才算数|才算真正|我又加|追加一条|都得.{0,6}才算",
+)
+# 权力翻转：灿灿从被动执行转为主动等昭昭作死（还有吗/按哪条）
+_RE_POWER_FLIP = re.compile(
+    r"还有吗|按哪条|到底按|你一条接一条",
+)
+# 主题嘴硬收尾（比「明天我抢先」更贴 C 公平执念）
+_RE_THEME_STUBBORN_END = re.compile(
+    r"赢规则|不算赢我|规则执行力|测你",
+)
 
 HUMOR_ISSUE_CAPS: tuple[tuple[str, int], ...] = (
     ("归属口水战", 5),
@@ -126,6 +147,14 @@ HUMOR_ISSUE_CAPS: tuple[tuple[str, int], ...] = (
     ("伪回旋镖", 6),
     # 2026-08-12 用户定：回旋镖重复（同一承诺/同一句引 ≥3 次）→ 好笑封顶 4
     ("回旋镖重复", 4),
+    # 2026-08-21 抱枕 #20：中段堆抢/掉/捡无新赛规 → 结构满配也虚高
+    ("肢体抢物复读", 8),
+    # 2026-08-21 抱枕 #20：非立规人作废/改规（灿灿规则机器只追问按哪条）
+    ("对方擅自改规", 7),
+    # 2026-08-21 GPT：同一「改定义」机制连打 ≥4 次=规则清单，非笑点递进
+    ("C规则机制复读", 6),
+    # 2026-08-21 GPT：≥3 次改定义且无「还有吗」式权力翻转
+    ("C规则缺权力翻转", 7),
 )
 
 
@@ -216,6 +245,145 @@ def _opening_reason_repeat_issue(
 _RE_REASON_STRIP = re.compile(r"[的话呢呀嘛吧啊哦嗯…\s「」『』“”\"'‘’：:，,、。！？是]")
 
 
+def _first_rule_maker_speaker(
+    lines: list[str],
+    speakers: list[str],
+) -> str | None:
+    """正文里首次立赛规的 speaker（用于判对方是否擅自改规）。"""
+    for i, ln in enumerate(lines[2:], start=2):
+        if _RE_ESTABLISH_RULE.search(ln) and i < len(speakers):
+            return speakers[i]
+    return None
+
+
+def _mid_body_range(lines: list[str]) -> tuple[int, int]:
+    """正文中间段（排除开场重复与末四拍/末句）。"""
+    n = len(lines)
+    if n >= 8:
+        return 2, n - 4
+    if n >= 6:
+        return 2, n - 2
+    return 2, n
+
+
+def _physical_repeat_issue(lines: list[str]) -> str | None:
+    """中段肢体抢物复读：多轮占有动作无规则层升级。"""
+    start, end = _mid_body_range(lines)
+    body = lines[start:end]
+    if len(body) < 3:
+        return None
+    physical = sum(1 for ln in body if _RE_PHYSICAL_POSSESSION.search(ln))
+    rule_esc = sum(1 for ln in body if _RE_RULE_ESCALATION.search(ln))
+    if physical >= 3 and rule_esc < 2:
+        return (
+            "C中段肢体抢物复读：多轮抢/掉/捡/怀里没有新赛规判据——"
+            "改规则轮次升级（占有→状态→姿势），每轮一句新判据+一句照字面执行"
+        )
+    return None
+
+
+def _opponent_void_rule_issue(
+    lines: list[str],
+    speakers: list[str],
+) -> str | None:
+    """非立规人作废/改规：灿灿只追问按哪条，不许说作废。"""
+    maker = _first_rule_maker_speaker(lines, speakers)
+    if not maker:
+        return None
+    start, end = _mid_body_range(lines)
+    for i, ln in enumerate(lines[start:end], start=start):
+        sp = speakers[i] if i < len(speakers) else None
+        if sp and sp != maker and _RE_OPPONENT_VOID.search(ln):
+            shown = ln[:18]
+            return (
+                f"C中段·对方擅自改规：{sp}说「{shown}…」——"
+                "只许立规人追加赛规，对方只追问按哪条/照字面执行"
+            )
+    return None
+
+
+def _count_rule_definition_appends(body: list[str]) -> int:
+    return sum(1 for ln in body if _RE_RULE_DEFINITION_APPEND.search(ln))
+
+
+def _rule_mechanism_repeat_issue(lines: list[str]) -> str | None:
+    """规则清单化：改定义式加赛连打，喜剧机制不升级。"""
+    start, end = _mid_body_range(lines)
+    body = lines[start:end]
+    appends = _count_rule_definition_appends(body)
+    if appends >= 4:
+        return (
+            "C规则机制复读：立规人连续改「拿到」定义≥4次（规则清单）——"
+            "压缩为3层：正常→钻定义→荒谬一条；禁离沙发/双脚/单脚层层叠加"
+        )
+    if appends >= 3 and not any("还有吗" in ln for ln in body):
+        return (
+            "C规则缺权力翻转：改定义≥3次但灿灿未「还有吗」反客为主——"
+            "中间加一句淡定「还有吗/行/好」等昭昭继续作死"
+        )
+    return None
+
+
+def _power_flip_bonus(body: list[str]) -> tuple[int, list[str]]:
+    pts = 0
+    pros: list[str] = []
+    if any("还有吗" in ln for ln in body):
+        pts += 3
+        pros.append("权力翻转")
+    elif sum(1 for ln in body if _RE_POWER_FLIP.search(ln)) >= 1:
+        pts += 1
+        pros.append("规则追问")
+    return pts, pros
+
+
+def _rule_round_escalation_issue(lines: list[str]) -> str | None:
+    """三轮升级不足或缺递进：结构向降分提示。"""
+    start, end = _mid_body_range(lines)
+    body = lines[start:end]
+    appends = _count_rule_definition_appends(body)
+    if appends < 2:
+        return (
+            "C规则轮次升级不足：缺少占有→状态→姿势三轮动作递进（-4）——"
+            "每轮一句新判据+一句照字面执行，第三轮须姿势控制"
+        )
+    if appends == 2:
+        return (
+            "C规则轮次升级偏少：仅 2 层升级，缺第三轮姿势控制（-2）"
+        )
+    return None
+
+
+def _rule_round_escalation_score(lines: list[str]) -> tuple[int, list[str]]:
+    """规则轮次升级：结构向加分；清单化时降档。"""
+    start, end = _mid_body_range(lines)
+    body = lines[start:end]
+    if len(body) < 4:
+        return 0, []
+    appends = _count_rule_definition_appends(body)
+    flip_pts, flip_pros = _power_flip_bonus(body)
+    follow_n = sum(
+        1
+        for ln in body
+        if re.search(
+            r"算不算|哪条|照|你也没说|一条接一条|到底按|钻空子",
+            ln,
+        )
+    )
+    if appends >= 4:
+        pts = 2 + min(flip_pts, 1)
+        pros = ["规则清单化"]
+        if flip_pros:
+            pros.extend(flip_pros[:1])
+        return pts, pros
+    if appends == 3 and follow_n >= 1:
+        return 4 + min(flip_pts, 2), ["规则轮次升级", *flip_pros[:1]]
+    if appends >= 2 and follow_n >= 1:
+        return 5 + min(flip_pts, 2), ["规则轮次升级", *flip_pros[:1]]
+    if appends >= 2:
+        return 3, ["规则轮次升级"]
+    return 0, []
+
+
 def _closing_stubborn_echo_issue(lines: list[str]) -> str | None:
     """末句嘴硬话发明本场赛规没有的比较维度（用户 2026-08-09 v25/v27 抓）。
 
@@ -227,6 +395,8 @@ def _closing_stubborn_echo_issue(lines: list[str]) -> str | None:
     与 validate 硬卡共用一个判定函数（quality.c_closing_echo_error），
     避免观感层与硬卡逻辑漂移；此处命中即观感降分，validate 命中即整稿重抽。
     """
+    from app.services.daily_story.story_types.quality import c_closing_echo_error
+
     return c_closing_echo_error(lines)
 
 
@@ -234,9 +404,25 @@ def collect_humor_issues(
     lines: list[str],
     speakers: list[str] | None,
 ) -> list[str]:
-    _ = speakers
+    from app.services.daily_story.story_types.quality import (
+        RE_BOOMERANG_RULE,
+        RE_REVELATION_PROP,
+    )
+
     cons: list[str] = []
     sp_arr = list(speakers) if speakers else []
+    physical_issue = _physical_repeat_issue(lines)
+    if physical_issue:
+        cons.append(physical_issue)
+    void_issue = _opponent_void_rule_issue(lines, sp_arr)
+    if void_issue:
+        cons.append(void_issue)
+    mechanism_issue = _rule_mechanism_repeat_issue(lines)
+    if mechanism_issue:
+        cons.append(mechanism_issue)
+    round_issue = _rule_round_escalation_issue(lines)
+    if round_issue:
+        cons.append(round_issue)
     reason_issue = _opening_reason_repeat_issue(lines, sp_arr)
     if reason_issue:
         cons.append(reason_issue)
@@ -395,6 +581,15 @@ def score_scene_beat(
     full_text = "".join(lines)
     late6 = "".join(lines[-6:]) if len(lines) >= 6 else full_text
 
+    rr_pts, rr_pros = _rule_round_escalation_score(lines)
+    if rr_pts >= 4:
+        return rr_pts, rr_pros
+
+    start, end = _mid_body_range(lines)
+    flip_pts, flip_pros = _power_flip_bonus(lines[start:end])
+    if flip_pts >= 3:
+        return flip_pts, flip_pros
+
     # 字面加赛（赛规引用/竞争升级/反悔指责/赛规自噬）——C 类核心好笑模式
     if RE_LITERAL_RULE_PLAY.search(mid_text):
         return 5, ["字面加赛场面"]
@@ -410,20 +605,35 @@ def score_funniness_tail(
     lines: list[str],
     speakers: list[str] | None = None,
 ) -> tuple[int, list[str]]:
+    from app.services.daily_story.story_types.quality import (
+        RE_BOOMERANG_RULE,
+        RE_TWIST_SEGUE,
+    )
+
+    _ = speakers
     tail4 = lines[-4:] if len(lines) >= 4 else lines
     late4_text = "".join(tail4)
     late6 = "".join(lines[-6:]) if len(lines) >= 6 else late4_text
+    rr_pts, _ = _rule_round_escalation_score(lines)
+    rule_round_mode = rr_pts >= 4
+    theme_end = bool(lines) and _RE_THEME_STUBBORN_END.search(lines[-1])
     points = 0
     pros: list[str] = []
     if RE_BOOMERANG_RULE.search(late4_text):
         points += 3
         pros.append("回旋镖收束")
         if RE_TWIST_SEGUE.search(late6):
-            points += 3
+            twist_pts = 2 if rule_round_mode else 3
+            points += twist_pts
             pros.append("字面回旋好笑")
         if RE_LITERAL_RULE_PLAY.search(late6):
-            points += 3
-            pros.append("字面加赛好笑")
+            literal_pts = 1 if rule_round_mode else 3
+            if literal_pts:
+                points += literal_pts
+                pros.append("字面加赛好笑")
+    if theme_end and points >= 3:
+        points += 1
+        pros.append("主题嘴硬收尾")
     return points, pros
 
 
@@ -435,6 +645,25 @@ def humor_revision_hint(issue: str) -> str | None:
             "立理由的人正文换新角度顶嘴（谁先拿到/谁先翻开/书是大家的/"
             "你没看完别占着），禁止自己重申「搬回来的/买的/攒零花钱」；"
             "对方击穿（搬回来不算，拿到才算）可以，但理由出处只讲一次。"
+        )
+    if "肢体抢物复读" in issue:
+        return (
+            f"【好笑·C】{issue}。"
+            "整件物中间段改「规则三轮升级」：靠着不算→整个抱→离地/单脚算不算，"
+            "每轮一句新判据+灿灿照字面追问；删抢→掉→捡→卡缝循环。"
+        )
+    if "对方擅自改规" in issue:
+        return (
+            f"【好笑·C】{issue}。"
+            "灿灿只执行+追问（算不算/哪条/你一条接一条说的），"
+            "禁作废/这局不算/你乱拽；追加赛规只许立规人。"
+        )
+    if "C规则机制复读" in issue or "C规则缺权力翻转" in issue:
+        return (
+            f"【好笑·C】{issue}。"
+            "整件物中间段只许3次规则升级：①谁先拿到 ②钻定义（靠着不算/得抱怀里）"
+            "③荒谬一条（连续抱满三秒/得自己承认）——禁离沙发→双脚→单脚清单；"
+            "灿灿中间加「还有吗/行/好」翻转权力，末句嘴硬锚主题（你赢规则不算赢我）。"
         )
     if "归属口水战" in issue:
         return (

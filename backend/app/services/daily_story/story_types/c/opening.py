@@ -166,6 +166,43 @@ _C_OPENING_LOSER_CRITERION_RE = re.compile(
 )
 
 
+_RE_CAKE_BLOB = re.compile(r"蛋糕|披萨|分蛋糕|切蛋糕|分块")
+_RE_MOM_CUT = re.compile(r"妈妈[^。！？]{0,10}切")
+_RE_SETTING_MULTI_HOLD = re.compile(
+    r"两[个只块]|各抓|各握|各攥|各抱|并排[^。！？]{0,12}(?:两|各)",
+)
+
+
+def append_c_framework_errors(
+    framework: dict,
+    *,
+    type_code: str | None,
+    errors: list[str],
+    theme: str = "",
+) -> None:
+    """C 类 framework 硬卡：蛋糕题 setting 禁妈妈切（与 patch setting去妈妈 冲突）。"""
+    code = (type_code or "").strip().upper()[:1]
+    if code != "C" or not isinstance(framework, dict):
+        return
+    setting = str(framework.get("setting") or "").strip()
+    blob = f"{theme}{setting}{framework.get('conflict_core') or ''}"
+    if _RE_CAKE_BLOB.search(blob) and _RE_MOM_CUT.search(setting):
+        errors.append(
+            "C类 framework setting 禁写「妈妈切好蛋糕」——改「灿灿切好两块蛋糕」"
+            "或「桌上两块蛋糕，姐弟对峙」，妈妈不在场，姐弟互争挑选"
+        )
+    from app.services.daily_story.story_types.c.validate import (
+        _RE_WHOLE_ITEM_ANCHOR,
+    )
+
+    if _RE_WHOLE_ITEM_ANCHOR.search(blob) and _RE_SETTING_MULTI_HOLD.search(setting):
+        errors.append(
+            "C类 framework setting 整件争点须同物同数 1：禁「两个并排/各抓一个/"
+            "各握一端」——改「沙发上一个蓝抱枕，姐弟同时伸手去抢」或「昭昭攥着"
+            "抱枕一角，灿灿伸手来夺」"
+        )
+
+
 def append_c_opening_errors(
     normalized: list[dict],
     *,
