@@ -11,7 +11,9 @@ CHAT_PIPELINE = "chat"
 DEFAULT_TID = 201  # 知识 → 科学科普（旧 tid，与 human_type2 配合）
 CHAT_TID = 201  # chat 旧 tid 占位；分区展示靠 human_type2
 CHAT_HUMAN_TYPE2 = 1025  # 新分区 → 亲子
-# 创作声明（mark_list id，勿把 label 塞进 neutral_mark）
+# chat 成功稿件均为 copyright=3 + creation_statement（非旧版 copyright=1）
+CHAT_COPYRIGHT = 3
+# 创作声明（mark_list id；submit 走 creation_statement 对象，勿用 mark_id / neutral_mark 短标签）
 CHAT_CONTENT_MARK_ID = 2
 CHAT_CONTENT_MARK_LABEL = "含虚构演绎内容"
 
@@ -59,6 +61,20 @@ def resolve_content_mark_label(pipeline: str | None) -> str | None:
     if (pipeline or "").strip() == CHAT_PIPELINE:
         return CHAT_CONTENT_MARK_LABEL
     return None
+
+
+def resolve_copyright(pipeline: str | None) -> int:
+    if (pipeline or "").strip() == CHAT_PIPELINE:
+        return CHAT_COPYRIGHT
+    return 1
+
+
+def resolve_creation_statement(pipeline: str | None) -> dict[str, int | str] | None:
+    mark_id = resolve_content_mark_id(pipeline)
+    label = resolve_content_mark_label(pipeline)
+    if mark_id is None or not label:
+        return None
+    return {"id": mark_id, "content": label}
 
 
 def resolve_neutral_mark(pipeline: str | None) -> str | None:

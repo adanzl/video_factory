@@ -41,8 +41,7 @@ class BiliUploader:
         dtime: int | None = None,
         dynamic: str = "",
         human_type2: int | None = None,
-        mark_id: int | None = None,
-        neutral_mark: str | None = None,
+        creation_statement: dict[str, Any] | None = None,
         topic_id: int | None = None,
         mission_id: int | None = None,
     ) -> dict[str, Any]:
@@ -68,8 +67,7 @@ class BiliUploader:
             dtime=dtime,
             dynamic=dynamic,
             human_type2=human_type2,
-            mark_id=mark_id,
-            neutral_mark=neutral_mark,
+            creation_statement=creation_statement,
             topic_id=topic_id,
             mission_id=mission_id,
         )
@@ -220,8 +218,7 @@ class BiliUploader:
         dtime: int | None = None,
         dynamic: str = "",
         human_type2: int | None = None,
-        mark_id: int | None = None,
-        neutral_mark: str | None = None,
+        creation_statement: dict[str, Any] | None = None,
         topic_id: int | None = None,
         mission_id: int | None = None,
     ) -> dict[str, Any]:
@@ -251,10 +248,8 @@ class BiliUploader:
         }
         if human_type2 is not None:
             body["human_type2"] = int(human_type2)
-        if mark_id is not None:
-            body["mark_id"] = int(mark_id)
-        elif neutral_mark:
-            body["neutral_mark"] = neutral_mark
+        if creation_statement:
+            body["creation_statement"] = creation_statement
         if topic_id:
             body["topic_id"] = int(topic_id)
             body["mission_id"] = int(mission_id or 0)
@@ -265,13 +260,13 @@ class BiliUploader:
         if dtime is not None:
             body["dtime"] = int(dtime)
         logger.info(
-            "bili submit title=%r tid=%s human_type2=%s mark_id=%s neutral_mark=%s "
-            "topic_id=%s mission_id=%s dtime=%s tags=%s filename=%s",
+            "bili submit title=%r copyright=%s tid=%s human_type2=%s "
+            "creation_statement=%s topic_id=%s mission_id=%s dtime=%s tags=%s filename=%s",
             title[:80],
+            copyright,
             tid,
             human_type2,
-            mark_id,
-            neutral_mark,
+            creation_statement,
             topic_id,
             mission_id,
             dtime,
@@ -290,12 +285,12 @@ class BiliUploader:
             code = payload.get("code")
             msg = payload.get("message") or f"投稿失败: {payload}"
             logger.warning(
-                "bili submit rejected code=%s msg=%s title=%r tid=%s mark_id=%s",
+                "bili submit rejected code=%s msg=%s title=%r tid=%s creation_statement=%s",
                 code,
                 msg,
                 title[:80],
                 tid,
-                mark_id,
+                creation_statement,
             )
             raise RuntimeError(msg)
         data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
@@ -303,12 +298,14 @@ class BiliUploader:
         aid = data.get("aid")
         url = f"https://www.bilibili.com/video/{bvid}" if bvid else None
         logger.info(
-            "bili submit ok bvid=%s aid=%s tid=%s human_type2=%s mark_id=%s topic_id=%s",
+            "bili submit ok bvid=%s aid=%s copyright=%s tid=%s human_type2=%s "
+            "creation_statement=%s topic_id=%s",
             bvid,
             aid,
+            copyright,
             tid,
             human_type2,
-            mark_id,
+            creation_statement,
             topic_id,
         )
         return {
@@ -318,10 +315,16 @@ class BiliUploader:
             "aid": aid,
             "url": url,
             "tid": int(tid),
+            "copyright": int(copyright),
             "human_type2": int(human_type2) if human_type2 is not None else None,
             "topic_id": int(topic_id) if topic_id else None,
             "mission_id": int(mission_id) if mission_id else None,
-            "mark_id": int(mark_id) if mark_id is not None else None,
-            "neutral_mark": neutral_mark or None,
+            "creation_statement": creation_statement,
+            "mark_id": int(creation_statement["id"]) if creation_statement else None,
+            "neutral_mark": (
+                str(creation_statement.get("content") or "")
+                if creation_statement
+                else None
+            ),
             "message": "upload ok",
         }
