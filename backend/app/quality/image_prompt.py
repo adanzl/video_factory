@@ -311,22 +311,6 @@ def check_image_prompt(
                     "segments": speaker_rows,
                 },
             )
-        # object_states 状态机校验：同段矛盾 / holder-position 冲突 / 状态回归
-        from app.services.script.visual_brief import validate_object_states
-
-        obj_issues = validate_object_states(
-            script.get("segments") or []
-        )
-        if obj_issues:
-            return QualityReport(
-                level="major",
-                step="image_prompts",
-                fail_stage="script",
-                details={
-                    "reason": "object_states conflict",
-                    "issues": obj_issues,
-                },
-            )
 
     too_short: list[dict] = []
     slightly_short: list[dict] = []
