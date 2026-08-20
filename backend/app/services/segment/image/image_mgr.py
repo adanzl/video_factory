@@ -335,6 +335,9 @@ class ImageMgr:
                 src = by_idx.get(int(seg.get('segment_index') or 0))
                 if src and isinstance(src.get('speakers'), list) and src.get('speakers'):
                     seg['speakers'] = list(src['speakers'])
+                # 同步 cast（LLM 判定的每一镜出镜角色），供 verify/_daily_speakers_of 使用
+                if src and isinstance(src.get('cast'), list):
+                    seg['cast'] = list(src['cast'])
 
         def _build_prompt(seg: dict) -> str:
             if type(provider).__name__ == 'Sd15ImageProvider':
