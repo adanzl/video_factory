@@ -390,13 +390,13 @@ def _dialogue_blob(segments: list[dict]) -> str:
 
 
 def normalize_object_states(segments: list[dict]) -> list[str]:
-    """object_states 状态机：跨镜继承缺失状态、去重、校验矛盾与状态回归。
+    """object_states 状态机：跨镜继承缺失状态、去重、自动修正矛盾与状态回归。
 
-    原地归一 segments 的 object_states，返回 issue 列表（major 矛盾）。
+    原地归一 segments 的 object_states，返回修正记录列表（供日志；不阻塞流水线）。
     """
-    issues: list[str] = []
+    notes: list[str] = []
     last_state: dict[str, dict] = {}
-    form_seq: dict[str, list[str]] = {}
+    form_seq: dict[str, list[str]] = {}  # 每个 object 的 form 单向演进历史
     for seg in segments:
         idx = int(seg.get("segment_index") or 0)
         raw = seg.get("object_states")
@@ -407,31 +407,43 @@ def normalize_object_states(segments: list[dict]) -> list[str]:
             if not obj:
                 continue
             if obj in seen:
-                issues.append(f"segment {idx}: object_states 重复 object={obj}")
+                notes.append(f"segment {idx}: object_states 重复 object={obj}，去重")
                 continue
             seen[obj] = st
         merged: dict[str, dict] = {k: dict(v) for k, v in last_state.items()}
         for obj, st in seen.items():
             merged[obj] = st
         for obj, st in merged.items():
-            holder = str(st.get("holder") or "").strip()
-            pos = str(st.get("position") or "").strip()
-            if holder and holder != "无" and pos and "手" not in pos and "手" not in holder:
-                issues.append(
-                    f"segment {idx}: object={obj} holder={holder} 与 position={pos} 矛盾"
-                )
             form = str(st.get("form") or "").strip()
+            # 状态回归自动修正：form 回退到历史较早值，则沿用最新状态（单向推进）
             if form:
                 seq = form_seq.setdefault(obj, [])
-                if form not in seq:
+                if form in seq:
+                    pos_in_seq = seq.index(form)
+                    if pos_in_seq < len(seq) - 1:
+                        notes.append(
+                            f"segment {idx}: object={obj} 状态回归 {form!r}，"
+                            f"自动修正为 {seq[-1]!r}"
+                        )
+                        st["form"] = seq[-1]
+                        form = seq[-1]
+                else:
                     seq.append(form)
-                elif seq.index(form) < len(seq) - 1:
-                    issues.append(
-                        f"segment {idx}: object={obj} 状态回归 {form!r}（禁止无理由回退）"
+            # holder/position 矛盾自动修正：持有人明确则位置归入其手中，否则澄清持有
+            holder = str(st.get("holder") or "").strip()
+            pos = str(st.get("position") or "").strip()
+            if holder and holder != "无":
+                if not pos:
+                    st["position"] = f"{holder}手中"
+                elif "手" not in pos and "手" not in holder:
+                    notes.append(
+                        f"segment {idx}: object={obj} holder={holder} 与 position={pos} 矛盾，"
+                        f"position 归入 {holder}手中"
                     )
+                    st["position"] = f"{holder}手中"
         seg["object_states"] = [dict(v, object=k) for k, v in merged.items()]
         last_state = merged
-    return issues
+    return notes
 
 
 def _sanitize_subject_action(action: str) -> str:
