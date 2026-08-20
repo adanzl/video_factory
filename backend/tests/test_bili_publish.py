@@ -258,6 +258,57 @@ def test_save_job_result_sets_publish(app_ctx) -> None:
     assert info["publish_result"]["bvid"] == "BV1ok"
 
 
+def test_save_job_result_failed_does_not_set_publish(app_ctx) -> None:
+    from app.repositories import repo_job
+
+    job = repo_job.create_job("failed publish", pipeline="chat", skip_publish=False)
+    saved = PublishMgr().save_job_result(
+        job,
+        {
+            "platform": "bilibili",
+            "status": "failed",
+            "message": "cookie expired",
+        },
+    )
+    assert saved["publish"] is False
+
+
+def test_run_publish_upload_failed_holds_on_publish(app_ctx, monkeypatch) -> None:
+    from app.repositories import repo_job
+    from worker import loop
+
+    job = repo_job.create_job(
+        "manual publish fail",
+        stage="publish",
+        status="pending",
+        pipeline="chat",
+    )
+    job_id = int(job["id"])
+
+    def fake_upload(job_id: int, *, manual: bool = False) -> None:
+        from worker.stages.common.publish import _persist_publish_result
+
+        current = repo_job.get_job(job_id)
+        _persist_publish_result(
+            current,
+            {
+                "platform": "bilibili",
+                "status": "failed",
+                "message": "upload rejected",
+            },
+            level="warning",
+        )
+
+    monkeypatch.setattr(
+        "worker.stages.common.publish.upload_bili_publish",
+        fake_upload,
+    )
+    result = loop.run_publish_upload(job_id)
+    assert result["stage"] == "publish"
+    assert result["status"] == "pending"
+    assert result["publish"] is False
+
+
 def test_resolve_next_publish_dtime_today() -> None:
     now = datetime(2026, 8, 19, 15, 0, tzinfo=PUBLISH_TZ)
     dtime, planned = resolve_next_publish_dtime("18:30", now=now)
