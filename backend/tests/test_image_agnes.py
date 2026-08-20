@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import requests
+
 from app.services.llm.llm_agnes import AgnesApiKey
 from app.services.segment.image.image_agnes import (
     AgnesImageProvider,
@@ -83,6 +85,67 @@ def test_request_failover_to_com_on_503() -> None:
     with patch(
         "app.services.segment.image.image_agnes.requests.request",
         side_effect=[resp_503, resp_ok],
+    ) as mock_request:
+        result = provider._request(  # noqa: SLF001
+            "POST",
+            cn_url,
+            api_key="k",
+            json={"model": "m"},
+            max_retries=2,
+        )
+
+    assert result is resp_ok
+    assert mock_request.call_count == 2
+    assert mock_request.call_args_list[0].args[1] == cn_url
+    assert mock_request.call_args_list[1].args[1] == com_url
+    assert provider._generation_url == com_url  # noqa: SLF001
+
+
+def test_request_failover_to_cn_on_timeout() -> None:
+    provider = AgnesImageProvider()
+    com_url = "https://apihub.agnes-ai.com/v1/images/generations"
+    cn_url = "https://apihub.agnes-ai.cn/v1/images/generations"
+
+    resp_ok = MagicMock()
+    resp_ok.status_code = 200
+    resp_ok.ok = True
+    resp_ok.content = b"{}"
+    resp_ok.json = MagicMock(return_value={"data": [{"url": "https://example.com/x.png"}]})
+
+    with patch(
+        "app.services.segment.image.image_agnes.requests.request",
+        side_effect=[requests.Timeout("connect timed out"), resp_ok],
+    ) as mock_request:
+        result = provider._request(  # noqa: SLF001
+            "POST",
+            com_url,
+            api_key="k",
+            json={"model": "m"},
+            max_retries=2,
+        )
+
+    assert result is resp_ok
+    assert mock_request.call_count == 2
+    assert mock_request.call_args_list[0].args[1] == com_url
+    assert mock_request.call_args_list[1].args[1] == cn_url
+    assert provider._generation_url == cn_url  # noqa: SLF001
+
+
+def test_request_failover_to_com_on_timeout() -> None:
+    provider = AgnesImageProvider()
+    provider._generation_url = "https://apihub.agnes-ai.cn/v1/images/generations"  # noqa: SLF001
+    cn_url = provider._generation_url
+    com_url = "https://apihub.agnes-ai.com/v1/images/generations"
+
+    resp_ok = MagicMock()
+    resp_ok.status_code = 200
+    resp_ok.ok = True
+    resp_ok.content = b"{}"
+    resp_ok.json = MagicMock(return_value={"data": [{"url": "https://example.com/x.png"}]})
+
+    with patch(
+        "app.services.segment.image.image_agnes.requests.request",
+        side_effect=[requests.ReadTimeout("read timed out"), resp_ok],
     ) as mock_request:
         result = provider._request(  # noqa: SLF001
             "POST",
