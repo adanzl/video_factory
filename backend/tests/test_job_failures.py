@@ -27,6 +27,18 @@ def test_is_expected_job_failure_agnes_i2v():
     )
 
 
+def test_is_expected_job_failure_agnes_image():
+    from app.services.llm.llm_agnes import AgnesImageError
+
+    assert is_expected_job_failure(
+        AgnesImageError(
+            "agnes request failed (after 1 retries; "
+            "url=https://apihub.agnes-ai.cn/v1/images/generations; "
+            "last_exc=Read timed out)"
+        )
+    )
+
+
 def test_is_expected_job_failure_agnes_content_policy():
     assert is_expected_job_failure(
         AgnesContentPolicyError(

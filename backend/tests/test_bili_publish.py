@@ -114,6 +114,28 @@ def test_publish_for_job_skip_publish(monkeypatch) -> None:
     assert "skip_publish" in result["message"]
 
 
+def test_publish_for_job_skip_publish_manual_bypass(monkeypatch) -> None:
+    monkeypatch.setattr(config, "mock_mode", False)
+    captured: dict = {}
+
+    def fake_publish(self, **kwargs):
+        captured.update(kwargs)
+        return {"platform": "bilibili", "status": "success", "bvid": "BV1manual"}
+
+    monkeypatch.setattr(PublishMgr, "publish", fake_publish)
+    job = {
+        "skip_publish": True,
+        "title": "手动投稿",
+        "pipeline": "chat",
+        "final_path": "/tmp/final.mp4",
+        "cover_path": "/tmp/cover.jpg",
+        "script_json": {"video_description": "desc"},
+    }
+    result = PublishMgr().publish_for_job(job, manual=True)
+    assert result["bvid"] == "BV1manual"
+    assert captured["title"] == "手动投稿"
+
+
 def test_publish_for_job_mock_mode(monkeypatch) -> None:
     monkeypatch.setattr(config, "mock_mode", True)
     result = PublishMgr().publish_for_job({"skip_publish": False, "title": "t"})

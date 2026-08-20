@@ -337,7 +337,7 @@ def run_publish_upload(job_id: int) -> dict:
     from worker.stages.common.publish import PublishStage, upload_bili_publish
 
     job_mgr.mark_running(job_id)
-    upload_bili_publish(job_id)
+    upload_bili_publish(job_id, manual=True)
     done = _advance_after_stage(job_id, PublishStage, status='pending')
     if done is not None:
         return done

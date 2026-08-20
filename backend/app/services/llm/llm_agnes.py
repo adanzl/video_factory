@@ -4,6 +4,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass
+from collections.abc import Callable
 from typing import Any
 import requests
 from app.config import Settings, get_settings
@@ -18,6 +19,10 @@ class AgnesQuotaExceeded(RuntimeError, JobStageFailureError):
 
 class AgnesI2VError(RuntimeError, JobStageFailureError):
     """图生视频 API 调用失败（重试耗尽、任务失败等），消息即原因。"""
+
+
+class AgnesImageError(RuntimeError, JobStageFailureError):
+    """文生图 API 调用失败（超时、重试耗尽等），消息即原因。"""
 
 
 class AgnesContentPolicyError(RuntimeError, JobStageFailureError):
@@ -45,6 +50,93 @@ def agnes_auth_header(api_key: str, *, extra: dict[str, str] | None=None) -> dic
     if extra:
         headers.update(extra)
     return headers
+
+_AGNES_COM_HOST = 'apihub.agnes-ai.com'
+_AGNES_CN_HOST = 'apihub.agnes-ai.cn'
+_AGNES_API_SUFFIXES = ('/chat/completions', '/images/generations', '/videos')
+
+
+def agnes_alternate_host_url(url: str) -> str | None:
+    """apihub 域名 .com ↔ .cn 互换；其它 URL 返回 None。"""
+    if _AGNES_COM_HOST in url:
+        return url.replace(_AGNES_COM_HOST, _AGNES_CN_HOST, 1)
+    if _AGNES_CN_HOST in url:
+        return url.replace(_AGNES_CN_HOST, _AGNES_COM_HOST, 1)
+    return None
+
+
+def agnes_is_apihub_url(url: str) -> bool:
+    return _AGNES_COM_HOST in url or _AGNES_CN_HOST in url
+
+
+def agnes_api_base_from_url(url: str) -> str | None:
+    """从 apihub 完整 API URL 提取 /v1 根路径。"""
+    if not agnes_is_apihub_url(url):
+        return None
+    for suffix in _AGNES_API_SUFFIXES:
+        if suffix in url:
+            return url.rsplit(suffix, 1)[0]
+    if '/v1' in url:
+        idx = url.find('/v1')
+        return url[:idx + 3]
+    return None
+
+
+def agnes_persist_base_url(url: str) -> str | None:
+    """切换进程内 AGNES_API_BASE_URL，便于后续请求走备用域名。"""
+    base = agnes_api_base_from_url(url)
+    if not base:
+        return None
+    settings = get_settings()
+    current = settings.agnes_api_base_url.rstrip('/')
+    if current != base:
+        settings.agnes_api_base_url = base
+        logger.info('agnes api base_url switched to %s', base)
+    return base
+
+
+def agnes_try_failover_host(
+    url: str,
+    tried: set[str],
+    *,
+    reason: str,
+    tag: str = '',
+) -> str | None:
+    """503/超时等在 apihub .com/.cn 间切换一次。"""
+    if not agnes_is_apihub_url(url):
+        return None
+    alt = agnes_alternate_host_url(url)
+    if not alt or alt in tried:
+        return None
+    prefix = f'{tag} ' if tag else ''
+    logger.warning(
+        '%sagnes %s on %s, failover to alternate domain %s',
+        prefix,
+        reason,
+        url,
+        alt,
+    )
+    tried.add(alt)
+    return alt
+
+
+def agnes_apply_host_failover(
+    url: str,
+    tried: set[str],
+    *,
+    reason: str,
+    tag: str = '',
+    on_switch: Callable[[str], None] | None = None,
+) -> str | None:
+    """切换备用域名并持久化 base_url；on_switch 可同步 provider 端点。"""
+    alt = agnes_try_failover_host(url, tried, reason=reason, tag=tag)
+    if not alt:
+        return None
+    agnes_persist_base_url(alt)
+    if on_switch is not None:
+        on_switch(alt)
+    return alt
+
 
 def _collect_error_text(*, status_code: int | None=None, body: dict | str | None=None, message: str | None=None) -> str:
     parts: list[str] = []
@@ -131,9 +223,20 @@ def _post_chat(*, api_key: AgnesApiKey, base_url: str, payload: dict[str, Any], 
     headers = agnes_auth_header(api_key.value)
     timeout = (connect_timeout, read_timeout)
     last_exc: Exception | None = None
+    host_failover_tried: set[str] = {url}
     for attempt in range(max_retries):
         try:
             resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
+            if resp.status_code == 503:
+                alt = agnes_apply_host_failover(
+                    url,
+                    host_failover_tried,
+                    reason='503',
+                    tag='llm',
+                )
+                if alt:
+                    url = alt
+                    continue
             if resp.status_code in _RETRYABLE:
                 wait = min(2 ** attempt * 2, 60)
                 logger.warning('agnes llm %s %s, retry %s/%s in %ss', resp.status_code, url, attempt + 1, max_retries, wait)
@@ -154,6 +257,16 @@ def _post_chat(*, api_key: AgnesApiKey, base_url: str, payload: dict[str, Any], 
             last_exc = exc
             if agnes_quota_exceeded_from_exception(exc):
                 raise AgnesQuotaExceeded(str(exc)) from exc
+            if isinstance(exc, requests.Timeout):
+                alt = agnes_apply_host_failover(
+                    url,
+                    host_failover_tried,
+                    reason='timeout',
+                    tag='llm',
+                )
+                if alt:
+                    url = alt
+                    continue
             wait = min(2 ** attempt * 2, 60)
             logger.warning('agnes llm request error: %s, retry in %ss', exc, wait)
             time.sleep(wait)
