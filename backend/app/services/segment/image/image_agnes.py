@@ -118,12 +118,38 @@ def _agnes_image_gen_keys(settings=None) -> list[AgnesApiKey]:
 
 
 def _agnes_alternate_host_url(url: str) -> str | None:
-    """503 时在 .com ↔ .cn 间切换；其它域名不变。"""
+    """生图 API 在 .com ↔ .cn 间切换；其它域名不变。"""
     if _AGNES_COM_HOST in url:
         return url.replace(_AGNES_COM_HOST, _AGNES_CN_HOST, 1)
     if _AGNES_CN_HOST in url:
         return url.replace(_AGNES_CN_HOST, _AGNES_COM_HOST, 1)
     return None
+
+
+def _maybe_failover_generation_host(
+    provider: AgnesImageProvider,
+    url: str,
+    host_failover_tried: set[str],
+    *,
+    reason: str,
+    tag: str,
+) -> str | None:
+    """images/generations 在 .com/.cn 间切换一次；已试过的域名不再切。"""
+    if "/images/generations" not in url:
+        return None
+    alt_url = _agnes_alternate_host_url(url)
+    if not alt_url or alt_url in host_failover_tried:
+        return None
+    logger.warning(
+        "%sagnes %s on %s, failover to alternate domain %s",
+        tag,
+        reason,
+        url,
+        alt_url,
+    )
+    host_failover_tried.add(alt_url)
+    provider._generation_url = alt_url
+    return alt_url
 
 
 def _to_agnes_size(size: str) -> str:
@@ -262,17 +288,16 @@ class AgnesImageProvider(ImageProvider):
                 elapsed = time.monotonic() - t0
                 last_status = resp.status_code
                 last_body = _resp_body_summary(resp)
-                if resp.status_code == 503 and "/images/generations" in url:
-                    alt_url = _agnes_alternate_host_url(url)
-                    if alt_url and alt_url not in host_failover_tried:
-                        logger.warning(
-                            "%sagnes 503 on %s, failover to alternate domain",
-                            tag,
-                            url,
-                        )
+                if resp.status_code == 503:
+                    alt_url = _maybe_failover_generation_host(
+                        self,
+                        url,
+                        host_failover_tried,
+                        reason="503",
+                        tag=tag,
+                    )
+                    if alt_url:
                         url = alt_url
-                        host_failover_tried.add(alt_url)
-                        self._generation_url = alt_url
                         continue
                 if resp.status_code in _RETRYABLE:
                     if attempt + 1 >= retries:
@@ -346,6 +371,17 @@ class AgnesImageProvider(ImageProvider):
                 last_exc = exc
                 if agnes_quota_exceeded_from_exception(exc):
                     raise AgnesQuotaExceeded(str(exc)) from exc
+                if isinstance(exc, requests.Timeout):
+                    alt_url = _maybe_failover_generation_host(
+                        self,
+                        url,
+                        host_failover_tried,
+                        reason="timeout",
+                        tag=tag,
+                    )
+                    if alt_url:
+                        url = alt_url
+                        continue
                 wait = min(2**attempt * 2, 60)
                 logger.warning(
                     "%sagnes request error in %.1fs: %s, retry %s/%s in %ss",
