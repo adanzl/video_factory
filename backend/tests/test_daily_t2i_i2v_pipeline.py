@@ -1321,13 +1321,10 @@ def test_stabilize_keeps_timeline_ranges():
 
 _KEYFRAME_LLM_MOTION = (
     "画面左边是灿灿，右边是昭昭。"
-    "灿灿说话，同时右手食指指向衣服团微微颤抖约2厘米后停止；"
-    "昭昭说话，同时双手摊开向上微抖一下后停止。"
-    "两人说话后面部表情恢复与静图一致："
-    "灿灿瞪圆眼睛嘴巴大张（愤怒质问状），不微笑；"
-    "昭昭撇着嘴角耸肩（委屈不服状），表情不变。"
+    "灿灿说话，同时微微点头后停止；"
+    "昭昭说话，同时双肩轻轻耸起后停止。"
     "服装发型稳定，身高比例（昭昭比灿灿矮半个头）不变。"
-    "镜头固定，不推近不拉远，画面只有人物和场景，无任何文字叠加。"
+    "镜头固定，不推近不拉远，两人全程在画面内，画面干净无字幕无文字。"
 )
 _FORBIDDEN_INJECTED = re.compile(
     r"粉色卫衣的黑马尾女孩|蓝色短袖T恤的短发男孩|嘴巴闭合不张嘴"
@@ -1345,7 +1342,7 @@ def test_keyframe_motion_llm_draft_contract():
     assert base.count("说话，同时") == 2
     assert "后定格" not in base
     assert "张嘴说话" not in base
-    head = base.split("两人说话后面部表情", 1)[0]
+    head = base.split("服装发型稳定", 1)[0]
     assert not re.search(r"[\d.]+-[\d.]+秒", head)
     assert _FORBIDDEN_INJECTED.search(base) is None
 
@@ -1369,8 +1366,8 @@ def test_keyframe_motion_after_inject_contract():
     assert "两人说话后面部表情恢复与静图一致" not in out
     assert "说话时只动嘴唇和下巴" in out
     # 末句动作由 inject 改为定格
-    assert "双手摊开向上微抖一下后定格" in out
-    assert "微微颤抖约2厘米后停止" in out
+    assert "双肩轻轻耸起后定格" in out
+    assert "微微点头后停止" in out
     assert "服装发型稳定" in out
     assert "镜头固定，不推近不拉远" in out
 

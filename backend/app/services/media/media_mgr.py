@@ -255,9 +255,9 @@ def _inject_mouth_motion(
             action_queues.setdefault(sp, []).append(action)
 
     fallback = {
-        "昭昭": "身体轻微后仰约1厘米后停止",
-        "灿灿": "右手食指轻轻点动约1厘米后停止",
-        "妈妈": "微微点头约1厘米后停止",
+        "昭昭": "双肩轻轻耸起后停止",
+        "灿灿": "微微点头后停止",
+        "妈妈": "微微点头后停止",
     }
 
     speaks = list(speak_re.finditer(prompt))
@@ -306,7 +306,7 @@ def _inject_mouth_motion(
     last_i = len(speaker_times) - 1
     for i, (speaker, time_str) in enumerate(speaker_times):
         q = action_queues.get(speaker) or []
-        action = q.pop(0) if q else fallback.get(speaker, "轻微点头约1厘米后停止")
+        action = q.pop(0) if q else fallback.get(speaker, "微微点头后停止")
         if i < last_i and action.endswith("后定格"):
             action = action[: -len("后定格")] + "后停止"
         elif i == last_i and "定格" not in action and action.endswith("后停止"):
