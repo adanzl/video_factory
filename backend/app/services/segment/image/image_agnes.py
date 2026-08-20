@@ -252,7 +252,8 @@ class AgnesImageProvider(ImageProvider):
         size = size or self._default_size
         return (
             f"provider=agnes_t2i, model={self._model}, size={size}, "
-            f"workers={self._max_concurrent}, stagger={self._stagger_sec}s"
+            f"workers={self._max_concurrent}, stagger={self._stagger_sec}s, "
+            f"api={self._generation_url}"
         )
 
     def _acquire_submit_slot(self) -> None:
@@ -1272,6 +1273,7 @@ class AgnesImageProvider(ImageProvider):
                         }
 
                         def _post_verify() -> requests.Response:
+                            nonlocal url, verify_url
                             resp = requests.post(
                                 url, headers=headers, json=payload, timeout=300
                             )
@@ -1283,7 +1285,6 @@ class AgnesImageProvider(ImageProvider):
                                     tag=f"{log_tag} verify",
                                 )
                                 if alt:
-                                    nonlocal verify_url
                                     verify_url = alt
                                     url = alt
                                     resp = requests.post(
