@@ -493,6 +493,12 @@ def _merge_visual_briefs(
             seg["scene_anchors"] = [
                 str(a).strip() for a in anchors if str(a).strip()
             ]
+        # cast：额外在场且非常态的角色（如妈妈），昭昭/灿灿由代码兜底补入
+        cast = item.get("cast")
+        if isinstance(cast, list):
+            seg["cast"] = [
+                str(c).strip() for c in cast if str(c).strip()
+            ]
 
 
 def _truncation_feedback() -> str:

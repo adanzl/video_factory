@@ -697,7 +697,20 @@ def _daily_zhao_handles_floor_shoelaces(vb: str) -> bool:
 
 
 def _daily_speakers_of(seg: dict) -> list[str]:
-    """本段出场角色：发言 ∪ 台词写明在场 ∪ 粘性 speakers（优先 speakers 字段）。"""
+    """本段出场角色：固定主角（昭昭/灿灿）默认每镜都在，妈妈按 cast 决定。
+
+    优先读 LLM 输出的 seg["cast"]（额外在场且非常态，如妈妈），
+    硬编码补入固定主角昭昭/灿灿；无 cast 时回退 speakers 粘性逻辑。
+    """
+    cast = seg.get("cast")
+    if isinstance(cast, list):
+        names: list[str] = ["昭昭", "灿灿"]
+        for n in cast:
+            n = str(n).strip()
+            if n in ("昭昭", "灿灿", "妈妈") and n not in names:
+                names.append(n)
+        return names
+
     from app.services.daily_story.speaker import allowed_cast_from_segment
 
     names = allowed_cast_from_segment(seg)
