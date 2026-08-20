@@ -922,16 +922,20 @@ const handleSubmit = async () => {
   const scheduleHint = scheduleEnabled.value
     ? `，定时于 ${schedulePreview.value || scheduleTime.value} 发布`
     : "，立即发布";
+  const publishedBvid =
+    publishResult.value?.status === "success" && publishResult.value.bvid
+      ? publishResult.value.bvid
+      : "";
+  const confirmTitle = publishedBvid ? "确认重新投稿" : "确认投稿";
+  const confirmMessage = publishedBvid
+    ? `该任务已投稿 ${publishedBvid}，再次投稿将上传为新稿件，旧稿不会自动删除。确定继续${scheduleHint}？`
+    : `确定投稿到 B 站？将上传成片与封面，并使用当前登录账号提交（公开浏览${scheduleHint}）。失败只记日志，任务不会标失败。`;
   try {
-    await ElMessageBox.confirm(
-      `确定投稿到 B 站？将上传成片与封面，并使用当前登录账号提交（公开浏览${scheduleHint}）。失败只记日志，任务不会标失败。`,
-      "确认投稿",
-      {
-        type: "warning",
-        confirmButtonText: "投稿",
-        cancelButtonText: "取消",
-      }
-    );
+    await ElMessageBox.confirm(confirmMessage, confirmTitle, {
+      type: "warning",
+      confirmButtonText: publishedBvid ? "重新投稿" : "投稿",
+      cancelButtonText: "取消",
+    });
   } catch {
     return;
   }

@@ -205,6 +205,35 @@ def test_publish_for_job_already_published(monkeypatch) -> None:
     assert result["message"] == "already published"
 
 
+def test_publish_for_job_already_published_manual_bypass(monkeypatch) -> None:
+    monkeypatch.setattr(config, "mock_mode", False)
+    captured: dict = {}
+
+    def fake_publish(self, **kwargs):
+        captured.update(kwargs)
+        return {"platform": "bilibili", "status": "success", "bvid": "BV1new"}
+
+    monkeypatch.setattr(PublishMgr, "publish", fake_publish)
+    job = {
+        "skip_publish": False,
+        "title": "重投",
+        "pipeline": "chat",
+        "final_path": "/tmp/final.mp4",
+        "cover_path": "/tmp/cover.jpg",
+        "script_json": {"video_description": "desc"},
+        "info": {
+            "publish_result": {
+                "status": "success",
+                "bvid": "BV1old",
+                "url": "https://www.bilibili.com/video/BV1old",
+            }
+        },
+    }
+    result = PublishMgr().publish_for_job(job, manual=True)
+    assert result["bvid"] == "BV1new"
+    assert captured["title"] == "重投"
+
+
 def test_save_job_result_sets_publish(app_ctx) -> None:
     from app.repositories import repo_job
 

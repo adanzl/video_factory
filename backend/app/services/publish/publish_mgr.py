@@ -65,7 +65,12 @@ class PublishMgr:
                 "message": "skip_publish=true，跳过上传",
             }
         existing = parse_job_info(job.get("info")).get("publish_result")
-        if isinstance(existing, dict) and existing.get("status") == "success" and existing.get("bvid"):
+        if (
+            not manual
+            and isinstance(existing, dict)
+            and existing.get("status") == "success"
+            and existing.get("bvid")
+        ):
             return {**existing, "message": "already published"}
 
         script = job.get("script_json") if isinstance(job.get("script_json"), dict) else {}
