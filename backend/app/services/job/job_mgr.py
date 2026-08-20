@@ -412,14 +412,14 @@ class JobMgr:
     def abort_job(self, job_id: int) -> dict:
         """请求中止。
 
-        - 一律先挂 cancel，并把 DB 状态落到 ``pending``，避免服务重启后
-          ``recovery`` 把用户已中止的任务误当作 stuck/running 自动续跑。
-        - 若当前仍有活着的后台 worker（持锁），它会在同进程内继续跑到下一次
-          cancel 检查点后自行退出；锁在 worker 结束前不会释放。
+        - 后台 worker 持锁时（含 DB 已 pending 但 worker_busy 的中间态），
+          必须挂 cancel 并保留至 worker 退出，禁止误清 cancel 导致继续跑。
+        - 无活跃 worker 且 status 非 running 时，仅重置 pending。
+        - 僵尸 running（无锁）时，清 cancel 并落 pending。
         """
         job = self.get_job(job_id)
-        was_running = job['status'] == 'running'
-        if not was_running:
+        worker_active = self.is_worker_active(job_id)
+        if not worker_active and job['status'] != 'running':
             job_cancel.clear(job_id)
             with atomic():
                 job = repo_job.update_job(job_id, status='pending', fail_stage=None, error_message=_pending_chat_info(job))
@@ -590,6 +590,8 @@ class JobMgr:
                                 if job['status'] == 'running':
                                     self.mark_aborted(job_id, fail_stage)
                                 else:
+                                    with atomic():
+                                        repo_job_log.append_log(job_id, fail_stage, '任务已中止', level='warning')
                                     job_cancel.clear(job_id)
                         except Exception:
                             logger.exception('job %s abort finalize failed', job_id)
