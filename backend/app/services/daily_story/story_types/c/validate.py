@@ -127,9 +127,17 @@ _RE_C_TONE_STACK_HARD = re.compile(
 # 攥够了/够了/够三秒 的「够」是程度副词（足够/撑够），非接触——从主词表剥离，
 # 单独只认「够+完成态+胜出裁定词」才算判据（够到归我/够着算我攥住/够不着算我赢）；
 # 回旋镖描述（你举起来我够不着/够不到/够不上）不带裁定词，不构成占有主张，放行。
+# 接触系须落在判据/自证语境（2026-08-21 GPT+Run2）：「你数到二就伸手了」
+# 是冲突动作描述，不是赛规——须带裁定词或「我先X到的」自证，否则不误触。
 _RE_CONTACT_CRITERION = re.compile(
+    r"(?:"
     r"(?:碰|摸|搭|挨|蹭|伸|探|点)(?![心几灯名头卯货将数子滴])"
-    r"(?:(?:到|着|了|一下|上|过|的)|[^。！？]{1,2}(?:了|过|的))|"
+    r"(?:(?:到|着|了|一下|上|过|的)|[^。！？]{1,4}(?:了|过|的))"
+    r"[^。！？]{0,10}(?:不算|(?:(?<!不)(?:算|就算|算数)|该|归|赢|谁))|"
+    r"我(?:手)?(?:先|已经)[^。！？]{0,4}"
+    r"(?:碰|摸|搭|挨|蹭|伸|探|点)(?![心几灯名头卯货将数子滴])"
+    r"(?:(?:到|着|了|一下|上|过|的)|[^。！？]{1,4}(?:了|过|的))"
+    r")|"
     r"够(?:到|着|上|一下|得着)?[^。！？]{0,4}"
     r"(?:(?<!不)(?:算|就算|算数)|该|归|赢|谁)",
 )
@@ -146,7 +154,8 @@ _RE_RESULT_CRITERION = re.compile(
 )
 _RE_STATE_CRITERION = re.compile(
     r"(?:松手|放手|撒手|拿稳|拿住|攥住|攥牢|一直拿着)"
-    r"[^。！？]{0,4}(?:(?<!不)算|输|赢|谁|该|归)",
+    r"[^。！？]{0,4}(?:(?<!不)算|输|赢|谁|该|归)|"
+    r"(?:还没|没有|尚未|仍)[^。！？]{0,8}(?:松手|放手|撒手|松开|手松)",
 )
 # 松手仪式判据（2026-08-21）：「同时松手/数到三一起松/松手后谁先归谁」——
 # 状态系+放弃控制，不是占有系公平判据；旧 _RE_STATE_CRITERION 窗口仅 4 字，
@@ -241,6 +250,58 @@ _RE_C_RECUT = re.compile(
 _RE_C_BOOMERANG_QUOTE = re.compile(
     r"你刚说|你刚才说|你自己说|你不是说",
 )
+# 整件非消耗品误用分派型赛规（2026-08-21 batch）：抱枕/遥控器/枕头/马桶/橡皮
+# 等争点须占有型或动作达标型，禁「我分你先挑/谁反悔谁小狗/切完你先挑」等分派骨架。
+_RE_WHOLE_ITEM_ANCHOR = re.compile(
+    r"抱枕|靠垫|遥控器|枕头|马桶|橡皮",
+)
+_RE_DISPATCH_RULE = re.compile(
+    r"我分你(?:先)?(?:挑|选)|谁反悔谁小狗|我拆箱你清点|"
+    r"切完(?:你)?(?:先)?挑|我切你选|我搬你摆|分完(?:你)?(?:先)?挑",
+)
+_RE_CUT_FOOD_THEME = re.compile(
+    r"蛋糕|披萨|切好|切完|切开|切块|分.{0,2}(?:蛋糕|块)",
+)
+
+
+def c_criterion_theme_profile(anchor: str) -> str:
+    """C 判据链选题：cut_food | whole_item | default。"""
+    text = anchor or ""
+    if _RE_CUT_FOOD_THEME.search(text):
+        return "cut_food"
+    if _RE_WHOLE_ITEM_ANCHOR.search(text):
+        return "whole_item"
+    return "default"
+
+
+# 整件物 Stage3/姿势升级禁独立身体仪式（类型级，非主题词表；专家 2026-08-21）
+_RE_C_WHOLE_ITEM_RITUAL = re.compile(
+    r"数到[一二三四五六七八九十\d]+|数.{0,3}[三3]|"
+    r"单脚站|金鸡独立|站满.{0,4}秒|数满十秒|"
+    r"十秒|转.{0,2}圈|闭眼|蛙跳|蹲下举手",
+)
+
+
+def c_whole_item_ritual_in_line(line: str) -> bool:
+    """整件物题：计时/计数/平衡仪式出现在判据句 → 非法。"""
+    return bool(_RE_C_WHOLE_ITEM_RITUAL.search(line or ""))
+
+
+def c_criterion_rule_reject_reason(profile: str, rule: str) -> str | None:
+    """判据链单条规则是否与本题 profile 冲突；冲突则返回原因码。"""
+    if profile == "whole_item" and _RE_DISPATCH_RULE.search(rule):
+        return "whole_item_dispatch"
+    if profile == "whole_item" and re.search(
+        r"单脚站|金鸡独立|举过头顶|坚持.{0,4}秒|站满十秒|数满十秒",
+        rule,
+    ):
+        return "whole_item_ritual"
+    if profile == "cut_food" and re.search(
+        r"单脚站|金鸡独立|举过头顶|站满十秒|数满十秒",
+        rule,
+    ):
+        return "cut_food_ritual"
+    return None
 # 分级杠精（专家三轮，2026-08-07）：模型把任何「双方同时执行、争完成度」的动作展开成
 # 连续谱（碰→抓→攥→拿稳；坐到→坐稳→坐实；撕开→撕多少；倒满→戳进→接着），逐级发明
 # 新判据词。结构特征 = 「X不算，Y才算」（或倒装「Y才算，X不算」）比较型杠精句成对出现。
@@ -285,6 +346,32 @@ def _mom_ruling_ignored_error(
     return (
         "C类：妈妈已出场裁定赛规，末段须引用妈妈原规作决胜证据"
         "（妈妈说/刚说…）或让妈妈本人判决收束，禁止双方末段各说「我先」僵局无人判定"
+    )
+
+
+def _whole_item_dispatch_error(story: dict, lines: list[str]) -> str | None:
+    """整件物题面误套分派型赛规（我分你先挑/谁反悔谁小狗等）→ 硬卡重抽。"""
+    anchor = (
+        str(story.get("theme") or "")
+        + str(story.get("conflict_core") or "")
+        + str(story.get("setting") or "")
+    )
+    if not _RE_WHOLE_ITEM_ANCHOR.search(anchor):
+        return None
+    hits = [
+        i + 1
+        for i, ln in enumerate(lines)
+        if _RE_DISPATCH_RULE.search(ln)
+    ]
+    if not hits:
+        return None
+    shown = ",".join(str(i) for i in hits[:3])
+    more = "…" if len(hits) > 3 else ""
+    return (
+        f"C类整件物误用分派型赛规（第{shown}句{more}）："
+        "抱枕/遥控器/枕头/马桶/橡皮等整件争点须占有型（谁先拿到/攥手里）"
+        "或动作达标型（谁先举起/坐到），禁「我分你先挑/谁反悔谁小狗/切完你先挑/"
+        "我切你选/我拆箱你清点」——分派型只限已切好/已分盘的食物（蛋糕/披萨）"
     )
 
 
@@ -489,6 +576,11 @@ def append_c_body_errors(story: dict, errors: list[str]) -> None:
             "好了呀/呢呀」是病句尾——每句结尾语气词最多一个（我先拿到的！/我攥手里"
             "了！/该我！），全篇禁连叠堆砌，整稿重抽",
         )
+        return
+
+    dispatch_on_whole = _whole_item_dispatch_error(story, lines)
+    if dispatch_on_whole:
+        errors.append(dispatch_on_whole)
         return
 
     criterion_drift = _criterion_drift_error(lines)

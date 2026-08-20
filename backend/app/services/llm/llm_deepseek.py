@@ -65,6 +65,14 @@ from app.services.daily_story.prompts import (
     validate_daily_story_opening,
 )
 from app.utils.job_cancel import raise_if_job_cancelled
+from app.services.daily_story.story_types.c.line import (
+    C_WHOLE_ITEM_BODY_LINES_MAX,
+    C_WHOLE_ITEM_BODY_LINES_MIN,
+    C_WHOLE_ITEM_POSSESSIVE_VERBS_HINT,
+    C_WHOLE_ITEM_WRITE_TARGET_MAX,
+    C_WHOLE_ITEM_WRITE_TARGET_MIN,
+    c_whole_item_overlap_buffer_hint,
+)
 from app.utils.media import (
     DEFAULT_SPEECH_CHARS_PER_SEC,
     default_narration_target_words,
@@ -104,11 +112,11 @@ _C_CRITERION_PACKAGE_SYSTEM = """\
 归属，占有型只许宣告「我先拿到的」「我攥在手里了」「我先抢到的」「谁先拿到归谁」；
 动作分派型写「我切你选」「切完你先挑」「我分你先挑」。
 
-**默认优先动作分派型（专家三轮 + 2026-08-12 定）**：规则把不同动作/角色分派给
-不同的人——「我切你选」「我分你先挑」「我搬你摆」「我拆箱你清点」「切完你先挑」，
-切/分/搬/拆是执行权，选/挑/摆/清点是优先选择权，两人不做同一件事，天然没有
-分级杠精。**切分/拆封即终结（2026-08-12 定）**：蛋糕/食物等资源一旦切好/拆封，
-禁止重切/恢复/重新比；开篇已切好只能争「谁先挑/拿哪块」，回旋镖扣「切完你先挑」。
+**动作分派型只限已切好/已分盘的食物（蛋糕/披萨）**；整件物（抱枕/遥控器/枕头/
+马桶/橡皮）须**占有型**（谁先拿到/抢到/攥手里归谁）或**动作达标型**（谁先举过
+头顶/坐到/举起归谁），禁把「我分你先挑/我切你选/谁反悔谁小狗」套到整件物。
+切分型资源用「我切你选」「切完你先挑」「我分你先挑」——切/分/搬/拆是执行权，
+选/挑/摆/清点是优先选择权，两人不做同一件事，天然没有分级杠精。
 
 **孩子气赌约仪式只在题面是「双方抢做同一动作」时用**（专家 2026-08-09 细化 +
 用户 2026-08-11 定「判据要有张力」）：「单脚站满十秒」「金鸡独立站满十秒」
@@ -121,12 +129,11 @@ _C_CRITERION_PACKAGE_SYSTEM = """\
 
 为主题生成 JSON（只输出 JSON，不要多余解释）：
 1. zhaozhao_rule：昭昭（弟弟）抛出的规则台词，一句 8-24 字、核心动词用占有系
-   白名单、**默认动作分派型**（我切你选/我分你先挑/切完你先挑/我拆箱你清点）；
-   只有题面确实要抢同一动作时才可带孩子气赌约仪式（谁先拿到归谁/谁先攥在手里再
-   单脚站满十秒谁喝/谁先举过头顶坚持三秒谁喝）；是可被抠字眼的占有判定，
-   别用「放桌上三秒」这类没张力的仪式。
-2. cancan_rule：灿灿（姐姐）抛出的规则台词，与昭昭的规则对立或加码，同样核心
-   用占有系白名单、默认动作分派型、可带干净仪式。
+   白名单；**切分型题**用动作分派（我切你选/我分你先挑/切完你先挑）；**整件物题**
+   用占有/举起（谁先拿到归谁/我先举过头顶坚持三秒归我）；只有消耗品/双方抢同一
+   动作时才可带孩子气赌约仪式（谁先攥在手里再单脚站满十秒谁喝）；禁「放桌上三秒」
+   这类没张力的仪式。
+2. cancan_rule：灿灿（姐姐）抛出的规则台词，与昭昭的规则对立或加码，选型同上。
 3. boomerang_quote：将被反噬的原话——**必须与 zhaozhao_rule 或 cancan_rule
    完全一致**（逐字复制其中一句，不能改动、不能另造）。
 4. boomerang_source：boomerang_quote 来自哪条，填 "zhaozhao_rule" 或
@@ -158,6 +165,8 @@ _C_CRITERION_INJECT_TEMPLATE = """\
   动作分派型判据用 切/分/搬/拆 + 选/挑/摆/清点。
 - **默认动作分派型**：我切你选/我分你先挑/切完你先挑/我拆箱你清点——切/分/搬/拆
   是执行权，选/挑/摆/清点是优先权；切好/拆封后禁重切/恢复/重新比。
+- **整件物题**（抱枕/遥控器/枕头/马桶/橡皮）：只许占有/举起判据（谁先拿到/抢到/
+  攥手里/举过头顶归谁），禁分派型（我分你先挑/谁反悔谁小狗/切完你先挑）。
 - 只有本稿判据链规则含仪式（单脚站/金鸡独立/举过头顶/坚持X秒）时才写仪式；
   **禁「放桌上三秒」这类没张力的位置仪式**（用户 2026-08-11 点名）。
   仪式不得引入接触/松手/打开/撕/掏/掉/洒等动作；别写「站够」（够字易误判，用
@@ -173,6 +182,99 @@ _C_CRITERION_INJECT_TEMPLATE = """\
 - 结尾回旋镖，被戳穿方引用**正文真出现过的规则原话**反呛（可用 {boomerang_quote}，
   须与前文逐字一致）。
 - 禁止其它动词当判据（碰/摸/按/拧/撕/喝/咬/动/跑/松手等一律禁用）。"""
+
+_WI_CRITERION_BUDGET_LINE = (
+    f"- 正文目标 **{C_WHOLE_ITEM_WRITE_TARGET_MIN}–{C_WHOLE_ITEM_WRITE_TARGET_MAX} 字**\n"
+    f"  （硬卡 ≥240，{c_whole_item_overlap_buffer_hint()}），\n"
+    f"  **{C_WHOLE_ITEM_BODY_LINES_MIN}–{C_WHOLE_ITEM_BODY_LINES_MAX} 句**。"
+)
+
+_C_CRITERION_INJECT_WHOLE_ITEM = """\
+
+【整件物题·占有专锁（比上文更硬；抱枕/遥控器/枕头/马桶/橡皮）】
+- **释放/脱离状态禁作判定标准**：松手/放手/手松/数到三一起松/同时松不得承担
+  「算不算拿到」的裁判功能；开场冲突动作（你手拿开/别拽）可自然出现。
+- 禁止把「谁先抢到」作为重开仪式；只写「先拿到/抢到/攥手里」作为初始结果。
+- 只允许动作词：拿到、攥住、抱进怀里、整个环住、往怀里收。
+- 禁 碰/摸/边儿/角儿 当拿到证据；只用 抢到/拿到/攥手里/抱在怀里。
+- 判据链锚定占有型，只许「谁先拿到/抢到/攥手里归谁」。
+- 禁止另立新赛规：同时松手/数到三一起松/单脚站/慢数/谁反悔谁小狗/我分你先挑。
+- 中间段规则三轮升级（正常→钻定义→荒谬一条），禁4层改定义清单；
+  每层一句新判据+灿灿「行/好/还有吗」翻转。
+- **灿灿规则机器**：只追问哪条作数/还有吗，禁作废/这局不算/你乱拽改规。
+- 末句嘴硬优先锚主题（你赢规则不算赢我），少用泛化「明天我抢先」。
+- 立规人=正文里完整说出回旋镖原话「{boomerang_quote}」的那一方（本稿为
+  {rule_maker}），**末句必须该人嘴硬收场**；禁止立规人赢后末句却是对方嘴硬。
+- 回旋镖「你刚说/你刚才说」全文 ≤2 次，末四拍仅 1 次；同一原话只引 1 遍。
+""" + _WI_CRITERION_BUDGET_LINE
+
+
+def _format_c_criterion_block_full(pkg: dict[str, Any]) -> str:
+    """完整判据链注入（非整件物正文，或测试/兼容）。"""
+    block = _C_CRITERION_INJECT_TEMPLATE.format(**pkg)
+    if pkg.get("profile") == "whole_item":
+        src = str(pkg.get("boomerang_source") or "").strip()
+        maker = "昭昭（弟弟）" if src == "zhaozhao_rule" else "灿灿（姐姐）"
+        block = (
+            f"{block}\n"
+            f"{_C_CRITERION_INJECT_WHOLE_ITEM.format(rule_maker=maker, **pkg)}"
+        )
+    return block
+
+
+def _format_c_whole_item_opening_criterion(pkg: dict[str, Any]) -> str:
+    """整件物开场：只锚占有系规则，不注入破段剧本（防早收束）。"""
+    zz = str(pkg.get("zhaozhao_rule") or "").strip()
+    cc = str(pkg.get("cancan_rule") or "").strip()
+    bq = str(pkg.get("boomerang_quote") or "").strip()
+    return f"""\
+【整件物·开场判据锚（占有系专锁）】
+- 判据只许占有系：拿到/抢到/攥手里/抱进怀里；禁 碰/摸/按遥控器/单脚站/松手。
+- 题面整件物全文唯一，禁漂移到遥控器/电视/按键。
+- 规则参考（开场可化用，勿逐字堆叠）：昭昭「{zz}」、灿灿「{cc}」。
+- 回旋镖原话须与正文一致，候选：「{bq}」。"""
+
+
+def _format_c_whole_item_body_criterion_summary(pkg: dict[str, Any]) -> str:
+    """整件物正文：摘要式要点，不注入完整破段剧本（专家 P2）。"""
+    zz = str(pkg.get("zhaozhao_rule") or "").strip()
+    cc = str(pkg.get("cancan_rule") or "").strip()
+    bq = str(pkg.get("boomerang_quote") or "").strip()
+    trap = str(pkg.get("trap") or "").strip()
+    src = str(pkg.get("boomerang_source") or "").strip()
+    maker = "昭昭（弟弟）" if src == "zhaozhao_rule" else "灿灿（姐姐）"
+    return f"""\
+【判据链要点（摘要·勿照抄须扩写；专家 2026-08-21 P2）】
+- 初始争点：谁先拿到/抢到整件物归谁（占有系，禁切分/分派/单脚站）。
+- 昭昭方向：{zz}
+- 灿灿方向：{cc}
+- 反噬点（破段落在这）：{trap}
+- 回旋镖原话（末段须逐字引用一次）：「{bq}」
+- 末句须由立规人（{maker}）嘴硬收场；立规人必须输。
+
+请严格按 user beats 状态机写满三轮升级（占有→状态→姿势）→权力翻转
+（「哪条作数」，禁用「按哪条/按遥控器」）→回旋镖→嘴硬。
+升级判据动词白名单：{C_WHOLE_ITEM_POSSESSIVE_VERBS_HINT}；禁够/碰/摸/搭/边/环住。
+**禁止**把以上要点当正文逐条抄写；须扩写具体动作对白，写满
+{C_WHOLE_ITEM_BODY_LINES_MIN}–{C_WHOLE_ITEM_BODY_LINES_MAX} 句、
+{C_WHOLE_ITEM_WRITE_TARGET_MIN}–{C_WHOLE_ITEM_WRITE_TARGET_MAX} 字。"""
+
+
+def _format_c_criterion_opening_block(pkg: dict[str, Any]) -> str:
+    if pkg.get("profile") == "whole_item":
+        return _format_c_whole_item_opening_criterion(pkg)
+    return _format_c_criterion_block_full(pkg)
+
+
+def _format_c_criterion_body_block(pkg: dict[str, Any]) -> str:
+    if pkg.get("profile") == "whole_item":
+        return _format_c_whole_item_body_criterion_summary(pkg)
+    return _format_c_criterion_block_full(pkg)
+
+
+def _format_c_criterion_block(pkg: dict[str, Any]) -> str:
+    """按 profile 拼装判据链注入块（兼容旧调用 = 完整块）。"""
+    return _format_c_criterion_block_full(pkg)
 
 
 def _build_story_avoid_block(avoid: list[str] | None) -> str:
@@ -1884,13 +1986,17 @@ class DeepSeekClient(LLMClient):
 
         avoid_block = _build_story_avoid_block(avoid)
         criterion_block = ""
+        criterion_opening_block = ""
+        criterion_body_block = ""
         if parse_story_type_code(story_type=story_type) == "C":
             pkg = self._generate_c_criterion_package(
                 theme,
                 avoid_block=avoid_block,
             )
             if pkg:
-                criterion_block = _C_CRITERION_INJECT_TEMPLATE.format(**pkg)
+                criterion_opening_block = _format_c_criterion_opening_block(pkg)
+                criterion_body_block = _format_c_criterion_body_block(pkg)
+                criterion_block = criterion_body_block
         if not isinstance(framework, dict) or not framework:
             framework = self._generate_daily_story_framework(
                 theme,
@@ -1902,7 +2008,7 @@ class DeepSeekClient(LLMClient):
                 theme,
                 framework,
                 story_type=story_type,
-                criterion_block=criterion_block,
+                criterion_block=criterion_opening_block or criterion_block,
                 avoid_block=avoid_block,
             )
         beats = None
@@ -1918,7 +2024,7 @@ class DeepSeekClient(LLMClient):
                 story_type=story_type,
                 framework=framework,
                 opening=opening,
-                criterion_block=criterion_block,
+                criterion_block=criterion_body_block or criterion_block,
                 avoid_block=avoid_block,
                 beats=beats,
             )
@@ -2218,11 +2324,21 @@ class DeepSeekClient(LLMClient):
                 from app.services.daily_story.story_types.a.opening import (
                     append_a_framework_errors,
                 )
+                from app.services.daily_story.story_types.c.opening import (
+                    append_c_framework_errors,
+                )
 
+                tc = parse_story_type_code(story_type=story_type)
                 append_a_framework_errors(
                     raw,
-                    type_code=parse_story_type_code(story_type=story_type),
+                    type_code=tc,
                     errors=errors,
+                )
+                append_c_framework_errors(
+                    raw,
+                    type_code=tc,
+                    errors=errors,
+                    theme=theme,
                 )
                 if errors:
                     raise ValueError("; ".join(errors))
@@ -2272,6 +2388,8 @@ class DeepSeekClient(LLMClient):
             _RE_RESULT_CRITERION,
             _RE_SEQUENCE_CRITERION,
             _RE_STATE_CRITERION,
+            c_criterion_rule_reject_reason,
+            c_criterion_theme_profile,
         )
 
         _FORBIDDEN = (
@@ -2297,11 +2415,20 @@ class DeepSeekClient(LLMClient):
             f"主题：{theme}\n\n"
             "输出昭昭/灿灿各一条规则台词 + 被反噬原话。"
         )
-        if re.search(r"蛋糕|切好|切完|切开|切块|分.{0,2}(?:蛋糕|块)", theme):
+        profile = c_criterion_theme_profile(theme)
+        if profile == "cut_food":
             user += (
                 "\n\n本主题是切分型资源：判据必须用「切完你先挑/我切你选/你切我选」，"
                 "禁止单脚站/举过头顶等身体仪式；trap 写「立规人答应切完先挑后反悔"
                 "硬抢/换小块，被对方按字面先挑走大块」。"
+            )
+        elif profile == "whole_item":
+            user += (
+                "\n\n本主题是整件非消耗品（占有型优先）：判据须「谁先拿到/抢到/"
+                "攥手里归谁」，两条规则都围绕占有，禁分派型（我分你先挑/我切你选/"
+                "谁反悔谁小狗/切完你先挑）；禁举过头顶/单脚站等仪式（易立规人方向反、"
+                "且非酸奶题禁搬慢数链）；trap 写「立规人立占有规则后反悔硬抢，"
+                "被对方用原规反问判输」。"
             )
         if avoid_block:
             user = f"{user}\n\n{avoid_block}"
@@ -2341,6 +2468,21 @@ class DeepSeekClient(LLMClient):
                     "[DAILY_STORY] C criterion package attempt=%d forbidden "
                     "rule: %s | %s",
                     attempt + 1,
+                    zz,
+                    cc,
+                )
+                continue
+            reject = (
+                c_criterion_rule_reject_reason(profile, zz)
+                or c_criterion_rule_reject_reason(profile, cc)
+            )
+            if reject:
+                logger.info(
+                    "[DAILY_STORY] C criterion package attempt=%d profile=%s "
+                    "reject=%s: %s | %s",
+                    attempt + 1,
+                    profile,
+                    reject,
                     zz,
                     cc,
                 )
@@ -2405,6 +2547,14 @@ class DeepSeekClient(LLMClient):
                     "禁立规人宣布自己赢/站满/酸奶归我**；执行纠纷只用 数快慢/脚落地/"
                     "扶墙，禁 松手/放手/拽/拉扯/碰 当判据。"
                 )
+            elif profile == "whole_item":
+                break_script = (
+                    "按占有规则字面执行：立规人（说出回旋镖原话的一方）立规后，"
+                    "对方按字面先完成占有（拿到/攥手里/抢过来）；立规人反悔硬抢/换条件，"
+                    "被对方用原规反问当场判输；末句**必须**由立规人嘴硬收场。"
+                    "**立规人必须输**，禁立规人宣布自己赢/归我；执行纠纷只用 "
+                    "抢/夺/抱/藏/压/捡起，禁 松手/放手/数到三/举过头顶/单脚站/碰/摸 当判据。"
+                )
             else:
                 break_script = (
                     "按动作分派/占有规则字面执行：立规人立规后，对方按字面行使"
@@ -2422,6 +2572,7 @@ class DeepSeekClient(LLMClient):
                 "boomerang_source": src,
                 "trap": trap,
                 "break_script": break_script,
+                "profile": profile,
             }
         logger.warning(
             "[DAILY_STORY] C criterion package failed after 3 attempts, "
@@ -2519,9 +2670,26 @@ class DeepSeekClient(LLMClient):
         # C 类台词锚定注入生效时降温度（专家定 0.4）：约束越硬温度越低，
         # 否则闭集选择会被发散冲垮。
         max_attempts = 3
+        from app.services.daily_story.prompts import (
+            _C_WHOLE_ITEM_HARD_LINE_MIN,
+            _is_c_whole_item_profile,
+            c_whole_item_body_too_short,
+            c_whole_item_near_miss,
+            c_whole_item_semantic_patch_ok,
+            dialogue_total_chars,
+            is_short_body_only_error,
+            parse_story_type_code,
+        )
+
+        _wi_type = (
+            parse_story_type_code(story_type=story_type) if story_type else None
+        )
+        if _is_c_whole_item_profile(_wi_type, theme, framework):
+            max_attempts = 4
         prev_story: dict | None = None
         same_err_streak = 0
         prev_err_key = ""
+        c_wi_short_fails = 0
         draft_temp = (
             _TEMP_CRITERION_LOCKED
             if criterion_block
@@ -2637,6 +2805,13 @@ class DeepSeekClient(LLMClient):
                             story_type=story_type,
                         )
             try:
+                short_err = c_whole_item_body_too_short(
+                    raw if isinstance(raw, dict) else None,
+                    theme=theme,
+                    framework=framework,
+                )
+                if short_err:
+                    raise ValueError(f"daily_story 校验失败: {short_err}")
                 validate_daily_story_json(raw, phase="body")
                 if isinstance(raw, dict):
                     raw.pop("_theme", None)
@@ -2752,12 +2927,57 @@ class DeepSeekClient(LLMClient):
                     if "A类偷吃" in errors or "检样不算开饭" in errors
                     else errors[:48]
                 )
-                if err_key == prev_err_key:
+                if is_short_body_only_error(errors):
+                    same_err_streak = 0
+                    prev_err_key = err_key
+                elif err_key == prev_err_key:
                     same_err_streak += 1
                 else:
                     same_err_streak = 1
                     prev_err_key = err_key
                 if attempt + 1 >= max_attempts or same_err_streak >= 2:
+                    if (
+                        isinstance(prev_story, dict)
+                        and _is_c_whole_item_profile(_wi_type, theme, framework)
+                        and is_short_body_only_error(errors)
+                        and c_whole_item_semantic_patch_ok(
+                            prev_story,
+                            theme=theme,
+                            framework=framework,
+                        )
+                    ):
+                        from app.services.daily_story.prompts import _clone_story
+                        from app.services.daily_story.story_types.c.patch import (
+                            patch_c_whole_item_semantic_expand,
+                        )
+
+                        fallback = _clone_story(prev_story)
+                        fb_notes = patch_c_whole_item_semantic_expand(fallback)
+                        if fb_notes:
+                            fallback["_theme"] = theme
+                            fallback["_story_type"] = story_type
+                            _force_framework_fields(fallback, framework)
+                            try:
+                                short_err2 = c_whole_item_body_too_short(
+                                    fallback,
+                                    theme=theme,
+                                    framework=framework,
+                                )
+                                if short_err2:
+                                    raise ValueError(
+                                        f"daily_story 校验失败: {short_err2}",
+                                    )
+                                validate_daily_story_json(fallback, phase="body")
+                                logger.info(
+                                    "[DAILY_STORY] whole_item semantic expand "
+                                    "saved retry: %s",
+                                    ",".join(fb_notes),
+                                )
+                                fallback.pop("_theme", None)
+                                fallback.pop("_story_type", None)
+                                return fallback
+                            except ValueError:
+                                prev_story = fallback
                     logger.warning(
                         "[DAILY_STORY] generate story body validation failed "
                         "attempt=%d/%d streak=%d: %s",
@@ -2775,11 +2995,41 @@ class DeepSeekClient(LLMClient):
                     exc,
                 )
                 # 重试按错误文案+字数分向；非字数问题走 revise 保篇幅
-                length_mode = resolve_daily_story_retry_length_mode(
-                    prev_story if isinstance(prev_story, dict) else None,
-                    errors=errors,
-                    story_type=story_type,
-                )
+                rewrite_tier = 0
+                if (
+                    _is_c_whole_item_profile(_wi_type, theme, framework)
+                    and is_short_body_only_error(errors)
+                    and isinstance(prev_story, dict)
+                ):
+                    c_wi_short_fails += 1
+                    n_lines = len(prev_story.get("dialogue") or [])
+                    struct_short = n_lines < _C_WHOLE_ITEM_HARD_LINE_MIN
+                    if struct_short:
+                        rewrite_tier = 2 if c_wi_short_fails >= 2 else 1
+                        length_mode = (
+                            "rewrite_from_scratch"
+                            if rewrite_tier >= 2
+                            else "revise_expand"
+                        )
+                    elif c_whole_item_near_miss(
+                        prev_story,
+                        theme=theme,
+                        framework=framework,
+                    ):
+                        length_mode = "revise_expand"
+                    else:
+                        rewrite_tier = 2 if c_wi_short_fails >= 2 else 1
+                        length_mode = (
+                            "rewrite_from_scratch"
+                            if rewrite_tier >= 2
+                            else "revise_expand"
+                        )
+                else:
+                    length_mode = resolve_daily_story_retry_length_mode(
+                        prev_story if isinstance(prev_story, dict) else None,
+                        errors=errors,
+                        story_type=story_type,
+                    )
                 system, _ = build_daily_story_prompts(
                     theme,
                     story_type=story_type,
@@ -2796,6 +3046,8 @@ class DeepSeekClient(LLMClient):
                         errors=errors,
                         phase="body",
                         story_type=story_type,
+                        c_wi_rewrite_tier=rewrite_tier or 1,
+                        framework=framework,
                     )
                     if beats and beats.get("division"):
                         user = (
@@ -2872,7 +3124,19 @@ class DeepSeekClient(LLMClient):
             _RE_RESULT_CRITERION,
             _RE_SEQUENCE_CRITERION,
             _RE_STATE_CRITERION,
+            c_criterion_theme_profile,
+            c_whole_item_ritual_in_line,
         )
+
+        anchor = (
+            str(story.get("_theme") or theme or "")
+            + str(story.get("conflict_core") or "")
+            + str(story.get("setting") or "")
+        )
+        is_whole_item = c_criterion_theme_profile(anchor) == "whole_item"
+        obj_hint = str(story.get("key") or story.get("conflict_core") or "物").strip()
+        if len(obj_hint) > 16:
+            obj_hint = obj_hint[:16]
 
         _FORBIDDEN = (
             _RE_CONTACT_CRITERION,
@@ -2904,6 +3168,9 @@ class DeepSeekClient(LLMClient):
                 continue
             if not _RE_CRITERION_LIKE.search(ln):
                 continue
+            if is_whole_item and c_whole_item_ritual_in_line(ln):
+                drift_idxs.append(i)
+                continue
             if any(r.search(ln) for r in _FORBIDDEN):
                 drift_idxs.append(i)
                 continue
@@ -2916,7 +3183,20 @@ class DeepSeekClient(LLMClient):
             return None
 
         # 3：逐句单句重写（每句最多重写 3 次；一次成功即替换）
-        rewrite_system = """\
+        if is_whole_item:
+            rewrite_system = f"""\
+你是「昭昭&灿灿」日常短剧 C 类整件物题的台词修稿器。只改一句对白中的
+「规则宣告/判定归属」部分：
+- 判据核心动词**必须**从白名单选用：{C_WHOLE_ITEM_POSSESSIVE_VERBS_HINT}。
+- 整句须可理解为「谁先[白名单动词]{obj_hint}归谁」或「得[占有动作]才算拿到」。
+- **禁止**只做同义微调（如「环住」改「抱住」仍不合格，须写成明确占有判据）。
+- **禁**判据位：够/碰/摸/搭/触/沾/挨/悬/边/环住/够不着/碰到边/抢到边。
+- **禁**计时/计数/平衡仪式：数到三/单脚站/金鸡独立/站满N秒/转圈 等。
+- **禁** 松手/放手 当判据；别写「站够」。
+- 保持原句气势、角色立场；字数尽量相近（±4 字）。
+只输出改写后的完整一句对白，不要解释、不要 JSON。"""
+        else:
+            rewrite_system = """\
 你是「昭昭&灿灿」日常短剧 C 类（公平执念）的台词修稿器。只改一句对白中的
 「规则宣告/判定归属」部分：
 - 判据核心动词只用占有系白名单：拿到/抢到/攥在手里/举起/翻开/坐上。
@@ -2959,6 +3239,8 @@ class DeepSeekClient(LLMClient):
                     continue
                 if any(r.search(cand) for r in _FORBIDDEN):
                     continue
+                if is_whole_item and c_whole_item_ritual_in_line(cand):
+                    continue
                 if not _POSSESSIVE.search(cand):
                     continue
                 if any(a and a in cand for a in _avoid_items):
@@ -2980,7 +3262,12 @@ class DeepSeekClient(LLMClient):
         # 4：复检全文判据句 + 整稿 validate
         for item in out["dialogue"]:
             ln = str(item.get("line") or "").strip()
-            if ln and _RE_CRITERION_LIKE.search(ln) and any(
+            if not ln:
+                continue
+            if is_whole_item and c_whole_item_ritual_in_line(ln):
+                if _RE_CRITERION_LIKE.search(ln):
+                    return None
+            if _RE_CRITERION_LIKE.search(ln) and any(
                 r.search(ln) for r in _FORBIDDEN
             ):
                 return None

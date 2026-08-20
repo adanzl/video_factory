@@ -273,8 +273,229 @@ _LENGTH_MODE_USER = {
 }
 
 
-def _body_line_budget(type_code: str | None) -> tuple[int, int, int]:
+# C 整件物正文句数/字数（权威定义在 story_types/c/line.py）
+from app.services.daily_story.story_types.c.line import (
+    C_WHOLE_ITEM_BODY_LINES_MAX as _C_WHOLE_ITEM_LINES_MAX,
+    C_WHOLE_ITEM_BODY_LINES_MIN as _C_WHOLE_ITEM_LINES_MIN,
+    C_WHOLE_ITEM_HARD_LINE_MIN as _C_WHOLE_ITEM_HARD_LINE_MIN,
+    C_WHOLE_ITEM_LOCAL_PAD_MAX as _C_WHOLE_ITEM_LOCAL_PAD_MAX,
+    C_WHOLE_ITEM_NEAR_MISS_CHAR_DEFICIT as _C_WHOLE_ITEM_NEAR_MISS_CHAR_DEFICIT,
+    C_WHOLE_ITEM_PATCH_CHAR_DEFICIT as _C_WHOLE_ITEM_PATCH_CHAR_DEFICIT,
+    C_WHOLE_ITEM_WRITE_TARGET_MAX as _C_WHOLE_ITEM_WRITE_TARGET_MAX,
+    C_WHOLE_ITEM_WRITE_TARGET_MIN as _C_WHOLE_ITEM_WRITE_TARGET_MIN,
+    c_whole_item_line_budget,
+    c_whole_item_overlap_buffer_hint,
+)
+
+
+def _is_c_whole_item_profile(
+    type_code: str | None,
+    theme: str | None = None,
+    framework: dict | None = None,
+) -> bool:
+    if not type_code or type_code.upper() != "C":
+        return False
+    from app.services.daily_story.story_types.c.validate import (
+        c_criterion_theme_profile,
+    )
+
+    anchor = str(theme or "")
+    if isinstance(framework, dict):
+        anchor += str(framework.get("conflict_core") or "")
+        anchor += str(framework.get("setting") or "")
+    return c_criterion_theme_profile(anchor) == "whole_item"
+
+
+def c_whole_item_body_too_short(
+    story: dict | None,
+    *,
+    theme: str = "",
+    framework: dict | None = None,
+) -> str | None:
+    """整件物正文硬验收：句数/字数不达标则返回原因，否则 None。"""
+    if not isinstance(story, dict):
+        return None
+    if not _is_c_whole_item_profile("C", theme, framework):
+        return None
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list):
+        return "C整件物句数须≥17，当前0句"
+    n_lines = len(dialogue)
+    chars = dialogue_total_chars(story)
+    parts: list[str] = []
+    if chars < DAILY_STORY_BODY_CHARS_MIN:
+        parts.append(
+            f"正文总字数须≥{DAILY_STORY_BODY_CHARS_MIN}，"
+            f"当前{chars}（还差{DAILY_STORY_BODY_CHARS_MIN - chars}字）"
+        )
+    if n_lines < _C_WHOLE_ITEM_HARD_LINE_MIN:
+        parts.append(
+            f"C整件物句数须≥{_C_WHOLE_ITEM_HARD_LINE_MIN}，当前{n_lines}句"
+        )
+    return "；".join(parts) if parts else None
+
+
+def c_whole_item_char_deficit_to_validate(story: dict | None) -> int:
+    """距 validate 下限 240 的字数缺口（0 表示已达标）。"""
+    if not isinstance(story, dict):
+        return DAILY_STORY_BODY_CHARS_MIN
+    return max(0, DAILY_STORY_BODY_CHARS_MIN - dialogue_total_chars(story))
+
+
+def c_whole_item_near_miss(story: dict | None, *, theme: str = "", framework: dict | None = None) -> bool:
+    """句数够、距 240 字差 ≤20 → 优先 LLM expand。"""
+    if not isinstance(story, dict) or not _is_c_whole_item_profile("C", theme, framework):
+        return False
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list):
+        return False
+    deficit = c_whole_item_char_deficit_to_validate(story)
+    return len(dialogue) >= _C_WHOLE_ITEM_LINES_MIN - 1 and 0 < deficit <= _C_WHOLE_ITEM_NEAR_MISS_CHAR_DEFICIT
+
+
+def c_whole_item_semantic_patch_ok(
+    story: dict | None,
+    *,
+    theme: str = "",
+    framework: dict | None = None,
+) -> bool:
+    """expand 后仍差 ≤PATCH_CHAR_DEFICIT 字 → 才允许本地 semantic patch。"""
+    if not isinstance(story, dict) or not _is_c_whole_item_profile("C", theme, framework):
+        return False
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list):
+        return False
+    deficit = c_whole_item_char_deficit_to_validate(story)
+    return (
+        len(dialogue) >= _C_WHOLE_ITEM_HARD_LINE_MIN
+        and 0 < deficit <= _C_WHOLE_ITEM_PATCH_CHAR_DEFICIT
+    )
+
+
+def is_short_body_only_error(errors: str) -> bool:
+    """纯短稿/句数不足（无判据/结构硬伤）→ D2 retry 不计 same_err_streak。"""
+    err = errors or ""
+    if "C整件物句数须≥" in err:
+        return not any(
+            x in err
+            for x in ("判据", "回旋镖", "跑题", "连说", "引话", "末段", "语气词", "漂移")
+        )
+    if "总字数须≥" in err:
+        return not any(
+            x in err
+            for x in (
+                "判据", "回旋镖", "跑题", "连说", "引话", "末段须有",
+                "语气词", "漂移", "speaker",
+            )
+        )
+    return False
+
+
+def _c_whole_item_story_summary(story: dict, theme: str) -> str:
+    """整件物短稿 retry 用结构摘要（禁传全文 JSON 防克隆）。"""
+    lines = [
+        f"主题：{theme}",
+        f"场景：{story.get('setting') or ''}",
+        f"争点：{story.get('conflict_core') or ''}",
+    ]
+    dialogue = story.get("dialogue")
+    if isinstance(dialogue, list):
+        n = len(dialogue)
+        chars = dialogue_total_chars(story)
+        lines.append(f"上一稿不合格：仅 {n} 句 / {chars} 字（勿复制任何原句）")
+    return "\n".join(x for x in lines if str(x).strip())
+
+
+def _build_c_whole_item_short_retry_user(
+    theme: str,
+    *,
+    prev_story: dict,
+    errors: str,
+    primary_line: str,
+    rewrite_tier: int,
+) -> str:
+    """C 整件物短稿 retry：不传上一稿 JSON，按 tier 扩写或完全重写。"""
+    from app.services.daily_story.story_types.c.line import c_whole_item_beats_hint
+
+    beats = c_whole_item_beats_hint()
+    w_lo = _C_WHOLE_ITEM_WRITE_TARGET_MIN
+    w_hi = _C_WHOLE_ITEM_WRITE_TARGET_MAX
+    lo = _C_WHOLE_ITEM_LINES_MIN
+    hi = _C_WHOLE_ITEM_LINES_MAX
+    if rewrite_tier >= 2:
+        n_prev = len(prev_story.get("dialogue") or [])
+        c_prev = dialogue_total_chars(prev_story)
+        struct_note = ""
+        if n_prev < _C_WHOLE_ITEM_HARD_LINE_MIN:
+            struct_note = (
+                f"上次只有 {n_prev} 句 / {c_prev} 字，缺少三轮升级与结构段预算；"
+                "须按 beats 写满占有→状态→姿势三轮。\n"
+            )
+        return (
+            f"主题：{theme}\n"
+            "【C·整件物·完全重写】上一稿不合格，禁止参考、禁止复制任何已有对白。\n"
+            f"{struct_note}"
+            f"{beats}\n"
+            f"要求：总句数 {lo}–{hi}（硬卡≥{_C_WHOLE_ITEM_HARD_LINE_MIN}），"
+            f"总字数 {w_lo}–{w_hi}（硬卡≥{DAILY_STORY_BODY_CHARS_MIN}）；"
+            "每句 15–18 字；重点写好「哪条作数」权力翻转与回旋镖；"
+            "禁止语气词凑字。speaker 仅昭昭/灿灿/妈妈。正文勿写发现开场。\n"
+            f"【本轮问题】{primary_line}\n"
+            "请输出完整 JSON（scene_title/setting/conflict_core/key/"
+            "punchline_explain/dialogue）。\n"
+            "禁止附带上一稿 JSON。"
+        )
+    summary = _c_whole_item_story_summary(prev_story, theme)
+    return (
+        f"主题：{theme}\n"
+        "【C·整件物·扩写重写】禁止复制上一稿任何完整句子，须重新表达并新增对白。\n"
+        f"{summary}\n\n{beats}\n"
+        f"要求：总句数≥{hi - 1}、总字数≥{w_lo}；至少新增 4 个动作/互怼分句，"
+        "重点扩「权力翻转（哪条作数）」与「回旋镖」段；"
+        "禁止语气词凑字；每句 15–18 字。\n"
+        f"【本轮问题】{primary_line}\n"
+        "请输出完整 JSON（scene_title/setting/conflict_core/key/"
+        "punchline_explain/dialogue）。\n"
+        "禁止附带上一稿 JSON。"
+    )
+
+
+def _build_c_whole_item_near_miss_expand_user(
+    theme: str,
+    *,
+    prev_story: dict,
+    errors: str,
+    primary_line: str,
+) -> str:
+    """整件物 near-miss：骨架不变，翻转/回旋镖段扩 2 句。"""
+    from app.services.daily_story.story_types.c.line import c_whole_item_beats_hint
+
+    beats = c_whole_item_beats_hint()
+    summary = _c_whole_item_story_summary(prev_story, theme)
+    deficit = c_whole_item_char_deficit_to_validate(prev_story)
+    return (
+        f"主题：{theme}\n"
+        "【C·整件物·near-miss 扩写】保留骨架只增不删；"
+        "只在权力翻转与回旋镖段新增 2 个动作/互怼分句。\n"
+        f"{summary}\n\n{beats}\n"
+        f"禁止新增规则、禁止语气词凑字、禁止改变判据；每句 15–18 字；"
+        f"距 validate 下限还差 {deficit} 字。\n"
+        f"【本轮问题】{primary_line}\n"
+        "请输出完整 JSON（scene_title/setting/conflict_core/key/"
+        "punchline_explain/dialogue）。\n"
+        "禁止附带上一稿 JSON。"
+    )
+
+
+def _body_line_budget(
+    type_code: str | None,
+    *,
+    theme: str | None = None,
+    framework: dict | None = None,
+) -> tuple[int, int, int]:
     """(min_lines, max_lines, avg_chars_per_line) for draft/retry hints."""
+    if _is_c_whole_item_profile(type_code, theme, framework):
+        return c_whole_item_line_budget()
     if type_code:
         line = STORY_TYPE_LINES.get(type_code.upper())
         if line and line.body_lines_min > 0 and line.body_lines_max > 0:
@@ -282,8 +503,27 @@ def _body_line_budget(type_code: str | None) -> tuple[int, int, int]:
     return 24, 28, 12
 
 
-def _daily_story_length_draft_for_type(type_code: str | None) -> str:
-    lo, hi, _avg = _body_line_budget(type_code)
+def _daily_story_length_draft_for_type(
+    type_code: str | None,
+    *,
+    theme: str | None = None,
+    framework: dict | None = None,
+) -> str:
+    if _is_c_whole_item_profile(type_code, theme, framework):
+        lo, hi = _C_WHOLE_ITEM_LINES_MIN, _C_WHOLE_ITEM_LINES_MAX
+        w_lo, w_hi = _C_WHOLE_ITEM_WRITE_TARGET_MIN, _C_WHOLE_ITEM_WRITE_TARGET_MAX
+        overlap = c_whole_item_overlap_buffer_hint()
+        return f"""\
+- 片长（C类·整件物·正文，放最前）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
+  每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
+  【C·整件物·首稿】写 {lo}–{hi} 句；**须一次写到 ≥{DAILY_STORY_BODY_CHARS_MIN} 字**
+  （{overlap}，删后仍 ≥{DAILY_STORY_BODY_CHARS_MIN}；勿少于 {w_lo - 20} 字）；
+  每句 15–18 字，按结构段预算写满（三轮升级占有→状态→姿势须逐层加码，见 user beats）；
+  三轮升级是评分核心：每轮动作须比前一轮更激烈，第三轮须姿势控制整件物；
+  禁止少于 {lo} 句、禁止用语气词堆字；回旋镖收束 3–4 句；被戳穿方末句嘴硬。
+  系统另拼 2 句开场。发现开场另计另验。
+"""
+    lo, hi, _avg = _body_line_budget(type_code, theme=theme, framework=framework)
     if type_code and type_code.upper() == "E":
         return f"""\
 - 片长（E类正文，放最前）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
@@ -345,8 +585,22 @@ def _daily_story_length_draft_for_type(type_code: str | None) -> str:
     return _DAILY_STORY_LENGTH_DRAFT
 
 
-def _daily_story_length_user_draft_for_type(type_code: str | None) -> str:
-    lo, hi, _avg = _body_line_budget(type_code)
+def _daily_story_length_user_draft_for_type(
+    type_code: str | None,
+    *,
+    theme: str | None = None,
+    framework: dict | None = None,
+) -> str:
+    if _is_c_whole_item_profile(type_code, theme, framework):
+        lo, hi = _C_WHOLE_ITEM_LINES_MIN, _C_WHOLE_ITEM_LINES_MAX
+        w_lo, w_hi = _C_WHOLE_ITEM_WRITE_TARGET_MIN, _C_WHOLE_ITEM_WRITE_TARGET_MAX
+        return f"""\
+3. 【C·整件物·首稿】写 **{lo}–{hi} 句**；**须一次写到 ≥{DAILY_STORY_BODY_CHARS_MIN} 字**
+   （瞄准 {w_lo}–{w_hi}）；每句 14–18 字；严格按 beats L3–L16 状态机；
+   输出前自查：句数≥{lo}、总字数≥{w_lo - 10}；勿交短稿。
+   回旋镖收束，被戳穿方末句嘴硬。发现开场另计另验。speaker 仅昭昭/灿灿/妈妈。
+"""
+    lo, hi, _avg = _body_line_budget(type_code, theme=theme, framework=framework)
     if type_code and type_code.upper() == "E":
         return f"""\
 3. 【E类·首稿】写 **{lo}–{hi} 句**；**须一次写到 ≥{DAILY_STORY_BODY_CHARS_MIN} 字**
@@ -386,9 +640,25 @@ def _daily_story_length_user_draft_for_type(type_code: str | None) -> str:
     return _DAILY_STORY_LENGTH_USER_DRAFT
 
 
-def _daily_story_length_revise_expand_for_type(type_code: str | None) -> str:
+def _daily_story_length_revise_expand_for_type(
+    type_code: str | None,
+    *,
+    theme: str | None = None,
+    framework: dict | None = None,
+) -> str:
+    if _is_c_whole_item_profile(type_code, theme, framework):
+        lo, hi = _C_WHOLE_ITEM_LINES_MIN, _C_WHOLE_ITEM_LINES_MAX
+        w_lo, w_hi = _C_WHOLE_ITEM_WRITE_TARGET_MIN, _C_WHOLE_ITEM_WRITE_TARGET_MAX
+        return f"""\
+- 片长（C·整件物·偏短重试·一次补满）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
+  每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
+  **本轮必须扩写到 {hi} 句、≥{w_lo} 字**（目标 {w_lo}–{w_hi}），禁止只补到 14–16 句。
+  保留上一稿立赛规→三轮升级→权力翻转→回旋镖→嘴硬骨架：只增不删；
+  重点扩写「哪条作数」权力翻转段与回旋镖段（各加具体动作/互怼分句）；
+  禁止整稿重写、禁止语气词尾巴凑字。发现开场另写另验。
+"""
     if type_code and type_code.upper() == "E":
-        lo, hi, _avg = _body_line_budget(type_code)
+        lo, hi, _avg = _body_line_budget(type_code, theme=theme, framework=framework)
         return f"""\
 - 片长（E类偏短重试·一次补满）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
   每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
@@ -398,7 +668,7 @@ def _daily_story_length_revise_expand_for_type(type_code: str | None) -> str:
   发现开场另写另验。
 """
     if type_code and type_code.upper() == "D":
-        lo, hi, _avg = _body_line_budget(type_code)
+        lo, hi, _avg = _body_line_budget(type_code, theme=theme, framework=framework)
         return f"""\
 - 片长（D类偏短重试·一次补满）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
   每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
@@ -407,7 +677,7 @@ def _daily_story_length_revise_expand_for_type(type_code: str | None) -> str:
   只增不删、禁止整稿重写、禁止轻轻放×N 凑字。发现开场另写另验。
 """
     if type_code and type_code.upper() == "A":
-        lo, hi, _avg = _body_line_budget(type_code)
+        lo, hi, _avg = _body_line_budget(type_code, theme=theme, framework=framework)
         return f"""\
 - 片长（A类偏短重试·一次补满）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
   每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
@@ -417,7 +687,7 @@ def _daily_story_length_revise_expand_for_type(type_code: str | None) -> str:
   发现开场另写另验。
 """
     if type_code and type_code.upper() == "B":
-        lo, hi, _avg = _body_line_budget(type_code)
+        lo, hi, _avg = _body_line_budget(type_code, theme=theme, framework=framework)
         return f"""\
 - 片长（B类偏短重试·一次补满）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
   每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
@@ -427,7 +697,7 @@ def _daily_story_length_revise_expand_for_type(type_code: str | None) -> str:
   发现开场另写另验。
 """
     if type_code and type_code.upper() == "C":
-        lo, hi, _avg = _body_line_budget(type_code)
+        lo, hi, _avg = _body_line_budget(type_code, theme=theme, framework=framework)
         return f"""\
 - 片长（C类偏短重试·一次补满）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
   每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
@@ -437,6 +707,28 @@ def _daily_story_length_revise_expand_for_type(type_code: str | None) -> str:
   发现开场另写另验。
 """
     return _DAILY_STORY_LENGTH_REVISE_EXPAND
+
+
+def _daily_story_length_rewrite_from_scratch_for_type(
+    type_code: str | None,
+    *,
+    theme: str | None = None,
+    framework: dict | None = None,
+) -> str:
+    if _is_c_whole_item_profile(type_code, theme, framework):
+        w_lo = _C_WHOLE_ITEM_WRITE_TARGET_MIN
+        w_hi = _C_WHOLE_ITEM_WRITE_TARGET_MAX
+        lo = _C_WHOLE_ITEM_LINES_MIN
+        hi = _C_WHOLE_ITEM_LINES_MAX
+        return f"""\
+- 片长（C·整件物·完全重写）：硬卡 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
+  每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
+  **从零撰写**，禁止参考/复制任何上一稿句子；写 {lo}–{hi} 句、{w_lo}–{w_hi} 字；
+  按 beats 结构段预算写满；禁止语气词凑字。发现开场另写另验。
+"""
+    return _daily_story_length_revise_expand_for_type(
+        type_code, theme=theme, framework=framework,
+    )
 
 
 def _daily_story_length_revise_patch_for_type(type_code: str | None) -> str:
@@ -488,23 +780,36 @@ def _daily_story_length_revise_trim_for_type(type_code: str | None) -> str:
     return _DAILY_STORY_LENGTH_REVISE_TRIM
 
 
-def _daily_story_length_user_revise_expand_for_type(type_code: str | None) -> str:
+def _daily_story_length_user_revise_expand_for_type(
+    type_code: str | None,
+    *,
+    theme: str | None = None,
+    framework: dict | None = None,
+) -> str:
+    if _is_c_whole_item_profile(type_code, theme, framework):
+        hi = _C_WHOLE_ITEM_LINES_MAX
+        w_lo = _C_WHOLE_ITEM_WRITE_TARGET_MIN
+        return f"""\
+3. 【C·整件物·一次补满】本轮必须扩写到 **{hi} 句、≥{w_lo} 字**（≤{DAILY_STORY_BODY_CHARS_MAX}）；
+   重点扩权力翻转「哪条作数」与回旋镖段；禁止只补到14-16句、禁止语气词凑字。
+   发现开场另计另验。speaker 仅昭昭/灿灿/妈妈。
+"""
     if type_code and type_code.upper() == "E":
-        lo, hi, _avg = _body_line_budget(type_code)
+        lo, hi, _avg = _body_line_budget(type_code, theme=theme, framework=framework)
         return f"""\
 3. 【E类·一次补满】本轮必须写到 ≥{DAILY_STORY_BODY_CHARS_MIN} 字；
    句数 {lo}–{hi}；每句尽量 17–20 字（≤{DAILY_STORY_LINE_CHARS_MAX}）；保留骨架只增不删。
    发现开场另计另验。speaker 仅昭昭/灿灿/妈妈。
 """
     if type_code and type_code.upper() == "D":
-        lo, hi, _avg = _body_line_budget(type_code)
+        lo, hi, _avg = _body_line_budget(type_code, theme=theme, framework=framework)
         return f"""\
 3. 【D类·一次补满】本轮必须写到 ≥{DAILY_STORY_BODY_CHARS_MIN} 字；
    句数 {lo}–{hi}；每句尽量 19–21 字（≤{DAILY_STORY_LINE_CHARS_MAX}）；保留骨架只增不删。
    发现开场另计另验。speaker 仅昭昭/灿灿。
 """
     if type_code and type_code.upper() == "A":
-        lo, hi, _avg = _body_line_budget(type_code)
+        lo, hi, _avg = _body_line_budget(type_code, theme=theme, framework=framework)
         return f"""\
 3. 【A类·一次补满】本轮必须写到 ≥{DAILY_STORY_BODY_CHARS_MIN} 字；
    句数 {lo}–{hi}；每句尽量 13–15 字（≤{DAILY_STORY_LINE_CHARS_MAX}）；保留骨架只增不删。
@@ -537,11 +842,21 @@ def _daily_story_contract(
     *,
     length_mode: str = "draft",
     type_code: str | None = None,
+    theme: str | None = None,
+    framework: dict | None = None,
 ) -> str:
     if length_mode == "draft":
-        length = _daily_story_length_draft_for_type(type_code)
+        length = _daily_story_length_draft_for_type(
+            type_code, theme=theme, framework=framework,
+        )
     elif length_mode == "revise_expand":
-        length = _daily_story_length_revise_expand_for_type(type_code)
+        length = _daily_story_length_revise_expand_for_type(
+            type_code, theme=theme, framework=framework,
+        )
+    elif length_mode == "rewrite_from_scratch":
+        length = _daily_story_length_rewrite_from_scratch_for_type(
+            type_code, theme=theme, framework=framework,
+        )
     elif length_mode == "revise_patch":
         length = _daily_story_length_revise_patch_for_type(type_code)
     elif length_mode == "revise_trim":
@@ -757,7 +1072,11 @@ def _shared_block_for_type(*, type_code: str | None = None) -> str:
     return f"{_SHARED_GENERIC}\n{mom}"
 
 
-def _daily_story_system_body(*, type_code: str | None = None) -> str:
+def _daily_story_system_body(
+    *,
+    type_code: str | None = None,
+    theme: str | None = None,
+) -> str:
     catalog = type_catalog_system_block()
     if not type_code:
         return f"{_DAILY_STORY_SYSTEM_SHARED}\n{catalog}\n"
@@ -765,9 +1084,14 @@ def _daily_story_system_body(*, type_code: str | None = None) -> str:
     if not line:
         return f"{_DAILY_STORY_SYSTEM_SHARED}\n{catalog}\n"
     humor = f"\n{line.humor_pack}\n" if (line.humor_pack or "").strip() else ""
+    prompt_block = line.prompt_block
+    if type_code.upper() == "C" and theme:
+        from app.services.daily_story.story_types.c.line import c_prompt_block_for_theme
+
+        prompt_block = c_prompt_block_for_theme(theme)
     return (
         f"{_shared_block_for_type(type_code=type_code)}\n"
-        f"{line.prompt_block}\n"
+        f"{prompt_block}\n"
         f"{format_block_for_code(line.code)}\n"
         f"{humor}"
     )
@@ -777,11 +1101,17 @@ def _daily_story_user_template(
     *,
     length_mode: str = "draft",
     type_code: str | None = None,
+    theme: str | None = None,
+    framework: dict | None = None,
 ) -> str:
     length_req = (
-        _daily_story_length_user_draft_for_type(type_code)
+        _daily_story_length_user_draft_for_type(
+            type_code, theme=theme, framework=framework,
+        )
         if length_mode == "draft" and type_code
-        else _daily_story_length_user_revise_expand_for_type(type_code)
+        else _daily_story_length_user_revise_expand_for_type(
+            type_code, theme=theme, framework=framework,
+        )
         if length_mode == "revise_expand" and type_code
         else _daily_story_length_user_revise_patch_for_type(type_code)
         if length_mode == "revise_patch" and type_code
@@ -841,12 +1171,14 @@ def _daily_story_system_prompt(
     *,
     length_mode: str = "draft",
     type_code: str | None = None,
+    theme: str | None = None,
+    framework: dict | None = None,
 ) -> str:
     return (
         "你是一位家庭情景喜剧编剧，写昭昭&灿灿的日常对话短剧。\n"
         "面向孩子和有娃的大人：笑点要孩子听得懂，家长看得出自家日常。\n\n"
-        f"{_daily_story_contract(length_mode=length_mode, type_code=type_code)}"
-        f"{_daily_story_system_body(type_code=type_code)}"
+        f"{_daily_story_contract(length_mode=length_mode, type_code=type_code, theme=theme, framework=framework)}"
+        f"{_daily_story_system_body(type_code=type_code, theme=theme)}"
     )
 
 
@@ -1353,6 +1685,34 @@ def build_daily_story_framework_prompts(
             "（如『姐弟偷喝橙汁瞒妈妈』），禁写「谁望风/谁下手/谁来X」这类"
             "局部分工问句——分工是执行细节，不是冲突内核。"
         )
+    if type_code and type_code.upper() == "C" and re.search(
+        r"蛋糕|披萨|分蛋糕|切蛋糕",
+        theme,
+    ):
+        user = (
+            f"{user}\n"
+            "【C 类 framework·蛋糕题 setting】题面含蛋糕/分蛋糕：setting 写"
+            "「灿灿切好两块蛋糕」或「桌上两块蛋糕姐弟对峙」，"
+            "禁写「妈妈切好蛋糕」——妈妈不在场，正文姐弟互争挑选。"
+        )
+    if type_code and type_code.upper() == "C":
+        from app.services.daily_story.story_types.c.validate import (
+            c_criterion_theme_profile,
+        )
+
+        if c_criterion_theme_profile(theme) == "whole_item":
+            user = (
+                f"{user}\n"
+                "【C 类 framework·整件物 setting】争点是单一整件物（抱枕/遥控器/"
+                "枕头/马桶/橡皮）：setting 须写**同一件物、数量 1**——"
+                "如「沙发上一个蓝抱枕，姐弟同时伸手去抢」；禁「两个抱枕并排/"
+                "各抓一个」与 conflict_core「争同一个 X」矛盾。"
+            )
+            from app.services.daily_story.story_types.c.line import (
+                c_whole_item_beats_hint,
+            )
+
+            user = f"{c_whole_item_beats_hint()}\n\n{user}"
     if type_code and type_code.upper() == "A":
         user = (
             f"{user}\n"
@@ -1405,6 +1765,8 @@ def build_daily_story_prompts(
     user_tpl = _daily_story_user_template(
         length_mode=length_mode,
         type_code=type_code,
+        theme=theme,
+        framework=framework,
     )
     core_word = extract_e_core_word(theme) if type_code and type_code.upper() == "E" else ""
     user = user_tpl.format(theme=theme, type_instruction=type_instruction, core_word=core_word)
@@ -1429,10 +1791,25 @@ def build_daily_story_prompts(
             "必须严格按上方骨架展开，禁止更换歪读点或另起冲突。\n\n"
             f"{user}"
         )
+    if _is_c_whole_item_profile(type_code, theme, framework):
+        from app.services.daily_story.story_types.c.line import c_whole_item_beats_hint
+
+        user = (
+            f"{c_whole_item_beats_hint()}\n\n"
+            "【C·整件物·正文生成】严格按上方 beats L3–L16 与结构段字数预算写满；"
+            f"首稿目标 {_C_WHOLE_ITEM_WRITE_TARGET_MIN}–{_C_WHOLE_ITEM_WRITE_TARGET_MAX} 字、"
+            f"{_C_WHOLE_ITEM_LINES_MIN}–{_C_WHOLE_ITEM_LINES_MAX} 句（硬卡≥"
+            f"{_C_WHOLE_ITEM_HARD_LINE_MIN}句/{DAILY_STORY_BODY_CHARS_MIN}字，"
+            f"首稿瞄准 {_C_WHOLE_ITEM_WRITE_TARGET_MIN}–{_C_WHOLE_ITEM_WRITE_TARGET_MAX}字）。\n"
+            "三轮升级须占有→状态→姿势逐层加码，缺递进或第三轮非姿势会结构降分。\n\n"
+            f"{user}"
+        )
     return (
         _daily_story_system_prompt(
             length_mode=length_mode,
             type_code=type_code,
+            theme=theme,
+            framework=framework,
         ),
         user,
     )
@@ -3504,6 +3881,21 @@ def _patch_body_char_budget(story: dict) -> list[str]:
     if code == "E" and re.search(r"挑食|青菜|拨到碗边", theme_ctx):
         chars_min = 265
         max_pad = 48
+    # C 整件物：大缺口交 LLM；句数够且差≤15字时允许本地补字（专家 P1）
+    if code == "C":
+        from app.services.daily_story.story_types.c.validate import (
+            c_criterion_theme_profile,
+        )
+
+        if c_criterion_theme_profile(theme_ctx) == "whole_item":
+            if total >= chars_min:
+                return notes
+            need = chars_min - total
+            if (
+                need > _C_WHOLE_ITEM_LOCAL_PAD_MAX
+                or n_lines < _C_WHOLE_ITEM_HARD_LINE_MIN
+            ):
+                return notes
     mid = dialogue[:-4] if len(dialogue) >= 8 else dialogue[1:]
     if total < chars_min:
         need = chars_min - total
@@ -3754,7 +4146,16 @@ def _patch_setting_mom_without_line(story: dict) -> list[str]:
     )
     if has_mom:
         return notes
-    new_setting = setting.replace("妈妈切", "桌上摆着").replace("妈妈", "")
+    if re.search(r"妈妈[^。！？]{0,8}切", setting) and re.search(
+        r"蛋糕|披萨",
+        setting,
+    ):
+        new_setting = (
+            setting.replace("妈妈切好", "灿灿切好")
+            .replace("妈妈切", "灿灿切")
+        )
+    else:
+        new_setting = setting.replace("妈妈切", "桌上摆着").replace("妈妈", "")
     new_setting = re.sub(r"\s{2,}", " ", new_setting).strip("，,。 ")
     if new_setting and new_setting != setting:
         story["setting"] = new_setting
@@ -3824,8 +4225,21 @@ def resolve_daily_story_retry_length_mode(
         locked = resolve_story_type_code(prev_story)
         if locked in STORY_TYPE_LABELS:
             type_code = locked
-    n_lines = 0
     chars = dialogue_total_chars(prev_story if isinstance(prev_story, dict) else None)
+    anchor = (
+        str((prev_story or {}).get("_theme") or "")
+        + str((prev_story or {}).get("conflict_core") or "")
+        + str((prev_story or {}).get("setting") or "")
+    )
+    if type_code == "C":
+        from app.services.daily_story.story_types.c.validate import (
+            c_criterion_theme_profile,
+        )
+
+        if c_criterion_theme_profile(anchor) == "whole_item":
+            if "总字数须≥" in err or chars < DAILY_STORY_BODY_CHARS_MIN:
+                return "revise_expand"
+    n_lines = 0
     if isinstance(prev_story, dict) and isinstance(prev_story.get("dialogue"), list):
         n_lines = len(prev_story["dialogue"])
     if type_code == "D" and isinstance(prev_story, dict):
@@ -3888,6 +4302,8 @@ def build_daily_story_retry_user(
     errors: str,
     phase: str = "body",
     story_type: str | None = None,
+    c_wi_rewrite_tier: int = 1,
+    framework: dict | None = None,
 ) -> str:
     """构造垂直修订重试 user：只列本轮问题 + 上一稿，不复述全套规则。
 
@@ -3913,7 +4329,37 @@ def build_daily_story_retry_user(
         err_deficit = _parse_body_char_deficit(errors)
         if err_deficit is not None:
             deficit = err_deficit
-        if deficit <= DAILY_STORY_RETRY_PATCH_DEFICIT_MAX:
+        from app.services.daily_story.story_types.c.validate import (
+            c_criterion_theme_profile,
+        )
+
+        wi_anchor = (
+            str(prev_story.get("_theme") or theme)
+            + str(prev_story.get("conflict_core") or "")
+            + str(prev_story.get("setting") or "")
+        )
+        is_c_whole_item = (
+            type_code == "C"
+            and c_criterion_theme_profile(wi_anchor) == "whole_item"
+        )
+        if is_c_whole_item:
+            length_hint = (
+                f"【C·整件物·一次补满】上一稿 {chars} 字，还差 {deficit} 字。\n"
+                f"本轮须一次扩写到 ≥{_C_WHOLE_ITEM_WRITE_TARGET_MIN} 字"
+                f"（目标 {_C_WHOLE_ITEM_WRITE_TARGET_MIN}–"
+                f"{_C_WHOLE_ITEM_WRITE_TARGET_MAX}），"
+                f"句数 {_C_WHOLE_ITEM_LINES_MIN}–{_C_WHOLE_ITEM_LINES_MAX}，"
+                f"禁止只堆「呢/呀/吧/嘛」凑字数。\n"
+                "按结构段补具体动作/互怼，不要句内垫语气词：\n"
+                "- 发现开场 2 句 25–35 字\n"
+                "- 初始规则 15–25 字\n"
+                "- 三轮升级各 20–30 字（占有→状态→姿势；"
+                "姿势须控制整件物，禁数到三/单脚站/金鸡独立）\n"
+                "- 权力翻转 25–35 字（哪条作数）\n"
+                "- 回旋镖+末句嘴硬 35–55 字\n"
+                "保留上一稿骨架只增不删；轮流说话。\n"
+            )
+        elif deficit <= DAILY_STORY_RETRY_PATCH_DEFICIT_MAX:
             # 模型补字必短补：按缺口 2 倍下指令，落区间中段才稳过硬卡
             pad_target = min(chars + max(deficit * 2, 24), aim_hi)
             length_hint = (
@@ -4014,6 +4460,54 @@ def build_daily_story_retry_user(
         )
     primary = pick_primary_validation_errors(errors, max_items=1)
     primary_line = primary[0] if primary else errors
+    from app.services.daily_story.story_types.c.validate import (
+        c_criterion_theme_profile,
+    )
+
+    wi_anchor = (
+        str(prev_story.get("_theme") or theme)
+        + str(prev_story.get("conflict_core") or "")
+        + str(prev_story.get("setting") or "")
+    )
+    if isinstance(framework, dict):
+        wi_anchor = (
+            str(prev_story.get("_theme") or theme)
+            + str(framework.get("conflict_core") or prev_story.get("conflict_core") or "")
+            + str(framework.get("setting") or prev_story.get("setting") or "")
+        )
+    is_c_whole_short = (
+        type_code == "C"
+        and c_criterion_theme_profile(wi_anchor) == "whole_item"
+        and (
+            chars < chars_min
+            or "总字数须≥" in errors
+            or "C整件物句数须≥" in errors
+        )
+        and "判据漂移" not in errors
+        and "正文跑题" not in errors
+    )
+    if is_c_whole_short:
+        if (
+            c_wi_rewrite_tier < 2
+            and c_whole_item_near_miss(
+                prev_story,
+                theme=theme,
+                framework=framework,
+            )
+        ):
+            return _build_c_whole_item_near_miss_expand_user(
+                theme,
+                prev_story=prev_story,
+                errors=errors,
+                primary_line=primary_line,
+            )
+        return _build_c_whole_item_short_retry_user(
+            theme,
+            prev_story=prev_story,
+            errors=errors,
+            primary_line=primary_line,
+            rewrite_tier=c_wi_rewrite_tier,
+        )
     prev_json = json.dumps(prev_story, ensure_ascii=False)
     if "正文跑题" in errors:
         # 上一稿主题写错：不许保留旧 conflict_core，按主题原词重写
