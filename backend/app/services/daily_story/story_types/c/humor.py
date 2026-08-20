@@ -116,9 +116,12 @@ _RE_OPPONENT_VOID = re.compile(
 _RE_RULE_DEFINITION_APPEND = re.compile(
     r"靠着不算|得.{0,8}才算|才算数|才算真正|我又加|追加一条|都得.{0,6}才算",
 )
-# 权力翻转：灿灿从被动执行转为主动等昭昭作死（还有吗/按哪条）
+# 权力翻转：灿灿从被动执行转为主动追问（还有吗/哪条作数/按哪条）
 _RE_POWER_FLIP = re.compile(
-    r"还有吗|按哪条|到底按|你一条接一条",
+    r"还有吗|哪条作数|按哪条|到底按|哪条说|哪条算|你一条接一条",
+)
+_RE_POWER_FLIP_STRONG = re.compile(
+    r"还有吗|哪条作数|按哪条|到底按哪条|哪条说我耍赖|哪条算",
 )
 # 主题嘴硬收尾（比「明天我抢先」更贴 C 公平执念）
 _RE_THEME_STUBBORN_END = re.compile(
@@ -316,23 +319,25 @@ def _rule_mechanism_repeat_issue(lines: list[str]) -> str | None:
             "C规则机制复读：立规人连续改「拿到」定义≥4次（规则清单）——"
             "压缩为3层：正常→钻定义→荒谬一条；禁离沙发/双脚/单脚层层叠加"
         )
-    if appends >= 3 and not any("还有吗" in ln for ln in body):
+    if appends >= 3 and not _body_has_power_flip(body):
         return (
-            "C规则缺权力翻转：改定义≥3次但灿灿未「还有吗」反客为主——"
-            "中间加一句淡定「还有吗/行/好」等昭昭继续作死"
+            "C规则缺权力翻转：改定义≥3次但缺翻转质疑句——"
+            "中间加「哪条作数/还有吗/你一条接一条说的」等昭昭继续作死"
         )
     return None
+
+
+def _body_has_power_flip(body: list[str]) -> bool:
+    """翻转质疑句：哪条作数与还有吗同档（专家 2026-08-21 P0-2）。"""
+    return any(_RE_POWER_FLIP_STRONG.search(ln) for ln in body)
 
 
 def _power_flip_bonus(body: list[str]) -> tuple[int, list[str]]:
     pts = 0
     pros: list[str] = []
-    if any("还有吗" in ln for ln in body):
+    if _body_has_power_flip(body):
         pts += 3
         pros.append("权力翻转")
-    elif sum(1 for ln in body if _RE_POWER_FLIP.search(ln)) >= 1:
-        pts += 1
-        pros.append("规则追问")
     return pts, pros
 
 
@@ -663,7 +668,8 @@ def humor_revision_hint(issue: str) -> str | None:
             f"【好笑·C】{issue}。"
             "整件物中间段只许3次规则升级：①谁先拿到 ②钻定义（靠着不算/得抱怀里）"
             "③荒谬一条（连续抱满三秒/得自己承认）——禁离沙发→双脚→单脚清单；"
-            "灿灿中间加「还有吗/行/好」翻转权力，末句嘴硬锚主题（你赢规则不算赢我）。"
+            "灿灿中间加「哪条作数/还有吗/你一条接一条说的」翻转权力，"
+            "末句嘴硬锚主题（你赢规则不算赢我）。"
         )
     if "归属口水战" in issue:
         return (

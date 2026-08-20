@@ -265,6 +265,51 @@ def _sanitize_whole_item_contact_line(line: str) -> str:
     return new_line
 
 
+# 整件物·垫字语气（专家 P1：你听着呀/好不好呀）
+_RE_WI_FILLER_PHRASE = re.compile(
+    r"你听着呀|好不好呀|真的呀|才刚",
+)
+_WI_FILLER_REPL: tuple[tuple[str, str], ...] = (
+    ("你听着呀", ""),
+    ("，你听着呀", ""),
+    ("你听着，", ""),
+    ("好不好呀", "好不好"),
+    ("真的呀", "真的"),
+    ("才刚", "刚"),
+)
+
+
+def patch_c_whole_item_filler(story: dict) -> list[str]:
+    """整件物：删「你听着呀/好不好呀」等垫字。"""
+    notes: list[str] = []
+    punch = str(story.get("punchline_explain") or "")
+    if parse_story_type_code(punchline=punch) != "C":
+        return notes
+    anchor = (
+        str(story.get("theme") or story.get("_theme") or "")
+        + str(story.get("conflict_core") or "")
+        + str(story.get("setting") or "")
+    )
+    if not _RE_WHOLE_ITEM_ANCHOR.search(anchor):
+        return notes
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list):
+        return notes
+    for i, item in enumerate(dialogue):
+        if not isinstance(item, dict):
+            continue
+        line = str(item.get("line") or "")
+        new_line = line
+        for old, repl in _WI_FILLER_REPL:
+            new_line = new_line.replace(old, repl)
+        new_line = re.sub(r"[，,]{2,}", "，", new_line)
+        new_line = re.sub(r"^[，,]", "", new_line)
+        if new_line != line:
+            item["line"] = new_line
+            notes.append(f"整件物垫字[{i}]")
+    return notes
+
+
 def patch_c_whole_item_tone_tail(story: dict) -> list[str]:
     """整件物：句尾连续语气词「呢呀/嘛呀」删成单语气词。"""
     notes: list[str] = []
@@ -517,6 +562,7 @@ def patch_c_body(story: dict) -> list[str]:
     notes.extend(patch_c_whole_item_contact(story))
 
     notes.extend(patch_c_whole_item_semantic_expand(story))
+    notes.extend(patch_c_whole_item_filler(story))
 
     last = dialogue[-1]
     prev = dialogue[-2]

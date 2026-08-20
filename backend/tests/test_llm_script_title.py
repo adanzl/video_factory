@@ -4889,6 +4889,65 @@ def test_c_humor_rewards_power_flip_haiyouma():
     assert q_flip.get("score", 0) > q_list.get("score", 0), (q_list, q_flip)
 
 
+def test_c_humor_rewards_power_flip_natiao_zuoshu():
+    """「哪条作数」与「还有吗」同档权力翻转 +3。"""
+    from app.services.daily_story.quality import score_daily_story
+
+    natiao = {
+        "dialogue": [
+            {"speaker": "昭昭", "line": "借我抱！"},
+            {"speaker": "灿灿", "line": "不行！"},
+            {"speaker": "昭昭", "line": "谁先拿到归谁！"},
+            {"speaker": "灿灿", "line": "我抱紧了！"},
+            {"speaker": "昭昭", "line": "靠着不算得抱怀里才算！"},
+            {"speaker": "灿灿", "line": "行，抱怀里啦！"},
+            {"speaker": "昭昭", "line": "得连续抱满三秒才算！"},
+            {"speaker": "灿灿", "line": "一、二、三，算不算？"},
+            {"speaker": "昭昭", "line": "不算你在耍赖！"},
+            {"speaker": "灿灿", "line": "那现在到底哪条作数？"},
+            {"speaker": "昭昭", "line": "按最开始谁先拿到！"},
+            {"speaker": "灿灿", "line": "你刚说谁先拿到我先抱到的！"},
+            {"speaker": "昭昭", "line": "哼你赢规则不算赢我！"},
+        ],
+        "_story_type": "C类公平执念",
+    }
+    haiyou = {
+        "dialogue": [
+            *natiao["dialogue"][:8],
+            {"speaker": "昭昭", "line": "不算你在耍赖！"},
+            {"speaker": "灿灿", "line": "一、二、三，还有吗？"},
+            {"speaker": "昭昭", "line": "按最开始谁先拿到！"},
+            *natiao["dialogue"][10:],
+        ],
+        "_story_type": "C类公平执念",
+    }
+    q_na = score_daily_story(natiao)
+    q_hy = score_daily_story(haiyou)
+    assert q_na.get("humor_regex_points", 0) >= 8, q_na
+    assert q_hy.get("humor_regex_points", 0) >= q_na.get("humor_regex_points", 0), (
+        q_na,
+        q_hy,
+    )
+
+
+def test_patch_c_whole_item_filler():
+    from app.services.daily_story.story_types.c.patch import patch_c_whole_item_filler
+
+    story = {
+        "theme": "沙发上的抱枕大战",
+        "conflict_core": "争抱枕",
+        "punchline_explain": "C类公平执念",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "你还没抢到，你听着呀！"},
+            {"speaker": "灿灿", "line": "好不好呀，借我抱！"},
+        ],
+    }
+    notes = patch_c_whole_item_filler(story)
+    assert notes
+    assert "你听着" not in story["dialogue"][0]["line"]
+    assert story["dialogue"][1]["line"] == "好不好，借我抱！"
+
+
 def test_c_humor_flags_physical_repeat_without_rule_escalation():
     """C 观感：中段堆抢/掉/捡无新赛规 → 肢体抢物复读。"""
     from app.services.daily_story.story_types.c.humor import collect_humor_issues

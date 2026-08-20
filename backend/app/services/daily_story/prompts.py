@@ -4188,6 +4188,11 @@ def try_local_patch_daily_story_body(story: dict) -> tuple[dict, list[str]]:
     notes.extend(_patch_body_char_budget(out))
     notes.extend(_patch_overlong_lines(out))
     notes.extend(_patch_consecutive_speakers(out))
+    from app.services.daily_story.story_types.c.patch import (
+        patch_c_whole_item_filler,
+    )
+
+    notes.extend(patch_c_whole_item_filler(out))
     return out, notes
 
 
