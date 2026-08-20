@@ -18,8 +18,10 @@ from app.config import get_settings
 from app.services.daily_story.speaker import DAILY_STORY_SPEAKER_NAMES
 from app.services.llm.llm_agnes import (
     AgnesApiKey,
+    AgnesImageError,
     AgnesQuotaExceeded,
     agnes_api_keys,
+    agnes_apply_host_failover,
     agnes_auth_header,
     agnes_quota_exceeded_from_exception,
     raise_if_agnes_content_policy,
@@ -33,8 +35,6 @@ logger = logging.getLogger(__name__)
 
 # 含 Cloudflare 源站错误 52x（如 520 unknown error）
 _RETRYABLE = frozenset({500, 502, 503, 504, 520, 521, 522, 523, 524, 525, 526, 527})
-_AGNES_COM_HOST = "apihub.agnes-ai.com"
-_AGNES_CN_HOST = "apihub.agnes-ai.cn"
 # 有备用 Key 时，5xx 同 Key 只打 1 次，失败立刻切
 _FAILOVER_HTTP_RETRIES = 1
 # 同一文生图提示词的质检重试次数；耗尽后由上层重生提示词再开一轮
@@ -98,7 +98,7 @@ class AgnesImageVerifyFailed(RuntimeError):
         self.prompt = prompt
 
 
-class _AgnesImageKeyFailover(RuntimeError):
+class _AgnesImageKeyFailover(AgnesImageError):
     """生图：配额/限流或持续 5xx，应切备用 Key。"""
 
 
@@ -117,15 +117,6 @@ def _agnes_image_gen_keys(settings=None) -> list[AgnesApiKey]:
     return agnes_api_keys(settings)
 
 
-def _agnes_alternate_host_url(url: str) -> str | None:
-    """生图 API 在 .com ↔ .cn 间切换；其它域名不变。"""
-    if _AGNES_COM_HOST in url:
-        return url.replace(_AGNES_COM_HOST, _AGNES_CN_HOST, 1)
-    if _AGNES_CN_HOST in url:
-        return url.replace(_AGNES_CN_HOST, _AGNES_COM_HOST, 1)
-    return None
-
-
 def _maybe_failover_generation_host(
     provider: AgnesImageProvider,
     url: str,
@@ -137,19 +128,13 @@ def _maybe_failover_generation_host(
     """images/generations 在 .com/.cn 间切换一次；已试过的域名不再切。"""
     if "/images/generations" not in url:
         return None
-    alt_url = _agnes_alternate_host_url(url)
-    if not alt_url or alt_url in host_failover_tried:
-        return None
-    logger.warning(
-        "%sagnes %s on %s, failover to alternate domain %s",
-        tag,
-        reason,
+    return agnes_apply_host_failover(
         url,
-        alt_url,
+        host_failover_tried,
+        reason=reason,
+        tag=tag,
+        on_switch=lambda alt: setattr(provider, "_generation_url", alt),
     )
-    host_failover_tried.add(alt_url)
-    provider._generation_url = alt_url
-    return alt_url
 
 
 def _to_agnes_size(size: str) -> str:
@@ -352,7 +337,7 @@ class AgnesImageProvider(ImageProvider):
                         elapsed,
                         body,
                     )
-                    raise RuntimeError(f"agnes api {resp.status_code}: {body}")
+                    raise AgnesImageError(f"agnes api {resp.status_code}: {body}")
                 logger.info(
                     "%sagnes http %s %s ok in %.1fs, bytes=%s",
                     tag,
@@ -403,7 +388,7 @@ class AgnesImageProvider(ImageProvider):
         detail = f"agnes request failed ({'; '.join(detail_parts)})"
         if last_status in _RETRYABLE:
             raise _AgnesImageKeyFailover(detail)
-        raise RuntimeError(detail)
+        raise AgnesImageError(detail)
 
     @staticmethod
     def _extract_image(body: dict) -> tuple[str | None, bytes | None]:
@@ -415,10 +400,10 @@ class AgnesImageProvider(ImageProvider):
                 message=str(err),
             )
             if isinstance(err, dict):
-                raise RuntimeError(
+                raise AgnesImageError(
                     f"agnes api error: {err.get('code')} - {err.get('message')}"
                 )
-            raise RuntimeError(f"agnes api error: {err}")
+            raise AgnesImageError(f"agnes api error: {err}")
         data = body.get("data") or []
         if not data:
             return None, None
@@ -524,7 +509,7 @@ class AgnesImageProvider(ImageProvider):
                 )
                 return output_path
             if not image_url:
-                raise RuntimeError("agnes response missing image url or b64_json")
+                raise AgnesImageError("agnes response missing image url or b64_json")
             logger.info(
                 "%s agnes downloading image url (%s key): %s",
                 log_tag,
@@ -701,7 +686,7 @@ class AgnesImageProvider(ImageProvider):
             )
         if last_exc:
             raise last_exc
-        raise RuntimeError("agnes generate failed without exception")
+        raise AgnesImageError("agnes generate failed without exception")
 
     # ── image-text match verification ────────────────────────────────
 
@@ -1214,11 +1199,13 @@ class AgnesImageProvider(ImageProvider):
                 return True
 
             log_tag = f"[out={image_path.name}]"
+            verify_url = f"{settings.agnes_api_base_url.rstrip('/')}/chat/completions"
+            host_failover_tried: set[str] = {verify_url}
             for retry in range(_VERIFY_RETRY_COUNT + 1):
                 for api_key in keys:
                     try:
                         headers = agnes_auth_header(api_key.value)
-                        url = f"{settings.agnes_api_base_url.rstrip('/')}/chat/completions"
+                        url = verify_url
                         payload = {
                             "model": settings.agnes_vl_model,
                             "messages": [
@@ -1242,6 +1229,19 @@ class AgnesImageProvider(ImageProvider):
                             "max_tokens": 16384,
                         }
                         resp = requests.post(url, headers=headers, json=payload, timeout=300)
+                        if resp.status_code == 503:
+                            alt = agnes_apply_host_failover(
+                                url,
+                                host_failover_tried,
+                                reason="503",
+                                tag=f"{log_tag} verify",
+                            )
+                            if alt:
+                                verify_url = alt
+                                url = alt
+                                resp = requests.post(
+                                    url, headers=headers, json=payload, timeout=300
+                                )
                         if resp.ok:
                             msg = (
                                 resp.json()
@@ -1271,6 +1271,24 @@ class AgnesImageProvider(ImageProvider):
                             retry,
                             _VERIFY_RETRY_COUNT,
                             _resp_body_summary(resp),
+                        )
+                    except requests.Timeout as exc:
+                        alt = agnes_apply_host_failover(
+                            verify_url,
+                            host_failover_tried,
+                            reason="timeout",
+                            tag=f"{log_tag} verify",
+                        )
+                        if alt:
+                            verify_url = alt
+                            continue
+                        logger.warning(
+                            "%s agnes verify_image timeout (%s key, retry=%s/%s): %s",
+                            log_tag,
+                            api_key.label,
+                            retry,
+                            _VERIFY_RETRY_COUNT,
+                            exc,
                         )
                     except Exception as exc:
                         logger.warning(

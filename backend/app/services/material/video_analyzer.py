@@ -16,6 +16,7 @@ from app.config import get_settings
 from app.services.llm.llm_agnes import (
     AgnesQuotaExceeded,
     agnes_api_keys,
+    agnes_apply_host_failover,
     agnes_auth_header,
     is_agnes_quota_exceeded,
     raise_if_agnes_quota,
@@ -156,9 +157,20 @@ class VideoAnalyzer:
         for idx, api_key in enumerate(keys):
             headers = agnes_auth_header(api_key.value)
             timeout = (settings.agnes_http_connect_timeout_sec, settings.agnes_http_submit_read_timeout_sec)
+            host_failover_tried: set[str] = {url}
             for attempt in range(settings.agnes_http_max_retries):
                 try:
                     resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
+                    if resp.status_code == 503:
+                        alt = agnes_apply_host_failover(
+                            url,
+                            host_failover_tried,
+                            reason="503",
+                            tag="multimodal",
+                        )
+                        if alt:
+                            url = alt
+                            continue
                     if resp.status_code in _RETRYABLE_HTTP:
                         wait = min(2**attempt * 2, 60)
                         logger.warning(
@@ -183,6 +195,16 @@ class VideoAnalyzer:
                     last_exc = exc
                     if is_agnes_quota_exceeded(message=str(exc)):
                         raise AgnesQuotaExceeded(str(exc)) from exc
+                    if isinstance(exc, requests.Timeout):
+                        alt = agnes_apply_host_failover(
+                            url,
+                            host_failover_tried,
+                            reason="timeout",
+                            tag="multimodal",
+                        )
+                        if alt:
+                            url = alt
+                            continue
                     if attempt < settings.agnes_http_max_retries - 1:
                         wait = min(2**attempt * 2, 60)
                         logger.warning("agnes multimodal request error: %s, retry in %ss", exc, wait)

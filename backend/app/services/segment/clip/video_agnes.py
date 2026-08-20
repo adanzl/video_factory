@@ -24,7 +24,9 @@ from app.services.llm.llm_agnes import (
     AgnesApiKey,
     AgnesI2VError,
     AgnesQuotaExceeded,
+    agnes_api_base_from_url,
     agnes_api_keys,
+    agnes_apply_host_failover,
     agnes_auth_header,
     agnes_quota_exceeded_from_exception,
     raise_if_agnes_quota,
@@ -576,6 +578,14 @@ class AgnesClipProvider(ClipProvider):
         self._poll_interval_sec = settings.agnes_video_poll_interval_sec
         self._active_job_id: int | None = None
 
+    def _sync_endpoints_from_api_url(self, api_url: str) -> None:
+        """备用域名切换后同步 videos 提交与 poll 根路径。"""
+        base = agnes_api_base_from_url(api_url)
+        if not base:
+            return
+        self._create_url = f"{base}/videos"
+        self._poll_root = _agnes_api_root(base)
+
     def _raise_if_job_cancelled(self) -> None:
         if self._active_job_id is not None:
             job_cancel.raise_if_cancelled(self._active_job_id)
@@ -638,12 +648,24 @@ class AgnesClipProvider(ClipProvider):
         read_timeout = self._submit_read_timeout if label == "submit" else self._poll_read_timeout
         req_timeout = timeout if timeout is not None else (self._connect_timeout, read_timeout)
         last_exc: Exception | None = None
+        host_failover_tried: set[str] = {url}
 
         for attempt in range(retries):
             try:
                 resp = requests.request(
                     method, url, headers=headers or {}, json=json, timeout=req_timeout
                 )
+                if resp.status_code == 503:
+                    alt = agnes_apply_host_failover(
+                        url,
+                        host_failover_tried,
+                        reason="503",
+                        tag=f"i2v {label}",
+                        on_switch=self._sync_endpoints_from_api_url,
+                    )
+                    if alt:
+                        url = alt
+                        continue
                 if resp.status_code in _RETRYABLE_HTTP:
                     wait = _backoff_seconds(attempt)
                     logger.warning(
@@ -684,6 +706,16 @@ class AgnesClipProvider(ClipProvider):
                 raise
             except requests.Timeout as exc:
                 last_exc = exc
+                alt = agnes_apply_host_failover(
+                    url,
+                    host_failover_tried,
+                    reason="timeout",
+                    tag=f"i2v {label}",
+                    on_switch=self._sync_endpoints_from_api_url,
+                )
+                if alt:
+                    url = alt
+                    continue
                 wait = _backoff_seconds(attempt, is_timeout=True)
                 hint = "（异步 API 提交应秒级返回 video_id）" if label == "submit" else ""
                 logger.warning(
@@ -1005,6 +1037,7 @@ class AgnesClipProvider(ClipProvider):
         if not keys:
             return None
         url = f"{settings.agnes_api_base_url.rstrip('/')}/chat/completions"
+        host_failover_tried: set[str] = {url}
         content: list[dict] = [{"type": "text", "text": question}]
         content.extend(
             {"type": "image_url", "image_url": {"url": uri}} for uri in frames
@@ -1028,6 +1061,16 @@ class AgnesClipProvider(ClipProvider):
                         json=payload,
                         timeout=(self._connect_timeout, _VL_READ_TIMEOUT_SEC),
                     )
+                    if resp.status_code == 503:
+                        alt = agnes_apply_host_failover(
+                            url,
+                            host_failover_tried,
+                            reason="503",
+                            tag="mouth verify vl",
+                        )
+                        if alt:
+                            url = alt
+                            continue
                     if not resp.ok:
                         if resp.status_code in _RETRYABLE_HTTP and attempt + 1 < _VL_MAX_ATTEMPTS:
                             wait = _backoff_seconds(attempt)
@@ -1066,6 +1109,15 @@ class AgnesClipProvider(ClipProvider):
                         )
                     return sides
                 except requests.Timeout as exc:
+                    alt = agnes_apply_host_failover(
+                        url,
+                        host_failover_tried,
+                        reason="timeout",
+                        tag="mouth verify vl",
+                    )
+                    if alt:
+                        url = alt
+                        continue
                     wait = _backoff_seconds(attempt)
                     if attempt + 1 < _VL_MAX_ATTEMPTS:
                         logger.warning(

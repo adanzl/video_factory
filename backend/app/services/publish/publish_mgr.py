@@ -42,7 +42,7 @@ class PublishMgr:
             raise BiliCookieExpired(status)
         return status
 
-    def publish_for_job(self, job: dict[str, Any]) -> dict[str, Any]:
+    def publish_for_job(self, job: dict[str, Any], *, manual: bool = False) -> dict[str, Any]:
         settings = get_settings()
         if settings.mock_mode:
             return {
@@ -50,7 +50,7 @@ class PublishMgr:
                 "status": "skipped",
                 "message": "MOCK_MODE，跳过实际上传",
             }
-        if job.get("skip_publish"):
+        if job.get("skip_publish") and not manual:
             return {
                 "platform": "bilibili",
                 "status": "skipped",

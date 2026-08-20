@@ -481,7 +481,8 @@ def _daily_cancan_handles_floor_shoelaces(vb: str, seg: dict | None = None) -> b
     if re.search(
         r"灿灿[^。；]{0,32}(?:抠|解|拉|扯|穿|捏|握)[^。；]{0,16}鞋带"
         r"|灿灿[^。；]{0,16}上手[^。；]{0,8}抠"
-        r"|灿灿[^。；]{0,20}蹲[^。；]{0,12}鞋",
+        # 禁止跨过「昭昭蹲…」误匹配：灿灿…昭昭蹲在鞋
+        r"|灿灿[^。；昭]{0,12}蹲[^。；]{0,8}鞋",
         text,
     ):
         return True
@@ -517,7 +518,7 @@ def _daily_cancan_floor_shoe_untie_clause(vb: str) -> str:
     """灿灿抠/解地垫粉鞋鞋带死结，鞋平放垫上。"""
     return (
         "灿灿赤脚仅穿白袜子蹲在地垫旁，"
-        "灿灿双手手指抠地垫上一双粉鞋的鞋带死结，"
+        "灿灿双手用力抠地垫上一双粉鞋的鞋带死结，"
         "粉鞋平放垫上、鞋帮贴地，粉鞋全部在地垫上。"
     )
 
@@ -535,7 +536,7 @@ def _daily_floor_shoe_lock(vb: str, speakers: list[str], seg: dict | None = None
     elif "昭昭" in speakers and tying:
         action = (
             f"{zhao_feet}昭昭蹲在地垫旁，双膝弯曲，"
-            "双手手指只捏地垫上一双粉鞋的鞋带结；"
+            "双手并拢拢住地垫上一双粉鞋的鞋带结；"
             "粉鞋平放垫上、鞋帮贴地，粉鞋全部在地垫上。"
         )
     elif "昭昭" in speakers:
@@ -728,7 +729,7 @@ def _daily_floor_shoe_untie_compact_prompt(seg: dict, *, vb: str) -> str:
         f"画面左侧{zhao}，蓝白运动鞋穿在脚上，站立，"
         f"双手掌心向上摊开，{zhao_mouth}。",
         f"画面右侧{cancan}，赤脚仅穿白袜子，"
-        f"蹲在地垫旁，双手手指抠地垫中央一双粉红运动鞋的鞋带死结，"
+        f"蹲在地垫旁，双手用力抠地垫中央一双粉红运动鞋的鞋带死结，"
         f"{cancan_mouth}。",
         "地垫中央平放两只粉红运动鞋，鞋带缠成死结，"
         "两只鞋底贴在一起，鞋帮贴地，粉鞋全部在地垫上。",

@@ -5,12 +5,11 @@ from unittest.mock import MagicMock, patch
 
 import requests
 
-from app.services.llm.llm_agnes import AgnesApiKey
+from app.services.llm.llm_agnes import AgnesApiKey, agnes_alternate_host_url
 from app.services.segment.image.image_agnes import (
     AgnesImageProvider,
     AgnesImageVerifyFailed,
     _VERIFY_MAX_ATTEMPTS,
-    _agnes_alternate_host_url,
     _to_agnes_size,
 )
 
@@ -23,9 +22,9 @@ def test_to_agnes_size() -> None:
 def test_agnes_alternate_host_url() -> None:
     com = "https://apihub.agnes-ai.com/v1/images/generations"
     cn = "https://apihub.agnes-ai.cn/v1/images/generations"
-    assert _agnes_alternate_host_url(com) == cn
-    assert _agnes_alternate_host_url(cn) == com
-    assert _agnes_alternate_host_url("https://example.com/v1") is None
+    assert agnes_alternate_host_url(com) == cn
+    assert agnes_alternate_host_url(cn) == com
+    assert agnes_alternate_host_url("https://example.com/v1") is None
 
 
 def test_request_failover_to_cn_on_503() -> None:
@@ -258,7 +257,7 @@ def test_generate_retries_verify_until_pass(tmp_path: Path) -> None:
     assert mock_gen.call_count == 3
     assert mock_verify.call_count == 3
     assert mock_verify.call_args.kwargs["content_style"] == "daily_story"
-    assert _VERIFY_MAX_ATTEMPTS == 3
+    assert _VERIFY_MAX_ATTEMPTS == 5
 
 
 def test_generate_raises_after_verify_exhausted(tmp_path: Path) -> None:

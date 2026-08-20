@@ -76,11 +76,11 @@ def ensure_publish_meta(job_id: int) -> None:
     PublishStage()._ensure_publish_meta(job_id)
 
 
-def upload_bili_publish(job_id: int) -> None:
+def upload_bili_publish(job_id: int, *, manual: bool = False) -> None:
     with atomic():
         job = repo_job.get_job(job_id)
     try:
-        result = publish_mgr.publish_for_job(job)
+        result = publish_mgr.publish_for_job(job, manual=manual)
     except BiliCookieExpired as exc:
         result = {
             "platform": "bilibili",

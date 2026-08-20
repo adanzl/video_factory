@@ -236,7 +236,7 @@
           type="info"
           :closable="false"
           show-icon
-          title="当前任务勾选了跳过投稿，「投稿」按钮不可用；可先「生成」补齐简介。"
+          title="流水线将自动跳过投稿；确认成片后可在此手动「投稿」。"
         />
       </section>
 
@@ -730,14 +730,12 @@ const finalFilePath = computed(() => resolveFinalPath(props.job.final_path));
 const publishActionDisabled = computed(
   () =>
     actionDisabled.value ||
-    Boolean(props.job.skip_publish) ||
     !finalFilePath.value ||
     Boolean(biliSessionError.value) ||
     !biliSessionUser.value
 );
 
 const publishActionDisabledReason = computed(() => {
-  if (props.job.skip_publish) return "任务已勾选跳过投稿";
   if (!finalFilePath.value) return "请先在「合成」阶段生成成片";
   if (biliSessionError.value || !biliSessionUser.value) return "请先扫码登录 B 站";
   if (props.job.status === "running") return "任务运行中，请稍后再试";

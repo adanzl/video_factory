@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 
 from app.services.llm.llm_agnes import _build_chat_payload, _chat_with_key_fallback
 from app.services.llm.llm_agnes import AgnesApiKey, AgnesQuotaExceeded
@@ -47,6 +48,41 @@ def test_chat_with_key_fallback_switches_on_quota(monkeypatch) -> None:
 
     assert finish == "stop"
     assert '"title":"ok"' in content
+
+
+def test_post_chat_failover_on_timeout(monkeypatch) -> None:
+    from app.config import config
+    from app.services.llm.llm_agnes import _post_chat
+
+    monkeypatch.setattr(
+        config, "agnes_api_base_url", "https://apihub.agnes-ai.com/v1", raising=False
+    )
+    com_url = "https://apihub.agnes-ai.com/v1/chat/completions"
+    cn_url = "https://apihub.agnes-ai.cn/v1/chat/completions"
+
+    ok_resp = MagicMock()
+    ok_resp.ok = True
+    ok_resp.status_code = 200
+    ok_resp.raise_for_status = MagicMock()
+
+    with patch(
+        "app.services.llm.llm_agnes.requests.post",
+        side_effect=[requests.Timeout("timed out"), ok_resp],
+    ) as mock_post:
+        resp = _post_chat(
+            api_key=AgnesApiKey("primary", "k"),
+            base_url="https://apihub.agnes-ai.com/v1",
+            payload={"model": "m"},
+            max_retries=2,
+            connect_timeout=1.0,
+            read_timeout=1.0,
+        )
+
+    assert resp is ok_resp
+    assert mock_post.call_count == 2
+    assert mock_post.call_args_list[0].args[0] == com_url
+    assert mock_post.call_args_list[1].args[0] == cn_url
+    assert config.agnes_api_base_url == "https://apihub.agnes-ai.cn/v1"
 
 
 def test_chat_requires_api_key(monkeypatch) -> None:

@@ -10,6 +10,7 @@ from app.services.llm.llm_agnes import (
     AgnesApiKey,
     AgnesContentPolicyError,
     AgnesQuotaExceeded,
+    agnes_alternate_host_url,
     agnes_api_keys,
     agnes_quota_exceeded_from_exception,
     is_agnes_content_policy,
@@ -17,6 +18,31 @@ from app.services.llm.llm_agnes import (
     raise_if_agnes_content_policy,
     raise_if_agnes_quota,
 )
+
+
+def test_agnes_alternate_host_url() -> None:
+    com = "https://apihub.agnes-ai.com/v1/images/generations"
+    cn = "https://apihub.agnes-ai.cn/v1/images/generations"
+    assert agnes_alternate_host_url(com) == cn
+    assert agnes_alternate_host_url(cn) == com
+    assert agnes_alternate_host_url("https://example.com/v1") is None
+    assert agnes_alternate_host_url(
+        "https://apihub.agnes-ai.com/v1/chat/completions"
+    ) == "https://apihub.agnes-ai.cn/v1/chat/completions"
+    assert agnes_alternate_host_url(
+        "https://apihub.agnes-ai.cn/v1/videos"
+    ) == "https://apihub.agnes-ai.com/v1/videos"
+
+
+def test_agnes_api_base_from_url() -> None:
+    from app.services.llm.llm_agnes import agnes_api_base_from_url
+
+    assert agnes_api_base_from_url(
+        "https://apihub.agnes-ai.com/v1/chat/completions"
+    ) == "https://apihub.agnes-ai.com/v1"
+    assert agnes_api_base_from_url(
+        "https://apihub.agnes-ai.cn/v1/videos"
+    ) == "https://apihub.agnes-ai.cn/v1"
 
 
 def test_agnes_api_keys_primary_first_then_free() -> None:

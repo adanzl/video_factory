@@ -809,7 +809,7 @@ def test_assemble_daily_t2i_floor_shoe_lace_lock():
     assert "赤脚仅穿白袜子" in prompt
     assert "仅有一双粉红运动鞋共两只" in prompt
     assert "全画面地垫上仅此一双粉红运动鞋共两只" in prompt
-    assert "双手手指只捏地垫上一双粉鞋的鞋带结" in prompt
+    assert "双手并拢拢住地垫上一双粉鞋的鞋带结" in prompt
     assert "鞋帮贴地" in prompt
     assert "粉鞋全部在地垫上" in prompt
     assert "穿进" not in prompt
@@ -839,7 +839,7 @@ def test_assemble_daily_t2i_floor_shoe_seg1_no_hand_conflict():
     assert "指向地面上的鞋" not in prompt
     assert "指向地垫上的鞋带" not in prompt
     assert "蹲在鞋边准备系带" not in prompt
-    assert "双手手指只捏地垫上一双粉鞋的鞋带结" in prompt
+    assert "双手并拢拢住地垫上一双粉鞋的鞋带结" in prompt
     assert "灿灿刚脱下的同一双" in prompt
 
 
@@ -904,7 +904,7 @@ def test_assemble_daily_t2i_floor_shoe_seg6_cancan_lift():
     assert "无人拿在手中" not in prompt
     assert "鞋带散开" not in prompt
     assert "散开的鞋带" not in prompt
-    assert "双手手指只捏" not in prompt
+    assert "双手并拢拢住" not in prompt
     assert "双手拎起" not in prompt
     assert "带。" not in prompt
     assert "粉运动鞋恰好两只" in prompt
@@ -937,7 +937,7 @@ def test_assemble_daily_t2i_floor_shoe_seg7_cancan_flip():
     assert "鞋带松散" not in prompt
     assert "鞋带散开" not in prompt
     assert "双手叉腰" not in prompt
-    assert "双手手指只捏" not in prompt
+    assert "双手并拢拢住" not in prompt
     assert "无人拿在手中" not in prompt
     assert "用右手提起" not in prompt
 
@@ -962,12 +962,37 @@ def test_assemble_daily_t2i_floor_shoe_seg9_aftermath():
     assert "表情沮丧" in prompt
     assert "灿灿双手叉腰" in prompt
     assert "鞋带纠缠散乱" in prompt
-    assert "双手手指只捏" not in prompt
+    assert "双手并拢拢住" not in prompt
     assert "双手自然下垂" not in prompt
     assert "鞋带散开；" not in prompt
     assert "粉运动鞋恰好两只" in prompt
     assert "粉鞋两只平放地垫中央" in prompt
     assert "重申：全画面仅两只粉运动鞋" in prompt
+
+
+def test_assemble_daily_t2i_floor_shoe_seg1_not_untie_compact():
+    """分镜1：昭昭系带开场，勿因「昭昭蹲在鞋」误走灿灿抠死结短 prompt。"""
+    setting = "客厅地垫上，灿灿脱下的粉红运动鞋鞋带散开摆着，昭昭蹲在鞋边准备系带"
+    seg = {
+        "segment_index": 1,
+        "shot_type": "特写",
+        "visual_brief": (
+            "客厅地垫上，灿灿脱下的粉红运动鞋鞋带散开摆着，昭昭蹲在鞋边准备系带。"
+            "画面左边是昭昭，右边是灿灿。"
+            "昭昭蹲着，双手伸向鞋带，抬头看向灿灿；"
+            "灿灿站着，右手食指指向地面上的鞋，左手自然下垂，皱眉瞪眼，说话。"
+        ),
+        "dialogue": [
+            {"speaker": "灿灿", "text": "昭昭，地垫上这双鞋鞋带又散了，你来帮我系。"},
+            {"speaker": "昭昭", "text": "好嘞，我这就蹲下来系。"},
+        ],
+    }
+    prompt = assemble_daily_t2i_prompt(seg, setting=setting)
+    assert "鞋带缠成死结" not in prompt
+    assert "鞋带散开" in prompt
+    assert "双手并拢拢住地垫上一双粉鞋的鞋带结" in prompt
+    assert "灿灿双手自然下垂" in prompt
+    assert "双手掌心向上摊开" not in prompt
 
 
 def test_assemble_daily_t2i_floor_shoe_seg8_cancan_untie():
@@ -990,7 +1015,7 @@ def test_assemble_daily_t2i_floor_shoe_seg8_cancan_untie():
     prompt = assemble_daily_t2i_prompt(seg, setting=setting)
     assert "画面左侧蓝T恤深蓝短裤短发男孩昭昭" in prompt
     assert "双手掌心向上摊开" in prompt
-    assert "双手手指抠地垫中央一双粉红运动鞋的鞋带死结" in prompt
+    assert "双手用力抠地垫中央一双粉红运动鞋的鞋带死结" in prompt
     assert "灿灿双手自然下垂" not in prompt
     assert "昭昭蹲在地垫旁看着地垫上的粉鞋" not in prompt
     assert "严格左蓝T恤深蓝短裤短发男孩昭昭、右粉卫衣蓝裤黑马尾女孩灿灿" in prompt
