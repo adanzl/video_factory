@@ -244,11 +244,19 @@ _DAILY_VISUAL_SUBJECTS_RULE = (
     "1-4个（如沙发/茶几/地垫/水槽/滑梯），只写名词不写材质样式，"
     "地点与 setting 一致；可移动小物件（遥控器/水杯/书包）不写；"
     "全片同一场景时各段保持一致。"
+    "【cast】每段另输出 cast 数组：本镜额外在场且非常态的角色名。"
+    "昭昭、灿灿是固定主角，默认每镜都在，不要写进 cast；"
+    "只把「按剧情需要才入镜」的角色（如妈妈）在真正登场时写进 cast。"
+    "妈妈入镜仅当本镜台词含 speaker=妈妈，或台词明文写明妈妈当场可见动作/状态；"
+    "偷吃/藏匿/怕被撞破、台词只是转述或询问去向（「妈说过/妈妈在哪」）、「躲着/瞒着/别让妈妈"
+    "看见」时，妈妈不在场，cast 输出空数组。"
+    "无额外在场角色时 cast 为空数组 []。"
 )
 
 _VISUAL_BRIEF_JSON_EXAMPLE_DAILY = """{
   "segments": [
     {"segment_index": 1, "visual_mode": "static_motion",
+     "cast": [],
      "visual_subjects": [
        {"name": "昭昭", "posture": "蹲在地垫旁", "action": "双手捏住鞋带", "expression": "皱眉用力"},
        {"name": "灿灿", "posture": "站在地垫旁", "action": "右手叉腰", "expression": "瞪眼"}
@@ -263,6 +271,7 @@ _VISUAL_BRIEF_JSON_EXAMPLE_DAILY = """{
 _VISUAL_BRIEF_JSON_EXAMPLE_DAILY_PARTIAL = """{
   "segments": [
     {"segment_index": 2, "visual_mode": "static_motion",
+     "cast": ["妈妈"],
      "visual_subjects": [
        {"name": "昭昭", "posture": "蹲在地垫旁", "action": "双手摊开", "expression": "表情惊讶"},
        {"name": "灿灿", "posture": "蹲在地垫上", "action": "双手拎起粉鞋", "expression": "皱眉"}

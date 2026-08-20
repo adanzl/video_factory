@@ -68,7 +68,7 @@ _MOUTH_CLOSED_MARK = "嘴巴自然闭合"
 # 否定词白名单：code 生成的固定短语，非 LLM 负面指令，豁免 L1
 _NEGATION_WHITELIST = (
     "固定不变", "保持不变", "不推近", "不拉远",
-    "不消失", "纹丝不动", "不动",
+    "不消失", "纹丝不动", "不动", "没有分成两扇",
 )
 
 # 对立谓词对：同一条提示词同时命中两个即矛盾（major）。
@@ -114,7 +114,10 @@ def audit_image_prompt_slots(prompt: object) -> list[dict]:
     for w in _NEGATION_WORDS:
         idx = text.find(w)
         while idx >= 0:
-            if any(wl in text[max(0, idx - 2) : idx + len(w) + 2] for wl in _NEGATION_WHITELIST):
+            if any(
+                wl in text[max(0, idx - 8) : idx + len(w) + 8]
+                for wl in _NEGATION_WHITELIST
+            ):
                 idx = text.find(w, idx + 1)
                 continue
             frag = text[max(0, idx - 4) : idx + len(w) + 8]
