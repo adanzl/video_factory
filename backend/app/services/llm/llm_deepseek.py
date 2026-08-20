@@ -229,6 +229,7 @@ def _format_c_whole_item_opening_criterion(pkg: dict[str, Any]) -> str:
     bq = str(pkg.get("boomerang_quote") or "").strip()
     return f"""\
 【整件物·开场判据锚（占有系专锁）】
+- **必须 2 句 discovery_opening**（先礼后兵+具体理由/可拍画面；仅昭昭/灿灿）。
 - 判据只许占有系：拿到/抢到/攥手里/抱进怀里；禁 碰/摸/按遥控器/单脚站/松手。
 - 题面整件物全文唯一，禁漂移到遥控器/电视/按键。
 - 规则参考（开场可化用，勿逐字堆叠）：昭昭「{zz}」、灿灿「{cc}」。
