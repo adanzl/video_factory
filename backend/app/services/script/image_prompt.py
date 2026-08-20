@@ -149,13 +149,19 @@ def _join_slots(parts: list[str]) -> str:
 
 def _render_object_states(states: list) -> str:
     """把结构化 object_states 渲染成道具状态句（S5）。"""
-    parts: list[str] = []
-    for st in states:
+    from app.services.script.visual_brief import _collapse_object_aliases
+
+    merged: dict[str, dict] = {}
+    for st in _collapse_object_aliases(states):
         if not isinstance(st, dict):
             continue
         obj = str(st.get("object") or "").strip()
         if not obj:
             continue
+        merged[obj] = st
+    parts: list[str] = []
+    for st in merged.values():
+        obj = str(st.get("object") or "").strip()
         count = str(st.get("count") or "").strip()
         form = str(st.get("form") or "").strip()
         holder = str(st.get("holder") or "").strip()
@@ -523,7 +529,7 @@ def _daily_zhao_floor_shoe_watch_action(vb: str, zhao_feet: str) -> str:
         if re.search(r"昭昭[^。；]{0,40}咧嘴得意", text):
             extra = "得意地笑，"
         return (
-            f"{zhao_feet}昭昭蹲在灿灿对面，双手叉腰，{extra}"
+            f"{zhao_feet}昭昭蹲在画面左边，双手叉腰，{extra}"
             "昭昭双手空着、只看灿灿手中的粉鞋。"
         )
     return (
@@ -856,44 +862,23 @@ def _daily_composition(
     vb: str = "",
 ) -> str:
     names = [s for s in speakers if s in _DAILY_CHAR_MAP]
-    look = _DAILY_COMPOSITION_LOOK
     has_lr = bool(_DAILY_LR_RE.search(vb or ""))
     has_lcr = bool(_DAILY_LCR_RE.search(vb or ""))
     if len(names) >= 3:
         a, b, c = names[0], names[1], names[2]
-        lr = "" if has_lcr else f"画面从左到右是{a}、{b}、{c}。"
-        if shot_type == "特写":
-            return (
-                f"{lr}"
-                f"中近景三人特写，严格左{look.get(a, a)}、"
-                f"中{look.get(b, b)}、右{look.get(c, c)}，左右位置固定不变。"
-            )
-        return (
-            f"{lr}"
-            f"中景三人同框，严格左{look.get(a, a)}、"
-            f"中{look.get(b, b)}、右{look.get(c, c)}，"
-            f"三人全部在场、左右位置固定不变，全身可见。"
-        )
+        lr = "" if (has_lcr or has_lr) else f"画面从左到右是{a}、{b}、{c}。"
+        return f"{lr}中景三人同框，全身可见。"
     if shot_type == "特写":
         if len(names) == 2:
             a, b = names[0], names[1]
             lr = "" if has_lr else f"画面左边是{a}，右边是{b}。"
-            return (
-                f"{lr}"
-                f"中近景特写，严格左侧{look.get(a, a)}占左半、"
-                f"右侧{look.get(b, b)}占右半，左右位置固定不变，"
-                f"每人只显示2条手臂。"
-            )
+            return f"{lr}中近景特写，全身可见，每人只显示2条手臂。"
         return "面部特写，占画面主体，背景虚化。"
     if shot_type == "中景":
         if len(names) == 2:
             a, b = names[0], names[1]
             lr = "" if has_lr else f"画面左边是{a}，右边是{b}。"
-            return (
-                f"{lr}"
-                f"中景，严格左{look.get(a, a)}、右{look.get(b, b)}，"
-                f"左右位置固定不变，全身可见，每人只显示2条手臂。"
-            )
+            return f"{lr}中景，全身可见，每人只显示2条手臂。"
         return "中景，人物全身，环境可见。"
     return "根据画面自然构图。"
 
@@ -988,9 +973,16 @@ def assemble_daily_t2i_prompt(
             scrub_leaked_speaker_names,
             scrub_offscreen_doorway_cues,
         )
-        from app.services.script.visual_brief import scrub_daily_visual_brief
+        from app.services.script.visual_brief import (
+            enrich_thin_daily_visual_brief,
+            scrub_daily_visual_brief,
+        )
 
         vb = scrub_daily_visual_brief(vb)
+        if seg.get("visual_subjects"):
+            vb = enrich_thin_daily_visual_brief(
+                {**seg, "visual_brief": vb}, setting=setting
+            )
         vb = strip_verify_regen_leak(vb)
         vb = scrub_leaked_speaker_names(vb, set(speakers))
         vb = scrub_offscreen_doorway_cues(vb, allowed=set(speakers))
@@ -1055,7 +1047,7 @@ def assemble_daily_t2i_prompt(
     if vb:
         s4_parts.append(vb)
         if "门" in vb and "完整门板" not in vb:
-            s4_parts.append("画面中的门是一扇单开门，只有一块完整门板，没有分成两扇")
+            s4_parts.append("画面中的门是一扇单开门，一块完整门板")
         if ("风" in vb or "吹" in vb) and ("头发" in vb or "马尾" in vb):
             if "连着头皮" not in vb:
                 s4_parts.append("发丝连着头皮")
@@ -1097,36 +1089,12 @@ def assemble_daily_t2i_prompt(
     layout = _daily_layout_speakers(seg, vb)
     s78 = _daily_lighting(vb) + _daily_composition(shot, layout, vb=vb)
 
-    # 人数硬锁（始终加）：末尾权重最高，压住 agnes 多画路人/额外人
-    cast_lock = ""
-    if speakers:
-        names_all = "、".join(speakers)
-        n = len(speakers)
-        if n == 1:
-            cast_lock = f"画面主体为{speakers[0]}一人，无其他人物"
-        elif n == 2:
-            cast_lock = f"画面主体为{speakers[0]}、{speakers[1]}两人，无其他人物"
-        else:
-            # 三人及以上：人数锁 + 空间关联 + 负面排除，压住 flash 多画人
-            positions = {
-                "昭昭": "左侧",
-                "灿灿": "右侧",
-                "妈妈": "居中",
-            }
-            pos_clause = "".join(
-                f"{name}在{positions[name]}" for name in speakers if name in positions
-            )
-            cast_lock = (
-                f"画面主体为{names_all}三人，除这三人外不得出现任何人影/路人/额外人物；"
-                f"{pos_clause}，三人呈紧凑三角形站位，画面边缘紧贴最外侧人物，背景空白处无人。"
-            )
-
     # S2 场景锚点按景别裁剪：特写背景虚化，完整锚点是噪音，只留地点
     s2 = scene_anchor or ""
     if s2 and shot == "特写":
         s2 = s2.split("，")[0]
 
-    parts = [s1, s3, s2, s4, s5, s6, s78, cast_lock]
+    parts = [s1, s2, s4, s5, s3, s6, s78]
     if extra and extra.strip():
         cleaned = strip_verify_regen_leak(extra.strip())
         if cleaned and cleaned == extra.strip():
@@ -1229,7 +1197,7 @@ _IMAGE_PROMPT_DIMENSIONS_FULL = (
     "①视觉风格（遵循 visual_style 定调，置于句首）；"
     "②主体（角色须写年龄/发型/脸型/服装/身高体型等外貌特征，与 visual_style 主角描述一致；表情扩张力、姿态、动作，至少2句细节）；"
     "③场景（前景/中景/背景，写至少 2 个具体物品；"
-    "画面含门时须写明「一扇单开门」（单扇门：只有一块完整门板，没有分成两扇），"
+    "画面含门时须写明「一扇单开门，一块完整门板」，"
     "门外是柔和的白色亮光）；"
     "④光照（主辅光方向、冷暖色调、明暗对比）；⑤构图（景别、占比、留白）；"
     "⑥视觉连续性（同场景多镜时，主体外貌/服装/发型须与相邻镜一致，"

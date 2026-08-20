@@ -278,20 +278,12 @@ _OFFSCREEN_DOOR_GAZE_RE = re.compile(
 
 
 def scrub_offscreen_doorway_cues(text: str, *, allowed: set[str]) -> str:
-    """妈妈不在 allowed 时，把「盯/瞟门口」改成空门口，避免路人入画。"""
+    """妈妈不在 allowed 时，去掉「盯/瞟门口」，避免暗示第三人入画。"""
     body = (text or "").strip()
     if not body or "妈妈" in allowed:
         return body
 
-    def _repl(m: re.Match[str]) -> str:
-        room_m = re.search(
-            r"(厨房|客厅|卧室|卫生间|厕所|阳台|餐厅|玄关)?门口",
-            m.group(0),
-        )
-        room = (room_m.group(1) or "") if room_m else ""
-        return f"{room}门口空无无人"
-
-    cleaned = _OFFSCREEN_DOOR_GAZE_RE.sub(_repl, body)
+    cleaned = _OFFSCREEN_DOOR_GAZE_RE.sub("", body)
     cleaned = re.sub(r"[，,]{2,}", "，", cleaned)
     cleaned = re.sub(r"[；;]{2,}", "；", cleaned)
     return cleaned.strip("，,；; ").strip()

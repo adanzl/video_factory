@@ -269,14 +269,15 @@ def test_hide_from_ma_short_form_marks_her_offscreen():
 
 
 def test_scrub_offscreen_doorway_cues_when_mom_absent():
-    """妈妈未入画时，「瞟/盯门口」须改成空门口。"""
+    """妈妈未入画时，「瞟/盯门口」须去掉，避免暗示第三人。"""
     raw = (
         "灿灿蹲在沙发边，右手举拖鞋，眼睛瞟向厨房门口，身体僵住。"
         "昭昭捂嘴指向拖鞋。"
     )
     out = scrub_offscreen_doorway_cues(raw, allowed={"昭昭", "灿灿"})
     assert "瞟向" not in out
-    assert "厨房门口空无无人" in out
+    assert "空无无人" not in out
+    assert "身体僵住" in out
     # 妈妈已入画则保留盯门口（可画妈妈站门口）
     keep = scrub_offscreen_doorway_cues(raw, allowed={"昭昭", "灿灿", "妈妈"})
     assert "眼睛瞟向厨房门口" in keep

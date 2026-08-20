@@ -126,7 +126,8 @@ _DAILY_VISUAL_BRIEF_CONTENT_RULE = (
     "【站位】两人：「画面左边是A，右边是B」，再按左→右写动作；"
     "三人默认「从左到右是昭昭、妈妈、灿灿」并写清每人动作；"
     "昭昭与灿灿同框默认左昭昭、右灿灿，全片尽量固定；"
-    "禁止「站在她右侧/他左侧」等相对站位（会和画面左右打架）；"
+    "站位用参照物加画面方位正面写（茶几前/沙发边/画面左边），"
+    "不用「对面/她右侧/他左侧」等相对虚词；"
     "speakers 列出的角色都要入画，未发言者写旁听姿态。"
     "【人物关系】对标本段 dialogue：质问方进攻（瞪/皱眉 + 指或叉腰二选一），"
     "辩解方防御（摊手/耸肩/撇嘴）；每人只定格一组姿势（冲突最强一瞬）；"
@@ -209,7 +210,7 @@ _DAILY_VISUAL_SUBJECTS_RULE = (
     "【visual_subjects】每段输出 visual_subjects 数组，不再输出 visual_brief 自由文本："
     "为本段每个入画角色各写一条 {name, posture, action, expression}："
     "name=角色名（昭昭/灿灿/妈妈，必须在本段 speakers 内，禁止写未授权角色）；"
-    "posture=姿态与位置参照，≤12字（如蹲在地垫旁/站在沙发边/坐在餐桌旁）；"
+    "posture=姿态与位置，≤12字，写清参照锚点（站在茶几前/坐在沙发上/蹲在画面左边地垫旁）；"
     "action=一个主动作，≤15字；手部互斥：每人只准一组手部动作，"
     "对称动作可写「双手叉腰/双手捏住」，非对称动作只写主动手、另一只手自然下垂；"
     "持物时写明哪只手握物、道具与手接触；"
@@ -226,9 +227,10 @@ _DAILY_VISUAL_SUBJECTS_RULE = (
     "【道具】冲突道具用台词已出现的物件与状态；"
     "衣物类用「衣服/衣物堆」泛称（粉色卫衣/蓝色T恤是角色身上穿的，不当道具）；"
     "事实对齐台词：说皱就画「刚叠好的衣服现已揉皱成一团」，说只碰一下就画无辜摊手。"
-    "【站位】两人「画面左边是A，右边是B」，全片固定左昭昭右灿灿；"
-    "三人同框默认从左到右是昭昭、妈妈、灿灿；"
-    "禁止「站在她右侧/他左侧」等相对站位；"
+    "【站位】两人写「画面左边是A，右边是B」，全片固定左昭昭右灿灿；"
+    "三人同框写「从左到右是昭昭、妈妈、灿灿」；"
+    "站位用参照物加方位正面写（茶几前/沙发边/画面左边），"
+    "相对位置写具体锚点（如妈妈站在茶几前、昭昭站在沙发边）；"
     "speakers 列出的角色都要入画，未发言者写旁听姿态。"
     "【安全】儿童角色不得持真实刀具/锐器；剧情涉及刀时统一写「塑料蛋糕刀」，"
     "涉及剪刀时全片同一把写「剪刀」（儿童塑料圆头）。"
@@ -292,7 +294,7 @@ _MOM_DIALOGUE_RULE = (
     "若台词是「躲着妈妈」「瞒着妈妈」「别让妈妈看见/发现」等，"
     "表示妈妈不在当前视线内，禁止把妈妈画到人物面前。"
     "「妈出来了/进来了」若本镜未把妈妈列入 speakers："
-    "门口须写空无无人，禁止用盯门口暗示第三人入画。"
+    "门口写「单开门半开，门外柔和白光」，只画空门口，不写路人或第三张脸。"
     "不要为了让妈妈入画而改写/强加台词。"
 )
 
@@ -402,7 +404,7 @@ def normalize_object_states(segments: list[dict]) -> list[str]:
         raw = seg.get("object_states")
         states = [st for st in raw if isinstance(st, dict)] if isinstance(raw, list) else []
         seen: dict[str, dict] = {}
-        for st in states:
+        for st in _collapse_object_aliases(states):
             obj = str(st.get("object") or "").strip()
             if not obj:
                 continue
@@ -470,6 +472,153 @@ def _sanitize_subject_expression(expression: str) -> str:
     return e.strip("，, ")
 
 
+def _collapse_object_aliases(states: list) -> list[dict]:
+    """同物异名去重：「薯片」并入「薯片袋」等，保留更长 object 名。"""
+    rows = [st for st in states if isinstance(st, dict)]
+    names = [str(st.get("object") or "").strip() for st in rows]
+    drop: set[str] = set()
+    for short in names:
+        if not short:
+            continue
+        for long in names:
+            if short != long and short in long:
+                drop.add(short)
+    return [
+        st
+        for st in rows
+        if str(st.get("object") or "").strip() not in drop
+    ]
+
+
+def _daily_scene_location(setting: str | None) -> str:
+    text = (setting or "").strip()
+    if not text:
+        return "客厅"
+    return text.split("，")[0].strip() or "客厅"
+
+
+def _vb_has_rich_scene_opening(vb: str, setting: str | None) -> bool:
+    """S4 是否已有 64/7 式场景开场（地点 + 陈设/动作铺陈）。"""
+    if len(vb) >= 130:
+        loc = _daily_scene_location(setting)
+        return loc in vb
+    loc = _daily_scene_location(setting)
+    if loc not in vb:
+        return False
+    return any(k in vb for k in ("沙发", "茶几", "地垫", "门口", "鞋柜", "阳台"))
+
+
+def _prop_snapshot_from_object_states(states: list) -> str:
+    """从 object_states 抽一句道具快照（仅用于 vb 内提及，避免 strip_unlocked 补尾巴）。"""
+    for st in _collapse_object_aliases(states):
+        obj = str(st.get("object") or "").strip()
+        form = str(st.get("form") or "").strip()
+        pos = str(st.get("position") or "").strip()
+        count = str(st.get("count") or "").strip()
+        if not obj or not pos:
+            continue
+        head = count + obj if count else obj
+        clause = f"{pos}放着{head}"
+        if form:
+            clause += f"，{form}"
+        return clause
+    return ""
+
+
+def _fuse_scene_opening_with_mom(
+    loc: str,
+    anchors: list[str],
+    mom_clause: str,
+) -> str:
+    """场景开场与妈妈动作合句，避免 S4 清洗误删无角色场景句。"""
+    head = loc
+    if anchors:
+        head += "，" + "、".join(anchors[:3]) + "清晰可见"
+    return f"{head}，{mom_clause}。"
+
+
+def _format_enriched_subject_clause(
+    name: str,
+    sub: dict | None,
+    *,
+    side: str | None = None,
+) -> str:
+    sub = sub or {}
+    posture = str(sub.get("posture") or "").strip()
+    action = _sanitize_subject_action(str(sub.get("action") or "").strip())
+    expr = _sanitize_subject_expression(str(sub.get("expression") or "").strip())
+    bits = [b for b in (posture, action, expr) if b]
+    if not bits:
+        return ""
+    if side:
+        tail = bits[1:] if bits[0].startswith(("站", "蹲", "坐")) else bits
+        tail_text = "，".join(tail)
+        return f"画面{side}是{name}" + (f"，{tail_text}" if tail_text else "")
+    head = bits[0]
+    if not head.startswith(name):
+        head = name + head
+    tail = "，".join(bits[1:])
+    return head + (f"，{tail}" if tail else "")
+
+
+def enrich_thin_daily_visual_brief(seg: dict, setting: str | None = None) -> str:
+    """薄 vb 加厚为 64/7 式：场景开场 + 妈妈居中 + 左右孩锚点。"""
+    vb = str(seg.get("visual_brief") or "").strip()
+    vb = re.sub(r"。?画面中有[^。；]+[。；]?", "。", vb).strip("，,；;。 ")
+    if _vb_has_rich_scene_opening(vb, setting):
+        return _resolve_vague_spatial_terms(vb)
+
+    subjects = seg.get("visual_subjects") or []
+    speakers = [str(s) for s in (seg.get("speakers") or []) if str(s).strip()]
+    subject_map = {
+        str(s.get("name") or "").strip(): s
+        for s in subjects
+        if isinstance(s, dict) and str(s.get("name") or "").strip()
+    }
+
+    loc = _daily_scene_location(setting)
+    anchors = [
+        str(a).strip() for a in (seg.get("scene_anchors") or []) if str(a).strip()
+    ]
+    prop_snap = _prop_snapshot_from_object_states(seg.get("object_states") or [])
+
+    char_lines: list[str] = []
+    if "妈妈" in speakers:
+        mom_clause = _format_enriched_subject_clause("妈妈", subject_map.get("妈妈"))
+        if mom_clause:
+            char_lines.append(_fuse_scene_opening_with_mom(loc, anchors, mom_clause))
+    elif loc:
+        opening = loc
+        if anchors:
+            opening += "，" + "、".join(anchors[:3]) + "清晰可见"
+        if prop_snap:
+            char_lines.append(f"{opening}，{prop_snap}。")
+        else:
+            char_lines.append(f"{opening}。")
+    for kid, side in (("昭昭", "左边"), ("灿灿", "右边")):
+        if kid in speakers:
+            line = _format_enriched_subject_clause(
+                kid, subject_map.get(kid), side=side
+            )
+            if line:
+                char_lines.append(line)
+    for name in speakers:
+        if name in ("妈妈", "昭昭", "灿灿"):
+            continue
+        line = _format_enriched_subject_clause(name, subject_map.get(name))
+        if line:
+            char_lines.append(line)
+
+    if not char_lines and vb:
+        return _resolve_vague_spatial_terms(vb)
+
+    body = "。".join(char_lines)
+    if prop_snap and "妈妈" not in speakers:
+        body = body.rstrip("。") + "。" + prop_snap
+    body = re.sub(r"[。]{2,}", "。", body)
+    return _resolve_vague_spatial_terms(body.strip("，,；;。 "))
+
+
 def render_visual_subjects(subjects: list) -> str:
     """visual_subjects → visual_brief 文本（供下游检测与 S4 画面槽使用）。"""
     parts: list[str] = []
@@ -496,7 +645,8 @@ def render_visual_subjects(subjects: list) -> str:
         if len(bits) > 1:
             clause += "，" + "，".join(bits[1:])
         parts.append(clause)
-    return "。".join(p.rstrip("。") for p in parts if p)
+    text = "。".join(p.rstrip("。") for p in parts if p)
+    return _resolve_vague_spatial_terms(text)
 
 
 def validate_object_states(segments: list[dict]) -> list[str]:
@@ -780,6 +930,24 @@ _RELATIVE_STAND_RE = re.compile(
     r"(?:她|他|(?:昭昭|灿灿|妈妈))(?:的)?"
     r"(左侧|右边|右侧|左边)"
 )
+_SPATIAL_ANCHOR_PRIORITY = (
+    "茶几", "沙发", "餐桌", "书桌", "地垫", "水槽", "门口",
+)
+_SQUAT_OPPOSITE_RE = re.compile(
+    r"(昭昭|灿灿|妈妈)蹲在(昭昭|灿灿|妈妈)对面"
+)
+_STAND_OPPOSITE_RE = re.compile(
+    r"(昭昭|灿灿|妈妈)站在(茶几|沙发|餐桌|书桌|地垫|水槽|门口)对面"
+)
+_STAND_BARE_OPPOSITE_RE = re.compile(
+    r"(昭昭|灿灿|妈妈)站在对面"
+)
+_STAND_BESIDE_CHAR_RE = re.compile(
+    r"(昭昭|灿灿|妈妈)站在(昭昭|灿灿|妈妈)(?:旁边|身旁|一侧)"
+)
+_STAND_BESIDE_OBJ_RE = re.compile(
+    r"(昭昭|灿灿|妈妈)站在(茶几|沙发|餐桌|书桌|地垫|水槽|门口)(?:旁|旁边|一侧)"
+)
 _SURFACE_PLACE_RE = re.compile(
     r"(桌上|桌面上|茶几上|沙发上|餐桌上|书桌上|旁边|纸旁|身旁|旁)"
     r"(?:还)?"
@@ -950,6 +1118,48 @@ def restore_held_prop_owners(new: str, old: str) -> str:
         return m.group(0)
 
     return _HELD_BY_RE.sub(_repl_by, text)
+
+
+def _pick_spatial_anchor(body: str) -> str:
+    for name in _SPATIAL_ANCHOR_PRIORITY:
+        if name in body:
+            return name
+    return "沙发"
+
+
+def _default_side_for(name: str) -> str:
+    if name == "妈妈":
+        return "中间"
+    if name == "昭昭":
+        return "左边"
+    if name == "灿灿":
+        return "右边"
+    return "中间"
+
+
+def _resolve_vague_spatial_terms(body: str) -> str:
+    """相对虚词改正面锚点：对面→物件前，旁边→画面左/右边。"""
+    if not body:
+        return body
+    anchor = _pick_spatial_anchor(body)
+    lock = _DAILY_LR_LOCK_RE.search(body)
+    side_of: dict[str, str] = {}
+    if lock:
+        side_of = {lock.group(1): "左边", lock.group(2): "右边"}
+
+    def _side(who: str) -> str:
+        return side_of.get(who) or _default_side_for(who)
+
+    body = _STAND_OPPOSITE_RE.sub(r"\1站在\2前", body)
+    body = _STAND_BARE_OPPOSITE_RE.sub(rf"\1站在{anchor}前", body)
+    body = _SQUAT_OPPOSITE_RE.sub(
+        lambda m: f"{m.group(1)}蹲在画面{_side(m.group(1))}", body
+    )
+    body = _STAND_BESIDE_CHAR_RE.sub(
+        lambda m: f"{m.group(1)}站在画面{_side(m.group(1))}", body
+    )
+    body = _STAND_BESIDE_OBJ_RE.sub(r"\1站在\2前侧", body)
+    return body
 
 
 def _resolve_relative_lr_conflict(body: str) -> str:
@@ -1288,6 +1498,7 @@ def scrub_daily_visual_brief(text: str) -> str:
     body = _dedupe_default_table_set(body)
     body = strip_held_prop_from_surface(body)
     body = _retarget_gaze_from_held_prop(body)
+    body = _resolve_vague_spatial_terms(body)
     body = _resolve_relative_lr_conflict(body)
     body = _resolve_stale_prop_position_conflict(body)
     body = _resolve_furniture_between_conflict(body)

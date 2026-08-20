@@ -37,17 +37,14 @@ def test_assemble_daily_t2i_prompt_structure():
     assert "昭昭比灿灿矮约半个头" in prompt
     assert "窗光从一侧斜照" in prompt
     assert "中近景特写" in prompt
-    # 昭昭+灿灿同框默认左昭昭右灿灿（不再按对白先发言者左右对调）
-    assert "蓝T恤深蓝短裤短发男孩昭昭" in prompt
-    assert "粉卫衣蓝裤黑马尾女孩灿灿" in prompt
+    assert "全身可见" in prompt
     assert "灿灿头发通体纯黑" in prompt
-    assert "左右位置固定不变" in prompt
     assert "画面左边是昭昭，右边是灿灿" in prompt
-    assert "深蓝色短裤" in prompt
-    assert "蓝色长裤" in prompt
-    assert "占左半" in prompt and "占右半" in prompt
+    assert "严格左" not in prompt
     # 场景陈设句（茶几上空水杯和蜡笔）已归 S2/S5，不再留在 S4
     assert "空水杯" not in prompt
+    # 槽位顺序：S1→S2→S4 场景动作在前，S3 外貌在后（对齐成功三人稿）
+    assert prompt.index("客厅沙发") < prompt.index("昭昭：7岁男孩")
     # 嘴型锁定：首个说话人（灿灿）张嘴，其余闭嘴，防 i2v 说话人反转
     assert "灿灿正在开口说话" in prompt
     assert "昭昭嘴巴自然闭合" in prompt
@@ -86,9 +83,8 @@ def test_assemble_daily_layout_from_visual_brief():
         ],
     }
     prompt = assemble_daily_t2i_prompt(seg)
-    assert "蓝T恤深蓝短裤短发男孩昭昭" in prompt
-    assert "粉卫衣蓝裤黑马尾女孩灿灿" in prompt
-    assert "左右位置固定不变" in prompt
+    assert "中景，全身可见" in prompt
+    assert "严格左" not in prompt
     assert "画面左边是昭昭，右边是灿灿" in prompt
     assert prompt.count("画面左边是昭昭，右边是灿灿") == 1
 
@@ -139,8 +135,9 @@ def test_assemble_daily_e_sticky_mom_not_dropped_by_lr_brief():
         "灿灿",
     ]
     prompt = assemble_daily_t2i_prompt(seg)
-    assert "三人特写" in prompt
-    assert "从左到右是昭昭、妈妈、灿灿" in prompt
+    assert "三人同框" in prompt
+    assert "中景三人同框，全身可见" in prompt
+    assert "从左到右是昭昭、妈妈、灿灿" not in prompt
 
 
 def test_assemble_daily_ma_coming_keeps_empty_doorway():
@@ -160,8 +157,7 @@ def test_assemble_daily_ma_coming_keeps_empty_doorway():
     prompt = assemble_daily_t2i_prompt(seg)
     assert "妈妈：" not in prompt
     assert "瞟向厨房门口" not in prompt
-    assert "厨房门口空无无人" in prompt
-    assert "画面主体为昭昭、灿灿两人" in prompt
+    assert "空无无人" not in prompt
 
 
 def test_assemble_daily_hide_ma_keeps_two_person_cast():
@@ -199,7 +195,7 @@ def test_assemble_daily_hide_ma_keeps_two_person_cast():
     assert "妈妈：" not in p1
     assert "三人同框" not in p1
     assert "三人特写" not in p1
-    assert "画面主体为昭昭、灿灿两人" in p1
+    assert "画面主体为" not in p1
     assert "灿灿：" in p1
     p2 = segs[1]["image_prompt"]
     assert "妈妈：" in p2
@@ -429,6 +425,69 @@ def test_scrub_daily_visual_brief_fixes_relative_lr_conflict():
     )
     assert "昭昭站在画面左边" in out
     assert "站在她右侧" not in out
+
+
+def test_scrub_daily_visual_brief_rewrites_vague_opposite_to_anchor():
+    """「对面/旁边」改正面锚点，不用否定表述。"""
+    from app.services.script.visual_brief import scrub_daily_visual_brief
+
+    mom = scrub_daily_visual_brief(
+        "昭昭站在茶几旁，双手背在身后。灿灿站在昭昭右边，双手下垂。"
+        "妈妈站在对面，单手叉腰，皱眉瞪眼。"
+    )
+    assert "妈妈站在茶几前" in mom
+    assert "对面" not in mom
+
+    squat = scrub_daily_visual_brief(
+        "画面左边是昭昭，右边是灿灿。昭昭蹲在灿灿对面，双手叉腰。"
+    )
+    assert "昭昭蹲在画面左边" in squat
+    assert "对面" not in squat
+
+
+def test_enrich_thin_daily_visual_brief_three_person_chips():
+    """薄 vb 加厚：场景开场 + 妈妈居中 + 左右孩锚点；S5 去重薯片/薯片袋。"""
+    from app.services.script.image_prompt import assemble_daily_t2i_prompt
+    from app.services.script.visual_brief import enrich_thin_daily_visual_brief
+
+    setting = (
+        "客厅，茶几上摆着一袋打开的薯片和半杯水，"
+        "昭昭和灿灿刚偷吃被妈妈发现，正手忙脚乱藏薯片"
+    )
+    seg = {
+        "segment_index": 12,
+        "shot_type": "特写",
+        "visual_brief": (
+            "昭昭站在茶几旁，双手背在身后，瞪大眼睛。"
+            "灿灿站在昭昭右边，双手下垂，撇嘴。"
+            "妈妈站在对面，单手叉腰，皱眉瞪眼。画面中有薯片"
+        ),
+        "speakers": ["昭昭", "灿灿", "妈妈"],
+        "visual_subjects": [
+            {"name": "昭昭", "posture": "站在茶几旁", "action": "双手背在身后", "expression": "瞪大眼睛"},
+            {"name": "灿灿", "posture": "站在昭昭右边", "action": "双手下垂", "expression": "撇嘴"},
+            {"name": "妈妈", "posture": "站在对面", "action": "单手叉腰", "expression": "皱眉瞪眼"},
+        ],
+        "object_states": [
+            {"object": "薯片袋", "count": "一个", "form": "袋口敞开，薯片散出", "holder": "无", "position": "茶几上"},
+            {"object": "薯片", "count": "一袋", "form": "袋口敞开，部分散落", "holder": "无", "position": "茶几上"},
+        ],
+        "scene_anchors": ["沙发", "茶几"],
+    }
+    enriched = enrich_thin_daily_visual_brief(seg, setting=setting)
+    assert "客厅" in enriched
+    assert "沙发" in enriched and "茶几" in enriched
+    assert "妈妈站在茶几前" in enriched
+    assert "画面左边是昭昭" in enriched
+    assert "画面右边是灿灿" in enriched
+    assert "对面" not in enriched
+    assert "画面中有薯片" not in enriched
+
+    prompt = assemble_daily_t2i_prompt(seg, setting=setting)
+    assert "客厅，沙发、茶几清晰可见" in prompt
+    assert "一个薯片袋在茶几上" in prompt
+    assert prompt.count("薯片袋") == 1
+    assert "对面" not in prompt
 
 
 def test_restore_held_prop_owners_keeps_original_holder():
@@ -906,7 +965,7 @@ def test_assemble_daily_t2i_floor_shoe_seg6_cancan_lift():
     prompt = assemble_daily_t2i_prompt(seg, setting=setting)
     assert "被拎离地面" in prompt
     assert "双手拎着系成死结串在一起" in prompt
-    assert "昭昭蹲在灿灿对面，双手叉腰" in prompt
+    assert "昭昭蹲在画面左边，双手叉腰" in prompt
     assert "无人拿在手中" not in prompt
     assert "鞋带散开" not in prompt
     assert "散开的鞋带" not in prompt
@@ -1053,6 +1112,19 @@ def test_assemble_daily_t2i_floor_shoe_seg9_corrupted_vb_dialogue_aftermath():
     assert "左右并排平放接触地垫" in prompt
 
 
+def test_render_object_states_dedup_same_object():
+    from app.services.script.image_prompt import _render_object_states
+
+    rendered = _render_object_states(
+        [
+            {"object": "薯片", "count": "一个", "position": "茶几上", "form": "袋口敞开，薯片散出"},
+            {"object": "薯片", "count": "一袋", "position": "茶几上", "form": "袋口敞开，部分散落"},
+        ]
+    )
+    assert rendered.count("薯片") == 1
+    assert "部分散落" in rendered
+
+
 def test_assemble_daily_t2i_no_duplicate_lr_in_prompt():
     """visual_brief 已有左右时，构图段不再重复「画面左边…」。"""
     seg = {
@@ -1070,7 +1142,8 @@ def test_assemble_daily_t2i_no_duplicate_lr_in_prompt():
     prompt = assemble_daily_t2i_prompt(seg)
     assert prompt.count("画面左边是昭昭，右边是灿灿") == 1
     assert "昭昭双手叉腰，点头瞪眼" not in prompt
-    assert "中景，严格左蓝T恤深蓝短裤短发男孩昭昭" in prompt
+    assert "中景，全身可见" in prompt
+    assert "严格左蓝T恤" not in prompt
 
 
 def test_build_image_prompts_daily_motion_modes_and_duration():

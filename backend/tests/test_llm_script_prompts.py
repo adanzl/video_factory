@@ -42,11 +42,11 @@ def test_build_image_prompts_door_single_leaf_rule():
             content_style=style,
             job={"pipeline": "standard", "content_style": style},
         )
-        assert "单扇门" in prompts["system"]
         assert "一扇单开门" in prompts["system"]
-        assert "只有一块完整门板" in prompts["system"]
+        assert "一块完整门板" in prompts["system"]
         assert "门外是柔和的白色亮光" in prompts["system"]
         # 纯正面表述：图像模型会把否定词当生成指令
+        assert "没有分成" not in prompts["system"]
         assert "双开门/对开门" not in prompts["system"]
 
 def test_wrap_image_prompts_daily_assembles_from_visual_brief():
@@ -143,7 +143,7 @@ def test_assemble_daily_t2i_prompt_door_and_hair_locks():
             "shot_type": "中景",
         }
     )
-    assert "画面中的门是一扇单开门，只有一块完整门板，没有分成两扇" in prompt
+    assert "画面中的门是一扇单开门，一块完整门板" in prompt
     assert "门缝" not in prompt
     assert "门与门框的空隙" in prompt
     assert "发丝连着头皮" in prompt
