@@ -1097,16 +1097,29 @@ def assemble_daily_t2i_prompt(
     layout = _daily_layout_speakers(seg, vb)
     s78 = _daily_lighting(vb) + _daily_composition(shot, layout, vb=vb)
 
-    # 妈妈未入画时硬锁人数
+    # 人数硬锁（始终加）：末尾权重最高，压住 agnes 多画路人/额外人
     cast_lock = ""
-    if speakers and "妈妈" not in speakers:
+    if speakers:
+        names_all = "、".join(speakers)
         n = len(speakers)
-        if n == 2:
-            cast_lock = f"画面主体为{'、'.join(speakers)}两人"
-        elif n == 1:
-            cast_lock = f"画面主体为{speakers[0]}一人"
+        if n == 1:
+            cast_lock = f"画面主体为{speakers[0]}一人，无其他人物"
+        elif n == 2:
+            cast_lock = f"画面主体为{speakers[0]}、{speakers[1]}两人，无其他人物"
         else:
-            cast_lock = f"画面主体为{'、'.join(speakers)}"
+            # 三人及以上：人数锁 + 空间关联 + 负面排除，压住 flash 多画人
+            positions = {
+                "昭昭": "左侧",
+                "灿灿": "右侧",
+                "妈妈": "居中",
+            }
+            pos_clause = "".join(
+                f"{name}在{positions[name]}" for name in speakers if name in positions
+            )
+            cast_lock = (
+                f"画面主体为{names_all}三人，除这三人外不得出现任何人影/路人/额外人物；"
+                f"{pos_clause}，三人呈紧凑三角形站位，画面边缘紧贴最外侧人物，背景空白处无人。"
+            )
 
     # S2 场景锚点按景别裁剪：特写背景虚化，完整锚点是噪音，只留地点
     s2 = scene_anchor or ""
