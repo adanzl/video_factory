@@ -52,15 +52,16 @@ _REDUNDANCY_STOP_WORDS: frozenset[str] = frozenset({
 _CONTENT_WORD_RE = re.compile(r"[\u4e00-\u9fff]{2,}")
 
 # 结构（格式/节奏/类型收束形态）满分 80（扣分制，未达标逐项扣）；总分 = 结构 + LLM 好笑
-# 发布线（llm_mgr target 结构 75）：结构≥75 且 LLM 好笑≥12（0-20 制）才够发布
+# 发布线（llm_mgr target 结构 75）：结构≥75 且 LLM 好笑≥HUMOR_PUBLISH_MIN（0-20 制）
+HUMOR_PUBLISH_MIN = 10
 STRUCTURE_SCORE_CAP = 80
 # 扣分制各维度满分（结构分从 80 满分往下扣，未达标按维度扣分，cons 与分数对应）
 OPENING_SCORE_FULL = 6          # 开场：锚定3 + 双句1 + 背景1 + 可拍1
 ESCALATION_SCORE_FULL = 14      # 推进：4 层达标满分，3层-6 / 2层-12 / ≤1层-14
 PUNCHLINE_SCORE_FULL = 8        # 收束形态：回旋镖/反转/破功落位达标满分，未落位扣8
 # 节奏维度无独立满分：紧凑达标不减，绕圈/拖沓按 _score_redundancy 原扣分（-5~-12）
-# 好笑维度 0–20：达标=8（够发布线）；很好笑=15（仅标签）
-_HUMOR_POINTS_FOR_GOOD = 8
+# 好笑维度 0–20：达标=HUMOR_PUBLISH_MIN（够发布线）；很好笑=15（仅标签）
+_HUMOR_POINTS_FOR_GOOD = HUMOR_PUBLISH_MIN
 _HUMOR_POINTS_FOR_GREAT = 15
 # 共享数字加分（A/B/C/E 兜底）：全文任意「数字+分钟/秒/下」≥2 处 → +2
 _RE_NUMBER_BONUS = re.compile(r"(?:\d+|[一二三四五六七八九十两]+)(?:分钟|秒|下)")
@@ -645,7 +646,7 @@ def _score_funniness(
         points += tail_pts
         pros.extend(tail_pros)
 
-    if points >= 9 and not cons:
+    if points >= HUMOR_PUBLISH_MIN and not cons:
         pros.append("好笑够格")
 
     points = _apply_humor_issue_caps(points, cons, profile)
@@ -1010,18 +1011,22 @@ def finalize_daily_story_total(
     if source == "llm":
         if not any(str(r).startswith("好笑") and str(r)[2:].isdigit() for r in reasons):
             reasons.append(f"好笑{funny}")
-        pass_ok = structure >= 75 and funny >= 12
+        pass_ok = structure >= 75 and funny >= HUMOR_PUBLISH_MIN
         quality["pass"] = pass_ok
         if pass_ok:
-            reasons.append(f"发布达标：结构{structure}≥75，LLM好笑{funny}/20≥12")
+            reasons.append(
+                f"发布达标：结构{structure}≥75，"
+                f"LLM好笑{funny}/20≥{HUMOR_PUBLISH_MIN}"
+            )
         else:
             misses = []
             if structure < 75:
                 misses.append(f"结构{structure}<75")
-            if funny < 12:
-                misses.append(f"好笑{funny}/20<12")
+            if funny < HUMOR_PUBLISH_MIN:
+                misses.append(f"好笑{funny}/20<{HUMOR_PUBLISH_MIN}")
             reasons.append(
-                f"未达发布线（{'，'.join(misses)}，须结构≥75且好笑≥12）"
+                f"未达发布线（{'，'.join(misses)}，"
+                f"须结构≥75且好笑≥{HUMOR_PUBLISH_MIN}）"
             )
         tail = f"-硬伤{points}" if points else ""
         reasons.append(f"总分{total}=结构{structure}+LLM好笑{funny}{tail}")

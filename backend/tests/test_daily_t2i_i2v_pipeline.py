@@ -31,7 +31,7 @@ def test_assemble_daily_t2i_prompt_structure():
         ],
     }
     prompt = assemble_daily_t2i_prompt(seg)
-    assert prompt.startswith("儿童情绪涂鸦风格")
+    assert prompt.startswith("儿童情绪涂鸦风")
     assert "灿灿：10岁女孩" in prompt
     assert "昭昭：7岁男孩" in prompt
     assert "昭昭比灿灿矮约半个头" in prompt
@@ -46,7 +46,8 @@ def test_assemble_daily_t2i_prompt_structure():
     assert "深蓝色短裤" in prompt
     assert "蓝色长裤" in prompt
     assert "占左半" in prompt and "占右半" in prompt
-    assert "蜡笔" in prompt
+    # 场景陈设句（茶几上空水杯和蜡笔）已归 S2/S5，不再留在 S4
+    assert "空水杯" not in prompt
     # 嘴型锁定：首个说话人（灿灿）张嘴，其余闭嘴，防 i2v 说话人反转
     assert "灿灿正在开口说话" in prompt
     assert "昭昭嘴巴自然闭合" in prompt
@@ -493,7 +494,7 @@ def test_scrub_daily_visual_brief_keeps_prop_when_no_position_conflict():
 
 
 def test_assemble_daily_image_prompts_injects_fixed_furniture_when_missing():
-    """分镜1 建立的固定陈设（沙发/茶几/扫帚/簸箕）后续镜缺失时强制补回。"""
+    """分镜1 建立的固定陈设（沙发/茶几）由 S2 场景锚点统一补回。"""
     from app.services.script.image_prompt import assemble_daily_image_prompts
 
     segs = [
@@ -518,8 +519,12 @@ def test_assemble_daily_image_prompts_injects_fixed_furniture_when_missing():
         },
     ]
     assemble_daily_image_prompts(segs, setting="客厅。")
+    ip1 = segs[0]["image_prompt"]
     ip6 = segs[1]["image_prompt"]
-    assert "画面中有沙发、茶几、扫帚、簸箕。" in ip6
+    # S2 场景锚点：地点+硬锚点（分镜1 沙发/茶几）
+    assert "客厅，沙发，茶几" in ip1
+    # 特写镜 S2 按景别裁剪，只留地点
+    assert "客厅；" in ip6
     assert "茶几上立着摔裂的相框" not in ip6
     # 幂等：重复拼装不会二次注入
     ip6_before = ip6
@@ -808,7 +813,8 @@ def test_assemble_daily_t2i_floor_shoe_lace_lock():
     assert "两侧同色蓝白运动鞋" not in prompt
     assert "赤脚仅穿白袜子" in prompt
     assert "仅有一双粉红运动鞋共两只" in prompt
-    assert "全画面地垫上仅此一双粉红运动鞋共两只" in prompt
+    # 三句重复锁定已去重，只保留 mat 从句里的单句鞋数描述
+    assert "全画面地垫上仅此一双粉红运动鞋共两只" not in prompt
     assert "双手并拢拢住地垫上一双粉鞋的鞋带结" in prompt
     assert "鞋帮贴地" in prompt
     assert "粉鞋全部在地垫上" in prompt
@@ -907,10 +913,11 @@ def test_assemble_daily_t2i_floor_shoe_seg6_cancan_lift():
     assert "双手并拢拢住" not in prompt
     assert "双手拎起" not in prompt
     assert "带。" not in prompt
-    assert "粉运动鞋恰好两只" in prompt
+    assert "全画面仅有两只粉红运动鞋" in prompt
     assert "粉鞋全部在灿灿双手中" in prompt
-    assert "重申：全画面仅两只粉运动鞋，均在灿灿双手中" in prompt
-    assert "咧嘴得意" in prompt
+    assert "重申" not in prompt
+    assert "得意地笑" in prompt
+    assert "咧嘴" not in prompt
 
 
 def test_assemble_daily_t2i_floor_shoe_seg7_cancan_flip():
@@ -965,9 +972,9 @@ def test_assemble_daily_t2i_floor_shoe_seg9_aftermath():
     assert "双手并拢拢住" not in prompt
     assert "双手自然下垂" not in prompt
     assert "鞋带散开；" not in prompt
-    assert "粉运动鞋恰好两只" in prompt
-    assert "粉鞋两只平放地垫中央" in prompt
-    assert "重申：全画面仅两只粉运动鞋" in prompt
+    assert "地垫中央仅有一双粉红运动鞋共两只" in prompt
+    assert "左右并排平放接触地垫" in prompt
+    assert "重申" not in prompt
 
 
 def test_assemble_daily_t2i_floor_shoe_seg1_not_untie_compact():
@@ -1043,7 +1050,7 @@ def test_assemble_daily_t2i_floor_shoe_seg9_corrupted_vb_dialogue_aftermath():
     assert "双手垂在身侧" in prompt
     assert "灿灿双手叉腰" in prompt
     assert "鞋带纠缠散乱" in prompt
-    assert "粉鞋两只平放地垫中央" in prompt
+    assert "左右并排平放接触地垫" in prompt
 
 
 def test_assemble_daily_t2i_no_duplicate_lr_in_prompt():

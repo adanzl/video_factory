@@ -126,6 +126,11 @@ class Config:
         self.skip_publish_default: bool = _bool("SKIP_PUBLISH_DEFAULT", True)
         self.skip_script_quality_check: bool = _bool("SKIP_SCRIPT_QUALITY_CHECK", False)
         self.script_qa_max_attempts: int = int(os.getenv("SCRIPT_QA_MAX_ATTEMPTS", "2"))
+        # 文生图提示词 L2 语义审核（LLM reviewer）：off / on_l1_hit / sample / full
+        self.image_prompt_l2_mode: str = os.getenv("IMAGE_PROMPT_L2_MODE", "off").strip().lower()
+        self.image_prompt_l2_sample_ratio: float = float(
+            os.getenv("IMAGE_PROMPT_L2_SAMPLE_RATIO", "0.3")
+        )
         self.host_enabled: bool = _bool("HOST_ENABLED")
         self.kling_upgrade_enabled: bool = _bool("KLING_UPGRADE_ENABLED")
         self.enable_scheduler: bool = _bool("ENABLE_SCHEDULER")

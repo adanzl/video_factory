@@ -21,6 +21,8 @@ __all__ = [
     "MIN_SD15_PROMPT_EN_WORDS",
     "TARGET_SD15_PROMPT_EN_WORDS",
     "check_image_prompt",
+    "audit_image_prompt_slots",
+    "register_opposite_pair",
     "collect_motion_prompt_issues",
     "format_image_prompt_retry_warning",
     "generic_motion_prompt_issue",
@@ -54,6 +56,81 @@ _ABSTRACT_VFX_RE = re.compile(
     r"(?:光效|光晕|图标|UI元素|ui元素|特效|粒子|能量|光圈|光环|"
     r"脉动|辉光|光束扫射|光束扫过|光柱扫过|光柱扫射|呼吸感)"
 )
+
+# ── L1 结构审核（槽位拼装后、出图前） ──
+_NEGATION_WORDS = (
+    "不要", "不能", "不得", "没有", "无人", "禁止", "别让", "不是", "未",
+    "无", "不", "别",
+)
+_MOUTH_OPEN_WORDS = ("龇牙", "咧嘴", "张嘴", "张口", "大笑", "露齿", "吐舌")
+_MOUTH_CLOSED_MARK = "嘴巴自然闭合"
+
+# 否定词白名单：code 生成的固定短语，非 LLM 负面指令，豁免 L1
+_NEGATION_WHITELIST = (
+    "固定不变", "保持不变", "不推近", "不拉远",
+    "不消失", "纹丝不动", "不动",
+)
+
+# 对立谓词对：同一条提示词同时命中两个即矛盾（major）。
+# L2 审出新矛盾后可 register_opposite_pair() 自动沉淀。
+_OPPOSITE_PHRASE_PAIRS: list[tuple[str, str]] = [
+    ("没有任何物品", "放着"),
+    ("空无一物", "放着"),
+    ("赤脚", "穿着运动鞋"),
+    ("翘起", "贴地"),
+    ("扯起", "贴地"),
+]
+
+
+def register_opposite_pair(a: str, b: str) -> None:
+    """L2 审出新矛盾时把 (名词, 谓词对) 沉淀回表，供后续 L1 复用。"""
+    pair = (a, b)
+    if pair not in _OPPOSITE_PHRASE_PAIRS:
+        _OPPOSITE_PHRASE_PAIRS.append(pair)
+
+
+def _redundant_ngrams(prompt: str, n: int = 6, threshold: int = 3) -> list[str]:
+    text = prompt or ""
+    counts: dict[str, int] = {}
+    for i in range(len(text) - n + 1):
+        gram = text[i : i + n]
+        if len(set(gram)) == 1:
+            continue
+        if any(ch in gram for ch in "，。；;、："):
+            continue
+        counts[gram] = counts.get(gram, 0) + 1
+    return sorted(g for g, c in counts.items() if c >= threshold)
+
+
+def audit_image_prompt_slots(prompt: object) -> list[dict]:
+    """L1 结构审核：否定词 / 口型冲突 / 对立谓词 / n-gram 冗余。
+
+    返回 issue 列表，每项 {level, kind, ...}；level 为 minor / major。
+    """
+    if not isinstance(prompt, str) or not prompt.strip():
+        return [{"level": "major", "kind": "empty", "detail": "image_prompt empty"}]
+    text = prompt
+    issues: list[dict] = []
+    for w in _NEGATION_WORDS:
+        idx = text.find(w)
+        while idx >= 0:
+            if any(wl in text[max(0, idx - 2) : idx + len(w) + 2] for wl in _NEGATION_WHITELIST):
+                idx = text.find(w, idx + 1)
+                continue
+            frag = text[max(0, idx - 4) : idx + len(w) + 8]
+            issues.append({"level": "major", "kind": "negation", "word": w, "context": frag})
+            idx = text.find(w, idx + 1)
+    if _MOUTH_CLOSED_MARK in text:
+        for w in _MOUTH_OPEN_WORDS:
+            if w in text:
+                issues.append({"level": "major", "kind": "mouth_conflict", "word": w})
+                break
+    for a, b in _OPPOSITE_PHRASE_PAIRS:
+        if a in text and b in text:
+            issues.append({"level": "major", "kind": "opposite", "pair": [a, b]})
+    for g in _redundant_ngrams(text):
+        issues.append({"level": "minor", "kind": "redundancy", "gram": g})
+    return issues
 
 
 def image_prompt_min_chars(*, sd15_mode: bool = False) -> int:
@@ -231,6 +308,22 @@ def check_image_prompt(
                     "segments": speaker_rows,
                 },
             )
+        # object_states 状态机校验：同段矛盾 / holder-position 冲突 / 状态回归
+        from app.services.script.visual_brief import validate_object_states
+
+        obj_issues = validate_object_states(
+            script.get("segments") or []
+        )
+        if obj_issues:
+            return QualityReport(
+                level="major",
+                step="image_prompts",
+                fail_stage="script",
+                details={
+                    "reason": "object_states conflict",
+                    "issues": obj_issues,
+                },
+            )
 
     too_short: list[dict] = []
     slightly_short: list[dict] = []
@@ -309,6 +402,33 @@ def check_image_prompt(
             details={
                 "reason": "image_prompt slightly short",
                 "segments": slightly_short,
+            },
+        )
+    # L1 结构审核：否定词 / 口型冲突 / 对立谓词 / n-gram 冗余
+    l1_major: list[dict] = []
+    l1_minor: list[dict] = []
+    for seg in segments:
+        idx = seg.get("segment_index")
+        for issue in audit_image_prompt_slots(seg.get("image_prompt")):
+            row = {"segment_index": idx, **issue}
+            (l1_major if issue["level"] == "major" else l1_minor).append(row)
+    if l1_major:
+        return QualityReport(
+            level="major",
+            step="image_prompts",
+            fail_stage="script",
+            details={
+                "reason": "L1 image_prompt conflict",
+                "issues": l1_major,
+            },
+        )
+    if l1_minor:
+        return QualityReport(
+            level="minor",
+            step="image_prompts",
+            details={
+                "reason": "L1 image_prompt redundancy",
+                "issues": l1_minor,
             },
         )
     return QualityReport(

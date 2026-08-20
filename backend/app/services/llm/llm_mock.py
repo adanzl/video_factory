@@ -168,6 +168,17 @@ class MockLLMClient(LLMClient):
             seg.setdefault("motion_prompt", _mock_motion_prompt())
         return script
 
+    def review_image_prompts(
+        self,
+        script: dict[str, Any],
+        *,
+        job: dict | None = None,
+        segment_indices: list[int] | None = None,
+    ) -> list[dict]:
+        """Mock 模式无 LLM，L2 审核直接放行。"""
+        _ = script, job, segment_indices
+        return []
+
     def fill_visual_briefs(
         self,
         script: dict[str, Any],

@@ -193,6 +193,87 @@ _DAILY_SETTING_RULE = (
     "每镜 visual_brief 落在该地点或其可见角落（沙发/茶几/书桌/门口）。"
 )
 
+_DAILY_OBJECT_STATE_RULE = (
+    "【object_states】每段另输出 object_states 数组：本片锁定活动道具在本镜的最终状态，"
+    "每项含 object、count、form、holder、position 五字段："
+    "object=道具名（本片 setting/台词点名的活动道具，与【物品锁定】列表对齐，如粉鞋/相框/水壶）；"
+    "count=数量词（两只/一个/一把等）；"
+    "form=本镜最终状态（如鞋带散开/鞋带打成死结两只鞋底贴在一起/摔裂掉在地上）；"
+    "holder=持有人角色名，无人持有写「无」；"
+    "position=具体位置（地垫中央/茶几上/灿灿双手中）；"
+    "未变化道具沿用上一镜状态原样照写；状态变化必须与剧情一致；"
+    "同一道具同一镜只能有一条状态；禁止前后镜状态无理由回退。"
+)
+
+_DAILY_VISUAL_SUBJECTS_RULE = (
+    "【visual_subjects】每段输出 visual_subjects 数组，不再输出 visual_brief 自由文本："
+    "为本段每个入画角色各写一条 {name, posture, action, expression}："
+    "name=角色名（昭昭/灿灿/妈妈，必须在本段 speakers 内，禁止写未授权角色）；"
+    "posture=姿态与位置参照，≤12字（如蹲在地垫旁/站在沙发边/坐在餐桌旁）；"
+    "action=一个主动作，≤15字；手部互斥：每人只准一组手部动作，"
+    "对称动作可写「双手叉腰/双手捏住」，非对称动作只写主动手、另一只手自然下垂；"
+    "持物时写明哪只手握物、道具与手接触；"
+    "expression=眉眼与嘴角静态，≤10字（如皱眉瞪眼/撇嘴/眯眼笑）；"
+    "禁止写场景陈设样式、角色外貌发型服装、道具状态与数量、口型开合；"
+    "expression 禁止出现「说话/开口/大喊」等口型词，口型由系统统一注入；"
+    "其他角色禁写说话/反驳类表情，只用眉眼肢体表达情绪；"
+    "情绪对标台词语气强度；每人只定格一组姿势（冲突最强一瞬）。"
+    "【人物关系】对标本段 dialogue：质问方进攻（瞪/皱眉 + 指或叉腰二选一），"
+    "辩解方防御（摊手/耸肩/撇嘴）；禁止把 A 角色的动作写成 B 角色的动作。"
+    "【门】画面涉及门（含门口/门外）时，门一律写成「一扇单开门」"
+    "（单扇门：只有一块完整门板，没有分成两扇），门外是柔和的白色亮光；"
+    "半开状态写「门板边缘与门框之间露出一道空隙」，禁止写「门缝」一词。"
+    "【道具】冲突道具用台词已出现的物件与状态；"
+    "衣物类用「衣服/衣物堆」泛称（粉色卫衣/蓝色T恤是角色身上穿的，不当道具）；"
+    "事实对齐台词：说皱就画「刚叠好的衣服现已揉皱成一团」，说只碰一下就画无辜摊手。"
+    "【站位】两人「画面左边是A，右边是B」，全片固定左昭昭右灿灿；"
+    "三人同框默认从左到右是昭昭、妈妈、灿灿；"
+    "禁止「站在她右侧/他左侧」等相对站位；"
+    "speakers 列出的角色都要入画，未发言者写旁听姿态。"
+    "【安全】儿童角色不得持真实刀具/锐器；剧情涉及刀时统一写「塑料蛋糕刀」，"
+    "涉及剪刀时全片同一把写「剪刀」（儿童塑料圆头）。"
+    "【风与头发】画面涉及风吹时，风只吹本镜在场角色的头发："
+    "谁说头发被风吹乱，风就吹谁的头发（与台词一致，写在对应角色的 action 里）；"
+    "台词未提头发时，只吹离门口最近、搭着/扶着门的角色；"
+    "发丝必须连着头皮；风从门外吹进室内时，头发顺风背离门口飘；"
+    "禁止写「马尾被吹起」「碎发乱飞」「发丝/马尾从门缝飘入」等易被画成独立飘浮头发的表述；"
+    "发丝连头皮等细节由系统注入提示词（系统注入示例：「门外的风吹起昭昭的黑色短发，"
+    "发丝向上飘起」），LLM 只需在 action 里点出「头发被风吹起」。"
+    "【开场】segment_index=1 且特写时，定格冲突峰值姿势，表情再夸张一档。"
+    "【scene_anchors】每段另输出 scene_anchors 数组：本镜场景的大型固定物名词，"
+    "1-4个（如沙发/茶几/地垫/水槽/滑梯），只写名词不写材质样式，"
+    "地点与 setting 一致；可移动小物件（遥控器/水杯/书包）不写；"
+    "全片同一场景时各段保持一致。"
+)
+
+_VISUAL_BRIEF_JSON_EXAMPLE_DAILY = """{
+  "segments": [
+    {"segment_index": 1, "visual_mode": "static_motion",
+     "visual_subjects": [
+       {"name": "昭昭", "posture": "蹲在地垫旁", "action": "双手捏住鞋带", "expression": "皱眉用力"},
+       {"name": "灿灿", "posture": "站在地垫旁", "action": "右手叉腰", "expression": "瞪眼"}
+     ],
+     "object_states": [{"object": "粉鞋", "count": "两只", "form": "鞋带散开", "holder": "无", "position": "地垫中央"}],
+     "scene_anchors": ["地垫", "沙发", "茶几"]}
+  ]
+}
+
+注意：segments 须覆盖输入的每一段，segment_index 一一对应；不要修改各段 text。"""
+
+_VISUAL_BRIEF_JSON_EXAMPLE_DAILY_PARTIAL = """{
+  "segments": [
+    {"segment_index": 2, "visual_mode": "static_motion",
+     "visual_subjects": [
+       {"name": "昭昭", "posture": "蹲在地垫旁", "action": "双手摊开", "expression": "表情惊讶"},
+       {"name": "灿灿", "posture": "蹲在地垫上", "action": "双手拎起粉鞋", "expression": "皱眉"}
+     ],
+     "object_states": [{"object": "粉鞋", "count": "两只", "form": "鞋带打成死结", "holder": "灿灿", "position": "灿灿双手中"}],
+     "scene_anchors": ["地垫", "沙发", "茶几"]}
+  ]
+}
+
+注意：仅输出标记为【需生成】的 segment；【仅上下文】无需输出；不要修改各段 text。"""
+
 _MOM_DIALOGUE_RULE = (
     "【角色约束】妈妈可入画当且仅当："
     "本段 dialogue 含 speaker=\"妈妈\"，或台词写明妈妈当场可见动作/状态"
@@ -297,6 +378,111 @@ def _dialogue_blob(segments: list[dict]) -> str:
                 continue
             parts.append(str(row.get("text") or row.get("line") or ""))
     return "".join(parts)
+
+
+def normalize_object_states(segments: list[dict]) -> list[str]:
+    """object_states 状态机：跨镜继承缺失状态、去重、校验矛盾与状态回归。
+
+    原地归一 segments 的 object_states，返回 issue 列表（major 矛盾）。
+    """
+    issues: list[str] = []
+    last_state: dict[str, dict] = {}
+    form_seq: dict[str, list[str]] = {}
+    for seg in segments:
+        idx = int(seg.get("segment_index") or 0)
+        raw = seg.get("object_states")
+        states = [st for st in raw if isinstance(st, dict)] if isinstance(raw, list) else []
+        seen: dict[str, dict] = {}
+        for st in states:
+            obj = str(st.get("object") or "").strip()
+            if not obj:
+                continue
+            if obj in seen:
+                issues.append(f"segment {idx}: object_states 重复 object={obj}")
+                continue
+            seen[obj] = st
+        merged: dict[str, dict] = {k: dict(v) for k, v in last_state.items()}
+        for obj, st in seen.items():
+            merged[obj] = st
+        for obj, st in merged.items():
+            holder = str(st.get("holder") or "").strip()
+            pos = str(st.get("position") or "").strip()
+            if holder and holder != "无" and pos and "手" not in pos and "手" not in holder:
+                issues.append(
+                    f"segment {idx}: object={obj} holder={holder} 与 position={pos} 矛盾"
+                )
+            form = str(st.get("form") or "").strip()
+            if form:
+                seq = form_seq.setdefault(obj, [])
+                if form not in seq:
+                    seq.append(form)
+                elif seq.index(form) < len(seq) - 1:
+                    issues.append(
+                        f"segment {idx}: object={obj} 状态回归 {form!r}（禁止无理由回退）"
+                    )
+        seg["object_states"] = [dict(v, object=k) for k, v in merged.items()]
+        last_state = merged
+    return issues
+
+
+def _sanitize_subject_action(action: str) -> str:
+    """action 字段槽内消毒：重写易诱发拿鞋/套鞋/手指变形的高危措辞。"""
+    a = action or ""
+    # 指鞋/指鞋带易诱发拿鞋或套鞋，改为看
+    a = re.sub(r"(?:右|左)?手?(?:食指|拇指)?\s*指(?:向|着)[^，。；]{0,6}鞋", "看向粉鞋", a)
+    # 穿鞋眼易被画成往脚上套鞋；与其他改写去重
+    a = re.sub(r"穿(?:进|过)[^，。；]{0,4}鞋眼", "", a)
+    a = re.sub(r"各捏(?:住)?一根鞋带", "捏住鞋带", a)
+    # 手指级精细动作降级为粗粒度
+    a = re.sub(r"手指[^，。；]{0,4}包裹", "捏住", a)
+    a = re.sub(r"(捏住鞋带){2,}", r"\1", a)
+    return a.strip("，, ")
+
+
+def _sanitize_subject_expression(expression: str) -> str:
+    """expression 字段槽内消毒：禁止口型词，口型由 S6 锁统一注入。"""
+    e = expression or ""
+    # 口型词直接剥掉（口型由 S6 槽位负责，expression 只写眉眼/嘴角静态）
+    e = re.sub(r"(?:撇嘴|咧嘴|笑着|微笑)?说话", "", e)
+    e = re.sub(r"开口|张嘴|张口|大喊|喊叫|反驳", "", e)
+    e = re.sub(r"[，,]{2,}", "，", e)
+    return e.strip("，, ")
+
+
+def render_visual_subjects(subjects: list) -> str:
+    """visual_subjects → visual_brief 文本（供下游检测与 S4 画面槽使用）。"""
+    parts: list[str] = []
+    for s in subjects:
+        if not isinstance(s, dict):
+            continue
+        name = str(s.get("name") or "").strip()
+        if not name:
+            continue
+        bits = [
+            str(s.get(k) or "").strip()
+            for k in ("posture", "action", "expression")
+        ]
+        bits = [b for b in bits if b]
+        if len(bits) >= 2:
+            bits[1] = _sanitize_subject_action(bits[1])
+        if len(bits) >= 3:
+            bits[2] = _sanitize_subject_expression(bits[2])
+        bits = [b for b in bits if b]
+        if not bits:
+            parts.append(name)
+            continue
+        clause = name + bits[0]
+        if len(bits) > 1:
+            clause += "，" + "，".join(bits[1:])
+        parts.append(clause)
+    return "。".join(p.rstrip("。") for p in parts if p)
+
+
+def validate_object_states(segments: list[dict]) -> list[str]:
+    """不改写原数据的 object_states 校验（深拷贝后跑状态机）。"""
+    import copy
+
+    return normalize_object_states(copy.deepcopy(segments))
 
 
 def daily_locked_inventory(
@@ -1249,7 +1435,7 @@ def build_visual_brief_prompts(
                     "剪刀全片同一把，写「剪刀」，勿改成安全剪/金属锋利剪。"
                 )
     content_rule = (
-        _DAILY_VISUAL_BRIEF_CONTENT_RULE
+        _DAILY_VISUAL_SUBJECTS_RULE
         if profile_style == CONTENT_STYLE_DAILY_STORY
         else _VISUAL_BRIEF_CONTENT_RULE
     )
@@ -1259,24 +1445,42 @@ def build_visual_brief_prompts(
         if partial
         else "segments 为分镜数组，须与输入逐段一一对应；"
     )
+    seg_fields = (
+        "各段含 segment_index, visual_subjects, object_states, scene_anchors, "
+        "visual_mode=static_motion；"
+        if profile_style == CONTENT_STYLE_DAILY_STORY
+        else "各段含 segment_index, visual_brief, visual_mode=static_motion；"
+    )
     seg_rule = (
         f"{coverage}"
-        "各段含 segment_index, visual_brief, visual_mode=static_motion；"
+        f"{seg_fields}"
         "不要输出或修改各段 text。"
         f"{content_rule}"
         f"{emotion_rule}"
         f"{cast_rule}"
         f"{_DAILY_CHARACTER_FACTS if profile_style == CONTENT_STYLE_DAILY_STORY else ''}"
+        f"{_DAILY_OBJECT_STATE_RULE if profile_style == CONTENT_STYLE_DAILY_STORY else ''}"
         f"{setting_rule}"
         "须通读全文 narration，保证相邻分镜画面衔接自然、叙事节奏连贯，"
         "避免前后镜主体/场景毫无关联的跳跃；"
-        "同时每镜 visual_brief 只表达本段 text 内容，禁止提前画后续段落情节。"
+        + (
+            "同时每镜 visual_subjects 只表达本段 text 内容，禁止提前画后续段落情节。"
+            if profile_style == CONTENT_STYLE_DAILY_STORY
+            else "同时每镜 visual_brief 只表达本段 text 内容，禁止提前画后续段落情节。"
+        )
     )
-    example = (
-        _VISUAL_BRIEF_JSON_EXAMPLE_PARTIAL
-        if partial
-        else _VISUAL_BRIEF_JSON_EXAMPLE_FULL
-    )
+    if profile_style == CONTENT_STYLE_DAILY_STORY:
+        example = (
+            _VISUAL_BRIEF_JSON_EXAMPLE_DAILY_PARTIAL
+            if partial
+            else _VISUAL_BRIEF_JSON_EXAMPLE_DAILY
+        )
+    else:
+        example = (
+            _VISUAL_BRIEF_JSON_EXAMPLE_PARTIAL
+            if partial
+            else _VISUAL_BRIEF_JSON_EXAMPLE_FULL
+        )
     system = (
         f"{_visual_role(profile_style)}输出 JSON，字段：segments。"
         f"{seg_rule}"
@@ -1295,13 +1499,20 @@ def build_visual_brief_prompts(
     )
     setting = str(script.get("setting") or "").strip()
     setting_line = f"全片地点 setting：{setting}\n" if setting else ""
+    if profile_style == CONTENT_STYLE_DAILY_STORY:
+        seg_label = "visual_subjects/object_states/scene_anchors"
+    else:
+        seg_label = "visual_brief"
     if partial:
         seg_header = (
-            "【各分镜口播 text】（已固定；仅【需生成】段输出 visual_brief，"
-            "【仅上下文】勿输出）：\n"
+            "【各分镜口播 text】（已固定；仅【需生成】段输出 "
+            f"{seg_label}，【仅上下文】勿输出）：\n"
         )
     else:
-        seg_header = "【各分镜口播 text】（已固定，请为每一段生成 visual_brief）：\n"
+        seg_header = (
+            "【各分镜口播 text】（已固定，请为每一段生成 "
+            f"{seg_label}）：\n"
+        )
     user = append_supplementary_to_user(
         (
             f"标题：{title}\n"
