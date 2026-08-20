@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 
 from app.repositories import repo_job, repo_job_log
@@ -8,6 +9,8 @@ from app.services.publish.publish_mgr import BiliCookieExpired, publish_mgr
 from app.utils.job_info import content_style_from_job
 from worker.context import JobContext
 from worker.stages.base import StageExecutor
+
+logger = logging.getLogger(__name__)
 
 
 class PublishStage(StageExecutor):
@@ -108,14 +111,16 @@ def _persist_publish_result(
     *,
     level: str = "info",
 ) -> None:
+    from app.services.publish.publish_mgr import _format_publish_result
+
+    message = _format_publish_result(result)
+    logger.info(message)
     job_id = int(job["id"])
     with atomic():
         publish_mgr.save_job_result(job, result)
-        bvid = result.get("bvid") or ""
         repo_job_log.append_log(
             job_id,
             PublishStage.name,
-            f"bilibili {result.get('status')}: {result.get('message')}"
-            + (f" {bvid}" if bvid else ""),
+            message,
             level=level,
         )

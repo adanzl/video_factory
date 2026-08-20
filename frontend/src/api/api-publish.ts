@@ -39,6 +39,7 @@ export interface BiliPublishConfig {
   pipeline: string;
   partition: BiliPublishPartition;
   neutral_mark?: string | null;
+  mark_id?: number | null;
   copyright: number;
   topic?: BiliPublishTopic | null;
   fixed_tags?: string[] | null;

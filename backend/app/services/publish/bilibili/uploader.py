@@ -41,6 +41,7 @@ class BiliUploader:
         dtime: int | None = None,
         dynamic: str = "",
         human_type2: int | None = None,
+        mark_id: int | None = None,
         neutral_mark: str | None = None,
         topic_id: int | None = None,
         mission_id: int | None = None,
@@ -67,6 +68,7 @@ class BiliUploader:
             dtime=dtime,
             dynamic=dynamic,
             human_type2=human_type2,
+            mark_id=mark_id,
             neutral_mark=neutral_mark,
             topic_id=topic_id,
             mission_id=mission_id,
@@ -218,6 +220,7 @@ class BiliUploader:
         dtime: int | None = None,
         dynamic: str = "",
         human_type2: int | None = None,
+        mark_id: int | None = None,
         neutral_mark: str | None = None,
         topic_id: int | None = None,
         mission_id: int | None = None,
@@ -248,7 +251,9 @@ class BiliUploader:
         }
         if human_type2 is not None:
             body["human_type2"] = int(human_type2)
-        if neutral_mark:
+        if mark_id is not None:
+            body["mark_id"] = int(mark_id)
+        elif neutral_mark:
             body["neutral_mark"] = neutral_mark
         if topic_id:
             body["topic_id"] = int(topic_id)
@@ -259,6 +264,20 @@ class BiliUploader:
             }
         if dtime is not None:
             body["dtime"] = int(dtime)
+        logger.info(
+            "bili submit title=%r tid=%s human_type2=%s mark_id=%s neutral_mark=%s "
+            "topic_id=%s mission_id=%s dtime=%s tags=%s filename=%s",
+            title[:80],
+            tid,
+            human_type2,
+            mark_id,
+            neutral_mark,
+            topic_id,
+            mission_id,
+            dtime,
+            ",".join(tags),
+            filename,
+        )
         resp = http.post(
             SUBMIT_URL,
             params={"csrf": csrf},
@@ -268,11 +287,30 @@ class BiliUploader:
         resp.raise_for_status()
         payload = resp.json()
         if payload.get("code") not in (0, None):
-            raise RuntimeError(payload.get("message") or f"投稿失败: {payload}")
+            code = payload.get("code")
+            msg = payload.get("message") or f"投稿失败: {payload}"
+            logger.warning(
+                "bili submit rejected code=%s msg=%s title=%r tid=%s mark_id=%s",
+                code,
+                msg,
+                title[:80],
+                tid,
+                mark_id,
+            )
+            raise RuntimeError(msg)
         data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
         bvid = str(data.get("bvid") or "").strip()
         aid = data.get("aid")
         url = f"https://www.bilibili.com/video/{bvid}" if bvid else None
+        logger.info(
+            "bili submit ok bvid=%s aid=%s tid=%s human_type2=%s mark_id=%s topic_id=%s",
+            bvid,
+            aid,
+            tid,
+            human_type2,
+            mark_id,
+            topic_id,
+        )
         return {
             "platform": "bilibili",
             "status": "success",
@@ -283,6 +321,7 @@ class BiliUploader:
             "human_type2": int(human_type2) if human_type2 is not None else None,
             "topic_id": int(topic_id) if topic_id else None,
             "mission_id": int(mission_id) if mission_id else None,
+            "mark_id": int(mark_id) if mark_id is not None else None,
             "neutral_mark": neutral_mark or None,
             "message": "upload ok",
         }
