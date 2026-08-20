@@ -48,8 +48,13 @@ _DEFAULT_MOTION_PROMPT = (
 _STABILITY_HINT = "画面稳定，无快速运镜"
 _FACE_LOCK_HINT = "面部表情与静图一致，不微笑不大笑，五官服装发型保持不变"
 _CAMERA_LOCK_HINT = "镜头固定，不推近不拉远，不放大构图"
+# I2V 对前缀更敏感：无字约束前置，避免被长 motion 末尾稀释
+_CLEAN_VISUAL_STYLE_HINT = (
+    "纯视觉画面，无任何字幕、水印、对话框或文字叠加"
+)
 _DEFAULT_NEGATIVE_PROMPT = (
-    "subtitles, text, words, letters, captions, watermark, overlay, "
+    "text overlay, speech bubble, subtitles, captions, "
+    "text, words, letters, watermark, overlay, "
     "字幕, 文字, 水印, 弹幕, 对白气泡, "
     "微笑, 大笑, 露齿笑, 开心, 嬉笑, 表情突变, 换脸, 脸部变形, "
     "扭曲, 多手指, "
@@ -349,28 +354,38 @@ def _cast_names_from_motion(
     return motion_names or image_names or speaker_names
 
 
+def _has_clean_visual_hint(text: str) -> bool:
+    return any(
+        marker in text
+        for marker in (
+            "纯视觉",
+            "无字幕",
+            "无文字",
+            "无对话框",
+            "文字叠加",
+            "无任何文字",
+        )
+    )
+
+
 def _cast_lock_hint(
     text: str,
     image_prompt: str | None = None,
     speakers: list[str] | None = None,
 ) -> str | None:
-    """按本段入画角色锁定。E 有妈妈同框时按从左到右枚举；无妈妈才禁第三人。"""
+    """按本段入画角色锁定。E 有妈妈同框时按从左到右枚举；无妈妈才强调无第三人。"""
     names = _cast_names_from_motion(text, image_prompt, speakers)
     if not names:
         return None
     cast = "、".join(names)
     n = len(names)
-    if n >= 3:
-        who = f"画面中有且仅有{n}人，从左到右是{cast}，人数与静图完全一致"
-    else:
-        who = f"画面中有且仅有{n}人：{cast}，人数与静图完全一致"
+    layout = f"从左到右是{cast}" if n >= 3 else cast
     parts = [
-        who,
-        f"{n}人全部在场全程可见，禁止任何人消失、出画、被裁切或融合成一人",
-        "禁止路人、禁止复制角色、禁止未列出的人物",
+        f"{n}人同框全程可见，{layout}，人数与静图完全一致",
+        f"{n}人全部在场、位置固定、不被裁切",
     ]
     if "妈妈" not in names:
-        parts.append("禁止妈妈入画、禁止任何成年男性或额外小孩入画")
+        parts.append("仅上述角色入画，无路人无额外人物")
     return "，".join(parts)
 
 
@@ -415,16 +430,20 @@ def _stabilize_motion_prompt(
     ):
         extras.append(_CAMERA_LOCK_HINT)
     cast_hint = _cast_lock_hint(text, image_prompt, speakers)
-    # 人数锁定前置：I2V 对前缀更敏感
+    chunks: list[str] = []
+    if not _has_clean_visual_hint(text):
+        chunks.append(_CLEAN_VISUAL_STYLE_HINT)
+    # 人数锁定紧跟无字 Style：I2V 对前缀更敏感
     if (
         cast_hint
         and "人数与静图" not in text
         and "只能是" not in text
         and "有且仅有" not in text
     ):
-        chunks = [cast_hint, text, *extras]
+        chunks.extend([cast_hint, text])
     else:
-        chunks = [text, *extras]
+        chunks.append(text)
+    chunks.extend(extras)
     return "，".join(chunks) if len(chunks) > 1 else chunks[0]
 
 

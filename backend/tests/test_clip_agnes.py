@@ -144,32 +144,32 @@ def test_stabilize_motion_prompt() -> None:
     assert "面部表情与静图一致" in out
     # 旧稿推近用语提交前剔除，并补镜头锁定
     locked = _stabilize_motion_prompt("炉口青烟缓缓上升，镜头极缓推进")
-    assert "极缓推进" not in locked
-    assert "镜头极缓" not in locked
-    assert locked.startswith("炉口青烟缓缓上升")
+    assert locked.startswith("纯视觉画面")
+    assert "炉口青烟缓缓上升" in locked
     assert "面部表情与静图一致" in locked
     assert "不推近" in locked or "镜头固定" in locked
-    # 已写表情锁定与固定机位则不再追加冗余
+    # 已写表情锁定与固定机位则仍补无字 Style 前缀（无 clean 标记时）
     already = "妈妈举手停，面部表情与静图一致不微笑，镜头固定不推近不拉远"
-    assert _stabilize_motion_prompt(already) == already
-    # 站位句触发人数锁定（前置；无妈妈时才禁成年男/第三人）
+    stabilized = _stabilize_motion_prompt(already)
+    assert stabilized.startswith("纯视觉画面")
+    assert already in stabilized
+    # 站位句触发人数锁定（Style + 正面人数锁前置）
     casted = _stabilize_motion_prompt(
         "画面左边是灿灿，右边是昭昭。灿灿说话，同时点头。镜头固定不推近不拉远，"
         "面部表情与静图一致不微笑"
     )
-    assert casted.startswith("画面中有且仅有2人：灿灿、昭昭")
-    assert "成年男性" in casted
-    assert "禁止妈妈入画" in casted
-    assert "禁止路人" in casted
+    assert casted.startswith("纯视觉画面")
+    assert "2人同框全程可见，灿灿、昭昭" in casted
+    assert "无路人无额外人物" in casted
+    assert "禁止路人" not in casted
     with_mom = _stabilize_motion_prompt(
         "画面左边是灿灿，右边是昭昭。妈妈说话，同时点头。镜头固定不推近不拉远，"
         "面部表情与静图一致不微笑"
     )
-    assert "有且仅有3人" in with_mom and "妈妈" in with_mom
+    assert "3人同框全程可见" in with_mom and "妈妈" in with_mom
     assert "从左到右是灿灿、昭昭、妈妈" in with_mom
     assert "禁止妈妈入画" not in with_mom
-    assert "禁止任何成年男性" not in with_mom
-    assert "禁止任何人消失" in with_mom
+    assert "不被裁切" in with_mom
 
 
 def test_stabilize_uses_three_person_still_when_motion_is_two() -> None:
@@ -185,8 +185,9 @@ def test_stabilize_uses_three_person_still_when_motion_is_two() -> None:
         "中近景三人特写，严格左蓝T恤男孩昭昭、中妈妈、右粉卫衣女孩灿灿。"
     )
     out = _stabilize_motion_prompt(motion, image_prompt=still)
+    assert out.startswith("纯视觉画面")
     assert "从左到右是昭昭、妈妈、灿灿" in out.split("画面左边是")[0]
-    assert "禁止任何人消失" in out
+    assert "不被裁切" in out
     assert "禁止妈妈入画" not in out
     assert "额外小孩" not in out.split("画面左边是")[0]
 
@@ -219,7 +220,7 @@ def test_stabilize_e_speakers_keep_mom_despite_two_person_motion() -> None:
         motion,
         speakers=["昭昭", "灿灿", "妈妈"],
     )
-    assert "有且仅有3人，从左到右是昭昭、妈妈、灿灿" in out
+    assert "3人同框全程可见，从左到右是昭昭、妈妈、灿灿" in out
     assert "禁止妈妈入画" not in out
     two = AgnesClipProvider()._build_i2v_payload(  # noqa: SLF001
         prompt=out,
@@ -239,6 +240,7 @@ def test_build_i2v_payload_includes_negative_prompt() -> None:
         height=720,
     )
     assert payload["mode"] == "ti2vid"
+    assert payload["negative_prompt"].startswith("text overlay, speech bubble")
     assert "微笑" in payload["negative_prompt"]
     assert "快速推进" in payload["negative_prompt"]
     assert "第三人" not in payload["negative_prompt"]
