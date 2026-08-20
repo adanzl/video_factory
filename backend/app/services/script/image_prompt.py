@@ -37,15 +37,15 @@ _DAILY_CHAR_ZHAO_FLOOR = (
 # 地垫粉鞋：T2I 把「穿进鞋眼」理解成往脚上套鞋，统一用「穿过」
 _FLOOR_SHOE_EYELET_RE = re.compile(r"穿进(.{0,4}鞋眼)")
 _FLOOR_SHOE_MAT_ANTI_PICKUP = (
-    "地垫粉鞋是灿灿刚脱下的唯一一双，两只始终平放接触地垫，鞋帮贴地，"
-    "无人拿在手中，无人往脚上套粉鞋，全画面仅这两只粉鞋。"
+    "地垫粉鞋是灿灿刚脱下的同一双，两只平放接触地垫，鞋帮贴地，"
+    "粉鞋全部在地垫上。"
 )
-_FLOOR_SHOE_ANTI_EXTRA = "全画面地垫上仅此一双粉红运动鞋共两只，禁止第三只鞋或第二双粉鞋。"
+_FLOOR_SHOE_ANTI_EXTRA = "全画面地垫上仅此一双粉红运动鞋共两只。"
 _FLOOR_SHOE_COUNT_LEAD = (
-    "全画面粉运动鞋总数恰好两只，是灿灿刚脱下的同一双；"
-    "昭昭脚上是蓝白运动鞋，与粉鞋不是同一双。"
+    "全画面粉运动鞋恰好两只，是灿灿刚脱下的同一双；"
+    "昭昭脚上穿着蓝白运动鞋。"
 )
-_FLOOR_SHOE_CAST_LOCK = "全画面仅昭昭、灿灿两个小孩，禁止第三个人物或路人。"
+_FLOOR_SHOE_CAST_LOCK = "全画面仅有昭昭、灿灿两位儿童。"
 # brief 里「指鞋/伸手向鞋带/托鞋帮」与硬锁打架，会诱发第三只鞋或套鞋
 _FLOOR_SHOE_HAND_SCRUB_RE = re.compile(
     r"(?:，|^)"
@@ -114,12 +114,12 @@ def _daily_floor_shoe_mat_clause(vb: str, seg: dict | None = None) -> str:
         return (
             "全画面仅有两只粉红运动鞋，均在灿灿双手中，"
             f"鞋带系成死结串在一起，被拎离地面{flip}，两只鞋底贴在一起；"
-            "地垫上没有任何粉运动鞋。"
+            "粉鞋全部在灿灿双手中。"
         )
     if any(k in text for k in ("拎", "提起", "翻过去", "哗啦")):
         return (
             "全画面仅有两只粉红运动鞋，均在灿灿双手中，鞋带已系成死结串在一起；"
-            "地垫上没有任何粉运动鞋。"
+            "粉鞋全部在灿灿双手中。"
         )
     if _daily_floor_shoe_aftermath(text, seg):
         return (
@@ -176,12 +176,12 @@ def _daily_floor_shoe_lead_anchor(vb: str, seg: dict | None = None) -> str:
         flip = "，鞋子翻了个个儿，" if any(k in text for k in ("翻", "哗啦")) else ""
         return (
             f"{_FLOOR_SHOE_COUNT_LEAD}{_FLOOR_SHOE_CAST_LOCK}"
-            f"粉鞋两只都在灿灿双手里{flip}地垫上零只粉鞋、无单独散落的粉鞋。"
+            f"粉鞋两只都在灿灿双手里{flip}。"
         )
     if _daily_floor_shoe_aftermath(text, seg):
         return (
             f"{_FLOOR_SHOE_COUNT_LEAD}{_FLOOR_SHOE_CAST_LOCK}"
-            "粉鞋两只平放地垫中央，无人手中另有粉鞋。"
+            "粉鞋两只平放地垫中央。"
         )
     return f"{_FLOOR_SHOE_COUNT_LEAD}{_FLOOR_SHOE_CAST_LOCK}"
 
@@ -190,10 +190,10 @@ def _daily_floor_shoe_tail_anchor(vb: str, seg: dict | None = None) -> str:
     """地垫鞋场：句末重申鞋数（与句首锚点呼应）。"""
     text = vb or ""
     if _daily_cancan_lifts_floor_shoes(text):
-        return "重申：全画面仅两只粉运动鞋，均在灿灿双手中，地垫上零只粉鞋。"
+        return "重申：全画面仅两只粉运动鞋，均在灿灿双手中。"
     if _daily_floor_shoe_aftermath(text, seg):
-        return "重申：全画面仅两只粉运动鞋，平放地垫中央，无人手中另有粉鞋。"
-    return f"{_FLOOR_SHOE_CAST_LOCK}重申：全画面粉运动鞋恰好两只，禁止第三只鞋。"
+        return "重申：全画面仅两只粉运动鞋，平放地垫中央。"
+    return f"{_FLOOR_SHOE_CAST_LOCK}重申：全画面粉运动鞋恰好两只。"
 
 
 def _scrub_floor_shoe_orphan_fragments(vb: str) -> str:
@@ -305,9 +305,33 @@ def _scrub_floor_shoe_brief_actions(vb: str, seg: dict | None = None) -> str:
     return "".join(kept).strip("，,；;。 ")
 
 
+def _scrub_floor_shoe_lr_and_background(vb: str) -> str:
+    """地垫镜：统一左昭右灿；去掉背景自相矛盾（无物 vs 遥控器）。"""
+    text = (vb or "").strip()
+    if not text:
+        return text
+    text = re.sub(
+        r"画面左边是灿灿，右边是昭昭",
+        "画面左边是昭昭，右边是灿灿",
+        text,
+    )
+    text = re.sub(
+        r"左边是灿灿，右边是昭昭",
+        "左边是昭昭，右边是灿灿",
+        text,
+    )
+    if "没有任何物品" in text or "表面整洁" in text:
+        text = re.sub(r"茶几上放着遥控器和空水杯[，。；]?", "", text)
+        text = re.sub(r"沙发和茶几上没有任何物品[，。；]?", "", text)
+        text = re.sub(r"[，,]\s*表面整洁", "", text)
+    text = re.sub(r"[，,]{2,}", "，", text)
+    return text.strip("，,；;。 ")
+
+
 def _scrub_floor_shoe_vb_redundancy(vb: str) -> str:
     """地垫系带场面：鞋位/鞋数由硬锁统一写，去掉 brief 里重复的垫鞋描述。"""
     text = _scrub_floor_shoe_wear_verbs((vb or "").strip())
+    text = _scrub_floor_shoe_lr_and_background(text)
     if not text:
         return text
     for pat in (
@@ -406,7 +430,7 @@ def _daily_zhao_floor_shoe_watch_action(vb: str, zhao_feet: str) -> str:
     if re.search(r"昭昭[^。；]{0,24}双手摊开", text):
         return (
             f"{zhao_feet}昭昭蹲在一旁，双手摊开，表情惊讶，"
-            "不碰粉鞋、不拿粉鞋、不往脚上套粉鞋。"
+            "昭昭双手空着、只看灿灿手中的粉鞋。"
         )
     if re.search(r"昭昭[^。；]{0,24}双手叉腰", text):
         extra = ""
@@ -414,11 +438,11 @@ def _daily_zhao_floor_shoe_watch_action(vb: str, zhao_feet: str) -> str:
             extra = "咧嘴得意地笑，"
         return (
             f"{zhao_feet}昭昭蹲在灿灿对面，双手叉腰，{extra}"
-            "不碰粉鞋、不拿粉鞋、不往脚上套粉鞋。"
+            "昭昭双手空着、只看灿灿手中的粉鞋。"
         )
     return (
         f"{zhao_feet}昭昭蹲在一旁抬头看着被拎起的粉鞋，"
-        "双手不碰粉鞋、不拿粉鞋。"
+        "昭昭双手空着。"
     )
 
 
@@ -432,16 +456,16 @@ def _daily_zhao_floor_shoe_idle_action(
     ):
         return (
             f"{zhao_feet}昭昭蹲在地垫旁，双手垂在身侧，"
-            "低头看着地垫上的粉鞋，表情沮丧，不碰粉鞋、不拿粉鞋。"
+            "低头看着地垫上的粉鞋，表情沮丧，昭昭双手空着。"
         )
     if re.search(r"昭昭[^。；]{0,24}双手叉腰", text):
         return (
             f"{zhao_feet}昭昭蹲在地垫旁，双手叉腰，"
-            "低头看着地垫上的粉鞋，不碰粉鞋、不拿粉鞋。"
+            "低头看着地垫上的粉鞋，昭昭双手空着。"
         )
     return (
         f"{zhao_feet}昭昭蹲在地垫旁看着地垫上的粉鞋，"
-        "双手不碰粉鞋、不拿粉鞋。"
+        "昭昭双手空着。"
     )
 
 
@@ -463,7 +487,15 @@ def _daily_cancan_handles_floor_shoelaces(vb: str, seg: dict | None = None) -> b
         return True
     if "抠" in text and "鞋带" in text:
         head = text[: text.find("抠")]
-        return "灿灿" in head[-40:]
+        if "灿灿" in head[-40:]:
+            return True
+    if seg:
+        for item in seg.get("dialogue") or []:
+            if str(item.get("speaker") or "").strip() != "灿灿":
+                continue
+            line = _daily_dialogue_line(item)
+            if "抠" in line and "死结" in line:
+                return True
     return False
 
 
@@ -473,20 +505,20 @@ def _daily_zhao_floor_shoe_untie_watch(vb: str, zhao_feet: str) -> str:
     if re.search(r"昭昭[^。；]{0,24}双手摊开", text):
         return (
             f"{zhao_feet}昭昭站在地垫旁，双手摊开耸肩，"
-            "歪头看着灿灿，不碰粉鞋、不拿粉鞋、不往脚上套粉鞋。"
+            "歪头看着灿灿，昭昭双手空着、只看灿灿。"
         )
     return (
         f"{zhao_feet}昭昭站在地垫旁看着灿灿，"
-        "双手不碰粉鞋、不拿粉鞋。"
+        "昭昭双手空着。"
     )
 
 
 def _daily_cancan_floor_shoe_untie_clause(vb: str) -> str:
     """灿灿抠/解地垫粉鞋鞋带死结，鞋平放垫上。"""
     return (
-        "灿灿赤脚仅穿白袜子蹲在地垫旁，脚上不穿粉运动鞋；"
-        "灿灿双手手指只抠地垫上一双粉鞋的鞋带死结，"
-        "粉鞋平放垫上、鞋帮贴地，不拿起粉鞋、不往脚上套粉鞋。"
+        "灿灿赤脚仅穿白袜子蹲在地垫旁，"
+        "灿灿双手手指抠地垫上一双粉鞋的鞋带死结，"
+        "粉鞋平放垫上、鞋帮贴地，粉鞋全部在地垫上。"
     )
 
 
@@ -495,7 +527,7 @@ def _daily_floor_shoe_lock(vb: str, speakers: list[str], seg: dict | None = None
     cancan_lift = _daily_cancan_lifts_floor_shoes(vb)
     cancan_untie = _daily_cancan_handles_floor_shoelaces(vb, seg)
     tying = _daily_zhao_handles_floor_shoelaces(vb)
-    zhao_feet = "昭昭双脚均已穿好蓝白运动鞋，与地垫粉鞋是不同的一双。"
+    zhao_feet = "昭昭双脚穿着蓝白运动鞋。"
     if "昭昭" in speakers and cancan_lift:
         action = _daily_zhao_floor_shoe_watch_action(vb, zhao_feet)
     elif "昭昭" in speakers and cancan_untie:
@@ -504,7 +536,7 @@ def _daily_floor_shoe_lock(vb: str, speakers: list[str], seg: dict | None = None
         action = (
             f"{zhao_feet}昭昭蹲在地垫旁，双膝弯曲，"
             "双手手指只捏地垫上一双粉鞋的鞋带结；"
-            "粉鞋平放垫上、鞋帮贴地，昭昭不拿起粉鞋、不往自己脚上套。"
+            "粉鞋平放垫上、鞋帮贴地，粉鞋全部在地垫上。"
         )
     elif "昭昭" in speakers:
         action = _daily_zhao_floor_shoe_idle_action(vb, zhao_feet, seg)
@@ -515,8 +547,7 @@ def _daily_floor_shoe_lock(vb: str, speakers: list[str], seg: dict | None = None
         cancan = (
             "灿灿赤脚仅穿白袜子蹲在地垫上，"
             f"双手拎着系成死结串在一起的一双粉鞋（共两只）{flip}，"
-            "两只鞋底贴在一起，粉鞋全部在灿灿手中、地垫上零只粉鞋；"
-            "不往脚上套粉鞋。"
+            "两只鞋底贴在一起，粉鞋全部在灿灿双手中。"
         )
     elif "灿灿" in speakers and cancan_untie:
         cancan = _daily_cancan_floor_shoe_untie_clause(vb)
@@ -530,7 +561,7 @@ def _daily_floor_shoe_lock(vb: str, speakers: list[str], seg: dict | None = None
 def _daily_cancan_floor_shoe_idle_clause(vb: str, seg: dict | None = None) -> str:
     """地垫旁观镜：灿灿站一旁，按 brief 写叉腰或垂手。"""
     text = vb or ""
-    base = "灿灿赤脚仅穿白袜子站在地垫旁，脚上不穿粉运动鞋；"
+    base = "灿灿赤脚仅穿白袜子站在地垫旁；"
     if _daily_floor_shoe_aftermath(text, seg) or re.search(
         r"灿灿[^。；]{0,24}双手叉腰", text
     ):
@@ -540,8 +571,8 @@ def _daily_cancan_floor_shoe_idle_clause(vb: str, seg: dict | None = None) -> st
             for d in (seg or {}).get("dialogue") or []
         ):
             tail += "叹了口气"
-        return base + tail + "，不拿粉鞋、不往脚上套粉鞋。"
-    return base + "灿灿双手自然下垂，不拿粉鞋、不往脚上套粉鞋。"
+        return base + tail + "，灿灿双手空着。"
+    return base + "灿灿双手自然下垂，灿灿双手空着。"
 
 
 def _daily_zhao_handles_floor_shoelaces(vb: str) -> bool:
@@ -632,6 +663,8 @@ def _daily_layout_speakers(seg: dict, vb: str) -> list[str]:
             and pair[0] != pair[1]
             and ("妈妈" not in allowed or hide_mom)
         ):
+            if pair == ["灿灿", "昭昭"]:
+                pair = ["昭昭", "灿灿"]
             return pair
     speakers = _daily_speakers_of(seg)
     if set(speakers) >= {"昭昭", "灿灿", "妈妈"}:
@@ -667,6 +700,50 @@ def _daily_lighting(vb: str) -> str:
     return "窗光从一侧斜照，在墙面和地面投下柔和光影。"
 
 
+_DAILY_COMPOSITION_LOOK = {
+    "昭昭": "蓝T恤深蓝短裤短发男孩昭昭",
+    "灿灿": "粉卫衣蓝裤黑马尾女孩灿灿",
+    "妈妈": "米色上衣牛仔裤黑长发妈妈",
+}
+
+
+def _daily_floor_shoe_background(vb: str) -> str:
+    """地垫抠结短 prompt：只保留极简背景，避免 brief 矛盾句进入 T2I。"""
+    text = vb or ""
+    if any(k in text for k in ("圆形", "编织", "浅灰")):
+        return "浅色木地板、米色圆形编织地垫，沙发一角背景虚化。"
+    return "浅色木地板、米色地垫，沙发一角背景虚化。"
+
+
+def _daily_floor_shoe_untie_compact_prompt(seg: dict, *, vb: str) -> str:
+    """灿灿抠死结 + 昭昭摊手旁观：短 prompt，左昭昭右灿灿，正面表述。"""
+    first = _daily_first_speaker(seg)
+    zhao_mouth = "嘴唇微张正在说话" if first == "昭昭" else "嘴唇闭合"
+    cancan_mouth = "嘴唇微张正在说话" if first == "灿灿" else "嘴唇闭合"
+    zhao = _DAILY_COMPOSITION_LOOK["昭昭"]
+    cancan = _DAILY_COMPOSITION_LOOK["灿灿"]
+    parts = [
+        _DAILY_T2I_STYLE,
+        f"室内客厅中近景，{_daily_floor_shoe_background(vb)}",
+        f"画面左侧{zhao}，蓝白运动鞋穿在脚上，站立，"
+        f"双手掌心向上摊开，{zhao_mouth}。",
+        f"画面右侧{cancan}，赤脚仅穿白袜子，"
+        f"蹲在地垫旁，双手手指抠地垫中央一双粉红运动鞋的鞋带死结，"
+        f"{cancan_mouth}。",
+        "地垫中央平放两只粉红运动鞋，鞋带缠成死结，"
+        "两只鞋底贴在一起，鞋帮贴地，粉鞋全部在地垫上。",
+        _DAILY_CANCAN_HAIR_LOCK,
+        _DAILY_CHAR_HEIGHT,
+        _FLOOR_SHOE_CAST_LOCK,
+        "中近景，严格左"
+        f"{zhao}、右{cancan}，"
+        "左右位置固定不变，全身可见，每人只显示2条手臂。",
+    ]
+    from app.services.script.visual_brief import strip_held_prop_from_surface
+
+    return strip_held_prop_from_surface("".join(parts))
+
+
 def _daily_composition(
     shot_type: str,
     speakers: list[str],
@@ -674,11 +751,7 @@ def _daily_composition(
     vb: str = "",
 ) -> str:
     names = [s for s in speakers if s in _DAILY_CHAR_MAP]
-    look = {
-        "昭昭": "蓝T恤深蓝短裤短发男孩昭昭",
-        "灿灿": "粉卫衣蓝裤黑马尾女孩灿灿",
-        "妈妈": "米色上衣牛仔裤黑长发妈妈",
-    }
+    look = _DAILY_COMPOSITION_LOOK
     has_lr = bool(_DAILY_LR_RE.search(vb or ""))
     has_lcr = bool(_DAILY_LCR_RE.search(vb or ""))
     if len(names) >= 3:
@@ -801,6 +874,11 @@ def assemble_daily_t2i_prompt(
         vb = _scrub_floor_shoe_idle_actions(vb)
         vb = _scrub_floor_shoe_orphan_fragments(vb)
         vb = _scrub_floor_shoe_brief_actions(vb, seg)
+
+    if floor_shoe_scene and _daily_cancan_handles_floor_shoelaces(
+        vb_for_shoe_lock, seg
+    ):
+        return _daily_floor_shoe_untie_compact_prompt(seg, vb=vb_for_shoe_lock)
 
     parts = [_DAILY_T2I_STYLE]
     if floor_shoe_scene:
