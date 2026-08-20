@@ -216,7 +216,7 @@ class DailyStoryMgr:
     ) -> list[dict]:
         return llm_mgr.generate_daily_story_themes(count, avoid=exclude)
 
-    def create_job(self, story_id: int, *, skip_publish: bool=False, speech_chars_per_sec: float | None=None, phrase_gap_sec: float | None=None) -> dict:
+    def create_job(self, story_id: int, *, skip_publish: bool=True, speech_chars_per_sec: float | None=None, phrase_gap_sec: float | None=None) -> dict:
         """基于日常故事创建视频任务（pipeline=daily_story）。"""
         from app.repositories import repo_job, repo_job_log
         from app.utils.job_info import (

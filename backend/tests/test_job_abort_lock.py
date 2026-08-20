@@ -407,8 +407,8 @@ def test_run_one_stage_merge_lands_on_publish(app_ctx, monkeypatch) -> None:
     assert result["status"] == "pending"
 
 
-def test_run_one_stage_publish_marks_done(app_ctx, monkeypatch) -> None:
-    """单独执行发布后标记 done。"""
+def test_run_one_stage_publish_holds_without_upload(app_ctx, monkeypatch) -> None:
+    """发布阶段只补元数据，未手动投稿时停在 publish/pending。"""
     from app.repositories import repo_job
     from worker import loop
     from worker.stages.common.publish import PublishStage
@@ -427,12 +427,12 @@ def test_run_one_stage_publish_marks_done(app_ctx, monkeypatch) -> None:
     )
     result = loop._run_one_stage(int(job["id"]), PublishStage, hold=True)
     assert executed == ["publish"]
-    assert result["stage"] == "done"
-    assert result["status"] == "done"
+    assert result["stage"] == "publish"
+    assert result["status"] == "pending"
 
 
-def test_run_from_merge_executes_publish(app_ctx, monkeypatch) -> None:
-    """连续跑时 merge 之后会执行发布阶段。"""
+def test_run_from_merge_stops_before_publish(app_ctx, monkeypatch) -> None:
+    """连续跑时 merge 之后进入 publish/pending，不自动执行发布。"""
     from app.repositories import repo_job
     from worker import loop
     from worker.stages.standard.merge import MergeStage
@@ -450,9 +450,9 @@ def test_run_from_merge_executes_publish(app_ctx, monkeypatch) -> None:
         pipeline="chat",
     )
     result = loop._run_from(int(job["id"]), MergeStage)
-    assert executed == ["merge", "publish"]
-    assert result["stage"] == "done"
-    assert result["status"] == "done"
+    assert executed == ["merge"]
+    assert result["stage"] == "publish"
+    assert result["status"] == "pending"
 
 
 def test_chat_type_info_message_format() -> None:
