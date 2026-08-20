@@ -123,7 +123,11 @@ def test_login_requires_credentials(tmp_path, monkeypatch) -> None:
 
 def test_resolve_tid_chat(monkeypatch) -> None:
     monkeypatch.setattr(config, "bili_tid", 201)
-    monkeypatch.setattr(config, "bili_tid_chat", 164)
-    assert resolve_tid("chat") == 164
+    monkeypatch.setattr(config, "bili_tid_chat", 201)
+    assert resolve_tid("chat") == 201
+    monkeypatch.setattr(config, "bili_human_type2_chat", 1025)
+    from app.services.publish.bilibili.tid import resolve_human_type2
+
+    assert resolve_human_type2("chat") == 1025
     assert resolve_tid("standard") == 201
     assert resolve_tid(None) == 201

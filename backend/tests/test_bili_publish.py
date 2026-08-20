@@ -45,8 +45,40 @@ def test_build_chat_tags_with_story_key(app_ctx, monkeypatch) -> None:
     tags = build_chat_tags(job)
     assert tags[:7] == list(CHAT_FIXED_TAGS)
     assert "鞋带系一起" in tags
-    assert tags[-1] == "闪闪发光的家庭日"
-    assert len(tags) == 9
+    assert "闪闪发光的家庭日" not in tags
+    assert len(tags) == 8
+
+
+def test_describe_publish_config_chat() -> None:
+    from app.services.publish.bilibili.publish_config import describe_publish_config
+    from app.services.publish.bilibili.tags import CHAT_FIXED_TAGS
+
+    info = describe_publish_config("chat")
+    assert info["pipeline"] == "chat"
+    assert info["partition"]["display"] == "亲子"
+    assert info["neutral_mark"] == "含虚构演绎内容"
+    assert info["topic"]["name"] == "闪闪发光的家庭日"
+    assert info["fixed_tags"] == list(CHAT_FIXED_TAGS)
+
+
+def test_describe_publish_config_standard() -> None:
+    from app.services.publish.bilibili.publish_config import describe_publish_config
+
+    info = describe_publish_config("standard")
+    assert info["partition"]["display"] == "科学科普"
+    assert info["neutral_mark"] is None
+    assert info["topic"] is None
+    assert info["fixed_tags"] is None
+
+
+def test_bili_config_route(app_ctx) -> None:
+    client = app_ctx.test_client()
+    resp = client.get("/v_factory/api/publish/bili/config?pipeline=chat")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["partition"]["display"] == "亲子"
+    assert data["topic"]["name"]
+    assert data["fixed_tags"]
 
 
 def test_build_fan_dynamic_chat() -> None:
@@ -63,6 +95,7 @@ def test_build_fan_dynamic_chat() -> None:
 def test_build_publish_tags_uses_job_title_for_chat(app_ctx, monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(config, "mock_mode", False)
     monkeypatch.setattr(config, "bili_activity_tag", "闪闪发光的家庭日")
+    monkeypatch.setattr(config, "bili_human_type2_chat", 1025)
     story_id = repo_daily_story.insert_story(
         theme="test",
         story={"scene_title": "鞋带系成死疙瘩", "key": "鞋带系一起", "dialogue": [{"speaker": "a", "line": "b"}]},
@@ -83,7 +116,15 @@ def test_build_publish_tags_uses_job_title_for_chat(app_ctx, monkeypatch, tmp_pa
             "message": "upload ok",
         }
 
+    def fake_topic(http, keywords, **kwargs):
+        assert keywords == "闪闪发光的家庭日"
+        return {"topic_id": 1299875, "mission_id": 4067655, "topic_name": keywords}
+
     monkeypatch.setattr(BiliUploader, "publish", lambda self, **kwargs: fake_publish(**kwargs))
+    monkeypatch.setattr(
+        "app.services.publish.bilibili.tags.resolve_activity_topic",
+        fake_topic,
+    )
     mgr = PublishMgr()
     monkeypatch.setattr(mgr, "require_session", lambda: {"ok": True})
     result = mgr.publish_for_job(
@@ -102,8 +143,12 @@ def test_build_publish_tags_uses_job_title_for_chat(app_ctx, monkeypatch, tmp_pa
     )
     assert result["bvid"] == "BV1test"
     assert captured["title"] == "job 原标题"
-    assert captured["tags"][-1] == "闪闪发光的家庭日"
+    assert "闪闪发光的家庭日" not in captured["tags"]
     assert "鞋带系一起" in captured["tags"]
+    assert captured["human_type2"] == 1025
+    assert captured["neutral_mark"] == "含虚构演绎内容"
+    assert captured["topic_id"] == 1299875
+    assert captured["mission_id"] == 4067655
     assert "又整活了" in captured["dynamic"]
 
 
@@ -241,12 +286,13 @@ def test_uploader_submit_parses_bvid(tmp_path, monkeypatch) -> None:
         }
         return resp
 
+    submit_payload: dict = {}
+
     def fake_post(url, **kwargs):
         resp = MagicMock()
         resp.raise_for_status = MagicMock()
         if "add/v3" in str(url):
-            payload = kwargs.get("json") or {}
-            assert payload.get("dtime") == 123456
+            submit_payload.update(kwargs.get("json") or {})
             resp.json.return_value = {
                 "code": 0,
                 "data": {"bvid": "BV1abc", "aid": 1},
@@ -281,9 +327,19 @@ def test_uploader_submit_parses_bvid(tmp_path, monkeypatch) -> None:
         tags=["tag"],
         video_path=video,
         cover_path=cover,
-        tid=164,
+        tid=201,
         dtime=123456,
+        human_type2=1025,
+        neutral_mark="含虚构演绎内容",
+        topic_id=1299875,
+        mission_id=4067655,
     )
     assert result["status"] == "success"
     assert result["bvid"] == "BV1abc"
-    assert result["tid"] == 164
+    assert result["tid"] == 201
+    assert submit_payload.get("dtime") == 123456
+    assert submit_payload.get("human_type2") == 1025
+    assert submit_payload.get("neutral_mark") == "含虚构演绎内容"
+    assert submit_payload.get("topic_id") == 1299875
+    assert submit_payload.get("mission_id") == 4067655
+    assert submit_payload.get("topic_detail", {}).get("from_topic_id") == 1299875

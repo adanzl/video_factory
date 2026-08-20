@@ -4,6 +4,7 @@ from flask import Blueprint
 
 from app.api.errors import APIError
 from app.api.utils import get_query, json_created, json_ok
+from app.services.publish.bilibili.publish_config import describe_publish_config
 from app.services.publish.bilibili.qrcode_login import qrcode_login_mgr
 from app.services.publish.publish_mgr import BiliCookieExpired, publish_mgr
 
@@ -16,6 +17,18 @@ def bili_session_route():
         return json_ok(publish_mgr.require_session())
     except BiliCookieExpired as exc:
         raise APIError(str(exc), status_code=401, code="bili_cookie_expired") from exc
+
+
+@bp.get("/bili/config")
+def bili_config_route():
+    pipeline = get_query("pipeline")
+    http = None
+    try:
+        publish_mgr.require_session()
+        http = publish_mgr.session_store().http()
+    except BiliCookieExpired:
+        pass
+    return json_ok(describe_publish_config(pipeline, http=http))
 
 
 @bp.post("/bili/login/qrcode")
