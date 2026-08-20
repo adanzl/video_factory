@@ -405,12 +405,14 @@ import {
   generatePublishMeta,
   generateVideoDescription,
   generateTags,
+  getJob,
   submitBiliPublish,
 } from "@/api/api-jobs";
 import { createBiliLoginQr, getBiliPublishConfig, getBiliSession, pollBiliLoginQr } from "@/api/api-publish";
 import type { BiliPublishConfig } from "@/api/api-publish";
 import { getDailyStory } from "@/api/api-daily-story";
 import { downloadMediaFile, getMediaFileUrl, getMediaPicViewUrl } from "@/api/api-media";
+import { JOB_STATUS_RUNNING } from "@/constants/job";
 import type { JobDetail, JobLog } from "@/types/jobs";
 import type { ScriptJson } from "@/types/jobs/script";
 import {
@@ -914,6 +916,20 @@ const handleRun = async () => {
   }
 };
 
+const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
+
+const waitForPublishJob = async (jobId: number, timeoutMs = 600_000): Promise<JobDetail> => {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const detail = await getJob(jobId);
+    if (detail.status !== JOB_STATUS_RUNNING && !detail.worker_busy) {
+      return detail;
+    }
+    await sleep(2000);
+  }
+  throw new Error("投稿超时，请稍后在任务详情查看结果");
+};
+
 const handleSubmit = async () => {
   if (publishActionDisabled.value) {
     ElMessage.warning(publishActionDisabledReason.value || "当前无法投稿");
@@ -929,7 +945,7 @@ const handleSubmit = async () => {
   const confirmTitle = publishedBvid ? "确认重新投稿" : "确认投稿";
   const confirmMessage = publishedBvid
     ? `该任务已投稿 ${publishedBvid}，再次投稿将上传为新稿件，旧稿不会自动删除。确定继续${scheduleHint}？`
-    : `确定投稿到 B 站？将上传成片与封面，并使用当前登录账号提交（公开浏览${scheduleHint}）。失败只记日志，任务不会标失败。`;
+    : `确定投稿到 B 站？将上传成片与封面，并使用当前登录账号提交（公开浏览${scheduleHint}）。投稿成功后才标记为已发布；失败只记日志，任务不会标失败。`;
   try {
     await ElMessageBox.confirm(confirmMessage, confirmTitle, {
       type: "warning",
@@ -948,8 +964,14 @@ const handleSubmit = async () => {
         time: scheduleEnabled.value ? scheduleTime.value : null,
       },
     });
-    ElMessage.success("已提交 B 站投稿，任务已开始执行");
+    const detail = await waitForPublishJob(props.job.id);
     emit("refresh");
+    const result = detail.info?.publish_result;
+    if (result?.status === "success" && result.bvid) {
+      ElMessage.success(`投稿成功（${result.bvid}），已标记为已发布`);
+      return;
+    }
+    ElMessage.warning(result?.message || "投稿未完成，未标记为已发布");
   } catch (error) {
     handleError(error, "投稿失败");
   } finally {

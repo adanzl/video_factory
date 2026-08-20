@@ -8,7 +8,24 @@ from app.repositories import repo_job_log, repo_job
 from worker.context import JobContext
 from worker.stages.base import StageExecutor
 from app.repositories.sql_exec import atomic
+from app.utils.job_info import parse_job_info
 logger = logging.getLogger(__name__)
+
+def _publish_stage_should_complete(job: dict) -> bool:
+    """发布阶段是否可结束：成功投稿，或流水线主动跳过。"""
+    result = parse_job_info(job.get('info')).get('publish_result') or {}
+    status = result.get('status')
+    if status == 'success' and result.get('bvid'):
+        return True
+    if status == 'skipped':
+        return True
+    return False
+
+def _hold_publish_stage(job_id: int, stage_cls: type[StageExecutor]) -> dict:
+    with atomic():
+        repo_job.update_job(job_id, stage='publish', status='pending')
+        repo_job_log.append_log(job_id, stage_cls.name, 'upload not successful, hold on publish')
+    return _reload_job(job_id)
 
 def _reload_job(job_id: int) -> dict:
     return repo_job.get_job(job_id)
@@ -338,6 +355,8 @@ def run_publish_upload(job_id: int) -> dict:
 
     job_mgr.mark_running(job_id)
     upload_bili_publish(job_id, manual=True)
+    if not _publish_stage_should_complete(_reload_job(job_id)):
+        return _hold_publish_stage(job_id, PublishStage)
     done = _advance_after_stage(job_id, PublishStage, status='pending')
     if done is not None:
         return done
