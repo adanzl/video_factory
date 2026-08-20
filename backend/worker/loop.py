@@ -54,6 +54,8 @@ def _advance_after_stage(job_id: int, stage_cls: type[StageExecutor], *, status:
     job = _reload_job(job_id)
     next_cls = next_stage_class(stage_cls, job)
     if next_cls is None:
+        if stage_cls.name == 'publish' and not _publish_stage_should_complete(job):
+            return _hold_publish_stage(job_id, stage_cls)
         return job_mgr.mark_done(job_id)
     next_name = next_cls.name
     with atomic():
@@ -88,10 +90,15 @@ def _run_from(job_id: int, start_cls: type[StageExecutor], *, segment_indices: l
         ctx = JobContext.from_job(job, rerun_segment_indices=rerun_segments, segment_scope=scope if stage_cls.name == 'segment' else None, intro_hold_tail_sec=intro_hold_tail_sec if stage_cls.name == 'intro' else None, intro_orientation=intro_orientation if stage_cls.name == 'intro' else None, tts_speech_rate=tts_speech_rate if stage_cls.name == 'tts' else None, tts_voice_id=tts_voice_id if stage_cls.name == 'tts' else None, tts_speaker_configs=tts_speaker_configs if stage_cls.name == 'tts' else None, script_segment_target_sec=script_segment_target_sec if stage_cls.name == 'script' else None, script_max_title_length=script_max_title_length if stage_cls.name == 'script' else None, script_narration_target_words=script_narration_target_words if stage_cls.name == 'script' else None, script_speech_chars_per_sec=script_speech_chars_per_sec if stage_cls.name == 'script' else None, script_skip_title_optimize=script_skip_title_optimize if stage_cls.name == 'script' else False, script_generate_image_prompts=script_generate_image_prompts if stage_cls.name == 'script' else False, script_supplementary_info=script_supplementary_info if stage_cls.name == 'script' else None, script_video_timeline=script_video_timeline if stage_cls.name == 'script' else None, script_segment_index=script_segment_index if stage_cls.name == 'script' else None, material_narration=material_narration if stage_cls.name == 'script' else None)
         _execute_stage(job_id, stage_cls, ctx)
         job_cancel.raise_if_cancelled(job_id)
+        job = _reload_job(job_id)
+        next_cls = next_stage_class(stage_cls, job)
+        if next_cls is not None and next_cls.name == 'publish':
+            _advance_after_stage(job_id, stage_cls, status='pending')
+            return _reload_job(job_id)
         done = _advance_after_stage(job_id, stage_cls, status='running')
         if done is not None:
             return done
-        stage_cls = next_stage_class(stage_cls, job)
+        stage_cls = next_cls
         rerun_segments = None
         scope = None
         material_narration = None

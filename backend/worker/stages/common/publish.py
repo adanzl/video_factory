@@ -21,7 +21,11 @@ class PublishStage(StageExecutor):
     def run(self, ctx: JobContext) -> None:
         job_id = ctx.job["id"]
         ensure_publish_meta(job_id)
-        upload_bili_publish(job_id)
+        repo_job_log.append_log(
+            job_id,
+            self.name,
+            "awaiting manual publish (pipeline does not auto-upload)",
+        )
 
     def _ensure_publish_meta(self, job_id: int) -> None:
         with atomic():

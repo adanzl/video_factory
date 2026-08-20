@@ -148,6 +148,15 @@ _RE_STATE_CRITERION = re.compile(
     r"(?:松手|放手|撒手|拿稳|拿住|攥住|攥牢|一直拿着)"
     r"[^。！？]{0,4}(?:(?<!不)算|输|赢|谁|该|归)",
 )
+# 松手仪式判据（2026-08-21）：「同时松手/数到三一起松/松手后谁先归谁」——
+# 状态系+放弃控制，不是占有系公平判据；旧 _RE_STATE_CRITERION 窗口仅 4 字，
+# 「同时松手，谁先抢到归谁」漏网，故单列抽象 pattern（非单篇词表）。
+_RE_RELEASE_RITUAL = re.compile(
+    r"同时(?:松手|放手|撒手|松)|"
+    r"(?:一起|同时)(?:松手|放手|撒手|松)|"
+    r"数到[一二三四五六七八九十\d]+[^。！？]{0,8}(?:一起)?松(?:手|)|"
+    r"(?:松手|放手|撒手|松)[^。！？]{0,16}谁先",
+)
 # 开场理由复读（用户定 2026-08-08 + 专家 2026-08-08）：正文不得变体重申开场已用过的
 # 理由。逐字复述硬卡只拦逐字照抄，拦不住「我搬回来的，我自然有优先权」这类换说法重申。
 # 检测是抽象不变量（非单篇词表）：取开场第 2 句（反对句）的「…的」理由段，正文中
@@ -315,7 +324,9 @@ def _criterion_drift_error(lines: list[str]) -> str | None:
     """
     for i, ln in enumerate(lines):
         hit: str | None = None
-        if _RE_RESULT_CRITERION.search(ln):
+        if _RE_RELEASE_RITUAL.search(ln):
+            hit = "松手仪式判据（同时松手/数到三一起松/松手后谁先）"
+        elif _RE_RESULT_CRITERION.search(ln):
             hit = "结果系判据（画面出来/灯亮/有声音才算）"
         elif _RE_OPERATE_CRITERION.search(ln):
             hit = "操作系判据（按到电视/按键就算）"

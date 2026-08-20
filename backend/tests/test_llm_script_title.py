@@ -2311,6 +2311,23 @@ def test_validate_c_body_accepts_possession_criterion():
     dialogue[4] = {"speaker": dialogue[4]["speaker"], "line": _pad_line("谁先拿到归谁吃呀")}
     validate_daily_story_json(story, phase="body")
 
+def test_validate_c_body_rejects_release_hand_ritual():
+    """松手仪式判据（同时松手/数到三一起松）硬卡。"""
+    story = _valid_story()
+    dialogue = story["dialogue"]
+    dialogue[3] = {
+        "speaker": dialogue[3]["speaker"],
+        "line": _pad_line("那咱们同时松手，谁先抢到归谁"),
+    }
+    with pytest.raises(ValueError, match="松手仪式判据"):
+        validate_daily_story_json(story, phase="body")
+    dialogue[3] = {
+        "speaker": dialogue[3]["speaker"],
+        "line": _pad_line("行，我数三下，数到三一起松"),
+    }
+    with pytest.raises(ValueError, match="松手仪式判据"):
+        validate_daily_story_json(story, phase="body")
+
 def _mom_ruling_check(speakers, lines):
     from app.services.daily_story.story_types.c.validate import _mom_ruling_ignored_error
 
