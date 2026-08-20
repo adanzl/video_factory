@@ -165,6 +165,49 @@ def test_abort_zombie_running_resets_to_pending(monkeypatch, noop_atomic):
     assert logged and "no active worker" in logged[0]
 
 
+def test_abort_while_worker_busy_but_pending_keeps_cancel(monkeypatch, noop_atomic):
+    """DB 已 pending 但 worker 仍持锁时，中止须挂 cancel，禁止误清导致继续跑。"""
+    mgr = JobMgr()
+    job_id = 79
+    logged: list[str] = []
+    updates: list[dict] = []
+
+    monkeypatch.setattr(
+        mgr,
+        "get_job",
+        lambda jid: {"id": jid, "status": "pending", "stage": "segment"},
+    )
+    monkeypatch.setattr(
+        _job_mgr_mod.repo_job_log,
+        "append_log",
+        lambda _jid, _stage, msg, **_k: logged.append(msg),
+    )
+    monkeypatch.setattr(
+        _job_mgr_mod.repo_job,
+        "get_job",
+        lambda jid: {"id": jid, "status": "pending", "stage": "segment"},
+    )
+
+    def _update(jid, **fields):
+        updates.append(fields)
+        return {"id": jid, "status": fields.get("status", "pending"), **fields}
+
+    monkeypatch.setattr(_job_mgr_mod.repo_job, "update_job", _update)
+
+    lock = mgr._job_lock(job_id)
+    assert lock.acquire(blocking=False)
+
+    try:
+        job_cancel.clear(job_id)
+        result = mgr.abort_job(job_id)
+        assert result["status"] == "pending"
+        assert job_cancel.is_cancelled(job_id)
+        assert any("waiting for worker to stop" in msg for msg in logged)
+    finally:
+        lock.release()
+        job_cancel.clear(job_id)
+
+
 def test_mark_done_while_cancelled_becomes_aborted(monkeypatch, noop_atomic):
     mgr = JobMgr()
     job_id = 88

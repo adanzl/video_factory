@@ -389,7 +389,8 @@ const handleAbort = async () => {
   if (!job.value) {
     return;
   }
-  const isRunning = job.value.status === JOB_STATUS_RUNNING;
+  const isRunning =
+    job.value.status === JOB_STATUS_RUNNING || job.value.worker_busy === true;
   try {
     await ElMessageBox.confirm(
       isRunning

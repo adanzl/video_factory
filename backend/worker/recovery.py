@@ -61,8 +61,15 @@ def recover_stuck_jobs() -> int:
             len(recovered),
         )
         from app.services.job.job_mgr import JobBusyError, job_mgr
+        from app.utils.job_cancel import job_cancel
 
         for job_id, _stage in recovered:
+            if job_cancel.is_cancelled(job_id):
+                logger.warning(
+                    "recovery skipped job %s: user aborted (cancel pending)",
+                    job_id,
+                )
+                continue
             try:
                 job_mgr.continue_job(job_id, sync=False, allow_running=False)
             except JobBusyError:
