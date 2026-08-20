@@ -58,6 +58,7 @@ def test_describe_publish_config_chat() -> None:
     assert info["partition"]["display"] == "亲子"
     assert info["neutral_mark"] == "含虚构演绎内容"
     assert info["mark_id"] == 2
+    assert info["copyright"] == 3
     assert info["topic"]["name"] == "闪闪发光的家庭日"
     assert info["fixed_tags"] == list(CHAT_FIXED_TAGS)
 
@@ -147,8 +148,11 @@ def test_build_publish_tags_uses_job_title_for_chat(app_ctx, monkeypatch, tmp_pa
     assert "闪闪发光的家庭日" not in captured["tags"]
     assert "鞋带系一起" in captured["tags"]
     assert captured["human_type2"] == 1025
-    assert captured["mark_id"] == 2
-    assert captured.get("neutral_mark") is None
+    assert captured["copyright"] == 3
+    assert captured["creation_statement"] == {
+        "id": 2,
+        "content": "含虚构演绎内容",
+    }
     assert captured["topic_id"] == 1299875
     assert captured["mission_id"] == 4067655
     assert "又整活了" in captured["dynamic"]
@@ -359,9 +363,10 @@ def test_uploader_submit_parses_bvid(tmp_path, monkeypatch) -> None:
         video_path=video,
         cover_path=cover,
         tid=201,
+        copyright=3,
         dtime=123456,
         human_type2=1025,
-        mark_id=2,
+        creation_statement={"id": 2, "content": "含虚构演绎内容"},
         topic_id=1299875,
         mission_id=4067655,
     )
@@ -369,8 +374,14 @@ def test_uploader_submit_parses_bvid(tmp_path, monkeypatch) -> None:
     assert result["bvid"] == "BV1abc"
     assert result["tid"] == 201
     assert submit_payload.get("dtime") == 123456
+    assert submit_payload.get("copyright") == 3
     assert submit_payload.get("human_type2") == 1025
-    assert submit_payload.get("mark_id") == 2
+    assert submit_payload.get("no_reprint") == 0
+    assert submit_payload.get("creation_statement") == {
+        "id": 2,
+        "content": "含虚构演绎内容",
+    }
+    assert "mark_id" not in submit_payload
     assert "neutral_mark" not in submit_payload
     assert submit_payload.get("topic_id") == 1299875
     assert submit_payload.get("mission_id") == 4067655

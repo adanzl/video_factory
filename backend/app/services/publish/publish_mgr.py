@@ -19,8 +19,9 @@ from app.services.publish.bilibili.tags import (
 )
 from app.services.publish.bilibili.tid import (
     describe_publish_partition,
-    resolve_content_mark_id,
     resolve_content_mark_label,
+    resolve_copyright,
+    resolve_creation_statement,
     resolve_human_type2,
     resolve_tid,
 )
@@ -49,7 +50,8 @@ def _format_publish_plan(
     title: str,
     tid: int,
     human_type2: int | None,
-    mark_id: int | None,
+    copyright: int,
+    creation_statement: dict[str, Any] | None,
     content_mark_label: str | None,
     topic_name: str | None,
     topic_id: int | None,
@@ -68,10 +70,12 @@ def _format_publish_plan(
         f"partition={partition}(tid={tid}"
         + (f",human_type2={human_type2}" if human_type2 is not None else "")
         + ")",
+        f"copyright={copyright}",
     ]
-    if mark_id is not None:
-        mark = content_mark_label or str(mark_id)
-        parts.append(f"mark_id={mark_id}({mark})")
+    if creation_statement:
+        mark_id = creation_statement.get("id")
+        mark = content_mark_label or creation_statement.get("content") or mark_id
+        parts.append(f"creation_statement={mark_id}({mark})")
     elif content_mark_label:
         parts.append(f"mark={content_mark_label!r}")
     if topic_id:
@@ -101,7 +105,7 @@ def _format_publish_result(result: dict[str, Any]) -> str:
     if result.get("mark_id") is not None:
         label = result.get("neutral_mark") or ""
         bits.append(
-            f"mark_id={result['mark_id']}"
+            f"creation_statement={result['mark_id']}"
             + (f"({label})" if label else "")
         )
     if result.get("topic_id"):
@@ -172,7 +176,8 @@ class PublishMgr:
         cover_path = Path(cover_raw) if cover_raw else None
         tid = resolve_tid(pipeline)
         human_type2 = resolve_human_type2(pipeline)
-        mark_id = resolve_content_mark_id(pipeline)
+        copyright = resolve_copyright(pipeline)
+        creation_statement = resolve_creation_statement(pipeline)
         content_mark_label = resolve_content_mark_label(pipeline)
         topic_id: int | None = None
         mission_id: int | None = None
@@ -200,7 +205,8 @@ class PublishMgr:
                 title=title,
                 tid=tid,
                 human_type2=human_type2,
-                mark_id=mark_id,
+                copyright=copyright,
+                creation_statement=creation_statement,
                 content_mark_label=content_mark_label,
                 topic_name=topic_name,
                 topic_id=topic_id,
@@ -218,10 +224,11 @@ class PublishMgr:
             description=description,
             tags=tags,
             tid=tid,
+            copyright=copyright,
             dtime=dtime,
             dynamic=dynamic,
             human_type2=human_type2,
-            mark_id=mark_id,
+            creation_statement=creation_statement,
             topic_id=topic_id,
             mission_id=mission_id,
         )
@@ -240,11 +247,11 @@ class PublishMgr:
         description: str = "",
         tags: list[str] | None = None,
         tid: int | None = None,
+        copyright: int | None = None,
         dtime: int | None = None,
         dynamic: str = "",
         human_type2: int | None = None,
-        mark_id: int | None = None,
-        neutral_mark: str | None = None,
+        creation_statement: dict[str, Any] | None = None,
         topic_id: int | None = None,
         mission_id: int | None = None,
     ) -> dict:
@@ -256,11 +263,11 @@ class PublishMgr:
             description=description,
             tags=tags or [],
             tid=tid if tid is not None else resolve_tid(None),
+            copyright=copyright if copyright is not None else resolve_copyright(None),
             dtime=dtime,
             dynamic=dynamic,
             human_type2=human_type2,
-            mark_id=mark_id,
-            neutral_mark=neutral_mark,
+            creation_statement=creation_statement,
             topic_id=topic_id,
             mission_id=mission_id,
         )
@@ -274,11 +281,11 @@ class PublishMgr:
         description: str,
         tags: list[str],
         tid: int,
+        copyright: int,
         dtime: int | None = None,
         dynamic: str = "",
         human_type2: int | None = None,
-        mark_id: int | None = None,
-        neutral_mark: str | None = None,
+        creation_statement: dict[str, Any] | None = None,
         topic_id: int | None = None,
         mission_id: int | None = None,
     ) -> dict:
@@ -289,11 +296,11 @@ class PublishMgr:
             video_path=video_path,
             cover_path=cover_path,
             tid=tid,
+            copyright=copyright,
             dtime=dtime,
             dynamic=dynamic,
             human_type2=human_type2,
-            mark_id=mark_id,
-            neutral_mark=neutral_mark,
+            creation_statement=creation_statement,
             topic_id=topic_id,
             mission_id=mission_id,
         )
