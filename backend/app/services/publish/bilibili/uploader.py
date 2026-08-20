@@ -40,6 +40,10 @@ class BiliUploader:
         copyright: int = 1,
         dtime: int | None = None,
         dynamic: str = "",
+        human_type2: int | None = None,
+        neutral_mark: str | None = None,
+        topic_id: int | None = None,
+        mission_id: int | None = None,
     ) -> dict[str, Any]:
         video = Path(video_path)
         if not video.is_file():
@@ -62,6 +66,10 @@ class BiliUploader:
             copyright=copyright,
             dtime=dtime,
             dynamic=dynamic,
+            human_type2=human_type2,
+            neutral_mark=neutral_mark,
+            topic_id=topic_id,
+            mission_id=mission_id,
         )
 
     def _upload_video(self, http: requests.Session, video: Path) -> str:
@@ -209,8 +217,12 @@ class BiliUploader:
         copyright: int,
         dtime: int | None = None,
         dynamic: str = "",
+        human_type2: int | None = None,
+        neutral_mark: str | None = None,
+        topic_id: int | None = None,
+        mission_id: int | None = None,
     ) -> dict[str, Any]:
-        body = {
+        body: dict[str, Any] = {
             "copyright": copyright,
             "videos": [{"filename": filename, "title": title, "desc": ""}],
             "source": "",
@@ -218,10 +230,13 @@ class BiliUploader:
             "cover": cover_url,
             "title": title[:80],
             "tag": ",".join(tags),
-            "desc_format_id": 0,
+            "desc_format_id": 9999,
             "desc": description,
             "dynamic": dynamic,
             "interactive": 0,
+            "recreate": -1,
+            "act_reserve_create": 0,
+            "no_disturbance": 0,
             "no_reprint": 1 if copyright == 1 else 0,
             "subtitle": {"open": 0, "lan": ""},
             "dolby": 0,
@@ -229,8 +244,19 @@ class BiliUploader:
             "up_selection_reply": False,
             "up_close_reply": False,
             "up_close_danmu": False,
-            "web_os": 1,
+            "web_os": 3,
         }
+        if human_type2 is not None:
+            body["human_type2"] = int(human_type2)
+        if neutral_mark:
+            body["neutral_mark"] = neutral_mark
+        if topic_id:
+            body["topic_id"] = int(topic_id)
+            body["mission_id"] = int(mission_id or 0)
+            body["topic_detail"] = {
+                "from_topic_id": int(topic_id),
+                "from_source": "arc.web.recommend",
+            }
         if dtime is not None:
             body["dtime"] = int(dtime)
         resp = http.post(
@@ -254,5 +280,9 @@ class BiliUploader:
             "aid": aid,
             "url": url,
             "tid": int(tid),
+            "human_type2": int(human_type2) if human_type2 is not None else None,
+            "topic_id": int(topic_id) if topic_id else None,
+            "mission_id": int(mission_id) if mission_id else None,
+            "neutral_mark": neutral_mark or None,
             "message": "upload ok",
         }

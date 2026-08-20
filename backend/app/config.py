@@ -287,7 +287,9 @@ class Config:
         self.bili_browser_headless: bool = _bool("BILI_BROWSER_HEADLESS", False)
         self.bili_browser_timeout_sec: int = int(os.getenv("BILI_BROWSER_TIMEOUT_SEC", "180"))
         self.bili_tid: int = int(os.getenv("BILI_TID", "201"))
-        self.bili_tid_chat: int = int(os.getenv("BILI_TID_CHAT", "164"))
+        # 旧 tid 占位；164=健身（勿用）。chat 展示分区靠 bili_human_type2_chat。
+        self.bili_tid_chat: int = int(os.getenv("BILI_TID_CHAT", "201"))
+        self.bili_human_type2_chat: int = int(os.getenv("BILI_HUMAN_TYPE2_CHAT", "1025"))
         self.bili_activity_tag: str = os.getenv(
             "BILI_ACTIVITY_TAG", "闪闪发光的家庭日"
         ).strip()

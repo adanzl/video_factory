@@ -10,8 +10,16 @@ from app.config import get_settings
 from app.services.publish.bilibili.dynamic import build_fan_dynamic
 from app.services.publish.bilibili.schedule import resolve_publish_dtime_from_job
 from app.services.publish.bilibili.session import BiliSession, cookie_expired_message
-from app.services.publish.bilibili.tags import build_publish_tags
-from app.services.publish.bilibili.tid import resolve_tid
+from app.services.publish.bilibili.tags import (
+    build_publish_tags,
+    resolve_activity_tag,
+    resolve_activity_topic,
+)
+from app.services.publish.bilibili.tid import (
+    resolve_human_type2,
+    resolve_neutral_mark,
+    resolve_tid,
+)
 from app.services.publish.bilibili.uploader import BiliUploader
 from app.utils.final_asset import resolve_final_path_file
 from app.utils.job_info import merge_job_info, parse_job_info
@@ -63,6 +71,7 @@ class PublishMgr:
         script = job.get("script_json") if isinstance(job.get("script_json"), dict) else {}
         title = str(job.get("title") or script.get("title") or "").strip()
         description = str(script.get("video_description") or "").strip()
+        pipeline = str(job.get("pipeline") or "").strip()
         tags = build_publish_tags(job)
         video_raw = resolve_final_path_file(job.get("final_path"))
         cover_raw = str(job.get("cover_path") or "").strip()
@@ -72,9 +81,21 @@ class PublishMgr:
             raise FileNotFoundError("final video missing")
         video_path = Path(video_raw)
         cover_path = Path(cover_raw) if cover_raw else None
-        tid = resolve_tid(job.get("pipeline"))
+        tid = resolve_tid(pipeline)
+        human_type2 = resolve_human_type2(pipeline)
+        neutral_mark = resolve_neutral_mark(pipeline)
+        topic_id: int | None = None
+        mission_id: int | None = None
+        if pipeline == "chat":
+            topic = resolve_activity_topic(
+                self.session_store().http(),
+                resolve_activity_tag(),
+            )
+            if topic:
+                topic_id = int(topic["topic_id"])
+                mission_id = int(topic.get("mission_id") or 0)
         dtime, planned_at = resolve_publish_dtime_from_job(job)
-        dynamic = build_fan_dynamic(title, pipeline=job.get("pipeline"))
+        dynamic = build_fan_dynamic(title, pipeline=pipeline)
         result = self.publish(
             title=title,
             video_path=video_path,
@@ -84,6 +105,10 @@ class PublishMgr:
             tid=tid,
             dtime=dtime,
             dynamic=dynamic,
+            human_type2=human_type2,
+            neutral_mark=neutral_mark,
+            topic_id=topic_id,
+            mission_id=mission_id,
         )
         if planned_at is not None:
             result["scheduled_at"] = planned_at.isoformat()
@@ -100,6 +125,10 @@ class PublishMgr:
         tid: int | None = None,
         dtime: int | None = None,
         dynamic: str = "",
+        human_type2: int | None = None,
+        neutral_mark: str | None = None,
+        topic_id: int | None = None,
+        mission_id: int | None = None,
     ) -> dict:
         self.require_session()
         return self._publish_bili(
@@ -111,6 +140,10 @@ class PublishMgr:
             tid=tid if tid is not None else resolve_tid(None),
             dtime=dtime,
             dynamic=dynamic,
+            human_type2=human_type2,
+            neutral_mark=neutral_mark,
+            topic_id=topic_id,
+            mission_id=mission_id,
         )
 
     def _publish_bili(
@@ -124,6 +157,10 @@ class PublishMgr:
         tid: int,
         dtime: int | None = None,
         dynamic: str = "",
+        human_type2: int | None = None,
+        neutral_mark: str | None = None,
+        topic_id: int | None = None,
+        mission_id: int | None = None,
     ) -> dict:
         result = BiliUploader(self.session_store()).publish(
             title=title,
@@ -134,6 +171,10 @@ class PublishMgr:
             tid=tid,
             dtime=dtime,
             dynamic=dynamic,
+            human_type2=human_type2,
+            neutral_mark=neutral_mark,
+            topic_id=topic_id,
+            mission_id=mission_id,
         )
         result["at"] = datetime.now(timezone.utc).isoformat()
         return result

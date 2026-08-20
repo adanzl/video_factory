@@ -13,13 +13,27 @@
       <!-- 投稿信息：标题 / 视频介绍 / 推荐标签 -->
       <section :class="STAGE_PANEL_CLASS">
         <div :class="STAGE_PANEL_HEADER_CLASS">
-          <div class="flex items-center gap-2">
+          <div class="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">
             <div :class="STAGE_PANEL_TITLE_TEXT_CLASS">投稿信息</div>
-            <el-tag v-if="biliSessionUser" size="small" type="success" effect="plain">
-              {{ biliSessionUser }}
-            </el-tag>
+            <div
+              v-if="publishResult"
+              class="flex min-w-0 flex-wrap items-center gap-1.5 text-sm"
+            >
+              <el-tag :type="publishResultAlertType" size="small" effect="plain">
+                {{ publishResultLabel }}
+              </el-tag>
+              <a
+                v-if="publishResult.url"
+                :href="publishResult.url"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="text-blue-600 underline wrap-break-word"
+              >
+                {{ publishResult.bvid || "打开稿件" }}
+              </a>
+            </div>
           </div>
-          <div class="flex items-center gap-2">
+          <div class="flex shrink-0 items-center gap-2">
             <el-button
               size="small"
               :loading="qrLoading"
@@ -50,6 +64,10 @@
         >
           <span class="text-sm text-gray-700">{{ biliLoginHint }}</span>
           <div class="flex flex-wrap items-center gap-2">
+            <span v-if="publishPartitionDisplay" class="text-sm text-gray-600">
+              分区：{{ publishPartitionDisplay }}
+            </span>
+            <span v-else class="text-sm text-gray-400">分区加载中…</span>
             <el-checkbox v-model="scheduleEnabled">定时发布</el-checkbox>
             <el-time-picker
               v-if="scheduleEnabled"
@@ -211,27 +229,7 @@
           </el-table-column>
         </el-table>
         <el-alert
-          v-if="publishResult"
-          class="mt-3"
-          :type="publishResultAlertType"
-          :closable="false"
-          show-icon
-        >
-          <template #title>
-            <span>{{ publishResultTitle }}</span>
-            <a
-              v-if="publishResult.url"
-              :href="publishResult.url"
-              target="_blank"
-              rel="noopener noreferrer"
-              class="ml-2 text-blue-600 underline"
-            >
-              {{ publishResult.bvid || "打开稿件" }}
-            </a>
-          </template>
-        </el-alert>
-        <el-alert
-          v-else-if="job.skip_publish"
+          v-if="!publishResult && job.skip_publish"
           class="mt-3"
           type="info"
           :closable="false"
@@ -409,7 +407,8 @@ import {
   generateTags,
   submitBiliPublish,
 } from "@/api/api-jobs";
-import { createBiliLoginQr, getBiliSession, pollBiliLoginQr } from "@/api/api-publish";
+import { createBiliLoginQr, getBiliPublishConfig, getBiliSession, pollBiliLoginQr } from "@/api/api-publish";
+import type { BiliPublishConfig } from "@/api/api-publish";
 import { getDailyStory } from "@/api/api-daily-story";
 import { downloadMediaFile, getMediaFileUrl, getMediaPicViewUrl } from "@/api/api-media";
 import type { JobDetail, JobLog } from "@/types/jobs";
@@ -448,8 +447,6 @@ const CHAT_FIXED_TAGS = [
   "儿童对话",
 ] as const;
 
-const CHAT_ACTIVITY_TAG = "闪闪发光的家庭日";
-
 const props = defineProps<{
   job: JobDetail;
   logs: JobLog[];
@@ -474,6 +471,7 @@ const showCover43Guide = ref(false);
 const biliSessionError = ref("");
 const biliSessionUser = ref("");
 const biliLoginHint = ref("");
+const publishConfig = ref<BiliPublishConfig | null>(null);
 const qrDialogVisible = ref(false);
 const qrLoading = ref(false);
 const qrSvg = ref("");
@@ -511,7 +509,7 @@ const refreshBiliSession = async () => {
     const session = await getBiliSession();
     biliSessionError.value = "";
     biliSessionUser.value = session.uname || "";
-    biliLoginHint.value = biliSessionUser.value ? `当前远程登录账号：${biliSessionUser.value}` : "";
+    biliLoginHint.value = biliSessionUser.value ? `当前登录账号：${biliSessionUser.value}` : "";
   } catch (error) {
     const axiosError = error as { response?: { data?: { error?: string } } };
     biliSessionError.value =
@@ -541,9 +539,18 @@ const refreshDailyStoryKey = async () => {
   }
 };
 
+const refreshPublishConfig = async () => {
+  try {
+    publishConfig.value = await getBiliPublishConfig(props.job.pipeline || undefined);
+  } catch {
+    publishConfig.value = null;
+  }
+};
+
 onMounted(() => {
   void refreshBiliSession();
   void refreshDailyStoryKey();
+  void refreshPublishConfig();
   const saved = props.job.info?.publish_schedule;
   if (saved) {
     scheduleEnabled.value = Boolean(saved.enabled);
@@ -649,7 +656,6 @@ const publishTags = computed((): PublishTagItem[] => {
     } else {
       items.push({ name: "待取故事 key", type: "info", hint: "主题" });
     }
-    items.push({ name: CHAT_ACTIVITY_TAG, type: "danger", hint: "活动" });
     return items;
   }
   return (script.value?.tags || []).map(raw => ({
@@ -667,26 +673,26 @@ const publishResultAlertType = computed(() => {
   return "info";
 });
 
-const publishResultTitle = computed(() => {
+const publishResultLabel = computed(() => {
   const result = publishResult.value;
   if (!result) return "";
-  const parts = [
-    result.status === "success"
-      ? "已投稿 B 站"
-      : result.status === "skipped"
-        ? "已跳过上传"
-        : "投稿未完成",
-    result.message,
-  ].filter(Boolean);
-  return parts.join("：");
+  if (result.status === "success") return "已投稿 B 站";
+  if (result.status === "skipped") {
+    return result.message ? `已跳过：${result.message}` : "已跳过上传";
+  }
+  return result.message || "投稿未完成";
 });
 
-const publishMetaRows = [
+const publishMetaRows = computed(() => [
   { key: "title", label: "标题" },
   { key: "description", label: "视频介绍" },
   { key: "tags", label: "标签" },
   { key: "dynamic", label: "粉丝动态" },
-] as const;
+]);
+
+const publishPartitionDisplay = computed(
+  () => publishConfig.value?.partition?.display?.trim() || ""
+);
 
 const canRegenerateDescription = computed(() => Boolean(script.value?.narration?.trim()));
 
@@ -1007,6 +1013,7 @@ watch(
   () => [props.job.info?.daily_story_id, props.job.material_id, props.job.pipeline],
   () => {
     void refreshDailyStoryKey();
+    void refreshPublishConfig();
   }
 );
 
