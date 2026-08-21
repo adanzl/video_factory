@@ -458,6 +458,7 @@ def validate_type_opening(
         type_code=type_code,
         errors=errors,
         setting=setting,
+        conflict_core=conflict_core,
     )
     from app.services.daily_story.story_types.d.opening import append_d_opening_errors
     from app.services.daily_story.story_types.e.opening import append_e_opening_errors

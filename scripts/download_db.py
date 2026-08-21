@@ -10,6 +10,7 @@
 """
 
 import os
+import shutil
 import subprocess
 import sys
 from datetime import datetime, timedelta
@@ -32,11 +33,151 @@ def _use_ssh_multiplexing():
     return sys.platform != "win32"
 
 
+# 远程主机 fallback：先局域网，后广域网（与 AGENTS.md 优先级一致）
+# (host, port, connect_timeout_sec) — port=None 走 ~/.ssh/config；局域网快速失败
+REMOTE_HOSTS = [
+    ("mini", None, 2),
+    ("vip.sy.frp.one", 57904, 10),
+    ("cn-hk-bgp-4.ofalias.net", 27358, 10),
+]
+SSH_USER = "leo"
+
+
+def _project_dir() -> str:
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _ssh_password() -> str:
+    from dotenv import load_dotenv
+
+    load_dotenv(os.path.join(_project_dir(), ".env"))
+    password = os.getenv("SSH_PASSWORD") or ""
+    if not password.strip():
+        raise RuntimeError("缺少 SSH_PASSWORD，请在 .env 中配置")
+    return password
+
+
+def _sshpass_prefix(password: str) -> list[str]:
+    sshpass = shutil.which("sshpass")
+    if not sshpass:
+        raise RuntimeError("需要 sshpass：brew install sshpass")
+    os.environ["SSHPASS"] = password
+    return [sshpass, "-e"]
+
+
+def _ssh_auth_opts() -> list[str]:
+    return [
+        "-o",
+        "StrictHostKeyChecking=accept-new",
+        "-o",
+        # cSpell: disable-next-line
+        "PreferredAuthentications=publickey,password",
+    ]
+
+
+def _ssh_target(host: str) -> str:
+    """生成 ssh/scp 的目标主机参数（不含 -p/-P）。"""
+    if host == "mini":
+        return "mini"
+    return f"{SSH_USER}@{host}"
+
+
+def _host_label(host: str, port: int | None) -> str:
+    target = _ssh_target(host)
+    return f"{target}:{port}" if port else target
+
+
+def _ssh_port_opts(port: int | None) -> list[str]:
+    return ["-p", str(port)] if port else []
+
+
+def _scp_port_opts(port: int | None) -> list[str]:
+    return ["-P", str(port)] if port else []
+
+
+def _connect_ssh(host, port, control_path, prefix, connect_timeout=10):
+    """尝试连接指定远程主机，成功返回 True。"""
+    run_timeout = connect_timeout + 5
+    target = _ssh_target(host)
+    common_opts = [
+        *_ssh_auth_opts(),
+        "-o",
+        f"ConnectTimeout={connect_timeout}",
+        "-o",
+        "ConnectionAttempts=1",
+    ]
+    if _use_ssh_multiplexing():
+        master_cmd = prefix + [
+            "ssh",
+            *common_opts,
+            "-o",
+            "ControlMaster=yes",
+            "-o",
+            f"ControlPath={control_path}",
+            "-o",
+            "ControlPersist=600",
+            *_ssh_port_opts(port),
+            target,
+            "echo connected",
+        ]
+    else:
+        master_cmd = prefix + [
+            "ssh",
+            *common_opts,
+            *_ssh_port_opts(port),
+            target,
+            "echo connected",
+        ]
+    result = subprocess.run(
+        master_cmd, capture_output=True, text=True, timeout=run_timeout
+    )
+    return result.returncode == 0
+
+
+def _close_ssh(host, port, control_path):
+    """关闭 SSH 复用连接（忽略错误）。"""
+    if not _use_ssh_multiplexing():
+        return
+    try:
+        close_cmd = [
+            "ssh",
+            "-o",
+            f"ControlPath={control_path}",
+            "-O",
+            "exit",
+            *_ssh_port_opts(port),
+            _ssh_target(host),
+        ]
+        subprocess.run(close_cmd, capture_output=True, timeout=5)
+    except Exception:
+        pass
+
+
+def _resolve_remote_host(control_path, prefix):
+    """按 fallback 列表依次尝试，返回首个可用的 (host, port)。"""
+    for host, port, connect_timeout in REMOTE_HOSTS:
+        label = _host_label(host, port)
+        print(f"  尝试连接: {label} (timeout={connect_timeout}s) ...")
+        try:
+            if _connect_ssh(host, port, control_path, prefix, connect_timeout):
+                print(f"  ✓ 已连接: {label}\n")
+                return host, port
+            print(f"  ✗ 连接失败: {label}")
+            _close_ssh(host, port, control_path)
+        except subprocess.TimeoutExpired:
+            print(f"  ✗ 连接超时: {label}")
+            _close_ssh(host, port, control_path)
+        except Exception as e:
+            print(f"  ✗ 连接异常 ({label}): {e}")
+            _close_ssh(host, port, control_path)
+    return None
+
+
 def download_files_from_server():
     """从服务器下载多个文件"""
-    remote_host = "leo@mini"
     remote_base = "/mnt/data/project/video_factory"
-    project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    project_dir = _project_dir()
+    prefix = _sshpass_prefix(_ssh_password())
 
     files_to_download = [
         {
@@ -52,7 +193,7 @@ def download_files_from_server():
     ]
 
     today = datetime.now()
-    for i in range(1, 4):
+    for i in range(1, 3):
         date = today - timedelta(days=i)
         date_str = date.strftime("%Y-%m-%d")
         log_filename = f"app.log.{date_str}"
@@ -67,7 +208,7 @@ def download_files_from_server():
     print("=" * 60)
     print("从服务器下载文件")
     print("=" * 60)
-    print(f"远程服务器: {remote_host}")
+    print(f"候选服务器: {', '.join(_host_label(h, p) for h, p, _ in REMOTE_HOSTS)}")
     print(f"文件数量: {len(files_to_download)}")
     print("=" * 60)
 
@@ -79,46 +220,15 @@ def download_files_from_server():
     fail_count = 0
     control_path = _ssh_control_path()
 
-    if _use_ssh_multiplexing():
-        print("\n建立 SSH 连接 ...")
-        try:
-            master_cmd = [
-                "ssh",
-                "-o",
-                "ControlMaster=yes",
-                "-o",
-                f"ControlPath={control_path}",
-                "-o",
-                "ControlPersist=600",
-                remote_host,
-                "echo connected",
-            ]
-            result = subprocess.run(
-                master_cmd, capture_output=True, text=True, timeout=30
-            )
-            if result.returncode != 0:
-                print(f"✗ SSH 连接失败: {result.stderr}")
-                return 0, len(files_to_download)
-            print("✓ SSH 连接已建立\n")
-        except Exception as e:
-            print(f"✗ 建立 SSH 连接失败: {e}")
-            return 0, len(files_to_download)
-    else:
-        print("\n测试 SSH 连接 ...")
-        try:
-            result = subprocess.run(
-                ["ssh", remote_host, "echo connected"],
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            if result.returncode != 0:
-                print(f"✗ SSH 连接失败: {result.stderr}")
-                return 0, len(files_to_download)
-            print("✓ SSH 连接正常\n")
-        except Exception as e:
-            print(f"✗ 建立 SSH 连接失败: {e}")
-            return 0, len(files_to_download)
+    print("\n建立 SSH 连接 ...")
+    resolved = _resolve_remote_host(control_path, prefix)
+    if not resolved:
+        print("✗ 所有候选服务器均无法连接")
+        return 0, len(files_to_download)
+    remote_host, remote_port = resolved
+    remote_label = _host_label(remote_host, remote_port)
+    remote_target = _ssh_target(remote_host)
+    print(f"使用服务器: {remote_label}")
 
     for file_info in files_to_download:
         local_dir = os.path.dirname(file_info["local"])
@@ -130,13 +240,16 @@ def download_files_from_server():
                 "scp",
                 "-o",
                 f"ControlPath={control_path}",
-                f'{remote_host}:{file_info["remote"]}',
+                *_scp_port_opts(remote_port),
+                f'{remote_target}:{file_info["remote"]}',
                 file_info["local"],
             ]
         else:
-            cmd = [
+            cmd = prefix + [
                 "scp",
-                f'{remote_host}:{file_info["remote"]}',
+                *_ssh_auth_opts(),
+                *_scp_port_opts(remote_port),
+                f'{remote_target}:{file_info["remote"]}',
                 file_info["local"],
             ]
 
@@ -169,19 +282,7 @@ def download_files_from_server():
             print(f"  ✗ 错误: {e}")
             fail_count += 1
 
-    if _use_ssh_multiplexing():
-        try:
-            close_cmd = [
-                "ssh",
-                "-o",
-                f"ControlPath={control_path}",
-                "-O",
-                "exit",
-                remote_host,
-            ]
-            subprocess.run(close_cmd, capture_output=True, timeout=5)
-        except Exception:
-            pass
+    _close_ssh(remote_host, remote_port, control_path)
 
     return success_count, fail_count
 
@@ -208,6 +309,9 @@ def main():
             print("✗ 所有文件下载失败！请检查网络连接和SSH配置")
             sys.exit(1)
 
+    except RuntimeError as e:
+        print(f"\n✗ {e}")
+        sys.exit(1)
     except KeyboardInterrupt:
         print("\n\n操作被用户中断")
         sys.exit(130)

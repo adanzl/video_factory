@@ -103,8 +103,9 @@ _RE_PHYSICAL_POSSESSION = re.compile(
 )
 # 规则轮次升级：新判据追加 + 对方照字面追问（C 整件物优先好笑模式）
 _RE_RULE_ESCALATION = re.compile(
-    r"才算|不算|得.{0,8}才算|追加|又说|离地|着地|单脚|整个抱|立着不算|"
-    r"按哪条|哪条|一条接一条|你也没说|到底按|钻空子",
+    r"才算|不算|得.{0,8}才算|追加|又说|整个抱|立着不算|"
+    r"按哪条|哪条|一条接一条|你也没说|到底按|钻空子|连续证明|旧规则|"
+    r"心里.*说过|须.*批准|谁算拿到|证明.*次",
 )
 _RE_ESTABLISH_RULE = re.compile(
     r"归谁|谁先|我定|规则|才公平|算算",
@@ -114,14 +115,26 @@ _RE_OPPONENT_VOID = re.compile(
 )
 # 立规人连续「改定义式加赛」（同一喜剧机制：不断重写「拿到」标准）
 _RE_RULE_DEFINITION_APPEND = re.compile(
-    r"靠着不算|得.{0,8}才算|才算数|才算真正|我又加|追加一条|都得.{0,6}才算",
+    r"光抱着不行|攥着不算|靠着不算|得.{0,8}才算|才算数|才算真正|追加一条|"
+    r"都得.{0,6}才算|连续证明|旧规则|须.*批准|谁算拿到|心里.*说过|最长.*宣言|"
+    r"加一条，?(?:拿到|证明|规则)",
+)
+# 翻转段权力终止（非第4层规则升级；batch8 专家+ChatGPT 2026-08-21）
+_RE_RULE_AUTHORITY_FLIP = re.compile(
+    r"不加了|现在规则我说了算|规则现在我说了算|规则(?:就)?我说了算|"
+    r"(?:我又加一条|再加一条).{0,8}我说了算",
+)
+# 规则反噬/字面加赛（灿灿用昭昭规则反将一军）
+_RE_RULE_BACKFIRE = re.compile(
+    r"证明第[三四五六]次|第[三四五六]次更|更厉害|你也得(?:连续)?证明|"
+    r"你(?:改|定)规则也得|旧规则不同意|你一条接一条说的|哪条说我钻空子",
 )
 # 权力翻转：灿灿从被动执行转为主动追问（还有吗/哪条作数/按哪条）
 _RE_POWER_FLIP = re.compile(
     r"还有吗|哪条作数|按哪条|到底按|哪条说|哪条算|你一条接一条",
 )
 _RE_POWER_FLIP_STRONG = re.compile(
-    r"还有吗|哪条作数|按哪条|到底按哪条|哪条说我耍赖|哪条算",
+    r"还有吗|哪条作数|按哪条|到底按哪条|哪条说我(?:耍赖|钻空子)|哪条算|你一条接一条",
 )
 # 主题嘴硬收尾（比「明天我抢先」更贴 C 公平执念）
 _RE_THEME_STUBBORN_END = re.compile(
@@ -158,6 +171,9 @@ HUMOR_ISSUE_CAPS: tuple[tuple[str, int], ...] = (
     ("C规则机制复读", 6),
     # 2026-08-21 GPT：≥3 次改定义且无「还有吗」式权力翻转
     ("C规则缺权力翻转", 7),
+    # 2026-08-21 provenance_gate P0：照抄 demo / 升级规则缺铺垫
+    ("C照抄demo", 5),
+    ("C升级规则铺垫偏弱", 6),
 )
 
 
@@ -280,7 +296,8 @@ def _physical_repeat_issue(lines: list[str]) -> str | None:
     if physical >= 3 and rule_esc < 2:
         return (
             "C中段肢体抢物复读：多轮抢/掉/捡/怀里没有新赛规判据——"
-            "改规则轮次升级（占有→状态→姿势），每轮一句新判据+一句照字面执行"
+            "改规则文本升级（占有定义→定义争夺→荒谬规则），"
+            "每轮一句新判据+一句照字面执行"
         )
     return None
 
@@ -306,7 +323,25 @@ def _opponent_void_rule_issue(
 
 
 def _count_rule_definition_appends(body: list[str]) -> int:
-    return sum(1 for ln in body if _RE_RULE_DEFINITION_APPEND.search(ln))
+    return sum(
+        1
+        for ln in body
+        if _RE_RULE_DEFINITION_APPEND.search(ln)
+        and not _RE_RULE_AUTHORITY_FLIP.search(ln)
+    )
+
+
+def _body_has_rule_backfire(body: list[str]) -> bool:
+    return any(_RE_RULE_BACKFIRE.search(ln) for ln in body)
+
+
+def _rule_backfire_bonus(body: list[str]) -> tuple[int, list[str]]:
+    hits = sum(1 for ln in body if _RE_RULE_BACKFIRE.search(ln))
+    if hits >= 2:
+        return 4, ["规则反噬"]
+    if hits >= 1:
+        return 2, ["规则反噬"]
+    return 0, []
 
 
 def _rule_mechanism_repeat_issue(lines: list[str]) -> str | None:
@@ -314,7 +349,9 @@ def _rule_mechanism_repeat_issue(lines: list[str]) -> str | None:
     start, end = _mid_body_range(lines)
     body = lines[start:end]
     appends = _count_rule_definition_appends(body)
-    if appends >= 4:
+    has_backfire = _body_has_rule_backfire(body)
+    has_auth_flip = any(_RE_RULE_AUTHORITY_FLIP.search(ln) for ln in body)
+    if appends >= 4 and not (has_backfire or has_auth_flip or _body_has_power_flip(body)):
         return (
             "C规则机制复读：立规人连续改「拿到」定义≥4次（规则清单）——"
             "压缩为3层：正常→钻定义→荒谬一条；禁离沙发/双脚/单脚层层叠加"
@@ -348,12 +385,12 @@ def _rule_round_escalation_issue(lines: list[str]) -> str | None:
     appends = _count_rule_definition_appends(body)
     if appends < 2:
         return (
-            "C规则轮次升级不足：缺少占有→状态→姿势三轮动作递进（-4）——"
-            "每轮一句新判据+一句照字面执行，第三轮须姿势控制"
+            "C规则轮次升级不足：缺少占有→定义→荒谬三轮规则文本递进（-4）——"
+            "每轮一句新判据+一句照字面执行，第三轮须荒谬规则（证明/套娃）"
         )
     if appends == 2:
         return (
-            "C规则轮次升级偏少：仅 2 层升级，缺第三轮姿势控制（-2）"
+            "C规则轮次升级偏少：仅 2 层升级，缺第三轮荒谬规则（-2）"
         )
     return None
 
@@ -366,6 +403,7 @@ def _rule_round_escalation_score(lines: list[str]) -> tuple[int, list[str]]:
         return 0, []
     appends = _count_rule_definition_appends(body)
     flip_pts, flip_pros = _power_flip_bonus(body)
+    backfire_pts, backfire_pros = _rule_backfire_bonus(body)
     follow_n = sum(
         1
         for ln in body
@@ -374,16 +412,25 @@ def _rule_round_escalation_score(lines: list[str]) -> tuple[int, list[str]]:
             ln,
         )
     )
-    if appends >= 4:
-        pts = 2 + min(flip_pts, 1)
+    has_auth_flip = any(_RE_RULE_AUTHORITY_FLIP.search(ln) for ln in body)
+    if appends >= 4 and not (has_auth_flip or backfire_pts):
+        pts = 2 + min(flip_pts, 1) + backfire_pts
         pros = ["规则清单化"]
         if flip_pros:
             pros.extend(flip_pros[:1])
+        if backfire_pros:
+            pros.extend(backfire_pros[:1])
         return pts, pros
     if appends == 3 and follow_n >= 1:
-        return 4 + min(flip_pts, 2), ["规则轮次升级", *flip_pros[:1]]
+        return (
+            4 + min(flip_pts, 2) + backfire_pts,
+            ["规则轮次升级", *flip_pros[:1], *backfire_pros[:1]],
+        )
     if appends >= 2 and follow_n >= 1:
-        return 5 + min(flip_pts, 2), ["规则轮次升级", *flip_pros[:1]]
+        return (
+            5 + min(flip_pts, 2) + backfire_pts,
+            ["规则轮次升级", *flip_pros[:1], *backfire_pros[:1]],
+        )
     if appends >= 2:
         return 3, ["规则轮次升级"]
     return 0, []
@@ -573,6 +620,20 @@ def collect_humor_issues(
     if echo:
         cons.append(echo)
 
+    from app.services.daily_story.provenance_gate import (
+        c_example_copy_soft_issue,
+        c_whole_item_weak_provenance_issue,
+    )
+    from app.services.daily_story.story_types.c.validate import c_criterion_theme_profile
+
+    profile = c_criterion_theme_profile(" ".join(lines[:8]))
+    copy_soft = c_example_copy_soft_issue(lines, profile)
+    if copy_soft:
+        cons.append(copy_soft)
+    weak_prov = c_whole_item_weak_provenance_issue(lines)
+    if weak_prov:
+        cons.append(weak_prov)
+
     return cons
 
 
@@ -591,7 +652,11 @@ def score_scene_beat(
         return rr_pts, rr_pros
 
     start, end = _mid_body_range(lines)
-    flip_pts, flip_pros = _power_flip_bonus(lines[start:end])
+    body = lines[start:end]
+    backfire_pts, backfire_pros = _rule_backfire_bonus(body)
+    if backfire_pts >= 4:
+        return backfire_pts, backfire_pros
+    flip_pts, flip_pros = _power_flip_bonus(body)
     if flip_pts >= 3:
         return flip_pts, flip_pros
 
@@ -654,8 +719,9 @@ def humor_revision_hint(issue: str) -> str | None:
     if "肢体抢物复读" in issue:
         return (
             f"【好笑·C】{issue}。"
-            "整件物中间段改「规则三轮升级」：靠着不算→整个抱→离地/单脚算不算，"
-            "每轮一句新判据+灿灿照字面追问；删抢→掉→捡→卡缝循环。"
+            "整件物中间段改「规则三轮升级」：光抱着不行→抱进怀里→"
+            "先验证缺口（怎么算/没看见）再量化次数，"
+            "每轮一句新判据+灿灿照字面追问；删抢→掉→捡→抱离沙发循环。"
         )
     if "对方擅自改规" in issue:
         return (
@@ -666,10 +732,16 @@ def humor_revision_hint(issue: str) -> str | None:
     if "C规则机制复读" in issue or "C规则缺权力翻转" in issue:
         return (
             f"【好笑·C】{issue}。"
-            "整件物中间段只许3次规则升级：①谁先拿到 ②钻定义（靠着不算/得抱怀里）"
-            "③荒谬一条（连续抱满三秒/得自己承认）——禁离沙发→双脚→单脚清单；"
+            "整件物中间段只许3次规则升级：①谁先拿到 ②钻定义（光抱着不行/得抱怀里）"
+            "③荒谬一条（须先有验证缺口再量化次数）——禁抱离沙发→双脚→单脚清单；"
             "灿灿中间加「哪条作数/还有吗/你一条接一条说的」翻转权力，"
             "末句嘴硬锚主题（你赢规则不算赢我）。"
+        )
+    if "C照抄demo" in issue or "C升级规则铺垫偏弱" in issue:
+        return (
+            f"【好笑·C】{issue}。"
+            "勿搬提示词/demo 原句；荒谬规则须先否定一次胜利（怎么算/没看见），"
+            "再引入证明，再从一次量化到 N 次。"
         )
     if "归属口水战" in issue:
         return (

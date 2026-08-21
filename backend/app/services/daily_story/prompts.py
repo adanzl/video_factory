@@ -429,7 +429,7 @@ def _build_c_whole_item_short_retry_user(
         if n_prev < _C_WHOLE_ITEM_HARD_LINE_MIN:
             struct_note = (
                 f"上次只有 {n_prev} 句 / {c_prev} 字，缺少三轮升级与结构段预算；"
-                "须按 beats 写满占有→状态→姿势三轮。\n"
+                "须按 beats 写满占有→定义→荒谬三轮。\n"
             )
         return (
             f"主题：{theme}\n"
@@ -518,7 +518,7 @@ def _daily_story_length_draft_for_type(
   每句台词硬性≤{DAILY_STORY_LINE_CHARS_MAX}字。
   【C·整件物·首稿】写 {lo}–{hi} 句；**须一次写到 ≥{DAILY_STORY_BODY_CHARS_MIN} 字**
   （{overlap}，删后仍 ≥{DAILY_STORY_BODY_CHARS_MIN}；勿少于 {w_lo - 20} 字）；
-  每句 15–18 字，按结构段预算写满（三轮升级占有→状态→姿势须逐层加码，见 user beats）；
+  每句 15–18 字，按结构段预算写满（三轮升级占有→定义→荒谬须逐层加码，见 user beats）；
   三轮升级是评分核心：每轮动作须比前一轮更激烈，第三轮须姿势控制整件物；
   禁止少于 {lo} 句、禁止用语气词堆字；回旋镖收束 3–4 句；被戳穿方末句嘴硬。
   系统另拼 2 句开场。发现开场另计另验。
@@ -1801,7 +1801,7 @@ def build_daily_story_prompts(
             f"{_C_WHOLE_ITEM_LINES_MIN}–{_C_WHOLE_ITEM_LINES_MAX} 句（硬卡≥"
             f"{_C_WHOLE_ITEM_HARD_LINE_MIN}句/{DAILY_STORY_BODY_CHARS_MIN}字，"
             f"首稿瞄准 {_C_WHOLE_ITEM_WRITE_TARGET_MIN}–{_C_WHOLE_ITEM_WRITE_TARGET_MAX}字）。\n"
-            "三轮升级须占有→状态→姿势逐层加码，缺递进或第三轮非姿势会结构降分。\n\n"
+            "三轮升级须占有→定义→荒谬逐层加码，缺递进或第三轮非姿势会结构降分。\n\n"
             f"{user}"
         )
     return (
@@ -2145,6 +2145,17 @@ def build_daily_story_opening_prompts(
             "（必须含「关」，禁止省略成「我这就去」）；\n"
             "- 不要重复第1句里的修饰词（轻点/慢慢）。"
         )
+    if type_code and type_code.upper() == "C":
+        from app.services.daily_story.story_types.c.validate import (
+            c_criterion_theme_profile,
+        )
+
+        if c_criterion_theme_profile(theme) == "whole_item":
+            from app.services.daily_story.story_types.c.line import (
+                c_whole_item_opening_comedy_append,
+            )
+
+            user = f"{user}\n\n{c_whole_item_opening_comedy_append()}"
     return system, user
 
 
@@ -4082,8 +4093,8 @@ def _patch_consecutive_speakers(story: dict) -> list[str]:
     dialogue = story.get("dialogue")
     if not isinstance(dialogue, list) or len(dialogue) < 2:
         return notes
-    # D 末四拍勿被连说翻 speaker 冲垮
-    protect_tail = 4 if code == "D" else 0
+    # C/D 末四拍由 patch closing 定 speaker，勿被连说翻转冲垮
+    protect_tail = 4 if code in ("C", "D") else 0
     end = max(1, len(dialogue) - protect_tail)
     fixes = 0
     for i in range(1, end):
@@ -4189,10 +4200,20 @@ def try_local_patch_daily_story_body(story: dict) -> tuple[dict, list[str]]:
     notes.extend(_patch_overlong_lines(out))
     notes.extend(_patch_consecutive_speakers(out))
     from app.services.daily_story.story_types.c.patch import (
+        patch_c_whole_item_closing,
+        patch_c_trim_soft_last,
+        _c_whole_item_story,
         patch_c_whole_item_filler,
     )
 
     notes.extend(patch_c_whole_item_filler(out))
+    from app.services.daily_story.story_types import resolve_story_type_code
+
+    if resolve_story_type_code(out) == "C":
+        notes.extend(
+            patch_c_trim_soft_last(out, whole_item=_c_whole_item_story(out)),
+        )
+        notes.extend(patch_c_whole_item_closing(out))
     return out, notes
 
 
@@ -4358,7 +4379,7 @@ def build_daily_story_retry_user(
                 "按结构段补具体动作/互怼，不要句内垫语气词：\n"
                 "- 发现开场 2 句 25–35 字\n"
                 "- 初始规则 15–25 字\n"
-                "- 三轮升级各 20–30 字（占有→状态→姿势；"
+                "- 三轮升级各 20–30 字（占有→定义→荒谬；"
                 "姿势须控制整件物，禁数到三/单脚站/金鸡独立）\n"
                 "- 权力翻转 25–35 字（哪条作数）\n"
                 "- 回旋镖+末句嘴硬 35–55 字\n"
