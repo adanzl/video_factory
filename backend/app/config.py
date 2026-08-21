@@ -291,6 +291,55 @@ class Config:
         )
         self.bili_browser_headless: bool = _bool("BILI_BROWSER_HEADLESS", False)
         self.bili_browser_timeout_sec: int = int(os.getenv("BILI_BROWSER_TIMEOUT_SEC", "180"))
+
+        # 金故事 H0b 逐字稿（yt-dlp + faster-whisper）
+        self.whisper_model_dir: Path = _path(
+            "WHISPER_MODEL_DIR", Path("/mnt/data/whisper")
+        )
+        self.gold_story_whisper_model: str = os.getenv(
+            "GOLD_STORY_WHISPER_MODEL", "base"
+        ).strip()
+        self.gold_story_whisper_device: str = os.getenv(
+            "GOLD_STORY_WHISPER_DEVICE", "cpu"
+        ).strip()
+        self.gold_story_whisper_compute_type: str = os.getenv(
+            "GOLD_STORY_WHISPER_COMPUTE_TYPE", "int8"
+        ).strip()
+        self.gold_story_whisper_vad_filter: bool = _bool(
+            "GOLD_STORY_WHISPER_VAD_FILTER", False
+        )
+        self.gold_story_transcript_repair: bool = _bool(
+            "GOLD_STORY_TRANSCRIPT_REPAIR", True
+        )
+        self.gold_story_transcript_dir: Path = _path(
+            "GOLD_STORY_TRANSCRIPT_DIR",
+            ROOT_DIR / "data/gold_story/transcripts",
+        )
+        self.gold_story_media_workspace: Path = _path(
+            "GOLD_STORY_MEDIA_WORKSPACE",
+            ROOT_DIR / "data/gold_story/media_workspace",
+        )
+        self.gold_story_use_proxy: bool = _bool("GOLD_STORY_USE_PROXY", False)
+        self.gold_story_enabled: bool = _bool("GOLD_STORY_ENABLED", False)
+        self.gold_story_cron_max: int = int(os.getenv("GOLD_STORY_CRON_MAX", "10"))
+        self.gold_story_min_view: int = int(os.getenv("GOLD_STORY_MIN_VIEW", "100000"))
+        self.gold_story_min_reply: int = int(os.getenv("GOLD_STORY_MIN_REPLY", "50"))
+        self.gold_story_candidates_file: Path = _path(
+            "GOLD_STORY_CANDIDATES_FILE",
+            ROOT_DIR / "data/gold_story/_candidates_bv.txt",
+        )
+        self.gold_story_search_keywords: str = os.getenv(
+            "GOLD_STORY_SEARCH_KEYWORDS", ""
+        ).strip()
+        douyin_cookie = _opt("DOUYIN_COOKIE_PATH")
+        self.douyin_cookie_path: Path | None = (
+            _path(
+                "DOUYIN_COOKIE_PATH",
+                ROOT_DIR / "data/secrets/douyin/cookies.txt",
+            )
+            if douyin_cookie
+            else None
+        )
         self.bili_tid: int = int(os.getenv("BILI_TID", "201"))
         # 旧 tid 占位；164=健身（勿用）。chat 展示分区靠 bili_human_type2_chat。
         self.bili_tid_chat: int = int(os.getenv("BILI_TID_CHAT", "201"))

@@ -11,3 +11,6 @@ qrcode>=8.2
 Pillow>=10.0
 redis>=5.0
 websocket-client>=1.8
+# 金故事 H0b（yt-dlp + faster-whisper）
+yt-dlp>=2025.3.31
+faster-whisper>=1.1.0
