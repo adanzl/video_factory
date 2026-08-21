@@ -90,6 +90,7 @@ def _summarize(theme: str, story: dict, elapsed: float) -> dict:
     dialogue = story.get("dialogue") or []
     opening = story.get("discovery_opening") or []
     quality = story.get("quality") if isinstance(story.get("quality"), dict) else {}
+    meta = story.get("_generation_meta") if isinstance(story.get("_generation_meta"), dict) else {}
     return {
         "theme": theme,
         "ok": True,
@@ -106,6 +107,10 @@ def _summarize(theme: str, story: dict, elapsed: float) -> dict:
         "quality_grade": quality.get("grade"),
         "quality_score": quality.get("score"),
         "quality_summary": quality.get("summary"),
+        "contract_version": meta.get("contract_version"),
+        "natural_pass": meta.get("natural_pass"),
+        "body_attempt": meta.get("body_attempt"),
+        "patch_notes": meta.get("patch_notes"),
         "opening": opening,
         "head": _lines(story)[:4],
         "tail": _lines(story)[-4:],
@@ -142,7 +147,9 @@ def _run_one(
                 f"ok chars={item['chars']} lines={item['lines']} "
                 f"opening={item['opening_lines']} speakers={item['speakers']} "
                 f"elapsed={item['elapsed_sec']}s "
-                f"grade={item.get('quality_grade')}({item.get('quality_score')})",
+                f"grade={item.get('quality_grade')}({item.get('quality_score')}) "
+                f"natural_pass={item.get('natural_pass')} "
+                f"body_attempt={item.get('body_attempt')}",
                 flush=True,
             )
             print(f"core={item['conflict_core']}", flush=True)
@@ -298,8 +305,10 @@ def main() -> None:
 
     out.write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
     ok_n = sum(1 for r in results if r.get("ok"))
+    natural_n = sum(1 for r in results if r.get("natural_pass"))
     print(f"\n[local] wrote {out}", flush=True)
     print(f"[local] done {ok_n}/{len(results)} ok", flush=True)
+    print(f"[local] natural_pass {natural_n}/{len(results)}", flush=True)
 
 
 if __name__ == "__main__":

@@ -12,6 +12,10 @@ import re
 
 from app.services.daily_story.story_types import parse_story_type_code
 from app.services.daily_story.story_types.c.line import C_WHOLE_ITEM_PATCH_CHAR_DEFICIT
+from app.services.daily_story.story_types.quality import (
+    RE_BOOMERANG_RULE,
+    RE_C_STUBBORN_LAST,
+)
 
 # 末句嘴硬软收词（可在句首，可带 …… 前缀）
 _RE_C_SOFT_HEAD = re.compile(
@@ -94,11 +98,11 @@ _WHOLE_ITEM_CLAUSE_REPAIRS: tuple[
     ),
     (
         re.compile(r"碰不算"),
-        "靠着不算",
+        "攥着不算",
     ),
     (
         re.compile(r"摸不算"),
-        "靠着不算",
+        "攥着不算",
     ),
     (
         re.compile(r"搭着边"),
@@ -227,14 +231,23 @@ _RE_WHOLE_ITEM_CONTACT = re.compile(
     r"够(?:不着|不到|到|着|上|一下|得着)?|"
     r"碰(?:到|着|上|的)?|摸(?:到|着|上|的)?|搭(?:到|着|上|的)?|"
     r"触(?:到|着|上)?|沾(?:到|着|上)?|挨(?:到|着|上)?|"
+    r"靠(?:着|在)?|贴(?:着|到|上)?|"
     r"环住|够着|悬(?:着|空)?|"
     r"(?:才|还)?(?:抢|碰|摸)?(?:到|着)?边(?:呢|啊|呀|嘛)?",
 )
 _WHOLE_ITEM_CONTACT_REPL: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"挨着[^。！？]{0,8}不算"), "光抱着不行"),
+    (re.compile(r"靠着[^。！？]{0,8}不算"), "光抱着不行"),
+    (re.compile(r"贴着[^。！？]{0,8}不算"), "光抱着不行"),
+    (re.compile(r"碰到[^。！？]{0,8}不算"), "光抱着不行"),
     (re.compile(r"够不着"), "抢不到"),
     (re.compile(r"够不到"), "抢不到"),
     (re.compile(r"够着"), "抢到"),
     (re.compile(r"够到"), "抢到"),
+    (re.compile(r"我挨着"), "我抱住"),
+    (re.compile(r"挨着"), "抱住"),
+    (re.compile(r"靠着"), "抱住"),
+    (re.compile(r"贴着"), "抱住"),
     (re.compile(r"碰到"), "抢到"),
     (re.compile(r"摸到"), "拿到"),
     (re.compile(r"搭到"), "抢到"),
@@ -417,20 +430,32 @@ def patch_c_stray_rebuttal(story: dict) -> list[str]:
     return notes
 
 
-def _c_default_stubborn_tail(soft: str) -> str:
+def _c_default_stubborn_tail(soft: str, *, whole_item: bool = False) -> str:
     """软收词后补一句通用嘴硬话（用户定 2026-08-08：禁光杆叹词收尾）。
 
     只做**通用**收束，不绑定具体 theme（patch 红线：禁止按主题造句）；
-    「明天我一定赢过你」对任何赛规都成立（仪式判据/先到先得都不错位，用户
-    2026-08-09 v26 定：末句嘴硬锚定的比法必须字面在本场立规句里，
-    「比你早/比你举得久」都可能发明本场没有的比法，万能胜负最稳）。
+    整件物题优先「你赢规则不算赢我」（2026-08-21 专家+幽默 regex）；
+    其它题「明天我一定赢过你」对任何赛规都成立。
     """
+    if whole_item:
+        if soft in ("哼", "切", "嘁"):
+            return "哼，你赢规则不算赢我！"
+        return "行吧，你赢规则不算赢我！"
     if soft in ("哼", "切", "嘁"):
         return "哼，明天我一定赢过你！"
     return "行吧，算你手快！"
 
 
-def patch_c_trim_soft_last(story: dict) -> list[str]:
+def _c_whole_item_story(story: dict) -> bool:
+    anchor = (
+        str(story.get("theme") or story.get("_theme") or "")
+        + str(story.get("conflict_core") or "")
+        + str(story.get("setting") or "")
+    )
+    return bool(_RE_WHOLE_ITEM_ANCHOR.search(anchor))
+
+
+def patch_c_trim_soft_last(story: dict, *, whole_item: bool | None = None) -> list[str]:
     """一句一改：末句若「哼/行吧/算了 + 长解释/文字游戏」，截成一句完整嘴硬话。
 
     C 末句禁光杆叹词收尾（用户定 2026-08-08），须一句有内容的嘴硬话——
@@ -456,7 +481,8 @@ def patch_c_trim_soft_last(story: dict) -> list[str]:
     tail = line[m.end():].strip("，,。！？… \t")
     if not tail or len(tail) < 8:
         return notes
-    new_line = _c_default_stubborn_tail(soft)
+    wi = _c_whole_item_story(story) if whole_item is None else whole_item
+    new_line = _c_default_stubborn_tail(soft, whole_item=wi)
     total = sum(len(str(d.get("line") or "")) for d in dialogue)
     if total - (len(line) - len(new_line)) < 280:  # 别把正文削到 280 硬卡以下
         return notes
@@ -465,37 +491,96 @@ def patch_c_trim_soft_last(story: dict) -> list[str]:
     return notes
 
 
-# 整件物 near-miss：句数够但字数差一截 → 翻转/回旋镖段插占有系短句（类型级）
-_RE_WI_SEMANTIC_ANCHOR = re.compile(
-    r"哪条|按哪条|最开始那条|归你|归我|你赢|不算赢|刚说|刚才说",
+# 整件物 near-miss：句数够但字数差一截 → 升级2–3段插占有系短句（禁翻转段/末四拍）
+_RE_WI_FLIP_ZONE = re.compile(
+    r"哪条作数|按哪条|一条接一条|不加了|我说了算|钻空子|哪条说我",
 )
-# 纯占有系动词，禁松手/按/压/环/碰/摸
+# 升级段锚点（规则定义句之后可插补字；禁用翻转段锚点定位）
+_RE_WI_UPGRADE_ANCHOR = re.compile(
+    r"光.{0,4}不行|光.{0,4}不算|攥着不算|得.{0,8}才算|才算数|才算真正|"
+    r"都得.{0,6}才算|加一条|连续证明|旧规则|须.*批准",
+)
+# 立规人改定义式加赛（与 humor 同源；整件物最多 3 层，专家 batch4）
+_RE_WI_RULE_DEFINITION = re.compile(
+    r"光.{0,4}不行|光.{0,4}不算|攥着不算|得.{0,8}才算|才算数|才算真正|"
+    r"都得.{0,6}才算",
+)
+_WI_RULE_LAYER_MAX = 3
+# 占有系对白（禁纯动作旁白占末四拍位，2026-08-21 batch）
 _WI_SEMANTIC_INSERT_LINES = (
-    "我收紧手臂，把抱枕往怀里扣了扣。",
-    "他没接话，又把抱枕往怀里带了带。",
+    "我两手都攥紧了，算不算拿到？",
+    "我整个抱怀里了，你也没说不行！",
+)
+_RE_WI_PURE_ACTION = re.compile(
+    r"收紧手臂|往怀里扣|往怀里带|没接话",
+)
+_RE_WI_ESTABLISH_RULE = re.compile(
+    r"归谁|谁先|我定|规则|才公平",
+)
+# 立规人：正文抛完整赛规（非开场「归我」占有宣示）
+_RE_WI_RULE_MAKER_LINE = re.compile(
+    r"谁先(?:拿到|抢到|攥).{0,8}归|谁先.*归谁|得.{0,8}才算|才算数",
+)
+_RE_WI_RULE_AUTHORITY_APPEND = re.compile(
+    r"我又加一条|再加一条|新规则",
+)
+_RE_WI_TAIL_RULE_CALLBACK = re.compile(
+    r"最开始那条|按最开始|谁先(?:拿到|抢到|攥).{0,8}归",
 )
 _WI_SEMANTIC_MIN_LINES = 17
 _WI_SEMANTIC_MAX_INSERT = 2
 
 
+def _wi_opposite_speaker(sp: str) -> str:
+    return "灿灿" if sp == "昭昭" else "昭昭"
+
+
+def _wi_insert_alternation_ok(dialogue: list, insert_at: int, alt: str) -> bool:
+    """插入后 i-1 / i / i+1 须严格交替。"""
+    if insert_at < 1 or insert_at > len(dialogue):
+        return False
+    prev_sp = str(dialogue[insert_at - 1].get("speaker") or "").strip()
+    if prev_sp in ("昭昭", "灿灿") and alt == prev_sp:
+        return False
+    if insert_at < len(dialogue):
+        next_sp = str(dialogue[insert_at].get("speaker") or "").strip()
+        if next_sp in ("昭昭", "灿灿") and alt == next_sp:
+            return False
+    return True
+
+
 def _find_wi_semantic_insert_at(dialogue: list) -> int | None:
-    """定位翻转/回旋镖段：最后一个锚点句之后；禁插前 3 句。"""
-    insert_at: int | None = None
-    for i in range(len(dialogue) - 1, -1, -1):
+    """定位升级2–3段：最后一个规则定义句之后；禁翻转段与末四拍。"""
+    if len(dialogue) < 4:
+        return None
+    max_insert = max(3, len(dialogue) - 4)
+    for i in range(max_insert - 1, 2, -1):
         item = dialogue[i]
         if not isinstance(item, dict):
             continue
         line = str(item.get("line") or "")
-        if _RE_WI_SEMANTIC_ANCHOR.search(line):
-            insert_at = i + 1
-            break
-    if insert_at is None:
-        insert_at = max(len(dialogue) - 1, 1)
-    if insert_at < 3:
-        return None
-    if insert_at > len(dialogue):
-        insert_at = len(dialogue)
-    return insert_at
+        if _RE_WI_FLIP_ZONE.search(line):
+            continue
+        if not _RE_WI_UPGRADE_ANCHOR.search(line):
+            continue
+        candidate = i + 1
+        if candidate >= max_insert:
+            continue
+        if candidate < len(dialogue):
+            nxt_ln = str(dialogue[candidate].get("line") or "")
+            if _RE_WI_FLIP_ZONE.search(nxt_ln):
+                continue
+        return candidate
+    return None
+
+
+def patch_c_whole_item_cap_rule_layers(story: dict) -> list[str]:
+    """整件物：立规人改定义式加赛硬上限 3 层（专家 batch4）。
+
+    删句会破坏交替发言与末四拍，暂只做计数占位；清单化由 humor 压分 + line 提示约束。
+    """
+    _ = story
+    return []
 
 
 def patch_c_whole_item_semantic_expand(story: dict) -> list[str]:
@@ -528,20 +613,170 @@ def patch_c_whole_item_semantic_expand(story: dict) -> list[str]:
     if insert_at is None:
         return notes
     prev_sp = str(dialogue[insert_at - 1].get("speaker") or "昭昭").strip()
-    alt = "灿灿" if prev_sp == "昭昭" else "昭昭"
+    if prev_sp not in ("昭昭", "灿灿"):
+        return notes
+    alt = _wi_opposite_speaker(prev_sp)
     inserted = 0
-    for tmpl in _WI_SEMANTIC_INSERT_LINES:
-        if c_whole_item_char_deficit_to_validate(story) <= 0:
+    templates = list(_WI_SEMANTIC_INSERT_LINES)
+    while (
+        c_whole_item_char_deficit_to_validate(story) > 0
+        and inserted < _WI_SEMANTIC_MAX_INSERT
+        and insert_at is not None
+    ):
+        if not templates:
             break
-        if inserted >= _WI_SEMANTIC_MAX_INSERT:
+        tmpl = templates.pop(0)
+        if _wi_insert_alternation_ok(dialogue, insert_at, alt):
+            dialogue.insert(insert_at, {"speaker": alt, "line": tmpl})
+            notes.append(f"整件物语义扩写[{insert_at}]")
+            insert_at += 1
+            inserted += 1
+            alt = _wi_opposite_speaker(alt)
+            continue
+        if insert_at >= len(dialogue):
             break
-        dialogue.insert(
-            insert_at,
-            {"speaker": alt, "line": tmpl},
+        next_sp = str(dialogue[insert_at].get("speaker") or "").strip()
+        if (
+            next_sp in ("昭昭", "灿灿")
+            and next_sp != prev_sp
+            and templates
+        ):
+            tmpl2 = templates.pop(0)
+            dialogue.insert(insert_at, {"speaker": alt, "line": tmpl})
+            dialogue.insert(
+                insert_at + 1,
+                {"speaker": _wi_opposite_speaker(alt), "line": tmpl2},
+            )
+            notes.append(f"整件物语义扩写[{insert_at}]×2")
+            insert_at += 2
+            inserted += 2
+            alt = prev_sp
+            continue
+        break
+    return notes
+
+
+def _whole_item_rule_maker(dialogue: list) -> str | None:
+    for i, item in enumerate(dialogue):
+        if i < 2 or not isinstance(item, dict):
+            continue
+        ln = str(item.get("line") or "")
+        if not _RE_WI_RULE_MAKER_LINE.search(ln):
+            continue
+        sp = str(item.get("speaker") or "").strip()
+        if sp in ("昭昭", "灿灿"):
+            return sp
+    return None
+
+
+def patch_c_whole_item_closing(story: dict) -> list[str]:
+    """整件物：末段纯动作→对白；回旋镖/嘴硬 speaker 对齐立规人。"""
+    notes: list[str] = []
+    punch = str(story.get("punchline_explain") or "")
+    if parse_story_type_code(punchline=punch) != "C":
+        return notes
+    anchor = (
+        str(story.get("theme") or story.get("_theme") or "")
+        + str(story.get("conflict_core") or "")
+        + str(story.get("setting") or "")
+    )
+    if not _RE_WHOLE_ITEM_ANCHOR.search(anchor):
+        return notes
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 4:
+        return notes
+    maker = _whole_item_rule_maker(dialogue)
+    if not maker:
+        return notes
+    opp = "灿灿" if maker == "昭昭" else "昭昭"
+
+    for item in dialogue:
+        if not isinstance(item, dict):
+            continue
+        ln = str(item.get("line") or "")
+        if (
+            str(item.get("speaker") or "") == maker
+            and _RE_WI_RULE_AUTHORITY_APPEND.search(ln)
+        ):
+            new_ln = re.sub(
+                r"我又加一条[，,]?|再加一条[，,]?|新规则[，,]?",
+                "不加了，",
+                ln,
+            )
+            if "现在规则我说了算" not in new_ln:
+                new_ln = "不加了，现在规则我说了算！"
+            if new_ln != ln:
+                item["line"] = new_ln
+                notes.append("整件物翻转→权力终止")
+
+    if len(dialogue) >= 5:
+        prev5 = dialogue[-5]
+        first_tail = dialogue[-4]
+        if isinstance(prev5, dict) and isinstance(first_tail, dict):
+            s5 = str(prev5.get("speaker") or "").strip()
+            s4 = str(first_tail.get("speaker") or "").strip()
+            if s5 in ("昭昭", "灿灿") and s5 == s4:
+                first_tail["speaker"] = _wi_opposite_speaker(s5)
+                notes.append("整件物末四拍首句→与前拍交替")
+
+    tail_start = max(0, len(dialogue) - 4)
+    for i in range(len(dialogue) - 1, tail_start - 1, -1):
+        item = dialogue[i]
+        if not isinstance(item, dict):
+            continue
+        ln = str(item.get("line") or "")
+        if not _RE_WI_PURE_ACTION.search(ln):
+            continue
+        dialogue.pop(i)
+        notes.append(f"整件物末段删纯动作[{i}]")
+
+    last = dialogue[-1]
+    prev = dialogue[-2]
+    if not isinstance(last, dict) or not isinstance(prev, dict):
+        return notes
+    last_ln = str(last.get("line") or "")
+    prev_ln = str(prev.get("line") or "")
+
+    def _stubborn_line(ln: str) -> bool:
+        return bool(
+            _RE_C_SOFT_HEAD.match(ln)
+            or RE_C_STUBBORN_LAST.search(ln)
+            or "让着你" in ln
+            or "赢规则" in ln
         )
-        notes.append(f"整件物语义扩写[{insert_at}]")
-        insert_at += 1
-        inserted += 1
+
+    if RE_BOOMERANG_RULE.search(last_ln) and _stubborn_line(prev_ln):
+        last["speaker"], prev["speaker"] = prev.get("speaker"), last.get("speaker")
+        last["line"], prev["line"] = prev_ln, last_ln
+        notes.append("整件物末两拍顺序纠错")
+        last_ln, prev_ln = str(last.get("line") or ""), str(prev.get("line") or "")
+
+    if _stubborn_line(last_ln) and str(last.get("speaker") or "") != maker:
+        last["speaker"] = maker
+        notes.append("整件物末句嘴硬→立规人")
+    if RE_BOOMERANG_RULE.search(prev_ln) and str(prev.get("speaker") or "") != opp:
+        prev["speaker"] = opp
+        notes.append("整件物回旋镖→对方")
+
+    from app.services.daily_story.possession_contract import (
+        align_whole_item_final_four_speakers,
+    )
+
+    notes.extend(
+        align_whole_item_final_four_speakers(dialogue, maker=maker, opp=opp)
+    )
+
+    last_ln = str(last.get("line") or "")
+    if str(last.get("speaker") or "") == maker and re.search(
+        r"明天我(?:抢先|比你早|一定赢)",
+        last_ln,
+    ) and "赢规则" not in last_ln:
+        m = _RE_C_SOFT_HEAD.match(last_ln)
+        soft = m.group(1) if m else "哼"
+        new_ln = _c_default_stubborn_tail(soft, whole_item=True)
+        if new_ln != last_ln:
+            last["line"] = new_ln
+            notes.append("整件物末句→主题嘴硬")
     return notes
 
 
@@ -559,25 +794,29 @@ def patch_c_body(story: dict) -> list[str]:
     notes.extend(patch_c_stray_rebuttal(story))
     notes.extend(patch_c_whole_item_near_miss(story))
     notes.extend(patch_c_whole_item_tone_tail(story))
-    notes.extend(patch_c_whole_item_contact(story))
+    wi = _c_whole_item_story(story)
+    if not wi:
+        notes.extend(patch_c_whole_item_contact(story))
 
     notes.extend(patch_c_whole_item_semantic_expand(story))
     notes.extend(patch_c_whole_item_filler(story))
+    notes.extend(patch_c_whole_item_cap_rule_layers(story))
 
     last = dialogue[-1]
     prev = dialogue[-2]
     if not isinstance(last, dict) or not isinstance(prev, dict):
         return notes
 
+    wi = _c_whole_item_story(story)
     last_sp = str(last.get("speaker") or "").strip()
     prev_sp = str(prev.get("speaker") or "").strip()
     if last_sp != "妈妈":
-        notes.extend(patch_c_trim_soft_last(story))
+        notes.extend(patch_c_trim_soft_last(story, whole_item=wi))
         return notes
 
     if prev_sp in ("昭昭", "灿灿"):
         alt = "灿灿" if prev_sp == "昭昭" else "昭昭"
         last["speaker"] = alt
         notes.append("C末句speaker妈妈→姐弟")
-    notes.extend(patch_c_trim_soft_last(story))
+    notes.extend(patch_c_trim_soft_last(story, whole_item=wi))
     return notes

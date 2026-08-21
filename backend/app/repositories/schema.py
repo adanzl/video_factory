@@ -160,6 +160,7 @@ def apply_schema(conn: sqlite3.Connection) -> None:
     apply_material_video_schema(conn)
     apply_material_audio_schema(conn)
     apply_daily_story_schema(conn)
+    apply_gold_story_schema(conn)
     conn.execute(
         "UPDATE video_job SET stage = 'segment' WHERE stage = 'ffmpeg'"
     )
@@ -308,6 +309,65 @@ def _backfill_daily_story_key(conn: sqlite3.Connection) -> None:
             "UPDATE daily_story SET key = ? WHERE id = ?",
             (k, story_id),
         )
+
+
+_GOLD_STORY_DDL = """
+CREATE TABLE IF NOT EXISTS gold_story (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    url TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    mechanism TEXT NOT NULL,
+    structure_type TEXT NOT NULL,
+    theme_family TEXT,
+    title TEXT,
+    conflict_core TEXT,
+    auto_score REAL NOT NULL,
+    engagement_score REAL,
+    content_hash TEXT NOT NULL,
+    times_used INTEGER NOT NULL DEFAULT 0,
+    avg_humor_delta REAL,
+    copy_hits INTEGER NOT NULL DEFAULT 0,
+    transcript_backend TEXT,
+    transcript_path TEXT,
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    last_used_at TEXT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_gold_story_source
+    ON gold_story(source, source_id);
+CREATE INDEX IF NOT EXISTS idx_gold_story_pick
+    ON gold_story(status, structure_type, mechanism);
+CREATE INDEX IF NOT EXISTS idx_gold_story_score
+    ON gold_story(status, auto_score DESC);
+
+CREATE TABLE IF NOT EXISTS gold_story_inject_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    gold_story_id INTEGER NOT NULL,
+    daily_story_id INTEGER,
+    job_id INTEGER,
+    theme TEXT,
+    story_type TEXT,
+    humor_score INTEGER,
+    baseline_humor INTEGER,
+    humor_delta REAL,
+    copy_hit INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (gold_story_id) REFERENCES gold_story(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_gs_inject_story
+    ON gold_story_inject_log(gold_story_id, created_at);
+"""
+
+
+def apply_gold_story_schema(conn: sqlite3.Connection) -> None:
+    """金故事库表（幂等）。"""
+    conn.executescript(_GOLD_STORY_DDL)
+    _ensure_journal_mode_delete(conn)
 
 
 def _ensure_column(

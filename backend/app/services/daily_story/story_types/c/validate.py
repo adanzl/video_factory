@@ -26,44 +26,7 @@ RE_WEAK_ACCUSE = re.compile(
     r"晕|腻|软|没长好|生病|哭|吵|笨|咳嗽|着凉|怕冷|怕热|胆小)",
 )
 
-# 逐字照抄正例硬卡（v35 酸奶稿抓：第 11-18 句整段复刻 line.py 酸奶合规示范 9-16 句）——
-# 「仿照论辩骨架」不等于逐字复用；正例全文已进提示词，LLM 会直接搬，须机读兜底。
-# 收录 line.py 81-97 行示范的中后段招牌句（去语气词/标点后）；正文 ≥2 句命中即整稿重抽。
-_EXAMPLE_NORM_SKIP = re.compile(r"[的了吗呢啊呀哼！？。，、…\s「」“”\"'‘’：:]")
-_C_EXAMPLE_PHARASES_NORM = {
-    _EXAMPLE_NORM_SKIP.sub("", s)
-    for s in (
-        "我早就不闹肚子了",
-        "酸奶又没写你名字谁先拿到谁喝",
-        "我先抓到手都攥出汗了松开",
-        "你攥那么紧瓶身都热了我攥着瓶盖呢我先拿的",
-        "瓶盖也算那你把瓶身给我我喝的时候你拿盖儿玩",
-        "不行整瓶都是我的你松开手",
-        "你数三下我数到二你就松手咱们同时放",
-        "好我喊到三就松手你可别提前抢",
-        "谁抢谁小狗我数一二你手松了我拿到了",
-        "你耍赖我还没喊三呢你二就动手了",
-        "你刚说数到三就松手可我数到二你还没放",
-        "我那是数到二准备松你倒好二还没落音就抢了",
-        "我不管现在瓶子在我手里我先喝你等下喝汤",
-        "你刚才说谁抢谁小狗你抢了你才是小狗",
-        "那是我说的可你也没按规矩来你赖皮",
-        "反正我先拿到的你抢了不算酸奶归我",
-        "哼明天我比你早",
-        # 2026-08-11 三方定稿 v52（慢数漏字反噬）中后段招牌句——禁逐字照抄
-        "那咱俩说好谁攥着酸奶再单脚站满十秒酸奶归谁",
-        "行你先站我数着数满十秒才算你",
-        "一二三你腿别抖我慢慢数",
-        "四五你只说站满十秒又没说数数要多快",
-        "你这是耍赖我站不住快数到十",
-        "六七八你脚落地没站满十秒",
-        "是你数太慢我才倒不算",
-        "你刚说站满十秒就算慢数也是数你输",
-        "可你那是故意拖长音赖皮",
-        "你刚说谁攥着酸奶单脚站满十秒归谁你输归我",
-        "明天我定规矩必须快数你一个字也别想拖",
-    )
-}
+# 正例/demo 照抄检测见 provenance_gate（酸奶 + 整件物结构正例）。
 
 # A 类末四拍标志性组合（C 稿勿全套照搬）
 RE_A_WHERE_DIFF = re.compile(r"哪里不一样|都是听|大人也要听小孩|大人要听小孩")
@@ -140,6 +103,10 @@ _RE_CONTACT_CRITERION = re.compile(
     r")|"
     r"够(?:到|着|上|一下|得着)?[^。！？]{0,4}"
     r"(?:(?<!不)(?:算|就算|算数)|该|归|赢|谁)",
+)
+# 「按哪条/按最开始那条/到底按哪条作数」= 认哪条规则，非按遥控器/按键（2026-08-21 batch）
+_RE_OPERATE_ABSTRACT_REF = re.compile(
+    r"按(?:照)?(?:哪|那|最|开|始|条|规|则|作数|说|条作数|最开始(?:那条)?|哪条(?:作数)?|那条)",
 )
 _RE_OPERATE_CRITERION = re.compile(
     r"(?:按|打开|切换|调)(?:到|着|了|一下)?"
@@ -264,6 +231,13 @@ _RE_CUT_FOOD_THEME = re.compile(
 )
 
 
+def _story_criterion_anchor(story: dict) -> str:
+    return " ".join(
+        str(story.get(k) or "")
+        for k in ("key", "conflict_core", "scene_title", "setting")
+    )
+
+
 def c_criterion_theme_profile(anchor: str) -> str:
     """C 判据链选题：cut_food | whole_item | default。"""
     text = anchor or ""
@@ -279,6 +253,22 @@ _RE_C_WHOLE_ITEM_RITUAL = re.compile(
     r"数到[一二三四五六七八九十\d]+|数.{0,3}[三3]|"
     r"单脚站|金鸡独立|站满.{0,4}秒|数满十秒|"
     r"十秒|转.{0,2}圈|闭眼|蛙跳|蹲下举手",
+)
+# 整件物：位置/姿态变化禁作「拿到」判据（DeepSeek+ChatGPT 2026-08-21 共识）
+# 放行占有系：抱进怀里/抱着/攥手里；禁抱离沙发/离地/单脚蹦等状态加码
+_RE_WHOLE_ITEM_PHYSICS_STATE = re.compile(
+    r"(?:"
+    r"抱离|离开(?:了)?[^。！？]{0,4}(?:沙发|坐垫|椅子|地面)|"
+    r"(?:双脚|单脚|两脚)(?:都)?(?:离地|蹦|跳)|"
+    r"(?:跳起来|蹦过去|翻滚|摔倒|跑出去)|"
+    r"离地[^。！？]{0,8}(?:才算|归|算|谁)|"
+    r"单脚[^。！？]{0,4}(?:蹦|跳)"
+    r")"
+    r"[^。！？]{0,12}(?:才算|不算|归|算数|该|谁)|"
+    r"(?:才算|不算|归|算数|该|谁)[^。！？]{0,12}(?:"
+    r"抱离|离开(?:了)?[^。！？]{0,4}(?:沙发|坐垫)|"
+    r"(?:双脚|单脚|两脚)(?:都)?离地|单脚[^。！？]{0,4}(?:蹦|跳)"
+    r")",
 )
 
 
@@ -375,6 +365,100 @@ def _whole_item_dispatch_error(story: dict, lines: list[str]) -> str | None:
     )
 
 
+def _whole_item_physics_state_error(story: dict, lines: list[str]) -> str | None:
+    """整件物：抱离沙发/双脚离地/单脚蹦等位置姿态变化禁作判据。"""
+    anchor = (
+        str(story.get("theme") or "")
+        + str(story.get("conflict_core") or "")
+        + str(story.get("setting") or "")
+    )
+    if not _RE_WHOLE_ITEM_ANCHOR.search(anchor):
+        return None
+    for i, ln in enumerate(lines):
+        if _RE_WHOLE_ITEM_PHYSICS_STATE.search(ln):
+            return (
+                f"C类整件物状态系判据[{i}]：抱离沙发/双脚离地/单脚蹦等位置姿态变化"
+                "不得作「拿到」判据——升级须走占有系（攥住/抱进怀里）或规则文本"
+                "（连续证明/规则须批准/谁算拿到），禁身体状态层层加码"
+            )
+    return None
+
+
+def _find_whole_item_rule_maker(
+    lines: list[str],
+    speakers: list[str],
+) -> str | None:
+    for i, ln in enumerate(lines):
+        if i < 2:
+            continue
+        if not _RE_WI_RULE_MAKER_LINE.search(ln):
+            continue
+        sp = speakers[i] if i < len(speakers) else None
+        if sp in ("昭昭", "灿灿"):
+            return sp
+    return None
+
+
+_RE_WI_RULE_MAKER_LINE = re.compile(
+    r"谁先(?:拿到|抢到|攥).{0,8}归|谁先.*归谁|得.{0,8}才算|才算数",
+)
+
+
+_RE_WI_WHICH_RULE_ASK = re.compile(
+    r"哪条(?:作数|算数|说)|还有吗|到底哪条",
+)
+_RE_WI_RECLAIM_RULE = re.compile(
+    r"最开始那条|按最开始|谁先(?:拿到|抢到|攥).{0,8}归",
+)
+
+
+def _whole_item_tail_speaker_error(
+    story: dict,
+    lines: list[str],
+    speakers: list[str],
+) -> str | None:
+    """整件物：末四拍四槽位 speaker 须 对方→立规人→对方→立规人。"""
+    anchor = (
+        str(story.get("theme") or "")
+        + str(story.get("conflict_core") or "")
+        + str(story.get("setting") or "")
+    )
+    if not _RE_WHOLE_ITEM_ANCHOR.search(anchor):
+        return None
+    if len(lines) < 4 or len(speakers) < 4:
+        return None
+    maker = _find_whole_item_rule_maker(lines, speakers)
+    if not maker:
+        return None
+    opp = "灿灿" if maker == "昭昭" else "昭昭"
+    role_labels = ("哪条作数", "回收初始规则", "回旋镖", "嘴硬")
+    expected = [opp, maker, opp, maker]
+    tail_sp = speakers[-4:]
+    for i, (sp, exp) in enumerate(zip(tail_sp, expected)):
+        if sp != exp:
+            who = "立规人" if exp == maker else "对方"
+            return (
+                f"C类整件物末四拍第{i + 1}句（{role_labels[i]}）须由{who}说，"
+                f"现为{sp}"
+            )
+    ln_recycle = lines[-3]
+    if speakers[-3] == maker and not _RE_WI_RECLAIM_RULE.search(ln_recycle):
+        if _RE_WI_WHICH_RULE_ASK.search(ln_recycle):
+            return (
+                "C类整件物末四拍：回收初始规则须在倒数第3句，"
+                "禁与「哪条作数」问句混在同一槽位"
+            )
+    ln_which = lines[-4]
+    if _RE_WI_RECLAIM_RULE.search(ln_which) and not _RE_WI_WHICH_RULE_ASK.search(
+        ln_which
+    ):
+        return (
+            "C类整件物末四拍：「最开始那条/谁先拿到归谁」须在倒数第3句由立规人说，"
+            "禁放在倒数第4句"
+        )
+    return None
+
+
 def _grading_bickering_error(lines: list[str]) -> str | None:
     """分级杠精硬卡（专家三轮，2026-08-07）：「X不算，Y才算」比较型杠精句 ≥2 次。
 
@@ -397,7 +481,11 @@ def _grading_bickering_error(lines: list[str]) -> str | None:
     return None
 
 
-def _criterion_drift_error(lines: list[str]) -> str | None:
+def _criterion_drift_error(
+    lines: list[str],
+    *,
+    phase: str = "body",
+) -> str | None:
     """判据动词白名单（专家六轮 2026-08-07；2026-08-09 用户三轮反馈定「零容忍」）。
 
     接触系当胜出主张（我先摸到→该我看）是失方自封弱判据；操作系（按到电视→就算）
@@ -415,9 +503,11 @@ def _criterion_drift_error(lines: list[str]) -> str | None:
             hit = "松手仪式判据（同时松手/数到三一起松/松手后谁先）"
         elif _RE_RESULT_CRITERION.search(ln):
             hit = "结果系判据（画面出来/灯亮/有声音才算）"
-        elif _RE_OPERATE_CRITERION.search(ln):
+        elif _RE_OPERATE_CRITERION.search(ln) and not _RE_OPERATE_ABSTRACT_REF.search(ln):
             hit = "操作系判据（按到电视/按键就算）"
         elif _RE_STATE_CRITERION.search(ln):
+            if phase == "body" and i < 2:
+                continue
             hit = "状态系判据（松手/放手算输）"
         elif _RE_SEQUENCE_CRITERION.search(ln):
             hit = "时序判据（我先动/谁先跑/抢跑算输）"
@@ -583,6 +673,16 @@ def append_c_body_errors(story: dict, errors: list[str]) -> None:
         errors.append(dispatch_on_whole)
         return
 
+    physics_state = _whole_item_physics_state_error(story, lines)
+    if physics_state:
+        errors.append(physics_state)
+        return
+
+    tail_speaker = _whole_item_tail_speaker_error(story, lines, speakers)
+    if tail_speaker:
+        errors.append(tail_speaker)
+        return
+
     criterion_drift = _criterion_drift_error(lines)
     if criterion_drift:
         errors.append(criterion_drift)
@@ -601,19 +701,27 @@ def append_c_body_errors(story: dict, errors: list[str]) -> None:
         )
         return
 
-    # 逐字照抄正例（v35 酸奶稿抓）：≥2 句与 line.py 酸奶合规示范逐字重复即整段复刻。
-    # 开场两句（场景定格）除外——「姐姐，冰箱里最后一瓶酸奶给我喝吧」式开场是通用模板。
-    copy_hits = [
-        f"第{j + 1}句「{ln}」"
-        for j, ln in enumerate(lines[2:], 2)
-        if _EXAMPLE_NORM_SKIP.sub("", ln) in _C_EXAMPLE_PHARASES_NORM
-    ]
-    if len(copy_hits) >= 2:
-        errors.append(
-            "C类正文逐字照抄正例（" + "；".join(copy_hits) + "）："
-            "正例只许仿照论辩骨架与句式，禁逐字复用原句——须换自己的措辞，"
-            "整段搬正例中后段即废稿",
-        )
+    from app.services.daily_story.provenance_gate import (
+        c_example_phrases_for_profile,
+        c_whole_item_rule_upgrade_provenance_error,
+        example_copy_error,
+    )
+
+    profile = c_criterion_theme_profile(_story_criterion_anchor(story))
+    if profile == "whole_item":
+        prov_err = c_whole_item_rule_upgrade_provenance_error(lines)
+        if prov_err:
+            errors.append(prov_err)
+            return
+
+    copy_err = example_copy_error(
+        lines,
+        c_example_phrases_for_profile(profile),
+        min_hits=2,
+        skip_first=2,
+    )
+    if copy_err:
+        errors.append(copy_err)
         return
 
     grading = _grading_bickering_error(lines)

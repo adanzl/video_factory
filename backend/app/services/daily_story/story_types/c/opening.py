@@ -209,6 +209,7 @@ def append_c_opening_errors(
     type_code: str | None,
     errors: list[str],
     setting: str = "",
+    conflict_core: str = "",
 ) -> None:
     code = (type_code or "").strip().upper()[:1]
     if code != "C":
@@ -293,6 +294,17 @@ def append_c_opening_errors(
                 "第一层冲突是占有遥控器，改「我先拿到的！」「我抢到了！」",
             )
             break
+
+    from app.services.daily_story.possession_contract import (
+        append_whole_item_opening_prevalidate_errors,
+    )
+
+    append_whole_item_opening_prevalidate_errors(
+        normalized,
+        setting=setting,
+        conflict_core=conflict_core,
+        errors=errors,
+    )
 
 
 def _opening_body_overlap(a: str, b: str) -> bool:

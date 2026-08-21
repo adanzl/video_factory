@@ -200,6 +200,7 @@ _C_CRITERION_INJECT_WHOLE_ITEM = """\
 - 判据链锚定占有型，只许「谁先拿到/抢到/攥手里归谁」。
 - 禁止另立新赛规：同时松手/数到三一起松/单脚站/慢数/谁反悔谁小狗/我分你先挑。
 - 中间段规则三轮升级（正常→钻定义→荒谬一条），禁4层改定义清单；
+  升级轴走**规则文本**（定义争夺/证明/规则套娃），禁抱离沙发/双脚离地/单脚蹦。
   每层一句新判据+灿灿「行/好/还有吗」翻转。
 - **灿灿规则机器**：只追问哪条作数/还有吗，禁作废/这局不算/你乱拽改规。
 - 末句嘴硬优先锚主题（你赢规则不算赢我），少用泛化「明天我抢先」。
@@ -253,7 +254,7 @@ def _format_c_whole_item_body_criterion_summary(pkg: dict[str, Any]) -> str:
 - 回旋镖原话（末段须逐字引用一次）：「{bq}」
 - 末句须由立规人（{maker}）嘴硬收场；立规人必须输。
 
-请严格按 user beats 状态机写满三轮升级（占有→状态→姿势）→权力翻转
+请严格按 user beats 状态机写满三轮升级（占有定义→定义争夺→荒谬规则）→权力翻转
 （「哪条作数」，禁用「按哪条/按遥控器」）→回旋镖→嘴硬。
 升级判据动词白名单：{C_WHOLE_ITEM_POSSESSIVE_VERBS_HINT}；禁够/碰/摸/搭/边/环住。
 **禁止**把以上要点当正文逐条抄写；须扩写具体动作对白，写满
@@ -2697,6 +2698,7 @@ class DeepSeekClient(LLMClient):
             else (_TEMP_CREATIVE_BLUEPRINT if blueprint else _TEMP_CREATIVE_HIGH)
         )
         for attempt in range(max_attempts):
+            patch_notes: list[str] = []
             # 全程 Flash：关 thinking + 高温，不用 Pro/thinking（太慢）。
             # pro 两轮实测 1/4 更差（v21/v22：过稿质量 47/62 反而更低、慢 2-3 倍），
             # 判据漂移不是换更强模型能解决的，回 flash（v20 基线 2/4、质量 83/84）。
@@ -2815,6 +2817,16 @@ class DeepSeekClient(LLMClient):
                     raise ValueError(f"daily_story 校验失败: {short_err}")
                 validate_daily_story_json(raw, phase="body")
                 if isinstance(raw, dict):
+                    from app.services.daily_story.possession_contract import (
+                        CONTRACT_VERSION,
+                    )
+
+                    raw["_generation_meta"] = {
+                        "contract_version": CONTRACT_VERSION,
+                        "natural_pass": attempt == 0 and not patch_notes,
+                        "body_attempt": attempt + 1,
+                        "patch_notes": list(patch_notes),
+                    }
                     raw.pop("_theme", None)
                     raw.pop("_story_type", None)
                     if blueprint:
@@ -2948,12 +2960,10 @@ class DeepSeekClient(LLMClient):
                         )
                     ):
                         from app.services.daily_story.prompts import _clone_story
-                        from app.services.daily_story.story_types.c.patch import (
-                            patch_c_whole_item_semantic_expand,
-                        )
+                        from app.services.daily_story.story_types.c.patch import patch_c_body
 
                         fallback = _clone_story(prev_story)
-                        fb_notes = patch_c_whole_item_semantic_expand(fallback)
+                        fb_notes = patch_c_body(fallback)
                         if fb_notes:
                             fallback["_theme"] = theme
                             fallback["_story_type"] = story_type

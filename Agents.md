@@ -6,7 +6,7 @@
 
 - 局域网 主机: mini  
 - 广域网 主机：vip.sy.frp.one:57904
-- 广域网 主机：57c42474b0ea.ofalias.net:58186
+- 广域网 主机：cn-hk-bgp-4.ofalias.net:27358
 用户名 leo
 密码 见.env 里的 SSH_PASSWORD
 优先级从上到下
@@ -49,17 +49,19 @@ DeepSeek 网页模拟 API，不是 Claude 子代理。涉及提示词方案评�
 - Deepseek 说明 `POST http://xxx/api/deepseek/doc`
 - 千问 说明 `POST http://xxx/api/qwen/doc`
 - Agnes 说明 `POST http://xxx/api/agnes/doc`
+- ChatGPT 说明 `POST http://xxx/api/chatgpt/doc`
 
 ### 状态查
 
  `GET /api/deepseek/status`
  `GET /api/qwen/status`
  `GET /api/agnes/status`
+ `GET /api/chatgpt/status`
 
 ### 地址
 
 - 优先级从上到下
-<!-- - 127.0.0.1  -->
+- <http://127.0.0.1:8848> (只有ChatGPT)
 - <http://192.168.50.172:8848/mock_agent>
 - <https://leo-zhao.natapp4.cc/mock_agent>
 
@@ -120,6 +122,7 @@ DeepSeek 网页模拟 API，不是 Claude 子代理。涉及提示词方案评�
 
 - 3家审核表示：专家 mock、qwen mock、你 审核
 - setting没所谓的，用户看不到
+- 给mock的对话，同一类问题不要新开对话
 
 ## 快捷命令
 

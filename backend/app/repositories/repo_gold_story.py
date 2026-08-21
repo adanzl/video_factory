@@ -1,0 +1,276 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+from datetime import datetime, timezone
+from typing import Any
+
+from app.repositories import sql_exec as sql
+
+_GOLD_STORY_COLUMNS = (
+    "id, source, source_id, url, status, mechanism, structure_type, "
+    "theme_family, title, conflict_core, auto_score, engagement_score, "
+    "content_hash, times_used, avg_humor_delta, copy_hits, "
+    "transcript_backend, transcript_path, payload_json, "
+    "created_at, updated_at, last_used_at"
+)
+
+_MIN_AUTO_SCORE = 0.55
+
+
+def normalize_story_raw(text: str) -> str:
+    t = str(text or "").strip().lower()
+    t = re.sub(r"\s+", " ", t)
+    return t
+
+
+def content_hash(story_raw: str) -> str:
+    return hashlib.sha256(normalize_story_raw(story_raw).encode()).hexdigest()
+
+
+def compute_auto_score(
+    *,
+    engagement_norm: float,
+    extract_confidence: float,
+    structure_confidence: float,
+    dialogue_confidence: float,
+) -> float:
+    return round(
+        0.25 * engagement_norm
+        + 0.25 * extract_confidence
+        + 0.25 * structure_confidence
+        + 0.25 * dialogue_confidence,
+        4,
+    )
+
+
+def _row_to_dict(row: dict) -> dict:
+    data = dict(row)
+    raw = data.get("payload_json") or "{}"
+    try:
+        data["payload"] = json.loads(raw)
+    except json.JSONDecodeError:
+        data["payload"] = {}
+    data.pop("payload_json", None)
+    return data
+
+
+def get_story(gold_story_id: int) -> dict:
+    row = sql.fetchone(
+        f"SELECT {_GOLD_STORY_COLUMNS} FROM gold_story WHERE id = ?",
+        (gold_story_id,),
+    )
+    sql.commit()
+    if row is None:
+        raise KeyError(f"gold_story {gold_story_id} not found")
+    return _row_to_dict(row)
+
+
+def list_stories(
+    *,
+    status: str | None = None,
+    structure_type: str | None = None,
+    mechanism: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[dict]:
+    limit = max(1, min(limit, 200))
+    offset = max(0, offset)
+    clauses: list[str] = []
+    params: list[Any] = []
+    if status:
+        clauses.append("status = ?")
+        params.append(status)
+    if structure_type:
+        clauses.append("structure_type = ?")
+        params.append(structure_type)
+    if mechanism:
+        clauses.append("mechanism = ?")
+        params.append(mechanism)
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    rows = sql.fetchall(
+        f"""
+        SELECT {_GOLD_STORY_COLUMNS}
+        FROM gold_story{where}
+        ORDER BY auto_score DESC, id DESC
+        LIMIT ? OFFSET ?
+        """,
+        (*params, limit, offset),
+    )
+    sql.commit()
+    return [_row_to_dict(row) for row in rows]
+
+
+def count_stories(*, status: str | None = None) -> int:
+    if status:
+        row = sql.fetchone(
+            "SELECT COUNT(*) AS cnt FROM gold_story WHERE status = ?",
+            (status,),
+        )
+    else:
+        row = sql.fetchone("SELECT COUNT(*) AS cnt FROM gold_story")
+    sql.commit()
+    return int(row["cnt"]) if row else 0
+
+
+def insert_or_skip(
+    *,
+    source: str,
+    source_id: str,
+    url: str,
+    mechanism: str,
+    structure_type: str,
+    story_raw: str,
+    payload: dict[str, Any],
+    title: str | None = None,
+    conflict_core: str | None = None,
+    theme_family: str | None = None,
+    engagement_score: float | None = None,
+    engagement_norm: float = 0.7,
+    extract_confidence: float | None = None,
+    structure_confidence: float | None = None,
+    dialogue_confidence: float | None = None,
+    auto_score: float | None = None,
+    transcript_backend: str | None = None,
+    transcript_path: str | None = None,
+    status: str = "active",
+) -> dict[str, Any]:
+    """H4 入库：过线则 INSERT，否则 skip。返回 action/id/reason。"""
+    extract_confidence = float(
+        extract_confidence
+        if extract_confidence is not None
+        else payload.get("extract_confidence", 0.0)
+    )
+    structure_confidence = float(
+        structure_confidence
+        if structure_confidence is not None
+        else payload.get("structure_confidence", 0.0)
+    )
+    dialogue_confidence = float(
+        dialogue_confidence
+        if dialogue_confidence is not None
+        else payload.get("dialogue_confidence", 0.0)
+    )
+    score = (
+        float(auto_score)
+        if auto_score is not None
+        else compute_auto_score(
+            engagement_norm=engagement_norm,
+            extract_confidence=extract_confidence,
+            structure_confidence=structure_confidence,
+            dialogue_confidence=dialogue_confidence,
+        )
+    )
+    if score < _MIN_AUTO_SCORE:
+        return {
+            "action": "skip",
+            "reason": "auto_score_below_threshold",
+            "auto_score": score,
+        }
+
+    payload = dict(payload)
+    payload.setdefault("story_raw", story_raw)
+    payload.setdefault("extract_confidence", extract_confidence)
+    payload.setdefault("structure_confidence", structure_confidence)
+    payload.setdefault("dialogue_confidence", dialogue_confidence)
+
+    c_hash = content_hash(story_raw)
+    dup = sql.fetchone(
+        "SELECT id FROM gold_story WHERE content_hash = ?",
+        (c_hash,),
+    )
+    if dup:
+        sql.commit()
+        return {
+            "action": "skip",
+            "reason": "duplicate_content_hash",
+            "id": int(dup["id"]),
+        }
+
+    existing = sql.fetchone(
+        "SELECT id FROM gold_story WHERE source = ? AND source_id = ?",
+        (source, source_id),
+    )
+    if existing:
+        sql.commit()
+        return {
+            "action": "skip",
+            "reason": "duplicate_source",
+            "id": int(existing["id"]),
+        }
+
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    result = sql.execute(
+        """
+        INSERT INTO gold_story (
+            source, source_id, url, status, mechanism, structure_type,
+            theme_family, title, conflict_core, auto_score, engagement_score,
+            content_hash, transcript_backend, transcript_path, payload_json,
+            created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            source,
+            source_id,
+            url,
+            status,
+            mechanism,
+            structure_type,
+            theme_family,
+            title,
+            conflict_core,
+            score,
+            engagement_score,
+            c_hash,
+            transcript_backend,
+            transcript_path,
+            json.dumps(payload, ensure_ascii=False),
+            now,
+            now,
+        ),
+    )
+    sql.commit()
+    new_id = int(result.lastrowid or 0)
+    return {"action": "insert", "id": new_id, "auto_score": score}
+
+
+def pick(
+    *,
+    theme: str,
+    story_type: str,
+    theme_family: str | None = None,
+    limit: int = 1,
+) -> list[dict]:
+    """H5 检索：structure_type 必须匹配，promoted 优先。"""
+    limit = max(1, min(limit, 10))
+    theme_q = f"%{str(theme or '').strip()}%"
+    clauses = [
+        "status IN ('promoted', 'active')",
+        "structure_type = ?",
+    ]
+    params: list[Any] = [story_type.upper()]
+    if theme_family:
+        clauses.append("theme_family = ?")
+        params.append(theme_family)
+    else:
+        clauses.append(
+            "(theme_family IS NULL OR theme_family = '' OR ? LIKE '%' || theme_family || '%')"
+        )
+        params.append(str(theme or "").strip())
+    where = " AND ".join(clauses)
+    rows = sql.fetchall(
+        f"""
+        SELECT {_GOLD_STORY_COLUMNS}
+        FROM gold_story
+        WHERE {where}
+        ORDER BY
+            CASE status WHEN 'promoted' THEN 0 ELSE 1 END,
+            auto_score DESC,
+            id DESC
+        LIMIT ?
+        """,
+        (*params, limit),
+    )
+    sql.commit()
+    return [_row_to_dict(row) for row in rows]
