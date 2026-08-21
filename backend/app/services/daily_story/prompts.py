@@ -1730,6 +1730,37 @@ def build_daily_story_framework_prompts(
     return system, user
 
 
+def build_gold_story_block(story: dict) -> str:
+    """H6/H7 注入块（见 docs/日常故事-金故事流水线.md §11）。"""
+    from app.services.daily_story.gold_story.inject import (
+        build_gold_story_block as _build,
+    )
+
+    return _build(story)
+
+
+def _resolve_gold_story_user_block(
+    *,
+    theme: str,
+    story_type: str | None,
+    framework: dict | None,
+) -> tuple[str, dict | None]:
+    if not story_type:
+        return "", None
+    theme_family = None
+    if framework:
+        raw = framework.get("theme_family")
+        if raw:
+            theme_family = str(raw).strip() or None
+    from app.services.daily_story.gold_story.inject import resolve_gold_story_block
+
+    return resolve_gold_story_block(
+        theme=theme,
+        story_type=story_type,
+        theme_family=theme_family,
+    )
+
+
 def build_daily_story_prompts(
     theme: str,
     *,
@@ -1804,6 +1835,13 @@ def build_daily_story_prompts(
             "三轮升级须占有→定义→荒谬逐层加码，缺递进或第三轮非姿势会结构降分。\n\n"
             f"{user}"
         )
+    gold_block, _gold_row = _resolve_gold_story_user_block(
+        theme=theme,
+        story_type=story_type,
+        framework=framework,
+    )
+    if gold_block:
+        user = f"{gold_block}\n\n{user}"
     return (
         _daily_story_system_prompt(
             length_mode=length_mode,

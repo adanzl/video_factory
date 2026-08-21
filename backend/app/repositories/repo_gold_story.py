@@ -7,6 +7,11 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.repositories import sql_exec as sql
+from app.services.daily_story.gold_story.types import (
+    normalize_mechanism,
+    normalize_structure_type,
+    validate_mechanism_structure_pair,
+)
 
 _GOLD_STORY_COLUMNS = (
     "id, source, source_id, url, status, mechanism, structure_type, "
@@ -54,6 +59,15 @@ def _row_to_dict(row: dict) -> dict:
         data["payload"] = {}
     data.pop("payload_json", None)
     return data
+
+
+def has_source(*, source: str, source_id: str) -> bool:
+    row = sql.fetchone(
+        "SELECT id FROM gold_story WHERE source = ? AND source_id = ?",
+        (source, source_id),
+    )
+    sql.commit()
+    return row is not None
 
 
 def get_story(gold_story_id: int) -> dict:
@@ -137,6 +151,9 @@ def insert_or_skip(
     status: str = "active",
 ) -> dict[str, Any]:
     """H4 入库：过线则 INSERT，否则 skip。返回 action/id/reason。"""
+    mechanism = normalize_mechanism(mechanism)
+    structure_type = normalize_structure_type(structure_type)
+    validate_mechanism_structure_pair(mechanism, structure_type)
     extract_confidence = float(
         extract_confidence
         if extract_confidence is not None
@@ -243,13 +260,14 @@ def pick(
     limit: int = 1,
 ) -> list[dict]:
     """H5 检索：structure_type 必须匹配，promoted 优先。"""
+    story_type = normalize_structure_type(story_type)
     limit = max(1, min(limit, 10))
     theme_q = f"%{str(theme or '').strip()}%"
     clauses = [
         "status IN ('promoted', 'active')",
         "structure_type = ?",
     ]
-    params: list[Any] = [story_type.upper()]
+    params: list[Any] = [story_type]
     if theme_family:
         clauses.append("theme_family = ?")
         params.append(theme_family)
@@ -274,3 +292,74 @@ def pick(
     )
     sql.commit()
     return [_row_to_dict(row) for row in rows]
+
+
+def fetch_recent_inject_mechanisms(
+    *,
+    story_type: str,
+    limit: int = 3,
+) -> list[str]:
+    """近 N 次注入用过的 mechanism（H5 降权）。"""
+    story_type = normalize_structure_type(story_type)
+    limit = max(1, min(limit, 10))
+    rows = sql.fetchall(
+        """
+        SELECT g.mechanism
+        FROM gold_story_inject_log l
+        JOIN gold_story g ON g.id = l.gold_story_id
+        WHERE l.story_type = ?
+        ORDER BY l.created_at DESC
+        LIMIT ?
+        """,
+        (story_type, limit),
+    )
+    sql.commit()
+    return [str(row["mechanism"]) for row in rows if row.get("mechanism")]
+
+
+def record_inject(
+    *,
+    gold_story_id: int,
+    daily_story_id: int | None = None,
+    job_id: int | None = None,
+    theme: str | None = None,
+    story_type: str | None = None,
+    humor_score: int | None = None,
+    baseline_humor: int | None = None,
+    humor_delta: float | None = None,
+    copy_hit: int = 0,
+) -> int:
+    """H9：写入 inject_log 并更新 gold_story 使用统计。"""
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    result = sql.execute(
+        """
+        INSERT INTO gold_story_inject_log (
+            gold_story_id, daily_story_id, job_id, theme, story_type,
+            humor_score, baseline_humor, humor_delta, copy_hit, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            gold_story_id,
+            daily_story_id,
+            job_id,
+            theme,
+            story_type,
+            humor_score,
+            baseline_humor,
+            humor_delta,
+            copy_hit,
+            now,
+        ),
+    )
+    sql.execute(
+        """
+        UPDATE gold_story
+        SET times_used = times_used + 1,
+            last_used_at = ?,
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (now, now, gold_story_id),
+    )
+    sql.commit()
+    return int(result.lastrowid or 0)
