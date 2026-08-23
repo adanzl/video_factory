@@ -96,6 +96,8 @@ def export_story_files(
         "extract_confidence": payload.get("extract_confidence"),
         "structure_confidence": payload.get("structure_confidence"),
         "dialogue_confidence": payload.get("dialogue_confidence"),
+        "status": row.get("status"),
+        "audit": payload.get("audit"),
     }
     out_dir = story_export_dir(config)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -105,6 +107,7 @@ def export_story_files(
         json.dumps(export, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    audit = export.get("audit") if isinstance(export.get("audit"), dict) else {}
     md_lines = [
         f"# {export.get('title') or '金故事'}",
         "",
@@ -112,23 +115,51 @@ def export_story_files(
         f"- URL: {export.get('url')}",
         f"- 机制: {export.get('mechanism')} / 结构: {export.get('structure_type')}",
         f"- auto_score: {export.get('auto_score')}",
+        f"- status: {export.get('status') or 'active'}",
         f"- story_raw 字数: {len(str(export.get('story_raw') or ''))}",
         f"- 逐字稿字数: {len(transcript_main.replace(chr(10), ''))}",
-        "",
-        "## 冲突核",
-        str(export.get("conflict_core") or ""),
-        "",
-        "## 逐字稿（修复 + 说话人）",
-        transcript_main_display or "（无）",
-        "",
-        "## ASR 原文",
-        transcript_raw_display or "（无）",
-        "",
-        "## story_raw",
-        str(export.get("story_raw") or "（空）"),
-        "",
-        "## beat",
     ]
+    audit_pass = audit.get("pass")
+    if audit_pass is not None:
+        md_lines.append(f"- 机审: {'通过' if audit_pass else '未通过'}")
+    md_lines.extend(["", "## 机审"])
+    if audit:
+        md_lines.append(f"阶段: {audit.get('stage') or ''}")
+        reasons = audit.get("reject_reasons") or audit.get("rule_reasons") or []
+        if reasons:
+            md_lines.append(f"原因: {'；'.join(str(r) for r in reasons)}")
+        llm = audit.get("llm")
+        if isinstance(llm, dict):
+            md_lines.append(
+                "LLM: "
+                f"sibling={llm.get('sibling_fit')} "
+                f"age={llm.get('age_fit')} "
+                f"conflict={llm.get('conflict_usable')} "
+                f"mapping={llm.get('mapping_fit')}"
+            )
+            note = str(llm.get("audit_notes") or "").strip()
+            if note:
+                md_lines.append(f"备注: {note}")
+    else:
+        md_lines.append("（无机审记录）")
+    md_lines.extend(
+        [
+            "",
+            "## 冲突核",
+            str(export.get("conflict_core") or ""),
+            "",
+            "## 逐字稿（修复 + 说话人）",
+            transcript_main_display or "（无）",
+            "",
+            "## ASR 原文",
+            transcript_raw_display or "（无）",
+            "",
+            "## story_raw",
+            str(export.get("story_raw") or "（空）"),
+            "",
+            "## beat",
+        ]
+    )
     for i, beat in enumerate(export.get("beat") or [], 1):
         md_lines.append(f"{i}. {beat}")
     md_lines.extend(["", "## dialogue_seed"])

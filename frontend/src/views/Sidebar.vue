@@ -27,6 +27,10 @@
           <el-icon><ChatDotRound /></el-icon>
           <template #title>日常故事</template>
         </el-menu-item>
+        <el-menu-item index="/gold-chat">
+          <el-icon><Medal /></el-icon>
+          <template #title>gold_chat</template>
+        </el-menu-item>
         <el-menu-item index="/materials/audio">
           <el-icon><Headset /></el-icon>
           <template #title>音频素材</template>
@@ -51,7 +55,7 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { HomeFilled, List, Document, Setting, Expand, Fold, VideoCamera, Search, Headset, ChatDotRound } from "@element-plus/icons-vue";
+import { HomeFilled, List, Document, Setting, Expand, Fold, VideoCamera, Search, Headset, ChatDotRound, Medal } from "@element-plus/icons-vue";
 import { useAppStore } from "@/stores/app";
 
 const emit = defineEmits<{

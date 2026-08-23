@@ -7,6 +7,7 @@ import PageMaterialAudio from "@/views/material/PageMaterialAudio.vue";
 import PageClipSearch from "@/views/clips/PageClipSearch.vue";
 import PageTopic from "@/views/topic/PageTopic.vue";
 import PageDailyStory from "@/views/daily_story/PageDailyStory.vue";
+import PageGoldChat from "@/views/gold_chat/PageGoldChat.vue";
 import PageConfig from "@/views/config/PageConfig.vue";
 
 const routes: RouteRecordRaw[] = [
@@ -48,6 +49,11 @@ const routes: RouteRecordRaw[] = [
     path: "/daily-story",
     name: "DailyStory",
     component: PageDailyStory,
+  },
+  {
+    path: "/gold-chat",
+    name: "GoldChat",
+    component: PageGoldChat,
   },
   {
     path: "/config",

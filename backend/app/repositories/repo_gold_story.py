@@ -81,6 +81,23 @@ def get_story(gold_story_id: int) -> dict:
     return _row_to_dict(row)
 
 
+def get_by_source_id(
+    *,
+    source_id: str,
+    source: str = "bilibili",
+) -> dict | None:
+    row = sql.fetchone(
+        f"""
+        SELECT {_GOLD_STORY_COLUMNS}
+        FROM gold_story
+        WHERE source = ? AND source_id = ?
+        """,
+        (source, source_id),
+    )
+    sql.commit()
+    return _row_to_dict(row) if row else None
+
+
 def list_stories(
     *,
     status: str | None = None,
@@ -363,3 +380,26 @@ def record_inject(
     )
     sql.commit()
     return int(result.lastrowid or 0)
+
+
+def update_story_status(
+    gold_story_id: int,
+    *,
+    status: str,
+    audit: dict[str, Any] | None = None,
+) -> None:
+    """更新 status；可选合并 payload.audit。"""
+    row = get_story(gold_story_id)
+    payload = dict(row.get("payload") or {})
+    if audit is not None:
+        payload["audit"] = audit
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    sql.execute(
+        """
+        UPDATE gold_story
+        SET status = ?, payload_json = ?, updated_at = ?
+        WHERE id = ?
+        """,
+        (status, json.dumps(payload, ensure_ascii=False), now, gold_story_id),
+    )
+    sql.commit()

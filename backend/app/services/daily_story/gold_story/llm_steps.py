@@ -305,3 +305,118 @@ def build_dialogue_seed(
     if confidence < 0.5:
         raise ValueError(f"H3b low dialogue_confidence={confidence:.2f}")
     return data
+
+
+_H4A_SYSTEM = (
+    "你是金故事机审员。判断站外微型故事能否迁移为"
+    "昭昭(7岁弟)+灿灿(10岁姐)姐弟日常冲突短视频。\n"
+    "采集词可以宽，但你须严格卡掉：母子/婴儿婴语为主、"
+    "冲突太短、映射距离太远、妈妈当主角的稿子。\n"
+    "只输出 JSON。"
+)
+
+_H4A_USER = """原视频标题：{video_title}
+结构化标题：{title}
+机制/结构：{mechanism} / {structure_type}
+
+冲突核：{conflict_core}
+
+story_raw：
+{story_raw}
+
+speaker_map_note：
+{speaker_map_note}
+
+dialogue_seed：
+{dialogue_seed}
+
+beat：
+{beat}
+
+逐字稿摘录：
+{transcript}
+
+输出 JSON：
+{{
+  "pass": true,
+  "sibling_fit": 0.0,
+  "age_fit": 0.0,
+  "conflict_usable": 0.0,
+  "mapping_fit": 0.0,
+  "reject_reasons": [],
+  "audit_notes": "一句"
+}}
+
+评分说明（0–1，越高越好）：
+- sibling_fit：是否姐弟/兄妹/两孩冲突，而非母子育儿/纯可爱
+- age_fit：能否自然落到 7 岁弟 + 10 岁姐（拒绝婴语、过小）
+- conflict_usable：是否有可拍争/抢/歪理/Threat 链，不是温馨旁白
+- mapping_fit：映射到昭昭/灿灿是否牵强（妈妈当第三主角应降分）
+
+pass=true 仅当四维均 ≥0.55 且无硬伤；否则 pass=false 并列出 reject_reasons。
+"""
+
+
+def audit_story_fit(
+    *,
+    video_title: str,
+    title: str,
+    story_raw: str,
+    conflict_core: str,
+    mechanism: str,
+    structure_type: str,
+    speaker_map_note: str,
+    dialogue_seed: list[Any],
+    beat: list[Any],
+    transcript: str = "",
+    description: str = "",
+    min_sibling_fit: float = 0.55,
+    min_age_fit: float = 0.55,
+    min_conflict_usable: float = 0.55,
+    min_mapping_fit: float = 0.55,
+) -> dict[str, Any]:
+    """H4a LLM 机审。"""
+    user = _H4A_USER.format(
+        video_title=video_title,
+        title=title,
+        mechanism=mechanism,
+        structure_type=structure_type,
+        conflict_core=conflict_core[:500],
+        story_raw=story_raw[:4000],
+        speaker_map_note=speaker_map_note[:800] or "（无）",
+        dialogue_seed=json.dumps(dialogue_seed, ensure_ascii=False, indent=2)[:4000],
+        beat=json.dumps(beat, ensure_ascii=False)[:2000],
+        transcript=str(transcript or description or "")[:4000] or "（无）",
+    )
+    data = _chat_json(_H4A_SYSTEM, user)
+    sibling_fit = float(data.get("sibling_fit") or 0.0)
+    age_fit = float(data.get("age_fit") or 0.0)
+    conflict_usable = float(data.get("conflict_usable") or 0.0)
+    mapping_fit = float(data.get("mapping_fit") or 0.0)
+    llm_pass = bool(data.get("pass"))
+    reasons = [str(r) for r in (data.get("reject_reasons") or []) if str(r).strip()]
+    thresholds_ok = (
+        sibling_fit >= min_sibling_fit
+        and age_fit >= min_age_fit
+        and conflict_usable >= min_conflict_usable
+        and mapping_fit >= min_mapping_fit
+    )
+    passed = llm_pass and thresholds_ok
+    if not thresholds_ok:
+        if sibling_fit < min_sibling_fit:
+            reasons.append(f"sibling_fit_low:{sibling_fit:.2f}")
+        if age_fit < min_age_fit:
+            reasons.append(f"age_fit_low:{age_fit:.2f}")
+        if conflict_usable < min_conflict_usable:
+            reasons.append(f"conflict_usable_low:{conflict_usable:.2f}")
+        if mapping_fit < min_mapping_fit:
+            reasons.append(f"mapping_fit_low:{mapping_fit:.2f}")
+    return {
+        "pass": passed,
+        "sibling_fit": sibling_fit,
+        "age_fit": age_fit,
+        "conflict_usable": conflict_usable,
+        "mapping_fit": mapping_fit,
+        "reject_reasons": reasons,
+        "audit_notes": str(data.get("audit_notes") or "").strip(),
+    }
