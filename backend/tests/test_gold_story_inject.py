@@ -19,6 +19,20 @@ _SAMPLE = {
     "conflict_core": "独占不让吃，被质问后歪理自洽",
     "payload": {
         "beat": ["独占不让", "被质问", "歪理自洽"],
+        "scene_contract": {
+            "source_type": "field",
+            "location": "餐桌",
+            "object": "果汁",
+            "characters": ["昭昭", "灿灿"],
+            "conflict": "争果汁",
+            "mom_lines_max": 0,
+            "beat_chain": [
+                {"speaker": "灿灿", "intent": "宣布占有"},
+                {"speaker": "昭昭", "intent": "质疑"},
+                {"speaker": "灿灿", "intent": "歪理"},
+                {"speaker": "昭昭", "intent": "收束"},
+            ],
+        },
         "dialogue_seed": [
             {"speaker": "灿灿", "intent": "宣布占有"},
             {"speaker": "昭昭", "intent": "质疑"},
@@ -35,6 +49,7 @@ def test_build_gold_story_block_shape():
     assert "M2" in block
     assert "1. 独占不让" in block
     assert "灿灿：宣布占有" in block
+    assert "scene_contract" in block
     assert "禁词：酱碗" in block
     assert "story_raw" not in block.lower()
 

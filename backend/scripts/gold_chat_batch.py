@@ -5,6 +5,8 @@
   conda run -n flask_env python -m scripts.gold_chat_batch run --max 10
   conda run -n flask_env python -m scripts.gold_chat_batch run \\
     --source-id BV1QSQ7BYEhH --force
+  conda run -n flask_env python -m scripts.gold_chat_batch polish \\
+    --source-id BV1ms411a7im
   conda run -n flask_env python -m scripts.gold_chat_batch list
 """
 
@@ -23,7 +25,10 @@ from app.config import Config
 from app.core import create_app
 from app.repositories import repo_gold_story
 from app.services.daily_story.gold_story.gold_chat_batch import run_gold_chat_batch
-from app.services.daily_story.gold_story.gold_chat_convert import gold_chat_export_dir
+from app.services.daily_story.gold_story.gold_chat_convert import (
+    gold_chat_export_dir,
+    polish_gold_chat_export,
+)
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
@@ -51,6 +56,27 @@ def _cmd_run(args: argparse.Namespace) -> int:
     if not report.get("selected"):
         return 1
     return 1
+
+
+def _cmd_polish(args: argparse.Namespace) -> int:
+    cfg = Config()
+    app = create_app()
+    sid = str(args.source_id or "").strip()
+    if not sid and args.id:
+        with app.app_context():
+            row = repo_gold_story.get_story(int(args.id))
+            sid = str(row.get("source_id") or "")
+    if not sid:
+        print("need --source-id or --id", file=sys.stderr)
+        return 1
+    with app.app_context():
+        try:
+            report = polish_gold_chat_export(sid, config=cfg)
+        except (FileNotFoundError, ValueError) as exc:
+            print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
+            return 1
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 0 if report.get("ok") else 1
 
 
 def _cmd_list(args: argparse.Namespace) -> int:
@@ -118,6 +144,11 @@ def main(argv: list[str] | None = None) -> int:
         help="已导出也重跑",
     )
     p_run.set_defaults(func=_cmd_run)
+
+    p_polish = sub.add_parser("polish", help="童语化润色已导出 gold_chat")
+    p_polish.add_argument("--source-id", help="指定 BV")
+    p_polish.add_argument("--id", help="指定 gold_story.id")
+    p_polish.set_defaults(func=_cmd_polish)
 
     p_list = sub.add_parser("list", help="库内条目 vs 已导出对照")
     p_list.add_argument("--status", default="active")

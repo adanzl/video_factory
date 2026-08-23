@@ -7,6 +7,7 @@ from typing import Any
 
 from app.config import Config
 from app.services.daily_story.gold_story.transcript import format_transcript_display
+from app.services.daily_story.gold_story.scene_contract import format_scene_contract_block
 
 
 def story_export_dir(config: Config | None = None) -> Path:
@@ -77,7 +78,14 @@ def export_story_files(
         "theme_family": row.get("theme_family"),
         "conflict_core": row.get("conflict_core"),
         "auto_score": row.get("auto_score"),
-        "story_raw": payload.get("story_raw") or "",
+        "story_raw": payload.get("story_raw") or row.get("story_raw") or "",
+        "source_type": payload.get("source_type"),
+        "funny_signal": payload.get("funny_signal"),
+        "danmaku_laugh_ratio": payload.get("danmaku_laugh_ratio"),
+        "comment_laugh_ratio": payload.get("comment_laugh_ratio"),
+        "cute_not_funny": payload.get("cute_not_funny"),
+        "scene_contract": payload.get("scene_contract"),
+        "contract_confidence": payload.get("contract_confidence"),
         "transcript": transcript_main,
         "transcript_raw": transcript_raw,
         "transcript_repaired": transcript_repaired,
@@ -118,6 +126,9 @@ def export_story_files(
         f"- status: {export.get('status') or 'active'}",
         f"- story_raw 字数: {len(str(export.get('story_raw') or ''))}",
         f"- 逐字稿字数: {len(transcript_main.replace(chr(10), ''))}",
+        f"- funny_signal: {export.get('funny_signal')}",
+        f"- 弹幕笑密度: {export.get('danmaku_laugh_ratio')}",
+        f"- 热评笑反应: {export.get('comment_laugh_ratio')}",
     ]
     audit_pass = audit.get("pass")
     if audit_pass is not None:
@@ -156,6 +167,9 @@ def export_story_files(
             "",
             "## story_raw",
             str(export.get("story_raw") or "（空）"),
+            "",
+            "## scene_contract",
+            format_scene_contract_block(export.get("scene_contract") or {}),
             "",
             "## beat",
         ]

@@ -52,3 +52,23 @@ def test_repair_transcript_ok(monkeypatch):
     assert out["repair_confidence"] == 0.82
     assert len(out["lines"]) == 2
     assert out["lines"][0]["speaker"] == "妈妈"
+
+
+def test_trim_story_raw(monkeypatch):
+    long_text = "姐弟抢遥控器，弟弟放狠话要回家，姐姐嘴硬后又追上去问明天还玩吗。" * 20
+
+    def fake_chat(_system: str, _user: str) -> dict:
+        return {
+            "story_raw": long_text[:200],
+            "trim_notes": "删重复",
+        }
+
+    monkeypatch.setattr(llm_steps, "_chat_json", fake_chat)
+    out = llm_steps.trim_story_raw(long_text, max_chars=380)
+    assert len(out) <= 380
+    assert len(out) >= 80
+
+
+def test_trim_story_raw_skips_when_short():
+    text = "短故事" * 20
+    assert llm_steps.trim_story_raw(text, max_chars=380) == text

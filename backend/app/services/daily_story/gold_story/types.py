@@ -26,7 +26,7 @@ MECHANISM_STRUCTURE_MAP: dict[str, str] = {
     "M1": "C",  # 回旋镖：主落 C 公平执念收束
     "M2": "C",  # 自私包装公平
     "M3": "F",  # Threat 链式互升级，暂无 A–E 标准收束
-    "M4": "C",  # 吵架递台词 escalation
+    "M4": "G",  # 递台词 escalation → 嘴硬心软（争物/双规则用 M1/M2→C）
     "M5": "A",  # 拒和解 / 嘴硬加码
     "M6": "A",  # 成人概念童化歪问
     "M7": "D",  # 字面执行跑偏
@@ -38,7 +38,7 @@ MECHANISM_STRUCTURE_MAP: dict[str, str] = {
 # 金故事扩展结构类型（尚未进入 daily_story validate；F 已由 M3 启用）
 GOLD_STORY_EXTENDED_TYPE_LABELS: dict[str, str] = {
     "F": "Threat 互升级",
-    "G": "待立项",
+    "G": "嘴硬心软",
 }
 
 GOLD_STORY_STRUCTURE_LABELS: dict[str, str] = {
@@ -90,6 +90,12 @@ GOLD_STORY_TYPE_CATALOG: tuple[dict[str, str], ...] = (
         "name": "Threat 互升级",
         "formula": "互相威胁→加码→僵持/露怯",
         "closing": "无 A–E 标准收束（暂不入 A–E 任务注入）",
+    },
+    {
+        "code": "G",
+        "name": "嘴硬心软",
+        "formula": "互怼/数落→真情 pivot→愣住→暖收",
+        "closing": "暖收或嘴硬里带软（多样，不锁模板）",
     },
 )
 

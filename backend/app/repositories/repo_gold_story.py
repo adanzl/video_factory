@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.repositories import sql_exec as sql
+from app.services.daily_story.gold_story.funny_signal import DEFAULT_FUNNY_SIGNAL
 from app.services.daily_story.gold_story.types import (
     normalize_mechanism,
     normalize_structure_type,
@@ -34,18 +35,32 @@ def content_hash(story_raw: str) -> str:
     return hashlib.sha256(normalize_story_raw(story_raw).encode()).hexdigest()
 
 
+def _funny_signal_from_payload(payload: dict[str, Any]) -> float | None:
+    raw = payload.get("funny_signal")
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
 def compute_auto_score(
     *,
-    engagement_norm: float,
-    extract_confidence: float,
-    structure_confidence: float,
-    dialogue_confidence: float,
+    funny_signal: float | None = None,
+    engagement_norm: float | None = None,
+    extract_confidence: float = 0.0,
+    structure_confidence: float = 0.0,
+    dialogue_confidence: float = 0.0,
 ) -> float:
+    """auto_score 以观众 funny_signal 为主（0.45），LLM 置信为辅。"""
+    _ = engagement_norm
+    fs = DEFAULT_FUNNY_SIGNAL if funny_signal is None else float(funny_signal)
     return round(
-        0.25 * engagement_norm
-        + 0.25 * extract_confidence
-        + 0.25 * structure_confidence
-        + 0.25 * dialogue_confidence,
+        0.45 * fs
+        + 0.20 * float(extract_confidence)
+        + 0.20 * float(structure_confidence)
+        + 0.15 * float(dialogue_confidence),
         4,
     )
 
@@ -145,6 +160,145 @@ def count_stories(*, status: str | None = None) -> int:
     return int(row["cnt"]) if row else 0
 
 
+def delete_stories_by_status(status: str) -> int:
+    """删除指定 status 的金故事。"""
+    st = str(status or "").strip()
+    if not st:
+        return 0
+    sql.execute(
+        "DELETE FROM gold_story_inject_log WHERE gold_story_id IN "
+        "(SELECT id FROM gold_story WHERE status = ?)",
+        (st,),
+    )
+    result = sql.execute("DELETE FROM gold_story WHERE status = ?", (st,))
+    sql.commit()
+    return int(result.rowcount or 0)
+
+
+def delete_stories_except(keep_ids: list[int]) -> int:
+    """删除不在 keep_ids 内的 gold_story（及关联 inject_log）。"""
+    ids = sorted({int(x) for x in keep_ids if int(x) > 0})
+    if not ids:
+        raise ValueError("keep_ids 不能为空")
+    placeholders = ",".join("?" * len(ids))
+    sql.execute(
+        f"DELETE FROM gold_story_inject_log WHERE gold_story_id NOT IN ({placeholders})",
+        tuple(ids),
+    )
+    result = sql.execute(
+        f"DELETE FROM gold_story WHERE id NOT IN ({placeholders})",
+        tuple(ids),
+    )
+    sql.commit()
+    return int(result.rowcount or 0)
+
+
+def patch_story_payload(gold_story_id: int, patch: dict[str, Any]) -> None:
+    """合并 payload 字段（如 funny_signal）。"""
+    row = get_story(int(gold_story_id))
+    payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+    merged = {**payload, **patch}
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    sql.execute(
+        "UPDATE gold_story SET payload_json = ?, updated_at = ? WHERE id = ?",
+        (json.dumps(merged, ensure_ascii=False), now, int(gold_story_id)),
+    )
+    sql.commit()
+
+
+def update_story_from_pipeline(
+    gold_story_id: int,
+    *,
+    mechanism: str,
+    structure_type: str,
+    title: str,
+    conflict_core: str,
+    story_raw: str,
+    payload: dict[str, Any],
+    transcript_path: str | None = None,
+    transcript_backend: str | None = None,
+    engagement_score: float | None = None,
+    engagement_norm: float = 0.7,
+    extract_confidence: float | None = None,
+    structure_confidence: float | None = None,
+    dialogue_confidence: float | None = None,
+    auto_score: float | None = None,
+    status: str = "active",
+) -> dict[str, Any]:
+    """H0c–H4 重跑后回写 gold_story。"""
+    mechanism = normalize_mechanism(mechanism)
+    structure_type = normalize_structure_type(structure_type)
+    validate_mechanism_structure_pair(mechanism, structure_type)
+    extract_confidence = float(
+        extract_confidence
+        if extract_confidence is not None
+        else payload.get("extract_confidence", 0.0)
+    )
+    structure_confidence = float(
+        structure_confidence
+        if structure_confidence is not None
+        else payload.get("structure_confidence", 0.0)
+    )
+    dialogue_confidence = float(
+        dialogue_confidence
+        if dialogue_confidence is not None
+        else payload.get("dialogue_confidence", 0.0)
+    )
+    score = (
+        float(auto_score)
+        if auto_score is not None
+        else compute_auto_score(
+            funny_signal=_funny_signal_from_payload(payload),
+            engagement_norm=engagement_norm,
+            extract_confidence=extract_confidence,
+            structure_confidence=structure_confidence,
+            dialogue_confidence=dialogue_confidence,
+        )
+    )
+    payload = dict(payload)
+    payload["story_raw"] = story_raw
+    payload["extract_confidence"] = extract_confidence
+    payload["structure_confidence"] = structure_confidence
+    payload["dialogue_confidence"] = dialogue_confidence
+    c_hash = content_hash(story_raw)
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    sql.execute(
+        """
+        UPDATE gold_story
+        SET mechanism = ?,
+            structure_type = ?,
+            title = ?,
+            conflict_core = ?,
+            auto_score = ?,
+            engagement_score = ?,
+            content_hash = ?,
+            transcript_backend = ?,
+            transcript_path = ?,
+            payload_json = ?,
+            status = ?,
+            updated_at = ?
+        WHERE id = ?
+        """,
+        (
+            mechanism,
+            structure_type,
+            title,
+            conflict_core,
+            score,
+            engagement_score,
+            c_hash,
+            transcript_backend,
+            transcript_path,
+            json.dumps(payload, ensure_ascii=False),
+            status,
+            now,
+            gold_story_id,
+        ),
+    )
+    sql.commit()
+    return {"id": gold_story_id, "auto_score": score, "status": status}
+
+
 def insert_or_skip(
     *,
     source: str,
@@ -190,6 +344,7 @@ def insert_or_skip(
         float(auto_score)
         if auto_score is not None
         else compute_auto_score(
+            funny_signal=_funny_signal_from_payload(payload),
             engagement_norm=engagement_norm,
             extract_confidence=extract_confidence,
             structure_confidence=structure_confidence,
