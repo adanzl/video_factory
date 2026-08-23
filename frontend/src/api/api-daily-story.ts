@@ -32,7 +32,7 @@ export interface DailyStoryRecord {
   story: StoryContent;
   /** 内容标签，表列权威；与 story.key 同步 */
   key: string | null;
-  /** 矛盾类型代码 A–E，来自笑点解析 */
+  /** 矛盾类型代码 A–G，来自笑点解析 */
   story_type: string | null;
   job_id: number | null;
   status: string;
@@ -49,6 +49,7 @@ export const DAILY_STORY_TYPE_LABELS: Record<string, string> = {
   C: "公平执念",
   D: "字面执行",
   E: "妈妈破功",
+  G: "嘴硬心软",
 };
 
 /** 如 A权威翻车；无有效代码时返回 "-" */
@@ -67,7 +68,7 @@ export function formatDailyStoryTypes(codes: string[] | null | undefined): strin
   return parts.length ? parts.join(" / ") : "-";
 }
 
-export const DAILY_STORY_TYPE_OPTIONS = (["A", "B", "C", "D", "E"] as const).map(
+export const DAILY_STORY_TYPE_OPTIONS = (["A", "B", "C", "D", "E", "G"] as const).map(
   (code) => ({
     value: code,
     label: formatDailyStoryType(code),
@@ -143,7 +144,7 @@ export async function deleteDailyStories(ids: number[]): Promise<{ deleted: numb
 
 export interface DailyStoryThemeItem {
   theme: string;
-  /** 可适配的矛盾类型 A–E，首项为主类型 */
+  /** 可适配的矛盾类型 A–G，首项为主类型 */
   story_types: string[];
 }
 
@@ -160,10 +161,10 @@ function normalizeThemeItem(item: unknown): DailyStoryThemeItem | null {
   if (Array.isArray(row.story_types)) {
     story_types = row.story_types
       .map((c) => String(c ?? "").trim().toUpperCase().slice(0, 1))
-      .filter((c) => "ABCDE".includes(c));
+      .filter((c) => c in DAILY_STORY_TYPE_LABELS);
   } else if (row.story_type) {
     const c = String(row.story_type).trim().toUpperCase().slice(0, 1);
-    if ("ABCDE".includes(c)) story_types = [c];
+    if (c in DAILY_STORY_TYPE_LABELS) story_types = [c];
   }
   // 去重保序
   story_types = [...new Set(story_types)];
