@@ -17,6 +17,7 @@ from app.services.daily_story.gold_story.collect import (
 from app.services.daily_story.gold_story import llm_steps
 from app.services.daily_story.gold_story import review as gs_review
 from app.services.daily_story.gold_story.export_story import export_story_files
+from app.services.daily_story.gold_story.funny_signal import passes_funny_gate_from_payload
 from app.services.daily_story.gold_story.transcript import (
     repaired_transcript_path,
     save_repaired_transcript,
@@ -43,7 +44,7 @@ def process_candidate(
     skip_transcript: bool = False,
     dry_run: bool = False,
 ) -> dict[str, Any]:
-    """单条 BV：H0b → H0c → H2 → H3 → H3b → H4a → H4。"""
+    """单条 BV：H0b → H0c → H2 → H3 → H3a → H3b → H4a → H4。"""
     cfg = config or Config()
     base: dict[str, Any] = {
         "source_id": candidate.source_id,
@@ -118,9 +119,16 @@ def process_candidate(
             title=candidate.title,
             story_raw=h2["story_raw"],
         )
+        source_type = str(h2.get("source_type") or "field").strip().lower()
+        h3a = llm_steps.build_scene_contract(
+            story_raw=h2["story_raw"],
+            h3=h3,
+            source_type=source_type,
+        )
         h3b = llm_steps.build_dialogue_seed(
             story_raw=h2["story_raw"],
             h3=h3,
+            scene_contract=h3a,
         )
     except ValueError as exc:
         return {**base, "action": "reject", "reason": str(exc)}
@@ -136,21 +144,27 @@ def process_candidate(
         transcript=transcript_for_h2,
         description=candidate.description,
         h3=h3,
+        h3a=h3a,
         h3b=h3b,
         config=cfg,
     )
     insert_status = "active" if audit.get("pass") else "rejected"
 
     norm = engagement_norm(candidate.view_count, candidate.reply_count)
+    funny_payload = dict(candidate.funny_metrics or {})
     payload: dict[str, Any] = {
         "perspective": h2.get("perspective"),
+        "source_type": source_type,
+        "story_raw": story_raw_text,
+        "scene_contract": h3a,
+        "contract_confidence": h3a.get("contract_confidence"),
         "funny_why": h3.get("funny_why"),
         "beat": h3.get("beat") or [],
         "banned_literals": h3.get("banned_literals") or [],
         "dialogue_seed": h3b.get("dialogue_seed") or [],
-        "closing_intent": h3b.get("closing_intent"),
-        "speaker_map_note": h3b.get("speaker_map_note"),
-        "setting": h3b.get("setting"),
+        "closing_intent": h3b.get("closing_intent") or h3a.get("closing_intent"),
+        "speaker_map_note": h3b.get("speaker_map_note") or h3a.get("remap_note"),
+        "setting": h3b.get("setting") or h3a.get("location"),
         "structure_mapping_note": h3.get("structure_mapping_note"),
         "extract_confidence": h2.get("extract_confidence"),
         "structure_confidence": h3.get("structure_confidence"),
@@ -158,8 +172,19 @@ def process_candidate(
         "search_keyword": candidate.keyword,
         "engagement_norm": norm,
         "audit": audit,
+        **funny_payload,
         **h0c_meta,
     }
+    funny_ok, funny_reason = passes_funny_gate_from_payload(payload, level="l2")
+    if not funny_ok:
+        insert_status = "rejected"
+        audit = {
+            **audit,
+            "pass": False,
+            "stage": "funny_signal",
+            "reject_reasons": [funny_reason],
+        }
+        payload["audit"] = audit
 
     result = repo_gold_story.insert_or_skip(
         source=candidate.source,
@@ -185,7 +210,11 @@ def process_candidate(
     action = result.get("action")
     if action == "insert" and insert_status == "rejected":
         result["action"] = "reject"
-        result["reason"] = "audit_failed"
+        result["reason"] = (
+            "low_audience_laugh"
+            if funny_reason.startswith("low_") or funny_reason == "cute_not_funny"
+            else "audit_failed"
+        )
         result["audit_reasons"] = audit.get("reject_reasons") or []
     return {**base, **result, "audit_pass": audit.get("pass"), "status": insert_status}
 

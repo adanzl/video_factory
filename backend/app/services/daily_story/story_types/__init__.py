@@ -1,4 +1,4 @@
-"""日常故事矛盾类型（A–E）线路注册与解析。"""
+"""日常故事矛盾类型（A–G）线路注册与解析。"""
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from app.services.daily_story.story_types.b.line import LINE_B
 from app.services.daily_story.story_types.c.line import LINE_C
 from app.services.daily_story.story_types.d.line import LINE_D
 from app.services.daily_story.story_types.e.line import LINE_E
+from app.services.daily_story.story_types.g.line import LINE_G
 
 __all__ = [
     "QUALITY_FALLBACK_CODE",
@@ -48,8 +49,11 @@ __all__ = [
 
 STORY_TYPE_LINES: dict[str, StoryTypeLine] = {
     r.code: r
-    for r in (LINE_A, LINE_B, LINE_C, LINE_D, LINE_E)
+    for r in (LINE_A, LINE_B, LINE_C, LINE_D, LINE_E, LINE_G)
 }
+
+_VALID_STORY_TYPES = frozenset(STORY_TYPE_LABELS.keys())
+_STORY_TYPE_CODE_CLASS = "[" + "".join(sorted(_VALID_STORY_TYPES)) + "]"
 
 # 解析不到类型标签时的默认质检配置（与 C 公平执念一致）
 QUALITY_FALLBACK_CODE = "C"
@@ -60,7 +64,7 @@ def story_line_for_code(code: str) -> StoryTypeLine:
 
 
 def extract_story_type_code_from_punchline(punchline: str | None) -> str | None:
-    """仅从笑点解析文本提取 A–E；解析不到则返回 None（不做默认兜底）。"""
+    """仅从笑点解析文本提取 A–G；解析不到则返回 None（不做默认兜底）。"""
     from app.repositories.schema import extract_story_type_from_punchline
 
     return extract_story_type_from_punchline(punchline)
@@ -72,20 +76,20 @@ def parse_story_type_code(
     punchline: str | None = None,
 ) -> str:
     if story_type:
-        m = re.match(r"^([ABCDE])", story_type.strip())
+        m = re.match(rf"^({_STORY_TYPE_CODE_CLASS})", story_type.strip())
         if m:
             return m.group(1).upper()
     text = punchline or ""
     weak = _parse_weak_punchline_type_code(text)
     if weak:
         return weak
-    for k in ("A", "B", "C", "D", "E"):
+    for k in sorted(STORY_TYPE_LABELS.keys()):
         if f"{k}类" in text or f"{k}：" in text:
             return k
     return QUALITY_FALLBACK_CODE
 
 
-_RE_PUNCHLINE_STD_TAG = re.compile(r"^([ABCDE])类")
+_RE_PUNCHLINE_STD_TAG = re.compile(rf"^({_STORY_TYPE_CODE_CLASS})类")
 _RE_A_TAIL = re.compile(r"哪里不一样|都是听|大人也要听小孩")
 _RE_A_CITE = re.compile(
     r"(?:你刚才(?:明明|自己)?说|你自己(?:刚才)?说|你不是说|你刚说|你说的)",
@@ -97,13 +101,13 @@ def _parse_weak_punchline_type_code(text: str) -> str | None:
     t = (text or "").strip()
     if not t:
         return None
-    m = re.search(r"矛盾类型\s*([ABCDE])", t, re.IGNORECASE)
+    m = re.search(rf"矛盾类型\s*({_STORY_TYPE_CODE_CLASS})", t, re.IGNORECASE)
     if m:
         return m.group(1).upper()
-    m = re.match(r"^([ABCDE])\s*类?\s*([^，,。：:]+)", t)
+    m = re.match(rf"^({_STORY_TYPE_CODE_CLASS})\s*类?\s*([^，,。：:]+)", t)
     if m:
         return m.group(1).upper()
-    m = re.match(r"^([ABCDE])\s+", t)
+    m = re.match(rf"^({_STORY_TYPE_CODE_CLASS})\s+", t)
     if m and m.group(1).upper() in STORY_TYPE_LABELS:
         return m.group(1).upper()
     return None
@@ -130,13 +134,13 @@ def normalize_punchline_explain(explain: str, code: str) -> str:
     if weak:
         rest = raw
         rest = re.sub(
-            r"^矛盾类型\s*[ABCDE][（(][^)）]+[)）]?\s*[：:]?\s*",
+            rf"^矛盾类型\s*{_STORY_TYPE_CODE_CLASS}[（(][^)）]+[)）]?\s*[：:]?\s*",
             "",
             rest,
             flags=re.IGNORECASE,
         )
-        rest = re.sub(r"^[ABCDE]\s*类?\s*[^，,。：:]+[：:]\s*", "", rest)
-        rest = re.sub(r"^[ABCDE]\s+\S+\s*[：:]\s*", "", rest)
+        rest = re.sub(rf"^[{_STORY_TYPE_CODE_CLASS[1:-1]}]\s*类?\s*[^，,。：:]+[：:]\s*", "", rest)
+        rest = re.sub(rf"^[{_STORY_TYPE_CODE_CLASS[1:-1]}]\s+\S+\s*[：:]\s*", "", rest)
         rest = rest.strip()
         if rest and not punchline_has_standard_type_tag(rest):
             return f"{tag}，{rest}"
@@ -406,6 +410,10 @@ def append_type_body_validation_errors(story: dict, errors: list[str]) -> None:
         from app.services.daily_story.story_types.e.validate import append_e_body_errors
 
         append_e_body_errors(story, errors)
+    elif code == "G":
+        from app.services.daily_story.story_types.g.validate import append_g_body_errors
+
+        append_g_body_errors(story, errors)
 
 
 def patch_type_body(story: dict) -> list[str]:
@@ -430,6 +438,10 @@ def patch_type_body(story: dict) -> list[str]:
         from app.services.daily_story.story_types.e.patch import patch_e_body
 
         return patch_e_body(story)
+    if code == "G":
+        from app.services.daily_story.story_types.g.patch import patch_g_body
+
+        return patch_g_body(story)
     return []
 
 
@@ -470,6 +482,15 @@ def validate_type_opening(
         conflict_core=conflict_core,
     )
     append_e_opening_errors(
+        normalized,
+        type_code=type_code,
+        errors=errors,
+        conflict_core=conflict_core,
+        setting=setting,
+    )
+    from app.services.daily_story.story_types.g.opening import append_g_opening_errors
+
+    append_g_opening_errors(
         normalized,
         type_code=type_code,
         errors=errors,

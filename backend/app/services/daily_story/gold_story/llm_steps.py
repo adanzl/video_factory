@@ -11,7 +11,50 @@ from app.services.daily_story.gold_story.types import (
     GOLD_STORY_TYPE_CATALOG,
     structure_type_for_mechanism,
 )
+from app.services.daily_story.gold_story.scene_contract import (
+    SEED_MIN,
+    seed_from_beat_chain,
+    validate_scene_contract,
+)
 from app.services.llm.llm_mgr import llm_mgr
+
+# 金稿正例：只允许引用已入库金故事原文；prompt 内禁止自造示范句。
+GOLD_H3A_SCENE_SNIPPET = """【金稿 scene_contract · BV1ND4y1X7Mm《灵魂拷问一招制敌》】
+location: 车内
+object: 爱学习的定义
+conflict: 灿灿：我爱学习你爱吗？
+mechanism: 双标规则：学习哭vs玩不哭
+beat_chain:
+1. 灿灿：立规：以爱学习为标准质问昭昭
+2. 昭昭：字面执行：用爱姐姐转移话题
+3. 灿灿：加码：用学习哭vs玩不哭双标回击
+4. 昭昭：反杀：无言以对，委屈看窗外
+5. 灿灿：嘴硬：一招制敌
+closing_intent: 灿灿得意总结一招制敌
+"""
+
+GOLD_H3B_SEED_SNIPPET = """【金稿 dialogue_seed · BV1ND4y1X7Mm】
+- 灿灿: 我超爱学习，你爱吗？
+- 昭昭: 我……我也爱吧。
+- 灿灿: 那你怎么老不写作业？
+- 昭昭: 可我更爱你呀。
+- 灿灿: 少来这套，转移话题。
+- 灿灿: 让你学习你哭哭啼啼。
+- 灿灿: 让你玩你咋不哭呢？
+- 昭昭: ……（委屈看向窗外）
+- 灿灿: 哼，一招制敌。
+"""
+
+GOLD_CHAT_LINES_SNIPPET = """【金稿对白 · BV1sh411G7aX《画作争夺战》】
+灿灿：昭昭，你趴那儿弄啥呢？让我瞅瞅。
+昭昭：不行！这是我的秘密，你不能看！
+灿灿：哼，小气鬼！我偏要看！
+昭昭：你走开！再抢我打你了！
+灿灿：你敢！哎呀！你推我！
+灿灿：对不起，昭昭。
+昭昭：没……没关系。
+灿灿：昭昭，你画的啥呀？让我看看嘛！
+"""
 
 _H0C_SYSTEM = (
     "你是短视频口播逐字稿修复师。输入为 faster-whisper 自动转写："
@@ -44,7 +87,7 @@ _H0C_USER = """视频标题：{title}
 - speaker 用简短称谓：妈妈、爸爸、宝宝、女孩、男孩、哥哥、妹妹等；
   无法判断时用 角色1/角色2，并在 repair_notes 说明
 - 合并 ASR 误切的碎句；修正明显同音错字（结合语境，勿脑补新剧情）
-- **合并连续重复的同一短语**（如「为减人」连刷十遍只保留 1–2 次）
+- **合并连续重复的同一短语**，只保留 1–2 次
 - 相邻同一 speaker 可合并为一条 line
 - lines 至少 2 条；repair_confidence<0.35 视为失败
 - ASR 再差也要尽力修复；confidence 表示角色/断句把握（≥0.5 为佳，≥0.35 可接受）
@@ -54,6 +97,9 @@ _H0C_USER = """视频标题：{title}
 _H2_SYSTEM = (
     "你是站外短视频故事抽取器。从逐字稿/热评/简介中选出 **一条** 微型故事"
     "（80–400 字第三方叙述），含冲突、升级、收束。\n"
+    "若逐字稿为口播/科普/经验分享（博主对着镜头讲方法），"
+    "须从中 **还原一个具体可拍现场**（谁在哪做了什么），"
+    "禁止只写方法论摘要或「第几招」清单。\n"
     "合集多梗时只取最好笑的一条。\n"
     "只输出 JSON。"
 )
@@ -72,6 +118,7 @@ _H2_USER = """视频标题：{title}
 输出 JSON：
 {{
   "story_raw": "第三方叙述全文…",
+  "source_type": "field | tutorial | mixed",
   "perspective": "third_person | mixed | direct_dialogue",
   "has_complete_arc": true,
   "extract_confidence": 0.0
@@ -79,6 +126,8 @@ _H2_USER = """视频标题：{title}
 
 规则：
 - story_raw **必须 80–400 字**；太短（单句笑话/只有一个梗）一律 has_complete_arc=false
+- 口播/科普/教程：source_type=tutorial，须改写 **一个姐弟可拍现场**，禁「第几招」清单
+- 角色只允许昭昭、灿灿、妈妈；爸爸/陌生小孩须映射或删除，不得保留在 story_raw
 - 优先选热评里 **整段复述**（有然后/最后/被问/嘴硬）的完整微型故事
 - has_complete_arc=false 或 extract_confidence<0.5 即失败
 - 不要输出 quote 字段；引号对白保留在 story_raw 内
@@ -87,7 +136,7 @@ _H2_USER = """视频标题：{title}
 
 _H3_SYSTEM = (
     "你是金故事结构化师。输入 story_raw，输出机制 M 码 + 结构类型 + beat。\n"
-    "mechanism 必须是 M1–M10 之一；structure_type 必须是 A–E 或 F。\n"
+    "mechanism 必须是 M1–M10 之一；structure_type 必须是 A–E、F 或 G。\n"
     "beat 4–6 步，禁止贴 story_raw 原文。\n"
     "只输出 JSON。"
 )
@@ -100,7 +149,7 @@ story_raw：
 机制表（M 码）：
 {mechanism_table}
 
-结构类型 A–E：
+结构类型 A–E / F / G：
 {type_catalog}
 
 输出 JSON：
@@ -119,19 +168,69 @@ story_raw：
 """
 
 
-_H3B_SYSTEM = (
-    "你是金故事对话化师。把第三方叙述转成昭昭(7岁弟)/灿灿(10岁姐) 的对话骨架。\n"
-    "dialogue_seed 只用 intent，不写成品台词；禁止 banned_literals 同词。\n"
+_H3A_SYSTEM = (
+    "你是金故事场景契约师。把 story_raw 转成昭昭(7岁弟)/灿灿(10岁姐) **可拍现场契约**。\n"
+    "口播/教程须强制 remap 为姐弟现场：施教方→灿灿(立规)，被教方→昭昭，陌生小孩→灿灿(占物)。\n"
+    "characters 只允许昭昭/灿灿/妈妈；beat_chain 至少 4 拍。\n"
     "只输出 JSON。"
 )
 
-_H3B_USER = """H3 结构化结果：
+_H3A_USER = """H3 结构化：
 {h3_json}
 
 story_raw：
 {story_raw}
 
-角色：昭昭=7岁弟，灿灿=10岁姐，妈妈少出场。
+source_type：{source_type}
+
+{gold_scene_snippet}
+
+输出 JSON：
+{{
+  "story_type": "C",
+  "source_type": "field|tutorial|mixed",
+  "location": "可拍地点",
+  "characters": ["灿灿", "昭昭"],
+  "object": "争的具体物品或话题",
+  "conflict": "姐弟当场冲突一句",
+  "mechanism": "来自 story_raw 的可拍规则/机制一句",
+  "beat_chain": [
+    {{"beat": 1, "speaker": "灿灿|昭昭|妈妈", "intent": "立规/占物/…"}}
+  ],
+  "closing_intent": "末句嘴硬/反转",
+  "mom_lines_max": 0,
+  "remap_note": "站外角色如何映射",
+  "banned_literals": ["…"],
+  "contract_confidence": 0.0
+}}
+
+规则：
+- object/conflict/mechanism **须能在 story_raw 找到依据**；禁止发明 story_raw 没有的物品/仪式/场景
+- 禁止无依据套用站内仪式模板（举过头顶/三秒/单脚站/金鸡独立等）
+- C类 beat_chain：立规→字面执行→加码→反杀→嘴硬（至少4拍）；拍内容跟当前 story_raw 走
+- **正例只允许上方金稿原文**；本稿须按 story_raw 写，禁止把金稿场景套到本稿
+- mom_lines_max 默认 0，最多 1
+- 禁止 characters/beat_chain 出现爸爸/陌生小孩/对方
+- tutorial 源禁止 mechanism/conflict 含「四招/方法/应该/告诉」
+"""
+
+
+_H3B_SYSTEM = (
+    "你是金故事对话化师。根据 scene_contract.beat_chain 展开 dialogue_seed。\n"
+    "intent 必须是第一人称现场动作/台词意图，禁止转述式 intent。\n"
+    "dialogue_seed 至少 4 条，建议 12–20 条短 intent；只输出 JSON。"
+)
+
+_H3B_USER = """scene_contract：
+{scene_contract_json}
+
+H3：
+{h3_json}
+
+story_raw（背景，勿照抄）：
+{story_raw}
+
+{gold_seed_snippet}
 
 输出 JSON：
 {{
@@ -139,10 +238,17 @@ story_raw：
   "dialogue_seed": [
     {{"speaker": "昭昭|灿灿|妈妈", "intent": "…"}}
   ],
-  "closing_intent": "与 structure_type 收束一致",
-  "speaker_map_note": "站外角色如何映射",
+  "closing_intent": "与 scene_contract 一致",
+  "speaker_map_note": "映射说明",
   "dialogue_confidence": 0.0
 }}
+
+规则：
+- 严格按 beat_chain 顺序展开；每拍 1–3 条 seed
+- intent 须来自 scene_contract + story_raw
+- **正例只允许上方金稿原文**；本稿禁止照抄金稿 intent 到不同场景
+- speaker 只允许昭昭/灿灿/妈妈；妈妈 seed 条数 ≤ scene_contract.mom_lines_max
+- 单条 intent ≤18 字；总 seed ≥4 条
 """
 
 
@@ -250,9 +356,10 @@ def extract_story_raw(
     if len(story_raw) < 80:
         raise ValueError(f"H2 story_raw too short: {len(story_raw)} chars (min 80)")
     if len(story_raw) > 450:
-        raise ValueError(f"H2 story_raw too long: {len(story_raw)} chars (max 400)")
+        story_raw = trim_story_raw(story_raw, max_chars=380)
     return {
         "story_raw": story_raw,
+        "source_type": str(data.get("source_type") or "field").strip().lower(),
         "perspective": str(data.get("perspective") or "third_person"),
         "extract_confidence": confidence,
         "has_complete_arc": has_arc,
@@ -287,23 +394,71 @@ def structurize_story(
     return data
 
 
+def build_scene_contract(
+    *,
+    story_raw: str,
+    h3: dict[str, Any],
+    source_type: str = "field",
+) -> dict[str, Any]:
+    """H3a：story_raw → 可拍场景契约。"""
+    user = _H3A_USER.format(
+        h3_json=json.dumps(h3, ensure_ascii=False, indent=2),
+        story_raw=story_raw[:4000],
+        source_type=source_type or "field",
+        gold_scene_snippet=GOLD_H3A_SCENE_SNIPPET,
+    )
+    data = _chat_json(_H3A_SYSTEM, user)
+    data.setdefault("story_type", str(h3.get("structure_type") or "C"))
+    data["source_type"] = str(data.get("source_type") or source_type or "field").lower()
+    if not data.get("banned_literals"):
+        data["banned_literals"] = list(h3.get("banned_literals") or [])
+    if data.get("mom_lines_max") is None:
+        data["mom_lines_max"] = 0
+    errors = validate_scene_contract(data)
+    if errors:
+        raise ValueError(f"H3a scene_contract invalid: {'; '.join(errors[:5])}")
+    confidence = float(data.get("contract_confidence") or 0.0)
+    if confidence < 0.35:
+        raise ValueError(f"H3a low contract_confidence={confidence:.2f}")
+    return data
+
+
 def build_dialogue_seed(
     *,
     story_raw: str,
     h3: dict[str, Any],
+    scene_contract: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """H3b：第三方叙述 → dialogue_seed。"""
+    """H3b：scene_contract → dialogue_seed。"""
+    contract = scene_contract or {}
     user = _H3B_USER.format(
+        scene_contract_json=json.dumps(contract, ensure_ascii=False, indent=2),
         h3_json=json.dumps(h3, ensure_ascii=False, indent=2),
         story_raw=story_raw[:4000],
+        gold_seed_snippet=GOLD_H3B_SEED_SNIPPET,
     )
     data = _chat_json(_H3B_SYSTEM, user)
     seed = data.get("dialogue_seed") or []
-    if not isinstance(seed, list) or len(seed) < 2:
+    if not isinstance(seed, list):
+        seed = []
+    if len(seed) < SEED_MIN:
+        seed = seed_from_beat_chain(contract.get("beat_chain") or [])
+        data["dialogue_seed"] = seed
+    if len(seed) < SEED_MIN:
         raise ValueError("H3b dialogue_seed too short")
+    mom_max = int(contract.get("mom_lines_max") or 0)
+    mom_in_seed = sum(
+        1 for r in seed if isinstance(r, dict) and str(r.get("speaker") or "") == "妈妈"
+    )
+    if mom_in_seed > max(1, mom_max):
+        raise ValueError(f"H3b mother-heavy seed: {mom_in_seed}>{mom_max}")
     confidence = float(data.get("dialogue_confidence") or 0.0)
-    if confidence < 0.5:
+    if confidence < 0.35:
         raise ValueError(f"H3b low dialogue_confidence={confidence:.2f}")
+    if not str(data.get("closing_intent") or "").strip():
+        data["closing_intent"] = str(contract.get("closing_intent") or "")
+    if not str(data.get("speaker_map_note") or "").strip():
+        data["speaker_map_note"] = str(contract.get("remap_note") or "")
     return data
 
 
@@ -311,7 +466,8 @@ _H4A_SYSTEM = (
     "你是金故事机审员。判断站外微型故事能否迁移为"
     "昭昭(7岁弟)+灿灿(10岁姐)姐弟日常冲突短视频。\n"
     "采集词可以宽，但你须严格卡掉：母子/婴儿婴语为主、"
-    "冲突太短、映射距离太远、妈妈当主角的稿子。\n"
+    "冲突太短、映射距离太远、家长当唯一主角的稿子。\n"
+    "站外爸爸/父亲/宝爸可等位映射为妈妈（少出场），不算硬伤。\n"
     "只输出 JSON。"
 )
 
@@ -351,10 +507,43 @@ beat：
 - sibling_fit：是否姐弟/兄妹/两孩冲突，而非母子育儿/纯可爱
 - age_fit：能否自然落到 7 岁弟 + 10 岁姐（拒绝婴语、过小）
 - conflict_usable：是否有可拍争/抢/歪理/Threat 链，不是温馨旁白
-- mapping_fit：映射到昭昭/灿灿是否牵强（妈妈当第三主角应降分）
+- mapping_fit：映射到昭昭/灿灿是否牵强（家长当第三主角应降分；爸爸→妈妈视为可接受）
 
 pass=true 仅当四维均 ≥0.55 且无硬伤；否则 pass=false 并列出 reject_reasons。
 """
+
+
+_TRIM_STORY_RAW_SYSTEM = (
+    "你是故事编辑。把过长的第三方叙述精简到可拍微型故事，保留冲突弧与收束。\n"
+    "只输出 JSON。"
+)
+
+_TRIM_STORY_RAW_USER = """story_raw（过长，须精简）：
+{story_raw}
+
+输出 JSON：
+{{
+  "story_raw": "精简后全文…",
+  "trim_notes": "一句说明删了什么"
+}}
+
+规则：保留 80–{max_chars} 字；不丢冲突/升级/收束；勿引入新情节；只输出 JSON。
+"""
+
+
+def trim_story_raw(story_raw: str, *, max_chars: int = 380) -> str:
+    """过长 story_raw → LLM 精简。"""
+    text = str(story_raw or "").strip()
+    if len(text) <= max_chars:
+        return text
+    user = _TRIM_STORY_RAW_USER.format(story_raw=text[:6000], max_chars=max_chars)
+    data = _chat_json(_TRIM_STORY_RAW_SYSTEM, user)
+    trimmed = str(data.get("story_raw") or "").strip()
+    if len(trimmed) < 80:
+        raise ValueError(f"trim_story_raw too short: {len(trimmed)}")
+    if len(trimmed) > max_chars + 40:
+        raise ValueError(f"trim_story_raw still too long: {len(trimmed)}")
+    return trimmed
 
 
 def audit_story_fit(

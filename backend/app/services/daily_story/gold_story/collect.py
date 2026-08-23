@@ -13,6 +13,11 @@ import requests
 from app.config import Config
 from app.services.daily_story.gold_story.bili_wbi import fetch_wbi_keys, sign_wbi_params
 from app.services.daily_story.gold_story.download import normalize_bv
+from app.services.daily_story.gold_story.funny_signal import (
+    compute_audience_funny_metrics,
+    metrics_to_payload,
+    passes_funny_gate,
+)
 from app.services.publish.bilibili.session import BiliSession, USER_AGENT
 
 logger = logging.getLogger(__name__)
@@ -50,6 +55,8 @@ class VideoCandidate:
     reply_count: int
     keyword: str
     top_replies: tuple[str, ...] = ()
+    cid: int = 0
+    funny_metrics: dict[str, Any] | None = None
 
 
 def search_keywords(config: Config | None = None) -> list[str]:
@@ -132,6 +139,7 @@ def fetch_video_meta(
         "aid": int(data.get("aid") or 0),
         "view_count": int(stat.get("view") or 0),
         "reply_count": int(stat.get("reply") or 0),
+        "cid": int(data.get("cid") or 0),
     }
 
 
@@ -264,6 +272,23 @@ def collect_candidates(
                 session=session,
                 limit=8,
             )
+            funny = compute_audience_funny_metrics(
+                source_id=bvid,
+                cid=int(meta.get("cid") or 0),
+                view_count=int(meta["view_count"]),
+                reply_count=int(meta["reply_count"]),
+                replies=replies,
+                session=session,
+            )
+            funny_ok, funny_reason = passes_funny_gate(funny, level="l1", config=cfg)
+            if not funny_ok:
+                logger.info(
+                    "gold_story h1 skip bvid=%s reason=%s funny=%.2f",
+                    bvid,
+                    funny_reason,
+                    funny.funny_signal,
+                )
+                continue
             results.append(
                 VideoCandidate(
                     source="bili",
@@ -275,6 +300,8 @@ def collect_candidates(
                     reply_count=int(meta["reply_count"]),
                     keyword=keyword,
                     top_replies=tuple(replies),
+                    cid=int(meta.get("cid") or 0),
+                    funny_metrics=metrics_to_payload(funny),
                 )
             )
     return results

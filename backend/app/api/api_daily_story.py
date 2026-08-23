@@ -17,6 +17,9 @@ from app.api.utils import (
     parse_str,
 )
 from app.services.daily_story.daily_story_mgr import daily_story_mgr
+from app.services.daily_story.story_types.model import STORY_TYPE_LABELS
+
+_VALID_STORY_TYPES = frozenset(STORY_TYPE_LABELS.keys())
 
 bp = Blueprint("api_daily_story", __name__, url_prefix="/v_factory/api/daily_story")
 
@@ -30,8 +33,8 @@ def list_stories_route():
     story_type: str | None = None
     if story_type_raw:
         code = story_type_raw.strip().upper()
-        if code not in ("A", "B", "C", "D", "E"):
-            raise APIError("story_type 须为 A–E", status_code=400)
+        if code not in _VALID_STORY_TYPES:
+            raise APIError("story_type 须为 A–G", status_code=400)
         story_type = code
     key_raw = get_query("key")
     key = key_raw.strip() if key_raw else None
@@ -74,8 +77,8 @@ def generate_story_route():
     story_type: str | None = None
     if story_type_raw:
         code = story_type_raw.strip().upper()[:1]
-        if code not in ("A", "B", "C", "D", "E"):
-            raise APIError("story_type 须为 A–E", status_code=400)
+        if code not in _VALID_STORY_TYPES:
+            raise APIError("story_type 须为 A–G", status_code=400)
         story_type = code
     logger.info(
         "[DAILY_STORY] api /generate theme=%r story_type=%r",

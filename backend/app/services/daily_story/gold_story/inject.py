@@ -6,6 +6,7 @@ from typing import Any
 
 from app.config import Config
 from app.repositories import repo_gold_story
+from app.services.daily_story.gold_story.scene_contract import format_scene_contract_block
 from app.services.daily_story.gold_story.types import (
     GOLD_STORY_INJECTABLE_CODES,
     is_injectable_structure_type,
@@ -41,6 +42,7 @@ def build_gold_story_block(story: dict[str, Any]) -> str:
     payload = story.get("payload") if isinstance(story.get("payload"), dict) else {}
     beat = payload.get("beat") or []
     dialogue_seed = payload.get("dialogue_seed") or []
+    scene_contract = payload.get("scene_contract") or {}
     banned = payload.get("banned_literals") or []
     closing = str(payload.get("closing_intent") or "").strip()
     mechanism = str(story.get("mechanism") or "").strip()
@@ -62,6 +64,7 @@ def build_gold_story_block(story: dict[str, Any]) -> str:
         ),
         "故事 beat：",
         format_beat_numbered(beat) or "（无）",
+        format_scene_contract_block(scene_contract),
         "对话骨架（intent 仅供参考，须重写为昭昭/灿灿 口语对白）：",
         format_dialogue_seed(dialogue_seed) or "（无）",
     ]

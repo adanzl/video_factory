@@ -54,6 +54,16 @@ def test_m2_injectable_c():
     assert is_injectable_structure_type("C")
 
 
+def test_m4_maps_to_g_injectable():
+    assert structure_type_for_mechanism("M4") == "G"
+    assert is_injectable_structure_type("G")
+
+
+def test_g_structure_label():
+    assert structure_type_label("G") == "嘴硬心软"
+    assert catalog_entry("G") is not None
+
+
 def test_pair_mismatch_raises():
     with pytest.raises(ValueError, match="M2 对应 structure_type=C"):
         validate_mechanism_structure_pair("M2", "A")

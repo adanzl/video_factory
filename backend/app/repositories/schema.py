@@ -217,22 +217,23 @@ CREATE INDEX IF NOT EXISTS idx_daily_story_status ON daily_story(status);
 
 
 def extract_story_type_from_punchline(punchline: str | None) -> str | None:
-    """从笑点解析提取 A–E（与 story_types 逻辑对齐，供迁移回填，避免循环依赖）。"""
+    """从笑点解析提取 A–G（与 story_types 逻辑对齐，供迁移回填，避免循环依赖）。"""
     import re
 
     t = (punchline or "").strip()
     if not t:
         return None
-    m = re.search(r"矛盾类型\s*([ABCDE])", t, re.IGNORECASE)
+    code_class = "[ABCDEG]"
+    m = re.search(rf"矛盾类型\s*({code_class})", t, re.IGNORECASE)
     if m:
         return m.group(1).upper()
-    m = re.match(r"^([ABCDE])\s*类?\s*([^，,。：:]+)", t)
+    m = re.match(rf"^({code_class})\s*类?\s*([^，,。：:]+)", t)
     if m:
         return m.group(1).upper()
-    m = re.match(r"^([ABCDE])\s+\S+", t)
+    m = re.match(rf"^({code_class})\s+\S+", t)
     if m:
         return m.group(1).upper()
-    for k in ("A", "B", "C", "D", "E"):
+    for k in ("A", "B", "C", "D", "E", "G"):
         if f"{k}类" in t or f"{k}：" in t:
             return k
     return None

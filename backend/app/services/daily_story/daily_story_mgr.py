@@ -2,11 +2,16 @@
 from __future__ import annotations
 import logging
 from typing import Any
+
 from app.repositories import repo_daily_story, repo_job, repo_job_log, repo_segment
+from app.repositories.sql_exec import atomic
+from app.services.daily_story.story_types.model import STORY_TYPE_LABELS
 from app.services.llm.llm_mgr import llm_mgr
 from app.utils.async_util import run_in_background
 from app.utils.job_info import merge_job_info, merge_job_script_params
-from app.repositories.sql_exec import atomic
+
+_VALID_STORY_TYPES = frozenset(STORY_TYPE_LABELS.keys())
+
 logger = logging.getLogger(__name__)
 _STATUS_PROCESSING = 'processing'
 _STATUS_ACTIVE = 'active'
@@ -46,7 +51,7 @@ class DailyStoryMgr:
     ) -> None:
         action = 'regenerate' if is_regenerate else 'generate'
         locked_type = (story_type or '').strip().upper()[:1] or None
-        if locked_type and locked_type not in ('A', 'B', 'C', 'D', 'E'):
+        if locked_type and locked_type not in _VALID_STORY_TYPES:
             locked_type = None
 
         def _worker() -> None:
@@ -185,8 +190,8 @@ class DailyStoryMgr:
         if not theme:
             raise ValueError('theme is empty')
         locked = (story_type or '').strip().upper()[:1] or None
-        if locked and locked not in ('A', 'B', 'C', 'D', 'E'):
-            raise ValueError('story_type 须为 A–E')
+        if locked and locked not in _VALID_STORY_TYPES:
+            raise ValueError('story_type 须为 A–G')
         with atomic():
             story_id = repo_daily_story.insert_story(
                 theme=theme,

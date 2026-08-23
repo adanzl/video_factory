@@ -3,11 +3,21 @@
 from __future__ import annotations
 
 import json
+import logging
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from app.config import Config
+from app.repositories import repo_gold_story
+from app.services.daily_story.gold_story.llm_steps import (
+    GOLD_CHAT_LINES_SNIPPET,
+)
+from app.services.daily_story.gold_story.scene_contract import (
+    format_scene_contract_block,
+    validate_chat_hard,
+)
 from app.services.daily_story.gold_story.types import structure_type_label
 from app.services.daily_story.prompts import (
     DAILY_STORY_BODY_CHARS_MAX,
@@ -16,29 +26,45 @@ from app.services.daily_story.prompts import (
     DAILY_STORY_KEY_CHARS_MIN,
     dialogue_total_chars,
 )
-from app.services.daily_story.speaker import DAILY_STORY_SPEAKER_NAMES
 from app.services.llm.llm_mgr import llm_mgr
 
+logger = logging.getLogger(__name__)
+
+# 润色：暴力语义软化提示（具体改法交给 LLM，不在代码里写死替换句）
+_VIOLENCE_WORD_HINTS: tuple[tuple[str, str], ...] = (
+    ("动手", "跟人闹了"),
+    ("挂彩", "弄成这样"),
+    ("揍", "欺负"),
+)
+
+_ZHAOZHAO_WA_PREFIX = re.compile(r"^我……+")
+
 _SYSTEM = (
-    "你是日常故事编剧。输入为金故事结构化结果（beat + dialogue_seed intent），"
-    "扩写成昭昭(7岁弟)/灿灿(10岁姐)可拍对白剧本。\n"
+    "你是日常故事编剧。输入为金故事 scene_contract（可拍场景契约）"
+    "与 dialogue_seed intent，扩写成昭昭(7岁弟)/灿灿(10岁姐)可拍对白剧本。\n"
+    "站外口播/科普/第三人称论述须 **还原成第一人称现场对白**："
+    "角色当场说、当场吵、当场做，禁止转述「妈妈说/教过/曾经」。\n"
+    "站外爸爸/父亲/宝爸须写为妈妈（少出场）；speaker 只允许昭昭/灿灿/妈妈。\n"
     "输出 JSON 须与站内 daily_story 字段一致；只输出 JSON。"
 )
 
 _USER = """金故事标题：{title}
 机制/结构：{mechanism} / {structure_type}（{structure_label}）
 冲突核：{conflict_core}
-现场：{setting}
 
-beat：
-{beat}
+{scene_contract_block}
 
 dialogue_seed（intent 骨架，须扩写为口语对白，禁止照抄）：
 {dialogue_seed}
 
 收束意图：{closing_intent}
+映射说明：{speaker_map_note}
+story_raw（背景，勿照抄；口播/论述须转现场对白）：{story_raw}
 禁词（对白中禁止出现）：{banned_literals}
 funny_why：{funny_why}
+source_type：{source_type}（tutorial 时禁保留教程口吻/第几招）
+
+{gold_chat_snippet}
 
 输出 JSON：
 {{
@@ -53,13 +79,51 @@ funny_why：{funny_why}
 }}
 
 规则：
-- 昭昭/灿灿 交替为主，妈妈少出场；口语化、可拍，不要旁白 narration
+- **第一人称现场对白**：每句是角色对另一角色当场说的话；禁第三人称论述、禁转述（「妈妈说/教过/说过」）
+- 口播/育儿科普/「第几招」：选一个具体场面演出来，勿保留教程口吻
+- 严格按 scene_contract.beat_chain 顺序推进；妈妈台词 ≤ scene_contract.mom_lines_max
+- **正例只允许上方金稿对白**；语气/句长可参考，剧情须来自本稿 scene_contract + seed
+- 昭昭/灿灿 交替为主，妈妈少出场；口语化、可拍
+- line 禁止括号舞台说明（如「（从厨房走出来）」「（语塞）」）
+- 站外爸爸/父亲/宝爸一律写妈妈，勿用爸爸作 speaker
+- 站外陌生小孩/对方家长→映射为灿灿/妈妈，**禁止**「小男孩」「对方」等第三 speaker
 - 按 beat 顺序推进，末段落实收束意图
 - 正文 dialogue 总字数 {chars_min}–{chars_max} 字（硬卡）
+- **首稿须一次写到 ≥{chars_min} 字**，建议 18–24 句、均句 ≤16 字；勿写短稿
 - 禁止直接使用禁词列表里的词
 - punchline_explain 须含「{structure_type}类」前缀
 - 不要输出 discovery_opening / quality 等额外字段
 """
+
+
+_FIX_SYSTEM = (
+    "你是日常故事编辑。根据校验错误修正 JSON。\n"
+    "须改成第一人称现场对白：角色当场说，禁止转述/旁白/括号说明。\n"
+    "speaker 只允许昭昭/灿灿/妈妈（爸爸/父亲须改为妈妈）。\n"
+    "只输出完整 JSON。"
+)
+
+_FIX_USER = """校验错误：
+{errors}
+
+当前 JSON：
+{story_json}
+
+规则：
+- 正文 dialogue 总字数 {chars_min}–{chars_max}（不足则 **扩写** 到 ≥{chars_min}，建议 18–24 句）
+- 对白句数须 ≥12；每句 ≤30 字，口语化、可拍
+- 禁词须同义改写：{banned_literals}
+- 转述/旁白/括号说明须改为当场对白
+- speaker 非法须改为昭昭/灿灿/妈妈
+只输出 JSON。"""
+
+_FATHER_SPEAKER_ALIASES = frozenset(
+    {"爸爸", "父亲", "爸", "老爸", "宝爸", "爸爸角色", "父亲角色"}
+)
+_KID_RIVAL_ALIASES = frozenset(
+    {"小男孩", "小女孩", "对方", "对方小朋友", "陌生小孩", "小朋友", "对方孩子"}
+)
+_THIRD_PARTY_PARENT_ALIASES = frozenset({"对方家长", "对方妈妈", "对方爸爸"})
 
 
 def gold_chat_export_dir(config: Config | None = None) -> Path:
@@ -83,6 +147,40 @@ def _chat_json(system: str, user: str) -> dict[str, Any]:
     return raw
 
 
+def _normalize_chat_speakers(story: dict[str, Any]) -> dict[str, Any]:
+    """站外爸爸/父亲 speaker → 妈妈。"""
+    out = dict(story)
+    dialogue: list[dict[str, Any]] = []
+    for item in story.get("dialogue") or []:
+        if not isinstance(item, dict):
+            continue
+        row = dict(item)
+        sp = str(row.get("speaker") or "").strip()
+        if sp in _FATHER_SPEAKER_ALIASES or sp in _THIRD_PARTY_PARENT_ALIASES:
+            row["speaker"] = "妈妈"
+        elif sp in _KID_RIVAL_ALIASES:
+            row["speaker"] = "灿灿"
+        dialogue.append(row)
+    out["dialogue"] = dialogue
+    return out
+
+
+def _fix_chat_with_llm(
+    story: dict[str, Any],
+    errors: str,
+    *,
+    banned_literals: list[str],
+) -> dict[str, Any]:
+    user = _FIX_USER.format(
+        errors=errors,
+        story_json=json.dumps(story, ensure_ascii=False)[:8000],
+        chars_min=DAILY_STORY_BODY_CHARS_MIN,
+        chars_max=DAILY_STORY_BODY_CHARS_MAX,
+        banned_literals="、".join(banned_literals) or "（无）",
+    )
+    return _chat_json(_FIX_SYSTEM, user)
+
+
 def _format_dialogue_seed(seed: list[Any]) -> str:
     lines: list[str] = []
     for item in seed or []:
@@ -99,8 +197,10 @@ def validate_gold_chat(
     story: dict[str, Any],
     *,
     banned_literals: list[str] | None = None,
+    source_type: str = "",
+    mom_lines_max: int | None = None,
 ) -> None:
-    """gold_chat 轻量校验（不跑完整 daily_story validate）。"""
+    """gold_chat 校验（字段 + scene_contract hard 规则）。"""
     errors: list[str] = []
     required = (
         "scene_title",
@@ -114,11 +214,8 @@ def validate_gold_chat(
         if field not in story:
             errors.append(f"缺少字段: {field}")
 
-    if errors:
-        raise ValueError("; ".join(errors))
-
     key = str(story.get("key") or "").strip()
-    if not (
+    if key and not (
         DAILY_STORY_KEY_CHARS_MIN <= len(key) <= DAILY_STORY_KEY_CHARS_MAX
     ):
         errors.append(
@@ -126,49 +223,30 @@ def validate_gold_chat(
             f"当前{len(key)}字"
         )
 
-    dialogue = story.get("dialogue") or []
-    allowed = set(DAILY_STORY_SPEAKER_NAMES)
-    if not isinstance(dialogue, list) or len(dialogue) < 4:
-        errors.append("dialogue 至少 4 句")
-    else:
-        for i, item in enumerate(dialogue):
-            if not isinstance(item, dict):
-                errors.append(f"dialogue[{i}] 不是字典")
-                continue
-            sp = str(item.get("speaker") or "").strip()
-            line = str(item.get("line") or "").strip()
-            if sp not in allowed:
-                errors.append(f"dialogue[{i}] speaker 非法: {sp!r}")
-            if not line:
-                errors.append(f"dialogue[{i}] line 为空")
-
-    total = dialogue_total_chars(story)
-    if total < DAILY_STORY_BODY_CHARS_MIN:
-        errors.append(
-            f"正文总字数须≥{DAILY_STORY_BODY_CHARS_MIN}，当前{total}"
-        )
-    if total > DAILY_STORY_BODY_CHARS_MAX:
-        errors.append(
-            f"正文总字数须≤{DAILY_STORY_BODY_CHARS_MAX}，当前{total}"
-        )
-
     explain = str(story.get("punchline_explain") or "").strip()
-    if not explain:
+    if "punchline_explain" in story and not explain:
         errors.append("punchline_explain 为空")
 
-    banned = [str(x).strip() for x in (banned_literals or []) if str(x).strip()]
-    if banned and isinstance(dialogue, list):
-        body = "\n".join(
-            str(item.get("line") or "")
-            for item in dialogue
-            if isinstance(item, dict)
+    errors.extend(
+        validate_chat_hard(
+            story,
+            banned_literals=banned_literals,
+            source_type=source_type,
+            mom_lines_max=mom_lines_max,
         )
-        hits = [w for w in banned if w and w in body]
-        if hits:
-            errors.append(f"对白含禁词: {'、'.join(hits[:5])}")
+    )
 
     if errors:
         raise ValueError("; ".join(errors))
+
+
+def _is_short_content_error(msg: str) -> bool:
+    """字数/句数不足 → 不重试，直接放弃。"""
+    return (
+        "正文总字数须≥" in msg
+        or "dialogue 至少" in msg
+        or "对白句数须≥" in msg
+    )
 
 
 def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
@@ -176,9 +254,14 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
     payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
     structure_type = str(row.get("structure_type") or "A").strip().upper()
     st_label = structure_type_label(structure_type)
-    beat = payload.get("beat") or []
+    scene_contract = payload.get("scene_contract") or {}
     seed = payload.get("dialogue_seed") or []
     banned = payload.get("banned_literals") or []
+    source_type = str(payload.get("source_type") or scene_contract.get("source_type") or "field")
+    story_raw = str(row.get("story_raw") or payload.get("story_raw") or "")[:800]
+    mom_max = scene_contract.get("mom_lines_max")
+    if mom_max is None:
+        mom_max = 1
 
     user = _USER.format(
         title=str(row.get("title") or ""),
@@ -186,18 +269,38 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
         structure_type=structure_type,
         structure_label=st_label,
         conflict_core=str(row.get("conflict_core") or "")[:500],
-        setting=str(payload.get("setting") or "")[:300],
-        beat=json.dumps(beat, ensure_ascii=False, indent=2)[:3000],
+        scene_contract_block=format_scene_contract_block(scene_contract),
         dialogue_seed=_format_dialogue_seed(seed)[:4000],
-        closing_intent=str(payload.get("closing_intent") or "")[:500],
+        closing_intent=str(payload.get("closing_intent") or scene_contract.get("closing_intent") or "")[:500],
+        speaker_map_note=str(payload.get("speaker_map_note") or scene_contract.get("remap_note") or "")[:500],
+        story_raw=story_raw or "（无）",
         banned_literals="、".join(str(x) for x in banned) or "（无）",
         funny_why=str(payload.get("funny_why") or "")[:500],
+        source_type=source_type,
+        gold_chat_snippet=GOLD_CHAT_LINES_SNIPPET,
         chars_min=DAILY_STORY_BODY_CHARS_MIN,
         chars_max=DAILY_STORY_BODY_CHARS_MAX,
     )
     data = _chat_json(_SYSTEM, user)
-    validate_gold_chat(data, banned_literals=list(banned))
-    return data
+    banned_list = [str(x) for x in banned]
+    data = _normalize_chat_speakers(data)
+    last_err = ""
+    for attempt in range(5):
+        try:
+            validate_gold_chat(
+                data,
+                banned_literals=banned_list,
+                source_type=source_type,
+                mom_lines_max=int(mom_max),
+            )
+            return data
+        except ValueError as exc:
+            last_err = str(exc)
+            if attempt >= 4:
+                raise ValueError(last_err) from exc
+            data = _fix_chat_with_llm(data, last_err, banned_literals=banned_list)
+            data = _normalize_chat_speakers(data)
+    raise ValueError(last_err or "gold_chat validate failed")
 
 
 def _chat_md_lines(dialogue: list[Any]) -> list[str]:
@@ -239,6 +342,8 @@ def export_gold_chat_files(
         "exported_at": datetime.now(timezone.utc).isoformat(),
         "daily_story": chat,
         "gold_meta": {
+            "source_type": payload.get("source_type"),
+            "scene_contract": payload.get("scene_contract"),
             "beat": payload.get("beat"),
             "dialogue_seed": payload.get("dialogue_seed"),
             "banned_literals": payload.get("banned_literals"),
@@ -339,4 +444,215 @@ def gold_chat_summary(source_id: str, *, config: Config | None = None) -> dict[s
         "chat_lines": chat_lines,
         "scene_title": daily.get("scene_title") or data.get("scene_title"),
         "exported_at": data.get("exported_at"),
+    }
+
+
+def collect_gold_chat_polish_issues(story: dict[str, Any]) -> list[dict[str, Any]]:
+    """规则收集 gold_chat 润色点，交给 daily_story 童语化润色模块。"""
+    issues: list[dict[str, Any]] = []
+    rows = story.get("dialogue") or []
+    wa_kept = 0
+    for i, row in enumerate(rows, 1):
+        if not isinstance(row, dict):
+            continue
+        sp = str(row.get("speaker") or "").strip()
+        line = str(row.get("line") or "").strip()
+        if not line:
+            continue
+        if sp == "昭昭" and _ZHAOZHAO_WA_PREFIX.match(line):
+            wa_kept += 1
+            if wa_kept > 2:
+                issues.append(
+                    {
+                        "lines": [i],
+                        "kind": "复读结巴",
+                        "desc": f"昭昭「我……」开头过多（第{wa_kept}处）：{line}",
+                        "fix": "改成短句直接说（如「不是。」「我跑了。」），"
+                        "勿再以「我……」开头；保留怂/委屈语气",
+                    }
+                )
+        if "跟个娘们似的" in line or "跟个娘们" in line:
+            issues.append(
+                {
+                    "lines": [i],
+                    "kind": "措辞",
+                    "desc": line,
+                    "fix": "删除「跟个娘们似的」等性别贬义，保留「还充大侠呢」等数落",
+                }
+            )
+        for word, hint in _VIOLENCE_WORD_HINTS:
+            if word in line:
+                issues.append(
+                    {
+                        "lines": [i],
+                        "kind": "暴力词",
+                        "desc": f"含「{word}」：{line}",
+                        "fix": f"软化暴力语义，可改成更儿童化的说法（如「{hint}」），保持原意",
+                    }
+                )
+        if sp == "昭昭" and line in {"嘿嘿。", "嘿嘿"}:
+            issues.append(
+                {
+                    "lines": [i],
+                    "kind": "收束",
+                    "desc": line,
+                    "fix": "改成更贴7岁的短反应，如「哦。」或「那你说话算数。」",
+                }
+            )
+    return issues
+
+
+def _apply_gold_chat_polish_fixes(
+    chat: dict[str, Any],
+    raw_fixes: Any,
+    *,
+    banned_literals: list[str] | None = None,
+    source_type: str = "field",
+    mom_lines_max: int = 0,
+) -> tuple[dict[str, Any], set[int]]:
+    from app.services.daily_story.review import apply_spot_fixes, fix_line_numbers
+
+    accepted: set[int] = set()
+    for no in fix_line_numbers(raw_fixes):
+        trial = accepted | {no}
+        fixed, notes = apply_spot_fixes(chat, raw_fixes, only=trial)
+        if not notes:
+            continue
+        try:
+            validate_gold_chat(
+                fixed,
+                banned_literals=banned_literals,
+                source_type=source_type,
+                mom_lines_max=mom_lines_max,
+            )
+        except ValueError as exc:
+            logger.info("gold_chat polish line %d dropped: %s", no, exc)
+            continue
+        accepted = trial
+    if not accepted:
+        return chat, accepted
+    fixed, _ = apply_spot_fixes(chat, raw_fixes, only=accepted)
+    validate_gold_chat(
+        fixed,
+        banned_literals=banned_literals,
+        source_type=source_type,
+        mom_lines_max=mom_lines_max,
+    )
+    return fixed, accepted
+
+
+def _repair_gold_chat_after_polish(chat: dict[str, Any]) -> dict[str, Any]:
+    """润色模块会误删首句「昭昭，」，此处补回。"""
+    out = dict(chat)
+    rows: list[dict[str, Any]] = []
+    first_cancan = True
+    for item in chat.get("dialogue") or []:
+        if not isinstance(item, dict):
+            continue
+        row = dict(item)
+        sp = str(row.get("speaker") or "").strip()
+        line = str(row.get("line") or "").strip()
+        if sp == "灿灿" and first_cancan:
+            first_cancan = False
+            if line.startswith("，") or line.startswith(","):
+                row["line"] = "昭昭" + line
+            elif line and not line.startswith("昭昭"):
+                row["line"] = f"昭昭，{line}"
+        rows.append(row)
+    out["dialogue"] = rows
+    return out
+
+
+def polish_gold_chat_wording(
+    chat: dict[str, Any],
+    *,
+    theme: str = "",
+    banned_literals: list[str] | None = None,
+    source_type: str = "field",
+    mom_lines_max: int = 0,
+) -> tuple[dict[str, Any], int]:
+    """复用 daily_story 童语化润色，只改被点行。"""
+    issues = collect_gold_chat_polish_issues(chat)
+    if not issues:
+        return chat, 0
+    client = llm_mgr._get_client()
+    polish = getattr(client, "polish_daily_story_wording", None)
+    if not callable(polish):
+        return chat, 0
+    raw = polish(
+        theme or str(chat.get("scene_title") or ""),
+        chat,
+        issues,
+        type_code="C",
+    )
+    fixed, accepted = _apply_gold_chat_polish_fixes(
+        chat,
+        raw,
+        banned_literals=banned_literals,
+        source_type=source_type,
+        mom_lines_max=mom_lines_max,
+    )
+    fixed = _repair_gold_chat_after_polish(fixed)
+    try:
+        validate_gold_chat(
+            fixed,
+            banned_literals=banned_literals,
+            source_type=source_type,
+            mom_lines_max=mom_lines_max,
+        )
+    except ValueError:
+        return chat, 0
+    return fixed, len(accepted)
+
+
+def polish_gold_chat_export(
+    source_id: str,
+    *,
+    config: Config | None = None,
+) -> dict[str, Any]:
+    """对已导出 gold_chat 做润色并回写 JSON/MD。"""
+    cfg = config or Config()
+    sid = str(source_id or "").strip()
+    export = load_gold_chat(sid, config=cfg)
+    if not export:
+        raise FileNotFoundError(f"尚未导出 gold_chat: {sid}")
+    chat = export.get("daily_story")
+    if not isinstance(chat, dict):
+        raise ValueError("gold_chat export missing daily_story")
+
+    row = repo_gold_story.get_by_source_id(source_id=sid, source="bili")
+    if not row:
+        row = {"source_id": sid, "id": export.get("gold_story_id")}
+    payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+    scene_contract = payload.get("scene_contract") or {}
+    banned = [str(x) for x in (payload.get("banned_literals") or [])]
+    source_type = str(payload.get("source_type") or scene_contract.get("source_type") or "field")
+    mom_max = scene_contract.get("mom_lines_max")
+    if mom_max is None:
+        mom_max = 0
+
+    issues_before = collect_gold_chat_polish_issues(chat)
+    polished, accepted_n = polish_gold_chat_wording(
+        chat,
+        theme=str(chat.get("scene_title") or row.get("title") or sid),
+        banned_literals=banned,
+        source_type=source_type,
+        mom_lines_max=int(mom_max),
+    )
+    polished = _repair_gold_chat_after_polish(polished)
+    paths = export_gold_chat_files(
+        source_id=sid,
+        row=row,
+        chat=polished,
+        config=cfg,
+    )
+    return {
+        "ok": True,
+        "source_id": sid,
+        "issues_before": len(issues_before),
+        "lines_polished": accepted_n,
+        "chat_chars": dialogue_total_chars(polished),
+        "chat_lines": len(polished.get("dialogue") or []),
+        "export": paths,
+        "daily_story": polished,
     }

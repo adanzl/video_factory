@@ -47,6 +47,56 @@ def test_rule_audit_passes_sibling_story():
     assert reasons == []
 
 
+def test_rule_audit_passes_father_maps_to_mom():
+    ok, reasons = review.run_rule_audit(
+        title="玩具被抢，爸爸的4招",
+        story_raw="弟弟玩具被姐姐抢走，爸爸过来调解，教弟弟四招应对，最后姐弟又和好一起玩。" * 3,
+        conflict_core="玩具被抢，家长介入调解",
+        transcript="爸爸：别抢\n姐姐：我先玩",
+        speaker_map_note="站外爸爸→妈妈，姐姐→灿灿，弟弟→昭昭",
+        dialogue_seed=[
+            {"speaker": "昭昭", "intent": "被抢"},
+            {"speaker": "灿灿", "intent": "占物"},
+            {"speaker": "妈妈", "intent": "调解"},
+            {"speaker": "昭昭", "intent": "和好"},
+        ],
+        beat=["抢", "介入", "调解", "和好"],
+    )
+    assert ok is True
+    assert reasons == []
+
+
+def test_rule_audit_with_scene_contract():
+    contract = {
+        "source_type": "field",
+        "characters": ["昭昭", "灿灿"],
+        "beat_chain": [
+            {"speaker": "灿灿", "intent": "占物"},
+            {"speaker": "昭昭", "intent": "质疑"},
+            {"speaker": "灿灿", "intent": "歪理"},
+            {"speaker": "昭昭", "intent": "威胁"},
+        ],
+        "mom_lines_max": 0,
+    }
+    ok, reasons = review.run_rule_audit(
+        title="姐弟抢遥控器名场面",
+        story_raw="姐姐占着遥控器不让弟弟看，弟弟说你不让我看我也不让你看，姐姐嘴硬说谁怕谁，最后弟弟真的走开，姐姐又追上去问明天还玩吗。" * 2,
+        conflict_core="姐弟抢遥控器，嘴硬后露怯",
+        transcript="姐姐：我的\n弟弟：给我",
+        speaker_map_note="站外姐弟映射昭昭灿灿",
+        dialogue_seed=[
+            {"speaker": "灿灿", "intent": "占物"},
+            {"speaker": "昭昭", "intent": "质疑"},
+            {"speaker": "灿灿", "intent": "歪理"},
+            {"speaker": "昭昭", "intent": "威胁"},
+        ],
+        beat=["占", "质问", "歪理", "收束"],
+        scene_contract=contract,
+    )
+    assert ok is True
+    assert reasons == []
+
+
 def test_audit_story_skips_llm_when_rules_fail():
     out = review.audit_story(
         title="宝宝可爱日常",

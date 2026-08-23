@@ -50,7 +50,8 @@ def _rerun_one(row: dict, cfg: Config) -> dict:
         "dialogue_seed": payload.get("dialogue_seed") or [],
         "speaker_map_note": payload.get("speaker_map_note") or "",
     }
-    story_raw = str(payload.get("story_raw") or "")
+    h3a = payload.get("scene_contract") if isinstance(payload.get("scene_contract"), dict) else {}
+    story_raw = str(row.get("story_raw") or payload.get("story_raw") or "")
     transcript = _load_transcript_for_row(row, cfg)
     result = audit_story(
         title=str(row.get("title") or ""),
@@ -59,6 +60,7 @@ def _rerun_one(row: dict, cfg: Config) -> dict:
         conflict_core=str(row.get("conflict_core") or ""),
         transcript=transcript,
         h3=h3,
+        h3a=h3a,
         h3b=h3b,
         config=cfg,
     )
