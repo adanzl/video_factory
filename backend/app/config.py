@@ -311,6 +311,22 @@ class Config:
         self.gold_story_transcript_repair: bool = _bool(
             "GOLD_STORY_TRANSCRIPT_REPAIR", True
         )
+        self.gold_story_audit_enabled: bool = _bool("GOLD_STORY_AUDIT_ENABLED", True)
+        self.gold_story_audit_min_story_raw_chars: int = int(
+            os.getenv("GOLD_STORY_AUDIT_MIN_STORY_RAW_CHARS", "100")
+        )
+        self.gold_story_audit_min_sibling_fit: float = float(
+            os.getenv("GOLD_STORY_AUDIT_MIN_SIBLING_FIT", "0.55")
+        )
+        self.gold_story_audit_min_age_fit: float = float(
+            os.getenv("GOLD_STORY_AUDIT_MIN_AGE_FIT", "0.55")
+        )
+        self.gold_story_audit_min_conflict_usable: float = float(
+            os.getenv("GOLD_STORY_AUDIT_MIN_CONFLICT_USABLE", "0.55")
+        )
+        self.gold_story_audit_min_mapping_fit: float = float(
+            os.getenv("GOLD_STORY_AUDIT_MIN_MAPPING_FIT", "0.55")
+        )
         self.gold_story_transcript_dir: Path = _path(
             "GOLD_STORY_TRANSCRIPT_DIR",
             ROOT_DIR / "data/gold_story/transcripts",

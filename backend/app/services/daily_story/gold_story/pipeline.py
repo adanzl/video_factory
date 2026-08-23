@@ -15,6 +15,7 @@ from app.services.daily_story.gold_story.collect import (
     write_candidate_list,
 )
 from app.services.daily_story.gold_story import llm_steps
+from app.services.daily_story.gold_story import review as gs_review
 from app.services.daily_story.gold_story.export_story import export_story_files
 from app.services.daily_story.gold_story.transcript import (
     repaired_transcript_path,
@@ -42,7 +43,7 @@ def process_candidate(
     skip_transcript: bool = False,
     dry_run: bool = False,
 ) -> dict[str, Any]:
-    """单条 BV：H0b → H0c → H2 → H3 → H3b → H4。"""
+    """单条 BV：H0b → H0c → H2 → H3 → H3b → H4a → H4。"""
     cfg = config or Config()
     base: dict[str, Any] = {
         "source_id": candidate.source_id,
@@ -126,6 +127,20 @@ def process_candidate(
     except Exception as exc:
         return {**base, "action": "error", "stage": "LLM", "error": str(exc)}
 
+    story_raw_text = str(h2["story_raw"])
+    audit = gs_review.audit_story(
+        title=str(h3.get("title") or candidate.title),
+        video_title=candidate.title,
+        story_raw=story_raw_text,
+        conflict_core=str(h3.get("conflict_core") or ""),
+        transcript=transcript_for_h2,
+        description=candidate.description,
+        h3=h3,
+        h3b=h3b,
+        config=cfg,
+    )
+    insert_status = "active" if audit.get("pass") else "rejected"
+
     norm = engagement_norm(candidate.view_count, candidate.reply_count)
     payload: dict[str, Any] = {
         "perspective": h2.get("perspective"),
@@ -142,6 +157,7 @@ def process_candidate(
         "dialogue_confidence": h3b.get("dialogue_confidence"),
         "search_keyword": candidate.keyword,
         "engagement_norm": norm,
+        "audit": audit,
         **h0c_meta,
     }
 
@@ -151,7 +167,7 @@ def process_candidate(
         url=candidate.url,
         mechanism=str(h3["mechanism"]),
         structure_type=str(h3["structure_type"]),
-        story_raw=str(h2["story_raw"]),
+        story_raw=story_raw_text,
         payload=payload,
         title=str(h3.get("title") or candidate.title),
         conflict_core=str(h3.get("conflict_core") or ""),
@@ -160,12 +176,18 @@ def process_candidate(
         engagement_norm=norm,
         transcript_backend="faster-whisper",
         transcript_path=str(transcript_path) if transcript_text else None,
+        status=insert_status,
     )
     if result.get("action") == "insert" and result.get("id"):
         row = repo_gold_story.get_story(int(result["id"]))
         paths = export_story_files(source_id=candidate.source_id, row=row, config=cfg)
         result["export"] = paths
-    return {**base, **result}
+    action = result.get("action")
+    if action == "insert" and insert_status == "rejected":
+        result["action"] = "reject"
+        result["reason"] = "audit_failed"
+        result["audit_reasons"] = audit.get("reject_reasons") or []
+    return {**base, **result, "audit_pass": audit.get("pass"), "status": insert_status}
 
 
 def run_collect_pipeline(
@@ -196,7 +218,8 @@ def run_collect_pipeline(
         write_candidate_list(candidates, cfg.gold_story_candidates_file)
 
     results: list[dict[str, Any]] = []
-    inserted = 0
+    inserted_active = 0
+    inserted_rejected = 0
     for row in candidates:
         outcome = process_candidate(
             row,
@@ -206,11 +229,14 @@ def run_collect_pipeline(
         )
         results.append(outcome)
         if outcome.get("action") == "insert":
-            inserted += 1
+            inserted_active += 1
+        elif outcome.get("action") == "reject" and outcome.get("reason") == "audit_failed":
+            inserted_rejected += 1
 
     return {
         "candidates": len(candidates),
-        "inserted": inserted,
+        "inserted": inserted_active,
+        "inserted_rejected": inserted_rejected,
         "results": results,
         "candidates_file": str(cfg.gold_story_candidates_file),
     }

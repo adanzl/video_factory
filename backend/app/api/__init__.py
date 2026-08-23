@@ -13,6 +13,7 @@ def register_api(app: Flask) -> None:
     from app.api.api_topic import bp as topic_bp
     from app.api.api_config import bp as config_bp
     from app.api.api_daily_story import bp as daily_story_bp
+    from app.api.api_gold_chat import bp as gold_chat_bp
 
     register_error_handlers(app)
     app.register_blueprint(jobs_bp)
@@ -24,3 +25,4 @@ def register_api(app: Flask) -> None:
     app.register_blueprint(topic_bp)
     app.register_blueprint(config_bp)
     app.register_blueprint(daily_story_bp)
+    app.register_blueprint(gold_chat_bp)
