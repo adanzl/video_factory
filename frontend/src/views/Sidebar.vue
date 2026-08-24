@@ -29,7 +29,7 @@
         </el-menu-item>
         <el-menu-item index="/gold-chat">
           <el-icon><Medal /></el-icon>
-          <template #title>gold_chat</template>
+          <template #title>金牌故事</template>
         </el-menu-item>
         <el-menu-item index="/materials/audio">
           <el-icon><Headset /></el-icon>

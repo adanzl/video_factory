@@ -194,10 +194,27 @@ _DAILY_SETTING_RULE = (
     "每镜 visual_brief 落在该地点或其可见角落（沙发/茶几/书桌/门口）。"
 )
 
+_BODY_PART_OBJECT_RE = re.compile(
+    r"^(?:一?只?)?(?:右|左)?(?:手|脚|手臂|腿|手指|手掌|头发|发丝|马尾)$"
+    r"|^.+的(?:手|脚|头发)$"
+)
+
+
+def is_body_part_object(obj: str) -> bool:
+    """身体部位不是可持道具；写入 object_states 会诱发断肢漂浮（如「手中放着一只手」）。"""
+    o = (obj or "").strip()
+    if not o:
+        return False
+    return bool(_BODY_PART_OBJECT_RE.match(o))
+
+
 _DAILY_OBJECT_STATE_RULE = (
     "【object_states】每段另输出 object_states 数组：本片锁定活动道具在本镜的最终状态，"
     "每项含 object、count、form、holder、position 五字段："
     "object=道具名（本片 setting/台词点名的活动道具，与【物品锁定】列表对齐，如粉鞋/相框/水壶）；"
+    "身体部位（手/脚/头发等）不是道具，禁止写入 object_states；"
+    "伤势/红肿/淤青写在 visual_subjects 的 action/expression"
+    "（如「左手捂住右手手背，右手红肿」），不要写「一只手」当物件；"
     "count=数量词（两只/一个/一把等）；"
     "form=本镜最终状态（如鞋带散开/鞋带打成死结两只鞋底贴在一起/摔裂掉在地上）；"
     "holder=持有人角色名，无人持有写「无」；"
@@ -408,6 +425,12 @@ def normalize_object_states(segments: list[dict]) -> list[str]:
             obj = str(st.get("object") or "").strip()
             if not obj:
                 continue
+            if is_body_part_object(obj):
+                notes.append(
+                    f"segment {idx}: object_states 剔除身体部位 object={obj!r}，"
+                    "伤势改由 visual_subjects 表达"
+                )
+                continue
             if obj in seen:
                 notes.append(f"segment {idx}: object_states 重复 object={obj}，去重")
                 continue
@@ -512,6 +535,8 @@ def _prop_snapshot_from_object_states(states: list) -> str:
     """从 object_states 抽一句道具快照（仅用于 vb 内提及，避免 strip_unlocked 补尾巴）。"""
     for st in _collapse_object_aliases(states):
         obj = str(st.get("object") or "").strip()
+        if is_body_part_object(obj):
+            continue
         form = str(st.get("form") or "").strip()
         pos = str(st.get("position") or "").strip()
         count = str(st.get("count") or "").strip()
