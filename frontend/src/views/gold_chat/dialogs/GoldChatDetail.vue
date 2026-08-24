@@ -284,8 +284,12 @@ const chatStory = computed<StoryContent>(
 );
 
 const titleText = computed(() => {
-  const t = detail.value?.title || detail.value?.source_id;
-  return t ? `金故事 · ${t}` : "金故事详情";
+  const id = detail.value?.id ?? props.goldStoryId;
+  const name = detail.value?.title || detail.value?.source_id;
+  if (id != null) {
+    return name ? `金故事 #${id} · ${name}` : `金故事 #${id}`;
+  }
+  return name ? `金故事 · ${name}` : "金故事详情";
 });
 
 async function loadDetail() {

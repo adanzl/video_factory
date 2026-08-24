@@ -1,4 +1,4 @@
-"""金故事机制 M1–M10 与结构类型 A–E/F/G 映射。"""
+"""金故事机制 M1–M10 与结构类型 A–E/F/G/H 映射。"""
 
 from __future__ import annotations
 
@@ -21,13 +21,13 @@ GOLD_STORY_MECHANISM_LABELS: dict[str, str] = {
     "M10": "假帮腔讽刺",
 }
 
-# M → 结构字母：能落 A–E 的落 A–E；否则用扩展字母（F/G…）
+# M → 结构字母：能落 A–E 的落 A–E；否则用扩展字母（F/G/H…）
 MECHANISM_STRUCTURE_MAP: dict[str, str] = {
     "M1": "C",  # 回旋镖：主落 C 公平执念收束
     "M2": "C",  # 自私包装公平
     "M3": "F",  # Threat 链式互升级，暂无 A–E 标准收束
     "M4": "G",  # 递台词 escalation → 嘴硬心软（争物/双规则用 M1/M2→C）
-    "M5": "A",  # 拒和解 / 嘴硬加码
+    "M5": "A",  # 拒和解 / 嘴硬加码（第三方调解收束可标 H）
     "M6": "A",  # 成人概念童化歪问
     "M7": "D",  # 字面执行跑偏
     "M8": "A",  # 一锤可拍（A 类中段不变量）
@@ -35,10 +35,16 @@ MECHANISM_STRUCTURE_MAP: dict[str, str] = {
     "M10": "E",  # 假帮腔讽刺（E 类帮腔）
 }
 
+# mechanism 默认映射外的合法 structure_type（防 H3 误判入库失败）
+MECHANISM_STRUCTURE_ALTERNATIVES: dict[str, frozenset[str]] = {
+    "M5": frozenset({"H"}),  # 拒和 + 第三方调解收束
+}
+
 # 金故事扩展结构类型（尚未进入 daily_story validate；F 已由 M3 启用）
 GOLD_STORY_EXTENDED_TYPE_LABELS: dict[str, str] = {
     "F": "Threat 互升级",
     "G": "嘴硬心软",
+    "H": "第三方化解",
 }
 
 GOLD_STORY_STRUCTURE_LABELS: dict[str, str] = {
@@ -50,8 +56,11 @@ GOLD_STORY_STRUCTURE_CODES: frozenset[str] = frozenset(
     GOLD_STORY_STRUCTURE_LABELS.keys()
 )
 
-# daily_story 已落地类型（H5 可注入任务）
-GOLD_STORY_INJECTABLE_CODES: frozenset[str] = frozenset(STORY_TYPE_LABELS.keys())
+# daily_story 已落地类型（H5 可注入任务）；H 暂仅 gold_story 侧
+_GOLD_STORY_NON_INJECTABLE = frozenset({"H"})
+GOLD_STORY_INJECTABLE_CODES: frozenset[str] = frozenset(
+    k for k in STORY_TYPE_LABELS if k not in _GOLD_STORY_NON_INJECTABLE
+)
 
 # 与 docs/日常故事-类型.md §3 一致（A–E）
 GOLD_STORY_TYPE_CATALOG: tuple[dict[str, str], ...] = (
@@ -97,6 +106,12 @@ GOLD_STORY_TYPE_CATALOG: tuple[dict[str, str], ...] = (
         "formula": "互怼/数落→真情 pivot→愣住→暖收",
         "closing": "暖收或嘴硬里带软（多样，不锁模板）",
     },
+    {
+        "code": "H",
+        "name": "第三方化解",
+        "formula": "升级/僵持→第三方定责劝和→仪式性和好",
+        "closing": "表演性道歉/拒和/拉手/齐声承诺；非 G 内部 pivot",
+    },
 )
 
 
@@ -110,6 +125,13 @@ def normalize_mechanism(value: str) -> str:
 
 def mechanism_label(code: str) -> str:
     return GOLD_STORY_MECHANISM_LABELS[normalize_mechanism(code)]
+
+
+def allowed_structure_types(mechanism: str) -> frozenset[str]:
+    mech = normalize_mechanism(mechanism)
+    allowed = {MECHANISM_STRUCTURE_MAP[mech]}
+    allowed |= MECHANISM_STRUCTURE_ALTERNATIVES.get(mech, frozenset())
+    return frozenset(allowed)
 
 
 def structure_type_for_mechanism(mechanism: str) -> str:
@@ -139,12 +161,15 @@ def catalog_entry(code: str) -> dict[str, str] | None:
 
 def validate_mechanism_structure_pair(mechanism: str, structure_type: str) -> None:
     mech = normalize_mechanism(mechanism)
-    expected = structure_type_for_mechanism(mech)
     actual = normalize_structure_type(structure_type)
-    if actual != expected:
+    allowed = allowed_structure_types(mech)
+    if actual not in allowed:
+        default = MECHANISM_STRUCTURE_MAP[mech]
+        alt = ", ".join(sorted(allowed))
         raise ValueError(
-            f"{mech} 对应 structure_type={expected}（"
-            f"{structure_type_label(expected)}），当前为 {actual}"
+            f"{mech} 对应 structure_type 须为 {alt} 之一"
+            f"（默认 {default}·{structure_type_label(default)}），"
+            f"当前为 {actual}"
         )
 
 

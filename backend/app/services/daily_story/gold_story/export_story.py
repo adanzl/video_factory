@@ -245,3 +245,33 @@ def export_story_files(
     )
     md_path.write_text("\n".join(md_lines), encoding="utf-8")
     return {"json": str(json_path), "markdown": str(md_path)}
+
+
+def cleanup_gold_story_files(source_id: str, *, config: Config | None = None) -> list[str]:
+    """删除金故事关联的逐字稿 / 导出 / 媒体缓存文件。"""
+    cfg = config or Config()
+    sid = str(source_id or "").strip()
+    if not sid:
+        return []
+    base = cfg.gold_story_transcript_dir.parent
+    ws = cfg.gold_story_media_workspace
+    candidates = [
+        cfg.gold_story_transcript_dir / f"{sid}.txt",
+        cfg.gold_story_transcript_dir / f"{sid}.repaired.txt",
+        base / "stories" / f"{sid}.json",
+        base / "stories" / f"{sid}.md",
+        base / "gold_chat" / f"{sid}.json",
+        base / "gold_chat" / f"{sid}.md",
+        ws / "downloads" / f"{sid}.mp4",
+        ws / "metadata" / f"{sid}.json",
+        ws / "audio" / f"{sid}.wav",
+    ]
+    removed: list[str] = []
+    for path in candidates:
+        try:
+            if path.is_file():
+                path.unlink()
+                removed.append(str(path))
+        except OSError:
+            continue
+    return removed

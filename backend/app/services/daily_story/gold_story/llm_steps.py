@@ -9,6 +9,8 @@ from app.services.daily_story.gold_story.types import (
     GOLD_STORY_MECHANISM_CODES,
     GOLD_STORY_MECHANISM_LABELS,
     GOLD_STORY_TYPE_CATALOG,
+    allowed_structure_types,
+    normalize_structure_type,
     structure_type_for_mechanism,
 )
 from app.services.daily_story.gold_story.scene_contract import (
@@ -136,7 +138,8 @@ _H2_USER = """视频标题：{title}
 
 _H3_SYSTEM = (
     "你是金故事结构化师。输入 story_raw，输出机制 M 码 + 结构类型 + beat。\n"
-    "mechanism 必须是 M1–M10 之一；structure_type 必须是 A–E、F 或 G。\n"
+    "mechanism 必须是 M1–M10 之一；structure_type 必须是 A–E、F、G 或 H。\n"
+    "M5 拒和加码：纯姐弟内部僵持→A；有妈妈/第三方调解收束→H。\n"
     "beat 4–6 步，禁止贴 story_raw 原文。\n"
     "只输出 JSON。"
 )
@@ -149,7 +152,7 @@ story_raw：
 机制表（M 码）：
 {mechanism_table}
 
-结构类型 A–E / F / G：
+结构类型 A–E / F / G / H：
 {type_catalog}
 
 输出 JSON：
@@ -208,8 +211,9 @@ source_type：{source_type}
 - object/conflict/mechanism **须能在 story_raw 找到依据**；禁止发明 story_raw 没有的物品/仪式/场景
 - 禁止无依据套用站内仪式模板（举过头顶/三秒/单脚站/金鸡独立等）
 - C类 beat_chain：立规→字面执行→加码→反杀→嘴硬（至少4拍）；拍内容跟当前 story_raw 走
+- H类 beat_chain：升级/互毁→僵持/拒和→妈妈定责劝和→仪式性和好（至少4拍）；mom_lines_max 2–3
 - **正例只允许上方金稿原文**；本稿须按 story_raw 写，禁止把金稿场景套到本稿
-- mom_lines_max 默认 0，最多 1
+- mom_lines_max：H 类 2–3；其余默认 0，最多 1
 - 禁止 characters/beat_chain 出现爸爸/陌生小孩/对方
 - tutorial 源禁止 mechanism/conflict 含「四招/方法/应该/告诉」
 """
@@ -382,9 +386,20 @@ def structurize_story(
     mechanism = str(data.get("mechanism") or "").strip().upper()
     if mechanism not in GOLD_STORY_MECHANISM_CODES:
         raise ValueError(f"H3 invalid mechanism: {mechanism!r}")
-    mapped = structure_type_for_mechanism(mechanism)
+    default_type = structure_type_for_mechanism(mechanism)
+    llm_type = str(data.get("structure_type") or "").strip().upper()
+    if llm_type:
+        try:
+            normalized = normalize_structure_type(llm_type)
+            if normalized in allowed_structure_types(mechanism):
+                data["structure_type"] = normalized
+            else:
+                data["structure_type"] = default_type
+        except ValueError:
+            data["structure_type"] = default_type
+    else:
+        data["structure_type"] = default_type
     data["mechanism"] = mechanism
-    data["structure_type"] = mapped
     beat = data.get("beat") or []
     if not isinstance(beat, list) or len(beat) < 4:
         raise ValueError("H3 beat must have 4–6 steps")
@@ -413,7 +428,8 @@ def build_scene_contract(
     if not data.get("banned_literals"):
         data["banned_literals"] = list(h3.get("banned_literals") or [])
     if data.get("mom_lines_max") is None:
-        data["mom_lines_max"] = 0
+        st = str(h3.get("structure_type") or "C").upper()
+        data["mom_lines_max"] = 3 if st == "H" else 0
     errors = validate_scene_contract(data)
     if errors:
         raise ValueError(f"H3a scene_contract invalid: {'; '.join(errors[:5])}")

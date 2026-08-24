@@ -222,6 +222,26 @@ export async function convertGoldChat(params: {
   return response.data;
 }
 
+export interface GoldStoryDeleteResult {
+  deleted: number;
+  ids: number[];
+  files_removed: number;
+  results: Array<{
+    id: number;
+    source_id?: string;
+    action: string;
+    error?: string;
+  }>;
+}
+
+export async function deleteGoldStories(ids: number[]): Promise<GoldStoryDeleteResult> {
+  const response = await api.post<GoldStoryDeleteResult>(
+    "/v_factory/api/gold_chat/delete",
+    { ids },
+  );
+  return response.data;
+}
+
 export async function collectGoldStories(params: {
   max?: number;
 } = {}): Promise<GoldStoryCollectResult> {

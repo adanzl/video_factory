@@ -1,0 +1,54 @@
+"""日常故事 H 类线路（第三方化解）。"""
+
+from app.services.daily_story.story_types.model import (
+    STORY_TYPE_KEYWORDS,
+    StoryTypeLine,
+    compile_layers,
+)
+
+LINE_H = StoryTypeLine(
+    code="H",
+    label="第三方化解",
+    keywords=STORY_TYPE_KEYWORDS["H"],
+    quality_ready=False,
+    body_lines_min=16,
+    body_lines_max=24,
+    line_format_hint="12–18字，升级/定责/和好各一句信息",
+    punchline_example="H类第三方化解，僵持后妈妈定责劝和，仪式性和好",
+    prompt_block="""\
+【本次类型：H 第三方化解 — 专属线路】
+- 核心：姐弟冲突 **升级或僵持** → **妈妈（第三方）定责劝和**
+  → **仪式性和好**（道歉/拉手/齐声承诺等）。
+- **不是** G 嘴硬心软：不靠姐弟内部 pivot/护短破防，靠第三方介入收束。
+- **不是** E 妈妈破功：妈妈不当立论主角，只做调解定责。
+- **不是** A 权威翻车：勿写末四拍引话/那不一样/破功链。
+
+【四段链（顺序固定）】
+1 **冲突升级**（4–8 句）：互毁/抢/推搡/拒和等，可 escalating。
+2 **僵持**（1–3 句）：一方不原谅、嘴硬加码。
+3 **第三方调解**（2–3 句）：妈妈定责、劝互相原谅/别打了。
+4 **仪式性和好**（2–4 句）：表演性道歉、拉手、齐声「不打了」等。
+
+【硬约束】
+- 妈妈台词 2–3 句，须在中后段；末句宜姐弟，勿妈妈总结。
+- 收束须**可拍**（动作或齐声），勿停在纯对骂。
+""",
+    user_closing="""\
+收束须仪式性和好（拉手/齐声承诺/表演性道歉）；
+勿 G 内部 pivot，勿 A 末四拍。""",
+    body_user_anchor="先写升级/僵持，再写妈妈定责劝和，最后仪式性和好。",
+    opening_system_append="""\
+H 类开场：姐弟当场冲突（抢/毁/推），勿写成 C 公平赛规首句。""",
+    opening_user_append="开场到「刚吵起来/刚互毁」，妈妈调解留正文。",
+    theme_user_append="主题宜姐弟冲突升级后第三方调解，非争物回旋镖。",
+    retry_soft_close_hint="补妈妈 2–3 句定责劝和，末段拉手或齐声和好。",
+    escalation_revision_hint="中段须明显升级或僵持，调解前勿提前和好。",
+    closing_revision_hint="收束须仪式性和好；末句宜姐弟，勿妈妈独白总结。",
+    layer_patterns=compile_layers(
+        (
+            ("升级", r"打|推|抢|弄坏|不原谅|生气|互毁"),
+            ("调解", r"别打|和好|道歉|原谅|都错|拉手"),
+            ("和好", r"不打了|对不起|没关系|说好了|齐声"),
+        ),
+    ),
+)

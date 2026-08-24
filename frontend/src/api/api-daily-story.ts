@@ -50,6 +50,7 @@ export const DAILY_STORY_TYPE_LABELS: Record<string, string> = {
   D: "字面执行",
   E: "妈妈破功",
   G: "嘴硬心软",
+  H: "第三方化解",
 };
 
 /** 如 A权威翻车；无有效代码时返回 "-" */
