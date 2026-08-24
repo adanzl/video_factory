@@ -130,3 +130,35 @@ def batch_route():
             force=force,
         ),
     )
+
+
+@bp.post("/import")
+def import_route():
+    data = get_json_body()
+    gold_story_id = parse_int(data, "id", 0, minimum=0, maximum=10_000_000)
+    if gold_story_id <= 0:
+        gold_story_id = None
+    source_id = parse_optional_str(data, "source_id")
+    force = parse_bool(data, "force", default=False)
+    if gold_story_id is None and not source_id:
+        raise APIError("id 或 source_id 必填", status_code=400)
+    logger.info(
+        "[GOLD_CHAT] import id=%s source_id=%s force=%s",
+        gold_story_id,
+        source_id,
+        force,
+    )
+    try:
+        return json_ok(
+            gold_chat_mgr.import_one(
+                gold_story_id=gold_story_id,
+                source_id=source_id,
+                force=force,
+            ),
+        )
+    except KeyError:
+        raise APIError("金故事不存在", status_code=404)
+    except FileNotFoundError as exc:
+        raise APIError(str(exc), status_code=404)
+    except ValueError as exc:
+        raise APIError(str(exc), status_code=400)

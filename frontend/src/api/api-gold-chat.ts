@@ -8,6 +8,7 @@ export interface GoldChatListItem {
   source_id: string;
   url?: string;
   title: string;
+  bili_title?: string;
   status: string;
   mechanism: string;
   structure_type: string;
@@ -18,6 +19,7 @@ export interface GoldChatListItem {
   chat_lines?: number;
   scene_title?: string;
   exported_at?: string;
+  gold_chat_daily_story_id?: number | null;
 }
 
 export type GoldChatListResponse = ListResponse<GoldChatListItem>;
@@ -27,6 +29,7 @@ export interface GoldChatExport {
   source_id: string;
   url?: string;
   title?: string;
+  bili_title?: string;
   mechanism?: string;
   structure_type?: string;
   status?: string;
@@ -34,9 +37,21 @@ export interface GoldChatExport {
   chat_chars?: number;
   chat_lines?: number;
   exported_at?: string;
+  gold_chat_daily_story_id?: number | null;
   daily_story: StoryContent;
   gold_meta?: Record<string, unknown>;
   gold_story?: GoldChatListItem;
+}
+
+export interface GoldChatImportResult {
+  action: "insert" | "update" | "skip";
+  reason?: string;
+  source_id?: string;
+  gold_story_id?: number;
+  daily_story_id?: number;
+  theme?: string;
+  story_type?: string;
+  daily_story?: StoryContent;
 }
 
 export interface GoldChatConvertResult {
@@ -73,6 +88,11 @@ export interface GoldChatBatchResult {
 }
 
 export { formatDailyStoryType };
+
+export function formatAutoScore(score?: number | null): string {
+  if (score == null || Number.isNaN(score)) return "-";
+  return score.toFixed(2);
+}
 
 export async function listGoldChats(params: {
   status?: string;
@@ -136,6 +156,22 @@ export async function batchConvertGoldChat(params: {
       force: params.force ?? false,
     },
     { timeout: 600_000 },
+  );
+  return response.data;
+}
+
+export async function importGoldChat(params: {
+  id?: number;
+  sourceId?: string;
+  force?: boolean;
+}): Promise<GoldChatImportResult> {
+  const response = await api.post<GoldChatImportResult>(
+    "/v_factory/api/gold_chat/import",
+    {
+      id: params.id,
+      source_id: params.sourceId,
+      force: params.force ?? false,
+    },
   );
   return response.data;
 }

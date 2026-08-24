@@ -11,6 +11,8 @@ from typing import Any
 
 from app.config import Config
 from app.repositories import repo_gold_story
+from app.services.daily_story.gold_story.collect import fetch_video_meta
+from app.services.daily_story.gold_story.export_story import export_story_files
 from app.services.daily_story.gold_story.llm_steps import (
     GOLD_CHAT_LINES_SNIPPET,
 )
@@ -315,6 +317,60 @@ def _chat_md_lines(dialogue: list[Any]) -> list[str]:
     return lines
 
 
+def _bili_meta_patch(source_id: str, *, config: Config) -> dict[str, Any]:
+    sid = str(source_id or "").strip()
+    if not sid.startswith("BV"):
+        return {}
+    try:
+        meta = fetch_video_meta(sid, config=config)
+    except Exception as exc:
+        logger.warning("gold_chat bili meta failed bvid=%s: %s", sid, exc)
+        return {}
+    url = str(meta.get("url") or "").strip() or f"https://www.bilibili.com/video/{sid}"
+    patch: dict[str, Any] = {
+        "bili_title": meta.get("title"),
+        "bili_url": url,
+        "bili_view_count": meta.get("view_count"),
+        "bili_reply_count": meta.get("reply_count"),
+    }
+    return {k: v for k, v in patch.items() if v not in (None, "")}
+
+
+def _backfill_gold_story_after_export(
+    row: dict[str, Any],
+    *,
+    chat: dict[str, Any],
+    paths: dict[str, str],
+    config: Config,
+) -> None:
+    """gold_chat 导出后回写库内摘要与 B 站元数据。"""
+    gid = int(row.get("id") or 0)
+    sid = str(row.get("source_id") or "").strip()
+    if gid <= 0 or not sid:
+        return
+
+    payload_patch = {
+        **_bili_meta_patch(sid, config=config),
+        "gold_chat_exported_at": datetime.now(timezone.utc).isoformat(),
+        "gold_chat_scene_title": chat.get("scene_title"),
+        "gold_chat_lines": len(chat.get("dialogue") or []),
+        "gold_chat_chars": dialogue_total_chars(chat),
+        "gold_chat_json": paths.get("json"),
+        "gold_chat_md": paths.get("markdown"),
+    }
+    repo_gold_story.patch_story_payload(gid, payload_patch)
+
+    bili_url = payload_patch.get("bili_url")
+    if isinstance(bili_url, str) and bili_url.strip():
+        repo_gold_story.update_story_source_fields(gid, url=bili_url.strip())
+
+    try:
+        fresh = repo_gold_story.get_story(gid)
+        export_story_files(source_id=sid, row=fresh, config=config)
+    except Exception as exc:
+        logger.warning("gold_chat story export failed id=%s: %s", gid, exc)
+
+
 def export_gold_chat_files(
     *,
     source_id: str,
@@ -389,12 +445,14 @@ def convert_gold_chat(
     """转换 + 落盘，返回摘要。"""
     sid = str(row.get("source_id") or "").strip()
     chat = gold_story_to_gold_chat(row)
+    cfg = config or Config()
     paths = export_gold_chat_files(
         source_id=sid,
         row=row,
         chat=chat,
-        config=config,
+        config=cfg,
     )
+    _backfill_gold_story_after_export(row, chat=chat, paths=paths, config=cfg)
     return {
         "ok": True,
         "source_id": sid,
@@ -426,25 +484,170 @@ def load_gold_chat(
     return data if isinstance(data, dict) else None
 
 
-def gold_chat_summary(source_id: str, *, config: Config | None = None) -> dict[str, Any]:
-    """列表页用的导出摘要。"""
-    data = load_gold_chat(source_id, config=config)
-    if not data:
-        return {"has_gold_chat": False}
-    daily = data.get("daily_story") if isinstance(data.get("daily_story"), dict) else {}
-    chat_chars = data.get("chat_chars")
-    if chat_chars is None and daily:
-        chat_chars = dialogue_total_chars(daily)
-    chat_lines = data.get("chat_lines")
-    if chat_lines is None and daily:
-        chat_lines = len(daily.get("dialogue") or [])
+def load_gold_chat_for_row(
+    row: dict[str, Any],
+    *,
+    config: Config | None = None,
+) -> dict[str, Any] | None:
+    """读取金故事行对应的 gold_chat 导出（标准路径 + payload 记录的备用路径）。"""
+    sid = str(row.get("source_id") or "").strip()
+    if not sid:
+        return None
+    export = load_gold_chat(sid, config=config)
+    if export is not None:
+        return export
+    payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+    alt_json = str(payload.get("gold_chat_json") or "").strip()
+    if not alt_json:
+        return None
+    alt_path = Path(alt_json)
+    if not alt_path.is_file():
+        return None
+    try:
+        raw = json.loads(alt_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+    return raw if isinstance(raw, dict) else None
+
+
+def import_gold_chat_daily_story(
+    row: dict[str, Any],
+    *,
+    config: Config | None = None,
+    force: bool = False,
+) -> dict[str, Any]:
+    """gold_chat 导出 → daily_story；force 时覆盖已有导入。"""
+    from app.repositories import repo_daily_story
+    from app.services.daily_story.prompts import sync_discovery_opening_from_dialogue
+    from app.services.daily_story.quality import attach_daily_story_quality
+
+    gid = int(row.get("id") or 0)
+    sid = str(row.get("source_id") or "").strip()
+    if gid <= 0 or not sid:
+        raise ValueError("gold_story 缺少 id 或 source_id")
+
+    export = load_gold_chat_for_row(row, config=config)
+    if export is None:
+        raise FileNotFoundError(f"尚未导出 gold_chat: {sid}")
+
+    chat = export.get("daily_story")
+    if not isinstance(chat, dict):
+        raise ValueError("gold_chat export missing daily_story")
+    if not (chat.get("dialogue") or []):
+        raise ValueError("gold_chat 对白为空")
+
+    story = dict(chat)
+    sync_discovery_opening_from_dialogue(story)
+    attach_daily_story_quality(story)
+
+    theme = str(
+        story.get("scene_title")
+        or story.get("key")
+        or row.get("title")
+        or sid
+    ).strip()
+    story_type = str(row.get("structure_type") or "").strip().upper()[:1] or None
+    story_key = str(story.get("key") or "").strip() or None
+
+    existing_raw = row.get("gold_chat_daily_story_id")
+    existing_id = int(existing_raw) if existing_raw else 0
+
+    if existing_id > 0 and not force:
+        return {
+            "action": "skip",
+            "reason": "already_imported",
+            "gold_story_id": gid,
+            "source_id": sid,
+            "daily_story_id": existing_id,
+        }
+
+    if existing_id > 0:
+        try:
+            repo_daily_story.get_story(existing_id)
+        except KeyError:
+            existing_id = 0
+
+    if existing_id > 0:
+        updated = repo_daily_story.update_story(
+            existing_id,
+            story=story,
+            story_type=story_type,
+            key=story_key,
+        )
+        repo_gold_story.set_gold_chat_daily_story_id(gid, existing_id)
+        return {
+            "action": "update",
+            "gold_story_id": gid,
+            "source_id": sid,
+            "daily_story_id": existing_id,
+            "theme": updated.get("theme"),
+            "story_type": updated.get("story_type"),
+            "daily_story": story,
+        }
+
+    new_id = repo_daily_story.insert_story(
+        theme=theme,
+        story=story,
+        story_type=story_type,
+        key=story_key,
+    )
+    repo_gold_story.set_gold_chat_daily_story_id(gid, new_id)
+    return {
+        "action": "insert",
+        "gold_story_id": gid,
+        "source_id": sid,
+        "daily_story_id": new_id,
+        "theme": theme,
+        "story_type": story_type,
+        "daily_story": story,
+    }
+
+
+def _summary_from_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
+    if not payload.get("gold_chat_exported_at"):
+        return None
     return {
         "has_gold_chat": True,
-        "chat_chars": chat_chars,
-        "chat_lines": chat_lines,
-        "scene_title": daily.get("scene_title") or data.get("scene_title"),
-        "exported_at": data.get("exported_at"),
+        "chat_chars": payload.get("gold_chat_chars"),
+        "chat_lines": payload.get("gold_chat_lines"),
+        "scene_title": payload.get("gold_chat_scene_title"),
+        "exported_at": payload.get("gold_chat_exported_at"),
+        "bili_title": payload.get("bili_title"),
     }
+
+
+def gold_chat_summary(
+    source_id: str,
+    *,
+    config: Config | None = None,
+    row: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """列表页用的导出摘要（优先读导出 JSON，其次读库内 payload）。"""
+    data = load_gold_chat(source_id, config=config)
+    if data:
+        daily = data.get("daily_story") if isinstance(data.get("daily_story"), dict) else {}
+        chat_chars = data.get("chat_chars")
+        if chat_chars is None and daily:
+            chat_chars = dialogue_total_chars(daily)
+        chat_lines = data.get("chat_lines")
+        if chat_lines is None and daily:
+            chat_lines = len(daily.get("dialogue") or [])
+        return {
+            "has_gold_chat": True,
+            "chat_chars": chat_chars,
+            "chat_lines": chat_lines,
+            "scene_title": daily.get("scene_title") or data.get("scene_title"),
+            "exported_at": data.get("exported_at"),
+        }
+
+    if row is None:
+        row = repo_gold_story.get_by_source_id(source_id=str(source_id or "").strip())
+    if row:
+        payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+        cached = _summary_from_payload(payload)
+        if cached:
+            return cached
+    return {"has_gold_chat": False}
 
 
 def collect_gold_chat_polish_issues(story: dict[str, Any]) -> list[dict[str, Any]]:

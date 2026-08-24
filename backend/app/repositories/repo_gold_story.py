@@ -19,6 +19,7 @@ _GOLD_STORY_COLUMNS = (
     "theme_family, title, conflict_core, auto_score, engagement_score, "
     "content_hash, times_used, avg_humor_delta, copy_hits, "
     "transcript_backend, transcript_path, payload_json, "
+    "gold_chat_daily_story_id, "
     "created_at, updated_at, last_used_at"
 )
 
@@ -99,18 +100,88 @@ def get_story(gold_story_id: int) -> dict:
 def get_by_source_id(
     *,
     source_id: str,
-    source: str = "bilibili",
+    source: str | None = "bilibili",
 ) -> dict | None:
+    sid = str(source_id or "").strip()
+    if not sid:
+        return None
+    if source:
+        row = sql.fetchone(
+            f"""
+            SELECT {_GOLD_STORY_COLUMNS}
+            FROM gold_story
+            WHERE source = ? AND source_id = ?
+            """,
+            (source, sid),
+        )
+        if row is not None:
+            sql.commit()
+            return _row_to_dict(row)
     row = sql.fetchone(
         f"""
         SELECT {_GOLD_STORY_COLUMNS}
         FROM gold_story
-        WHERE source = ? AND source_id = ?
+        WHERE source_id = ?
+        ORDER BY id DESC
+        LIMIT 1
         """,
-        (source, source_id),
+        (sid,),
     )
     sql.commit()
     return _row_to_dict(row) if row else None
+
+
+def update_story_source_fields(
+    gold_story_id: int,
+    *,
+    url: str | None = None,
+    title: str | None = None,
+    engagement_score: float | None = None,
+) -> None:
+    """回写站外元数据（如 B 站 title/url）。"""
+    fields: list[str] = []
+    params: list[Any] = []
+    if url is not None:
+        fields.append("url = ?")
+        params.append(str(url).strip())
+    if title is not None:
+        fields.append("title = ?")
+        params.append(str(title).strip())
+    if engagement_score is not None:
+        fields.append("engagement_score = ?")
+        params.append(float(engagement_score))
+    if not fields:
+        return
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    fields.append("updated_at = ?")
+    params.append(now)
+    params.append(int(gold_story_id))
+    sql.execute(
+        f"UPDATE gold_story SET {', '.join(fields)} WHERE id = ?",
+        tuple(params),
+    )
+    sql.commit()
+
+
+def set_gold_chat_daily_story_id(
+    gold_story_id: int,
+    daily_story_id: int | None,
+) -> None:
+    """标注 gold_chat 已导入的日常故事 id（重导仍指向同一行）。"""
+    ds_id = int(daily_story_id) if daily_story_id else None
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    sql.execute(
+        """
+        UPDATE gold_story
+        SET gold_chat_daily_story_id = ?, updated_at = ?
+        WHERE id = ?
+        """,
+        (ds_id, now, int(gold_story_id)),
+    )
+    patch: dict[str, Any] = {"gold_chat_imported_at": now}
+    if ds_id:
+        patch["gold_chat_daily_story_id"] = ds_id
+    patch_story_payload(int(gold_story_id), patch)
 
 
 def list_stories(

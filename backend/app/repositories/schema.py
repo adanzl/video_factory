@@ -368,6 +368,7 @@ CREATE INDEX IF NOT EXISTS idx_gs_inject_story
 def apply_gold_story_schema(conn: sqlite3.Connection) -> None:
     """金故事库表（幂等）。"""
     conn.executescript(_GOLD_STORY_DDL)
+    _ensure_column(conn, "gold_story", "gold_chat_daily_story_id", "INTEGER")
     _ensure_journal_mode_delete(conn)
 
 
