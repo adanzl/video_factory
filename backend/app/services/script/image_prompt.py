@@ -149,14 +149,17 @@ def _join_slots(parts: list[str]) -> str:
 
 def _render_object_states(states: list) -> str:
     """把结构化 object_states 渲染成道具状态句（S5）。"""
-    from app.services.script.visual_brief import _collapse_object_aliases
+    from app.services.script.visual_brief import (
+        _collapse_object_aliases,
+        is_body_part_object,
+    )
 
     merged: dict[str, dict] = {}
     for st in _collapse_object_aliases(states):
         if not isinstance(st, dict):
             continue
         obj = str(st.get("object") or "").strip()
-        if not obj:
+        if not obj or is_body_part_object(obj):
             continue
         merged[obj] = st
     parts: list[str] = []
@@ -1102,7 +1105,20 @@ def assemble_daily_t2i_prompt(
 
     from app.services.script.visual_brief import strip_held_prop_from_surface
 
-    return strip_held_prop_from_surface(_join_slots(parts))
+    prompt = strip_held_prop_from_surface(_join_slots(parts))
+    return _scrub_detached_body_part_clauses(prompt)
+
+
+_DETACHED_BODY_PART_CLAUSE_RE = re.compile(
+    r"[；;]?[^；;]*(?:手中|手里|手上)(?:放着|握着|拿着)?(?:一?只?)?(?:右|左)?手[^；;]*"
+    r"|[^；;]*(?:一?只?)?(?:右|左)?手在[^；;]{0,8}手中[^；;]*"
+)
+
+
+def _scrub_detached_body_part_clauses(prompt: str) -> str:
+    """剔除「手中放着一只手」类断肢表述（object_states 误把伤势当道具）。"""
+    text = _DETACHED_BODY_PART_CLAUSE_RE.sub("", prompt or "")
+    return re.sub(r"[；;]{2,}", "；", text).strip("；; ")
 
 
 def assemble_daily_image_prompts(
