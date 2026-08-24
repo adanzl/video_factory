@@ -61,7 +61,7 @@ DeepSeek 网页模拟 API，不是 Claude 子代理。涉及提示词方案评�
 ### 地址
 
 - 优先级从上到下
-- <http://127.0.0.1:8848> (只有ChatGPT)
+- <http://127.0.0.1:8848/> (有ChatGPT)
 - <http://192.168.50.172:8848/mock_agent>
 - <https://leo-zhao.natapp4.cc/mock_agent>
 

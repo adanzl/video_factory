@@ -220,11 +220,6 @@ def validate_chat_hard(
     if total > DAILY_STORY_BODY_CHARS_MAX:
         errors.append(f"正文总字数须≤{DAILY_STORY_BODY_CHARS_MAX}，当前{total}")
 
-    if line_count > 0:
-        last_sp = str(dialogue[-1].get("speaker") or "").strip() if isinstance(dialogue[-1], dict) else ""
-        if last_sp == "妈妈":
-            errors.append("末句不能是妈妈")
-
     banned = [str(x).strip() for x in (banned_literals or []) if str(x).strip()]
     if banned:
         body = "\n".join(

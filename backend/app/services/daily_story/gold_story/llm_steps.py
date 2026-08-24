@@ -48,6 +48,8 @@ GOLD_H3B_SEED_SNIPPET = """【金稿 dialogue_seed · BV1ND4y1X7Mm】
 - 灿灿: 哼，一招制敌。
 """
 
+GOLD_CHAT_LINES_SNIPPET_SOURCE_ID = "BV1sh411G7aX"
+
 GOLD_CHAT_LINES_SNIPPET = """【金稿对白 · BV1sh411G7aX《画作争夺战》】
 灿灿：昭昭，你趴那儿弄啥呢？让我瞅瞅。
 昭昭：不行！这是我的秘密，你不能看！
@@ -65,6 +67,22 @@ GOLD_CHAT_LINES_SNIPPET = """【金稿对白 · BV1sh411G7aX《画作争夺战�
 灿灿：不打了！这还差不多。
 妈妈：我去拿碘伏，你额头上还没涂呢。
 """
+
+GOLD_CHAT_LINES_SNIPPET_SAME_SOURCE = f"""【同源金稿 · 不注入全文正例】
+本稿与金稿对白正例同源（{GOLD_CHAT_LINES_SNIPPET_SOURCE_ID}），
+禁止按正例句数/字数复现。
+须按上方 scene_contract.beat_chain + dialogue_seed
+扩写到 ≥240 字、18–24 句现场对白。
+语气参考 M5+H：互毁双向、拒和加码、妈妈分层调解；
+勿连续两句照抄 seed。"""
+
+
+def resolve_gold_chat_snippet(source_id: str) -> str:
+    """同源金稿不注入全文正例，避免 LLM 锚定在 ~180 字短稿。"""
+    sid = str(source_id or "").strip()
+    if sid == GOLD_CHAT_LINES_SNIPPET_SOURCE_ID:
+        return GOLD_CHAT_LINES_SNIPPET_SAME_SOURCE
+    return GOLD_CHAT_LINES_SNIPPET
 
 _H0C_SYSTEM = (
     "你是短视频口播逐字稿修复师。输入为 faster-whisper 自动转写："

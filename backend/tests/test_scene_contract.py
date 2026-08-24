@@ -75,11 +75,11 @@ def test_validate_chat_hard_rejects_short_lines():
     assert any("对白句数" in e for e in errs)
 
 
-def test_validate_chat_hard_rejects_mom_last():
+def test_validate_chat_hard_allows_mom_last():
     lines = _long_dialogue(14)
     lines[-1] = {"speaker": "妈妈", "line": "好了别吵了。"}
     errs = validate_chat_hard(lines_to_story(lines), mom_lines_max=1)
-    assert any("末句" in e for e in errs)
+    assert not any("末句" in e for e in errs)
 
 
 def lines_to_story(lines: list[dict[str, str]]) -> dict:

@@ -110,6 +110,8 @@ def test_gold_story_to_gold_chat_retries_when_too_short(monkeypatch):
         return bad
 
     monkeypatch.setattr(gc, "_chat_json", fake_chat)
+    monkeypatch.setattr(gc, "PASS1_CANDIDATE_COUNT", 1)
+    monkeypatch.setattr(gc, "PASS1_REGENERATE_MAX", 1)
     out = gc.gold_story_to_gold_chat(_sample_row())
     assert len(out["dialogue"]) >= 4
     assert calls["n"] == 1
@@ -129,10 +131,58 @@ def test_gold_story_to_gold_chat_retries_on_validate_error(monkeypatch):
         return bad
 
     monkeypatch.setattr(gc, "_chat_json", fake_chat)
+    monkeypatch.setattr(gc, "PASS1_CANDIDATE_COUNT", 1)
+    monkeypatch.setattr(gc, "PASS1_REGENERATE_MAX", 1)
     out = gc.gold_story_to_gold_chat(_sample_row())
     assert len(out["dialogue"]) >= 4
     assert calls["n"] == 1
     assert calls.get("fix") is True
+
+
+def test_apply_deterministic_shorten_trims_one_char():
+    story = _sample_chat()
+    story["dialogue"][0]["line"] = "你刚才又抢我遥控器，我还不敢说呀！"
+    assert len(story["dialogue"][0]["line"]) == 17  # sanity
+    long_line = "你" * 30 + "！"
+    assert len(long_line) == 31
+    story["dialogue"][0]["line"] = long_line
+    out, changed = gc._apply_deterministic_shorten(story)
+    assert changed
+    assert len(out["dialogue"][0]["line"]) <= 30
+
+
+def test_validate_pass1_shortens_before_full_fix(monkeypatch):
+    calls: list[str] = []
+
+    def fake_validate(story, **kwargs):
+        for item in story.get("dialogue") or []:
+            if len(str(item.get("line") or "")) > 30:
+                raise ValueError("单句过长(max=31>30)")
+        return None
+
+    def fake_shorten(story, **_kw):
+        calls.append("shorten")
+        out = dict(story)
+        rows = [dict(x) for x in out["dialogue"]]
+        rows[0]["line"] = str(rows[0]["line"])[:30]
+        out["dialogue"] = rows
+        return out
+
+    monkeypatch.setattr(gc, "validate_gold_chat", fake_validate)
+    monkeypatch.setattr(gc, "_shorten_overlong_lines_with_llm", fake_shorten)
+    monkeypatch.setattr(gc, "_fix_chat_with_llm", lambda *_a, **_k: (_ for _ in ()).throw(
+        AssertionError("should not full fix")
+    ))
+    story = _sample_chat()
+    story["dialogue"][0]["line"] = "你" * 31
+    out = gc._validate_pass1_chat(
+        story,
+        banned_literals=[],
+        source_type="field",
+        mom_lines_max=1,
+    )
+    assert calls == ["shorten"]
+    assert len(out["dialogue"][0]["line"]) <= 30
 
 
 def test_gold_story_to_gold_chat(monkeypatch):
@@ -241,3 +291,42 @@ def test_import_gold_chat_daily_story_insert_and_reimport(
         assert updated["action"] == "update"
         saved2 = repo_daily_story.get_story(ds_id)
         assert saved2["story"]["scene_title"] == "新标题"
+
+
+def test_resolve_gold_chat_snippet_same_source():
+    from app.services.daily_story.gold_story.llm_steps import (
+        GOLD_CHAT_LINES_SNIPPET,
+        GOLD_CHAT_LINES_SNIPPET_SOURCE_ID,
+        resolve_gold_chat_snippet,
+    )
+
+    note = resolve_gold_chat_snippet(GOLD_CHAT_LINES_SNIPPET_SOURCE_ID)
+    assert "不注入全文正例" in note
+    assert GOLD_CHAT_LINES_SNIPPET not in note
+
+
+def test_resolve_gold_chat_snippet_cross_source():
+    from app.services.daily_story.gold_story.llm_steps import (
+        GOLD_CHAT_LINES_SNIPPET,
+        resolve_gold_chat_snippet,
+    )
+
+    assert resolve_gold_chat_snippet("BV1OTHER") == GOLD_CHAT_LINES_SNIPPET
+
+
+def test_patch_gold_chat_near_miss_chars():
+    story = _sample_chat()
+    from app.services.daily_story.prompts import DAILY_STORY_BODY_CHARS_MIN
+
+    total = gc.dialogue_total_chars(story)
+    trim = total - DAILY_STORY_BODY_CHARS_MIN + 2
+    assert trim > 0
+    dlg = story["dialogue"]
+    last = dlg[-1]
+    line = str(last["line"])
+    last["line"] = line[:-trim]
+    deficit = DAILY_STORY_BODY_CHARS_MIN - gc.dialogue_total_chars(story)
+    assert 0 < deficit <= gc.GOLD_CHAT_NEAR_MISS_DEFICIT_MAX
+    patched, changed = gc._patch_gold_chat_near_miss_chars(story)
+    assert changed
+    assert gc.dialogue_total_chars(patched) >= DAILY_STORY_BODY_CHARS_MIN
