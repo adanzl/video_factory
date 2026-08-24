@@ -14,7 +14,10 @@ from app.services.daily_story.gold_story.gold_chat_convert import (
     load_gold_chat,
     load_gold_chat_for_row,
 )
-from app.services.daily_story.gold_story.export_story import load_transcript_for_row
+from app.services.daily_story.gold_story.export_story import (
+    cleanup_gold_story_files,
+    load_transcript_for_row,
+)
 from app.services.daily_story.gold_story.pipeline import run_collect_pipeline
 
 
@@ -290,6 +293,33 @@ class GoldChatMgr:
             "failed": failed,
             "results": report.get("results") or [],
             "candidates_file": report.get("candidates_file"),
+        }
+
+    def delete_stories(self, gold_story_ids: list[int]) -> dict[str, Any]:
+        _ensure_schema()
+        cfg = Config()
+        ids = sorted({int(x) for x in gold_story_ids if int(x) > 0})
+        if not ids:
+            raise ValueError("ids 不能为空")
+        ok_ids: list[int] = []
+        results: list[dict[str, Any]] = []
+        files_removed = 0
+        for gid in ids:
+            try:
+                row = repo_gold_story.get_story(gid)
+            except KeyError:
+                results.append({"id": gid, "action": "error", "error": "not_found"})
+                continue
+            sid = str(row.get("source_id") or "").strip()
+            files_removed += len(cleanup_gold_story_files(sid, config=cfg))
+            ok_ids.append(gid)
+            results.append({"id": gid, "source_id": sid, "action": "ok"})
+        deleted = repo_gold_story.delete_stories_by_ids(ok_ids) if ok_ids else 0
+        return {
+            "deleted": deleted,
+            "ids": ok_ids,
+            "results": results,
+            "files_removed": files_removed,
         }
 
 

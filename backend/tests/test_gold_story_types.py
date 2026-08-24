@@ -8,6 +8,7 @@ from app.services.daily_story.gold_story.types import (
     GOLD_STORY_MECHANISM_CODES,
     GOLD_STORY_STRUCTURE_CODES,
     MECHANISM_STRUCTURE_MAP,
+    allowed_structure_types,
     catalog_entry,
     is_injectable_structure_type,
     mechanism_label,
@@ -64,8 +65,20 @@ def test_g_structure_label():
     assert catalog_entry("G") is not None
 
 
+def test_h_structure_label():
+    assert structure_type_label("H") == "第三方化解"
+    assert catalog_entry("H") is not None
+    assert not is_injectable_structure_type("H")
+
+
+def test_m5_allows_a_or_h():
+    assert allowed_structure_types("M5") == frozenset({"A", "H"})
+    validate_mechanism_structure_pair("M5", "A")
+    validate_mechanism_structure_pair("M5", "H")
+
+
 def test_pair_mismatch_raises():
-    with pytest.raises(ValueError, match="M2 对应 structure_type=C"):
+    with pytest.raises(ValueError, match="M2 对应 structure_type"):
         validate_mechanism_structure_pair("M2", "A")
 
 

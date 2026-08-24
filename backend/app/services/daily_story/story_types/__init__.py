@@ -1,4 +1,4 @@
-"""日常故事矛盾类型（A–G）线路注册与解析。"""
+"""日常故事矛盾类型（A–H）线路注册与解析。"""
 
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ from app.services.daily_story.story_types.c.line import LINE_C
 from app.services.daily_story.story_types.d.line import LINE_D
 from app.services.daily_story.story_types.e.line import LINE_E
 from app.services.daily_story.story_types.g.line import LINE_G
+from app.services.daily_story.story_types.h.line import LINE_H
 
 __all__ = [
     "QUALITY_FALLBACK_CODE",
@@ -49,7 +50,7 @@ __all__ = [
 
 STORY_TYPE_LINES: dict[str, StoryTypeLine] = {
     r.code: r
-    for r in (LINE_A, LINE_B, LINE_C, LINE_D, LINE_E, LINE_G)
+    for r in (LINE_A, LINE_B, LINE_C, LINE_D, LINE_E, LINE_G, LINE_H)
 }
 
 _VALID_STORY_TYPES = frozenset(STORY_TYPE_LABELS.keys())
@@ -64,7 +65,7 @@ def story_line_for_code(code: str) -> StoryTypeLine:
 
 
 def extract_story_type_code_from_punchline(punchline: str | None) -> str | None:
-    """仅从笑点解析文本提取 A–G；解析不到则返回 None（不做默认兜底）。"""
+    """仅从笑点解析文本提取 A–H；解析不到则返回 None（不做默认兜底）。"""
     from app.repositories.schema import extract_story_type_from_punchline
 
     return extract_story_type_from_punchline(punchline)
@@ -414,6 +415,10 @@ def append_type_body_validation_errors(story: dict, errors: list[str]) -> None:
         from app.services.daily_story.story_types.g.validate import append_g_body_errors
 
         append_g_body_errors(story, errors)
+    elif code == "H":
+        from app.services.daily_story.story_types.h.validate import append_h_body_errors
+
+        append_h_body_errors(story, errors)
 
 
 def patch_type_body(story: dict) -> list[str]:
@@ -442,6 +447,10 @@ def patch_type_body(story: dict) -> list[str]:
         from app.services.daily_story.story_types.g.patch import patch_g_body
 
         return patch_g_body(story)
+    if code == "H":
+        from app.services.daily_story.story_types.h.patch import patch_h_body
+
+        return patch_h_body(story)
     return []
 
 
@@ -491,6 +500,15 @@ def validate_type_opening(
     from app.services.daily_story.story_types.g.opening import append_g_opening_errors
 
     append_g_opening_errors(
+        normalized,
+        type_code=type_code,
+        errors=errors,
+        conflict_core=conflict_core,
+        setting=setting,
+    )
+    from app.services.daily_story.story_types.h.opening import append_h_opening_errors
+
+    append_h_opening_errors(
         normalized,
         type_code=type_code,
         errors=errors,

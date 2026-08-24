@@ -15,6 +15,14 @@
       >
         批量转 gold_chat{{ selectedIds.length ? `（${selectedIds.length}）` : "" }}
       </el-button>
+      <el-button
+        type="danger"
+        :disabled="!selectedIds.length"
+        :loading="deleting"
+        @click="handleBatchDelete"
+      >
+        批量删除{{ selectedIds.length ? `（${selectedIds.length}）` : "" }}
+      </el-button>
       <el-checkbox v-model="batchForce">已导出也重跑</el-checkbox>
       <el-select v-model="filterStatus" class="w-28!" @change="onFilterChange">
         <el-option label="active" value="active" />
@@ -78,7 +86,7 @@
           <span v-else class="text-gray-400">-</span>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="300" fixed="right">
+      <el-table-column label="操作" width="340" fixed="right">
         <template #default="{ row }">
           <el-button
             type="primary"
@@ -114,6 +122,15 @@
             @click.stop="handleConvertOne(row)"
           >
             {{ row.has_gold_chat ? "重转" : "转换" }}
+          </el-button>
+          <el-button
+            type="danger"
+            link
+            size="small"
+            :loading="deletingId === row.id"
+            @click.stop="handleDeleteOne(row)"
+          >
+            删除
           </el-button>
         </template>
       </el-table-column>
@@ -161,6 +178,7 @@ import {
   batchConvertGoldChat,
   collectGoldStories,
   convertGoldChat,
+  deleteGoldStories,
   formatAutoScore,
   formatDailyStoryType,
   importGoldChat,
@@ -174,8 +192,10 @@ const items = ref<GoldChatListItem[]>([]);
 const loading = ref(false);
 const collecting = ref(false);
 const batching = ref(false);
+const deleting = ref(false);
 const convertingId = ref<number | null>(null);
 const importingId = ref<number | null>(null);
+const deletingId = ref<number | null>(null);
 const selectedIds = ref<number[]>([]);
 const showDetail = ref(false);
 const showTranscript = ref(false);
@@ -320,6 +340,57 @@ async function handleConvertOne(row: GoldChatListItem) {
     handleError(e, "转换失败");
   } finally {
     convertingId.value = null;
+  }
+}
+
+async function handleDeleteOne(row: GoldChatListItem) {
+  try {
+    await ElMessageBox.confirm(
+      `确定删除「${row.title || row.source_id}」？关联逐字稿与导出文件将一并删除。`,
+      "删除金故事",
+      { type: "warning" },
+    );
+  } catch {
+    return;
+  }
+  deletingId.value = row.id;
+  try {
+    const res = await deleteGoldStories([row.id]);
+    if (res.deleted > 0) {
+      ElMessage.success("已删除");
+    } else {
+      ElMessage.warning("未删除任何记录");
+    }
+    await fetchItems();
+  } catch (e) {
+    handleError(e, "删除失败");
+  } finally {
+    deletingId.value = null;
+  }
+}
+
+async function handleBatchDelete() {
+  if (!selectedIds.value.length) return;
+  const n = selectedIds.value.length;
+  try {
+    await ElMessageBox.confirm(
+      `确定删除选中的 ${n} 条金故事？关联逐字稿与导出文件将一并删除。`,
+      "批量删除",
+      { type: "warning" },
+    );
+  } catch {
+    return;
+  }
+  deleting.value = true;
+  try {
+    const res = await deleteGoldStories(selectedIds.value);
+    ElMessage.success(`已删除 ${res.deleted} 条`);
+    selectedIds.value = [];
+    await fetchItems();
+  } catch (e) {
+    handleError(e, "批量删除失败");
+  } finally {
+    deleting.value = false;
   }
 }
 

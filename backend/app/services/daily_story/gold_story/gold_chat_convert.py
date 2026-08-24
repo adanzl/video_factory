@@ -65,6 +65,7 @@ story_raw（背景，勿照抄；口播/论述须转现场对白）：{story_raw
 禁词（对白中禁止出现）：{banned_literals}
 funny_why：{funny_why}
 source_type：{source_type}（tutorial 时禁保留教程口吻/第几招）
+{structure_hint}
 
 {gold_chat_snippet}
 
@@ -114,6 +115,7 @@ _FIX_USER = """校验错误：
 规则：
 - 正文 dialogue 总字数 {chars_min}–{chars_max}（不足则 **扩写** 到 ≥{chars_min}，建议 18–24 句）
 - 对白句数须 ≥12；每句 ≤30 字，口语化、可拍
+- 妈妈台词须 ≤{mom_lines_max} 句；末句不能是妈妈
 - 禁词须同义改写：{banned_literals}
 - 转述/旁白/括号说明须改为当场对白
 - speaker 非法须改为昭昭/灿灿/妈妈
@@ -172,6 +174,7 @@ def _fix_chat_with_llm(
     errors: str,
     *,
     banned_literals: list[str],
+    mom_lines_max: int = 1,
 ) -> dict[str, Any]:
     user = _FIX_USER.format(
         errors=errors,
@@ -179,6 +182,7 @@ def _fix_chat_with_llm(
         chars_min=DAILY_STORY_BODY_CHARS_MIN,
         chars_max=DAILY_STORY_BODY_CHARS_MAX,
         banned_literals="、".join(banned_literals) or "（无）",
+        mom_lines_max=max(0, int(mom_lines_max)),
     )
     return _chat_json(_FIX_SYSTEM, user)
 
@@ -251,6 +255,17 @@ def _is_short_content_error(msg: str) -> bool:
     )
 
 
+def _structure_type_hint(structure_type: str) -> str:
+    st = str(structure_type or "").strip().upper()
+    if st == "H":
+        return """【H 第三方化解 · 扩写要点】
+- 前段：姐弟互毁/抢/推搡/拒和 escalating
+- 中后段：妈妈 2–3 句定责劝和（别打了/都错了/要互相原谅）
+- 收束：表演性道歉、拉手和好或齐声「不打了」；末句宜姐弟
+- 非 G 内部 pivot/护短破防"""
+    return ""
+
+
 def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
     """单条 gold_story 行 → daily_story 形 JSON。"""
     payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
@@ -279,6 +294,7 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
         banned_literals="、".join(str(x) for x in banned) or "（无）",
         funny_why=str(payload.get("funny_why") or "")[:500],
         source_type=source_type,
+        structure_hint=_structure_type_hint(structure_type),
         gold_chat_snippet=GOLD_CHAT_LINES_SNIPPET,
         chars_min=DAILY_STORY_BODY_CHARS_MIN,
         chars_max=DAILY_STORY_BODY_CHARS_MAX,
@@ -300,7 +316,12 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
             last_err = str(exc)
             if attempt >= 4:
                 raise ValueError(last_err) from exc
-            data = _fix_chat_with_llm(data, last_err, banned_literals=banned_list)
+            data = _fix_chat_with_llm(
+                data,
+                last_err,
+                banned_literals=banned_list,
+                mom_lines_max=int(mom_max),
+            )
             data = _normalize_chat_speakers(data)
     raise ValueError(last_err or "gold_chat validate failed")
 

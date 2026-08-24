@@ -137,6 +137,39 @@ def test_api_list_all_statuses(app_ctx):
     assert "BV1TESTALL02" in all_ids
 
 
+def test_api_delete(app_ctx, tmp_path, monkeypatch):
+    inserted = _insert_sample(app_ctx)
+    gid = int(inserted["id"])
+
+    import app.config as config_mod
+    from app.services.daily_story.gold_story import export_story as es
+
+    transcript_dir = tmp_path / "transcripts"
+    transcript_dir.mkdir()
+    (transcript_dir / "BV1TESTAPI01.txt").write_text("test", encoding="utf-8")
+
+    class PatchedConfig(config_mod.Config):
+        def __init__(self):
+            super().__init__()
+            self.gold_story_transcript_dir = transcript_dir
+            self.gold_story_media_workspace = tmp_path / "media"
+
+    monkeypatch.setattr(config_mod, "Config", PatchedConfig)
+    monkeypatch.setattr("app.services.daily_story.gold_story.gold_chat_mgr.Config", PatchedConfig)
+    monkeypatch.setattr(es, "Config", PatchedConfig)
+
+    client = app_ctx.test_client()
+    resp = client.post("/v_factory/api/gold_chat/delete", json={"ids": [gid]})
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["deleted"] == 1
+    assert gid in body["ids"]
+
+    list_resp = client.get("/v_factory/api/gold_chat/list?limit=50")
+    ids = {x["id"] for x in list_resp.get_json()["items"]}
+    assert gid not in ids
+
+
 def test_api_collect(app_ctx, monkeypatch):
     def fake_collect(*, max_candidates=10, **_kwargs):
         return {

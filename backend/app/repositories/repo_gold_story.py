@@ -264,6 +264,24 @@ def delete_stories_except(keep_ids: list[int]) -> int:
     return int(result.rowcount or 0)
 
 
+def delete_stories_by_ids(gold_story_ids: list[int]) -> int:
+    """按 id 删除 gold_story（及关联 inject_log）。"""
+    ids = sorted({int(x) for x in gold_story_ids if int(x) > 0})
+    if not ids:
+        return 0
+    placeholders = ",".join("?" * len(ids))
+    sql.execute(
+        f"DELETE FROM gold_story_inject_log WHERE gold_story_id IN ({placeholders})",
+        tuple(ids),
+    )
+    result = sql.execute(
+        f"DELETE FROM gold_story WHERE id IN ({placeholders})",
+        tuple(ids),
+    )
+    sql.commit()
+    return int(result.rowcount or 0)
+
+
 def patch_story_payload(gold_story_id: int, patch: dict[str, Any]) -> None:
     """合并 payload 字段（如 funny_signal）。"""
     row = get_story(int(gold_story_id))
@@ -273,6 +291,20 @@ def patch_story_payload(gold_story_id: int, patch: dict[str, Any]) -> None:
     sql.execute(
         "UPDATE gold_story SET payload_json = ?, updated_at = ? WHERE id = ?",
         (json.dumps(merged, ensure_ascii=False), now, int(gold_story_id)),
+    )
+    sql.commit()
+
+
+def update_structure_type(gold_story_id: int, structure_type: str) -> None:
+    """更新 structure_type（须与 mechanism 合法配对）。"""
+    row = get_story(int(gold_story_id))
+    mechanism = str(row.get("mechanism") or "")
+    st = normalize_structure_type(structure_type)
+    validate_mechanism_structure_pair(mechanism, st)
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    sql.execute(
+        "UPDATE gold_story SET structure_type = ?, updated_at = ? WHERE id = ?",
+        (st, now, int(gold_story_id)),
     )
     sql.commit()
 
