@@ -100,7 +100,7 @@ class GoldChatMgr:
     def list_items(
         self,
         *,
-        status: str | None = "active",
+        status: str | None = None,
         limit: int = 15,
         offset: int = 0,
     ) -> dict[str, Any]:

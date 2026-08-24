@@ -119,7 +119,7 @@ def test_api_list_all_statuses(app_ctx):
             story_raw="rejected样例" * 20,
             payload={"beat": ["a", "b", "c", "d"]},
             title="rejected样例",
-            auto_score=0.5,
+            auto_score=0.56,
             status="rejected",
         )
 
