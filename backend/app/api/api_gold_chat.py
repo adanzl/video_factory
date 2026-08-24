@@ -71,8 +71,6 @@ def get_route():
         )
     except KeyError:
         raise APIError("金故事不存在", status_code=404)
-    except FileNotFoundError as exc:
-        raise APIError(str(exc), status_code=404)
 
 
 @bp.post("/convert")

@@ -87,7 +87,9 @@ def test_api_list_and_convert(app_ctx, monkeypatch, tmp_path):
     get_resp = client.get(f"/v_factory/api/gold_chat/get?id={gid}")
     assert get_resp.status_code == 200
     detail = get_resp.get_json()
-    assert detail["daily_story"]["scene_title"] == "关门练功"
+    assert detail["dump"]["story_raw"]
+    assert detail["has_gold_chat"] is True
+    assert detail["gold_chat"]["daily_story"]["scene_title"] == "关门练功"
 
     list_resp2 = client.get("/v_factory/api/gold_chat/list?limit=10")
     row2 = next(x for x in list_resp2.get_json()["items"] if x["id"] == gid)
@@ -111,9 +113,14 @@ def test_api_batch(app_ctx, monkeypatch, tmp_path):
     assert report["results"][0]["action"] == "ok"
 
 
-def test_api_get_missing_export(app_ctx):
+def test_api_get_dump_without_gold_chat(app_ctx):
     inserted = _insert_sample(app_ctx)
     gid = int(inserted["id"])
     client = app_ctx.test_client()
     resp = client.get(f"/v_factory/api/gold_chat/get?id={gid}")
-    assert resp.status_code == 404
+    assert resp.status_code == 200
+    detail = resp.get_json()
+    assert detail["id"] == gid
+    assert detail["dump"]["story_raw"]
+    assert detail["has_gold_chat"] is False
+    assert detail["gold_chat"] is None

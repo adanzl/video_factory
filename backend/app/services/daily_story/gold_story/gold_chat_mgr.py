@@ -47,6 +47,53 @@ def _row_to_list_item(row: dict[str, Any], *, config: Config) -> dict[str, Any]:
     }
 
 
+def _row_to_dump(row: dict[str, Any]) -> dict[str, Any]:
+    """金故事 dump（story_raw + 结构化抽取）。"""
+    payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+    dump: dict[str, Any] = {}
+    for key in (
+        "story_raw",
+        "perspective",
+        "funny_why",
+        "beat",
+        "banned_literals",
+        "dialogue_seed",
+        "setting",
+        "closing_intent",
+        "speaker_map_note",
+        "scene_contract",
+        "source_type",
+    ):
+        val = payload.get(key)
+        if val not in (None, "", [], {}):
+            dump[key] = val
+    story_raw = str(row.get("story_raw") or payload.get("story_raw") or "").strip()
+    if story_raw:
+        dump["story_raw"] = story_raw
+    transcript_path = row.get("transcript_path")
+    if transcript_path:
+        dump["transcript_path"] = transcript_path
+    return dump
+
+
+def _row_to_detail_header(row: dict[str, Any]) -> dict[str, Any]:
+    payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+    sid = str(row.get("source_id") or "").strip()
+    return {
+        "id": row.get("id"),
+        "source_id": sid,
+        "url": payload.get("bili_url") or row.get("url"),
+        "title": row.get("title"),
+        "bili_title": payload.get("bili_title"),
+        "status": row.get("status"),
+        "mechanism": row.get("mechanism"),
+        "structure_type": row.get("structure_type"),
+        "conflict_core": row.get("conflict_core"),
+        "auto_score": row.get("auto_score"),
+        "gold_chat_daily_story_id": row.get("gold_chat_daily_story_id"),
+    }
+
+
 class GoldChatMgr:
     def list_items(
         self,
@@ -85,24 +132,38 @@ class GoldChatMgr:
         else:
             raise ValueError("id 或 source_id 必填")
 
+        if row is None:
+            raise KeyError("金故事不存在")
         if not source_id:
             raise KeyError("gold_story missing source_id")
 
-        export = load_gold_chat_for_row(row, config=cfg)
-        if export is None:
-            payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
-            if payload.get("gold_chat_exported_at"):
-                raise FileNotFoundError(
-                    f"gold_chat 摘要已在库内，但导出文件缺失: {source_id}；请重转"
-                )
-            raise FileNotFoundError(f"尚未导出 gold_chat: {source_id}")
-
         payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+        export = load_gold_chat_for_row(row, config=cfg)
+        gold_chat: dict[str, Any] | None = None
+        has_gold_chat = export is not None
+
+        if export is not None:
+            gold_chat = {
+                "chat_chars": export.get("chat_chars"),
+                "chat_lines": export.get("chat_lines"),
+                "exported_at": export.get("exported_at"),
+                "daily_story": export.get("daily_story"),
+                "gold_meta": export.get("gold_meta"),
+            }
+        elif payload.get("gold_chat_exported_at"):
+            gold_chat = {
+                "export_missing": True,
+                "exported_at": payload.get("gold_chat_exported_at"),
+                "chat_chars": payload.get("gold_chat_chars"),
+                "chat_lines": payload.get("gold_chat_lines"),
+                "scene_title": payload.get("gold_chat_scene_title"),
+            }
+
         return {
-            "gold_story": row,
-            "bili_title": payload.get("bili_title"),
-            "gold_chat_daily_story_id": row.get("gold_chat_daily_story_id"),
-            **export,
+            **_row_to_detail_header(row),
+            "dump": _row_to_dump(row),
+            "has_gold_chat": has_gold_chat,
+            "gold_chat": gold_chat,
         }
 
     def convert_one(
