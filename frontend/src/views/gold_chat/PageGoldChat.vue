@@ -45,7 +45,7 @@
       <el-table-column prop="id" label="ID" width="60" />
       <el-table-column prop="source_id" label="BV" width="130" show-overflow-tooltip />
       <el-table-column prop="title" label="金故事标题" min-width="160" show-overflow-tooltip />
-      <el-table-column label="结构" width="100">
+      <el-table-column label="结构" width="110">
         <template #default="{ row }">
           {{ formatDailyStoryType(row.structure_type) }}
         </template>

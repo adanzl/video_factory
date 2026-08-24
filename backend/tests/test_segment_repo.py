@@ -110,6 +110,47 @@ def test_insert_segments_stores_info_json(app_ctx) -> None:
     assert rebuilt[1]["text"] == "a2"
 
 
+def test_insert_segments_preserves_gen_sec_when_info_in_seg(app_ctx) -> None:
+    job = repo_job.create_job("test preserve gen sec")
+    job_id = job["id"]
+    repo_segment.insert_segments(
+        job_id,
+        [
+            {
+                "segment_index": 1,
+                "text": "a",
+                "visual_mode": "static_motion",
+            },
+        ],
+    )
+    row = repo_segment.list_segments(job_id)[0]
+    repo_segment.update_segment(
+        row["id"],
+        info={
+            "video_provider": "ffmpeg",
+            "image_gen_sec": 12.3,
+            "clip_gen_sec": 45.6,
+        },
+    )
+
+    repo_segment.insert_segments(
+        job_id,
+        [
+            {
+                "segment_index": 1,
+                "text": "a2",
+                "visual_mode": "static_motion",
+                "info": {"video_provider": "agnes_i2v"},
+            },
+        ],
+    )
+
+    updated = repo_segment.list_segments(job_id)[0]
+    assert updated["info"]["video_provider"] == "agnes_i2v"
+    assert updated["info"]["image_gen_sec"] == 12.3
+    assert updated["info"]["clip_gen_sec"] == 45.6
+
+
 def test_insert_segments_preserves_tts_duration_sec(app_ctx) -> None:
     job = repo_job.create_job("test preserve duration")
     job_id = job["id"]
