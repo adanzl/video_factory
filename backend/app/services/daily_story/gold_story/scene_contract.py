@@ -44,6 +44,7 @@ _RELAY_SPEECH = re.compile(
     r"(?:妈妈|爸爸)(?:说了|说，|教过|告诉我|说过)|"
     r"你上次说的呀|一位(?:妈妈|爸爸)|经验分享|第[一二三四1-4]招"
 )
+_REMAP_SIBLING_TERMS = re.compile(r"哥哥|弟弟")
 
 CHAT_LINE_COUNT_MIN = 12
 CHAT_LINE_COUNT_MAX = 24
@@ -162,6 +163,10 @@ def collect_voice_errors(dialogue: list[Any]) -> list[str]:
             errors.append(f"dialogue[{i}] 含括号说明，须改为当场对白")
         elif _RELAY_SPEECH.search(line):
             errors.append(f"dialogue[{i}] 像转述/论述，须改为第一人称现场对白")
+        elif _REMAP_SIBLING_TERMS.search(line):
+            errors.append(
+                f"dialogue[{i}] 含站外称谓哥哥/弟弟，须改姐姐/昭昭/灿灿"
+            )
     return errors
 
 
