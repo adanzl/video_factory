@@ -117,6 +117,7 @@ DeepSeek 网页模拟 API，不是 Claude 子代理。涉及提示词方案评�
 - PowerShell 会拆坏命令，不要直接用，用 Python
 - 生成故事要和DB已有作比较，避免重复
 - 生图和生视频提示词由 Agnes mock审核
+- 不能上传db文件
 
 ## 审核稿子
 
