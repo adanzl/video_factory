@@ -274,20 +274,20 @@ def test_import_gold_chat_daily_story_insert_and_reimport(
     gc.export_gold_chat_files(source_id=row["source_id"], row=row, chat=chat)
 
     with app_ctx.app_context():
-        out = gc.import_gold_chat_daily_story(row)
+        out = gc.import_gold_chat_daily_story(row, review=False)
         assert out["action"] == "insert"
         ds_id = int(out["daily_story_id"])
         saved = repo_daily_story.get_story(ds_id)
         assert saved["story"]["scene_title"] == "关门练功"
 
         row["gold_chat_daily_story_id"] = ds_id
-        skip = gc.import_gold_chat_daily_story(row)
+        skip = gc.import_gold_chat_daily_story(row, review=False)
         assert skip["action"] == "skip"
 
         chat2 = dict(chat)
         chat2["scene_title"] = "新标题"
         gc.export_gold_chat_files(source_id=row["source_id"], row=row, chat=chat2)
-        updated = gc.import_gold_chat_daily_story(row, force=True)
+        updated = gc.import_gold_chat_daily_story(row, force=True, review=False)
         assert updated["action"] == "update"
         saved2 = repo_daily_story.get_story(ds_id)
         assert saved2["story"]["scene_title"] == "新标题"

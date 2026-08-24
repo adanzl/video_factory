@@ -56,7 +56,7 @@ _CONTENT_WORD_RE = re.compile(r"[\u4e00-\u9fff]{2,}")
 HUMOR_PUBLISH_MIN = 10
 STRUCTURE_SCORE_CAP = 80
 # 扣分制各维度满分（结构分从 80 满分往下扣，未达标按维度扣分，cons 与分数对应）
-OPENING_SCORE_FULL = 6          # 开场：锚定3 + 双句1 + 背景1 + 可拍1
+OPENING_SCORE_FULL = 2          # 开场：缺/未满各最多扣 2（2026-08-25 自 6 下调）
 ESCALATION_SCORE_FULL = 14      # 推进：4 层达标满分，3层-6 / 2层-12 / ≤1层-14
 PUNCHLINE_SCORE_FULL = 8        # 收束形态：回旋镖/反转/破功落位达标满分，未落位扣8
 # 节奏维度无独立满分：紧凑达标不减，绕圈/拖沓按 _score_redundancy 原扣分（-5~-12）
@@ -726,14 +726,14 @@ def score_daily_story(
         score -= 10
         cons.append("笑点解析缺类型")
 
-    # ── 开场维度（满分 6）：opening 净分为 -8~+8，未拿满按差扣分 ──
+    # ── 开场维度（满分 2）：缺或未满均最多扣 OPENING_SCORE_FULL ──
     opening = story.get("discovery_opening")
     if not isinstance(opening, list) or not (
         DAILY_STORY_OPENING_LINES_MIN
         <= len(opening)
         <= DAILY_STORY_OPENING_LINES_MAX
     ):
-        score -= 5
+        score -= OPENING_SCORE_FULL
         cons.append("缺发现开场")
     elif profile.score_opening_quality:
         op_pts, op_pros, op_cons = profile.score_opening_quality(story)
