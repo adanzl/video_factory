@@ -33,6 +33,22 @@ def _parse_info(raw: object | None) -> dict | None:
     return dict(parsed) if isinstance(parsed, dict) and parsed else None
 
 
+def _merge_segment_info_for_insert(
+    prev_info: object | None,
+    seg_info: object | None,
+) -> dict | None:
+    """script_json 同步时合并 info：新值覆盖旧值，保留未出现在 script 的运行时统计。"""
+    prev = _parse_info(prev_info) or {}
+    incoming = _parse_info(seg_info) or {}
+    if not prev and not incoming:
+        return None
+    merged = {**prev, **incoming}
+    for key in ("image_gen_sec", "clip_gen_sec"):
+        if key in prev and key not in incoming:
+            merged[key] = prev[key]
+    return merged or None
+
+
 def delete_segments(job_id: int) -> None:
     sql.execute("DELETE FROM video_segment WHERE job_id = ?", (job_id,))
     sql.commit()
@@ -65,7 +81,12 @@ def insert_segments(
         if not status:
             status = "pending"
         if "info" in seg:
-            info_raw = _serialize_info(seg.get("info"))
+            if prev is not None:
+                info_raw = _serialize_info(
+                    _merge_segment_info_for_insert(prev.get("info"), seg.get("info"))
+                )
+            else:
+                info_raw = _serialize_info(seg.get("info"))
         elif prev is not None:
             info_raw = _serialize_info(prev.get("info"))
         else:

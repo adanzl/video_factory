@@ -388,7 +388,7 @@ def run_segment_all(job_id: int, *, to_end: bool=False, segment_indices: list[in
         raise ValueError('segment stage is not available for material pipeline jobs')
     segment_cls = stage_class_for('segment', job)
     job_mgr.mark_running(job_id)
-    _run_one_stage(job_id, segment_cls, segment_indices=segment_indices, segment_scope='all', advance=True)
+    _run_one_stage(job_id, segment_cls, segment_indices=segment_indices, segment_scope='all', advance=to_end)
     if not to_end:
         return _reload_job(job_id)
     return _run_from(job_id, next_stage_class(segment_cls, job))
@@ -411,7 +411,7 @@ def run_segment_clips(job_id: int, *, to_end: bool=False, segment_indices: list[
         raise ValueError('segment stage is not available for material pipeline jobs')
     segment_cls = stage_class_for('segment', job)
     job_mgr.mark_running(job_id)
-    _run_one_stage(job_id, segment_cls, segment_indices=segment_indices, segment_scope='clips', advance=True)
+    _run_one_stage(job_id, segment_cls, segment_indices=segment_indices, segment_scope='clips', advance=to_end)
     if not to_end:
         return _reload_job(job_id)
     return _run_from(job_id, next_stage_class(segment_cls, job))
