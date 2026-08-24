@@ -41,7 +41,7 @@ LINE_H = StoryTypeLine(
 H 类开场：姐弟当场冲突（抢/毁/推），勿写成 C 公平赛规首句。""",
     opening_user_append="开场到「刚吵起来/刚互毁」，妈妈调解留正文。",
     theme_user_append="主题宜姐弟冲突升级后第三方调解，非争物回旋镖。",
-    retry_soft_close_hint="补妈妈 2–3 句定责劝和，末段拉手或齐声和好。",
+    retry_soft_close_hint="补妈妈问谁先动手 + 定责劝和，末段齐声不打了/碘伏涂药；勿自编彩虹交换。",
     escalation_revision_hint="中段须明显升级或僵持，调解前勿提前和好。",
     closing_revision_hint="收束须仪式性和好；末句宜姐弟，勿妈妈独白总结。",
     layer_patterns=compile_layers(

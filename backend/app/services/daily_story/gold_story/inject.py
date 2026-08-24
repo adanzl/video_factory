@@ -6,7 +6,10 @@ from typing import Any
 
 from app.config import Config
 from app.repositories import repo_gold_story
-from app.services.daily_story.gold_story.scene_contract import format_scene_contract_block
+from app.services.daily_story.gold_story.scene_contract import (
+    format_scene_contract_block,
+    sanitize_banned_literals,
+)
 from app.services.daily_story.gold_story.types import (
     GOLD_STORY_INJECTABLE_CODES,
     is_injectable_structure_type,
@@ -43,7 +46,11 @@ def build_gold_story_block(story: dict[str, Any]) -> str:
     beat = payload.get("beat") or []
     dialogue_seed = payload.get("dialogue_seed") or []
     scene_contract = payload.get("scene_contract") or {}
-    banned = payload.get("banned_literals") or []
+    banned = sanitize_banned_literals(
+        payload.get("banned_literals"),
+        scene_contract=scene_contract,
+        beat=payload.get("beat") if isinstance(payload.get("beat"), list) else [],
+    )
     closing = str(payload.get("closing_intent") or "").strip()
     mechanism = str(story.get("mechanism") or "").strip()
     structure_type = str(story.get("structure_type") or "").strip()

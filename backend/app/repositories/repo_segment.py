@@ -160,6 +160,30 @@ def sync_image_paths_from_disk(job_id: int, images_dir) -> int:
     return fixed
 
 
+def sync_clip_paths_from_disk(job_id: int, clips_dir) -> int:
+    """磁盘已有 mp4 但 DB 缺 clip_path 时补写（防并发落库竞态丢字段）。"""
+    from pathlib import Path
+
+    root = Path(clips_dir)
+    if not root.is_dir():
+        return 0
+    fixed = 0
+    for row in list_segments(job_id):
+        recorded = row.get("clip_path")
+        if recorded:
+            try:
+                if Path(str(recorded)).is_file():
+                    continue
+            except OSError:
+                pass
+        fallback = root / f"{int(row['segment_index'])}.mp4"
+        if not fallback.is_file():
+            continue
+        update_segment(int(row["id"]), clip_path=str(fallback.resolve()))
+        fixed += 1
+    return fixed
+
+
 def list_segments(job_id: int) -> list[dict]:
     rows = sql.fetchall(
         """

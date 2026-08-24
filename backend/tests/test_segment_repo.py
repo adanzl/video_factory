@@ -168,3 +168,26 @@ def test_sync_image_paths_from_disk(app_ctx, tmp_path) -> None:
     row = repo_segment.list_segments(job_id)[0]
     assert row["image_path"] == str(png.resolve())
     assert row["status"] == "done"
+
+
+def test_sync_clip_paths_from_disk(app_ctx, tmp_path) -> None:
+    job = repo_job.create_job("test sync clip path")
+    job_id = job["id"]
+    repo_segment.insert_segments(
+        job_id,
+        [
+            {
+                "segment_index": 1,
+                "text": "a",
+                "visual_mode": "static_motion",
+            },
+        ],
+    )
+    clips_dir = tmp_path / "segments"
+    clips_dir.mkdir()
+    mp4 = clips_dir / "1.mp4"
+    mp4.write_bytes(b"fake")
+    fixed = repo_segment.sync_clip_paths_from_disk(job_id, clips_dir)
+    assert fixed == 1
+    row = repo_segment.list_segments(job_id)[0]
+    assert row["clip_path"] == str(mp4.resolve())

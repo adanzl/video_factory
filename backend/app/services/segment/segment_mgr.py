@@ -259,6 +259,17 @@ class SegmentMgr:
                 # 合并已有 clip（跳过生成的不在 new_clips 里）
                 all_paths = list(new_clips.segment_clip_paths) + existing_clip_paths
                 clips = SegmentClipsResult(segment_clip_paths=all_paths)
+            if job_id is not None:
+                from app.repositories import repo_segment
+
+                repaired = repo_segment.sync_clip_paths_from_disk(
+                    job_id, media_dir / "segments"
+                )
+                if repaired:
+                    logger.info(
+                        "produce_segments: repaired %s clip_path(s) from disk",
+                        repaired,
+                    )
         elapsed = time.time() - t0
         logger.info(
             "produce_segments: done in %.1fs (images=%s, clips=%s)",

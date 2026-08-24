@@ -19,6 +19,7 @@ from app.services.daily_story.gold_story.funny_signal import (
     metrics_to_payload,
     passes_funny_gate_from_payload,
 )
+from app.services.daily_story.gold_story.scene_contract import sanitize_banned_literals
 from app.services.daily_story.gold_story.export_story import export_story_files
 from app.services.daily_story.gold_story import llm_steps
 from app.services.daily_story.gold_story import review as gs_review
@@ -171,6 +172,11 @@ def reprocess_gold_story(
     )
     funny_payload = metrics_to_payload(funny)
     old_payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+    banned = sanitize_banned_literals(
+        h3.get("banned_literals") or h3a.get("banned_literals"),
+        scene_contract=h3a,
+        beat=h3.get("beat") if isinstance(h3.get("beat"), list) else [],
+    )
     payload: dict[str, Any] = {
         **old_payload,
         "perspective": h2.get("perspective"),
@@ -180,7 +186,7 @@ def reprocess_gold_story(
         "contract_confidence": h3a.get("contract_confidence"),
         "funny_why": h3.get("funny_why"),
         "beat": h3.get("beat") or [],
-        "banned_literals": h3.get("banned_literals") or [],
+        "banned_literals": banned,
         "dialogue_seed": h3b.get("dialogue_seed") or [],
         "closing_intent": h3b.get("closing_intent") or h3a.get("closing_intent"),
         "speaker_map_note": h3b.get("speaker_map_note") or h3a.get("remap_note"),
