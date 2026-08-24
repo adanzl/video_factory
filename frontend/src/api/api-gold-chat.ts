@@ -24,8 +24,33 @@ export interface GoldChatListItem {
 
 export type GoldChatListResponse = ListResponse<GoldChatListItem>;
 
-export interface GoldChatExport {
-  gold_story_id?: number;
+export interface GoldStoryDump {
+  story_raw?: string;
+  perspective?: string;
+  funny_why?: string;
+  beat?: string[];
+  banned_literals?: string[];
+  dialogue_seed?: Array<{ speaker?: string; intent?: string }>;
+  setting?: string;
+  closing_intent?: string;
+  speaker_map_note?: string;
+  scene_contract?: Record<string, unknown>;
+  source_type?: string;
+  transcript_path?: string;
+}
+
+export interface GoldChatPayload {
+  chat_chars?: number;
+  chat_lines?: number;
+  exported_at?: string;
+  export_missing?: boolean;
+  scene_title?: string;
+  daily_story?: StoryContent;
+  gold_meta?: Record<string, unknown>;
+}
+
+export interface GoldStoryDetail {
+  id?: number;
   source_id: string;
   url?: string;
   title?: string;
@@ -34,14 +59,15 @@ export interface GoldChatExport {
   structure_type?: string;
   status?: string;
   conflict_core?: string;
-  chat_chars?: number;
-  chat_lines?: number;
-  exported_at?: string;
+  auto_score?: number;
   gold_chat_daily_story_id?: number | null;
-  daily_story: StoryContent;
-  gold_meta?: Record<string, unknown>;
-  gold_story?: GoldChatListItem;
+  dump: GoldStoryDump;
+  has_gold_chat: boolean;
+  gold_chat?: GoldChatPayload | null;
 }
+
+/** @deprecated 兼容旧引用，请用 GoldStoryDetail */
+export type GoldChatExport = GoldStoryDetail;
 
 export interface GoldChatImportResult {
   action: "insert" | "update" | "skip";
@@ -109,8 +135,8 @@ export async function listGoldChats(params: {
 export async function getGoldChat(params: {
   id?: number;
   sourceId?: string;
-}): Promise<GoldChatExport> {
-  const response = await api.get<GoldChatExport>(
+}): Promise<GoldStoryDetail> {
+  const response = await api.get<GoldStoryDetail>(
     "/v_factory/api/gold_chat/get",
     {
       params: {

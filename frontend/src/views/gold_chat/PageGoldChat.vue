@@ -80,7 +80,6 @@
       <el-table-column label="操作" width="240" fixed="right">
         <template #default="{ row }">
           <el-button
-            v-if="row.has_gold_chat"
             type="primary"
             link
             size="small"
@@ -209,10 +208,6 @@ function onSelectionChange(rows: GoldChatListItem[]) {
 }
 
 function viewItem(row: GoldChatListItem) {
-  if (!row.has_gold_chat) {
-    ElMessage.info("请先转换 gold_chat");
-    return;
-  }
   currentId.value = row.id;
   currentSourceId.value = row.source_id;
   showDetail.value = true;
