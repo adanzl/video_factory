@@ -7,24 +7,20 @@
       <el-button type="primary" :loading="collecting" @click="handleCollect">
         采集（10 条）
       </el-button>
-      <el-button type="primary" :loading="batching" @click="handleBatchConvert">
-        批量转 gold_chat（{{ batchMax }} 条）
+      <el-button
+        type="primary"
+        :disabled="!selectedIds.length"
+        :loading="batching"
+        @click="handleBatchConvert"
+      >
+        批量转 gold_chat{{ selectedIds.length ? `（${selectedIds.length}）` : "" }}
       </el-button>
-      <el-input-number v-model="batchMax" :min="1" :max="50" size="small" class="w-28!" />
       <el-checkbox v-model="batchForce">已导出也重跑</el-checkbox>
       <el-select v-model="filterStatus" class="w-28!" @change="onFilterChange">
         <el-option label="active" value="active" />
         <el-option label="rejected" value="rejected" />
         <el-option label="全部" value="" />
       </el-select>
-      <el-button
-        type="primary"
-        :disabled="!selectedIds.length"
-        :loading="converting"
-        @click="handleConvertSelected"
-      >
-        转换选中
-      </el-button>
     </div>
 
     <el-table
@@ -178,7 +174,6 @@ const items = ref<GoldChatListItem[]>([]);
 const loading = ref(false);
 const collecting = ref(false);
 const batching = ref(false);
-const converting = ref(false);
 const convertingId = ref<number | null>(null);
 const importingId = ref<number | null>(null);
 const selectedIds = ref<number[]>([]);
@@ -194,7 +189,6 @@ const page = ref(1);
 const pageSize = ref(parseInt(localStorage.getItem("goldChatPageSize") || "15", 10));
 const total = ref(0);
 const filterStatus = ref("active");
-const batchMax = ref(10);
 const batchForce = ref(false);
 
 async function fetchItems() {
@@ -329,13 +323,38 @@ async function handleConvertOne(row: GoldChatListItem) {
   }
 }
 
-async function handleConvertSelected() {
+async function handleBatchConvert() {
   if (!selectedIds.value.length) return;
-  converting.value = true;
+  const n = selectedIds.value.length;
+  const hasExported = items.value.some(
+    (row) => selectedIds.value.includes(row.id) && row.has_gold_chat,
+  );
+  if (hasExported && !batchForce.value) {
+    try {
+      await ElMessageBox.confirm(
+        `选中 ${n} 条中有已导出项，未勾选「已导出也重跑」将跳过它们。继续？`,
+        "批量转换",
+        { type: "info" },
+      );
+    } catch {
+      return;
+    }
+  } else {
+    try {
+      await ElMessageBox.confirm(
+        `将转换选中的 ${n} 条金故事为 gold_chat，继续？`,
+        "批量转换",
+        { type: "info" },
+      );
+    } catch {
+      return;
+    }
+  }
+  batching.value = true;
   try {
     const res = await batchConvertGoldChat({
       ids: selectedIds.value,
-      max: selectedIds.value.length,
+      max: n,
       force: batchForce.value,
     });
     ElMessage.success(`完成：成功 ${res.ok}，跳过 ${res.skipped}，失败 ${res.failed}`);
@@ -343,7 +362,7 @@ async function handleConvertSelected() {
   } catch (e) {
     handleError(e, "批量转换失败");
   } finally {
-    converting.value = false;
+    batching.value = false;
   }
 }
 
@@ -368,32 +387,6 @@ async function handleCollect() {
     handleError(e, "采集失败");
   } finally {
     collecting.value = false;
-  }
-}
-
-async function handleBatchConvert() {
-  try {
-    await ElMessageBox.confirm(
-      `将从库内取最多 ${batchMax.value} 条${filterStatus.value || "全部"}金故事转 gold_chat，继续？`,
-      "批量转换",
-      { type: "info" },
-    );
-  } catch {
-    return;
-  }
-  batching.value = true;
-  try {
-    const res = await batchConvertGoldChat({
-      max: batchMax.value,
-      status: filterStatus.value || "active",
-      force: batchForce.value,
-    });
-    ElMessage.success(`完成：成功 ${res.ok}，跳过 ${res.skipped}，失败 ${res.failed}`);
-    await fetchItems();
-  } catch (e) {
-    handleError(e, "批量转换失败");
-  } finally {
-    batching.value = false;
   }
 }
 
