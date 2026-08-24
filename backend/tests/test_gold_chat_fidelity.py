@@ -681,6 +681,19 @@ def test_patch_dedupe_ne_suffix():
     assert not patched["dialogue"][7]["line"].endswith("呢呢")
 
 
+def test_patch_m5_break_sibling_consecutive():
+    from app.services.daily_story.quality import _has_consecutive_sibling
+    from app.services.daily_story.gold_story.gold_chat_fidelity import (
+        patch_m5_break_sibling_consecutive,
+    )
+
+    story = _m5h_story(_m5h_dialogue_v2())
+    assert _has_consecutive_sibling(story["dialogue"])
+    patched, changed = patch_m5_break_sibling_consecutive(story)
+    assert changed
+    assert not _has_consecutive_sibling(patched["dialogue"])
+
+
 def test_format_m5_h_pass1_beat_block():
     from app.services.daily_story.gold_story.gold_chat_fidelity import (
         format_m5_h_pass1_beat_block,
@@ -709,13 +722,19 @@ def test_patch_m5_retaliation_action():
     assert "保真-互毁动作" in kinds
     patched, changed = patch_m5_retaliation_action(story, conflict_text=_CONFLICT_5)
     assert changed
-    assert "撕啦" in patched["dialogue"][5]["line"]
+    retal_line = next(
+        d["line"] for d in patched["dialogue"] if "撕" in d.get("line", "")
+    )
+    assert "撕啦" in retal_line
     full, _ = apply_m5_h_local_patches(
-        story,
+        patched,
         closing_intent=_CLOSING,
         conflict_text=_CONFLICT_5,
     )
-    assert "撕啦" in full["dialogue"][5]["line"]
+    retal_full = next(
+        d["line"] for d in full["dialogue"] if "撕" in d.get("line", "")
+    )
+    assert "撕啦" in retal_full
     assert "保真-互毁动作" not in {
         x["kind"]
         for x in collect_fidelity_issues(

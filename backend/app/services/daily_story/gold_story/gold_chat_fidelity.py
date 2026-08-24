@@ -1291,6 +1291,71 @@ def _escalate_line_for_context(pre_mom_lines: list[str]) -> str:
     return "哼，没那么容易算！"
 
 
+_MAX_M5_CONSECUTIVE_FIXES = 8
+
+
+def _pick_m5_bridge_line(
+    speaker: str,
+    prev_line: str,
+    next_line: str,
+) -> tuple[str, str]:
+    alt = "昭昭" if speaker == "灿灿" else "灿灿"
+    blob = prev_line + next_line
+    if "拉手" in prev_line or "还打不" in next_line:
+        return alt, "嗯……好吧。"
+    if "不原谅" in next_line or "道歉也没用" in next_line:
+        return alt, "哼！别说了！"
+    if "赔" in blob or "撕" in blob or "弄花" in blob:
+        return alt, "呜……别闹了！"
+    if "画" in blob:
+        return alt, "你住手！"
+    return alt, "别说了！"
+
+
+def patch_m5_break_sibling_consecutive(
+    story: dict[str, Any],
+) -> tuple[dict[str, Any], bool]:
+    """M5+H：姐弟同人连说处插短接话，满足观感交替节奏。"""
+    import copy
+
+    from app.services.daily_story.dialogue_text import (
+        DAILY_STORY_LINE_CHARS_MAX,
+        dialogue_char_count,
+    )
+
+    rows = _dialogue_rows(story)
+    if len(rows) < 2:
+        return story, False
+    out = copy.deepcopy(story)
+    dlg = out.get("dialogue")
+    if not isinstance(dlg, list):
+        return story, False
+    changed = False
+    fixes = 0
+    i = 1
+    while i < len(dlg) and fixes < _MAX_M5_CONSECUTIVE_FIXES:
+        a, b = dlg[i - 1], dlg[i]
+        if not isinstance(a, dict) or not isinstance(b, dict):
+            i += 1
+            continue
+        sa = str(a.get("speaker") or "").strip()
+        sb = str(b.get("speaker") or "").strip()
+        if sa not in ("昭昭", "灿灿") or sa != sb:
+            i += 1
+            continue
+        prev_line = str(a.get("line") or "")
+        next_line = str(b.get("line") or "")
+        bridge_sp, bridge_ln = _pick_m5_bridge_line(sa, prev_line, next_line)
+        if dialogue_char_count(bridge_ln) > DAILY_STORY_LINE_CHARS_MAX:
+            i += 1
+            continue
+        dlg.insert(i, {"speaker": bridge_sp, "line": bridge_ln})
+        changed = True
+        fixes += 1
+        i += 2
+    return (out, True) if changed else (story, False)
+
+
 _M5_RULE_AUTHORITY_PREFIX = "家规就是"
 _M5_RULE_CANONICAL = "家规就是谁先动手谁道歉！"
 _RE_MOM_RULE_REF = re.compile(r"妈妈(?:说过|说|讲|告诉)")

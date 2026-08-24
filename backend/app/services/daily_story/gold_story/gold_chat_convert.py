@@ -24,6 +24,7 @@ from app.services.daily_story.gold_story.gold_chat_fidelity import (
     format_role_binding_block,
     is_structural_fidelity_kind,
     pass1_fidelity_score,
+    patch_m5_break_sibling_consecutive,
     patch_remap_sibling_terms,
     repair_m5_h_conflict_core,
     repair_m5_h_scene_contract,
@@ -1206,6 +1207,7 @@ def convert_gold_chat(
             closing_intent=closing,
             conflict_text=conflict_text,
         )
+        chat, _ = patch_m5_break_sibling_consecutive(chat)
         blocking, _warn = split_fidelity_issues(
             collect_fidelity_issues(
                 chat,
@@ -1284,11 +1286,37 @@ def load_gold_chat_for_row(
     return raw if isinstance(raw, dict) else None
 
 
+def _review_gold_chat_import_story(story: dict[str, Any], theme: str) -> dict[str, Any]:
+    """gold_chat 导入 daily_story：单次 LLM 审读，注入 humor.funny_score。"""
+    try:
+        from app.services.daily_story.review import (
+            apply_review_to_quality,
+            collect_local_issues,
+            merge_issues,
+        )
+        from app.services.llm import llm_mgr
+
+        client = llm_mgr._get_client()
+        review = getattr(client, "review_daily_story_issues", None)
+        if not callable(review):
+            return story
+        issues_, humor_ = review(theme, story)
+        issues = merge_issues(collect_local_issues(story), issues_)
+        return apply_review_to_quality(story, issues, humor=humor_)
+    except Exception as exc:
+        logging.getLogger(__name__).warning(
+            "gold_chat import review skipped: %s",
+            exc,
+        )
+        return story
+
+
 def import_gold_chat_daily_story(
     row: dict[str, Any],
     *,
     config: Config | None = None,
     force: bool = False,
+    review: bool = True,
 ) -> dict[str, Any]:
     """gold_chat 导出 → daily_story；force 时覆盖已有导入。"""
     from app.repositories import repo_daily_story
@@ -1311,9 +1339,6 @@ def import_gold_chat_daily_story(
         raise ValueError("gold_chat 对白为空")
 
     story = dict(chat)
-    sync_discovery_opening_from_dialogue(story)
-    attach_daily_story_quality(story)
-
     theme = str(
         story.get("scene_title")
         or story.get("key")
@@ -1321,6 +1346,15 @@ def import_gold_chat_daily_story(
         or sid
     ).strip()
     story_type = str(row.get("structure_type") or "").strip().upper()[:1] or None
+    mech = str(row.get("mechanism") or "").strip().upper()
+    if story_type:
+        story["story_type"] = story_type
+    if mech == "M5" and story_type == "H":
+        story, _ = patch_m5_break_sibling_consecutive(story)
+    sync_discovery_opening_from_dialogue(story)
+    attach_daily_story_quality(story, theme=theme)
+    if review:
+        story = _review_gold_chat_import_story(story, theme)
     story_key = str(story.get("key") or "").strip() or None
 
     existing_raw = row.get("gold_chat_daily_story_id")
