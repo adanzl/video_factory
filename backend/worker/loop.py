@@ -49,6 +49,17 @@ def _execute_stage(job_id: int, stage_cls: type[StageExecutor], ctx: JobContext)
         raise
     logger.info('=== %s done in %.1fs ===', stage_cls.__name__, time.time() - t0)
 
+def _prepare_publish_hold(job_id: int) -> None:
+    """进入 publish/pending：补投稿元数据并写日志，不实际上传 B 站。"""
+    from worker.stages.common.publish import PublishStage
+
+    job = _reload_job(job_id)
+    ctx = JobContext.from_job(job)
+    _execute_stage(job_id, PublishStage, ctx)
+    with atomic():
+        repo_job.update_job(job_id, stage='publish', status='pending')
+
+
 def _advance_after_stage(job_id: int, stage_cls: type[StageExecutor], *, status: str) -> dict | None:
     job_cancel.raise_if_cancelled(job_id)
     job = _reload_job(job_id)
@@ -61,6 +72,8 @@ def _advance_after_stage(job_id: int, stage_cls: type[StageExecutor], *, status:
     with atomic():
         repo_job.update_job(job_id, stage=next_name, status=status)
         repo_job_log.append_log(job_id, stage_cls.name, f'stage done, next={next_name}')
+    if next_name == 'publish' and status == 'pending':
+        _prepare_publish_hold(job_id)
     return None
 
 def _run_one_stage(job_id: int, stage_cls: type[StageExecutor], *, segment_indices: list[int] | None=None, segment_scope: str | None=None, advance: bool=True, hold: bool=False, intro_hold_tail_sec: float | None=None, intro_orientation: str | None=None, tts_speech_rate: float | None=None, tts_voice_id: str | None=None, tts_speaker_configs: dict | None=None, script_segment_target_sec: float | None=None, script_max_title_length: int | None=None, script_narration_target_words: int | None=None, script_speech_chars_per_sec: float | None=None, script_skip_title_optimize: bool=False, script_generate_image_prompts: bool=False, script_supplementary_info: str | None=None, script_video_timeline: str | None=None, script_segment_index: int | None=None, material_narration: str | None=None) -> dict:

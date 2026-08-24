@@ -161,6 +161,7 @@ const doneLoading = ref(false);
 const activeStage = ref("script");
 /** chat 流水线：日常故事矛盾类型展示文案 */
 const chatStoryTypeLabel = ref<string | null>(null);
+const prevJobStatus = ref<string | null>(null);
 
 const jobStages = computed(() => (job.value ? stagesForJob(job.value) : []));
 
@@ -294,6 +295,14 @@ const fetchDetail = async (options: { silent?: boolean } = {}) => {
     logs.value = logList;
     await loadChatStoryType(detail);
     syncRunningPoll(detail);
+    if (
+      prevJobStatus.value === JOB_STATUS_RUNNING &&
+      detail.status !== JOB_STATUS_RUNNING &&
+      detail.stage
+    ) {
+      syncActiveStage(detail);
+    }
+    prevJobStatus.value = detail.status ?? null;
   } catch (error) {
     if (!silent) {
       job.value = undefined;
@@ -471,6 +480,7 @@ watch(
   () => props.jobId,
   async () => {
     stopRunningPoll();
+    prevJobStatus.value = null;
     await fetchDetail();
     if (job.value) {
       syncActiveStage(job.value);

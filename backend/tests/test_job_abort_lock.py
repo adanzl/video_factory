@@ -402,7 +402,7 @@ def test_run_one_stage_merge_lands_on_publish(app_ctx, monkeypatch) -> None:
         pipeline="chat",
     )
     result = loop._run_one_stage(int(job["id"]), MergeStage, hold=True)
-    assert executed == ["merge"]
+    assert executed == ["merge", "publish"]
     assert result["stage"] == "publish"
     assert result["status"] == "pending"
 
@@ -450,7 +450,7 @@ def test_run_from_merge_stops_before_publish(app_ctx, monkeypatch) -> None:
         pipeline="chat",
     )
     result = loop._run_from(int(job["id"]), MergeStage)
-    assert executed == ["merge"]
+    assert executed == ["merge", "publish"]
     assert result["stage"] == "publish"
     assert result["status"] == "pending"
 
