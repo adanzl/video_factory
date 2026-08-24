@@ -295,6 +295,16 @@ def patch_story_payload(gold_story_id: int, patch: dict[str, Any]) -> None:
     sql.commit()
 
 
+def update_conflict_core(gold_story_id: int, conflict_core: str) -> None:
+    """更新 conflict_core 列（M5+H 契约修复回写）。"""
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    sql.execute(
+        "UPDATE gold_story SET conflict_core = ?, updated_at = ? WHERE id = ?",
+        (str(conflict_core or "").strip(), now, int(gold_story_id)),
+    )
+    sql.commit()
+
+
 def update_structure_type(gold_story_id: int, structure_type: str) -> None:
     """更新 structure_type（须与 mechanism 合法配对）。"""
     row = get_story(int(gold_story_id))

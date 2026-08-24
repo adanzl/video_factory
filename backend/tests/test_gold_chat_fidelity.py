@@ -49,7 +49,7 @@ def _m5h_dialogue_v2() -> list[dict[str, str]]:
         {"speaker": "昭昭", "line": "哼，我偏要涂一下，弄坏你的画！"},
         {"speaker": "灿灿", "line": "你干嘛！别碰我的纸！"},
         {"speaker": "昭昭", "line": "是你先推我的！"},
-        {"speaker": "灿灿", "line": "那我也弄坏你的画！"},
+        {"speaker": "灿灿", "line": "我也抢你画撕啦！你赔！"},
         {"speaker": "灿灿", "line": "你赔！我额头都蹭破了！"},
         {"speaker": "昭昭", "line": "呜……对不起嘛，我不是故意的。"},
         {"speaker": "灿灿", "line": "家规就是谁先动手谁道歉！"},
@@ -145,9 +145,26 @@ def _issues(story: dict, **kw) -> list[dict]:
 def test_collect_fidelity_issues_m5h_first_draft():
     issues = _issues(_m5h_story(_m5h_dialogue_v1()))
     kinds = {str(x.get("kind") or "") for x in issues}
-    assert "保真-互毁前文" in kinds or "保真-互毁对象" in kinds
+    assert (
+        "保真-互毁前文" in kinds
+        or "保真-互毁对象" in kinds
+        or "保真-发起方倒置" in kinds
+    )
     assert "保真-M5立规" in kinds
     assert "保真-H定责" in kinds
+
+
+def test_collect_fidelity_issues_tear_not_only_si_huai():
+    """「撕破/撕了」须算互毁前文依据，勿误拦 Pass1 合理稿。"""
+    dlg = [
+        {"speaker": "灿灿", "line": "我的画马上就好，太阳要涂成金色。"},
+        {"speaker": "昭昭", "line": "我看看你画的什么嘛！"},
+        {"speaker": "灿灿", "line": "别碰！你手脏，会弄脏我的画！"},
+        {"speaker": "昭昭", "line": "哼，我偏要碰！哎呀，不小心撕破了。"},
+        {"speaker": "灿灿", "line": "你！你故意的！我也要弄坏你的画！"},
+    ]
+    kinds = {x["kind"] for x in _issues(_m5h_story(dlg))}
+    assert "保真-互毁前文" not in kinds
 
 
 def test_collect_fidelity_issues_m5h_merged_line_passes():
@@ -218,6 +235,82 @@ def test_collect_fidelity_issues_inverted_role_flags():
     ]
     kinds = {x["kind"] for x in _issues(_m5h_story(dlg))}
     assert "保真-发起方倒置" in kinds
+
+
+def test_repair_m5_h_scene_contract_fixes_gold5_beat_chain():
+    from app.services.daily_story.gold_story.gold_chat_fidelity import (
+        repair_m5_h_conflict_core,
+        repair_m5_h_scene_contract,
+        validate_contract_role_consistency,
+    )
+
+    sc = {
+        "conflict": "灿灿：你干嘛弄坏我的画！",
+        "beat_chain": [
+            {"beat": 1, "speaker": "灿灿", "intent": "抢看/占物：要瞅画作"},
+            {"beat": 2, "speaker": "昭昭", "intent": "拒看/推搡：这是我的秘密"},
+            {"beat": 3, "speaker": "灿灿", "intent": "互毁升级：抢画/推搡打架"},
+        ],
+    }
+    core = "灿灿抢看昭昭秘密画互毁扭打，姐姐额头蹭破，弟弟道歉，妈妈调解和好。"
+    fixed_core, _ = repair_m5_h_conflict_core(core, sc)
+    fixed_sc, changed = repair_m5_h_scene_contract(sc, conflict_core=fixed_core)
+    assert changed
+    assert validate_contract_role_consistency(fixed_sc, conflict_core=fixed_core) == []
+    assert fixed_sc["beat_chain"][0]["speaker"] == "灿灿"
+    assert "秘密" not in fixed_sc["beat_chain"][0]["intent"]
+    assert fixed_sc["beat_chain"][1]["speaker"] == "昭昭"
+    assert "弄坏灿灿" in fixed_core
+
+
+def test_parse_fight_question_asker_from_summary():
+    from app.services.daily_story.gold_story.gold_chat_fidelity import (
+        _parse_fight_question_asker,
+    )
+
+    assert (
+        _parse_fight_question_asker(
+            "灿灿得意总结：以后还打不打架？昭昭齐声说不打了"
+        )
+        == "灿灿"
+    )
+
+
+def test_patch_split_m5_merged_line():
+    from app.services.daily_story.gold_story.gold_chat_fidelity import (
+        patch_split_m5_merged_line,
+    )
+
+    story = _m5h_story(_m5h_dialogue_v2())
+    story["dialogue"][8] = {
+        "speaker": "灿灿",
+        "line": "家规就是谁先动手谁道歉！你推我，你先道歉！哼，我不原谅！",
+    }
+    patched, changed = patch_split_m5_merged_line(story)
+    assert changed
+    assert patched["dialogue"][8]["line"] == "家规就是谁先动手谁道歉！"
+
+
+def test_patch_fight_question_speaker():
+    from app.services.daily_story.gold_story.gold_chat_fidelity import (
+        collect_fidelity_issues,
+        patch_fight_question_speaker,
+    )
+
+    dlg = _m5h_dialogue_no_apology()
+    story = _m5h_story(dlg)
+    closing = "灿灿总结：以后还打不打架？昭昭齐声说不打了"
+    patched, changed = patch_fight_question_speaker(story, closing_intent=closing)
+    assert changed
+    assert patched["dialogue"][14]["speaker"] == "灿灿"
+    after = collect_fidelity_issues(
+        patched,
+        structure_type="H",
+        mechanism="M5",
+        closing_intent=closing,
+        conflict_text=_CONFLICT_5,
+    )
+    assert "保真-齐声问句" not in {x["kind"] for x in after}
 
 
 def test_patch_m5_rule_authority_adds_prefix():
@@ -356,7 +449,7 @@ def test_refine_gold_chat_fidelity_accepts_merged_retaliation_line(monkeypatch):
         for item in issues:
             if item["kind"] in {"保真-互毁前文", "保真-互毁对象"}:
                 fixes = [f for f in fixes if f["no"] not in {1, 4}]
-                fixes.append({"no": 6, "line": "你把我画抢坏了！我也弄坏你的画！"})
+                fixes.append({"no": 6, "line": "你把我画抢坏了！抢你画撕啦！"})
         return {"fixes": fixes}
 
     monkeypatch.setattr(gc, "_fidelity_refine_with_llm", fake_refine)
@@ -535,30 +628,150 @@ def test_batch291_flags_wrong_retaliation_speaker():
     assert any(4 in x.get("lines", []) for x in hit)
 
 
-def test_exported_pipeline_json_has_fidelity_gaps():
+def test_patch_ensure_chorus_inserts_missing_closing():
+    from app.services.daily_story.gold_story.gold_chat_fidelity import (
+        apply_m5_h_local_patches,
+        collect_fidelity_issues,
+    )
+
+    dlg = list(_m5h_dialogue_v2())
+    dlg = dlg[:16] + dlg[19:]
+    story = _m5h_story(dlg)
+    before = {x["kind"] for x in _issues(story)}
+    assert "保真-齐声问句" in before
+    patched, changed = apply_m5_h_local_patches(
+        story,
+        closing_intent=_CLOSING,
+        conflict_text=_CONFLICT_5,
+    )
+    assert changed
+    after = collect_fidelity_issues(
+        patched,
+        structure_type="H",
+        mechanism="M5",
+        closing_intent=_CLOSING,
+        conflict_text=_CONFLICT_5,
+    )
+    assert "保真-齐声问句" not in {x["kind"] for x in after}
+
+
+def test_patch_fix_mom_ask_admission():
+    from app.services.daily_story.gold_story.gold_chat_fidelity import (
+        patch_fix_mom_ask_admission,
+    )
+
+    dlg = list(_m5h_dialogue_v2())
+    dlg[13] = {"speaker": "昭昭", "line": "我不知道……"}
+    story = _m5h_story(dlg)
+    patched, changed = patch_fix_mom_ask_admission(story)
+    assert changed
+    assert "弄花" in patched["dialogue"][13]["line"] or "推" in patched["dialogue"][13]["line"]
+
+
+def test_patch_dedupe_ne_suffix():
+    from app.services.daily_story.gold_story.gold_chat_fidelity import (
+        patch_dedupe_ne_suffix,
+    )
+
+    story = _m5h_story(_m5h_dialogue_v2())
+    story["dialogue"][7] = {"speaker": "昭昭", "line": "呜……对不起嘛呢呢"}
+    patched, changed = patch_dedupe_ne_suffix(story)
+    assert changed
+    assert patched["dialogue"][7]["line"].endswith("呢")
+    assert not patched["dialogue"][7]["line"].endswith("呢呢")
+
+
+def test_format_m5_h_pass1_beat_block():
+    from app.services.daily_story.gold_story.gold_chat_fidelity import (
+        format_m5_h_pass1_beat_block,
+    )
+
+    block = format_m5_h_pass1_beat_block(
+        conflict_text=_CONFLICT_5,
+        closing_intent=_CLOSING,
+    )
+    assert "固定节拍表" in block
+    assert "灿灿 立规" in block
+    assert "还打不打架" in block
+
+
+def test_patch_m5_retaliation_action():
+    from app.services.daily_story.gold_story.gold_chat_fidelity import (
+        apply_m5_h_local_patches,
+        collect_fidelity_issues,
+        patch_m5_retaliation_action,
+    )
+
+    dlg = list(_m5h_dialogue_v2())
+    dlg[5] = {"speaker": "灿灿", "line": "那我也撕你的画！"}
+    story = _m5h_story(dlg)
+    kinds = {x["kind"] for x in _issues(story)}
+    assert "保真-互毁动作" in kinds
+    patched, changed = patch_m5_retaliation_action(story, conflict_text=_CONFLICT_5)
+    assert changed
+    assert "撕啦" in patched["dialogue"][5]["line"]
+    full, _ = apply_m5_h_local_patches(
+        story,
+        closing_intent=_CLOSING,
+        conflict_text=_CONFLICT_5,
+    )
+    assert "撕啦" in full["dialogue"][5]["line"]
+    assert "保真-互毁动作" not in {
+        x["kind"]
+        for x in collect_fidelity_issues(
+            full,
+            structure_type="H",
+            mechanism="M5",
+            closing_intent=_CLOSING,
+            conflict_text=_CONFLICT_5,
+        )
+    }
+
+
+def test_patch_m5_soften_premature_push_blame():
+    from app.services.daily_story.gold_story.gold_chat_fidelity import (
+        patch_m5_soften_premature_push_blame,
+    )
+
+    dlg = [
+        {"speaker": "灿灿", "line": "别碰！还没干呢！"},
+        {"speaker": "昭昭", "line": "哎呀，不小心弄花了你的画！"},
+        {"speaker": "灿灿", "line": "你故意的！"},
+        {"speaker": "昭昭", "line": "我就碰了一下，你推我干嘛！"},
+        {"speaker": "灿灿", "line": "我也抢你画撕啦！你赔！"},
+        {"speaker": "灿灿", "line": "哎哟，你推我，额头蹭破皮了，好疼！"},
+    ]
+    story = _m5h_story(dlg)
+    patched, changed = patch_m5_soften_premature_push_blame(
+        story,
+        conflict_text=_CONFLICT_5,
+    )
+    assert changed
+    assert "推我" not in patched["dialogue"][3]["line"]
+    assert "凶我" in patched["dialogue"][3]["line"]
+
+
+def test_exported_pipeline_json_passes_fidelity():
+    from app.services.daily_story.gold_story.gold_chat_fidelity import (
+        split_fidelity_issues,
+    )
+
     p = Path(__file__).resolve().parents[2] / "data/gold_story/gold_chat/BV1sh411G7aX.json"
     if not p.is_file():
         pytest.skip("no local export")
     data = json.loads(p.read_text(encoding="utf-8"))
+    if str(data.get("mechanism") or "").upper() != "M5":
+        pytest.skip("local export not M5+H pipeline draft")
     story = data["daily_story"]
     sc = data.get("gold_meta", {}).get("scene_contract") or {}
     closing = sc.get("closing_intent") or data.get("gold_meta", {}).get("closing_intent") or _CLOSING
-    kinds = {x["kind"] for x in collect_fidelity_issues(
+    issues = collect_fidelity_issues(
         story,
         structure_type="H",
         mechanism="M5",
         closing_intent=closing,
         conflict_text=str(sc.get("conflict") or ""),
         beat_chain=sc.get("beat_chain"),
-    )}
-    assert (
-        "保真-发起方倒置" in kinds
-        or "保真-互毁前文" in kinds
-        or "保真-收场拖句" in kinds
-        or "保真-齐声问句" in kinds
-        or "保真-H定责" in kinds
-        or "保真-M5拒和speaker" in kinds
-        or "保真-收场Invent" in kinds
-        or "保真-对象持有补丁" in kinds
-        or "保真-M5合并" in kinds
     )
+    blocking, _warn = split_fidelity_issues(issues)
+    assert not blocking, f"export blocking issues: {blocking}"

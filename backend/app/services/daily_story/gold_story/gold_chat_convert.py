@@ -19,10 +19,14 @@ from app.services.daily_story.gold_story.gold_chat_fidelity import (
     format_beat_sequence_block,
     format_fidelity_block,
     format_fidelity_issues_block,
+    format_m5_h_pass1_beat_block,
     format_pass1_regen_feedback,
     format_role_binding_block,
     is_structural_fidelity_kind,
     pass1_fidelity_score,
+    patch_remap_sibling_terms,
+    repair_m5_h_conflict_core,
+    repair_m5_h_scene_contract,
     should_regenerate_pass1,
     split_fidelity_issues,
     validate_contract_role_consistency,
@@ -74,6 +78,8 @@ _USER = """金故事标题：{title}
 
 {beat_sequence_block}
 
+{m5_h_beat_block}
+
 {pass1_feedback_block}
 
 dialogue_seed（intent 骨架，须扩写为口语对白，禁止照抄）：
@@ -112,8 +118,12 @@ source_type：{source_type}（tutorial 时禁保留教程口吻/第几招）
 - **M5 受害方**：scene conflict 受害方须 establish 持有物；先毁物/撕抢者≠受害方
 - **H 调解**：妈妈须分层（先问谁先动手 → 再定责劝和），勿合并成一句；禁「扯平/都有错」
 - **收束**：严格按 closing_intent；「还打不打架」须由 closing_intent 指定角色问；碘伏/涂药后禁止新剧情（一起画/续写承诺）
+- **句尾禁叠「呢呢」**；口语可单「呢/嘛」，勿连续堆叠
 - 若有上方金稿对白正例：语气/句长可参考；剧情须来自本稿 scene_contract + seed
 - 昭昭/灿灿 交替为主，妈妈少出场；口语化、可拍
+- **禁止对白出现「哥哥」「弟弟」**；称呼用姐姐/昭昭/灿灿
+- 互毁须双向：先毁方实质弄坏/撕，受害方须**当场动手**报复（写撕了/撕啦/弄坏了），禁仅「那我也撕你的」口头威胁
+- **齐声「不打了」**=昭昭一句+灿灿一句各应答，勿合并括号舞台说明
 - line 禁止括号舞台说明（如「（从厨房走出来）」「（语塞）」）
 - 站外爸爸/父亲/宝爸一律写妈妈，勿用爸爸作 speaker
 - 站外陌生小孩/对方家长→映射为灿灿/妈妈，**禁止**「小男孩」「对方」等第三 speaker
@@ -242,6 +252,7 @@ def _normalize_chat_speakers(story: dict[str, Any]) -> dict[str, Any]:
             row["speaker"] = "灿灿"
         dialogue.append(row)
     out["dialogue"] = dialogue
+    out, _ = patch_remap_sibling_terms(out)
     return out
 
 
@@ -466,6 +477,34 @@ def _ensure_gold_chat_min_chars(story: dict[str, Any]) -> tuple[dict[str, Any], 
     return data2, changed or changed2
 
 
+def _prepare_chat_for_validate(
+    data: dict[str, Any],
+    *,
+    structure_type: str,
+    mechanism: str,
+    closing_intent: str = "",
+    conflict_text: str = "",
+    banned_literals: list[str] | None = None,
+    mom_lines_max: int = 1,
+) -> dict[str, Any]:
+    """M5+H 本地补丁 → 补字数 → hard 校验（LLM 精修后亦须先补丁再验）。"""
+    st = str(structure_type or "").strip().upper()
+    mech = str(mechanism or "").strip().upper()
+    if mech == "M5" and st == "H":
+        data, _ = apply_m5_h_local_patches(
+            data,
+            closing_intent=closing_intent,
+            conflict_text=conflict_text,
+        )
+    data, _ = _ensure_gold_chat_min_chars(data)
+    validate_gold_chat(
+        data,
+        banned_literals=banned_literals,
+        mom_lines_max=mom_lines_max,
+    )
+    return data
+
+
 def _validate_pass1_chat(
     story: dict[str, Any],
     *,
@@ -540,17 +579,29 @@ def _pick_pass1_candidate(
         raise ValueError("no pass1 candidates")
     if len(candidates) == 1:
         return candidates[0]
-    return min(
-        candidates,
-        key=lambda d: pass1_fidelity_score(
-            d,
+
+    def _score(d: dict[str, Any]) -> tuple[int, int]:
+        scored = d
+        mech = str(mechanism or "").strip().upper()
+        st = str(structure_type or "").strip().upper()
+        if mech == "M5" and st == "H":
+            scored, _ = apply_m5_h_local_patches(
+                d,
+                closing_intent=closing_intent,
+                conflict_text=conflict_text,
+            )
+        return pass1_fidelity_score(
+            scored,
             structure_type=structure_type,
             mechanism=mechanism,
             closing_intent=closing_intent,
             beat_chain=beat_chain,
             conflict_text=conflict_text,
-        ),
-    )
+        )
+
+    zero_struct = [c for c in candidates if _score(c)[0] == 0]
+    pool = zero_struct if zero_struct else candidates
+    return min(pool, key=_score)
 
 
 def _fidelity_refine_with_llm(
@@ -597,7 +648,11 @@ def refine_gold_chat_fidelity(
 
     for _round in range(max(1, int(max_rounds))):
         if mech == "M5" and st == "H":
-            data, _ = apply_m5_h_local_patches(data)
+            data, _ = apply_m5_h_local_patches(
+                data,
+                closing_intent=closing,
+                conflict_text=conflict_text,
+            )
 
         issues = collect_fidelity_issues(
             data,
@@ -609,26 +664,30 @@ def refine_gold_chat_fidelity(
         )
         blocking, warn = split_fidelity_issues(issues)
         if not blocking and not warn:
-            data, _ = _ensure_gold_chat_min_chars(data)
-            validate_gold_chat(
+            return _prepare_chat_for_validate(
                 data,
+                structure_type=st,
+                mechanism=mech,
+                closing_intent=closing,
+                conflict_text=conflict_text,
                 banned_literals=banned,
                 mom_lines_max=mom_max,
             )
-            return data
         if not blocking:
             if warn:
                 logger.info(
                     "gold_chat fidelity warn only: %s",
                     "、".join(str(x.get("kind") or "") for x in warn[:3]),
                 )
-            data, _ = _ensure_gold_chat_min_chars(data)
-            validate_gold_chat(
+            return _prepare_chat_for_validate(
                 data,
+                structure_type=st,
+                mechanism=mech,
+                closing_intent=closing,
+                conflict_text=conflict_text,
                 banned_literals=banned,
                 mom_lines_max=mom_max,
             )
-            return data
         if bail_on_structural and should_regenerate_pass1(blocking):
             struct_kinds = [
                 str(x.get("kind") or "")
@@ -656,10 +715,13 @@ def refine_gold_chat_fidelity(
         if not accepted:
             break
         data = _normalize_chat_speakers(fixed)
-        data, _ = _ensure_gold_chat_min_chars(data)
         try:
-            validate_gold_chat(
+            data = _prepare_chat_for_validate(
                 data,
+                structure_type=st,
+                mechanism=mech,
+                closing_intent=closing,
+                conflict_text=conflict_text,
                 banned_literals=banned,
                 mom_lines_max=mom_max,
             )
@@ -683,9 +745,12 @@ def refine_gold_chat_fidelity(
             "gold_chat fidelity warn remain: %s",
             "、".join(str(x.get("kind") or "") for x in warn_remain[:3]),
         )
-    data, _ = _ensure_gold_chat_min_chars(data)
-    validate_gold_chat(
+    data = _prepare_chat_for_validate(
         data,
+        structure_type=st,
+        mechanism=mech,
+        closing_intent=closing,
+        conflict_text=conflict_text,
         banned_literals=banned,
         mom_lines_max=mom_max,
     )
@@ -767,10 +832,17 @@ def _structure_type_hint(structure_type: str, mechanism: str = "") -> str:
         extra = ""
         if mech == "M5":
             extra = (
-                "\n- **M5+H**：互毁须双向；妈妈前须拒和+加码两拍嘴硬再调解；"
+                "\n- **M5+H**：互毁须双向且受害方须**当场动手**撕/弄坏对方画（写撕了/撕啦），"
+                "禁仅口头「那我也撕」；推/扭打后**须写伤情一句**（额/头/蹭破/疼），"
+                "再写昭昭哭腔道歉 → 灿灿立规 → 拒和 → 加码 → 妈妈问谁先动手；"
+                "昭昭须承认先弄画/先推/先动手；"
                 "先动手方与受害方分工：服软/道歉≠拒和/加码，禁止同一 speaker；"
                 "scene conflict 受害方须在前 2 句 establish 持有/创作，先毁物者≠受害方；"
-                "禁止「秘密画/抢看秘密」偏题，须写捣乱毁画→互毁→扭打"
+                "禁止「秘密画/抢看秘密」偏题，须写捣乱毁画→互毁→扭打；"
+                "「还打不打架」须 closing_intent 指定角色问（常为灿灿），禁止妈妈代问；"
+                "齐声「不打了」=姐弟各一句（昭昭+灿灿），勿合并舞台说明；"
+                "story_raw 有碘伏/涂药须写妈妈拿碘伏收场，**禁止发朋友圈/录视频** invent；"
+                "碘伏后禁止新剧情（一起画/续写承诺）；句尾禁叠「呢呢」"
             )
         return f"""【H 第三方化解 · 机制 {mech or "?"}】
 - 详拍见下方「金稿保真 checklist」，逐步落实勿跳步{extra}"""
@@ -783,6 +855,23 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
     structure_type = str(row.get("structure_type") or "A").strip().upper()
     st_label = structure_type_label(structure_type)
     scene_contract = payload.get("scene_contract") or {}
+    if not isinstance(scene_contract, dict):
+        scene_contract = {}
+    conflict_core = str(row.get("conflict_core") or "")
+    mechanism = str(row.get("mechanism") or "")
+    if mechanism.upper() == "M5" and structure_type == "H":
+        repaired_core, core_changed = repair_m5_h_conflict_core(
+            conflict_core,
+            scene_contract,
+        )
+        if core_changed:
+            conflict_core = repaired_core
+        repaired_sc, sc_changed = repair_m5_h_scene_contract(
+            scene_contract,
+            conflict_core=conflict_core,
+        )
+        if sc_changed:
+            scene_contract = repaired_sc
     seed = payload.get("dialogue_seed") or []
     banned = sanitize_banned_literals(
         payload.get("banned_literals") or scene_contract.get("banned_literals"),
@@ -794,7 +883,6 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
     mom_max = scene_contract.get("mom_lines_max")
     if mom_max is None:
         mom_max = 1
-    mechanism = str(row.get("mechanism") or "")
     beat = payload.get("beat") if isinstance(payload.get("beat"), list) else []
     closing = str(
         payload.get("closing_intent") or scene_contract.get("closing_intent") or ""
@@ -803,11 +891,11 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(beat_chain, list):
         beat_chain = []
     conflict_text = str(
-        scene_contract.get("conflict") or row.get("conflict_core") or ""
+        scene_contract.get("conflict") or conflict_core or ""
     )
     contract_role_errs = validate_contract_role_consistency(
         scene_contract,
-        conflict_core=str(row.get("conflict_core") or ""),
+        conflict_core=conflict_core,
     )
     if contract_role_errs:
         raise ValueError(f"contract_role:{'; '.join(contract_role_errs)}")
@@ -825,6 +913,12 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
         closing_intent=closing,
         story_raw=story_raw,
     )
+    m5_h_beat_block = ""
+    if mechanism.upper() == "M5" and structure_type == "H":
+        m5_h_beat_block = format_m5_h_pass1_beat_block(
+            conflict_text=conflict_text,
+            closing_intent=closing,
+        )
 
     banned_list = [str(x) for x in banned]
     mom_int = int(mom_max)
@@ -836,10 +930,11 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
             mechanism=mechanism,
             structure_type=structure_type,
             structure_label=st_label,
-            conflict_core=str(row.get("conflict_core") or "")[:500],
+            conflict_core=conflict_core[:500],
             scene_contract_block=format_scene_contract_block(scene_contract),
             role_binding_block=role_binding_block,
             beat_sequence_block=beat_sequence_block,
+            m5_h_beat_block=m5_h_beat_block,
             pass1_feedback_block=pass1_feedback_block,
             dialogue_seed=_format_dialogue_seed(seed)[:4000],
             closing_intent=str(
@@ -886,7 +981,7 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
             conflict_text=conflict_text,
         )
         try:
-            return refine_gold_chat_fidelity(
+            chat = refine_gold_chat_fidelity(
                 data,
                 structure_type=structure_type,
                 mechanism=mechanism,
@@ -899,6 +994,9 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
                 max_rounds=PASS2_MAX_ROUNDS,
                 bail_on_structural=True,
             )
+            if conflict_core:
+                chat["conflict_core"] = conflict_core
+            return chat
         except ValueError as exc:
             last_err = str(exc)
             if not str(exc).startswith(("fidelity_structural:", "fidelity_refine_failed:")):
@@ -1002,7 +1100,7 @@ def export_gold_chat_files(
         "mechanism": row.get("mechanism"),
         "structure_type": row.get("structure_type"),
         "status": row.get("status"),
-        "conflict_core": row.get("conflict_core"),
+        "conflict_core": chat.get("conflict_core") or row.get("conflict_core"),
         "chat_chars": dialogue_total_chars(chat),
         "chat_lines": len(chat.get("dialogue") or []),
         "exported_at": datetime.now(timezone.utc).isoformat(),
@@ -1047,14 +1145,80 @@ def export_gold_chat_files(
     return {"json": str(json_path), "markdown": str(md_path)}
 
 
+def _persist_m5_h_contract_if_needed(row: dict[str, Any]) -> dict[str, Any]:
+    """M5+H 契约修复回写 DB，返回刷新后的 row。"""
+    gid = int(row.get("id") or 0)
+    mechanism = str(row.get("mechanism") or "").upper()
+    structure_type = str(row.get("structure_type") or "").strip().upper()
+    if gid <= 0 or mechanism != "M5" or structure_type != "H":
+        return row
+
+    payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+    scene_contract = payload.get("scene_contract") or {}
+    if not isinstance(scene_contract, dict):
+        scene_contract = {}
+
+    conflict_core = str(row.get("conflict_core") or "")
+    repaired_core, core_changed = repair_m5_h_conflict_core(
+        conflict_core,
+        scene_contract,
+    )
+    if core_changed:
+        conflict_core = repaired_core
+    repaired_sc, sc_changed = repair_m5_h_scene_contract(
+        scene_contract,
+        conflict_core=conflict_core,
+    )
+    if not core_changed and not sc_changed:
+        return row
+
+    if sc_changed:
+        repo_gold_story.patch_story_payload(gid, {"scene_contract": repaired_sc})
+    if core_changed:
+        repo_gold_story.update_conflict_core(gid, conflict_core)
+    return repo_gold_story.get_story(gid) or row
+
+
 def convert_gold_chat(
     row: dict[str, Any],
     *,
     config: Config | None = None,
 ) -> dict[str, Any]:
     """转换 + 落盘，返回摘要。"""
+    row = _persist_m5_h_contract_if_needed(row)
     sid = str(row.get("source_id") or "").strip()
     chat = gold_story_to_gold_chat(row)
+    mech = str(row.get("mechanism") or "").upper()
+    st = str(row.get("structure_type") or "").strip().upper()
+    if mech == "M5" and st == "H":
+        payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+        scene_contract = payload.get("scene_contract") or {}
+        closing = str(
+            payload.get("closing_intent")
+            or scene_contract.get("closing_intent")
+            or ""
+        )
+        conflict_text = str(
+            scene_contract.get("conflict") or row.get("conflict_core") or ""
+        )
+        chat, _ = apply_m5_h_local_patches(
+            chat,
+            closing_intent=closing,
+            conflict_text=conflict_text,
+        )
+        blocking, _warn = split_fidelity_issues(
+            collect_fidelity_issues(
+                chat,
+                structure_type=st,
+                mechanism=mech,
+                closing_intent=closing,
+                conflict_text=conflict_text,
+                beat_chain=scene_contract.get("beat_chain"),
+            )
+        )
+        if blocking:
+            kinds = "、".join(str(x.get("kind") or "") for x in blocking[:3])
+            raise ValueError(f"fidelity_export:{kinds}")
     cfg = config or Config()
     paths = export_gold_chat_files(
         source_id=sid,
