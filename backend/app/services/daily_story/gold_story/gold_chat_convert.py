@@ -13,7 +13,11 @@ from app.config import Config
 from app.repositories import repo_gold_story
 from app.services.daily_story.gold_story.collect import fetch_video_meta
 from app.services.daily_story.gold_story.export_story import export_story_files
-from app.services.daily_story.gold_story.gold_chat_fidelity import format_fidelity_block
+from app.services.daily_story.gold_story.gold_chat_fidelity import (
+    collect_fidelity_issues,
+    format_fidelity_block,
+    format_fidelity_issues_block,
+)
 from app.services.daily_story.gold_story.llm_steps import (
     GOLD_CHAT_LINES_SNIPPET,
 )
@@ -128,6 +132,31 @@ _FIX_USER = """校验错误：
 - speaker 非法须改为昭昭/灿灿/妈妈
 只输出 JSON。"""
 
+_FIDELITY_REFINE_SYSTEM = (
+    "你是 gold_chat 保真精修编辑。只改被点到的对白行，其余字段与行数不动。\n"
+    "须落实金稿保真 checklist；M5 立规用「家规/规矩」，禁「妈妈说过/教过」。\n"
+    "互毁前文：须在「也弄坏」**之前**的句子里写弄坏/抢坏，"
+    "改机审标定的行号；禁止把前文塞进「也弄坏」同一句。\n"
+    "只输出 JSON：{\"fixes\":[{\"no\":行号,\"line\":\"改好后的一句\"}]}"
+)
+
+_FIDELITY_REFINE_USER = """保真机审问题（只改标定行）：
+{issues_block}
+
+{fidelity_block}
+
+当前 JSON（dialogue 节选）：
+{story_json}
+
+硬约束：
+- 只改上方标定行号；行数、speaker 不变；每句 ≤30 字
+- **保真-互毁前文**：改「也弄坏」前几句（常是第4句），补弄坏/抢坏；
+  第6句可仍写「我也弄坏你的画」，勿合并成一句
+- 正文总字数 {chars_min}–{chars_max}；妈妈台词 ≤{mom_lines_max} 句；末句不能是妈妈
+- 禁词须同义改写：{banned_literals}
+- line 只写台词，不带「昭昭：」前缀；禁括号说明
+只输出 fixes JSON。"""
+
 _FATHER_SPEAKER_ALIASES = frozenset(
     {"爸爸", "父亲", "爸", "老爸", "宝爸", "爸爸角色", "父亲角色"}
 )
@@ -192,6 +221,85 @@ def _fix_chat_with_llm(
         mom_lines_max=max(0, int(mom_lines_max)),
     )
     return _chat_json(_FIX_SYSTEM, user)
+
+
+def _fidelity_refine_with_llm(
+    story: dict[str, Any],
+    issues: list[dict[str, Any]],
+    *,
+    fidelity_block: str,
+    banned_literals: list[str],
+    mom_lines_max: int = 1,
+) -> dict[str, Any]:
+    user = _FIDELITY_REFINE_USER.format(
+        issues_block=format_fidelity_issues_block(issues),
+        fidelity_block=fidelity_block,
+        story_json=json.dumps(story, ensure_ascii=False)[:8000],
+        chars_min=DAILY_STORY_BODY_CHARS_MIN,
+        chars_max=DAILY_STORY_BODY_CHARS_MAX,
+        banned_literals="、".join(banned_literals) or "（无）",
+        mom_lines_max=max(0, int(mom_lines_max)),
+    )
+    return _chat_json(_FIDELITY_REFINE_SYSTEM, user)
+
+
+def refine_gold_chat_fidelity(
+    story: dict[str, Any],
+    *,
+    structure_type: str,
+    mechanism: str,
+    fidelity_block: str,
+    banned_literals: list[str] | None = None,
+    mom_lines_max: int = 1,
+    max_rounds: int = 2,
+) -> dict[str, Any]:
+    """Pass 2：保真机审 → LLM 定点精修 → 再 hard 校验。"""
+    banned = [str(x) for x in (banned_literals or []) if str(x).strip()]
+    mom_max = max(0, int(mom_lines_max))
+    data = _normalize_chat_speakers(dict(story))
+    st = str(structure_type or "").strip().upper()
+    mech = str(mechanism or "").strip().upper()
+
+    for _round in range(max(1, int(max_rounds))):
+        issues = collect_fidelity_issues(data, structure_type=st, mechanism=mech)
+        if not issues:
+            return data
+
+        raw = _fidelity_refine_with_llm(
+            data,
+            issues,
+            fidelity_block=fidelity_block,
+            banned_literals=banned,
+            mom_lines_max=mom_max,
+        )
+        fixed, accepted = _apply_gold_chat_polish_fixes(
+            data,
+            raw,
+            banned_literals=banned,
+            mom_lines_max=mom_max,
+        )
+        if not accepted:
+            break
+        data = _normalize_chat_speakers(fixed)
+        try:
+            validate_gold_chat(
+                data,
+                banned_literals=banned,
+                mom_lines_max=mom_max,
+            )
+        except ValueError:
+            continue
+
+    remain = collect_fidelity_issues(data, structure_type=st, mechanism=mech)
+    if remain:
+        kinds = "、".join(str(x.get("kind") or "") for x in remain[:3])
+        raise ValueError(f"fidelity_refine_failed:{kinds}")
+    validate_gold_chat(
+        data,
+        banned_literals=banned,
+        mom_lines_max=mom_max,
+    )
+    return data
 
 
 def _format_dialogue_seed(seed: list[Any]) -> str:
@@ -295,6 +403,17 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
     if mom_max is None:
         mom_max = 1
     mechanism = str(row.get("mechanism") or "")
+    beat = payload.get("beat") if isinstance(payload.get("beat"), list) else []
+    closing = str(
+        payload.get("closing_intent") or scene_contract.get("closing_intent") or ""
+    )
+    fidelity_block = format_fidelity_block(
+        structure_type=structure_type,
+        mechanism=mechanism,
+        beat=beat,
+        closing_intent=closing,
+        story_raw=story_raw,
+    )
 
     user = _USER.format(
         title=str(row.get("title") or ""),
@@ -311,13 +430,7 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
         funny_why=str(payload.get("funny_why") or "")[:500],
         source_type=source_type,
         structure_hint=_structure_type_hint(structure_type, mechanism),
-        fidelity_block=format_fidelity_block(
-            structure_type=structure_type,
-            mechanism=mechanism,
-            beat=payload.get("beat") if isinstance(payload.get("beat"), list) else [],
-            closing_intent=str(payload.get("closing_intent") or scene_contract.get("closing_intent") or ""),
-            story_raw=story_raw,
-        ),
+        fidelity_block=fidelity_block,
         gold_chat_snippet=GOLD_CHAT_LINES_SNIPPET,
         chars_min=DAILY_STORY_BODY_CHARS_MIN,
         chars_max=DAILY_STORY_BODY_CHARS_MAX,
@@ -334,7 +447,14 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
                 source_type=source_type,
                 mom_lines_max=int(mom_max),
             )
-            return data
+            return refine_gold_chat_fidelity(
+                data,
+                structure_type=structure_type,
+                mechanism=mechanism,
+                fidelity_block=fidelity_block,
+                banned_literals=banned_list,
+                mom_lines_max=int(mom_max),
+            )
         except ValueError as exc:
             last_err = str(exc)
             if attempt >= 4:

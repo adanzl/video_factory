@@ -271,6 +271,7 @@ def _register_profiles() -> dict[str, TypeQualityProfile]:
     from app.services.daily_story.story_types.d import quality as qd
     from app.services.daily_story.story_types.e import quality as qe
     from app.services.daily_story.story_types.g import quality as qg
+    from app.services.daily_story.story_types.h import quality as quality_h
 
     profiles = (
         qa.QUALITY_PROFILE,
@@ -279,6 +280,7 @@ def _register_profiles() -> dict[str, TypeQualityProfile]:
         qd.QUALITY_PROFILE,
         qe.QUALITY_PROFILE,
         qg.QUALITY_PROFILE,
+        quality_h.QUALITY_PROFILE,
     )
     return {p.code: p for p in profiles}
 

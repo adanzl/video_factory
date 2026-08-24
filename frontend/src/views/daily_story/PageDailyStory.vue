@@ -59,7 +59,7 @@
           {{ row.key || row.story?.key || "-" }}
         </template>
       </el-table-column>
-      <el-table-column label="矛盾类型" width="100" show-overflow-tooltip>
+      <el-table-column label="矛盾类型" width="110" show-overflow-tooltip>
         <template #default="{ row }">
           {{ formatDailyStoryType(row.story_type) }}
         </template>

@@ -13,8 +13,8 @@ _LIMP_SOFT_CLOSE_MARKERS = (
 )
 _PUNCHLINE_TYPE_MARKERS = (
     "权威翻车", "公平执念", "字面执行", "结盟翻车", "妈妈破功", "嘴硬心软",
-    "A类", "B类", "C类", "D类", "E类", "G类",
-    "A：", "B：", "C：", "D：", "E：", "G：",
+    "A类", "B类", "C类", "D类", "E类", "G类", "H类",
+    "A：", "B：", "C：", "D：", "E：", "G：", "H：",
 )
 _MOM_JUDGE_PATTERNS = (
     "谁先放好谁先选", "算你赢", "算他赢", "一人一半", "一人一个",
@@ -287,21 +287,21 @@ def _accident_props_from_line(line: str) -> list[str]:
         after = line[m.end():]
         head = re.sub(r"^[了到在过上这那一个是把将]", "", after)
         seg = re.match(r"[一-鿿]{1,6}", head)
-        cand = ""
+        candidate = ""
         if seg:
             raw = seg.group(0)
             if _RE_PROP_SKIP.match(raw):
-                cand = ""
+                candidate = ""
             else:
-                cand = _RE_PROP_TAIL.sub("", raw)
-        if not cand:
+                candidate = _RE_PROP_TAIL.sub("", raw)
+        if not candidate:
             # 回看动词前的「把/将 + 名词」
             before = line[: m.start()]
             bm = re.search(r"[把将]([一-鿿]{1,6})[^一-鿿]*$", before)
             if bm:
-                cand = _RE_PROP_TAIL.sub("", bm.group(1))
-        if cand and not _RE_PROP_SKIP.match(cand):
-            found.append(cand)
+                candidate = _RE_PROP_TAIL.sub("", bm.group(1))
+        if candidate and not _RE_PROP_SKIP.match(candidate):
+            found.append(candidate)
     return found
 
 
@@ -355,9 +355,11 @@ def _score_childlike_diction(lines: list[str]) -> tuple[int, list[str]]:
     hits: list[str] = []
     for i, ln in enumerate(lines):
         for pat, kind in ((_RE_META_SPEECH, "类型术语"), (_RE_ADULT_SPEECH, "成人词")):
-            m = pat.search(ln)
-            if m:
-                hits.append((i, f"对白[{i}]「{m.group(0)}」（{kind}：{ln[:20]}）"))
+            for m in pat.finditer(ln):
+                frag = m.group(0)
+                if frag == "秘密" and re.search(r"我的秘密|小秘密", ln):
+                    continue
+                hits.append((i, f"对白[{i}]「{frag}」（{kind}：{ln[:20]}）"))
     if not hits:
         return 0, []
     opening_hits = [d for i, d in hits if i < 4]
@@ -399,6 +401,11 @@ def _score_relevancy(story: dict, theme: str | None) -> tuple[int, list[str]]:
         hit_n = sum(1 for s in singles if s in check_text)
         need = 2 if len(theme_chars_raw) >= 3 else len(theme_chars_raw)
         if hit_n >= need:
+            return 0, []
+    # 长主题（≥5 字）常把物件嵌在 conflict_core 单字里（画作→画），
+    # 2-gram 对不上时看主题前两字是否已在核心/开场落地。
+    if not matched_any and len(theme_chars_raw) >= 5:
+        if any(c in check_text for c in theme_chars_raw[:2]):
             return 0, []
     if not matched_any:
         return -30, [f"跑题：主题「{theme}」未在核心/开场中体现"]
@@ -978,13 +985,13 @@ def finalize_daily_story_total(
         try:
             funny = max(0, min(20, int(humor.get("funny_score"))))
             source = "llm"
-            htype = humor.get("humor_type")
-            if htype not in ("natural", "formulaic", "none"):
-                htype = "none"
+            humor_type = humor.get("humor_type")
+            if humor_type not in ("natural", "formulaic", "none"):
+                humor_type = "none"
             quality["humor"] = {
                 "funny_score": funny,
                 "best_moment": str(humor.get("best_moment") or "").strip()[:40],
-                "humor_type": htype,
+                "humor_type": humor_type,
             }
         except (TypeError, ValueError):
             source = "regex"
