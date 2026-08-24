@@ -13,6 +13,7 @@ from app.config import Config
 from app.repositories import repo_gold_story
 from app.services.daily_story.gold_story.collect import fetch_video_meta
 from app.services.daily_story.gold_story.export_story import export_story_files
+from app.services.daily_story.gold_story.gold_chat_fidelity import format_fidelity_block
 from app.services.daily_story.gold_story.llm_steps import (
     GOLD_CHAT_LINES_SNIPPET,
 )
@@ -67,6 +68,7 @@ story_raw（背景，勿照抄；口播/论述须转现场对白）：{story_raw
 funny_why：{funny_why}
 source_type：{source_type}（tutorial 时禁保留教程口吻/第几招）
 {structure_hint}
+{fidelity_block}
 
 {gold_chat_snippet}
 
@@ -85,9 +87,10 @@ source_type：{source_type}（tutorial 时禁保留教程口吻/第几招）
 规则：
 - **第一人称现场对白**：每句是角色对另一角色当场说的话；禁第三人称论述、禁转述（「妈妈说/教过/说过」）
 - 口播/育儿科普/「第几招」：选一个具体场面演出来，勿保留教程口吻
-- 严格按 scene_contract.beat_chain 顺序推进；妈妈台词 ≤ scene_contract.mom_lines_max
-- **须覆盖 story_raw / beat 关键拍**（伤情/碘伏、妈妈问谁先动手、齐声不打了等）；
-  closing_intent 原意优先，**禁止**用无关暖梗（交换礼物/彩虹/酒窝等）替换金稿收束
+- 严格按 scene_contract.beat_chain **与下方金稿保真 checklist** 顺序推进；妈妈台词 ≤ mom_lines_max
+- **M5 拒和**：「不原谅」后须至少 1 句加码/仍嘴硬，**禁止**妈妈一句「都错了」立刻和好
+- **H 调解**：妈妈须分层（先问谁先动手 → 再定责劝和），勿合并成一句
+- **双向互毁**：「也弄坏你的」类台词须有前文（谁先弄坏谁写清楚）
 - **正例只允许上方金稿对白**；语气/句长可参考，剧情须来自本稿 scene_contract + seed
 - 昭昭/灿灿 交替为主，妈妈少出场；口语化、可拍
 - line 禁止括号舞台说明（如「（从厨房走出来）」「（语塞）」）
@@ -119,6 +122,7 @@ _FIX_USER = """校验错误：
 - 正文 dialogue 总字数 {chars_min}–{chars_max}（不足则 **扩写** 到 ≥{chars_min}，建议 18–24 句）
 - 对白句数须 ≥12；每句 ≤30 字，口语化、可拍
 - 妈妈台词须 ≤{mom_lines_max} 句；末句不能是妈妈
+- 若违反金稿保真 checklist（跳步/自编暖收/互毁缺「也」的依据/M5 无加码），须按 checklist 补拍
 - 禁词须同义改写：{banned_literals}
 - 转述/旁白/括号说明须改为当场对白
 - speaker 非法须改为昭昭/灿灿/妈妈
@@ -258,14 +262,18 @@ def _is_short_content_error(msg: str) -> bool:
     )
 
 
-def _structure_type_hint(structure_type: str) -> str:
+def _structure_type_hint(structure_type: str, mechanism: str = "") -> str:
     st = str(structure_type or "").strip().upper()
+    mech = str(mechanism or "").strip().upper()
     if st == "H":
-        return """【H 第三方化解 · 须贴近 story_raw / beat】
-- 前段：抢看/互毁/扭打 escalating；story_raw 有伤情则须可拍（蹭破/涂碘伏等）
-- 妈妈：先问「谁先动手」再定责劝和；台词 2–4 句，末句宜姐弟
-- 收束：灿灿问「以后还打不打架？」+ 齐声「不打了！」；可补碘伏/涂药一拍
-- 非 G 内部 pivot；勿自编交换画作/彩虹等站内暖梗替换金稿收束"""
+        extra = ""
+        if mech == "M5":
+            extra = (
+                "\n- **M5+H**：互毁须双向；拒和后须加码再调解；"
+                "勿把「抢秘密」替代「互毁画作」"
+            )
+        return f"""【H 第三方化解 · 机制 {mech or "?"}】
+- 详拍见下方「金稿保真 checklist」，逐步落实勿跳步{extra}"""
     return ""
 
 
@@ -286,10 +294,11 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
     mom_max = scene_contract.get("mom_lines_max")
     if mom_max is None:
         mom_max = 1
+    mechanism = str(row.get("mechanism") or "")
 
     user = _USER.format(
         title=str(row.get("title") or ""),
-        mechanism=str(row.get("mechanism") or ""),
+        mechanism=mechanism,
         structure_type=structure_type,
         structure_label=st_label,
         conflict_core=str(row.get("conflict_core") or "")[:500],
@@ -301,7 +310,14 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
         banned_literals="、".join(str(x) for x in banned) or "（无）",
         funny_why=str(payload.get("funny_why") or "")[:500],
         source_type=source_type,
-        structure_hint=_structure_type_hint(structure_type),
+        structure_hint=_structure_type_hint(structure_type, mechanism),
+        fidelity_block=format_fidelity_block(
+            structure_type=structure_type,
+            mechanism=mechanism,
+            beat=payload.get("beat") if isinstance(payload.get("beat"), list) else [],
+            closing_intent=str(payload.get("closing_intent") or scene_contract.get("closing_intent") or ""),
+            story_raw=story_raw,
+        ),
         gold_chat_snippet=GOLD_CHAT_LINES_SNIPPET,
         chars_min=DAILY_STORY_BODY_CHARS_MIN,
         chars_max=DAILY_STORY_BODY_CHARS_MAX,
