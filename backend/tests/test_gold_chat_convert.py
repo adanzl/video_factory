@@ -162,3 +162,82 @@ def test_export_gold_chat_files(tmp_path, monkeypatch):
     assert Path(paths["markdown"]).is_file()
     payload = json.loads(Path(paths["json"]).read_text(encoding="utf-8"))
     assert payload["daily_story"]["scene_title"] == "关门练功"
+
+
+def test_gold_chat_summary_from_payload():
+    summary = gc.gold_chat_summary(
+        "BV1TEST0001",
+        row={
+            "source_id": "BV1TEST0001",
+            "payload": {
+                "gold_chat_exported_at": "2026-08-24T00:00:00+00:00",
+                "gold_chat_scene_title": "嘴硬心软",
+                "gold_chat_lines": 18,
+                "gold_chat_chars": 260,
+                "bili_title": "东北弟弟打架被姐姐骂",
+            },
+        },
+    )
+    assert summary["has_gold_chat"] is True
+    assert summary["scene_title"] == "嘴硬心软"
+    assert summary["chat_lines"] == 18
+    assert summary["bili_title"] == "东北弟弟打架被姐姐骂"
+
+
+def test_import_gold_chat_daily_story_insert_and_reimport(
+    app_ctx, tmp_path, monkeypatch,
+):
+    from app.repositories import repo_daily_story, repo_gold_story
+
+    with app_ctx.app_context():
+        inserted = repo_gold_story.insert_or_skip(
+            source="bilibili",
+            source_id="BV1TESTIMPORT01",
+            url="https://www.bilibili.com/video/BV1TESTIMPORT01",
+            mechanism="M6",
+            structure_type="A",
+            story_raw="导入测试专用故事" * 20,
+            payload={
+                "setting": "卧室门口",
+                "beat": ["被欺负", "关门幻想", "开门怂", "姐姐得意"],
+                "dialogue_seed": [
+                    {"speaker": "昭昭", "intent": "抱怨被欺负"},
+                    {"speaker": "灿灿", "intent": "得意威胁"},
+                ],
+                "closing_intent": "昭昭缩回角落",
+                "banned_literals": ["小姨", "萌娃"],
+                "funny_why": "幻想与怂的反差",
+            },
+            title="测试标题",
+            conflict_core="弟弟幻想报复姐姐，开门秒怂",
+            extract_confidence=0.8,
+            structure_confidence=0.8,
+            dialogue_confidence=0.8,
+            auto_score=0.9,
+            status="active",
+        )
+        assert inserted.get("action") == "insert"
+        row = repo_gold_story.get_story(int(inserted["id"]))
+
+    chat = _sample_chat()
+    monkeypatch.setattr(gc, "gold_chat_export_dir", lambda _cfg=None: tmp_path)
+    gc.export_gold_chat_files(source_id=row["source_id"], row=row, chat=chat)
+
+    with app_ctx.app_context():
+        out = gc.import_gold_chat_daily_story(row)
+        assert out["action"] == "insert"
+        ds_id = int(out["daily_story_id"])
+        saved = repo_daily_story.get_story(ds_id)
+        assert saved["story"]["scene_title"] == "关门练功"
+
+        row["gold_chat_daily_story_id"] = ds_id
+        skip = gc.import_gold_chat_daily_story(row)
+        assert skip["action"] == "skip"
+
+        chat2 = dict(chat)
+        chat2["scene_title"] = "新标题"
+        gc.export_gold_chat_files(source_id=row["source_id"], row=row, chat=chat2)
+        updated = gc.import_gold_chat_daily_story(row, force=True)
+        assert updated["action"] == "update"
+        saved2 = repo_daily_story.get_story(ds_id)
+        assert saved2["story"]["scene_title"] == "新标题"

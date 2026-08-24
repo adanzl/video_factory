@@ -41,7 +41,11 @@
           {{ formatDailyStoryType(row.structure_type) }}
         </template>
       </el-table-column>
-      <el-table-column prop="auto_score" label="分" width="70" align="center" />
+      <el-table-column label="评分" width="70" align="center">
+        <template #default="{ row }">
+          {{ formatAutoScore(row.auto_score) }}
+        </template>
+      </el-table-column>
       <el-table-column label="gold_chat" width="100" align="center">
         <template #default="{ row }">
           <el-tag v-if="row.has_gold_chat" type="success" size="small">已导出</el-tag>
@@ -61,7 +65,19 @@
           <span v-else class="text-gray-400">-</span>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="180" fixed="right">
+      <el-table-column label="日常故事" width="90" align="center">
+        <template #default="{ row }">
+          <router-link
+            v-if="row.gold_chat_daily_story_id"
+            :to="`/daily-story`"
+            class="text-blue-600 hover:underline"
+          >
+            #{{ row.gold_chat_daily_story_id }}
+          </router-link>
+          <span v-else class="text-gray-400">-</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="操作" width="240" fixed="right">
         <template #default="{ row }">
           <el-button
             v-if="row.has_gold_chat"
@@ -71,6 +87,16 @@
             @click="viewItem(row)"
           >
             查看
+          </el-button>
+          <el-button
+            v-if="row.has_gold_chat"
+            type="primary"
+            link
+            size="small"
+            :loading="importingId === row.id"
+            @click="handleImportOne(row)"
+          >
+            {{ row.gold_chat_daily_story_id ? "重导" : "导入" }}
           </el-button>
           <el-button
             type="primary"
@@ -101,6 +127,7 @@
       :gold-story-id="currentId"
       :source-id="currentSourceId"
       @closed="fetchItems"
+      @imported="fetchItems"
     />
   </div>
 </template>
@@ -115,7 +142,9 @@ import GoldChatDetail from "@/views/gold_chat/dialogs/GoldChatDetail.vue";
 import {
   batchConvertGoldChat,
   convertGoldChat,
+  formatAutoScore,
   formatDailyStoryType,
+  importGoldChat,
   listGoldChats,
   type GoldChatListItem,
 } from "@/api/api-gold-chat";
@@ -127,6 +156,7 @@ const loading = ref(false);
 const batching = ref(false);
 const converting = ref(false);
 const convertingId = ref<number | null>(null);
+const importingId = ref<number | null>(null);
 const selectedIds = ref<number[]>([]);
 const showDetail = ref(false);
 const currentId = ref<number | null>(null);
@@ -186,6 +216,40 @@ function viewItem(row: GoldChatListItem) {
   currentId.value = row.id;
   currentSourceId.value = row.source_id;
   showDetail.value = true;
+}
+
+async function handleImportOne(row: GoldChatListItem) {
+  const reimport = !!row.gold_chat_daily_story_id;
+  if (reimport) {
+    try {
+      await ElMessageBox.confirm(
+        `将覆盖日常故事 #${row.gold_chat_daily_story_id} 的对白内容，继续？`,
+        "重新导入",
+        { type: "warning" },
+      );
+    } catch {
+      return;
+    }
+  }
+  importingId.value = row.id;
+  try {
+    const res = await importGoldChat({
+      id: row.id,
+      force: reimport,
+    });
+    if (res.action === "skip") {
+      ElMessage.info("已导入，未重导");
+    } else {
+      ElMessage.success(
+        `${res.action === "update" ? "已重导" : "已导入"} → 日常故事 #${res.daily_story_id}`,
+      );
+    }
+    await fetchItems();
+  } catch (e) {
+    handleError(e, reimport ? "重导失败" : "导入失败");
+  } finally {
+    importingId.value = null;
+  }
 }
 
 async function handleConvertOne(row: GoldChatListItem) {

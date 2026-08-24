@@ -32,6 +32,7 @@ def _insert_sample(app_ctx) -> dict:
             extract_confidence=0.8,
             structure_confidence=0.8,
             dialogue_confidence=0.8,
+            auto_score=0.9,
             status="active",
         )
         return result

@@ -25,6 +25,9 @@
           <div>
             <div class="mb-1 text-xs text-gray-400">金故事标题</div>
             <div>{{ detail.title || "-" }}</div>
+            <div v-if="detail.bili_title && detail.bili_title !== detail.title" class="mt-1 text-xs text-gray-400">
+              B站原标题：{{ detail.bili_title }}
+            </div>
           </div>
           <div>
             <div class="mb-1 text-xs text-gray-400">机制 / 结构</div>
@@ -54,6 +57,18 @@
             <div class="rounded-lg bg-gray-50 p-3 text-gray-600">
               {{ story.punchline_explain || "-" }}
             </div>
+          </div>
+          <div>
+            <div class="mb-1 text-xs text-gray-400">日常故事</div>
+            <div v-if="detail.gold_chat_daily_story_id">
+              <router-link
+                to="/daily-story"
+                class="text-blue-600 hover:underline"
+              >
+                #{{ detail.gold_chat_daily_story_id }}
+              </router-link>
+            </div>
+            <div v-else class="text-gray-400">未导入</div>
           </div>
           <div>
             <div class="mb-1 text-xs text-gray-400">gold_chat</div>
@@ -91,15 +106,29 @@
     </div>
     <div v-else-if="loading" class="py-16 text-center text-gray-400">加载中…</div>
     <div v-else class="py-16 text-center text-gray-400">暂无数据</div>
+
+    <template v-if="detail" #footer>
+      <el-button @click="visible = false">关闭</el-button>
+      <el-button
+        v-if="detail.daily_story?.dialogue?.length"
+        type="primary"
+        :loading="importing"
+        @click="handleImport"
+      >
+        {{ detail.gold_chat_daily_story_id ? "重新导入日常故事" : "导入日常故事" }}
+      </el-button>
+    </template>
   </el-dialog>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
+import { ElMessage, ElMessageBox } from "element-plus";
 import {
   calcChatChars,
   formatDailyStoryType,
   getGoldChat,
+  importGoldChat,
   type GoldChatExport,
 } from "@/api/api-gold-chat";
 import type { StoryContent } from "@/api/api-daily-story";
@@ -115,10 +144,12 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: "update:modelValue", value: boolean): void;
   (e: "closed"): void;
+  (e: "imported"): void;
 }>();
 
 const { handleError } = useErrorHandler();
 const loading = ref(false);
+const importing = ref(false);
 const detail = ref<GoldChatExport | null>(null);
 
 const visible = computed({
@@ -149,6 +180,41 @@ async function loadDetail() {
     handleError(e, "加载 gold_chat 失败");
   } finally {
     loading.value = false;
+  }
+}
+
+async function handleImport() {
+  if (!props.goldStoryId && !props.sourceId) return;
+  const reimport = !!detail.value?.gold_chat_daily_story_id;
+  if (reimport) {
+    try {
+      await ElMessageBox.confirm(
+        `将覆盖日常故事 #${detail.value?.gold_chat_daily_story_id} 的对白，继续？`,
+        "重新导入",
+        { type: "warning" },
+      );
+    } catch {
+      return;
+    }
+  }
+  importing.value = true;
+  try {
+    const res = await importGoldChat({
+      id: props.goldStoryId ?? undefined,
+      sourceId: props.sourceId ?? undefined,
+      force: reimport,
+    });
+    if (res.action === "skip") {
+      ElMessage.info("已导入");
+    } else {
+      ElMessage.success(`已${reimport ? "重导" : "导入"} → #${res.daily_story_id}`);
+    }
+    emit("imported");
+    await loadDetail();
+  } catch (e) {
+    handleError(e, "导入失败");
+  } finally {
+    importing.value = false;
   }
 }
 

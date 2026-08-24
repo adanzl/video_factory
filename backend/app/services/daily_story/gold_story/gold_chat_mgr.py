@@ -10,7 +10,9 @@ from app.services.daily_story.gold_story.gold_chat_batch import run_gold_chat_ba
 from app.services.daily_story.gold_story.gold_chat_convert import (
     convert_gold_chat,
     gold_chat_summary,
+    import_gold_chat_daily_story,
     load_gold_chat,
+    load_gold_chat_for_row,
 )
 
 
@@ -26,17 +28,21 @@ def _ensure_schema() -> None:
 
 def _row_to_list_item(row: dict[str, Any], *, config: Config) -> dict[str, Any]:
     sid = str(row.get("source_id") or "").strip()
-    summary = gold_chat_summary(sid, config=config)
+    payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+    summary = gold_chat_summary(sid, config=config, row=row)
+    bili_title = payload.get("bili_title")
     return {
         "id": row.get("id"),
         "source_id": sid,
-        "url": row.get("url"),
+        "url": payload.get("bili_url") or row.get("url"),
         "title": row.get("title"),
+        "bili_title": bili_title,
         "status": row.get("status"),
         "mechanism": row.get("mechanism"),
         "structure_type": row.get("structure_type"),
         "conflict_core": row.get("conflict_core"),
         "auto_score": row.get("auto_score"),
+        "gold_chat_daily_story_id": row.get("gold_chat_daily_story_id"),
         **summary,
     }
 
@@ -82,12 +88,20 @@ class GoldChatMgr:
         if not source_id:
             raise KeyError("gold_story missing source_id")
 
-        export = load_gold_chat(source_id, config=cfg)
+        export = load_gold_chat_for_row(row, config=cfg)
         if export is None:
+            payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+            if payload.get("gold_chat_exported_at"):
+                raise FileNotFoundError(
+                    f"gold_chat 摘要已在库内，但导出文件缺失: {source_id}；请重转"
+                )
             raise FileNotFoundError(f"尚未导出 gold_chat: {source_id}")
 
+        payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
         return {
             "gold_story": row,
+            "bili_title": payload.get("bili_title"),
+            "gold_chat_daily_story_id": row.get("gold_chat_daily_story_id"),
             **export,
         }
 
@@ -124,6 +138,28 @@ class GoldChatMgr:
 
         outcome = convert_gold_chat(row, config=cfg)
         return {"action": "ok", **outcome}
+
+    def import_one(
+        self,
+        *,
+        gold_story_id: int | None = None,
+        source_id: str | None = None,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        _ensure_schema()
+        cfg = Config()
+        row: dict[str, Any] | None = None
+        if gold_story_id is not None:
+            row = repo_gold_story.get_story(int(gold_story_id))
+        elif source_id:
+            row = repo_gold_story.get_by_source_id(source_id=str(source_id).strip())
+        else:
+            raise ValueError("id 或 source_id 必填")
+
+        if row is None:
+            raise KeyError("金故事不存在")
+
+        return import_gold_chat_daily_story(row, config=cfg, force=force)
 
     def batch_convert(
         self,
