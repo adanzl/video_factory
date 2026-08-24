@@ -212,7 +212,17 @@ _HAND_INJURY_SETTING_RE = re.compile(r"手(?:上有伤|背.{0,2}伤|.{0,2}肿)|�
 _HAND_INJURY_DIALOGUE_RE = re.compile(
     r"手.{0,4}肿|肿成馒头|你这手|手都|擦擦药|擦药"
 )
+_HAND_BANDAGE_DIALOGUE_RE = re.compile(r"擦擦药|擦药|包扎|缠(?:上)?纱布|创可贴|缠绷带")
 _HAND_INJURY_FORM_RE = re.compile(r"红肿|淤青|擦伤|肿胀|肿")
+_HAND_BANDAGED_RE = re.compile(r"纱布|绷带|创可贴|包扎|缠好")
+
+
+def _segment_dialogue_text(seg: dict) -> str:
+    parts = [str(seg.get("text") or "")]
+    for row in seg.get("dialogue") or []:
+        if isinstance(row, dict):
+            parts.append(str(row.get("text") or row.get("line") or ""))
+    return "".join(parts)
 
 
 def hand_injury_story_active(
@@ -241,18 +251,43 @@ def _hand_injury_form_phrase(form: str) -> str:
     return "红肿淤青略肿"
 
 
-def _subject_action_has_hand_injury(action: str) -> bool:
-    return bool(_HAND_INJURY_FORM_RE.search(action or ""))
+def _first_bandage_segment_index(segments: list[dict]) -> int | None:
+    for seg in sorted(
+        segments, key=lambda s: int(s.get("segment_index") or 0)
+    ):
+        if _HAND_BANDAGE_DIALOGUE_RE.search(_segment_dialogue_text(seg)):
+            return int(seg.get("segment_index") or 0)
+    return None
 
 
-def _enrich_subject_hand_injury(
+def _hand_injury_phase(seg: dict, bandage_from: int | None) -> str:
+    idx = int(seg.get("segment_index") or 0)
+    if bandage_from is not None and idx >= bandage_from:
+        return "bandaged"
+    return "swollen"
+
+
+def _subject_has_hand_injury_visual(action: str) -> bool:
+    text = action or ""
+    return bool(_HAND_INJURY_FORM_RE.search(text) or _HAND_BANDAGED_RE.search(text))
+
+
+def _strip_swollen_hand_phrases(action: str, *, injured_side: str) -> str:
+    covering = "左" if injured_side == "右手" else "右"
+    text = action or ""
+    text = re.sub(rf"，?{covering}手[^，]*捂[^，]*{injured_side}[^，]*", "", text)
+    text = re.sub(r"，?[^，]*(?:红肿|淤青|肿胀)[^，]*", "", text)
+    return text.strip("，, ")
+
+
+def _enrich_subject_hand_injury_swollen(
     sub: dict,
     *,
     injured_side: str,
     form_phrase: str,
 ) -> None:
     action = str(sub.get("action") or "").strip()
-    if _subject_action_has_hand_injury(action):
+    if _HAND_INJURY_FORM_RE.search(action):
         return
     covering = "左" if injured_side == "右手" else "右"
     injury_clause = f"{injured_side}手背{form_phrase}"
@@ -266,6 +301,55 @@ def _enrich_subject_hand_injury(
         )
     else:
         sub["action"] = f"{covering}手捂住{injured_side}手背，{injury_clause}"
+
+
+def _enrich_subject_hand_injury_bandaged(
+    sub: dict,
+    *,
+    injured_side: str,
+    applying: bool,
+) -> None:
+    action = _strip_swollen_hand_phrases(
+        str(sub.get("action") or "").strip(),
+        injured_side=injured_side,
+    )
+    if applying:
+        clause = (
+            f"灿灿正给昭昭{injured_side}缠白色纱布包扎，"
+            f"{injured_side}连着昭昭身体"
+        )
+    else:
+        clause = f"{injured_side}缠着白色纱布绷带"
+    if _HAND_BANDAGED_RE.search(action):
+        sub["action"] = action
+        return
+    sub["action"] = f"{clause}，{action}".strip("，") if action else clause
+
+
+def _enrich_subject_hand_injury(
+    sub: dict,
+    *,
+    injured_side: str,
+    form_phrase: str,
+    phase: str = "swollen",
+    applying_bandage: bool = False,
+) -> None:
+    if phase == "bandaged":
+        _enrich_subject_hand_injury_bandaged(
+            sub,
+            injured_side=injured_side,
+            applying=applying_bandage,
+        )
+        return
+    _enrich_subject_hand_injury_swollen(
+        sub,
+        injured_side=injured_side,
+        form_phrase=form_phrase,
+    )
+
+
+def _subject_action_has_hand_injury(action: str) -> bool:
+    return _subject_has_hand_injury_visual(action)
 
 
 def _refresh_visual_brief_from_subjects(seg: dict) -> None:
@@ -291,6 +375,7 @@ def migrate_body_part_injury_to_subjects(seg: dict, st: dict) -> None:
                 sub,
                 injured_side=injured_side,
                 form_phrase=form_phrase,
+                phase="swollen",
             )
             break
     _refresh_visual_brief_from_subjects(seg)
@@ -300,10 +385,11 @@ def promote_hand_injury_across_segments(
     segments: list[dict],
     setting: str | None = None,
 ) -> None:
-    """全片手伤设定时，为昭昭补全「手背红肿」等可见伤势（不写断肢道具）。"""
+    """全片手伤：擦药前红肿，擦药镜及之后包扎（不写断肢道具）。"""
     if not hand_injury_story_active(setting, segments):
         return
-    form_phrase = "红肿肿胀"
+    bandage_from = _first_bandage_segment_index(segments)
+    swollen_form = "红肿肿胀"
     for seg in segments:
         speakers = [str(s) for s in (seg.get("speakers") or []) if str(s).strip()]
         if "昭昭" not in speakers:
@@ -311,18 +397,26 @@ def promote_hand_injury_across_segments(
         subjects = seg.get("visual_subjects")
         if not isinstance(subjects, list):
             continue
+        phase = _hand_injury_phase(seg, bandage_from)
+        applying = bool(
+            phase == "bandaged"
+            and _HAND_BANDAGE_DIALOGUE_RE.search(_segment_dialogue_text(seg))
+        )
+        seg["_hand_injury_phase"] = phase
         for sub in subjects:
             if isinstance(sub, dict) and str(sub.get("name") or "").strip() == "昭昭":
                 _enrich_subject_hand_injury(
                     sub,
                     injured_side="右手",
-                    form_phrase=form_phrase,
+                    form_phrase=swollen_form,
+                    phase=phase,
+                    applying_bandage=applying,
                 )
         _refresh_visual_brief_from_subjects(seg)
 
 
 def daily_hand_injury_s4_clause(seg: dict, setting: str | None = None) -> str:
-    """T2I 兜底：手伤剧情但 vb 仍无红肿描写时，补一句连身伤手。"""
+    """T2I 兜底：手伤剧情但 vb 仍无伤势描写时，按阶段补红肿或包扎。"""
     speakers = [
         str(s).strip()
         for s in (seg.get("speakers") or [])
@@ -333,6 +427,16 @@ def daily_hand_injury_s4_clause(seg: dict, setting: str | None = None) -> str:
     if not hand_injury_story_active(setting, [seg]):
         return ""
     vb = str(seg.get("visual_brief") or "")
+    phase = str(seg.get("_hand_injury_phase") or "swollen")
+    if phase == "bandaged":
+        if _HAND_BANDAGED_RE.search(vb):
+            return ""
+        if _HAND_BANDAGE_DIALOGUE_RE.search(_segment_dialogue_text(seg)):
+            return (
+                "灿灿正给昭昭右手缠白色纱布包扎，"
+                "昭昭右手连着身体，不是漂浮断肢"
+            )
+        return "昭昭右手缠着白色纱布绷带，双手连着昭昭身体"
     if _HAND_INJURY_FORM_RE.search(vb):
         return ""
     return (
@@ -348,6 +452,7 @@ _DAILY_OBJECT_STATE_RULE = (
     "身体部位（手/脚/头发等）不是道具，禁止写入 object_states；"
     "伤势/红肿/淤青写在 visual_subjects 的 action/expression"
     "（如「左手捂住右手手背，右手红肿」），不要写「一只手」当物件；"
+    "台词出现擦药/包扎后，后续镜昭昭右手改写成缠着白色纱布绷带，不再写红肿；"
     "count=数量词（两只/一个/一把等）；"
     "form=本镜最终状态（如鞋带散开/鞋带打成死结两只鞋底贴在一起/摔裂掉在地上）；"
     "holder=持有人角色名，无人持有写「无」；"

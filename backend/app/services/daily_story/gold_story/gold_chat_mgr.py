@@ -15,6 +15,7 @@ from app.services.daily_story.gold_story.gold_chat_convert import (
     load_gold_chat_for_row,
 )
 from app.services.daily_story.gold_story.export_story import load_transcript_for_row
+from app.services.daily_story.gold_story.pipeline import run_collect_pipeline
 
 
 def _ensure_schema() -> None:
@@ -260,6 +261,36 @@ class GoldChatMgr:
             source_ids=source_ids,
             skip_existing=not force,
         )
+
+    def collect(
+        self,
+        *,
+        max_candidates: int = 10,
+    ) -> dict[str, Any]:
+        """H0–H4：B 站搜索采集并入库。"""
+        _ensure_schema()
+        max_candidates = max(1, min(int(max_candidates), 50))
+        report = run_collect_pipeline(
+            max_candidates=max_candidates,
+            skip_transcript=False,
+            dry_run=False,
+            write_list=True,
+        )
+        skipped = sum(1 for r in report.get("results") or [] if r.get("action") == "skip")
+        failed = sum(
+            1 for r in report.get("results") or [] if r.get("action") == "error"
+        )
+        return {
+            "workflow": "gold_story_collect",
+            "max": max_candidates,
+            "candidates": report.get("candidates", 0),
+            "inserted": report.get("inserted", 0),
+            "inserted_rejected": report.get("inserted_rejected", 0),
+            "skipped": skipped,
+            "failed": failed,
+            "results": report.get("results") or [],
+            "candidates_file": report.get("candidates_file"),
+        }
 
 
 gold_chat_mgr = GoldChatMgr()

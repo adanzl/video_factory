@@ -1188,6 +1188,7 @@ def assemble_daily_image_prompts(
             scene_anchor=scene_anchor,
             setting=setting,
         )
+        seg.pop("_hand_injury_phase", None)
     return segments
 
 
