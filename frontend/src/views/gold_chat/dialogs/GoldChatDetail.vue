@@ -183,10 +183,12 @@
 
         <div
           v-else
-          class="flex flex-1 flex-col items-center justify-center gap-2 p-8 text-center text-gray-400"
+          class="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center text-gray-400"
         >
           <div>尚未转换 gold_chat</div>
-          <div class="text-xs">在列表页点「转换」生成日常对白</div>
+          <el-button type="primary" :loading="converting" @click="handleConvert">
+            转 gold_chat
+          </el-button>
         </div>
 
         <div
@@ -212,6 +214,14 @@
         </div>
         <div>
           <el-button @click="openTranscript">逐字稿</el-button>
+          <el-button
+            type="primary"
+            plain
+            :loading="converting"
+            @click="handleConvert"
+          >
+            {{ detail.has_gold_chat ? "重转 gold_chat" : "转 gold_chat" }}
+          </el-button>
           <el-button @click="visible = false">关闭</el-button>
           <el-button
             v-if="detail.has_gold_chat && chatStory.dialogue?.length"
@@ -232,6 +242,7 @@ import { computed, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import {
   calcChatChars,
+  convertGoldChat,
   formatDailyStoryType,
   getGoldChat,
   importGoldChat,
@@ -251,12 +262,14 @@ const emit = defineEmits<{
   (e: "update:modelValue", value: boolean): void;
   (e: "closed"): void;
   (e: "imported"): void;
+  (e: "converted"): void;
   (e: "open-transcript", payload: { id?: number | null; sourceId?: string | null; title?: string | null }): void;
 }>();
 
 const { handleError } = useErrorHandler();
 const loading = ref(false);
 const importing = ref(false);
+const converting = ref(false);
 const detail = ref<GoldStoryDetail | null>(null);
 
 const visible = computed({
@@ -301,6 +314,39 @@ function openTranscript() {
     sourceId: props.sourceId ?? detail.value.source_id ?? null,
     title: detail.value.title ?? null,
   });
+}
+
+async function handleConvert() {
+  if (!props.goldStoryId && !props.sourceId) return;
+  const reconvert = !!detail.value?.has_gold_chat;
+  if (reconvert) {
+    try {
+      await ElMessageBox.confirm("重新转换会覆盖已有 gold_chat，继续？", "确认", {
+        type: "warning",
+      });
+    } catch {
+      return;
+    }
+  }
+  converting.value = true;
+  try {
+    const res = await convertGoldChat({
+      id: props.goldStoryId ?? undefined,
+      sourceId: props.sourceId ?? undefined,
+      force: reconvert,
+    });
+    if (res.action === "skip") {
+      ElMessage.info("已有导出，未重跑");
+    } else {
+      ElMessage.success(`已转换：${res.chat_lines ?? 0} 句`);
+    }
+    emit("converted");
+    await loadDetail();
+  } catch (e) {
+    handleError(e, "转换失败");
+  } finally {
+    converting.value = false;
+  }
 }
 
 async function handleImport() {

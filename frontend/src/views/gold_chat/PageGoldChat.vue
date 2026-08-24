@@ -4,6 +4,9 @@
       <el-button type="primary" :disabled="loading" @click="fetchItems">
         <el-icon><Refresh /></el-icon>
       </el-button>
+      <el-button type="primary" :loading="collecting" @click="handleCollect">
+        采集（10 条）
+      </el-button>
       <el-button type="primary" :loading="batching" @click="handleBatchConvert">
         批量转 gold_chat（{{ batchMax }} 条）
       </el-button>
@@ -137,6 +140,7 @@
       :source-id="currentSourceId"
       @closed="fetchItems"
       @imported="fetchItems"
+      @converted="fetchItems"
       @open-transcript="openTranscriptFromDetail"
     />
 
@@ -159,6 +163,7 @@ import GoldChatDetail from "@/views/gold_chat/dialogs/GoldChatDetail.vue";
 import GoldStoryTranscript from "@/views/gold_chat/dialogs/GoldStoryTranscript.vue";
 import {
   batchConvertGoldChat,
+  collectGoldStories,
   convertGoldChat,
   formatAutoScore,
   formatDailyStoryType,
@@ -171,6 +176,7 @@ const { handleError } = useErrorHandler();
 
 const items = ref<GoldChatListItem[]>([]);
 const loading = ref(false);
+const collecting = ref(false);
 const batching = ref(false);
 const converting = ref(false);
 const convertingId = ref<number | null>(null);
@@ -338,6 +344,30 @@ async function handleConvertSelected() {
     handleError(e, "批量转换失败");
   } finally {
     converting.value = false;
+  }
+}
+
+async function handleCollect() {
+  try {
+    await ElMessageBox.confirm(
+      "将从 B 站搜索并采集最多 10 条金故事（含转写与结构化），耗时较长，继续？",
+      "采集金故事",
+      { type: "info" },
+    );
+  } catch {
+    return;
+  }
+  collecting.value = true;
+  try {
+    const res = await collectGoldStories({ max: 10 });
+    ElMessage.success(
+      `采集完成：候选 ${res.candidates}，入库 ${res.inserted}，拒 ${res.inserted_rejected}，跳过 ${res.skipped}，失败 ${res.failed}`,
+    );
+    await fetchItems();
+  } catch (e) {
+    handleError(e, "采集失败");
+  } finally {
+    collecting.value = false;
   }
 }
 

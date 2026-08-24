@@ -42,12 +42,14 @@ def _parse_source_id_list(data: dict, field: str = "source_ids") -> list[str] | 
 
 @bp.get("/list")
 def list_route():
-    status = get_query("status", default="active")
+    status = get_query("status")
+    if status in ("", "all", "*"):
+        status = None
     limit = parse_query_int("limit", 15, required=False, minimum=1, maximum=200)
     offset = parse_query_int("offset", 0, required=False, minimum=0)
     return json_ok(
         gold_chat_mgr.list_items(
-            status=status or None,
+            status=status,
             limit=limit,
             offset=offset,
         ),
@@ -120,6 +122,14 @@ def convert_route():
         raise APIError("金故事不存在", status_code=404)
     except ValueError as exc:
         raise APIError(str(exc), status_code=400)
+
+
+@bp.post("/collect")
+def collect_route():
+    data = get_json_body(required=False) or {}
+    max_items = parse_int(data, "max", 10, minimum=1, maximum=50)
+    logger.info("[GOLD_CHAT] collect max=%d", max_items)
+    return json_ok(gold_chat_mgr.collect(max_candidates=max_items))
 
 
 @bp.post("/batch")

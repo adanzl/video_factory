@@ -134,6 +134,26 @@ export interface GoldChatBatchResult {
   batch_report?: { json?: string; markdown?: string };
 }
 
+export interface GoldStoryCollectResult {
+  workflow: string;
+  max: number;
+  candidates: number;
+  inserted: number;
+  inserted_rejected: number;
+  skipped: number;
+  failed: number;
+  candidates_file?: string;
+  results: Array<{
+    source_id?: string;
+    title?: string;
+    action: string;
+    reason?: string;
+    status?: string;
+    id?: number;
+    error?: string;
+  }>;
+}
+
 export { formatDailyStoryType };
 
 export function formatAutoScore(score?: number | null): string {
@@ -198,6 +218,17 @@ export async function convertGoldChat(params: {
       force: params.force ?? false,
     },
     { timeout: 120_000 },
+  );
+  return response.data;
+}
+
+export async function collectGoldStories(params: {
+  max?: number;
+} = {}): Promise<GoldStoryCollectResult> {
+  const response = await api.post<GoldStoryCollectResult>(
+    "/v_factory/api/gold_chat/collect",
+    { max: params.max ?? 10 },
+    { timeout: 3_600_000 },
   );
   return response.data;
 }

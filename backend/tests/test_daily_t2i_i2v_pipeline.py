@@ -1217,6 +1217,82 @@ def test_promote_hand_injury_from_setting_without_object_states():
     assert "手中放着一只手" not in seg["image_prompt"]
 
 
+def test_hand_injury_bandaged_after_medicine_segment():
+    from app.services.script.image_prompt import assemble_daily_image_prompts
+
+    segments = [
+        {
+            "segment_index": 10,
+            "shot_type": "中景",
+            "speakers": ["昭昭", "灿灿"],
+            "visual_subjects": [
+                {
+                    "name": "昭昭",
+                    "posture": "站在门口",
+                    "action": "双手握拳放在身前",
+                    "expression": "认真",
+                },
+                {
+                    "name": "灿灿",
+                    "posture": "站在昭昭对面",
+                    "action": "右手叉腰",
+                    "expression": "撇嘴",
+                },
+            ],
+            "text": "哼，小屁孩，还管我？认真的。",
+        },
+        {
+            "segment_index": 11,
+            "shot_type": "中景",
+            "speakers": ["昭昭", "灿灿"],
+            "visual_subjects": [
+                {
+                    "name": "昭昭",
+                    "posture": "站在灿灿面前",
+                    "action": "向前迈步",
+                    "expression": "低头",
+                },
+                {
+                    "name": "灿灿",
+                    "posture": "站在昭昭面前",
+                    "action": "右手招了招",
+                    "expression": "放松",
+                },
+            ],
+            "text": "行了行了，过来，我给你擦擦药。嗯。",
+        },
+        {
+            "segment_index": 12,
+            "shot_type": "中景",
+            "speakers": ["昭昭", "灿灿"],
+            "visual_subjects": [
+                {
+                    "name": "昭昭",
+                    "posture": "站在灿灿旁",
+                    "action": "抬头看向灿灿",
+                    "expression": "眯眼笑",
+                },
+                {
+                    "name": "灿灿",
+                    "posture": "站在昭昭旁",
+                    "action": "右手拍了拍昭昭肩膀",
+                    "expression": "微笑",
+                },
+            ],
+            "text": "以后谁欺负你，我还得给你撑腰呢！那说好了！",
+        },
+    ]
+    assemble_daily_image_prompts(
+        segments,
+        setting="家门口，昭昭手上有伤，灿灿叉腰瞪他。",
+    )
+    assert "红肿" in segments[0]["image_prompt"]
+    assert "纱布" in segments[1]["image_prompt"]
+    assert "红肿" not in segments[1]["image_prompt"]
+    assert "纱布" in segments[2]["image_prompt"]
+    assert "红肿" not in segments[2]["image_prompt"]
+
+
 def test_assemble_daily_t2i_no_duplicate_lr_in_prompt():
     """visual_brief 已有左右时，构图段不再重复「画面左边…」。"""
     seg = {

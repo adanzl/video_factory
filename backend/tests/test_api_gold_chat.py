@@ -96,6 +96,76 @@ def test_api_list_and_convert(app_ctx, monkeypatch, tmp_path):
     assert row2["has_gold_chat"] is True
 
 
+def test_api_list_all_statuses(app_ctx):
+    with app_ctx.app_context():
+        repo_gold_story.insert_or_skip(
+            source="bilibili",
+            source_id="BV1TESTALL01",
+            url="https://www.bilibili.com/video/BV1TESTALL01",
+            mechanism="M6",
+            structure_type="A",
+            story_raw="active样例" * 20,
+            payload={"beat": ["a", "b", "c", "d"]},
+            title="active样例",
+            auto_score=0.9,
+            status="active",
+        )
+        repo_gold_story.insert_or_skip(
+            source="bilibili",
+            source_id="BV1TESTALL02",
+            url="https://www.bilibili.com/video/BV1TESTALL02",
+            mechanism="M6",
+            structure_type="A",
+            story_raw="rejected样例" * 20,
+            payload={"beat": ["a", "b", "c", "d"]},
+            title="rejected样例",
+            auto_score=0.5,
+            status="rejected",
+        )
+
+    client = app_ctx.test_client()
+    active_resp = client.get("/v_factory/api/gold_chat/list?status=active&limit=50")
+    assert active_resp.status_code == 200
+    active_ids = {x["source_id"] for x in active_resp.get_json()["items"]}
+    assert "BV1TESTALL01" in active_ids
+    assert "BV1TESTALL02" not in active_ids
+
+    all_resp = client.get("/v_factory/api/gold_chat/list?limit=50")
+    assert all_resp.status_code == 200
+    all_ids = {x["source_id"] for x in all_resp.get_json()["items"]}
+    assert "BV1TESTALL01" in all_ids
+    assert "BV1TESTALL02" in all_ids
+
+
+def test_api_collect(app_ctx, monkeypatch):
+    def fake_collect(*, max_candidates=10, **_kwargs):
+        return {
+            "candidates": 2,
+            "inserted": 1,
+            "inserted_rejected": 0,
+            "results": [
+                {"source_id": "BV1NEW001", "action": "insert", "status": "active", "id": 99},
+                {"source_id": "BV1OLD001", "action": "skip", "reason": "already_in_db"},
+            ],
+            "candidates_file": "/tmp/candidates.txt",
+        }
+
+    monkeypatch.setattr(
+        "app.services.daily_story.gold_story.gold_chat_mgr.run_collect_pipeline",
+        fake_collect,
+    )
+
+    client = app_ctx.test_client()
+    resp = client.post("/v_factory/api/gold_chat/collect", json={"max": 10})
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["workflow"] == "gold_story_collect"
+    assert body["max"] == 10
+    assert body["inserted"] == 1
+    assert body["skipped"] == 1
+    assert body["failed"] == 0
+
+
 def test_api_batch(app_ctx, monkeypatch, tmp_path):
     inserted = _insert_sample(app_ctx)
     gid = int(inserted["id"])
