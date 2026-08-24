@@ -1180,6 +1180,41 @@ def test_body_part_object_states_do_not_render_detached_hand():
     assert "手中放着一只手" not in prompt
     assert "一只手在昭昭手中" not in prompt
     assert "左手抬起捂住右手" in prompt
+    assert "红肿" in prompt
+
+
+def test_promote_hand_injury_from_setting_without_object_states():
+    from app.services.script.image_prompt import assemble_daily_image_prompts
+
+    seg = {
+        "segment_index": 1,
+        "shot_type": "中近景特写",
+        "speakers": ["昭昭", "灿灿"],
+        "visual_subjects": [
+            {
+                "name": "昭昭",
+                "posture": "站在门口",
+                "action": "左手抬起捂住右手",
+                "expression": "低头皱眉",
+            },
+            {
+                "name": "灿灿",
+                "posture": "站在昭昭对面",
+                "action": "右手叉腰",
+                "expression": "瞪眼",
+            },
+        ],
+        "dialogue": [
+            {"speaker": "灿灿", "text": "昭昭，你手咋了？"},
+            {"speaker": "昭昭", "text": "没……没有。"},
+        ],
+    }
+    assemble_daily_image_prompts(
+        [seg],
+        setting="家门口，昭昭手上有伤，灿灿叉腰瞪他。",
+    )
+    assert "红肿" in seg["image_prompt"]
+    assert "手中放着一只手" not in seg["image_prompt"]
 
 
 def test_assemble_daily_t2i_no_duplicate_lr_in_prompt():

@@ -1058,6 +1058,11 @@ def assemble_daily_t2i_prompt(
                 w in vb for w in ("背离", "飘离门口", "远离门")
             ):
                 s4_parts.append("风从门口吹向室内，头发顺风飘离门口")
+    from app.services.script.visual_brief import daily_hand_injury_s4_clause
+
+    hand_injury_clause = daily_hand_injury_s4_clause(seg, setting)
+    if hand_injury_clause:
+        s4_parts.append(hand_injury_clause)
     s4 = "；".join(
         p.strip("，,；;。. ") for p in s4_parts if p.strip("，,；;。. ")
     )
@@ -1152,6 +1157,9 @@ def assemble_daily_image_prompts(
         logging.getLogger(__name__).warning(
             "object_states issues: %s", "; ".join(obj_issues[:5])
         )
+    from app.services.script.visual_brief import promote_hand_injury_across_segments
+
+    promote_hand_injury_across_segments(segments, setting)
     locked = daily_locked_inventory(segments, setting)
     for seg in segments:
         vb = str(seg.get("visual_brief") or "")

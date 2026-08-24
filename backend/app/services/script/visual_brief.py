@@ -208,6 +208,139 @@ def is_body_part_object(obj: str) -> bool:
     return bool(_BODY_PART_OBJECT_RE.match(o))
 
 
+_HAND_INJURY_SETTING_RE = re.compile(r"手(?:上有伤|背.{0,2}伤|.{0,2}肿)|肿.{0,4}手")
+_HAND_INJURY_DIALOGUE_RE = re.compile(
+    r"手.{0,4}肿|肿成馒头|你这手|手都|擦擦药|擦药"
+)
+_HAND_INJURY_FORM_RE = re.compile(r"红肿|淤青|擦伤|肿胀|肿")
+
+
+def hand_injury_story_active(
+    setting: str | None,
+    segments: list[dict] | None = None,
+) -> bool:
+    if setting and _HAND_INJURY_SETTING_RE.search(setting):
+        return True
+    if segments:
+        return bool(_HAND_INJURY_DIALOGUE_RE.search(_dialogue_blob(segments)))
+    return False
+
+
+def _injured_hand_side_from_object(obj: str) -> str:
+    if "左" in obj:
+        return "左手"
+    if "右" in obj:
+        return "右手"
+    return "右手"
+
+
+def _hand_injury_form_phrase(form: str) -> str:
+    form = (form or "").strip()
+    if form and _HAND_INJURY_FORM_RE.search(form):
+        return form
+    return "红肿淤青略肿"
+
+
+def _subject_action_has_hand_injury(action: str) -> bool:
+    return bool(_HAND_INJURY_FORM_RE.search(action or ""))
+
+
+def _enrich_subject_hand_injury(
+    sub: dict,
+    *,
+    injured_side: str,
+    form_phrase: str,
+) -> None:
+    action = str(sub.get("action") or "").strip()
+    if _subject_action_has_hand_injury(action):
+        return
+    covering = "左" if injured_side == "右手" else "右"
+    injury_clause = f"{injured_side}手背{form_phrase}"
+    if re.search(rf"{covering}手.*捂.*{injured_side}", action):
+        sub["action"] = f"{action}，{injury_clause}".strip("，")
+    elif "捂" in action and "手" in action:
+        sub["action"] = f"{action}，{injury_clause}".strip("，")
+    elif action:
+        sub["action"] = (
+            f"{covering}手捂住{injured_side}手背，{injury_clause}，{action}"
+        )
+    else:
+        sub["action"] = f"{covering}手捂住{injured_side}手背，{injury_clause}"
+
+
+def _refresh_visual_brief_from_subjects(seg: dict) -> None:
+    subjects = seg.get("visual_subjects")
+    if isinstance(subjects, list) and subjects:
+        seg["visual_brief"] = render_visual_subjects(subjects)
+
+
+def migrate_body_part_injury_to_subjects(seg: dict, st: dict) -> None:
+    """object_states 误写身体部位时，把 form 迁回 visual_subjects.action。"""
+    obj = str(st.get("object") or "").strip()
+    if not is_body_part_object(obj) or "手" not in obj:
+        return
+    holder = str(st.get("holder") or "").strip() or "昭昭"
+    injured_side = _injured_hand_side_from_object(obj)
+    form_phrase = _hand_injury_form_phrase(str(st.get("form") or ""))
+    subjects = seg.get("visual_subjects")
+    if not isinstance(subjects, list):
+        return
+    for sub in subjects:
+        if isinstance(sub, dict) and str(sub.get("name") or "").strip() == holder:
+            _enrich_subject_hand_injury(
+                sub,
+                injured_side=injured_side,
+                form_phrase=form_phrase,
+            )
+            break
+    _refresh_visual_brief_from_subjects(seg)
+
+
+def promote_hand_injury_across_segments(
+    segments: list[dict],
+    setting: str | None = None,
+) -> None:
+    """全片手伤设定时，为昭昭补全「手背红肿」等可见伤势（不写断肢道具）。"""
+    if not hand_injury_story_active(setting, segments):
+        return
+    form_phrase = "红肿肿胀"
+    for seg in segments:
+        speakers = [str(s) for s in (seg.get("speakers") or []) if str(s).strip()]
+        if "昭昭" not in speakers:
+            continue
+        subjects = seg.get("visual_subjects")
+        if not isinstance(subjects, list):
+            continue
+        for sub in subjects:
+            if isinstance(sub, dict) and str(sub.get("name") or "").strip() == "昭昭":
+                _enrich_subject_hand_injury(
+                    sub,
+                    injured_side="右手",
+                    form_phrase=form_phrase,
+                )
+        _refresh_visual_brief_from_subjects(seg)
+
+
+def daily_hand_injury_s4_clause(seg: dict, setting: str | None = None) -> str:
+    """T2I 兜底：手伤剧情但 vb 仍无红肿描写时，补一句连身伤手。"""
+    speakers = [
+        str(s).strip()
+        for s in (seg.get("speakers") or [])
+        if str(s).strip()
+    ]
+    if "昭昭" not in speakers:
+        return ""
+    if not hand_injury_story_active(setting, [seg]):
+        return ""
+    vb = str(seg.get("visual_brief") or "")
+    if _HAND_INJURY_FORM_RE.search(vb):
+        return ""
+    return (
+        "昭昭右手手背红肿肿胀，左手捂住右手手背，"
+        "双手连着昭昭身体，不是漂浮断肢"
+    )
+
+
 _DAILY_OBJECT_STATE_RULE = (
     "【object_states】每段另输出 object_states 数组：本片锁定活动道具在本镜的最终状态，"
     "每项含 object、count、form、holder、position 五字段："
@@ -421,11 +554,13 @@ def normalize_object_states(segments: list[dict]) -> list[str]:
         raw = seg.get("object_states")
         states = [st for st in raw if isinstance(st, dict)] if isinstance(raw, list) else []
         seen: dict[str, dict] = {}
+        body_injury_states: list[dict] = []
         for st in _collapse_object_aliases(states):
             obj = str(st.get("object") or "").strip()
             if not obj:
                 continue
             if is_body_part_object(obj):
+                body_injury_states.append(st)
                 notes.append(
                     f"segment {idx}: object_states 剔除身体部位 object={obj!r}，"
                     "伤势改由 visual_subjects 表达"
@@ -467,6 +602,8 @@ def normalize_object_states(segments: list[dict]) -> list[str]:
                     )
                     st["position"] = f"{holder}手中"
         seg["object_states"] = [dict(v, object=k) for k, v in merged.items()]
+        for st in body_injury_states:
+            migrate_body_part_injury_to_subjects(seg, st)
         last_state = merged
     return notes
 
