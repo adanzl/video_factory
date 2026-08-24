@@ -247,6 +247,101 @@ def validate_chat_hard(
     return errors
 
 
+# banned_literals 仅保留站外真名 / 须 remap 的 speaker 称谓（H3 prompt 对齐）
+SPEAKER_REMAP_BANNED: frozenset[str] = frozenset(
+    {
+        "哥哥",
+        "妹妹",
+        "弟弟",
+        "姐姐",
+        "小男孩",
+        "小女孩",
+        "爸爸",
+        "父亲",
+        "母亲",
+        "宝爸",
+        "宝妈",
+        "老爸",
+        "对方",
+        "陌生小孩",
+        "对方家长",
+        "对方妈妈",
+        "对方爸爸",
+        "小朋友",
+        "对方孩子",
+    },
+)
+
+# 常见 scene / 笑点词，禁止 LLM 误写入 banned_literals
+_BANNED_LITERAL_NEVER: frozenset[str] = frozenset(
+    {
+        "画画",
+        "碘伏",
+        "朋友圈",
+        "涂药",
+        "扭打",
+        "相声",
+    },
+)
+
+_SURNAME_HINT = re.compile(r"[贾赵李王张刘陈杨黄周吴徐孙马朱胡郭何高林罗郑梁]")
+
+
+def _scene_core_blob(
+    scene_contract: dict[str, Any] | None,
+    beat: list[Any] | None,
+) -> str:
+    sc = scene_contract or {}
+    parts: list[str] = [
+        str(sc.get("object") or ""),
+        str(sc.get("conflict") or ""),
+        str(sc.get("mechanism") or ""),
+        str(sc.get("closing_intent") or ""),
+        str(sc.get("location") or ""),
+    ]
+    for row in sc.get("beat_chain") or []:
+        if isinstance(row, dict):
+            parts.append(str(row.get("intent") or row.get("beat") or ""))
+    for item in beat or []:
+        parts.append(str(item or ""))
+    return "".join(parts)
+
+
+def _is_source_proper_name(word: str) -> bool:
+    w = str(word or "").strip()
+    if len(w) < 3 or len(w) > 8:
+        return False
+    if not re.fullmatch(r"[\u4e00-\u9fff]+", w):
+        return False
+    if w in _BANNED_LITERAL_NEVER:
+        return False
+    return bool(_SURNAME_HINT.search(w))
+
+
+def sanitize_banned_literals(
+    banned: list[Any] | None,
+    *,
+    scene_contract: dict[str, Any] | None = None,
+    beat: list[Any] | None = None,
+) -> list[str]:
+    """过滤 H3 误伤的 scene/笑点词，只留 remap 称谓与站外真名。"""
+    core = _scene_core_blob(scene_contract, beat)
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in banned or []:
+        w = str(raw or "").strip()
+        if not w or w in seen:
+            continue
+        if w in _BANNED_LITERAL_NEVER:
+            continue
+        if w in core:
+            continue
+        if w in SPEAKER_REMAP_BANNED or _is_source_proper_name(w):
+            seen.add(w)
+            out.append(w)
+    return out
+
+
 def seed_from_beat_chain(chain: list[Any]) -> list[dict[str, str]]:
     """beat_chain → dialogue_seed 兜底。"""
     out: list[dict[str, str]] = []

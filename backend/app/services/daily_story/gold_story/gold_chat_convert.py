@@ -18,6 +18,7 @@ from app.services.daily_story.gold_story.llm_steps import (
 )
 from app.services.daily_story.gold_story.scene_contract import (
     format_scene_contract_block,
+    sanitize_banned_literals,
     validate_chat_hard,
 )
 from app.services.daily_story.gold_story.types import structure_type_label
@@ -85,6 +86,8 @@ source_type：{source_type}（tutorial 时禁保留教程口吻/第几招）
 - **第一人称现场对白**：每句是角色对另一角色当场说的话；禁第三人称论述、禁转述（「妈妈说/教过/说过」）
 - 口播/育儿科普/「第几招」：选一个具体场面演出来，勿保留教程口吻
 - 严格按 scene_contract.beat_chain 顺序推进；妈妈台词 ≤ scene_contract.mom_lines_max
+- **须覆盖 story_raw / beat 关键拍**（伤情/碘伏、妈妈问谁先动手、齐声不打了等）；
+  closing_intent 原意优先，**禁止**用无关暖梗（交换礼物/彩虹/酒窝等）替换金稿收束
 - **正例只允许上方金稿对白**；语气/句长可参考，剧情须来自本稿 scene_contract + seed
 - 昭昭/灿灿 交替为主，妈妈少出场；口语化、可拍
 - line 禁止括号舞台说明（如「（从厨房走出来）」「（语塞）」）
@@ -258,11 +261,11 @@ def _is_short_content_error(msg: str) -> bool:
 def _structure_type_hint(structure_type: str) -> str:
     st = str(structure_type or "").strip().upper()
     if st == "H":
-        return """【H 第三方化解 · 扩写要点】
-- 前段：姐弟互毁/抢/推搡/拒和 escalating
-- 中后段：妈妈 2–3 句定责劝和（别打了/都错了/要互相原谅）
-- 收束：表演性道歉、拉手和好或齐声「不打了」；末句宜姐弟
-- 非 G 内部 pivot/护短破防"""
+        return """【H 第三方化解 · 须贴近 story_raw / beat】
+- 前段：抢看/互毁/扭打 escalating；story_raw 有伤情则须可拍（蹭破/涂碘伏等）
+- 妈妈：先问「谁先动手」再定责劝和；台词 2–4 句，末句宜姐弟
+- 收束：灿灿问「以后还打不打架？」+ 齐声「不打了！」；可补碘伏/涂药一拍
+- 非 G 内部 pivot；勿自编交换画作/彩虹等站内暖梗替换金稿收束"""
     return ""
 
 
@@ -273,7 +276,11 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
     st_label = structure_type_label(structure_type)
     scene_contract = payload.get("scene_contract") or {}
     seed = payload.get("dialogue_seed") or []
-    banned = payload.get("banned_literals") or []
+    banned = sanitize_banned_literals(
+        payload.get("banned_literals") or scene_contract.get("banned_literals"),
+        scene_contract=scene_contract,
+        beat=payload.get("beat") if isinstance(payload.get("beat"), list) else [],
+    )
     source_type = str(payload.get("source_type") or scene_contract.get("source_type") or "field")
     story_raw = str(row.get("story_raw") or payload.get("story_raw") or "")[:800]
     mom_max = scene_contract.get("mom_lines_max")
@@ -849,7 +856,11 @@ def polish_gold_chat_export(
         row = {"source_id": sid, "id": export.get("gold_story_id")}
     payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
     scene_contract = payload.get("scene_contract") or {}
-    banned = [str(x) for x in (payload.get("banned_literals") or [])]
+    banned = sanitize_banned_literals(
+        payload.get("banned_literals") or scene_contract.get("banned_literals"),
+        scene_contract=scene_contract,
+        beat=payload.get("beat") if isinstance(payload.get("beat"), list) else [],
+    )
     source_type = str(payload.get("source_type") or scene_contract.get("source_type") or "field")
     mom_max = scene_contract.get("mom_lines_max")
     if mom_max is None:

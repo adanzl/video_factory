@@ -559,10 +559,10 @@ class MediaMgr:
             if seg_id is not None and motion_prompt:
                 try:
                     from app.repositories import repo_segment
-                    from app.repositories.sql_exec import atomic
+                    from app.repositories.sql_exec import locked_atomic
 
                     with _greenlet_app_context():
-                        with atomic():
+                        with locked_atomic():
                             repo_segment.update_segment(
                                 int(seg_id), motion_prompt=motion_prompt
                             )

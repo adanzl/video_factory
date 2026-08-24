@@ -38,7 +38,7 @@ _SAMPLE = {
             {"speaker": "昭昭", "intent": "质疑"},
         ],
         "closing_intent": "嘴硬收束",
-        "banned_literals": ["酱碗"],
+        "banned_literals": ["妹妹", "哥哥"],
     },
 }
 
@@ -50,7 +50,7 @@ def test_build_gold_story_block_shape():
     assert "1. 独占不让" in block
     assert "灿灿：宣布占有" in block
     assert "scene_contract" in block
-    assert "禁词：酱碗" in block
+    assert "禁词：妹妹、哥哥" in block
     assert "story_raw" not in block.lower()
 
 

@@ -15,6 +15,7 @@ from app.services.daily_story.gold_story.types import (
 )
 from app.services.daily_story.gold_story.scene_contract import (
     SEED_MIN,
+    sanitize_banned_literals,
     seed_from_beat_chain,
     validate_scene_contract,
 )
@@ -168,6 +169,12 @@ story_raw：
   "structure_confidence": 0.0,
   "structure_mapping_note": ""
 }}
+
+banned_literals 规则（仅填 remap/真名，勿填场景与笑点词）：
+- **可填**：站外真名（如贾西西）、须 remap 的称谓（哥哥/妹妹/小男孩/对方）
+- **禁止填**：场景本体（画画/画作）、可拍道具与动作（碘伏/涂药）、
+  笑点细节、叙述/meta（朋友圈/发视频）、object/conflict 已有词
+- 换物/换说法写在 structure_mapping_note，不要靠禁词删场景
 """
 
 
@@ -206,6 +213,8 @@ source_type：{source_type}
   "banned_literals": ["…"],
   "contract_confidence": 0.0
 }}
+
+banned_literals：同 H3，仅 remap 称谓与站外真名；禁止填画画/碘伏/朋友圈等场景与笑点词。
 
 规则：
 - object/conflict/mechanism **须能在 story_raw 找到依据**；禁止发明 story_raw 没有的物品/仪式/场景
@@ -406,6 +415,10 @@ def structurize_story(
     confidence = float(data.get("structure_confidence") or 0.0)
     if confidence < 0.5:
         raise ValueError(f"H3 low structure_confidence={confidence:.2f}")
+    data["banned_literals"] = sanitize_banned_literals(
+        data.get("banned_literals") if isinstance(data.get("banned_literals"), list) else [],
+        beat=data.get("beat") if isinstance(data.get("beat"), list) else [],
+    )
     return data
 
 
@@ -425,8 +438,12 @@ def build_scene_contract(
     data = _chat_json(_H3A_SYSTEM, user)
     data.setdefault("story_type", str(h3.get("structure_type") or "C"))
     data["source_type"] = str(data.get("source_type") or source_type or "field").lower()
-    if not data.get("banned_literals"):
-        data["banned_literals"] = list(h3.get("banned_literals") or [])
+    raw_banned = data.get("banned_literals") or h3.get("banned_literals") or []
+    data["banned_literals"] = sanitize_banned_literals(
+        raw_banned if isinstance(raw_banned, list) else [],
+        scene_contract=data,
+        beat=h3.get("beat") if isinstance(h3.get("beat"), list) else [],
+    )
     if data.get("mom_lines_max") is None:
         st = str(h3.get("structure_type") or "C").upper()
         data["mom_lines_max"] = 3 if st == "H" else 0
