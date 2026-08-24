@@ -66,6 +66,27 @@ export interface GoldStoryDetail {
   gold_chat?: GoldChatPayload | null;
 }
 
+export interface GoldStoryTranscript {
+  id?: number;
+  source_id: string;
+  title?: string;
+  url?: string;
+  transcript_backend?: string;
+  transcript_path?: string | null;
+  transcript_repaired_path?: string | null;
+  transcript_repair_confidence?: number;
+  transcript_speakers?: string[];
+  transcript_repair_notes?: string;
+  has_transcript: boolean;
+  has_repaired: boolean;
+  transcript_raw: string;
+  transcript_repaired: string;
+  transcript: string;
+  transcript_raw_chars: number;
+  transcript_repaired_chars: number;
+  transcript_chars: number;
+}
+
 /** @deprecated 兼容旧引用，请用 GoldStoryDetail */
 export type GoldChatExport = GoldStoryDetail;
 
@@ -138,6 +159,22 @@ export async function getGoldChat(params: {
 }): Promise<GoldStoryDetail> {
   const response = await api.get<GoldStoryDetail>(
     "/v_factory/api/gold_chat/get",
+    {
+      params: {
+        id: params.id,
+        source_id: params.sourceId,
+      },
+    },
+  );
+  return response.data;
+}
+
+export async function getGoldStoryTranscript(params: {
+  id?: number;
+  sourceId?: string;
+}): Promise<GoldStoryTranscript> {
+  const response = await api.get<GoldStoryTranscript>(
+    "/v_factory/api/gold_chat/transcript",
     {
       params: {
         id: params.id,

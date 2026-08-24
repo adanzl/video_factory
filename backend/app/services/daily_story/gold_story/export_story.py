@@ -50,6 +50,59 @@ def _load_repaired_transcript_text(
     return _read_transcript_file(path)
 
 
+def load_transcript_for_row(
+    row: dict[str, Any],
+    *,
+    config: Config | None = None,
+) -> dict[str, Any]:
+    """读取金故事 ASR / 修复逐字稿（磁盘文件）。"""
+    cfg = config or Config()
+    sid = str(row.get("source_id") or "").strip()
+    payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+    transcript_raw = _load_transcript_text(source_id=sid, row=row, config=cfg)
+    transcript_repaired = _load_repaired_transcript_text(
+        source_id=sid,
+        row=row,
+        config=cfg,
+    )
+    transcript_main = transcript_repaired or transcript_raw
+
+    raw_path = str(row.get("transcript_path") or "").strip()
+    default_raw = cfg.gold_story_transcript_dir / f"{sid}.txt"
+    if not raw_path and default_raw.is_file():
+        raw_path = str(default_raw)
+
+    repaired_path = str(payload.get("transcript_repaired_path") or "").strip()
+    default_rep = cfg.gold_story_transcript_dir / f"{sid}.repaired.txt"
+    if not repaired_path and default_rep.is_file():
+        repaired_path = str(default_rep)
+
+    raw_display = format_transcript_display(transcript_raw)
+    repaired_display = format_transcript_display(transcript_repaired)
+    main_display = format_transcript_display(transcript_main)
+
+    return {
+        "id": row.get("id"),
+        "source_id": sid,
+        "title": row.get("title"),
+        "url": payload.get("bili_url") or row.get("url"),
+        "transcript_backend": row.get("transcript_backend"),
+        "transcript_path": raw_path or None,
+        "transcript_repaired_path": repaired_path or None,
+        "transcript_repair_confidence": payload.get("transcript_repair_confidence"),
+        "transcript_speakers": payload.get("transcript_speakers"),
+        "transcript_repair_notes": payload.get("transcript_repair_notes"),
+        "has_transcript": bool(transcript_raw or transcript_repaired),
+        "has_repaired": bool(transcript_repaired),
+        "transcript_raw": raw_display,
+        "transcript_repaired": repaired_display,
+        "transcript": main_display,
+        "transcript_raw_chars": len(transcript_raw.replace("\n", "")),
+        "transcript_repaired_chars": len(transcript_repaired.replace("\n", "")),
+        "transcript_chars": len(transcript_main.replace("\n", "")),
+    }
+
+
 def export_story_files(
     *,
     source_id: str,
