@@ -123,8 +123,14 @@
               <div v-else class="text-gray-400">（无 story_raw）</div>
             </div>
 
-            <div v-if="dump.transcript_path" class="text-xs text-gray-400">
-              逐字稿：{{ dump.transcript_path }}
+            <div class="flex items-center justify-between gap-2">
+              <div class="text-xs text-gray-400">ASR 逐字稿</div>
+              <el-button type="primary" link size="small" @click="openTranscript">
+                查看逐字稿
+              </el-button>
+            </div>
+            <div v-if="dump.transcript_path" class="truncate text-xs text-gray-400" :title="dump.transcript_path">
+              {{ dump.transcript_path }}
             </div>
           </div>
         </el-scrollbar>
@@ -205,6 +211,7 @@
           </span>
         </div>
         <div>
+          <el-button @click="openTranscript">逐字稿</el-button>
           <el-button @click="visible = false">关闭</el-button>
           <el-button
             v-if="detail.has_gold_chat && chatStory.dialogue?.length"
@@ -244,6 +251,7 @@ const emit = defineEmits<{
   (e: "update:modelValue", value: boolean): void;
   (e: "closed"): void;
   (e: "imported"): void;
+  (e: "open-transcript", payload: { id?: number | null; sourceId?: string | null; title?: string | null }): void;
 }>();
 
 const { handleError } = useErrorHandler();
@@ -284,6 +292,15 @@ async function loadDetail() {
   } finally {
     loading.value = false;
   }
+}
+
+function openTranscript() {
+  if (!detail.value) return;
+  emit("open-transcript", {
+    id: props.goldStoryId ?? detail.value.id ?? null,
+    sourceId: props.sourceId ?? detail.value.source_id ?? null,
+    title: detail.value.title ?? null,
+  });
 }
 
 async function handleImport() {

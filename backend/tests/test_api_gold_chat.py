@@ -124,3 +124,57 @@ def test_api_get_dump_without_gold_chat(app_ctx):
     assert detail["dump"]["story_raw"]
     assert detail["has_gold_chat"] is False
     assert detail["gold_chat"] is None
+
+
+def test_api_get_transcript(app_ctx, tmp_path, monkeypatch):
+    inserted = _insert_sample(app_ctx)
+    gid = int(inserted["id"])
+    transcript_dir = tmp_path / "transcripts"
+    transcript_dir.mkdir()
+    (transcript_dir / "BV1TESTAPI01.txt").write_text(
+        "昭昭：你好。\n灿灿：怎么了？",
+        encoding="utf-8",
+    )
+    (transcript_dir / "BV1TESTAPI01.repaired.txt").write_text(
+        "昭昭：你好。\n灿灿：怎么了？",
+        encoding="utf-8",
+    )
+
+    import app.config as config_mod
+
+    real_config = config_mod.Config
+
+    class PatchedConfig(real_config):
+        def __init__(self):
+            super().__init__()
+            self.gold_story_transcript_dir = transcript_dir
+
+    monkeypatch.setattr(config_mod, "Config", PatchedConfig)
+    monkeypatch.setattr(
+        "app.services.daily_story.gold_story.gold_chat_mgr.Config",
+        PatchedConfig,
+    )
+    monkeypatch.setattr(
+        "app.services.daily_story.gold_story.export_story.Config",
+        PatchedConfig,
+    )
+
+    client = app_ctx.test_client()
+    resp = client.get(f"/v_factory/api/gold_chat/transcript?id={gid}")
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["has_transcript"] is True
+    assert body["has_repaired"] is True
+    assert "昭昭" in body["transcript_raw"]
+    assert body["transcript_chars"] > 0
+
+
+def test_api_get_transcript_empty(app_ctx):
+    inserted = _insert_sample(app_ctx)
+    gid = int(inserted["id"])
+    client = app_ctx.test_client()
+    resp = client.get(f"/v_factory/api/gold_chat/transcript?id={gid}")
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["has_transcript"] is False
+    assert body["transcript"] == ""

@@ -73,6 +73,25 @@ def get_route():
         raise APIError("金故事不存在", status_code=404)
 
 
+@bp.get("/transcript")
+def transcript_route():
+    gold_story_id: int | None = None
+    source_id = get_query("source_id")
+    if get_query("id"):
+        gold_story_id = parse_id(field="id")
+    if gold_story_id is None and not source_id:
+        raise APIError("id 或 source_id 必填", status_code=400)
+    try:
+        return json_ok(
+            gold_chat_mgr.get_transcript(
+                gold_story_id=gold_story_id,
+                source_id=source_id,
+            ),
+        )
+    except KeyError:
+        raise APIError("金故事不存在", status_code=404)
+
+
 @bp.post("/convert")
 def convert_route():
     data = get_json_body()

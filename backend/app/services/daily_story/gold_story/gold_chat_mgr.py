@@ -14,6 +14,7 @@ from app.services.daily_story.gold_story.gold_chat_convert import (
     load_gold_chat,
     load_gold_chat_for_row,
 )
+from app.services.daily_story.gold_story.export_story import load_transcript_for_row
 
 
 def _ensure_schema() -> None:
@@ -165,6 +166,27 @@ class GoldChatMgr:
             "has_gold_chat": has_gold_chat,
             "gold_chat": gold_chat,
         }
+
+    def get_transcript(
+        self,
+        *,
+        gold_story_id: int | None = None,
+        source_id: str | None = None,
+    ) -> dict[str, Any]:
+        _ensure_schema()
+        cfg = Config()
+        row: dict[str, Any] | None = None
+        if gold_story_id is not None:
+            row = repo_gold_story.get_story(int(gold_story_id))
+        elif source_id:
+            row = repo_gold_story.get_by_source_id(source_id=str(source_id).strip())
+        else:
+            raise ValueError("id 或 source_id 必填")
+
+        if row is None:
+            raise KeyError("金故事不存在")
+
+        return load_transcript_for_row(row, config=cfg)
 
     def convert_one(
         self,

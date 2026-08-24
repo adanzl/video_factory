@@ -27,9 +27,11 @@
     <el-table
       :data="items"
       stripe
-      class="w-full"
+      class="w-full gold-chat-table"
       v-loading="loading"
+      row-class-name="gold-chat-row"
       @selection-change="onSelectionChange"
+      @row-click="onRowClick"
       @row-dblclick="viewItem"
     >
       <el-table-column type="selection" width="48" />
@@ -77,15 +79,23 @@
           <span v-else class="text-gray-400">-</span>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="240" fixed="right">
+      <el-table-column label="操作" width="300" fixed="right">
         <template #default="{ row }">
           <el-button
             type="primary"
             link
             size="small"
-            @click="viewItem(row)"
+            @click.stop="viewItem(row)"
           >
             查看
+          </el-button>
+          <el-button
+            type="primary"
+            link
+            size="small"
+            @click.stop="viewTranscript(row)"
+          >
+            逐字稿
           </el-button>
           <el-button
             v-if="row.has_gold_chat"
@@ -93,7 +103,7 @@
             link
             size="small"
             :loading="importingId === row.id"
-            @click="handleImportOne(row)"
+            @click.stop="handleImportOne(row)"
           >
             {{ row.gold_chat_daily_story_id ? "重导" : "导入" }}
           </el-button>
@@ -102,7 +112,7 @@
             link
             size="small"
             :loading="convertingId === row.id"
-            @click="handleConvertOne(row)"
+            @click.stop="handleConvertOne(row)"
           >
             {{ row.has_gold_chat ? "重转" : "转换" }}
           </el-button>
@@ -127,6 +137,14 @@
       :source-id="currentSourceId"
       @closed="fetchItems"
       @imported="fetchItems"
+      @open-transcript="openTranscriptFromDetail"
+    />
+
+    <GoldStoryTranscript
+      v-model="showTranscript"
+      :gold-story-id="transcriptId"
+      :source-id="transcriptSourceId"
+      :title="transcriptTitle"
     />
   </div>
 </template>
@@ -138,6 +156,7 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import { usePageRefresh } from "@/stores/app";
 import { useErrorHandler } from "@/composables/useErrorHandler";
 import GoldChatDetail from "@/views/gold_chat/dialogs/GoldChatDetail.vue";
+import GoldStoryTranscript from "@/views/gold_chat/dialogs/GoldStoryTranscript.vue";
 import {
   batchConvertGoldChat,
   convertGoldChat,
@@ -158,8 +177,12 @@ const convertingId = ref<number | null>(null);
 const importingId = ref<number | null>(null);
 const selectedIds = ref<number[]>([]);
 const showDetail = ref(false);
+const showTranscript = ref(false);
 const currentId = ref<number | null>(null);
 const currentSourceId = ref<string | null>(null);
+const transcriptId = ref<number | null>(null);
+const transcriptSourceId = ref<string | null>(null);
+const transcriptTitle = ref<string | null>(null);
 
 const page = ref(1);
 const pageSize = ref(parseInt(localStorage.getItem("goldChatPageSize") || "15", 10));
@@ -205,6 +228,30 @@ function onPageSizeChange() {
 
 function onSelectionChange(rows: GoldChatListItem[]) {
   selectedIds.value = rows.map((r) => r.id);
+}
+
+function onRowClick(row: GoldChatListItem, _column: unknown, event: MouseEvent) {
+  const target = event.target as HTMLElement | null;
+  if (target?.closest(".el-checkbox, .el-button, a")) return;
+  viewItem(row);
+}
+
+function viewTranscript(row: GoldChatListItem) {
+  transcriptId.value = row.id;
+  transcriptSourceId.value = row.source_id;
+  transcriptTitle.value = row.title;
+  showTranscript.value = true;
+}
+
+function openTranscriptFromDetail(payload: {
+  id?: number | null;
+  sourceId?: string | null;
+  title?: string | null;
+}) {
+  transcriptId.value = payload.id ?? null;
+  transcriptSourceId.value = payload.sourceId ?? null;
+  transcriptTitle.value = payload.title ?? null;
+  showTranscript.value = true;
 }
 
 function viewItem(row: GoldChatListItem) {
@@ -323,3 +370,9 @@ async function handleBatchConvert() {
 onMounted(fetchItems);
 usePageRefresh(fetchItems);
 </script>
+
+<style scoped>
+:deep(.gold-chat-row) {
+  cursor: pointer;
+}
+</style>
