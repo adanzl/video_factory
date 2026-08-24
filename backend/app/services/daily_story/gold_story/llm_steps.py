@@ -227,7 +227,11 @@ banned_literals：同 H3，仅 remap 称谓与站外真名；禁止填画画/碘
 - object/conflict/mechanism **须能在 story_raw 找到依据**；禁止发明 story_raw 没有的物品/仪式/场景
 - 禁止无依据套用站内仪式模板（举过头顶/三秒/单脚站/金鸡独立等）
 - C类 beat_chain：立规→字面执行→加码→反杀→嘴硬（至少4拍）；拍内容跟当前 story_raw 走
-- H类 beat_chain：升级/互毁→僵持/拒和→妈妈定责劝和→仪式性和好（至少4拍）；mom_lines_max 2–3
+- H类 beat_chain（**须 6–8 拍**，逐步写清，禁止合并跳步）：
+  1 抢看/占物 → 2 拒看/推搡 → 3 **双向互毁**（谁先弄坏谁+报复，须对称）
+  → 4 伤情可拍 → 5 哭腔道歉 → 6 M5拒和+加码（不原谅，妈妈介入前）
+  → 7 妈妈问谁先动手+定责劝和 → 8 仪式性和好/碘伏/收场
+  M5+H 时 object 须是 story_raw 争物（如画作），勿改成「抢秘密」替代互毁
 - **正例只允许上方金稿原文**；本稿须按 story_raw 写，禁止把金稿场景套到本稿
 - mom_lines_max：H 类 2–3；其余默认 0，最多 1
 - 禁止 characters/beat_chain 出现爸爸/陌生小孩/对方
@@ -265,6 +269,7 @@ story_raw（背景，勿照抄）：
 
 规则：
 - 严格按 beat_chain 顺序展开；每拍 1–3 条 seed
+- M5+H：seed 须含「双向互毁」「拒和/不原谅」「妈妈问谁先动手」分拍，勿合并
 - intent 须来自 scene_contract + story_raw
 - **正例只允许上方金稿原文**；本稿禁止照抄金稿 intent 到不同场景
 - speaker 只允许昭昭/灿灿/妈妈；妈妈 seed 条数 ≤ scene_contract.mom_lines_max

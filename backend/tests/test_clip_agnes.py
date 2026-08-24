@@ -172,6 +172,23 @@ def test_stabilize_motion_prompt() -> None:
     assert "不被裁切" in with_mom
 
 
+def test_stabilize_keyframe_tail_clean_hint_still_prefixes_visual_style() -> None:
+    """尾部「无字幕」不能替代前置 Style；否则 I2V 仍易画出字幕。"""
+    motion = (
+        "画面左边是昭昭，右边是灿灿。"
+        "0.0-3.3秒右侧女孩开口说话，口型自然开合，说完即闭嘴，同时双手叉腰时肩膀轻轻耸动后停止，"
+        "此时左侧男孩嘴巴闭合不动；"
+        "3.3-5.0秒左侧男孩开口说话，口型自然开合，说完即闭嘴，同时举起的右手手掌微微张开后定格，"
+        "此时右侧女孩嘴巴闭合不动。"
+        "说话时只动嘴唇和下巴，头部姿态与五官其余部分保持稳定。"
+        "服装发型稳定，身高比例（昭昭比灿灿矮半个头）不变。"
+        "镜头固定，不推近不拉远，两人全程在画面内，画面干净无字幕无文字。"
+    )
+    out = _stabilize_motion_prompt(motion)
+    assert out.startswith("纯视觉画面")
+    assert "无任何字幕、水印、对话框或文字叠加" in out
+
+
 def test_stabilize_uses_three_person_still_when_motion_is_two() -> None:
     """静图三人、运动写成左右两人时，不得锁成共2人把边上人吃掉。"""
     motion = (

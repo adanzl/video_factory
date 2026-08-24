@@ -53,9 +53,9 @@ _CLEAN_VISUAL_STYLE_HINT = (
     "纯视觉画面，无任何字幕、水印、对话框或文字叠加"
 )
 _DEFAULT_NEGATIVE_PROMPT = (
-    "text overlay, speech bubble, subtitles, captions, "
-    "text, words, letters, watermark, overlay, "
-    "字幕, 文字, 水印, 弹幕, 对白气泡, "
+    "text overlay, speech bubble, subtitles, captions, on-screen text, "
+    "text, words, letters, watermark, overlay, chinese characters on screen, "
+    "字幕, 文字, 水印, 弹幕, 对白气泡, 画面文字, 汉字叠加, 台词字幕, "
     "微笑, 大笑, 露齿笑, 开心, 嬉笑, 表情突变, 换脸, 脸部变形, "
     "扭曲, 多手指, "
     "knife, sharp blade, sharp tool, real knife, knife in child's hand, "
@@ -368,6 +368,12 @@ def _has_clean_visual_hint(text: str) -> bool:
     )
 
 
+def _has_clean_visual_prefix(text: str) -> bool:
+    """无字约束须在 prompt 最前；仅尾部写「无字幕」不算。"""
+    head = (text or "").strip()[:24]
+    return head.startswith("纯视觉") or head.startswith("禁止画面出现任何字幕")
+
+
 def _cast_lock_hint(
     text: str,
     image_prompt: str | None = None,
@@ -431,7 +437,7 @@ def _stabilize_motion_prompt(
         extras.append(_CAMERA_LOCK_HINT)
     cast_hint = _cast_lock_hint(text, image_prompt, speakers)
     chunks: list[str] = []
-    if not _has_clean_visual_hint(text):
+    if not _has_clean_visual_prefix(text):
         chunks.append(_CLEAN_VISUAL_STYLE_HINT)
     # 人数锁定紧跟无字 Style：I2V 对前缀更敏感
     if (
