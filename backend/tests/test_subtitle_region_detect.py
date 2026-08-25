@@ -5,6 +5,7 @@ import statistics
 import numpy as np
 
 from app.services.daily_story.gold_story.subtitle_detect import (
+    SubtitleRegion,
     _BandObservation,
     _cluster_observations,
     _region_from_cluster,
@@ -62,3 +63,10 @@ def test_region_from_cluster_caps_height_to_two_lines():
 def test_list_subtitle_bands_returns_empty_on_blank():
     gray = np.full((480, 640), 20, dtype=np.uint8)
     assert list_subtitle_bands_from_gray(gray) == []
+
+
+def test_region_crop_vf_must_pass_max_h_for_detect_samples():
+    """detect 抽样切图须传 config max_h，否则默认 0.12 压扁 ROI。"""
+    region = SubtitleRegion(y_ratio=0.8, h_ratio=0.2)
+    assert region.crop_vf_expr(max_h_ratio=0.20) == "crop=iw:ih*0.2:0:ih*0.8"
+    assert "0.12" in region.crop_vf_expr()
