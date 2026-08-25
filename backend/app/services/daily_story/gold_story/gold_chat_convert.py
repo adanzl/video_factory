@@ -62,7 +62,7 @@ _VIOLENCE_WORD_HINTS: tuple[tuple[str, str], ...] = (
     ("揍", "欺负"),
 )
 
-_ZHAOZHAO_WA_PREFIX = re.compile(r"^我……+")
+_ZHAO_WA_PREFIX = re.compile(r"^我……+")
 
 _SYSTEM = (
     "你是日常故事编剧。输入为金故事 scene_contract（可拍场景契约）"
@@ -220,7 +220,7 @@ PASS2_MAX_ROUNDS = 2
 GOLD_CHAT_NEAR_MISS_DEFICIT_MAX = 3
 _GOLD_CHAT_PAD_TAILS = ("呢", "呀", "吧", "嘛", "啊", "哦")
 _RE_PAD_SUFFIX_STACK = re.compile(
-    r"呢呢|啊呢|吧呢|嘛呢|呀呢|你呀呢|行了吧呢|不懂你呢"
+    r"呢呢|啊呢|吧呢|嘛呢|呀呢|你呀呢|行了吧呢|不懂你呢|听听不懂|你真是呢|你真是的呢"
 )
 
 
@@ -377,8 +377,10 @@ def _shorten_overlong_lines_with_llm(
 
 
 def _pad_suffix_blocked(core: str) -> frozenset[str]:
-    """句尾已有语气词则不再叠任何垫字后缀。"""
+    """句尾已有语气词或「的」收束则不再叠垫字后缀。"""
     if any(core.endswith(suf) for suf in _GOLD_CHAT_PAD_TAILS):
+        return frozenset(_GOLD_CHAT_PAD_TAILS)
+    if core.endswith("的"):
         return frozenset(_GOLD_CHAT_PAD_TAILS)
     return frozenset()
 
@@ -395,6 +397,9 @@ def _sanitize_pad_suffix_line(line: str) -> str:
         ("你呀呢", "你呀"),
         ("行了吧呢", "行了吧"),
         ("不懂你呢", "听不懂你"),
+        ("听听不懂", "听不懂"),
+        ("你真是呢", "你真是的"),
+        ("你真是的呢", "你真是的"),
     ):
         if old in out:
             out = out.replace(old, new)
@@ -1617,7 +1622,7 @@ def collect_gold_chat_polish_issues(story: dict[str, Any]) -> list[dict[str, Any
         line = str(row.get("line") or "").strip()
         if not line:
             continue
-        if sp == "昭昭" and _ZHAOZHAO_WA_PREFIX.match(line):
+        if sp == "昭昭" and _ZHAO_WA_PREFIX.match(line):
             wa_kept += 1
             if wa_kept > 2:
                 issues.append(
@@ -1830,6 +1835,9 @@ def polish_gold_chat_export(
         mom_lines_max=int(mom_max),
     )
     polished = _repair_gold_chat_after_polish(polished)
+    polished, _ = patch_sanitize_pad_suffix(polished)
+    polished, _ = _ensure_gold_chat_min_chars(polished)
+    polished, _ = patch_sanitize_pad_suffix(polished)
     paths = export_gold_chat_files(
         source_id=sid,
         row=row,
