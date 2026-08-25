@@ -28,6 +28,8 @@ def _cmd_doctor(_: argparse.Namespace) -> int:
     print(json.dumps(report, ensure_ascii=False, indent=2))
     ok = bool(report.get("ffmpeg") and report.get("yt_dlp") and report.get("faster_whisper"))
     ok = ok and bool(report.get("whisper_model_exists"))
+    if report.get("gold_story_ocr_enabled"):
+        ok = ok and bool(report.get("rapidocr") and report.get("ocr_models_ready"))
     return 0 if ok else 1
 
 

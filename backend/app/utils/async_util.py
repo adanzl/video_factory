@@ -16,9 +16,12 @@ import sys
 import tempfile
 import threading
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
+from concurrent.futures import Future
 from queue import Empty
-from typing import Optional
+from typing import Optional, TypeVar
+
+_T = TypeVar("_T")
 
 
 def run_in_background(func: Callable[[], None], *, daemon: bool = True) -> None:
@@ -46,6 +49,32 @@ def _hub_sleep(seconds: float) -> None:
         gevent_sleep(seconds)
     except ImportError:
         time.sleep(seconds)
+
+
+def wait_futures_hub(
+    futures: Iterable[Future[_T]],
+    *,
+    poll_sec: float = 0.02,
+    timeout: float | None = None,
+) -> list[Future[_T]]:
+    """等待 ProcessPool / ThreadPool future；gevent hub 上轮询让出。"""
+    pending = {f for f in futures if not f.done()}
+    if not pending:
+        return list(futures)
+
+    deadline = time.time() + timeout if timeout is not None else None
+    while pending:
+        done_now = {f for f in pending if f.done()}
+        pending -= done_now
+        if not pending:
+            break
+        if deadline is not None and time.time() > deadline:
+            raise TimeoutError("wait_futures_hub timed out")
+        if _on_gevent_hub():
+            _hub_sleep(poll_sec)
+        else:
+            time.sleep(poll_sec)
+    return list(futures)
 
 
 def _wait_worker_thread(

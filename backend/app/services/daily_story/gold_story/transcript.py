@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import shutil
 from datetime import datetime, timezone
@@ -18,6 +19,10 @@ from app.services.daily_story.gold_story.download import (
     write_metadata,
 )
 from app.services.daily_story.gold_story import whisper as gs_whisper
+from app.services.daily_story.gold_story import subtitle_ocr as gs_subtitle_ocr
+from app.services.daily_story.gold_story import transcript_merge as gs_transcript_merge
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "batch_bilibili",
@@ -88,6 +93,98 @@ def _transcript_path(config: Config, ref: MediaRef) -> Path:
     return config.gold_story_transcript_dir / f"{ref.source_id}.txt"
 
 
+def _resolve_transcription(
+    *,
+    video_path: Path,
+    audio_path: Path,
+    ref: MediaRef,
+    cfg: Config,
+    workspace: Path,
+    prompt: str | None,
+    title: str = "",
+    duration_sec: float | None = None,
+) -> dict[str, Any]:
+    """OCR 优先（烧录字幕）→ Whisper ASR 兜底，按 quality_score 选主稿。"""
+    candidates: list[dict[str, Any]] = []
+    ocr_result: dict[str, Any] | None = None
+    asr_result: dict[str, Any] | None = None
+
+    if gs_subtitle_ocr.should_try_ocr(video_path, config=cfg, workspace=workspace):
+        try:
+            ocr_result = gs_subtitle_ocr.transcribe_video_ocr(
+                video_path,
+                config=cfg,
+                workspace=workspace,
+                source_id=ref.source_id,
+                title=title,
+                duration_sec=duration_sec,
+            )
+            if str(ocr_result.get("text") or "").strip():
+                candidates.append(ocr_result)
+        except Exception as exc:
+            logger.warning(
+                "gold_story OCR failed bvid=%s: %s",
+                ref.source_id,
+                exc,
+            )
+
+    try:
+        asr_result = gs_whisper.transcribe_audio(audio_path, cfg, prompt=prompt)
+        if str(asr_result.get("text") or "").strip():
+            asr_row = {
+                **asr_result,
+                "source": "asr",
+                "avg_confidence": None,
+                "quality_score": gs_transcript_merge.score_transcript_text(
+                    str(asr_result.get("text") or ""),
+                    title=title,
+                    duration_sec=float(duration_sec or 0.0),
+                ),
+            }
+            candidates.append(asr_row)
+    except Exception as exc:
+        if not candidates:
+            raise
+        logger.warning(
+            "gold_story ASR failed after OCR bvid=%s: %s",
+            ref.source_id,
+            exc,
+        )
+
+    if not candidates:
+        raise RuntimeError("both OCR and ASR returned empty transcript")
+
+    picked = gs_transcript_merge.pick_transcript_candidate(
+        candidates,
+        title=title,
+        duration_sec=float(duration_sec or 0.0),
+        min_quality=float(cfg.gold_story_ocr_quality_min),
+    )
+    engine = str(picked.get("engine") or picked.get("source") or "unknown")
+    model = str(picked.get("model") or "")
+    return {
+        "text": str(picked.get("text") or ""),
+        "segments": picked.get("segments") or [],
+        "engine": engine,
+        "model": model,
+        "language": picked.get("language"),
+        "source": picked.get("source"),
+        "quality_score": picked.get("quality_score"),
+        "quality_warn": picked.get("quality_warn"),
+        "avg_confidence": picked.get("avg_confidence"),
+        "ocr_attempted": ocr_result is not None,
+        "asr_attempted": asr_result is not None,
+        "candidates": [
+            {
+                "source": row.get("source"),
+                "quality_score": row.get("quality_score"),
+                "chars": len(str(row.get("text") or "")),
+            }
+            for row in candidates
+        ],
+    }
+
+
 def transcribe_media(
     source: str,
     *,
@@ -116,12 +213,22 @@ def transcribe_media(
     metadata_dir = workspace / "metadata"
 
     downloaded = download_media(ref, cfg)
+    duration_sec = float(downloaded.metadata.get("duration") or 0.0)
     audio_path = extract_audio_wav(
         downloaded.video_path,
         audio_dir=audio_dir,
         stem=ref.source_id,
     )
-    transcription = gs_whisper.transcribe_audio(audio_path, cfg, prompt=prompt)
+    transcription = _resolve_transcription(
+        video_path=downloaded.video_path,
+        audio_path=audio_path,
+        ref=ref,
+        cfg=cfg,
+        workspace=workspace,
+        prompt=prompt,
+        title=str(downloaded.metadata.get("title") or ""),
+        duration_sec=duration_sec,
+    )
     out_path.write_text(transcription["text"] + "\n", encoding="utf-8")
 
     meta_path = write_metadata(
@@ -137,6 +244,8 @@ def transcribe_media(
             "engine": transcription["engine"],
             "model": transcription["model"],
             "language": transcription.get("language"),
+            "transcript_backend": transcription.get("source"),
+            "transcript_quality_score": transcription.get("quality_score"),
             "transcript_path": str(out_path),
             "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         },
@@ -149,6 +258,8 @@ def transcribe_media(
         "metadata_path": str(meta_path),
         "engine": transcription["engine"],
         "model": transcription["model"],
+        "transcript_backend": transcription.get("source"),
+        "quality_score": transcription.get("quality_score"),
     }
 
 
@@ -225,6 +336,10 @@ def doctor(config: Config | None = None) -> dict[str, Any]:
     model_path = cfg.whisper_model_dir / cfg.gold_story_whisper_model
     yt_dlp_ok = False
     faster_whisper_ok = False
+    rapidocr_ok = False
+    onnxruntime_ok = False
+    cv2_ok = False
+    ocr_models_ok = False
     try:
         import yt_dlp  # noqa: F401
 
@@ -237,11 +352,43 @@ def doctor(config: Config | None = None) -> dict[str, Any]:
         faster_whisper_ok = True
     except ImportError:
         pass
+    try:
+        from rapidocr import RapidOCR  # noqa: F401
+
+        rapidocr_ok = True
+    except ImportError:
+        pass
+    try:
+        import onnxruntime  # noqa: F401
+
+        onnxruntime_ok = True
+    except ImportError:
+        pass
+    try:
+        import cv2  # noqa: F401
+
+        cv2_ok = True
+    except ImportError:
+        pass
+
+    ocr_dir = cfg.ocr_model_dir
+    if ocr_dir.is_dir():
+        ocr_models_ok = (
+            (ocr_dir / "ch_PP-OCRv4_det_mobile.onnx").is_file()
+            and (ocr_dir / "ch_PP-OCRv4_rec_mobile.onnx").is_file()
+        )
 
     return {
         "ffmpeg": shutil.which("ffmpeg"),
         "yt_dlp": yt_dlp_ok,
         "faster_whisper": faster_whisper_ok,
+        "rapidocr": rapidocr_ok,
+        "onnxruntime": onnxruntime_ok,
+        "opencv": cv2_ok,
+        "ocr_model_dir": str(ocr_dir),
+        "ocr_models_ready": ocr_models_ok,
+        "gold_story_ocr_enabled": cfg.gold_story_ocr_enabled,
+        "gold_story_ocr_frame_workers": cfg.gold_story_ocr_frame_workers,
         "whisper_model_dir": str(cfg.whisper_model_dir),
         "whisper_model": cfg.gold_story_whisper_model,
         "whisper_model_path": str(model_path),

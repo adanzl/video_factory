@@ -308,6 +308,20 @@ class Config:
         self.gold_story_whisper_vad_filter: bool = _bool(
             "GOLD_STORY_WHISPER_VAD_FILTER", False
         )
+        # 金故事 H0b 烧录字幕 OCR（RapidOCR + PP-OCRv4 mobile）
+        self.ocr_model_dir: Path = _path(
+            "OCR_MODEL_DIR", Path("/mnt/data/ocr/models")
+        )
+        self.gold_story_ocr_enabled: bool = _bool("GOLD_STORY_OCR_ENABLED", True)
+        self.gold_story_ocr_fps: float = float(
+            os.getenv("GOLD_STORY_OCR_FPS", "2")
+        )
+        self.gold_story_ocr_frame_workers: int = int(
+            os.getenv("GOLD_STORY_OCR_FRAME_WORKERS", "4")
+        )
+        self.gold_story_ocr_quality_min: float = float(
+            os.getenv("GOLD_STORY_OCR_QUALITY_MIN", "0.55")
+        )
         self.gold_story_transcript_repair: bool = _bool(
             "GOLD_STORY_TRANSCRIPT_REPAIR", True
         )
