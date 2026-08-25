@@ -141,6 +141,26 @@ def test_i_quality_scores_story_69_shape():
     assert "I末段缺赢家一招制敌" not in q["reasons"]
 
 
+def test_review_prompt_i_stubborn_progression_not_dup():
+    from app.services.daily_story.review import build_review_prompts
+
+    story = {
+        "story_type": "I",
+        "setting": "卧室里，灿灿和昭昭因为作业吵起来",
+        "conflict_core": "姐姐灵魂拷问「我爱学习你爱吗」，弟弟哑口无言",
+        "dialogue": [
+            {"speaker": "灿灿", "line": "还嘴硬？我不说了还不行？你真是的！"},
+            {"speaker": "昭昭", "line": "哼！不说了呢！"},
+            {"speaker": "灿灿", "line": "哼，看你还嘴硬呢！"},
+        ],
+    }
+    system, _ = build_review_prompts("灵魂拷问", story)
+    assert "I 类「问倒收束」" in system
+    assert "还嘴硬" in system
+    assert "递进" in system
+    assert "别当重复报" in system
+
+
 def test_collect_narration_meta_flags_yizhaozhidi():
     from app.services.daily_story.gold_story.gold_chat_convert import (
         collect_gold_chat_polish_issues,
