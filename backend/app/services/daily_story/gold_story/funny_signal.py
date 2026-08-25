@@ -39,8 +39,9 @@ CUTE_WORDS: tuple[str, ...] = (
     "好萌",
 )
 
-L1_FUNNY_MIN = 0.20
-L2_FUNNY_MIN = 0.40
+L1_FUNNY_MIN = 0.10
+# 一成弹幕在笑就够。
+L2_FUNNY_MIN = 0.10
 DEFAULT_FUNNY_SIGNAL = 0.15
 MAX_DANMAKU = 1000
 DM_MIN_FOR_HARD = 20
