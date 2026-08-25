@@ -104,14 +104,15 @@ def _resolve_transcription(
     title: str = "",
     duration_sec: float | None = None,
 ) -> dict[str, Any]:
-    """OCR 优先（烧录字幕）→ Whisper ASR 兜底，按 quality_score 选主稿。"""
+    """OCR 优先（烧录字幕，子进程隔离）→ 必要时 Whisper ASR 兜底。"""
     candidates: list[dict[str, Any]] = []
     ocr_result: dict[str, Any] | None = None
     asr_result: dict[str, Any] | None = None
+    skip_asr = False
 
     if gs_subtitle_ocr.should_try_ocr(video_path, config=cfg, workspace=workspace):
         try:
-            ocr_result = gs_subtitle_ocr.transcribe_video_ocr(
+            ocr_result = gs_subtitle_ocr.transcribe_video_ocr_subprocess(
                 video_path,
                 config=cfg,
                 workspace=workspace,
@@ -121,6 +122,13 @@ def _resolve_transcription(
             )
             if str(ocr_result.get("text") or "").strip():
                 candidates.append(ocr_result)
+                skip_asr = gs_subtitle_ocr.should_skip_asr_after_ocr(ocr_result, cfg)
+                if skip_asr:
+                    logger.info(
+                        "gold_story skip ASR bvid=%s ocr_quality=%.2f",
+                        ref.source_id,
+                        float(ocr_result.get("quality_score") or 0.0),
+                    )
         except Exception as exc:
             logger.warning(
                 "gold_story OCR failed bvid=%s: %s",
@@ -128,28 +136,29 @@ def _resolve_transcription(
                 exc,
             )
 
-    try:
-        asr_result = gs_whisper.transcribe_audio(audio_path, cfg, prompt=prompt)
-        if str(asr_result.get("text") or "").strip():
-            asr_row = {
-                **asr_result,
-                "source": "asr",
-                "avg_confidence": None,
-                "quality_score": gs_transcript_merge.score_transcript_text(
-                    str(asr_result.get("text") or ""),
-                    title=title,
-                    duration_sec=float(duration_sec or 0.0),
-                ),
-            }
-            candidates.append(asr_row)
-    except Exception as exc:
-        if not candidates:
-            raise
-        logger.warning(
-            "gold_story ASR failed after OCR bvid=%s: %s",
-            ref.source_id,
-            exc,
-        )
+    if not skip_asr:
+        try:
+            asr_result = gs_whisper.transcribe_audio(audio_path, cfg, prompt=prompt)
+            if str(asr_result.get("text") or "").strip():
+                asr_row = {
+                    **asr_result,
+                    "source": "asr",
+                    "avg_confidence": None,
+                    "quality_score": gs_transcript_merge.score_transcript_text(
+                        str(asr_result.get("text") or ""),
+                        title=title,
+                        duration_sec=float(duration_sec or 0.0),
+                    ),
+                }
+                candidates.append(asr_row)
+        except Exception as exc:
+            if not candidates:
+                raise
+            logger.warning(
+                "gold_story ASR failed after OCR bvid=%s: %s",
+                ref.source_id,
+                exc,
+            )
 
     if not candidates:
         raise RuntimeError("both OCR and ASR returned empty transcript")
@@ -174,6 +183,7 @@ def _resolve_transcription(
         "avg_confidence": picked.get("avg_confidence"),
         "ocr_attempted": ocr_result is not None,
         "asr_attempted": asr_result is not None,
+        "asr_skipped": skip_asr,
         "candidates": [
             {
                 "source": row.get("source"),

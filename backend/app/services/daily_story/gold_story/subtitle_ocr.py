@@ -2,23 +2,26 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import shutil
 import subprocess
-from concurrent.futures import Future, ProcessPoolExecutor
+import sys
+import tempfile
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from app.config import Config
 from app.services.daily_story.gold_story import transcript_merge as gs_merge
-
-_CJK_IN_LINE = re.compile(r"[\u4e00-\u9fff]")
 from app.services.daily_story.gold_story.subtitle_detect import detect_burned_subtitles
 from app.utils.async_util import wait_futures_hub
 
 logger = logging.getLogger(__name__)
+
+_CJK_IN_LINE = re.compile(r"[\u4e00-\u9fff]")
 
 _SPEAKER_LINE_RE = re.compile(r"^([^：:]{1,8})[：:]\s*(.+)$")
 _OVERLAY_LINE_RES = (
@@ -33,6 +36,8 @@ _OVERLAY_LINE_RES = (
 )
 _SINGLE_CHAR_RE = re.compile(r"^[A-Za-z0-9]$")
 _OCR_CONFIG_NAME = "rapidocr_gold_story.yaml"
+_BACKEND_DIR = Path(__file__).resolve().parents[4]
+_OCR_SUBPROCESS_TIMEOUT_SEC = 600.0
 
 _worker_engine = None
 _worker_config_path: str | None = None
@@ -48,6 +53,16 @@ class OcrFrame:
 def ocr_config_path(config: Config | None = None) -> Path:
     _ = config
     return Path(__file__).with_name(_OCR_CONFIG_NAME)
+
+
+def ocr_models_ready(config: Config) -> bool:
+    model_dir = config.ocr_model_dir
+    if not model_dir.is_dir():
+        return False
+    return (
+        (model_dir / "ch_PP-OCRv4_det_mobile.onnx").is_file()
+        and (model_dir / "ch_PP-OCRv4_rec_mobile.onnx").is_file()
+    )
 
 
 def _ffmpeg() -> str:
@@ -279,7 +294,7 @@ def transcribe_video_ocr(
     title: str = "",
     duration_sec: float | None = None,
 ) -> dict[str, Any]:
-    """单视频 OCR 逐字稿。"""
+    """单视频 OCR 逐字稿（当前进程内执行，供 subprocess worker 调用）。"""
     frame_dir = workspace / "ocr_frames" / source_id
     frames = extract_subtitle_frames(
         video_path,
@@ -315,13 +330,124 @@ def transcribe_video_ocr(
     }
 
 
+def should_skip_asr_after_ocr(ocr_result: dict[str, Any], config: Config) -> bool:
+    text = str(ocr_result.get("text") or "").strip()
+    if not text:
+        return False
+    quality = float(ocr_result.get("quality_score") or 0.0)
+    return quality >= float(config.gold_story_ocr_skip_asr_min)
+
+
+def _run_ocr_worker(input_path: Path, output_path: Path) -> None:
+    payload = json.loads(input_path.read_text(encoding="utf-8"))
+    cfg = Config()
+    if payload.get("ocr_model_dir"):
+        cfg.ocr_model_dir = Path(str(payload["ocr_model_dir"]))
+    if payload.get("gold_story_ocr_fps") is not None:
+        cfg.gold_story_ocr_fps = float(payload["gold_story_ocr_fps"])
+    if payload.get("gold_story_ocr_frame_workers") is not None:
+        cfg.gold_story_ocr_frame_workers = int(payload["gold_story_ocr_frame_workers"])
+
+    result = transcribe_video_ocr(
+        Path(str(payload["video_path"])),
+        config=cfg,
+        workspace=Path(str(payload["workspace"])),
+        source_id=str(payload["source_id"]),
+        title=str(payload.get("title") or ""),
+        duration_sec=payload.get("duration_sec"),
+    )
+    output_path.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
+
+
+def transcribe_video_ocr_subprocess(
+    video_path: Path,
+    *,
+    config: Config,
+    workspace: Path,
+    source_id: str,
+    title: str = "",
+    duration_sec: float | None = None,
+) -> dict[str, Any]:
+    """子进程隔离 OCR，避免与 Whisper/GPU 同进程 segfault。"""
+    if not ocr_models_ready(config):
+        raise RuntimeError(
+            f"OCR model dir not ready: {config.ocr_model_dir} (set OCR_MODEL_DIR)"
+        )
+
+    payload = {
+        "video_path": str(video_path),
+        "workspace": str(workspace),
+        "source_id": source_id,
+        "title": title,
+        "duration_sec": duration_sec,
+        "ocr_model_dir": str(config.ocr_model_dir),
+        "gold_story_ocr_fps": config.gold_story_ocr_fps,
+        "gold_story_ocr_frame_workers": config.gold_story_ocr_frame_workers,
+    }
+    module = "app.services.daily_story.gold_story.subtitle_ocr"
+    with tempfile.TemporaryDirectory(prefix="gold_story_ocr_") as tmp:
+        input_path = Path(tmp) / "input.json"
+        output_path = Path(tmp) / "output.json"
+        input_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        cmd = [
+            sys.executable,
+            "-m",
+            module,
+            "--worker",
+            str(input_path),
+            str(output_path),
+        ]
+        logger.info(
+            "gold_story OCR subprocess bvid=%s workers=%s",
+            source_id,
+            config.gold_story_ocr_frame_workers,
+        )
+        try:
+            from app.utils.async_util import _on_gevent_hub, run_subprocess_safe
+
+            if _on_gevent_hub():
+                code, stdout, stderr = run_subprocess_safe(
+                    cmd,
+                    timeout=_OCR_SUBPROCESS_TIMEOUT_SEC,
+                    cwd=str(_BACKEND_DIR),
+                )
+                if code != 0:
+                    raise RuntimeError(
+                        f"OCR subprocess failed code={code}: "
+                        f"{(stderr or stdout or '').strip()}"
+                    )
+            else:
+                proc = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    encoding="utf-8",
+                    cwd=str(_BACKEND_DIR),
+                    timeout=_OCR_SUBPROCESS_TIMEOUT_SEC,
+                    check=False,
+                )
+                if proc.returncode != 0:
+                    raise RuntimeError(
+                        f"OCR subprocess failed code={proc.returncode}: "
+                        f"{(proc.stderr or proc.stdout or '').strip()}"
+                    )
+        except subprocess.TimeoutExpired as exc:
+            raise TimeoutError(
+                f"OCR subprocess timed out after {_OCR_SUBPROCESS_TIMEOUT_SEC}s"
+            ) from exc
+
+        if not output_path.is_file():
+            raise RuntimeError("OCR subprocess produced no output")
+        data = json.loads(output_path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise RuntimeError("OCR subprocess returned invalid payload")
+        return data
+
+
 def should_try_ocr(video_path: Path, *, config: Config, workspace: Path) -> bool:
     if not config.gold_story_ocr_enabled:
         return False
-    try:
-        build_ocr_engine(config)
-    except Exception as exc:
-        logger.warning("OCR unavailable: %s", exc)
+    if not ocr_models_ready(config):
+        logger.warning("OCR models not ready under %s", config.ocr_model_dir)
         return False
     try:
         return detect_burned_subtitles(
@@ -332,3 +458,21 @@ def should_try_ocr(video_path: Path, *, config: Config, workspace: Path) -> bool
     except Exception as exc:
         logger.warning("subtitle detect failed, skip OCR: %s", exc)
         return False
+
+
+def _cli_worker() -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(description="gold_story OCR subprocess worker")
+    parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("input_json")
+    parser.add_argument("output_json")
+    args = parser.parse_args()
+    if not args.worker:
+        parser.error("missing --worker")
+    _run_ocr_worker(Path(args.input_json), Path(args.output_json))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(_cli_worker())
