@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from app.services.daily_story.story_types import (
     STORY_TYPE_LINES,
+    append_type_body_validation_errors,
     parse_story_type_code,
+    story_type_punchline_conflict,
     story_type_tag,
+    type_body_validation_enabled,
 )
 from app.services.daily_story.story_types.i.validate import append_i_body_errors
 
@@ -50,8 +53,31 @@ def test_i_validate_rejects_missing_speechless():
     assert any("语塞" in e for e in errors)
 
 
+def test_i_body_validate_gated_when_not_quality_ready():
+    story = {
+        "story_type": "I",
+        "punchline_explain": "I类问倒收束",
+        "dialogue": [{"speaker": "灿灿", "line": f"我爱学习你爱吗{i}"} for i in range(10)],
+    }
+    assert not type_body_validation_enabled("I")
+    errors: list[str] = []
+    append_type_body_validation_errors(story, errors)
+    assert not any("I类" in e for e in errors)
+
+
 def test_parse_i_from_story_type():
     assert parse_story_type_code(story_type="I", punchline="C类：旧稿") == "I"
+
+
+def test_story_type_punchline_conflict():
+    story = {
+        "story_type": "I",
+        "punchline_explain": "C类：姐姐用双标灵魂拷问把弟弟问到哑口无言",
+    }
+    msg = story_type_punchline_conflict(story)
+    assert msg is not None
+    assert "story_type=I" in msg
+    assert "punchline=C" in msg
 
 
 def test_i_quality_profile_not_c_fallback():
@@ -103,3 +129,32 @@ def test_i_quality_scores_story_69_shape():
     assert "C规则轮次升级" not in "".join(q["reasons"])
     assert "回旋镖" not in "".join(q["reasons"])
     assert "收束形态未落位" not in "".join(q["reasons"])
+    assert any("拖尾" in r for r in q["reasons"])
+
+
+def test_attach_normalizes_punchline_on_conflict():
+    from app.services.daily_story.quality import attach_daily_story_quality
+
+    story = {
+        "story_type": "I",
+        "conflict_core": "灵魂拷问",
+        "punchline_explain": "C类：旧稿解释",
+        "discovery_opening": [
+            {"speaker": "灿灿", "line": "我爱学习，你爱吗？"},
+            {"speaker": "昭昭", "line": "我……我也爱吧。"},
+        ],
+        "dialogue": [
+            {"speaker": "灿灿", "line": "我爱学习，你爱吗？"},
+            {"speaker": "昭昭", "line": "我……我也爱吧。"},
+            {"speaker": "灿灿", "line": "那你怎么老不写作业？"},
+            {"speaker": "昭昭", "line": "可我更爱你呀！"},
+            {"speaker": "灿灿", "line": "少来！凭啥我爱学习你不爱？"},
+            {"speaker": "昭昭", "line": "我……我说不过你。"},
+            {"speaker": "灿灿", "line": "让你学习你哭哭啼啼，让你玩你咋不哭？"},
+            {"speaker": "昭昭", "line": "我不说了，我看窗外还不行？"},
+            {"speaker": "灿灿", "line": "哼，一招制敌！你服不服？"},
+            {"speaker": "昭昭", "line": "服了……我以后也爱学习。"},
+        ],
+    }
+    attach_daily_story_quality(story, theme="灵魂拷问", finalize=False)
+    assert story["punchline_explain"].startswith("I类问倒收束")
