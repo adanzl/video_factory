@@ -90,6 +90,8 @@ _WRITTEN_SIGNAL_RES: tuple[re.Pattern[str], ...] = (
         r"进行|完成|非常|十分|迅速|立刻|由于|因此|从而|以及",
     ),
 )
+# 视频标题/旁白/meta：孩子台词里不应出现（通用，不限故事类型）
+_RE_NARRATION_META = re.compile(r"一招制敌|服不服")
 
 _RE_PUNCT = re.compile(r"[，。！？…、：；~—\s·「」“”\"'?!.,]")
 # 行动宣言段：孩子不会先大喊自己将做的具体动作（「我来扯掉这夹子」）。
@@ -190,6 +192,33 @@ def _dialogue(story: dict) -> list[dict]:
     if not isinstance(rows, list):
         return []
     return [r for r in rows if isinstance(r, dict)]
+
+
+def narration_meta_issue(line: str, *, line_no: int) -> dict[str, Any] | None:
+    """姐弟台词命中 narration/meta 词时，交给润色模块改口语。"""
+    if not _RE_NARRATION_META.search(line):
+        return None
+    return {
+        "lines": [line_no],
+        "kind": "旁白腔",
+        "desc": f"像视频标题/旁白/meta，不像孩子现场说：{line}",
+        "fix": "改成当场互怼口语（如「哼，看你还嘴硬！」），"
+        "删「一招制敌」「服不服」等 narration 词",
+    }
+
+
+def collect_narration_meta_issues(story: dict) -> list[dict[str, Any]]:
+    """通用：扫 narration/meta 词，供 gold_chat 与 daily_story 润色共用。"""
+    out: list[dict[str, Any]] = []
+    for i, row in enumerate(_dialogue(story), 1):
+        sp = str(row.get("speaker") or "").strip()
+        line = str(row.get("line") or "").strip()
+        if not line or sp not in ("昭昭", "灿灿"):
+            continue
+        issue = narration_meta_issue(line, line_no=i)
+        if issue:
+            out.append(issue)
+    return out
 
 
 def numbered_dialogue(story: dict) -> str:
@@ -377,6 +406,11 @@ def collect_wording_issues(
             })
             continue
         speaker = str(row.get("speaker") or "").strip()
+        if speaker in ("昭昭", "灿灿"):
+            meta_issue = narration_meta_issue(line, line_no=i)
+            if meta_issue:
+                out.append(meta_issue)
+                continue
         if speaker in ("昭昭", "灿灿") and "站住" in line:
             out.append({
                 "lines": [i],
@@ -804,6 +838,12 @@ def build_wording_polish_prompts(
             "（删手忙脚乱，保留薯片物证，勿改成「明明是你」）；"
             "禁提醒太晚/没拦住/来不及；一句一气口，勿逗号连两拍。\n"
         )
+    if issue_kinds & {"旁白腔"}:
+        system += (
+            "【旁白/meta】被点行须改成孩子对角色说的现场口语；"
+            "删视频标题/评点词（一招制敌、服不服等），"
+            "可改成嘴硬得意（如「哼，看你还嘴硬！」）。\n"
+        )
     system += (
         "对照示例：\n"
         "- 深痕 → 深印子\n"
@@ -835,6 +875,8 @@ def build_wording_polish_prompts(
             "、渣粘鞋底走一步一个印、兜撑破饼干蹦出来等），用拟声/通感/反差"
             "预期制造笑点，但不得改成旁白；\n"
             "- 旁白式概括：像在念画面/总结/报幕，不像对角色说话。\n"
+            "  **视频标题/meta 词**：如「一招制敌」「服不服」——"
+            "像 UP 主评点，不像孩子现场说，须改成互怼口语；\n"
             "  **重点抓「事后解说动作结果」**：孩子把自己刚做完/刚发生的事"
             "当旁白念出来（如「我滑了一跤」「相框又掉地上了」这类结果解说），"
             "也抓「我+动作过程+结果」自述（如「我一弯腰，头撞到茶几角了」"
