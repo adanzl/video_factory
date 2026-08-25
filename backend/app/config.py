@@ -325,6 +325,21 @@ class Config:
         self.gold_story_ocr_skip_asr_min: float = float(
             os.getenv("GOLD_STORY_OCR_SKIP_ASR_MIN", "0.55")
         )
+        self.gold_story_ocr_region_detect: bool = _bool(
+            "GOLD_STORY_OCR_REGION_DETECT", True
+        )
+        self.gold_story_ocr_crop_bottom_ratio: float = float(
+            os.getenv("GOLD_STORY_OCR_CROP_BOTTOM_RATIO", "0.10")
+        )
+        self.gold_story_ocr_region_search_ratio: float = float(
+            os.getenv("GOLD_STORY_OCR_REGION_SEARCH_RATIO", "0.35")
+        )
+        self.gold_story_ocr_region_cluster_tol: float = float(
+            os.getenv("GOLD_STORY_OCR_REGION_CLUSTER_TOL", "0.025")
+        )
+        self.gold_story_ocr_region_min_hit_ratio: float = float(
+            os.getenv("GOLD_STORY_OCR_REGION_MIN_HIT_RATIO", "0.2")
+        )
         self.gold_story_transcript_repair: bool = _bool(
             "GOLD_STORY_TRANSCRIPT_REPAIR", True
         )
