@@ -167,7 +167,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { onMounted, onUnmounted, ref } from "vue";
 import { Refresh } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { usePageRefresh } from "@/stores/app";
@@ -181,9 +181,11 @@ import {
   deleteGoldStories,
   formatAutoScore,
   formatDailyStoryType,
+  getGoldStoryCollectStatus,
   importGoldChat,
   listGoldChats,
   type GoldChatListItem,
+  type GoldStoryCollectResult,
 } from "@/api/api-gold-chat";
 
 const { handleError } = useErrorHandler();
@@ -191,6 +193,8 @@ const { handleError } = useErrorHandler();
 const items = ref<GoldChatListItem[]>([]);
 const loading = ref(false);
 const collecting = ref(false);
+const POLL_INTERVAL_MS = 3000;
+let collectPollTimer: ReturnType<typeof setInterval> | null = null;
 const batching = ref(false);
 const deleting = ref(false);
 const convertingId = ref<number | null>(null);
@@ -211,8 +215,31 @@ const total = ref(0);
 const filterStatus = ref("active");
 const batchForce = ref(false);
 
-async function fetchItems() {
-  loading.value = true;
+function stopCollectPolling() {
+  if (collectPollTimer != null) {
+    clearInterval(collectPollTimer);
+    collectPollTimer = null;
+  }
+}
+
+function formatCollectDone(res: GoldStoryCollectResult): string {
+  return (
+    `采集完成：候选 ${res.candidates ?? 0}，入库 ${res.inserted ?? 0}，` +
+    `拒 ${res.inserted_rejected ?? 0}，跳过 ${res.skipped ?? 0}，` +
+    `失败 ${res.failed ?? 0}`
+  );
+}
+
+function startCollectPolling() {
+  if (collectPollTimer != null) return;
+  collectPollTimer = setInterval(() => {
+    void pollCollectStatus();
+  }, POLL_INTERVAL_MS);
+}
+
+async function fetchItems(opts?: { quiet?: boolean }) {
+  const quiet = opts?.quiet === true;
+  if (!quiet) loading.value = true;
   try {
     const res = await listGoldChats({
       limit: pageSize.value,
@@ -224,7 +251,33 @@ async function fetchItems() {
   } catch (e) {
     handleError(e, "加载 gold_chat 列表失败");
   } finally {
-    loading.value = false;
+    if (!quiet) loading.value = false;
+  }
+}
+
+async function pollCollectStatus() {
+  try {
+    const res = await getGoldStoryCollectStatus();
+    if (res.status === "running") {
+      collecting.value = true;
+      await fetchItems({ quiet: true });
+      startCollectPolling();
+      return;
+    }
+    const wasCollecting = collecting.value;
+    collecting.value = false;
+    stopCollectPolling();
+    if (!wasCollecting) return;
+    await fetchItems({ quiet: true });
+    if (res.status === "error") {
+      ElMessage.error(res.error || "采集失败");
+      return;
+    }
+    if (res.status === "done") {
+      ElMessage.success(formatCollectDone(res));
+    }
+  } catch (e) {
+    handleError(e, "查询采集进度失败");
   }
 }
 
@@ -440,7 +493,7 @@ async function handleBatchConvert() {
 async function handleCollect() {
   try {
     await ElMessageBox.confirm(
-      "将从 B 站搜索并采集最多 10 条金故事（含转写与结构化），耗时较长，继续？",
+      "将从 B 站搜索并采集最多 10 条金故事（含转写与结构化），后台进行，继续？",
       "采集金故事",
       { type: "info" },
     );
@@ -450,18 +503,25 @@ async function handleCollect() {
   collecting.value = true;
   try {
     const res = await collectGoldStories({ max: 10 });
-    ElMessage.success(
-      `采集完成：候选 ${res.candidates}，入库 ${res.inserted}，拒 ${res.inserted_rejected}，跳过 ${res.skipped}，失败 ${res.failed}`,
-    );
+    if (res.status === "running") {
+      ElMessage.success("已开始采集，完成后列表会自动刷新");
+      startCollectPolling();
+      return;
+    }
+    collecting.value = false;
+    ElMessage.success(formatCollectDone(res));
     await fetchItems();
   } catch (e) {
-    handleError(e, "采集失败");
-  } finally {
     collecting.value = false;
+    handleError(e, "采集失败");
   }
 }
 
-onMounted(fetchItems);
+onMounted(() => {
+  void fetchItems();
+  void pollCollectStatus();
+});
+onUnmounted(stopCollectPolling);
 usePageRefresh(fetchItems);
 </script>
 
