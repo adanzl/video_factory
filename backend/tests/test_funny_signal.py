@@ -55,13 +55,30 @@ def test_passes_funny_gate_l2_rejects_low_signal():
         danmaku_laugh_ratio=0.1,
         comment_laugh_ratio=0.05,
         view_reply_ratio_norm=0.2,
-        funny_signal=0.15,
+        funny_signal=0.05,
         cute_not_funny=False,
         danmaku_fetch_ok=True,
     )
     ok, reason = passes_funny_gate(metrics, level="l2")
     assert ok is False
     assert "low_funny_signal" in reason
+
+
+def test_passes_funny_gate_l2_accepts_moderate_danmaku_laugh():
+    """一成弹幕在笑即可过 L2。"""
+    metrics = AudienceFunnyMetrics(
+        danmaku_total=100,
+        danmaku_laugh_score=20.0,
+        danmaku_laugh_ratio=0.12,
+        comment_laugh_ratio=0.0,
+        view_reply_ratio_norm=0.8,
+        funny_signal=0.15,
+        cute_not_funny=False,
+        danmaku_fetch_ok=True,
+    )
+    ok, reason = passes_funny_gate(metrics, level="l2")
+    assert ok is True
+    assert reason == "ok"
 
 
 def test_passes_funny_gate_l2_ignores_quiet_comments():
