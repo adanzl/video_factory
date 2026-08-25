@@ -155,7 +155,7 @@ def extract_subtitle_frames(
         old.unlink(missing_ok=True)
 
     if region is not None:
-        vf = f"fps={fps},{region.clamp().crop_vf_expr()}"
+        vf = f"fps={fps},{region.crop_vf_expr()}"
     else:
         crop_y = 1.0 - crop_bottom_ratio
         vf = f"fps={fps},crop=iw:ih*{crop_bottom_ratio}:0:ih*{crop_y}"

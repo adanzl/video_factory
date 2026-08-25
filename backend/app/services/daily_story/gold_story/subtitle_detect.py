@@ -30,9 +30,9 @@ class SubtitleRegion:
     samples: int = 0
     confidence: float = 0.0
 
-    def clamp(self) -> SubtitleRegion:
+    def clamp(self, *, max_h_ratio: float = 0.12) -> SubtitleRegion:
         y = max(0.0, min(float(self.y_ratio), 0.98))
-        h = max(0.04, min(float(self.h_ratio), 0.25))
+        h = max(0.04, min(float(self.h_ratio), float(max_h_ratio)))
         if y + h > 1.0:
             h = max(0.04, 1.0 - y)
         return SubtitleRegion(
@@ -43,8 +43,8 @@ class SubtitleRegion:
             confidence=self.confidence,
         )
 
-    def crop_vf_expr(self) -> str:
-        region = self.clamp()
+    def crop_vf_expr(self, *, max_h_ratio: float = 0.12) -> str:
+        region = self.clamp(max_h_ratio=max_h_ratio)
         return f"crop=iw:ih*{region.h_ratio}:0:ih*{region.y_ratio}"
 
 
@@ -93,7 +93,7 @@ def extract_sample_frame(
     """抽取单帧；region 优先，否则回退固定底栏。"""
     output_path.parent.mkdir(parents=True, exist_ok=True)
     if region is not None:
-        vf = region.clamp().crop_vf_expr()
+        vf = region.crop_vf_expr()
     else:
         crop_y = 1.0 - crop_bottom_ratio
         vf = f"crop=iw:ih*{crop_bottom_ratio}:0:ih*{crop_y}"
@@ -193,15 +193,18 @@ def _merge_nearby_bands(
     bands: list[tuple[int, int]],
     *,
     max_gap: int = 8,
+    max_height: int | None = None,
 ) -> list[tuple[int, int]]:
-    """合并同一行字幕的上下边缘（边缘检测常拆成两条细带）。"""
+    """合并相邻文字带；超过 max_height（约 2 行字幕）则不并层。"""
     if not bands:
         return []
     ordered = sorted(bands, key=lambda band: band[0])
     merged: list[tuple[int, int]] = []
     cur_start, cur_end = ordered[0]
     for start, end in ordered[1:]:
-        if start - cur_end <= max_gap:
+        gap = start - cur_end
+        merged_h = max(cur_end, end) - cur_start
+        if gap <= max_gap and (max_height is None or merged_h <= max_height):
             cur_end = max(cur_end, end)
             continue
         merged.append((cur_start, cur_end))
@@ -227,25 +230,41 @@ def _band_to_ratios(
     y1: int,
     *,
     frame_h: int,
-    pad_ratio: float = 0.35,
+    pad_ratio: float = 0.12,
+    max_h_ratio: float = 0.10,
 ) -> tuple[float, float] | None:
-    pad = max(int((y1 - y0) * pad_ratio), max(int(frame_h * 0.008), 4))
+    pad = max(int((y1 - y0) * pad_ratio), max(int(frame_h * 0.004), 2))
     y0 = max(0, y0 - pad)
     y1 = min(frame_h, y1 + pad)
     band_h = y1 - y0
     if band_h <= 0:
         return None
+    max_h_px = max(int(frame_h * max_h_ratio), 8)
+    if band_h > max_h_px:
+        # 说明层/多行解说：裁到字幕最大高度，锚在带底（靠近画面底边）
+        y0 = max(0, y1 - max_h_px)
+        band_h = y1 - y0
     return y0 / float(frame_h), band_h / float(frame_h)
+
+
+def _filter_subtitle_observations(
+    observations: list[_BandObservation],
+    *,
+    max_h_ratio: float,
+) -> list[_BandObservation]:
+    """第一步筛选：丢弃高于「最多 2 行」的Observation（多为说明层）。"""
+    limit = float(max_h_ratio) * 1.05
+    return [obs for obs in observations if float(obs.h_ratio) <= limit]
 
 
 def list_subtitle_bands_from_gray(
     gray: np.ndarray,
     *,
     search_bottom_ratio: float = 0.35,
-    min_h_ratio: float = 0.012,
-    max_h_ratio: float = 0.12,
+    min_h_ratio: float = 0.02,
+    max_h_ratio: float = 0.10,
 ) -> list[_BandObservation]:
-    """在底部搜索区列出全部文字带（不在单帧内做最终决策）。"""
+    """在底部搜索区列出文字带；单带高度不超过 max_h_ratio（约 2 行）。"""
     if gray.ndim != 2 or gray.size == 0:
         return []
 
@@ -253,31 +272,38 @@ def list_subtitle_bands_from_gray(
     search_ratio = max(0.15, min(float(search_bottom_ratio), 0.5))
     search_y = int(frame_h * (1.0 - search_ratio))
     roi = gray[search_y:, :]
-    raw_bands = _merge_nearby_bands(_bands_from_edge_profile(roi))
+    max_h_px = max(int(frame_h * max_h_ratio), 8)
+    raw_bands = _merge_nearby_bands(
+        _bands_from_edge_profile(roi),
+        max_height=max_h_px,
+    )
     if not raw_bands:
         return []
 
-    min_h = max(int(frame_h * min_h_ratio), 4)
+    min_h = max(int(frame_h * min_h_ratio), 3)
     max_h = max(int(frame_h * max_h_ratio), min_h + 1)
     out: list[_BandObservation] = []
     for y0_roi, y1_roi in raw_bands:
         band_h_px = y1_roi - y0_roi
+        if band_h_px > max_h:
+            continue
         if band_h_px < min_h:
             center = (y0_roi + y1_roi) // 2
             half = min_h // 2
             y0_roi = max(0, center - half)
             y1_roi = min(roi.shape[0], center + half)
             band_h_px = y1_roi - y0_roi
-        if not (min_h <= band_h_px <= max_h or len(raw_bands) == 1):
-            continue
         ratios = _band_to_ratios(
             search_y + y0_roi,
             search_y + y1_roi,
             frame_h=frame_h,
+            max_h_ratio=max_h_ratio,
         )
         if ratios is None:
             continue
         y_ratio, h_ratio = ratios
+        if h_ratio > max_h_ratio * 1.05:
+            continue
         out.append(_BandObservation(y_ratio=y_ratio, h_ratio=h_ratio))
     return out
 
@@ -305,24 +331,46 @@ def _select_fixed_dialogue_cluster(
     *,
     sample_frames: int,
     min_hit_ratio: float = 0.2,
+    max_h_ratio: float = 0.10,
 ) -> list[_BandObservation] | None:
-    """取跨帧出现最频繁的文字带（对白位置全片固定）。"""
+    """取跨帧出现最频繁、高度像对白字幕（≤2 行）的文字带。"""
     if not clusters:
         return None
     min_hits = max(2, int(sample_frames * min_hit_ratio))
-    eligible = [cluster for cluster in clusters if len(cluster) >= min_hits]
-    pool = eligible or clusters
+
+    def _cluster_median_h(cluster: list[_BandObservation]) -> float:
+        return statistics.median([obs.h_ratio for obs in cluster])
+
+    eligible = [
+        cluster
+        for cluster in clusters
+        if len(cluster) >= min_hits and _cluster_median_h(cluster) <= max_h_ratio * 1.05
+    ]
+    pool = eligible or [
+        cluster
+        for cluster in clusters
+        if _cluster_median_h(cluster) <= max_h_ratio * 1.05
+    ]
+    if not pool:
+        pool = clusters
 
     def _score(cluster: list[_BandObservation]) -> tuple[int, float]:
-        # 命中次数优先；同分时取更靠下（y_center 更大）的稳定对白带。
         return (len(cluster), statistics.mean([obs.y_center for obs in cluster]))
 
     return max(pool, key=_score)
 
 
-def _region_from_cluster(cluster: list[_BandObservation]) -> SubtitleRegion:
-    y_ratio = statistics.median([obs.y_ratio for obs in cluster])
-    h_ratio = statistics.median([obs.h_ratio for obs in cluster])
+def _region_from_cluster(
+    cluster: list[_BandObservation],
+    *,
+    max_h_ratio: float,
+    min_h_ratio: float,
+) -> SubtitleRegion:
+    """聚类 → 固定高度字幕窗（最多 2 行），y 锚定在稳定对白带。"""
+    y_center = statistics.median([obs.y_center for obs in cluster])
+    h_ratio = min(float(max_h_ratio), max(float(min_h_ratio), float(max_h_ratio)))
+    y_ratio = y_center - h_ratio * 0.5
+    y_ratio = max(0.0, min(y_ratio, 1.0 - h_ratio))
     confidence = min(1.0, 0.35 + len(cluster) * 0.08)
     return SubtitleRegion(
         y_ratio=y_ratio,
@@ -330,19 +378,20 @@ def _region_from_cluster(cluster: list[_BandObservation]) -> SubtitleRegion:
         method="edge_band_fixed",
         samples=len(cluster),
         confidence=confidence,
-    ).clamp()
+    ).clamp(max_h_ratio=max_h_ratio)
 
 
 def fallback_subtitle_region(config: Config | None = None) -> SubtitleRegion:
     cfg = config or Config()
-    y = 1.0 - float(cfg.gold_story_ocr_crop_bottom_ratio)
+    max_h = float(cfg.gold_story_ocr_region_max_h_ratio)
+    y = 1.0 - max_h
     return SubtitleRegion(
         y_ratio=y,
-        h_ratio=float(cfg.gold_story_ocr_crop_bottom_ratio),
+        h_ratio=max_h,
         method="fallback_fixed",
         samples=0,
         confidence=0.25,
-    ).clamp()
+    ).clamp(max_h_ratio=max_h)
 
 
 def detect_subtitle_region(
@@ -386,6 +435,8 @@ def detect_subtitle_region(
     sampled_frames = 0
     search_ratio = float(cfg.gold_story_ocr_region_search_ratio)
     cluster_tol = float(cfg.gold_story_ocr_region_cluster_tol)
+    max_h_ratio = float(cfg.gold_story_ocr_region_max_h_ratio)
+    min_h_ratio = float(cfg.gold_story_ocr_region_min_h_ratio)
 
     try:
         import cv2
@@ -410,16 +461,23 @@ def detect_subtitle_region(
                 list_subtitle_bands_from_gray(
                     gray,
                     search_bottom_ratio=search_ratio,
+                    min_h_ratio=min_h_ratio,
+                    max_h_ratio=max_h_ratio,
                 )
             )
         except Exception as exc:
             logger.debug("subtitle region sample failed ts=%.2f: %s", ts, exc)
 
+    observations = _filter_subtitle_observations(
+        observations,
+        max_h_ratio=max_h_ratio,
+    )
     clusters = _cluster_observations(observations, y_center_tol=cluster_tol)
     picked = _select_fixed_dialogue_cluster(
         clusters,
         sample_frames=max(sampled_frames, 1),
         min_hit_ratio=float(cfg.gold_story_ocr_region_min_hit_ratio),
+        max_h_ratio=max_h_ratio,
     )
     if picked is None:
         logger.info(
@@ -430,7 +488,11 @@ def detect_subtitle_region(
         )
         return fallback_subtitle_region(cfg)
 
-    merged = _region_from_cluster(picked)
+    merged = _region_from_cluster(
+        picked,
+        max_h_ratio=max_h_ratio,
+        min_h_ratio=min_h_ratio,
+    )
     logger.info(
         "subtitle region bvid=%s y=%.3f h=%.3f hits=%s/%s frames=%s conf=%.2f",
         video_path.stem,

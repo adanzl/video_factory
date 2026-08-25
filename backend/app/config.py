@@ -331,6 +331,12 @@ class Config:
         self.gold_story_ocr_crop_bottom_ratio: float = float(
             os.getenv("GOLD_STORY_OCR_CROP_BOTTOM_RATIO", "0.10")
         )
+        self.gold_story_ocr_region_max_h_ratio: float = float(
+            os.getenv("GOLD_STORY_OCR_REGION_MAX_H_RATIO", "0.10")
+        )
+        self.gold_story_ocr_region_min_h_ratio: float = float(
+            os.getenv("GOLD_STORY_OCR_REGION_MIN_H_RATIO", "0.025")
+        )
         self.gold_story_ocr_region_search_ratio: float = float(
             os.getenv("GOLD_STORY_OCR_REGION_SEARCH_RATIO", "0.35")
         )
