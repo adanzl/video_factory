@@ -25,9 +25,9 @@
       </el-button>
       <el-checkbox v-model="batchForce">已导出也重跑</el-checkbox>
       <el-select v-model="filterStatus" class="w-28!" @change="onFilterChange">
-        <el-option label="active" value="active" />
-        <el-option label="rejected" value="rejected" />
         <el-option label="全部" value="" />
+        <el-option label="通过" value="active" />
+        <el-option label="驳回" value="rejected" />
       </el-select>
     </div>
 
@@ -43,6 +43,13 @@
     >
       <el-table-column type="selection" width="48" />
       <el-table-column prop="id" label="ID" width="60" />
+      <el-table-column label="状态" width="80" align="center">
+        <template #default="{ row }">
+          <el-tag :type="statusTagType(row.status)" size="small">
+            {{ formatStoryStatus(row.status) }}
+          </el-tag>
+        </template>
+      </el-table-column>
       <el-table-column prop="source_id" label="BV" width="130" show-overflow-tooltip />
       <el-table-column prop="title" label="金故事标题" min-width="160" show-overflow-tooltip />
       <el-table-column label="结构" width="120">
@@ -212,8 +219,25 @@ const transcriptTitle = ref<string | null>(null);
 const page = ref(1);
 const pageSize = ref(parseInt(localStorage.getItem("goldChatPageSize") || "15", 10));
 const total = ref(0);
-const filterStatus = ref("active");
+const filterStatus = ref("");
 const batchForce = ref(false);
+
+function formatStoryStatus(status: string): string {
+  if (status === "active") return "通过";
+  if (status === "rejected") return "驳回";
+  if (status === "promoted") return "晋升";
+  if (status === "retired") return "淘汰";
+  return status || "-";
+}
+
+function statusTagType(
+  status: string,
+): "success" | "danger" | "warning" | "info" {
+  if (status === "active" || status === "promoted") return "success";
+  if (status === "rejected") return "info";
+  if (status === "retired") return "info";
+  return "warning";
+}
 
 function stopCollectPolling() {
   if (collectPollTimer != null) {

@@ -41,11 +41,23 @@ CUTE_WORDS: tuple[str, ...] = (
 
 L1_FUNNY_MIN = 0.20
 L2_FUNNY_MIN = 0.40
-L2_COMMENT_LAUGH_MIN = 0.15
 DEFAULT_FUNNY_SIGNAL = 0.15
 MAX_DANMAKU = 1000
 DM_MIN_FOR_HARD = 20
 DM_LAUGH_RATIO_MIN = 0.08
+# 观众好笑以弹幕为主；评论区几乎不「哈哈」，只作弱补充。
+FUNNY_DM_WEIGHT = 0.90
+FUNNY_COMMENT_WEIGHT = 0.04
+FUNNY_ENGAGE_WEIGHT = 0.06
+FUNNY_REJECT_MARKERS: tuple[str, ...] = (
+    "low_funny_signal",
+    "low_comment_laugh",
+    "no_danmaku_laugh",
+    "no_audience_laugh",
+    "cute_not_funny",
+    "low_audience_laugh",
+)
+_INGEST_STATUSES = frozenset({"active", "rejected"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,9 +125,9 @@ def compute_funny_signal(
     view_reply_norm: float,
 ) -> float:
     signal = (
-        0.50 * float(dm_laugh_ratio)
-        + 0.30 * float(comment_laugh)
-        + 0.20 * float(view_reply_norm)
+        FUNNY_DM_WEIGHT * float(dm_laugh_ratio)
+        + FUNNY_COMMENT_WEIGHT * float(comment_laugh)
+        + FUNNY_ENGAGE_WEIGHT * float(view_reply_norm)
     )
     return round(min(1.0, max(0.0, signal)), 4)
 
@@ -200,18 +212,104 @@ def _passes_funny_values(
     min_signal = L2_FUNNY_MIN if level == "l2" else L1_FUNNY_MIN
     if funny_signal < min_signal:
         return False, f"low_funny_signal:{funny_signal:.2f}<{min_signal}"
-    if level == "l2" and comment_laugh_ratio < L2_COMMENT_LAUGH_MIN:
-        if danmaku_fetch_ok and danmaku_total >= 50:
-            pass
-        elif comment_laugh_ratio < L2_COMMENT_LAUGH_MIN:
-            return False, (
-                f"low_comment_laugh:{comment_laugh_ratio:.2f}"
-                f"<{L2_COMMENT_LAUGH_MIN}"
-            )
     if level == "l1" and danmaku_fetch_ok and danmaku_laugh_score <= 0:
-        if comment_laugh_ratio <= 0:
-            return False, "no_audience_laugh"
+        return False, "no_audience_laugh"
+    if (
+        level == "l1"
+        and not danmaku_fetch_ok
+        and comment_laugh_ratio <= 0
+        and danmaku_laugh_score <= 0
+    ):
+        return False, "no_audience_laugh"
     return True, "ok"
+
+
+def is_funny_gate_reject(audit: dict[str, Any] | None) -> bool:
+    """机审是否只因好笑门控被拒（含旧版评论区笑声硬卡）。"""
+    if not isinstance(audit, dict):
+        return False
+    if str(audit.get("stage") or "") == "funny_signal":
+        return True
+    reasons = [str(x).strip() for x in (audit.get("reject_reasons") or []) if str(x).strip()]
+    if not reasons:
+        return False
+    return all(_is_funny_reject_reason(item) for item in reasons)
+
+
+def _is_funny_reject_reason(reason: str) -> bool:
+    text = str(reason or "").strip()
+    return any(text == marker or text.startswith(f"{marker}:") for marker in FUNNY_REJECT_MARKERS)
+
+
+def rescore_payload_funny(payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    """按当前权重重算 funny_signal。缺弹幕分量则无法重评。"""
+    if not isinstance(payload, dict) or payload.get("danmaku_laugh_ratio") is None:
+        return None
+    out = dict(payload)
+    out["funny_signal"] = compute_funny_signal(
+        dm_laugh_ratio=float(out.get("danmaku_laugh_ratio") or 0),
+        comment_laugh=float(out.get("comment_laugh_ratio") or 0),
+        view_reply_norm=float(out.get("view_reply_ratio_norm") or 0),
+    )
+    return out
+
+
+def next_status_after_funny_rescore(
+    *,
+    status: str,
+    audit: dict[str, Any] | None,
+    l2_ok: bool,
+    l2_reason: str,
+) -> tuple[str, dict[str, Any]]:
+    """ingest 态按 L2 翻状态；promoted/retired 只回写分数。"""
+    current = str(status or "").strip() or "active"
+    next_audit = dict(audit or {})
+    if current not in _INGEST_STATUSES:
+        return current, next_audit
+    if l2_ok:
+        if current == "rejected" and is_funny_gate_reject(next_audit):
+            next_audit["pass"] = True
+            next_audit.pop("stage", None)
+            next_audit["reject_reasons"] = []
+            return "active", next_audit
+        return current, next_audit
+    if current == "active" or is_funny_gate_reject(next_audit) or not next_audit.get("reject_reasons"):
+        next_audit["pass"] = False
+        next_audit["stage"] = "funny_signal"
+        next_audit["reject_reasons"] = [l2_reason]
+        return "rejected", next_audit
+    return "rejected", next_audit
+
+
+def plan_funny_rescore(row: dict[str, Any]) -> dict[str, Any]:
+    """根据已存弹幕/评论分量规划重评结果，不写库。"""
+    payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+    rescored = rescore_payload_funny(payload)
+    if rescored is None:
+        return {
+            "id": row.get("id"),
+            "skipped": True,
+            "reason": "missing_danmaku_laugh_ratio",
+        }
+    l2_ok, l2_reason = passes_funny_gate_from_payload(rescored, level="l2")
+    status, audit = next_status_after_funny_rescore(
+        status=str(row.get("status") or ""),
+        audit=rescored.get("audit") if isinstance(rescored.get("audit"), dict) else {},
+        l2_ok=l2_ok,
+        l2_reason=l2_reason,
+    )
+    rescored["audit"] = audit
+    return {
+        "id": row.get("id"),
+        "skipped": False,
+        "payload": rescored,
+        "status": status,
+        "old_status": row.get("status"),
+        "old_signal": payload.get("funny_signal"),
+        "funny_signal": rescored.get("funny_signal"),
+        "l2_ok": l2_ok,
+        "l2_reason": l2_reason,
+    }
 
 
 def fetch_danmaku_texts(
