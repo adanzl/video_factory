@@ -132,9 +132,12 @@ def test_api_list_all_statuses(app_ctx):
 
     all_resp = client.get("/v_factory/api/gold_chat/list?limit=50")
     assert all_resp.status_code == 200
-    all_ids = {x["source_id"] for x in all_resp.get_json()["items"]}
+    all_items = all_resp.get_json()["items"]
+    all_ids = {x["source_id"] for x in all_items}
     assert "BV1TESTALL01" in all_ids
     assert "BV1TESTALL02" in all_ids
+    listed_ids = [int(x["id"]) for x in all_items]
+    assert listed_ids == sorted(listed_ids, reverse=True)
 
 
 def test_api_delete(app_ctx, tmp_path, monkeypatch):

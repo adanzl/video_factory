@@ -210,7 +210,7 @@ def list_stories(
         f"""
         SELECT {_GOLD_STORY_COLUMNS}
         FROM gold_story{where}
-        ORDER BY auto_score DESC, id DESC
+        ORDER BY id DESC
         LIMIT ? OFFSET ?
         """,
         (*params, limit, offset),
