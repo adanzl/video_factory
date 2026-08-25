@@ -847,6 +847,16 @@ def _structure_type_hint(structure_type: str, mechanism: str = "") -> str:
             )
         return f"""【H 第三方化解 · 机制 {mech or "?"}】
 - 详拍见下方「金稿保真 checklist」，逐步落实勿跳步{extra}"""
+    if st == "I":
+        extra = ""
+        if mech == "M11":
+            extra = (
+                "\n- **M11+I**：中段须写清价值高地/标准一句（如爱学习你爱吗）；"
+                "灵魂拷问须不可答/不可接；对方语塞后赢家嘴硬总结；"
+                "禁止 A 末四拍反噬/破功；可含双规则拉扯但收束须问倒"
+            )
+        return f"""【I 问倒收束 · 机制 {mech or "?"}】
+- 详拍见下方「金稿保真 checklist」，逐步落实勿跳步{extra}"""
     return ""
 
 
