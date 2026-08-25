@@ -35,6 +35,13 @@ _MECH_STRUCTURE_CHAINS: dict[tuple[str, str], tuple[str, ...]] = {
         "愣住 beat",
         "暖收或半暖",
     ),
+    ("M11", "I"): (
+        "争锋/互怼 escalating（可含双规则拉扯）",
+        "立价值标准/道德高地（须可拍一句）",
+        "灵魂拷问：抛出不可答/不可接问题",
+        "对方语塞/败北 beat",
+        "赢家嘴硬总结（一招制敌；无反噬）",
+    ),
 }
 
 _DEFAULT_H_CHAIN: tuple[str, ...] = (

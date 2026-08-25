@@ -164,8 +164,10 @@ _H2_USER = """视频标题：{title}
 
 _H3_SYSTEM = (
     "你是金故事结构化师。输入 story_raw，输出机制 M 码 + 结构类型 + beat。\n"
-    "mechanism 必须是 M1–M10 之一；structure_type 必须是 A–E、F、G 或 H。\n"
+    "mechanism 必须是 M1–M11 之一；structure_type 必须是 A–E、F、G、H 或 I。\n"
     "M5 拒和加码：纯姐弟内部僵持→A；有妈妈/第三方调解收束→H。\n"
+    "M8 泛一锤可拍→A；M11 价值高地灵魂拷问/不可答问题→I（赢家嘴硬，无反噬）。\n"
+    "M2 双规则/自私包装公平：若收束为回旋镖→C；若收束为灵魂拷问问倒→M11+I。\n"
     "beat 4–6 步，禁止贴 story_raw 原文。\n"
     "只输出 JSON。"
 )
@@ -178,7 +180,7 @@ story_raw：
 机制表（M 码）：
 {mechanism_table}
 
-结构类型 A–E / F / G / H：
+结构类型 A–E / F / G / H / I：
 {type_catalog}
 
 输出 JSON：
@@ -245,6 +247,8 @@ banned_literals：同 H3，仅 remap 称谓与站外真名；禁止填画画/碘
 - object/conflict/mechanism **须能在 story_raw 找到依据**；禁止发明 story_raw 没有的物品/仪式/场景
 - 禁止无依据套用站内仪式模板（举过头顶/三秒/单脚站/金鸡独立等）
 - C类 beat_chain：立规→字面执行→加码→反杀→嘴硬（至少4拍）；拍内容跟当前 story_raw 走
+- I类 beat_chain（**须 4–6 拍**）：争锋/互怼→立价值标准→灵魂拷问→对方语塞→赢家嘴硬总结；
+  禁止 A 末四拍反噬/破功；closing 须赢家一招制敌
 - H类 beat_chain（**须 6–8 拍**，逐步写清，禁止合并跳步）：
   1 抢看/占物 → 2 拒看/推搡 → 3 **双向互毁**（谁先弄坏谁+报复，须对称）
   → 4 伤情可拍 → 5 哭腔道歉 → 6 M5拒和+加码（不原谅，妈妈介入前）

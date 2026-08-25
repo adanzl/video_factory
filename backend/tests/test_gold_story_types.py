@@ -71,6 +71,16 @@ def test_h_structure_label():
     assert not is_injectable_structure_type("H")
 
 
+def test_m11_maps_to_i_not_injectable():
+    assert normalize_mechanism("M11") == "M11"
+    assert mechanism_label("M11") == "灵魂拷问"
+    assert structure_type_for_mechanism("M11") == "I"
+    assert structure_type_label("I") == "问倒收束"
+    assert catalog_entry("I") is not None
+    assert not is_injectable_structure_type("I")
+    validate_mechanism_structure_pair("M11", "I")
+
+
 def test_m5_allows_a_or_h():
     assert allowed_structure_types("M5") == frozenset({"A", "H"})
     validate_mechanism_structure_pair("M5", "A")

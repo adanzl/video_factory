@@ -1,11 +1,11 @@
-"""金故事机制 M1–M10 与结构类型 A–E/F/G/H 映射。"""
+"""金故事机制 M1–M11 与结构类型 A–E/F/G/H/I 映射。"""
 
 from __future__ import annotations
 
 from app.services.daily_story.story_types import STORY_TYPE_LABELS
 
 GOLD_STORY_MECHANISM_CODES: frozenset[str] = frozenset(
-    f"M{i}" for i in range(1, 11)
+    f"M{i}" for i in range(1, 12)
 )
 
 GOLD_STORY_MECHANISM_LABELS: dict[str, str] = {
@@ -19,6 +19,7 @@ GOLD_STORY_MECHANISM_LABELS: dict[str, str] = {
     "M8": "一锤可拍",
     "M9": "结盟甩锅",
     "M10": "假帮腔讽刺",
+    "M11": "灵魂拷问",
 }
 
 # M → 结构字母：能落 A–E 的落 A–E；否则用扩展字母（F/G/H…）
@@ -33,6 +34,7 @@ MECHANISM_STRUCTURE_MAP: dict[str, str] = {
     "M8": "A",  # 一锤可拍（A 类中段不变量）
     "M9": "B",  # 结盟甩锅
     "M10": "E",  # 假帮腔讽刺（E 类帮腔）
+    "M11": "I",  # 价值高地灵魂拷问 → 问倒收束
 }
 
 # mechanism 默认映射外的合法 structure_type（防 H3 误判入库失败）
@@ -45,6 +47,7 @@ GOLD_STORY_EXTENDED_TYPE_LABELS: dict[str, str] = {
     "F": "Threat 互升级",
     "G": "嘴硬心软",
     "H": "第三方化解",
+    "I": "问倒收束",
 }
 
 GOLD_STORY_STRUCTURE_LABELS: dict[str, str] = {
@@ -56,8 +59,8 @@ GOLD_STORY_STRUCTURE_CODES: frozenset[str] = frozenset(
     GOLD_STORY_STRUCTURE_LABELS.keys()
 )
 
-# daily_story 已落地类型（H5 可注入任务）；H 暂仅 gold_story 侧
-_GOLD_STORY_NON_INJECTABLE = frozenset({"H"})
+# daily_story 已落地类型（H5 可注入任务）；H/I 暂仅 gold_story 侧
+_GOLD_STORY_NON_INJECTABLE = frozenset({"H", "I"})
 GOLD_STORY_INJECTABLE_CODES: frozenset[str] = frozenset(
     k for k in STORY_TYPE_LABELS if k not in _GOLD_STORY_NON_INJECTABLE
 )
@@ -111,6 +114,12 @@ GOLD_STORY_TYPE_CATALOG: tuple[dict[str, str], ...] = (
         "name": "第三方化解",
         "formula": "升级/僵持→第三方定责劝和→仪式性和好",
         "closing": "表演性道歉/拒和/拉手/齐声承诺；非 G 内部 pivot",
+    },
+    {
+        "code": "I",
+        "name": "问倒收束",
+        "formula": "争锋→价值高地→灵魂拷问→语塞→赢家嘴硬",
+        "closing": "赢家一招制敌总结；无 A 式反噬/破功",
     },
 )
 
