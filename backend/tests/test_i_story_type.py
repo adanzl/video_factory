@@ -33,7 +33,7 @@ def test_i_validate_passes_soul_question_shape():
             {"speaker": "昭昭", "line": "我……我说不过你。"},
             {"speaker": "灿灿", "line": "让你学习你哭哭啼啼，让你玩你咋不哭？"},
             {"speaker": "昭昭", "line": "我不说了，我看窗外还不行？"},
-            {"speaker": "灿灿", "line": "哼，一招制敌！你服不服？"},
+            {"speaker": "灿灿", "line": "好了，不爱学习还跟我吵啥！"},
             {"speaker": "昭昭", "line": "服了……我以后也爱学习。"},
         ],
     }
@@ -112,22 +112,56 @@ def test_i_quality_scores_story_69_shape():
             {"speaker": "昭昭", "line": "我……我也爱吧。"},
             {"speaker": "灿灿", "line": "那你怎么老不写作业？每次都要妈妈催！"},
             {"speaker": "昭昭", "line": "可我更爱你呀！姐姐，我最喜欢你了！"},
-            {"speaker": "灿灿", "line": "少来这套！咱俩一个爸妈生的，凭啥我爱学习你不爱？"},
+            {"speaker": "灿灿", "line": "少来这套！转移话题也没用。"},
+            {"speaker": "昭昭", "line": "我哪有啊！我就是……就是怕你不理我。"},
+            {
+                "speaker": "灿灿",
+                "line": "咱俩一个爸妈生的，凭啥我爱学习你不爱？你倒是说说看！",
+            },
             {"speaker": "昭昭", "line": "我……我说不过你。"},
             {"speaker": "灿灿", "line": "让你学习你哭哭啼啼的，让你玩你咋不哭呢？"},
-            {"speaker": "昭昭", "line": "我……我不说了，别说了还不行？"},
-            {"speaker": "灿灿", "line": "哼，一招制敌！你服不服？"},
+            {"speaker": "昭昭", "line": "你听不懂我说话，我也听不懂你！"},
+            {"speaker": "灿灿", "line": "还嘴硬？我不说了还不行？你呀！"},
+            {"speaker": "昭昭", "line": "我……我不说了，哼！哼！"},
+            {"speaker": "灿灿", "line": "好了，不爱学习还跟我吵啥！"},
             {"speaker": "昭昭", "line": "服了……我以后也爱学习，行了吧！"},
             {"speaker": "灿灿", "line": "这还差不多，说到做到，别光嘴上说啊。"},
         ],
     }
     q = score_daily_story(story, theme="灵魂拷问")
     assert q["structure_score"] >= 75, q
+    from app.services.daily_story.prompts import dialogue_total_chars
+
+    assert dialogue_total_chars(story) >= 240
+    assert len(story["dialogue"]) >= 12
     assert "C规则轮次升级" not in "".join(q["reasons"])
     assert "回旋镖" not in "".join(q["reasons"])
     assert "收束形态未落位" not in "".join(q["reasons"])
     assert "拖尾" not in "".join(q["reasons"])
     assert "I末段缺赢家一招制敌" not in q["reasons"]
+
+
+def test_patch_i_naturalize_win_line():
+    from app.services.daily_story.story_types.i.patch import patch_i_body
+
+    story = {
+        "story_type": "I",
+        "dialogue": [
+            {"speaker": "灿灿", "line": "昭昭，我爱学习，你爱吗？"},
+            {"speaker": "昭昭", "line": "我……我也爱吧。"},
+            {"speaker": "灿灿", "line": "那你怎么老不写作业？"},
+            {"speaker": "昭昭", "line": "可我更爱你呀！"},
+            {"speaker": "灿灿", "line": "少来！凭啥我爱学习你不爱？"},
+            {"speaker": "昭昭", "line": "我……我说不过你。"},
+            {"speaker": "灿灿", "line": "让你学习你哭哭啼啼，让你玩你咋不哭？"},
+            {"speaker": "昭昭", "line": "我不说了，我看窗外还不行？"},
+            {"speaker": "灿灿", "line": "哼，一招制敌！你服不服？"},
+            {"speaker": "昭昭", "line": "服了……我以后也爱学习。"},
+        ],
+    }
+    notes = patch_i_body(story)
+    assert story["dialogue"][8]["line"] == "好了，不爱学习还跟我吵啥！"
+    assert any("口语" in n for n in notes)
 
 
 def test_i_humor_no_false_missing_win_on_trimmed_story():
@@ -142,7 +176,7 @@ def test_i_humor_no_false_missing_win_on_trimmed_story():
         "我……我说不过你。",
         "让你学习你哭哭啼啼的，让你玩你咋不哭呢？",
         "我……我不说了，别说了还不行？",
-        "哼，一招制敌！你服不服？",
+        "好了，不爱学习还跟我吵啥！",
         "服了……我以后也爱学习，行了吧！",
         "这还差不多，说到做到，别光嘴上说啊。",
     ]
@@ -169,7 +203,7 @@ def test_attach_normalizes_punchline_on_conflict():
             {"speaker": "昭昭", "line": "我……我说不过你。"},
             {"speaker": "灿灿", "line": "让你学习你哭哭啼啼，让你玩你咋不哭？"},
             {"speaker": "昭昭", "line": "我不说了，我看窗外还不行？"},
-            {"speaker": "灿灿", "line": "哼，一招制敌！你服不服？"},
+            {"speaker": "灿灿", "line": "好了，不爱学习还跟我吵啥！"},
             {"speaker": "昭昭", "line": "服了……我以后也爱学习。"},
         ],
     }

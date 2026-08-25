@@ -803,6 +803,30 @@ def apply_gold_chat_normalizations(
         chat["setting"] = new_setting
     if st == "I":
         notes.extend(patch_i_body(chat))
+    chat, pad_changed = _ensure_gold_chat_min_chars(chat)
+    if pad_changed:
+        notes.append("gold_chat垫字补min")
+    total = dialogue_total_chars(chat)
+    if total < DAILY_STORY_BODY_CHARS_MIN:
+        payload_banned = payload.get("banned_literals") if isinstance(payload, dict) else []
+        sc_banned = sc.get("banned_literals") if isinstance(sc.get("banned_literals"), list) else []
+        banned = [str(x) for x in (payload_banned or sc_banned or []) if str(x).strip()]
+        mom_max = sc.get("mom_lines_max")
+        if mom_max is None:
+            mom_max = 1
+        try:
+            chat = _fix_chat_with_llm(
+                chat,
+                f"正文总字数须≥{DAILY_STORY_BODY_CHARS_MIN}，当前{total}字",
+                banned_literals=banned,
+                mom_lines_max=int(mom_max),
+            )
+            if st == "I":
+                notes.extend(patch_i_body(chat))
+            chat, _ = _ensure_gold_chat_min_chars(chat)
+            notes.append("gold_chat LLM扩写补min")
+        except Exception as exc:
+            logger.warning("gold_chat normalize LLM expand skipped: %s", exc)
     return chat, notes
 
 
@@ -891,7 +915,8 @@ def _structure_type_hint(structure_type: str, mechanism: str = "") -> str:
             extra = (
                 "\n- **M11+I**：中段须写清价值高地/标准一句（如爱学习你爱吗）；"
                 "灵魂拷问须不可答/不可接；对方语塞后赢家嘴硬总结；"
-                "禁止 A 末四拍反噬/破功；可含双规则拉扯但收束须问倒"
+                "禁止 A 末四拍反噬/破功；可含双规则拉扯但收束须问倒；"
+                "收束须姐弟现场口语，禁 narration/meta（一招制敌、服不服等评点词）"
             )
         return f"""【I 问倒收束 · 机制 {mech or "?"}】
 - 详拍见下方「金稿保真 checklist」，逐步落实勿跳步{extra}"""
