@@ -134,16 +134,22 @@ export interface GoldChatBatchResult {
   batch_report?: { json?: string; markdown?: string };
 }
 
+export type GoldStoryCollectStatus = "idle" | "running" | "done" | "error";
+
 export interface GoldStoryCollectResult {
   workflow: string;
-  max: number;
-  candidates: number;
-  inserted: number;
-  inserted_rejected: number;
-  skipped: number;
-  failed: number;
+  status: GoldStoryCollectStatus;
+  max?: number;
+  candidates?: number;
+  inserted?: number;
+  inserted_rejected?: number;
+  skipped?: number;
+  failed?: number;
   candidates_file?: string;
-  results: Array<{
+  error?: string | null;
+  started_at?: number;
+  finished_at?: number;
+  results?: Array<{
     source_id?: string;
     title?: string;
     action: string;
@@ -248,7 +254,13 @@ export async function collectGoldStories(params: {
   const response = await api.post<GoldStoryCollectResult>(
     "/v_factory/api/gold_chat/collect",
     { max: params.max ?? 10 },
-    { timeout: 3_600_000 },
+  );
+  return response.data;
+}
+
+export async function getGoldStoryCollectStatus(): Promise<GoldStoryCollectResult> {
+  const response = await api.get<GoldStoryCollectResult>(
+    "/v_factory/api/gold_chat/collect",
   );
   return response.data;
 }

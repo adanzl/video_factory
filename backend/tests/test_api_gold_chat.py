@@ -171,6 +171,11 @@ def test_api_delete(app_ctx, tmp_path, monkeypatch):
 
 
 def test_api_collect(app_ctx, monkeypatch):
+    from app.services.daily_story.gold_story import gold_chat_mgr as mgr_mod
+
+    mgr_mod.reset_collect_state()
+    workers: list = []
+
     def fake_collect(*, max_candidates=10, **_kwargs):
         return {
             "candidates": 2,
@@ -183,9 +188,11 @@ def test_api_collect(app_ctx, monkeypatch):
             "candidates_file": "/tmp/candidates.txt",
         }
 
+    monkeypatch.setattr(mgr_mod, "run_collect_pipeline", fake_collect)
     monkeypatch.setattr(
-        "app.services.daily_story.gold_story.gold_chat_mgr.run_collect_pipeline",
-        fake_collect,
+        mgr_mod,
+        "run_in_background",
+        lambda func, **_kwargs: workers.append(func),
     )
 
     client = app_ctx.test_client()
@@ -193,10 +200,22 @@ def test_api_collect(app_ctx, monkeypatch):
     assert resp.status_code == 200
     body = resp.get_json()
     assert body["workflow"] == "gold_story_collect"
+    assert body["status"] == "running"
     assert body["max"] == 10
-    assert body["inserted"] == 1
-    assert body["skipped"] == 1
-    assert body["failed"] == 0
+    assert body["inserted"] == 0
+    assert len(workers) == 1
+
+    busy = client.post("/v_factory/api/gold_chat/collect", json={"max": 10})
+    assert busy.status_code == 409
+    assert busy.get_json()["code"] == "collect_busy"
+
+    workers[0]()
+    status = client.get("/v_factory/api/gold_chat/collect").get_json()
+    assert status["status"] == "done"
+    assert status["inserted"] == 1
+    assert status["skipped"] == 1
+    assert status["failed"] == 0
+    mgr_mod.reset_collect_state()
 
 
 def test_api_batch(app_ctx, monkeypatch, tmp_path):

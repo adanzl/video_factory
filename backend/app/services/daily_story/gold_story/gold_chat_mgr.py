@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import logging
+import threading
+import time
 from typing import Any
 
 from app.config import Config
@@ -19,6 +22,15 @@ from app.services.daily_story.gold_story.export_story import (
     load_transcript_for_row,
 )
 from app.services.daily_story.gold_story.pipeline import run_collect_pipeline
+from app.utils.async_util import run_in_background
+
+logger = logging.getLogger(__name__)
+
+_COLLECT_LOCK = threading.Lock()
+_COLLECT_STATE: dict[str, Any] = {
+    "workflow": "gold_story_collect",
+    "status": "idle",
+}
 
 
 def _ensure_schema() -> None:
@@ -29,6 +41,86 @@ def _ensure_schema() -> None:
     conn = db.session.connection().connection.dbapi_connection
     apply_gold_story_schema(conn)
     sql.commit()
+
+
+def _collect_snapshot() -> dict[str, Any]:
+    with _COLLECT_LOCK:
+        return dict(_COLLECT_STATE)
+
+
+def reset_collect_state() -> None:
+    with _COLLECT_LOCK:
+        _COLLECT_STATE.clear()
+        _COLLECT_STATE.update(
+            {
+                "workflow": "gold_story_collect",
+                "status": "idle",
+            }
+        )
+
+
+def _summarize_collect_report(
+    report: dict[str, Any],
+    *,
+    max_candidates: int,
+) -> dict[str, Any]:
+    results = report.get("results") or []
+    skipped = sum(1 for r in results if r.get("action") == "skip")
+    failed = sum(1 for r in results if r.get("action") == "error")
+    return {
+        "workflow": "gold_story_collect",
+        "max": max_candidates,
+        "candidates": report.get("candidates", 0),
+        "inserted": report.get("inserted", 0),
+        "inserted_rejected": report.get("inserted_rejected", 0),
+        "skipped": skipped,
+        "failed": failed,
+        "results": results,
+        "candidates_file": report.get("candidates_file"),
+    }
+
+
+def _run_collect_job(max_candidates: int) -> None:
+    from app.repositories.database import get_app
+
+    with get_app().app_context():
+        try:
+            _ensure_schema()
+            report = run_collect_pipeline(
+                max_candidates=max_candidates,
+                skip_transcript=False,
+                dry_run=False,
+                write_list=True,
+            )
+            summary = _summarize_collect_report(
+                report,
+                max_candidates=max_candidates,
+            )
+            with _COLLECT_LOCK:
+                _COLLECT_STATE.update(
+                    {
+                        **summary,
+                        "status": "done",
+                        "error": None,
+                        "finished_at": time.time(),
+                    }
+                )
+            logger.info(
+                "[GOLD_CHAT] collect done max=%d inserted=%s failed=%s",
+                max_candidates,
+                summary.get("inserted"),
+                summary.get("failed"),
+            )
+        except Exception as exc:
+            logger.exception("[GOLD_CHAT] collect failed max=%d", max_candidates)
+            with _COLLECT_LOCK:
+                _COLLECT_STATE.update(
+                    {
+                        "status": "error",
+                        "error": str(exc),
+                        "finished_at": time.time(),
+                    }
+                )
 
 
 def _row_to_list_item(row: dict[str, Any], *, config: Config) -> dict[str, Any]:
@@ -270,30 +362,34 @@ class GoldChatMgr:
         *,
         max_candidates: int = 10,
     ) -> dict[str, Any]:
-        """H0–H4：B 站搜索采集并入库。"""
-        _ensure_schema()
+        """H0–H4：排队后台采集，立刻返回 running。"""
         max_candidates = max(1, min(int(max_candidates), 50))
-        report = run_collect_pipeline(
-            max_candidates=max_candidates,
-            skip_transcript=False,
-            dry_run=False,
-            write_list=True,
-        )
-        skipped = sum(1 for r in report.get("results") or [] if r.get("action") == "skip")
-        failed = sum(
-            1 for r in report.get("results") or [] if r.get("action") == "error"
-        )
-        return {
-            "workflow": "gold_story_collect",
-            "max": max_candidates,
-            "candidates": report.get("candidates", 0),
-            "inserted": report.get("inserted", 0),
-            "inserted_rejected": report.get("inserted_rejected", 0),
-            "skipped": skipped,
-            "failed": failed,
-            "results": report.get("results") or [],
-            "candidates_file": report.get("candidates_file"),
-        }
+        with _COLLECT_LOCK:
+            if _COLLECT_STATE.get("status") == "running":
+                raise RuntimeError("采集进行中")
+            _COLLECT_STATE.clear()
+            _COLLECT_STATE.update(
+                {
+                    "workflow": "gold_story_collect",
+                    "status": "running",
+                    "max": max_candidates,
+                    "started_at": time.time(),
+                    "candidates": 0,
+                    "inserted": 0,
+                    "inserted_rejected": 0,
+                    "skipped": 0,
+                    "failed": 0,
+                    "results": [],
+                    "error": None,
+                }
+            )
+            snapshot = dict(_COLLECT_STATE)
+        run_in_background(lambda n=max_candidates: _run_collect_job(n))
+        logger.info("[GOLD_CHAT] collect queued max=%d", max_candidates)
+        return snapshot
+
+    def collect_status(self) -> dict[str, Any]:
+        return _collect_snapshot()
 
     def delete_stories(self, gold_story_ids: list[int]) -> dict[str, Any]:
         _ensure_schema()

@@ -124,12 +124,20 @@ def convert_route():
         raise APIError(str(exc), status_code=400)
 
 
+@bp.get("/collect")
+def collect_status_route():
+    return json_ok(gold_chat_mgr.collect_status())
+
+
 @bp.post("/collect")
 def collect_route():
     data = get_json_body(required=False) or {}
     max_items = parse_int(data, "max", 10, minimum=1, maximum=50)
     logger.info("[GOLD_CHAT] collect max=%d", max_items)
-    return json_ok(gold_chat_mgr.collect(max_candidates=max_items))
+    try:
+        return json_ok(gold_chat_mgr.collect(max_candidates=max_items))
+    except RuntimeError as exc:
+        raise APIError(str(exc), status_code=409, code="collect_busy") from exc
 
 
 @bp.post("/batch")
