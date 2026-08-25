@@ -335,7 +335,19 @@ class Config:
             os.getenv("GOLD_STORY_OCR_CROP_BOTTOM_RATIO", "0.10")
         )
         self.gold_story_ocr_region_max_h_ratio: float = float(
-            os.getenv("GOLD_STORY_OCR_REGION_MAX_H_RATIO", "0.12")
+            os.getenv("GOLD_STORY_OCR_REGION_MAX_H_RATIO", "0.20")
+        )
+        self.gold_story_ocr_region_min_y_center: float = float(
+            os.getenv("GOLD_STORY_OCR_REGION_MIN_Y_CENTER", "0.84")
+        )
+        self.gold_story_ocr_min_box_height_ratio: float = float(
+            os.getenv("GOLD_STORY_OCR_MIN_BOX_HEIGHT_RATIO", "0.65")
+        )
+        self.gold_story_ocr_min_dialogue_box_px: float = float(
+            os.getenv("GOLD_STORY_OCR_MIN_DIALOGUE_BOX_PX", "22")
+        )
+        self.gold_story_ocr_min_white_bg_ratio: float = float(
+            os.getenv("GOLD_STORY_OCR_MIN_WHITE_BG_RATIO", "0.42")
         )
         self.gold_story_ocr_region_min_h_ratio: float = float(
             os.getenv("GOLD_STORY_OCR_REGION_MIN_H_RATIO", "0.025")

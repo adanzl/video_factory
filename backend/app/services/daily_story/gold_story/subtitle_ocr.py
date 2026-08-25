@@ -36,6 +36,9 @@ _OCR_SUBPROCESS_TIMEOUT_SEC = 600.0
 _worker_engine = None
 _worker_config_path: str | None = None
 _worker_model_root: str | None = None
+_worker_min_box_height_ratio: float = 0.65
+_worker_min_dialogue_box_px: float = 22.0
+_worker_min_white_bg_ratio: float = 0.42
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,16 +69,147 @@ def _ffmpeg() -> str:
     return path
 
 
-def _init_ocr_worker(config_path: str, model_root_dir: str) -> None:
+def _init_ocr_worker(
+    config_path: str,
+    model_root_dir: str,
+    min_box_height_ratio: float = 0.65,
+    min_dialogue_box_px: float = 22.0,
+    min_white_bg_ratio: float = 0.42,
+) -> None:
     global _worker_engine, _worker_config_path, _worker_model_root
+    global _worker_min_box_height_ratio, _worker_min_dialogue_box_px
+    global _worker_min_white_bg_ratio
     _worker_config_path = config_path
     _worker_model_root = model_root_dir
+    _worker_min_box_height_ratio = float(min_box_height_ratio)
+    _worker_min_dialogue_box_px = float(min_dialogue_box_px)
+    _worker_min_white_bg_ratio = float(min_white_bg_ratio)
     from rapidocr import RapidOCR
 
     _worker_engine = RapidOCR(
         config_path=config_path,
         params={"Global.model_root_dir": model_root_dir},
     )
+
+
+def _box_height(box: Any) -> float:
+    ys = [float(point[1]) for point in box]
+    return max(ys) - min(ys)
+
+
+def _box_white_bg_ratio(
+    image: Any,
+    box: Any,
+    *,
+    pad: int = 4,
+    white_threshold: int = 210,
+) -> float:
+    """检测 OCR 框周围是否有对白白底气泡（overlay 为描边字，白底占比低）。"""
+    try:
+        import cv2
+    except ImportError:
+        return 1.0
+
+    xs = [int(point[0]) for point in box]
+    ys = [int(point[1]) for point in box]
+    x0, x1 = max(0, min(xs)), min(image.shape[1] - 1, max(xs))
+    y0, y1 = max(0, min(ys)), min(image.shape[0] - 1, max(ys))
+    cy0 = max(0, y0 - pad)
+    cy1 = min(image.shape[0], y1 + 1 + pad)
+    cx0 = max(0, x0 - pad)
+    cx1 = min(image.shape[1], x1 + 1 + pad)
+    patch = image[cy0:cy1, cx0:cx1]
+    if patch.size == 0:
+        return 0.0
+    gray = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
+    return float((gray > white_threshold).mean())
+
+
+def _filter_dialogue_boxes(
+    image: Any,
+    txts: tuple[str, ...] | list[str],
+    scores: tuple[float, ...] | list[float],
+    boxes: Any,
+    *,
+    min_white_bg_ratio: float,
+) -> tuple[list[str], list[float], list[Any]]:
+    """只保留白底气泡风格的对白框，去掉描边 overlay / 解说层。"""
+    if boxes is None:
+        return list(txts), list(scores), []
+    kept_txts: list[str] = []
+    kept_scores: list[float] = []
+    kept_boxes: list[Any] = []
+    box_list = list(boxes)
+    for idx, txt in enumerate(txts):
+        if idx >= len(box_list):
+            break
+        if _box_white_bg_ratio(image, box_list[idx]) >= min_white_bg_ratio:
+            kept_txts.append(str(txt))
+            kept_scores.append(float(scores[idx] if idx < len(scores) else 0.0))
+            kept_boxes.append(box_list[idx])
+    return kept_txts, kept_scores, kept_boxes
+
+
+def _read_crop_height(image_path: str) -> float:
+    try:
+        import cv2
+    except ImportError:
+        return 0.0
+    image = cv2.imread(image_path)
+    if image is None:
+        return 0.0
+    return float(image.shape[0])
+
+
+def compose_frame_text(
+    txts: tuple[str, ...] | list[str],
+    scores: tuple[float, ...] | list[float],
+    boxes: Any,
+    *,
+    crop_h: float = 0.0,
+    min_height_ratio: float = 0.65,
+    min_dialogue_box_px: float = 22.0,
+) -> tuple[str, float]:
+    """单帧多行 OCR：去掉小字号说明，拼成一行（无换行）。
+
+    注：overlay 描边字在 compose 前已按白底气泡占比过滤。
+    """
+    _ = crop_h
+    box_list = list(boxes) if boxes is not None else []
+    items: list[tuple[str, float, float]] = []
+    for idx, txt in enumerate(txts):
+        line = str(txt or "").strip()
+        if not line:
+            continue
+        score = float(scores[idx] if idx < len(scores) else 0.0)
+        box_h = _box_height(box_list[idx]) if idx < len(box_list) else 0.0
+        items.append((line, score, box_h))
+
+    if not items:
+        return "", 0.0
+
+    if len(items) == 1:
+        line, score, box_h = items[0]
+        if box_h > 0 and box_h < min_dialogue_box_px:
+            return "", 0.0
+        return line, score
+
+    heights = [box_h for _, _, box_h in items if box_h > 0]
+    frame_max_h = max(heights) if heights else 0.0
+    threshold = frame_max_h * min_height_ratio if frame_max_h > 0 else 0.0
+
+    kept: list[tuple[str, float]] = []
+    for line, score, box_h in items:
+        if threshold > 0 and box_h > 0 and box_h < threshold:
+            continue
+        kept.append((line, score))
+
+    if not kept:
+        return "", 0.0
+
+    text = "".join(line for line, _ in kept)
+    confidence = sum(score for _, score in kept) / len(kept)
+    return text, confidence
 
 
 def _ocr_single_frame(args: tuple[float, str]) -> dict[str, Any]:
@@ -95,22 +229,47 @@ def _ocr_single_frame(args: tuple[float, str]) -> dict[str, Any]:
             "lines": [],
         }
 
-    parts: list[str] = []
-    scores: list[float] = []
-    for txt, score in zip(result.txts, result.scores or ()):
-        line = str(txt or "").strip()
-        if not line:
-            continue
-        parts.append(line)
-        scores.append(float(score or 0.0))
+    try:
+        import cv2
+    except ImportError:
+        cv2 = None  # type: ignore[assignment]
 
-    text = " ".join(parts).strip()
-    confidence = sum(scores) / len(scores) if scores else 0.0
+    crop_h = _read_crop_height(image_path)
+    txts = list(result.txts)
+    scores = list(result.scores or ())
+    boxes = result.boxes
+    if cv2 is not None:
+        image = cv2.imread(str(image_path))
+        if image is not None:
+            txts, scores, boxes = _filter_dialogue_boxes(
+                image,
+                txts,
+                scores,
+                boxes,
+                min_white_bg_ratio=_worker_min_white_bg_ratio,
+            )
+    if not txts:
+        return {
+            "timestamp_sec": timestamp_sec,
+            "text": "",
+            "confidence": 0.0,
+            "lines": [],
+        }
+
+    text, confidence = compose_frame_text(
+        txts,
+        scores,
+        boxes,
+        crop_h=crop_h,
+        min_height_ratio=_worker_min_box_height_ratio,
+        min_dialogue_box_px=_worker_min_dialogue_box_px,
+    )
+    lines = [text] if text else []
     return {
         "timestamp_sec": timestamp_sec,
         "text": text,
         "confidence": confidence,
-        "lines": parts,
+        "lines": lines,
     }
 
 
@@ -137,13 +296,16 @@ def extract_subtitle_frames(
     fps: float = 2.0,
     region: SubtitleRegion | None = None,
     crop_bottom_ratio: float = 0.10,
+    config: Config | None = None,
 ) -> list[OcrFrame]:
     output_dir.mkdir(parents=True, exist_ok=True)
     for old in output_dir.glob("frame_*.jpg"):
         old.unlink(missing_ok=True)
 
+    cfg = config or Config()
     if region is not None:
-        vf = f"fps={fps},{region.crop_vf_expr()}"
+        max_h = float(cfg.gold_story_ocr_region_max_h_ratio)
+        vf = f"fps={fps},{region.crop_vf_expr(max_h_ratio=max_h)}"
     else:
         crop_y = 1.0 - crop_bottom_ratio
         vf = f"fps={fps},crop=iw:ih*{crop_bottom_ratio}:0:ih*{crop_y}"
@@ -246,10 +408,7 @@ def dedupe_frames(
 
 
 def _iter_row_texts(row: dict[str, Any]) -> list[str]:
-    """逐行返回 OCR 原文，不做过滤。"""
-    raw_lines = row.get("lines") or []
-    if raw_lines:
-        return [str(line).strip() for line in raw_lines if str(line).strip()]
+    """每帧一行（帧内多行 OCR 已在 compose_frame_text 合并）。"""
     text = str(row.get("text") or "").strip()
     return [text] if text else []
 
@@ -300,19 +459,23 @@ def ocr_frames_parallel(
 
     cfg_path = str(ocr_config_path(config))
     model_root = str(config.ocr_model_dir)
+    min_h_ratio = float(config.gold_story_ocr_min_box_height_ratio)
+    min_box_px = float(config.gold_story_ocr_min_dialogue_box_px)
+    min_white_bg = float(config.gold_story_ocr_min_white_bg_ratio)
     workers = max(1, int(config.gold_story_ocr_frame_workers))
     workers = min(workers, len(frames))
 
     tasks = [(frame.timestamp_sec, str(frame.image_path)) for frame in frames]
+    initargs = (cfg_path, model_root, min_h_ratio, min_box_px, min_white_bg)
     if workers <= 1:
-        _init_ocr_worker(cfg_path, model_root)
+        _init_ocr_worker(*initargs)
         return [_ocr_single_frame(task) for task in tasks]
 
     rows: list[dict[str, Any]] = []
     with ProcessPoolExecutor(
         max_workers=workers,
         initializer=_init_ocr_worker,
-        initargs=(cfg_path, model_root),
+        initargs=initargs,
     ) as pool:
         futures = [pool.submit(_ocr_single_frame, task) for task in tasks]
         for future in wait_futures_hub(futures):
@@ -347,6 +510,7 @@ def transcribe_video_ocr(
         fps=float(config.gold_story_ocr_fps),
         region=region,
         crop_bottom_ratio=float(config.gold_story_ocr_crop_bottom_ratio),
+        config=config,
     )
     ocr_rows = ocr_frames_parallel(frames, config)
     text, line_rows, avg_conf = merge_ocr_rows(ocr_rows)

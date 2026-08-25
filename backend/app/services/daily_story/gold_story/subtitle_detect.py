@@ -251,10 +251,16 @@ def _filter_subtitle_observations(
     observations: list[_BandObservation],
     *,
     max_h_ratio: float,
+    min_y_center: float = 0.0,
 ) -> list[_BandObservation]:
-    """第一步筛选：丢弃高于「最多 2 行」的Observation（多为说明层）。"""
+    """第一步筛选：丢弃超高带 + 画面偏上的说明层。"""
     limit = float(max_h_ratio) * 1.05
-    return [obs for obs in observations if float(obs.h_ratio) <= limit]
+    floor = max(0.0, float(min_y_center))
+    return [
+        obs
+        for obs in observations
+        if float(obs.h_ratio) <= limit and obs.y_center >= floor
+    ]
 
 
 def list_subtitle_bands_from_gray(
@@ -366,11 +372,14 @@ def _region_from_cluster(
     max_h_ratio: float,
     min_h_ratio: float,
 ) -> SubtitleRegion:
-    """聚类 → 固定高度字幕窗（最多 2 行），y 锚定在带底边。"""
-    y_bottom = statistics.median([obs.y_ratio + obs.h_ratio for obs in cluster])
-    h_ratio = max(float(min_h_ratio), min(float(max_h_ratio), float(max_h_ratio)))
-    y_ratio = y_bottom - h_ratio
-    y_ratio = max(0.0, min(y_ratio, 1.0 - h_ratio))
+    """聚类 → 以稳定对白带中心为锚，固定高度（约 2 行白框）。"""
+    y_center = statistics.median([obs.y_center for obs in cluster])
+    h_obs = statistics.median([obs.h_ratio for obs in cluster])
+    h_ratio = min(
+        float(max_h_ratio),
+        max(float(min_h_ratio), h_obs * 2.5, 0.16),
+    )
+    y_ratio = max(0.0, min(y_center - h_ratio * 0.52, 1.0 - h_ratio))
     confidence = min(1.0, 0.35 + len(cluster) * 0.08)
     return SubtitleRegion(
         y_ratio=y_ratio,
@@ -437,6 +446,7 @@ def detect_subtitle_region(
     cluster_tol = float(cfg.gold_story_ocr_region_cluster_tol)
     max_h_ratio = float(cfg.gold_story_ocr_region_max_h_ratio)
     min_h_ratio = float(cfg.gold_story_ocr_region_min_h_ratio)
+    min_y_center = float(cfg.gold_story_ocr_region_min_y_center)
 
     try:
         import cv2
@@ -471,6 +481,7 @@ def detect_subtitle_region(
     observations = _filter_subtitle_observations(
         observations,
         max_h_ratio=max_h_ratio,
+        min_y_center=min_y_center,
     )
     clusters = _cluster_observations(observations, y_center_tol=cluster_tol)
     picked = _select_fixed_dialogue_cluster(

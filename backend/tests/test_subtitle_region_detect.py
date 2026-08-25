@@ -53,9 +53,10 @@ def test_select_fixed_dialogue_cluster_prefers_recurring_lower_band():
 
 def test_region_from_cluster_caps_height_to_two_lines():
     cluster = [_BandObservation(y_ratio=0.88, h_ratio=0.05) for _ in range(5)]
-    region = _region_from_cluster(cluster, max_h_ratio=0.10, min_h_ratio=0.025)
-    assert region.h_ratio <= 0.10
-    assert 0.85 <= region.y_ratio + region.h_ratio <= 1.0
+    region = _region_from_cluster(cluster, max_h_ratio=0.18, min_h_ratio=0.025)
+    assert region.h_ratio <= 0.18
+    assert region.y_ratio <= 0.88
+    assert region.y_ratio + region.h_ratio <= 1.0
 
 
 def test_list_subtitle_bands_returns_empty_on_blank():
