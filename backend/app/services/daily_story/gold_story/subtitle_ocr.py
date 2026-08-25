@@ -30,15 +30,25 @@ logger = logging.getLogger(__name__)
 _CJK_IN_LINE = re.compile(r"[\u4e00-\u9fff]")
 
 _SPEAKER_LINE_RE = re.compile(r"^([^：:]{1,8})[：:]\s*(.+)$")
-_OVERLAY_LINE_RES = (
-    re.compile(r"近日"),
+_PURE_OVERLAY_FRAGMENT_RES = (
     re.compile(r"素材来源"),
     re.compile(r"应来自"),
     re.compile(r"网邮|内发极来"),
     re.compile(r"令人哭笑不得"),
-    re.compile(r"一招制"),
-    re.compile(r"舌头授"),
+    re.compile(r"^一双儿女"),
+    re.compile(r"^舌头[授授摇捋]"),
+    re.compile(r"^姐姐一招制"),
     re.compile(r"^[+＋]\s"),
+)
+_GARBAGE_FRAGMENT_RES = (
+    re.compile(r"^[A-Za-z0-9]$"),
+    re.compile(r"^D\s*\d*$"),
+    re.compile(r"^[A-Za-z0-9\s]{1,3}$"),
+)
+_TRAILING_NOISE_RES = (
+    re.compile(r"[品口]+$"),
+    re.compile(r"\s+[你尚]?说[王注尚]+$"),
+    re.compile(r"\s+素材来源.*$"),
 )
 _SINGLE_CHAR_RE = re.compile(r"^[A-Za-z0-9]$")
 _OCR_CONFIG_NAME = "rapidocr_gold_story.yaml"
@@ -181,38 +191,148 @@ def extract_subtitle_frames(
     return frames
 
 
-def dedupe_frames(frames: list[OcrFrame]) -> list[OcrFrame]:
-    """相邻帧保留代表帧，降低 OCR 次数。"""
+_DHASH_SIZE = (9, 8)
+_DHASH_THRESHOLD = 5
+
+
+def _frame_dhash(image_path: Path) -> int | None:
+    try:
+        import cv2
+    except ImportError:
+        return None
+    gray = cv2.imread(str(image_path), cv2.IMREAD_GRAYSCALE)
+    if gray is None:
+        return None
+    small = cv2.resize(gray, _DHASH_SIZE, interpolation=cv2.INTER_AREA)
+    diff = small[:, 1:] > small[:, :-1]
+    value = 0
+    for bit in diff.flatten():
+        value = (value << 1) | int(bit)
+    return value
+
+
+def _hamming_distance(a: int, b: int) -> int:
+    return int((a ^ b).bit_count())
+
+
+def _subsample_uniform(frames: list[OcrFrame], max_frames: int) -> list[OcrFrame]:
+    if len(frames) <= max_frames:
+        return frames
+    cap = max(2, int(max_frames))
+    last_idx = len(frames) - 1
+    picked: list[OcrFrame] = []
+    seen: set[int] = set()
+    for slot in range(cap):
+        idx = round(slot * last_idx / (cap - 1))
+        if idx in seen:
+            continue
+        seen.add(idx)
+        picked.append(frames[idx])
+    return picked
+
+
+def dedupe_frames(
+    frames: list[OcrFrame],
+    *,
+    max_frames: int = 80,
+) -> list[OcrFrame]:
+    """字幕静止时合并相邻帧；超长片再均匀抽样至上限。"""
     if not frames:
         return []
+    if len(frames) == 1:
+        return frames
+
+    cap = max(2, int(max_frames))
     kept: list[OcrFrame] = [frames[0]]
-    step = max(len(frames) // 80, 1)
-    for idx in range(1, len(frames)):
-        if idx % step != 0 and idx != len(frames) - 1:
+    last_hash = _frame_dhash(frames[0].image_path)
+    use_hash = last_hash is not None
+
+    for frame in frames[1:-1]:
+        if not use_hash:
+            kept.append(frame)
             continue
-        kept.append(frames[idx])
-    return kept
+        current = _frame_dhash(frame.image_path)
+        if current is None:
+            kept.append(frame)
+            last_hash = None
+            use_hash = False
+            continue
+        if last_hash is None or _hamming_distance(last_hash, current) > _DHASH_THRESHOLD:
+            kept.append(frame)
+            last_hash = current
+
+    if frames[-1] is not kept[-1]:
+        kept.append(frames[-1])
+
+    return _subsample_uniform(kept, cap)
 
 
-def _is_overlay_line(text: str) -> bool:
+def _sanitize_dialogue_fragment(text: str) -> str:
+    line = str(text or "").strip()
+    for prefix in ("连环追问", "近日"):
+        if line.startswith(prefix):
+            line = line[len(prefix) :].strip()
+    for pat in _TRAILING_NOISE_RES:
+        line = pat.sub("", line).strip()
+    return line.strip()
+
+
+def _is_pure_overlay_fragment(text: str) -> bool:
+    line = str(text or "").strip()
+    if not line:
+        return True
+    return any(pat.search(line) for pat in _PURE_OVERLAY_FRAGMENT_RES)
+
+
+def _is_garbage_fragment(text: str) -> bool:
     line = str(text or "").strip()
     if not line:
         return True
     if _SINGLE_CHAR_RE.match(line):
         return True
+    if any(pat.match(line) for pat in _GARBAGE_FRAGMENT_RES):
+        return True
     if len(line) <= 2 and not _CJK_IN_LINE.search(line):
         return True
-    if len(line) > 36 and "：" not in line and ":" not in line:
+    cjk_count = len(_CJK_IN_LINE.findall(line))
+    if len(line) <= 4 and cjk_count == 0:
         return True
-    return any(pat.search(line) for pat in _OVERLAY_LINE_RES)
+    return False
+
+
+def _is_overlay_line(text: str) -> bool:
+    """兼容诊断脚本：整行是否应视为纯解说/垃圾。"""
+    line = _sanitize_dialogue_fragment(str(text or "").strip())
+    if not line:
+        return True
+    return _is_pure_overlay_fragment(line) or _is_garbage_fragment(line)
+
+
+def _expand_row_fragments(row: dict[str, Any]) -> list[dict[str, Any]]:
+    ts = float(row.get("timestamp_sec") or 0.0)
+    conf = float(row.get("confidence") or 0.0)
+    raw_lines = row.get("lines") or []
+    if not raw_lines:
+        text = str(row.get("text") or "").strip()
+        if text:
+            raw_lines = [text]
+    out: list[dict[str, Any]] = []
+    for raw in raw_lines:
+        frag = _sanitize_dialogue_fragment(str(raw or "").strip())
+        if not frag or _is_garbage_fragment(frag) or _is_pure_overlay_fragment(frag):
+            continue
+        out.append(
+            {
+                "timestamp_sec": ts,
+                "text": frag,
+                "confidence": conf,
+            }
+        )
+    return out
 
 
 def _clean_ocr_fragment(text: str) -> str:
-    line = str(text or "").strip()
-    for prefix in ("连环追问", "素材来源", "近日"):
-        if line.startswith(prefix):
-            line = line[len(prefix) :].strip()
-    return line.strip()
+    return _sanitize_dialogue_fragment(text)
 
 
 def _parse_speaker_line(text: str) -> tuple[str | None, str]:
@@ -225,15 +345,18 @@ def _parse_speaker_line(text: str) -> tuple[str | None, str]:
 
 
 def merge_ocr_rows(rows: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]], float]:
-    """按时间合并 OCR 行，去重相邻相同字幕。"""
-    ordered = sorted(rows, key=lambda r: float(r.get("timestamp_sec") or 0.0))
+    """按时间合并 OCR 片段，去重相邻相同字幕。"""
+    fragments: list[dict[str, Any]] = []
+    for row in rows:
+        fragments.extend(_expand_row_fragments(row))
+    ordered = sorted(fragments, key=lambda r: float(r.get("timestamp_sec") or 0.0))
     merged_lines: list[dict[str, Any]] = []
     plain_parts: list[str] = []
     confidences: list[float] = []
 
     for row in ordered:
-        text = _clean_ocr_fragment(str(row.get("text") or "").strip())
-        if not text or _is_overlay_line(text):
+        text = str(row.get("text") or "").strip()
+        if not text:
             continue
         conf = float(row.get("confidence") or 0.0)
         if merged_lines and gs_merge.texts_similar(
@@ -323,7 +446,10 @@ def transcribe_video_ocr(
         region=region,
         crop_bottom_ratio=float(config.gold_story_ocr_crop_bottom_ratio),
     )
-    sample_frames = dedupe_frames(frames)
+    sample_frames = dedupe_frames(
+        frames,
+        max_frames=int(config.gold_story_ocr_max_frames),
+    )
     ocr_rows = ocr_frames_parallel(sample_frames, config)
     text, line_rows, avg_conf = merge_ocr_rows(ocr_rows)
 
