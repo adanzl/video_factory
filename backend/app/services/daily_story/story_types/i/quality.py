@@ -20,10 +20,8 @@ _I_CLOSING_TAIL_ALLOW = 2
 
 def score_i_trailing_tail(lines: list[str]) -> tuple[int, list[str]]:
     """pass2：一招制敌后拖尾轻扣（结构分，非 punchline 满扣）。"""
-    win_idx = next(
-        (i for i, ln in enumerate(lines) if RE_WIN_STUBBORN.search(ln)),
-        -1,
-    )
+    win_indices = [i for i, ln in enumerate(lines) if RE_WIN_STUBBORN.search(ln)]
+    win_idx = win_indices[-1] if win_indices else -1
     if win_idx < 0:
         return 0, []
     trailing = len(lines) - win_idx - 1
