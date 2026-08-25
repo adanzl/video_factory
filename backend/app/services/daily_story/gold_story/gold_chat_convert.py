@@ -219,6 +219,9 @@ PASS1_REGENERATE_MAX = 3
 PASS2_MAX_ROUNDS = 2
 GOLD_CHAT_NEAR_MISS_DEFICIT_MAX = 3
 _GOLD_CHAT_PAD_TAILS = ("呢", "呀", "吧", "嘛", "啊", "哦")
+_RE_PAD_SUFFIX_STACK = re.compile(
+    r"呢呢|啊呢|吧呢|嘛呢|呀呢|你呀呢|行了吧呢|不懂你呢"
+)
 
 
 def gold_chat_export_dir(config: Config | None = None) -> Path:
@@ -373,6 +376,50 @@ def _shorten_overlong_lines_with_llm(
     return _normalize_chat_speakers(_chat_json(_SHORTEN_SYSTEM, user))
 
 
+def _pad_suffix_blocked(core: str) -> frozenset[str]:
+    """句尾已有语气词则不再叠任何垫字后缀。"""
+    if any(core.endswith(suf) for suf in _GOLD_CHAT_PAD_TAILS):
+        return frozenset(_GOLD_CHAT_PAD_TAILS)
+    return frozenset()
+
+
+def _sanitize_pad_suffix_line(line: str) -> str:
+    """机械去叠语气词（呢呢/啊呢/你呀呢等），不改剧情。"""
+    out = line
+    for old, new in (
+        ("呢呢", "呢"),
+        ("啊呢", "啊"),
+        ("吧呢", "吧"),
+        ("嘛呢", "嘛"),
+        ("呀呢", "呀"),
+        ("你呀呢", "你呀"),
+        ("行了吧呢", "行了吧"),
+        ("不懂你呢", "听不懂你"),
+    ):
+        if old in out:
+            out = out.replace(old, new)
+    return out
+
+
+def patch_sanitize_pad_suffix(story: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    """垫字后收口：去掉呢呢/啊呢等叠字。"""
+    import copy
+
+    out = copy.deepcopy(story)
+    changed = False
+    for item in out.get("dialogue") or []:
+        if not isinstance(item, dict):
+            continue
+        old = str(item.get("line") or "").strip()
+        if not old or not _RE_PAD_SUFFIX_STACK.search(old):
+            continue
+        new = _sanitize_pad_suffix_line(old)
+        if new != old:
+            item["line"] = new
+            changed = True
+    return out, changed
+
+
 def _pad_gold_chat_line(line: str, need: int) -> tuple[str, int]:
     """near-miss 本地垫字：句尾补语气词，不增行。"""
     if need <= 0 or not line:
@@ -387,7 +434,10 @@ def _pad_gold_chat_line(line: str, need: int) -> tuple[str, int]:
     room = max(0, CHAT_MAX_LINE_CHARS - len(line))
     if room <= 0:
         return line, 0
+    blocked = _pad_suffix_blocked(core)
     for suf in sorted(_GOLD_CHAT_PAD_TAILS, key=len, reverse=True):
+        if suf in blocked:
+            continue
         if len(suf) <= room and len(suf) <= need:
             return f"{core}{suf}{trail}", len(suf)
     return line, 0
@@ -806,6 +856,13 @@ def apply_gold_chat_normalizations(
     chat, pad_changed = _ensure_gold_chat_min_chars(chat)
     if pad_changed:
         notes.append("gold_chat垫字补min")
+    chat, san_changed = patch_sanitize_pad_suffix(chat)
+    if san_changed:
+        notes.append("gold_chat去叠语气词")
+        chat, pad_changed2 = _ensure_gold_chat_min_chars(chat)
+        if pad_changed2:
+            notes.append("gold_chat垫字补min")
+        chat, _ = patch_sanitize_pad_suffix(chat)
     return chat, notes
 
 
@@ -898,6 +955,30 @@ def _structure_type_hint(structure_type: str, mechanism: str = "") -> str:
                 "收束须姐弟现场口语，禁 narration/meta（一招制敌、服不服等评点词）"
             )
         return f"""【I 问倒收束 · 机制 {mech or "?"}】
+- 详拍见下方「金稿保真 checklist」，逐步落实勿跳步{extra}"""
+    if st == "J":
+        extra = ""
+        if mech == "M8":
+            extra = (
+                "\n- **M8+J**：一锤威慑须镇住对方，收束对方怂/不敢再顶；"
+                "家长可旁观或感叹一句；禁止 A 末四拍反噬/破功"
+            )
+        elif mech == "M5":
+            extra = (
+                "\n- **M5+J**：否决权/拒放行压住（家规不许、不放行）；"
+                "对方怂；家长可旁观或感叹；禁止写成调解和好（勿套 H），"
+                "禁止 A 末四拍反噬"
+            )
+        return f"""【J 权威压住 · 机制 {mech or "?"}】
+- 详拍见下方「金稿保真 checklist」，逐步落实勿跳步{extra}"""
+    if st == "K":
+        extra = ""
+        if mech == "M12":
+            extra = (
+                "\n- **M12+K**：主戏是姐弟互打互骂升级；大人躲/叹/劝失败；"
+                "收束僵持不和好；禁止套 H 定责劝和+仪式性和好"
+            )
+        return f"""【K 家长看戏 · 机制 {mech or "?"}】
 - 详拍见下方「金稿保真 checklist」，逐步落实勿跳步{extra}"""
     return ""
 
@@ -1520,9 +1601,13 @@ def gold_chat_summary(
 
 def collect_gold_chat_polish_issues(story: dict[str, Any]) -> list[dict[str, Any]]:
     """规则收集 gold_chat 润色点，交给 daily_story 童语化润色模块。"""
-    from app.services.daily_story.review import collect_narration_meta_issues
+    from app.services.daily_story.review import (
+        collect_narration_meta_issues,
+        collect_pad_stack_issues,
+    )
 
     issues: list[dict[str, Any]] = list(collect_narration_meta_issues(story))
+    issues.extend(collect_pad_stack_issues(story))
     rows = story.get("dialogue") or []
     wa_kept = 0
     for i, row in enumerate(rows, 1):
@@ -1629,6 +1714,9 @@ def _apply_gold_chat_polish_fixes(
         return chat, accepted
     fixed, _ = apply_spot_fixes(chat, raw_fixes, only=accepted)
     fixed, _ = _ensure_gold_chat_min_chars(fixed)
+    fixed, _ = patch_sanitize_pad_suffix(fixed)
+    fixed, _ = _ensure_gold_chat_min_chars(fixed)
+    fixed, _ = patch_sanitize_pad_suffix(fixed)
     validate_gold_chat(
         fixed,
         banned_literals=banned_literals,

@@ -452,6 +452,29 @@ def update_structure_type(gold_story_id: int, structure_type: str) -> None:
     sql.commit()
 
 
+def update_mechanism_and_structure(
+    gold_story_id: int,
+    *,
+    mechanism: str,
+    structure_type: str,
+) -> None:
+    """同时更新 mechanism 与 structure_type（须合法配对）。"""
+    get_story(int(gold_story_id))
+    mech = normalize_mechanism(mechanism)
+    st = normalize_structure_type(structure_type)
+    validate_mechanism_structure_pair(mech, st)
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    sql.execute(
+        """
+        UPDATE gold_story
+        SET mechanism = ?, structure_type = ?, updated_at = ?
+        WHERE id = ?
+        """,
+        (mech, st, now, int(gold_story_id)),
+    )
+    sql.commit()
+
+
 def update_story_from_pipeline(
     gold_story_id: int,
     *,

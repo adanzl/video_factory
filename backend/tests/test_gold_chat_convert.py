@@ -330,3 +330,27 @@ def test_patch_gold_chat_near_miss_chars():
     patched, changed = gc._patch_gold_chat_near_miss_chars(story)
     assert changed
     assert gc.dialogue_total_chars(patched) >= DAILY_STORY_BODY_CHARS_MIN
+
+
+def test_pad_gold_chat_line_skips_duplicate_ne():
+    line = "让你玩你咋不哭呢？"
+    new, added = gc._pad_gold_chat_line(line, 1)
+    assert added == 0
+    assert new == line
+
+
+def test_patch_sanitize_pad_suffix():
+    story = {
+        "dialogue": [
+            {"speaker": "灿灿", "line": "让你玩你咋不哭呢呢？"},
+            {"speaker": "灿灿", "line": "还嘴硬？你呀呢！"},
+            {"speaker": "昭昭", "line": "行了吧呢！"},
+            {"speaker": "灿灿", "line": "别光嘴上说啊呢。"},
+        ],
+    }
+    out, changed = gc.patch_sanitize_pad_suffix(story)
+    assert changed
+    lines = [d["line"] for d in out["dialogue"]]
+    assert "呢呢" not in "".join(lines)
+    assert "你呀呢" not in "".join(lines)
+    assert "啊呢" not in "".join(lines)
