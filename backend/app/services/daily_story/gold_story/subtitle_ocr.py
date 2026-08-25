@@ -29,28 +29,6 @@ logger = logging.getLogger(__name__)
 
 _CJK_IN_LINE = re.compile(r"[\u4e00-\u9fff]")
 
-_SPEAKER_LINE_RE = re.compile(r"^([^：:]{1,8})[：:]\s*(.+)$")
-_PURE_OVERLAY_FRAGMENT_RES = (
-    re.compile(r"素材来源"),
-    re.compile(r"应来自"),
-    re.compile(r"网邮|内发极来"),
-    re.compile(r"令人哭笑不得"),
-    re.compile(r"^一双儿女"),
-    re.compile(r"^舌头[授授摇捋]"),
-    re.compile(r"^姐姐一招制"),
-    re.compile(r"^[+＋]\s"),
-)
-_GARBAGE_FRAGMENT_RES = (
-    re.compile(r"^[A-Za-z0-9]$"),
-    re.compile(r"^D\s*\d*$"),
-    re.compile(r"^[A-Za-z0-9\s]{1,3}$"),
-)
-_TRAILING_NOISE_RES = (
-    re.compile(r"[品口]+$"),
-    re.compile(r"\s+[你尚]?说[王注尚]+$"),
-    re.compile(r"\s+素材来源.*$"),
-)
-_SINGLE_CHAR_RE = re.compile(r"^[A-Za-z0-9]$")
 _OCR_CONFIG_NAME = "rapidocr_gold_story.yaml"
 _BACKEND_DIR = Path(__file__).resolve().parents[4]
 _OCR_SUBPROCESS_TIMEOUT_SEC = 600.0
@@ -192,7 +170,7 @@ def extract_subtitle_frames(
 
 
 _DHASH_SIZE = (9, 8)
-_DHASH_THRESHOLD = 5
+_DHASH_THRESHOLD = 0
 
 
 def _frame_dhash(image_path: Path) -> int | None:
@@ -267,122 +245,46 @@ def dedupe_frames(
     return _subsample_uniform(kept, cap)
 
 
-def _sanitize_dialogue_fragment(text: str) -> str:
-    line = str(text or "").strip()
-    for prefix in ("连环追问", "近日"):
-        if line.startswith(prefix):
-            line = line[len(prefix) :].strip()
-    for pat in _TRAILING_NOISE_RES:
-        line = pat.sub("", line).strip()
-    return line.strip()
-
-
-def _is_pure_overlay_fragment(text: str) -> bool:
-    line = str(text or "").strip()
-    if not line:
-        return True
-    return any(pat.search(line) for pat in _PURE_OVERLAY_FRAGMENT_RES)
-
-
-def _is_garbage_fragment(text: str) -> bool:
-    line = str(text or "").strip()
-    if not line:
-        return True
-    if _SINGLE_CHAR_RE.match(line):
-        return True
-    if any(pat.match(line) for pat in _GARBAGE_FRAGMENT_RES):
-        return True
-    if len(line) <= 2 and not _CJK_IN_LINE.search(line):
-        return True
-    cjk_count = len(_CJK_IN_LINE.findall(line))
-    if len(line) <= 4 and cjk_count == 0:
-        return True
-    return False
-
-
-def _is_overlay_line(text: str) -> bool:
-    """兼容诊断脚本：整行是否应视为纯解说/垃圾。"""
-    line = _sanitize_dialogue_fragment(str(text or "").strip())
-    if not line:
-        return True
-    return _is_pure_overlay_fragment(line) or _is_garbage_fragment(line)
-
-
-def _expand_row_fragments(row: dict[str, Any]) -> list[dict[str, Any]]:
-    ts = float(row.get("timestamp_sec") or 0.0)
-    conf = float(row.get("confidence") or 0.0)
+def _iter_row_texts(row: dict[str, Any]) -> list[str]:
+    """逐行返回 OCR 原文，不做过滤。"""
     raw_lines = row.get("lines") or []
-    if not raw_lines:
-        text = str(row.get("text") or "").strip()
-        if text:
-            raw_lines = [text]
-    out: list[dict[str, Any]] = []
-    for raw in raw_lines:
-        frag = _sanitize_dialogue_fragment(str(raw or "").strip())
-        if not frag or _is_garbage_fragment(frag) or _is_pure_overlay_fragment(frag):
-            continue
-        out.append(
-            {
-                "timestamp_sec": ts,
-                "text": frag,
-                "confidence": conf,
-            }
-        )
-    return out
-
-
-def _clean_ocr_fragment(text: str) -> str:
-    return _sanitize_dialogue_fragment(text)
-
-
-def _parse_speaker_line(text: str) -> tuple[str | None, str]:
-    match = _SPEAKER_LINE_RE.match(str(text or "").strip())
-    if not match:
-        return None, str(text or "").strip()
-    speaker = match.group(1).strip()
-    body = match.group(2).strip()
-    return speaker, body
+    if raw_lines:
+        return [str(line).strip() for line in raw_lines if str(line).strip()]
+    text = str(row.get("text") or "").strip()
+    return [text] if text else []
 
 
 def merge_ocr_rows(rows: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]], float]:
-    """按时间合并 OCR 片段，去重相邻相同字幕。"""
-    fragments: list[dict[str, Any]] = []
-    for row in rows:
-        fragments.extend(_expand_row_fragments(row))
-    ordered = sorted(fragments, key=lambda r: float(r.get("timestamp_sec") or 0.0))
+    """OCR 原样输出，仅去掉相邻重复行。"""
     merged_lines: list[dict[str, Any]] = []
     plain_parts: list[str] = []
     confidences: list[float] = []
 
-    for row in ordered:
-        text = str(row.get("text") or "").strip()
-        if not text:
-            continue
+    for row in sorted(rows, key=lambda r: float(r.get("timestamp_sec") or 0.0)):
+        ts = float(row.get("timestamp_sec") or 0.0)
         conf = float(row.get("confidence") or 0.0)
-        if merged_lines and gs_merge.texts_similar(
-            merged_lines[-1].get("text") or "",
-            text,
-        ):
-            merged_lines[-1]["end_sec"] = float(row.get("timestamp_sec") or 0.0)
-            merged_lines[-1]["confidence"] = max(
-                float(merged_lines[-1].get("confidence") or 0.0),
-                conf,
+        for text in _iter_row_texts(row):
+            if merged_lines and gs_merge.texts_similar(
+                merged_lines[-1].get("text") or "",
+                text,
+            ):
+                merged_lines[-1]["end_sec"] = ts
+                merged_lines[-1]["confidence"] = max(
+                    float(merged_lines[-1].get("confidence") or 0.0),
+                    conf,
+                )
+                continue
+            merged_lines.append(
+                {
+                    "timestamp_sec": ts,
+                    "end_sec": ts,
+                    "speaker": None,
+                    "text": text,
+                    "confidence": conf,
+                }
             )
-            continue
-
-        speaker, body = _parse_speaker_line(text)
-        line_text = f"{speaker}：{body}" if speaker else text
-        merged_lines.append(
-            {
-                "timestamp_sec": float(row.get("timestamp_sec") or 0.0),
-                "end_sec": float(row.get("timestamp_sec") or 0.0),
-                "speaker": speaker,
-                "text": line_text,
-                "confidence": conf,
-            }
-        )
-        plain_parts.append(body if speaker else text)
-        confidences.append(conf)
+            plain_parts.append(text)
+            confidences.append(conf)
 
     plain = "\n".join(plain_parts).strip()
     avg_conf = sum(confidences) / len(confidences) if confidences else 0.0
@@ -446,11 +348,7 @@ def transcribe_video_ocr(
         region=region,
         crop_bottom_ratio=float(config.gold_story_ocr_crop_bottom_ratio),
     )
-    sample_frames = dedupe_frames(
-        frames,
-        max_frames=int(config.gold_story_ocr_max_frames),
-    )
-    ocr_rows = ocr_frames_parallel(sample_frames, config)
+    ocr_rows = ocr_frames_parallel(frames, config)
     text, line_rows, avg_conf = merge_ocr_rows(ocr_rows)
 
     quality = gs_merge.score_transcript_text(
@@ -468,7 +366,7 @@ def transcribe_video_ocr(
         "source": "ocr",
         "avg_confidence": avg_conf,
         "quality_score": quality,
-        "frame_count": len(sample_frames),
+        "frame_count": len(frames),
         "ocr_frame_dir": str(frame_dir),
         "subtitle_region": {
             "y_ratio": region.y_ratio,
