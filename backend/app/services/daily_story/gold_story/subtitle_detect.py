@@ -89,11 +89,19 @@ def extract_sample_frame(
     timestamp_sec: float,
     region: SubtitleRegion | None = None,
     crop_bottom_ratio: float = 0.20,
+    config: Config | None = None,
+    max_h_ratio: float | None = None,
 ) -> Path:
     """抽取单帧；region 优先，否则回退固定底栏。"""
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg = config or Config()
+    max_h = float(
+        max_h_ratio
+        if max_h_ratio is not None
+        else cfg.gold_story_ocr_region_max_h_ratio
+    )
     if region is not None:
-        vf = region.crop_vf_expr()
+        vf = region.crop_vf_expr(max_h_ratio=max_h)
     else:
         crop_y = 1.0 - crop_bottom_ratio
         vf = f"crop=iw:ih*{crop_bottom_ratio}:0:ih*{crop_y}"
@@ -551,6 +559,7 @@ def detect_burned_subtitles(
                 output_path=frame_path,
                 timestamp_sec=ts,
                 region=region,
+                config=cfg,
             )
             if roi_has_text_band(frame_path):
                 hits += 1
