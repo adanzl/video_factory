@@ -93,6 +93,7 @@ _WRITTEN_SIGNAL_RES: tuple[re.Pattern[str], ...] = (
 # 视频标题/旁白/meta：孩子台词里不应出现（通用，不限故事类型）
 _RE_NARRATION_META = re.compile(r"一招制敌|服不服")
 _RE_PARTICLE_STACK = re.compile(r"呢呢|啊呢|吧呢|嘛呢|呀呢|你呀呢|行了吧呢")
+_RE_KID_TYPO_LINE = re.compile(r"听听不懂|你真是呢")
 
 _RE_PUNCT = re.compile(r"[，。！？…、：；~—\s·「」“”\"'?!.,]")
 # 行动宣言段：孩子不会先大喊自己将做的具体动作（「我来扯掉这夹子」）。
@@ -230,17 +231,27 @@ def collect_pad_stack_issues(story: dict) -> list[dict[str, Any]]:
         line = str(row.get("line") or "").strip()
         if not line or sp not in ("昭昭", "灿灿"):
             continue
-        if not _RE_PARTICLE_STACK.search(line):
+        if _RE_KID_TYPO_LINE.search(line):
+            out.append(
+                {
+                    "lines": [i],
+                    "kind": "语病",
+                    "desc": f"明显语病/错字：{line}",
+                    "fix": "「听听不懂」→「听不懂」；「你真是呢」→「你真是的」",
+                }
+            )
+        if not _RE_PARTICLE_STACK.search(line) and not _RE_KID_TYPO_LINE.search(line):
             continue
-        out.append(
-            {
-                "lines": [i],
-                "kind": "垫字叠字",
-                "desc": f"句尾叠语气词/不通：{line}",
-                "fix": "改成自然口语；禁呢呢/啊呢/吧呢/你呀呢；"
-                "可用实义短句补字数（如「我改还不成吗」「我可盯着呢」）",
-            }
-        )
+        if _RE_PARTICLE_STACK.search(line):
+            out.append(
+                {
+                    "lines": [i],
+                    "kind": "垫字叠字",
+                    "desc": f"句尾叠语气词/不通：{line}",
+                    "fix": "改成自然口语；禁呢呢/啊呢/吧呢/你呀呢；"
+                    "可用实义短句补字数（如「我改还不成吗」「我可盯着呢」）",
+                }
+            )
     return out
 
 
@@ -442,6 +453,16 @@ def collect_wording_issues(
                         "desc": f"句尾叠语气词/不通：{line}",
                         "fix": "改成自然口语；禁呢呢/啊呢/吧呢/你呀呢；"
                         "可用实义短句补字数（如「我改还不成吗」「我可盯着呢」）",
+                    }
+                )
+                continue
+            if _RE_KID_TYPO_LINE.search(line):
+                out.append(
+                    {
+                        "lines": [i],
+                        "kind": "语病",
+                        "desc": f"明显语病/错字：{line}",
+                        "fix": "「听听不懂」→「听不懂」；「你真是呢」→「你真是的」或删多余语气词",
                     }
                 )
                 continue
