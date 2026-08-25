@@ -322,6 +322,9 @@ class Config:
         self.gold_story_ocr_quality_min: float = float(
             os.getenv("GOLD_STORY_OCR_QUALITY_MIN", "0.55")
         )
+        self.gold_story_ocr_skip_asr_min: float = float(
+            os.getenv("GOLD_STORY_OCR_SKIP_ASR_MIN", "0.55")
+        )
         self.gold_story_transcript_repair: bool = _bool(
             "GOLD_STORY_TRANSCRIPT_REPAIR", True
         )

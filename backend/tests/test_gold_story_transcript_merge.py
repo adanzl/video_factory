@@ -1,5 +1,7 @@
 """金故事 H0b 多源逐字稿融合测试。"""
 
+from app.config import Config
+from app.services.daily_story.gold_story import subtitle_ocr as ocr
 from app.services.daily_story.gold_story import transcript_merge as tm
 
 
@@ -45,3 +47,27 @@ def test_pick_transcript_prefers_ocr_when_higher_quality():
 
 def test_texts_similar_merges_duplicate_frames():
     assert tm.texts_similar("我爱学习你爱吗", "我爱学习，你爱吗")
+
+
+def test_should_skip_asr_after_ocr_when_quality_high():
+    cfg = Config()
+    cfg.gold_story_ocr_skip_asr_min = 0.55
+    assert ocr.should_skip_asr_after_ocr(
+        {"text": "我爱学习你爱吗", "quality_score": 0.89},
+        cfg,
+    )
+    assert not ocr.should_skip_asr_after_ocr(
+        {"text": "我爱学习你爱吗", "quality_score": 0.4},
+        cfg,
+    )
+    assert not ocr.should_skip_asr_after_ocr({"text": "", "quality_score": 0.9}, cfg)
+
+
+def test_ocr_models_ready(tmp_path):
+    cfg = Config()
+    cfg.ocr_model_dir = tmp_path
+    assert not ocr.ocr_models_ready(cfg)
+    (tmp_path / "ch_PP-OCRv4_det_mobile.onnx").write_text("x")
+    assert not ocr.ocr_models_ready(cfg)
+    (tmp_path / "ch_PP-OCRv4_rec_mobile.onnx").write_text("x")
+    assert ocr.ocr_models_ready(cfg)
