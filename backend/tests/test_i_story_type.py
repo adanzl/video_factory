@@ -92,7 +92,7 @@ def test_i_quality_scores_story_69_shape():
     story = {
         "theme": "灵魂拷问",
         "story_type": "I",
-        "setting": "车内，妈妈开车，灿灿和昭昭坐在后座",
+        "setting": "卧室里，灿灿和昭昭因为作业吵起来",
         "conflict_core": "姐姐灵魂拷问「我爱学习你爱吗」，弟弟哑口无言",
         "punchline_explain": (
             "I类问倒收束：姐姐用双标灵魂拷问把弟弟问到哑口无言，一招制敌收场。"
@@ -115,21 +115,38 @@ def test_i_quality_scores_story_69_shape():
             {"speaker": "灿灿", "line": "少来这套！咱俩一个爸妈生的，凭啥我爱学习你不爱？"},
             {"speaker": "昭昭", "line": "我……我说不过你。"},
             {"speaker": "灿灿", "line": "让你学习你哭哭啼啼的，让你玩你咋不哭呢？"},
-            {"speaker": "昭昭", "line": "我……我不说了，我看窗外还不行？"},
+            {"speaker": "昭昭", "line": "我……我不说了，别说了还不行？"},
             {"speaker": "灿灿", "line": "哼，一招制敌！你服不服？"},
             {"speaker": "昭昭", "line": "服了……我以后也爱学习，行了吧！"},
             {"speaker": "灿灿", "line": "这还差不多，说到做到，别光嘴上说啊。"},
-            {"speaker": "昭昭", "line": "嗯嗯，姐姐你监督我，我一定写，不偷懒。"},
-            {"speaker": "灿灿", "line": "行，以后我写作业，你也得写，这样才公平吧？"},
-            {"speaker": "昭昭", "line": "公平……姐姐你说啥就是啥，我听你的。"},
         ],
     }
     q = score_daily_story(story, theme="灵魂拷问")
-    assert q["structure_score"] >= 70, q
+    assert q["structure_score"] >= 75, q
     assert "C规则轮次升级" not in "".join(q["reasons"])
     assert "回旋镖" not in "".join(q["reasons"])
     assert "收束形态未落位" not in "".join(q["reasons"])
-    assert any("拖尾" in r for r in q["reasons"])
+    assert "拖尾" not in "".join(q["reasons"])
+    assert "I末段缺赢家一招制敌" not in q["reasons"]
+
+
+def test_i_humor_no_false_missing_win_on_trimmed_story():
+    from app.services.daily_story.story_types.i.humor import collect_i_humor_issues
+
+    lines = [
+        "昭昭，别跟我讲道理。我就问你，我爱学习，你爱吗？",
+        "我……我也爱吧。",
+        "那你怎么老不写作业？",
+        "可我更爱你呀！",
+        "少来这套！凭啥我爱学习你不爱？",
+        "我……我说不过你。",
+        "让你学习你哭哭啼啼的，让你玩你咋不哭呢？",
+        "我……我不说了，别说了还不行？",
+        "哼，一招制敌！你服不服？",
+        "服了……我以后也爱学习，行了吧！",
+        "这还差不多，说到做到，别光嘴上说啊。",
+    ]
+    assert "I末段缺赢家一招制敌" not in collect_i_humor_issues(lines)
 
 
 def test_attach_normalizes_punchline_on_conflict():

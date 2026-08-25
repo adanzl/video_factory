@@ -39,6 +39,10 @@ from app.services.daily_story.gold_story.scene_contract import (
     sanitize_banned_literals,
     validate_chat_hard,
 )
+from app.services.daily_story.gold_story.setting_location import (
+    normalize_gold_chat_setting,
+    setting_location_violations,
+)
 from app.services.daily_story.gold_story.types import structure_type_label
 from app.services.daily_story.prompts import (
     DAILY_STORY_BODY_CHARS_MAX,
@@ -770,6 +774,38 @@ def _format_dialogue_seed(seed: list[Any]) -> str:
     return "\n".join(lines) or "（无）"
 
 
+def apply_gold_chat_normalizations(
+    chat: dict[str, Any],
+    *,
+    row: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], list[str]]:
+    """setting 地点映射 + I 类收束拖尾裁剪等本地规范化。"""
+    from app.services.daily_story.story_types.i.patch import patch_i_body
+
+    notes: list[str] = []
+    payload = row.get("payload") if isinstance(row, dict) and isinstance(row.get("payload"), dict) else {}
+    sc = payload.get("scene_contract") if isinstance(payload.get("scene_contract"), dict) else {}
+    st = str(
+        (row or {}).get("structure_type") or chat.get("story_type") or ""
+    ).strip().upper()
+    raw_chars = sc.get("characters") if isinstance(sc.get("characters"), list) else []
+    characters = tuple(str(c).strip() for c in raw_chars if str(c).strip())
+    if len(characters) < 2:
+        characters = ("灿灿", "昭昭")
+
+    new_setting, sn = normalize_gold_chat_setting(
+        str(chat.get("setting") or ""),
+        scene_contract_location=str(sc.get("location") or ""),
+        characters=characters,
+    )
+    if sn:
+        notes.extend(sn)
+        chat["setting"] = new_setting
+    if st == "I":
+        notes.extend(patch_i_body(chat))
+    return chat, notes
+
+
 def validate_gold_chat(
     story: dict[str, Any],
     *,
@@ -790,6 +826,8 @@ def validate_gold_chat(
     for field in required:
         if field not in story:
             errors.append(f"缺少字段: {field}")
+
+    errors.extend(setting_location_violations(str(story.get("setting") or "")))
 
     key = str(story.get("key") or "").strip()
     if key and not (
@@ -1199,6 +1237,13 @@ def convert_gold_chat(
     row = _persist_m5_h_contract_if_needed(row)
     sid = str(row.get("source_id") or "").strip()
     chat = gold_story_to_gold_chat(row)
+    chat, norm_notes = apply_gold_chat_normalizations(chat, row=row)
+    if norm_notes:
+        logger.info(
+            "gold_chat normalize %s: %s",
+            sid,
+            "；".join(norm_notes[:4]),
+        )
     mech = str(row.get("mechanism") or "").upper()
     st = str(row.get("structure_type") or "").strip().upper()
     if mech == "M5" and st == "H":
@@ -1348,6 +1393,7 @@ def import_gold_chat_daily_story(
     if not (chat.get("dialogue") or []):
         raise ValueError("gold_chat 对白为空")
 
+    chat, _ = apply_gold_chat_normalizations(dict(chat), row=row)
     story = dict(chat)
     theme = str(
         story.get("scene_title")

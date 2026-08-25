@@ -23,12 +23,14 @@ def collect_i_humor_issues(
     if len(lines) < 6:
         return issues
     body = "".join(lines)
-    tail4 = "".join(lines[-4:])
+    tail6 = "".join(lines[-6:])
     if not RE_SOUL_QUESTION.search(body):
         issues.append("I缺灵魂拷问/价值高地")
     if not RE_SPEECHLESS.search(body):
         issues.append("I缺对方语塞")
-    if not RE_WIN_STUBBORN.search(tail4):
+    has_win = bool(RE_WIN_STUBBORN.search(tail6))
+    has_surrender = bool(re.search(r"服了|行了吧|听你的", tail6))
+    if not has_win and not (RE_SPEECHLESS.search(tail6) and has_surrender):
         issues.append("I末段缺赢家一招制敌")
     return issues
 
