@@ -1,4 +1,4 @@
-"""金故事 M 机制与 A–E/F 结构映射。"""
+"""金故事 M 机制与 A–E/F/J/K 结构映射。"""
 
 from __future__ import annotations
 
@@ -81,10 +81,33 @@ def test_m11_maps_to_i_not_injectable():
     validate_mechanism_structure_pair("M11", "I")
 
 
-def test_m5_allows_a_or_h():
-    assert allowed_structure_types("M5") == frozenset({"A", "H"})
+def test_m5_allows_a_h_or_j():
+    assert allowed_structure_types("M5") == frozenset({"A", "H", "J"})
     validate_mechanism_structure_pair("M5", "A")
     validate_mechanism_structure_pair("M5", "H")
+    validate_mechanism_structure_pair("M5", "J")
+
+
+def test_m8_allows_a_or_j():
+    assert allowed_structure_types("M8") == frozenset({"A", "J"})
+    validate_mechanism_structure_pair("M8", "A")
+    validate_mechanism_structure_pair("M8", "J")
+    assert structure_type_for_mechanism("M8") == "A"
+    assert structure_type_label("J") == "权威压住"
+    assert catalog_entry("J") is not None
+    assert not is_injectable_structure_type("J")
+
+
+def test_m12_maps_to_k_not_injectable():
+    assert normalize_mechanism("M12") == "M12"
+    assert mechanism_label("M12") == "家长旁观"
+    assert structure_type_for_mechanism("M12") == "K"
+    assert structure_type_label("K") == "家长看戏"
+    assert catalog_entry("K") is not None
+    assert not is_injectable_structure_type("K")
+    validate_mechanism_structure_pair("M12", "K")
+    with pytest.raises(ValueError, match="M12 对应 structure_type"):
+        validate_mechanism_structure_pair("M12", "H")
 
 
 def test_pair_mismatch_raises():

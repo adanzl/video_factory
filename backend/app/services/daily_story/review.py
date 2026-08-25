@@ -92,6 +92,7 @@ _WRITTEN_SIGNAL_RES: tuple[re.Pattern[str], ...] = (
 )
 # 视频标题/旁白/meta：孩子台词里不应出现（通用，不限故事类型）
 _RE_NARRATION_META = re.compile(r"一招制敌|服不服")
+_RE_PARTICLE_STACK = re.compile(r"呢呢|啊呢|吧呢|嘛呢|呀呢|你呀呢|行了吧呢")
 
 _RE_PUNCT = re.compile(r"[，。！？…、：；~—\s·「」“”\"'?!.,]")
 # 行动宣言段：孩子不会先大喊自己将做的具体动作（「我来扯掉这夹子」）。
@@ -218,6 +219,28 @@ def collect_narration_meta_issues(story: dict) -> list[dict[str, Any]]:
         issue = narration_meta_issue(line, line_no=i)
         if issue:
             out.append(issue)
+    return out
+
+
+def collect_pad_stack_issues(story: dict) -> list[dict[str, Any]]:
+    """通用：句尾叠语气词/垫字事故，交给润色改口语。"""
+    out: list[dict[str, Any]] = []
+    for i, row in enumerate(_dialogue(story), 1):
+        sp = str(row.get("speaker") or "").strip()
+        line = str(row.get("line") or "").strip()
+        if not line or sp not in ("昭昭", "灿灿"):
+            continue
+        if not _RE_PARTICLE_STACK.search(line):
+            continue
+        out.append(
+            {
+                "lines": [i],
+                "kind": "垫字叠字",
+                "desc": f"句尾叠语气词/不通：{line}",
+                "fix": "改成自然口语；禁呢呢/啊呢/吧呢/你呀呢；"
+                "可用实义短句补字数（如「我改还不成吗」「我可盯着呢」）",
+            }
+        )
     return out
 
 
@@ -410,6 +433,17 @@ def collect_wording_issues(
             meta_issue = narration_meta_issue(line, line_no=i)
             if meta_issue:
                 out.append(meta_issue)
+                continue
+            if _RE_PARTICLE_STACK.search(line):
+                out.append(
+                    {
+                        "lines": [i],
+                        "kind": "垫字叠字",
+                        "desc": f"句尾叠语气词/不通：{line}",
+                        "fix": "改成自然口语；禁呢呢/啊呢/吧呢/你呀呢；"
+                        "可用实义短句补字数（如「我改还不成吗」「我可盯着呢」）",
+                    }
+                )
                 continue
         if speaker in ("昭昭", "灿灿") and "站住" in line:
             out.append({
@@ -837,6 +871,11 @@ def build_wording_polish_prompts(
             "「你手忙脚乱弄撒薯片，还怪我？」→「你弄撒的薯片，还怪我？」"
             "（删手忙脚乱，保留薯片物证，勿改成「明明是你」）；"
             "禁提醒太晚/没拦住/来不及；一句一气口，勿逗号连两拍。\n"
+        )
+    if issue_kinds & {"垫字叠字"}:
+        system += (
+            "【垫字叠字】被点行须去掉呢呢/啊呢/吧呢/你呀呢等叠字；"
+            "勿为凑字数堆语气词，可用实义短句补（如「我改还不成吗」「我可盯着呢」）。\n"
         )
     if issue_kinds & {"旁白腔"}:
         system += (

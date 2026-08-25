@@ -1,11 +1,11 @@
-"""金故事机制 M1–M11 与结构类型 A–E/F/G/H/I 映射。"""
+"""金故事机制 M1–M12 与结构类型 A–E/F/G/H/I/J/K 映射。"""
 
 from __future__ import annotations
 
 from app.services.daily_story.story_types import STORY_TYPE_LABELS
 
 GOLD_STORY_MECHANISM_CODES: frozenset[str] = frozenset(
-    f"M{i}" for i in range(1, 12)
+    f"M{i}" for i in range(1, 13)
 )
 
 GOLD_STORY_MECHANISM_LABELS: dict[str, str] = {
@@ -20,6 +20,7 @@ GOLD_STORY_MECHANISM_LABELS: dict[str, str] = {
     "M9": "结盟甩锅",
     "M10": "假帮腔讽刺",
     "M11": "灵魂拷问",
+    "M12": "家长旁观",
 }
 
 # M → 结构字母：能落 A–E 的落 A–E；否则用扩展字母（F/G/H…）
@@ -28,18 +29,20 @@ MECHANISM_STRUCTURE_MAP: dict[str, str] = {
     "M2": "C",  # 自私包装公平
     "M3": "F",  # Threat 链式互升级，暂无 A–E 标准收束
     "M4": "G",  # 递台词 escalation → 嘴硬心软（争物/双规则用 M1/M2→C）
-    "M5": "A",  # 拒和解 / 嘴硬加码（第三方调解收束可标 H）
+    "M5": "A",  # 拒和解 / 嘴硬加码（调解→H；否决压住→J）
     "M6": "A",  # 成人概念童化歪问
     "M7": "D",  # 字面执行跑偏
-    "M8": "A",  # 一锤可拍（A 类中段不变量）
+    "M8": "A",  # 一锤可拍（有反噬→A；镇住不翻→J）
     "M9": "B",  # 结盟甩锅
     "M10": "E",  # 假帮腔讽刺（E 类帮腔）
     "M11": "I",  # 价值高地灵魂拷问 → 问倒收束
+    "M12": "K",  # 家长旁观不劝和 → 家长看戏
 }
 
 # mechanism 默认映射外的合法 structure_type（防 H3 误判入库失败）
 MECHANISM_STRUCTURE_ALTERNATIVES: dict[str, frozenset[str]] = {
-    "M5": frozenset({"H"}),  # 拒和 + 第三方调解收束
+    "M5": frozenset({"H", "J"}),  # H 第三方调解；J 否决权压住
+    "M8": frozenset({"J"}),  # 一锤镇住、不翻车
 }
 
 # 金故事扩展结构类型（尚未进入 daily_story validate；F 已由 M3 启用）
@@ -48,6 +51,8 @@ GOLD_STORY_EXTENDED_TYPE_LABELS: dict[str, str] = {
     "G": "嘴硬心软",
     "H": "第三方化解",
     "I": "问倒收束",
+    "J": "权威压住",
+    "K": "家长看戏",
 }
 
 GOLD_STORY_STRUCTURE_LABELS: dict[str, str] = {
@@ -59,13 +64,13 @@ GOLD_STORY_STRUCTURE_CODES: frozenset[str] = frozenset(
     GOLD_STORY_STRUCTURE_LABELS.keys()
 )
 
-# daily_story 已落地类型（H5 可注入任务）；H/I 暂仅 gold_story 侧
-_GOLD_STORY_NON_INJECTABLE = frozenset({"H", "I"})
+# daily_story 已落地类型（H5 可注入任务）；H/I/J/K 暂仅 gold_story 侧
+_GOLD_STORY_NON_INJECTABLE = frozenset({"H", "I", "J", "K"})
 GOLD_STORY_INJECTABLE_CODES: frozenset[str] = frozenset(
     k for k in STORY_TYPE_LABELS if k not in _GOLD_STORY_NON_INJECTABLE
 )
 
-# 与 docs/日常故事-类型.md §3 一致（A–E）
+# 与 docs/日常故事-类型.md §3 一致（含金故事扩展 F–K）
 GOLD_STORY_TYPE_CATALOG: tuple[dict[str, str], ...] = (
     {
         "code": "A",
@@ -120,6 +125,18 @@ GOLD_STORY_TYPE_CATALOG: tuple[dict[str, str], ...] = (
         "name": "问倒收束",
         "formula": "争锋→价值高地→灵魂拷问→语塞→赢家嘴硬",
         "closing": "赢家一招制敌总结；无 A 式反噬/破功",
+    },
+    {
+        "code": "J",
+        "name": "权威压住",
+        "formula": "闹/求放行→一锤或否决压住→对方怂→家长旁观",
+        "closing": "镇住不翻车；禁止 A 末四拍反噬",
+    },
+    {
+        "code": "K",
+        "name": "家长看戏",
+        "formula": "互打互骂升级→大人躲/叹/劝失败→僵持",
+        "closing": "不和好；禁止套 H 第三方化解",
     },
 )
 

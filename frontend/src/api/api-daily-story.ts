@@ -42,7 +42,7 @@ export interface DailyStoryRecord {
 
 export type DailyStoryListResponse = ListResponse<DailyStoryRecord>;
 
-/** 与后端 STORY_TYPE_LABELS 一致（含金故事扩展 F/I） */
+/** 与后端 STORY_TYPE_LABELS 一致（含金故事扩展 F/J/K） */
 export const DAILY_STORY_TYPE_LABELS: Record<string, string> = {
   A: "权威翻车",
   B: "结盟翻车",
@@ -53,6 +53,8 @@ export const DAILY_STORY_TYPE_LABELS: Record<string, string> = {
   G: "嘴硬心软",
   H: "第三方化解",
   I: "问倒收束",
+  J: "权威压住",
+  K: "家长看戏",
 };
 
 /** 如 A权威翻车；无有效代码时返回 "-" */
