@@ -11,6 +11,9 @@ qrcode>=8.2
 Pillow>=10.0
 redis>=5.0
 websocket-client>=1.8
-# 金故事 H0b（yt-dlp + faster-whisper）
+# 金故事 H0b（yt-dlp + faster-whisper + 烧录字幕 OCR）
 yt-dlp>=2025.3.31
 faster-whisper>=1.1.0
+rapidocr>=3.9
+onnxruntime>=1.19
+opencv-python-headless>=4.8
