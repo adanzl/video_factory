@@ -314,7 +314,10 @@ class Config:
         )
         self.gold_story_ocr_enabled: bool = _bool("GOLD_STORY_OCR_ENABLED", True)
         self.gold_story_ocr_fps: float = float(
-            os.getenv("GOLD_STORY_OCR_FPS", "2")
+            os.getenv("GOLD_STORY_OCR_FPS", "1")
+        )
+        self.gold_story_ocr_max_frames: int = int(
+            os.getenv("GOLD_STORY_OCR_MAX_FRAMES", "80")
         )
         self.gold_story_ocr_frame_workers: int = int(
             os.getenv("GOLD_STORY_OCR_FRAME_WORKERS", "4")
@@ -332,7 +335,7 @@ class Config:
             os.getenv("GOLD_STORY_OCR_CROP_BOTTOM_RATIO", "0.10")
         )
         self.gold_story_ocr_region_max_h_ratio: float = float(
-            os.getenv("GOLD_STORY_OCR_REGION_MAX_H_RATIO", "0.10")
+            os.getenv("GOLD_STORY_OCR_REGION_MAX_H_RATIO", "0.12")
         )
         self.gold_story_ocr_region_min_h_ratio: float = float(
             os.getenv("GOLD_STORY_OCR_REGION_MIN_H_RATIO", "0.025")

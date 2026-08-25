@@ -366,10 +366,10 @@ def _region_from_cluster(
     max_h_ratio: float,
     min_h_ratio: float,
 ) -> SubtitleRegion:
-    """聚类 → 固定高度字幕窗（最多 2 行），y 锚定在稳定对白带。"""
-    y_center = statistics.median([obs.y_center for obs in cluster])
-    h_ratio = min(float(max_h_ratio), max(float(min_h_ratio), float(max_h_ratio)))
-    y_ratio = y_center - h_ratio * 0.5
+    """聚类 → 固定高度字幕窗（最多 2 行），y 锚定在带底边。"""
+    y_bottom = statistics.median([obs.y_ratio + obs.h_ratio for obs in cluster])
+    h_ratio = max(float(min_h_ratio), min(float(max_h_ratio), float(max_h_ratio)))
+    y_ratio = y_bottom - h_ratio
     y_ratio = max(0.0, min(y_ratio, 1.0 - h_ratio))
     confidence = min(1.0, 0.35 + len(cluster) * 0.08)
     return SubtitleRegion(
