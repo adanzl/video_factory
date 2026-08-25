@@ -211,6 +211,9 @@ def reprocess_gold_story(
         }
         payload["audit"] = audit
 
+    transcript_backend = str(
+        tx.get("transcript_backend") or tx.get("engine") or "unknown"
+    )
     updated = repo_gold_story.update_story_from_pipeline(
         gold_story_id,
         mechanism=str(h3["mechanism"]),
@@ -219,7 +222,7 @@ def reprocess_gold_story(
         conflict_core=str(h3.get("conflict_core") or ""),
         story_raw=story_raw_text,
         payload=payload,
-        transcript_backend="faster-whisper",
+        transcript_backend=transcript_backend,
         transcript_path=str(transcript_path),
         engagement_score=float(norm),
         status=insert_status,

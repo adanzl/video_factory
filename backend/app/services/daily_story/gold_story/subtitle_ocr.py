@@ -16,7 +16,13 @@ from typing import Any
 
 from app.config import Config
 from app.services.daily_story.gold_story import transcript_merge as gs_merge
-from app.services.daily_story.gold_story.subtitle_detect import detect_burned_subtitles
+from app.services.daily_story.gold_story.subtitle_detect import (
+    SubtitleRegion,
+    detect_burned_subtitles,
+    detect_subtitle_region,
+    fallback_subtitle_region,
+    probe_duration,
+)
 from app.utils.async_util import wait_futures_hub
 
 logger = logging.getLogger(__name__)
@@ -141,14 +147,18 @@ def extract_subtitle_frames(
     *,
     output_dir: Path,
     fps: float = 2.0,
-    crop_bottom_ratio: float = 0.20,
+    region: SubtitleRegion | None = None,
+    crop_bottom_ratio: float = 0.10,
 ) -> list[OcrFrame]:
     output_dir.mkdir(parents=True, exist_ok=True)
     for old in output_dir.glob("frame_*.jpg"):
         old.unlink(missing_ok=True)
 
-    crop_y = 1.0 - crop_bottom_ratio
-    vf = f"fps={fps},crop=iw:ih*{crop_bottom_ratio}:0:ih*{crop_y}"
+    if region is not None:
+        vf = f"fps={fps},{region.clamp().crop_vf_expr()}"
+    else:
+        crop_y = 1.0 - crop_bottom_ratio
+        vf = f"fps={fps},crop=iw:ih*{crop_bottom_ratio}:0:ih*{crop_y}"
     pattern = output_dir / "frame_%06d.jpg"
     cmd = [
         _ffmpeg(),
@@ -296,19 +306,26 @@ def transcribe_video_ocr(
 ) -> dict[str, Any]:
     """单视频 OCR 逐字稿（当前进程内执行，供 subprocess worker 调用）。"""
     frame_dir = workspace / "ocr_frames" / source_id
+    region_dir = workspace / "ocr_region" / source_id
+    if duration_sec is None:
+        duration_sec = probe_duration(video_path)
+
+    region = detect_subtitle_region(
+        video_path,
+        workspace=region_dir,
+        duration_sec=duration_sec,
+        config=config,
+    )
     frames = extract_subtitle_frames(
         video_path,
         output_dir=frame_dir,
         fps=float(config.gold_story_ocr_fps),
+        region=region,
+        crop_bottom_ratio=float(config.gold_story_ocr_crop_bottom_ratio),
     )
     sample_frames = dedupe_frames(frames)
     ocr_rows = ocr_frames_parallel(sample_frames, config)
     text, line_rows, avg_conf = merge_ocr_rows(ocr_rows)
-
-    if duration_sec is None:
-        from app.services.daily_story.gold_story.subtitle_detect import _probe_duration
-
-        duration_sec = _probe_duration(video_path)
 
     quality = gs_merge.score_transcript_text(
         text,
@@ -327,6 +344,13 @@ def transcribe_video_ocr(
         "quality_score": quality,
         "frame_count": len(sample_frames),
         "ocr_frame_dir": str(frame_dir),
+        "subtitle_region": {
+            "y_ratio": region.y_ratio,
+            "h_ratio": region.h_ratio,
+            "method": region.method,
+            "samples": region.samples,
+            "confidence": region.confidence,
+        },
     }
 
 
