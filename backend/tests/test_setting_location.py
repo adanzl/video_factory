@@ -46,7 +46,7 @@ def test_apply_gold_chat_normalizations_i_trims_tail():
             {"speaker": "昭昭", "line": "我……我说不过你。"},
             {"speaker": "灿灿", "line": "让你学习你哭哭啼啼，让你玩你咋不哭？"},
             {"speaker": "昭昭", "line": "我不说了，我看窗外还不行？"},
-            {"speaker": "灿灿", "line": "哼，一招制敌！你服不服？"},
+            {"speaker": "灿灿", "line": "好了，不爱学习还跟我吵啥！"},
             {"speaker": "昭昭", "line": "服了……我以后也爱学习。"},
             {"speaker": "灿灿", "line": "这还差不多，说到做到，别光嘴上说啊。"},
             {"speaker": "昭昭", "line": "嗯嗯，姐姐你监督我，我一定写，不偷懒。"},
@@ -59,4 +59,4 @@ def test_apply_gold_chat_normalizations_i_trims_tail():
     out, notes = gc.apply_gold_chat_normalizations(dict(chat), row=row)
     assert "卧室" in out["setting"]
     assert len(out["dialogue"]) == 11
-    assert any("映射" in n or "拖尾" in n for n in notes)
+    assert any("subplot" in n or "映射" in n for n in notes)

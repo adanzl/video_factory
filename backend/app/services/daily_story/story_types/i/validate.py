@@ -8,7 +8,9 @@ from app.services.daily_story.story_types import parse_story_type_code
 
 RE_SOUL_QUESTION = re.compile(r"爱学习|你爱吗|灵魂|拷问|凭啥|相同|为啥")
 RE_SPEECHLESS = re.compile(r"说不过|语塞|哑口|不说了|看窗外|憋不出|张了张嘴")
-RE_WIN_STUBBORN = re.compile(r"一招制敌|制敌|服不服|别跟我吵|不爱学习就别")
+RE_WIN_STUBBORN = re.compile(
+    r"一招制敌|制敌|服不服|别跟我吵|不爱学习还|不爱学习就别|看你还说|还说啥|嘴硬"
+)
 RE_A_BACKFIRE = re.compile(r"那不一样|都是听|破功|自相矛盾|你刚才说")
 
 
