@@ -86,6 +86,32 @@ def _cmd_probe(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_rescore(_: argparse.Namespace) -> int:
+    """按已存弹幕/评论分量重算 funny_signal，并重套 L2。"""
+    app = create_app()
+    with app.app_context():
+        rows = repo_gold_story.rescore_all_funny()
+    flipped = [
+        row
+        for row in rows
+        if not row.get("skipped") and row.get("old_status") != row.get("status")
+    ]
+    print(
+        json.dumps(
+            {
+                "total": len(rows),
+                "scored": sum(1 for row in rows if not row.get("skipped")),
+                "skipped": sum(1 for row in rows if row.get("skipped")),
+                "flipped": flipped,
+                "rows": rows,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+    return 0
+
+
 def _cmd_sync(_: argparse.Namespace) -> int:
     """回写所有 active 条目的 funny_signal。"""
     cfg = Config()
@@ -187,6 +213,9 @@ def main(argv: list[str] | None = None) -> int:
 
     p_sync = sub.add_parser("sync", help="回写 active 条目的 funny_signal")
     p_sync.set_defaults(func=_cmd_sync)
+
+    p_rescore = sub.add_parser("rescore", help="全库按当前权重重评 funny_signal")
+    p_rescore.set_defaults(func=_cmd_rescore)
 
     p_clean = sub.add_parser("cleanup-exports", help="删 stories/ 孤儿导出")
     p_clean.set_defaults(func=_cmd_cleanup_exports)

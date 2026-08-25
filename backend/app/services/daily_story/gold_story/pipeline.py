@@ -116,6 +116,18 @@ def process_candidate(
             description=candidate.description,
             replies=list(candidate.top_replies),
         )
+        story_raw_text = str(h2["story_raw"])
+        near = repo_gold_story.find_near_duplicate(story_raw_text)
+        if near:
+            return {
+                **base,
+                "action": "skip",
+                "reason": "duplicate_similar_story",
+                "id": near["id"],
+                "similar_source_id": near["source_id"],
+                "similar_ratio": near["ratio"],
+                "similar_lcs": near["lcs"],
+            }
         h3 = llm_steps.structurize_story(
             title=candidate.title,
             story_raw=h2["story_raw"],
@@ -136,7 +148,6 @@ def process_candidate(
     except Exception as exc:
         return {**base, "action": "error", "stage": "LLM", "error": str(exc)}
 
-    story_raw_text = str(h2["story_raw"])
     audit = gs_review.audit_story(
         title=str(h3.get("title") or candidate.title),
         video_title=candidate.title,

@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 from datetime import datetime, timezone
+from difflib import SequenceMatcher
 from typing import Any
 
 from app.repositories import sql_exec as sql
@@ -24,6 +25,8 @@ _GOLD_STORY_COLUMNS = (
 )
 
 _MIN_AUTO_SCORE = 0.55
+_COMPACT_STORY_RE = re.compile(r"[\s\W_]+", re.UNICODE)
+NEAR_DUP_LCS_MIN = 16
 
 
 def normalize_story_raw(text: str) -> str:
@@ -32,8 +35,62 @@ def normalize_story_raw(text: str) -> str:
     return t
 
 
+def compact_story_raw(text: str) -> str:
+    """去空白标点，统一近形字，便于转载比对。"""
+    t = str(text or "").strip().lower().replace("唧", "叽")
+    return _COMPACT_STORY_RE.sub("", t)
+
+
 def content_hash(story_raw: str) -> str:
     return hashlib.sha256(normalize_story_raw(story_raw).encode()).hexdigest()
+
+
+def story_raw_similarity(left: str, right: str) -> tuple[float, int]:
+    """返回 (ratio, 最长公共子串长度)。"""
+    a = compact_story_raw(left)
+    b = compact_story_raw(right)
+    if not a or not b:
+        return 0.0, 0
+    matcher = SequenceMatcher(None, a, b, autojunk=False)
+    longest = max((block.size for block in matcher.get_matching_blocks()), default=0)
+    return round(matcher.ratio(), 4), int(longest)
+
+
+def is_near_duplicate_story(left: str, right: str) -> bool:
+    _ratio, longest = story_raw_similarity(left, right)
+    return longest >= NEAR_DUP_LCS_MIN
+
+
+def find_near_duplicate(story_raw: str) -> dict[str, Any] | None:
+    """库内近重复：转载换 BV、LLM 抽稿措辞不同仍能命中。"""
+    compact_new = compact_story_raw(story_raw)
+    if len(compact_new) < NEAR_DUP_LCS_MIN:
+        return None
+    rows = sql.fetchall(
+        """
+        SELECT id, source_id, title,
+               json_extract(payload_json, '$.story_raw') AS story_raw
+        FROM gold_story
+        """,
+    )
+    sql.commit()
+    best: dict[str, Any] | None = None
+    for row in rows:
+        ratio, longest = story_raw_similarity(story_raw, str(row["story_raw"] or ""))
+        if longest < NEAR_DUP_LCS_MIN:
+            continue
+        cand = {
+            "id": int(row["id"]),
+            "source_id": str(row["source_id"] or ""),
+            "title": row["title"],
+            "ratio": ratio,
+            "lcs": longest,
+        }
+        if best is None or cand["lcs"] > best["lcs"] or (
+            cand["lcs"] == best["lcs"] and cand["ratio"] > best["ratio"]
+        ):
+            best = cand
+    return best
 
 
 def _funny_signal_from_payload(payload: dict[str, Any]) -> float | None:
@@ -282,6 +339,82 @@ def delete_stories_by_ids(gold_story_ids: list[int]) -> int:
     return int(result.rowcount or 0)
 
 
+def list_all_stories() -> list[dict]:
+    rows = sql.fetchall(
+        f"SELECT {_GOLD_STORY_COLUMNS} FROM gold_story ORDER BY id DESC",
+    )
+    sql.commit()
+    return [_row_to_dict(row) for row in rows]
+
+
+def apply_funny_rescore(
+    gold_story_id: int,
+    *,
+    payload: dict[str, Any],
+    auto_score: float,
+    status: str,
+) -> None:
+    """回写重评后的 funny_signal / auto_score / status。"""
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    sql.execute(
+        """
+        UPDATE gold_story
+        SET payload_json = ?, auto_score = ?, status = ?, updated_at = ?
+        WHERE id = ?
+        """,
+        (
+            json.dumps(payload, ensure_ascii=False),
+            float(auto_score),
+            str(status),
+            now,
+            int(gold_story_id),
+        ),
+    )
+    sql.commit()
+
+
+def rescore_all_funny() -> list[dict[str, Any]]:
+    """全库按当前权重重算 funny_signal，并重套 L2 门控。"""
+    from app.services.daily_story.gold_story.funny_signal import plan_funny_rescore
+
+    results: list[dict[str, Any]] = []
+    for row in list_all_stories():
+        plan = plan_funny_rescore(row)
+        gid = int(row["id"])
+        if plan.get("skipped"):
+            results.append(plan)
+            continue
+        payload = plan["payload"]
+        score = compute_auto_score(
+            funny_signal=_funny_signal_from_payload(payload),
+            extract_confidence=float(payload.get("extract_confidence") or 0),
+            structure_confidence=float(payload.get("structure_confidence") or 0),
+            dialogue_confidence=float(payload.get("dialogue_confidence") or 0),
+        )
+        apply_funny_rescore(
+            gid,
+            payload=payload,
+            auto_score=score,
+            status=str(plan["status"]),
+        )
+        results.append(
+            {
+                "id": gid,
+                "source_id": row.get("source_id"),
+                "title": row.get("title"),
+                "skipped": False,
+                "old_status": plan.get("old_status"),
+                "status": plan["status"],
+                "old_signal": plan.get("old_signal"),
+                "funny_signal": plan.get("funny_signal"),
+                "auto_score": score,
+                "l2_ok": plan.get("l2_ok"),
+                "l2_reason": plan.get("l2_reason"),
+            }
+        )
+    return results
+
+
 def patch_story_payload(gold_story_id: int, patch: dict[str, Any]) -> None:
     """合并 payload 字段（如 funny_signal）。"""
     row = get_story(int(gold_story_id))
@@ -488,6 +621,17 @@ def insert_or_skip(
             "action": "skip",
             "reason": "duplicate_content_hash",
             "id": int(dup["id"]),
+        }
+
+    near = find_near_duplicate(story_raw)
+    if near:
+        return {
+            "action": "skip",
+            "reason": "duplicate_similar_story",
+            "id": int(near["id"]),
+            "similar_source_id": near["source_id"],
+            "similar_ratio": near["ratio"],
+            "similar_lcs": near["lcs"],
         }
 
     existing = sql.fetchone(
