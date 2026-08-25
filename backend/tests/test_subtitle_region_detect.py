@@ -7,6 +7,7 @@ import numpy as np
 from app.services.daily_story.gold_story.subtitle_detect import (
     _BandObservation,
     _cluster_observations,
+    _region_from_cluster,
     _select_fixed_dialogue_cluster,
     list_subtitle_bands_from_gray,
 )
@@ -40,10 +41,21 @@ def test_select_fixed_dialogue_cluster_prefers_recurring_lower_band():
         observations.append(_BandObservation(y_ratio=0.90, h_ratio=0.06))
 
     clusters = _cluster_observations(observations, y_center_tol=0.025)
-    picked = _select_fixed_dialogue_cluster(clusters, sample_frames=8)
+    picked = _select_fixed_dialogue_cluster(
+        clusters,
+        sample_frames=8,
+        max_h_ratio=0.10,
+    )
     assert picked is not None
     assert len(picked) == 6
     assert statistics.mean(obs.y_center for obs in picked) > 0.88
+
+
+def test_region_from_cluster_caps_height_to_two_lines():
+    cluster = [_BandObservation(y_ratio=0.88, h_ratio=0.05) for _ in range(5)]
+    region = _region_from_cluster(cluster, max_h_ratio=0.10, min_h_ratio=0.025)
+    assert region.h_ratio <= 0.10
+    assert 0.85 <= region.y_ratio + region.h_ratio <= 1.0
 
 
 def test_list_subtitle_bands_returns_empty_on_blank():
