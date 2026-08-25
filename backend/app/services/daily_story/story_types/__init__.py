@@ -44,7 +44,9 @@ __all__ = [
     "revision_hints_for_type",
     "select_story_type_tag",
     "story_line_for_code",
+    "story_type_punchline_conflict",
     "story_type_tag",
+    "type_body_validation_enabled",
     "type_catalog_system_block",
     "validate_type_opening",
 ]
@@ -63,6 +65,52 @@ QUALITY_FALLBACK_CODE = "C"
 
 def story_line_for_code(code: str) -> StoryTypeLine:
     return STORY_TYPE_LINES.get(code.upper(), LINE_C)
+
+
+def type_body_validation_enabled(code: str) -> bool:
+    """quality_ready=False 的类型不进 H5 生成硬卡（仅 gold 侧观测）。"""
+    line = STORY_TYPE_LINES.get(code.upper())
+    return bool(line and line.quality_ready)
+
+
+def story_type_punchline_conflict(story: dict) -> str | None:
+    """DB story_type 与 punchline 类型标记不一致时返回告警文案。"""
+    if not isinstance(story, dict):
+        return None
+    st_raw = str(story.get("story_type") or "").strip()
+    if not st_raw:
+        return None
+    st = parse_story_type_code(story_type=st_raw)
+    punch = str(story.get("punchline_explain") or "").strip()
+    if not punch:
+        return None
+    punch_code = extract_story_type_code_from_punchline(punch)
+    if not punch_code:
+        punch_code = _parse_weak_punchline_type_code(punch)
+    if punch_code and punch_code != st:
+        return f"类型标签冲突：story_type={st}，punchline={punch_code}类"
+    return None
+
+
+def repair_punchline_explain_for_story_type(story: dict) -> bool:
+    """story_type 与 punchline 类型冲突时，按 story_type 重写前缀。"""
+    if not isinstance(story, dict):
+        return False
+    conflict = story_type_punchline_conflict(story)
+    if not conflict:
+        return False
+    st = parse_story_type_code(story_type=str(story.get("story_type") or ""))
+    raw = str(story.get("punchline_explain") or "").strip()
+    punch_code = extract_story_type_code_from_punchline(raw) or _parse_weak_punchline_type_code(raw)
+    if not punch_code or punch_code == st:
+        return False
+    rest = raw
+    rest = re.sub(rf"^矛盾类型\s*{punch_code}[（(][^)）]+[)）]?\s*[：:]?\s*", "", rest, flags=re.IGNORECASE)
+    rest = re.sub(rf"^{punch_code}\s*类?\s*[：:]\s*", "", rest)
+    rest = rest.strip()
+    tag = story_type_tag(st)
+    story["punchline_explain"] = f"{tag}，{rest}" if rest else tag
+    return True
 
 
 def extract_story_type_code_from_punchline(punchline: str | None) -> str | None:
@@ -416,11 +464,11 @@ def append_type_body_validation_errors(story: dict, errors: list[str]) -> None:
         from app.services.daily_story.story_types.g.validate import append_g_body_errors
 
         append_g_body_errors(story, errors)
-    elif code == "H":
+    elif code == "H" and type_body_validation_enabled("H"):
         from app.services.daily_story.story_types.h.validate import append_h_body_errors
 
         append_h_body_errors(story, errors)
-    elif code == "I":
+    elif code == "I" and type_body_validation_enabled("I"):
         from app.services.daily_story.story_types.i.validate import append_i_body_errors
 
         append_i_body_errors(story, errors)
@@ -517,19 +565,21 @@ def validate_type_opening(
     )
     from app.services.daily_story.story_types.h.opening import append_h_opening_errors
 
-    append_h_opening_errors(
-        normalized,
-        type_code=type_code,
-        errors=errors,
-        conflict_core=conflict_core,
-        setting=setting,
-    )
-    from app.services.daily_story.story_types.i.opening import append_i_opening_errors
+    if type_body_validation_enabled("H"):
+        append_h_opening_errors(
+            normalized,
+            type_code=type_code,
+            errors=errors,
+            conflict_core=conflict_core,
+            setting=setting,
+        )
+    if type_body_validation_enabled("I"):
+        from app.services.daily_story.story_types.i.opening import append_i_opening_errors
 
-    append_i_opening_errors(
-        normalized,
-        type_code=type_code,
-        errors=errors,
-        conflict_core=conflict_core,
-        setting=setting,
-    )
+        append_i_opening_errors(
+            normalized,
+            type_code=type_code,
+            errors=errors,
+            conflict_core=conflict_core,
+            setting=setting,
+        )

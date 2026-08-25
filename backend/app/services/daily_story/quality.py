@@ -723,6 +723,12 @@ def score_daily_story(
     explain = str(story.get("punchline_explain") or "")
     profile = resolve_quality_profile(story)
 
+    from app.services.daily_story.story_types import story_type_punchline_conflict
+
+    type_conflict = story_type_punchline_conflict(story)
+    if type_conflict:
+        cons.append(type_conflict)
+
     if not explain or not any(m in explain for m in _PUNCHLINE_TYPE_MARKERS):
         score -= 10
         cons.append("笑点解析缺类型")
@@ -870,6 +876,14 @@ def score_daily_story(
         cons.append(f"收束形态未落位：无回旋镖/反转/破功落点（-{PUNCHLINE_SCORE_FULL}）")
         if punch_details:
             cons.extend(punch_details)
+
+    if profile.code == "I":
+        from app.services.daily_story.story_types.i.quality import score_i_trailing_tail
+
+        tail_ded, tail_cons = score_i_trailing_tail(lines)
+        if tail_ded:
+            score -= tail_ded
+            cons.extend(tail_cons)
 
     structure_score = max(0, min(STRUCTURE_SCORE_CAP, score))
     # 正则好笑：生成循环不计入 score（只追结构）；保存/预览经
@@ -1068,6 +1082,9 @@ def attach_daily_story_quality(
     """
     if not isinstance(story, dict):
         return story
+    from app.services.daily_story.story_types import repair_punchline_explain_for_story_type
+
+    repair_punchline_explain_for_story_type(story)
     prev = story.get("quality") if isinstance(story.get("quality"), dict) else None
     prev_humor = prev.get("humor") if isinstance(prev, dict) else None
     quality = score_daily_story(story, theme=theme)
