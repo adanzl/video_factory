@@ -242,8 +242,9 @@ def resolve_quality_profile(
 ) -> TypeQualityProfile:
     if not isinstance(story, dict):
         return _PROFILE_C
+    st = story_type or str(story.get("story_type") or "").strip() or None
     code = parse_story_type_code(
-        story_type=story_type,
+        story_type=st,
         punchline=str(story.get("punchline_explain") or ""),
     )
     return quality_profile_for_code(code)
@@ -272,6 +273,7 @@ def _register_profiles() -> dict[str, TypeQualityProfile]:
     from app.services.daily_story.story_types.e import quality as qe
     from app.services.daily_story.story_types.g import quality as qg
     from app.services.daily_story.story_types.h import quality as quality_h
+    from app.services.daily_story.story_types.i import quality as quality_i
 
     profiles = (
         qa.QUALITY_PROFILE,
@@ -281,6 +283,7 @@ def _register_profiles() -> dict[str, TypeQualityProfile]:
         qe.QUALITY_PROFILE,
         qg.QUALITY_PROFILE,
         quality_h.QUALITY_PROFILE,
+        quality_i.QUALITY_PROFILE,
     )
     return {p.code: p for p in profiles}
 
