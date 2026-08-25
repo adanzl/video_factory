@@ -806,27 +806,6 @@ def apply_gold_chat_normalizations(
     chat, pad_changed = _ensure_gold_chat_min_chars(chat)
     if pad_changed:
         notes.append("gold_chat垫字补min")
-    total = dialogue_total_chars(chat)
-    if total < DAILY_STORY_BODY_CHARS_MIN:
-        payload_banned = payload.get("banned_literals") if isinstance(payload, dict) else []
-        sc_banned = sc.get("banned_literals") if isinstance(sc.get("banned_literals"), list) else []
-        banned = [str(x) for x in (payload_banned or sc_banned or []) if str(x).strip()]
-        mom_max = sc.get("mom_lines_max")
-        if mom_max is None:
-            mom_max = 1
-        try:
-            chat = _fix_chat_with_llm(
-                chat,
-                f"正文总字数须≥{DAILY_STORY_BODY_CHARS_MIN}，当前{total}字",
-                banned_literals=banned,
-                mom_lines_max=int(mom_max),
-            )
-            if st == "I":
-                notes.extend(patch_i_body(chat))
-            chat, _ = _ensure_gold_chat_min_chars(chat)
-            notes.append("gold_chat LLM扩写补min")
-        except Exception as exc:
-            logger.warning("gold_chat normalize LLM expand skipped: %s", exc)
     return chat, notes
 
 
@@ -1541,7 +1520,9 @@ def gold_chat_summary(
 
 def collect_gold_chat_polish_issues(story: dict[str, Any]) -> list[dict[str, Any]]:
     """规则收集 gold_chat 润色点，交给 daily_story 童语化润色模块。"""
-    issues: list[dict[str, Any]] = []
+    from app.services.daily_story.review import collect_narration_meta_issues
+
+    issues: list[dict[str, Any]] = list(collect_narration_meta_issues(story))
     rows = story.get("dialogue") or []
     wa_kept = 0
     for i, row in enumerate(rows, 1):
@@ -1695,11 +1676,12 @@ def polish_gold_chat_wording(
     polish = getattr(client, "polish_daily_story_wording", None)
     if not callable(polish):
         return chat, 0
+    type_code = str(chat.get("story_type") or "").strip().upper()[:1] or None
     raw = polish(
         theme or str(chat.get("scene_title") or ""),
         chat,
         issues,
-        type_code="C",
+        type_code=type_code,
     )
     fixed, accepted = _apply_gold_chat_polish_fixes(
         chat,
