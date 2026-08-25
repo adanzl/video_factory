@@ -20,6 +20,7 @@ from app.services.daily_story.story_types.d.line import LINE_D
 from app.services.daily_story.story_types.e.line import LINE_E
 from app.services.daily_story.story_types.g.line import LINE_G
 from app.services.daily_story.story_types.h.line import LINE_H
+from app.services.daily_story.story_types.i.line import LINE_I
 
 __all__ = [
     "QUALITY_FALLBACK_CODE",
@@ -50,7 +51,7 @@ __all__ = [
 
 STORY_TYPE_LINES: dict[str, StoryTypeLine] = {
     r.code: r
-    for r in (LINE_A, LINE_B, LINE_C, LINE_D, LINE_E, LINE_G, LINE_H)
+    for r in (LINE_A, LINE_B, LINE_C, LINE_D, LINE_E, LINE_G, LINE_H, LINE_I)
 }
 
 _VALID_STORY_TYPES = frozenset(STORY_TYPE_LABELS.keys())
@@ -419,6 +420,10 @@ def append_type_body_validation_errors(story: dict, errors: list[str]) -> None:
         from app.services.daily_story.story_types.h.validate import append_h_body_errors
 
         append_h_body_errors(story, errors)
+    elif code == "I":
+        from app.services.daily_story.story_types.i.validate import append_i_body_errors
+
+        append_i_body_errors(story, errors)
 
 
 def patch_type_body(story: dict) -> list[str]:
@@ -451,6 +456,10 @@ def patch_type_body(story: dict) -> list[str]:
         from app.services.daily_story.story_types.h.patch import patch_h_body
 
         return patch_h_body(story)
+    if code == "I":
+        from app.services.daily_story.story_types.i.patch import patch_i_body
+
+        return patch_i_body(story)
     return []
 
 
@@ -509,6 +518,15 @@ def validate_type_opening(
     from app.services.daily_story.story_types.h.opening import append_h_opening_errors
 
     append_h_opening_errors(
+        normalized,
+        type_code=type_code,
+        errors=errors,
+        conflict_core=conflict_core,
+        setting=setting,
+    )
+    from app.services.daily_story.story_types.i.opening import append_i_opening_errors
+
+    append_i_opening_errors(
         normalized,
         type_code=type_code,
         errors=errors,
