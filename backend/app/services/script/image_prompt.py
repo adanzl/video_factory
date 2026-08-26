@@ -138,13 +138,98 @@ def _daily_scene_anchor(
 
 
 def _join_slots(parts: list[str]) -> str:
-    """槽位拼装：每个槽位去掉首尾标点，用「；」连接，零判断。"""
+    """槽位拼装：每个槽位去掉首尾标点，用「；」连接；完全相同槽位去重。"""
     out: list[str] = []
+    seen: set[str] = set()
     for p in parts:
         p = (p or "").strip("，,；;。. ")
-        if p:
+        if p and p not in seen:
+            seen.add(p)
             out.append(p)
     return "；".join(out)
+
+
+_SCENE_FURNITURE_OBJECTS = frozenset({"餐桌", "茶几", "沙发", "书桌", "床", "地垫"})
+
+
+def _filter_scene_duplicate_object_states(
+    states: list,
+    *,
+    scene_anchor: str | None,
+    scene_anchors: list | None,
+) -> list:
+    """S2 已写场景硬锚点时，S5 不再重复渲染同名家具体。"""
+    anchor_blob = (scene_anchor or "") + "、".join(
+        str(a).strip() for a in (scene_anchors or []) if str(a).strip()
+    )
+    if not anchor_blob:
+        return states
+    out: list = []
+    for st in states:
+        if not isinstance(st, dict):
+            continue
+        obj = str(st.get("object") or "").strip()
+        if obj in _SCENE_FURNITURE_OBJECTS and obj in anchor_blob:
+            continue
+        out.append(st)
+    return out
+
+
+def _strip_s4_redundant_scene_prefix(s4: str, s2: str) -> str:
+    """S4 开头勿重复 S2 地点前缀（如 S2=餐桌旁… S4=餐桌旁，餐桌清晰可见…）。"""
+    if not s4 or not s2:
+        return s4
+    s2_head = s2.split("，")[0].strip()
+    for prefix in (s2_head + "，", s2 + "，", s2):
+        if s4.startswith(prefix):
+            return s4[len(prefix) :].lstrip("，")
+    return s4
+
+
+def _strip_s4_object_state_overlap(s4: str, states: list) -> str:
+    """结构化路径：holder+道具状态句归 S5，从 S4 剔除同类描写。"""
+    if not s4 or not states:
+        return s4
+    from app.services.script.visual_brief import (
+        _collapse_object_aliases,
+        is_body_part_object,
+    )
+
+    pairs: list[tuple[str, str]] = []
+    for st in _collapse_object_aliases(states):
+        if not isinstance(st, dict):
+            continue
+        obj = str(st.get("object") or "").strip()
+        holder = str(st.get("holder") or "").strip()
+        if not obj or is_body_part_object(obj):
+            continue
+        if holder and holder != "无":
+            pairs.append((obj, holder))
+    if not pairs:
+        return s4
+    kept: list[str] = []
+    for part in re.split(r"(?<=[。；;])", s4):
+        s = part.strip()
+        if not s:
+            continue
+        drop = False
+        for obj, holder in pairs:
+            if obj not in s or holder not in s:
+                continue
+            if s.startswith("画面") and ("左边" in s or "右边" in s):
+                continue
+            if any(
+                k in s
+                for k in ("手中放着", "手里放着", "被" + holder, "被灿灿用", "被昭昭用")
+            ):
+                drop = True
+                break
+            if ("手中" in s or "手里" in s) and not s.startswith("画面"):
+                drop = True
+                break
+        if not drop:
+            kept.append(s)
+    return "".join(kept).strip("，,；;。 ")
 
 
 def _render_object_states(states: list) -> str:
@@ -1028,6 +1113,10 @@ def assemble_daily_t2i_prompt(
     # S1 风格（常量）
     s1 = _DAILY_T2I_STYLE
 
+    s2 = scene_anchor or ""
+    if s2 and shot == "特写":
+        s2 = s2.split("，")[0]
+
     # S3 角色外貌（子块拼装：基块 + 身高锁 + 发色锁 + 地垫变体）
     char_parts: list[str] = []
     for name in speakers:
@@ -1066,14 +1155,26 @@ def assemble_daily_t2i_prompt(
     s4 = "；".join(
         p.strip("，,；;。. ") for p in s4_parts if p.strip("，,；;。. ")
     )
+    from app.services.script.visual_brief import _dedupe_clause_text
+
+    s4 = _dedupe_clause_text(s4)
+    if structured and s2:
+        s4 = _strip_s4_redundant_scene_prefix(s4, s2)
 
     # S5 道具状态：优先结构化 object_states（状态机已归一），否则 vb 关键词推导兜底
     s5 = ""
     obj_states = seg.get("object_states")
     if isinstance(obj_states, list) and obj_states:
+        obj_states = _filter_scene_duplicate_object_states(
+            obj_states,
+            scene_anchor=s2,
+            scene_anchors=seg.get("scene_anchors"),
+        )
         rendered = _render_object_states(obj_states)
         if rendered:
             s5 = rendered
+            if structured:
+                s4 = _strip_s4_object_state_overlap(s4, obj_states)
             if floor_shoe_scene and (
                 "粉鞋" in rendered or "粉红运动鞋" in rendered
             ):
@@ -1096,11 +1197,6 @@ def assemble_daily_t2i_prompt(
     # S7+8 镜头参数（光照 + 构图站位合并）
     layout = _daily_layout_speakers(seg, vb)
     s78 = _daily_lighting(vb) + _daily_composition(shot, layout, vb=vb)
-
-    # S2 场景锚点按景别裁剪：特写背景虚化，完整锚点是噪音，只留地点
-    s2 = scene_anchor or ""
-    if s2 and shot == "特写":
-        s2 = s2.split("，")[0]
 
     parts = [s1, s2, s4, s5, s3, s6, s78]
     if extra and extra.strip():
