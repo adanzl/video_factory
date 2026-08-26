@@ -24,11 +24,9 @@ if str(BACKEND_DIR) not in sys.path:
 from app.config import Config
 from app.core import create_app
 from app.repositories import repo_gold_story
-from app.services.daily_story.gold_story.gold_chat_batch import run_gold_chat_batch
-from app.services.daily_story.gold_story.gold_chat_convert import (
-    gold_chat_export_dir,
-    polish_gold_chat_export,
-)
+from app.services.daily_story.gold_story.gold_chat.batch import run_gold_chat_batch
+from app.services.daily_story.gold_story.gold_chat.export import gold_chat_export_dir
+from app.services.daily_story.gold_story.gold_chat.polish import polish_gold_chat_export
 
 
 def _cmd_run(args: argparse.Namespace) -> int:

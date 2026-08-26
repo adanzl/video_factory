@@ -26,7 +26,7 @@ from app.services.daily_story.gold_story.export_story import (
     _load_repaired_transcript_text,
     _load_transcript_text,
 )
-from app.services.daily_story.gold_story.review import audit_story
+from app.services.daily_story.gold_story.collect.review import audit_story
 
 
 def _load_transcript_for_row(row: dict, cfg: Config) -> str:

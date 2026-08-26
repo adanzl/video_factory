@@ -5,9 +5,9 @@ from __future__ import annotations
 from typing import Any
 
 from app.config import Config
-from app.repositories import repo_gold_story
-from app.services.daily_story.gold_story.scene_contract import (
-    format_scene_contract_block,
+from app.repositories import repo_daily_story, repo_gold_story
+from app.services.daily_story.gold_story.scene import (
+    format_scene_block,
     sanitize_banned_literals,
 )
 from app.services.daily_story.gold_story.types import (
@@ -17,6 +17,7 @@ from app.services.daily_story.gold_story.types import (
     normalize_structure_type,
     structure_type_label,
 )
+from app.services.daily_story.prompts import themes_near_duplicate
 
 
 def format_beat_numbered(beat: list[Any]) -> str:
@@ -71,7 +72,7 @@ def build_gold_story_block(story: dict[str, Any]) -> str:
         ),
         "故事 beat：",
         format_beat_numbered(beat) or "（无）",
-        format_scene_contract_block(scene_contract),
+        format_scene_block(scene_contract),
         "对话骨架（intent 仅供参考，须重写为昭昭/灿灿 口语对白）：",
         format_dialogue_seed(dialogue_seed) or "（无）",
     ]
@@ -83,14 +84,35 @@ def build_gold_story_block(story: dict[str, Any]) -> str:
     return "\n".join(parts)
 
 
+def _gold_near_duplicate_of_daily_story(row: dict[str, Any]) -> bool:
+    """金故事 conflict_core/标题 是否与已有 daily_story 稿子雷同。"""
+    gold_bits = [
+        str(row.get("conflict_core") or "").strip(),
+        str(row.get("title") or "").strip(),
+    ]
+    gold_bits = [text for text in gold_bits if text]
+    if not gold_bits:
+        return False
+    existing = repo_daily_story.list_stories(limit=200)
+    for item in existing:
+        theme = str(item.get("theme") or "").strip()
+        story = item.get("story") if isinstance(item.get("story"), dict) else {}
+        conflict = str(story.get("conflict_core") or "").strip()
+        for gold in gold_bits:
+            if theme and themes_near_duplicate(gold, theme):
+                return True
+            if conflict and themes_near_duplicate(gold, conflict):
+                return True
+    return False
+
+
 def pick_for_injection(
     *,
     theme: str,
     story_type: str,
     theme_family: str | None = None,
-    exclude_mechanisms: set[str] | None = None,
 ) -> dict[str, Any] | None:
-    """H5：取 1 条可注入金故事；F 等非 A–E 不入队。"""
+    """H5：取 1 条可注入金故事；与已有 daily_story 雷同则跳过。"""
     code = normalize_structure_type(story_type)
     if code not in GOLD_STORY_INJECTABLE_CODES:
         return None
@@ -100,14 +122,11 @@ def pick_for_injection(
         theme_family=theme_family,
         limit=5,
     )
-    recent = recent_injected_mechanisms(story_type=code)
-    exclude = {m.upper() for m in (exclude_mechanisms or set())} | recent
     for row in rows:
-        mech = str(row.get("mechanism") or "").upper()
         st = str(row.get("structure_type") or "").upper()
         if not is_injectable_structure_type(st):
             continue
-        if mech and mech in exclude:
+        if _gold_near_duplicate_of_daily_story(row):
             continue
         return row
     return None
@@ -120,7 +139,7 @@ def resolve_gold_story_block(
     theme_family: str | None = None,
     config: Config | None = None,
 ) -> tuple[str, dict[str, Any] | None]:
-    """H7 入口：开关关闭或无匹配时返回空块。"""
+    """H7 入口：开关关闭、无匹配或全部雷同时返回空块。"""
     cfg = config or Config()
     if not cfg.gold_story_enabled or not story_type:
         return "", None
@@ -132,17 +151,3 @@ def resolve_gold_story_block(
     if not row:
         return "", None
     return build_gold_story_block(row), row
-
-
-def recent_injected_mechanisms(
-    *,
-    story_type: str,
-    limit: int = 3,
-) -> set[str]:
-    """近 N 次注入用过的 mechanism（H5 降权，best-effort）。"""
-    code = normalize_structure_type(story_type)
-    rows = repo_gold_story.fetch_recent_inject_mechanisms(
-        story_type=code,
-        limit=limit,
-    )
-    return {str(r).upper() for r in rows if r}

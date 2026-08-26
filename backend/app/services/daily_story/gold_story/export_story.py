@@ -7,7 +7,7 @@ from typing import Any
 
 from app.config import Config
 from app.services.daily_story.gold_story.transcript import format_transcript_display
-from app.services.daily_story.gold_story.scene_contract import format_scene_contract_block
+from app.services.daily_story.gold_story.scene import format_scene_block
 
 
 def story_export_dir(config: Config | None = None) -> Path:
@@ -222,7 +222,7 @@ def export_story_files(
             str(export.get("story_raw") or "（空）"),
             "",
             "## scene_contract",
-            format_scene_contract_block(export.get("scene_contract") or {}),
+            format_scene_block(export.get("scene_contract") or {}),
             "",
             "## beat",
         ]

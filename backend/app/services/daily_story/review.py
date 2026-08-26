@@ -1255,36 +1255,17 @@ def apply_review_to_quality(
     points, reasons = review_penalty(penalized)
 
     if humor and isinstance(humor, dict):
-        quality["humor"] = humor
-        funny = max(0, min(20, int(humor.get("funny_score") or 0)))
-        structure = int(quality.get("structure_score") or 0)
-        score = max(0, min(100, structure + funny - points))
-        quality["score"] = score
-        quality["grade"] = _grade_from_score(score)
-        pass_ok = structure >= 75 and funny >= HUMOR_PUBLISH_MIN
-        quality["pass"] = pass_ok
-        if pass_ok:
-            line_reason = (
-                f"发布达标：结构{structure}≥75，"
-                f"LLM好笑{funny}/20≥{HUMOR_PUBLISH_MIN}"
-            )
-        else:
-            misses = []
-            if structure < 75:
-                misses.append(f"结构{structure}<75")
-            if funny < HUMOR_PUBLISH_MIN:
-                misses.append(f"好笑{funny}/20<{HUMOR_PUBLISH_MIN}")
-            line_reason = (
-                f"未达发布线（{'，'.join(misses)}，"
-                f"须结构≥75且好笑≥{HUMOR_PUBLISH_MIN}）"
-            )
-        all_reasons = [*reasons, line_reason]
-        quality["reasons"] = [*(quality.get("reasons") or []), *all_reasons]
-        head = all_reasons[0]
-        quality["summary"] = (
-            f"{head}，另有{len(all_reasons) - 1}项"
-            if len(all_reasons) > 1
-            else head
+        from app.services.daily_story.quality import finalize_daily_story_total
+
+        if reasons:
+            quality["reasons"] = [
+                *(quality.get("reasons") or []),
+                *reasons,
+            ]
+        finalize_daily_story_total(
+            quality,
+            humor=humor,
+            review_penalty_points=points,
         )
         return story
 

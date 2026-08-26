@@ -1,8 +1,8 @@
 """金故事 H0b 多源逐字稿融合测试。"""
 
 from app.config import Config
-from app.services.daily_story.gold_story import subtitle_ocr as ocr
-from app.services.daily_story.gold_story import transcript_merge as tm
+from app.services.daily_story.gold_story.transcript import ocr
+from app.services.daily_story.gold_story.transcript import merge as tm
 
 
 def test_score_transcript_prefers_clean_dialogue():

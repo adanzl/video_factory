@@ -19,7 +19,7 @@ from app.services.daily_story.gold_story.collect import (
     fetch_top_replies,
     fetch_video_meta,
 )
-from app.services.daily_story.gold_story.funny_signal import (
+from app.services.daily_story.gold_story.collect.funny import (
     compute_audience_funny_metrics,
     metrics_to_payload,
     passes_funny_gate_from_payload,

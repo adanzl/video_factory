@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from app.services.daily_story.gold_story import gold_chat_convert as gc
-from app.services.daily_story.gold_story.setting_location import (
+from app.services.daily_story.gold_story.gold_chat import convert as gc
+from app.services.daily_story.gold_story.gold_chat.setting import (
     normalize_gold_chat_setting,
     resolve_target_location,
     setting_location_violations,

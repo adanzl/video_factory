@@ -162,7 +162,7 @@ def test_review_prompt_i_stubborn_progression_not_dup():
 
 
 def test_collect_narration_meta_flags_yizhaozhidi():
-    from app.services.daily_story.gold_story.gold_chat_convert import (
+    from app.services.daily_story.gold_story.gold_chat.convert import (
         collect_gold_chat_polish_issues,
     )
     from app.services.daily_story.review import collect_wording_issues

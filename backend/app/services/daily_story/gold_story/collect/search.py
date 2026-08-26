@@ -11,9 +11,9 @@ from typing import Any
 import requests
 
 from app.config import Config
-from app.services.daily_story.gold_story.bili_wbi import fetch_wbi_keys, sign_wbi_params
-from app.services.daily_story.gold_story.download import normalize_bv
-from app.services.daily_story.gold_story.funny_signal import (
+from app.services.daily_story.gold_story.collect.sign import fetch_bili_sign_keys, sign_bili_params
+from app.services.daily_story.gold_story.transcript.download import normalize_bv
+from app.services.daily_story.gold_story.collect.funny import (
     compute_audience_funny_metrics,
     metrics_to_payload,
     passes_funny_gate,
@@ -184,8 +184,8 @@ def search_bilibili(
     cfg = config or Config()
     limit = max(1, min(limit, 50))
     http = session or _bili_http(cfg)
-    img_key, sub_key = fetch_wbi_keys(http)
-    params = sign_wbi_params(
+    img_key, sub_key = fetch_bili_sign_keys(http)
+    params = sign_bili_params(
         {
             "keyword": keyword,
             "search_type": "video",

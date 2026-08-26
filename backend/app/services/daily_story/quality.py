@@ -662,16 +662,9 @@ def _score_funniness(
         points += tail_pts
         pros.extend(tail_pros)
 
-    if points >= HUMOR_PUBLISH_MIN and not cons:
-        pros.append("好笑够格")
-
     points = _apply_humor_issue_caps(points, cons, profile)
 
     points = max(0, min(20, points))
-    if points >= _HUMOR_POINTS_FOR_GREAT:
-        pros.append("很好笑")
-    elif points >= _HUMOR_POINTS_FOR_GOOD:
-        pros.append("好笑达标")
 
     return points, pros, cons
 
@@ -685,8 +678,9 @@ def score_daily_story(
 
     评分模型：
     - 结构分（格式、层数、收束形态、节奏）80 满分扣分制
-    - 正则好笑维度 0–20 仅作标签输出（2026-08-10 退役），发布线好笑由 LLM 审读
-      注入 funny_score（0-20），总分 = 结构 + LLM 好笑 − 审读硬伤（≤100）
+    - humor_regex_points 仅作离线诊断（修订 hint），不计入总分
+    - 发布线好笑由 LLM 审读注入 funny_score（0-20）；
+      有 LLM 时总分 = 结构 + LLM 好笑 − 审读硬伤；无 LLM 时总分暂=结构分
     """
     if not isinstance(story, dict):
         return {
@@ -886,8 +880,7 @@ def score_daily_story(
             cons.extend(tail_cons)
 
     structure_score = max(0, min(STRUCTURE_SCORE_CAP, score))
-    # 正则好笑：生成循环不计入 score（只追结构）；保存/预览经
-    # finalize_daily_story_total 与结构相加；正式发布线以 LLM 审读为准。
+    # humor_regex_points：离线诊断（cons→修订 hint），不计入 score / 总分。
     humor_regex_points, humor_pros, humor_cons = _score_funniness(
         lines,
         type_code=profile.code,
@@ -897,8 +890,7 @@ def score_daily_story(
     pros.extend(humor_pros)
     cons.extend(humor_cons)
     pros.append(f"结构{structure_score}")
-    pros.append(f"正则好笑{humor_regex_points}")
-    # score 暂=结构分，供生成循环；attach/保存会 finalize 成结构+好笑
+    # score 暂=结构分；finalize 有 LLM 好笑才加成总分
     grade = _grade_from_score(structure_score)
     summary = _build_summary(
         pros, cons, grade, profile.summary_highlight_tokens,
@@ -982,20 +974,30 @@ def structure_score_of(quality: dict[str, Any] | None) -> int:
         return 0
 
 
+def _is_humor_score_reason(reason: str) -> bool:
+    """reasons 里由 regex 好笑分产出的标签（非 LLM 正式分）。"""
+    s = str(reason).strip()
+    if s.startswith("正则好笑"):
+        return True
+    if s.startswith("好笑") and len(s) > 2 and s[2:].isdigit():
+        return True
+    return s in ("好笑够格", "好笑达标", "很好笑")
+
+
 def finalize_daily_story_total(
     quality: dict[str, Any],
     *,
     humor: dict[str, Any] | None = None,
     review_penalty_points: int = 0,
 ) -> dict[str, Any]:
-    """总分 = 结构 + 好笑 − 审读硬伤。
+    """总分 = 结构 + LLM 好笑 − 审读硬伤（有 LLM 时）。
 
-    优先沿用 LLM ``humor.funny_score``（0-20）；否则用正则
-    ``humor_regex_points``。保存故事时走这条，避免只剩结构分。
+    无 LLM ``humor.funny_score`` 时：总分暂=结构分，``humor_pending=True``，
+    不判发布线。``humor_regex_points`` 仅保留作离线诊断。
     """
     structure = structure_score_of(quality)
     funny = 0
-    source = "regex"
+    source = "pending"
     if isinstance(humor, dict) and humor.get("funny_score") is not None:
         try:
             funny = max(0, min(20, int(humor.get("funny_score"))))
@@ -1009,16 +1011,19 @@ def finalize_daily_story_total(
                 "humor_type": humor_type,
             }
         except (TypeError, ValueError):
-            source = "regex"
-    if source == "regex":
-        try:
-            funny = max(0, min(20, int(quality.get("humor_regex_points") or 0)))
-        except (TypeError, ValueError):
-            funny = 0
+            source = "pending"
+    if source != "llm":
         quality.pop("humor", None)
+        quality["humor_pending"] = True
+    else:
+        quality["humor_pending"] = False
 
     points = max(0, int(review_penalty_points or 0))
-    total = max(0, min(100, structure + funny - points))
+    if source == "llm":
+        total = max(0, min(100, structure + funny - points))
+    else:
+        total = structure
+
     quality["score"] = total
     quality["grade"] = _grade_from_score(total)
 
@@ -1029,15 +1034,9 @@ def finalize_daily_story_total(
         and not str(r).startswith("发布达标")
         and not str(r).startswith("未达发布线")
         and not str(r).startswith("LLM好笑")
+        and not str(r).startswith("好笑待LLM审读")
+        and not _is_humor_score_reason(str(r))
     ]
-    normalized: list[str] = []
-    for r in reasons:
-        s = str(r)
-        if s.startswith("正则好笑"):
-            normalized.append(f"好笑{funny}")
-        else:
-            normalized.append(r)
-    reasons = normalized
     if source == "llm":
         if not any(str(r).startswith("好笑") and str(r)[2:].isdigit() for r in reasons):
             reasons.append(f"好笑{funny}")
@@ -1060,12 +1059,13 @@ def finalize_daily_story_total(
             )
         tail = f"-硬伤{points}" if points else ""
         reasons.append(f"总分{total}=结构{structure}+LLM好笑{funny}{tail}")
+        quality["summary"] = f"结构{structure}，好笑{funny}，总分{total}"
     else:
-        tail = f"-硬伤{points}" if points else ""
-        reasons.append(f"总分{total}=结构{structure}+好笑{funny}{tail}")
         quality.pop("pass", None)
+        reasons.append("好笑待LLM审读")
+        reasons.append(f"总分{total}=结构{structure}（好笑待LLM审读）")
+        quality["summary"] = f"结构{structure}，好笑待LLM审读，总分{total}"
     quality["reasons"] = reasons
-    quality["summary"] = f"结构{structure}，好笑{funny}，总分{total}"
     return quality
 
 
@@ -1075,7 +1075,7 @@ def attach_daily_story_quality(
     theme: str | None = None,
     finalize: bool = True,
 ) -> dict[str, Any]:
-    """重算观感分。默认 finalize=True：总分=结构+好笑（保存/列表用）。
+    """重算观感分。默认 finalize=True：有 LLM 好笑则总分=结构+LLM 好笑，否则暂=结构分。
 
     生成循环比较结构分请用 ``structure_score_of(quality)``，不要看总分。
     若稿上已有 LLM ``quality.humor``，finalize 时保留并优先用它。

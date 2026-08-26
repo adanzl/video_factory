@@ -2,9 +2,9 @@
 
 用法:
   cd backend
-  conda run -n flask_env python -m scripts.gold_story_pick \\
+  conda run -n flask_env python -m scripts.gold_story_block \\
     --theme 抢遥控器 --story-type C
-  conda run -n flask_env python -m scripts.gold_story_pick --list
+  conda run -n flask_env python -m scripts.gold_story_block --list
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ if str(BACKEND_DIR) not in sys.path:
 
 from app.core import create_app
 from app.repositories import repo_gold_story
-from app.services.daily_story.gold_story.inject import (
+from app.services.daily_story.gold_story.story_block import (
     build_gold_story_block,
     pick_for_injection,
 )

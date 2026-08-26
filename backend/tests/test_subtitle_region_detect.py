@@ -4,7 +4,7 @@ import statistics
 
 import numpy as np
 
-from app.services.daily_story.gold_story.subtitle_detect import (
+from app.services.daily_story.gold_story.transcript.detect import (
     SubtitleRegion,
     _BandObservation,
     _cluster_observations,

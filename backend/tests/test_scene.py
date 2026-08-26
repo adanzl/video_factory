@@ -1,14 +1,16 @@
-"""H3a scene_contract 与 validate_chat_hard 测试。"""
+"""H3a scene_contract 与成品对白 hard 校验测试。"""
 
 from __future__ import annotations
 
 import pytest
 
-from app.services.daily_story.gold_story.scene_contract import (
-    format_scene_contract_block,
-    seed_from_beat_chain,
+from app.services.daily_story.gold_story.gold_chat.validate import (
     validate_chat_hard,
-    validate_scene_contract,
+)
+from app.services.daily_story.gold_story.scene import (
+    format_scene_block,
+    seed_from_beat_chain,
+    validate_scene,
 )
 
 
@@ -33,18 +35,18 @@ def _sample_contract() -> dict:
     }
 
 
-def test_validate_scene_contract_ok():
-    assert validate_scene_contract(_sample_contract()) == []
+def test_validate_scene_ok():
+    assert validate_scene(_sample_contract()) == []
 
 
-def test_validate_scene_contract_rejects_short_chain():
+def test_validate_scene_rejects_short_chain():
     bad = {**_sample_contract(), "beat_chain": [{"speaker": "昭昭", "intent": "a"}]}
-    errs = validate_scene_contract(bad)
+    errs = validate_scene(bad)
     assert any("beat_chain" in e for e in errs)
 
 
-def test_format_scene_contract_block():
-    block = format_scene_contract_block(_sample_contract())
+def test_format_scene_block():
+    block = format_scene_block(_sample_contract())
     assert "scene_contract" in block
     assert "昭昭" in block
     assert "beat_chain" in block

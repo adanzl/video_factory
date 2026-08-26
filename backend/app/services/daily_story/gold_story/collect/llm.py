@@ -13,11 +13,11 @@ from app.services.daily_story.gold_story.types import (
     normalize_structure_type,
     structure_type_for_mechanism,
 )
-from app.services.daily_story.gold_story.scene_contract import (
+from app.services.daily_story.gold_story.scene import (
     SEED_MIN,
     sanitize_banned_literals,
     seed_from_beat_chain,
-    validate_scene_contract,
+    validate_scene,
 )
 from app.services.llm.llm_mgr import llm_mgr
 
@@ -489,7 +489,7 @@ def build_scene_contract(
     if data.get("mom_lines_max") is None:
         st = str(h3.get("structure_type") or "C").upper()
         data["mom_lines_max"] = 3 if st == "H" else 0
-    errors = validate_scene_contract(data)
+    errors = validate_scene(data)
     if errors:
         raise ValueError(f"H3a scene_contract invalid: {'; '.join(errors[:5])}")
     confidence = float(data.get("contract_confidence") or 0.0)

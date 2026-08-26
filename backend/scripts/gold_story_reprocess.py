@@ -20,11 +20,19 @@ if str(BACKEND_DIR) not in sys.path:
 
 from app.core import create_app
 from app.repositories import repo_gold_story
-from app.services.daily_story.gold_story.reprocess import (
-    KEEP_SIX_BVS,
-    KEEP_SIX_IDS,
-    reprocess_many,
+from app.services.daily_story.gold_story.collect.pipeline import (
+    overwrite_existing_stories,
 )
+
+KEEP_ACTIVE_IDS = (18, 23, 31, 34)
+KEEP_ACTIVE_BVS = (
+    "BV1sh411G7aX",
+    "BV18vLh6yEvm",
+    "BV1ND4y1X7Mm",
+    "BV1ms411a7im",
+)
+KEEP_SIX_IDS = KEEP_ACTIVE_IDS
+KEEP_SIX_BVS = KEEP_ACTIVE_BVS
 
 
 def _cmd_prune(_: argparse.Namespace) -> int:
@@ -53,7 +61,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
         return 1
     app = create_app()
     with app.app_context():
-        results = reprocess_many(
+        results = overwrite_existing_stories(
             ids,
             force_transcript=not args.skip_transcript,
         )
@@ -66,7 +74,10 @@ def _cmd_all(_: argparse.Namespace) -> int:
     app = create_app()
     with app.app_context():
         deleted = repo_gold_story.delete_stories_except(list(KEEP_SIX_IDS))
-        results = reprocess_many(list(KEEP_SIX_IDS), force_transcript=True)
+        results = overwrite_existing_stories(
+            list(KEEP_SIX_IDS),
+            force_transcript=True,
+        )
     payload = {"deleted": deleted, "results": results}
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     ok = sum(1 for r in results if r.get("action") == "ok")

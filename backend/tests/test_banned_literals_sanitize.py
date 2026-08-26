@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.services.daily_story.gold_story.scene_contract import sanitize_banned_literals
+from app.services.daily_story.gold_story.scene import sanitize_banned_literals
 
 
 def test_sanitize_drops_scene_and_humor_words():
