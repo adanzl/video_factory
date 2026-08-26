@@ -1,7 +1,8 @@
 """烧录字幕检测与字幕带 ROI 定位。
 
-业务规则：正片对白字幕在全片垂直位置固定；UP 主说明/解说层
-出现帧少且 y 位偏高。检测时多样本聚类，取跨帧最稳定的一条带。
+定带算法：边缘密度行投影 → 中位聚合 → 底部搜索区滑动窗口取峰。
+OCR 主路径复用已抽搜索带帧定带（一遍解码）；本模块另留视频抽样入口
+供烧录探测等兼容调用。
 """
 
 from __future__ import annotations
@@ -167,33 +168,229 @@ def roi_has_text_band(image_path: Path, *, min_edge_ratio: float = 0.015) -> boo
     return edge_ratio >= min_edge_ratio and std >= 18.0
 
 
-def _bands_from_edge_profile(gray: np.ndarray) -> list[tuple[int, int]]:
+def compute_edge_density_profile(gray: np.ndarray) -> np.ndarray:
+    """行向边缘密度投影：profile[y] = 该行边缘像素占比。"""
     import cv2
 
-    if gray.size == 0:
-        return []
+    if gray.ndim != 2 or gray.size == 0:
+        return np.zeros(0, dtype=float)
     blurred = cv2.GaussianBlur(gray, (3, 3), 0)
     edges = cv2.Canny(blurred, 80, 180)
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 3))
+    # 轻微横向膨胀，让笔画连成水平带
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 1))
     edges = cv2.dilate(edges, kernel, iterations=1)
-    profile = np.sum(edges > 0, axis=1).astype(float)
-    if profile.size == 0 or float(profile.max()) <= 0:
-        return []
+    width = max(int(edges.shape[1]), 1)
+    profile = np.sum(edges > 0, axis=1).astype(float) / float(width)
+    return profile
 
-    thresh = max(float(profile.max()) * 0.35, 8.0)
+
+def _sliding_window_scores(profile: np.ndarray, win_h: int) -> np.ndarray:
+    """均值密度滑动窗口；返回长度 H-win_h+1。"""
+    if win_h <= 0 or profile.size < win_h:
+        return np.zeros(0, dtype=float)
+    prefix_sum = np.cumsum(np.insert(profile.astype(float), 0, 0.0))
+    return (prefix_sum[win_h:] - prefix_sum[:-win_h]) / float(win_h)
+
+
+def sliding_window_subtitle_band(
+    profile: np.ndarray,
+    *,
+    search_y0: int,
+    min_h: int,
+    max_h: int,
+    step: int = 2,
+) -> tuple[int, int, float] | None:
+    """在搜索区内用滑动窗口圈出边缘密度最高的字幕带 (y0, y1, score)。"""
+    candidates = collect_sliding_window_candidates(
+        profile,
+        search_y0=search_y0,
+        min_h=min_h,
+        max_h=max_h,
+        step=step,
+        top_k=1,
+    )
+    return candidates[0] if candidates else None
+
+
+def collect_sliding_window_candidates(
+    profile: np.ndarray,
+    *,
+    search_y0: int,
+    min_h: int,
+    max_h: int,
+    step: int = 2,
+    top_k: int = 5,
+) -> list[tuple[int, int, float]]:
+    """滑动窗口候选带，按边缘密度分排序。"""
+    if profile.size == 0:
+        return []
+    h_frame = int(profile.size)
+    y0_floor = max(0, min(int(search_y0), h_frame - 1))
+    min_h = max(3, int(min_h))
+    max_h = max(min_h, int(max_h))
+    step = max(1, int(step))
+
+    scored: list[tuple[int, int, float]] = []
+    for win_h in range(min_h, max_h + 1, step):
+        scores = _sliding_window_scores(profile, win_h)
+        if scores.size == 0:
+            continue
+        start_lo = y0_floor
+        start_hi = h_frame - win_h
+        if start_hi < start_lo:
+            continue
+        segment = scores[start_lo : start_hi + 1]
+        if segment.size == 0:
+            continue
+        # 取该窗高下的局部峰，避免只盯一个全局点
+        peak_idx = int(np.argmax(segment))
+        start = start_lo + peak_idx
+        score = float(scores[start])
+        bottom_bonus = 0.05 * (start + win_h) / float(h_frame)
+        compact_bonus = 0.02 * (
+            1.0 - (win_h - min_h) / float(max(max_h - min_h, 1))
+        )
+        scored.append((start, start + win_h, score + bottom_bonus + compact_bonus))
+
+    if not scored:
+        return []
+    scored.sort(key=lambda row: row[2], reverse=True)
+    # NMS：中心距过近只留高分
+    kept: list[tuple[int, int, float]] = []
+    for y0, y1, score in scored:
+        center = 0.5 * (y0 + y1)
+        if any(abs(center - 0.5 * (a + b)) < max(8.0, 0.4 * (y1 - y0)) for a, b, _ in kept):
+            continue
+        kept.append((y0, y1, score))
+        if len(kept) >= max(1, int(top_k)):
+            break
+    return kept
+
+
+def band_edge_side_contrast_score(
+    gray: np.ndarray,
+    y0: int,
+    y1: int,
+    *,
+    offset: int = 2,
+) -> float:
+    """边缘两侧色差：字幕字/底对比高；地板/桌面渐变边缘两侧接近。
+
+    返回 0~1，越高越像烧录字幕。
+    """
+    import cv2
+
+    if gray.ndim != 2 or gray.size == 0 or y1 <= y0:
+        return 0.0
+    h, w = gray.shape
+    y0 = max(0, min(int(y0), h - 1))
+    y1 = max(y0 + 1, min(int(y1), h))
+    roi = gray[y0:y1, :]
+    if roi.size == 0:
+        return 0.0
+    blurred = cv2.GaussianBlur(roi, (3, 3), 0)
+    edges = cv2.Canny(blurred, 80, 180)
+    ys, xs = np.where(edges > 0)
+    if ys.size < 12:
+        # 边缘太少：用直方图双峰近似（字+底）
+        hist = np.bincount(roi.ravel(), minlength=256).astype(float)
+        if hist.sum() <= 0:
+            return 0.0
+        # 粗分低/高两半峰值差
+        lo = float(hist[:128].max())
+        hi = float(hist[128:].max())
+        peak = max(lo, hi)
+        other = min(lo, hi)
+        return float(np.clip((peak - other) / (peak + 1e-6), 0.0, 1.0))
+
+    off = max(1, int(offset))
+    diffs: list[float] = []
+    # 子采样，避免过慢
+    step = max(1, ys.size // 400)
+    for i in range(0, ys.size, step):
+        yy = int(ys[i])
+        xx = int(xs[i])
+        x_l = xx - off
+        x_r = xx + off
+        if x_l < 0 or x_r >= w:
+            continue
+        left = float(roi[yy, x_l])
+        right = float(roi[yy, x_r])
+        diffs.append(abs(left - right))
+    if not diffs:
+        return 0.0
+    # 字幕描边两侧差通常很大；渐变纹理中位数偏低
+    med = float(np.median(np.asarray(diffs, dtype=float)))
+    return float(np.clip(med / 80.0, 0.0, 1.0))
+
+
+def mean_band_contrast_over_frames(
+    grays: list[np.ndarray],
+    y0: int,
+    y1: int,
+) -> float:
+    if not grays:
+        return 0.0
+    scores = [band_edge_side_contrast_score(g, y0, y1) for g in grays if g is not None]
+    if not scores:
+        return 0.0
+    return float(statistics.median(scores))
+
+
+def refine_band_by_profile(
+    profile: np.ndarray,
+    y0: int,
+    y1: int,
+    *,
+    keep_ratio: float = 0.35,
+) -> tuple[int, int]:
+    """在窗口内按投影阈值收紧上下边界，去掉空白边。"""
+    if profile.size == 0 or y1 <= y0:
+        return y0, y1
+    y0 = max(0, min(y0, profile.size - 1))
+    y1 = max(y0 + 1, min(y1, profile.size))
+    segment = profile[y0:y1]
+    peak = float(segment.max()) if segment.size else 0.0
+    if peak <= 1e-6:
+        return y0, y1
+    thr = peak * float(keep_ratio)
+    mask = segment >= thr
+    if not np.any(mask):
+        return y0, y1
+    idx = np.where(mask)[0]
+    return y0 + int(idx[0]), y0 + int(idx[-1]) + 1
+
+
+def _bands_from_edge_profile(gray: np.ndarray) -> list[tuple[int, int]]:
+    """兼容旧名：单帧边缘投影 + 滑动窗口，返回若干候选带。"""
+    profile = compute_edge_density_profile(gray)
+    if profile.size == 0:
+        return []
+    h = int(profile.size)
+    # 在整幅内找主峰，再 NMS 找次峰（供双层检测）
     bands: list[tuple[int, int]] = []
-    in_band = False
-    start = 0
-    for idx, value in enumerate(profile):
-        if value >= thresh and not in_band:
-            in_band = True
-            start = idx
-        elif value < thresh and in_band:
-            in_band = False
-            if idx - start >= 3:
-                bands.append((start, idx))
-    if in_band and len(profile) - start >= 3:
-        bands.append((start, len(profile)))
+    work = profile.copy()
+    min_h = max(3, int(h * 0.02))
+    max_h = max(min_h, int(h * 0.12))
+    for _ in range(3):
+        hit = sliding_window_subtitle_band(
+            work,
+            search_y0=0,
+            min_h=min_h,
+            max_h=max_h,
+            step=2,
+        )
+        if hit is None or hit[2] < 0.02:
+            break
+        y0, y1, _score = hit
+        y0, y1 = refine_band_by_profile(profile, y0, y1)
+        if y1 - y0 >= 3:
+            bands.append((y0, y1))
+        # 抑制已选峰，继续找次峰
+        pad = max(2, (y1 - y0) // 2)
+        lo = max(0, y0 - pad)
+        hi = min(h, y1 + pad)
+        work[lo:hi] = 0.0
     return bands
 
 
@@ -278,47 +475,46 @@ def list_subtitle_bands_from_gray(
     min_h_ratio: float = 0.02,
     max_h_ratio: float = 0.10,
 ) -> list[_BandObservation]:
-    """在底部搜索区列出文字带；单带高度不超过 max_h_ratio（约 2 行）。"""
+    """底部搜索区：边缘密度投影 + 滑动窗口，列出候选字幕带。"""
     if gray.ndim != 2 or gray.size == 0:
         return []
 
     frame_h, _frame_w = gray.shape
-    search_ratio = max(0.15, min(float(search_bottom_ratio), 0.5))
-    search_y = int(frame_h * (1.0 - search_ratio))
-    roi = gray[search_y:, :]
-    max_h_px = max(int(frame_h * max_h_ratio), 8)
-    raw_bands = _merge_nearby_bands(
-        _bands_from_edge_profile(roi),
-        max_height=max_h_px,
-    )
-    if not raw_bands:
+    profile = compute_edge_density_profile(gray)
+    if profile.size == 0 or float(profile.max()) <= 0:
         return []
 
+    search_ratio = max(0.15, min(float(search_bottom_ratio), 0.55))
+    search_y = int(frame_h * (1.0 - search_ratio))
     min_h = max(int(frame_h * min_h_ratio), 3)
     max_h = max(int(frame_h * max_h_ratio), min_h + 1)
+
+    work = profile.copy()
     out: list[_BandObservation] = []
-    for y0_roi, y1_roi in raw_bands:
-        band_h_px = y1_roi - y0_roi
-        if band_h_px > max_h:
-            continue
-        if band_h_px < min_h:
-            center = (y0_roi + y1_roi) // 2
-            half = min_h // 2
-            y0_roi = max(0, center - half)
-            y1_roi = min(roi.shape[0], center + half)
-            band_h_px = y1_roi - y0_roi
+    for _ in range(3):
+        hit = sliding_window_subtitle_band(
+            work,
+            search_y0=search_y,
+            min_h=min_h,
+            max_h=max_h,
+            step=2,
+        )
+        if hit is None or hit[2] < 0.015:
+            break
+        y0, y1, _score = hit
+        y0, y1 = refine_band_by_profile(profile, y0, y1)
         ratios = _band_to_ratios(
-            search_y + y0_roi,
-            search_y + y1_roi,
+            y0,
+            y1,
             frame_h=frame_h,
             max_h_ratio=max_h_ratio,
         )
-        if ratios is None:
-            continue
-        y_ratio, h_ratio = ratios
-        if h_ratio > max_h_ratio * 1.05:
-            continue
-        out.append(_BandObservation(y_ratio=y_ratio, h_ratio=h_ratio))
+        if ratios is not None:
+            y_ratio, h_ratio = ratios
+            if h_ratio <= max_h_ratio * 1.05:
+                out.append(_BandObservation(y_ratio=y_ratio, h_ratio=h_ratio))
+        pad = max(2, (y1 - y0) // 2)
+        work[max(0, y0 - pad) : min(frame_h, y1 + pad)] = 0.0
     return out
 
 
@@ -346,14 +542,19 @@ def _select_fixed_dialogue_cluster(
     sample_frames: int,
     min_hit_ratio: float = 0.2,
     max_h_ratio: float = 0.10,
+    min_y_center: float = 0.84,
 ) -> list[_BandObservation] | None:
-    """取跨帧出现最频繁、高度像对白字幕（≤2 行）的文字带。"""
+    """选对白带：底部先验优先，再比出现次数（不全靠频率，防常驻台标劫持）。"""
     if not clusters:
         return None
     min_hits = max(2, int(sample_frames * min_hit_ratio))
+    floor = max(0.0, float(min_y_center))
 
     def _cluster_median_h(cluster: list[_BandObservation]) -> float:
         return statistics.median([obs.h_ratio for obs in cluster])
+
+    def _cluster_mean_y(cluster: list[_BandObservation]) -> float:
+        return statistics.mean([obs.y_center for obs in cluster])
 
     eligible = [
         cluster
@@ -368,10 +569,28 @@ def _select_fixed_dialogue_cluster(
     if not pool:
         pool = clusters
 
+    bottom_pool = [c for c in pool if _cluster_mean_y(c) >= floor]
+    if bottom_pool:
+        pool = bottom_pool
+
     def _score(cluster: list[_BandObservation]) -> tuple[int, float]:
-        return (len(cluster), statistics.mean([obs.y_center for obs in cluster]))
+        # 同在底部候选里：次数多优先，其次更靠下
+        return (len(cluster), _cluster_mean_y(cluster))
 
     return max(pool, key=_score)
+
+
+def _percentile(values: list[float], pct: float) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(float(v) for v in values)
+    if len(ordered) == 1:
+        return ordered[0]
+    rank = (len(ordered) - 1) * (float(pct) / 100.0)
+    lo = int(rank)
+    hi = min(lo + 1, len(ordered) - 1)
+    frac = rank - lo
+    return ordered[lo] * (1.0 - frac) + ordered[hi] * frac
 
 
 def _region_from_cluster(
@@ -380,12 +599,13 @@ def _region_from_cluster(
     max_h_ratio: float,
     min_h_ratio: float,
 ) -> SubtitleRegion:
-    """聚类 → 以稳定对白带中心为锚，固定高度（约 2 行白框）。"""
+    """聚类 → 对白带锚点；高度用观测 h 的 P90 + 小 pad，只封顶不硬撑。"""
     y_center = statistics.median([obs.y_center for obs in cluster])
-    h_obs = statistics.median([obs.h_ratio for obs in cluster])
+    heights = [float(obs.h_ratio) for obs in cluster]
+    h_obs = _percentile(heights, 90.0)
     h_ratio = min(
         float(max_h_ratio),
-        max(float(min_h_ratio), h_obs * 2.5, 0.16),
+        max(float(min_h_ratio), float(h_obs) * 1.15),
     )
     y_ratio = max(0.0, min(y_center - h_ratio * 0.52, 1.0 - h_ratio))
     confidence = min(1.0, 0.35 + len(cluster) * 0.08)
@@ -411,6 +631,183 @@ def fallback_subtitle_region(config: Config | None = None) -> SubtitleRegion:
     ).clamp(max_h_ratio=max_h)
 
 
+def pick_subtitle_region_from_grays(
+    grays: list[np.ndarray],
+    *,
+    config: Config | None = None,
+    search_band_top_ratio: float | None = None,
+    log_tag: str = "",
+) -> SubtitleRegion:
+    """从已有灰度帧定对白字幕带（不再二次解码视频）。
+
+    ``search_band_top_ratio`` 非空时，输入已是全帧底部搜索带裁切，
+    返回的 y/h 仍换算成**全帧**归一化坐标。
+    """
+    cfg = config or Config()
+    if not cfg.gold_story_ocr_region_detect:
+        return fallback_subtitle_region(cfg)
+    if not grays:
+        return fallback_subtitle_region(cfg)
+
+    search_ratio_cfg = float(cfg.gold_story_ocr_region_search_ratio)
+    max_h_ratio = float(cfg.gold_story_ocr_region_max_h_ratio)
+    min_h_ratio = float(cfg.gold_story_ocr_region_min_h_ratio)
+
+    profiles: list[np.ndarray] = []
+    kept: list[np.ndarray] = []
+    frame_h = 0
+    for gray in grays:
+        if gray is None or getattr(gray, "ndim", 0) != 2 or gray.size == 0:
+            continue
+        profile = compute_edge_density_profile(gray)
+        if profile.size == 0:
+            continue
+        peak = float(profile.max())
+        if peak > 1e-6:
+            profile = profile / peak
+        profiles.append(profile)
+        kept.append(gray)
+        frame_h = int(profile.size)
+
+    if not profiles or frame_h <= 0:
+        return fallback_subtitle_region(cfg)
+
+    stacked = np.stack(
+        [p if p.size == frame_h else np.resize(p, frame_h) for p in profiles],
+        axis=0,
+    )
+    agg = np.median(stacked, axis=0)
+
+    band_top = search_band_top_ratio
+    if band_top is not None:
+        # 输入已是搜索带：整图可搜；min/max 高按全帧比例换算到本图像素
+        search_ratio = max(0.15, min(1.0 - float(band_top), 0.55))
+        search_y0 = 0
+        full_h_equiv = frame_h / max(search_ratio, 1e-6)
+        min_h = max(int(full_h_equiv * min_h_ratio), 8)
+        max_h = max(
+            min_h + 1,
+            int(full_h_equiv * min(max_h_ratio, 0.14)),
+        )
+        min_h = min(min_h, frame_h - 1)
+        max_h = min(max_h, frame_h)
+    else:
+        search_ratio = max(0.15, min(float(search_ratio_cfg), 0.55))
+        search_y0 = int(frame_h * (1.0 - search_ratio))
+        min_h = max(int(frame_h * min_h_ratio), 8)
+        max_h = max(min_h + 1, int(frame_h * min(max_h_ratio, 0.14)))
+
+    candidates = collect_sliding_window_candidates(
+        agg,
+        search_y0=search_y0,
+        min_h=min_h,
+        max_h=max_h,
+        step=max(1, frame_h // 400),
+        top_k=5,
+    )
+    if not candidates:
+        logger.info(
+            "subtitle region sliding-window miss tag=%s frames=%s → fallback",
+            log_tag or "-",
+            len(profiles),
+        )
+        return fallback_subtitle_region(cfg)
+
+    best: tuple[int, int, float, float] | None = None
+    for y0, y1, dens_score in candidates:
+        ry0, ry1 = refine_band_by_profile(agg, y0, y1, keep_ratio=0.30)
+        contrast = mean_band_contrast_over_frames(kept, ry0, ry1)
+        final = float(dens_score) * (0.35 + 0.65 * float(contrast))
+        if best is None or final > best[2]:
+            best = (ry0, ry1, final, contrast)
+
+    if best is None or best[2] < 0.015:
+        return fallback_subtitle_region(cfg)
+
+    y0, y1, score, contrast = best
+    pad = max(int((y1 - y0) * 0.12), max(int(frame_h * 0.004), 2))
+    y0 = max(0, y0 - pad)
+    y1 = min(frame_h, y1 + pad)
+
+    if band_top is not None:
+        search_ratio = max(0.15, min(1.0 - float(band_top), 0.55))
+        local_y = y0 / float(frame_h)
+        local_h = (y1 - y0) / float(frame_h)
+        y_ratio = float(band_top) + local_y * search_ratio
+        h_ratio = local_h * search_ratio
+    else:
+        h_ratio = (y1 - y0) / float(frame_h)
+        y_ratio = y0 / float(frame_h)
+
+    conf = min(
+        1.0,
+        0.35 + 0.06 * len(profiles) + 0.25 * contrast + min(score, 0.25),
+    )
+    region = SubtitleRegion(
+        y_ratio=y_ratio,
+        h_ratio=h_ratio,
+        method="edge_density_sliding+contrast",
+        samples=len(profiles),
+        confidence=conf,
+    ).clamp(max_h_ratio=max_h_ratio)
+    logger.info(
+        "subtitle region tag=%s y=%.3f h=%.3f frames=%s dens=%.3f contrast=%.2f conf=%.2f",
+        log_tag or "-",
+        region.y_ratio,
+        region.h_ratio,
+        region.samples,
+        score,
+        contrast,
+        region.confidence,
+    )
+    return region
+
+
+def detect_subtitle_region_from_images(
+    image_paths: list[Path],
+    *,
+    config: Config | None = None,
+    search_band_top_ratio: float | None = None,
+    max_samples: int = 10,
+    log_tag: str = "",
+) -> SubtitleRegion:
+    """从已抽帧路径定带；均匀抽样，避免再跑一遍 ffmpeg。"""
+    cfg = config or Config()
+    if not image_paths:
+        return fallback_subtitle_region(cfg)
+    try:
+        import cv2
+    except ImportError:
+        logger.warning("opencv missing, subtitle region fallback")
+        return fallback_subtitle_region(cfg)
+
+    paths = list(image_paths)
+    cap = max(2, int(max_samples))
+    if len(paths) > cap:
+        last = len(paths) - 1
+        picked: list[Path] = []
+        seen: set[int] = set()
+        for slot in range(cap):
+            idx = round(slot * last / (cap - 1))
+            if idx in seen:
+                continue
+            seen.add(idx)
+            picked.append(paths[idx])
+        paths = picked
+
+    grays: list[np.ndarray] = []
+    for path in paths:
+        gray = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+        if gray is not None:
+            grays.append(gray)
+    return pick_subtitle_region_from_grays(
+        grays,
+        config=cfg,
+        search_band_top_ratio=search_band_top_ratio,
+        log_tag=log_tag,
+    )
+
+
 def detect_subtitle_region(
     video_path: Path,
     *,
@@ -418,7 +815,11 @@ def detect_subtitle_region(
     duration_sec: float | None = None,
     config: Config | None = None,
 ) -> SubtitleRegion:
-    """多样本聚类固定对白字幕带；失败时回退固定底栏。"""
+    """兼容入口：临时抽多样本全帧再定带（烧录探测等）。
+
+    OCR 主路径请用已抽搜索带帧 + ``detect_subtitle_region_from_images``，
+    避免视频解码两遍。
+    """
     cfg = config or Config()
     if not cfg.gold_story_ocr_region_detect:
         return fallback_subtitle_region(cfg)
@@ -431,30 +832,20 @@ def detect_subtitle_region(
     sample_points = tuple(
         round(ratio, 3)
         for ratio in (
-            0.08,
-            0.16,
-            0.24,
+            0.12,
+            0.22,
             0.32,
-            0.40,
-            0.48,
-            0.56,
-            0.64,
+            0.42,
+            0.52,
+            0.62,
             0.72,
-            0.80,
-            0.88,
-            0.94,
+            0.82,
+            0.90,
+            0.96,
         )
     )
     frame_dir = workspace / "region_detect"
     frame_dir.mkdir(parents=True, exist_ok=True)
-
-    observations: list[_BandObservation] = []
-    sampled_frames = 0
-    search_ratio = float(cfg.gold_story_ocr_region_search_ratio)
-    cluster_tol = float(cfg.gold_story_ocr_region_cluster_tol)
-    max_h_ratio = float(cfg.gold_story_ocr_region_max_h_ratio)
-    min_h_ratio = float(cfg.gold_story_ocr_region_min_h_ratio)
-    min_y_center = float(cfg.gold_story_ocr_region_min_y_center)
 
     try:
         import cv2
@@ -462,6 +853,7 @@ def detect_subtitle_region(
         logger.warning("opencv missing, subtitle region fallback")
         return fallback_subtitle_region(cfg)
 
+    grays: list[np.ndarray] = []
     for idx, ratio in enumerate(sample_points):
         ts = max(duration_sec * ratio, 0.0)
         frame_path = frame_dir / f"full_{idx:02d}.jpg"
@@ -472,57 +864,17 @@ def detect_subtitle_region(
                 timestamp_sec=ts,
             )
             gray = cv2.imread(str(frame_path), cv2.IMREAD_GRAYSCALE)
-            if gray is None:
-                continue
-            sampled_frames += 1
-            observations.extend(
-                list_subtitle_bands_from_gray(
-                    gray,
-                    search_bottom_ratio=search_ratio,
-                    min_h_ratio=min_h_ratio,
-                    max_h_ratio=max_h_ratio,
-                )
-            )
+            if gray is not None:
+                grays.append(gray)
         except Exception as exc:
             logger.debug("subtitle region sample failed ts=%.2f: %s", ts, exc)
 
-    observations = _filter_subtitle_observations(
-        observations,
-        max_h_ratio=max_h_ratio,
-        min_y_center=min_y_center,
+    return pick_subtitle_region_from_grays(
+        grays,
+        config=cfg,
+        search_band_top_ratio=None,
+        log_tag=video_path.stem,
     )
-    clusters = _cluster_observations(observations, y_center_tol=cluster_tol)
-    picked = _select_fixed_dialogue_cluster(
-        clusters,
-        sample_frames=max(sampled_frames, 1),
-        min_hit_ratio=float(cfg.gold_story_ocr_region_min_hit_ratio),
-        max_h_ratio=max_h_ratio,
-    )
-    if picked is None:
-        logger.info(
-            "subtitle region detect fallback bvid=%s frames=%s bands=%s",
-            video_path.stem,
-            sampled_frames,
-            len(observations),
-        )
-        return fallback_subtitle_region(cfg)
-
-    merged = _region_from_cluster(
-        picked,
-        max_h_ratio=max_h_ratio,
-        min_h_ratio=min_h_ratio,
-    )
-    logger.info(
-        "subtitle region bvid=%s y=%.3f h=%.3f hits=%s/%s frames=%s conf=%.2f",
-        video_path.stem,
-        merged.y_ratio,
-        merged.h_ratio,
-        merged.samples,
-        len(observations),
-        sampled_frames,
-        merged.confidence,
-    )
-    return merged
 
 
 def detect_burned_subtitles(

@@ -78,7 +78,7 @@ def _arm_count_question(look: str) -> str:
     )
 # 拼装器写入 image_prompt 的首个说话人张嘴标记（须与 image_prompt.py 一致）
 _MOUTH_FIRST_SPEAKER_RE = re.compile(
-    r"(昭昭|灿灿|妈妈)(?:嘴巴明显张开|微微张嘴|嘴巴微张)?正在开口说话"
+    r"(昭昭|灿灿|妈妈)(?:嘴唇微张，|(?:嘴巴明显张开|微微张嘴|嘴巴微张)?)正在开口说话"
 )
 _PROP_HOLDER_RE = re.compile(
     r"(?P<hand>右手|左手)?"

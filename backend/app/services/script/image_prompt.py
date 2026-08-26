@@ -1189,7 +1189,7 @@ def assemble_daily_t2i_prompt(
     s6 = ""
     if first and first in speakers:
         others = [n for n in speakers if n != first]
-        mouth = f"{first}正在开口说话"
+        mouth = f"{first}嘴唇微张，正在开口说话"
         if others:
             mouth += f"，{'、'.join(others)}嘴巴自然闭合"
         s6 = mouth
