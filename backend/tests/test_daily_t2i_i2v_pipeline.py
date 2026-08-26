@@ -490,6 +490,43 @@ def test_enrich_thin_daily_visual_brief_three_person_chips():
     assert "对面" not in prompt
 
 
+def test_assemble_dining_segment_no_prop_triple_repeat():
+    """M2+C 餐桌镜：肉块/餐桌不得在 S4+S5 三遍复读（#70 分镜8 类问题）。"""
+    from app.services.script.image_prompt import assemble_daily_t2i_prompt
+
+    setting = "餐桌旁，灿灿面前一盘肉，昭昭碗里几根青菜"
+    seg = {
+        "segment_index": 8,
+        "shot_type": "中近景特写",
+        "speakers": ["昭昭", "灿灿"],
+        "visual_subjects": [
+            {"name": "昭昭", "posture": "站在餐桌旁", "action": "双手叉腰", "expression": "皱眉瞪眼"},
+            {"name": "灿灿", "posture": "坐在餐桌旁", "action": "双手捏住肉块，用筷子夹起", "expression": "眯眼笑"},
+        ],
+        "object_states": [
+            {"object": "肉", "count": "一块", "form": "被灿灿用筷子夹起，悬在盘子上方", "holder": "灿灿", "position": ""},
+            {"object": "青菜", "count": "几根", "form": "盛在碗里", "holder": "昭昭", "position": ""},
+            {"object": "餐桌", "count": "一张", "form": "桌上摆着菜盘和碗", "holder": "无", "position": "画面中央"},
+        ],
+        "scene_anchors": ["餐桌"],
+        "visual_brief": (
+            "餐桌旁，餐桌清晰可见，灿灿手中放着一块肉，被灿灿用筷子夹起，悬在盘子上方。"
+            "画面左边是昭昭，双手叉腰，皱眉瞪眼。画面右边是灿灿，双手捏住肉块，眯眼笑。"
+            "灿灿手中放着一块肉，被灿灿用筷子夹起，悬在盘子上方。"
+        ),
+        "dialogue": [{"speaker": "昭昭", "line": "你碗里肉这么多，凭什么不能给我夹一块！"}],
+    }
+    prompt = assemble_daily_t2i_prompt(
+        seg, scene_anchor="餐桌旁，餐桌，菜盘", setting=setting,
+    )
+    assert prompt.count("被灿灿用筷子夹起，悬在盘子上方") <= 1
+    assert prompt.count("一块肉在灿灿手中") <= 1
+    assert prompt.count("餐桌旁") <= 2
+    assert prompt.count("一张餐桌在画面中央") == 0
+    assert "画面左边是昭昭" in prompt
+    assert "一块肉在灿灿手中" in prompt
+
+
 def test_restore_held_prop_owners_keeps_original_holder():
     """质检重写把剪刀改到昭昭手里时，拨回灿灿。"""
     from app.services.script.visual_brief import restore_held_prop_owners

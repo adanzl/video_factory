@@ -773,6 +773,25 @@ def _vb_has_rich_scene_opening(vb: str, setting: str | None) -> bool:
     return any(k in vb for k in ("沙发", "茶几", "地垫", "门口", "鞋柜", "阳台"))
 
 
+def _dedupe_clause_text(text: str) -> str:
+    """去掉完全重复的句/分句（S4 内 LLM 偶发复读）。"""
+    if not text:
+        return text
+    parts = re.split(r"(?<=[。；;])", text)
+    seen: set[str] = set()
+    kept: list[str] = []
+    for part in parts:
+        s = part.strip()
+        if not s:
+            continue
+        key = re.sub(r"\s+", "", s)
+        if key in seen:
+            continue
+        seen.add(key)
+        kept.append(s)
+    return "".join(kept).strip("，,；;。 ")
+
+
 def _prop_snapshot_from_object_states(states: list) -> str:
     """从 object_states 抽一句道具快照（仅用于 vb 内提及，避免 strip_unlocked 补尾巴）。"""
     for st in _collapse_object_aliases(states):
@@ -832,8 +851,9 @@ def enrich_thin_daily_visual_brief(seg: dict, setting: str | None = None) -> str
     """薄 vb 加厚为 64/7 式：场景开场 + 妈妈居中 + 左右孩锚点。"""
     vb = str(seg.get("visual_brief") or "").strip()
     vb = re.sub(r"。?画面中有[^。；]+[。；]?", "。", vb).strip("，,；;。 ")
-    if _vb_has_rich_scene_opening(vb, setting):
-        return _resolve_vague_spatial_terms(vb)
+    structured = bool(seg.get("visual_subjects")) and bool(seg.get("object_states"))
+    if not structured and _vb_has_rich_scene_opening(vb, setting):
+        return _resolve_vague_spatial_terms(_dedupe_clause_text(vb))
 
     subjects = seg.get("visual_subjects") or []
     speakers = [str(s) for s in (seg.get("speakers") or []) if str(s).strip()]
@@ -847,7 +867,12 @@ def enrich_thin_daily_visual_brief(seg: dict, setting: str | None = None) -> str
     anchors = [
         str(a).strip() for a in (seg.get("scene_anchors") or []) if str(a).strip()
     ]
-    prop_snap = _prop_snapshot_from_object_states(seg.get("object_states") or [])
+    # 结构化路径：道具归 S5，S4 不写 prop_snap（避免与 object_states 三遍复读）
+    prop_snap = (
+        ""
+        if structured
+        else _prop_snapshot_from_object_states(seg.get("object_states") or [])
+    )
 
     char_lines: list[str] = []
     if "妈妈" in speakers:
@@ -880,10 +905,14 @@ def enrich_thin_daily_visual_brief(seg: dict, setting: str | None = None) -> str
         return _resolve_vague_spatial_terms(vb)
 
     body = "。".join(char_lines)
-    if prop_snap and "妈妈" not in speakers:
+    if (
+        prop_snap
+        and "妈妈" not in speakers
+        and prop_snap not in body
+    ):
         body = body.rstrip("。") + "。" + prop_snap
     body = re.sub(r"[。]{2,}", "。", body)
-    return _resolve_vague_spatial_terms(body.strip("，,；;。 "))
+    return _resolve_vague_spatial_terms(_dedupe_clause_text(body.strip("，,；;。 ")))
 
 
 def render_visual_subjects(subjects: list) -> str:
