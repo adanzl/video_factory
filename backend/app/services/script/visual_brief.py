@@ -763,6 +763,36 @@ def bowl_container_owners(
     return out
 
 
+def unbind_foreign_bowl_food_action(
+    action: str,
+    actor: str,
+    owners: dict[str, str],
+) -> str:
+    """对方碗里的冲突物不要写进自己的动作句，否则出图会把食物画到自己面前。"""
+    a = str(action or "")
+    actor = str(actor or "").strip()
+    if not a or not actor or not owners:
+        return a
+    for prop, who in owners.items():
+        if not prop or who == actor or prop not in a:
+            continue
+        a = re.sub(
+            rf"指着{re.escape(who)}面前的{re.escape(prop)}盘?",
+            "伸手指向对面",
+            a,
+        )
+        a = re.sub(rf"伸向{re.escape(prop)}盘?", "伸向对面的碗", a)
+        a = re.sub(
+            rf"{re.escape(who)}面前的{re.escape(prop)}盘?",
+            "对面",
+            a,
+        )
+        a = a.replace(f"{prop}盘", "对面")
+        a = a.replace(prop, "")
+    a = re.sub(r"[，,]{2,}", "，", a)
+    return a.strip("，, ")
+
+
 def enrich_setting_with_dialogue_props(
     setting: str,
     dialogue: list | None = None,
@@ -1041,6 +1071,15 @@ def enrich_thin_daily_visual_brief(seg: dict, setting: str | None = None) -> str
         return _resolve_vague_spatial_terms(_dedupe_clause_text(vb))
 
     subjects = seg.get("visual_subjects") or []
+    owners = bowl_container_owners(setting, seg.get("dialogue"))
+    if owners:
+        for sub in subjects:
+            if not isinstance(sub, dict):
+                continue
+            name = str(sub.get("name") or "").strip()
+            sub["action"] = unbind_foreign_bowl_food_action(
+                str(sub.get("action") or ""), name, owners
+            )
     speakers = [str(s) for s in (seg.get("speakers") or []) if str(s).strip()]
     subject_map = {
         str(s.get("name") or "").strip(): s
@@ -2195,8 +2234,9 @@ def build_visual_brief_prompts(
                     + "；".join(hold_bits)
                     + "。object_states.position 写「谁碗里/谁面前」，禁止写成手中"
                     "（除非本镜台词明确在递碗/端盘）；"
-                    "另一方碗里不要出现该物（如肉只在灿灿碗里，昭昭碗里没有肉）；"
-                    "禁止道具换手或凭空消失；action 不要无故写端着碗。"
+                    "站位左昭昭右灿灿：左边昭昭面前碗里是青菜，右边灿灿面前碗里是肉；"
+                    "用正面写，不要写「没有肉」；禁止道具换手；action 不要无故写端着碗。"
+                    "对方碗里的食物不要写进自己的动作句（不要写「指着肉盘」，改写指向对面）。"
                 )
     content_rule = (
         _DAILY_VISUAL_SUBJECTS_RULE
