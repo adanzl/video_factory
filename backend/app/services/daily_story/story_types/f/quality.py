@@ -1,4 +1,4 @@
-"""F 类观感 profile（Threat 互升级）。"""
+"""F 类观感 profile（互呛加码）。"""
 
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ def score_scene_beat(
         reasons.append("互呛威胁")
     if RE_ESCALATE.search(mid):
         score += 4
-        reasons.append("Threat 加码")
+        reasons.append("互呛加码")
     if RE_EXTERNAL.search(body):
         score += 3
         reasons.append("外部打断反差")
@@ -72,7 +72,7 @@ QUALITY_PROFILE = TypeQualityProfile(
         "外部打断",
         "偷拍",
         "尴尬",
-        "Threat",
+        "互呛",
         "加码",
     ),
     summary_highlight_tokens=(

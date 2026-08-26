@@ -13,7 +13,7 @@ STORY_TYPE_LABELS: dict[str, str] = {
     "D": "字面执行",
     "B": "结盟翻车",
     "E": "妈妈破功",
-    "F": "Threat 互升级",
+    "F": "互呛加码",
     "G": "嘴硬心软",
     "H": "第三方化解",
     "I": "问倒收束",
@@ -75,7 +75,7 @@ STORY_TYPE_KEYWORDS: dict[str, frozenset[str]] = {
 
 TYPE_CATALOG_LINE = (
     "【矛盾类型一览】A权威翻车 / C公平执念 / D字面执行 / "
-    "B结盟翻车 / E妈妈破功 / FThreat互升级 / G嘴硬心软 / H第三方化解 / "
+    "B结盟翻车 / E妈妈破功 / F互呛加码 / G嘴硬心软 / H第三方化解 / "
     "I问倒收束 / L退让点破；"
     "生成时会锁定其中一种并走该类型专属线路。"
 )

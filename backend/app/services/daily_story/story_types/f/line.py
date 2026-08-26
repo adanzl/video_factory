@@ -1,4 +1,4 @@
-"""日常故事 F 类线路（Threat 互升级）。"""
+"""日常故事 F 类线路（互呛加码）。"""
 
 from app.services.daily_story.story_types.model import (
     STORY_TYPE_KEYWORDS,
@@ -8,15 +8,15 @@ from app.services.daily_story.story_types.model import (
 
 LINE_F = StoryTypeLine(
     code="F",
-    label="Threat 互升级",
+    label="互呛加码",
     keywords=STORY_TYPE_KEYWORDS["F"],
     quality_ready=False,
     body_lines_min=18,
     body_lines_max=24,
     line_format_hint="8–14字，互呛/加码各一句，禁空慌",
-    punchline_example="F类Threat互升级，互呛加码后僵持或外部打断收束",
+    punchline_example="F类互呛加码，互顶嘴加码后僵持或外部打断收束",
     prompt_block="""\
-【本次类型：F Threat 互升级 — 专属线路】
+【本次类型：F 互呛加码 — 专属线路】
 - 核心：互相威胁/互呛 → **加码**（镜像回怼、音量/气势抬升）
   → **僵持/露怯**，或 **外部打断**（旁人/镜头/偷拍须有 seed 依据）。
 - **不是** B 结盟翻车：无瞒妈密谋、无走样甩锅露馅链；末段勿「咱俩一伙」表演结盟。
@@ -42,7 +42,7 @@ LINE_F = StoryTypeLine(
     opening_system_append="""\
 F 类开场：互呛/生气现状，勿写成 C 争物公平战或 B 密谋分工。""",
     opening_user_append="开场到「刚吵起来/刚顶回去」，加码与收束留正文。",
-    theme_user_append="主题宜互呛升级（Threat 链），非结盟瞒妈或争物赛规。",
+    theme_user_append="主题宜互呛加码升级，非结盟瞒妈或争物赛规。",
     retry_soft_close_hint="补一轮加码后收束：僵持/露怯，或 seed 有则外部打断尴尬收。",
     escalation_revision_hint="中段须层层加码，收束前勿提前软化或结盟。",
     closing_revision_hint="收束勿 B 甩锅露馅、勿 G 暖收；外部打断后宜尴尬收束。",
