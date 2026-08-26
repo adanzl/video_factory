@@ -1,4 +1,4 @@
-"""F 类好笑维：Threat 加码与收束反差。"""
+"""F 类好笑维：互呛加码与收束反差。"""
 
 from __future__ import annotations
 

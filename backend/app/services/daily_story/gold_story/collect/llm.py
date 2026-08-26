@@ -584,7 +584,7 @@ beat：
 评分说明（0–1，越高越好）：
 - sibling_fit：是否姐弟/兄妹/两孩冲突，而非母子育儿/纯可爱
 - age_fit：能否自然落到 7 岁弟 + 10 岁姐（拒绝婴语、过小）
-- conflict_usable：是否有可拍争/抢/歪理/Threat 链，不是温馨旁白
+- conflict_usable：是否有可拍争/抢/歪理/互呛链，不是温馨旁白
 - mapping_fit：映射到昭昭/灿灿是否牵强（家长当第三主角应降分；爸爸→妈妈视为可接受）
 
 pass=true 仅当四维均 ≥0.55 且无硬伤；否则 pass=false 并列出 reject_reasons。

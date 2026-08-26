@@ -1,4 +1,4 @@
-"""F 类正文硬卡（Threat 加码收束，非 B/G/C/A）。"""
+"""F 类正文硬卡（互呛加码收束，非 B/G/C/A）。"""
 
 from __future__ import annotations
 
@@ -125,7 +125,7 @@ def append_f_fidelity_issues(
             {
                 "lines": list(range(2, min(8, n) + 1)),
                 "kind": "保真-F加码",
-                "desc": "中段缺 Threat 加码升级",
+                "desc": "中段缺互呛加码升级",
                 "fix": "补吼叫/镜像回怼/啊啊等等势抬升",
             }
         )

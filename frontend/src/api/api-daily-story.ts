@@ -49,7 +49,7 @@ export const DAILY_STORY_TYPE_LABELS: Record<string, string> = {
   C: "公平执念",
   D: "字面执行",
   E: "妈妈破功",
-  F: "Threat 互升级",
+  F: "互呛加码",
   G: "嘴硬心软",
   H: "第三方化解",
   I: "问倒收束",

@@ -41,7 +41,7 @@ def test_normalize_mechanism_rejects_type_codes():
 
 def test_normalize_structure_type_extended_f():
     assert normalize_structure_type("f") == "F"
-    assert structure_type_label("F") == "Threat 互升级"
+    assert structure_type_label("F") == "互呛加码"
     assert catalog_entry("F") is not None
 
 

@@ -1,4 +1,4 @@
-"""F 类 Threat 互升级 validate 与注册。"""
+"""F 类互呛加码 validate 与注册。"""
 
 from __future__ import annotations
 
@@ -12,8 +12,8 @@ from app.services.daily_story.story_types.f.validate import append_f_body_errors
 
 def test_f_registered():
     assert "F" in STORY_TYPE_LINES
-    assert STORY_TYPE_LINES["F"].label == "Threat 互升级"
-    assert story_type_tag("F") == "F类Threat 互升级"
+    assert STORY_TYPE_LINES["F"].label == "互呛加码"
+    assert story_type_tag("F") == "F类互呛加码"
 
 
 def test_f_validate_passes_m3_external_interrupt():
@@ -30,7 +30,7 @@ def test_f_validate_passes_m3_external_interrupt():
             {"speaker": "灿灿", "line": "啊啊啊了啊！"},
             {"speaker": "昭昭", "line": "啊什么了啊！"},
             {"speaker": "灿灿", "line": "姐，有人拍我们呢！"},
-            {"speaker": "昭昭", "line": "啊？快闭嘴真的呀！"},
+            {"speaker": "昭昭", "line": "啊？快闭嘴！"},
             {"speaker": "灿灿", "line": "别吵了，咱们先看看谁在拍！"},
             {"speaker": "昭昭", "line": "好，先别丢人，笑一个！"},
             {"speaker": "灿灿", "line": "嗯，假装刚才在闹着玩！"},
@@ -49,7 +49,7 @@ def test_f_validate_passes_m3_external_interrupt():
 def test_f_validate_rejects_b_alliance_tail():
     story = {
         "story_type": "F",
-        "punchline_explain": "F类Threat互升级",
+        "punchline_explain": "F类互呛加码",
         "dialogue": [
             {"speaker": "灿灿", "line": "你再说一遍试试！"},
             {"speaker": "昭昭", "line": "试试就试试！"},
@@ -71,4 +71,4 @@ def test_f_validate_rejects_b_alliance_tail():
 
 
 def test_parse_f_from_punchline():
-    assert parse_story_type_code(punchline="F类：Threat互升级") == "F"
+    assert parse_story_type_code(punchline="F类：互呛加码") == "F"

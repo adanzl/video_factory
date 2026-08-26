@@ -11,7 +11,7 @@ GOLD_STORY_MECHANISM_CODES: frozenset[str] = frozenset(
 GOLD_STORY_MECHANISM_LABELS: dict[str, str] = {
     "M1": "回旋镖扣原话",
     "M2": "自私包装公平",
-    "M3": "Threat 互升级",
+    "M3": "互呛加码",
     "M4": "递台词",
     "M5": "拒和加码",
     "M6": "成人概念童化",
@@ -27,7 +27,7 @@ GOLD_STORY_MECHANISM_LABELS: dict[str, str] = {
 MECHANISM_STRUCTURE_MAP: dict[str, str] = {
     "M1": "C",  # 回旋镖：主落 C 公平执念收束
     "M2": "C",  # 自私包装公平（退让点破偏心→L）
-    "M3": "F",  # Threat 链式互升级，暂无 A–E 标准收束
+    "M3": "F",  # 互呛链式加码，暂无 A–E 标准收束
     "M4": "G",  # 递台词 escalation → 嘴硬心软（争物/双规则用 M1/M2→C）
     "M5": "A",  # 拒和解 / 嘴硬加码（调解→H；否决压住→J）
     "M6": "A",  # 成人概念童化歪问
@@ -48,7 +48,7 @@ MECHANISM_STRUCTURE_ALTERNATIVES: dict[str, frozenset[str]] = {
 
 # 金故事扩展结构类型（尚未进入 daily_story validate；F 已由 M3 启用）
 GOLD_STORY_EXTENDED_TYPE_LABELS: dict[str, str] = {
-    "F": "Threat 互升级",
+    "F": "互呛加码",
     "G": "嘴硬心软",
     "H": "第三方化解",
     "I": "问倒收束",
@@ -106,8 +106,8 @@ GOLD_STORY_TYPE_CATALOG: tuple[dict[str, str], ...] = (
     },
     {
         "code": "F",
-        "name": "Threat 互升级",
-        "formula": "互相威胁→加码→僵持/露怯",
+        "name": "互呛加码",
+        "formula": "互相顶嘴→加码→僵持/露怯",
         "closing": "无 A–E 标准收束（暂不入 A–E 任务注入）",
     },
     {
