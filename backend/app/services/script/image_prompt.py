@@ -232,13 +232,21 @@ def _strip_s4_object_state_overlap(s4: str, states: list) -> str:
     return "".join(kept).strip("，,；;。 ")
 
 
-def _render_object_states(states: list) -> str:
+def _render_object_states(
+    states: list,
+    *,
+    setting: str | None = None,
+    dialogue: list | None = None,
+) -> str:
     """把结构化 object_states 渲染成道具状态句（S5）。"""
     from app.services.script.visual_brief import (
         _collapse_object_aliases,
+        bowl_container_owners,
         is_body_part_object,
     )
 
+    owners = bowl_container_owners(setting, dialogue)
+    other_kid = {"灿灿": "昭昭", "昭昭": "灿灿"}
     merged: dict[str, dict] = {}
     for st in _collapse_object_aliases(states):
         if not isinstance(st, dict):
@@ -248,12 +256,35 @@ def _render_object_states(states: list) -> str:
             continue
         merged[obj] = st
     parts: list[str] = []
+    meat_owner = owners.get("肉")
+    veg_owner = owners.get("青菜")
+    compact_bowls = meat_owner and veg_owner and meat_owner != veg_owner
     for st in merged.values():
         obj = str(st.get("object") or "").strip()
         count = str(st.get("count") or "").strip()
         form = str(st.get("form") or "").strip()
         holder = str(st.get("holder") or "").strip()
         pos = str(st.get("position") or "").strip()
+        who = owners.get(obj) or ""
+        if compact_bowls and obj in {"肉", "青菜"}:
+            if obj == "肉":
+                clause = f"{meat_owner}碗里有{count}{obj}"
+                if form:
+                    clause += f"，{form}"
+                parts.append(clause)
+            elif obj == "青菜":
+                clause = f"{veg_owner}碗里只有{count}{obj}，没有肉"
+                parts.append(clause)
+            continue
+        if who:
+            clause = f"{who}碗里有{count}{obj}"
+            if form:
+                clause += f"，{form}"
+            other = other_kid.get(who)
+            if other:
+                clause += f"；{other}碗里没有{obj}"
+            parts.append(clause)
+            continue
         if holder and holder != "无":
             clause = f"{count}{obj}在{holder}手中"
         elif pos:
@@ -1170,7 +1201,11 @@ def assemble_daily_t2i_prompt(
             scene_anchor=s2,
             scene_anchors=seg.get("scene_anchors"),
         )
-        rendered = _render_object_states(obj_states)
+        rendered = _render_object_states(
+            obj_states,
+            setting=setting,
+            dialogue=seg.get("dialogue"),
+        )
         if rendered:
             s5 = rendered
             if structured:
@@ -1246,7 +1281,7 @@ def assemble_daily_image_prompts(
     # object_states 状态机：跨镜继承 + 去重 + 校验矛盾/回归
     from app.services.script.visual_brief import normalize_object_states
 
-    obj_issues = normalize_object_states(segments)
+    obj_issues = normalize_object_states(segments, setting=setting)
     if obj_issues:
         import logging
 
