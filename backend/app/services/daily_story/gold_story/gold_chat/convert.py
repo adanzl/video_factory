@@ -93,7 +93,8 @@ PASS1_REGENERATE_MAX = 3
 PASS2_MAX_ROUNDS = 2
 GOLD_CHAT_NEAR_MISS_DEFICIT_MAX = 3
 _RE_PAD_SUFFIX_STACK = re.compile(
-    r"呢呢|啊呢|吧呢|嘛呢|呀呢|你呀呢|行了吧呢|不懂你呢|听听不懂|你真是呢|你真是的呢"
+    r"呢呢|啊呢|吧呢|嘛呢|呀呢|你呀呢|行了吧呢|不懂你呢|听听不懂|你真是呢|你真是的呢|"
+    r"了呢了呀|了呢呀|了呀呢|好不好了呀|着呢了呀",
 )
 _B_GOLD_CHAT_PAD_TAILS = ("呀", "啊", "嘛", "呢", "吧", "真的呀")
 _F_GOLD_CHAT_PAD_TAILS = ("呀", "啊", "嘛", "呢", "吧")
@@ -253,7 +254,9 @@ def _sanitize_pad_suffix_line(line: str) -> str:
         ("你听着呀", ""),
         ("好呢了呀", "呢"),
         ("好不好了呀", ""),
-        ("了呢了呀", "了呢"),
+        ("了呢了呀", ""),
+        ("了呢呀", ""),
+        ("了呀呢", ""),
     ):
         if old in out:
             out = out.replace(old, new)
