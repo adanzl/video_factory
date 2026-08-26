@@ -1,4 +1,4 @@
-"""gold_chat API 业务层。"""
+"""金故事对外入口（对齐 daily_story_mgr）。"""
 
 from __future__ import annotations
 
@@ -9,19 +9,21 @@ from typing import Any
 
 from app.config import Config
 from app.repositories import repo_gold_story
-from app.services.daily_story.gold_story.gold_chat_batch import run_gold_chat_batch
-from app.services.daily_story.gold_story.gold_chat_convert import (
-    convert_gold_chat,
+from app.services.daily_story.gold_story.gold_chat.batch import run_gold_chat_batch
+from app.services.daily_story.gold_story.gold_chat.convert import convert_gold_chat
+from app.services.daily_story.gold_story.gold_chat.export import (
     gold_chat_summary,
-    import_gold_chat_daily_story,
     load_gold_chat,
     load_gold_chat_for_row,
+)
+from app.services.daily_story.gold_story.gold_chat.import_story import (
+    import_gold_chat_daily_story,
 )
 from app.services.daily_story.gold_story.export_story import (
     cleanup_gold_story_files,
     load_transcript_for_row,
 )
-from app.services.daily_story.gold_story.pipeline import run_collect_pipeline
+from app.services.daily_story.gold_story.collect.pipeline import run_collect_pipeline
 from app.utils.async_util import run_in_background
 
 logger = logging.getLogger(__name__)
@@ -191,7 +193,7 @@ def _row_to_detail_header(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-class GoldChatMgr:
+class GoldStoryMgr:
     def list_items(
         self,
         *,
@@ -318,6 +320,32 @@ class GoldChatMgr:
         outcome = convert_gold_chat(row, config=cfg)
         return {"action": "ok", **outcome}
 
+    def resolve_story_block(
+        self,
+        *,
+        theme: str,
+        story_type: str | None,
+        theme_family: str | None = None,
+        config: Config | None = None,
+    ) -> tuple[str, dict[str, Any] | None]:
+        from app.services.daily_story.gold_story.story_block import (
+            resolve_gold_story_block,
+        )
+
+        return resolve_gold_story_block(
+            theme=theme,
+            story_type=story_type,
+            theme_family=theme_family,
+            config=config,
+        )
+
+    def build_story_block(self, story: dict[str, Any]) -> str:
+        from app.services.daily_story.gold_story.story_block import (
+            build_gold_story_block,
+        )
+
+        return build_gold_story_block(story)
+
     def import_one(
         self,
         *,
@@ -419,4 +447,4 @@ class GoldChatMgr:
         }
 
 
-gold_chat_mgr = GoldChatMgr()
+gold_story_mgr = GoldStoryMgr()

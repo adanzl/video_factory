@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
 
-from app.services.daily_story.gold_story import gold_chat_convert as gc
+from app.services.daily_story.gold_story.gold_chat import convert as gc
+from app.services.daily_story.gold_story.gold_chat import export as gce
+from app.services.daily_story.gold_story.gold_chat import patch as gcp
 
 
 def _sample_row() -> dict:
@@ -143,12 +146,12 @@ def test_apply_deterministic_shorten_trims_one_char():
     story = _sample_chat()
     story["dialogue"][0]["line"] = "你刚才又抢我遥控器，我还不敢说呀！"
     assert len(story["dialogue"][0]["line"]) == 17  # sanity
-    long_line = "你" * 30 + "！"
-    assert len(long_line) == 31
+    long_line = "你" * 24 + "呀"
+    assert len(long_line) == 25
     story["dialogue"][0]["line"] = long_line
     out, changed = gc._apply_deterministic_shorten(story)
     assert changed
-    assert len(out["dialogue"][0]["line"]) <= 30
+    assert len(out["dialogue"][0]["line"]) <= gc.CHAT_MAX_LINE_CHARS
 
 
 def test_validate_pass1_shortens_before_full_fix(monkeypatch):
@@ -156,15 +159,17 @@ def test_validate_pass1_shortens_before_full_fix(monkeypatch):
 
     def fake_validate(story, **kwargs):
         for item in story.get("dialogue") or []:
-            if len(str(item.get("line") or "")) > 30:
-                raise ValueError("单句过长(max=31>30)")
+            if len(str(item.get("line") or "")) > gc.CHAT_MAX_LINE_CHARS:
+                raise ValueError(
+                    f"单句过长(max=31>{gc.CHAT_MAX_LINE_CHARS})"
+                )
         return None
 
     def fake_shorten(story, **_kw):
         calls.append("shorten")
         out = dict(story)
         rows = [dict(x) for x in out["dialogue"]]
-        rows[0]["line"] = str(rows[0]["line"])[:30]
+        rows[0]["line"] = str(rows[0]["line"])[: gc.CHAT_MAX_LINE_CHARS]
         out["dialogue"] = rows
         return out
 
@@ -182,7 +187,7 @@ def test_validate_pass1_shortens_before_full_fix(monkeypatch):
         mom_lines_max=1,
     )
     assert calls == ["shorten"]
-    assert len(out["dialogue"][0]["line"]) <= 30
+    assert len(out["dialogue"][0]["line"]) <= gc.CHAT_MAX_LINE_CHARS
 
 
 def test_gold_story_to_gold_chat(monkeypatch):
@@ -196,11 +201,8 @@ def test_gold_story_to_gold_chat(monkeypatch):
 
 
 def test_export_gold_chat_files(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        gc,
-        "gold_chat_export_dir",
-        lambda _cfg=None: tmp_path,
-    )
+    monkeypatch.setattr(gc, "gold_chat_export_dir", lambda _cfg=None: tmp_path)
+    monkeypatch.setattr(gce, "gold_chat_export_dir", lambda _cfg=None: tmp_path)
     row = _sample_row()
     chat = _sample_chat()
     paths = gc.export_gold_chat_files(
@@ -271,6 +273,7 @@ def test_import_gold_chat_daily_story_insert_and_reimport(
 
     chat = _sample_chat()
     monkeypatch.setattr(gc, "gold_chat_export_dir", lambda _cfg=None: tmp_path)
+    monkeypatch.setattr(gce, "gold_chat_export_dir", lambda _cfg=None: tmp_path)
     gc.export_gold_chat_files(source_id=row["source_id"], row=row, chat=chat)
 
     with app_ctx.app_context():
@@ -294,7 +297,7 @@ def test_import_gold_chat_daily_story_insert_and_reimport(
 
 
 def test_resolve_gold_chat_snippet_same_source():
-    from app.services.daily_story.gold_story.llm_steps import (
+    from app.services.daily_story.gold_story.collect.llm import (
         GOLD_CHAT_LINES_SNIPPET,
         GOLD_CHAT_LINES_SNIPPET_SOURCE_ID,
         resolve_gold_chat_snippet,
@@ -306,7 +309,7 @@ def test_resolve_gold_chat_snippet_same_source():
 
 
 def test_resolve_gold_chat_snippet_cross_source():
-    from app.services.daily_story.gold_story.llm_steps import (
+    from app.services.daily_story.gold_story.collect.llm import (
         GOLD_CHAT_LINES_SNIPPET,
         resolve_gold_chat_snippet,
     )
@@ -332,11 +335,11 @@ def test_patch_gold_chat_near_miss_chars():
     assert gc.dialogue_total_chars(patched) >= DAILY_STORY_BODY_CHARS_MIN
 
 
-def test_pad_gold_chat_line_skips_duplicate_ne():
+def test_pad_gold_chat_line_uses_daily_pad():
     line = "让你玩你咋不哭呢？"
     new, added = gc._pad_gold_chat_line(line, 1)
-    assert added == 0
-    assert new == line
+    assert added == 1
+    assert "了呢" in new
 
 
 def test_patch_sanitize_pad_suffix():
@@ -354,3 +357,24 @@ def test_patch_sanitize_pad_suffix():
     assert "呢呢" not in "".join(lines)
     assert "你呀呢" not in "".join(lines)
     assert "啊呢" not in "".join(lines)
+
+
+def test_patch_trim_redundant_ne_suffix_keeps_cancan_and_close():
+    story = {
+        "dialogue": [
+            {"speaker": "昭昭", "line": "你碗里肉这么多，凭什么不能给我夹一块呢！"},
+            {"speaker": "灿灿", "line": "那也不行，妈妈说过吃多肉会变胖呢！"},
+            {"speaker": "昭昭", "line": "我不管，我就吃一块呢！"},
+            {"speaker": "灿灿", "line": "你说话不算话呢！"},
+            {"speaker": "昭昭", "line": "哼，不吃就不吃呢！"},
+            {"speaker": "昭昭", "line": "这妹妹，八百个心眼子呢！"},
+        ],
+    }
+    out, notes = gcp.patch_trim_redundant_ne_suffix(story, max_ne_suffix=4)
+    lines = [d["line"] for d in out["dialogue"]]
+    assert any("去冗余呢" in n for n in notes)
+    assert lines[0].endswith("夹一块！")
+    assert lines[2].endswith("吃一块！")
+    assert lines[1].endswith("变胖呢！")
+    assert lines[5].endswith("八百个心眼子呢！")
+    assert sum(1 for ln in lines if re.search(r"呢[！。!?？]$", ln)) <= 4

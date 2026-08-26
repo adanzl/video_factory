@@ -9,10 +9,8 @@ from typing import Any
 
 from app.config import Config
 from app.repositories import repo_gold_story
-from app.services.daily_story.gold_story.gold_chat_convert import (
-    convert_gold_chat,
-    gold_chat_export_dir,
-)
+from app.services.daily_story.gold_story.gold_chat.convert import convert_gold_chat
+from app.services.daily_story.gold_story.gold_chat.export import gold_chat_export_dir
 
 
 def _already_exported(source_id: str, config: Config) -> bool:

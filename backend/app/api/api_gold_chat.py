@@ -16,7 +16,7 @@ from app.api.utils import (
     parse_query_int,
     parse_optional_str,
 )
-from app.services.daily_story.gold_story.gold_chat_mgr import gold_chat_mgr
+from app.services.daily_story.gold_story.gold_story_mgr import gold_story_mgr
 
 bp = Blueprint(
     "api_gold_chat",
@@ -48,7 +48,7 @@ def list_route():
     limit = parse_query_int("limit", 15, required=False, minimum=1, maximum=200)
     offset = parse_query_int("offset", 0, required=False, minimum=0)
     return json_ok(
-        gold_chat_mgr.list_items(
+        gold_story_mgr.list_items(
             status=status,
             limit=limit,
             offset=offset,
@@ -66,7 +66,7 @@ def get_route():
         raise APIError("id 或 source_id 必填", status_code=400)
     try:
         return json_ok(
-            gold_chat_mgr.get_chat(
+            gold_story_mgr.get_chat(
                 gold_story_id=gold_story_id,
                 source_id=source_id,
             ),
@@ -85,7 +85,7 @@ def transcript_route():
         raise APIError("id 或 source_id 必填", status_code=400)
     try:
         return json_ok(
-            gold_chat_mgr.get_transcript(
+            gold_story_mgr.get_transcript(
                 gold_story_id=gold_story_id,
                 source_id=source_id,
             ),
@@ -112,7 +112,7 @@ def convert_route():
     )
     try:
         return json_ok(
-            gold_chat_mgr.convert_one(
+            gold_story_mgr.convert_one(
                 gold_story_id=gold_story_id,
                 source_id=source_id,
                 force=force,
@@ -126,7 +126,7 @@ def convert_route():
 
 @bp.get("/collect")
 def collect_status_route():
-    return json_ok(gold_chat_mgr.collect_status())
+    return json_ok(gold_story_mgr.collect_status())
 
 
 @bp.post("/collect")
@@ -135,7 +135,7 @@ def collect_route():
     max_items = parse_int(data, "max", 10, minimum=1, maximum=50)
     logger.info("[GOLD_CHAT] collect max=%d", max_items)
     try:
-        return json_ok(gold_chat_mgr.collect(max_candidates=max_items))
+        return json_ok(gold_story_mgr.collect(max_candidates=max_items))
     except RuntimeError as exc:
         raise APIError(str(exc), status_code=409, code="collect_busy") from exc
 
@@ -157,7 +157,7 @@ def batch_route():
         source_ids,
     )
     return json_ok(
-        gold_chat_mgr.batch_convert(
+        gold_story_mgr.batch_convert(
             max_items=max_items,
             status=status,
             gold_story_ids=gold_story_ids,
@@ -175,7 +175,7 @@ def delete_route():
         raise APIError("ids 必填", status_code=400)
     logger.info("[GOLD_CHAT] delete ids=%s", ids)
     try:
-        return json_ok(gold_chat_mgr.delete_stories(ids))
+        return json_ok(gold_story_mgr.delete_stories(ids))
     except ValueError as exc:
         raise APIError(str(exc), status_code=400)
 
@@ -198,7 +198,7 @@ def import_route():
     )
     try:
         return json_ok(
-            gold_chat_mgr.import_one(
+            gold_story_mgr.import_one(
                 gold_story_id=gold_story_id,
                 source_id=source_id,
                 force=force,

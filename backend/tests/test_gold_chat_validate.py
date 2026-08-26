@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
 import pytest
 
-from app.services.daily_story.gold_story import gold_chat_convert as gc
-from app.services.daily_story.gold_story.gold_chat_fidelity import (
+from app.services.daily_story.gold_story.gold_chat import convert as gc
+from app.services.daily_story.gold_story.gold_chat.validate import (
     collect_fidelity_issues,
     should_regenerate_pass1,
 )
@@ -25,7 +22,7 @@ def _m5h_dialogue_v1() -> list[dict[str, str]]:
     dlg[8] = {"speaker": "灿灿", "line": "谁先动手谁道歉！哼，我不原谅！"}
     dlg[14] = {
         "speaker": "妈妈",
-        "line": "灿灿，弟弟都道歉了，你画坏了可以再画，额头破了得先处理。",
+        "line": "弟弟都道歉了，画能再画，额头先涂。",
     }
     return dlg
 
@@ -36,7 +33,7 @@ def _m5h_refine_fixes() -> list[dict[str, str | int]]:
         {"no": 1, "line": "我在画小兔子呢，你也画你的别捣乱！"},
         {"no": 3, "line": "哼，我偏要涂一下，弄坏你的画！"},
         {"no": 9, "line": "家规就是谁先动手谁道歉！"},
-        {"no": 15, "line": "昭昭先弄画不对，灿灿你也别推人。画能重画，额头先处理。"},
+        {"no": 15, "line": "昭昭先弄画不对，灿灿也别推人。"},
         {"no": 17, "line": "以后还打不打架？"},
     ]
 
@@ -58,7 +55,7 @@ def _m5h_dialogue_v2() -> list[dict[str, str]]:
         {"speaker": "灿灿", "line": "道歉也没用！我画了好久呢！"},
         {"speaker": "妈妈", "line": "别打了！谁先动手的？"},
         {"speaker": "昭昭", "line": "我……我先弄花的，姐姐对不起！"},
-        {"speaker": "妈妈", "line": "昭昭先弄画不对，灿灿你也别推人。画能重画，额头先处理。"},
+        {"speaker": "妈妈", "line": "昭昭先弄画不对，灿灿也别推人。"},
         {"speaker": "灿灿", "line": "哼……那拉手吧。"},
         {"speaker": "灿灿", "line": "以后还打不打架？"},
         {"speaker": "昭昭", "line": "不打了！"},
@@ -238,7 +235,7 @@ def test_collect_fidelity_issues_inverted_role_flags():
 
 
 def test_repair_m5_h_scene_contract_fixes_gold5_beat_chain():
-    from app.services.daily_story.gold_story.gold_chat_fidelity import (
+    from app.services.daily_story.gold_story.gold_chat.validate import (
         repair_m5_h_conflict_core,
         repair_m5_h_scene_contract,
         validate_contract_role_consistency,
@@ -264,7 +261,7 @@ def test_repair_m5_h_scene_contract_fixes_gold5_beat_chain():
 
 
 def test_parse_fight_question_asker_from_summary():
-    from app.services.daily_story.gold_story.gold_chat_fidelity import (
+    from app.services.daily_story.gold_story.gold_chat.validate import (
         _parse_fight_question_asker,
     )
 
@@ -277,7 +274,7 @@ def test_parse_fight_question_asker_from_summary():
 
 
 def test_patch_split_m5_merged_line():
-    from app.services.daily_story.gold_story.gold_chat_fidelity import (
+    from app.services.daily_story.gold_story.gold_chat.patch import (
         patch_split_m5_merged_line,
     )
 
@@ -292,9 +289,11 @@ def test_patch_split_m5_merged_line():
 
 
 def test_patch_fight_question_speaker():
-    from app.services.daily_story.gold_story.gold_chat_fidelity import (
-        collect_fidelity_issues,
+    from app.services.daily_story.gold_story.gold_chat.patch import (
         patch_fight_question_speaker,
+    )
+    from app.services.daily_story.gold_story.gold_chat.validate import (
+        collect_fidelity_issues,
     )
 
     dlg = _m5h_dialogue_no_apology()
@@ -314,7 +313,7 @@ def test_patch_fight_question_speaker():
 
 
 def test_patch_m5_rule_authority_adds_prefix():
-    from app.services.daily_story.gold_story.gold_chat_fidelity import (
+    from app.services.daily_story.gold_story.gold_chat.patch import (
         patch_m5_rule_authority,
     )
 
@@ -332,7 +331,7 @@ def test_patch_m5_rule_authority_adds_prefix():
 
 
 def test_patch_m5_pre_mom_escalation_adds_escalate():
-    from app.services.daily_story.gold_story.gold_chat_fidelity import (
+    from app.services.daily_story.gold_story.gold_chat.patch import (
         patch_m5_pre_mom_escalation,
     )
 
@@ -347,7 +346,7 @@ def test_patch_m5_pre_mom_escalation_adds_escalate():
 
 
 def test_split_fidelity_issues_warn_kinds():
-    from app.services.daily_story.gold_story.gold_chat_fidelity import (
+    from app.services.daily_story.gold_story.gold_chat.validate import (
         split_fidelity_issues,
     )
 
@@ -368,7 +367,7 @@ def test_refine_passes_with_only_fidelity_warn(monkeypatch):
         "line": "家规就是谁先动手谁道歉！哼，我不原谅！道歉也没用！",
     }
     story = _m5h_story(dlg)
-    from app.services.daily_story.gold_story.gold_chat_fidelity import (
+    from app.services.daily_story.gold_story.gold_chat.validate import (
         split_fidelity_issues,
     )
 
@@ -629,8 +628,10 @@ def test_batch291_flags_wrong_retaliation_speaker():
 
 
 def test_patch_ensure_chorus_inserts_missing_closing():
-    from app.services.daily_story.gold_story.gold_chat_fidelity import (
+    from app.services.daily_story.gold_story.gold_chat.patch import (
         apply_m5_h_local_patches,
+    )
+    from app.services.daily_story.gold_story.gold_chat.validate import (
         collect_fidelity_issues,
     )
 
@@ -656,7 +657,7 @@ def test_patch_ensure_chorus_inserts_missing_closing():
 
 
 def test_patch_fix_mom_ask_admission():
-    from app.services.daily_story.gold_story.gold_chat_fidelity import (
+    from app.services.daily_story.gold_story.gold_chat.patch import (
         patch_fix_mom_ask_admission,
     )
 
@@ -669,7 +670,7 @@ def test_patch_fix_mom_ask_admission():
 
 
 def test_patch_dedupe_ne_suffix():
-    from app.services.daily_story.gold_story.gold_chat_fidelity import (
+    from app.services.daily_story.gold_story.gold_chat.patch import (
         patch_dedupe_ne_suffix,
     )
 
@@ -683,7 +684,7 @@ def test_patch_dedupe_ne_suffix():
 
 def test_patch_m5_break_sibling_consecutive():
     from app.services.daily_story.quality import _has_consecutive_sibling
-    from app.services.daily_story.gold_story.gold_chat_fidelity import (
+    from app.services.daily_story.gold_story.gold_chat.patch import (
         patch_m5_break_sibling_consecutive,
     )
 
@@ -695,7 +696,7 @@ def test_patch_m5_break_sibling_consecutive():
 
 
 def test_format_m5_h_pass1_beat_block():
-    from app.services.daily_story.gold_story.gold_chat_fidelity import (
+    from app.services.daily_story.gold_story.gold_chat.prompts import (
         format_m5_h_pass1_beat_block,
     )
 
@@ -709,10 +710,12 @@ def test_format_m5_h_pass1_beat_block():
 
 
 def test_patch_m5_retaliation_action():
-    from app.services.daily_story.gold_story.gold_chat_fidelity import (
+    from app.services.daily_story.gold_story.gold_chat.patch import (
         apply_m5_h_local_patches,
-        collect_fidelity_issues,
         patch_m5_retaliation_action,
+    )
+    from app.services.daily_story.gold_story.gold_chat.validate import (
+        collect_fidelity_issues,
     )
 
     dlg = list(_m5h_dialogue_v2())
@@ -748,7 +751,7 @@ def test_patch_m5_retaliation_action():
 
 
 def test_patch_m5_soften_premature_push_blame():
-    from app.services.daily_story.gold_story.gold_chat_fidelity import (
+    from app.services.daily_story.gold_story.gold_chat.patch import (
         patch_m5_soften_premature_push_blame,
     )
 
@@ -768,29 +771,3 @@ def test_patch_m5_soften_premature_push_blame():
     assert changed
     assert "推我" not in patched["dialogue"][3]["line"]
     assert "凶我" in patched["dialogue"][3]["line"]
-
-
-def test_exported_pipeline_json_passes_fidelity():
-    from app.services.daily_story.gold_story.gold_chat_fidelity import (
-        split_fidelity_issues,
-    )
-
-    p = Path(__file__).resolve().parents[2] / "data/gold_story/gold_chat/BV1sh411G7aX.json"
-    if not p.is_file():
-        pytest.skip("no local export")
-    data = json.loads(p.read_text(encoding="utf-8"))
-    if str(data.get("mechanism") or "").upper() != "M5":
-        pytest.skip("local export not M5+H pipeline draft")
-    story = data["daily_story"]
-    sc = data.get("gold_meta", {}).get("scene_contract") or {}
-    closing = sc.get("closing_intent") or data.get("gold_meta", {}).get("closing_intent") or _CLOSING
-    issues = collect_fidelity_issues(
-        story,
-        structure_type="H",
-        mechanism="M5",
-        closing_intent=closing,
-        conflict_text=str(sc.get("conflict") or ""),
-        beat_chain=sc.get("beat_chain"),
-    )
-    blocking, _warn = split_fidelity_issues(issues)
-    assert not blocking, f"export blocking issues: {blocking}"

@@ -5,7 +5,8 @@ from __future__ import annotations
 import pytest
 
 from app.repositories import repo_gold_story
-from app.services.daily_story.gold_story import gold_chat_convert as gc
+from app.services.daily_story.gold_story.gold_chat import convert as gc
+from app.services.daily_story.gold_story.gold_chat import export as gce
 
 
 def _insert_sample(app_ctx) -> dict:
@@ -42,9 +43,26 @@ def _sample_chat() -> dict:
     lines = [
         {"speaker": "昭昭", "line": "你刚才又抢我遥控器，我还不敢说。"},
         {"speaker": "灿灿", "line": "谁让你手慢，我先用就是我的。"},
+        {"speaker": "昭昭", "line": "那我关上门，我在里面练功夫，等会儿打回来。"},
+        {"speaker": "灿灿", "line": "你练啊，开门我看你还敢不敢。"},
+        {"speaker": "昭昭", "line": "我……我先看看你在不在门口。"},
+        {"speaker": "灿灿", "line": "在啊，你出来试试。"},
+        {"speaker": "昭昭", "line": "算了算了，我先不跟你计较。"},
+        {"speaker": "灿灿", "line": "刚才不是说要打回来吗？"},
+        {"speaker": "昭昭", "line": "我就是先歇一会儿，又不是怕你。"},
+        {"speaker": "灿灿", "line": "那你把门打开，别躲里面。"},
+        {"speaker": "昭昭", "line": "不开，我要再练两招。"},
+        {"speaker": "灿灿", "line": "行，你练，我等着。"},
+        {"speaker": "昭昭", "line": "好了好了，遥控器还你一半行吧。"},
+        {"speaker": "灿灿", "line": "这还差不多，明天继续。"},
     ]
+    n = 0
     while gc.dialogue_total_chars({"dialogue": lines}) < 240:
-        lines.append({"speaker": "昭昭", "line": "我就是先歇一会儿，又不是怕你。"})
+        n += 1
+        if n % 2:
+            lines.append({"speaker": "昭昭", "line": f"我再练一招，你别敲门{n}。"})
+        else:
+            lines.append({"speaker": "灿灿", "line": f"门缝里我看着你呢{n}。"})
     return {
         "scene_title": "关门练功",
         "setting": "卧室门口",
@@ -61,6 +79,7 @@ def test_api_list_and_convert(app_ctx, monkeypatch, tmp_path):
     gid = int(inserted["id"])
 
     monkeypatch.setattr(gc, "gold_chat_export_dir", lambda _cfg=None: tmp_path)
+    monkeypatch.setattr(gce, "gold_chat_export_dir", lambda _cfg=None: tmp_path)
 
     def fake_chat(_row):
         return _sample_chat()
@@ -158,7 +177,7 @@ def test_api_delete(app_ctx, tmp_path, monkeypatch):
             self.gold_story_media_workspace = tmp_path / "media"
 
     monkeypatch.setattr(config_mod, "Config", PatchedConfig)
-    monkeypatch.setattr("app.services.daily_story.gold_story.gold_chat_mgr.Config", PatchedConfig)
+    monkeypatch.setattr("app.services.daily_story.gold_story.gold_story_mgr.Config", PatchedConfig)
     monkeypatch.setattr(es, "Config", PatchedConfig)
 
     client = app_ctx.test_client()
@@ -174,7 +193,7 @@ def test_api_delete(app_ctx, tmp_path, monkeypatch):
 
 
 def test_api_collect(app_ctx, monkeypatch):
-    from app.services.daily_story.gold_story import gold_chat_mgr as mgr_mod
+    from app.services.daily_story.gold_story import gold_story_mgr as mgr_mod
 
     mgr_mod.reset_collect_state()
     workers: list = []
@@ -225,6 +244,7 @@ def test_api_batch(app_ctx, monkeypatch, tmp_path):
     inserted = _insert_sample(app_ctx)
     gid = int(inserted["id"])
     monkeypatch.setattr(gc, "gold_chat_export_dir", lambda _cfg=None: tmp_path)
+    monkeypatch.setattr(gce, "gold_chat_export_dir", lambda _cfg=None: tmp_path)
     monkeypatch.setattr(gc, "gold_story_to_gold_chat", lambda _row: _sample_chat())
 
     client = app_ctx.test_client()
@@ -276,7 +296,7 @@ def test_api_get_transcript(app_ctx, tmp_path, monkeypatch):
 
     monkeypatch.setattr(config_mod, "Config", PatchedConfig)
     monkeypatch.setattr(
-        "app.services.daily_story.gold_story.gold_chat_mgr.Config",
+        "app.services.daily_story.gold_story.gold_story_mgr.Config",
         PatchedConfig,
     )
     monkeypatch.setattr(

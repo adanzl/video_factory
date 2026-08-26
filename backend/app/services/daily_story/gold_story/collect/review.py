@@ -6,10 +6,10 @@ import re
 from typing import Any
 
 from app.config import Config
-from app.services.daily_story.gold_story import llm_steps
-from app.services.daily_story.gold_story.scene_contract import (
+from app.services.daily_story.gold_story.collect import llm as llm_steps
+from app.services.daily_story.gold_story.scene import (
     validate_dialogue_seed_speakers,
-    validate_scene_contract,
+    validate_scene,
 )
 
 _SIBLING_HINT = re.compile(
@@ -61,7 +61,7 @@ def run_rule_audit(
     """规则机审；False 时 reasons 非空。"""
     reasons: list[str] = []
     if isinstance(scene_contract, dict) and scene_contract:
-        contract_errors = validate_scene_contract(scene_contract)
+        contract_errors = validate_scene(scene_contract)
         if contract_errors:
             reasons.extend(contract_errors[:3])
         seed_errors = validate_dialogue_seed_speakers(dialogue_seed)

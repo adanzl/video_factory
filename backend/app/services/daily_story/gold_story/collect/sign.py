@@ -23,7 +23,7 @@ def _key_from_url(url: str) -> str:
     return name.split(".", 1)[0]
 
 
-def fetch_wbi_keys(session: requests.Session) -> tuple[str, str]:
+def fetch_bili_sign_keys(session: requests.Session) -> tuple[str, str]:
     resp = session.get(
         "https://api.bilibili.com/x/web-interface/nav",
         timeout=20,
@@ -38,7 +38,7 @@ def fetch_wbi_keys(session: requests.Session) -> tuple[str, str]:
     return img_key, sub_key
 
 
-def sign_wbi_params(
+def sign_bili_params(
     params: dict[str, Any],
     *,
     img_key: str,

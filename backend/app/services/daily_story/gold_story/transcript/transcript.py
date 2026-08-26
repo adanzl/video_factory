@@ -10,7 +10,10 @@ from pathlib import Path
 from typing import Any
 
 from app.config import Config
-from app.services.daily_story.gold_story.download import (
+from . import merge as gs_transcript_merge
+from . import ocr as gs_subtitle_ocr
+from . import whisper as gs_whisper
+from .download import (
     MediaRef,
     download_media,
     extract_audio_wav,
@@ -18,9 +21,6 @@ from app.services.daily_story.gold_story.download import (
     parse_media_ref,
     write_metadata,
 )
-from app.services.daily_story.gold_story import whisper as gs_whisper
-from app.services.daily_story.gold_story import subtitle_ocr as gs_subtitle_ocr
-from app.services.daily_story.gold_story import transcript_merge as gs_transcript_merge
 
 logger = logging.getLogger(__name__)
 

@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from app.services.daily_story.gold_story.subtitle_ocr import (
+from app.services.daily_story.gold_story.transcript.ocr import (
     _box_white_bg_ratio,
     _filter_dialogue_boxes,
 )

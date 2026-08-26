@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.services.daily_story.gold_story import llm_steps
+from app.services.daily_story.gold_story.collect import llm as llm_steps
 from app.services.daily_story.gold_story.transcript import format_dialogue_transcript
 
 

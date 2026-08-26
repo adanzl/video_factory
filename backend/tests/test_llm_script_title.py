@@ -2138,8 +2138,8 @@ def test_a_steal_check_early_skips_non_steal():
     errors = _a_body_errors(story)
     assert not any("检查线前置" in e for e in errors), errors
 
-def test_attach_daily_story_quality_finalizes_structure_plus_regex_humor():
-    """保存路径：attach 后总分 = 结构 + 正则好笑。"""
+def test_attach_daily_story_quality_without_llm_humor_structure_only():
+    """无 LLM 好笑时：attach 后总分暂=结构分，标记待审读。"""
     from app.services.daily_story.quality import (
         attach_daily_story_quality,
         score_daily_story,
@@ -2170,9 +2170,12 @@ def test_attach_daily_story_quality_finalizes_structure_plus_regex_humor():
     attach_daily_story_quality(story, theme="弄乱叠好的衣服")
     q = story["quality"]
     structure = int(q["structure_score"])
-    humor = int(q["humor_regex_points"])
-    assert q["score"] == min(100, structure + humor), q
-    assert q["score"] >= structure
+    assert q["score"] == structure, q
+    assert q.get("humor_pending") is True
+    assert "待LLM审读" in q["summary"]
+    assert any("待LLM审读" in r for r in q["reasons"])
+    assert "pass" not in q
+    assert isinstance(q.get("humor_regex_points"), int)
     assert raw["score"] == structure
 
 def test_infer_story_type_and_normalize_punchline():

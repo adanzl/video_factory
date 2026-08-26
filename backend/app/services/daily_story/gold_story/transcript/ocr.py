@@ -15,8 +15,8 @@ from pathlib import Path
 from typing import Any
 
 from app.config import Config
-from app.services.daily_story.gold_story import transcript_merge as gs_merge
-from app.services.daily_story.gold_story.subtitle_detect import (
+from . import merge as gs_merge
+from .detect import (
     SubtitleRegion,
     detect_burned_subtitles,
     detect_subtitle_region,
@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 _CJK_IN_LINE = re.compile(r"[\u4e00-\u9fff]")
 
 _OCR_CONFIG_NAME = "rapidocr_gold_story.yaml"
-_BACKEND_DIR = Path(__file__).resolve().parents[4]
+_BACKEND_DIR = Path(__file__).resolve().parents[5]
 _OCR_SUBPROCESS_TIMEOUT_SEC = 600.0
 
 _worker_engine = None
@@ -596,7 +596,7 @@ def transcribe_video_ocr_subprocess(
         "gold_story_ocr_fps": config.gold_story_ocr_fps,
         "gold_story_ocr_frame_workers": config.gold_story_ocr_frame_workers,
     }
-    module = "app.services.daily_story.gold_story.subtitle_ocr"
+    module = "app.services.daily_story.gold_story.transcript.ocr"
     with tempfile.TemporaryDirectory(prefix="gold_story_ocr_") as tmp:
         input_path = Path(tmp) / "input.json"
         output_path = Path(tmp) / "output.json"

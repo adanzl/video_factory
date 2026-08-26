@@ -7,7 +7,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from app.services.daily_story.gold_story.subtitle_ocr import OcrFrame, dedupe_frames
+from app.services.daily_story.gold_story.transcript.ocr import OcrFrame, dedupe_frames
 
 
 def _write_frame(path: Path, seed: int) -> None:

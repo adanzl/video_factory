@@ -8,17 +8,24 @@ from typing import Any
 
 from app.config import Config
 from app.repositories import repo_gold_story
-from app.services.daily_story.gold_story.collect import (
+from app.services.daily_story.gold_story.collect import llm as llm_steps
+from app.services.daily_story.gold_story.collect import review as gs_review
+from app.services.daily_story.gold_story.collect.funny import (
+    compute_audience_funny_metrics,
+    metrics_to_payload,
+    passes_funny_gate_from_payload,
+)
+from app.services.daily_story.gold_story.collect.search import (
     VideoCandidate,
+    _bili_http,
     collect_candidates,
     engagement_norm,
+    fetch_top_replies,
+    fetch_video_meta,
     write_candidate_list,
 )
-from app.services.daily_story.gold_story import llm_steps
-from app.services.daily_story.gold_story import review as gs_review
 from app.services.daily_story.gold_story.export_story import export_story_files
-from app.services.daily_story.gold_story.funny_signal import passes_funny_gate_from_payload
-from app.services.daily_story.gold_story.scene_contract import sanitize_banned_literals
+from app.services.daily_story.gold_story.scene import sanitize_banned_literals
 from app.services.daily_story.gold_story.transcript import (
     repaired_transcript_path,
     save_repaired_transcript,
@@ -44,8 +51,14 @@ def process_candidate(
     config: Config | None = None,
     skip_transcript: bool = False,
     dry_run: bool = False,
+    overwrite_existing: bool = False,
+    force_transcript: bool = False,
+    existing_row: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """单条 BV：H0b → H0c → H2 → H3 → H3a → H3b → H4a → H4。"""
+    """单条 BV：H0b → H0c → H2 → H3 → H3a → H3b → H4a → H4。
+
+    overwrite_existing=True 时走已入库回写，不插入新行。
+    """
     cfg = config or Config()
     base: dict[str, Any] = {
         "source_id": candidate.source_id,
@@ -53,18 +66,31 @@ def process_candidate(
         "keyword": candidate.keyword,
     }
 
-    if _existing_source(candidate.source, candidate.source_id):
+    if existing_row is None and _existing_source(candidate.source, candidate.source_id):
+        existing_row = repo_gold_story.get_by_source_id(
+            source_id=candidate.source_id,
+            source=candidate.source,
+        )
+    if existing_row and not overwrite_existing:
         return {**base, "action": "skip", "reason": "already_in_db"}
 
     transcript_path = cfg.gold_story_transcript_dir / f"{candidate.source_id}.txt"
     transcript_text = _read_transcript(transcript_path)
+    tx: dict[str, Any] | None = None
 
-    if not transcript_text and not skip_transcript:
+    need_transcript = force_transcript or (not transcript_text and not skip_transcript)
+    if need_transcript:
         try:
-            tx = transcribe_bilibili(candidate.source_id, config=cfg)
+            tx = transcribe_bilibili(
+                candidate.source_id,
+                config=cfg,
+                skip_existing=not force_transcript,
+            )
             if tx.get("action") in {"ok", "skip"}:
                 transcript_path = Path(str(tx.get("transcript_path") or transcript_path))
                 transcript_text = _read_transcript(transcript_path)
+            elif overwrite_existing:
+                return {**base, "action": "error", "stage": "H0b", "error": tx}
             else:
                 return {**base, "action": "error", "stage": "H0b", "error": tx}
         except Exception as exc:
@@ -73,8 +99,13 @@ def process_candidate(
                 candidate.source_id,
                 exc,
             )
+            if overwrite_existing:
+                return {**base, "action": "error", "stage": "H0b", "error": str(exc)}
             if not candidate.description and not candidate.top_replies:
                 return {**base, "action": "error", "stage": "H0b", "error": str(exc)}
+
+    if overwrite_existing and not transcript_text:
+        return {**base, "action": "error", "stage": "H0b", "error": "empty transcript"}
 
     transcript_for_h2 = transcript_text
     h0c_meta: dict[str, Any] = {}
@@ -118,7 +149,8 @@ def process_candidate(
         )
         story_raw_text = str(h2["story_raw"])
         near = repo_gold_story.find_near_duplicate(story_raw_text)
-        if near:
+        self_id = int(existing_row["id"]) if existing_row and existing_row.get("id") else None
+        if near and (self_id is None or int(near["id"]) != self_id):
             return {
                 **base,
                 "action": "skip",
@@ -164,12 +196,18 @@ def process_candidate(
 
     norm = engagement_norm(candidate.view_count, candidate.reply_count)
     funny_payload = dict(candidate.funny_metrics or {})
+    old_payload: dict[str, Any] = {}
+    if overwrite_existing and existing_row:
+        raw_old = existing_row.get("payload")
+        if isinstance(raw_old, dict):
+            old_payload = dict(raw_old)
     banned = sanitize_banned_literals(
         h3.get("banned_literals") or h3a.get("banned_literals"),
         scene_contract=h3a,
         beat=h3.get("beat") if isinstance(h3.get("beat"), list) else [],
     )
     payload: dict[str, Any] = {
+        **old_payload,
         "perspective": h2.get("perspective"),
         "source_type": source_type,
         "story_raw": story_raw_text,
@@ -203,6 +241,53 @@ def process_candidate(
         }
         payload["audit"] = audit
 
+    transcript_backend = "faster-whisper"
+    if tx:
+        transcript_backend = str(
+            tx.get("transcript_backend") or tx.get("engine") or "faster-whisper"
+        )
+
+    if overwrite_existing and existing_row:
+        gid = int(existing_row["id"])
+        updated = repo_gold_story.update_story_from_pipeline(
+            gid,
+            mechanism=str(h3["mechanism"]),
+            structure_type=str(h3["structure_type"]),
+            title=str(h3.get("title") or candidate.title),
+            conflict_core=str(h3.get("conflict_core") or ""),
+            story_raw=story_raw_text,
+            payload=payload,
+            transcript_backend=transcript_backend,
+            transcript_path=str(transcript_path) if transcript_text else None,
+            engagement_score=float(norm),
+            engagement_norm=norm,
+            status=insert_status,
+        )
+        fresh = repo_gold_story.get_story(gid)
+        paths = export_story_files(source_id=candidate.source_id, row=fresh, config=cfg)
+        action = "ok" if insert_status == "active" else "reject"
+        reason = None
+        if action == "reject":
+            reason = (
+                "low_audience_laugh"
+                if funny_reason.startswith("low_") or funny_reason == "cute_not_funny"
+                else "audit_failed"
+            )
+        return {
+            **base,
+            "id": gid,
+            "action": action,
+            "reason": reason,
+            "status": insert_status,
+            "audit_pass": audit.get("pass"),
+            "audit_reasons": audit.get("reject_reasons") or [],
+            "transcript_chars": len(transcript_text),
+            "transcript_repaired_chars": len(transcript_for_h2),
+            "story_raw_chars": len(story_raw_text),
+            "auto_score": updated.get("auto_score"),
+            "export": paths,
+        }
+
     result = repo_gold_story.insert_or_skip(
         source=candidate.source,
         source_id=candidate.source_id,
@@ -216,7 +301,7 @@ def process_candidate(
         theme_family=str(h3.get("theme_family") or "") or None,
         engagement_score=float(norm),
         engagement_norm=norm,
-        transcript_backend="faster-whisper",
+        transcript_backend=transcript_backend,
         transcript_path=str(transcript_path) if transcript_text else None,
         status=insert_status,
     )
@@ -234,6 +319,94 @@ def process_candidate(
         )
         result["audit_reasons"] = audit.get("reject_reasons") or []
     return {**base, **result, "audit_pass": audit.get("pass"), "status": insert_status}
+
+
+def overwrite_existing_story(
+    gold_story_id: int,
+    *,
+    config: Config | None = None,
+    force_transcript: bool = True,
+) -> dict[str, Any]:
+    """已入库条目再跑 H0b–H4，回写同一行。"""
+    cfg = config or Config()
+    row = repo_gold_story.get_story(int(gold_story_id))
+    source_id = str(row.get("source_id") or "").strip()
+    base = {
+        "id": gold_story_id,
+        "source_id": source_id,
+        "title": row.get("title"),
+    }
+    if not source_id:
+        return {**base, "action": "error", "error": "missing source_id"}
+
+    try:
+        meta = fetch_video_meta(source_id, config=cfg)
+        replies = fetch_top_replies(int(meta.get("aid") or 0), config=cfg, limit=8)
+    except Exception as exc:
+        logger.warning("overwrite meta failed bvid=%s: %s", source_id, exc)
+        meta = {
+            "title": row.get("title") or source_id,
+            "description": "",
+            "view_count": 0,
+            "reply_count": 0,
+            "url": str(row.get("url") or ""),
+            "cid": 0,
+        }
+        replies = []
+
+    http = _bili_http(cfg)
+    funny = compute_audience_funny_metrics(
+        source_id=source_id,
+        cid=int(meta.get("cid") or 0),
+        view_count=int(meta.get("view_count") or 0),
+        reply_count=int(meta.get("reply_count") or 0),
+        replies=replies,
+        session=http,
+    )
+    candidate = VideoCandidate(
+        source=str(row.get("source") or "bili"),
+        source_id=source_id,
+        url=str(meta.get("url") or row.get("url") or ""),
+        title=str(meta.get("title") or row.get("title") or ""),
+        description=str(meta.get("description") or ""),
+        view_count=int(meta.get("view_count") or 0),
+        reply_count=int(meta.get("reply_count") or 0),
+        keyword="",
+        top_replies=tuple(replies),
+        cid=int(meta.get("cid") or 0),
+        funny_metrics=metrics_to_payload(funny),
+    )
+    outcome = process_candidate(
+        candidate,
+        config=cfg,
+        overwrite_existing=True,
+        force_transcript=force_transcript,
+        existing_row=row,
+    )
+    return {**base, **outcome}
+
+
+def overwrite_existing_stories(
+    gold_story_ids: list[int],
+    *,
+    config: Config | None = None,
+    force_transcript: bool = True,
+) -> list[dict[str, Any]]:
+    results: list[dict[str, Any]] = []
+    for gid in gold_story_ids:
+        try:
+            results.append(
+                overwrite_existing_story(
+                    int(gid),
+                    config=config,
+                    force_transcript=force_transcript,
+                )
+            )
+        except KeyError:
+            results.append(
+                {"id": gid, "action": "error", "error": f"gold_story {gid} not found"}
+            )
+    return results
 
 
 def run_collect_pipeline(

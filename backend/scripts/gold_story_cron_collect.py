@@ -24,7 +24,7 @@ from app.services.daily_story.gold_story.collect import (
     collect_candidates,
     write_candidate_list,
 )
-from app.services.daily_story.gold_story.pipeline import run_collect_pipeline
+from app.services.daily_story.gold_story.collect.pipeline import run_collect_pipeline
 
 
 def _cmd_collect(args: argparse.Namespace) -> int:

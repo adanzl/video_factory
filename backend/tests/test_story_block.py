@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from app.services.daily_story.gold_story.inject import (
+from app.services.daily_story.gold_story.story_block import (
     build_gold_story_block,
     pick_for_injection,
     resolve_gold_story_block,
@@ -63,7 +63,7 @@ def test_resolve_disabled_by_default():
 def test_resolve_when_enabled():
     cfg = type("Cfg", (), {"gold_story_enabled": True})()
     with patch(
-        "app.services.daily_story.gold_story.inject.pick_for_injection",
+        "app.services.daily_story.gold_story.story_block.pick_for_injection",
         return_value=_SAMPLE,
     ):
         block, row = resolve_gold_story_block(
@@ -75,18 +75,26 @@ def test_resolve_when_enabled():
     assert "冲突核：独占不让吃" in block
 
 
-def test_pick_skips_excluded_mechanism():
+def test_pick_skips_near_duplicate_daily_story():
     rows = [
-        {**_SAMPLE, "mechanism": "M2"},
-        {**_SAMPLE, "id": 2, "mechanism": "M4"},
+        {**_SAMPLE, "mechanism": "M2", "title": "独占果汁歪理"},
+        {**_SAMPLE, "id": 2, "mechanism": "M4", "title": "另一条不撞车",
+         "conflict_core": "结盟失败互相甩锅"},
+    ]
+    existing = [
+        {
+            "theme": "独占不让吃，被质问后歪理自洽",
+            "story": {"conflict_core": "独占果汁"},
+        }
     ]
     with patch("app.repositories.repo_gold_story.pick", return_value=rows):
         with patch(
-            "app.services.daily_story.gold_story.inject.recent_injected_mechanisms",
-            return_value={"M2"},
+            "app.repositories.repo_daily_story.list_stories",
+            return_value=existing,
         ):
             picked = pick_for_injection(theme="结盟", story_type="C")
     assert picked is not None
+    assert picked["id"] == 2
     assert picked["mechanism"] == "M4"
 
 
