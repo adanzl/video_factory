@@ -69,6 +69,59 @@ def test_parse_speaking_sides() -> None:
     assert _parse_speaking_sides("无法判断画面内容") is None
 
 
+def test_parse_subtitle_hit() -> None:
+    from app.services.segment.clip.video_agnes import _parse_subtitle_hit
+
+    assert _parse_subtitle_hit("有字幕") is True
+    assert _parse_subtitle_hit("有字幕。") is True
+    assert _parse_subtitle_hit("无字幕") is False
+    assert _parse_subtitle_hit("没有字幕") is False
+    assert _parse_subtitle_hit("未见字幕") is False
+    assert _parse_subtitle_hit("") is None
+    assert _parse_subtitle_hit("看不清") is None
+
+
+def test_subtitle_verify_hard_fails_after_retries(tmp_path: Path) -> None:
+    from app.services.llm.llm_agnes import AgnesI2VError
+
+    provider = AgnesClipProvider()
+    image_path = tmp_path / "1.png"
+    image_path.write_bytes(b"png")
+    settings = SimpleNamespace(
+        video_width=720,
+        video_height=1280,
+        agnes_video_mouth_verify=False,
+        agnes_video_mouth_verify_attempts=2,
+    )
+    with (
+        patch(
+            "app.services.segment.clip.video_agnes.get_settings",
+            return_value=settings,
+        ),
+        patch.object(provider, "_generate_raw") as mock_gen,
+        patch(
+            "app.services.segment.clip.video_agnes._sample_verify_windows",
+            return_value=[(0.0, 3.0, "", ["data:image/jpeg;base64,xx"])],
+        ),
+        patch.object(provider, "_verify_no_burned_subtitles", return_value=False),
+        patch(
+            "app.services.segment.clip.video_agnes.clip_mgr.cue_total_duration",
+            return_value=3.0,
+        ),
+        pytest.raises(AgnesI2VError, match="烧录字幕"),
+    ):
+        provider.build_segment_clip(
+            image_path=image_path,
+            subtitle_cues=[("x", 3.0)],
+            output_path=tmp_path / "clip.mp4",
+            motion_preset="ken_burns_slow",
+            work_dir=tmp_path / "work",
+            segment_index=11,
+            motion_prompt="镜头固定不推近不拉远",
+        )
+    assert mock_gen.call_count == 2
+
+
 def test_normalize_submit_ids_drops_task_prefixed_video_id() -> None:
     video_id, task_id = _normalize_submit_ids(
         video_id="task_hmLXl8ALGUeArDTsu7xBZHBaqgZYVNji",
