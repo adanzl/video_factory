@@ -241,16 +241,13 @@ def set_gold_chat_daily_story_id(
     patch_story_payload(int(gold_story_id), patch)
 
 
-def list_stories(
+def _list_where(
     *,
     status: str | None = None,
     structure_type: str | None = None,
     mechanism: str | None = None,
-    limit: int = 50,
-    offset: int = 0,
-) -> list[dict]:
-    limit = max(1, min(limit, 200))
-    offset = max(0, offset)
+    has_story: bool | None = None,
+) -> tuple[str, list[Any]]:
     clauses: list[str] = []
     params: list[Any] = []
     if status:
@@ -262,7 +259,32 @@ def list_stories(
     if mechanism:
         clauses.append("mechanism = ?")
         params.append(mechanism)
-    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    if has_story is True:
+        clauses.append("gold_chat_daily_story_id IS NOT NULL")
+    elif has_story is False:
+        clauses.append("gold_chat_daily_story_id IS NULL")
+    if not clauses:
+        return "", []
+    return " WHERE " + " AND ".join(clauses), params
+
+
+def list_stories(
+    *,
+    status: str | None = None,
+    structure_type: str | None = None,
+    mechanism: str | None = None,
+    has_story: bool | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[dict]:
+    limit = max(1, min(limit, 200))
+    offset = max(0, offset)
+    where, params = _list_where(
+        status=status,
+        structure_type=structure_type,
+        mechanism=mechanism,
+        has_story=has_story,
+    )
     rows = sql.fetchall(
         f"""
         SELECT {_GOLD_STORY_COLUMNS}
@@ -276,14 +298,23 @@ def list_stories(
     return [_row_to_dict(row) for row in rows]
 
 
-def count_stories(*, status: str | None = None) -> int:
-    if status:
-        row = sql.fetchone(
-            "SELECT COUNT(*) AS cnt FROM gold_story WHERE status = ?",
-            (status,),
-        )
-    else:
-        row = sql.fetchone("SELECT COUNT(*) AS cnt FROM gold_story")
+def count_stories(
+    *,
+    status: str | None = None,
+    structure_type: str | None = None,
+    mechanism: str | None = None,
+    has_story: bool | None = None,
+) -> int:
+    where, params = _list_where(
+        status=status,
+        structure_type=structure_type,
+        mechanism=mechanism,
+        has_story=has_story,
+    )
+    row = sql.fetchone(
+        f"SELECT COUNT(*) AS cnt FROM gold_story{where}",
+        tuple(params) if params else None,
+    )
     sql.commit()
     return int(row["cnt"]) if row else 0
 

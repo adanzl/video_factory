@@ -37,6 +37,11 @@
         <el-option label="通过" value="active" />
         <el-option label="驳回" value="rejected" />
       </el-select>
+      <el-radio-group v-model="filterHasStory" @change="onFilterChange">
+        <el-radio-button value="">全部</el-radio-button>
+        <el-radio-button value="yes">有故事</el-radio-button>
+        <el-radio-button value="no">无故事</el-radio-button>
+      </el-radio-group>
     </div>
 
     <el-table
@@ -245,6 +250,7 @@ const page = ref(1);
 const pageSize = ref(parseInt(localStorage.getItem("goldChatPageSize") || "15", 10));
 const total = ref(0);
 const filterStatus = ref("");
+const filterHasStory = ref("");
 const batchForce = ref(false);
 
 function formatStoryStatus(status: string): string {
@@ -315,6 +321,11 @@ async function fetchItems(opts?: { quiet?: boolean }) {
       limit: pageSize.value,
       offset: (page.value - 1) * pageSize.value,
       ...(filterStatus.value ? { status: filterStatus.value } : {}),
+      ...(filterHasStory.value === "yes"
+        ? { has_story: true }
+        : filterHasStory.value === "no"
+          ? { has_story: false }
+          : {}),
     });
     items.value = res.items;
     total.value = res.total;

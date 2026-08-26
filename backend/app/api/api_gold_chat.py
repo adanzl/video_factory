@@ -45,11 +45,18 @@ def list_route():
     status = get_query("status")
     if status in ("", "all", "*"):
         status = None
+    has_story_raw = (get_query("has_story") or "").strip().lower()
+    has_story: bool | None = None
+    if has_story_raw in ("1", "true", "yes"):
+        has_story = True
+    elif has_story_raw in ("0", "false", "no"):
+        has_story = False
     limit = parse_query_int("limit", 15, required=False, minimum=1, maximum=200)
     offset = parse_query_int("offset", 0, required=False, minimum=0)
     return json_ok(
         gold_story_mgr.list_items(
             status=status,
+            has_story=has_story,
             limit=limit,
             offset=offset,
         ),

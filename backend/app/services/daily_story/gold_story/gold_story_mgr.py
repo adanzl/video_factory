@@ -260,6 +260,7 @@ class GoldStoryMgr:
         self,
         *,
         status: str | None = None,
+        has_story: bool | None = None,
         limit: int = 15,
         offset: int = 0,
     ) -> dict[str, Any]:
@@ -269,10 +270,14 @@ class GoldStoryMgr:
         offset = max(0, offset)
         rows = repo_gold_story.list_stories(
             status=status or None,
+            has_story=has_story,
             limit=limit,
             offset=offset,
         )
-        total = repo_gold_story.count_stories(status=status or None)
+        total = repo_gold_story.count_stories(
+            status=status or None,
+            has_story=has_story,
+        )
         items = [_row_to_list_item(row, config=cfg) for row in rows]
         return {"items": items, "total": total, "limit": limit, "offset": offset}
 
