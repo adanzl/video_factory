@@ -119,6 +119,12 @@ _MOUTH_VERIFY_SYSTEM = (
     "判断画面中哪个人物在说话：任一帧张开嘴巴，或各帧间嘴部有明显开合/口型变化，即算在说话。"
     "只回答「左侧」「中间」「右侧」「多人」或「无人」，不要输出任何其他内容。"
 )
+_SUBTITLE_VERIFY_SYSTEM = (
+    "你是视频抽帧质检员。这些图按时间顺序取自同一段图生视频。"
+    "判断画面上是否出现烧录字幕、字幕条、汉字、拼音、对白气泡或可读文字。"
+    "衣服花纹、食物、家具纹理不算文字。"
+    "只回答「有字幕」或「无字幕」。"
+)
 
 
 def _extract_speak_windows(prompt: str) -> list[tuple[float, float, str]]:
@@ -190,6 +196,59 @@ def _frame_data_uri(video_path: Path, at_sec: float, tmp_path: Path) -> str | No
         tmp_path.unlink(missing_ok=True)
 
 
+def _sample_window_frames(
+    video_path: Path,
+    start: float,
+    end: float,
+    duration: float,
+    work_dir: Path,
+    segment_index: int,
+    window_index: int,
+) -> list[str]:
+    """按口型校验同一套比例点抽帧。"""
+    span = max(end - start, 0.0)
+    frames: list[str] = []
+    for fraction in _MOUTH_VERIFY_FRACTIONS:
+        t = start + span * fraction if span > 0 else start
+        if duration > 0:
+            t = min(t, max(0.0, duration - 0.05))
+        uri = _frame_data_uri(
+            video_path,
+            t,
+            work_dir
+            / f"{segment_index}.mouth_{window_index}_{int(fraction * 100)}.jpg",
+        )
+        if uri:
+            frames.append(uri)
+    return frames
+
+
+def _sample_verify_windows(
+    video_path: Path,
+    prompt: str,
+    *,
+    work_dir: Path,
+    segment_index: int,
+) -> list[tuple[float, float, str, list[str]]]:
+    """口型/字幕共用抽帧：有说话窗按窗抽，否则按全片同一套比例点。"""
+    duration = probe_duration(video_path)
+    windows = _extract_speak_windows(prompt)
+    if not windows:
+        frames = _sample_window_frames(
+            video_path, 0.0, max(duration, 0.0), duration,
+            work_dir, segment_index, 0,
+        )
+        return [(0.0, max(duration, 0.0), "", frames)] if frames else []
+    sampled: list[tuple[float, float, str, list[str]]] = []
+    for w_idx, (start, end, label) in enumerate(windows):
+        frames = _sample_window_frames(
+            video_path, start, end, duration,
+            work_dir, segment_index, w_idx,
+        )
+        sampled.append((start, end, label, frames))
+    return sampled
+
+
 def _parse_speaking_sides(content: str) -> set[str] | None:
     """解析 VL 选边回答 → 在说话的侧集合；无法解析返回 None。"""
     text = (content or "").strip().strip("。．.")
@@ -209,6 +268,22 @@ def _parse_speaking_sides(content: str) -> set[str] | None:
         if not found:
             found.update({"左侧", "右侧"})
     return found or None
+
+
+def _parse_subtitle_hit(content: str) -> bool | None:
+    """True=有字幕，False=无字幕，None=无法解析。"""
+    text = (content or "").strip().strip("。．.！! ")
+    if not text:
+        return None
+    if "无字幕" in text or "没有字幕" in text or "未见字幕" in text:
+        return False
+    if "有字幕" in text:
+        return True
+    if text in {"无", "没有", "否"}:
+        return False
+    if text in {"有", "是"}:
+        return True
+    return None
 
 
 def _resolve_api_dimensions(target_w: int, target_h: int) -> tuple[int, int]:
@@ -1053,10 +1128,15 @@ class AgnesClipProvider(ClipProvider):
 
         raise AgnesI2VError(f"agnes i2v task {agnes_id} timeout, last state={state}")
 
-    def _ask_vl_speaking_sides(
-        self, question: str, frames: list[str]
-    ) -> set[str] | None:
-        """单次 VL 判定哪侧人物在说话；调用/解析失败返回 None（放行，避免误杀）。"""
+    def _ask_vl_content(
+        self,
+        *,
+        system: str,
+        question: str,
+        frames: list[str],
+        tag: str,
+    ) -> str | None:
+        """抽帧问 VL，返回回复正文；调用失败返回 None。"""
         settings = get_settings()
         keys = agnes_api_keys()
         if not keys:
@@ -1070,7 +1150,7 @@ class AgnesClipProvider(ClipProvider):
         payload = {
             "model": settings.agnes_vl_model,
             "messages": [
-                {"role": "system", "content": _MOUTH_VERIFY_SYSTEM},
+                {"role": "system", "content": system},
                 {"role": "user", "content": content},
             ],
             # agnes-2.0-flash 强制思考且无法关闭，预算须容纳思考过程，
@@ -1091,7 +1171,7 @@ class AgnesClipProvider(ClipProvider):
                             url,
                             host_failover_tried,
                             reason="503",
-                            tag="mouth verify vl",
+                            tag=tag,
                         )
                         if alt:
                             url = alt
@@ -1100,7 +1180,8 @@ class AgnesClipProvider(ClipProvider):
                         if resp.status_code in _RETRYABLE_HTTP and attempt + 1 < _VL_MAX_ATTEMPTS:
                             wait = _backoff_seconds(attempt)
                             logger.warning(
-                                "mouth verify vl http %s (%s key), retry %s/%s in %ss",
+                                "%s http %s (%s key), retry %s/%s in %ss",
+                                tag,
                                 resp.status_code,
                                 api_key.label,
                                 attempt + 1,
@@ -1110,7 +1191,8 @@ class AgnesClipProvider(ClipProvider):
                             time.sleep(wait)
                             continue
                         logger.warning(
-                            "mouth verify vl http %s (%s key)",
+                            "%s http %s (%s key)",
+                            tag,
                             resp.status_code,
                             api_key.label,
                         )
@@ -1120,25 +1202,16 @@ class AgnesClipProvider(ClipProvider):
                     )
                     reply = (msg.get("content") or "").strip()
                     if not reply:
-                        # agnes VL 常把短答案放进 reasoning_content；
-                        # 仅当它足够短（是直接答案而非思考链）才采信
                         reasoning = (msg.get("reasoning_content") or "").strip()
                         if len(reasoning) <= 20:
                             reply = reasoning
-                    sides = _parse_speaking_sides(reply)
-                    if sides is None:
-                        logger.warning(
-                            "mouth verify vl reply unparsable (%s key): %s",
-                            api_key.label,
-                            str(reply)[:80],
-                        )
-                    return sides
+                    return reply or None
                 except requests.Timeout as exc:
                     alt = agnes_apply_host_failover(
                         url,
                         host_failover_tried,
                         reason="timeout",
-                        tag="mouth verify vl",
+                        tag=tag,
                     )
                     if alt:
                         url = alt
@@ -1146,8 +1219,9 @@ class AgnesClipProvider(ClipProvider):
                     wait = _backoff_seconds(attempt)
                     if attempt + 1 < _VL_MAX_ATTEMPTS:
                         logger.warning(
-                            "mouth verify vl timeout (%s key), retry %s/%s "
+                            "%s timeout (%s key), retry %s/%s "
                             "in %ss (read=%ss): %s",
+                            tag,
                             api_key.label,
                             attempt + 1,
                             _VL_MAX_ATTEMPTS,
@@ -1158,8 +1232,9 @@ class AgnesClipProvider(ClipProvider):
                         time.sleep(wait)
                         continue
                     logger.warning(
-                        "mouth verify vl timeout exhausted (%s key, "
+                        "%s timeout exhausted (%s key, "
                         "read=%ss, attempts=%s): %s",
+                        tag,
                         api_key.label,
                         int(_VL_READ_TIMEOUT_SEC),
                         _VL_MAX_ATTEMPTS,
@@ -1167,41 +1242,40 @@ class AgnesClipProvider(ClipProvider):
                     )
                 except Exception as exc:
                     logger.warning(
-                        "mouth verify vl call failed (%s key): %s",
+                        "%s call failed (%s key): %s",
+                        tag,
                         api_key.label,
                         exc,
                     )
                     break
         return None
 
+    def _ask_vl_speaking_sides(
+        self, question: str, frames: list[str]
+    ) -> set[str] | None:
+        """单次 VL 判定哪侧人物在说话；调用/解析失败返回 None（放行，避免误杀）。"""
+        reply = self._ask_vl_content(
+            system=_MOUTH_VERIFY_SYSTEM,
+            question=question,
+            frames=frames,
+            tag="mouth verify vl",
+        )
+        if reply is None:
+            return None
+        sides = _parse_speaking_sides(reply)
+        if sides is None:
+            logger.warning("mouth verify vl reply unparsable: %s", str(reply)[:80])
+        return sides
+
     def _verify_mouth_motion(
         self,
-        raw_path: Path,
-        prompt: str,
+        sampled: list[tuple[float, float, str, list[str]]],
         *,
-        work_dir: Path,
         segment_index: int,
     ) -> bool:
-        """按说话窗口抽帧（640 宽）问 VL 说话人是否开口；全窗口通过返回 True。"""
-        windows = _extract_speak_windows(prompt)
-        if not windows:
-            return True
-        duration = probe_duration(raw_path)
-        for w_idx, (start, end, label) in enumerate(windows):
-            frames: list[str] = []
-            for fraction in _MOUTH_VERIFY_FRACTIONS:
-                t = start + (end - start) * fraction
-                if duration > 0:
-                    t = min(t, max(0.0, duration - 0.05))
-                uri = _frame_data_uri(
-                    raw_path,
-                    t,
-                    work_dir
-                    / f"{segment_index}.mouth_{w_idx}_{int(fraction * 100)}.jpg",
-                )
-                if uri:
-                    frames.append(uri)
-            if not frames:
+        """用已抽帧问 VL 说话人是否开口；全窗口通过返回 True。"""
+        for start, end, label, frames in sampled:
+            if not label or not frames:
                 continue
             question = (
                 f"这{len(frames)}张图按时间顺序取自同一段视频 "
@@ -1222,6 +1296,38 @@ class AgnesClipProvider(ClipProvider):
             )
             if not ok:
                 return False
+        return True
+
+    def _verify_no_burned_subtitles(
+        self,
+        frames: list[str],
+        *,
+        segment_index: int,
+    ) -> bool:
+        """用口型同一批帧问 VL 是否烧了字幕。有字幕返回 False；无帧/VL 失败放行。"""
+        if not frames:
+            logger.warning("clip %s subtitle verify: no frames, skip", segment_index)
+            return True
+        question = (
+            f"这{len(frames)}张图按时间顺序取自同一段视频。"
+            "画面上有没有烧录字幕、汉字、拼音或对白条？"
+            "回答「有字幕」或「无字幕」。"
+        )
+        reply = self._ask_vl_content(
+            system=_SUBTITLE_VERIFY_SYSTEM,
+            question=question,
+            frames=frames,
+            tag="subtitle verify vl",
+        )
+        hit = _parse_subtitle_hit(reply or "")
+        logger.info(
+            "clip %s subtitle verify vl=%s: %s",
+            segment_index,
+            (reply or "?")[:20],
+            "BURNED SUBTITLES" if hit else ("ok" if hit is False else "skip"),
+        )
+        if hit is True:
+            return False
         return True
 
     def _submit_and_poll(
@@ -1292,11 +1398,7 @@ class AgnesClipProvider(ClipProvider):
             output_path.parent.mkdir(parents=True, exist_ok=True)
             try:
                 settings = get_settings()
-                verify_attempts = (
-                    max(1, settings.agnes_video_mouth_verify_attempts)
-                    if settings.agnes_video_mouth_verify
-                    else 1
-                )
+                verify_attempts = max(1, settings.agnes_video_mouth_verify_attempts)
                 for v_attempt in range(1, verify_attempts + 1):
                     self._generate_raw(
                         image_path, prompt, raw_path,
@@ -1305,15 +1407,40 @@ class AgnesClipProvider(ClipProvider):
                         segment_index=segment_index,
                     )
                     self._raise_if_job_cancelled()
-                    if not settings.agnes_video_mouth_verify:
-                        break
-                    if self._verify_mouth_motion(
+                    sampled = _sample_verify_windows(
                         raw_path,
                         prompt,
                         work_dir=work_dir,
                         segment_index=segment_index,
-                    ):
+                    )
+                    all_frames = [
+                        uri for *_, frames in sampled for uri in frames
+                    ]
+                    mouth_ok = True
+                    if settings.agnes_video_mouth_verify:
+                        mouth_ok = self._verify_mouth_motion(
+                            sampled,
+                            segment_index=segment_index,
+                        )
+                    sub_ok = self._verify_no_burned_subtitles(
+                        all_frames,
+                        segment_index=segment_index,
+                    )
+                    if mouth_ok and sub_ok:
                         break
+                    if not sub_ok:
+                        if v_attempt < verify_attempts:
+                            logger.warning(
+                                "clip %s: subtitle verify FAILED, resubmitting i2v "
+                                "(attempt %s/%s)",
+                                segment_index,
+                                v_attempt,
+                                verify_attempts,
+                            )
+                            continue
+                        raise AgnesI2VError(
+                            f"clip {segment_index}: 画面出现烧录字幕"
+                        )
                     if v_attempt < verify_attempts:
                         logger.warning(
                             "clip %s: mouth verify FAILED, resubmitting i2v "
