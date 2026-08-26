@@ -95,6 +95,7 @@ GOLD_CHAT_NEAR_MISS_DEFICIT_MAX = 3
 _RE_PAD_SUFFIX_STACK = re.compile(
     r"呢呢|啊呢|吧呢|嘛呢|呀呢|你呀呢|行了吧呢|不懂你呢|听听不懂|你真是呢|你真是的呢"
 )
+_B_GOLD_CHAT_PAD_TAILS = ("呀", "啊", "嘛", "呢", "吧", "真的呀")
 
 
 def _client():
@@ -246,6 +247,12 @@ def _sanitize_pad_suffix_line(line: str) -> str:
         ("听听不懂", "听不懂"),
         ("你真是呢", "你真是的"),
         ("你真是的呢", "你真是的"),
+        ("着呢了呀", "着呢"),
+        ("你听着了呀", ""),
+        ("你听着呀", ""),
+        ("好呢了呀", "呢"),
+        ("好不好了呀", ""),
+        ("了呢了呀", "了呢"),
     ):
         if old in out:
             out = out.replace(old, new)
@@ -271,11 +278,19 @@ def patch_sanitize_pad_suffix(story: dict[str, Any]) -> tuple[dict[str, Any], bo
     return out, changed
 
 
-def _pad_gold_chat_line(line: str, need: int) -> tuple[str, int]:
+def _pad_gold_chat_line(
+    line: str,
+    need: int,
+    *,
+    used: set[str] | None = None,
+    story_type: str = "",
+) -> tuple[str, int]:
     """near-miss 本地垫字：走日常故事同一套句尾垫字。"""
     from app.services.daily_story.prompts import _pad_dialogue_line
 
-    return _pad_dialogue_line(line, need)
+    st = str(story_type or "").strip().upper()
+    tails = _B_GOLD_CHAT_PAD_TAILS if st == "B" else None
+    return _pad_dialogue_line(line, need, used, tails=tails)
 
 
 def _patch_gold_chat_near_miss_chars(story: dict[str, Any]) -> tuple[dict[str, Any], bool]:
@@ -300,12 +315,16 @@ def _patch_gold_chat_near_miss_chars(story: dict[str, Any]) -> tuple[dict[str, A
     ] or list(range(len(dialogue)))
 
     changed = False
+    used_pads: set[str] = set()
+    story_type = str(story.get("story_type") or "").strip().upper()
     for idx in reversed(indices):
         item = dialogue[idx]
         if not isinstance(item, dict):
             continue
         line = str(item.get("line") or "").strip()
-        new_line, added = _pad_gold_chat_line(line, need)
+        new_line, added = _pad_gold_chat_line(
+            line, need, used=used_pads, story_type=story_type,
+        )
         if added <= 0:
             continue
         item["line"] = new_line
@@ -343,6 +362,8 @@ def _pad_gold_chat_to_min_chars(
     ] or list(range(len(dialogue)))
 
     changed = False
+    used_pads: set[str] = set()
+    story_type = str(story.get("story_type") or "").strip().upper()
     for idx in reversed(indices):
         if need <= 0:
             break
@@ -350,7 +371,9 @@ def _pad_gold_chat_to_min_chars(
         if not isinstance(item, dict):
             continue
         line = str(item.get("line") or "").strip()
-        new_line, added = _pad_gold_chat_line(line, need)
+        new_line, added = _pad_gold_chat_line(
+            line, need, used=used_pads, story_type=story_type,
+        )
         if added <= 0:
             continue
         item["line"] = new_line
@@ -365,6 +388,109 @@ def _ensure_gold_chat_min_chars(story: dict[str, Any]) -> tuple[dict[str, Any], 
         return data, changed
     data2, changed2 = _pad_gold_chat_to_min_chars(data)
     return data2, changed or changed2
+
+
+def _gold_chat_post_pad_cleanup(story: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """垫字后：B 类剥句尾垫字 + 再补 min（禁回灌好不好）。"""
+    from app.services.daily_story.story_types.b.patch import patch_b_strip_filler
+
+    notes: list[str] = []
+    out = dict(story)
+    st = str(out.get("story_type") or "").strip().upper()
+    if st == "B":
+        strip_notes = patch_b_strip_filler(out)
+        if strip_notes:
+            notes.extend(strip_notes[:6])
+    out, pad_changed = _ensure_gold_chat_min_chars(out)
+    if pad_changed:
+        notes.append("gold_chat垫字补min")
+        if st == "B":
+            strip_notes = patch_b_strip_filler(out)
+            if strip_notes:
+                notes.extend(strip_notes[:6])
+    return out, notes
+
+
+def _refine_after_normalize(
+    chat: dict[str, Any],
+    row: dict[str, Any],
+) -> dict[str, Any]:
+    """normalize 垫字后若仍有非结构性保真 issue，走一轮 Pass2 精修。"""
+    payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+    scene_contract = payload.get("scene_contract") or {}
+    if not isinstance(scene_contract, dict):
+        scene_contract = {}
+    structure_type = str(row.get("structure_type") or chat.get("story_type") or "B")
+    structure_type = structure_type.strip().upper()
+    mechanism = str(row.get("mechanism") or "").strip().upper()
+    closing = str(
+        payload.get("closing_intent") or scene_contract.get("closing_intent") or ""
+    )
+    beat_chain = scene_contract.get("beat_chain") or []
+    if not isinstance(beat_chain, list):
+        beat_chain = []
+    conflict_text = str(
+        scene_contract.get("conflict") or row.get("conflict_core") or ""
+    )
+    beat = payload.get("beat") if isinstance(payload.get("beat"), list) else []
+    banned = sanitize_banned_literals(
+        payload.get("banned_literals") or scene_contract.get("banned_literals"),
+        scene_contract=scene_contract,
+        beat=beat,
+    )
+    mom_max = scene_contract.get("mom_lines_max")
+    if mom_max is None:
+        mom_max = 1
+    source_type = str(
+        payload.get("source_type") or scene_contract.get("source_type") or "field"
+    )
+    story_raw = str(row.get("story_raw") or payload.get("story_raw") or "")[:800]
+    fidelity_block = format_fidelity_block(
+        structure_type=structure_type,
+        mechanism=mechanism,
+        beat=beat,
+        closing_intent=closing,
+        story_raw=story_raw,
+    )
+    banned_list = [str(x) for x in banned]
+
+    issues = collect_fidelity_issues(
+        chat,
+        structure_type=structure_type,
+        mechanism=mechanism,
+        closing_intent=closing,
+        beat_chain=beat_chain,
+        conflict_text=conflict_text,
+    )
+    blocking, _warn = split_fidelity_issues(issues)
+    if not blocking:
+        return chat
+    if any(
+        is_structural_fidelity_kind(str(x.get("kind") or "")) for x in blocking
+    ):
+        return chat
+
+    try:
+        refined = refine_gold_chat_fidelity(
+            chat,
+            structure_type=structure_type,
+            mechanism=mechanism,
+            fidelity_block=fidelity_block,
+            banned_literals=banned_list,
+            mom_lines_max=int(mom_max),
+            closing_intent=closing,
+            beat_chain=beat_chain,
+            conflict_text=conflict_text,
+            max_rounds=1,
+            bail_on_structural=False,
+        )
+    except ValueError:
+        logger.info("gold_chat post-normalize refine skipped: %s", blocking[:2])
+        return chat
+
+    refined, _ = _gold_chat_post_pad_cleanup(refined)
+    refined, _ = patch_sanitize_pad_suffix(refined)
+    return refined
 
 
 def _prepare_chat_for_validate(
@@ -691,6 +817,17 @@ def apply_gold_chat_normalizations(
     if sn:
         notes.extend(sn)
         chat["setting"] = new_setting
+    from app.services.script.visual_brief import enrich_setting_with_dialogue_props
+
+    before_setting = str(chat.get("setting") or "")
+    after_setting = enrich_setting_with_dialogue_props(
+        before_setting,
+        chat.get("dialogue") or [],
+        contract_object=str(sc.get("object") or ""),
+    )
+    if after_setting != before_setting:
+        chat["setting"] = after_setting
+        notes.append("setting 补冲突物持有")
     if st:
         # M2+C 已有专用 patch 链；勿再走 daily_story 的连说改 speaker / 整件肉 filler
         if not (st == "C" and mech.upper() == "M2"):
@@ -754,6 +891,8 @@ def apply_gold_chat_normalizations(
     chat, pad_changed = _ensure_gold_chat_min_chars(chat)
     if pad_changed:
         notes.append("gold_chat垫字补min")
+    chat, cleanup_notes = _gold_chat_post_pad_cleanup(chat)
+    notes.extend(cleanup_notes)
     chat, san_changed = patch_sanitize_pad_suffix(chat)
     if san_changed:
         notes.append("gold_chat去叠语气词")
@@ -1048,6 +1187,7 @@ def convert_gold_chat(
     sid = str(row.get("source_id") or "").strip()
     chat = gold_story_to_gold_chat(row)
     chat, norm_notes = apply_gold_chat_normalizations(chat, row=row)
+    chat = _refine_after_normalize(chat, row)
     if norm_notes:
         logger.info(
             "gold_chat normalize %s: %s",
