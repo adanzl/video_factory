@@ -18,6 +18,7 @@ from app.services.daily_story.story_types.b.line import LINE_B
 from app.services.daily_story.story_types.c.line import LINE_C
 from app.services.daily_story.story_types.d.line import LINE_D
 from app.services.daily_story.story_types.e.line import LINE_E
+from app.services.daily_story.story_types.f.line import LINE_F
 from app.services.daily_story.story_types.g.line import LINE_G
 from app.services.daily_story.story_types.h.line import LINE_H
 from app.services.daily_story.story_types.i.line import LINE_I
@@ -55,7 +56,7 @@ __all__ = [
 STORY_TYPE_LINES: dict[str, StoryTypeLine] = {
     r.code: r
     for r in (
-        LINE_A, LINE_B, LINE_C, LINE_D, LINE_E, LINE_G, LINE_H, LINE_I, LINE_L,
+        LINE_A, LINE_B, LINE_C, LINE_D, LINE_E, LINE_F, LINE_G, LINE_H, LINE_I, LINE_L,
     )
 }
 
@@ -467,6 +468,10 @@ def append_type_body_validation_errors(story: dict, errors: list[str]) -> None:
         from app.services.daily_story.story_types.g.validate import append_g_body_errors
 
         append_g_body_errors(story, errors)
+    elif code == "F":
+        from app.services.daily_story.story_types.f.validate import append_f_body_errors
+
+        append_f_body_errors(story, errors)
     elif code == "H" and type_body_validation_enabled("H"):
         from app.services.daily_story.story_types.h.validate import append_h_body_errors
 
@@ -507,6 +512,10 @@ def patch_type_body(story: dict) -> list[str]:
         from app.services.daily_story.story_types.g.patch import patch_g_body
 
         return patch_g_body(story)
+    if code == "F":
+        from app.services.daily_story.story_types.f.patch import patch_f_body
+
+        return patch_f_body(story)
     if code == "H":
         from app.services.daily_story.story_types.h.patch import patch_h_body
 
@@ -568,6 +577,15 @@ def validate_type_opening(
     from app.services.daily_story.story_types.g.opening import append_g_opening_errors
 
     append_g_opening_errors(
+        normalized,
+        type_code=type_code,
+        errors=errors,
+        conflict_core=conflict_core,
+        setting=setting,
+    )
+    from app.services.daily_story.story_types.f.opening import append_f_opening_errors
+
+    append_f_opening_errors(
         normalized,
         type_code=type_code,
         errors=errors,

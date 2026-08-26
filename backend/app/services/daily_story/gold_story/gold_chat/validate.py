@@ -1115,7 +1115,11 @@ def collect_fidelity_issues(
         )
     elif st == "H":
         _append_h_generic_issues(rows, issues, closing_intent=closing)
-    if st == "B":
+    elif st == "F":
+        from app.services.daily_story.story_types.f.validate import append_f_fidelity_issues
+
+        append_f_fidelity_issues(rows, issues, mechanism=mech)
+    if st in {"B", "F"}:
         _append_pad_filler_issues(rows, issues)
 
     seen: set[tuple[str, int]] = set()
