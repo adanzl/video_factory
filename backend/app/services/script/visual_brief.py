@@ -617,7 +617,8 @@ def _daily_fixed_furniture(segments: list[dict]) -> tuple[str, ...]:
     return ()
 
 
-# 可锁定的活动道具 + 质检重写爱编的杂物。未在 setting/台词/分镜1 出现则删。
+# 杂物剥离用的已知名词（文具/零食等）。冲突物识别不靠这份名单，
+# 而走 setting/台词容器句中心语（面前/碗里/端着）。
 _LOCKABLE_PROPS: tuple[str, ...] = (
     "剪刀", "纸", "水壶", "相框", "蛋糕", "薯片", "酸奶",
     "饼干", "衣服", "衣物", "袜子", "鞋带", "洗手液",
@@ -644,6 +645,159 @@ def _dialogue_blob(segments: list[dict]) -> str:
                 continue
             parts.append(str(row.get("text") or row.get("line") or ""))
     return "".join(parts)
+
+
+def _dialogue_rows_any(dialogue: list | None) -> list[dict]:
+    rows: list[dict] = []
+    for row in dialogue or []:
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows
+
+
+def _row_speaker_line(row: dict) -> tuple[str, str]:
+    sp = str(row.get("speaker") or "").strip()
+    line = str(row.get("line") or row.get("text") or "").strip()
+    return sp, line
+
+
+def _other_kid(speaker: str) -> str:
+    if speaker == "昭昭":
+        return "灿灿"
+    if speaker == "灿灿":
+        return "昭昭"
+    return ""
+
+
+_NAMED_CONTAINER_RE = re.compile(
+    r"(昭昭|灿灿|妈妈)"
+    r".{0,8}?"
+    r"(面前|碗里|盘里|手里|手中|端着|捧着)"
+    r"(?:那)?"
+    r"(?:一盘|一碗|一块|几根|一根|一些|两块|一袋|一双)?"
+    r"([\u4e00-\u9fa5]{1,8})"
+)
+_DEIXIS_CONTAINER_RE = re.compile(
+    r"(你|我)(?:的)?"
+    r"(碗里|盘里|手里|面前)"
+    r"(?:那)?"
+    r"(?:一盘|一碗|一块|几根)?"
+    r"([\u4e00-\u9fa5]{1,8})"
+)
+_SETTING_SURFACE_RE = re.compile(
+    r"(?:桌上|茶几上|地垫上)"
+    r"(?:摊着|放着|摆着|立着)?"
+    r"(?:一张|一把|一个|一双|两只)?"
+    r"([^，。；]{1,14})"
+)
+
+
+def _valid_activity_prop(prop: str) -> str:
+    key = _prop_key(prop)
+    if not key or key in _PROP_NOUN_SKIP:
+        return ""
+    if key in _DAILY_FIXED_FURNITURE:
+        return ""
+    if key in ("客厅", "卧室", "厨房", "餐厅", "门口"):
+        return ""
+    return key
+
+
+def extract_story_prop_holdings(
+    setting: str,
+    dialogue: list | None = None,
+) -> list[tuple[str, str]]:
+    """从 setting/台词容器句抽 (holder, prop)。不查道具名词名单。"""
+    out: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+
+    def _add(holder: str, raw: str) -> None:
+        prop = _valid_activity_prop(raw)
+        if not prop:
+            return
+        item = (holder, prop)
+        if item in seen:
+            return
+        seen.add(item)
+        out.append(item)
+
+    for m in _NAMED_CONTAINER_RE.finditer(str(setting or "")):
+        _add(m.group(1), m.group(3))
+    for m in _SETTING_SURFACE_RE.finditer(str(setting or "")):
+        _add("", m.group(1))
+    for row in _dialogue_rows_any(dialogue):
+        sp, line = _row_speaker_line(row)
+        if not line:
+            continue
+        for m in _NAMED_CONTAINER_RE.finditer(line):
+            _add(m.group(1), m.group(3))
+        for m in _DEIXIS_CONTAINER_RE.finditer(line):
+            who = m.group(1)
+            raw = m.group(3)
+            if who == "我":
+                holder = sp if sp in {"昭昭", "灿灿", "妈妈"} else ""
+            else:
+                holder = _other_kid(sp)
+            if holder:
+                _add(holder, raw)
+    return out
+
+
+def extract_story_activity_props(
+    setting: str,
+    dialogue: list | None = None,
+) -> set[str]:
+    """本片活动道具名：容器句抽出的中心语（无白名单）。"""
+    return {prop for _holder, prop in extract_story_prop_holdings(setting, dialogue)}
+
+
+def enrich_setting_with_dialogue_props(
+    setting: str,
+    dialogue: list | None = None,
+    *,
+    contract_object: str = "",
+) -> str:
+    """setting 缺冲突物时，用台词容器句/契约 object 补持有落点。"""
+    text = str(setting or "").strip()
+    rows = _dialogue_rows_any(dialogue)
+    holdings = list(extract_story_prop_holdings(text, rows))
+    blob = "".join(_row_speaker_line(r)[1] for r in rows)
+    obj = str(contract_object or "").strip()
+    if obj and obj not in text and obj in blob:
+        key = _valid_activity_prop(obj) or _clip_prop_noun(obj)
+        if key and not any(p == key or key in p for _h, p in holdings):
+            holder = ""
+            for h, p in holdings:
+                if p == key:
+                    holder = h
+                    break
+            if not holder:
+                for row in rows:
+                    sp, line = _row_speaker_line(row)
+                    if key not in line:
+                        continue
+                    m = _DEIXIS_CONTAINER_RE.search(line)
+                    if m and _valid_activity_prop(m.group(3)) == key:
+                        holder = (
+                            sp if m.group(1) == "我" else _other_kid(sp)
+                        )
+                        break
+            holdings.append((holder, key))
+    bits: list[str] = []
+    seen_prop: set[str] = set()
+    for holder, prop in holdings:
+        if not prop or prop in text or prop in seen_prop:
+            continue
+        seen_prop.add(prop)
+        if holder:
+            bits.append(f"{holder}面前有{prop}")
+        else:
+            bits.append(f"{prop}在场")
+    if not bits:
+        return text
+    if not text:
+        return "，".join(bits)
+    return text.rstrip("。，,") + "，" + "，".join(bits)
 
 
 def normalize_object_states(segments: list[dict]) -> list[str]:
@@ -964,9 +1118,13 @@ def daily_locked_inventory(
         if int(seg.get("segment_index") or 0) == 1:
             vb1 = str(seg.get("visual_brief") or "")
             break
-    # 冲突道具：setting / 台词 / 分镜1 任一出现即可锁。
+    # 冲突道具：setting / 台词容器句抽出的中心语（不靠道具名词白名单）。
     # 尺子/铅笔等杂物只认 setting 与分镜1 画面，避免台词「拿尺子比」误锁实物。
-    locked = {
+    rows: list[dict] = []
+    for seg in segments:
+        rows.extend(_dialogue_rows_any(seg.get("dialogue")))
+    locked = extract_story_activity_props(setting_text, rows)
+    locked |= {
         n
         for n in _LOCKABLE_PROPS
         if n not in _CLUTTER_ONLY_PROPS and (n in spoken or n in vb1)
@@ -1266,11 +1424,39 @@ _NAMED_GAZE_PROP_RE = re.compile(
 _SURFACE_ITEM_SPLIT_RE = re.compile(r"和|与|及|、")
 
 
+_MEASURE_HEAD_RE = re.compile(
+    r"^(?:那|这)?"
+    r"(?:一|两|几)?"
+    r"(?:盘|碗|块|根|袋|盒|瓶|杯|张|把|支|条|个|份|串|双|件)"
+)
+_PROP_NOUN_SKIP = frozenset(
+    {"东西", "那个", "这个", "什么", "哪里", "这样", "那样", "一下"}
+)
+
+
+def _clip_prop_noun(raw: str) -> str:
+    s = (raw or "").strip()
+    s = re.split(
+        r"不香|这么|好多|好香|香得|香吗|凭什么|不能|都得|[吗呢啊呀吧哦]",
+        s,
+        maxsplit=1,
+    )[0]
+    return s.strip("的了着过呢嘛呀啊吧哦，。！？ ")
+
+
 def _prop_key(prop: str) -> str:
-    """取道具名最后的名词（「摔裂的相框」→「相框」，不带形容词）。"""
-    if "的" in prop:
-        return prop.rsplit("的", 1)[1]
-    return prop[-2:]
+    """取道具中心语：量词后名词（一盘肉→肉），「的」后名词；否则末两字。"""
+    text = _clip_prop_noun(prop)
+    if not text:
+        return ""
+    if "的" in text:
+        text = text.rsplit("的", 1)[1].strip()
+    m = _MEASURE_HEAD_RE.match(text)
+    if m and m.end() < len(text):
+        return text[m.end() :]
+    if len(text) <= 2:
+        return text
+    return text[-2:]
 
 
 def _key_means_same_prop(clause: str, key: str) -> bool:
@@ -1304,13 +1490,13 @@ def _held_prop_keys(body: str) -> set[str]:
             if not raw:
                 continue
             key = _prop_key(raw)
-            if len(key) < 2:
+            if not key:
                 continue
             keys.add(key)
         for m in _HELD_BY_RE.finditer(clause):
             raw = (m.group(1) or "").strip()
             key = _prop_key(raw)
-            if len(key) >= 2:
+            if key:
                 keys.add(key)
     return keys
 
@@ -1961,6 +2147,24 @@ def build_visual_brief_prompts(
                     "禁止新增分镜1/setting/台词没有的家具、文具或第二件同款"
                     "（如尺子、铅笔、沙发、另一张纸）；"
                     "剪刀全片同一把，写「剪刀」，勿改成安全剪/金属锋利剪。"
+                )
+            dlg_rows: list[dict] = []
+            for seg in segments:
+                dlg_rows.extend(_dialogue_rows_any(seg.get("dialogue")))
+            holdings = extract_story_prop_holdings(setting_text, dlg_rows)
+            if holdings:
+                hold_bits = []
+                for holder, prop in holdings:
+                    if holder:
+                        hold_bits.append(f"{holder}持有{prop}")
+                    else:
+                        hold_bits.append(prop)
+                setting_rule += (
+                    "【持物锁定】本片从 setting/台词容器句抽出的持有关系："
+                    + "；".join(hold_bits)
+                    + "。每镜 object_states 须包含这些 object，holder 与上表一致"
+                    "（除非本段台词写了递出/抢到）；持物方 visual_subjects.action "
+                    "须写明端着/拿着对应容器，禁止道具换手或凭空消失。"
                 )
     content_rule = (
         _DAILY_VISUAL_SUBJECTS_RULE

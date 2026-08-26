@@ -250,6 +250,7 @@ banned_literals：同 H3，仅 remap 称谓与站外真名；禁止填画画/碘
 
 规则：
 - object/conflict/mechanism **须能在 story_raw 找到依据**；禁止发明 story_raw 没有的物品/仪式/场景
+- object：争的具体物品或话题；双方各持一物时两件都写入 object
 - 禁止无依据套用站内仪式模板（举过头顶/三秒/单脚站/金鸡独立等）
 - C类 beat_chain：立规→字面执行→加码→反杀→嘴硬（至少4拍）；拍内容跟当前 story_raw 走
 - I类 beat_chain（**须 4–6 拍**）：争锋/互怼→立价值标准→灵魂拷问→对方语塞→赢家嘴硬总结；
@@ -289,7 +290,7 @@ story_raw（背景，勿照抄）：
 
 输出 JSON：
 {{
-  "setting": "可拍现场一句",
+  "setting": "地点 + 谁面前/端着哪件冲突物",
   "dialogue_seed": [
     {{"speaker": "昭昭|灿灿|妈妈", "intent": "…"}}
   ],
@@ -299,6 +300,7 @@ story_raw（背景，勿照抄）：
 }}
 
 规则：
+- setting 须含地点与冲突物持有（谁面前/谁端着哪件），与 object 对齐；勿只写地点
 - 严格按 beat_chain 顺序展开；每拍 1–3 条 seed
 - M5+H：seed 须含「双向互毁」「拒和/不原谅」「妈妈问谁先动手」分拍，勿合并
 - intent 须来自 scene_contract + story_raw

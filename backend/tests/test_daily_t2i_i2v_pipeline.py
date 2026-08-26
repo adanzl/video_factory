@@ -815,6 +815,52 @@ def test_clutter_prop_not_locked_from_dialogue_metaphor():
     assert "尺子" not in out
 
 
+def test_story_container_props_locked_without_name_list():
+    """容器句抽出的冲突物要锁定；不靠把肉/菜写进道具名单。"""
+    from app.services.script.visual_brief import (
+        _LOCKABLE_PROPS,
+        daily_locked_inventory,
+        enrich_setting_with_dialogue_props,
+        extract_story_prop_holdings,
+        _prop_key,
+    )
+
+    assert _prop_key("一盘肉") == "肉"
+    assert _prop_key("几根青菜") == "青菜"
+    assert "肉" not in _LOCKABLE_PROPS
+    assert "青菜" not in _LOCKABLE_PROPS
+
+    setting = "餐桌旁，灿灿面前一盘肉，昭昭碗里几根青菜"
+    segs = [
+        {
+            "segment_index": 1,
+            "visual_brief": "餐桌旁。",
+            "dialogue": [
+                {"speaker": "昭昭", "line": "你碗里肉这么多，凭什么不能给我夹一块！"},
+            ],
+        }
+    ]
+    locked = daily_locked_inventory(segs, setting)
+    assert "肉" in locked
+    assert "青菜" in locked
+    holdings = extract_story_prop_holdings(setting, segs[0]["dialogue"])
+    assert ("灿灿", "肉") in holdings
+    assert ("昭昭", "青菜") in holdings
+
+    thin = enrich_setting_with_dialogue_props(
+        "餐桌旁，灿灿和昭昭在吵架",
+        [
+            {"speaker": "昭昭", "line": "你碗里肉这么多，凭什么不能给我夹一块！"},
+            {"speaker": "灿灿", "line": "你碗里那青菜不香吗？"},
+        ],
+        contract_object="肉",
+    )
+    assert "肉" in thin
+    assert "青菜" in thin
+    assert "灿灿面前有肉" in thin
+    assert "昭昭面前有青菜" in thin
+
+
 def test_strip_unlocked_inventory_remote_job79_dirty_brief():
     """远程 job79 质检重写原文：尺子/沙发/第二张纸必须剥掉，剪刀要补回。"""
     from app.services.script.visual_brief import (
