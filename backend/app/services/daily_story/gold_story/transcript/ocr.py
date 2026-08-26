@@ -1,4 +1,4 @@
-"""H0b 烧录字幕 OCR：抽帧 → 去重 → ProcessPool 并行识别。"""
+"""H0b 烧录字幕 OCR：一遍抽搜索带 → 同批定带裁切 → ProcessPool 识别。"""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from . import merge as gs_merge
 from .detect import (
     SubtitleRegion,
     detect_burned_subtitles,
-    detect_subtitle_region,
+    detect_subtitle_region_from_images,
     fallback_subtitle_region,
     probe_duration,
 )
@@ -102,9 +102,9 @@ def _box_white_bg_ratio(
     box: Any,
     *,
     pad: int = 4,
-    white_threshold: int = 210,
+    white_threshold: int = 140,
 ) -> float:
-    """检测 OCR 框周围是否有对白白底气泡（overlay 为描边字，白底占比低）。"""
+    """框周亮底占比（特征，不作业务门控）。"""
     try:
         import cv2
     except ImportError:
@@ -125,6 +125,168 @@ def _box_white_bg_ratio(
     return float((gray > white_threshold).mean())
 
 
+def _box_ink_color_key(image: Any, box: Any) -> str:
+    """粗粒度字色：white / yellow / black / other（笔画亮部主色）。"""
+    try:
+        import cv2
+        import numpy as np
+    except ImportError:
+        return "other"
+
+    xs = [int(point[0]) for point in box]
+    ys = [int(point[1]) for point in box]
+    x0, x1 = max(0, min(xs)), min(image.shape[1] - 1, max(xs))
+    y0, y1 = max(0, min(ys)), min(image.shape[0] - 1, max(ys))
+    if x1 <= x0 or y1 <= y0:
+        return "other"
+    patch = image[y0 : y1 + 1, x0 : x1 + 1]
+    if patch.size == 0:
+        return "other"
+    gray = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
+    hsv = cv2.cvtColor(patch, cv2.COLOR_BGR2HSV)
+    # 亮笔画（白/黄描边字）；若整体偏暗则看暗笔画（黑字）
+    bright_thr = float(np.percentile(gray, 80))
+    bright = gray >= max(bright_thr, 140)
+    if float(bright.mean()) >= 0.03:
+        h = hsv[:, :, 0][bright]
+        s = hsv[:, :, 1][bright]
+        v = hsv[:, :, 2][bright]
+    else:
+        dark = gray <= min(float(np.percentile(gray, 25)), 90)
+        if float(dark.mean()) < 0.03:
+            return "other"
+        h = hsv[:, :, 0][dark]
+        s = hsv[:, :, 1][dark]
+        v = hsv[:, :, 2][dark]
+        if float(np.median(v)) <= 90:
+            return "black"
+        return "other"
+
+    med_h = float(np.median(h))
+    med_s = float(np.median(s))
+    med_v = float(np.median(v))
+    if med_v < 90:
+        return "black"
+    if med_s >= 50 and 12 <= med_h <= 45:
+        return "yellow"
+    if med_v >= 150 and med_s <= 90:
+        return "white"
+    return "other"
+
+
+def infer_majority_ink_color(
+    hits: list[dict[str, Any]],
+) -> str:
+    """全片字数加权，多数派字色 = 对白颜色。"""
+    weights: dict[str, int] = {}
+    for hit in hits:
+        text = str(hit.get("text") or "").strip()
+        if not text:
+            continue
+        key = str(hit.get("color_key") or "other")
+        weights[key] = weights.get(key, 0) + max(len(text), 1)
+    if not weights:
+        return "white"
+    return max(weights.items(), key=lambda kv: kv[1])[0]
+
+
+def filter_hits_by_majority_color(
+    hits: list[dict[str, Any]],
+    *,
+    color_key: str,
+) -> list[dict[str, Any]]:
+    return [
+        hit
+        for hit in hits
+        if str(hit.get("color_key") or "other") == str(color_key)
+    ]
+
+
+_WATERMARK_RE = re.compile(r"(联系删除|如有侵权|侵权|来源[:：]|糖小果)")
+
+
+def filter_repeat_watermark_hits(
+    hits: list[dict[str, Any]],
+    *,
+    min_repeat: int = 4,
+) -> list[dict[str, Any]]:
+    """同色后的二次过滤：短且反复出现的水印/来源字当噪点删。"""
+    from collections import Counter
+
+    counts = Counter(
+        str(h.get("text") or "").strip()
+        for h in hits
+        if str(h.get("text") or "").strip()
+    )
+    out: list[dict[str, Any]] = []
+    for hit in hits:
+        text = str(hit.get("text") or "").strip()
+        if not text:
+            continue
+        if _WATERMARK_RE.search(text) and counts[text] >= 2:
+            continue
+        if len(text) <= 6 and counts[text] >= int(min_repeat):
+            continue
+        out.append(hit)
+    return out
+
+
+def infer_video_subtitle_fill_style(
+    hits: list[dict[str, Any]],
+    *,
+    bubble_min: float = 0.42,
+) -> str:
+    """兼容旧名：由多数派字色映射粗风格（调试用）。"""
+    key = infer_majority_ink_color(hits)
+    if key == "black":
+        # 黑字多见于白底气泡
+        lit = sum(
+            max(len(str(h.get("text") or "")), 1)
+            for h in hits
+            if str(h.get("color_key")) == "black"
+            and float(h.get("white_bg") or 0) >= float(bubble_min)
+        )
+        return "bubble" if lit > 0 else "stroke"
+    return "stroke"
+
+
+def filter_hits_by_fill_style(
+    hits: list[dict[str, Any]],
+    *,
+    style: str,
+    bubble_min: float = 0.42,
+) -> list[dict[str, Any]]:
+    """兼容旧接口：改走多数派字色。"""
+    _ = style, bubble_min
+    key = infer_majority_ink_color(hits)
+    kept = filter_hits_by_majority_color(hits, color_key=key)
+    return filter_repeat_watermark_hits(kept)
+
+
+def _subtitle_fill_style(
+    white_bg_ratios: list[float],
+    *,
+    bubble_min: float = 0.42,
+    texts: list[str] | None = None,
+) -> str:
+    """兼容旧调用。"""
+    _ = bubble_min
+    ratios = [float(r) for r in white_bg_ratios if r is not None]
+    if not ratios:
+        return "stroke"
+    hits = []
+    for i, ratio in enumerate(ratios):
+        text = str(texts[i]) if texts is not None and i < len(texts) else "x"
+        hits.append(
+            {
+                "text": text,
+                "white_bg": ratio,
+                "color_key": "black" if ratio >= 0.42 else "white",
+            }
+        )
+    return infer_video_subtitle_fill_style(hits, bubble_min=bubble_min)
+
+
 def _filter_dialogue_boxes(
     image: Any,
     txts: tuple[str, ...] | list[str],
@@ -132,22 +294,38 @@ def _filter_dialogue_boxes(
     boxes: Any,
     *,
     min_white_bg_ratio: float,
+    style: str | None = None,
 ) -> tuple[list[str], list[float], list[Any]]:
-    """只保留白底气泡风格的对白框，去掉描边 overlay / 解说层。"""
+    """单帧过滤（测试/兼容）：多数派字色。"""
+    _ = style
     if boxes is None:
         return list(txts), list(scores), []
-    kept_txts: list[str] = []
-    kept_scores: list[float] = []
-    kept_boxes: list[Any] = []
     box_list = list(boxes)
-    for idx, txt in enumerate(txts):
-        if idx >= len(box_list):
-            break
-        if _box_white_bg_ratio(image, box_list[idx]) >= min_white_bg_ratio:
-            kept_txts.append(str(txt))
-            kept_scores.append(float(scores[idx] if idx < len(scores) else 0.0))
-            kept_boxes.append(box_list[idx])
-    return kept_txts, kept_scores, kept_boxes
+    n = min(len(txts), len(box_list))
+    if n <= 0:
+        return [], [], []
+
+    hits: list[dict[str, Any]] = []
+    for idx in range(n):
+        box = box_list[idx]
+        hits.append(
+            {
+                "text": str(txts[idx]),
+                "score": float(scores[idx] if idx < len(scores) else 0.0),
+                "white_bg": _box_white_bg_ratio(image, box),
+                "color_key": _box_ink_color_key(image, box),
+                "box": box,
+            }
+        )
+    key = infer_majority_ink_color(hits)
+    kept = filter_hits_by_majority_color(hits, color_key=key)
+    # 测试场景无全片重复水印，这里不做 watermark 二次过滤
+    _ = min_white_bg_ratio
+    return (
+        [str(h["text"]) for h in kept],
+        [float(h["score"]) for h in kept],
+        [h["box"] for h in kept],
+    )
 
 
 def _read_crop_height(image_path: str) -> float:
@@ -172,7 +350,7 @@ def compose_frame_text(
 ) -> tuple[str, float]:
     """单帧多行 OCR：去掉小字号说明，拼成一行（无换行）。
 
-    注：overlay 描边字在 compose 前已按白底气泡占比过滤。
+    注：颜色筛选在片级 `filter_hits_by_fill_style` 完成后再 compose。
     """
     _ = crop_h
     box_list = list(boxes) if boxes is not None else []
@@ -213,6 +391,7 @@ def compose_frame_text(
 
 
 def _ocr_single_frame(args: tuple[float, str]) -> dict[str, Any]:
+    """单帧 OCR：只产出候选 hit（含 white_bg），不做片级颜色过滤。"""
     global _worker_engine
     if _worker_engine is None:
         if not _worker_config_path or not _worker_model_root:
@@ -221,56 +400,130 @@ def _ocr_single_frame(args: tuple[float, str]) -> dict[str, Any]:
 
     timestamp_sec, image_path = args
     result = _worker_engine(str(image_path), use_cls=False)
+    empty = {
+        "timestamp_sec": timestamp_sec,
+        "hits": [],
+        "text": "",
+        "confidence": 0.0,
+        "lines": [],
+    }
     if result is None or not getattr(result, "txts", None):
-        return {
-            "timestamp_sec": timestamp_sec,
-            "text": "",
-            "confidence": 0.0,
-            "lines": [],
-        }
+        return empty
 
     try:
         import cv2
     except ImportError:
         cv2 = None  # type: ignore[assignment]
 
-    crop_h = _read_crop_height(image_path)
-    txts = list(result.txts)
-    scores = list(result.scores or ())
-    boxes = result.boxes
+    image = None
     if cv2 is not None:
         image = cv2.imread(str(image_path))
-        if image is not None:
-            txts, scores, boxes = _filter_dialogue_boxes(
-                image,
-                txts,
-                scores,
-                boxes,
-                min_white_bg_ratio=_worker_min_white_bg_ratio,
-            )
-    if not txts:
-        return {
-            "timestamp_sec": timestamp_sec,
-            "text": "",
-            "confidence": 0.0,
-            "lines": [],
-        }
 
-    text, confidence = compose_frame_text(
-        txts,
-        scores,
-        boxes,
-        crop_h=crop_h,
-        min_height_ratio=_worker_min_box_height_ratio,
-        min_dialogue_box_px=_worker_min_dialogue_box_px,
-    )
-    lines = [text] if text else []
+    txts = list(result.txts)
+    scores = list(result.scores or ())
+    boxes = list(result.boxes) if result.boxes is not None else []
+    hits: list[dict[str, Any]] = []
+    for idx, txt in enumerate(txts):
+        text = str(txt or "").strip()
+        if not text:
+            continue
+        box = boxes[idx] if idx < len(boxes) else None
+        white_bg = 0.0
+        box_h = 0.0
+        color_key = "other"
+        if box is not None:
+            box_h = _box_height(box)
+            if image is not None:
+                white_bg = _box_white_bg_ratio(image, box)
+                color_key = _box_ink_color_key(image, box)
+        hits.append(
+            {
+                "text": text,
+                "score": float(scores[idx] if idx < len(scores) else 0.0),
+                "white_bg": float(white_bg),
+                "color_key": color_key,
+                "box_h": float(box_h),
+            }
+        )
     return {
         "timestamp_sec": timestamp_sec,
-        "text": text,
-        "confidence": confidence,
-        "lines": lines,
+        "hits": hits,
+        "text": "",
+        "confidence": 0.0,
+        "lines": [],
     }
+
+
+def materialize_ocr_rows(
+    raw_rows: list[dict[str, Any]],
+    *,
+    color_key: str,
+    min_height_ratio: float,
+    min_dialogue_box_px: float,
+) -> list[dict[str, Any]]:
+    """片级多数派字色 + 水印二次过滤后，压成 merge 可用行。"""
+    all_colored: list[dict[str, Any]] = []
+    for row in raw_rows:
+        all_colored.extend(
+            filter_hits_by_majority_color(
+                list(row.get("hits") or []),
+                color_key=color_key,
+            )
+        )
+    allowed_texts = {
+        str(h.get("text") or "").strip()
+        for h in filter_repeat_watermark_hits(all_colored)
+        if str(h.get("text") or "").strip()
+    }
+
+    out: list[dict[str, Any]] = []
+    for row in raw_rows:
+        hits = [
+            hit
+            for hit in filter_hits_by_majority_color(
+                list(row.get("hits") or []),
+                color_key=color_key,
+            )
+            if str(hit.get("text") or "").strip() in allowed_texts
+        ]
+        if not hits:
+            out.append(
+                {
+                    "timestamp_sec": row.get("timestamp_sec"),
+                    "text": "",
+                    "confidence": 0.0,
+                    "lines": [],
+                }
+            )
+            continue
+        txts = [str(h["text"]) for h in hits]
+        scores = [float(h["score"]) for h in hits]
+        boxes = [
+            [
+                [0.0, 0.0],
+                [10.0, 0.0],
+                [10.0, float(h["box_h"])],
+                [0.0, float(h["box_h"])],
+            ]
+            for h in hits
+        ]
+        text, confidence = compose_frame_text(
+            txts,
+            scores,
+            boxes,
+            min_height_ratio=min_height_ratio,
+            min_dialogue_box_px=min_dialogue_box_px,
+        )
+        out.append(
+            {
+                "timestamp_sec": row.get("timestamp_sec"),
+                "text": text,
+                "confidence": confidence,
+                "lines": [text] if text else [],
+                "hits": hits,
+            }
+        )
+    return out
 
 
 def build_ocr_engine(config: Config):
@@ -298,6 +551,7 @@ def extract_subtitle_frames(
     crop_bottom_ratio: float = 0.10,
     config: Config | None = None,
 ) -> list[OcrFrame]:
+    """ffmpeg 抽帧一次。OCR 主路径传底部搜索带 ratio，不定最终字幕带。"""
     output_dir.mkdir(parents=True, exist_ok=True)
     for old in output_dir.glob("frame_*.jpg"):
         old.unlink(missing_ok=True)
@@ -329,6 +583,48 @@ def extract_subtitle_frames(
         ts = (idx - 1) / max(fps, 0.1)
         frames.append(OcrFrame(timestamp_sec=ts, image_path=image_path))
     return frames
+
+
+def crop_search_band_frames_to_region(
+    frames: list[OcrFrame],
+    region: SubtitleRegion,
+    *,
+    search_band_top_ratio: float,
+    config: Config | None = None,
+) -> list[OcrFrame]:
+    """将搜索带帧就地裁成定带结果（不再二次 ffmpeg）。"""
+    if not frames:
+        return []
+    cfg = config or Config()
+    try:
+        import cv2
+    except ImportError as exc:
+        raise RuntimeError("opencv-python is required for OCR crop") from exc
+
+    band_top = max(0.0, min(float(search_band_top_ratio), 0.98))
+    search_ratio = max(1.0 - band_top, 0.05)
+    clamped = region.clamp(max_h_ratio=float(cfg.gold_story_ocr_region_max_h_ratio))
+    local_y = (float(clamped.y_ratio) - band_top) / search_ratio
+    local_h = float(clamped.h_ratio) / search_ratio
+    local_y = max(0.0, min(local_y, 0.98))
+    local_h = max(0.04, min(local_h, 1.0 - local_y))
+
+    kept: list[OcrFrame] = []
+    for frame in frames:
+        img = cv2.imread(str(frame.image_path))
+        if img is None:
+            continue
+        h = int(img.shape[0])
+        y0 = int(round(h * local_y))
+        y1 = int(round(h * (local_y + local_h)))
+        y0 = max(0, min(y0, h - 1))
+        y1 = max(y0 + 1, min(y1, h))
+        crop = img[y0:y1, :]
+        if crop.size == 0:
+            continue
+        cv2.imwrite(str(frame.image_path), crop)
+        kept.append(frame)
+    return kept
 
 
 _DHASH_SIZE = (9, 8)
@@ -492,27 +788,62 @@ def transcribe_video_ocr(
     title: str = "",
     duration_sec: float | None = None,
 ) -> dict[str, Any]:
-    """单视频 OCR 逐字稿（当前进程内执行，供 subprocess worker 调用）。"""
+    """单视频 OCR 逐字稿（视频只解码一遍）。
+
+    流程：
+    1) ffmpeg 抽底部搜索带帧（一次）
+    2) 同批帧定字幕带 → 就地裁切
+    3) OCR → 多数派字色过滤 → merge
+    """
     frame_dir = workspace / "ocr_frames" / source_id
-    region_dir = workspace / "ocr_region" / source_id
     if duration_sec is None:
         duration_sec = probe_duration(video_path)
 
-    region = detect_subtitle_region(
-        video_path,
-        workspace=region_dir,
-        duration_sec=duration_sec,
-        config=config,
-    )
+    search_ratio = float(config.gold_story_ocr_region_search_ratio)
+    search_ratio = max(0.15, min(search_ratio, 0.55))
+    search_band_top = 1.0 - search_ratio
+
+    # 1) 一遍抽帧：底部搜索带（比最终字幕带宽，留给定带）
     frames = extract_subtitle_frames(
         video_path,
         output_dir=frame_dir,
         fps=float(config.gold_story_ocr_fps),
-        region=region,
-        crop_bottom_ratio=float(config.gold_story_ocr_crop_bottom_ratio),
+        region=None,
+        crop_bottom_ratio=search_ratio,
         config=config,
     )
-    ocr_rows = ocr_frames_parallel(frames, config)
+    if config.gold_story_ocr_region_detect and frames:
+        region = detect_subtitle_region_from_images(
+            [f.image_path for f in frames],
+            config=config,
+            search_band_top_ratio=search_band_top,
+            max_samples=10,
+            log_tag=source_id,
+        )
+    else:
+        region = fallback_subtitle_region(config)
+    if frames:
+        frames = crop_search_band_frames_to_region(
+            frames,
+            region,
+            search_band_top_ratio=search_band_top,
+            config=config,
+        )
+
+    # 2) 全片 OCR 候选（先不过滤）
+    raw_rows = ocr_frames_parallel(frames, config)
+    all_hits: list[dict[str, Any]] = []
+    for row in raw_rows:
+        all_hits.extend(list(row.get("hits") or []))
+
+    # 3) 多数派字色 + 水印二次过滤
+    color_key = infer_majority_ink_color(all_hits)
+    ocr_rows = materialize_ocr_rows(
+        raw_rows,
+        color_key=color_key,
+        min_height_ratio=float(config.gold_story_ocr_min_box_height_ratio),
+        min_dialogue_box_px=float(config.gold_story_ocr_min_dialogue_box_px),
+    )
     text, line_rows, avg_conf = merge_ocr_rows(ocr_rows)
 
     quality = gs_merge.score_transcript_text(
@@ -532,6 +863,8 @@ def transcribe_video_ocr(
         "quality_score": quality,
         "frame_count": len(frames),
         "ocr_frame_dir": str(frame_dir),
+        "subtitle_color_key": color_key,
+        "subtitle_fill_style": infer_video_subtitle_fill_style(all_hits),
         "subtitle_region": {
             "y_ratio": region.y_ratio,
             "h_ratio": region.h_ratio,

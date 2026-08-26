@@ -46,7 +46,7 @@ def test_assemble_daily_t2i_prompt_structure():
     # 槽位顺序：S1→S2→S4 场景动作在前，S3 外貌在后（对齐成功三人稿）
     assert prompt.index("客厅沙发") < prompt.index("昭昭：7岁男孩")
     # 嘴型锁定：首个说话人（灿灿）张嘴，其余闭嘴，防 i2v 说话人反转
-    assert "灿灿正在开口说话" in prompt
+    assert "灿灿嘴唇微张，正在开口说话" in prompt
     assert "昭昭嘴巴自然闭合" in prompt
 
 
@@ -247,7 +247,7 @@ def test_scrub_daily_visual_brief_strips_mouth_and_fixes_hands():
     assert "嘴巴大张" not in prompt
     assert "嘴巴大张" not in prompt
     assert prompt.count("正在开口说话") == 1
-    assert "昭昭正在开口说话" in prompt
+    assert "昭昭嘴唇微张，正在开口说话" in prompt
     assert "双手叉腰" not in prompt
     assert "叉腰" not in prompt
     assert "左手自然下垂" in prompt

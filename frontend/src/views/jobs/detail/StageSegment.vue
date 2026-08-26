@@ -53,6 +53,7 @@
               <el-checkbox :model-value="allSelected" @change="toggleSelectAll"> 全选 </el-checkbox>
               <span class="text-sm text-gray-500">
                 共 {{ segments.length }} 分镜，{{ closeupCount }}个特写，留空表示全部
+                {{ segmentsWithImageCount }}/{{ segmentsWithClipCount }}/{{ segments.length }}
               </span>
             </div>
             <el-checkbox-group v-model="selectedSegments" class="flex flex-wrap gap-x-4 gap-y-1">
@@ -80,7 +81,9 @@
       <button
         v-for="segment in segments"
         :key="segment.segment_index"
-        class="cursor-pointer rounded px-1.5 py-0.5 text-xs transition-colors hover:bg-blue-50 hover:text-blue-600"
+        type="button"
+        class="segment-locator cursor-pointer rounded px-1.5 py-0.5 text-xs transition-colors hover:bg-gray-100"
+        :class="segmentLocatorClass(segment)"
         @click="scrollToSegment(segment.segment_index)"
       >
         #{{ segment.segment_index }}
@@ -766,6 +769,26 @@ const closeupCount = computed(
   () => props.segments.filter(seg => !!segmentKeyframeValue(seg)).length
 );
 
+const segmentsWithImageCount = computed(
+  () => props.segments.filter(seg => !!seg.image_path?.trim()).length
+);
+
+const segmentsWithClipCount = computed(
+  () => props.segments.filter(seg => !!seg.clip_path?.trim()).length
+);
+
+function segmentLocatorClass(segment: JobSegment): string {
+  const hasImage = !!segment.image_path?.trim();
+  const hasClip = !!segment.clip_path?.trim();
+  if (hasImage && hasClip) {
+    return "is-ready";
+  }
+  if (hasImage) {
+    return "is-image";
+  }
+  return "is-empty";
+}
+
 const visualBriefByIndex = computed(() => {
   const script = props.job.script_json as ScriptJson | null;
   const map = new Map<number, string>();
@@ -1030,5 +1053,17 @@ const handleRun = async (toEnd: boolean) => {
 .keyframe-select--active :deep(.el-select__selected-item) {
   color: #d97706;
   font-weight: 600;
+}
+
+.segment-locator.is-empty {
+  color: #9ca3af;
+}
+
+.segment-locator.is-image {
+  color: #111827;
+}
+
+.segment-locator.is-ready {
+  color: #2563eb;
 }
 </style>

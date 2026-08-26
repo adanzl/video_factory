@@ -332,10 +332,11 @@ class Config:
             "GOLD_STORY_OCR_REGION_DETECT", True
         )
         self.gold_story_ocr_crop_bottom_ratio: float = float(
-            os.getenv("GOLD_STORY_OCR_CROP_BOTTOM_RATIO", "0.10")
+            os.getenv("GOLD_STORY_OCR_CROP_BOTTOM_RATIO", "0.28")
         )
+        # 字幕带高度封顶（动态观测后再 clamp；不是目标带宽）
         self.gold_story_ocr_region_max_h_ratio: float = float(
-            os.getenv("GOLD_STORY_OCR_REGION_MAX_H_RATIO", "0.20")
+            os.getenv("GOLD_STORY_OCR_REGION_MAX_H_RATIO", "0.22")
         )
         self.gold_story_ocr_region_min_y_center: float = float(
             os.getenv("GOLD_STORY_OCR_REGION_MIN_Y_CENTER", "0.84")
@@ -346,6 +347,7 @@ class Config:
         self.gold_story_ocr_min_dialogue_box_px: float = float(
             os.getenv("GOLD_STORY_OCR_MIN_DIALOGUE_BOX_PX", "22")
         )
+        # 白底气泡判定阈值；过滤时按帧自动适配（有白底才门控）
         self.gold_story_ocr_min_white_bg_ratio: float = float(
             os.getenv("GOLD_STORY_OCR_MIN_WHITE_BG_RATIO", "0.42")
         )
@@ -353,7 +355,7 @@ class Config:
             os.getenv("GOLD_STORY_OCR_REGION_MIN_H_RATIO", "0.025")
         )
         self.gold_story_ocr_region_search_ratio: float = float(
-            os.getenv("GOLD_STORY_OCR_REGION_SEARCH_RATIO", "0.35")
+            os.getenv("GOLD_STORY_OCR_REGION_SEARCH_RATIO", "0.50")
         )
         self.gold_story_ocr_region_cluster_tol: float = float(
             os.getenv("GOLD_STORY_OCR_REGION_CLUSTER_TOL", "0.025")

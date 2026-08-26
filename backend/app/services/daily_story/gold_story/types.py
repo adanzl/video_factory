@@ -1,4 +1,4 @@
-"""金故事机制 M1–M12 与结构类型 A–E/F/G/H/I/J/K 映射。"""
+"""金故事机制 M1–M12 与结构类型 A–E/F/G/H/I/J/K/L 映射。"""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ GOLD_STORY_MECHANISM_LABELS: dict[str, str] = {
 # M → 结构字母：能落 A–E 的落 A–E；否则用扩展字母（F/G/H…）
 MECHANISM_STRUCTURE_MAP: dict[str, str] = {
     "M1": "C",  # 回旋镖：主落 C 公平执念收束
-    "M2": "C",  # 自私包装公平
+    "M2": "C",  # 自私包装公平（退让点破偏心→L）
     "M3": "F",  # Threat 链式互升级，暂无 A–E 标准收束
     "M4": "G",  # 递台词 escalation → 嘴硬心软（争物/双规则用 M1/M2→C）
     "M5": "A",  # 拒和解 / 嘴硬加码（调解→H；否决压住→J）
@@ -41,6 +41,7 @@ MECHANISM_STRUCTURE_MAP: dict[str, str] = {
 
 # mechanism 默认映射外的合法 structure_type（防 H3 误判入库失败）
 MECHANISM_STRUCTURE_ALTERNATIVES: dict[str, frozenset[str]] = {
+    "M2": frozenset({"L"}),  # 表演公平被拒领点破 → L（非双规则回旋镖）
     "M5": frozenset({"H", "J"}),  # H 第三方调解；J 否决权压住
     "M8": frozenset({"J"}),  # 一锤镇住、不翻车
 }
@@ -53,6 +54,7 @@ GOLD_STORY_EXTENDED_TYPE_LABELS: dict[str, str] = {
     "I": "问倒收束",
     "J": "权威压住",
     "K": "家长看戏",
+    "L": "退让点破",
 }
 
 GOLD_STORY_STRUCTURE_LABELS: dict[str, str] = {
@@ -64,13 +66,13 @@ GOLD_STORY_STRUCTURE_CODES: frozenset[str] = frozenset(
     GOLD_STORY_STRUCTURE_LABELS.keys()
 )
 
-# daily_story 已落地类型（H5 可注入任务）；H/I/J/K 暂仅 gold_story 侧
-_GOLD_STORY_NON_INJECTABLE = frozenset({"H", "I", "J", "K"})
+# daily_story 已落地类型（H5 可注入任务）；H/I/J/K/L 暂仅 gold_story 侧
+_GOLD_STORY_NON_INJECTABLE = frozenset({"H", "I", "J", "K", "L"})
 GOLD_STORY_INJECTABLE_CODES: frozenset[str] = frozenset(
     k for k in STORY_TYPE_LABELS if k not in _GOLD_STORY_NON_INJECTABLE
 )
 
-# 与 docs/日常故事-类型.md §3 一致（含金故事扩展 F–K）
+# 与 docs/日常故事-类型.md §3 一致（含金故事扩展 F–L）
 GOLD_STORY_TYPE_CATALOG: tuple[dict[str, str], ...] = (
     {
         "code": "A",
@@ -137,6 +139,12 @@ GOLD_STORY_TYPE_CATALOG: tuple[dict[str, str], ...] = (
         "name": "家长看戏",
         "formula": "互打互骂升级→大人躲/叹/劝失败→僵持",
         "closing": "不和好；禁止套 H 第三方化解",
+    },
+    {
+        "code": "L",
+        "name": "退让点破",
+        "formula": "争物短→成人表演公平催让渡→拒收退让→点破偏心→语塞",
+        "closing": "点破偏心/成人语塞；禁止 C 回旋镖、A 破功",
     },
 )
 

@@ -158,6 +158,22 @@ def delete_titles(title_ids: list[int]) -> int:
     return cur.rowcount
 
 
+def clear_job_id_by_job(job_id: int) -> int:
+    """删除视频任务时解除选题绑定（job_id → NULL，已入队改回 queued）。"""
+    cur = sql.execute(
+        """
+        UPDATE title
+        SET job_id = NULL,
+            status = CASE WHEN status = 'enqueued' THEN 'queued' ELSE status END,
+            updated_at = datetime('now')
+        WHERE job_id = ?
+        """,
+        (job_id,),
+    )
+    sql.commit()
+    return int(cur.rowcount or 0)
+
+
 def list_by_ids(title_ids: list[int]) -> list[dict]:
     if not title_ids:
         return []

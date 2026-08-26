@@ -1175,7 +1175,7 @@ def patch_m5_pre_mom_escalation(story: dict[str, Any]) -> tuple[dict[str, Any], 
 
 # 短 seed gold_chat：点题/closing 后另起第二轮（角色反转续写）
 _SHORT_SEED_MAX = 12
-_POST_CLOSE_TRIM_TYPES = frozenset({"C", "I"})
+_POST_CLOSE_TRIM_TYPES = frozenset({"C", "I", "L"})
 RE_GOLD_HOLDER_WANT = re.compile(
     r"帮我夹|够不着|馋这一口|我也想吃|给我夹|分我半|换一口|我说不吃是客气"
 )
@@ -1310,13 +1310,52 @@ def patch_gold_chat_post_close_tail(
     if not should_trim:
         return story, []
 
+    kept = rows[: close_idx + 1]
+    # 抽象安全下限：删尾后须仍满足 hard validate 同源门槛，避免短稿被剪穿
+    from app.services.daily_story.gold_story.scene import CHAT_LINE_COUNT_MIN
+    from app.services.daily_story.prompts import (
+        DAILY_STORY_BODY_CHARS_MIN,
+        dialogue_total_chars,
+    )
+
+    candidate = dict(story)
+    candidate["dialogue"] = kept
+    if len(kept) < CHAT_LINE_COUNT_MIN:
+        return story, []
+    if dialogue_total_chars(candidate) < DAILY_STORY_BODY_CHARS_MIN:
+        return story, []
+
     out = copy.deepcopy(story)
-    out["dialogue"] = rows[: close_idx + 1]
+    out["dialogue"] = kept
     dropped = len(rows) - close_idx - 1
     return out, [f"gold_chat删点题后拖尾({dropped}句)"]
 
 
 # M2+C 结构：对齐现有 C 类 layer/boomerang scorer（不改 quality.py）
+# M2+C 整件物（肉/吃商）=#24 校准域；牛奶/公平类勿套 #24 收束与再堵来回
+_M2_C_MEAT_MARKERS = re.compile(r"肉|吃商|八百|心眼|分肉|夹.{0,2}块|盘里")
+_M2_C_FAIR_MARKERS = re.compile(r"牛奶|公平|陷阱|让给|让出|偏心眼")
+
+
+def m2_c_meat_whole_item_context(
+    story: dict[str, Any],
+    *,
+    payload: dict[str, Any] | None = None,
+) -> bool:
+    """True=走 #24 肉战 patch；False=非整件肉（如牛奶公平），禁硬贴吃商/八百。"""
+    payload = payload if isinstance(payload, dict) else {}
+    sc = payload.get("scene_contract")
+    if not isinstance(sc, dict):
+        sc = {}
+    blob = "".join(
+        str(story.get(k) or "")
+        for k in ("scene_title", "setting", "conflict_core", "key")
+    ) + str(sc.get("object") or "") + str(sc.get("conflict") or "")
+    if _M2_C_FAIR_MARKERS.search(blob):
+        return False
+    return bool(_M2_C_MEAT_MARKERS.search(blob))
+
+
 _RE_M2_C1 = re.compile(r"凭什么|归谁|谁先|应该给我|你抢")
 _RE_M2_C2 = re.compile(r"你刚说|你定的|规矩|你不是说")
 _RE_M2_C3 = re.compile(r"凭什么你|你说了算|你又不是")
@@ -1333,6 +1372,7 @@ def patch_m2_c_structure(
     structure_type: str = "",
     mechanism: str = "",
     theme: str = "",
+    payload: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
     """M2+C 金稿：补 C1–C4 层触发词 + 末段回旋镖 + C类 punchline（仅 normalize）。"""
     import copy
@@ -1349,26 +1389,32 @@ def patch_m2_c_structure(
     if len(rows) < 8:
         return out, []
 
+    meat_ctx = m2_c_meat_whole_item_context(out, payload=payload)
     notes: list[str] = []
     changed = False
 
     # punchline_explain → C类前缀
     explain = str(out.get("punchline_explain") or "").strip()
     if explain and not explain.startswith("C类"):
-        out["punchline_explain"] = (
-            "C类：灿灿用昭昭原话与妈妈规矩双重堵截，昭昭无奈嘀咕八百个心眼子。"
-            if "八百" in explain or "堵" in explain
-            else f"C类：{explain}"
-        )
+        if meat_ctx and ("八百" in explain or "堵" in explain):
+            out["punchline_explain"] = (
+                "C类：灿灿用昭昭原话与妈妈规矩双重堵截，昭昭无奈嘀咕八百个心眼子。"
+            )
+        else:
+            out["punchline_explain"] = f"C类：{explain}"
         notes.append("M2+C punchline→C类")
         changed = True
 
     # 主题锚定（relevancy 查 conflict_core+setting+前4句）
-    theme_anchor = str(theme or out.get("scene_title") or "八百个心眼子").strip()
+    theme_anchor = str(theme or out.get("scene_title") or "").strip()
     core = str(out.get("conflict_core") or "")
     setting = str(out.get("setting") or "")
     first4 = _m2_c_layer_blob(rows[:4])
-    if theme_anchor and theme_anchor[:2] not in core + setting + first4:
+    if (
+        meat_ctx
+        and theme_anchor
+        and theme_anchor[:2] not in core + setting + first4
+    ):
         suffix = "，昭昭无奈称妹妹八百个心眼子"
         if suffix not in core:
             out["conflict_core"] = (core.rstrip("。") + suffix + "。").replace("。。", "。")
@@ -1388,8 +1434,10 @@ def patch_m2_c_structure(
             new_line = new_line.replace("你刚才不是", "你刚说").replace("你刚才说", "你刚说")
             new_line = new_line.replace("你刚才", "你刚说")
         new_line = re.sub(r"你刚说+", "你刚说", new_line)
-        if sp == "灿灿" and "妈妈说" in new_line and "妈妈说过" not in new_line:
-            new_line = new_line.replace("妈妈说", "妈妈说过")
+        if sp == "灿灿" and "妈妈说" in new_line:
+            new_line = new_line.replace("妈妈说", "之前说过")
+        if "妈妈说过" in new_line:
+            new_line = new_line.replace("妈妈说过", "之前说过")
 
         if new_line != line:
             item["line"] = new_line
@@ -1445,11 +1493,16 @@ def patch_m2_c_structure(
             if "我说了算" in ln or "不分" in ln or "不行" in ln or "归我" in ln:
                 if "你刚说" in ln or "你说的" in ln:
                     break
-                item["line"] = (
-                    f"不行！你刚说「不吃就不吃」，{ln.lstrip('，,')}"
-                    if "不吃" in blob or "不爱吃" in blob
-                    else f"你刚说不想吃肉，{ln.lstrip('，,')}"
-                )
+                tail = re.sub(r"明天的是明天的，?", "", ln.lstrip("，, "))
+                if "不吃" in blob or "不爱吃" in blob:
+                    candidate = f"不行！你刚说「不吃就不吃」，{tail}"
+                    if len(candidate) > 24:
+                        candidate = "不行！你刚说「不吃就不吃」，今天我说了算！"
+                else:
+                    candidate = f"你刚说不想吃肉，{tail}"
+                    if len(candidate) > 24:
+                        candidate = "你刚说不想吃肉，今天我说了算！"
+                item["line"] = candidate
                 notes.append("M2+C末段回旋镖")
                 changed = True
                 break
@@ -1545,23 +1598,24 @@ def _dialogue_pair_key(item: dict[str, Any]) -> tuple[str, str]:
     )
 
 
-def patch_gold_chat_dedup_dialogue_loop(
+def patch_gold_chat_dedupe_dialogue_loop(
     story: dict[str, Any],
 ) -> tuple[dict[str, Any], list[str]]:
     """删 2 句一组的连续复读环（LLM 凑字数常见）。"""
     import copy
 
     rows = _dialogue_rows(story)
-    if len(rows) < 6:
+    if len(rows) < 4:
         return story, []
 
     cut = len(rows)
-    for i in range(2, len(rows)):
+    # ABAB…：当前句==两句前，且上一句==三句前 → 从第二组 AB 起截断
+    for i in range(3, len(rows)):
         if (
             _dialogue_pair_key(rows[i]) == _dialogue_pair_key(rows[i - 2])
-            and _dialogue_pair_key(rows[i - 1]) == _dialogue_pair_key(rows[i - 1])
+            and _dialogue_pair_key(rows[i - 1]) == _dialogue_pair_key(rows[i - 3])
         ):
-            cut = i - 2
+            cut = i - 1
             break
 
     if cut >= len(rows):
@@ -1619,10 +1673,13 @@ def patch_m2_c_ensure_seed_close(
     *,
     payload: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
-    """M2+C：缺 seed 收束（妈妈+八百个心眼子）则补末两拍。"""
+    """M2+C 整件肉：缺 seed 收束则补妈妈+八百个心眼子；牛奶/公平类不注入。"""
     import copy
 
     payload = payload if isinstance(payload, dict) else {}
+    if not m2_c_meat_whole_item_context(story, payload=payload):
+        return story, []
+
     rows = _dialogue_rows(story)
     if not rows:
         return story, []
@@ -1668,13 +1725,16 @@ def patch_gold_chat_c_seed_bridge(
     *,
     structure_type: str = "",
     mechanism: str = "",
+    payload: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
-    """M2+C 截尾后在妈妈出场前补「再要/再堵」短来回（灿灿仍占上风）。"""
+    """M2+C 整件肉：妈妈出场前补「再要/再堵」短来回；非肉战跳过。"""
     import copy
 
     st = str(structure_type or story.get("story_type") or "").strip().upper()
     mech = str(mechanism or "").strip().upper()
     if st != "C" or mech != "M2":
+        return story, []
+    if not m2_c_meat_whole_item_context(story, payload=payload):
         return story, []
 
     rows = _dialogue_rows(story)

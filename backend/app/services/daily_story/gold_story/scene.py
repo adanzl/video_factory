@@ -138,6 +138,25 @@ def validate_dialogue_seed_speakers(seed: list[Any]) -> list[str]:
     return errors
 
 
+_NARRATION_LINE_RE = re.compile(
+    r"(?:^|[，,])"
+    r"(?:松手|转身离开|愣住|留下面面相觑|推向(?:灿灿|昭昭)|"
+    r"放下牛奶|心里不是滋味，但坚持)"
+)
+
+
+def collect_narration_dialogue_errors(dialogue: list[Any]) -> list[str]:
+    """分镜/动作句误当对白。"""
+    errors: list[str] = []
+    for i, item in enumerate(dialogue or []):
+        if not isinstance(item, dict):
+            continue
+        line = str(item.get("line") or "").strip()
+        if line and _NARRATION_LINE_RE.search(line):
+            errors.append(f"dialogue[{i}] narration_not_speech")
+    return errors
+
+
 def collect_voice_errors(dialogue: list[Any]) -> list[str]:
     errors: list[str] = []
     for i, item in enumerate(dialogue or []):

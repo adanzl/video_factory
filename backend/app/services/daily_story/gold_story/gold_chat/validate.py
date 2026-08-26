@@ -1203,4 +1203,7 @@ def validate_chat_hard(
                 errors.append(f"tutorial_residue_in_dialogue:{word}")
 
     errors.extend(collect_voice_errors(dialogue))
+    from app.services.daily_story.gold_story.scene import collect_narration_dialogue_errors
+
+    errors.extend(collect_narration_dialogue_errors(dialogue if isinstance(dialogue, list) else []))
     return errors

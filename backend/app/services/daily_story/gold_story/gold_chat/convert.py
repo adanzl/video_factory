@@ -681,6 +681,8 @@ def apply_gold_chat_normalizations(
     if len(characters) < 2:
         characters = ("灿灿", "昭昭")
 
+    mech = str((row or {}).get("mechanism") or payload.get("mechanism") or "").strip()
+
     new_setting, sn = normalize_gold_chat_setting(
         str(chat.get("setting") or ""),
         scene_contract_location=str(sc.get("location") or ""),
@@ -690,11 +692,13 @@ def apply_gold_chat_normalizations(
         notes.extend(sn)
         chat["setting"] = new_setting
     if st:
-        chat, type_notes = apply_type_body_pipeline(chat, structure_type=st)
-        notes.extend(type_notes)
+        # M2+C 已有专用 patch 链；勿再走 daily_story 的连说改 speaker / 整件肉 filler
+        if not (st == "C" and mech.upper() == "M2"):
+            chat, type_notes = apply_type_body_pipeline(chat, structure_type=st)
+            notes.extend(type_notes)
     from app.services.daily_story.gold_story.gold_chat.patch import (
         patch_gold_chat_c_seed_bridge,
-        patch_gold_chat_dedup_dialogue_loop,
+        patch_gold_chat_dedupe_dialogue_loop,
         patch_gold_chat_post_close_tail,
         patch_m2_c_ensure_seed_close,
         patch_m2_c_break_eating_consecutive,
@@ -703,9 +707,8 @@ def apply_gold_chat_normalizations(
         patch_m2_c_structure,
     )
 
-    mech = str((row or {}).get("mechanism") or payload.get("mechanism") or "").strip()
-    chat, dedup_notes = patch_gold_chat_dedup_dialogue_loop(chat)
-    notes.extend(dedup_notes)
+    chat, loop_notes = patch_gold_chat_dedupe_dialogue_loop(chat)
+    notes.extend(loop_notes)
     if st == "C" and mech.upper() == "M2":
         theme = str(
             chat.get("scene_title")
@@ -727,6 +730,7 @@ def apply_gold_chat_normalizations(
             chat,
             structure_type=st,
             mechanism=mech,
+            payload=payload,
         )
         notes.extend(bridge_notes)
         chat, struct_notes = patch_m2_c_structure(
@@ -734,6 +738,7 @@ def apply_gold_chat_normalizations(
             structure_type=st,
             mechanism=mech,
             theme=theme,
+            payload=payload,
         )
         notes.extend(struct_notes)
     chat, tail_notes = patch_gold_chat_post_close_tail(
@@ -762,6 +767,9 @@ def apply_gold_chat_normalizations(
 
     chat, ne_notes = patch_trim_redundant_ne_suffix(chat)
     notes.extend(ne_notes)
+    chat, trimmed = _apply_deterministic_shorten(chat)
+    if trimmed:
+        notes.append("gold_chat截长句")
     return chat, notes
 
 
@@ -1046,6 +1054,25 @@ def convert_gold_chat(
             sid,
             "；".join(norm_notes[:4]),
         )
+    payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+    scene_contract = payload.get("scene_contract") or {}
+    if not isinstance(scene_contract, dict):
+        scene_contract = {}
+    source_type = str(payload.get("source_type") or scene_contract.get("source_type") or "field")
+    mom_max = scene_contract.get("mom_lines_max")
+    if mom_max is None:
+        mom_max = 1
+    banned = sanitize_banned_literals(
+        payload.get("banned_literals") or scene_contract.get("banned_literals"),
+        scene_contract=scene_contract,
+        beat=payload.get("beat") if isinstance(payload.get("beat"), list) else [],
+    )
+    validate_gold_chat(
+        chat,
+        banned_literals=[str(x) for x in banned],
+        source_type=source_type,
+        mom_lines_max=int(mom_max),
+    )
     mech = str(row.get("mechanism") or "").upper()
     st = str(row.get("structure_type") or "").strip().upper()
     if mech == "M5" and st == "H":

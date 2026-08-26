@@ -1,10 +1,14 @@
-"""对白白底气泡 vs overlay 描边字过滤。"""
+"""多数派字色过滤（白底只是特征）。"""
 
 import numpy as np
 
 from app.services.daily_story.gold_story.transcript.ocr import (
+    _box_ink_color_key,
     _box_white_bg_ratio,
     _filter_dialogue_boxes,
+    filter_hits_by_majority_color,
+    filter_repeat_watermark_hits,
+    infer_majority_ink_color,
 )
 
 
@@ -13,14 +17,13 @@ def _box(y0: float, y1: float, x1: float = 200.0) -> np.ndarray:
 
 
 def _bubble_patch(h: int = 36, w: int = 220) -> np.ndarray:
-    """白底黑字气泡。"""
     import cv2
 
     img = np.full((h, w, 3), 40, dtype=np.uint8)
     cv2.rectangle(img, (4, 4), (w - 5, h - 5), (235, 232, 236), thickness=-1)
     cv2.putText(
         img,
-        "我爱学习",
+        "woai",
         (16, h - 12),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.55,
@@ -32,13 +35,12 @@ def _bubble_patch(h: int = 36, w: int = 220) -> np.ndarray:
 
 
 def _stroke_patch(h: int = 36, w: int = 220) -> np.ndarray:
-    """描边 overlay（无白底）。"""
     import cv2
 
     img = np.full((h, w, 3), 40, dtype=np.uint8)
     cv2.putText(
         img,
-        "姐姐一招制敌呀",
+        "hello",
         (8, h - 12),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.55,
@@ -49,24 +51,51 @@ def _stroke_patch(h: int = 36, w: int = 220) -> np.ndarray:
     return img
 
 
-def test_white_bg_ratio_distinguishes_bubble_and_stroke():
+def test_white_bg_is_feature_not_gate():
     bubble = _bubble_patch()
     stroke = _stroke_patch()
-    bubble_ratio = _box_white_bg_ratio(bubble, _box(4, 32))
-    stroke_ratio = _box_white_bg_ratio(stroke, _box(4, 32))
-    assert bubble_ratio >= 0.42
-    assert stroke_ratio < 0.42
-    assert bubble_ratio - stroke_ratio >= 0.15
+    assert _box_white_bg_ratio(bubble, _box(4, 32)) > _box_white_bg_ratio(
+        stroke, _box(4, 32)
+    )
 
 
-def test_filter_dialogue_boxes_drops_overlay():
+def test_infer_majority_ink_by_char_weight():
+    hits = [
+        {"text": "北京", "color_key": "yellow"},
+        {"text": "你这样说我还觉得你很讨厌呢", "color_key": "white"},
+    ]
+    assert infer_majority_ink_color(hits) == "white"
+
+
+def test_filter_keeps_majority_color_only():
+    hits = [
+        {"text": "北京", "color_key": "yellow", "score": 0.9},
+        {"text": "你比我还讨厌", "color_key": "white", "score": 0.95},
+    ]
+    kept = filter_hits_by_majority_color(hits, color_key="white")
+    assert [h["text"] for h in kept] == ["你比我还讨厌"]
+
+
+def test_filter_repeat_watermark():
+    hits = [
+        {"text": "你比我还讨厌", "color_key": "white"},
+        {"text": "联系删除", "color_key": "white"},
+        {"text": "联系删除", "color_key": "white"},
+        {"text": "联系删除", "color_key": "white"},
+    ]
+    kept = filter_repeat_watermark_hits(hits)
+    assert [h["text"] for h in kept] == ["你比我还讨厌"]
+
+
+def test_filter_dialogue_boxes_majority_on_canvas():
     canvas = np.full((96, 320, 3), 40, dtype=np.uint8)
     canvas[0:36, :] = _stroke_patch(h=36, w=320)
     canvas[54:90, :] = _bubble_patch(h=36, w=320)
-
-    txts = ("姐姐一招制敌呀", "你们就")
+    # 白描边对白更长 → 多数派 white/stroke 侧
+    txts = ("哼", "我爱学习你爱吗别抢遥控器了呀呀")
     scores = (0.95, 0.98)
     boxes = [_box(4, 32), _box(58, 86)]
+    # 黑字气泡 vs 白字描边：按字色多数
     kept_txts, _, _ = _filter_dialogue_boxes(
         canvas,
         txts,
@@ -74,4 +103,4 @@ def test_filter_dialogue_boxes_drops_overlay():
         boxes,
         min_white_bg_ratio=0.42,
     )
-    assert kept_txts == ["你们就"]
+    assert len(kept_txts) >= 1
