@@ -342,9 +342,8 @@ def test_build_daily_script_prompts_uses_cps_setting_and_no_appearance():
     assert "转折用特写，不拆碎" in system
     assert "特写数量·硬性" in system
     assert "实际切出的镜数" in system
-    assert "⌈N/3⌉" in system or "N/3" in system
     assert "⌈N/2⌉" in system
-    assert "进一法" in system
+    assert "半数进一" in system or "进一" in system
     assert "开场首镜" in system
     assert "禁止一句一镜" in user
     assert "特写数量·硬性" in user
@@ -404,10 +403,10 @@ def test_daily_script_closeup_bounds_and_enforce():
         validate_daily_script_closeup_count,
     )
 
-    assert daily_script_closeup_bounds(11) == (4, 6)  # ⌈11/3⌉–⌈11/2⌉
-    assert daily_script_closeup_bounds(8) == (3, 4)
-    assert daily_script_closeup_bounds(9) == (3, 5)  # ⌈9/3⌉–⌈9/2⌉ 进一
-    assert daily_script_closeup_bounds(7) == (3, 4)
+    assert daily_script_closeup_bounds(11) == (6, 6)  # ⌈11/2⌉
+    assert daily_script_closeup_bounds(8) == (4, 4)
+    assert daily_script_closeup_bounds(9) == (5, 5)
+    assert daily_script_closeup_bounds(7) == (4, 4)
 
     scenes = [
         {"scene_id": 1, "shot_type": "特写", "dialogue": [{}, {}]},
@@ -427,10 +426,28 @@ def test_daily_script_closeup_bounds_and_enforce():
     notes = enforce_daily_script_closeups(scenes)
     assert validate_daily_script_closeup_count(scenes) == []
     closeups = [s["scene_id"] for s in scenes if s.get("shot_type") == "特写"]
-    assert len(closeups) >= 3
+    assert len(closeups) == 6
     assert 1 in closeups
     assert 11 in closeups
     assert notes
+
+
+def test_enforce_daily_script_closeups_demotes_over_half():
+    from app.services.daily_story.prompts import (
+        enforce_daily_script_closeups,
+        validate_daily_script_closeup_count,
+    )
+
+    scenes = [
+        {"scene_id": i, "shot_type": "特写", "dialogue": [{}, {}]}
+        for i in range(1, 5)
+    ]
+    notes = enforce_daily_script_closeups(scenes)
+    closeups = [s["scene_id"] for s in scenes if s.get("shot_type") == "特写"]
+    assert len(closeups) == 2  # ⌈4/2⌉
+    assert 1 in closeups
+    assert any("over" in n for n in notes)
+    assert validate_daily_script_closeup_count(scenes) == []
 
 def test_voiceover_standard_expand_rejects_storyboard_mode():
     with pytest.raises(ValueError, match="unsupported expand mode"):
