@@ -140,6 +140,42 @@ def collect_route():
         raise APIError(str(exc), status_code=409, code="collect_busy") from exc
 
 
+@bp.get("/reimport")
+def reimport_status_route():
+    return json_ok(gold_story_mgr.reimport_status())
+
+
+@bp.post("/reimport")
+def reimport_route():
+    data = get_json_body(required=False) or {}
+    gold_story_ids = parse_int_list(data, "ids", allow_empty=False)
+    source_ids = _parse_source_id_list(data) or []
+    source_id = parse_optional_str(data, "source_id")
+    if source_id:
+        source_ids = [source_id, *source_ids]
+    force_transcript = parse_bool(data, "force_transcript", default=True)
+    if not gold_story_ids and not source_ids:
+        raise APIError("ids 或 source_id 必填", status_code=400)
+    logger.info(
+        "[GOLD_CHAT] reimport ids=%s source_ids=%s force_transcript=%s",
+        gold_story_ids,
+        source_ids,
+        force_transcript,
+    )
+    try:
+        return json_ok(
+            gold_story_mgr.reimport(
+                gold_story_ids=gold_story_ids,
+                source_ids=source_ids,
+                force_transcript=force_transcript,
+            ),
+        )
+    except RuntimeError as exc:
+        raise APIError(str(exc), status_code=409, code="reimport_busy") from exc
+    except ValueError as exc:
+        raise APIError(str(exc), status_code=400)
+
+
 @bp.post("/batch")
 def batch_route():
     data = get_json_body(required=False) or {}

@@ -160,6 +160,34 @@ export interface GoldStoryCollectResult {
   }>;
 }
 
+export type GoldStoryReimportStatus = GoldStoryCollectStatus;
+
+export interface GoldStoryReimportResult {
+  workflow: string;
+  status: GoldStoryReimportStatus;
+  ids?: number[];
+  source_ids?: string[];
+  force_transcript?: boolean;
+  requested?: number;
+  updated?: number;
+  inserted?: number;
+  rejected?: number;
+  failed?: number;
+  ok?: number;
+  error?: string | null;
+  started_at?: number;
+  finished_at?: number;
+  results?: Array<{
+    source_id?: string;
+    title?: string;
+    action: string;
+    reason?: string;
+    status?: string;
+    id?: number;
+    error?: string;
+  }>;
+}
+
 export { formatDailyStoryType };
 
 export function formatAutoScore(score?: number | null): string {
@@ -261,6 +289,31 @@ export async function collectGoldStories(params: {
 export async function getGoldStoryCollectStatus(): Promise<GoldStoryCollectResult> {
   const response = await api.get<GoldStoryCollectResult>(
     "/v_factory/api/gold_chat/collect",
+  );
+  return response.data;
+}
+
+export async function reimportGoldStories(params: {
+  ids?: number[];
+  sourceId?: string;
+  sourceIds?: string[];
+  forceTranscript?: boolean;
+} = {}): Promise<GoldStoryReimportResult> {
+  const response = await api.post<GoldStoryReimportResult>(
+    "/v_factory/api/gold_chat/reimport",
+    {
+      ids: params.ids,
+      source_id: params.sourceId,
+      source_ids: params.sourceIds,
+      force_transcript: params.forceTranscript ?? true,
+    },
+  );
+  return response.data;
+}
+
+export async function getGoldStoryReimportStatus(): Promise<GoldStoryReimportResult> {
+  const response = await api.get<GoldStoryReimportResult>(
+    "/v_factory/api/gold_chat/reimport",
   );
   return response.data;
 }
