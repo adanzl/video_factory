@@ -50,15 +50,15 @@ def score_punchline(
     prev2: str,
     last: str,
 ) -> tuple[int, list[str]]:
-    del speakers, prev2
-    tail = last + "".join(lines[-3:])
-    if RE_B_ALLIANCE_TAIL.search(tail) and not RE_EXTERNAL.search(tail):
+    del speakers, prev2, last
+    close = f_humor.close_tail_text(lines)
+    if RE_B_ALLIANCE_TAIL.search(close) and not RE_EXTERNAL.search(close):
         return 0, ["F收束似B结盟"]
-    if RE_G_SOFT.search(tail):
+    if RE_G_SOFT.search(close):
         return 0, ["F收束含G暖收"]
-    if RE_A_BACKFIRE.search(tail):
+    if RE_A_BACKFIRE.search(close):
         return 0, ["F收束含A反噬"]
-    if f_humor.RE_STALE.search(tail) or RE_EXTERNAL.search(tail):
+    if f_humor.has_close_markers(lines):
         return 5, ["僵持或外部打断收束"]
     return 0, []
 

@@ -96,6 +96,7 @@ _RE_PAD_SUFFIX_STACK = re.compile(
     r"呢呢|啊呢|吧呢|嘛呢|呀呢|你呀呢|行了吧呢|不懂你呢|听听不懂|你真是呢|你真是的呢"
 )
 _B_GOLD_CHAT_PAD_TAILS = ("呀", "啊", "嘛", "呢", "吧", "真的呀")
+_F_GOLD_CHAT_PAD_TAILS = ("呀", "啊", "嘛", "呢", "吧")
 
 
 def _client():
@@ -289,7 +290,12 @@ def _pad_gold_chat_line(
     from app.services.daily_story.prompts import _pad_dialogue_line
 
     st = str(story_type or "").strip().upper()
-    tails = _B_GOLD_CHAT_PAD_TAILS if st == "B" else None
+    if st == "B":
+        tails = _B_GOLD_CHAT_PAD_TAILS
+    elif st == "F":
+        tails = _F_GOLD_CHAT_PAD_TAILS
+    else:
+        tails = None
     return _pad_dialogue_line(line, need, used, tails=tails)
 
 
@@ -441,6 +447,11 @@ def _refine_after_normalize(
     conflict_text = str(
         scene_contract.get("conflict") or row.get("conflict_core") or ""
     )
+    dialogue_seed = payload.get("dialogue_seed") if isinstance(
+        payload.get("dialogue_seed"), list
+    ) else []
+    object_text = str(scene_contract.get("object") or "")
+    mechanism_text = str(scene_contract.get("mechanism") or "")
     beat = payload.get("beat") if isinstance(payload.get("beat"), list) else []
     banned = sanitize_banned_literals(
         payload.get("banned_literals") or scene_contract.get("banned_literals"),
@@ -470,6 +481,10 @@ def _refine_after_normalize(
         closing_intent=closing,
         beat_chain=beat_chain,
         conflict_text=conflict_text,
+        dialogue_seed=dialogue_seed,
+        beat=beat,
+        object_text=object_text,
+        mechanism_text=mechanism_text,
     )
     blocking, _warn = split_fidelity_issues(issues)
     if not blocking:
@@ -490,6 +505,10 @@ def _refine_after_normalize(
             closing_intent=closing,
             beat_chain=beat_chain,
             conflict_text=conflict_text,
+            dialogue_seed=dialogue_seed,
+            beat=beat,
+            object_text=object_text,
+            mechanism_text=mechanism_text,
             max_rounds=1,
             bail_on_structural=False,
         )
@@ -599,6 +618,10 @@ def _pick_pass1_candidate(
     closing_intent: str,
     beat_chain: list[Any] | None = None,
     conflict_text: str = "",
+    dialogue_seed: list[Any] | None = None,
+    beat: list[Any] | None = None,
+    object_text: str = "",
+    mechanism_text: str = "",
 ) -> dict[str, Any]:
     if not candidates:
         raise ValueError("no pass1 candidates")
@@ -622,6 +645,10 @@ def _pick_pass1_candidate(
             closing_intent=closing_intent,
             beat_chain=beat_chain,
             conflict_text=conflict_text,
+            dialogue_seed=dialogue_seed,
+            beat=beat,
+            object_text=object_text,
+            mechanism_text=mechanism_text,
         )
 
     zero_struct = [c for c in candidates if _score(c)[0] == 0]
@@ -661,6 +688,10 @@ def refine_gold_chat_fidelity(
     closing_intent: str = "",
     beat_chain: list[Any] | None = None,
     conflict_text: str = "",
+    dialogue_seed: list[Any] | None = None,
+    beat: list[Any] | None = None,
+    object_text: str = "",
+    mechanism_text: str = "",
     max_rounds: int = PASS2_MAX_ROUNDS,
     bail_on_structural: bool = True,
 ) -> dict[str, Any]:
@@ -687,6 +718,10 @@ def refine_gold_chat_fidelity(
             closing_intent=closing,
             beat_chain=beat_chain,
             conflict_text=conflict_text,
+            dialogue_seed=dialogue_seed,
+            beat=beat,
+            object_text=object_text,
+            mechanism_text=mechanism_text,
         )
         blocking, warn = split_fidelity_issues(issues)
         if not blocking and not warn:
@@ -1031,6 +1066,8 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
     conflict_text = str(
         scene_contract.get("conflict") or conflict_core or ""
     )
+    object_text = str(scene_contract.get("object") or "")
+    mechanism_text = str(scene_contract.get("mechanism") or "")
     contract_role_errs = validate_contract_role_consistency(
         scene_contract,
         conflict_core=conflict_core,
@@ -1117,6 +1154,10 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
             closing_intent=closing,
             beat_chain=beat_chain,
             conflict_text=conflict_text,
+            dialogue_seed=seed,
+            beat=beat,
+            object_text=object_text,
+            mechanism_text=mechanism_text,
         )
         try:
             chat = refine_gold_chat_fidelity(
@@ -1129,6 +1170,10 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
                 closing_intent=closing,
                 beat_chain=beat_chain,
                 conflict_text=conflict_text,
+                dialogue_seed=seed,
+                beat=beat,
+                object_text=object_text,
+                mechanism_text=mechanism_text,
                 max_rounds=PASS2_MAX_ROUNDS,
                 bail_on_structural=True,
             )
@@ -1197,6 +1242,7 @@ def convert_gold_chat(
     chat = gold_story_to_gold_chat(row)
     chat, norm_notes = apply_gold_chat_normalizations(chat, row=row)
     chat = _refine_after_normalize(chat, row)
+    chat, _ = _ensure_gold_chat_min_chars(chat)
     if norm_notes:
         logger.info(
             "gold_chat normalize %s: %s",
@@ -1249,6 +1295,10 @@ def convert_gold_chat(
                 closing_intent=closing,
                 conflict_text=conflict_text,
                 beat_chain=scene_contract.get("beat_chain"),
+                dialogue_seed=payload.get("dialogue_seed"),
+                beat=payload.get("beat"),
+                object_text=str(scene_contract.get("object") or ""),
+                mechanism_text=str(scene_contract.get("mechanism") or ""),
             )
         )
         if blocking:

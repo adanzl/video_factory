@@ -2,33 +2,20 @@
   <div>
     <div class="mb-4 flex flex-wrap items-center gap-3">
       <el-button type="primary" :disabled="loading" @click="fetchItems">
-        <el-icon><Refresh /></el-icon>
+        <el-icon>
+          <Refresh />
+        </el-icon>
       </el-button>
       <el-button type="primary" :loading="collecting" :disabled="reimporting" @click="handleCollect">
         采集（10 条）
       </el-button>
-      <el-button
-        type="primary"
-        :loading="reimporting"
-        :disabled="collecting"
-        @click="handleReimport"
-      >
+      <el-button type="primary" :loading="reimporting" :disabled="collecting" @click="handleReimport">
         重新导入
       </el-button>
-      <el-button
-        type="primary"
-        :disabled="!selectedIds.length"
-        :loading="batching"
-        @click="handleBatchConvert"
-      >
+      <el-button type="primary" :disabled="!selectedIds.length" :loading="batching" @click="handleBatchConvert">
         批量转 gold_chat{{ selectedIds.length ? `（${selectedIds.length}）` : "" }}
       </el-button>
-      <el-button
-        type="danger"
-        :disabled="!selectedIds.length"
-        :loading="deleting"
-        @click="handleBatchDelete"
-      >
+      <el-button type="danger" :disabled="!selectedIds.length" :loading="deleting" @click="handleBatchDelete">
         批量删除{{ selectedIds.length ? `（${selectedIds.length}）` : "" }}
       </el-button>
       <el-checkbox v-model="batchForce">已导出也重跑</el-checkbox>
@@ -44,16 +31,8 @@
       </el-radio-group>
     </div>
 
-    <el-table
-      :data="items"
-      stripe
-      class="w-full gold-chat-table"
-      v-loading="loading"
-      row-class-name="gold-chat-row"
-      @selection-change="onSelectionChange"
-      @row-click="onRowClick"
-      @row-dblclick="viewItem"
-    >
+    <el-table :data="items" stripe class="w-full gold-chat-table" v-loading="loading" row-class-name="gold-chat-row"
+      @selection-change="onSelectionChange" @row-click="onRowClick" @row-dblclick="viewItem">
       <el-table-column type="selection" width="48" />
       <el-table-column prop="id" label="ID" width="60" />
       <el-table-column label="状态" width="80" align="center">
@@ -96,11 +75,7 @@
       </el-table-column>
       <el-table-column label="日常故事" width="90" align="center">
         <template #default="{ row }">
-          <router-link
-            v-if="row.gold_chat_daily_story_id"
-            :to="`/daily-story`"
-            class="text-blue-600 hover:underline"
-          >
+          <router-link v-if="row.gold_chat_daily_story_id" :to="`/daily-story`" class="text-blue-600 hover:underline">
             #{{ row.gold_chat_daily_story_id }}
           </router-link>
           <span v-else class="text-gray-400">-</span>
@@ -108,92 +83,30 @@
       </el-table-column>
       <el-table-column label="操作" width="300" fixed="right">
         <template #default="{ row }">
-          <el-button
-            type="primary"
-            link
-            size="small"
-            @click.stop="viewItem(row)"
-          >
+          <el-button type="primary" link size="small" @click.stop="viewItem(row)">
             查看
           </el-button>
-          <el-button
-            type="primary"
-            link
-            size="small"
-            @click.stop="viewTranscript(row)"
-          >
+          <el-button type="primary" link size="small" @click.stop="viewTranscript(row)">
             逐字稿
           </el-button>
-          <el-button
-            type="primary"
-            link
-            size="small"
-            :loading="reimportingId === row.id"
-            :disabled="reimporting || collecting"
-            @click.stop="handleReimportOne(row)"
-          >
-            重新导入
-          </el-button>
-          <el-button
-            v-if="row.has_gold_chat"
-            type="primary"
-            link
-            size="small"
-            :loading="importingId === row.id"
-            @click.stop="handleImportOne(row)"
-          >
-            {{ row.gold_chat_daily_story_id ? "重导" : "导入" }}
-          </el-button>
-          <el-button
-            type="primary"
-            link
-            size="small"
-            :loading="convertingId === row.id"
-            @click.stop="handleConvertOne(row)"
-          >
-            {{ row.has_gold_chat ? "重转" : "转换" }}
-          </el-button>
-          <el-button
-            type="danger"
-            link
-            size="small"
-            :loading="deletingId === row.id"
-            @click.stop="handleDeleteOne(row)"
-          >
+          <el-button type="danger" link size="small" :loading="deletingId === row.id"
+            @click.stop="handleDeleteOne(row)">
             删除
           </el-button>
         </template>
       </el-table-column>
     </el-table>
 
-    <el-pagination
-      v-model:current-page="page"
-      v-model:page-size="pageSize"
-      :total="total"
-      :page-sizes="[15, 20, 50]"
-      layout="sizes, prev, pager, next"
-      class="mt-4 justify-start"
-      @current-change="onPageChange"
-      @size-change="onPageSizeChange"
-    />
+    <el-pagination v-model:current-page="page" v-model:page-size="pageSize" :total="total" :page-sizes="[15, 20, 50]"
+      layout="sizes, prev, pager, next" class="mt-4 justify-start" @current-change="onPageChange"
+      @size-change="onPageSizeChange" />
 
-    <GoldChatDetail
-      v-model="showDetail"
-      :gold-story-id="currentId"
-      :source-id="currentSourceId"
-      @closed="fetchItems"
-      @imported="fetchItems"
-      @converted="fetchItems"
-      @reimported="onDetailReimported"
-      @open-transcript="openTranscriptFromDetail"
-    />
+    <GoldChatDetail v-model="showDetail" :gold-story-id="currentId" :source-id="currentSourceId" @closed="fetchItems"
+      @imported="fetchItems" @converted="fetchItems" @reimported="onDetailReimported"
+      @open-transcript="openTranscriptFromDetail" />
 
-    <GoldStoryTranscript
-      v-model="showTranscript"
-      :gold-story-id="transcriptId"
-      :source-id="transcriptSourceId"
-      :title="transcriptTitle"
-    />
+    <GoldStoryTranscript v-model="showTranscript" :gold-story-id="transcriptId" :source-id="transcriptSourceId"
+      :title="transcriptTitle" />
   </div>
 </template>
 
@@ -208,13 +121,11 @@ import GoldStoryTranscript from "@/views/gold_chat/dialogs/GoldStoryTranscript.v
 import {
   batchConvertGoldChat,
   collectGoldStories,
-  convertGoldChat,
   deleteGoldStories,
   formatAutoScore,
   formatDailyStoryType,
   getGoldStoryCollectStatus,
   getGoldStoryReimportStatus,
-  importGoldChat,
   listGoldChats,
   reimportGoldStories,
   type GoldChatListItem,
@@ -233,8 +144,6 @@ let collectPollTimer: ReturnType<typeof setInterval> | null = null;
 let reimportPollTimer: ReturnType<typeof setInterval> | null = null;
 const batching = ref(false);
 const deleting = ref(false);
-const convertingId = ref<number | null>(null);
-const importingId = ref<number | null>(null);
 const reimportingId = ref<number | null>(null);
 const deletingId = ref<number | null>(null);
 const selectedIds = ref<number[]>([]);
@@ -246,11 +155,22 @@ const transcriptId = ref<number | null>(null);
 const transcriptSourceId = ref<string | null>(null);
 const transcriptTitle = ref<string | null>(null);
 
+const FILTER_STATUS_KEY = "goldChatFilterStatus";
+const FILTER_HAS_STORY_KEY = "goldChatFilterHasStory";
+const FILTER_STATUS_VALUES = ["", "active", "rejected"];
+const FILTER_HAS_STORY_VALUES = ["", "yes", "no"];
+
+function readStoredChoice(key: string, allowed: string[]): string {
+  const raw = localStorage.getItem(key);
+  if (raw == null) return "";
+  return allowed.includes(raw) ? raw : "";
+}
+
 const page = ref(1);
 const pageSize = ref(parseInt(localStorage.getItem("goldChatPageSize") || "15", 10));
 const total = ref(0);
-const filterStatus = ref("");
-const filterHasStory = ref("");
+const filterStatus = ref(readStoredChoice(FILTER_STATUS_KEY, FILTER_STATUS_VALUES));
+const filterHasStory = ref(readStoredChoice(FILTER_HAS_STORY_KEY, FILTER_HAS_STORY_VALUES));
 const batchForce = ref(false);
 
 function formatStoryStatus(status: string): string {
@@ -390,6 +310,8 @@ async function pollReimportStatus() {
 }
 
 function onFilterChange() {
+  localStorage.setItem(FILTER_STATUS_KEY, filterStatus.value);
+  localStorage.setItem(FILTER_HAS_STORY_KEY, filterHasStory.value);
   page.value = 1;
   selectedIds.value = [];
   void fetchItems();
@@ -445,69 +367,6 @@ function viewItem(row: GoldChatListItem) {
   currentId.value = row.id;
   currentSourceId.value = row.source_id;
   showDetail.value = true;
-}
-
-async function handleImportOne(row: GoldChatListItem) {
-  const reimport = !!row.gold_chat_daily_story_id;
-  if (reimport) {
-    try {
-      await ElMessageBox.confirm(
-        `将覆盖日常故事 #${row.gold_chat_daily_story_id} 的对白内容，继续？`,
-        "重新导入",
-        { type: "warning" },
-      );
-    } catch {
-      return;
-    }
-  }
-  importingId.value = row.id;
-  try {
-    const res = await importGoldChat({
-      id: row.id,
-      force: reimport,
-    });
-    if (res.action === "skip") {
-      ElMessage.info("已导入，未重导");
-    } else {
-      ElMessage.success(
-        `${res.action === "update" ? "已重导" : "已导入"} → 日常故事 #${res.daily_story_id}`,
-      );
-    }
-    await fetchItems();
-  } catch (e) {
-    handleError(e, reimport ? "重导失败" : "导入失败");
-  } finally {
-    importingId.value = null;
-  }
-}
-
-async function handleConvertOne(row: GoldChatListItem) {
-  if (row.has_gold_chat) {
-    try {
-      await ElMessageBox.confirm("重新转换会覆盖已有导出，继续？", "确认", {
-        type: "warning",
-      });
-    } catch {
-      return;
-    }
-  }
-  convertingId.value = row.id;
-  try {
-    const res = await convertGoldChat({
-      id: row.id,
-      force: row.has_gold_chat,
-    });
-    if (res.action === "skip") {
-      ElMessage.info("已有导出，未重跑");
-    } else {
-      ElMessage.success(`已转换：${res.chat_lines ?? 0} 句`);
-    }
-    await fetchItems();
-  } catch (e) {
-    handleError(e, "转换失败");
-  } finally {
-    convertingId.value = null;
-  }
 }
 
 async function handleDeleteOne(row: GoldChatListItem) {
@@ -631,28 +490,13 @@ async function startReimportJob(params: {
   }
 }
 
-async function handleReimportOne(row: GoldChatListItem) {
-  try {
-    await ElMessageBox.confirm(
-      `将从 ${row.source_id} 重跑转写与结构化，覆盖本条金稿。` +
-        "已导出的 gold_chat 不会自动重转。继续？",
-      "重新导入",
-      { type: "warning" },
-    );
-  } catch {
-    return;
-  }
-  reimportingId.value = row.id;
-  await startReimportJob({ ids: [row.id] });
-}
-
 async function handleReimport() {
   if (selectedIds.value.length) {
     const n = selectedIds.value.length;
     try {
       await ElMessageBox.confirm(
         `将从 BV 重跑转写与结构化，覆盖选中的 ${n} 条金稿。` +
-          "已导出的 gold_chat 不会自动重转。继续？",
+        "已导出的 gold_chat 不会自动重转。继续？",
         "重新导入",
         { type: "warning" },
       );

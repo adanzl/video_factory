@@ -231,7 +231,6 @@
           >
             {{ detail.has_gold_chat ? "重转 gold_chat" : "转 gold_chat" }}
           </el-button>
-          <el-button @click="visible = false">关闭</el-button>
           <el-button
             v-if="detail.has_gold_chat && chatStory.dialogue?.length"
             type="primary"

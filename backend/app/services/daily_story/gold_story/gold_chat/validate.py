@@ -391,6 +391,10 @@ def pass1_fidelity_score(
     closing_intent: str = "",
     beat_chain: list[Any] | None = None,
     conflict_text: str = "",
+    dialogue_seed: list[Any] | None = None,
+    beat: list[Any] | None = None,
+    object_text: str = "",
+    mechanism_text: str = "",
 ) -> tuple[int, int]:
     """预选 Pass1 候选：(结构性 issue 数, 总 issue 数)，越小越好。"""
     issues = collect_fidelity_issues(
@@ -400,6 +404,10 @@ def pass1_fidelity_score(
         closing_intent=closing_intent,
         beat_chain=beat_chain,
         conflict_text=conflict_text,
+        dialogue_seed=dialogue_seed,
+        beat=beat,
+        object_text=object_text,
+        mechanism_text=mechanism_text,
     )
     structural = sum(
         1 for x in issues if is_structural_fidelity_kind(str(x.get("kind") or ""))
@@ -1091,6 +1099,10 @@ def collect_fidelity_issues(
     closing_intent: str = "",
     beat_chain: list[Any] | None = None,
     conflict_text: str = "",
+    dialogue_seed: list[Any] | None = None,
+    beat: list[Any] | None = None,
+    object_text: str = "",
+    mechanism_text: str = "",
 ) -> list[dict[str, Any]]:
     """保真机审：返回 polish 同构 issue 列表（抽象不变量，非逐篇剧情）。"""
     st = str(structure_type or "").strip().upper()
@@ -1118,7 +1130,18 @@ def collect_fidelity_issues(
     elif st == "F":
         from app.services.daily_story.story_types.f.validate import append_f_fidelity_issues
 
-        append_f_fidelity_issues(rows, issues, mechanism=mech)
+        append_f_fidelity_issues(
+            rows,
+            issues,
+            mechanism=mech,
+            dialogue_seed=dialogue_seed,
+            beat_chain=beat_chain,
+            beat=beat,
+            closing_intent=closing,
+            conflict_text=conflict,
+            object_text=object_text,
+            mechanism_text=mechanism_text,
+        )
     if st in {"B", "F"}:
         _append_pad_filler_issues(rows, issues)
 
