@@ -197,6 +197,8 @@ export function formatAutoScore(score?: number | null): string {
 
 export async function listGoldChats(params: {
   status?: string;
+  /** true=已导入日常故事；false=未导入 */
+  has_story?: boolean;
   limit?: number;
   offset?: number;
 } = {}): Promise<GoldChatListResponse> {

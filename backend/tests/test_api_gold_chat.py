@@ -159,6 +159,52 @@ def test_api_list_all_statuses(app_ctx):
     assert listed_ids == sorted(listed_ids, reverse=True)
 
 
+def test_api_list_has_story(app_ctx):
+    with app_ctx.app_context():
+        has_row = repo_gold_story.insert_or_skip(
+            source="bilibili",
+            source_id="BV1HASSTORY01",
+            url="https://www.bilibili.com/video/BV1HASSTORY01",
+            mechanism="M6",
+            structure_type="A",
+            story_raw="已导入日常故事样例" * 20,
+            payload={"beat": ["a", "b", "c", "d"]},
+            title="已导入日常故事",
+            auto_score=0.9,
+            status="active",
+        )
+        no_row = repo_gold_story.insert_or_skip(
+            source="bilibili",
+            source_id="BV1HASSTORY02",
+            url="https://www.bilibili.com/video/BV1HASSTORY02",
+            mechanism="M6",
+            structure_type="A",
+            story_raw="未导入日常故事样例" * 20,
+            payload={"beat": ["a", "b", "c", "d"]},
+            title="未导入日常故事",
+            auto_score=0.9,
+            status="active",
+        )
+        assert has_row.get("action") == "insert"
+        assert no_row.get("action") == "insert"
+        repo_gold_story.set_gold_chat_daily_story_id(int(has_row["id"]), 999)
+
+    client = app_ctx.test_client()
+    yes_resp = client.get("/v_factory/api/gold_chat/list?has_story=true&limit=50")
+    assert yes_resp.status_code == 200
+    yes_ids = {x["source_id"] for x in yes_resp.get_json()["items"]}
+    assert "BV1HASSTORY01" in yes_ids
+    assert "BV1HASSTORY02" not in yes_ids
+    yes_row = next(x for x in yes_resp.get_json()["items"] if x["source_id"] == "BV1HASSTORY01")
+    assert yes_row["gold_chat_daily_story_id"] == 999
+
+    no_resp = client.get("/v_factory/api/gold_chat/list?has_story=false&limit=50")
+    assert no_resp.status_code == 200
+    no_ids = {x["source_id"] for x in no_resp.get_json()["items"]}
+    assert "BV1HASSTORY01" not in no_ids
+    assert "BV1HASSTORY02" in no_ids
+
+
 def test_api_delete(app_ctx, tmp_path, monkeypatch):
     inserted = _insert_sample(app_ctx)
     gid = int(inserted["id"])
