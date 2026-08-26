@@ -45,7 +45,8 @@ F 类开场：互呛/生气现状，勿写成 C 争物公平战或 B 密谋分�
     theme_user_append="主题宜互呛加码升级，非结盟瞒妈或争物赛规。",
     retry_soft_close_hint="补一轮加码后收束：僵持/露怯，或 seed 有则外部打断尴尬收。",
     escalation_revision_hint="中段须层层加码，收束前勿提前软化或结盟。",
-    closing_revision_hint="收束勿 B 甩锅露馅、勿 G 暖收；外部打断后宜尴尬收束。",
+    closing_revision_hint="收束勿 B 甩锅露馅、勿 G 暖收；外部打断后宜尴尬短收（≤5句），"
+    "勿商量应对镜头，勿 H 式别吵了/和好。",
     layer_patterns=compile_layers(
         (
             ("互呛", r"讨厌|再说|试试|你敢|哼|别吵"),

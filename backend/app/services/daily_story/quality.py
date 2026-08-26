@@ -14,8 +14,8 @@ _LIMP_SOFT_CLOSE_MARKERS = (
 _PUNCHLINE_TYPE_MARKERS = (
     "权威翻车", "公平执念", "字面执行", "结盟翻车", "妈妈破功", "嘴硬心软",
     "问倒收束", "权威压住", "家长看戏", "退让点破",
-    "A类", "B类", "C类", "D类", "E类", "G类", "H类", "I类", "J类", "K类", "L类",
-    "A：", "B：", "C：", "D：", "E：", "G：", "H：", "I：", "J：", "K：", "L：",
+    "A类", "B类", "C类", "D类", "E类", "F类", "G类", "H类", "I类", "J类", "K类", "L类",
+    "A：", "B：", "C：", "D：", "E：", "F：", "G：", "H：", "I：", "J：", "K：", "L：",
 )
 _MOM_JUDGE_PATTERNS = (
     "谁先放好谁先选", "算你赢", "算他赢", "一人一半", "一人一个",
@@ -387,8 +387,13 @@ def _score_relevancy(story: dict, theme: str | None) -> tuple[int, list[str]]:
     core = str(story.get("conflict_core") or "")
     setting = str(story.get("setting") or "")
     lines = _dialogue_lines(story)
-    first4 = "".join(lines[:4]) if len(lines) >= 4 else "".join(lines)
-    check_text = core + setting + first4
+    opening = story.get("discovery_opening")
+    has_opening = isinstance(opening, list) and opening
+    if has_opening:
+        first4 = "".join(lines[:4]) if len(lines) >= 4 else "".join(lines)
+        check_text = core + setting + first4
+    else:
+        check_text = core + setting + "".join(lines)
 
     matched_long = [w for w in theme_words if len(w) >= 3 and w in check_text]
     matched_any = [w for w in theme_words if w in check_text]
@@ -727,9 +732,12 @@ def score_daily_story(
         score -= 10
         cons.append("笑点解析缺类型")
 
-    # ── 开场维度（满分 2）：缺或未满均最多扣 OPENING_SCORE_FULL ──
+    # ── 开场维度（满分 2）：gold_chat 正文无 discovery_opening 时不扣 ──
     opening = story.get("discovery_opening")
-    if not isinstance(opening, list) or not (
+    body_only = not isinstance(opening, list) or not opening
+    if body_only and len(lines) >= 16:
+        pass
+    elif not isinstance(opening, list) or not (
         DAILY_STORY_OPENING_LINES_MIN
         <= len(opening)
         <= DAILY_STORY_OPENING_LINES_MAX
