@@ -240,6 +240,75 @@ def test_api_collect(app_ctx, monkeypatch):
     mgr_mod.reset_collect_state()
 
 
+def test_api_reimport(app_ctx, monkeypatch):
+    from app.services.daily_story.gold_story import gold_story_mgr as mgr_mod
+
+    mgr_mod.reset_collect_state()
+    workers: list = []
+
+    def fake_reimport(**_kwargs):
+        return {
+            "requested": 1,
+            "updated": 1,
+            "inserted": 0,
+            "rejected": 0,
+            "failed": 0,
+            "ok": 1,
+            "results": [
+                {
+                    "id": 13,
+                    "source_id": "BV1Ci4y1L7jg",
+                    "action": "ok",
+                },
+            ],
+        }
+
+    monkeypatch.setattr(mgr_mod, "reimport_stories", fake_reimport)
+    monkeypatch.setattr(
+        mgr_mod,
+        "run_in_background",
+        lambda func, **_kwargs: workers.append(func),
+    )
+
+    client = app_ctx.test_client()
+    resp = client.post(
+        "/v_factory/api/gold_chat/reimport",
+        json={"source_id": "BV1Ci4y1L7jg"},
+    )
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["workflow"] == "gold_story_reimport"
+    assert body["status"] == "running"
+    assert body["source_ids"] == ["BV1Ci4y1L7jg"]
+    assert len(workers) == 1
+
+    busy = client.post(
+        "/v_factory/api/gold_chat/reimport",
+        json={"ids": [13]},
+    )
+    assert busy.status_code == 409
+    assert busy.get_json()["code"] == "reimport_busy"
+
+    collect_busy = client.post("/v_factory/api/gold_chat/collect", json={"max": 10})
+    assert collect_busy.status_code == 409
+
+    workers[0]()
+    status = client.get("/v_factory/api/gold_chat/reimport").get_json()
+    assert status["status"] == "done"
+    assert status["updated"] == 1
+    assert status["ok"] == 1
+    mgr_mod.reset_collect_state()
+
+
+def test_api_reimport_requires_target(app_ctx):
+    from app.services.daily_story.gold_story import gold_story_mgr as mgr_mod
+
+    mgr_mod.reset_collect_state()
+    client = app_ctx.test_client()
+    resp = client.post("/v_factory/api/gold_chat/reimport", json={})
+    assert resp.status_code == 400
+
+
 def test_api_batch(app_ctx, monkeypatch, tmp_path):
     inserted = _insert_sample(app_ctx)
     gid = int(inserted["id"])

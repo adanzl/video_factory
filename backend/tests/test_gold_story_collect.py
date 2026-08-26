@@ -109,3 +109,45 @@ def test_insert_skips_similar_reprint(app_ctx):
     assert second.get("action") == "skip"
     assert second.get("reason") == "duplicate_similar_story"
     assert int(second.get("id")) == int(first["id"])
+
+
+def test_reimport_stories_from_id_and_bv(app_ctx, monkeypatch):
+    from app.repositories import repo_gold_story
+    from app.services.daily_story.gold_story.collect import pipeline as pl
+
+    inserted = repo_gold_story.insert_or_skip(
+        source="bili",
+        source_id="BV1REIMPORT01",
+        url="https://www.bilibili.com/video/BV1REIMPORT01",
+        mechanism="M6",
+        structure_type="A",
+        story_raw="旧稿" * 20,
+        payload={"beat": ["a", "b", "c", "d"]},
+        title="旧标题",
+        auto_score=0.8,
+        status="active",
+    )
+    gid = int(inserted["id"])
+    calls: list[tuple[str, object]] = []
+
+    def fake_overwrite(gold_story_id, **_kwargs):
+        calls.append(("overwrite", int(gold_story_id)))
+        return {"id": int(gold_story_id), "source_id": "BV1REIMPORT01", "action": "ok"}
+
+    def fake_import(source_id, **_kwargs):
+        calls.append(("import", source_id))
+        return {"source_id": source_id, "action": "insert", "id": 99}
+
+    monkeypatch.setattr(pl, "overwrite_existing_story", fake_overwrite)
+    monkeypatch.setattr(pl, "import_or_overwrite_source", fake_import)
+
+    report = pl.reimport_stories(
+        gold_story_ids=[gid],
+        source_ids=["https://www.bilibili.com/video/BV1NEWID0001"],
+        force_transcript=True,
+    )
+    assert report["requested"] == 2
+    assert report["updated"] == 1
+    assert report["inserted"] == 1
+    assert report["failed"] == 0
+    assert calls == [("overwrite", gid), ("import", "BV1NEWID0001")]

@@ -217,6 +217,15 @@
           <el-button
             type="primary"
             plain
+            :loading="reimporting"
+            :disabled="converting || importing"
+            @click="handleReimportFromBv"
+          >
+            从 BV 重新导入
+          </el-button>
+          <el-button
+            type="primary"
+            plain
             :loading="converting"
             @click="handleConvert"
           >
@@ -246,6 +255,7 @@ import {
   formatDailyStoryType,
   getGoldChat,
   importGoldChat,
+  reimportGoldStories,
   type GoldStoryDetail,
 } from "@/api/api-gold-chat";
 import type { StoryContent } from "@/api/api-daily-story";
@@ -263,6 +273,7 @@ const emit = defineEmits<{
   (e: "closed"): void;
   (e: "imported"): void;
   (e: "converted"): void;
+  (e: "reimported"): void;
   (e: "open-transcript", payload: { id?: number | null; sourceId?: string | null; title?: string | null }): void;
 }>();
 
@@ -270,6 +281,7 @@ const { handleError } = useErrorHandler();
 const loading = ref(false);
 const importing = ref(false);
 const converting = ref(false);
+const reimporting = ref(false);
 const detail = ref<GoldStoryDetail | null>(null);
 
 const visible = computed({
@@ -350,6 +362,42 @@ async function handleConvert() {
     handleError(e, "转换失败");
   } finally {
     converting.value = false;
+  }
+}
+
+async function handleReimportFromBv() {
+  if (!props.goldStoryId && !props.sourceId) return;
+  const bv = detail.value?.source_id || props.sourceId || "";
+  try {
+    await ElMessageBox.confirm(
+      `将从 ${bv || "BV"} 重跑转写与结构化，覆盖本条金稿。` +
+        "已导出的 gold_chat 不会自动重转。继续？",
+      "从 BV 重新导入",
+      { type: "warning" },
+    );
+  } catch {
+    return;
+  }
+  reimporting.value = true;
+  try {
+    const res = await reimportGoldStories({
+      ids: props.goldStoryId ? [props.goldStoryId] : undefined,
+      sourceId: props.goldStoryId ? undefined : (props.sourceId ?? undefined),
+      forceTranscript: true,
+    });
+    if (res.status === "running") {
+      ElMessage.success("已开始从 BV 重新导入");
+      emit("reimported");
+      visible.value = false;
+      return;
+    }
+    ElMessage.success("重新导入完成");
+    emit("reimported");
+    await loadDetail();
+  } catch (e) {
+    handleError(e, "重新导入失败");
+  } finally {
+    reimporting.value = false;
   }
 }
 

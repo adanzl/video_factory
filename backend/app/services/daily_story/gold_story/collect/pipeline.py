@@ -31,6 +31,7 @@ from app.services.daily_story.gold_story.transcript import (
     save_repaired_transcript,
     transcribe_bilibili,
 )
+from app.services.daily_story.gold_story.transcript.download import normalize_bv
 
 logger = logging.getLogger(__name__)
 
@@ -321,6 +322,57 @@ def process_candidate(
     return {**base, **result, "audit_pass": audit.get("pass"), "status": insert_status}
 
 
+def _build_candidate_from_bvid(
+    source_id: str,
+    *,
+    config: Config,
+    existing_row: dict[str, Any] | None = None,
+) -> VideoCandidate:
+    """拉 B 站元数据 + 热评，拼 H0 候选。已有行时元数据失败可降级。"""
+    try:
+        meta = fetch_video_meta(source_id, config=config)
+        replies = fetch_top_replies(int(meta.get("aid") or 0), config=config, limit=8)
+    except Exception as exc:
+        if existing_row is None:
+            raise
+        logger.warning("overwrite meta failed bvid=%s: %s", source_id, exc)
+        meta = {
+            "title": existing_row.get("title") or source_id,
+            "description": "",
+            "view_count": 0,
+            "reply_count": 0,
+            "url": str(existing_row.get("url") or ""),
+            "cid": 0,
+        }
+        replies = []
+
+    http = _bili_http(config)
+    funny = compute_audience_funny_metrics(
+        source_id=source_id,
+        cid=int(meta.get("cid") or 0),
+        view_count=int(meta.get("view_count") or 0),
+        reply_count=int(meta.get("reply_count") or 0),
+        replies=replies,
+        session=http,
+    )
+    source = "bili"
+    if existing_row:
+        source = str(existing_row.get("source") or "bili")
+    return VideoCandidate(
+        source=source,
+        source_id=source_id,
+        url=str(meta.get("url") or (existing_row or {}).get("url") or ""),
+        title=str(meta.get("title") or (existing_row or {}).get("title") or ""),
+        description=str(meta.get("description") or ""),
+        view_count=int(meta.get("view_count") or 0),
+        reply_count=int(meta.get("reply_count") or 0),
+        keyword="",
+        top_replies=tuple(replies),
+        cid=int(meta.get("cid") or 0),
+        funny_metrics=metrics_to_payload(funny),
+    )
+
+
 def overwrite_existing_story(
     gold_story_id: int,
     *,
@@ -339,42 +391,10 @@ def overwrite_existing_story(
     if not source_id:
         return {**base, "action": "error", "error": "missing source_id"}
 
-    try:
-        meta = fetch_video_meta(source_id, config=cfg)
-        replies = fetch_top_replies(int(meta.get("aid") or 0), config=cfg, limit=8)
-    except Exception as exc:
-        logger.warning("overwrite meta failed bvid=%s: %s", source_id, exc)
-        meta = {
-            "title": row.get("title") or source_id,
-            "description": "",
-            "view_count": 0,
-            "reply_count": 0,
-            "url": str(row.get("url") or ""),
-            "cid": 0,
-        }
-        replies = []
-
-    http = _bili_http(cfg)
-    funny = compute_audience_funny_metrics(
-        source_id=source_id,
-        cid=int(meta.get("cid") or 0),
-        view_count=int(meta.get("view_count") or 0),
-        reply_count=int(meta.get("reply_count") or 0),
-        replies=replies,
-        session=http,
-    )
-    candidate = VideoCandidate(
-        source=str(row.get("source") or "bili"),
-        source_id=source_id,
-        url=str(meta.get("url") or row.get("url") or ""),
-        title=str(meta.get("title") or row.get("title") or ""),
-        description=str(meta.get("description") or ""),
-        view_count=int(meta.get("view_count") or 0),
-        reply_count=int(meta.get("reply_count") or 0),
-        keyword="",
-        top_replies=tuple(replies),
-        cid=int(meta.get("cid") or 0),
-        funny_metrics=metrics_to_payload(funny),
+    candidate = _build_candidate_from_bvid(
+        source_id,
+        config=cfg,
+        existing_row=row,
     )
     outcome = process_candidate(
         candidate,
@@ -382,6 +402,47 @@ def overwrite_existing_story(
         overwrite_existing=True,
         force_transcript=force_transcript,
         existing_row=row,
+    )
+    return {**base, **outcome}
+
+
+def import_or_overwrite_source(
+    source_id: str,
+    *,
+    config: Config | None = None,
+    force_transcript: bool = True,
+) -> dict[str, Any]:
+    """按 BV 导入：已有则覆盖，没有则走 H0b–H4 新入库。"""
+    cfg = config or Config()
+    try:
+        bvid = normalize_bv(source_id)
+    except ValueError as exc:
+        return {
+            "source_id": str(source_id or "").strip(),
+            "action": "error",
+            "error": str(exc),
+        }
+
+    existing = repo_gold_story.get_by_source_id(source_id=bvid)
+    if existing:
+        return overwrite_existing_story(
+            int(existing["id"]),
+            config=cfg,
+            force_transcript=force_transcript,
+        )
+
+    base = {"source_id": bvid}
+    try:
+        candidate = _build_candidate_from_bvid(bvid, config=cfg)
+    except Exception as exc:
+        logger.warning("reimport meta failed bvid=%s: %s", bvid, exc)
+        return {**base, "action": "error", "stage": "H0", "error": str(exc)}
+
+    outcome = process_candidate(
+        candidate,
+        config=cfg,
+        overwrite_existing=False,
+        force_transcript=force_transcript,
     )
     return {**base, **outcome}
 
@@ -407,6 +468,81 @@ def overwrite_existing_stories(
                 {"id": gid, "action": "error", "error": f"gold_story {gid} not found"}
             )
     return results
+
+
+def reimport_stories(
+    *,
+    gold_story_ids: list[int] | None = None,
+    source_ids: list[str] | None = None,
+    force_transcript: bool = True,
+    config: Config | None = None,
+) -> dict[str, Any]:
+    """从 BV 重新导入金稿：已有覆盖，没有则新入库。"""
+    cfg = config or Config()
+    results: list[dict[str, Any]] = []
+    seen_ids: set[int] = set()
+    seen_bvs: set[str] = set()
+
+    for gid in gold_story_ids or []:
+        try:
+            outcome = overwrite_existing_story(
+                int(gid),
+                config=cfg,
+                force_transcript=force_transcript,
+            )
+        except KeyError:
+            outcome = {
+                "id": gid,
+                "action": "error",
+                "error": f"gold_story {gid} not found",
+            }
+        sid = str(outcome.get("source_id") or "").strip()
+        if outcome.get("id"):
+            seen_ids.add(int(outcome["id"]))
+        if sid:
+            seen_bvs.add(sid)
+        results.append(outcome)
+
+    for raw in source_ids or []:
+        try:
+            bvid = normalize_bv(raw)
+        except ValueError as exc:
+            results.append(
+                {
+                    "source_id": str(raw or "").strip(),
+                    "action": "error",
+                    "error": str(exc),
+                }
+            )
+            continue
+        if bvid in seen_bvs:
+            continue
+        existing = repo_gold_story.get_by_source_id(source_id=bvid)
+        if existing and int(existing["id"]) in seen_ids:
+            continue
+        outcome = import_or_overwrite_source(
+            bvid,
+            config=cfg,
+            force_transcript=force_transcript,
+        )
+        if outcome.get("id"):
+            seen_ids.add(int(outcome["id"]))
+        seen_bvs.add(bvid)
+        results.append(outcome)
+
+    updated = sum(1 for r in results if r.get("action") == "ok")
+    inserted = sum(1 for r in results if r.get("action") == "insert")
+    rejected = sum(1 for r in results if r.get("action") == "reject")
+    failed = sum(1 for r in results if r.get("action") == "error")
+    return {
+        "requested": len(results),
+        "updated": updated,
+        "inserted": inserted,
+        "rejected": rejected,
+        "failed": failed,
+        "ok": updated + inserted + rejected,
+        "results": results,
+    }
 
 
 def run_collect_pipeline(

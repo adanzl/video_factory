@@ -23,7 +23,10 @@ from app.services.daily_story.gold_story.export_story import (
     cleanup_gold_story_files,
     load_transcript_for_row,
 )
-from app.services.daily_story.gold_story.collect.pipeline import run_collect_pipeline
+from app.services.daily_story.gold_story.collect.pipeline import (
+    reimport_stories,
+    run_collect_pipeline,
+)
 from app.utils.async_util import run_in_background
 
 logger = logging.getLogger(__name__)
@@ -31,6 +34,10 @@ logger = logging.getLogger(__name__)
 _COLLECT_LOCK = threading.Lock()
 _COLLECT_STATE: dict[str, Any] = {
     "workflow": "gold_story_collect",
+    "status": "idle",
+}
+_REIMPORT_STATE: dict[str, Any] = {
+    "workflow": "gold_story_reimport",
     "status": "idle",
 }
 
@@ -50,12 +57,24 @@ def _collect_snapshot() -> dict[str, Any]:
         return dict(_COLLECT_STATE)
 
 
+def _reimport_snapshot() -> dict[str, Any]:
+    with _COLLECT_LOCK:
+        return dict(_REIMPORT_STATE)
+
+
 def reset_collect_state() -> None:
     with _COLLECT_LOCK:
         _COLLECT_STATE.clear()
         _COLLECT_STATE.update(
             {
                 "workflow": "gold_story_collect",
+                "status": "idle",
+            }
+        )
+        _REIMPORT_STATE.clear()
+        _REIMPORT_STATE.update(
+            {
+                "workflow": "gold_story_reimport",
                 "status": "idle",
             }
         )
@@ -117,6 +136,49 @@ def _run_collect_job(max_candidates: int) -> None:
             logger.exception("[GOLD_CHAT] collect failed max=%d", max_candidates)
             with _COLLECT_LOCK:
                 _COLLECT_STATE.update(
+                    {
+                        "status": "error",
+                        "error": str(exc),
+                        "finished_at": time.time(),
+                    }
+                )
+
+
+def _run_reimport_job(
+    gold_story_ids: list[int],
+    source_ids: list[str],
+    force_transcript: bool,
+) -> None:
+    from app.repositories.database import get_app
+
+    with get_app().app_context():
+        try:
+            _ensure_schema()
+            report = reimport_stories(
+                gold_story_ids=gold_story_ids or None,
+                source_ids=source_ids or None,
+                force_transcript=force_transcript,
+            )
+            with _COLLECT_LOCK:
+                _REIMPORT_STATE.update(
+                    {
+                        "workflow": "gold_story_reimport",
+                        **report,
+                        "status": "done",
+                        "error": None,
+                        "finished_at": time.time(),
+                    }
+                )
+            logger.info(
+                "[GOLD_CHAT] reimport done requested=%s ok=%s failed=%s",
+                report.get("requested"),
+                report.get("ok"),
+                report.get("failed"),
+            )
+        except Exception as exc:
+            logger.exception("[GOLD_CHAT] reimport failed")
+            with _COLLECT_LOCK:
+                _REIMPORT_STATE.update(
                     {
                         "status": "error",
                         "error": str(exc),
@@ -395,6 +457,8 @@ class GoldStoryMgr:
         with _COLLECT_LOCK:
             if _COLLECT_STATE.get("status") == "running":
                 raise RuntimeError("采集进行中")
+            if _REIMPORT_STATE.get("status") == "running":
+                raise RuntimeError("重新导入进行中")
             _COLLECT_STATE.clear()
             _COLLECT_STATE.update(
                 {
@@ -418,6 +482,67 @@ class GoldStoryMgr:
 
     def collect_status(self) -> dict[str, Any]:
         return _collect_snapshot()
+
+    def reimport(
+        self,
+        *,
+        gold_story_ids: list[int] | None = None,
+        source_ids: list[str] | None = None,
+        force_transcript: bool = True,
+    ) -> dict[str, Any]:
+        """从 BV 后台重跑 H0b–H4，立刻返回 running。"""
+        ids = sorted({int(x) for x in (gold_story_ids or []) if int(x) > 0})
+        bvs: list[str] = []
+        seen: set[str] = set()
+        for raw in source_ids or []:
+            text = str(raw or "").strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            bvs.append(text)
+        if not ids and not bvs:
+            raise ValueError("ids 或 source_id 必填")
+        if len(ids) + len(bvs) > 20:
+            raise ValueError("一次最多重新导入 20 条")
+
+        with _COLLECT_LOCK:
+            if _COLLECT_STATE.get("status") == "running":
+                raise RuntimeError("采集进行中")
+            if _REIMPORT_STATE.get("status") == "running":
+                raise RuntimeError("重新导入进行中")
+            _REIMPORT_STATE.clear()
+            _REIMPORT_STATE.update(
+                {
+                    "workflow": "gold_story_reimport",
+                    "status": "running",
+                    "ids": ids,
+                    "source_ids": bvs,
+                    "force_transcript": bool(force_transcript),
+                    "started_at": time.time(),
+                    "requested": 0,
+                    "updated": 0,
+                    "inserted": 0,
+                    "rejected": 0,
+                    "failed": 0,
+                    "ok": 0,
+                    "results": [],
+                    "error": None,
+                }
+            )
+            snapshot = dict(_REIMPORT_STATE)
+        run_in_background(
+            lambda: _run_reimport_job(ids, bvs, bool(force_transcript)),
+        )
+        logger.info(
+            "[GOLD_CHAT] reimport queued ids=%s source_ids=%s force_transcript=%s",
+            ids,
+            bvs,
+            force_transcript,
+        )
+        return snapshot
+
+    def reimport_status(self) -> dict[str, Any]:
+        return _reimport_snapshot()
 
     def delete_stories(self, gold_story_ids: list[int]) -> dict[str, Any]:
         _ensure_schema()
