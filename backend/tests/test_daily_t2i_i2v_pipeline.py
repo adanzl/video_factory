@@ -520,11 +520,12 @@ def test_assemble_dining_segment_no_prop_triple_repeat():
         seg, scene_anchor="餐桌旁，餐桌，菜盘", setting=setting,
     )
     assert prompt.count("被灿灿用筷子夹起，悬在盘子上方") <= 1
-    assert prompt.count("一块肉在灿灿手中") <= 1
     assert prompt.count("餐桌旁") <= 2
     assert prompt.count("一张餐桌在画面中央") == 0
     assert "画面左边是昭昭" in prompt
-    assert "一块肉在灿灿手中" in prompt
+    assert "灿灿碗里有一块肉" in prompt
+    assert "昭昭碗里只有几根青菜，没有肉" in prompt
+    assert "一块肉在灿灿手中" not in prompt
 
 
 def test_restore_held_prop_owners_keeps_original_holder():
@@ -859,6 +860,66 @@ def test_story_container_props_locked_without_name_list():
     assert "青菜" in thin
     assert "灿灿面前有肉" in thin
     assert "昭昭面前有青菜" in thin
+
+
+def test_bowl_container_lock_not_forced_into_hands():
+    """桌上碗盘：肉在灿灿碗里，昭昭碗里没有肉；不要写成拿在手里。"""
+    from app.services.script.image_prompt import assemble_daily_t2i_prompt
+    from app.services.script.visual_brief import normalize_object_states
+
+    setting = "餐桌旁，灿灿面前一盘肉，昭昭碗里几根青菜"
+    segs = [
+        {
+            "segment_index": 1,
+            "shot_type": "中近景特写",
+            "speakers": ["昭昭", "灿灿"],
+            "visual_subjects": [
+                {
+                    "name": "昭昭",
+                    "posture": "坐在餐桌左边",
+                    "action": "右手指着肉盘",
+                    "expression": "瞪眼皱眉",
+                },
+                {
+                    "name": "灿灿",
+                    "posture": "坐在餐桌右边",
+                    "action": "双手护住肉盘",
+                    "expression": "撇嘴瞪眼",
+                },
+            ],
+            "object_states": [
+                {
+                    "object": "肉",
+                    "count": "一盘",
+                    "form": "冒着热气",
+                    "holder": "灿灿",
+                    "position": "灿灿面前的餐桌上",
+                },
+                {
+                    "object": "青菜",
+                    "count": "几根",
+                    "form": "堆在碗里",
+                    "holder": "昭昭",
+                    "position": "昭昭面前的餐桌上",
+                },
+            ],
+            "scene_anchors": ["餐桌"],
+            "dialogue": [
+                {"speaker": "昭昭", "line": "你碗里肉这么多，凭什么不能给我夹一块！"},
+            ],
+        }
+    ]
+    normalize_object_states(segs, setting=setting)
+    meat = next(s for s in segs[0]["object_states"] if s["object"] == "肉")
+    veg = next(s for s in segs[0]["object_states"] if s["object"] == "青菜")
+    assert meat["position"] == "灿灿碗里"
+    assert veg["position"] == "昭昭碗里"
+    assert "手中" not in meat["position"]
+    prompt = assemble_daily_t2i_prompt(segs[0], setting=setting, scene_anchor="餐桌旁")
+    assert "灿灿碗里有一盘肉" in prompt
+    assert "昭昭碗里只有几根青菜，没有肉" in prompt
+    assert "一盘肉在灿灿手中" not in prompt
+    assert "青菜在昭昭手中" not in prompt
 
 
 def test_strip_unlocked_inventory_remote_job79_dirty_brief():

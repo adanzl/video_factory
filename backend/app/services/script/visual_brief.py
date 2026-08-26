@@ -751,6 +751,18 @@ def extract_story_activity_props(
     return {prop for _holder, prop in extract_story_prop_holdings(setting, dialogue)}
 
 
+def bowl_container_owners(
+    setting: str | None,
+    dialogue: list | None = None,
+) -> dict[str, str]:
+    """容器句冲突物 → 碗主人。表示归谁的碗/盘，不是拿在手里。"""
+    out: dict[str, str] = {}
+    for holder, prop in extract_story_prop_holdings(setting or "", dialogue):
+        if holder and prop:
+            out[prop] = holder
+    return out
+
+
 def enrich_setting_with_dialogue_props(
     setting: str,
     dialogue: list | None = None,
@@ -800,7 +812,10 @@ def enrich_setting_with_dialogue_props(
     return text.rstrip("。，,") + "，" + "，".join(bits)
 
 
-def normalize_object_states(segments: list[dict]) -> list[str]:
+def normalize_object_states(
+    segments: list[dict],
+    setting: str | None = None,
+) -> list[str]:
     """object_states 状态机：跨镜继承缺失状态、去重、自动修正矛盾与状态回归。
 
     原地归一 segments 的 object_states，返回修正记录列表（供日志；不阻塞流水线）。
@@ -808,6 +823,10 @@ def normalize_object_states(segments: list[dict]) -> list[str]:
     notes: list[str] = []
     last_state: dict[str, dict] = {}
     form_seq: dict[str, list[str]] = {}  # 每个 object 的 form 单向演进历史
+    dlg_rows: list = []
+    for seg in segments:
+        dlg_rows.extend(_dialogue_rows_any(seg.get("dialogue")))
+    bowl_owners = bowl_container_owners(setting, dlg_rows)
     for seg in segments:
         idx = int(seg.get("segment_index") or 0)
         raw = seg.get("object_states")
@@ -848,10 +867,22 @@ def normalize_object_states(segments: list[dict]) -> list[str]:
                         form = seq[-1]
                 else:
                     seq.append(form)
-            # holder/position 矛盾自动修正：持有人明确则位置归入其手中，否则澄清持有
+            # holder/position：碗/盘里的冲突物保持容器位；手持物才归入手中
             holder = str(st.get("holder") or "").strip()
             pos = str(st.get("position") or "").strip()
-            if holder and holder != "无":
+            bowl_who = bowl_owners.get(obj) or ""
+            if bowl_who:
+                if holder != bowl_who:
+                    st["holder"] = bowl_who
+                    holder = bowl_who
+                new_pos = f"{bowl_who}碗里"
+                if pos != new_pos:
+                    notes.append(
+                        f"segment {idx}: object={obj} 容器归属 {bowl_who}，"
+                        f"position 写 {new_pos}"
+                    )
+                    st["position"] = new_pos
+            elif holder and holder != "无":
                 if not pos:
                     st["position"] = f"{holder}手中"
                 elif "手" not in pos and "手" not in holder:
@@ -2156,15 +2187,16 @@ def build_visual_brief_prompts(
                 hold_bits = []
                 for holder, prop in holdings:
                     if holder:
-                        hold_bits.append(f"{holder}持有{prop}")
+                        hold_bits.append(f"{holder}碗里有{prop}")
                     else:
                         hold_bits.append(prop)
                 setting_rule += (
-                    "【持物锁定】本片从 setting/台词容器句抽出的持有关系："
+                    "【持物锁定】冲突物在谁的碗/盘里，不是拿在手里："
                     + "；".join(hold_bits)
-                    + "。每镜 object_states 须包含这些 object，holder 与上表一致"
-                    "（除非本段台词写了递出/抢到）；持物方 visual_subjects.action "
-                    "须写明端着/拿着对应容器，禁止道具换手或凭空消失。"
+                    + "。object_states.position 写「谁碗里/谁面前」，禁止写成手中"
+                    "（除非本镜台词明确在递碗/端盘）；"
+                    "另一方碗里不要出现该物（如肉只在灿灿碗里，昭昭碗里没有肉）；"
+                    "禁止道具换手或凭空消失；action 不要无故写端着碗。"
                 )
     content_rule = (
         _DAILY_VISUAL_SUBJECTS_RULE
