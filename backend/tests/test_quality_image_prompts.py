@@ -3,6 +3,7 @@ from app.quality.quality_mgr import (
     skip_image_prompt_check,
 )
 from app.quality.image_prompt import (
+    audit_image_prompt_slots,
     collect_motion_prompt_issues,
     generic_motion_prompt_issue,
     image_prompt_min_chars,
@@ -149,6 +150,29 @@ def test_skip_image_prompt_check():
 def test_generic_motion_prompt_issue_rejects_filler():
     assert generic_motion_prompt_issue("镜头固定，主体稳定，画面平滑") is not None
     assert generic_motion_prompt_issue("炉口青烟缓缓上升，镜头极缓推进") is None
+
+
+def test_audit_does_not_block_negation_words():
+    issues = audit_image_prompt_slots(
+        "昭昭坐在餐桌左边，右手扶额，无奈。不要画出字幕。"
+    )
+    assert not any(i.get("kind") == "negation" for i in issues)
+
+
+def test_check_image_prompt_allows_wunai_in_assembled_slot():
+    prompt = (
+        "儿童情绪涂鸦风，彩铅蜡笔混合笔触，高饱和色彩，涂色出界，手工感；"
+        "餐桌旁；餐桌、椅子清晰可见。"
+        "画面左边是昭昭，右手扶额，无奈。画面右边是灿灿，右手拿着筷子，眯眼笑。"
+        "昭昭：7岁男孩，黑色超短发露耳露后颈，圆脸，蓝色短袖T恤。"
+        "灿灿：10岁女孩，黑色单侧高马尾，粉色卫衣蓝色长裤。"
+        "窗光从一侧斜照，在墙面和地面投下柔和光影。"
+        "画面左边是昭昭，右边是灿灿。中近景特写，全身可见"
+    )
+    report = check_image_prompt(
+        {"segments": [{"segment_index": 11, "image_prompt": prompt}]}
+    )
+    assert report.level != "major"
 
 
 def test_collect_motion_prompt_issues_flags_duplicates():

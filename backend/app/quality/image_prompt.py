@@ -58,19 +58,8 @@ _ABSTRACT_VFX_RE = re.compile(
 )
 
 # ── L1 结构审核（槽位拼装后、出图前） ──
-_NEGATION_WORDS = (
-    "不要", "不能", "不得", "没有", "无人", "禁止", "别让", "不是", "未",
-    "无", "不", "别",
-)
 _MOUTH_OPEN_WORDS = ("龇牙", "咧嘴", "张嘴", "张口", "大笑", "露齿", "吐舌")
 _MOUTH_CLOSED_MARK = "嘴巴自然闭合"
-
-# 否定词白名单：code 生成的固定短语，非 LLM 负面指令，豁免 L1
-_NEGATION_WHITELIST = (
-    "固定不变", "保持不变", "不推近", "不拉远",
-    "不消失", "纹丝不动", "不动",
-    "每人只显示",
-)
 
 # 对立谓词对：同一条提示词同时命中两个即矛盾（major）。
 # L2 审出新矛盾后可 register_opposite_pair() 自动沉淀。
@@ -104,7 +93,7 @@ def _redundant_ngrams(prompt: str, n: int = 6, threshold: int = 3) -> list[str]:
 
 
 def audit_image_prompt_slots(prompt: object) -> list[dict]:
-    """L1 结构审核：否定词 / 口型冲突 / 对立谓词 / n-gram 冗余。
+    """L1 结构审核：口型冲突 / 对立谓词 / n-gram 冗余。
 
     返回 issue 列表，每项 {level, kind, ...}；level 为 minor / major。
     """
@@ -112,18 +101,6 @@ def audit_image_prompt_slots(prompt: object) -> list[dict]:
         return [{"level": "major", "kind": "empty", "detail": "image_prompt empty"}]
     text = prompt
     issues: list[dict] = []
-    for w in _NEGATION_WORDS:
-        idx = text.find(w)
-        while idx >= 0:
-            if any(
-                wl in text[max(0, idx - 8) : idx + len(w) + 8]
-                for wl in _NEGATION_WHITELIST
-            ):
-                idx = text.find(w, idx + 1)
-                continue
-            frag = text[max(0, idx - 4) : idx + len(w) + 8]
-            issues.append({"level": "major", "kind": "negation", "word": w, "context": frag})
-            idx = text.find(w, idx + 1)
     if _MOUTH_CLOSED_MARK in text:
         for w in _MOUTH_OPEN_WORDS:
             if w in text:
@@ -392,7 +369,7 @@ def check_image_prompt(
                 "segments": slightly_short,
             },
         )
-    # L1 结构审核：否定词 / 口型冲突 / 对立谓词 / n-gram 冗余
+    # L1 结构审核：口型冲突 / 对立谓词 / n-gram 冗余
     l1_major: list[dict] = []
     l1_minor: list[dict] = []
     for seg in segments:
