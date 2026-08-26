@@ -55,7 +55,7 @@ source_type：{source_type}（tutorial 时禁保留教程口吻/第几招）
 输出 JSON：
 {{
   "scene_title": "短标题",
-  "setting": "可拍现场一句",
+  "setting": "地点 + 冲突物落点（谁面前/谁端着哪件）",
   "key": "2-8字内容标签",
   "conflict_core": "一句话冲突核",
   "dialogue": [
@@ -65,6 +65,7 @@ source_type：{source_type}（tutorial 时禁保留教程口吻/第几招）
 }}
 
 规则：
+- **setting**：地点 + 冲突物落点（谁面前/谁端着哪件）；双方各持一物须两件都写；禁止只写地点和「在吵架」
 - **第一人称现场对白**：每句是角色对另一角色当场说的话；禁第三人称论述、禁转述（「妈妈说/教过/说过」）
 - 口播/育儿科普/「第几招」：选一个具体场面演出来，勿保留教程口吻
 - 严格按 scene_contract.beat_chain **与上方事件顺序硬约束、金稿保真 checklist** 顺序推进；妈妈台词 ≤ mom_lines_max

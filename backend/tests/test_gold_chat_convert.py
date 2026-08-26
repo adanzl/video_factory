@@ -378,3 +378,29 @@ def test_patch_trim_redundant_ne_suffix_keeps_cancan_and_close():
     assert lines[1].endswith("变胖呢！")
     assert lines[5].endswith("八百个心眼子呢！")
     assert sum(1 for ln in lines if re.search(r"呢[！。!?？]$", ln)) <= 4
+
+
+def test_normalize_enriches_setting_from_bowl_lines():
+    chat = {
+        "setting": "餐桌旁，灿灿和昭昭在吵架",
+        "story_type": "C",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "你碗里肉这么多，凭什么不能给我夹一块！"},
+            {"speaker": "灿灿", "line": "你碗里那青菜不香吗？"},
+        ],
+    }
+    row = {
+        "structure_type": "C",
+        "mechanism": "M2",
+        "payload": {
+            "scene_contract": {
+                "location": "餐桌",
+                "object": "肉",
+                "characters": ["灿灿", "昭昭"],
+            }
+        },
+    }
+    out, notes = gc.apply_gold_chat_normalizations(chat, row=row)
+    assert "肉" in str(out.get("setting") or "")
+    assert "青菜" in str(out.get("setting") or "")
+    assert any("冲突物" in n for n in notes)

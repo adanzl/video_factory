@@ -393,6 +393,7 @@ def _ensure_gold_chat_min_chars(story: dict[str, Any]) -> tuple[dict[str, Any], 
 def _gold_chat_post_pad_cleanup(story: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     """垫字后：B 类剥句尾垫字 + 再补 min（禁回灌好不好）。"""
     from app.services.daily_story.story_types.b.patch import patch_b_strip_filler
+    from app.services.daily_story.story_types.f.patch import patch_f_strip_filler
 
     notes: list[str] = []
     out = dict(story)
@@ -401,11 +402,19 @@ def _gold_chat_post_pad_cleanup(story: dict[str, Any]) -> tuple[dict[str, Any], 
         strip_notes = patch_b_strip_filler(out)
         if strip_notes:
             notes.extend(strip_notes[:6])
+    elif st == "F":
+        strip_notes = patch_f_strip_filler(out)
+        if strip_notes:
+            notes.extend(strip_notes[:6])
     out, pad_changed = _ensure_gold_chat_min_chars(out)
     if pad_changed:
         notes.append("gold_chat垫字补min")
         if st == "B":
             strip_notes = patch_b_strip_filler(out)
+            if strip_notes:
+                notes.extend(strip_notes[:6])
+        elif st == "F":
+            strip_notes = patch_f_strip_filler(out)
             if strip_notes:
                 notes.extend(strip_notes[:6])
     return out, notes
