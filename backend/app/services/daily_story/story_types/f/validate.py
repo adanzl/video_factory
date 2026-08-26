@@ -46,6 +46,9 @@ RE_F_BROKEN_ELLIPSIS = re.compile(
     r"^(呵呵|嘿嘿)[…\.。！!]*$|^(呵呵|嘿嘿)…你听着|^…你听着",
 )
 RE_F_BROKEN_EXCLAIM = re.compile(r"啊{2,}了啊|啊什么了啊")
+RE_F_PAD_STACK = re.compile(
+    r"了呢了呀|了呢呀|了呀呢|好不好了呀|着呢了呀|呢呢|你呀呢|啊呢",
+)
 RE_F_PIVOT_TRIGGER = re.compile(r"拍我们|偷拍|有人拍|镜头|录像")
 
 
@@ -312,6 +315,21 @@ def append_f_fidelity_issues(
                 "kind": "保真-F童语",
                 "desc": "互呛句垫字不通（啊啊啊了啊/啊什么了啊）",
                 "fix": "改为啊啊啊！或啊什么啊！等自然感叹",
+            }
+        )
+
+    pad_hits = [
+        i + 1
+        for i, ln in enumerate(lines)
+        if RE_F_PAD_STACK.search(ln)
+    ]
+    if pad_hits:
+        issues.append(
+            {
+                "lines": pad_hits,
+                "kind": "保真-F童语",
+                "desc": "句尾语气垫字叠堆（了呢了呀/了呢呀等）",
+                "fix": "删叠垫字，以实词或单语气词收尾（讨厌呢/讨厌了呀）",
             }
         )
 

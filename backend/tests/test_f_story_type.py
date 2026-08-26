@@ -142,6 +142,27 @@ def test_f_fidelity_flags_camera_staging_and_broken_ellipsis():
     assert any("对白过多" in k for k in kinds)
 
 
+def test_f_strip_filler_removes_le_ya_stack():
+    from app.services.daily_story.story_types.f.patch import patch_f_strip_filler
+
+    story = {
+        "story_type": "F",
+        "punchline_explain": "F类：互呛",
+        "dialogue": [
+            {
+                "speaker": "灿灿",
+                "line": "昭昭，你刚才那样说话，我还觉得你很讨厌了呢了呀！",
+            },
+            {"speaker": "昭昭", "line": "那你还很讨厌了呢呀！"},
+        ],
+    }
+    notes = patch_f_strip_filler(story)
+    assert notes
+    assert "了呢了呀" not in story["dialogue"][0]["line"]
+    assert story["dialogue"][0]["line"].endswith("讨厌！")
+    assert "了呢呀" not in story["dialogue"][1]["line"]
+
+
 def test_quality_f_structure_score_external_interrupt_close():
     from app.services.daily_story.quality import score_daily_story
     from app.services.daily_story.story_types.f.patch import patch_f_punchline_prefix
