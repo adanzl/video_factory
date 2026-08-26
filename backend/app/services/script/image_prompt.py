@@ -246,7 +246,7 @@ def _render_object_states(
     )
 
     owners = bowl_container_owners(setting, dialogue)
-    other_kid = {"灿灿": "昭昭", "昭昭": "灿灿"}
+    side_of = {"昭昭": "画面左边", "灿灿": "画面右边"}
     merged: dict[str, dict] = {}
     for st in _collapse_object_aliases(states):
         if not isinstance(st, dict):
@@ -255,10 +255,43 @@ def _render_object_states(
         if not obj or is_body_part_object(obj):
             continue
         merged[obj] = st
+
+    def _bowl_clause(who: str, count: str, obj: str, form: str = "") -> str:
+        side = side_of.get(who, "")
+        if side:
+            clause = f"{side}{who}面前的碗里是{count}{obj}"
+        else:
+            clause = f"{who}碗里有{count}{obj}"
+        if form and "碗" not in form:
+            clause += f"，{form}"
+        return clause
+
     parts: list[str] = []
     meat_owner = owners.get("肉")
     veg_owner = owners.get("青菜")
     compact_bowls = meat_owner and veg_owner and meat_owner != veg_owner
+    if compact_bowls:
+        veg_st = merged.pop("青菜", None) or {}
+        meat_st = merged.pop("肉", None) or {}
+        by_who = {
+            veg_owner: _bowl_clause(
+                veg_owner,
+                str(veg_st.get("count") or "").strip(),
+                "青菜",
+            ),
+            meat_owner: _bowl_clause(
+                meat_owner,
+                str(meat_st.get("count") or "").strip(),
+                "肉",
+                str(meat_st.get("form") or "").strip(),
+            ),
+        }
+        for who in ("昭昭", "灿灿"):
+            if who in by_who:
+                parts.append(by_who[who])
+        for who, clause in by_who.items():
+            if who not in {"昭昭", "灿灿"}:
+                parts.append(clause)
     for st in merged.values():
         obj = str(st.get("object") or "").strip()
         count = str(st.get("count") or "").strip()
@@ -266,24 +299,8 @@ def _render_object_states(
         holder = str(st.get("holder") or "").strip()
         pos = str(st.get("position") or "").strip()
         who = owners.get(obj) or ""
-        if compact_bowls and obj in {"肉", "青菜"}:
-            if obj == "肉":
-                clause = f"{meat_owner}碗里有{count}{obj}"
-                if form:
-                    clause += f"，{form}"
-                parts.append(clause)
-            elif obj == "青菜":
-                clause = f"{veg_owner}碗里只有{count}{obj}，没有肉"
-                parts.append(clause)
-            continue
         if who:
-            clause = f"{who}碗里有{count}{obj}"
-            if form:
-                clause += f"，{form}"
-            other = other_kid.get(who)
-            if other:
-                clause += f"；{other}碗里没有{obj}"
-            parts.append(clause)
+            parts.append(_bowl_clause(who, count, obj, form))
             continue
         if holder and holder != "无":
             clause = f"{count}{obj}在{holder}手中"

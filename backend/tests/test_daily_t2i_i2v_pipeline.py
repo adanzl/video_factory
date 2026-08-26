@@ -523,9 +523,10 @@ def test_assemble_dining_segment_no_prop_triple_repeat():
     assert prompt.count("餐桌旁") <= 2
     assert prompt.count("一张餐桌在画面中央") == 0
     assert "画面左边是昭昭" in prompt
-    assert "灿灿碗里有一块肉" in prompt
-    assert "昭昭碗里只有几根青菜，没有肉" in prompt
+    assert "画面右边灿灿面前的碗里是一块肉" in prompt
+    assert "画面左边昭昭面前的碗里是几根青菜" in prompt
     assert "一块肉在灿灿手中" not in prompt
+    assert "没有肉" not in prompt
 
 
 def test_restore_held_prop_owners_keeps_original_holder():
@@ -916,10 +917,12 @@ def test_bowl_container_lock_not_forced_into_hands():
     assert veg["position"] == "昭昭碗里"
     assert "手中" not in meat["position"]
     prompt = assemble_daily_t2i_prompt(segs[0], setting=setting, scene_anchor="餐桌旁")
-    assert "灿灿碗里有一盘肉" in prompt
-    assert "昭昭碗里只有几根青菜，没有肉" in prompt
+    assert "画面右边灿灿面前的碗里是一盘肉" in prompt
+    assert "画面左边昭昭面前的碗里是几根青菜" in prompt
     assert "一盘肉在灿灿手中" not in prompt
     assert "青菜在昭昭手中" not in prompt
+    assert "指着肉盘" not in prompt
+    assert "没有肉" not in prompt
 
 
 def test_strip_unlocked_inventory_remote_job79_dirty_brief():
