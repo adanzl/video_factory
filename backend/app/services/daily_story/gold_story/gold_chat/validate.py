@@ -60,6 +60,7 @@ RE_AGGRESSIVE_DAMAGE = re.compile(r"撕|弄坏|弄花|抢坏|毁|抓坏|涂坏")
 RE_DAMAGE_THREAT = re.compile(r"再.*就.*撕|再抢.*撕|敢.*撕|要不.*撕|否则.*撕")
 RE_BEAT_INITIATOR = re.compile(r"抢|看|瞅|占")
 RE_BEAT_DEFENDER = re.compile(r"拒看|拒绝|secret|秘密|不行|威胁", re.IGNORECASE)
+RE_PAD_FILLER_TAIL = re.compile(r"(?:好不好呀|好不好|了呢呀|了呀呢)$")
 
 # closing_intent 常见收场词；未出现则末段禁对应 invent 动作
 _CLOSING_INVENT_ALLOW = re.compile(r"帮|扶|递|棉签|送去|一起|回来|不疼了|快点|等你")
@@ -1057,6 +1058,31 @@ def _append_h_generic_issues(
         )
 
 
+def _append_pad_filler_issues(
+    rows: list[dict[str, Any]],
+    issues: list[dict[str, Any]],
+    *,
+    max_tail_filler: int = 3,
+) -> None:
+    """B 类 gold_chat：句尾「好不好/了呢呀」垫字过密 → 机审 issue。"""
+    hits: list[int] = []
+    for i, row in enumerate(rows, 1):
+        line = str(row.get("line") or "").strip()
+        if RE_PAD_FILLER_TAIL.search(line):
+            hits.append(i)
+    if len(hits) <= max_tail_filler:
+        return
+    issues.append(
+        _issue(
+            lines=hits,
+            kind="保真-垫字过密",
+            desc=f"句尾垫字「好不好/了呢呀」过多（{len(hits)} 处，上限 {max_tail_filler}）",
+            fix="保留 2–3 处即可，其余改短句实词收尾；"
+            "互怼句补全宾语，禁「呢呀/好不好呀」堆砌",
+        )
+    )
+
+
 def collect_fidelity_issues(
     story: dict[str, Any],
     *,
@@ -1089,6 +1115,8 @@ def collect_fidelity_issues(
         )
     elif st == "H":
         _append_h_generic_issues(rows, issues, closing_intent=closing)
+    if st == "B":
+        _append_pad_filler_issues(rows, issues)
 
     seen: set[tuple[str, int]] = set()
     out: list[dict[str, Any]] = []
