@@ -67,7 +67,7 @@ GOLD_STORY_STRUCTURE_CODES: frozenset[str] = frozenset(
 )
 
 # daily_story 已落地类型（H5 可注入任务）；H/I/J/K/L 暂仅 gold_story 侧
-_GOLD_STORY_NON_INJECTABLE = frozenset({"H", "I", "J", "K", "L"})
+_GOLD_STORY_NON_INJECTABLE = frozenset({"F", "H", "I", "J", "K", "L"})
 GOLD_STORY_INJECTABLE_CODES: frozenset[str] = frozenset(
     k for k in STORY_TYPE_LABELS if k not in _GOLD_STORY_NON_INJECTABLE
 )
