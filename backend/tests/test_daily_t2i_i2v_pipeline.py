@@ -1948,3 +1948,60 @@ def test_rewrite_shared_grip_skips_when_ends_already_written():
     assert out == s4
     assert "握住遥控器一端" in out
     assert "握住遥控器另一端" in out
+
+
+def test_rewrite_shared_grip_tv_remote_object_with_short_grip():
+    """核心物品提取为「电视遥控器」+款式，S4 简写「握遥控器」时仍改写为一端/另一端。"""
+    from app.services.script.image_prompt import (
+        _rewrite_shared_grip_to_ends_s4,
+        assemble_daily_t2i_prompt,
+    )
+
+    s4 = (
+        "画面左边是昭昭，左手握遥控器，右手食指指向灿灿，皱眉瞪眼。"
+        "画面右边是灿灿，右手握遥控器，左手叉腰，撇嘴瞪眼"
+    )
+    states = [
+        {
+            "object": "电视遥控器",
+            "count": "一个",
+            "form": "黑色长方形，两端被两人各握一端",
+            "holder": "昭昭与灿灿",
+            "position": "昭昭与灿灿手中",
+        }
+    ]
+    out = _rewrite_shared_grip_to_ends_s4(s4, states)
+    assert "左手握电视遥控器一端" in out
+    assert "右手握电视遥控器另一端" in out
+
+    seg = {
+        "segment_index": 2,
+        "shot_type": "中近景",
+        "speakers": ["昭昭", "灿灿"],
+        "visual_brief": s4,
+        "visual_subjects": [
+            {
+                "name": "昭昭",
+                "posture": "坐在沙发上，身体前倾",
+                "action": "左手握遥控器，右手食指指向灿灿",
+                "expression": "皱眉瞪眼",
+            },
+            {
+                "name": "灿灿",
+                "posture": "坐在沙发上，身体后仰",
+                "action": "右手握遥控器，左手叉腰",
+                "expression": "撇嘴瞪眼",
+            },
+        ],
+        "object_states": states,
+        "scene_anchors": ["沙发"],
+        "dialogue": [
+            {"speaker": "灿灿", "text": "遥控器给我，我要看动画片！"},
+            {"speaker": "昭昭", "text": "不行，我先看新闻！"},
+        ],
+    }
+    prompt = assemble_daily_t2i_prompt(seg, setting="客厅，沙发上", scene_anchor="客厅，沙发")
+    assert "左手握电视遥控器一端" in prompt
+    assert "右手握电视遥控器另一端" in prompt
+    assert "黑色长方形" in prompt
+    assert prompt.count("电视遥控器") >= 3  # S4 两处 + S5 一处
