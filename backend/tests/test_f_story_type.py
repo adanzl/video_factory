@@ -73,8 +73,8 @@ def test_parse_f_from_punchline():
     assert parse_story_type_code(punchline="F类：互呛加码") == "F"
 
 
-def test_f_fidelity_flags_gs9_invent_and_h_tail():
-    from app.services.daily_story.story_types.f.validate import append_f_fidelity_issues
+def test_f_align_flags_gs9_invent_and_h_tail():
+    from app.services.daily_story.story_types.f.validate import append_f_align_issues
 
     rows = [
         {"line": "你再说一遍试试！"},
@@ -95,7 +95,7 @@ def test_f_fidelity_flags_gs9_invent_and_h_tail():
         {"line": "好，就这么说定了！"},
     ]
     issues: list[dict] = []
-    append_f_fidelity_issues(
+    append_f_align_issues(
         rows,
         issues,
         mechanism="M3",
@@ -113,8 +113,8 @@ def test_f_fidelity_flags_gs9_invent_and_h_tail():
     assert any("团结" in k or "好姐弟" in k for k in kinds)
 
 
-def test_f_fidelity_flags_camera_staging_and_broken_ellipsis():
-    from app.services.daily_story.story_types.f.validate import append_f_fidelity_issues
+def test_f_align_flags_camera_staging_and_broken_ellipsis():
+    from app.services.daily_story.story_types.f.validate import append_f_align_issues
 
     rows = [
         {"line": "你再说一遍试试！"},
@@ -134,7 +134,7 @@ def test_f_fidelity_flags_camera_staging_and_broken_ellipsis():
         {"line": "希望他拍完就走，别烦我们了。"},
     ]
     issues: list[dict] = []
-    append_f_fidelity_issues(rows, issues, mechanism="M3")
+    append_f_align_issues(rows, issues, mechanism="M3")
     kinds = {str(x.get("kind")) + ":" + str(x.get("desc")) for x in issues}
     assert any("别吵" in k for k in kinds)
     assert any("数三二一" in k or "商量应对镜头" in k for k in kinds)

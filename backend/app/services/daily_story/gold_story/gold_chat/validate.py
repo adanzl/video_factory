@@ -1,4 +1,4 @@
-"""gold_chat 金稿保真：checklist 注入 + 机审 + 精修 issue 收集。"""
+"""gold_chat 类型对齐：checklist 注入 + 机审 + 精修 issue 收集。"""
 
 from __future__ import annotations
 
@@ -6,16 +6,16 @@ import re
 from typing import Any
 
 
-def fidelity_chain(
+def align_chain(
     *,
     structure_type: str,
     mechanism: str,
 ) -> tuple[str, ...]:
     from app.services.daily_story.gold_story.gold_chat.type_bridge import (
-        type_fidelity_chain,
+        type_align_chain,
     )
 
-    return type_fidelity_chain(structure_type=structure_type, mechanism=mechanism)
+    return type_align_chain(structure_type=structure_type, mechanism=mechanism)
 
 
 _BANNED_INVENTED_CLOSES: tuple[str, ...] = (
@@ -66,7 +66,8 @@ RE_PAD_FILLER_TAIL = re.compile(r"(?:好不好呀|好不好|了呢呀|了呀呢)
 _CLOSING_INVENT_ALLOW = re.compile(r"帮|扶|递|棉签|送去|一起|回来|不疼了|快点|等你")
 
 # 结构性问题：Pass2 定点修易打补丁，应打回 Pass1 重生
-STRUCTURAL_FIDELITY_KINDS: frozenset[str] = frozenset(
+# 「对齐-类型契约」留给 Pass2 定点补槽，不进此集合
+STRUCTURAL_ALIGN_KINDS: frozenset[str] = frozenset(
     {
         "保真-互毁前文",
         "保真-互毁对象",
@@ -76,8 +77,8 @@ STRUCTURAL_FIDELITY_KINDS: frozenset[str] = frozenset(
     }
 )
 
-# 保真 warn：不阻塞导出，可进 quality / 人工复核
-FIDELITY_WARN_KINDS: frozenset[str] = frozenset(
+# warn：不阻塞导出，可进 quality / 人工复核
+ALIGN_WARN_KINDS: frozenset[str] = frozenset(
     {
         "保真-M5合并",
         "保真-收场Invent",
@@ -86,15 +87,15 @@ FIDELITY_WARN_KINDS: frozenset[str] = frozenset(
 )
 
 
-def is_structural_fidelity_kind(kind: str) -> bool:
-    return str(kind or "").strip() in STRUCTURAL_FIDELITY_KINDS
+def is_structural_align_kind(kind: str) -> bool:
+    return str(kind or "").strip() in STRUCTURAL_ALIGN_KINDS
 
 
-def is_fidelity_warn_kind(kind: str) -> bool:
-    return str(kind or "").strip() in FIDELITY_WARN_KINDS
+def is_align_warn_kind(kind: str) -> bool:
+    return str(kind or "").strip() in ALIGN_WARN_KINDS
 
 
-def split_fidelity_issues(
+def split_align_issues(
     issues: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """blocking 未通过则 fail；warn 仅记录，不阻塞导出。"""
@@ -102,7 +103,7 @@ def split_fidelity_issues(
     warn: list[dict[str, Any]] = []
     for item in issues:
         kind = str(item.get("kind") or "")
-        if is_fidelity_warn_kind(kind):
+        if is_align_warn_kind(kind):
             warn.append(item)
         else:
             blocking.append(item)
@@ -114,7 +115,7 @@ def should_regenerate_pass1(issues: list[dict[str, Any]]) -> bool:
     if not issues:
         return False
     kinds = {str(x.get("kind") or "") for x in issues}
-    return bool(kinds & STRUCTURAL_FIDELITY_KINDS)
+    return bool(kinds & STRUCTURAL_ALIGN_KINDS)
 
 
 def _sibling_partner(name: str) -> str:
@@ -383,7 +384,7 @@ def _append_closing_tail_issues(
             )
 
 
-def pass1_fidelity_score(
+def pass1_align_score(
     story: dict[str, Any],
     *,
     structure_type: str,
@@ -397,7 +398,7 @@ def pass1_fidelity_score(
     mechanism_text: str = "",
 ) -> tuple[int, int]:
     """预选 Pass1 候选：(结构性 issue 数, 总 issue 数)，越小越好。"""
-    issues = collect_fidelity_issues(
+    issues = collect_align_issues(
         story,
         structure_type=structure_type,
         mechanism=mechanism,
@@ -410,7 +411,7 @@ def pass1_fidelity_score(
         mechanism_text=mechanism_text,
     )
     structural = sum(
-        1 for x in issues if is_structural_fidelity_kind(str(x.get("kind") or ""))
+        1 for x in issues if is_structural_align_kind(str(x.get("kind") or ""))
     )
     return structural, len(issues)
 
@@ -1091,7 +1092,7 @@ def _append_pad_filler_issues(
     )
 
 
-def collect_fidelity_issues(
+def collect_align_issues(
     story: dict[str, Any],
     *,
     structure_type: str,
@@ -1104,7 +1105,11 @@ def collect_fidelity_issues(
     object_text: str = "",
     mechanism_text: str = "",
 ) -> list[dict[str, Any]]:
-    """保真机审：返回 polish 同构 issue 列表（抽象不变量，非逐篇剧情）。"""
+    """类型对齐机审：返回 polish 同构 issue（抽象不变量，非逐篇剧情）。
+
+    特化机审（M5+H / H / F）之外，A–L 一律再跑类型正文契约
+    （不依赖 quality_ready）。
+    """
     st = str(structure_type or "").strip().upper()
     mech = str(mechanism or "").strip().upper()
     rows = _dialogue_rows(story)
@@ -1128,9 +1133,9 @@ def collect_fidelity_issues(
     elif st == "H":
         _append_h_generic_issues(rows, issues, closing_intent=closing)
     elif st == "F":
-        from app.services.daily_story.story_types.f.validate import append_f_fidelity_issues
+        from app.services.daily_story.story_types.f.validate import append_f_align_issues
 
-        append_f_fidelity_issues(
+        append_f_align_issues(
             rows,
             issues,
             mechanism=mech,
@@ -1145,17 +1150,66 @@ def collect_fidelity_issues(
     if st in {"B", "F"}:
         _append_pad_filler_issues(rows, issues)
 
-    seen: set[tuple[str, int]] = set()
+    _append_type_contract_align_issues(story, structure_type=st, issues=issues)
+
+    seen: set[tuple[str, int, str]] = set()
     out: list[dict[str, Any]] = []
     for item in issues:
         kind = str(item.get("kind") or "")
+        desc = str(item.get("desc") or "")
         line_nos = item.get("lines") or []
-        key = (kind, int(line_nos[0]) if line_nos else 0)
+        key = (kind, int(line_nos[0]) if line_nos else 0, desc)
         if key in seen:
             continue
         seen.add(key)
         out.append(item)
     return out
+
+
+def _append_type_contract_align_issues(
+    story: dict[str, Any],
+    *,
+    structure_type: str,
+    issues: list[dict[str, Any]],
+) -> None:
+    """A–L 类型正文契约 → gold_chat issue（绕过 quality_ready）。"""
+    from app.services.daily_story.story_types import (
+        STORY_TYPE_LABELS,
+        append_type_body_validation_errors,
+    )
+
+    st = str(structure_type or "").strip().upper()
+    if st not in STORY_TYPE_LABELS:
+        return
+
+    rows = _dialogue_rows(story)
+    n = len(rows)
+    if n < 6:
+        return
+
+    mini = dict(story)
+    mini["story_type"] = st
+    punch = str(mini.get("punchline_explain") or "").strip()
+    if not punch.upper().startswith(st):
+        label = STORY_TYPE_LABELS.get(st, st)
+        mini["punchline_explain"] = f"{st}类{label}，{punch}".strip("，")
+
+    errors: list[str] = []
+    append_type_body_validation_errors(mini, errors, for_gold_chat=True)
+    if not errors:
+        return
+
+    # 契约问题多落在中后段；给精修可操作行号
+    line_nos = list(range(max(1, n - 5), n + 1))
+    for err in errors:
+        issues.append(
+            {
+                "lines": line_nos,
+                "kind": "对齐-类型契约",
+                "desc": err,
+                "fix": "按类型契约改对白：补齐缺槽、删错型收束，勿另起第二轮",
+            }
+        )
 
 
 def _line_lens(dialogue: list[Any]) -> list[int]:

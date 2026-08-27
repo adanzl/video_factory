@@ -139,7 +139,7 @@
       <!-- 右侧：gold_chat 生成稿 -->
       <div class="flex min-h-0 min-w-0 flex-1 flex-col rounded-lg border border-gray-200 bg-gray-50">
         <div class="flex items-center justify-between border-b border-gray-100 px-4 py-2">
-          <div class="text-sm font-medium text-gray-700">gold_chat</div>
+          <div class="text-sm font-medium text-gray-700">对话稿</div>
           <div v-if="chatStory.scene_title" class="text-xs text-gray-500">
             {{ chatStory.scene_title }}
           </div>
@@ -149,7 +149,7 @@
           v-if="detail.gold_chat?.export_missing"
           class="border-b border-amber-100 bg-amber-50 px-4 py-2 text-xs text-amber-700"
         >
-          导出文件缺失，请重转 gold_chat
+          导出文件缺失，请重转 对话稿
         </div>
 
         <div
@@ -185,9 +185,9 @@
           v-else
           class="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center text-gray-400"
         >
-          <div>尚未转换 gold_chat</div>
+          <div>尚未转换 对话稿</div>
           <el-button type="primary" :loading="converting" @click="handleConvert">
-            转 gold_chat
+            转 对话稿
           </el-button>
         </div>
 
@@ -229,7 +229,7 @@
             :loading="converting"
             @click="handleConvert"
           >
-            {{ detail.has_gold_chat ? "重转 gold_chat" : "转 gold_chat" }}
+            {{ detail.has_gold_chat ? "重转 对话稿" : "转 对话稿" }}
           </el-button>
           <el-button
             v-if="detail.has_gold_chat && chatStory.dialogue?.length"
@@ -237,7 +237,7 @@
             :loading="importing"
             @click="handleImport"
           >
-            {{ detail.gold_chat_daily_story_id ? "重新导入日常故事" : "导入日常故事" }}
+            {{ detail.gold_chat_daily_story_id ? "重导日常故事" : "导入日常故事" }}
           </el-button>
         </div>
       </div>
@@ -271,6 +271,7 @@ const emit = defineEmits<{
   (e: "update:modelValue", value: boolean): void;
   (e: "closed"): void;
   (e: "imported"): void;
+  (e: "converting"): void;
   (e: "converted"): void;
   (e: "reimported"): void;
   (e: "open-transcript", payload: { id?: number | null; sourceId?: string | null; title?: string | null }): void;
@@ -344,6 +345,7 @@ async function handleConvert() {
     }
   }
   converting.value = true;
+  emit("converting");
   try {
     const res = await convertGoldChat({
       id: props.goldStoryId ?? undefined,
@@ -358,6 +360,7 @@ async function handleConvert() {
     emit("converted");
     await loadDetail();
   } catch (e) {
+    emit("converted");
     handleError(e, "转换失败");
   } finally {
     converting.value = false;

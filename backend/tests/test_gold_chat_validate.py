@@ -6,7 +6,7 @@ import pytest
 
 from app.services.daily_story.gold_story.gold_chat import convert as gc
 from app.services.daily_story.gold_story.gold_chat.validate import (
-    collect_fidelity_issues,
+    collect_align_issues,
     should_regenerate_pass1,
 )
 
@@ -129,7 +129,7 @@ def _m5h_story(dialogue: list[dict[str, str]]) -> dict:
 
 
 def _issues(story: dict, **kw) -> list[dict]:
-    return collect_fidelity_issues(
+    return collect_align_issues(
         story,
         structure_type="H",
         mechanism="M5",
@@ -139,19 +139,66 @@ def _issues(story: dict, **kw) -> list[dict]:
     )
 
 
-def test_collect_fidelity_issues_m5h_first_draft():
-    issues = _issues(_m5h_story(_m5h_dialogue_v1()))
-    kinds = {str(x.get("kind") or "") for x in issues}
-    assert (
-        "保真-互毁前文" in kinds
-        or "保真-互毁对象" in kinds
-        or "保真-发起方倒置" in kinds
+def test_collect_align_issues_i_type_contract_without_quality_ready():
+    """I quality_ready=False 时，gold_chat 仍须拦缺语塞/末段制敌。"""
+    from app.services.daily_story.story_types import type_body_validation_enabled
+
+    assert not type_body_validation_enabled("I")
+    story = {
+        "story_type": "I",
+        "punchline_explain": "I类问倒收束",
+        "dialogue": [
+            {"speaker": "灿灿", "line": "遥控器给我，我要看动画！"},
+            {"speaker": "昭昭", "line": "不行，我先看新闻！"},
+            {"speaker": "灿灿", "line": "你天天霸占电视，不讲理！"},
+            {"speaker": "昭昭", "line": "我爱学习，你爱吗呀？"},
+            {"speaker": "灿灿", "line": "我……我也爱学习啊。"},
+            {"speaker": "昭昭", "line": "那你怎么不写作业嘛？"},
+            {"speaker": "灿灿", "line": "我……我待会写吧。"},
+            {"speaker": "昭昭", "line": "哼，就知道看电视呢。"},
+            {"speaker": "灿灿", "line": "嘿嘿，一招制敌好不好！"},
+            {"speaker": "昭昭", "line": "你等着，我写完作业再来抢！"},
+            {"speaker": "灿灿", "line": "写作业还想着抢，你心不诚！"},
+            {"speaker": "昭昭", "line": "我诚心诚意，写完就来看！"},
+        ],
+    }
+    issues = collect_align_issues(
+        story,
+        structure_type="I",
+        mechanism="M11",
     )
-    assert "保真-M5立规" in kinds
-    assert "保真-H定责" in kinds
+    kinds = {str(x.get("kind") or "") for x in issues}
+    assert "对齐-类型契约" in kinds
+    descs = " ".join(str(x.get("desc") or "") for x in issues)
+    assert "语塞" in descs or "一招制敌" in descs or "制敌" in descs
 
 
-def test_collect_fidelity_issues_tear_not_only_si_huai():
+def test_collect_align_issues_type_contract_covers_a_to_l_registry():
+    """A–L 均进入类型契约机审路径（空对白跳过，有对白则不因未注册漏检）。"""
+    from app.services.daily_story.story_types import STORY_TYPE_LABELS
+
+    base_dlg = [
+        {"speaker": "昭昭", "line": "这是我的东西，不准抢！"},
+        {"speaker": "灿灿", "line": "凭什么你说了算呀？"},
+        {"speaker": "昭昭", "line": "我说了算，你听着！"},
+        {"speaker": "灿灿", "line": "那我偏不听你的！"},
+        {"speaker": "昭昭", "line": "你再抢我就告状！"},
+        {"speaker": "灿灿", "line": "你告去呀，我才不怕！"},
+        {"speaker": "昭昭", "line": "哼，看你还嘴硬！"},
+        {"speaker": "灿灿", "line": "我才不认输呢！"},
+    ]
+    for code in sorted(STORY_TYPE_LABELS.keys()):
+        story = {
+            "story_type": code,
+            "punchline_explain": f"{code}类测试",
+            "dialogue": list(base_dlg),
+        }
+        # 不应因未知类型抛错；特化类型可能有 issue，也可能没有
+        collect_align_issues(story, structure_type=code, mechanism="")
+
+
+
+def test_collect_align_issues_tear_not_only_si_huai():
     """「撕破/撕了」须算互毁前文依据，勿误拦 Pass1 合理稿。"""
     dlg = [
         {"speaker": "灿灿", "line": "我的画马上就好，太阳要涂成金色。"},
@@ -164,7 +211,7 @@ def test_collect_fidelity_issues_tear_not_only_si_huai():
     assert "保真-互毁前文" not in kinds
 
 
-def test_collect_fidelity_issues_m5h_merged_line_passes():
+def test_collect_align_issues_m5h_merged_line_passes():
     dlg = list(_m5h_dialogue_v1())
     dlg[5] = {
         "speaker": "昭昭",
@@ -175,7 +222,7 @@ def test_collect_fidelity_issues_m5h_merged_line_passes():
     assert "保真-互毁对象" not in kinds
 
 
-def test_collect_fidelity_issues_m5h_fixed_passes():
+def test_collect_align_issues_m5h_fixed_passes():
     assert _issues(_m5h_story(_m5h_dialogue_v2())) == []
 
 
@@ -204,12 +251,12 @@ def _m5h_dialogue_no_apology() -> list[dict[str, str]]:
     ]
 
 
-def test_collect_fidelity_issues_m5h_no_apology_passes():
+def test_collect_align_issues_m5h_no_apology_passes():
     kinds = {x["kind"] for x in _issues(_m5h_story(_m5h_dialogue_no_apology()))}
     assert "保真-M5加码" not in kinds
 
 
-def test_collect_fidelity_issues_inverted_role_flags():
+def test_collect_align_issues_inverted_role_flags():
     dlg = [
         {"speaker": "灿灿", "line": "昭昭，你偷偷画什么呢？让我瞅瞅！"},
         {"speaker": "昭昭", "line": "不行！这是我的秘密画！"},
@@ -293,7 +340,7 @@ def test_patch_fight_question_speaker():
         patch_fight_question_speaker,
     )
     from app.services.daily_story.gold_story.gold_chat.validate import (
-        collect_fidelity_issues,
+        collect_align_issues,
     )
 
     dlg = _m5h_dialogue_no_apology()
@@ -302,7 +349,7 @@ def test_patch_fight_question_speaker():
     patched, changed = patch_fight_question_speaker(story, closing_intent=closing)
     assert changed
     assert patched["dialogue"][14]["speaker"] == "灿灿"
-    after = collect_fidelity_issues(
+    after = collect_align_issues(
         patched,
         structure_type="H",
         mechanism="M5",
@@ -345,9 +392,9 @@ def test_patch_m5_pre_mom_escalation_adds_escalate():
     assert "保真-M5加码" not in {x["kind"] for x in _issues(patched)}
 
 
-def test_split_fidelity_issues_warn_kinds():
+def test_split_align_issues_warn_kinds():
     from app.services.daily_story.gold_story.gold_chat.validate import (
-        split_fidelity_issues,
+        split_align_issues,
     )
 
     issues = [
@@ -355,12 +402,12 @@ def test_split_fidelity_issues_warn_kinds():
         {"kind": "保真-互毁前文", "lines": [6]},
         {"kind": "保真-收场Invent", "lines": [20]},
     ]
-    blocking, warn = split_fidelity_issues(issues)
+    blocking, warn = split_align_issues(issues)
     assert {x["kind"] for x in blocking} == {"保真-互毁前文"}
     assert {x["kind"] for x in warn} == {"保真-M5合并", "保真-收场Invent"}
 
 
-def test_refine_passes_with_only_fidelity_warn(monkeypatch):
+def test_refine_passes_with_only_align_warn(monkeypatch):
     dlg = _m5h_dialogue_v2()
     dlg[8] = {
         "speaker": "灿灿",
@@ -368,22 +415,22 @@ def test_refine_passes_with_only_fidelity_warn(monkeypatch):
     }
     story = _m5h_story(dlg)
     from app.services.daily_story.gold_story.gold_chat.validate import (
-        split_fidelity_issues,
+        split_align_issues,
     )
 
-    blocking, warn = split_fidelity_issues(_issues(story))
+    blocking, warn = split_align_issues(_issues(story))
     assert not blocking
     assert warn
 
     def fail_llm(*_a, **_k):
         raise AssertionError("should not call LLM when only warn")
 
-    monkeypatch.setattr(gc, "_fidelity_refine_with_llm", fail_llm)
-    out = gc.refine_gold_chat_fidelity(
+    monkeypatch.setattr(gc, "_align_refine_with_llm", fail_llm)
+    out = gc.refine_gold_chat_align(
         story,
         structure_type="H",
         mechanism="M5",
-        fidelity_block="",
+        align_block="",
         mom_lines_max=4,
         closing_intent=_CLOSING,
         bail_on_structural=False,
@@ -391,7 +438,7 @@ def test_refine_passes_with_only_fidelity_warn(monkeypatch):
     assert out["dialogue"][8]["line"].startswith("家规就是")
 
 
-def test_collect_fidelity_issues_bad_pass2_flags_speaker_and_invent():
+def test_collect_align_issues_bad_pass2_flags_speaker_and_invent():
     kinds = {x["kind"] for x in _issues(_m5h_story(_m5h_dialogue_bad_pass2()))}
     assert "保真-M5拒和speaker" in kinds
     assert "保真-对象持有补丁" in kinds or "保真-互毁前文" in kinds
@@ -413,25 +460,25 @@ def test_should_regenerate_pass1_single_local_issue():
     assert not should_regenerate_pass1(issues)
 
 
-def test_collect_fidelity_issues_pipeline_draft_flags_merge_and_invent():
+def test_collect_align_issues_pipeline_draft_flags_merge_and_invent():
     kinds = {x["kind"] for x in _issues(_m5h_story(_m5h_dialogue_pipeline()))}
     assert "保真-M5合并" in kinds
     assert "保真-互毁前文" in kinds or "保真-互毁对象" in kinds
     assert "保真-收场Invent" in kinds
 
 
-def test_refine_gold_chat_fidelity_applies_spot_fixes(monkeypatch):
+def test_refine_gold_chat_align_applies_spot_fixes(monkeypatch):
     story = _m5h_story(_m5h_dialogue_v1())
 
     def fake_refine(_story, _issues, **_kw):
         return {"fixes": _m5h_refine_fixes()}
 
-    monkeypatch.setattr(gc, "_fidelity_refine_with_llm", fake_refine)
-    out = gc.refine_gold_chat_fidelity(
+    monkeypatch.setattr(gc, "_align_refine_with_llm", fake_refine)
+    out = gc.refine_gold_chat_align(
         story,
         structure_type="H",
         mechanism="M5",
-        fidelity_block="",
+        align_block="",
         mom_lines_max=4,
         closing_intent=_CLOSING,
         bail_on_structural=False,
@@ -440,7 +487,7 @@ def test_refine_gold_chat_fidelity_applies_spot_fixes(monkeypatch):
     assert _issues(out) == []
 
 
-def test_refine_gold_chat_fidelity_accepts_merged_retaliation_line(monkeypatch):
+def test_refine_gold_chat_align_accepts_merged_retaliation_line(monkeypatch):
     story = _m5h_story(_m5h_dialogue_v1())
 
     def fake_refine(_story, issues, **_kw):
@@ -451,12 +498,12 @@ def test_refine_gold_chat_fidelity_accepts_merged_retaliation_line(monkeypatch):
                 fixes.append({"no": 6, "line": "你把我画抢坏了！抢你画撕啦！"})
         return {"fixes": fixes}
 
-    monkeypatch.setattr(gc, "_fidelity_refine_with_llm", fake_refine)
-    out = gc.refine_gold_chat_fidelity(
+    monkeypatch.setattr(gc, "_align_refine_with_llm", fake_refine)
+    out = gc.refine_gold_chat_align(
         story,
         structure_type="H",
         mechanism="M5",
-        fidelity_block="",
+        align_block="",
         mom_lines_max=4,
         closing_intent=_CLOSING,
         bail_on_structural=False,
@@ -464,19 +511,19 @@ def test_refine_gold_chat_fidelity_accepts_merged_retaliation_line(monkeypatch):
     assert _issues(out) == []
 
 
-def test_refine_gold_chat_fidelity_fails_when_llm_noop(monkeypatch):
+def test_refine_gold_chat_align_fails_when_llm_noop(monkeypatch):
     story = _m5h_story(_m5h_dialogue_v1())
 
     def fake_refine(_story, _issues, **_kw):
         return {"fixes": []}
 
-    monkeypatch.setattr(gc, "_fidelity_refine_with_llm", fake_refine)
-    with pytest.raises(ValueError, match="fidelity_refine_failed"):
-        gc.refine_gold_chat_fidelity(
+    monkeypatch.setattr(gc, "_align_refine_with_llm", fake_refine)
+    with pytest.raises(ValueError, match="align_refine_failed"):
+        gc.refine_gold_chat_align(
             story,
             structure_type="H",
             mechanism="M5",
-            fidelity_block="",
+            align_block="",
             mom_lines_max=4,
             closing_intent=_CLOSING,
             max_rounds=1,
@@ -486,20 +533,20 @@ def test_refine_gold_chat_fidelity_fails_when_llm_noop(monkeypatch):
 
 def test_refine_bails_on_structural_by_default():
     story = _m5h_story(_m5h_dialogue_bad_pass2())
-    with pytest.raises(ValueError, match="fidelity_structural"):
-        gc.refine_gold_chat_fidelity(
+    with pytest.raises(ValueError, match="align_structural"):
+        gc.refine_gold_chat_align(
             story,
             structure_type="H",
             mechanism="M5",
-            fidelity_block="",
+            align_block="",
             mom_lines_max=4,
             closing_intent=_CLOSING,
         )
 
 
-def test_gold_story_to_gold_chat_runs_fidelity_pass(monkeypatch):
+def test_gold_story_to_gold_chat_runs_align_pass(monkeypatch):
     def fake_chat(system: str, _user: str) -> dict:
-        if "保真精修" in system:
+        if "对齐精修" in system or "保真精修" in system:
             return {"fixes": _m5h_refine_fixes()}
         return _m5h_story(_m5h_dialogue_v1())
 
@@ -536,13 +583,22 @@ def test_gold_story_to_gold_chat_runs_fidelity_pass(monkeypatch):
     monkeypatch.setattr(gc, "_chat_json", fake_chat)
     monkeypatch.setattr(gc, "PASS1_CANDIDATE_COUNT", 1)
     monkeypatch.setattr(gc, "PASS1_REGENERATE_MAX", 1)
-    _real_refine = gc.refine_gold_chat_fidelity
+    _real_refine = gc.refine_gold_chat_align
 
     def refine_test(*args, **kwargs):
         kwargs["bail_on_structural"] = False
         return _real_refine(*args, **kwargs)
 
-    monkeypatch.setattr(gc, "refine_gold_chat_fidelity", refine_test)
+    monkeypatch.setattr(gc, "refine_gold_chat_align", refine_test)
+    monkeypatch.setattr(
+        gc,
+        "_attach_gold_chat_structure_score",
+        lambda chat, _row: {
+            **chat,
+            "quality": {"structure_score": 80, "score": 80, "summary": "结构80"},
+        },
+    )
+    monkeypatch.setattr(gc, "_gate_gold_chat_structure_score", lambda _chat: 80)
     out = gc.gold_story_to_gold_chat(row)
     assert "家规就是" in out["dialogue"][8]["line"]
     assert _issues(out) == []
@@ -632,7 +688,7 @@ def test_patch_ensure_chorus_inserts_missing_closing():
         apply_m5_h_local_patches,
     )
     from app.services.daily_story.gold_story.gold_chat.validate import (
-        collect_fidelity_issues,
+        collect_align_issues,
     )
 
     dlg = list(_m5h_dialogue_v2())
@@ -646,7 +702,7 @@ def test_patch_ensure_chorus_inserts_missing_closing():
         conflict_text=_CONFLICT_5,
     )
     assert changed
-    after = collect_fidelity_issues(
+    after = collect_align_issues(
         patched,
         structure_type="H",
         mechanism="M5",
@@ -715,7 +771,7 @@ def test_patch_m5_retaliation_action():
         patch_m5_retaliation_action,
     )
     from app.services.daily_story.gold_story.gold_chat.validate import (
-        collect_fidelity_issues,
+        collect_align_issues,
     )
 
     dlg = list(_m5h_dialogue_v2())
@@ -740,7 +796,7 @@ def test_patch_m5_retaliation_action():
     assert "撕啦" in retal_full
     assert "保真-互毁动作" not in {
         x["kind"]
-        for x in collect_fidelity_issues(
+        for x in collect_align_issues(
             full,
             structure_type="H",
             mechanism="M5",

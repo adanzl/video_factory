@@ -7,7 +7,7 @@ import pytest
 from app.services.daily_story.gold_story.gold_chat.type_bridge import (
     apply_type_body_pipeline,
     structure_type_hint,
-    type_fidelity_chain,
+    type_align_chain,
 )
 from app.services.daily_story.gold_story.types import (
     MECHANISM_STRUCTURE_MAP,
@@ -19,19 +19,19 @@ from app.services.daily_story.gold_story.types import (
     ("mech", "st"),
     sorted(MECHANISM_STRUCTURE_MAP.items()),
 )
-def test_default_mechanism_pairs_have_fidelity_chain(mech: str, st: str):
-    chain = type_fidelity_chain(structure_type=st, mechanism=mech)
+def test_default_mechanism_pairs_have_align_chain(mech: str, st: str):
+    chain = type_align_chain(structure_type=st, mechanism=mech)
     assert chain, f"{mech}+{st} 应有扩写链"
 
 
 @pytest.mark.parametrize("code", sorted(GOLD_STORY_STRUCTURE_CODES))
 def test_structure_type_fallback_chain(code: str):
-    chain = type_fidelity_chain(structure_type=code, mechanism="")
+    chain = type_align_chain(structure_type=code, mechanism="")
     assert chain, f"结构 {code} 应有 fallback 扩写链"
 
 
 def test_m2_c_chain_mentions_boomerang():
-    chain = type_fidelity_chain(structure_type="C", mechanism="M2")
+    chain = type_align_chain(structure_type="C", mechanism="M2")
     blob = "\n".join(chain)
     assert "堵截" in blob
     assert "回旋镖" in blob

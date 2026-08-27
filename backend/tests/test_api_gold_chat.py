@@ -85,6 +85,15 @@ def test_api_list_and_convert(app_ctx, monkeypatch, tmp_path):
         return _sample_chat()
 
     monkeypatch.setattr(gc, "gold_story_to_gold_chat", fake_chat)
+    monkeypatch.setattr(
+        gc,
+        "_attach_gold_chat_structure_score",
+        lambda chat, _row: {
+            **chat,
+            "quality": {"structure_score": 80, "score": 80, "summary": "结构80"},
+        },
+    )
+    monkeypatch.setattr(gc, "_gate_gold_chat_structure_score", lambda _chat: 80)
 
     client = app_ctx.test_client()
     list_resp = client.get("/v_factory/api/gold_chat/list?limit=10")
@@ -384,6 +393,15 @@ def test_api_batch(app_ctx, monkeypatch, tmp_path):
     monkeypatch.setattr(gc, "gold_chat_export_dir", lambda _cfg=None: tmp_path)
     monkeypatch.setattr(gce, "gold_chat_export_dir", lambda _cfg=None: tmp_path)
     monkeypatch.setattr(gc, "gold_story_to_gold_chat", lambda _row: _sample_chat())
+    monkeypatch.setattr(
+        gc,
+        "_attach_gold_chat_structure_score",
+        lambda chat, _row: {
+            **chat,
+            "quality": {"structure_score": 80, "score": 80, "summary": "结构80"},
+        },
+    )
+    monkeypatch.setattr(gc, "_gate_gold_chat_structure_score", lambda _chat: 80)
 
     client = app_ctx.test_client()
     batch_resp = client.post(

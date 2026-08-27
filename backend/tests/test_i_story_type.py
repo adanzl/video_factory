@@ -202,6 +202,50 @@ def test_i_humor_no_false_missing_win_on_trimmed_story():
     assert "I末段缺赢家一招制敌" not in collect_i_humor_issues(lines)
 
 
+def test_i_speechless_accepts_stammer_ellipsis():
+    """省略号结巴算语塞（类型级，非单篇词表）。"""
+    story = {
+        "story_type": "I",
+        "punchline_explain": "I类问倒收束",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "我爱学习，你爱吗？"},
+            {"speaker": "灿灿", "line": "我……我也爱学习。"},
+            {"speaker": "昭昭", "line": "那你怎么不写作业？"},
+            {"speaker": "灿灿", "line": "我……我待会写。"},
+            {"speaker": "昭昭", "line": "哼，就知道看电视。"},
+            {"speaker": "灿灿", "line": "我去写作业。"},
+            {"speaker": "昭昭", "line": "看你还嘴硬！"},
+            {"speaker": "灿灿", "line": "行了行了。"},
+            {"speaker": "昭昭", "line": "一招制敌。"},
+            {"speaker": "灿灿", "line": "哼。"},
+        ],
+    }
+    errors: list[str] = []
+    append_i_body_errors(story, errors)
+    assert not any("语塞" in e for e in errors)
+
+
+def test_repair_closing_intent_follows_seed_win_speaker():
+    from app.services.daily_story.story_types.i.validate import (
+        repair_closing_intent_from_seed_win,
+        repair_conflict_core_from_seed_win,
+    )
+
+    seed = [
+        {"speaker": "昭昭", "intent": "我爱学习，你爱吗？"},
+        {"speaker": "灿灿", "intent": "我……我也爱。"},
+        {"speaker": "昭昭", "intent": "（得意）一招制敌。"},
+    ]
+    fixed = repair_closing_intent_from_seed_win("灿灿得意总结一招制敌", seed)
+    assert fixed.startswith("昭昭")
+    conflict = repair_conflict_core_from_seed_win(
+        "姐弟抢遥控器，姐姐用爱学习灵魂拷问瞬间制胜",
+        seed,
+    )
+    assert "昭昭" in conflict
+    assert "姐姐用" not in conflict
+
+
 def test_attach_normalizes_punchline_on_conflict():
     from app.services.daily_story.quality import attach_daily_story_quality
 

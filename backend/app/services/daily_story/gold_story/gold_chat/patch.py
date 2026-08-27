@@ -1176,6 +1176,7 @@ def patch_m5_pre_mom_escalation(story: dict[str, Any]) -> tuple[dict[str, Any], 
 # 短 seed gold_chat：点题/closing 后另起第二轮（角色反转续写）
 _SHORT_SEED_MAX = 12
 _POST_CLOSE_TRIM_TYPES = frozenset({"C", "I", "L"})
+_I_POST_CLOSE_TAIL_ALLOW = 2
 RE_GOLD_HOLDER_WANT = re.compile(
     r"帮我夹|够不着|馋这一口|我也想吃|给我夹|分我半|换一口|我说不吃是客气"
 )
@@ -1287,6 +1288,39 @@ def patch_gold_chat_post_close_tail(
     rows = _dialogue_rows(story)
     if len(rows) < 8:
         return story, []
+
+    # I：制敌后拖尾——够字数硬裁，否则交给 patch_i 末段锚定（保篇幅）
+    if st == "I":
+        from app.services.daily_story.prompts import (
+            DAILY_STORY_BODY_CHARS_MIN,
+            dialogue_total_chars,
+        )
+        from app.services.daily_story.story_types.i.validate import RE_WIN_STUBBORN
+
+        win_indices = [
+            i
+            for i, r in enumerate(rows)
+            if RE_WIN_STUBBORN.search(str(r.get("line") or ""))
+        ]
+        if not win_indices:
+            return story, []
+        win_idx = win_indices[0]  # 首次制敌，防第二轮
+        keep_end = win_idx + 1 + _I_POST_CLOSE_TAIL_ALLOW
+        if len(rows) <= keep_end:
+            return story, []
+        kept = rows[:keep_end]
+        from app.services.daily_story.gold_story.scene import CHAT_LINE_COUNT_MIN
+
+        candidate = dict(story)
+        candidate["dialogue"] = kept
+        if len(kept) < CHAT_LINE_COUNT_MIN:
+            return story, []
+        if dialogue_total_chars(candidate) < DAILY_STORY_BODY_CHARS_MIN:
+            return story, []
+        out = copy.deepcopy(story)
+        out["dialogue"] = kept
+        dropped = len(rows) - keep_end
+        return out, [f"gold_chat删I制敌后拖尾({dropped}句)"]
 
     keywords = _gold_close_keywords(story, payload)
     close_idx = _find_gold_close_line_index(rows, keywords)

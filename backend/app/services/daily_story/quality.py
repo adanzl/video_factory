@@ -53,7 +53,9 @@ _REDUNDANCY_STOP_WORDS: frozenset[str] = frozenset({
 _CONTENT_WORD_RE = re.compile(r"[\u4e00-\u9fff]{2,}")
 
 # 结构（格式/节奏/类型收束形态）满分 80（扣分制，未达标逐项扣）；总分 = 结构 + LLM 好笑
-# 发布线（llm_mgr target 结构 75）：结构≥75 且 LLM 好笑≥HUMOR_PUBLISH_MIN（0-20 制）
+# 发布线（llm_mgr target 结构 75）：结构≥STRUCTURE_PUBLISH_MIN
+# 且 LLM 好笑≥HUMOR_PUBLISH_MIN（0-20 制）
+STRUCTURE_PUBLISH_MIN = 75
 HUMOR_PUBLISH_MIN = 10
 STRUCTURE_SCORE_CAP = 80
 # 扣分制各维度满分（结构分从 80 满分往下扣，未达标按维度扣分，cons 与分数对应）
@@ -1048,22 +1050,22 @@ def finalize_daily_story_total(
     if source == "llm":
         if not any(str(r).startswith("好笑") and str(r)[2:].isdigit() for r in reasons):
             reasons.append(f"好笑{funny}")
-        pass_ok = structure >= 75 and funny >= HUMOR_PUBLISH_MIN
+        pass_ok = structure >= STRUCTURE_PUBLISH_MIN and funny >= HUMOR_PUBLISH_MIN
         quality["pass"] = pass_ok
         if pass_ok:
             reasons.append(
-                f"发布达标：结构{structure}≥75，"
+                f"发布达标：结构{structure}≥{STRUCTURE_PUBLISH_MIN}，"
                 f"LLM好笑{funny}/20≥{HUMOR_PUBLISH_MIN}"
             )
         else:
             misses = []
-            if structure < 75:
-                misses.append(f"结构{structure}<75")
+            if structure < STRUCTURE_PUBLISH_MIN:
+                misses.append(f"结构{structure}<{STRUCTURE_PUBLISH_MIN}")
             if funny < HUMOR_PUBLISH_MIN:
                 misses.append(f"好笑{funny}/20<{HUMOR_PUBLISH_MIN}")
             reasons.append(
                 f"未达发布线（{'，'.join(misses)}，"
-                f"须结构≥75且好笑≥{HUMOR_PUBLISH_MIN}）"
+                f"须结构≥{STRUCTURE_PUBLISH_MIN}且好笑≥{HUMOR_PUBLISH_MIN}）"
             )
         tail = f"-硬伤{points}" if points else ""
         reasons.append(f"总分{total}=结构{structure}+LLM好笑{funny}{tail}")

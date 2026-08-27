@@ -440,13 +440,26 @@ def format_block_for_code(code: str) -> str:
 """
 
 
-def append_type_body_validation_errors(story: dict, errors: list[str]) -> None:
+def append_type_body_validation_errors(
+    story: dict,
+    errors: list[str],
+    *,
+    for_gold_chat: bool = False,
+) -> None:
+    """类型正文硬卡。
+
+    H5 生成默认看 ``quality_ready``；gold_chat 机审传 ``for_gold_chat=True``
+    时 A–L 一律跑契约（不提前开 quality_ready）。
+    """
     from app.services.daily_story.story_types.a.facts import (
         append_brush_timer_fact_errors,
         append_homework_fact_errors,
     )
     from app.services.daily_story.story_types.a.validate import append_a_body_errors
     from app.services.daily_story.story_types.b.facts import append_b_fact_errors
+
+    def _enabled(code: str) -> bool:
+        return for_gold_chat or type_body_validation_enabled(code)
 
     append_homework_fact_errors(story, errors)
     append_brush_timer_fact_errors(story, errors)
@@ -470,31 +483,31 @@ def append_type_body_validation_errors(story: dict, errors: list[str]) -> None:
         from app.services.daily_story.story_types.e.validate import append_e_body_errors
 
         append_e_body_errors(story, errors)
-    elif code == "G" and type_body_validation_enabled("G"):
+    elif code == "G" and _enabled("G"):
         from app.services.daily_story.story_types.g.validate import append_g_body_errors
 
         append_g_body_errors(story, errors)
-    elif code == "F" and type_body_validation_enabled("F"):
+    elif code == "F" and _enabled("F"):
         from app.services.daily_story.story_types.f.validate import append_f_body_errors
 
         append_f_body_errors(story, errors)
-    elif code == "H" and type_body_validation_enabled("H"):
+    elif code == "H" and _enabled("H"):
         from app.services.daily_story.story_types.h.validate import append_h_body_errors
 
         append_h_body_errors(story, errors)
-    elif code == "I" and type_body_validation_enabled("I"):
+    elif code == "I" and _enabled("I"):
         from app.services.daily_story.story_types.i.validate import append_i_body_errors
 
         append_i_body_errors(story, errors)
-    elif code == "J" and type_body_validation_enabled("J"):
+    elif code == "J" and _enabled("J"):
         from app.services.daily_story.story_types.j.validate import append_j_body_errors
 
         append_j_body_errors(story, errors)
-    elif code == "K" and type_body_validation_enabled("K"):
+    elif code == "K" and _enabled("K"):
         from app.services.daily_story.story_types.k.validate import append_k_body_errors
 
         append_k_body_errors(story, errors)
-    elif code == "L" and type_body_validation_enabled("L"):
+    elif code == "L" and _enabled("L"):
         from app.services.daily_story.story_types.l.validate import append_l_body_errors
 
         append_l_body_errors(story, errors)

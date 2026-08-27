@@ -156,7 +156,7 @@ def append_f_body_errors(story: dict, errors: list[str]) -> None:
         errors.append("F类：末段勿 A 式反噬/破功链")
 
 
-def append_f_fidelity_issues(
+def append_f_align_issues(
     rows: list[dict],
     issues: list[dict],
     *,
@@ -169,7 +169,7 @@ def append_f_fidelity_issues(
     object_text: str = "",
     mechanism_text: str = "",
 ) -> None:
-    """gold_chat 保真：F 类抽象 invariant（非逐篇剧情）。"""
+    """gold_chat 对齐：F 类抽象 invariant（非逐篇剧情）。"""
     lines = [
         str(row.get("line") or "").strip()
         for row in rows
