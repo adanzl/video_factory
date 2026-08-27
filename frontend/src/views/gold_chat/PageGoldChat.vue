@@ -89,6 +89,16 @@
           <el-button type="primary" link size="small" @click.stop="viewTranscript(row)">
             逐字稿
           </el-button>
+          <el-button
+            v-if="row.status !== 'rejected'"
+            type="warning"
+            link
+            size="small"
+            :loading="rejectingId === row.id"
+            @click.stop="handleRejectOne(row)"
+          >
+            驳回
+          </el-button>
           <el-button type="danger" link size="small" :loading="deletingId === row.id"
             @click.stop="handleDeleteOne(row)">
             删除
@@ -127,6 +137,7 @@ import {
   getGoldStoryCollectStatus,
   getGoldStoryReimportStatus,
   listGoldChats,
+  rejectGoldStories,
   reimportGoldStories,
   type GoldChatListItem,
   type GoldStoryCollectResult,
@@ -146,6 +157,7 @@ const batching = ref(false);
 const deleting = ref(false);
 const reimportingId = ref<number | null>(null);
 const deletingId = ref<number | null>(null);
+const rejectingId = ref<number | null>(null);
 const selectedIds = ref<number[]>([]);
 const showDetail = ref(false);
 const showTranscript = ref(false);
@@ -367,6 +379,33 @@ function viewItem(row: GoldChatListItem) {
   currentId.value = row.id;
   currentSourceId.value = row.source_id;
   showDetail.value = true;
+}
+
+async function handleRejectOne(row: GoldChatListItem) {
+  if (row.status === "rejected") return;
+  try {
+    await ElMessageBox.confirm(
+      `确定驳回「${row.title || row.source_id}」？仅改状态，不删文件。`,
+      "驳回金故事",
+      { type: "warning" },
+    );
+  } catch {
+    return;
+  }
+  rejectingId.value = row.id;
+  try {
+    const res = await rejectGoldStories([row.id]);
+    if (res.rejected > 0) {
+      ElMessage.success("已驳回");
+    } else {
+      ElMessage.warning("未驳回任何记录");
+    }
+    await fetchItems();
+  } catch (e) {
+    handleError(e, "驳回失败");
+  } finally {
+    rejectingId.value = null;
+  }
 }
 
 async function handleDeleteOne(row: GoldChatListItem) {

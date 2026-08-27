@@ -357,6 +357,29 @@ export async function importGoldChat(params: {
   return response.data;
 }
 
+export interface GoldStoryRejectResult {
+  rejected: number;
+  skipped: number;
+  ids: number[];
+  results: Array<{
+    id: number;
+    source_id?: string;
+    action: string;
+    status?: string;
+    prev_status?: string | null;
+    reason?: string;
+    error?: string;
+  }>;
+}
+
+export async function rejectGoldStories(ids: number[]): Promise<GoldStoryRejectResult> {
+  const response = await api.post<GoldStoryRejectResult>(
+    "/v_factory/api/gold_chat/reject",
+    { ids },
+  );
+  return response.data;
+}
+
 export function calcChatChars(dialogue?: DialogueLine[]): number {
   if (!dialogue?.length) return 0;
   return dialogue.reduce((sum, d) => sum + (d.line?.length || 0), 0);

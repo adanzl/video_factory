@@ -549,6 +549,61 @@ class GoldStoryMgr:
     def reimport_status(self) -> dict[str, Any]:
         return _reimport_snapshot()
 
+    def reject_stories(self, gold_story_ids: list[int]) -> dict[str, Any]:
+        """人工驳回：仅改 status=rejected，不删文件。"""
+        _ensure_schema()
+        ids = sorted({int(x) for x in gold_story_ids if int(x) > 0})
+        if not ids:
+            raise ValueError("ids 不能为空")
+        ok_ids: list[int] = []
+        skipped: list[int] = []
+        results: list[dict[str, Any]] = []
+        for gid in ids:
+            try:
+                row = repo_gold_story.get_story(gid)
+            except KeyError:
+                results.append({"id": gid, "action": "error", "error": "not_found"})
+                continue
+            sid = str(row.get("source_id") or "").strip()
+            old = str(row.get("status") or "").strip()
+            if old == "rejected":
+                skipped.append(gid)
+                results.append(
+                    {
+                        "id": gid,
+                        "source_id": sid,
+                        "action": "skip",
+                        "reason": "already_rejected",
+                    }
+                )
+                continue
+            repo_gold_story.update_story_status(
+                gid,
+                status="rejected",
+                audit={
+                    "pass": False,
+                    "stage": "manual",
+                    "reject_reasons": ["manual_reject"],
+                    "prev_status": old or None,
+                },
+            )
+            ok_ids.append(gid)
+            results.append(
+                {
+                    "id": gid,
+                    "source_id": sid,
+                    "action": "ok",
+                    "status": "rejected",
+                    "prev_status": old or None,
+                }
+            )
+        return {
+            "rejected": len(ok_ids),
+            "skipped": len(skipped),
+            "ids": ok_ids,
+            "results": results,
+        }
+
     def delete_stories(self, gold_story_ids: list[int]) -> dict[str, Any]:
         _ensure_schema()
         cfg = Config()

@@ -11,10 +11,27 @@ _OVERLAY_RES = (
     re.compile(r"素材来源"),
     re.compile(r"应来自"),
 )
+_EMAIL_URL_RE = re.compile(
+    r"@|[.](?:com|cn|net|org)\b|https?://|qq\.com",
+    re.IGNORECASE,
+)
+_LATIN_NOISE_RE = re.compile(r"^[A-Za-z0-9._%+\-]{2,}$")
+
+_CJK_RE = re.compile(r"[\u4e00-\u9fff]")
+_GARBLED_RE = re.compile(r"[^\u4e00-\u9fffA-Za-z0-9，。！？、；：\"\"''（）…\\s]")
+_REPEAT_RE = re.compile(r"(.{2,8})\1{2,}")
+
+
+def normalize_transcript_line(text: str) -> str:
+    return re.sub(r"\s+", "", str(text or "").strip())
+
+
+def _transcript_lines(text: str) -> list[str]:
+    return [ln.strip() for ln in str(text or "").splitlines() if ln.strip()]
 
 
 def _overlay_line_ratio(text: str) -> float:
-    lines = [ln.strip() for ln in str(text or "").splitlines() if ln.strip()]
+    lines = _transcript_lines(text)
     if not lines:
         return 0.0
     bad = 0
@@ -26,13 +43,39 @@ def _overlay_line_ratio(text: str) -> float:
     return bad / len(lines)
 
 
-_CJK_RE = re.compile(r"[\u4e00-\u9fff]")
-_GARBLED_RE = re.compile(r"[^\u4e00-\u9fffA-Za-z0-9，。！？、；：\"\"''（）…\\s]")
-_REPEAT_RE = re.compile(r"(.{2,8})\1{2,}")
+def _noise_line_ratio(text: str) -> float:
+    """邮箱/链接/纯拉丁噪声行占比（常见于无烧录字幕的水印误 OCR）。"""
+    lines = _transcript_lines(text)
+    if not lines:
+        return 0.0
+    bad = 0
+    for ln in lines:
+        if _EMAIL_URL_RE.search(ln) or _LATIN_NOISE_RE.fullmatch(ln):
+            bad += 1
+    return bad / len(lines)
 
 
-def normalize_transcript_line(text: str) -> str:
-    return re.sub(r"\s+", "", str(text or "").strip())
+def _near_variant_line_ratio(text: str) -> float:
+    """近重复但未并成同一句的行占比。
+
+    无稳定烧录字幕时，OCR 常对同一花字输出「逗乐介多/个多/谷多」
+    一类变体簇；真字幕合并后该比例应很低。
+    """
+    lines = [normalize_transcript_line(ln) for ln in _transcript_lines(text)]
+    lines = [ln for ln in lines if len(ln) >= 4]
+    n = len(lines)
+    if n < 4:
+        return 0.0
+    variant = 0
+    for i, a in enumerate(lines):
+        for j, b in enumerate(lines):
+            if i == j:
+                continue
+            ratio = SequenceMatcher(None, a, b).ratio()
+            if 0.5 <= ratio < 0.92:
+                variant += 1
+                break
+    return variant / n
 
 
 def score_transcript_text(
@@ -58,7 +101,8 @@ def score_transcript_text(
     keyword_hits = sum(1 for c in set(title_chars) if c in compact)
     keyword_ratio = keyword_hits / max(len(set(title_chars)), 1)
 
-    line_count = len([ln for ln in raw.splitlines() if ln.strip()])
+    lines = _transcript_lines(raw)
+    line_count = len(lines)
     duration_bonus = 0.0
     if duration_sec > 0:
         lines_per_min = line_count / max(duration_sec / 60.0, 0.1)
@@ -70,6 +114,14 @@ def score_transcript_text(
         conf_bonus = max(0.0, min(float(avg_confidence), 1.0)) * 0.15
 
     overlay_penalty = _overlay_line_ratio(raw) * 0.25
+    noise_penalty = _noise_line_ratio(raw) * 0.45
+    variant_ratio = _near_variant_line_ratio(raw)
+    # 变体簇 ≥35%：典型无字幕误 OCR，重罚到跳过 ASR 阈值以下
+    variant_penalty = 0.0
+    if variant_ratio >= 0.35:
+        variant_penalty = 0.25 + min(variant_ratio, 1.0) * 0.35
+    elif variant_ratio >= 0.2:
+        variant_penalty = variant_ratio * 0.35
 
     score = (
         0.45 * cjk_ratio
@@ -80,6 +132,8 @@ def score_transcript_text(
         - garbled_ratio * 0.35
         - repeat_penalty
         - overlay_penalty
+        - noise_penalty
+        - variant_penalty
     )
     return max(0.0, min(round(score, 4), 1.0))
 

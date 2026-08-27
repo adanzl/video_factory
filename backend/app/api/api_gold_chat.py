@@ -210,6 +210,19 @@ def batch_route():
     )
 
 
+@bp.post("/reject")
+def reject_route():
+    data = get_json_body()
+    ids = parse_int_list(data, "ids")
+    if not ids:
+        raise APIError("ids 必填", status_code=400)
+    logger.info("[GOLD_CHAT] reject ids=%s", ids)
+    try:
+        return json_ok(gold_story_mgr.reject_stories(ids))
+    except ValueError as exc:
+        raise APIError(str(exc), status_code=400)
+
+
 @bp.post("/delete")
 def delete_route():
     data = get_json_body()
