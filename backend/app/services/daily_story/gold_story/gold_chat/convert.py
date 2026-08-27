@@ -418,7 +418,7 @@ def _gold_chat_pad_indices(
     *,
     story_type: str,
 ) -> list[int]:
-    """可垫字行号；I 类排除收束段（首次制敌/服软后）与末 2 句。"""
+    """可垫字行号；I 类排除收束段（首次语塞到结尾）与末 2 句。"""
     indices = [
         i
         for i, item in enumerate(dialogue)
@@ -429,8 +429,8 @@ def _gold_chat_pad_indices(
     if st != "I":
         return indices
     from app.services.daily_story.story_types.i.validate import (
+        RE_SPEECHLESS,
         RE_WIN_STUBBORN,
-        find_i_close_index,
     )
 
     lines = [
@@ -438,15 +438,16 @@ def _gold_chat_pad_indices(
         for item in dialogue
         if isinstance(item, dict)
     ]
-    close_idx = find_i_close_index(lines)
     protected: set[int] = set()
+    for i, ln in enumerate(lines):
+        if RE_SPEECHLESS.search(ln):
+            protected.update(range(i, len(dialogue)))
+            break
     for i, item in enumerate(dialogue):
         if isinstance(item, dict) and RE_WIN_STUBBORN.search(
             str(item.get("line") or "")
         ):
             protected.add(i)
-    if close_idx >= 0:
-        protected.update(range(close_idx, len(dialogue)))
     if len(dialogue) > 2:
         protected.add(len(dialogue) - 1)
         protected.add(len(dialogue) - 2)
