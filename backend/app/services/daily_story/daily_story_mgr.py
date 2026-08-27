@@ -254,7 +254,9 @@ class DailyStoryMgr:
                 bgm={'enabled': True, 'material_id': DEFAULT_DAILY_STORY_BGM_MATERIAL_ID, 'volume_db': DEFAULT_BGM_VOLUME_DB},
                 subtitle={'enabled': True},
             )
-            speaker_configs = {name: dict(cfg) for name, cfg in DEFAULT_DAILY_SPEAKER_CONFIGS.items()}
+            speaker_configs: dict[str, Any] = {
+                name: dict(cfg) for name, cfg in DEFAULT_DAILY_SPEAKER_CONFIGS.items()
+            }
             speaker_configs['phrase_gap_sec'] = gap
             info['tts'] = {'speaker_configs': speaker_configs}
             from app.services.daily_story.story_types import chat_type_info_message

@@ -54,9 +54,15 @@
           {{ formatAutoScore(row.auto_score) }}
         </template>
       </el-table-column>
-      <el-table-column label="gold_chat" width="100" align="center">
+      <el-table-column label="gold_chat" width="110" align="center">
         <template #default="{ row }">
-          <el-tag v-if="row.has_gold_chat" type="success" size="small">已导出</el-tag>
+          <el-tag v-if="isGoldChatProcessing(row)" type="warning" size="small">
+            <span class="inline-flex items-center gap-1">
+              <el-icon class="is-loading"><Loading /></el-icon>
+              处理中
+            </span>
+          </el-tag>
+          <el-tag v-else-if="row.has_gold_chat" type="success" size="small">已导出</el-tag>
           <el-tag v-else type="info" size="small">未导出</el-tag>
         </template>
       </el-table-column>
@@ -81,7 +87,7 @@
           <span v-else class="text-gray-400">-</span>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="300" fixed="right">
+      <el-table-column label="操作" width="250" fixed="right">
         <template #default="{ row }">
           <el-button type="primary" link size="small" @click.stop="viewItem(row)">
             查看
@@ -122,7 +128,7 @@
 
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from "vue";
-import { Refresh } from "@element-plus/icons-vue";
+import { Loading, Refresh } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { usePageRefresh } from "@/stores/app";
 import { useErrorHandler } from "@/composables/useErrorHandler";
@@ -155,7 +161,9 @@ let collectPollTimer: ReturnType<typeof setInterval> | null = null;
 let reimportPollTimer: ReturnType<typeof setInterval> | null = null;
 const batching = ref(false);
 const deleting = ref(false);
-const reimportingId = ref<number | null>(null);
+const reimportingIds = ref<number[]>([]);
+const reimportingSourceIds = ref<string[]>([]);
+const convertingIds = ref<number[]>([]);
 const deletingId = ref<number | null>(null);
 const rejectingId = ref<number | null>(null);
 const selectedIds = ref<number[]>([]);
@@ -200,6 +208,31 @@ function statusTagType(
   if (status === "rejected") return "info";
   if (status === "retired") return "info";
   return "warning";
+}
+
+function clearProcessingTargets() {
+  reimportingIds.value = [];
+  reimportingSourceIds.value = [];
+  convertingIds.value = [];
+}
+
+function setReimportTargets(opts: {
+  ids?: number[] | null;
+  sourceIds?: string[] | null;
+}) {
+  const ids = (opts.ids || []).filter((id) => Number.isFinite(id) && id > 0);
+  const sourceIds = (opts.sourceIds || [])
+    .map((s) => String(s || "").trim())
+    .filter(Boolean);
+  reimportingIds.value = [...new Set(ids)];
+  reimportingSourceIds.value = [...new Set(sourceIds)];
+}
+
+function isGoldChatProcessing(row: GoldChatListItem): boolean {
+  if (convertingIds.value.includes(row.id)) return true;
+  if (reimportingIds.value.includes(row.id)) return true;
+  const sid = String(row.source_id || "").trim();
+  return !!sid && reimportingSourceIds.value.includes(sid);
 }
 
 function stopCollectPolling() {
@@ -299,13 +332,17 @@ async function pollReimportStatus() {
     const res = await getGoldStoryReimportStatus();
     if (res.status === "running") {
       reimporting.value = true;
+      setReimportTargets({
+        ids: res.ids,
+        sourceIds: res.source_ids,
+      });
       await fetchItems({ quiet: true });
       startReimportPolling();
       return;
     }
     const wasReimporting = reimporting.value;
     reimporting.value = false;
-    reimportingId.value = null;
+    clearProcessingTargets();
     stopReimportPolling();
     if (!wasReimporting) return;
     await fetchItems({ quiet: true });
@@ -371,6 +408,10 @@ function openTranscriptFromDetail(payload: {
 
 function onDetailReimported() {
   reimporting.value = true;
+  setReimportTargets({
+    ids: currentId.value != null ? [currentId.value] : [],
+    sourceIds: currentSourceId.value ? [currentSourceId.value] : [],
+  });
   startReimportPolling();
   void fetchItems({ quiet: true });
 }
@@ -487,6 +528,7 @@ async function handleBatchConvert() {
     }
   }
   batching.value = true;
+  convertingIds.value = [...selectedIds.value];
   try {
     const res = await batchConvertGoldChat({
       ids: selectedIds.value,
@@ -499,6 +541,7 @@ async function handleBatchConvert() {
     handleError(e, "批量转换失败");
   } finally {
     batching.value = false;
+    convertingIds.value = [];
   }
 }
 
@@ -507,6 +550,10 @@ async function startReimportJob(params: {
   sourceId?: string;
 }) {
   reimporting.value = true;
+  setReimportTargets({
+    ids: params.ids,
+    sourceIds: params.sourceId ? [params.sourceId] : [],
+  });
   try {
     const res = await reimportGoldStories({
       ids: params.ids,
@@ -514,17 +561,25 @@ async function startReimportJob(params: {
       forceTranscript: true,
     });
     if (res.status === "running") {
+      setReimportTargets({
+        ids: res.ids?.length ? res.ids : params.ids,
+        sourceIds: res.source_ids?.length
+          ? res.source_ids
+          : params.sourceId
+            ? [params.sourceId]
+            : [],
+      });
       ElMessage.success("已开始从 BV 重新导入，完成后列表会自动刷新");
       startReimportPolling();
       return;
     }
     reimporting.value = false;
-    reimportingId.value = null;
+    clearProcessingTargets();
     ElMessage.success(formatReimportDone(res));
     await fetchItems();
   } catch (e) {
     reimporting.value = false;
-    reimportingId.value = null;
+    clearProcessingTargets();
     handleError(e, "重新导入失败");
   }
 }
