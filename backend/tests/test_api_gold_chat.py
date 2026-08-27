@@ -238,6 +238,29 @@ def test_api_delete(app_ctx, tmp_path, monkeypatch):
     assert gid not in ids
 
 
+def test_api_reject(app_ctx):
+    inserted = _insert_sample(app_ctx)
+    gid = int(inserted["id"])
+    client = app_ctx.test_client()
+
+    resp = client.post("/v_factory/api/gold_chat/reject", json={"ids": [gid]})
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["rejected"] == 1
+    assert gid in body["ids"]
+
+    again = client.post("/v_factory/api/gold_chat/reject", json={"ids": [gid]})
+    assert again.status_code == 200
+    assert again.get_json()["rejected"] == 0
+    assert again.get_json()["skipped"] == 1
+
+    list_resp = client.get("/v_factory/api/gold_chat/list?status=rejected&limit=50")
+    assert list_resp.status_code == 200
+    ids = {x["id"] for x in list_resp.get_json()["items"]}
+    assert gid in ids
+    row = next(x for x in list_resp.get_json()["items"] if x["id"] == gid)
+    assert row["status"] == "rejected"
+
 def test_api_collect(app_ctx, monkeypatch):
     from app.services.daily_story.gold_story import gold_story_mgr as mgr_mod
 

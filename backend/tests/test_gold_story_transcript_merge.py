@@ -23,6 +23,63 @@ def test_score_transcript_prefers_clean_dialogue():
     assert good_score > bad_score
 
 
+def test_score_transcript_penalizes_no_subtitle_ocr_noise():
+    """无烧录字幕时误 OCR 水印/花字变体簇，不得跳过 ASR。"""
+    garbled = (
+        "逗乐介多网友\n逗乐个多网发\n逗乐谷多网友\n逗乐介多网方\n"
+        "1.0\n"
+        "一位签签左检香家网作业的时屋\n一位签签本检香家网作业购时屋\n"
+        "一位签签本检查家网作业的时候\n位签签左检香家网作业的时屋\n"
+        "AYK\n"
+        "签签毛到后一险槽圈\n签签专到后二险槽圈\n爷签手到后一险槽圈\n"
+        "签签考到后一险槽圈\n立卫往后面闪腔\n"
+        "因为过却旦白户的孩子\n因为过都旦白己的孩子片之不台立点\n"
+        "因为过都旦白已购孩子\n因为过都旦百户的孩子\n国为文都旦白已购孩了\n"
+        "大直众了同一个出界同\n大百卖了同一个州界同飞#\n大首卖了\n大直卖了\n"
+        "口奶奶都很淡定\n爸爸和奶奶都很淡定\n"
+        "和拉偏架没有关系，完全是怕被误伤\n母大练练，文流Z\n"
+        "1160134217@qq.com\n1160134217@qq.comYYASX\n1160134217@qq.com\n"
+    )
+    clean = (
+        "逗乐众多网友\n"
+        "一位爸爸在检查家庭作业的时候\n"
+        "儿子和女儿突然在旁边打得不可开交\n"
+        "爸爸看到后一脸懵圈\n"
+        "立马往后面闪躲\n"
+        "因为都是自己的孩子\n"
+        "怕被误伤\n"
+        "爸爸和奶奶都很淡定\n"
+        "和拉偏架没有关系，完全是怕被误伤\n"
+    )
+    title = "姐弟俩在家打得不可开交，旁边的爸爸疯狂闪躲"
+    garbled_score = tm.score_transcript_text(
+        garbled,
+        title=title,
+        duration_sec=66.0,
+        avg_confidence=0.85,
+    )
+    clean_score = tm.score_transcript_text(
+        clean,
+        title=title,
+        duration_sec=66.0,
+        avg_confidence=0.85,
+    )
+    assert garbled_score < 0.55, garbled_score
+    assert clean_score >= 0.55, clean_score
+    assert clean_score > garbled_score
+
+    cfg = Config()
+    cfg.gold_story_ocr_skip_asr_min = 0.55
+    assert not ocr.should_skip_asr_after_ocr(
+        {"text": garbled, "quality_score": garbled_score},
+        cfg,
+    )
+    assert ocr.should_skip_asr_after_ocr(
+        {"text": clean, "quality_score": clean_score},
+        cfg,
+    )
+
+
 def test_pick_transcript_prefers_ocr_when_higher_quality():
     picked = tm.pick_transcript_candidate(
         [
