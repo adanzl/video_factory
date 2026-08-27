@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import requests
+from PIL import Image as PILImage
 
 from app.services.llm.llm_agnes import AgnesApiKey
 from app.services.segment.image.image_agnes import (
@@ -645,6 +646,127 @@ def test_strip_prompt_for_verify_drops_daily_wrap() -> None:
     assert "基于参考图" not in user
     assert "客厅地板上昭昭举手" in user
     assert [cid for cid, _ in items][0] == "scene"
+
+
+def test_parse_hardfail_arm_answer() -> None:
+    # 正常：2 手 + 无多手
+    assert AgnesImageProvider._parse_hardfail_arm_answer(
+        "项1: 2\n项2: 否"
+    ) == (2, False)
+    # 多手：3 手 + 是
+    assert AgnesImageProvider._parse_hardfail_arm_answer(
+        "项1: 3\n项2: 是"
+    ) == (3, True)
+    # 数字项解析不出（例如 VL 答「无该角色」），返回 None 不误杀
+    assert AgnesImageProvider._parse_hardfail_arm_answer(
+        "项1: 无该角色\n项2: 否"
+    ) == (None, False)
+    # 项2 答案无法解析为是/否
+    assert AgnesImageProvider._parse_hardfail_arm_answer(
+        "项1: 2\n项2: 不清楚"
+    ) == (2, None)
+
+
+def test_crop_zone_data_url_zooms(tmp_path: Path) -> None:
+    img = PILImage.new("RGB", (1000, 600), "white")
+    for x in (100, 600, 800):
+        for y in (100, 300):
+            img.putpixel((x, y), (0, 0, 0))
+    path = tmp_path / "crop.png"
+    img.save(path)
+
+    left = AgnesImageProvider._crop_zone_data_url(path, "left")
+    right = AgnesImageProvider._crop_zone_data_url(path, "right")
+    center = AgnesImageProvider._crop_zone_data_url(path, "center")
+    assert left.startswith("data:image/jpeg;base64,")
+    assert right.startswith("data:image/jpeg;base64,")
+    assert center.startswith("data:image/jpeg;base64,")
+    import base64 as b64_mod
+
+    for b64 in (left, right, center):
+        raw = b64_mod.b64decode(b64.split(",", 1)[1])
+        assert raw[:2] == b"\xff\xd8"  # JPEG magic
+
+
+def test_verify_hardfail_limbs_passes_normal(tmp_path: Path) -> None:
+    provider = AgnesImageProvider()
+    img = PILImage.new("RGB", (1000, 600), "white")
+    path = tmp_path / "ok.png"
+    img.save(path)
+
+    with (
+        patch.object(provider, "_ask_hardfail_vl", return_value="项1: 2\n项2: 否"),
+        patch(
+            "app.services.segment.image.image_agnes.agnes_api_keys",
+            return_value=[AgnesApiKey("primary", "k")],
+        ),
+        patch.object(provider, "_allowed_cast_for_verify", return_value=["昭昭", "灿灿"]),
+    ):
+        ok = provider._verify_hardfail_limbs(
+            path,
+            expected_speakers=["昭昭", "灿灿"],
+            content_style="daily_story",
+        )
+    assert ok is True
+
+
+def test_verify_hardfail_limbs_fails_on_third_arm(tmp_path: Path) -> None:
+    provider = AgnesImageProvider()
+    img = PILImage.new("RGB", (1000, 600), "white")
+    path = tmp_path / "bad.png"
+    img.save(path)
+
+    with (
+        patch.object(
+            provider, "_ask_hardfail_vl", return_value="项1: 3\n项2: 是"
+        ),
+        patch(
+            "app.services.segment.image.image_agnes.agnes_api_keys",
+            return_value=[AgnesApiKey("primary", "k")],
+        ),
+        patch.object(provider, "_allowed_cast_for_verify", return_value=["灿灿"]),
+    ):
+        ok = provider._verify_hardfail_limbs(
+            path,
+            expected_speakers=["灿灿"],
+            content_style="daily_story",
+        )
+    assert ok is False
+
+
+def test_verify_hardfail_limbs_skips_on_vl_failure(tmp_path: Path) -> None:
+    """VL 网络失败/解析不出时跳过该角色，不误杀。"""
+    provider = AgnesImageProvider()
+    img = PILImage.new("RGB", (1000, 600), "white")
+    path = tmp_path / "skip.png"
+    img.save(path)
+
+    with (
+        patch.object(provider, "_ask_hardfail_vl", return_value=None),
+        patch(
+            "app.services.segment.image.image_agnes.agnes_api_keys",
+            return_value=[AgnesApiKey("primary", "k")],
+        ),
+        patch.object(provider, "_allowed_cast_for_verify", return_value=["灿灿"]),
+    ):
+        ok = provider._verify_hardfail_limbs(
+            path,
+            expected_speakers=["灿灿"],
+            content_style="daily_story",
+        )
+    assert ok is True
+
+
+def test_verify_hardfail_limbs_non_daily_skips(tmp_path: Path) -> None:
+    provider = AgnesImageProvider()
+    path = tmp_path / "any.png"
+    path.write_bytes(b"png")
+    ok = provider._verify_hardfail_limbs(
+        path,
+        expected_speakers=["昭昭"],
+        content_style="science",
+    )
+    assert ok is True
 
 
 def test_generate_switches_to_backup_key_on_quota(tmp_path: Path) -> None:
