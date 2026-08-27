@@ -75,6 +75,12 @@ def _backfill_gold_story_after_export(
         "gold_chat_json": paths.get("json"),
         "gold_chat_md": paths.get("markdown"),
     }
+    quality = chat.get("quality") if isinstance(chat.get("quality"), dict) else None
+    if quality:
+        from app.services.daily_story.quality import structure_score_of
+
+        payload_patch["gold_chat_structure_score"] = structure_score_of(quality)
+        payload_patch["gold_chat_quality_summary"] = quality.get("summary")
     repo_gold_story.patch_story_payload(gid, payload_patch)
 
     bili_url = payload_patch.get("bili_url")

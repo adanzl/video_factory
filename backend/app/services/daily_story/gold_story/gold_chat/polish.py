@@ -152,12 +152,17 @@ def _apply_gold_chat_polish_fixes(
     fixed, _ = patch_sanitize_pad_suffix(fixed)
     fixed, _ = _ensure_gold_chat_min_chars(fixed)
     fixed, _ = patch_sanitize_pad_suffix(fixed)
-    validate_gold_chat(
-        fixed,
-        banned_literals=banned_literals,
-        source_type=source_type,
-        mom_lines_max=mom_lines_max,
-    )
+    try:
+        validate_gold_chat(
+            fixed,
+            banned_literals=banned_literals,
+            source_type=source_type,
+            mom_lines_max=mom_lines_max,
+        )
+    except ValueError as exc:
+        # 垫字/去叠语气后仍不过 hard：丢弃本轮定点改，交上层重试或报 align
+        logger.info("gold_chat polish batch dropped: %s", exc)
+        return chat, set()
     return fixed, accepted
 
 

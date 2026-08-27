@@ -8,9 +8,9 @@ from app.services.daily_story.gold_story.gold_chat.validate import (
     _parse_conflict_victim,
     _parse_fight_question_asker,
     _sibling_partner,
-    collect_fidelity_issues,
-    fidelity_chain,
-    is_structural_fidelity_kind,
+    collect_align_issues,
+    align_chain,
+    is_structural_align_kind,
 )
 
 CHAT_MAX_LINE_CHARS = DAILY_STORY_LINE_CHARS_MAX
@@ -48,7 +48,7 @@ story_raw（背景，勿照抄；口播/论述须转现场对白）：{story_raw
 funny_why：{funny_why}
 source_type：{source_type}（tutorial 时禁保留教程口吻/第几招）
 {structure_hint}
-{fidelity_block}
+{align_block}
 
 {gold_chat_snippet}
 
@@ -68,7 +68,7 @@ source_type：{source_type}（tutorial 时禁保留教程口吻/第几招）
 - **setting**：地点 + 冲突物落点（谁面前/谁端着哪件）；双方各持一物须两件都写；禁止只写地点和「在吵架」
 - **第一人称现场对白**：每句是角色对另一角色当场说的话；禁第三人称论述、禁转述（「妈妈说/教过/说过」）
 - 口播/育儿科普/「第几招」：选一个具体场面演出来，勿保留教程口吻
-- 严格按 scene_contract.beat_chain **与上方事件顺序硬约束、金稿保真 checklist** 顺序推进；妈妈台词 ≤ mom_lines_max
+- 严格按 scene_contract.beat_chain **与上方事件顺序硬约束、金稿对齐 checklist** 顺序推进；妈妈台词 ≤ mom_lines_max
 - **互毁段**：「也/还+撕/弄坏+你的」须由受害方说，且先毁方已实质破坏；speaker 不得调序
 - **M5 妈妈前**：须两拍嘴硬（拒和 + 加码），与是否道歉无关；禁止妈妈一句「都错了」立刻和好
 - **M5 角色绑定**：前文互毁/推搡锁定先动手方与受害方；服软/道歉与拒和/加码**不得同一 speaker**
@@ -115,15 +115,15 @@ _FIX_USER = """校验错误：
 - **修复只增不删**：不得减少总字数、不得删 dialogue 行
 - 对白句数须 ≥12；每句 ≤{max_line} 字，口语化、可拍
 - 妈妈台词须 ≤{mom_lines_max} 句；末句宜姐弟对白（非 hard）
-- 若违反金稿保真 checklist（跳步/自编暖收/互毁缺「也」的依据/M5 无加码），须按 checklist 补拍
+- 若违反金稿对齐 checklist（跳步/自编暖收/互毁缺「也」的依据/M5 无加码），须按 checklist 补拍
 - 禁词须同义改写：{banned_literals}
 - 转述/旁白/括号说明须改为当场对白
 - speaker 非法须改为昭昭/灿灿/妈妈
 只输出 JSON。"""
 
-_FIDELITY_REFINE_SYSTEM = (
-    "你是 gold_chat 保真精修编辑。只改被点到的对白行，其余字段与行数不动。\n"
-    "须落实金稿保真 checklist；M5 立规用「家规/规矩/规定」，勿写「妈妈说过」类转述。\n"
+_ALIGN_REFINE_SYSTEM = (
+    "你是 gold_chat 类型对齐精修编辑。只改被点到的对白行，其余字段与行数不动。\n"
+    "须落实金稿对齐 checklist；M5 立规用「家规/规矩/规定」，勿写「妈妈说过」类转述。\n"
     "互毁：报复句之前须 establish 双方物/作品；改机审标定行，"
     "禁止把前文合并进「也/还弄坏」同一句。\n"
     "M5 立规/拒和/加码各占一句，禁止一句三连；"
@@ -135,10 +135,10 @@ _FIDELITY_REFINE_SYSTEM = (
     "只输出 JSON：{\"fixes\":[{\"no\":行号,\"line\":\"改好后的一句\"}]}"
 )
 
-_FIDELITY_REFINE_USER = """保真机审问题（只改标定行）：
+_ALIGN_REFINE_USER = """对齐机审问题（只改标定行）：
 {issues_block}
 
-{fidelity_block}
+{align_block}
 
 当前 JSON（dialogue 节选）：
 {story_json}
@@ -294,14 +294,17 @@ def format_pass1_regen_feedback(
     beat_chain: list[Any] | None = None,
     conflict_text: str = "",
 ) -> str:
-    """Pass1 重试：把上一轮 structural 机审问题注入 prompt。"""
+    """Pass1 重试：把上一轮 structural 机审 / 结构分问题注入 prompt。"""
     err = str(error or "").strip()
-    if not err.startswith(("fidelity_structural:", "fidelity_refine_failed:")):
+    if err.startswith("structure_score:"):
+        return format_structure_score_feedback(err, story)
+
+    if not err.startswith(("align_structural:", "align_refine_failed:")):
         return ""
 
     issues: list[dict[str, Any]] = []
     if isinstance(story, dict):
-        raw = collect_fidelity_issues(
+        raw = collect_align_issues(
             story,
             structure_type=structure_type,
             mechanism=mechanism,
@@ -312,7 +315,7 @@ def format_pass1_regen_feedback(
         issues = [
             x
             for x in raw
-            if is_structural_fidelity_kind(str(x.get("kind") or ""))
+            if is_structural_align_kind(str(x.get("kind") or ""))
         ]
 
     parts = ["【上一轮 Pass1 失败 · 本轮须修正】"]
@@ -332,6 +335,45 @@ def format_pass1_regen_feedback(
     return "\n".join(parts)
 
 
+def format_structure_score_feedback(
+    error: str,
+    story: dict[str, Any] | None,
+) -> str:
+    """Pass1 重试：上一轮结构分未过线时的修订指令。"""
+    from app.services.daily_story.quality import (
+        STRUCTURE_PUBLISH_MIN,
+        build_quality_revision_hints,
+        structure_score_of,
+    )
+
+    err = str(error or "").strip()
+    score_txt = err.split(":", 1)[-1] if ":" in err else err
+    parts = [
+        f"【上一轮结构分未过线（须≥{STRUCTURE_PUBLISH_MIN}）· 本轮抬结构】",
+        f"机审：结构分 {score_txt}",
+    ]
+    if isinstance(story, dict):
+        quality = story.get("quality") if isinstance(story.get("quality"), dict) else {}
+        struct = structure_score_of(quality)
+        if struct:
+            parts.append(f"当前结构分：{struct}")
+        cons = [
+            str(r)
+            for r in (quality.get("reasons") or [])
+            if any(
+                str(r).startswith(p) or p in str(r)
+                for p in ("缺", "未", "拖", "不足", "勿", "过", "偏", "-")
+            )
+        ][:5]
+        for c in cons:
+            parts.append(f"- {c}")
+        hints = build_quality_revision_hints(quality, story=story).strip()
+        if hints:
+            parts.append(hints[:500])
+    parts.append("禁止另起第二轮；收束槽位落在末段后即停。")
+    return "\n".join(parts)
+
+
 def format_story_beats(beat: list[Any] | None) -> str:
     lines: list[str] = []
     for i, item in enumerate(beat or [], start=1):
@@ -341,7 +383,7 @@ def format_story_beats(beat: list[Any] | None) -> str:
     return "\n".join(lines) if lines else "（无 beat 摘要）"
 
 
-def format_fidelity_block(
+def format_align_block(
     *,
     structure_type: str,
     mechanism: str,
@@ -352,10 +394,10 @@ def format_fidelity_block(
     """注入 gold_chat prompt：金稿关键拍 checklist。"""
     st = str(structure_type or "").strip().upper()
     mech = str(mechanism or "").strip().upper()
-    chain = fidelity_chain(structure_type=st, mechanism=mech)
+    chain = align_chain(structure_type=st, mechanism=mech)
 
     parts = [
-        "【金稿保真 checklist · 扩写时逐步落实，禁止跳步】",
+        "【金稿对齐 checklist · 扩写时逐步落实，禁止跳步】",
         *([f"- {step}" for step in chain]),
     ]
 
@@ -392,7 +434,7 @@ def format_fidelity_block(
     return "\n".join(parts)
 
 
-def format_fidelity_issues_block(issues: list[dict[str, Any]]) -> str:
+def format_align_issues_block(issues: list[dict[str, Any]]) -> str:
     lines: list[str] = []
     for item in issues:
         nos = "、".join(str(n) for n in item.get("lines") or [])

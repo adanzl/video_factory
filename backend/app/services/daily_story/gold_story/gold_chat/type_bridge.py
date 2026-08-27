@@ -231,8 +231,13 @@ _MECH_HINT_APPEND: dict[tuple[str, str], str] = {
     ("M11", "I"): (
         "\n- **M11+I**：中段须写清价值高地/标准一句（如爱学习你爱吗）；"
         "灵魂拷问须不可答/不可接；对方语塞后赢家嘴硬总结；"
+        "语塞须可机读（说不过/哑口/我……/服了/接不上等）；"
+        "**篇幅前置**：争锋+拷问+语塞须写满全文≥240字；"
+        "对方服软或赢家口语制敌（看你还嘴硬/别跟我吵）落在末 1–2 句即停；"
+        "**禁止**念类型标签作台词（勿说「一招制敌」「问倒」「语塞」）；"
+        "**禁止**服软后再用作业监督/你等着/你别得意拉扯凑字；"
         "禁止 A 末四拍反噬/破功；可含双规则拉扯但收束须问倒；"
-        "收束须姐弟现场口语，禁 narration/meta（一招制敌、服不服等评点词）"
+        "收束须姐弟现场口语，禁长段旁白评点"
     ),
     ("M8", "J"): (
         "\n- **M8+J**：一锤威慑须镇住对方，收束对方怂/不敢再顶；"
@@ -271,12 +276,12 @@ _MECH_HINT_APPEND: dict[tuple[str, str], str] = {
 }
 
 
-def type_fidelity_chain(
+def type_align_chain(
     *,
     structure_type: str,
     mechanism: str = "",
 ) -> tuple[str, ...]:
-    """金稿保真扩写链：mechanism+structure 特化 > 结构类型默认。"""
+    """金稿对齐扩写链：mechanism+structure 特化 > 结构类型默认。"""
     st = str(structure_type or "").strip().upper()
     mech = str(mechanism or "").strip().upper()
     if mech and st:
@@ -318,7 +323,7 @@ def structure_type_hint(
         if anchor:
             parts.append(f"- 正文锚：{anchor}")
 
-    chain = type_fidelity_chain(structure_type=st, mechanism=mech)
+    chain = type_align_chain(structure_type=st, mechanism=mech)
     if chain:
         parts.append("- 扩写链（逐步落实，禁止跳步）：")
         parts.extend(f"  · {step}" for step in chain)
@@ -327,7 +332,7 @@ def structure_type_hint(
     if extra:
         parts.append(extra.strip())
 
-    parts.append("- 详拍亦见下方「金稿保真 checklist」与 beat_chain")
+    parts.append("- 详拍亦见下方「金稿对齐 checklist」与 beat_chain")
     return "\n".join(parts)
 
 

@@ -35,9 +35,14 @@
       @selection-change="onSelectionChange" @row-click="onRowClick" @row-dblclick="viewItem">
       <el-table-column type="selection" width="48" />
       <el-table-column prop="id" label="ID" width="60" />
-      <el-table-column label="状态" width="80" align="center">
+      <el-table-column label="状态" width="100" align="center">
         <template #default="{ row }">
-          <el-tag :type="statusTagType(row.status)" size="small">
+          <el-tag v-if="isReimportProcessing(row)" type="warning" size="small">
+            <span class="inline-flex items-center gap-1">
+              处理中
+            </span>
+          </el-tag>
+          <el-tag v-else :type="statusTagType(row.status)" size="small">
             {{ formatStoryStatus(row.status) }}
           </el-tag>
         </template>
@@ -54,11 +59,10 @@
           {{ formatAutoScore(row.auto_score) }}
         </template>
       </el-table-column>
-      <el-table-column label="gold_chat" width="110" align="center">
+      <el-table-column label="对话稿" width="110" align="center">
         <template #default="{ row }">
-          <el-tag v-if="isGoldChatProcessing(row)" type="warning" size="small">
+          <el-tag v-if="isGoldChatConverting(row)" type="warning" size="small">
             <span class="inline-flex items-center gap-1">
-              <el-icon class="is-loading"><Loading /></el-icon>
               处理中
             </span>
           </el-tag>
@@ -118,8 +122,8 @@
       @size-change="onPageSizeChange" />
 
     <GoldChatDetail v-model="showDetail" :gold-story-id="currentId" :source-id="currentSourceId" @closed="fetchItems"
-      @imported="fetchItems" @converted="fetchItems" @reimported="onDetailReimported"
-      @open-transcript="openTranscriptFromDetail" />
+      @imported="fetchItems" @converting="onDetailConverting" @converted="onDetailConverted"
+      @reimported="onDetailReimported" @open-transcript="openTranscriptFromDetail" />
 
     <GoldStoryTranscript v-model="showTranscript" :gold-story-id="transcriptId" :source-id="transcriptSourceId"
       :title="transcriptTitle" />
@@ -128,7 +132,7 @@
 
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from "vue";
-import { Loading, Refresh } from "@element-plus/icons-vue";
+import { Refresh } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { usePageRefresh } from "@/stores/app";
 import { useErrorHandler } from "@/composables/useErrorHandler";
@@ -210,9 +214,12 @@ function statusTagType(
   return "warning";
 }
 
-function clearProcessingTargets() {
+function clearReimportTargets() {
   reimportingIds.value = [];
   reimportingSourceIds.value = [];
+}
+
+function clearConvertingTargets() {
   convertingIds.value = [];
 }
 
@@ -228,11 +235,14 @@ function setReimportTargets(opts: {
   reimportingSourceIds.value = [...new Set(sourceIds)];
 }
 
-function isGoldChatProcessing(row: GoldChatListItem): boolean {
-  if (convertingIds.value.includes(row.id)) return true;
+function isReimportProcessing(row: GoldChatListItem): boolean {
   if (reimportingIds.value.includes(row.id)) return true;
   const sid = String(row.source_id || "").trim();
   return !!sid && reimportingSourceIds.value.includes(sid);
+}
+
+function isGoldChatConverting(row: GoldChatListItem): boolean {
+  return convertingIds.value.includes(row.id);
 }
 
 function stopCollectPolling() {
@@ -342,7 +352,7 @@ async function pollReimportStatus() {
     }
     const wasReimporting = reimporting.value;
     reimporting.value = false;
-    clearProcessingTargets();
+    clearReimportTargets();
     stopReimportPolling();
     if (!wasReimporting) return;
     await fetchItems({ quiet: true });
@@ -404,6 +414,17 @@ function openTranscriptFromDetail(payload: {
   transcriptSourceId.value = payload.sourceId ?? null;
   transcriptTitle.value = payload.title ?? null;
   showTranscript.value = true;
+}
+
+function onDetailConverting() {
+  if (currentId.value != null) {
+    convertingIds.value = [currentId.value];
+  }
+}
+
+function onDetailConverted() {
+  clearConvertingTargets();
+  void fetchItems({ quiet: true });
 }
 
 function onDetailReimported() {
@@ -574,12 +595,12 @@ async function startReimportJob(params: {
       return;
     }
     reimporting.value = false;
-    clearProcessingTargets();
+    clearReimportTargets();
     ElMessage.success(formatReimportDone(res));
     await fetchItems();
   } catch (e) {
     reimporting.value = false;
-    clearProcessingTargets();
+    clearReimportTargets();
     handleError(e, "重新导入失败");
   }
 }

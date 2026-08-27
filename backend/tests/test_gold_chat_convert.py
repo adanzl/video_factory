@@ -100,8 +100,45 @@ def test_normalize_chat_speakers_father_to_mom():
     assert out["dialogue"][0]["speaker"] == "妈妈"
 
 
+def test_gate_gold_chat_structure_score_raises_when_low():
+    with pytest.raises(ValueError, match=r"structure_score:63"):
+        gc._gate_gold_chat_structure_score(
+            {"quality": {"structure_score": 63, "score": 63}}
+        )
+
+
+def test_gate_gold_chat_structure_score_ok():
+    assert gc._gate_gold_chat_structure_score(
+        {"quality": {"structure_score": 80, "score": 80}}
+    ) == 80
+
+
+def test_attach_gold_chat_structure_score_writes_quality():
+    row = _sample_row()
+    chat = _sample_chat()
+    out = gc._attach_gold_chat_structure_score(chat, row)
+    assert isinstance(out.get("quality"), dict)
+    assert out["story_type"] == "A"
+    assert "structure_score" in out["quality"]
+
+
+def _bypass_structure_gate(monkeypatch):
+    monkeypatch.setattr(
+        gc,
+        "_attach_gold_chat_structure_score",
+        lambda chat, _row: {
+            **chat,
+            "quality": {"structure_score": 80, "score": 80, "summary": "结构80"},
+        },
+    )
+    monkeypatch.setattr(gc, "_gate_gold_chat_structure_score", lambda _chat: 80)
+    # 测试夹具对白过不了 A–L 契约机审；跳过 Pass2 对齐精修
+    monkeypatch.setattr(gc, "refine_gold_chat_align", lambda story, **_kw: story)
+
+
 def test_gold_story_to_gold_chat_retries_when_too_short(monkeypatch):
     calls: dict[str, int | bool] = {"n": 0}
+    _bypass_structure_gate(monkeypatch)
 
     def fake_chat(system: str, _user: str) -> dict:
         if "编辑" in system:
@@ -123,6 +160,7 @@ def test_gold_story_to_gold_chat_retries_when_too_short(monkeypatch):
 
 def test_gold_story_to_gold_chat_retries_on_validate_error(monkeypatch):
     calls: dict[str, int | bool] = {"n": 0}
+    _bypass_structure_gate(monkeypatch)
 
     def fake_chat(system: str, _user: str) -> dict:
         if "编辑" in system:
@@ -191,6 +229,8 @@ def test_validate_pass1_shortens_before_full_fix(monkeypatch):
 
 
 def test_gold_story_to_gold_chat(monkeypatch):
+    _bypass_structure_gate(monkeypatch)
+
     def fake_chat(_system: str, _user: str) -> dict:
         return _sample_chat()
 
@@ -198,6 +238,7 @@ def test_gold_story_to_gold_chat(monkeypatch):
     out = gc.gold_story_to_gold_chat(_sample_row())
     assert out["scene_title"] == "关门练功"
     assert len(out["dialogue"]) >= 4
+    assert out["quality"]["structure_score"] == 80
 
 
 def test_export_gold_chat_files(tmp_path, monkeypatch):
