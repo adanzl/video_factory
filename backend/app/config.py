@@ -195,7 +195,9 @@ class Config:
         self.z_image_prompt_extend: bool = _bool("Z_IMAGE_PROMPT_EXTEND")
         self.agnes_api_key: str | None = _opt("AGNES_API_KEY")
         self.agnes_free_api_key: str | None = _opt("AGNES_FREE_API_KEY")
+        self.agnes_cn_free_api_key: str | None = _opt("AGNES_CN_FREE_API_KEY")
         self.agnes_api_base_url: str = os.getenv("AGNES_API_BASE_URL", "https://apihub.agnes-ai.com/v1")
+        self.agnes_api_base_url_cn: str = os.getenv("AGNES_API_BASE_URL_CN", "https://api.agnes-ai.cn/v1")
         self.agnes_image_model: str = os.getenv("AGNES_IMAGE_MODEL", "agnes-image-2.1-flash")
         self.agnes_image_size: str = os.getenv("AGNES_IMAGE_SIZE", "1K")
         self.agnes_image_ratio: str = os.getenv("AGNES_IMAGE_RATIO", "")
@@ -246,7 +248,7 @@ class Config:
         self.deepseek_pro_model: str = os.getenv("DEEPSEEK_PRO_MODEL", "deepseek-v4-pro")
         self.deepseek_max_tokens: int = int(os.getenv("DEEPSEEK_MAX_TOKENS", "32768"))
         self.deepseek_thinking_enabled: bool = _bool("DEEPSEEK_THINKING", default=True)
-        self.agnes_llm_model: str = os.getenv("AGNES_LLM_MODEL", "agnes-2.0-flash")
+        self.agnes_llm_model: str = os.getenv("AGNES_LLM_MODEL", "agnes-2.5-flash")
         self.agnes_llm_max_tokens: int = int(os.getenv("AGNES_LLM_MAX_TOKENS", "32768"))
         self.agnes_vl_model: str = os.getenv("AGNES_VL_MODEL", "agnes-2.5-flash")
         self.llm_image_prompt_batch_size: int = int(os.getenv("LLM_IMAGE_PROMPT_BATCH_SIZE", "4"))
@@ -284,8 +286,6 @@ class Config:
         self.intro_tts_rate: float = float(os.getenv("INTRO_TTS_RATE", "1.25"))
         self.intro_tts_pitch: float = float(os.getenv("INTRO_TTS_PITCH", "1.15"))
 
-        self.bili_username: str | None = _opt("BILI_USERNAME")
-        self.bili_password: str | None = _opt("BILI_PASSWORD")
         self.bili_cookie_path: Path = _path(
             "BILI_COOKIE_PATH", ROOT_DIR / "data/secrets/bilibili/cookies.json"
         )
@@ -461,10 +461,13 @@ class Config:
     def missing_provider_keys(self) -> list[str]:
         """非 mock 时可能影响流水线的常见 Key（仅提示，不强制）。"""
         missing: list[str] = []
-        if not self.deepseek_api_key and not (
-            self.agnes_api_key or self.agnes_free_api_key
-        ):
-            missing.append("DEEPSEEK_API_KEY 或 AGNES_*_API_KEY")
+        has_agnes = bool(
+            self.agnes_api_key
+            or self.agnes_free_api_key
+            or self.agnes_cn_free_api_key
+        )
+        if not self.deepseek_api_key and not has_agnes:
+            missing.append("DEEPSEEK_API_KEY 或任一 AGNES_*_API_KEY")
         if not self.dashscope_api_key and not self.tts_api_key:
             missing.append("DASHSCOPE_API_KEY 或 TTS_API_KEY")
         return missing

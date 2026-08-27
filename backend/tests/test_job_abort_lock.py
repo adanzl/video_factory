@@ -376,6 +376,14 @@ def test_advance_after_merge_enters_publish(app_ctx) -> None:
         status="pending",
         pipeline="chat",
     )
+    repo_job.update_job(
+        int(job["id"]),
+        script_json={
+            "title": "merge then publish",
+            "narration": "测试旁白用于投稿元数据",
+            "dialogue": [{"speaker": "昭昭", "line": "你好"}],
+        },
+    )
     result = _advance_after_stage(int(job["id"]), MergeStage, status="pending")
     assert result is None
     updated = _reload_job(int(job["id"]))

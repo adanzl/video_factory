@@ -100,7 +100,7 @@ def test_bili_session_route_expired(app_ctx, tmp_path, monkeypatch) -> None:
     assert "扫码登录" in body["error"]
 
 
-def test_login_skips_when_session_valid(tmp_path, monkeypatch) -> None:
+def test_password_login_removed_use_qr(tmp_path, monkeypatch) -> None:
     session = BiliSession(tmp_path / "cookies.json")
     monkeypatch.setattr(
         session,
@@ -109,15 +109,8 @@ def test_login_skips_when_session_valid(tmp_path, monkeypatch) -> None:
     )
     result = BiliPasswordLogin(session).login()
     assert result["status"] == "already"
-    assert result["uname"] == "leo"
-
-
-def test_login_requires_credentials(tmp_path, monkeypatch) -> None:
-    session = BiliSession(tmp_path / "cookies.json")
     monkeypatch.setattr(session, "check", lambda: {"ok": False, "message": "cookie missing"})
-    monkeypatch.setattr(config, "bili_username", None)
-    monkeypatch.setattr(config, "bili_password", None)
-    with pytest.raises(ValueError, match="BILI_USERNAME"):
+    with pytest.raises(ValueError, match="扫码登录"):
         BiliPasswordLogin(session).login()
 
 

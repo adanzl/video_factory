@@ -22,13 +22,16 @@ from app.services.segment.clip.clip_render import fit_video_duration
 from app.services.media.ffmpeg_utils import ffmpeg_cmd_start, probe_duration, run_ffmpeg
 from app.services.llm.llm_agnes import (
     AgnesApiKey,
+    AgnesContentPolicyError,
     AgnesI2VError,
     AgnesQuotaExceeded,
     agnes_api_base_from_url,
     agnes_api_keys,
     agnes_apply_host_failover,
     agnes_auth_header,
+    agnes_key_base_url,
     agnes_quota_exceeded_from_exception,
+    agnes_should_switch_key,
     raise_if_agnes_quota,
 )
 from app.utils.job_cancel import job_cancel
@@ -692,7 +695,7 @@ class AgnesClipProvider(ClipProvider):
 
     def _submit_interval_for_key(self, key_label: str) -> float:
         """Agnes 视频提交间隔：接口现为 1 RPM，付费/免费默认都按 60s（可配）。"""
-        if key_label == "free":
+        if key_label in ("free", "cn_free"):
             return max(0.0, self._free_submit_interval)
         return max(0.0, self._submit_interval)
 
@@ -899,26 +902,26 @@ class AgnesClipProvider(ClipProvider):
     def _with_api_key_fallback(self, operation: Callable[[AgnesApiKey], Path]) -> Path:
         keys = agnes_api_keys()
         if not keys:
-            raise AgnesI2VError("AGNES_FREE_API_KEY / AGNES_API_KEY 未配置，无法调用 Agnes 图生视频")
+            raise AgnesI2VError(
+                "AGNES_API_KEY / AGNES_FREE_API_KEY / AGNES_CN_FREE_API_KEY "
+                "未配置，无法调用 Agnes 图生视频"
+            )
 
         last_exc: Exception | None = None
         for idx, key in enumerate(keys):
             try:
                 return operation(key)
-            except AgnesQuotaExceeded as exc:
+            except AgnesContentPolicyError:
+                raise
+            except Exception as exc:
                 last_exc = exc
-            except RuntimeError as exc:
-                if not agnes_quota_exceeded_from_exception(exc):
+                if idx >= len(keys) - 1 or not agnes_should_switch_key(exc):
                     raise
-                last_exc = exc
-
-            if idx >= len(keys) - 1:
-                assert last_exc is not None
-                raise last_exc
-            logger.warning(
-                "agnes %s key quota/rate limit exceeded, switching to backup",
-                key.label,
-            )
+                logger.warning(
+                    "agnes %s key failed (%s), switching to backup",
+                    key.label,
+                    type(exc).__name__,
+                )
 
         raise AgnesI2VError("agnes i2v failed without exception")
 
@@ -934,6 +937,9 @@ class AgnesClipProvider(ClipProvider):
         height: int | None = None,
         segment_index: int | None = None,
     ) -> Path:
+        base = agnes_key_base_url(api_key)
+        self._create_url = f"{base}/videos"
+        self._poll_root = _agnes_api_root(base)
         image_ref = _resolve_i2v_image(image_path)
         headers = agnes_auth_header(api_key.value, extra={"Connection": "close"})
         payload = self._build_i2v_payload(
@@ -1141,8 +1147,6 @@ class AgnesClipProvider(ClipProvider):
         keys = agnes_api_keys()
         if not keys:
             return None
-        url = f"{settings.agnes_api_base_url.rstrip('/')}/chat/completions"
-        host_failover_tried: set[str] = {url}
         content: list[dict] = [{"type": "text", "text": question}]
         content.extend(
             {"type": "image_url", "image_url": {"url": uri}} for uri in frames
@@ -1158,6 +1162,8 @@ class AgnesClipProvider(ClipProvider):
             "max_tokens": 16384,
         }
         for api_key in keys:
+            url = f"{agnes_key_base_url(api_key, settings)}/chat/completions"
+            host_failover_tried: set[str] = {url}
             for attempt in range(_VL_MAX_ATTEMPTS):
                 try:
                     resp = requests.post(

@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import requests
 
-from app.services.llm.llm_agnes import AgnesApiKey, agnes_alternate_host_url
+from app.services.llm.llm_agnes import AgnesApiKey
 from app.services.segment.image.image_agnes import (
     AgnesImageProvider,
     AgnesImageVerifyFailed,
@@ -17,14 +17,6 @@ from app.services.segment.image.image_agnes import (
 def test_to_agnes_size() -> None:
     assert _to_agnes_size("720*1280") == "720x1280"
     assert _to_agnes_size("1920x1080") == "1920x1080"
-
-
-def test_agnes_alternate_host_url() -> None:
-    com = "https://apihub.agnes-ai.com/v1/images/generations"
-    cn = "https://apihub.agnes-ai.cn/v1/images/generations"
-    assert agnes_alternate_host_url(com) == cn
-    assert agnes_alternate_host_url(cn) == com
-    assert agnes_alternate_host_url("https://example.com/v1") is None
 
 
 def test_request_failover_to_cn_on_503() -> None:
@@ -280,12 +272,12 @@ def test_generate_raises_after_verify_exhausted(tmp_path: Path) -> None:
             assert exc.output_path == output
 
 
-def test_generate_verify_retry_rotates_keys(tmp_path: Path) -> None:
+def test_generate_verify_retry_keeps_same_key(tmp_path: Path) -> None:
     provider = AgnesImageProvider()
     output = tmp_path / "1.png"
     output.write_bytes(b"png")
-    free = AgnesApiKey("free", "free-key")
-    primary = AgnesApiKey("primary", "main-key")
+    free = AgnesApiKey("free", "free-key", "https://apihub.agnes-ai.com/v1")
+    primary = AgnesApiKey("primary", "main-key", "https://apihub.agnes-ai.com/v1")
 
     with (
         patch(
@@ -302,8 +294,8 @@ def test_generate_verify_retry_rotates_keys(tmp_path: Path) -> None:
     assert result == output
     assert mock_gen.call_count == 3
     used = [c.args[0].label for c in mock_gen.call_args_list]
-    assert used == ["primary", "free", "primary"]
-
+    # 质检失败不换 Key，始终用 sticky 的 primary
+    assert used == ["primary", "primary", "primary"]
 
 def test_parse_item_answer_handles_bu_shi() -> None:
     assert AgnesImageProvider._parse_item_answer("不是") == "no"

@@ -107,20 +107,26 @@ def _pick_host(prefix: list[str]) -> tuple[str, int | None]:
 
 
 def _login_local(*, force: bool) -> dict:
-    from app.services.publish.bilibili.login import BiliPasswordLogin
     from app.services.publish.bilibili.session import BiliSession
 
+    if force:
+        raise RuntimeError("账号密码登录已移除，请先在前端扫码登录，再同步 Cookie")
+
     session = BiliSession()
-    result = BiliPasswordLogin(session).login(force=force)
+    status = session.check()
+    if not status.get("ok"):
+        raise RuntimeError(
+            f"本地 Cookie 无效：{status.get('message') or '未登录'}；"
+            "请先在前端投稿页扫码登录"
+        )
     logger.info(
-        "local login %s: %s mid=%s",
-        result.get("status"),
-        result.get("uname"),
-        result.get("mid"),
+        "local cookie ok: %s mid=%s",
+        status.get("uname"),
+        status.get("mid"),
     )
     if not session.path.is_file():
         raise RuntimeError(f"cookie 文件不存在: {session.path}")
-    return {"session": session, **result}
+    return {"session": session, "status": "already", **status}
 
 
 def _sync_cookie(local_path: Path, *, prefix: list[str], host: str, port: int | None) -> None:

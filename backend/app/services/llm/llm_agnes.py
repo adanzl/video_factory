@@ -32,28 +32,90 @@ class AgnesContentPolicyError(RuntimeError, JobStageFailureError):
 class AgnesApiKey:
     label: str
     value: str
+    # 与 Key 绑定的 API 根路径（国际 / 国内站不同）
+    base_url: str = ""
 
-def agnes_api_keys(settings: Settings | None=None) -> list[AgnesApiKey]:
-    """返回 Agnes Key 列表：优先 AGNES_API_KEY（收费），限流后再切 FREE。"""
+
+def agnes_api_keys(settings: Settings | None = None) -> list[AgnesApiKey]:
+    """Key 链：付费 → 国际免费 → 国内免费；各自绑定 base_url。"""
     cfg = settings or get_settings()
+    intl = (cfg.agnes_api_base_url or "").rstrip("/")
+    cn = (getattr(cfg, "agnes_api_base_url_cn", None) or "").rstrip("/") or intl
     keys: list[AgnesApiKey] = []
     primary = cfg.agnes_api_key
     free = cfg.agnes_free_api_key
+    cn_free = getattr(cfg, "agnes_cn_free_api_key", None)
+    seen: set[str] = set()
     if primary:
-        keys.append(AgnesApiKey('primary', primary))
-    if free and free != primary:
-        keys.append(AgnesApiKey('free', free))
+        keys.append(AgnesApiKey("primary", primary, intl))
+        seen.add(primary)
+    if free and free not in seen:
+        keys.append(AgnesApiKey("free", free, intl))
+        seen.add(free)
+    if cn_free and cn_free not in seen:
+        keys.append(AgnesApiKey("cn_free", cn_free, cn))
     return keys
 
-def agnes_auth_header(api_key: str, *, extra: dict[str, str] | None=None) -> dict[str, str]:
-    headers = {'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'}
+
+def agnes_key_base_url(api_key: AgnesApiKey, settings: Settings | None = None) -> str:
+    """取 Key 绑定地址；缺省回落国际 base_url。"""
+    if api_key.base_url:
+        return api_key.base_url.rstrip("/")
+    cfg = settings or get_settings()
+    return (cfg.agnes_api_base_url or "").rstrip("/")
+
+
+def agnes_auth_header(api_key: str, *, extra: dict[str, str] | None = None) -> dict[str, str]:
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     if extra:
         headers.update(extra)
     return headers
 
-_AGNES_COM_HOST = 'apihub.agnes-ai.com'
-_AGNES_CN_HOST = 'apihub.agnes-ai.cn'
-_AGNES_API_SUFFIXES = ('/chat/completions', '/images/generations', '/videos')
+
+def agnes_should_switch_key(
+    exc: BaseException | None = None,
+    *,
+    status_code: int | None = None,
+    body: dict | str | None = None,
+    message: str | None = None,
+) -> bool:
+    """4xx/5xx/配额/限流/超时 → 换下一把 Key。提示词违规不换（上层重生）。"""
+    if isinstance(exc, AgnesContentPolicyError):
+        return False
+    code = status_code
+    if code is None and isinstance(exc, requests.HTTPError) and exc.response is not None:
+        code = exc.response.status_code
+        if body is None:
+            try:
+                body = exc.response.json()
+            except Exception:
+                body = (exc.response.text or "")[:500]
+    msg = message or (str(exc) if exc else None)
+    if is_agnes_content_policy(body=body, message=msg):
+        return False
+    if isinstance(exc, AgnesQuotaExceeded):
+        return True
+    if exc is not None and agnes_quota_exceeded_from_exception(exc):
+        return True
+    if is_agnes_quota_exceeded(status_code=code, body=body, message=msg):
+        return True
+    if code is not None and code >= 400:
+        return True
+    if isinstance(exc, (requests.Timeout, requests.ConnectionError)):
+        return True
+    if isinstance(exc, (AgnesI2VError, AgnesImageError)):
+        return True
+    text = str(exc or "")
+    if "last_status=" in text:
+        return True
+    if "after" in text and "retries" in text:
+        return True
+    return False
+
+
+_AGNES_COM_HOST = "apihub.agnes-ai.com"
+_AGNES_CN_HOST = "apihub.agnes-ai.cn"
+_AGNES_API_SUFFIXES = ("/chat/completions", "/images/generations", "/videos")
 
 
 def agnes_alternate_host_url(url: str) -> str | None:
@@ -70,28 +132,28 @@ def agnes_is_apihub_url(url: str) -> bool:
 
 
 def agnes_api_base_from_url(url: str) -> str | None:
-    """从 apihub 完整 API URL 提取 /v1 根路径。"""
-    if not agnes_is_apihub_url(url):
-        return None
+    """从完整 API URL 提取 /v1 根路径。"""
     for suffix in _AGNES_API_SUFFIXES:
         if suffix in url:
             return url.rsplit(suffix, 1)[0]
-    if '/v1' in url:
-        idx = url.find('/v1')
-        return url[:idx + 3]
+    if "/v1" in url:
+        idx = url.find("/v1")
+        return url[: idx + 3]
     return None
 
 
 def agnes_persist_base_url(url: str) -> str | None:
-    """切换进程内 AGNES_API_BASE_URL，便于后续请求走备用域名。"""
+    """进程内记下当前生效的国际 base_url（兼容旧域名 failover）。"""
     base = agnes_api_base_from_url(url)
     if not base:
         return None
     settings = get_settings()
-    current = settings.agnes_api_base_url.rstrip('/')
-    if current != base:
+    current = settings.agnes_api_base_url.rstrip("/")
+    if current != base and (
+        _AGNES_COM_HOST in base or _AGNES_CN_HOST in base
+    ):
         settings.agnes_api_base_url = base
-        logger.info('agnes api base_url switched to %s', base)
+        logger.info("agnes api base_url switched to %s", base)
     return base
 
 
@@ -100,17 +162,17 @@ def agnes_try_failover_host(
     tried: set[str],
     *,
     reason: str,
-    tag: str = '',
+    tag: str = "",
 ) -> str | None:
-    """503/超时等在 apihub .com/.cn 间切换一次。"""
+    """503/超时等在 apihub .com/.cn 间切换一次（同 Key 内兜底）。"""
     if not agnes_is_apihub_url(url):
         return None
     alt = agnes_alternate_host_url(url)
     if not alt or alt in tried:
         return None
-    prefix = f'{tag} ' if tag else ''
+    prefix = f"{tag} " if tag else ""
     logger.warning(
-        '%sagnes %s on %s, failover to alternate domain %s',
+        "%sagnes %s on %s, failover to alternate domain %s",
         prefix,
         reason,
         url,
@@ -125,7 +187,7 @@ def agnes_apply_host_failover(
     tried: set[str],
     *,
     reason: str,
-    tag: str = '',
+    tag: str = "",
     on_switch: Callable[[str], None] | None = None,
 ) -> str | None:
     """切换备用域名并持久化 base_url；on_switch 可同步 provider 端点。"""
@@ -248,9 +310,12 @@ def _post_chat(*, api_key: AgnesApiKey, base_url: str, payload: dict[str, Any], 
                     body = resp.json()
                 except Exception:
                     body = resp.text[:500]
+                raise_if_agnes_content_policy(status_code=resp.status_code, body=body)
                 raise_if_agnes_quota(status_code=resp.status_code, body=body)
             resp.raise_for_status()
             return resp
+        except AgnesContentPolicyError:
+            raise
         except AgnesQuotaExceeded:
             raise
         except requests.RequestException as exc:
@@ -278,29 +343,39 @@ def _chat_with_key_fallback(*, system: str, user: str, max_tokens: int | None=No
     settings = get_settings()
     keys = agnes_api_keys(settings)
     if not keys:
-        raise RuntimeError('AGNES_FREE_API_KEY / AGNES_API_KEY 未配置，无法使用 Agnes LLM')
+        raise RuntimeError(
+            'AGNES_API_KEY / AGNES_FREE_API_KEY / AGNES_CN_FREE_API_KEY 未配置，无法使用 Agnes LLM'
+        )
     limit = settings.agnes_llm_max_tokens if max_tokens is None else max_tokens
     payload = _build_chat_payload(model=settings.agnes_llm_model, system=system, user=user, max_tokens=limit)
     last_exc: Exception | None = None
     for idx, api_key in enumerate(keys):
+        base = agnes_key_base_url(api_key, settings)
         try:
-            resp = _post_chat(api_key=api_key, base_url=settings.agnes_api_base_url, payload=payload, max_retries=settings.agnes_http_max_retries, connect_timeout=settings.agnes_http_connect_timeout_sec, read_timeout=settings.agnes_http_submit_read_timeout_sec)
+            resp = _post_chat(
+                api_key=api_key,
+                base_url=base,
+                payload=payload,
+                max_retries=settings.agnes_http_max_retries,
+                connect_timeout=settings.agnes_http_connect_timeout_sec,
+                read_timeout=settings.agnes_http_submit_read_timeout_sec,
+            )
             choice = resp.json()['choices'][0]
             finish = choice.get('finish_reason')
             content = choice.get('message', {}).get('content') or ''
             if finish == 'length':
                 logger.warning('Agnes LLM response truncated (finish_reason=length), max_tokens=%d model=%s', limit, settings.agnes_llm_model)
             return (content, finish)
-        except AgnesQuotaExceeded as exc:
-            last_exc = exc
-            if idx < len(keys) - 1:
-                logger.warning('agnes llm %s key quota/rate limit exceeded, switching to backup', api_key.label)
-                continue
+        except AgnesContentPolicyError:
             raise
         except Exception as exc:
-            if agnes_quota_exceeded_from_exception(exc) and idx < len(keys) - 1:
-                logger.warning('agnes llm %s key quota/rate limit exceeded, switching to backup', api_key.label)
-                last_exc = exc
+            last_exc = exc
+            if idx < len(keys) - 1 and agnes_should_switch_key(exc):
+                logger.warning(
+                    'agnes llm %s key failed (%s), switching to backup',
+                    api_key.label,
+                    type(exc).__name__,
+                )
                 continue
             raise
     if last_exc:

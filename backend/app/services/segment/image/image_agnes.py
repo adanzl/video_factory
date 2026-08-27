@@ -22,12 +22,15 @@ from app.services.daily_story.speaker import DAILY_STORY_SPEAKER_NAMES
 from app.utils.job_cancel import job_cancel
 from app.services.llm.llm_agnes import (
     AgnesApiKey,
+    AgnesContentPolicyError,
     AgnesImageError,
     AgnesQuotaExceeded,
     agnes_api_keys,
     agnes_apply_host_failover,
     agnes_auth_header,
+    agnes_key_base_url,
     agnes_quota_exceeded_from_exception,
+    agnes_should_switch_key,
     raise_if_agnes_content_policy,
     raise_if_agnes_quota,
 )
@@ -107,13 +110,12 @@ class _AgnesImageKeyFailover(AgnesImageError):
 
 
 def _should_switch_image_key(exc: BaseException) -> bool:
-    """生图切备用 Key：配额/限流，或同 Key 重试耗尽后的 5xx。"""
-    if isinstance(exc, (_AgnesImageKeyFailover, AgnesQuotaExceeded)):
+    """生图切备用 Key：4xx/5xx/配额/限流；提示词违规不换。"""
+    if isinstance(exc, AgnesContentPolicyError):
+        return False
+    if isinstance(exc, _AgnesImageKeyFailover):
         return True
-    if agnes_quota_exceeded_from_exception(exc):
-        return True
-    text = str(exc)
-    return any(f"last_status={code}" in text for code in _RETRYABLE)
+    return agnes_should_switch_key(exc)
 
 
 def _agnes_image_gen_keys(settings=None) -> list[AgnesApiKey]:
@@ -524,9 +526,10 @@ class AgnesImageProvider(ImageProvider):
                 len(prompt),
                 prompt,
             )
+            gen_url = f"{agnes_key_base_url(api_key)}/images/generations"
             resp = self._request(
                 "POST",
-                self._generation_url,
+                gen_url,
                 api_key=api_key.value,
                 json=payload,
                 max_retries=max_retries,
@@ -602,14 +605,16 @@ class AgnesImageProvider(ImageProvider):
             if get_settings().mock_mode:
                 return self._fallback.generate(prompt, output_path, size=size)
             raise RuntimeError(
-                "Agnes API Key 未配置（AGNES_API_KEY / AGNES_FREE_API_KEY）；"
-                "非 MOCK_MODE 下拒绝静默出占位图"
+                "Agnes API Key 未配置（AGNES_API_KEY / AGNES_FREE_API_KEY / "
+                "AGNES_CN_FREE_API_KEY）；非 MOCK_MODE 下拒绝静默出占位图"
             )
 
         exhausted: set[str] = set()
         result: Path | None = None
         last_exc: Exception | None = None
         last_key: AgnesApiKey | None = None
+        # 质检失败不换 Key：沿用上一把成功出图的 key
+        sticky_key: AgnesApiKey | None = None
 
         for attempt in range(_VERIFY_MAX_ATTEMPTS):
             self._raise_if_job_cancelled()
@@ -617,13 +622,16 @@ class AgnesImageProvider(ImageProvider):
             if not usable:
                 break
 
-            # 校验失败重试时轮询换 key；本轮若撞配额/5xx 则同 attempt 内换下一个
-            start = attempt % len(usable)
+            if sticky_key and sticky_key.value not in exhausted:
+                ordered = [sticky_key] + [
+                    k for k in usable if k.value != sticky_key.value
+                ]
+            else:
+                ordered = usable
+
             generated = False
-            for offset in range(len(usable)):
-                key = usable[(start + offset) % len(usable)]
+            for key in ordered:
                 last_key = key
-                # 还有其它未耗尽 Key 时：5xx 首次失败即切，不在同 Key 上磨
                 has_backup = any(
                     k.value != key.value and k.value not in exhausted for k in keys
                 )
@@ -641,8 +649,11 @@ class AgnesImageProvider(ImageProvider):
                         ref_images=ref_images,
                         max_retries=key_retries,
                     )
+                    sticky_key = key
                     generated = True
                     break
+                except AgnesContentPolicyError:
+                    raise
                 except Exception as exc:
                     if _should_switch_image_key(exc):
                         exhausted.add(key.value)
@@ -653,10 +664,11 @@ class AgnesImageProvider(ImageProvider):
                         )
                         if nxt is not None:
                             logger.warning(
-                                "%s agnes %s key quota/rate/5xx exhausted, "
+                                "%s agnes %s key failed (%s), "
                                 "switching to backup (%s)",
                                 log_tag,
                                 key.label,
+                                type(exc).__name__,
                                 nxt.label,
                             )
                             continue
@@ -703,11 +715,6 @@ class AgnesImageProvider(ImageProvider):
                 )
                 return result
             more = attempt + 1 < _VERIFY_MAX_ATTEMPTS
-            next_usable = [k for k in keys if k.value not in exhausted]
-            next_label = ""
-            if more and next_usable:
-                next_key = next_usable[(attempt + 1) % len(next_usable)]
-                next_label = f", next_key={next_key.label}"
             logger.warning(
                 "%s agnes image verify FAILED (%s key, attempt=%s/%s, "
                 "prompt_chars=%s, speakers=%s)%s",
@@ -717,7 +724,7 @@ class AgnesImageProvider(ImageProvider):
                 _VERIFY_MAX_ATTEMPTS,
                 len(prompt),
                 expected_speakers,
-                f", regenerating…{next_label}" if more else ", raise for prompt re_gen",
+                ", regenerating with same key…" if more else ", raise for prompt re_gen",
             )
 
         if result is not None and result.exists():
@@ -1241,14 +1248,16 @@ class AgnesImageProvider(ImageProvider):
                 return True
 
             log_tag = f"[out={image_path.name}]"
-            verify_url = f"{settings.agnes_api_base_url.rstrip('/')}/chat/completions"
-            host_failover_tried: set[str] = {verify_url}
             for retry in range(_VERIFY_RETRY_COUNT + 1):
                 self._raise_if_job_cancelled()
                 for api_key in keys:
                     try:
                         headers = agnes_auth_header(api_key.value)
+                        verify_url = (
+                            f"{agnes_key_base_url(api_key, settings)}/chat/completions"
+                        )
                         url = verify_url
+                        host_failover_tried: set[str] = {verify_url}
                         payload = {
                             "model": settings.agnes_vl_model,
                             "messages": [

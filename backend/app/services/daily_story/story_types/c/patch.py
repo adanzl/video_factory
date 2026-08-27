@@ -422,6 +422,8 @@ def patch_c_stray_rebuttal(story: dict) -> list[str]:
     rest = line[m.end():].strip()
     if not rest or len(rest) < 4:
         return notes  # 删完只剩光杆/太短，不动（交给 LLM 重试）
+    from app.services.daily_story.prompts import DAILY_STORY_BODY_CHARS_MIN
+
     total = sum(len(str(d.get("line") or "")) for d in dialogue)
     if total - (len(line) - len(rest)) < DAILY_STORY_BODY_CHARS_MIN:
         return notes  # 别把正文削到硬卡下限以下
