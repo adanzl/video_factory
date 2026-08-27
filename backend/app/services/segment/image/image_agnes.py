@@ -66,6 +66,9 @@ _DAILY_LOOK = {
 _DAILY_ARM_IDS = {"昭昭": "zhao_arms", "灿灿": "can_arms", "妈妈": "mom_arms"}
 _ARM_COUNT_IDS = frozenset({"zhao_arms", "can_arms", "mom_arms", "extra_arms"})
 _MAX_ARMS_PER_PERSON = 2
+_DAILY_LEG_IDS = {"昭昭": "zhao_legs", "灿灿": "can_legs", "妈妈": "mom_legs"}
+_LEG_COUNT_IDS = frozenset({"zhao_legs", "can_legs", "mom_legs", "extra_legs"})
+_MAX_LEGS_PER_PERSON = 2
 
 
 def _arm_count_question(look: str) -> str:
@@ -77,6 +80,19 @@ def _arm_count_question(look: str) -> str:
         "明显多出来的第3只手必须计入）。"
         "剪柄、纸边、遥控器不算。"
         "不要用「人只有两只胳膊」的常识改口。"
+        "只回答阿拉伯数字"
+    )
+
+
+def _leg_count_question(look: str) -> str:
+    """腿条数问法：要数字。是/否和「人只有两腿」先验都会漏三腿。"""
+    return (
+        f"只看{look}本人。"
+        "该角色身上凡是末端呈人脚或鞋子形态的肢端都算一条腿"
+        "（起点是髋、臀、膝盖或桌下都要数，"
+        "明显多出来的第3条腿必须计入）。"
+        "桌腿、椅腿、裤褶不算。"
+        "不要用「人只有两条腿」的常识改口。"
         "只回答阿拉伯数字"
     )
 # 拼装器写入 image_prompt 的首个说话人张嘴标记（须与 image_prompt.py 一致）
@@ -751,6 +767,9 @@ class AgnesImageProvider(ImageProvider):
         "项「手臂」：只报该角色末端呈人手形态的肢端条数，只答阿拉伯数字；"
         "起点是肩膀/腋下/腰侧/胸口/身前都要数，多出来的第3只手必须计入；"
         "剪柄、纸边不算；不要用「人只有两臂」改口；不要用是/否。"
+        "项「腿」：只报该角色末端呈人脚或鞋子形态的肢端条数，只答阿拉伯数字；"
+        "起点是髋/臀/膝盖/桌下都要数，多出来的第3条腿必须计入；"
+        "桌腿、椅腿、裤褶不算；不要用「人只有两腿」改口；不要用是/否。"
         "项「嘴型」：只看该项写明角色本人是否张着嘴，微张即算张（答是）；"
         "完全闭合才答「否」；其他人物的嘴型与本项无关。"
         "项「人数」：数清晰完整的主体人头，只回答阿拉伯数字；"
@@ -1028,7 +1047,7 @@ class AgnesImageProvider(ImageProvider):
             speakers=speakers,
             content_style=content_style,
         )
-        # 手臂条数：是/否不可靠（分镜2 昭昭三臂仍答「是」）。按人报数字。
+        # 手臂/腿条数：是/否不可靠（三臂/三腿仍答「是」）。按人报数字。
         if content_style == CONTENT_STYLE_DAILY_STORY:
             for name in _DAILY_SPEAKER_ORDER:
                 if name in allowed and name in _DAILY_ARM_IDS:
@@ -1038,6 +1057,14 @@ class AgnesImageProvider(ImageProvider):
                             _arm_count_question(_DAILY_LOOK[name]),
                         )
                     )
+            for name in _DAILY_SPEAKER_ORDER:
+                if name in allowed and name in _DAILY_LEG_IDS:
+                    items.append(
+                        (
+                            _DAILY_LEG_IDS[name],
+                            _leg_count_question(_DAILY_LOOK[name]),
+                        )
+                    )
         else:
             items.append(
                 (
@@ -1045,6 +1072,14 @@ class AgnesImageProvider(ImageProvider):
                     "画面中手臂最多的那个人，末端呈人手形态的肢端一共几条？"
                     "起点是肩膀/腋下/腰侧/胸口/身前都要数；剪柄纸边不算。"
                     "不要用「人只有两臂」改口。只回答阿拉伯数字",
+                )
+            )
+            items.append(
+                (
+                    "extra_legs",
+                    "画面中腿最多的那个人，末端呈人脚或鞋子形态的肢端一共几条？"
+                    "起点是髋/臀/膝盖/桌下都要数；桌腿椅腿裤褶不算。"
+                    "不要用「人只有两腿」改口。只回答阿拉伯数字",
                 )
             )
         cast_max: int | None = None
@@ -1111,6 +1146,7 @@ class AgnesImageProvider(ImageProvider):
         单项解析失败仍跳过（避免误杀）；但若整段一个有效项都没有，
         视为质检失效，返回 False 触发重生（避免全 unknown 放行）。
         cast_count 须报数字，并由 cast_max 卡上限（是/否已不可靠）。
+        手臂/腿条数须报数字，超过 2 失败。
         其余项：答「是」通过；答「否」失败
         （zhao_hair「无昭昭」、can_hair「无灿灿」、mom_adult「无妈妈」放行）。
         """
@@ -1144,6 +1180,14 @@ class AgnesImageProvider(ImageProvider):
                     return False
                 parsed_any = True
                 if n > _MAX_ARMS_PER_PERSON:
+                    return False
+                continue
+            if cid in _LEG_COUNT_IDS:
+                n = AgnesImageProvider._parse_person_count(raw)
+                if n is None:
+                    return False
+                parsed_any = True
+                if n > _MAX_LEGS_PER_PERSON:
                     return False
                 continue
             verdict = AgnesImageProvider._parse_item_answer(raw)
@@ -1191,7 +1235,7 @@ class AgnesImageProvider(ImageProvider):
             if raw is None:
                 parts.append(f"{cid}=unknown")
                 continue
-            if cid == "cast_count" or cid in _ARM_COUNT_IDS:
+            if cid == "cast_count" or cid in _ARM_COUNT_IDS or cid in _LEG_COUNT_IDS:
                 n = AgnesImageProvider._parse_person_count(raw)
                 parts.append(f"{cid}={n if n is not None else 'unknown'}")
                 continue
