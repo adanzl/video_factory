@@ -13,6 +13,12 @@ from app.services.daily_story.story_types.j.validate import (
 
 RE_MOM_USELESS = re.compile(r"妈妈.*没用|答应没用|妈妈都答应")
 RE_REPEAT_VETO = re.compile(r"我说了算|不行就不行|我说不行")
+_RE_J_HOLD = re.compile(r"我说了算")
+
+HUMOR_ISSUE_CAPS: tuple[tuple[str, int], ...] = (
+    ("J我说了算复读", 12),
+    ("J否决同构复读", 10),
+)
 
 
 def collect_j_humor_issues(
@@ -33,6 +39,12 @@ def collect_j_humor_issues(
         issues.append("J缺对方怂退")
     if not RE_HOLD.search(tail4):
         issues.append("J末段缺镇住收场")
+    hold_n = len(_RE_J_HOLD.findall(body))
+    if hold_n >= 3:
+        issues.append("J我说了算复读过多")
+    veto_hits = len(RE_REPEAT_VETO.findall(body))
+    if veto_hits >= 5:
+        issues.append("J否决同构复读")
     return issues
 
 
@@ -57,7 +69,8 @@ def score_funniness_tail(
         pts += 2
         pros.append("哀求加码")
     veto_hits = len(RE_REPEAT_VETO.findall(body))
-    if veto_hits >= 2:
+    hold_n = len(_RE_J_HOLD.findall(body))
+    if veto_hits >= 2 and hold_n <= 2:
         pts += 2
         pros.append("反复否决")
     if RE_SURRENDER.search(body) and RE_HOLD.search(tail):
