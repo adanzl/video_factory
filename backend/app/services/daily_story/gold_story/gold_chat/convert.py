@@ -413,6 +413,47 @@ def _pad_gold_chat_line(
     return _pad_dialogue_line(line, need, used, tails=tails)
 
 
+def _gold_chat_pad_indices(
+    dialogue: list[Any],
+    *,
+    story_type: str,
+) -> list[int]:
+    """可垫字行号；I 类排除收束段（首次制敌/服软后）与末 2 句。"""
+    indices = [
+        i
+        for i, item in enumerate(dialogue)
+        if isinstance(item, dict)
+        and str(item.get("speaker") or "") in {"昭昭", "灿灿"}
+    ] or list(range(len(dialogue)))
+    st = str(story_type or "").strip().upper()
+    if st != "I":
+        return indices
+    from app.services.daily_story.story_types.i.validate import (
+        RE_WIN_STUBBORN,
+        find_i_close_index,
+    )
+
+    lines = [
+        str(item.get("line") or "")
+        for item in dialogue
+        if isinstance(item, dict)
+    ]
+    close_idx = find_i_close_index(lines)
+    protected: set[int] = set()
+    for i, item in enumerate(dialogue):
+        if isinstance(item, dict) and RE_WIN_STUBBORN.search(
+            str(item.get("line") or "")
+        ):
+            protected.add(i)
+    if close_idx >= 0:
+        protected.update(range(close_idx, len(dialogue)))
+    if len(dialogue) > 2:
+        protected.add(len(dialogue) - 1)
+        protected.add(len(dialogue) - 2)
+    kept = [i for i in indices if i not in protected]
+    return kept or indices
+
+
 def _patch_gold_chat_near_miss_chars(story: dict[str, Any]) -> tuple[dict[str, Any], bool]:
     """240 hard 不变；差 ≤3 字时本地垫字收口。"""
     import copy
@@ -427,12 +468,8 @@ def _patch_gold_chat_near_miss_chars(story: dict[str, Any]) -> tuple[dict[str, A
     if not isinstance(dialogue, list) or not dialogue:
         return story, False
 
-    indices = [
-        i
-        for i, item in enumerate(dialogue)
-        if isinstance(item, dict)
-        and str(item.get("speaker") or "") in {"昭昭", "灿灿"}
-    ] or list(range(len(dialogue)))
+    story_type = str(story.get("story_type") or "").strip().upper()
+    indices = _gold_chat_pad_indices(dialogue, story_type=story_type)
 
     changed = False
     used_pads: set[str] = set()
@@ -474,12 +511,9 @@ def _pad_gold_chat_to_min_chars(
     if not isinstance(dialogue, list) or not dialogue:
         return story, False
 
-    indices = [
-        i
-        for i, item in enumerate(dialogue)
-        if isinstance(item, dict)
-        and str(item.get("speaker") or "") in {"昭昭", "灿灿"}
-    ] or list(range(len(dialogue)))
+    indices = _gold_chat_pad_indices(
+        dialogue, story_type=str(story.get("story_type") or "")
+    )
 
     changed = False
     used_pads: set[str] = set()
@@ -641,6 +675,10 @@ def _refine_after_normalize(
 
     refined, _ = _gold_chat_post_pad_cleanup(refined)
     refined, _ = patch_sanitize_pad_suffix(refined)
+    if str(refined.get("story_type") or "").strip().upper() == "I":
+        from app.services.daily_story.story_types.i.patch import patch_i_body
+
+        patch_i_body(refined)
     return refined
 
 
