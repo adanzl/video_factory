@@ -1866,3 +1866,85 @@ def test_scrub_daily_visual_brief_strips_labels_and_outfit_props():
     assert "蓝色T恤" not in cleaned
     assert "衣服" in cleaned
     assert "叉腰瞪眼" in cleaned
+
+
+def test_rewrite_shared_grip_to_ends_s4_two_people_hold_one_remote():
+    """两人共持单件道具时，S4 的「握遥控器」改写为「握遥控器一端/另一端」。
+
+    对应 job88 2-9 镜「左手握遥控器 + 右手握遥控器」被 T2I 画成两个遥控器的问题。
+    """
+    from app.services.script.image_prompt import (
+        _rewrite_shared_grip_to_ends_s4,
+        assemble_daily_t2i_prompt,
+    )
+
+    s4 = (
+        "画面左边是昭昭，左手握遥控器，右手食指指向灿灿，皱眉瞪眼。"
+        "画面右边是灿灿，右手握遥控器，左手叉腰，撇嘴瞪眼"
+    )
+    states = [
+        {
+            "object": "遥控器",
+            "count": "一个",
+            "form": "两端被两人各握一端",
+            "holder": "昭昭与灿灿",
+            "position": "昭昭与灿灿手中",
+        }
+    ]
+    out = _rewrite_shared_grip_to_ends_s4(s4, states)
+    assert "左手握遥控器一端" in out
+    assert "右手握遥控器另一端" in out
+    assert out.count("握遥控器一端") == 1
+    assert out.count("握遥控器另一端") == 1
+    # 完整拼装：S4 已改写，S5 数量一致，不得出现两个独立的「握遥控器」
+    seg = {
+        "segment_index": 2,
+        "shot_type": "中近景",
+        "speakers": ["昭昭", "灿灿"],
+        "visual_brief": s4,
+        "visual_subjects": [
+            {
+                "name": "昭昭",
+                "posture": "坐在沙发上，身体前倾",
+                "action": "左手握遥控器，右手食指指向灿灿",
+                "expression": "皱眉瞪眼",
+            },
+            {
+                "name": "灿灿",
+                "posture": "坐在沙发上，身体后仰",
+                "action": "右手握遥控器，左手叉腰",
+                "expression": "撇嘴瞪眼",
+            },
+        ],
+        "object_states": states,
+        "scene_anchors": ["沙发"],
+    }
+    prompt = assemble_daily_t2i_prompt(seg, setting="客厅，沙发上", scene_anchor="客厅，沙发")
+    assert "左手握遥控器一端" in prompt
+    assert "右手握遥控器另一端" in prompt
+    assert prompt.count("一个遥控器在昭昭与灿灿手中") == 1
+
+
+def test_rewrite_shared_grip_skips_when_ends_already_written():
+    """seg1 已写「握住遥控器一端/另一端」时，不重复改写。"""
+    from app.services.script.image_prompt import (
+        _rewrite_shared_grip_to_ends_s4,
+    )
+
+    s4 = (
+        "画面左边是昭昭，左手握住遥控器一端，皱眉瞪眼。"
+        "画面右边是灿灿，右手握住遥控器另一端，瞪眼"
+    )
+    states = [
+        {
+            "object": "遥控器",
+            "count": "一个",
+            "form": "两端被两人各握一端",
+            "holder": "昭昭与灿灿",
+            "position": "昭昭与灿灿手中",
+        }
+    ]
+    out = _rewrite_shared_grip_to_ends_s4(s4, states)
+    assert out == s4
+    assert "握住遥控器一端" in out
+    assert "握住遥控器另一端" in out

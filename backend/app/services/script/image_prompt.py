@@ -232,6 +232,57 @@ def _strip_s4_object_state_overlap(s4: str, states: list) -> str:
     return "".join(kept).strip("，,；;。 ")
 
 
+_SHARED_SINGLE_COUNT_RE = re.compile(
+    r"^(一个|一只|一把|一根|一块|一枚|一张|一支|一条|一件|一册|一本|一台|一座)"
+)
+
+
+def _rewrite_shared_grip_to_ends_s4(s4: str, states: list) -> str:
+    """两人共持单件道具时，把 S4 前两处「握{obj}」改写为「握{obj}一端/另一端」。
+
+    object_states 已归一为 count=一个 + holder=两人（如「昭昭与灿灿」），
+    S4 若写「左手握遥控器」「右手握遥控器」两处独立持物，T2I 会画成两个遥控器；
+    改为「握遥控器一端」「握遥控器另一端」与 S5「两端被两人各握一端」对齐。
+    S4 已写「一端/另一端」时跳过，避免二次改写。
+    """
+    if not s4 or not states:
+        return s4
+    from app.services.script.visual_brief import (
+        _collapse_object_aliases,
+        is_body_part_object,
+    )
+
+    roles = ("昭昭", "灿灿", "妈妈")
+    result = s4
+    for st in _collapse_object_aliases(states):
+        if not isinstance(st, dict):
+            continue
+        obj = str(st.get("object") or "").strip()
+        count = str(st.get("count") or "").strip()
+        holder = str(st.get("holder") or "").strip()
+        if not obj or is_body_part_object(obj):
+            continue
+        if not count or not _SHARED_SINGLE_COUNT_RE.match(count):
+            continue
+        if len([r for r in roles if r and r in holder]) < 2:
+            continue
+        if f"{obj}一端" in result or f"{obj}另一端" in result:
+            continue
+        pattern = re.compile(rf"(握(?:住|着)?){re.escape(obj)}")
+        counter = [0]
+
+        def _repl(match: re.Match) -> str:
+            counter[0] += 1
+            if counter[0] == 1:
+                return f"{match.group(1)}{obj}一端"
+            if counter[0] == 2:
+                return f"{match.group(1)}{obj}另一端"
+            return match.group(0)
+
+        result = pattern.sub(_repl, result)
+    return result
+
+
 def _render_object_states(
     states: list,
     *,
@@ -1227,6 +1278,7 @@ def assemble_daily_t2i_prompt(
             s5 = rendered
             if structured:
                 s4 = _strip_s4_object_state_overlap(s4, obj_states)
+                s4 = _rewrite_shared_grip_to_ends_s4(s4, obj_states)
             if floor_shoe_scene and (
                 "粉鞋" in rendered or "粉红运动鞋" in rendered
             ):
