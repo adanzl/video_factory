@@ -1,46 +1,60 @@
 <template>
   <div>
     <div class="mb-4 flex flex-wrap items-center gap-3">
-      <el-button type="primary" :disabled="loading" @click="fetchStories">
+      <el-button type="primary" size="small" :disabled="loading" @click="fetchStories">
         <el-icon><Refresh /></el-icon>
       </el-button>
-      <el-button type="primary" @click="showGenerateDialog = true">生成故事</el-button>
-      <el-select
-        v-model="filterStoryType"
-        placeholder="矛盾类型"
-        clearable
-        class="w-30!"
-        @change="onFilterStoryTypeChange"
-      >
-        <el-option
-          v-for="opt in DAILY_STORY_TYPE_FILTER_OPTIONS"
-          :key="opt.value"
-          :label="opt.label"
-          :value="opt.value"
-        />
-      </el-select>
+      <el-button type="primary" size="small" @click="showGenerateDialog = true">生成故事</el-button>
       <el-input
         v-model="filterKey"
+        size="small"
         placeholder="搜索关键字"
         clearable
         class="w-48!"
         @keyup.enter="onSearchKey"
         @clear="onSearchKey"
       />
-      <el-button type="primary" @click="onSearchKey">搜索</el-button>
-      <el-radio-group v-model="filterHasJob" @change="onFilterHasJobChange">
+      <el-button type="primary" size="small" @click="onSearchKey">搜索</el-button>
+      <el-radio-group v-model="filterHasJob" size="small" @change="onFilterHasJobChange">
         <el-radio-button value="">不限</el-radio-button>
         <el-radio-button value="yes">有任务</el-radio-button>
         <el-radio-button value="no">无任务</el-radio-button>
       </el-radio-group>
       <el-button
         type="danger"
+        size="small"
         :disabled="!selectedIds.length"
         :loading="deleting"
         @click="handleDeleteSelected"
       >
         删除
       </el-button>
+    </div>
+
+    <div class="mb-4 flex flex-wrap items-center gap-2">
+      <span class="shrink-0 text-sm text-gray-500">矛盾类型</span>
+      <div class="flex min-w-0 flex-1 flex-wrap gap-2">
+        <el-tag
+          class="cursor-pointer justify-center!"
+          size="small"
+          :effect="filterStoryType === '' ? 'dark' : 'plain'"
+          :type="filterStoryType === '' ? 'primary' : 'info'"
+          @click="setTypeFilter('')"
+        >
+          全部
+        </el-tag>
+        <el-tag
+          v-for="opt in DAILY_STORY_TYPE_FILTER_OPTIONS"
+          :key="opt.value"
+          class="cursor-pointer justify-center!"
+          size="small"
+          :effect="filterStoryType === opt.value ? 'dark' : 'plain'"
+          :type="filterStoryType === opt.value ? 'primary' : 'info'"
+          @click="setTypeFilter(opt.value)"
+        >
+          {{ opt.label }}
+        </el-tag>
+      </div>
     </div>
 
     <el-table
@@ -175,6 +189,12 @@ const filterKey = ref("");
 const appliedKey = ref("");
 /** ""=不限, yes=有任务, no=无任务 */
 const filterHasJob = ref<"" | "yes" | "no">("");
+
+function setTypeFilter(code: string) {
+  if (filterStoryType.value === code) return;
+  filterStoryType.value = code;
+  onFilterStoryTypeChange();
+}
 
 function onFilterStoryTypeChange() {
   page.value = 1;

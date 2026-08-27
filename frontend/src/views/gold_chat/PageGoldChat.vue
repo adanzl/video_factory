@@ -1,30 +1,30 @@
 <template>
   <div>
     <div class="mb-4 flex flex-wrap items-center gap-3">
-      <el-button type="primary" :disabled="loading" @click="fetchItems">
+      <el-button type="primary" size="small" :disabled="loading" @click="fetchItems">
         <el-icon>
           <Refresh />
         </el-icon>
       </el-button>
-      <el-button type="primary" :loading="collecting" :disabled="reimporting" @click="handleCollect">
+      <el-button type="primary" size="small" :loading="collecting" :disabled="reimporting" @click="handleCollect">
         采集（10 条）
       </el-button>
-      <el-button type="primary" :loading="reimporting" :disabled="collecting" @click="handleReimport">
+      <el-button type="primary" size="small" :loading="reimporting" :disabled="collecting" @click="handleReimport">
         重新导入
       </el-button>
-      <el-button type="primary" :disabled="!selectedIds.length" :loading="batching" @click="handleBatchConvert">
+      <el-button type="primary" size="small" :disabled="!selectedIds.length" :loading="batching" @click="handleBatchConvert">
         批量转 gold_chat{{ selectedIds.length ? `（${selectedIds.length}）` : "" }}
       </el-button>
-      <el-button type="danger" :disabled="!selectedIds.length" :loading="deleting" @click="handleBatchDelete">
+      <el-button type="danger" size="small" :disabled="!selectedIds.length" :loading="deleting" @click="handleBatchDelete">
         批量删除{{ selectedIds.length ? `（${selectedIds.length}）` : "" }}
       </el-button>
-      <el-checkbox v-model="batchForce">已导出也重跑</el-checkbox>
-      <el-select v-model="filterStatus" class="w-28!" @change="onFilterChange">
+      <el-checkbox v-model="batchForce" size="small">已导出也重跑</el-checkbox>
+      <el-select v-model="filterStatus" size="small" class="w-28!" @change="onFilterChange">
         <el-option label="全部" value="" />
         <el-option label="通过" value="active" />
         <el-option label="驳回" value="rejected" />
       </el-select>
-      <el-radio-group v-model="filterHasStory" @change="onFilterChange">
+      <el-radio-group v-model="filterHasStory" size="small" @change="onFilterChange">
         <el-radio-button value="">全部</el-radio-button>
         <el-radio-button value="yes">有故事</el-radio-button>
         <el-radio-button value="no">无故事</el-radio-button>

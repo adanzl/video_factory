@@ -1,12 +1,13 @@
 <template>
   <div>
     <div class="mb-4 flex flex-wrap items-center gap-3">
-      <el-button type="primary" :disabled="loading" @click="fetchMaterials">
+      <el-button type="primary" size="small" :disabled="loading" @click="fetchMaterials">
         <el-icon><Refresh /></el-icon>
       </el-button>
-      <el-button type="primary" @click="showUploadDialog = true">上传素材</el-button>
+      <el-button type="primary" size="small" @click="showUploadDialog = true">上传素材</el-button>
       <el-button
         type="danger"
+        size="small"
         :disabled="!selectedIds.length"
         :loading="deleting"
         @click="handleDeleteSelected"

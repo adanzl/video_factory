@@ -1,11 +1,12 @@
 <template>
   <div>
     <div class="mb-4 flex flex-wrap items-center gap-3">
-      <el-button type="primary" :disabled="loading" @click="fetchTitles">
+      <el-button type="primary" size="small" :disabled="loading" @click="fetchTitles">
         <el-icon><Refresh /></el-icon>
       </el-button>
-      <el-button type="primary" @click="showGenerateDialog = true">AI 生成选题</el-button>
+      <el-button type="primary" size="small" @click="showGenerateDialog = true">AI 生成选题</el-button>
       <el-button
+        size="small"
         :disabled="!selectedIds.length"
         :loading="scoring"
         @click="handleScoreSelected"
@@ -14,6 +15,7 @@
       </el-button>
       <el-button
         type="success"
+        size="small"
         :disabled="!selectedIds.length"
         :loading="enqueuing"
         @click="openEnqueueDialog(selectedIds)"
@@ -22,6 +24,7 @@
       </el-button>
       <el-button
         type="danger"
+        size="small"
         :disabled="!selectedIds.length"
         :loading="deleting"
         @click="handleDeleteSelected"
@@ -30,6 +33,7 @@
       </el-button>
       <el-button
         type="warning"
+        size="small"
         :loading="cleaningLow"
         @click="showCleanLowDialog = true"
       >
@@ -37,6 +41,7 @@
       </el-button>
       <el-select
         v-model="statusFilter"
+        size="small"
         placeholder="全部状态"
         clearable
         class="w-36!"
