@@ -268,15 +268,20 @@ def _rewrite_shared_grip_to_ends_s4(s4: str, states: list) -> str:
             continue
         if f"{obj}一端" in result or f"{obj}另一端" in result:
             continue
-        pattern = re.compile(rf"(握(?:住|着)?){re.escape(obj)}")
+        # obj 可能是「电视遥控器」而 S4 写「握遥控器」（简写）；
+        # 匹配「握/握住/握着 + 纯汉字名词」，名词与 obj 互相包含时视为同一道具
+        pattern = re.compile(r"(握(?:住|着)?)([\u4e00-\u9fa5]{1,8})")
         counter = [0]
 
         def _repl(match: re.Match) -> str:
+            verb, noun = match.group(1), match.group(2)
+            if obj not in noun and noun not in obj:
+                return match.group(0)
             counter[0] += 1
             if counter[0] == 1:
-                return f"{match.group(1)}{obj}一端"
+                return f"{verb}{obj}一端"
             if counter[0] == 2:
-                return f"{match.group(1)}{obj}另一端"
+                return f"{verb}{obj}另一端"
             return match.group(0)
 
         result = pattern.sub(_repl, result)
