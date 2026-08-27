@@ -191,7 +191,7 @@ class DailyStoryMgr:
             raise ValueError('theme is empty')
         locked = (story_type or '').strip().upper()[:1] or None
         if locked and locked not in _VALID_STORY_TYPES:
-            raise ValueError('story_type 须为 A–G')
+            raise ValueError(f'story_type 无效: {locked}')
         with atomic():
             story_id = repo_daily_story.insert_story(
                 theme=theme,
