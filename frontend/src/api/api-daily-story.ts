@@ -32,7 +32,7 @@ export interface DailyStoryRecord {
   story: StoryContent;
   /** 内容标签，表列权威；与 story.key 同步 */
   key: string | null;
-  /** 矛盾类型代码 A–G，来自笑点解析 */
+  /** 矛盾类型代码 A–L，来自笑点解析 */
   story_type: string | null;
   job_id: number | null;
   status: string;
@@ -42,7 +42,7 @@ export interface DailyStoryRecord {
 
 export type DailyStoryListResponse = ListResponse<DailyStoryRecord>;
 
-/** 与后端 STORY_TYPE_LABELS 一致（含金故事扩展 F/J/K） */
+/** 与后端 STORY_TYPE_LABELS 一致（A–L） */
 export const DAILY_STORY_TYPE_LABELS: Record<string, string> = {
   A: "权威翻车",
   B: "结盟翻车",
@@ -55,6 +55,7 @@ export const DAILY_STORY_TYPE_LABELS: Record<string, string> = {
   I: "问倒收束",
   J: "权威压住",
   K: "家长看戏",
+  L: "退让点破",
 };
 
 /** 如 A权威翻车；无有效代码时返回 "-" */
@@ -73,12 +74,27 @@ export function formatDailyStoryTypes(codes: string[] | null | undefined): strin
   return parts.length ? parts.join(" / ") : "-";
 }
 
-export const DAILY_STORY_TYPE_OPTIONS = (["A", "B", "C", "D", "E", "G"] as const).map(
-  (code) => ({
+function storyTypeOptions(codes: readonly string[]) {
+  return codes.map((code) => ({
     value: code,
     label: formatDailyStoryType(code),
-  }),
+  }));
+}
+
+/** 列表筛选：全部已注册类型 */
+export const DAILY_STORY_TYPE_FILTER_OPTIONS = storyTypeOptions(
+  Object.keys(DAILY_STORY_TYPE_LABELS).sort(),
 );
+
+/** 手动锁定生成：已开 quality_ready 的类型 */
+export const DAILY_STORY_TYPE_GENERATE_OPTIONS = storyTypeOptions([
+  "A",
+  "B",
+  "C",
+  "D",
+  "E",
+  "G",
+]);
 
 const DAILY_STORY_POLL_INTERVAL_MS = 3_000;
 const DAILY_STORY_POLL_MAX_MS = 10 * 60_000;
@@ -149,7 +165,7 @@ export async function deleteDailyStories(ids: number[]): Promise<{ deleted: numb
 
 export interface DailyStoryThemeItem {
   theme: string;
-  /** 可适配的矛盾类型 A–G，首项为主类型 */
+  /** 可适配的矛盾类型 A–L，首项为主类型 */
   story_types: string[];
 }
 

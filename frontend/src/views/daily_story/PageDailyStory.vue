@@ -13,7 +13,7 @@
         @change="onFilterStoryTypeChange"
       >
         <el-option
-          v-for="opt in DAILY_STORY_TYPE_OPTIONS"
+          v-for="opt in DAILY_STORY_TYPE_FILTER_OPTIONS"
           :key="opt.value"
           :label="opt.label"
           :value="opt.value"
@@ -148,7 +148,7 @@ import CreateStory from "@/views/daily_story/dialogs/CreateStory.vue";
 import {
   listDailyStories,
   deleteDailyStories,
-  DAILY_STORY_TYPE_OPTIONS,
+  DAILY_STORY_TYPE_FILTER_OPTIONS,
   formatDailyStoryType,
   type DailyStoryRecord,
   type DialogueLine,
