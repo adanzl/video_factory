@@ -2005,3 +2005,73 @@ def test_rewrite_shared_grip_tv_remote_object_with_short_grip():
     assert "右手握电视遥控器另一端" in prompt
     assert "黑色长方形" in prompt
     assert prompt.count("电视遥控器") >= 3  # S4 两处 + S5 一处
+
+
+def test_scene_anchor_appends_tv_when_dialogue_mentions_tv():
+    """台词涉电视相关词时，场景锚点必须补「电视」。
+    回归：分镜5「指向电视方向」因 scene_anchors 只有沙发而画面无电视。"""
+    from app.services.script.image_prompt import _daily_scene_anchor
+
+    out = _daily_scene_anchor(
+        "客厅，沙发上",
+        "画面左边是昭昭，右手食指指向电视方向，瞪眼。",
+        ["沙发"],
+        dialogue_blob="你倒是背个新闻给我听！今天新闻说，科学家发现新星星，你懂吗？",
+    )
+    assert "电视" in out
+    assert out.startswith("客厅")
+
+
+def test_scene_anchor_no_tv_without_trigger_words():
+    """无电视相关词时，场景锚点不得凭空出现电视。"""
+    from app.services.script.image_prompt import _daily_scene_anchor
+
+    out = _daily_scene_anchor(
+        "客厅，沙发上",
+        "画面左边是昭昭，右手摊开，瞪眼。",
+        ["沙发"],
+        dialogue_blob="你把作业写完！",
+    )
+    assert "电视" not in out
+
+
+def test_assemble_daily_image_prompts_adds_tv_across_segments():
+    """全片台词涉电视时，各镜 image_prompt 场景锚点带电视（特写只保留地点）。"""
+    segs = []
+    for idx in (1, 2, 5):
+        segs.append(
+            {
+                "segment_index": idx,
+                "shot_type": "中景" if idx != 1 else "特写",
+                "speakers": ["昭昭", "灿灿"],
+                "visual_brief": (
+                    "画面左边是昭昭，左手握遥控器，右手食指指向电视方向，瞪眼。"
+                    "画面右边是灿灿，右手握遥控器，左手摊开，瞪眼"
+                ),
+                "visual_subjects": [
+                    {"name": "昭昭", "posture": "坐在沙发上", "action": "左手握遥控器，右手指向电视方向", "expression": "瞪眼"},
+                    {"name": "灿灿", "posture": "坐在沙发上", "action": "右手握遥控器，左手摊开", "expression": "瞪眼"},
+                ],
+                "object_states": [
+                    {
+                        "object": "电视遥控器",
+                        "count": "一个",
+                        "form": "黑色长方形，两端被两人各握一端",
+                        "holder": "昭昭与灿灿",
+                        "position": "昭昭与灿灿手中",
+                    }
+                ],
+                "scene_anchors": ["沙发"],
+                "dialogue": [
+                    {"speaker": "灿灿", "text": "遥控器给我，我要看动画片！"},
+                    {"speaker": "昭昭", "text": "你天天霸占电视，不讲理！"},
+                ],
+            }
+        )
+    assemble_daily_image_prompts(segs, setting="客厅，沙发上")
+    seg5 = next(s for s in segs if int(s["segment_index"]) == 5)
+    s2_5 = seg5["image_prompt"].split("；")[1]
+    assert "客厅，沙发，电视" in s2_5
+    seg1 = next(s for s in segs if int(s["segment_index"]) == 1)
+    # 特写只保留地点「客厅」，不强制带电视
+    assert seg1["image_prompt"].split("；")[1].strip() == "客厅"

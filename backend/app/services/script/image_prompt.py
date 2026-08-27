@@ -93,21 +93,26 @@ _SCENE_LOCATION_WORDS = (
 _SCENE_OUTDOOR_WORDS = ("公园", "操场", "楼下", "马路", "户外", "院子", "阳台")
 # 按面积/定位权重从大到小；地面锚点单独处理
 _SCENE_ANCHOR_ORDER = (
-    "沙发", "茶几", "餐桌", "书桌", "水槽", "窗户", "书架", "电视柜",
-    "床", "衣柜", "冰箱", "灶台", "滑梯", "沙坑", "长椅",
+    "沙发", "茶几", "餐桌", "书桌", "水槽", "窗户", "书架", "电视",
+    "电视柜", "床", "衣柜", "冰箱", "灶台", "滑梯", "沙坑", "长椅",
 )
+# 台词/setting 出现这些词时，画面必须有一台电视（T2I 场景锚点补「电视」）
+_TV_TRIGGER_WORDS = ("电视", "动画片", "看新闻", "霸占电视", "电视柜")
 
 
 def _daily_scene_anchor(
     setting: str | None,
     seg1_vb: str,
     scene_anchors: list | None = None,
+    *,
+    dialogue_blob: str = "",
 ) -> str:
     """压缩版场景锚点：地点 + 硬锚点名词，室内≤3、户外≤5，只写一个辨识形容词。
 
     硬锚点优先取 LLM 输出的 scene_anchors（结构化），否则扫 setting/分镜1 vb。
+    台词/setting 涉电视相关词时补「电视」，防止「指向电视方向」等动作落空。
     """
-    blob = f"{setting or ''}{seg1_vb or ''}"
+    blob = f"{setting or ''}{seg1_vb or ''}{dialogue_blob or ''}"
     loc = next((w for w in _SCENE_LOCATION_WORDS if w in blob), None)
     if not loc:
         loc = (setting or "").strip("，。; ；")
@@ -132,6 +137,9 @@ def _daily_scene_anchor(
     for k in _SCENE_ANCHOR_ORDER:
         if k in blob and k not in anchors:
             anchors.append(k)
+    # 台词/画面涉电视相关词但锚点仍无电视时强制补「电视」（分镜5「指向电视方向」落空根因）
+    if "电视" not in "".join(anchors) and any(w in blob for w in _TV_TRIGGER_WORDS):
+        anchors.append("电视")
     cap = 5 if outdoor else 3
     parts = [loc] + anchors[:cap]
     return "，".join(p for p in parts if p)
@@ -1379,7 +1387,12 @@ def assemble_daily_image_prompts(
             seg1_vb = str(seg.get("visual_brief") or "")
             seg1_anchors = seg.get("scene_anchors") or None
             break
-    scene_anchor = _daily_scene_anchor(setting, seg1_vb, seg1_anchors)
+    from app.services.script.visual_brief import _dialogue_blob
+
+    dialogue_blob = _dialogue_blob(segments)
+    scene_anchor = _daily_scene_anchor(
+        setting, seg1_vb, seg1_anchors, dialogue_blob=dialogue_blob
+    )
     wanted = (
         {int(i) for i in segment_indices} if segment_indices is not None else None
     )
