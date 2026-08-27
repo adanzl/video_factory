@@ -45,4 +45,11 @@
     "python-envs.defaultPackageManager": "ms-python.python:conda",
     "python.terminal.activateEnvInCurrentTerminal": true,
     "python.languageServer": "None",
+    // 仓库根脚本通过 sys.path 挂 backend；静态分析需显式 extraPaths
+    "python.analysis.extraPaths": [
+        "${workspaceFolder}/backend"
+    ],
+    "basedpyright.analysis.extraPaths": [
+        "${workspaceFolder}/backend"
+    ]
 }

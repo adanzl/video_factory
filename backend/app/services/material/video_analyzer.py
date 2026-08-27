@@ -14,11 +14,15 @@ import requests
 
 from app.config import get_settings
 from app.services.llm.llm_agnes import (
+    AgnesContentPolicyError,
     AgnesQuotaExceeded,
     agnes_api_keys,
     agnes_apply_host_failover,
     agnes_auth_header,
+    agnes_key_base_url,
+    agnes_should_switch_key,
     is_agnes_quota_exceeded,
+    raise_if_agnes_content_policy,
     raise_if_agnes_quota,
 )
 from app.services.media.ffmpeg_utils import extract_frames_interval, probe_duration
@@ -130,7 +134,9 @@ class VideoAnalyzer:
         settings = get_settings()
         keys = agnes_api_keys(settings)
         if not keys:
-            raise RuntimeError("AGNES_FREE_API_KEY / AGNES_API_KEY 未配置")
+            raise RuntimeError(
+                "AGNES_API_KEY / AGNES_FREE_API_KEY / AGNES_CN_FREE_API_KEY 未配置"
+            )
 
         content: list[dict] = [{"type": "text", "text": user_text}]
         for b64 in images_b64:
@@ -151,16 +157,21 @@ class VideoAnalyzer:
             "max_tokens": limit,
         }
 
-        url = f"{settings.agnes_api_base_url.rstrip('/')}/chat/completions"
         last_exc: Exception | None = None
 
         for idx, api_key in enumerate(keys):
             headers = agnes_auth_header(api_key.value)
-            timeout = (settings.agnes_http_connect_timeout_sec, settings.agnes_http_submit_read_timeout_sec)
+            timeout = (
+                settings.agnes_http_connect_timeout_sec,
+                settings.agnes_http_submit_read_timeout_sec,
+            )
+            url = f"{agnes_key_base_url(api_key, settings)}/chat/completions"
             host_failover_tried: set[str] = {url}
             for attempt in range(settings.agnes_http_max_retries):
                 try:
-                    resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
+                    resp = requests.post(
+                        url, headers=headers, json=payload, timeout=timeout
+                    )
                     if resp.status_code == 503:
                         alt = agnes_apply_host_failover(
                             url,
@@ -175,7 +186,11 @@ class VideoAnalyzer:
                         wait = min(2**attempt * 2, 60)
                         logger.warning(
                             "agnes multimodal %s %s, retry %s/%s in %ss",
-                            resp.status_code, url, attempt + 1, settings.agnes_http_max_retries, wait,
+                            resp.status_code,
+                            url,
+                            attempt + 1,
+                            settings.agnes_http_max_retries,
+                            wait,
                         )
                         time.sleep(wait)
                         continue
@@ -185,16 +200,25 @@ class VideoAnalyzer:
                             body = resp.json()
                         except Exception:
                             body = resp.text[:500]
-                        raise_if_agnes_quota(status_code=resp.status_code, body=body)
+                        raise_if_agnes_content_policy(
+                            status_code=resp.status_code, body=body
+                        )
+                        raise_if_agnes_quota(
+                            status_code=resp.status_code, body=body
+                        )
                     resp.raise_for_status()
                     choice = resp.json()["choices"][0]
                     return (choice.get("message", {}).get("content") or "").strip()
-                except AgnesQuotaExceeded:
+                except AgnesContentPolicyError:
                     raise
+                except AgnesQuotaExceeded as exc:
+                    last_exc = exc
+                    break
                 except requests.RequestException as exc:
                     last_exc = exc
                     if is_agnes_quota_exceeded(message=str(exc)):
-                        raise AgnesQuotaExceeded(str(exc)) from exc
+                        last_exc = AgnesQuotaExceeded(str(exc))
+                        break
                     if isinstance(exc, requests.Timeout):
                         alt = agnes_apply_host_failover(
                             url,
@@ -207,11 +231,19 @@ class VideoAnalyzer:
                             continue
                     if attempt < settings.agnes_http_max_retries - 1:
                         wait = min(2**attempt * 2, 60)
-                        logger.warning("agnes multimodal request error: %s, retry in %ss", exc, wait)
+                        logger.warning(
+                            "agnes multimodal request error: %s, retry in %ss",
+                            exc,
+                            wait,
+                        )
                         time.sleep(wait)
                         continue
                     break
-            if idx < len(keys) - 1:
+            if (
+                last_exc is not None
+                and idx < len(keys) - 1
+                and agnes_should_switch_key(last_exc)
+            ):
                 logger.warning(
                     "agnes multimodal %s key failed, switching to backup",
                     api_key.label,
@@ -222,7 +254,6 @@ class VideoAnalyzer:
         if last_exc:
             raise last_exc
         raise RuntimeError("agnes multimodal request failed after all retries")
-
     # ── response validation ─────────────────────────────────
 
     def _validate(self, raw: str) -> str:

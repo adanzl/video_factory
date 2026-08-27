@@ -13,6 +13,7 @@ from app.services.llm.llm_agnes import (
     agnes_alternate_host_url,
     agnes_api_keys,
     agnes_quota_exceeded_from_exception,
+    agnes_should_switch_key,
     is_agnes_content_policy,
     is_agnes_quota_exceeded,
     raise_if_agnes_content_policy,
@@ -49,11 +50,30 @@ def test_agnes_api_keys_primary_first_then_free() -> None:
     settings = SimpleNamespace(
         agnes_api_key="main-key",
         agnes_free_api_key="free-key",
+        agnes_cn_free_api_key=None,
+        agnes_api_base_url="https://apihub.agnes-ai.com/v1",
+        agnes_api_base_url_cn="https://api.agnes-ai.cn/v1",
     )
     keys = agnes_api_keys(settings)
     assert keys == [
-        AgnesApiKey("primary", "main-key"),
-        AgnesApiKey("free", "free-key"),
+        AgnesApiKey("primary", "main-key", "https://apihub.agnes-ai.com/v1"),
+        AgnesApiKey("free", "free-key", "https://apihub.agnes-ai.com/v1"),
+    ]
+
+
+def test_agnes_api_keys_includes_cn_free() -> None:
+    settings = SimpleNamespace(
+        agnes_api_key="main-key",
+        agnes_free_api_key="free-key",
+        agnes_cn_free_api_key="cn-key",
+        agnes_api_base_url="https://apihub.agnes-ai.com/v1",
+        agnes_api_base_url_cn="https://api.agnes-ai.cn/v1",
+    )
+    keys = agnes_api_keys(settings)
+    assert keys == [
+        AgnesApiKey("primary", "main-key", "https://apihub.agnes-ai.com/v1"),
+        AgnesApiKey("free", "free-key", "https://apihub.agnes-ai.com/v1"),
+        AgnesApiKey("cn_free", "cn-key", "https://api.agnes-ai.cn/v1"),
     ]
 
 
@@ -61,19 +81,28 @@ def test_agnes_api_keys_free_only() -> None:
     settings = SimpleNamespace(
         agnes_api_key=None,
         agnes_free_api_key="free-key",
+        agnes_cn_free_api_key=None,
+        agnes_api_base_url="https://apihub.agnes-ai.com/v1",
+        agnes_api_base_url_cn="https://api.agnes-ai.cn/v1",
     )
     keys = agnes_api_keys(settings)
-    assert keys == [AgnesApiKey("free", "free-key")]
+    assert keys == [
+        AgnesApiKey("free", "free-key", "https://apihub.agnes-ai.com/v1")
+    ]
 
 
 def test_agnes_api_keys_dedup_same_value() -> None:
     settings = SimpleNamespace(
         agnes_api_key="same-key",
         agnes_free_api_key="same-key",
+        agnes_cn_free_api_key="same-key",
+        agnes_api_base_url="https://apihub.agnes-ai.com/v1",
+        agnes_api_base_url_cn="https://api.agnes-ai.cn/v1",
     )
     keys = agnes_api_keys(settings)
-    assert keys == [AgnesApiKey("primary", "same-key")]
-
+    assert keys == [
+        AgnesApiKey("primary", "same-key", "https://apihub.agnes-ai.com/v1")
+    ]
 
 def test_is_agnes_quota_exceeded_status_and_keywords() -> None:
     assert is_agnes_quota_exceeded(status_code=429)
