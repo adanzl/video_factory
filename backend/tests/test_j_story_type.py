@@ -1,0 +1,107 @@
+"""J 类权威压住 validate 与质检注册。"""
+
+from __future__ import annotations
+
+from app.services.daily_story.story_types import (
+    STORY_TYPE_LINES,
+    append_type_body_validation_errors,
+    parse_story_type_code,
+    story_type_tag,
+    type_body_validation_enabled,
+)
+from app.services.daily_story.story_types.j.validate import append_j_body_errors
+
+
+def _j_veto_story() -> dict:
+    return {
+        "story_type": "J",
+        "theme": "姐姐说了算",
+        "setting": "家中客厅，昭昭想出门，妈妈站在一旁",
+        "conflict_core": "姐姐说了算，否决权高于妈妈",
+        "punchline_explain": (
+            "J类权威压住，灿灿一票否决压住昭昭，即使妈妈同意也无效，"
+            "昭昭哀求无果后怂退，灿灿仍占上风。"
+        ),
+        "discovery_opening": [
+            {"speaker": "昭昭", "line": "妈妈，我想去公园玩！"},
+            {"speaker": "妈妈", "line": "去吧，早点回来。"},
+        ],
+        "dialogue": [
+            {"speaker": "昭昭", "line": "妈妈，我想去公园玩！"},
+            {"speaker": "妈妈", "line": "去吧，早点回来。"},
+            {"speaker": "灿灿", "line": "等等，我同意了吗呀？"},
+            {"speaker": "昭昭", "line": "姐姐，求你了，让我去了吧！"},
+            {"speaker": "灿灿", "line": "我说不行就不行啊！"},
+            {"speaker": "昭昭", "line": "呜呜呜，我保证写完作业嘛！"},
+            {"speaker": "灿灿", "line": "哭也没用，我说了算吧。"},
+            {"speaker": "昭昭", "line": "姐姐，我求你了，就一次呢！"},
+            {"speaker": "灿灿", "line": "别哭了，再哭更不准真的呀。"},
+            {"speaker": "昭昭", "line": "可是妈妈都答应了呀！"},
+            {"speaker": "灿灿", "line": "妈妈答应没用，我不同意就是不行。"},
+            {"speaker": "昭昭", "line": "姐姐你太霸道了，我讨厌你！"},
+            {"speaker": "灿灿", "line": "讨厌我也没用，这个家我说了算。"},
+            {"speaker": "昭昭", "line": "那我回房间了，不理你了！"},
+            {"speaker": "灿灿", "line": "去吧去吧，反正我说了算呀。"},
+        ],
+    }
+
+
+def test_j_registered():
+    assert "J" in STORY_TYPE_LINES
+    assert STORY_TYPE_LINES["J"].label == "权威压住"
+    assert story_type_tag("J") == "J类权威压住"
+    assert STORY_TYPE_LINES["J"].quality_ready is False
+
+
+def test_j_validate_passes_veto_shape():
+    story = _j_veto_story()
+    errors: list[str] = []
+    append_j_body_errors(story, errors)
+    assert errors == []
+
+
+def test_j_validate_rejects_a_backfire():
+    story = _j_veto_story()
+    story["dialogue"][-2] = {
+        "speaker": "昭昭",
+        "line": "你刚才说写完作业才能看。",
+    }
+    story["dialogue"][-1] = {
+        "speaker": "灿灿",
+        "line": "那不一样，这不算看。",
+    }
+    errors: list[str] = []
+    append_j_body_errors(story, errors)
+    assert any("A 式" in e for e in errors)
+
+
+def test_j_body_validate_gated_when_not_quality_ready():
+    story = _j_veto_story()
+    story["dialogue"] = story["dialogue"][:8]
+    assert not type_body_validation_enabled("J")
+    errors: list[str] = []
+    append_type_body_validation_errors(story, errors)
+    assert not any("J类" in e for e in errors)
+
+
+def test_parse_j_from_story_type():
+    assert parse_story_type_code(story_type="J", punchline="C类：旧稿") == "J"
+
+
+def test_j_quality_profile_not_c_fallback():
+    from app.services.daily_story.story_types.quality import quality_profile_for_code
+
+    assert quality_profile_for_code("J").code == "J"
+
+
+def test_j_quality_scores_veto_story():
+    from app.services.daily_story.quality import score_daily_story
+
+    story = _j_veto_story()
+    q = score_daily_story(story, theme="姐姐说了算")
+    assert q["structure_score"] >= 70, q
+    assert "C开场说话人" not in "".join(q["reasons"])
+    assert "C规则轮次升级" not in "".join(q["reasons"])
+    assert "回旋镖" not in "".join(q["reasons"])
+    assert "收束形态未落位" not in "".join(q["reasons"])
+    assert "笑点解析缺类型" not in q["reasons"]

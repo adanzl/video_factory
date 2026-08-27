@@ -34,7 +34,7 @@ def list_stories_route():
     if story_type_raw:
         code = story_type_raw.strip().upper()
         if code not in _VALID_STORY_TYPES:
-            raise APIError("story_type 须为 A–G", status_code=400)
+            raise APIError(f"story_type 无效: {code}", status_code=400)
         story_type = code
     key_raw = get_query("key")
     key = key_raw.strip() if key_raw else None
@@ -78,7 +78,7 @@ def generate_story_route():
     if story_type_raw:
         code = story_type_raw.strip().upper()[:1]
         if code not in _VALID_STORY_TYPES:
-            raise APIError("story_type 须为 A–G", status_code=400)
+            raise APIError(f"story_type 无效: {code}", status_code=400)
         story_type = code
     logger.info(
         "[DAILY_STORY] api /generate theme=%r story_type=%r",

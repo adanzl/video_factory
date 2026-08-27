@@ -22,6 +22,8 @@ from app.services.daily_story.story_types.f.line import LINE_F
 from app.services.daily_story.story_types.g.line import LINE_G
 from app.services.daily_story.story_types.h.line import LINE_H
 from app.services.daily_story.story_types.i.line import LINE_I
+from app.services.daily_story.story_types.j.line import LINE_J
+from app.services.daily_story.story_types.k.line import LINE_K
 from app.services.daily_story.story_types.l.line import LINE_L
 
 __all__ = [
@@ -56,7 +58,7 @@ __all__ = [
 STORY_TYPE_LINES: dict[str, StoryTypeLine] = {
     r.code: r
     for r in (
-        LINE_A, LINE_B, LINE_C, LINE_D, LINE_E, LINE_F, LINE_G, LINE_H, LINE_I, LINE_L,
+        LINE_A, LINE_B, LINE_C, LINE_D, LINE_E, LINE_F, LINE_G, LINE_H, LINE_I, LINE_J, LINE_K, LINE_L,
     )
 }
 
@@ -264,6 +266,10 @@ def infer_story_type_code(
         scores["A"] = scores.get("A", 0) + 2
     if re.search(r"鞋带|叮嘱|照做|字面", blob):
         scores["D"] = scores.get("D", 0) + 2
+    if re.search(r"说了算|否决|妈妈.*没用|不同意就是不行", blob):
+        scores["J"] = scores.get("J", 0) + 2
+    if re.search(r"越劝越|劝不动|看戏|管不了|不和好", blob):
+        scores["K"] = scores.get("K", 0) + 2
 
     max_score = max(scores.values())
     if max_score <= 0:
@@ -464,11 +470,11 @@ def append_type_body_validation_errors(story: dict, errors: list[str]) -> None:
         from app.services.daily_story.story_types.e.validate import append_e_body_errors
 
         append_e_body_errors(story, errors)
-    elif code == "G":
+    elif code == "G" and type_body_validation_enabled("G"):
         from app.services.daily_story.story_types.g.validate import append_g_body_errors
 
         append_g_body_errors(story, errors)
-    elif code == "F":
+    elif code == "F" and type_body_validation_enabled("F"):
         from app.services.daily_story.story_types.f.validate import append_f_body_errors
 
         append_f_body_errors(story, errors)
@@ -480,6 +486,14 @@ def append_type_body_validation_errors(story: dict, errors: list[str]) -> None:
         from app.services.daily_story.story_types.i.validate import append_i_body_errors
 
         append_i_body_errors(story, errors)
+    elif code == "J" and type_body_validation_enabled("J"):
+        from app.services.daily_story.story_types.j.validate import append_j_body_errors
+
+        append_j_body_errors(story, errors)
+    elif code == "K" and type_body_validation_enabled("K"):
+        from app.services.daily_story.story_types.k.validate import append_k_body_errors
+
+        append_k_body_errors(story, errors)
     elif code == "L" and type_body_validation_enabled("L"):
         from app.services.daily_story.story_types.l.validate import append_l_body_errors
 
@@ -524,6 +538,14 @@ def patch_type_body(story: dict) -> list[str]:
         from app.services.daily_story.story_types.i.patch import patch_i_body
 
         return patch_i_body(story)
+    if code == "J":
+        from app.services.daily_story.story_types.j.patch import patch_j_body
+
+        return patch_j_body(story)
+    if code == "K":
+        from app.services.daily_story.story_types.k.patch import patch_k_body
+
+        return patch_k_body(story)
     if code == "L":
         from app.services.daily_story.story_types.l.patch import patch_l_body
 
@@ -574,24 +596,26 @@ def validate_type_opening(
         conflict_core=conflict_core,
         setting=setting,
     )
-    from app.services.daily_story.story_types.g.opening import append_g_opening_errors
+    if type_body_validation_enabled("G"):
+        from app.services.daily_story.story_types.g.opening import append_g_opening_errors
 
-    append_g_opening_errors(
-        normalized,
-        type_code=type_code,
-        errors=errors,
-        conflict_core=conflict_core,
-        setting=setting,
-    )
-    from app.services.daily_story.story_types.f.opening import append_f_opening_errors
+        append_g_opening_errors(
+            normalized,
+            type_code=type_code,
+            errors=errors,
+            conflict_core=conflict_core,
+            setting=setting,
+        )
+    if type_body_validation_enabled("F"):
+        from app.services.daily_story.story_types.f.opening import append_f_opening_errors
 
-    append_f_opening_errors(
-        normalized,
-        type_code=type_code,
-        errors=errors,
-        conflict_core=conflict_core,
-        setting=setting,
-    )
+        append_f_opening_errors(
+            normalized,
+            type_code=type_code,
+            errors=errors,
+            conflict_core=conflict_core,
+            setting=setting,
+        )
     from app.services.daily_story.story_types.h.opening import append_h_opening_errors
 
     if type_body_validation_enabled("H"):
@@ -606,6 +630,26 @@ def validate_type_opening(
         from app.services.daily_story.story_types.i.opening import append_i_opening_errors
 
         append_i_opening_errors(
+            normalized,
+            type_code=type_code,
+            errors=errors,
+            conflict_core=conflict_core,
+            setting=setting,
+        )
+    if type_body_validation_enabled("J"):
+        from app.services.daily_story.story_types.j.opening import append_j_opening_errors
+
+        append_j_opening_errors(
+            normalized,
+            type_code=type_code,
+            errors=errors,
+            conflict_core=conflict_core,
+            setting=setting,
+        )
+    if type_body_validation_enabled("K"):
+        from app.services.daily_story.story_types.k.opening import append_k_opening_errors
+
+        append_k_opening_errors(
             normalized,
             type_code=type_code,
             errors=errors,
