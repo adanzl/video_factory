@@ -54,7 +54,7 @@
               自动适配
             </el-tag>
             <el-tag
-              v-for="opt in DAILY_STORY_TYPE_OPTIONS"
+              v-for="opt in DAILY_STORY_TYPE_GENERATE_OPTIONS"
               :key="opt.value"
               class="cursor-pointer!"
               :effect="selectedStoryType === opt.value ? 'dark' : 'plain'"
@@ -83,7 +83,7 @@ import {
   generateDailyStory,
   generateDailyStoryThemes,
   formatDailyStoryTypes,
-  DAILY_STORY_TYPE_OPTIONS,
+  DAILY_STORY_TYPE_GENERATE_OPTIONS,
   type DailyStoryThemeItem,
 } from "@/api/api-daily-story";
 
