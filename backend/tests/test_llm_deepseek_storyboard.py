@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import pytest
+
 from app.services.llm.llm_deepseek import (
+    DeepSeekClient,
     _assemble_storyboard_narration,
     _loads_llm_json,
 )
 from app.services.script.segment_split import apply_segments_from_voiceover
 from app.utils.media import segment_text_char_cap
+
+
+def _bare_client() -> DeepSeekClient:
+    return object.__new__(DeepSeekClient)
 
 
 def test_apply_segments_from_voiceover_respects_cap():
@@ -63,3 +70,36 @@ def test_loads_llm_json_repairs_speaker_line_colon_typo():
         "speaker": "昭昭",
         "line": "我拽着一角你没看见吗",
     }
+
+
+def test_chat_json_retries_once_on_invalid_json(monkeypatch):
+    """LLM 偶发坏 JSON 时，_chat_json 带格式提示重试一次并成功。"""
+    client = _bare_client()
+    calls: list[tuple[str, str]] = []
+
+    def fake_chat(system, user, **kwargs):
+        calls.append((system, user))
+        if len(calls) == 1:
+            return '{"segments": [{"segment_index": 1', "stop"
+        return '{"segments": [{"segment_index": 1, "text": "ok"}]}', "stop"
+
+    monkeypatch.setattr(client, "_chat", fake_chat)
+
+    parsed, finish = client._chat_json("sys", "user")
+    assert parsed == {"segments": [{"segment_index": 1, "text": "ok"}]}
+    assert finish == "stop"
+    assert len(calls) == 2
+    assert "合法 JSON" in calls[1][1]
+
+
+def test_chat_json_invalid_json_raises_after_retry(monkeypatch):
+    """重试后仍坏 JSON 则保留原 ValueError 硬失败行为。"""
+    client = _bare_client()
+
+    def fake_chat(system, user, **kwargs):
+        return '{"broken": ', "stop"
+
+    monkeypatch.setattr(client, "_chat", fake_chat)
+
+    with pytest.raises(ValueError, match="invalid JSON"):
+        client._chat_json("sys", "user")
