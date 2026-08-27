@@ -332,6 +332,26 @@ def test_evaluate_verify_response_zhao_hair_and_cast() -> None:
     arms_yes = "项1: 是\n项2: 是\n项3: 是\n项4: 是\n项5: 是\n项6: 是\n项7: 3\n"
     assert not AgnesImageProvider._evaluate_verify_response(arms_yes, ids, cast_max=3)
 
+    ids_legs = [
+        "scene",
+        "zhao_hair",
+        "can_hair",
+        "can_one",
+        "mom_adult",
+        "zhao_legs",
+        "cast_count",
+    ]
+    bad_legs = "项1: 是\n项2: 是\n项3: 是\n项4: 是\n项5: 是\n项6: 3\n项7: 3\n"
+    assert not AgnesImageProvider._evaluate_verify_response(
+        bad_legs, ids_legs, cast_max=3
+    )
+    legs_yes = "项1: 是\n项2: 是\n项3: 是\n项4: 是\n项5: 是\n项6: 是\n项7: 3\n"
+    assert not AgnesImageProvider._evaluate_verify_response(
+        legs_yes, ids_legs, cast_max=3
+    )
+    ok_legs = "项1: 是\n项2: 是\n项3: 是\n项4: 是\n项5: 是\n项6: 2\n项7: 3\n"
+    assert AgnesImageProvider._evaluate_verify_response(ok_legs, ids_legs, cast_max=3)
+
     bad_cast = "项1: 是\n项2: 是\n项3: 是\n项4: 是\n项5: 是\n项6: 2\n项7: 4\n"
     assert not AgnesImageProvider._evaluate_verify_response(bad_cast, ids, cast_max=3)
 
@@ -410,6 +430,9 @@ def test_build_verify_checklist_daily_includes_zhao() -> None:
         "zhao_arms",
         "can_arms",
         "mom_arms",
+        "zhao_legs",
+        "can_legs",
+        "mom_legs",
         "cast_count",
     ]
     assert cast_max == 3
@@ -433,6 +456,9 @@ def test_build_verify_checklist_daily_includes_zhao() -> None:
     assert "末端呈人手形态的肢端都算一条手臂" in user
     assert "腋下、腰侧、胸口" in user
     assert "不要用「人只有两只胳膊」的常识改口" in user
+    assert "末端呈人脚或鞋子形态的肢端都算一条腿" in user
+    assert "桌腿、椅腿、裤褶不算" in user
+    assert "不要用「人只有两条腿」的常识改口" in user
     assert "只回答阿拉伯数字" in user
     assert "照片墙" in user
 
@@ -497,6 +523,7 @@ def test_build_verify_checklist_daily_includes_zhao() -> None:
     assert "mom_adult" not in [cid for cid, _ in items_one]
     assert "cast_count" in [cid for cid, _ in items_one]
     assert "zhao_arms" in [cid for cid, _ in items_one]
+    assert "zhao_legs" in [cid for cid, _ in items_one]
     assert max_one == 2
     assert "上限参考 2" in user_one
     assert "只数人头" in user_one
@@ -537,7 +564,7 @@ def test_build_verify_checklist_daily_includes_zhao() -> None:
         expected_speakers=None,
         content_style="science_child",
     )
-    assert [cid for cid, _ in items2] == ["scene", "extra_arms"]
+    assert [cid for cid, _ in items2] == ["scene", "extra_arms", "extra_legs"]
     assert max2 is None
     assert "昭昭" not in user2
 
