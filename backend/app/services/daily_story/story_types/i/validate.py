@@ -18,6 +18,39 @@ RE_WIN_STUBBORN = re.compile(
 )
 RE_A_BACKFIRE = re.compile(r"那不一样|都是听|破功|自相矛盾|你刚才说")
 _RE_CLOSING_WIN_CLAIM = re.compile(r"总结|制敌|得意|嘴硬|问倒")
+# 服软：语塞后首次服软/放弃争夺即收束点（抽象表达，勿按单篇台词堆叠）
+RE_I_SURRENDER = re.compile(
+    r"认输|服了|我这就去|这就去写|行了吧|听你的|真的呀.*写|"
+    r"说得对|你赢了|不跟你争|不跟你抢|我去写"
+)
+# 首次收束后允许的拖尾句数（与 patch 裁尾容忍一致）
+I_CLOSING_TAIL_ALLOW = 1
+
+
+def find_i_close_index(lines: list[str]) -> int:
+    """首次收束段末尾（连续制敌/服软拍的最后一拍）下标；未出现则 -1。
+
+    收束段 = 语塞后的制敌/服软句及其后紧邻的制敌/服软拍
+    （「制敌→服软」「服软→制敌」都算收束过程），段后拖尾须裁。
+    """
+    speechless_seen = False
+    for i, ln in enumerate(lines):
+        if RE_SPEECHLESS.search(ln):
+            speechless_seen = True
+        if not (RE_WIN_STUBBORN.search(ln) or
+                (speechless_seen and RE_I_SURRENDER.search(ln))):
+            continue
+        j = i
+        while j + 1 < len(lines):
+            nxt = lines[j + 1]
+            if RE_WIN_STUBBORN.search(nxt) or (
+                speechless_seen and RE_I_SURRENDER.search(nxt)
+            ):
+                j += 1
+            else:
+                break
+        return j
+    return -1
 
 
 def repair_closing_intent_from_seed_win(
@@ -141,3 +174,9 @@ def append_i_body_errors(story: dict, errors: list[str]) -> None:
         errors.append("I类：末段须赢家一招制敌（制敌/服不服等）")
     if RE_A_BACKFIRE.search(tail4):
         errors.append("I类：末段勿 A 式反噬/破功链")
+    close_idx = find_i_close_index(lines)
+    if close_idx >= 0 and len(lines) - close_idx - 1 > I_CLOSING_TAIL_ALLOW:
+        errors.append(
+            f"I类：首次收束（第{close_idx + 1}句制敌/服软）后仍有"
+            f"{len(lines) - close_idx - 1}句拖尾，首轮收束即止"
+        )

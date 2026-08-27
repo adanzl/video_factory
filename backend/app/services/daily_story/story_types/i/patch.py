@@ -6,13 +6,13 @@ import re
 
 from app.services.daily_story.story_types import parse_story_type_code
 from app.services.daily_story.story_types.i.validate import (
-    RE_SPEECHLESS,
+    RE_I_SURRENDER,
     RE_WIN_STUBBORN,
+    find_i_close_index,
 )
 
 _I_CLOSING_TAIL_ALLOW = 1
 _RE_INDOOR_SETTING = re.compile(r"卧室|客厅|厨房|餐厅|书桌|餐桌|沙发")
-_RE_I_SURRENDER = re.compile(r"服了|我这就去|这就去写|行了吧|听你的|真的呀.*写")
 _ORAL_WIN_LINE = "看你还嘴硬！"
 
 
@@ -25,18 +25,6 @@ def _dialogue_lines(story: dict) -> list[str]:
         for d in dialogue
         if isinstance(d, dict) and str(d.get("line") or "").strip()
     ]
-
-
-def _find_i_close_index(lines: list[str]) -> int:
-    speechless_seen = False
-    for i, ln in enumerate(lines):
-        if RE_SPEECHLESS.search(ln):
-            speechless_seen = True
-        if RE_WIN_STUBBORN.search(ln):
-            return i
-        if speechless_seen and _RE_I_SURRENDER.search(ln):
-            return i
-    return -1
 
 
 def _ensure_oral_win_at_end(story: dict, winner: str) -> list[str]:
@@ -67,7 +55,7 @@ def patch_i_trim_trailing_subplot(story: dict) -> list[str]:
         return notes
 
     lines = _dialogue_lines(story)
-    close_idx = _find_i_close_index(lines)
+    close_idx = find_i_close_index(lines)
     if close_idx < 0:
         return notes
 
@@ -87,7 +75,7 @@ def patch_i_trim_trailing_subplot(story: dict) -> list[str]:
                 continue
             sp = str(dialogue[i].get("speaker") or "").strip()
             ln = str(dialogue[i].get("line") or "")
-            if sp in ("昭昭", "灿灿") and not _RE_I_SURRENDER.search(ln):
+            if sp in ("昭昭", "灿灿") and not RE_I_SURRENDER.search(ln):
                 winner = sp
                 break
 
@@ -148,6 +136,40 @@ def patch_i_indoor_dialogue(story: dict) -> list[str]:
     return notes
 
 
+def patch_i_clean_win_line_suffix(story: dict) -> list[str]:
+    """制敌句收束锚干净：句尾垫字尾巴（好不好/你听着/语气词）剥离。
+
+    尾巴定义复用 daily_story 垫字集合（_LOCAL_PAD_TAILS / _LOCAL_TRIM_CHARS），
+    收束锚不承载垫字尾巴。
+    """
+    from app.services.daily_story.prompts import (
+        _LOCAL_PAD_TAILS,
+        _LOCAL_TRIM_CHARS,
+    )
+
+    parts = [re.escape(t) for t in _LOCAL_PAD_TAILS] + [
+        re.escape(c) for c in _LOCAL_TRIM_CHARS
+    ]
+    re_win_pad_tail = re.compile(
+        r"[，,、]*(?:" + "|".join(parts) + r")+(?=[！!。？?]?$)"
+    )
+    notes: list[str] = []
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list):
+        return notes
+    for item in dialogue:
+        if not isinstance(item, dict):
+            continue
+        line = str(item.get("line") or "")
+        if not RE_WIN_STUBBORN.search(line):
+            continue
+        new = re_win_pad_tail.sub("", line)
+        if new != line:
+            item["line"] = new
+            notes.append("I制敌句去句尾语气词")
+    return notes
+
+
 def patch_i_body(story: dict) -> list[str]:
     notes: list[str] = []
     code = parse_story_type_code(
@@ -159,4 +181,5 @@ def patch_i_body(story: dict) -> list[str]:
     notes.extend(patch_i_trim_trailing_subplot(story))
     notes.extend(patch_i_strip_meta_type_labels(story))
     notes.extend(patch_i_indoor_dialogue(story))
+    notes.extend(patch_i_clean_win_line_suffix(story))
     return notes
