@@ -2075,3 +2075,65 @@ def test_assemble_daily_image_prompts_adds_tv_across_segments():
     seg1 = next(s for s in segs if int(s["segment_index"]) == 1)
     # 特写只保留地点「客厅」，不强制带电视
     assert seg1["image_prompt"].split("；")[1].strip() == "客厅"
+
+
+def test_scrub_hand_contradiction_s4_downgrades_two_hand():
+    """持物角色写「双手抱头」时降级为另一只手，避免三手。"""
+    from app.services.script.image_prompt import _scrub_hand_contradiction_s4
+
+    s4 = (
+        "画面左边是昭昭，左手握遥控器一端，右手挥动，瞪眼。"
+        "画面右边是灿灿，右手握遥控器另一端，双手抱头，皱眉闭眼"
+    )
+    out = _scrub_hand_contradiction_s4(s4)
+    assert "左手抱头" in out
+    assert "双手抱头" not in out
+    # 昭昭无持物双手动作，不应被改写
+    assert "右手挥动" in out
+
+
+def test_scrub_hand_contradiction_s4_keeps_both_hands_when_no_grip():
+    """无持物时「双手」动作保留（双手叉腰等对称动作合法）。"""
+    from app.services.script.image_prompt import _scrub_hand_contradiction_s4
+
+    s4 = "画面左边是昭昭，双手叉腰，瞪眼。画面右边是灿灿，双手摊开，瞪眼"
+    out = _scrub_hand_contradiction_s4(s4)
+    assert "双手叉腰" in out
+    assert "双手摊开" in out
+
+
+def test_assemble_daily_image_prompts_fixes_grip_two_hand_conflict():
+    """全片拼装时 seg9 式「右手握遥控器，双手抱头」被改写为另一只手。"""
+    seg = {
+        "segment_index": 9,
+        "shot_type": "中景",
+        "speakers": ["昭昭", "灿灿"],
+        "visual_brief": (
+            "昭昭坐在沙发上，身体前倾，左手握遥控器，右手挥动，瞪眼。"
+            "灿灿坐在沙发上，低头，右手握遥控器，双手抱头，皱眉闭眼"
+        ),
+        "visual_subjects": [
+            {"name": "昭昭", "posture": "坐在沙发上，身体前倾", "action": "左手握遥控器，右手挥动", "expression": "瞪眼"},
+            {"name": "灿灿", "posture": "坐在沙发上，低头", "action": "右手握遥控器，双手抱头", "expression": "皱眉闭眼"},
+        ],
+        "object_states": [
+            {
+                "object": "遥控器",
+                "count": "一个",
+                "form": "两端被两人各握一端",
+                "holder": "昭昭与灿灿",
+                "position": "昭昭与灿灿手中",
+            }
+        ],
+        "scene_anchors": ["沙发"],
+        "dialogue": [
+            {"speaker": "灿灿", "text": "我……我……"},
+            {"speaker": "昭昭", "text": "别说了！"},
+        ],
+    }
+    prompt = assemble_daily_image_prompts(
+        [seg], setting="客厅，沙发上，灿灿和昭昭各执遥控器一端，互不相让"
+    )[0]["image_prompt"]
+    assert "双手抱头" not in prompt
+    assert "左手抱头" in prompt
+    assert "右手握遥控器另一端" in prompt

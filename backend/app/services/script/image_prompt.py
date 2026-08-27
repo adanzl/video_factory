@@ -296,6 +296,37 @@ def _rewrite_shared_grip_to_ends_s4(s4: str, states: list) -> str:
     return result
 
 
+def _scrub_hand_contradiction_s4(s4: str) -> str:
+    """持物手与双手动作互斥兜底。
+
+    同一角色「单手握物」又写「双手动作」（如「右手握遥控器，双手抱头」）
+    时，把「双手动作」降为另一只手动作，保证每角色恒为 2 只手，
+    从源头消除 T2I 三手/多手异常。
+    """
+    text = (s4 or "").strip()
+    if not text:
+        return text
+    # 按角色名把文本切成片段：角色名到下一个角色名/句末
+    parts = re.split(r"(?=昭昭|灿灿|妈妈)", text)
+    rebuilt: list[str] = []
+    for part in parts:
+        role = next((r for r in ("昭昭", "灿灿", "妈妈") if part.startswith(r)), None)
+        if role:
+            part = _fix_role_hand_contradiction(part)
+        rebuilt.append(part)
+    return "".join(rebuilt).strip("，,；; ")
+
+
+def _fix_role_hand_contradiction(chunk: str) -> str:
+    """单个角色片段内：单手握物 + 双手动作 → 双手降为另一只手。"""
+    grip = re.search(r"(?P<hand>左手|右手)握(?:住|着)?[\u4e00-\u9fa5]{1,8}", chunk)
+    two = re.search(r"双手(?P<act>[\u4e00-\u9fa5]{1,5})", chunk)
+    if not (grip and two):
+        return chunk
+    other = "右手" if grip.group("hand") == "左手" else "左手"
+    return chunk.replace(two.group(0), f"{other}{two.group('act')}", 1)
+
+
 def _render_object_states(
     states: list,
     *,
@@ -1272,6 +1303,7 @@ def assemble_daily_t2i_prompt(
     s4 = _dedupe_clause_text(s4)
     if structured and s2:
         s4 = _strip_s4_redundant_scene_prefix(s4, s2)
+    s4 = _scrub_hand_contradiction_s4(s4)
 
     # S5 道具状态：优先结构化 object_states（状态机已归一），否则 vb 关键词推导兜底
     s5 = ""
