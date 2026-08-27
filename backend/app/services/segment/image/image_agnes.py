@@ -70,6 +70,29 @@ _DAILY_LEG_IDS = {"昭昭": "zhao_legs", "灿灿": "can_legs", "妈妈": "mom_le
 _LEG_COUNT_IDS = frozenset({"zhao_legs", "can_legs", "mom_legs", "extra_legs"})
 _MAX_LEGS_PER_PERSON = 2
 
+# ── 多手硬卡（裁剪放大数手）────────────────────────────────
+# 主校验整图数手对低分辨率下的多手会漏（图9 双手抱头+第三只手握遥控器）。
+# 硬卡把角色所在半幅裁剪 ×2 放大后再数手+多手确认，两问任一命中即失败。
+_HARDFAIL_ARM_SYSTEM_PROMPT = (
+    "你是图像质检员。只根据用户列出的检查项逐项判断，每项单独一行回答。"
+    "回答格式必须为「项N: 是」或「项N: 否」，数字项只回答阿拉伯数字。"
+    "不要解释、不要编号列表外的文字。"
+)
+_HARDFAIL_ARM_Q1 = (
+    "项1: 只看{look}本人。该角色身上凡是末端呈人手形态的肢端都算一条手臂"
+    "（起点是肩膀、腋下、腰侧、胸口或身前都要数，明显多出来的第3只手必须计入）。"
+    "手里握着东西的手也要算进去——手和握着的东西是两回事。"
+    "不要用「人只有两只胳膊」的常识改口。只回答阿拉伯数字"
+)
+_HARDFAIL_ARM_Q2 = (
+    "项2: {look}本人是否出现了多于正常两只手的情况？"
+    "（数清楚她/他身上所有的手，包括握着东西的手、"
+    "从腰侧/背后/胸前伸出的手）是则回答「是」，否则回答「否」。"
+)
+# daily 固定布局：昭昭左、灿灿右、妈妈中
+_HARDFAIL_ZONE = {"昭昭": "left", "灿灿": "right", "妈妈": "center"}
+_HARDFAIL_ZOOM = 2
+
 
 def _arm_count_question(look: str) -> str:
     """手臂条数问法：要数字。是/否和「人只有两臂」先验都会漏三臂。"""
@@ -78,7 +101,8 @@ def _arm_count_question(look: str) -> str:
         "该角色身上凡是末端呈人手形态的肢端都算一条手臂"
         "（起点是肩膀、腋下、腰侧、胸口或身前都要数，"
         "明显多出来的第3只手必须计入）。"
-        "剪柄、纸边、遥控器不算。"
+        "手里握着东西的手也要算进去——手和握着的东西是两回事；"
+        "剪柄、纸边不算。"
         "不要用「人只有两只胳膊」的常识改口。"
         "只回答阿拉伯数字"
     )
@@ -766,6 +790,7 @@ class AgnesImageProvider(ImageProvider):
         "画风套话、参考图指令前缀、次要细节差异一律算通过（答是）。"
         "项「手臂」：只报该角色末端呈人手形态的肢端条数，只答阿拉伯数字；"
         "起点是肩膀/腋下/腰侧/胸口/身前都要数，多出来的第3只手必须计入；"
+        "手里握着东西的手也要算进去——手和握着的东西是两回事；"
         "剪柄、纸边不算；不要用「人只有两臂」改口；不要用是/否。"
         "项「腿」：只报该角色末端呈人脚或鞋子形态的肢端条数，只答阿拉伯数字；"
         "起点是髋/臀/膝盖/桌下都要数，多出来的第3条腿必须计入；"
@@ -1368,6 +1393,12 @@ class AgnesImageProvider(ImageProvider):
                                 ok,
                                 AgnesImageProvider._format_verify_reply(content, check_ids),
                             )
+                            if ok and content_style == CONTENT_STYLE_DAILY_STORY:
+                                ok = self._verify_hardfail_limbs(
+                                    image_path,
+                                    expected_speakers=expected_speakers,
+                                    content_style=content_style,
+                                )
                             return ok
                         logger.warning(
                             "%s agnes verify_image http %s (%s key, retry=%s/%s), body=%s",
@@ -1425,3 +1456,192 @@ class AgnesImageProvider(ImageProvider):
                 "agnes verify_image error [out=%s]: %s", image_path.name, exc
             )
             return True
+
+    # ── 多手硬卡：裁剪放大数手 ────────────────────────────────
+
+    @staticmethod
+    def _crop_zone_data_url(
+        image_path: Path,
+        zone: str,
+        *,
+        zoom: int = _HARDFAIL_ZOOM,
+    ) -> str:
+        """把角色所在区域裁剪出来并放大，返回 base64 data URL。
+
+        daily 固定布局：昭昭在左半幅、灿灿在右半幅、妈妈在中间半幅。
+        整图 VL 对低分辨率多手会漏（三手相叠/握着东西被忽略），
+        裁剪放大后手部轮廓更清晰，VL 才能数出来。
+        """
+        img = PILImage.open(image_path)
+        w, h = img.size
+        if zone == "left":
+            box = (0, 0, w // 2, h)
+        elif zone == "right":
+            box = (w // 2, 0, w, h)
+        else:  # center
+            box = (w // 4, 0, w * 3 // 4, h)
+        crop = img.crop(box)
+        crop = crop.resize(
+            (crop.size[0] * zoom, crop.size[1] * zoom), PILImage.LANCZOS
+        )
+        max_dim = 1024
+        if max(crop.size) > max_dim:
+            ratio = max_dim / max(crop.size)
+            crop = crop.resize(
+                (int(crop.size[0] * ratio), int(crop.size[1] * ratio)),
+                PILImage.LANCZOS,
+            )
+        buf = io.BytesIO()
+        crop.convert("RGB").save(buf, format="JPEG", quality=92)
+        return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+
+    def _verify_hardfail_limbs(
+        self,
+        image_path: Path,
+        *,
+        expected_speakers: list[str] | None,
+        content_style: str | None,
+    ) -> bool:
+        """多手硬卡：对出镜角色裁剪放大后数手，任何角色 >2 手即失败。
+
+        返回 False 触发整图重生成。网络/解析失败跳过该角色（不误杀），
+        仅当 VL 明确给出「>2 手」或「多手=是」时才判失败。
+        """
+        if content_style != CONTENT_STYLE_DAILY_STORY:
+            return True
+        if not image_path.exists():
+            return True
+        settings = get_settings()
+        keys = agnes_api_keys(settings)
+        if not keys:
+            return True
+        speakers = [str(s).strip() for s in (expected_speakers or []) if str(s).strip()]
+        allowed = AgnesImageProvider._allowed_cast_for_verify(
+            speakers=speakers,
+            content_style=content_style,
+        )
+        roles = [name for name in allowed if name in _HARDFAIL_ZONE]
+        if not roles:
+            return True
+
+        log_tag = f"[out={image_path.name}]"
+        for name in roles:
+            zone = _HARDFAIL_ZONE[name]
+            try:
+                data_url = AgnesImageProvider._crop_zone_data_url(image_path, zone)
+            except Exception as exc:
+                logger.warning(
+                    "%s agnes hardfail crop %s error: %s", log_tag, name, exc
+                )
+                continue
+            look = _DAILY_LOOK.get(name, name)
+            question = (
+                _HARDFAIL_ARM_Q1.format(look=look)
+                + "\n"
+                + _HARDFAIL_ARM_Q2.format(look=look)
+            )
+            answer = self._ask_hardfail_vl(settings, keys, data_url, question, log_tag)
+            if answer is None:
+                continue
+            count, extra = AgnesImageProvider._parse_hardfail_arm_answer(answer)
+            hit = (count is not None and count > _MAX_ARMS_PER_PERSON) or (
+                extra is True
+            )
+            logger.info(
+                "%s agnes hardfail limbs %s: count=%s extra=%s hit=%s",
+                log_tag,
+                name,
+                count,
+                extra,
+                hit,
+            )
+            if hit:
+                return False
+        return True
+
+    def _ask_hardfail_vl(
+        self,
+        settings,
+        keys: list,
+        data_url: str,
+        question: str,
+        log_tag: str,
+    ) -> str | None:
+        """裁剪图数手 VL 调用；网络失败返回 None（跳过该角色）。"""
+        for api_key in keys:
+            try:
+                headers = agnes_auth_header(api_key.value)
+                url = f"{agnes_key_base_url(api_key, settings)}/chat/completions"
+                payload = {
+                    "model": settings.agnes_vl_model,
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": _HARDFAIL_ARM_SYSTEM_PROMPT,
+                        },
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": question},
+                                {"type": "image_url", "image_url": {"url": data_url}},
+                            ],
+                        },
+                    ],
+                    "max_tokens": 16384,
+                }
+
+                def _post() -> requests.Response:
+                    return requests.post(
+                        url, headers=headers, json=payload, timeout=300
+                    )
+
+                resp = self._run_blocking_cancellable(_post)
+                if resp.ok:
+                    msg = (
+                        resp.json()
+                        .get("choices", [{}])[0]
+                        .get("message", {})
+                        or {}
+                    )
+                    return AgnesImageProvider._vl_message_text(msg)
+                logger.warning(
+                    "%s agnes hardfail http %s (%s key): %s",
+                    log_tag,
+                    resp.status_code,
+                    api_key.label,
+                    _resp_body_summary(resp),
+                )
+            except Exception as exc:
+                logger.warning(
+                    "%s agnes hardfail call failed (%s key): %s",
+                    log_tag,
+                    api_key.label,
+                    exc,
+                )
+        return None
+
+    @staticmethod
+    def _parse_hardfail_arm_answer(body: str) -> tuple[int | None, bool | None]:
+        """解析硬卡两问回答，返回 (count, extra)。
+
+        项1 数字为手臂条数；项2 是/否为多手确认。
+        解析失败返回 None，调用方跳过（不误杀）。
+        """
+        count: int | None = None
+        extra: bool | None = None
+        for raw in (body or "").split("\n"):
+            line = raw.strip()
+            m = _ITEM_LINE_RE.match(line)
+            if not m:
+                continue
+            num = int(m.group(1))
+            text = m.group(2)
+            if num == 1:
+                count = AgnesImageProvider._parse_person_count(text)
+            elif num == 2:
+                verdict = AgnesImageProvider._parse_item_answer(text)
+                if verdict == "yes":
+                    extra = True
+                elif verdict == "no":
+                    extra = False
+        return count, extra
