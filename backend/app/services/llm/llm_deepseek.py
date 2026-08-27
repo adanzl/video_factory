@@ -621,6 +621,33 @@ def _chunk_indices(indices: list[int], batch_size: int) -> list[list[int]]:
     return [ordered[i : i + size] for i in range(0, len(ordered), size)]
 
 
+# LLM 偶发漏段时的补全重试上限（只对缺段局部重试，成本低）
+_IMAGE_PROMPT_RETRY_ON_MISSING = 2
+
+
+def _missing_image_prompt_indices(
+    prompts: list[dict],
+    required: list[int],
+    *,
+    motion_only: bool,
+) -> list[int]:
+    """返回缺非空 prompt 的 segment_index（daily 只看 motion_prompt，其它看 image_prompt）。"""
+    if motion_only:
+        present = {
+            int(item["segment_index"])
+            for item in prompts
+            if item.get("segment_index") is not None
+            and str(item.get("motion_prompt") or "").strip()
+        }
+    else:
+        present = {
+            int(item["segment_index"])
+            for item in prompts
+            if item.get("image_prompt")
+        }
+    return [idx for idx in required if idx not in present]
+
+
 class DeepSeekClient(LLMClient):
     def __init__(self) -> None:
         import requests
@@ -1228,6 +1255,35 @@ class DeepSeekClient(LLMClient):
             )
             batches = _chunk_indices(all_indices, 1)
             prompt_items = _run_all(batches)
+
+        # LLM 偶发漏段（motion_prompt/image_prompt 为空或缺失）时，
+        # 只对缺段带 feedback 局部补全重试，避免整次 script 硬失败
+        for _ in range(_IMAGE_PROMPT_RETRY_ON_MISSING):
+            missing = _missing_image_prompt_indices(
+                prompt_items,
+                all_indices,
+                motion_only=is_daily,
+            )
+            if not missing:
+                break
+            logger.warning(
+                "image_prompts missing segments=%s, retrying these segments",
+                missing,
+            )
+            retry_feedback = (
+                f"上一轮输出缺少这些 segment 的 motion_prompt: {missing}；"
+                "请只为这些 segment 补全 motion_prompt，不得遗漏。"
+            )
+            if feedback:
+                retry_feedback = f"{feedback}；{retry_feedback}"
+            prompt_items = prompt_items + self._generate_image_prompts(
+                script,
+                feedback=retry_feedback,
+                supplementary_info=supplementary_info,
+                job=job,
+                segment_indices=missing,
+                include_sd15_prompt=include_sd15_prompt,
+            )["image_prompts"]
 
         self._merge_image_prompts(
             script,
