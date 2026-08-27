@@ -275,10 +275,14 @@ class DailyStoryMgr:
 
     def update_story(self, story_id: int, *, story: dict[str, Any]) -> dict:
         """更新日常故事内容（保存时重算观感分）。"""
-        from app.services.daily_story.prompts import sync_discovery_opening_from_dialogue
+        from app.services.daily_story.prompts import (
+            sync_discovery_opening_from_dialogue,
+            try_local_patch_daily_story_body,
+        )
         from app.services.daily_story.quality import attach_daily_story_quality
         if isinstance(story, dict):
             sync_discovery_opening_from_dialogue(story)
+            story, _ = try_local_patch_daily_story_body(story)
             attach_daily_story_quality(story)
         return repo_daily_story.update_story(story_id, story=story)
 

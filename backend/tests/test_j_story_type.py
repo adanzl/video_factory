@@ -105,3 +105,50 @@ def test_j_quality_scores_veto_story():
     assert "回旋镖" not in "".join(q["reasons"])
     assert "收束形态未落位" not in "".join(q["reasons"])
     assert "笑点解析缺类型" not in q["reasons"]
+
+
+def _j_repetitive_veto_story() -> dict:
+    story = _j_veto_story()
+    story["dialogue"] = [
+        {"speaker": "昭昭", "line": "妈妈，我想去公园玩！"},
+        {"speaker": "妈妈", "line": "去吧，早点回来。"},
+        {"speaker": "灿灿", "line": "等等，我同意了吗呀？"},
+        {"speaker": "昭昭", "line": "姐姐，求你了，让我去了吧！"},
+        {"speaker": "灿灿", "line": "我说不行就不行啊！"},
+        {"speaker": "昭昭", "line": "同桌说公园里有鸽子，我想去看看嘛！"},
+        {"speaker": "灿灿", "line": "看鸽子也不行，出门我说了算。"},
+        {"speaker": "昭昭", "line": "我鞋都穿好喽，就在门口玩一小会儿！"},
+        {"speaker": "灿灿", "line": "穿好了也没用，再哭更不准呀。"},
+        {"speaker": "昭昭", "line": "我保证五点半准时回家，绝不贪玩呢！"},
+        {"speaker": "灿灿", "line": "准时回家也没用，想都别想呀。"},
+        {"speaker": "昭昭", "line": "可是妈妈都答应了呀！"},
+        {"speaker": "灿灿", "line": "妈妈答应没用，我不同意就不行。"},
+        {"speaker": "昭昭", "line": "那我帮你收玩具，还带两根冰棍嘛！"},
+        {"speaker": "灿灿", "line": "带冰棍也不行，我说不行就不行。"},
+        {"speaker": "昭昭", "line": "我把新贴纸也给你三张，行吧？"},
+        {"speaker": "灿灿", "line": "贴纸也不行，出门我说了算。"},
+        {"speaker": "昭昭", "line": "姐姐你太霸道了，我讨厌你！"},
+        {"speaker": "灿灿", "line": "讨厌我也没用，这个家我说了算。"},
+        {"speaker": "昭昭", "line": "呜呜，我回房间了，不理你了！"},
+        {"speaker": "灿灿", "line": "回你的去，反正我说了算呀。"},
+    ]
+    return story
+
+
+def test_j_patch_dedupes_authority_repeat():
+    from app.services.daily_story.story_types.j.patch import patch_j_body
+
+    story = _j_repetitive_veto_story()
+    notes = patch_j_body(story)
+    assert notes
+    cancan = [
+        x["line"]
+        for x in story["dialogue"]
+        if x.get("speaker") == "灿灿"
+    ]
+    hold_n = sum(line.count("我说了算") for line in cancan)
+    assert hold_n <= 2, cancan
+    assert cancan[-1].count("我说了算") >= 1
+    errors: list[str] = []
+    append_j_body_errors(story, errors)
+    assert errors == []

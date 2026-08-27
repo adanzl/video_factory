@@ -55,6 +55,11 @@ def score_punchline(
 
 
 def humor_revision_hint(issue_text: str) -> str | None:
+    if "我说了算" in issue_text or "否决同构" in issue_text or "同构复读" in issue_text:
+        return (
+            "【J去复读】灿灿中段否决须换说法，全篇「我说了算」≤2次；"
+            "每句带新理由（理由/缩小/保证/搬妈妈/利诱），末句再镇住。"
+        )
     if "镇住" in issue_text or "收束" in issue_text:
         return "【J收束】末段灿灿仍占上风（我说了算/反正…），昭昭怂退；勿 A 破功。"
     if "否决" in issue_text or "推进" in issue_text:
@@ -90,4 +95,5 @@ QUALITY_PROFILE = TypeQualityProfile(
     score_opening_quality=j_opening.score_opening_quality,
     score_funniness_tail=j_humor.score_funniness_tail,
     humor_revision_hint=humor_revision_hint,
+    humor_issue_caps=j_humor.HUMOR_ISSUE_CAPS,
 )
