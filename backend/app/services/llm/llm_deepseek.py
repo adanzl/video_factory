@@ -715,6 +715,7 @@ class DeepSeekClient(LLMClient):
         model: str | None = None,
     ) -> tuple[dict[str, Any], str | None]:
         _EMPTY_RETRIES = 3
+        _JSON_RETRIES = 1
         for _ in range(_EMPTY_RETRIES):
             content, finish = self._chat(
                 system,
@@ -733,17 +734,41 @@ class DeepSeekClient(LLMClient):
             time.sleep(1)
         else:
             raise ValueError("LLM returned empty response after %d retries" % _EMPTY_RETRIES)
-        try:
-            parsed = _loads_llm_json(content)
-        except ValueError as exc:
-            # 记录 LLM 响应片段以便排查
-            preview = content[:300].replace("\n", "\\n")
-            logger.warning(
-                "LLM JSON 解析失败: %s\n  content_preview=%r",
-                exc,
-                preview,
-            )
-            raise ValueError(str(exc)) from exc
+        # LLM 偶发输出坏 JSON（缺逗号/花括号不闭合等）时，带格式提示重试一次，
+        # 避免 script/visual_brief/image_prompts 等整个阶段硬失败
+        last_exc: ValueError | None = None
+        for attempt in range(_JSON_RETRIES + 1):
+            try:
+                parsed = _loads_llm_json(content)
+            except ValueError as exc:
+                last_exc = exc
+                if attempt >= _JSON_RETRIES:
+                    # 记录 LLM 响应片段以便排查
+                    preview = content[:300].replace("\n", "\\n")
+                    logger.warning(
+                        "LLM JSON 解析失败: %s\n  content_preview=%r",
+                        exc,
+                        preview,
+                    )
+                    raise ValueError(str(exc)) from exc
+                logger.warning(
+                    "LLM JSON 解析失败，带格式提示重试 (attempt=%d/%d): %s",
+                    attempt + 1,
+                    _JSON_RETRIES,
+                    exc,
+                )
+                content, finish = self._chat(
+                    system,
+                    user
+                    + "\n\n上次输出不是合法 JSON，请重新输出严格合法的 JSON 对象，"
+                    "不要包含任何解释文字、markdown 代码围栏、注释或多余字符。",
+                    max_tokens=max_tokens,
+                    thinking_enabled=thinking_enabled,
+                    temperature=temperature,
+                    model=model,
+                )
+                continue
+            break
         return parsed, finish
 
     def _expand_narration_if_needed(
