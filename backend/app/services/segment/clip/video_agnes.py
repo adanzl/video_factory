@@ -1446,12 +1446,8 @@ class AgnesClipProvider(ClipProvider):
 
             clip_width = width or get_settings().video_width
             clip_height = height or get_settings().video_height
-            settings = get_settings()
-            # Flash 用 aspect_ratio：由 AGNES_VIDEO_WIDTH/HEIGHT 约分推算
-            aspect_ratio = _resolve_aspect_ratio(
-                settings.agnes_video_width,
-                settings.agnes_video_height,
-            )
+            # Flash 用 aspect_ratio：由当前分镜画布宽高约分推算
+            aspect_ratio = _resolve_aspect_ratio(clip_width, clip_height)
             api_seconds = _pick_seconds(total_duration)
             api_sec_f = float(api_seconds)
             prompt = _stabilize_motion_prompt(
@@ -1476,6 +1472,7 @@ class AgnesClipProvider(ClipProvider):
             )
             output_path.parent.mkdir(parents=True, exist_ok=True)
             try:
+                settings = get_settings()
                 verify_attempts = max(1, settings.agnes_video_mouth_verify_attempts)
                 for v_attempt in range(1, verify_attempts + 1):
                     self._generate_raw(
