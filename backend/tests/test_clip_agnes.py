@@ -92,8 +92,6 @@ def test_subtitle_verify_hard_fails_after_retries(tmp_path: Path) -> None:
     settings = SimpleNamespace(
         video_width=720,
         video_height=1280,
-        agnes_video_width=720,
-        agnes_video_height=1280,
         agnes_video_mouth_verify=False,
         agnes_video_mouth_verify_attempts=2,
     )
@@ -564,8 +562,6 @@ def test_agnes_clip_provider_submits_i2v_payload(tmp_path: Path) -> None:
             return_value=SimpleNamespace(
                 video_width=720,
                 video_height=1280,
-                agnes_video_width=720,
-                agnes_video_height=1280,
                 ffmpeg_crf=23,
                 agnes_video_mouth_verify=False,
                 agnes_video_mouth_verify_attempts=1,
