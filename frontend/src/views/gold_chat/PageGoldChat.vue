@@ -6,10 +6,10 @@
           <Refresh />
         </el-icon>
       </el-button>
-      <el-button type="primary" size="small" :loading="collecting" :disabled="reimporting" @click="handleCollect">
+      <el-button type="primary" size="small" :loading="collecting" @click="handleCollect">
         采集（10 条）
       </el-button>
-      <el-button type="primary" size="small" :loading="reimporting" :disabled="collecting" @click="handleReimport">
+      <el-button type="primary" size="small" :loading="reimporting" @click="handleReimport">
         重新导入
       </el-button>
       <el-button type="primary" size="small" :disabled="!selectedIds.length" :loading="batching" @click="handleBatchConvert">
