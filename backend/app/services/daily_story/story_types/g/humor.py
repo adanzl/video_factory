@@ -5,13 +5,13 @@ from __future__ import annotations
 import re
 
 RE_ESCALATE = re.compile(
-    r"丢人|嘴硬|怂|没记性|充|大侠|烦|骂|错错",
+    r"丢人|嘴硬|怂|没记性|充|大侠|烦|骂|错错|少来|还敢|属狗|逮着就咬|狠心|有理|装|唬",
 )
 RE_PIVOT = re.compile(
-    r"护|撑腰|拼命|动你|心疼|管你|认真的|我怕",
+    r"护|撑腰|拼命|动你|心疼|管你|认真的|我怕|重要|舍不得|在乎",
 )
 RE_STUNNED = re.compile(r"你说啥|……|\.\.\.|愣")
-RE_SOFT = re.compile(r"擦|药|说好了|行了|过来|撑腰|相视|笑")
+RE_SOFT = re.compile(r"擦|药|说好了|行了|过来|撑腰|相视|笑|识相|饶|原谅|算了")
 
 
 def collect_g_humor_issues(

@@ -199,6 +199,41 @@ def _repair_i_row_contract(row: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _resolve_structure_row(row: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    from app.services.daily_story.gold_story.gold_chat.type_bridge import (
+        resolve_gold_chat_structure_row,
+    )
+
+    return resolve_gold_chat_structure_row(row)
+
+
+def _persist_structure_correction(row: dict[str, Any], notes: list[str]) -> dict[str, Any]:
+    """structure 纠偏后回写 DB（仅 gold_chat 入口触发）。"""
+    if not notes:
+        return row
+    gid = int(row.get("id") or 0)
+    if gid <= 0:
+        return row
+    st = str(row.get("structure_type") or "").strip().upper()
+    if not st:
+        return row
+    try:
+        repo_gold_story.update_structure_type(gid, st)
+    except ValueError as exc:
+        logger.warning("[GOLD_CHAT] structure persist skipped id=%s: %s", gid, exc)
+        return row
+    payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+    sc = payload.get("scene_contract") if isinstance(payload.get("scene_contract"), dict) else None
+    if isinstance(sc, dict) and str(sc.get("story_type") or "").strip().upper() == st:
+        repo_gold_story.patch_story_payload(gid, {"scene_contract": sc})
+    logger.info(
+        "[GOLD_CHAT] structure auto_correct id=%s notes=%s",
+        gid,
+        "；".join(notes),
+    )
+    return repo_gold_story.get_story(gid) or row
+
+
 PASS1_CANDIDATE_COUNT = 4
 PASS1_REGENERATE_MAX = 5
 PASS2_MAX_ROUNDS = 2
@@ -1193,6 +1228,7 @@ def _structure_type_hint(structure_type: str, mechanism: str = "") -> str:
 def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
     """单条 gold_story 行 → daily_story 形 JSON。"""
     row = _repair_i_row_contract(row)
+    row, _structure_notes = _resolve_structure_row(row)
     payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
     structure_type = str(row.get("structure_type") or "A").strip().upper()
     st_label = structure_type_label(structure_type)
@@ -1458,6 +1494,8 @@ def convert_gold_chat(
 ) -> dict[str, Any]:
     """转换 + 落盘，返回摘要。"""
     row = _persist_m5_h_contract_if_needed(row)
+    row, structure_notes = _resolve_structure_row(row)
+    row = _persist_structure_correction(row, structure_notes)
     sid = str(row.get("source_id") or "").strip()
     chat = gold_story_to_gold_chat(row)
     chat, norm_notes = apply_gold_chat_normalizations(chat, row=row)

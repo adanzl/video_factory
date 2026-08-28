@@ -54,7 +54,7 @@ source_type：{source_type}（tutorial 时禁保留教程口吻/第几招）
 
 输出 JSON：
 {{
-  "scene_title": "短标题",
+  "scene_title": "短标题，口语钩子；用词须在对白/正文中原样出现，禁自创与正文不一致的说法",
   "setting": "地点 + 冲突物落点（谁面前/谁端着哪件）",
   "key": "2-8字内容标签",
   "conflict_core": "一句话冲突核",

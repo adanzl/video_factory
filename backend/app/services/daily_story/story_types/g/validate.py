@@ -8,11 +8,11 @@ from app.services.daily_story.story_types import parse_story_type_code
 from app.services.daily_story.story_types.quality import RE_BOOMERANG_RULE
 
 RE_PIVOT = re.compile(
-    r"护|撑腰|拼命|动你|心疼|管你|认真的|我怕|别叫我|老弟|我弟",
+    r"护|撑腰|拼命|动你|心疼|管你|认真的|我怕|别叫我|老弟|我弟|重要|舍不得|在乎",
 )
 RE_STUNNED = re.compile(r"你说啥|你说什么|……|\.\.\.|愣|啥\？|什么\？")
 RE_SOFT_CLOSE = re.compile(
-    r"擦|药|说好了|行了|过来|撑腰|嗯|笑|好\s*吧|别.*欺负",
+    r"擦|药|说好了|行了|过来|撑腰|嗯|笑|好\s*吧|别.*欺负|识相|饶|原谅|算了",
 )
 RE_F_STALE = re.compile(
     r"不跟你玩|不跟你好了|不理你|回家.*不|谁也不|爱咋咋",

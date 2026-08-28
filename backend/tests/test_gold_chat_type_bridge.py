@@ -6,6 +6,7 @@ import pytest
 
 from app.services.daily_story.gold_story.gold_chat.type_bridge import (
     apply_type_body_pipeline,
+    resolve_gold_chat_structure_row,
     structure_type_hint,
     type_align_chain,
 )
@@ -50,6 +51,52 @@ def test_structure_type_hint_m2_c_extra():
     assert "M2+C" in hint
     assert "自私包装公平" in hint
     assert "禁止另起第二轮" in hint
+
+
+def test_m5_g_chain_mentions_pivot():
+    chain = type_align_chain(structure_type="G", mechanism="M5")
+    blob = "\n".join(chain)
+    assert "pivot" in blob
+    assert "识相" in blob
+
+
+def test_resolve_structure_row_m5_a_to_g_when_mapping_and_seed():
+    row = {
+        "id": 11,
+        "mechanism": "M5",
+        "structure_type": "A",
+        "payload": {
+            "structure_mapping_note": "从互怼到真情流露，符合G型结构",
+            "dialogue_seed": [
+                {"speaker": "灿灿", "intent": "立规：以后不许再咬人"},
+                {"speaker": "昭昭", "intent": "假装咬但没咬，逗姐姐"},
+                {"speaker": "灿灿", "intent": "亮出旧咬痕，说永远记得"},
+                {"speaker": "昭昭", "intent": "说现在不咬了，因为姐姐重要"},
+                {"speaker": "灿灿", "intent": "嘴硬：哼，算你识相"},
+            ],
+            "scene_contract": {"story_type": "C"},
+        },
+    }
+    fixed, notes = resolve_gold_chat_structure_row(row)
+    assert fixed["structure_type"] == "G"
+    assert fixed["payload"]["scene_contract"]["story_type"] == "G"
+    assert any("structure_type:A→G" in n for n in notes)
+
+
+def test_resolve_structure_row_skips_without_mapping_note():
+    row = {
+        "mechanism": "M5",
+        "structure_type": "A",
+        "payload": {
+            "dialogue_seed": [
+                {"speaker": "昭昭", "intent": "说现在不咬了，因为姐姐重要"},
+                {"speaker": "灿灿", "intent": "嘴硬：哼，算你识相"},
+            ],
+        },
+    }
+    fixed, notes = resolve_gold_chat_structure_row(row)
+    assert fixed["structure_type"] == "A"
+    assert notes == []
 
 
 def test_patch_gold_chat_post_close_tail_m2_c():
