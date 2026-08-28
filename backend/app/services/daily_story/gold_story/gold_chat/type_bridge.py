@@ -6,9 +6,16 @@
 
 from __future__ import annotations
 
+import copy
+import re
 from typing import Any
 
-from app.services.daily_story.gold_story.types import catalog_entry, mechanism_label
+from app.services.daily_story.gold_story.types import (
+    allowed_structure_types,
+    catalog_entry,
+    mechanism_label,
+    normalize_structure_type,
+)
 from app.services.daily_story.story_types import (
     STORY_TYPE_LINES,
     revision_hints_for_type,
@@ -126,6 +133,13 @@ _MECH_STRUCTURE_CHAINS: dict[tuple[str, str], tuple[str, ...]] = {
         "pivot：护短/真心一句",
         "愣住 beat",
         "暖收或半暖",
+    ),
+    ("M5", "G"): (
+        "数落/互损 escalating（翻旧账：咬人没记性/丢人，弟弟不服顶嘴）",
+        "拒和/加码：立规不许再咬 + 亮旧痕/旧账（嘴硬不原谅）",
+        "pivot：真心一句（你重要/舍不得/怕你疼），不提前软化",
+        "愣住 beat（你说啥/……）",
+        "暖收或嘴硬里带软（哼，算你识相/过来，给你揉揉）",
     ),
     ("M5", "A"): (
         "立规/拒和 escalating",
@@ -274,6 +288,75 @@ _MECH_HINT_APPEND: dict[tuple[str, str], str] = {
         "\n- **M1+C**：回旋镖扣原话——收束须引正文真出现过的对方原话"
     ),
 }
+
+
+_RE_MAPPING_G = re.compile(r"G\s*型|G\s*类|符合\s*G")
+_RE_SEED_PIVOT = re.compile(
+    r"护|撑腰|重要|舍不得|在乎|心疼|真心|动你|管你|认真的|我怕",
+)
+_RE_SEED_SOFT = re.compile(
+    r"识相|暖|嘴硬|原谅|饶|擦|药|说好了|行了|撑腰|嗯|笑",
+)
+
+
+def _dialogue_seed_blob(seed: list[Any] | None) -> str:
+    parts: list[str] = []
+    for item in seed or []:
+        if not isinstance(item, dict):
+            continue
+        parts.append(str(item.get("intent") or item.get("beat") or ""))
+    return "\n".join(parts)
+
+
+def _mapping_note_suggests_g(note: str) -> bool:
+    return bool(_RE_MAPPING_G.search(str(note or "")))
+
+
+def _seed_suggests_g(seed: list[Any] | None) -> bool:
+    blob = _dialogue_seed_blob(seed)
+    if not blob.strip():
+        return False
+    return bool(_RE_SEED_PIVOT.search(blob) and _RE_SEED_SOFT.search(blob))
+
+
+def resolve_gold_chat_structure_row(row: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """gold_chat 入口纠偏 structure_type（mapping_note + seed 强信号）。"""
+    notes: list[str] = []
+    out = dict(row)
+    payload = out.get("payload") if isinstance(out.get("payload"), dict) else {}
+    payload = copy.deepcopy(payload)
+    mechanism = str(out.get("mechanism") or "").strip().upper()
+    current = str(out.get("structure_type") or "").strip().upper()
+    mapping_note = str(payload.get("structure_mapping_note") or "")
+    seed = payload.get("dialogue_seed")
+    if not isinstance(seed, list):
+        seed = []
+
+    target = "G"
+    if current == target:
+        out["payload"] = payload
+        return out, notes
+    if not _mapping_note_suggests_g(mapping_note) or not _seed_suggests_g(seed):
+        out["payload"] = payload
+        return out, notes
+    if mechanism and target not in allowed_structure_types(mechanism):
+        out["payload"] = payload
+        return out, notes
+
+    normalize_structure_type(target)
+    out["structure_type"] = target
+    notes.append(f"structure_type:{current}→{target}(mapping+seed)")
+
+    sc = payload.get("scene_contract")
+    if isinstance(sc, dict):
+        sc = copy.deepcopy(sc)
+        sc_type = str(sc.get("story_type") or "").strip().upper()
+        if sc_type and sc_type != target:
+            sc["story_type"] = target
+            notes.append(f"scene_contract.story_type:{sc_type}→{target}")
+        payload["scene_contract"] = sc
+    out["payload"] = payload
+    return out, notes
 
 
 def type_align_chain(

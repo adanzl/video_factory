@@ -42,7 +42,7 @@ def score_punchline(
     del speakers, lines
     if RE_SOFT.search(last) or RE_SOFT.search(prev2 + last):
         return 6, ["暖收或半暖"]
-    if SHARED_PUNCH_SOFT.search(last):
+    if any(m in last for m in SHARED_PUNCH_SOFT):
         return 3, ["软收束"]
     return 0, []
 
@@ -67,6 +67,9 @@ QUALITY_PROFILE = TypeQualityProfile(
         "你说啥",
         "擦",
         "药",
+        "重要",
+        "舍不得",
+        "在乎",
     ),
     penalize_stubborn_end=False,
     collect_humor_issues=g_humor.collect_g_humor_issues,

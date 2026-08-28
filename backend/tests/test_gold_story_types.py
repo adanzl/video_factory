@@ -81,9 +81,10 @@ def test_m11_maps_to_i_not_injectable():
     validate_mechanism_structure_pair("M11", "I")
 
 
-def test_m5_allows_a_h_or_j():
-    assert allowed_structure_types("M5") == frozenset({"A", "H", "J"})
+def test_m5_allows_a_g_h_or_j():
+    assert allowed_structure_types("M5") == frozenset({"A", "G", "H", "J"})
     validate_mechanism_structure_pair("M5", "A")
+    validate_mechanism_structure_pair("M5", "G")
     validate_mechanism_structure_pair("M5", "H")
     validate_mechanism_structure_pair("M5", "J")
 
