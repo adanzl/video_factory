@@ -1488,6 +1488,12 @@ def convert_gold_chat(
         source_type=source_type,
         mom_lines_max=int(mom_max),
     )
+    logger.info(
+        "[GOLD_CHAT] convert %s passed validation lines=%s chars=%s",
+        sid,
+        len(chat.get("dialogue") or []),
+        dialogue_total_chars(chat),
+    )
     mech = str(row.get("mechanism") or "").upper()
     st = str(row.get("structure_type") or "").strip().upper()
     if mech == "M5" and st == "H":
@@ -1526,6 +1532,13 @@ def convert_gold_chat(
             raise ValueError(f"align_export:{kinds}")
     chat = _attach_gold_chat_structure_score(chat, row)
     struct = _gate_gold_chat_structure_score(chat)
+    logger.info(
+        "[GOLD_CHAT] convert %s structure_score=%s lines=%s chars=%s",
+        sid,
+        struct,
+        len(chat.get("dialogue") or []),
+        dialogue_total_chars(chat),
+    )
     cfg = config or Config()
     paths = export_gold_chat_files(
         source_id=sid,
@@ -1534,6 +1547,7 @@ def convert_gold_chat(
         config=cfg,
     )
     _backfill_gold_story_after_export(row, chat=chat, paths=paths, config=cfg)
+    logger.info("[GOLD_CHAT] convert %s exported paths=%s", sid, list(paths.keys()))
     return {
         "ok": True,
         "source_id": sid,

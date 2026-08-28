@@ -128,6 +128,7 @@ def convert_route():
     except KeyError:
         raise APIError("金故事不存在", status_code=404)
     except ValueError as exc:
+        logger.error("[GOLD_CHAT] convert failed id=%s source_id=%s: %s", gold_story_id, source_id, exc)
         raise APIError(str(exc), status_code=400)
 
 
@@ -199,15 +200,22 @@ def batch_route():
         gold_story_ids,
         source_ids,
     )
-    return json_ok(
-        gold_story_mgr.batch_convert(
-            max_items=max_items,
-            status=status,
-            gold_story_ids=gold_story_ids,
-            source_ids=source_ids,
-            force=force,
-        ),
+    result = gold_story_mgr.batch_convert(
+        max_items=max_items,
+        status=status,
+        gold_story_ids=gold_story_ids,
+        source_ids=source_ids,
+        force=force,
     )
+    logger.info(
+        "[GOLD_CHAT] batch done requested=%d selected=%d ok=%d skipped=%d failed=%d",
+        max_items,
+        result.get("selected", 0),
+        result.get("ok", 0),
+        result.get("skipped", 0),
+        result.get("failed", 0),
+    )
+    return json_ok(result)
 
 
 @bp.post("/reject")
