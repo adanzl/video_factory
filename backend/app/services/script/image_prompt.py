@@ -45,6 +45,14 @@ _FLOOR_SHOE_COUNT_LEAD = (
     "昭昭脚上穿着蓝白运动鞋。"
 )
 _FLOOR_SHOE_CAST_LOCK = "全画面仅有昭昭、灿灿两位儿童。"
+# 三人同框人数硬锁：防止 T2I 在复杂多人镜里额外加路人（cast_count 超员）
+_DAILY_CAST_LOCK_3 = "全画面仅有{}、{}、{}三人，不得出现其他任何人物。"
+# form 已含位置词（背在背上/握在手中/挎在腰间…）时，渲染以 form 为准，
+# 避免与 holder 渲染的「在X手中」并存成矛盾句（书包“手中+背上”同屏）
+_FORM_POSITION_RE = re.compile(
+    r"(?:背|扛|挂|挎|握|拿|提|捧|抱|叼|夹|举|拎|戴|穿|端|攥)在"
+    r"(?:(?:昭昭|灿灿|妈妈)(?:的)?)?[^，,；;]{0,10}"
+)
 # brief 里「指鞋/伸手向鞋带/托鞋帮」与硬锁打架，会诱发第三只鞋或套鞋
 _FLOOR_SHOE_HAND_SCRUB_RE = re.compile(
     r"(?:，|^)"
@@ -113,14 +121,17 @@ def _daily_scene_anchor(
     台词/setting 涉电视相关词时补「电视」，防止「指向电视方向」等动作落空。
     """
     blob = f"{setting or ''}{seg1_vb or ''}{dialogue_blob or ''}"
-    loc = next((w for w in _SCENE_LOCATION_WORDS if w in blob), None)
+    # 场景地点/室内外只由设定与首镜画面决定；台词里的地点词仅是向往内容
+    # （“我想去公园玩”“公园里有鸽子”），不能把画面场景拉到公园
+    scene_blob = f"{setting or ''}{seg1_vb or ''}"
+    loc = next((w for w in _SCENE_LOCATION_WORDS if w in scene_blob), None)
     if not loc:
         loc = (setting or "").strip("，。; ；")
         if len(loc) > 4:
             loc = loc[:4]
     if not loc:
         loc = "室内"
-    outdoor = any(w in blob for w in _SCENE_OUTDOOR_WORDS)
+    outdoor = any(w in scene_blob for w in _SCENE_OUTDOOR_WORDS)
     anchors: list[str] = []
     # 地面锚点（地垫/地毯）优先，带辨识形容词
     if "圆形" in blob and "地垫" in blob:
@@ -404,7 +415,12 @@ def _render_object_states(
         else:
             clause = f"{count}{obj}"
         if form:
-            clause += f"，{form}"
+            # form 已含位置词（背在昭昭背上/握在手中…）时以 form 为准，
+            # 否则会拼出「书包在昭昭手中，背在昭昭背上」的矛盾句
+            if holder and holder != "无" and _FORM_POSITION_RE.search(form):
+                clause = f"{count}{obj}{form}"
+            else:
+                clause += f"，{form}"
         parts.append(clause)
     return "；".join(p for p in parts if p)
 
@@ -1146,7 +1162,11 @@ def inject_role_completeness(
         return mom_clause
     if mom_clause.split("，")[0] in text:
         return text
-    return f"{text}{mom_clause}"
+    # 拼接处补分隔：text 可能以人数硬锁结尾（…不得出现其他任何人物），
+    # 直接拼接会与完整性子句粘连
+    if text.rstrip().endswith(("。", "！", "？", "；")):
+        return f"{text}{mom_clause}"
+    return f"{text}。{mom_clause}"
 
 
 def _daily_composition(
@@ -1161,7 +1181,10 @@ def _daily_composition(
     if len(names) >= 3:
         a, b, c = names[0], names[1], names[2]
         lr = "" if (has_lcr or has_lr) else f"画面从左到右是{a}、{b}、{c}。"
-        return f"{lr}中景三人同框，全身可见。"
+        return (
+            f"{lr}中景三人同框，全身可见。"
+            f"{_DAILY_CAST_LOCK_3.format(a, b, c)}"
+        )
     if shot_type == "特写":
         if len(names) == 2:
             a, b = names[0], names[1]
