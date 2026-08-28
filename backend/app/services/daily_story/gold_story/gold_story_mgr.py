@@ -36,10 +36,12 @@ _COLLECT_STATE: dict[str, Any] = {
     "workflow": "gold_story_collect",
     "status": "idle",
 }
+_REIMPORT_LOCK = threading.Lock()
 _REIMPORT_STATE: dict[str, Any] = {
     "workflow": "gold_story_reimport",
     "status": "idle",
 }
+_CONVERT_LOCK = threading.Lock()
 
 
 def _ensure_schema() -> None:
@@ -58,7 +60,7 @@ def _collect_snapshot() -> dict[str, Any]:
 
 
 def _reimport_snapshot() -> dict[str, Any]:
-    with _COLLECT_LOCK:
+    with _REIMPORT_LOCK:
         return dict(_REIMPORT_STATE)
 
 
@@ -71,6 +73,7 @@ def reset_collect_state() -> None:
                 "status": "idle",
             }
         )
+    with _REIMPORT_LOCK:
         _REIMPORT_STATE.clear()
         _REIMPORT_STATE.update(
             {
@@ -177,7 +180,7 @@ def _run_reimport_job(
             )
         except Exception as exc:
             logger.exception("[GOLD_CHAT] reimport failed")
-            with _COLLECT_LOCK:
+            with _REIMPORT_LOCK:
                 _REIMPORT_STATE.update(
                     {
                         "status": "error",
@@ -384,7 +387,8 @@ class GoldStoryMgr:
                 "export": export,
             }
 
-        outcome = convert_gold_chat(row, config=cfg)
+        with _CONVERT_LOCK:
+            outcome = convert_gold_chat(row, config=cfg)
         return {"action": "ok", **outcome}
 
     def resolve_story_block(
@@ -462,8 +466,6 @@ class GoldStoryMgr:
         with _COLLECT_LOCK:
             if _COLLECT_STATE.get("status") == "running":
                 raise RuntimeError("采集进行中")
-            if _REIMPORT_STATE.get("status") == "running":
-                raise RuntimeError("重新导入进行中")
             _COLLECT_STATE.clear()
             _COLLECT_STATE.update(
                 {
@@ -510,9 +512,7 @@ class GoldStoryMgr:
         if len(ids) + len(bvs) > 20:
             raise ValueError("一次最多重新导入 20 条")
 
-        with _COLLECT_LOCK:
-            if _COLLECT_STATE.get("status") == "running":
-                raise RuntimeError("采集进行中")
+        with _REIMPORT_LOCK:
             if _REIMPORT_STATE.get("status") == "running":
                 raise RuntimeError("重新导入进行中")
             _REIMPORT_STATE.clear()
