@@ -87,17 +87,8 @@ def build_motion_prompt(*, legacy: bool = False) -> str:
 
 MOTION_PROMPT = build_motion_prompt()
 
-NEGATIVE_PROMPT = (
-    "subtitles, text, words, letters, captions, watermark, overlay, "
-    "字幕, 文字, 水印, 弹幕, 对白气泡, "
-    "微笑, 大笑, 露齿笑, 开心, 嬉笑, 表情突变, 换脸, 脸部变形, "
-    "扭曲, 多手指, "
-    "快速推进, 大幅推进, 强烈变焦, 画面放大, 裁切脸部, zoom in, dolly in"
-)
-
-DEFAULT_NUM_FRAMES = 81
-DEFAULT_FPS = 24
-I2V_MODE = "ti2vid"
+DEFAULT_SECONDS = 5
+I2V_MODE = "keyframe"
 
 
 def _encode_image_data_uri(path: Path) -> str:
@@ -199,9 +190,8 @@ def main() -> int:
     )
     parser.add_argument("--motion", default=None, help="覆盖 motion prompt（默认 inject 或 --legacy-motion）")
     parser.add_argument("--out", type=Path, default=None, help="输出路径（默认 tmp/i2v_seg1_<时间戳>.mp4）")
-    parser.add_argument("--frames", type=int, default=DEFAULT_NUM_FRAMES, help=f"生成帧数（默认 {DEFAULT_NUM_FRAMES}）")
-    parser.add_argument("--width", type=int, default=1280, help="视频宽度（默认 1280）")
-    parser.add_argument("--height", type=int, default=720, help="视频高度（默认 720）")
+    parser.add_argument("--seconds", type=int, default=DEFAULT_SECONDS, help=f"视频秒数 4-12（默认 {DEFAULT_SECONDS}）")
+    parser.add_argument("--aspect-ratio", default="16:9", help="画幅（默认 16:9）")
     parser.add_argument("-v", "--verbose", action="store_true", help="打印 DEBUG 日志")
     args = parser.parse_args()
 
@@ -236,25 +226,28 @@ def main() -> int:
     api_key = keys[0]
     base_url = settings.agnes_api_base_url
     poll_root = base_url.rstrip("/")
+    if poll_root.endswith("/v1"):
+        poll_root = poll_root[:-3]
 
+    seconds = str(max(4, min(12, int(args.seconds))))
+    model = settings.agnes_video_model
     payload = {
-        "model": settings.agnes_video_model,
+        "model": model,
         "prompt": motion,
-        "image": image_ref,
         "mode": I2V_MODE,
-        "num_frames": args.frames,
-        "frame_rate": DEFAULT_FPS,
-        "negative_prompt": NEGATIVE_PROMPT,
-        "width": args.width,
-        "height": args.height,
+        "seconds": seconds,
+        "size": "720P",
+        "aspect_ratio": args.aspect_ratio,
+        "first_frame": image_ref,
+        "n": 1,
     }
 
     print(f"provider:   agnes_i2v ({api_key.label} key)")
-    print(f"size:       {args.width}x{args.height}")
+    print(f"size:       720P / {args.aspect_ratio}")
     print(f"base_url:   {base_url}")
-    print(f"model:      {settings.agnes_video_model}")
+    print(f"model:      {model}")
     print(f"image:      {image_path}")
-    print(f"frames:     {args.frames} @ {DEFAULT_FPS}fps ≈ {args.frames / DEFAULT_FPS:.1f}s")
+    print(f"seconds:    {seconds}")
     print(f"out:        {out}")
     print(f"motion ({len(motion)} chars):")
     print(f"  {motion}")
@@ -264,12 +257,18 @@ def main() -> int:
     try:
         print("📤 提交 I2V 任务...")
         submit_resp = _request_i2v(api_key.value, base_url, payload)
+        video_id = submit_resp.get("video_id")
         task_id = submit_resp.get("id") or submit_resp.get("task_id")
-        if not task_id:
+        if not video_id and not task_id:
             raise RuntimeError(f"submit response missing id: {submit_resp}")
-        print(f"   task_id: {task_id}")
+        print(f"   video_id: {video_id or '-'}  task_id: {task_id or '-'}")
 
-        poll_url = f"{poll_root}/videos/{task_id}"
+        if video_id and not str(video_id).startswith("task_"):
+            from urllib.parse import urlencode
+
+            poll_url = f"{poll_root}/agnesapi?{urlencode({'video_id': video_id, 'model_name': model})}"
+        else:
+            poll_url = f"{base_url.rstrip('/')}/videos/{task_id}"
         print(f"⏳ 轮询任务状态 ({poll_url})...")
         completed = _poll_i2v(api_key.value, poll_url, max_attempts=settings.agnes_video_poll_max_attempts, interval_sec=settings.agnes_video_poll_interval_sec)
 

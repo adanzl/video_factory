@@ -1,4 +1,4 @@
-"""Agnes AI 图生视频 ClipProvider（agnes-video-v2.0，Data URI 输入）。"""
+"""Agnes AI 图生视频 ClipProvider（agnes-video-2.5-flash，keyframe 首帧）。"""
 
 from __future__ import annotations
 
@@ -44,7 +44,11 @@ _RETRYABLE_HTTP = frozenset({500, 502, 503, 504, 520, 521, 522, 523, 524, 525, 5
 _RATE_LIMIT_WAIT_SEC = 60.0
 _TASK_RETRY_TOKENS = ("failed", "timeout", "429", "rate limit", "too many")
 _TERMINAL_POLL_STATES = frozenset({"completed", "failed"})
-_I2V_MODE = "ti2vid"
+# Video 2.5 Flash：图生视频用 keyframe + first_frame（保持成片真实首帧）
+_I2V_MODE = "keyframe"
+_FLASH_SIZE = "720P"
+_MIN_SECONDS = 4
+_MAX_SECONDS = 12
 _DEFAULT_MOTION_PROMPT = (
     "画面元素轻微自然晃动，镜头固定不推近不拉远，面部表情与静图一致"
 )
@@ -55,18 +59,16 @@ _CAMERA_LOCK_HINT = "镜头固定，不推近不拉远，不放大构图"
 _CLEAN_VISUAL_STYLE_HINT = (
     "纯视觉画面，无任何字幕、水印、对话框或文字叠加"
 )
-_DEFAULT_NEGATIVE_PROMPT = (
-    "text overlay, speech bubble, subtitles, captions, on-screen text, "
-    "text, words, letters, watermark, overlay, chinese characters on screen, "
-    "字幕, 文字, 水印, 弹幕, 对白气泡, 画面文字, 汉字叠加, 台词字幕, "
-    "微笑, 大笑, 露齿笑, 开心, 嬉笑, 表情突变, 换脸, 脸部变形, "
-    "扭曲, 多手指, "
-    "knife, sharp blade, sharp tool, real knife, knife in child's hand, "
-    "刀具, 锋利刀具, 儿童持刀, 餐刀, "
-    "crowd, duplicate character, cloned person, extra stranger, "
-    "路人, 多余路人, 复制人物, 克隆角色, "
-    "快速推进, 大幅推进, 强烈变焦, 画面放大, 裁切脸部, zoom in, dolly in"
+# Flash 无 negative_prompt；人数/表情等约束靠正向 motion 前缀
+_ASPECT_PRESETS: tuple[tuple[str, float], ...] = (
+    ("21:9", 21 / 9),
+    ("16:9", 16 / 9),
+    ("4:3", 4 / 3),
+    ("1:1", 1.0),
+    ("3:4", 3 / 4),
+    ("9:16", 9 / 16),
 )
+_VALID_ASPECT_RATIOS = frozenset(name for name, _ in _ASPECT_PRESETS)
 _CAST_LR_RE = re.compile(
     r"画面左边是\s*(昭昭|灿灿|妈妈)\s*[，,；;]?\s*右边是\s*(昭昭|灿灿|妈妈)"
 )
@@ -92,12 +94,6 @@ _CAMERA_ZOOM_RE = re.compile(
     r"|slow\s*zoom(?:\s*in)?|zoom\s*in|dolly\s*in",
     re.IGNORECASE,
 )
-# Agnes 720p 各比例上限均为 409 帧（1080p 仅 169 帧，更长分镜靠 loop + fit 补齐）
-_MAX_FRAMES = 409
-_MIN_FRAMES = 81
-# Agnes API 默认 1152×768 ≈ 884K 像素（720P 级别），超出会 400
-_API_TARGET_PIXELS = 921_600  # 1280×720
-
 # ── 口型后校验：按说话窗口抽帧给 VL 判断是否开口 ──────────────────
 # 兼容侧边身份（左侧男孩）与旧版角色名（昭昭）；三人含中间
 _MOUTH_SPEAK_WINDOW_RE = re.compile(
@@ -289,14 +285,6 @@ def _parse_subtitle_hit(content: str) -> bool | None:
     return None
 
 
-def _resolve_api_dimensions(target_w: int, target_h: int) -> tuple[int, int]:
-    """将目标画布尺寸缩放到 Agnes API 支持的 ~720P 总像素范围内，保持比例。"""
-    scale = min(1.0, math.sqrt(_API_TARGET_PIXELS / (target_w * target_h)))
-    api_w = int(target_w * scale) // 2 * 2  # 保证偶数
-    api_h = int(target_h * scale) // 2 * 2
-    return max(api_w, 2), max(api_h, 2)
-
-
 def _backoff_seconds(attempt: int, *, is_timeout: bool = False) -> float:
     if is_timeout:
         return min(45.0 + attempt * 30.0, 180.0)
@@ -473,21 +461,6 @@ def _cast_lock_hint(
     return "，".join(parts)
 
 
-def _negative_prompt_for_motion(text: str) -> str:
-    """按出场动态补 negative：无妈妈时才禁第三人/成年男，避免误伤有妈妈镜头。"""
-    names = _cast_names_from_motion(text)
-    extra: list[str] = []
-    if names and "妈妈" not in names:
-        extra.append(
-            "third person, extra person, adult man, adult woman, "
-            "第三人, 成年男性, 成年女人, 多余男人, 多余小孩, 第三个小孩, "
-            "妈妈, 沙发后男人, man behind sofa"
-        )
-    if not extra:
-        return _DEFAULT_NEGATIVE_PROMPT
-    return f"{_DEFAULT_NEGATIVE_PROMPT}, {', '.join(extra)}"
-
-
 def _stabilize_motion_prompt(
     prompt: str,
     image_prompt: str | None = None,
@@ -531,9 +504,102 @@ def _stabilize_motion_prompt(
     return "，".join(chunks) if len(chunks) > 1 else chunks[0]
 
 
-def _pick_num_frames(target_sec: float, frame_rate: int) -> int:
-    need = max(_MIN_FRAMES, int(math.ceil(target_sec * frame_rate)))
-    return min(_MAX_FRAMES, 8 * math.ceil((need - 1) / 8) + 1)
+def _pick_seconds(target_sec: float) -> str:
+    """Flash 仅支持整数秒字符串 \"4\"–\"12\"；四舍五入后钳制到合法区间。"""
+    # 正数四舍五入：floor(x + 0.5)，避免 Python round 的银行家舍入
+    sec = int(math.floor(float(target_sec) + 0.5))
+    return str(max(_MIN_SECONDS, min(_MAX_SECONDS, sec)))
+
+
+def _resolve_aspect_ratio(width: int, height: int) -> str:
+    """由宽高算 Flash 合法 aspect_ratio（精确约分优先，否则取最近预设）。"""
+    if width <= 0 or height <= 0:
+        return "16:9"
+    g = math.gcd(width, height)
+    exact = f"{width // g}:{height // g}"
+    allowed = {name for name, _ in _ASPECT_PRESETS}
+    if exact in allowed:
+        return exact
+    ratio = width / height
+    best = min(_ASPECT_PRESETS, key=lambda item: abs(item[1] - ratio))
+    return best[0]
+
+
+def _effective_aspect_ratio(
+    width: int,
+    height: int,
+    *,
+    configured: str | None = None,
+) -> str:
+    """优先用 AGNES_VIDEO_ASPECT_RATIO；auto/非法则按画布推算。"""
+    raw = (configured if configured is not None else get_settings().agnes_video_aspect_ratio)
+    value = str(raw or "").strip()
+    if value and value.lower() != "auto" and value in _VALID_ASPECT_RATIOS:
+        return value
+    return _resolve_aspect_ratio(width, height)
+
+
+_TIMELINE_WINDOW_RE = re.compile(
+    r"(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)秒"
+)
+
+
+def _remap_prompt_timeline(prompt: str, src_sec: float, dst_sec: float) -> str:
+    """把口型/动作窗口从语音时长映射到 API 整数秒（再 scale 回语音时对齐）。"""
+    if src_sec <= 0 or dst_sec <= 0 or abs(src_sec - dst_sec) < 0.05:
+        return prompt
+    factor = dst_sec / src_sec
+
+    def _repl(match: re.Match[str]) -> str:
+        start = float(match.group(1)) * factor
+        end = float(match.group(2)) * factor
+        return f"{start:.1f}-{end:.1f}秒"
+
+    return _TIMELINE_WINDOW_RE.sub(_repl, prompt or "")
+
+
+def _scale_video_to_duration(
+    src: Path,
+    dst: Path,
+    target_sec: float,
+) -> Path:
+    """用 setpts 把成片时长 scale 到语音时长（整数秒 API → 小数秒口播）。"""
+    raw_dur = probe_duration(src)
+    if raw_dur <= 0 or target_sec <= 0:
+        return src
+    if abs(raw_dur - target_sec) <= 0.05:
+        return src
+    factor = target_sec / raw_dur
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    logger.info(
+        "agnes i2v time-scale: %.3fs -> %.3fs (setpts factor=%.6f)",
+        raw_dur,
+        target_sec,
+        factor,
+    )
+    run_ffmpeg(
+        [
+            *ffmpeg_cmd_start(hwaccel=False),
+            "-i",
+            str(src),
+            "-vf",
+            f"setpts=PTS*{factor:.6f}",
+            "-an",
+            "-c:v",
+            "libx264",
+            "-crf",
+            str(get_settings().ffmpeg_crf),
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+            "-t",
+            f"{target_sec:.3f}",
+            "-y",
+            str(dst),
+        ]
+    )
+    return dst
 
 
 def _encode_image_data_uri(path: Path) -> str:
@@ -667,7 +733,6 @@ class AgnesClipProvider(ClipProvider):
         self._create_url = f"{base}/videos"
         self._poll_root = _agnes_api_root(base)
         self._model = settings.agnes_video_model
-        self._frame_rate = settings.clip_fps
         self._submit_interval = settings.agnes_submit_interval_sec
         self._free_submit_interval = settings.agnes_free_submit_interval_sec
         self._http_max_retries = settings.agnes_http_max_retries
@@ -881,23 +946,23 @@ class AgnesClipProvider(ClipProvider):
         return None
 
     def _build_i2v_payload(
-        self, *, prompt: str, image_ref: str, num_frames: int,
-        width: int | None = None, height: int | None = None,
+        self,
+        *,
+        prompt: str,
+        image_ref: str,
+        seconds: str,
+        aspect_ratio: str,
     ) -> dict:
-        payload: dict = {
+        return {
             "model": self._model,
             "prompt": prompt,
-            "image": image_ref,
             "mode": _I2V_MODE,
-            "num_frames": num_frames,
-            "frame_rate": self._frame_rate,
-            "negative_prompt": _negative_prompt_for_motion(prompt),
+            "seconds": seconds,
+            "size": _FLASH_SIZE,
+            "aspect_ratio": aspect_ratio,
+            "first_frame": image_ref,
+            "n": 1,
         }
-        if width is not None:
-            payload["width"] = width
-        if height is not None:
-            payload["height"] = height
-        return payload
 
     def _with_api_key_fallback(self, operation: Callable[[AgnesApiKey], Path]) -> Path:
         keys = agnes_api_keys()
@@ -932,9 +997,8 @@ class AgnesClipProvider(ClipProvider):
         prompt: str,
         output_path: Path,
         *,
-        num_frames: int,
-        width: int | None = None,
-        height: int | None = None,
+        seconds: str,
+        aspect_ratio: str,
         segment_index: int | None = None,
     ) -> Path:
         base = agnes_key_base_url(api_key)
@@ -945,18 +1009,18 @@ class AgnesClipProvider(ClipProvider):
         payload = self._build_i2v_payload(
             prompt=prompt,
             image_ref=image_ref,
-            num_frames=num_frames,
-            width=width,
-            height=height,
+            seconds=seconds,
+            aspect_ratio=aspect_ratio,
         )
         logger.info(
-            "agnes i2v submit (%s key): model=%s frames=%s fps=%s size=%sx%s image=%s prompt_chars=%s",
+            "agnes i2v submit (%s key): model=%s mode=%s seconds=%s size=%s "
+            "aspect_ratio=%s image=%s prompt_chars=%s",
             api_key.label,
             self._model,
-            num_frames,
-            self._frame_rate,
-            width or "-",
-            height or "-",
+            _I2V_MODE,
+            seconds,
+            _FLASH_SIZE,
+            aspect_ratio,
             _format_image_ref_for_log(image_ref),
             len(prompt),
         )
@@ -1001,9 +1065,8 @@ class AgnesClipProvider(ClipProvider):
         prompt: str,
         output_path: Path,
         *,
-        num_frames: int,
-        width: int | None = None,
-        height: int | None = None,
+        seconds: str,
+        aspect_ratio: str,
         segment_index: int | None = None,
     ) -> Path:
         return self._with_api_key_fallback(
@@ -1012,9 +1075,8 @@ class AgnesClipProvider(ClipProvider):
                 image_path,
                 prompt,
                 output_path,
-                num_frames=num_frames,
-                width=width,
-                height=height,
+                seconds=seconds,
+                aspect_ratio=aspect_ratio,
                 segment_index=segment_index,
             )
         )
@@ -1051,12 +1113,14 @@ class AgnesClipProvider(ClipProvider):
         return video_id, task_id, state, body
 
     def _poll_url(self, video_id: str | None, task_id: str | None) -> str:
-        # 有 Agnes task id 时优先走 /videos/{id}；agnes-api 仅用于真实 video_id
+        # Flash keyframe：推荐 video_id + model_name；task_id 作兼容回退
+        if video_id:
+            return (
+                f"{self._poll_root}/agnesapi?"
+                f"{urlencode({'video_id': video_id, 'model_name': self._model})}"
+            )
         if task_id:
             return f"{self._create_url}/{task_id}"
-        if video_id:
-            # cSpell: disable-next-line
-            return f"{self._poll_root}/agnesapi?{urlencode({'video_id': video_id})}"
         raise AgnesI2VError("agnes poll missing both video_id and task_id")
 
     def _download_video(self, poll: dict, output_path: Path, task_label: str) -> Path:
@@ -1382,34 +1446,42 @@ class AgnesClipProvider(ClipProvider):
 
             clip_width = width or get_settings().video_width
             clip_height = height or get_settings().video_height
-            api_w, api_h = _resolve_api_dimensions(clip_width, clip_height)
+            settings = get_settings()
+            # Flash 用 aspect_ratio：由 AGNES_VIDEO_WIDTH/HEIGHT 约分推算
+            aspect_ratio = _resolve_aspect_ratio(
+                settings.agnes_video_width,
+                settings.agnes_video_height,
+            )
+            api_seconds = _pick_seconds(total_duration)
+            api_sec_f = float(api_seconds)
             prompt = _stabilize_motion_prompt(
                 motion_prompt or "",
                 image_prompt=image_prompt,
                 speakers=speakers,
             )
-            num_frames = _pick_num_frames(total_duration, self._frame_rate)
+            # 口型窗口按语音轴写；提交前映射到 API 整数秒，scale 回语音后对齐
+            prompt = _remap_prompt_timeline(prompt, total_duration, api_sec_f)
             raw_path = work_dir / f"{segment_index}.agnes_raw.mp4"
+            scaled_path = work_dir / f"{segment_index}.agnes_scaled.mp4"
 
             logger.info(
-                "segment %s: total_duration=%.2fs n_cues=%s; submitting agnes i2v "
-                "(frames=%s, fps=%s, motion=%s)",
+                "segment %s: speech=%.2fs n_cues=%s; submitting agnes i2v "
+                "(seconds=%s, aspect_ratio=%s, motion=%s)",
                 segment_index,
                 total_duration,
                 len(subtitle_cues),
-                num_frames,
-                self._frame_rate,
+                api_seconds,
+                aspect_ratio,
                 prompt,
             )
             output_path.parent.mkdir(parents=True, exist_ok=True)
             try:
-                settings = get_settings()
                 verify_attempts = max(1, settings.agnes_video_mouth_verify_attempts)
                 for v_attempt in range(1, verify_attempts + 1):
                     self._generate_raw(
                         image_path, prompt, raw_path,
-                        num_frames=num_frames,
-                        width=api_w, height=api_h,
+                        seconds=api_seconds,
+                        aspect_ratio=aspect_ratio,
                         segment_index=segment_index,
                     )
                     self._raise_if_job_cancelled()
@@ -1463,16 +1535,26 @@ class AgnesClipProvider(ClipProvider):
                             verify_attempts,
                         )
                 self._raise_if_job_cancelled()
-                logger.info("clip %s: raw done, fitting to %.1fs", segment_index, total_duration)
-                raw_path = _loop_video_to_duration(
+                logger.info(
+                    "clip %s: raw done, scale+fit to speech %.3fs",
+                    segment_index,
+                    total_duration,
+                )
+                # >12s 口播：先 loop 铺满，再 setpts scale 贴合语音
+                looped = _loop_video_to_duration(
                     raw_path,
                     work_dir=work_dir,
                     segment_index=segment_index,
                     total_duration=total_duration,
                 )
-                # 字幕改在 merge 阶段 ASS 烧录
+                timed = _scale_video_to_duration(
+                    looped,
+                    scaled_path,
+                    total_duration,
+                )
+                # 字幕改在 merge 阶段 ASS 烧录；此处做画布缩放与残差对齐
                 fit_video_duration(
-                    raw_path,
+                    timed,
                     output_path,
                     total_duration,
                     width=clip_width,
@@ -1480,6 +1562,9 @@ class AgnesClipProvider(ClipProvider):
                 )
             finally:
                 raw_path.unlink(missing_ok=True)
+                scaled_path.unlink(missing_ok=True)
+                loop_path = work_dir / f"{segment_index}.agnes_loop.mp4"
+                loop_path.unlink(missing_ok=True)
 
             logger.info("clip %s: done in %.1fs", segment_index, time.time() - t0)
             return output_path
