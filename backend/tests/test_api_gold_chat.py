@@ -367,8 +367,11 @@ def test_api_reimport(app_ctx, monkeypatch):
     assert busy.status_code == 409
     assert busy.get_json()["code"] == "reimport_busy"
 
-    collect_busy = client.post("/v_factory/api/gold_chat/collect", json={"max": 10})
-    assert collect_busy.status_code == 409
+    collect_free = client.post("/v_factory/api/gold_chat/collect", json={"max": 10})
+    # 采集与重新导入互不锁：reimport 运行中 collect 可正常启动
+    assert collect_free.status_code == 200
+    assert collect_free.get_json()["workflow"] == "gold_story_collect"
+    assert collect_free.get_json()["status"] == "running"
 
     workers[0]()
     status = client.get("/v_factory/api/gold_chat/reimport").get_json()

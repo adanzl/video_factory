@@ -226,7 +226,7 @@ class Config:
             "AGNES_VIDEO_ASPECT_RATIO", "auto"
         ).strip() or "auto"
         self.agnes_video_poll_interval_sec: float = float(
-            os.getenv("AGNES_VIDEO_POLL_INTERVAL_SEC", "2")
+            os.getenv("AGNES_VIDEO_POLL_INTERVAL_SEC", "3")
         )
         self.agnes_video_poll_max_attempts: int = int(os.getenv("AGNES_VIDEO_POLL_MAX_ATTEMPTS", "120"))
         self.agnes_video_task_max_retries: int = int(os.getenv("AGNES_VIDEO_TASK_MAX_RETRIES", "2"))

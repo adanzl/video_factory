@@ -29,6 +29,7 @@
         "flac",
         "fontsdir",
         "fuser",
+        "gevent",
         "HOTWORD",
         "hwaccel",
         "hwupload",
@@ -59,6 +60,7 @@
         "pixabay",
         "pkill",
         "playwright",
+        "publickey",
         "pytest",
         "qrcode",
         "Radeon",
@@ -106,8 +108,7 @@
         "wiperight",
         "xfade",
         "xianyu",
-        "ZHAO",
-        "publickey",
+        "ZHAO"
     ],
     "ignoreRegExpList": [
         "\\b[a-zA-Z_][a-zA-Z0-9_]*\\s*\\(",

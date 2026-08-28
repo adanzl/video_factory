@@ -31,17 +31,33 @@ from app.utils.async_util import run_in_background
 
 logger = logging.getLogger(__name__)
 
-_COLLECT_LOCK = threading.Lock()
+
+def _hub_safe_lock() -> Any:
+    """gevent hub 上可让出的锁。
+
+    main.py 使用 ``monkey.patch_all(..., thread=False)``，``threading.Lock``
+    是真实 OS 锁。请求 greenlet A 持锁并 yield 后，greenlet B 再
+    ``acquire()`` 会堵死整个 hub（接口全部无响应）。必须用 gevent 锁。
+    """
+    try:
+        from gevent.lock import Semaphore
+
+        return Semaphore(1)
+    except ImportError:
+        return threading.Lock()
+
+
+_COLLECT_LOCK = _hub_safe_lock()
 _COLLECT_STATE: dict[str, Any] = {
     "workflow": "gold_story_collect",
     "status": "idle",
 }
-_REIMPORT_LOCK = threading.Lock()
+_REIMPORT_LOCK = _hub_safe_lock()
 _REIMPORT_STATE: dict[str, Any] = {
     "workflow": "gold_story_reimport",
     "status": "idle",
 }
-_CONVERT_LOCK = threading.Lock()
+_CONVERT_LOCK = _hub_safe_lock()
 
 
 def _ensure_schema() -> None:
@@ -162,7 +178,7 @@ def _run_reimport_job(
                 source_ids=source_ids or None,
                 force_transcript=force_transcript,
             )
-            with _COLLECT_LOCK:
+            with _REIMPORT_LOCK:
                 _REIMPORT_STATE.update(
                     {
                         "workflow": "gold_story_reimport",
@@ -393,9 +409,11 @@ class GoldStoryMgr:
             source_id,
             force,
         )
+        # 非阻塞：busy 立刻 409，避免第二路 convert 在 hub 上死等
+        if not _CONVERT_LOCK.acquire(blocking=False):
+            raise RuntimeError("转换进行中")
         try:
-            with _CONVERT_LOCK:
-                outcome = convert_gold_chat(row, config=cfg)
+            outcome = convert_gold_chat(row, config=cfg)
             logger.info(
                 "[GOLD_CHAT] convert_one ok source_id=%s lines=%s chars=%s score=%s",
                 sid,
@@ -407,6 +425,8 @@ class GoldStoryMgr:
         except Exception as exc:
             logger.exception("[GOLD_CHAT] convert_one failed source_id=%s: %s", sid, exc)
             raise
+        finally:
+            _CONVERT_LOCK.release()
 
     def resolve_story_block(
         self,
@@ -465,13 +485,18 @@ class GoldStoryMgr:
         source_ids: list[str] | None = None,
         force: bool = False,
     ) -> dict[str, Any]:
-        return run_gold_chat_batch(
-            max_items=max_items,
-            status=status,
-            gold_story_ids=gold_story_ids,
-            source_ids=source_ids,
-            skip_existing=not force,
-        )
+        if not _CONVERT_LOCK.acquire(blocking=False):
+            raise RuntimeError("转换进行中")
+        try:
+            return run_gold_chat_batch(
+                max_items=max_items,
+                status=status,
+                gold_story_ids=gold_story_ids,
+                source_ids=source_ids,
+                skip_existing=not force,
+            )
+        finally:
+            _CONVERT_LOCK.release()
 
     def collect(
         self,
