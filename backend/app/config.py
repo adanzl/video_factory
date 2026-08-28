@@ -218,11 +218,15 @@ class Config:
         self.agnes_video_download_timeout_sec: float = float(
             os.getenv("AGNES_VIDEO_DOWNLOAD_TIMEOUT_SEC", "300")
         )
-        self.agnes_video_model: str = os.getenv("AGNES_VIDEO_MODEL", "agnes-video-v2.0")
-        self.agnes_video_width: int = int(os.getenv("AGNES_VIDEO_WIDTH", "1280"))
-        self.agnes_video_height: int = int(os.getenv("AGNES_VIDEO_HEIGHT", "720"))
+        self.agnes_video_model: str = os.getenv(
+            "AGNES_VIDEO_MODEL", "agnes-video-2.5-flash"
+        )
+        # Flash 合法值：21:9 / 16:9 / 4:3 / 1:1 / 3:4 / 9:16；auto=按任务画布推算
+        self.agnes_video_aspect_ratio: str = os.getenv(
+            "AGNES_VIDEO_ASPECT_RATIO", "auto"
+        ).strip() or "auto"
         self.agnes_video_poll_interval_sec: float = float(
-            os.getenv("AGNES_VIDEO_POLL_INTERVAL_SEC", "15")
+            os.getenv("AGNES_VIDEO_POLL_INTERVAL_SEC", "2")
         )
         self.agnes_video_poll_max_attempts: int = int(os.getenv("AGNES_VIDEO_POLL_MAX_ATTEMPTS", "120"))
         self.agnes_video_task_max_retries: int = int(os.getenv("AGNES_VIDEO_TASK_MAX_RETRIES", "2"))

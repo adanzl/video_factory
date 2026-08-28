@@ -202,8 +202,14 @@ CONFIG_GROUPS: tuple[ConfigGroupDef, ...] = (
             _f("wan_i2v_poll_max_attempts", "WAN_I2V_POLL_MAX_ATTEMPTS", "I2V 轮询上限", "number", min_value=10, max_value=300),
             _f("wan_t2i_poll_max_attempts", "WAN_T2I_POLL_MAX_ATTEMPTS", "T2I 轮询上限", "number", min_value=10, max_value=300),
             _f("agnes_video_model", "AGNES_VIDEO_MODEL", "视频模型"),
-            _f("agnes_video_width", "AGNES_VIDEO_WIDTH", "视频宽度", "number", min_value=360, max_value=3840),
-            _f("agnes_video_height", "AGNES_VIDEO_HEIGHT", "视频高度", "number", min_value=360, max_value=3840),
+            _f(
+                "agnes_video_aspect_ratio",
+                "AGNES_VIDEO_ASPECT_RATIO",
+                "画幅 aspect_ratio",
+                "select",
+                options=("auto", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"),
+                description="auto=按任务画布推算；其余为 Agnes Flash 合法值",
+            ),
             _f(
                 "agnes_video_poll_interval_sec",
                 "AGNES_VIDEO_POLL_INTERVAL_SEC",

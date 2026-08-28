@@ -13,8 +13,10 @@ from app.services.segment.clip.video_agnes import (
     _extract_speak_windows,
     _normalize_submit_ids,
     _parse_speaking_sides,
-    _pick_num_frames,
+    _pick_seconds,
     _read_agnes_source_url,
+    _remap_prompt_timeline,
+    _resolve_aspect_ratio,
     _resolve_i2v_image,
     _stabilize_motion_prompt,
 )
@@ -90,6 +92,8 @@ def test_subtitle_verify_hard_fails_after_retries(tmp_path: Path) -> None:
     settings = SimpleNamespace(
         video_width=720,
         video_height=1280,
+        agnes_video_width=720,
+        agnes_video_height=1280,
         agnes_video_mouth_verify=False,
         agnes_video_mouth_verify_attempts=2,
     )
@@ -155,21 +159,44 @@ def test_extract_video_url_from_metadata() -> None:
     assert url == "https://platform-outputs.agnes-ai.space/videos/task_x.mp4"
 
 
-def test_agnes_poll_url_prefers_task_id() -> None:
+def test_agnes_poll_url_prefers_video_id_with_model() -> None:
     provider = AgnesClipProvider()
+    provider._model = "agnes-video-2.5-flash"  # noqa: SLF001
     url = provider._poll_url(  # noqa: SLF001
         video_id="video_real",
         task_id="task_test",
     )
-    assert url.endswith("/videos/task_test")
-    assert "agnesapi" not in url
+    assert "agnesapi" in url
+    assert "video_id=video_real" in url
+    assert "model_name=agnes-video-2.5-flash" in url
 
 
-def test_pick_num_frames() -> None:
-    assert _pick_num_frames(2.5, 24) == 81
-    assert _pick_num_frames(5.0, 24) == 121
-    assert _pick_num_frames(20.0, 24) == 409
-    assert _pick_num_frames(17.1, 24) == 409
+def test_pick_seconds_rounds_half_up() -> None:
+    assert _pick_seconds(2.5) == "4"  # 钳制下限
+    assert _pick_seconds(4.4) == "4"
+    assert _pick_seconds(4.5) == "5"  # 四舍五入
+    assert _pick_seconds(5.0) == "5"
+    assert _pick_seconds(11.5) == "12"
+    assert _pick_seconds(20.0) == "12"  # 钳制上限
+
+
+def test_resolve_aspect_ratio() -> None:
+    assert _resolve_aspect_ratio(1280, 720) == "16:9"
+    assert _resolve_aspect_ratio(720, 1280) == "9:16"
+    assert _resolve_aspect_ratio(720, 720) == "1:1"
+    assert _resolve_aspect_ratio(1680, 720) == "21:9"
+    assert _resolve_aspect_ratio(960, 720) == "4:3"
+    assert _resolve_aspect_ratio(720, 960) == "3:4"
+    # 非标准尺寸取最近预设
+    assert _resolve_aspect_ratio(1000, 700) == "4:3"
+
+
+def test_remap_prompt_timeline() -> None:
+    src = "0.0-3.4秒右侧女孩开口说话；3.4-5.3秒左侧男孩开口说话。"
+    out = _remap_prompt_timeline(src, 5.3, 5.0)
+    assert "0.0-3.2秒" in out
+    assert "3.2-5.0秒" in out
+    assert _remap_prompt_timeline(src, 5.0, 5.0) == src
 
 
 def test_normalize_video_provider_agnes() -> None:
@@ -264,10 +291,14 @@ def test_stabilize_uses_three_person_still_when_motion_is_two() -> None:
     two = AgnesClipProvider()._build_i2v_payload(  # noqa: SLF001
         prompt=out,
         image_ref="https://example.com/a.png",
-        num_frames=81,
+        seconds="5",
+        aspect_ratio="9:16",
     )
-    assert "多余小孩" not in two["negative_prompt"]
-    assert "第三个小孩" not in two["negative_prompt"]
+    assert two["mode"] == "keyframe"
+    assert two["first_frame"] == "https://example.com/a.png"
+    assert "negative_prompt" not in two
+    assert "多余小孩" not in two["prompt"]
+    assert "第三个小孩" not in two["prompt"]
 
 
 def test_cast_names_from_mom_in_middle() -> None:
@@ -295,48 +326,34 @@ def test_stabilize_e_speakers_keep_mom_despite_two_person_motion() -> None:
     two = AgnesClipProvider()._build_i2v_payload(  # noqa: SLF001
         prompt=out,
         image_ref="https://example.com/a.png",
-        num_frames=81,
+        seconds="5",
+        aspect_ratio="9:16",
     )
-    assert "多余小孩" not in two["negative_prompt"]
+    assert "negative_prompt" not in two
+    assert "多余小孩" not in two["prompt"]
 
 
-def test_build_i2v_payload_includes_negative_prompt() -> None:
+def test_build_i2v_payload_flash_keyframe() -> None:
     provider = AgnesClipProvider()
     payload = provider._build_i2v_payload(
         prompt="微动",
         image_ref="https://example.com/a.png",
-        num_frames=81,
-        width=1280,
-        height=720,
+        seconds="5",
+        aspect_ratio="16:9",
     )
-    assert payload["mode"] == "ti2vid"
-    assert payload["negative_prompt"].startswith("text overlay, speech bubble")
-    assert "微笑" in payload["negative_prompt"]
-    assert "快速推进" in payload["negative_prompt"]
-    assert "第三人" not in payload["negative_prompt"]
-    assert "third person" not in payload["negative_prompt"]
-    assert "duplicate character" in payload["negative_prompt"]
+    assert payload["mode"] == "keyframe"
+    assert payload["seconds"] == "5"
+    assert payload["size"] == "720P"
+    assert payload["aspect_ratio"] == "16:9"
+    assert payload["first_frame"] == "https://example.com/a.png"
+    assert payload["n"] == 1
+    assert "image" not in payload
+    assert "num_frames" not in payload
+    assert "frame_rate" not in payload
+    assert "width" not in payload
+    assert "height" not in payload
+    assert "negative_prompt" not in payload
     assert payload["prompt"] == "微动"
-
-    two = provider._build_i2v_payload(
-        prompt="画面左边是灿灿，右边是昭昭。灿灿说话，同时点头。",
-        image_ref="https://example.com/a.png",
-        num_frames=81,
-        width=1280,
-        height=720,
-    )
-    assert "成年男性" in two["negative_prompt"]
-    assert "third person" in two["negative_prompt"]
-
-    three = provider._build_i2v_payload(
-        prompt="画面左边是灿灿，右边是昭昭。妈妈说话，同时点头。",
-        image_ref="https://example.com/a.png",
-        num_frames=81,
-        width=1280,
-        height=720,
-    )
-    assert "成年男性" not in three["negative_prompt"]
-    assert "third person" not in three["negative_prompt"]
 
 
 def test_encode_image_data_uri(tmp_path: Path) -> None:
@@ -542,12 +559,28 @@ def test_agnes_clip_provider_submits_i2v_payload(tmp_path: Path) -> None:
         patch.object(provider, "_request", side_effect=[create_resp, poll_resp]) as mock_request,
         patch("app.services.segment.clip.video_agnes.requests.get", return_value=video_resp),
         patch("app.services.segment.clip.video_agnes.probe_duration", return_value=5.0),
+        patch(
+            "app.services.segment.clip.video_agnes.get_settings",
+            return_value=SimpleNamespace(
+                video_width=720,
+                video_height=1280,
+                agnes_video_width=720,
+                agnes_video_height=1280,
+                ffmpeg_crf=23,
+                agnes_video_mouth_verify=False,
+                agnes_video_mouth_verify_attempts=1,
+            ),
+        ),
+        patch(
+            "app.services.segment.clip.video_agnes._scale_video_to_duration",
+            side_effect=lambda src, dst, target: dst.write_bytes(b"scaled") or dst,
+        ) as mock_scale,
         patch("app.services.segment.clip.video_agnes.fit_video_duration") as mock_fit,
     ):
         mock_fit.side_effect = lambda src, dst, *_args, **_kwargs: dst.write_bytes(b"fit")
         provider.build_segment_clip(
             image_path=image_path,
-            subtitle_cues=[("hello", 5.0)],
+            subtitle_cues=[("hello", 5.3)],
             output_path=output_path,
             motion_preset="ken_burns_slow",
             work_dir=tmp_path / "work",
@@ -561,17 +594,23 @@ def test_agnes_clip_provider_submits_i2v_payload(tmp_path: Path) -> None:
     create_call = mock_request.call_args_list[0]
     payload = create_call.kwargs["json"]
     assert payload["model"] == provider._model  # noqa: SLF001
-    assert payload["mode"] == "ti2vid"
-    assert payload["image"].startswith("data:image/png;base64,")
-    assert payload["num_frames"] == 129
+    assert payload["mode"] == "keyframe"
+    assert payload["seconds"] == "5"  # 5.3 四舍五入
+    assert payload["size"] == "720P"
+    assert payload["aspect_ratio"] == "9:16"  # 720x1280 约分
+    assert payload["first_frame"].startswith("data:image/png;base64,")
+    assert "num_frames" not in payload
     assert "slow zoom" not in payload["prompt"].lower()
     assert "不推近" in payload["prompt"] or "镜头固定" in payload["prompt"]
     assert "宇宙飞船" not in payload["prompt"]
 
     poll_call = mock_request.call_args_list[1]
     assert poll_call.args[0] == "GET"
-    assert poll_call.args[1].endswith("/videos/task_test")
-    assert "agnesapi" not in poll_call.args[1]
+    assert "agnesapi" in poll_call.args[1]
+    assert "video_id=video_test" in poll_call.args[1]
+    assert f"model_name={provider._model}" in poll_call.args[1]  # noqa: SLF001
+    assert mock_scale.called
+    assert mock_scale.call_args.args[2] == 5.3
 
 
 def test_clip_batch_i2v_concurrency_respects_max_workers(tmp_path: Path) -> None:
