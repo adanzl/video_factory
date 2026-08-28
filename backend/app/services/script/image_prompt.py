@@ -1086,6 +1086,69 @@ def _daily_floor_shoe_untie_compact_prompt(seg: dict, *, vb: str) -> str:
     return strip_held_prop_from_surface("".join(parts))
 
 
+# 多人同框镜头中会破坏“三人全身同框”的位移动词。
+# 仅中和“位移/离场/朝向变化”类动词（走向/转身/背对/离开/出画等）；
+# 蹲/坐/站起/关门等叙事关键姿势不自动中和（避免把系鞋带/关门改成呆站）。
+_DISPLACEMENT_RE = re.compile(
+    r"(?:正?在)?(?:朝|向|往)?(?:画面[左中右]?[边侧]?)?"
+    r"(?:走向|走进|转身|背对|背向|离开|出门|进屋|跑向|快步|出画|入画|"
+    r"侧身离去|靠近|走近|走远|走开|跑开|离开房间|转身离开)[^，。；]*"
+    r"|(?<![看望瞧指瞄瞟瞥盯视])(?:朝|向|往)(?:房间|门口|门外|屋内|屋外)[^，。；]*"
+)
+
+
+def neutralize_displacement(text: str, *, multi_body: bool) -> str:
+    """多人同框时，把位移动词替换为静态站位，避免背影/出画/遮挡。
+
+    仅当 multi_body=True（三人同框/全身可见）时生效；单人/特写不处理，
+    保留叙事动作（如人物转身离开）。命中后记录替换（调用方日志）。
+    注意：不匹配“看向/望门口”等视线词，避免误伤。
+    """
+    text = (text or "").strip()
+    if not text or not multi_body:
+        return text
+    orig = text
+    text = _DISPLACEMENT_RE.sub("站位稳定，脸朝镜头", text)
+    text = re.sub(r"[，,]{2,}", "，", text)
+    text = re.sub(r"，(?=[。；;]|$)", "", text)
+    if text != orig:
+        return text.strip("，,；;。. ")
+    return text
+
+
+def inject_role_completeness(
+    text: str,
+    speakers: list[str],
+    *,
+    shot_type: str = "",
+) -> str:
+    """多主体同框时，为每个必须出镜角色注入“硬主体完整性”描述。
+
+    解决“妈妈旁观→被省略/只半身/虚化”等问题：
+    把每个出镜角色从“可丢弃填充物”升级为“必须成型的硬主体”。
+    """
+    names = [s for s in speakers if s in _DAILY_CHAR_MAP]
+    if len(names) < 2 or shot_type == "特写":
+        return text
+    full = "、".join(names)
+    if "妈妈" in names:
+        mom_clause = (
+            f"{full}均为画面硬主体，全身从头到脚完整可见，"
+            "妈妈作为独立完整主体入镜，面部清晰朝向镜头，"
+            "不被门框/前景/其他角色遮挡，不虚化、不裁切、不背影。"
+        )
+    else:
+        mom_clause = (
+            f"{full}均为画面硬主体，全身从头到脚完整可见，"
+            "面部清晰朝向镜头，不被遮挡、不虚化、不裁切、不背影。"
+        )
+    if not text:
+        return mom_clause
+    if mom_clause.split("，")[0] in text:
+        return text
+    return f"{text}{mom_clause}"
+
+
 def _daily_composition(
     shot_type: str,
     speakers: list[str],
@@ -1151,9 +1214,81 @@ _SCENE_SENTENCE_WORDS = (
     "托盘", "阳台", "厨房", "卧室", "遥控器", "空水杯", "场景定稿",
 )
 
-_MOUTH_ACTION_RE = re.compile(
-    r"(?:龇牙咧嘴|龇牙|咧嘴|露齿|吐舌|张嘴|张口|大笑|咧开嘴)"
+# S6 口型锁唯一负责嘴部状态：所有非 S6 层（S2/S3/S4/S5/S7/8）不得残留任何嘴部姿态词。
+# 黑名单覆盖嘴部动作/口型/嘴部道具占用；删除后按语义补偿非嘴部表情，避免情绪空洞。
+_MOUTH_TOKEN_RE = re.compile(
+    r"(?:龇牙咧嘴|龇牙|露齿|咧开嘴|咧嘴|吐舌|张嘴|张口|大笑|抿嘴|撇嘴|撅嘴|噘嘴|嘟嘴|嘟着嘴|嘟起嘴|鼓腮|鼓着腮|鼓着腮帮子|腮帮子|咬唇|咬嘴唇|咬住嘴唇|嘴角|嘴唇|嘴巴|嘴形|口型|含[着住]?|叼着|嘴里|嘴边|唇边|亲吻|亲了|吹气|憋嘴|闭嘴|嘴一撇|瘪嘴|裂开嘴|张着嘴|微张着嘴|嘟囔|撇着嘴角|不说话|忍住笑|憋住笑|抿着嘴角)"
 )
+# 嘴部词 → 非嘴部情绪补偿（保证删除后情绪仍在，且不再诱发模型重画嘴部）
+_MOUTH_EMOTION_COMPENSATION = (
+    ("鼓着腮帮子", "眼睑微垂，神情气鼓鼓的"),
+    ("鼓着腮", "眼睑微垂，神情气鼓鼓的"),
+    ("鼓腮", "眼睑微垂，神情气鼓鼓的"),
+    ("咬住嘴唇", "目光低垂，神情紧张"),
+    ("咬嘴唇", "目光低垂，神情紧张"),
+    ("咬唇", "目光低垂，神情紧张"),
+    ("嘟着嘴", "眉头微抬，眼尾微垂，略带委屈"),
+    ("嘟起嘴", "眉头微抬，眼尾微垂，略带委屈"),
+    ("嘟嘴", "眉头微抬，眼尾微垂，略带委屈"),
+    ("撇嘴", "眉心微蹙，目光下移，神情不悦"),
+    ("撅嘴", "眉头微抬，眼尾微垂，略带委屈"),
+    ("噘嘴", "眉头微抬，眼尾微垂，略带委屈"),
+    ("抿嘴", "神情克制，目光坚定"),
+    ("瘪嘴", "眉头微蹙，神情委屈"),
+    ("龇牙咧嘴", "眼角弯起，目光明亮"),
+    ("咧开嘴", "眼角弯起，目光明亮"),
+    ("咧嘴", "眼角弯起，目光明亮"),
+    ("龇牙", "眼角弯起，目光明亮"),
+    ("露齿", "眼角弯起，目光明亮"),
+    ("大笑", "眼尾弯起，目光明亮，脸颊微红"),
+    ("吐舌", "俏皮的眼神"),
+    ("吹气", "眉头微蹙"),
+)
+# 非嘴部安全表情白名单（供 verify/清洗时对照，不直接使用）
+_MOUTH_SAFE_EXPRESSIONS = (
+    "皱眉", "眉心", "眉头", "瞪眼", "眯眼", "眼睑", "目光", "眼尾", "眼含", "鼻翼", "脸颊", "眼神", "眼角", "眼弯", "眸光",
+)
+
+
+def scrub_mouth_tokens(text: str) -> str:
+    """从任意非 S6 层文本中删除嘴部姿态词并做情绪补偿。
+
+    口型由 S6 唯一负责；S2/S3/S4/S5/S7/8 出现任何嘴部词都会与口型锁打架。
+    命中嘴部 token 时：若该 token 有情绪语义，先补偿一个非嘴部表情；
+    再删除 token 本体，并清理因此产生的重复标点/空段。
+    """
+    text = (text or "").strip()
+    if not text:
+        return text
+    for word, compensation in _MOUTH_EMOTION_COMPENSATION:
+        if word in text:
+            # 同句已带眉眼表情时不重复补偿，仅删除；否则补一个非嘴部表情
+            sentence = text
+            has_eye_expr = any(
+                w in sentence for w in ("眉心", "眉头", "瞪眼", "眯眼", "眼睑", "目光", "眼尾", "眼神", "眼角", "皱眉")
+            )
+            if not has_eye_expr:
+                text = text.replace(word, compensation, 1)
+            else:
+                text = text.replace(word, "", 1)
+            break
+    text = _MOUTH_TOKEN_RE.sub("", text)
+    # 嘴部词删除后可能残留孤立的「笑/不说话/忍住」等嘴部上下文词
+    def _strip_residual_mouth(m: re.Match) -> str:
+        return m.group(1)
+
+    text = re.sub(r"(目光明亮|眼尾弯起|脸颊微红|神情克制|目光坚定|略带委屈|神情委屈|神情不悦|目光低垂|神情紧张|气鼓鼓的|俏皮)笑", _strip_residual_mouth, text)
+    text = re.sub(r"[，,]{2,}", "，", text)
+    text = re.sub(r"，(?=[。；;]|$)", "", text)
+    text = re.sub(r"[，,；;。. ]{2,}", "，", text)
+    text = re.sub(r"(?<=委屈)委屈", "", text)
+    text = text.strip("，,；;。. ")
+    return text
+
+
+def _scrub_vb_mouth_words(vb: str) -> str:
+    """S4 禁写嘴部动作，口型由 S6 唯一负责（张嘴词与闭嘴锁矛盾）。"""
+    return scrub_mouth_tokens(vb)
 
 
 def _strip_vb_scene_anchor_sentences(vb: str) -> str:
@@ -1172,17 +1307,6 @@ def _strip_vb_scene_anchor_sentences(vb: str) -> str:
             continue
         kept.append(sentence)
     return "".join(kept).strip("，,；;。. ")
-
-
-def _scrub_vb_mouth_words(vb: str) -> str:
-    """S4 禁写嘴部动作，口型由 S6 唯一负责（张嘴词与闭嘴锁矛盾）。"""
-    text = (vb or "").strip()
-    if not text:
-        return text
-    text = _MOUTH_ACTION_RE.sub("", text)
-    text = re.sub(r"[，,]{2,}", "，", text)
-    text = re.sub(r"，(?=[。；;]|$)", "", text)
-    return text.strip("，,；;。. ")
 
 
 def assemble_daily_t2i_prompt(
@@ -1253,12 +1377,21 @@ def assemble_daily_t2i_prompt(
         vb = _scrub_vb_mouth_words(vb)
         vb = _strip_style_suffix(vb)
 
+    # 多人同框（三人同框/多角色中景）时：先消解位移动词，避免“走向房间⇄同框”冲突
+    multi_body = len([s for s in speakers if s in _DAILY_CHAR_MAP]) >= 3 or (
+        len([s for s in speakers if s in _DAILY_CHAR_MAP]) == 2
+        and shot in ("中景", "全景")
+    )
+    if vb and multi_body:
+        vb = neutralize_displacement(vb, multi_body=True)
+
     # S1 风格（常量）
     s1 = _DAILY_T2I_STYLE
 
     s2 = scene_anchor or ""
     if s2 and shot == "特写":
         s2 = s2.split("，")[0]
+    s2 = scrub_mouth_tokens(s2)
 
     # S3 角色外貌（子块拼装：基块 + 身高锁 + 发色锁 + 地垫变体）
     char_parts: list[str] = []
@@ -1276,6 +1409,7 @@ def assemble_daily_t2i_prompt(
     if "灿灿" in speakers:
         char_parts.append(_DAILY_CANCAN_HAIR_LOCK)
     s3 = "".join(char_parts)
+    s3 = scrub_mouth_tokens(s3)
 
     # S4 本镜画面（唯一 LLM 入口，已清洗；场景/陈设归 S2，不重复）
     s4_parts: list[str] = []
@@ -1304,6 +1438,7 @@ def assemble_daily_t2i_prompt(
     if structured and s2:
         s4 = _strip_s4_redundant_scene_prefix(s4, s2)
     s4 = _scrub_hand_contradiction_s4(s4)
+    s4 = scrub_mouth_tokens(s4)
 
     # S5 道具状态：优先结构化 object_states（状态机已归一），否则 vb 关键词推导兜底
     s5 = ""
@@ -1333,6 +1468,7 @@ def assemble_daily_t2i_prompt(
                 s5 += _daily_floor_shoe_cast_poses(vb_for_shoe_lock, speakers, seg)
     elif floor_shoe_scene and speakers:
         s5 = _daily_floor_shoe_lock(vb_for_shoe_lock, speakers, seg) or ""
+    s5 = scrub_mouth_tokens(s5)
 
     # S6 口型锁（dialogue 推导）
     s6 = ""
@@ -1346,6 +1482,10 @@ def assemble_daily_t2i_prompt(
     # S7+8 镜头参数（光照 + 构图站位合并）
     layout = _daily_layout_speakers(seg, vb)
     s78 = _daily_lighting(vb) + _daily_composition(shot, layout, vb=vb)
+    s78 = scrub_mouth_tokens(s78)
+    # 多人同框时：为每个出镜角色注入硬主体完整性，妈妈不被省略/虚化/遮挡
+    if multi_body:
+        s78 = inject_role_completeness(s78, speakers, shot_type=shot)
 
     parts = [s1, s2, s4, s5, s3, s6, s78]
     if extra and extra.strip():

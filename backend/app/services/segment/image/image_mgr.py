@@ -31,19 +31,44 @@ def _verify_prompt_regen_feedback(speakers: list[str]) -> str:
         look.append('妈妈须为成年女性黑长发米色上衣牛仔裤，禁止画成小孩')
     look_clause = f"；仍须保持：{'；'.join(look)}" if look else ''
     cast = '、'.join(speakers) if speakers else '本段对白角色'
+    role_missing_tip = (
+        '若因角色被省略/只半身失败（尤其妈妈）：'
+        '把每个出镜角色写成画面硬主体，全身完整、正面朝镜头、不被遮挡。'
+        if '妈妈' in speakers
+        else '若因角色被省略/只半身失败：'
+        '把每个出镜角色写成画面硬主体，全身完整、正面朝镜头、不被遮挡。'
+    )
     return (
         f'出图质检连续未通过（发型/人数/肢体/场景等），请改写本段 image_prompt：'
         f'换姿势与构图、冲突道具用台词已有物件放大，禁止新编陈设{look_clause}。'
         f'画面人物只能是：{cast}；禁止新增未出场角色。'
+        f'若因口型冲突（撇嘴/抿嘴/闭嘴等与张嘴说话矛盾）失败：'
+        f'删掉一切嘴部姿态词，只保留眉眼表情，口型由系统注入。'
+        f'{role_missing_tip}'
+        f'若因位移动词（走向/转身/背对/离开等）破坏多人同框失败：'
+        f'改用静态站位，保留脸部朝向镜头，不背影不出画。'
     )
+
 
 def _verify_visual_brief_regen_feedback(speakers: list[str]) -> str:
     cast = '、'.join(speakers) if speakers else '本段可入画角色'
+    role_missing_tip = (
+        '若因角色（尤其妈妈）被省略/只半身失败：'
+        '该角色必须作为独立主体入镜，写清全身、正面、站位，不被遮挡。'
+        if '妈妈' in speakers
+        else '若因角色被省略/只半身失败：'
+        '该角色必须作为独立主体入镜，写清全身、正面、站位，不被遮挡。'
+    )
     return (
         f'出图质检连续未通过，请改写本段 visual_brief：换姿势与构图、'
         f'冲突道具用台词已有物件放大，禁止新编陈设；'
         f'站位与台词事实保持一致；禁止写发型/服装/鞋帽；'
         f'画面人物必须含：{cast}（同场粘性角色不可漏画）；禁止新增未授权角色。'
+        f'若因口型冲突失败：expression 禁写撇嘴/抿嘴/嘟嘴/咧嘴/大笑等嘴部姿态词，'
+        f'只用眉眼表情，口型由系统注入。'
+        f'{role_missing_tip}'
+        f'若因位移动词（走向/转身/背对/离开/出画等）破坏同框失败：'
+        f'多人同框镜改用静态站位，禁止位移动词。'
     )
 
 def _content_policy_prompt_regen_feedback(speakers: list[str]) -> str:
