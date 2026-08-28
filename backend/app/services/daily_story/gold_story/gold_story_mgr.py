@@ -387,9 +387,26 @@ class GoldStoryMgr:
                 "export": export,
             }
 
-        with _CONVERT_LOCK:
-            outcome = convert_gold_chat(row, config=cfg)
-        return {"action": "ok", **outcome}
+        logger.info(
+            "[GOLD_CHAT] convert_one start id=%s source_id=%s force=%s",
+            gold_story_id,
+            source_id,
+            force,
+        )
+        try:
+            with _CONVERT_LOCK:
+                outcome = convert_gold_chat(row, config=cfg)
+            logger.info(
+                "[GOLD_CHAT] convert_one ok source_id=%s lines=%s chars=%s score=%s",
+                sid,
+                outcome.get("chat_lines"),
+                outcome.get("chat_chars"),
+                outcome.get("structure_score"),
+            )
+            return {"action": "ok", **outcome}
+        except Exception as exc:
+            logger.exception("[GOLD_CHAT] convert_one failed source_id=%s: %s", sid, exc)
+            raise
 
     def resolve_story_block(
         self,

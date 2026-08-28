@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from app.config import Config
 from app.repositories import repo_gold_story
@@ -76,14 +79,28 @@ def run_gold_chat_batch(
         if skip_existing and _already_exported(sid, cfg):
             skip_count += 1
             results.append({**base, "action": "skip", "reason": "already_exported"})
+            logger.info("[GOLD_CHAT] batch skip source_id=%s reason=already_exported", sid)
             continue
         try:
             outcome = convert_gold_chat(row, config=cfg)
             ok_count += 1
+            logger.info(
+                "[GOLD_CHAT] batch ok source_id=%s lines=%s chars=%s score=%s",
+                sid,
+                outcome.get("chat_lines"),
+                outcome.get("chat_chars"),
+                outcome.get("structure_score"),
+            )
             results.append({**base, "action": "ok", **outcome})
         except Exception as exc:
             fail_count += 1
+            logger.exception("[GOLD_CHAT] batch failed source_id=%s: %s", sid, exc)
             results.append({**base, "action": "error", "error": str(exc)})
+
+    logger.info(
+        "[GOLD_CHAT] batch done selected=%d ok=%d skipped=%d failed=%d",
+        len(rows), ok_count, skip_count, fail_count,
+    )
 
     report = {
         "workflow": "gold_chat",
