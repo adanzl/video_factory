@@ -223,6 +223,7 @@ def _row_to_list_item(row: dict[str, Any], *, config: Config) -> dict[str, Any]:
         "conflict_core": row.get("conflict_core"),
         "auto_score": row.get("auto_score"),
         "gold_chat_daily_story_id": row.get("gold_chat_daily_story_id"),
+        "updated_at": row.get("updated_at"),
         **summary,
     }
 

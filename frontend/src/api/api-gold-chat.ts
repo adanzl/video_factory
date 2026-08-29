@@ -20,6 +20,7 @@ export interface GoldChatListItem {
   scene_title?: string;
   exported_at?: string;
   gold_chat_daily_story_id?: number | null;
+  updated_at?: string;
 }
 
 export type GoldChatListResponse = ListResponse<GoldChatListItem>;
