@@ -93,10 +93,12 @@
       </el-table-column>
       <el-table-column label="更新时间" width="150" align="center">
         <template #default="{ row }">
-          {{ row.updated_at || "-" }}
+          <el-tooltip :content="row.updated_at || ''" placement="top" :disabled="!row.updated_at">
+            <span>{{ row.updated_at ? formatUpdateTime(row.updated_at) : "-" }}</span>
+          </el-tooltip>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="250" fixed="right">
+      <el-table-column label="操作" width="220" fixed="right">
         <template #default="{ row }">
           <el-button type="primary" link size="small" @click.stop="viewItem(row)">
             查看
@@ -158,6 +160,11 @@ import {
   type GoldStoryCollectResult,
   type GoldStoryReimportResult,
 } from "@/api/api-gold-chat";
+import { formatDateTime } from "@/utils/date";
+
+function formatUpdateTime(value?: string): string {
+  return formatDateTime(value).split(" ")[0] ?? "-";
+}
 
 const { handleError } = useErrorHandler();
 
