@@ -144,6 +144,7 @@ export interface GoldStoryCollectResult {
   candidates?: number;
   inserted?: number;
   inserted_rejected?: number;
+  gate_rejected?: number;
   skipped?: number;
   failed?: number;
   candidates_file?: string;

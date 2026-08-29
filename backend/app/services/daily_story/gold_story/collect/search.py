@@ -11,6 +11,7 @@ from typing import Any
 import requests
 
 from app.config import Config
+from app.repositories import repo_gold_story
 from app.services.daily_story.gold_story.collect.sign import fetch_bili_sign_keys, sign_bili_params
 from app.services.daily_story.gold_story.transcript.download import normalize_bv
 from app.services.daily_story.gold_story.collect.funny import (
@@ -247,6 +248,12 @@ def collect_candidates(
             if bvid in seen or len(results) >= cap:
                 continue
             seen.add(bvid)
+            if repo_gold_story.has_source(source="bili", source_id=bvid):
+                logger.info(
+                    "gold_story h0 skip bvid=%s reason=already_in_db",
+                    bvid,
+                )
+                continue
             try:
                 meta = fetch_video_meta(bvid, config=cfg, session=session)
             except Exception as exc:

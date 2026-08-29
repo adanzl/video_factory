@@ -43,6 +43,81 @@ def test_h1_rejects_low_engagement():
     assert reason == "low_engagement"
 
 
+def test_collect_candidates_skips_already_in_db(app_ctx, monkeypatch):
+    from app.repositories import repo_gold_story
+    from app.services.daily_story.gold_story.collect import search as search_mod
+    from app.services.daily_story.gold_story.collect.funny import (
+        AudienceFunnyMetrics,
+        metrics_to_payload,
+    )
+
+    repo_gold_story.insert_or_skip(
+        source="bili",
+        source_id="BV1ALREADY01",
+        url="https://www.bilibili.com/video/BV1ALREADY01",
+        mechanism="M11",
+        structure_type="I",
+        story_raw="已入库故事" * 20,
+        payload={"beat": ["a", "b", "c", "d"]},
+        title="已入库",
+        auto_score=0.8,
+        status="active",
+    )
+
+    monkeypatch.setattr(
+        search_mod,
+        "search_keywords",
+        lambda _cfg: ["姐弟吵架"],
+    )
+    monkeypatch.setattr(
+        search_mod,
+        "search_bilibili",
+        lambda *_a, **_k: ["BV1ALREADY01", "BV1FRESH0001"],
+    )
+
+    def fake_meta(bvid, **_kwargs):
+        return {
+            "title": "姐弟吵架名场面",
+            "description": "",
+            "view_count": 200_000,
+            "reply_count": 80,
+            "url": f"https://www.bilibili.com/video/{bvid}",
+            "aid": 1,
+            "cid": 1,
+        }
+
+    monkeypatch.setattr(search_mod, "fetch_video_meta", fake_meta)
+    monkeypatch.setattr(search_mod, "fetch_top_replies", lambda *_a, **_k: ["哈哈"])
+    funny = AudienceFunnyMetrics(
+        danmaku_total=100,
+        danmaku_laugh_score=100.0,
+        danmaku_laugh_ratio=0.5,
+        comment_laugh_ratio=0.4,
+        view_reply_ratio_norm=0.5,
+        funny_signal=0.8,
+        cute_not_funny=False,
+        danmaku_fetch_ok=True,
+    )
+    monkeypatch.setattr(
+        search_mod,
+        "compute_audience_funny_metrics",
+        lambda **_k: funny,
+    )
+    monkeypatch.setattr(
+        search_mod,
+        "passes_funny_gate",
+        lambda *_a, **_k: (True, "ok"),
+    )
+    monkeypatch.setattr(
+        search_mod,
+        "metrics_to_payload",
+        metrics_to_payload,
+    )
+
+    rows = search_mod.collect_candidates(max_candidates=5)
+    assert [r.source_id for r in rows] == ["BV1FRESH0001"]
+
+
 def test_near_duplicate_catches_reprint_wording():
     from app.repositories.repo_gold_story import is_near_duplicate_story
 
