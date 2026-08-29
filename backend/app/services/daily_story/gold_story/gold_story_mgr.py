@@ -107,12 +107,20 @@ def _summarize_collect_report(
     results = report.get("results") or []
     skipped = sum(1 for r in results if r.get("action") == "skip")
     failed = sum(1 for r in results if r.get("action") == "error")
+    gate_rejected = int(report.get("gate_rejected") or 0)
+    if not gate_rejected:
+        gate_rejected = sum(
+            1
+            for r in results
+            if r.get("action") == "reject" and not r.get("id")
+        )
     return {
         "workflow": "gold_story_collect",
         "max": max_candidates,
         "candidates": report.get("candidates", 0),
         "inserted": report.get("inserted", 0),
         "inserted_rejected": report.get("inserted_rejected", 0),
+        "gate_rejected": gate_rejected,
         "skipped": skipped,
         "failed": failed,
         "results": results,

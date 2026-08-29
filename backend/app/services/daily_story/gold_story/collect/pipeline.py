@@ -177,7 +177,12 @@ def process_candidate(
             scene_contract=h3a,
         )
     except ValueError as exc:
-        return {**base, "action": "reject", "reason": str(exc)}
+        logger.info(
+            "gold_story LLM reject bvid=%s reason=%s",
+            candidate.source_id,
+            exc,
+        )
+        return {**base, "action": "reject", "reason": str(exc), "stage": "LLM"}
     except Exception as exc:
         return {**base, "action": "error", "stage": "LLM", "error": str(exc)}
 
@@ -575,6 +580,7 @@ def run_collect_pipeline(
     results: list[dict[str, Any]] = []
     inserted_active = 0
     inserted_rejected = 0
+    gate_rejected = 0
     for row in candidates:
         outcome = process_candidate(
             row,
@@ -585,13 +591,18 @@ def run_collect_pipeline(
         results.append(outcome)
         if outcome.get("action") == "insert":
             inserted_active += 1
-        elif outcome.get("action") == "reject" and outcome.get("reason") == "audit_failed":
-            inserted_rejected += 1
+        elif outcome.get("action") == "reject":
+            # 已落库的 audit/funny 拒 vs H2–H3b 未入库软拒
+            if outcome.get("id"):
+                inserted_rejected += 1
+            else:
+                gate_rejected += 1
 
     return {
         "candidates": len(candidates),
         "inserted": inserted_active,
         "inserted_rejected": inserted_rejected,
+        "gate_rejected": gate_rejected,
         "results": results,
         "candidates_file": str(cfg.gold_story_candidates_file),
     }
