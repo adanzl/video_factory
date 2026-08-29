@@ -7,7 +7,7 @@
         </el-icon>
       </el-button>
       <el-button type="primary" size="small" :loading="collecting" @click="handleCollect">
-        采集（10 条）
+        {{ collectButtonLabel }}
       </el-button>
       <el-button type="primary" size="small" :loading="reimporting" @click="handleReimport">
         重新导入
@@ -19,16 +19,21 @@
         批量删除{{ selectedIds.length ? `（${selectedIds.length}）` : "" }}
       </el-button>
       <el-checkbox v-model="batchForce" size="small">已导出也重跑</el-checkbox>
-      <el-select v-model="filterStatus" size="small" class="w-28!" @change="onFilterChange">
+      <el-select v-model="filterStatus" size="small" class="w-36!" @change="onFilterChange">
         <el-option label="全部" value="" />
+        <el-option label="排队中" value="pending" />
+        <el-option label="处理中" value="processing" />
         <el-option label="通过" value="active" />
         <el-option label="驳回" value="rejected" />
       </el-select>
       <el-radio-group v-model="filterHasStory" size="small" @change="onFilterChange">
         <el-radio-button value="">全部</el-radio-button>
-        <el-radio-button value="yes">有故事</el-radio-button>
-        <el-radio-button value="no">无故事</el-radio-button>
+        <el-radio-button value="yes">已导入日常</el-radio-button>
+        <el-radio-button value="no">未导入日常</el-radio-button>
       </el-radio-group>
+      <span v-if="collecting && collectProgressText" class="text-xs text-gray-500">
+        {{ collectProgressText }}
+      </span>
     </div>
 
     <el-table :data="items" stripe class="w-full gold-chat-table" v-loading="loading" row-class-name="gold-chat-row"
@@ -138,7 +143,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import { Refresh } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { usePageRefresh } from "@/stores/app";
@@ -193,7 +198,7 @@ const transcriptTitle = ref<string | null>(null);
 
 const FILTER_STATUS_KEY = "goldChatFilterStatus";
 const FILTER_HAS_STORY_KEY = "goldChatFilterHasStory";
-const FILTER_STATUS_VALUES = ["", "active", "rejected"];
+const FILTER_STATUS_VALUES = ["", "pending", "processing", "active", "rejected"];
 const FILTER_HAS_STORY_VALUES = ["", "yes", "no"];
 
 function readStoredChoice(key: string, allowed: string[]): string {
@@ -208,8 +213,36 @@ const total = ref(0);
 const filterStatus = ref(readStoredChoice(FILTER_STATUS_KEY, FILTER_STATUS_VALUES));
 const filterHasStory = ref(readStoredChoice(FILTER_HAS_STORY_KEY, FILTER_HAS_STORY_VALUES));
 const batchForce = ref(false);
+const collectPhase = ref("");
+const collectEnqueued = ref(0);
+const collectProcessed = ref(0);
+const collectCandidates = ref(0);
+
+const collectButtonLabel = computed(() => {
+  if (!collecting.value) return "采集（10 条）";
+  if (collectPhase.value === "enqueue" || collectPhase.value === "enqueued") {
+    return `入队中 ${collectEnqueued.value}/${collectCandidates.value || "?"}`;
+  }
+  if (collectPhase.value === "process") {
+    return `转写中 ${collectProcessed.value}/${collectEnqueued.value || "?"}`;
+  }
+  return "采集中…";
+});
+
+const collectProgressText = computed(() => {
+  if (!collecting.value) return "";
+  if (collectPhase.value === "enqueue" || collectPhase.value === "enqueued") {
+    return `已入队 ${collectEnqueued.value}，随后异步 OCR`;
+  }
+  if (collectPhase.value === "process") {
+    return `队列处理 ${collectProcessed.value}/${collectEnqueued.value || collectCandidates.value || "?"}`;
+  }
+  return "";
+});
 
 function formatStoryStatus(status: string): string {
+  if (status === "pending") return "排队中";
+  if (status === "processing") return "处理中";
   if (status === "active") return "通过";
   if (status === "rejected") return "驳回";
   if (status === "promoted") return "晋升";
@@ -221,6 +254,7 @@ function statusTagType(
   status: string,
 ): "success" | "danger" | "warning" | "info" {
   if (status === "active" || status === "promoted") return "success";
+  if (status === "pending" || status === "processing") return "warning";
   if (status === "rejected") return "info";
   if (status === "retired") return "info";
   return "warning";
@@ -273,10 +307,37 @@ function stopReimportPolling() {
 
 function formatCollectDone(res: GoldStoryCollectResult): string {
   return (
-    `采集完成：候选 ${res.candidates ?? 0}，入库 ${res.inserted ?? 0}，` +
-    `审拒 ${res.inserted_rejected ?? 0}，门拒 ${res.gate_rejected ?? 0}，` +
-    `跳过 ${res.skipped ?? 0}，失败 ${res.failed ?? 0}`
+    `采集完成：入队 ${res.enqueued ?? res.candidates ?? 0}，` +
+    `通过 ${res.inserted ?? 0}，审拒 ${res.inserted_rejected ?? 0}，` +
+    `门拒 ${res.gate_rejected ?? 0}，失败 ${res.failed ?? 0}`
   );
+}
+
+function applyCollectProgress(res: GoldStoryCollectResult) {
+  collectPhase.value = String(res.phase || "");
+  collectEnqueued.value = Number(res.enqueued || 0);
+  collectProcessed.value = Number(res.processed || 0);
+  collectCandidates.value = Number(res.candidates || 0);
+}
+
+function resetCollectProgress() {
+  collectPhase.value = "";
+  collectEnqueued.value = 0;
+  collectProcessed.value = 0;
+  collectCandidates.value = 0;
+}
+
+function showCollectListFilters() {
+  // 采集后应能看见 pending，避免「有故事/通过」筛掉
+  page.value = 1;
+  if (filterHasStory.value === "yes") {
+    filterHasStory.value = "";
+    localStorage.setItem(FILTER_HAS_STORY_KEY, "");
+  }
+  if (filterStatus.value && !["", "pending", "processing"].includes(filterStatus.value)) {
+    filterStatus.value = "";
+    localStorage.setItem(FILTER_STATUS_KEY, "");
+  }
 }
 
 function formatReimportDone(res: GoldStoryReimportResult): string {
@@ -326,8 +387,10 @@ async function fetchItems(opts?: { quiet?: boolean }) {
 async function pollCollectStatus() {
   try {
     const res = await getGoldStoryCollectStatus();
+    applyCollectProgress(res);
     if (res.status === "running") {
       collecting.value = true;
+      showCollectListFilters();
       await fetchItems({ quiet: true });
       startCollectPolling();
       return;
@@ -335,14 +398,20 @@ async function pollCollectStatus() {
     const wasCollecting = collecting.value;
     collecting.value = false;
     stopCollectPolling();
-    if (!wasCollecting) return;
+    if (!wasCollecting) {
+      resetCollectProgress();
+      return;
+    }
+    showCollectListFilters();
     await fetchItems({ quiet: true });
     if (res.status === "error") {
       ElMessage.error(res.error || "采集失败");
+      resetCollectProgress();
       return;
     }
     if (res.status === "done") {
       ElMessage.success(formatCollectDone(res));
+      resetCollectProgress();
     }
   } catch (e) {
     handleError(e, "查询采集进度失败");
@@ -666,18 +735,23 @@ async function handleCollect() {
     return;
   }
   collecting.value = true;
+  showCollectListFilters();
   try {
     const res = await collectGoldStories({ max: 10 });
+    applyCollectProgress(res);
     if (res.status === "running") {
-      ElMessage.success("已开始采集，完成后列表会自动刷新");
+      ElMessage.success("已开始采集：先入队，再异步转写");
       startCollectPolling();
+      await fetchItems({ quiet: true });
       return;
     }
     collecting.value = false;
     ElMessage.success(formatCollectDone(res));
+    resetCollectProgress();
     await fetchItems();
   } catch (e) {
     collecting.value = false;
+    resetCollectProgress();
     handleError(e, "采集失败");
   }
 }

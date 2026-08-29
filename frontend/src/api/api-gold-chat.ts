@@ -137,11 +137,18 @@ export interface GoldChatBatchResult {
 
 export type GoldStoryCollectStatus = "idle" | "running" | "done" | "error";
 
+/** 采集任务状态（含入队 / 异步 OCR 进度） */
 export interface GoldStoryCollectResult {
   workflow: string;
   status: GoldStoryCollectStatus;
   max?: number;
+  /** enqueue | enqueued | process | done */
+  phase?: string;
   candidates?: number;
+  /** H0/H1 已 pending 入库条数 */
+  enqueued?: number;
+  /** 队列已处理条数（OCR+结构化） */
+  processed?: number;
   inserted?: number;
   inserted_rejected?: number;
   gate_rejected?: number;
