@@ -160,10 +160,10 @@ import {
   type GoldStoryCollectResult,
   type GoldStoryReimportResult,
 } from "@/api/api-gold-chat";
-import { formatDateTime } from "@/utils/date";
 
 function formatUpdateTime(value?: string): string {
-  return formatDateTime(value).split(" ")[0] ?? "-";
+  if (!value) return "-";
+  return value.split(" ")[0];
 }
 
 const { handleError } = useErrorHandler();
@@ -274,8 +274,8 @@ function stopReimportPolling() {
 function formatCollectDone(res: GoldStoryCollectResult): string {
   return (
     `采集完成：候选 ${res.candidates ?? 0}，入库 ${res.inserted ?? 0}，` +
-    `拒 ${res.inserted_rejected ?? 0}，跳过 ${res.skipped ?? 0}，` +
-    `失败 ${res.failed ?? 0}`
+    `审拒 ${res.inserted_rejected ?? 0}，门拒 ${res.gate_rejected ?? 0}，` +
+    `跳过 ${res.skipped ?? 0}，失败 ${res.failed ?? 0}`
   );
 }
 
