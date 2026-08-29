@@ -105,8 +105,16 @@ def _summarize_collect_report(
     max_candidates: int,
 ) -> dict[str, Any]:
     results = report.get("results") or []
-    skipped = sum(1 for r in results if r.get("action") == "skip")
-    failed = sum(1 for r in results if r.get("action") == "error")
+    skipped = int(
+        report.get("skipped")
+        if report.get("skipped") is not None
+        else sum(1 for r in results if r.get("action") == "skip")
+    )
+    failed = int(
+        report.get("failed")
+        if report.get("failed") is not None
+        else sum(1 for r in results if r.get("action") == "error")
+    )
     gate_rejected = int(report.get("gate_rejected") or 0)
     if not gate_rejected:
         gate_rejected = sum(
@@ -117,7 +125,10 @@ def _summarize_collect_report(
     return {
         "workflow": "gold_story_collect",
         "max": max_candidates,
+        "phase": report.get("phase") or "running",
         "candidates": report.get("candidates", 0),
+        "enqueued": report.get("enqueued", 0),
+        "processed": report.get("processed", 0),
         "inserted": report.get("inserted", 0),
         "inserted_rejected": report.get("inserted_rejected", 0),
         "gate_rejected": gate_rejected,
@@ -126,6 +137,20 @@ def _summarize_collect_report(
         "results": results,
         "candidates_file": report.get("candidates_file"),
     }
+
+
+def _publish_collect_progress(partial: dict[str, Any], *, max_candidates: int) -> None:
+    summary = _summarize_collect_report(partial, max_candidates=max_candidates)
+    with _COLLECT_LOCK:
+        if _COLLECT_STATE.get("status") != "running":
+            return
+        _COLLECT_STATE.update(
+            {
+                **summary,
+                "status": "running",
+                "error": None,
+            }
+        )
 
 
 def _run_collect_job(max_candidates: int) -> None:
@@ -139,6 +164,9 @@ def _run_collect_job(max_candidates: int) -> None:
                 skip_transcript=False,
                 dry_run=False,
                 write_list=True,
+                on_progress=lambda p: _publish_collect_progress(
+                    p, max_candidates=max_candidates
+                ),
             )
             summary = _summarize_collect_report(
                 report,
@@ -154,8 +182,9 @@ def _run_collect_job(max_candidates: int) -> None:
                     }
                 )
             logger.info(
-                "[GOLD_CHAT] collect done max=%d inserted=%s failed=%s",
+                "[GOLD_CHAT] collect done max=%d enqueued=%s inserted=%s failed=%s",
                 max_candidates,
+                summary.get("enqueued"),
                 summary.get("inserted"),
                 summary.get("failed"),
             )
@@ -523,8 +552,11 @@ class GoldStoryMgr:
                     "workflow": "gold_story_collect",
                     "status": "running",
                     "max": max_candidates,
+                    "phase": "enqueue",
                     "started_at": time.time(),
                     "candidates": 0,
+                    "enqueued": 0,
+                    "processed": 0,
                     "inserted": 0,
                     "inserted_rejected": 0,
                     "skipped": 0,

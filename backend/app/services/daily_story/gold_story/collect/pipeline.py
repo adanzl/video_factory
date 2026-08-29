@@ -550,16 +550,15 @@ def reimport_stories(
     }
 
 
-def run_collect_pipeline(
+def enqueue_collect_candidates(
     *,
     config: Config | None = None,
     max_candidates: int | None = None,
     keywords: list[str] | None = None,
-    skip_transcript: bool = False,
-    dry_run: bool = False,
     write_list: bool = True,
+    on_progress: Any | None = None,
 ) -> dict[str, Any]:
-    """H0–H4 一次跑完。"""
+    """H0/H1：搜索后立刻 pending 入库（不做 OCR）。"""
     from app.repositories.schema import apply_gold_story_schema
     from app.repositories import sql_exec as sql
     from app.repositories.db_obj import db
@@ -578,31 +577,273 @@ def run_collect_pipeline(
         write_candidate_list(candidates, cfg.gold_story_candidates_file)
 
     results: list[dict[str, Any]] = []
+    enqueued = 0
+    skipped = 0
+
+    def _snapshot() -> dict[str, Any]:
+        return {
+            "phase": "enqueue",
+            "candidates": len(candidates),
+            "enqueued": enqueued,
+            "skipped": skipped,
+            "processed": 0,
+            "inserted": 0,
+            "inserted_rejected": 0,
+            "gate_rejected": 0,
+            "results": list(results),
+            "candidates_file": str(cfg.gold_story_candidates_file),
+        }
+
+    if on_progress is not None:
+        try:
+            on_progress(_snapshot())
+        except Exception:
+            logger.exception("gold_story enqueue on_progress failed")
+
+    for row in candidates:
+        payload = {
+            "bili_title": row.title,
+            "search_keyword": row.keyword,
+            "pipeline_stage": "queued",
+            **(row.funny_metrics or {}),
+        }
+        try:
+            outcome = repo_gold_story.insert_pending(
+                source=row.source,
+                source_id=row.source_id,
+                url=row.url,
+                title=row.title,
+                engagement_score=float(engagement_norm(row.view_count, row.reply_count)),
+                payload=payload,
+            )
+        except Exception as exc:
+            logger.exception("gold_story enqueue failed bvid=%s", row.source_id)
+            outcome = {
+                "source_id": row.source_id,
+                "title": row.title,
+                "action": "error",
+                "error": str(exc),
+            }
+            results.append(outcome)
+            if on_progress is not None:
+                try:
+                    on_progress(_snapshot())
+                except Exception:
+                    logger.exception("gold_story enqueue on_progress failed")
+            continue
+
+        item = {
+            "source_id": row.source_id,
+            "title": row.title,
+            "keyword": row.keyword,
+            **outcome,
+        }
+        results.append(item)
+        if outcome.get("action") == "insert":
+            enqueued += 1
+        else:
+            skipped += 1
+        if on_progress is not None:
+            try:
+                on_progress(_snapshot())
+            except Exception:
+                logger.exception("gold_story enqueue on_progress failed")
+
+    return _snapshot()
+
+
+def _finalize_pending_failure(
+    gold_story_id: int,
+    *,
+    reason: str,
+    stage: str = "pipeline",
+) -> None:
+    repo_gold_story.update_story_status(
+        int(gold_story_id),
+        status="rejected",
+        audit={
+            "pass": False,
+            "stage": stage,
+            "reject_reasons": [reason],
+        },
+    )
+
+
+def drain_pending_stories(
+    *,
+    config: Config | None = None,
+    skip_transcript: bool = False,
+    force_transcript: bool = True,
+    dry_run: bool = False,
+    limit: int | None = None,
+    on_progress: Any | None = None,
+) -> dict[str, Any]:
+    """异步队列：pending → OCR/H0c/H2–H4 → active|rejected。"""
+    cfg = config or Config()
+    results: list[dict[str, Any]] = []
     inserted_active = 0
     inserted_rejected = 0
     gate_rejected = 0
-    for row in candidates:
-        outcome = process_candidate(
-            row,
-            config=cfg,
-            skip_transcript=skip_transcript,
-            dry_run=dry_run,
-        )
-        results.append(outcome)
-        if outcome.get("action") == "insert":
-            inserted_active += 1
-        elif outcome.get("action") == "reject":
-            # 已落库的 audit/funny 拒 vs H2–H3b 未入库软拒
-            if outcome.get("id"):
-                inserted_rejected += 1
+    failed = 0
+    processed = 0
+
+    def _snapshot() -> dict[str, Any]:
+        return {
+            "phase": "process",
+            "processed": processed,
+            "inserted": inserted_active,
+            "inserted_rejected": inserted_rejected,
+            "gate_rejected": gate_rejected,
+            "failed": failed,
+            "results": list(results),
+        }
+
+    while True:
+        if limit is not None and processed >= max(0, int(limit)):
+            break
+        row = repo_gold_story.claim_next_pending()
+        if row is None:
+            break
+        gid = int(row["id"])
+        source_id = str(row.get("source_id") or "")
+        if dry_run:
+            repo_gold_story.update_story_status(gid, status="pending")
+            results.append(
+                {
+                    "id": gid,
+                    "source_id": source_id,
+                    "action": "dry_run",
+                }
+            )
+            processed += 1
+            continue
+
+        try:
+            candidate = _build_candidate_from_bvid(
+                source_id,
+                config=cfg,
+                existing_row=row,
+            )
+            outcome = process_candidate(
+                candidate,
+                config=cfg,
+                skip_transcript=skip_transcript,
+                overwrite_existing=True,
+                # 有稿则复用；无稿才转写（不必 force 重跑）
+                force_transcript=False,
+                existing_row=row,
+            )
+        except Exception as exc:
+            logger.exception("gold_story drain failed id=%s bv=%s", gid, source_id)
+            _finalize_pending_failure(gid, reason=str(exc), stage="drain")
+            outcome = {
+                "id": gid,
+                "source_id": source_id,
+                "action": "error",
+                "error": str(exc),
+            }
+            failed += 1
+            results.append(outcome)
+            processed += 1
+            if on_progress is not None:
+                try:
+                    on_progress(_snapshot())
+                except Exception:
+                    logger.exception("gold_story drain on_progress failed")
+            continue
+
+        action = str(outcome.get("action") or "")
+        status = str(outcome.get("status") or "")
+        # 早退（OCR/LLM 软拒）未回写 status 时，收口为 rejected
+        if action in {"error", "reject", "skip"} and status not in {"active", "rejected"}:
+            reason = str(
+                outcome.get("reason")
+                or outcome.get("error")
+                or action
+            )
+            _finalize_pending_failure(
+                gid,
+                reason=reason,
+                stage=str(outcome.get("stage") or action),
+            )
+            outcome = {**outcome, "status": "rejected", "id": gid}
+            if action == "error":
+                failed += 1
             else:
                 gate_rejected += 1
+        elif action == "ok" or status == "active":
+            inserted_active += 1
+        elif action == "reject" or status == "rejected":
+            inserted_rejected += 1
 
+        results.append(outcome)
+        processed += 1
+        if on_progress is not None:
+            try:
+                on_progress(_snapshot())
+            except Exception:
+                logger.exception("gold_story drain on_progress failed")
+
+    return _snapshot()
+
+
+def run_collect_pipeline(
+    *,
+    config: Config | None = None,
+    max_candidates: int | None = None,
+    keywords: list[str] | None = None,
+    skip_transcript: bool = False,
+    dry_run: bool = False,
+    write_list: bool = True,
+    on_progress: Any | None = None,
+) -> dict[str, Any]:
+    """H0/H1 先 pending 入库，再异步队列跑 OCR→结构化。"""
+    cfg = config or Config()
+
+    def _emit(partial: dict[str, Any]) -> None:
+        if on_progress is None:
+            return
+        try:
+            on_progress(partial)
+        except Exception:
+            logger.exception("gold_story collect on_progress failed")
+
+    enq = enqueue_collect_candidates(
+        config=cfg,
+        max_candidates=max_candidates,
+        keywords=keywords,
+        write_list=write_list,
+        on_progress=on_progress,
+    )
+    _emit({**enq, "phase": "enqueued"})
+
+    if dry_run:
+        return {
+            **enq,
+            "phase": "done",
+            "processed": 0,
+            "inserted": 0,
+            "inserted_rejected": 0,
+            "gate_rejected": 0,
+        }
+
+    drain = drain_pending_stories(
+        config=cfg,
+        skip_transcript=skip_transcript,
+        force_transcript=not skip_transcript,
+        dry_run=False,
+        on_progress=on_progress,
+    )
     return {
-        "candidates": len(candidates),
-        "inserted": inserted_active,
-        "inserted_rejected": inserted_rejected,
-        "gate_rejected": gate_rejected,
-        "results": results,
-        "candidates_file": str(cfg.gold_story_candidates_file),
+        "phase": "done",
+        "candidates": enq.get("candidates", 0),
+        "enqueued": enq.get("enqueued", 0),
+        "skipped": enq.get("skipped", 0),
+        "processed": drain.get("processed", 0),
+        "inserted": drain.get("inserted", 0),
+        "inserted_rejected": drain.get("inserted_rejected", 0),
+        "gate_rejected": drain.get("gate_rejected", 0),
+        "failed": drain.get("failed", 0),
+        "results": list(enq.get("results") or []) + list(drain.get("results") or []),
+        "candidates_file": enq.get("candidates_file"),
     }

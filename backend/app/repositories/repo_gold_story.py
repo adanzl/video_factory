@@ -27,6 +27,9 @@ _GOLD_STORY_COLUMNS = (
 _MIN_AUTO_SCORE = 0.55
 _COMPACT_STORY_RE = re.compile(r"[\s\W_]+", re.UNICODE)
 NEAR_DUP_LCS_MIN = 16
+# H0/H1 先入库占位；H5 pick 只取 active/promoted，不会命中
+PENDING_MECHANISM = "PENDING"
+PENDING_STRUCTURE = "P"
 
 
 def normalize_story_raw(text: str) -> str:
@@ -846,6 +849,97 @@ def record_inject(
     )
     sql.commit()
     return int(result.lastrowid or 0)
+
+
+def insert_pending(
+    *,
+    source: str,
+    source_id: str,
+    url: str,
+    title: str | None = None,
+    engagement_score: float | None = None,
+    payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """H0/H1 后先落库为 pending，OCR/结构化异步排队。"""
+    source = str(source or "").strip() or "bili"
+    source_id = str(source_id or "").strip()
+    if not source_id:
+        raise ValueError("source_id required")
+    existing = sql.fetchone(
+        "SELECT id, status FROM gold_story WHERE source = ? AND source_id = ?",
+        (source, source_id),
+    )
+    if existing:
+        sql.commit()
+        return {
+            "action": "skip",
+            "reason": "duplicate_source",
+            "id": int(existing["id"]),
+            "status": existing["status"],
+        }
+
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    body = dict(payload or {})
+    body.setdefault("pipeline_stage", "queued")
+    c_hash = content_hash(f"pending:{source}:{source_id}")
+    result = sql.execute(
+        """
+        INSERT INTO gold_story (
+            source, source_id, url, status, mechanism, structure_type,
+            theme_family, title, conflict_core, auto_score, engagement_score,
+            content_hash, transcript_backend, transcript_path, payload_json,
+            created_at, updated_at
+        ) VALUES (?, ?, ?, 'pending', ?, ?, NULL, ?, NULL, 0, ?, ?, NULL, NULL, ?, ?, ?)
+        """,
+        (
+            source,
+            source_id,
+            str(url or ""),
+            PENDING_MECHANISM,
+            PENDING_STRUCTURE,
+            title,
+            engagement_score,
+            c_hash,
+            json.dumps(body, ensure_ascii=False),
+            now,
+            now,
+        ),
+    )
+    sql.commit()
+    return {
+        "action": "insert",
+        "id": int(result.lastrowid),
+        "status": "pending",
+    }
+
+
+def claim_next_pending() -> dict[str, Any] | None:
+    """取出一条 pending → processing（单飞认领）。"""
+    row = sql.fetchone(
+        """
+        SELECT id FROM gold_story
+        WHERE status = 'pending'
+        ORDER BY id ASC
+        LIMIT 1
+        """
+    )
+    if row is None:
+        sql.commit()
+        return None
+    gid = int(row["id"])
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    result = sql.execute(
+        """
+        UPDATE gold_story
+        SET status = 'processing', updated_at = ?
+        WHERE id = ? AND status = 'pending'
+        """,
+        (now, gid),
+    )
+    sql.commit()
+    if int(result.rowcount or 0) <= 0:
+        return None
+    return get_story(gid)
 
 
 def update_story_status(

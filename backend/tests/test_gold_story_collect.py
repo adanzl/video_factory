@@ -118,6 +118,51 @@ def test_collect_candidates_skips_already_in_db(app_ctx, monkeypatch):
     assert [r.source_id for r in rows] == ["BV1FRESH0001"]
 
 
+def test_enqueue_pending_before_ocr(app_ctx, monkeypatch):
+    """采集应先 pending 入库，不在入队阶段跑 OCR。"""
+    from app.repositories import repo_gold_story
+    from app.services.daily_story.gold_story.collect import pipeline as pl
+    from app.services.daily_story.gold_story.collect.search import VideoCandidate
+
+    calls: list[str] = []
+
+    def boom(*_a, **_k):
+        calls.append("ocr")
+        raise AssertionError("enqueue must not OCR")
+
+    monkeypatch.setattr(pl, "transcribe_bilibili", boom)
+    monkeypatch.setattr(
+        pl,
+        "collect_candidates",
+        lambda **_k: [
+            VideoCandidate(
+                source="bili",
+                source_id="BV1PEND00001",
+                url="https://www.bilibili.com/video/BV1PEND00001",
+                title="排队测试",
+                description="",
+                view_count=100_000,
+                reply_count=50,
+                keyword="姐弟吵架",
+                top_replies=(),
+                cid=1,
+                funny_metrics={"funny_signal": 0.8},
+            )
+        ],
+    )
+
+    report = pl.enqueue_collect_candidates(max_candidates=1, write_list=False)
+    assert report["enqueued"] == 1
+    assert calls == []
+    row = repo_gold_story.get_by_source_id(source_id="BV1PEND00001")
+    assert row is not None
+    assert row["status"] == "pending"
+    claimed = repo_gold_story.claim_next_pending()
+    assert claimed is not None
+    assert claimed["status"] == "processing"
+    assert repo_gold_story.claim_next_pending() is None
+
+
 def test_near_duplicate_catches_reprint_wording():
     from app.repositories.repo_gold_story import is_near_duplicate_story
 
