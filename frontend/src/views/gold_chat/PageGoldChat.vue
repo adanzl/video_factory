@@ -91,6 +91,11 @@
           <span v-else class="text-gray-400">-</span>
         </template>
       </el-table-column>
+      <el-table-column label="更新时间" width="150" align="center">
+        <template #default="{ row }">
+          {{ row.updated_at || "-" }}
+        </template>
+      </el-table-column>
       <el-table-column label="操作" width="250" fixed="right">
         <template #default="{ row }">
           <el-button type="primary" link size="small" @click.stop="viewItem(row)">
