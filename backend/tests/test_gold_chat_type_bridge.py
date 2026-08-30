@@ -230,6 +230,58 @@ def test_patch_m2_c_structure_layers():
     assert struct is not None and struct >= 50
 
 
+def test_patch_m2_c_structure_closing_boomerang_speaker():
+    """#19 零食战：closing 昭昭回旋镖 + 灿灿嘴硬。"""
+    from app.services.daily_story.gold_story.gold_chat.patch import (
+        patch_m2_c_structure,
+    )
+
+    chat = {
+        "scene_title": "零食保卫战",
+        "setting": "沙发前",
+        "conflict_core": "灿灿护零食不给昭昭",
+        "punchline_explain": "C类：昭昭用规矩回旋镖堵住。",
+        "story_type": "C",
+        "dialogue": [
+            {"speaker": "灿灿", "line": "零食归我，作业本归你。"},
+            {"speaker": "昭昭", "line": "凭什么零食都是你的？"},
+            {"speaker": "灿灿", "line": "我说了算，你别碰。"},
+            {"speaker": "昭昭", "line": "那作业归谁？"},
+            {"speaker": "灿灿", "line": "作业归你，零食归我。"},
+            {"speaker": "昭昭", "line": "你这规矩不公平。"},
+            {"speaker": "灿灿", "line": "公平什么，真的不行。"},
+            {"speaker": "昭昭", "line": "那我撕你作业本。"},
+            {"speaker": "灿灿", "line": "你刚说的规矩，今天我说了算！"},
+            {"speaker": "昭昭", "line": "哼，下次还这样！"},
+        ],
+    }
+    payload = {
+        "closing_intent": "昭昭用规矩回旋镖堵住，灿灿嘴硬约下次",
+    }
+    patched, notes = patch_m2_c_structure(
+        chat,
+        structure_type="C",
+        mechanism="M2",
+        theme="零食保卫战",
+        payload=payload,
+    )
+    assert "沙发" in patched["setting"] or "厅" in patched["setting"]
+    # 尾段回旋镖须在昭昭
+    boom_speakers = [
+        r["speaker"]
+        for r in patched["dialogue"][-5:]
+        if "你刚说" in str(r.get("line") or "")
+    ]
+    assert boom_speakers and boom_speakers[-1] == "昭昭"
+    assert patched["dialogue"][-1]["speaker"] == "灿灿"
+    assert "哼" not in patched["dialogue"][-1]["line"]
+    assert patched["dialogue"][-2]["speaker"] == "昭昭"
+    assert "你刚说" in patched["dialogue"][-2]["line"]
+    assert any(
+        "嘴硬" in n or "回旋镖" in n or "错位" in n for n in notes
+    )
+
+
 def test_apply_type_body_pipeline_sets_story_type():
     chat = {
         "story_type": "C",

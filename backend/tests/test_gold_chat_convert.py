@@ -140,29 +140,32 @@ def test_gold_story_to_gold_chat_retries_when_too_short(monkeypatch):
     calls: dict[str, int | bool] = {"n": 0}
     _bypass_structure_gate(monkeypatch)
 
-    def fake_chat(system: str, _user: str) -> dict:
+    def fake_chat(system: str, _user: str, **_kwargs) -> dict:
         if "编辑" in system:
             calls["fix"] = True
             return _sample_chat()
         calls["n"] = int(calls["n"]) + 1
-        bad = _sample_chat()
-        bad["dialogue"] = bad["dialogue"][:2]
-        return bad
+        if int(calls["n"]) == 1:
+            bad = _sample_chat()
+            bad["dialogue"] = bad["dialogue"][:2]
+            return bad
+        return _sample_chat()
 
     monkeypatch.setattr(gc, "_chat_json", fake_chat)
     monkeypatch.setattr(gc, "PASS1_CANDIDATE_COUNT", 1)
-    monkeypatch.setattr(gc, "PASS1_REGENERATE_MAX", 1)
+    monkeypatch.setattr(gc, "PASS1_REGENERATE_MAX", 2)
     out = gc.gold_story_to_gold_chat(_sample_row())
     assert len(out["dialogue"]) >= 4
-    assert calls["n"] == 1
-    assert calls.get("fix") is True
+    assert int(calls["n"]) >= 2
+    # 偏短不再烧 FIX，交外层 Pass1 回灌重抽
+    assert calls.get("fix") is not True
 
 
 def test_gold_story_to_gold_chat_retries_on_validate_error(monkeypatch):
     calls: dict[str, int | bool] = {"n": 0}
     _bypass_structure_gate(monkeypatch)
 
-    def fake_chat(system: str, _user: str) -> dict:
+    def fake_chat(system: str, _user: str, **_kwargs) -> dict:
         if "编辑" in system:
             calls["fix"] = True
             return _sample_chat()
@@ -231,7 +234,7 @@ def test_validate_pass1_shortens_before_full_fix(monkeypatch):
 def test_gold_story_to_gold_chat(monkeypatch):
     _bypass_structure_gate(monkeypatch)
 
-    def fake_chat(_system: str, _user: str) -> dict:
+    def fake_chat(_system: str, _user: str, **_kwargs) -> dict:
         return _sample_chat()
 
     monkeypatch.setattr(gc, "_chat_json", fake_chat)
@@ -346,7 +349,136 @@ def test_resolve_gold_chat_snippet_same_source():
 
     note = resolve_gold_chat_snippet(GOLD_CHAT_LINES_SNIPPET_SOURCE_ID)
     assert "不注入全文正例" in note
+    assert "未满 240" in note
+    assert "18–24" not in note
     assert GOLD_CHAT_LINES_SNIPPET not in note
+
+
+def test_format_dialogue_seed_marks_spoken_lines():
+    text = gc._format_dialogue_seed(
+        [
+            {"speaker": "灿灿", "intent": "零食归我，作业本归你，公平吧？"},
+            {"speaker": "昭昭", "intent": "立规反杀"},
+        ]
+    )
+    assert "要点" in text
+    assert "勿逐字照抄" in text
+    assert "intent：立规反杀" in text
+
+
+def test_closing_for_prompt_shortens_long():
+    long = (
+        "灿灿求饶但嘴硬收场：昭昭用灿灿自己立的规矩"
+        "「零食归我，作业本归你」堵住，灿灿语塞，答应归还零食，末句嘴硬约下次"
+    )
+    out = gc._closing_for_prompt(long)
+    assert len(out) < len(long)
+    assert "灿灿求饶但嘴硬收场" in out
+
+
+def test_pass1_regen_feedback_includes_short_error():
+    from app.services.daily_story.gold_story.gold_chat.prompts import (
+        format_pass1_regen_feedback,
+    )
+
+    fb = format_pass1_regen_feedback(
+        "正文总字数须≥240，当前214",
+        None,
+        structure_type="C",
+        mechanism="M2",
+    )
+    assert "未满" in fb or "≥240" in fb
+    assert "214" in fb or "错误" in fb
+
+
+def test_pass1_regen_feedback_includes_truncated():
+    from app.services.daily_story.gold_story.gold_chat.prompts import (
+        format_pass1_regen_feedback,
+    )
+
+    fb = format_pass1_regen_feedback(
+        "LLM output truncated (finish_reason=length)；对白 JSON 须短小",
+        None,
+        structure_type="C",
+        mechanism="M2",
+    )
+    assert "截断" in fb or "过长" in fb
+    assert "≥240" in fb or "写满" in fb
+    assert "最多扩 1 句" not in fb
+    assert "禁止复读" in fb or "循环" in fb
+
+
+def test_is_truncation_error():
+    assert gc._is_truncation_error(
+        "LLM output truncated (finish_reason=length)；对白 JSON 须短小"
+    )
+    assert not gc._is_truncation_error("正文总字数须≥240，当前214")
+
+
+def test_c_force_sibling_alternate_includes_tail():
+    story = {
+        "story_type": "C",
+        "dialogue": [
+            {"speaker": "灿灿", "line": f"句{i}"}
+            for i in range(10)
+        ],
+    }
+    # 人为制造末段连说
+    story["dialogue"][8]["speaker"] = "昭昭"
+    story["dialogue"][9]["speaker"] = "昭昭"
+    out, changed = gc.patch_c_force_sibling_alternate(story)
+    assert changed
+    speakers = [d["speaker"] for d in out["dialogue"]]
+    for i in range(1, len(speakers)):
+        if speakers[i] in {"昭昭", "灿灿"} and speakers[i - 1] in {"昭昭", "灿灿"}:
+            assert speakers[i] != speakers[i - 1]
+
+
+def test_c_possession_criterion_rewrite():
+    story = {
+        "story_type": "C",
+        "dialogue": [
+            {"speaker": "灿灿", "line": "我先摸到的，该我！"},
+            {"speaker": "昭昭", "line": "谁先吃到归谁"},
+            {"speaker": "灿灿", "line": "谁先吃光谁赢"},
+        ],
+    }
+    out, changed = gc.patch_c_possession_criterion(story)
+    assert changed
+    blob = "".join(str(x.get("line") or "") for x in out["dialogue"])
+    assert "摸到" not in blob
+    assert "吃到" not in blob
+    assert "吃光" not in blob
+    assert "拿到" in blob
+    from app.services.daily_story.story_types.c.validate import _criterion_drift_error
+
+    lines = [str(x.get("line") or "") for x in out["dialogue"]]
+    assert _criterion_drift_error(lines) is None
+
+
+def test_strip_c_tone_stack_and_safe_pad():
+    stacked = "我先拿到的了呢了呀！"
+    assert "了呢了呀" not in gc._strip_c_tone_stack_line(stacked)
+    story = {
+        "story_type": "C",
+        "dialogue": [
+            {"speaker": "灿灿", "line": "零食归我了呢了呀"},
+            {"speaker": "昭昭", "line": "你等着呢呀"},
+        ],
+    }
+    out, changed = gc.patch_sanitize_c_tone_stack(story)
+    assert changed
+    for item in out["dialogue"]:
+        assert not gc._RE_C_TONE_STACK.search(str(item["line"]))
+    padded, n = gc._pad_gold_chat_line("我先拿到", 1, used=set(), story_type="C")
+    assert n == 1
+    assert padded in ("我先拿到啊", "我先拿到吧")
+    # 已有语气词：可补短可拍词，但禁叠语气词尾
+    same, n2 = gc._pad_gold_chat_line("我先拿到啊", 2, used=set(), story_type="C")
+    assert "了呢了呀" not in same
+    assert same.startswith("我先拿到啊")
+    if n2:
+        assert same != "我先拿到啊"
 
 
 def test_resolve_gold_chat_snippet_cross_source():

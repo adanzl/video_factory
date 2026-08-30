@@ -3,6 +3,12 @@
 from typing import Any
 
 from app.services.daily_story.dialogue_text import DAILY_STORY_LINE_CHARS_MAX
+from app.services.daily_story.prompts import (
+    DAILY_STORY_BODY_CHARS_MAX,
+    DAILY_STORY_BODY_CHARS_MIN,
+    DAILY_STORY_KEY_CHARS_MAX,
+    DAILY_STORY_KEY_CHARS_MIN,
+)
 from app.services.daily_story.gold_story.gold_chat.validate import (
     _BANNED_INVENTED_CLOSES,
     _parse_conflict_victim,
@@ -14,6 +20,12 @@ from app.services.daily_story.gold_story.gold_chat.validate import (
 )
 
 CHAT_MAX_LINE_CHARS = DAILY_STORY_LINE_CHARS_MAX
+# 提示词软目标：低于硬卡上限，避免顶着 370 写爆
+CHARS_SOFT_LO = DAILY_STORY_BODY_CHARS_MIN + 40  # 280
+CHARS_SOFT_HI = DAILY_STORY_BODY_CHARS_MAX - 30  # 340
+DIALOGUE_ROUNDS_SOFT_LO = 12
+DIALOGUE_ROUNDS_SOFT_HI = 16
+DIALOGUE_ROUNDS_HARD_MAX = 18
 
 _SYSTEM = (
     "你是日常故事编剧。输入为金故事 scene_contract（可拍场景契约）"
@@ -21,7 +33,10 @@ _SYSTEM = (
     "站外口播/科普/第三人称论述须 **还原成第一人称现场对白**："
     "角色当场说、当场吵、当场做，禁止转述「妈妈说/教过/曾经」。\n"
     "站外爸爸/父亲/宝爸须写为妈妈（少出场）；speaker 只允许昭昭/灿灿/妈妈。\n"
-    "输出 JSON 须与站内 daily_story 字段一致；只输出 JSON。"
+    "只输出一个合法 JSON 对象：无解释、无注释、无 markdown 代码围栏。\n"
+    "输出 JSON 须与站内 daily_story 字段一致。\n"
+    "**输出预算**：先保证正文 ≥240 字（目标 280–340），"
+    "dialogue 约 12–16 条后闭合；禁止复读/草稿并列/循环加戏。"
 )
 
 _USER = """金故事标题：{title}
@@ -38,10 +53,10 @@ _USER = """金故事标题：{title}
 
 {pass1_feedback_block}
 
-dialogue_seed（intent 骨架，须扩写为口语对白，禁止照抄）：
+dialogue_seed（剧情要点，不是最终台词）：
 {dialogue_seed}
 
-收束意图：{closing_intent}
+收束意图（只落实要点，勿把说明整段写进对白）：{closing_intent}
 映射说明：{speaker_map_note}
 story_raw（背景，勿照抄；口播/论述须转现场对白）：{story_raw}
 禁词（对白中禁止出现）：{banned_literals}
@@ -56,7 +71,7 @@ source_type：{source_type}（tutorial 时禁保留教程口吻/第几招）
 {{
   "scene_title": "短标题，口语钩子；用词须在对白/正文中原样出现，禁自创与正文不一致的说法",
   "setting": "地点 + 冲突物落点（谁面前/谁端着哪件）",
-  "key": "2-8字内容标签",
+  "key": "{key_min}-{key_max}字内容标签",
   "conflict_core": "一句话冲突核",
   "dialogue": [
     {{"speaker": "昭昭|灿灿|妈妈", "line": "…"}}
@@ -65,6 +80,18 @@ source_type：{source_type}（tutorial 时禁保留教程口吻/第几招）
 }}
 
 规则：
+- **字数硬卡（最优先）**：正文 dialogue 总字数必须 ≥{chars_min} 且 ≤{chars_max}；
+  目标落在 {chars_soft_lo}–{chars_soft_hi}。**未满 {chars_min} 禁止收束闭合**
+- **句数**：对白宜 {rounds_soft_lo}–{rounds_soft_hi} 轮，最多 {rounds_hard_max} 轮；
+  禁止循环复读注水；不够字数时用句内扩写或必要反应句补满，勿提早停笔
+- **收束时机**：字数已 ≥{chars_min} 且冲突按 closing 落实后立刻闭合；
+  禁止超过 {chars_max}，禁止顶着上限注水
+- **单句** ≤{max_line} 字；**key** 须 {key_min}–{key_max} 字；
+  **punchline_explain 必填**，含「{structure_type}类」前缀，宜短
+- **seed**：通常每条扩 1–2 句；可保留关键词，禁止逐字照抄；
+  禁止一条 seed 改写成多版本/草稿并列
+- **seed 收束**：全部拍写完且 closing 落实后即停；禁止另起第二轮；
+  禁止同一句对白重复循环凑字数
 - **setting**：地点 + 冲突物落点（谁面前/谁端着哪件）；双方各持一物须两件都写；禁止只写地点和「在吵架」
 - **第一人称现场对白**：每句是角色对另一角色当场说的话；禁第三人称论述、禁转述（「妈妈说/教过/说过」）
 - 口播/育儿科普/「第几招」：选一个具体场面演出来，勿保留教程口吻
@@ -74,8 +101,9 @@ source_type：{source_type}（tutorial 时禁保留教程口吻/第几招）
 - **M5 角色绑定**：前文互毁/推搡锁定先动手方与受害方；服软/道歉与拒和/加码**不得同一 speaker**
 - **M5 受害方**：scene conflict 受害方须 establish 持有物；先毁物/撕抢者≠受害方
 - **H 调解**：妈妈须分层（先问谁先动手 → 再定责劝和），勿合并成一句；禁「扯平/都有错」
-- **收束**：严格按 closing_intent；「还打不打架」须由 closing_intent 指定角色问；碘伏/涂药后禁止新剧情（一起画/续写承诺）
-- **句尾禁叠「呢呢」**；口语可单「呢/嘛」，勿连续堆叠
+- **收束**：严格按 closing_intent 要点；「还打不打架」须由 closing_intent 指定角色问；碘伏/涂药后禁止新剧情（一起画/续写承诺）
+- **句尾语气词**：每句结尾最多一个（呢/嘛/呀/啊/吧）；
+  禁「了呢了呀/着呢了呀/呢呀」等叠尾；禁叠「呢呢」
 - 若有上方金稿对白正例：语气/句长可参考；剧情须来自本稿 scene_contract + seed
 - 昭昭/灿灿 交替为主，妈妈少出场；口语化、可拍
 - **禁止对白出现「哥哥」「弟弟」**；称呼用姐姐/昭昭/灿灿
@@ -85,13 +113,7 @@ source_type：{source_type}（tutorial 时禁保留教程口吻/第几招）
 - 站外爸爸/父亲/宝爸一律写妈妈，勿用爸爸作 speaker
 - 站外陌生小孩/对方家长→映射为灿灿/妈妈，**禁止**「小男孩」「对方」等第三 speaker
 - 按 beat 顺序推进，末段落实收束意图
-- **seed 收束**：dialogue_seed 全部拍写完后即停；点题/closing_intent 落实后
-  禁止另起第二轮（争点物归属、角色分工不得反转）；**禁止同一句对白重复**
-  循环凑字数
-- 正文 dialogue 总字数 {chars_min}–{chars_max} 字（硬卡）
-- **首稿须一次写到 ≥{chars_min} 字**，建议 18–24 句、均句 ≤16 字；勿写短稿
 - 禁止直接使用禁词列表里的词
-- punchline_explain 须含「{structure_type}类」前缀
 - 不要输出 discovery_opening / quality 等额外字段
 """
 
@@ -100,8 +122,8 @@ _FIX_SYSTEM = (
     "你是日常故事编辑。根据校验错误修正 JSON。\n"
     "须改成第一人称现场对白：角色当场说，禁止转述/旁白/括号说明。\n"
     "speaker 只允许昭昭/灿灿/妈妈（爸爸/父亲须改为妈妈）。\n"
-    "修复不得减少正文总字数、不得删句；不足则扩写补齐。\n"
-    "只输出完整 JSON。"
+    "字数不足则扩写；字数超限则压缩（可删注水/复读句）；\n"
+    "缺字段则补齐。只输出完整合法 JSON。"
 )
 
 _FIX_USER = """校验错误：
@@ -111,9 +133,11 @@ _FIX_USER = """校验错误：
 {story_json}
 
 规则：
-- 正文 dialogue 总字数 {chars_min}–{chars_max}（不足则 **扩写** 到 ≥{chars_min}，建议 18–24 句）
-- **修复只增不删**：不得减少总字数、不得删 dialogue 行
-- 对白句数须 ≥12；每句 ≤{max_line} 字，口语化、可拍
+- 正文 dialogue 总字数必须落在 {chars_min}–{chars_max}（目标 {chars_soft_lo}–{chars_soft_hi}）
+- **未满 {chars_min}**：必须扩写到 ≥{chars_min}（句内加字或加必要反应句，禁复读循环）
+- **超过 {chars_max}**：压缩到上限内（可删注水句，勿另起第二轮）
+- 对白宜 {rounds_soft_lo}–{rounds_soft_hi} 轮，最多 {rounds_hard_max} 轮；每句 ≤{max_line} 字
+- key 须 {key_min}–{key_max} 字；缺 punchline_explain 须补且含类型前缀
 - 妈妈台词须 ≤{mom_lines_max} 句；末句宜姐弟对白（非 hard）
 - 若违反金稿对齐 checklist（跳步/自编暖收/互毁缺「也」的依据/M5 无加码），须按 checklist 补拍
 - 禁词须同义改写：{banned_literals}
@@ -294,44 +318,75 @@ def format_pass1_regen_feedback(
     beat_chain: list[Any] | None = None,
     conflict_text: str = "",
 ) -> str:
-    """Pass1 重试：把上一轮 structural 机审 / 结构分问题注入 prompt。"""
+    """Pass1 重试：把上一轮失败原因注入 prompt。"""
     err = str(error or "").strip()
+    if not err:
+        return ""
     if err.startswith("structure_score:"):
         return format_structure_score_feedback(err, story)
 
-    if not err.startswith(("align_structural:", "align_refine_failed:")):
-        return ""
+    if err.startswith(("align_structural:", "align_refine_failed:")):
+        issues: list[dict[str, Any]] = []
+        if isinstance(story, dict):
+            raw = collect_align_issues(
+                story,
+                structure_type=structure_type,
+                mechanism=mechanism,
+                closing_intent=closing_intent,
+                beat_chain=beat_chain,
+                conflict_text=conflict_text,
+            )
+            issues = [
+                x
+                for x in raw
+                if is_structural_align_kind(str(x.get("kind") or ""))
+            ]
 
-    issues: list[dict[str, Any]] = []
-    if isinstance(story, dict):
-        raw = collect_align_issues(
-            story,
-            structure_type=structure_type,
-            mechanism=mechanism,
-            closing_intent=closing_intent,
-            beat_chain=beat_chain,
-            conflict_text=conflict_text,
+        parts = ["【上一轮 Pass1 失败 · 本轮须修正】"]
+        parts.append(f"机审：{err.split(':', 1)[-1]}")
+        if issues:
+            for item in issues[:4]:
+                kind = str(item.get("kind") or "")
+                lines = item.get("lines") or []
+                ln = "、".join(str(n) for n in lines[:3]) if lines else "?"
+                desc = str(item.get("desc") or "")[:120]
+                parts.append(f"- {kind}（第{ln}句）：{desc}")
+                fix = str(item.get("fix") or "").strip()
+                if fix:
+                    parts.append(f"  → {fix[:100]}")
+        else:
+            parts.append("- 对照上方事件顺序硬约束重写，勿重复同类错误")
+        return "\n".join(parts)
+
+    # 硬校验失败（字数/缺字段/单句过长等）也回灌，避免同提示空转
+    parts = ["【上一轮 Pass1 硬校验失败 · 本轮须一次写对】", f"错误：{err[:400]}"]
+    if "正文总字数须≥" in err:
+        parts.append(
+            f"- 正文必须先写满 ≥{DAILY_STORY_BODY_CHARS_MIN} 字，"
+            f"目标 {CHARS_SOFT_LO}–{CHARS_SOFT_HI}；未满禁止收束"
         )
-        issues = [
-            x
-            for x in raw
-            if is_structural_align_kind(str(x.get("kind") or ""))
-        ]
-
-    parts = ["【上一轮 Pass1 失败 · 本轮须修正】"]
-    parts.append(f"机审：{err.split(':', 1)[-1]}")
-    if issues:
-        for item in issues[:4]:
-            kind = str(item.get("kind") or "")
-            lines = item.get("lines") or []
-            ln = "、".join(str(n) for n in lines[:3]) if lines else "?"
-            desc = str(item.get("desc") or "")[:120]
-            parts.append(f"- {kind}（第{ln}句）：{desc}")
-            fix = str(item.get("fix") or "").strip()
-            if fix:
-                parts.append(f"  → {fix[:100]}")
-    else:
-        parts.append("- 对照上方事件顺序硬约束重写，勿重复同类错误")
+    if "正文总字数须≤" in err:
+        parts.append(
+            f"- 正文不得超过 {DAILY_STORY_BODY_CHARS_MAX} 字；删注水/复读，勿顶上限"
+        )
+    if "punchline_explain" in err:
+        parts.append("- 必须含 punchline_explain，且带类型前缀")
+    if "key 须" in err:
+        parts.append("- key 须 2–8 字")
+    if "单句过长" in err:
+        parts.append(f"- 每句 ≤{CHAT_MAX_LINE_CHARS} 字")
+    if "finish_reason=length" in err or "truncated" in err:
+        parts.extend(
+            [
+                "- 上次输出过长被截断：禁止复读/草稿并列/循环加戏",
+                f"- 仍须写满 ≥{DAILY_STORY_BODY_CHARS_MIN} 字"
+                f"（目标 {CHARS_SOFT_LO}–{CHARS_SOFT_HI}），未满禁止收束",
+                f"- dialogue 宜 {DIALOGUE_ROUNDS_SOFT_LO}–"
+                f"{DIALOGUE_ROUNDS_SOFT_HI} 条"
+                f"（≤{DIALOGUE_ROUNDS_HARD_MAX}）",
+                "- 每条 seed 通常扩 1–2 句；写完 beat+closing 立刻闭合",
+            ]
+        )
     return "\n".join(parts)
 
 
