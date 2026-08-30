@@ -1400,6 +1400,105 @@ def _m2_c_layer_blob(rows: list[dict[str, Any]]) -> str:
     return "".join(str(r.get("line") or "") for r in rows)
 
 
+def _m2_c_snack_snack_name(story: dict[str, Any], payload: dict[str, Any] | None) -> str:
+    blob = _m2_c_layer_blob(_dialogue_rows(story))
+    if "薯片" in blob:
+        return "薯片"
+    if isinstance(payload, dict):
+        obj = str(
+            payload.get("object")
+            or (payload.get("scene_contract") or {}).get("object")
+            or ""
+        )
+        if "薯片" in obj:
+            return "薯片"
+    return "零食"
+
+
+def _m2_c_is_snack_homework_ctx(
+    story: dict[str, Any],
+    *,
+    meat_ctx: bool,
+    payload: dict[str, Any] | None = None,
+) -> bool:
+    if meat_ctx:
+        return False
+    rows = _dialogue_rows(story)
+    blob = _m2_c_layer_blob(rows)
+    sc = ""
+    if isinstance(payload, dict):
+        sc = str(
+            (payload.get("scene_contract") or {}).get("object")
+            or payload.get("object")
+            or ""
+        )
+        sc += str(
+            (payload.get("scene_contract") or {}).get("conflict")
+            or payload.get("conflict")
+            or ""
+        )
+    hay = blob + sc + str(story.get("scene_title") or "")
+    has_snack = bool(re.search(r"零食|薯片", hay))
+    has_hw = bool(re.search(r"作业|本子", hay))
+    return has_snack and has_hw
+
+
+def patch_m2_c_snack_beat_rebuild(
+    story: dict[str, Any],
+    *,
+    payload: dict[str, Any] | None = None,
+    boom_sp: str = "昭昭",
+    last_sp: str = "灿灿",
+) -> tuple[dict[str, Any], list[str]]:
+    """零食+作业本 M2+C：按 beat 重建对白（禁吃肉赛规模板/垫词堆砌）。"""
+    import copy
+
+    snack = _m2_c_snack_snack_name(story, payload)
+    out = copy.deepcopy(story)
+    out["dialogue"] = [
+        {
+            "speaker": "灿灿",
+            "line": f"沙发上这包{snack}归我，作业本归你，公平吧？",
+        },
+        {"speaker": "昭昭", "line": "凭什么你偷吃我的零食还定规矩？"},
+        {"speaker": "灿灿", "line": "谁拿到算谁的才算数，你抢不到。"},
+        {"speaker": "昭昭", "line": "那我拿到作业本，本子归我才算？"},
+        {"speaker": "灿灿", "line": "本子不算！还得我攥手里才算真正归我。"},
+        {"speaker": "昭昭", "line": "你一条接一条说，哪条作数啊？"},
+        {"speaker": "灿灿", "line": "你敢撕本子，我就把零食全吃光！"},
+        {"speaker": "昭昭", "line": "之前说过的，规矩是你自己定的。"},
+        {"speaker": "灿灿", "line": "你撕了我也交不了差，零食你也保不住！"},
+        {"speaker": "昭昭", "line": "那我先不撕，你还认不认这规矩？"},
+        {"speaker": "灿灿", "line": "认什么呀，零食本来就是我的。"},
+        {"speaker": "昭昭", "line": "本子我放下了，你说话算不算数？"},
+        {"speaker": "灿灿", "line": f"别撕啦，{snack}给你还不行吗。"},
+        {
+            "speaker": boom_sp or "昭昭",
+            "line": f"你刚说「{snack}归我，作业本归你」，说不通！",
+        },
+        {
+            "speaker": last_sp or "灿灿",
+            "line": "下次我先写在纸上，看你怎么钻空子啊。",
+        },
+    ]
+    # 末两句 speaker 已按 closing；若 boom/last 同人则兜底交替
+    if out["dialogue"][-1]["speaker"] == out["dialogue"][-2]["speaker"]:
+        out["dialogue"][-1]["speaker"] = (
+            "灿灿" if out["dialogue"][-2]["speaker"] == "昭昭" else "昭昭"
+        )
+    out["punchline_explain"] = (
+        "C类：昭昭用灿灿刚立的规矩回旋镖堵住，灿灿语塞求饶，末句嘴硬约下次。"
+    )
+    if not str(out.get("setting") or "").strip():
+        out["setting"] = "家中客厅，灿灿端着零食盒，昭昭攥着作业本"
+    elif not re.search(r"厅|沙发|桌", str(out.get("setting") or "")):
+        out["setting"] = f"客厅，{out['setting']}"
+    from app.services.daily_story.prompts import sync_discovery_opening_from_dialogue
+
+    sync_discovery_opening_from_dialogue(out)
+    return out, ["M2+C零食战beat重建"]
+
+
 def patch_m2_c_structure(
     story: dict[str, Any],
     *,
@@ -1438,6 +1537,18 @@ def patch_m2_c_structure(
     if "灿灿" in closing and "回旋镖" in closing and "昭昭用" not in closing:
         boom_sp = "灿灿"
     last_sp = "灿灿" if "灿灿嘴硬" in closing else ("昭昭" if "昭昭嘴硬" in closing else "")
+
+    snack_ctx = _m2_c_is_snack_homework_ctx(
+        out, meat_ctx=meat_ctx, payload=payload
+    )
+    if snack_ctx:
+        rebuilt, rebuild_notes = patch_m2_c_snack_beat_rebuild(
+            out,
+            payload=payload,
+            boom_sp=boom_sp,
+            last_sp=last_sp or "灿灿",
+        )
+        return rebuilt, rebuild_notes
 
     # setting 缺地点会扣开场分
     setting = str(out.get("setting") or "").strip()
@@ -1524,24 +1635,53 @@ def patch_m2_c_structure(
 
     rows = _dialogue_rows(out)
 
-    # 开场对白缺地点词（观感查 dialogue，不查 setting）
+    # 开场对白缺地点词：嵌进口语（禁「沙发前，」旁白定格起句）
+    for item in rows[:2]:
+        ln = str(item.get("line") or "").strip()
+        stripped = re.sub(
+            r"^(?:客厅|厨房|卧室|沙发|门口|餐桌)(?:前|里|旁|边)?[，,]\s*",
+            "",
+            ln,
+        )
+        if stripped != ln and stripped:
+            item["line"] = stripped
+            notes.append("M2+C剥开场旁白定格")
+            changed = True
+    rows = _dialogue_rows(out)
     open_blob = _m2_c_layer_blob(rows[:3])
     if not re.search(r"客厅|沙发|餐桌|厨房|门口|床", open_blob):
         for item in rows[:2]:
             if str(item.get("speaker") or "") not in {"昭昭", "灿灿"}:
                 continue
             ln = str(item.get("line") or "").strip()
-            item["line"] = f"沙发前，{ln}".replace("，，", "，")[:24]
-            notes.append("M2+C开场补地点")
+            if re.search(r"零食|薯片|肉", ln):
+                new_ln = re.sub(
+                    r"(这包|那包)?(零食|薯片|肉)",
+                    r"沙发上那包\2",
+                    ln,
+                    count=1,
+                )
+            else:
+                m = re.match(r"^((?:昭昭|灿灿)[，,])?(.*)$", ln)
+                prefix = (m.group(1) if m else "") or ""
+                rest = (m.group(2) if m else ln) or ""
+                new_ln = f"{prefix}沙发上{rest}".replace("沙发上沙发上", "沙发上")
+            item["line"] = new_ln[:24]
+            notes.append("M2+C开场嵌地点")
             changed = True
             break
 
-    # 规则轮次：中段补「才算」定义升级（≥2 次）
+    # 规则轮次：仅整件物/吃肉语境才补「才算」模板；零食作业本战禁注入举过头顶
     rows = _dialogue_rows(out)
     mid = rows[2:-4] if len(rows) >= 10 else rows[2:-2]
     mid_blob = _m2_c_layer_blob(mid)
     append_n = len(re.findall(r"才算|不算|追加一条", mid_blob))
-    if append_n < 2 and mid:
+    snack_ctx = (not meat_ctx) and bool(
+        re.search(r"薯片|作业本|(?:零食.{0,8}作业)|(?:作业.{0,8}零食)", _m2_c_layer_blob(rows))
+        or re.search(r"零食", _m2_c_layer_blob(rows[:4]))
+        and re.search(r"作业|本子", _m2_c_layer_blob(rows))
+    )
+    if meat_ctx and append_n < 2 and mid:
         targets = [
             it
             for it in mid
@@ -1581,6 +1721,37 @@ def patch_m2_c_structure(
                 other["line"] = "那按哪条才算？你一条接一条！"
                 notes.append("M2+C补规则追问")
                 changed = True
+    elif snack_ctx and mid:
+        # 清掉误注入的整件物赛规
+        for item in rows:
+            ln = str(item.get("line") or "")
+            if re.search(r"举过头顶|证明三次|光抱着不行", ln):
+                sp = str(item.get("speaker") or "")
+                if sp == "灿灿":
+                    item["line"] = "零食归我，作业本归你，这才公平！"
+                else:
+                    item["line"] = "你偷吃还讲公平？"
+                notes.append("M2+C清无关才算模板")
+                changed = True
+        # 零食战递进：威胁本子 / 吃光加码（贴 beat，不发明新赛规维度）
+        rows = _dialogue_rows(out)
+        blob = _m2_c_layer_blob(rows)
+        if "撕" not in blob and len(rows) >= 8:
+            for item in rows[3:8]:
+                if str(item.get("speaker") or "") == "昭昭":
+                    item["line"] = "你不还，我就撕你作业本！"
+                    notes.append("M2+C补撕本威胁")
+                    changed = True
+                    break
+        rows = _dialogue_rows(out)
+        blob = _m2_c_layer_blob(rows)
+        if "吃光" not in blob and "全吃" not in blob and len(rows) >= 8:
+            for item in rows[4:9]:
+                if str(item.get("speaker") or "") == "灿灿":
+                    item["line"] = "你敢撕，我就把零食全吃光！"
+                    notes.append("M2+C补吃光加码")
+                    changed = True
+                    break
 
     rows = _dialogue_rows(out)
     blob = _m2_c_layer_blob(rows)
@@ -1604,6 +1775,14 @@ def patch_m2_c_structure(
     rule_frag = ""
     for item in rows[:-4]:
         ln = str(item.get("line") or "")
+        # 优先完整双归句，避免截成「作业本归你，公平」
+        m = re.search(
+            r"((?:零食|薯片).{0,4}归我.{0,2}(?:作业本|本子).{0,2}归你)",
+            ln,
+        )
+        if m:
+            rule_frag = re.sub(r"[呢呀嘛吧啊「」]", "", m.group(1))[:14]
+            break
         m = re.search(r"((?:零食|作业|肉|牛奶).{0,6}归.{0,4})", ln)
         if m:
             rule_frag = m.group(1)[:10]
@@ -1611,22 +1790,24 @@ def patch_m2_c_structure(
         if "不吃就不吃" in ln or "不爱吃" in ln:
             rule_frag = "不吃就不吃"
             break
-        if "规矩" in ln and "归" in ln:
-            rule_frag = re.sub(r"[呢呀嘛吧啊]", "", ln)[:10]
-            break
     if meat_ctx or rule_frag == "不吃就不吃":
         boom_line = "你刚说「不吃就不吃」，说不通！"
     elif rule_frag:
         boom_line = f"你刚说「{rule_frag}」，说不通！"
-    elif "零食" in blob or "作业" in blob:
-        boom_line = "你刚说零食归你本子归我，说不通！"
-        if "零食归" not in blob:
-            for item in rows[1:6]:
+    elif snack_ctx or "零食" in blob or "作业" in blob:
+        # 确保前文有出处后再引
+        has_src = any(
+            re.search(r"零食.{0,4}归我", str(it.get("line") or ""))
+            for it in rows[:-4]
+        )
+        if not has_src:
+            for item in rows[0:4]:
                 if str(item.get("speaker") or "") == "灿灿":
-                    item["line"] = "零食归我，作业本归你。"
+                    item["line"] = "零食归我，作业本归你，公平吧？"
                     notes.append("M2+C补规矩出处")
                     changed = True
                     break
+        boom_line = "你刚说「零食归我，作业本归你」，说不通！"
     else:
         boom_line = "你刚说的规矩，现在说不通了！"
     boom_line = boom_line[:24]
@@ -1682,17 +1863,102 @@ def patch_m2_c_structure(
             changed = True
             break
 
-    # 剥垫字叠词
+    # 剥垫字叠词：只清「现在/立刻/马上/快点」连拍，保留单次「真的/不行/啊/吧」
     rows = _dialogue_rows(out)
     for item in rows:
         ln = str(item.get("line") or "")
-        new_ln = re.sub(r"(真的啊?|不行吧?|快点|现在|立刻|马上)\1+", r"\1", ln)
-        new_ln = re.sub(r"(立刻|马上|现在|快点){2,}", "现在", new_ln)
+        new_ln = re.sub(r"(真的啊)+", "真的", ln)
         new_ln = re.sub(r"(不行吧)+", "不行", new_ln)
-        new_ln = re.sub(r"(真的啊)+", "真的", new_ln)
-        if new_ln != ln:
+        new_ln = re.sub(r"(?:立刻|马上|现在|快点){2,}", "", new_ln)
+        new_ln = re.sub(
+            r"(?:现在|立刻|马上|快点)+(真的|不行|啊|吧)?([！。？!]?)$",
+            r"\1\2",
+            new_ln,
+        )
+        new_ln = new_ln.strip("，, ")
+        if new_ln and new_ln != ln:
             item["line"] = new_ln[:24]
             notes.append("M2+C剥叠垫词")
+            changed = True
+
+    # 零食战：清掉中段误引的残缺回旋镖（只保留末二句那条）
+    if snack_ctx:
+        rows = _dialogue_rows(out)
+        for item in rows[:-2]:
+            ln = str(item.get("line") or "")
+            if not re.search(r"你刚说|你说的|你不是说", ln):
+                continue
+            item["line"] = re.sub(
+                r"(不行[！!])?(?:你刚说|你说的|你不是说)[^，。！?]{0,18}",
+                "",
+                ln,
+            ).strip("，,！!。？ ") or "你休想！"
+            notes.append("M2+C清中段杂引")
+            changed = True
+
+        # 字数不够时用本场语义扩句，禁止靠「现在立刻」凑字
+        rows = _dialogue_rows(out)
+        from app.services.daily_story.prompts import (
+            DAILY_STORY_BODY_CHARS_MIN,
+            dialogue_total_chars,
+        )
+
+        expands = (
+            (r"^你等着", "你等着，薯片不还我就撕本子！"),
+            (r"^你敢撕", "你敢撕，我就把零食全吃光！"),
+            (r"^你休想", "你休想，规矩是你自己定的！"),
+            (r"^放下", "放下我的作业本，那是明天要交的！"),
+            (r"^你偷吃", "你偷吃我的零食，还敢讲公平？"),
+            (r"^好好好", "好好好，薯片给你，别撕我本子！"),
+            (r"^下次", "下次我先把规矩写清楚！"),
+        )
+        guard = 0
+        while dialogue_total_chars(out) < DAILY_STORY_BODY_CHARS_MIN and guard < 10:
+            guard += 1
+            grew = False
+            for item in rows:
+                ln = str(item.get("line") or "").strip()
+                if len(ln) >= 22:
+                    continue
+                for pat, repl in expands:
+                    if re.search(pat, ln) and ln != repl[:24]:
+                        item["line"] = repl[:24]
+                        notes.append("M2+C零食扩句")
+                        changed = True
+                        grew = True
+                        break
+                if grew:
+                    break
+            if not grew:
+                # 给偏短中段句加本场细节（不增句）
+                for item in rows[2:-2]:
+                    ln = str(item.get("line") or "").strip()
+                    if len(ln) >= 20:
+                        continue
+                    sp = str(item.get("speaker") or "")
+                    if sp == "昭昭" and "本子" not in ln and "撕" not in ln:
+                        item["line"] = (ln.rstrip("！。") + "，不还就撕本子！")[:24]
+                    elif sp == "灿灿" and "吃" not in ln:
+                        item["line"] = (ln.rstrip("！。") + "，敢撕我全吃光！")[:24]
+                    else:
+                        continue
+                    notes.append("M2+C零食扩句")
+                    changed = True
+                    grew = True
+                    break
+            if not grew:
+                break
+            rows = _dialogue_rows(out)
+
+        # 扩句后可能冲掉末二拍，再钉一次
+        rows = _dialogue_rows(out)
+        if len(rows) >= 2 and last_sp:
+            rows[-1]["speaker"] = last_sp
+            if "下次" not in str(rows[-1].get("line") or ""):
+                rows[-1]["line"] = "下次我先把规矩写清楚！"
+            rows[-2]["speaker"] = boom_sp
+            rows[-2]["line"] = boom_line
+            notes.append("M2+C零食末拍重钉")
             changed = True
 
     if changed:

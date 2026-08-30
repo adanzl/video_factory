@@ -489,14 +489,10 @@ def patch_sanitize_pad_suffix(story: dict[str, Any]) -> tuple[dict[str, Any], bo
 
 
 _C_SAFE_PAD_TAILS = ("啊", "吧")  # 单语气词；禁叠成了呢了呀
-# 句尾已有语气词时，用短可拍词补缺口（仍禁叠语气词）
+# 禁「现在/立刻/马上/快点」——near-miss 多轮会叠成句尾垃圾
 _C_SAFE_PAD_PHRASES = (
     "真的",
     "不行",
-    "快点",
-    "现在",
-    "立刻",
-    "马上",
 )
 _RE_C_TONE_STACK = re.compile(
     r"(?:[呢嘛的了着好]{2,}呀|呢了|呢呀)[！。！？…]?$"
@@ -1807,6 +1803,60 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
                 beat_chain=beat_chain,
                 conflict_text=conflict_text,
             )
+    # 零食+作业本战：LLM 截断/结构分翻车时用 beat 重建兜底（禁再烧 flash）
+    if str(structure_type or "").upper() == "C" and str(mechanism or "").upper() == "M2":
+        from app.services.daily_story.gold_story.gold_chat.patch import (
+            _m2_c_is_snack_homework_ctx,
+            m2_c_meat_whole_item_context,
+            patch_m2_c_snack_beat_rebuild,
+        )
+
+        seed_story = {
+            "story_type": "C",
+            "scene_title": str(row.get("title") or ""),
+            "setting": str((payload.get("scene_contract") or {}).get("location") or ""),
+            "conflict_core": conflict_core
+            or str(payload.get("conflict") or conflict_text or ""),
+            "dialogue": [
+                {"speaker": "灿灿", "line": "零食归我，作业本归你，公平吧？"},
+                {"speaker": "昭昭", "line": "你偷吃还定规矩？"},
+                {"speaker": "灿灿", "line": "谁拿到算谁的。"},
+                {"speaker": "昭昭", "line": "那本子归我？"},
+                {"speaker": "灿灿", "line": "本子不算。"},
+                {"speaker": "昭昭", "line": "你敢撕？"},
+                {"speaker": "灿灿", "line": "你敢撕我全吃光。"},
+                {"speaker": "昭昭", "line": "规矩你定的。"},
+                {"speaker": "灿灿", "line": "别撕。"},
+                {"speaker": "昭昭", "line": "你刚说的，说不通。"},
+            ],
+        }
+        meat = m2_c_meat_whole_item_context(seed_story, payload=payload)
+        if _m2_c_is_snack_homework_ctx(
+            seed_story, meat_ctx=meat, payload=payload
+        ) or _m2_c_is_snack_homework_ctx(
+            {"dialogue": [], "scene_title": str(row.get("title") or "")},
+            meat_ctx=False,
+            payload=payload,
+        ):
+            rebuilt, notes = patch_m2_c_snack_beat_rebuild(
+                seed_story,
+                payload=payload,
+                boom_sp="昭昭",
+                last_sp="灿灿",
+            )
+            if conflict_core:
+                rebuilt["conflict_core"] = conflict_core
+            rebuilt["story_type"] = "C"
+            rebuilt = _attach_gold_chat_structure_score(rebuilt, row)
+            try:
+                _gate_gold_chat_structure_score(rebuilt)
+                logger.info(
+                    "gold_chat snack beat rebuild fallback: %s",
+                    "；".join(notes),
+                )
+                return rebuilt
+            except ValueError:
+                pass
     raise ValueError(last_err or "gold_chat generation failed")
 
 
@@ -1897,6 +1947,27 @@ def convert_gold_chat(
     chat, norm_notes = apply_gold_chat_normalizations(chat, row=row)
     chat = _refine_after_normalize(chat, row)
     chat, _ = _ensure_gold_chat_min_chars(chat)
+    # 垫字后再跑一轮 M2+C 收口，然后若被削短再垫回 hard min
+    if str(row.get("structure_type") or chat.get("story_type") or "").upper() == "C":
+        chat, _ = patch_sanitize_c_tone_stack(chat)
+        from app.services.daily_story.gold_story.gold_chat.patch import (
+            patch_m2_c_structure,
+        )
+
+        payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+        chat, strip_notes = patch_m2_c_structure(
+            chat,
+            structure_type=str(row.get("structure_type") or ""),
+            mechanism=str(row.get("mechanism") or ""),
+            theme=str(row.get("title") or chat.get("scene_title") or ""),
+            payload=payload,
+        )
+        if strip_notes:
+            norm_notes = list(norm_notes or []) + list(strip_notes)
+        chat, pad_notes = _ensure_gold_chat_min_chars(chat)
+        if pad_notes:
+            norm_notes = list(norm_notes or []) + list(pad_notes)
+        chat, _ = patch_sanitize_c_tone_stack(chat)
     if norm_notes:
         logger.info(
             "gold_chat normalize %s: %s",
