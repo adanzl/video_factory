@@ -15,7 +15,12 @@ from app.services.daily_story.gold_story.gold_chat.patch import (
     patch_remap_sibling_terms,
 )
 from app.services.daily_story.gold_story.gold_chat.prompts import (
+    CHARS_SOFT_HI,
+    CHARS_SOFT_LO,
     CHAT_MAX_LINE_CHARS,
+    DIALOGUE_ROUNDS_HARD_MAX,
+    DIALOGUE_ROUNDS_SOFT_HI,
+    DIALOGUE_ROUNDS_SOFT_LO,
     _ALIGN_REFINE_SYSTEM,
     _ALIGN_REFINE_USER,
     _FIX_SYSTEM,
@@ -30,6 +35,7 @@ from app.services.daily_story.gold_story.gold_chat.prompts import (
     format_m5_h_pass1_beat_block,
     format_pass1_regen_feedback,
     format_role_binding_block,
+    format_structure_score_feedback,
 )
 from app.services.daily_story.gold_story.gold_chat.validate import (
     collect_align_issues,
@@ -237,7 +243,11 @@ def _persist_structure_correction(row: dict[str, Any], notes: list[str]) -> dict
 PASS1_CANDIDATE_COUNT = 4
 PASS1_REGENERATE_MAX = 5
 PASS2_MAX_ROUNDS = 2
-GOLD_CHAT_NEAR_MISS_DEFICIT_MAX = 3
+# 差 ≤40 字本地垫字（215 等 near-miss 须能收口）
+GOLD_CHAT_NEAR_MISS_DEFICIT_MAX = 40
+# 对白 JSON 正常约数百～1.5k tokens；再大视为跑飞
+GOLD_CHAT_LLM_MAX_TOKENS = 2048
+CLOSING_PROMPT_MAX_CHARS = 28
 _RE_PAD_SUFFIX_STACK = re.compile(
     r"呢呢|啊呢|吧呢|嘛呢|呀呢|你呀呢|行了吧呢|不懂你呢|听听不懂|你真是呢|你真是的呢|"
     r"了呢了呀|了呢呀|了呀呢|好不好了呀|着呢了呀",
@@ -250,16 +260,68 @@ def _client():
     return llm_mgr._get_client()
 
 
-def _chat_json(system: str, user: str) -> dict[str, Any]:
-    raw, _finish = _client()._chat_json(
+def _is_truncation_error(msg: str) -> bool:
+    err = str(msg or "")
+    return "finish_reason=length" in err or "truncated" in err
+
+
+def _chat_json(
+    system: str,
+    user: str,
+    *,
+    temperature: float = 0.4,
+    max_tokens: int | None = None,
+) -> dict[str, Any]:
+    """gold_chat 专用：紧预算；length 立刻失败，勿走全局 JSON 重试再烧一轮。"""
+    from app.services.llm.llm_deepseek import _loads_llm_json
+
+    budget = int(max_tokens or GOLD_CHAT_LLM_MAX_TOKENS)
+    content, finish = _client()._chat(
         system,
         user,
         thinking_enabled=False,
-        temperature=0.4,
+        temperature=float(temperature),
+        max_tokens=budget,
     )
+    if not str(content or "").strip():
+        raise ValueError("LLM returned empty response")
+    if finish == "length":
+        raise ValueError(
+            "LLM output truncated (finish_reason=length)；"
+            "对白 JSON 须短小，禁止超长/循环输出"
+        )
+    raw = _loads_llm_json(content)
     if not isinstance(raw, dict):
         raise ValueError("LLM JSON must be object")
     return raw
+
+
+def _prompt_budget_kwargs() -> dict[str, Any]:
+    return {
+        "chars_min": DAILY_STORY_BODY_CHARS_MIN,
+        "chars_max": DAILY_STORY_BODY_CHARS_MAX,
+        "chars_soft_lo": CHARS_SOFT_LO,
+        "chars_soft_hi": CHARS_SOFT_HI,
+        "rounds_soft_lo": DIALOGUE_ROUNDS_SOFT_LO,
+        "rounds_soft_hi": DIALOGUE_ROUNDS_SOFT_HI,
+        "rounds_hard_max": DIALOGUE_ROUNDS_HARD_MAX,
+        "key_min": DAILY_STORY_KEY_CHARS_MIN,
+        "key_max": DAILY_STORY_KEY_CHARS_MAX,
+        "max_line": CHAT_MAX_LINE_CHARS,
+    }
+
+
+def _closing_for_prompt(closing: str) -> str:
+    """长 closing 压成要点，避免模型把说明整段写进对白。"""
+    s = str(closing or "").strip()
+    if len(s) <= CLOSING_PROMPT_MAX_CHARS:
+        return s
+    for sep in ("：", ":", "；", ";", "。"):
+        if sep in s:
+            head = s.split(sep, 1)[0].strip()
+            if 4 <= len(head) <= CLOSING_PROMPT_MAX_CHARS:
+                return f"{head}（按 beat 收束，勿照抄说明）"
+    return s[:CLOSING_PROMPT_MAX_CHARS].rstrip("，。；、 ") + "…"
 
 
 def _normalize_chat_speakers(story: dict[str, Any]) -> dict[str, Any]:
@@ -291,11 +353,9 @@ def _fix_chat_with_llm(
     user = _FIX_USER.format(
         errors=errors,
         story_json=json.dumps(story, ensure_ascii=False)[:8000],
-        chars_min=DAILY_STORY_BODY_CHARS_MIN,
-        chars_max=DAILY_STORY_BODY_CHARS_MAX,
         banned_literals="、".join(banned_literals) or "（无）",
         mom_lines_max=max(0, int(mom_lines_max)),
-        max_line=CHAT_MAX_LINE_CHARS,
+        **_prompt_budget_kwargs(),
     )
     return _chat_json(_FIX_SYSTEM, user)
 
@@ -428,6 +488,129 @@ def patch_sanitize_pad_suffix(story: dict[str, Any]) -> tuple[dict[str, Any], bo
     return out, changed
 
 
+_C_SAFE_PAD_TAILS = ("啊", "吧")  # 单语气词；禁叠成了呢了呀
+# 句尾已有语气词时，用短可拍词补缺口（仍禁叠语气词）
+_C_SAFE_PAD_PHRASES = (
+    "真的",
+    "不行",
+    "快点",
+    "现在",
+    "立刻",
+    "马上",
+)
+_RE_C_TONE_STACK = re.compile(
+    r"(?:[呢嘛的了着好]{2,}呀|呢了|呢呀)[！。！？…]?$"
+)
+
+
+def _strip_c_tone_stack_line(line: str) -> str:
+    """C 类硬卡：句尾语气词堆砌 → 剥成无叠尾。"""
+    s = str(line or "").strip()
+    if not s or not _RE_C_TONE_STACK.search(s):
+        return s
+    punct = s[-1] if s[-1] in "！。？…!" else ""
+    body = s[:-1] if punct else s
+    body = re.sub(r"[呢嘛呀啊吧了着的好]+$", "", body)
+    return (body + punct) if body else s
+
+
+def patch_sanitize_c_tone_stack(story: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    """剥 C 类句尾叠语气词（垫字副作用）。"""
+    import copy
+
+    if str(story.get("story_type") or "").strip().upper() != "C":
+        return story, False
+    out = copy.deepcopy(story)
+    changed = False
+    for item in out.get("dialogue") or []:
+        if not isinstance(item, dict):
+            continue
+        old = str(item.get("line") or "").strip()
+        new = _strip_c_tone_stack_line(old)
+        if new != old:
+            item["line"] = new
+            changed = True
+    return out, changed
+
+
+def patch_c_force_sibling_alternate(
+    story: dict[str, Any],
+) -> tuple[dict[str, Any], bool]:
+    """C：全篇姐弟严格交替（含末四拍）。日常 try_local_patch 会保护末 4 句。"""
+    import copy
+
+    if str(story.get("story_type") or "").strip().upper() != "C":
+        return story, False
+    out = copy.deepcopy(story)
+    dialogue = out.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 2:
+        return story, False
+    changed = False
+    for i in range(1, len(dialogue)):
+        a, b = dialogue[i - 1], dialogue[i]
+        if not isinstance(a, dict) or not isinstance(b, dict):
+            continue
+        sa = str(a.get("speaker") or "").strip()
+        sb = str(b.get("speaker") or "").strip()
+        if sa in {"昭昭", "灿灿"} and sa == sb:
+            b["speaker"] = "灿灿" if sa == "昭昭" else "昭昭"
+            changed = True
+    return out, changed
+
+
+_RE_C_WEAK_CRITERION_REWRITE = (
+    (re.compile(r"我先(?:碰|摸|搭|够|伸|探|吃|喝|咬|舔|尝)(?:到|着|了|的|完|光)?"), "我先拿到的"),
+    (re.compile(r"谁先(?:碰|摸|搭|够|伸|探|吃|喝|咬|舔|尝)(?:到|着|了|完|光)?"), "谁先拿到"),
+    (
+        re.compile(
+            r"(?:碰|摸|搭|够)(?:到|着|了|的|一下)?(?=[^。！？]{0,8}(?:该|归|算|赢|谁))"
+        ),
+        "拿到",
+    ),
+    (
+        re.compile(
+            r"(?:吃|喝|咬|舔|吞|尝|擦)(?:到|着|了|一下|完|光)?"
+            r"(?=[^。！？]{0,6}(?:该|归|算|赢|谁))"
+        ),
+        "拿到",
+    ),
+    (
+        re.compile(
+            r"(?:拧|撕|掰|揭)(?:开|掉|下来|完)?(?=[^。！？]{0,8}(?:该|归|算|赢|谁))"
+        ),
+        "拿到",
+    ),
+)
+
+
+def patch_c_possession_criterion(
+    story: dict[str, Any],
+) -> tuple[dict[str, Any], bool]:
+    """C：弱接触/消耗系判据翻成占有系（拿到），避免判据漂移硬卡。"""
+    import copy
+
+    if str(story.get("story_type") or "").strip().upper() != "C":
+        return story, False
+    out = copy.deepcopy(story)
+    dialogue = out.get("dialogue")
+    if not isinstance(dialogue, list):
+        return story, False
+    changed = False
+    for item in dialogue:
+        if not isinstance(item, dict):
+            continue
+        old = str(item.get("line") or "")
+        new = old
+        for pat, repl in _RE_C_WEAK_CRITERION_REWRITE:
+            new2 = pat.sub(repl, new)
+            if new2 != new:
+                new = new2
+                changed = True
+        if new != old:
+            item["line"] = new
+    return out, changed
+
+
 def _pad_gold_chat_line(
     line: str,
     need: int,
@@ -439,6 +622,38 @@ def _pad_gold_chat_line(
     from app.services.daily_story.prompts import _pad_dialogue_line
 
     st = str(story_type or "").strip().upper()
+    if st == "C":
+        # C 禁句尾语气词堆砌；优先单语气词，否则短可拍词
+        s = str(line or "").strip()
+        if need <= 0:
+            return s, 0
+        from app.services.daily_story.dialogue_text import DAILY_STORY_LINE_CHARS_MAX
+
+        core = s.rstrip("！。？…!")
+        punct = s[len(core) :]
+        room = max(0, DAILY_STORY_LINE_CHARS_MAX - len(s))
+        if room <= 0:
+            return s, 0
+        if not re.search(r"[呢嘛呀啊吧了]$", core):
+            for tail in _C_SAFE_PAD_TAILS:
+                if used is not None and tail in used:
+                    continue
+                if len(tail) > need or len(tail) > room:
+                    continue
+                if used is not None:
+                    used.add(tail)
+                return core + tail + punct, len(tail)
+        for phr in _C_SAFE_PAD_PHRASES:
+            if used is not None and phr in used:
+                continue
+            if core.endswith(phr):
+                continue
+            if len(phr) > need or len(phr) > room:
+                continue
+            if used is not None:
+                used.add(phr)
+            return core + phr + punct, len(phr)
+        return s, 0
     if st == "B":
         tails = _B_GOLD_CHAT_PAD_TAILS
     elif st == "F":
@@ -491,7 +706,7 @@ def _gold_chat_pad_indices(
 
 
 def _patch_gold_chat_near_miss_chars(story: dict[str, Any]) -> tuple[dict[str, Any], bool]:
-    """240 hard 不变；差 ≤3 字时本地垫字收口。"""
+    """240 hard 不变；差 ≤NEAR_MISS 字时本地垫字收口。"""
     import copy
 
     total = dialogue_total_chars(story)
@@ -577,6 +792,10 @@ def _pad_gold_chat_to_min_chars(
             changed = True
             progressed = True
         if not progressed:
+            # 垫词用尽时清空复用，优先把 near-miss 垫满
+            if used_pads:
+                used_pads.clear()
+                continue
             break
     return out, changed
 
@@ -584,9 +803,18 @@ def _pad_gold_chat_to_min_chars(
 def _ensure_gold_chat_min_chars(story: dict[str, Any]) -> tuple[dict[str, Any], bool]:
     data, changed = _patch_gold_chat_near_miss_chars(story)
     if dialogue_total_chars(data) >= DAILY_STORY_BODY_CHARS_MIN:
-        return data, changed
+        data, san = patch_sanitize_c_tone_stack(data)
+        data, san2 = patch_sanitize_pad_suffix(data)
+        return data, changed or san or san2
     data2, changed2 = _pad_gold_chat_to_min_chars(data)
-    return data2, changed or changed2
+    data2, san = patch_sanitize_c_tone_stack(data2)
+    data2, san2 = patch_sanitize_pad_suffix(data2)
+    # 剥叠语气词后可能又短，再垫一轮（C 安全垫）
+    if dialogue_total_chars(data2) < DAILY_STORY_BODY_CHARS_MIN:
+        data3, changed3 = _pad_gold_chat_to_min_chars(data2)
+        data3, san3 = patch_sanitize_c_tone_stack(data3)
+        return data3, changed or changed2 or changed3 or san or san2 or san3
+    return data2, changed or changed2 or san or san2
 
 
 def _gold_chat_post_pad_cleanup(story: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
@@ -752,9 +980,13 @@ def _validate_pass1_chat(
     banned_literals: list[str],
     source_type: str,
     mom_lines_max: int,
+    structure_type: str = "",
 ) -> dict[str, Any]:
     """Pass1 硬校验 + 格式 fix，直至通过或耗尽 retry。"""
     data = _normalize_chat_speakers(dict(story))
+    st = str(structure_type or data.get("story_type") or "").strip().upper()
+    if st:
+        data["story_type"] = st
     last_err = ""
     shorten_llm_used = False
     for attempt in range(5):
@@ -770,6 +1002,9 @@ def _validate_pass1_chat(
         except ValueError as exc:
             last_err = str(exc)
             if attempt >= 4:
+                raise ValueError(last_err) from exc
+            # 偏短：fix LLM 常空转/再截断；立刻交外层 Pass1 回灌重抽
+            if _is_short_content_error(last_err):
                 raise ValueError(last_err) from exc
             if "单句过长" in last_err:
                 trimmed, changed = _apply_deterministic_shorten(data)
@@ -788,6 +1023,8 @@ def _validate_pass1_chat(
                 mom_lines_max=mom_lines_max,
             )
             data = _normalize_chat_speakers(data)
+            if st:
+                data["story_type"] = st
     raise ValueError(last_err or "gold_chat validate failed")
 
 
@@ -797,13 +1034,20 @@ def _generate_pass1_candidate(
     banned_literals: list[str],
     source_type: str,
     mom_lines_max: int,
+    structure_type: str = "",
+    temperature: float = 0.4,
 ) -> dict[str, Any]:
-    data = _normalize_chat_speakers(_chat_json(_SYSTEM, user))
+    data = _normalize_chat_speakers(
+        _chat_json(_SYSTEM, user, temperature=temperature)
+    )
+    if structure_type:
+        data["story_type"] = str(structure_type).strip().upper()
     return _validate_pass1_chat(
         data,
         banned_literals=banned_literals,
         source_type=source_type,
         mom_lines_max=mom_lines_max,
+        structure_type=structure_type,
     )
 
 
@@ -871,7 +1115,7 @@ def _align_refine_with_llm(
         mom_lines_max=max(0, int(mom_lines_max)),
         max_line=CHAT_MAX_LINE_CHARS,
     )
-    return _chat_json(_ALIGN_REFINE_SYSTEM, user)
+    return _chat_json(_ALIGN_REFINE_SYSTEM, user, max_tokens=1024)
 
 
 def refine_gold_chat_align(
@@ -963,13 +1207,20 @@ def refine_gold_chat_align(
             )
             raise ValueError(f"align_structural:{kinds}")
 
-        raw = _align_refine_with_llm(
-            data,
-            blocking + warn,
-            align_block=align_block,
-            banned_literals=banned,
-            mom_lines_max=mom_max,
-        )
+        try:
+            raw = _align_refine_with_llm(
+                data,
+                blocking + warn,
+                align_block=align_block,
+                banned_literals=banned,
+                mom_lines_max=mom_max,
+            )
+        except ValueError as refine_exc:
+            if _is_truncation_error(str(refine_exc)):
+                raise ValueError(
+                    f"align_refine_failed:LLM截断:{refine_exc}"
+                ) from refine_exc
+            raise
         fixed, accepted = _apply_gold_chat_polish_fixes(
             data,
             raw,
@@ -1000,10 +1251,27 @@ def refine_gold_chat_align(
         beat_chain=beat_chain,
         conflict_text=conflict_text,
     )
+    # 末轮：C 本地收口后再机审，避免弱判据/连说卡死
+    if st == "C":
+        data, _ = patch_c_force_sibling_alternate(data)
+        data, _ = patch_c_possession_criterion(data)
+        data, _ = patch_sanitize_c_tone_stack(data)
+        remain = collect_align_issues(
+            data,
+            structure_type=st,
+            mechanism=mech,
+            closing_intent=closing,
+            beat_chain=beat_chain,
+            conflict_text=conflict_text,
+        )
     blocking_remain, warn_remain = split_align_issues(remain)
     if blocking_remain:
-        kinds = "、".join(str(x.get("kind") or "") for x in blocking_remain[:3])
-        raise ValueError(f"align_refine_failed:{kinds}")
+        parts: list[str] = []
+        for x in blocking_remain[:3]:
+            kind = str(x.get("kind") or "")
+            desc = str(x.get("desc") or "").strip()
+            parts.append(f"{kind}:{desc}" if desc else kind)
+        raise ValueError(f"align_refine_failed:{'；'.join(parts)}")
     if warn_remain:
         logger.info(
             "gold_chat align warn remain: %s",
@@ -1022,15 +1290,31 @@ def refine_gold_chat_align(
 
 
 def _format_dialogue_seed(seed: list[Any]) -> str:
+    """成句 seed 标成「要点须改写」，降低照抄/一条扩多版。"""
     lines: list[str] = []
+    spoken_like = 0
     for item in seed or []:
         if not isinstance(item, dict):
             continue
         speaker = str(item.get("speaker") or "").strip()
         intent = str(item.get("intent") or "").strip()
-        if speaker and intent:
-            lines.append(f"- {speaker}：{intent}")
-    return "\n".join(lines) or "（无）"
+        if not (speaker and intent):
+            continue
+        if len(intent) >= 8 and any(ch in intent for ch in "？！。!?.…"):
+            spoken_like += 1
+            lines.append(
+                f"- {speaker}｜要点：{intent}"
+                "（须改写成口语，勿逐字照抄；本条最多 1–2 句）"
+            )
+        else:
+            lines.append(f"- {speaker}｜intent：{intent}")
+    body = "\n".join(lines) or "（无）"
+    if spoken_like:
+        return (
+            "（下列 seed 已接近成句：只取语义改写，禁止一条扩成多版本）\n"
+            + body
+        )
+    return body
 
 
 def apply_gold_chat_normalizations(
@@ -1257,7 +1541,7 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
         beat=payload.get("beat") if isinstance(payload.get("beat"), list) else [],
     )
     source_type = str(payload.get("source_type") or scene_contract.get("source_type") or "field")
-    story_raw = str(row.get("story_raw") or payload.get("story_raw") or "")[:800]
+    story_raw_full = str(row.get("story_raw") or payload.get("story_raw") or "")
     mom_max = scene_contract.get("mom_lines_max")
     if mom_max is None:
         mom_max = 1
@@ -1291,7 +1575,7 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
         mechanism=mechanism,
         beat=beat,
         closing_intent=closing,
-        story_raw=story_raw,
+        story_raw=story_raw_full[:800],
     )
     m5_h_beat_block = ""
     if mechanism.upper() == "M5" and structure_type == "H":
@@ -1304,7 +1588,11 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
     mom_int = int(mom_max)
     last_err = ""
     pass1_feedback_block = ""
+    pass1_temperature = 0.4
     for _regen in range(PASS1_REGENERATE_MAX):
+        # 截断回灌后压低 story_raw，减少「照着长叙述扩写跑飞」
+        story_raw_cap = 400 if pass1_temperature < 0.35 else 800
+        story_raw = story_raw_full[:story_raw_cap]
         user = _USER.format(
             title=str(row.get("title") or ""),
             mechanism=mechanism,
@@ -1317,7 +1605,7 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
             m5_h_beat_block=m5_h_beat_block,
             pass1_feedback_block=pass1_feedback_block,
             dialogue_seed=_format_dialogue_seed(seed)[:4000],
-            closing_intent=closing,
+            closing_intent=_closing_for_prompt(closing),
             speaker_map_note=str(
                 payload.get("speaker_map_note")
                 or scene_contract.get("remap_note")
@@ -1330,10 +1618,10 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
             structure_hint=_structure_type_hint(structure_type, mechanism),
             align_block=align_block,
             gold_chat_snippet=resolve_gold_chat_snippet(str(row.get("source_id") or "")),
-            chars_min=DAILY_STORY_BODY_CHARS_MIN,
-            chars_max=DAILY_STORY_BODY_CHARS_MAX,
+            **_prompt_budget_kwargs(),
         )
         candidates: list[dict[str, Any]] = []
+        hit_truncation = False
         for _ in range(PASS1_CANDIDATE_COUNT):
             try:
                 candidates.append(
@@ -1342,11 +1630,32 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
                         banned_literals=banned_list,
                         source_type=source_type,
                         mom_lines_max=mom_int,
+                        structure_type=structure_type,
+                        temperature=pass1_temperature,
                     )
                 )
             except ValueError as exc:
                 last_err = str(exc)
+                # 同提示连打截断只会烧额度；立刻换反馈重抽
+                if _is_truncation_error(last_err):
+                    hit_truncation = True
+                    break
         if not candidates:
+            if last_err:
+                pass1_feedback_block = format_pass1_regen_feedback(
+                    last_err,
+                    None,
+                    structure_type=structure_type,
+                    mechanism=mechanism,
+                    closing_intent=closing,
+                    beat_chain=beat_chain,
+                    conflict_text=conflict_text,
+                )
+                if hit_truncation or _is_truncation_error(last_err):
+                    pass1_temperature = 0.25
+                elif _is_short_content_error(last_err):
+                    # 截断回灌后若偏短，略抬温并保留「须≥240」反馈
+                    pass1_temperature = max(pass1_temperature, 0.35)
             continue
         data = _pick_pass1_candidate(
             candidates,
@@ -1360,6 +1669,28 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
             object_text=object_text,
             mechanism_text=mechanism_text,
         )
+        # 类型本地补丁先于 Pass2 align，避免 C 回旋镖等只能靠 LLM 精修
+        from app.services.daily_story.gold_story.gold_chat.type_bridge import (
+            apply_type_body_pipeline,
+        )
+
+        data, type_notes = apply_type_body_pipeline(
+            data, structure_type=structure_type
+        )
+        data, alt_changed = patch_c_force_sibling_alternate(data)
+        if alt_changed:
+            type_notes = list(type_notes) + ["C全篇交替"]
+        data, crit_changed = patch_c_possession_criterion(data)
+        if crit_changed:
+            type_notes = list(type_notes) + ["C判据→占有系"]
+        data, _ = patch_sanitize_c_tone_stack(data)
+        data, _ = patch_sanitize_pad_suffix(data)
+        data, _ = _ensure_gold_chat_min_chars(data)
+        if type_notes:
+            logger.info(
+                "gold_chat pre-align type patch: %s",
+                "；".join(str(n) for n in type_notes[:4]),
+            )
         try:
             chat = refine_gold_chat_align(
                 data,
@@ -1378,13 +1709,74 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
                 max_rounds=PASS2_MAX_ROUNDS,
                 bail_on_structural=True,
             )
+            # align 精修可能又写回弱判据/连说；收口再垫一次
+            chat, _ = patch_c_force_sibling_alternate(chat)
+            chat, _ = patch_c_possession_criterion(chat)
+            chat, _ = patch_sanitize_c_tone_stack(chat)
+            chat, _ = patch_sanitize_pad_suffix(chat)
+            chat, _ = _ensure_gold_chat_min_chars(chat)
             if conflict_core:
                 chat["conflict_core"] = conflict_core
+            # 结构分门控前先跑 M2+C 回旋镖/触发词补丁（否则 40 分空转）
+            from app.services.daily_story.gold_story.gold_chat.patch import (
+                patch_m2_c_structure,
+            )
+
+            chat, m2_notes = patch_m2_c_structure(
+                chat,
+                structure_type=structure_type,
+                mechanism=mechanism,
+                theme=str(row.get("title") or chat.get("scene_title") or ""),
+                payload=payload,
+            )
+            if m2_notes:
+                logger.info(
+                    "gold_chat pre-score M2+C: %s",
+                    "；".join(str(n) for n in m2_notes[:4]),
+                )
             chat = _attach_gold_chat_structure_score(chat, row)
             try:
                 _gate_gold_chat_structure_score(chat)
             except ValueError as score_exc:
                 last_err = str(score_exc)
+                # 已过 align 的稿：先定点抬结构，避免整开 Pass1 空转
+                try:
+                    fb = format_structure_score_feedback(last_err, chat)
+                    lifted = _fix_chat_with_llm(
+                        chat,
+                        fb or last_err,
+                        banned_literals=banned_list,
+                        mom_lines_max=mom_int,
+                    )
+                    lifted = _normalize_chat_speakers(lifted)
+                    if structure_type:
+                        lifted["story_type"] = structure_type
+                    lifted, _ = patch_c_force_sibling_alternate(lifted)
+                    lifted, _ = patch_c_possession_criterion(lifted)
+                    lifted, _ = patch_sanitize_c_tone_stack(lifted)
+                    lifted, _ = patch_sanitize_pad_suffix(lifted)
+                    lifted, _ = _ensure_gold_chat_min_chars(lifted)
+                    lifted, _ = patch_m2_c_structure(
+                        lifted,
+                        structure_type=structure_type,
+                        mechanism=mechanism,
+                        theme=str(row.get("title") or lifted.get("scene_title") or ""),
+                        payload=payload,
+                    )
+                    if conflict_core:
+                        lifted["conflict_core"] = conflict_core
+                    lifted = _attach_gold_chat_structure_score(lifted, row)
+                    _gate_gold_chat_structure_score(lifted)
+                    return lifted
+                except ValueError:
+                    pass
+                quality = chat.get("quality") if isinstance(chat.get("quality"), dict) else {}
+                logger.info(
+                    "gold_chat structure_score fail score=%s summary=%s reasons=%s",
+                    quality.get("structure_score") or quality.get("score"),
+                    quality.get("summary"),
+                    (quality.get("reasons") or [])[:8],
+                )
                 pass1_feedback_block = format_pass1_regen_feedback(
                     last_err,
                     chat,
@@ -1398,7 +1790,11 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
             return chat
         except ValueError as exc:
             last_err = str(exc)
-            if not str(exc).startswith(
+            # Pass2/校验路径截断也回灌 Pass1，勿直接打死整次 convert
+            if _is_truncation_error(last_err):
+                last_err = f"align_refine_failed:LLM截断:{last_err}"
+                pass1_temperature = 0.25
+            elif not last_err.startswith(
                 ("align_structural:", "align_refine_failed:", "structure_score:")
             ):
                 raise

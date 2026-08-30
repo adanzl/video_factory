@@ -1426,6 +1426,29 @@ def patch_m2_c_structure(
     meat_ctx = m2_c_meat_whole_item_context(out, payload=payload)
     notes: list[str] = []
     changed = False
+    closing = ""
+    if isinstance(payload, dict):
+        closing = str(
+            payload.get("closing_intent")
+            or (payload.get("scene_contract") or {}).get("closing_intent")
+            or ""
+        )
+    # closing「昭昭用…回旋镖…灿灿嘴硬」→ 回旋镖 speaker=昭昭，末句=灿灿
+    boom_sp = "昭昭" if "昭昭" in closing and "回旋镖" in closing else "灿灿"
+    if "灿灿" in closing and "回旋镖" in closing and "昭昭用" not in closing:
+        boom_sp = "灿灿"
+    last_sp = "灿灿" if "灿灿嘴硬" in closing else ("昭昭" if "昭昭嘴硬" in closing else "")
+
+    # setting 缺地点会扣开场分
+    setting = str(out.get("setting") or "").strip()
+    if setting and not re.search(r"厅|房|桌|沙发|厨房|门口|床", setting):
+        out["setting"] = f"客厅，{setting}"
+        notes.append("M2+C补setting地点")
+        changed = True
+    elif not setting:
+        out["setting"] = "客厅沙发前，零食在灿灿手里"
+        notes.append("M2+C补setting")
+        changed = True
 
     # punchline_explain → C类前缀
     explain = str(out.get("punchline_explain") or "").strip()
@@ -1500,6 +1523,66 @@ def patch_m2_c_structure(
             break
 
     rows = _dialogue_rows(out)
+
+    # 开场对白缺地点词（观感查 dialogue，不查 setting）
+    open_blob = _m2_c_layer_blob(rows[:3])
+    if not re.search(r"客厅|沙发|餐桌|厨房|门口|床", open_blob):
+        for item in rows[:2]:
+            if str(item.get("speaker") or "") not in {"昭昭", "灿灿"}:
+                continue
+            ln = str(item.get("line") or "").strip()
+            item["line"] = f"沙发前，{ln}".replace("，，", "，")[:24]
+            notes.append("M2+C开场补地点")
+            changed = True
+            break
+
+    # 规则轮次：中段补「才算」定义升级（≥2 次）
+    rows = _dialogue_rows(out)
+    mid = rows[2:-4] if len(rows) >= 10 else rows[2:-2]
+    mid_blob = _m2_c_layer_blob(mid)
+    append_n = len(re.findall(r"才算|不算|追加一条", mid_blob))
+    if append_n < 2 and mid:
+        targets = [
+            it
+            for it in mid
+            if str(it.get("speaker") or "") == "灿灿"
+            and not re.search(
+                r"之前|你刚说|凭什么|才算",
+                str(it.get("line") or ""),
+            )
+        ]
+        if len(targets) < 2:
+            more = [
+                it
+                for it in mid
+                if it not in targets
+                and not re.search(r"之前|你刚说", str(it.get("line") or ""))
+            ]
+            targets = targets + more
+        if targets:
+            targets[0]["line"] = "光抱着不行，得举过头顶才算！"
+            notes.append("M2+C补规则定义轮")
+            changed = True
+        if len(targets) >= 2:
+            targets[1]["line"] = "还得证明三次才算真正拿到！"
+            notes.append("M2+C补荒谬规则轮")
+            changed = True
+        elif len(mid) >= 2 and targets:
+            other = next(
+                (
+                    it
+                    for it in mid
+                    if str(it.get("speaker") or "")
+                    != str(targets[0].get("speaker") or "")
+                ),
+                None,
+            )
+            if other is not None:
+                other["line"] = "那按哪条才算？你一条接一条！"
+                notes.append("M2+C补规则追问")
+                changed = True
+
+    rows = _dialogue_rows(out)
     blob = _m2_c_layer_blob(rows)
 
     # C3：昭昭反驳须挑战权威
@@ -1515,31 +1598,102 @@ def patch_m2_c_structure(
                 break
 
     rows = _dialogue_rows(out)
-    tail5 = _m2_c_layer_blob(rows[-5:])
+    blob = _m2_c_layer_blob(rows)
 
-    # 末 5 句回旋镖（灿灿引昭昭原话；须落在 tail5，与全文次数无关）
-    boom_n = len(re.findall(r"你刚说|你说的|你不是说", _m2_c_layer_blob(rows)))
-    if not RE_BOOMERANG_RULE.search(tail5):
-        for item in reversed(rows[-6:]):
-            if str(item.get("speaker") or "") != "灿灿":
-                continue
-            ln = str(item.get("line") or "")
-            if "我说了算" in ln or "不分" in ln or "不行" in ln or "归我" in ln:
-                if "你刚说" in ln or "你说的" in ln:
+    # 从正文抽出可核对的规矩短句（供回旋镖引语有前文）
+    rule_frag = ""
+    for item in rows[:-4]:
+        ln = str(item.get("line") or "")
+        m = re.search(r"((?:零食|作业|肉|牛奶).{0,6}归.{0,4})", ln)
+        if m:
+            rule_frag = m.group(1)[:10]
+            break
+        if "不吃就不吃" in ln or "不爱吃" in ln:
+            rule_frag = "不吃就不吃"
+            break
+        if "规矩" in ln and "归" in ln:
+            rule_frag = re.sub(r"[呢呀嘛吧啊]", "", ln)[:10]
+            break
+    if meat_ctx or rule_frag == "不吃就不吃":
+        boom_line = "你刚说「不吃就不吃」，说不通！"
+    elif rule_frag:
+        boom_line = f"你刚说「{rule_frag}」，说不通！"
+    elif "零食" in blob or "作业" in blob:
+        boom_line = "你刚说零食归你本子归我，说不通！"
+        if "零食归" not in blob:
+            for item in rows[1:6]:
+                if str(item.get("speaker") or "") == "灿灿":
+                    item["line"] = "零食归我，作业本归你。"
+                    notes.append("M2+C补规矩出处")
+                    changed = True
                     break
-                tail = re.sub(r"明天的是明天的，?", "", ln.lstrip("，, "))
-                if "不吃" in blob or "不爱吃" in blob:
-                    candidate = f"不行！你刚说「不吃就不吃」，{tail}"
-                    if len(candidate) > 24:
-                        candidate = "不行！你刚说「不吃就不吃」，今天我说了算！"
-                else:
-                    candidate = f"你刚说不想吃肉，{tail}"
-                    if len(candidate) > 24:
-                        candidate = "你刚说不想吃肉，今天我说了算！"
-                item["line"] = candidate
-                notes.append("M2+C末段回旋镖")
-                changed = True
-                break
+    else:
+        boom_line = "你刚说的规矩，现在说不通了！"
+    boom_line = boom_line[:24]
+
+    # 末句嘴硬：禁「哼」（会触发无破功软收 -20）
+    if last_sp and rows:
+        last = rows[-1]
+        want_last = "下次我还这样！"
+        if str(last.get("speaker") or "") != last_sp or "哼" in str(
+            last.get("line") or ""
+        ):
+            last["speaker"] = last_sp
+            last["line"] = want_last
+            notes.append("M2+C末句嘴硬speaker")
+            changed = True
+        elif not re.search(r"下次|还这样|嘴硬|算你|藏", str(last.get("line") or "")):
+            last["line"] = want_last
+            notes.append("M2+C末句嘴硬话")
+            changed = True
+
+    rows = _dialogue_rows(out)
+    # 倒数第二句固定为 boom_sp 回旋镖（须落在 validate 的 tail4）
+    if len(rows) >= 2:
+        prev = rows[-2]
+        prev["speaker"] = boom_sp
+        prev["line"] = boom_line
+        notes.append("M2+C末段回旋镖")
+        changed = True
+        for item in rows[-4:-2] + rows[-1:]:
+            ln = str(item.get("line") or "")
+            if not re.search(r"你刚说|你说的|你不是说", ln):
+                continue
+            if item is prev:
+                continue
+            item["line"] = re.sub(
+                r"(不行[！!])?(?:你刚说|你说的|你不是说)[^，。！?]{0,16}",
+                "",
+                ln,
+            ).strip("，, ") or "真的不行！"
+            notes.append("M2+C清尾段杂引")
+            changed = True
+
+    # C4：新证据（之前/妈妈）
+    rows = _dialogue_rows(out)
+    blob = _m2_c_layer_blob(rows)
+    if not re.search(r"之前|妈妈说过|上次|柜子里", blob):
+        for item in rows[4:10]:
+            if str(item.get("speaker") or "") not in {"昭昭", "灿灿"}:
+                continue
+            ln = str(item.get("line") or "").strip()
+            item["line"] = f"之前说过的，{ln}".replace("，，", "，")[:24]
+            notes.append("M2+C补C4新证据")
+            changed = True
+            break
+
+    # 剥垫字叠词
+    rows = _dialogue_rows(out)
+    for item in rows:
+        ln = str(item.get("line") or "")
+        new_ln = re.sub(r"(真的啊?|不行吧?|快点|现在|立刻|马上)\1+", r"\1", ln)
+        new_ln = re.sub(r"(立刻|马上|现在|快点){2,}", "现在", new_ln)
+        new_ln = re.sub(r"(不行吧)+", "不行", new_ln)
+        new_ln = re.sub(r"(真的啊)+", "真的", new_ln)
+        if new_ln != ln:
+            item["line"] = new_ln[:24]
+            notes.append("M2+C剥叠垫词")
+            changed = True
 
     if changed:
         from app.services.daily_story.prompts import sync_discovery_opening_from_dialogue
@@ -1547,6 +1701,7 @@ def patch_m2_c_structure(
         sync_discovery_opening_from_dialogue(out)
 
     return out, notes
+
 
 
 def patch_m2_c_eating_roles(

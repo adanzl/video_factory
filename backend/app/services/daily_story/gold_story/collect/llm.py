@@ -72,7 +72,8 @@ GOLD_CHAT_LINES_SNIPPET_SAME_SOURCE = f"""【同源金稿 · 不注入全文正�
 本稿与金稿对白正例同源（{GOLD_CHAT_LINES_SNIPPET_SOURCE_ID}），
 禁止按正例句数/字数复现。
 须按上方 scene_contract.beat_chain + dialogue_seed
-扩写到 ≥240 字、18–24 句现场对白。
+写到目标 280–340 字、12–16 轮（硬卡 240–370，最多 18 轮）。
+**未满 240 字禁止收束**；写够后立刻闭合，禁止循环注水/复读。
 语气参考 M5+H：互毁双向、拒和加码、妈妈分层调解；
 勿连续两句照抄 seed。"""
 
