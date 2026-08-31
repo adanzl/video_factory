@@ -250,6 +250,7 @@ def _list_where(
     structure_type: str | None = None,
     mechanism: str | None = None,
     has_story: bool | None = None,
+    exclude_rejected: bool = False,
 ) -> tuple[str, list[Any]]:
     clauses: list[str] = []
     params: list[Any] = []
@@ -266,6 +267,9 @@ def _list_where(
         clauses.append("gold_chat_daily_story_id IS NOT NULL")
     elif has_story is False:
         clauses.append("gold_chat_daily_story_id IS NULL")
+    if exclude_rejected:
+        clauses.append("status != ?")
+        params.append("rejected")
     if not clauses:
         return "", []
     return " WHERE " + " AND ".join(clauses), params
@@ -277,6 +281,7 @@ def list_stories(
     structure_type: str | None = None,
     mechanism: str | None = None,
     has_story: bool | None = None,
+    exclude_rejected: bool = False,
     limit: int = 50,
     offset: int = 0,
 ) -> list[dict]:
@@ -287,6 +292,7 @@ def list_stories(
         structure_type=structure_type,
         mechanism=mechanism,
         has_story=has_story,
+        exclude_rejected=exclude_rejected,
     )
     rows = sql.fetchall(
         f"""
@@ -307,12 +313,14 @@ def count_stories(
     structure_type: str | None = None,
     mechanism: str | None = None,
     has_story: bool | None = None,
+    exclude_rejected: bool = False,
 ) -> int:
     where, params = _list_where(
         status=status,
         structure_type=structure_type,
         mechanism=mechanism,
         has_story=has_story,
+        exclude_rejected=exclude_rejected,
     )
     row = sql.fetchone(
         f"SELECT COUNT(*) AS cnt FROM gold_story{where}",
