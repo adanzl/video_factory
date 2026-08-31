@@ -68,15 +68,16 @@ def test_wrap_image_prompts_daily_assembles_from_visual_brief():
     wrap_image_prompts(segments, content_style="daily_story")
     prompt = segments[0]["image_prompt"]
     assert prompt.startswith("基于参考图调整人物动作")
-    assert "【严格风格】" in prompt
-    assert "昭昭：7岁男孩" in prompt
-    assert "灿灿：10岁女孩" in prompt
-    assert "昭昭比灿灿矮约半个头" in prompt
+    assert "保持参考图外貌" in prompt
+    assert "儿童涂鸦蜡笔画风格" in prompt
+    assert "绝不允许" not in prompt
+    assert "禁用" not in prompt
     assert "平涂光照" in prompt
     assert "窗光从一侧斜照" not in prompt
-    assert "【风格锁定】" in prompt
+    assert "与参考图同质" in prompt
     assert "中近景特写" in prompt
     assert "橡皮" in prompt
+    assert "昭昭：7岁男孩" not in prompt
 
 def test_wrap_image_prompts_passes_setting_for_sticky_cast():
     from app.services.script.image_prompt import wrap_image_prompts
