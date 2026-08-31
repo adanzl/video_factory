@@ -23,10 +23,14 @@ from app.utils.job_info import (
 # 有角色参考图时置于句首；结尾「孩子气的构图。」供质检剥离前缀
 _DAILY_T2I_STYLE = (
     "基于参考图调整人物动作，保留昭昭与灿灿的外貌、发型、服装与身高比例，"
-    "画风与参考图一致，只改本镜动作、表情与道具状态。"
-    "儿童情绪涂鸦风格，彩铅和蜡笔混合笔触，用力不均的线条，"
-    "主观夸张变形，高饱和色彩，涂色出界，橡皮擦拭痕迹，手工感，"
+    "只改本镜动作、表情与道具状态。"
+    "【严格风格】儿童涂鸦蜡笔画风格，粗黑轮廓线，彩铅蜡笔涂色质感，"
+    "涂色出界，手绘感，童真插画，绝不允许写实摄影或3D渲染。"
     "孩子气的构图。"
+)
+_DAILY_T2I_STYLE_LOCK_TAIL = (
+    "【风格锁定】保持蜡笔涂鸦绘本风格与参考图同质，"
+    "禁用真实光影、照片级渲染、CGI；场景仍按本镜简笔涂鸦表现，勿写成实景照片。"
 )
 
 _DAILY_CHAR_ZHAO = (
@@ -380,8 +384,7 @@ def _render_object_states(
     parts: list[str] = []
     meat_owner = owners.get("肉")
     veg_owner = owners.get("青菜")
-    compact_bowls = meat_owner and veg_owner and meat_owner != veg_owner
-    if compact_bowls:
+    if meat_owner and veg_owner and meat_owner != veg_owner:
         veg_st = merged.pop("青菜", None) or {}
         meat_st = merged.pop("肉", None) or {}
         by_who = {
@@ -971,8 +974,8 @@ def _daily_speakers_of(seg: dict) -> list[str]:
 
     from app.services.daily_story.speaker import allowed_cast_from_segment
 
-    names = allowed_cast_from_segment(seg)
-    return [n for n in ("昭昭", "灿灿", "妈妈") if n in names]
+    allowed = allowed_cast_from_segment(seg)
+    return [n for n in ("昭昭", "灿灿", "妈妈") if n in allowed]
 
 
 def _daily_first_speaker(seg: dict) -> str | None:
@@ -1059,8 +1062,9 @@ def _daily_lighting(vb: str) -> str:
         w in vb for w in ("室外", "户外", "院子", "阳台", "楼下", "公园", "小区", "马路")
     )
     if outdoor:
-        return "室外自然光，柔和散射，画面明亮。"
-    return "窗光从一侧斜照，在墙面和地面投下柔和光影。"
+        return "平涂明亮，无真实阴影与立体光影。"
+    # 避免「窗光/木地板光影」把 i2i 推向写实房间
+    return "平涂光照，无真实阴影与立体光影。"
 
 
 _DAILY_COMPOSITION_LOOK = {
@@ -1420,6 +1424,9 @@ def assemble_daily_t2i_prompt(
     if s2 and shot == "特写":
         s2 = s2.split("，")[0]
     s2 = scrub_mouth_tokens(s2)
+    if s2:
+        # 保留客厅等场景语义，仅钉死「简笔涂鸦而非实景照片」
+        s2 = f"{s2}，简笔涂鸦场景，非写实照片"
 
     # S3 角色外貌（子块拼装：基块 + 身高锁 + 发色锁 + 地垫变体）
     char_parts: list[str] = []
@@ -1515,7 +1522,7 @@ def assemble_daily_t2i_prompt(
     if multi_body:
         s78 = inject_role_completeness(s78, speakers, shot_type=shot)
 
-    parts = [s1, s2, s4, s5, s3, s6, s78]
+    parts = [s1, s2, s4, s5, s3, s6, s78, _DAILY_T2I_STYLE_LOCK_TAIL]
     if extra and extra.strip():
         cleaned = strip_verify_regen_leak(extra.strip())
         if cleaned and cleaned == extra.strip():

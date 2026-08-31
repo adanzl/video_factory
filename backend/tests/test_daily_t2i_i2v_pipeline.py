@@ -32,11 +32,14 @@ def test_assemble_daily_t2i_prompt_structure():
     }
     prompt = assemble_daily_t2i_prompt(seg)
     assert prompt.startswith("基于参考图调整人物动作")
-    assert "儿童情绪涂鸦风格" in prompt
+    assert "【严格风格】" in prompt
+    assert "横线笔记本纸" not in prompt
     assert "灿灿：10岁女孩" in prompt
     assert "昭昭：7岁男孩" in prompt
     assert "昭昭比灿灿矮约半个头" in prompt
-    assert "窗光从一侧斜照" in prompt
+    assert "平涂光照" in prompt
+    assert "窗光从一侧斜照" not in prompt
+    assert "【风格锁定】" in prompt
     assert "中近景特写" in prompt
     assert "全身可见" in prompt
     assert "灿灿头发通体纯黑" in prompt
