@@ -220,9 +220,12 @@ def test_stabilize_motion_prompt() -> None:
     assert "slow zoom" not in out.lower()
     assert "镜头固定" in out or "不推近" in out
     assert "面部表情与静图一致" in out
+    assert "颜色与首帧完全一致" in out
+    assert "不补色不改色" in out
     # 旧稿推近用语提交前剔除，并补镜头锁定
     locked = _stabilize_motion_prompt("炉口青烟缓缓上升，镜头极缓推进")
     assert locked.startswith("纯视觉画面")
+    assert locked.index("颜色与首帧完全一致") < locked.index("炉口青烟")
     assert "炉口青烟缓缓上升" in locked
     assert "面部表情与静图一致" in locked
     assert "不推近" in locked or "镜头固定" in locked
@@ -231,6 +234,13 @@ def test_stabilize_motion_prompt() -> None:
     stabilized = _stabilize_motion_prompt(already)
     assert stabilized.startswith("纯视觉画面")
     assert already in stabilized
+    assert "不补色不改色" in stabilized
+    # 已写色彩锁则不重复补
+    colored = _stabilize_motion_prompt(
+        "所有区域颜色与首帧完全一致，不补色不改色，"
+        "纱帘轻动，镜头固定不推近不拉远，面部表情与静图一致不微笑"
+    )
+    assert colored.count("不补色不改色") == 1
     # 站位句触发人数锁定（Style + 正面人数锁前置）
     casted = _stabilize_motion_prompt(
         "画面左边是灿灿，右边是昭昭。灿灿说话，同时点头。镜头固定不推近不拉远，"

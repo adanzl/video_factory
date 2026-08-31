@@ -59,6 +59,8 @@ _CAMERA_LOCK_HINT = "镜头固定，不推近不拉远，不放大构图"
 _CLEAN_VISUAL_STYLE_HINT = (
     "纯视觉画面，无任何字幕、水印、对话框或文字叠加"
 )
+# 静图有线稿留白时，I2V 易自动补色；用「保持/不动」禁「涂色/上色」动词
+_COLOR_LOCK_HINT = "所有区域颜色与首帧完全一致，不补色不改色"
 # Flash 无 negative_prompt；人数/表情等约束靠正向 motion 前缀
 _ASPECT_PRESETS: tuple[tuple[str, float], ...] = (
     ("21:9", 21 / 9),
@@ -490,7 +492,13 @@ def _stabilize_motion_prompt(
     chunks: list[str] = []
     if not _has_clean_visual_prefix(text):
         chunks.append(_CLEAN_VISUAL_STYLE_HINT)
-    # 人数锁定紧跟无字 Style：I2V 对前缀更敏感
+    # 色彩锁紧跟无字 Style：防止静图留白区被 I2V 补色
+    if not any(
+        word in text
+        for word in ("颜色与首帧", "色彩不动", "不补色不改色", "色彩与静图")
+    ):
+        chunks.append(_COLOR_LOCK_HINT)
+    # 人数锁定紧跟色彩锁：I2V 对前缀更敏感
     if (
         cast_hint
         and "人数与静图" not in text
