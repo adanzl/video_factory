@@ -22,15 +22,16 @@ from app.utils.job_info import (
 
 # 有角色参考图时置于句首；结尾「孩子气的构图。」供质检剥离前缀
 _DAILY_T2I_STYLE = (
-    "基于参考图调整人物动作，保留昭昭与灿灿的外貌、发型、服装与身高比例，"
+    "基于参考图调整人物动作，保持参考图外貌，"
+    "保留昭昭与灿灿的外貌、发型、服装与身高比例，"
     "只改本镜动作、表情与道具状态。"
-    "【严格风格】儿童涂鸦蜡笔画风格，粗黑轮廓线，彩铅蜡笔涂色质感，"
-    "涂色出界，手绘感，童真插画，绝不允许写实摄影或3D渲染。"
+    "儿童涂鸦蜡笔画风格，粗黑轮廓线，彩铅蜡笔涂色质感，"
+    "涂色出界，手绘感，童真插画。"
     "孩子气的构图。"
 )
+# 风格只在末尾钉一次（正面表述，无负向禁词）
 _DAILY_T2I_STYLE_LOCK_TAIL = (
-    "【风格锁定】保持蜡笔涂鸦绘本风格与参考图同质，"
-    "禁用真实光影、照片级渲染、CGI；场景仍按本镜简笔涂鸦表现，勿写成实景照片。"
+    "儿童涂鸦蜡笔绘本风格，粗黑轮廓线，彩铅涂色出界，手绘童真，与参考图同质。"
 )
 
 _DAILY_CHAR_ZHAO = (
@@ -1062,9 +1063,8 @@ def _daily_lighting(vb: str) -> str:
         w in vb for w in ("室外", "户外", "院子", "阳台", "楼下", "公园", "小区", "马路")
     )
     if outdoor:
-        return "平涂明亮，无真实阴影与立体光影。"
-    # 避免「窗光/木地板光影」把 i2i 推向写实房间
-    return "平涂光照，无真实阴影与立体光影。"
+        return "平涂明亮光照。"
+    return "平涂光照。"
 
 
 _DAILY_COMPOSITION_LOOK = {
@@ -1185,8 +1185,11 @@ def _daily_composition(
     vb: str = "",
 ) -> str:
     names = [s for s in speakers if s in _DAILY_CHAR_MAP]
-    has_lr = bool(_DAILY_LR_RE.search(vb or ""))
-    has_lcr = bool(_DAILY_LCR_RE.search(vb or ""))
+    vb_text = vb or ""
+    has_lr = bool(_DAILY_LR_RE.search(vb_text)) or (
+        "画面左边是" in vb_text and "画面右边是" in vb_text
+    )
+    has_lcr = bool(_DAILY_LCR_RE.search(vb_text))
     if len(names) >= 3:
         a, b, c = names[0], names[1], names[2]
         lr = "" if (has_lcr or has_lr) else f"画面从左到右是{a}、{b}、{c}。"
@@ -1425,26 +1428,10 @@ def assemble_daily_t2i_prompt(
         s2 = s2.split("，")[0]
     s2 = scrub_mouth_tokens(s2)
     if s2:
-        # 保留客厅等场景语义，仅钉死「简笔涂鸦而非实景照片」
-        s2 = f"{s2}，简笔涂鸦场景，非写实照片"
+        s2 = f"{s2}，简笔涂鸦场景"
 
-    # S3 角色外貌（子块拼装：基块 + 身高锁 + 发色锁 + 地垫变体）
-    char_parts: list[str] = []
-    for name in speakers:
-        if name == "昭昭" and floor_shoe_scene:
-            char_parts.append(_DAILY_CHAR_ZHAO_FLOOR)
-        elif name == "灿灿" and floor_shoe_scene:
-            char_parts.append(_DAILY_CHAR_CANCAN_SOCKS)
-        elif name in _DAILY_CHAR_MAP:
-            char_parts.append(_DAILY_CHAR_MAP[name])
-    if set(speakers) >= {"昭昭", "灿灿", "妈妈"}:
-        char_parts.append(_DAILY_CHAR_HEIGHT_3)
-    elif "昭昭" in speakers and "灿灿" in speakers:
-        char_parts.append(_DAILY_CHAR_HEIGHT)
-    if "灿灿" in speakers:
-        char_parts.append(_DAILY_CANCAN_HAIR_LOCK)
-    s3 = "".join(char_parts)
-    s3 = scrub_mouth_tokens(s3)
+    # S3：有参考图时外貌靠「保持参考图外貌」句锁定，不再展开服装长描述
+    s3 = ""
 
     # S4 本镜画面（唯一 LLM 入口，已清洗；场景/陈设归 S2，不重复）
     s4_parts: list[str] = []

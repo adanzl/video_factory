@@ -6,6 +6,7 @@
         "DASHSCOPE",
         "dbtp",
         "DEEPSEEK",
+        "deixis",
         "demuxer",
         "ffprobe",
         "Freetype",
@@ -44,7 +45,7 @@
     "python-envs.defaultEnvManager": "ms-python.python:conda",
     "python-envs.defaultPackageManager": "ms-python.python:conda",
     "python.terminal.activateEnvInCurrentTerminal": true,
-    "python.languageServer": "None",
+    "python.languageServer": "Default",
     // 仓库根脚本通过 sys.path 挂 backend；静态分析需显式 extraPaths
     "python.analysis.extraPaths": [
         "${workspaceFolder}/backend"

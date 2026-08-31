@@ -32,23 +32,23 @@ def test_assemble_daily_t2i_prompt_structure():
     }
     prompt = assemble_daily_t2i_prompt(seg)
     assert prompt.startswith("基于参考图调整人物动作")
-    assert "【严格风格】" in prompt
+    assert "保持参考图外貌" in prompt
+    assert "儿童涂鸦蜡笔画风格" in prompt
+    assert "绝不允许" not in prompt
+    assert "禁用" not in prompt
+    assert "非写实" not in prompt
     assert "横线笔记本纸" not in prompt
-    assert "灿灿：10岁女孩" in prompt
-    assert "昭昭：7岁男孩" in prompt
-    assert "昭昭比灿灿矮约半个头" in prompt
     assert "平涂光照" in prompt
     assert "窗光从一侧斜照" not in prompt
-    assert "【风格锁定】" in prompt
+    assert "与参考图同质" in prompt
     assert "中近景特写" in prompt
     assert "全身可见" in prompt
-    assert "灿灿头发通体纯黑" in prompt
     assert "画面左边是昭昭，右边是灿灿" in prompt
     assert "严格左" not in prompt
+    # 有参考图时不再展开外貌长描述
+    assert "昭昭：7岁男孩" not in prompt
     # 场景陈设句（茶几上空水杯和蜡笔）已归 S2/S5，不再留在 S4
     assert "空水杯" not in prompt
-    # 槽位顺序：S1→S2→S4 场景动作在前，S3 外貌在后（对齐成功三人稿）
-    assert prompt.index("客厅沙发") < prompt.index("昭昭：7岁男孩")
     # 嘴型锁定：首个说话人（灿灿）张嘴，其余闭嘴，防 i2v 说话人反转
     assert "灿灿嘴唇微张，正在开口说话" in prompt
     assert "昭昭嘴巴自然闭合" in prompt
