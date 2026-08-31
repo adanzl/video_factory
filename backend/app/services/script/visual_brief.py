@@ -707,6 +707,8 @@ _DEIXIS_CONTAINER_RE = re.compile(
     r"(?:一盘|一碗|一块|几根)?"
     r"([\u4e00-\u9fa5]{1,8})"
 )
+# 碗/盘/面前 = 桌面容器归属；手里/手中/端着/捧着 = 手持，不得写入碗里
+_BOWL_CONTAINER_MARKERS = frozenset({"面前", "碗里", "盘里"})
 _SETTING_SURFACE_RE = re.compile(
     r"(?:桌上|茶几上|地垫上)"
     r"(?:摊着|放着|摆着|立着)?"
@@ -726,15 +728,15 @@ def _valid_activity_prop(prop: str) -> str:
     return key
 
 
-def extract_story_prop_holdings(
+def _extract_story_prop_holdings_marked(
     setting: str,
     dialogue: list | None = None,
-) -> list[tuple[str, str]]:
-    """从 setting/台词容器句抽 (holder, prop)。不查道具名词名单。"""
-    out: list[tuple[str, str]] = []
+) -> list[tuple[str, str, str]]:
+    """从 setting/台词容器句抽 (holder, prop, marker)。不查道具名词名单。"""
+    out: list[tuple[str, str, str]] = []
     seen: set[tuple[str, str]] = set()
 
-    def _add(holder: str, raw: str) -> None:
+    def _add(holder: str, raw: str, marker: str) -> None:
         prop = _valid_activity_prop(raw)
         if not prop:
             return
@@ -742,28 +744,42 @@ def extract_story_prop_holdings(
         if item in seen:
             return
         seen.add(item)
-        out.append(item)
+        out.append((holder, prop, marker))
 
     for m in _NAMED_CONTAINER_RE.finditer(str(setting or "")):
-        _add(m.group(1), m.group(3))
+        _add(m.group(1), m.group(3), m.group(2))
     for m in _SETTING_SURFACE_RE.finditer(str(setting or "")):
-        _add("", m.group(1))
+        _add("", m.group(1), "表面")
     for row in _dialogue_rows_any(dialogue):
         sp, line = _row_speaker_line(row)
         if not line:
             continue
         for m in _NAMED_CONTAINER_RE.finditer(line):
-            _add(m.group(1), m.group(3))
+            _add(m.group(1), m.group(3), m.group(2))
         for m in _DEIXIS_CONTAINER_RE.finditer(line):
             who = m.group(1)
+            marker = m.group(2)
             raw = m.group(3)
             if who == "我":
                 holder = sp if sp in {"昭昭", "灿灿", "妈妈"} else ""
             else:
                 holder = _other_kid(sp)
             if holder:
-                _add(holder, raw)
+                _add(holder, raw, marker)
     return out
+
+
+def extract_story_prop_holdings(
+    setting: str,
+    dialogue: list | None = None,
+) -> list[tuple[str, str]]:
+    """从 setting/台词容器句抽 (holder, prop)。不查道具名词名单。"""
+    return [
+        (holder, prop)
+        for holder, prop, _marker in _extract_story_prop_holdings_marked(
+            setting, dialogue
+        )
+    ]
 
 
 def extract_story_activity_props(
@@ -778,10 +794,12 @@ def bowl_container_owners(
     setting: str | None,
     dialogue: list | None = None,
 ) -> dict[str, str]:
-    """容器句冲突物 → 碗主人。表示归谁的碗/盘，不是拿在手里。"""
+    """碗/盘/面前容器句冲突物 → 碗主人。手里/手中/端着不算碗归属。"""
     out: dict[str, str] = {}
-    for holder, prop in extract_story_prop_holdings(setting or "", dialogue):
-        if holder and prop:
+    for holder, prop, marker in _extract_story_prop_holdings_marked(
+        setting or "", dialogue
+    ):
+        if holder and prop and marker in _BOWL_CONTAINER_MARKERS:
             out[prop] = holder
     return out
 
@@ -1077,7 +1095,10 @@ def _format_enriched_subject_clause(
     if side:
         tail = bits[1:] if bits[0].startswith(("站", "蹲", "坐")) else bits
         tail_text = "，".join(tail)
-        return f"画面{side}是{name}" + (f"，{tail_text}" if tail_text else "")
+        head = f"画面{side}是{name}"
+        if name == "灿灿":
+            head += "，比昭昭高一点"
+        return head + (f"，{tail_text}" if tail_text else "")
     head = bits[0]
     if not head.startswith(name):
         head = name + head
@@ -2244,23 +2265,21 @@ def build_visual_brief_prompts(
             dlg_rows: list[dict] = []
             for seg in segments:
                 dlg_rows.extend(_dialogue_rows_any(seg.get("dialogue")))
-            holdings = extract_story_prop_holdings(setting_text, dlg_rows)
-            if holdings:
-                hold_bits = []
-                for holder, prop in holdings:
-                    if holder:
-                        hold_bits.append(f"{holder}碗里有{prop}")
-                    else:
-                        hold_bits.append(prop)
-                setting_rule += (
-                    "【持物锁定】冲突物在谁的碗/盘里，不是拿在手里："
-                    + "；".join(hold_bits)
-                    + "。object_states.position 写「谁碗里/谁面前」，禁止写成手中"
-                    "（除非本镜台词明确在递碗/端盘）；"
-                    "站位左昭昭右灿灿：左边昭昭面前碗里是青菜，右边灿灿面前碗里是肉；"
-                    "用正面写，不要写「没有肉」；禁止道具换手；action 不要无故写端着碗。"
-                    "对方碗里的食物不要写进自己的动作句（不要写「指着肉盘」，改写指向对面）。"
-                )
+            bowl_owners = bowl_container_owners(setting_text, dlg_rows)
+            if bowl_owners:
+                hold_bits = [
+                    f"{who}碗里有{prop}" for prop, who in bowl_owners.items() if who
+                ]
+                if hold_bits:
+                    setting_rule += (
+                        "【持物锁定】冲突物在谁的碗/盘里，不是拿在手里："
+                        + "；".join(hold_bits)
+                        + "。object_states.position 写「谁碗里/谁面前」，禁止写成手中"
+                        "（除非本镜台词明确在递碗/端盘）；"
+                        "站位左昭昭右灿灿：左边昭昭面前碗里是青菜，右边灿灿面前碗里是肉；"
+                        "用正面写，不要写「没有肉」；禁止道具换手；action 不要无故写端着碗。"
+                        "对方碗里的食物不要写进自己的动作句（不要写「指着肉盘」，改写指向对面）。"
+                    )
     content_rule = (
         _DAILY_VISUAL_SUBJECTS_RULE
         if profile_style == CONTENT_STYLE_DAILY_STORY

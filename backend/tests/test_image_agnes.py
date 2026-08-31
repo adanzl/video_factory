@@ -188,8 +188,8 @@ def test_generate_downloads_url(tmp_path: Path) -> None:
     assert output.read_bytes() == b"png-bytes"
 
 
-def test_generate_puts_http_ref_into_ref_images_not_image(tmp_path: Path) -> None:
-    """GitHub URL 须进 ref_images（角色参考），禁止误入 image（i2i 底图）。"""
+def test_generate_puts_http_ref_into_image_not_ref_images(tmp_path: Path) -> None:
+    """GitHub URL 须进 extra_body.image（角色参考）；ref_images 已失效。"""
     provider = AgnesImageProvider()
     output = tmp_path / "1.png"
     ref_url = (
@@ -222,8 +222,8 @@ def test_generate_puts_http_ref_into_ref_images_not_image(tmp_path: Path) -> Non
 
     payload = mock_request.call_args.kwargs["json"]
     extra = payload["extra_body"]
-    assert extra["ref_images"] == [ref_url]
-    assert "image" not in extra
+    assert extra["image"] == [ref_url]
+    assert "ref_images" not in extra
 
 
 def test_generate_retries_verify_until_pass(tmp_path: Path) -> None:

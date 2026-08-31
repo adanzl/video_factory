@@ -26,7 +26,7 @@ class SegmentProduceResult:
     clips: SegmentClipsResult
 
 
-# 探测脚本可选用的角色参考图 URL；正式出图不再传 ref_images。
+# daily_story / chat：角色定妆合影（左昭昭右灿灿）
 _CHAT_HOSTS_REF_URL = (
     "https://raw.githubusercontent.com/adanzl/video_factory/main/"
     "backend/res/host/crayon/hosts.png"
@@ -34,7 +34,7 @@ _CHAT_HOSTS_REF_URL = (
 
 
 def _resolve_chat_ref_images() -> list[Path | str]:
-    """探测脚本用的 hosts.png URL；produce_segments 不再调用。"""
+    """chat 流水线角色参考图（GitHub hosts.png）。"""
     return [_CHAT_HOSTS_REF_URL]
 
 
@@ -156,11 +156,21 @@ class SegmentMgr:
         generated = []
         if scope != "clips" and image_targets:
             _check_cancelled()
-            from app.utils.job_info import content_style_from_job, resolve_image_provider
+            from app.utils.job_info import (
+                CONTENT_STYLE_DAILY_STORY,
+                content_style_from_job,
+                resolve_image_provider,
+            )
 
             image_size = resolve_segment_image_size(job)
             image_provider = resolve_image_provider(job)
             style = content_style_from_job(job) if job else None
+
+            ref_images = (
+                _resolve_chat_ref_images()
+                if style == CONTENT_STYLE_DAILY_STORY
+                else None
+            )
 
             generated = image_mgr.generate_segment_images(
                 image_targets,
@@ -170,6 +180,7 @@ class SegmentMgr:
                 on_image_done=on_image_done,
                 job_id=job_id,
                 job=job,
+                ref_images=ref_images,
                 content_style=style,
             )
             if job_id is not None:
