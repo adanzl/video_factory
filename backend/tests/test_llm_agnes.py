@@ -82,7 +82,8 @@ def test_post_chat_failover_on_timeout(monkeypatch) -> None:
     assert mock_post.call_count == 2
     assert mock_post.call_args_list[0].args[0] == com_url
     assert mock_post.call_args_list[1].args[0] == cn_url
-    assert config.agnes_api_base_url == "https://apihub.agnes-ai.cn/v1"
+    # failover 仅当前请求生效，不持久化全局 base_url
+    assert config.agnes_api_base_url == "https://apihub.agnes-ai.com/v1"
 
 
 def test_chat_requires_api_key(monkeypatch) -> None:

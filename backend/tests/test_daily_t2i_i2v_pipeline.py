@@ -31,7 +31,8 @@ def test_assemble_daily_t2i_prompt_structure():
         ],
     }
     prompt = assemble_daily_t2i_prompt(seg)
-    assert prompt.startswith("儿童情绪涂鸦风")
+    assert prompt.startswith("基于参考图调整人物动作")
+    assert "儿童情绪涂鸦风格" in prompt
     assert "灿灿：10岁女孩" in prompt
     assert "昭昭：7岁男孩" in prompt
     assert "昭昭比灿灿矮约半个头" in prompt
@@ -479,7 +480,7 @@ def test_enrich_thin_daily_visual_brief_three_person_chips():
     assert "沙发" in enriched and "茶几" in enriched
     assert "妈妈站在茶几前" in enriched
     assert "画面左边是昭昭" in enriched
-    assert "画面右边是灿灿" in enriched
+    assert "画面右边是灿灿，比昭昭高一点" in enriched
     assert "对面" not in enriched
     assert "画面中有薯片" not in enriched
 
@@ -923,6 +924,80 @@ def test_bowl_container_lock_not_forced_into_hands():
     assert "青菜在昭昭手中" not in prompt
     assert "指着肉盘" not in prompt
     assert "没有肉" not in prompt
+
+
+def test_handheld_snack_not_forced_into_bowl():
+    """手里举着零食不得归一成「灿灿碗里」（job91 回归）。"""
+    from app.services.script.image_prompt import (
+        _render_object_states,
+        assemble_daily_t2i_prompt,
+    )
+    from app.services.script.visual_brief import (
+        bowl_container_owners,
+        extract_story_prop_holdings,
+        normalize_object_states,
+    )
+
+    setting = (
+        "家中客厅，灿灿坐在沙发上，手里举着一包零食，"
+        "昭昭站在他面前，气鼓鼓地伸手去够。"
+    )
+    dialogue = [
+        {"speaker": "灿灿", "line": "沙发上这包零食归我，作业本归你，公平吧？"},
+        {"speaker": "昭昭", "line": "凭什么你偷吃我的零食还定规矩？"},
+    ]
+    holdings = extract_story_prop_holdings(setting, dialogue)
+    assert ("灿灿", "零食") in holdings
+    assert bowl_container_owners(setting, dialogue) == {}
+
+    segs = [
+        {
+            "segment_index": 1,
+            "speakers": ["昭昭", "灿灿"],
+            "shot_type": "特写",
+            "dialogue": dialogue,
+            "visual_subjects": [
+                {
+                    "name": "灿灿",
+                    "posture": "坐在沙发上",
+                    "action": "右手举起零食包",
+                    "expression": "挑眉瞪眼",
+                },
+                {
+                    "name": "昭昭",
+                    "posture": "站在灿灿面前",
+                    "action": "右手指向灿灿",
+                    "expression": "皱眉瞪眼",
+                },
+            ],
+            "object_states": [
+                {
+                    "object": "零食",
+                    "count": "一包",
+                    "form": "未开封，包装完整",
+                    "holder": "灿灿",
+                    "position": "灿灿手中",
+                }
+            ],
+            "scene_anchors": ["沙发", "茶几"],
+            "visual_brief": (
+                "灿灿坐在沙发上，右手举起零食包，挑眉瞪眼。"
+                "昭昭站在灿灿面前，右手指向灿灿，皱眉瞪眼。"
+            ),
+        }
+    ]
+    notes = normalize_object_states(segs, setting=setting)
+    assert not any("碗里" in n for n in notes)
+    snack = segs[0]["object_states"][0]
+    assert snack["position"] == "灿灿手中"
+    rendered = _render_object_states(
+        segs[0]["object_states"], setting=setting, dialogue=dialogue
+    )
+    assert "碗里" not in rendered
+    assert "一包零食在灿灿手中" in rendered
+    prompt = assemble_daily_t2i_prompt(segs[0], setting=setting)
+    assert "碗里" not in prompt
+    assert "一包零食在灿灿手中" in prompt
 
 
 def test_strip_unlocked_inventory_remote_job79_dirty_brief():

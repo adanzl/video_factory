@@ -520,35 +520,46 @@ class AgnesImageProvider(ImageProvider):
             extra_body: dict = {"response_format": "url"}
             ref_names: list[str] = []
             if ref_images:
-                # URL / 本地 base64 一律进 ref_images（角色参考）；勿用 image（那是 i2i 底图）
+                # 角色参考图走 extra_body.image（Agnes 现行有效字段）；
+                # ref_images 已失效，勿再写入。
                 ref_payload: list[str] = []
                 for ref in ref_images:
                     if isinstance(ref, str) and ref.startswith(("http://", "https://")):
                         ref_payload.append(ref)
                         ref_names.append(ref)
-                        logger.info("%s agnes ref_image url: %s", log_tag, ref)
+                        logger.info("%s agnes ref image url: %s", log_tag, ref)
+                        continue
+                    if isinstance(ref, str) and ref.startswith("data:image/"):
+                        ref_payload.append(ref)
+                        ref_names.append("data-uri")
+                        logger.info("%s agnes ref image data-uri", log_tag)
                         continue
                     ref_path = Path(ref)
                     if ref_path.exists():
+                        mime = (
+                            "image/jpeg"
+                            if ref_path.suffix.lower() in {".jpg", ".jpeg"}
+                            else "image/png"
+                        )
                         ref_b64 = base64.b64encode(
                             ref_path.read_bytes()
                         ).decode("ascii")
-                        ref_payload.append(ref_b64)
+                        ref_payload.append(f"data:{mime};base64,{ref_b64}")
                         ref_names.append(ref_path.name)
                         logger.info(
-                            "%s agnes ref_image: %s, size=%s bytes",
+                            "%s agnes ref image: %s, size=%s bytes",
                             log_tag,
                             ref_path.name,
                             ref_path.stat().st_size,
                         )
                     else:
                         logger.warning(
-                            "%s agnes ref_image not found: %s",
+                            "%s agnes ref image not found: %s",
                             log_tag,
                             ref_path,
                         )
                 if ref_payload:
-                    extra_body["ref_images"] = ref_payload
+                    extra_body["image"] = ref_payload
             payload = {
                 "model": self._model,
                 "prompt": prompt,

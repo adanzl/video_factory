@@ -142,21 +142,6 @@ def agnes_api_base_from_url(url: str) -> str | None:
     return None
 
 
-def agnes_persist_base_url(url: str) -> str | None:
-    """进程内记下当前生效的国际 base_url（兼容旧域名 failover）。"""
-    base = agnes_api_base_from_url(url)
-    if not base:
-        return None
-    settings = get_settings()
-    current = settings.agnes_api_base_url.rstrip("/")
-    if current != base and (
-        _AGNES_COM_HOST in base or _AGNES_CN_HOST in base
-    ):
-        settings.agnes_api_base_url = base
-        logger.info("agnes api base_url switched to %s", base)
-    return base
-
-
 def agnes_try_failover_host(
     url: str,
     tried: set[str],
@@ -190,11 +175,11 @@ def agnes_apply_host_failover(
     tag: str = "",
     on_switch: Callable[[str], None] | None = None,
 ) -> str | None:
-    """切换备用域名并持久化 base_url；on_switch 可同步 provider 端点。"""
+    """切换备用域名（仅当前请求生效，不持久化全局 base_url）；
+    on_switch 可同步 provider 端点。"""
     alt = agnes_try_failover_host(url, tried, reason=reason, tag=tag)
     if not alt:
         return None
-    agnes_persist_base_url(alt)
     if on_switch is not None:
         on_switch(alt)
     return alt

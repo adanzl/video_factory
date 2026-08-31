@@ -97,8 +97,10 @@ def test_produce_images_persists_each_image_via_callback(tmp_path: Path) -> None
     assert result.image_paths == persisted
 
 
-def test_produce_chat_does_not_pass_ref_images(tmp_path: Path) -> None:
-    """chat 流水线纯文生图，不再把 hosts.png 塞进 Agnes ref_images。"""
+def test_produce_chat_passes_hosts_ref_images(tmp_path: Path) -> None:
+    """daily_story / chat 出图须带 hosts.png 角色参考图。"""
+    from app.services.segment.segment_mgr import _CHAT_HOSTS_REF_URL
+
     media_dir = tmp_path / "75"
     images_dir = media_dir / "images"
     images_dir.mkdir(parents=True)
@@ -121,6 +123,7 @@ def test_produce_chat_does_not_pass_ref_images(tmp_path: Path) -> None:
         content_style: str | None = None,
     ) -> list[tuple[int, Path]]:
         captured["ref_images"] = ref_images
+        captured["content_style"] = content_style
         return [(seg["id"], out_dir / f"{seg['segment_index']}.png") for seg in targets]
 
     with patch.object(image_mgr, "generate_segment_images", side_effect=_fake_generate):
@@ -128,10 +131,17 @@ def test_produce_chat_does_not_pass_ref_images(tmp_path: Path) -> None:
             segments=segments,
             media_dir=media_dir,
             scope="images",
-            job={"pipeline": "chat", "info": {"orientation": "landscape"}},
+            job={
+                "pipeline": "chat",
+                "info": {
+                    "orientation": "landscape",
+                    "content_style": "daily_story",
+                },
+            },
         )
 
-    assert captured["ref_images"] is None
+    assert captured["ref_images"] == [_CHAT_HOSTS_REF_URL]
+    assert captured["content_style"] == "daily_story"
 
 
 def test_produce_clips_partial_skips_unselected_without_image(tmp_path: Path) -> None:
