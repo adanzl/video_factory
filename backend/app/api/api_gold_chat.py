@@ -51,7 +51,8 @@ def list_route():
         has_story = True
     elif has_story_raw in ("0", "false", "no"):
         has_story = False
-    exclude_rejected = parse_bool(get_query("exclude_rejected"), default=False)
+    exclude_rejected_raw = (get_query("exclude_rejected") or "").strip().lower()
+    exclude_rejected = exclude_rejected_raw in ("1", "true", "yes")
     limit = parse_query_int("limit", 15, required=False, minimum=1, maximum=200)
     offset = parse_query_int("offset", 0, required=False, minimum=0)
     return json_ok(
