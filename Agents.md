@@ -127,7 +127,22 @@ DeepSeek 网页模拟 API，不是 Claude 子代理。涉及提示词方案评�
 - setting用户看不到，有些矛盾可忽略
 - 给mock的对话，同一类问题不要新开对话
 - 不要过拟合
+- 图片、视频生成的提示词修改问agnes mock
+- 你要是看图的话，用Agnes Vl
 
 ## 快捷命令
 
 - push 表示执行提交git 并执行push，不用你管pull的事
+- 不要自动push，需要我同意才行
+
+
+## pi插件
+
+- pi-agent-extensions、 17 个扩展和 4 种主题 
+    `pi install npm:pi-agent-extensions`
+- pi-mcp-adapter 
+    `pi install npm:pi-mcp-adapter`
+- pi-background-tasks 允许你在后台运行耗时的 Shell 任务，避免阻塞主会话 
+    `pi install npm:@ifi/pi-background-tasks'
+- pi-web-access 赋予 Pi 网页搜索、URL 抓取、GitHub 仓库克隆等能力
+    `pi install npm:pi-web-access`
