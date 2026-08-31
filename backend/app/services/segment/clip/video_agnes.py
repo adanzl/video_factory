@@ -753,6 +753,7 @@ class AgnesClipProvider(ClipProvider):
         self._poll_max_attempts = settings.agnes_video_poll_max_attempts
         self._poll_interval_sec = settings.agnes_video_poll_interval_sec
         self._active_job_id: int | None = None
+        self._last_video_url: str | None = None
 
     def _sync_endpoints_from_api_url(self, api_url: str) -> None:
         """备用域名切换后同步 videos 提交与 poll 根路径。"""
@@ -1140,6 +1141,7 @@ class AgnesClipProvider(ClipProvider):
                 repr(poll)[:800],
             )
             raise AgnesI2VError(f"agnes i2v task {task_label} completed but missing video url")
+        self._last_video_url = video_url
         video = requests.get(
             video_url,
             timeout=(self._connect_timeout, self._download_timeout),
@@ -1490,6 +1492,15 @@ class AgnesClipProvider(ClipProvider):
                         segment_index=segment_index,
                     )
                     self._raise_if_job_cancelled()
+                    logger.info(
+                        "clip %s: i2v raw ready (%s), download=%s, "
+                        "verify before accept (attempt %s/%s)",
+                        segment_index,
+                        raw_path.name,
+                        self._last_video_url or "-",
+                        v_attempt,
+                        verify_attempts,
+                    )
                     sampled = _sample_verify_windows(
                         raw_path,
                         prompt,
