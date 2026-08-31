@@ -118,6 +118,21 @@ _SCENE_ANCHOR_ORDER = (
 _TV_TRIGGER_WORDS = ("电视", "动画片", "看新闻", "霸占电视", "电视柜")
 
 
+def _lock_living_room_long_sofa(text: str) -> str:
+    """客厅沙发形态锁定为长条沙发，避免分体/转角沙发乱飘。"""
+    if not text or "客厅" not in text:
+        return text
+    if "长条沙发" in text:
+        return text
+    if re.search(r"(?<!长条)沙发", text):
+        return re.sub(r"(?<!长条)沙发", "长条沙发", text)
+    parts = [p for p in text.split("，") if p]
+    if parts and parts[0] == "客厅":
+        parts.insert(1, "长条沙发")
+        return "，".join(parts)
+    return f"{text}，长条沙发"
+
+
 def _daily_scene_anchor(
     setting: str | None,
     seg1_vb: str,
@@ -129,6 +144,7 @@ def _daily_scene_anchor(
 
     硬锚点优先取 LLM 输出的 scene_anchors（结构化），否则扫 setting/分镜1 vb。
     台词/setting 涉电视相关词时补「电视」，防止「指向电视方向」等动作落空。
+    客厅一律锁定「长条沙发」（有沙发则改写，无则补入）。
     """
     blob = f"{setting or ''}{seg1_vb or ''}{dialogue_blob or ''}"
     # 场景地点/室内外只由设定与首镜画面决定；台词里的地点词仅是向往内容
@@ -163,7 +179,7 @@ def _daily_scene_anchor(
         anchors.append("电视")
     cap = 5 if outdoor else 3
     parts = [loc] + anchors[:cap]
-    return "，".join(p for p in parts if p)
+    return _lock_living_room_long_sofa("，".join(p for p in parts if p))
 
 
 def _join_slots(parts: list[str]) -> str:
@@ -1423,7 +1439,7 @@ def assemble_daily_t2i_prompt(
     # S1 风格（常量）
     s1 = _DAILY_T2I_STYLE
 
-    s2 = scene_anchor or ""
+    s2 = _lock_living_room_long_sofa(scene_anchor or "")
     if s2 and shot == "特写":
         s2 = s2.split("，")[0]
     s2 = scrub_mouth_tokens(s2)

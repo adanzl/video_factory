@@ -624,9 +624,10 @@ def test_assemble_daily_image_prompts_injects_fixed_furniture_when_missing():
     ip1 = segs[0]["image_prompt"]
     ip6 = segs[1]["image_prompt"]
     # S2 场景锚点：地点+硬锚点（分镜1 沙发/茶几）
-    assert "客厅，沙发，茶几" in ip1
-    # 特写镜 S2 按景别裁剪，只留地点
-    assert "客厅；" in ip6
+    assert "客厅，长条沙发，茶几" in ip1
+    # 特写镜 S2 按景别裁剪，只留地点（可带轻涂后缀）
+    assert "客厅，场景浅色蜡笔轻涂" in ip6 or ip6.split("；")[1].startswith("客厅")
+    assert "长条沙发" not in ip6.split("；")[1]
     assert "茶几上立着摔裂的相框" not in ip6
     # 幂等：重复拼装不会二次注入
     ip6_before = ip6
@@ -2111,6 +2112,34 @@ def test_scene_anchor_no_tv_without_trigger_words():
         dialogue_blob="你把作业写完！",
     )
     assert "电视" not in out
+    assert "长条沙发" in out
+    assert re.search(r"(?<!长条)沙发", out) is None
+
+
+def test_living_room_locks_long_sofa():
+    """客厅 S2 沙发一律长条沙发；无沙发时也补入。"""
+    from app.services.script.image_prompt import (
+        _daily_scene_anchor,
+        _lock_living_room_long_sofa,
+        assemble_daily_t2i_prompt,
+    )
+
+    assert _lock_living_room_long_sofa("客厅，沙发，茶几") == "客厅，长条沙发，茶几"
+    assert _lock_living_room_long_sofa("客厅，茶几") == "客厅，长条沙发，茶几"
+    assert "长条沙发" in _daily_scene_anchor("客厅", "", ["茶几"])
+    prompt = assemble_daily_t2i_prompt(
+        {
+            "segment_index": 2,
+            "shot_type": "中景",
+            "speakers": ["昭昭", "灿灿"],
+            "visual_brief": "画面左边是昭昭，右边是灿灿。",
+            "scene_anchors": ["沙发", "茶几"],
+        },
+        setting="客厅",
+        scene_anchor="客厅，沙发，茶几",
+    )
+    assert "长条沙发" in prompt
+    assert "分体" not in prompt
 
 
 def test_assemble_daily_image_prompts_adds_tv_across_segments():
@@ -2149,10 +2178,13 @@ def test_assemble_daily_image_prompts_adds_tv_across_segments():
     assemble_daily_image_prompts(segs, setting="客厅，沙发上")
     seg5 = next(s for s in segs if int(s["segment_index"]) == 5)
     s2_5 = seg5["image_prompt"].split("；")[1]
-    assert "客厅，沙发，电视" in s2_5
+    assert "客厅，长条沙发，电视" in s2_5
     seg1 = next(s for s in segs if int(s["segment_index"]) == 1)
-    # 特写只保留地点「客厅」，不强制带电视
-    assert seg1["image_prompt"].split("；")[1].strip() == "客厅"
+    # 特写只保留地点「客厅」，不强制带电视/长条沙发
+    s2_1 = seg1["image_prompt"].split("；")[1].strip()
+    assert s2_1.startswith("客厅")
+    assert "电视" not in s2_1
+    assert "长条沙发" not in s2_1
 
 
 def test_scrub_hand_contradiction_s4_downgrades_two_hand():
