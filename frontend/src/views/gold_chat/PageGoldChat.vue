@@ -361,7 +361,7 @@ async function fetchItems(opts?: { quiet?: boolean }) {
     const res = await listGoldChats({
       limit: pageSize.value,
       offset: (page.value - 1) * pageSize.value,
-      exclude_rejected: filterExcludeRejected.value,
+      exclude_rejected: !filterExcludeRejected.value,
       ...(filterHasStory.value === "yes"
         ? { has_story: true }
         : filterHasStory.value === "no"
