@@ -96,7 +96,6 @@
         "transnet",
         "transnetv",
         "tweaker",
-        "unpaintable",
         "unpickle",
         "usecase",
         "usermod",
@@ -110,6 +109,7 @@
         "wiperight",
         "xfade",
         "xianyu",
+        "unpaintable",
         "ZHAO"
     ],
     "ignoreRegExpList": [

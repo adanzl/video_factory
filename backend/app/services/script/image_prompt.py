@@ -1428,7 +1428,7 @@ def assemble_daily_t2i_prompt(
         s2 = s2.split("，")[0]
     s2 = scrub_mouth_tokens(s2)
     if s2:
-        s2 = f"{s2}，简笔涂鸦场景"
+        s2 = f"{s2}，场景浅色蜡笔轻涂"
 
     # S3：有参考图时外貌靠「保持参考图外貌」句锁定，不再展开服装长描述
     s3 = ""
