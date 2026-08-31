@@ -19,13 +19,9 @@
         批量删除{{ selectedIds.length ? `（${selectedIds.length}）` : "" }}
       </el-button>
       <el-checkbox v-model="batchForce" size="small">已导出也重跑</el-checkbox>
-      <el-select v-model="filterStatus" size="small" class="w-36!" @change="onFilterChange">
-        <el-option label="全部" value="" />
-        <el-option label="排队中" value="pending" />
-        <el-option label="处理中" value="processing" />
-        <el-option label="通过" value="active" />
-        <el-option label="驳回" value="rejected" />
-      </el-select>
+      <el-checkbox v-model="filterExcludeRejected" size="small" @change="onFilterChange">
+        包含已驳回
+      </el-checkbox>
       <el-radio-group v-model="filterHasStory" size="small" @change="onFilterChange">
         <el-radio-button value="">全部</el-radio-button>
         <el-radio-button value="yes">已导入日常</el-radio-button>
@@ -38,9 +34,9 @@
 
     <el-table :data="items" stripe class="w-full gold-chat-table" v-loading="loading" row-class-name="gold-chat-row"
       @selection-change="onSelectionChange" @row-click="onRowClick" @row-dblclick="viewItem">
-      <el-table-column type="selection" width="48" />
-      <el-table-column prop="id" label="ID" width="60" />
-      <el-table-column label="状态" width="100" align="center">
+      <el-table-column type="selection" width="30" />
+      <el-table-column prop="id" label="ID" width="50" />
+      <el-table-column label="状态" width="70" align="center">
         <template #default="{ row }">
           <el-tag v-if="isReimportProcessing(row)" type="warning" size="small">
             <span class="inline-flex items-center gap-1">
@@ -52,19 +48,19 @@
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="source_id" label="BV" width="130" show-overflow-tooltip />
+      <el-table-column prop="source_id" label="BV" width="135" show-overflow-tooltip />
       <el-table-column prop="title" label="金故事标题" min-width="160" show-overflow-tooltip />
       <el-table-column label="结构" width="120">
         <template #default="{ row }">
           {{ formatDailyStoryType(row.structure_type) }}
         </template>
       </el-table-column>
-      <el-table-column label="评分" width="70" align="center">
+      <el-table-column label="评分" width="60" align="center">
         <template #default="{ row }">
           {{ formatAutoScore(row.auto_score) }}
         </template>
       </el-table-column>
-      <el-table-column label="对话稿" width="110" align="center">
+      <el-table-column label="对话稿" width="70" align="center">
         <template #default="{ row }">
           <el-tag v-if="isGoldChatConverting(row)" type="warning" size="small">
             <span class="inline-flex items-center gap-1">
@@ -196,10 +192,9 @@ const transcriptId = ref<number | null>(null);
 const transcriptSourceId = ref<string | null>(null);
 const transcriptTitle = ref<string | null>(null);
 
-const FILTER_STATUS_KEY = "goldChatFilterStatus";
 const FILTER_HAS_STORY_KEY = "goldChatFilterHasStory";
-const FILTER_STATUS_VALUES = ["", "pending", "processing", "active", "rejected"];
 const FILTER_HAS_STORY_VALUES = ["", "yes", "no"];
+const FILTER_EXCLUDE_REJECTED_KEY = "goldChatFilterExcludeRejected";
 
 function readStoredChoice(key: string, allowed: string[]): string {
   const raw = localStorage.getItem(key);
@@ -210,8 +205,10 @@ function readStoredChoice(key: string, allowed: string[]): string {
 const page = ref(1);
 const pageSize = ref(parseInt(localStorage.getItem("goldChatPageSize") || "15", 10));
 const total = ref(0);
-const filterStatus = ref(readStoredChoice(FILTER_STATUS_KEY, FILTER_STATUS_VALUES));
 const filterHasStory = ref(readStoredChoice(FILTER_HAS_STORY_KEY, FILTER_HAS_STORY_VALUES));
+const filterExcludeRejected = ref(
+  localStorage.getItem(FILTER_EXCLUDE_REJECTED_KEY) !== "false",
+);
 const batchForce = ref(false);
 const collectPhase = ref("");
 const collectEnqueued = ref(0);
@@ -334,10 +331,6 @@ function showCollectListFilters() {
     filterHasStory.value = "";
     localStorage.setItem(FILTER_HAS_STORY_KEY, "");
   }
-  if (filterStatus.value && !["", "pending", "processing"].includes(filterStatus.value)) {
-    filterStatus.value = "";
-    localStorage.setItem(FILTER_STATUS_KEY, "");
-  }
 }
 
 function formatReimportDone(res: GoldStoryReimportResult): string {
@@ -368,7 +361,7 @@ async function fetchItems(opts?: { quiet?: boolean }) {
     const res = await listGoldChats({
       limit: pageSize.value,
       offset: (page.value - 1) * pageSize.value,
-      ...(filterStatus.value ? { status: filterStatus.value } : {}),
+      exclude_rejected: filterExcludeRejected.value,
       ...(filterHasStory.value === "yes"
         ? { has_story: true }
         : filterHasStory.value === "no"
@@ -450,8 +443,8 @@ async function pollReimportStatus() {
 }
 
 function onFilterChange() {
-  localStorage.setItem(FILTER_STATUS_KEY, filterStatus.value);
   localStorage.setItem(FILTER_HAS_STORY_KEY, filterHasStory.value);
+  localStorage.setItem(FILTER_EXCLUDE_REJECTED_KEY, String(filterExcludeRejected.value));
   page.value = 1;
   selectedIds.value = [];
   void fetchItems();
