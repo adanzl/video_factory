@@ -10,6 +10,7 @@ _OVERLAY_RES = (
     re.compile(r"近日"),
     re.compile(r"素材来源"),
     re.compile(r"应来自"),
+    re.compile(r"陶泥|小猴子|bilibili", re.IGNORECASE),
 )
 _EMAIL_URL_RE = re.compile(
     r"@|[.](?:com|cn|net|org)\b|https?://|qq\.com",
@@ -20,6 +21,8 @@ _LATIN_NOISE_RE = re.compile(r"^[A-Za-z0-9._%+\-]{2,}$")
 _CJK_RE = re.compile(r"[\u4e00-\u9fff]")
 _GARBLED_RE = re.compile(r"[^\u4e00-\u9fffA-Za-z0-9，。！？、；：\"\"''（）…\\s]")
 _REPEAT_RE = re.compile(r"(.{2,8})\1{2,}")
+# 描边字幕 mobile OCR 常见形近误字（背→育、来→米、什→竹 等）
+_OCR_CONFUSION_CHARS = frozenset("育竹工姿卜适言诉取扇")
 
 
 def normalize_transcript_line(text: str) -> str:
@@ -78,6 +81,16 @@ def _near_variant_line_ratio(text: str) -> float:
     return variant / n
 
 
+def _ocr_confusion_char_ratio(text: str) -> float:
+    """形近误字占比；真对白里「育/竹/工米」类组合应极少。"""
+    compact = normalize_transcript_line(text)
+    cjk = _CJK_RE.findall(compact)
+    if len(cjk) < 8:
+        return 0.0
+    bad = sum(1 for ch in cjk if ch in _OCR_CONFUSION_CHARS)
+    return bad / len(cjk)
+
+
 def score_transcript_text(
     text: str,
     *,
@@ -123,6 +136,13 @@ def score_transcript_text(
     elif variant_ratio >= 0.2:
         variant_penalty = variant_ratio * 0.35
 
+    confusion_ratio = _ocr_confusion_char_ratio(raw)
+    confusion_penalty = 0.0
+    if confusion_ratio >= 0.12:
+        confusion_penalty = 0.18 + min(confusion_ratio, 0.35) * 0.55
+    elif confusion_ratio >= 0.06:
+        confusion_penalty = confusion_ratio * 0.65
+
     score = (
         0.45 * cjk_ratio
         + 0.20 * keyword_ratio
@@ -134,6 +154,7 @@ def score_transcript_text(
         - overlay_penalty
         - noise_penalty
         - variant_penalty
+        - confusion_penalty
     )
     return max(0.0, min(round(score, 4), 1.0))
 

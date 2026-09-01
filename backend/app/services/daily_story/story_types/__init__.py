@@ -25,6 +25,7 @@ from app.services.daily_story.story_types.i.line import LINE_I
 from app.services.daily_story.story_types.j.line import LINE_J
 from app.services.daily_story.story_types.k.line import LINE_K
 from app.services.daily_story.story_types.l.line import LINE_L
+from app.services.daily_story.story_types.n.line import LINE_N
 
 __all__ = [
     "QUALITY_FALLBACK_CODE",
@@ -58,7 +59,8 @@ __all__ = [
 STORY_TYPE_LINES: dict[str, StoryTypeLine] = {
     r.code: r
     for r in (
-        LINE_A, LINE_B, LINE_C, LINE_D, LINE_E, LINE_F, LINE_G, LINE_H, LINE_I, LINE_J, LINE_K, LINE_L,
+        LINE_A, LINE_B, LINE_C, LINE_D, LINE_E, LINE_F, LINE_G, LINE_H,
+        LINE_I, LINE_J, LINE_K, LINE_L, LINE_N,
     )
 }
 
@@ -449,7 +451,7 @@ def append_type_body_validation_errors(
     """类型正文硬卡。
 
     H5 生成默认看 ``quality_ready``；gold_chat 机审传 ``for_gold_chat=True``
-    时 A–L 一律跑契约（不提前开 quality_ready）。
+    时 A–N 一律跑契约（不提前开 quality_ready）。
     """
     from app.services.daily_story.story_types.a.facts import (
         append_brush_timer_fact_errors,
@@ -511,6 +513,10 @@ def append_type_body_validation_errors(
         from app.services.daily_story.story_types.l.validate import append_l_body_errors
 
         append_l_body_errors(story, errors)
+    elif code == "N" and _enabled("N"):
+        from app.services.daily_story.story_types.n.validate import append_n_body_errors
+
+        append_n_body_errors(story, errors)
 
 
 def patch_type_body(story: dict) -> list[str]:
@@ -563,6 +569,10 @@ def patch_type_body(story: dict) -> list[str]:
         from app.services.daily_story.story_types.l.patch import patch_l_body
 
         return patch_l_body(story)
+    if code == "N":
+        from app.services.daily_story.story_types.n.patch import patch_n_body
+
+        return patch_n_body(story)
     return []
 
 
@@ -673,6 +683,16 @@ def validate_type_opening(
         from app.services.daily_story.story_types.l.opening import append_l_opening_errors
 
         append_l_opening_errors(
+            normalized,
+            type_code=type_code,
+            errors=errors,
+            conflict_core=conflict_core,
+            setting=setting,
+        )
+    if type_body_validation_enabled("N"):
+        from app.services.daily_story.story_types.n.opening import append_n_opening_errors
+
+        append_n_opening_errors(
             normalized,
             type_code=type_code,
             errors=errors,

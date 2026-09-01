@@ -460,7 +460,8 @@ def format_seed_span_block(seed: list[Any] | None) -> str:
     need_lines = max(0, CHAT_LINE_COUNT_MIN - n)
     parts = [
         f"【篇幅硬卡】dialogue_seed 共 {n} 条；"
-        f"正文必须 ≥{CHAT_LINE_COUNT_MIN} 句且 ≥{DAILY_STORY_BODY_CHARS_MIN} 字。",
+        f"正文必须 ≥{CHAT_LINE_COUNT_MIN} 句且 ≥{DAILY_STORY_BODY_CHARS_MIN} 字"
+        f"（目标 280–340）；每句宜 16–22 字，禁灌尾巴凑字。",
     ]
     if need_lines > 0:
         parts.append(

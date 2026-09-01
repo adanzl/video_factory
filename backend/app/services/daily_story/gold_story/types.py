@@ -1,4 +1,4 @@
-"""金故事机制 M1–M12 与结构类型 A–E/F/G/H/I/J/K/L 映射。"""
+"""金故事机制 M1–M12 与结构类型 A–E/F/G/H/I/J/K/L/N 映射。"""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ GOLD_STORY_MECHANISM_LABELS: dict[str, str] = {
     "M3": "互呛加码",
     "M4": "递台词",
     "M5": "拒和加码",
-    "M6": "成人概念童化",
+    "M6": "正经胡说",
     "M7": "字面执行跑偏",
     "M8": "一锤可拍",
     "M9": "结盟甩锅",
@@ -30,7 +30,7 @@ MECHANISM_STRUCTURE_MAP: dict[str, str] = {
     "M3": "F",  # 互呛链式加码，暂无 A–E 标准收束
     "M4": "G",  # 递台词 escalation → 嘴硬心软（争物/双规则用 M1/M2→C）
     "M5": "A",  # 拒和解 / 嘴硬加码（调解→H；否决压住→J）
-    "M6": "A",  # 成人概念童化歪问
+    "M6": "N",  # 正经胡说 / 童化歪理（偶发 A/E 追问链另标）
     "M7": "D",  # 字面执行跑偏
     "M8": "A",  # 一锤可拍（有反噬→A；镇住不翻→J）
     "M9": "B",  # 结盟甩锅
@@ -43,6 +43,7 @@ MECHANISM_STRUCTURE_MAP: dict[str, str] = {
 MECHANISM_STRUCTURE_ALTERNATIVES: dict[str, frozenset[str]] = {
     "M2": frozenset({"L"}),  # 表演公平被拒领点破 → L（非双规则回旋镖）
     "M5": frozenset({"G", "H", "J"}),  # G 拒和后 pivot 暖收；H 调解；J 否决压住
+    "M6": frozenset({"A", "E"}),  # 偶发权威反噬/妈妈破功追问链（默认 N）
     "M8": frozenset({"J"}),  # 一锤镇住、不翻车
 }
 
@@ -55,6 +56,7 @@ GOLD_STORY_EXTENDED_TYPE_LABELS: dict[str, str] = {
     "J": "权威压住",
     "K": "家长看戏",
     "L": "退让点破",
+    "N": "正经胡说",
 }
 
 GOLD_STORY_STRUCTURE_LABELS: dict[str, str] = {
@@ -66,13 +68,13 @@ GOLD_STORY_STRUCTURE_CODES: frozenset[str] = frozenset(
     GOLD_STORY_STRUCTURE_LABELS.keys()
 )
 
-# daily_story 已落地类型（H5 可注入任务）；H/I/J/K/L 暂仅 gold_story 侧
-_GOLD_STORY_NON_INJECTABLE = frozenset({"F", "H", "I", "J", "K", "L"})
+# daily_story 已落地类型（H5 可注入任务）；H/I/J/K/L/N 暂仅 gold_story 侧
+_GOLD_STORY_NON_INJECTABLE = frozenset({"F", "H", "I", "J", "K", "L", "N"})
 GOLD_STORY_INJECTABLE_CODES: frozenset[str] = frozenset(
     k for k in STORY_TYPE_LABELS if k not in _GOLD_STORY_NON_INJECTABLE
 )
 
-# 与 docs/日常故事-类型.md §3 一致（含金故事扩展 F–L）
+# 与 docs/日常故事-类型.md §3 一致（含金故事扩展 F–N）
 GOLD_STORY_TYPE_CATALOG: tuple[dict[str, str], ...] = (
     {
         "code": "A",
@@ -145,6 +147,12 @@ GOLD_STORY_TYPE_CATALOG: tuple[dict[str, str], ...] = (
         "name": "退让点破",
         "formula": "争物短→成人表演公平催让渡→拒收退让→点破偏心→语塞",
         "closing": "点破偏心/成人语塞；禁止 C 回旋镖、A 破功",
+    },
+    {
+        "code": "N",
+        "name": "正经胡说",
+        "formula": "设问考验→离谱秒答→追问→荒诞自洽→愣住",
+        "closing": "对方愣住/接不住；禁止 A/C/E/I 标准收束",
     },
 )
 

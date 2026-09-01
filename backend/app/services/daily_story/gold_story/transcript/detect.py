@@ -31,11 +31,17 @@ class SubtitleRegion:
     samples: int = 0
     confidence: float = 0.0
 
-    def clamp(self, *, max_h_ratio: float = 0.12) -> SubtitleRegion:
+    def clamp(
+        self,
+        *,
+        max_h_ratio: float = 0.12,
+        min_h_ratio: float = 0.04,
+    ) -> SubtitleRegion:
+        floor = max(0.04, float(min_h_ratio))
         y = max(0.0, min(float(self.y_ratio), 0.98))
-        h = max(0.04, min(float(self.h_ratio), float(max_h_ratio)))
+        h = max(floor, min(float(self.h_ratio), float(max_h_ratio)))
         if y + h > 1.0:
-            h = max(0.04, 1.0 - y)
+            h = max(floor, 1.0 - y)
         return SubtitleRegion(
             y_ratio=y,
             h_ratio=h,
@@ -44,9 +50,38 @@ class SubtitleRegion:
             confidence=self.confidence,
         )
 
-    def crop_vf_expr(self, *, max_h_ratio: float = 0.12) -> str:
-        region = self.clamp(max_h_ratio=max_h_ratio)
+    def crop_vf_expr(
+        self,
+        *,
+        max_h_ratio: float = 0.12,
+        min_h_ratio: float = 0.04,
+    ) -> str:
+        region = self.clamp(max_h_ratio=max_h_ratio, min_h_ratio=min_h_ratio)
         return f"crop=iw:ih*{region.h_ratio}:0:ih*{region.y_ratio}"
+
+
+def ensure_ocr_readable_region(
+    region: SubtitleRegion,
+    *,
+    min_h_ratio: float,
+    max_h_ratio: float,
+) -> SubtitleRegion:
+    """定带过薄时向上扩高，给 OCR 留足字高余量（不二次解码）。"""
+    floor = max(0.04, float(min_h_ratio))
+    clamped = region.clamp(max_h_ratio=max_h_ratio, min_h_ratio=0.04)
+    if clamped.h_ratio >= floor - 1e-6:
+        return clamped.clamp(max_h_ratio=max_h_ratio, min_h_ratio=floor)
+    deficit = floor - clamped.h_ratio
+    y = max(0.0, clamped.y_ratio - deficit * 0.70)
+    h = min(floor, max_h_ratio, 1.0 - y)
+    expanded = SubtitleRegion(
+        y_ratio=y,
+        h_ratio=h,
+        method=f"{clamped.method}+ocr_floor",
+        samples=clamped.samples,
+        confidence=clamped.confidence,
+    )
+    return expanded.clamp(max_h_ratio=max_h_ratio, min_h_ratio=floor)
 
 
 def _ffmpeg() -> str:
@@ -717,7 +752,7 @@ def pick_subtitle_region_from_grays(
         return fallback_subtitle_region(cfg)
 
     y0, y1, score, contrast = best
-    pad = max(int((y1 - y0) * 0.12), max(int(frame_h * 0.004), 2))
+    pad = max(int((y1 - y0) * 0.28), max(int(frame_h * 0.008), 4))
     y0 = max(0, y0 - pad)
     y1 = min(frame_h, y1 + pad)
 
@@ -741,7 +776,13 @@ def pick_subtitle_region_from_grays(
         method="edge_density_sliding+contrast",
         samples=len(profiles),
         confidence=conf,
-    ).clamp(max_h_ratio=max_h_ratio)
+    )
+    ocr_floor = float(getattr(cfg, "gold_story_ocr_region_ocr_floor_h_ratio", 0.07))
+    region = ensure_ocr_readable_region(
+        region,
+        min_h_ratio=ocr_floor,
+        max_h_ratio=max_h_ratio,
+    )
     logger.info(
         "subtitle region tag=%s y=%.3f h=%.3f frames=%s dens=%.3f contrast=%.2f conf=%.2f",
         log_tag or "-",

@@ -1175,7 +1175,7 @@ def patch_m5_pre_mom_escalation(story: dict[str, Any]) -> tuple[dict[str, Any], 
 
 # 短 seed gold_chat：点题/closing 后另起第二轮（角色反转续写）
 _SHORT_SEED_MAX = 12
-_POST_CLOSE_TRIM_TYPES = frozenset({"C", "I", "L"})
+_POST_CLOSE_TRIM_TYPES = frozenset({"C", "I", "L", "N"})
 _I_POST_CLOSE_TAIL_ALLOW = 2
 RE_GOLD_HOLDER_WANT = re.compile(
     r"帮我夹|够不着|馋这一口|我也想吃|给我夹|分我半|换一口|我说不吃是客气"
