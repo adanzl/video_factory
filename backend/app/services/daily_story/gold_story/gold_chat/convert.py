@@ -2086,6 +2086,15 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
             chat, _ = patch_sanitize_c_tone_stack(chat)
             chat, _ = patch_sanitize_pad_suffix(chat)
             chat, _ = _ensure_gold_chat_min_chars(chat)
+            # align 可能写回昭昭「哼」软收末句；结构门控前再跑类型补丁
+            chat, post_notes = apply_type_body_pipeline(
+                chat, structure_type=structure_type
+            )
+            if post_notes:
+                logger.info(
+                    "gold_chat post-align type patch: %s",
+                    "；".join(str(n) for n in post_notes[:4]),
+                )
             if conflict_core:
                 chat["conflict_core"] = conflict_core
             # 结构分门控前先跑 M2+C 回旋镖/触发词补丁（否则 40 分空转）
@@ -2134,6 +2143,9 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
                         theme=str(row.get("title") or lifted.get("scene_title") or ""),
                         payload=payload,
                     )
+                    lifted, _ = apply_type_body_pipeline(
+                        lifted, structure_type=structure_type
+                    )
                     if conflict_core:
                         lifted["conflict_core"] = conflict_core
                     lifted = _attach_gold_chat_structure_score(lifted, row)
@@ -2144,11 +2156,32 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
                 quality = cast(dict[str, Any], chat.get("quality")) if isinstance(
                     chat.get("quality"), dict
                 ) else {}
+                reasons = [str(r) for r in (quality.get("reasons") or [])]
+                cons = [
+                    r
+                    for r in reasons
+                    if any(
+                        p in r
+                        for p in (
+                            "缺",
+                            "未",
+                            "拖",
+                            "不足",
+                            "软收",
+                            "跑题",
+                            "说人话",
+                            "连说",
+                            "-",
+                        )
+                    )
+                ]
                 logger.info(
-                    "gold_chat structure_score fail score=%s summary=%s reasons=%s",
+                    "gold_chat structure_score fail score=%s summary=%s "
+                    "cons=%s pros=%s",
                     quality.get("structure_score") or quality.get("score"),
                     quality.get("summary"),
-                    (quality.get("reasons") or [])[:8],
+                    cons[:8],
+                    reasons[:6],
                 )
                 pass1_feedback_block = format_pass1_regen_feedback(
                     last_err,
