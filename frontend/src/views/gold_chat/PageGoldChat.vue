@@ -38,7 +38,7 @@
       </span>
     </div>
 
-    <el-table :data="items" stripe class="w-full gold-chat-table" v-loading="loading" row-class-name="gold-chat-row"
+    <el-table ref="tableRef" :data="items" stripe class="w-full gold-chat-table" v-loading="loading" row-class-name="gold-chat-row"
       @selection-change="onSelectionChange" @row-click="onRowClick" @row-dblclick="viewItem">
       <el-table-column type="selection" width="30" />
       <el-table-column prop="id" label="ID" width="50" />
@@ -172,6 +172,7 @@ function formatUpdateTime(value?: string): string {
 const { handleError } = useErrorHandler();
 
 const items = ref<GoldChatListItem[]>([]);
+const tableRef = ref<any>(null);
 const loading = ref(false);
 const collecting = ref(false);
 const reimporting = ref(false);
@@ -693,6 +694,10 @@ function onDetailClosed() {
     selectedIds.value = savedSelected.filter((id) =>
       items.value.some((row) => row.id === id),
     );
+    savedSelected.forEach((id) => {
+      const row = items.value.find((r) => r.id === id);
+      if (row) tableRef.value?.toggleRowSelection(row, true);
+    });
   });
 }
 
