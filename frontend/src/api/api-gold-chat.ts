@@ -387,6 +387,32 @@ export async function importGoldChat(params: {
   return response.data;
 }
 
+export async function restoreGoldStories(
+  ids: number[],
+  fromStatus: "archived" | "rejected",
+): Promise<GoldStoryRestoreResult> {
+  const response = await api.post<GoldStoryRestoreResult>(
+    "/v_factory/api/gold_chat/restore",
+    { ids, from_status: fromStatus },
+  );
+  return response.data;
+}
+
+export interface GoldStoryRestoreResult {
+  restored: number;
+  skipped: number;
+  ids: number[];
+  results: Array<{
+    id: number;
+    source_id?: string;
+    action: string;
+    status?: string;
+    prev_status?: string | null;
+    reason?: string;
+    error?: string;
+  }>;
+}
+
 export interface GoldStoryArchiveResult {
   archived: number;
   skipped: number;

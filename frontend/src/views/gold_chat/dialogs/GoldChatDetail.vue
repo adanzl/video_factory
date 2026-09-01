@@ -259,36 +259,24 @@
     <template v-if="detail" #footer>
       <div class="flex w-full items-center justify-between">
         <div class="flex items-center gap-2">
-          <div class="text-xs text-gray-400">
-            <span v-if="detail.gold_chat_daily_story_id">
-              已导入日常故事
-              <router-link to="/daily-story" class="text-blue-600 hover:underline">
-                #{{ detail.gold_chat_daily_story_id }}
-              </router-link>
-            </span>
-          </div>
-          <el-button
-            v-if="detail.status !== 'rejected'"
-            type="warning"
-            plain
-            size="small"
-            :loading="rejecting"
-            :disabled="converting || importing || reimporting || archiving"
-            @click="handleReject"
+          <el-radio-group
+          :model-value="statusChoice"
+          size="small"
+          :disabled="statusBusy"
+          @change="onStatusChoiceChange"
           >
-            驳回
-          </el-button>
-          <el-button
-            v-if="detail.status !== 'archived'"
-            type="info"
-            plain
-            size="small"
-            :loading="archiving"
-            :disabled="converting || importing || reimporting || rejecting"
-            @click="handleArchive"
-          >
-            归档
-          </el-button>
+          <el-radio-button value="normal">正常</el-radio-button>
+          <el-radio-button value="rejected">驳回</el-radio-button>
+          <el-radio-button value="archived">归档</el-radio-button>
+        </el-radio-group>
+        <div class="text-xs text-gray-400">
+          <span v-if="detail.gold_chat_daily_story_id">
+            已导入日常故事
+            <router-link to="/daily-story" class="text-blue-600 hover:underline">
+              #{{ detail.gold_chat_daily_story_id }}
+            </router-link>
+          </span>
+        </div>
         </div>
         <div>
           <el-button @click="openTranscript">逐字稿</el-button>
@@ -334,6 +322,7 @@ import {
   getGoldChat,
   importGoldChat,
   rejectGoldStories,
+  restoreGoldStories,
   reimportGoldStories,
   type GoldStoryAudit,
   type GoldStoryDetail,
@@ -364,9 +353,21 @@ const loading = ref(false);
 const importing = ref(false);
 const converting = ref(false);
 const reimporting = ref(false);
-const rejecting = ref(false);
-const archiving = ref(false);
+const statusUpdating = ref(false);
 const detail = ref<GoldStoryDetail | null>(null);
+
+type StatusChoice = "normal" | "rejected" | "archived";
+
+const statusBusy = computed(
+  () => converting.value || importing.value || reimporting.value || statusUpdating.value,
+);
+
+const statusChoice = computed<StatusChoice>(() => {
+  const st = detail.value?.status;
+  if (st === "rejected") return "rejected";
+  if (st === "archived") return "archived";
+  return "normal";
+});
 
 const visible = computed({
   get: () => props.modelValue,
@@ -528,65 +529,43 @@ async function handleReimportFromBv() {
   }
 }
 
-async function handleReject() {
-  if (!detail.value || detail.value.status === "rejected") return;
-  const name = detail.value.title || detail.value.source_id || "";
+async function onStatusChoiceChange(next: StatusChoice) {
+  if (!detail.value || next === statusChoice.value) return;
+  const id = detail.value.id ?? props.goldStoryId;
+  if (!id) return;
+  statusUpdating.value = true;
   try {
-    await ElMessageBox.confirm(
-      `确定驳回「${name}」？仅改状态，不删文件。`,
-      "驳回金故事",
-      { type: "warning" },
-    );
-  } catch {
-    return;
-  }
-  rejecting.value = true;
-  try {
-    const id = detail.value.id ?? props.goldStoryId;
-    if (!id) return;
-    const res = await rejectGoldStories([id]);
-    if (res.rejected > 0) {
-      ElMessage.success("已驳回");
-      emit("status-changed");
-      await loadDetail();
-    } else {
-      ElMessage.warning("未驳回任何记录");
+    if (next === "rejected") {
+      const res = await rejectGoldStories([id]);
+      if (res.rejected <= 0) {
+        ElMessage.warning("未驳回");
+        return;
+      }
+    } else if (next === "archived") {
+      const res = await archiveGoldStories([id]);
+      if (res.archived <= 0) {
+        ElMessage.warning("未归档");
+        return;
+      }
+    } else if (detail.value.status === "rejected") {
+      const res = await restoreGoldStories([id], "rejected");
+      if (res.restored <= 0) {
+        ElMessage.warning("未恢复");
+        return;
+      }
+    } else if (detail.value.status === "archived") {
+      const res = await restoreGoldStories([id], "archived");
+      if (res.restored <= 0) {
+        ElMessage.warning("未恢复");
+        return;
+      }
     }
+    emit("status-changed");
+    await loadDetail();
   } catch (e) {
-    handleError(e, "驳回失败");
+    handleError(e, "状态更新失败");
   } finally {
-    rejecting.value = false;
-  }
-}
-
-async function handleArchive() {
-  if (!detail.value || detail.value.status === "archived") return;
-  const name = detail.value.title || detail.value.source_id || "";
-  try {
-    await ElMessageBox.confirm(
-      `确定归档「${name}」？仅改状态，不删文件。`,
-      "归档金故事",
-      { type: "warning" },
-    );
-  } catch {
-    return;
-  }
-  archiving.value = true;
-  try {
-    const id = detail.value.id ?? props.goldStoryId;
-    if (!id) return;
-    const res = await archiveGoldStories([id]);
-    if (res.archived > 0) {
-      ElMessage.success("已归档");
-      emit("status-changed");
-      await loadDetail();
-    } else {
-      ElMessage.warning("未归档任何记录");
-    }
-  } catch (e) {
-    handleError(e, "归档失败");
-  } finally {
-    archiving.value = false;
+    statusUpdating.value = false;
   }
 }
 

@@ -259,6 +259,22 @@ def reject_route():
         raise APIError(str(exc), status_code=400)
 
 
+@bp.post("/restore")
+def restore_route():
+    data = get_json_body()
+    ids = parse_int_list(data, "ids")
+    if not ids:
+        raise APIError("ids 必填", status_code=400)
+    from_status = parse_optional_str(data, "from_status")
+    if not from_status:
+        raise APIError("from_status 必填", status_code=400)
+    logger.info("[GOLD_CHAT] restore ids=%s from_status=%s", ids, from_status)
+    try:
+        return json_ok(gold_story_mgr.restore_stories(ids, from_status=from_status))
+    except ValueError as exc:
+        raise APIError(str(exc), status_code=400)
+
+
 @bp.post("/delete")
 def delete_route():
     data = get_json_body()
