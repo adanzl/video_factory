@@ -506,6 +506,24 @@ _C_SAFE_PAD_PHRASES = (
     "真的",
     "不行",
 )
+# 句数不足时中段插抽象反应（不写死主题物件，保 speaker 交替）
+_GOLD_CHAT_REACT_LINES: tuple[tuple[str, str], ...] = (
+    ("昭昭", "你少来这套！"),
+    ("灿灿", "少废话听我的！"),
+    ("昭昭", "我就不服！"),
+    ("灿灿", "你再闹试试！"),
+    ("昭昭", "凭什么听你的！"),
+    ("灿灿", "我说怎样就怎样！"),
+)
+# 偏短句句内加可拍尾巴（姐弟通用；可复用到不同句）
+_GOLD_CHAT_LINE_EXPAND: tuple[str, ...] = (
+    "，你给我听好了",
+    "，这回算清楚",
+    "，别再装傻",
+    "，我可记住了",
+    "，说了就不改",
+    "，再闹我可恼了",
+)
 _RE_C_TONE_STACK = re.compile(
     r"(?:[呢嘛的了着好]{2,}呀|呢了|呢呀)[！。！？…]?$"
 )
@@ -844,12 +862,133 @@ def _pad_gold_chat_to_min_chars(
     return out, changed
 
 
+def _ensure_gold_chat_min_lines(story: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    """句数 <12 时在收束前插抽象反应句（保交替，不改末 2 句）。"""
+    import copy
+
+    from app.services.daily_story.gold_story.scene import CHAT_LINE_COUNT_MIN
+
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list):
+        return story, False
+    rows = [x for x in dialogue if isinstance(x, dict) and str(x.get("line") or "").strip()]
+    if len(rows) >= CHAT_LINE_COUNT_MIN:
+        return story, False
+    # 只补 near-miss（差 ≤3 句）；差太多交 Pass1 重生成，勿硬插成空壳
+    if CHAT_LINE_COUNT_MIN - len(rows) > PASS1_SHORT_LINE_DEFICIT_MAX:
+        return story, False
+
+    out = copy.deepcopy(story)
+    dlg = list(out.get("dialogue") or [])
+    react_i = 0
+    guard = 0
+    while len(dlg) < CHAT_LINE_COUNT_MIN and guard < 8:
+        guard += 1
+        insert_at = max(2, len(dlg) - 2)
+        prev = dlg[insert_at - 1] if insert_at >= 1 else {}
+        prev_sp = str(prev.get("speaker") or "").strip()
+        want_sp = "灿灿" if prev_sp == "昭昭" else "昭昭"
+        # 选匹配 speaker 的反应句
+        line = ""
+        for _ in range(len(_GOLD_CHAT_REACT_LINES)):
+            sp, ln = _GOLD_CHAT_REACT_LINES[react_i % len(_GOLD_CHAT_REACT_LINES)]
+            react_i += 1
+            if sp == want_sp:
+                line = ln
+                break
+        if not line:
+            line = "少来！" if want_sp == "昭昭" else "听我的！"
+        # 避免与邻句完全相同
+        neigh = {
+            str(dlg[insert_at - 1].get("line") or "") if insert_at >= 1 else "",
+            str(dlg[insert_at].get("line") or "") if insert_at < len(dlg) else "",
+        }
+        if line in neigh:
+            continue
+        dlg.insert(insert_at, {"speaker": want_sp, "line": line})
+    out["dialogue"] = dlg
+    return out, len(dlg) > len(rows)
+
+
+def _expand_short_gold_chat_lines(story: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    """偏短句加可拍尾巴，补到 hard min（每句最多一条尾巴，禁叠灌）。"""
+    import copy
+
+    from app.services.daily_story.dialogue_text import DAILY_STORY_LINE_CHARS_MAX
+
+    total = dialogue_total_chars(story)
+    need = DAILY_STORY_BODY_CHARS_MIN - total
+    if need <= 0:
+        return story, False
+
+    out = copy.deepcopy(story)
+    dialogue = out.get("dialogue")
+    if not isinstance(dialogue, list) or not dialogue:
+        return story, False
+
+    changed = False
+    touched: set[int] = set()
+    used_clauses: set[str] = set()
+    for _ in range(8):
+        need = DAILY_STORY_BODY_CHARS_MIN - dialogue_total_chars(out)
+        if need <= 0:
+            break
+        candidates = [
+            (i, item)
+            for i, item in enumerate(dialogue)
+            if isinstance(item, dict)
+            and i not in touched
+            and str(item.get("speaker") or "") in {"昭昭", "灿灿"}
+            and 4 <= len(str(item.get("line") or "").strip()) < 16
+        ]
+        if not candidates:
+            break
+        candidates.sort(key=lambda x: len(str(x[1].get("line") or "")))
+        progressed = False
+        for idx, item in candidates:
+            need = DAILY_STORY_BODY_CHARS_MIN - dialogue_total_chars(out)
+            if need <= 0:
+                break
+            line = str(item.get("line") or "").strip()
+            core = line.rstrip("！。？…!")
+            punct = line[len(core) :] or "！"
+            room = max(0, DAILY_STORY_LINE_CHARS_MAX - len(line))
+            if room < 4:
+                touched.add(idx)
+                continue
+            for clause in (
+                [c for c in _GOLD_CHAT_LINE_EXPAND if c.lstrip("，,") not in used_clauses]
+                + [c for c in _GOLD_CHAT_LINE_EXPAND if c.lstrip("，,") in used_clauses]
+            ):
+                bare = clause.lstrip("，,")
+                if bare in core:
+                    continue
+                if len(clause) > room or len(clause) > need:
+                    continue
+                item["line"] = (core + clause + punct)[:DAILY_STORY_LINE_CHARS_MAX]
+                used_clauses.add(bare)
+                touched.add(idx)
+                changed = True
+                progressed = True
+                break
+            if progressed:
+                break
+        if not progressed:
+            break
+    return out, changed
+
+
 def _ensure_gold_chat_min_chars(story: dict[str, Any]) -> tuple[dict[str, Any], bool]:
-    """垫到 hard min；sanitize 剥叠后若又短，再垫（避免 235→垫满→剥回 235）。"""
-    data, changed = _patch_gold_chat_near_miss_chars(story)
+    """垫到 hard min；先补句数，再句内扩写/粒子垫；sanitize 剥叠后再垫。"""
+    data, changed_lines = _ensure_gold_chat_min_lines(story)
+    data, changed_exp = _expand_short_gold_chat_lines(data)
+    changed = changed_lines or changed_exp
+
+    data2, changed_pad = _patch_gold_chat_near_miss_chars(data)
+    data, changed = data2, changed or changed_pad
     if dialogue_total_chars(data) < DAILY_STORY_BODY_CHARS_MIN:
-        data2, changed2 = _pad_gold_chat_to_min_chars(data)
-        data, changed = data2, changed or changed2
+        data3, changed3 = _pad_gold_chat_to_min_chars(data)
+        data, changed = data3, changed or changed3
 
     # 垫 ↔ 剥叠：最多几轮，直到 ≥min 或垫不动
     for _ in range(4):
@@ -859,9 +998,10 @@ def _ensure_gold_chat_min_chars(story: dict[str, Any]) -> tuple[dict[str, Any], 
         if dialogue_total_chars(data) >= DAILY_STORY_BODY_CHARS_MIN:
             return data, changed
         before = dialogue_total_chars(data)
+        data, exp_again = _expand_short_gold_chat_lines(data)
         data, pad_again = _pad_gold_chat_to_min_chars(data)
-        changed = changed or pad_again
-        if not pad_again or dialogue_total_chars(data) <= before:
+        changed = changed or exp_again or pad_again
+        if (not exp_again and not pad_again) or dialogue_total_chars(data) <= before:
             break
     return data, changed
 
@@ -1106,6 +1246,7 @@ def _validate_pass1_chat(
         data["story_type"] = st
     last_err = ""
     shorten_llm_used = False
+    short_expand_llm_used = False
     for attempt in range(5):
         data = _apply_pass1_setting_normalize(data, row=row)
         data, _ = _ensure_gold_chat_min_chars(data)
@@ -1121,8 +1262,30 @@ def _validate_pass1_chat(
             last_err = str(exc)
             if attempt >= 4:
                 raise ValueError(last_err) from exc
-            # 偏短：本地补句/垫字仍不足 → 交外层 Pass1 回灌，勿烧 FIX
+            # 偏短：粒子垫字补不动（如 12 短句≈150 字）→ 先 FIX 句内扩写一轮；
+            # 仍不足再交外层 Pass1 重生成（勿空烧整稿重抽）
             if _is_short_content_error(last_err):
+                if not short_expand_llm_used:
+                    deficit = _char_deficit_from_error(last_err) or 0
+                    expand_err = last_err
+                    if deficit > 0:
+                        expand_err = (
+                            f"{last_err}；须句内扩写补满还差{deficit}字，"
+                            f"偏短句各加到约18–{CHAT_MAX_LINE_CHARS}字，"
+                            f"禁止只加语气词、禁止删句"
+                        )
+                    data = _fix_chat_with_llm(
+                        data,
+                        expand_err,
+                        banned_literals=banned_literals,
+                        mom_lines_max=mom_lines_max,
+                    )
+                    data = _normalize_chat_speakers(data)
+                    if st:
+                        data["story_type"] = st
+                    data, _ = _ensure_gold_chat_min_chars(data)
+                    short_expand_llm_used = True
+                    continue
                 raise ValueError(last_err) from exc
             if "单句过长" in last_err:
                 trimmed, changed = _apply_deterministic_shorten(data)
@@ -1663,13 +1826,18 @@ def _is_regenerable_line_short_error(msg: str) -> bool:
 
 
 def _is_regenerable_short_error(msg: str) -> bool:
-    """句数差 ≤3，或字数差 ≤120 可 Pass1 重生成。"""
-    if _is_regenerable_line_short_error(msg):
-        return True
-    deficit = _char_deficit_from_error(msg)
-    if deficit is None:
+    """句数差 ≤3，或仅字数不足（句数已够/未报句数）→ 可 Pass1 重生成。
+
+    字数缺口大（如 117/240）也靠 FIX 扩写 + 重抽，勿立刻驳回。
+    仅当句数差 >3（如 8/12）才视为不可靠重生成。
+    """
+    line_def = _line_count_deficit_from_error(msg)
+    if line_def is not None and line_def > PASS1_SHORT_LINE_DEFICIT_MAX:
         return False
-    return 1 <= deficit <= 120
+    if line_def is not None and line_def >= 1:
+        return True
+    char_def = _char_deficit_from_error(msg)
+    return char_def is not None and char_def > 0
 
 
 def _short_content_reject_message(detail: str, *, regen_count: int = 0) -> str:
