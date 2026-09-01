@@ -174,6 +174,7 @@ def test_j_patch_dedupes_authority_repeat():
 
     story = _j_repetitive_veto_story()
     notes = patch_j_body(story)
+    assert any("J去否决复读" in n for n in notes)
     assert notes
     cancan = [
         x["line"]
@@ -186,3 +187,47 @@ def test_j_patch_dedupes_authority_repeat():
     errors: list[str] = []
     append_j_body_errors(story, errors)
     assert errors == []
+
+
+def test_j_patch_swaps_limp_last_to_cancan_hold():
+    """末句昭昭「哼」软收须与灿灿镇住对调，避免无破功软收 -20。"""
+    from app.services.daily_story.quality import score_daily_story
+    from app.services.daily_story.story_types.j.patch import patch_j_body
+
+    story = {
+        "story_type": "J",
+        "setting": "幼儿园午休垫子上，灿灿和昭昭在抢地盘",
+        "conflict_core": "弟弟先闹动手，姐姐一锤 KO 镇住，弟弟表面认输内心不服",
+        "punchline_explain": "J类：灿灿一锤镇住，昭昭怂退不敢再顶。",
+        "discovery_opening": [
+            {"speaker": "昭昭", "line": "这是我的地盘，你走开！"},
+            {"speaker": "灿灿", "line": "不行，谁赢谁说了算！"},
+        ],
+        "dialogue": [
+            {"speaker": "昭昭", "line": "这是我的地盘，你走开！"},
+            {"speaker": "灿灿", "line": "我先来的，该你走！"},
+            {"speaker": "昭昭", "line": "哼，看招！"},
+            {"speaker": "灿灿", "line": "你敢打我？不行！"},
+            {"speaker": "昭昭", "line": "就打你，怎么了！"},
+            {"speaker": "灿灿", "line": "谁赢谁说了算！"},
+            {"speaker": "昭昭", "line": "拿出你的最强形态来！"},
+            {"speaker": "灿灿", "line": "草莓熊肘击！"},
+            {"speaker": "昭昭", "line": "啊，我输了！"},
+            # prev2 故意不含镇住词，复现「有收束形态仍无破功软收 -20」
+            {"speaker": "灿灿", "line": "以后玩具归姐姐这边！"},
+            {"speaker": "昭昭", "line": "哼，等我长大再算账！"},
+        ],
+    }
+    before = score_daily_story(story, theme="地盘争夺", skip_relevancy=True)
+    assert any("无破功软收" in r for r in before["reasons"]), before
+    assert before["structure_score"] < 75, before
+
+    notes = patch_j_body(story)
+    assert any("镇住" in n for n in notes)
+    assert story["dialogue"][-1]["speaker"] == "灿灿"
+    assert "哼" not in story["dialogue"][-1]["line"]
+    assert story["dialogue"][-2]["speaker"] == "昭昭"
+
+    after = score_daily_story(story, theme="地盘争夺", skip_relevancy=True)
+    assert after["structure_score"] >= 75, after
+    assert "无破功软收" not in "".join(after["reasons"])
