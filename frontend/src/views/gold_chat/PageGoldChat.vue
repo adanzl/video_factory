@@ -688,7 +688,12 @@ function onDetailConverted(payload?: {
 }
 
 function onDetailClosed() {
-  void fetchItems();
+  const savedSelected = [...selectedIds.value];
+  void fetchItems().then(() => {
+    selectedIds.value = items.value
+      .filter((row) => savedSelected.includes(row.id))
+      .map((row) => row.id);
+  });
 }
 
 function onDetailReimported() {
