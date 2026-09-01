@@ -151,3 +151,19 @@ def test_region_crop_vf_must_pass_max_h_for_detect_samples():
     region = SubtitleRegion(y_ratio=0.8, h_ratio=0.2)
     assert region.crop_vf_expr(max_h_ratio=0.20) == "crop=iw:ih*0.2:0:ih*0.8"
     assert "0.12" in region.crop_vf_expr()
+
+
+def test_ensure_ocr_readable_region_expands_thin_band():
+    from app.services.daily_story.gold_story.transcript.detect import (
+        ensure_ocr_readable_region,
+    )
+
+    thin = SubtitleRegion(y_ratio=0.687, h_ratio=0.040, method="test")
+    expanded = ensure_ocr_readable_region(
+        thin,
+        min_h_ratio=0.07,
+        max_h_ratio=0.22,
+    )
+    assert expanded.h_ratio >= 0.07 - 1e-6
+    assert expanded.y_ratio < thin.y_ratio
+    assert expanded.y_ratio + expanded.h_ratio <= 1.0 + 1e-6

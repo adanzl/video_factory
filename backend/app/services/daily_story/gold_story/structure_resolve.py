@@ -1,4 +1,4 @@
-"""金故事结构类型纠偏：M2+C 误判为武力压制时应落 M8+J。"""
+"""金故事结构类型纠偏：M2+C 误判武力压制→M8+J；正经胡说→M6+N。"""
 
 from __future__ import annotations
 
@@ -27,6 +27,11 @@ _RE_DOMINATION = re.compile(
 _RE_SURRENDER = re.compile(r"我输了|认输|不敢再|怂|服软|败下阵来?|当场")
 _RE_WINNER_RULE = re.compile(r"谁赢了?谁说了算|谁赢谁|赢了说了算|胜者为王")
 _RE_DEFERRED_GRUDGE = re.compile(r"等我长大|以后再|再跟你算账|忍气吞声|来日再")
+_RE_SOLEMN_NONSENSE = re.compile(
+    r"一本正经|正经胡说|荒诞逻辑|无厘头|童趣逻辑|跳跃逻辑|"
+    r"哭笑不得|愣住.*放弃|被童言|胡说"
+)
+_RE_NO_BOOMERANG_NOTE = re.compile(r"未形成回旋镖|没有回旋镖|非回旋镖|无回旋镖")
 
 
 def classification_blob(
@@ -82,6 +87,17 @@ def suggests_m8_j_domination(blob: str) -> bool:
     return bool(_RE_SURRENDER.search(text))
 
 
+def suggests_m6_n_solemn_nonsense(blob: str) -> bool:
+    text = str(blob or "")
+    if not _RE_SOLEMN_NONSENSE.search(text):
+        return False
+    if suggests_c_fairness_boomerang(text):
+        return False
+    if suggests_m8_j_domination(text):
+        return False
+    return True
+
+
 def should_reclassify_m2_c_to_m8_j(
     *,
     mechanism: str,
@@ -97,6 +113,28 @@ def should_reclassify_m2_c_to_m8_j(
     if suggests_c_fairness_boomerang(blob):
         return False
     return True
+
+
+def should_reclassify_to_m6_n(
+    *,
+    mechanism: str,
+    structure_type: str,
+    blob: str,
+) -> bool:
+    """误标 C/A/E 的正经胡说 → M6+N。"""
+    mech = str(mechanism or "").strip().upper()
+    st = str(structure_type or "").strip().upper()
+    if mech == "M6" and st == "N":
+        return False
+    if not suggests_m6_n_solemn_nonsense(blob):
+        return False
+    if mech == "M6" and st in {"A", "E", "C"}:
+        return True
+    if mech == "M2" and st == "C":
+        return True
+    if st == "C" and _RE_NO_BOOMERANG_NOTE.search(blob):
+        return True
+    return False
 
 
 def _sync_scene_contract_story_type(
@@ -115,12 +153,33 @@ def _sync_scene_contract_story_type(
     payload["scene_contract"] = sc
 
 
+def _apply_reclass(
+    out: dict[str, Any],
+    *,
+    target_mech: str,
+    target_st: str,
+    note_extra: str,
+    note_tag: str,
+) -> list[str]:
+    notes = [
+        f"mechanism:{out.get('mechanism')}→{target_mech}"
+        f"+structure:{out.get('structure_type')}→{target_st}({note_tag})"
+    ]
+    out["mechanism"] = target_mech
+    out["structure_type"] = target_st
+    note = str(out.get("structure_mapping_note") or "").strip()
+    out["structure_mapping_note"] = (
+        f"{note}；{note_extra}".strip("；") if note else note_extra
+    )
+    return notes
+
+
 def resolve_h3_structure(
     h3: dict[str, Any],
     *,
     story_raw: str = "",
 ) -> tuple[dict[str, Any], list[str]]:
-    """H3 后处理：武力压制误标 M2+C → M8+J。"""
+    """H3 后处理：武力压制误标 M2+C → M8+J；正经胡说误标 → M6+N。"""
     notes: list[str] = []
     out = dict(h3)
     blob = classification_blob(
@@ -129,19 +188,38 @@ def resolve_h3_structure(
         conflict_core=str(out.get("conflict_core") or ""),
         mapping_note=str(out.get("structure_mapping_note") or ""),
     )
-    if not should_reclassify_m2_c_to_m8_j(
+    if should_reclassify_m2_c_to_m8_j(
         mechanism=str(out.get("mechanism") or ""),
         structure_type=str(out.get("structure_type") or ""),
         blob=blob,
     ):
+        notes.extend(
+            _apply_reclass(
+                out,
+                target_mech="M8",
+                target_st="J",
+                note_extra="武力压制单方定规+认输收场，非 C 双规则回旋镖",
+                note_tag="domination-not-fairness",
+            )
+        )
         return out, notes
 
-    out["mechanism"] = "M8"
-    out["structure_type"] = "J"
-    notes.append("mechanism:M2→M8+structure:C→J(domination-not-fairness)")
-    note = str(out.get("structure_mapping_note") or "").strip()
-    extra = "武力压制单方定规+认输收场，非 C 双规则回旋镖"
-    out["structure_mapping_note"] = f"{note}；{extra}".strip("；") if note else extra
+    if should_reclassify_to_m6_n(
+        mechanism=str(out.get("mechanism") or ""),
+        structure_type=str(out.get("structure_type") or ""),
+        blob=blob,
+    ):
+        notes.extend(
+            _apply_reclass(
+                out,
+                target_mech="M6",
+                target_st="N",
+                note_extra="正经胡说荒诞自洽+愣住，非 C/A/E 标准收束",
+                note_tag="solemn-nonsense",
+            )
+        )
+        return out, notes
+
     return out, notes
 
 
@@ -164,16 +242,29 @@ def resolve_structure_row(row: dict[str, Any]) -> tuple[dict[str, Any], list[str
     )
     mechanism = str(out.get("mechanism") or "").strip().upper()
     current = str(out.get("structure_type") or "").strip().upper()
-    if not should_reclassify_m2_c_to_m8_j(
+
+    target_mech = ""
+    target_st = ""
+    extra = ""
+    if should_reclassify_m2_c_to_m8_j(
         mechanism=mechanism,
         structure_type=current,
         blob=blob,
     ):
+        target_mech, target_st = "M8", "J"
+        extra = "武力压制单方定规+认输收场，非 C 双规则回旋镖"
+    elif should_reclassify_to_m6_n(
+        mechanism=mechanism,
+        structure_type=current,
+        blob=blob,
+    ):
+        target_mech, target_st = "M6", "N"
+        extra = "正经胡说荒诞自洽+愣住，非 C/A/E 标准收束"
+
+    if not target_mech:
         out["payload"] = payload
         return out, notes
 
-    target_mech = "M8"
-    target_st = "J"
     if target_st not in allowed_structure_types(target_mech):
         out["payload"] = payload
         return out, notes
@@ -184,9 +275,10 @@ def resolve_structure_row(row: dict[str, Any]) -> tuple[dict[str, Any], list[str
     notes.append(f"mechanism:{mechanism}→{target_mech}+structure:{current}→{target_st}")
 
     note = str(payload.get("structure_mapping_note") or "").strip()
-    extra = "武力压制单方定规+认输收场，非 C 双规则回旋镖"
     if extra not in note:
-        payload["structure_mapping_note"] = f"{note}；{extra}".strip("；") if note else extra
+        payload["structure_mapping_note"] = (
+            f"{note}；{extra}".strip("；") if note else extra
+        )
 
     _sync_scene_contract_story_type(payload, target_st, notes)
     out["payload"] = payload

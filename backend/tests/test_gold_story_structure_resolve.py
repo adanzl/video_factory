@@ -98,6 +98,59 @@ def test_resolve_gold_chat_structure_row_m2_c_to_m8_j():
     assert any("M2→M8" in n for n in notes)
 
 
+_STORY_39_RAW = (
+    "妈妈问儿子：“如果爸爸掉水里了，你先吃苹果还是先吃香蕉？”"
+    "儿子想都没想就说：“吃香蕉。”妈妈追问为什么，儿子一本正经地说："
+    "“因为香蕉有籽，吃了能长成香蕉树，到时候就能把爸爸捞上来了。”"
+    "妈妈愣住，哭笑不得。"
+)
+
+
+def test_suggests_m6_n_for_solemn_nonsense():
+    from app.services.daily_story.gold_story.structure_resolve import (
+        should_reclassify_to_m6_n,
+        suggests_m6_n_solemn_nonsense,
+    )
+
+    blob = (
+        _STORY_39_RAW
+        + "\n双方各执判据但未形成回旋镖"
+        + "\n荒诞逻辑一本正经"
+    )
+    assert suggests_m6_n_solemn_nonsense(blob)
+    assert should_reclassify_to_m6_n(
+        mechanism="M2",
+        structure_type="C",
+        blob=blob,
+    )
+    assert not should_reclassify_m2_c_to_m8_j(
+        mechanism="M2",
+        structure_type="C",
+        blob=blob,
+    )
+
+
+def test_resolve_h3_structure_story_39_to_m6_n():
+    h3 = {
+        "mechanism": "M2",
+        "structure_type": "C",
+        "conflict_core": "妈妈用假设性问题考验，儿子用荒诞逻辑回应",
+        "beat": [
+            "妈妈抛出二选一难题",
+            "儿子秒答吃香蕉",
+            "妈妈追问，儿子一本正经解释",
+            "妈妈哭笑不得",
+        ],
+        "structure_mapping_note": "双方各执判据但未形成回旋镖",
+        "structure_confidence": 0.7,
+    }
+    fixed, notes = resolve_h3_structure(h3, story_raw=_STORY_39_RAW)
+    assert fixed["mechanism"] == "M6"
+    assert fixed["structure_type"] == "N"
+    assert notes
+    assert "solemn-nonsense" in notes[0]
+
+
 def test_structurize_story_applies_resolve(monkeypatch):
     def fake_chat(_system: str, _user: str) -> dict:
         return {

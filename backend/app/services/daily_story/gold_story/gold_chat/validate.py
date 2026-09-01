@@ -1187,8 +1187,9 @@ def _append_seed_speaker_issues(
         line = str(row.get("line") or "").strip()
         if not line or sp not in {"昭昭", "灿灿", "妈妈"}:
             continue
+        line_han = "".join(re.findall(r"[\u4e00-\u9fff]", line))
         for phr, want in owners.items():
-            if phr not in line:
+            if phr not in line and phr not in line_han:
                 continue
             if sp == want:
                 continue
@@ -1218,7 +1219,7 @@ def collect_align_issues(
 ) -> list[dict[str, Any]]:
     """类型对齐机审：返回 polish 同构 issue（抽象不变量，非逐篇剧情）。
 
-    特化机审（M5+H / H / F）之外，A–L 一律再跑类型正文契约
+    特化机审（M5+H / H / F）之外，A–N 一律再跑类型正文契约
     （不依赖 quality_ready）。
     """
     st = str(structure_type or "").strip().upper()
@@ -1288,7 +1289,7 @@ def _append_type_contract_align_issues(
     structure_type: str,
     issues: list[dict[str, Any]],
 ) -> None:
-    """A–L 类型正文契约 → gold_chat issue（绕过 quality_ready）。"""
+    """A–N 类型正文契约 → gold_chat issue（绕过 quality_ready）。"""
     from app.services.daily_story.story_types import (
         STORY_TYPE_LABELS,
         append_type_body_validation_errors,

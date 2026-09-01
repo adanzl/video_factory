@@ -358,6 +358,14 @@ class Config:
         self.gold_story_ocr_region_min_h_ratio: float = float(
             os.getenv("GOLD_STORY_OCR_REGION_MIN_H_RATIO", "0.025")
         )
+        # 定带后 OCR 裁切高度下限（全帧比例）；过薄时向上扩高
+        self.gold_story_ocr_region_ocr_floor_h_ratio: float = float(
+            os.getenv("GOLD_STORY_OCR_REGION_OCR_FLOOR_H_RATIO", "0.07")
+        )
+        # 送入 RapidOCR 前，裁切图高度不足则放大到此像素
+        self.gold_story_ocr_preprocess_min_height_px: int = int(
+            os.getenv("GOLD_STORY_OCR_PREPROCESS_MIN_HEIGHT_PX", "72")
+        )
         self.gold_story_ocr_region_search_ratio: float = float(
             os.getenv("GOLD_STORY_OCR_REGION_SEARCH_RATIO", "0.50")
         )

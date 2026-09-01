@@ -32,7 +32,7 @@ export interface DailyStoryRecord {
   story: StoryContent;
   /** 内容标签，表列权威；与 story.key 同步 */
   key: string | null;
-  /** 矛盾类型代码 A–L，来自笑点解析 */
+  /** 矛盾类型代码 A–N，来自笑点解析 */
   story_type: string | null;
   job_id: number | null;
   status: string;
@@ -42,7 +42,7 @@ export interface DailyStoryRecord {
 
 export type DailyStoryListResponse = ListResponse<DailyStoryRecord>;
 
-/** 与后端 STORY_TYPE_LABELS 一致（A–L） */
+/** 与后端 STORY_TYPE_LABELS 一致（A–N） */
 export const DAILY_STORY_TYPE_LABELS: Record<string, string> = {
   A: "权威翻车",
   B: "结盟翻车",
@@ -55,7 +55,8 @@ export const DAILY_STORY_TYPE_LABELS: Record<string, string> = {
   I: "问倒收束",
   J: "权威压住",
   K: "家长看戏",
-  L: "退让点破",
+    L: "退让点破",
+  N: "正经胡说",
 };
 
 /** 如 A权威翻车；无有效代码时返回 "-" */
@@ -165,7 +166,7 @@ export async function deleteDailyStories(ids: number[]): Promise<{ deleted: numb
 
 export interface DailyStoryThemeItem {
   theme: string;
-  /** 可适配的矛盾类型 A–L，首项为主类型 */
+  /** 可适配的矛盾类型 A–N，首项为主类型 */
   story_types: string[];
 }
 

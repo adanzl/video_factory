@@ -5,6 +5,7 @@ import numpy as np
 from app.services.daily_story.gold_story.transcript.ocr import (
     _box_ink_color_key,
     _box_white_bg_ratio,
+    _preprocess_subtitle_crop,
     filter_hits_by_majority_color,
     filter_repeat_watermark_hits,
     infer_majority_ink_color,
@@ -86,7 +87,33 @@ def test_filter_repeat_watermark():
     assert [h["text"] for h in kept] == ["你比我还讨厌"]
 
 
-def test_filter_dialogue_boxes_majority_on_canvas():
+def test_filter_up_watermark_without_repeat():
+    hits = [
+        {"text": "你为什么不能背上来啊", "color_key": "white"},
+        {"text": "陶泥小猴子", "color_key": "white"},
+        {"text": "陶泥小猴子Do", "color_key": "white"},
+    ]
+    kept = filter_repeat_watermark_hits(hits)
+    assert [h["text"] for h in kept] == ["你为什么不能背上来啊"]
+
+
+def test_preprocess_upscales_thin_crop():
+    import cv2
+
+    thin = np.full((40, 320, 3), 40, dtype=np.uint8)
+    cv2.putText(
+        thin,
+        "test",
+        (8, 28),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.5,
+        (245, 245, 245),
+        2,
+        cv2.LINE_AA,
+    )
+    out = _preprocess_subtitle_crop(thin, min_height_px=72)
+    assert out.shape[0] >= 72
+    assert out.shape[1] >= thin.shape[1]
     canvas = np.full((96, 320, 3), 40, dtype=np.uint8)
     canvas[0:36, :] = _stroke_patch(h=36, w=320)
     canvas[54:90, :] = _bubble_patch(h=36, w=320)

@@ -111,6 +111,18 @@ def test_m12_maps_to_k_not_injectable():
         validate_mechanism_structure_pair("M12", "H")
 
 
+def test_m6_maps_to_n_not_injectable():
+    assert normalize_mechanism("M6") == "M6"
+    assert mechanism_label("M6") == "正经胡说"
+    assert structure_type_for_mechanism("M6") == "N"
+    assert structure_type_label("N") == "正经胡说"
+    assert catalog_entry("N") is not None
+    assert not is_injectable_structure_type("N")
+    assert allowed_structure_types("M6") == frozenset({"N", "A", "E"})
+    validate_mechanism_structure_pair("M6", "N")
+    validate_mechanism_structure_pair("M6", "A")
+
+
 def test_pair_mismatch_raises():
     with pytest.raises(ValueError, match="M2 对应 structure_type"):
         validate_mechanism_structure_pair("M2", "A")

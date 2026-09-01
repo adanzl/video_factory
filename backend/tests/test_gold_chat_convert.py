@@ -77,13 +77,42 @@ def test_validate_gold_chat_ok():
 
 
 def test_ensure_gold_chat_min_chars_pads_short_story():
-    lines = _sample_chat()["dialogue"][:12]
-    for item in lines:
-        item["line"] = str(item["line"])[:18]
-    story = {**_sample_chat(), "dialogue": lines}
+    """near-miss（差 ≤40）可本地垫满；大缺口不硬凑。"""
+    story = {
+        "story_type": "J",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "这是我的地盘，你快走开听见没有呀真的！"},
+            {"speaker": "灿灿", "line": "我先趴在这儿的，该你马上走开听见没有！"},
+            {"speaker": "昭昭", "line": "哼，看招，我先推你一下试试看啊真的！"},
+            {"speaker": "灿灿", "line": "你敢打我，我就马上告诉妈妈去啊真的！"},
+            {"speaker": "昭昭", "line": "就打你，你抢了我的位置啊真的不行！"},
+            {"speaker": "灿灿", "line": "谁赢谁说了算，咱们现在来比呀啊！"},
+            {"speaker": "昭昭", "line": "我拿出最强形态，再出拳打你啊听见！"},
+            {"speaker": "灿灿", "line": "草莓熊肘击，我砸你肚子一下听清楚！"},
+            {"speaker": "昭昭", "line": "哎哟我输了，你也太厉害啦呀真的！"},
+            {"speaker": "灿灿", "line": "玩具都归我，你到那边去躺着吧啊！"},
+            {"speaker": "昭昭", "line": "等长大再算账，我现在怕你啊真的！"},
+            {"speaker": "灿灿", "line": "我说了算，你乖乖躺好别动呀听见！"},
+        ],
+    }
+    chars = gc.dialogue_total_chars(story)
+    assert chars < gc.DAILY_STORY_BODY_CHARS_MIN
+    assert gc.DAILY_STORY_BODY_CHARS_MIN - chars <= gc.GOLD_CHAT_NEAR_MISS_DEFICIT_MAX
     out, changed = gc._ensure_gold_chat_min_chars(story)
     assert changed
     assert gc.dialogue_total_chars(out) >= gc.DAILY_STORY_BODY_CHARS_MIN
+
+    # 大缺口：剥灌尾后不靠粒子硬凑到 240（仍可中段加句，但空短稿不够）
+    short = {
+        "story_type": "J",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "看招！"},
+            {"speaker": "灿灿", "line": "谁赢谁说了算！"},
+        ]
+        * 6,
+    }
+    out_short, _ = gc._ensure_gold_chat_min_chars(short)
+    assert gc.dialogue_total_chars(out_short) < 100
 
 
 def test_validate_gold_chat_rejects_banned():
@@ -254,18 +283,18 @@ def test_ensure_gold_chat_min_chars_does_not_spam_expand_tails():
     near = {
         "story_type": "J",
         "dialogue": [
-            {"speaker": "昭昭", "line": "这是我的地盘你走开听见没有！"},
-            {"speaker": "灿灿", "line": "我先趴这儿的该你马上走！"},
-            {"speaker": "昭昭", "line": "哼看招我推你一下试试！"},
-            {"speaker": "灿灿", "line": "你敢打我我就告诉妈妈！"},
-            {"speaker": "昭昭", "line": "就打你你抢我的位置啊！"},
-            {"speaker": "灿灿", "line": "谁赢谁说了算咱们来比！"},
-            {"speaker": "昭昭", "line": "拿出最强形态我出拳打！"},
-            {"speaker": "灿灿", "line": "草莓熊肘击我砸你肚子！"},
-            {"speaker": "昭昭", "line": "哎哟我输了你太厉害啦！"},
-            {"speaker": "灿灿", "line": "玩具都归我你到那边去！"},
-            {"speaker": "昭昭", "line": "长大再算账我现在怕你！"},
-            {"speaker": "灿灿", "line": "我说了算你乖乖躺好吧！"},
+            {"speaker": "昭昭", "line": "这是我的地盘，你快走开听见没有呀真的！"},
+            {"speaker": "灿灿", "line": "我先趴在这儿的，该你马上走开听见没有！"},
+            {"speaker": "昭昭", "line": "哼，看招，我先推你一下试试看啊真的！"},
+            {"speaker": "灿灿", "line": "你敢打我，我就马上告诉妈妈去啊真的！"},
+            {"speaker": "昭昭", "line": "就打你，你抢了我的位置啊真的不行！"},
+            {"speaker": "灿灿", "line": "谁赢谁说了算，咱们现在来比呀啊！"},
+            {"speaker": "昭昭", "line": "我拿出最强形态，再出拳打你啊听见！"},
+            {"speaker": "灿灿", "line": "草莓熊肘击，我砸你肚子一下听清楚！"},
+            {"speaker": "昭昭", "line": "哎哟我输了，你也太厉害啦呀真的！"},
+            {"speaker": "灿灿", "line": "玩具都归我，你到那边去躺着吧啊！"},
+            {"speaker": "昭昭", "line": "等长大再算账，我现在怕你啊真的！"},
+            {"speaker": "灿灿", "line": "我说了算，你乖乖躺好别动呀听见！"},
         ],
     }
     chars = gc.dialogue_total_chars(near)
@@ -288,6 +317,62 @@ def test_sanitize_strips_expand_clutter():
     assert changed
     assert "你给我听好了" not in out["dialogue"][0]["line"]
     assert "这回算清楚" not in out["dialogue"][1]["line"]
+
+
+def test_patch_seed_speaker_align_fixes_swapped_phrases():
+    seed = [
+        {"speaker": "昭昭", "intent": "拿出最强形态来！"},
+        {"speaker": "灿灿", "intent": "草莓熊肘击！"},
+        {"speaker": "昭昭", "intent": "哼，等我长大再算账！"},
+    ]
+    story = {
+        "story_type": "J",
+        "dialogue": [
+            {"speaker": "灿灿", "line": "拿出最强形态来打我呀！"},
+            {"speaker": "昭昭", "line": "草莓熊肘击砸过去！"},
+            {"speaker": "灿灿", "line": "哼，等我长大再算账！"},
+        ],
+    }
+    out, changed = gc.patch_seed_speaker_align(story, dialogue_seed=seed)
+    assert changed
+    assert out["dialogue"][0]["speaker"] == "昭昭"
+    assert out["dialogue"][1]["speaker"] == "灿灿"
+    assert out["dialogue"][2]["speaker"] == "昭昭"
+
+
+def test_attach_gold_chat_structure_score_skips_opening_penalty_for_body():
+    """计分前清空 discovery_opening，避免前 2 句被当开场扣分。"""
+    row = _sample_row()
+    row["structure_type"] = "J"
+    row["title"] = "世子之争"
+    chat = {
+        "scene_title": "世子之争",
+        "setting": "地板垫上，灿灿和昭昭在抢垫子",
+        "conflict_core": "昭昭先动手，灿灿一锤镇住",
+        "punchline_explain": "J类权威压住：一锤肘击后镇住",
+        "story_type": "J",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "这垫子是我的地盘你走开！"},
+            {"speaker": "灿灿", "line": "谁赢谁说了算玩具归我！"},
+            {"speaker": "昭昭", "line": "拿出最强形态来打我！"},
+            {"speaker": "灿灿", "line": "草莓熊肘击砸你肚子！"},
+            {"speaker": "昭昭", "line": "啊我输了你太厉害啦！"},
+            {"speaker": "灿灿", "line": "以后玩具都归我安排！"},
+            {"speaker": "昭昭", "line": "哼等我长大再跟你算！"},
+            {"speaker": "灿灿", "line": "这局我已经镇住你了！"},
+            {"speaker": "昭昭", "line": "再求你一次松口行不行！"},
+            {"speaker": "灿灿", "line": "不行规矩就是这样定的！"},
+            {"speaker": "昭昭", "line": "那我保证这次听你的话！"},
+            {"speaker": "灿灿", "line": "保证也没用现在听我的！"},
+        ],
+    }
+    out = gc._attach_gold_chat_structure_score(chat, row)
+    reasons = " ".join(str(r) for r in (out.get("quality") or {}).get("reasons") or [])
+    assert "开场未满" not in reasons
+    assert "J开场缺求放行" not in reasons
+    assert "缺发现开场" not in reasons
+    score = int((out.get("quality") or {}).get("structure_score") or 0)
+    assert score >= 75, (score, reasons)
 
 
 def test_gold_chat_structure_score_skips_bili_title_relevancy():

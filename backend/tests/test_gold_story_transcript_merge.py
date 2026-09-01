@@ -128,3 +128,49 @@ def test_ocr_models_ready(tmp_path):
     assert not ocr.ocr_models_ready(cfg)
     (tmp_path / "ch_PP-OCRv4_rec_mobile.onnx").write_text("x")
     assert ocr.ocr_models_ready(cfg)
+
+
+def test_score_transcript_penalizes_stroke_ocr_confusions():
+    """描边字幕误识（育/竹/工米）不得虚高到跳过 ASR。"""
+    garbled = (
+        "我育不工米呀\n"
+        "你为竹么不能育上米啊\n"
+        "他门能育上米\n"
+        "找姿\n"
+        "我姿\n"
+        "陶泥小猴子\n"
+    )
+    clean = (
+        "我哭不出来呀\n"
+        "你为什么不能背上来啊\n"
+        "他们能背上来\n"
+        "我哭\n"
+        "我哭\n"
+    )
+    title = "我忍辱负重，只为了多年后的一句：姐，在吗？"
+    garbled_score = tm.score_transcript_text(
+        garbled,
+        title=title,
+        duration_sec=213.0,
+        avg_confidence=0.88,
+    )
+    clean_score = tm.score_transcript_text(
+        clean,
+        title=title,
+        duration_sec=213.0,
+        avg_confidence=0.88,
+    )
+    assert garbled_score < 0.55, garbled_score
+    assert clean_score >= 0.55, clean_score
+    assert clean_score > garbled_score
+
+    cfg = Config()
+    cfg.gold_story_ocr_skip_asr_min = 0.55
+    assert not ocr.should_skip_asr_after_ocr(
+        {"text": garbled, "quality_score": garbled_score},
+        cfg,
+    )
+    assert ocr.should_skip_asr_after_ocr(
+        {"text": clean, "quality_score": clean_score},
+        cfg,
+    )

@@ -22,6 +22,7 @@ from .detect import (
     SubtitleRegion,
     detect_burned_subtitles,
     detect_subtitle_region_from_images,
+    ensure_ocr_readable_region,
     fallback_subtitle_region,
     probe_duration,
 )
@@ -36,6 +37,7 @@ _OCR_SUBPROCESS_TIMEOUT_SEC = 600.0
 _worker_engine = None
 _worker_config_path: str | None = None
 _worker_model_root: str | None = None
+_worker_preprocess_min_h: int = 72
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,10 +71,12 @@ def _ffmpeg() -> str:
 def _init_ocr_worker(
     config_path: str,
     model_root_dir: str,
+    preprocess_min_h: int = 72,
 ) -> None:
-    global _worker_engine, _worker_config_path, _worker_model_root
+    global _worker_engine, _worker_config_path, _worker_model_root, _worker_preprocess_min_h
     _worker_config_path = config_path
     _worker_model_root = model_root_dir
+    _worker_preprocess_min_h = max(int(preprocess_min_h), 32)
     from rapidocr import RapidOCR  # type: ignore[import-not-found,unused-ignore]
 
     _worker_engine = RapidOCR(
@@ -180,7 +184,30 @@ def filter_hits_by_majority_color(
     ]
 
 
-_WATERMARK_RE = re.compile(r"(联系删除|如有侵权|侵权|来源[:：]|糖小果)")
+_WATERMARK_RE = re.compile(
+    r"(联系删除|如有侵权|侵权|来源[:：]|糖小果|陶泥|小猴子|bilibili)",
+    re.IGNORECASE,
+)
+
+
+def _preprocess_subtitle_crop(
+    image: Any,
+    *,
+    min_height_px: int = 72,
+) -> Any:
+    """薄裁切 + 描边字：放大并轻度锐化，提升 mobile OCR 可读性。"""
+    if image is None or getattr(image, "size", 0) == 0:
+        return image
+    h, w = image.shape[:2]
+    out = image
+    target = max(int(min_height_px), 1)
+    if h < target:
+        scale = target / max(h, 1)
+        new_w = max(int(w * scale), w)
+        new_h = max(int(h * scale), target)
+        out = cv2.resize(out, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
+    blurred = cv2.GaussianBlur(out, (0, 0), 1.0)
+    return cv2.addWeighted(out, 1.35, blurred, -0.35, 0)
 
 
 def filter_repeat_watermark_hits(
@@ -201,7 +228,9 @@ def filter_repeat_watermark_hits(
         text = str(hit.get("text") or "").strip()
         if not text:
             continue
-        if _WATERMARK_RE.search(text) and counts[text] >= 2:
+        if _WATERMARK_RE.search(text):
+            continue
+        if len(text) <= 8 and counts[text] >= max(2, int(min_repeat) - 2):
             continue
         if len(text) <= 6 and counts[text] >= int(min_repeat):
             continue
@@ -288,6 +317,14 @@ def _ocr_single_frame(args: tuple[float, str]) -> dict[str, Any]:
         _init_ocr_worker(_worker_config_path, _worker_model_root)
 
     timestamp_sec, image_path = args
+    image = cv2.imread(str(image_path))
+    if image is not None:
+        proc = _preprocess_subtitle_crop(
+            image,
+            min_height_px=_worker_preprocess_min_h,
+        )
+        cv2.imwrite(str(image_path), proc)
+
     result = _worker_engine(str(image_path), use_cls=False)  # type: ignore[operator]
     empty = {
         "timestamp_sec": timestamp_sec,
@@ -464,11 +501,17 @@ def crop_search_band_frames_to_region(
 
     band_top = max(0.0, min(float(search_band_top_ratio), 0.98))
     search_ratio = max(1.0 - band_top, 0.05)
-    clamped = region.clamp(max_h_ratio=float(cfg.gold_story_ocr_region_max_h_ratio))
+    ocr_floor = float(cfg.gold_story_ocr_region_ocr_floor_h_ratio)
+    clamped = ensure_ocr_readable_region(
+        region,
+        min_h_ratio=ocr_floor,
+        max_h_ratio=float(cfg.gold_story_ocr_region_max_h_ratio),
+    )
     local_y = (float(clamped.y_ratio) - band_top) / search_ratio
     local_h = float(clamped.h_ratio) / search_ratio
     local_y = max(0.0, min(local_y, 0.98))
-    local_h = max(0.04, min(local_h, 1.0 - local_y))
+    local_min_h = max(ocr_floor / search_ratio, 0.04)
+    local_h = max(local_min_h, min(local_h, 1.0 - local_y))
 
     kept: list[OcrFrame] = []
     for frame in frames:
@@ -616,7 +659,11 @@ def ocr_frames_parallel(
     workers = min(workers, len(frames))
 
     tasks = [(frame.timestamp_sec, str(frame.image_path)) for frame in frames]
-    init_args = (cfg_path, model_root)
+    init_args = (
+        cfg_path,
+        model_root,
+        int(config.gold_story_ocr_preprocess_min_height_px),
+    )
     if workers <= 1:
         _init_ocr_worker(*init_args)
         return [_ocr_single_frame(task) for task in tasks]
@@ -676,6 +723,11 @@ def transcribe_video_ocr(
         )
     else:
         region = fallback_subtitle_region(config)
+    region = ensure_ocr_readable_region(
+        region,
+        min_h_ratio=float(config.gold_story_ocr_region_ocr_floor_h_ratio),
+        max_h_ratio=float(config.gold_story_ocr_region_max_h_ratio),
+    )
     if frames:
         frames = crop_search_band_frames_to_region(
             frames,
