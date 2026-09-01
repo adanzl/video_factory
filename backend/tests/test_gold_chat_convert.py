@@ -147,6 +147,7 @@ def _bypass_structure_gate(monkeypatch):
 
 
 def test_gold_story_to_gold_chat_retries_when_one_line_short(monkeypatch):
+    """差 1 句 near-miss：本地插句即可过，不必整稿重抽。"""
     calls: dict[str, int | bool] = {"n": 0}
     _bypass_structure_gate(monkeypatch)
 
@@ -156,8 +157,7 @@ def test_gold_story_to_gold_chat_retries_when_one_line_short(monkeypatch):
             return _sample_chat()
         calls["n"] = int(calls["n"]) + 1
         chat = _sample_chat()
-        if int(calls["n"]) <= 2:
-            chat["dialogue"] = chat["dialogue"][:11]
+        chat["dialogue"] = chat["dialogue"][:11]
         return chat
 
     monkeypatch.setattr(gc, "_chat_json", fake_chat)
@@ -165,7 +165,7 @@ def test_gold_story_to_gold_chat_retries_when_one_line_short(monkeypatch):
     monkeypatch.setattr(gc, "PASS1_REGENERATE_MAX", 5)
     out = gc.gold_story_to_gold_chat(_sample_row())
     assert len(out["dialogue"]) >= 12
-    assert int(calls["n"]) >= 3
+    assert int(calls["n"]) == 1
     assert calls.get("fix") is not True
 
 
@@ -183,7 +183,8 @@ def test_gold_story_to_gold_chat_rejects_when_far_too_short(monkeypatch):
         gc.gold_story_to_gold_chat(_sample_row())
 
 
-def test_gold_story_to_gold_chat_rejects_after_three_one_line_short_regens(monkeypatch):
+def test_gold_story_to_gold_chat_pads_one_line_short_locally(monkeypatch):
+    """11 句近失本地补到 ≥12，不再空烧 3 次重生成。"""
     _bypass_structure_gate(monkeypatch)
 
     def fake_chat(_system: str, _user: str, **_kwargs) -> dict:
@@ -193,8 +194,9 @@ def test_gold_story_to_gold_chat_rejects_after_three_one_line_short_regens(monke
 
     monkeypatch.setattr(gc, "_chat_json", fake_chat)
     monkeypatch.setattr(gc, "PASS1_CANDIDATE_COUNT", 1)
-    with pytest.raises(ValueError, match="重生成3次仍不达标"):
-        gc.gold_story_to_gold_chat(_sample_row())
+    out = gc.gold_story_to_gold_chat(_sample_row())
+    assert len(out["dialogue"]) >= 12
+    assert gc.dialogue_total_chars(out) >= gc.DAILY_STORY_BODY_CHARS_MIN
 
 
 def test_bump_short_regen_helpers():
@@ -213,36 +215,41 @@ def test_bump_short_regen_helpers():
     assert not gc._is_regenerable_line_short_error(err8)
     with pytest.raises(ValueError, match="本地垫字仍不足"):
         gc._bump_short_regen_or_reject(err8, 0)
-    # 字数 near-miss（如 235/240）也应可重生成，勿冒充「重生成3次」
+    # 字数 near-miss / 大缺口均可重生成（勿立刻「本地垫字仍不足」）
     err_chars = "正文总字数须≥240，当前235"
     assert gc._char_deficit_from_error(err_chars) == 5
     assert gc._is_regenerable_short_error(err_chars)
     assert gc._bump_short_regen_or_reject(err_chars, 0) == 1
-    err_short = "正文总字数须≥240，当前148"
+    err_short = "正文总字数须≥240，当前117"
     assert gc._is_regenerable_short_error(err_short)
+    assert gc._bump_short_regen_or_reject(err_short, 0) == 1
     with pytest.raises(ValueError, match="重生成3次仍不达标"):
         gc._bump_short_regen_or_reject(err_chars, 3)
 
 
-def test_ensure_gold_chat_min_chars_survives_sanitize_strip():
-    """垫满后剥叠语气词又短 → 须再垫回 ≥240（回归 235 假驳回）。"""
-    from app.services.daily_story.prompts import DAILY_STORY_BODY_CHARS_MIN
-
-    story = _sample_chat()
-    total = gc.dialogue_total_chars(story)
-    # 剪到差 5 字，并塞可被 sanitize 剥掉的叠尾
-    trim = total - DAILY_STORY_BODY_CHARS_MIN + 5
-    dlg = story["dialogue"]
-    last = dlg[-3]
-    line = str(last["line"])
-    assert len(line) > trim
-    core = line[:-trim].rstrip("！。？…!")
-    last["line"] = core + "呢呢！"
-    assert gc.dialogue_total_chars(story) < DAILY_STORY_BODY_CHARS_MIN
-    out, changed = gc._ensure_gold_chat_min_chars(story)
+def test_ensure_gold_chat_min_lines_and_expand_reaches_floor():
+    """10 短句须本地插反应句 + 句内扩写到 ≥12 句 / ≥240 字。"""
+    short = {
+        "story_type": "J",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "这是我的地盘，你走开！"},
+            {"speaker": "灿灿", "line": "我先来的，该你走！"},
+            {"speaker": "昭昭", "line": "哼，看招！"},
+            {"speaker": "灿灿", "line": "你敢打我？"},
+            {"speaker": "昭昭", "line": "谁赢谁说了算！"},
+            {"speaker": "灿灿", "line": "拿出最强形态来！"},
+            {"speaker": "昭昭", "line": "草莓熊肘击！"},
+            {"speaker": "灿灿", "line": "啊，我输了！"},
+            {"speaker": "昭昭", "line": "以后玩具都归我！"},
+            {"speaker": "灿灿", "line": "哼，等我长大再算账！"},
+        ],
+    }
+    assert len(short["dialogue"]) == 10
+    assert gc.dialogue_total_chars(short) < gc.DAILY_STORY_BODY_CHARS_MIN
+    out, changed = gc._ensure_gold_chat_min_chars(short)
     assert changed
-    assert gc.dialogue_total_chars(out) >= DAILY_STORY_BODY_CHARS_MIN
-    assert "呢呢" not in "".join(str(x.get("line") or "") for x in out["dialogue"])
+    assert len(out["dialogue"]) >= 12
+    assert gc.dialogue_total_chars(out) >= gc.DAILY_STORY_BODY_CHARS_MIN
 
 
 def test_gold_chat_structure_score_skips_bili_title_relevancy():
@@ -279,6 +286,36 @@ def test_body_only_gold_chat_12_lines_skips_opening_penalty():
     }
     q = score_daily_story(story, theme="世子之争")
     assert "缺发现开场" not in " ".join(q.get("reasons") or [])
+
+
+def test_validate_pass1_expands_short_with_fix_before_regen(monkeypatch):
+    """偏短时先 FIX 句内扩写，勿立刻整稿重生成。"""
+    calls = {"fix": 0}
+
+    short = _sample_chat()
+    short["story_type"] = "J"
+    short["dialogue"] = [
+        {"speaker": "昭昭", "line": "看招！"},
+        {"speaker": "灿灿", "line": "你敢！"},
+    ] * 6
+    assert gc.dialogue_total_chars(short) < gc.DAILY_STORY_BODY_CHARS_MIN
+
+    def fake_fix(story, errors, **_kw):
+        calls["fix"] += 1
+        assert "正文总字数须≥" in errors
+        return _sample_chat()
+
+    monkeypatch.setattr(gc, "_fix_chat_with_llm", fake_fix)
+    monkeypatch.setattr(gc, "_ensure_gold_chat_min_chars", lambda s: (s, False))
+    out = gc._validate_pass1_chat(
+        short,
+        banned_literals=[],
+        source_type="field",
+        mom_lines_max=0,
+        structure_type="J",
+    )
+    assert calls["fix"] == 1
+    assert len(out["dialogue"]) >= 12
 
 
 def test_gold_story_to_gold_chat_retries_on_validate_error(monkeypatch):
