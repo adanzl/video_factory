@@ -921,6 +921,21 @@ def insert_pending(
     }
 
 
+def reset_processing_to_pending() -> int:
+    """服务重启后：processing → pending，便于队列重新认领。"""
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    result = sql.execute(
+        """
+        UPDATE gold_story
+        SET status = 'pending', updated_at = ?
+        WHERE status = 'processing'
+        """,
+        (now,),
+    )
+    sql.commit()
+    return int(result.rowcount or 0)
+
+
 def claim_next_pending() -> dict[str, Any] | None:
     """取出一条 pending → processing（单飞认领）。"""
     row = sql.fetchone(

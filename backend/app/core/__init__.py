@@ -6,7 +6,11 @@ from app.api import register_api
 from app.config import config
 from app.core.log_config import setup_server_logging
 from app.repositories.database import get_app, get_dbapi_connection, init_database
-from worker.recovery import recover_stuck_daily_stories, recover_stuck_jobs
+from worker.recovery import (
+    recover_stuck_daily_stories,
+    recover_stuck_gold_story_pending,
+    recover_stuck_jobs,
+)
 app_logger, access_logger = setup_server_logging(log_dir=config.log_dir, is_production=config.is_production)
 log = app_logger
 
@@ -25,6 +29,19 @@ def _recover_stuck_daily_stories() -> None:
             log.warning('startup recovery: %d daily story/stories were stuck and have been re-queued', count)
     except Exception:
         log.exception('startup recovery failed, daily stories may still be stuck')
+
+def _recover_stuck_gold_story_pending() -> None:
+    try:
+        count = recover_stuck_gold_story_pending()
+        if count:
+            log.warning(
+                'startup recovery: %d gold story/stories pending queue re-draining',
+                count,
+            )
+    except Exception:
+        log.exception(
+            'startup recovery failed, gold story pending queue may still be stuck',
+        )
 
 def create_app() -> Flask:
     app = Flask(__name__)
@@ -77,5 +94,6 @@ def create_app() -> Flask:
     with app.app_context():
         _recover_stuck_jobs()
         _recover_stuck_daily_stories()
+        _recover_stuck_gold_story_pending()
     return app
 __all__ = ['access_logger', 'app_logger', 'create_app', 'get_app', 'log']

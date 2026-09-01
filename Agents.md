@@ -135,7 +135,7 @@ DeepSeek 网页模拟 API，不是 Claude 子代理。涉及提示词方案评�
 ## 快捷命令
 
 - push 表示执行提交git 并执行push，不用你管远程pull的事
-- pull 表示执行本地
+- pull 表示执行本地git pull，并解决本地冲突
 - 不要自动push，需要我同意才行
 
 ## pi插件
