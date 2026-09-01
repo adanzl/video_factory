@@ -680,6 +680,7 @@ def score_daily_story(
     story: dict | None,
     *,
     theme: str | None = None,
+    skip_relevancy: bool = False,
 ) -> dict[str, Any]:
     """给故事打观感分。
 
@@ -710,11 +711,12 @@ def score_daily_story(
     tail2 = "".join(lines[-2:]) if lines else ""
     prev2 = "".join(lines[-3:-1]) if len(lines) >= 3 else "".join(lines[:-1])
 
-    # ── 跑题：一次扣到位 ──
-    rel_bonus, rel_details = _score_relevancy(story, theme)
-    score += rel_bonus
-    if rel_bonus < 0:
-        cons.extend(rel_details)
+    # ── 跑题：一次扣到位（gold_chat 已有 beat/契约保真，勿按 B 站标题字面硬扣）──
+    if not skip_relevancy:
+        rel_bonus, rel_details = _score_relevancy(story, theme)
+        score += rel_bonus
+        if rel_bonus < 0:
+            cons.extend(rel_details)
 
     # ── 必备字段 ──
     if not str(story.get("conflict_core") or "").strip():
@@ -737,7 +739,9 @@ def score_daily_story(
     # ── 开场维度（满分 2）：gold_chat 正文无 discovery_opening 时不扣 ──
     opening = story.get("discovery_opening")
     body_only = not isinstance(opening, list) or not opening
-    if body_only and len(lines) >= 16:
+    from app.services.daily_story.gold_story.scene import CHAT_LINE_COUNT_MIN
+
+    if body_only and len(lines) >= CHAT_LINE_COUNT_MIN:
         pass
     elif not isinstance(opening, list) or not (
         DAILY_STORY_OPENING_LINES_MIN
@@ -1084,6 +1088,7 @@ def attach_daily_story_quality(
     *,
     theme: str | None = None,
     finalize: bool = True,
+    skip_relevancy: bool = False,
 ) -> dict[str, Any]:
     """重算观感分。默认 finalize=True：有 LLM 好笑则总分=结构+LLM 好笑，否则暂=结构分。
 
@@ -1097,7 +1102,7 @@ def attach_daily_story_quality(
     repair_punchline_explain_for_story_type(story)
     prev = story.get("quality") if isinstance(story.get("quality"), dict) else None
     prev_humor = prev.get("humor") if isinstance(prev, dict) else None
-    quality = score_daily_story(story, theme=theme)
+    quality = score_daily_story(story, theme=theme, skip_relevancy=skip_relevancy)
     if finalize:
         finalize_daily_story_total(
             quality,

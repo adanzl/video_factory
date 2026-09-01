@@ -80,6 +80,8 @@ source_type：{source_type}（tutorial 时禁保留教程口吻/第几招）
 }}
 
 规则：
+- **扣题（硬卡）**：金故事标题「{title}」的核心词须在对白中自然出现至少一处；
+  scene_title 须与标题同调，禁正文完全跑题
 - **字数硬卡（最优先）**：正文 dialogue 总字数必须 ≥{chars_min} 且 ≤{chars_max}；
   目标落在 {chars_soft_lo}–{chars_soft_hi}。**未满 {chars_min} 禁止收束闭合**
 - **句数**：对白宜 {rounds_soft_lo}–{rounds_soft_hi} 轮，最多 {rounds_hard_max} 轮；
@@ -417,7 +419,7 @@ def format_structure_score_feedback(
             for r in (quality.get("reasons") or [])  # type: ignore[arg-type,union-attr,assignment]
             if any(
                 str(r).startswith(p) or p in str(r)
-                for p in ("缺", "未", "拖", "不足", "勿", "过", "偏", "-")
+                for p in ("缺", "未", "拖", "不足", "勿", "过", "偏", "跑题", "-")
             )
         ][:5]
         for c in cons:
