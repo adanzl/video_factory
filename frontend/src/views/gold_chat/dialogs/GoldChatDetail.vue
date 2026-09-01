@@ -262,7 +262,6 @@
           <el-radio-group
           :model-value="statusChoice"
           size="small"
-          :disabled="statusBusy"
           @change="onStatusChoiceChange"
           >
           <el-radio-button value="normal">正常</el-radio-button>
