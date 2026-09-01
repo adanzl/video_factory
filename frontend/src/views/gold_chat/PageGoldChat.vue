@@ -12,6 +12,9 @@
       <el-button type="primary" size="small" :loading="reimporting" @click="handleReimport">
         重新导入
       </el-button>
+      <el-button type="success" size="small" :loading="reimporting" @click="handleImportBV">
+        导入BV
+      </el-button>
       <el-button type="primary" size="small" :disabled="!selectedIds.length" :loading="batching" @click="handleBatchConvert">
         批量转 gold_chat{{ selectedIds.length ? `（${selectedIds.length}）` : "" }}
       </el-button>
@@ -744,6 +747,33 @@ async function startReimportJob(params: {
     clearReimportTargets();
     handleError(e, "重新导入失败");
   }
+}
+
+async function handleImportBV() {
+  if (selectedIds.value.length) {
+    ElMessage.warning("已选中金故事时请使用「重新导入」按钮");
+    return;
+  }
+  let raw = "";
+  try {
+    const { value } = await ElMessageBox.prompt(
+      "输入 BV 号或 B 站视频链接。已入库的会覆盖金稿，未入库的会新导入。",
+      "导入BV",
+      {
+        inputPlaceholder: "BV1xxxx 或视频链接",
+        confirmButtonText: "开始导入",
+        inputValidator: (val: string) => {
+          if (!String(val || "").trim()) return "请输入 BV 号";
+          return true;
+        },
+      },
+    );
+    raw = String(value || "").trim();
+  } catch {
+    return;
+  }
+  if (!raw) return;
+  await startReimportJob({ sourceId: raw });
 }
 
 async function handleReimport() {
