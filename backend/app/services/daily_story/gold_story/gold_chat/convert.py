@@ -524,6 +524,10 @@ def _strip_extra_natural_expands(line: str) -> str:
         body = body.replace(f"，{soft}", "").replace(soft, "")
     bare_all = [c.lstrip("，,") for c in _GOLD_CHAT_NATURAL_EXPAND]
     hits = [(body.find(b), b) for b in bare_all if b in body]
+    for bare in bare_all:
+        while body.count(bare) > 1:
+            body = body.replace(bare, "", 1)
+    hits = [(body.find(b), b) for b in bare_all if b in body]
     if len(hits) <= 1:
         body = re.sub(r"[，,]{2,}", "，", body).strip("，, ")
         return (body + punct) if body else s
@@ -572,9 +576,21 @@ def patch_sanitize_pad_particles(
         old = str(item.get("line") or "").strip()
         if not old:
             continue
+        cleaned = re.sub(r"([！。？])[呀啊吧]+([！。？])$", r"\1", old)
+        if cleaned != old:
+            item["line"] = cleaned
+            changed = True
+            old = cleaned
         punct = old[-1] if old[-1] in "！。？…!" else ""
         body = old[:-1] if punct else old
-        new_body = re.sub(r"了[呀吧啊]$", "", body)
+        new_body = re.sub(r"了[呀吧啊]{2,}$", "了", body)
+        new_body = re.sub(r"啊{2,}$", "啊", new_body)
+        new_body = re.sub(r"吧{2,}", "吧", new_body)
+        new_body = re.sub(r"吗吧+", "吗", new_body)
+        new_body = re.sub(r"呀呀+", "呀", new_body)
+        new_body = re.sub(r"呀吧$", "呀", new_body)
+        new_body = re.sub(r"吗啊+", "吗", new_body)
+        new_body = re.sub(r"了[呀吧啊]$", "", new_body)
         new_body = re.sub(r"了呢呀$", "了呢", new_body)
         new_body = re.sub(r"了啊呀$", "了啊", new_body)
         for soft in _GOLD_CHAT_EXPAND_SOFT_CLUTTER:
@@ -621,6 +637,28 @@ def patch_strip_all_natural_expands(
     return out, changed
 
 
+def patch_j_fix_lose_speaker(
+    story: dict[str, Any],
+) -> tuple[dict[str, Any], bool]:
+    """J：认输句必须归昭昭（防连说改 speaker 后错位）。"""
+    import copy
+
+    if str(story.get("story_type") or "").strip().upper() != "J":
+        return story, False
+    out = copy.deepcopy(story)
+    changed = False
+    lose_pat = re.compile(r"我输了|我认输了")
+    for item in out.get("dialogue") or []:
+        if not isinstance(item, dict):
+            continue
+        line = str(item.get("line") or "")
+        sp = str(item.get("speaker") or "").strip()
+        if lose_pat.search(line) and sp != "昭昭":
+            item["speaker"] = "昭昭"
+            changed = True
+    return out, changed
+
+
 def patch_j_dedupe_plea_rounds(
     story: dict[str, Any],
 ) -> tuple[dict[str, Any], bool]:
@@ -631,7 +669,7 @@ def patch_j_dedupe_plea_rounds(
         return story, False
     out = copy.deepcopy(story)
     dialogue = out.get("dialogue")
-    if not isinstance(dialogue, list) or len(dialogue) < 6:
+    if not isinstance(dialogue, list) or len(dialogue) < 4:
         return story, False
 
     lose_idx = next(
@@ -647,8 +685,12 @@ def patch_j_dedupe_plea_rounds(
     if lose_idx < 0:
         return story, False
 
-    plea_pat = re.compile(r"再求你一次|再给一次机会|那我保证|就这一次|姐姐，再给")
-    veto_pat = re.compile(r"不行|规矩|输了就是输了|别想反悔")
+    plea_pat = re.compile(
+        r"再求你|再给.{0,2}机会|换个理由.{0,4}求|那我保证|就这一次|姐姐，再给"
+    )
+    veto_pat = re.compile(
+        r"不行|规矩|输了就是输了|别想反悔|休想耍赖|继续压住|赢了就是赢了"
+    )
     plea_idx = [
         i
         for i, x in enumerate(dialogue)
@@ -742,6 +784,21 @@ _GOLD_CHAT_NATURAL_EXPAND: tuple[str, ...] = (
     "，给我站住",
     "，轮不到你",
     "，我先说定",
+)
+# J 扩写尾巴 speaker 禁忌（防权威/挑衅语气错位）
+_J_ZHAO_FORBIDDEN_EXPAND: frozenset[str] = frozenset(
+    {
+        "少跟我吵",
+        "轮不到你",
+        "不许再耍赖",
+        "马上给我挪开",
+        "给我站住",
+        "我先说定",
+        "说一不二",
+    }
+)
+_J_CAN_FORBIDDEN_EXPAND: frozenset[str] = frozenset(
+    {"你试试看", "少跟我吵", "我才不怕", "你凭什么"}
 )
 _GOLD_CHAT_EXPAND_SOFT_CLUTTER: tuple[str, ...] = (
     "听见没有呀",
@@ -859,6 +916,7 @@ def _realign_j_role_speakers(
     st = str(structure_type or chat.get("story_type") or "").strip().upper()
     out, _ = patch_seed_speaker_align(chat, dialogue_seed=dialogue_seed)
     if st == "J":
+        out, _ = patch_j_fix_lose_speaker(out)
         out, _ = patch_j_plea_veto_speakers(out)
         out, _ = patch_j_dedupe_plea_rounds(out)
         out, _ = patch_break_consecutive_keep_seed(out, dialogue_seed=dialogue_seed)
@@ -1029,6 +1087,13 @@ def patch_j_drop_post_lose_bridge(
         "先别吵，听清楚",
     )
     drop: set[int] = set()
+    for i in range(max(0, lose_idx - 2), lose_idx):
+        item = dialogue[i]
+        if not isinstance(item, dict):
+            continue
+        line = str(item.get("line") or "")
+        if any(br in line for br in bridges):
+            drop.add(i)
     for i in range(lose_idx + 1, len(dialogue)):
         item = dialogue[i]
         if not isinstance(item, dict):
@@ -1040,6 +1105,207 @@ def patch_j_drop_post_lose_bridge(
     if not drop:
         return story, False
     out["dialogue"] = [x for i, x in enumerate(dialogue) if i not in drop]
+    return out, True
+
+
+def patch_j_drop_post_lose_plea(
+    story: dict[str, Any],
+) -> tuple[dict[str, Any], bool]:
+    """J：认输后删求情-拒绝对，直进嘀咕+镇住（防审稿判拉锯）。"""
+    import copy
+
+    if str(story.get("story_type") or "").strip().upper() != "J":
+        return story, False
+    out = copy.deepcopy(story)
+    dialogue = out.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 4:
+        return story, False
+    lose_idx = next(
+        (
+            i
+            for i, x in enumerate(dialogue)
+            if isinstance(x, dict)
+            and str(x.get("speaker") or "") == "昭昭"
+            and "我输了" in str(x.get("line") or "")
+        ),
+        -1,
+    )
+    if lose_idx < 0:
+        return story, False
+    plea_pat = re.compile(
+        r"再给.{0,2}机会|再.{0,2}给.{0,2}一次|再求你|换个理由.{0,4}求|"
+        r"求一次|那我保证|姐姐，再|还没准备好|我保证不闹"
+    )
+    veto_pat = re.compile(
+        r"不行|规矩|输了就是输了|别想反悔|休想耍赖|继续压住|赢了就是赢了|换个说法"
+    )
+    drop: set[int] = set()
+    for i in range(lose_idx + 1, len(dialogue)):
+        item = dialogue[i]
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("speaker") or "") != "昭昭":
+            continue
+        line = str(item.get("line") or "")
+        if not plea_pat.search(line):
+            continue
+        drop.add(i)
+        if i + 1 < len(dialogue):
+            nxt = dialogue[i + 1]
+            if (
+                isinstance(nxt, dict)
+                and str(nxt.get("speaker") or "") == "灿灿"
+                and veto_pat.search(str(nxt.get("line") or ""))
+            ):
+                drop.add(i + 1)
+    if not drop:
+        return story, False
+    out["dialogue"] = [x for i, x in enumerate(dialogue) if i not in drop]
+    return out, True
+
+
+def _j_expand_bare_allowed(bare: str, speaker: str) -> bool:
+    """near-miss 扩写按 speaker 过滤，防权威/挑衅错位。"""
+    sp = str(speaker or "").strip()
+    b = str(bare or "").strip()
+    if not b:
+        return False
+    if sp == "昭昭" and any(x in b or b in x for x in _J_ZHAO_FORBIDDEN_EXPAND):
+        return False
+    if sp == "灿灿" and any(x in b or b in x for x in _J_CAN_FORBIDDEN_EXPAND):
+        return False
+    return True
+
+
+def patch_j_strip_role_mismatch_expands(
+    story: dict[str, Any],
+) -> tuple[dict[str, Any], bool]:
+    """J：剥 speaker 禁忌扩写尾巴（如昭昭说「少跟我吵」）。"""
+    import copy
+
+    if str(story.get("story_type") or "").strip().upper() != "J":
+        return story, False
+    out = copy.deepcopy(story)
+    changed = False
+    for item in out.get("dialogue") or []:
+        if not isinstance(item, dict):
+            continue
+        sp = str(item.get("speaker") or "").strip()
+        old = str(item.get("line") or "").strip()
+        if not old:
+            continue
+        punct = old[-1] if old[-1] in "！。？…!" else ""
+        body = old[:-1] if punct else old
+        forbidden = (
+            _J_ZHAO_FORBIDDEN_EXPAND
+            if sp == "昭昭"
+            else (_J_CAN_FORBIDDEN_EXPAND if sp == "灿灿" else frozenset())
+        )
+        for bare in sorted(forbidden, key=len, reverse=True):
+            for suffix in ("", "啊", "呀", "吧"):
+                token = bare + suffix
+                body = body.replace(f"，{token}", "").replace(token, "")
+        body = re.sub(r"[，,]{2,}", "，", body).strip("，, ")
+        if not body:
+            continue
+        new = body + (punct or "！")
+        if new != old:
+            item["line"] = new
+            changed = True
+    return out, changed
+
+
+def patch_j_ensure_post_lose_alternate(
+    story: dict[str, Any],
+) -> tuple[dict[str, Any], bool]:
+    """J：认输后若连说，插灿灿短否决，保交替与收场节奏。"""
+    import copy
+
+    from app.services.daily_story.gold_story.scene import CHAT_LINE_COUNT_MAX
+
+    if str(story.get("story_type") or "").strip().upper() != "J":
+        return story, False
+    out = copy.deepcopy(story)
+    dialogue = out.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 4:
+        return story, False
+    lose_idx = next(
+        (
+            i
+            for i, x in enumerate(dialogue)
+            if isinstance(x, dict)
+            and str(x.get("speaker") or "") == "昭昭"
+            and "我输了" in str(x.get("line") or "")
+        ),
+        -1,
+    )
+    if lose_idx < 0 or lose_idx + 1 >= len(dialogue):
+        return story, False
+    nxt = dialogue[lose_idx + 1]
+    if not isinstance(nxt, dict) or str(nxt.get("speaker") or "") != "昭昭":
+        return story, False
+    nxt_line = str(nxt.get("line") or "")
+    if re.search(r"长大.{0,8}算", nxt_line):
+        return story, False
+    if re.search(
+        r"再给|再求|换个理由.{0,4}求|求一次|那我保证|还没准备好",
+        nxt_line,
+    ):
+        return story, False
+    if len(dialogue) >= CHAT_LINE_COUNT_MAX:
+        return story, False
+    stubs = (
+        "你少废话，输了就是输了！",
+        "别讨价还价，规矩定了！",
+    )
+    used = {str(x.get("line") or "").strip() for x in dialogue if isinstance(x, dict)}
+    text = next((s for s in stubs if s not in used), stubs[0])
+    dialogue.insert(lose_idx + 1, {"speaker": "灿灿", "line": text})
+    return out, True
+
+
+def patch_j_ensure_post_lose_can_press(
+    story: dict[str, Any],
+) -> tuple[dict[str, Any], bool]:
+    """J：删求拒后若认输直跳嘀咕，补灿灿短镇住句。"""
+    import copy
+
+    from app.services.daily_story.gold_story.scene import CHAT_LINE_COUNT_MAX
+
+    if str(story.get("story_type") or "").strip().upper() != "J":
+        return story, False
+    out = copy.deepcopy(story)
+    dialogue = out.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 4:
+        return story, False
+    lose_idx = next(
+        (
+            i
+            for i, x in enumerate(dialogue)
+            if isinstance(x, dict)
+            and str(x.get("speaker") or "") == "昭昭"
+            and "我输了" in str(x.get("line") or "")
+        ),
+        -1,
+    )
+    if lose_idx < 0 or lose_idx + 1 >= len(dialogue):
+        return story, False
+    nxt = dialogue[lose_idx + 1]
+    if not isinstance(nxt, dict):
+        return story, False
+    if str(nxt.get("speaker") or "") != "昭昭":
+        return story, False
+    if not re.search(r"长大.{0,8}算", str(nxt.get("line") or "")):
+        return story, False
+    if len(dialogue) >= CHAT_LINE_COUNT_MAX:
+        return story, False
+    stubs = (
+        "你少废话，输了就是输了！",
+        "别讨价还价，这局我说了算！",
+    )
+    used = {str(x.get("line") or "").strip() for x in dialogue if isinstance(x, dict)}
+    text = next((s for s in stubs if s not in used), stubs[0])
+    dialogue.insert(lose_idx + 1, {"speaker": "灿灿", "line": text})
     return out, True
 
 
@@ -1399,7 +1665,11 @@ def _boost_short_with_mid_lines(story: dict[str, Any]) -> tuple[dict[str, Any], 
     return out, changed
 
 
-def _expand_short_gold_chat_lines(story: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+def _expand_short_gold_chat_lines(
+    story: dict[str, Any],
+    *,
+    ignore_deficit_cap: bool = False,
+) -> tuple[dict[str, Any], bool]:
     """句数已满、字数 near-miss 时，句内加可读实词尾巴（禁旧灌尾）。
 
     每句最多一条、优先不重复；大缺口仍交 Pass1/FIX，勿靠本地硬灌过关。
@@ -1419,7 +1689,7 @@ def _expand_short_gold_chat_lines(story: dict[str, Any]) -> tuple[dict[str, Any]
     total = dialogue_total_chars(story)
     need = DAILY_STORY_BODY_CHARS_MIN - total
     # 只接手 near-miss；大缺口交 FIX（temp↑）写满，勿本地叠灌
-    if need <= 0 or need > GOLD_CHAT_NEAR_MISS_DEFICIT_MAX:
+    if need <= 0 or ((not ignore_deficit_cap) and need > GOLD_CHAT_NEAR_MISS_DEFICIT_MAX):
         return story, False
 
     out = copy.deepcopy(story)
@@ -1450,7 +1720,8 @@ def _expand_short_gold_chat_lines(story: dict[str, Any]) -> tuple[dict[str, Any]
             and expand_count.get(i, 0) < 1
             and str(item.get("speaker") or "") in {"昭昭", "灿灿"}
             and 4 <= len(str(item.get("line") or "").strip()) < 20
-            and i < len(dialogue) - 2  # 末两句不垫尾巴，保收场干净
+            and i >= 2
+            and i < len(dialogue) - 2  # 首尾句不垫尾巴，保开场/收场干净
             and not any(
                 br in str(item.get("line") or "")
                 for br in (
@@ -1477,7 +1748,15 @@ def _expand_short_gold_chat_lines(story: dict[str, Any]) -> tuple[dict[str, Any]
             if room < 5:
                 expand_count[idx] = 1
                 continue
-            pool = [c for c in _GOLD_CHAT_NATURAL_EXPAND if c.lstrip("，,") not in used]
+            pool = [
+                c
+                for c in _GOLD_CHAT_NATURAL_EXPAND
+                if c.lstrip("，,") not in used
+                and _j_expand_bare_allowed(
+                    c.lstrip("，,"),
+                    str(item.get("speaker") or ""),
+                )
+            ]
             if not pool:
                 break
             for clause in pool:
@@ -1631,12 +1910,22 @@ def _gold_chat_j_final_polish(
     changed = out is not chat
     if st != "J":
         return out, changed
+    out, c0 = patch_j_fix_lose_speaker(out)
+    changed = changed or c0
     out, c1 = patch_sanitize_natural_expand_stack(out)
     out, c2 = patch_sanitize_pad_particles(out)
     out, c3 = patch_sanitize_expand_clutter(out)
-    out, c4 = patch_j_dedupe_plea_rounds(out)
-    changed = changed or c1 or c2 or c3 or c4
-    for _ in range(2):
+    out, c4b = patch_j_dedupe_plea_rounds(out)
+    out, c5 = patch_j_drop_post_lose_bridge(out)
+    out, c4c = patch_j_drop_post_lose_plea(out)
+    out, c5c = patch_j_ensure_post_lose_can_press(out)
+    out, c5b = patch_j_ensure_post_lose_alternate(out)
+    changed = changed or c1 or c2 or c3 or c4b or c4c or c5 or c5c or c5b
+    if c4c and dialogue_total_chars(out) < DAILY_STORY_BODY_CHARS_MIN:
+        out, cr = patch_strip_all_natural_expands(out)
+        out, cr2 = patch_sanitize_pad_particles(out)
+        changed = changed or cr or cr2
+    for _ in range(3):
         if dialogue_total_chars(out) >= DAILY_STORY_BODY_CHARS_MIN:
             break
         out, cx = _expand_short_gold_chat_lines(out)
@@ -1645,20 +1934,28 @@ def _gold_chat_j_final_polish(
     for item in out.get("dialogue") or []:
         if not isinstance(item, dict):
             continue
-        if str(item.get("speaker") or "") != "昭昭":
-            continue
         line = str(item.get("line") or "")
-        if "我输了" not in line:
-            continue
-        cleaned_story, lose_changed = patch_strip_all_natural_expands(
-            {"dialogue": [{"speaker": "昭昭", "line": line}]}
-        )
-        dlg = cleaned_story.get("dialogue") or []
-        if dlg and isinstance(dlg[0], dict):
-            item["line"] = dlg[0].get("line") or line
-            changed = changed or lose_changed
-    out, c5 = patch_j_drop_post_lose_bridge(out)
-    changed = changed or c5
+        sp = str(item.get("speaker") or "").strip()
+        if sp == "昭昭" and "我输了" in line:
+            cleaned_story, lose_changed = patch_strip_all_natural_expands(
+                {"dialogue": [{"speaker": "昭昭", "line": line}]}
+            )
+            dlg = cleaned_story.get("dialogue") or []
+            if dlg and isinstance(dlg[0], dict):
+                item["line"] = dlg[0].get("line") or line
+                changed = changed or lose_changed
+        elif sp == "昭昭" and re.search(
+            r"再给一次机会|再求你一次|那我保证", line
+        ):
+            cleaned_story, plea_changed = patch_strip_all_natural_expands(
+                {"dialogue": [{"speaker": "昭昭", "line": line}]}
+            )
+            dlg = cleaned_story.get("dialogue") or []
+            if dlg and isinstance(dlg[0], dict):
+                item["line"] = dlg[0].get("line") or line
+                changed = changed or plea_changed
+    out, c5c = patch_j_strip_role_mismatch_expands(out)
+    changed = changed or c5c
     need = DAILY_STORY_BODY_CHARS_MIN - dialogue_total_chars(out)
     if 0 < need <= GOLD_CHAT_NEAR_MISS_DEFICIT_MAX:
         out, cy = _pad_gold_chat_to_min_chars(
@@ -1668,6 +1965,128 @@ def _gold_chat_j_final_polish(
         changed = changed or cy
     out, c6 = patch_sanitize_bridge_lines(out)
     changed = changed or c6
+    for _ in range(3):
+        need = DAILY_STORY_BODY_CHARS_MIN - dialogue_total_chars(out)
+        if need <= 0:
+            break
+        out, cz = _pad_gold_chat_to_min_chars(
+            out, particle_only=True, max_rounds=4
+        )
+        out, _ = patch_sanitize_pad_particles(out)
+        out, _ = patch_j_strip_role_mismatch_expands(out)
+        changed = changed or cz
+    if dialogue_total_chars(out) < DAILY_STORY_BODY_CHARS_MIN:
+        out, cm = _gold_chat_force_min_chars(out)
+        out, _ = patch_sanitize_natural_expand_stack(out)
+        out, _ = patch_j_strip_role_mismatch_expands(out)
+        out, _ = patch_sanitize_bridge_lines(out)
+        changed = changed or cm
+    out, c6b = patch_j_soften_closing_grumble(out)
+    changed = changed or c6b
+    for _ in range(5):
+        if dialogue_total_chars(out) >= DAILY_STORY_BODY_CHARS_MIN:
+            break
+        before = dialogue_total_chars(out)
+        out, cp = _pad_gold_chat_to_min_chars(
+            out, particle_only=True, max_rounds=4
+        )
+        changed = changed or cp
+        if dialogue_total_chars(out) <= before:
+            out, ce = _expand_short_gold_chat_lines(out)
+            out, _ = patch_sanitize_natural_expand_stack(out)
+            changed = changed or ce
+        out, _ = patch_j_strip_role_mismatch_expands(out)
+        out, _ = patch_j_soften_closing_grumble(out)
+        out, _ = patch_sanitize_bridge_lines(out)
+    out, cf = _gold_chat_force_min_chars(out)
+    out, c4d = patch_j_drop_post_lose_plea(out)
+    out, c5d = patch_j_ensure_post_lose_can_press(out)
+    out, _ = patch_j_strip_role_mismatch_expands(out)
+    out, _ = patch_sanitize_pad_particles(out)
+    if dialogue_total_chars(out) < DAILY_STORY_BODY_CHARS_MIN:
+        out, cf2 = _gold_chat_force_min_chars(out)
+        changed = changed or cf2
+    changed = changed or cf or c4d or c5d
+    return out, changed
+
+
+def _gold_chat_force_min_chars(story: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    """终稿仍差 min 时：句内扩写 → 粒子/可读垫满（禁插求否对）。"""
+    need = DAILY_STORY_BODY_CHARS_MIN - dialogue_total_chars(story)
+    if need <= 0:
+        return story, False
+    out = story
+    changed = False
+    for _ in range(4):
+        if dialogue_total_chars(out) >= DAILY_STORY_BODY_CHARS_MIN:
+            break
+        out, c5 = _expand_short_gold_chat_lines(out, ignore_deficit_cap=True)
+        out, _ = patch_sanitize_natural_expand_stack(out)
+        changed = changed or c5
+    for _ in range(8):
+        if dialogue_total_chars(out) >= DAILY_STORY_BODY_CHARS_MIN:
+            break
+        before = dialogue_total_chars(out)
+        out, c4 = _pad_gold_chat_to_min_chars(
+            out, particle_only=True, max_rounds=24
+        )
+        out, _ = patch_sanitize_pad_particles(out)
+        changed = changed or c4
+        if dialogue_total_chars(out) <= before:
+            out, c6 = _pad_gold_chat_to_min_chars(
+                out, particle_only=False, max_rounds=12
+            )
+            changed = changed or c6
+            if dialogue_total_chars(out) <= before:
+                break
+    if dialogue_total_chars(out) < DAILY_STORY_BODY_CHARS_MIN:
+        out, cr = patch_strip_all_natural_expands(out)
+        out, _ = patch_sanitize_pad_particles(out)
+        changed = changed or cr
+        for _ in range(4):
+            if dialogue_total_chars(out) >= DAILY_STORY_BODY_CHARS_MIN:
+                break
+            out, cx = _expand_short_gold_chat_lines(out, ignore_deficit_cap=True)
+            out, _ = patch_sanitize_natural_expand_stack(out)
+            changed = changed or cx
+        out, cp = _pad_gold_chat_to_min_chars(out, max_rounds=24)
+        out, _ = patch_sanitize_pad_particles(out)
+        changed = changed or cp
+    out, _ = patch_sanitize_natural_expand_stack(out)
+    out, _ = patch_sanitize_pad_particles(out)
+    return out, changed
+
+
+def patch_j_soften_closing_grumble(
+    story: dict[str, Any],
+) -> tuple[dict[str, Any], bool]:
+    """J：末段昭昭嘀咕去掉「你等着瞧」等强势尾缀，保怂态。"""
+    import copy
+
+    if str(story.get("story_type") or "").strip().upper() != "J":
+        return story, False
+    out = copy.deepcopy(story)
+    changed = False
+    for item in out.get("dialogue") or []:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("speaker") or "") != "昭昭":
+            continue
+        old = str(item.get("line") or "").strip()
+        if not re.search(r"长大.{0,8}算", old):
+            continue
+        punct = old[-1] if old[-1] in "！。？…!" else ""
+        body = old[:-1] if punct else old
+        new_body = re.sub(r"[，,]?你等着瞧[！。]?$", "", body)
+        new_body = re.sub(r"[，,]?你等着呀[！。]?$", "", new_body)
+        new_body = re.sub(r"^哼[，,]", "那个，", new_body)
+        new_body = new_body.strip("，, ")
+        if not new_body:
+            continue
+        new = new_body + (punct or "！")
+        if new != old:
+            item["line"] = new
+            changed = True
     return out, changed
 
 
@@ -3202,6 +3621,11 @@ def convert_gold_chat(
         else None,
         structure_type=str(row.get("structure_type") or ""),
     )
+    if dialogue_total_chars(chat) < DAILY_STORY_BODY_CHARS_MIN:
+        chat, _ = _gold_chat_force_min_chars(chat)
+        chat, _ = patch_j_strip_role_mismatch_expands(chat)
+        chat, _ = patch_j_soften_closing_grumble(chat)
+        chat, _ = patch_sanitize_bridge_lines(chat)
     validate_gold_chat(
         chat,
         banned_literals=[str(x) for x in banned],

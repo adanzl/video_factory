@@ -370,6 +370,97 @@ def test_patch_j_dedupe_plea_rounds_drops_second_kind():
     assert "再求你一次" not in blob
 
 
+def test_patch_j_drop_post_lose_plea_removes_gei_wo_chance():
+    story = {
+        "story_type": "J",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "啊，我输了！你力气真大！"},
+            {"speaker": "灿灿", "line": "你少废话，输了就是输了！"},
+            {"speaker": "昭昭", "line": "再给我一次机会嘛，我还没准备好！"},
+            {"speaker": "灿灿", "line": "输了就是输了，别耍赖了啊！"},
+            {"speaker": "昭昭", "line": "哼，等我长大再算账！"},
+            {"speaker": "灿灿", "line": "以后玩具都归我！"},
+        ],
+    }
+    out, changed = gc.patch_j_drop_post_lose_plea(story)
+    assert changed
+    lines = [str(x.get("line") or "") for x in out["dialogue"]]
+    assert not any("再给" in ln or "一次机会" in ln for ln in lines)
+    assert any("长大" in ln and "算" in ln for ln in lines)
+
+
+def test_patch_j_strip_role_mismatch_expands_strips_can_shao_gen_wo_chao():
+    story = {
+        "story_type": "J",
+        "dialogue": [
+            {
+                "speaker": "灿灿",
+                "line": "草莓熊肘击！看我的厉害了啊，少跟我吵啊！",
+            },
+        ],
+    }
+    out, changed = gc.patch_j_strip_role_mismatch_expands(story)
+    assert changed
+    assert "少跟我吵" not in out["dialogue"][0]["line"]
+
+
+def test_gold_chat_force_min_chars_after_plea_drop():
+    base = [
+        {"speaker": "昭昭", "line": "这块地板是我的地盘，你赶紧走开！"},
+        {"speaker": "灿灿", "line": "明明是我先来的，该你走开才对！"},
+        {"speaker": "昭昭", "line": "哼，看招！我推你一把了啊！"},
+        {"speaker": "灿灿", "line": "你敢打我？我可不是好惹的呀！"},
+        {"speaker": "昭昭", "line": "等等，先听我说完！"},
+        {"speaker": "灿灿", "line": "谁赢谁说了算，这可是规矩！"},
+        {"speaker": "昭昭", "line": "拿出最强形态来，我可不会输！"},
+        {"speaker": "灿灿", "line": "草莓熊肘击！看我的厉害了啊！"},
+        {"speaker": "昭昭", "line": "啊，我输了！你力气真大！"},
+        {"speaker": "灿灿", "line": "你少废话，输了就是输了！"},
+        {"speaker": "昭昭", "line": "再给我一次机会嘛，我还没准备好！"},
+        {"speaker": "灿灿", "line": "输了就是输了，别耍赖了啊！"},
+        {"speaker": "昭昭", "line": "哼，等我长大再算账！"},
+        {"speaker": "灿灿", "line": "以后玩具都归我，你记住呀！"},
+    ]
+    story = {"story_type": "J", "dialogue": base}
+    dropped, dropped_changed = gc.patch_j_drop_post_lose_plea(story)
+    assert dropped_changed
+    assert gc.dialogue_total_chars(dropped) < gc.DAILY_STORY_BODY_CHARS_MIN
+    out, changed = gc._gold_chat_force_min_chars(dropped)
+    assert changed
+    assert gc.dialogue_total_chars(out) > gc.dialogue_total_chars(dropped)
+
+
+def test_patch_j_fix_lose_speaker_moves_can_to_zhao():
+    story = {
+        "story_type": "J",
+        "dialogue": [
+            {"speaker": "灿灿", "line": "草莓熊肘击！看招！"},
+            {"speaker": "灿灿", "line": "哎呀，我输了，你厉害！"},
+        ],
+    }
+    out, changed = gc.patch_j_fix_lose_speaker(story)
+    assert changed
+    assert out["dialogue"][1]["speaker"] == "昭昭"
+
+
+def test_patch_j_drop_post_lose_plea_removes_huan_li_you():
+    story = {
+        "story_type": "J",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "啊，我输了！我认输总行！"},
+            {"speaker": "灿灿", "line": "你少废话，输了就是输了！"},
+            {"speaker": "昭昭", "line": "我换个理由再求一次行不行？我保证不闹了！"},
+            {"speaker": "灿灿", "line": "你休想耍赖！规矩就是这样！"},
+            {"speaker": "昭昭", "line": "哼，等我长大再算账！"},
+        ],
+    }
+    out, changed = gc.patch_j_drop_post_lose_plea(story)
+    assert changed
+    blob = "".join(str(x.get("line") or "") for x in out["dialogue"])
+    assert "换个理由" not in blob
+    assert "求一次" not in blob
+
+
 def test_patch_seed_speaker_align_fixes_swapped_phrases():
     seed = [
         {"speaker": "昭昭", "intent": "拿出最强形态来！"},
