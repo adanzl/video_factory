@@ -147,7 +147,7 @@ def _bypass_structure_gate(monkeypatch):
 
 
 def test_gold_story_to_gold_chat_retries_when_one_line_short(monkeypatch):
-    """差 1 句 near-miss：本地插句即可过，不必整稿重抽。"""
+    """差 1 句：不本地硬插注水句；须 FIX 扩写或 Pass1 重生成。"""
     calls: dict[str, int | bool] = {"n": 0}
     _bypass_structure_gate(monkeypatch)
 
@@ -157,7 +157,8 @@ def test_gold_story_to_gold_chat_retries_when_one_line_short(monkeypatch):
             return _sample_chat()
         calls["n"] = int(calls["n"]) + 1
         chat = _sample_chat()
-        chat["dialogue"] = chat["dialogue"][:11]
+        if int(calls["n"]) == 1:
+            chat["dialogue"] = chat["dialogue"][:11]
         return chat
 
     monkeypatch.setattr(gc, "_chat_json", fake_chat)
@@ -165,8 +166,9 @@ def test_gold_story_to_gold_chat_retries_when_one_line_short(monkeypatch):
     monkeypatch.setattr(gc, "PASS1_REGENERATE_MAX", 5)
     out = gc.gold_story_to_gold_chat(_sample_row())
     assert len(out["dialogue"]) >= 12
-    assert int(calls["n"]) == 1
-    assert calls.get("fix") is not True
+    assert int(calls["n"]) >= 2 or calls.get("fix") is True
+    blob = "".join(str(d.get("line") or "") for d in out["dialogue"])
+    assert "你给我听好了" not in blob
 
 
 def test_gold_story_to_gold_chat_rejects_when_far_too_short(monkeypatch):
@@ -183,19 +185,23 @@ def test_gold_story_to_gold_chat_rejects_when_far_too_short(monkeypatch):
         gc.gold_story_to_gold_chat(_sample_row())
 
 
-def test_gold_story_to_gold_chat_pads_one_line_short_locally(monkeypatch):
-    """11 句近失本地补到 ≥12，不再空烧 3 次重生成。"""
+def test_gold_story_to_gold_chat_regens_when_one_line_short(monkeypatch):
+    """11 句近失：禁止本地插反应句凑数，须重生成。"""
     _bypass_structure_gate(monkeypatch)
+    calls = {"n": 0}
 
     def fake_chat(_system: str, _user: str, **_kwargs) -> dict:
-        bad = _sample_chat()
-        bad["dialogue"] = bad["dialogue"][:11]
-        return bad
+        calls["n"] += 1
+        chat = _sample_chat()
+        if calls["n"] == 1:
+            chat["dialogue"] = chat["dialogue"][:11]
+        return chat
 
     monkeypatch.setattr(gc, "_chat_json", fake_chat)
     monkeypatch.setattr(gc, "PASS1_CANDIDATE_COUNT", 1)
     out = gc.gold_story_to_gold_chat(_sample_row())
     assert len(out["dialogue"]) >= 12
+    assert calls["n"] >= 2
     assert gc.dialogue_total_chars(out) >= gc.DAILY_STORY_BODY_CHARS_MIN
 
 
@@ -227,8 +233,8 @@ def test_bump_short_regen_helpers():
         gc._bump_short_regen_or_reject(err_chars, 3)
 
 
-def test_ensure_gold_chat_min_lines_and_expand_reaches_floor():
-    """10 短句须本地插反应句 + 句内扩写到 ≥12 句 / ≥240 字。"""
+def test_ensure_gold_chat_min_chars_does_not_spam_expand_tails():
+    """偏短稿禁止本地灌「你给我听好了」等尾巴凑字。"""
     short = {
         "story_type": "J",
         "dialogue": [
@@ -244,12 +250,27 @@ def test_ensure_gold_chat_min_lines_and_expand_reaches_floor():
             {"speaker": "灿灿", "line": "哼，等我长大再算账！"},
         ],
     }
-    assert len(short["dialogue"]) == 10
     assert gc.dialogue_total_chars(short) < gc.DAILY_STORY_BODY_CHARS_MIN
-    out, changed = gc._ensure_gold_chat_min_chars(short)
+    out, _ = gc._ensure_gold_chat_min_chars(short)
+    blob = "".join(str(d.get("line") or "") for d in out["dialogue"])
+    for phrase in ("你给我听好了", "这回算清楚", "别再装傻", "说了就不改"):
+        assert phrase not in blob, blob
+    # 重度偏短：本地不得硬灌到 hard min（交 Pass1 重生成）
+    assert gc.dialogue_total_chars(out) < gc.DAILY_STORY_BODY_CHARS_MIN
+
+
+def test_sanitize_strips_expand_clutter():
+    dirty = {
+        "story_type": "J",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "看招，你给我听好了呀！"},
+            {"speaker": "灿灿", "line": "谁赢谁说了算，这回算清楚！"},
+        ],
+    }
+    out, changed = gc.patch_sanitize_expand_clutter(dirty)
     assert changed
-    assert len(out["dialogue"]) >= 12
-    assert gc.dialogue_total_chars(out) >= gc.DAILY_STORY_BODY_CHARS_MIN
+    assert "你给我听好了" not in out["dialogue"][0]["line"]
+    assert "这回算清楚" not in out["dialogue"][1]["line"]
 
 
 def test_gold_chat_structure_score_skips_bili_title_relevancy():

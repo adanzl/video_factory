@@ -61,6 +61,11 @@ RE_DAMAGE_THREAT = re.compile(r"再.*就.*撕|再抢.*撕|敢.*撕|要不.*撕|�
 RE_BEAT_INITIATOR = re.compile(r"抢|看|瞅|占")
 RE_BEAT_DEFENDER = re.compile(r"拒看|拒绝|secret|秘密|不行|威胁", re.IGNORECASE)
 RE_PAD_FILLER_TAIL = re.compile(r"(?:好不好呀|好不好|了呢呀|了呀呢)$")
+# 本地扩写/插句灌尾巴：人读硬伤（不限 B/F）
+RE_EXPAND_CLUTTER = re.compile(
+    r"你给我听好了|这回算清楚|别再装傻|我可记住了|说了就不改|"
+    r"再闹我可恼了|少废话听我的|你少来这套|我说怎样就怎样"
+)
 
 # closing_intent 常见收场词；未出现则末段禁对应 invent 动作
 _CLOSING_INVENT_ALLOW = re.compile(r"帮|扶|递|棉签|送去|一起|回来|不疼了|快点|等你")
@@ -74,6 +79,8 @@ STRUCTURAL_ALIGN_KINDS: frozenset[str] = frozenset(
         "保真-对象持有补丁",
         "保真-M5拒和speaker",
         "保真-发起方倒置",
+        "保真-垫字过密",
+        "保真-seed角色",
     }
 )
 
@@ -1072,24 +1079,128 @@ def _append_pad_filler_issues(
     issues: list[dict[str, Any]],
     *,
     max_tail_filler: int = 3,
+    max_expand_clutter: int = 2,
 ) -> None:
-    """B 类 gold_chat：句尾「好不好/了呢呀」垫字过密 → 机审 issue。"""
+    """句尾「好不好/了呢呀」或扩写灌尾巴过密 → 机审 issue。"""
     hits: list[int] = []
+    clutter: list[int] = []
     for i, row in enumerate(rows, 1):
         line = str(row.get("line") or "").strip()
         if RE_PAD_FILLER_TAIL.search(line):
             hits.append(i)
-    if len(hits) <= max_tail_filler:
-        return
-    issues.append(
-        _issue(
-            lines=hits,
-            kind="保真-垫字过密",
-            desc=f"句尾垫字「好不好/了呢呀」过多（{len(hits)} 处，上限 {max_tail_filler}）",
-            fix="保留 2–3 处即可，其余改短句实词收尾；"
-            "互怼句补全宾语，禁「呢呀/好不好呀」堆砌",
+        if RE_EXPAND_CLUTTER.search(line):
+            clutter.append(i)
+    if len(hits) > max_tail_filler:
+        issues.append(
+            _issue(
+                lines=hits,
+                kind="保真-垫字过密",
+                desc=f"句尾垫字「好不好/了呢呀」过多（{len(hits)} 处，上限 {max_tail_filler}）",
+                fix="保留 2–3 处即可，其余改短句实词收尾；"
+                "互怼句补全宾语，禁「呢呀/好不好呀」堆砌",
+            )
         )
+    if len(clutter) > max_expand_clutter:
+        issues.append(
+            _issue(
+                lines=clutter,
+                kind="保真-垫字过密",
+                desc=(
+                    f"扩写灌尾巴过多（{len(clutter)} 处，上限 {max_expand_clutter}）："
+                    "你给我听好了/这回算清楚/别再装傻…"
+                ),
+                fix="删灌尾，用 beat 相关实词句内扩写；勿复读同一尾巴",
+            )
+        )
+
+
+def _seed_unique_phrase_owners(
+    dialogue_seed: list[Any] | None,
+) -> dict[str, str]:
+    """seed intent 中仅属一方的特色短语 → speaker（抽象，不写死单篇）。
+
+    过短/通用对白词（谁先动手/对不起…）不入库，避免误伤正常引用。
+    """
+    from collections import defaultdict
+
+    stop = frozenset(
+        {
+            "谁先动手",
+            "对不起",
+            "我不玩",
+            "拉手吧",
+            "不打了",
+            "你走开",
+            "该你走",
+            "怎么了",
+            "看招",
+            "行不行",
+            "好不好",
+            "没办法",
+            "没关系",
+        }
     )
+    owners: dict[str, set[str]] = defaultdict(set)
+    for item in dialogue_seed or []:
+        if not isinstance(item, dict):
+            continue
+        sp = str(item.get("speaker") or "").strip()
+        if sp not in {"昭昭", "灿灿", "妈妈"}:
+            continue
+        intent = str(item.get("intent") or item.get("line") or "")
+        text = "".join(re.findall(r"[\u4e00-\u9fff]", intent))
+        if len(text) < 3:
+            continue
+        if 3 <= len(text) <= 14 and text not in stop:
+            owners[text].add(sp)
+        for length in range(min(8, len(text)), 3, -1):
+            for i in range(0, len(text) - length + 1):
+                phr = text[i : i + length]
+                if phr in stop or len(phr) < 4:
+                    continue
+                owners[phr].add(sp)
+    unique = {
+        phr: next(iter(sps))
+        for phr, sps in owners.items()
+        if len(sps) == 1 and len(phr) >= 4
+    }
+    kept: dict[str, str] = {}
+    for phr, sp in sorted(unique.items(), key=lambda x: -len(x[0])):
+        if any(phr in longer and kept[longer] == sp for longer in kept):
+            continue
+        kept[phr] = sp
+    return kept
+
+
+def _append_seed_speaker_issues(
+    rows: list[dict[str, Any]],
+    issues: list[dict[str, Any]],
+    *,
+    dialogue_seed: list[Any] | None = None,
+) -> None:
+    """seed 专属短语出现在对白时，speaker 须与 seed 一致。"""
+    owners = _seed_unique_phrase_owners(dialogue_seed)
+    if not owners:
+        return
+    for i, row in enumerate(rows, 1):
+        sp = str(row.get("speaker") or "").strip()
+        line = str(row.get("line") or "").strip()
+        if not line or sp not in {"昭昭", "灿灿", "妈妈"}:
+            continue
+        for phr, want in owners.items():
+            if phr not in line:
+                continue
+            if sp == want:
+                continue
+            issues.append(
+                _issue(
+                    lines=[i],
+                    kind="保真-seed角色",
+                    desc=f"第{i}句「{phr}」属 seed 的{want}，现由{sp}说：{line}",
+                    fix=f"将该句 speaker 改为{want}，或把短语挪回{want}台词",
+                )
+            )
+            break
 
 
 def collect_align_issues(
@@ -1149,6 +1260,11 @@ def collect_align_issues(
         )
     if st in {"B", "F"}:
         _append_pad_filler_issues(rows, issues)
+    else:
+        # 全类型拦扩写灌尾巴；B/F 仍走上面含好不好的完整版
+        _append_pad_filler_issues(rows, issues, max_tail_filler=99)
+
+    _append_seed_speaker_issues(rows, issues, dialogue_seed=dialogue_seed)
 
     _append_type_contract_align_issues(story, structure_type=st, issues=issues)
 
