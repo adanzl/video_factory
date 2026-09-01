@@ -256,7 +256,8 @@ GOLD_CHAT_LLM_MAX_TOKENS = 2048
 CLOSING_PROMPT_MAX_CHARS = 28
 _RE_PAD_SUFFIX_STACK = re.compile(
     r"呢呢|啊呢|吧呢|嘛呢|呀呢|你呀呢|行了吧呢|不懂你呢|听听不懂|你真是呢|你真是的呢|"
-    r"了呢了呀|了呢呀|了呀呢|好不好了呀|着呢了呀",
+    r"了呢了呀|了呢呀|了呀呢|好不好了呀|着呢了呀|你听着了呀|你听着|真的呀真的|"
+    r"不行了吧|嘛了呀|真的嘛了呀|好不好呀",
 )
 _B_GOLD_CHAT_PAD_TAILS = ("呀", "啊", "嘛", "呢", "吧", "真的呀")
 _F_GOLD_CHAT_PAD_TAILS = ("呀", "啊", "嘛", "呢", "吧")
@@ -472,6 +473,8 @@ def _sanitize_pad_suffix_line(line: str) -> str:
     ):
         if old in out:
             out = out.replace(old, new)
+    out = re.sub(r"(?:不行吧|真的啊|不行啊|真的呀)+([！。！？…]?)$", r"\1", out)
+    out = re.sub(r"(?:吧|啊|呀|呢|嘛)(?:吧|啊|呀|呢|嘛)+([！。！？…]?)$", r"\1", out)
     return out
 
 
@@ -624,8 +627,8 @@ def _pad_gold_chat_line(
     from app.services.daily_story.prompts import _pad_dialogue_line
 
     st = str(story_type or "").strip().upper()
-    if st == "C":
-        # C 禁句尾语气词堆砌；优先单语气词，否则短可拍词
+    if st in {"C", "J"}:
+        # C/J 禁句尾语气词堆砌；J 仅单字尾巴，C 可再用短词
         s = str(line or "").strip()
         if need <= 0:
             return s, 0
@@ -645,16 +648,17 @@ def _pad_gold_chat_line(
                 if used is not None:
                     used.add(tail)
                 return core + tail + punct, len(tail)
-        for phr in _C_SAFE_PAD_PHRASES:
-            if used is not None and phr in used:
-                continue
-            if core.endswith(phr):
-                continue
-            if len(phr) > need or len(phr) > room:
-                continue
-            if used is not None:
-                used.add(phr)
-            return core + phr + punct, len(phr)
+        if st == "C":
+            for phr in _C_SAFE_PAD_PHRASES:
+                if used is not None and phr in used:
+                    continue
+                if core.endswith(phr):
+                    continue
+                if len(phr) > need or len(phr) > room:
+                    continue
+                if used is not None:
+                    used.add(phr)
+                return core + phr + punct, len(phr)
         return s, 0
     if st == "B":
         tails = _B_GOLD_CHAT_PAD_TAILS
@@ -681,7 +685,7 @@ def _pad_gold_chat_line(
         trail = core[-1]
         core = core[:-1]
     room = max(0, DAILY_STORY_LINE_CHARS_MAX - dialogue_char_count(text))
-    for phr in (*_C_SAFE_PAD_PHRASES, "你听着"):
+    for phr in _C_SAFE_PAD_PHRASES:
         if used is not None and phr in used:
             continue
         if core.endswith(phr):
@@ -833,20 +837,25 @@ def _pad_gold_chat_to_min_chars(
 
 
 def _ensure_gold_chat_min_chars(story: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    """垫到 hard min；sanitize 剥叠后若又短，再垫（避免 235→垫满→剥回 235）。"""
     data, changed = _patch_gold_chat_near_miss_chars(story)
-    if dialogue_total_chars(data) >= DAILY_STORY_BODY_CHARS_MIN:
+    if dialogue_total_chars(data) < DAILY_STORY_BODY_CHARS_MIN:
+        data2, changed2 = _pad_gold_chat_to_min_chars(data)
+        data, changed = data2, changed or changed2
+
+    # 垫 ↔ 剥叠：最多几轮，直到 ≥min 或垫不动
+    for _ in range(4):
         data, san = patch_sanitize_c_tone_stack(data)
         data, san2 = patch_sanitize_pad_suffix(data)
-        return data, changed or san or san2
-    data2, changed2 = _pad_gold_chat_to_min_chars(data)
-    data2, san = patch_sanitize_c_tone_stack(data2)
-    data2, san2 = patch_sanitize_pad_suffix(data2)
-    # 剥叠语气词后可能又短，再垫一轮（C 安全垫）
-    if dialogue_total_chars(data2) < DAILY_STORY_BODY_CHARS_MIN:
-        data3, changed3 = _pad_gold_chat_to_min_chars(data2)
-        data3, san3 = patch_sanitize_c_tone_stack(data3)
-        return data3, changed or changed2 or changed3 or san or san2 or san3
-    return data2, changed or changed2 or san or san2
+        changed = changed or san or san2
+        if dialogue_total_chars(data) >= DAILY_STORY_BODY_CHARS_MIN:
+            return data, changed
+        before = dialogue_total_chars(data)
+        data, pad_again = _pad_gold_chat_to_min_chars(data)
+        changed = changed or pad_again
+        if not pad_again or dialogue_total_chars(data) <= before:
+            break
+    return data, changed
 
 
 def _gold_chat_post_pad_cleanup(story: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
@@ -1630,6 +1639,13 @@ def _line_count_deficit_from_error(msg: str) -> int | None:
     return max(0, int(m.group(1)) - int(m.group(2)))
 
 
+def _char_deficit_from_error(msg: str) -> int | None:
+    m = re.search(r"正文总字数须≥(\d+)，当前(\d+)", str(msg or ""))
+    if not m:
+        return None
+    return max(0, int(m.group(1)) - int(m.group(2)))
+
+
 def _is_regenerable_line_short_error(msg: str) -> bool:
     """句数差 ≤3（如 9–11/12）可 Pass1 重生成。"""
     deficit = _line_count_deficit_from_error(msg)
@@ -1638,21 +1654,38 @@ def _is_regenerable_line_short_error(msg: str) -> bool:
     return 1 <= deficit <= PASS1_SHORT_LINE_DEFICIT_MAX
 
 
-def _short_content_reject_message(detail: str) -> str:
+def _is_regenerable_short_error(msg: str) -> bool:
+    """句数差 ≤3，或字数差 ≤ near-miss（如 235/240）可 Pass1 重生成。"""
+    if _is_regenerable_line_short_error(msg):
+        return True
+    deficit = _char_deficit_from_error(msg)
+    if deficit is None:
+        return False
+    return 1 <= deficit <= GOLD_CHAT_NEAR_MISS_DEFICIT_MAX
+
+
+def _short_content_reject_message(detail: str, *, regen_count: int = 0) -> str:
     text = str(detail or "").strip()
-    head = f"gold_chat篇幅驳回:重生成{PASS1_SHORT_REGENERATE_MAX}次仍不达标"
+    if regen_count > 0:
+        head = f"gold_chat篇幅驳回:重生成{regen_count}次仍不达标"
+    else:
+        head = "gold_chat篇幅驳回:本地垫字仍不足"
     return f"{head}; {text}" if text else head
 
 
 def _bump_short_regen_or_reject(msg: str, short_regen_count: int) -> int:
-    """句数差 ≤3 → Pass1 重生成（最多 3 次）；差距更大或次数用尽 → 驳回。"""
+    """句/字 near-miss → Pass1 重生成（最多 3 次）；差距更大或次数用尽 → 驳回。"""
     if not _is_short_content_error(msg):
         return short_regen_count
-    if not _is_regenerable_line_short_error(msg):
-        raise ValueError(_short_content_reject_message(msg))
+    if not _is_regenerable_short_error(msg):
+        raise ValueError(
+            _short_content_reject_message(msg, regen_count=short_regen_count)
+        )
     next_count = short_regen_count + 1
     if next_count > PASS1_SHORT_REGENERATE_MAX:
-        raise ValueError(_short_content_reject_message(msg))
+        raise ValueError(
+            _short_content_reject_message(msg, regen_count=PASS1_SHORT_REGENERATE_MAX)
+        )
     return next_count
 
 
@@ -2040,14 +2073,14 @@ def _attach_gold_chat_structure_score(
     if st:
         out["story_type"] = st
     theme = str(
-        out.get("scene_title")
+        row.get("title")
+        or out.get("scene_title")
         or out.get("key")
-        or row.get("title")
         or row.get("source_id")
         or ""
     ).strip()
     sync_discovery_opening_from_dialogue(out)
-    attach_daily_story_quality(out, theme=theme, finalize=True)
+    attach_daily_story_quality(out, theme=theme, finalize=True, skip_relevancy=True)
     return out
 
 

@@ -202,7 +202,7 @@ def test_bump_short_regen_helpers():
     assert gc._is_regenerable_line_short_error(err11)
     assert gc._bump_short_regen_or_reject(err11, 0) == 1
     assert gc._bump_short_regen_or_reject(err11, 2) == 3
-    with pytest.raises(ValueError, match="篇幅驳回"):
+    with pytest.raises(ValueError, match="重生成3次仍不达标"):
         gc._bump_short_regen_or_reject(err11, 3)
     err10 = "对白句数须≥12，当前10"
     assert gc._is_regenerable_line_short_error(err10)
@@ -211,8 +211,72 @@ def test_bump_short_regen_helpers():
     assert gc._is_regenerable_line_short_error(err9)
     err8 = "对白句数须≥12，当前8"
     assert not gc._is_regenerable_line_short_error(err8)
-    with pytest.raises(ValueError, match="篇幅驳回"):
+    with pytest.raises(ValueError, match="本地垫字仍不足"):
         gc._bump_short_regen_or_reject(err8, 0)
+    # 字数 near-miss（如 235/240）也应可重生成，勿冒充「重生成3次」
+    err_chars = "正文总字数须≥240，当前235"
+    assert gc._char_deficit_from_error(err_chars) == 5
+    assert gc._is_regenerable_short_error(err_chars)
+    assert gc._bump_short_regen_or_reject(err_chars, 0) == 1
+    with pytest.raises(ValueError, match="重生成3次仍不达标"):
+        gc._bump_short_regen_or_reject(err_chars, 3)
+
+
+def test_ensure_gold_chat_min_chars_survives_sanitize_strip():
+    """垫满后剥叠语气词又短 → 须再垫回 ≥240（回归 235 假驳回）。"""
+    from app.services.daily_story.prompts import DAILY_STORY_BODY_CHARS_MIN
+
+    story = _sample_chat()
+    total = gc.dialogue_total_chars(story)
+    # 剪到差 5 字，并塞可被 sanitize 剥掉的叠尾
+    trim = total - DAILY_STORY_BODY_CHARS_MIN + 5
+    dlg = story["dialogue"]
+    last = dlg[-3]
+    line = str(last["line"])
+    assert len(line) > trim
+    core = line[:-trim].rstrip("！。？…!")
+    last["line"] = core + "呢呢！"
+    assert gc.dialogue_total_chars(story) < DAILY_STORY_BODY_CHARS_MIN
+    out, changed = gc._ensure_gold_chat_min_chars(story)
+    assert changed
+    assert gc.dialogue_total_chars(out) >= DAILY_STORY_BODY_CHARS_MIN
+    assert "呢呢" not in "".join(str(x.get("line") or "") for x in out["dialogue"])
+
+
+def test_gold_chat_structure_score_skips_bili_title_relevancy():
+    """gold_chat 结构分不按 B 站标题字面跑题（保真走 beat/契约）。"""
+    row = _sample_row()
+    row["title"] = "世子之争"
+    chat = _sample_chat()
+    chat["scene_title"] = "垫子争夺战"
+    chat["story_type"] = "J"
+    chat["dialogue"] = [
+        {"speaker": "昭昭", "line": "这沙发我先占好了，你挪开！"},
+        {"speaker": "灿灿", "line": "不行，我先来的，该你走！"},
+    ] * 6
+    out = gc._attach_gold_chat_structure_score(chat, row)
+    reasons = " ".join(str(r) for r in (out.get("quality") or {}).get("reasons") or [])
+    assert "跑题" not in reasons
+
+
+def test_body_only_gold_chat_12_lines_skips_opening_penalty():
+    """gold_chat 无 discovery_opening、≥12 句时不扣「缺发现开场」。"""
+    from app.services.daily_story.quality import score_daily_story
+
+    story = {
+        "scene_title": "世子之争",
+        "setting": "地板垫上，灿灿和昭昭在抢垫子",
+        "conflict_core": "昭昭先动手，灿灿一锤镇住",
+        "punchline_explain": "J类权威压住",
+        "story_type": "J",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "世子之争我先占这垫子！"},
+            {"speaker": "灿灿", "line": "不行，谁赢谁说了算！"},
+        ]
+        * 6,
+    }
+    q = score_daily_story(story, theme="世子之争")
+    assert "缺发现开场" not in " ".join(q.get("reasons") or [])
 
 
 def test_gold_story_to_gold_chat_retries_on_validate_error(monkeypatch):
