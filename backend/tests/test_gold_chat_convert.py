@@ -218,6 +218,8 @@ def test_bump_short_regen_helpers():
     assert gc._char_deficit_from_error(err_chars) == 5
     assert gc._is_regenerable_short_error(err_chars)
     assert gc._bump_short_regen_or_reject(err_chars, 0) == 1
+    err_short = "正文总字数须≥240，当前148"
+    assert gc._is_regenerable_short_error(err_short)
     with pytest.raises(ValueError, match="重生成3次仍不达标"):
         gc._bump_short_regen_or_reject(err_chars, 3)
 
@@ -631,6 +633,33 @@ def test_pad_gold_chat_line_uses_daily_pad():
     new, added = gc._pad_gold_chat_line(line, 1)
     assert added == 1
     assert "了呢" in new
+
+
+def test_patch_sanitize_pad_suffix_preserves_normal_ne():
+    """单次「不行了吧/好不好呀」是正常口语，勿误触发垫字剥除。"""
+    story = {
+        "dialogue": [
+            {"speaker": "昭昭", "line": "这不行了吧！"},
+            {"speaker": "灿灿", "line": "这样好不好呀？"},
+        ],
+    }
+    out, changed = gc.patch_sanitize_pad_suffix(story)
+    assert not changed
+    assert out["dialogue"][0]["line"] == "这不行了吧！"
+
+
+def test_patch_gold_chat_dedupe_skips_when_cut_too_short():
+    """删复读环后若 <12 句 / <240 字，不剪（防短稿被剪穿）。"""
+    from app.services.daily_story.gold_story.gold_chat import patch as gcp
+
+    rows = []
+    for _ in range(6):
+        rows.append({"speaker": "昭昭", "line": "哼，看招！"})
+        rows.append({"speaker": "灿灿", "line": "你敢动手？"})
+    story = {"dialogue": rows}
+    out, notes = gcp.patch_gold_chat_dedupe_dialogue_loop(story)
+    assert out["dialogue"] == rows
+    assert not notes
 
 
 def test_patch_sanitize_pad_suffix():

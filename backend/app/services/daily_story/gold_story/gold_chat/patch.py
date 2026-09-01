@@ -2085,8 +2085,22 @@ def patch_gold_chat_dedupe_dialogue_loop(
     if cut >= len(rows):
         return story, []
 
+    from app.services.daily_story.gold_story.scene import CHAT_LINE_COUNT_MIN
+    from app.services.daily_story.prompts import (
+        DAILY_STORY_BODY_CHARS_MIN,
+        dialogue_total_chars,
+    )
+
+    kept = rows[:cut]
+    candidate = dict(story)
+    candidate["dialogue"] = kept
+    if len(kept) < CHAT_LINE_COUNT_MIN:
+        return story, []
+    if dialogue_total_chars(candidate) < DAILY_STORY_BODY_CHARS_MIN:
+        return story, []
+
     out = copy.deepcopy(story)
-    out["dialogue"] = rows[:cut]
+    out["dialogue"] = kept
     dropped = len(rows) - cut
     return out, [f"gold_chat删复读环({dropped}句)"]
 
