@@ -50,6 +50,9 @@ RESTRICTED_LOCATION_MAP: dict[str, str] = {
     "户外": "阳台",
     "公园": "阳台",
     "操场": "阳台",
+    "幼儿园": "地板",
+    "午休": "地板",
+    "午睡": "地板",
 }
 
 _RE_RESTRICTED = re.compile(
@@ -82,6 +85,8 @@ def resolve_target_location(raw: str, *, default: str = "客厅") -> str:
     for place in sorted(ALLOWED_SETTING_PLACES, key=len, reverse=True):
         if place in text:
             return place
+    if "垫子" in text or "地垫" in text:
+        return "地板"
     return default
 
 

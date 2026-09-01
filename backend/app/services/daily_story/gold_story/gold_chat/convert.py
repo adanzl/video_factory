@@ -1811,33 +1811,22 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
             patch_m2_c_snack_beat_rebuild,
         )
 
-        seed_story = {
+        ctx_story = {
             "story_type": "C",
             "scene_title": str(row.get("title") or ""),
             "setting": str((payload.get("scene_contract") or {}).get("location") or ""),
             "conflict_core": conflict_core
             or str(payload.get("conflict") or conflict_text or ""),
-            "dialogue": [
-                {"speaker": "灿灿", "line": "零食归我，作业本归你，公平吧？"},
-                {"speaker": "昭昭", "line": "你偷吃还定规矩？"},
-                {"speaker": "灿灿", "line": "谁拿到算谁的。"},
-                {"speaker": "昭昭", "line": "那本子归我？"},
-                {"speaker": "灿灿", "line": "本子不算。"},
-                {"speaker": "昭昭", "line": "你敢撕？"},
-                {"speaker": "灿灿", "line": "你敢撕我全吃光。"},
-                {"speaker": "昭昭", "line": "规矩你定的。"},
-                {"speaker": "灿灿", "line": "别撕。"},
-                {"speaker": "昭昭", "line": "你刚说的，说不通。"},
-            ],
+            "dialogue": [],
         }
-        meat = m2_c_meat_whole_item_context(seed_story, payload=payload)
+        meat = m2_c_meat_whole_item_context(ctx_story, payload=payload)
         if _m2_c_is_snack_homework_ctx(
-            seed_story, meat_ctx=meat, payload=payload
-        ) or _m2_c_is_snack_homework_ctx(
-            {"dialogue": [], "scene_title": str(row.get("title") or "")},
-            meat_ctx=False,
+            ctx_story,
+            meat_ctx=meat,
             payload=payload,
         ):
+            seed_story = dict(ctx_story)
+            seed_story["dialogue"] = list(chat.get("dialogue") or [])
             rebuilt, notes = patch_m2_c_snack_beat_rebuild(
                 seed_story,
                 payload=payload,
