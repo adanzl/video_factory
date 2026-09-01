@@ -52,7 +52,7 @@ def _tts_with_retry(text: str, *, word_timestamps: bool, rate: float, voice: str
                 time.sleep(delay)
             else:
                 logger.error('tts all %d attempts failed (voice=%s): %s', _TTS_MAX_RETRIES, voice, exc)
-    raise last_err
+    raise last_err  # type: ignore[arg-type,assignment]
 
 def _synthesize_segment_dialogue(seg: dict, clips_dir: Path, ext: str, speaker_configs: dict[str, dict], phrase_gap_sec: float, *, job_id: int | None=None) -> _SegResult:
     """合成单个分镜的多角色对话，返回结果。可在线程池中并发执行。"""
@@ -148,7 +148,7 @@ class DailyTtsStage(StageExecutor):
         persist_configs = {**speaker_configs, 'phrase_gap_sec': phrase_gap_sec}
         self._persist_speaker_configs(job['id'], persist_configs)
         self._job_id = ctx.job['id']
-        result = self._synthesize_multi_speaker(segments, ctx.media_dir / 'audio', speaker_configs, phrase_gap_sec)
+        result = self._synthesize_multi_speaker(segments, ctx.media_dir / 'audio', speaker_configs, phrase_gap_sec)  # type: ignore[arg-type,assignment]
         normalize_loudness(result['audio_path'], target_lufs=settings.audio_target_lufs, true_peak=settings.audio_true_peak)
         final_duration = probe_duration(result['audio_path'])
         cue_total = sum((c.duration_sec for c in result['subtitle_cues']))
@@ -237,7 +237,7 @@ class DailyTtsStage(StageExecutor):
         pool = gevent.pool.Pool(size=max_workers)
         green_lets = [pool.spawn(_run_seg, seg) for seg in segments]
         gevent.joinall(green_lets, raise_error=True)
-        seg_results = [g.value for g in green_lets]
+        seg_results = [g.value for g in green_lets]  # type: ignore[arg-type,assignment]
         seg_results.sort(key=lambda r: r.seg_index)
         clip_paths = [r.clip_path for r in seg_results]
         all_subtitle_cues: list[SubtitleCue] = []

@@ -113,12 +113,12 @@ def atomic() -> Iterator[None]:
 def locked_atomic() -> Iterator[None]:
     """串行 + 短事务：出图 batch 多 greenlet 写分镜时用。"""
     lock = _get_db_write_lock()
-    lock.acquire()
+    lock.acquire()  # type: ignore[union-attr]
     try:
         with atomic():
             yield
     finally:
-        lock.release()
+        lock.release()  # type: ignore[union-attr]
 
 
 def get_dbapi_connection() -> sqlite3.Connection:

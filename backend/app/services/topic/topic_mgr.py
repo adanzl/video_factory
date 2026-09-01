@@ -223,7 +223,7 @@ class TopicMgr:
         scored: list[dict] = []
         with atomic():
             for title_id, result, status in pending:
-                updated = repo_title.update_title(title_id, score=result.total, score_detail=result.to_dict(), status=status)
+                updated = repo_title.update_title(title_id, score=result.total, score_detail=result.to_dict(), status=status)  # type: ignore[attr-defined]
                 scored.append(updated)
         return {'scored': scored, 'count': len(scored)}
 
@@ -264,10 +264,10 @@ class TopicMgr:
         script_kwargs = {'skip_title_optimize': True, 'generate_image_prompts': True}
         if run_mode == 'script':
             for job, hook in zip(jobs, job_hooks):
-                job_mgr.run_script(job['id'], to_end=False, supplementary_info=hook, **script_kwargs)
+                job_mgr.run_script(job['id'], to_end=False, supplementary_info=hook, **script_kwargs)  # type: ignore[arg-type]
         elif run_mode == 'full':
             for job, hook in zip(jobs, job_hooks):
-                job_mgr.run_script(job['id'], to_end=True, supplementary_info=hook, **script_kwargs)
+                job_mgr.run_script(job['id'], to_end=True, supplementary_info=hook, **script_kwargs)  # type: ignore[arg-type]
         logger.info('[TOPIC] enqueue done count=%d run_mode=%s job_ids=%s', len(jobs), run_mode, [job['id'] for job in jobs])
         return {'jobs': jobs, 'count': len(jobs), 'run_mode': run_mode}
 topic_mgr = TopicMgr()

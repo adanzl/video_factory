@@ -228,7 +228,7 @@ def test_insert_skips_similar_reprint(app_ctx):
     )
     assert second.get("action") == "skip"
     assert second.get("reason") == "duplicate_similar_story"
-    assert int(second.get("id")) == int(first["id"])
+    assert int(second.get("id")) == int(first["id"])  # type: ignore[arg-type]
 
 
 def test_reimport_stories_from_id_and_bv(app_ctx, monkeypatch):

@@ -98,7 +98,7 @@ class MaterialAudioMgr:
             material_dir = audio_root / str(material_id)
             dest = self._write_audio_file(material_dir, file, ext)
             meta = self._finalize_audio_file(material_dir, dest)
-            return repo_material_audio.update_material_audio(material_id, name=display_name, note=note_text, **meta)
+            return repo_material_audio.update_material_audio(material_id, name=display_name, note=note_text, **meta)  # type: ignore[arg-type,assignment]
         except Exception:
             self._rollback_upload(material_id, material_dir)
             raise

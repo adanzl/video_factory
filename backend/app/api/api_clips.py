@@ -61,7 +61,7 @@ def preview_clip_route():
     """代理外部素材视频，支持 Range 请求供浏览器播放。"""
     url = _parse_query_str("url", required=True, max_length=2048)
     try:
-        return proxy_clip_preview(url)
+        return proxy_clip_preview(url)  # type: ignore[arg-type]
     except ValueError as exc:
         raise APIError(str(exc), status_code=400) from exc
 
@@ -90,7 +90,7 @@ def search_clips_route():
             raise APIError("search_mode must be original or ai")
     try:
         result = clip_search_mgr.search(
-            query,
+            query,  # type: ignore[arg-type]
             per_page=per_page,
             providers=providers,
             orientation=orientation,
@@ -111,11 +111,11 @@ def import_segment_clip_route():
     if segment_index is None:
         raise APIError("segment_index is required")
     video_url = parse_str(data, "video_url", required=True)
-    if len(video_url) > 2048:
+    if len(video_url) > 2048:  # type: ignore[arg-type]
         raise APIError("video_url too long (max 2048)")
     job_mgr.get_job(job_id)
     try:
-        segment = clip_search_mgr.import_to_segment(job_id, segment_index, video_url)
+        segment = clip_search_mgr.import_to_segment(job_id, segment_index, video_url)  # type: ignore[arg-type]
     except JobBusyError as exc:
         raise APIError(str(exc), status_code=409, code="job_busy") from exc
     except KeyError as exc:

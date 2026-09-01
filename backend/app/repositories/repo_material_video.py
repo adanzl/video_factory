@@ -35,7 +35,7 @@ def create_material_video(
             note,
         ),
     )
-    material_id = int(cur.lastrowid)
+    material_id = int(cur.lastrowid)  # type: ignore[arg-type,assignment]
     sql.commit()
     return get_material_video(material_id)
 

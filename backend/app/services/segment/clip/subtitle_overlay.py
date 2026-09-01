@@ -124,10 +124,10 @@ def render_subtitle_overlay(
     line_gap = max(4, font_size // 24)
     text_block = _render_subtitle_block(lines, font_size, line_gap)
 
-    canvas = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-    text_x = (width - text_block.size[0]) // 2
-    text_y = int(height * SUBTITLE_Y_RATIO - text_block.size[1] / 2)
-    text_y = max(0, min(text_y, height - text_block.size[1]))
+    canvas = Image.new("RGBA", (width, height), (0, 0, 0, 0))  # type: ignore[operator,arg-type]
+    text_x = (width - text_block.size[0]) // 2  # type: ignore[operator,arg-type]
+    text_y = int(height * SUBTITLE_Y_RATIO - text_block.size[1] / 2)  # type: ignore[operator,arg-type]
+    text_y = max(0, min(text_y, height - text_block.size[1]))  # type: ignore[operator,arg-type]
     canvas.alpha_composite(text_block, (text_x, text_y))
     canvas.save(output_path, compress_level=0)
     return output_path

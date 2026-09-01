@@ -334,7 +334,7 @@ class ImageMgr:
         params_desc = provider.describe_params(size=size)
         logger.info('image batch start: count=%s, workers=%s, %s', total, max_workers, params_desc)
         if hasattr(provider, '_active_job_id'):
-            provider._active_job_id = job_id
+            provider._active_job_id = job_id  # type: ignore[attr-defined,assignment,union-attr]
 
         from app.utils.job_info import CONTENT_STYLE_DAILY_STORY, content_style_from_job
         style = content_style or (content_style_from_job(job) if job else None)
@@ -453,7 +453,7 @@ class ImageMgr:
                         )
                         try:
                             wrap_image_prompts(
-                                script.get('segments') or [],
+                                script.get('segments') or [],  # type: ignore[attr-defined,assignment,union-attr]
                                 content_style=style,
                                 setting=setting,
                                 segment_indices=[index],
@@ -461,7 +461,7 @@ class ImageMgr:
                             refreshed = next(
                                 (
                                     s
-                                    for s in (script.get('segments') or [])
+                                    for s in (script.get('segments') or [])  # type: ignore[attr-defined,assignment,union-attr]
                                     if int(s.get('segment_index') or 0) == index
                                 ),
                                 None,
@@ -588,7 +588,7 @@ class ImageMgr:
         finally:
             group.kill(block=False)
             if hasattr(provider, '_active_job_id'):
-                provider._active_job_id = None
+                provider._active_job_id = None  # type: ignore[attr-defined,assignment,union-attr]
         elapsed = time.time() - start
         logger.info('image batch done: %s/%s ok, skipped=%s in %.1fs | %s', len(results), total, skipped, elapsed, params_desc)
         return results

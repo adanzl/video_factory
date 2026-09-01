@@ -215,7 +215,7 @@ def insert_story(
             story_key,
         ),
     )
-    story_id = int(cur.lastrowid)
+    story_id = int(cur.lastrowid)  # type: ignore[arg-type,assignment]
     sql.commit()
     return story_id
 

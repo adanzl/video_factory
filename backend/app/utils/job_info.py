@@ -502,7 +502,7 @@ def xfade_params_from_info(info: str | dict | None, *, settings: Any | None=None
         duration_raw = cfg.segment_xfade_duration_sec
     transition = normalize_xfade_transition(transition_raw if isinstance(transition_raw, str) else str(transition_raw or 'none'))
     try:
-        duration_sec = float(duration_raw)
+        duration_sec = float(duration_raw)  # type: ignore[arg-type,assignment]
     except (TypeError, ValueError):
         duration_sec = DEFAULT_XFADE_DURATION_SEC
     duration_sec = max(0.05, min(2.0, duration_sec))

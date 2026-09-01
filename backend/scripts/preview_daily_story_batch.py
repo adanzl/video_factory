@@ -104,13 +104,13 @@ def _summarize(theme: str, story: dict, elapsed: float) -> dict:
         "conflict_core": story.get("conflict_core"),
         "punchline_explain": story.get("punchline_explain"),
         "punchline_blueprint": story.get("punchline_blueprint"),
-        "quality_grade": quality.get("grade"),
-        "quality_score": quality.get("score"),
-        "quality_summary": quality.get("summary"),
-        "contract_version": meta.get("contract_version"),
-        "natural_pass": meta.get("natural_pass"),
-        "body_attempt": meta.get("body_attempt"),
-        "patch_notes": meta.get("patch_notes"),
+        "quality_grade": quality.get("grade"),  # type: ignore[union-attr]
+        "quality_score": quality.get("score"),  # type: ignore[union-attr]
+        "quality_summary": quality.get("summary"),  # type: ignore[union-attr]
+        "contract_version": meta.get("contract_version"),  # type: ignore[union-attr]
+        "natural_pass": meta.get("natural_pass"),  # type: ignore[union-attr]
+        "body_attempt": meta.get("body_attempt"),  # type: ignore[union-attr]
+        "patch_notes": meta.get("patch_notes"),  # type: ignore[union-attr]
         "opening": opening,
         "head": _lines(story)[:4],
         "tail": _lines(story)[-4:],

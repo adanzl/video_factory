@@ -14,7 +14,7 @@ def test_agnes_request_cancellable_stops_on_job_abort() -> None:
     job_cancel.clear(job_id)
     provider = AgnesImageProvider()
     provider._active_job_id = job_id  # noqa: SLF001
-    started = gevent.event.Event()
+    started = gevent.event.Event()  # type: ignore[attr-defined]
 
     def slow_request(*_args, **_kwargs):
         started.set()

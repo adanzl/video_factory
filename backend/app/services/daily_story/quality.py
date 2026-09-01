@@ -355,7 +355,7 @@ def _score_childlike_diction(lines: list[str]) -> tuple[int, list[str]]:
     全篇≥2 处也扣；仅正文零星 1 处不判（容忍孩子偶尔冒出）。
     返回 (bonus, details)，bonus ≤ 0。
     """
-    hits: list[str] = []
+    hits: list[tuple[int, str]] = []
     for i, ln in enumerate(lines):
         for pat, kind in ((_RE_META_SPEECH, "类型术语"), (_RE_ADULT_SPEECH, "成人词")):
             for m in pat.finditer(ln):
@@ -621,8 +621,8 @@ def _score_funniness(
     )
     scene_pts, scene_pros = 0, []
     if not humor_blocked and profile.score_scene_beat:
-        scene_pts, scene_pros = profile.score_scene_beat(
-            lines, text_has_hammer_beat=_text_has_hammer_beat,
+        scene_pts, scene_pros = profile.score_scene_beat(  # type: ignore[arg-type]  # type: ignore[arg-type,call-arg]  # type: ignore[arg-type,call-arg]
+            lines, text_has_hammer_beat=_text_has_hammer_beat,  # type: ignore[arg-type,call-arg]
         )
     if scene_pts:
         points += scene_pts
@@ -773,7 +773,7 @@ def score_daily_story(
 
     # ── 角色违规 ──
     mom_n = sum(
-        1 for d in dialogue
+        1 for d in (dialogue or [])
         if isinstance(d, dict) and str(d.get("speaker") or "").strip() == "妈妈"
     )
     if mom_n >= profile.mom_lines_penalty_at:
@@ -784,14 +784,14 @@ def score_daily_story(
         for pat in _MOM_JUDGE_PATTERNS:
             if any(
                 pat in str(d.get("line") or "")
-                for d in dialogue
+                for d in (dialogue or [])
                 if isinstance(d, dict) and d.get("speaker") == "妈妈"
             ):
                 score -= 25
                 cons.append(f"妈妈裁判式收场（{pat}）")
                 break
 
-    if _has_consecutive_sibling(dialogue):
+    if _has_consecutive_sibling(dialogue):  # type: ignore[arg-type]
         score -= 15
         cons.append("存在同人连说")
 
@@ -1010,7 +1010,7 @@ def finalize_daily_story_total(
     source = "pending"
     if isinstance(humor, dict) and humor.get("funny_score") is not None:
         try:
-            funny = max(0, min(20, int(humor.get("funny_score"))))
+            funny = max(0, min(20, int(humor.get("funny_score"))))  # type: ignore[arg-type]
             source = "llm"
             humor_type = humor.get("humor_type")
             if humor_type not in ("natural", "formulaic", "none"):

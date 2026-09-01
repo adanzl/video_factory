@@ -553,7 +553,7 @@ class AliTTSClient(TTSClient):
         pool = gevent.pool.Pool(size=max_workers)
         greenlets = [pool.spawn(_run, seg) for seg in segments]
         gevent.joinall(greenlets, raise_error=True)
-        segment_results: list[_SegmentSynthResult] = [g.value for g in greenlets]
+        segment_results: list[_SegmentSynthResult] = [g.value for g in greenlets]  # type: ignore[union-attr]
 
         segment_results.sort(key=lambda item: item.seg_index)
 

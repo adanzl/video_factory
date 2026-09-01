@@ -19,8 +19,8 @@
         批量删除{{ selectedIds.length ? `（${selectedIds.length}）` : "" }}
       </el-button>
       <el-checkbox v-model="batchForce" size="small">已导出也重跑</el-checkbox>
-      <el-checkbox v-model="filterExcludeRejected" size="small" @change="onFilterChange">
-        包含已驳回
+      <el-checkbox v-model="filterExcludeArchived" size="small" @change="onFilterChange">
+        包含已归档
       </el-checkbox>
       <el-radio-group v-model="filterHasStory" size="small" @change="onFilterChange">
         <el-radio-button value="">全部</el-radio-button>
@@ -108,14 +108,14 @@
             逐字稿
           </el-button>
           <el-button
-            v-if="row.status !== 'rejected'"
+            v-if="row.status !== 'archived'"
             type="warning"
             link
             size="small"
-            :loading="rejectingId === row.id"
-            @click.stop="handleRejectOne(row)"
+            :loading="archivingId === row.id"
+            @click.stop="handleArchiveOne(row)"
           >
-            驳回
+            归档
           </el-button>
           <el-button type="danger" link size="small" :loading="deletingId === row.id"
             @click.stop="handleDeleteOne(row)">
@@ -130,7 +130,7 @@
       @size-change="onPageSizeChange" />
 
     <GoldChatDetail v-model="showDetail" :gold-story-id="currentId" :source-id="currentSourceId"
-      @closed="onDetailClosed" @imported="fetchItems" @converting="onDetailConverting"
+      @closed="onDetailClosed" @imported="fetchItems" @status-changed="fetchItems" @converting="onDetailConverting"
       @converted="onDetailConverted" @reimported="onDetailReimported"
       @open-transcript="openTranscriptFromDetail" />
 
@@ -148,6 +148,7 @@ import { useErrorHandler } from "@/composables/useErrorHandler";
 import GoldChatDetail from "@/views/gold_chat/dialogs/GoldChatDetail.vue";
 import GoldStoryTranscript from "@/views/gold_chat/dialogs/GoldStoryTranscript.vue";
 import {
+  archiveGoldStories,
   batchConvertGoldChat,
   collectGoldStories,
   deleteGoldStories,
@@ -156,7 +157,6 @@ import {
   getGoldStoryCollectStatus,
   getGoldStoryReimportStatus,
   listGoldChats,
-  rejectGoldStories,
   reimportGoldStories,
   type GoldChatListItem,
   type GoldStoryCollectResult,
@@ -182,8 +182,8 @@ const deleting = ref(false);
 const reimportingIds = ref<number[]>([]);
 const reimportingSourceIds = ref<string[]>([]);
 const convertingIds = ref<number[]>([]);
+const archivingId = ref<number | null>(null);
 const deletingId = ref<number | null>(null);
-const rejectingId = ref<number | null>(null);
 const selectedIds = ref<number[]>([]);
 const showDetail = ref(false);
 const showTranscript = ref(false);
@@ -195,7 +195,7 @@ const transcriptTitle = ref<string | null>(null);
 
 const FILTER_HAS_STORY_KEY = "goldChatFilterHasStory";
 const FILTER_HAS_STORY_VALUES = ["", "yes", "no"];
-const FILTER_EXCLUDE_REJECTED_KEY = "goldChatFilterExcludeRejected";
+const FILTER_EXCLUDE_ARCHIVED_KEY = "goldChatFilterExcludeArchived";
 
 function readStoredChoice(key: string, allowed: string[]): string {
   const raw = localStorage.getItem(key);
@@ -207,8 +207,8 @@ const page = ref(1);
 const pageSize = ref(parseInt(localStorage.getItem("goldChatPageSize") || "15", 10));
 const total = ref(0);
 const filterHasStory = ref(readStoredChoice(FILTER_HAS_STORY_KEY, FILTER_HAS_STORY_VALUES));
-const filterExcludeRejected = ref(
-  localStorage.getItem(FILTER_EXCLUDE_REJECTED_KEY) !== "false",
+const filterExcludeArchived = ref(
+  localStorage.getItem(FILTER_EXCLUDE_ARCHIVED_KEY) !== "false",
 );
 const batchForce = ref(false);
 const collectPhase = ref("");
@@ -243,6 +243,7 @@ function formatStoryStatus(status: string): string {
   if (status === "processing") return "处理中";
   if (status === "active") return "通过";
   if (status === "rejected") return "驳回";
+  if (status === "archived") return "归档";
   if (status === "promoted") return "晋升";
   if (status === "retired") return "淘汰";
   return status || "-";
@@ -254,6 +255,7 @@ function statusTagType(
   if (status === "active" || status === "promoted") return "success";
   if (status === "pending" || status === "processing") return "warning";
   if (status === "rejected") return "info";
+  if (status === "archived") return "info";
   if (status === "retired") return "info";
   return "warning";
 }
@@ -362,7 +364,7 @@ async function fetchItems(opts?: { quiet?: boolean }) {
     const res = await listGoldChats({
       limit: pageSize.value,
       offset: (page.value - 1) * pageSize.value,
-      exclude_rejected: !filterExcludeRejected.value,
+      exclude_archived: !filterExcludeArchived.value,
       ...(filterHasStory.value === "yes"
         ? { has_story: true }
         : filterHasStory.value === "no"
@@ -445,7 +447,7 @@ async function pollReimportStatus() {
 
 function onFilterChange() {
   localStorage.setItem(FILTER_HAS_STORY_KEY, filterHasStory.value);
-  localStorage.setItem(FILTER_EXCLUDE_REJECTED_KEY, String(filterExcludeRejected.value));
+  localStorage.setItem(FILTER_EXCLUDE_ARCHIVED_KEY, String(filterExcludeArchived.value));
   page.value = 1;
   selectedIds.value = [];
   void fetchItems();
@@ -523,30 +525,30 @@ function viewItem(row: GoldChatListItem) {
   showDetail.value = true;
 }
 
-async function handleRejectOne(row: GoldChatListItem) {
-  if (row.status === "rejected") return;
+async function handleArchiveOne(row: GoldChatListItem) {
+  if (row.status === "archived") return;
   try {
     await ElMessageBox.confirm(
-      `确定驳回「${row.title || row.source_id}」？仅改状态，不删文件。`,
-      "驳回金故事",
+      `确定归档「${row.title || row.source_id}」？仅改状态，不删文件。`,
+      "归档金故事",
       { type: "warning" },
     );
   } catch {
     return;
   }
-  rejectingId.value = row.id;
+  archivingId.value = row.id;
   try {
-    const res = await rejectGoldStories([row.id]);
-    if (res.rejected > 0) {
-      ElMessage.success("已驳回");
+    const res = await archiveGoldStories([row.id]);
+    if (res.archived > 0) {
+      ElMessage.success("已归档");
     } else {
-      ElMessage.warning("未驳回任何记录");
+      ElMessage.warning("未归档任何记录");
     }
     await fetchItems();
   } catch (e) {
-    handleError(e, "驳回失败");
+    handleError(e, "归档失败");
   } finally {
-    rejectingId.value = null;
+    archivingId.value = null;
   }
 }
 

@@ -440,7 +440,7 @@ class GoldStoryMgr:
         *,
         status: str | None = None,
         has_story: bool | None = None,
-        exclude_rejected: bool = False,
+        exclude_archived: bool = False,
         limit: int = 15,
         offset: int = 0,
     ) -> dict[str, Any]:
@@ -451,14 +451,14 @@ class GoldStoryMgr:
         rows = repo_gold_story.list_stories(
             status=status or None,
             has_story=has_story,
-            exclude_rejected=exclude_rejected,
+            exclude_archived=exclude_archived,
             limit=limit,
             offset=offset,
         )
         total = repo_gold_story.count_stories(
             status=status or None,
             has_story=has_story,
-            exclude_rejected=exclude_rejected,
+            exclude_archived=exclude_archived,
         )
         items = [_row_to_list_item(row, config=cfg) for row in rows]
         return {"items": items, "total": total, "limit": limit, "offset": offset}
@@ -830,6 +830,60 @@ class GoldStoryMgr:
 
     def reimport_status(self) -> dict[str, Any]:
         return _reimport_snapshot()
+
+    def archive_stories(self, gold_story_ids: list[int]) -> dict[str, Any]:
+        """人工归档：仅改 status=archived，不删文件。"""
+        _ensure_schema()
+        ids = sorted({int(x) for x in gold_story_ids if int(x) > 0})
+        if not ids:
+            raise ValueError("ids 不能为空")
+        ok_ids: list[int] = []
+        skipped: list[int] = []
+        results: list[dict[str, Any]] = []
+        for gid in ids:
+            try:
+                row = repo_gold_story.get_story(gid)
+            except KeyError:
+                results.append({"id": gid, "action": "error", "error": "not_found"})
+                continue
+            sid = str(row.get("source_id") or "").strip()
+            old = str(row.get("status") or "").strip()
+            if old == "archived":
+                skipped.append(gid)
+                results.append(
+                    {
+                        "id": gid,
+                        "source_id": sid,
+                        "action": "skip",
+                        "reason": "already_archived",
+                    }
+                )
+                continue
+            repo_gold_story.update_story_status(
+                gid,
+                status="archived",
+                audit={
+                    "stage": "manual",
+                    "archive_reason": "manual_archive",
+                    "prev_status": old or None,
+                },
+            )
+            ok_ids.append(gid)
+            results.append(
+                {
+                    "id": gid,
+                    "source_id": sid,
+                    "action": "ok",
+                    "status": "archived",
+                    "prev_status": old or None,
+                }
+            )
+        return {
+            "archived": len(ok_ids),
+            "skipped": len(skipped),
+            "ids": ok_ids,
+            "results": results,
+        }
 
     def reject_stories(self, gold_story_ids: list[int]) -> dict[str, Any]:
         """人工驳回：仅改 status=rejected，不删文件。"""

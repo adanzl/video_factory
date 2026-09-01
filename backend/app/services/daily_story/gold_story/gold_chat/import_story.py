@@ -29,7 +29,7 @@ def _review_gold_chat_import_story(story: dict[str, Any], theme: str) -> dict[st
         review = getattr(client, "review_daily_story_issues", None)
         if not callable(review):
             return story
-        issues_, humor_ = review(theme, story)
+        issues_, humor_ = review(theme, story)  # type: ignore[union-attr]
         issues = merge_issues(collect_local_issues(story), issues_)
         return apply_review_to_quality(story, issues, humor=humor_)
     except Exception as exc:

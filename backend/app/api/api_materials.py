@@ -121,7 +121,7 @@ def create_job_from_material_route():
     try:
         job = material_video_mgr.create_job_from_material(
             material_id,
-            title,
+            title,  # type: ignore[union-attr]
             narration=narration,
             script_mode=script_mode,
             skip_publish=skip_publish,

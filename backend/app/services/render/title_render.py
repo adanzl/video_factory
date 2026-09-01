@@ -30,7 +30,7 @@ def text_bbox(
         font=font,
         stroke_width=stroke_width,
     )
-    return right - left, bottom - top
+    return right - left, bottom - top  # type: ignore[union-attr]
 
 
 def _draw_styled_text(

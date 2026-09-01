@@ -65,8 +65,8 @@ class VideoAnalyzer:
 
     def _extract_frames(self) -> tuple[list[str], int]:
         """抽帧：3s间隔算帧数 → +1 → 重算间隔。"""
-        target = int(self._duration / 3) + 1
-        interval = max(2, round(self._duration / target))
+        target = int(self._duration / 3) + 1  # type: ignore[arg-type,assignment]
+        interval = max(2, round(self._duration / target))  # type: ignore[union-attr]
         with tempfile.TemporaryDirectory() as tmpdir:
             frames = extract_frames_interval(self._video_path, Path(tmpdir), interval)
             if not frames:

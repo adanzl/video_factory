@@ -124,7 +124,7 @@ def search_pexels(
                 duration_sec=float(item["duration"]) if item.get("duration") else None,
                 width=int(picked["width"]) if picked.get("width") else None,
                 height=int(picked["height"]) if picked.get("height") else None,
-                author=str(user.get("name")) if user.get("name") else None,
+                author=str(user.get("name")) if user.get("name") else None,  # type: ignore[union-attr]
             )
         )
     return clips

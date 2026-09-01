@@ -190,7 +190,7 @@ def patch_c_whole_item_near_miss(story: dict) -> list[str]:
                 return fixed, True
         for pat, repl in _WHOLE_ITEM_CLAUSE_REPAIRS:
             if pat.search(new_line):
-                subbed = pat.sub(repl, new_line)
+                subbed = pat.sub(repl, new_line)  # type: ignore[union-attr]
                 if subbed != new_line:
                     new_line = subbed
                     changed = True

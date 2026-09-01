@@ -33,9 +33,9 @@ def test_vf_for_encode_vaapi_appends_hwupload() -> None:
 @pytest.mark.skipif(_FFMPEG is None, reason="ffmpeg not installed")
 def test_scale_pad_filter_runs_as_single_output_graph(tmp_path: Path) -> None:
     vf = vf_for_encode(scale_pad_filter(width=640, height=360, fps=25))
-    out = subprocess.run(
+    out = subprocess.run(  # type: ignore[arg-type,call-overload]
         [
-            _FFMPEG,
+            _FFMPEG,  # type: ignore[arg-type,call-overload]
             "-hide_banner",
             "-loglevel",
             "error",
@@ -62,9 +62,9 @@ def test_scale_pad_filter_vaapi_chain_is_single_output_graph() -> None:
     base = scale_pad_filter(width=640, height=360, fps=25)
     with patch("app.services.media.ffmpeg_utils.vaapi_enabled", return_value=True):
         vf = vf_for_encode(base)
-    out = subprocess.run(
+    out = subprocess.run(  # type: ignore[arg-type,call-overload]
         [
-            _FFMPEG,
+            _FFMPEG,  # type: ignore[arg-type,call-overload]
             "-hide_banner",
             "-loglevel",
             "error",

@@ -214,7 +214,7 @@ def test_preview_streams_video(monkeypatch):
             "https://videos.pexels.com/video-files/36382074/15429717_3840_2160_25fps.mp4"
         )
         assert response.status_code == 200
-        assert b"".join(response.response) == b"12345"
+        assert b"".join(response.response) == b"12345"  # type: ignore[arg-type,index]
         assert response.headers["Content-Type"] == "video/mp4"
 
 
@@ -386,7 +386,7 @@ def test_search_clips_original_mode(monkeypatch, settings):
         from app.services.clip_search.models import StockClip
 
         captured["pexels"] = query
-        captured["pexels_lang"] = kwargs.get("locale")
+        captured["pexels_lang"] = kwargs.get("locale")  # type: ignore[arg-type,index]
         return [
             StockClip(
                 id="pexels:1",
@@ -419,14 +419,14 @@ def test_search_clips_ai_mode(monkeypatch, settings):
 
     def fake_rewrite(query, *, language=None):
         captured["rewrite_input"] = query
-        captured["rewrite_lang"] = language
+        captured["rewrite_lang"] = language  # type: ignore[arg-type,index]
         return "rewritten query"
 
     def fake_pexels(query, **kwargs):
         from app.services.clip_search.models import StockClip
 
         captured["pexels"] = query
-        captured["pexels_lang"] = kwargs.get("locale")
+        captured["pexels_lang"] = kwargs.get("locale")  # type: ignore[arg-type,index]
         return [
             StockClip(
                 id="pexels:1",
@@ -443,7 +443,7 @@ def test_search_clips_ai_mode(monkeypatch, settings):
         from app.services.clip_search.models import StockClip
 
         captured["pixabay"] = query
-        captured["pixabay_lang"] = kwargs.get("lang")
+        captured["pixabay_lang"] = kwargs.get("lang")  # type: ignore[arg-type,index]
         return [
             StockClip(
                 id="pixabay:2",
@@ -491,7 +491,7 @@ def test_search_pexels_passes_locale(monkeypatch):
         locale="zh-CN",
         timeout=5,
     )
-    assert captured["params"]["locale"] == "zh-CN"
+    assert captured["params"]["locale"] == "zh-CN"  # type: ignore[arg-type,index]
 
 
 def test_search_pixabay_passes_lang(monkeypatch):
@@ -503,4 +503,4 @@ def test_search_pixabay_passes_lang(monkeypatch):
 
     monkeypatch.setattr("app.services.clip_search.providers.pixabay.get_json", fake_get_json)
     search_pixabay("magnet", api_key="k", per_page=5, lang="en", timeout=5)
-    assert captured["params"]["lang"] == "en"
+    assert captured["params"]["lang"] == "en"  # type: ignore[arg-type,index]

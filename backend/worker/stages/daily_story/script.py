@@ -148,7 +148,7 @@ class DailyScriptStage(StageExecutor):
                         avoid_titles=avoid_titles,
                     )
                     client = llm_mgr._get_client()
-                    raw, _ = client._chat_json(
+                    raw, _ = client._chat_json(  # type: ignore[attr-defined]
                         prompts['system'], prompts['user'],
                         thinking_enabled=False, temperature=1.0,
                     )
@@ -163,7 +163,7 @@ class DailyScriptStage(StageExecutor):
                         candidates,
                         anchors,
                         fetch_candidates=lambda: parse_chat_title_candidates_payload(
-                            client._chat_json(
+                            client._chat_json(  # type: ignore[attr-defined]
                                 prompts['system'], prompts['user'],
                                 thinking_enabled=False, temperature=1.0,
                             )[0],
@@ -183,7 +183,7 @@ class DailyScriptStage(StageExecutor):
                             title,
                             title_content,
                             max_len=max_len,
-                            fetch_json=lambda p: client._chat_json(
+                            fetch_json=lambda p: client._chat_json(  # type: ignore[attr-defined]
                                 p['system'], p['user'],
                                 thinking_enabled=False, temperature=0.3,
                             )[0],

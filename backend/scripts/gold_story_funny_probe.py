@@ -15,7 +15,7 @@ from app.config import Config
 from app.core import create_app
 from app.repositories import repo_gold_story
 from app.services.daily_story.gold_story.collect import (
-    _bili_http,
+    _bili_http,  # type: ignore[union-attr]
     fetch_top_replies,
     fetch_video_meta,
 )
@@ -172,7 +172,7 @@ def _cmd_prune(_: argparse.Namespace) -> int:
     keep_ids = list(KEEP_GOOD_IDS)
     with app.app_context():
         deleted_rejected = repo_gold_story.delete_stories_by_status("rejected")
-        deleted_other = repo_gold_story.delete_stories_except(keep_ids)
+        deleted_other = repo_gold_story.delete_stories_except(keep_ids)  # type: ignore[union-attr]
         patched: list[dict] = []
         for gid in keep_ids:
             rows = _probe_ids((gid,), cfg)

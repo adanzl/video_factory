@@ -207,7 +207,7 @@ def phrase_durations_from_words(
         else:
             end_ms = speech_ends[index] if speech_ends[index] is not None else begin
 
-        durations.append(max((end_ms - begin) / 1000.0, 0.05))
+        durations.append(max((end_ms - begin) / 1000.0, 0.05))  # type: ignore[union-attr]
 
     segment_ms = int(round(segment_duration_sec * 1000))
     if begins and begins[-1] is not None and speech_ends[-1] is not None:

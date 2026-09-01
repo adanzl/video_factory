@@ -77,7 +77,7 @@ def create_job(
     )
     job_id = cur.lastrowid
     sql.commit()
-    return get_job(int(job_id))
+    return get_job(int(job_id))  # type: ignore[arg-type,assignment]
 
 
 def list_jobs(

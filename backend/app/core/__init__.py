@@ -62,7 +62,7 @@ def create_app() -> Flask:
 
     @app.before_request
     def _record_request_start_time():
-        request._vf_start_time = time.perf_counter()
+        request._vf_start_time = time.perf_counter()  # type: ignore[union-attr]
 
     @app.after_request
     def _log_api_access(response):

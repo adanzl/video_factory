@@ -76,6 +76,16 @@ def test_validate_gold_chat_ok():
     gc.validate_gold_chat(story, banned_literals=["小姨"])
 
 
+def test_ensure_gold_chat_min_chars_pads_short_story():
+    lines = _sample_chat()["dialogue"][:12]
+    for item in lines:
+        item["line"] = str(item["line"])[:18]
+    story = {**_sample_chat(), "dialogue": lines}
+    out, changed = gc._ensure_gold_chat_min_chars(story)
+    assert changed
+    assert gc.dialogue_total_chars(out) >= gc.DAILY_STORY_BODY_CHARS_MIN
+
+
 def test_validate_gold_chat_rejects_banned():
     story = _sample_chat()
     story["dialogue"][0]["line"] = "小姨又欺负我"
@@ -136,7 +146,7 @@ def _bypass_structure_gate(monkeypatch):
     monkeypatch.setattr(gc, "refine_gold_chat_align", lambda story, **_kw: story)
 
 
-def test_gold_story_to_gold_chat_retries_when_too_short(monkeypatch):
+def test_gold_story_to_gold_chat_retries_when_one_line_short(monkeypatch):
     calls: dict[str, int | bool] = {"n": 0}
     _bypass_structure_gate(monkeypatch)
 
@@ -145,20 +155,64 @@ def test_gold_story_to_gold_chat_retries_when_too_short(monkeypatch):
             calls["fix"] = True
             return _sample_chat()
         calls["n"] = int(calls["n"]) + 1
-        if int(calls["n"]) == 1:
-            bad = _sample_chat()
-            bad["dialogue"] = bad["dialogue"][:2]
-            return bad
-        return _sample_chat()
+        chat = _sample_chat()
+        if int(calls["n"]) <= 2:
+            chat["dialogue"] = chat["dialogue"][:11]
+        return chat
 
     monkeypatch.setattr(gc, "_chat_json", fake_chat)
     monkeypatch.setattr(gc, "PASS1_CANDIDATE_COUNT", 1)
-    monkeypatch.setattr(gc, "PASS1_REGENERATE_MAX", 2)
+    monkeypatch.setattr(gc, "PASS1_REGENERATE_MAX", 5)
     out = gc.gold_story_to_gold_chat(_sample_row())
-    assert len(out["dialogue"]) >= 4
-    assert int(calls["n"]) >= 2
-    # 偏短不再烧 FIX，交外层 Pass1 回灌重抽
+    assert len(out["dialogue"]) >= 12
+    assert int(calls["n"]) >= 3
     assert calls.get("fix") is not True
+
+
+def test_gold_story_to_gold_chat_rejects_when_far_too_short(monkeypatch):
+    _bypass_structure_gate(monkeypatch)
+
+    def fake_chat(_system: str, _user: str, **_kwargs) -> dict:
+        bad = _sample_chat()
+        bad["dialogue"] = bad["dialogue"][:2]
+        return bad
+
+    monkeypatch.setattr(gc, "_chat_json", fake_chat)
+    monkeypatch.setattr(gc, "PASS1_CANDIDATE_COUNT", 1)
+    with pytest.raises(ValueError, match="篇幅驳回"):
+        gc.gold_story_to_gold_chat(_sample_row())
+
+
+def test_gold_story_to_gold_chat_rejects_after_three_one_line_short_regens(monkeypatch):
+    _bypass_structure_gate(monkeypatch)
+
+    def fake_chat(_system: str, _user: str, **_kwargs) -> dict:
+        bad = _sample_chat()
+        bad["dialogue"] = bad["dialogue"][:11]
+        return bad
+
+    monkeypatch.setattr(gc, "_chat_json", fake_chat)
+    monkeypatch.setattr(gc, "PASS1_CANDIDATE_COUNT", 1)
+    with pytest.raises(ValueError, match="重生成3次仍不达标"):
+        gc.gold_story_to_gold_chat(_sample_row())
+
+
+def test_bump_short_regen_helpers():
+    err11 = "对白句数须≥12，当前11; 正文总字数须≥240，当前155"
+    assert gc._is_regenerable_line_short_error(err11)
+    assert gc._bump_short_regen_or_reject(err11, 0) == 1
+    assert gc._bump_short_regen_or_reject(err11, 2) == 3
+    with pytest.raises(ValueError, match="篇幅驳回"):
+        gc._bump_short_regen_or_reject(err11, 3)
+    err10 = "对白句数须≥12，当前10"
+    assert gc._is_regenerable_line_short_error(err10)
+    assert gc._bump_short_regen_or_reject(err10, 0) == 1
+    err9 = "对白句数须≥12，当前9"
+    assert gc._is_regenerable_line_short_error(err9)
+    err8 = "对白句数须≥12，当前8"
+    assert not gc._is_regenerable_line_short_error(err8)
+    with pytest.raises(ValueError, match="篇幅驳回"):
+        gc._bump_short_regen_or_reject(err8, 0)
 
 
 def test_gold_story_to_gold_chat_retries_on_validate_error(monkeypatch):

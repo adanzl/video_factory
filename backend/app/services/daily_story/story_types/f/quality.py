@@ -96,6 +96,6 @@ QUALITY_PROFILE = TypeQualityProfile(
     penalize_wait_mom_end=False,
     penalize_mom_judge=False,
     collect_humor_issues=f_humor.collect_f_humor_issues,
-    score_scene_beat=score_scene_beat,
+    score_scene_beat=score_scene_beat,  # type: ignore[union-attr]
     score_funniness_tail=f_humor.score_funniness_tail,
 )

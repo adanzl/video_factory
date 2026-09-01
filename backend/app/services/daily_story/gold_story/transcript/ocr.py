@@ -14,6 +14,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import cv2
+import numpy as np
+
 from app.config import Config
 from . import merge as gs_merge
 from .detect import (
@@ -27,8 +30,6 @@ from app.utils.async_util import wait_futures_hub
 
 logger = logging.getLogger(__name__)
 
-_CJK_IN_LINE = re.compile(r"[\u4e00-\u9fff]")
-
 _OCR_CONFIG_NAME = "rapidocr_gold_story.yaml"
 _BACKEND_DIR = Path(__file__).resolve().parents[5]
 _OCR_SUBPROCESS_TIMEOUT_SEC = 600.0
@@ -36,9 +37,6 @@ _OCR_SUBPROCESS_TIMEOUT_SEC = 600.0
 _worker_engine = None
 _worker_config_path: str | None = None
 _worker_model_root: str | None = None
-_worker_min_box_height_ratio: float = 0.65
-_worker_min_dialogue_box_px: float = 22.0
-_worker_min_white_bg_ratio: float = 0.42
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,18 +70,10 @@ def _ffmpeg() -> str:
 def _init_ocr_worker(
     config_path: str,
     model_root_dir: str,
-    min_box_height_ratio: float = 0.65,
-    min_dialogue_box_px: float = 22.0,
-    min_white_bg_ratio: float = 0.42,
 ) -> None:
     global _worker_engine, _worker_config_path, _worker_model_root
-    global _worker_min_box_height_ratio, _worker_min_dialogue_box_px
-    global _worker_min_white_bg_ratio
     _worker_config_path = config_path
     _worker_model_root = model_root_dir
-    _worker_min_box_height_ratio = float(min_box_height_ratio)
-    _worker_min_dialogue_box_px = float(min_dialogue_box_px)
-    _worker_min_white_bg_ratio = float(min_white_bg_ratio)
     from rapidocr import RapidOCR  # type: ignore[import-not-found,unused-ignore]
 
     _worker_engine = RapidOCR(
@@ -105,11 +95,6 @@ def _box_white_bg_ratio(
     white_threshold: int = 140,
 ) -> float:
     """框周亮底占比（特征，不作业务门控）。"""
-    try:
-        import cv2
-    except ImportError:
-        return 1.0
-
     xs = [int(point[0]) for point in box]
     ys = [int(point[1]) for point in box]
     x0, x1 = max(0, min(xs)), min(image.shape[1] - 1, max(xs))
@@ -127,12 +112,6 @@ def _box_white_bg_ratio(
 
 def _box_ink_color_key(image: Any, box: Any) -> str:
     """粗粒度字色：white / yellow / black / other（笔画亮部主色）。"""
-    try:
-        import cv2
-        import numpy as np
-    except ImportError:
-        return "other"
-
     xs = [int(point[0]) for point in box]
     ys = [int(point[1]) for point in box]
     x0, x1 = max(0, min(xs)), min(image.shape[1] - 1, max(xs))
@@ -250,95 +229,6 @@ def infer_video_subtitle_fill_style(
     return "stroke"
 
 
-def filter_hits_by_fill_style(
-    hits: list[dict[str, Any]],
-    *,
-    style: str,
-    bubble_min: float = 0.42,
-) -> list[dict[str, Any]]:
-    """兼容旧接口：改走多数派字色。"""
-    _ = style, bubble_min
-    key = infer_majority_ink_color(hits)
-    kept = filter_hits_by_majority_color(hits, color_key=key)
-    return filter_repeat_watermark_hits(kept)
-
-
-def _subtitle_fill_style(
-    white_bg_ratios: list[float],
-    *,
-    bubble_min: float = 0.42,
-    texts: list[str] | None = None,
-) -> str:
-    """兼容旧调用。"""
-    _ = bubble_min
-    ratios = [float(r) for r in white_bg_ratios if r is not None]
-    if not ratios:
-        return "stroke"
-    hits = []
-    for i, ratio in enumerate(ratios):
-        text = str(texts[i]) if texts is not None and i < len(texts) else "x"
-        hits.append(
-            {
-                "text": text,
-                "white_bg": ratio,
-                "color_key": "black" if ratio >= 0.42 else "white",
-            }
-        )
-    return infer_video_subtitle_fill_style(hits, bubble_min=bubble_min)
-
-
-def _filter_dialogue_boxes(
-    image: Any,
-    txts: tuple[str, ...] | list[str],
-    scores: tuple[float, ...] | list[float],
-    boxes: Any,
-    *,
-    min_white_bg_ratio: float,
-    style: str | None = None,
-) -> tuple[list[str], list[float], list[Any]]:
-    """单帧过滤（测试/兼容）：多数派字色。"""
-    _ = style
-    if boxes is None:
-        return list(txts), list(scores), []
-    box_list = list(boxes)
-    n = min(len(txts), len(box_list))
-    if n <= 0:
-        return [], [], []
-
-    hits: list[dict[str, Any]] = []
-    for idx in range(n):
-        box = box_list[idx]
-        hits.append(
-            {
-                "text": str(txts[idx]),
-                "score": float(scores[idx] if idx < len(scores) else 0.0),
-                "white_bg": _box_white_bg_ratio(image, box),
-                "color_key": _box_ink_color_key(image, box),
-                "box": box,
-            }
-        )
-    key = infer_majority_ink_color(hits)
-    kept = filter_hits_by_majority_color(hits, color_key=key)
-    # 测试场景无全片重复水印，这里不做 watermark 二次过滤
-    _ = min_white_bg_ratio
-    return (
-        [str(h["text"]) for h in kept],
-        [float(h["score"]) for h in kept],
-        [h["box"] for h in kept],
-    )
-
-
-def _read_crop_height(image_path: str) -> float:
-    try:
-        import cv2
-    except ImportError:
-        return 0.0
-    image = cv2.imread(image_path)
-    if image is None:
-        return 0.0
-    return float(image.shape[0])
-
-
 def compose_frame_text(
     txts: tuple[str, ...] | list[str],
     scores: tuple[float, ...] | list[float],
@@ -350,7 +240,7 @@ def compose_frame_text(
 ) -> tuple[str, float]:
     """单帧多行 OCR：去掉小字号说明，拼成一行（无换行）。
 
-    注：颜色筛选在片级 `filter_hits_by_fill_style` 完成后再 compose。
+    注：颜色筛选在片级 materialize_ocr_rows 完成后再 compose。
     """
     _ = crop_h
     box_list = list(boxes) if boxes is not None else []
@@ -407,21 +297,16 @@ def _ocr_single_frame(args: tuple[float, str]) -> dict[str, Any]:
         "confidence": 0.0,
         "lines": [],
     }
-    if result is None or not getattr(result, "txts", None):
+    txts = getattr(result, "txts", None)
+    if result is None or not txts:
         return empty
 
-    try:
-        import cv2
-    except ImportError:
-        cv2 = None  # type: ignore[assignment]
+    image = cv2.imread(str(image_path))
 
-    image = None
-    if cv2 is not None:
-        image = cv2.imread(str(image_path))
-
-    txt_list = list(result.txts)
-    scores = list(result.scores or ())
-    boxes = list(result.boxes) if result.boxes is not None else []
+    txt_list = list(txts)
+    scores = list(getattr(result, "scores", None) or ())
+    boxes_raw = getattr(result, "boxes", None)
+    boxes = list(boxes_raw) if boxes_raw is not None else []
     hits: list[dict[str, Any]] = []
     for idx, txt in enumerate(txt_list):
         text = str(txt or "").strip()
@@ -526,22 +411,6 @@ def materialize_ocr_rows(
     return out
 
 
-def build_ocr_engine(config: Config):
-    """主进程探测用（非 ProcessPool worker）。"""
-    from rapidocr import RapidOCR  # type: ignore[import-not-found,unused-ignore]
-
-    cfg_path = ocr_config_path(config)
-    model_root = config.ocr_model_dir
-    if not model_root.is_dir():
-        raise RuntimeError(
-            f"OCR model dir not found: {model_root} (set OCR_MODEL_DIR)"
-        )
-    return RapidOCR(
-        config_path=str(cfg_path),
-        params={"Global.model_root_dir": str(model_root)},
-    )
-
-
 def extract_subtitle_frames(
     video_path: Path,
     *,
@@ -596,10 +465,6 @@ def crop_search_band_frames_to_region(
     if not frames:
         return []
     cfg = config or Config()
-    try:
-        import cv2
-    except ImportError as exc:
-        raise RuntimeError("opencv-python is required for OCR crop") from exc
 
     band_top = max(0.0, min(float(search_band_top_ratio), 0.98))
     search_ratio = max(1.0 - band_top, 0.05)
@@ -632,10 +497,6 @@ _DHASH_THRESHOLD = 0
 
 
 def _frame_dhash(image_path: Path) -> int | None:
-    try:
-        import cv2
-    except ImportError:
-        return None
     gray = cv2.imread(str(image_path), cv2.IMREAD_GRAYSCALE)
     if gray is None:
         return None
@@ -755,14 +616,11 @@ def ocr_frames_parallel(
 
     cfg_path = str(ocr_config_path(config))
     model_root = str(config.ocr_model_dir)
-    min_h_ratio = float(config.gold_story_ocr_min_box_height_ratio)
-    min_box_px = float(config.gold_story_ocr_min_dialogue_box_px)
-    min_white_bg = float(config.gold_story_ocr_min_white_bg_ratio)
     workers = max(1, int(config.gold_story_ocr_frame_workers))
     workers = min(workers, len(frames))
 
     tasks = [(frame.timestamp_sec, str(frame.image_path)) for frame in frames]
-    init_args = (cfg_path, model_root, min_h_ratio, min_box_px, min_white_bg)
+    init_args = (cfg_path, model_root)
     if workers <= 1:
         _init_ocr_worker(*init_args)
         return [_ocr_single_frame(task) for task in tasks]

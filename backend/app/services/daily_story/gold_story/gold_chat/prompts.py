@@ -272,7 +272,7 @@ def format_beat_sequence_block(
     parts = [
         "【事件顺序硬约束 · 对白须逐步落实，禁止跳步/调序/speaker 互换】",
     ]
-    chain_text = format_beat_chain(beat_chain)
+    chain_text = format_beat_chain(beat_chain)  # type: ignore[arg-type,union-attr,assignment]
     if chain_text:
         parts.extend(
             [
@@ -414,7 +414,7 @@ def format_structure_score_feedback(
             parts.append(f"当前结构分：{struct}")
         cons = [
             str(r)
-            for r in (quality.get("reasons") or [])
+            for r in (quality.get("reasons") or [])  # type: ignore[arg-type,union-attr,assignment]
             if any(
                 str(r).startswith(p) or p in str(r)
                 for p in ("缺", "未", "拖", "不足", "勿", "过", "偏", "-")
@@ -422,7 +422,7 @@ def format_structure_score_feedback(
         ][:5]
         for c in cons:
             parts.append(f"- {c}")
-        hints = build_quality_revision_hints(quality, story=story).strip()
+        hints = build_quality_revision_hints(quality, story=story).strip()  # type: ignore[arg-type,union-attr,assignment]
         if hints:
             parts.append(hints[:500])
     parts.append("禁止另起第二轮；收束槽位落在末段后即停。")

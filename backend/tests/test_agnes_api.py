@@ -54,7 +54,7 @@ def test_agnes_api_keys_primary_first_then_free() -> None:
         agnes_api_base_url="https://apihub.agnes-ai.com/v1",
         agnes_api_base_url_cn="https://api.agnes-ai.cn/v1",
     )
-    keys = agnes_api_keys(settings)
+    keys = agnes_api_keys(settings)  # type: ignore[arg-type]
     assert keys == [
         AgnesApiKey("primary", "main-key", "https://apihub.agnes-ai.com/v1"),
         AgnesApiKey("free", "free-key", "https://apihub.agnes-ai.com/v1"),
@@ -69,7 +69,7 @@ def test_agnes_api_keys_includes_cn_free() -> None:
         agnes_api_base_url="https://apihub.agnes-ai.com/v1",
         agnes_api_base_url_cn="https://api.agnes-ai.cn/v1",
     )
-    keys = agnes_api_keys(settings)
+    keys = agnes_api_keys(settings)  # type: ignore[arg-type]
     assert keys == [
         AgnesApiKey("primary", "main-key", "https://apihub.agnes-ai.com/v1"),
         AgnesApiKey("free", "free-key", "https://apihub.agnes-ai.com/v1"),
@@ -85,7 +85,7 @@ def test_agnes_api_keys_free_only() -> None:
         agnes_api_base_url="https://apihub.agnes-ai.com/v1",
         agnes_api_base_url_cn="https://api.agnes-ai.cn/v1",
     )
-    keys = agnes_api_keys(settings)
+    keys = agnes_api_keys(settings)  # type: ignore[arg-type]
     assert keys == [
         AgnesApiKey("free", "free-key", "https://apihub.agnes-ai.com/v1")
     ]
@@ -99,7 +99,7 @@ def test_agnes_api_keys_dedup_same_value() -> None:
         agnes_api_base_url="https://apihub.agnes-ai.com/v1",
         agnes_api_base_url_cn="https://api.agnes-ai.cn/v1",
     )
-    keys = agnes_api_keys(settings)
+    keys = agnes_api_keys(settings)  # type: ignore[arg-type]
     assert keys == [
         AgnesApiKey("primary", "same-key", "https://apihub.agnes-ai.com/v1")
     ]

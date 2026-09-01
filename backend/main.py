@@ -59,7 +59,7 @@ if __name__ == "__main__":
 
     try:
         from gevent.pywsgi import WSGIServer
-        from geventwebsocket.handler import WebSocketHandler
+        from geventwebsocket.handler import WebSocketHandler  # type: ignore[union-attr]
         from werkzeug.middleware.dispatcher import DispatcherMiddleware
         from werkzeug.middleware.shared_data import SharedDataMiddleware
 

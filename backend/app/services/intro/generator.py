@@ -164,10 +164,10 @@ def _tint_image(
     keep = 1.0 - mix
     for y in range(h):
         for x in range(w):
-            r, g, b, a = pixels[x, y]
+            r, g, b, a = pixels[x, y]  # type: ignore[index,union-attr]
             if a == 0:
                 continue
-            pixels[x, y] = (
+            pixels[x, y] = (  # type: ignore[index,union-attr]
                 int(r * keep + tr * mix),
                 int(g * keep + tg * mix),
                 int(b * keep + tb * mix),

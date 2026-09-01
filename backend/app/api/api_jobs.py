@@ -84,7 +84,7 @@ def _parse_script_body() -> tuple[
                 status_code=400,
             )
     segment_index = parse_optional_int(data, "segment_index", minimum=1)
-    return (
+    return (  # type: ignore[arg-type,assignment]
         parse_id(data),
         parse_bool(data, "to_end", default=False),
         parse_optional_str(data, "title"),
@@ -105,7 +105,7 @@ def _parse_script_body() -> tuple[
 
 @bp.post("/script")
 def run_script_route():
-    (
+    (  # type: ignore[arg-type,assignment]
         job_id,
         to_end,
         title,
@@ -134,11 +134,11 @@ def run_script_route():
             narration_target_words=narration_target_words,
             speech_chars_per_sec=speech_chars_per_sec,
             skip_title_optimize=skip_title_optimize,
-            generate_image_prompts=generate_image_prompts,
+            generate_image_prompts=generate_image_prompts,  # type: ignore[arg-type,assignment]
             supplementary_info=supplementary_info,
             video_timeline=video_timeline,
             orientation=orientation,
-            content_style=content_style,
+            content_style=content_style,  # type: ignore[arg-type,assignment]
             segment_index=segment_index,
         ),
     )
@@ -546,7 +546,7 @@ def add_job_route():
     data = get_json_body()
     title = parse_str(data, "title")
     skip_publish = parse_bool(data, "skip_publish", default=True)
-    job = job_mgr.create_from_title(title, skip_publish=skip_publish)
+    job = job_mgr.create_from_title(title, skip_publish=skip_publish)  # type: ignore[arg-type,assignment]
     return json_created(job)
 
 

@@ -113,7 +113,7 @@ def test_audit_story_skips_llm_when_rules_fail():
             ],
             "speaker_map_note": "妈妈保留",
         },
-        config=type(
+        config=type(  # type: ignore[arg-type]
             "Cfg",
             (),
             {
@@ -163,7 +163,7 @@ def test_audit_story_llm_pass(monkeypatch):
             ],
             "speaker_map_note": "姐弟→昭昭灿灿",
         },
-        config=type(
+        config=type(  # type: ignore[arg-type]
             "Cfg",
             (),
             {

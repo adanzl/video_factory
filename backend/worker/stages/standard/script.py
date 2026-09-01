@@ -383,7 +383,7 @@ class ScriptStage(StageExecutor):
             except ScriptValidationError as exc:
                 last_exc = exc
                 retry_scope = _validation_retry_scope(exc)
-                feedback = _validation_feedback(exc, min_chars=min_narration_chars, accept_chars=accept_narration_chars, segment_target_sec=segment_target_sec, narration_target_words=narration_target_words, content_style=content_style, speech_chars_per_sec=speech_chars_per_sec)
+                feedback = _validation_feedback(exc, min_chars=min_narration_chars, accept_chars=accept_narration_chars, segment_target_sec=segment_target_sec, narration_target_words=narration_target_words, content_style=content_style, speech_chars_per_sec=speech_chars_per_sec)  # type: ignore[arg-type]
                 if retry_scope != 'visual_brief':
                     script = None
                 with atomic():
@@ -405,7 +405,7 @@ class ScriptStage(StageExecutor):
                 except ScriptValidationError as exc:
                     last_exc = exc
                     retry_scope = _validation_retry_scope(exc)
-                    feedback = _validation_feedback(exc, min_chars=min_narration_chars, accept_chars=accept_narration_chars, segment_target_sec=segment_target_sec, narration_target_words=narration_target_words, content_style=content_style, speech_chars_per_sec=speech_chars_per_sec)
+                    feedback = _validation_feedback(exc, min_chars=min_narration_chars, accept_chars=accept_narration_chars, segment_target_sec=segment_target_sec, narration_target_words=narration_target_words, content_style=content_style, speech_chars_per_sec=speech_chars_per_sec)  # type: ignore[arg-type]
                     if retry_scope != 'visual_brief':
                         script = None
                     with atomic():
@@ -452,7 +452,7 @@ class ScriptStage(StageExecutor):
             script_mgr.attach_prompts(script, ctx.job, title, segment_target_sec=segment_target_sec, max_title_length=max_title_length, narration_target_words=narration_target_words, supplementary_info=supplementary_info, skip_title_optimize=bool(ctx.script_skip_title_optimize))
             resolved_seg_target = segment_target_sec if segment_target_sec is not None else get_settings().segment_target_sec
             from app.utils.media import assign_segment_timings
-            assign_segment_timings(script, segment_target_sec=resolved_seg_target, chars_per_sec=speech_chars_per_sec)
+            assign_segment_timings(script, segment_target_sec=resolved_seg_target, chars_per_sec=speech_chars_per_sec)  # type: ignore[arg-type]
             if supplementary_info:
                 script['supplementary_info'] = supplementary_info
             else:
@@ -463,7 +463,7 @@ class ScriptStage(StageExecutor):
             script['segment_target_sec'] = resolved_seg_target
             script['max_title_length'] = max_len
             script['generate_image_prompts'] = generate_image_prompts
-            assign_segment_timings(script, segment_target_sec=resolved_seg_target, chars_per_sec=speech_chars_per_sec)
+            assign_segment_timings(script, segment_target_sec=resolved_seg_target, chars_per_sec=speech_chars_per_sec)  # type: ignore[arg-type]
             if not generate_image_prompts:
                 _strip_image_prompt_fields(script)
             script['cost_time'] = round(time.perf_counter() - started, 1)

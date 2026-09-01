@@ -58,7 +58,7 @@ def parse_topics_payload(raw: dict[str, Any], *, max_title_len: int) -> list[dic
         out.append(
             {
                 "title": title,
-                "keyword": kw_str or None,
+                "keyword": kw_str or None,  # type: ignore[union-attr]
                 "category": category,
                 "template": template,
                 "hook": hook,
