@@ -28,7 +28,7 @@ from app.services.daily_story.gold_story.collect.pipeline import (
     reimport_stories,
     run_collect_pipeline,
 )
-from app.utils.async_util import run_in_background
+from app.utils.async_util import run_in_os_thread
 
 logger = logging.getLogger(__name__)
 
@@ -686,7 +686,7 @@ class GoldStoryMgr:
                 }
             )
             snapshot = dict(_COLLECT_STATE)
-        run_in_background(lambda n=max_candidates: _run_collect_job(n))
+        run_in_os_thread(lambda n=max_candidates: _run_collect_job(n))
         logger.info("[GOLD_CHAT] collect queued max=%d", max_candidates)
         return snapshot
 
@@ -736,7 +736,7 @@ class GoldStoryMgr:
                 }
             )
 
-        run_in_background(lambda n=pending_count: _run_recovery_drain_job(n))
+        run_in_os_thread(lambda n=pending_count: _run_recovery_drain_job(n))
         logger.warning(
             "[GOLD_CHAT] recovering %d pending gold story/stories "
             "(reset %d processing)",
@@ -790,7 +790,7 @@ class GoldStoryMgr:
                 }
             )
             snapshot = dict(_REIMPORT_STATE)
-        run_in_background(
+        run_in_os_thread(
             lambda: _run_reimport_job(ids, bvs, bool(force_transcript)),
         )
         logger.info(

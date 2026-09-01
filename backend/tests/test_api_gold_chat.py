@@ -289,11 +289,7 @@ def test_api_collect(app_ctx, monkeypatch):
         }
 
     monkeypatch.setattr(mgr_mod, "run_collect_pipeline", fake_collect)
-    monkeypatch.setattr(
-        mgr_mod,
-        "run_in_background",
-        lambda func, **_kwargs: workers.append(func),
-    )
+    monkeypatch.setattr(mgr_mod, "run_in_os_thread", lambda func, **_kwargs: workers.append(func))
 
     client = app_ctx.test_client()
     resp = client.post("/v_factory/api/gold_chat/collect", json={"max": 10})
@@ -342,11 +338,7 @@ def test_api_reimport(app_ctx, monkeypatch):
         }
 
     monkeypatch.setattr(mgr_mod, "reimport_stories", fake_reimport)
-    monkeypatch.setattr(
-        mgr_mod,
-        "run_in_background",
-        lambda func, **_kwargs: workers.append(func),
-    )
+    monkeypatch.setattr(mgr_mod, "run_in_os_thread", lambda func, **_kwargs: workers.append(func))
 
     client = app_ctx.test_client()
     resp = client.post(

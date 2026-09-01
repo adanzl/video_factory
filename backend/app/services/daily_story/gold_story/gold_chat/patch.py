@@ -1489,6 +1489,15 @@ def patch_m2_c_snack_beat_rebuild(
     out["punchline_explain"] = (
         "C类：昭昭用灿灿刚立的规矩回旋镖堵住，灿灿语塞求饶，末句嘴硬约下次。"
     )
+    title = str(out.get("scene_title") or story.get("scene_title") or "").strip()
+    if title and not str(out.get("key") or "").strip():
+        out["key"] = title[:12]
+    if title and not str(out.get("scene_title") or "").strip():
+        out["scene_title"] = title
+    if not str(out.get("key") or "").strip():
+        out["key"] = "零食作业战"
+    if not str(out.get("scene_title") or "").strip():
+        out["scene_title"] = str(out.get("key") or "零食作业战")
     if not str(out.get("setting") or "").strip():
         out["setting"] = "家中客厅，灿灿端着零食盒，昭昭攥着作业本"
     elif not re.search(r"厅|沙发|桌", str(out.get("setting") or "")):

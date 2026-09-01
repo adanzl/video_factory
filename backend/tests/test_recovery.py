@@ -133,7 +133,7 @@ def test_recover_stuck_gold_story_pending_resets_processing(
     monkeypatch.setattr(mgr_mod, "drain_pending_stories", fake_drain)
     monkeypatch.setattr(
         mgr_mod,
-        "run_in_background",
+        "run_in_os_thread",
         lambda func, **_kwargs: workers.append(func),
     )
 

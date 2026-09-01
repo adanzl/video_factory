@@ -37,6 +37,15 @@ def run_in_background(func: Callable[[], None], *, daemon: bool = True) -> None:
         threading.Thread(target=func, daemon=daemon).start()
 
 
+def run_in_os_thread(func: Callable[[], None], *, daemon: bool = True) -> None:
+    """CPU / 子进程密集任务：真 OS 线程，避免占满 gevent hub。
+
+    适用于转写、OCR、大批量 LLM 等长时间不 yield 的工作。
+    调用方须在 func 内自行建立 Flask ``app_context``。
+    """
+    threading.Thread(target=func, daemon=daemon).start()
+
+
 def _on_gevent_hub() -> bool:
     """gevent WSGI 的请求处理跑在主线程，join 会阻塞整个 hub。"""
     return threading.current_thread() is threading.main_thread()
