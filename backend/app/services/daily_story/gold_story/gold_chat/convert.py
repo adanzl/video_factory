@@ -588,6 +588,7 @@ def patch_sanitize_pad_particles(
         new_body = re.sub(r"吧{2,}", "吧", new_body)
         new_body = re.sub(r"吗吧+", "吗", new_body)
         new_body = re.sub(r"呀呀+", "呀", new_body)
+        new_body = re.sub(r"来呀来呀", "来呀", new_body)
         new_body = re.sub(r"呀吧$", "呀", new_body)
         new_body = re.sub(r"吗啊+", "吗", new_body)
         new_body = re.sub(r"了[呀吧啊]$", "", new_body)
@@ -598,6 +599,148 @@ def patch_sanitize_pad_particles(
         new_body = re.sub(r"[，,]{2,}", "，", new_body).strip("，, ")
         if new_body != body and new_body:
             item["line"] = new_body + (punct or "！")
+            changed = True
+    return out, changed
+
+
+def patch_j_cap_ya_particles(
+    story: dict[str, Any],
+    *,
+    max_lines: int = 2,
+) -> tuple[dict[str, Any], bool]:
+    """J：全篇句尾「呀」最多保留 max_lines 处，其余剥掉防满篇垫字。"""
+    import copy
+
+    if str(story.get("story_type") or "").strip().upper() != "J":
+        return story, False
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list):
+        return story, False
+    ya_indices: list[int] = []
+    for i, item in enumerate(dialogue):
+        if not isinstance(item, dict):
+            continue
+        line = str(item.get("line") or "").strip()
+        if re.search(r"呀[！。？…!]?$", line) or re.search(
+            r"[来好啦了]呀[！。？…!]?$", line
+        ):
+            ya_indices.append(i)
+    if len(ya_indices) <= max_lines:
+        return story, False
+    out = copy.deepcopy(story)
+    dialogue = out.get("dialogue")
+    if not isinstance(dialogue, list):
+        return story, False
+    changed = False
+    for i in ya_indices[max_lines:]:
+        item = dialogue[i]
+        if not isinstance(item, dict):
+            continue
+        old = str(item.get("line") or "").strip()
+        punct = old[-1] if old[-1] in "！。？…!" else ""
+        body = old[:-1] if punct else old
+        new_body = re.sub(r"来呀来呀", "来", body)
+        new_body = re.sub(r"([来啦了])呀$", r"\1", new_body)
+        new_body = re.sub(r"呀$", "", new_body)
+        new_body = new_body.strip("，, ")
+        if not new_body:
+            continue
+        new = new_body + (punct or "！")
+        if new != old:
+            item["line"] = new
+            changed = True
+    return out, changed
+
+
+def patch_j_cap_trailing_particles(
+    story: dict[str, Any],
+    *,
+    particles: tuple[str, ...] = ("啊", "呀"),
+    max_lines: int = 3,
+) -> tuple[dict[str, Any], bool]:
+    """J：全篇句尾语气词（啊/呀）最多保留 max_lines 处。"""
+    import copy
+
+    if str(story.get("story_type") or "").strip().upper() != "J":
+        return story, False
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list):
+        return story, False
+    pat = re.compile(
+        rf"(?:{'|'.join(re.escape(p) for p in particles)})[！。？…!]?$"
+    )
+    hit_indices: list[int] = []
+    for i, item in enumerate(dialogue):
+        if not isinstance(item, dict):
+            continue
+        line = str(item.get("line") or "").strip()
+        if pat.search(line):
+            hit_indices.append(i)
+    if len(hit_indices) <= max_lines:
+        return story, False
+    out = copy.deepcopy(story)
+    dialogue = out.get("dialogue")
+    if not isinstance(dialogue, list):
+        return story, False
+    changed = False
+    for i in hit_indices[max_lines:]:
+        item = dialogue[i]
+        if not isinstance(item, dict):
+            continue
+        old = str(item.get("line") or "").strip()
+        punct = old[-1] if old[-1] in "！。？…!" else ""
+        body = old[:-1] if punct else old
+        new_body = body
+        for p in particles:
+            new_body = re.sub(rf"{re.escape(p)}$", "", new_body)
+        new_body = re.sub(r"([了啦呢])啊$", r"\1", new_body)
+        new_body = new_body.strip("，, ")
+        if not new_body:
+            continue
+        new = new_body + (punct or "！")
+        if new != old:
+            item["line"] = new
+            changed = True
+    return out, changed
+
+
+def patch_j_dedupe_cross_line_phrases(
+    story: dict[str, Any],
+) -> tuple[dict[str, Any], bool]:
+    """J：全篇扩写短语（你凭什么等）只保留首现，防叠灌重复。"""
+    import copy
+
+    if str(story.get("story_type") or "").strip().upper() != "J":
+        return story, False
+    out = copy.deepcopy(story)
+    dialogue = out.get("dialogue")
+    if not isinstance(dialogue, list):
+        return story, False
+    seen: set[str] = set()
+    changed = False
+    for item in dialogue:
+        if not isinstance(item, dict):
+            continue
+        old = str(item.get("line") or "").strip()
+        if not old:
+            continue
+        punct = old[-1] if old[-1] in "！。？…!" else ""
+        body = old[:-1] if punct else old
+        new_body = body
+        for phr in _J_CROSS_LINE_DEDUPE_PHRASES:
+            if phr not in new_body:
+                continue
+            if phr in seen:
+                for variant in (f"，{phr}呀", f"，{phr}啊", f"，{phr}", phr):
+                    new_body = new_body.replace(variant, "")
+            else:
+                seen.add(phr)
+        new_body = re.sub(r"[，,]{2,}", "，", new_body).strip("，, ")
+        if not new_body:
+            continue
+        new = new_body + (punct or "！")
+        if new != old:
+            item["line"] = new
             changed = True
     return out, changed
 
@@ -634,6 +777,31 @@ def patch_strip_all_natural_expands(
         if new != old:
             item["line"] = new
             changed = True
+    return out, changed
+
+
+def patch_j_fix_strongest_form_wording(
+    story: dict[str, Any],
+) -> tuple[dict[str, Any], bool]:
+    """J：「最强形态」须昭昭自述挑衅，禁「那你拿出」错位口吻。"""
+    import copy
+
+    if str(story.get("story_type") or "").strip().upper() != "J":
+        return story, False
+    out = copy.deepcopy(story)
+    changed = False
+    for item in out.get("dialogue") or []:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("speaker") or "").strip() != "昭昭":
+            continue
+        line = str(item.get("line") or "")
+        if "最强形态" not in line:
+            continue
+        if not re.search(r"那你|你拿|你出", line):
+            continue
+        item["line"] = "我拿出最强形态来，我可不会输！"
+        changed = True
     return out, changed
 
 
@@ -770,7 +938,6 @@ _GOLD_CHAT_NATURAL_MID_PAIRS: tuple[tuple[tuple[str, str], tuple[str, str]], ...
 )
 # 可读句内扩写：禁「这回听清楚/听见没有」——审稿视同灌尾
 _GOLD_CHAT_NATURAL_EXPAND: tuple[str, ...] = (
-    "，你凭什么呀",
     "，我偏就不信",
     "，你试试看啊",
     "，我才不怕呢",
@@ -805,7 +972,17 @@ _GOLD_CHAT_EXPAND_SOFT_CLUTTER: tuple[str, ...] = (
     "这回听清楚",
     "听见没有",
     "这回听清楚",
+    "你听着了呀",
+    "你听着呀",
+    "你听着",
 )
+_J_CROSS_LINE_DEDUPE_PHRASES: tuple[str, ...] = (
+    "你凭什么",
+    "你试试看",
+    "少跟我吵",
+    "我才不怕",
+)
+_J_YA_CAP_MAX_LINES = 2
 _RE_C_TONE_STACK = re.compile(
     r"(?:[呢嘛的了着好]{2,}呀|呢了|呢呀)[！。！？…]?$"
 )
@@ -982,6 +1159,7 @@ def patch_break_consecutive_keep_seed(
     story: dict[str, Any],
     *,
     dialogue_seed: list[Any] | None = None,
+    bridge_cap: int = 2,
 ) -> tuple[dict[str, Any], bool]:
     """打散同人连说：只插对方短接话，不改已有句 speaker（保 seed/求否方向）。"""
     import copy
@@ -1017,7 +1195,7 @@ def patch_break_consecutive_keep_seed(
         )
         used = {str(x.get("line") or "").strip() for x in dialogue if isinstance(x, dict)}
         bridge_n = sum(1 for br in bridges if br in used)
-        if bridge_n >= 2:
+        if bridge_n >= bridge_cap:
             i += 1
             continue
         text = next((br for br in bridges if br not in used), None)
@@ -1101,7 +1279,6 @@ def patch_j_drop_post_lose_bridge(
         line = str(item.get("line") or "")
         if any(br in line for br in bridges):
             drop.add(i)
-            break
     if not drop:
         return story, False
     out["dialogue"] = [x for i, x in enumerate(dialogue) if i not in drop]
@@ -1406,7 +1583,7 @@ def _pad_gold_chat_line(
         return s, 0
     if st == "J":
         line_out, added = _pad_dialogue_line(
-            line, need, used, tails=("呀", "啊", "吧")
+            line, need, used, tails=("啊", "吧")
         )
         if added > 0:
             return line_out, added
@@ -1912,6 +2089,8 @@ def _gold_chat_j_final_polish(
         return out, changed
     out, c0 = patch_j_fix_lose_speaker(out)
     changed = changed or c0
+    out, c0b = patch_j_fix_strongest_form_wording(out)
+    changed = changed or c0b
     out, c1 = patch_sanitize_natural_expand_stack(out)
     out, c2 = patch_sanitize_pad_particles(out)
     out, c3 = patch_sanitize_expand_clutter(out)
@@ -1983,6 +2162,9 @@ def _gold_chat_j_final_polish(
         changed = changed or cm
     out, c6b = patch_j_soften_closing_grumble(out)
     changed = changed or c6b
+    out, c6c = patch_j_strip_post_lose_defiant(out)
+    out, c6d = patch_j_fix_can_closing_after_grumble(out)
+    changed = changed or c6c or c6d
     for _ in range(5):
         if dialogue_total_chars(out) >= DAILY_STORY_BODY_CHARS_MIN:
             break
@@ -2002,59 +2184,345 @@ def _gold_chat_j_final_polish(
     out, c4d = patch_j_drop_post_lose_plea(out)
     out, c5d = patch_j_ensure_post_lose_can_press(out)
     out, _ = patch_j_strip_role_mismatch_expands(out)
+    out, _ = patch_j_dedupe_cross_line_phrases(out)
+    out, _ = patch_j_cap_ya_particles(out)
     out, _ = patch_sanitize_pad_particles(out)
+    for _ in range(4):
+        if dialogue_total_chars(out) >= DAILY_STORY_BODY_CHARS_MIN:
+            break
+        before = dialogue_total_chars(out)
+        out, cp = _pad_gold_chat_to_min_chars(
+            out, particle_only=True, max_rounds=12
+        )
+        changed = changed or cp
+        if dialogue_total_chars(out) <= before:
+            out, ce = _expand_short_gold_chat_lines(out, ignore_deficit_cap=True)
+            out, _ = patch_sanitize_natural_expand_stack(out)
+            changed = changed or ce
+            if dialogue_total_chars(out) <= before:
+                break
     if dialogue_total_chars(out) < DAILY_STORY_BODY_CHARS_MIN:
         out, cf2 = _gold_chat_force_min_chars(out)
+        out, _ = patch_j_dedupe_cross_line_phrases(out)
         changed = changed or cf2
+    for _ in range(3):
+        out, cb = patch_break_consecutive_keep_seed(
+            out, dialogue_seed=dialogue_seed, bridge_cap=4
+        )
+        changed = changed or cb
+        if not cb:
+            break
+        out, _ = patch_sanitize_bridge_lines(out)
+    out, c5e = patch_j_drop_post_lose_bridge(out)
+    out, c5f = patch_j_fix_post_lose_consecutive_can(out)
+    changed = changed or c5e or c5f
+    for _ in range(3):
+        if dialogue_total_chars(out) >= DAILY_STORY_BODY_CHARS_MIN:
+            break
+        before = dialogue_total_chars(out)
+        out, cp = _pad_gold_chat_to_min_chars(
+            out, particle_only=True, max_rounds=8
+        )
+        changed = changed or cp
+        if dialogue_total_chars(out) <= before:
+            break
+    for _ in range(4):
+        out, ct = patch_j_cap_trailing_particles(out, max_lines=3)
+        changed = changed or ct
+        if dialogue_total_chars(out) >= DAILY_STORY_BODY_CHARS_MIN:
+            break
+        out, ce = _expand_short_gold_chat_lines(out, ignore_deficit_cap=True)
+        out, _ = patch_sanitize_natural_expand_stack(out)
+        changed = changed or ce
+        if dialogue_total_chars(out) >= DAILY_STORY_BODY_CHARS_MIN:
+            continue
+        before = dialogue_total_chars(out)
+        out, cp = _pad_gold_chat_to_min_chars(
+            out, particle_only=True, max_rounds=8
+        )
+        changed = changed or cp
+        if dialogue_total_chars(out) <= before:
+            break
     changed = changed or cf or c4d or c5d
     return out, changed
 
 
-def _gold_chat_force_min_chars(story: dict[str, Any]) -> tuple[dict[str, Any], bool]:
-    """终稿仍差 min 时：句内扩写 → 粒子/可读垫满（禁插求否对）。"""
+def _gold_chat_insert_body_lines_for_min(
+    story: dict[str, Any],
+) -> tuple[dict[str, Any], bool]:
+    """删句后 pad/expand 顶格时：中段插 1–2 条抽象反应句补 min（非求拒）。"""
+    import copy
+
+    from app.services.daily_story.gold_story.scene import CHAT_LINE_COUNT_MAX
+
     need = DAILY_STORY_BODY_CHARS_MIN - dialogue_total_chars(story)
     if need <= 0:
         return story, False
-    out = story
+    out = copy.deepcopy(story)
+    dialogue = out.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 4:
+        return story, False
+    existing = {
+        str(x.get("line") or "").strip()
+        for x in dialogue
+        if isinstance(x, dict)
+    }
+    insert_at = min(max(3, len(dialogue) // 3), len(dialogue) - 3)
+    changed = False
+    inserted = 0
+    for sp, line in _GOLD_CHAT_REACT_LINES:
+        if dialogue_total_chars(out) >= DAILY_STORY_BODY_CHARS_MIN:
+            break
+        if len(dialogue) >= CHAT_LINE_COUNT_MAX:
+            break
+        if inserted >= 2:
+            break
+        text = str(line).strip()
+        if not text or text in existing:
+            continue
+        dialogue.insert(insert_at, {"speaker": sp, "line": text})
+        existing.add(text)
+        insert_at += 1
+        inserted += 1
+        changed = True
+    if changed:
+        out2, cp = _pad_gold_chat_to_min_chars(out, max_rounds=48)
+        out = out2
+        changed = True
+    return out, changed
+
+
+def _gold_chat_force_min_chars(story: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    """终稿仍差 min 时：句内扩写 → 粒子/可读垫满 → 中段插反应句（禁插求否对）。"""
+    import copy
+
+    from app.services.daily_story.gold_story.scene import CHAT_LINE_COUNT_MIN
+
+    need = DAILY_STORY_BODY_CHARS_MIN - dialogue_total_chars(story)
+    if need <= 0:
+        return story, False
+    dialogue = story.get("dialogue")
+    if isinstance(dialogue, list) and len(dialogue) >= CHAT_LINE_COUNT_MIN + 2:
+        out = copy.deepcopy(story)
+        changed = False
+        for _ in range(8):
+            if dialogue_total_chars(out) >= DAILY_STORY_BODY_CHARS_MIN:
+                break
+            before = dialogue_total_chars(out)
+            out2, cx = _expand_short_gold_chat_lines(out, ignore_deficit_cap=True)
+            out = out2
+            out, _ = patch_sanitize_natural_expand_stack(out)
+            out, _ = patch_j_dedupe_cross_line_phrases(out)
+            out, _ = patch_j_strip_role_mismatch_expands(out)
+            changed = changed or cx
+            if dialogue_total_chars(out) <= before:
+                out2, cp = _pad_gold_chat_to_min_chars(out, max_rounds=48)
+                out = out2
+                out, _ = patch_sanitize_pad_particles(out)
+                out, _ = patch_j_cap_ya_particles(out)
+                changed = changed or cp
+                if dialogue_total_chars(out) <= before:
+                    break
+        return out, changed
+    out = copy.deepcopy(story)
     changed = False
     for _ in range(4):
         if dialogue_total_chars(out) >= DAILY_STORY_BODY_CHARS_MIN:
             break
-        out, c5 = _expand_short_gold_chat_lines(out, ignore_deficit_cap=True)
+        out2, c5 = _expand_short_gold_chat_lines(out, ignore_deficit_cap=True)
+        out = out2
         out, _ = patch_sanitize_natural_expand_stack(out)
         changed = changed or c5
     for _ in range(8):
         if dialogue_total_chars(out) >= DAILY_STORY_BODY_CHARS_MIN:
             break
         before = dialogue_total_chars(out)
-        out, c4 = _pad_gold_chat_to_min_chars(
+        out2, c4 = _pad_gold_chat_to_min_chars(
             out, particle_only=True, max_rounds=24
         )
+        out = out2
         out, _ = patch_sanitize_pad_particles(out)
         changed = changed or c4
         if dialogue_total_chars(out) <= before:
-            out, c6 = _pad_gold_chat_to_min_chars(
+            out2, c6 = _pad_gold_chat_to_min_chars(
                 out, particle_only=False, max_rounds=12
             )
+            out = out2
             changed = changed or c6
             if dialogue_total_chars(out) <= before:
                 break
     if dialogue_total_chars(out) < DAILY_STORY_BODY_CHARS_MIN:
-        out, cr = patch_strip_all_natural_expands(out)
-        out, _ = patch_sanitize_pad_particles(out)
-        changed = changed or cr
         for _ in range(4):
             if dialogue_total_chars(out) >= DAILY_STORY_BODY_CHARS_MIN:
                 break
-            out, cx = _expand_short_gold_chat_lines(out, ignore_deficit_cap=True)
-            out, _ = patch_sanitize_natural_expand_stack(out)
-            changed = changed or cx
-        out, cp = _pad_gold_chat_to_min_chars(out, max_rounds=24)
-        out, _ = patch_sanitize_pad_particles(out)
-        changed = changed or cp
+            before = dialogue_total_chars(out)
+            out2, ci = _gold_chat_insert_body_lines_for_min(out)
+            out = out2
+            changed = changed or ci
+            if dialogue_total_chars(out) >= DAILY_STORY_BODY_CHARS_MIN:
+                break
+            out2, cp = _pad_gold_chat_to_min_chars(out, max_rounds=48)
+            out = out2
+            changed = changed or cp
+            if dialogue_total_chars(out) <= before:
+                break
     out, _ = patch_sanitize_natural_expand_stack(out)
+    out, _ = patch_j_dedupe_cross_line_phrases(out)
+    out, _ = patch_j_cap_trailing_particles(out, max_lines=3)
     out, _ = patch_sanitize_pad_particles(out)
+    if dialogue_total_chars(out) < DAILY_STORY_BODY_CHARS_MIN:
+        out2, cp = _pad_gold_chat_to_min_chars(
+            out, particle_only=True, max_rounds=24
+        )
+        out = out2
+        out, _ = patch_j_cap_trailing_particles(out, max_lines=3)
+        changed = changed or cp
     return out, changed
+
+
+def patch_j_strip_post_lose_defiant(
+    story: dict[str, Any],
+) -> tuple[dict[str, Any], bool]:
+    """J：认输后昭昭句剥「我才不怕/你试试看」等逆势尾巴，保怂态。"""
+    import copy
+
+    if str(story.get("story_type") or "").strip().upper() != "J":
+        return story, False
+    out = copy.deepcopy(story)
+    dialogue = out.get("dialogue")
+    if not isinstance(dialogue, list):
+        return story, False
+    lose_idx = next(
+        (
+            i
+            for i, x in enumerate(dialogue)
+            if isinstance(x, dict)
+            and str(x.get("speaker") or "") == "昭昭"
+            and "我输了" in str(x.get("line") or "")
+        ),
+        -1,
+    )
+    if lose_idx < 0:
+        return story, False
+    changed = False
+    defiant_bits = (
+        "，我才不怕呢",
+        "，我才不怕",
+        "我才不怕呢",
+        "我才不怕",
+        "，你试试看啊",
+        "，你试试看",
+        "你试试看",
+        "，谁怕谁",
+        "谁怕谁",
+    )
+    for item in dialogue[lose_idx + 1 :]:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("speaker") or "") != "昭昭":
+            continue
+        old = str(item.get("line") or "").strip()
+        if not old or re.search(r"长大.{0,8}算", old):
+            continue
+        punct = old[-1] if old[-1] in "！。？…!" else ""
+        body = old[:-1] if punct else old
+        new_body = body
+        for bit in defiant_bits:
+            new_body = new_body.replace(bit, "")
+        new_body = re.sub(r"[，,]{2,}", "，", new_body).strip("，, ")
+        if not new_body:
+            continue
+        new = new_body + (punct or "！")
+        if new != old:
+            item["line"] = new
+            changed = True
+    return out, changed
+
+
+def patch_j_fix_can_closing_after_grumble(
+    story: dict[str, Any],
+) -> tuple[dict[str, Any], bool]:
+    """J：昭昭嘀咕长大算账后，灿灿末句禁「行啊我等着」接招，改镇住命令。"""
+    import copy
+
+    if str(story.get("story_type") or "").strip().upper() != "J":
+        return story, False
+    out = copy.deepcopy(story)
+    dialogue = out.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 2:
+        return story, False
+    grumble_idx = next(
+        (
+            i
+            for i in range(len(dialogue) - 1, -1, -1)
+            if isinstance(dialogue[i], dict)
+            and str(dialogue[i].get("speaker") or "") == "昭昭"
+            and re.search(r"长大.{0,8}算", str(dialogue[i].get("line") or ""))
+        ),
+        -1,
+    )
+    if grumble_idx < 0 or grumble_idx + 1 >= len(dialogue):
+        return story, False
+    last = dialogue[-1]
+    if not isinstance(last, dict) or str(last.get("speaker") or "") != "灿灿":
+        return story, False
+    old = str(last.get("line") or "").strip()
+    if not re.search(r"行啊|我等着|等着.*算|算.*账", old):
+        return story, False
+    stubs = (
+        "别废话，趴好了！我说了算！",
+        "闭嘴，现在就得听我的！",
+        "少顶嘴，乖乖趴好别动！",
+    )
+    used = {str(x.get("line") or "").strip() for x in dialogue if isinstance(x, dict)}
+    text = next((s for s in stubs if s not in used), stubs[0])
+    last["line"] = text
+    return out, True
+
+
+def patch_j_fix_post_lose_consecutive_can(
+    story: dict[str, Any],
+) -> tuple[dict[str, Any], bool]:
+    """J：删桥句后若灿灿连说，插昭昭短怂句保交替。"""
+    import copy
+
+    from app.services.daily_story.gold_story.scene import CHAT_LINE_COUNT_MAX
+
+    if str(story.get("story_type") or "").strip().upper() != "J":
+        return story, False
+    out = copy.deepcopy(story)
+    dialogue = out.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 4:
+        return story, False
+    lose_idx = next(
+        (
+            i
+            for i, x in enumerate(dialogue)
+            if isinstance(x, dict)
+            and str(x.get("speaker") or "") == "昭昭"
+            and "我输了" in str(x.get("line") or "")
+        ),
+        -1,
+    )
+    if lose_idx < 0 or lose_idx + 2 >= len(dialogue):
+        return story, False
+    a = dialogue[lose_idx + 1]
+    b = dialogue[lose_idx + 2]
+    if not isinstance(a, dict) or not isinstance(b, dict):
+        return story, False
+    if str(a.get("speaker") or "") != "灿灿" or str(b.get("speaker") or "") != "灿灿":
+        return story, False
+    if len(dialogue) >= CHAT_LINE_COUNT_MAX:
+        return story, False
+    stubs = (
+        "姐，我知道了，别打了。",
+        "好嘛，我听话还不行吗。",
+        "哎呀，我服了，你说怎样就怎样。",
+    )
+    used = {str(x.get("line") or "").strip() for x in dialogue if isinstance(x, dict)}
+    text = next((s for s in stubs if s not in used), stubs[0])
+    dialogue.insert(lose_idx + 2, {"speaker": "昭昭", "line": text})
+    return out, True
 
 
 def patch_j_soften_closing_grumble(
@@ -2080,6 +2548,9 @@ def patch_j_soften_closing_grumble(
         new_body = re.sub(r"[，,]?你等着瞧[！。]?$", "", body)
         new_body = re.sub(r"[，,]?你等着呀[！。]?$", "", new_body)
         new_body = re.sub(r"^哼[，,]", "那个，", new_body)
+        new_body = re.sub(r"([。！？…!])?[啊呀]+([。！？…!])$", r"\2", new_body)
+        if not new_body.startswith("那个"):
+            new_body = "那个，" + new_body.lstrip("那个，")
         new_body = new_body.strip("，, ")
         if not new_body:
             continue
@@ -3313,6 +3784,16 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
                     "gold_chat pre-score M2+C: %s",
                     "；".join(str(n) for n in m2_notes[:4]),
                 )
+            if str(structure_type or "").upper() == "J":
+                for _ in range(4):
+                    chat, br = patch_break_consecutive_keep_seed(
+                        chat, dialogue_seed=seed, bridge_cap=4
+                    )
+                    if not br:
+                        break
+                    chat, _ = patch_sanitize_bridge_lines(chat)
+                    chat, _ = patch_seed_speaker_align(chat, dialogue_seed=seed)
+                chat, _ = patch_j_drop_post_lose_bridge(chat)
             chat = _attach_gold_chat_structure_score(chat, row)
             try:
                 _gate_gold_chat_structure_score(chat)
@@ -3622,10 +4103,37 @@ def convert_gold_chat(
         structure_type=str(row.get("structure_type") or ""),
     )
     if dialogue_total_chars(chat) < DAILY_STORY_BODY_CHARS_MIN:
-        chat, _ = _gold_chat_force_min_chars(chat)
-        chat, _ = patch_j_strip_role_mismatch_expands(chat)
-        chat, _ = patch_j_soften_closing_grumble(chat)
-        chat, _ = patch_sanitize_bridge_lines(chat)
+        for _ in range(3):
+            if dialogue_total_chars(chat) >= DAILY_STORY_BODY_CHARS_MIN:
+                break
+            before = dialogue_total_chars(chat)
+            chat, _ = _gold_chat_force_min_chars(chat)
+            chat, _ = patch_j_strip_role_mismatch_expands(chat)
+            chat, _ = patch_j_soften_closing_grumble(chat)
+            chat, _ = patch_sanitize_bridge_lines(chat)
+            if dialogue_total_chars(chat) <= before:
+                chat, _ = _pad_gold_chat_to_min_chars(
+                    chat, particle_only=True, max_rounds=12
+                )
+                if dialogue_total_chars(chat) <= before:
+                    break
+    seed = (
+        payload0.get("dialogue_seed")
+        if isinstance(payload0.get("dialogue_seed"), list)
+        else None
+    )
+    if str(row.get("structure_type") or chat.get("story_type") or "").upper() == "J":
+        for _ in range(3):
+            chat, br = patch_break_consecutive_keep_seed(
+                chat, dialogue_seed=seed, bridge_cap=4
+            )
+            if not br:
+                break
+            chat, _ = patch_sanitize_bridge_lines(chat)
+        if dialogue_total_chars(chat) < DAILY_STORY_BODY_CHARS_MIN:
+            chat, _ = _pad_gold_chat_to_min_chars(
+                chat, particle_only=True, max_rounds=12
+            )
     validate_gold_chat(
         chat,
         banned_literals=[str(x) for x in banned],

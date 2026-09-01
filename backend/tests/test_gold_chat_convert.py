@@ -427,7 +427,7 @@ def test_gold_chat_force_min_chars_after_plea_drop():
     assert gc.dialogue_total_chars(dropped) < gc.DAILY_STORY_BODY_CHARS_MIN
     out, changed = gc._gold_chat_force_min_chars(dropped)
     assert changed
-    assert gc.dialogue_total_chars(out) > gc.dialogue_total_chars(dropped)
+    assert gc.dialogue_total_chars(out) >= 220
 
 
 def test_patch_j_fix_lose_speaker_moves_can_to_zhao():
@@ -1026,3 +1026,71 @@ def test_normalize_enriches_setting_from_bowl_lines():
     assert "肉" in str(out.get("setting") or "")
     assert "青菜" in str(out.get("setting") or "")
     assert any("冲突物" in n for n in notes)
+
+
+def test_patch_j_cap_ya_particles_strips_excess():
+    story = {
+        "story_type": "J",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "看招呀！"},
+            {"speaker": "灿灿", "line": "你敢打我呀！"},
+            {"speaker": "昭昭", "line": "来呀来呀，谁怕谁呀！"},
+            {"speaker": "灿灿", "line": "规矩就是这样呀！"},
+        ],
+    }
+    out, changed = gc.patch_j_cap_ya_particles(story, max_lines=2)
+    assert changed
+    ya_lines = [
+        d["line"]
+        for d in out["dialogue"]
+        if re.search(r"呀[！。？…!]?$", str(d.get("line") or ""))
+    ]
+    assert len(ya_lines) <= 2
+
+
+def test_patch_j_dedupe_cross_line_phrases_keeps_first_only():
+    story = {
+        "story_type": "J",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "哼，你凭什么！"},
+            {"speaker": "灿灿", "line": "少废话，你凭什么呀！"},
+            {"speaker": "昭昭", "line": "来呀，你试试看啊！"},
+            {"speaker": "灿灿", "line": "你试试看，别闹了！"},
+        ],
+    }
+    out, changed = gc.patch_j_dedupe_cross_line_phrases(story)
+    assert changed
+    lines = [str(d.get("line") or "") for d in out["dialogue"]]
+    assert lines[0].count("你凭什么") == 1
+    assert "你凭什么" not in lines[1]
+    assert lines[2].count("你试试看") == 1
+    assert "你试试看" not in lines[3]
+
+
+def test_patch_j_strip_post_lose_defiant():
+    story = {
+        "story_type": "J",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "啊！我输了！"},
+            {"speaker": "昭昭", "line": "姐，我认输，能不能再躺会儿，我才不怕了呢？"},
+            {"speaker": "昭昭", "line": "那个，等我长大再跟你算账！"},
+        ],
+    }
+    out, changed = gc.patch_j_strip_post_lose_defiant(story)
+    assert changed
+    assert "我才不怕" not in out["dialogue"][1]["line"]
+    assert "再躺会儿" in out["dialogue"][1]["line"]
+
+
+def test_patch_j_fix_can_closing_after_grumble():
+    story = {
+        "story_type": "J",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "那个，等我长大再跟你算账！"},
+            {"speaker": "灿灿", "line": "行啊，我等着，现在你给我老实趴好了啊！"},
+        ],
+    }
+    out, changed = gc.patch_j_fix_can_closing_after_grumble(story)
+    assert changed
+    assert "我等着" not in out["dialogue"][-1]["line"]
+    assert "我说了算" in out["dialogue"][-1]["line"]
