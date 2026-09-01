@@ -8,7 +8,11 @@ from app.services.daily_story.story_types import parse_story_type_code
 
 RE_PLEAD = re.compile(r"求|让我|去吧|放行|同意了吗|妈妈.*答应|写完作业")
 RE_VETO = re.compile(r"不行|不同意|我说了算|否决|不准|没用|听我的|霸道")
-RE_SURRENDER = re.compile(r"不去了|回房间|不理你|再也不求|放弃|呜呜")
+# M5+J 常写情绪退出；M8+J 武力压制常写认输/服软（与 structure_resolve 一致）
+RE_SURRENDER = re.compile(
+    r"不去了|回房间|不理你|再也不求|放弃|呜呜|"
+    r"认输|我输了|不敢再|服软|败下阵",
+)
 RE_HOLD = re.compile(r"我说了算|反正|听我的|省得|这个家")
 RE_A_BACKFIRE = re.compile(r"那不一样|都是听|破功|自相矛盾|你刚才说|哪里不一样")
 RE_H_MEDIATE = re.compile(r"别打|和好|道歉|原谅|都错|拉手|定责")
