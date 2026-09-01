@@ -940,6 +940,65 @@ class GoldStoryMgr:
             "results": results,
         }
 
+    def restore_stories(
+        self,
+        gold_story_ids: list[int],
+        *,
+        from_status: str,
+    ) -> dict[str, Any]:
+        """取消归档/驳回，恢复为 audit.prev_status 或 active。"""
+        _RESTORABLE = frozenset({"archived", "rejected"})
+        from_st = str(from_status or "").strip()
+        if from_st not in _RESTORABLE:
+            raise ValueError("from_status 无效")
+        _ensure_schema()
+        ids = sorted({int(x) for x in gold_story_ids if int(x) > 0})
+        if not ids:
+            raise ValueError("ids 不能为空")
+        ok_ids: list[int] = []
+        skipped: list[int] = []
+        results: list[dict[str, Any]] = []
+        for gid in ids:
+            try:
+                row = repo_gold_story.get_story(gid)
+            except KeyError:
+                results.append({"id": gid, "action": "error", "error": "not_found"})
+                continue
+            sid = str(row.get("source_id") or "").strip()
+            old = str(row.get("status") or "").strip()
+            if old != from_st:
+                skipped.append(gid)
+                results.append(
+                    {
+                        "id": gid,
+                        "source_id": sid,
+                        "action": "skip",
+                        "reason": f"not_{from_st}",
+                    }
+                )
+                continue
+            payload = cast(dict[str, Any], row.get("payload") or {})
+            audit = cast(dict[str, Any], payload.get("audit") or {})
+            prev = str(audit.get("prev_status") or "").strip()
+            next_status = prev if prev and prev not in _RESTORABLE else "active"
+            repo_gold_story.set_story_status(gid, status=next_status)
+            ok_ids.append(gid)
+            results.append(
+                {
+                    "id": gid,
+                    "source_id": sid,
+                    "action": "ok",
+                    "status": next_status,
+                    "prev_status": old,
+                }
+            )
+        return {
+            "restored": len(ok_ids),
+            "skipped": len(skipped),
+            "ids": ok_ids,
+            "results": results,
+        }
+
     def delete_stories(self, gold_story_ids: list[int]) -> dict[str, Any]:
         _ensure_schema()
         cfg = Config()

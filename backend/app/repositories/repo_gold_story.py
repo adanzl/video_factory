@@ -986,3 +986,17 @@ def update_story_status(
         (status, json.dumps(payload, ensure_ascii=False), now, gold_story_id),
     )
     sql.commit()
+
+
+def set_story_status(gold_story_id: int, *, status: str) -> None:
+    """仅更新 status，不改动 payload。"""
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    sql.execute(
+        """
+        UPDATE gold_story
+        SET status = ?, updated_at = ?
+        WHERE id = ?
+        """,
+        (status, now, gold_story_id),
+    )
+    sql.commit()
