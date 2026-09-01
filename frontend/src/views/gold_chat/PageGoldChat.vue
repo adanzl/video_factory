@@ -141,7 +141,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
 import { Refresh } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { usePageRefresh } from "@/stores/app";
@@ -528,6 +528,7 @@ function startReimportPolling() {
 
 async function fetchItems(opts?: { quiet?: boolean }) {
   const quiet = opts?.quiet === true;
+  const savedSelected = quiet ? [...selectedIds.value] : null;
   if (!quiet) loading.value = true;
   try {
     const res = await listGoldChats({
@@ -542,6 +543,16 @@ async function fetchItems(opts?: { quiet?: boolean }) {
     });
     items.value = res.items;
     total.value = res.total;
+    if (savedSelected !== null) {
+      await nextTick();
+      selectedIds.value = savedSelected.filter((id) =>
+        items.value.some((row) => row.id === id),
+      );
+      savedSelected.forEach((id) => {
+        const row = items.value.find((r) => r.id === id);
+        if (row) tableRef.value?.toggleRowSelection(row, true);
+      });
+    }
   } catch (e) {
     handleError(e, "加载 gold_chat 列表失败");
   } finally {
@@ -689,16 +700,7 @@ function onDetailConverted(payload?: {
 }
 
 function onDetailClosed() {
-  const savedSelected = [...selectedIds.value];
-  void fetchItems().then(() => {
-    selectedIds.value = savedSelected.filter((id) =>
-      items.value.some((row) => row.id === id),
-    );
-    savedSelected.forEach((id) => {
-      const row = items.value.find((r) => r.id === id);
-      if (row) tableRef.value?.toggleRowSelection(row, true);
-    });
-  });
+  void fetchItems();
 }
 
 function onDetailReimported() {
