@@ -255,9 +255,9 @@ GOLD_CHAT_NEAR_MISS_DEFICIT_MAX = 40
 GOLD_CHAT_LLM_MAX_TOKENS = 2048
 CLOSING_PROMPT_MAX_CHARS = 28
 _RE_PAD_SUFFIX_STACK = re.compile(
+    r"(?:不行吧|真的啊|你听着|你听着了呀|真的呀真的|真的嘛了呀|嘛了呀){2,}|"
     r"呢呢|啊呢|吧呢|嘛呢|呀呢|你呀呢|行了吧呢|不懂你呢|听听不懂|你真是呢|你真是的呢|"
-    r"了呢了呀|了呢呀|了呀呢|好不好了呀|着呢了呀|你听着了呀|你听着|真的呀真的|"
-    r"不行了吧|嘛了呀|真的嘛了呀|好不好呀",
+    r"了呢了呀|了呢呀|了呀呢|好不好了呀|着呢了呀",
 )
 _B_GOLD_CHAT_PAD_TAILS = ("呀", "啊", "嘛", "呢", "吧", "真的呀")
 _F_GOLD_CHAT_PAD_TAILS = ("呀", "啊", "嘛", "呢", "吧")
@@ -473,8 +473,11 @@ def _sanitize_pad_suffix_line(line: str) -> str:
     ):
         if old in out:
             out = out.replace(old, new)
-    out = re.sub(r"(?:不行吧|真的啊|不行啊|真的呀)+([！。！？…]?)$", r"\1", out)
-    out = re.sub(r"(?:吧|啊|呀|呢|嘛)(?:吧|啊|呀|呢|嘛)+([！。！？…]?)$", r"\1", out)
+    out = re.sub(
+        r"(?:不行吧|真的啊|你听着|你听着了呀|真的呀|嘛了呀){2,}([！。！？…]?)$",
+        r"\1",
+        out,
+    )
     return out
 
 
@@ -627,8 +630,7 @@ def _pad_gold_chat_line(
     from app.services.daily_story.prompts import _pad_dialogue_line
 
     st = str(story_type or "").strip().upper()
-    if st in {"C", "J"}:
-        # C/J 禁句尾语气词堆砌；J 仅单字尾巴，C 可再用短词
+    if st == "C":
         s = str(line or "").strip()
         if need <= 0:
             return s, 0
@@ -648,18 +650,24 @@ def _pad_gold_chat_line(
                 if used is not None:
                     used.add(tail)
                 return core + tail + punct, len(tail)
-        if st == "C":
-            for phr in _C_SAFE_PAD_PHRASES:
-                if used is not None and phr in used:
-                    continue
-                if core.endswith(phr):
-                    continue
-                if len(phr) > need or len(phr) > room:
-                    continue
-                if used is not None:
-                    used.add(phr)
-                return core + phr + punct, len(phr)
+        for phr in _C_SAFE_PAD_PHRASES:
+            if used is not None and phr in used:
+                continue
+            if core.endswith(phr):
+                continue
+            if len(phr) > need or len(phr) > room:
+                continue
+            if used is not None:
+                used.add(phr)
+            return core + phr + punct, len(phr)
         return s, 0
+    if st == "J":
+        line_out, added = _pad_dialogue_line(
+            line, need, used, tails=("呀", "啊", "吧")
+        )
+        if added > 0:
+            return line_out, added
+        return line, 0
     if st == "B":
         tails = _B_GOLD_CHAT_PAD_TAILS
     elif st == "F":
@@ -1655,13 +1663,13 @@ def _is_regenerable_line_short_error(msg: str) -> bool:
 
 
 def _is_regenerable_short_error(msg: str) -> bool:
-    """句数差 ≤3，或字数差 ≤ near-miss（如 235/240）可 Pass1 重生成。"""
+    """句数差 ≤3，或字数差 ≤120 可 Pass1 重生成。"""
     if _is_regenerable_line_short_error(msg):
         return True
     deficit = _char_deficit_from_error(msg)
     if deficit is None:
         return False
-    return 1 <= deficit <= GOLD_CHAT_NEAR_MISS_DEFICIT_MAX
+    return 1 <= deficit <= 120
 
 
 def _short_content_reject_message(detail: str, *, regen_count: int = 0) -> str:
