@@ -296,9 +296,9 @@ def assign_segment_timings(
         idx = int(seg.get("segment_index") or 0)
         slot = slots_by_index.get(idx)
         if slot is not None:
-            start = round(float(slot.start_sec), 3)
-            end = round(float(slot.end_sec), 3)
-            duration = round(float(slot.duration_sec), 3)
+            start = round(float(slot.start_sec), 3)  # type: ignore[attr-defined]
+            end = round(float(slot.end_sec), 3)  # type: ignore[attr-defined]
+            duration = round(float(slot.duration_sec), 3)  # type: ignore[attr-defined]
         else:
             duration = estimate_segment_duration_sec(
                 str(seg.get("text") or ""),

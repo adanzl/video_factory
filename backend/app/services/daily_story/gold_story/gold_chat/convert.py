@@ -246,6 +246,8 @@ def _persist_structure_correction(row: dict[str, Any], notes: list[str]) -> dict
 
 PASS1_CANDIDATE_COUNT = 4
 PASS1_REGENERATE_MAX = 5
+PASS1_SHORT_REGENERATE_MAX = 3
+PASS1_SHORT_LINE_DEFICIT_MAX = 3
 PASS2_MAX_ROUNDS = 2
 # 差 ≤40 字本地垫字（215 等 near-miss 须能收口）
 GOLD_CHAT_NEAR_MISS_DEFICIT_MAX = 40
@@ -660,7 +662,36 @@ def _pad_gold_chat_line(
         tails = _F_GOLD_CHAT_PAD_TAILS
     else:
         tails = None
-    return _pad_dialogue_line(line, need, used, tails=tails)
+    line_out, added = _pad_dialogue_line(line, need, used, tails=tails)
+    if added > 0:
+        return line_out, added
+    if need <= 0:
+        return line, 0
+    from app.services.daily_story.dialogue_text import (
+        DAILY_STORY_LINE_CHARS_MAX,
+        dialogue_char_count,
+    )
+
+    text = str(line or "").strip()
+    if not text:
+        return line, 0
+    trail = ""
+    core = text
+    if core[-1] in "。！？…":
+        trail = core[-1]
+        core = core[:-1]
+    room = max(0, DAILY_STORY_LINE_CHARS_MAX - dialogue_char_count(text))
+    for phr in (*_C_SAFE_PAD_PHRASES, "你听着"):
+        if used is not None and phr in used:
+            continue
+        if core.endswith(phr):
+            continue
+        if len(phr) > room or len(phr) > need:
+            continue
+        if used is not None:
+            used.add(phr)
+        return f"{core}{phr}{trail}", len(phr)
+    return line, 0
 
 
 def _gold_chat_pad_indices(
@@ -769,8 +800,9 @@ def _pad_gold_chat_to_min_chars(
     changed = False
     used_pads: set[str] = set()
     story_type = str(story.get("story_type") or "").strip().upper()
+    pad_rounds = 24 if need > GOLD_CHAT_NEAR_MISS_DEFICIT_MAX else 12
     # 多轮垫字：单轮每句最多补一尾巴，循环直到满或停步
-    for _ in range(12):
+    for _ in range(pad_rounds):
         need = floor - dialogue_total_chars(out)
         if need <= 0:
             break
@@ -1072,7 +1104,7 @@ def _validate_pass1_chat(
             last_err = str(exc)
             if attempt >= 4:
                 raise ValueError(last_err) from exc
-            # 偏短：fix LLM 常空转/再截断；立刻交外层 Pass1 回灌重抽
+            # 偏短：本地补句/垫字仍不足 → 交外层 Pass1 回灌，勿烧 FIX
             if _is_short_content_error(last_err):
                 raise ValueError(last_err) from exc
             if "单句过长" in last_err:
@@ -1583,12 +1615,45 @@ def validate_gold_chat(
 
 
 def _is_short_content_error(msg: str) -> bool:
-    """字数/句数不足 → 不重试，直接放弃。"""
+    """字数/句数不足。"""
     return (
         "正文总字数须≥" in msg
         or "dialogue 至少" in msg
         or "对白句数须≥" in msg
     )
+
+
+def _line_count_deficit_from_error(msg: str) -> int | None:
+    m = re.search(r"对白句数须≥(\d+)，当前(\d+)", str(msg or ""))
+    if not m:
+        return None
+    return max(0, int(m.group(1)) - int(m.group(2)))
+
+
+def _is_regenerable_line_short_error(msg: str) -> bool:
+    """句数差 ≤3（如 9–11/12）可 Pass1 重生成。"""
+    deficit = _line_count_deficit_from_error(msg)
+    if deficit is None:
+        return False
+    return 1 <= deficit <= PASS1_SHORT_LINE_DEFICIT_MAX
+
+
+def _short_content_reject_message(detail: str) -> str:
+    text = str(detail or "").strip()
+    head = f"gold_chat篇幅驳回:重生成{PASS1_SHORT_REGENERATE_MAX}次仍不达标"
+    return f"{head}; {text}" if text else head
+
+
+def _bump_short_regen_or_reject(msg: str, short_regen_count: int) -> int:
+    """句数差 ≤3 → Pass1 重生成（最多 3 次）；差距更大或次数用尽 → 驳回。"""
+    if not _is_short_content_error(msg):
+        return short_regen_count
+    if not _is_regenerable_line_short_error(msg):
+        raise ValueError(_short_content_reject_message(msg))
+    next_count = short_regen_count + 1
+    if next_count > PASS1_SHORT_REGENERATE_MAX:
+        raise ValueError(_short_content_reject_message(msg))
+    return next_count
 
 
 def _structure_type_hint(structure_type: str, mechanism: str = "") -> str:
@@ -1680,6 +1745,7 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
     pass1_feedback_block = ""
     pass1_temperature = 0.4
     chat: dict[str, Any] = {}
+    short_regen_count = 0
     for _regen in range(PASS1_REGENERATE_MAX):
         # 截断回灌后压低 story_raw，减少「照着长叙述扩写跑飞」
         story_raw_cap = 400 if pass1_temperature < 0.35 else 800
@@ -1746,7 +1812,9 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
                 if hit_truncation or _is_truncation_error(last_err):
                     pass1_temperature = 0.25
                 elif _is_short_content_error(last_err):
-                    # 截断回灌后若偏短，略抬温并保留「须≥240」反馈
+                    short_regen_count = _bump_short_regen_or_reject(
+                        last_err, short_regen_count
+                    )
                     pass1_temperature = max(pass1_temperature, 0.35)
             continue
         data = _pick_pass1_candidate(
@@ -1890,6 +1958,11 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
             if _is_truncation_error(last_err):
                 last_err = f"align_refine_failed:LLM截断:{last_err}"
                 pass1_temperature = 0.25
+            elif _is_short_content_error(last_err):
+                short_regen_count = _bump_short_regen_or_reject(
+                    last_err, short_regen_count
+                )
+                pass1_temperature = max(pass1_temperature, 0.35)
             elif not last_err.startswith(
                 ("align_structural:", "align_refine_failed:", "structure_score:")
             ):
@@ -1946,7 +2019,11 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
                 return rebuilt
             except ValueError:
                 pass
-    raise ValueError(last_err or "gold_chat generation failed")
+    raise ValueError(
+        _short_content_reject_message(last_err)
+        if last_err and _is_short_content_error(last_err)
+        else (last_err or "gold_chat generation failed")
+    )
 
 
 
@@ -2078,6 +2155,7 @@ def convert_gold_chat(
         scene_contract=scene_contract,
         beat=payload.get("beat") if isinstance(payload.get("beat"), list) else [],
     )
+    chat, _ = _ensure_gold_chat_min_chars(chat)
     validate_gold_chat(
         chat,
         banned_literals=[str(x) for x in banned],

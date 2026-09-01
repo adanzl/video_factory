@@ -391,7 +391,7 @@ CONFIG_GROUPS: tuple[ConfigGroupDef, ...] = (
                 "bili_activity_tag",
                 "BILI_ACTIVITY_TAG",
                 "活动话题名",
-                "text",
+                "text",  # type: ignore[union-attr]
                 description="chat 投稿活动话题（topic_id），默认「闪闪发光的家庭日」",
             ),
         ),

@@ -177,7 +177,7 @@ def test_gold_story_reimport_worker_runs_in_os_thread(app_ctx, monkeypatch) -> N
     mgr_mod.gold_story_mgr.reimport(source_ids=["BV1TEST"])
     assert "func" in captured
 
-    worker = threading.Thread(target=captured["func"])
+    worker = threading.Thread(target=captured["func"])  # type: ignore[arg-type]
     worker.start()
     assert worker.is_alive()
 

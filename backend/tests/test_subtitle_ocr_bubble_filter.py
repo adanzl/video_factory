@@ -5,7 +5,6 @@ import numpy as np
 from app.services.daily_story.gold_story.transcript.ocr import (
     _box_ink_color_key,
     _box_white_bg_ratio,
-    _filter_dialogue_boxes,
     filter_hits_by_majority_color,
     filter_repeat_watermark_hits,
     infer_majority_ink_color,
@@ -91,16 +90,19 @@ def test_filter_dialogue_boxes_majority_on_canvas():
     canvas = np.full((96, 320, 3), 40, dtype=np.uint8)
     canvas[0:36, :] = _stroke_patch(h=36, w=320)
     canvas[54:90, :] = _bubble_patch(h=36, w=320)
-    # 白描边对白更长 → 多数派 white/stroke 侧
     txts = ("哼", "我爱学习你爱吗别抢遥控器了呀呀")
     scores = (0.95, 0.98)
     boxes = [_box(4, 32), _box(58, 86)]
-    # 黑字气泡 vs 白字描边：按字色多数
-    kept_txts, _, _ = _filter_dialogue_boxes(
-        canvas,
-        txts,
-        scores,
-        boxes,
-        min_white_bg_ratio=0.42,
-    )
+    hits = [
+        {
+            "text": str(txts[i]),
+            "score": float(scores[i]),
+            "white_bg": _box_white_bg_ratio(canvas, boxes[i]),
+            "color_key": _box_ink_color_key(canvas, boxes[i]),
+        }
+        for i in range(len(txts))
+    ]
+    key = infer_majority_ink_color(hits)
+    kept = filter_hits_by_majority_color(hits, color_key=key)
+    kept_txts = [str(h["text"]) for h in kept]
     assert len(kept_txts) >= 1

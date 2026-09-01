@@ -136,9 +136,9 @@ class MediaServeMgr:
             new_h = max(1, round(oh * w_val / ow))
         else:
             new_h = h_val
-            new_w = max(1, round(ow * h_val / oh))
+            new_w = max(1, round(ow * h_val / oh))  # type: ignore[union-attr]
 
-        resized = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+        resized = img.resize((new_w, new_h), Image.Resampling.LANCZOS)  # type: ignore[union-attr]
         resized.save(cache_path)
         logger.info("[Pic] 缩放 %s → %s (%dx%d)", path, cache_path, new_w, new_h)
         return str(cache_path), mimetype

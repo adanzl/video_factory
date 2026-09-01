@@ -46,6 +46,9 @@
     "python-envs.defaultPackageManager": "ms-python.python:conda",
     "python.terminal.activateEnvInCurrentTerminal": true,
     "python.languageServer": "Default",
+    // 类型检查交给 basedpyright（读 pyrightconfig.json），避免与 Pylance 重复报错。
+    // conda 路径因 OS/安装位置而异，勿写入仓库；各机器命令面板选 flask_env 解释器即可。
+    "python.analysis.typeCheckingMode": "off",
     // 仓库根脚本通过 sys.path 挂 backend；静态分析需显式 extraPaths
     "python.analysis.extraPaths": [
         "${workspaceFolder}/backend"

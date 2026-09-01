@@ -258,13 +258,37 @@
 
     <template v-if="detail" #footer>
       <div class="flex w-full items-center justify-between">
-        <div class="text-xs text-gray-400">
-          <span v-if="detail.gold_chat_daily_story_id">
-            已导入日常故事
-            <router-link to="/daily-story" class="text-blue-600 hover:underline">
-              #{{ detail.gold_chat_daily_story_id }}
-            </router-link>
-          </span>
+        <div class="flex items-center gap-2">
+          <div class="text-xs text-gray-400">
+            <span v-if="detail.gold_chat_daily_story_id">
+              已导入日常故事
+              <router-link to="/daily-story" class="text-blue-600 hover:underline">
+                #{{ detail.gold_chat_daily_story_id }}
+              </router-link>
+            </span>
+          </div>
+          <el-button
+            v-if="detail.status !== 'rejected'"
+            type="warning"
+            plain
+            size="small"
+            :loading="rejecting"
+            :disabled="converting || importing || reimporting || archiving"
+            @click="handleReject"
+          >
+            驳回
+          </el-button>
+          <el-button
+            v-if="detail.status !== 'archived'"
+            type="info"
+            plain
+            size="small"
+            :loading="archiving"
+            :disabled="converting || importing || reimporting || rejecting"
+            @click="handleArchive"
+          >
+            归档
+          </el-button>
         </div>
         <div>
           <el-button @click="openTranscript">逐字稿</el-button>
@@ -303,11 +327,13 @@
 import { computed, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import {
+  archiveGoldStories,
   calcChatChars,
   convertGoldChat,
   formatDailyStoryType,
   getGoldChat,
   importGoldChat,
+  rejectGoldStories,
   reimportGoldStories,
   type GoldStoryAudit,
   type GoldStoryDetail,
@@ -326,6 +352,7 @@ const emit = defineEmits<{
   (e: "update:modelValue", value: boolean): void;
   (e: "closed"): void;
   (e: "imported"): void;
+  (e: "status-changed"): void;
   (e: "converting"): void;
   (e: "converted"): void;
   (e: "reimported"): void;
@@ -337,6 +364,8 @@ const loading = ref(false);
 const importing = ref(false);
 const converting = ref(false);
 const reimporting = ref(false);
+const rejecting = ref(false);
+const archiving = ref(false);
 const detail = ref<GoldStoryDetail | null>(null);
 
 const visible = computed({
@@ -365,11 +394,13 @@ const auditBlock = computed<GoldStoryAudit | null>(() => {
   const hasReasons = (audit.reject_reasons?.length ?? 0) > 0;
   const hasNote = !!audit.audit_notes?.trim();
   const rejected = detail.value?.status === "rejected" || audit.pass === false;
-  if (!rejected && !hasReasons && !hasNote) return null;
+  const archived = detail.value?.status === "archived";
+  if (!rejected && !archived && !hasReasons && !hasNote) return null;
   return audit;
 });
 
 const auditTitle = computed(() => {
+  if (detail.value?.status === "archived") return "已归档";
   if (detail.value?.status === "rejected") return "已驳回";
   if (auditBlock.value?.pass === false) return "机审未通过";
   return "机审";
@@ -389,7 +420,9 @@ const auditScoreText = computed(() => {
 function formatAuditStage(stage: string): string {
   if (stage === "rules") return "规则机审";
   if (stage === "llm") return "LLM 机审";
-  if (stage === "manual") return "人工驳回";
+  if (stage === "manual") {
+    return detail.value?.status === "archived" ? "人工归档" : "人工驳回";
+  }
   if (stage === "funny_signal") return "好笑门控";
   if (stage === "pipeline") return "流水线";
   return stage;
@@ -492,6 +525,68 @@ async function handleReimportFromBv() {
     handleError(e, "重新导入失败");
   } finally {
     reimporting.value = false;
+  }
+}
+
+async function handleReject() {
+  if (!detail.value || detail.value.status === "rejected") return;
+  const name = detail.value.title || detail.value.source_id || "";
+  try {
+    await ElMessageBox.confirm(
+      `确定驳回「${name}」？仅改状态，不删文件。`,
+      "驳回金故事",
+      { type: "warning" },
+    );
+  } catch {
+    return;
+  }
+  rejecting.value = true;
+  try {
+    const id = detail.value.id ?? props.goldStoryId;
+    if (!id) return;
+    const res = await rejectGoldStories([id]);
+    if (res.rejected > 0) {
+      ElMessage.success("已驳回");
+      emit("status-changed");
+      await loadDetail();
+    } else {
+      ElMessage.warning("未驳回任何记录");
+    }
+  } catch (e) {
+    handleError(e, "驳回失败");
+  } finally {
+    rejecting.value = false;
+  }
+}
+
+async function handleArchive() {
+  if (!detail.value || detail.value.status === "archived") return;
+  const name = detail.value.title || detail.value.source_id || "";
+  try {
+    await ElMessageBox.confirm(
+      `确定归档「${name}」？仅改状态，不删文件。`,
+      "归档金故事",
+      { type: "warning" },
+    );
+  } catch {
+    return;
+  }
+  archiving.value = true;
+  try {
+    const id = detail.value.id ?? props.goldStoryId;
+    if (!id) return;
+    const res = await archiveGoldStories([id]);
+    if (res.archived > 0) {
+      ElMessage.success("已归档");
+      emit("status-changed");
+      await loadDetail();
+    } else {
+      ElMessage.warning("未归档任何记录");
+    }
+  } catch (e) {
+    handleError(e, "归档失败");
+  } finally {
+    archiving.value = false;
   }
 }
 

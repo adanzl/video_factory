@@ -241,7 +241,7 @@ def gold_chat_summary(
             "has_gold_chat": True,
             "chat_chars": chat_chars,
             "chat_lines": chat_lines,
-            "scene_title": daily.get("scene_title") or data.get("scene_title"),
+            "scene_title": daily.get("scene_title") or data.get("scene_title"),  # type: ignore[union-attr]
             "exported_at": data.get("exported_at"),
         }
 

@@ -162,8 +162,8 @@ class PublishMgr:
             return {**existing, "message": "already published"}
 
         script = job.get("script_json") if isinstance(job.get("script_json"), dict) else {}
-        title = str(job.get("title") or script.get("title") or "").strip()
-        description = str(script.get("video_description") or "").strip()
+        title = str(job.get("title") or script.get("title") or "").strip()  # type: ignore[union-attr]
+        description = str(script.get("video_description") or "").strip()  # type: ignore[union-attr]
         pipeline = str(job.get("pipeline") or "").strip()
         tags = build_publish_tags(job)
         video_raw = resolve_final_path_file(job.get("final_path"))

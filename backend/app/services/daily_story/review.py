@@ -769,7 +769,7 @@ def parse_humor(raw: Any) -> dict[str, Any] | None:
     if not isinstance(h, dict):
         return None
     try:
-        fs = int(h.get("funny_score"))
+        fs = int(h.get("funny_score"))  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return None
     if not (0 <= fs <= 20):
@@ -1135,7 +1135,7 @@ def fix_line_numbers(raw: Any) -> list[int]:
         if not isinstance(item, dict):
             continue
         try:
-            no = int(item.get("no"))
+            no = int(item.get("no"))  # type: ignore[arg-type]
         except (TypeError, ValueError):
             continue
         if no not in out:
@@ -1169,7 +1169,7 @@ def apply_spot_fixes(
         if not isinstance(item, dict):
             continue
         try:
-            no = int(item.get("no"))
+            no = int(item.get("no"))  # type: ignore[arg-type]
         except (TypeError, ValueError):
             continue
         new_line = _strip_speaker_prefix(
@@ -1613,7 +1613,7 @@ def run_daily_story_review(
         for _ in range(REVIEW_FIRST_PASSES):
             if not callable(review):
                 continue
-            issues_, humor_ = review(theme, s)
+            issues_, humor_ = review(theme, s)  # type: ignore[call-arg]
             issues = merge_issues(issues, issues_)
             if humor_seen is None and humor_:
                 humor_seen = humor_

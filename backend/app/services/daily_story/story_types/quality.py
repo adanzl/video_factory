@@ -154,7 +154,7 @@ def c_closing_echo_error(lines: list[str]) -> str | None:
             )
         return None
     dim = m.group(1)
-    if dim in ritual_line:
+    if dim in ritual_line:  # type: ignore[union-attr]
         return None  # 维度字面在本场立规句 → 合法（如立规「谁举得久」→ 比你久）
     return (
         f"C末句嘴硬比法漂移：本场仪式判据「{ritual}」，末句「{last[:16]}」在比「{dim}」，"

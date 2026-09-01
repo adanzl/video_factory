@@ -1262,7 +1262,7 @@ class DeepSeekClient(LLMClient):
             gevent.joinall(green_lets, raise_error=True)
             items: list[dict] = []
             for g in green_lets:
-                items.extend(g.value)
+                items.extend(g.value)  # type: ignore[union-attr]
                 raise_if_job_cancelled(job)
             return items
 
@@ -1669,7 +1669,7 @@ class DeepSeekClient(LLMClient):
                 )
                 self._shrink_longest_segments_to_fit(data, max_chars)
         raise_if_job_cancelled(job)
-        return data
+        return data  # type: ignore[union-attr]
 
     def optimize_script_title(
         self,

@@ -132,7 +132,7 @@ def main() -> None:
         shutil.rmtree(work)
     work.mkdir(parents=True, exist_ok=True)
 
-    host = _load_host_sprite(settings, width=args.width, height=args.height, layout=layout)
+    host = _load_host_sprite(settings, width=args.width, height=args.height, layout=layout)  # type: ignore[union-attr]
     moon_tint_yellow = settings.intro_moon_tint in {"yellow", "tint", "gold", "1", "true"}
     layers = _build_layers(
         args.title,

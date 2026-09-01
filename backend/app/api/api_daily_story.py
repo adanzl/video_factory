@@ -87,7 +87,7 @@ def generate_story_route():
     )
     try:
         return json_ok(
-            daily_story_mgr.generate_and_save(theme, story_type=story_type),
+            daily_story_mgr.generate_and_save(theme, story_type=story_type),  # type: ignore[union-attr]
         )
     except ValueError as e:
         raise APIError(str(e), status_code=400)

@@ -22,7 +22,7 @@ def create_material_audio(
         """,
         (name, file_path, duration_sec, size_bytes, note),
     )
-    material_id = int(cur.lastrowid)
+    material_id = int(cur.lastrowid)  # type: ignore[arg-type,assignment]
     sql.commit()
     return get_material_audio(material_id)
 

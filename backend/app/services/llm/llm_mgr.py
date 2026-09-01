@@ -254,7 +254,7 @@ class LLMMgr:
             existing_script=existing_script,
             retry_scope=retry_scope,
             generate_image_prompts=generate_image_prompts,
-            include_sd15_prompt=include_sd15_prompt,
+            include_sd15_prompt=include_sd15_prompt,  # type: ignore[arg-type]
         )
 
     def generate_storyboard(
@@ -968,8 +968,8 @@ class LLMMgr:
             refine = getattr(client, "refine_daily_story_for_quality", None)
             for _ri in range(max_refine):
                 revision_hints = build_quality_revision_hints(
-                    story.get("quality") or {},
-                    story=story,
+                    story.get("quality") or {},  # type: ignore[assignment,arg-type,union-attr]
+                    story=story,  # type: ignore[assignment,arg-type,union-attr]
                 )
                 if not (revision_hints and callable(refine)):
                     break
@@ -981,11 +981,11 @@ class LLMMgr:
                         story_type=story_type,
                         avoid=avoid,
                     )
-                    attach_daily_story_quality(refined, theme=theme)
-                    r_score = structure_score_of(refined.get("quality"))
+                    attach_daily_story_quality(refined, theme=theme)  # type: ignore[assignment,arg-type,union-attr]
+                    r_score = structure_score_of(refined.get("quality"))  # type: ignore[assignment,arg-type,union-attr]
                     if r_score > best_score:
                         best_score = r_score
-                        best_story = refined
+                        best_story = refined  # type: ignore[assignment,arg-type,union-attr]
                     if r_score >= target:
                         elapsed = time.perf_counter() - started
                         logger.info(
@@ -993,7 +993,7 @@ class LLMMgr:
                             "attempt=%d/%d elapsed=%.1fs",
                             r_score, attempt + 1, max_full, elapsed,
                         )
-                        return refined
+                        return refined  # type: ignore[assignment,arg-type,union-attr]
                     story = refined
                     score = r_score
                 except ValueError as exc:

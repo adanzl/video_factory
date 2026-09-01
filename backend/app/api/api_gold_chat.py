@@ -51,15 +51,15 @@ def list_route():
         has_story = True
     elif has_story_raw in ("0", "false", "no"):
         has_story = False
-    exclude_rejected_raw = (get_query("exclude_rejected") or "").strip().lower()
-    exclude_rejected = exclude_rejected_raw in ("1", "true", "yes")
+    exclude_archived_raw = (get_query("exclude_archived") or "").strip().lower()
+    exclude_archived = exclude_archived_raw in ("1", "true", "yes")
     limit = parse_query_int("limit", 15, required=False, minimum=1, maximum=200)
     offset = parse_query_int("offset", 0, required=False, minimum=0)
     return json_ok(
         gold_story_mgr.list_items(
             status=status,
             has_story=has_story,
-            exclude_rejected=exclude_rejected,
+            exclude_archived=exclude_archived,
             limit=limit,
             offset=offset,
         ),
@@ -231,6 +231,19 @@ def batch_route():
         result.get("failed", 0),
     )
     return json_ok(result)
+
+
+@bp.post("/archive")
+def archive_route():
+    data = get_json_body()
+    ids = parse_int_list(data, "ids")
+    if not ids:
+        raise APIError("ids 必填", status_code=400)
+    logger.info("[GOLD_CHAT] archive ids=%s", ids)
+    try:
+        return json_ok(gold_story_mgr.archive_stories(ids))
+    except ValueError as exc:
+        raise APIError(str(exc), status_code=400)
 
 
 @bp.post("/reject")

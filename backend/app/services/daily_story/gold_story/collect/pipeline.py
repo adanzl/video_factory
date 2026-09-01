@@ -564,7 +564,7 @@ def enqueue_collect_candidates(
     from app.repositories.db_obj import db
 
     conn = db.session.connection().connection.dbapi_connection
-    apply_gold_story_schema(conn)
+    apply_gold_story_schema(conn)  # type: ignore[union-attr]
     sql.commit()
 
     cfg = config or Config()

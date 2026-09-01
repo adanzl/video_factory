@@ -56,10 +56,10 @@ def search_nasa(
         timeout=timeout,
     )
     collection = data.get("collection") if isinstance(data.get("collection"), dict) else {}
-    items = collection.get("items") if isinstance(collection.get("items"), list) else []
+    items = collection.get("items") if isinstance(collection.get("items"), list) else []  # type: ignore[union-attr,index]
 
     candidates: list[tuple[str, str, str | None]] = []
-    for item in items[: per_page * 2]:
+    for item in items[: per_page * 2]:  # type: ignore[union-attr,index]
         if not isinstance(item, dict):
             continue
         meta_list = item.get("data")

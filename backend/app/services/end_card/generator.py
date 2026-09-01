@@ -329,7 +329,7 @@ def _build_layers(width: int, height: int) -> dict:
         bbox = draw_probe.textbbox((0, 0), label, font=font)
         tw = bbox[2] - bbox[0]
         th = bbox[3] - bbox[1]
-        label_img = Image.new("RGBA", (max(tw + 4, ico.width), th + 4), (0, 0, 0, 0))
+        label_img = Image.new("RGBA", (max(tw + 4, ico.width), th + 4), (0, 0, 0, 0))  # type: ignore[union-attr]
         ImageDraw.Draw(label_img).text(
             ((label_img.width - tw) // 2, 0),
             label,

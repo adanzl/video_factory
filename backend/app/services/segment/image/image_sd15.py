@@ -574,7 +574,7 @@ def pick_business_by_keywords(prompt: str) -> str:
         business: sum(1 for kw in keywords if kw.casefold() in text)
         for business, keywords in SD15_BUSINESS_KEYWORDS.items()
     }
-    best = max(scores, key=scores.get)
+    best = max(scores, key=scores.get)  # type: ignore[call-overload,return-value]
     if scores[best] == 0:
         return _DEFAULT_BUSINESS
     life_score = scores["life"]
@@ -1256,7 +1256,7 @@ class Sd15ImageProvider(ImageProvider):
             data = resp.json()
             return base64.b64decode(data["images"][0])
 
-        return self._run_blocking_cancellable(_post)
+        return self._run_blocking_cancellable(_post)  # type: ignore[call-overload,return-value]
 
     def _generate_split(
         self,

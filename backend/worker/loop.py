@@ -391,7 +391,7 @@ def run_segment_all(job_id: int, *, to_end: bool=False, segment_indices: list[in
     _run_one_stage(job_id, segment_cls, segment_indices=segment_indices, segment_scope='all', advance=to_end)
     if not to_end:
         return _reload_job(job_id)
-    return _run_from(job_id, next_stage_class(segment_cls, job))
+    return _run_from(job_id, next_stage_class(segment_cls, job))  # type: ignore[arg-type]
 
 def run_segment_images(job_id: int, *, to_end: bool=False, segment_indices: list[int] | None=None) -> dict:
     job = _reload_job(job_id)
@@ -403,7 +403,7 @@ def run_segment_images(job_id: int, *, to_end: bool=False, segment_indices: list
     if not to_end:
         return _reload_job(job_id)
     _run_one_stage(job_id, segment_cls, segment_indices=segment_indices, segment_scope='clips', advance=True)
-    return _run_from(job_id, next_stage_class(segment_cls, job))
+    return _run_from(job_id, next_stage_class(segment_cls, job))  # type: ignore[arg-type]
 
 def run_segment_clips(job_id: int, *, to_end: bool=False, segment_indices: list[int] | None=None) -> dict:
     job = _reload_job(job_id)
@@ -414,7 +414,7 @@ def run_segment_clips(job_id: int, *, to_end: bool=False, segment_indices: list[
     _run_one_stage(job_id, segment_cls, segment_indices=segment_indices, segment_scope='clips', advance=to_end)
     if not to_end:
         return _reload_job(job_id)
-    return _run_from(job_id, next_stage_class(segment_cls, job))
+    return _run_from(job_id, next_stage_class(segment_cls, job))  # type: ignore[arg-type]
 
 def drain_pending() -> int:
     """领取并同步执行所有 pending（经 job_mgr 持锁）。"""

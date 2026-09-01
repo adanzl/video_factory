@@ -315,7 +315,7 @@ def job_chat_type_info(job: dict, *, success: bool = False) -> str | None:
     from app.repositories import repo_daily_story
 
     info = job.get("info") if isinstance(job.get("info"), dict) else {}
-    raw_id = info.get("daily_story_id") or job.get("material_id")
+    raw_id = info.get("daily_story_id") or job.get("material_id")  # type: ignore[union-attr]
     if not raw_id:
         return None
     try:

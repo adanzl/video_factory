@@ -270,6 +270,36 @@ def test_api_reject(app_ctx):
     row = next(x for x in list_resp.get_json()["items"] if x["id"] == gid)
     assert row["status"] == "rejected"
 
+
+def test_api_archive(app_ctx):
+    inserted = _insert_sample(app_ctx)
+    gid = int(inserted["id"])
+    client = app_ctx.test_client()
+
+    resp = client.post("/v_factory/api/gold_chat/archive", json={"ids": [gid]})
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["archived"] == 1
+    assert gid in body["ids"]
+
+    again = client.post("/v_factory/api/gold_chat/archive", json={"ids": [gid]})
+    assert again.status_code == 200
+    assert again.get_json()["archived"] == 0
+    assert again.get_json()["skipped"] == 1
+
+    list_resp = client.get("/v_factory/api/gold_chat/list?status=archived&limit=50")
+    assert list_resp.status_code == 200
+    ids = {x["id"] for x in list_resp.get_json()["items"]}
+    assert gid in ids
+    row = next(x for x in list_resp.get_json()["items"] if x["id"] == gid)
+    assert row["status"] == "archived"
+
+    hidden = client.get("/v_factory/api/gold_chat/list?exclude_archived=true&limit=50")
+    assert hidden.status_code == 200
+    hidden_ids = {x["id"] for x in hidden.get_json()["items"]}
+    assert gid not in hidden_ids
+
+
 def test_api_collect(app_ctx, monkeypatch):
     from app.services.daily_story.gold_story import gold_story_mgr as mgr_mod
 

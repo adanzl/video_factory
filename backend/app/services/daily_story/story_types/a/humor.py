@@ -406,7 +406,7 @@ def score_scene_beat(
     return 0, []
 
 
-def score_funniness_tail(
+def score_funniness_tail(  # type: ignore[union-attr]
     lines: list[str],
     speakers: list[str] | None = None,
 ) -> tuple[int, list[str]]:

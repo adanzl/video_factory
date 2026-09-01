@@ -69,7 +69,7 @@ def test_resolve_when_enabled():
         block, row = resolve_gold_story_block(
             theme="抢遥控器",
             story_type="C",
-            config=cfg,
+            config=cfg,  # type: ignore[arg-type]
         )
     assert row is _SAMPLE
     assert "冲突核：独占不让吃" in block

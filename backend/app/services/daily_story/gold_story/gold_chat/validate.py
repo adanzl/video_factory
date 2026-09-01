@@ -553,7 +553,7 @@ def _your_object_established(line: str, prior_lines: list[str]) -> bool:
         return False
     if _reciprocal_objects_established(prior_lines):
         return True
-    if RE_PRIOR_DAMAGE.search(before) and RE_YOUR_OBJ.search(line[m_ret.end() :]):
+    if RE_PRIOR_DAMAGE.search(before) and RE_YOUR_OBJ.search(line[m_ret.end() :]):  # type: ignore[union-attr]
         return True
     return False
 

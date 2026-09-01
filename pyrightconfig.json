@@ -17,6 +17,5 @@
   ],
   "ignore": [
     "backend/tests/*"
-  ],
-  "pythonPath": "/opt/homebrew/Caskroom/miniconda/base/envs/flask_env/bin/python"
+  ]
 }

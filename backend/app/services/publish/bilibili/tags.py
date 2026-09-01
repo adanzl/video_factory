@@ -56,7 +56,7 @@ def resolve_theme_tag(job: dict[str, Any]) -> str:
     if daily_story_id:
         story = repo_daily_story.get_story(int(daily_story_id))
         story_content = story.get("story") if isinstance(story.get("story"), dict) else {}
-        key = _clean_tag(str(story_content.get("key") or ""))
+        key = _clean_tag(str(story_content.get("key") or ""))  # type: ignore[union-attr]
         if key:
             return key
     title = _clean_tag(str(job.get("title") or ""))
@@ -145,4 +145,4 @@ def build_publish_tags(job: dict[str, Any], *, settings: Any | None = None) -> l
     if pipeline == CHAT_PIPELINE:
         return build_chat_tags(job, settings=settings)
     script = job.get("script_json") if isinstance(job.get("script_json"), dict) else {}
-    return normalize_tags(script.get("tags"))
+    return normalize_tags(script.get("tags"))  # type: ignore[union-attr]

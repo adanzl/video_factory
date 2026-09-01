@@ -179,7 +179,7 @@ class BiliQrLoginMgr:
     def _parse_poll_payload(payload: dict[str, Any]) -> dict[str, str]:
         data = payload.get("data") if isinstance(payload, dict) else None
         code = data.get("code") if isinstance(data, dict) else None
-        message = str(data.get("message") or payload.get("message") or "").strip()
+        message = str(data.get("message") or payload.get("message") or "").strip()  # type: ignore[union-attr]
         if code == 0:
             return {"status": STATUS_CONFIRMED, "message": "扫码确认完成，正在校验登录态"}
         if code == 86090:

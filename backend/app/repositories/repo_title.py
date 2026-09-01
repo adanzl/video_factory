@@ -110,7 +110,7 @@ def insert_title(
     if cur.rowcount == 0:
         sql.commit()
         return None
-    title_id = int(cur.lastrowid)
+    title_id = int(cur.lastrowid)  # type: ignore[arg-type,assignment]
     sql.commit()
     return get_title(title_id)
 

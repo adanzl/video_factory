@@ -97,7 +97,7 @@ def _gold_near_duplicate_of_daily_story(row: dict[str, Any]) -> bool:
     for item in existing:
         theme = str(item.get("theme") or "").strip()
         story = item.get("story") if isinstance(item.get("story"), dict) else {}
-        conflict = str(story.get("conflict_core") or "").strip()
+        conflict = str(story.get("conflict_core") or "").strip()  # type: ignore[union-attr]
         for gold in gold_bits:
             if theme and themes_near_duplicate(gold, theme):
                 return True

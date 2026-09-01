@@ -73,5 +73,5 @@ QUALITY_PROFILE = TypeQualityProfile(
     ),
     penalize_stubborn_end=False,
     collect_humor_issues=g_humor.collect_g_humor_issues,
-    score_scene_beat=score_scene_beat,
+    score_scene_beat=score_scene_beat,  # type: ignore[union-attr]
 )

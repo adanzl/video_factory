@@ -392,7 +392,7 @@ def test_daily_story_create_job_info_stores_phrase_gap_in_tts():
     speaker_configs = {
         name: dict(cfg) for name, cfg in DEFAULT_DAILY_SPEAKER_CONFIGS.items()
     }
-    speaker_configs["phrase_gap_sec"] = phrase_gap_sec
+    speaker_configs["phrase_gap_sec"] = phrase_gap_sec  # type: ignore[arg-type]
     info["tts"] = {"speaker_configs": speaker_configs}
 
     assert info["script"]["speech_chars_per_sec"] == 3.6

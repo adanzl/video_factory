@@ -227,8 +227,8 @@ export function formatAutoScore(score?: number | null): string {
 export async function listGoldChats(params: {
   /** true=已导入日常故事；false=未导入 */
   has_story?: boolean;
-  /** 排除已驳回条目 */
-  exclude_rejected?: boolean;
+  /** 排除已归档条目 */
+  exclude_archived?: boolean;
   limit?: number;
   offset?: number;
 } = {}): Promise<GoldChatListResponse> {
@@ -383,6 +383,29 @@ export async function importGoldChat(params: {
       source_id: params.sourceId,
       force: params.force ?? false,
     },
+  );
+  return response.data;
+}
+
+export interface GoldStoryArchiveResult {
+  archived: number;
+  skipped: number;
+  ids: number[];
+  results: Array<{
+    id: number;
+    source_id?: string;
+    action: string;
+    status?: string;
+    prev_status?: string | null;
+    reason?: string;
+    error?: string;
+  }>;
+}
+
+export async function archiveGoldStories(ids: number[]): Promise<GoldStoryArchiveResult> {
+  const response = await api.post<GoldStoryArchiveResult>(
+    "/v_factory/api/gold_chat/archive",
+    { ids },
   );
   return response.data;
 }

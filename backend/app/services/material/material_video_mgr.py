@@ -109,7 +109,7 @@ class MaterialVideoMgr:
             material_dir = materials_root / str(material_id)
             dest = self._write_material_video(material_dir, file, ext)
             meta = self._finalize_material_video(material_dir, dest)
-            return repo_material_video.update_material_video(material_id, name=display_name, note=note_text, **meta)
+            return repo_material_video.update_material_video(material_id, name=display_name, note=note_text, **meta)  # type: ignore[arg-type,assignment]
         except Exception:
             self._rollback_upload(material_id, material_dir)
             raise
@@ -173,7 +173,7 @@ class MaterialVideoMgr:
             raise ValueError(f'run_mode must be one of {sorted(_RUN_MODES)}')
         with atomic():
             repo_material_video.get_material_video(material_id)
-            script_json = {'pending_narration': narration.strip(), 'script_mode': 'manual'} if mode == 'manual' else None
+            script_json = {'pending_narration': narration.strip(), 'script_mode': 'manual'} if mode == 'manual' else None  # type: ignore[union-attr]
             job = repo_job.create_job(cleaned_title, skip_publish=skip_publish, stage='prepare', status='pending', pipeline=PIPELINE_MATERIAL, material_id=material_id, script_json=script_json, info=merge_job_info(None, orientation=default_orientation_for_pipeline(PIPELINE_MATERIAL)))
             repo_job_log.append_log(job['id'], 'prepare', f'created material job from material #{material_id}, script_mode={mode}, run_mode={run}')
             repo_material_video.update_material_video(material_id, job_id=job['id'])

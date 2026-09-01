@@ -167,15 +167,15 @@ def test_generate_single_uses_job_size(monkeypatch, tmp_path):
 
     def fake_post(url, json=None, timeout=None):
         if url.endswith("/sdapi/v1/options"):
-            captured.setdefault("checkpoints", []).append(json.get("sd_model_checkpoint"))
-            class Resp:
+            captured.setdefault("checkpoints", []).append(json.get("sd_model_checkpoint"))  # type: ignore[union-attr]
+            class Resp:  # type: ignore[assignment]
                 def raise_for_status(self):
                     return None
 
             return Resp()
         if url.endswith("/sdapi/v1/txt2img"):
             captured.setdefault("payloads", []).append(json)
-            class Resp:
+            class Resp:  # type: ignore[assignment]
                 def raise_for_status(self):
                     return None
 
@@ -185,7 +185,7 @@ def test_generate_single_uses_job_size(monkeypatch, tmp_path):
                     return {"images": [base64.b64encode(b"png").decode()]}
 
             return Resp()
-        class Resp:
+        class Resp:  # type: ignore[assignment]
             def raise_for_status(self):
                 return None
 
@@ -248,8 +248,8 @@ def test_generate_split_stitches_panels_vertical(monkeypatch, tmp_path):
 
     def fake_post(url, json=None, timeout=None):
         if url.endswith("/sdapi/v1/options"):
-            captured.setdefault("checkpoints", []).append(json.get("sd_model_checkpoint"))
-            class Resp:
+            captured.setdefault("checkpoints", []).append(json.get("sd_model_checkpoint"))  # type: ignore[union-attr]
+            class Resp:  # type: ignore[assignment]
                 def raise_for_status(self):
                     return None
 
@@ -260,13 +260,13 @@ def test_generate_split_stitches_panels_vertical(monkeypatch, tmp_path):
             import base64
             import io
 
-            height = json["height"]
+            height = json["height"]  # type: ignore[index,union-attr]
             color = (255, 0, 0) if height == 320 and len(captured["payloads"]) == 1 else (0, 0, 255)
-            img = Image.new("RGB", (json["width"], height), color=color)
+            img = Image.new("RGB", (json["width"], height), color=color)  # type: ignore[index,union-attr]
             buf = io.BytesIO()
             img.save(buf, format="PNG")
 
-            class Resp:
+            class Resp:  # type: ignore[assignment]
                 def raise_for_status(self):
                     return None
 
@@ -274,7 +274,7 @@ def test_generate_split_stitches_panels_vertical(monkeypatch, tmp_path):
                     return {"images": [base64.b64encode(buf.getvalue()).decode()]}
 
             return Resp()
-        class Resp:
+        class Resp:  # type: ignore[assignment]
             def raise_for_status(self):
                 return None
 
@@ -322,8 +322,8 @@ def test_generate_split_stitches_panels(monkeypatch, tmp_path):
 
     def fake_post(url, json=None, timeout=None):
         if url.endswith("/sdapi/v1/options"):
-            captured.setdefault("checkpoints", []).append(json.get("sd_model_checkpoint"))
-            class Resp:
+            captured.setdefault("checkpoints", []).append(json.get("sd_model_checkpoint"))  # type: ignore[union-attr]
+            class Resp:  # type: ignore[assignment]
                 def raise_for_status(self):
                     return None
 
@@ -334,13 +334,13 @@ def test_generate_split_stitches_panels(monkeypatch, tmp_path):
             import base64
             import io
 
-            width = json["width"]
+            width = json["width"]  # type: ignore[index,union-attr]
             color = (255, 0, 0) if width == 320 and len(captured["payloads"]) == 1 else (0, 0, 255)
-            img = Image.new("RGB", (width, json["height"]), color=color)
+            img = Image.new("RGB", (width, json["height"]), color=color)  # type: ignore[index,union-attr]
             buf = io.BytesIO()
             img.save(buf, format="PNG")
 
-            class Resp:
+            class Resp:  # type: ignore[assignment]
                 def raise_for_status(self):
                     return None
 
@@ -348,7 +348,7 @@ def test_generate_split_stitches_panels(monkeypatch, tmp_path):
                     return {"images": [base64.b64encode(buf.getvalue()).decode()]}
 
             return Resp()
-        class Resp:
+        class Resp:  # type: ignore[assignment]
             def raise_for_status(self):
                 return None
 
