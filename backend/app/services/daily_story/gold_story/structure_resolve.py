@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import copy
 import re
-from typing import Any
+from typing import Any, cast
 
 from app.services.daily_story.gold_story.types import (
     allowed_structure_types,
@@ -149,7 +149,7 @@ def resolve_structure_row(row: dict[str, Any]) -> tuple[dict[str, Any], list[str
     """已入库金稿纠偏 mechanism/structure_type（含 payload.scene_contract）。"""
     notes: list[str] = []
     out = dict(row)
-    payload = out.get("payload") if isinstance(out.get("payload"), dict) else {}
+    payload = cast(dict[str, Any], out.get("payload") or {})
     payload = copy.deepcopy(payload)
 
     blob = classification_blob(

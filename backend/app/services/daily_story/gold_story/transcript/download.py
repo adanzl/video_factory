@@ -197,12 +197,12 @@ def _download_with_ytdlp(
     if not config.gold_story_use_proxy:
         ydl_opts["proxy"] = ""
 
-    with YoutubeDL(ydl_opts) as ydl:
+    with YoutubeDL(ydl_opts) as ydl:  # type: ignore[arg-type,assignment]
         info = ydl.extract_info(ref.url, download=True)
         if info and "entries" in info and info["entries"]:
-            info = info["entries"][0]
-        info = ydl.sanitize_info(info or {})
-        video_path = _resolve_video_path(ydl, info, ref.source_id, downloads_dir)
+            info = info["entries"][0]  # type: ignore[arg-type,assignment]
+        info = ydl.sanitize_info(info or {})  # type: ignore[arg-type,assignment]
+        video_path = _resolve_video_path(ydl, info, ref.source_id, downloads_dir)  # type: ignore[arg-type,assignment]
         if not video_path.exists():
             raise RuntimeError(f"download finished but file missing: {video_path}")
 
@@ -210,10 +210,10 @@ def _download_with_ytdlp(
         "source": ref.source,
         "source_id": ref.source_id,
         "url": ref.url,
-        "title": info.get("title"),
-        "uploader": info.get("uploader"),
-        "duration": info.get("duration"),
-        "webpage_url": info.get("webpage_url") or ref.url,
+        "title": info.get("title"),  # type: ignore[union-attr]
+        "uploader": info.get("uploader"),  # type: ignore[union-attr]
+        "duration": info.get("duration"),  # type: ignore[union-attr]
+        "webpage_url": info.get("webpage_url") or ref.url,  # type: ignore[union-attr]
         "downloaded_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
     return DownloadResult(ref=ref, video_path=video_path, metadata=metadata)

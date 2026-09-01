@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import copy
 import re
-from typing import Any
+from typing import Any, cast
 
 from app.services.daily_story.gold_story.types import (
     allowed_structure_types,
@@ -325,7 +325,7 @@ def _seed_suggests_g(seed: list[Any] | None) -> bool:
 def resolve_gold_chat_structure_row(row: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     """gold_chat 入口纠偏 structure_type（M2+C→M8+J、mapping_note+seed→G）。"""
     out, notes = resolve_structure_row(row)
-    payload = out.get("payload") if isinstance(out.get("payload"), dict) else {}
+    payload = cast(dict[str, Any], out.get("payload") or {})
     payload = copy.deepcopy(payload)
     mechanism = str(out.get("mechanism") or "").strip().upper()
     current = str(out.get("structure_type") or "").strip().upper()

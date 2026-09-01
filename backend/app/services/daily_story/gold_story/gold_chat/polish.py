@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any
+from typing import Any, cast
 
 from app.config import Config
 from app.repositories import repo_gold_story
@@ -253,7 +253,7 @@ def polish_gold_chat_export(
     row = repo_gold_story.get_by_source_id(source_id=sid, source="bili")
     if not row:
         row = {"source_id": sid, "id": export.get("gold_story_id")}
-    payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+    payload = cast(dict[str, Any], row.get("payload") or {})
     scene_contract = payload.get("scene_contract") or {}
     banned = sanitize_banned_literals(
         payload.get("banned_literals") or scene_contract.get("banned_literals"),

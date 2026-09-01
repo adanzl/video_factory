@@ -93,6 +93,12 @@ def run_gold_chat_batch(
                 outcome.get("structure_score"),
             )
             results.append({**base, "action": "ok", **outcome})
+        except ValueError as exc:
+            fail_count += 1
+            gid = int(row.get("id") or 0)
+            if gid > 0:
+                record_gold_chat_failure(gid, exc, source_id=sid, stage="batch")
+            results.append({**base, "action": "error", "error": str(exc)})
         except Exception as exc:
             fail_count += 1
             gid = int(row.get("id") or 0)

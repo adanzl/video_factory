@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from app.config import Config
 from app.repositories import repo_daily_story, repo_gold_story
@@ -43,7 +43,7 @@ def format_dialogue_seed(dialogue_seed: list[Any]) -> str:
 
 def build_gold_story_block(story: dict[str, Any]) -> str:
     """H6/H7：组装注入块（禁止贴 story_raw / 成品对白）。"""
-    payload = story.get("payload") if isinstance(story.get("payload"), dict) else {}
+    payload = cast(dict[str, Any], story.get("payload") or {})
     beat = payload.get("beat") or []
     dialogue_seed = payload.get("dialogue_seed") or []
     scene_contract = payload.get("scene_contract") or {}

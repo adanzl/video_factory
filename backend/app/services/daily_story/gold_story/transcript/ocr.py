@@ -84,7 +84,7 @@ def _init_ocr_worker(
     _worker_min_box_height_ratio = float(min_box_height_ratio)
     _worker_min_dialogue_box_px = float(min_dialogue_box_px)
     _worker_min_white_bg_ratio = float(min_white_bg_ratio)
-    from rapidocr import RapidOCR
+    from rapidocr import RapidOCR  # type: ignore[import-not-found,unused-ignore]
 
     _worker_engine = RapidOCR(
         config_path=config_path,
@@ -399,7 +399,7 @@ def _ocr_single_frame(args: tuple[float, str]) -> dict[str, Any]:
         _init_ocr_worker(_worker_config_path, _worker_model_root)
 
     timestamp_sec, image_path = args
-    result = _worker_engine(str(image_path), use_cls=False)
+    result = _worker_engine(str(image_path), use_cls=False)  # type: ignore[operator]
     empty = {
         "timestamp_sec": timestamp_sec,
         "hits": [],
@@ -419,11 +419,11 @@ def _ocr_single_frame(args: tuple[float, str]) -> dict[str, Any]:
     if cv2 is not None:
         image = cv2.imread(str(image_path))
 
-    txts = list(result.txts)
+    txt_list = list(result.txts)
     scores = list(result.scores or ())
     boxes = list(result.boxes) if result.boxes is not None else []
     hits: list[dict[str, Any]] = []
-    for idx, txt in enumerate(txts):
+    for idx, txt in enumerate(txt_list):
         text = str(txt or "").strip()
         if not text:
             continue
@@ -496,7 +496,7 @@ def materialize_ocr_rows(
                 }
             )
             continue
-        txts = [str(h["text"]) for h in hits]
+        txt_list = [str(h["text"]) for h in hits]
         scores = [float(h["score"]) for h in hits]
         boxes = [
             [
@@ -508,7 +508,7 @@ def materialize_ocr_rows(
             for h in hits
         ]
         text, confidence = compose_frame_text(
-            txts,
+            txt_list,
             scores,
             boxes,
             min_height_ratio=min_height_ratio,
@@ -528,7 +528,7 @@ def materialize_ocr_rows(
 
 def build_ocr_engine(config: Config):
     """主进程探测用（非 ProcessPool worker）。"""
-    from rapidocr import RapidOCR
+    from rapidocr import RapidOCR  # type: ignore[import-not-found,unused-ignore]
 
     cfg_path = ocr_config_path(config)
     model_root = config.ocr_model_dir
@@ -762,16 +762,16 @@ def ocr_frames_parallel(
     workers = min(workers, len(frames))
 
     tasks = [(frame.timestamp_sec, str(frame.image_path)) for frame in frames]
-    initargs = (cfg_path, model_root, min_h_ratio, min_box_px, min_white_bg)
+    init_args = (cfg_path, model_root, min_h_ratio, min_box_px, min_white_bg)
     if workers <= 1:
-        _init_ocr_worker(*initargs)
+        _init_ocr_worker(*init_args)
         return [_ocr_single_frame(task) for task in tasks]
 
     rows: list[dict[str, Any]] = []
     with ProcessPoolExecutor(
         max_workers=workers,
         initializer=_init_ocr_worker,
-        initargs=initargs,
+        initargs=init_args,
     ) as pool:
         futures = [pool.submit(_ocr_single_frame, task) for task in tasks]
         for future in wait_futures_hub(futures):

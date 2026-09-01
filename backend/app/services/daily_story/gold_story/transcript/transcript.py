@@ -357,19 +357,19 @@ def doctor(config: Config | None = None) -> dict[str, Any]:
     except ImportError:
         pass
     try:
-        import faster_whisper  # noqa: F401
+        import faster_whisper  # noqa: F401  # type: ignore[import-not-found,unused-ignore]
 
         faster_whisper_ok = True
     except ImportError:
         pass
     try:
-        from rapidocr import RapidOCR  # noqa: F401
+        from rapidocr import RapidOCR  # noqa: F401  # type: ignore[import-not-found,unused-ignore]
 
         rapidocr_ok = True
     except ImportError:
         pass
     try:
-        import onnxruntime  # noqa: F401
+        import onnxruntime  # noqa: F401  # type: ignore[import-not-found,unused-ignore]
 
         onnxruntime_ok = True
     except ImportError:

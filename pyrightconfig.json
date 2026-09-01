@@ -1,12 +1,22 @@
 {
-  "extraPaths": ["backend"],
+  "typeCheckingMode": "basic",
+  "venv": "flask_env",
+  "extraPaths": [
+    "backend"
+  ],
   "executionEnvironments": [
     {
       "root": ".",
-      "extraPaths": ["backend"]
+      "extraPaths": [
+        "backend"
+      ]
     },
     {
       "root": "backend"
     }
-  ]
+  ],
+  "ignore": [
+    "backend/tests/*"
+  ],
+  "pythonPath": "/opt/homebrew/Caskroom/miniconda/base/envs/flask_env/bin/python"
 }

@@ -345,7 +345,7 @@ def _type_catalog() -> str:
 
 
 def _chat_json(system: str, user: str) -> dict[str, Any]:
-    raw, _finish = _client()._chat_json(
+    raw, _finish = _client()._chat_json(  # type: ignore[attr-defined]
         system,
         user,
         thinking_enabled=False,

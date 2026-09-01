@@ -149,7 +149,7 @@ def _generate_cover(job: dict, cover_path: Path, width: int, height: int) -> Non
     source, reason = pick_cover_image(job, segs)
     if source is not None:
         img = Image.open(source).convert('RGBA')
-        img = img.resize((cw, ch), Image.LANCZOS)
+        img = img.resize((cw, ch), Image.LANCZOS)  # type: ignore[attr-defined]
         composed = compose_cover_image(img, title, brand_name=brand, host_intro_path=host_intro_path)
         composed.convert('RGB').save(cover_path, quality=92)
         logger.info('job %s cover: using %s (%s)', job_id, reason, source)
