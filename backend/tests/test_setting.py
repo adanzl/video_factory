@@ -2,27 +2,79 @@
 
 from __future__ import annotations
 
+import pytest
+
 from app.services.daily_story.gold_story.gold_chat import convert as gc
 from app.services.daily_story.gold_story.gold_chat.setting import (
+    ALLOWED_SETTING_PLACES,
+    classify_setting_place,
+    format_place_catalog_for_prompt,
     normalize_gold_chat_setting,
     resolve_target_location,
+    set_place_classify_hook,
     setting_location_violations,
 )
 
 
-def test_resolve_car_to_bedroom():
+@pytest.fixture(autouse=True)
+def _reset_place_hook():
+    set_place_classify_hook(None)
+    classify_setting_place.cache_clear()
+    yield
+    set_place_classify_hook(None)
+    classify_setting_place.cache_clear()
+
+
+def _hook(mapping: dict[str, str]):
+    default = mapping.get("__default__", "客厅")
+
+    def _fn(raw: str, context: str) -> dict:
+        blob = f"{raw} {context}"
+        for key, place in mapping.items():
+            if key == "__default__":
+                continue
+            if key in blob:
+                return {"place": place, "confidence": 0.9, "reason": "test"}
+        return {"place": default, "confidence": 0.9, "reason": "test"}
+
+    return _fn
+
+
+def test_place_catalog_covers_allowed_set():
+    catalog = format_place_catalog_for_prompt()
+    assert "客厅" in catalog
+    assert ALLOWED_SETTING_PLACES == frozenset(
+        line.split("：", 1)[0].removeprefix("- ").strip()
+        for line in catalog.splitlines()
+        if line.startswith("- ")
+    )
+
+
+def test_resolve_keeps_allowed_place_in_text():
+    assert resolve_target_location("卧室里吵架") == "卧室"
+    assert resolve_target_location("地板上的垫子") == "地板"
+
+
+def test_classify_setting_place_uses_llm_hook():
+    set_place_classify_hook(_hook({"车内": "卧室", "幼儿园午休垫子": "地板"}))
+    assert classify_setting_place("车内") == "卧室"
+    assert classify_setting_place("幼儿园午休垫子") == "地板"
+
+
+def test_resolve_unknown_uses_llm_classify():
+    set_place_classify_hook(_hook({"车内": "卧室"}))
     assert resolve_target_location("车内") == "卧室"
-    assert resolve_target_location("妈妈开车，后座") == "卧室"
 
 
-def test_normalize_car_setting():
+def test_normalize_car_setting_maps_via_llm():
+    set_place_classify_hook(_hook({"车内": "卧室"}))
     new, notes = normalize_gold_chat_setting(
         "车内，妈妈开车，灿灿和昭昭坐在后座",
         scene_contract_location="车内",
     )
     assert "卧室" in new
     assert "开车" not in new
-    assert notes
+    assert any("归类" in n for n in notes)
 
 
 def test_setting_violations_reject_car():
@@ -33,7 +85,19 @@ def test_setting_violations_allow_bedroom():
     assert setting_location_violations("卧室里，灿灿和昭昭因为作业吵起来") == []
 
 
+def test_normalize_kindergarten_setting_maps_via_llm():
+    set_place_classify_hook(_hook({"幼儿园午休垫子": "地板"}))
+    new, notes = normalize_gold_chat_setting(
+        "幼儿园午休垫子上，灿灿和昭昭对峙",
+        scene_contract_location="幼儿园午休垫子",
+    )
+    assert "地板" in new
+    assert "幼儿园" not in new
+    assert notes
+
+
 def test_apply_gold_chat_normalizations_i_trims_tail():
+    set_place_classify_hook(_hook({"车内": "卧室"}))
     chat = {
         "story_type": "I",
         "setting": "车内，妈妈开车",
@@ -59,4 +123,4 @@ def test_apply_gold_chat_normalizations_i_trims_tail():
     out, notes = gc.apply_gold_chat_normalizations(dict(chat), row=row)
     assert "卧室" in out["setting"]
     assert len(out["dialogue"]) == 11
-    assert any("subplot" in n or "映射" in n for n in notes)
+    assert any("subplot" in n or "归类" in n or "映射" in n for n in notes)

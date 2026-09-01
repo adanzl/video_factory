@@ -6,6 +6,7 @@
         "apihub",
         "asyncio",
         "axios",
+        "basedpyright",
         "bilibili",
         "bitsandbytes",
         "BLAS",
@@ -96,6 +97,7 @@
         "transnet",
         "transnetv",
         "tweaker",
+        "unpaintable",
         "unpickle",
         "usecase",
         "usermod",
@@ -109,7 +111,6 @@
         "wiperight",
         "xfade",
         "xianyu",
-        "unpaintable",
         "ZHAO"
     ],
     "ignoreRegExpList": [

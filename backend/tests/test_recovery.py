@@ -144,7 +144,7 @@ def test_recover_stuck_gold_story_pending_resets_processing(
     assert len(workers) == 1
 
     row = repo_gold_story.get_by_source_id(source_id="BV1RECOVER01")
-    assert row["status"] == "pending"
+    assert row and row["status"] == "pending"
 
     workers[0]()
     status = mgr_mod.gold_story_mgr.collect_status()

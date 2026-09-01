@@ -14,6 +14,7 @@ from app.config import Config
 from app.repositories import repo_gold_story
 from app.services.daily_story.gold_story.gold_chat.convert import convert_gold_chat
 from app.services.daily_story.gold_story.gold_chat.export import gold_chat_export_dir
+from app.services.daily_story.gold_story.gold_chat.status import record_gold_chat_failure
 
 
 def _already_exported(source_id: str, config: Config) -> bool:
@@ -94,6 +95,9 @@ def run_gold_chat_batch(
             results.append({**base, "action": "ok", **outcome})
         except Exception as exc:
             fail_count += 1
+            gid = int(row.get("id") or 0)
+            if gid > 0:
+                record_gold_chat_failure(gid, exc, source_id=sid, stage="batch")
             logger.exception("[GOLD_CHAT] batch failed source_id=%s: %s", sid, exc)
             results.append({**base, "action": "error", "error": str(exc)})
 

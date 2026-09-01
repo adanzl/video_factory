@@ -19,6 +19,10 @@ from app.services.daily_story.gold_story.scene import (
     seed_from_beat_chain,
     validate_scene,
 )
+from app.services.daily_story.gold_story.gold_chat.setting import (
+    format_place_catalog_for_prompt,
+    normalize_scene_contract_location,
+)
 from app.services.daily_story.gold_story.structure_resolve import resolve_h3_structure
 from app.services.llm.llm_mgr import llm_mgr
 
@@ -231,6 +235,9 @@ source_type：{source_type}
 
 {gold_scene_snippet}
 
+允许地点表（location 须从中选一，可拍室内锚点）：
+{place_catalog}
+
 输出 JSON：
 {{
   "story_type": "C",
@@ -255,6 +262,7 @@ banned_literals：同 H3，仅 remap 称谓与站外真名；禁止填画画/碘
 规则：
 - object/conflict/mechanism **须能在 story_raw 找到依据**；禁止发明 story_raw 没有的物品/仪式/场景
 - object：争的具体物品或话题；双方各持一物时两件都写入 object
+- location：须为允许地点表中的 place；站外场景选最接近的一项（如车内→卧室，午休垫→地板）
 - 禁止无依据套用站内仪式模板（举过头顶/三秒/单脚站/金鸡独立等）
 - C类 beat_chain：争资源→双规则（每轮新判据）→三轮升级→同场回旋镖→嘴硬（至少4拍）；
   **禁止**把单方「谁赢了谁说了算」+武力压制+认输标 C
@@ -490,10 +498,15 @@ def build_scene_contract(
         story_raw=story_raw[:4000],
         source_type=source_type or "field",
         gold_scene_snippet=GOLD_H3A_SCENE_SNIPPET,
+        place_catalog=format_place_catalog_for_prompt(),
     )
     data = _chat_json(_H3A_SYSTEM, user)
     data.setdefault("story_type", str(h3.get("structure_type") or "C"))
     data["source_type"] = str(data.get("source_type") or source_type or "field").lower()
+    data, _loc_notes = normalize_scene_contract_location(
+        data,
+        activity_context=story_raw[:800],
+    )
     raw_banned = data.get("banned_literals") or h3.get("banned_literals") or []
     data["banned_literals"] = sanitize_banned_literals(
         raw_banned if isinstance(raw_banned, list) else [],

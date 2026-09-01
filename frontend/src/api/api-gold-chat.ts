@@ -63,6 +63,11 @@ export interface GoldStoryAudit {
   };
 }
 
+export interface GoldChatErrorInfo {
+  error: string;
+  failed_at?: string;
+}
+
 export interface GoldStoryDetail {
   id?: number;
   source_id: string;
@@ -79,6 +84,7 @@ export interface GoldStoryDetail {
   dump: GoldStoryDump;
   has_gold_chat: boolean;
   gold_chat?: GoldChatPayload | null;
+  gold_chat_error?: GoldChatErrorInfo | null;
 }
 
 export interface GoldStoryTranscript {

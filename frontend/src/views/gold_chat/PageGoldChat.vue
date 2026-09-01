@@ -129,9 +129,10 @@
       layout="sizes, prev, pager, next" class="mt-4 justify-start" @current-change="onPageChange"
       @size-change="onPageSizeChange" />
 
-    <GoldChatDetail v-model="showDetail" :gold-story-id="currentId" :source-id="currentSourceId" @closed="fetchItems"
-      @imported="fetchItems" @converting="onDetailConverting" @converted="onDetailConverted"
-      @reimported="onDetailReimported" @open-transcript="openTranscriptFromDetail" />
+    <GoldChatDetail v-model="showDetail" :gold-story-id="currentId" :source-id="currentSourceId"
+      @closed="onDetailClosed" @imported="fetchItems" @converting="onDetailConverting"
+      @converted="onDetailConverted" @reimported="onDetailReimported"
+      @open-transcript="openTranscriptFromDetail" />
 
     <GoldStoryTranscript v-model="showTranscript" :gold-story-id="transcriptId" :source-id="transcriptSourceId"
       :title="transcriptTitle" />
@@ -499,6 +500,11 @@ function onDetailConverting() {
 function onDetailConverted() {
   clearConvertingTargets();
   void fetchItems({ quiet: true });
+}
+
+function onDetailClosed() {
+  clearConvertingTargets();
+  void fetchItems();
 }
 
 function onDetailReimported() {

@@ -420,6 +420,32 @@ def test_api_get_dump_without_gold_chat(app_ctx):
     assert detail["dump"]["story_raw"]
     assert detail["has_gold_chat"] is False
     assert detail["gold_chat"] is None
+    assert detail.get("gold_chat_error") is None
+
+
+def test_api_convert_failure_records_error(app_ctx, monkeypatch):
+    inserted = _insert_sample(app_ctx)
+    gid = int(inserted["id"])
+
+    def boom(_row, *, config=None):
+        raise ValueError("对白 10 句/110 字不足")
+
+    monkeypatch.setattr(
+        "app.services.daily_story.gold_story.gold_story_mgr.convert_gold_chat",
+        boom,
+    )
+
+    client = app_ctx.test_client()
+    convert_resp = client.post("/v_factory/api/gold_chat/convert", json={"id": gid})
+    assert convert_resp.status_code == 400
+    assert "不足" in convert_resp.get_json()["error"]
+
+    get_resp = client.get(f"/v_factory/api/gold_chat/get?id={gid}")
+    assert get_resp.status_code == 200
+    detail = get_resp.get_json()
+    err = detail.get("gold_chat_error") or {}
+    assert "不足" in err.get("error", "")
+    assert err.get("failed_at")
 
 
 def test_api_get_includes_audit(app_ctx):

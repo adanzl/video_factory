@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Any
+from typing import Any, cast
 
 from app.config import Config
 from app.repositories import repo_gold_story
@@ -15,6 +15,10 @@ from app.services.daily_story.gold_story.gold_chat.export import (
     gold_chat_summary,
     load_gold_chat,
     load_gold_chat_for_row,
+)
+from app.services.daily_story.gold_story.gold_chat.status import (
+    gold_chat_error_from_payload,
+    record_gold_chat_failure,
 )
 from app.services.daily_story.gold_story.gold_chat.import_story import (
     import_gold_chat_daily_story,
@@ -67,7 +71,7 @@ def _ensure_schema() -> None:
     from app.repositories import sql_exec as sql
 
     conn = db.session.connection().connection.dbapi_connection
-    apply_gold_story_schema(conn)
+    apply_gold_story_schema(conn)  # type: ignore[arg-type]
     sql.commit()
 
 
@@ -107,12 +111,12 @@ def _summarize_collect_report(
 ) -> dict[str, Any]:
     results = report.get("results") or []
     skipped = int(
-        report.get("skipped")
+        report.get("skipped")  # type: ignore[arg-type]
         if report.get("skipped") is not None
         else sum(1 for r in results if r.get("action") == "skip")
     )
     failed = int(
-        report.get("failed")
+        report.get("failed")  # type: ignore[arg-type]
         if report.get("failed") is not None
         else sum(1 for r in results if r.get("action") == "error")
     )
@@ -323,7 +327,7 @@ def _run_reimport_job(
 
 def _row_to_list_item(row: dict[str, Any], *, config: Config) -> dict[str, Any]:
     sid = str(row.get("source_id") or "").strip()
-    payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+    payload = cast(dict[str, Any], row.get("payload") or {})
     summary = gold_chat_summary(sid, config=config, row=row)
     bili_title = payload.get("bili_title")
     return {
@@ -345,7 +349,7 @@ def _row_to_list_item(row: dict[str, Any], *, config: Config) -> dict[str, Any]:
 
 def _row_to_dump(row: dict[str, Any]) -> dict[str, Any]:
     """金故事 dump（story_raw + 结构化抽取）。"""
-    payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+    payload = cast(dict[str, Any], row.get("payload") or {})
     dump: dict[str, Any] = {}
     for key in (
         "story_raw",
@@ -381,7 +385,8 @@ def _row_to_audit_summary(payload: dict[str, Any] | None) -> dict[str, Any] | No
         return None
     reasons_raw = audit.get("reject_reasons") or audit.get("rule_reasons") or []
     reasons = [str(r).strip() for r in reasons_raw if str(r).strip()]
-    llm = audit.get("llm") if isinstance(audit.get("llm"), dict) else {}
+    llm_raw = audit.get("llm")
+    llm = llm_raw if isinstance(llm_raw, dict) else {}
     note = str(llm.get("audit_notes") or "").strip()
     stage = str(audit.get("stage") or "").strip() or None
     passed = audit.get("pass")
@@ -480,7 +485,7 @@ class GoldStoryMgr:
         if not source_id:
             raise KeyError("gold_story missing source_id")
 
-        payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+        payload = cast(dict[str, Any], row.get("payload") or {})
         export = load_gold_chat_for_row(row, config=cfg)
         gold_chat: dict[str, Any] | None = None
         has_gold_chat = export is not None
@@ -502,12 +507,16 @@ class GoldStoryMgr:
                 "scene_title": payload.get("gold_chat_scene_title"),
             }
 
-        return {
+        gold_chat_error = gold_chat_error_from_payload(payload)
+        out = {
             **_row_to_detail_header(row),
             "dump": _row_to_dump(row),
             "has_gold_chat": has_gold_chat,
             "gold_chat": gold_chat,
         }
+        if gold_chat_error is not None:
+            out["gold_chat_error"] = gold_chat_error
+        return out
 
     def get_transcript(
         self,
@@ -581,6 +590,14 @@ class GoldStoryMgr:
             )
             return {"action": "ok", **outcome}
         except Exception as exc:
+            gid = int(row.get("id") or 0)
+            if gid > 0:
+                record_gold_chat_failure(
+                    gid,
+                    exc,
+                    source_id=sid,
+                    stage="convert",
+                )
             logger.exception("[GOLD_CHAT] convert_one failed source_id=%s: %s", sid, exc)
             raise
         finally:
