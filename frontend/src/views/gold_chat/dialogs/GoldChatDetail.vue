@@ -175,6 +175,31 @@
         </div>
 
         <div
+          v-if="detail.gold_chat_error?.error"
+          class="border-b border-red-100 bg-red-50 px-4 py-2"
+        >
+          <el-tooltip placement="top" :show-after="300">
+            <template #content>
+              <div class="max-w-md whitespace-pre-wrap wrap-break-word text-xs">
+                {{ detail.gold_chat_error.error }}
+              </div>
+            </template>
+            <div
+              class="line-clamp-2 cursor-default text-xs leading-relaxed wrap-break-word text-red-700"
+            >
+              <span class="font-medium">转换失败：</span>{{ detail.gold_chat_error.error }}
+            </div>
+          </el-tooltip>
+          <div
+            v-if="detail.gold_chat_error.failed_at"
+            class="mt-1 truncate text-xs text-red-500"
+            :title="detail.gold_chat_error.failed_at"
+          >
+            {{ formatDateTime(detail.gold_chat_error.failed_at) }}
+          </div>
+        </div>
+
+        <div
           v-if="detail.gold_chat?.export_missing"
           class="border-b border-amber-100 bg-amber-50 px-4 py-2 text-xs text-amber-700"
         >
@@ -428,6 +453,7 @@ async function handleConvert() {
   } catch (e) {
     emit("converted");
     handleError(e, "转换失败");
+    await loadDetail();
   } finally {
     converting.value = false;
   }

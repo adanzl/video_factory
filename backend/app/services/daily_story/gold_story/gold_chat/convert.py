@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Any
+from typing import Any, cast
 
 from app.config import Config
 from app.repositories import repo_gold_story
@@ -169,8 +169,10 @@ def _repair_i_row_contract(row: dict[str, Any]) -> dict[str, Any]:
     st = str(row.get("structure_type") or "").strip().upper()
     if st != "I":
         return row
-    payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
-    sc = payload.get("scene_contract") if isinstance(payload.get("scene_contract"), dict) else {}
+    payload = cast(dict[str, Any], row.get("payload") or {})
+    sc = cast(dict[str, Any], payload.get("scene_contract")) if isinstance(
+        payload.get("scene_contract"), dict
+    ) else {}
     seed = payload.get("dialogue_seed")
     if not isinstance(seed, list):
         seed = sc.get("dialogue_seed") if isinstance(sc, dict) else None
@@ -228,8 +230,10 @@ def _persist_structure_correction(row: dict[str, Any], notes: list[str]) -> dict
     except ValueError as exc:
         logger.warning("[GOLD_CHAT] structure persist skipped id=%s: %s", gid, exc)
         return row
-    payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
-    sc = payload.get("scene_contract") if isinstance(payload.get("scene_contract"), dict) else None
+    payload = cast(dict[str, Any], row.get("payload") or {})
+    sc = cast(dict[str, Any], payload.get("scene_contract")) if isinstance(
+        payload.get("scene_contract"), dict
+    ) else None
     if isinstance(sc, dict) and str(sc.get("story_type") or "").strip().upper() == st:
         repo_gold_story.patch_story_payload(gid, {"scene_contract": sc})
     logger.info(
@@ -276,7 +280,7 @@ def _chat_json(
     from app.services.llm.llm_deepseek import _loads_llm_json
 
     budget = int(max_tokens or GOLD_CHAT_LLM_MAX_TOKENS)
-    content, finish = _client()._chat(
+    content, finish = _client()._chat(  # type: ignore[attr-defined]
         system,
         user,
         thinking_enabled=False,
@@ -848,7 +852,7 @@ def _refine_after_normalize(
     row: dict[str, Any],
 ) -> dict[str, Any]:
     """normalize 垫字后若仍有非结构性对齐 issue，走一轮 Pass2 精修。"""
-    payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+    payload = cast(dict[str, Any], row.get("payload") or {})
     scene_contract = payload.get("scene_contract") or {}
     if not isinstance(scene_contract, dict):
         scene_contract = {}
@@ -1324,12 +1328,17 @@ def apply_gold_chat_normalizations(
     )
 
     notes: list[str] = []
-    payload = row.get("payload") if isinstance(row, dict) and isinstance(row.get("payload"), dict) else {}
-    sc = payload.get("scene_contract") if isinstance(payload.get("scene_contract"), dict) else {}
+    payload = cast(dict[str, Any], (row or {}).get("payload") or {})
+    _sc_raw = payload.get("scene_contract")
+    if isinstance(_sc_raw, dict):
+        sc = _sc_raw
+    else:
+        sc = {}
     st = str(
         (row or {}).get("structure_type") or chat.get("story_type") or ""
     ).strip().upper()
-    raw_chars = sc.get("characters") if isinstance(sc.get("characters"), list) else []
+    _chars_raw = sc.get("characters")
+    raw_chars = _chars_raw if isinstance(_chars_raw, list) else []
     characters = tuple(str(c).strip() for c in raw_chars if str(c).strip())
     if len(characters) < 2:
         characters = ("灿灿", "昭昭")
@@ -1339,6 +1348,15 @@ def apply_gold_chat_normalizations(
     new_setting, sn = normalize_gold_chat_setting(
         str(chat.get("setting") or ""),
         scene_contract_location=str(sc.get("location") or ""),
+        activity_context=" ".join(
+            x
+            for x in (
+                str(sc.get("object") or ""),
+                str(sc.get("conflict") or ""),
+                str((row or {}).get("conflict_core") or ""),
+            )
+            if x
+        ),
         characters=characters,
     )
     if sn:
@@ -1509,7 +1527,7 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
     """单条 gold_story 行 → daily_story 形 JSON。"""
     row = _repair_i_row_contract(row)
     row, _structure_notes = _resolve_structure_row(row)
-    payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+    payload = cast(dict[str, Any], row.get("payload") or {})
     structure_type = str(row.get("structure_type") or "A").strip().upper()
     st_label = structure_type_label(structure_type)
     scene_contract = payload.get("scene_contract") or {}
@@ -1585,6 +1603,7 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
     last_err = ""
     pass1_feedback_block = ""
     pass1_temperature = 0.4
+    chat: dict[str, Any] = {}
     for _regen in range(PASS1_REGENERATE_MAX):
         # 截断回灌后压低 story_raw，减少「照着长叙述扩写跑飞」
         story_raw_cap = 400 if pass1_temperature < 0.35 else 800
@@ -1687,6 +1706,7 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
                 "gold_chat pre-align type patch: %s",
                 "；".join(str(n) for n in type_notes[:4]),
             )
+        chat = data
         try:
             chat = refine_gold_chat_align(
                 data,
@@ -1766,7 +1786,9 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
                     return lifted
                 except ValueError:
                     pass
-                quality = chat.get("quality") if isinstance(chat.get("quality"), dict) else {}
+                quality = cast(dict[str, Any], chat.get("quality")) if isinstance(
+                    chat.get("quality"), dict
+                ) else {}
                 logger.info(
                     "gold_chat structure_score fail score=%s summary=%s reasons=%s",
                     quality.get("structure_score") or quality.get("score"),
@@ -1881,7 +1903,9 @@ def _gate_gold_chat_structure_score(chat: dict[str, Any]) -> int:
         structure_score_of,
     )
 
-    quality = chat.get("quality") if isinstance(chat.get("quality"), dict) else {}
+    quality = cast(dict[str, Any], chat.get("quality")) if isinstance(
+        chat.get("quality"), dict
+    ) else {}
     struct = structure_score_of(quality)
     if struct < STRUCTURE_PUBLISH_MIN:
         raise ValueError(f"structure_score:{struct}")
@@ -1896,7 +1920,7 @@ def _persist_m5_h_contract_if_needed(row: dict[str, Any]) -> dict[str, Any]:
     if gid <= 0 or mechanism != "M5" or structure_type != "H":
         return row
 
-    payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+    payload = cast(dict[str, Any], row.get("payload") or {})
     scene_contract = payload.get("scene_contract") or {}
     if not isinstance(scene_contract, dict):
         scene_contract = {}
@@ -1943,7 +1967,7 @@ def convert_gold_chat(
             patch_m2_c_structure,
         )
 
-        payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+        payload = cast(dict[str, Any], row.get("payload") or {})
         chat, strip_notes = patch_m2_c_structure(
             chat,
             structure_type=str(row.get("structure_type") or ""),
@@ -1955,7 +1979,7 @@ def convert_gold_chat(
             norm_notes = list(norm_notes or []) + list(strip_notes)
         chat, pad_notes = _ensure_gold_chat_min_chars(chat)
         if pad_notes:
-            norm_notes = list(norm_notes or []) + list(pad_notes)
+            norm_notes = list(norm_notes or []) + ["垫字达标"]
         chat, _ = patch_sanitize_c_tone_stack(chat)
     if norm_notes:
         logger.info(
@@ -1963,7 +1987,7 @@ def convert_gold_chat(
             sid,
             "；".join(norm_notes[:4]),
         )
-    payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+    payload = cast(dict[str, Any], row.get("payload") or {})
     scene_contract = payload.get("scene_contract") or {}
     if not isinstance(scene_contract, dict):
         scene_contract = {}
@@ -1991,7 +2015,7 @@ def convert_gold_chat(
     mech = str(row.get("mechanism") or "").upper()
     st = str(row.get("structure_type") or "").strip().upper()
     if mech == "M5" and st == "H":
-        payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+        payload = cast(dict[str, Any], row.get("payload") or {})
         scene_contract = payload.get("scene_contract") or {}
         closing = str(
             payload.get("closing_intent")

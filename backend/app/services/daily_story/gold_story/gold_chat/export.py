@@ -10,6 +10,7 @@ from typing import Any
 
 from app.config import Config
 from app.repositories import repo_gold_story
+from app.services.daily_story.gold_story.gold_chat.status import clear_gold_chat_failure
 from app.services.daily_story.gold_story.collect import fetch_video_meta
 from app.services.daily_story.gold_story.export_story import export_story_files
 from app.services.daily_story.prompts import dialogue_total_chars
@@ -82,6 +83,7 @@ def _backfill_gold_story_after_export(
         payload_patch["gold_chat_structure_score"] = structure_score_of(quality)
         payload_patch["gold_chat_quality_summary"] = quality.get("summary")
     repo_gold_story.patch_story_payload(gid, payload_patch)
+    clear_gold_chat_failure(gid, source_id=sid)
 
     bili_url = payload_patch.get("bili_url")
     if isinstance(bili_url, str) and bili_url.strip():

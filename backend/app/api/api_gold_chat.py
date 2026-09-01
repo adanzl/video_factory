@@ -133,8 +133,21 @@ def convert_route():
     except RuntimeError as exc:
         raise APIError(str(exc), status_code=409, code="convert_busy") from exc
     except ValueError as exc:
-        logger.error("[GOLD_CHAT] convert failed id=%s source_id=%s: %s", gold_story_id, source_id, exc)
-        raise APIError(str(exc), status_code=400)
+        logger.error(
+            "[GOLD_CHAT] convert failed id=%s source_id=%s: %s",
+            gold_story_id,
+            source_id,
+            exc,
+        )
+        raise APIError(str(exc), status_code=400) from exc
+    except Exception as exc:
+        logger.exception(
+            "[GOLD_CHAT] convert failed id=%s source_id=%s: %s",
+            gold_story_id,
+            source_id,
+            exc,
+        )
+        raise APIError(str(exc), status_code=400) from exc
 
 
 @bp.get("/collect")
