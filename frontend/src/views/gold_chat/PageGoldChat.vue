@@ -690,9 +690,9 @@ function onDetailConverted(payload?: {
 function onDetailClosed() {
   const savedSelected = [...selectedIds.value];
   void fetchItems().then(() => {
-    selectedIds.value = items.value
-      .filter((row) => savedSelected.includes(row.id))
-      .map((row) => row.id);
+    selectedIds.value = savedSelected.filter((id) =>
+      items.value.some((row) => row.id === id),
+    );
   });
 }
 
