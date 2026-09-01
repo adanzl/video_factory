@@ -19,6 +19,7 @@ from app.services.daily_story.gold_story.scene import (
     seed_from_beat_chain,
     validate_scene,
 )
+from app.services.daily_story.gold_story.structure_resolve import resolve_h3_structure
 from app.services.llm.llm_mgr import llm_mgr
 
 # 金稿正例：只允许引用已入库金故事原文；prompt 内禁止自造示范句。
@@ -172,8 +173,10 @@ _H3_SYSTEM = (
     "M11 价值高地灵魂拷问/不可答问题→I（赢家嘴硬，无反噬）。\n"
     "M12 家长旁观：互打互骂升级、大人躲/叹/劝失败、僵持不和好→K；"
     "禁止套 H（H 必须有定责劝和+仪式性和好）。\n"
-    "M2 双规则/自私包装公平：若收束为回旋镖→C；"
+    "M2 双规则/自私包装公平：须双方各执公平判据且同场回旋镖引原话→C；"
     "若收束为拒领点破表演公平→L；若收束为灵魂拷问问倒→M11+I。\n"
+    "禁止把 M2+C 用于武力扭打/一锤 KO：仅有「谁赢了谁说了算」单方定规、"
+    "对方认输/怂、或「长大再算账」延后不服→M8+J（镇住不翻车，非双规则回旋镖）。\n"
     "beat 4–6 步，禁止贴 story_raw 原文。\n"
     "只输出 JSON。"
 )
@@ -253,7 +256,9 @@ banned_literals：同 H3，仅 remap 称谓与站外真名；禁止填画画/碘
 - object/conflict/mechanism **须能在 story_raw 找到依据**；禁止发明 story_raw 没有的物品/仪式/场景
 - object：争的具体物品或话题；双方各持一物时两件都写入 object
 - 禁止无依据套用站内仪式模板（举过头顶/三秒/单脚站/金鸡独立等）
-- C类 beat_chain：立规→字面执行→加码→反杀→嘴硬（至少4拍）；拍内容跟当前 story_raw 走
+- C类 beat_chain：争资源→双规则（每轮新判据）→三轮升级→同场回旋镖→嘴硬（至少4拍）；
+  **禁止**把单方「谁赢了谁说了算」+武力压制+认输标 C
+- J类与 C 边界：J=一锤镇住对方怂/不敢再顶；C=双规则同场回旋镖引原话
 - I类 beat_chain（**须 4–6 拍**）：争锋/互怼→立价值标准→灵魂拷问→对方语塞→赢家嘴硬总结；
   禁止 A 末四拍反噬/破功；closing 须赢家一招制敌
 - J类 beat_chain（**须 4–5 拍**）：闹/求放行/试探权威→一锤威慑或否决压住
@@ -465,6 +470,11 @@ def structurize_story(
         data.get("banned_literals") if isinstance(data.get("banned_literals"), list) else [],
         beat=data.get("beat") if isinstance(data.get("beat"), list) else [],
     )
+    data, resolve_notes = resolve_h3_structure(data, story_raw=story_raw)
+    if resolve_notes:
+        note = str(data.get("structure_mapping_note") or "").strip()
+        suffix = ";".join(resolve_notes)
+        data["structure_mapping_note"] = f"{note};{suffix}".strip(";") if note else suffix
     return data
 
 

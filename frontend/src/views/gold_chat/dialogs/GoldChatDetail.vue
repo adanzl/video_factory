@@ -37,6 +37,35 @@
               </div>
             </div>
 
+            <div
+              v-if="auditBlock"
+              class="rounded-lg border border-red-100 bg-red-50 p-3"
+            >
+              <div class="mb-2 flex flex-wrap items-center gap-2 text-sm font-medium text-red-700">
+                {{ auditTitle }}
+                <el-tag v-if="auditBlock.stage" size="small" type="info">
+                  {{ formatAuditStage(auditBlock.stage) }}
+                </el-tag>
+              </div>
+              <ul
+                v-if="auditBlock.reject_reasons?.length"
+                class="list-disc space-y-1 pl-4 text-sm text-red-800"
+              >
+                <li v-for="(reason, i) in auditBlock.reject_reasons" :key="i">
+                  {{ reason }}
+                </li>
+              </ul>
+              <div
+                v-if="auditBlock.audit_notes"
+                class="mt-2 text-xs leading-relaxed text-red-700"
+              >
+                {{ auditBlock.audit_notes }}
+              </div>
+              <div v-if="auditScoreText" class="mt-2 text-xs text-gray-500">
+                {{ auditScoreText }}
+              </div>
+            </div>
+
             <div>
               <div class="mb-1 text-xs text-gray-400">金故事标题</div>
               <div class="font-medium">{{ detail.title || "-" }}</div>
@@ -255,6 +284,7 @@ import {
   getGoldChat,
   importGoldChat,
   reimportGoldStories,
+  type GoldStoryAudit,
   type GoldStoryDetail,
 } from "@/api/api-gold-chat";
 import type { StoryContent } from "@/api/api-daily-story";
@@ -303,6 +333,42 @@ const titleText = computed(() => {
   }
   return name ? `金故事 · ${name}` : "金故事详情";
 });
+
+const auditBlock = computed<GoldStoryAudit | null>(() => {
+  const audit = detail.value?.audit;
+  if (!audit) return null;
+  const hasReasons = (audit.reject_reasons?.length ?? 0) > 0;
+  const hasNote = !!audit.audit_notes?.trim();
+  const rejected = detail.value?.status === "rejected" || audit.pass === false;
+  if (!rejected && !hasReasons && !hasNote) return null;
+  return audit;
+});
+
+const auditTitle = computed(() => {
+  if (detail.value?.status === "rejected") return "已驳回";
+  if (auditBlock.value?.pass === false) return "机审未通过";
+  return "机审";
+});
+
+const auditScoreText = computed(() => {
+  const scores = auditBlock.value?.llm_scores;
+  if (!scores) return "";
+  const parts: string[] = [];
+  if (scores.sibling_fit != null) parts.push(`姐弟适配 ${scores.sibling_fit}`);
+  if (scores.age_fit != null) parts.push(`年龄适配 ${scores.age_fit}`);
+  if (scores.conflict_usable != null) parts.push(`冲突可用 ${scores.conflict_usable}`);
+  if (scores.mapping_fit != null) parts.push(`映射适配 ${scores.mapping_fit}`);
+  return parts.join(" · ");
+});
+
+function formatAuditStage(stage: string): string {
+  if (stage === "rules") return "规则机审";
+  if (stage === "llm") return "LLM 机审";
+  if (stage === "manual") return "人工驳回";
+  if (stage === "funny_signal") return "好笑门控";
+  if (stage === "pipeline") return "流水线";
+  return stage;
+}
 
 async function loadDetail() {
   if (!props.goldStoryId && !props.sourceId) {

@@ -430,6 +430,48 @@ def test_api_get_dump_without_gold_chat(app_ctx):
     assert detail["gold_chat"] is None
 
 
+def test_api_get_includes_audit(app_ctx):
+    with app_ctx.app_context():
+        inserted = repo_gold_story.insert_or_skip(
+            source="bilibili",
+            source_id="BV1TESTAUDIT01",
+            url="https://www.bilibili.com/video/BV1TESTAUDIT01",
+            mechanism="M6",
+            structure_type="A",
+            story_raw="机审驳回样例" * 20,
+            payload={
+                "beat": ["a", "b", "c", "d"],
+                "audit": {
+                    "pass": False,
+                    "stage": "llm",
+                    "reject_reasons": ["冲突太短", "家长当唯一主角"],
+                    "llm": {
+                        "sibling_fit": 0.2,
+                        "age_fit": 0.1,
+                        "conflict_usable": 0.2,
+                        "mapping_fit": 0.3,
+                        "audit_notes": "原稿家长独白过多",
+                    },
+                },
+            },
+            title="机审驳回样例",
+            auto_score=0.9,
+            status="rejected",
+        )
+        gid = int(inserted["id"])
+
+    client = app_ctx.test_client()
+    resp = client.get(f"/v_factory/api/gold_chat/get?id={gid}")
+    assert resp.status_code == 200
+    detail = resp.get_json()
+    audit = detail.get("audit") or {}
+    assert audit.get("pass") is False
+    assert audit.get("stage") == "llm"
+    assert "冲突太短" in (audit.get("reject_reasons") or [])
+    assert audit.get("audit_notes") == "原稿家长独白过多"
+    assert audit.get("llm_scores", {}).get("sibling_fit") == 0.2
+
+
 def test_api_get_transcript(app_ctx, tmp_path, monkeypatch):
     inserted = _insert_sample(app_ctx)
     gid = int(inserted["id"])

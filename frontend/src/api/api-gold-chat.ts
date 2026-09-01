@@ -50,6 +50,19 @@ export interface GoldChatPayload {
   gold_meta?: Record<string, unknown>;
 }
 
+export interface GoldStoryAudit {
+  pass?: boolean;
+  stage?: string;
+  reject_reasons?: string[];
+  audit_notes?: string;
+  llm_scores?: {
+    sibling_fit?: number;
+    age_fit?: number;
+    conflict_usable?: number;
+    mapping_fit?: number;
+  };
+}
+
 export interface GoldStoryDetail {
   id?: number;
   source_id: string;
@@ -62,6 +75,7 @@ export interface GoldStoryDetail {
   conflict_core?: string;
   auto_score?: number;
   gold_chat_daily_story_id?: number | null;
+  audit?: GoldStoryAudit | null;
   dump: GoldStoryDump;
   has_gold_chat: boolean;
   gold_chat?: GoldChatPayload | null;

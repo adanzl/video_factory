@@ -100,6 +100,7 @@ DeepSeek 网页模拟 API，不是 Claude 子代理。涉及提示词方案评�
   "mode": "expert",
   "deep_thinking": true
 }
+```
 
 ## 注意
 
@@ -119,6 +120,7 @@ DeepSeek 网页模拟 API，不是 Claude 子代理。涉及提示词方案评�
 - 生图和生视频提示词由 Agnes mock审核
 - 不能上传db文件
 - 避免 Emphasis used instead of a heading
+- 避免代码告警
 - gevent thread=False  下不要使用 threading.Lock
 
 ## 审核稿子
@@ -132,17 +134,17 @@ DeepSeek 网页模拟 API，不是 Claude 子代理。涉及提示词方案评�
 
 ## 快捷命令
 
-- push 表示执行提交git 并执行push，不用你管pull的事
+- push 表示执行提交git 并执行push，不用你管远程pull的事
+- pull 表示执行本地
 - 不要自动push，需要我同意才行
-
 
 ## pi插件
 
-- pi-agent-extensions、 17 个扩展和 4 种主题 
+- pi-agent-extensions、 17 个扩展和 4 种主题
     `pi install npm:pi-agent-extensions`
-- pi-mcp-adapter 
+- pi-mcp-adapter
     `pi install npm:pi-mcp-adapter`
-- pi-background-tasks 允许你在后台运行耗时的 Shell 任务，避免阻塞主会话 
+- pi-background-tasks 允许你在后台运行耗时的 Shell 任务，避免阻塞主会话
     `pi install npm:@ifi/pi-background-tasks'
 - pi-web-access 赋予 Pi 网页搜索、URL 抓取、GitHub 仓库克隆等能力
     `pi install npm:pi-web-access`
