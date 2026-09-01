@@ -15,6 +15,8 @@ from gevent import spawn as gevent_spawn
 from gevent.event import AsyncResult
 from PIL import Image as PILImage
 
+from typing import Any, cast
+
 import requests
 
 from app.config import get_settings

@@ -319,6 +319,57 @@ def test_sanitize_strips_expand_clutter():
     assert "这回算清楚" not in out["dialogue"][1]["line"]
 
 
+def test_sanitize_natural_expand_stack_keeps_one_tail():
+    """句内多条 near-miss 扩写尾巴只留最早一条。"""
+    dirty = {
+        "story_type": "J",
+        "dialogue": [
+            {
+                "speaker": "灿灿",
+                "line": "明明是我先来的，该你走开才对，再闹我恼了，你试试看啊！",
+            },
+        ],
+    }
+    out, changed = gc.patch_sanitize_natural_expand_stack(dirty)
+    assert changed
+    line = out["dialogue"][0]["line"]
+    assert "再闹我恼了" in line
+    assert "你试试看啊" not in line
+
+
+def test_strip_all_natural_expands_for_j_final():
+    dirty = {
+        "story_type": "J",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "这块垫子是我的，你走开，我偏就不信！"},
+            {"speaker": "灿灿", "line": "草莓熊肘击！看我的厉害了啊，我才不怕呢！"},
+        ],
+    }
+    out, changed = gc.patch_strip_all_natural_expands(dirty)
+    assert changed
+    assert "我偏就不信" not in out["dialogue"][0]["line"]
+    assert "我才不怕呢" not in out["dialogue"][1]["line"]
+
+
+def test_patch_j_dedupe_plea_rounds_drops_second_kind():
+    story = {
+        "story_type": "J",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "啊，我输了！"},
+            {"speaker": "昭昭", "line": "姐姐，再给一次机会嘛。我保证听话！"},
+            {"speaker": "灿灿", "line": "输了就是输了，别想反悔。"},
+            {"speaker": "昭昭", "line": "再求你一次，这回你就松口！"},
+            {"speaker": "灿灿", "line": "不行，规矩就是这样定的！"},
+            {"speaker": "昭昭", "line": "哼，等我长大再算账！"},
+        ],
+    }
+    out, changed = gc.patch_j_dedupe_plea_rounds(story)
+    assert changed
+    blob = "".join(str(x.get("line") or "") for x in out["dialogue"])
+    assert "再给一次机会" in blob
+    assert "再求你一次" not in blob
+
+
 def test_patch_seed_speaker_align_fixes_swapped_phrases():
     seed = [
         {"speaker": "昭昭", "intent": "拿出最强形态来！"},
