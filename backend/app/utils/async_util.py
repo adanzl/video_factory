@@ -1,10 +1,9 @@
 """在 gevent 环境中通过原生线程执行阻塞任务与外部命令。
 
-主进程使用 gevent（main.py：``subprocess=True, thread=False``），
-标准库 threading 仍是真实 OS 线程。
-gevent patch subprocess 后，Linux 会把 ``_fork_exec`` 置 ``None``，
-非 hub 的 OS 线程不能直接用 patched Popen；
-``run_in_os_thread`` 内会 ``unpatched_subprocess()`` 补回原生符号。
+主进程使用 gevent（main.py：``subprocess=True, thread=False``）。
+外部命令统一走 ``run_subprocess_safe`` / ``run_subprocess_cmd``（os.system），
+不要在 OS 线程里直接 ``subprocess.run``：会与 hub 的 SIGCHLD 冲突，
+留下僵尸进程并卡在 pipe read。
 
 注意：gevent hub 跑在主线程上，主线程里 thread.join 会卡死所有接口；
 等待子线程结果时必须轮询 + gevent.sleep 让出 hub。
@@ -125,8 +124,13 @@ def run_subprocess_cmd(
     cwd: str | None = None,
     env: dict[str, str] | None = None,
 ) -> tuple[int, str, str]:
-    """子进程统一入口：hub 上用 os.system 降级，OS 线程用原生 subprocess。"""
-    if _on_gevent_hub() and subprocess_gevent_patched():
+    """子进程统一入口。
+
+    gevent ``subprocess=True`` 时，不论 hub / OS 线程都走 ``run_subprocess_safe``
+   （os.system）。OS 线程里直接 ``subprocess.run`` 会与 hub 的 SIGCHLD 抢信号，
+    留下僵尸进程并卡在 pipe read（历史片头 / 本次 H0b 同根因）。
+    """
+    if subprocess_gevent_patched():
         code, stdout, stderr = run_subprocess_safe(
             list(cmd),
             timeout=timeout,
@@ -134,19 +138,18 @@ def run_subprocess_cmd(
             env=env,
         )
     else:
-        with unpatched_subprocess():
-            proc = subprocess.run(
-                list(cmd),
-                capture_output=True,
-                encoding="utf-8",
-                timeout=timeout,
-                check=False,
-                cwd=cwd,
-                env=env,
-            )
-            code = int(proc.returncode)
-            stdout = proc.stdout or ""
-            stderr = proc.stderr or ""
+        proc = subprocess.run(
+            list(cmd),
+            capture_output=True,
+            encoding="utf-8",
+            timeout=timeout,
+            check=False,
+            cwd=cwd,
+            env=env,
+        )
+        code = int(proc.returncode)
+        stdout = proc.stdout or ""
+        stderr = proc.stderr or ""
     if check and code != 0:
         detail = (stderr or stdout or "").strip() or f"exit {code}"
         raise RuntimeError(f"command failed: {detail}")
@@ -158,13 +161,10 @@ def run_in_os_thread(func: Callable[[], None], *, daemon: bool = True) -> None:
 
     适用于转写、OCR、大批量 LLM 等长时间不 yield 的工作。
     调用方须在 func 内自行建立 Flask ``app_context``。
-    gevent patch 后子线程内须恢复原生 subprocess（yt-dlp/ffmpeg 等）。
+    外部命令须走 ``run_subprocess_cmd`` / ``run_subprocess_safe``，
+    不要在线程里直接 ``subprocess.run``（会与 gevent SIGCHLD 冲突）。
     """
-    def _wrapper() -> None:
-        with unpatched_subprocess():
-            func()
-
-    threading.Thread(target=_wrapper, daemon=daemon).start()
+    threading.Thread(target=func, daemon=daemon).start()
 
 
 def _on_gevent_hub() -> bool:

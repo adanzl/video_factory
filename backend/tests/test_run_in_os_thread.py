@@ -113,8 +113,8 @@ def test_run_in_os_thread_gevent_hub_stays_responsive_with_db() -> None:
 
 
 def test_run_in_os_thread_subprocess_off_hub(app_ctx) -> None:
-    """OCR 分支：子线程在 gevent patch 下应能跑 subprocess。"""
-    from app.utils.async_util import _on_gevent_hub, run_in_os_thread, unpatched_subprocess
+    """gevent patch 下 OS 线程应走 run_subprocess_cmd（safe），不能裸 subprocess.run。"""
+    from app.utils.async_util import _on_gevent_hub, run_in_os_thread, run_subprocess_cmd
 
     done = threading.Event()
     result: dict[str, object] = {}
@@ -128,15 +128,12 @@ def test_run_in_os_thread_subprocess_off_hub(app_ctx) -> None:
                 result["subprocess_ok"] = False
                 done.set()
                 return
-            with unpatched_subprocess():
-                proc = subprocess.run(
-                    [sys.executable, "-c", "print('ok')"],
-                    capture_output=True,
-                    text=True,
-                    timeout=10,
-                    check=False,
-                )
-            result["subprocess_ok"] = proc.returncode == 0 and proc.stdout.strip() == "ok"
+            code, out, _err = run_subprocess_cmd(
+                [sys.executable, "-c", "print('ok')"],
+                timeout=10,
+                check=True,
+            )
+            result["subprocess_ok"] = code == 0 and out.strip() == "ok"
         done.set()
 
     run_in_os_thread(worker)

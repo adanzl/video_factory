@@ -6,13 +6,14 @@ import json
 import os
 import re
 import shutil
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from app.config import Config
-from app.utils.async_util import run_subprocess_cmd, unpatched_subprocess
+from app.utils.async_util import run_subprocess_cmd
 
 _BV_PATTERN = re.compile(r"(BV[0-9A-Za-z]{10})")
 # 抖音 aweme_id（19 位数字）；后续 H0 接入时复用
@@ -169,78 +170,87 @@ def _download_with_ytdlp(
     *,
     cookie_path: Path | None,
 ) -> DownloadResult:
-    try:
-        from yt_dlp import YoutubeDL
-    except ImportError as exc:
-        raise RuntimeError("yt-dlp is not installed") from exc
-
+    """用 yt-dlp CLI 下载；避免 Python API 在 gevent 下 spawn ffmpeg 变僵尸。"""
     workspace = config.gold_story_media_workspace
     downloads_dir = workspace / "downloads"
     downloads_dir.mkdir(parents=True, exist_ok=True)
 
-    ydl_opts: dict[str, Any] = {
-        "format": "bv*+ba/b",
-        "merge_output_format": "mp4",
-        "noplaylist": True,
-        "outtmpl": str(downloads_dir / f"{ref.source_id}.%(ext)s"),
-        "noprogress": True,
-        "quiet": True,
-        "no_warnings": True,
-    }
+    outtmpl = str(downloads_dir / f"{ref.source_id}.%(ext)s")
+    cmd: list[str] = [
+        sys.executable,
+        "-m",
+        "yt_dlp",
+        "-f",
+        "bv*+ba/b",
+        "--merge-output-format",
+        "mp4",
+        "--no-playlist",
+        "--no-progress",
+        "--no-warnings",
+        "--write-info-json",
+        "-o",
+        outtmpl,
+    ]
     if cookie_path and cookie_path.exists():
         resolved = _ytdlp_cookie_path(cookie_path, workspace)
         if resolved:
-            ydl_opts["cookiefile"] = resolved
+            cmd.extend(["--cookies", resolved])
     if not config.gold_story_use_proxy:
-        ydl_opts["proxy"] = ""
+        cmd.extend(["--proxy", ""])
+    cmd.append(ref.url)
 
-    with unpatched_subprocess():
-        with YoutubeDL(ydl_opts) as ydl:  # type: ignore[arg-type,assignment]
-            info = ydl.extract_info(ref.url, download=True)
-            if info and "entries" in info and info["entries"]:
-                info = info["entries"][0]  # type: ignore[arg-type,assignment]
-            info = ydl.sanitize_info(info or {})  # type: ignore[arg-type,assignment]
-            video_path = _resolve_video_path(ydl, info, ref.source_id, downloads_dir)  # type: ignore[arg-type,assignment]
-            if not video_path.exists():
-                raise RuntimeError(f"download finished but file missing: {video_path}")
+    # 清理同 stem 旧产物，避免读到过期 info.json
+    for old in downloads_dir.glob(f"{ref.source_id}.*"):
+        try:
+            old.unlink()
+        except OSError:
+            pass
 
+    run_subprocess_cmd(cmd, timeout=900.0, check=True)
+
+    video_path = _resolve_downloaded_video(downloads_dir, ref.source_id)
+    if not video_path.exists():
+        raise RuntimeError(f"download finished but file missing: {video_path}")
+
+    info = _read_info_json(downloads_dir, ref.source_id)
     metadata = {
         "source": ref.source,
         "source_id": ref.source_id,
         "url": ref.url,
-        "title": info.get("title"),  # type: ignore[union-attr]
-        "uploader": info.get("uploader"),  # type: ignore[union-attr]
-        "duration": info.get("duration"),  # type: ignore[union-attr]
-        "webpage_url": info.get("webpage_url") or ref.url,  # type: ignore[union-attr]
+        "title": info.get("title"),
+        "uploader": info.get("uploader"),
+        "duration": info.get("duration"),
+        "webpage_url": info.get("webpage_url") or ref.url,
         "downloaded_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
     return DownloadResult(ref=ref, video_path=video_path, metadata=metadata)
 
 
-def _resolve_video_path(
-    ydl: Any,
-    info: dict[str, Any],
-    source_id: str,
-    downloads_dir: Path,
-) -> Path:
-    requested = info.get("requested_downloads") or []
-    for item in requested:
-        filepath = item.get("filepath")
-        if filepath:
-            return Path(filepath)
+def _resolve_downloaded_video(downloads_dir: Path, source_id: str) -> Path:
+    preferred = downloads_dir / f"{source_id}.mp4"
+    if preferred.exists():
+        return preferred
+    for path in sorted(downloads_dir.glob(f"{source_id}.*")):
+        if path.suffix.lower() in {".mp4", ".mkv", ".webm", ".flv"}:
+            return path
+    return preferred
 
-    prepared = Path(ydl.prepare_filename(info))
-    if prepared.exists():
-        return prepared
 
-    merged = prepared.with_suffix(".mp4")
-    if merged.exists():
-        return merged
-
-    fallback = downloads_dir / f"{source_id}.mp4"
-    if fallback.exists():
-        return fallback
-    return prepared
+def _read_info_json(downloads_dir: Path, source_id: str) -> dict[str, Any]:
+    candidates = [
+        downloads_dir / f"{source_id}.info.json",
+        *sorted(downloads_dir.glob(f"{source_id}*.info.json")),
+    ]
+    for path in candidates:
+        if not path.is_file():
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(payload, dict):
+            return payload
+    return {}
 
 
 def _looks_like_url(value: str) -> bool:
