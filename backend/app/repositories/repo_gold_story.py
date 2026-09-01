@@ -5,7 +5,7 @@ import json
 import re
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
-from typing import Any
+from typing import Any, cast
 
 from app.repositories import sql_exec as sql
 from app.services.daily_story.gold_story.collect.funny import DEFAULT_FUNNY_SIGNAL
@@ -460,7 +460,7 @@ def rescore_all_funny() -> list[dict[str, Any]]:
 def patch_story_payload(gold_story_id: int, patch: dict[str, Any]) -> None:
     """合并 payload 字段（如 funny_signal）。"""
     row = get_story(int(gold_story_id))
-    payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+    payload = cast(dict[str, Any], row.get("payload") or {})
     merged = {**payload, **patch}
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     sql.execute(

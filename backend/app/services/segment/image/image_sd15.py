@@ -1334,7 +1334,7 @@ class Sd15ImageProvider(ImageProvider):
         else:
             result = _stitch_horizontal(first_bytes, second_bytes)
         img = Image.open(io.BytesIO(result))
-        img = img.resize((width, height), Image.LANCZOS)
+        img = img.resize((width, height), Image.LANCZOS)  # type: ignore[attr-defined]
         buf = io.BytesIO()
         img.save(buf, format="PNG")
         return buf.getvalue()

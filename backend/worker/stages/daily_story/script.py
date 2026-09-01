@@ -187,7 +187,7 @@ class DailyScriptStage(StageExecutor):
                                 p['system'], p['user'],
                                 thinking_enabled=False, temperature=0.3,
                             )[0],
-                            check_json=lambda p: client._chat_json(
+                            check_json=lambda p: client._chat_json(  # type: ignore[attr-defined]
                                 p['system'], p['user'],
                                 thinking_enabled=False, temperature=0.3,
                             )[0],

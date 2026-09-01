@@ -107,7 +107,7 @@ def _optimize_daily_story_title(draft: str, story_content: dict, *, max_len: int
         return kept
     prompts = build_chat_title_prompts(draft, story_content, max_title_length=max_len, avoid_titles=avoid_titles)
     client = llm_mgr._get_client()
-    raw, _ = client._chat_json(prompts['system'], prompts['user'], thinking_enabled=False, temperature=1.0)
+    raw, _ = client._chat_json(prompts['system'], prompts['user'], thinking_enabled=False, temperature=1.0)  # type: ignore[attr-defined]
     candidates = parse_chat_title_candidates_payload(raw, max_title_len=max_len)
     anchors = extract_core_anchor_words(draft, story_content)
     phrase = extract_theme_action_phrase(draft, story_content)
@@ -118,7 +118,7 @@ def _optimize_daily_story_title(draft: str, story_content: dict, *, max_len: int
         candidates,
         anchors,
         fetch_candidates=lambda: parse_chat_title_candidates_payload(
-            client._chat_json(prompts['system'], prompts['user'], thinking_enabled=False, temperature=1.0)[0],
+            client._chat_json(prompts['system'], prompts['user'], thinking_enabled=False, temperature=1.0)[0],  # type: ignore[attr-defined]
             max_title_len=max_len,
         ),
     )
@@ -132,10 +132,10 @@ def _optimize_daily_story_title(draft: str, story_content: dict, *, max_len: int
         draft,
         story_content,
         max_len=max_len,
-        fetch_json=lambda p: client._chat_json(
+        fetch_json=lambda p: client._chat_json(  # type: ignore[attr-defined]
             p['system'], p['user'], thinking_enabled=False, temperature=0.3
         )[0],
-        check_json=lambda p: client._chat_json(
+        check_json=lambda p: client._chat_json(  # type: ignore[attr-defined]
             p['system'], p['user'], thinking_enabled=False, temperature=0.3
         )[0],
     )
@@ -405,7 +405,7 @@ class JobMgr:
                 script = job.get('script_json')
                 if isinstance(script, dict):
                     synced = dict(script)
-                    synced['title'] = re.sub('\\s+', '', updates['title'].strip())
+                    synced['title'] = re.sub('\\s+', '', str(updates['title']).strip())
                     updates['script_json'] = synced
             if updates.get('publish') is True and job.get('status') != 'running':
                 updates['stage'] = 'done'
@@ -414,7 +414,7 @@ class JobMgr:
                 type_info = job_chat_type_info(job, success=True)
                 if type_info:
                     updates['error_message'] = type_info
-            job = repo_job.update_job(job_id, **updates)
+            job = repo_job.update_job(job_id, **updates)  # type: ignore[arg-type]
             repo_job_log.append_log(job_id, 'api', f"updated fields: {', '.join(updates)}")
             return job
 
@@ -701,7 +701,7 @@ class JobMgr:
             action = str(job.get('stage') or 'script')
         else:
             action = rerun_stage
-        return self.submit_action(job_id, action, lambda: run_job(job_id, from_stage=from_stage, only_stage=only_stage, segment_indices=segment_indices), prepare=prepare, segment_indices=segment_indices, sync=True, prepare_mode=prepare_mode)
+        return self.submit_action(job_id, action, lambda: run_job(job_id, from_stage=from_stage, only_stage=only_stage, segment_indices=segment_indices), prepare=prepare, segment_indices=segment_indices, sync=True, prepare_mode=prepare_mode)  # type: ignore[arg-type]
 
     def continue_job(self, job_id: int, *, sync: bool=True, allow_running: bool=False) -> dict:
         """从当前 stage 续跑（不 prepare）。drain / recovery 用。"""
@@ -714,7 +714,7 @@ class JobMgr:
         return self.submit_action(
             job_id,
             action,
-            lambda: run_job(job_id),
+            lambda: run_job(job_id),  # type: ignore[arg-type]
             prepare=False,
             sync=sync,
             allow_running=allow_running,
@@ -752,14 +752,14 @@ class JobMgr:
         detail = _script_action_detail(job=job, to_end=to_end, title=title, segment_target_sec=segment_target_sec, max_title_length=max_title_length, estimated_duration_min=estimated_duration_min, narration_target_words=narration_target_words, speech_chars_per_sec=speech_chars_per_sec, skip_title_optimize=skip_title_optimize, generate_image_prompts=generate_image_prompts, supplementary_info=supplementary_info, video_timeline=video_timeline, orientation=orientation, content_style=content_style)
         if segment_index is not None:
             detail += f', segment_index={segment_index}'
-        return self._run_in_background(job_id, 'script', lambda: run_script(job_id, to_end=to_end, segment_target_sec=segment_target_sec, max_title_length=max_title_length, narration_target_words=narration_target_words, speech_chars_per_sec=speech_chars_per_sec, skip_title_optimize=skip_title_optimize, generate_image_prompts=generate_image_prompts, supplementary_info=supplementary_info, video_timeline=video_timeline, segment_index=segment_index), action_detail=detail)
+        return self._run_in_background(job_id, 'script', lambda: run_script(job_id, to_end=to_end, segment_target_sec=segment_target_sec, max_title_length=max_title_length, narration_target_words=narration_target_words, speech_chars_per_sec=speech_chars_per_sec, skip_title_optimize=skip_title_optimize, generate_image_prompts=generate_image_prompts, supplementary_info=supplementary_info, video_timeline=video_timeline, segment_index=segment_index), action_detail=detail)  # type: ignore[arg-type]
 
     def generate_script(self, job_id: int, *, prompt_type: str='image_prompt', segment_indices: list[int] | None=None) -> dict:
         """生成指定类型的提示词（不重置脚本、不清除产物）。"""
         from worker.loop import run_script_prompts
         job = self.get_job(job_id)
         detail = _image_prompts_action_detail(job, segment_indices=segment_indices)
-        return self.submit_action(job_id, 'script', lambda: run_script_prompts(job_id, prompt_type=prompt_type, segment_indices=segment_indices), prepare=False, action_detail=f'prompts/{prompt_type}: {detail}' if detail else f'prompts/{prompt_type}', sync=False)
+        return self.submit_action(job_id, 'script', lambda: run_script_prompts(job_id, prompt_type=prompt_type, segment_indices=segment_indices), prepare=False, action_detail=f'prompts/{prompt_type}: {detail}' if detail else f'prompts/{prompt_type}', sync=False)  # type: ignore[arg-type]
 
     def preview_script_prompts(self, job_id: int, *, title: str | None=None, segment_target_sec: float | None=None, max_title_length: int | None=None, estimated_duration_min: float | None=None, narration_target_words: int | None=None, speech_chars_per_sec: float | None=None, skip_title_optimize: bool=False, supplementary_info: str | None=None, video_timeline: str | None=None, orientation: str | None=None, content_style: str | None=None) -> list[dict[str, str]]:
         from app.services.script.script_mgr import script_mgr
@@ -935,7 +935,7 @@ class JobMgr:
             with atomic():
                 job = repo_job.get_job(job_id)
                 repo_job.update_job(job_id, info=merge_job_info(job.get('info'), **info_patch))
-        return self._run_in_background(job_id, 'intro', lambda: run_intro(job_id, to_end=to_end, hold_tail_sec=hold_tail_sec, orientation=orientation))
+        return self._run_in_background(job_id, 'intro', lambda: run_intro(job_id, to_end=to_end, hold_tail_sec=hold_tail_sec, orientation=orientation))  # type: ignore[arg-type]
 
     def run_intro_video(self, job_id: int, *, hold_tail_sec: float | None=None, orientation: str | None=None, orientation_preference: str | None=None, intro_category: str | None=None) -> dict:
         """仅重新生成片头视频，不动封面/片尾。"""
@@ -1037,7 +1037,7 @@ class JobMgr:
                     break
             if seg1_image and seg1_image.exists():
                 img = Image.open(seg1_image).convert('RGBA')
-                img = img.resize((cw, ch), Image.LANCZOS)
+                img = img.resize((cw, ch), Image.LANCZOS)  # type: ignore[attr-defined]
                 composed = compose_cover_image(img, title, brand_name=brand, host_intro_path=host_intro_path)
                 composed.convert('RGB').save(cover_path, quality=92)
                 logger.info('job %s cover: using seg1 image %s (%sx%s)', job_id, seg1_image, cw, ch)
@@ -1084,26 +1084,26 @@ class JobMgr:
     def run_tts(self, job_id: int, *, to_end: bool=False, speech_rate: float | None=None, voice_id: str | None=None, speaker_configs: dict | None=None) -> dict:
         """生成配音。实现：worker/loop.run_tts → worker/stages/common/tts.py"""
         from worker.loop import run_tts
-        return self._run_in_background(job_id, 'tts', lambda: run_tts(job_id, to_end=to_end, speech_rate=speech_rate, voice_id=voice_id, speaker_configs=speaker_configs))
+        return self._run_in_background(job_id, 'tts', lambda: run_tts(job_id, to_end=to_end, speech_rate=speech_rate, voice_id=voice_id, speaker_configs=speaker_configs))  # type: ignore[arg-type]
 
     def run_segment_all(self, job_id: int, *, to_end: bool=False, segment_indices: list[int] | None=None, image_provider: str | None=None, video_provider: str | None=None) -> dict:
         """重跑分镜静图与图生视频。实现：worker/loop.run_segment_all → worker/stages/standard/segment.py"""
         from worker.loop import run_segment_all
         self._persist_image_provider(job_id, image_provider)
         self._persist_video_provider(job_id, video_provider)
-        return self._run_in_background(job_id, 'segment/all', lambda: run_segment_all(job_id, to_end=to_end, segment_indices=segment_indices), segment_indices=segment_indices)
+        return self._run_in_background(job_id, 'segment/all', lambda: run_segment_all(job_id, to_end=to_end, segment_indices=segment_indices), segment_indices=segment_indices)  # type: ignore[arg-type]
 
     def run_segment_images(self, job_id: int, *, to_end: bool=False, segment_indices: list[int] | None=None, image_provider: str | None=None) -> dict:
         """重出分镜静图。实现：worker/loop.run_segment_images → worker/stages/standard/segment.py"""
         from worker.loop import run_segment_images
         self._persist_image_provider(job_id, image_provider)
-        return self._run_in_background(job_id, 'segment/images', lambda: run_segment_images(job_id, to_end=to_end, segment_indices=segment_indices), segment_indices=segment_indices)
+        return self._run_in_background(job_id, 'segment/images', lambda: run_segment_images(job_id, to_end=to_end, segment_indices=segment_indices), segment_indices=segment_indices)  # type: ignore[arg-type]
 
     def run_segment_clips(self, job_id: int, *, to_end: bool=False, segment_indices: list[int] | None=None, video_provider: str | None=None) -> dict:
         """重跑图生视频。实现：worker/loop.run_segment_clips → worker/stages/standard/segment.py"""
         from worker.loop import run_segment_clips
         self._persist_video_provider(job_id, video_provider)
-        return self._run_in_background(job_id, 'segment/clips', lambda: run_segment_clips(job_id, to_end=to_end, segment_indices=segment_indices), segment_indices=segment_indices)
+        return self._run_in_background(job_id, 'segment/clips', lambda: run_segment_clips(job_id, to_end=to_end, segment_indices=segment_indices), segment_indices=segment_indices)  # type: ignore[arg-type]
 
     def run_merge(self, job_id: int, *, to_end: bool=False, bgm: dict | None=None, subtitle: dict | None=None, xfade: dict | None=None) -> dict:
         """合成成片。实现：worker/loop.run_merge → merge stage（按 pipeline 分发）"""
@@ -1127,13 +1127,13 @@ class JobMgr:
                     info = merge_job_info(info, xfade=normalized_xfade)
                     repo_job_log.append_log(job_id, 'api', f'merge xfade config: {normalized_xfade}')
                 updates['info'] = info
-            repo_job.update_job(job_id, bump_version=True, fetch=False, **updates)
-        return self._run_in_background(job_id, 'merge', lambda: run_merge(job_id, to_end=to_end))
+            repo_job.update_job(job_id, bump_version=True, fetch=False, **updates)  # type: ignore[arg-type]
+        return self._run_in_background(job_id, 'merge', lambda: run_merge(job_id, to_end=to_end))  # type: ignore[arg-type]
 
     def run_prepare(self, job_id: int, *, to_end: bool=False) -> dict:
         """素材任务：复制基底视频。实现：worker/loop.run_prepare → worker/stages/material/prepare.py"""
         from worker.loop import run_prepare
-        return self._run_in_background(job_id, 'prepare', lambda: run_prepare(job_id, to_end=to_end))
+        return self._run_in_background(job_id, 'prepare', lambda: run_prepare(job_id, to_end=to_end))  # type: ignore[arg-type]
 
     def generate_publish_meta(self, job_id: int) -> dict:
         from worker.stages.common.publish import ensure_publish_meta
@@ -1156,7 +1156,7 @@ class JobMgr:
         return self._run_in_background(
             job_id,
             "publish",
-            lambda: run_publish(job_id, to_end=to_end),
+            lambda: run_publish(job_id, to_end=to_end),  # type: ignore[arg-type]
         )
 
     def submit_bili_publish(
@@ -1173,7 +1173,7 @@ class JobMgr:
         return self._run_in_background(
             job_id,
             "publish",
-            lambda: run_publish_upload(job_id),
+            lambda: run_publish_upload(job_id),  # type: ignore[arg-type]
         )
 
     def _save_publish_schedule(self, job_id: int, publish_schedule: dict) -> None:

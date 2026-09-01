@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from app.config import Config
 from app.services.daily_story.gold_story.transcript import format_transcript_display
@@ -40,7 +40,7 @@ def _load_repaired_transcript_text(
     config: Config | None = None,
 ) -> str:
     cfg = config or Config()
-    payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+    payload = cast(dict[str, Any], row.get("payload") or {})
     raw_path = str(payload.get("transcript_repaired_path") or "").strip()
     path = (
         Path(raw_path)
@@ -58,7 +58,7 @@ def load_transcript_for_row(
     """读取金故事 ASR / 修复逐字稿（磁盘文件）。"""
     cfg = config or Config()
     sid = str(row.get("source_id") or "").strip()
-    payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+    payload = cast(dict[str, Any], row.get("payload") or {})
     transcript_raw = _load_transcript_text(source_id=sid, row=row, config=cfg)
     transcript_repaired = _load_repaired_transcript_text(
         source_id=sid,
@@ -109,7 +109,7 @@ def export_story_files(
     row: dict[str, Any],
     config: Config | None = None,
 ) -> dict[str, str]:
-    payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+    payload = cast(dict[str, Any], row.get("payload") or {})
     sid = str(source_id or row.get("source_id") or row.get("id"))
     transcript_raw = _load_transcript_text(source_id=sid, row=row, config=config)
     transcript_repaired = _load_repaired_transcript_text(
@@ -168,7 +168,7 @@ def export_story_files(
         json.dumps(export, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
-    audit = export.get("audit") if isinstance(export.get("audit"), dict) else {}
+    _tmp = export.get("audit"); audit = cast(dict[str, Any], _tmp) if isinstance(_tmp, dict) else {}
     md_lines = [
         f"# {export.get('title') or '金故事'}",
         "",

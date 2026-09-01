@@ -6,7 +6,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from app.config import Config
 from app.repositories import repo_gold_story
@@ -108,7 +108,7 @@ def export_gold_chat_files(
     out_dir = gold_chat_export_dir(config)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+    payload = cast(dict[str, Any], row.get("payload") or {})
     export = {
         "gold_story_id": row.get("id"),
         "source_id": sid,
@@ -193,7 +193,7 @@ def load_gold_chat_for_row(
     export = load_gold_chat(sid, config=config)
     if export is not None:
         return export
-    payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+    payload = cast(dict[str, Any], row.get("payload") or {})
     alt_json = str(payload.get("gold_chat_json") or "").strip()
     if not alt_json:
         return None
@@ -248,7 +248,7 @@ def gold_chat_summary(
     if row is None:
         row = repo_gold_story.get_by_source_id(source_id=str(source_id or "").strip())
     if row:
-        payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+        payload = cast(dict[str, Any], row.get("payload") or {})
         cached = _summary_from_payload(payload)
         if cached:
             return cached

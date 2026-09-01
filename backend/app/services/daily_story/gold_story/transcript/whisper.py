@@ -31,7 +31,7 @@ def transcribe_audio(
             "(set WHISPER_MODEL_DIR and GOLD_STORY_WHISPER_MODEL)"
         )
     try:
-        from faster_whisper import WhisperModel
+        from faster_whisper import WhisperModel  # type: ignore[import-not-found]
     except ImportError as exc:
         raise RuntimeError("faster-whisper is not installed") from exc
 

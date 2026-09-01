@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 TopicLlmOperation = Literal["generate", "save", "optimize"]
 

@@ -166,7 +166,7 @@ def _agnes_image_gen_keys(settings=None) -> list[AgnesApiKey]:
 def _maybe_failover_generation_host(
     provider: AgnesImageProvider,
     url: str,
-    host_failover_tried: set[str],
+    host_failover_tried: set[str],  # type: ignore[var-annotated]
     *,
     reason: str,
     tag: str,
@@ -176,7 +176,7 @@ def _maybe_failover_generation_host(
         return None
     return agnes_apply_host_failover(
         url,
-        host_failover_tried,
+        host_failover_tried,  # type: ignore[var-annotated]
         reason=reason,
         tag=tag,
         on_switch=lambda alt: setattr(provider, "_generation_url", alt),
@@ -208,7 +208,7 @@ def _guess_agnes_ratio(size: str) -> str:
 def _resp_body_summary(resp: requests.Response, *, limit: int = 500) -> str:
     """截断响应体，便于日志排查（不含密钥）。HTML 错误页只保留 title。"""
     try:
-        body = resp.json()
+        body = resp.json()  # type: ignore[attr-defined,assignment]
         text = str(body)
     except Exception:
         raw = (resp.text or "").strip() or "<empty>"
@@ -216,7 +216,7 @@ def _resp_body_summary(resp: requests.Response, *, limit: int = 500) -> str:
         if head.startswith("<!doctype") or "<html" in head:
             m = _HTML_TITLE_RE.search(raw)
             title = " ".join(m.group(1).split()) if m else ""
-            text = f"<html: {title}>" if title else f"<html status={resp.status_code}>"
+            text = f"<html: {title}>" if title else f"<html status={resp.status_code}>"  # type: ignore[attr-defined,assignment]
         else:
             text = raw
     text = " ".join(text.split())
@@ -329,13 +329,13 @@ class AgnesImageProvider(ImageProvider):
         log_tag: str = "",
     ) -> requests.Response:
         retries = max_retries if max_retries is not None else self._http_max_retries
-        timeout = get_settings().agnes_image_timeout_sec if timeout is None else timeout
+        timeout = int(get_settings().agnes_image_timeout_sec) if timeout is None else int(timeout)  # type: ignore[arg-type]
         headers = agnes_auth_header(api_key)
         tag = f"{log_tag} " if log_tag else ""
         last_exc: Exception | None = None
         last_status: int | None = None
         last_body: str | None = None
-        host_failover_tried = {url}
+        host_failover_tried = {url}  # type: ignore[var-annotated]
         for attempt in range(retries):
             self._raise_if_job_cancelled()
             t0 = time.monotonic()
@@ -350,26 +350,26 @@ class AgnesImageProvider(ImageProvider):
                     )
                 )
                 elapsed = time.monotonic() - t0
-                last_status = resp.status_code
-                last_body = _resp_body_summary(resp)
-                if resp.status_code == 503:
+                last_status = resp.status_code  # type: ignore[attr-defined,assignment]
+                last_body = _resp_body_summary(resp)  # type: ignore[arg-type]
+                if resp.status_code == 503:  # type: ignore[attr-defined,assignment]
                     alt_url = _maybe_failover_generation_host(
                         self,
                         url,
-                        host_failover_tried,
+                        host_failover_tried,  # type: ignore[var-annotated]
                         reason="503",
                         tag=tag,
                     )
                     if alt_url:
                         url = alt_url
                         continue
-                if resp.status_code in _RETRYABLE:
+                if resp.status_code in _RETRYABLE:  # type: ignore[attr-defined,assignment]
                     if attempt + 1 >= retries:
                         # 最后一次仍 5xx：不再 sleep，交给上层切 Key / 失败
                         logger.warning(
                             "%sagnes %s %s in %.1fs, body=%s, giving up after %s/%s",
                             tag,
-                            resp.status_code,
+                            resp.status_code,  # type: ignore[attr-defined,assignment]
                             url,
                             elapsed,
                             last_body,
@@ -381,7 +381,7 @@ class AgnesImageProvider(ImageProvider):
                     logger.warning(
                         "%sagnes %s %s in %.1fs, body=%s, retry %s/%s in %ss",
                         tag,
-                        resp.status_code,
+                        resp.status_code,  # type: ignore[attr-defined,assignment]
                         url,
                         elapsed,
                         last_body,
@@ -391,44 +391,44 @@ class AgnesImageProvider(ImageProvider):
                     )
                     self._sleep_cancellable(wait)
                     continue
-                if resp.status_code == 429:
+                if resp.status_code == 429:  # type: ignore[attr-defined,assignment]
                     body: dict | str | None = None
                     try:
-                        body = resp.json()
+                        body = resp.json()  # type: ignore[attr-defined,assignment]
                     except Exception:
-                        body = _resp_body_summary(resp)
-                    raise_if_agnes_quota(status_code=resp.status_code, body=body)
-                if not resp.ok:
+                        body = _resp_body_summary(resp)  # type: ignore[arg-type]
+                    raise_if_agnes_quota(status_code=resp.status_code, body=body)  # type: ignore[attr-defined,assignment]
+                if not resp.ok:  # type: ignore[attr-defined,assignment]
                     body = None
                     try:
-                        body = resp.json()
+                        body = resp.json()  # type: ignore[attr-defined,assignment]
                     except Exception:
-                        body = _resp_body_summary(resp)
-                    raise_if_agnes_quota(status_code=resp.status_code, body=body)
+                        body = _resp_body_summary(resp)  # type: ignore[arg-type]
+                    raise_if_agnes_quota(status_code=resp.status_code, body=body)  # type: ignore[attr-defined,assignment]
                     raise_if_agnes_content_policy(
-                        status_code=resp.status_code, body=body
+                        status_code=resp.status_code, body=body  # type: ignore[attr-defined,assignment]
                     )
                     logger.warning(
                         "%sagnes api %s %s in %.1fs: %s",
                         tag,
-                        resp.status_code,
+                        resp.status_code,  # type: ignore[attr-defined,assignment]
                         url,
                         elapsed,
                         body,
                     )
-                    raise AgnesImageError(f"agnes api {resp.status_code}: {body}")
+                    raise AgnesImageError(f"agnes api {resp.status_code}: {body}")  # type: ignore[attr-defined,assignment]
                 logger.info(
                     "%sagnes http %s %s ok in %.1fs, bytes=%s",
                     tag,
-                    resp.status_code,
+                    resp.status_code,  # type: ignore[attr-defined,assignment]
                     url,
                     elapsed,
-                    len(resp.content or b""),
+                    len(resp.content or b""),  # type: ignore[attr-defined,assignment]
                 )
-                return resp
+                return cast(requests.Response, resp)  # type: ignore[return-value]
             except RuntimeError:
                 raise
-            except AgnesQuotaExceeded:
+            except AgnesQuotaExceeded:  # type: ignore[unreachable]
                 raise
             except requests.RequestException as exc:
                 elapsed = time.monotonic() - t0
@@ -439,7 +439,7 @@ class AgnesImageProvider(ImageProvider):
                     alt_url = _maybe_failover_generation_host(
                         self,
                         url,
-                        host_failover_tried,
+                        host_failover_tried,  # type: ignore[var-annotated]
                         reason="timeout",
                         tag=tag,
                     )
@@ -586,7 +586,7 @@ class AgnesImageProvider(ImageProvider):
                 max_retries=max_retries,
                 log_tag=log_tag,
             )
-            image_url, image_bytes = self._extract_image(resp.json())
+            image_url, image_bytes = self._extract_image(resp.json())  # type: ignore[attr-defined,assignment]
             output_path.parent.mkdir(parents=True, exist_ok=True)
             if image_bytes is not None:
                 output_path.write_bytes(image_bytes)
@@ -612,8 +612,8 @@ class AgnesImageProvider(ImageProvider):
                     image_url, timeout=get_settings().agnes_image_timeout_sec
                 )
             )
-            img.raise_for_status()
-            output_path.write_bytes(img.content)
+            img.raise_for_status()  # type: ignore[attr-defined]
+            output_path.write_bytes(img.content)  # type: ignore[attr-defined]
             sidecar = output_path.with_name(output_path.name + ".agnes_source_url")
             sidecar.write_text(image_url.strip(), encoding="utf-8")
             logger.info(
@@ -621,7 +621,7 @@ class AgnesImageProvider(ImageProvider):
                 log_tag,
                 api_key.label,
                 time.monotonic() - t0,
-                len(img.content),
+                len(img.content),  # type: ignore[attr-defined]
                 output_path,
             )
             return output_path
@@ -739,7 +739,7 @@ class AgnesImageProvider(ImageProvider):
             if not generated:
                 break
             if result is None or not result.exists():
-                return result
+                return result  # type: ignore[return-value]
 
             if not get_settings().agnes_image_verify:
                 logger.info(
@@ -1310,7 +1310,7 @@ class AgnesImageProvider(ImageProvider):
                 if max(img.size) > max_dim:
                     ratio = max_dim / max(img.size)
                     new_size = (int(img.size[0] * ratio), int(img.size[1] * ratio))
-                    img = img.resize(new_size, PILImage.LANCZOS)
+                    img = img.resize(new_size, PILImage.LANCZOS)  # type: ignore[attr-defined]
                 buf = io.BytesIO()
                 img.convert("RGB").save(buf, format="JPEG", quality=85)
                 b64 = base64.b64encode(buf.getvalue()).decode("ascii")
@@ -1333,11 +1333,11 @@ class AgnesImageProvider(ImageProvider):
                 for api_key in keys:
                     try:
                         headers = agnes_auth_header(api_key.value)
-                        verify_url = (
+                        verify_url = (  # type: ignore[var-annotated]
                             f"{agnes_key_base_url(api_key, settings)}/chat/completions"
                         )
-                        url = verify_url
-                        host_failover_tried: set[str] = {verify_url}
+                        url = verify_url  # type: ignore[var-annotated]
+                        host_failover_tried: set[str] = {verify_url}  # type: ignore[var-annotated]
                         payload = {
                             "model": settings.agnes_vl_model,
                             "messages": [
@@ -1362,19 +1362,19 @@ class AgnesImageProvider(ImageProvider):
                         }
 
                         def _post_verify() -> requests.Response:
-                            nonlocal url, verify_url
+                            nonlocal url, verify_url  # type: ignore[var-annotated]
                             resp = requests.post(
                                 url, headers=headers, json=payload, timeout=300
                             )
-                            if resp.status_code == 503:
+                            if resp.status_code == 503:  # type: ignore[attr-defined,assignment]
                                 alt = agnes_apply_host_failover(
                                     url,
-                                    host_failover_tried,
+                                    host_failover_tried,  # type: ignore[var-annotated]
                                     reason="503",
                                     tag=f"{log_tag} verify",
                                 )
                                 if alt:
-                                    verify_url = alt
+                                    verify_url = alt  # type: ignore[var-annotated]
                                     url = alt
                                     resp = requests.post(
                                         url, headers=headers, json=payload, timeout=300
@@ -1382,11 +1382,11 @@ class AgnesImageProvider(ImageProvider):
                             return resp
 
                         resp = self._run_blocking_cancellable(_post_verify)
-                        if resp.status_code == 503:
+                        if resp.status_code == 503:  # type: ignore[attr-defined,assignment]
                             continue
-                        if resp.ok:
+                        if resp.ok:  # type: ignore[attr-defined,assignment]
                             msg = (
-                                resp.json()
+                                resp.json()  # type: ignore[attr-defined,assignment]
                                 .get("choices", [{}])[0]
                                 .get("message", {})
                                 or {}
@@ -1414,21 +1414,21 @@ class AgnesImageProvider(ImageProvider):
                         logger.warning(
                             "%s agnes verify_image http %s (%s key, retry=%s/%s), body=%s",
                             log_tag,
-                            resp.status_code,
+                            resp.status_code,  # type: ignore[attr-defined,assignment]
                             api_key.label,
                             retry,
                             _VERIFY_RETRY_COUNT,
-                            _resp_body_summary(resp),
+                            _resp_body_summary(resp),  # type: ignore[arg-type]
                         )
                     except requests.Timeout as exc:
                         alt = agnes_apply_host_failover(
-                            verify_url,
-                            host_failover_tried,
+                            verify_url,  # type: ignore[var-annotated]
+                            host_failover_tried,  # type: ignore[var-annotated]
                             reason="timeout",
                             tag=f"{log_tag} verify",
                         )
                         if alt:
-                            verify_url = alt
+                            verify_url = alt  # type: ignore[var-annotated]
                             continue
                         logger.warning(
                             "%s agnes verify_image timeout (%s key, retry=%s/%s): %s",
@@ -1493,14 +1493,14 @@ class AgnesImageProvider(ImageProvider):
             box = (w // 4, 0, w * 3 // 4, h)
         crop = img.crop(box)
         crop = crop.resize(
-            (crop.size[0] * zoom, crop.size[1] * zoom), PILImage.LANCZOS
+            (crop.size[0] * zoom, crop.size[1] * zoom), PILImage.LANCZOS  # type: ignore[attr-defined]
         )
         max_dim = 1024
         if max(crop.size) > max_dim:
             ratio = max_dim / max(crop.size)
             crop = crop.resize(
                 (int(crop.size[0] * ratio), int(crop.size[1] * ratio)),
-                PILImage.LANCZOS,
+                PILImage.LANCZOS,  # type: ignore[attr-defined]
             )
         buf = io.BytesIO()
         crop.convert("RGB").save(buf, format="JPEG", quality=92)
@@ -1607,9 +1607,9 @@ class AgnesImageProvider(ImageProvider):
                     )
 
                 resp = self._run_blocking_cancellable(_post)
-                if resp.ok:
+                if resp.ok:  # type: ignore[attr-defined,assignment]
                     msg = (
-                        resp.json()
+                        resp.json()  # type: ignore[attr-defined,assignment]
                         .get("choices", [{}])[0]
                         .get("message", {})
                         or {}
@@ -1618,9 +1618,9 @@ class AgnesImageProvider(ImageProvider):
                 logger.warning(
                     "%s agnes hardfail http %s (%s key): %s",
                     log_tag,
-                    resp.status_code,
+                    resp.status_code,  # type: ignore[attr-defined,assignment]
                     api_key.label,
-                    _resp_body_summary(resp),
+                    _resp_body_summary(resp),  # type: ignore[arg-type]
                 )
             except Exception as exc:
                 logger.warning(

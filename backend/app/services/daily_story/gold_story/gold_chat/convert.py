@@ -932,6 +932,7 @@ def _refine_after_normalize(
             mechanism_text=mechanism_text,
             max_rounds=1,
             bail_on_structural=False,
+            row=row,
         )
     except ValueError:
         logger.info("gold_chat post-normalize refine skipped: %s", blocking[:2])
@@ -946,6 +947,62 @@ def _refine_after_normalize(
     return refined
 
 
+def _setting_normalize_kwargs_from_row(
+    row: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if not isinstance(row, dict):
+        return {}
+    payload = cast(dict[str, Any], row.get("payload") or {})
+    sc_raw = payload.get("scene_contract")
+    sc = sc_raw if isinstance(sc_raw, dict) else {}
+    raw_chars = sc.get("characters")
+    characters = tuple(
+        str(c).strip()
+        for c in (raw_chars if isinstance(raw_chars, list) else [])
+        if str(c).strip()
+    )
+    if len(characters) < 2:
+        characters = ("灿灿", "昭昭")
+    activity_context = " ".join(
+        x
+        for x in (
+            str(sc.get("object") or ""),
+            str(sc.get("conflict") or ""),
+            str(row.get("conflict_core") or ""),
+        )
+        if x
+    )
+    return {
+        "scene_contract_location": str(sc.get("location") or ""),
+        "activity_context": activity_context,
+        "characters": characters,
+    }
+
+
+def _apply_pass1_setting_normalize(
+    chat: dict[str, Any],
+    *,
+    row: dict[str, Any] | None = None,
+    scene_contract_location: str = "",
+    activity_context: str = "",
+    characters: tuple[str, ...] | None = None,
+) -> dict[str, Any]:
+    """Pass1/Pass2 校验前：站外 setting → 允许地点表内锚点。"""
+    out = dict(chat)
+    kw = _setting_normalize_kwargs_from_row(row) if row else {}
+    loc = str(scene_contract_location or kw.get("scene_contract_location") or "")
+    ctx = str(activity_context or kw.get("activity_context") or "")
+    chars = characters or kw.get("characters") or ("灿灿", "昭昭")
+    new_setting, _notes = normalize_gold_chat_setting(
+        str(out.get("setting") or ""),
+        scene_contract_location=loc,
+        activity_context=ctx,
+        characters=chars,
+    )
+    out["setting"] = new_setting
+    return out
+
+
 def _prepare_chat_for_validate(
     data: dict[str, Any],
     *,
@@ -955,8 +1012,11 @@ def _prepare_chat_for_validate(
     conflict_text: str = "",
     banned_literals: list[str] | None = None,
     mom_lines_max: int = 1,
+    row: dict[str, Any] | None = None,
+    scene_contract_location: str = "",
+    activity_context: str = "",
 ) -> dict[str, Any]:
-    """M5+H 本地补丁 → 补字数 → hard 校验（LLM 精修后亦须先补丁再验）。"""
+    """M5+H 本地补丁 → setting 归类 → 补字数 → hard 校验。"""
     st = str(structure_type or "").strip().upper()
     mech = str(mechanism or "").strip().upper()
     if mech == "M5" and st == "H":
@@ -965,6 +1025,13 @@ def _prepare_chat_for_validate(
             closing_intent=closing_intent,
             conflict_text=conflict_text,
         )
+    ctx = activity_context or conflict_text
+    data = _apply_pass1_setting_normalize(
+        data,
+        row=row,
+        scene_contract_location=scene_contract_location,
+        activity_context=ctx,
+    )
     data, _ = _ensure_gold_chat_min_chars(data)
     validate_gold_chat(
         data,
@@ -981,6 +1048,7 @@ def _validate_pass1_chat(
     source_type: str,
     mom_lines_max: int,
     structure_type: str = "",
+    row: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Pass1 硬校验 + 格式 fix，直至通过或耗尽 retry。"""
     data = _normalize_chat_speakers(dict(story))
@@ -990,6 +1058,7 @@ def _validate_pass1_chat(
     last_err = ""
     shorten_llm_used = False
     for attempt in range(5):
+        data = _apply_pass1_setting_normalize(data, row=row)
         data, _ = _ensure_gold_chat_min_chars(data)
         try:
             validate_gold_chat(
@@ -1036,6 +1105,7 @@ def _generate_pass1_candidate(
     mom_lines_max: int,
     structure_type: str = "",
     temperature: float = 0.4,
+    row: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     data = _normalize_chat_speakers(
         _chat_json(_SYSTEM, user, temperature=temperature)
@@ -1048,6 +1118,7 @@ def _generate_pass1_candidate(
         source_type=source_type,
         mom_lines_max=mom_lines_max,
         structure_type=structure_type,
+        row=row,
     )
 
 
@@ -1135,6 +1206,7 @@ def refine_gold_chat_align(
     mechanism_text: str = "",
     max_rounds: int = PASS2_MAX_ROUNDS,
     bail_on_structural: bool = True,
+    row: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Pass 2：对齐机审 → LLM 定点精修 → 再 hard 校验。"""
     banned = [str(x) for x in (banned_literals or []) if str(x).strip()]
@@ -1180,6 +1252,7 @@ def refine_gold_chat_align(
                 conflict_text=conflict_text,
                 banned_literals=banned,
                 mom_lines_max=mom_max,
+                row=row,
             )
         if not blocking:
             if warn:
@@ -1195,6 +1268,7 @@ def refine_gold_chat_align(
                 conflict_text=conflict_text,
                 banned_literals=banned,
                 mom_lines_max=mom_max,
+                row=row,
             )
         if bail_on_structural and should_regenerate_pass1(blocking):
             struct_kinds = [
@@ -1239,6 +1313,7 @@ def refine_gold_chat_align(
                 conflict_text=conflict_text,
                 banned_literals=banned,
                 mom_lines_max=mom_max,
+                row=row,
             )
         except ValueError:
             continue
@@ -1285,6 +1360,7 @@ def refine_gold_chat_align(
         conflict_text=conflict_text,
         banned_literals=banned,
         mom_lines_max=mom_max,
+        row=row,
     )
     return data
 
@@ -1647,6 +1723,7 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
                         mom_lines_max=mom_int,
                         structure_type=structure_type,
                         temperature=pass1_temperature,
+                        row=row,
                     )
                 )
             except ValueError as exc:
@@ -1724,6 +1801,7 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
                 mechanism_text=mechanism_text,
                 max_rounds=PASS2_MAX_ROUNDS,
                 bail_on_structural=True,
+                row=row,
             )
             # align 精修可能又写回弱判据/连说；收口再垫一次
             chat, _ = patch_c_force_sibling_alternate(chat)

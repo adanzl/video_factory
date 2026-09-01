@@ -6,7 +6,7 @@ import logging
 import math
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import requests
 
@@ -284,7 +284,7 @@ def next_status_after_funny_rescore(
 
 def plan_funny_rescore(row: dict[str, Any]) -> dict[str, Any]:
     """根据已存弹幕/评论分量规划重评结果，不写库。"""
-    payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+    payload = cast(dict[str, Any], row.get("payload") or {})
     rescored = rescore_payload_funny(payload)
     if rescored is None:
         return {

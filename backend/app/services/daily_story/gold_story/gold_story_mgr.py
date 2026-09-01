@@ -589,6 +589,16 @@ class GoldStoryMgr:
                 outcome.get("structure_score"),
             )
             return {"action": "ok", **outcome}
+        except ValueError as exc:
+            gid = int(row.get("id") or 0)
+            if gid > 0:
+                record_gold_chat_failure(
+                    gid,
+                    exc,
+                    source_id=sid,
+                    stage="convert",
+                )
+            raise
         except Exception as exc:
             gid = int(row.get("id") or 0)
             if gid > 0:
