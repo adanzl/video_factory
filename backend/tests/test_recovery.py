@@ -97,3 +97,67 @@ def test_recover_skips_abort_hold(app_ctx) -> None:
     assert repo_job.get_job(job_id)["status"] == "pending"
     logs = repo_job_log.list_logs(job_id)
     assert any("skipped auto-recover: user aborted" in log["message"] for log in logs)
+
+
+def test_recover_stuck_gold_story_pending_resets_processing(
+    app_ctx,
+    monkeypatch,
+) -> None:
+    from app.repositories import repo_gold_story
+    from app.services.daily_story.gold_story import gold_story_mgr as mgr_mod
+
+    mgr_mod.reset_collect_state()
+    repo_gold_story.insert_pending(
+        source="bili",
+        source_id="BV1RECOVER01",
+        url="https://www.bilibili.com/video/BV1RECOVER01",
+        title="recover test",
+    )
+    claimed = repo_gold_story.claim_next_pending()
+    assert claimed is not None
+    assert claimed["status"] == "processing"
+
+    workers: list = []
+
+    def fake_drain(**_kwargs):
+        return {
+            "phase": "process",
+            "processed": 1,
+            "inserted": 1,
+            "inserted_rejected": 0,
+            "gate_rejected": 0,
+            "failed": 0,
+            "results": [],
+        }
+
+    monkeypatch.setattr(mgr_mod, "drain_pending_stories", fake_drain)
+    monkeypatch.setattr(
+        mgr_mod,
+        "run_in_background",
+        lambda func, **_kwargs: workers.append(func),
+    )
+
+    from worker.recovery import recover_stuck_gold_story_pending
+
+    count = recover_stuck_gold_story_pending()
+    assert count == 1
+    assert len(workers) == 1
+
+    row = repo_gold_story.get_by_source_id(source_id="BV1RECOVER01")
+    assert row["status"] == "pending"
+
+    workers[0]()
+    status = mgr_mod.gold_story_mgr.collect_status()
+    assert status["status"] == "done"
+    assert status.get("recovered") is True
+    assert status["processed"] == 1
+    mgr_mod.reset_collect_state()
+
+
+def test_recover_stuck_gold_story_pending_noop_when_idle(app_ctx) -> None:
+    from app.services.daily_story.gold_story import gold_story_mgr as mgr_mod
+
+    mgr_mod.reset_collect_state()
+    from worker.recovery import recover_stuck_gold_story_pending
+
+    assert recover_stuck_gold_story_pending() == 0

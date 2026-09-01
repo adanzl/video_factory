@@ -24,6 +24,7 @@ from app.services.daily_story.gold_story.export_story import (
     load_transcript_for_row,
 )
 from app.services.daily_story.gold_story.collect.pipeline import (
+    drain_pending_stories,
     reimport_stories,
     run_collect_pipeline,
 )
@@ -151,6 +152,83 @@ def _publish_collect_progress(partial: dict[str, Any], *, max_candidates: int) -
                 "error": None,
             }
         )
+
+
+def _run_recovery_drain_job(pending_count: int) -> None:
+    """仅 drain 队列（服务重启恢复用）。"""
+    from app.repositories.database import get_app
+
+    with get_app().app_context():
+        try:
+            _ensure_schema()
+
+            def _on_progress(partial: dict[str, Any]) -> None:
+                summary = _summarize_collect_report(
+                    {
+                        **partial,
+                        "phase": "process",
+                        "candidates": pending_count,
+                        "enqueued": pending_count,
+                    },
+                    max_candidates=pending_count,
+                )
+                with _COLLECT_LOCK:
+                    if _COLLECT_STATE.get("status") != "running":
+                        return
+                    _COLLECT_STATE.update(
+                        {
+                            **summary,
+                            "status": "running",
+                            "recovered": True,
+                            "error": None,
+                        }
+                    )
+
+            report = drain_pending_stories(
+                skip_transcript=False,
+                dry_run=False,
+                on_progress=_on_progress,
+            )
+            summary = _summarize_collect_report(
+                {
+                    **report,
+                    "phase": "done",
+                    "candidates": pending_count,
+                    "enqueued": pending_count,
+                },
+                max_candidates=pending_count,
+            )
+            with _COLLECT_LOCK:
+                _COLLECT_STATE.update(
+                    {
+                        **summary,
+                        "status": "done",
+                        "recovered": True,
+                        "error": None,
+                        "finished_at": time.time(),
+                    }
+                )
+            logger.info(
+                "[GOLD_CHAT] recovery drain done pending=%d processed=%s inserted=%s failed=%s",
+                pending_count,
+                summary.get("processed"),
+                summary.get("inserted"),
+                summary.get("failed"),
+            )
+        except Exception as exc:
+            logger.exception(
+                "[GOLD_CHAT] recovery drain failed pending=%d",
+                pending_count,
+            )
+            with _COLLECT_LOCK:
+                _COLLECT_STATE.update(
+                    {
+                        "status": "error",
+                        "recovered": True,
+                        "error": str(exc),
+                        "finished_at": time.time(),
+                    }
+                )
 
 
 def _run_collect_job(max_candidates: int) -> None:
@@ -614,6 +692,58 @@ class GoldStoryMgr:
 
     def collect_status(self) -> dict[str, Any]:
         return _collect_snapshot()
+
+    def recover_stuck_pending_stories(self) -> int:
+        """服务重启后恢复卡在 pending/processing 的采集入库队列。"""
+        _ensure_schema()
+        reset_count = repo_gold_story.reset_processing_to_pending()
+        pending_count = repo_gold_story.count_stories(status="pending")
+        if pending_count <= 0:
+            if reset_count:
+                logger.info(
+                    "[GOLD_CHAT] reset %d processing row(s), no pending left",
+                    reset_count,
+                )
+            else:
+                logger.info("[GOLD_CHAT] no stuck pending gold stories to recover")
+            return 0
+
+        with _COLLECT_LOCK:
+            if _COLLECT_STATE.get("status") == "running":
+                logger.warning(
+                    "[GOLD_CHAT] recovery skipped: collect drain already running"
+                )
+                return 0
+            _COLLECT_STATE.clear()
+            _COLLECT_STATE.update(
+                {
+                    "workflow": "gold_story_collect",
+                    "status": "running",
+                    "recovered": True,
+                    "phase": "process",
+                    "max": pending_count,
+                    "started_at": time.time(),
+                    "candidates": pending_count,
+                    "enqueued": pending_count,
+                    "processed": 0,
+                    "inserted": 0,
+                    "inserted_rejected": 0,
+                    "gate_rejected": 0,
+                    "skipped": 0,
+                    "failed": 0,
+                    "results": [],
+                    "error": None,
+                }
+            )
+
+        run_in_background(lambda n=pending_count: _run_recovery_drain_job(n))
+        logger.warning(
+            "[GOLD_CHAT] recovering %d pending gold story/stories "
+            "(reset %d processing)",
+            pending_count,
+            reset_count,
+        )
+        return pending_count
 
     def reimport(
         self,
