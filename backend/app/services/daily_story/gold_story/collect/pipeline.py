@@ -481,6 +481,7 @@ def reimport_stories(
     source_ids: list[str] | None = None,
     force_transcript: bool = True,
     config: Config | None = None,
+    on_progress: Any | None = None,
 ) -> dict[str, Any]:
     """从 BV 重新导入金稿：已有覆盖，没有则新入库。"""
     cfg = config or Config()
@@ -488,33 +489,85 @@ def reimport_stories(
     seen_ids: set[int] = set()
     seen_bvs: set[str] = set()
 
+    work: list[tuple[str, int | str]] = []
     for gid in gold_story_ids or []:
-        try:
-            outcome = overwrite_existing_story(
-                int(gid),
-                config=cfg,
-                force_transcript=force_transcript,
-            )
-        except KeyError:
-            outcome = {
-                "id": gid,
-                "action": "error",
-                "error": f"gold_story {gid} not found",
-            }
-        sid = str(outcome.get("source_id") or "").strip()
-        if outcome.get("id"):
-            seen_ids.add(int(outcome["id"]))
-        if sid:
-            seen_bvs.add(sid)
-        results.append(outcome)
-
+        work.append(("id", int(gid)))
     for raw in source_ids or []:
+        work.append(("bv", str(raw or "").strip()))
+
+    total = len(work)
+
+    def _emit_progress(idx: int, *, processing: tuple[str, int | str] | None) -> None:
+        if on_progress is None:
+            return
+        queued_ids: list[int] = []
+        queued_bvs: list[str] = []
+        for kind, value in work[idx + 1 :]:
+            if kind == "id":
+                queued_ids.append(int(value))
+            elif kind == "bv" and value:
+                queued_bvs.append(str(value))
+        proc_id: int | None = None
+        proc_bv: str | None = None
+        if processing is not None:
+            p_kind, p_val = processing
+            if p_kind == "id":
+                proc_id = int(p_val)
+                try:
+                    row = repo_gold_story.get_story(proc_id)
+                    proc_bv = str(row.get("source_id") or "").strip() or None
+                except KeyError:
+                    proc_bv = None
+            elif p_kind == "bv" and p_val:
+                try:
+                    proc_bv = normalize_bv(str(p_val))
+                except ValueError:
+                    proc_bv = str(p_val).strip() or None
+        on_progress(
+            {
+                "processed": idx,
+                "requested": total,
+                "processing_id": proc_id,
+                "processing_source_id": proc_bv,
+                "queued_ids": queued_ids,
+                "queued_source_ids": queued_bvs,
+                "results": list(results),
+            }
+        )
+
+    for idx, (kind, value) in enumerate(work):
+        _emit_progress(idx, processing=(kind, value))
+        if kind == "id":
+            gid = int(value)
+            try:
+                outcome = overwrite_existing_story(
+                    gid,
+                    config=cfg,
+                    force_transcript=force_transcript,
+                )
+            except KeyError:
+                outcome = {
+                    "id": gid,
+                    "action": "error",
+                    "error": f"gold_story {gid} not found",
+                }
+            sid = str(outcome.get("source_id") or "").strip()
+            if outcome.get("id"):
+                seen_ids.add(int(outcome["id"]))
+            if sid:
+                seen_bvs.add(sid)
+            results.append(outcome)
+            continue
+
+        raw = str(value or "").strip()
+        if not raw:
+            continue
         try:
             bvid = normalize_bv(raw)
         except ValueError as exc:
             results.append(
                 {
-                    "source_id": str(raw or "").strip(),
+                    "source_id": raw,
                     "action": "error",
                     "error": str(exc),
                 }

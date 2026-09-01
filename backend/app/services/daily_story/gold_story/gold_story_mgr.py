@@ -282,6 +282,13 @@ def _run_collect_job(max_candidates: int) -> None:
                 )
 
 
+def _publish_reimport_progress(partial: dict[str, Any]) -> None:
+    with _REIMPORT_LOCK:
+        if _REIMPORT_STATE.get("status") != "running":
+            return
+        _REIMPORT_STATE.update(partial)
+
+
 def _run_reimport_job(
     gold_story_ids: list[int],
     source_ids: list[str],
@@ -296,6 +303,7 @@ def _run_reimport_job(
                 gold_story_ids=gold_story_ids or None,
                 source_ids=source_ids or None,
                 force_transcript=force_transcript,
+                on_progress=_publish_reimport_progress,
             )
             with _REIMPORT_LOCK:
                 _REIMPORT_STATE.update(
@@ -303,6 +311,10 @@ def _run_reimport_job(
                         "workflow": "gold_story_reimport",
                         **report,
                         "status": "done",
+                        "processing_id": None,
+                        "processing_source_id": None,
+                        "queued_ids": [],
+                        "queued_source_ids": [],
                         "error": None,
                         "finished_at": time.time(),
                     }
@@ -797,6 +809,9 @@ class GoldStoryMgr:
         with _REIMPORT_LOCK:
             if _REIMPORT_STATE.get("status") == "running":
                 raise RuntimeError("重新导入进行中")
+            total = len(ids) + len(bvs)
+            first_id = ids[0] if ids else None
+            first_bv = bvs[0] if (not ids and bvs) else None
             _REIMPORT_STATE.clear()
             _REIMPORT_STATE.update(
                 {
@@ -806,7 +821,12 @@ class GoldStoryMgr:
                     "source_ids": bvs,
                     "force_transcript": bool(force_transcript),
                     "started_at": time.time(),
-                    "requested": 0,
+                    "requested": total,
+                    "processed": 0,
+                    "processing_id": first_id,
+                    "processing_source_id": first_bv,
+                    "queued_ids": ids[1:] if len(ids) > 1 else [],
+                    "queued_source_ids": bvs if ids else bvs[1:],
                     "updated": 0,
                     "inserted": 0,
                     "rejected": 0,

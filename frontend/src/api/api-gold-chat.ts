@@ -198,6 +198,11 @@ export interface GoldStoryReimportResult {
   source_ids?: string[];
   force_transcript?: boolean;
   requested?: number;
+  processed?: number;
+  processing_id?: number | null;
+  processing_source_id?: string | null;
+  queued_ids?: number[];
+  queued_source_ids?: string[];
   updated?: number;
   inserted?: number;
   rejected?: number;

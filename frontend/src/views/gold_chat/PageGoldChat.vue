@@ -33,6 +33,9 @@
       <span v-if="collecting && collectProgressText" class="text-xs text-gray-500">
         {{ collectProgressText }}
       </span>
+      <span v-if="reimporting && reimportProgressText" class="text-xs text-gray-500">
+        {{ reimportProgressText }}
+      </span>
     </div>
 
     <el-table :data="items" stripe class="w-full gold-chat-table" v-loading="loading" row-class-name="gold-chat-row"
@@ -41,13 +44,8 @@
       <el-table-column prop="id" label="ID" width="50" />
       <el-table-column label="状态" width="70" align="center">
         <template #default="{ row }">
-          <el-tag v-if="isReimportProcessing(row)" type="warning" size="small">
-            <span class="inline-flex items-center gap-1">
-              处理中
-            </span>
-          </el-tag>
-          <el-tag v-else :type="statusTagType(row.status)" size="small">
-            {{ formatStoryStatus(row.status) }}
+          <el-tag :type="getRowStatus(row).type" size="small">
+            {{ getRowStatus(row).label }}
           </el-tag>
         </template>
       </el-table-column>
@@ -182,8 +180,12 @@ let collectPollTimer: ReturnType<typeof setInterval> | null = null;
 let reimportPollTimer: ReturnType<typeof setInterval> | null = null;
 const batching = ref(false);
 const deleting = ref(false);
-const reimportingIds = ref<number[]>([]);
-const reimportingSourceIds = ref<string[]>([]);
+const reimportBatchIds = ref<number[]>([]);
+const reimportBatchSourceIds = ref<string[]>([]);
+const reimportProcessed = ref(0);
+const reimportRequested = ref(0);
+const reimportProcessingId = ref<number | null>(null);
+const reimportProcessingSourceId = ref<string | null>(null);
 const convertingIds = ref<number[]>([]);
 const convertingSourceIds = ref<string[]>([]);
 const archivingId = ref<number | null>(null);
@@ -242,6 +244,21 @@ const collectProgressText = computed(() => {
   return "";
 });
 
+const reimportProgressText = computed(() => {
+  if (!reimporting.value || reimportRequested.value <= 0) return "";
+  const total = reimportRequested.value;
+  const done = Math.min(reimportProcessed.value, total);
+  const current = Math.min(done + 1, total);
+  if (done >= total) return `重新导入完成 ${total}/${total}`;
+  const curLabel =
+    reimportProcessingId.value != null
+      ? `#${reimportProcessingId.value}`
+      : reimportProcessingSourceId.value
+        ? extractBv(reimportProcessingSourceId.value)
+        : "?";
+  return `重新导入 ${current}/${total}（${curLabel}）`;
+});
+
 function formatStoryStatus(status: string): string {
   if (status === "pending") return "排队中";
   if (status === "processing") return "处理中";
@@ -257,16 +274,146 @@ function statusTagType(
   status: string,
 ): "success" | "danger" | "warning" | "info" {
   if (status === "active" || status === "promoted") return "success";
-  if (status === "pending" || status === "processing") return "warning";
+  if (status === "processing") return "warning";
+  if (status === "pending") return "info";
   if (status === "rejected") return "info";
   if (status === "archived") return "info";
   if (status === "retired") return "info";
   return "warning";
 }
 
+function extractBv(raw: string): string {
+  const m = String(raw || "").match(/BV[\w]+/i);
+  return m ? m[0].toUpperCase() : String(raw || "").trim();
+}
+
+function sourceIdsMatch(a: string | null | undefined, b: string | null | undefined): boolean {
+  const left = extractBv(String(a || ""));
+  const right = extractBv(String(b || ""));
+  return !!left && left === right;
+}
+
 function clearReimportTargets() {
-  reimportingIds.value = [];
-  reimportingSourceIds.value = [];
+  reimportBatchIds.value = [];
+  reimportBatchSourceIds.value = [];
+  reimportProcessed.value = 0;
+  reimportRequested.value = 0;
+  reimportProcessingId.value = null;
+  reimportProcessingSourceId.value = null;
+}
+
+function applyReimportProgress(res: GoldStoryReimportResult) {
+  const ids = [...new Set((res.ids || []).map((id) => Number(id)).filter((id) => id > 0))];
+  const sourceIds = [
+    ...new Set(
+      (res.source_ids || [])
+        .map((s) => String(s || "").trim())
+        .filter(Boolean),
+    ),
+  ];
+  const total = ids.length + sourceIds.length;
+  const processed = Math.max(
+    0,
+    Number(res.processed ?? 0),
+    (res.results || []).length,
+  );
+  reimportBatchIds.value = ids;
+  reimportBatchSourceIds.value = sourceIds;
+  reimportProcessed.value = Math.min(processed, total);
+  reimportRequested.value = Math.max(Number(res.requested ?? 0), total);
+
+  let procId: number | null =
+    res.processing_id != null && Number(res.processing_id) > 0
+      ? Number(res.processing_id)
+      : null;
+  let procSource =
+    String(res.processing_source_id || "").trim() || null;
+
+  if (
+    res.status === "running" &&
+    reimportProcessed.value < reimportRequested.value &&
+    !procId &&
+    !procSource
+  ) {
+    if (reimportProcessed.value < ids.length) {
+      procId = ids[reimportProcessed.value];
+    } else {
+      const srcIdx = reimportProcessed.value - ids.length;
+      procSource = sourceIds[srcIdx] || null;
+    }
+  }
+
+  reimportProcessingId.value = procId;
+  reimportProcessingSourceId.value = procSource;
+}
+
+function initReimportJobTargets(opts: {
+  ids?: number[] | null;
+  sourceIds?: string[] | null;
+}) {
+  const ids = (opts.ids || []).map((id) => Number(id)).filter((id) => id > 0);
+  const sourceIds = (opts.sourceIds || [])
+    .map((s) => String(s || "").trim())
+    .filter(Boolean);
+  reimportBatchIds.value = [...new Set(ids)];
+  reimportBatchSourceIds.value = [...new Set(sourceIds)];
+  reimportProcessed.value = 0;
+  reimportRequested.value = ids.length + sourceIds.length;
+  reimportProcessingId.value = ids[0] ?? null;
+  reimportProcessingSourceId.value = ids.length ? null : (sourceIds[0] ?? null);
+}
+
+function reimportWorkIndex(row: GoldChatListItem): number {
+  const id = Number(row.id);
+  const idIdx = reimportBatchIds.value.indexOf(id);
+  if (idIdx >= 0) return idIdx;
+  const sid = String(row.source_id || "").trim();
+  const srcIdx = reimportBatchSourceIds.value.findIndex((raw) =>
+    sourceIdsMatch(sid, raw),
+  );
+  if (srcIdx >= 0) return reimportBatchIds.value.length + srcIdx;
+  return -1;
+}
+
+function isInReimportBatch(row: GoldChatListItem): boolean {
+  return reimportWorkIndex(row) >= 0;
+}
+
+function isReimportProcessing(row: GoldChatListItem): boolean {
+  if (!reimporting.value || !isInReimportBatch(row)) return false;
+  const idx = reimportWorkIndex(row);
+  return idx === reimportProcessed.value && idx < reimportRequested.value;
+}
+
+function isReimportQueued(row: GoldChatListItem): boolean {
+  if (!reimporting.value || !isInReimportBatch(row)) return false;
+  const idx = reimportWorkIndex(row);
+  return idx > reimportProcessed.value;
+}
+
+function getRowStatus(row: GoldChatListItem): {
+  label: string;
+  type: "success" | "danger" | "warning" | "info";
+} {
+  if (reimporting.value && isInReimportBatch(row)) {
+    const idx = reimportWorkIndex(row);
+    if (idx >= 0 && idx < reimportProcessed.value) {
+      return {
+        label: formatStoryStatus(row.status),
+        type: statusTagType(row.status),
+      };
+    }
+    if (isReimportProcessing(row)) {
+      return { label: "处理中", type: "warning" };
+    }
+    if (isReimportQueued(row)) {
+      return { label: "排队中", type: "info" };
+    }
+  }
+  return {
+    label: formatStoryStatus(row.status),
+    type: statusTagType(row.status),
+  };
 }
 
 function clearConvertingTargets() {
@@ -304,24 +451,6 @@ function removeConvertingTargets(opts: {
       (sid) => !sourceIds.has(sid),
     );
   }
-}
-
-function setReimportTargets(opts: {
-  ids?: number[] | null;
-  sourceIds?: string[] | null;
-}) {
-  const ids = (opts.ids || []).filter((id) => Number.isFinite(id) && id > 0);
-  const sourceIds = (opts.sourceIds || [])
-    .map((s) => String(s || "").trim())
-    .filter(Boolean);
-  reimportingIds.value = [...new Set(ids)];
-  reimportingSourceIds.value = [...new Set(sourceIds)];
-}
-
-function isReimportProcessing(row: GoldChatListItem): boolean {
-  if (reimportingIds.value.includes(row.id)) return true;
-  const sid = String(row.source_id || "").trim();
-  return !!sid && reimportingSourceIds.value.includes(sid);
 }
 
 function isGoldChatConverting(row: GoldChatListItem): boolean {
@@ -458,10 +587,7 @@ async function pollReimportStatus() {
     const res = await getGoldStoryReimportStatus();
     if (res.status === "running") {
       reimporting.value = true;
-      setReimportTargets({
-        ids: res.ids,
-        sourceIds: res.source_ids,
-      });
+      applyReimportProgress(res);
       await fetchItems({ quiet: true });
       startReimportPolling();
       return;
@@ -567,7 +693,7 @@ function onDetailClosed() {
 
 function onDetailReimported() {
   reimporting.value = true;
-  setReimportTargets({
+  initReimportJobTargets({
     ids: currentId.value != null ? [currentId.value] : [],
     sourceIds: currentSourceId.value ? [currentSourceId.value] : [],
   });
@@ -715,7 +841,7 @@ async function startReimportJob(params: {
   sourceId?: string;
 }) {
   reimporting.value = true;
-  setReimportTargets({
+  initReimportJobTargets({
     ids: params.ids,
     sourceIds: params.sourceId ? [params.sourceId] : [],
   });
@@ -726,14 +852,7 @@ async function startReimportJob(params: {
       forceTranscript: true,
     });
     if (res.status === "running") {
-      setReimportTargets({
-        ids: res.ids?.length ? res.ids : params.ids,
-        sourceIds: res.source_ids?.length
-          ? res.source_ids
-          : params.sourceId
-            ? [params.sourceId]
-            : [],
-      });
+      applyReimportProgress(res);
       ElMessage.success("已开始从 BV 重新导入，完成后列表会自动刷新");
       startReimportPolling();
       return;

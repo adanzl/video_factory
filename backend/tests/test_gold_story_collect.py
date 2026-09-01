@@ -271,3 +271,48 @@ def test_reimport_stories_from_id_and_bv(app_ctx, monkeypatch):
     assert report["inserted"] == 1
     assert report["failed"] == 0
     assert calls == [("overwrite", gid), ("import", "BV1NEWID0001")]
+
+
+def test_reimport_stories_on_progress(app_ctx, monkeypatch):
+    from app.repositories import repo_gold_story
+    from app.services.daily_story.gold_story.collect import pipeline as pl
+
+    rows = []
+    for i in range(3):
+        inserted = repo_gold_story.insert_or_skip(
+            source="bili",
+            source_id=f"BV1PROGTEST{i}",
+            url=f"https://www.bilibili.com/video/BV1PROGTEST{i}",
+            mechanism="M6",
+            structure_type="A",
+            story_raw="稿" * 20,
+            payload={"beat": ["a", "b", "c", "d"]},
+            title=f"进度{i}",
+            auto_score=0.8,
+            status="active",
+        )
+        rows.append(int(inserted["id"]))
+
+    def fake_overwrite(gold_story_id, **_kwargs):
+        row = repo_gold_story.get_story(int(gold_story_id))
+        return {
+            "id": int(gold_story_id),
+            "source_id": str(row.get("source_id") or ""),
+            "action": "ok",
+        }
+
+    monkeypatch.setattr(pl, "overwrite_existing_story", fake_overwrite)
+    progress: list[dict] = []
+
+    pl.reimport_stories(
+        gold_story_ids=rows,
+        force_transcript=True,
+        on_progress=lambda p: progress.append(dict(p)),
+    )
+    assert progress
+    first = progress[0]
+    assert first["processed"] == 0
+    assert first["processing_id"] == rows[0]
+    assert first["queued_ids"] == rows[1:]
+    assert len(progress) == len(rows)
+    assert progress[-1]["processing_id"] == rows[-1]

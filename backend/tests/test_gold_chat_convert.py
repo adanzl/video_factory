@@ -234,29 +234,46 @@ def test_bump_short_regen_helpers():
 
 
 def test_ensure_gold_chat_min_chars_does_not_spam_expand_tails():
-    """偏短稿禁止本地灌「你给我听好了」等尾巴凑字。"""
-    short = {
+    """旧灌尾须剥掉；大缺口不靠本地叠尾巴硬凑到 240。"""
+    dirty = {
         "story_type": "J",
         "dialogue": [
-            {"speaker": "昭昭", "line": "这是我的地盘，你走开！"},
-            {"speaker": "灿灿", "line": "我先来的，该你走！"},
-            {"speaker": "昭昭", "line": "哼，看招！"},
-            {"speaker": "灿灿", "line": "你敢打我？"},
-            {"speaker": "昭昭", "line": "谁赢谁说了算！"},
-            {"speaker": "灿灿", "line": "拿出最强形态来！"},
-            {"speaker": "昭昭", "line": "草莓熊肘击！"},
-            {"speaker": "灿灿", "line": "啊，我输了！"},
-            {"speaker": "昭昭", "line": "以后玩具都归我！"},
-            {"speaker": "灿灿", "line": "哼，等我长大再算账！"},
-        ],
+            {"speaker": "昭昭", "line": "看招，你给我听好了呀！"},
+            {"speaker": "灿灿", "line": "谁赢谁说了算，这回算清楚！"},
+            {"speaker": "昭昭", "line": "草莓熊肘击，别再装傻！"},
+            {"speaker": "灿灿", "line": "玩具归我，说了就不改！"},
+        ]
+        * 3,
     }
-    assert gc.dialogue_total_chars(short) < gc.DAILY_STORY_BODY_CHARS_MIN
-    out, _ = gc._ensure_gold_chat_min_chars(short)
+    out, _ = gc._ensure_gold_chat_min_chars(dirty)
     blob = "".join(str(d.get("line") or "") for d in out["dialogue"])
     for phrase in ("你给我听好了", "这回算清楚", "别再装傻", "说了就不改"):
         assert phrase not in blob, blob
-    # 重度偏短：本地不得硬灌到 hard min（交 Pass1 重生成）
-    assert gc.dialogue_total_chars(out) < gc.DAILY_STORY_BODY_CHARS_MIN
+
+    # near-miss：12 句差 ≤40 可用可读尾巴/粒子补满
+    near = {
+        "story_type": "J",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "这是我的地盘你走开听见没有！"},
+            {"speaker": "灿灿", "line": "我先趴这儿的该你马上走！"},
+            {"speaker": "昭昭", "line": "哼看招我推你一下试试！"},
+            {"speaker": "灿灿", "line": "你敢打我我就告诉妈妈！"},
+            {"speaker": "昭昭", "line": "就打你你抢我的位置啊！"},
+            {"speaker": "灿灿", "line": "谁赢谁说了算咱们来比！"},
+            {"speaker": "昭昭", "line": "拿出最强形态我出拳打！"},
+            {"speaker": "灿灿", "line": "草莓熊肘击我砸你肚子！"},
+            {"speaker": "昭昭", "line": "哎哟我输了你太厉害啦！"},
+            {"speaker": "灿灿", "line": "玩具都归我你到那边去！"},
+            {"speaker": "昭昭", "line": "长大再算账我现在怕你！"},
+            {"speaker": "灿灿", "line": "我说了算你乖乖躺好吧！"},
+        ],
+    }
+    chars = gc.dialogue_total_chars(near)
+    assert chars < gc.DAILY_STORY_BODY_CHARS_MIN
+    assert gc.DAILY_STORY_BODY_CHARS_MIN - chars <= gc.GOLD_CHAT_NEAR_MISS_DEFICIT_MAX
+    out2, changed = gc._ensure_gold_chat_min_chars(near)
+    assert changed
+    assert gc.dialogue_total_chars(out2) >= gc.DAILY_STORY_BODY_CHARS_MIN
 
 
 def test_sanitize_strips_expand_clutter():
