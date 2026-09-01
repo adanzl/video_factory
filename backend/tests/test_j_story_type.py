@@ -135,6 +135,29 @@ def _j_repetitive_veto_story() -> dict:
     return story
 
 
+def test_j_validate_accepts_m8_domination_shape():
+    story = {
+        "story_type": "J",
+        "punchline_explain": "J类权威压住，灿灿一锤镇住昭昭",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "这是我的地盘，你走开！"},
+            {"speaker": "灿灿", "line": "我先来的，该你走！"},
+            {"speaker": "昭昭", "line": "哼，看招！"},
+            {"speaker": "灿灿", "line": "你敢打我？"},
+            {"speaker": "灿灿", "line": "谁赢谁说了算！"},
+            {"speaker": "昭昭", "line": "拿出最强形态来！"},
+            {"speaker": "灿灿", "line": "草莓熊肘击！"},
+            {"speaker": "昭昭", "line": "啊，我输了！"},
+            {"speaker": "灿灿", "line": "以后玩具都归我！"},
+            {"speaker": "昭昭", "line": "哼，等我长大再算账！"},
+            {"speaker": "灿灿", "line": "算你识相，反正都听我的。"},
+        ],
+    }
+    errors: list[str] = []
+    append_j_body_errors(story, errors)
+    assert errors == [], errors
+
+
 def test_j_validate_accepts_m8_surrender_phrases():
     story = _j_veto_story()
     story["dialogue"] = story["dialogue"][:12] + [
