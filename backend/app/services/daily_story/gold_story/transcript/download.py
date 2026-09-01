@@ -6,13 +6,13 @@ import json
 import os
 import re
 import shutil
-import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from app.config import Config
+from app.utils.async_util import run_subprocess_cmd, unpatched_subprocess
 
 _BV_PATTERN = re.compile(r"(BV[0-9A-Za-z]{10})")
 # 抖音 aweme_id（19 位数字）；后续 H0 接入时复用
@@ -88,7 +88,7 @@ def extract_audio_wav(video_path: Path, *, audio_dir: Path, stem: str) -> Path:
 
     audio_dir.mkdir(parents=True, exist_ok=True)
     audio_path = audio_dir / f"{stem}.wav"
-    result = subprocess.run(
+    _, _, stderr = run_subprocess_cmd(
         [
             ffmpeg,
             "-y",
@@ -103,12 +103,9 @@ def extract_audio_wav(video_path: Path, *, audio_dir: Path, stem: str) -> Path:
             "1",
             str(audio_path),
         ],
-        capture_output=True,
-        encoding="utf-8",
+        check=True,
     )
-    if result.returncode != 0:
-        stderr = (result.stderr or "").strip() or "unknown ffmpeg error"
-        raise RuntimeError(f"ffmpeg failed to extract audio: {stderr}")
+    _ = stderr
     return audio_path
 
 
@@ -197,14 +194,15 @@ def _download_with_ytdlp(
     if not config.gold_story_use_proxy:
         ydl_opts["proxy"] = ""
 
-    with YoutubeDL(ydl_opts) as ydl:  # type: ignore[arg-type,assignment]
-        info = ydl.extract_info(ref.url, download=True)
-        if info and "entries" in info and info["entries"]:
-            info = info["entries"][0]  # type: ignore[arg-type,assignment]
-        info = ydl.sanitize_info(info or {})  # type: ignore[arg-type,assignment]
-        video_path = _resolve_video_path(ydl, info, ref.source_id, downloads_dir)  # type: ignore[arg-type,assignment]
-        if not video_path.exists():
-            raise RuntimeError(f"download finished but file missing: {video_path}")
+    with unpatched_subprocess():
+        with YoutubeDL(ydl_opts) as ydl:  # type: ignore[arg-type,assignment]
+            info = ydl.extract_info(ref.url, download=True)
+            if info and "entries" in info and info["entries"]:
+                info = info["entries"][0]  # type: ignore[arg-type,assignment]
+            info = ydl.sanitize_info(info or {})  # type: ignore[arg-type,assignment]
+            video_path = _resolve_video_path(ydl, info, ref.source_id, downloads_dir)  # type: ignore[arg-type,assignment]
+            if not video_path.exists():
+                raise RuntimeError(f"download finished but file missing: {video_path}")
 
     metadata = {
         "source": ref.source,

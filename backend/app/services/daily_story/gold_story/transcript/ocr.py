@@ -6,7 +6,6 @@ import json
 import logging
 import re
 import shutil
-import subprocess
 import sys
 import tempfile
 from concurrent.futures import ProcessPoolExecutor
@@ -26,7 +25,7 @@ from .detect import (
     fallback_subtitle_region,
     probe_duration,
 )
-from app.utils.async_util import wait_futures_hub
+from app.utils.async_util import run_subprocess_cmd, wait_futures_hub
 
 logger = logging.getLogger(__name__)
 
@@ -442,10 +441,7 @@ def extract_subtitle_frames(
         vf,
         str(pattern),
     ]
-    result = subprocess.run(cmd, capture_output=True, encoding="utf-8")
-    if result.returncode != 0:
-        stderr = (result.stderr or "").strip() or "unknown ffmpeg error"
-        raise RuntimeError(f"ffmpeg extract frames failed: {stderr}")
+    run_subprocess_cmd(cmd, check=True)
 
     frames: list[OcrFrame] = []
     for idx, image_path in enumerate(sorted(output_dir.glob("frame_*.jpg")), start=1):
@@ -810,34 +806,13 @@ def transcribe_video_ocr_subprocess(
             config.gold_story_ocr_frame_workers,
         )
         try:
-            from app.utils.async_util import _on_gevent_hub, run_subprocess_safe
-
-            if _on_gevent_hub():
-                code, stdout, stderr = run_subprocess_safe(
-                    cmd,
-                    timeout=_OCR_SUBPROCESS_TIMEOUT_SEC,
-                    cwd=str(_BACKEND_DIR),
-                )
-                if code != 0:
-                    raise RuntimeError(
-                        f"OCR subprocess failed code={code}: "
-                        f"{(stderr or stdout or '').strip()}"
-                    )
-            else:
-                proc = subprocess.run(
-                    cmd,
-                    capture_output=True,
-                    encoding="utf-8",
-                    cwd=str(_BACKEND_DIR),
-                    timeout=_OCR_SUBPROCESS_TIMEOUT_SEC,
-                    check=False,
-                )
-                if proc.returncode != 0:
-                    raise RuntimeError(
-                        f"OCR subprocess failed code={proc.returncode}: "
-                        f"{(proc.stderr or proc.stdout or '').strip()}"
-                    )
-        except subprocess.TimeoutExpired as exc:
+            run_subprocess_cmd(
+                cmd,
+                timeout=_OCR_SUBPROCESS_TIMEOUT_SEC,
+                cwd=str(_BACKEND_DIR),
+                check=True,
+            )
+        except TimeoutError as exc:
             raise TimeoutError(
                 f"OCR subprocess timed out after {_OCR_SUBPROCESS_TIMEOUT_SEC}s"
             ) from exc
