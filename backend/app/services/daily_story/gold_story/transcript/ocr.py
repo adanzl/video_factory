@@ -830,6 +830,11 @@ def transcribe_video_ocr(
             config=config,
         )
 
+    # 1.5) 去重 + 上限截断，避免超长视频 OCR 超时
+    max_frames = int(config.gold_story_ocr_max_frames)
+    if len(frames) > max_frames:
+        frames = dedupe_frames(frames, max_frames=max_frames)
+
     # 2) 全片 OCR 候选（先不过滤）
     raw_rows = ocr_frames_parallel(frames, config)
     all_hits: list[dict[str, Any]] = []
