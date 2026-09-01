@@ -56,6 +56,8 @@ _USER = """金故事标题：{title}
 dialogue_seed（剧情要点，不是最终台词）：
 {dialogue_seed}
 
+{seed_span_block}
+
 收束意图（只落实要点，勿把说明整段写进对白）：{closing_intent}
 映射说明：{speaker_map_note}
 story_raw（背景，勿照抄；口播/论述须转现场对白）：{story_raw}
@@ -89,7 +91,7 @@ source_type：{source_type}（tutorial 时禁保留教程口吻/第几招）
   禁灌尾巴（「你给我听好了/这回算清楚/别再装傻/说了就不改」等）
 - **收束时机**：字数已 ≥{chars_min} 且冲突按 closing 落实后立刻闭合；
   禁止超过 {chars_max}，禁止顶着上限注水
-- **单句** ≤{max_line} 字；**key** 须 {key_min}–{key_max} 字；
+- **单句** ≤{max_line} 字，**宜 16–22 字**（过短难满 240 总字）；**key** 须 {key_min}–{key_max} 字；
   **punchline_explain 必填**，含「{structure_type}类」前缀，宜短
 - **seed**：通常每条扩 1–2 句；可保留关键词，禁止逐字照抄；
   禁止一条 seed 改写成多版本/草稿并列；
@@ -369,7 +371,14 @@ def format_pass1_regen_feedback(
     if "正文总字数须≥" in err:
         parts.append(
             f"- 正文必须先写满 ≥{DAILY_STORY_BODY_CHARS_MIN} 字，"
-            f"目标 {CHARS_SOFT_LO}–{CHARS_SOFT_HI}；未满禁止收束"
+            f"目标 {CHARS_SOFT_LO}–{CHARS_SOFT_HI}；未满禁止收束；"
+            "禁灌「你给我听好了/这回算清楚」尾巴"
+        )
+    if "对白句数须≥" in err or "句数须≥" in err:
+        parts.append(
+            f"- 对白必须 ≥{DIALOGUE_ROUNDS_SOFT_LO} 句；"
+            "seed 1:1 扩完不够时，中段加「哀求/加码+否决」来回；"
+            "禁止提早收束"
         )
     if "正文总字数须≤" in err:
         parts.append(
@@ -432,6 +441,38 @@ def format_structure_score_feedback(
         if hints:
             parts.append(hints[:500])
     parts.append("禁止另起第二轮；收束槽位落在末段后即停。")
+    return "\n".join(parts)
+
+
+def format_seed_span_block(seed: list[Any] | None) -> str:
+    """seed 条数不足 12 时，强制提示中段加码扩句，禁止 1:1 扩完就停。"""
+    from app.services.daily_story.gold_story.scene import CHAT_LINE_COUNT_MIN
+    from app.services.daily_story.prompts import DAILY_STORY_BODY_CHARS_MIN
+
+    n = 0
+    for item in seed or []:
+        if isinstance(item, dict) and (
+            str(item.get("intent") or item.get("line") or "").strip()
+        ):
+            n += 1
+        elif str(item or "").strip():
+            n += 1
+    need_lines = max(0, CHAT_LINE_COUNT_MIN - n)
+    parts = [
+        f"【篇幅硬卡】dialogue_seed 共 {n} 条；"
+        f"正文必须 ≥{CHAT_LINE_COUNT_MIN} 句且 ≥{DAILY_STORY_BODY_CHARS_MIN} 字。",
+    ]
+    if need_lines > 0:
+        parts.append(
+            f"seed 少于 {CHAT_LINE_COUNT_MIN}：中段至少把 {need_lines} 条"
+            "扩成「哀求/加码 + 否决」两句（共补 ≥"
+            f"{need_lines} 句），禁止 seed 1:1 扩完就停；"
+            "禁止灌尾巴（你给我听好了/这回算清楚等）凑字。"
+        )
+    else:
+        parts.append(
+            "禁止提早收束；句内用 beat 实词写满字数，禁灌尾巴凑字。"
+        )
     return "\n".join(parts)
 
 
