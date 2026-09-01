@@ -751,14 +751,25 @@ async function startReimportJob(params: {
 
 async function handleImportBV() {
   if (selectedIds.value.length) {
-    ElMessage.warning("已选中金故事时请使用「重新导入」按钮");
+    const n = selectedIds.value.length;
+    try {
+      await ElMessageBox.confirm(
+        `将从 BV 重跑转写与结构化，覆盖选中的 ${n} 条金稿。` +
+        "已导出的 gold_chat 不会自动重转。继续？",
+        "批量重新导入",
+        { type: "warning" },
+      );
+    } catch {
+      return;
+    }
+    await startReimportJob({ ids: [...selectedIds.value] });
     return;
   }
   let raw = "";
   try {
     const { value } = await ElMessageBox.prompt(
       "输入 BV 号或 B 站视频链接。已入库的会覆盖金稿，未入库的会新导入。",
-      "导入BV",
+      "从 BV 导入",
       {
         inputPlaceholder: "BV1xxxx 或视频链接",
         confirmButtonText: "开始导入",
