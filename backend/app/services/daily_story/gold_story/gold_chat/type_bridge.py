@@ -16,6 +16,7 @@ from app.services.daily_story.gold_story.types import (
     mechanism_label,
     normalize_structure_type,
 )
+from app.services.daily_story.gold_story.structure_resolve import resolve_structure_row
 from app.services.daily_story.story_types import (
     STORY_TYPE_LINES,
     revision_hints_for_type,
@@ -322,9 +323,8 @@ def _seed_suggests_g(seed: list[Any] | None) -> bool:
 
 
 def resolve_gold_chat_structure_row(row: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
-    """gold_chat 入口纠偏 structure_type（mapping_note + seed 强信号）。"""
-    notes: list[str] = []
-    out = dict(row)
+    """gold_chat 入口纠偏 structure_type（M2+C→M8+J、mapping_note+seed→G）。"""
+    out, notes = resolve_structure_row(row)
     payload = out.get("payload") if isinstance(out.get("payload"), dict) else {}
     payload = copy.deepcopy(payload)
     mechanism = str(out.get("mechanism") or "").strip().upper()

@@ -294,10 +294,45 @@ def _row_to_dump(row: dict[str, Any]) -> dict[str, Any]:
     return dump
 
 
+def _row_to_audit_summary(payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    """详情 API 用：从 payload.audit 提取可展示的机审摘要。"""
+    if not isinstance(payload, dict):
+        return None
+    audit = payload.get("audit")
+    if not isinstance(audit, dict):
+        return None
+    reasons_raw = audit.get("reject_reasons") or audit.get("rule_reasons") or []
+    reasons = [str(r).strip() for r in reasons_raw if str(r).strip()]
+    llm = audit.get("llm") if isinstance(audit.get("llm"), dict) else {}
+    note = str(llm.get("audit_notes") or "").strip()
+    stage = str(audit.get("stage") or "").strip() or None
+    passed = audit.get("pass")
+    scores: dict[str, Any] = {}
+    for key in ("sibling_fit", "age_fit", "conflict_usable", "mapping_fit"):
+        val = llm.get(key)
+        if val is not None:
+            scores[key] = val
+    if passed is None and not reasons and not note and not stage:
+        return None
+    summary: dict[str, Any] = {}
+    if passed is not None:
+        summary["pass"] = bool(passed)
+    if stage:
+        summary["stage"] = stage
+    if reasons:
+        summary["reject_reasons"] = reasons
+    if note:
+        summary["audit_notes"] = note
+    if scores:
+        summary["llm_scores"] = scores
+    return summary or None
+
+
 def _row_to_detail_header(row: dict[str, Any]) -> dict[str, Any]:
-    payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+    raw_payload = row.get("payload")
+    payload: dict[str, Any] = raw_payload if isinstance(raw_payload, dict) else {}
     sid = str(row.get("source_id") or "").strip()
-    return {
+    out = {
         "id": row.get("id"),
         "source_id": sid,
         "url": payload.get("bili_url") or row.get("url"),
@@ -310,6 +345,10 @@ def _row_to_detail_header(row: dict[str, Any]) -> dict[str, Any]:
         "auto_score": row.get("auto_score"),
         "gold_chat_daily_story_id": row.get("gold_chat_daily_story_id"),
     }
+    audit = _row_to_audit_summary(payload)
+    if audit is not None:
+        out["audit"] = audit
+    return out
 
 
 class GoldStoryMgr:

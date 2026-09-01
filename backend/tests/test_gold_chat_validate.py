@@ -545,7 +545,7 @@ def test_refine_bails_on_structural_by_default():
 
 
 def test_gold_story_to_gold_chat_runs_align_pass(monkeypatch):
-    def fake_chat(system: str, _user: str) -> dict:
+    def fake_chat(system: str, _user: str, **_kwargs) -> dict:
         if "对齐精修" in system or "保真精修" in system:
             return {"fixes": _m5h_refine_fixes()}
         return _m5h_story(_m5h_dialogue_v1())
