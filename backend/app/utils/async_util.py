@@ -1,7 +1,9 @@
 """在 gevent 环境中通过原生线程执行阻塞任务与外部命令。
 
 主进程使用 gevent（main.py 设置 thread=False），标准库 threading 仍是真实 OS 线程。
-subprocess 被 gevent patch 后，子线程中不能直接调用 subprocess，需用 os.system 降级。
+subprocess 被 gevent patch 后，非 hub 的 OS 线程不能直接调用 patched subprocess
+（Windows 会报 child watchers are only available on the default loop）；
+``run_in_os_thread`` 内会自动 ``unpatched_subprocess()``，或走 ``run_subprocess_cmd``。
 
 注意：gevent hub 跑在主线程上，主线程里 thread.join 会卡死所有接口；
 等待子线程结果时必须轮询 + gevent.sleep 让出 hub。
@@ -18,8 +20,9 @@ import threading
 import time
 from collections.abc import Callable, Iterable, Sequence
 from concurrent.futures import Future
+from contextlib import contextmanager
 from queue import Empty
-from typing import Optional, TypeVar
+from typing import Any, Iterator, Optional, TypeVar
 
 _T = TypeVar("_T")
 
@@ -37,13 +40,93 @@ def run_in_background(func: Callable[[], None], *, daemon: bool = True) -> None:
         threading.Thread(target=func, daemon=daemon).start()
 
 
+def subprocess_gevent_patched() -> bool:
+    """主进程是否已对 subprocess 做 gevent monkey patch。"""
+    try:
+        from gevent.monkey import is_module_patched
+
+        return bool(is_module_patched("subprocess"))
+    except ImportError:
+        return False
+
+
+@contextmanager
+def unpatched_subprocess() -> Iterator[None]:
+    """在 OS 线程内临时恢复原生 subprocess（gevent patch 后子线程不能直接 Popen）。"""
+    if not subprocess_gevent_patched():
+        yield
+        return
+
+    import subprocess as sp
+    from gevent.monkey import get_original
+
+    saved: dict[str, Any] = {}
+    for name in ("Popen", "run", "call", "check_call", "check_output"):
+        if not hasattr(sp, name):
+            continue
+        try:
+            original = get_original("subprocess", name)
+        except AttributeError:
+            original = get_original("subprocess", name, getattr(sp, name))
+        current = getattr(sp, name)
+        if original is not None and original is not current:
+            saved[name] = current
+            setattr(sp, name, original)
+    try:
+        yield
+    finally:
+        for name, patched in saved.items():
+            setattr(sp, name, patched)
+
+
+def run_subprocess_cmd(
+    cmd: Sequence[str],
+    *,
+    timeout: float = 600.0,
+    check: bool = True,
+    cwd: str | None = None,
+    env: dict[str, str] | None = None,
+) -> tuple[int, str, str]:
+    """子进程统一入口：hub 上用 os.system 降级，OS 线程用原生 subprocess。"""
+    if _on_gevent_hub() and subprocess_gevent_patched():
+        code, stdout, stderr = run_subprocess_safe(
+            list(cmd),
+            timeout=timeout,
+            cwd=cwd,
+            env=env,
+        )
+    else:
+        with unpatched_subprocess():
+            proc = subprocess.run(
+                list(cmd),
+                capture_output=True,
+                encoding="utf-8",
+                timeout=timeout,
+                check=False,
+                cwd=cwd,
+                env=env,
+            )
+            code = int(proc.returncode)
+            stdout = proc.stdout or ""
+            stderr = proc.stderr or ""
+    if check and code != 0:
+        detail = (stderr or stdout or "").strip() or f"exit {code}"
+        raise RuntimeError(f"command failed: {detail}")
+    return code, stdout, stderr
+
+
 def run_in_os_thread(func: Callable[[], None], *, daemon: bool = True) -> None:
     """CPU / 子进程密集任务：真 OS 线程，避免占满 gevent hub。
 
     适用于转写、OCR、大批量 LLM 等长时间不 yield 的工作。
     调用方须在 func 内自行建立 Flask ``app_context``。
+    gevent patch 后子线程内须恢复原生 subprocess（yt-dlp/ffmpeg 等）。
     """
-    threading.Thread(target=func, daemon=daemon).start()
+    def _wrapper() -> None:
+        with unpatched_subprocess():
+            func()
+
+    threading.Thread(target=_wrapper, daemon=daemon).start()
 
 
 def _on_gevent_hub() -> bool:

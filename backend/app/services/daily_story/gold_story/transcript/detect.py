@@ -10,13 +10,13 @@ from __future__ import annotations
 import logging
 import shutil
 import statistics
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 
 from app.config import Config
+from app.utils.async_util import run_subprocess_cmd
 
 logger = logging.getLogger(__name__)
 
@@ -74,11 +74,9 @@ def _probe_duration(video_path: Path) -> float:
         "default=noprint_wrappers=1:nokey=1",
         str(video_path),
     ]
-    result = subprocess.run(cmd, capture_output=True, encoding="utf-8")
-    if result.returncode != 0:
-        return 0.0
+    _, stdout, _ = run_subprocess_cmd(cmd, check=False, timeout=60.0)
     try:
-        return float((result.stdout or "").strip())
+        return float((stdout or "").strip())
     except ValueError:
         return 0.0
 
@@ -119,10 +117,7 @@ def extract_sample_frame(
         vf,
         str(output_path),
     ]
-    result = subprocess.run(cmd, capture_output=True, encoding="utf-8")
-    if result.returncode != 0:
-        stderr = (result.stderr or "").strip() or "unknown ffmpeg error"
-        raise RuntimeError(f"ffmpeg sample frame failed: {stderr}")
+    run_subprocess_cmd(cmd, check=True)
     return output_path
 
 
@@ -144,10 +139,7 @@ def extract_full_sample_frame(
         "1",
         str(output_path),
     ]
-    result = subprocess.run(cmd, capture_output=True, encoding="utf-8")
-    if result.returncode != 0:
-        stderr = (result.stderr or "").strip() or "unknown ffmpeg error"
-        raise RuntimeError(f"ffmpeg sample frame failed: {stderr}")
+    run_subprocess_cmd(cmd, check=True)
     return output_path
 
 
