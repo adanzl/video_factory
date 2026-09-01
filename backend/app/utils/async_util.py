@@ -1,9 +1,10 @@
 """在 gevent 环境中通过原生线程执行阻塞任务与外部命令。
 
-主进程使用 gevent（main.py 设置 thread=False），标准库 threading 仍是真实 OS 线程。
-subprocess 被 gevent patch 后，非 hub 的 OS 线程不能直接调用 patched subprocess
-（Windows 会报 child watchers are only available on the default loop）；
-``run_in_os_thread`` 内会自动 ``unpatched_subprocess()``，或走 ``run_subprocess_cmd``。
+主进程使用 gevent（main.py：``subprocess=True, thread=False``），
+标准库 threading 仍是真实 OS 线程。
+gevent patch subprocess 后，Linux 会把 ``_fork_exec`` 置 ``None``，
+非 hub 的 OS 线程不能直接用 patched Popen；
+``run_in_os_thread`` 内会 ``unpatched_subprocess()`` 补回原生符号。
 
 注意：gevent hub 跑在主线程上，主线程里 thread.join 会卡死所有接口；
 等待子线程结果时必须轮询 + gevent.sleep 让出 hub。
@@ -50,25 +51,62 @@ def subprocess_gevent_patched() -> bool:
         return False
 
 
+def _original_subprocess_attr(name: str, current: Any) -> Any:
+    """取 gevent 保存的原生符号；Linux 上还需补回被置空的 _fork_exec。"""
+    from gevent.monkey import get_original
+
+    try:
+        original = get_original("subprocess", name)
+    except (AttributeError, KeyError, TypeError):
+        original = None
+    if original is not None:
+        return original
+    if name == "_posixsubprocess":
+        try:
+            import _posixsubprocess as posix_mod
+
+            return posix_mod
+        except ImportError:
+            return current
+    if name == "_fork_exec":
+        try:
+            import _posixsubprocess as posix_mod
+
+            return getattr(posix_mod, "fork_exec", current)
+        except ImportError:
+            return current
+    return current
+
+
 @contextmanager
 def unpatched_subprocess() -> Iterator[None]:
-    """在 OS 线程内临时恢复原生 subprocess（gevent patch 后子线程不能直接 Popen）。"""
+    """在 OS 线程内临时恢复原生 subprocess。
+
+    gevent ``patch(subprocess=True)`` 不只替换 Popen/run，还会把 Linux 的
+    ``subprocess._fork_exec`` / ``_posixsubprocess`` 置成 ``None``。
+    只还原公开 API 时，原生 Popen 会报 ``'NoneType' object is not callable``。
+    """
     if not subprocess_gevent_patched():
         yield
         return
 
     import subprocess as sp
-    from gevent.monkey import get_original
 
     saved: dict[str, Any] = {}
-    for name in ("Popen", "run", "call", "check_call", "check_output"):
+    names = (
+        "Popen",
+        "run",
+        "call",
+        "check_call",
+        "check_output",
+        "_fork_exec",
+        "_posixsubprocess",
+    )
+    for name in names:
         if not hasattr(sp, name):
             continue
-        try:
-            original = get_original("subprocess", name)
-        except AttributeError:
-            original = get_original("subprocess", name, getattr(sp, name))
         current = getattr(sp, name)
+        original = _original_subprocess_attr(name, current)
         if original is not None and original is not current:
             saved[name] = current
             setattr(sp, name, original)

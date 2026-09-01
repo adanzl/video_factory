@@ -827,3 +827,59 @@ def test_patch_m5_soften_premature_push_blame():
     assert changed
     assert "推我" not in patched["dialogue"][3]["line"]
     assert "凶我" in patched["dialogue"][3]["line"]
+
+
+def test_collect_align_issues_expand_clutter_is_structural():
+    story = {
+        "story_type": "J",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "这是我的地盘，你给我听好了！"},
+            {"speaker": "灿灿", "line": "该你走，这回算清楚！"},
+            {"speaker": "昭昭", "line": "看招，别再装傻！"},
+            {"speaker": "灿灿", "line": "谁赢谁说了算，说了就不改！"},
+        ]
+        * 3,
+    }
+    issues = collect_align_issues(
+        story,
+        structure_type="J",
+        mechanism="M8",
+        dialogue_seed=[],
+    )
+    kinds = {str(x.get("kind") or "") for x in issues}
+    assert "保真-垫字过密" in kinds
+    assert should_regenerate_pass1(issues)
+
+
+def test_collect_align_issues_seed_speaker_mismatch():
+    seed = [
+        {"speaker": "昭昭", "intent": "拿出最强形态来！"},
+        {"speaker": "灿灿", "intent": "草莓熊肘击！"},
+        {"speaker": "昭昭", "intent": "啊，我输了！"},
+    ]
+    story = {
+        "story_type": "J",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "这是我的地盘，你走开！"},
+            {"speaker": "灿灿", "line": "我先来的，该你走！"},
+            {"speaker": "昭昭", "line": "哼，看招！"},
+            {"speaker": "灿灿", "line": "你敢打我？"},
+            {"speaker": "昭昭", "line": "谁赢谁说了算！"},
+            {"speaker": "灿灿", "line": "拿出最强形态来！"},  # 错：seed 属昭昭
+            {"speaker": "昭昭", "line": "草莓熊肘击！"},  # 错：seed 属灿灿
+            {"speaker": "灿灿", "line": "啊，我输了！"},  # 错
+            {"speaker": "昭昭", "line": "以后玩具都归我！"},
+            {"speaker": "灿灿", "line": "现在就得听我的！"},
+            {"speaker": "昭昭", "line": "哼，等我长大再算账！"},
+            {"speaker": "灿灿", "line": "听我的，我说了算！"},
+        ],
+    }
+    issues = collect_align_issues(
+        story,
+        structure_type="J",
+        mechanism="M8",
+        dialogue_seed=seed,
+    )
+    kinds = {str(x.get("kind") or "") for x in issues}
+    assert "保真-seed角色" in kinds
+    assert should_regenerate_pass1(issues)

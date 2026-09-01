@@ -85,13 +85,15 @@ source_type：{source_type}（tutorial 时禁保留教程口吻/第几招）
 - **字数硬卡（最优先）**：正文 dialogue 总字数必须 ≥{chars_min} 且 ≤{chars_max}；
   目标落在 {chars_soft_lo}–{chars_soft_hi}。**未满 {chars_min} 禁止收束闭合**
 - **句数**：对白宜 {rounds_soft_lo}–{rounds_soft_hi} 轮，最多 {rounds_hard_max} 轮；
-  禁止循环复读注水；不够字数时用句内扩写或必要反应句补满，勿提早停笔
+  禁止循环复读注水；不够字数时用**beat 相关实词**句内扩写或必要反应句补满，
+  禁灌尾巴（「你给我听好了/这回算清楚/别再装傻/说了就不改」等）
 - **收束时机**：字数已 ≥{chars_min} 且冲突按 closing 落实后立刻闭合；
   禁止超过 {chars_max}，禁止顶着上限注水
 - **单句** ≤{max_line} 字；**key** 须 {key_min}–{key_max} 字；
   **punchline_explain 必填**，含「{structure_type}类」前缀，宜短
 - **seed**：通常每条扩 1–2 句；可保留关键词，禁止逐字照抄；
-  禁止一条 seed 改写成多版本/草稿并列
+  禁止一条 seed 改写成多版本/草稿并列；
+  **seed 专属动作/口号须由 seed 标注 speaker 来说**（禁角色对调）
 - **seed 收束**：全部拍写完且 closing 落实后即停；禁止另起第二轮；
   禁止同一句对白重复循环凑字数
 - **setting**：地点 + 冲突物落点（谁面前/谁端着哪件）；双方各持一物须两件都写；禁止只写地点和「在吵架」
@@ -136,12 +138,14 @@ _FIX_USER = """校验错误：
 
 规则：
 - 正文 dialogue 总字数必须落在 {chars_min}–{chars_max}（目标 {chars_soft_lo}–{chars_soft_hi}）
-- **未满 {chars_min}**：必须扩写到 ≥{chars_min}（句内加字或加必要反应句，禁复读循环）
+- **未满 {chars_min}**：必须扩写到 ≥{chars_min}（句内加 **beat 相关实词**，
+  禁「你给我听好了/这回算清楚/别再装傻」等灌尾；可加必要反应句，禁复读循环）
 - **超过 {chars_max}**：压缩到上限内（可删注水句，勿另起第二轮）
 - 对白宜 {rounds_soft_lo}–{rounds_soft_hi} 轮，最多 {rounds_hard_max} 轮；每句 ≤{max_line} 字
 - key 须 {key_min}–{key_max} 字；缺 punchline_explain 须补且含类型前缀
 - 妈妈台词须 ≤{mom_lines_max} 句；末句宜姐弟对白（非 hard）
 - 若违反金稿对齐 checklist（跳步/自编暖收/互毁缺「也」的依据/M5 无加码），须按 checklist 补拍
+- seed 专属短语须由 seed 标注 speaker 来说，禁角色对调
 - 禁词须同义改写：{banned_literals}
 - 转述/旁白/括号说明须改为当场对白
 - speaker 非法须改为昭昭/灿灿/妈妈

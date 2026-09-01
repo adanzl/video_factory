@@ -515,7 +515,7 @@ _GOLD_CHAT_REACT_LINES: tuple[tuple[str, str], ...] = (
     ("昭昭", "凭什么听你的！"),
     ("灿灿", "我说怎样就怎样！"),
 )
-# 偏短句句内加可拍尾巴（姐弟通用；可复用到不同句）
+# 已停用：句内灌尾巴毁可读性；保留常量仅供机审/剥除识别
 _GOLD_CHAT_LINE_EXPAND: tuple[str, ...] = (
     "，你给我听好了",
     "，这回算清楚",
@@ -523,6 +523,16 @@ _GOLD_CHAT_LINE_EXPAND: tuple[str, ...] = (
     "，我可记住了",
     "，说了就不改",
     "，再闹我可恼了",
+)
+_GOLD_CHAT_EXPAND_CLUTTER: tuple[str, ...] = tuple(
+    c.lstrip("，,") for c in _GOLD_CHAT_LINE_EXPAND
+) + (
+    "少废话听我的",
+    "你少来这套",
+    "我就不服",
+    "你再闹试试",
+    "凭什么听你的",
+    "我说怎样就怎样",
 )
 _RE_C_TONE_STACK = re.compile(
     r"(?:[呢嘛的了着好]{2,}呀|呢了|呢呀)[！。！？…]?$"
@@ -863,126 +873,62 @@ def _pad_gold_chat_to_min_chars(
 
 
 def _ensure_gold_chat_min_lines(story: dict[str, Any]) -> tuple[dict[str, Any], bool]:
-    """句数 <12 时在收束前插抽象反应句（保交替，不改末 2 句）。"""
-    import copy
+    """已停用：硬插「少废话听我的」等反应句毁可读性。
 
-    from app.services.daily_story.gold_story.scene import CHAT_LINE_COUNT_MIN
-
-    dialogue = story.get("dialogue")
-    if not isinstance(dialogue, list):
-        return story, False
-    rows = [x for x in dialogue if isinstance(x, dict) and str(x.get("line") or "").strip()]
-    if len(rows) >= CHAT_LINE_COUNT_MIN:
-        return story, False
-    # 只补 near-miss（差 ≤3 句）；差太多交 Pass1 重生成，勿硬插成空壳
-    if CHAT_LINE_COUNT_MIN - len(rows) > PASS1_SHORT_LINE_DEFICIT_MAX:
-        return story, False
-
-    out = copy.deepcopy(story)
-    dlg = list(out.get("dialogue") or [])
-    react_i = 0
-    guard = 0
-    while len(dlg) < CHAT_LINE_COUNT_MIN and guard < 8:
-        guard += 1
-        insert_at = max(2, len(dlg) - 2)
-        prev = dlg[insert_at - 1] if insert_at >= 1 else {}
-        prev_sp = str(prev.get("speaker") or "").strip()
-        want_sp = "灿灿" if prev_sp == "昭昭" else "昭昭"
-        # 选匹配 speaker 的反应句
-        line = ""
-        for _ in range(len(_GOLD_CHAT_REACT_LINES)):
-            sp, ln = _GOLD_CHAT_REACT_LINES[react_i % len(_GOLD_CHAT_REACT_LINES)]
-            react_i += 1
-            if sp == want_sp:
-                line = ln
-                break
-        if not line:
-            line = "少来！" if want_sp == "昭昭" else "听我的！"
-        # 避免与邻句完全相同
-        neigh = {
-            str(dlg[insert_at - 1].get("line") or "") if insert_at >= 1 else "",
-            str(dlg[insert_at].get("line") or "") if insert_at < len(dlg) else "",
-        }
-        if line in neigh:
-            continue
-        dlg.insert(insert_at, {"speaker": want_sp, "line": line})
-    out["dialogue"] = dlg
-    return out, len(dlg) > len(rows)
+    句数不足交 Pass1 重生成写满；勿本地注水。
+    """
+    return story, False
 
 
 def _expand_short_gold_chat_lines(story: dict[str, Any]) -> tuple[dict[str, Any], bool]:
-    """偏短句加可拍尾巴，补到 hard min（每句最多一条尾巴，禁叠灌）。"""
+    """已停用：句内灌「你给我听好了」等尾巴毁可读性。
+
+    偏短交 Pass1 FIX / 外层重生成写满；本地只允许粒子 near-miss 垫字。
+    """
+    return story, False
+
+
+def _strip_expand_clutter_line(line: str) -> str:
+    """剥句内扩写灌尾巴（可读性硬伤）。"""
+    s = str(line or "").strip()
+    if not s:
+        return s
+    punct = s[-1] if s[-1] in "！。？…!" else ""
+    body = s[:-1] if punct else s
+    for clause in _GOLD_CHAT_EXPAND_CLUTTER:
+        body = body.replace(f"，{clause}", "").replace(clause, "")
+    body = re.sub(r"[，,]{2,}", "，", body).strip("，, ")
+    if not body:
+        return s
+    return body + (punct or "！")
+
+
+def patch_sanitize_expand_clutter(
+    story: dict[str, Any],
+) -> tuple[dict[str, Any], bool]:
+    """剥扩写灌尾巴；字数跌破 min 交上层重生成，勿再灌回去。"""
     import copy
 
-    from app.services.daily_story.dialogue_text import DAILY_STORY_LINE_CHARS_MAX
-
-    total = dialogue_total_chars(story)
-    need = DAILY_STORY_BODY_CHARS_MIN - total
-    if need <= 0:
-        return story, False
-
     out = copy.deepcopy(story)
-    dialogue = out.get("dialogue")
-    if not isinstance(dialogue, list) or not dialogue:
-        return story, False
-
     changed = False
-    touched: set[int] = set()
-    used_clauses: set[str] = set()
-    for _ in range(8):
-        need = DAILY_STORY_BODY_CHARS_MIN - dialogue_total_chars(out)
-        if need <= 0:
-            break
-        candidates = [
-            (i, item)
-            for i, item in enumerate(dialogue)
-            if isinstance(item, dict)
-            and i not in touched
-            and str(item.get("speaker") or "") in {"昭昭", "灿灿"}
-            and 4 <= len(str(item.get("line") or "").strip()) < 16
-        ]
-        if not candidates:
-            break
-        candidates.sort(key=lambda x: len(str(x[1].get("line") or "")))
-        progressed = False
-        for idx, item in candidates:
-            need = DAILY_STORY_BODY_CHARS_MIN - dialogue_total_chars(out)
-            if need <= 0:
-                break
-            line = str(item.get("line") or "").strip()
-            core = line.rstrip("！。？…!")
-            punct = line[len(core) :] or "！"
-            room = max(0, DAILY_STORY_LINE_CHARS_MAX - len(line))
-            if room < 4:
-                touched.add(idx)
-                continue
-            for clause in (
-                [c for c in _GOLD_CHAT_LINE_EXPAND if c.lstrip("，,") not in used_clauses]
-                + [c for c in _GOLD_CHAT_LINE_EXPAND if c.lstrip("，,") in used_clauses]
-            ):
-                bare = clause.lstrip("，,")
-                if bare in core:
-                    continue
-                if len(clause) > room or len(clause) > need:
-                    continue
-                item["line"] = (core + clause + punct)[:DAILY_STORY_LINE_CHARS_MAX]
-                used_clauses.add(bare)
-                touched.add(idx)
-                changed = True
-                progressed = True
-                break
-            if progressed:
-                break
-        if not progressed:
-            break
+    for item in out.get("dialogue") or []:
+        if not isinstance(item, dict):
+            continue
+        old = str(item.get("line") or "").strip()
+        if not old or not any(c in old for c in _GOLD_CHAT_EXPAND_CLUTTER):
+            continue
+        new = _strip_expand_clutter_line(old)
+        if new != old:
+            item["line"] = new
+            changed = True
     return out, changed
 
 
 def _ensure_gold_chat_min_chars(story: dict[str, Any]) -> tuple[dict[str, Any], bool]:
-    """垫到 hard min；先补句数，再句内扩写/粒子垫；sanitize 剥叠后再垫。"""
-    data, changed_lines = _ensure_gold_chat_min_lines(story)
-    data, changed_exp = _expand_short_gold_chat_lines(data)
-    changed = changed_lines or changed_exp
+    """垫到 hard min；先补句数，再粒子 near-miss；禁句内灌尾巴。"""
+    data, clutter_changed = patch_sanitize_expand_clutter(story)
+    data, changed_lines = _ensure_gold_chat_min_lines(data)
+    changed = clutter_changed or changed_lines
 
     data2, changed_pad = _patch_gold_chat_near_miss_chars(data)
     data, changed = data2, changed or changed_pad
@@ -990,20 +936,37 @@ def _ensure_gold_chat_min_chars(story: dict[str, Any]) -> tuple[dict[str, Any], 
         data3, changed3 = _pad_gold_chat_to_min_chars(data)
         data, changed = data3, changed or changed3
 
-    # 垫 ↔ 剥叠：最多几轮，直到 ≥min 或垫不动
+    # 垫 ↔ 剥叠：最多几轮，直到 ≥min 或垫不动（不再走 expand 灌尾）
     for _ in range(4):
         data, san = patch_sanitize_c_tone_stack(data)
         data, san2 = patch_sanitize_pad_suffix(data)
-        changed = changed or san or san2
+        data, san3 = patch_sanitize_expand_clutter(data)
+        changed = changed or san or san2 or san3
         if dialogue_total_chars(data) >= DAILY_STORY_BODY_CHARS_MIN:
             return data, changed
         before = dialogue_total_chars(data)
-        data, exp_again = _expand_short_gold_chat_lines(data)
         data, pad_again = _pad_gold_chat_to_min_chars(data)
-        changed = changed or exp_again or pad_again
-        if (not exp_again and not pad_again) or dialogue_total_chars(data) <= before:
+        changed = changed or pad_again
+        if (not pad_again) or dialogue_total_chars(data) <= before:
             break
     return data, changed
+
+
+def _post_align_j_closing_touchup(
+    chat: dict[str, Any],
+    *,
+    structure_type: str,
+) -> tuple[dict[str, Any], list[str]]:
+    """align 后只跑 J 末句镇住（勿全量 type pipeline，免把 H 连说改坏）。"""
+    st = str(structure_type or chat.get("story_type") or "").strip().upper()
+    if st != "J":
+        return chat, []
+    from app.services.daily_story.story_types.j.patch import patch_j_body
+
+    out = dict(chat)
+    out["story_type"] = "J"
+    notes = patch_j_body(out)
+    return out, list(notes or [])
 
 
 def _gold_chat_post_pad_cleanup(story: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
@@ -2086,13 +2049,13 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
             chat, _ = patch_sanitize_c_tone_stack(chat)
             chat, _ = patch_sanitize_pad_suffix(chat)
             chat, _ = _ensure_gold_chat_min_chars(chat)
-            # align 可能写回昭昭「哼」软收末句；结构门控前再跑类型补丁
-            chat, post_notes = apply_type_body_pipeline(
+            # align 可能写回昭昭「哼」软收末句；只跑 J 末句镇住，勿全量 type pipeline
+            chat, post_notes = _post_align_j_closing_touchup(
                 chat, structure_type=structure_type
             )
             if post_notes:
                 logger.info(
-                    "gold_chat post-align type patch: %s",
+                    "gold_chat post-align J touchup: %s",
                     "；".join(str(n) for n in post_notes[:4]),
                 )
             if conflict_core:
@@ -2143,7 +2106,7 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
                         theme=str(row.get("title") or lifted.get("scene_title") or ""),
                         payload=payload,
                     )
-                    lifted, _ = apply_type_body_pipeline(
+                    lifted, _ = _post_align_j_closing_touchup(
                         lifted, structure_type=structure_type
                     )
                     if conflict_core:

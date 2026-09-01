@@ -13,10 +13,10 @@
         重新导入
       </el-button>
       <el-button type="success" size="small" :loading="reimporting" @click="handleImportBV">
-        导入BV
+        从BV导入
       </el-button>
       <el-button type="primary" size="small" :disabled="!selectedIds.length" :loading="batching" @click="handleBatchConvert">
-        批量转 gold_chat{{ selectedIds.length ? `（${selectedIds.length}）` : "" }}
+        批量转对话{{ selectedIds.length ? `（${selectedIds.length}）` : "" }}
       </el-button>
       <el-button type="danger" size="small" :disabled="!selectedIds.length" :loading="deleting" @click="handleBatchDelete">
         批量删除{{ selectedIds.length ? `（${selectedIds.length}）` : "" }}
