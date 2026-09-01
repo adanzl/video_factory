@@ -700,7 +700,7 @@ function onDetailConverted(payload?: {
 }
 
 function onDetailClosed() {
-  void fetchItems();
+  void fetchItems({ quiet: true });
 }
 
 function onDetailReimported() {
@@ -997,7 +997,7 @@ onUnmounted(() => {
   stopCollectPolling();
   stopReimportPolling();
 });
-usePageRefresh(fetchItems);
+usePageRefresh(() => void fetchItems({ quiet: true }));
 </script>
 
 <style scoped>
