@@ -135,6 +135,17 @@ def _j_repetitive_veto_story() -> dict:
     return story
 
 
+def test_j_validate_accepts_m8_surrender_phrases():
+    story = _j_veto_story()
+    story["dialogue"] = story["dialogue"][:12] + [
+        {"speaker": "昭昭", "line": "好吧好吧，我输了还不行吗！"},
+        {"speaker": "灿灿", "line": "输了就听话，反正我说了算呀。"},
+    ]
+    errors: list[str] = []
+    append_j_body_errors(story, errors)
+    assert errors == [], errors
+
+
 def test_j_patch_dedupes_authority_repeat():
     from app.services.daily_story.story_types.j.patch import patch_j_body
 

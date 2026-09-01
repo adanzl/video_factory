@@ -64,7 +64,7 @@
         <template #default="{ row }">
           <el-tag v-if="isGoldChatConverting(row)" type="warning" size="small">
             <span class="inline-flex items-center gap-1">
-              处理中
+              转换中
             </span>
           </el-tag>
           <el-tag v-else-if="row.has_gold_chat" type="success" size="small">已导出</el-tag>
@@ -182,6 +182,7 @@ const deleting = ref(false);
 const reimportingIds = ref<number[]>([]);
 const reimportingSourceIds = ref<string[]>([]);
 const convertingIds = ref<number[]>([]);
+const convertingSourceIds = ref<string[]>([]);
 const archivingId = ref<number | null>(null);
 const deletingId = ref<number | null>(null);
 const selectedIds = ref<number[]>([]);
@@ -267,6 +268,39 @@ function clearReimportTargets() {
 
 function clearConvertingTargets() {
   convertingIds.value = [];
+  convertingSourceIds.value = [];
+}
+
+function setConvertingTargets(opts: {
+  ids?: number[] | null;
+  sourceIds?: string[] | null;
+}) {
+  const ids = (opts.ids || []).filter((id) => Number.isFinite(id) && id > 0);
+  const sourceIds = (opts.sourceIds || [])
+    .map((s) => String(s || "").trim())
+    .filter(Boolean);
+  convertingIds.value = [...new Set([...convertingIds.value, ...ids])];
+  convertingSourceIds.value = [
+    ...new Set([...convertingSourceIds.value, ...sourceIds]),
+  ];
+}
+
+function removeConvertingTargets(opts: {
+  ids?: number[] | null;
+  sourceIds?: string[] | null;
+}) {
+  const ids = new Set((opts.ids || []).filter((id) => Number.isFinite(id) && id > 0));
+  const sourceIds = new Set(
+    (opts.sourceIds || []).map((s) => String(s || "").trim()).filter(Boolean),
+  );
+  if (ids.size) {
+    convertingIds.value = convertingIds.value.filter((id) => !ids.has(id));
+  }
+  if (sourceIds.size) {
+    convertingSourceIds.value = convertingSourceIds.value.filter(
+      (sid) => !sourceIds.has(sid),
+    );
+  }
 }
 
 function setReimportTargets(opts: {
@@ -288,7 +322,9 @@ function isReimportProcessing(row: GoldChatListItem): boolean {
 }
 
 function isGoldChatConverting(row: GoldChatListItem): boolean {
-  return convertingIds.value.includes(row.id);
+  if (convertingIds.value.includes(row.id)) return true;
+  const sid = String(row.source_id || "").trim();
+  return !!sid && convertingSourceIds.value.includes(sid);
 }
 
 function stopCollectPolling() {
@@ -493,19 +529,36 @@ function openTranscriptFromDetail(payload: {
   showTranscript.value = true;
 }
 
-function onDetailConverting() {
-  if (currentId.value != null) {
-    convertingIds.value = [currentId.value];
-  }
+function onDetailConverting(payload?: {
+  id?: number | null;
+  sourceId?: string | null;
+}) {
+  setConvertingTargets({
+    ids: payload?.id != null ? [payload.id] : currentId.value != null ? [currentId.value] : [],
+    sourceIds: payload?.sourceId
+      ? [payload.sourceId]
+      : currentSourceId.value
+        ? [currentSourceId.value]
+        : [],
+  });
 }
 
-function onDetailConverted() {
-  clearConvertingTargets();
+function onDetailConverted(payload?: {
+  id?: number | null;
+  sourceId?: string | null;
+}) {
+  if (payload?.id != null || payload?.sourceId) {
+    removeConvertingTargets({
+      ids: payload?.id != null ? [payload.id] : undefined,
+      sourceIds: payload?.sourceId ? [payload.sourceId] : undefined,
+    });
+  } else {
+    clearConvertingTargets();
+  }
   void fetchItems({ quiet: true });
 }
 
 function onDetailClosed() {
-  clearConvertingTargets();
   void fetchItems();
 }
 
@@ -631,7 +684,13 @@ async function handleBatchConvert() {
     }
   }
   batching.value = true;
-  convertingIds.value = [...selectedIds.value];
+  setConvertingTargets({
+    ids: selectedIds.value,
+    sourceIds: items.value
+      .filter((row) => selectedIds.value.includes(row.id))
+      .map((row) => String(row.source_id || "").trim())
+      .filter(Boolean),
+  });
   try {
     const res = await batchConvertGoldChat({
       ids: selectedIds.value,
@@ -644,7 +703,7 @@ async function handleBatchConvert() {
     handleError(e, "批量转换失败");
   } finally {
     batching.value = false;
-    convertingIds.value = [];
+    clearConvertingTargets();
   }
 }
 

@@ -342,8 +342,8 @@ const emit = defineEmits<{
   (e: "closed"): void;
   (e: "imported"): void;
   (e: "status-changed"): void;
-  (e: "converting"): void;
-  (e: "converted"): void;
+  (e: "converting", payload: { id?: number | null; sourceId?: string | null }): void;
+  (e: "converted", payload: { id?: number | null; sourceId?: string | null }): void;
   (e: "reimported"): void;
   (e: "open-transcript", payload: { id?: number | null; sourceId?: string | null; title?: string | null }): void;
 }>();
@@ -469,8 +469,12 @@ async function handleConvert() {
       return;
     }
   }
+  const convertTarget = {
+    id: props.goldStoryId ?? detail.value?.id ?? null,
+    sourceId: props.sourceId ?? detail.value?.source_id ?? null,
+  };
   converting.value = true;
-  emit("converting");
+  emit("converting", convertTarget);
   try {
     const res = await convertGoldChat({
       id: props.goldStoryId ?? undefined,
@@ -482,10 +486,10 @@ async function handleConvert() {
     } else {
       ElMessage.success(`已转换：${res.chat_lines ?? 0} 句`);
     }
-    emit("converted");
+    emit("converted", convertTarget);
     await loadDetail();
   } catch (e) {
-    emit("converted");
+    emit("converted", convertTarget);
     handleError(e, "转换失败");
     await loadDetail();
   } finally {
