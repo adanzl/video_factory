@@ -141,8 +141,131 @@ def validate_dialogue_seed_speakers(seed: list[Any]) -> list[str]:
 _NARRATION_LINE_RE = re.compile(
     r"(?:^|[，,])"
     r"(?:松手|转身离开|愣住|留下面面相觑|推向(?:灿灿|昭昭)|"
-    r"放下牛奶|心里不是滋味，但坚持)"
+    r"放下牛奶|心里不是滋味，但坚持)|"
+    # 第三人称分镜/动作说明（抽象形态，非单篇词表）
+    r"被(?:灿灿|昭昭|妈妈)[^。！？]{0,20}|"
+    r"^(?:叹气|愣住)[，,]|"
+    r"(?:一把|挣扎着|护着手)[^。！？]{0,24}"
+    r"(?:揪|按|拍|打|推|抓)|"
+    r"(?:揪住|按住|推向)(?:昭昭|灿灿|她|他)|"
+    r"按在地上|"
+    r"又?补[一二两三四五两1-5]?下|"
+    r"缩到角落|嘟囔着|一边[^，。]{0,10}一边|"
+    r"(?:哼，)?(?:缩到|嘟囔|趴下|扭头走开)"
 )
+_RE_ACTION_CHUNK = re.compile(
+    r"又?补[一二两三四五两1-5]?下|按在地上|"
+    r"(?:一把|挣扎着|护着手)[^。！？]{0,24}(?:揪|按|拍|打|推|抓)|"
+    r"(?:揪住|按住|推向)(?:昭昭|灿灿|她|他)|"
+    r"被(?:灿灿|昭昭|妈妈)[^。！？]{0,16}|"
+    r"缩到角落|嘟囔着|"
+    r"^(?:叹气|愣住)$"
+)
+
+
+def looks_like_narration_line(text: str) -> bool:
+    """对白/seed 是否像分镜动作说明而非可说出口的话。"""
+    line = str(text or "").strip()
+    return bool(line and _NARRATION_LINE_RE.search(line))
+
+
+def rewrite_narration_to_speech(text: str, *, speaker: str = "") -> str:
+    """把动作说明压成可说出口的短句；无口语尾巴则给抽象兜底。"""
+    raw = str(text or "").strip()
+    if not raw or not looks_like_narration_line(raw):
+        return raw
+    sp = str(speaker or "").strip()
+    fallback = (
+        "唉，我管不了你们了" if sp in {"妈妈", "爸爸"} else "你别过来！"
+    )
+    parts = [p.strip() for p in re.split(r"[，,]", raw) if p.strip()]
+    spoken: list[str] = []
+    for part in parts:
+        # 纯动作块即使带「我」也剥掉（如「我补两下」）
+        if _RE_ACTION_CHUNK.search(part) and not re.search(
+            r"[？！]|疼|怕|不服|活该|警告|别逼|松手",
+            part,
+        ):
+            cleaned = _RE_ACTION_CHUNK.sub("", part).strip("，。！？ ")
+            cleaned = re.sub(r"^我$", "", cleaned).strip()
+            if cleaned and re.search(r"[我你]|疼|怕|警告|别", cleaned):
+                spoken.append(cleaned)
+            continue
+        if looks_like_narration_line(part) and not re.search(
+            r"[？！]|警告|别|喊|妈|疼|怕|不服|活该|管不了",
+            part,
+        ):
+            continue
+        if re.search(
+            r"[我你]|[？！]|警告|别|喊|妈|疼|怕|不服|活该|管不了|劝不",
+            part,
+        ):
+            spoken.append(part)
+    if spoken:
+        out = spoken[0]
+        for part in spoken[1:]:
+            if out and out[-1] in "？！。!?":
+                out = f"{out}{part}"
+            else:
+                out = f"{out}，{part}"
+        out = _RE_ACTION_CHUNK.sub("", out)
+        out = re.sub(r"[？！。!?][，,]+", lambda m: m.group(0)[0], out)
+        out = re.sub(r"[，,]{2,}", "，", out)
+        out = re.sub(r"(?:^|[，,])我(?=[，,]|$)", "", out)
+        out = out.strip("，。 ")
+        if not out:
+            return fallback
+        if looks_like_narration_line(out):
+            return fallback
+        if out[-1] not in "？！。!?":
+            out = f"{out}！"
+        return out
+    return fallback
+
+
+def sanitize_dialogue_seed_speech(seed: list[Any] | None) -> list[Any]:
+    """seed intent/line 若是分镜说明，压成可说出口的话（全类型通用）。"""
+    if not isinstance(seed, list):
+        return []
+    out: list[Any] = []
+    for item in seed:
+        if not isinstance(item, dict):
+            out.append(item)
+            continue
+        row = dict(item)
+        sp = str(row.get("speaker") or "").strip()
+        key = "intent" if str(row.get("intent") or "").strip() else "line"
+        text = str(row.get(key) or "").strip()
+        if text and looks_like_narration_line(text):
+            row[key] = rewrite_narration_to_speech(text, speaker=sp)
+        out.append(row)
+    return out
+
+
+def patch_dialogue_narration_to_speech(story: dict[str, Any]) -> list[str]:
+    """正文对白里的分镜说明压成口语。"""
+    notes: list[str] = []
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list):
+        return notes
+    for i, item in enumerate(dialogue):
+        if not isinstance(item, dict):
+            continue
+        sp = str(item.get("speaker") or "").strip()
+        line = str(item.get("line") or "").strip()
+        if not looks_like_narration_line(line):
+            continue
+        new_line = rewrite_narration_to_speech(line, speaker=sp)
+        if looks_like_narration_line(new_line):
+            new_line = (
+                "唉，我管不了你们了"
+                if sp in {"妈妈", "爸爸"}
+                else "你别过来！"
+            )
+        if new_line != line:
+            item["line"] = new_line
+            notes.append(f"旁白→口语[{i + 1}]")
+    return notes
 
 
 def collect_narration_dialogue_errors(dialogue: list[Any]) -> list[str]:
@@ -152,7 +275,7 @@ def collect_narration_dialogue_errors(dialogue: list[Any]) -> list[str]:
         if not isinstance(item, dict):
             continue
         line = str(item.get("line") or "").strip()
-        if line and _NARRATION_LINE_RE.search(line):
+        if looks_like_narration_line(line):
             errors.append(f"dialogue[{i}] narration_not_speech")
     return errors
 

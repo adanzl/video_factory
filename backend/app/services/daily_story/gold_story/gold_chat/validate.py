@@ -1391,10 +1391,12 @@ def validate_chat_hard(
         errors.append(f"妈妈台词须≤{mom_max}句，当前{mom_count}")
 
     line_count = len([x for x in dialogue if isinstance(x, dict) and str(x.get("line") or "").strip()])
+    st = str(story.get("story_type") or "").strip().upper()
+    line_max = CHAT_LINE_COUNT_MAX + (2 if st == "K" else 0)
     if line_count < CHAT_LINE_COUNT_MIN:
         errors.append(f"对白句数须≥{CHAT_LINE_COUNT_MIN}，当前{line_count}")
-    if line_count > CHAT_LINE_COUNT_MAX:
-        errors.append(f"对白句数须≤{CHAT_LINE_COUNT_MAX}，当前{line_count}")
+    if line_count > line_max:
+        errors.append(f"对白句数须≤{line_max}，当前{line_count}")
 
     lenses = _line_lens(dialogue if isinstance(dialogue, list) else [])
     if lenses:

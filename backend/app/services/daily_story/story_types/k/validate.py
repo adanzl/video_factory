@@ -13,6 +13,10 @@ RE_PARENT_FAIL = re.compile(
 RE_STALEMATE = re.compile(r"不和好|僵持|哼|不理|别理|谁怕谁|越劝越")
 RE_H_RECONCILE = re.compile(r"拉手|(?<!不)和好|不打了|对不起|原谅|说好了|齐声")
 RE_A_BACKFIRE = re.compile(r"那不一样|都是听|破功|自相矛盾|你刚才说")
+# closing 须带僵持/劝失败线索；带 H 式和好或纯旁观总结则纠偏
+RE_CLOSING_STALE_CUE = re.compile(
+    r"不和好|僵持|哼|不理|别管|劝不了|管不了|劝失败|劝不动",
+)
 
 
 def _lines_and_speakers(story: dict) -> tuple[list[str], list[str]]:
@@ -31,6 +35,18 @@ def _lines_and_speakers(story: dict) -> tuple[list[str], list[str]]:
         speakers.append(sp)
         lines.append(ln)
     return lines, speakers
+
+
+def repair_closing_intent_for_k(closing_intent: str) -> str:
+    """K：closing 被 H 式和好/缺僵持线索带偏时，收成劝失败+僵持。"""
+    closing = str(closing_intent or "").strip()
+    if not closing:
+        return "大人劝失败，姐弟僵持不和好"
+    if RE_H_RECONCILE.search(closing) or not RE_CLOSING_STALE_CUE.search(closing):
+        if re.search(r"妈妈|爸爸|大人", closing):
+            return "大人劝失败，姐弟僵持不和好"
+        return "姐弟僵持不和好，大人劝不动"
+    return closing
 
 
 def append_k_body_errors(story: dict, errors: list[str]) -> None:
