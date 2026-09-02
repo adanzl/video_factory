@@ -42,7 +42,11 @@ CPU: AMD Ryzen 9 7940HS w/ Radeon 780M Graphics
 
 ## 「专家」
 
-DeepSeek 网页模拟 API，不是 Claude 子代理。涉及提示词方案评审时用户说「和专家商量/达成一致再落地」，指用它的专家模式评审。body `{"question":..., "mode":"expert", "deep_thinking":true}`；新对话不带 `conversation_id`，续聊带返回 id；
+- DeepSeek 网页模拟 API
+- 涉及提示词方案评审时用户说「和专家商量/达成一致再落地」，指用它的专家模式评审
+- body `{"question":..., "mode":"expert", "deep_thinking":true}`
+- 新对话不带 `conversation_id`，续聊带返回 id
+- 除非特别短的问题，否则使用异步模式
 
 ### 接口
 
