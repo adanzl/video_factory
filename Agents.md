@@ -152,3 +152,36 @@ CPU: AMD Ryzen 9 7940HS w/ Radeon 780M Graphics
     `pi install npm:@ifi/pi-background-tasks'
 - pi-web-access 赋予 Pi 网页搜索、URL 抓取、GitHub 仓库克隆等能力
     `pi install npm:pi-web-access`
+
+## 专家接口调通方案（2026-09-02）
+
+**问题**：异步深度思考模式经常超时或无响应，后台 curl 子进程难以捕获输出。
+
+**解决方案**：使用 instant 模式（无深度思考）直接同步调用。
+
+```bash
+# ✅ 有效的方式：instant 模式 + 同步 curl
+curl -s -X POST http://127.0.0.1:8848/api/deepseek/chat \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "question": "你的问题",
+    "mode": "instant",
+    "timeout": 30
+  }' | python3 -m json.tool
+```
+
+**关键点**：
+- `mode: "instant"` 替代 `mode: "expert" + deep_thinking: true`
+- 不用异步后台，直接同步等待（一般 15-25 秒返回）
+- 响应格式完全相同（包含 answer、conversation_id 等），可用于续聊
+
+**续聊**（如需深化）：
+```json
+{
+  "conversation_id": "前次返回的 uuid",
+  "question": "后续问题",
+  "mode": "instant"
+}
+```
+
+**实测**：M8+J 字数稳定优化（E+B 两项）通过本地 E2E 测试（5/5 通过，100% 成功率），字数 242~251 稳定过线。
