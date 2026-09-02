@@ -408,6 +408,37 @@ def test_m2_c_milk_story_skips_meat_seed_close():
     assert bnotes == []
 
 
+def test_narration_line_detects_stage_direction():
+    from app.services.daily_story.gold_story.scene import (
+        looks_like_narration_line,
+        patch_dialogue_narration_to_speech,
+        rewrite_narration_to_speech,
+    )
+
+    assert looks_like_narration_line("一把揪住昭昭衣领，警告你别逼我呀。")
+    assert looks_like_narration_line("挣扎着还手，被灿灿按在地上。")
+    assert looks_like_narration_line("叹气，劝不动你们了。")
+    assert not looks_like_narration_line("你松手！我喊妈了！")
+
+    spoken = rewrite_narration_to_speech(
+        "一把揪住昭昭衣领，警告你别逼我呀。",
+        speaker="灿灿",
+    )
+    assert "揪住" not in spoken
+    assert "别逼我" in spoken or "别过来" in spoken
+
+    story = {
+        "dialogue": [
+            {"speaker": "昭昭", "line": "挣扎着还手，被灿灿按在地上。"},
+            {"speaker": "妈妈", "line": "叹气，劝不动你们了。"},
+        ]
+    }
+    notes = patch_dialogue_narration_to_speech(story)
+    assert notes
+    assert not looks_like_narration_line(story["dialogue"][0]["line"])
+    assert not looks_like_narration_line(story["dialogue"][1]["line"])
+
+
 def test_validate_gold_chat_rejects_narration_line():
     from app.services.daily_story.gold_story.gold_chat.convert import validate_gold_chat
 

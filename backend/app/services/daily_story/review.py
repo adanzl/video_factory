@@ -92,7 +92,11 @@ _WRITTEN_SIGNAL_RES: tuple[re.Pattern[str], ...] = (
 )
 # 视频标题/旁白/meta：孩子台词里不应出现（通用，不限故事类型）
 _RE_NARRATION_META = re.compile(r"一招制敌|服不服")
-_RE_PARTICLE_STACK = re.compile(r"呢呢|啊呢|吧呢|嘛呢|呀呢|你呀呢|行了吧呢")
+_RE_PARTICLE_STACK = re.compile(
+    r"呢呢|啊呢|吧呢|嘛呢|呀呢|你呀呢|行了吧呢|"
+    r"真的呀真的|嘛呀|了呢|好不好呀|不行嘛|活该了呢|"
+    r"(?:真的(?:呀|呢|吧)){2,}|嘛不行嘛"
+)
 _RE_KID_TYPO_LINE = re.compile(r"听听不懂|你真是呢")
 
 _RE_PUNCT = re.compile(r"[，。！？…、：；~—\s·「」“”\"'?!.,]")

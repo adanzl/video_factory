@@ -107,11 +107,17 @@ def _resolve_closing_intent(
     *,
     structure_type: str = "",
 ) -> str:
-    """读取 closing；I 类与 seed 制敌 speaker 冲突时以 seed 为准。"""
+    """读取 closing；I 对齐 seed 赢家；K 纠偏 H 式和好/缺僵持。"""
     closing = str(
         payload.get("closing_intent") or scene_contract.get("closing_intent") or ""
     )
     st = str(structure_type or "").strip().upper()
+    if st == "K":
+        from app.services.daily_story.story_types.k.validate import (
+            repair_closing_intent_for_k,
+        )
+
+        return repair_closing_intent_for_k(closing)
     if st != "I":
         return closing
     from app.services.daily_story.story_types.i.validate import (
@@ -268,11 +274,19 @@ GOLD_CHAT_LLM_MAX_TOKENS = 2048
 CLOSING_PROMPT_MAX_CHARS = 28
 _RE_PAD_SUFFIX_STACK = re.compile(
     r"(?:不行吧|真的啊|你听着|你听着了呀|真的呀真的|真的嘛了呀|嘛了呀){2,}|"
+    r"(?:真的(?:呀|呢|吧|啊)?){2,}|"
+    r"(?:不行(?:真的|了?[啊吧呀呢嘛])?){2,}|"
+    r"(?:了[啊吧呀呢]){2,}|"
+    r"不行真的不行|真的了啊|真的呀不行|了吧不行|了啊不行|"
+    r"活该了呢|活该嘛呀|不行嘛呀|嘛不行嘛|真的呀不行|"
+    r"嘛呀[！。？…!?]|了呢呀|了呢了呀|"
     r"呢呢|啊呢|吧呢|嘛呢|呀呢|你呀呢|行了吧呢|不懂你呢|听听不懂|你真是呢|你真是的呢|"
-    r"了呢了呀|了呢呀|了呀呢|好不好了呀|着呢了呀",
+    r"了呀呢|好不好了呀|着呢了呀",
 )
 _B_GOLD_CHAT_PAD_TAILS = ("呀", "啊", "嘛", "呢", "吧", "真的呀")
 _F_GOLD_CHAT_PAD_TAILS = ("呀", "啊", "嘛", "呢", "吧")
+# K：禁「真的呀/好不好/嘛」多轮升级成嘛呀/真的呀真的
+_K_GOLD_CHAT_PAD_TAILS = ("啊", "吧", "呀")
 
 
 def _client():
@@ -547,14 +561,37 @@ def _sanitize_pad_suffix_line(line: str) -> str:
         ("了呢了呀", ""),
         ("了呢呀", ""),
         ("了呀呢", ""),
+        ("嘛不行嘛呀", ""),
+        ("嘛不行嘛", ""),
+        ("真的呀不行嘛", "真的不行"),
+        ("不行嘛呀", "不行"),
+        ("活该嘛呀", "活该"),
+        ("活该了呢", "活该"),
     ):
         if old in out:
             out = out.replace(old, new)
+    out = re.sub(r"(?:真的(?:呀|呢|吧|啊)?){2,}", "真的", out)
+    out = re.sub(r"(?:不行(?:真的|了?[啊吧呀呢嘛])?){2,}", "不行", out)
+    out = re.sub(r"(?:了[啊吧呀呢]){2,}", "", out)
+    for junk in (
+        "不行真的不行",
+        "真的了啊",
+        "真的呀不行",
+        "了吧不行",
+        "了啊不行",
+    ):
+        out = out.replace(junk, "")
     out = re.sub(
         r"(?:不行吧|真的啊|你听着|你听着了呀|真的呀|嘛了呀){2,}([！。！？…]?)$",
         r"\1",
         out,
     )
+    out = re.sub(r"嘛呀([！。？…!?])$", r"\1", out)
+    out = re.sub(r"真的(?:呀|呢|吧)?([！。？…!?])$", r"\1", out)
+    out = re.sub(r"不行嘛([！。？…!?])$", r"不行\1", out)
+    out = re.sub(r"[，,]{2,}", "，", out).strip("，, ")
+    if out and out[-1] not in "！。？…!?" and line[-1:] in "！。？…!?":
+        out = out + line[-1]
     return out
 
 
@@ -1020,6 +1057,46 @@ _M8_J_NATURAL_MID_PAIRS: tuple[tuple[tuple[str, str], tuple[str, str]], ...] = (
         ("灿灿", "规矩先讲好，输了别赖账！"),
     ),
 )
+# K：互顶升级/僵持向，禁套 J 求否；「越劝」须对劝架大人，勿对弟妹说
+_K_NATURAL_MID_PAIRS: tuple[tuple[tuple[str, str], tuple[str, str]], ...] = (
+    (
+        ("昭昭", "你再拧耳朵试试！"),
+        ("灿灿", "试试就试试，来啊！"),
+    ),
+    (
+        ("昭昭", "你拧疼我了！松开！"),
+        ("灿灿", "疼也得挨打！"),
+    ),
+    (
+        ("昭昭", "哼，有你好看！"),
+        ("灿灿", "谁怕你记仇！"),
+    ),
+    (
+        ("昭昭", "我咬定了不松口！"),
+        ("灿灿", "松不松都要打！"),
+    ),
+    (
+        ("昭昭", "你还打！我不怕你！"),
+        ("灿灿", "再闹我就更凶！"),
+    ),
+    (
+        ("昭昭", "你给我等着瞧！"),
+        ("灿灿", "等着瞧就等着瞧！"),
+    ),
+)
+# K near-miss 可读扩写：按说话人分流，禁串角/禁粘护手句
+_K_ZHAO_NATURAL_EXPAND: tuple[str, ...] = (
+    "，我才不怕呢",
+    "，你试试看啊",
+)
+_K_CAN_NATURAL_EXPAND: tuple[str, ...] = (
+    "，再闹我恼了",
+    "，轮不到你",
+)
+_K_GOLD_CHAT_NATURAL_EXPAND: tuple[str, ...] = (
+    _K_ZHAO_NATURAL_EXPAND + _K_CAN_NATURAL_EXPAND
+)
+_RE_K_NO_EXPAND_LINE = re.compile(r"弄疼我手|打归打|手疼|护手")
 # 可读句内扩写：禁「这回听清楚/听见没有」——审稿视同灌尾
 _GOLD_CHAT_NATURAL_EXPAND: tuple[str, ...] = (
     "，我偏就不信",
@@ -1717,6 +1794,7 @@ def _pad_gold_chat_line(
     *,
     used: set[str] | None = None,
     story_type: str = "",
+    speaker: str = "",
 ) -> tuple[str, int]:
     """near-miss 本地垫字：走日常故事同一套句尾垫字。"""
     from app.services.daily_story.prompts import _pad_dialogue_line
@@ -1764,6 +1842,33 @@ def _pad_gold_chat_line(
         tails = _B_GOLD_CHAT_PAD_TAILS
     elif st == "F":
         tails = _F_GOLD_CHAT_PAD_TAILS
+    elif st == "K":
+        # K：只在句尾无语气词时补一个呀/啊/吧；禁止 particle_upgrade 叠成了呀
+        from app.services.daily_story.dialogue_text import (
+            DAILY_STORY_LINE_CHARS_MAX,
+            dialogue_char_count,
+        )
+
+        text = str(line or "").strip()
+        if need <= 0 or not text or _RE_K_NO_EXPAND_LINE.search(text):
+            return line, 0
+        trail = ""
+        core = text
+        if core[-1] in "。！？…":
+            trail = core[-1]
+            core = core[:-1]
+        if not core or re.search(r"[呢嘛呀啊吧了呗]$", core):
+            return line, 0
+        room = max(0, DAILY_STORY_LINE_CHARS_MAX - dialogue_char_count(text))
+        for tail in _K_GOLD_CHAT_PAD_TAILS:
+            if used is not None and tail in used:
+                continue
+            if len(tail) > need or len(tail) > room:
+                continue
+            if used is not None:
+                used.add(tail)
+            return f"{core}{tail}{trail}", len(tail)
+        return line, 0
     else:
         tails = None
     line_out, added = _pad_dialogue_line(line, need, used, tails=tails)
@@ -1870,7 +1975,11 @@ def _patch_gold_chat_near_miss_chars(story: dict[str, Any]) -> tuple[dict[str, A
         if any(b in line for b in natural_bares):
             continue
         new_line, added = _pad_gold_chat_line(
-            line, need, used=used_pads, story_type=story_type,
+            line,
+            need,
+            used=used_pads,
+            story_type=story_type,
+            speaker=str(item.get("speaker") or ""),
         )
         if added <= 0:
             continue
@@ -1910,7 +2019,14 @@ def _pad_gold_chat_to_min_chars(
     changed = False
     used_pads: set[str] | None = None if particle_only else set()
     story_type = str(story.get("story_type") or "").strip().upper()
-    natural_bares = {c.lstrip("，,") for c in _GOLD_CHAT_NATURAL_EXPAND}
+    # K：粒子叠垫必脏，改走可读尾巴/中段句
+    if story_type == "K" and particle_only:
+        particle_only = False
+        used_pads = set()
+    expand_src = (
+        _K_GOLD_CHAT_NATURAL_EXPAND if story_type == "K" else _GOLD_CHAT_NATURAL_EXPAND
+    )
+    natural_bares = {c.lstrip("，,") for c in expand_src}
     pad_rounds = (
         max_rounds
         if max_rounds is not None
@@ -1933,7 +2049,11 @@ def _pad_gold_chat_to_min_chars(
             if (not particle_only) and any(b in line for b in natural_bares):
                 continue
             new_line, added = _pad_gold_chat_line(
-                line, need, used=used_pads, story_type=story_type,
+                line,
+                need,
+                used=used_pads,
+                story_type=story_type,
+                speaker=str(item.get("speaker") or ""),
             )
             if added <= 0:
                 continue
@@ -1986,6 +2106,8 @@ def _boost_short_with_mid_lines(
         return story, False
 
     st = str(structure_type or story.get("story_type") or "").strip().upper()
+    # K：顶满 24 句时仍可能差字，允许至 26 以便插实义中段对
+    line_cap = CHAT_LINE_COUNT_MAX + (2 if st == "K" else 0)
     m8_j = is_m8_j_domination(mechanism=mechanism, structure_type=st)
     large_gap = need > GOLD_CHAT_NEAR_MISS_DEFICIT_MAX
     if total < 100 and not large_gap:
@@ -2000,9 +2122,10 @@ def _boost_short_with_mid_lines(
             return story, False
         if len(dialogue) >= CHAT_LINE_COUNT_MIN:
             return story, False
-    elif "再求你一次" in blob or "那我保证" in blob:
+    elif st == "J" and ("再求你一次" in blob or "那我保证" in blob):
         # 已有求否加码，勿再插第二对
         return story, False
+    # K：僵持词已在不挡大缺口补句；小缺口且已有僵持点则不再插
     insert_at = max(2, len(dialogue) - 2)
     if m8_j:
         ko_idx = next(
@@ -2019,29 +2142,66 @@ def _boost_short_with_mid_lines(
     prev = dialogue[insert_at - 1] if insert_at > 0 else None
     if isinstance(prev, dict) and str(prev.get("speaker") or "").strip() == "昭昭":
         insert_at = min(insert_at + 1, len(dialogue))
-    pair_pool = _M8_J_NATURAL_MID_PAIRS if m8_j else _GOLD_CHAT_NATURAL_MID_PAIRS
+    if m8_j:
+        pair_pool = _M8_J_NATURAL_MID_PAIRS
+    elif st == "J":
+        pair_pool = _GOLD_CHAT_NATURAL_MID_PAIRS
+    elif st == "K":
+        pair_pool = _K_NATURAL_MID_PAIRS
+    else:
+        pair_pool = tuple(
+            (_GOLD_CHAT_REACT_LINES[i], _GOLD_CHAT_REACT_LINES[i + 1])
+            for i in range(0, len(_GOLD_CHAT_REACT_LINES) - 1, 2)
+        )
     changed = False
     pairs_used = 0
     max_pairs = 1 if m8_j else (2 if large_gap else 1)
+    if st == "K":
+        # 小缺口只插 1 对，避免后段空喊堆叠
+        max_pairs = 2 if need >= 20 else 1
+
+    def _norm_pad_line(text: str) -> str:
+        return re.sub(r"[呀啊吧呢嘛了呗！？。!?，,\s]", "", str(text or ""))
+
+    existing_norm = {_norm_pad_line(x) for x in existing if x}
     for pair in pair_pool:
         if dialogue_total_chars(out) >= DAILY_STORY_BODY_CHARS_MIN:
             break
         if pairs_used >= max_pairs:
             break
-        if len(dialogue) + 2 > CHAT_LINE_COUNT_MAX:
+        if len(dialogue) + 2 > line_cap:
             break
         lines_ok = True
         for _sp, line in pair:
             text = str(line).strip()
-            if not text or text in existing:
+            if not text or text in existing or _norm_pad_line(text) in existing_norm:
                 lines_ok = False
                 break
         if not lines_ok:
             continue
+        # 避免插出同角色连说（上一句说话人 == 对首句）
+        first_sp = str(pair[0][0]).strip()
+        while insert_at > 0 and insert_at <= len(dialogue):
+            prev_item = dialogue[insert_at - 1]
+            if not isinstance(prev_item, dict):
+                break
+            if str(prev_item.get("speaker") or "").strip() != first_sp:
+                break
+            if insert_at >= len(dialogue):
+                break
+            insert_at += 1
+        if insert_at > 0 and insert_at <= len(dialogue):
+            prev_item = dialogue[insert_at - 1]
+            if (
+                isinstance(prev_item, dict)
+                and str(prev_item.get("speaker") or "").strip() == first_sp
+            ):
+                continue
         for speaker, line in pair:
             text = str(line).strip()
             dialogue.insert(insert_at, {"speaker": speaker, "line": text})
             existing.add(text)
+            existing_norm.add(_norm_pad_line(text))
             insert_at += 1
         pairs_used += 1
         changed = True
@@ -2083,7 +2243,11 @@ def _expand_short_gold_chat_lines(
     changed = False
     expand_count: dict[int, int] = {}
     used: set[str] = set()
-    bare_all = {c.lstrip("，,") for c in _GOLD_CHAT_NATURAL_EXPAND}
+    st = str(story.get("story_type") or "").strip().upper()
+    expand_src = (
+        _K_GOLD_CHAT_NATURAL_EXPAND if st == "K" else _GOLD_CHAT_NATURAL_EXPAND
+    )
+    bare_all = {c.lstrip("，,") for c in expand_src}
     for i, item in enumerate(dialogue):
         if not isinstance(item, dict):
             continue
@@ -2115,6 +2279,7 @@ def _expand_short_gold_chat_lines(
                 )
             )
             and "我输了" not in str(item.get("line") or "")
+            and not _RE_K_NO_EXPAND_LINE.search(str(item.get("line") or ""))
         ]
         if not candidates:
             break
@@ -2131,13 +2296,29 @@ def _expand_short_gold_chat_lines(
             if room < 5:
                 expand_count[idx] = 1
                 continue
+            sp = str(item.get("speaker") or "").strip()
+            if st == "K":
+                if sp == "昭昭":
+                    src = _K_ZHAO_NATURAL_EXPAND
+                elif sp == "灿灿":
+                    src = _K_CAN_NATURAL_EXPAND
+                else:
+                    expand_count[idx] = 1
+                    continue
+            else:
+                src = expand_src
             pool = [
                 c
-                for c in _GOLD_CHAT_NATURAL_EXPAND
+                for c in src
                 if c.lstrip("，,") not in used
+                and c.lstrip("，,") not in "".join(
+                    str(x.get("line") or "")
+                    for x in dialogue
+                    if isinstance(x, dict)
+                )
                 and _j_expand_bare_allowed(
                     c.lstrip("，,"),
-                    str(item.get("speaker") or ""),
+                    sp,
                 )
             ]
             if not pool:
@@ -2522,6 +2703,30 @@ def _gold_chat_force_min_chars(story: dict[str, Any]) -> tuple[dict[str, Any], b
     need = DAILY_STORY_BODY_CHARS_MIN - dialogue_total_chars(story)
     if need <= 0:
         return story, False
+    st = str(story.get("story_type") or "").strip().upper()
+    if st == "K":
+        out = copy.deepcopy(story)
+        out["story_type"] = "K"
+        changed = False
+        for _ in range(6):
+            if dialogue_total_chars(out) >= DAILY_STORY_BODY_CHARS_MIN:
+                break
+            before = dialogue_total_chars(out)
+            # K 禁口头禅扩写垫字（会与去重打架）；只插中段对 + 单语气词
+            out2, c1 = _boost_short_with_mid_lines(out, structure_type="K")
+            out = out2
+            out, _ = patch_sanitize_pad_suffix(out)
+            out, _ = patch_sanitize_pad_particles(out)
+            changed = changed or c1
+            if dialogue_total_chars(out) <= before:
+                out2, cp = _pad_gold_chat_to_min_chars(out, max_rounds=24)
+                out = out2
+                out, _ = patch_sanitize_pad_suffix(out)
+                out, _ = patch_sanitize_pad_particles(out)
+                changed = changed or cp
+                if dialogue_total_chars(out) <= before:
+                    break
+        return out, changed
     dialogue = story.get("dialogue")
     if isinstance(dialogue, list) and len(dialogue) >= CHAT_LINE_COUNT_MIN + 2:
         out = copy.deepcopy(story)
@@ -2997,7 +3202,21 @@ def _prepare_chat_for_validate(
         scene_contract_location=scene_contract_location,
         activity_context=ctx,
     )
-    data, _ = _ensure_gold_chat_min_chars(data)
+    from app.services.daily_story.gold_story.scene import (
+        patch_dialogue_narration_to_speech,
+    )
+
+    patch_dialogue_narration_to_speech(data)
+    if st == "K":
+        from app.services.daily_story.story_types.k.patch import patch_k_body
+
+        data["story_type"] = "K"
+        patch_k_body(data)
+    data, _ = _ensure_gold_chat_min_chars(
+        data,
+        mechanism=mech,
+        structure_type=st,
+    )
     validate_gold_chat(
         data,
         banned_literals=banned_literals,
@@ -3027,6 +3246,16 @@ def _validate_pass1_chat(
     short_expand_rounds = 0
     for attempt in range(5):
         data = _apply_pass1_setting_normalize(data, row=row)
+        from app.services.daily_story.gold_story.scene import (
+            patch_dialogue_narration_to_speech,
+        )
+
+        patch_dialogue_narration_to_speech(data)
+        if st == "K":
+            from app.services.daily_story.story_types.k.patch import patch_k_body
+
+            data["story_type"] = "K"
+            patch_k_body(data)
         data, _ = _ensure_gold_chat_min_chars(
             data,
             mechanism=mech,
@@ -3293,6 +3522,17 @@ def refine_gold_chat_align(
                 mechanism=mech,
                 dialogue_seed=dialogue_seed,
             )
+        if st == "K":
+            from app.services.daily_story.story_types.k.patch import patch_k_body
+
+            data = dict(data)
+            data["story_type"] = "K"
+            patch_k_body(data)
+        from app.services.daily_story.gold_story.scene import (
+            patch_dialogue_narration_to_speech,
+        )
+
+        patch_dialogue_narration_to_speech(data)
 
         issues = collect_align_issues(
             data,
@@ -3390,11 +3630,25 @@ def refine_gold_chat_align(
         beat_chain=beat_chain,
         conflict_text=conflict_text,
     )
-    # 末轮：C 本地收口后再机审，避免弱判据/连说卡死
+    # 末轮：C/K 本地收口后再机审，避免弱判据/连说卡死
     if st == "C":
         data, _ = patch_c_force_sibling_alternate(data)
         data, _ = patch_c_possession_criterion(data)
         data, _ = patch_sanitize_c_tone_stack(data)
+        remain = collect_align_issues(
+            data,
+            structure_type=st,
+            mechanism=mech,
+            closing_intent=closing,
+            beat_chain=beat_chain,
+            conflict_text=conflict_text,
+        )
+    if st == "K":
+        from app.services.daily_story.story_types.k.patch import patch_k_body
+
+        data = dict(data)
+        data["story_type"] = "K"
+        patch_k_body(data)
         remain = collect_align_issues(
             data,
             structure_type=st,
@@ -3578,6 +3832,11 @@ def apply_gold_chat_normalizations(
         if not (st == "C" and mech.upper() == "M2"):
             chat, type_notes = apply_type_body_pipeline(chat, structure_type=st)
             notes.extend(type_notes)
+        from app.services.daily_story.gold_story.scene import (
+            patch_dialogue_narration_to_speech,
+        )
+
+        notes.extend(patch_dialogue_narration_to_speech(chat))
     from app.services.daily_story.gold_story.gold_chat.patch import (
         patch_gold_chat_c_seed_bridge,
         patch_gold_chat_dedupe_dialogue_loop,
@@ -3842,6 +4101,18 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
         if sc_changed:
             scene_contract = repaired_sc
     seed = payload.get("dialogue_seed") or []
+    if isinstance(seed, list):
+        from app.services.daily_story.gold_story.scene import (
+            sanitize_dialogue_seed_speech,
+        )
+
+        seed = sanitize_dialogue_seed_speech(seed)
+    if structure_type == "K" and isinstance(seed, list):
+        from app.services.daily_story.story_types.k.patch import (
+            sanitize_k_dialogue_seed,
+        )
+
+        seed = sanitize_k_dialogue_seed(seed)
     banned = sanitize_banned_literals(
         payload.get("banned_literals") or scene_contract.get("banned_literals"),
         scene_contract=scene_contract,
@@ -4022,6 +4293,13 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
         data, type_notes = apply_type_body_pipeline(
             data, structure_type=structure_type
         )
+        from app.services.daily_story.gold_story.scene import (
+            patch_dialogue_narration_to_speech,
+        )
+
+        narr_notes = patch_dialogue_narration_to_speech(data)
+        if narr_notes:
+            type_notes = list(type_notes) + narr_notes
         data, alt_changed = patch_c_force_sibling_alternate(data)
         if alt_changed:
             type_notes = list(type_notes) + ["C全篇交替"]
@@ -4379,7 +4657,13 @@ def convert_gold_chat(
         structure_type=str(row.get("structure_type") or ""),
     )
     chat = _refine_after_normalize(chat, row)
-    chat, _ = _ensure_gold_chat_min_chars(chat)
+    _st0 = str(row.get("structure_type") or chat.get("story_type") or "")
+    _mech0 = str(row.get("mechanism") or "")
+    chat, _ = _ensure_gold_chat_min_chars(
+        chat,
+        mechanism=_mech0,
+        structure_type=_st0,
+    )
     chat = _realign_j_role_speakers(
         chat,
         dialogue_seed=payload0.get("dialogue_seed")
@@ -4404,7 +4688,11 @@ def convert_gold_chat(
         )
         if strip_notes:
             norm_notes = list(norm_notes or []) + list(strip_notes)
-        chat, pad_notes = _ensure_gold_chat_min_chars(chat)
+        chat, pad_notes = _ensure_gold_chat_min_chars(
+            chat,
+            mechanism=_mech0,
+            structure_type=_st0,
+        )
         if pad_notes:
             norm_notes = list(norm_notes or []) + ["垫字达标"]
         chat, _ = patch_sanitize_c_tone_stack(chat)
@@ -4427,7 +4715,27 @@ def convert_gold_chat(
         scene_contract=scene_contract,
         beat=payload.get("beat") if isinstance(payload.get("beat"), list) else [],
     )
-    chat, _ = _ensure_gold_chat_min_chars(chat)
+    chat, _ = _ensure_gold_chat_min_chars(
+        chat,
+        mechanism=_mech0,
+        structure_type=_st0,
+    )
+    if str(_st0 or "").upper() == "K":
+        from app.services.daily_story.story_types.k.patch import patch_k_body
+
+        chat = dict(chat)
+        chat["story_type"] = "K"
+        patch_k_body(chat)
+        chat, _ = _ensure_gold_chat_min_chars(
+            chat,
+            mechanism=_mech0,
+            structure_type=_st0,
+        )
+        chat, _ = patch_sanitize_pad_suffix(chat)
+        chat, _ = patch_sanitize_pad_particles(chat)
+        patch_k_body(chat)
+        chat, _ = patch_sanitize_pad_suffix(chat)
+        chat, _ = patch_sanitize_pad_particles(chat)
     chat, _ = _gold_chat_j_final_polish(
         chat,
         dialogue_seed=payload0.get("dialogue_seed")
@@ -4450,6 +4758,55 @@ def convert_gold_chat(
                 )
                 if dialogue_total_chars(chat) <= before:
                     break
+    if str(_st0 or "").upper() == "K":
+        from app.services.daily_story.story_types.k.patch import patch_k_body
+
+        chat = dict(chat)
+        chat["story_type"] = "K"
+        # 末轮补字后再剥；不足则用中段句/可读扩写补，禁止粒子叠脏
+        for _ in range(5):
+            chat, _ = patch_sanitize_pad_suffix(chat)
+            chat, _ = patch_sanitize_pad_particles(chat)
+            patch_k_body(chat)
+            if dialogue_total_chars(chat) >= DAILY_STORY_BODY_CHARS_MIN:
+                break
+            before = dialogue_total_chars(chat)
+            chat, _ = _boost_short_with_mid_lines(
+                chat, mechanism=_mech0, structure_type="K"
+            )
+            chat, _ = _gold_chat_force_min_chars(chat)
+            if dialogue_total_chars(chat) <= before:
+                break
+        chat, _ = patch_sanitize_pad_suffix(chat)
+        chat, _ = patch_sanitize_pad_particles(chat)
+        from app.services.daily_story.story_types.k.patch import (
+            patch_k_fix_truncations,
+            patch_k_body,
+        )
+
+        patch_k_fix_truncations(chat)
+        if dialogue_total_chars(chat) < DAILY_STORY_BODY_CHARS_MIN:
+            chat, _ = _boost_short_with_mid_lines(
+                chat, mechanism=_mech0, structure_type="K"
+            )
+            chat, _ = _gold_chat_force_min_chars(chat)
+            patch_k_fix_truncations(chat)
+        # 出口完整 K patch 后只中段补字+截断修复，避免口头禅去重再砍字
+        patch_k_body(chat)
+        for _ in range(4):
+            if dialogue_total_chars(chat) >= DAILY_STORY_BODY_CHARS_MIN:
+                break
+            before = dialogue_total_chars(chat)
+            chat, c1 = _boost_short_with_mid_lines(
+                chat, mechanism=_mech0, structure_type="K"
+            )
+            chat, c2 = _gold_chat_force_min_chars(chat)
+            patch_k_fix_truncations(chat)
+            if dialogue_total_chars(chat) <= before and not c1 and not c2:
+                break
+        chat, _ = patch_sanitize_pad_suffix(chat)
+        chat, _ = patch_sanitize_pad_particles(chat)
+        patch_k_fix_truncations(chat)
     seed = (
         payload0.get("dialogue_seed")
         if isinstance(payload0.get("dialogue_seed"), list)
