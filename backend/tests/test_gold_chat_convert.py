@@ -282,6 +282,22 @@ def test_expand_seed_for_line_floor_m8_j_uses_domination_beats():
     assert len(intents) >= 10
 
 
+def test_boost_short_m8_j_skips_when_lose_already_present():
+    short = {
+        "story_type": "J",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "看招！"},
+            {"speaker": "灿灿", "line": "草莓熊肘击！"},
+            {"speaker": "昭昭", "line": "啊，我输了！"},
+            {"speaker": "灿灿", "line": "以后玩具都归我！"},
+        ],
+    }
+    out, changed = gc._boost_short_with_mid_lines(
+        short, mechanism="M8", structure_type="J"
+    )
+    assert not changed
+
+
 def test_boost_short_m8_j_inserts_domination_pairs_under_line_floor():
     short = {
         "story_type": "J",
@@ -293,7 +309,6 @@ def test_boost_short_m8_j_inserts_domination_pairs_under_line_floor():
             {"speaker": "灿灿", "line": "谁赢谁说了算！"},
             {"speaker": "昭昭", "line": "拿出最强形态来！"},
             {"speaker": "灿灿", "line": "草莓熊肘击！"},
-            {"speaker": "昭昭", "line": "啊，我输了！"},
             {"speaker": "灿灿", "line": "以后玩具都归我！"},
             {"speaker": "昭昭", "line": "哼，等我长大再算账！"},
         ],
@@ -304,10 +319,56 @@ def test_boost_short_m8_j_inserts_domination_pairs_under_line_floor():
         structure_type="J",
     )
     assert changed
-    assert len(out["dialogue"]) >= 12
+    assert len(out["dialogue"]) >= 11
     blob = "".join(str(d.get("line") or "") for d in out["dialogue"])
     assert "再求你一次" not in blob
     assert "不服" in blob or "谁赢" in blob
+
+
+def test_j_pre_score_polish_clears_consecutive_and_rematch():
+    from app.services.daily_story.quality import (
+        STRUCTURE_PUBLISH_MIN,
+        _has_consecutive_sibling,
+        score_daily_story,
+        structure_score_of,
+    )
+
+    raw = {
+        "story_type": "J",
+        "theme": "世子之争",
+        "setting": "幼儿园午休垫子",
+        "conflict_core": "昭昭先动手打灿灿，灿灿立规谁赢谁说了算",
+        "punchline_explain": "J类权威压住，灿灿一锤镇住昭昭",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "这块地板是我的地盘，你赶紧走开！"},
+            {"speaker": "灿灿", "line": "明明是我先来的，该你走开才对！"},
+            {"speaker": "昭昭", "line": "哼，看招！我拍你肩膀，你试试看啊！"},
+            {"speaker": "灿灿", "line": "你敢打我？我反击了啊，说一不二！"},
+            {"speaker": "昭昭", "line": "等等，先听我说完！"},
+            {"speaker": "灿灿", "line": "谁赢谁说了算，这是规矩！"},
+            {"speaker": "昭昭", "line": "你别插嘴，轮到我！"},
+            {"speaker": "灿灿", "line": "拿出你的最强形态来，我偏就不信！"},
+            {"speaker": "灿灿", "line": "草莓熊肘击！我撞你肚子！"},
+            {"speaker": "昭昭", "line": "啊，我输了！你力气真大！"},
+            {"speaker": "昭昭", "line": "不服！再来！我还没用全力！"},
+            {"speaker": "灿灿", "line": "谁赢谁说了算，你服不服？"},
+            {"speaker": "昭昭", "line": "哼，等我长大再算账！"},
+            {"speaker": "灿灿", "line": "以后玩具都归我！你服不服？"},
+        ],
+    }
+    assert _has_consecutive_sibling(raw["dialogue"])
+    polished = gc._gold_chat_j_pre_score_polish(raw, dialogue_seed=[])
+    assert not _has_consecutive_sibling(polished["dialogue"])
+    assert "不服！再来" not in "".join(
+        str(x.get("line") or "") for x in polished["dialogue"]
+    )
+    assert any(
+        "最强形态" in str(x.get("line") or "")
+        and str(x.get("speaker") or "") == "昭昭"
+        for x in polished["dialogue"]
+    )
+    q = score_daily_story(polished, theme="世子之争", skip_relevancy=True)
+    assert structure_score_of(q) >= STRUCTURE_PUBLISH_MIN
 
 
 def test_ensure_gold_chat_min_chars_does_not_spam_expand_tails():
