@@ -936,6 +936,20 @@ _GOLD_CHAT_NATURAL_MID_PAIRS: tuple[tuple[tuple[str, str], tuple[str, str]], ...
         ("灿灿", "少讨价还价，这回听我安排！"),
     ),
 )
+_M8_J_NATURAL_MID_PAIRS: tuple[tuple[tuple[str, str], tuple[str, str]], ...] = (
+    (
+        ("昭昭", "我才不服，再来一回合！"),
+        ("灿灿", "来啊，看谁先认输！"),
+    ),
+    (
+        ("昭昭", "你别得意，我还没发力呢！"),
+        ("灿灿", "行了，谁赢谁说了算，别磨蹭！"),
+    ),
+    (
+        ("昭昭", "你真敢跟我动手啊？"),
+        ("灿灿", "规矩先讲好，输了别赖账！"),
+    ),
+)
 # 可读句内扩写：禁「这回听清楚/听见没有」——审稿视同灌尾
 _GOLD_CHAT_NATURAL_EXPAND: tuple[str, ...] = (
     "，我偏就不信",
@@ -1782,10 +1796,16 @@ def _ensure_gold_chat_min_lines(story: dict[str, Any]) -> tuple[dict[str, Any], 
     return story, False
 
 
-def _boost_short_with_mid_lines(story: dict[str, Any]) -> tuple[dict[str, Any], bool]:
-    """FIX/Pass1 写不满时：收束前插入「昭求/灿否」成对句，保 J 权威方向。
+def _boost_short_with_mid_lines(
+    story: dict[str, Any],
+    *,
+    mechanism: str = "",
+    structure_type: str = "",
+) -> tuple[dict[str, Any], bool]:
+    """FIX/Pass1 写不满时：收束前插入成对句，保 J 权威方向。
 
-    仅当已有实质正文（≥100 字）且句数已满时启用。
+    M8+J 插互顶/立规对；M5+J 等插昭求/灿否对。
+    大缺口（>near_miss）时允许句数 <12 先插对补句数/字数。
     """
     import copy
 
@@ -1793,34 +1813,45 @@ def _boost_short_with_mid_lines(story: dict[str, Any]) -> tuple[dict[str, Any], 
         CHAT_LINE_COUNT_MAX,
         CHAT_LINE_COUNT_MIN,
     )
+    from app.services.daily_story.gold_story.gold_chat.type_bridge import (
+        is_m8_j_domination,
+    )
 
     total = dialogue_total_chars(story)
     need = DAILY_STORY_BODY_CHARS_MIN - total
-    if need <= 0 or total < 100:
+    if need <= 0:
         return story, False
 
     out = copy.deepcopy(story)
     dialogue = out.get("dialogue")
-    if not isinstance(dialogue, list) or len(dialogue) < CHAT_LINE_COUNT_MIN:
+    if not isinstance(dialogue, list) or len(dialogue) < 4:
+        return story, False
+
+    st = str(structure_type or story.get("story_type") or "").strip().upper()
+    m8_j = is_m8_j_domination(mechanism=mechanism, structure_type=st)
+    large_gap = need > GOLD_CHAT_NEAR_MISS_DEFICIT_MAX
+    if total < 100 and not large_gap:
+        return story, False
+    if len(dialogue) < CHAT_LINE_COUNT_MIN and not large_gap:
         return story, False
 
     existing = {str(x.get("line") or "").strip() for x in dialogue if isinstance(x, dict)}
     blob = "".join(existing)
-    if "再求你一次" in blob or "那我保证" in blob:
+    if not m8_j and ("再求你一次" in blob or "那我保证" in blob):
         # 已有求否加码，勿再插第二对
         return story, False
-    # 插在倒数第 2 句前，且保证前一句是灿灿，避免与昭昭求放行连说
     insert_at = max(2, len(dialogue) - 2)
     prev = dialogue[insert_at - 1] if insert_at > 0 else None
     if isinstance(prev, dict) and str(prev.get("speaker") or "").strip() == "昭昭":
         insert_at = min(insert_at + 1, len(dialogue))
+    pair_pool = _M8_J_NATURAL_MID_PAIRS if m8_j else _GOLD_CHAT_NATURAL_MID_PAIRS
     changed = False
     pairs_used = 0
-    for pair in _GOLD_CHAT_NATURAL_MID_PAIRS:
+    max_pairs = 2 if large_gap else 1
+    for pair in pair_pool:
         if dialogue_total_chars(out) >= DAILY_STORY_BODY_CHARS_MIN:
             break
-        # 最多 1 对：多对会在一锤后堆「求-拒」拉锯，人审当灌尾
-        if pairs_used >= 1:
+        if pairs_used >= max_pairs:
             break
         if len(dialogue) + 2 > CHAT_LINE_COUNT_MAX:
             break
@@ -1991,7 +2022,12 @@ def patch_sanitize_expand_clutter(
     return out, changed
 
 
-def _ensure_gold_chat_min_chars(story: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+def _ensure_gold_chat_min_chars(
+    story: dict[str, Any],
+    *,
+    mechanism: str = "",
+    structure_type: str = "",
+) -> tuple[dict[str, Any], bool]:
     """near-miss 垫到 hard min；大缺口先可读中段加句，再交 Pass1/FIX。
 
     剥旧灌尾 → 可读句内扩写 → 中段加句 → 粒子 near-miss（差 ≤60）。
@@ -2003,8 +2039,14 @@ def _ensure_gold_chat_min_chars(story: dict[str, Any]) -> tuple[dict[str, Any], 
     # 仅大缺口才插求否对；near-miss 交给句内扩写/粒子，避免一锤后拉锯灌尾
     need_now = DAILY_STORY_BODY_CHARS_MIN - dialogue_total_chars(data)
     changed_mid = False
+    st = str(structure_type or story.get("story_type") or "").strip().upper()
+    mech = str(mechanism or "").strip()
     if need_now > GOLD_CHAT_NEAR_MISS_DEFICIT_MAX:
-        data, changed_mid = _boost_short_with_mid_lines(data)
+        data, changed_mid = _boost_short_with_mid_lines(
+            data,
+            mechanism=mech,
+            structure_type=st,
+        )
     changed = changed or changed_mid
 
     data2, changed_pad = _patch_gold_chat_near_miss_chars(data)
@@ -2032,7 +2074,11 @@ def _ensure_gold_chat_min_chars(story: dict[str, Any]) -> tuple[dict[str, Any], 
         if need <= 0 or need > GOLD_CHAT_NEAR_MISS_DEFICIT_MAX:
             # 仍差很多时再试一次中段加句
             if need > GOLD_CHAT_NEAR_MISS_DEFICIT_MAX:
-                data, mid2 = _boost_short_with_mid_lines(data)
+                data, mid2 = _boost_short_with_mid_lines(
+                    data,
+                    mechanism=mech,
+                    structure_type=st,
+                )
                 changed = changed or mid2
                 need = DAILY_STORY_BODY_CHARS_MIN - dialogue_total_chars(data)
                 if need <= 0 or need > GOLD_CHAT_NEAR_MISS_DEFICIT_MAX:
@@ -2792,11 +2838,13 @@ def _validate_pass1_chat(
     source_type: str,
     mom_lines_max: int,
     structure_type: str = "",
+    mechanism: str = "",
     row: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Pass1 硬校验 + 格式 fix，直至通过或耗尽 retry。"""
     data = _normalize_chat_speakers(dict(story))
     st = str(structure_type or data.get("story_type") or "").strip().upper()
+    mech = str(mechanism or "").strip()
     if st:
         data["story_type"] = st
     last_err = ""
@@ -2804,7 +2852,11 @@ def _validate_pass1_chat(
     short_expand_rounds = 0
     for attempt in range(5):
         data = _apply_pass1_setting_normalize(data, row=row)
-        data, _ = _ensure_gold_chat_min_chars(data)
+        data, _ = _ensure_gold_chat_min_chars(
+            data,
+            mechanism=mech,
+            structure_type=st,
+        )
         try:
             validate_gold_chat(
                 data,
@@ -2820,14 +2872,25 @@ def _validate_pass1_chat(
             # 偏短：先 FIX 句内/加句扩写最多 3 轮；仍不足交外层 Pass1 重生成
             if _is_short_content_error(last_err):
                 if short_expand_rounds < 3:
+                    from app.services.daily_story.gold_story.gold_chat.type_bridge import (
+                        is_m8_j_domination,
+                    )
+
                     deficit = _char_deficit_from_error(last_err) or 0
                     expand_err = last_err
                     extras: list[str] = []
+                    m8_j = is_m8_j_domination(mechanism=mech, structure_type=st)
                     if "句数" in last_err or "对白句数" in last_err:
-                        extras.append(
-                            "中段插入哀求/加码+否决来回，补到≥12句；"
-                            "禁灌「你给我听好了/这回算清楚」尾巴"
-                        )
+                        if m8_j:
+                            extras.append(
+                                "中段插入互顶/立规/应战各 1–2 句，补到≥12句；"
+                                "禁灌「你给我听好了/这回算清楚」尾巴"
+                            )
+                        else:
+                            extras.append(
+                                "中段插入哀求/加码+否决来回，补到≥12句；"
+                                "禁灌「你给我听好了/这回算清楚」尾巴"
+                            )
                     if deficit > 0:
                         extras.append(
                             f"句内用 beat 实词扩写还差{deficit}字，"
@@ -2856,7 +2919,11 @@ def _validate_pass1_chat(
                     data = _normalize_chat_speakers(data)
                     if st:
                         data["story_type"] = st
-                    data, _ = _ensure_gold_chat_min_chars(data)
+                    data, _ = _ensure_gold_chat_min_chars(
+                        data,
+                        mechanism=mech,
+                        structure_type=st,
+                    )
                     short_expand_rounds += 1
                     continue
                 raise ValueError(last_err) from exc
@@ -2889,6 +2956,7 @@ def _generate_pass1_candidate(
     source_type: str,
     mom_lines_max: int,
     structure_type: str = "",
+    mechanism: str = "",
     temperature: float = 0.4,
     row: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -2903,6 +2971,7 @@ def _generate_pass1_candidate(
         source_type=source_type,
         mom_lines_max=mom_lines_max,
         structure_type=structure_type,
+        mechanism=mechanism,
         row=row,
     )
 
@@ -3182,12 +3251,17 @@ def _expand_seed_for_line_floor(
     seed: list[Any] | None,
     *,
     structure_type: str = "",
+    mechanism: str = "",
 ) -> list[Any]:
     """seed 条数 <12 时，在收束前插入抽象加码拍，迫使 Pass1 写满句数。
 
     只改 prompt 用 seed，不写回 DB；intent 抽象，不按单篇物件造句。
     """
     from app.services.daily_story.gold_story.scene import CHAT_LINE_COUNT_MIN
+
+    from app.services.daily_story.gold_story.gold_chat.type_bridge import (
+        is_m8_j_domination,
+    )
 
     out: list[Any] = [dict(x) if isinstance(x, dict) else x for x in (seed or [])]
     n = sum(
@@ -3199,7 +3273,14 @@ def _expand_seed_for_line_floor(
         return out
 
     st = str(structure_type or "").strip().upper()
-    if st == "J":
+    if is_m8_j_domination(mechanism=mechanism, structure_type=st):
+        extras: list[dict[str, str]] = [
+            {"speaker": "昭昭", "intent": "不服继续顶撞/扭打升级"},
+            {"speaker": "灿灿", "intent": "重申谁赢谁说了算"},
+            {"speaker": "昭昭", "intent": "嘴硬应战要对方出招"},
+            {"speaker": "灿灿", "intent": "一锤前放狠话或气势铺垫"},
+        ]
+    elif st == "J":
         extras: list[dict[str, str]] = [
             {"speaker": "昭昭", "intent": "换个理由再求一次"},
             {"speaker": "灿灿", "intent": "换个说法继续压住"},
@@ -3588,7 +3669,11 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
         # 截断回灌后压低 story_raw，减少「照着长叙述扩写跑飞」
         story_raw_cap = 400 if pass1_temperature < 0.35 else 800
         story_raw = story_raw_full[:story_raw_cap]
-        prompt_seed = _expand_seed_for_line_floor(seed, structure_type=structure_type)
+        prompt_seed = _expand_seed_for_line_floor(
+            seed,
+            structure_type=structure_type,
+            mechanism=mechanism,
+        )
         user = _USER.format(
             title=str(row.get("title") or ""),
             mechanism=mechanism,
@@ -3601,7 +3686,11 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
             m5_h_beat_block=m5_h_beat_block,
             pass1_feedback_block=pass1_feedback_block,
             dialogue_seed=_format_dialogue_seed(prompt_seed)[:4000],
-            seed_span_block=format_seed_span_block(prompt_seed),
+            seed_span_block=format_seed_span_block(
+                prompt_seed,
+                structure_type=structure_type,
+                mechanism=mechanism,
+            ),
             closing_intent=_closing_for_prompt(closing),
             speaker_map_note=str(
                 payload.get("speaker_map_note")
@@ -3634,6 +3723,7 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
                         source_type=source_type,
                         mom_lines_max=mom_int,
                         structure_type=structure_type,
+                        mechanism=mechanism,
                         temperature=pass1_temperature,
                         row=row,
                     )
@@ -3702,7 +3792,11 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
             type_notes = list(type_notes) + ["seed角色归位"]
         data, _ = patch_sanitize_c_tone_stack(data)
         data, _ = patch_sanitize_pad_suffix(data)
-        data, _ = _ensure_gold_chat_min_chars(data)
+        data, _ = _ensure_gold_chat_min_chars(
+            data,
+            mechanism=mechanism,
+            structure_type=structure_type,
+        )
         # 连说/垫字后再归位一次，避免补丁把专属短语翻错
         data, seed_changed2 = patch_seed_speaker_align(data, dialogue_seed=seed)
         if seed_changed2:
