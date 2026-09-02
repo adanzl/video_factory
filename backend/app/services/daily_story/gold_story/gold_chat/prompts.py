@@ -153,6 +153,50 @@ _FIX_USER = """校验错误：
 - speaker 非法须改为昭昭/灿灿/妈妈
 只输出 JSON。"""
 
+M8_J_BEAT_BUDGET_BLOCK = """【M8+J 篇幅 beat 预算（禁止 1:1 扩 seed）】
+| beat | 句数 | 字数 | 备注 |
+| 扭打/压制 | 2–3 | 55–75 | 动作短句，可含拟声/反应 |
+| 立规/谁赢谁说了算 | 2 | 40–55 | 明确规则，可互顶 |
+| 应战/互顶 | 3 | 65–85 | 核心扩写区，可成对出现 |
+| 一锤定音 | 1–2 | 25–45 | 短促，不拖泥带水 |
+| 认输/收束 | 2 | 35–55 | 收束，禁止新增对抗 |
+| 合计 | 12–14 | 260–340 | 优先保句数 |
+
+硬约束：
+- 禁止 1:1 扩写 seed；中段互顶/立规/应战须各加码 1–2 句
+- 认输后不得出现新的对抗、威胁、反驳、不服、再来一回合
+- 每句 ≤24 字；禁止灌尾巴凑字"""
+
+_M8_J_MID_REWRITE_SYSTEM = (
+    "你是 M8+J 日常故事编辑。须保留开头扭打段和结尾认输段，"
+    "只重写中段「立规→应战→一锤」对白。\n"
+    "speaker 只允许昭昭/灿灿/妈妈。只输出完整合法 JSON。"
+)
+
+_M8_J_MID_REWRITE_USER = """任务：保留首尾，重写中段以补满篇幅。
+
+保留开头（不得改动 speaker/句序/大意）：
+{head_json}
+
+保留结尾认输段（不得改动；认输后禁止新增对抗/不服/再来）：
+{tail_json}
+
+当前中段（可整体替换）：
+{mid_json}
+
+要求：
+- 中段须写满「立规/谁赢谁说了算→互顶应战→一锤定音」
+- 中段『立规→应战→一锤』共需 120–160 字（占全文 50–67%）；禁止在首尾垫字
+- 中段新增 2–3 组互顶/应战对白（每组 2 句），每句 ≤{max_line} 字
+- 全文 dialogue 总字数须 ≥{chars_min}（目标 {chars_soft_lo}–{chars_soft_hi}）
+- 认输段句数不增加；认输后禁止不服/再来/威胁
+- 禁词：{banned_literals}
+
+当前 JSON（只改 dialogue，其余字段保持）：
+{story_json}
+
+只输出 JSON。"""
+
 _ALIGN_REFINE_SYSTEM = (
     "你是 gold_chat 类型对齐精修编辑。只改被点到的对白行，其余字段与行数不动。\n"
     "须落实金稿对齐 checklist；M5 立规用「家规/规矩/规定」，勿写「妈妈说过」类转述。\n"
@@ -316,6 +360,23 @@ def format_beat_sequence_block(
     return "\n".join(parts)
 
 
+def format_m8_j_beat_budget_block(
+    *,
+    mechanism: str = "",
+    structure_type: str = "",
+) -> str:
+    from app.services.daily_story.gold_story.gold_chat.type_bridge import (
+        is_m8_j_domination,
+    )
+
+    if not is_m8_j_domination(
+        mechanism=mechanism,
+        structure_type=structure_type,
+    ):
+        return ""
+    return M8_J_BEAT_BUDGET_BLOCK
+
+
 def format_pass1_regen_feedback(
     error: str,
     story: dict[str, Any] | None,
@@ -325,6 +386,7 @@ def format_pass1_regen_feedback(
     closing_intent: str = "",
     beat_chain: list[Any] | None = None,
     conflict_text: str = "",
+    short_regen_count: int = 0,
 ) -> str:
     """Pass1 重试：把上一轮失败原因注入 prompt。"""
     err = str(error or "").strip()
@@ -391,14 +453,34 @@ def format_pass1_regen_feedback(
                 "seed 1:1 扩完不够时，中段加「哀求/加码+否决」来回；"
                 "禁止提早收束"
             )
-    if (
-        is_m8_j_domination(mechanism=mechanism, structure_type=structure_type)
-        and "正文总字数须≥" in err
-    ):
-        parts.append(
-            "- M8+J：扭打互顶→立规谁赢谁说了算→应战挑衅→一锤取胜→认输收场；"
-            "每句宜 16–22 字写满 beat，禁止只扩 seed 短句就停"
-        )
+    m8_j = is_m8_j_domination(mechanism=mechanism, structure_type=structure_type)
+    if m8_j and _is_short_content_feedback_error(err):
+        parts.append(format_m8_j_beat_budget_block(
+            mechanism=mechanism,
+            structure_type=structure_type,
+        ))
+        if short_regen_count >= 3:
+            parts.extend(
+                [
+                    "- **第 3 次重试：强制中段重写**",
+                    "- 保留开头扭打段与结尾认输段不动",
+                    "- 只重写「立规→应战→一锤」中段，插入 2–3 组互顶/应战对",
+                    "- 认输后禁止不服/再来/威胁；禁止尾部灌水",
+                ]
+            )
+        elif short_regen_count >= 2:
+            parts.extend(
+                [
+                    "- **第 2 次重试：中段 beat 不足**",
+                    "- 立规/应战段各须再加 1–2 句互顶对白",
+                    "- 禁止在认输后加戏；禁止 1:1 扩 seed",
+                ]
+            )
+        elif "正文总字数须≥" in err:
+            parts.append(
+                "- M8+J：扭打互顶→立规谁赢谁说了算→应战挑衅→一锤取胜→认输收场；"
+                "每句宜 16–22 字写满 beat，禁止只扩 seed 短句就停"
+            )
     if "正文总字数须≤" in err:
         parts.append(
             f"- 正文不得超过 {DAILY_STORY_BODY_CHARS_MAX} 字；删注水/复读，勿顶上限"
@@ -422,6 +504,14 @@ def format_pass1_regen_feedback(
             ]
         )
     return "\n".join(parts)
+
+
+def _is_short_content_feedback_error(err: str) -> bool:
+    return (
+        "正文总字数须≥" in err
+        or "dialogue 至少" in err
+        or "对白句数须≥" in err
+    )
 
 
 def format_structure_score_feedback(
@@ -514,6 +604,12 @@ def format_seed_span_block(
         parts.append(
             "禁止提早收束；句内用 beat 实词写满字数，禁灌尾巴凑字。"
         )
+    beat_budget = format_m8_j_beat_budget_block(
+        mechanism=mechanism,
+        structure_type=structure_type,
+    )
+    if beat_budget:
+        parts.extend(["", beat_budget])
     return "\n".join(parts)
 
 

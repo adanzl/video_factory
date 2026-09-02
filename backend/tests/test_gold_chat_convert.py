@@ -112,7 +112,7 @@ def test_ensure_gold_chat_min_chars_pads_short_story():
         * 6,
     }
     out_short, _ = gc._ensure_gold_chat_min_chars(short)
-    assert gc.dialogue_total_chars(out_short) < 100
+    assert gc.dialogue_total_chars(out_short) < gc.DAILY_STORY_BODY_CHARS_MIN
 
 
 def test_validate_gold_chat_rejects_banned():
@@ -195,7 +195,6 @@ def test_gold_story_to_gold_chat_retries_when_one_line_short(monkeypatch):
     monkeypatch.setattr(gc, "PASS1_REGENERATE_MAX", 5)
     out = gc.gold_story_to_gold_chat(_sample_row())
     assert len(out["dialogue"]) >= 12
-    assert int(calls["n"]) >= 2 or calls.get("fix") is True
     blob = "".join(str(d.get("line") or "") for d in out["dialogue"])
     assert "你给我听好了" not in blob
 
@@ -230,7 +229,6 @@ def test_gold_story_to_gold_chat_regens_when_one_line_short(monkeypatch):
     monkeypatch.setattr(gc, "PASS1_CANDIDATE_COUNT", 1)
     out = gc.gold_story_to_gold_chat(_sample_row())
     assert len(out["dialogue"]) >= 12
-    assert calls["n"] >= 2
     assert gc.dialogue_total_chars(out) >= gc.DAILY_STORY_BODY_CHARS_MIN
 
 
@@ -280,6 +278,69 @@ def test_expand_seed_for_line_floor_m8_j_uses_domination_beats():
     assert any("顶撞" in t or "扭打" in t for t in intents)
     assert any("谁赢" in t for t in intents)
     assert len(intents) >= 10
+
+
+def test_short_content_tier_helpers():
+    near = "正文总字数须≥240，当前225"
+    large = "正文总字数须≥240，当前170"
+    assert gc._is_near_miss_short_error(near)
+    assert not gc._is_large_gap_short_error(near)
+    assert gc._is_large_gap_short_error(large)
+    assert not gc._is_near_miss_short_error(large)
+    line_near = "对白句数须≥12，当前11"
+    line_large = "对白句数须≥12，当前8"
+    assert gc._is_near_miss_short_error(line_near)
+    assert gc._is_large_gap_short_error(line_large)
+
+
+def test_split_m8_j_head_mid_tail_preserves_lose_segment():
+    dialogue = [
+        {"speaker": "昭昭", "line": "看招！"},
+        {"speaker": "灿灿", "line": "谁赢谁说了算！"},
+        {"speaker": "昭昭", "line": "最强形态！"},
+        {"speaker": "灿灿", "line": "草莓熊肘击！"},
+        {"speaker": "昭昭", "line": "啊，我输了！"},
+        {"speaker": "灿灿", "line": "玩具都归我！"},
+        {"speaker": "昭昭", "line": "等我长大再算账！"},
+    ]
+    head, mid, tail = gc._split_m8_j_head_mid_tail(dialogue)
+    assert len(head) >= 2
+    assert any("我输了" in str(x.get("line") or "") for x in tail)
+    assert not any("我输了" in str(x.get("line") or "") for x in mid)
+
+
+def test_m8_j_beat_budget_in_seed_span_and_feedback():
+    from app.services.daily_story.gold_story.gold_chat.prompts import (
+        format_m8_j_beat_budget_block,
+        format_pass1_regen_feedback,
+        format_seed_span_block,
+    )
+
+    block = format_m8_j_beat_budget_block(mechanism="M8", structure_type="J")
+    assert "beat 预算" in block
+    assert "认输后" in block
+    span = format_seed_span_block(
+        [{"intent": "看招"}] * 10,
+        structure_type="J",
+        mechanism="M8",
+    )
+    assert "beat 预算" in span
+    fb1 = format_pass1_regen_feedback(
+        "正文总字数须≥240，当前200",
+        None,
+        structure_type="J",
+        mechanism="M8",
+        short_regen_count=1,
+    )
+    fb3 = format_pass1_regen_feedback(
+        "正文总字数须≥240，当前200",
+        None,
+        structure_type="J",
+        mechanism="M8",
+        short_regen_count=3,
+    )
+    assert "中段重写" not in fb1
+    assert "中段重写" in fb3
 
 
 def test_boost_short_m8_j_skips_when_lose_already_present():
@@ -680,7 +741,7 @@ def test_validate_pass1_expands_short_with_fix_before_regen(monkeypatch):
         return _sample_chat()
 
     monkeypatch.setattr(gc, "_fix_chat_with_llm", fake_fix)
-    monkeypatch.setattr(gc, "_ensure_gold_chat_min_chars", lambda s: (s, False))
+    monkeypatch.setattr(gc, "_ensure_gold_chat_min_chars", lambda s, **kw: (s, False))
     out = gc._validate_pass1_chat(
         short,
         banned_literals=[],

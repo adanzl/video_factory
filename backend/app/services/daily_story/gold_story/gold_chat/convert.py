@@ -25,6 +25,8 @@ from app.services.daily_story.gold_story.gold_chat.prompts import (
     _ALIGN_REFINE_USER,
     _FIX_SYSTEM,
     _FIX_USER,
+    _M8_J_MID_REWRITE_SYSTEM,
+    _M8_J_MID_REWRITE_USER,
     _SHORTEN_SYSTEM,
     _SHORTEN_USER,
     _SYSTEM,
@@ -37,6 +39,9 @@ from app.services.daily_story.gold_story.gold_chat.prompts import (
     format_role_binding_block,
     format_seed_span_block,
     format_structure_score_feedback,
+)
+from app.services.daily_story.gold_story.gold_chat.type_bridge import (
+    is_m8_j_domination,
 )
 from app.services.daily_story.gold_story.gold_chat.validate import (
     collect_align_issues,
@@ -250,6 +255,11 @@ PASS1_CANDIDATE_COUNT = 2
 PASS1_REGENERATE_MAX = 5
 PASS1_SHORT_REGENERATE_MAX = 3
 PASS1_SHORT_LINE_DEFICIT_MAX = 3
+PASS1_NEAR_MISS_CHAR_DEFICIT_MAX = 20
+PASS1_LARGE_GAP_CHAR_DEFICIT_MIN = 60
+# M8+J 大缺口阈值更激进：缺 ≥40 字立即中段重写，不走轻量 FIX
+PASS1_LARGE_GAP_CHAR_DEFICIT_MIN_M8J = 40
+PASS1_NEAR_MISS_FIX_MAX_ROUNDS = 2
 PASS2_MAX_ROUNDS = 2
 # 差 ≤60 字本地可读扩写/粒子收口（FIX 常停在 190–220）
 GOLD_CHAT_NEAR_MISS_DEFICIT_MAX = 60
@@ -378,6 +388,60 @@ def _fix_chat_with_llm(
         **_prompt_budget_kwargs(),
     )
     return _chat_json(_FIX_SYSTEM, user, temperature=0.55)
+
+
+def _split_m8_j_head_mid_tail(
+    dialogue: list[Any],
+) -> tuple[list[Any], list[Any], list[Any]]:
+    """M8+J 中段重写：保留首尾，中段可替换。"""
+    lose_idx = _j_lose_line_index(dialogue)
+    n = len(dialogue)
+    if n < 4:
+        head_n = max(1, n // 3)
+        tail_n = max(1, n - head_n - 1)
+        return dialogue[:head_n], dialogue[head_n:n - tail_n], dialogue[n - tail_n:]
+    if lose_idx < 0:
+        head_n = min(3, max(2, n // 4))
+        tail_n = min(3, max(2, n // 5))
+        return dialogue[:head_n], dialogue[head_n:n - tail_n], dialogue[n - tail_n:]
+    head_n = min(3, max(2, lose_idx // 2))
+    head = dialogue[:head_n]
+    tail = dialogue[lose_idx:]
+    mid = dialogue[head_n:lose_idx]
+    if not mid and head_n < lose_idx:
+        mid = dialogue[head_n:lose_idx]
+    return head, mid, tail
+
+
+def _rewrite_m8_j_mid_section_with_llm(
+    story: dict[str, Any],
+    *,
+    banned_literals: list[str],
+    mom_lines_max: int = 1,
+) -> dict[str, Any]:
+    """大缺口：保留首尾，只让 LLM 重写中段立规→应战→一锤。"""
+    dialogue = story.get("dialogue") or []
+    if not isinstance(dialogue, list) or len(dialogue) < 4:
+        return story
+    head, mid, tail = _split_m8_j_head_mid_tail(dialogue)
+    user = _M8_J_MID_REWRITE_USER.format(
+        head_json=json.dumps(head, ensure_ascii=False),
+        mid_json=json.dumps(mid, ensure_ascii=False),
+        tail_json=json.dumps(tail, ensure_ascii=False),
+        story_json=json.dumps(story, ensure_ascii=False)[:8000],
+        banned_literals="、".join(banned_literals) or "（无）",
+        mom_lines_max=max(0, int(mom_lines_max)),
+        **_prompt_budget_kwargs(),
+    )
+    out = _normalize_chat_speakers(
+        _chat_json(_M8_J_MID_REWRITE_SYSTEM, user, temperature=0.55)
+    )
+    new_dialogue = out.get("dialogue") or []
+    if not isinstance(new_dialogue, list) or len(new_dialogue) < len(head) + len(tail):
+        return story
+    merged = dict(story)
+    merged["dialogue"] = new_dialogue
+    return merged
 
 
 _LINE_TRIM_SUFFIXES = ("！", "。", "!", "？", "?", "啊", "呢", "吧", "嘛", "呀", "哦")
@@ -2980,17 +3044,46 @@ def _validate_pass1_chat(
             last_err = str(exc)
             if attempt >= 4:
                 raise ValueError(last_err) from exc
-            # 偏短：先 FIX 句内/加句扩写最多 3 轮；仍不足交外层 Pass1 重生成
+            # 偏短：near_miss 轻量 FIX；大缺口 M8+J 中段重写；仍不足交外层 Pass1 重生成
             if _is_short_content_error(last_err):
-                if short_expand_rounds < 3:
-                    from app.services.daily_story.gold_story.gold_chat.type_bridge import (
-                        is_m8_j_domination,
-                    )
+                from app.services.daily_story.gold_story.gold_chat.type_bridge import (
+                    is_m8_j_domination,
+                )
 
+                m8_j = is_m8_j_domination(mechanism=mech, structure_type=st)
+                large_gap = m8_j and _is_large_gap_short_error(
+                    last_err, mechanism=mech, structure_type=st
+                )
+                near_miss = _is_near_miss_short_error(last_err)
+                max_fix = (
+                    PASS1_NEAR_MISS_FIX_MAX_ROUNDS
+                    if near_miss
+                    else (2 if large_gap else 3)
+                )
+                if large_gap and short_expand_rounds == 0:
+                    logger.info(
+                        "[GOLD_CHAT] pass1 M8+J mid rewrite err=%s",
+                        last_err[:120],
+                    )
+                    data = _rewrite_m8_j_mid_section_with_llm(
+                        data,
+                        banned_literals=banned_literals,
+                        mom_lines_max=mom_lines_max,
+                    )
+                    data = _normalize_chat_speakers(data)
+                    if st:
+                        data["story_type"] = st
+                    data, _ = _ensure_gold_chat_min_chars(
+                        data,
+                        mechanism=mech,
+                        structure_type=st,
+                    )
+                    short_expand_rounds += 1
+                    continue
+                if short_expand_rounds < max_fix:
                     deficit = _char_deficit_from_error(last_err) or 0
                     expand_err = last_err
                     extras: list[str] = []
-                    m8_j = is_m8_j_domination(mechanism=mech, structure_type=st)
                     if "句数" in last_err or "对白句数" in last_err:
                         if m8_j:
                             extras.append(
@@ -3003,12 +3096,18 @@ def _validate_pass1_chat(
                                 "禁灌「你给我听好了/这回算清楚」尾巴"
                             )
                     if deficit > 0:
-                        extras.append(
-                            f"句内用 beat 实词扩写还差{deficit}字，"
-                            f"偏短句加到约18–{CHAT_MAX_LINE_CHARS}字；"
-                            "禁止只加语气词、禁止删句、"
-                            "禁止「你给我听好了/这回算清楚/别再装傻」"
-                        )
+                        if near_miss:
+                            extras.append(
+                                f"near_miss 差{deficit}字：只扩 1 个现有短句"
+                                f"（动作/神态），不新增 beat、不尾部灌水"
+                            )
+                        else:
+                            extras.append(
+                                f"句内用 beat 实词扩写还差{deficit}字，"
+                                f"偏短句加到约18–{CHAT_MAX_LINE_CHARS}字；"
+                                "禁止只加语气词、禁止删句、"
+                                "禁止「你给我听好了/这回算清楚/别再装傻」"
+                            )
                     else:
                         extras.append(
                             "句内用 beat 实词写满；"
@@ -3616,6 +3715,37 @@ def _is_short_content_error(msg: str) -> bool:
     )
 
 
+def _is_near_miss_short_error(msg: str) -> bool:
+    """差 ≤20 字或仅少 1 句：轻量 FIX，不动结构。"""
+    char_def = _char_deficit_from_error(msg)
+    line_def = _line_count_deficit_from_error(msg)
+    if char_def is not None and 0 < char_def <= PASS1_NEAR_MISS_CHAR_DEFICIT_MAX:
+        return True
+    return line_def is not None and line_def == 1
+
+
+def _is_large_gap_short_error(
+    msg: str,
+    *,
+    mechanism: str = "",
+    structure_type: str = "",
+) -> bool:
+    """差 ≥60 字或少 ≥3 句：须中段重写，勿同 prompt 空转。
+    M8+J 用更激进阈值（≥40 字）早点进入中段重写。"""
+    char_def = _char_deficit_from_error(msg)
+    line_def = _line_count_deficit_from_error(msg)
+    
+    # M8+J 专用：缺 ≥40 字立即中段重写
+    if is_m8_j_domination(mechanism=mechanism, structure_type=structure_type):
+        threshold = PASS1_LARGE_GAP_CHAR_DEFICIT_MIN_M8J
+    else:
+        threshold = PASS1_LARGE_GAP_CHAR_DEFICIT_MIN
+    
+    if char_def is not None and char_def >= threshold:
+        return True
+    return line_def is not None and line_def >= 3
+
+
 def _line_count_deficit_from_error(msg: str) -> int | None:
     m = re.search(r"对白句数须≥(\d+)，当前(\d+)", str(msg or ""))
     if not m:
@@ -3854,6 +3984,11 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
                     break
         if not candidates:
             if last_err:
+                if hit_short or _is_short_content_error(last_err):
+                    short_regen_count = _bump_short_regen_or_reject(
+                        last_err, short_regen_count
+                    )
+                    pass1_temperature = max(pass1_temperature, 0.55)
                 pass1_feedback_block = format_pass1_regen_feedback(
                     last_err,
                     None,
@@ -3862,15 +3997,10 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
                     closing_intent=closing,
                     beat_chain=beat_chain,
                     conflict_text=conflict_text,
+                    short_regen_count=short_regen_count,
                 )
                 if hit_truncation or _is_truncation_error(last_err):
                     pass1_temperature = 0.25
-                elif hit_short or _is_short_content_error(last_err):
-                    short_regen_count = _bump_short_regen_or_reject(
-                        last_err, short_regen_count
-                    )
-                    # 短稿需写长：抬温，避免 0.35 原样复读
-                    pass1_temperature = max(pass1_temperature, 0.55)
             continue
         data = _pick_pass1_candidate(
             candidates,
@@ -4072,6 +4202,7 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
                     closing_intent=closing,
                     beat_chain=beat_chain,
                     conflict_text=conflict_text,
+                    short_regen_count=short_regen_count,
                 )
                 continue
             return chat
@@ -4098,6 +4229,7 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
                 closing_intent=closing,
                 beat_chain=beat_chain,
                 conflict_text=conflict_text,
+                short_regen_count=short_regen_count,
             )
     # 零食+作业本战：LLM 截断/结构分翻车时用 beat 重建兜底（禁再烧 flash）
     if str(structure_type or "").upper() == "C" and str(mechanism or "").upper() == "M2":

@@ -240,7 +240,7 @@
           class="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center text-gray-400"
         >
           <div>尚未转换 对话稿</div>
-          <el-button type="primary" :loading="converting" @click="handleConvert">
+          <el-button type="primary" :loading="converting" :disabled="statusBusy" @click="handleConvert">
             转 对话稿
           </el-button>
         </div>
@@ -292,6 +292,7 @@
             type="primary"
             plain
             :loading="converting"
+            :disabled="statusBusy"
             @click="handleConvert"
           >
             {{ detail.has_gold_chat ? "重转 对话稿" : "转 对话稿" }}
