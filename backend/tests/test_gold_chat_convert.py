@@ -262,6 +262,54 @@ def test_bump_short_regen_helpers():
         gc._bump_short_regen_or_reject(err_chars, 3)
 
 
+def test_expand_seed_for_line_floor_m8_j_uses_domination_beats():
+    seed = [
+        {"speaker": "昭昭", "intent": "看招"},
+        {"speaker": "灿灿", "intent": "谁赢谁说了算"},
+    ]
+    out = gc._expand_seed_for_line_floor(
+        seed,
+        structure_type="J",
+        mechanism="M8",
+    )
+    intents = [
+        str(x.get("intent") or "")
+        for x in out
+        if isinstance(x, dict)
+    ]
+    assert any("顶撞" in t or "扭打" in t for t in intents)
+    assert any("谁赢" in t for t in intents)
+    assert len(intents) >= 10
+
+
+def test_boost_short_m8_j_inserts_domination_pairs_under_line_floor():
+    short = {
+        "story_type": "J",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "这是我的地盘，你走开！"},
+            {"speaker": "灿灿", "line": "我先来的，该你走！"},
+            {"speaker": "昭昭", "line": "哼，看招！"},
+            {"speaker": "灿灿", "line": "你敢打我？"},
+            {"speaker": "灿灿", "line": "谁赢谁说了算！"},
+            {"speaker": "昭昭", "line": "拿出最强形态来！"},
+            {"speaker": "灿灿", "line": "草莓熊肘击！"},
+            {"speaker": "昭昭", "line": "啊，我输了！"},
+            {"speaker": "灿灿", "line": "以后玩具都归我！"},
+            {"speaker": "昭昭", "line": "哼，等我长大再算账！"},
+        ],
+    }
+    out, changed = gc._boost_short_with_mid_lines(
+        short,
+        mechanism="M8",
+        structure_type="J",
+    )
+    assert changed
+    assert len(out["dialogue"]) >= 12
+    blob = "".join(str(d.get("line") or "") for d in out["dialogue"])
+    assert "再求你一次" not in blob
+    assert "不服" in blob or "谁赢" in blob
+
+
 def test_ensure_gold_chat_min_chars_does_not_spam_expand_tails():
     """旧灌尾须剥掉；大缺口不靠本地叠尾巴硬凑到 240。"""
     dirty = {

@@ -271,6 +271,9 @@ _MECH_HINT_APPEND: dict[tuple[str, str], str] = {
     ("M8", "J"): (
         "\n- **M8+J**：一锤威慑须镇住对方，收束对方怂/不敢再顶；"
         "昭昭须字面写出怂退（认输/我输了/不敢再/回房间/不理你等）；"
+        "**篇幅前置**：扭打互顶→立规谁赢谁说了算→应战挑衅→一锤取胜"
+        f"须写满全文≥240字（目标280–340），每句宜16–22字；"
+        "seed 短句禁止 1:1 扩完就停，中段须互顶/立规/应战各加码 1–2 句；"
         "家长可旁观或感叹一句；禁止 A 末四拍反噬/破功"
     ),
     ("M5", "J"): (
@@ -321,6 +324,17 @@ _RE_SEED_PIVOT = re.compile(
 _RE_SEED_SOFT = re.compile(
     r"识相|暖|嘴硬|原谅|饶|擦|药|说好了|行了|撑腰|嗯|笑",
 )
+
+
+def is_m8_j_domination(
+    *,
+    mechanism: str = "",
+    structure_type: str = "",
+) -> bool:
+    return (
+        str(mechanism or "").strip().upper() == "M8"
+        and str(structure_type or "").strip().upper() == "J"
+    )
 
 
 def _dialogue_seed_blob(seed: list[Any] | None) -> str:

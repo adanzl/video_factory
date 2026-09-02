@@ -367,6 +367,10 @@ def format_pass1_regen_feedback(
         return "\n".join(parts)
 
     # 硬校验失败（字数/缺字段/单句过长等）也回灌，避免同提示空转
+    from app.services.daily_story.gold_story.gold_chat.type_bridge import (
+        is_m8_j_domination,
+    )
+
     parts = ["【上一轮 Pass1 硬校验失败 · 本轮须一次写对】", f"错误：{err[:400]}"]
     if "正文总字数须≥" in err:
         parts.append(
@@ -375,10 +379,25 @@ def format_pass1_regen_feedback(
             "禁灌「你给我听好了/这回算清楚」尾巴"
         )
     if "对白句数须≥" in err or "句数须≥" in err:
+        if is_m8_j_domination(mechanism=mechanism, structure_type=structure_type):
+            parts.append(
+                f"- 对白必须 ≥{DIALOGUE_ROUNDS_SOFT_LO} 句；"
+                "M8+J：中段加「互顶/立规/应战」各 1–2 句，"
+                "勿只把 seed 短句 1:1 扩完；禁止提早收束"
+            )
+        else:
+            parts.append(
+                f"- 对白必须 ≥{DIALOGUE_ROUNDS_SOFT_LO} 句；"
+                "seed 1:1 扩完不够时，中段加「哀求/加码+否决」来回；"
+                "禁止提早收束"
+            )
+    if (
+        is_m8_j_domination(mechanism=mechanism, structure_type=structure_type)
+        and "正文总字数须≥" in err
+    ):
         parts.append(
-            f"- 对白必须 ≥{DIALOGUE_ROUNDS_SOFT_LO} 句；"
-            "seed 1:1 扩完不够时，中段加「哀求/加码+否决」来回；"
-            "禁止提早收束"
+            "- M8+J：扭打互顶→立规谁赢谁说了算→应战挑衅→一锤取胜→认输收场；"
+            "每句宜 16–22 字写满 beat，禁止只扩 seed 短句就停"
         )
     if "正文总字数须≤" in err:
         parts.append(
@@ -444,11 +463,23 @@ def format_structure_score_feedback(
     return "\n".join(parts)
 
 
-def format_seed_span_block(seed: list[Any] | None) -> str:
+def format_seed_span_block(
+    seed: list[Any] | None,
+    *,
+    structure_type: str = "",
+    mechanism: str = "",
+) -> str:
     """seed 条数不足 12 时，强制提示中段加码扩句，禁止 1:1 扩完就停。"""
+    from app.services.daily_story.gold_story.gold_chat.type_bridge import (
+        is_m8_j_domination,
+    )
     from app.services.daily_story.gold_story.scene import CHAT_LINE_COUNT_MIN
     from app.services.daily_story.prompts import DAILY_STORY_BODY_CHARS_MIN
 
+    m8_j = is_m8_j_domination(
+        mechanism=mechanism,
+        structure_type=structure_type,
+    )
     n = 0
     for item in seed or []:
         if isinstance(item, dict) and (
@@ -464,12 +495,21 @@ def format_seed_span_block(seed: list[Any] | None) -> str:
         f"（目标 280–340）；每句宜 16–22 字，禁灌尾巴凑字。",
     ]
     if need_lines > 0:
-        parts.append(
-            f"seed 少于 {CHAT_LINE_COUNT_MIN}：中段至少把 {need_lines} 条"
-            "扩成「哀求/加码 + 否决」两句（共补 ≥"
-            f"{need_lines} 句），禁止 seed 1:1 扩完就停；"
-            "禁止灌尾巴（你给我听好了/这回算清楚等）凑字。"
-        )
+        if m8_j:
+            parts.append(
+                f"seed 少于 {CHAT_LINE_COUNT_MIN}：中段至少把 {need_lines} 条"
+                "扩成「互顶/立规/应战」各 1–2 句（扭打升级、重申谁赢谁说了算、"
+                "挑衅要对方出招），共补 ≥"
+                f"{need_lines} 句；禁止 seed 1:1 短句扩完就停；"
+                "禁止灌尾巴（你给我听好了/这回算清楚等）凑字。"
+            )
+        else:
+            parts.append(
+                f"seed 少于 {CHAT_LINE_COUNT_MIN}：中段至少把 {need_lines} 条"
+                "扩成「哀求/加码 + 否决」两句（共补 ≥"
+                f"{need_lines} 句），禁止 seed 1:1 扩完就停；"
+                "禁止灌尾巴（你给我听好了/这回算清楚等）凑字。"
+            )
     else:
         parts.append(
             "禁止提早收束；句内用 beat 实词写满字数，禁灌尾巴凑字。"
