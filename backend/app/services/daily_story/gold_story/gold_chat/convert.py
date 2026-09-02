@@ -783,7 +783,7 @@ def patch_strip_all_natural_expands(
 def patch_j_fix_strongest_form_wording(
     story: dict[str, Any],
 ) -> tuple[dict[str, Any], bool]:
-    """J：「最强形态」须昭昭自述挑衅，禁「那你拿出」错位口吻。"""
+    """J：「最强形态」须昭昭自述挑衅，禁灿灿错位或「那你拿出」口吻。"""
     import copy
 
     if str(story.get("story_type") or "").strip().upper() != "J":
@@ -793,10 +793,16 @@ def patch_j_fix_strongest_form_wording(
     for item in out.get("dialogue") or []:
         if not isinstance(item, dict):
             continue
-        if str(item.get("speaker") or "").strip() != "昭昭":
-            continue
         line = str(item.get("line") or "")
         if "最强形态" not in line:
+            continue
+        sp = str(item.get("speaker") or "").strip()
+        if sp == "灿灿":
+            item["speaker"] = "昭昭"
+            item["line"] = "我拿出最强形态来，你可别怂！"
+            changed = True
+            continue
+        if sp != "昭昭":
             continue
         if not re.search(r"那你|你拿|你出", line):
             continue
@@ -1355,6 +1361,94 @@ def patch_j_drop_post_lose_plea(
     return out, True
 
 
+def _j_lose_line_index(dialogue: list[Any]) -> int:
+    for i, x in enumerate(dialogue):
+        if not isinstance(x, dict):
+            continue
+        if (
+            str(x.get("speaker") or "").strip() == "昭昭"
+            and re.search(r"我输了|认输", str(x.get("line") or ""))
+        ):
+            return i
+    return -1
+
+
+_RE_J_POST_LOSE_REMATCH = re.compile(
+    r"不服|再来一回合|我还没用全力|看谁先认输|别磨蹭|"
+    r"我还没发力|奉陪到底|你记住了|你真敢",
+)
+_RE_J_POST_LOSE_KEEP = re.compile(r"长大.{0,8}算|都归我|玩具都归")
+
+
+def patch_j_drop_post_lose_rematch(
+    story: dict[str, Any],
+) -> tuple[dict[str, Any], bool]:
+    """J/M8+J：认输后删本地互顶加码句，保收场节奏。"""
+    import copy
+
+    if str(story.get("story_type") or "").strip().upper() != "J":
+        return story, False
+    out = copy.deepcopy(story)
+    dialogue = out.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 4:
+        return story, False
+    lose_idx = _j_lose_line_index(dialogue)
+    if lose_idx < 0:
+        return story, False
+    tail_guard = set(range(max(lose_idx + 1, len(dialogue) - 2), len(dialogue)))
+    drop: set[int] = set()
+    for i in range(lose_idx + 1, len(dialogue)):
+        if i in tail_guard:
+            continue
+        item = dialogue[i]
+        if not isinstance(item, dict):
+            continue
+        line = str(item.get("line") or "")
+        if _RE_J_POST_LOSE_KEEP.search(line):
+            continue
+        if _RE_J_POST_LOSE_REMATCH.search(line):
+            drop.add(i)
+    if not drop:
+        return story, False
+    out["dialogue"] = [x for i, x in enumerate(dialogue) if i not in drop]
+    return out, True
+
+
+def _gold_chat_j_pre_score_polish(
+    chat: dict[str, Any],
+    *,
+    dialogue_seed: list[Any] | None,
+    mechanism: str = "",
+) -> dict[str, Any]:
+    """结构分门控前：J 删认输后拉锯、打散连说、归位 seed。"""
+    from app.services.daily_story.gold_story.gold_chat.patch import (
+        patch_m5_break_sibling_consecutive,
+    )
+
+    out = dict(chat)
+    out["story_type"] = "J"
+    out, _ = patch_j_fix_lose_speaker(out)
+    out, _ = patch_j_fix_strongest_form_wording(out)
+    out, _ = patch_j_drop_post_lose_rematch(out)
+    out, _ = patch_j_dedupe_plea_rounds(out)
+    out, _ = patch_j_drop_post_lose_plea(out)
+    out, _ = patch_j_drop_post_lose_bridge(out)
+    out, _ = patch_seed_speaker_align(out, dialogue_seed=dialogue_seed)
+    for _ in range(2):
+        out, br = patch_m5_break_sibling_consecutive(out)
+        if not br:
+            break
+    out, _ = patch_j_ensure_post_lose_alternate(out)
+    out, _ = patch_j_fix_post_lose_consecutive_can(out)
+    out, _ = patch_j_drop_post_lose_bridge(out)
+    out, _ = _ensure_gold_chat_min_chars(
+        out,
+        mechanism=mechanism,
+        structure_type="J",
+    )
+    return out
+
+
 def _j_expand_bare_allowed(bare: str, speaker: str) -> bool:
     """near-miss 扩写按 speaker 过滤，防权威/挑衅错位。"""
     sp = str(speaker or "").strip()
@@ -1837,17 +1931,34 @@ def _boost_short_with_mid_lines(
 
     existing = {str(x.get("line") or "").strip() for x in dialogue if isinstance(x, dict)}
     blob = "".join(existing)
-    if not m8_j and ("再求你一次" in blob or "那我保证" in blob):
+    if m8_j:
+        if _j_lose_line_index(dialogue) >= 0:
+            return story, False
+        if len(dialogue) >= CHAT_LINE_COUNT_MIN:
+            return story, False
+    elif "再求你一次" in blob or "那我保证" in blob:
         # 已有求否加码，勿再插第二对
         return story, False
     insert_at = max(2, len(dialogue) - 2)
+    if m8_j:
+        ko_idx = next(
+            (
+                i
+                for i, x in enumerate(dialogue)
+                if isinstance(x, dict)
+                and re.search(r"草莓熊|肘击", str(x.get("line") or ""))
+            ),
+            -1,
+        )
+        if ko_idx >= 2:
+            insert_at = min(insert_at, ko_idx)
     prev = dialogue[insert_at - 1] if insert_at > 0 else None
     if isinstance(prev, dict) and str(prev.get("speaker") or "").strip() == "昭昭":
         insert_at = min(insert_at + 1, len(dialogue))
     pair_pool = _M8_J_NATURAL_MID_PAIRS if m8_j else _GOLD_CHAT_NATURAL_MID_PAIRS
     changed = False
     pairs_used = 0
-    max_pairs = 2 if large_gap else 1
+    max_pairs = 1 if m8_j else (2 if large_gap else 1)
     for pair in pair_pool:
         if dialogue_total_chars(out) >= DAILY_STORY_BODY_CHARS_MIN:
             break
@@ -3879,15 +3990,11 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
                     "；".join(str(n) for n in m2_notes[:4]),
                 )
             if str(structure_type or "").upper() == "J":
-                for _ in range(4):
-                    chat, br = patch_break_consecutive_keep_seed(
-                        chat, dialogue_seed=seed, bridge_cap=4
-                    )
-                    if not br:
-                        break
-                    chat, _ = patch_sanitize_bridge_lines(chat)
-                    chat, _ = patch_seed_speaker_align(chat, dialogue_seed=seed)
-                chat, _ = patch_j_drop_post_lose_bridge(chat)
+                chat = _gold_chat_j_pre_score_polish(
+                    chat,
+                    dialogue_seed=seed,
+                    mechanism=mechanism,
+                )
             chat = _attach_gold_chat_structure_score(chat, row)
             try:
                 _gate_gold_chat_structure_score(chat)
