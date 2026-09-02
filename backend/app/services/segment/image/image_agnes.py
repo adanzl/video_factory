@@ -337,7 +337,7 @@ class AgnesImageProvider(ImageProvider):
         last_exc: Exception | None = None
         last_status: int | None = None
         last_body: str | None = None
-        host_failover_tried = {url}  # type: ignore[var-annotated]
+        host_failover_tried = set()  # type: ignore[var-annotated]
         for attempt in range(retries):
             self._raise_if_job_cancelled()
             t0 = time.monotonic()
@@ -1339,7 +1339,7 @@ class AgnesImageProvider(ImageProvider):
                             f"{agnes_key_base_url(api_key, settings)}/chat/completions"
                         )
                         url = verify_url  # type: ignore[var-annotated]
-                        host_failover_tried: set[str] = {verify_url}  # type: ignore[var-annotated]
+                        host_failover_tried: set[str] = set()  # type: ignore[var-annotated]
                         payload = {
                             "model": settings.agnes_vl_model,
                             "messages": [
