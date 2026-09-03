@@ -116,6 +116,8 @@ def test_wrap_image_prompts_passes_setting_for_sticky_cast():
     assert "三人" in segments[0]["image_prompt"]
 
 def test_assemble_daily_t2i_prompt_only_speakers():
+    """单角色镜（只有灿灿）：不注入妈妈文字块、构图单人全身；
+    孩子外貌靠 S1 参考图句锁定，站位不得把昭昭写成本镜主体。"""
     from app.services.script.image_prompt import assemble_daily_t2i_prompt
 
     prompt = assemble_daily_t2i_prompt(
@@ -125,10 +127,11 @@ def test_assemble_daily_t2i_prompt_only_speakers():
             "shot_type": "中景",
         }
     )
-    assert "灿灿：10岁女孩" in prompt
-    assert "昭昭" not in prompt
     assert "妈妈" not in prompt
+    assert "灿灿叉腰瞪眼" in prompt
+    assert "保留昭昭与灿灿的外貌" in prompt
     assert "中景，人物全身" in prompt
+    assert "画面左边是昭昭" not in prompt
 
 def test_assemble_daily_t2i_prompt_door_and_hair_locks():
     """拼装层硬锁：门必须单扇、风吹头发必须连头皮，不依赖 LLM 照写。"""
