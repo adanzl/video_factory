@@ -91,7 +91,9 @@ _DAILY_CHAR_MOM = (
     "妈妈：成年女性，黑色长发，米色上衣，蓝色牛仔裤，深色平底鞋。"
 )
 _DAILY_CHAR_HEIGHT = "昭昭比灿灿矮约半个头。"
-_DAILY_CHAR_HEIGHT_3 = "妈妈最高，灿灿次之，昭昭最矮（约差半个头）。"
+# 三人同框时，孩子间身高已由站位句（visual_brief enrich 的「比昭昭高一点」）
+# 承担；此处只保留妈妈的高度参照，去掉与站位重复的「灿灿次之，昭昭最矮」。
+_DAILY_CHAR_HEIGHT_MOM = "妈妈最高。"
 
 _DAILY_CHAR_MAP: dict[str, str] = {
     "昭昭": _DAILY_CHAR_ZHAO,
@@ -1175,13 +1177,12 @@ def inject_role_completeness(
     if "妈妈" in names:
         mom_clause = (
             f"{full}均为画面硬主体，全身从头到脚完整可见，"
-            "妈妈作为独立完整主体入镜，面部清晰朝向镜头，"
-            "不被门框/前景/其他角色遮挡，不虚化、不裁切、不背影。"
+            "妈妈作为独立完整主体入镜，面部清晰朝向镜头。"
         )
     else:
         mom_clause = (
             f"{full}均为画面硬主体，全身从头到脚完整可见，"
-            "面部清晰朝向镜头，不被遮挡、不虚化、不裁切、不背影。"
+            "面部清晰朝向镜头。"
         )
     if not text:
         return mom_clause
@@ -1452,7 +1453,7 @@ def assemble_daily_t2i_prompt(
     if "妈妈" in speakers:
         s3 = _DAILY_CHAR_MOM
         if {"昭昭", "灿灿"} <= set(speakers):
-            s3 += _DAILY_CHAR_HEIGHT_3
+            s3 += _DAILY_CHAR_HEIGHT_MOM
 
     # S4 本镜画面（唯一 LLM 入口，已清洗；场景/陈设归 S2，不重复）
     s4_parts: list[str] = []
