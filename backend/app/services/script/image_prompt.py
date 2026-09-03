@@ -1446,8 +1446,13 @@ def assemble_daily_t2i_prompt(
     if s2:
         s2 = f"{s2}，场景浅色蜡笔轻涂"
 
-    # S3：有参考图时外貌靠「保持参考图外貌」句锁定，不再展开服装长描述
+    # S3：有参考图的角色（昭昭/灿灿）外貌靠「保持参考图外貌」句锁定；
+    # 妈妈无参考图，需在此单独注入文字外貌描述。
     s3 = ""
+    if "妈妈" in speakers:
+        s3 = _DAILY_CHAR_MOM
+        if {"昭昭", "灿灿"} <= set(speakers):
+            s3 += _DAILY_CHAR_HEIGHT_3
 
     # S4 本镜画面（唯一 LLM 入口，已清洗；场景/陈设归 S2，不重复）
     s4_parts: list[str] = []
