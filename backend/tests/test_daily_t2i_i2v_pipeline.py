@@ -200,7 +200,10 @@ def test_assemble_daily_hide_ma_keeps_two_person_cast():
     assert "三人同框" not in p1
     assert "三人特写" not in p1
     assert "画面主体为" not in p1
-    assert "灿灿：" in p1
+    # 孩子文字身份由 S1 参考图句锁定；此处守护站位/动作主体仍在、妈妈未入场
+    assert "画面左边是昭昭，右边是灿灿" in p1
+    assert "昭昭端盘" in p1
+    assert "灿灿扯袖子" in p1
     p2 = segs[1]["image_prompt"]
     assert "妈妈：" in p2
     assert "三人同框" in p2
@@ -749,7 +752,8 @@ def test_assemble_daily_image_prompts_blocks_prop_state_regression():
 
 
 def test_assemble_daily_image_prompts_locks_inventory_from_setting():
-    """质检重写爱编尺子/沙发/第二张纸，锁定后只能留 setting 里的剪刀和纸。"""
+    """质检重写爱编尺子/背景沙发/第二张纸，锁定后只能留 setting 里的剪刀和纸；
+    客厅场景锚点固定补入「长条沙发」（沙发锁定 1c1fd7b）。"""
     from app.services.script.image_prompt import assemble_daily_image_prompts
 
     setting = (
@@ -790,7 +794,8 @@ def test_assemble_daily_image_prompts_locks_inventory_from_setting():
     assert "儿童安全剪刀" not in ip2
     assert "尺子" not in ip2
     assert "铅笔" not in ip2
-    assert "沙发" not in ip2
+    assert "长条沙发" in ip2
+    assert "背景是沙发" not in ip2
     assert "茶几" not in ip2
     assert "两张" not in ip2
 
@@ -1094,7 +1099,7 @@ def test_assemble_daily_t2i_floor_shoe_lace_lock():
         ],
     }
     prompt = assemble_daily_t2i_prompt(seg, setting=setting)
-    assert "双脚均已穿好一双蓝白运动鞋" in prompt
+    assert "昭昭双脚穿着蓝白运动鞋" in prompt
     assert "两侧同色蓝白运动鞋" not in prompt
     assert "赤脚仅穿白袜子" in prompt
     assert "仅有一双粉红运动鞋共两只" in prompt

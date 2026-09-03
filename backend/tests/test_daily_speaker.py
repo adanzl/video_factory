@@ -236,7 +236,9 @@ def test_assemble_layout_does_not_leak_cancan_when_cast_two():
             ],
         }
     )
-    assert "灿灿" not in prompt
+    # 构图只排 cast 内两人（昭昭+妈妈）；S1 参考图锁定句里的「灿灿」不在范围内
+    assert "画面左边是昭昭，右边是妈妈" in prompt
+    assert "从左到右是昭昭、妈妈、灿灿" not in prompt
     assert "妈妈" in prompt
     assert "昭昭" in prompt
 

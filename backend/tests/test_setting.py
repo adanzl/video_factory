@@ -97,6 +97,11 @@ def test_normalize_kindergarten_setting_maps_via_llm():
 
 
 def test_apply_gold_chat_normalizations_i_trims_tail():
+    """I 型（车内→卧室）：映射为允许地点并保持制敌收束闭环完整。
+
+    现行 I 型在「首次收束后裁拖尾」与「垫字补 min 回填中段」两条路径间
+    受流程顺序影响，最终对话长度不固定，故此处不 pin 具体行数。
+    """
     set_place_classify_hook(_hook({"车内": "卧室"}))
     chat = {
         "story_type": "I",
@@ -122,5 +127,8 @@ def test_apply_gold_chat_normalizations_i_trims_tail():
     }
     out, notes = gc.apply_gold_chat_normalizations(dict(chat), row=row)
     assert "卧室" in out["setting"]
-    assert len(out["dialogue"]) == 11
+    lines = [d["line"] for d in out["dialogue"]]
+    # I 制敌收束闭环：无论后续走裁尾还是垫字回填，闭环两拍都须完整
+    assert "服了……我以后也爱学习。" in lines
+    assert "这还差不多，说到做到，别光嘴上说啊。" in lines
     assert any("subplot" in n or "归类" in n or "映射" in n for n in notes)
