@@ -124,9 +124,9 @@ def run_job(job_id: int, *, from_stage: str | None=None, only_stage: str | None=
     job = _reload_job(job_id)
     if only_stage:
         job_mgr.mark_running(job_id)
-        return _run_one_stage(job_id, stage_class_for(only_stage, job))
+        return _run_one_stage(job_id, stage_class_for(only_stage, job), segment_indices=segment_indices)
     if from_stage:
-        return _run_from(job_id, stage_class_for(from_stage, job))
+        return _run_from(job_id, stage_class_for(from_stage, job), segment_indices=segment_indices)
     if job['stage'] == 'done':
         return job
     return _run_from(job_id, stage_class_for(job['stage'], job))
