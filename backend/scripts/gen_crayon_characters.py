@@ -41,7 +41,7 @@ def generate_image(
     *,
     api_key: str,
     base_url: str,
-    model: str = "agnes-image-2.1-flash",
+    model: str = "agnes-image-2.5-flash",
     size: str = "720x1280",
 ) -> Path:
     """调用 Agnes images/generations 进行文生图。"""

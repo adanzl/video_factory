@@ -198,7 +198,7 @@ class Config:
         self.agnes_cn_free_api_key: str | None = _opt("AGNES_CN_FREE_API_KEY")
         self.agnes_api_base_url: str = os.getenv("AGNES_API_BASE_URL", "https://apihub.agnes-ai.com/v1")
         self.agnes_api_base_url_cn: str = os.getenv("AGNES_API_BASE_URL_CN", "https://api.agnes-ai.cn/v1")
-        self.agnes_image_model: str = os.getenv("AGNES_IMAGE_MODEL", "agnes-image-2.1-flash")
+        self.agnes_image_model: str = os.getenv("AGNES_IMAGE_MODEL", "agnes-image-2.5-flash")
         self.agnes_image_size: str = os.getenv("AGNES_IMAGE_SIZE", "1K")
         self.agnes_image_ratio: str = os.getenv("AGNES_IMAGE_RATIO", "")
         self.agnes_image_verify: bool = _bool("AGNES_IMAGE_VERIFY", True)
