@@ -611,7 +611,7 @@ def _scale_video_to_duration(
 
 
 def _encode_image_data_uri(path: Path) -> str:
-    """本地分镜图 → Data URI Base64（与 agnes-image-2.1-flash 文档一致）。"""
+    """本地分镜图 → Data URI Base64（与 agnes-image-2.5-flash 文档一致）。"""
     mime, _ = mimetypes.guess_type(str(path))
     mime = mime or "image/png"
     encoded = base64.b64encode(path.read_bytes()).decode("ascii")
