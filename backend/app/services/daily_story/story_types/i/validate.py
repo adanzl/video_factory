@@ -6,10 +6,14 @@ import re
 
 from app.services.daily_story.story_types import parse_story_type_code
 
-RE_SOUL_QUESTION = re.compile(r"爱学习|你爱吗|灵魂|拷问|凭啥|相同|为啥")
+RE_SOUL_QUESTION = re.compile(
+    r"爱学习|你爱吗|灵魂|拷问|凭啥|相同|为啥|"
+    r"那你怎么|你那是.*吗|为你好|你才.*呢|"
+    r"快乐.*重要|重要.*快乐|双标|强词夺理|你自己"
+)
 # 语塞：明示败北 + 抽象卡壳/结巴（省略号认输），勿按单篇词表堆叠
 RE_SPEECHLESS = re.compile(
-    r"说不过|语塞|哑口|不说了|看窗外|憋不出|张了张嘴|"
+    r"说不过|语塞|哑口|不说了|看.{0,2}窗外|憋不出|张了张嘴|委屈|"
     r"答不上|说不出|接不上|卡壳|服了|张口结舌|憋红|"
     r"我……|……我"
 )
