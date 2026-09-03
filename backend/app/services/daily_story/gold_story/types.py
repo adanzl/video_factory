@@ -41,7 +41,7 @@ MECHANISM_STRUCTURE_MAP: dict[str, str] = {
 
 # mechanism 默认映射外的合法 structure_type（防 H3 误判入库失败）
 MECHANISM_STRUCTURE_ALTERNATIVES: dict[str, frozenset[str]] = {
-    "M2": frozenset({"L"}),  # 表演公平被拒领点破 → L（非双规则回旋镖）
+    "M2": frozenset({"L", "I"}),  # L 表演公平被拒；I 灵魂拷问质问链无公平争夺
     "M5": frozenset({"G", "H", "J"}),  # G 拒和后 pivot 暖收；H 调解；J 否决压住
     "M6": frozenset({"A", "E"}),  # 偶发权威反噬/妈妈破功追问链（默认 N）
     "M8": frozenset({"J"}),  # 一锤镇住、不翻车
