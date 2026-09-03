@@ -171,11 +171,13 @@ curl -s -X POST http://127.0.0.1:8848/api/deepseek/chat \
 ```
 
 **关键点**：
+
 - `mode: "instant"` 替代 `mode: "expert" + deep_thinking: true`
 - 不用异步后台，直接同步等待（一般 15-25 秒返回）
 - 响应格式完全相同（包含 answer、conversation_id 等），可用于续聊
 
 **续聊**（如需深化）：
+
 ```json
 {
   "conversation_id": "前次返回的 uuid",
