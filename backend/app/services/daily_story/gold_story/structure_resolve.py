@@ -32,6 +32,13 @@ _RE_SOLEMN_NONSENSE = re.compile(
     r"哭笑不得|愣住.*放弃|被童言|胡说"
 )
 _RE_NO_BOOMERANG_NOTE = re.compile(r"未形成回旋镖|没有回旋镖|非回旋镖|无回旋镖")
+_RE_I_SOUL_QUESTION = re.compile(
+    r"灵魂拷问|一招制敌|价值高地|质问.*双标|双标.*质问|"
+    r"为你好.*不让我|不让我.*为你好|语塞|无言以对|哑口无言"
+)
+_RE_I_QUESTION_CHAIN = re.compile(
+    r"(你那是|那你怎么|你才|你自己).{0,20}(吗？|呢？|！)"
+)
 
 
 def classification_blob(
@@ -65,6 +72,22 @@ def suggests_c_fairness_boomerang(blob: str) -> bool:
         return True
     fair_hits = len(re.findall(r"公平|凭什么|归谁|你先|我先|应该给我", text))
     return fair_hits >= 3 and not _RE_DOMINATION.search(text)
+
+
+def suggests_m11_i_soul_question(blob: str) -> bool:
+    """灵魂拷问：质问链+语塞/一招制敌，无公平争夺。"""
+    text = str(blob or "")
+    if suggests_c_fairness_boomerang(text):
+        return False
+    if _RE_DOMINATION.search(text):
+        return False
+    has_soul = bool(_RE_I_SOUL_QUESTION.search(text))
+    question_hits = len(_RE_I_QUESTION_CHAIN.findall(text))
+    if has_soul and question_hits >= 2:
+        return True
+    if has_soul and not suggests_c_fairness_boomerang(text):
+        return True
+    return False
 
 
 def suggests_m8_j_domination(blob: str) -> bool:
@@ -109,6 +132,24 @@ def should_reclassify_m2_c_to_m8_j(
     if mech != "M2" or st != "C":
         return False
     if not suggests_m8_j_domination(blob):
+        return False
+    if suggests_c_fairness_boomerang(blob):
+        return False
+    return True
+
+
+def should_reclassify_m2_c_to_m11_i(
+    *,
+    mechanism: str,
+    structure_type: str,
+    blob: str,
+) -> bool:
+    """M2+C 但实际是灵魂拷问质问链 → M11+I。"""
+    mech = str(mechanism or "").strip().upper()
+    st = str(structure_type or "").strip().upper()
+    if mech != "M2" or st != "C":
+        return False
+    if not suggests_m11_i_soul_question(blob):
         return False
     if suggests_c_fairness_boomerang(blob):
         return False
@@ -204,6 +245,22 @@ def resolve_h3_structure(
         )
         return out, notes
 
+    if should_reclassify_m2_c_to_m11_i(
+        mechanism=str(out.get("mechanism") or ""),
+        structure_type=str(out.get("structure_type") or ""),
+        blob=blob,
+    ):
+        notes.extend(
+            _apply_reclass(
+                out,
+                target_mech="M11",
+                target_st="I",
+                note_extra="灵魂拷问质问链+语塞/一招制敌，非 C 公平争夺",
+                note_tag="soul-question-not-fairness",
+            )
+        )
+        return out, notes
+
     if should_reclassify_to_m6_n(
         mechanism=str(out.get("mechanism") or ""),
         structure_type=str(out.get("structure_type") or ""),
@@ -253,6 +310,13 @@ def resolve_structure_row(row: dict[str, Any]) -> tuple[dict[str, Any], list[str
     ):
         target_mech, target_st = "M8", "J"
         extra = "武力压制单方定规+认输收场，非 C 双规则回旋镖"
+    elif should_reclassify_m2_c_to_m11_i(
+        mechanism=mechanism,
+        structure_type=current,
+        blob=blob,
+    ):
+        target_mech, target_st = "M11", "I"
+        extra = "灵魂拷问质问链+语塞/一招制敌，非 C 公平争夺"
     elif should_reclassify_to_m6_n(
         mechanism=mechanism,
         structure_type=current,
