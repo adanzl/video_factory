@@ -123,6 +123,19 @@ def test_m6_maps_to_n_not_injectable():
     validate_mechanism_structure_pair("M6", "A")
 
 
+def test_m13_maps_to_o_not_injectable():
+    assert normalize_mechanism("M13") == "M13"
+    assert mechanism_label("M13") == "顾赛不顾奖"
+    assert structure_type_for_mechanism("M13") == "O"
+    assert structure_type_label("O") == "目标错位"
+    assert catalog_entry("O") is not None
+    assert not is_injectable_structure_type("O")
+    assert allowed_structure_types("M13") == frozenset({"O"})
+    validate_mechanism_structure_pair("M13", "O")
+    with pytest.raises(ValueError, match="M13 对应 structure_type"):
+        validate_mechanism_structure_pair("M13", "C")
+
+
 def test_pair_mismatch_raises():
     with pytest.raises(ValueError, match="M2 对应 structure_type"):
         validate_mechanism_structure_pair("M2", "A")

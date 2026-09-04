@@ -234,20 +234,29 @@ def _persist_structure_correction(row: dict[str, Any], notes: list[str]) -> dict
     gid = int(row.get("id") or 0)
     if gid <= 0:
         return row
+    mech = str(row.get("mechanism") or "").strip().upper()
     st = str(row.get("structure_type") or "").strip().upper()
-    if not st:
+    if not mech or not st:
         return row
     try:
-        repo_gold_story.update_structure_type(gid, st)
+        repo_gold_story.update_mechanism_and_structure(
+            gid,
+            mechanism=mech,
+            structure_type=st,
+        )
     except ValueError as exc:
         logger.warning("[GOLD_CHAT] structure persist skipped id=%s: %s", gid, exc)
         return row
     payload = cast(dict[str, Any], row.get("payload") or {})
-    sc = cast(dict[str, Any], payload.get("scene_contract")) if isinstance(
-        payload.get("scene_contract"), dict
-    ) else None
-    if isinstance(sc, dict) and str(sc.get("story_type") or "").strip().upper() == st:
-        repo_gold_story.patch_story_payload(gid, {"scene_contract": sc})
+    patch: dict[str, Any] = {}
+    note = str(payload.get("structure_mapping_note") or "").strip()
+    if note:
+        patch["structure_mapping_note"] = note
+    sc = payload.get("scene_contract")
+    if isinstance(sc, dict):
+        patch["scene_contract"] = sc
+    if patch:
+        repo_gold_story.patch_story_payload(gid, patch)
     logger.info(
         "[GOLD_CHAT] structure auto_correct id=%s notes=%s",
         gid,

@@ -1,4 +1,5 @@
-"""金故事结构类型纠偏：M2+C 误判武力压制→M8+J；正经胡说→M6+N。"""
+"""金故事结构类型纠偏：M2+C 误判武力压制→M8+J；正经胡说→M6+N；
+目标错位→M13+O。"""
 
 from __future__ import annotations
 
@@ -38,6 +39,17 @@ _RE_I_SOUL_QUESTION = re.compile(
 )
 _RE_I_QUESTION_CHAIN = re.compile(
     r"(你那是|那你怎么|你才|你自己).{0,20}(吗？|呢？|！)"
+)
+# 目标错位：死磕赛过程，奖品/资源溜走后点题（非双规则互戳）
+_RE_GOAL_TUNNEL_GAME = re.compile(
+    r"剪刀石头布|猜拳|赢的.*(?:才)?能?吃|赢了.*吃|吹蜡烛|抢吃"
+)
+_RE_GOAL_TUNNEL_PROCESS = re.compile(
+    r"光顾着赢|顾着赢|一心只想赢|专注出拳|多次获胜|又赢|我赢了"
+)
+_RE_GOAL_TUNNEL_PRIZE = re.compile(
+    r"菜都没了|菜.*没了|只剩|吃光|见底|空盘子|资源.*溜|目标.*没|"
+    r"白赢|赢了.*没"
 )
 
 
@@ -121,6 +133,25 @@ def suggests_m6_n_solemn_nonsense(blob: str) -> bool:
     return True
 
 
+def suggests_m13_o_goal_tunnel(blob: str) -> bool:
+    """目标错位：死磕赛过程，奖品溜走后点题；非双规则回旋镖。"""
+    text = str(blob or "")
+    if suggests_c_fairness_boomerang(text):
+        return False
+    if suggests_m8_j_domination(text):
+        return False
+    if suggests_m6_n_solemn_nonsense(text):
+        return False
+    has_game = bool(_RE_GOAL_TUNNEL_GAME.search(text))
+    has_process = bool(_RE_GOAL_TUNNEL_PROCESS.search(text))
+    has_prize = bool(_RE_GOAL_TUNNEL_PRIZE.search(text))
+    if has_prize and has_process:
+        return True
+    if has_prize and has_game and re.search(r"光顾着|顾着赢|白赢|赢了.*没", text):
+        return True
+    return False
+
+
 def should_reclassify_m2_c_to_m8_j(
     *,
     mechanism: str,
@@ -178,6 +209,28 @@ def should_reclassify_to_m6_n(
     return False
 
 
+def should_reclassify_m2_c_to_m13_o(
+    *,
+    mechanism: str,
+    structure_type: str,
+    blob: str,
+) -> bool:
+    """M2+C 但实际是顾赛不顾奖/目标错位 → M13+O。"""
+    mech = str(mechanism or "").strip().upper()
+    st = str(structure_type or "").strip().upper()
+    if mech == "M13" and st == "O":
+        return False
+    if not suggests_m13_o_goal_tunnel(blob):
+        return False
+    if suggests_c_fairness_boomerang(blob):
+        return False
+    if mech == "M2" and st == "C":
+        return True
+    if st == "C" and _RE_NO_BOOMERANG_NOTE.search(blob):
+        return True
+    return False
+
+
 def _sync_scene_contract_story_type(
     payload: dict[str, Any],
     target: str,
@@ -220,7 +273,8 @@ def resolve_h3_structure(
     *,
     story_raw: str = "",
 ) -> tuple[dict[str, Any], list[str]]:
-    """H3 后处理：武力压制误标 M2+C → M8+J；正经胡说误标 → M6+N。"""
+    """H3 后处理：武力压制误标 M2+C → M8+J；正经胡说误标 → M6+N；
+    目标错位误标 → M13+O。"""
     notes: list[str] = []
     out = dict(h3)
     blob = classification_blob(
@@ -277,6 +331,22 @@ def resolve_h3_structure(
         )
         return out, notes
 
+    if should_reclassify_m2_c_to_m13_o(
+        mechanism=str(out.get("mechanism") or ""),
+        structure_type=str(out.get("structure_type") or ""),
+        blob=blob,
+    ):
+        notes.extend(
+            _apply_reclass(
+                out,
+                target_mech="M13",
+                target_st="O",
+                note_extra="顾赛不顾奖：赢过程输目标，非 C 双规则回旋镖",
+                note_tag="goal-tunnel-not-fairness",
+            )
+        )
+        return out, notes
+
     return out, notes
 
 
@@ -324,6 +394,13 @@ def resolve_structure_row(row: dict[str, Any]) -> tuple[dict[str, Any], list[str
     ):
         target_mech, target_st = "M6", "N"
         extra = "正经胡说荒诞自洽+愣住，非 C/A/E 标准收束"
+    elif should_reclassify_m2_c_to_m13_o(
+        mechanism=mechanism,
+        structure_type=current,
+        blob=blob,
+    ):
+        target_mech, target_st = "M13", "O"
+        extra = "顾赛不顾奖：赢过程输目标，非 C 双规则回旋镖"
 
     if not target_mech:
         out["payload"] = payload
