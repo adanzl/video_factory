@@ -56,6 +56,7 @@ def test_o_body_validate_and_structure_score():
     attach_daily_story_quality(story, theme="抢吃猜拳")
     q = story["quality"]
     assert q["structure_score"] >= 60
+    assert "笑点解析缺类型" not in (q.get("reasons") or [])
     assert any(
         "点题" in r or "溜走" in r or "死磕" in r or "立规" in r
         for r in q.get("reasons") or []

@@ -1551,8 +1551,7 @@ def _select_story_type(theme: str) -> str:
 def _extract_type_from_punchline(punchline: str) -> str | None:
     """从 punchline_explain 中提取矛盾类型标签。"""
     text = punchline or ""
-    for k in ("A", "B", "C", "D", "E"):
-        label = STORY_TYPE_LABELS[k]
+    for k, label in STORY_TYPE_LABELS.items():
         if f"{k}类{label}" in text or f"{k}类" in text or f"{k}：" in text:
             return story_type_tag(k)
     return None
