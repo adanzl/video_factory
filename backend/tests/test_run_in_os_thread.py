@@ -144,7 +144,7 @@ def test_run_in_os_thread_subprocess_off_hub(app_ctx) -> None:
 
 def test_gold_story_reimport_worker_runs_in_os_thread(app_ctx, monkeypatch) -> None:
     """金故事 reimport：OS 线程内应能更新 _REIMPORT_STATE。"""
-    from app.services.daily_story.gold_story import gold_story_mgr as mgr_mod
+    from app.services.gold_story import gold_story_mgr as mgr_mod
 
     mgr_mod.reset_collect_state()
     finished = threading.Event()

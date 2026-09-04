@@ -8,8 +8,8 @@ from difflib import SequenceMatcher
 from typing import Any, cast
 
 from app.repositories import sql_exec as sql
-from app.services.daily_story.gold_story.collect.funny import DEFAULT_FUNNY_SIGNAL
-from app.services.daily_story.gold_story.types import (
+from app.services.gold_story.collect.funny import DEFAULT_FUNNY_SIGNAL
+from app.services.gold_story.types import (
     normalize_mechanism,
     normalize_structure_type,
     validate_mechanism_structure_pair,
@@ -417,7 +417,7 @@ def apply_funny_rescore(
 
 def rescore_all_funny() -> list[dict[str, Any]]:
     """全库按当前权重重算 funny_signal，并重套 L2 门控。"""
-    from app.services.daily_story.gold_story.collect.funny import plan_funny_rescore
+    from app.services.gold_story.collect.funny import plan_funny_rescore
 
     results: list[dict[str, Any]] = []
     for row in list_all_stories():

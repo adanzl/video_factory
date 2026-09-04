@@ -14,12 +14,12 @@ if str(BACKEND_DIR) not in sys.path:
 from app.config import Config
 from app.core import create_app
 from app.repositories import repo_gold_story
-from app.services.daily_story.gold_story.collect import (
+from app.services.gold_story.collect import (
     _bili_http,  # type: ignore[union-attr]
     fetch_top_replies,
     fetch_video_meta,
 )
-from app.services.daily_story.gold_story.collect.funny import (
+from app.services.gold_story.collect.funny import (
     compute_audience_funny_metrics,
     metrics_to_payload,
     passes_funny_gate_from_payload,

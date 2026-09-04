@@ -4,7 +4,7 @@ import statistics
 
 import numpy as np
 
-from app.services.daily_story.gold_story.transcript.detect import (
+from app.services.gold_story.transcript.detect import (
     SubtitleRegion,
     _BandObservation,
     _cluster_observations,
@@ -120,7 +120,7 @@ def test_list_subtitle_bands_returns_empty_on_blank():
 
 def test_pick_region_from_search_band_grays_maps_to_fullframe():
     """搜索带裁切帧定带后，y/h 须换算回全帧坐标。"""
-    from app.services.daily_story.gold_story.transcript.detect import (
+    from app.services.gold_story.transcript.detect import (
         pick_subtitle_region_from_grays,
     )
 
@@ -154,7 +154,7 @@ def test_region_crop_vf_must_pass_max_h_for_detect_samples():
 
 
 def test_ensure_ocr_readable_region_expands_thin_band():
-    from app.services.daily_story.gold_story.transcript.detect import (
+    from app.services.gold_story.transcript.detect import (
         ensure_ocr_readable_region,
     )
 

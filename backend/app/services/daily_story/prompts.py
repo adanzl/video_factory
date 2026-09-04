@@ -1735,7 +1735,7 @@ def build_daily_story_framework_prompts(
 
 def build_gold_story_block(story: dict) -> str:
     """H6/H7 注入块（见 docs/日常故事-金故事流水线.md §11）。"""
-    from app.services.daily_story.gold_story.gold_story_mgr import gold_story_mgr
+    from app.services.gold_story.gold_story_mgr import gold_story_mgr
 
     return gold_story_mgr.build_story_block(story)
 
@@ -1753,7 +1753,7 @@ def _resolve_gold_story_user_block(
         raw = framework.get("theme_family")
         if raw:
             theme_family = str(raw).strip() or None
-    from app.services.daily_story.gold_story.gold_story_mgr import gold_story_mgr
+    from app.services.gold_story.gold_story_mgr import gold_story_mgr
 
     return gold_story_mgr.resolve_story_block(
         theme=theme,

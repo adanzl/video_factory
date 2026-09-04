@@ -11,7 +11,7 @@ def align_chain(
     structure_type: str,
     mechanism: str,
 ) -> tuple[str, ...]:
-    from app.services.daily_story.gold_story.gold_chat.type_bridge import (
+    from app.services.gold_story.gold_chat.type_bridge import (
         type_align_chain,
     )
 
@@ -1347,7 +1347,7 @@ def validate_chat_hard(
     """gold_chat / 成品对白 hard 校验。"""
     from statistics import mean
 
-    from app.services.daily_story.gold_story.scene import (
+    from app.services.gold_story.scene import (
         ALLOWED_SPEAKERS,
         CHAT_AVG_LINE_CHARS_MAX,
         CHAT_LINE_COUNT_MAX,
@@ -1431,7 +1431,7 @@ def validate_chat_hard(
                 errors.append(f"tutorial_residue_in_dialogue:{word}")
 
     errors.extend(collect_voice_errors(dialogue))
-    from app.services.daily_story.gold_story.scene import collect_narration_dialogue_errors
+    from app.services.gold_story.scene import collect_narration_dialogue_errors
 
     errors.extend(collect_narration_dialogue_errors(dialogue if isinstance(dialogue, list) else []))
     return errors

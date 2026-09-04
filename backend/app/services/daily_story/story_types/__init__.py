@@ -1,9 +1,10 @@
-"""日常故事矛盾类型（A–H）线路注册与解析。"""
+"""日常故事矛盾类型（A–O）线路注册与解析。"""
 
 from __future__ import annotations
 
 import random
 import re
+from typing import Any
 
 from app.services.daily_story.story_types.model import (
     STORY_TYPE_KEYWORDS,
@@ -35,9 +36,14 @@ __all__ = [
     "STORY_TYPE_LINES",
     "StoryTypeLine",
     "append_type_body_validation_errors",
+    "apply_gold_chat_body_pipeline",
+    "apply_gold_chat_k_fix_truncations",
+    "apply_gold_chat_strip_filler",
+    "apply_gold_chat_type_patch",
     "chat_type_info_message",
     "format_block_for_code",
     "format_story_type_brief",
+    "gold_chat_type_revision_hint",
     "job_chat_type_info",
     "layer_patterns_for_story",
     "infer_story_type_code",
@@ -48,6 +54,7 @@ __all__ = [
     "resolve_story_type_code",
     "patch_type_body",
     "revision_hints_for_type",
+    "sanitize_gold_chat_dialogue_seed",
     "select_story_type_tag",
     "story_line_for_code",
     "story_type_punchline_conflict",
@@ -381,6 +388,102 @@ def layer_patterns_for_story(story: dict | None) -> tuple[tuple[str, re.Pattern[
 def revision_hints_for_type(code: str) -> tuple[str, str]:
     line = story_line_for_code(code)
     return line.escalation_revision_hint, line.closing_revision_hint
+
+
+def gold_chat_type_revision_hint(structure_type: str) -> str:
+    """金稿 prompt 用：类型修订 hint + 正文锚（不含机制附录）。"""
+    st = str(structure_type or "").strip().upper()
+    if not st or st not in STORY_TYPE_LINES:
+        return ""
+    parts: list[str] = []
+    esc, close = revision_hints_for_type(st)
+    line = story_line_for_code(st)
+    if esc:
+        parts.append(f"- 冲突升级：{esc}")
+    if close:
+        parts.append(f"- 收束修订：{close}")
+    anchor = str(line.body_user_anchor or "").strip()
+    if anchor:
+        parts.append(f"- 正文锚：{anchor}")
+    return "\n".join(parts)
+
+
+def apply_gold_chat_type_patch(
+    chat: dict[str, Any],
+    *,
+    structure_type: str,
+) -> tuple[dict[str, Any], list[str]]:
+    """仅跑 ``patch_type_body``（金稿中段定点修；不含通用垫字链）。"""
+    st = str(structure_type or "").strip().upper()
+    if not st or not isinstance(chat, dict):
+        return chat, []
+    out = dict(chat)
+    out["story_type"] = st
+    notes = list(patch_type_body(out) or [])
+    return out, notes
+
+
+def apply_gold_chat_body_pipeline(
+    chat: dict[str, Any],
+    *,
+    structure_type: str,
+) -> tuple[dict[str, Any], list[str]]:
+    """金稿对白 → 日常成熟 patch 链。
+
+    gold_chat 类型后处理唯一入口（含通用连说/字数等）。
+    """
+    st = str(structure_type or "").strip().upper()
+    if not st or not isinstance(chat, dict):
+        return chat, []
+    from app.services.daily_story.prompts import try_local_patch_daily_story_body
+
+    out = dict(chat)
+    out["story_type"] = st
+    patched, notes = try_local_patch_daily_story_body(out)
+    return patched, list(notes or [])
+
+
+def apply_gold_chat_strip_filler(chat: dict[str, Any]) -> list[str]:
+    """垫字后按类型剥填料（B/F）；经公开桥，勿直连各类型 patch。"""
+    if not isinstance(chat, dict):
+        return []
+    code = resolve_story_type_code(chat)
+    if code == "B":
+        from app.services.daily_story.story_types.b.patch import patch_b_strip_filler
+
+        return list(patch_b_strip_filler(chat) or [])
+    if code == "F":
+        from app.services.daily_story.story_types.f.patch import patch_f_strip_filler
+
+        return list(patch_f_strip_filler(chat) or [])
+    return []
+
+
+def sanitize_gold_chat_dialogue_seed(
+    seed: list[Any],
+    *,
+    structure_type: str,
+) -> list[Any]:
+    """金稿 dialogue_seed 类型向清洗（现仅 K）。"""
+    st = str(structure_type or "").strip().upper()
+    if st == "K":
+        from app.services.daily_story.story_types.k.patch import (
+            sanitize_k_dialogue_seed,
+        )
+
+        return sanitize_k_dialogue_seed(seed)
+    return seed
+
+
+def apply_gold_chat_k_fix_truncations(chat: dict[str, Any]) -> list[str]:
+    """K：修复截断句；经公开桥。"""
+    if not isinstance(chat, dict):
+        return []
+    from app.services.daily_story.story_types.k.patch import (
+        patch_k_fix_truncations,
+    )
+
+    return list(patch_k_fix_truncations(chat) or [])
 
 
 def type_catalog_system_block() -> str:

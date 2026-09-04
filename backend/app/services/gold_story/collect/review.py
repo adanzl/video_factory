@@ -6,8 +6,8 @@ import re
 from typing import Any
 
 from app.config import Config
-from app.services.daily_story.gold_story.collect import llm as llm_steps
-from app.services.daily_story.gold_story.scene import (
+from app.services.gold_story.collect import llm as llm_steps
+from app.services.gold_story.scene import (
     validate_dialogue_seed_speakers,
     validate_scene,
 )

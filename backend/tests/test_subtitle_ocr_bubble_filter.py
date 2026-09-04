@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from app.services.daily_story.gold_story.transcript.ocr import (
+from app.services.gold_story.transcript.ocr import (
     _box_ink_color_key,
     _box_white_bg_ratio,
     _preprocess_subtitle_crop,

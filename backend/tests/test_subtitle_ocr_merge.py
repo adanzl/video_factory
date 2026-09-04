@@ -1,6 +1,6 @@
 """OCR 合并：原样保留，仅相邻去重。"""
 
-from app.services.daily_story.gold_story.transcript.ocr import merge_ocr_rows
+from app.services.gold_story.transcript.ocr import merge_ocr_rows
 
 
 def test_merge_keeps_all_lines_and_only_dedupes_adjacent():

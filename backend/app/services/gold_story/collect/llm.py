@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from app.services.daily_story.gold_story.types import (
+from app.services.gold_story.types import (
     GOLD_STORY_MECHANISM_CODES,
     GOLD_STORY_MECHANISM_LABELS,
     GOLD_STORY_TYPE_CATALOG,
@@ -13,17 +13,17 @@ from app.services.daily_story.gold_story.types import (
     normalize_structure_type,
     structure_type_for_mechanism,
 )
-from app.services.daily_story.gold_story.scene import (
+from app.services.gold_story.scene import (
     SEED_MIN,
     sanitize_banned_literals,
     seed_from_beat_chain,
     validate_scene,
 )
-from app.services.daily_story.gold_story.gold_chat.setting import (
+from app.services.gold_story.gold_chat.setting import (
     format_place_catalog_for_prompt,
     normalize_scene_contract_location,
 )
-from app.services.daily_story.gold_story.structure_resolve import resolve_h3_structure
+from app.services.gold_story.structure_resolve import resolve_h3_structure
 from app.services.llm.llm_mgr import llm_mgr
 
 # 金稿正例：只允许引用已入库金故事原文；prompt 内禁止自造示范句。

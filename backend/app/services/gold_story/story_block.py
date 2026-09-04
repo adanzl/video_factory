@@ -6,11 +6,11 @@ from typing import Any, cast
 
 from app.config import Config
 from app.repositories import repo_daily_story, repo_gold_story
-from app.services.daily_story.gold_story.scene import (
+from app.services.gold_story.scene import (
     format_scene_block,
     sanitize_banned_literals,
 )
-from app.services.daily_story.gold_story.types import (
+from app.services.gold_story.types import (
     GOLD_STORY_INJECTABLE_CODES,
     is_injectable_structure_type,
     mechanism_label,

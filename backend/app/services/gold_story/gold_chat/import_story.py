@@ -7,8 +7,8 @@ from typing import Any
 
 from app.config import Config
 from app.repositories import repo_gold_story
-from app.services.daily_story.gold_story.gold_chat.export import load_gold_chat_for_row
-from app.services.daily_story.gold_story.gold_chat.patch import (
+from app.services.gold_story.gold_chat.export import load_gold_chat_for_row
+from app.services.gold_story.gold_chat.patch import (
     patch_m5_break_sibling_consecutive,
 )
 
@@ -67,7 +67,7 @@ def import_gold_chat_daily_story(
     if not (chat.get("dialogue") or []):
         raise ValueError("gold_chat 对白为空")
 
-    from app.services.daily_story.gold_story.gold_chat.convert import (
+    from app.services.gold_story.gold_chat.convert import (
         apply_gold_chat_normalizations,
     )
 

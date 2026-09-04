@@ -1,7 +1,8 @@
-"""gold_chat ↔ daily_story 类型流水线桥接（统一抽象）。
+"""gold_chat ↔ daily_story 类型流水线薄适配。
 
-金故事 gold_chat 与日常故事生成共用同一套类型 patch / 收束 / 质检口径；
-本模块是唯一桥接入口，避免在 gold_chat_convert 里按类型 if/else 分叉。
+类型 body / 修订 hint 经 ``story_types`` 公开桥；本模块只做：
+金稿 row 字段映射、机制附录、扩写链（mech+structure）。
+勿在此再造一套字母类型 patch。
 """
 
 from __future__ import annotations
@@ -10,17 +11,17 @@ import copy
 import re
 from typing import Any, cast
 
-from app.services.daily_story.gold_story.types import (
+from app.services.gold_story.types import (
     allowed_structure_types,
     catalog_entry,
     mechanism_label,
     normalize_structure_type,
 )
-from app.services.daily_story.gold_story.structure_resolve import resolve_structure_row
+from app.services.gold_story.structure_resolve import resolve_structure_row
 from app.services.daily_story.story_types import (
     STORY_TYPE_LINES,
-    revision_hints_for_type,
-    story_line_for_code,
+    apply_gold_chat_body_pipeline,
+    gold_chat_type_revision_hint,
 )
 
 # 结构类型默认扩写链（无 mechanism 特化时的 fallback）
@@ -467,15 +468,9 @@ def structure_type_hint(
         parts.append(f"- 收束：{entry['closing']}")
 
     if st in STORY_TYPE_LINES:
-        esc, close = revision_hints_for_type(st)
-        line = story_line_for_code(st)
-        if esc:
-            parts.append(f"- 冲突升级：{esc}")
-        if close:
-            parts.append(f"- 收束修订：{close}")
-        anchor = str(line.body_user_anchor or "").strip()
-        if anchor:
-            parts.append(f"- 正文锚：{anchor}")
+        type_hint = gold_chat_type_revision_hint(st)
+        if type_hint:
+            parts.append(type_hint)
 
     chain = type_align_chain(structure_type=st, mechanism=mech)
     if chain:
@@ -495,14 +490,5 @@ def apply_type_body_pipeline(
     *,
     structure_type: str,
 ) -> tuple[dict[str, Any], list[str]]:
-    """跑日常故事成熟 patch 链（patch_type_body + try_local_patch）。"""
-    st = str(structure_type or "").strip().upper()
-    if not st or not isinstance(chat, dict):
-        return chat, []
-
-    from app.services.daily_story.prompts import try_local_patch_daily_story_body
-
-    out = dict(chat)
-    out["story_type"] = st
-    patched, notes = try_local_patch_daily_story_body(out)
-    return patched, notes
+    """转调 daily ``apply_gold_chat_body_pipeline``（兼容旧调用名）。"""
+    return apply_gold_chat_body_pipeline(chat, structure_type=structure_type)

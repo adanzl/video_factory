@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from app.services.daily_story.gold_story.collect import review
+from app.services.gold_story.collect import review
 
 
 def test_rule_audit_rejects_mother_baby_story():

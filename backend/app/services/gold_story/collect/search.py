@@ -12,9 +12,9 @@ import requests
 
 from app.config import Config
 from app.repositories import repo_gold_story
-from app.services.daily_story.gold_story.collect.sign import fetch_bili_sign_keys, sign_bili_params
-from app.services.daily_story.gold_story.transcript.download import normalize_bv
-from app.services.daily_story.gold_story.collect.funny import (
+from app.services.gold_story.collect.sign import fetch_bili_sign_keys, sign_bili_params
+from app.services.gold_story.transcript.download import normalize_bv
+from app.services.gold_story.collect.funny import (
     compute_audience_funny_metrics,
     metrics_to_payload,
     passes_funny_gate,

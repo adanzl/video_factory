@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from app.services.daily_story.gold_story.transcript.ocr import compose_frame_text
+from app.services.gold_story.transcript.ocr import compose_frame_text
 
 
 def _box(y0: float, y1: float) -> np.ndarray:

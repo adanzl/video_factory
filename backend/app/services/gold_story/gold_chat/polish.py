@@ -8,12 +8,12 @@ from typing import Any, cast
 
 from app.config import Config
 from app.repositories import repo_gold_story
-from app.services.daily_story.gold_story.gold_chat.export import (
+from app.services.gold_story.gold_chat.export import (
     export_gold_chat_files,
     load_gold_chat,
 )
 from app.services.daily_story.prompts import dialogue_total_chars
-from app.services.daily_story.gold_story.scene import sanitize_banned_literals
+from app.services.gold_story.scene import sanitize_banned_literals
 from app.services.llm.llm_mgr import llm_mgr
 
 logger = logging.getLogger(__name__)
@@ -98,7 +98,7 @@ def _apply_gold_chat_polish_fixes(
     source_type: str = "field",
     mom_lines_max: int = 0,
 ) -> tuple[dict[str, Any], set[int]]:
-    from app.services.daily_story.gold_story.gold_chat.convert import (
+    from app.services.gold_story.gold_chat.convert import (
         _ensure_gold_chat_min_chars,
         patch_sanitize_pad_suffix,
         validate_gold_chat,
@@ -211,7 +211,7 @@ def polish_gold_chat_wording(
         issues,
         type_code=type_code,
     )
-    from app.services.daily_story.gold_story.gold_chat.convert import (
+    from app.services.gold_story.gold_chat.convert import (
         validate_gold_chat,
     )
 
@@ -273,7 +273,7 @@ def polish_gold_chat_export(
         source_type=source_type,
         mom_lines_max=int(mom_max),
     )
-    from app.services.daily_story.gold_story.gold_chat.convert import (
+    from app.services.gold_story.gold_chat.convert import (
         _ensure_gold_chat_min_chars,
         patch_sanitize_pad_suffix,
     )

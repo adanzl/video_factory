@@ -10,9 +10,9 @@ from typing import Any, cast
 
 from app.config import Config
 from app.repositories import repo_gold_story
-from app.services.daily_story.gold_story.gold_chat.status import clear_gold_chat_failure
-from app.services.daily_story.gold_story.collect import fetch_video_meta
-from app.services.daily_story.gold_story.export_story import export_story_files
+from app.services.gold_story.gold_chat.status import clear_gold_chat_failure
+from app.services.gold_story.collect import fetch_video_meta
+from app.services.gold_story.export_story import export_story_files
 from app.services.daily_story.prompts import dialogue_total_chars
 
 logger = logging.getLogger(__name__)

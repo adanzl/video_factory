@@ -9,7 +9,7 @@ from app.services.daily_story.prompts import (
     DAILY_STORY_KEY_CHARS_MAX,
     DAILY_STORY_KEY_CHARS_MIN,
 )
-from app.services.daily_story.gold_story.gold_chat.validate import (
+from app.services.gold_story.gold_chat.validate import (
     _BANNED_INVENTED_CLOSES,
     _parse_conflict_victim,
     _parse_fight_question_asker,
@@ -317,7 +317,7 @@ def format_beat_sequence_block(
     structure_type: str = "",
 ) -> str:
     """Pass1 注入：beat 事件顺序硬约束 + 互毁正/反例。"""
-    from app.services.daily_story.gold_story.scene import format_beat_chain
+    from app.services.gold_story.scene import format_beat_chain
 
     mech = str(mechanism or "").strip().upper()
     st = str(structure_type or "").strip().upper()
@@ -367,7 +367,7 @@ def format_m8_j_beat_budget_block(
     mechanism: str = "",
     structure_type: str = "",
 ) -> str:
-    from app.services.daily_story.gold_story.gold_chat.type_bridge import (
+    from app.services.gold_story.gold_chat.type_bridge import (
         is_m8_j_domination,
     )
 
@@ -431,7 +431,7 @@ def format_pass1_regen_feedback(
         return "\n".join(parts)
 
     # 硬校验失败（字数/缺字段/单句过长等）也回灌，避免同提示空转
-    from app.services.daily_story.gold_story.gold_chat.type_bridge import (
+    from app.services.gold_story.gold_chat.type_bridge import (
         is_m8_j_domination,
     )
 
@@ -562,10 +562,10 @@ def format_seed_span_block(
     mechanism: str = "",
 ) -> str:
     """seed 条数不足 12 时，强制提示中段加码扩句，禁止 1:1 扩完就停。"""
-    from app.services.daily_story.gold_story.gold_chat.type_bridge import (
+    from app.services.gold_story.gold_chat.type_bridge import (
         is_m8_j_domination,
     )
-    from app.services.daily_story.gold_story.scene import CHAT_LINE_COUNT_MIN
+    from app.services.gold_story.scene import CHAT_LINE_COUNT_MIN
     from app.services.daily_story.prompts import DAILY_STORY_BODY_CHARS_MIN
 
     m8_j = is_m8_j_domination(

@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import pytest
 
-from app.services.daily_story.gold_story.gold_chat.validate import (
+from app.services.gold_story.gold_chat.validate import (
     validate_chat_hard,
 )
-from app.services.daily_story.gold_story.scene import (
+from app.services.gold_story.scene import (
     format_scene_block,
     seed_from_beat_chain,
     validate_scene,

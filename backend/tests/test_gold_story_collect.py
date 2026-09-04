@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.services.daily_story.gold_story.collect import (
+from app.services.gold_story.collect import (
     engagement_norm,
     passes_h1_filter,
 )
@@ -45,8 +45,8 @@ def test_h1_rejects_low_engagement():
 
 def test_collect_candidates_skips_already_in_db(app_ctx, monkeypatch):
     from app.repositories import repo_gold_story
-    from app.services.daily_story.gold_story.collect import search as search_mod
-    from app.services.daily_story.gold_story.collect.funny import (
+    from app.services.gold_story.collect import search as search_mod
+    from app.services.gold_story.collect.funny import (
         AudienceFunnyMetrics,
         metrics_to_payload,
     )
@@ -121,8 +121,8 @@ def test_collect_candidates_skips_already_in_db(app_ctx, monkeypatch):
 def test_enqueue_pending_before_ocr(app_ctx, monkeypatch):
     """采集应先 pending 入库，不在入队阶段跑 OCR。"""
     from app.repositories import repo_gold_story
-    from app.services.daily_story.gold_story.collect import pipeline as pl
-    from app.services.daily_story.gold_story.collect.search import VideoCandidate
+    from app.services.gold_story.collect import pipeline as pl
+    from app.services.gold_story.collect.search import VideoCandidate
 
     calls: list[str] = []
 
@@ -233,7 +233,7 @@ def test_insert_skips_similar_reprint(app_ctx):
 
 def test_reimport_stories_from_id_and_bv(app_ctx, monkeypatch):
     from app.repositories import repo_gold_story
-    from app.services.daily_story.gold_story.collect import pipeline as pl
+    from app.services.gold_story.collect import pipeline as pl
 
     inserted = repo_gold_story.insert_or_skip(
         source="bili",
@@ -275,7 +275,7 @@ def test_reimport_stories_from_id_and_bv(app_ctx, monkeypatch):
 
 def test_reimport_stories_on_progress(app_ctx, monkeypatch):
     from app.repositories import repo_gold_story
-    from app.services.daily_story.gold_story.collect import pipeline as pl
+    from app.services.gold_story.collect import pipeline as pl
 
     rows = []
     for i in range(3):

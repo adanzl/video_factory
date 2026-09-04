@@ -20,11 +20,11 @@ if str(BACKEND_DIR) not in sys.path:
 
 from app.config import Config
 from app.core import create_app
-from app.services.daily_story.gold_story.collect import (
+from app.services.gold_story.collect import (
     collect_candidates,
     write_candidate_list,
 )
-from app.services.daily_story.gold_story.collect.pipeline import run_collect_pipeline
+from app.services.gold_story.collect.pipeline import run_collect_pipeline
 
 
 def _cmd_collect(args: argparse.Namespace) -> int:

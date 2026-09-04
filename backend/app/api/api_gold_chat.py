@@ -16,7 +16,7 @@ from app.api.utils import (
     parse_query_int,
     parse_optional_str,
 )
-from app.services.daily_story.gold_story.gold_story_mgr import gold_story_mgr
+from app.services.gold_story.gold_story_mgr import gold_story_mgr
 
 bp = Blueprint(
     "api_gold_chat",

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from app.services.daily_story.gold_story.gold_chat import convert as gc
-from app.services.daily_story.gold_story.gold_chat.setting import (
+from app.services.gold_story.gold_chat import convert as gc
+from app.services.gold_story.gold_chat.setting import (
     ALLOWED_SETTING_PLACES,
     classify_setting_place,
     format_place_catalog_for_prompt,

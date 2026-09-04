@@ -1,6 +1,6 @@
 """H0–H4 采集入库。"""
 
-from app.services.daily_story.gold_story.collect.search import (
+from app.services.gold_story.collect.search import (
     VideoCandidate,
     collect_candidates,
     engagement_norm,

@@ -1,4 +1,10 @@
-"""gold_chat：金故事 → 日常对白（独立流程，不入 H0–H4 采集流水线）。"""
+"""gold_chat：金故事 → 日常对白（独立流程，不入 H0–H4 采集流水线）。
+
+本地 patch_* 分流（Batch1 盘点，Batch2 继续删并）：
+- gold_length：垫字/扩写/语气词清理（待抽 length.py）
+- type_invariant：应经 story_types 公开桥（已改 patch_*_body 调用）
+- delete_or_prompt：过拟合补丁（优先删/改提示词，勿整包搬家）
+"""
 
 from __future__ import annotations
 
@@ -9,12 +15,12 @@ from typing import Any, cast
 
 from app.config import Config
 from app.repositories import repo_gold_story
-from app.services.daily_story.gold_story.gold_chat.patch import (
+from app.services.gold_story.gold_chat.patch import (
     apply_m5_h_local_patches,
     patch_m5_break_sibling_consecutive,
     patch_remap_sibling_terms,
 )
-from app.services.daily_story.gold_story.gold_chat.prompts import (
+from app.services.gold_story.gold_chat.prompts import (
     CHARS_SOFT_HI,
     CHARS_SOFT_LO,
     CHAT_MAX_LINE_CHARS,
@@ -40,10 +46,10 @@ from app.services.daily_story.gold_story.gold_chat.prompts import (
     format_seed_span_block,
     format_structure_score_feedback,
 )
-from app.services.daily_story.gold_story.gold_chat.type_bridge import (
+from app.services.gold_story.gold_chat.type_bridge import (
     is_m8_j_domination,
 )
-from app.services.daily_story.gold_story.gold_chat.validate import (
+from app.services.gold_story.gold_chat.validate import (
     collect_align_issues,
     is_structural_align_kind,
     pass1_align_score,
@@ -54,16 +60,16 @@ from app.services.daily_story.gold_story.gold_chat.validate import (
     validate_chat_hard,
     validate_contract_role_consistency,
 )
-from app.services.daily_story.gold_story.collect.llm import resolve_gold_chat_snippet
-from app.services.daily_story.gold_story.scene import (
+from app.services.gold_story.collect.llm import resolve_gold_chat_snippet
+from app.services.gold_story.scene import (
     format_scene_block,
     sanitize_banned_literals,
 )
-from app.services.daily_story.gold_story.gold_chat.setting import (
+from app.services.gold_story.gold_chat.setting import (
     normalize_gold_chat_setting,
     setting_location_violations,
 )
-from app.services.daily_story.gold_story.types import structure_type_label
+from app.services.gold_story.types import structure_type_label
 from app.services.daily_story.prompts import (
     DAILY_STORY_BODY_CHARS_MAX,
     DAILY_STORY_BODY_CHARS_MIN,
@@ -72,7 +78,7 @@ from app.services.daily_story.prompts import (
     dialogue_total_chars,
 )
 from app.services.llm.llm_mgr import llm_mgr
-from app.services.daily_story.gold_story.gold_chat.export import (
+from app.services.gold_story.gold_chat.export import (
     _backfill_gold_story_after_export,
     export_gold_chat_files,
     gold_chat_export_dir,
@@ -80,10 +86,10 @@ from app.services.daily_story.gold_story.gold_chat.export import (
     load_gold_chat,
     load_gold_chat_for_row,
 )
-from app.services.daily_story.gold_story.gold_chat.import_story import (
+from app.services.gold_story.gold_chat.import_story import (
     import_gold_chat_daily_story,
 )
-from app.services.daily_story.gold_story.gold_chat.polish import (
+from app.services.gold_story.gold_chat.polish import (
     _apply_gold_chat_polish_fixes,
     collect_gold_chat_polish_issues,
     polish_gold_chat_export,
@@ -137,16 +143,14 @@ def _apply_i_close_local_patches(
     dialogue_seed: list[Any] | None = None,
 ) -> dict[str, Any]:
     """I：Pass2 前本地收束裁尾；裁短则抛错打回 Pass1 加长争锋。"""
-    from app.services.daily_story.gold_story.gold_chat.patch import (
+    from app.services.gold_story.gold_chat.patch import (
         patch_gold_chat_post_close_tail,
         patch_m5_break_sibling_consecutive,
     )
-    from app.services.daily_story.gold_story.scene import CHAT_LINE_COUNT_MIN
-    from app.services.daily_story.story_types.i.patch import patch_i_body
+    from app.services.gold_story.scene import CHAT_LINE_COUNT_MIN
+    from app.services.daily_story.story_types import apply_gold_chat_type_patch
 
-    data = dict(story)
-    data["story_type"] = "I"
-    patch_i_body(data)
+    data, _ = apply_gold_chat_type_patch(dict(story), structure_type="I")
     data, _ = patch_m5_break_sibling_consecutive(data)
     payload: dict[str, Any] = {}
     if isinstance(dialogue_seed, list):
@@ -220,7 +224,7 @@ def _repair_i_row_contract(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _resolve_structure_row(row: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
-    from app.services.daily_story.gold_story.gold_chat.type_bridge import (
+    from app.services.gold_story.gold_chat.type_bridge import (
         resolve_gold_chat_structure_row,
     )
 
@@ -1221,7 +1225,7 @@ def patch_seed_speaker_align(
     """seed 专属短语出现在错 speaker 时，改回 seed 标注角色（抽象，不写死单篇）。"""
     import copy
 
-    from app.services.daily_story.gold_story.gold_chat.validate import (
+    from app.services.gold_story.gold_chat.validate import (
         _seed_unique_phrase_owners,
     )
 
@@ -1334,7 +1338,7 @@ def patch_break_consecutive_keep_seed(
     """打散同人连说：只插对方短接话，不改已有句 speaker（保 seed/求否方向）。"""
     import copy
 
-    from app.services.daily_story.gold_story.scene import CHAT_LINE_COUNT_MAX
+    from app.services.gold_story.scene import CHAT_LINE_COUNT_MAX
 
     out = copy.deepcopy(story)
     dialogue = out.get("dialogue")
@@ -1571,7 +1575,7 @@ def _gold_chat_j_pre_score_polish(
     mechanism: str = "",
 ) -> dict[str, Any]:
     """结构分门控前：J 删认输后拉锯、打散连说、归位 seed。"""
-    from app.services.daily_story.gold_story.gold_chat.patch import (
+    from app.services.gold_story.gold_chat.patch import (
         patch_m5_break_sibling_consecutive,
     )
 
@@ -1656,7 +1660,7 @@ def patch_j_ensure_post_lose_alternate(
     """J：认输后若连说，插灿灿短否决，保交替与收场节奏。"""
     import copy
 
-    from app.services.daily_story.gold_story.scene import CHAT_LINE_COUNT_MAX
+    from app.services.gold_story.scene import CHAT_LINE_COUNT_MAX
 
     if str(story.get("story_type") or "").strip().upper() != "J":
         return story, False
@@ -1705,7 +1709,7 @@ def patch_j_ensure_post_lose_can_press(
     """J：删求拒后若认输直跳嘀咕，补灿灿短镇住句。"""
     import copy
 
-    from app.services.daily_story.gold_story.scene import CHAT_LINE_COUNT_MAX
+    from app.services.gold_story.scene import CHAT_LINE_COUNT_MAX
 
     if str(story.get("story_type") or "").strip().upper() != "J":
         return story, False
@@ -2096,11 +2100,11 @@ def _boost_short_with_mid_lines(
     """
     import copy
 
-    from app.services.daily_story.gold_story.scene import (
+    from app.services.gold_story.scene import (
         CHAT_LINE_COUNT_MAX,
         CHAT_LINE_COUNT_MIN,
     )
-    from app.services.daily_story.gold_story.gold_chat.type_bridge import (
+    from app.services.gold_story.gold_chat.type_bridge import (
         is_m8_j_domination,
     )
 
@@ -2229,7 +2233,7 @@ def _expand_short_gold_chat_lines(
     import copy
 
     from app.services.daily_story.dialogue_text import DAILY_STORY_LINE_CHARS_MAX
-    from app.services.daily_story.gold_story.scene import CHAT_LINE_COUNT_MIN
+    from app.services.gold_story.scene import CHAT_LINE_COUNT_MIN
 
     dialogue = story.get("dialogue")
     if not isinstance(dialogue, list):
@@ -2474,11 +2478,9 @@ def _post_align_j_closing_touchup(
     st = str(structure_type or chat.get("story_type") or "").strip().upper()
     if st != "J":
         return chat, []
-    from app.services.daily_story.story_types.j.patch import patch_j_body
+    from app.services.daily_story.story_types import apply_gold_chat_type_patch
 
-    out = dict(chat)
-    out["story_type"] = "J"
-    notes = patch_j_body(out)
+    out, notes = apply_gold_chat_type_patch(chat, structure_type="J")
     return out, list(notes or [])
 
 
@@ -2664,7 +2666,7 @@ def _gold_chat_insert_body_lines_for_min(
     """删句后 pad/expand 顶格时：中段插 1–2 条抽象反应句补 min（非求拒）。"""
     import copy
 
-    from app.services.daily_story.gold_story.scene import CHAT_LINE_COUNT_MAX
+    from app.services.gold_story.scene import CHAT_LINE_COUNT_MAX
 
     need = DAILY_STORY_BODY_CHARS_MIN - dialogue_total_chars(story)
     if need <= 0:
@@ -2707,7 +2709,7 @@ def _gold_chat_force_min_chars(story: dict[str, Any]) -> tuple[dict[str, Any], b
     """终稿仍差 min 时：句内扩写 → 粒子/可读垫满 → 中段插反应句（禁插求否对）。"""
     import copy
 
-    from app.services.daily_story.gold_story.scene import CHAT_LINE_COUNT_MIN
+    from app.services.gold_story.scene import CHAT_LINE_COUNT_MIN
 
     need = DAILY_STORY_BODY_CHARS_MIN - dialogue_total_chars(story)
     if need <= 0:
@@ -2921,7 +2923,7 @@ def patch_j_fix_post_lose_consecutive_can(
     """J：删桥句后若灿灿连说，插昭昭短怂句保交替。"""
     import copy
 
-    from app.services.daily_story.gold_story.scene import CHAT_LINE_COUNT_MAX
+    from app.services.gold_story.scene import CHAT_LINE_COUNT_MAX
 
     if str(story.get("story_type") or "").strip().upper() != "J":
         return story, False
@@ -2998,31 +3000,20 @@ def patch_j_soften_closing_grumble(
 
 def _gold_chat_post_pad_cleanup(story: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     """垫字后：B 类剥句尾垫字 + 再补 min（禁回灌好不好）。"""
-    from app.services.daily_story.story_types.b.patch import patch_b_strip_filler
-    from app.services.daily_story.story_types.f.patch import patch_f_strip_filler
+    from app.services.daily_story.story_types import apply_gold_chat_strip_filler
 
     notes: list[str] = []
     out = dict(story)
     st = str(out.get("story_type") or "").strip().upper()
-    if st == "B":
-        strip_notes = patch_b_strip_filler(out)
-        if strip_notes:
-            notes.extend(strip_notes[:6])
-    elif st == "F":
-        strip_notes = patch_f_strip_filler(out)
-        if strip_notes:
-            notes.extend(strip_notes[:6])
+    strip_notes = apply_gold_chat_strip_filler(out)
+    if strip_notes:
+        notes.extend(strip_notes[:6])
     out, pad_changed = _ensure_gold_chat_min_chars(out)
     if pad_changed:
         notes.append("gold_chat垫字补min")
-        if st == "B":
-            strip_notes = patch_b_strip_filler(out)
-            if strip_notes:
-                notes.extend(strip_notes[:6])
-        elif st == "F":
-            strip_notes = patch_f_strip_filler(out)
-            if strip_notes:
-                notes.extend(strip_notes[:6])
+        strip_notes = apply_gold_chat_strip_filler(out)
+        if strip_notes:
+            notes.extend(strip_notes[:6])
     return out, notes
 
 
@@ -3120,9 +3111,9 @@ def _refine_after_normalize(
     refined, _ = _gold_chat_post_pad_cleanup(refined)
     refined, _ = patch_sanitize_pad_suffix(refined)
     if str(refined.get("story_type") or "").strip().upper() == "I":
-        from app.services.daily_story.story_types.i.patch import patch_i_body
+        from app.services.daily_story.story_types import apply_gold_chat_type_patch
 
-        patch_i_body(refined)
+        refined, _ = apply_gold_chat_type_patch(refined, structure_type="I")
     return refined
 
 
@@ -3211,16 +3202,15 @@ def _prepare_chat_for_validate(
         scene_contract_location=scene_contract_location,
         activity_context=ctx,
     )
-    from app.services.daily_story.gold_story.scene import (
+    from app.services.gold_story.scene import (
         patch_dialogue_narration_to_speech,
     )
 
     patch_dialogue_narration_to_speech(data)
     if st == "K":
-        from app.services.daily_story.story_types.k.patch import patch_k_body
+        from app.services.daily_story.story_types import apply_gold_chat_type_patch
 
-        data["story_type"] = "K"
-        patch_k_body(data)
+        data, _ = apply_gold_chat_type_patch(data, structure_type="K")
     data, _ = _ensure_gold_chat_min_chars(
         data,
         mechanism=mech,
@@ -3255,16 +3245,15 @@ def _validate_pass1_chat(
     short_expand_rounds = 0
     for attempt in range(5):
         data = _apply_pass1_setting_normalize(data, row=row)
-        from app.services.daily_story.gold_story.scene import (
+        from app.services.gold_story.scene import (
             patch_dialogue_narration_to_speech,
         )
 
         patch_dialogue_narration_to_speech(data)
         if st == "K":
-            from app.services.daily_story.story_types.k.patch import patch_k_body
+            from app.services.daily_story.story_types import apply_gold_chat_type_patch
 
-            data["story_type"] = "K"
-            patch_k_body(data)
+            data, _ = apply_gold_chat_type_patch(data, structure_type="K")
         data, _ = _ensure_gold_chat_min_chars(
             data,
             mechanism=mech,
@@ -3284,7 +3273,7 @@ def _validate_pass1_chat(
                 raise ValueError(last_err) from exc
             # 偏短：near_miss 轻量 FIX；大缺口 M8+J 中段重写；仍不足交外层 Pass1 重生成
             if _is_short_content_error(last_err):
-                from app.services.daily_story.gold_story.gold_chat.type_bridge import (
+                from app.services.gold_story.gold_chat.type_bridge import (
                     is_m8_j_domination,
                 )
 
@@ -3532,12 +3521,10 @@ def refine_gold_chat_align(
                 dialogue_seed=dialogue_seed,
             )
         if st == "K":
-            from app.services.daily_story.story_types.k.patch import patch_k_body
+            from app.services.daily_story.story_types import apply_gold_chat_type_patch
 
-            data = dict(data)
-            data["story_type"] = "K"
-            patch_k_body(data)
-        from app.services.daily_story.gold_story.scene import (
+            data, _ = apply_gold_chat_type_patch(data, structure_type="K")
+        from app.services.gold_story.scene import (
             patch_dialogue_narration_to_speech,
         )
 
@@ -3653,11 +3640,9 @@ def refine_gold_chat_align(
             conflict_text=conflict_text,
         )
     if st == "K":
-        from app.services.daily_story.story_types.k.patch import patch_k_body
+        from app.services.daily_story.story_types import apply_gold_chat_type_patch
 
-        data = dict(data)
-        data["story_type"] = "K"
-        patch_k_body(data)
+        data, _ = apply_gold_chat_type_patch(data, structure_type="K")
         remain = collect_align_issues(
             data,
             structure_type=st,
@@ -3667,14 +3652,12 @@ def refine_gold_chat_align(
             conflict_text=conflict_text,
         )
     if st == "O":
-        from app.services.daily_story.story_types.o.patch import patch_o_body
+        from app.services.daily_story.story_types import apply_gold_chat_type_patch
 
-        data = dict(data)
-        data["story_type"] = "O"
-        patch_o_body(data)
+        data, _ = apply_gold_chat_type_patch(data, structure_type="O")
         data, _ = patch_sanitize_pad_suffix(data)
         data, _ = patch_sanitize_pad_particles(data)
-        patch_o_body(data)
+        data, _ = apply_gold_chat_type_patch(data, structure_type="O")
         remain = collect_align_issues(
             data,
             structure_type=st,
@@ -3747,9 +3730,9 @@ def _expand_seed_for_line_floor(
 
     只改 prompt 用 seed，不写回 DB；intent 抽象，不按单篇物件造句。
     """
-    from app.services.daily_story.gold_story.scene import CHAT_LINE_COUNT_MIN
+    from app.services.gold_story.scene import CHAT_LINE_COUNT_MIN
 
-    from app.services.daily_story.gold_story.gold_chat.type_bridge import (
+    from app.services.gold_story.gold_chat.type_bridge import (
         is_m8_j_domination,
     )
 
@@ -3804,8 +3787,8 @@ def apply_gold_chat_normalizations(
     row: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
     """setting 地点映射 + 类型 patch 链（桥接日常故事成熟流水线）。"""
-    from app.services.daily_story.gold_story.gold_chat.type_bridge import (
-        apply_type_body_pipeline,
+    from app.services.daily_story.story_types import (
+        apply_gold_chat_body_pipeline,
     )
 
     notes: list[str] = []
@@ -3857,14 +3840,14 @@ def apply_gold_chat_normalizations(
     if st:
         # M2+C 已有专用 patch 链；勿再走 daily_story 的连说改 speaker / 整件肉 filler
         if not (st == "C" and mech.upper() == "M2"):
-            chat, type_notes = apply_type_body_pipeline(chat, structure_type=st)
+            chat, type_notes = apply_gold_chat_body_pipeline(chat, structure_type=st)
             notes.extend(type_notes)
-        from app.services.daily_story.gold_story.scene import (
+        from app.services.gold_story.scene import (
             patch_dialogue_narration_to_speech,
         )
 
         notes.extend(patch_dialogue_narration_to_speech(chat))
-    from app.services.daily_story.gold_story.gold_chat.patch import (
+    from app.services.gold_story.gold_chat.patch import (
         patch_gold_chat_c_seed_bridge,
         patch_gold_chat_dedupe_dialogue_loop,
         patch_gold_chat_post_close_tail,
@@ -3931,7 +3914,7 @@ def apply_gold_chat_normalizations(
         if pad_changed2:
             notes.append("gold_chat垫字补min")
         chat, _ = patch_sanitize_pad_suffix(chat)
-    from app.services.daily_story.gold_story.gold_chat.patch import (
+    from app.services.gold_story.gold_chat.patch import (
         patch_trim_redundant_ne_suffix,
     )
 
@@ -4095,7 +4078,7 @@ def _bump_short_regen_or_reject(msg: str, short_regen_count: int) -> int:
 
 
 def _structure_type_hint(structure_type: str, mechanism: str = "") -> str:
-    from app.services.daily_story.gold_story.gold_chat.type_bridge import (
+    from app.services.gold_story.gold_chat.type_bridge import (
         structure_type_hint,
     )
 
@@ -4129,17 +4112,19 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
             scene_contract = repaired_sc
     seed = payload.get("dialogue_seed") or []
     if isinstance(seed, list):
-        from app.services.daily_story.gold_story.scene import (
+        from app.services.gold_story.scene import (
             sanitize_dialogue_seed_speech,
         )
 
         seed = sanitize_dialogue_seed_speech(seed)
     if structure_type == "K" and isinstance(seed, list):
-        from app.services.daily_story.story_types.k.patch import (
-            sanitize_k_dialogue_seed,
+        from app.services.daily_story.story_types import (
+            sanitize_gold_chat_dialogue_seed,
         )
 
-        seed = sanitize_k_dialogue_seed(seed)
+        seed = sanitize_gold_chat_dialogue_seed(
+            seed, structure_type="K"
+        )
     banned = sanitize_banned_literals(
         payload.get("banned_literals") or scene_contract.get("banned_literals"),
         scene_contract=scene_contract,
@@ -4313,14 +4298,14 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
             mechanism_text=mechanism_text,
         )
         # 类型本地补丁先于 Pass2 align，避免 C 回旋镖等只能靠 LLM 精修
-        from app.services.daily_story.gold_story.gold_chat.type_bridge import (
-            apply_type_body_pipeline,
+        from app.services.daily_story.story_types import (
+            apply_gold_chat_body_pipeline,
         )
 
-        data, type_notes = apply_type_body_pipeline(
+        data, type_notes = apply_gold_chat_body_pipeline(
             data, structure_type=structure_type
         )
-        from app.services.daily_story.gold_story.scene import (
+        from app.services.gold_story.scene import (
             patch_dialogue_narration_to_speech,
         )
 
@@ -4408,7 +4393,7 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
             if conflict_core:
                 chat["conflict_core"] = conflict_core
             # 结构分门控前先跑 M2+C 回旋镖/触发词补丁（否则 40 分空转）
-            from app.services.daily_story.gold_story.gold_chat.patch import (
+            from app.services.gold_story.gold_chat.patch import (
                 patch_m2_c_structure,
             )
 
@@ -4538,7 +4523,7 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
             )
     # 零食+作业本战：LLM 截断/结构分翻车时用 beat 重建兜底（禁再烧 flash）
     if str(structure_type or "").upper() == "C" and str(mechanism or "").upper() == "M2":
-        from app.services.daily_story.gold_story.gold_chat.patch import (
+        from app.services.gold_story.gold_chat.patch import (
             _m2_c_is_snack_homework_ctx,
             m2_c_meat_whole_item_context,
             patch_m2_c_snack_beat_rebuild,
@@ -4701,7 +4686,7 @@ def convert_gold_chat(
     # 垫字后再跑一轮 M2+C 收口，然后若被削短再垫回 hard min
     if str(row.get("structure_type") or chat.get("story_type") or "").upper() == "C":
         chat, _ = patch_sanitize_c_tone_stack(chat)
-        from app.services.daily_story.gold_story.gold_chat.patch import (
+        from app.services.gold_story.gold_chat.patch import (
             patch_m2_c_structure,
         )
 
@@ -4748,11 +4733,9 @@ def convert_gold_chat(
         structure_type=_st0,
     )
     if str(_st0 or "").upper() == "K":
-        from app.services.daily_story.story_types.k.patch import patch_k_body
+        from app.services.daily_story.story_types import apply_gold_chat_type_patch
 
-        chat = dict(chat)
-        chat["story_type"] = "K"
-        patch_k_body(chat)
+        chat, _ = apply_gold_chat_type_patch(chat, structure_type="K")
         chat, _ = _ensure_gold_chat_min_chars(
             chat,
             mechanism=_mech0,
@@ -4760,7 +4743,7 @@ def convert_gold_chat(
         )
         chat, _ = patch_sanitize_pad_suffix(chat)
         chat, _ = patch_sanitize_pad_particles(chat)
-        patch_k_body(chat)
+        chat, _ = apply_gold_chat_type_patch(chat, structure_type="K")
         chat, _ = patch_sanitize_pad_suffix(chat)
         chat, _ = patch_sanitize_pad_particles(chat)
     chat, _ = _gold_chat_j_final_polish(
@@ -4771,11 +4754,9 @@ def convert_gold_chat(
         structure_type=str(row.get("structure_type") or ""),
     )
     if str(_st0 or "").upper() == "O":
-        from app.services.daily_story.story_types.o.patch import patch_o_body
+        from app.services.daily_story.story_types import apply_gold_chat_type_patch
 
-        chat = dict(chat)
-        chat["story_type"] = "O"
-        o_notes = patch_o_body(chat)
+        chat, o_notes = apply_gold_chat_type_patch(chat, structure_type="O")
         if o_notes:
             logger.info(
                 "gold_chat O final polish: %s",
@@ -4787,7 +4768,7 @@ def convert_gold_chat(
             structure_type=_st0,
         )
         # 垫字后再截一次，避免又拉出第二轮
-        o_notes2 = patch_o_body(chat)
+        chat, o_notes2 = apply_gold_chat_type_patch(chat, structure_type="O")
         if o_notes2:
             logger.info(
                 "gold_chat O re-trim: %s",
@@ -4809,15 +4790,16 @@ def convert_gold_chat(
                 if dialogue_total_chars(chat) <= before:
                     break
     if str(_st0 or "").upper() == "K":
-        from app.services.daily_story.story_types.k.patch import patch_k_body
+        from app.services.daily_story.story_types import (
+            apply_gold_chat_k_fix_truncations,
+            apply_gold_chat_type_patch,
+        )
 
-        chat = dict(chat)
-        chat["story_type"] = "K"
         # 末轮补字后再剥；不足则用中段句/可读扩写补，禁止粒子叠脏
         for _ in range(5):
             chat, _ = patch_sanitize_pad_suffix(chat)
             chat, _ = patch_sanitize_pad_particles(chat)
-            patch_k_body(chat)
+            chat, _ = apply_gold_chat_type_patch(chat, structure_type="K")
             if dialogue_total_chars(chat) >= DAILY_STORY_BODY_CHARS_MIN:
                 break
             before = dialogue_total_chars(chat)
@@ -4829,20 +4811,15 @@ def convert_gold_chat(
                 break
         chat, _ = patch_sanitize_pad_suffix(chat)
         chat, _ = patch_sanitize_pad_particles(chat)
-        from app.services.daily_story.story_types.k.patch import (
-            patch_k_fix_truncations,
-            patch_k_body,
-        )
-
-        patch_k_fix_truncations(chat)
+        apply_gold_chat_k_fix_truncations(chat)
         if dialogue_total_chars(chat) < DAILY_STORY_BODY_CHARS_MIN:
             chat, _ = _boost_short_with_mid_lines(
                 chat, mechanism=_mech0, structure_type="K"
             )
             chat, _ = _gold_chat_force_min_chars(chat)
-            patch_k_fix_truncations(chat)
+            apply_gold_chat_k_fix_truncations(chat)
         # 出口完整 K patch 后只中段补字+截断修复，避免口头禅去重再砍字
-        patch_k_body(chat)
+        chat, _ = apply_gold_chat_type_patch(chat, structure_type="K")
         for _ in range(4):
             if dialogue_total_chars(chat) >= DAILY_STORY_BODY_CHARS_MIN:
                 break
@@ -4851,12 +4828,12 @@ def convert_gold_chat(
                 chat, mechanism=_mech0, structure_type="K"
             )
             chat, c2 = _gold_chat_force_min_chars(chat)
-            patch_k_fix_truncations(chat)
+            apply_gold_chat_k_fix_truncations(chat)
             if dialogue_total_chars(chat) <= before and not c1 and not c2:
                 break
         chat, _ = patch_sanitize_pad_suffix(chat)
         chat, _ = patch_sanitize_pad_particles(chat)
-        patch_k_fix_truncations(chat)
+        apply_gold_chat_k_fix_truncations(chat)
     seed = (
         payload0.get("dialogue_seed")
         if isinstance(payload0.get("dialogue_seed"), list)
@@ -4875,11 +4852,9 @@ def convert_gold_chat(
                 chat, particle_only=True, max_rounds=12
             )
     if str(_st0 or "").upper() == "O":
-        from app.services.daily_story.story_types.o.patch import patch_o_body
+        from app.services.daily_story.story_types import apply_gold_chat_type_patch
 
-        chat = dict(chat)
-        chat["story_type"] = "O"
-        o_notes3 = patch_o_body(chat)
+        chat, o_notes3 = apply_gold_chat_type_patch(chat, structure_type="O")
         if o_notes3:
             logger.info(
                 "gold_chat O pre-validate trim: %s",
@@ -4887,7 +4862,7 @@ def convert_gold_chat(
             )
         chat, _ = patch_sanitize_pad_suffix(chat)
         chat, _ = patch_sanitize_pad_particles(chat)
-        o_notes4 = patch_o_body(chat)
+        chat, o_notes4 = apply_gold_chat_type_patch(chat, structure_type="O")
         if o_notes4:
             logger.info(
                 "gold_chat O post-sanitize trim: %s",
@@ -4898,7 +4873,7 @@ def convert_gold_chat(
             mechanism=_mech0,
             structure_type=_st0,
         )
-        patch_o_body(chat)
+        chat, _ = apply_gold_chat_type_patch(chat, structure_type="O")
     validate_gold_chat(
         chat,
         banned_literals=[str(x) for x in banned],
@@ -4961,14 +4936,12 @@ def convert_gold_chat(
             "；".join(consec_notes[:8]),
         )
     if st_final == "O":
-        from app.services.daily_story.story_types.o.patch import patch_o_body
+        from app.services.daily_story.story_types import apply_gold_chat_type_patch
 
-        chat = dict(chat)
-        chat["story_type"] = "O"
-        o_final = patch_o_body(chat)
+        chat, o_final = apply_gold_chat_type_patch(chat, structure_type="O")
         chat, _ = patch_sanitize_pad_suffix(chat)
         chat, _ = patch_sanitize_pad_particles(chat)
-        o_final2 = patch_o_body(chat)
+        chat, o_final2 = apply_gold_chat_type_patch(chat, structure_type="O")
         notes = [*(o_final or []), *(o_final2 or [])]
         if notes:
             logger.info(
@@ -5000,7 +4973,7 @@ def convert_gold_chat(
             )
             raise
         from app.services.daily_story.quality import structure_score_of
-        from app.services.daily_story.story_types.o.patch import patch_o_body
+        from app.services.daily_story.story_types import apply_gold_chat_type_patch
 
         quality0 = cast(dict[str, Any], chat.get("quality")) if isinstance(
             chat.get("quality"), dict
@@ -5019,16 +4992,15 @@ def convert_gold_chat(
                 mom_lines_max=int(mom_max),
             )
             lifted = _normalize_chat_speakers(lifted)
-            lifted["story_type"] = "O"
             lifted, _ = patch_sanitize_pad_suffix(lifted)
             lifted, _ = patch_sanitize_pad_particles(lifted)
-            patch_o_body(lifted)
+            lifted, _ = apply_gold_chat_type_patch(lifted, structure_type="O")
             lifted, _ = _ensure_gold_chat_min_chars(
                 lifted,
                 mechanism=mech,
                 structure_type=st_final,
             )
-            patch_o_body(lifted)
+            lifted, _ = apply_gold_chat_type_patch(lifted, structure_type="O")
             lifted = _attach_gold_chat_structure_score(lifted, row)
             struct = _gate_gold_chat_structure_score(lifted)
             chat = lifted

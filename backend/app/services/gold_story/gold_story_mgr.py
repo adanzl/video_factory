@@ -9,25 +9,25 @@ from typing import Any, cast
 
 from app.config import Config
 from app.repositories import repo_gold_story
-from app.services.daily_story.gold_story.gold_chat.batch import run_gold_chat_batch
-from app.services.daily_story.gold_story.gold_chat.convert import convert_gold_chat
-from app.services.daily_story.gold_story.gold_chat.export import (
+from app.services.gold_story.gold_chat.batch import run_gold_chat_batch
+from app.services.gold_story.gold_chat.convert import convert_gold_chat
+from app.services.gold_story.gold_chat.export import (
     gold_chat_summary,
     load_gold_chat,
     load_gold_chat_for_row,
 )
-from app.services.daily_story.gold_story.gold_chat.status import (
+from app.services.gold_story.gold_chat.status import (
     gold_chat_error_from_payload,
     record_gold_chat_failure,
 )
-from app.services.daily_story.gold_story.gold_chat.import_story import (
+from app.services.gold_story.gold_chat.import_story import (
     import_gold_chat_daily_story,
 )
-from app.services.daily_story.gold_story.export_story import (
+from app.services.gold_story.export_story import (
     cleanup_gold_story_files,
     load_transcript_for_row,
 )
-from app.services.daily_story.gold_story.collect.pipeline import (
+from app.services.gold_story.collect.pipeline import (
     drain_pending_stories,
     reimport_stories,
     run_collect_pipeline,
@@ -633,7 +633,7 @@ class GoldStoryMgr:
         theme_family: str | None = None,
         config: Config | None = None,
     ) -> tuple[str, dict[str, Any] | None]:
-        from app.services.daily_story.gold_story.story_block import (
+        from app.services.gold_story.story_block import (
             resolve_gold_story_block,
         )
 
@@ -645,7 +645,7 @@ class GoldStoryMgr:
         )
 
     def build_story_block(self, story: dict[str, Any]) -> str:
-        from app.services.daily_story.gold_story.story_block import (
+        from app.services.gold_story.story_block import (
             build_gold_story_block,
         )
 

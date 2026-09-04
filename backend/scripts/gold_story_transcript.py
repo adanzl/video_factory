@@ -20,7 +20,7 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from app.core import create_app
-from app.services.daily_story.gold_story import transcript as gs_transcript
+from app.services.gold_story import transcript as gs_transcript
 
 
 def _cmd_doctor(_: argparse.Namespace) -> int:

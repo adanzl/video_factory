@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from app.services.daily_story.gold_story.transcript.download import parse_media_ref
-from app.services.daily_story.gold_story.transcript import (
+from app.services.gold_story.transcript.download import parse_media_ref
+from app.services.gold_story.transcript import (
     format_dialogue_transcript,
     format_transcript_display,
     normalize_bv,

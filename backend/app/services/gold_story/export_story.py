@@ -6,8 +6,8 @@ from pathlib import Path
 from typing import Any, cast
 
 from app.config import Config
-from app.services.daily_story.gold_story.transcript import format_transcript_display
-from app.services.daily_story.gold_story.scene import format_scene_block
+from app.services.gold_story.transcript import format_transcript_display
+from app.services.gold_story.scene import format_scene_block
 
 
 def story_export_dir(config: Config | None = None) -> Path:
