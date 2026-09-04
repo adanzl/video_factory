@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from app.repositories import repo_gold_story
-from app.services.daily_story.gold_story.collect.funny import (
+from app.services.gold_story.collect.funny import (
     AudienceFunnyMetrics,
     FUNNY_COMMENT_WEIGHT,
     FUNNY_DM_WEIGHT,
@@ -140,7 +140,7 @@ def test_compute_auto_score_uses_funny_signal():
 
 
 def test_plan_funny_rescore_flips_comment_laugh_reject():
-    from app.services.daily_story.gold_story.collect.funny import plan_funny_rescore
+    from app.services.gold_story.collect.funny import plan_funny_rescore
 
     plan = plan_funny_rescore(
         {

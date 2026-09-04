@@ -747,7 +747,7 @@ def score_daily_story(
     # ── 开场维度（满分 2）：gold_chat 正文无 discovery_opening 时不扣 ──
     opening = story.get("discovery_opening")
     body_only = not isinstance(opening, list) or not opening
-    from app.services.daily_story.gold_story.scene import CHAT_LINE_COUNT_MIN
+    from app.services.gold_story.scene import CHAT_LINE_COUNT_MIN
 
     if body_only and len(lines) >= CHAT_LINE_COUNT_MIN:
         pass

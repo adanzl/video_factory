@@ -104,7 +104,7 @@ def test_recover_stuck_gold_story_pending_resets_processing(
     monkeypatch,
 ) -> None:
     from app.repositories import repo_gold_story
-    from app.services.daily_story.gold_story import gold_story_mgr as mgr_mod
+    from app.services.gold_story import gold_story_mgr as mgr_mod
 
     mgr_mod.reset_collect_state()
     repo_gold_story.insert_pending(
@@ -155,7 +155,7 @@ def test_recover_stuck_gold_story_pending_resets_processing(
 
 
 def test_recover_stuck_gold_story_pending_noop_when_idle(app_ctx) -> None:
-    from app.services.daily_story.gold_story import gold_story_mgr as mgr_mod
+    from app.services.gold_story import gold_story_mgr as mgr_mod
 
     mgr_mod.reset_collect_state()
     from worker.recovery import recover_stuck_gold_story_pending

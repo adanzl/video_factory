@@ -21,12 +21,12 @@ if str(BACKEND_DIR) not in sys.path:
 from app.config import Config
 from app.core import create_app
 from app.repositories import repo_gold_story
-from app.services.daily_story.gold_story.export_story import export_story_files
-from app.services.daily_story.gold_story.export_story import (
+from app.services.gold_story.export_story import export_story_files
+from app.services.gold_story.export_story import (
     _load_repaired_transcript_text,
     _load_transcript_text,
 )
-from app.services.daily_story.gold_story.collect.review import audit_story
+from app.services.gold_story.collect.review import audit_story
 
 
 def _load_transcript_for_row(row: dict, cfg: Config) -> str:

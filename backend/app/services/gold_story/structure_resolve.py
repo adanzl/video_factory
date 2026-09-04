@@ -7,7 +7,7 @@ import copy
 import re
 from typing import Any, cast
 
-from app.services.daily_story.gold_story.types import (
+from app.services.gold_story.types import (
     allowed_structure_types,
     normalize_structure_type,
 )

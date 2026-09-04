@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from app.services.daily_story.gold_story.collect import llm as llm_steps
-from app.services.daily_story.gold_story.gold_chat.type_bridge import (
+from app.services.gold_story.collect import llm as llm_steps
+from app.services.gold_story.gold_chat.type_bridge import (
     resolve_gold_chat_structure_row,
 )
-from app.services.daily_story.gold_story.structure_resolve import (
+from app.services.gold_story.structure_resolve import (
     resolve_h3_structure,
     should_reclassify_m2_c_to_m8_j,
     suggests_c_fairness_boomerang,
@@ -107,7 +107,7 @@ _STORY_39_RAW = (
 
 
 def test_suggests_m6_n_for_solemn_nonsense():
-    from app.services.daily_story.gold_story.structure_resolve import (
+    from app.services.gold_story.structure_resolve import (
         should_reclassify_to_m6_n,
         suggests_m6_n_solemn_nonsense,
     )
@@ -161,7 +161,7 @@ _STORY_53_RAW = (
 
 
 def test_suggests_m13_o_for_goal_tunnel():
-    from app.services.daily_story.gold_story.structure_resolve import (
+    from app.services.gold_story.structure_resolve import (
         should_reclassify_m2_c_to_m13_o,
         suggests_m13_o_goal_tunnel,
     )

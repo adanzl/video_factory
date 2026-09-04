@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from app.services.daily_story.gold_story.gold_chat import convert as gc
-from app.services.daily_story.gold_story.gold_chat import export as gce
+from app.services.gold_story.gold_chat import convert as gc
+from app.services.gold_story.gold_chat import export as gce
 
 
 def _sample_row() -> dict:
@@ -478,7 +478,7 @@ def test_import_gold_chat_daily_story_insert_and_reimport(
 
 
 def test_resolve_gold_chat_snippet_same_source():
-    from app.services.daily_story.gold_story.collect.llm import (
+    from app.services.gold_story.collect.llm import (
         GOLD_CHAT_LINES_SNIPPET,
         GOLD_CHAT_LINES_SNIPPET_SOURCE_ID,
         resolve_gold_chat_snippet,
@@ -514,7 +514,7 @@ def test_closing_for_prompt_shortens_long():
 
 
 def test_pass1_regen_feedback_includes_short_error():
-    from app.services.daily_story.gold_story.gold_chat.prompts import (
+    from app.services.gold_story.gold_chat.prompts import (
         format_pass1_regen_feedback,
     )
 
@@ -536,7 +536,7 @@ def test_is_truncation_error():
 
 
 def test_resolve_gold_chat_snippet_cross_source():
-    from app.services.daily_story.gold_story.collect.llm import (
+    from app.services.gold_story.collect.llm import (
         GOLD_CHAT_LINES_SNIPPET,
         resolve_gold_chat_snippet,
     )

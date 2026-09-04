@@ -839,7 +839,7 @@ def transcribe_video_ocr_subprocess(
         "gold_story_ocr_fps": config.gold_story_ocr_fps,
         "gold_story_ocr_frame_workers": config.gold_story_ocr_frame_workers,
     }
-    module = "app.services.daily_story.gold_story.transcript.ocr"
+    module = "app.services.gold_story.transcript.ocr"
     with tempfile.TemporaryDirectory(prefix="gold_story_ocr_") as tmp:
         input_path = Path(tmp) / "input.json"
         output_path = Path(tmp) / "output.json"

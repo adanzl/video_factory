@@ -8,14 +8,14 @@ from typing import Any
 
 from app.config import Config
 from app.repositories import repo_gold_story
-from app.services.daily_story.gold_story.collect import llm as llm_steps
-from app.services.daily_story.gold_story.collect import review as gs_review
-from app.services.daily_story.gold_story.collect.funny import (
+from app.services.gold_story.collect import llm as llm_steps
+from app.services.gold_story.collect import review as gs_review
+from app.services.gold_story.collect.funny import (
     compute_audience_funny_metrics,
     metrics_to_payload,
     passes_funny_gate_from_payload,
 )
-from app.services.daily_story.gold_story.collect.search import (
+from app.services.gold_story.collect.search import (
     VideoCandidate,
     _bili_http,
     collect_candidates,
@@ -24,14 +24,14 @@ from app.services.daily_story.gold_story.collect.search import (
     fetch_video_meta,
     write_candidate_list,
 )
-from app.services.daily_story.gold_story.export_story import export_story_files
-from app.services.daily_story.gold_story.scene import sanitize_banned_literals
-from app.services.daily_story.gold_story.transcript import (
+from app.services.gold_story.export_story import export_story_files
+from app.services.gold_story.scene import sanitize_banned_literals
+from app.services.gold_story.transcript import (
     repaired_transcript_path,
     save_repaired_transcript,
     transcribe_bilibili,
 )
-from app.services.daily_story.gold_story.transcript.download import normalize_bv
+from app.services.gold_story.transcript.download import normalize_bv
 
 logger = logging.getLogger(__name__)
 

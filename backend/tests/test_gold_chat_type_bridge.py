@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from app.services.daily_story.gold_story.gold_chat.type_bridge import (
+from app.services.gold_story.gold_chat.type_bridge import (
     apply_type_body_pipeline,
     resolve_gold_chat_structure_row,
     structure_type_hint,
     type_align_chain,
 )
-from app.services.daily_story.gold_story.types import (
+from app.services.gold_story.types import (
     MECHANISM_STRUCTURE_MAP,
     GOLD_STORY_STRUCTURE_CODES,
 )
@@ -100,7 +100,7 @@ def test_resolve_structure_row_skips_without_mapping_note():
 
 
 def test_patch_gold_chat_post_close_tail_m2_c():
-    from app.services.daily_story.gold_story.gold_chat.patch import (
+    from app.services.gold_story.gold_chat.patch import (
         patch_gold_chat_post_close_tail,
     )
 
@@ -149,7 +149,7 @@ def test_patch_gold_chat_post_close_tail_m2_c():
 
 def test_post_close_tail_skips_when_below_validate_floor():
     """删尾后若 <12 句 / <240 字，不剪（防短 seed 被剪穿）。"""
-    from app.services.daily_story.gold_story.gold_chat.patch import (
+    from app.services.gold_story.gold_chat.patch import (
         patch_gold_chat_post_close_tail,
     )
 
@@ -187,7 +187,7 @@ def test_post_close_tail_skips_when_below_validate_floor():
 
 
 def test_patch_m2_c_structure_layers():
-    from app.services.daily_story.gold_story.gold_chat.patch import (
+    from app.services.gold_story.gold_chat.patch import (
         patch_m2_c_structure,
     )
     from app.services.daily_story.quality import attach_daily_story_quality
@@ -230,6 +230,31 @@ def test_patch_m2_c_structure_layers():
     assert struct is not None and struct >= 50
 
 
+def test_apply_gold_chat_body_pipeline_via_story_types():
+    from app.services.daily_story.story_types import (
+        apply_gold_chat_body_pipeline,
+        apply_gold_chat_type_patch,
+        gold_chat_type_revision_hint,
+    )
+
+    chat = {
+        "dialogue": [
+            {"speaker": "昭昭", "line": "我先说一句。"},
+            {"speaker": "灿灿", "line": "我说了算呀。"},
+        ],
+        "setting": "家里客厅",
+    }
+    patched, notes = apply_gold_chat_body_pipeline(
+        chat, structure_type="C"
+    )
+    assert patched.get("story_type") == "C"
+    assert isinstance(notes, list)
+    typed, _ = apply_gold_chat_type_patch(chat, structure_type="J")
+    assert typed.get("story_type") == "J"
+    hint = gold_chat_type_revision_hint("J")
+    assert "冲突升级" in hint or "收束修订" in hint or hint == ""
+
+
 def test_apply_type_body_pipeline_sets_story_type():
     chat = {
         "story_type": "C",
@@ -245,7 +270,7 @@ def test_apply_type_body_pipeline_sets_story_type():
 
 def test_m2_c_milk_story_skips_meat_seed_close():
     """#23 牛奶公平：勿注入吃商/八百个心眼子收束。"""
-    from app.services.daily_story.gold_story.gold_chat.patch import (
+    from app.services.gold_story.gold_chat.patch import (
         m2_c_meat_whole_item_context,
         patch_m2_c_ensure_seed_close,
         patch_gold_chat_c_seed_bridge,
@@ -291,7 +316,7 @@ def test_m2_c_milk_story_skips_meat_seed_close():
 
 
 def test_narration_line_detects_stage_direction():
-    from app.services.daily_story.gold_story.scene import (
+    from app.services.gold_story.scene import (
         looks_like_narration_line,
         patch_dialogue_narration_to_speech,
         rewrite_narration_to_speech,
@@ -322,7 +347,7 @@ def test_narration_line_detects_stage_direction():
 
 
 def test_validate_gold_chat_rejects_narration_line():
-    from app.services.daily_story.gold_story.gold_chat.convert import validate_gold_chat
+    from app.services.gold_story.gold_chat.convert import validate_gold_chat
 
     story = {
         "scene_title": "公平的陷阱",

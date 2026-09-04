@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.services.daily_story.gold_story.types import (
+from app.services.gold_story.types import (
     GOLD_STORY_MECHANISM_CODES,
     GOLD_STORY_STRUCTURE_CODES,
     MECHANISM_STRUCTURE_MAP,

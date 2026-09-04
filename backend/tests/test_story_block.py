@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from app.services.daily_story.gold_story.story_block import (
+from app.services.gold_story.story_block import (
     build_gold_story_block,
     pick_for_injection,
     resolve_gold_story_block,
@@ -63,7 +63,7 @@ def test_resolve_disabled_by_default():
 def test_resolve_when_enabled():
     cfg = type("Cfg", (), {"gold_story_enabled": True})()
     with patch(
-        "app.services.daily_story.gold_story.story_block.pick_for_injection",
+        "app.services.gold_story.story_block.pick_for_injection",
         return_value=_SAMPLE,
     ):
         block, row = resolve_gold_story_block(

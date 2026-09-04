@@ -112,6 +112,6 @@ def recover_stuck_daily_stories() -> int:
 
 
 def recover_stuck_gold_story_pending() -> int:
-    from app.services.daily_story.gold_story.gold_story_mgr import gold_story_mgr
+    from app.services.gold_story.gold_story_mgr import gold_story_mgr
 
     return gold_story_mgr.recover_stuck_pending_stories()

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from app.services.daily_story.gold_story.gold_chat import convert as gc
-from app.services.daily_story.gold_story.gold_chat.validate import (
+from app.services.gold_story.gold_chat import convert as gc
+from app.services.gold_story.gold_chat.validate import (
     collect_align_issues,
     should_regenerate_pass1,
 )
@@ -236,7 +236,7 @@ def test_collect_align_issues_inverted_role_flags():
 
 
 def test_split_align_issues_warn_kinds():
-    from app.services.daily_story.gold_story.gold_chat.validate import (
+    from app.services.gold_story.gold_chat.validate import (
         split_align_issues,
     )
 
@@ -257,7 +257,7 @@ def test_refine_passes_with_only_align_warn(monkeypatch):
         "line": "家规就是谁先动手谁道歉！哼，我不原谅！道歉也没用！",
     }
     story = _m5h_story(dlg)
-    from app.services.daily_story.gold_story.gold_chat.validate import (
+    from app.services.gold_story.gold_chat.validate import (
         split_align_issues,
     )
 

@@ -5,8 +5,8 @@ from __future__ import annotations
 import pytest
 
 from app.repositories import repo_gold_story
-from app.services.daily_story.gold_story.gold_chat import convert as gc
-from app.services.daily_story.gold_story.gold_chat import export as gce
+from app.services.gold_story.gold_chat import convert as gc
+from app.services.gold_story.gold_chat import export as gce
 
 
 def _insert_sample(app_ctx) -> dict:
@@ -219,7 +219,7 @@ def test_api_delete(app_ctx, tmp_path, monkeypatch):
     gid = int(inserted["id"])
 
     import app.config as config_mod
-    from app.services.daily_story.gold_story import export_story as es
+    from app.services.gold_story import export_story as es
 
     transcript_dir = tmp_path / "transcripts"
     transcript_dir.mkdir()
@@ -232,7 +232,7 @@ def test_api_delete(app_ctx, tmp_path, monkeypatch):
             self.gold_story_media_workspace = tmp_path / "media"
 
     monkeypatch.setattr(config_mod, "Config", PatchedConfig)
-    monkeypatch.setattr("app.services.daily_story.gold_story.gold_story_mgr.Config", PatchedConfig)
+    monkeypatch.setattr("app.services.gold_story.gold_story_mgr.Config", PatchedConfig)
     monkeypatch.setattr(es, "Config", PatchedConfig)
 
     client = app_ctx.test_client()
@@ -301,7 +301,7 @@ def test_api_archive(app_ctx):
 
 
 def test_api_collect(app_ctx, monkeypatch):
-    from app.services.daily_story.gold_story import gold_story_mgr as mgr_mod
+    from app.services.gold_story import gold_story_mgr as mgr_mod
 
     mgr_mod.reset_collect_state()
     workers: list = []
@@ -345,7 +345,7 @@ def test_api_collect(app_ctx, monkeypatch):
 
 
 def test_api_reimport(app_ctx, monkeypatch):
-    from app.services.daily_story.gold_story import gold_story_mgr as mgr_mod
+    from app.services.gold_story import gold_story_mgr as mgr_mod
 
     mgr_mod.reset_collect_state()
     workers: list = []
@@ -404,7 +404,7 @@ def test_api_reimport(app_ctx, monkeypatch):
 
 
 def test_api_reimport_requires_target(app_ctx):
-    from app.services.daily_story.gold_story import gold_story_mgr as mgr_mod
+    from app.services.gold_story import gold_story_mgr as mgr_mod
 
     mgr_mod.reset_collect_state()
     client = app_ctx.test_client()
@@ -461,7 +461,7 @@ def test_api_convert_failure_records_error(app_ctx, monkeypatch):
         raise ValueError("对白 10 句/110 字不足")
 
     monkeypatch.setattr(
-        "app.services.daily_story.gold_story.gold_story_mgr.convert_gold_chat",
+        "app.services.gold_story.gold_story_mgr.convert_gold_chat",
         boom,
     )
 
@@ -545,11 +545,11 @@ def test_api_get_transcript(app_ctx, tmp_path, monkeypatch):
 
     monkeypatch.setattr(config_mod, "Config", PatchedConfig)
     monkeypatch.setattr(
-        "app.services.daily_story.gold_story.gold_story_mgr.Config",
+        "app.services.gold_story.gold_story_mgr.Config",
         PatchedConfig,
     )
     monkeypatch.setattr(
-        "app.services.daily_story.gold_story.export_story.Config",
+        "app.services.gold_story.export_story.Config",
         PatchedConfig,
     )
 

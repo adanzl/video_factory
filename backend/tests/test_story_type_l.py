@@ -1,6 +1,6 @@
 """L 类退让点破：校验/观感 smoke（注册见 fl_extended）。"""
 
-from app.services.daily_story.gold_story.types import (
+from app.services.gold_story.types import (
     allowed_structure_types,
     validate_mechanism_structure_pair,
 )

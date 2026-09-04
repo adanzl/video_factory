@@ -1,6 +1,6 @@
 """H0b 下载 / ASR / OCR。"""
 
-from app.services.daily_story.gold_story.transcript.transcript import (
+from app.services.gold_story.transcript.transcript import (
     batch_bilibili,
     batch_transcribe,
     doctor,

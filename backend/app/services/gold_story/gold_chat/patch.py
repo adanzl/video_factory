@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from app.services.daily_story.gold_story.gold_chat.validate import (
+from app.services.gold_story.gold_chat.validate import (
     RE_FIGHT_QUESTION,
     RE_INJURY,
     RE_IODINE_CLOSE,
@@ -304,7 +304,7 @@ def patch_m5_insert_authority_before_mom(
     """妈妈介入前全无家规/规矩时，补一句 canonical 立规（句数满则替换嘴硬句）。"""
     import copy
 
-    from app.services.daily_story.gold_story.scene import (
+    from app.services.gold_story.scene import (
         CHAT_LINE_COUNT_MAX,
     )
 
@@ -1122,7 +1122,7 @@ def patch_m5_pre_mom_escalation(story: dict[str, Any]) -> tuple[dict[str, Any], 
         if sp not in {"昭昭", "灿灿"}:
             sp = str(dlg[stubborn_idx].get("speaker") or "灿灿").strip()
         if len(candidate) <= 30:
-            from app.services.daily_story.gold_story.scene import (
+            from app.services.gold_story.scene import (
                 CHAT_LINE_COUNT_MAX,
             )
 
@@ -1309,7 +1309,7 @@ def patch_gold_chat_post_close_tail(
         if len(rows) <= keep_end:
             return story, []
         kept = rows[:keep_end]
-        from app.services.daily_story.gold_story.scene import CHAT_LINE_COUNT_MIN
+        from app.services.gold_story.scene import CHAT_LINE_COUNT_MIN
 
         candidate = dict(story)
         candidate["dialogue"] = kept
@@ -1346,7 +1346,7 @@ def patch_gold_chat_post_close_tail(
 
     kept = rows[: close_idx + 1]
     # 抽象安全下限：删尾后须仍满足 hard validate 同源门槛，避免短稿被剪穿
-    from app.services.daily_story.gold_story.scene import CHAT_LINE_COUNT_MIN
+    from app.services.gold_story.scene import CHAT_LINE_COUNT_MIN
     from app.services.daily_story.prompts import (
         DAILY_STORY_BODY_CHARS_MIN,
         dialogue_total_chars,
@@ -2085,7 +2085,7 @@ def patch_gold_chat_dedupe_dialogue_loop(
     if cut >= len(rows):
         return story, []
 
-    from app.services.daily_story.gold_story.scene import CHAT_LINE_COUNT_MIN
+    from app.services.gold_story.scene import CHAT_LINE_COUNT_MIN
     from app.services.daily_story.prompts import (
         DAILY_STORY_BODY_CHARS_MIN,
         dialogue_total_chars,

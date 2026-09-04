@@ -26,7 +26,7 @@ if str(BACKEND_DIR) not in sys.path:
 
 from app.core import create_app
 from app.repositories import repo_gold_story
-from app.services.daily_story.gold_story.gold_chat.type_bridge import (
+from app.services.gold_story.gold_chat.type_bridge import (
     resolve_gold_chat_structure_row,
 )
 
