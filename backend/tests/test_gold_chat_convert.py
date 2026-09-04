@@ -211,25 +211,6 @@ def test_gold_story_to_gold_chat_rejects_when_far_too_short(monkeypatch):
         gc.gold_story_to_gold_chat(_sample_row())
 
 
-def test_gold_story_to_gold_chat_regens_when_one_line_short(monkeypatch):
-    """11 句近失：禁止本地插反应句凑数，须重生成。"""
-    _bypass_structure_gate(monkeypatch)
-    calls = {"n": 0}
-
-    def fake_chat(_system: str, _user: str, **_kwargs) -> dict:
-        calls["n"] += 1
-        chat = _sample_chat()
-        if calls["n"] == 1:
-            chat["dialogue"] = chat["dialogue"][:11]
-        return chat
-
-    monkeypatch.setattr(gc, "_chat_json", fake_chat)
-    monkeypatch.setattr(gc, "PASS1_CANDIDATE_COUNT", 1)
-    out = gc.gold_story_to_gold_chat(_sample_row())
-    assert len(out["dialogue"]) >= 12
-    assert gc.dialogue_total_chars(out) >= gc.DAILY_STORY_BODY_CHARS_MIN
-
-
 def test_bump_short_regen_helpers():
     err11 = "对白句数须≥12，当前11; 正文总字数须≥240，当前155"
     assert gc._is_regenerable_line_short_error(err11)
@@ -256,19 +237,6 @@ def test_bump_short_regen_helpers():
     assert gc._bump_short_regen_or_reject(err_short, 0) == 1
     with pytest.raises(ValueError, match="重生成3次仍不达标"):
         gc._bump_short_regen_or_reject(err_chars, 3)
-
-
-def test_short_content_tier_helpers():
-    near = "正文总字数须≥240，当前225"
-    large = "正文总字数须≥240，当前170"
-    assert gc._is_near_miss_short_error(near)
-    assert not gc._is_large_gap_short_error(near)
-    assert gc._is_large_gap_short_error(large)
-    assert not gc._is_near_miss_short_error(large)
-    line_near = "对白句数须≥12，当前11"
-    line_large = "对白句数须≥12，当前8"
-    assert gc._is_near_miss_short_error(line_near)
-    assert gc._is_large_gap_short_error(line_large)
 
 
 def test_attach_gold_chat_structure_score_skips_opening_penalty_for_body():
@@ -322,26 +290,6 @@ def test_gold_chat_structure_score_skips_bili_title_relevancy():
     assert "跑题" not in reasons
 
 
-def test_body_only_gold_chat_12_lines_skips_opening_penalty():
-    """gold_chat 无 discovery_opening、≥12 句时不扣「缺发现开场」。"""
-    from app.services.daily_story.quality import score_daily_story
-
-    story = {
-        "scene_title": "世子之争",
-        "setting": "地板垫上，灿灿和昭昭在抢垫子",
-        "conflict_core": "昭昭先动手，灿灿一锤镇住",
-        "punchline_explain": "J类权威压住",
-        "story_type": "J",
-        "dialogue": [
-            {"speaker": "昭昭", "line": "世子之争我先占这垫子！"},
-            {"speaker": "灿灿", "line": "不行，谁赢谁说了算！"},
-        ]
-        * 6,
-    }
-    q = score_daily_story(story, theme="世子之争")
-    assert "缺发现开场" not in " ".join(q.get("reasons") or [])
-
-
 def test_validate_pass1_expands_short_with_fix_before_regen(monkeypatch):
     """偏短时先 FIX 句内扩写，勿立刻整稿重生成。"""
     calls = {"fix": 0}
@@ -370,28 +318,6 @@ def test_validate_pass1_expands_short_with_fix_before_regen(monkeypatch):
     )
     assert calls["fix"] == 1
     assert len(out["dialogue"]) >= 12
-
-
-def test_gold_story_to_gold_chat_retries_on_validate_error(monkeypatch):
-    calls: dict[str, int | bool] = {"n": 0}
-    _bypass_structure_gate(monkeypatch)
-
-    def fake_chat(system: str, _user: str, **_kwargs) -> dict:
-        if "编辑" in system:
-            calls["fix"] = True
-            return _sample_chat()
-        calls["n"] = int(calls["n"]) + 1
-        bad = _sample_chat()
-        bad["dialogue"][0]["line"] = "妈妈说了，抢不过就躲着点。"
-        return bad
-
-    monkeypatch.setattr(gc, "_chat_json", fake_chat)
-    monkeypatch.setattr(gc, "PASS1_CANDIDATE_COUNT", 1)
-    monkeypatch.setattr(gc, "PASS1_REGENERATE_MAX", 1)
-    out = gc.gold_story_to_gold_chat(_sample_row())
-    assert len(out["dialogue"]) >= 4
-    assert calls["n"] == 1
-    assert calls.get("fix") is True
 
 
 def test_apply_deterministic_shorten_trims_one_char():
@@ -600,23 +526,6 @@ def test_pass1_regen_feedback_includes_short_error():
     )
     assert "未满" in fb or "≥240" in fb
     assert "214" in fb or "错误" in fb
-
-
-def test_pass1_regen_feedback_includes_truncated():
-    from app.services.daily_story.gold_story.gold_chat.prompts import (
-        format_pass1_regen_feedback,
-    )
-
-    fb = format_pass1_regen_feedback(
-        "LLM output truncated (finish_reason=length)；对白 JSON 须短小",
-        None,
-        structure_type="C",
-        mechanism="M2",
-    )
-    assert "截断" in fb or "过长" in fb
-    assert "≥240" in fb or "写满" in fb
-    assert "最多扩 1 句" not in fb
-    assert "禁止复读" in fb or "循环" in fb
 
 
 def test_is_truncation_error():

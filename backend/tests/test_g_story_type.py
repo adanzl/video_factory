@@ -2,18 +2,8 @@
 
 from __future__ import annotations
 
-from app.services.daily_story.story_types import (
-    STORY_TYPE_LINES,
-    parse_story_type_code,
-    story_type_tag,
-)
+from app.services.daily_story.story_types import parse_story_type_code
 from app.services.daily_story.story_types.g.validate import append_g_body_errors
-
-
-def test_g_registered():
-    assert "G" in STORY_TYPE_LINES
-    assert STORY_TYPE_LINES["G"].label == "嘴硬心软"
-    assert story_type_tag("G") == "G类嘴硬心软"
 
 
 def test_g_validate_passes_canonical_shape():

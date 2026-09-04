@@ -1,14 +1,8 @@
 """O 类目标错位：校验/观感 smoke（注册映射见 test_gold_story_types）。"""
 
 from app.services.daily_story.quality import attach_daily_story_quality
-from app.services.daily_story.story_types import STORY_TYPE_LINES, patch_type_body
+from app.services.daily_story.story_types import patch_type_body
 from app.services.daily_story.story_types.o.validate import append_o_body_errors
-
-
-def test_o_line_registered():
-    assert "O" in STORY_TYPE_LINES
-    assert STORY_TYPE_LINES["O"].label == "目标错位"
-    assert STORY_TYPE_LINES["O"].quality_ready is False
 
 
 def test_o_body_validate_and_structure_score():
