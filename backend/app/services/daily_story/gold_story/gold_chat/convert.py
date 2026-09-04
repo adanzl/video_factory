@@ -318,7 +318,7 @@ def _chat_json(
     from app.services.llm.llm_deepseek import _loads_llm_json
 
     budget = int(max_tokens or GOLD_CHAT_LLM_MAX_TOKENS)
-    logger.info(
+    logger.debug(
         "[GOLD_CHAT] llm_chat start temp=%.2f max_tokens=%s user_chars=%s",
         float(temperature),
         budget,
@@ -331,7 +331,7 @@ def _chat_json(
         temperature=float(temperature),
         max_tokens=budget,
     )
-    logger.info(
+    logger.debug(
         "[GOLD_CHAT] llm_chat done finish=%s out_chars=%s",
         finish,
         len(str(content or "")),
@@ -3299,7 +3299,7 @@ def _validate_pass1_chat(
                     else (2 if large_gap else 3)
                 )
                 if large_gap and short_expand_rounds == 0:
-                    logger.info(
+                    logger.debug(
                         "[GOLD_CHAT] pass1 M8+J mid rewrite err=%s",
                         last_err[:120],
                     )
@@ -3353,7 +3353,7 @@ def _validate_pass1_chat(
                         )
                     if extras:
                         expand_err = f"{last_err}；" + "；".join(extras)
-                    logger.info(
+                    logger.debug(
                         "[GOLD_CHAT] pass1 FIX short round=%s err=%s",
                         short_expand_rounds + 1,
                         last_err[:120],
@@ -4179,7 +4179,7 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
     chat: dict[str, Any] = {}
     short_regen_count = 0
     for _regen in range(PASS1_REGENERATE_MAX):
-        logger.info(
+        logger.debug(
             "[GOLD_CHAT] pass1 regen=%s/%s temp=%.2f short_regen=%s feedback=%s",
             _regen + 1,
             PASS1_REGENERATE_MAX,
@@ -4231,7 +4231,7 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
         hit_truncation = False
         hit_short = False
         for _cand_i in range(PASS1_CANDIDATE_COUNT):
-            logger.info(
+            logger.debug(
                 "[GOLD_CHAT] pass1 candidate %s/%s …",
                 _cand_i + 1,
                 PASS1_CANDIDATE_COUNT,
@@ -4251,7 +4251,7 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
                 )
             except ValueError as exc:
                 last_err = str(exc)
-                logger.info(
+                logger.debug(
                     "[GOLD_CHAT] pass1 candidate fail: %s",
                     last_err[:160],
                 )
