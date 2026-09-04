@@ -114,7 +114,7 @@ def convert_route():
     force = parse_bool(data, "force", default=False)
     if gold_story_id is None and not source_id:
         raise APIError("id 或 source_id 必填", status_code=400)
-    logger.info(
+    logger.debug(
         "[GOLD_CHAT] convert id=%s source_id=%s force=%s",
         gold_story_id,
         source_id,
@@ -153,7 +153,7 @@ def collect_status_route():
 def collect_route():
     data = get_json_body(required=False) or {}
     max_items = parse_int(data, "max", 10, minimum=1, maximum=50)
-    logger.info("[GOLD_CHAT] collect max=%d", max_items)
+    logger.debug("[GOLD_CHAT] collect max=%d", max_items)
     try:
         return json_ok(gold_story_mgr.collect(max_candidates=max_items))
     except RuntimeError as exc:
@@ -176,7 +176,7 @@ def reimport_route():
     force_transcript = parse_bool(data, "force_transcript", default=True)
     if not gold_story_ids and not source_ids:
         raise APIError("ids 或 source_id 必填", status_code=400)
-    logger.info(
+    logger.debug(
         "[GOLD_CHAT] reimport ids=%s source_ids=%s force_transcript=%s",
         gold_story_ids,
         source_ids,
@@ -204,7 +204,7 @@ def batch_route():
     force = parse_bool(data, "force", default=False)
     gold_story_ids = parse_int_list(data, "ids", allow_empty=False)
     source_ids = _parse_source_id_list(data)
-    logger.info(
+    logger.debug(
         "[GOLD_CHAT] batch max=%d status=%s force=%s ids=%s source_ids=%s",
         max_items,
         status,
@@ -222,7 +222,7 @@ def batch_route():
         )
     except RuntimeError as exc:
         raise APIError(str(exc), status_code=409, code="convert_busy") from exc
-    logger.info(
+    logger.debug(
         "[GOLD_CHAT] batch done requested=%d selected=%d ok=%d skipped=%d failed=%d",
         max_items,
         result.get("selected", 0),
@@ -298,7 +298,7 @@ def import_route():
     force = parse_bool(data, "force", default=False)
     if gold_story_id is None and not source_id:
         raise APIError("id 或 source_id 必填", status_code=400)
-    logger.info(
+    logger.debug(
         "[GOLD_CHAT] import id=%s source_id=%s force=%s",
         gold_story_id,
         source_id,
