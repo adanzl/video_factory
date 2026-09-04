@@ -370,6 +370,21 @@ def test_evaluate_verify_response_zhao_hair_and_cast() -> None:
     na = "项1: 是\n项2: 无昭昭\n项3: 无灿灿\n项4: 是\n项5: 无妈妈\n项6: 2\n项7: 3\n"
     assert AgnesImageProvider._evaluate_verify_response(na, ids, cast_max=3)
 
+    # 身高硬卡：昭昭等高/更高 → 失败；缺其一放行
+    ids_h = ["scene", "height_can", "cast_count"]
+    assert AgnesImageProvider._evaluate_verify_response(
+        "项1: 是\n项2: 是\n项3: 2\n", ids_h, cast_max=2
+    )
+    assert not AgnesImageProvider._evaluate_verify_response(
+        "项1: 是\n项2: 否\n项3: 2\n", ids_h, cast_max=2
+    )
+    assert AgnesImageProvider._evaluate_verify_response(
+        "项1: 是\n项2: 无昭昭\n项3: 2\n", ids_h, cast_max=2
+    )
+    assert AgnesImageProvider._evaluate_verify_response(
+        "项1: 是\n项2: 无灿灿\n项3: 2\n", ids_h, cast_max=2
+    )
+
     # 正文空 / 全项解析失败 → 质检失效，不得放行
     assert not AgnesImageProvider._evaluate_verify_response("", ids, cast_max=3)
     assert not AgnesImageProvider._evaluate_verify_response("思考中……", ids, cast_max=3)
@@ -427,6 +442,7 @@ def test_build_verify_checklist_daily_includes_zhao() -> None:
         "zhao_hair",
         "can_hair",
         "can_one",
+        "height_can",
         "mom_adult",
         "zhao_arms",
         "can_arms",
@@ -443,6 +459,8 @@ def test_build_verify_checklist_daily_includes_zhao() -> None:
     assert "一共几个" in user
     assert "阿拉伯数字" in user
     assert "穿粉色卫衣的女孩是否恰好 1 个" in user
+    assert "是否明显比" in user
+    assert "高约半个头" in user
     assert "只数人头" in user
     assert "只能是：" not in user
     assert "禁止路人" not in user
@@ -521,6 +539,7 @@ def test_build_verify_checklist_daily_includes_zhao() -> None:
     assert "zhao_hair" in [cid for cid, _ in items_one]
     assert "can_hair" not in [cid for cid, _ in items_one]
     assert "can_one" not in [cid for cid, _ in items_one]
+    assert "height_can" not in [cid for cid, _ in items_one]
     assert "mom_adult" not in [cid for cid, _ in items_one]
     assert "cast_count" in [cid for cid, _ in items_one]
     assert "zhao_arms" in [cid for cid, _ in items_one]
@@ -539,6 +558,7 @@ def test_build_verify_checklist_daily_includes_zhao() -> None:
     assert "zhao_hair" not in [cid for cid, _ in items_can]
     assert "can_hair" in [cid for cid, _ in items_can]
     assert "can_one" in [cid for cid, _ in items_can]
+    assert "height_can" not in [cid for cid, _ in items_can]
     assert "mom_adult" not in [cid for cid, _ in items_can]
     assert "cast_count" in [cid for cid, _ in items_can]
     assert max_can == 2

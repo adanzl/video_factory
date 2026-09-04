@@ -75,25 +75,25 @@ _MAX_LEGS_PER_PERSON = 2
 # ── 多手硬卡（裁剪放大数手）────────────────────────────────
 # 主校验整图数手对低分辨率下的多手会漏（图9 双手抱头+第三只手握遥控器）。
 # 硬卡把角色所在半幅裁剪 ×2 放大后再数手+多手确认，两问任一命中即失败。
-_HARDFAIL_ARM_SYSTEM_PROMPT = (
+_HARD_FAIL_ARM_SYSTEM_PROMPT = (
     "你是图像质检员。只根据用户列出的检查项逐项判断，每项单独一行回答。"
     "回答格式必须为「项N: 是」或「项N: 否」，数字项只回答阿拉伯数字。"
     "不要解释、不要编号列表外的文字。"
 )
-_HARDFAIL_ARM_Q1 = (
+_HARD_FAIL_ARM_Q1 = (
     "项1: 只看{look}本人。该角色身上凡是末端呈人手形态的肢端都算一条手臂"
     "（起点是肩膀、腋下、腰侧、胸口或身前都要数，明显多出来的第3只手必须计入）。"
     "手里握着东西的手也要算进去——手和握着的东西是两回事。"
     "不要用「人只有两只胳膊」的常识改口。只回答阿拉伯数字"
 )
-_HARDFAIL_ARM_Q2 = (
+_HARD_FAIL_ARM_Q2 = (
     "项2: {look}本人是否出现了多于正常两只手的情况？"
     "（数清楚她/他身上所有的手，包括握着东西的手、"
     "从腰侧/背后/胸前伸出的手）是则回答「是」，否则回答「否」。"
 )
 # daily 固定布局：昭昭左、灿灿右、妈妈中
-_HARDFAIL_ZONE = {"昭昭": "left", "灿灿": "right", "妈妈": "center"}
-_HARDFAIL_ZOOM = 2
+_HARD_FAIL_ZONE = {"昭昭": "left", "灿灿": "right", "妈妈": "center"}
+_HARD_FAIL_ZOOM = 2
 
 
 def _arm_count_question(look: str) -> str:
@@ -797,6 +797,7 @@ class AgnesImageProvider(ImageProvider):
         "回答格式必须为「项N: 是」或「项N: 否」"
         "（昭昭短发项无该角色可答「项N: 无昭昭」；"
         "灿灿发型项无该角色可答「项N: 无灿灿」；"
+        "身高项缺其一可答「项N: 无昭昭」或「项N: 无灿灿」；"
         "妈妈成年项无该角色可答「项N: 无妈妈」）。"
         "不要解释、不要编号列表外的文字、不要复述提示词。"
         "项「场景」：只看主场景/主体是否明显跑偏；"
@@ -814,6 +815,8 @@ class AgnesImageProvider(ImageProvider):
         "不判断是谁；两个相同服装/双胞胎/额外漂浮人头各算一人；"
         "背景照片墙/镜子虚影/玩具人脸/远处剪影一律不算。"
         "项「粉卫衣」：穿粉色卫衣的女孩是否恰好 1 个；多了（含漂浮头）答否。"
+        "项「身高」：灿灿是否明显比昭昭高；昭昭等高或更高答「否」；"
+        "缺其一可答「无昭昭」或「无灿灿」。"
         "项「单扇门」：门是否只有一个门扇（单开门）；"
         "左右各一扇的双开门/对开门答「否」。"
         "项「无飘发」：画面里是否没有不连在任何人头上的独立马尾/发束/一绺头发"
@@ -961,6 +964,22 @@ class AgnesImageProvider(ImageProvider):
                     "画面中穿粉色卫衣的女孩是否恰好 1 个？"
                     "出现两个及以上粉卫衣女孩、或额外漂浮的女孩头/脸答「否」。"
                     "回答「是」或「否」",
+                )
+            )
+        # 身高硬卡：姐弟同框时灿灿须明显高于昭昭（约半个头）
+        if (
+            content_style == CONTENT_STYLE_DAILY_STORY
+            and "昭昭" in speakers
+            and "灿灿" in speakers
+        ):
+            items.append(
+                (
+                    "height_can",
+                    f"{_DAILY_LOOK['灿灿']}是否明显比{_DAILY_LOOK['昭昭']}高"
+                    "（同站姿至少高约半个头；昭昭等高或更高答「否」）？"
+                    "一人坐/蹲、一人站时比体型比例：灿灿应显更高大。"
+                    "回答「是」或「否」；"
+                    "仅当缺短发男孩答「无昭昭」、缺马尾女孩答「无灿灿」",
                 )
             )
         if content_style == CONTENT_STYLE_DAILY_STORY and "妈妈" in speakers:
@@ -1236,6 +1255,8 @@ class AgnesImageProvider(ImageProvider):
                 continue
             if cid == "can_hair" and verdict == "na_can":
                 continue
+            if cid == "height_can" and verdict in ("na_zhao", "na_can"):
+                continue
             if cid == "mom_adult" and verdict == "na_mom":
                 continue
             if verdict == "no" and cid in {
@@ -1243,6 +1264,7 @@ class AgnesImageProvider(ImageProvider):
                 "zhao_hair",
                 "can_hair",
                 "can_one",
+                "height_can",
                 "mom_adult",
                 "lr_pos",
                 "mouth_first",
@@ -1477,7 +1499,7 @@ class AgnesImageProvider(ImageProvider):
         image_path: Path,
         zone: str,
         *,
-        zoom: int = _HARDFAIL_ZOOM,
+        zoom: int = _HARD_FAIL_ZOOM,
     ) -> str:
         """把角色所在区域裁剪出来并放大，返回 base64 data URL。
 
@@ -1533,13 +1555,13 @@ class AgnesImageProvider(ImageProvider):
             speakers=speakers,
             content_style=content_style,
         )
-        roles = [name for name in allowed if name in _HARDFAIL_ZONE]
+        roles = [name for name in allowed if name in _HARD_FAIL_ZONE]
         if not roles:
             return True
 
         log_tag = f"[out={image_path.name}]"
         for name in roles:
-            zone = _HARDFAIL_ZONE[name]
+            zone = _HARD_FAIL_ZONE[name]
             try:
                 data_url = AgnesImageProvider._crop_zone_data_url(image_path, zone)
             except Exception as exc:
@@ -1549,9 +1571,9 @@ class AgnesImageProvider(ImageProvider):
                 continue
             look = _DAILY_LOOK.get(name, name)
             question = (
-                _HARDFAIL_ARM_Q1.format(look=look)
+                _HARD_FAIL_ARM_Q1.format(look=look)
                 + "\n"
-                + _HARDFAIL_ARM_Q2.format(look=look)
+                + _HARD_FAIL_ARM_Q2.format(look=look)
             )
             answer = self._ask_hardfail_vl(settings, keys, data_url, question, log_tag)
             if answer is None:
@@ -1590,7 +1612,7 @@ class AgnesImageProvider(ImageProvider):
                     "messages": [
                         {
                             "role": "system",
-                            "content": _HARDFAIL_ARM_SYSTEM_PROMPT,
+                            "content": _HARD_FAIL_ARM_SYSTEM_PROMPT,
                         },
                         {
                             "role": "user",
