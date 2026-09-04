@@ -4148,20 +4148,22 @@ def _patch_consecutive_speakers(story: dict) -> list[str]:
     # C/D 末四拍由 patch closing 定 speaker，勿被连说翻转冲垮
     protect_tail = 4 if code in ("C", "D") else 0
     end = max(1, len(dialogue) - protect_tail)
-    fixes = 0
-    for i in range(1, end):
-        a, b = dialogue[i - 1], dialogue[i]
-        if not isinstance(a, dict) or not isinstance(b, dict):
-            continue
-        sa = str(a.get("speaker") or "").strip()
-        sb = str(b.get("speaker") or "").strip()
-        if sa in {"昭昭", "灿灿"} and sa == sb:
-            new_sp = "灿灿" if sa == "昭昭" else "昭昭"
-            b["speaker"] = new_sp
-            notes.append(f"连说改speaker[{i}]")
-            fixes += 1
-            if fixes >= 6:
-                break
+    # 改 speaker 可能把连说挪到下一句，多轮扫到干净（勿卡死在 fixes≥6）
+    for _ in range(max(1, len(dialogue))):
+        fixed_this = 0
+        for i in range(1, end):
+            a, b = dialogue[i - 1], dialogue[i]
+            if not isinstance(a, dict) or not isinstance(b, dict):
+                continue
+            sa = str(a.get("speaker") or "").strip()
+            sb = str(b.get("speaker") or "").strip()
+            if sa in {"昭昭", "灿灿"} and sa == sb:
+                new_sp = "灿灿" if sa == "昭昭" else "昭昭"
+                b["speaker"] = new_sp
+                notes.append(f"连说改speaker[{i}]")
+                fixed_this += 1
+        if not fixed_this:
+            break
     return notes
 
 
