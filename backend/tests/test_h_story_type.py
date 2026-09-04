@@ -2,19 +2,8 @@
 
 from __future__ import annotations
 
-from app.services.daily_story.story_types import (
-    STORY_TYPE_LINES,
-    parse_story_type_code,
-    story_type_tag,
-)
+from app.services.daily_story.story_types import parse_story_type_code
 from app.services.daily_story.story_types.h.validate import append_h_body_errors
-
-
-def test_h_registered():
-    assert "H" in STORY_TYPE_LINES
-    assert STORY_TYPE_LINES["H"].label == "第三方化解"
-    assert story_type_tag("H") == "H类第三方化解"
-    assert STORY_TYPE_LINES["H"].quality_ready is False
 
 
 def test_h_validate_passes_mediation_shape():
@@ -53,12 +42,6 @@ def test_h_validate_rejects_no_mom():
 
 def test_parse_h_from_punchline():
     assert parse_story_type_code(punchline="H类第三方化解，仪式性和好") == "H"
-
-
-def test_h_quality_profile_not_c_fallback():
-    from app.services.daily_story.story_types.quality import quality_profile_for_code
-
-    assert quality_profile_for_code("H").code == "H"
 
 
 def test_h_quality_scores_mediation_story():

@@ -1,18 +1,15 @@
-"""L 类退让点破：线路/校验/观感 smoke。"""
+"""L 类退让点破：校验/观感 smoke（注册见 fl_extended）。"""
 
 from app.services.daily_story.gold_story.types import (
     allowed_structure_types,
     validate_mechanism_structure_pair,
 )
 from app.services.daily_story.quality import attach_daily_story_quality
-from app.services.daily_story.story_types import STORY_TYPE_LINES, patch_type_body
+from app.services.daily_story.story_types import patch_type_body
 from app.services.daily_story.story_types.l.validate import append_l_body_errors
 
 
-def test_l_registered_and_m2_allows_l():
-    assert "L" in STORY_TYPE_LINES
-    assert STORY_TYPE_LINES["L"].label == "退让点破"
-    assert STORY_TYPE_LINES["L"].quality_ready is False
+def test_m2_allows_l():
     assert "L" in allowed_structure_types("M2")
     validate_mechanism_structure_pair("M2", "L")
 

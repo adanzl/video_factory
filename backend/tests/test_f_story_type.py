@@ -2,18 +2,8 @@
 
 from __future__ import annotations
 
-from app.services.daily_story.story_types import (
-    STORY_TYPE_LINES,
-    parse_story_type_code,
-    story_type_tag,
-)
+from app.services.daily_story.story_types import parse_story_type_code
 from app.services.daily_story.story_types.f.validate import append_f_body_errors
-
-
-def test_f_registered():
-    assert "F" in STORY_TYPE_LINES
-    assert STORY_TYPE_LINES["F"].label == "互呛加码"
-    assert story_type_tag("F") == "F类互呛加码"
 
 
 def test_f_validate_passes_m3_external_interrupt():

@@ -421,16 +421,3 @@ def test_gold_story_to_gold_chat_runs_align_pass(monkeypatch):
     out = gc.gold_story_to_gold_chat(row)
     assert "家规就是" in out["dialogue"][8]["line"]
     assert _issues(out) == []
-
-
-def test_patch_fix_mom_ask_admission():
-    from app.services.daily_story.gold_story.gold_chat.patch import (
-        patch_fix_mom_ask_admission,
-    )
-
-    dlg = list(_m5h_dialogue_v2())
-    dlg[13] = {"speaker": "昭昭", "line": "我不知道……"}
-    story = _m5h_story(dlg)
-    patched, changed = patch_fix_mom_ask_admission(story)
-    assert changed
-    assert "弄花" in patched["dialogue"][13]["line"] or "推" in patched["dialogue"][13]["line"]

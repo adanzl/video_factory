@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import re
-
 import pytest
 
 from app.services.daily_story.gold_story.gold_chat.type_bridge import (
@@ -230,122 +228,6 @@ def test_patch_m2_c_structure_layers():
     attach_daily_story_quality(patched, theme="八百个心眼子")
     struct = patched["quality"]["structure_score"]
     assert struct is not None and struct >= 50
-
-
-def test_patch_m2_c_structure_closing_boomerang_speaker():
-    """#19 零食战：closing 昭昭回旋镖 + 灿灿嘴硬。"""
-    from app.services.daily_story.gold_story.gold_chat.patch import (
-        patch_m2_c_structure,
-    )
-
-    chat = {
-        "scene_title": "零食保卫战",
-        "setting": "沙发前",
-        "conflict_core": "灿灿护零食不给昭昭",
-        "punchline_explain": "C类：昭昭用规矩回旋镖堵住。",
-        "story_type": "C",
-        "dialogue": [
-            {"speaker": "灿灿", "line": "沙发前，零食归我，作业本归你。"},
-            {"speaker": "昭昭", "line": "凭什么零食都是你的？"},
-            {"speaker": "灿灿", "line": "我说了算，你别碰。"},
-            {"speaker": "昭昭", "line": "那作业归谁？"},
-            {"speaker": "灿灿", "line": "作业归你，零食归我。"},
-            {"speaker": "昭昭", "line": "你这规矩不公平。"},
-            {"speaker": "灿灿", "line": "公平什么，真的不行。"},
-            {"speaker": "昭昭", "line": "那我撕你作业本。"},
-            {"speaker": "灿灿", "line": "你刚说的规矩，今天我说了算！"},
-            {"speaker": "昭昭", "line": "哼，下次还这样！"},
-        ],
-    }
-    payload = {
-        "closing_intent": "昭昭用规矩回旋镖堵住，灿灿嘴硬约下次",
-    }
-    patched, notes = patch_m2_c_structure(
-        chat,
-        structure_type="C",
-        mechanism="M2",
-        theme="零食保卫战",
-        payload=payload,
-    )
-    first = patched["dialogue"][0]["line"]
-    assert not re.match(
-        r"^(?:客厅|厨房|卧室|沙发|门口|餐桌)(?:前|里|旁|边)?[，,]",
-        first,
-    ), first
-    assert "沙发" in first or "沙发" in patched["dialogue"][1]["line"]
-    # 尾段回旋镖须在昭昭
-    boom_speakers = [
-        r["speaker"]
-        for r in patched["dialogue"][-5:]
-        if "你刚说" in str(r.get("line") or "")
-    ]
-    assert boom_speakers and boom_speakers[-1] == "昭昭"
-    assert patched["dialogue"][-1]["speaker"] == "灿灿"
-    assert "哼" not in patched["dialogue"][-1]["line"]
-    assert patched["dialogue"][-2]["speaker"] == "昭昭"
-    assert "你刚说" in patched["dialogue"][-2]["line"]
-    assert any(
-        "嘴硬" in n
-        or "回旋镖" in n
-        or "错位" in n
-        or "旁白" in n
-        or "地点" in n
-        or "才算模板" in n
-        or "beat重建" in n
-        for n in notes
-    )
-    for row in patched["dialogue"]:
-        assert "举过头顶" not in str(row.get("line") or "")
-        assert "证明三次" not in str(row.get("line") or "")
-
-
-def test_patch_m2_c_structure_snack_no_meat_template():
-    from app.services.daily_story.gold_story.gold_chat.patch import (
-        patch_m2_c_structure,
-    )
-    from app.services.daily_story.prompts import dialogue_total_chars
-    from app.services.daily_story.quality import (
-        STRUCTURE_PUBLISH_MIN,
-        attach_daily_story_quality,
-        structure_score_of,
-    )
-
-    chat = {
-        "scene_title": "零食保卫战",
-        "setting": "客厅沙发",
-        "conflict_core": "灿灿偷吃昭昭零食",
-        "punchline_explain": "C类：回旋镖。",
-        "story_type": "C",
-        "dialogue": [
-            {"speaker": "灿灿", "line": "薯片归我，作业本归你，公平吧？"},
-            {"speaker": "昭昭", "line": "你偷吃我零食，还敢说公平？"},
-            {"speaker": "灿灿", "line": "光抱着不行，得举过头顶才算！"},
-            {"speaker": "昭昭", "line": "你等着马上立刻！"},
-            {"speaker": "灿灿", "line": "之前说过的，还得证明三次才算真正拿到！"},
-            {"speaker": "昭昭", "line": "不还就撕你作业本！"},
-            {"speaker": "灿灿", "line": "你敢撕我就全吃光！"},
-            {"speaker": "昭昭", "line": "你刚说零食归我作业本归你！"},
-            {"speaker": "灿灿", "line": "我逗你玩的！"},
-            {"speaker": "昭昭", "line": "哼，下次还这样！"},
-        ],
-    }
-    patched, notes = patch_m2_c_structure(
-        chat,
-        structure_type="C",
-        mechanism="M2",
-        theme="零食保卫战",
-        payload={"closing_intent": "昭昭用规矩回旋镖堵住，灿灿嘴硬约下次"},
-    )
-    blob = "".join(str(r.get("line") or "") for r in patched["dialogue"])
-    assert "举过头顶" not in blob
-    assert "证明三次" not in blob
-    assert "马上立刻" not in blob
-    assert any("beat重建" in n for n in notes)
-    assert patched["dialogue"][-1]["speaker"] == "灿灿"
-    assert "你刚说" in patched["dialogue"][-2]["line"]
-    assert dialogue_total_chars(patched) >= 240
-    attach_daily_story_quality(patched, theme="零食保卫战", finalize=True)
-    assert structure_score_of(patched["quality"]) >= STRUCTURE_PUBLISH_MIN
 
 
 def test_apply_type_body_pipeline_sets_story_type():

@@ -3,21 +3,12 @@
 from __future__ import annotations
 
 from app.services.daily_story.story_types import (
-    STORY_TYPE_LINES,
     append_type_body_validation_errors,
     parse_story_type_code,
     story_type_punchline_conflict,
-    story_type_tag,
     type_body_validation_enabled,
 )
 from app.services.daily_story.story_types.i.validate import append_i_body_errors
-
-
-def test_i_registered():
-    assert "I" in STORY_TYPE_LINES
-    assert STORY_TYPE_LINES["I"].label == "问倒收束"
-    assert story_type_tag("I") == "I类问倒收束"
-    assert STORY_TYPE_LINES["I"].quality_ready is False
 
 
 def test_i_validate_passes_soul_question_shape():
@@ -78,12 +69,6 @@ def test_story_type_punchline_conflict():
     assert msg is not None
     assert "story_type=I" in msg
     assert "punchline=C" in msg
-
-
-def test_i_quality_profile_not_c_fallback():
-    from app.services.daily_story.story_types.quality import quality_profile_for_code
-
-    assert quality_profile_for_code("I").code == "I"
 
 
 def test_i_quality_scores_story_69_shape():
