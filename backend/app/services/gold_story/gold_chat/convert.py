@@ -2469,6 +2469,70 @@ def _ensure_gold_chat_min_chars(
     return data, changed
 
 
+def _o_polish_meet_min_chars(
+    chat: dict[str, Any],
+    *,
+    mechanism: str,
+    structure_type: str = "O",
+    rounds: int = 4,
+) -> tuple[dict[str, Any], list[str]]:
+    """O 抛光与补字交替：出口保证正文 ≥ hard min，避免末次抛光削穿。"""
+    from app.services.daily_story.story_types import apply_gold_chat_type_patch
+
+    all_notes: list[str] = []
+    st = str(structure_type or "O").strip().upper() or "O"
+    mech = str(mechanism or "")
+    for _ in range(max(1, rounds)):
+        chat, notes = apply_gold_chat_type_patch(chat, structure_type=st)
+        if notes:
+            all_notes.extend(str(n) for n in notes[:4])
+        chat, _ = patch_sanitize_pad_suffix(chat)
+        chat, _ = patch_sanitize_pad_particles(chat)
+        chars = dialogue_total_chars(chat)
+        if chars >= DAILY_STORY_BODY_CHARS_MIN and not notes:
+            break
+        before = chars
+        if chars < DAILY_STORY_BODY_CHARS_MIN:
+            chat, _ = _boost_short_with_mid_lines(
+                chat, mechanism=mech, structure_type=st
+            )
+        chat, _ = _ensure_gold_chat_min_chars(
+            chat, mechanism=mech, structure_type=st
+        )
+        if dialogue_total_chars(chat) < DAILY_STORY_BODY_CHARS_MIN:
+            chat, _ = _gold_chat_force_min_chars(chat)
+            chat, _ = _pad_gold_chat_to_min_chars(
+                chat, particle_only=True, max_rounds=12
+            )
+        if (
+            dialogue_total_chars(chat) >= DAILY_STORY_BODY_CHARS_MIN
+            and dialogue_total_chars(chat) == before
+            and not notes
+        ):
+            break
+    # 末次抛光后再补，堵住「补满 → 再抛光削到 <min」
+    chat, tail_notes = apply_gold_chat_type_patch(chat, structure_type=st)
+    if tail_notes:
+        all_notes.extend(str(n) for n in tail_notes[:2])
+    if dialogue_total_chars(chat) < DAILY_STORY_BODY_CHARS_MIN:
+        chat, _ = _boost_short_with_mid_lines(
+            chat, mechanism=mech, structure_type=st
+        )
+        chat, _ = _gold_chat_force_min_chars(chat)
+        chat, _ = _ensure_gold_chat_min_chars(
+            chat, mechanism=mech, structure_type=st
+        )
+        chat, tail2 = apply_gold_chat_type_patch(chat, structure_type=st)
+        if tail2:
+            all_notes.extend(str(n) for n in tail2[:2])
+        if dialogue_total_chars(chat) < DAILY_STORY_BODY_CHARS_MIN:
+            chat, _ = _ensure_gold_chat_min_chars(
+                chat, mechanism=mech, structure_type=st
+            )
+            chat, _ = _gold_chat_force_min_chars(chat)
+    return chat, all_notes
+
+
 def _post_align_j_closing_touchup(
     chat: dict[str, Any],
     *,
@@ -3652,12 +3716,14 @@ def refine_gold_chat_align(
             conflict_text=conflict_text,
         )
     if st == "O":
-        from app.services.daily_story.story_types import apply_gold_chat_type_patch
-
-        data, _ = apply_gold_chat_type_patch(data, structure_type="O")
-        data, _ = patch_sanitize_pad_suffix(data)
-        data, _ = patch_sanitize_pad_particles(data)
-        data, _ = apply_gold_chat_type_patch(data, structure_type="O")
+        data, o_align_notes = _o_polish_meet_min_chars(
+            data, mechanism=str(mech or ""), structure_type="O", rounds=3
+        )
+        if o_align_notes:
+            logger.info(
+                "gold_chat O align-end polish: %s",
+                "；".join(str(n) for n in o_align_notes[:4]),
+            )
         remain = collect_align_issues(
             data,
             structure_type=st,
@@ -4754,25 +4820,13 @@ def convert_gold_chat(
         structure_type=str(row.get("structure_type") or ""),
     )
     if str(_st0 or "").upper() == "O":
-        from app.services.daily_story.story_types import apply_gold_chat_type_patch
-
-        chat, o_notes = apply_gold_chat_type_patch(chat, structure_type="O")
+        chat, o_notes = _o_polish_meet_min_chars(
+            chat, mechanism=_mech0, structure_type="O", rounds=3
+        )
         if o_notes:
             logger.info(
                 "gold_chat O final polish: %s",
                 "；".join(str(n) for n in o_notes[:4]),
-            )
-        chat, _ = _ensure_gold_chat_min_chars(
-            chat,
-            mechanism=_mech0,
-            structure_type=_st0,
-        )
-        # 垫字后再截一次，避免又拉出第二轮
-        chat, o_notes2 = apply_gold_chat_type_patch(chat, structure_type="O")
-        if o_notes2:
-            logger.info(
-                "gold_chat O re-trim: %s",
-                "；".join(str(n) for n in o_notes2[:4]),
             )
     if dialogue_total_chars(chat) < DAILY_STORY_BODY_CHARS_MIN:
         for _ in range(3):
@@ -4852,28 +4906,14 @@ def convert_gold_chat(
                 chat, particle_only=True, max_rounds=12
             )
     if str(_st0 or "").upper() == "O":
-        from app.services.daily_story.story_types import apply_gold_chat_type_patch
-
-        chat, o_notes3 = apply_gold_chat_type_patch(chat, structure_type="O")
+        chat, o_notes3 = _o_polish_meet_min_chars(
+            chat, mechanism=_mech0, structure_type="O", rounds=4
+        )
         if o_notes3:
             logger.info(
                 "gold_chat O pre-validate trim: %s",
                 "；".join(str(n) for n in o_notes3[:4]),
             )
-        chat, _ = patch_sanitize_pad_suffix(chat)
-        chat, _ = patch_sanitize_pad_particles(chat)
-        chat, o_notes4 = apply_gold_chat_type_patch(chat, structure_type="O")
-        if o_notes4:
-            logger.info(
-                "gold_chat O post-sanitize trim: %s",
-                "；".join(str(n) for n in o_notes4[:4]),
-            )
-        chat, _ = _ensure_gold_chat_min_chars(
-            chat,
-            mechanism=_mech0,
-            structure_type=_st0,
-        )
-        chat, _ = apply_gold_chat_type_patch(chat, structure_type="O")
     validate_gold_chat(
         chat,
         banned_literals=[str(x) for x in banned],
@@ -4936,17 +4976,16 @@ def convert_gold_chat(
             "；".join(consec_notes[:8]),
         )
     if st_final == "O":
-        from app.services.daily_story.story_types import apply_gold_chat_type_patch
-
-        chat, o_final = apply_gold_chat_type_patch(chat, structure_type="O")
-        chat, _ = patch_sanitize_pad_suffix(chat)
-        chat, _ = patch_sanitize_pad_particles(chat)
-        chat, o_final2 = apply_gold_chat_type_patch(chat, structure_type="O")
-        notes = [*(o_final or []), *(o_final2 or [])]
-        if notes:
+        chat, o_pre_score = _o_polish_meet_min_chars(
+            chat,
+            mechanism=str(row.get("mechanism") or ""),
+            structure_type="O",
+            rounds=3,
+        )
+        if o_pre_score:
             logger.info(
                 "gold_chat O pre-score polish: %s",
-                "；".join(str(n) for n in notes[:4]),
+                "；".join(str(n) for n in o_pre_score[:4]),
             )
     chat = _attach_gold_chat_structure_score(chat, row)
     try:
