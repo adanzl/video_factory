@@ -3666,6 +3666,23 @@ def refine_gold_chat_align(
             beat_chain=beat_chain,
             conflict_text=conflict_text,
         )
+    if st == "O":
+        from app.services.daily_story.story_types.o.patch import patch_o_body
+
+        data = dict(data)
+        data["story_type"] = "O"
+        patch_o_body(data)
+        data, _ = patch_sanitize_pad_suffix(data)
+        data, _ = patch_sanitize_pad_particles(data)
+        patch_o_body(data)
+        remain = collect_align_issues(
+            data,
+            structure_type=st,
+            mechanism=mech,
+            closing_intent=closing,
+            beat_chain=beat_chain,
+            conflict_text=conflict_text,
+        )
     blocking_remain, warn_remain = split_align_issues(remain)
     if blocking_remain:
         parts: list[str] = []
@@ -3746,15 +3763,16 @@ def _expand_seed_for_line_floor(
         return out
 
     st = str(structure_type or "").strip().upper()
+    extras: list[dict[str, str]]
     if is_m8_j_domination(mechanism=mechanism, structure_type=st):
-        extras: list[dict[str, str]] = [
+        extras = [
             {"speaker": "昭昭", "intent": "不服继续顶撞/扭打升级"},
             {"speaker": "灿灿", "intent": "重申谁赢谁说了算"},
             {"speaker": "昭昭", "intent": "嘴硬应战要对方出招"},
             {"speaker": "灿灿", "intent": "一锤前放狠话或气势铺垫"},
         ]
     elif st == "J":
-        extras: list[dict[str, str]] = [
+        extras = [
             {"speaker": "昭昭", "intent": "换个理由再求一次"},
             {"speaker": "灿灿", "intent": "换个说法继续压住"},
             {"speaker": "昭昭", "intent": "再保证一次求放行"},
@@ -4752,6 +4770,29 @@ def convert_gold_chat(
         else None,
         structure_type=str(row.get("structure_type") or ""),
     )
+    if str(_st0 or "").upper() == "O":
+        from app.services.daily_story.story_types.o.patch import patch_o_body
+
+        chat = dict(chat)
+        chat["story_type"] = "O"
+        o_notes = patch_o_body(chat)
+        if o_notes:
+            logger.info(
+                "gold_chat O final polish: %s",
+                "；".join(str(n) for n in o_notes[:4]),
+            )
+        chat, _ = _ensure_gold_chat_min_chars(
+            chat,
+            mechanism=_mech0,
+            structure_type=_st0,
+        )
+        # 垫字后再截一次，避免又拉出第二轮
+        o_notes2 = patch_o_body(chat)
+        if o_notes2:
+            logger.info(
+                "gold_chat O re-trim: %s",
+                "；".join(str(n) for n in o_notes2[:4]),
+            )
     if dialogue_total_chars(chat) < DAILY_STORY_BODY_CHARS_MIN:
         for _ in range(3):
             if dialogue_total_chars(chat) >= DAILY_STORY_BODY_CHARS_MIN:
@@ -4833,6 +4874,31 @@ def convert_gold_chat(
             chat, _ = _pad_gold_chat_to_min_chars(
                 chat, particle_only=True, max_rounds=12
             )
+    if str(_st0 or "").upper() == "O":
+        from app.services.daily_story.story_types.o.patch import patch_o_body
+
+        chat = dict(chat)
+        chat["story_type"] = "O"
+        o_notes3 = patch_o_body(chat)
+        if o_notes3:
+            logger.info(
+                "gold_chat O pre-validate trim: %s",
+                "；".join(str(n) for n in o_notes3[:4]),
+            )
+        chat, _ = patch_sanitize_pad_suffix(chat)
+        chat, _ = patch_sanitize_pad_particles(chat)
+        o_notes4 = patch_o_body(chat)
+        if o_notes4:
+            logger.info(
+                "gold_chat O post-sanitize trim: %s",
+                "；".join(str(n) for n in o_notes4[:4]),
+            )
+        chat, _ = _ensure_gold_chat_min_chars(
+            chat,
+            mechanism=_mech0,
+            structure_type=_st0,
+        )
+        patch_o_body(chat)
     validate_gold_chat(
         chat,
         banned_literals=[str(x) for x in banned],
@@ -4894,28 +4960,97 @@ def convert_gold_chat(
             "gold_chat pre-score consecutive patch: %s",
             "；".join(consec_notes[:8]),
         )
+    if st_final == "O":
+        from app.services.daily_story.story_types.o.patch import patch_o_body
+
+        chat = dict(chat)
+        chat["story_type"] = "O"
+        o_final = patch_o_body(chat)
+        chat, _ = patch_sanitize_pad_suffix(chat)
+        chat, _ = patch_sanitize_pad_particles(chat)
+        o_final2 = patch_o_body(chat)
+        notes = [*(o_final or []), *(o_final2 or [])]
+        if notes:
+            logger.info(
+                "gold_chat O pre-score polish: %s",
+                "；".join(str(n) for n in notes[:4]),
+            )
     chat = _attach_gold_chat_structure_score(chat, row)
     try:
         struct = _gate_gold_chat_structure_score(chat)
     except ValueError:
-        quality = cast(dict[str, Any], chat.get("quality")) if isinstance(
+        # 终检分不够：定点抬一轮再 O 抛光（与 align 后抬分同思路）
+        if st_final != "O":
+            quality = cast(dict[str, Any], chat.get("quality")) if isinstance(
+                chat.get("quality"), dict
+            ) else {}
+            reasons = [str(r) for r in (quality.get("reasons") or [])]
+            cons = [
+                r
+                for r in reasons
+                if any(p in r for p in ("缺", "未", "拖", "不足", "软收", "连说", "-"))
+            ]
+            logger.info(
+                "gold_chat structure_score fail score=%s summary=%s "
+                "cons=%s pros=%s",
+                quality.get("structure_score") or quality.get("score"),
+                quality.get("summary"),
+                cons[:8],
+                reasons[:6],
+            )
+            raise
+        from app.services.daily_story.quality import structure_score_of
+        from app.services.daily_story.story_types.o.patch import patch_o_body
+
+        quality0 = cast(dict[str, Any], chat.get("quality")) if isinstance(
             chat.get("quality"), dict
         ) else {}
-        reasons = [str(r) for r in (quality.get("reasons") or [])]
-        cons = [
-            r
-            for r in reasons
-            if any(p in r for p in ("缺", "未", "拖", "不足", "软收", "连说", "-"))
-        ]
-        logger.info(
-            "gold_chat structure_score fail score=%s summary=%s "
-            "cons=%s pros=%s",
-            quality.get("structure_score") or quality.get("score"),
-            quality.get("summary"),
-            cons[:8],
-            reasons[:6],
+        fb = format_structure_score_feedback(
+            f"structure_score:{structure_score_of(quality0)}",
+            chat,
         )
-        raise
+        try:
+            lifted = _fix_chat_with_llm(
+                chat,
+                fb
+                or "抬结构：两轮死磕见底后由赢赛方自述点题，"
+                "勿垫字碎片、勿对手代点题、勿点题后抬杠",
+                banned_literals=[str(x) for x in banned],
+                mom_lines_max=int(mom_max),
+            )
+            lifted = _normalize_chat_speakers(lifted)
+            lifted["story_type"] = "O"
+            lifted, _ = patch_sanitize_pad_suffix(lifted)
+            lifted, _ = patch_sanitize_pad_particles(lifted)
+            patch_o_body(lifted)
+            lifted, _ = _ensure_gold_chat_min_chars(
+                lifted,
+                mechanism=mech,
+                structure_type=st_final,
+            )
+            patch_o_body(lifted)
+            lifted = _attach_gold_chat_structure_score(lifted, row)
+            struct = _gate_gold_chat_structure_score(lifted)
+            chat = lifted
+        except ValueError:
+            quality = cast(dict[str, Any], chat.get("quality")) if isinstance(
+                chat.get("quality"), dict
+            ) else {}
+            reasons = [str(r) for r in (quality.get("reasons") or [])]
+            cons = [
+                r
+                for r in reasons
+                if any(p in r for p in ("缺", "未", "拖", "不足", "软收", "连说", "-"))
+            ]
+            logger.info(
+                "gold_chat structure_score fail score=%s summary=%s "
+                "cons=%s pros=%s",
+                quality.get("structure_score") or quality.get("score"),
+                quality.get("summary"),
+                cons[:8],
+                reasons[:6],
+            )
+            raise
     logger.info(
         "[GOLD_CHAT] convert %s structure_score=%s lines=%s chars=%s",
         sid,
