@@ -1,24 +1,14 @@
-"""N 类正经胡说：线路/校验/观感 smoke。"""
+"""N 类正经胡说：校验/观感 smoke（注册映射见 test_gold_story_types）。"""
 
-from app.services.daily_story.gold_story.types import (
-    allowed_structure_types,
-    structure_type_for_mechanism,
-    validate_mechanism_structure_pair,
-)
 from app.services.daily_story.quality import attach_daily_story_quality
 from app.services.daily_story.story_types import STORY_TYPE_LINES, patch_type_body
 from app.services.daily_story.story_types.n.validate import append_n_body_errors
 
 
-def test_n_registered_and_m6_maps_to_n():
+def test_n_line_registered():
     assert "N" in STORY_TYPE_LINES
     assert STORY_TYPE_LINES["N"].label == "正经胡说"
     assert STORY_TYPE_LINES["N"].quality_ready is False
-    assert structure_type_for_mechanism("M6") == "N"
-    assert allowed_structure_types("M6") == frozenset({"N", "A", "E"})
-    validate_mechanism_structure_pair("M6", "N")
-    validate_mechanism_structure_pair("M6", "A")
-    validate_mechanism_structure_pair("M6", "E")
 
 
 def test_n_body_validate_and_structure_score():

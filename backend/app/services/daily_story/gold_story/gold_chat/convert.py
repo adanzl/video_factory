@@ -4881,8 +4881,41 @@ def convert_gold_chat(
         if blocking:
             kinds = "、".join(str(x.get("kind") or "") for x in blocking[:3])
             raise ValueError(f"align_export:{kinds}")
+    # 终检前再清一次姐弟连说（垫字/精修可能重新制造）
+    from app.services.daily_story.prompts import _patch_consecutive_speakers
+
+    chat = dict(chat)
+    st_final = str(row.get("structure_type") or chat.get("story_type") or "").strip().upper()
+    if st_final:
+        chat["story_type"] = st_final
+    consec_notes = _patch_consecutive_speakers(chat)
+    if consec_notes:
+        logger.info(
+            "gold_chat pre-score consecutive patch: %s",
+            "；".join(consec_notes[:8]),
+        )
     chat = _attach_gold_chat_structure_score(chat, row)
-    struct = _gate_gold_chat_structure_score(chat)
+    try:
+        struct = _gate_gold_chat_structure_score(chat)
+    except ValueError:
+        quality = cast(dict[str, Any], chat.get("quality")) if isinstance(
+            chat.get("quality"), dict
+        ) else {}
+        reasons = [str(r) for r in (quality.get("reasons") or [])]
+        cons = [
+            r
+            for r in reasons
+            if any(p in r for p in ("缺", "未", "拖", "不足", "软收", "连说", "-"))
+        ]
+        logger.info(
+            "gold_chat structure_score fail score=%s summary=%s "
+            "cons=%s pros=%s",
+            quality.get("structure_score") or quality.get("score"),
+            quality.get("summary"),
+            cons[:8],
+            reasons[:6],
+        )
+        raise
     logger.info(
         "[GOLD_CHAT] convert %s structure_score=%s lines=%s chars=%s",
         sid,
