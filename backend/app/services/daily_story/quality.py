@@ -11,14 +11,6 @@ _LIMP_SOFT_CLOSE_MARKERS = (
     "我不管", "不管了", "随便你", "那行", "行行行",
     "哼", "吃吧", "你赢",
 )
-_PUNCHLINE_TYPE_MARKERS = (
-    "权威翻车", "公平执念", "字面执行", "结盟翻车", "妈妈破功", "嘴硬心软",
-    "问倒收束", "权威压住", "家长看戏", "退让点破", "正经胡说",
-    "A类", "B类", "C类", "D类", "E类", "F类", "G类", "H类",
-    "I类", "J类", "K类", "L类", "N类",
-    "A：", "B：", "C：", "D：", "E：", "F：", "G：", "H：",
-    "I：", "J：", "K：", "L：", "N：",
-)
 _MOM_JUDGE_PATTERNS = (
     "谁先放好谁先选", "算你赢", "算他赢", "一人一半", "一人一个",
 )
@@ -36,12 +28,26 @@ from app.services.daily_story.prompts import (
     DAILY_STORY_OPENING_LINES_MAX,
     DAILY_STORY_OPENING_LINES_MIN,
 )
+from app.services.daily_story.story_types.model import STORY_TYPE_LABELS
 from app.services.daily_story.story_types.quality import (
     closing_satisfied,
     quality_profile_for_code,
     resolve_quality_profile,
     score_punchline_for_profile,
 )
+
+
+def _punchline_type_markers() -> tuple[str, ...]:
+    """与 STORY_TYPE_LABELS 同步，避免新类型漏标导致「笑点解析缺类型」。"""
+    markers: list[str] = []
+    for code, label in STORY_TYPE_LABELS.items():
+        markers.append(label)
+        markers.append(f"{code}类")
+        markers.append(f"{code}：")
+    return tuple(markers)
+
+
+_PUNCHLINE_TYPE_MARKERS = _punchline_type_markers()
 # ── 绕圈检测 ──
 _REDUNDANCY_STOP_WORDS: frozenset[str] = frozenset({
     "我", "你", "他", "她", "我们", "你们", "他们", "她们",
