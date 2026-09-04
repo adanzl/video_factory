@@ -151,6 +151,87 @@ def test_resolve_h3_structure_story_39_to_m6_n():
     assert "solemn-nonsense" in notes[0]
 
 
+_STORY_53_RAW = (
+    "灿灿和昭昭玩抢吃蜡烛的游戏，规则是剪刀石头布，赢的人才能吃一口菜。"
+    "昭昭一心只想赢，每次出拳都特别认真，结果真的赢了好几次。"
+    "可等她慢悠悠地夹菜时，发现桌上的菜已经被灿灿吃得差不多了。"
+    "她愣愣地看着空盘子，又看看自己碗里仅剩的一小块菜，委屈地嘟囔："
+    "「我光顾着赢了，菜都没了……」灿灿在一旁偷笑，妈妈也忍不住笑出声来。"
+)
+
+
+def test_suggests_m13_o_for_goal_tunnel():
+    from app.services.daily_story.gold_story.structure_resolve import (
+        should_reclassify_m2_c_to_m13_o,
+        suggests_m13_o_goal_tunnel,
+    )
+
+    assert suggests_m13_o_goal_tunnel(_STORY_53_RAW)
+    assert should_reclassify_m2_c_to_m13_o(
+        mechanism="M2",
+        structure_type="C",
+        blob=_STORY_53_RAW,
+    )
+    assert not should_reclassify_m2_c_to_m8_j(
+        mechanism="M2",
+        structure_type="C",
+        blob=_STORY_53_RAW,
+    )
+    assert suggests_c_fairness_boomerang(_M2_C_FAIR_RAW)
+    assert not should_reclassify_m2_c_to_m13_o(
+        mechanism="M2",
+        structure_type="C",
+        blob=_M2_C_FAIR_RAW,
+    )
+
+
+def test_resolve_h3_structure_story_53_to_m13_o():
+    h3 = {
+        "mechanism": "M2",
+        "structure_type": "C",
+        "conflict_core": "昭昭光顾着赢剪刀石头布，结果菜被灿灿吃光了",
+        "beat": [
+            "昭昭提出剪刀石头布，赢的人才能吃菜",
+            "昭昭专注出拳多次获胜",
+            "夹菜时发现菜量减少",
+            "昭昭点题：光顾着赢，菜都没了",
+        ],
+        "structure_mapping_note": "双规则体现在赢者吃菜与快速夹菜",
+        "structure_confidence": 0.8,
+    }
+    fixed, notes = resolve_h3_structure(h3, story_raw=_STORY_53_RAW)
+    assert fixed["mechanism"] == "M13"
+    assert fixed["structure_type"] == "O"
+    assert notes
+    assert "goal-tunnel-not-fairness" in notes[0]
+
+
+def test_resolve_gold_chat_structure_row_story_53_to_m13_o():
+    row = {
+        "id": 53,
+        "mechanism": "M2",
+        "structure_type": "C",
+        "conflict_core": "昭昭光顾着赢剪刀石头布，结果菜被灿灿吃光了",
+        "payload": {
+            "story_raw": _STORY_53_RAW,
+            "beat": [
+                "昭昭提出剪刀石头布，赢的人才能吃菜",
+                "昭昭专注出拳多次获胜",
+                "夹菜时发现菜量减少",
+                "昭昭点题：光顾着赢，菜都没了",
+            ],
+            "structure_mapping_note": "双规则体现在赢者吃菜与快速夹菜",
+            "scene_contract": {"story_type": "C"},
+            "closing_intent": "灿灿偷笑，妈妈笑场",
+        },
+    }
+    fixed, notes = resolve_gold_chat_structure_row(row)
+    assert fixed["mechanism"] == "M13"
+    assert fixed["structure_type"] == "O"
+    assert fixed["payload"]["scene_contract"]["story_type"] == "O"
+    assert any("M2→M13" in n or "M13" in n for n in notes)
+
+
 def test_structurize_story_applies_resolve(monkeypatch):
     def fake_chat(_system: str, _user: str) -> dict:
         return {

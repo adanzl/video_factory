@@ -1,11 +1,11 @@
-"""金故事机制 M1–M12 与结构类型 A–E/F/G/H/I/J/K/L/N 映射。"""
+"""金故事机制 M1–M13 与结构类型 A–E/F/G/H/I/J/K/L/N/O 映射。"""
 
 from __future__ import annotations
 
 from app.services.daily_story.story_types import STORY_TYPE_LABELS
 
 GOLD_STORY_MECHANISM_CODES: frozenset[str] = frozenset(
-    f"M{i}" for i in range(1, 13)
+    f"M{i}" for i in range(1, 14)
 )
 
 GOLD_STORY_MECHANISM_LABELS: dict[str, str] = {
@@ -21,6 +21,7 @@ GOLD_STORY_MECHANISM_LABELS: dict[str, str] = {
     "M10": "假帮腔讽刺",
     "M11": "灵魂拷问",
     "M12": "家长旁观",
+    "M13": "顾赛不顾奖",
 }
 
 # M → 结构字母：能落 A–E 的落 A–E；否则用扩展字母（F/G/H…）
@@ -37,6 +38,7 @@ MECHANISM_STRUCTURE_MAP: dict[str, str] = {
     "M10": "E",  # 假帮腔讽刺（E 类帮腔）
     "M11": "I",  # 价值高地灵魂拷问 → 问倒收束
     "M12": "K",  # 家长旁观不劝和 → 家长看戏
+    "M13": "O",  # 顾赛不顾奖 → 目标错位
 }
 
 # mechanism 默认映射外的合法 structure_type（防 H3 误判入库失败）
@@ -57,6 +59,7 @@ GOLD_STORY_EXTENDED_TYPE_LABELS: dict[str, str] = {
     "K": "家长看戏",
     "L": "退让点破",
     "N": "正经胡说",
+    "O": "目标错位",
 }
 
 GOLD_STORY_STRUCTURE_LABELS: dict[str, str] = {
@@ -68,13 +71,13 @@ GOLD_STORY_STRUCTURE_CODES: frozenset[str] = frozenset(
     GOLD_STORY_STRUCTURE_LABELS.keys()
 )
 
-# daily_story 已落地类型（H5 可注入任务）；H/I/J/K/L/N 暂仅 gold_story 侧
-_GOLD_STORY_NON_INJECTABLE = frozenset({"F", "H", "I", "J", "K", "L", "N"})
+# daily_story 已落地类型（H5 可注入任务）；H/I/J/K/L/N/O 暂仅 gold_story 侧
+_GOLD_STORY_NON_INJECTABLE = frozenset({"F", "H", "I", "J", "K", "L", "N", "O"})
 GOLD_STORY_INJECTABLE_CODES: frozenset[str] = frozenset(
     k for k in STORY_TYPE_LABELS if k not in _GOLD_STORY_NON_INJECTABLE
 )
 
-# 与 docs/日常故事-类型.md §3 一致（含金故事扩展 F–N）
+# 与 docs/日常故事-类型.md §3 一致（含金故事扩展 F–O）
 GOLD_STORY_TYPE_CATALOG: tuple[dict[str, str], ...] = (
     {
         "code": "A",
@@ -153,6 +156,12 @@ GOLD_STORY_TYPE_CATALOG: tuple[dict[str, str], ...] = (
         "name": "正经胡说",
         "formula": "设问考验→离谱秒答→追问→荒诞自洽→愣住",
         "closing": "对方愣住/接不住；禁止 A/C/E/I 标准收束",
+    },
+    {
+        "code": "O",
+        "name": "目标错位",
+        "formula": "立赛规→死磕过程/赢赛→资源溜走→点题认栽",
+        "closing": "赢过程输目标点题；禁止 C 双规则回旋镖",
     },
 )
 

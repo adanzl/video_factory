@@ -26,6 +26,7 @@ from app.services.daily_story.story_types.j.line import LINE_J
 from app.services.daily_story.story_types.k.line import LINE_K
 from app.services.daily_story.story_types.l.line import LINE_L
 from app.services.daily_story.story_types.n.line import LINE_N
+from app.services.daily_story.story_types.o.line import LINE_O
 
 __all__ = [
     "QUALITY_FALLBACK_CODE",
@@ -60,7 +61,7 @@ STORY_TYPE_LINES: dict[str, StoryTypeLine] = {
     r.code: r
     for r in (
         LINE_A, LINE_B, LINE_C, LINE_D, LINE_E, LINE_F, LINE_G, LINE_H,
-        LINE_I, LINE_J, LINE_K, LINE_L, LINE_N,
+        LINE_I, LINE_J, LINE_K, LINE_L, LINE_N, LINE_O,
     )
 }
 
@@ -272,6 +273,8 @@ def infer_story_type_code(
         scores["J"] = scores.get("J", 0) + 2
     if re.search(r"越劝越|劝不动|看戏|管不了|不和好", blob):
         scores["K"] = scores.get("K", 0) + 2
+    if re.search(r"光顾着赢|顾着赢|赢了.*没了|菜都没了|白赢", blob):
+        scores["O"] = scores.get("O", 0) + 2
 
     max_score = max(scores.values())
     if max_score <= 0:
@@ -517,6 +520,10 @@ def append_type_body_validation_errors(
         from app.services.daily_story.story_types.n.validate import append_n_body_errors
 
         append_n_body_errors(story, errors)
+    elif code == "O" and _enabled("O"):
+        from app.services.daily_story.story_types.o.validate import append_o_body_errors
+
+        append_o_body_errors(story, errors)
 
 
 def patch_type_body(story: dict) -> list[str]:
@@ -573,6 +580,10 @@ def patch_type_body(story: dict) -> list[str]:
         from app.services.daily_story.story_types.n.patch import patch_n_body
 
         return patch_n_body(story)
+    if code == "O":
+        from app.services.daily_story.story_types.o.patch import patch_o_body
+
+        return patch_o_body(story)
     return []
 
 
@@ -693,6 +704,16 @@ def validate_type_opening(
         from app.services.daily_story.story_types.n.opening import append_n_opening_errors
 
         append_n_opening_errors(
+            normalized,
+            type_code=type_code,
+            errors=errors,
+            conflict_core=conflict_core,
+            setting=setting,
+        )
+    if type_body_validation_enabled("O"):
+        from app.services.daily_story.story_types.o.opening import append_o_opening_errors
+
+        append_o_opening_errors(
             normalized,
             type_code=type_code,
             errors=errors,
