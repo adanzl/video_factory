@@ -35,6 +35,18 @@ _RE_O_PUNCH_SOFT_TAIL = re.compile(
 _RE_O_PUNCH_JUNK_TAIL = re.compile(
     r"[，,。！!…]*\s*(?:了呢|真的了呢|嘛了呀|了呀)[。！!…]*$"
 )
+# 金稿句内扩写 clutter（抽象；勿绑单篇菜名）
+_RE_O_EXPAND_CLUTTER = re.compile(
+    r"[，,]\s*(?:"
+    r"我可记住啦?|说一不二|马上给我挪开|我才不怕呢|"
+    r"你试试看啊|我偏就不信|少跟我吵啊|再闹我恼了|"
+    r"不许再耍赖了|别再乱动了|说了就不改"
+    r")[^。！!]*"
+)
+# 补字事故：哦不行 / 没真的呀 等读不通碎片
+_RE_O_PAD_GARBAGE = re.compile(
+    r"[，,]?\s*(?:快点哦不行|哦不行|又没真的呀|没真的呀)[。！!]?"
+)
 
 
 def _dialogue_rows(story: dict) -> list[dict]:
@@ -78,6 +90,8 @@ def patch_o_clean_punch_soft_tail(story: dict) -> list[str]:
     cleaned = line
     if RE_O_PUNCH_SOFT_CHALLENGE.search(cleaned):
         cleaned = _RE_O_PUNCH_SOFT_TAIL.sub("", cleaned).rstrip("，, ")
+    if _RE_O_EXPAND_CLUTTER.search(cleaned):
+        cleaned = _RE_O_EXPAND_CLUTTER.sub("", cleaned).rstrip("，, ")
     if RE_O_PUNCH_TAIL_JUNK.search(cleaned) or _RE_O_PUNCH_JUNK_TAIL.search(cleaned):
         cleaned = _RE_O_PUNCH_JUNK_TAIL.sub("", cleaned).rstrip("，, ….")
         # 保留呜呜情绪音时补顿号收口
@@ -200,7 +214,7 @@ def patch_o_trim_after_punch(story: dict) -> list[str]:
 
 
 def patch_o_strip_line_junk(story: dict) -> list[str]:
-    """剥全篇垫字碎片（了呢/好不好呀/再闹我恼等）。"""
+    """剥全篇垫字碎片与扩写 clutter（了呢/好不好呀/再闹我恼等）。"""
     notes: list[str] = []
     rows = _dialogue_rows(story)
     n = 0
@@ -210,7 +224,9 @@ def patch_o_strip_line_junk(story: dict) -> list[str]:
     )
     for item in rows:
         line = str(item.get("line") or "")
-        cleaned = junk.sub("", line).rstrip("，, ")
+        cleaned = junk.sub("", line)
+        cleaned = _RE_O_PAD_GARBAGE.sub("", cleaned)
+        cleaned = _RE_O_EXPAND_CLUTTER.sub("", cleaned).rstrip("，, ")
         if cleaned and cleaned[-1] not in "。！!…？?":
             cleaned += "！"
         if cleaned != line and cleaned.strip():

@@ -1022,6 +1022,38 @@ _GOLD_CHAT_REACT_LINES: tuple[tuple[str, str], ...] = (
     ("昭昭", "凭什么听你的！"),
     ("灿灿", "我说怎样就怎样！"),
 )
+# O：字数不够只插「死磕过程 / 资源溜走」实义对，禁止复用抬杠反应库
+_O_NATURAL_MID_PAIRS: tuple[tuple[tuple[str, str], tuple[str, str]], ...] = (
+    (
+        ("昭昭", "认真出！我这回稳赢！"),
+        ("灿灿", "你赢你的，我先动筷了。"),
+    ),
+    (
+        ("昭昭", "再来一把，看谁先赢够！"),
+        ("灿灿", "你接着比，桌上可不等你。"),
+    ),
+    (
+        ("昭昭", "嘿，又是我赢！"),
+        ("灿灿", "赢了就快点夹，别磨蹭。"),
+    ),
+    (
+        ("昭昭", "专心比，我还能再赢！"),
+        ("灿灿", "你比你的，我吃我的。"),
+    ),
+    (
+        ("昭昭", "出拳！我还没玩够！"),
+        ("灿灿", "你玩你的，份额可越来越少。"),
+    ),
+)
+_O_GOLD_CHAT_PAD_TAILS = ("呀", "啊", "吧")  # 单语气词；禁 particle_upgrade 叠字
+# O 句内扩写：只允许过程/催夹实义，禁抬杠/记仇类 clutter
+_O_SAFE_NATURAL_EXPAND: tuple[str, ...] = (
+    "，认真点",
+    "，别磨蹭",
+    "，接着比",
+    "，快点夹",
+    "，桌上见底了",
+)
 # 已停用灌尾巴（毁可读性）；保留常量供机审/剥除识别
 _GOLD_CHAT_LINE_EXPAND: tuple[str, ...] = (
     "，你给我听好了",
@@ -1851,6 +1883,52 @@ def _pad_gold_chat_line(
         if added > 0:
             return line_out, added
         return line, 0
+    if st == "O":
+        # O：优先单语气词；已有语气词则改补安全实义尾巴（禁 particle_upgrade）
+        from app.services.daily_story.dialogue_text import (
+            DAILY_STORY_LINE_CHARS_MAX,
+            dialogue_char_count,
+        )
+
+        text = str(line or "").strip()
+        if need <= 0 or not text:
+            return line, 0
+        trail = ""
+        core = text
+        if core[-1] in "。！？…":
+            trail = core[-1]
+            core = core[:-1]
+        if not core:
+            return line, 0
+        room = max(0, DAILY_STORY_LINE_CHARS_MAX - dialogue_char_count(text))
+        if not re.search(r"[呢嘛呀啊吧了呗]$", core):
+            for tail in _O_GOLD_CHAT_PAD_TAILS:
+                if used is not None and tail in used:
+                    continue
+                if len(tail) > need or len(tail) > room:
+                    continue
+                if used is not None:
+                    used.add(tail)
+                return f"{core}{tail}{trail}", len(tail)
+        # 大缺口才补实义尾巴；仅死磕/催夹句可扩，避免「少了？+接着比」错位
+        if (
+            need >= 4
+            and "，" not in core
+            and "," not in core
+            and re.search(r"赢|再来|夹|比|出拳|认真", core)
+        ):
+            for phr in _O_SAFE_NATURAL_EXPAND:
+                bare = phr.lstrip("，,")
+                if used is not None and bare in used:
+                    continue
+                if bare in core or core.endswith(bare):
+                    continue
+                if len(phr) > need or len(phr) > room:
+                    continue
+                if used is not None:
+                    used.add(bare)
+                return f"{core}{phr}{trail}", len(phr)
+        return line, 0
     if st == "B":
         tails = _B_GOLD_CHAT_PAD_TAILS
     elif st == "F":
@@ -1916,12 +1994,25 @@ def _pad_gold_chat_line(
     return line, 0
 
 
+def _o_goal_punch_index(dialogue: list[Any]) -> int:
+    """O 点题认栽句下标；无则 -1。"""
+    from app.services.daily_story.story_types.o.validate import RE_GOAL_PUNCH
+
+    idxs = [
+        i
+        for i, item in enumerate(dialogue)
+        if isinstance(item, dict)
+        and RE_GOAL_PUNCH.search(str(item.get("line") or ""))
+    ]
+    return idxs[-1] if idxs else -1
+
+
 def _gold_chat_pad_indices(
     dialogue: list[Any],
     *,
     story_type: str,
 ) -> list[int]:
-    """可垫字行号；I 类排除收束段（首次语塞到结尾）与末 2 句。"""
+    """可垫字行号；I 排除收束段；O 排除点题句及之后。"""
     indices = [
         i
         for i, item in enumerate(dialogue)
@@ -1929,6 +2020,12 @@ def _gold_chat_pad_indices(
         and str(item.get("speaker") or "") in {"昭昭", "灿灿"}
     ] or list(range(len(dialogue)))
     st = str(story_type or "").strip().upper()
+    if st == "O":
+        punch = _o_goal_punch_index(dialogue)
+        if punch >= 0:
+            kept = [i for i in indices if i < punch]
+            return kept or indices
+        return indices
     if st != "I":
         return indices
     from app.services.daily_story.story_types.i.validate import (
@@ -1978,7 +2075,12 @@ def _patch_gold_chat_near_miss_chars(story: dict[str, Any]) -> tuple[dict[str, A
     changed = False
     used_pads: set[str] = set()
     story_type = str(story.get("story_type") or "").strip().upper()
-    natural_bares = {c.lstrip("，,") for c in _GOLD_CHAT_NATURAL_EXPAND}
+    if story_type == "O":
+        natural_bares = {c.lstrip("，,") for c in _O_SAFE_NATURAL_EXPAND}
+    elif story_type == "K":
+        natural_bares = {c.lstrip("，,") for c in _K_GOLD_CHAT_NATURAL_EXPAND}
+    else:
+        natural_bares = {c.lstrip("，,") for c in _GOLD_CHAT_NATURAL_EXPAND}
     for idx in reversed(indices):
         item = dialogue[idx]
         if not isinstance(item, dict):
@@ -2036,9 +2138,12 @@ def _pad_gold_chat_to_min_chars(
     if story_type == "K" and particle_only:
         particle_only = False
         used_pads = set()
-    expand_src = (
-        _K_GOLD_CHAT_NATURAL_EXPAND if story_type == "K" else _GOLD_CHAT_NATURAL_EXPAND
-    )
+    if story_type == "O":
+        expand_src = _O_SAFE_NATURAL_EXPAND
+    elif story_type == "K":
+        expand_src = _K_GOLD_CHAT_NATURAL_EXPAND
+    else:
+        expand_src = _GOLD_CHAT_NATURAL_EXPAND
     natural_bares = {c.lstrip("，,") for c in expand_src}
     pad_rounds = (
         max_rounds
@@ -2075,6 +2180,9 @@ def _pad_gold_chat_to_min_chars(
             progressed = True
         if not progressed:
             # 垫词用尽时清空复用，优先把 near-miss 垫满
+            # O：不清空，避免同一实义尾巴复读成模板
+            if story_type == "O":
+                break
             if used_pads is not None and used_pads:
                 used_pads.clear()
                 continue
@@ -2096,6 +2204,7 @@ def _boost_short_with_mid_lines(
     """FIX/Pass1 写不满时：收束前插入成对句，保 J 权威方向。
 
     M8+J 插互顶/立规对；M5+J 等插昭求/灿否对。
+    O 只插死磕/资源溜走实义对，且必须在点题句之前。
     大缺口（>near_miss）时允许句数 <12 先插对补句数/字数。
     """
     import copy
@@ -2140,6 +2249,18 @@ def _boost_short_with_mid_lines(
         return story, False
     # K：僵持词已在不挡大缺口补句；小缺口且已有僵持点则不再插
     insert_at = max(2, len(dialogue) - 2)
+    if st == "O":
+        punch = _o_goal_punch_index(dialogue)
+        if punch >= 0:
+            # 插在点题前；若点题前是昭昭连说，再往前挪到可交替处
+            insert_at = punch
+            while insert_at > 2:
+                prev_item = dialogue[insert_at - 1]
+                if not isinstance(prev_item, dict):
+                    break
+                if str(prev_item.get("speaker") or "").strip() != "昭昭":
+                    break
+                insert_at -= 1
     if m8_j:
         ko_idx = next(
             (
@@ -2153,7 +2274,11 @@ def _boost_short_with_mid_lines(
         if ko_idx >= 2:
             insert_at = min(insert_at, ko_idx)
     prev = dialogue[insert_at - 1] if insert_at > 0 else None
-    if isinstance(prev, dict) and str(prev.get("speaker") or "").strip() == "昭昭":
+    if (
+        st != "O"
+        and isinstance(prev, dict)
+        and str(prev.get("speaker") or "").strip() == "昭昭"
+    ):
         insert_at = min(insert_at + 1, len(dialogue))
     if m8_j:
         pair_pool = _M8_J_NATURAL_MID_PAIRS
@@ -2161,6 +2286,8 @@ def _boost_short_with_mid_lines(
         pair_pool = _GOLD_CHAT_NATURAL_MID_PAIRS
     elif st == "K":
         pair_pool = _K_NATURAL_MID_PAIRS
+    elif st == "O":
+        pair_pool = _O_NATURAL_MID_PAIRS
     else:
         pair_pool = tuple(
             (_GOLD_CHAT_REACT_LINES[i], _GOLD_CHAT_REACT_LINES[i + 1])
@@ -2172,6 +2299,8 @@ def _boost_short_with_mid_lines(
     if st == "K":
         # 小缺口只插 1 对，避免后段空喊堆叠
         max_pairs = 2 if need >= 20 else 1
+    if st == "O":
+        max_pairs = 1
 
     def _norm_pad_line(text: str) -> str:
         return re.sub(r"[呀啊吧呢嘛了呗！？。!?，,\s]", "", str(text or ""))
@@ -2203,6 +2332,15 @@ def _boost_short_with_mid_lines(
             if insert_at >= len(dialogue):
                 break
             insert_at += 1
+            if st == "O":
+                punch = _o_goal_punch_index(dialogue)
+                if punch >= 0 and insert_at > punch:
+                    insert_at = punch
+                    break
+        if st == "O":
+            punch = _o_goal_punch_index(dialogue)
+            if punch >= 0 and insert_at > punch:
+                continue
         if insert_at > 0 and insert_at <= len(dialogue):
             prev_item = dialogue[insert_at - 1]
             if (
@@ -2257,10 +2395,14 @@ def _expand_short_gold_chat_lines(
     expand_count: dict[int, int] = {}
     used: set[str] = set()
     st = str(story.get("story_type") or "").strip().upper()
-    expand_src = (
-        _K_GOLD_CHAT_NATURAL_EXPAND if st == "K" else _GOLD_CHAT_NATURAL_EXPAND
-    )
+    if st == "O":
+        expand_src = _O_SAFE_NATURAL_EXPAND
+    elif st == "K":
+        expand_src = _K_GOLD_CHAT_NATURAL_EXPAND
+    else:
+        expand_src = _GOLD_CHAT_NATURAL_EXPAND
     bare_all = {c.lstrip("，,") for c in expand_src}
+    o_punch = _o_goal_punch_index(dialogue) if st == "O" else -1
     for i, item in enumerate(dialogue):
         if not isinstance(item, dict):
             continue
@@ -2282,6 +2424,16 @@ def _expand_short_gold_chat_lines(
             and 4 <= len(str(item.get("line") or "").strip()) < 20
             and i >= 2
             and i < len(dialogue) - 2  # 首尾句不垫尾巴，保开场/收场干净
+            and (o_punch < 0 or i < o_punch)
+            and (
+                st != "O"
+                or bool(
+                    re.search(
+                        r"赢|再来|夹|比|出拳|认真",
+                        str(item.get("line") or ""),
+                    )
+                )
+            )
             and not any(
                 br in str(item.get("line") or "")
                 for br in (
@@ -2476,60 +2628,38 @@ def _o_polish_meet_min_chars(
     structure_type: str = "O",
     rounds: int = 4,
 ) -> tuple[dict[str, Any], list[str]]:
-    """O 抛光与补字交替：出口保证正文 ≥ hard min，避免末次抛光削穿。"""
+    """O 抛光：前置安全补字，末次 type patch 仅作兜底（不逐步强制 patch）。"""
     from app.services.daily_story.story_types import apply_gold_chat_type_patch
 
+    del rounds  # 保留签名兼容；O 不靠多轮插对堆句数
     all_notes: list[str] = []
     st = str(structure_type or "O").strip().upper() or "O"
     mech = str(mechanism or "")
-    for _ in range(max(1, rounds)):
-        chat, notes = apply_gold_chat_type_patch(chat, structure_type=st)
-        if notes:
-            all_notes.extend(str(n) for n in notes[:4])
-        chat, _ = patch_sanitize_pad_suffix(chat)
-        chat, _ = patch_sanitize_pad_particles(chat)
-        chars = dialogue_total_chars(chat)
-        if chars >= DAILY_STORY_BODY_CHARS_MIN and not notes:
-            break
-        before = chars
-        if chars < DAILY_STORY_BODY_CHARS_MIN:
-            chat, _ = _boost_short_with_mid_lines(
-                chat, mechanism=mech, structure_type=st
-            )
-        chat, _ = _ensure_gold_chat_min_chars(
+    chat, notes0 = apply_gold_chat_type_patch(chat, structure_type=st)
+    if notes0:
+        all_notes.extend(str(n) for n in notes0[:4])
+    chat, _ = patch_sanitize_pad_suffix(chat)
+    chat, _ = patch_sanitize_pad_particles(chat)
+    if dialogue_total_chars(chat) < DAILY_STORY_BODY_CHARS_MIN:
+        # 最多两对中段实义（此处 1 + force 内再 1），其余 pad/expand
+        chat, _ = _boost_short_with_mid_lines(
             chat, mechanism=mech, structure_type=st
         )
+        chat, _ = _expand_short_gold_chat_lines(chat, ignore_deficit_cap=True)
+        chat, _ = _pad_gold_chat_to_min_chars(chat, max_rounds=12)
         if dialogue_total_chars(chat) < DAILY_STORY_BODY_CHARS_MIN:
             chat, _ = _gold_chat_force_min_chars(chat)
-            chat, _ = _pad_gold_chat_to_min_chars(
-                chat, particle_only=True, max_rounds=12
-            )
-        if (
-            dialogue_total_chars(chat) >= DAILY_STORY_BODY_CHARS_MIN
-            and dialogue_total_chars(chat) == before
-            and not notes
-        ):
-            break
-    # 末次抛光后再补，堵住「补满 → 再抛光削到 <min」
+            chat, _ = _pad_gold_chat_to_min_chars(chat, max_rounds=12)
+    # 兜底：清理点题说话人/第二轮抬杠/垫字
     chat, tail_notes = apply_gold_chat_type_patch(chat, structure_type=st)
     if tail_notes:
         all_notes.extend(str(n) for n in tail_notes[:2])
     if dialogue_total_chars(chat) < DAILY_STORY_BODY_CHARS_MIN:
-        chat, _ = _boost_short_with_mid_lines(
-            chat, mechanism=mech, structure_type=st
-        )
-        chat, _ = _gold_chat_force_min_chars(chat)
-        chat, _ = _ensure_gold_chat_min_chars(
-            chat, mechanism=mech, structure_type=st
-        )
+        chat, _ = _pad_gold_chat_to_min_chars(chat, max_rounds=24)
+        chat, _ = _expand_short_gold_chat_lines(chat, ignore_deficit_cap=True)
         chat, tail2 = apply_gold_chat_type_patch(chat, structure_type=st)
         if tail2:
             all_notes.extend(str(n) for n in tail2[:2])
-        if dialogue_total_chars(chat) < DAILY_STORY_BODY_CHARS_MIN:
-            chat, _ = _ensure_gold_chat_min_chars(
-                chat, mechanism=mech, structure_type=st
-            )
-            chat, _ = _gold_chat_force_min_chars(chat)
     return chat, all_notes
 
 
@@ -2779,6 +2909,40 @@ def _gold_chat_force_min_chars(story: dict[str, Any]) -> tuple[dict[str, Any], b
     if need <= 0:
         return story, False
     st = str(story.get("story_type") or "").strip().upper()
+    if st == "O":
+        # O：最多插 2 对中段实义；其余靠单语气词/安全扩写，禁止抬杠灌句
+        out = copy.deepcopy(story)
+        out["story_type"] = "O"
+        changed = False
+        boost_used = 0
+        for _ in range(8):
+            if dialogue_total_chars(out) >= DAILY_STORY_BODY_CHARS_MIN:
+                break
+            before = dialogue_total_chars(out)
+            if boost_used < 1:
+                out2, c1 = _boost_short_with_mid_lines(out, structure_type="O")
+                out = out2
+                if c1:
+                    boost_used += 1
+                changed = changed or c1
+            out, _ = patch_sanitize_pad_suffix(out)
+            out, _ = patch_sanitize_pad_particles(out)
+            if dialogue_total_chars(out) >= DAILY_STORY_BODY_CHARS_MIN:
+                break
+            out2, cp = _pad_gold_chat_to_min_chars(out, max_rounds=24)
+            out = out2
+            out, _ = patch_sanitize_pad_suffix(out)
+            out, _ = patch_sanitize_pad_particles(out)
+            changed = changed or cp
+            if dialogue_total_chars(out) <= before:
+                out2, ce = _expand_short_gold_chat_lines(
+                    out, ignore_deficit_cap=True
+                )
+                out = out2
+                changed = changed or ce
+                if dialogue_total_chars(out) <= before:
+                    break
+        return out, changed
     if st == "K":
         out = copy.deepcopy(story)
         out["story_type"] = "K"
