@@ -49,7 +49,8 @@ RE_O_WIN_CLAIM = re.compile(
 )
 # 垫字碎片过密（gold_chat 补字副作用；勿把单字「呢」当硬伤）
 RE_O_PAD_JUNK = re.compile(
-    r"嘛了呀|了呀不行|真的嘛了|不行好不好呀|好不好呀|再闹我恼"
+    r"嘛了呀|了呀不行|真的嘛了|不行好不好呀|好不好呀|再闹我恼|"
+    r"快点哦不行|哦不行|没真的呀|我可记住啦"
 )
 # 对手代点题（削弱主角自悟）
 RE_O_OTHER_SPOILER = re.compile(r"你(?:光)?顾着赢|你只顾着赢")
@@ -125,6 +126,11 @@ def append_o_body_errors(story: dict, errors: list[str]) -> None:
             r"(?:了呢|嘛了呀)\s*$", punch_ln
         ):
             errors.append("O类：点题句勿缀了呢/嘛了呀等垫字碎片")
+        if re.search(
+            r"我可记住|说一不二|马上给我挪开|我偏就不信",
+            punch_ln,
+        ):
+            errors.append("O类：点题句勿缀扩写尾巴，须干脆认栽")
         for ln in lines[:p_i]:
             if RE_O_RESULT_GLOAT.search(ln) and (
                 RE_O_POST_PUNCH_CONTINUE.search(ln)

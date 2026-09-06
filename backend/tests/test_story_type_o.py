@@ -131,3 +131,90 @@ def test_o_body_validate_and_structure_score():
         "点题" in r or "溜走" in r or "死磕" in r or "立规" in r
         for r in q.get("reasons") or []
     )
+
+
+def test_o_export_like_junk_is_patched():
+    """导出稿常见：对手代点题、扩写尾巴、点题后抬杠 → 本地修净。"""
+    story = {
+        "story_type": "O",
+        "scene_title": "光顾着赢",
+        "setting": "餐桌前",
+        "conflict_core": "目标错位：昭昭光顾着赢猜拳，菜被吃光",
+        "key": "抢吃猜拳",
+        "punchline_explain": "O类目标错位，赢了过程输了目标",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "剪刀石头布，赢的才能吃菜！"},
+            {"speaker": "灿灿", "line": "好，来！"},
+            {"speaker": "昭昭", "line": "剪刀石头布！哈，我赢，我才不怕呢！"},
+            {"speaker": "灿灿", "line": "那你夹吧，快点哦不行，马上给我挪开。"},
+            {"speaker": "昭昭", "line": "咦，菜怎么少了？"},
+            {"speaker": "灿灿", "line": "你赢你的，我吃我的。"},
+            {"speaker": "昭昭", "line": "再来！又赢！"},
+            {"speaker": "灿灿", "line": "快夹，不然又没真的呀。"},
+            {"speaker": "昭昭", "line": "啊？只剩一小块了？"},
+            {"speaker": "灿灿", "line": "你光顾着赢，菜都被我吃光啦！"},
+            {"speaker": "昭昭", "line": "我光顾着赢，菜都没了，我可记住啦……"},
+            {"speaker": "灿灿", "line": "嘿嘿，我吃饱啦，你慢慢赢。"},
+            {"speaker": "昭昭", "line": "不行，我偏就不信！"},
+            {"speaker": "灿灿", "line": "真的不行好不好呀！"},
+            {"speaker": "妈妈", "line": "哈哈，你俩真逗。"},
+        ],
+    }
+    bad: list[str] = []
+    append_o_body_errors(story, bad)
+    assert bad, bad
+    notes = patch_type_body(story)
+    assert notes, notes
+    clean: list[str] = []
+    append_o_body_errors(story, clean)
+    assert clean == [], clean
+    lines = [str(d["line"]) for d in story["dialogue"]]
+    speakers = [str(d["speaker"]) for d in story["dialogue"]]
+    punch_i = next(i for i, ln in enumerate(lines) if "光顾着赢" in ln and "我光顾着赢" in ln)
+    assert speakers[punch_i] == "昭昭"
+    assert "我可记住" not in lines[punch_i]
+    assert not any("你光顾着赢" in ln for ln in lines)
+    assert not any("我偏就不信" in ln for ln in lines)
+    assert not any("慢慢赢" in ln for ln in lines)
+
+
+def test_o_gold_chat_boost_inserts_before_punch():
+    """O 凑字插中段对须在点题前，且不用通用抬杠库。"""
+    from app.services.daily_story.prompts import DAILY_STORY_BODY_CHARS_MIN
+    from app.services.gold_story.gold_chat.convert import (
+        _O_NATURAL_MID_PAIRS,
+        _boost_short_with_mid_lines,
+        dialogue_total_chars,
+    )
+
+    story = {
+        "story_type": "O",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "剪刀石头布，赢的才能吃！"},
+            {"speaker": "灿灿", "line": "好，来！"},
+            {"speaker": "昭昭", "line": "我赢了！"},
+            {"speaker": "灿灿", "line": "那你夹吧。"},
+            {"speaker": "昭昭", "line": "咦，少了？"},
+            {"speaker": "灿灿", "line": "你赢你的。"},
+            {"speaker": "昭昭", "line": "又赢！"},
+            {"speaker": "灿灿", "line": "快夹。"},
+            {"speaker": "昭昭", "line": "只剩一点？"},
+            {"speaker": "昭昭", "line": "我光顾着赢，菜都没了……"},
+            {"speaker": "灿灿", "line": "嘿嘿，我吃饱了。"},
+            {"speaker": "妈妈", "line": "哈哈，真逗。"},
+        ],
+    }
+    before = dialogue_total_chars(story)
+    assert before < DAILY_STORY_BODY_CHARS_MIN
+    out, changed = _boost_short_with_mid_lines(story, structure_type="O")
+    assert changed
+    lines = [str(d["line"]) for d in out["dialogue"]]
+    punch_i = next(i for i, ln in enumerate(lines) if "我光顾着赢" in ln)
+    assert punch_i >= 2
+    # 新插入句应来自 O 安全库，且落在点题前
+    o_lines = {p[0][1] for p in _O_NATURAL_MID_PAIRS} | {
+        p[1][1] for p in _O_NATURAL_MID_PAIRS
+    }
+    inserted = [ln for ln in lines[:punch_i] if ln in o_lines]
+    assert inserted, lines
+    assert not any("你少来这套" in ln or "我就不服" in ln for ln in lines)
