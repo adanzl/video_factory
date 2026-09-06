@@ -220,7 +220,8 @@ def patch_o_strip_line_junk(story: dict) -> list[str]:
     n = 0
     junk = re.compile(
         r"[，,]?\s*(?:再闹我恼了呢?|好不好呀|了呢|马上给我挪开(?:嘛)?|"
-        r"你试试看了呢|不许再耍赖了呢)[。！!]?"
+        r"你试试看了呢|不许再耍赖了呢|"
+        r"啦了呀不行了吧|了呀不行了吧|了呀不行|真的呀不行)[。！!]?"
     )
     for item in rows:
         line = str(item.get("line") or "")
