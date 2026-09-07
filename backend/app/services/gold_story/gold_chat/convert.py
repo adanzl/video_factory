@@ -3227,7 +3227,7 @@ def patch_j_soften_closing_grumble(
 
 
 def _gold_chat_post_pad_cleanup(story: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
-    """垫字后：B 类剥句尾垫字 + 再补 min（禁回灌好不好）。"""
+    """垫字后：B/F/P 类剥句尾垫字 + 再补 min（禁回灌好不好）。"""
     from app.services.daily_story.story_types import apply_gold_chat_strip_filler
 
     notes: list[str] = []
@@ -3242,6 +3242,22 @@ def _gold_chat_post_pad_cleanup(story: dict[str, Any]) -> tuple[dict[str, Any], 
         strip_notes = apply_gold_chat_strip_filler(out)
         if strip_notes:
             notes.extend(strip_notes[:6])
+    # P：补字常加在末尾，认怂截断须在最后一次补字后重跑
+    if st == "P":
+        from app.services.daily_story.story_types.p.patch import (
+            patch_p_fix_surrender_speaker,
+            patch_p_strip_pad_tails,
+            patch_p_trim_after_surrender,
+        )
+
+        for fn in (
+            patch_p_strip_pad_tails,
+            patch_p_fix_surrender_speaker,
+            patch_p_trim_after_surrender,
+        ):
+            extra = fn(out) or []
+            if extra:
+                notes.extend(extra[:4])
     return out, notes
 
 

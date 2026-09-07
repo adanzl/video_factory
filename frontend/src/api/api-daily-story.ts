@@ -58,6 +58,7 @@ export const DAILY_STORY_TYPE_LABELS: Record<string, string> = {
     L: "退让点破",
   N: "正经胡说",
   O: "目标错位",
+  P: "整蛊互整",
 };
 
 /** 如 A权威翻车；无有效代码时返回 "-" */

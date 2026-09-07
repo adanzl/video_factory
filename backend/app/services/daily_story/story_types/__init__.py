@@ -1,4 +1,4 @@
-"""日常故事矛盾类型（A–O）线路注册与解析。"""
+"""日常故事矛盾类型（A–P）线路注册与解析。"""
 
 from __future__ import annotations
 
@@ -28,6 +28,7 @@ from app.services.daily_story.story_types.k.line import LINE_K
 from app.services.daily_story.story_types.l.line import LINE_L
 from app.services.daily_story.story_types.n.line import LINE_N
 from app.services.daily_story.story_types.o.line import LINE_O
+from app.services.daily_story.story_types.p.line import LINE_P
 
 __all__ = [
     "QUALITY_FALLBACK_CODE",
@@ -68,7 +69,7 @@ STORY_TYPE_LINES: dict[str, StoryTypeLine] = {
     r.code: r
     for r in (
         LINE_A, LINE_B, LINE_C, LINE_D, LINE_E, LINE_F, LINE_G, LINE_H,
-        LINE_I, LINE_J, LINE_K, LINE_L, LINE_N, LINE_O,
+        LINE_I, LINE_J, LINE_K, LINE_L, LINE_N, LINE_O, LINE_P,
     )
 }
 
@@ -282,6 +283,8 @@ def infer_story_type_code(
         scores["K"] = scores.get("K", 0) + 2
     if re.search(r"光顾着赢|顾着赢|赢了.*没了|菜都没了|白赢", blob):
         scores["O"] = scores.get("O", 0) + 2
+    if re.search(r"整蛊|回敬|认输|再试试|不了不了|挑战", blob):
+        scores["P"] = scores.get("P", 0) + 2
 
     max_score = max(scores.values())
     if max_score <= 0:
@@ -456,6 +459,16 @@ def apply_gold_chat_strip_filler(chat: dict[str, Any]) -> list[str]:
         from app.services.daily_story.story_types.f.patch import patch_f_strip_filler
 
         return list(patch_f_strip_filler(chat) or [])
+    if code == "P":
+        from app.services.daily_story.story_types.p.patch import (
+            patch_p_strip_pad_tails,
+            patch_p_trim_after_surrender,
+        )
+
+        notes: list[str] = []
+        notes.extend(patch_p_strip_pad_tails(chat) or [])
+        notes.extend(patch_p_trim_after_surrender(chat) or [])
+        return notes
     return []
 
 
@@ -627,6 +640,10 @@ def append_type_body_validation_errors(
         from app.services.daily_story.story_types.o.validate import append_o_body_errors
 
         append_o_body_errors(story, errors)
+    elif code == "P" and _enabled("P"):
+        from app.services.daily_story.story_types.p.validate import append_p_body_errors
+
+        append_p_body_errors(story, errors)
 
 
 def patch_type_body(story: dict) -> list[str]:
@@ -687,6 +704,10 @@ def patch_type_body(story: dict) -> list[str]:
         from app.services.daily_story.story_types.o.patch import patch_o_body
 
         return patch_o_body(story)
+    if code == "P":
+        from app.services.daily_story.story_types.p.patch import patch_p_body
+
+        return patch_p_body(story)
     return []
 
 
@@ -817,6 +838,16 @@ def validate_type_opening(
         from app.services.daily_story.story_types.o.opening import append_o_opening_errors
 
         append_o_opening_errors(
+            normalized,
+            type_code=type_code,
+            errors=errors,
+            conflict_core=conflict_core,
+            setting=setting,
+        )
+    if type_body_validation_enabled("P"):
+        from app.services.daily_story.story_types.p.opening import append_p_opening_errors
+
+        append_p_opening_errors(
             normalized,
             type_code=type_code,
             errors=errors,
