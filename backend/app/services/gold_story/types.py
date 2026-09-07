@@ -1,11 +1,11 @@
-"""金故事机制 M1–M13 与结构类型 A–E/F/G/H/I/J/K/L/N/O 映射。"""
+"""金故事机制 M1–M14 与结构类型 A–E/F/G/H/I/J/K/L/N/O/P 映射。"""
 
 from __future__ import annotations
 
 from app.services.daily_story.story_types import STORY_TYPE_LABELS
 
 GOLD_STORY_MECHANISM_CODES: frozenset[str] = frozenset(
-    f"M{i}" for i in range(1, 14)
+    f"M{i}" for i in range(1, 15)
 )
 
 GOLD_STORY_MECHANISM_LABELS: dict[str, str] = {
@@ -22,6 +22,7 @@ GOLD_STORY_MECHANISM_LABELS: dict[str, str] = {
     "M11": "灵魂拷问",
     "M12": "家长旁观",
     "M13": "顾赛不顾奖",
+    "M14": "以牙还牙",
 }
 
 # M → 结构字母：能落 A–E 的落 A–E；否则用扩展字母（F/G/H…）
@@ -39,11 +40,13 @@ MECHANISM_STRUCTURE_MAP: dict[str, str] = {
     "M11": "I",  # 价值高地灵魂拷问 → 问倒收束
     "M12": "K",  # 家长旁观不劝和 → 家长看戏
     "M13": "O",  # 顾赛不顾奖 → 目标错位
+    "M14": "P",  # 以牙还牙整蛊互整 → 认怂散场
 }
 
 # mechanism 默认映射外的合法 structure_type（防 H3 误判入库失败）
 MECHANISM_STRUCTURE_ALTERNATIVES: dict[str, frozenset[str]] = {
     "M2": frozenset({"L", "I"}),  # L 表演公平被拒；I 灵魂拷问质问链无公平争夺
+    "M3": frozenset({"P"}),  # 道具整蛊互整时可落 P（默认仍 F 口头互呛）
     "M5": frozenset({"G", "H", "J"}),  # G 拒和后 pivot 暖收；H 调解；J 否决压住
     "M6": frozenset({"A", "E"}),  # 偶发权威反噬/妈妈破功追问链（默认 N）
     "M8": frozenset({"J"}),  # 一锤镇住、不翻车
@@ -60,6 +63,7 @@ GOLD_STORY_EXTENDED_TYPE_LABELS: dict[str, str] = {
     "L": "退让点破",
     "N": "正经胡说",
     "O": "目标错位",
+    "P": "整蛊互整",
 }
 
 GOLD_STORY_STRUCTURE_LABELS: dict[str, str] = {
@@ -71,8 +75,8 @@ GOLD_STORY_STRUCTURE_CODES: frozenset[str] = frozenset(
     GOLD_STORY_STRUCTURE_LABELS.keys()
 )
 
-# daily_story 已落地类型（H5 可注入任务）；H/I/J/K/L/N/O 暂仅 gold_story 侧
-_GOLD_STORY_NON_INJECTABLE = frozenset({"F", "H", "I", "J", "K", "L", "N", "O"})
+# daily_story 已落地类型（H5 可注入任务）；H/I/J/K/L/N/O/P 暂仅 gold_story 侧
+_GOLD_STORY_NON_INJECTABLE = frozenset({"F", "H", "I", "J", "K", "L", "N", "O", "P"})
 GOLD_STORY_INJECTABLE_CODES: frozenset[str] = frozenset(
     k for k in STORY_TYPE_LABELS if k not in _GOLD_STORY_NON_INJECTABLE
 )
@@ -162,6 +166,12 @@ GOLD_STORY_TYPE_CATALOG: tuple[dict[str, str], ...] = (
         "name": "目标错位",
         "formula": "立赛规→死磕过程/赢赛→资源溜走→点题认栽",
         "closing": "赢过程输目标点题；禁止 C 双规则回旋镖",
+    },
+    {
+        "code": "P",
+        "name": "整蛊互整",
+        "formula": "下料挑战→硬撑/自食→回敬加码→认怂散场",
+        "closing": "认输/不敢再试或短笑散；禁止 C 回旋镖、G 暖收",
     },
 )
 

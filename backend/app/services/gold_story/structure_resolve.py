@@ -1,5 +1,5 @@
 """金故事结构类型纠偏：M2+C 误判武力压制→M8+J；正经胡说→M6+N；
-目标错位→M13+O。"""
+目标错位→M13+O；整蛊互整→M14+P。"""
 
 from __future__ import annotations
 
@@ -51,6 +51,11 @@ _RE_GOAL_TUNNEL_PRIZE = re.compile(
     r"菜都没了|菜.*没了|只剩|吃光|见底|空盘子|资源.*溜|目标.*没|"
     r"白赢|赢了.*没"
 )
+# 整蛊互整：道具下料 + 回敬 + 认怂（抽象，禁绑单篇芥末词）
+_RE_P_OFFER = re.compile(r"尝尝|试试这个|给你选|挑战|这卷|这口|抹|加料|整蛊")
+_RE_P_RETALIATE = re.compile(r"再试试|也给你|轮到你|回敬|特意给你|专门给你")
+_RE_P_SURRENDER = re.compile(r"认输|不了不了|不敢再|我怂|服了|不试了")
+_RE_P_PRANK_NOTE = re.compile(r"整蛊|互整|以牙还牙|挑战.*认输|回敬")
 
 
 def classification_blob(
@@ -148,6 +153,49 @@ def suggests_m13_o_goal_tunnel(blob: str) -> bool:
     if has_prize and has_process:
         return True
     if has_prize and has_game and re.search(r"光顾着|顾着赢|白赢|赢了.*没", text):
+        return True
+    return False
+
+
+def suggests_m14_p_prank_reciprocal(blob: str) -> bool:
+    """整蛊互整：道具下料 + 回敬加码 + 认怂；非公平回旋镖、非武力一锤。"""
+    text = str(blob or "")
+    if suggests_c_fairness_boomerang(text):
+        return False
+    if suggests_m8_j_domination(text):
+        return False
+    if suggests_m13_o_goal_tunnel(text):
+        return False
+    has_offer = bool(_RE_P_OFFER.search(text) or _RE_P_PRANK_NOTE.search(text))
+    has_retaliate = bool(_RE_P_RETALIATE.search(text))
+    has_surrender = bool(_RE_P_SURRENDER.search(text))
+    if has_offer and has_retaliate and has_surrender:
+        return True
+    if has_offer and has_retaliate and _RE_P_PRANK_NOTE.search(text):
+        return True
+    return False
+
+
+def should_reclassify_to_m14_p(
+    *,
+    mechanism: str,
+    structure_type: str,
+    blob: str,
+) -> bool:
+    """误标 C/F 的道具整蛊互整 → M14+P。"""
+    mech = str(mechanism or "").strip().upper()
+    st = str(structure_type or "").strip().upper()
+    if mech == "M14" and st == "P":
+        return False
+    if not suggests_m14_p_prank_reciprocal(blob):
+        return False
+    if suggests_c_fairness_boomerang(blob):
+        return False
+    if mech == "M2" and st == "C":
+        return True
+    if mech == "M3" and st == "F":
+        return True
+    if st == "C" and _RE_P_PRANK_NOTE.search(blob):
         return True
     return False
 
@@ -274,7 +322,7 @@ def resolve_h3_structure(
     story_raw: str = "",
 ) -> tuple[dict[str, Any], list[str]]:
     """H3 后处理：武力压制误标 M2+C → M8+J；正经胡说误标 → M6+N；
-    目标错位误标 → M13+O。"""
+    目标错位误标 → M13+O；整蛊互整误标 → M14+P。"""
     notes: list[str] = []
     out = dict(h3)
     blob = classification_blob(
@@ -347,6 +395,22 @@ def resolve_h3_structure(
         )
         return out, notes
 
+    if should_reclassify_to_m14_p(
+        mechanism=str(out.get("mechanism") or ""),
+        structure_type=str(out.get("structure_type") or ""),
+        blob=blob,
+    ):
+        notes.extend(
+            _apply_reclass(
+                out,
+                target_mech="M14",
+                target_st="P",
+                note_extra="道具整蛊互整回敬认怂，非 C 双规则/非 F 纯口头威胁",
+                note_tag="prank-reciprocal",
+            )
+        )
+        return out, notes
+
     return out, notes
 
 
@@ -401,6 +465,13 @@ def resolve_structure_row(row: dict[str, Any]) -> tuple[dict[str, Any], list[str
     ):
         target_mech, target_st = "M13", "O"
         extra = "顾赛不顾奖：赢过程输目标，非 C 双规则回旋镖"
+    elif should_reclassify_to_m14_p(
+        mechanism=mechanism,
+        structure_type=current,
+        blob=blob,
+    ):
+        target_mech, target_st = "M14", "P"
+        extra = "道具整蛊互整回敬认怂，非 C 双规则/非 F 纯口头威胁"
 
     if not target_mech:
         out["payload"] = payload

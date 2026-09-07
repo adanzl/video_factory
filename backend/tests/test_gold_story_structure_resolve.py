@@ -255,3 +255,45 @@ def test_structurize_story_applies_resolve(monkeypatch):
     out = llm_steps.structurize_story(title="世子之争", story_raw=_STORY_28_RAW)
     assert out["mechanism"] == "M8"
     assert out["structure_type"] == "J"
+
+
+_STORY_47_RAW = (
+    "卷饼挑战桌上，昭昭把一卷抹满芥末的饼推到灿灿面前，笑嘻嘻地说："
+    "「妹妹，这卷可香了，你尝尝。」灿灿咬了一口，瞬间眼泪都呛出来了，"
+    "却硬撑着说：「还行，不辣。」昭昭憋着笑，自己也咬了一口，结果脸都绿了，"
+    "赶紧灌水。灿灿见状，反而乐了，又拿起一卷递过去：「哥，再试试这个，"
+    "我特意给你选的。」昭昭看着那卷明显加了料的饼，苦着脸摆手："
+    "「不了不了，我认输。」最后两人都笑了，把剩下的饼分着吃。"
+)
+
+
+def test_resolve_h3_structure_story_47_to_m14_p():
+    from app.services.gold_story.structure_resolve import (
+        should_reclassify_to_m14_p,
+        suggests_m14_p_prank_reciprocal,
+    )
+
+    assert suggests_m14_p_prank_reciprocal(_STORY_47_RAW)
+    assert should_reclassify_to_m14_p(
+        mechanism="M2",
+        structure_type="C",
+        blob=_STORY_47_RAW,
+    )
+    h3 = {
+        "mechanism": "M2",
+        "structure_type": "C",
+        "conflict_core": "昭昭用芥末饼整蛊灿灿，反被回敬，最终认输",
+        "beat": [
+            "昭昭递芥末饼声称好吃",
+            "灿灿硬撑说还行不辣",
+            "灿灿回敬加料饼",
+            "昭昭认输不敢再试",
+        ],
+        "structure_mapping_note": "整蛊互整回敬认怂",
+        "structure_confidence": 0.8,
+    }
+    fixed, notes = resolve_h3_structure(h3, story_raw=_STORY_47_RAW)
+    assert fixed["mechanism"] == "M14"
+    assert fixed["structure_type"] == "P"
+    assert notes
+    assert "prank-reciprocal" in notes[0]

@@ -223,7 +223,7 @@ def extract_story_type_from_punchline(punchline: str | None) -> str | None:
     t = (punchline or "").strip()
     if not t:
         return None
-    code_class = "[ABCDEGHIJKLNO]"
+    code_class = "[ABCDEGHIJKLNOP]"
     m = re.search(rf"矛盾类型\s*({code_class})", t, re.IGNORECASE)
     if m:
         return m.group(1).upper()
