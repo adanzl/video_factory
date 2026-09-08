@@ -12,9 +12,37 @@ from app.services.daily_story.story_types.k.validate import (
 )
 
 _PARENT_FAIL_LINE = "唉，我管不了你们了。"
-_KID_STALEMATE_LINE = "哼，我才不理你！"
+# 末句勿以「哼」起笔（会触发观感「无破功软收」-20）；中段可用带哼版本
+_KID_STALEMATE_LAST = "我才不理你！"
+_KID_STALEMATE_MID = "哼，我才不理你！"
+_KID_STALEMATE_LINE = _KID_STALEMATE_LAST  # 兼容旧引用
 _PARENT_SPEAKERS = frozenset({"妈妈", "爸爸"})
 _KID_SPEAKERS = frozenset({"昭昭", "灿灿"})
+# 与 quality._LIMP_SOFT_CLOSE_MARKERS 对齐的末句软收（K 勿末句落这些）
+_LIMP_LAST_MARKERS = (
+    "给你",
+    "算了",
+    "好吧",
+    "好了好了",
+    "行吧",
+    "随你",
+    "我不管",
+    "不管了",
+    "随便你",
+    "那行",
+    "行行行",
+    "哼",
+    "吃吧",
+    "你赢",
+)
+_PUNCH_BEFORE_SOFT = (
+    "不和好",
+    "别管",
+    "越劝越",
+    "管不了",
+    "谁怕谁",
+    "僵持",
+)
 # 家长旁观评点/解说腔（非劝失败口语）
 _RE_PARENT_META = re.compile(
     r"真绝了|太好笑|笑死|胜不骄|败不馁|这下好看|好看了|"
@@ -65,6 +93,58 @@ _PAD_JUNK_REPLACEMENTS = (
 )
 
 
+def _k_content_anchor(story: dict, prev_line: str = "") -> str:
+    """从上一句 / key / conflict_core 抽 2 字实义锚，供末句挂接（非单篇词表）。"""
+    skip = {
+        "你们",
+        "我们",
+        "什么",
+        "怎么",
+        "一个",
+        "这个",
+        "那个",
+        "不是",
+        "就是",
+        "可以",
+        "已经",
+        "真的",
+        "不管",
+        "不理",
+        "继续",
+        "妈妈",
+        "爸爸",
+        "昭昭",
+        "灿灿",
+        "兄妹",
+        "姐弟",
+        "无奈",
+        "旁观",
+        "扶额",
+    }
+    for src in (
+        prev_line,
+        str(story.get("key") or ""),
+        str(story.get("conflict_core") or ""),
+        str(story.get("scene_title") or ""),
+    ):
+        for m in re.finditer(r"[\u4e00-\u9fff]{2}", str(src or "")):
+            tok = m.group(0)
+            if tok in skip or tok[-1] in "了的吗呢吧啊呀嘛":
+                continue
+            return tok
+    return ""
+
+
+def _k_stalemate_last_line(story: dict, prev_line: str = "") -> str:
+    """末句僵持：尽量挂前文/主题锚，避免「你服不服→我才不理你」脱节。"""
+    anchor = _k_content_anchor(story, prev_line)
+    if anchor:
+        line = f"这{anchor}我才不理你！"
+        if len(line) <= 24:
+            return line
+    return _KID_STALEMATE_LAST
+
+
 def _is_k(story: dict) -> bool:
     punch = str(story.get("punchline_explain") or "")
     code = parse_story_type_code(
@@ -92,7 +172,7 @@ def _rewrite_h_line(speaker: str, line: str) -> str:
         return text
     if sp in _PARENT_SPEAKERS:
         return _PARENT_FAIL_LINE
-    return _KID_STALEMATE_LINE
+    return _KID_STALEMATE_MID
 
 
 def sanitize_k_dialogue_seed(seed: list | None) -> list:
@@ -112,7 +192,7 @@ def sanitize_k_dialogue_seed(seed: list | None) -> list:
             if sp in _PARENT_SPEAKERS:
                 row[key] = "唉，我管不了你们了"
             else:
-                row[key] = "哼，我才不理你"
+                row[key] = "我才不理你"
         out.append(row)
     return out
 
@@ -174,7 +254,15 @@ def patch_k_close_stalemate(story: dict) -> list[str]:
                     target = i
                     break
         if target is not None:
-            dialogue[target]["line"] = _KID_STALEMATE_LINE
+            # 末句禁用「哼…」软收模板，避免观感无破功软收 -20
+            if target == idxs[-1]:
+                prev_line = ""
+                if len(idxs) >= 2:
+                    prev_i = idxs[-2]
+                    prev_line = str(dialogue[prev_i].get("line") or "").strip()
+                dialogue[target]["line"] = _k_stalemate_last_line(story, prev_line)
+            else:
+                dialogue[target]["line"] = _KID_STALEMATE_MID
             notes.append("K补僵持收束")
 
     parent_n = sum(
@@ -205,6 +293,108 @@ def patch_k_close_stalemate(story: dict) -> list[str]:
             notes.append(f"K家长评点→劝失败[{i + 1}]")
 
     story["dialogue"] = dialogue
+    return notes
+
+
+def patch_k_fix_limp_soft_close(story: dict) -> list[str]:
+    """末句若落 limp 软收且前文无破功锚，改成不带哼的僵持句。"""
+    notes: list[str] = []
+    if not _is_k(story):
+        return notes
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 4:
+        return notes
+    idxs = _dialogue_idxs(dialogue)
+    if len(idxs) < 4:
+        return notes
+    last_i = idxs[-1]
+    last_item = dialogue[last_i]
+    if not isinstance(last_item, dict):
+        return notes
+    last = str(last_item.get("line") or "").strip()
+    if not last:
+        return notes
+    limp = any(m in last for m in _LIMP_LAST_MARKERS)
+    if not limp:
+        return notes
+    prev2 = "".join(
+        str(dialogue[i].get("line") or "").strip()
+        for i in idxs[-3:-1]
+        if isinstance(dialogue[i], dict)
+    )
+    punched = any(m in prev2 for m in _PUNCH_BEFORE_SOFT) or any(
+        m in last for m in _PUNCH_BEFORE_SOFT
+    )
+    if punched and not last.startswith("哼"):
+        # 先破功再软收可留；但「哼」起笔仍易被审稿打成软塌，末句去掉
+        return notes
+    if punched and last.startswith("哼"):
+        # 去哼留僵持语义
+        cleaned = re.sub(r"^哼[，, ]*", "", last).strip()
+        if cleaned and cleaned != last:
+            last_item["line"] = cleaned
+            notes.append(f"K末句去哼[{last_i + 1}]")
+            story["dialogue"] = dialogue
+            return notes
+    sp = str(last_item.get("speaker") or "").strip()
+    prev_line = ""
+    if len(idxs) >= 2:
+        prev_line = str(dialogue[idxs[-2]].get("line") or "").strip()
+    replacement = _k_stalemate_last_line(story, prev_line)
+    if sp not in _KID_SPEAKERS:
+        # 找末段孩子句改
+        for i in reversed(idxs[-4:]):
+            item = dialogue[i]
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("speaker") or "").strip() in _KID_SPEAKERS:
+                item["line"] = replacement
+                notes.append(f"K末段软收→僵持[{i + 1}]")
+                story["dialogue"] = dialogue
+                return notes
+        return notes
+    last_item["line"] = replacement
+    notes.append(f"K末句软收→僵持[{last_i + 1}]")
+    story["dialogue"] = dialogue
+    return notes
+
+
+def patch_k_tail_anchor(story: dict) -> list[str]:
+    """末 4 句若完全丢掉主题/冲突锚，末句挂回一层实义，防空喊互打收场。"""
+    notes: list[str] = []
+    if not _is_k(story):
+        return notes
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 8:
+        return notes
+    idxs = _dialogue_idxs(dialogue)
+    if len(idxs) < 4:
+        return notes
+    anchor = _k_content_anchor(story)
+    if not anchor:
+        return notes
+    tail = "".join(
+        str(dialogue[i].get("line") or "")
+        for i in idxs[-4:]
+        if isinstance(dialogue[i], dict)
+    )
+    if anchor in tail:
+        return notes
+    # 末句孩子台词回扣锚点（不新增句，避免冲字数/交替）
+    for i in reversed(idxs[-4:]):
+        item = dialogue[i]
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("speaker") or "").strip() not in _KID_SPEAKERS:
+            continue
+        prev_line = ""
+        pos = idxs.index(i)
+        if pos > 0:
+            prev_line = str(dialogue[idxs[pos - 1]].get("line") or "").strip()
+        item["line"] = _k_stalemate_last_line(story, prev_line or anchor)
+        notes.append(f"K末段回扣主题锚[{i + 1}:{anchor}]")
+        story["dialogue"] = dialogue
+        return notes
     return notes
 
 
@@ -795,5 +985,7 @@ def patch_k_body(story: dict) -> list[str]:
     notes.extend(patch_k_strip_orphan_reply(story))
     notes.extend(patch_k_break_same_speaker_run(story))
     notes.extend(patch_k_close_stalemate(story))
+    notes.extend(patch_k_fix_limp_soft_close(story))
+    notes.extend(patch_k_tail_anchor(story))
     notes.extend(patch_k_trim_empty_tail(story))
     return notes
