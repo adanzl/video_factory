@@ -1102,41 +1102,46 @@ _M8_J_NATURAL_MID_PAIRS: tuple[tuple[tuple[str, str], tuple[str, str]], ...] = (
         ("灿灿", "规矩先讲好，输了别赖账！"),
     ),
 )
-# K：互顶升级/僵持向，禁套 J 求否；「越劝」须对劝架大人，勿对弟妹说
+# K：互顶升级/僵持向，禁套 J 求否；禁拧耳朵/咬手等注水互打灌句
+# （会冲掉场故事主梗，且与「越劝」须对大人 的约定冲突）
 _K_NATURAL_MID_PAIRS: tuple[tuple[tuple[str, str], tuple[str, str]], ...] = (
     (
-        ("昭昭", "你再拧耳朵试试！"),
-        ("灿灿", "试试就试试，来啊！"),
+        ("昭昭", "你还敢推我！"),
+        ("灿灿", "推你怎么了，来吵啊！"),
     ),
     (
-        ("昭昭", "你拧疼我了！松开！"),
-        ("灿灿", "疼也得挨打！"),
+        ("昭昭", "你再吼我试试！"),
+        ("灿灿", "我偏要吼，谁怕谁！"),
     ),
     (
-        ("昭昭", "哼，有你好看！"),
-        ("灿灿", "谁怕你记仇！"),
+        ("昭昭", "你还骂！我更凶！"),
+        ("灿灿", "再闹我就打！"),
     ),
     (
-        ("昭昭", "我咬定了不松口！"),
-        ("灿灿", "松不松都要打！"),
+        ("昭昭", "哭也没用，我才不怕！"),
+        ("灿灿", "哼，我继续顶着！"),
+    ),
+    (
+        ("昭昭", "你越凶我越顶！"),
+        ("灿灿", "谁怕谁啊，继续吵！"),
     ),
     (
         ("昭昭", "你还打！我不怕你！"),
         ("灿灿", "再闹我就更凶！"),
-    ),
-    (
-        ("昭昭", "你给我等着瞧！"),
-        ("灿灿", "等着瞧就等着瞧！"),
     ),
 )
 # K near-miss 可读扩写：按说话人分流，禁串角/禁粘护手句
 _K_ZHAO_NATURAL_EXPAND: tuple[str, ...] = (
     "，我才不怕呢",
     "，你试试看啊",
+    "，我偏不让步",
+    "，我继续顶着",
 )
 _K_CAN_NATURAL_EXPAND: tuple[str, ...] = (
     "，再闹我恼了",
-    "，轮不到你",
+    "，轮不到你说",
+    "，我继续顶着",
+    "，谁怕谁啊",
 )
 _K_GOLD_CHAT_NATURAL_EXPAND: tuple[str, ...] = (
     _K_ZHAO_NATURAL_EXPAND + _K_CAN_NATURAL_EXPAND
@@ -2297,8 +2302,8 @@ def _boost_short_with_mid_lines(
     pairs_used = 0
     max_pairs = 1 if m8_j else (2 if large_gap else 1)
     if st == "K":
-        # 小缺口只插 1 对，避免后段空喊堆叠
-        max_pairs = 2 if need >= 20 else 1
+        # 大缺口允许多插几对实义中段，避免卡在 220 字附近反复垫粒子
+        max_pairs = 3 if need >= 40 else (2 if need >= 20 else 1)
     if st == "O":
         max_pairs = 1
 
@@ -2947,24 +2952,38 @@ def _gold_chat_force_min_chars(story: dict[str, Any]) -> tuple[dict[str, Any], b
         out = copy.deepcopy(story)
         out["story_type"] = "K"
         changed = False
-        for _ in range(6):
+        boost_used = 0
+        for _ in range(12):
             if dialogue_total_chars(out) >= DAILY_STORY_BODY_CHARS_MIN:
                 break
             before = dialogue_total_chars(out)
-            # K 禁口头禅扩写垫字（会与去重打架）；只插中段对 + 单语气词
-            out2, c1 = _boost_short_with_mid_lines(out, structure_type="K")
+            # K：中段实义对优先（最多 4 轮）；再粒子/句内扩写补齐 hard min
+            if boost_used < 4:
+                out2, c1 = _boost_short_with_mid_lines(out, structure_type="K")
+                out = out2
+                if c1:
+                    boost_used += 1
+                changed = changed or c1
+            out, _ = patch_sanitize_pad_suffix(out)
+            out, _ = patch_sanitize_pad_particles(out)
+            if dialogue_total_chars(out) >= DAILY_STORY_BODY_CHARS_MIN:
+                break
+            out2, cp = _pad_gold_chat_to_min_chars(out, max_rounds=32)
             out = out2
             out, _ = patch_sanitize_pad_suffix(out)
             out, _ = patch_sanitize_pad_particles(out)
-            changed = changed or c1
+            changed = changed or cp
+            if dialogue_total_chars(out) >= DAILY_STORY_BODY_CHARS_MIN:
+                break
+            out2, ce = _expand_short_gold_chat_lines(
+                out, ignore_deficit_cap=True
+            )
+            out = out2
+            out, _ = patch_sanitize_pad_suffix(out)
+            out, _ = patch_sanitize_pad_particles(out)
+            changed = changed or ce
             if dialogue_total_chars(out) <= before:
-                out2, cp = _pad_gold_chat_to_min_chars(out, max_rounds=24)
-                out = out2
-                out, _ = patch_sanitize_pad_suffix(out)
-                out, _ = patch_sanitize_pad_particles(out)
-                changed = changed or cp
-                if dialogue_total_chars(out) <= before:
-                    break
+                break
         return out, changed
     dialogue = story.get("dialogue")
     if isinstance(dialogue, list) and len(dialogue) >= CHAT_LINE_COUNT_MIN + 2:
@@ -5171,59 +5190,57 @@ def convert_gold_chat(
     try:
         struct = _gate_gold_chat_structure_score(chat)
     except ValueError:
-        # 终检分不够：定点抬一轮再 O 抛光（与 align 后抬分同思路）
-        if st_final != "O":
-            quality = cast(dict[str, Any], chat.get("quality")) if isinstance(
-                chat.get("quality"), dict
-            ) else {}
-            reasons = [str(r) for r in (quality.get("reasons") or [])]
-            cons = [
-                r
-                for r in reasons
-                if any(p in r for p in ("缺", "未", "拖", "不足", "软收", "连说", "-"))
-            ]
-            logger.info(
-                "gold_chat structure_score fail score=%s summary=%s "
-                "cons=%s pros=%s",
-                quality.get("structure_score") or quality.get("score"),
-                quality.get("summary"),
-                cons[:8],
-                reasons[:6],
+        # 终检分不够：K 先本地修软收/垫字再过门；O 走定点 LLM 抬分
+        if st_final == "K":
+            from app.services.daily_story.story_types import (
+                apply_gold_chat_k_fix_truncations,
+                apply_gold_chat_type_patch,
             )
-            raise
-        from app.services.daily_story.quality import structure_score_of
-        from app.services.daily_story.story_types import apply_gold_chat_type_patch
 
-        quality0 = cast(dict[str, Any], chat.get("quality")) if isinstance(
-            chat.get("quality"), dict
-        ) else {}
-        fb = format_structure_score_feedback(
-            f"structure_score:{structure_score_of(quality0)}",
-            chat,
-        )
-        try:
-            lifted = _fix_chat_with_llm(
-                chat,
-                fb
-                or "抬结构：两轮死磕见底后由赢赛方自述点题，"
-                "勿垫字碎片、勿对手代点题、勿点题后抬杠",
-                banned_literals=[str(x) for x in banned],
-                mom_lines_max=int(mom_max),
-            )
-            lifted = _normalize_chat_speakers(lifted)
+            lifted = dict(chat)
+            lifted["story_type"] = "K"
+            lifted, _ = apply_gold_chat_type_patch(lifted, structure_type="K")
             lifted, _ = patch_sanitize_pad_suffix(lifted)
             lifted, _ = patch_sanitize_pad_particles(lifted)
-            lifted, _ = apply_gold_chat_type_patch(lifted, structure_type="O")
-            lifted, _ = _ensure_gold_chat_min_chars(
-                lifted,
-                mechanism=mech,
-                structure_type=st_final,
-            )
-            lifted, _ = apply_gold_chat_type_patch(lifted, structure_type="O")
+            for _ in range(4):
+                if dialogue_total_chars(lifted) >= DAILY_STORY_BODY_CHARS_MIN:
+                    break
+                before = dialogue_total_chars(lifted)
+                lifted, c1 = _boost_short_with_mid_lines(
+                    lifted, mechanism=_mech0, structure_type="K"
+                )
+                lifted, c2 = _gold_chat_force_min_chars(lifted)
+                apply_gold_chat_k_fix_truncations(lifted)
+                lifted, _ = apply_gold_chat_type_patch(lifted, structure_type="K")
+                if dialogue_total_chars(lifted) <= before and not c1 and not c2:
+                    break
+            lifted, _ = patch_sanitize_pad_suffix(lifted)
+            lifted, _ = patch_sanitize_pad_particles(lifted)
+            apply_gold_chat_k_fix_truncations(lifted)
             lifted = _attach_gold_chat_structure_score(lifted, row)
-            struct = _gate_gold_chat_structure_score(lifted)
-            chat = lifted
-        except ValueError:
+            try:
+                struct = _gate_gold_chat_structure_score(lifted)
+                chat = lifted
+            except ValueError:
+                quality = cast(dict[str, Any], lifted.get("quality")) if isinstance(
+                    lifted.get("quality"), dict
+                ) else {}
+                reasons = [str(r) for r in (quality.get("reasons") or [])]
+                cons = [
+                    r
+                    for r in reasons
+                    if any(p in r for p in ("缺", "未", "拖", "不足", "软收", "连说", "-"))
+                ]
+                logger.info(
+                    "gold_chat structure_score fail score=%s summary=%s "
+                    "cons=%s pros=%s",
+                    quality.get("structure_score") or quality.get("score"),
+                    quality.get("summary"),
+                    cons[:8],
+                    reasons[:6],
+                )
+                raise
+        elif st_final != "O":
             quality = cast(dict[str, Any], chat.get("quality")) if isinstance(
                 chat.get("quality"), dict
             ) else {}
@@ -5242,6 +5259,58 @@ def convert_gold_chat(
                 reasons[:6],
             )
             raise
+        else:
+            from app.services.daily_story.quality import structure_score_of
+            from app.services.daily_story.story_types import apply_gold_chat_type_patch
+
+            quality0 = cast(dict[str, Any], chat.get("quality")) if isinstance(
+                chat.get("quality"), dict
+            ) else {}
+            fb = format_structure_score_feedback(
+                f"structure_score:{structure_score_of(quality0)}",
+                chat,
+            )
+            try:
+                lifted = _fix_chat_with_llm(
+                    chat,
+                    fb
+                    or "抬结构：两轮死磕见底后由赢赛方自述点题，"
+                    "勿垫字碎片、勿对手代点题、勿点题后抬杠",
+                    banned_literals=[str(x) for x in banned],
+                    mom_lines_max=int(mom_max),
+                )
+                lifted = _normalize_chat_speakers(lifted)
+                lifted, _ = patch_sanitize_pad_suffix(lifted)
+                lifted, _ = patch_sanitize_pad_particles(lifted)
+                lifted, _ = apply_gold_chat_type_patch(lifted, structure_type="O")
+                lifted, _ = _ensure_gold_chat_min_chars(
+                    lifted,
+                    mechanism=mech,
+                    structure_type=st_final,
+                )
+                lifted, _ = apply_gold_chat_type_patch(lifted, structure_type="O")
+                lifted = _attach_gold_chat_structure_score(lifted, row)
+                struct = _gate_gold_chat_structure_score(lifted)
+                chat = lifted
+            except ValueError:
+                quality = cast(dict[str, Any], chat.get("quality")) if isinstance(
+                    chat.get("quality"), dict
+                ) else {}
+                reasons = [str(r) for r in (quality.get("reasons") or [])]
+                cons = [
+                    r
+                    for r in reasons
+                    if any(p in r for p in ("缺", "未", "拖", "不足", "软收", "连说", "-"))
+                ]
+                logger.info(
+                    "gold_chat structure_score fail score=%s summary=%s "
+                    "cons=%s pros=%s",
+                    quality.get("structure_score") or quality.get("score"),
+                    quality.get("summary"),
+                    cons[:8],
+                    reasons[:6],
+                )
+                raise
     logger.info(
         "[GOLD_CHAT] convert %s structure_score=%s lines=%s chars=%s",
         sid,
