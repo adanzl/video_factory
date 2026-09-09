@@ -299,6 +299,80 @@ def test_resolve_h3_structure_story_47_to_m14_p():
     assert "prank-reciprocal" in notes[0]
 
 
+_STORY_75_RAW = (
+    "妈妈和妹妹灿灿在餐桌前玩抽签游戏，抽到几口就吃几口。"
+    "灿灿对抽到的签不满意，非要重抽，妈妈笑着纵容。"
+    "她抓起一个泡芙，一口塞进嘴里，奶油都挤了出来，妈妈夸她厉害。"
+    "接着灿灿又盯上辣味面条，明明吃不了辣，却硬要逞强，"
+    "结果被辣得大汗淋漓。灿灿嘴硬不承认，最后把剩下的推给妈妈，"
+    "说自己胃小吃不了太多。妈妈笑着让她去刷碗洗盘子，看穿小心思。"
+)
+
+
+def test_story_75_lottery_dishes_to_m15_q():
+    """抽签+洗碗纠偏到 M15+Q，不得钉死 M14+P。"""
+    from app.services.gold_story.structure_resolve import (
+        p_structure_evidence_blob,
+        should_demote_forced_m14_p,
+        should_reclassify_to_m14_p,
+        should_reclassify_to_m15_q,
+        suggests_m14_p_prank_reciprocal,
+        suggests_m15_q_cheat_expose,
+    )
+
+    contaminated = (
+        f"{_STORY_75_RAW}\n"
+        "灿灿抽签耍赖猛吃，最后推食被妈妈回敬洗碗\n"
+        "回敬洗碗\n"
+        "道具整蛊互整回敬认怂，mechanism:M2→M14"
+    )
+    clean = p_structure_evidence_blob(
+        story_raw=_STORY_75_RAW,
+        conflict_core="灿灿抽签耍赖猛吃，最后推食被妈妈回敬洗碗",
+        closing_intent="妈妈笑着让灿灿洗碗，看穿她的小心思",
+        beat=["抽签", "逞强", "推食", "洗碗"],
+        dialogue_seed=[
+            {"speaker": "灿灿", "intent": "耍赖重抽"},
+            {"speaker": "灿灿", "intent": "推食借口胃小"},
+            {"speaker": "妈妈", "intent": "回敬洗碗"},
+        ],
+    )
+    assert not suggests_m14_p_prank_reciprocal(clean)
+    assert not suggests_m14_p_prank_reciprocal(contaminated)
+    assert suggests_m15_q_cheat_expose(clean)
+    assert not should_reclassify_to_m14_p(
+        mechanism="M2", structure_type="C", blob=clean
+    )
+    assert should_reclassify_to_m15_q(
+        mechanism="M14", structure_type="P", blob=clean
+    )
+    assert not should_demote_forced_m14_p(
+        mechanism="M14", structure_type="P", blob=clean
+    )
+    h3 = {
+        "mechanism": "M14",
+        "structure_type": "P",
+        "conflict_core": "灿灿抽签耍赖猛吃，最后推食被妈妈看穿心思让洗碗",
+        "beat": ["抽签", "逞强", "推食", "洗碗"],
+        "structure_mapping_note": "道具整蛊互整回敬认怂；M2→M14+P",
+        "structure_confidence": 0.9,
+        "closing_intent": "妈妈笑着让灿灿洗碗，看穿她的小心思",
+    }
+    fixed, notes = resolve_h3_structure(h3, story_raw=_STORY_75_RAW)
+    assert fixed["mechanism"] == "M15"
+    assert fixed["structure_type"] == "Q"
+    assert any("cheat-expose-backfire" in n for n in notes)
+
+
+def test_bare_huijing_alone_not_m14_p():
+    from app.services.gold_story.structure_resolve import (
+        suggests_m14_p_prank_reciprocal,
+    )
+
+    assert not suggests_m14_p_prank_reciprocal("妈妈回敬洗碗，孩子认了")
+    assert not suggests_m14_p_prank_reciprocal("整蛊互整回敬认怂")
+
+
 def test_demote_forced_m2_c_warm_mom_talk():
     from app.services.gold_story.structure_resolve import should_demote_forced_m2_c
 

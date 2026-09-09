@@ -261,6 +261,12 @@ def _persist_structure_correction(row: dict[str, Any], notes: list[str]) -> dict
         patch["scene_contract"] = sc
     if patch:
         repo_gold_story.patch_story_payload(gid, patch)
+    # demote 置信写回 payload
+    conf = payload.get("structure_confidence")
+    if conf is not None and "demote:forced-m14p-not-prank" in "；".join(notes):
+        repo_gold_story.patch_story_payload(
+            gid, {"structure_confidence": float(conf)}
+        )
     logger.info(
         "[GOLD_CHAT] structure auto_correct id=%s notes=%s",
         gid,
@@ -3476,6 +3482,11 @@ def _prepare_chat_for_validate(
         from app.services.daily_story.story_types import apply_gold_chat_type_patch
 
         data, _ = apply_gold_chat_type_patch(data, structure_type="K")
+    data = _apply_gold_chat_local_hard_repairs(
+        data,
+        structure_type=st,
+        mom_lines_max=mom_lines_max,
+    )
     data, _ = _ensure_gold_chat_min_chars(
         data,
         mechanism=mech,
@@ -3519,6 +3530,11 @@ def _validate_pass1_chat(
             from app.services.daily_story.story_types import apply_gold_chat_type_patch
 
             data, _ = apply_gold_chat_type_patch(data, structure_type="K")
+        data = _apply_gold_chat_local_hard_repairs(
+            data,
+            structure_type=st,
+            mom_lines_max=mom_lines_max,
+        )
         data, _ = _ensure_gold_chat_min_chars(
             data,
             mechanism=mech,
@@ -3536,6 +3552,28 @@ def _validate_pass1_chat(
             last_err = str(exc)
             if attempt >= 4:
                 raise ValueError(last_err) from exc
+            # 缺字段/妈句：本地补丁 + 通用 FIX，勿只走短篇幅扩写
+            if _has_non_short_hard_errors(last_err):
+                data = _apply_gold_chat_local_hard_repairs(
+                    data,
+                    structure_type=st,
+                    mom_lines_max=mom_lines_max,
+                )
+                data = _fix_chat_with_llm(
+                    data,
+                    last_err,
+                    banned_literals=banned_literals,
+                    mom_lines_max=mom_lines_max,
+                )
+                data = _normalize_chat_speakers(data)
+                if st:
+                    data["story_type"] = st
+                data = _apply_gold_chat_local_hard_repairs(
+                    data,
+                    structure_type=st,
+                    mom_lines_max=mom_lines_max,
+                )
+                continue
             # 偏短：near_miss 轻量 FIX；大缺口 M8+J 中段重写；仍不足交外层 Pass1 重生成
             if _is_short_content_error(last_err):
                 from app.services.gold_story.gold_chat.type_bridge import (
@@ -4319,9 +4357,141 @@ def _is_regenerable_short_error(msg: str) -> bool:
     return char_def is not None and char_def > 0
 
 
+def _has_non_short_hard_errors(msg: str) -> bool:
+    """缺字段/妈句等硬错：勿只走短篇幅 FIX。"""
+    text = str(msg or "")
+    return (
+        "缺少字段" in text
+        or "punchline_explain" in text
+        or "妈妈台词须" in text
+        or "爸爸台词须" in text
+        or "key 须" in text
+    )
+
+
+def _ensure_gold_chat_punchline_explain(
+    story: dict[str, Any],
+    *,
+    structure_type: str = "",
+) -> dict[str, Any]:
+    """缺 punchline_explain 时按类型补前缀字段（不改对白）。"""
+    out = dict(story)
+    st = str(structure_type or out.get("story_type") or "").strip().upper()
+    if not st:
+        return out
+    from app.services.daily_story.story_types import (
+        STORY_TYPE_LABELS,
+        normalize_punchline_explain,
+    )
+
+    if st not in STORY_TYPE_LABELS:
+        return out
+    raw = str(out.get("punchline_explain") or "").strip()
+    if not raw:
+        label = STORY_TYPE_LABELS.get(st, st)
+        out["punchline_explain"] = f"{st}类{label}"
+        return out
+    out["punchline_explain"] = normalize_punchline_explain(raw, st)
+    return out
+
+
+def _trim_gold_chat_mom_lines(
+    story: dict[str, Any],
+    *,
+    mom_lines_max: int = 1,
+) -> tuple[dict[str, Any], bool]:
+    """妈妈句超限：先合并连续妈妈句，再保留末尾相关句至上限。"""
+    import copy
+
+    mom_max = max(0, int(mom_lines_max))
+    out = copy.deepcopy(story)
+    dialogue = out.get("dialogue")
+    if not isinstance(dialogue, list) or mom_max <= 0:
+        # mom_max=0：删全部妈妈句
+        if not isinstance(dialogue, list):
+            return story, False
+        kept = [
+            item
+            for item in dialogue
+            if not (
+                isinstance(item, dict)
+                and str(item.get("speaker") or "").strip() == "妈妈"
+            )
+        ]
+        if len(kept) == len(dialogue):
+            return story, False
+        out["dialogue"] = kept
+        return out, True
+
+    from app.services.daily_story.dialogue_text import (
+        DAILY_STORY_LINE_CHARS_MAX,
+        dialogue_char_count,
+    )
+
+    changed = False
+    # 合并连续妈妈句
+    i = 1
+    while i < len(dialogue):
+        a, b = dialogue[i - 1], dialogue[i]
+        if not isinstance(a, dict) or not isinstance(b, dict):
+            i += 1
+            continue
+        if str(a.get("speaker") or "").strip() != "妈妈":
+            i += 1
+            continue
+        if str(b.get("speaker") or "").strip() != "妈妈":
+            i += 1
+            continue
+        left = str(a.get("line") or "").rstrip("。！？…")
+        right = str(b.get("line") or "").strip()
+        sep = "，" if left and not left.endswith(("！", "!", "？")) else ""
+        merged = f"{left}{sep}{right}"
+        if dialogue_char_count(merged) > DAILY_STORY_LINE_CHARS_MAX:
+            i += 1
+            continue
+        a["line"] = merged
+        dialogue.pop(i)
+        changed = True
+
+    mom_idxs = [
+        idx
+        for idx, item in enumerate(dialogue)
+        if isinstance(item, dict)
+        and str(item.get("speaker") or "").strip() == "妈妈"
+    ]
+    if len(mom_idxs) <= mom_max:
+        return (out, changed) if changed else (story, False)
+
+    # 超限：保留最后 mom_max 句妈妈台词（收束常在末段）
+    drop = set(mom_idxs[:-mom_max])
+    out["dialogue"] = [
+        item for idx, item in enumerate(dialogue) if idx not in drop
+    ]
+    return out, True
+
+
+def _apply_gold_chat_local_hard_repairs(
+    story: dict[str, Any],
+    *,
+    structure_type: str = "",
+    mom_lines_max: int = 1,
+) -> dict[str, Any]:
+    """校验前本地硬修复：补 punchline、裁妈妈句。"""
+    data = _ensure_gold_chat_punchline_explain(
+        story, structure_type=structure_type
+    )
+    data, _ = _trim_gold_chat_mom_lines(data, mom_lines_max=mom_lines_max)
+    return data
+
+
 def _short_content_reject_message(detail: str, *, regen_count: int = 0) -> str:
     text = str(detail or "").strip()
-    if regen_count > 0:
+    if _has_non_short_hard_errors(text):
+        if regen_count > 0:
+            head = f"gold_chat校验驳回:重试{regen_count}次仍不达标"
+        else:
+            head = "gold_chat校验驳回"
+    elif regen_count > 0:
         head = f"gold_chat篇幅驳回:重生成{regen_count}次仍不达标"
     else:
         head = "gold_chat篇幅驳回:本地垫字仍不足"
@@ -4352,10 +4522,39 @@ def _structure_type_hint(structure_type: str, mechanism: str = "") -> str:
     return structure_type_hint(structure_type=structure_type, mechanism=mechanism)
 
 
+def _gate_forced_m14_p_or_raise(row: dict[str, Any]) -> None:
+    """假 M14+P（亲子成人反将等）禁止硬转对白。"""
+    from app.services.gold_story.structure_resolve import (
+        p_structure_evidence_blob,
+        should_demote_forced_m14_p,
+    )
+
+    payload = cast(dict[str, Any], row.get("payload") or {})
+    blob = p_structure_evidence_blob(
+        story_raw=str(payload.get("story_raw") or ""),
+        beat=payload.get("beat") if isinstance(payload.get("beat"), list) else [],
+        conflict_core=str(row.get("conflict_core") or ""),
+        closing_intent=str(payload.get("closing_intent") or ""),
+        dialogue_seed=payload.get("dialogue_seed")
+        if isinstance(payload.get("dialogue_seed"), list)
+        else None,
+    )
+    if should_demote_forced_m14_p(
+        mechanism=str(row.get("mechanism") or ""),
+        structure_type=str(row.get("structure_type") or ""),
+        blob=blob,
+    ):
+        raise ValueError(
+            "gold_chat结构驳回:forced-m14p-not-prank; "
+            "缺道具互整认怂链（亲子成人反将不可硬套 P）"
+        )
+
+
 def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
     """单条 gold_story 行 → daily_story 形 JSON。"""
     row = _repair_i_row_contract(row)
     row, _structure_notes = _resolve_structure_row(row)
+    _gate_forced_m14_p_or_raise(row)
     payload = cast(dict[str, Any], row.get("payload") or {})
     structure_type = str(row.get("structure_type") or "A").strip().upper()
     st_label = structure_type_label(structure_type)
@@ -4599,6 +4798,17 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
         data, seed_changed2 = patch_seed_speaker_align(data, dialogue_seed=seed)
         if seed_changed2:
             type_notes = list(type_notes) + ["seed角色再归位"]
+        if str(structure_type or "").upper() == "Q":
+            data, q_notes = apply_gold_chat_body_pipeline(
+                data, structure_type="Q"
+            )
+            if q_notes:
+                type_notes = list(type_notes) + list(q_notes)[:4]
+            data, _ = _ensure_gold_chat_min_chars(
+                data,
+                mechanism=mechanism,
+                structure_type=structure_type,
+            )
         if str(structure_type or "").upper() == "J":
             data, br_changed = patch_break_consecutive_keep_seed(
                 data, dialogue_seed=seed

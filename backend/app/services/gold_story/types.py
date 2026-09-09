@@ -1,11 +1,11 @@
-"""金故事机制 M1–M14 与结构类型 A–E/F/G/H/I/J/K/L/N/O/P 映射。"""
+"""金故事机制 M1–M15 与结构类型 A–E/F/G/H/I/J/K/L/N/O/P/Q 映射。"""
 
 from __future__ import annotations
 
 from app.services.daily_story.story_types import STORY_TYPE_LABELS
 
 GOLD_STORY_MECHANISM_CODES: frozenset[str] = frozenset(
-    f"M{i}" for i in range(1, 15)
+    f"M{i}" for i in range(1, 16)
 )
 
 GOLD_STORY_MECHANISM_LABELS: dict[str, str] = {
@@ -23,6 +23,7 @@ GOLD_STORY_MECHANISM_LABELS: dict[str, str] = {
     "M12": "家长旁观",
     "M13": "顾赛不顾奖",
     "M14": "以牙还牙",
+    "M15": "耍赖翻车",
 }
 
 # M → 结构字母：能落 A–E 的落 A–E；否则用扩展字母（F/G/H…）
@@ -41,6 +42,7 @@ MECHANISM_STRUCTURE_MAP: dict[str, str] = {
     "M12": "K",  # 家长旁观不劝和 → 家长看戏
     "M13": "O",  # 顾赛不顾奖 → 目标错位
     "M14": "P",  # 以牙还牙整蛊互整 → 认怂散场
+    "M15": "Q",  # 耍赖/借口被拆穿 → 反噬翻车
 }
 
 # mechanism 默认映射外的合法 structure_type（防 H3 误判入库失败）
@@ -64,6 +66,7 @@ GOLD_STORY_EXTENDED_TYPE_LABELS: dict[str, str] = {
     "N": "正经胡说",
     "O": "目标错位",
     "P": "整蛊互整",
+    "Q": "耍赖翻车",
 }
 
 GOLD_STORY_STRUCTURE_LABELS: dict[str, str] = {
@@ -75,8 +78,10 @@ GOLD_STORY_STRUCTURE_CODES: frozenset[str] = frozenset(
     GOLD_STORY_STRUCTURE_LABELS.keys()
 )
 
-# daily_story 已落地类型（H5 可注入任务）；H/I/J/K/L/N/O/P 暂仅 gold_story 侧
-_GOLD_STORY_NON_INJECTABLE = frozenset({"F", "H", "I", "J", "K", "L", "N", "O", "P"})
+# daily_story 已落地类型（H5 可注入任务）；H/I/J/K/L/N/O/P/Q 暂仅 gold_story 侧
+_GOLD_STORY_NON_INJECTABLE = frozenset(
+    {"F", "H", "I", "J", "K", "L", "N", "O", "P", "Q"}
+)
 GOLD_STORY_INJECTABLE_CODES: frozenset[str] = frozenset(
     k for k in STORY_TYPE_LABELS if k not in _GOLD_STORY_NON_INJECTABLE
 )
@@ -172,6 +177,12 @@ GOLD_STORY_TYPE_CATALOG: tuple[dict[str, str], ...] = (
         "name": "整蛊互整",
         "formula": "下料挑战→硬撑/自食→回敬加码→认怂散场",
         "closing": "认输/不敢再试或短笑散；禁止 C 回旋镖、G 暖收",
+    },
+    {
+        "code": "Q",
+        "name": "耍赖翻车",
+        "formula": "立玩法→耍赖/借口加码→被拆穿→反噬收场",
+        "closing": "赖法反噬；禁止 E 妈妈破功、P 互整认怂、H 劝和",
     },
 )
 

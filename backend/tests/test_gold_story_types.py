@@ -45,9 +45,13 @@ def test_injectable_vs_extended():
     assert not is_injectable_structure_type("J")
     assert not is_injectable_structure_type("O")
     assert not is_injectable_structure_type("P")
+    assert not is_injectable_structure_type("Q")
     assert mechanism_label("M14") == "以牙还牙"
+    assert mechanism_label("M15") == "耍赖翻车"
     assert structure_type_label("P") == "整蛊互整"
+    assert structure_type_label("Q") == "耍赖翻车"
     assert catalog_entry("P") is not None
+    assert catalog_entry("Q") is not None
 
 
 def test_multi_allow_sets():
@@ -56,11 +60,13 @@ def test_multi_allow_sets():
     assert allowed_structure_types("M6") == frozenset({"N", "A", "E"})
     assert allowed_structure_types("M13") == frozenset({"O"})
     assert allowed_structure_types("M14") == frozenset({"P"})
+    assert allowed_structure_types("M15") == frozenset({"Q"})
     assert allowed_structure_types("M3") == frozenset({"F", "P"})
     validate_mechanism_structure_pair("M5", "J")
     validate_mechanism_structure_pair("M8", "J")
     validate_mechanism_structure_pair("M6", "A")
     validate_mechanism_structure_pair("M14", "P")
+    validate_mechanism_structure_pair("M15", "Q")
     with pytest.raises(ValueError, match="M13 对应 structure_type"):
         validate_mechanism_structure_pair("M13", "C")
 

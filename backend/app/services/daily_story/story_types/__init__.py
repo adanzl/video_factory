@@ -29,6 +29,7 @@ from app.services.daily_story.story_types.l.line import LINE_L
 from app.services.daily_story.story_types.n.line import LINE_N
 from app.services.daily_story.story_types.o.line import LINE_O
 from app.services.daily_story.story_types.p.line import LINE_P
+from app.services.daily_story.story_types.q.line import LINE_Q
 
 __all__ = [
     "QUALITY_FALLBACK_CODE",
@@ -69,7 +70,7 @@ STORY_TYPE_LINES: dict[str, StoryTypeLine] = {
     r.code: r
     for r in (
         LINE_A, LINE_B, LINE_C, LINE_D, LINE_E, LINE_F, LINE_G, LINE_H,
-        LINE_I, LINE_J, LINE_K, LINE_L, LINE_N, LINE_O, LINE_P,
+        LINE_I, LINE_J, LINE_K, LINE_L, LINE_N, LINE_O, LINE_P, LINE_Q,
     )
 }
 
@@ -285,6 +286,8 @@ def infer_story_type_code(
         scores["O"] = scores.get("O", 0) + 2
     if re.search(r"整蛊|回敬|认输|再试试|不了不了|挑战", blob):
         scores["P"] = scores.get("P", 0) + 2
+    if re.search(r"耍赖|重抽|借口|看穿|拆穿|洗碗|心思", blob):
+        scores["Q"] = scores.get("Q", 0) + 2
 
     max_score = max(scores.values())
     if max_score <= 0:
@@ -469,6 +472,12 @@ def apply_gold_chat_strip_filler(chat: dict[str, Any]) -> list[str]:
         notes.extend(patch_p_strip_pad_tails(chat) or [])
         notes.extend(patch_p_trim_after_surrender(chat) or [])
         return notes
+    if code == "Q":
+        from app.services.daily_story.story_types.q.patch import (
+            patch_q_strip_pad_tails,
+        )
+
+        return list(patch_q_strip_pad_tails(chat) or [])
     return []
 
 
@@ -647,6 +656,10 @@ def append_type_body_validation_errors(
         from app.services.daily_story.story_types.p.validate import append_p_body_errors
 
         append_p_body_errors(story, errors)
+    elif code == "Q" and _enabled("Q"):
+        from app.services.daily_story.story_types.q.validate import append_q_body_errors
+
+        append_q_body_errors(story, errors)
 
 
 def patch_type_body(story: dict) -> list[str]:
@@ -711,6 +724,10 @@ def patch_type_body(story: dict) -> list[str]:
         from app.services.daily_story.story_types.p.patch import patch_p_body
 
         return patch_p_body(story)
+    if code == "Q":
+        from app.services.daily_story.story_types.q.patch import patch_q_body
+
+        return patch_q_body(story)
     return []
 
 
@@ -851,6 +868,16 @@ def validate_type_opening(
         from app.services.daily_story.story_types.p.opening import append_p_opening_errors
 
         append_p_opening_errors(
+            normalized,
+            type_code=type_code,
+            errors=errors,
+            conflict_core=conflict_core,
+            setting=setting,
+        )
+    if type_body_validation_enabled("Q"):
+        from app.services.daily_story.story_types.q.opening import append_q_opening_errors
+
+        append_q_opening_errors(
             normalized,
             type_code=type_code,
             errors=errors,

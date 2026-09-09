@@ -1,6 +1,6 @@
 """金故事结构类型纠偏：M2+C 误判武力压制→M8+J；正经胡说→M6+N；
-目标错位→M13+O；整蛊互整→M14+P；暖收误标 M7+D→M4+G；
-无双规则硬套 M2+C → 降置信拒收。"""
+目标错位→M13+O；整蛊互整→M14+P；耍赖翻车→M15+Q；暖收误标 M7+D→M4+G；
+无双规则硬套 M2+C / 假 M14+P → 降置信拒收。"""
 
 from __future__ import annotations
 
@@ -52,11 +52,31 @@ _RE_GOAL_TUNNEL_PRIZE = re.compile(
     r"菜都没了|菜.*没了|只剩|吃光|见底|空盘子|资源.*溜|目标.*没|"
     r"白赢|赢了.*没"
 )
-# 整蛊互整：道具下料 + 回敬 + 认怂（抽象，禁绑单篇芥末词）
-_RE_P_OFFER = re.compile(r"尝尝|试试这个|给你选|挑战|这卷|这口|抹|加料|整蛊")
-_RE_P_RETALIATE = re.compile(r"再试试|也给你|轮到你|回敬|特意给你|专门给你")
+# 整蛊互整：道具下料 + 对等回敬 + 认怂（抽象，禁绑单篇芥末词）
+# 裸「回敬」不得单独充当 offer/retaliate（会把「回敬洗碗」亲子反将误标 P）
+_RE_P_OFFER = re.compile(
+    r"尝尝|试试这个|给你选|挑战|这卷|这口|抹|加料|整蛊|"
+    r"递.*饼|推到.*面前"
+)
+_RE_P_RETALIATE = re.compile(
+    r"再试试|也给你|轮到你|特意给你|专门给你|也尝尝|给你加料"
+)
 _RE_P_SURRENDER = re.compile(r"认输|不了不了|不敢再|我怂|服了|不试了")
-_RE_P_PRANK_NOTE = re.compile(r"整蛊|互整|以牙还牙|挑战.*认输|回敬")
+_RE_P_PRANK_NOTE = re.compile(r"整蛊|互整|以牙还牙|挑战.*认输")
+# 成人惩罚/家务反将：负向（无互整链时禁止当 P；可作 Q 反噬信号）
+_RE_P_ADULT_REVERSE = re.compile(
+    r"洗碗|刷碗|洗盘子|罚站|写作业|没收|罚洗|去做家务"
+)
+# 耍赖翻车：约定后耍赖/借口 → 被拆穿 → 反噬（与 E/P 对仗）
+_RE_Q_CHEAT = re.compile(
+    r"耍赖|重抽|再抽|逞强|借口|推给|胃小|太少|不认|嘴硬"
+)
+_RE_Q_EXPOSE = re.compile(
+    r"看穿|拆穿|揭穿|心思|你昨天|偷吃|别装|露馅|明明"
+)
+_RE_Q_BACKFIRE = re.compile(
+    r"洗碗|刷碗|洗盘子|加活|罚|活该|自己收拾|你去|翻车"
+)
 # 硬套 M2+C 的自述/题材信号（抽象，不绑单篇词表）
 _RE_FORCED_M2C_NOTE = re.compile(
     r"无回旋镖|没有回旋镖|未形成回旋镖|非回旋镖|"
@@ -179,8 +199,30 @@ def suggests_m13_o_goal_tunnel(blob: str) -> bool:
     return False
 
 
+def p_structure_evidence_blob(
+    *,
+    story_raw: str = "",
+    beat: list[Any] | None = None,
+    conflict_core: str = "",
+    closing_intent: str = "",
+    dialogue_seed: list[Any] | None = None,
+) -> str:
+    """P 纠偏证据：不含 mapping_note，防「整蛊回敬」自证循环。"""
+    return classification_blob(
+        story_raw=story_raw,
+        beat=beat,
+        conflict_core=conflict_core,
+        mapping_note="",
+        closing_intent=closing_intent,
+        dialogue_seed=dialogue_seed,
+    )
+
+
 def suggests_m14_p_prank_reciprocal(blob: str) -> bool:
-    """整蛊互整：道具下料 + 回敬加码 + 认怂；非公平回旋镖、非武力一锤。"""
+    """整蛊互整：道具下料 + 对等回敬 + 认怂；非公平回旋镖、非武力一锤。
+
+    须三拍齐备；禁止用「回敬/整蛊」备注词单独充当 offer。
+    """
     text = str(blob or "")
     if suggests_c_fairness_boomerang(text):
         return False
@@ -188,14 +230,10 @@ def suggests_m14_p_prank_reciprocal(blob: str) -> bool:
         return False
     if suggests_m13_o_goal_tunnel(text):
         return False
-    has_offer = bool(_RE_P_OFFER.search(text) or _RE_P_PRANK_NOTE.search(text))
+    has_offer = bool(_RE_P_OFFER.search(text))
     has_retaliate = bool(_RE_P_RETALIATE.search(text))
     has_surrender = bool(_RE_P_SURRENDER.search(text))
-    if has_offer and has_retaliate and has_surrender:
-        return True
-    if has_offer and has_retaliate and _RE_P_PRANK_NOTE.search(text):
-        return True
-    return False
+    return bool(has_offer and has_retaliate and has_surrender)
 
 
 def should_reclassify_to_m14_p(
@@ -218,6 +256,62 @@ def should_reclassify_to_m14_p(
     if mech == "M3" and st == "F":
         return True
     if st == "C" and _RE_P_PRANK_NOTE.search(blob):
+        return True
+    return False
+
+
+def should_demote_forced_m14_p(
+    *,
+    mechanism: str,
+    structure_type: str,
+    blob: str,
+) -> bool:
+    """已标 M14+P 但干净证据无互整认怂链 → 降置信（禁亲子洗碗反将硬套）。
+
+    若已可纠到 M15+Q，优先走 reclass，不 demote。
+    """
+    mech = str(mechanism or "").strip().upper()
+    st = str(structure_type or "").strip().upper()
+    if mech != "M14" or st != "P":
+        return False
+    if suggests_m15_q_cheat_expose(blob):
+        return False
+    return not suggests_m14_p_prank_reciprocal(blob)
+
+
+def suggests_m15_q_cheat_expose(blob: str) -> bool:
+    """耍赖翻车：耍赖/借口加码 + 被拆穿 + 反噬；非 P 互整、非 C 回旋镖。"""
+    text = str(blob or "")
+    if suggests_m14_p_prank_reciprocal(text):
+        return False
+    if suggests_c_fairness_boomerang(text):
+        return False
+    if suggests_m8_j_domination(text):
+        return False
+    has_cheat = bool(_RE_Q_CHEAT.search(text))
+    has_expose = bool(_RE_Q_EXPOSE.search(text))
+    has_backfire = bool(_RE_Q_BACKFIRE.search(text))
+    return bool(has_cheat and has_expose and has_backfire)
+
+
+def should_reclassify_to_m15_q(
+    *,
+    mechanism: str,
+    structure_type: str,
+    blob: str,
+) -> bool:
+    """误标 P/C/E 的耍赖翻车 → M15+Q。"""
+    mech = str(mechanism or "").strip().upper()
+    st = str(structure_type or "").strip().upper()
+    if mech == "M15" and st == "Q":
+        return False
+    if not suggests_m15_q_cheat_expose(blob):
+        return False
+    if mech == "M14" and st == "P":
+        return True
+    if mech == "M2" and st == "C":
+        return True
+    if st in {"P", "C", "E"}:
         return True
     return False
 
@@ -395,14 +489,22 @@ def resolve_h3_structure(
 ) -> tuple[dict[str, Any], list[str]]:
     """H3 后处理：武力压制误标 M2+C → M8+J；正经胡说误标 → M6+N；
     目标错位误标 → M13+O；整蛊互整误标 → M14+P；
-    暖收误标 M7+D → M4+G；无双规则硬套 M2+C → 降 structure_confidence。"""
+    暖收误标 M7+D → M4+G；无双规则硬套 M2+C / 假 M14+P → 降 structure_confidence。"""
     notes: list[str] = []
     out = dict(h3)
+    beat = out.get("beat") if isinstance(out.get("beat"), list) else []
     blob = classification_blob(
         story_raw=story_raw,
-        beat=out.get("beat") if isinstance(out.get("beat"), list) else [],
+        beat=beat,
         conflict_core=str(out.get("conflict_core") or ""),
         mapping_note=str(out.get("structure_mapping_note") or ""),
+    )
+    # P 判定禁用 mapping_note，防「整蛊回敬」自证
+    blob_p = p_structure_evidence_blob(
+        story_raw=story_raw,
+        beat=beat,
+        conflict_core=str(out.get("conflict_core") or ""),
+        closing_intent=str(out.get("closing_intent") or ""),
     )
     if should_reclassify_m7_d_to_m4_g(
         mechanism=str(out.get("mechanism") or ""),
@@ -487,7 +589,7 @@ def resolve_h3_structure(
     if should_reclassify_to_m14_p(
         mechanism=str(out.get("mechanism") or ""),
         structure_type=str(out.get("structure_type") or ""),
-        blob=blob,
+        blob=blob_p,
     ):
         notes.extend(
             _apply_reclass(
@@ -498,6 +600,42 @@ def resolve_h3_structure(
                 note_tag="prank-reciprocal",
             )
         )
+        return out, notes
+
+    if should_reclassify_to_m15_q(
+        mechanism=str(out.get("mechanism") or ""),
+        structure_type=str(out.get("structure_type") or ""),
+        blob=blob_p,
+    ):
+        notes.extend(
+            _apply_reclass(
+                out,
+                target_mech="M15",
+                target_st="Q",
+                note_extra="耍赖/借口被拆穿后反噬，非 P 互整认怂、非 E 妈妈破功",
+                note_tag="cheat-expose-backfire",
+            )
+        )
+        return out, notes
+
+    if should_demote_forced_m14_p(
+        mechanism=str(out.get("mechanism") or ""),
+        structure_type=str(out.get("structure_type") or ""),
+        blob=blob_p,
+    ):
+        conf = float(out.get("structure_confidence") or 0.0)
+        out["structure_confidence"] = min(conf, 0.35)
+        note = str(out.get("structure_mapping_note") or "").strip()
+        extra = (
+            "adult_reverse_not_prank；缺道具互整认怂链，禁止硬套 M14+P"
+            if _RE_P_ADULT_REVERSE.search(blob_p)
+            else "no_retaliate_chain；缺道具互整认怂链，禁止硬套 M14+P"
+        )
+        if "adult_reverse_not_prank" not in note and "no_retaliate_chain" not in note:
+            out["structure_mapping_note"] = (
+                f"{note}；{extra}".strip("；") if note else extra
+            )
+        notes.append("demote:forced-m14p-not-prank")
         return out, notes
 
     if should_demote_forced_m2_c(
@@ -530,6 +668,15 @@ def resolve_structure_row(row: dict[str, Any]) -> tuple[dict[str, Any], list[str
         beat=payload.get("beat") if isinstance(payload.get("beat"), list) else [],
         conflict_core=str(out.get("conflict_core") or ""),
         mapping_note=str(payload.get("structure_mapping_note") or ""),
+        closing_intent=str(payload.get("closing_intent") or ""),
+        dialogue_seed=payload.get("dialogue_seed")
+        if isinstance(payload.get("dialogue_seed"), list)
+        else None,
+    )
+    blob_p = p_structure_evidence_blob(
+        story_raw=str(payload.get("story_raw") or ""),
+        beat=payload.get("beat") if isinstance(payload.get("beat"), list) else [],
+        conflict_core=str(out.get("conflict_core") or ""),
         closing_intent=str(payload.get("closing_intent") or ""),
         dialogue_seed=payload.get("dialogue_seed")
         if isinstance(payload.get("dialogue_seed"), list)
@@ -579,12 +726,40 @@ def resolve_structure_row(row: dict[str, Any]) -> tuple[dict[str, Any], list[str
     elif should_reclassify_to_m14_p(
         mechanism=mechanism,
         structure_type=current,
-        blob=blob,
+        blob=blob_p,
     ):
         target_mech, target_st = "M14", "P"
         extra = "道具整蛊互整回敬认怂，非 C 双规则/非 F 纯口头威胁"
+    elif should_reclassify_to_m15_q(
+        mechanism=mechanism,
+        structure_type=current,
+        blob=blob_p,
+    ):
+        target_mech, target_st = "M15", "Q"
+        extra = "耍赖/借口被拆穿后反噬，非 P 互整认怂、非 E 妈妈破功"
 
     if not target_mech:
+        if should_demote_forced_m14_p(
+            mechanism=mechanism,
+            structure_type=current,
+            blob=blob_p,
+        ):
+            conf = float(payload.get("structure_confidence") or out.get("structure_confidence") or 0.0)
+            payload["structure_confidence"] = min(conf, 0.35)
+            note = str(payload.get("structure_mapping_note") or "").strip()
+            demote_extra = (
+                "adult_reverse_not_prank；缺道具互整认怂链，禁止硬套 M14+P"
+                if _RE_P_ADULT_REVERSE.search(blob_p)
+                else "no_retaliate_chain；缺道具互整认怂链，禁止硬套 M14+P"
+            )
+            if (
+                "adult_reverse_not_prank" not in note
+                and "no_retaliate_chain" not in note
+            ):
+                payload["structure_mapping_note"] = (
+                    f"{note}；{demote_extra}".strip("；") if note else demote_extra
+                )
+            notes.append("demote:forced-m14p-not-prank")
         out["payload"] = payload
         return out, notes
 

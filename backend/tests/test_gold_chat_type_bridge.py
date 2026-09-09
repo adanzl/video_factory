@@ -369,3 +369,100 @@ def test_validate_gold_chat_rejects_narration_line():
         assert False, "expected ValueError"
     except ValueError as exc:
         assert "narration_not_speech" in str(exc)
+
+
+def test_q_patch_binds_cheat_speaker_and_strips_pads():
+    import re
+
+    from app.services.daily_story.story_types.q.patch import patch_q_body
+    from app.services.daily_story.story_types.q.validate import append_q_body_errors
+    from app.services.gold_story.scene import (
+        looks_like_narration_line,
+        patch_dialogue_narration_to_speech,
+        rewrite_narration_to_speech,
+    )
+
+    assert looks_like_narration_line(
+        "一口吞下泡芙，奶油都挤出来嘛，说一不二！"
+    )
+    spoken = rewrite_narration_to_speech(
+        "一口吞下泡芙，奶油都挤出来嘛，说一不二！",
+        speaker="灿灿",
+    )
+    assert "吞下泡芙" not in spoken
+    assert "看我" in spoken or "一口吞" in spoken
+    assert not looks_like_narration_line(spoken)
+
+    story = {
+        "story_type": "Q",
+        "conflict_core": "灿灿抽签耍赖，借口胃小推食，妈妈看穿让洗碗",
+        "punchline_explain": "Q类耍赖翻车",
+        "dialogue_seed": [
+            {"speaker": "灿灿", "intent": "太少，重抽"},
+            {"speaker": "灿灿", "intent": "嘴硬不认偷吃"},
+            {"speaker": "灿灿", "intent": "胃小吃不下，剩的给你"},
+            {"speaker": "妈妈", "intent": "看穿心思，让她洗碗"},
+        ],
+        "dialogue": [
+            {"speaker": "灿灿", "line": "三口太少啦，我要重抽嘛！"},
+            {"speaker": "昭昭", "line": "八口才够嘛，这次满意吧！"},
+            {
+                "speaker": "灿灿",
+                "line": "一口吞下泡芙，奶油都挤出来嘛，说一不二！",
+            },
+            {"speaker": "昭昭", "line": "辣面真香，我还能再来几口吧，我才不怕呢！"},
+            {"speaker": "灿灿", "line": "我才没耍赖！"},
+            {"speaker": "昭昭", "line": "你昨天偷吃辣条了！"},
+            {"speaker": "灿灿", "line": "就一根，不算偷吃！"},
+            {"speaker": "昭昭", "line": "还装呢！"},
+            {"speaker": "灿灿", "line": "真的不辣！"},
+            {"speaker": "昭昭", "line": "不行好不好，我偏就不信！"},
+            {"speaker": "昭昭", "line": "哎呀，胃小装不下，剩的给你了呢。"},
+            {"speaker": "妈妈", "line": "看穿你小心思，吃完去洗碗吧。"},
+        ],
+    }
+    patch_dialogue_narration_to_speech(story)
+    notes = patch_q_body(story)
+    assert any("归位" in n for n in notes)
+    speakers_cheat = [
+        d["speaker"]
+        for d in story["dialogue"]
+        if d["speaker"] in {"昭昭", "灿灿"}
+        and (
+            "胃小" in d["line"]
+            or "才够" in d["line"]
+            or "我还能" in d["line"]
+        )
+    ]
+    assert speakers_cheat
+    assert all(sp == "灿灿" for sp in speakers_cheat)
+    mom = next(d for d in story["dialogue"] if d["speaker"] == "妈妈")
+    assert re.search(r"推|胃", mom["line"])
+    errs: list[str] = []
+    append_q_body_errors(story, errs)
+    assert errs == []
+
+
+def test_q_consecutive_does_not_steal_cheat_lines():
+    from app.services.daily_story.prompts import _patch_consecutive_speakers
+    from app.services.daily_story.story_types.q.validate import append_q_body_errors
+
+    story = {
+        "story_type": "Q",
+        "conflict_core": "灿灿抽签耍赖借口胃小推食",
+        "punchline_explain": "Q类耍赖翻车",
+        "dialogue": [
+            {"speaker": "灿灿", "line": "三口太少，我要重抽！"},
+            {"speaker": "灿灿", "line": "胃小装不下，剩的给你！"},
+            {"speaker": "昭昭", "line": "看穿了，别装！"},
+            {"speaker": "妈妈", "line": "推食的小心思，去洗碗！"},
+        ],
+    }
+    notes = _patch_consecutive_speakers(story)
+    assert any("Q插接话" in n for n in notes)
+    assert story["dialogue"][0]["speaker"] == "灿灿"
+    assert "胃小" in story["dialogue"][2]["line"]
+    assert story["dialogue"][2]["speaker"] == "灿灿"
+    errs: list[str] = []
+    append_q_body_errors(story, errs)
+    assert not any("抢戏" in e for e in errs)

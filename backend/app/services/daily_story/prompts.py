@@ -4186,6 +4186,9 @@ def _patch_consecutive_speakers(story: dict) -> list[str]:
     code = resolve_story_type_code(story)
     if code == "B":
         return []
+    # Q：只插接话、不改 speaker，避免把耍赖句翻给姐弟后再与 seed 归位拉锯
+    if code == "Q":
+        return _patch_q_break_consecutive_insert(story)
     notes: list[str] = []
     dialogue = story.get("dialogue")
     if not isinstance(dialogue, list) or len(dialogue) < 2:
@@ -4208,6 +4211,72 @@ def _patch_consecutive_speakers(story: dict) -> list[str]:
                 notes.append(f"连说改speaker[{i}]")
                 fixed_this += 1
         if not fixed_this:
+            break
+    return notes
+
+
+def _patch_q_break_consecutive_insert(story: dict) -> list[str]:
+    """Q：同人连说只插对方短接话，保留已有句 speaker；接话去重。"""
+    notes: list[str] = []
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 2:
+        return notes
+    from app.services.daily_story.story_types.q.validate import (
+        resolve_q_cheat_speaker,
+    )
+
+    cheater = resolve_q_cheat_speaker(story)
+    expose_pool = [
+        "你又来这套？",
+        "签都认了还改口？",
+        "刚才不是挺能的？",
+        "这话我怎么不信？",
+        "露馅了吧？",
+    ]
+    cheat_pool = [
+        "我才没耍赖！",
+        "你少管！",
+        "这次不一样！",
+    ]
+    used: set[str] = set()
+    for item in dialogue:
+        if isinstance(item, dict):
+            core = re.sub(
+                r"[，,。！!？?\s]+", "", str(item.get("line") or "")
+            )
+            if core:
+                used.add(core)
+
+    def _pick(pool: list[str]) -> str:
+        for p in pool:
+            c = re.sub(r"[，,。！!？?\s]+", "", p)
+            if c not in used:
+                used.add(c)
+                return p
+        return pool[-1]
+
+    inserted = 0
+    for _ in range(2):  # 上限 2，避免句数爆 24
+        hit = False
+        for i in range(1, len(dialogue)):
+            a, b = dialogue[i - 1], dialogue[i]
+            if not isinstance(a, dict) or not isinstance(b, dict):
+                continue
+            sa = str(a.get("speaker") or "").strip()
+            sb = str(b.get("speaker") or "").strip()
+            if sa not in {"昭昭", "灿灿"} or sa != sb:
+                continue
+            other = "灿灿" if sa == "昭昭" else "昭昭"
+            if other != cheater:
+                bridge = _pick(expose_pool)
+            else:
+                bridge = _pick(cheat_pool)
+            dialogue.insert(i, {"speaker": other, "line": bridge})
+            notes.append(f"Q插接话断连说[{i}]")
+            inserted += 1
+            hit = True
+            break
+        if not hit:
             break
     return notes
 
@@ -4301,6 +4370,9 @@ def try_local_patch_daily_story_body(story: dict) -> tuple[dict, list[str]]:
     notes.extend(_patch_body_char_budget(out))
     notes.extend(_patch_overlong_lines(out))
     notes.extend(_patch_consecutive_speakers(out))
+    # Q：末轮连说后可能再冲角色绑定，收尾再归位一次
+    if resolve_story_type_code(out) == "Q":
+        notes.extend(patch_type_body(out))
     from app.services.daily_story.story_types.c.patch import (
         patch_c_whole_item_closing,
         patch_c_trim_soft_last,
@@ -4309,8 +4381,6 @@ def try_local_patch_daily_story_body(story: dict) -> tuple[dict, list[str]]:
     )
 
     notes.extend(patch_c_whole_item_filler(out))
-    from app.services.daily_story.story_types import resolve_story_type_code
-
     if resolve_story_type_code(out) == "C":
         notes.extend(
             patch_c_trim_soft_last(out, whole_item=_c_whole_item_story(out)),

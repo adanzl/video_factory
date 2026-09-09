@@ -575,3 +575,81 @@ def test_normalize_enriches_setting_from_bowl_lines():
     assert "肉" in str(out.get("setting") or "")
     assert "青菜" in str(out.get("setting") or "")
     assert any("冲突物" in n for n in notes)
+
+
+def test_gate_forced_m14_p_rejects_when_not_q():
+    """无拆穿反噬链的假 P 仍结构驳回；能纠到 Q 的不走此门。"""
+    row = {
+        "id": 99,
+        "mechanism": "M14",
+        "structure_type": "P",
+        "conflict_core": "两人互骂了一会儿就散了",
+        "payload": {
+            "story_raw": "姐弟互骂几句，没有道具整蛊也没有认怂。",
+            "beat": ["互骂", "散场"],
+            "closing_intent": "散了",
+            "dialogue_seed": [
+                {"speaker": "灿灿", "intent": "骂一句"},
+                {"speaker": "昭昭", "intent": "回骂"},
+            ],
+        },
+    }
+    with pytest.raises(ValueError, match="forced-m14p-not-prank"):
+        gc._gate_forced_m14_p_or_raise(row)
+
+
+def test_resolve_row_75_to_m15_q_allows_convert_gate():
+    row = {
+        "id": 75,
+        "mechanism": "M14",
+        "structure_type": "P",
+        "conflict_core": "灿灿抽签耍赖，借口胃小推食，妈妈看穿让洗碗",
+        "payload": {
+            "story_raw": (
+                "妈妈和灿灿玩抽签吃饭，灿灿耍赖重抽、逞强吃辣，"
+                "最后借口胃小把剩食推给妈妈，妈妈看穿心思让她洗碗。"
+            ),
+            "beat": ["抽签", "逞强", "推食", "洗碗"],
+            "closing_intent": "妈妈笑着让灿灿洗碗，看穿她的小心思",
+            "dialogue_seed": [
+                {"speaker": "灿灿", "intent": "耍赖重抽"},
+                {"speaker": "灿灿", "intent": "推食借口胃小"},
+                {"speaker": "妈妈", "intent": "看穿心思让洗碗"},
+            ],
+            "structure_mapping_note": "M2→M14+P",
+        },
+    }
+    out, notes = gc._resolve_structure_row(row)
+    assert out["mechanism"] == "M15"
+    assert out["structure_type"] == "Q"
+    assert any("cheat-expose" in n or "M15" in n for n in notes)
+    gc._gate_forced_m14_p_or_raise(out)  # 已是 Q，不应抛
+
+
+def test_local_hard_repairs_punchline_and_mom():
+    story = _sample_chat()
+    story.pop("punchline_explain", None)
+    story["story_type"] = "A"
+    story["dialogue"] = list(story["dialogue"]) + [
+        {"speaker": "妈妈", "line": "别吵了先吃饭。"},
+        {"speaker": "妈妈", "line": "吃完再理论。"},
+    ]
+    out = gc._apply_gold_chat_local_hard_repairs(
+        story, structure_type="A", mom_lines_max=1
+    )
+    assert "punchline_explain" in out
+    assert str(out["punchline_explain"]).startswith("A类")
+    mom_n = sum(
+        1
+        for d in out["dialogue"]
+        if isinstance(d, dict) and d.get("speaker") == "妈妈"
+    )
+    assert mom_n <= 1
+
+
+def test_reject_message_not_pad_when_missing_fields():
+    err = "缺少字段: punchline_explain; 妈妈台词须≤1句，当前2; 正文总字数须≥240，当前226"
+    msg = gc._short_content_reject_message(err)
+    assert "校验驳回" in msg
+    assert "本地垫字仍不足" not in msg
+    assert gc._has_non_short_hard_errors(err)
