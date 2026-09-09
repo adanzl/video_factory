@@ -14,6 +14,13 @@ logger = logging.getLogger(__name__)
 _TERMINAL_STAGES: frozenset[str] = frozenset({"done"})
 
 
+def _recovery_error_message(job: dict) -> str | None:
+    """回 pending 时保留 chat 矛盾类型信息栏，勿清空成 None（#98）。"""
+    from app.services.daily_story.story_types import job_chat_type_info
+
+    return job_chat_type_info(job, success=False)
+
+
 def recover_stuck_jobs() -> int:
     recovered: list[tuple[int, str]] = []
 
@@ -39,12 +46,15 @@ def recover_stuck_jobs() -> int:
 
             job_id = int(row["id"])
             job = repo_job.get_job(job_id)
+            type_msg = _recovery_error_message(job)
             if job_abort_hold(job):
                 logger.warning(
                     "recovery skipped job %s: user aborted (abort_hold)",
                     job_id,
                 )
-                repo_job.update_job(job_id, status="pending", error_message=None)
+                repo_job.update_job(
+                    job_id, status="pending", error_message=type_msg
+                )
                 repo_job_log.append_log(
                     job_id,
                     stage,
@@ -62,7 +72,9 @@ def recover_stuck_jobs() -> int:
                 title_preview,
             )
 
-            repo_job.update_job(job_id, status="pending", error_message=None)
+            repo_job.update_job(
+                job_id, status="pending", error_message=type_msg
+            )
             repo_job_log.append_log(
                 job_id,
                 stage,
