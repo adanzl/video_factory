@@ -190,6 +190,13 @@ _H3_SYSTEM = (
     "若收束为拒领点破表演公平→L；若收束为灵魂拷问问倒→M11+I。\n"
     "禁止把 M2+C 用于武力扭打/一锤 KO：仅有「谁赢了谁说了算」单方定规、"
     "对方认输/怂、或「长大再算账」延后不服→M8+J（镇住不翻车，非双规则回旋镖）。\n"
+    "**严禁默认套 M2+C**：缺「双规则+同场回旋镖」任一条件时禁止标 M2+C；"
+    "宁可 structure_confidence<0.5 让本步失败，也不硬套。\n"
+    "下列一律禁止标 M2+C（confidence 须 <0.5）："
+    "纯温馨哄娃/感动拥抱无争；婴语「我爱你」纠正；夫妻/家长理性共识无孩子对手戏；"
+    "成人恋爱抢对象/片场醋意。\n"
+    "孩子与家长趣味冲突（抽签耍赖、逞强被回敬、追问破功）可标对应 M/结构，"
+    "不必改成姐弟公平战。\n"
     "beat 4–6 步，禁止贴 story_raw 原文。\n"
     "只输出 JSON。"
 )
@@ -230,7 +237,9 @@ banned_literals 规则（仅填 remap/真名，勿填场景与笑点词）：
 _H3A_SYSTEM = (
     "你是金故事场景契约师。把 story_raw 转成昭昭(7岁弟)/灿灿(10岁姐) **可拍现场契约**。\n"
     "口播/教程须强制 remap 为姐弟现场：施教方→灿灿(立规)，被教方→昭昭，陌生小孩→灿灿(占物)。\n"
-    "characters 允许昭昭/灿灿/妈妈/爸爸；单孩+家长须拆成双孩戏份；"
+    "characters 允许昭昭/灿灿/妈妈/爸爸；"
+    "源稿是孩子与家长趣味冲突时 **保留妈妈/爸爸为配角对手**，"
+    "**禁止**把戏核家长硬映成灿灿/昭昭；单孩可加另一孩旁观或联手，但勿偷换对手。\n"
     "能用妈妈就用妈妈，源稿爸爸且代不了才保留爸爸；beat_chain 至少 4 拍。\n"
     "只输出 JSON。"
 )
@@ -262,7 +271,7 @@ source_type：{source_type}
   ],
   "closing_intent": "末句嘴硬/反转",
   "mom_lines_max": 0,
-  "remap_note": "站外角色如何映射（单孩须拆成姐弟；家长能用妈不用爸）",
+  "remap_note": "站外角色如何映射（孩子vs家长须保留家长；能用妈不用爸）",
   "banned_literals": ["…"],
   "contract_confidence": 0.0
 }}
@@ -274,6 +283,7 @@ banned_literals：同 H3，仅 remap 称谓与站外真名；禁止填画画/碘
 - object：争的具体物品或话题；双方各持一物时两件都写入 object
 - location：须为允许地点表中的 place；站外场景选最接近的一项（如车内→卧室，午休垫→地板）
 - 禁止无依据套用站内仪式模板（举过头顶/三秒/单脚站/金鸡独立等）
+- **禁止**把妈妈/爸爸映成灿灿或昭昭来「制造姐弟戏」；家长是对手就留在 characters
 - C类 beat_chain：争资源→双规则（每轮新判据）→三轮升级→同场回旋镖→嘴硬（至少4拍）；
   **禁止**把单方「谁赢了谁说了算」+武力压制+认输标 C；
   **禁止**把道具整蛊互整（下料→回敬→认怂）标 C（应 M14+P）
@@ -485,9 +495,6 @@ def structurize_story(
     beat = data.get("beat") or []
     if not isinstance(beat, list) or len(beat) < 4:
         raise ValueError("H3 beat must have 4–6 steps")
-    confidence = float(data.get("structure_confidence") or 0.0)
-    if confidence < 0.5:
-        raise ValueError(f"H3 low structure_confidence={confidence:.2f}")
     data["banned_literals"] = sanitize_banned_literals(
         data.get("banned_literals") if isinstance(data.get("banned_literals"), list) else [],
         beat=data.get("beat") if isinstance(data.get("beat"), list) else [],
@@ -497,6 +504,9 @@ def structurize_story(
         note = str(data.get("structure_mapping_note") or "").strip()
         suffix = ";".join(resolve_notes)
         data["structure_mapping_note"] = f"{note};{suffix}".strip(";") if note else suffix
+    confidence = float(data.get("structure_confidence") or 0.0)
+    if confidence < 0.5:
+        raise ValueError(f"H3 low structure_confidence={confidence:.2f}")
     return data
 
 
@@ -580,11 +590,14 @@ def build_dialogue_seed(
 
 _H4A_SYSTEM = (
     "你是金故事机审员。判断站外微型故事能否迁移为"
-    "昭昭(7岁弟)+灿灿(10岁姐)姐弟日常冲突短视频。\n"
-    "采集词可以宽，但你须严格卡掉：母子/婴儿婴语为主、"
-    "冲突太短、映射距离太远、家长当唯一主角的稿子。\n"
-    "源稿爸爸且妈妈代不了时可保留爸爸（配角少台词）；"
-    "能用妈妈就用妈妈；单孩须已拆成姐弟戏份。\n"
+    "昭昭(7岁弟)/灿灿(10岁姐)日常可拍短视频。\n"
+    "主戏可以是：姐弟互怼；姐弟联手对家长；"
+    "**或单孩与家长的趣味冲突**（抽签耍赖、逞强被回敬、追问破功等），"
+    "家长宜配角少台词。\n"
+    "须卡掉：婴儿婴语/纯温馨无冲突、冲突太短无可拍链、"
+    "家长当唯一主角且孩子无戏、映射把戏核家长硬改成孩子导致失真、"
+    "成人恋爱/夫妻决策无孩子对手戏。\n"
+    "源稿爸爸且妈妈代不了时可保留爸爸；能用妈妈就用妈妈。\n"
     "只输出 JSON。"
 )
 
@@ -621,13 +634,18 @@ beat：
 }}
 
 评分说明（0–1，越高越好）：
-- sibling_fit：是否姐弟/兄妹/两孩冲突，而非母子育儿/纯可爱
-- age_fit：能否自然落到 7 岁弟 + 10 岁姐（拒绝婴语、过小）
-- conflict_usable：是否有可拍争/抢/歪理/互呛链，不是温馨旁白
-- mapping_fit：映射到昭昭/灿灿是否牵强（家长当第三主角应降分；
-  保留爸爸配角且已有姐弟戏份可接受；能用妈不用爸）
+- sibling_fit：能否落到站内可拍主戏（姐弟互怼 / 姐弟联手对家长 /
+  **单孩对家长趣味冲突** 均可）。
+  **禁止**因「有爸爸/妈妈」或「只有一个孩子」就打低分；
+  只卡纯母婴育儿、无孩子对手戏、或孩子未成形。
+- age_fit：能否自然落到约 7–10 岁孩（拒绝婴语、过小）。
+- conflict_usable：是否有可拍争/抢/歪理/追问/破功/以牙还牙链，不是温馨旁白。
+- mapping_fit：映射是否自然。保留戏核家长（爸爸/妈妈）为配角对手可接受；
+  把必须出场的家长硬映成昭昭/灿灿应降分；家长唯一主角且孩子无戏应降分；
+  能用妈不用爸。
 
 pass=true 仅当四维均 ≥0.55 且无硬伤；否则 pass=false 并列出 reject_reasons。
+**reject_reasons 禁止写「非姐弟冲突」「无昭昭/须拆双孩」来挡孩子与家长的趣事。**
 """
 
 

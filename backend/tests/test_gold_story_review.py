@@ -66,6 +66,32 @@ def test_rule_audit_passes_father_maps_to_mom():
     assert reasons == []
 
 
+def test_rule_audit_passes_parent_child_fun():
+    """孩子与家长趣味冲突可过，不因缺姐弟互怼词卡掉。"""
+    ok, reasons = review.run_rule_audit(
+        title="抽签吃饭的机灵鬼",
+        story_raw=(
+            "妈妈和妹妹灿灿在餐桌前玩抽签游戏，抽到几口就吃几口。"
+            "灿灿对抽到的签不满意非要重抽，妈妈笑着纵容。"
+            "灿灿逞强吃辣面被辣得大汗，最后把剩食推给妈妈借口胃小，"
+            "妈妈看穿心思笑着让她去洗碗。"
+        )
+        * 2,
+        conflict_core="灿灿抽签耍赖猛吃，最后推食被妈妈回敬洗碗",
+        transcript="灿灿：重抽！\n妈妈：洗碗去",
+        speaker_map_note="灿灿对应灿灿，妈妈对应妈妈",
+        dialogue_seed=[
+            {"speaker": "灿灿", "intent": "耍赖重抽"},
+            {"speaker": "灿灿", "intent": "逞强吃辣"},
+            {"speaker": "灿灿", "intent": "推食借口胃小"},
+            {"speaker": "妈妈", "intent": "回敬洗碗"},
+        ],
+        beat=["抽签", "逞强", "推食", "洗碗"],
+    )
+    assert ok is True
+    assert reasons == []
+
+
 def test_rule_audit_with_scene_contract():
     contract = {
         "source_type": "field",
