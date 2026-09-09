@@ -149,7 +149,10 @@ _NARRATION_LINE_RE = re.compile(
     r"按在地上|"
     r"又?补[一二两三四五两1-5]?下|"
     r"缩到角落|嘟囔着|一边[^，。]{0,10}一边|"
-    r"(?:哼，)?(?:缩到|嘟囔|趴下|扭头走开)"
+    r"(?:哼，)?(?:缩到|嘟囔|趴下|扭头走开)|"
+    # 咀嚼/塞食动作说明（非口语；须带宾语/结果，避免误伤「看我一口吞」）
+    r"一口(?:吞下|塞进|吞了)[^。！？?]{0,20}|"
+    r"(?:^|[，,])奶油都?(?:挤|溢)(?:出来|出)?"
 )
 _RE_ACTION_CHUNK = re.compile(
     r"又?补[一二两三四五两1-5]?下|按在地上|"
@@ -173,6 +176,9 @@ def rewrite_narration_to_speech(text: str, *, speaker: str = "") -> str:
     if not raw or not looks_like_narration_line(raw):
         return raw
     sp = str(speaker or "").strip()
+    # 咀嚼/塞食动作 → 可说的逞强短句（抽象，不绑具体食物）
+    if re.search(r"一口(?:吞下|塞进|吞了)|奶油都?(?:挤|溢)", raw):
+        return "看我一口吞！"
     fallback = (
         "唉，我管不了你们了" if sp in {"妈妈", "爸爸"} else "你别过来！"
     )
