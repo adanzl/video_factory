@@ -1,5 +1,5 @@
 """金故事结构类型纠偏：M2+C 误判武力压制→M8+J；正经胡说→M6+N；
-目标错位→M13+O；整蛊互整→M14+P。"""
+目标错位→M13+O；整蛊互整→M14+P；无双规则硬套 M2+C → 降置信拒收。"""
 
 from __future__ import annotations
 
@@ -56,6 +56,20 @@ _RE_P_OFFER = re.compile(r"尝尝|试试这个|给你选|挑战|这卷|这口|�
 _RE_P_RETALIATE = re.compile(r"再试试|也给你|轮到你|回敬|特意给你|专门给你")
 _RE_P_SURRENDER = re.compile(r"认输|不了不了|不敢再|我怂|服了|不试了")
 _RE_P_PRANK_NOTE = re.compile(r"整蛊|互整|以牙还牙|挑战.*认输|回敬")
+# 硬套 M2+C 的自述/题材信号（抽象，不绑单篇词表）
+_RE_FORCED_M2C_NOTE = re.compile(
+    r"无回旋镖|没有回旋镖|未形成回旋镖|非回旋镖|"
+    r"理性共识|温馨感动|偏C但弱|变体|"
+    r"双重规则.*无回旋镖|无回旋镖.*双重"
+)
+_RE_WARM_NO_CONFLICT = re.compile(
+    r"甜蜜|感动|扑进.*怀|破涕为笑|亲了又亲|我爱你.*我爱你|"
+    r"小甜心|眼眶湿润"
+)
+_RE_ADULT_OR_COUPLE = re.compile(
+    r"二胎|再生一个|夫妻|闺蜜.*怀|抢男人|导演|片场|电动车|雅迪"
+)
+_RE_INFANT_LOVE = re.compile(r"三岁|宝宝|婴语|人类幼崽")
 
 
 def classification_blob(
@@ -200,6 +214,32 @@ def should_reclassify_to_m14_p(
     return False
 
 
+def should_demote_forced_m2_c(
+    *,
+    mechanism: str,
+    structure_type: str,
+    blob: str,
+) -> bool:
+    """无双规则回旋镖却硬标 M2+C（温馨/婴语/夫妻共识等）→ 降置信拒收。"""
+    mech = str(mechanism or "").strip().upper()
+    st = str(structure_type or "").strip().upper()
+    if mech != "M2" or st != "C":
+        return False
+    text = str(blob or "")
+    # 自述无回旋镖/理性共识：优先于「公平」词刷屏
+    if _RE_FORCED_M2C_NOTE.search(text):
+        return True
+    if suggests_c_fairness_boomerang(blob):
+        return False
+    if _RE_WARM_NO_CONFLICT.search(text) and _RE_NO_BOOMERANG_NOTE.search(text):
+        return True
+    if _RE_INFANT_LOVE.search(text) and _RE_WARM_NO_CONFLICT.search(text):
+        return True
+    if _RE_ADULT_OR_COUPLE.search(text):
+        return True
+    return False
+
+
 def should_reclassify_m2_c_to_m8_j(
     *,
     mechanism: str,
@@ -322,7 +362,8 @@ def resolve_h3_structure(
     story_raw: str = "",
 ) -> tuple[dict[str, Any], list[str]]:
     """H3 后处理：武力压制误标 M2+C → M8+J；正经胡说误标 → M6+N；
-    目标错位误标 → M13+O；整蛊互整误标 → M14+P。"""
+    目标错位误标 → M13+O；整蛊互整误标 → M14+P；
+    无双规则硬套 M2+C → 降 structure_confidence。"""
     notes: list[str] = []
     out = dict(h3)
     blob = classification_blob(
@@ -409,6 +450,21 @@ def resolve_h3_structure(
                 note_tag="prank-reciprocal",
             )
         )
+        return out, notes
+
+    if should_demote_forced_m2_c(
+        mechanism=str(out.get("mechanism") or ""),
+        structure_type=str(out.get("structure_type") or ""),
+        blob=blob,
+    ):
+        conf = float(out.get("structure_confidence") or 0.0)
+        out["structure_confidence"] = min(conf, 0.35)
+        note = str(out.get("structure_mapping_note") or "").strip()
+        extra = "缺双规则同场回旋镖，禁止硬套 M2+C"
+        out["structure_mapping_note"] = (
+            f"{note}；{extra}".strip("；") if note else extra
+        )
+        notes.append("demote:forced-m2c-no-fairness-boomerang")
         return out, notes
 
     return out, notes

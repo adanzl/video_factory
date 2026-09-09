@@ -297,3 +297,53 @@ def test_resolve_h3_structure_story_47_to_m14_p():
     assert fixed["structure_type"] == "P"
     assert notes
     assert "prank-reciprocal" in notes[0]
+
+
+def test_demote_forced_m2_c_warm_mom_talk():
+    from app.services.gold_story.structure_resolve import should_demote_forced_m2_c
+
+    raw = (
+        "妈妈翻出女儿小时候的旧衣服说要买新的，女儿惊喜。"
+        "妈妈见哭忙哄，女儿破涕为笑。生日全听女儿，最后感动扑进妈妈怀里。"
+    )
+    note = "无回旋镖，结构偏C但弱化，可视为C的变体"
+    blob = f"{raw}\n{note}"
+    assert should_demote_forced_m2_c(
+        mechanism="M2", structure_type="C", blob=blob
+    )
+    h3 = {
+        "mechanism": "M2",
+        "structure_type": "C",
+        "conflict_core": "妈妈用甜言蜜语哄女儿",
+        "beat": ["翻旧衣", "哄哭", "夸女儿", "生日感动", "拥抱"],
+        "structure_mapping_note": note,
+        "structure_confidence": 0.7,
+    }
+    fixed, notes = resolve_h3_structure(h3, story_raw=raw)
+    assert fixed["mechanism"] == "M2"
+    assert fixed["structure_type"] == "C"
+    assert float(fixed["structure_confidence"]) < 0.5
+    assert any("demote:forced-m2c" in n for n in notes)
+
+
+def test_demote_forced_m2_c_couple_second_child():
+    from app.services.gold_story.structure_resolve import should_demote_forced_m2_c
+
+    raw = (
+        "妈妈看到闺蜜又怀了二胎，问爸爸还要不要再生一个。"
+        "爸爸说为了作伴不公平，两人达成理性共识：先养好老大。"
+    )
+    note = "无回旋镖互戳，实为理性共识，故用M2+C但降置信度"
+    assert should_demote_forced_m2_c(
+        mechanism="M2", structure_type="C", blob=f"{raw}\n{note}"
+    )
+
+
+def test_keep_m2_c_real_fairness_not_demoted():
+    from app.services.gold_story.structure_resolve import should_demote_forced_m2_c
+
+    assert not should_demote_forced_m2_c(
+        mechanism="M2",
+        structure_type="C",
+        blob=_M2_C_FAIR_RAW,
+    )
