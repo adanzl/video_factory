@@ -499,6 +499,12 @@ function speakerStyle(speaker: string): { bg: string; text: string; full: string
       text: "text-emerald-600",
       full: "bg-emerald-50 text-emerald-800",
     };
+  if (speaker === "爸爸")
+    return {
+      bg: "bg-slate-100",
+      text: "text-slate-700",
+      full: "bg-slate-100 text-slate-800",
+    };
   return { bg: "bg-pink-50", text: "text-pink-600", full: "bg-pink-50 text-pink-800" };
 }
 

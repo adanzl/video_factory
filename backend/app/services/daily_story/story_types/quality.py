@@ -206,6 +206,8 @@ class TypeQualityProfile:
     punch_before_soft_markers: tuple[str, ...]
     mom_lines_penalty_at: int = 3
     mom_lines_penalty: int = 10
+    dad_lines_penalty_at: int = 2
+    dad_lines_penalty: int = 10
     penalize_wait_mom_end: bool = True
     penalize_split_end: bool = True
     penalize_stubborn_end: bool = True

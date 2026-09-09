@@ -128,26 +128,35 @@ def _first_cancan_rule(dialogue: list) -> str:
 
 
 def patch_d_strip_mom(story: dict) -> list[str]:
-    """D 主戏姐弟：删掉妈妈插话（留给 E 类）。"""
+    """D 主戏姐弟：删掉家长插话（留给 E 类）。"""
     notes: list[str] = []
     if not _is_d(story):
         return notes
     dialogue = story.get("dialogue")
     if not isinstance(dialogue, list):
         return notes
-    dropped = 0
+    dropped_mom = 0
+    dropped_dad = 0
     for i in reversed(range(len(dialogue))):
         d = dialogue[i]
-        if isinstance(d, dict) and str(d.get("speaker") or "").strip() == "妈妈":
+        if not isinstance(d, dict):
+            continue
+        sp = str(d.get("speaker") or "").strip()
+        if sp == "妈妈":
             dialogue.pop(i)
-            dropped += 1
-    if dropped:
-        notes.append(f"D删妈妈插话×{dropped}")
+            dropped_mom += 1
+        elif sp == "爸爸":
+            dialogue.pop(i)
+            dropped_dad += 1
+    if dropped_mom:
+        notes.append(f"D删妈妈插话×{dropped_mom}")
+    if dropped_dad:
+        notes.append(f"D删爸爸插话×{dropped_dad}")
     return notes
 
 
 def patch_d_strip_mom_mentions(story: dict) -> list[str]:
-    """D 禁妈妈：对白里「妈妈说」等提法删掉或改成灿灿说。"""
+    """D 禁家长：对白里「妈妈说/爸爸说」等提法删掉或改成灿灿说。"""
     notes: list[str] = []
     if not _is_d(story):
         return notes
@@ -158,10 +167,14 @@ def patch_d_strip_mom_mentions(story: dict) -> list[str]:
         if not isinstance(d, dict):
             continue
         line = str(d.get("line") or "")
-        if "妈妈" not in line:
+        if "妈妈" not in line and "爸爸" not in line:
             continue
-        new_line = re.sub(r"妈妈说|听妈妈的|别告诉妈妈", "听我说", line)
-        new_line = new_line.replace("妈妈", "")
+        new_line = re.sub(
+            r"妈妈说|听妈妈的|别告诉妈妈|爸爸说|听爸爸的|别告诉爸爸",
+            "听我说",
+            line,
+        )
+        new_line = new_line.replace("妈妈", "").replace("爸爸", "")
         new_line = re.sub(r"，，+", "，", new_line).strip("， ")
         if not new_line:
             continue
@@ -169,7 +182,7 @@ def patch_d_strip_mom_mentions(story: dict) -> list[str]:
             new_line = truncate_overlong_line(new_line)
         if new_line != line:
             d["line"] = new_line
-            notes.append(f"D去妈妈提及[{i}]")
+            notes.append(f"D去家长提及[{i}]")
     return notes
 
 

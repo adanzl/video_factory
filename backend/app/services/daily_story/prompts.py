@@ -74,9 +74,12 @@ DAILY_STORY_CHARACTERS = (
     "穿粉色卫衣、蓝色长裤、两侧同色粉红运动鞋，比昭昭高约半个头"
 )
 
-# 妈妈无参考图，外貌特征由 LLM 在 image_prompt 中文字描述，不混入有参考图角色常量
+# 妈妈/爸爸无参考图，外貌特征由 LLM 在 image_prompt 中文字描述，不混入有参考图角色常量
 DAILY_STORY_CHARACTER_MOM = (
     "妈妈：成年女性，黑色长发，米色上衣、蓝色牛仔裤、深色平底鞋"
+)
+DAILY_STORY_CHARACTER_DAD = (
+    "爸爸：成年男性，黑色短发露耳，深灰圆领卫衣、藏青休闲裤、黑色运动鞋"
 )
 
 # 片长：语速约 3.6 字/秒、目标约 1:30–2:00
@@ -152,7 +155,7 @@ DAILY_STORY_KEY_CHARS_MIN = 2
 DAILY_STORY_KEY_CHARS_MAX = 8
 _CONFLICT_ANCHOR_STOP = frozenset(
     {
-        "昭昭", "灿灿", "妈妈", "姐弟", "我们", "什么", "怎么",
+        "昭昭", "灿灿", "妈妈", "爸爸", "姐弟", "我们", "什么", "怎么",
         "这个", "那个", "不是", "就是", "可以", "不行",
         "争第", "一个", "个洗", "一洗",  # 碎片噪声，优先「洗澡」「橡皮」等实物
         "后自", "反被", "却翻", "矩后", "己示", "范翻", "快立", "牙太",
@@ -230,34 +233,34 @@ _DAILY_STORY_LENGTH_USER_DRAFT = f"""\
    【按句数写更准】写 24–28 句（每句约 10–14 字），直接瞄准
    {DAILY_STORY_BODY_WRITE_TARGET_MIN}–{DAILY_STORY_BODY_WRITE_TARGET_MAX} 字；
    勿先写超长再删。发现开场另计另验。
-   speaker 仅昭昭/灿灿/妈妈。
+   speaker 仅昭昭/灿灿/妈妈/爸爸。
 """
 
 _DAILY_STORY_LENGTH_USER_REVISE_EXPAND = f"""\
 3. 【字数：偏短只增】正文扩到 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字
    （瞄准 {DAILY_STORY_BODY_RETRY_TARGET_MIN}–{DAILY_STORY_BODY_RETRY_TARGET_MAX}）；
    只增不删，禁止整稿重写、禁止超上限；发现开场另计另验。
-   speaker 仅昭昭/灿灿/妈妈。
+   speaker 仅昭昭/灿灿/妈妈/爸爸。
 """
 
 _DAILY_STORY_LENGTH_USER_REVISE_TRIM = f"""\
 3. 【字数：偏长只删】正文压到 ≤{DAILY_STORY_BODY_CHARS_MAX} 字
    （瞄准 {DAILY_STORY_BODY_RETRY_TARGET_MIN}–{DAILY_STORY_BODY_RETRY_TARGET_MAX}，
    须 ≥{DAILY_STORY_BODY_CHARS_MIN}）；只删不增，禁止新增台词；发现开场另计另验。
-   speaker 仅昭昭/灿灿/妈妈。
+   speaker 仅昭昭/灿灿/妈妈/爸爸。
 """
 
 _DAILY_STORY_LENGTH_USER_REVISE_PATCH = f"""\
 3. 【字数：微调补齐】正文须落在 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
    只改现有句子（句内加字或改 1–2 句措辞），禁止插入大段新回合、禁止整稿重写。
-   发现开场另计另验。speaker 仅昭昭/灿灿/妈妈。
+   发现开场另计另验。speaker 仅昭昭/灿灿/妈妈/爸爸。
 """
 
 _DAILY_STORY_LENGTH_USER_REVISE = f"""\
 3. 【字数硬卡优先】正文只遵守 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字；
    每句 ≤{DAILY_STORY_LINE_CHARS_MAX} 字且一句一层意思。
    非字数问题勿改篇幅；发现开场另计另验。
-   speaker 仅昭昭/灿灿/妈妈。
+   speaker 仅昭昭/灿灿/妈妈/爸爸。
 """
 
 _LENGTH_MODE_SYSTEM = {
@@ -443,7 +446,7 @@ def _build_c_whole_item_short_retry_user(
             f"要求：总句数 {lo}–{hi}（硬卡≥{_C_WHOLE_ITEM_HARD_LINE_MIN}），"
             f"总字数 {w_lo}–{w_hi}（硬卡≥{DAILY_STORY_BODY_CHARS_MIN}）；"
             "每句 15–18 字；重点写好「哪条作数」权力翻转与回旋镖；"
-            "禁止语气词凑字。speaker 仅昭昭/灿灿/妈妈。正文勿写发现开场。\n"
+            "禁止语气词凑字。speaker 仅昭昭/灿灿/妈妈/爸爸。正文勿写发现开场。\n"
             f"【本轮问题】{primary_line}\n"
             "请输出完整 JSON（scene_title/setting/conflict_core/key/"
             "punchline_explain/dialogue）。\n"
@@ -602,7 +605,7 @@ def _daily_story_length_user_draft_for_type(
 3. 【C·整件物·首稿】写 **{lo}–{hi} 句**；**须一次写到 ≥{DAILY_STORY_BODY_CHARS_MIN} 字**
    （瞄准 {w_lo}–{w_hi}）；每句 14–18 字；严格按 beats L3–L16 状态机；
    输出前自查：句数≥{lo}、总字数≥{w_lo - 10}；勿交短稿。
-   回旋镖收束，被戳穿方末句嘴硬。发现开场另计另验。speaker 仅昭昭/灿灿/妈妈。
+   回旋镖收束，被戳穿方末句嘴硬。发现开场另计另验。speaker 仅昭昭/灿灿/妈妈/爸爸。
 """
     lo, hi, _avg = _body_line_budget(type_code, theme=theme, framework=framework)
     if type_code and type_code.upper() == "E":
@@ -610,7 +613,7 @@ def _daily_story_length_user_draft_for_type(
 3. 【E类·首稿】写 **{lo}–{hi} 句**；**须一次写到 ≥{DAILY_STORY_BODY_CHARS_MIN} 字**
    （瞄准 300–340），
    每句带追问/开脱+可拍细节双信息，自然达到 17–20 字；勿交短稿。
-   发现开场另计另验。speaker 仅昭昭/灿灿/妈妈。
+   发现开场另计另验。speaker 仅昭昭/灿灿/妈妈/爸爸。
 """
     if type_code and type_code.upper() == "D":
         return f"""\
@@ -625,21 +628,21 @@ def _daily_story_length_user_draft_for_type(
 3. 【A类·首稿】写 **{lo}–{hi} 句**；**须一次写到 ≥{DAILY_STORY_BODY_CHARS_MIN} 字**
    （瞄准 {DAILY_STORY_BODY_RETRY_TARGET_MIN}–{DAILY_STORY_BODY_RETRY_TARGET_MAX}），
    每句带动作/表情+抬杠点双信息，自然达到 13–15 字；勿交短稿。
-   发现开场另计另验。speaker 仅昭昭/灿灿/妈妈。
+   发现开场另计另验。speaker 仅昭昭/灿灿/妈妈/爸爸。
 """
     if type_code and type_code.upper() == "B":
         return f"""\
 3. 【B类·首稿】写 **{lo}–{hi} 句**；**须一次写到 ≥{DAILY_STORY_BODY_CHARS_MIN} 字**
    （瞄准 {DAILY_STORY_BODY_RETRY_TARGET_MIN}–{DAILY_STORY_BODY_RETRY_TARGET_MAX}），
    每句带动作/分工+连锁结果双信息，自然达到 13–16 字；勿交短稿。
-   发现开场另计另验。speaker 仅昭昭/灿灿/妈妈。
+   发现开场另计另验。speaker 仅昭昭/灿灿/妈妈/爸爸。
 """
     if type_code and type_code.upper() == "C":
         return f"""\
 3. 【C类·首稿】写 **{lo}–{hi} 句**；**须一次写到 ≥{DAILY_STORY_BODY_CHARS_MIN} 字**
    （瞄准 {DAILY_STORY_BODY_RETRY_TARGET_MIN}–{DAILY_STORY_BODY_RETRY_TARGET_MAX}），
    每句带动作/赛规+反噬双信息，自然达到 13–16 字；勿交短稿。
-   回旋镖收束，被戳穿方末句嘴硬。发现开场另计另验。speaker 仅昭昭/灿灿/妈妈。
+   回旋镖收束，被戳穿方末句嘴硬。发现开场另计另验。speaker 仅昭昭/灿灿/妈妈/爸爸。
 """
     return _DAILY_STORY_LENGTH_USER_DRAFT
 
@@ -796,14 +799,14 @@ def _daily_story_length_user_revise_expand_for_type(
         return f"""\
 3. 【C·整件物·一次补满】本轮必须扩写到 **{hi} 句、≥{w_lo} 字**（≤{DAILY_STORY_BODY_CHARS_MAX}）；
    重点扩权力翻转「哪条作数」与回旋镖段；禁止只补到14-16句、禁止语气词凑字。
-   发现开场另计另验。speaker 仅昭昭/灿灿/妈妈。
+   发现开场另计另验。speaker 仅昭昭/灿灿/妈妈/爸爸。
 """
     if type_code and type_code.upper() == "E":
         lo, hi, _avg = _body_line_budget(type_code, theme=theme, framework=framework)
         return f"""\
 3. 【E类·一次补满】本轮必须写到 ≥{DAILY_STORY_BODY_CHARS_MIN} 字；
    句数 {lo}–{hi}；每句尽量 17–20 字（≤{DAILY_STORY_LINE_CHARS_MAX}）；保留骨架只增不删。
-   发现开场另计另验。speaker 仅昭昭/灿灿/妈妈。
+   发现开场另计另验。speaker 仅昭昭/灿灿/妈妈/爸爸。
 """
     if type_code and type_code.upper() == "D":
         lo, hi, _avg = _body_line_budget(type_code, theme=theme, framework=framework)
@@ -817,7 +820,7 @@ def _daily_story_length_user_revise_expand_for_type(
         return f"""\
 3. 【A类·一次补满】本轮必须写到 ≥{DAILY_STORY_BODY_CHARS_MIN} 字；
    句数 {lo}–{hi}；每句尽量 13–15 字（≤{DAILY_STORY_LINE_CHARS_MAX}）；保留骨架只增不删。
-   发现开场另计另验。speaker 仅昭昭/灿灿/妈妈。
+   发现开场另计另验。speaker 仅昭昭/灿灿/妈妈/爸爸。
 """
     return _DAILY_STORY_LENGTH_USER_REVISE_EXPAND
 
@@ -826,19 +829,19 @@ def _daily_story_length_user_revise_patch_for_type(type_code: str | None) -> str
     if type_code and type_code.upper() == "E":
         return f"""\
 3. 【E类·句内微调】禁止增删句；偏短句各加几个字（可拍细节），写到≥{DAILY_STORY_BODY_CHARS_MIN}；
-   闭环与妈妈末句破功勿动；发现开场另计另验。speaker 仅昭昭/灿灿/妈妈。
+   闭环与妈妈末句破功勿动；发现开场另计另验。speaker 仅昭昭/灿灿/妈妈/爸爸。
 """
     if type_code and type_code.upper() == "D":
         return f"""\
 3. 【D类·句内微调】禁止增删句；偏短句各加 2–8 字，写到≥{DAILY_STORY_BODY_CHARS_MIN}；
-   回旋镖收束勿动；发现开场另计另验。speaker 仅昭昭/灿灿/妈妈。
+   回旋镖收束勿动；发现开场另计另验。speaker 仅昭昭/灿灿/妈妈/爸爸。
 """
     return _DAILY_STORY_LENGTH_USER_REVISE_PATCH
 
 
 _SPEAKER_BY_TYPE = {
-    "D": "昭昭、灿灿（本场禁止妈妈出场）",
-    "E": "昭昭、灿灿、妈妈（立规+中段1句短反应+末句破功）",
+    "D": "昭昭、灿灿（本场禁止妈妈/爸爸发言）",
+    "E": "昭昭、灿灿、妈妈（立规+中段1句短反应+末句破功；爸爸默认可不写）",
 }
 
 
@@ -867,12 +870,15 @@ def _daily_story_contract(
         length = _daily_story_length_revise_trim_for_type(type_code)
     else:
         length = _LENGTH_MODE_SYSTEM.get(length_mode, _DAILY_STORY_LENGTH_DRAFT)
-    speakers = _SPEAKER_BY_TYPE.get((type_code or "").upper(), "昭昭、灿灿、妈妈")
+    speakers = _SPEAKER_BY_TYPE.get(
+        (type_code or "").upper(),
+        "昭昭、灿灿、妈妈（爸爸可偶发，能用妈不用爸）",
+    )
     return f"""\
 【共用设定】
 - 受众：孩子和有娃的大人（家长能会心一笑，孩子觉得好玩；禁成人梗/谐音/网络热梗）。
 - 角色年龄：昭昭7岁弟弟，灿灿10岁姐姐；可发言角色仅{speakers}。
-- 爸爸可「不在场被提到」，禁止作为 speaker；禁止老师入戏。
+- 家长优先级：能用妈妈就用妈妈；爸爸仅在妈妈代不了时出场，戏份更少；禁止老师入戏。
 - 场景：家庭内部或家门口（客厅/厨房/卧室/门口）；禁止学校、放学路、公园等外景主场。
 {length}\
 """
@@ -883,7 +889,8 @@ _DAILY_STORY_SYSTEM_SHARED = """\
 - 昭昭：弟弟，男孩，7岁。好奇心强，喜欢追问，擅长用现实经验挑战抽象规则，经常把简单的事越问越复杂。天真且固执。
 - 灿灿：姐姐，女孩，10岁。比昭昭懂事一点，偶尔想模仿大人的语气管教弟弟，但自己的逻辑也经常掉进孩子的坑里。有时候会被昭昭带偏，嘴硬但心软。
 - 妈妈：配角。可出场，但台词少；主戏仍是姐弟，妈妈不是戏核。
-- 关系：亲姐弟，住在一起；主戏是姐弟斗嘴/较真/互相带偏，不是被妈妈教育。
+- 爸爸：配角，优先级低于妈妈。默认可不写；仅妈妈代不了时出场，台词更少，不是戏核。
+- 关系：亲姐弟，住在一起；主戏是姐弟斗嘴/较真/互相带偏，不是被家长教育。
 
 【妈妈戏份（硬约束）】
 - A/C/D 默认可不写妈妈；主戏与破功优先纯姐弟完成。
@@ -894,6 +901,12 @@ _DAILY_STORY_SYSTEM_SHARED = """\
 - 禁止明确判赢/判平/另开赛制（如「算你赢」「一人一半」「谁先放好谁先选」）。
 - 日常口气可以（叮嘱、谁也别乱动、别吵了）：但不应用一句掐灭尚未落地的破功。
 - 破功/软收：A/B/C/D 优先姐弟对白；**E 类末句妈妈破功收场**。
+
+【爸爸戏份（硬约束，严于妈妈）】
+- 能用妈妈就用妈妈；爸爸默认可不写。
+- 若出场：宜全程 ≤1–2 句；禁止与妈妈双人抢戏。
+- 禁止明确判赢/判平/另开赛制；禁当裁判收场。
+- **E 类破功仍只绑妈妈**，不写爸爸破功；**D 类禁爸爸发言**。
 
 【发现开场（系统另写，正文勿写）】
 - 开场=正片第一镜：系统另写 **2 句**，须有背景地点 + 可拍画面，再前置进片。
@@ -957,18 +970,18 @@ _DAILY_STORY_SYSTEM_SHARED = """\
    - 耍赖占有：「反正我要用」「反正是我的」——没戳穿只赖账；
    - 甩给妈妈：「等妈回来」「叫妈评理」——本场须姐弟内收束（E 类妈妈在场除外）。
 10. 禁止赢家说最后一句：末句 speaker 必须是破功/被反杀/嘴硬的一方。
-11. setting 一致性：若 setting 中妈妈完成某动作（如切蛋糕/拿东西），
-    她必须在正文至少出场 1 句台词呼应；否则把该动作改由姐弟中的一人执行。
+11. setting 一致性：若 setting 中妈妈/爸爸完成某动作（如切蛋糕/拿东西），
+    对应家长必须在正文至少出场 1 句台词呼应；否则把该动作改由姐弟中的一人执行。
 """
 
 
 # 类型化共享段：锁定类型时按需裁剪，不再把五类交叉规则全量灌给单一类型。
-# 妈妈的角色定义与戏份规则随类型切换（D 禁妈妈、E 立规+破功、A/B/C 可少出场）。
+# 妈妈的角色定义与戏份规则随类型切换（D 禁家长、E 立规+破功、A/B/C 可少出场）。
 _SHARED_GENERIC = """\
 【角色设定】
 - 昭昭：弟弟，男孩，7岁。好奇心强，喜欢追问，擅长用现实经验挑战抽象规则，经常把简单的事越问越复杂。天真且固执。
 - 灿灿：姐姐，女孩，10岁。比昭昭懂事一点，偶尔想模仿大人的语气管教弟弟，但自己的逻辑也经常掉进孩子的坑里。有时候会被昭昭带偏，嘴硬但心软。
-- 关系：亲姐弟，住在一起；主戏是姐弟斗嘴/较真/互相带偏，不是被妈妈教育。
+- 关系：亲姐弟，住在一起；主戏是姐弟斗嘴/较真/互相带偏，不是被家长教育。
 
 【发现开场（系统另写，正文勿写）】
 - 开场=正片第一镜：系统另写 **2 句**，须有背景地点 + 可拍画面，再前置进片。
@@ -976,7 +989,7 @@ _SHARED_GENERIC = """\
 - setting 仍须写清地点 + 已发生的同一冲突动作，与 conflict_core **同一件实物、
   数量只能为 1**（一个/一只/一条）；发现开场亦须扣同一争点物。
   （反例：setting 写「各抓一个/两个并排对峙」，core 却写「争同一个 X」）。
-- setting 中若提到妈妈做了某动作（如「妈妈切好蛋糕」），正文里妈妈必须至少出场 1 句台词
+- setting 中若提到妈妈/爸爸做了某动作，正文里对应家长必须至少出场 1 句台词
   呼应这个动作；否则把该动作改由姐弟中的一人执行（如「灿灿切好蛋糕」）。
 
 【单冲突（硬约束）】
@@ -1043,6 +1056,10 @@ _MOM_BLOCK_DEFAULT = """\
 - 日常口气可以（叮嘱、谁也别乱动、别吵了）：但不应用一句掐灭尚未落地的破功。
 - 破功/软收：优先姐弟对白完成。
 - 若妈妈出场：情绪须有层次，从「解释/管教」→「心虚/语塞」→「认输/投降」。
+
+【爸爸戏份（硬约束，严于妈妈）】
+- 能用妈妈就用妈妈；爸爸默认可不写；若出场宜 ≤1–2 句。
+- 禁止明确判赢/判平/另开赛制；禁当裁判收场。
 """
 
 _MOM_BLOCK_D = """\
@@ -1050,6 +1067,9 @@ _MOM_BLOCK_D = """\
 - 妈妈：本场严禁出场（主戏仅昭昭/灿灿，规矩由灿灿立）；可被提及，禁发言、禁「妈妈说」。
 - 禁止明确判赢/判平/另开赛制（如「算你赢」「一人一半」「谁先放好谁先选」）。
 - 破功/软收：纯姐弟对白完成。
+
+【爸爸戏份（D类硬约束）】
+- 爸爸同妈妈：本场严禁发言；可被提及，禁「爸爸说」。
 """
 
 _MOM_BLOCK_E = """\
@@ -1059,6 +1079,9 @@ _MOM_BLOCK_E = """\
   假开脱由灿灿扛。禁止只首尾出声、禁止中段连辩。
 - 禁止明确判赢/判平/另开赛制（如「算你赢」「一人一半」「谁先放好谁先选」）。
 - 妈妈情绪须有层次：从「解释/管教」→「心虚/语塞」→「认输/投降」。
+
+【爸爸戏份（E类）】
+- E 破功只绑妈妈；爸爸默认可不写，勿改成爸爸破功。
 """
 
 
@@ -1300,11 +1323,12 @@ DAILY_STORY_THEME_USER_TEMPLATE = """\
 面向孩子和有娃的大人。
 
 家庭背景：姐弟和爸爸妈妈住在一起，家里没有宠物；
-可发言角色仅昭昭、灿灿、妈妈；妈妈可出场但戏份轻（少台词）。
+可发言角色昭昭、灿灿、妈妈为主；爸爸可偶发（能用妈不用爸），戏份更轻。
 
 【硬要求】
 1. 具体小事，带动作/实物；禁抽象讨论（友谊/公平概念题）。
-2. 主戏在家门口/室内；禁爸/老师入戏、禁学校公园外景主场。
+2. 主戏在家门口/室内；禁老师入戏、禁学校公园外景主场；
+   家长默认可不写，能用妈妈就用妈妈。
 3. 每条≤15字；可拍优先；口头道德题（说谎/诚实/有礼貌）禁止。
 4. E 类须「规矩+妈妈可拍现行」同题写出（手机亮/勺子挂菜等）。
 5. **按类型配额输出**，共 {count} 条，配额：{quota_line}。
@@ -2038,8 +2062,9 @@ DAILY_STORY_OPENING_SYSTEM_PROMPT = f"""\
 你为昭昭&灿灿日常短剧写「正片开端」开场：像片头第一镜，观众立刻入戏。
 必须写 **2 句**（换人说），不写正文互怼中段。
 
-【角色】昭昭7岁弟弟、灿灿10岁姐姐、妈妈；开场 speaker 仅此三人。
-两句须换人；可以是姐弟互说，也可以是孩子与妈妈对说。
+【角色】昭昭7岁弟弟、灿灿10岁姐姐、妈妈；爸爸可偶发（能用妈不用爸）。
+开场 speaker 为昭昭/灿灿/妈妈/爸爸。
+两句须换人；可以是姐弟互说，也可以是孩子与家长对说。
 【场景】家庭内部/门口；口语短句，每句≤{DAILY_STORY_LINE_CHARS_MAX}字；禁成人梗/网络热梗。
 
 【开场要干什么】
@@ -2106,7 +2131,7 @@ DAILY_STORY_OPENING_SYSTEM_PROMPT = f"""\
 
 【输出】只输出 JSON：
 {{"opening":[{{"speaker":"昭昭","line":"…"}},{{"speaker":"灿灿","line":"…"}}]}}
-opening 必须恰好 2 句、换人说；speaker 为昭昭/灿灿/妈妈；
+opening 必须恰好 2 句、换人说；speaker 为昭昭/灿灿/妈妈/爸爸；
 须锚定本次 conflict_core 的实物或动作，并带地点/画面。
 """
 
@@ -2126,7 +2151,7 @@ DAILY_STORY_OPENING_USER_TEMPLATE = """\
 刚发生什么），勿凭空另造状态或新物；地点词顺动作自然带出即可
 （「我在门口捡了只小狗」——「门口」就在句子里），不必硬点；
 第1句定场，第2句点冲突；
-speaker 为昭昭/灿灿/妈妈（可孩子对说，也可孩子与妈妈对说）；
+speaker 为昭昭/灿灿/妈妈/爸爸（可孩子对说，也可孩子与家长对说）；
 正文第 1 句尚未发生，禁止开场预支其中的「磨蹭/不许/放下」等指责后再用「还说我…」；
 不要寒暄，不要只写一句干问。直接输出 JSON。
 """
@@ -2209,7 +2234,7 @@ _CLOSEUP_TURNING_RE = re.compile(
 DAILY_SCRIPT_SYSTEM_PROMPT = """\
 你是儿童情景对话短剧的分镜编剧，只负责把对白切成可执行镜头，不写画面描述。
 
-【可发言角色】昭昭（7岁弟弟）、灿灿（10岁姐姐）、妈妈。场景以家庭内部/门口为主。
+【可发言角色】昭昭（7岁弟弟）、灿灿（10岁姐姐）、妈妈；爸爸可偶发（能用妈不用爸）。场景以家庭内部/门口为主。
 
 【分镜规则】
 1. 【切分原则】按单镜**倾向 2 句**、≤{max_sec} 秒切分（对白共 {total_chars} 字 / {line_count} 句）；
@@ -2692,10 +2717,10 @@ def _append_dialogue_rhythm_errors(story: dict, errors: list[str]) -> None:
 
 
 def _append_mom_line_errors(story: dict, errors: list[str]) -> None:
-    """校验妈妈台词：句数上限、禁止裁判式收场。
+    """校验家长台词：句数上限、禁止裁判式收场。
 
     E 类不设妈妈句数硬上限（立规+中段1句+破功靠提示词）；
-    其它类型主戏在姐弟，≤3。
+    其它类型主戏在姐弟，妈妈≤3、爸爸≤2。
     """
     from app.services.daily_story.story_types import resolve_story_type_code
 
@@ -2707,23 +2732,37 @@ def _append_mom_line_errors(story: dict, errors: list[str]) -> None:
         for i, item in enumerate(dialogue)
         if isinstance(item, dict) and item.get("speaker") == "妈妈"
     ]
+    dad_items = [
+        (i, item)
+        for i, item in enumerate(dialogue)
+        if isinstance(item, dict) and item.get("speaker") == "爸爸"
+    ]
     type_code = resolve_story_type_code(story)
     if type_code != "E" and len(mom_items) > 3:
         errors.append(
             f"妈妈台词超过3句（{len(mom_items)}句），主戏应在姐弟"
         )
-    for _, item in mom_items:
-        line = str(item.get("line") or "")
-        for pattern in _MOM_JUDGE_PATTERNS:
-            if pattern in line:
-                errors.append(
-                    f"妈妈台词不可当裁判（发现「{pattern}」）：{line!r}"
-                )
-                break
+    if len(dad_items) > 2:
+        errors.append(
+            f"爸爸台词超过2句（{len(dad_items)}句），优先级低于妈妈、主戏应在姐弟"
+        )
+    for label, items in (("妈妈", mom_items), ("爸爸", dad_items)):
+        for _, item in items:
+            line = str(item.get("line") or "")
+            for pattern in _MOM_JUDGE_PATTERNS:
+                if pattern in line:
+                    errors.append(
+                        f"{label}台词不可当裁判（发现「{pattern}」）：{line!r}"
+                    )
+                    break
     # 妈妈的句数占比：总句数≤10 且妈妈≥3 句视为妈妈主导（E 除外）
     if type_code != "E" and len(dialogue) <= 10 and len(mom_items) >= 3:
         errors.append(
             f"短剧（{len(dialogue)}句）中妈妈台词过多（{len(mom_items)}句），禁止妈妈主导"
+        )
+    if len(dialogue) <= 10 and len(dad_items) >= 2:
+        errors.append(
+            f"短剧（{len(dialogue)}句）中爸爸台词过多（{len(dad_items)}句），禁止爸爸主导"
         )
 
 
@@ -2752,22 +2791,23 @@ def _append_winner_last_line_errors(story: dict, errors: list[str]) -> None:
 
 
 def _append_setting_mom_consistency_errors(story: dict, errors: list[str]) -> None:
-    """setting 中妈妈有动作但正文妈妈无台词 → 违规。"""
+    """setting 中家长有动作但正文无对应台词 → 违规。"""
     setting = str(story.get("setting") or "").strip()
-    if "妈妈" not in setting:
-        return
     dialogue = story.get("dialogue")
     if not isinstance(dialogue, list):
         return
-    mom_lines = [
-        item for item in dialogue
-        if isinstance(item, dict) and item.get("speaker") == "妈妈"
-    ]
-    if not mom_lines:
-        errors.append(
-            "setting 提到妈妈动作（如切蛋糕）但正文妈妈无台词；"
-            "须给妈妈至少 1 句台词呼应，或把 setting 中的动作改由姐弟执行"
-        )
+    for parent in ("妈妈", "爸爸"):
+        if parent not in setting:
+            continue
+        parent_lines = [
+            item for item in dialogue
+            if isinstance(item, dict) and item.get("speaker") == parent
+        ]
+        if not parent_lines:
+            errors.append(
+                f"setting 提到{parent}动作但正文{parent}无台词；"
+                f"须给{parent}至少 1 句台词呼应，或把 setting 中的动作改由姐弟执行"
+            )
 
 
 # 句子末尾把称呼/命令语塞在陈述之后，造成倒装或叠词
@@ -3379,7 +3419,7 @@ def validate_daily_story_opening(
             f"opening 须 {DAILY_STORY_OPENING_LINES_MIN}–"
             f"{DAILY_STORY_OPENING_LINES_MAX} 句，当前 {len(opening)}"
         )
-    allowed = {"昭昭", "灿灿", "妈妈"}
+    allowed = set(DAILY_STORY_SPEAKER_NAMES)
     normalized: list[dict] = []
     for i, item in enumerate(opening or []):
         coerced, err = _coerce_opening_item(item, index=i)
@@ -3391,7 +3431,7 @@ def validate_daily_story_opening(
         line = coerced["line"]
         if speaker not in allowed:
             errors.append(
-                f"opening[{i}] speaker 须为昭昭/灿灿/妈妈，收到：{speaker!r}"
+                f"opening[{i}] speaker 须为昭昭/灿灿/妈妈/爸爸，收到：{speaker!r}"
             )
         if not line or not re.search(r"[\u4e00-\u9fff\w]", line):
             errors.append(f"opening[{i}] line 须含可发音内容")
@@ -3561,13 +3601,18 @@ def opening_avoid_speaker_from_body(body: dict | None) -> str | None:
 
 
 _KNOWN_SPEAKER_TYPOS = frozenset({"speayer", "speeker", "spaker"})
-# 繁简/口语别名：只映射到三人定名，不把姐姐/弟弟当 speaker
-_SPEAKER_CHAR_FOLD = str.maketrans({"燦": "灿", "媽": "妈"})
+# 繁简/口语别名：映射到四人定名，不把姐姐/弟弟当 speaker
+_SPEAKER_CHAR_FOLD = str.maketrans({"燦": "灿", "媽": "妈", "爸": "爸"})
 _SPEAKER_VALUE_ALIASES = {
     "灿灿": "灿灿",
     "昭昭": "昭昭",
     "妈妈": "妈妈",
     "妈": "妈妈",
+    "爸爸": "爸爸",
+    "爸": "爸爸",
+    "父亲": "爸爸",
+    "老爸": "爸爸",
+    "宝爸": "爸爸",
 }
 
 
@@ -4167,7 +4212,7 @@ def _patch_consecutive_speakers(story: dict) -> list[str]:
     return notes
 
 
-_VOCATIVE_NAMES = ("妈妈", "妈", "孩子们", "孩子", "昭昭", "灿灿")
+_VOCATIVE_NAMES = ("妈妈", "妈", "爸爸", "爸", "孩子们", "孩子", "昭昭", "灿灿")
 _FINAL_PARTICLES = "呀啊呢吧吗了啦"
 
 
@@ -4198,39 +4243,42 @@ def _patch_vocative_punctuation(story: dict) -> list[str]:
     return notes
 
 
-def _patch_setting_mom_without_line(story: dict) -> list[str]:
-    """setting 写了妈妈动作但正文无妈妈台词 → 改由姐弟场景。"""
+def _patch_setting_parent_without_line(story: dict) -> list[str]:
+    """setting 写了家长动作但正文无对应台词 → 改由姐弟场景。"""
     notes: list[str] = []
     setting = str(story.get("setting") or "")
-    if "妈妈" not in setting:
-        return notes
     dialogue = story.get("dialogue") or []
-    has_mom = any(
-        isinstance(d, dict) and str(d.get("speaker") or "").strip() == "妈妈"
-        for d in dialogue
-    )
-    if has_mom:
-        return notes
-    if re.search(r"妈妈[^。！？]{0,8}切", setting) and re.search(
-        r"蛋糕|披萨",
-        setting,
-    ):
-        new_setting = (
-            setting.replace("妈妈切好", "灿灿切好")
-            .replace("妈妈切", "灿灿切")
+    for parent, note in (("妈妈", "setting去妈妈"), ("爸爸", "setting去爸爸")):
+        if parent not in setting:
+            continue
+        has_line = any(
+            isinstance(d, dict) and str(d.get("speaker") or "").strip() == parent
+            for d in dialogue
         )
-    else:
-        new_setting = setting.replace("妈妈切", "桌上摆着").replace("妈妈", "")
-    new_setting = re.sub(r"\s{2,}", " ", new_setting).strip("，,。 ")
-    if new_setting and new_setting != setting:
-        story["setting"] = new_setting
-        notes.append("setting去妈妈")
+        if has_line:
+            continue
+        if re.search(rf"{parent}[^。！？]{{0,8}}切", setting) and re.search(
+            r"蛋糕|披萨",
+            setting,
+        ):
+            new_setting = (
+                setting.replace(f"{parent}切好", "灿灿切好")
+                .replace(f"{parent}切", "灿灿切")
+            )
+        else:
+            new_setting = (
+                setting.replace(f"{parent}切", "桌上摆着").replace(parent, "")
+            )
+        new_setting = re.sub(r"\s{2,}", " ", new_setting).strip("，,。 ")
+        if new_setting and new_setting != setting:
+            story["setting"] = new_setting
+            setting = new_setting
+            notes.append(note)
     return notes
 
 
-
 def try_local_patch_daily_story_body(story: dict) -> tuple[dict, list[str]]:
-    """校验前确定性修补：超长句/字数小缺口/引话/setting妈妈。
+    """校验前确定性修补：超长句/字数小缺口/引话/setting家长。
 
     能修则少打一轮 LLM；修不干净仍交重试。
     """
@@ -4240,7 +4288,7 @@ def try_local_patch_daily_story_body(story: dict) -> tuple[dict, list[str]]:
     notes: list[str] = []
     notes.extend(_patch_speaker_aliases(out))
     notes.extend(_patch_overlong_lines(out))
-    notes.extend(_patch_setting_mom_without_line(out))
+    notes.extend(_patch_setting_parent_without_line(out))
     notes.extend(_patch_consecutive_speakers(out))
     notes.extend(patch_type_body(out))
     notes.extend(_patch_vocative_punctuation(out))
@@ -4640,7 +4688,7 @@ def build_daily_story_opening_retry_user(
     must_txt = "、".join(must) if must else core or "冲突实物/动作"
     avoid = (avoid_speaker or "").strip()
     speaker_hint = ""
-    if avoid in {"昭昭", "灿灿", "妈妈"}:
+    if avoid in {"昭昭", "灿灿", "妈妈", "爸爸"}:
         speaker_hint = (
             f"开场末句说话人不能是「{avoid}」"
             f"（正文以「{avoid}」起句，避免拼后连说）；"
@@ -4677,7 +4725,7 @@ def build_daily_story_quality_retry_user(
         f"【待修补维度】\n{revision_hints}\n\n"
         f"【字数硬卡】正文 {DAILY_STORY_BODY_CHARS_MIN}–{DAILY_STORY_BODY_CHARS_MAX} 字，"
         f"每句 ≤{DAILY_STORY_LINE_CHARS_MAX} 字。修补后不能超上限，删改的字数在别处补回。\n"
-        f"speaker 仅昭昭/灿灿/妈妈，禁同人连说。\n"
+        f"speaker 仅昭昭/灿灿/妈妈/爸爸，禁同人连说。\n"
         f"setting / conflict_core 如已正确则保留不动。\n\n"
         f"【上一稿】\n{json.dumps(prev_story, ensure_ascii=False)}\n\n"
         "请输出修订后的完整 JSON。"

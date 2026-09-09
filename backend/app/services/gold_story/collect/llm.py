@@ -161,7 +161,10 @@ _H2_USER = """视频标题：{title}
 规则：
 - story_raw **必须 80–400 字**；太短（单句笑话/只有一个梗）一律 has_complete_arc=false
 - 口播/科普/教程：source_type=tutorial，须改写 **一个姐弟可拍现场**，禁「第几招」清单
-- 角色只允许昭昭、灿灿、妈妈；爸爸/陌生小孩须映射或删除，不得保留在 story_raw
+- 角色允许昭昭、灿灿、妈妈、爸爸；陌生小孩须映射或删除。
+  源稿是爸爸且妈妈代不了时保留爸爸；能用妈妈就用妈妈；
+  单孩+家长须拆成昭昭+灿灿双孩戏份，家长仍配角。
+  不得保留站外真名/小男孩/对方等在 story_raw
 - 优先选热评里 **整段复述**（有然后/最后/被问/嘴硬）的完整微型故事
 - has_complete_arc=false 或 extract_confidence<0.5 即失败
 - 不要输出 quote 字段；引号对白保留在 story_raw 内
@@ -227,7 +230,8 @@ banned_literals 规则（仅填 remap/真名，勿填场景与笑点词）：
 _H3A_SYSTEM = (
     "你是金故事场景契约师。把 story_raw 转成昭昭(7岁弟)/灿灿(10岁姐) **可拍现场契约**。\n"
     "口播/教程须强制 remap 为姐弟现场：施教方→灿灿(立规)，被教方→昭昭，陌生小孩→灿灿(占物)。\n"
-    "characters 只允许昭昭/灿灿/妈妈；beat_chain 至少 4 拍。\n"
+    "characters 允许昭昭/灿灿/妈妈/爸爸；单孩+家长须拆成双孩戏份；"
+    "能用妈妈就用妈妈，源稿爸爸且代不了才保留爸爸；beat_chain 至少 4 拍。\n"
     "只输出 JSON。"
 )
 
@@ -254,11 +258,11 @@ source_type：{source_type}
   "conflict": "姐弟当场冲突一句",
   "mechanism": "来自 story_raw 的可拍规则/机制一句",
   "beat_chain": [
-    {{"beat": 1, "speaker": "灿灿|昭昭|妈妈", "intent": "立规/占物/…"}}
+    {{"beat": 1, "speaker": "灿灿|昭昭|妈妈|爸爸", "intent": "立规/占物/…"}}
   ],
   "closing_intent": "末句嘴硬/反转",
   "mom_lines_max": 0,
-  "remap_note": "站外角色如何映射",
+  "remap_note": "站外角色如何映射（单孩须拆成姐弟；家长能用妈不用爸）",
   "banned_literals": ["…"],
   "contract_confidence": 0.0
 }}
@@ -289,7 +293,7 @@ banned_literals：同 H3，仅 remap 称谓与站外真名；禁止填画画/碘
   M5+H 时 object 须是 story_raw 争物（如画作），勿改成「抢秘密」替代互毁
 - **正例只允许上方金稿原文**；本稿须按 story_raw 写，禁止把金稿场景套到本稿
 - mom_lines_max：H 类 2–3；K 类 1–2（旁观叹气）；其余默认 0，最多 1
-- 禁止 characters/beat_chain 出现爸爸/陌生小孩/对方
+- 禁止 characters/beat_chain 出现陌生小孩/对方；爸爸仅源稿需要且妈妈代不了时保留
 - tutorial 源禁止 mechanism/conflict 含「四招/方法/应该/告诉」
 """
 
@@ -315,7 +319,7 @@ story_raw（背景，勿照抄）：
 {{
   "setting": "地点 + 谁面前/端着哪件冲突物",
   "dialogue_seed": [
-    {{"speaker": "昭昭|灿灿|妈妈", "intent": "…"}}
+    {{"speaker": "昭昭|灿灿|妈妈|爸爸", "intent": "…"}}
   ],
   "closing_intent": "与 scene_contract 一致",
   "speaker_map_note": "映射说明",
@@ -328,7 +332,8 @@ story_raw（背景，勿照抄）：
 - M5+H：seed 须含「双向互毁」「拒和/不原谅」「妈妈问谁先动手」分拍，勿合并
 - intent 须来自 scene_contract + story_raw
 - **正例只允许上方金稿原文**；本稿禁止照抄金稿 intent 到不同场景
-- speaker 只允许昭昭/灿灿/妈妈；妈妈 seed 条数 ≤ scene_contract.mom_lines_max
+- speaker 允许昭昭/灿灿/妈妈/爸爸；妈妈 seed 条数 ≤ scene_contract.mom_lines_max
+- 爸爸 seed 宜更少（能用妈不用爸）；单孩+家长须拆成双孩 intent
 - 单条 intent ≤18 字；总 seed ≥4 条
 """
 
@@ -578,7 +583,8 @@ _H4A_SYSTEM = (
     "昭昭(7岁弟)+灿灿(10岁姐)姐弟日常冲突短视频。\n"
     "采集词可以宽，但你须严格卡掉：母子/婴儿婴语为主、"
     "冲突太短、映射距离太远、家长当唯一主角的稿子。\n"
-    "站外爸爸/父亲/宝爸可等位映射为妈妈（少出场），不算硬伤。\n"
+    "源稿爸爸且妈妈代不了时可保留爸爸（配角少台词）；"
+    "能用妈妈就用妈妈；单孩须已拆成姐弟戏份。\n"
     "只输出 JSON。"
 )
 
@@ -618,7 +624,8 @@ beat：
 - sibling_fit：是否姐弟/兄妹/两孩冲突，而非母子育儿/纯可爱
 - age_fit：能否自然落到 7 岁弟 + 10 岁姐（拒绝婴语、过小）
 - conflict_usable：是否有可拍争/抢/歪理/互呛链，不是温馨旁白
-- mapping_fit：映射到昭昭/灿灿是否牵强（家长当第三主角应降分；爸爸→妈妈视为可接受）
+- mapping_fit：映射到昭昭/灿灿是否牵强（家长当第三主角应降分；
+  保留爸爸配角且已有姐弟戏份可接受；能用妈不用爸）
 
 pass=true 仅当四维均 ≥0.55 且无硬伤；否则 pass=false 并列出 reject_reasons。
 """

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import re
 
-DAILY_STORY_SPEAKER_NAMES: tuple[str, ...] = ("昭昭", "灿灿", "妈妈")
+DAILY_STORY_SPEAKER_NAMES: tuple[str, ...] = ("昭昭", "灿灿", "妈妈", "爸爸")
+_PARENT_SPEAKERS = frozenset({"妈妈", "爸爸"})
 
 # 点名但非当场在画：转述旧规矩、询问去向、刻意避开等（不授予入画）
 # 口语常写「妈」；妈妈? = 妈|妈妈，避免「别让妈看见」漏判导致粘性硬塞三人
@@ -35,6 +36,33 @@ _PRESENT_MOM_RE = re.compile(
     r"|(?:^|[，,。！？\s])妈[，,]"
     r"|妈妈[，,]"
     r"|妈妈?你"
+)
+
+# 爸爸：口语「爸/爸爸」；镜像妈妈在场/离场逻辑
+_ABSENT_DAD_RE = re.compile(
+    r"爸爸?(?:说过|说的|让我们|叫我们|呢|在哪儿?|去哪儿?)"
+    r"|听爸爸?的"
+    r"|(?:别|先别|不要).{0,4}(?:告诉|让).{0,3}爸爸?"
+    r"|(?:躲|背|瞒)着爸爸?"
+    r"|别让爸爸?(?:看见|发现|知道)"
+    r"|别被爸爸?(?:看见|发现)"
+    r"|不让爸爸?知道"
+    r"|趁爸爸?不在"
+    r"|(?:听见?|听着?).{0,6}爸爸?(?:脚步声|脚步|声音|动静)"
+    r"|爸爸?(?:刚)?(?:听见|听到)"
+    r"|(?:不然|否则|等|等到|如果|要是|万一).{0,3}爸爸?回来"
+    r"|爸爸?(?:马上|就|快要).{0,3}回来了?"
+    r"|爸爸?回来(?:要|就|会)"
+)
+
+_PRESENT_DAD_RE = re.compile(
+    r"爸爸?(?:还|正|就)?(?:在)?"
+    r"(?:躺|刷|拿|握|坐|站|睡|笑|吃|嗑|看|玩|举|点|回|戴|听|抱)"
+    r"|爸爸?(?:手里|手机|屏幕|沙发|被窝|床上)"
+    r"|爸爸?还在"
+    r"|(?:^|[，,。！？\s])爸[，,]"
+    r"|爸爸[，,]"
+    r"|爸爸?你"
 )
 
 _ABSENT_CHILD_RE = {
@@ -74,6 +102,10 @@ _SETTING_OFFSCREEN_MOM_RE = re.compile(
     r"妈妈(?:还|正|就)?(?:在|待在|留在|躲在)?"
     r"(客厅|厨房|卧室|卫生间|厕所|阳台|餐厅|书房|玄关|门口)"
 )
+_SETTING_OFFSCREEN_DAD_RE = re.compile(
+    r"爸爸(?:还|正|就)?(?:在|待在|留在|躲在)?"
+    r"(客厅|厨房|卧室|卫生间|厕所|阳台|餐厅|书房|玄关|门口)"
+)
 
 __all__ = [
     "DAILY_STORY_SPEAKER_NAMES",
@@ -82,6 +114,7 @@ __all__ = [
     "annotate_sticky_stage_speakers",
     "collect_speaker_leak_issues",
     "collect_speaker_leak_segments",
+    "dad_should_stay_offscreen",
     "leaked_speaker_names_in_text",
     "mom_should_stay_offscreen",
     "present_cast_from_dialogue",
@@ -127,6 +160,8 @@ def present_cast_from_dialogue(dialogue: list | None) -> set[str]:
     for text in _line_texts(dialogue):
         if _PRESENT_MOM_RE.search(text) and not _ABSENT_MOM_RE.search(text):
             present.add("妈妈")
+        if _PRESENT_DAD_RE.search(text) and not _ABSENT_DAD_RE.search(text):
+            present.add("爸爸")
         for name in ("昭昭", "灿灿"):
             if _PRESENT_CHILD_RE[name].search(text) and not _ABSENT_CHILD_RE[
                 name
@@ -151,6 +186,17 @@ def mom_should_stay_offscreen(dialogue: list | None) -> bool:
     return any(_ABSENT_MOM_RE.search(text) for text in _line_texts(dialogue))
 
 
+def dad_should_stay_offscreen(dialogue: list | None) -> bool:
+    """台词明确要求避开爸爸视线时，爸爸本段不得入画。"""
+    speakers = speakers_from_dialogue(dialogue)
+    if "爸爸" in speakers:
+        return False
+    present = present_cast_from_dialogue(dialogue)
+    if "爸爸" in present:
+        return False
+    return any(_ABSENT_DAD_RE.search(text) for text in _line_texts(dialogue))
+
+
 def _primary_room_from_setting(setting: str | None) -> str | None:
     text = str(setting or "")
     m = _ROOM_RE.search(text)
@@ -167,12 +213,24 @@ def _mom_should_stay_offscreen_in_setting(setting: str | None) -> bool:
     return mom_room_m.group(1) != primary_room
 
 
+def _dad_should_stay_offscreen_in_setting(setting: str | None) -> bool:
+    """setting 只表示爸爸在另一房间/门外时，不授予当前镜头入画。"""
+    text = str(setting or "")
+    primary_room = _primary_room_from_setting(text)
+    dad_room_m = _SETTING_OFFSCREEN_DAD_RE.search(text)
+    if not primary_room or not dad_room_m:
+        return False
+    return dad_room_m.group(1) != primary_room
+
+
 def stage_cast_from_setting(setting: str | None) -> set[str]:
     """setting 点名的角色视为开场已在场（同场戏粘性起点）。"""
     text = str(setting or "")
     cast = {name for name in DAILY_STORY_SPEAKER_NAMES if name in text}
     if _mom_should_stay_offscreen_in_setting(text):
         cast.discard("妈妈")
+    if _dad_should_stay_offscreen_in_setting(text):
+        cast.discard("爸爸")
     return cast
 
 
@@ -186,7 +244,7 @@ def annotate_sticky_stage_speakers(
     写入每段 ``speakers``（有序）。例：餐桌戏妈妈先出场后，
     姐弟互怼镜仍须三人同框，不能把妈妈 scrub 掉。
 
-    若 setting 已同时点到妈妈与另一角色，或开场镜妈妈已发言且
+    若 setting 已同时点到家长与另一角色，或开场镜家长已发言且
     全文三人都会出场，则开场起全员同框。
     """
     segs = [s for s in (segments or []) if isinstance(s, dict)]
@@ -208,9 +266,9 @@ def annotate_sticky_stage_speakers(
         ordered[0].get("dialogue") if ordered else None,
     )
     family_stage = (
-        ("妈妈" in sticky and len(sticky) >= 2)
+        (bool(sticky & _PARENT_SPEAKERS) and len(sticky) >= 2)
         or (
-            "妈妈" in opening
+            bool(opening & _PARENT_SPEAKERS)
             and len(story_speakers) >= 3
         )
     )
@@ -223,6 +281,9 @@ def annotate_sticky_stage_speakers(
             # 当前段明确要求避开妈妈视线时，打断“妈妈持续同框”的粘性；
             # 后续若台词再次明确在场或由妈妈发言，会自然重新入画。
             sticky.discard("妈妈")
+        if dad_should_stay_offscreen(seg.get("dialogue")):
+            local.discard("爸爸")
+            sticky.discard("爸爸")
         sticky |= local
         seg["speakers"] = [n for n in DAILY_STORY_SPEAKER_NAMES if n in sticky]
 
@@ -235,6 +296,8 @@ def allowed_cast_from_segment(seg: dict | None) -> set[str]:
         allowed = {str(s).strip() for s in raw if str(s).strip()}
         if mom_should_stay_offscreen(seg.get("dialogue")):
             allowed.discard("妈妈")
+        if dad_should_stay_offscreen(seg.get("dialogue")):
+            allowed.discard("爸爸")
         return allowed
     return allowed_cast_from_dialogue(seg.get("dialogue"))
 
@@ -264,7 +327,7 @@ def scrub_leaked_speaker_names(text: str, allowed: set[str]) -> str:
     return "室内场景，无未授权角色入画。"
 
 
-# 妈妈未入画时，「盯/瞟门口」会诱使 T2I 画出陌生人（如「妈出来了」却无妈妈外貌）
+# 家长未入画时，「盯/瞟门口」会诱使 T2I 画出陌生人（如「妈出来了」却无妈妈外貌）
 _OFFSCREEN_DOOR_GAZE_RE = re.compile(
     r"(?:同时)?"
     r"(?:眼睛|目光|余光|身体)?"
@@ -278,9 +341,9 @@ _OFFSCREEN_DOOR_GAZE_RE = re.compile(
 
 
 def scrub_offscreen_doorway_cues(text: str, *, allowed: set[str]) -> str:
-    """妈妈不在 allowed 时，去掉「盯/瞟门口」，避免暗示第三人入画。"""
+    """家长都不在 allowed 时，去掉「盯/瞟门口」，避免暗示第三人入画。"""
     body = (text or "").strip()
-    if not body or "妈妈" in allowed:
+    if not body or ("妈妈" in allowed) or ("爸爸" in allowed):
         return body
 
     cleaned = _OFFSCREEN_DOOR_GAZE_RE.sub("", body)

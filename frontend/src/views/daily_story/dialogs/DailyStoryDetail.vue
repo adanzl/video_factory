@@ -225,6 +225,7 @@ import {
 function speakerStyle(speaker: string): { bg: string; text: string } {
   if (speaker === '昭昭') return { bg: 'bg-blue-50', text: 'text-blue-600 font-bold' }
   if (speaker === '妈妈') return { bg: 'bg-emerald-50', text: 'text-emerald-600 font-bold' }
+  if (speaker === '爸爸') return { bg: 'bg-slate-100', text: 'text-slate-700 font-bold' }
   return { bg: 'bg-pink-50', text: 'text-pink-600 font-bold' }
 }
 

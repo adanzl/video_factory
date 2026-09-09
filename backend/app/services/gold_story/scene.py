@@ -10,8 +10,6 @@ from app.services.daily_story.speaker import DAILY_STORY_SPEAKER_NAMES
 
 ALLOWED_SPEAKERS = frozenset(DAILY_STORY_SPEAKER_NAMES)
 ILLEGAL_SPEAKER_HINTS = (
-    "爸爸",
-    "父亲",
     "小男孩",
     "小女孩",
     "陌生",

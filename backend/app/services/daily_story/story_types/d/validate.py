@@ -114,8 +114,11 @@ def append_d_body_errors(story: dict, errors: list[str]) -> None:
         return
 
     mom_n = sum(1 for sp in speakers if sp == "妈妈")
+    dad_n = sum(1 for sp in speakers if sp == "爸爸")
     if mom_n > 0:
         errors.append("D类主戏姐弟，禁止妈妈插话（留给E类）")
+    if dad_n > 0:
+        errors.append("D类主戏姐弟，禁止爸爸插话")
 
     # 唠叨门：只数灿灿前 6 句里自己立规矩的次数。
     # 昭昭「你说系紧，我就…」这类**引规复述**不算唠叨（字面执行本来就须引原话）。

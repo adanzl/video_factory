@@ -129,6 +129,7 @@ VOICE_MODEL_MAP = {
     "longjielidou_v3": "cosyvoice-v3-flash",
     "cosyvoice-v3.5-flash-leo-f9d115bfdf2346edbeb9d21ecd4f9ce9": "cosyvoice-v3.5-flash",
     "cosyvoice-v3.5-flash-leo-40c4359c732f4b459a40f3408e1186ed": "cosyvoice-v3.5-flash",
+    "cosyvoice-v3.5-flash-dad2-6c9e71c5b4cd4c44838b650d91ba47d4": "cosyvoice-v3.5-flash",
 }
 DEFAULT_VOICE = "cosyvoice-v3.5-flash-leo-40c4359c732f4b459a40f3408e1186ed"  # cSpell: disable-line
 DEFAULT_MODEL = "cosyvoice-v3.5-plus"
@@ -551,9 +552,9 @@ class AliTTSClient(TTSClient):
             )
 
         pool = gevent.pool.Pool(size=max_workers)
-        greenlets = [pool.spawn(_run, seg) for seg in segments]
-        gevent.joinall(greenlets, raise_error=True)
-        segment_results: list[_SegmentSynthResult] = [g.value for g in greenlets]  # type: ignore[union-attr]
+        greenlet_lst = [pool.spawn(_run, seg) for seg in segments]
+        gevent.joinall(greenlet_lst, raise_error=True)
+        segment_results: list[_SegmentSynthResult] = [g.value for g in greenlet_lst]  # type: ignore[union-attr]
 
         segment_results.sort(key=lambda item: item.seg_index)
 

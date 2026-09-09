@@ -519,9 +519,9 @@ def format_block_for_code(code: str) -> str:
     if code_u == "D":
         rows = (
             f'    {{"speaker": "昭昭", "line": "台词（{line.line_format_hint}）"}},\n'
-            '    {"speaker": "灿灿", "line": "台词"}  // 本场仅昭昭/灿灿，禁止妈妈\n'
+            '    {"speaker": "灿灿", "line": "台词"}  // 本场仅昭昭/灿灿，禁止妈妈/爸爸\n'
         )
-        footer = "本场仅昭昭/灿灿出场；禁止妈妈。"
+        footer = "本场仅昭昭/灿灿出场；禁止妈妈/爸爸发言。"
     elif code_u == "E":
         rows = (
             f'    {{"speaker": "妈妈", "line": "台词（{line.line_format_hint}）"}},\n'
@@ -530,7 +530,7 @@ def format_block_for_code(code: str) -> str:
         )
         footer = (
             "妈妈三拍：开场立规+中段恰好1句短反应+末句破功并当场做回去；"
-            "假开脱由灿灿扛，昭昭只戳穿追问；大人例外最多2次。"
+            "假开脱由灿灿扛，昭昭只戳穿追问；大人例外最多2次；爸爸默认可不写。"
         )
     else:
         rows = (
@@ -538,7 +538,10 @@ def format_block_for_code(code: str) -> str:
             '    {"speaker": "灿灿", "line": "台词"},\n'
             '    {"speaker": "妈妈", "line": "台词（宜少）"}\n'
         )
-        footer = "妈妈可有台词，但宜少（建议≤3句）；主回合仍是姐弟。"
+        footer = (
+            "妈妈可有台词，但宜少（建议≤3句）；"
+            "爸爸可偶发（能用妈不用爸，宜≤1–2句）；主回合仍是姐弟。"
+        )
     return f"""\
 【格式要求】
 严格输出以下JSON结构：

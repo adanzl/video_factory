@@ -22,7 +22,21 @@ from worker.context import JobContext
 from worker.stages.base import StageExecutor
 from app.repositories.sql_exec import atomic
 logger = logging.getLogger(__name__)
-DEFAULT_DAILY_SPEAKER_CONFIGS: dict[str, dict] = {'昭昭': {'voice_id': 'cosyvoice-v3.5-flash-leo-f9d115bfdf2346edbeb9d21ecd4f9ce9', 'speech_rate': 1.15}, '灿灿': {'voice_id': 'cosyvoice-v3.5-flash-leo-40c4359c732f4b459a40f3408e1186ed', 'speech_rate': 1.3}, '妈妈': {'voice_id': 'longwan_v3', 'speech_rate': 1.2}}
+DEFAULT_DAILY_SPEAKER_CONFIGS: dict[str, dict] = {
+    "昭昭": {
+        "voice_id": "cosyvoice-v3.5-flash-leo-f9d115bfdf2346edbeb9d21ecd4f9ce9",
+        "speech_rate": 1.15,
+    },
+    "灿灿": {
+        "voice_id": "cosyvoice-v3.5-flash-leo-40c4359c732f4b459a40f3408e1186ed",
+        "speech_rate": 1.3,
+    },
+    "妈妈": {"voice_id": "longwan_v3", "speech_rate": 1.2},
+    "爸爸": {
+        "voice_id": "cosyvoice-v3.5-flash-dad2-6c9e71c5b4cd4c44838b650d91ba47d4",
+        "speech_rate": 1.15,
+    },
+}
 _DEFAULT_SPEAKER_CONFIGS = DEFAULT_DAILY_SPEAKER_CONFIGS
 _DEFAULT_PHRASE_GAP_SEC = 0.2
 _TTS_MAX_RETRIES = 3

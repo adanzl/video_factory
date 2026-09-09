@@ -17,11 +17,6 @@ _SIBLING_HINT = re.compile(
     re.I,
 )
 _PARENT_CHILD = re.compile(r"妈妈|爸爸|母亲|父亲|宝妈|宝爸", re.I)
-_FATHER_MAPS_TO_MOM = re.compile(
-    r"(?:爸爸|父亲|宝爸).*(?:→|映射|改为|换成|等位|写为).*妈妈|"
-    r"站外(?:爸爸|父亲|宝爸).*(?:→|为|成).*妈妈",
-    re.I,
-)
 _STORY_RAW_TRIM_MAX = 380
 _INFANT_SKEW = re.compile(r"婴语|话都说不清楚|小宝贝|人类幼崽|萌娃.*可爱", re.I)
 _MOTHER_BABY_CONFLICT = re.compile(
@@ -116,10 +111,11 @@ def run_rule_audit(
         reasons.append("infant_skew_title")
 
     map_note = str(speaker_map_note or "")
-    if _PARENT_CHILD.search(map_note) and "保留" in map_note and not _SIBLING_HINT.search(
-        map_note
-    ):
-        if not _FATHER_MAPS_TO_MOM.search(map_note):
+    # 映射说明写「保留家长」时须已有姐弟信号（保留爸爸配角+姐弟可过）
+    if _PARENT_CHILD.search(map_note) and "保留" in map_note:
+        if not _has_sibling_signal(
+            title_text, raw, speaker_map_note, conflict_core,
+        ):
             reasons.append("mapping_keeps_parent_role")
 
     return (len(reasons) == 0, reasons)

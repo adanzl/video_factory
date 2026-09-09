@@ -11,6 +11,7 @@ export const DEFAULT_TTS_VOICE ="cosyvoice-v3.5-flash-leo-40c4359c732f4b459a40f3
 export const TTS_VOICE_ZHAO = "cosyvoice-v3.5-flash-leo-f9d115bfdf2346edbeb9d21ecd4f9ce9";
 export const TTS_VOICE_CAN = DEFAULT_TTS_VOICE;
 export const TTS_VOICE_MOM = "longwan_v3";
+export const TTS_VOICE_DAD = "cosyvoice-v3.5-flash-dad2-6c9e71c5b4cd4c44838b650d91ba47d4";
 
 const CLONED_VOICES: TtsVoiceOption[] = [
   {
@@ -20,6 +21,10 @@ const CLONED_VOICES: TtsVoiceOption[] = [
   {
     label: "复刻 (昭昭)",
     value: TTS_VOICE_ZHAO,
+  },
+  {
+    label: "复刻 (爸爸)",
+    value: TTS_VOICE_DAD,
   },
 ];
 
