@@ -1,5 +1,6 @@
 """金故事结构类型纠偏：M2+C 误判武力压制→M8+J；正经胡说→M6+N；
-目标错位→M13+O；整蛊互整→M14+P；无双规则硬套 M2+C → 降置信拒收。"""
+目标错位→M13+O；整蛊互整→M14+P；暖收误标 M7+D→M4+G；
+无双规则硬套 M2+C → 降置信拒收。"""
 
 from __future__ import annotations
 
@@ -70,7 +71,14 @@ _RE_ADULT_OR_COUPLE = re.compile(
     r"二胎|再生一个|夫妻|闺蜜.*怀|抢男人|导演|片场|电动车|雅迪"
 )
 _RE_INFANT_LOVE = re.compile(r"三岁|宝宝|婴语|人类幼崽")
-
+# M7/D 误标暖收：有暖心收束、无字面破规回旋镖
+_RE_WARM_CLOSE = re.compile(
+    r"暖心|暖收|会心一笑|愣住.*笑|笑出声|感动|"
+    r"符合G|G型结构|嘴硬心软"
+)
+_RE_D_CLOSE = re.compile(
+    r"叮嘱.*破|破规|原话回旋|你刚说|你不是说|规矩是你|歪读执行.*破"
+)
 
 def classification_blob(
     *,
@@ -240,6 +248,30 @@ def should_demote_forced_m2_c(
     return False
 
 
+def suggests_m4_g_warm_close(blob: str) -> bool:
+    """暖心收束：愣住/暖收/符合G；非 D 字面破规回旋镖。"""
+    text = str(blob or "")
+    if not _RE_WARM_CLOSE.search(text):
+        return False
+    if _RE_D_CLOSE.search(text):
+        return False
+    return True
+
+
+def should_reclassify_m7_d_to_m4_g(
+    *,
+    mechanism: str,
+    structure_type: str,
+    blob: str,
+) -> bool:
+    """立规后暖收误标 M7+D → M4+G。"""
+    mech = str(mechanism or "").strip().upper()
+    st = str(structure_type or "").strip().upper()
+    if mech != "M7" or st != "D":
+        return False
+    return suggests_m4_g_warm_close(blob)
+
+
 def should_reclassify_m2_c_to_m8_j(
     *,
     mechanism: str,
@@ -363,7 +395,7 @@ def resolve_h3_structure(
 ) -> tuple[dict[str, Any], list[str]]:
     """H3 后处理：武力压制误标 M2+C → M8+J；正经胡说误标 → M6+N；
     目标错位误标 → M13+O；整蛊互整误标 → M14+P；
-    无双规则硬套 M2+C → 降 structure_confidence。"""
+    暖收误标 M7+D → M4+G；无双规则硬套 M2+C → 降 structure_confidence。"""
     notes: list[str] = []
     out = dict(h3)
     blob = classification_blob(
@@ -372,6 +404,22 @@ def resolve_h3_structure(
         conflict_core=str(out.get("conflict_core") or ""),
         mapping_note=str(out.get("structure_mapping_note") or ""),
     )
+    if should_reclassify_m7_d_to_m4_g(
+        mechanism=str(out.get("mechanism") or ""),
+        structure_type=str(out.get("structure_type") or ""),
+        blob=blob,
+    ):
+        notes.extend(
+            _apply_reclass(
+                out,
+                target_mech="M4",
+                target_st="G",
+                note_extra="立规后暖心收束，非 D 字面破规回旋镖",
+                note_tag="warm-close-not-literal",
+            )
+        )
+        return out, notes
+
     if should_reclassify_m2_c_to_m8_j(
         mechanism=str(out.get("mechanism") or ""),
         structure_type=str(out.get("structure_type") or ""),
@@ -493,7 +541,14 @@ def resolve_structure_row(row: dict[str, Any]) -> tuple[dict[str, Any], list[str
     target_mech = ""
     target_st = ""
     extra = ""
-    if should_reclassify_m2_c_to_m8_j(
+    if should_reclassify_m7_d_to_m4_g(
+        mechanism=mechanism,
+        structure_type=current,
+        blob=blob,
+    ):
+        target_mech, target_st = "M4", "G"
+        extra = "立规后暖心收束，非 D 字面破规回旋镖"
+    elif should_reclassify_m2_c_to_m8_j(
         mechanism=mechanism,
         structure_type=current,
         blob=blob,
@@ -550,4 +605,50 @@ def resolve_structure_row(row: dict[str, Any]) -> tuple[dict[str, Any], list[str
 
     _sync_scene_contract_story_type(payload, target_st, notes)
     out["payload"] = payload
+    return out, notes
+
+
+def sync_h3_from_scene_contract(
+    h3: dict[str, Any],
+    scene_contract: dict[str, Any] | None,
+    *,
+    story_raw: str = "",
+) -> tuple[dict[str, Any], list[str]]:
+    """H3a 标了结构字母时回写 H3 列，避免表头与契约分叉（如列 D、契约 G）。"""
+    notes: list[str] = []
+    out = dict(h3)
+    sc = scene_contract if isinstance(scene_contract, dict) else {}
+    sc_st = str(sc.get("story_type") or "").strip().upper()
+    h3_st = str(out.get("structure_type") or "").strip().upper()
+    if not sc_st or sc_st == h3_st:
+        return out, notes
+
+    blob = classification_blob(
+        story_raw=story_raw,
+        beat=out.get("beat") if isinstance(out.get("beat"), list) else [],
+        conflict_core=str(out.get("conflict_core") or ""),
+        mapping_note=str(out.get("structure_mapping_note") or ""),
+        closing_intent=str(sc.get("closing_intent") or ""),
+    )
+    # 已知分叉：契约 G / 列 D（暖收）→ 跟契约走
+    if sc_st == "G" and h3_st == "D" and (
+        suggests_m4_g_warm_close(blob)
+        or should_reclassify_m7_d_to_m4_g(
+            mechanism=str(out.get("mechanism") or ""),
+            structure_type=h3_st,
+            blob=blob,
+        )
+        or _RE_WARM_CLOSE.search(blob)
+    ):
+        notes.extend(
+            _apply_reclass(
+                out,
+                target_mech="M4",
+                target_st="G",
+                note_extra="H3a.story_type=G 回写列（原误标 D）",
+                note_tag="sync-scene-g",
+            )
+        )
+        return out, notes
+
     return out, notes

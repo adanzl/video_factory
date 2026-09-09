@@ -26,6 +26,7 @@ from app.services.gold_story.collect.search import (
 )
 from app.services.gold_story.export_story import export_story_files
 from app.services.gold_story.scene import sanitize_banned_literals
+from app.services.gold_story.structure_resolve import sync_h3_from_scene_contract
 from app.services.gold_story.transcript import (
     repaired_transcript_path,
     save_repaired_transcript,
@@ -171,6 +172,18 @@ def process_candidate(
             h3=h3,
             source_type=source_type,
         )
+        h3, sync_notes = sync_h3_from_scene_contract(
+            h3, h3a, story_raw=str(h2.get("story_raw") or "")
+        )
+        if sync_notes:
+            note = str(h3.get("structure_mapping_note") or "").strip()
+            suffix = ";".join(sync_notes)
+            h3["structure_mapping_note"] = (
+                f"{note};{suffix}".strip(";") if note else suffix
+            )
+            # 契约字母与列对齐
+            h3a = dict(h3a)
+            h3a["story_type"] = str(h3.get("structure_type") or h3a.get("story_type"))
         h3b = llm_steps.build_dialogue_seed(
             story_raw=h2["story_raw"],
             h3=h3,

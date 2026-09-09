@@ -9,9 +9,7 @@ from app.services.gold_story.types import (
     GOLD_STORY_MECHANISM_CODES,
     GOLD_STORY_MECHANISM_LABELS,
     GOLD_STORY_TYPE_CATALOG,
-    allowed_structure_types,
-    normalize_structure_type,
-    structure_type_for_mechanism,
+    align_mechanism_structure,
 )
 from app.services.gold_story.scene import (
     SEED_MIN,
@@ -186,6 +184,10 @@ _H3_SYSTEM = (
     "禁止把「光顾着赢、奖品没了」标成 M2+C（无双规则互戳回旋镖）。\n"
     "M14 以牙还牙：道具整蛊/挑战下料→硬撑或自食→回敬加码→认怂散场→P；"
     "禁止把整蛊互整标成 M2+C；口头威胁互呛无道具回敬→M3+F。\n"
+    "M7 字面执行：须歪读跑偏且叮嘱方破规+原话回旋镖→D；"
+    "**禁止**仅因出现「规矩/谁…谁…」就标 M7。\n"
+    "M4 嘴硬心软：立规/互怼后真情或反转示好→对方愣住→暖收→G；"
+    "立规后孩子争着帮忙/抢活、家长愣住暖心→M4+G（不是 M7+D）。\n"
     "M2 双规则/自私包装公平：须双方各执公平判据且同场回旋镖引原话→C；"
     "若收束为拒领点破表演公平→L；若收束为灵魂拷问问倒→M11+I。\n"
     "禁止把 M2+C 用于武力扭打/一锤 KO：仅有「谁赢了谁说了算」单方定规、"
@@ -478,20 +480,17 @@ def structurize_story(
     mechanism = str(data.get("mechanism") or "").strip().upper()
     if mechanism not in GOLD_STORY_MECHANISM_CODES:
         raise ValueError(f"H3 invalid mechanism: {mechanism!r}")
-    default_type = structure_type_for_mechanism(mechanism)
-    llm_type = str(data.get("structure_type") or "").strip().upper()
-    if llm_type:
-        try:
-            normalized = normalize_structure_type(llm_type)
-            if normalized in allowed_structure_types(mechanism):
-                data["structure_type"] = normalized
-            else:
-                data["structure_type"] = default_type
-        except ValueError:
-            data["structure_type"] = default_type
-    else:
-        data["structure_type"] = default_type
-    data["mechanism"] = mechanism
+    mech, st, align_note = align_mechanism_structure(
+        mechanism,
+        str(data.get("structure_type") or ""),
+    )
+    data["mechanism"] = mech
+    data["structure_type"] = st
+    if align_note:
+        note = str(data.get("structure_mapping_note") or "").strip()
+        data["structure_mapping_note"] = (
+            f"{note}；{align_note}".strip("；") if note else align_note
+        )
     beat = data.get("beat") or []
     if not isinstance(beat, list) or len(beat) < 4:
         raise ValueError("H3 beat must have 4–6 steps")
