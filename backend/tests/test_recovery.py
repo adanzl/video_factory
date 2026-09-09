@@ -99,6 +99,41 @@ def test_recover_skips_abort_hold(app_ctx) -> None:
     assert any("skipped auto-recover: user aborted" in log["message"] for log in logs)
 
 
+def test_recover_preserves_chat_type_info(app_ctx) -> None:
+    """自动恢复勿清空 chat 任务信息栏矛盾类型（#98）。"""
+    from app.repositories import repo_daily_story
+    from app.utils.job_info import merge_job_info
+
+    story_id = repo_daily_story.insert_story(
+        theme="抢粥",
+        story={
+            "scene_title": "趴地舔粥",
+            "dialogue": [{"speaker": "昭昭", "line": "我舔"}],
+        },
+        story_type="K",
+        status="active",
+    )
+    job = repo_job.create_job(
+        "趴地舔粥",
+        stage="segment",
+        status="running",
+        pipeline="chat",
+        material_id=story_id,
+        info=merge_job_info(None, daily_story_id=story_id),
+        error_message="[K家长看戏]",
+    )
+    job_id = int(job["id"])
+
+    with patch.object(job_mgr, "continue_job", return_value={"id": job_id}):
+        from worker.recovery import recover_stuck_jobs
+
+        recover_stuck_jobs()
+
+    row = repo_job.get_job(job_id)
+    assert row["status"] == "pending"
+    assert row["error_message"] == "[K家长看戏]"
+
+
 def test_recover_stuck_gold_story_pending_resets_processing(
     app_ctx,
     monkeypatch,
