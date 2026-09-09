@@ -346,6 +346,9 @@ def collect_humor_issues(
     mom_n = sum(1 for sp in (speakers or []) if sp == "妈妈")
     if mom_n > 0:
         cons.append("妈妈插话不好笑")
+    dad_n = sum(1 for sp in (speakers or []) if sp == "爸爸")
+    if dad_n > 0:
+        cons.append("爸爸插话不好笑")
 
     # 末段相邻再引一次常见于 LLM 结巴，不硬杀；
     # 中段（末 6 句之外）+ 收束各一枪、或 ≥3 次才记复读

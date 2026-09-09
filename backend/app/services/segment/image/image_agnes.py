@@ -64,12 +64,27 @@ _DAILY_LOOK = {
     "昭昭": "蓝色短袖T恤的短发男孩（昭昭）",
     "灿灿": "粉色卫衣的黑马尾女孩（灿灿）",
     "妈妈": "米色上衣的黑长发成年女性（妈妈）",
+    "爸爸": "深灰卫衣的短发成年男性（爸爸）",
 }
-_DAILY_ARM_IDS = {"昭昭": "zhao_arms", "灿灿": "can_arms", "妈妈": "mom_arms"}
-_ARM_COUNT_IDS = frozenset({"zhao_arms", "can_arms", "mom_arms", "extra_arms"})
+_DAILY_ARM_IDS = {
+    "昭昭": "zhao_arms",
+    "灿灿": "can_arms",
+    "妈妈": "mom_arms",
+    "爸爸": "dad_arms",
+}
+_ARM_COUNT_IDS = frozenset(
+    {"zhao_arms", "can_arms", "mom_arms", "dad_arms", "extra_arms"}
+)
 _MAX_ARMS_PER_PERSON = 2
-_DAILY_LEG_IDS = {"昭昭": "zhao_legs", "灿灿": "can_legs", "妈妈": "mom_legs"}
-_LEG_COUNT_IDS = frozenset({"zhao_legs", "can_legs", "mom_legs", "extra_legs"})
+_DAILY_LEG_IDS = {
+    "昭昭": "zhao_legs",
+    "灿灿": "can_legs",
+    "妈妈": "mom_legs",
+    "爸爸": "dad_legs",
+}
+_LEG_COUNT_IDS = frozenset(
+    {"zhao_legs", "can_legs", "mom_legs", "dad_legs", "extra_legs"}
+)
 _MAX_LEGS_PER_PERSON = 2
 
 # ── 多手硬卡（裁剪放大数手）────────────────────────────────
@@ -91,8 +106,13 @@ _HARD_FAIL_ARM_Q2 = (
     "（数清楚她/他身上所有的手，包括握着东西的手、"
     "从腰侧/背后/胸前伸出的手）是则回答「是」，否则回答「否」。"
 )
-# daily 固定布局：昭昭左、灿灿右、妈妈中
-_HARD_FAIL_ZONE = {"昭昭": "left", "灿灿": "right", "妈妈": "center"}
+# daily 固定布局：昭昭左、灿灿右、家长中
+_HARD_FAIL_ZONE = {
+    "昭昭": "left",
+    "灿灿": "right",
+    "妈妈": "center",
+    "爸爸": "center",
+}
 _HARD_FAIL_ZOOM = 2
 
 
@@ -123,7 +143,7 @@ def _leg_count_question(look: str) -> str:
     )
 # 拼装器写入 image_prompt 的首个说话人张嘴标记（须与 image_prompt.py 一致）
 _MOUTH_FIRST_SPEAKER_RE = re.compile(
-    r"(昭昭|灿灿|妈妈)(?:嘴唇微张，|(?:嘴巴明显张开|微微张嘴|嘴巴微张)?)正在开口说话"
+    r"(昭昭|灿灿|妈妈|爸爸)(?:嘴唇微张，|(?:嘴巴明显张开|微微张嘴|嘴巴微张)?)正在开口说话"
 )
 _PROP_HOLDER_RE = re.compile(
     r"(?P<hand>右手|左手)?"
@@ -994,7 +1014,7 @@ class AgnesImageProvider(ImageProvider):
             )
         # 左右站位：提示词写了「左边是A，右边是B」时校验，防 T2I 对调导致后续嘴型全反
         lr = re.search(
-            r"画面左边是\s*(昭昭|灿灿|妈妈)\s*[，,；;]?\s*右边是\s*(昭昭|灿灿|妈妈)",
+            r"画面左边是\s*(昭昭|灿灿|妈妈|爸爸)\s*[，,；;]?\s*右边是\s*(昭昭|灿灿|妈妈|爸爸)",
             scene_prompt,
         )
         if content_style == CONTENT_STYLE_DAILY_STORY and lr:
@@ -1029,7 +1049,7 @@ class AgnesImageProvider(ImageProvider):
             m = _PROP_HOLDER_RE.search(clause)
             if not m:
                 continue
-            roles = re.findall(r"昭昭|灿灿|妈妈", clause[: m.start()])
+            roles = re.findall(r"昭昭|灿灿|妈妈|爸爸", clause[: m.start()])
             if roles:
                 prop_match = (roles[-1], m.group("hand") or "手中", m.group("prop"))
                 break
@@ -1037,7 +1057,7 @@ class AgnesImageProvider(ImageProvider):
             holder, hand, prop = prop_match
             others = [
                 name
-                for name in ("昭昭", "灿灿", "妈妈")
+                for name in ("昭昭", "灿灿", "妈妈", "爸爸")
                 if name in speakers and name != holder
             ]
             look = _DAILY_LOOK.get(holder, holder)

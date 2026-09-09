@@ -61,7 +61,7 @@ _DAILY_CAST_LOCK_3 = "全画面仅有{}、{}、{}三人，不得出现其他任�
 # 避免与 holder 渲染的「在X手中」并存成矛盾句（书包“手中+背上”同屏）
 _FORM_POSITION_RE = re.compile(
     r"(?:背|扛|挂|挎|握|拿|提|捧|抱|叼|夹|举|拎|戴|穿|端|攥)在"
-    r"(?:(?:昭昭|灿灿|妈妈)(?:的)?)?[^，,；;]{0,10}"
+    r"(?:(?:昭昭|灿灿|妈妈|爸爸|爸爸)(?:的)?)?[^，,；;]{0,10}"
 )
 # brief 里「指鞋/伸手向鞋带/托鞋帮」与硬锁打架，会诱发第三只鞋或套鞋
 _FLOOR_SHOE_HAND_SCRUB_RE = re.compile(
@@ -90,15 +90,21 @@ _DAILY_CANCAN_HAIR_LOCK = (
 _DAILY_CHAR_MOM = (
     "妈妈：成年女性，黑色长发，米色上衣，蓝色牛仔裤，深色平底鞋。"
 )
+_DAILY_CHAR_DAD = (
+    "爸爸：成年男性，黑色短发露耳，深灰圆领卫衣，藏青休闲裤，黑色运动鞋。"
+)
 _DAILY_CHAR_HEIGHT = "昭昭比灿灿矮约半个头。"
 # 三人同框时，孩子间身高已由站位句（visual_brief enrich 的「比昭昭高一点」）
-# 承担；此处只保留妈妈的高度参照，去掉与站位重复的「灿灿次之，昭昭最矮」。
+# 承担；此处只保留家长的高度参照。
 _DAILY_CHAR_HEIGHT_MOM = "妈妈最高。"
+_DAILY_CHAR_HEIGHT_DAD = "爸爸最高，妈妈次之。"
+_DAILY_CHAR_HEIGHT_DAD_ONLY = "爸爸最高。"
 
 _DAILY_CHAR_MAP: dict[str, str] = {
     "昭昭": _DAILY_CHAR_ZHAO,
     "灿灿": _DAILY_CHAR_CANCAN,
     "妈妈": _DAILY_CHAR_MOM,
+    "爸爸": _DAILY_CHAR_DAD,
 }
 
 _FLOOR_SHOE_SETTING_RE = re.compile(
@@ -299,7 +305,7 @@ def _rewrite_shared_grip_to_ends_s4(s4: str, states: list) -> str:
         is_body_part_object,
     )
 
-    roles = ("昭昭", "灿灿", "妈妈")
+    roles = ("昭昭", "灿灿", "妈妈", "爸爸")
     result = s4
     for st in _collapse_object_aliases(states):
         if not isinstance(st, dict):
@@ -346,10 +352,10 @@ def _scrub_hand_contradiction_s4(s4: str) -> str:
     if not text:
         return text
     # 按角色名把文本切成片段：角色名到下一个角色名/句末
-    parts = re.split(r"(?=昭昭|灿灿|妈妈)", text)
+    parts = re.split(r"(?=昭昭|灿灿|妈妈|爸爸|爸爸)", text)
     rebuilt: list[str] = []
     for part in parts:
-        role = next((r for r in ("昭昭", "灿灿", "妈妈") if part.startswith(r)), None)
+        role = next((r for r in ("昭昭", "灿灿", "妈妈", "爸爸") if part.startswith(r)), None)
         if role:
             part = _fix_role_hand_contradiction(part)
         rebuilt.append(part)
@@ -977,9 +983,9 @@ def _daily_zhao_handles_floor_shoelaces(vb: str) -> bool:
 
 
 def _daily_speakers_of(seg: dict) -> list[str]:
-    """本段出场角色：固定主角（昭昭/灿灿）默认每镜都在，妈妈按 cast 决定。
+    """本段出场角色：固定主角（昭昭/灿灿）默认每镜都在，家长按 cast 决定。
 
-    优先读 LLM 输出的 seg["cast"]（额外在场且非常态，如妈妈），
+    优先读 LLM 输出的 seg["cast"]（额外在场且非常态，如妈妈/爸爸），
     硬编码补入固定主角昭昭/灿灿；无 cast 时回退 speakers 粘性逻辑。
     """
     cast = seg.get("cast")
@@ -987,14 +993,14 @@ def _daily_speakers_of(seg: dict) -> list[str]:
         names: list[str] = ["昭昭", "灿灿"]
         for n in cast:
             n = str(n).strip()
-            if n in ("昭昭", "灿灿", "妈妈") and n not in names:
+            if n in ("昭昭", "灿灿", "妈妈", "爸爸") and n not in names:
                 names.append(n)
         return names
 
     from app.services.daily_story.speaker import allowed_cast_from_segment
 
     allowed = allowed_cast_from_segment(seg)
-    return [n for n in ("昭昭", "灿灿", "妈妈") if n in allowed]
+    return [n for n in ("昭昭", "灿灿", "妈妈", "爸爸") if n in allowed]
 
 
 def _daily_first_speaker(seg: dict) -> str | None:
@@ -1007,14 +1013,14 @@ def _daily_first_speaker(seg: dict) -> str | None:
 
 
 _DAILY_LR_RE = re.compile(
-    r"画面左边是\s*(昭昭|灿灿|妈妈)\s*[，,；;]?\s*右边是\s*(昭昭|灿灿|妈妈)"
+    r"画面左边是\s*(昭昭|灿灿|妈妈|爸爸)\s*[，,；;]?\s*右边是\s*(昭昭|灿灿|妈妈|爸爸)"
 )
 _DAILY_LCR_RE = re.compile(
-    r"(?:画面)?从左到右是\s*(昭昭|灿灿|妈妈)\s*[、,，]\s*"
-    r"(昭昭|灿灿|妈妈)\s*[、,，]\s*(昭昭|灿灿|妈妈)"
-    r"|左边是\s*(昭昭|灿灿|妈妈)\s*[，,；;]?\s*"
-    r"中间是\s*(昭昭|灿灿|妈妈)\s*[，,；;]?\s*"
-    r"右边是\s*(昭昭|灿灿|妈妈)"
+    r"(?:画面)?从左到右是\s*(昭昭|灿灿|妈妈|爸爸)\s*[、,，]\s*"
+    r"(昭昭|灿灿|妈妈|爸爸)\s*[、,，]\s*(昭昭|灿灿|妈妈|爸爸)"
+    r"|左边是\s*(昭昭|灿灿|妈妈|爸爸)\s*[，,；;]?\s*"
+    r"中间是\s*(昭昭|灿灿|妈妈|爸爸)\s*[，,；;]?\s*"
+    r"右边是\s*(昭昭|灿灿|妈妈|爸爸)"
 )
 
 
@@ -1040,18 +1046,25 @@ def _daily_layout_speakers(seg: dict, vb: str) -> list[str]:
         pair = _keep([left, right])
         # 妈妈须离场（躲着/别让看见）或本段根本没有妈妈时，才尊重二人 brief。
         # E 类粘性三人：台词可以少、画面不能缺席，勿因 vb 只写左右把妈妈挤出构图。
-        from app.services.daily_story.speaker import mom_should_stay_offscreen
+        from app.services.daily_story.speaker import (
+            dad_should_stay_offscreen,
+            mom_should_stay_offscreen,
+        )
 
         hide_mom = mom_should_stay_offscreen(seg.get("dialogue"))
+        hide_dad = dad_should_stay_offscreen(seg.get("dialogue"))
         if (
             len(pair) == 2
             and pair[0] != pair[1]
             and ("妈妈" not in allowed or hide_mom)
+            and ("爸爸" not in allowed or hide_dad)
         ):
             if pair == ["灿灿", "昭昭"]:
                 pair = ["昭昭", "灿灿"]
             return pair
     speakers = _daily_speakers_of(seg)
+    if set(speakers) >= {"昭昭", "灿灿", "爸爸"} and "妈妈" not in speakers:
+        return ["昭昭", "爸爸", "灿灿"]
     if set(speakers) >= {"昭昭", "灿灿", "妈妈"}:
         return ["昭昭", "妈妈", "灿灿"]
     if "昭昭" in speakers and "灿灿" in speakers:
@@ -1089,6 +1102,7 @@ _DAILY_COMPOSITION_LOOK = {
     "昭昭": "蓝T恤深蓝短裤短发男孩昭昭",
     "灿灿": "粉卫衣蓝裤黑马尾女孩灿灿",
     "妈妈": "米色上衣牛仔裤黑长发妈妈",
+    "爸爸": "深灰卫衣藏青裤短发爸爸",
 }
 
 
@@ -1174,10 +1188,11 @@ def inject_role_completeness(
     if len(names) < 2 or shot_type == "特写":
         return text
     full = "、".join(names)
-    if "妈妈" in names:
+    if "妈妈" in names or "爸爸" in names:
+        parent = "爸爸" if "爸爸" in names else "妈妈"
         mom_clause = (
             f"{full}均为画面硬主体，全身从头到脚完整可见，"
-            "妈妈作为独立完整主体入镜，面部清晰朝向镜头。"
+            f"{parent}作为独立完整主体入镜，面部清晰朝向镜头。"
         )
     else:
         mom_clause = (
@@ -1353,7 +1368,7 @@ def _strip_vb_scene_anchor_sentences(vb: str) -> str:
         sentence = part.strip()
         if not sentence:
             continue
-        has_char = any(n in sentence for n in ("昭昭", "灿灿", "妈妈"))
+        has_char = any(n in sentence for n in ("昭昭", "灿灿", "妈妈", "爸爸"))
         scene_hits = [w for w in _SCENE_SENTENCE_WORDS if w in sentence]
         if not has_char and len(scene_hits) >= 2:
             continue
@@ -1448,12 +1463,19 @@ def assemble_daily_t2i_prompt(
         s2 = f"{s2}，场景浅色蜡笔轻涂"
 
     # S3：有参考图的角色（昭昭/灿灿）外貌靠「保持参考图外貌」句锁定；
-    # 妈妈无参考图，需在此单独注入文字外貌描述。
-    s3 = ""
+    # 家长无参考图，需在此单独注入文字外貌描述。
+    s3_parts: list[str] = []
     if "妈妈" in speakers:
-        s3 = _DAILY_CHAR_MOM
-        if {"昭昭", "灿灿"} <= set(speakers):
-            s3 += _DAILY_CHAR_HEIGHT_MOM
+        s3_parts.append(_DAILY_CHAR_MOM)
+    if "爸爸" in speakers:
+        s3_parts.append(_DAILY_CHAR_DAD)
+    if "爸爸" in speakers and "妈妈" in speakers:
+        s3_parts.append(_DAILY_CHAR_HEIGHT_DAD)
+    elif "爸爸" in speakers:
+        s3_parts.append(_DAILY_CHAR_HEIGHT_DAD_ONLY)
+    elif "妈妈" in speakers and {"昭昭", "灿灿"} <= set(speakers):
+        s3_parts.append(_DAILY_CHAR_HEIGHT_MOM)
+    s3 = "".join(s3_parts)
 
     # S4 本镜画面（唯一 LLM 入口，已清洗；场景/陈设归 S2，不重复）
     s4_parts: list[str] = []

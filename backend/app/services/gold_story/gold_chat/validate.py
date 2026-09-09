@@ -1145,7 +1145,7 @@ def _seed_unique_phrase_owners(
         if not isinstance(item, dict):
             continue
         sp = str(item.get("speaker") or "").strip()
-        if sp not in {"昭昭", "灿灿", "妈妈"}:
+        if sp not in {"昭昭", "灿灿", "妈妈", "爸爸"}:
             continue
         intent = str(item.get("intent") or item.get("line") or "")
         text = "".join(re.findall(r"[\u4e00-\u9fff]", intent))
@@ -1185,7 +1185,7 @@ def _append_seed_speaker_issues(
     for i, row in enumerate(rows, 1):
         sp = str(row.get("speaker") or "").strip()
         line = str(row.get("line") or "").strip()
-        if not line or sp not in {"昭昭", "灿灿", "妈妈"}:
+        if not line or sp not in {"昭昭", "灿灿", "妈妈", "爸爸"}:
             continue
         line_han = "".join(re.findall(r"[\u4e00-\u9fff]", line))
         for phr, want in owners.items():
@@ -1370,7 +1370,9 @@ def validate_chat_hard(
 
     allowed = set(ALLOWED_SPEAKERS)
     mom_max = 1 if mom_lines_max is None else max(0, int(mom_lines_max))
+    dad_max = 1
     mom_count = 0
+    dad_count = 0
 
     for i, item in enumerate(dialogue):
         if not isinstance(item, dict):
@@ -1386,9 +1388,15 @@ def validate_chat_hard(
             mom_count += 1
             if any(w in line for w in MOM_BANNED_IN_LINE):
                 errors.append(f"dialogue[{i}] 妈妈台词像说教")
+        if sp == "爸爸":
+            dad_count += 1
+            if any(w in line for w in MOM_BANNED_IN_LINE):
+                errors.append(f"dialogue[{i}] 爸爸台词像说教")
 
     if mom_count > mom_max:
         errors.append(f"妈妈台词须≤{mom_max}句，当前{mom_count}")
+    if dad_count > dad_max:
+        errors.append(f"爸爸台词须≤{dad_max}句，当前{dad_count}")
 
     line_count = len([x for x in dialogue if isinstance(x, dict) and str(x.get("line") or "").strip()])
     st = str(story.get("story_type") or "").strip().upper()

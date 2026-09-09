@@ -792,15 +792,31 @@ def score_daily_story(
         score -= profile.mom_lines_penalty
         cons.append(f"妈妈台词偏多（{mom_n}句）")
 
+    dad_n = sum(
+        1 for d in (dialogue or [])
+        if isinstance(d, dict) and str(d.get("speaker") or "").strip() == "爸爸"
+    )
+    if dad_n >= profile.dad_lines_penalty_at:
+        score -= profile.dad_lines_penalty
+        cons.append(f"爸爸台词偏多（{dad_n}句）")
+
     if profile.penalize_mom_judge:
         for pat in _MOM_JUDGE_PATTERNS:
             if any(
                 pat in str(d.get("line") or "")
                 for d in (dialogue or [])
-                if isinstance(d, dict) and d.get("speaker") == "妈妈"
+                if isinstance(d, dict)
+                and d.get("speaker") in ("妈妈", "爸爸")
             ):
                 score -= 25
-                cons.append(f"妈妈裁判式收场（{pat}）")
+                who = next(
+                    str(d.get("speaker") or "")
+                    for d in (dialogue or [])
+                    if isinstance(d, dict)
+                    and d.get("speaker") in ("妈妈", "爸爸")
+                    and pat in str(d.get("line") or "")
+                )
+                cons.append(f"{who}裁判式收场（{pat}）")
                 break
 
     if _has_consecutive_sibling(dialogue):  # type: ignore[arg-type]

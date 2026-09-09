@@ -382,7 +382,7 @@ def _closing_for_prompt(closing: str) -> str:
 
 
 def _normalize_chat_speakers(story: dict[str, Any]) -> dict[str, Any]:
-    """站外爸爸/父亲 speaker → 妈妈。"""
+    """站外父亲别名 → 爸爸；第三方家长 → 妈妈；陌生小孩 → 灿灿。"""
     out = dict(story)
     dialogue: list[dict[str, Any]] = []
     for item in story.get("dialogue") or []:
@@ -390,7 +390,9 @@ def _normalize_chat_speakers(story: dict[str, Any]) -> dict[str, Any]:
             continue
         row = dict(item)
         sp = str(row.get("speaker") or "").strip()
-        if sp in _FATHER_SPEAKER_ALIASES or sp in _THIRD_PARTY_PARENT_ALIASES:
+        if sp in _FATHER_SPEAKER_ALIASES:
+            row["speaker"] = "爸爸"
+        elif sp in _THIRD_PARTY_PARENT_ALIASES:
             row["speaker"] = "妈妈"
         elif sp in _KID_RIVAL_ALIASES:
             row["speaker"] = "灿灿"
@@ -1280,7 +1282,7 @@ def patch_seed_speaker_align(
             continue
         sp = str(item.get("speaker") or "").strip()
         line = str(item.get("line") or "").strip()
-        if not line or sp not in {"昭昭", "灿灿", "妈妈"}:
+        if not line or sp not in {"昭昭", "灿灿", "妈妈", "爸爸"}:
             continue
         line_han = "".join(re.findall(r"[\u4e00-\u9fff]", line))
         for phr, want in owners.items():

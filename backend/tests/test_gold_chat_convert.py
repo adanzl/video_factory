@@ -130,11 +130,18 @@ def test_validate_gold_chat_rejects_relay_and_paren():
         gc.validate_gold_chat(story)
 
 
-def test_normalize_chat_speakers_father_to_mom():
+def test_normalize_chat_speakers_keeps_father():
     story = _sample_chat()
     story["dialogue"][0]["speaker"] = "爸爸"
     out = gc._normalize_chat_speakers(story)
-    assert out["dialogue"][0]["speaker"] == "妈妈"
+    assert out["dialogue"][0]["speaker"] == "爸爸"
+
+
+def test_normalize_chat_speakers_father_alias_to_dad():
+    story = _sample_chat()
+    story["dialogue"][0]["speaker"] = "老爸"
+    out = gc._normalize_chat_speakers(story)
+    assert out["dialogue"][0]["speaker"] == "爸爸"
 
 
 def test_gate_gold_chat_structure_score_raises_when_low():

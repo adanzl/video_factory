@@ -374,6 +374,7 @@ const DESC_LABEL_WIDTH = "80px";
 function speakerStyle(speaker: string): { bg: string; text: string; full: string } {
   if (speaker === '昭昭') return { bg: 'bg-blue-50', text: 'text-blue-600', full: 'bg-blue-50 text-blue-800' }
   if (speaker === '妈妈') return { bg: 'bg-emerald-50', text: 'text-emerald-600', full: 'bg-emerald-50 text-emerald-800' }
+  if (speaker === '爸爸') return { bg: 'bg-slate-100', text: 'text-slate-700', full: 'bg-slate-100 text-slate-800' }
   return { bg: 'bg-pink-50', text: 'text-pink-600', full: 'bg-pink-50 text-pink-800' }
 }
 

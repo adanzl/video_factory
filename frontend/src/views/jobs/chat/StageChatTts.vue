@@ -194,7 +194,7 @@ import { ElMessage, ElMessageBox } from "element-plus";
 import { runJobStageAction } from "@/api/api-jobs";
 import { getMediaDuration, getMediaFileUrl, getMediaText } from "@/api/api-media";
 import MediaComponent from "@/components/MediaComponent.vue";
-import { DEFAULT_TTS_VOICE, TTS_VOICE_MOM, TTS_VOICE_OPTIONS, TTS_VOICE_ZHAO } from "@/constants/tts-voices";
+import { DEFAULT_TTS_VOICE, TTS_VOICE_DAD, TTS_VOICE_MOM, TTS_VOICE_OPTIONS, TTS_VOICE_ZHAO } from "@/constants/tts-voices";
 import type { JobDetail, JobLog } from "@/types/jobs";
 import type { ScriptJson } from "@/types/jobs/script";
 import type { RunStageActionPayload } from "@/types/jobs/stageAction";
@@ -229,12 +229,14 @@ const speakers = [
   { key: "昭昭", label: "弟弟" },
   { key: "灿灿", label: "姐姐" },
   { key: "妈妈", label: "妈妈" },
+  { key: "爸爸", label: "爸爸" },
 ];
 
 const defaultSpeakerConfigs: Record<string, SpeakerConfig> = {
   昭昭: { voice_id: TTS_VOICE_ZHAO, speech_rate: 1.15 },
   灿灿: { voice_id: DEFAULT_TTS_VOICE, speech_rate: 1.3 },
   妈妈: { voice_id: TTS_VOICE_MOM, speech_rate: 1.2 },
+  爸爸: { voice_id: TTS_VOICE_DAD, speech_rate: 1.15 },
 };
 
 const props = defineProps<{
