@@ -200,6 +200,55 @@ def structure_type_for_mechanism(mechanism: str) -> str:
     return MECHANISM_STRUCTURE_MAP[mech]
 
 
+def preferred_mechanism_for_structure(structure_type: str) -> str | None:
+    """结构字母 → 优先机制（先匹配默认映射，再匹配备选）。"""
+    st = str(structure_type or "").strip().upper()
+    if st not in GOLD_STORY_STRUCTURE_CODES:
+        return None
+    for mech, default in MECHANISM_STRUCTURE_MAP.items():
+        if default == st:
+            return mech
+    for mech, alts in MECHANISM_STRUCTURE_ALTERNATIVES.items():
+        if st in alts:
+            return mech
+    return None
+
+
+def align_mechanism_structure(
+    mechanism: str,
+    structure_type: str,
+) -> tuple[str, str, str | None]:
+    """校正 M/结构配对。
+
+    旧逻辑：structure 不在 mechanism 允许集 → 强行改成 mechanism 默认结构
+    （M7+G 会被压成 M7+D，丢掉 LLM 的 G）。
+    新逻辑：优先保留 structure，改 mechanism 去对齐；实在对不上才回退默认结构。
+    """
+    mech = normalize_mechanism(mechanism)
+    default_st = MECHANISM_STRUCTURE_MAP[mech]
+    raw_st = str(structure_type or "").strip().upper()
+    if not raw_st:
+        return mech, default_st, None
+    try:
+        st = normalize_structure_type(raw_st)
+    except ValueError:
+        return mech, default_st, f"structure:{raw_st!r}→{default_st}(invalid)"
+    if st in allowed_structure_types(mech):
+        return mech, st, None
+    alt_mech = preferred_mechanism_for_structure(st)
+    if alt_mech and st in allowed_structure_types(alt_mech):
+        return (
+            alt_mech,
+            st,
+            f"mechanism:{mech}→{alt_mech}(align-structure-{st})",
+        )
+    return (
+        mech,
+        default_st,
+        f"structure:{st}→{default_st}(mech-default-{mech})",
+    )
+
+
 def normalize_structure_type(value: str) -> str:
     code = str(value or "").strip().upper()
     if code not in GOLD_STORY_STRUCTURE_CODES:

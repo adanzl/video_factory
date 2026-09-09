@@ -347,3 +347,60 @@ def test_keep_m2_c_real_fairness_not_demoted():
         structure_type="C",
         blob=_M2_C_FAIR_RAW,
     )
+
+def test_align_mechanism_prefers_structure_over_mech_default():
+    """M7+G 不得被压成 M7+D（#68 根因）。"""
+    from app.services.gold_story.types import align_mechanism_structure
+
+    mech, st, note = align_mechanism_structure("M7", "G")
+    assert mech == "M4"
+    assert st == "G"
+    assert note and "align-structure-G" in note
+
+
+def test_resolve_m7_d_warm_close_to_m4_g():
+    """立规后抢刷碗暖收：M7+D → M4+G。"""
+    raw = (
+        "爸爸说老规矩谁后吃完谁刷碗。灿灿立刻放下筷子说我刷就行。"
+        "昭昭也附和。爸爸愣了一下，随即笑出声来，心里暖暖的。"
+    )
+    note = (
+        "将规矩执行歪读为抢着刷碗，属于字面执行跑偏，"
+        "但最终以爸爸暖心收尾，符合G型结构。"
+    )
+    h3 = {
+        "mechanism": "M7",
+        "structure_type": "D",
+        "conflict_core": "爸爸立规矩，女儿争相刷碗",
+        "beat": [
+            "爸爸立规矩谁后吃完谁刷碗",
+            "灿灿主动请缨刷碗",
+            "昭昭附和",
+            "爸爸愣住转而暖心一笑",
+        ],
+        "structure_mapping_note": note,
+        "structure_confidence": 0.8,
+    }
+    fixed, notes = resolve_h3_structure(h3, story_raw=raw)
+    assert fixed["mechanism"] == "M4"
+    assert fixed["structure_type"] == "G"
+    assert any("warm-close-not-literal" in n for n in notes)
+
+
+def test_sync_h3_from_scene_contract_g_over_d():
+    from app.services.gold_story.structure_resolve import sync_h3_from_scene_contract
+
+    h3 = {
+        "mechanism": "M7",
+        "structure_type": "D",
+        "conflict_core": "抢刷碗",
+        "beat": ["立规", "请缨", "附和", "暖心"],
+        "structure_mapping_note": "符合G型结构",
+    }
+    sc = {"story_type": "G", "closing_intent": "爸爸暖心一笑"}
+    fixed, notes = sync_h3_from_scene_contract(
+        h3, sc, story_raw="爸爸愣住笑出声来，心里暖暖的。"
+    )
+    assert fixed["mechanism"] == "M4"
+    assert fixed["structure_type"] == "G"
+    assert notes
