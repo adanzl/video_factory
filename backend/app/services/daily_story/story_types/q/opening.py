@@ -10,7 +10,9 @@ from app.services.daily_story.dialogue_text import (
 )
 
 Q_OPENING_ANCHOR_RE = re.compile(
-    r"抽签|轮到|几口|约定|玩|吃|再抽|太少|规则"
+    r"约定|规则|玩法|轮到|说好|抽签|猜拳|轮流|"
+    r"(?:\d+|[一二三四五六七八九十两]+|几)(?:口|下|次)|"
+    r"玩|吃"
 )
 Q_OPENING_BAD_RE = re.compile(
     r"爱学习|你爱吗|灵魂|拷问|你刚说|那不一样|擦药|尝尝|再试试"
