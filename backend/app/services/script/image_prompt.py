@@ -438,6 +438,16 @@ def _render_object_states(
         holder = str(st.get("holder") or "").strip()
         pos = str(st.get("position") or "").strip()
         who = owners.get(obj) or ""
+        # 手持优先于碗归属：举起的签筒不能写成「碗里是签筒」
+        if "手" in pos and holder and holder != "无":
+            if form and _FORM_POSITION_RE.search(form):
+                clause = f"{count}{obj}{form}"
+            else:
+                clause = f"{count}{obj}在{holder}手中"
+                if form and "碗" not in form:
+                    clause += f"，{form}"
+            parts.append(clause)
+            continue
         if who:
             parts.append(_bowl_clause(who, count, obj, form))
             continue
@@ -1225,6 +1235,11 @@ def _daily_composition(
     if len(names) >= 3:
         a, b, c = names[0], names[1], names[2]
         lr = "" if (has_lcr or has_lr) else f"画面从左到右是{a}、{b}、{c}。"
+        if shot_type == "特写":
+            return (
+                f"{lr}中近景特写，上半身同框。"
+                f"{_DAILY_CAST_LOCK_3.format(a, b, c)}"
+            )
         return (
             f"{lr}中景三人同框，全身可见。"
             f"{_DAILY_CAST_LOCK_3.format(a, b, c)}"
@@ -1591,6 +1606,8 @@ def assemble_daily_image_prompts(
     from app.services.script.visual_brief import (
         _resolve_prop_state_regression,
         daily_locked_inventory,
+        normalize_visual_subjects_lr,
+        render_visual_subjects,
         scrub_daily_visual_brief,
         strip_unlocked_inventory,
     )
@@ -1598,6 +1615,13 @@ def assemble_daily_image_prompts(
     # 跨镜状态保护：已落地的冲突道具不得在后续镜写回家具台面
     # （覆盖出图质检兜底重写 visual_brief 的路径）
     _resolve_prop_state_regression(segments)
+    # 生图硬约束：左昭右灿（纠正 LLM 写反的 posture，并刷新 brief）
+    for seg in segments:
+        subjects = seg.get("visual_subjects")
+        if isinstance(subjects, list) and subjects:
+            fixed = normalize_visual_subjects_lr(subjects)
+            seg["visual_subjects"] = fixed
+            seg["visual_brief"] = render_visual_subjects(fixed)
     # object_states 状态机：跨镜继承 + 去重 + 校验矛盾/回归
     from app.services.script.visual_brief import normalize_object_states
 

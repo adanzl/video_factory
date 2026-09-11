@@ -476,7 +476,9 @@ _DAILY_VISUAL_SUBJECTS_RULE = (
     "【visual_subjects】每段输出 visual_subjects 数组，不再输出 visual_brief 自由文本："
     "为本段每个入画角色各写一条 {name, posture, action, expression}："
     "name=角色名（昭昭/灿灿/妈妈，必须在本段 speakers 内，禁止写未授权角色）；"
-    "posture=姿态与位置，≤12字，写清参照锚点（站在茶几前/坐在沙发上/蹲在画面左边地垫旁）；"
+    "posture=姿态与位置，≤12字，写清参照锚点；"
+    "站位硬约束（生图固定左昭右灿）：昭昭只能写画面左边/左侧（如站在餐桌左边），"
+    "灿灿只能写画面右边/右侧（如站在餐桌右边）；禁止灿灿在左、昭昭在右；"
     "action=一个主动作，≤15字；手部互斥：每人只准一组手部动作，"
     "对称动作可写「双手叉腰/双手捏住」，非对称动作只写主动手、另一只手自然下垂；"
     "持物时写明哪只手握物、道具与手接触；持物角色禁止再写任何「双手」动作"
@@ -496,10 +498,11 @@ _DAILY_VISUAL_SUBJECTS_RULE = (
     "【道具】冲突道具用台词已出现的物件与状态；"
     "衣物类用「衣服/衣物堆」泛称（粉色卫衣/蓝色T恤是角色身上穿的，不当道具）；"
     "事实对齐台词：说皱就画「刚叠好的衣服现已揉皱成一团」，说只碰一下就画无辜摊手。"
-    "【站位】两人写「画面左边是A，右边是B」，全片固定左昭昭右灿灿；"
-    "三人同框写「从左到右是昭昭、妈妈、灿灿」；"
+    "【站位】全片固定左昭昭右灿灿（生图硬约束，不可写反）；"
+    "两人：昭昭在左、灿灿在右；三人同框：从左到右昭昭、妈妈、灿灿；"
+    "posture 必须带左右：昭昭用左边/左侧，灿灿用右边/右侧；"
     "站位用参照物加方位正面写（茶几前/沙发边/画面左边），"
-    "相对位置写具体锚点（如妈妈站在茶几前、昭昭站在沙发边）；"
+    "相对位置写具体锚点（如妈妈坐在餐桌对面、昭昭站在餐桌左边）；"
     "speakers 列出的角色都要入画，未发言者写旁听姿态。"
     "【多人同框】speakers 含 3 人及以上（或 2 人且同框中景）时，"
     "画面必须三/两人全身同框完整可见；"
@@ -737,14 +740,22 @@ def _extract_story_prop_holdings_marked(
     seen: set[tuple[str, str]] = set()
 
     def _add(holder: str, raw: str, marker: str) -> None:
-        prop = _valid_activity_prop(raw)
+        text = str(raw or "").strip()
+        # 「面前摆着/放着签筒」=桌面陈设，不是碗里食物
+        surface = False
+        m_surf = re.match(r"^(摆着|放着|立着|摊着|搁着)", text)
+        if m_surf:
+            text = text[m_surf.end() :]
+            surface = True
+        prop = _valid_activity_prop(text)
         if not prop:
             return
         item = (holder, prop)
         if item in seen:
             return
         seen.add(item)
-        out.append((holder, prop, marker))
+        use_marker = "表面" if surface and marker == "面前" else marker
+        out.append((holder, prop, use_marker))
 
     for m in _NAMED_CONTAINER_RE.finditer(str(setting or "")):
         _add(m.group(1), m.group(3), m.group(2))
@@ -942,7 +953,19 @@ def normalize_object_states(
             holder = str(st.get("holder") or "").strip()
             pos = str(st.get("position") or "").strip()
             bowl_who = bowl_owners.get(obj) or ""
-            if bowl_who:
+            held = _subject_holds_object(seg, obj, holder or bowl_who)
+            if held:
+                who = holder if holder and holder != "无" else bowl_who
+                if who:
+                    new_pos = f"{who}手中"
+                    if pos != new_pos or holder != who:
+                        notes.append(
+                            f"segment {idx}: object={obj} 画面正手持，"
+                            f"position 写 {new_pos}（不进碗）"
+                        )
+                    st["holder"] = who
+                    st["position"] = new_pos
+            elif bowl_who:
                 if holder != bowl_who:
                     st["holder"] = bowl_who
                     holder = bowl_who
@@ -1181,6 +1204,84 @@ def enrich_thin_daily_visual_brief(seg: dict, setting: str | None = None) -> str
         body = body.rstrip("。") + "。" + prop_snap
     body = re.sub(r"[。]{2,}", "。", body)
     return _resolve_vague_spatial_terms(_dedupe_clause_text(body.strip("，,；;。 ")))
+
+
+def _swap_lr_in_text(text: str) -> str:
+    """把文本里的左↔右对调（先占位，避免连环替换）。"""
+    s = str(text or "")
+    if not s:
+        return s
+    s = s.replace("左边", "\0R边\0").replace("右边", "左边").replace("\0R边\0", "右边")
+    s = s.replace("左侧", "\0R侧\0").replace("右侧", "左侧").replace("\0R侧\0", "右侧")
+    return s
+
+
+def _posture_side(posture: str) -> str | None:
+    """posture 里显式左右：left / right / None。"""
+    text = str(posture or "")
+    has_l = bool(re.search(r"左(?:边|侧)?", text))
+    has_r = bool(re.search(r"右(?:边|侧)?", text))
+    if has_l and not has_r:
+        return "left"
+    if has_r and not has_l:
+        return "right"
+    return None
+
+
+def normalize_visual_subjects_lr(subjects: list) -> list[dict]:
+    """生图硬约束：左昭右灿。纠正 LLM 写反的 posture，并按左→右排序。"""
+    rows = [s for s in (subjects or []) if isinstance(s, dict)]
+    by_name: dict[str, dict] = {}
+    for s in rows:
+        name = str(s.get("name") or "").strip()
+        if name:
+            by_name[name] = s
+    zhao = by_name.get("昭昭")
+    can = by_name.get("灿灿")
+    if zhao and can:
+        zp = str(zhao.get("posture") or "")
+        cp = str(can.get("posture") or "")
+        z_side = _posture_side(zp)
+        c_side = _posture_side(cp)
+        if z_side == "right" and c_side == "left":
+            zhao["posture"] = _swap_lr_in_text(zp)
+            can["posture"] = _swap_lr_in_text(cp)
+        elif z_side == "right" and c_side is None:
+            zhao["posture"] = _swap_lr_in_text(zp)
+        elif c_side == "left" and z_side is None:
+            can["posture"] = _swap_lr_in_text(cp)
+    ordered: list[dict] = []
+    seen: set[str] = set()
+    for name in ("昭昭", "妈妈", "爸爸", "灿灿"):
+        if name in by_name:
+            ordered.append(by_name[name])
+            seen.add(name)
+    for s in rows:
+        name = str(s.get("name") or "").strip()
+        if name not in seen:
+            ordered.append(s)
+            if name:
+                seen.add(name)
+    return ordered
+
+
+def _subject_holds_object(seg: dict, obj: str, holder: str) -> bool:
+    """visual_subjects 是否写了 holder 用手举起/拿着该道具。"""
+    obj = str(obj or "").strip()
+    holder = str(holder or "").strip()
+    if not obj or not holder:
+        return False
+    for sub in seg.get("visual_subjects") or []:
+        if not isinstance(sub, dict):
+            continue
+        if str(sub.get("name") or "").strip() != holder:
+            continue
+        action = str(sub.get("action") or "")
+        if obj not in action:
+            continue
+        if re.search(r"(?:举|拿|握|端|捧|拎|提)(?:起|着|住)?", action):
+            return True
+    return False
 
 
 def render_visual_subjects(subjects: list) -> str:
