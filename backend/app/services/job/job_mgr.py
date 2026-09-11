@@ -121,11 +121,13 @@ def _optimize_daily_story_title(draft: str, story_content: dict, *, max_len: int
             client._chat_json(prompts['system'], prompts['user'], thinking_enabled=False, temperature=1.0)[0],  # type: ignore[attr-defined]
             max_title_len=max_len,
         ),
+        story_content=story_content,
     )
     final_title = pick_best_chat_title(
         draft, candidates,
         max_len=max_len, avoid_titles=avoid_titles, anchor_words=anchors,
         story_type=story_content.get('story_type'),
+        story_content=story_content,
     )
     return polish_chat_title(
         final_title,

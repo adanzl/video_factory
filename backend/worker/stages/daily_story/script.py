@@ -169,6 +169,7 @@ class DailyScriptStage(StageExecutor):
                             )[0],
                             max_title_len=max_len,
                         ),
+                        story_content=title_content,
                     )
                     final = pick_best_chat_title(
                         title, candidates,
@@ -176,6 +177,7 @@ class DailyScriptStage(StageExecutor):
                         avoid_titles=avoid_titles,
                         anchor_words=anchors,
                         story_type=title_content.get('story_type'),
+                        story_content=title_content,
                     )
                     if final and final != title:
                         polished = polish_chat_title(

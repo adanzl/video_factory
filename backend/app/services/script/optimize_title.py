@@ -117,10 +117,93 @@ def _candidate_has_anchor(candidate: str, anchors: list[str]) -> bool:
     return any(a in core for a in nouns)
 
 
-def filter_chat_title_candidates(candidates: list[str], anchor_words: list[str]) -> list[str]:
-    """候选层硬校验：只保留包含主题锚词（完整短语优先）的候选。"""
+def _dialogue_blob(story_content: dict | None) -> str:
+    """对白 speaker + 台词，用于判断标题人物是否真出场。"""
+    if not story_content:
+        return ""
+    lines = story_content.get("dialogue") or []
+    parts: list[str] = []
+    for item in lines:
+        if isinstance(item, dict):
+            parts.append(str(item.get("speaker") or ""))
+            parts.append(str(item.get("line") or item.get("text") or ""))
+        else:
+            parts.append(str(item))
+    return "".join(parts)
+
+
+def _dialogue_speakers(story_content: dict | None) -> list[str]:
+    if not story_content:
+        return []
+    seen: list[str] = []
+    for item in story_content.get("dialogue") or []:
+        if not isinstance(item, dict):
+            continue
+        speaker = str(item.get("speaker") or "").strip()
+        if speaker and speaker not in seen:
+            seen.append(speaker)
+    return seen
+
+
+# 标题里的家庭角色：对白没出场则禁止写进标题。
+# 裸「妈」排除 干嘛/奶妈/干妈/后妈/妈妈（妈妈由更长词覆盖）。
+_TITLE_CAST_ROLES: tuple[tuple[str, tuple[str, ...], re.Pattern[str]], ...] = (
+    ("妈妈", ("妈妈", "妈"), re.compile(r"妈妈|(?<![奶干后阿])妈(?!妈)")),
+    ("爸爸", ("爸爸", "爸", "老爸"), re.compile(r"爸爸|老爸|(?<![爷老])爸(?!爸)")),
+    ("奶奶", ("奶奶",), re.compile(r"奶奶")),
+    ("爷爷", ("爷爷",), re.compile(r"爷爷")),
+    ("外婆", ("外婆", "姥姥"), re.compile(r"外婆|姥姥")),
+    ("外公", ("外公", "姥爷"), re.compile(r"外公|姥爷")),
+)
+
+
+def title_absent_roles(title: str, story_content: dict | None = None) -> tuple[str, ...]:
+    """标题点名了、但对白（含 speaker）未出现的家庭角色。无对白时不判。"""
+    text = str(title or "")
+    blob = _dialogue_blob(story_content)
+    if not text or not blob:
+        return ()
+    absent: list[str] = []
+    for label, variants, pattern in _TITLE_CAST_ROLES:
+        if not pattern.search(text):
+            continue
+        if any(variant in blob for variant in variants):
+            continue
+        absent.append(label)
+    return tuple(absent)
+
+
+def _dialogue_cast_mismatch_note(draft_title: str, story_content: dict) -> str:
+    """源标题/主题写了但对白没有的人物 → 提示词硬卡。"""
+    meta = "".join(
+        str(story_content.get(key) or "")
+        for key in ("scene_title", "theme", "conflict_core", "key")
+    )
+    absent = title_absent_roles(f"{draft_title}{meta}", story_content)
+    if not absent:
+        return ""
+    speakers = _dialogue_speakers(story_content)
+    who = "、".join(speakers) if speakers else "（对白角色）"
+    bad = "、".join(absent)
+    return (
+        f"\n【硬性·对白人物】对白出场：{who}。未出现：{bad}。"
+        f"初稿/主题/冲突核心里的「{bad}」是源视频旧标签，标题禁止出现这些称呼；"
+        "必须按对白实际冲突重写，禁止沿用对不上的源标题。"
+    )
+
+
+def filter_chat_title_candidates(
+    candidates: list[str],
+    anchor_words: list[str],
+    *,
+    story_content: dict | None = None,
+) -> list[str]:
+    """候选层硬校验：只保留含主题锚词、且人物对得上对白的候选。"""
     anchors = [str(a).strip() for a in (anchor_words or []) if str(a).strip()]
-    return [c for c in candidates if _candidate_has_anchor(c, anchors)]
+    out = [c for c in candidates if _candidate_has_anchor(c, anchors)]
+    if story_content:
+        out = [c for c in out if not title_absent_roles(c, story_content)]
+    return out
 
 
 def ensure_chat_title_candidates(
@@ -129,11 +212,14 @@ def ensure_chat_title_candidates(
     *,
     fetch_candidates: Callable[[], list[str]],
     max_attempts: int = 3,
+    story_content: dict | None = None,
 ) -> list[str]:
-    """候选层硬校验+补足：缺主题锚词的候选作废；不足 3 个时重生成补足（去重保序）。"""
+    """候选层硬校验+补足：缺主题锚词/对白人物对不上的候选作废；不足 3 个时重生成补足。"""
     seen: set[str] = set()
     out: list[str] = []
-    for c in filter_chat_title_candidates(candidates, anchor_words):
+    for c in filter_chat_title_candidates(
+        candidates, anchor_words, story_content=story_content,
+    ):
         if c not in seen:
             seen.add(c)
             out.append(c)
@@ -143,7 +229,9 @@ def ensure_chat_title_candidates(
             more = fetch_candidates()
         except Exception:
             break
-        for c in filter_chat_title_candidates(more, anchor_words):
+        for c in filter_chat_title_candidates(
+            more, anchor_words, story_content=story_content,
+        ):
             if c not in seen:
                 seen.add(c)
                 out.append(c)
@@ -266,6 +354,8 @@ def _polish_candidate_ok(
     if phrases and any(core.endswith(p) for p in phrases):
         return False
     if not allow_deletion and not _polish_keeps_content(source, candidate):
+        return False
+    if title_absent_roles(candidate, story_content):
         return False
     return True
 
@@ -520,16 +610,22 @@ def extract_core_anchor_words(draft: str, story_content: dict) -> list[str]:
     scene = title_core(str(story_content.get('scene_title') or draft or ''))
     if not scene:
         return []
+    # 源标题点名了对白没有的人（如金故事「怼妈」映射成姐弟戏）→ 锚词不可信，宁可不锚定
+    if title_absent_roles(scene, story_content) or title_absent_roles(draft, story_content):
+        return []
     blob = ''.join(str(story_content.get(k) or '') for k in ('conflict_core', 'setting', 'theme'))
     for n in _ANCHOR_SCENE_NGRAM_ORDER:
         found: list[str] = []
         for i in range(len(scene) - n + 1):
             w = scene[i:i + n]
             if w in blob and w not in found and _word_boundary_in_blob(w, blob):
+                if title_absent_roles(w, story_content):
+                    continue
                 found.append(w)
         if found:
             return found[:2]
-    return _extract_theme_fallback(str(story_content.get('theme') or ''), story_content)
+    fallback = _extract_theme_fallback(str(story_content.get('theme') or ''), story_content)
+    return [w for w in fallback if not title_absent_roles(w, story_content)]
 
 
 # 主题动作动词：用来拼「动作+核心名词」的完整主题短语（偷看电视/偷吃月饼/藏玩具）
@@ -568,10 +664,18 @@ def extract_theme_action_phrase(draft: str, story_content: dict) -> str:
         if i > 0:
             two = src[i - 2:i] if i >= 2 else ""
             if two in _THEME_ACTION_2CHAR:
-                return two + noun  # 偷看+电视 → 偷看电视；偷吃+月饼 → 偷吃月饼
+                phrase = two + noun  # 偷看+电视 → 偷看电视；偷吃+月饼 → 偷吃月饼
+                if title_absent_roles(phrase, story_content):
+                    return ""
+                return phrase
             prev = src[i - 1]
             if prev in _THEME_ACTION_VERBS:
-                return prev + noun  # 藏+玩具 → 藏玩具
+                phrase = prev + noun  # 藏+玩具 → 藏玩具
+                if title_absent_roles(phrase, story_content):
+                    return ""
+                return phrase
+    if title_absent_roles(noun, story_content):
+        return ""
     return noun
 
 
@@ -620,6 +724,8 @@ def maybe_keep_cover_draft(
     if len(text) > max_len:
         return None
     if not _is_visual_cover_phrase(text):
+        return None
+    if title_absent_roles(text, story_content):
         return None
     return text
 
@@ -707,7 +813,7 @@ def _story_type_grammar_bad_hit(title: str, story_type: str | None) -> bool:
     return any(p.search(core) for p in patterns)
 
 
-def pick_best_chat_title(draft: str, candidates: list[str], *, max_len: int, avoid_titles: list[str] | None=None, anchor_words: list[str] | None=None, story_type: str | None=None) -> str:
+def pick_best_chat_title(draft: str, candidates: list[str], *, max_len: int, avoid_titles: list[str] | None=None, anchor_words: list[str] | None=None, story_type: str | None=None, story_content: dict | None=None) -> str:
     """从多个候选中选最终标题：退化保护 + 长度硬截断 + 钩子分排序。
 
     - 命中初稿或 avoid_titles（已用过的标题）的候选降权，避免手动重跑输出同一个；
@@ -715,6 +821,8 @@ def pick_best_chat_title(draft: str, candidates: list[str], *, max_len: int, avo
     - A/B/D/E：画面物件短语优先，口述反问与封面剧透词降权；
     - anchor_words：本场核心名词（如「月饼」）。含核心名词的候选 +2（贴主题），
       不含的候选直接作废、不参与选择；全部候选都不含核心词时回退初稿，绝不写跑题标题；
+    - story_content：标题点名了对白没有的家庭角色（妈妈/爸爸等）→ 该候选作废；
+      初稿自身也对不上对白时，不保护初稿，让对白候选胜出；
     - story_type：命中信息锚词（C 类「先挑/大块/白忙/咋还输」等）→ +2，孩子话风格词
       （说好/凭啥/明明）→ +1，弱孩子话词（呀/呗）在有信息锚词时 +1；
       黑名单书面词、书面倒装、缺信息锚词 → 直接拒收该候选；
@@ -730,12 +838,17 @@ def pick_best_chat_title(draft: str, candidates: list[str], *, max_len: int, avo
     # 完整主题短语（≥3 字，如「偷看电视」）必须完整出现；2 字核心名词（电视）按子串即可
     phrases = [a for a in anchors if len(a) >= 3]
     nouns = [a for a in anchors if len(a) < 3]
+    draft_mismatch = bool(title_absent_roles(draft, story_content))
     best = draft
-    best_score = _chat_title_hook_score(draft, story_type=story_type)
+    best_score = (
+        -999 if draft_mismatch else _chat_title_hook_score(draft, story_type=story_type)
+    )
     best_tie = (-1, -1, -1, -1)  # 初稿平局永不替换
     any_anchored = False
     for cand in candidates:
         chosen = select_optimized_title(draft, cand, max_len=max_len)
+        if title_absent_roles(chosen, story_content):
+            continue
         info_hit, style_hit, block_hit, weak_hit = _story_type_word_hit(chosen, story_type)
         if (
             block_hit
@@ -911,6 +1024,8 @@ def _build_chat_title_system_prompt_c(*, max_title_len: int) -> str:
         "\n- 称呼要符合剧本：只准用剧本里孩子原话出现过的称呼，且只在孩子真的"
         "对被瞒对象/在场角色说话时才用；瞒着妈妈藏/偷的戏（妈妈在厨房、孩子藏玩具），"
         "孩子不会开口叫妈妈，标题就绝不能开场写「妈妈，…」或「妈，…」来点破"
+        "\n- 标题人物必须来自对白：对白没出现的人（妈妈/爸爸等）禁止写进标题；"
+        "源标题写了但对白没有，必须按对白重写，禁止沿用怼妈这类对不上的旧标题"
         "\n- 钩子要落在具体好笑画面：把一个道具+动作（「擦」「踩」「摔」「翻」）放进标题，"
         "让读者能脑补画面，别写泛泛的结果"
         "\n- 禁止用「谁…」「…怨谁」质问句"
@@ -960,6 +1075,8 @@ def build_chat_title_system_prompt(
         "\n- 禁止用「谁…」「…怨谁」质问句"
         "\n- 禁止编造剧本里没有的细节、道具或量词"
         "\n- 称呼只准用剧本孩子原话里出现过的，瞒着妈妈的戏不要开场「妈，…」"
+        "\n- 标题人物必须来自对白：对白没出现的人（妈妈/爸爸等）禁止写进标题；"
+        "源标题写了但对白没有，必须按对白重写，禁止沿用怼妈这类对不上的旧标题"
         "\n- 坏例：「剪刀剪歪了，还咋教弟弟？」「折飞机翻车」「偷看电视被抓包！」"
         "「三个全是翻车记」"
         "\n- 好例：「剪刀下的直线」「洗手不搓泡」「浇花发洪水」「关门关到门更开」"
@@ -1000,6 +1117,8 @@ def build_chat_title_user_prompt(
         context_parts.append(f"故事主题：{theme}")
     theme_phrase = extract_theme_action_phrase(draft_title, story_content)
     type_key = str(story_content.get("story_type") or "").strip().upper()
+    if theme_phrase and title_absent_roles(theme_phrase, story_content):
+        theme_phrase = ""
     if theme_phrase:
         if _is_c_type(type_key):
             context_parts.append(f"本集主题短语（标题必须原样保留）：{theme_phrase}")
@@ -1058,6 +1177,12 @@ def build_chat_title_user_prompt(
 
     anchors = extract_core_anchor_words(draft_title, story_content)
     theme_phrase = extract_theme_action_phrase(draft_title, story_content)
+    if theme_phrase and title_absent_roles(theme_phrase, story_content):
+        theme_phrase = ""
+    cast_note = _dialogue_cast_mismatch_note(draft_title, story_content)
+    core_label = theme_phrase or draft_title
+    if title_absent_roles(core_label, story_content):
+        core_label = "对白里的冲突（不要用源标题里没出场的人）"
     anchor_note = ""
     if _is_c_type(type_key) and theme_phrase:
         anchor_note = (
@@ -1083,7 +1208,7 @@ def build_chat_title_user_prompt(
     if _is_c_type(type_key):
         steps = (
             "第一步，先看清本集的「主题 + 类型结局」：本集主题短语是"
-            f"「{theme_phrase or draft_title}」，"
+            f"「{core_label}」，"
             "类型结局要用**孩子话**表达。"
             "（这行写在 JSON 外面，不要进 JSON。）"
             "第二步，写 3 个候选 title（同一 JSON 数组，最有钩子的放第一个），"
@@ -1116,7 +1241,7 @@ def build_chat_title_user_prompt(
     else:
         steps = (
             "第一步，先定封面画面：本集核心物件/动作是"
-            f"「{theme_phrase or draft_title}」，"
+            f"「{core_label}」，"
             "标题只设预期、不播结局。"
             "（这行写在 JSON 外面，不要进 JSON。）"
             "第二步，写 3 个候选 title（同一 JSON 数组，画面感最强的放第一个），"
@@ -1145,6 +1270,7 @@ def build_chat_title_user_prompt(
         "（如剧本只说「满地水」就绝不能写「满屋水」）；"
         "称呼只准用剧本孩子原话里的，且只在孩子真对被瞒对象/在场角色说话时用——"
         "瞒着妈妈藏/偷的戏孩子不会喊妈妈，标题不能开场「妈妈，…」「妈，…」点破。"
+        f"{cast_note}"
         f"{tail}"
         f"{avoid_note}"
     )
