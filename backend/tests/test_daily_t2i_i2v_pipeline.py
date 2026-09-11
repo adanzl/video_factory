@@ -139,9 +139,11 @@ def test_assemble_daily_e_sticky_mom_not_dropped_by_lr_brief():
         "灿灿",
     ]
     prompt = assemble_daily_t2i_prompt(seg)
-    assert "三人同框" in prompt
-    assert "中景三人同框，全身可见" in prompt
+    assert "全画面仅有昭昭、妈妈、灿灿三人" in prompt
+    assert "中近景特写，上半身同框" in prompt
+    assert "中景三人同框，全身可见" not in prompt
     assert "从左到右是昭昭、妈妈、灿灿" not in prompt
+    assert "妈妈：" in prompt
 
 
 def test_assemble_daily_ma_coming_keeps_empty_doorway():
@@ -965,6 +967,129 @@ def test_handheld_snack_not_forced_into_bowl():
     prompt = assemble_daily_t2i_prompt(segs[0], setting=setting)
     assert "碗里" not in prompt
     assert "一包零食在灿灿手中" in prompt
+
+
+def test_lot_tube_on_table_not_forced_into_bowl():
+    """「面前摆着签筒」是桌面陈设；举起签筒不得归一成碗里（job99 回归）。"""
+    from app.services.script.image_prompt import (
+        _render_object_states,
+        assemble_daily_t2i_prompt,
+    )
+    from app.services.script.visual_brief import (
+        bowl_container_owners,
+        normalize_object_states,
+        normalize_visual_subjects_lr,
+        render_visual_subjects,
+    )
+
+    setting = "餐桌前，灿灿面前摆着抽签筒、泡芙和辣面，妈妈坐在对面"
+    dialogue = [
+        {"speaker": "灿灿", "line": "妈妈，抽签吃饭，抽到几口就吃几口，不许赖！"},
+        {"speaker": "昭昭", "line": "你又来这套！"},
+    ]
+    assert bowl_container_owners(setting, dialogue) == {}
+
+    subjects = [
+        {
+            "name": "灿灿",
+            "posture": "站在餐桌左边",
+            "action": "右手举起签筒",
+            "expression": "瞪眼皱眉",
+        },
+        {
+            "name": "昭昭",
+            "posture": "站在餐桌右边",
+            "action": "左手叉腰",
+            "expression": "斜视",
+        },
+        {
+            "name": "妈妈",
+            "posture": "坐在餐桌对面",
+            "action": "双手放在桌面上",
+            "expression": "微笑注视",
+        },
+    ]
+    subjects = normalize_visual_subjects_lr(subjects)
+    assert subjects[0]["name"] == "昭昭"
+    assert "左" in subjects[0]["posture"]
+    assert subjects[-1]["name"] == "灿灿"
+    assert "右" in subjects[-1]["posture"]
+
+    segs = [
+        {
+            "segment_index": 1,
+            "shot_type": "特写",
+            "speakers": ["昭昭", "灿灿", "妈妈"],
+            "dialogue": dialogue,
+            "visual_subjects": subjects,
+            "visual_brief": render_visual_subjects(subjects),
+            "object_states": [
+                {
+                    "object": "签筒",
+                    "count": "一个",
+                    "form": "棕色圆柱形，筒口朝上",
+                    "holder": "灿灿",
+                    "position": "灿灿手中",
+                }
+            ],
+            "scene_anchors": ["餐桌"],
+        }
+    ]
+    notes = normalize_object_states(segs, setting=setting)
+    assert not any("碗里" in n for n in notes)
+    tube = segs[0]["object_states"][0]
+    assert tube["position"] == "灿灿手中"
+    rendered = _render_object_states(
+        segs[0]["object_states"], setting=setting, dialogue=dialogue
+    )
+    assert "碗里" not in rendered
+    assert "一个签筒在灿灿手中" in rendered
+    prompt = assemble_daily_t2i_prompt(
+        segs[0], setting=setting, scene_anchor="餐桌前"
+    )
+    assert "碗里" not in prompt
+    assert "一个签筒在灿灿手中" in prompt
+    assert "中近景特写" in prompt
+    assert "中景三人同框，全身可见" not in prompt
+    assert "画面左边是昭昭" in prompt
+    assert "画面右边是灿灿" in prompt
+
+
+def test_normalize_visual_subjects_lr_swaps_reversed_kids():
+    from app.services.script.visual_brief import (
+        normalize_visual_subjects_lr,
+        render_visual_subjects,
+    )
+
+    subjects = normalize_visual_subjects_lr(
+        [
+            {
+                "name": "灿灿",
+                "posture": "站在餐桌左边",
+                "action": "右手举起签筒",
+                "expression": "瞪眼",
+            },
+            {
+                "name": "昭昭",
+                "posture": "站在餐桌右边",
+                "action": "左手叉腰",
+                "expression": "斜视",
+            },
+            {
+                "name": "妈妈",
+                "posture": "坐在餐桌对面",
+                "action": "双手放桌面",
+                "expression": "微笑",
+            },
+        ]
+    )
+    assert [s["name"] for s in subjects] == ["昭昭", "妈妈", "灿灿"]
+    assert "左" in subjects[0]["posture"]
+    assert "右" in subjects[2]["posture"]
+    brief = render_visual_subjects(subjects)
+    assert brief.index("昭昭") < brief.index("灿灿")
+    assert "昭昭站在餐桌左边" in brief
+    assert "灿灿站在餐桌右边" in brief
 
 
 def test_locked_inventory_keeps_shot1_furniture():

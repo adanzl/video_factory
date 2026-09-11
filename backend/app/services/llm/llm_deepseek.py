@@ -570,14 +570,18 @@ def _merge_visual_briefs(
         subjects = item.get("visual_subjects")
         brief = str(item.get("visual_brief") or "").strip()
         if isinstance(subjects, list) and subjects:
-            from app.services.script.visual_brief import render_visual_subjects
+            from app.services.script.visual_brief import (
+                normalize_visual_subjects_lr,
+                render_visual_subjects,
+            )
 
+            subjects = normalize_visual_subjects_lr(
+                [s for s in subjects if isinstance(s, dict)]
+            )
             rendered = render_visual_subjects(subjects)
             if not rendered:
                 raise ValueError(f"visual_subjects empty for segment {idx}")
-            seg["visual_subjects"] = [
-                s for s in subjects if isinstance(s, dict)
-            ]
+            seg["visual_subjects"] = subjects
             seg["visual_brief"] = rendered
         elif brief:
             seg["visual_brief"] = brief
