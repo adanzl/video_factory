@@ -84,8 +84,9 @@ source_type：{source_type}（tutorial 时禁保留教程口吻/第几招）
 }}
 
 规则：
-- **扣题（硬卡）**：金故事标题「{title}」的核心词须在对白中自然出现至少一处；
-  scene_title 须与标题同调，禁正文完全跑题
+- **扣题（硬卡）**：金故事标题「{title}」的核心事件须在对白中自然出现；
+  scene_title 须与对白人物同调。若源标题人物未进对白（如妈妈被映射成灿灿/姐姐），
+  scene_title/key/conflict_core 必须按对白改写，禁止沿用「怼妈」这类对不上的源标题
 - **字数硬卡（最优先）**：正文 dialogue 总字数必须 ≥{chars_min} 且 ≤{chars_max}；
   目标落在 {chars_soft_lo}–{chars_soft_hi}。**未满 {chars_min} 禁止收束闭合**
 - **句数**：对白宜 {rounds_soft_lo}–{rounds_soft_hi} 轮，最多 {rounds_hard_max} 轮；

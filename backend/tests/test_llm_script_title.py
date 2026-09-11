@@ -288,6 +288,100 @@ def test_ensure_chat_title_candidates_refills_missing():
     assert all("分蛋糕" in c for c in out)
     assert "先挑反被挑走大块" not in out
 
+def _job101_sister_roast_story() -> dict:
+    """金故事源标题带「怼妈」，转写后对白只有灿灿/昭昭。"""
+    return {
+        "scene_title": "萌娃金句怼妈",
+        "theme": "萌娃金句怼妈",
+        "key": "金句怼妈",
+        "conflict_core": "妈妈考验女儿社交观，反被女儿用历史典故和哲理金句问倒",
+        "setting": "客厅沙发上，灿灿端着水杯，昭昭盘腿坐着，两人面对面聊夸奖和朋友",
+        "story_type": "I",
+        "dialogue": [
+            {"speaker": "灿灿", "line": "昭昭，别人夸你好看，你怎么一点都不激动？"},
+            {"speaker": "昭昭", "line": "智慧没增加，光好看有什么用，看看戚夫人和吕雉。"},
+            {"speaker": "灿灿", "line": "那你说，朋友多了到底好不好？"},
+            {"speaker": "昭昭", "line": "姐姐，你爱朋友多，还是爱自己开心？"},
+            {"speaker": "灿灿", "line": "行行行，我说不过你，你赢了。"},
+            {"speaker": "昭昭", "line": "看你还嘴硬！"},
+        ],
+    }
+
+
+def test_title_absent_roles_ignores_ganma():
+    """「干嘛」里的妈不算家庭角色。"""
+    from app.services.script.optimize_title import title_absent_roles
+
+    story = {
+        "dialogue": [
+            {"speaker": "灿灿", "line": "你干嘛抢遥控器"},
+            {"speaker": "昭昭", "line": "我先拿到的"},
+        ],
+    }
+    assert title_absent_roles("你干嘛抢遥控器", story) == ()
+
+
+def test_chat_title_rejects_mom_when_dialogue_has_no_mom():
+    """源标题「怼妈」但对白是姐弟：不保初稿、不强制锚、候选丢掉妈妈。"""
+    from app.services.script.optimize_title import (
+        build_chat_title_user_prompt,
+        extract_core_anchor_words,
+        filter_chat_title_candidates,
+        maybe_keep_cover_draft,
+        pick_best_chat_title,
+        title_absent_roles,
+    )
+
+    story = _job101_sister_roast_story()
+    assert title_absent_roles("萌娃金句怼妈", story) == ("妈妈",)
+    assert title_absent_roles("萌娃金句怼妈妈", story) == ("妈妈",)
+    assert title_absent_roles("别人夸你好看", story) == ()
+    assert maybe_keep_cover_draft("萌娃金句怼妈", story, max_len=15) is None
+    assert extract_core_anchor_words("萌娃金句怼妈", story) == []
+    assert filter_chat_title_candidates(
+        ["萌娃金句怼妈妈", "别人夸你好看", "姐姐你爱朋友多"],
+        [],
+        story_content=story,
+    ) == ["别人夸你好看", "姐姐你爱朋友多"]
+    best = pick_best_chat_title(
+        "萌娃金句怼妈",
+        ["萌娃金句怼妈妈", "别人夸你好看"],
+        max_len=15,
+        story_content=story,
+    )
+    assert best == "别人夸你好看"
+    assert "妈" not in best
+    prompt = build_chat_title_user_prompt(
+        draft_title="萌娃金句怼妈",
+        story_content=story,
+        max_title_len=15,
+    )
+    assert "【硬性·对白人物】" in prompt
+    assert "未出现：妈妈" in prompt
+    assert "对白出场：灿灿、昭昭" in prompt
+    assert "本集核心物件/动作（须保留" not in prompt
+
+
+def test_chat_title_keeps_mom_when_dialogue_has_mom():
+    """对白有妈妈时，标题可以写妈妈；封面初稿仍可保留。"""
+    from app.services.script.optimize_title import (
+        maybe_keep_cover_draft,
+        title_absent_roles,
+    )
+
+    story = {
+        "scene_title": "洗手不搓泡",
+        "theme": "妈妈教洗手",
+        "story_type": "E",
+        "dialogue": [
+            {"speaker": "妈妈", "line": "洗手要搓出泡"},
+            {"speaker": "昭昭", "line": "我搓了呀"},
+        ],
+    }
+    assert title_absent_roles("妈妈洗手不搓泡", story) == ()
+    assert maybe_keep_cover_draft("洗手不搓泡", story, max_len=15) == "洗手不搓泡"
+
+
 def test_polish_chat_title_valid_and_fallback():
     """润色结果通过硬校验才采用；缺短语/黑名单/句尾倒装/请求异常都回退原标题。"""
     from app.services.script.optimize_title import polish_chat_title
