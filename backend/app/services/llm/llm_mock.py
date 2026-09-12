@@ -46,8 +46,9 @@ class MockLLMClient(LLMClient):
         existing_script: dict | None = None,
         retry_scope: str | None = None,
         generate_image_prompts: bool = True,
+        include_sd15_prompt: bool = False,
     ) -> dict[str, Any]:
-        _ = feedback, supplementary_info, job, narration_target_words
+        _ = feedback, supplementary_info, job, narration_target_words, include_sd15_prompt
         if retry_scope == "image_prompts" and existing_script is not None:
             if generate_image_prompts:
                 return self.fill_image_prompts(existing_script)
@@ -147,8 +148,9 @@ class MockLLMClient(LLMClient):
         supplementary_info: str | None = None,
         job: dict | None = None,
         segment_indices: list[int] | None = None,
+        include_sd15_prompt: bool = False,
     ) -> dict[str, Any]:
-        _ = feedback, supplementary_info, job
+        _ = feedback, supplementary_info, job, include_sd15_prompt
         visual_style = script.get("visual_style") or (
             "3D卡通渲染科普插画，暖黄侧光，浅木色场景，银红条形磁铁统一造型"
         )
