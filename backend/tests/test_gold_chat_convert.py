@@ -388,6 +388,95 @@ def test_gold_story_to_gold_chat(monkeypatch):
     assert out["quality"]["structure_score"] == 80
 
 
+def test_rebuild_h3a_h3b_on_convert_refreshes_contract(monkeypatch):
+    """重转切入点：用 story_raw+H3 重跑 H3a/H3b 写回契约。"""
+    patched: dict = {}
+
+    def fake_build_scene(**_kwargs):
+        return {
+            "story_type": "I",
+            "location": "客厅",
+            "characters": ["灿灿", "昭昭", "妈妈"],
+            "object": "58分成绩单",
+            "conflict": "昭昭宣扬灿灿考58分",
+            "mechanism": "宣传高分该谢、低分怪分数",
+            "beat_chain": [
+                {"beat": 1, "speaker": "灿灿", "intent": "责备宣传"},
+                {"beat": 2, "speaker": "昭昭", "intent": "双标辩解"},
+                {"beat": 3, "speaker": "妈妈", "intent": "冰箱反问"},
+                {"beat": 4, "speaker": "昭昭", "intent": "嘴硬"},
+            ],
+            "closing_intent": "昭昭嘴硬",
+            "mom_lines_max": 2,
+            "remap_note": "戏核家长须保留出场",
+            "banned_literals": [],
+            "contract_confidence": 0.9,
+        }
+
+    def fake_build_seed(**_kwargs):
+        return {
+            "setting": "客厅，灿灿攥着58分成绩单",
+            "dialogue_seed": [
+                {"speaker": "灿灿", "intent": "责备宣传58分"},
+                {"speaker": "昭昭", "intent": "双标辩解"},
+                {"speaker": "妈妈", "intent": "冰箱反问"},
+                {"speaker": "昭昭", "intent": "嘴硬"},
+            ],
+            "closing_intent": "昭昭嘴硬",
+            "speaker_map_note": "妈妈保留",
+            "dialogue_confidence": 0.9,
+        }
+
+    monkeypatch.setattr(
+        "app.services.gold_story.collect.llm.build_scene_contract",
+        fake_build_scene,
+    )
+    monkeypatch.setattr(
+        "app.services.gold_story.collect.llm.build_dialogue_seed",
+        fake_build_seed,
+    )
+    monkeypatch.setattr(
+        gc.repo_gold_story,
+        "patch_story_payload",
+        lambda gid, patch: patched.update({"gid": gid, **patch}),
+    )
+
+    row = {
+        "id": 44,
+        "title": "分数宣传",
+        "mechanism": "M11",
+        "structure_type": "I",
+        "conflict_core": "宣传差分",
+        "theme_family": "分数",
+        "payload": {
+            "story_raw": "姐姐考了差分化妹妹宣传，妈妈责备并用冰箱反问。" * 3,
+            "beat": [
+                "妹妹宣扬，妈妈责备",
+                "妹妹辩称双标",
+                "妈妈反问冰箱",
+                "妈妈点出开好头",
+            ],
+            "scene_contract": {
+                "characters": ["灿灿", "昭昭"],
+                "mom_lines_max": 0,
+                "object": "383分",
+            },
+            "source_type": "field",
+            "structure_confidence": 0.8,
+        },
+    }
+    out = gc._rebuild_h3a_h3b_on_convert(row)
+    sc = out["payload"]["scene_contract"]
+    assert "妈妈" in sc["characters"]
+    assert int(sc["mom_lines_max"]) >= 2
+    assert "383" not in str(sc.get("object") or "")
+    assert any(
+        isinstance(r, dict) and r.get("speaker") == "妈妈"
+        for r in out["payload"]["dialogue_seed"]
+    )
+    assert patched.get("gid") == 44
+
+
 def test_export_gold_chat_files(tmp_path, monkeypatch):
     monkeypatch.setattr(gc, "gold_chat_export_dir", lambda _cfg=None: tmp_path)
     monkeypatch.setattr(gce, "gold_chat_export_dir", lambda _cfg=None: tmp_path)
