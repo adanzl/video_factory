@@ -5744,9 +5744,10 @@ def convert_gold_chat(
             logger.info("gold_chat pre-score propaganda rebind")
         if st_final == "I":
             from app.services.daily_story.story_types.i.patch import (
+                patch_i_dedupe_sibling_lines,
+                patch_i_enforce_line_max,
                 patch_i_fix_parent_sibling_voice,
                 patch_i_seal_after_parent_soul,
-                patch_i_dedupe_sibling_lines,
             )
 
             voice_notes = patch_i_fix_parent_sibling_voice(chat)
@@ -5754,11 +5755,14 @@ def convert_gold_chat(
             dedupe_notes = patch_i_dedupe_sibling_lines(chat)
             chat, _ = patch_sanitize_pad_suffix(chat)
             chat, _ = patch_sanitize_pad_particles(chat)
-            if voice_notes or seal_notes or dedupe_notes:
+            max_notes = patch_i_enforce_line_max(chat)
+            if voice_notes or seal_notes or dedupe_notes or max_notes:
                 logger.info(
                     "gold_chat pre-score I voice/seal: %s",
                     "；".join(
-                        (voice_notes + seal_notes + dedupe_notes)[:6]
+                        (
+                            voice_notes + seal_notes + dedupe_notes + max_notes
+                        )[:6]
                     ),
                 )
     if st_final == "O":
