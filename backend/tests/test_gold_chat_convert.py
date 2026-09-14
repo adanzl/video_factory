@@ -511,6 +511,28 @@ def test_sanitize_pad_suffix_strips_compound_tails():
     assert "冰箱" in lines[2]
 
 
+def test_sanitize_pad_suffix_strips_glued_buxing():
+    """粘连垫字「知道不行/关系不行」应剥；真拒绝「还不行」保留。"""
+    story = {
+        "dialogue": [
+            {"speaker": "昭昭", "line": "姐数学58分，全班都知道不行！"},
+            {
+                "speaker": "昭昭",
+                "line": "跟我没关系不行，我才不怕呢。",
+            },
+            {"speaker": "灿灿", "line": "这样还不行！"},
+        ]
+    }
+    out, changed = gc.patch_sanitize_pad_suffix(story)
+    assert changed
+    lines = [str(x["line"]) for x in out["dialogue"]]
+    assert "知道不行" not in lines[0]
+    assert "都知道" in lines[0]
+    assert "关系不行" not in lines[1]
+    assert "没关系" in lines[1]
+    assert lines[2] == "这样还不行！"
+
+
 def test_parse_conflict_propaganda_roles():
     from app.services.gold_story.gold_chat.validate import (
         _parse_conflict_propaganda_roles,
