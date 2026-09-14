@@ -1240,6 +1240,18 @@ _J_ZHAO_FORBIDDEN_EXPAND: frozenset[str] = frozenset(
 _J_CAN_FORBIDDEN_EXPAND: frozenset[str] = frozenset(
     {"你试试看", "少跟我吵", "我才不怕", "你凭什么"}
 )
+# I：禁语义错位/审稿点名凑字尾巴（抽象禁表，不绑单篇）
+_I_FORBIDDEN_EXPAND: frozenset[str] = frozenset(
+    {
+        "我可记住啦",
+        "别再乱动了",
+        "马上给我挪开",
+        "给我站住",
+        "说一不二",
+        "轮不到你",
+        "我偏就不信",
+    }
+)
 _GOLD_CHAT_EXPAND_SOFT_CLUTTER: tuple[str, ...] = (
     "听见没有呀",
     "这回听清楚",
@@ -2320,6 +2332,12 @@ def _pad_gold_chat_to_min_chars(
         expand_src = _O_SAFE_NATURAL_EXPAND
     elif story_type == "K":
         expand_src = _K_GOLD_CHAT_NATURAL_EXPAND
+    elif story_type == "I":
+        expand_src = tuple(
+            c
+            for c in _GOLD_CHAT_NATURAL_EXPAND
+            if not any(f in c for f in _I_FORBIDDEN_EXPAND)
+        )
     else:
         expand_src = _GOLD_CHAT_NATURAL_EXPAND
     natural_bares = {c.lstrip("，,") for c in expand_src}
@@ -2577,6 +2595,12 @@ def _expand_short_gold_chat_lines(
         expand_src = _O_SAFE_NATURAL_EXPAND
     elif st == "K":
         expand_src = _K_GOLD_CHAT_NATURAL_EXPAND
+    elif st == "I":
+        expand_src = tuple(
+            c
+            for c in _GOLD_CHAT_NATURAL_EXPAND
+            if not any(f in c for f in _I_FORBIDDEN_EXPAND)
+        )
     else:
         expand_src = _GOLD_CHAT_NATURAL_EXPAND
     bare_all = {c.lstrip("，,") for c in expand_src}
@@ -5748,21 +5772,41 @@ def convert_gold_chat(
                 patch_i_enforce_line_max,
                 patch_i_fix_parent_sibling_voice,
                 patch_i_seal_after_parent_soul,
+                patch_i_strip_mid_pad,
+                patch_i_strip_premature_speechless,
             )
 
             voice_notes = patch_i_fix_parent_sibling_voice(chat)
+            premature_notes = patch_i_strip_premature_speechless(chat)
             seal_notes = patch_i_seal_after_parent_soul(chat)
             dedupe_notes = patch_i_dedupe_sibling_lines(chat)
+            # dedupe 不得打穿语塞位：再封一次
+            seal_notes2 = patch_i_seal_after_parent_soul(chat)
+            pad_notes = patch_i_strip_mid_pad(chat)
             chat, _ = patch_sanitize_pad_suffix(chat)
             chat, _ = patch_sanitize_pad_particles(chat)
             max_notes = patch_i_enforce_line_max(chat)
-            if voice_notes or seal_notes or dedupe_notes or max_notes:
+            if (
+                voice_notes
+                or premature_notes
+                or seal_notes
+                or seal_notes2
+                or dedupe_notes
+                or pad_notes
+                or max_notes
+            ):
                 logger.info(
                     "gold_chat pre-score I voice/seal: %s",
                     "；".join(
                         (
-                            voice_notes + seal_notes + dedupe_notes + max_notes
-                        )[:6]
+                            voice_notes
+                            + premature_notes
+                            + seal_notes
+                            + dedupe_notes
+                            + seal_notes2
+                            + pad_notes
+                            + max_notes
+                        )[:8]
                     ),
                 )
     if st_final == "O":

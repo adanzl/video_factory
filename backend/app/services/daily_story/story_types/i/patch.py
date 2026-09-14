@@ -15,7 +15,7 @@ from app.services.daily_story.story_types.i.validate import (
 
 _I_CLOSING_TAIL_ALLOW = 1
 _RE_INDOOR_SETTING = re.compile(r"卧室|客厅|厨房|餐厅|书桌|餐桌|沙发")
-_ORAL_WIN_LINE = "不乐意就别乱说别人！"
+_ORAL_WIN_LINE = "不乐意就别拿别人低分嚷！"
 _ORAL_SPEECHLESS_LINE = "我……我……"
 # ≤24 字硬上限；留余量勿贴边
 _I_SOUL_SWAP_LINE = "换你被到处说低分，你乐意吗？"
@@ -23,6 +23,48 @@ _RE_SOUL_WINNER = re.compile(
     r"还得会|好不好|照你这么说|那照你|评论.{0,8}吗|"
     r"爱学习|你爱吗|灵魂|拷问|换你|乐意吗|跟你无关|也没关系"
 )
+# 嘴硬争锋残留：语塞句里仍在辩，不算真正败北
+_RE_SPEECHLESS_STILL_ARGUES = re.compile(
+    r"反正|没错|就是|不怪我|没关系|偏就|不信|才能说|比别人强"
+)
+
+
+def _find_parent_soul_idx(dialogue: list) -> int:
+    """正文首次家长灵魂拷问下标；无则 -1。"""
+    for i, item in enumerate(dialogue):
+        if not isinstance(item, dict):
+            continue
+        sp = str(item.get("speaker") or "").strip()
+        ln = str(item.get("line") or "")
+        if sp not in ("妈妈", "爸爸"):
+            continue
+        if (
+            _RE_SOUL_WINNER.search(ln)
+            or "换你" in ln
+            or "乐意吗" in ln
+            or "冰箱" in ln
+        ):
+            return i
+    return -1
+
+
+def _propaganda_roles(story: dict) -> tuple[str, str]:
+    prop, vict = "昭昭", "灿灿"
+    try:
+        from app.services.gold_story.gold_chat.validate import (
+            _parse_conflict_propaganda_roles,
+        )
+
+        roles = _parse_conflict_propaganda_roles(
+            str(story.get("conflict_core") or "")
+        )
+        if roles:
+            prop, vict = roles
+    except Exception:
+        pass
+    return prop, vict
+
+
 _RE_ADULT_DEBATE = re.compile(
     r"只有比别人强|才能评论|资格评论|有权评论|凭本事评论"
 )
@@ -47,42 +89,18 @@ def patch_i_seal_after_parent_soul(story: dict) -> list[str]:
     dialogue = story.get("dialogue")
     if not isinstance(dialogue, list) or len(dialogue) < 4:
         return notes
-    soul_idx = -1
+    soul_idx = _find_parent_soul_idx(dialogue)
     winner = ""
-    for i, item in enumerate(dialogue):
-        if not isinstance(item, dict):
-            continue
-        sp = str(item.get("speaker") or "").strip()
-        ln = str(item.get("line") or "")
-        if sp not in ("妈妈", "爸爸"):
-            continue
-        if not (
-            _RE_SOUL_WINNER.search(ln)
-            or "换你" in ln
-            or "乐意吗" in ln
-            or "冰箱" in ln
-        ):
-            continue
-        soul_idx = i
-        winner = sp
-        break
+    if soul_idx >= 0 and isinstance(dialogue[soul_idx], dict):
+        winner = str(dialogue[soul_idx].get("speaker") or "").strip()
     if soul_idx < 0 or not winner:
         return notes
 
     # 被拷问方：优先 conflict 宣传方；否则取拷问前最后一句姐弟
     target = ""
-    try:
-        from app.services.gold_story.gold_chat.validate import (
-            _parse_conflict_propaganda_roles,
-        )
-
-        roles = _parse_conflict_propaganda_roles(
-            str(story.get("conflict_core") or "")
-        )
-        if roles:
-            target = roles[0]
-    except Exception:
-        pass
+    prop, _vict = _propaganda_roles(story)
+    if prop:
+        target = prop
     if not target:
         for j in range(soul_idx - 1, -1, -1):
             if not isinstance(dialogue[j], dict):
@@ -160,39 +178,12 @@ def patch_i_expand_before_soul(story: dict) -> list[str]:
             if isinstance(d, dict)
         )
 
-    soul_idx = -1
-    for i, item in enumerate(dialogue):
-        if not isinstance(item, dict):
-            continue
-        sp = str(item.get("speaker") or "").strip()
-        line = str(item.get("line") or "")
-        if sp not in ("妈妈", "爸爸"):
-            continue
-        if (
-            _RE_SOUL_WINNER.search(line)
-            or "换你" in line
-            or "乐意吗" in line
-            or "冰箱" in line
-        ):
-            soul_idx = i
-            break
+    soul_idx = _find_parent_soul_idx(dialogue)
     if soul_idx < 2:
         return notes
 
     # 从 conflict 解析宣传/受害，勿写死昭昭宣传（防过拟合）
-    prop, vict = "昭昭", "灿灿"
-    try:
-        from app.services.gold_story.gold_chat.validate import (
-            _parse_conflict_propaganda_roles,
-        )
-
-        roles = _parse_conflict_propaganda_roles(
-            str(story.get("conflict_core") or "")
-        )
-        if roles:
-            prop, vict = roles
-    except Exception:
-        pass
+    prop, vict = _propaganda_roles(story)
 
     fillers = [
         (prop, "我就是要说，你管得着吗，全楼都该听！"),
@@ -238,8 +229,20 @@ def patch_i_expand_before_soul(story: dict) -> list[str]:
     )
 
     grow_tails = {
-        prop: ["，我就这理", "，管你怎么想", "，我说定了"],
-        vict: ["，你别再嚷", "，快还我卷子", "，我跟妈妈说"],
+        prop: ["，管你怎么想", "，我说定了", "，我就这理"],
+        vict: ["，快还我卷子", "，我跟妈妈说", "，你别再嚷"],
+    }
+    # 全稿已用过的尾巴不再叠，防「我就这理」复读
+    used_tails = {
+        t[1:]
+        for t in (
+            grow_tails[prop] + grow_tails[vict]
+        )
+        if any(
+            t[1:] in str(d.get("line") or "")
+            for d in dialogue
+            if isinstance(d, dict)
+        )
     }
     while _chars() < DAILY_STORY_BODY_CHARS_MIN:
         grew = False
@@ -251,12 +254,14 @@ def patch_i_expand_before_soul(story: dict) -> list[str]:
             if sp not in {prop, vict} or dialogue_char_count(line) >= 20:
                 continue
             for extra in grow_tails.get(sp, []):
-                if extra[1:] in line:  # 跳过已含尾巴
+                bare = extra[1:]
+                if bare in line or bare in used_tails:
                     continue
                 cand = line.rstrip("！。？") + extra + "！"
                 if dialogue_char_count(cand) > DAILY_STORY_LINE_CHARS_MAX:
                     continue
                 dialogue[i]["line"] = cand
+                used_tails.add(bare)
                 grew = True
                 inserted += 1
                 break
@@ -271,19 +276,85 @@ def patch_i_expand_before_soul(story: dict) -> list[str]:
     return notes
 
 
+def patch_i_strip_premature_speechless(story: dict) -> list[str]:
+    """拷问前禁止伪语塞：结巴/接不上却仍嘴硬 → 改回争锋。
+
+    抽象条件：RE_SPEECHLESS 命中且在家长灵魂拷问之前；不绑单篇词表。
+    """
+    notes: list[str] = []
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 4:
+        return notes
+    soul_idx = _find_parent_soul_idx(dialogue)
+    if soul_idx < 0:
+        soul_idx = len(dialogue)
+    prop, vict = _propaganda_roles(story)
+    prop_alts = [
+        "事实摆那儿，我宣传怎么了！",
+        "高分就该谢我，低分就怪分数！",
+        "我就是要说，管你怎么想！",
+    ]
+    vict_alts = [
+        "你拿我分数当笑话讲，也太过分！",
+        "你再宣传一次，我跟妈妈告状去！",
+        "你快放下卷子，别再满屋子嚷！",
+    ]
+    ai = {prop: 0, vict: 0}
+    for i in range(soul_idx):
+        if not isinstance(dialogue[i], dict):
+            continue
+        sp = str(dialogue[i].get("speaker") or "").strip()
+        line = str(dialogue[i].get("line") or "").strip()
+        if sp not in {prop, vict} or not line:
+            continue
+        if not RE_SPEECHLESS.search(line):
+            continue
+        # 纯短口语结巴也算提前败北，一律改争锋
+        pool = prop_alts if sp == prop else vict_alts
+        cand = pool[ai[sp] % len(pool)]
+        ai[sp] += 1
+        dialogue[i]["line"] = cand
+        notes.append("I拷问前伪语塞改争锋")
+    if notes:
+        story["dialogue"] = dialogue
+    return notes
+
+
 def patch_i_ban_meta_speechless(story: dict) -> list[str]:
-    """禁「我一时说不出话」类自述语塞。"""
+    """禁「我一时说不出话」类自述语塞；仅拷问后改口语结巴。"""
     notes: list[str] = []
     dialogue = story.get("dialogue")
     if not isinstance(dialogue, list):
         return notes
-    for item in dialogue:
+    soul_idx = _find_parent_soul_idx(dialogue)
+    for i, item in enumerate(dialogue):
         if not isinstance(item, dict):
             continue
         line = str(item.get("line") or "")
-        if "说不出话" in line or "一时语塞" in line:
+        meta = (
+            "说不出话" in line
+            or "一时语塞" in line
+            or ("一时" in line and "接不上" in line)
+            or (
+                RE_SPEECHLESS.search(line)
+                and _RE_SPEECHLESS_STILL_ARGUES.search(line)
+            )
+        )
+        if not meta:
+            continue
+        if soul_idx >= 0 and i > soul_idx:
             item["line"] = _ORAL_SPEECHLESS_LINE
             notes.append("I自述语塞改口语")
+        else:
+            # 拷问前元话语留给 strip_premature；此处再兜底
+            sp = str(item.get("speaker") or "").strip()
+            item["line"] = (
+                "事实摆那儿，我宣传怎么了！"
+                if sp in {"昭昭", "灿灿"}
+                else line
+            )
+            if item["line"] != line:
+                notes.append("I拷问前元话语改争锋")
     return notes
 
 
@@ -667,6 +738,15 @@ def patch_i_fix_parent_sibling_voice(story: dict) -> list[str]:
             continue
         if sp not in {"昭昭", "灿灿"}:
             continue
+        # 对妈喊却说姐弟宣传腔：改回对受害方争锋（抽象错位，不绑单篇）
+        if (
+            sp == prop
+            and re.match(r"^妈[妈]?[！!，,]", line)
+            and claim.search(line)
+        ):
+            item["line"] = "事实摆那儿，我宣传怎么了！"
+            notes.append("I对妈错位宣传改争锋")
+            continue
         if claim.search(line) and sp != prop:
             item["speaker"] = prop
             notes.append("I宣传腔speaker归位")
@@ -686,24 +766,16 @@ def _i_line_core(line: str) -> str:
 
 
 def patch_i_dedupe_sibling_lines(story: dict) -> list[str]:
-    """姐弟近重复台词：后出现的改写，防凑字空转。"""
+    """姐弟近重复台词：后出现的改写，防凑字空转。
+
+    语塞短句（我……）禁止被近重复改写成嘴硬争锋，否则会打穿
+    「拷问→语塞→制敌」骨架。
+    """
     notes: list[str] = []
     dialogue = story.get("dialogue")
     if not isinstance(dialogue, list):
         return notes
-    prop, vict = "昭昭", "灿灿"
-    try:
-        from app.services.gold_story.gold_chat.validate import (
-            _parse_conflict_propaganda_roles,
-        )
-
-        roles = _parse_conflict_propaganda_roles(
-            str(story.get("conflict_core") or "")
-        )
-        if roles:
-            prop, vict = roles
-    except Exception:
-        pass
+    prop, vict = _propaganda_roles(story)
     alts = {
         prop: [
             "事实摆那儿，我宣传怎么了！",
@@ -725,12 +797,21 @@ def patch_i_dedupe_sibling_lines(story: dict) -> list[str]:
         line = str(item.get("line") or "").strip()
         if sp not in {prop, vict} or not line:
             continue
+        # 真正语塞：跳过去重，勿改回争锋
+        if RE_SPEECHLESS.search(line) and not _RE_SPEECHLESS_STILL_ARGUES.search(
+            line
+        ):
+            continue
         key = _i_line_core(line)
         if not key:
             continue
-        # 近重复：完全相同，或已有核心被包含
-        dup = key in seen or any(
-            key in old or old in key for old in seen if len(old) >= 6
+        # 近重复：完全相同，或双方核心均够长时的互相包含
+        # （短核「我我」不可 substring 命中长句，否则会误伤语塞）
+        dup = key in seen or (
+            len(key) >= 6
+            and any(
+                key in old or old in key for old in seen if len(old) >= 6
+            )
         )
         if dup:
             pool = alts.get(sp) or []
@@ -764,7 +845,7 @@ def patch_i_dedupe_sibling_lines(story: dict) -> list[str]:
 
 
 def patch_i_strip_mid_pad(story: dict) -> list[str]:
-    """剥中段「好不好/呢」垫字脏尾，保留问号语义。"""
+    """剥中段凑字脏尾：好不好/呢、啦了呀、可记住啦等。"""
     notes: list[str] = []
     dialogue = story.get("dialogue")
     if not isinstance(dialogue, list):
@@ -786,6 +867,16 @@ def patch_i_strip_mid_pad(story: dict) -> list[str]:
         )
         new = re.sub(r"真的([！!。？?]?)$", r"\1", new)
         new = re.sub(r"[，,]?我偏就不信[！!。？?]?$", "！", new)
+        # 抽象凑字堆叠：啦了呀 / 可记住啦 / 乱动尾巴（分数口舌无关）
+        new = re.sub(r"啦了呀", "啦", new)
+        new = re.sub(r"听见啦了", "听见啦", new)
+        new = re.sub(r"[，,]?我可记住啦?[了]?[！!。？?]?", "", new)
+        new = re.sub(r"[，,]?别再乱动了", "", new)
+        new = re.sub(r"我才不怕了([！!。？?]?)", r"我才不怕\1", new)
+        new = re.sub(r"歪理了([？?])", r"歪理\1", new)
+        new = re.sub(r"告状去?呢([！!。？?]?)", r"告状\1", new)
+        new = re.sub(r"妈妈说呢([！!。？?]?)", r"妈妈说\1", new)
+        new = re.sub(r"[，,]{2,}", "，", new).strip("，, ")
         if new and new[-1] not in "！!。？?":
             new = new.rstrip("，, ") + "！"
         if new != line:
@@ -837,12 +928,16 @@ def patch_i_body(story: dict) -> list[str]:
     notes.extend(patch_i_second_person_present(story))
     notes.extend(patch_i_strip_relay_and_invented_prop(story))
     notes.extend(patch_i_collapse_same_filler(story))
+    notes.extend(patch_i_strip_premature_speechless(story))
     notes.extend(patch_i_ban_meta_speechless(story))
+    notes.extend(patch_i_strip_premature_speechless(story))
     notes.extend(patch_i_seal_after_parent_soul(story))
     notes.extend(patch_i_expand_before_soul(story))
     notes.extend(patch_i_seal_after_parent_soul(story))
     notes.extend(patch_i_fix_parent_sibling_voice(story))
     notes.extend(patch_i_dedupe_sibling_lines(story))
+    # dedupe 可能误伤语塞：再封一次
+    notes.extend(patch_i_seal_after_parent_soul(story))
     notes.extend(patch_i_strip_mid_pad(story))
     notes.extend(patch_i_enforce_line_max(story))
     notes.extend(patch_i_trim_trailing_subplot(story))

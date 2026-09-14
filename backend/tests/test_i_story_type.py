@@ -210,6 +210,70 @@ def test_i_speechless_accepts_stammer_ellipsis():
     assert not any("语塞" in e for e in errors)
 
 
+def test_i_rejects_speechless_before_parent_soul():
+    """家长拷问后才算语塞；拷问前伪语塞硬拦。"""
+    story = {
+        "story_type": "I",
+        "punchline_explain": "I类问倒收束",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "我见人就说你低分！"},
+            {"speaker": "灿灿", "line": "你嘴怎么这么快！"},
+            {"speaker": "昭昭", "line": "我……我一时接不上，反正没错！"},
+            {"speaker": "灿灿", "line": "你再宣传我跟妈妈告状！"},
+            {"speaker": "妈妈", "line": "换你被到处说低分，你乐意吗？"},
+            {"speaker": "昭昭", "line": "事实摆那儿，我宣传怎么了！"},
+            {"speaker": "妈妈", "line": "不乐意就别乱说别人！"},
+            {"speaker": "昭昭", "line": "我偏就不认！"},
+            {"speaker": "妈妈", "line": "看你还嘴硬！"},
+            {"speaker": "昭昭", "line": "哼！"},
+        ],
+    }
+    errors: list[str] = []
+    append_i_body_errors(story, errors)
+    assert any("语塞须在灵魂拷问之后" in e for e in errors)
+
+
+def test_i_patch_preserves_speechless_after_soul_vs_dedupe():
+    """去重不得把拷问后语塞短句改回嘴硬争锋。"""
+    from app.services.daily_story.story_types.i.patch import patch_i_body
+
+    story = {
+        "story_type": "I",
+        "conflict_core": "昭昭到处宣扬灿灿数学58分，妈妈责备昭昭戳灿灿痛处",
+        "punchline_explain": "I类问倒收束",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "灿灿数学考了58分，我见人就说！"},
+            {"speaker": "灿灿", "line": "你到处说我58分，同学都笑我！"},
+            {"speaker": "昭昭", "line": "我……我一时接不上，反正我没错！"},
+            {"speaker": "灿灿", "line": "你拿我分数当笑话讲，也太过分！"},
+            {"speaker": "昭昭", "line": "跟我有啥关系，又不是我考的！"},
+            {"speaker": "灿灿", "line": "你到处说还有理了？别再嚷！"},
+            {"speaker": "昭昭", "line": "高分就该谢我，低分就怪分数！"},
+            {"speaker": "灿灿", "line": "你再宣传一次，我跟妈妈告状！"},
+            {"speaker": "妈妈", "line": "换你被到处说低分，你乐意吗？"},
+            {"speaker": "昭昭", "line": "事实摆那儿，我宣传怎么了！"},
+            {"speaker": "妈妈", "line": "不乐意就别乱说别人！"},
+        ],
+    }
+    notes = patch_i_body(story)
+    assert notes
+    dlg = story["dialogue"]
+    lines = [(d["speaker"], d["line"]) for d in dlg]
+    soul = next(i for i, (s, l) in enumerate(lines) if s == "妈妈" and "乐意吗" in l)
+    assert soul >= 0
+    assert soul + 1 < len(lines)
+    assert lines[soul + 1][0] == "昭昭"
+    assert "我……" in lines[soul + 1][1]
+    assert "事实摆" not in lines[soul + 1][1]
+    assert lines[-1][0] == "妈妈"
+    assert "不乐意" in lines[-1][1]
+    # 拷问前不应再留伪语塞
+    for sp, ln in lines[:soul]:
+        if sp == "昭昭":
+            assert "接不上" not in ln
+            assert not (ln.startswith("我……") and "反正" in ln)
+
+
 def test_repair_closing_intent_follows_seed_win_speaker():
     from app.services.daily_story.story_types.i.validate import (
         repair_closing_intent_from_seed_win,

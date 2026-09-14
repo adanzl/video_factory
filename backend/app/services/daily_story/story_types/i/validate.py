@@ -22,7 +22,8 @@ RE_SPEECHLESS = re.compile(
 )
 RE_WIN_STUBBORN = re.compile(
     r"一招制敌|制敌|服不服|别跟我吵|不爱学习还|不爱学习就别|"
-    r"看你还嘴硬|看你还说|还说啥|还嘴硬|不乐意就别|别乱说别人"
+    r"看你还嘴硬|看你还说|还说啥|还嘴硬|不乐意就别|别乱说别人|"
+    r"别拿别人|低分嚷"
 )
 RE_A_BACKFIRE = re.compile(r"那不一样|都是听|破功|自相矛盾|你刚才说")
 _RE_CLOSING_WIN_CLAIM = re.compile(r"总结|制敌|得意|嘴硬|问倒")
@@ -217,6 +218,38 @@ def append_i_body_errors(story: dict, errors: list[str]) -> None:
                 errors.append("I类：beat家长拷问须在正文由家长说出")
     if not RE_SPEECHLESS.search(body):
         errors.append("I类：正文须写对方语塞/败北（说不过/看窗外等）")
+    else:
+        # 语塞须落在灵魂拷问之后（抽象顺序，不绑单篇词）
+        soul_i = -1
+        speech_i = -1
+        dialogue = story.get("dialogue")
+        if isinstance(dialogue, list):
+            for i, item in enumerate(dialogue):
+                if not isinstance(item, dict):
+                    continue
+                sp = str(item.get("speaker") or "").strip()
+                ln = str(item.get("line") or "")
+                if (
+                    soul_i < 0
+                    and sp in ("妈妈", "爸爸")
+                    and (
+                        RE_SOUL_QUESTION.search(ln)
+                        or "换你" in ln
+                        or "乐意吗" in ln
+                        or "冰箱" in ln
+                    )
+                ):
+                    soul_i = i
+                if speech_i < 0 and RE_SPEECHLESS.search(ln):
+                    # 嘴硬残留不算真正语塞（拷问前伪败北）
+                    if re.search(
+                        r"反正|没错|不怪我|没关系|偏就|不信|才能说",
+                        ln,
+                    ):
+                        continue
+                    speech_i = i
+        if soul_i >= 0 and (speech_i < 0 or speech_i <= soul_i):
+            errors.append("I类：语塞须在灵魂拷问之后")
     if not RE_WIN_STUBBORN.search(tail4):
         errors.append("I类：末段须赢家一招制敌（制敌/服不服等）")
     if RE_A_BACKFIRE.search(tail4):
