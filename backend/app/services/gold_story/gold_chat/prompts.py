@@ -11,6 +11,7 @@ from app.services.daily_story.prompts import (
 )
 from app.services.gold_story.gold_chat.validate import (
     _BANNED_INVENTED_CLOSES,
+    _parse_conflict_propaganda_roles,
     _parse_conflict_victim,
     _parse_fight_question_asker,
     _sibling_partner,
@@ -273,7 +274,22 @@ _SHORTEN_USER = """以下对白有单句超过 {max_chars} 字，请**只改超�
 
 
 def format_role_binding_block(conflict_text: str) -> str:
-    """Pass1 注入：从 scene conflict 解析受害方/先动手方分工。"""
+    """Pass1 注入：从 scene conflict 解析受害方/先动手方/宣传方分工。"""
+    prop_roles = _parse_conflict_propaganda_roles(conflict_text)
+    if prop_roles:
+        propagandist, victim = prop_roles
+        return (
+            "【角色分工锁定 · 硬约束 · 分数宣传】\n"
+            f"- 宣传方 = {propagandist}：第一人称「我宣传/宣扬/到处说」"
+            f"与「宣传高分该谢、低分怪分数」辩解只能由 {propagandist} 说\n"
+            f"- 受害方 = {victim}：被说低分、同学笑话、抗议「你到处说」"
+            f"只能由 {victim} 说；可用短促抗议，禁止空转复读同一短句\n"
+            f"- 禁止：{victim} 说「我宣传…」；{propagandist} 说"
+            f"「你到处说我/同学笑我」受害腔\n"
+            "- 在场互指用你/名字，禁止「她考了…」第三人称转述对方\n"
+            "- 家长拷问须打穿宣传方「跟我无关」借口；优先换位反问，"
+            "勿写成帮「谁都能评」开脱；勿并给姐弟"
+        )
     victim = _parse_conflict_victim(conflict_text)
     if not victim:
         return ""

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
@@ -89,6 +90,256 @@ def format_scene_block(contract: dict[str, Any]) -> str:
 
 
 _PARENT_SPEAKERS = frozenset({"妈妈", "爸爸"})
+_RE_ADULT_EXAM = re.compile(r"高考|中考|考研|成考")
+_RE_SCORE_NUM = re.compile(r"(\d{2,3})分")
+
+
+def _contract_age_check_blob(contract: dict[str, Any]) -> str:
+    """迁龄检查只看可拍正文口径，不含 remap_note 说明句（避免「高考→小学」误伤）。"""
+    parts: list[str] = []
+    for key in ("object", "conflict", "mechanism", "closing_intent"):
+        parts.append(str(contract.get(key) or ""))
+    for row in contract.get("beat_chain") or []:
+        if isinstance(row, dict):
+            parts.append(str(row.get("intent") or ""))
+        else:
+            parts.append(str(row))
+    return "\n".join(parts)
+
+
+def age_remap_contract_errors(
+    story_raw: str,
+    contract: dict[str, Any],
+) -> list[str]:
+    """站外成人考语境迁入 7–10 岁后，契约仍残留成人考/大总分则报错。
+
+    抽象门槛：源稿含高考/中考等，且契约正文仍写成人考词，或原样带回 ≥300 的分值。
+    """
+    raw = str(story_raw or "")
+    if not _RE_ADULT_EXAM.search(raw):
+        return []
+    blob = _contract_age_check_blob(contract) if contract else ""
+    errors: list[str] = []
+    if _RE_ADULT_EXAM.search(blob):
+        errors.append("age_remap:contract_still_has_adult_exam")
+    raw_big = {int(x) for x in _RE_SCORE_NUM.findall(raw) if int(x) >= 300}
+    out_big = {int(x) for x in _RE_SCORE_NUM.findall(blob) if int(x) >= 300}
+    if raw_big & out_big:
+        errors.append("age_remap:adult_total_score_carried_over")
+    return errors
+
+
+def _elementary_score_map(raw: str, text: str) -> dict[int, int]:
+    """把 ≥300 的成人总分映射为小学百分制高低对比（抽象，非单篇分值）。"""
+    big = sorted(
+        {
+            int(x)
+            for x in _RE_SCORE_NUM.findall(f"{raw}\n{text}")
+            if int(x) >= 300
+        }
+    )
+    if not big:
+        return {}
+    mapping: dict[int, int] = {}
+    if len(big) == 1:
+        mapping[big[0]] = 58 if big[0] < 550 else 98
+        return mapping
+    mapping[big[0]] = 58
+    mapping[big[-1]] = 98
+    for mid in big[1:-1]:
+        mapping[mid] = 78
+    return mapping
+
+
+def _remap_adult_exam_text(text: str, *, score_map: dict[int, int]) -> str:
+    out = _RE_ADULT_EXAM.sub("考试", str(text or ""))
+    for old, new in sorted(score_map.items(), reverse=True):
+        out = out.replace(f"{old}分", f"{new}分")
+    return out
+
+
+def remap_story_raw_scores_for_prompt(
+    story_raw: str,
+    *,
+    contract: dict[str, Any] | None = None,
+) -> str:
+    """扩写/seed 提示用：把成人考大总分改成小学量级，避免原稿分数字面污染对白。"""
+    text = str(story_raw or "")
+    if not text:
+        return text
+    blob = ""
+    if isinstance(contract, dict):
+        blob = _contract_age_check_blob(contract)
+    score_map = _elementary_score_map(text, blob or text)
+    if not score_map and not _RE_ADULT_EXAM.search(text):
+        return text
+    return _remap_adult_exam_text(text, score_map=score_map)
+
+
+def force_age_score_remap(
+    contract: dict[str, Any],
+    *,
+    story_raw: str,
+) -> tuple[dict[str, Any], bool]:
+    """LLM 迁龄仍残留成人考/大总分时，本地改写契约文本字段。"""
+    if not isinstance(contract, dict):
+        return contract, False
+    if not age_remap_contract_errors(story_raw, contract):
+        return contract, False
+    score_map = _elementary_score_map(
+        story_raw,
+        _contract_age_check_blob(contract),
+    )
+    out = dict(contract)
+    changed = False
+    for key in (
+        "object",
+        "conflict",
+        "mechanism",
+        "closing_intent",
+        "remap_note",
+    ):
+        old = str(out.get(key) or "")
+        if not old:
+            continue
+        new = _remap_adult_exam_text(old, score_map=score_map)
+        if new != old:
+            out[key] = new
+            changed = True
+    chain = out.get("beat_chain")
+    if isinstance(chain, list):
+        new_chain: list[Any] = []
+        for row in chain:
+            if not isinstance(row, dict):
+                new_chain.append(row)
+                continue
+            item = dict(row)
+            old = str(item.get("intent") or "")
+            new = _remap_adult_exam_text(old, score_map=score_map)
+            if new != old:
+                item["intent"] = new
+                changed = True
+            new_chain.append(item)
+        out["beat_chain"] = new_chain
+    note = str(out.get("remap_note") or "").strip()
+    marker = "成人考分已迁小学量级"
+    if marker not in note:
+        out["remap_note"] = f"{note}；{marker}".strip("；") if note else marker
+        changed = True
+    return out, changed
+
+
+_RE_EXAM_SCORE = re.compile(r"(?<!\d)(\d{1,3})分")
+_RE_SIBLING_LABEL = (
+    (re.compile(r"妹妹"), "昭昭"),
+    (re.compile(r"弟弟"), "昭昭"),
+    (re.compile(r"姐姐"), "灿灿"),
+    (re.compile(r"哥哥"), "灿灿"),
+)
+
+
+def scrub_h3_beat_list(
+    beat: list[Any] | None,
+    *,
+    story_raw: str = "",
+) -> list[Any]:
+    """H3 beat 进 H3a 前：迁龄分数字面 + 站外姐弟称谓 → 站内名。"""
+    if not isinstance(beat, list):
+        return []
+    score_map = _elementary_score_map(story_raw, story_raw) if story_raw else {}
+    out: list[Any] = []
+    for step in beat:
+        text = str(step or "")
+        if not text:
+            out.append(step)
+            continue
+        if score_map or _RE_ADULT_EXAM.search(text):
+            text = _remap_adult_exam_text(text, score_map=score_map)
+        for pat, repl in _RE_SIBLING_LABEL:
+            text = pat.sub(repl, text)
+        out.append(text)
+    return out
+
+
+def canonical_exam_score_from_texts(*blobs: str) -> int | None:
+    """从 seed/beat 文本抽小学百分制考分（1–100）；众数优先。"""
+    from collections import Counter
+
+    scores: list[int] = []
+    for blob in blobs:
+        for m in _RE_EXAM_SCORE.finditer(str(blob or "")):
+            n = int(m.group(1))
+            if 1 <= n <= 100:
+                scores.append(n)
+    if not scores:
+        return None
+    mode, _cnt = Counter(scores).most_common(1)[0]
+    return mode
+
+
+def sync_contract_exam_scores(
+    contract: dict[str, Any],
+    *,
+    dialogue_seed: list[Any] | None = None,
+    conflict_core: str = "",
+) -> tuple[dict[str, Any], str, bool]:
+    """契约与 seed 考分口径对齐：以 seed/beat_chain 众数为准改写 conflict 等。"""
+    if not isinstance(contract, dict):
+        return contract, conflict_core, False
+    seed_blob = "\n".join(
+        str(r.get("intent") or "")
+        for r in (dialogue_seed or [])
+        if isinstance(r, dict)
+    )
+    chain_blob = "\n".join(
+        str(r.get("intent") or "")
+        for r in (contract.get("beat_chain") or [])
+        if isinstance(r, dict)
+    )
+    canon = canonical_exam_score_from_texts(seed_blob, chain_blob)
+    if canon is None:
+        return contract, conflict_core, False
+
+    def _rewrite(text: str) -> str:
+        raw = str(text or "")
+        if not raw:
+            return raw
+
+        def _sub(m: re.Match[str]) -> str:
+            n = int(m.group(1))
+            if 1 <= n <= 100 and n != canon:
+                return f"{canon}分"
+            return m.group(0)
+
+        return _RE_EXAM_SCORE.sub(_sub, raw)
+
+    out = dict(contract)
+    changed = False
+    for key in ("object", "conflict", "mechanism", "closing_intent", "remap_note"):
+        old = str(out.get(key) or "")
+        new = _rewrite(old)
+        if new != old:
+            out[key] = new
+            changed = True
+    chain = out.get("beat_chain")
+    if isinstance(chain, list):
+        new_chain: list[Any] = []
+        for row in chain:
+            if not isinstance(row, dict):
+                new_chain.append(row)
+                continue
+            item = dict(row)
+            old = str(item.get("intent") or "")
+            new = _rewrite(old)
+            if new != old:
+                item["intent"] = new
+                changed = True
+            new_chain.append(item)
+        out["beat_chain"] = new_chain
+    core = _rewrite(conflict_core)
+    if core != str(conflict_core or ""):
+        changed = True
+    return out, core, changed
 
 
 def _parent_in_h3_beats(h3: dict[str, Any] | None) -> bool:

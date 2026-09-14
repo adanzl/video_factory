@@ -511,6 +511,60 @@ def test_sanitize_pad_suffix_strips_compound_tails():
     assert "冰箱" in lines[2]
 
 
+def test_parse_conflict_propaganda_roles():
+    from app.services.gold_story.gold_chat.validate import (
+        _parse_conflict_propaganda_roles,
+    )
+
+    roles = _parse_conflict_propaganda_roles(
+        "昭昭到处说姐姐考了58分，妈妈责备昭昭戳姐姐痛处"
+    )
+    assert roles == ("昭昭", "灿灿")
+
+
+def test_patch_score_propaganda_speakers_realigns():
+    story = {
+        "conflict_core": "昭昭到处说灿灿考了58分",
+        "dialogue": [
+            {"speaker": "昭昭", "line": "她考高分我宣传，她得谢我。"},
+            {"speaker": "昭昭", "line": "你到处说，我同学都笑我。"},
+            {"speaker": "灿灿", "line": "我宣传高分你谢我，宣传低分你怪我。"},
+            {"speaker": "灿灿", "line": "低分被怪是分数问题，怪我咯。"},
+        ],
+    }
+    out, changed = gc.patch_score_propaganda_speakers(
+        story, conflict_text=story["conflict_core"]
+    )
+    assert changed
+    assert out["dialogue"][1]["speaker"] == "灿灿"
+    assert out["dialogue"][2]["speaker"] == "昭昭"
+    assert out["dialogue"][3]["speaker"] == "昭昭"
+
+
+def test_patch_collapse_empty_sibling_repeats():
+    story = {
+        "dialogue": [
+            {"speaker": "灿灿", "line": "别说了！"},
+            {"speaker": "灿灿", "line": "别说了！"},
+            {"speaker": "灿灿", "line": "别说了！"},
+        ]
+    }
+    out, changed = gc.patch_collapse_empty_sibling_repeats(story)
+    assert changed
+    assert out["dialogue"][0]["line"] == "别说了！"
+    assert out["dialogue"][1]["line"] != "别说了！"
+
+
+def test_format_role_binding_block_propaganda():
+    from app.services.gold_story.gold_chat.prompts import format_role_binding_block
+
+    block = format_role_binding_block(
+        "昭昭到处说姐姐考了58分，妈妈责备昭昭戳姐姐痛处"
+    )
+    assert "宣传方 = 昭昭" in block
+    assert "受害方 = 灿灿" in block
+
+
 def test_export_gold_chat_files(tmp_path, monkeypatch):
     monkeypatch.setattr(gc, "gold_chat_export_dir", lambda _cfg=None: tmp_path)
     monkeypatch.setattr(gce, "gold_chat_export_dir", lambda _cfg=None: tmp_path)

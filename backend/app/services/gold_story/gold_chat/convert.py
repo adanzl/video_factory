@@ -608,13 +608,20 @@ def _sanitize_pad_suffix_line(line: str) -> str:
         out = out.replace(junk, "")
     # 仅剥复合垫字尾（不行了吧+真的… 叠用 / 真的了呢），勿误伤单次「真的呀」
     out = re.sub(
-        r"(?:不行了吧|不行了呢|不行了啊)+"
+        r"(?:不行了吧|不行了呢|不行了啊|不行真的)+"
         r"(?:真的了?[呢啊吧呀嘛]?)+[！。？…!]?$",
         "",
         out,
     )
     out = re.sub(
-        r"(?:真的了呢|了吧真的了呢|了吧真的)+[！。？…!]?$",
+        r"(?:真的了呢|了吧真的了呢|了吧真的|真的呀真的|真的了呢了呀)+"
+        r"[！。？…!]?$",
+        "",
+        out,
+    )
+    # 句内垫字串成团：真的呀/不行/了呀/了呢 连续堆叠
+    out = re.sub(
+        r"(?:真的(?:呀|呢|吧|了)?|不行(?:真的)?|了[呀呢吧啊嘛]){3,}",
         "",
         out,
     )
@@ -650,8 +657,23 @@ def patch_sanitize_pad_suffix(story: dict[str, Any]) -> tuple[dict[str, Any], bo
         ):
             continue
         new = _sanitize_pad_suffix_line(old)
+        if not str(new or "").strip():
+            # 整句被垫字掏空：改成语塞短句，勿留空 line
+            sp = str(item.get("speaker") or "").strip()
+            new = "我……" if sp in {"昭昭", "灿灿"} else "行了。"
         if new != old:
             item["line"] = new
+            changed = True
+    # 清掉仍为空的脏行
+    dlg = out.get("dialogue")
+    if isinstance(dlg, list):
+        cleaned = [
+            x
+            for x in dlg
+            if isinstance(x, dict) and str(x.get("line") or "").strip()
+        ]
+        if len(cleaned) != len(dlg):
+            out["dialogue"] = cleaned
             changed = True
     return out, changed
 
@@ -1320,6 +1342,117 @@ def patch_seed_speaker_align(
             item["speaker"] = want
             changed = True
             break
+    return out, changed
+
+
+_RE_PROPAGANDA_CLAIM = re.compile(
+    r"我宣传|我宣扬|宣传高分|宣传低分|到处说她|到处说他|"
+    r"低分被怪|低分怪分|高分.{0,8}谢|不是我考的|跟我有啥关系|"
+    r"我.{0,4}门口喊|去门口喊|门口喊给|满楼|让.{0,4}都听见|"
+    r"全班都知道|全楼都该听|全班都听见|"
+    r"我要让|我再去.{0,6}喊|我举着卷子|没瞎编|明明白白|"
+    r"宣传出去|事实又不是我|我.{0,4}楼下.{0,6}喊|又喊了一遍"
+)
+_RE_PROPAGANDA_VICTIM = re.compile(
+    r"同学都笑我|你到处说我|说我考|拿我.{0,8}分|笑我|"
+    r"你到处说|把卷子还我|你太过分|也太过分|当笑话讲|"
+    r"放下卷子|满屋子嚷嚷|告状去|别到处说|"
+    r"你.{0,4}门口喊|我同学全知道|同学会笑我"
+)
+
+
+def patch_score_propaganda_speakers(
+    story: dict[str, Any],
+    *,
+    conflict_text: str = "",
+) -> tuple[dict[str, Any], bool]:
+    """分数宣传稿：宣传腔/受害腔 speaker 与 conflict 分工对齐。"""
+    import copy
+
+    from app.services.gold_story.gold_chat.validate import (
+        _parse_conflict_propaganda_roles,
+    )
+
+    roles = _parse_conflict_propaganda_roles(
+        conflict_text or str(story.get("conflict_core") or "")
+    )
+    if not roles:
+        return story, False
+    propagandist, victim = roles
+    out = copy.deepcopy(story)
+    dialogue = out.get("dialogue")
+    if not isinstance(dialogue, list):
+        return story, False
+    changed = False
+    for item in dialogue:
+        if not isinstance(item, dict):
+            continue
+        sp = str(item.get("speaker") or "").strip()
+        line = str(item.get("line") or "").strip()
+        # 家长只允许拷问/制敌/管教腔；误说第一人称宣传/受害腔则归位
+        if sp in ("妈妈", "爸爸") and line:
+            if re.search(
+                r"换你|乐意吗|还得会|照你|评论.{0,8}吗|嘴硬|别跟我吵|"
+                r"不乐意|别乱说|把卷子给我|轮不到你",
+                line,
+            ):
+                continue
+            if re.search(
+                r"我宣传|我宣扬|我.{0,6}喊|我举着|跟我有啥关系|我又没瞎编",
+                line,
+            ):
+                item["speaker"] = propagandist
+                changed = True
+            elif _RE_PROPAGANDA_VICTIM.search(line):
+                item["speaker"] = victim
+                changed = True
+            continue
+        if sp not in {"昭昭", "灿灿"} or not line:
+            continue
+        if _RE_PROPAGANDA_CLAIM.search(line) and sp != propagandist:
+            item["speaker"] = propagandist
+            changed = True
+        elif _RE_PROPAGANDA_VICTIM.search(line) and sp != victim:
+            item["speaker"] = victim
+            changed = True
+    return out, changed
+
+
+def patch_collapse_empty_sibling_repeats(
+    story: dict[str, Any],
+) -> tuple[dict[str, Any], bool]:
+    """姐弟连说同一空转短句（如「别说了」）时只留首句，后续改写抗议。"""
+    import copy
+
+    out = copy.deepcopy(story)
+    dialogue = out.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 2:
+        return story, False
+    changed = False
+    prev_sp = ""
+    prev_line = ""
+    for item in dialogue:
+        if not isinstance(item, dict):
+            continue
+        sp = str(item.get("speaker") or "").strip()
+        line = str(item.get("line") or "").strip()
+        if sp not in {"昭昭", "灿灿"}:
+            prev_sp, prev_line = sp, line
+            continue
+        compact = re.sub(r"[！!。.?？…\s]", "", line)
+        prev_compact = re.sub(r"[！!。.?？…\s]", "", prev_line)
+        if (
+            sp == prev_sp
+            and compact
+            and compact == prev_compact
+            and len(compact) <= 4
+        ):
+            # 空转复读 → 换成一句有信息的短抗议
+            item["line"] = "你别再说我分数了！"
+            changed = True
+            prev_line = item["line"]
+            continue
+        prev_sp, prev_line = sp, line
     return out, changed
 
 
@@ -4135,6 +4268,13 @@ def apply_gold_chat_normalizations(
 
     mech = str((row or {}).get("mechanism") or payload.get("mechanism") or "").strip()
 
+    # I 类家长拷问补丁依赖 beat_chain
+    if not isinstance(chat.get("gold_beat_chain"), list):
+        chain = sc.get("beat_chain")
+        if isinstance(chain, list):
+            chat = dict(chat)
+            chat["gold_beat_chain"] = chain
+
     new_setting, sn = normalize_gold_chat_setting(
         str(chat.get("setting") or ""),
         scene_contract_location=str(sc.get("location") or ""),
@@ -4626,6 +4766,12 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
     )
     source_type = str(payload.get("source_type") or scene_contract.get("source_type") or "field")
     story_raw_full = str(row.get("story_raw") or payload.get("story_raw") or "")
+    from app.services.gold_story.scene import remap_story_raw_scores_for_prompt
+
+    story_raw_full = remap_story_raw_scores_for_prompt(
+        story_raw_full,
+        contract=scene_contract,
+    )
     mom_max = scene_contract.get("mom_lines_max")
     if mom_max is None:
         mom_max = 1
@@ -4796,6 +4942,7 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
             apply_gold_chat_body_pipeline,
         )
 
+        data["gold_beat_chain"] = beat_chain
         data, type_notes = apply_gold_chat_body_pipeline(
             data, structure_type=structure_type
         )
@@ -4815,6 +4962,14 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
         data, seed_changed = patch_seed_speaker_align(data, dialogue_seed=seed)
         if seed_changed:
             type_notes = list(type_notes) + ["seed角色归位"]
+        data, prop_changed = patch_score_propaganda_speakers(
+            data, conflict_text=conflict_text
+        )
+        if prop_changed:
+            type_notes = list(type_notes) + ["宣传受害归位"]
+        data, empty_changed = patch_collapse_empty_sibling_repeats(data)
+        if empty_changed:
+            type_notes = list(type_notes) + ["空转复读改写"]
         data, _ = patch_sanitize_c_tone_stack(data)
         data, _ = patch_sanitize_pad_suffix(data)
         data, _ = _ensure_gold_chat_min_chars(
@@ -4822,10 +4977,25 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
             mechanism=mechanism,
             structure_type=structure_type,
         )
-        # 连说/垫字后再归位一次，避免补丁把专属短语翻错
+        # 连说/垫字后再：先宣传分工，再 seed 短语（seed 最后赢，避免结构卡死）
+        data, prop_changed2 = patch_score_propaganda_speakers(
+            data, conflict_text=conflict_text
+        )
+        if prop_changed2:
+            type_notes = list(type_notes) + ["宣传受害再归位"]
         data, seed_changed2 = patch_seed_speaker_align(data, dialogue_seed=seed)
         if seed_changed2:
             type_notes = list(type_notes) + ["seed角色再归位"]
+        # 垫字达标后可能又灌尾：I 类再封一次语塞后收束
+        if str(structure_type or "").upper() == "I":
+            from app.services.daily_story.story_types import apply_gold_chat_type_patch
+
+            data, i_notes = apply_gold_chat_type_patch(
+                data, structure_type="I"
+            )
+            if i_notes:
+                type_notes = list(type_notes) + list(i_notes)[:3]
+            data, _ = patch_sanitize_pad_suffix(data)
         if str(structure_type or "").upper() == "Q":
             data, q_notes = apply_gold_chat_body_pipeline(
                 data, structure_type="Q"
@@ -5163,7 +5333,12 @@ def _rebuild_h3a_h3b_on_convert(row: dict[str, Any]) -> dict[str, Any]:
         build_dialogue_seed,
         build_scene_contract,
     )
-    from app.services.gold_story.scene import sanitize_banned_literals
+    from app.services.gold_story.scene import (
+        remap_story_raw_scores_for_prompt,
+        sanitize_banned_literals,
+        scrub_h3_beat_list,
+        sync_contract_exam_scores,
+    )
 
     payload = dict(cast(dict[str, Any], row.get("payload") or {}))
     story_raw = str(row.get("story_raw") or payload.get("story_raw") or "").strip()
@@ -5174,7 +5349,8 @@ def _rebuild_h3a_h3b_on_convert(row: dict[str, Any]) -> dict[str, Any]:
         )
         return row
 
-    beat = payload.get("beat") if isinstance(payload.get("beat"), list) else []
+    beat_raw = payload.get("beat") if isinstance(payload.get("beat"), list) else []
+    beat = scrub_h3_beat_list(beat_raw, story_raw=story_raw)
     h3: dict[str, Any] = {
         "title": row.get("title"),
         "conflict_core": row.get("conflict_core"),
@@ -5202,9 +5378,14 @@ def _rebuild_h3a_h3b_on_convert(row: dict[str, Any]) -> dict[str, Any]:
         )
         return row
 
+    # H3b 也勿吃未迁龄 story_raw
+    story_raw_for_seed = remap_story_raw_scores_for_prompt(
+        story_raw,
+        contract=h3a,
+    )
     try:
         h3b = build_dialogue_seed(
-            story_raw=story_raw,
+            story_raw=story_raw_for_seed,
             h3=h3,
             scene_contract=h3a,
         )
@@ -5230,10 +5411,17 @@ def _rebuild_h3a_h3b_on_convert(row: dict[str, Any]) -> dict[str, Any]:
         scene_contract=h3a,
         beat=beat,
     )
+    seed_list = h3b.get("dialogue_seed") or []
+    remapped_core = str(h3a.get("conflict") or "").strip()
+    h3a, remapped_core, _score_synced = sync_contract_exam_scores(
+        h3a,
+        dialogue_seed=seed_list if isinstance(seed_list, list) else [],
+        conflict_core=remapped_core,
+    )
     patch: dict[str, Any] = {
         "scene_contract": h3a,
         "contract_confidence": h3a.get("contract_confidence"),
-        "dialogue_seed": h3b.get("dialogue_seed") or [],
+        "dialogue_seed": seed_list,
         "closing_intent": (
             h3b.get("closing_intent") or h3a.get("closing_intent")
         ),
@@ -5248,7 +5436,6 @@ def _rebuild_h3a_h3b_on_convert(row: dict[str, Any]) -> dict[str, Any]:
     out = dict(row)
     out["payload"] = payload
     # 迁龄/remap 后以 scene conflict 为准，勿沿用站外旧 conflict_core
-    remapped_core = str(h3a.get("conflict") or "").strip()
     if remapped_core:
         out["conflict_core"] = remapped_core
     gid = int(row.get("id") or 0)
@@ -5537,6 +5724,32 @@ def convert_gold_chat(
             "gold_chat pre-score consecutive patch: %s",
             "；".join(consec_notes[:8]),
         )
+    # 连说改 speaker 可能打乱宣传/受害腔；I 类终检前必再锁
+    chat, prop_final = patch_score_propaganda_speakers(
+        chat, conflict_text=str(row.get("conflict_core") or "")
+    )
+    if prop_final or st_final == "I":
+        if prop_final:
+            logger.info("gold_chat pre-score propaganda rebind")
+        if st_final == "I":
+            from app.services.daily_story.story_types.i.patch import (
+                patch_i_fix_parent_sibling_voice,
+                patch_i_seal_after_parent_soul,
+                patch_i_dedupe_sibling_lines,
+            )
+
+            voice_notes = patch_i_fix_parent_sibling_voice(chat)
+            seal_notes = patch_i_seal_after_parent_soul(chat)
+            dedupe_notes = patch_i_dedupe_sibling_lines(chat)
+            chat, _ = patch_sanitize_pad_suffix(chat)
+            chat, _ = patch_sanitize_pad_particles(chat)
+            if voice_notes or seal_notes or dedupe_notes:
+                logger.info(
+                    "gold_chat pre-score I voice/seal: %s",
+                    "；".join(
+                        (voice_notes + seal_notes + dedupe_notes)[:6]
+                    ),
+                )
     if st_final == "O":
         chat, o_pre_score = _o_polish_meet_min_chars(
             chat,
