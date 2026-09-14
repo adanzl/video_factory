@@ -391,14 +391,15 @@ def test_gold_story_to_gold_chat(monkeypatch):
 def test_rebuild_h3a_h3b_on_convert_refreshes_contract(monkeypatch):
     """重转切入点：用 story_raw+H3 重跑 H3a/H3b 写回契约。"""
     patched: dict = {}
+    cores: list[str] = []
 
     def fake_build_scene(**_kwargs):
         return {
             "story_type": "I",
             "location": "客厅",
             "characters": ["灿灿", "昭昭", "妈妈"],
-            "object": "58分成绩单",
-            "conflict": "昭昭宣扬灿灿考58分",
+            "object": "小学单科成绩单",
+            "conflict": "昭昭宣扬灿灿考了低分，妈妈责备戳痛处",
             "mechanism": "宣传高分该谢、低分怪分数",
             "beat_chain": [
                 {"beat": 1, "speaker": "灿灿", "intent": "责备宣传"},
@@ -415,9 +416,9 @@ def test_rebuild_h3a_h3b_on_convert_refreshes_contract(monkeypatch):
 
     def fake_build_seed(**_kwargs):
         return {
-            "setting": "客厅，灿灿攥着58分成绩单",
+            "setting": "客厅，灿灿攥着成绩单",
             "dialogue_seed": [
-                {"speaker": "灿灿", "intent": "责备宣传58分"},
+                {"speaker": "灿灿", "intent": "责备宣传低分"},
                 {"speaker": "昭昭", "intent": "双标辩解"},
                 {"speaker": "妈妈", "intent": "冰箱反问"},
                 {"speaker": "昭昭", "intent": "嘴硬"},
@@ -440,13 +441,18 @@ def test_rebuild_h3a_h3b_on_convert_refreshes_contract(monkeypatch):
         "patch_story_payload",
         lambda gid, patch: patched.update({"gid": gid, **patch}),
     )
+    monkeypatch.setattr(
+        gc.repo_gold_story,
+        "update_conflict_core",
+        lambda gid, core: cores.append(core),
+    )
 
     row = {
         "id": 44,
         "title": "分数宣传",
         "mechanism": "M11",
         "structure_type": "I",
-        "conflict_core": "宣传差分",
+        "conflict_core": "站外旧核：高考高分口吻残留",
         "theme_family": "分数",
         "payload": {
             "story_raw": "姐姐考了差分化妹妹宣传，妈妈责备并用冰箱反问。" * 3,
@@ -459,7 +465,7 @@ def test_rebuild_h3a_h3b_on_convert_refreshes_contract(monkeypatch):
             "scene_contract": {
                 "characters": ["灿灿", "昭昭"],
                 "mom_lines_max": 0,
-                "object": "383分",
+                "object": "站外旧分数口吻",
             },
             "source_type": "field",
             "structure_confidence": 0.8,
@@ -469,12 +475,40 @@ def test_rebuild_h3a_h3b_on_convert_refreshes_contract(monkeypatch):
     sc = out["payload"]["scene_contract"]
     assert "妈妈" in sc["characters"]
     assert int(sc["mom_lines_max"]) >= 2
-    assert "383" not in str(sc.get("object") or "")
+    assert "高考" not in str(out.get("conflict_core") or "")
+    assert "低分" in str(out.get("conflict_core") or "")
+    assert cores and "低分" in cores[0]
     assert any(
         isinstance(r, dict) and r.get("speaker") == "妈妈"
         for r in out["payload"]["dialogue_seed"]
     )
     assert patched.get("gid") == 44
+
+
+def test_sanitize_pad_suffix_strips_compound_tails():
+    story = {
+        "dialogue": [
+            {
+                "speaker": "昭昭",
+                "line": "那跟我有啥关系不行了吧真的了呢。",
+            },
+            {
+                "speaker": "灿灿",
+                "line": "你别再宣传了真的了呢",
+            },
+            {
+                "speaker": "妈妈",
+                "line": "评论冰箱还得会制冷吗？",
+            },
+        ]
+    }
+    out, changed = gc.patch_sanitize_pad_suffix(story)
+    assert changed
+    lines = [str(x["line"]) for x in out["dialogue"]]
+    assert "真的了呢" not in lines[0]
+    assert "不行了吧" not in lines[0]
+    assert "真的了呢" not in lines[1]
+    assert "冰箱" in lines[2]
 
 
 def test_export_gold_chat_files(tmp_path, monkeypatch):
