@@ -1,5 +1,8 @@
 """gold_chat：金故事 → 日常对白（独立流程，不入 H0–H4 采集流水线）。
 
+重转入口 ``convert_gold_chat`` 会先重跑 H3a/H3b 刷新 scene_contract，
+再扩写对白（不必从 BV 重新导入）。
+
 本地 patch_* 分流（Batch1 盘点，Batch2 继续删并）：
 - gold_length：垫字/扩写/语气词清理（待抽 length.py）
 - type_invariant：应经 story_types 公开桥（已改 patch_*_body 调用）
@@ -5125,15 +5128,114 @@ def _persist_m5_h_contract_if_needed(row: dict[str, Any]) -> dict[str, Any]:
     return repo_gold_story.get_story(gid) or row
 
 
+def _rebuild_h3a_h3b_on_convert(row: dict[str, Any]) -> dict[str, Any]:
+    """重转入口：用库内 story_raw + H3 字段重跑 H3a/H3b，刷新契约后再扩写。
+
+    这是「重转对话稿」的切入点——不必从 BV 重新导入。
+    H3a/H3b 失败则保留旧契约，避免整条重转中断。
+    """
+    from app.services.gold_story.collect.llm import (
+        build_dialogue_seed,
+        build_scene_contract,
+    )
+    from app.services.gold_story.scene import sanitize_banned_literals
+
+    payload = dict(cast(dict[str, Any], row.get("payload") or {}))
+    story_raw = str(row.get("story_raw") or payload.get("story_raw") or "").strip()
+    if len(story_raw) < 40:
+        logger.warning(
+            "[GOLD_CHAT] skip H3a/H3b rebuild id=%s: story_raw too short",
+            row.get("id"),
+        )
+        return row
+
+    beat = payload.get("beat") if isinstance(payload.get("beat"), list) else []
+    h3: dict[str, Any] = {
+        "title": row.get("title"),
+        "conflict_core": row.get("conflict_core"),
+        "mechanism": row.get("mechanism"),
+        "structure_type": row.get("structure_type"),
+        "theme_family": row.get("theme_family"),
+        "beat": beat,
+        "funny_why": payload.get("funny_why"),
+        "banned_literals": payload.get("banned_literals") or [],
+        "structure_mapping_note": payload.get("structure_mapping_note") or "",
+        "structure_confidence": float(payload.get("structure_confidence") or 0.8),
+    }
+    source_type = str(payload.get("source_type") or "field")
+    try:
+        h3a = build_scene_contract(
+            story_raw=story_raw,
+            h3=h3,
+            source_type=source_type,
+        )
+        h3b = build_dialogue_seed(
+            story_raw=story_raw,
+            h3=h3,
+            scene_contract=h3a,
+        )
+    except Exception as exc:
+        logger.warning(
+            "[GOLD_CHAT] H3a/H3b rebuild failed id=%s: %s; keep old contract",
+            row.get("id"),
+            exc,
+        )
+        return row
+
+    banned = sanitize_banned_literals(
+        h3a.get("banned_literals") or payload.get("banned_literals"),
+        scene_contract=h3a,
+        beat=beat,
+    )
+    patch: dict[str, Any] = {
+        "scene_contract": h3a,
+        "contract_confidence": h3a.get("contract_confidence"),
+        "dialogue_seed": h3b.get("dialogue_seed") or [],
+        "closing_intent": (
+            h3b.get("closing_intent") or h3a.get("closing_intent")
+        ),
+        "speaker_map_note": (
+            h3b.get("speaker_map_note") or h3a.get("remap_note")
+        ),
+        "setting": h3b.get("setting") or h3a.get("location"),
+        "dialogue_confidence": h3b.get("dialogue_confidence"),
+        "banned_literals": banned,
+    }
+    payload.update(patch)
+    out = dict(row)
+    out["payload"] = payload
+    gid = int(row.get("id") or 0)
+    if gid > 0:
+        try:
+            repo_gold_story.patch_story_payload(gid, patch)
+        except Exception as exc:
+            logger.warning(
+                "[GOLD_CHAT] persist rebuilt contract failed id=%s: %s",
+                gid,
+                exc,
+            )
+    logger.info(
+        "[GOLD_CHAT] rebuilt H3a/H3b id=%s mom_lines_max=%s chars=%s",
+        row.get("id"),
+        h3a.get("mom_lines_max"),
+        ",".join(str(c) for c in (h3a.get("characters") or [])),
+    )
+    return out
+
+
 def convert_gold_chat(
     row: dict[str, Any],
     *,
     config: Config | None = None,
 ) -> dict[str, Any]:
-    """转换 + 落盘，返回摘要。"""
+    """转换 + 落盘，返回摘要。
+
+    会先重跑 H3a/H3b 刷新 scene_contract（重转的切入点），再扩写对白。
+    """
     row = _persist_m5_h_contract_if_needed(row)
     row, structure_notes = _resolve_structure_row(row)
     row = _persist_structure_correction(row, structure_notes)
+    row = _rebuild_h3a_h3b_on_convert(row)
     sid = str(row.get("source_id") or "").strip()
     chat = gold_story_to_gold_chat(row)
     chat, norm_notes = apply_gold_chat_normalizations(chat, row=row)
