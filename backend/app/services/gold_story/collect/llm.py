@@ -13,7 +13,10 @@ from app.services.gold_story.types import (
 )
 from app.services.gold_story.scene import (
     SEED_MIN,
+    age_remap_contract_errors,
     apply_parent_role_budget,
+    force_age_score_remap,
+    remap_story_raw_scores_for_prompt,
     sanitize_banned_literals,
     seed_from_beat_chain,
     validate_scene,
@@ -301,6 +304,10 @@ banned_literals：同 H3，仅 remap 称谓与站外真名；禁止填画画/碘
 - **迁龄（硬）**：站外中考/高考/大学/成人职场考分 → 改写成 7–10 岁小学语境；
   分数用小学可拍量级（如单科百分制差分 vs 高分，或两三科合计），
   保留「差分被宣传挨骂 / 高分被宣传该谢」一类对比；禁止原样保留不可能的总分口吻
+- **姐弟映射（硬）**：源稿妹妹/弟弟→昭昭，姐姐/哥哥→灿灿；家长保留妈妈/爸爸；
+  conflict/beat_chain/remap_note 须用站内名，勿混用妹妹/姐姐称谓
+- 同一稿分数口径须统一（conflict/object/beat_chain/remap_note 同一考分），
+  禁止同篇混写两个不同百分制分值
 - C类 beat_chain：争资源→双规则（每轮新判据）→三轮升级→同场回旋镖→嘴硬（至少4拍）；
   **禁止**把单方「谁赢了谁说了算」+武力压制+认输标 C；
   **禁止**把道具整蛊互整（下料→回敬→认怂）标 C（应 M14+P）
@@ -539,30 +546,66 @@ def build_scene_contract(
     source_type: str = "field",
 ) -> dict[str, Any]:
     """H3a：story_raw → 可拍场景契约。"""
-    user = _H3A_USER.format(
+    base_user = _H3A_USER.format(
         h3_json=json.dumps(h3, ensure_ascii=False, indent=2),
         story_raw=story_raw[:4000],
         source_type=source_type or "field",
         gold_scene_snippet=GOLD_H3A_SCENE_SNIPPET,
         place_catalog=format_place_catalog_for_prompt(),
     )
-    data = _chat_json(_H3A_SYSTEM, user)
-    data.setdefault("story_type", str(h3.get("structure_type") or "C"))
-    data["source_type"] = str(data.get("source_type") or source_type or "field").lower()
-    data, _loc_notes = normalize_scene_contract_location(
-        data,
-        activity_context=story_raw[:800],
+    age_retry_hint = (
+        "\n\n【迁龄重试硬约束】源稿含高考/中考等成人考语境时，"
+        "object/conflict/beat_chain/mechanism **禁止**残留成人考词，"
+        "也禁止原样带回 ≥300 的站外总分；须改成小学可拍量级"
+        "（百分制或两三科合计），并保留高低分对比梗。"
     )
-    raw_banned = data.get("banned_literals") or h3.get("banned_literals") or []
-    data["banned_literals"] = sanitize_banned_literals(
-        raw_banned if isinstance(raw_banned, list) else [],
-        scene_contract=data,
-        beat=h3.get("beat") if isinstance(h3.get("beat"), list) else [],
-    )
-    data = apply_parent_role_budget(data, h3=h3)
-    errors = validate_scene(data)
-    if errors:
-        raise ValueError(f"H3a scene_contract invalid: {'; '.join(errors[:5])}")
+    data: dict[str, Any] | None = None
+    last_age_errs: list[str] = []
+    for attempt in range(2):
+        user = base_user + (age_retry_hint if attempt else "")
+        data = _chat_json(_H3A_SYSTEM, user)
+        data.setdefault("story_type", str(h3.get("structure_type") or "C"))
+        data["source_type"] = str(
+            data.get("source_type") or source_type or "field"
+        ).lower()
+        data, _loc_notes = normalize_scene_contract_location(
+            data,
+            activity_context=story_raw[:800],
+        )
+        raw_banned = data.get("banned_literals") or h3.get("banned_literals") or []
+        data["banned_literals"] = sanitize_banned_literals(
+            raw_banned if isinstance(raw_banned, list) else [],
+            scene_contract=data,
+            beat=h3.get("beat") if isinstance(h3.get("beat"), list) else [],
+        )
+        data = apply_parent_role_budget(data, h3=h3)
+        errors = validate_scene(data)
+        if errors:
+            raise ValueError(
+                f"H3a scene_contract invalid: {'; '.join(errors[:5])}"
+            )
+        last_age_errs = age_remap_contract_errors(story_raw, data)
+        if not last_age_errs:
+            break
+        data, _forced = force_age_score_remap(data, story_raw=story_raw)
+        last_age_errs = age_remap_contract_errors(story_raw, data)
+        if not last_age_errs:
+            break
+    assert data is not None
+    if last_age_errs:
+        data, _ = force_age_score_remap(data, story_raw=story_raw)
+        last_age_errs = age_remap_contract_errors(story_raw, data)
+    if last_age_errs:
+        raise ValueError(
+            f"H3a age_remap failed: {'; '.join(last_age_errs[:3])}"
+        )
+    # remap_note 说明里常残留「高考383迁龄」字样，单独洗净
+    note = str(data.get("remap_note") or "")
+    if note:
+        scrubbed = remap_story_raw_scores_for_prompt(note, contract=data)
+        if scrubbed != note:
+            data = dict(data)
+            data["remap_note"] = scrubbed
     confidence = float(data.get("contract_confidence") or 0.0)
     if confidence < 0.35:
         raise ValueError(f"H3a low contract_confidence={confidence:.2f}")

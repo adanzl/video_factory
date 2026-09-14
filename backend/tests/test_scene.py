@@ -59,6 +59,65 @@ def test_seed_from_beat_chain():
     assert seed[0]["speaker"] == "灿灿"
 
 
+def test_force_age_score_remap_rewrites_adult_totals():
+    from app.services.gold_story.scene import (
+        age_remap_contract_errors,
+        force_age_score_remap,
+    )
+
+    raw = "姐姐高考考了383分，要是683分妹妹会感谢。"
+    contract = {
+        "object": "383分成绩单",
+        "conflict": "妹妹宣扬姐姐383分，对比683分",
+        "mechanism": "宣传高分该谢",
+        "beat_chain": [
+            {"speaker": "妈妈", "intent": "责备宣扬383分"},
+            {"speaker": "昭昭", "intent": "辩称683分会感谢"},
+        ],
+        "remap_note": "高考迁龄说明可保留字样",
+    }
+    assert age_remap_contract_errors(raw, contract)
+    out, changed = force_age_score_remap(contract, story_raw=raw)
+    assert changed
+    assert not age_remap_contract_errors(raw, out)
+    blob = f"{out['object']}{out['conflict']}{out['beat_chain']}"
+    assert "383" not in blob
+    assert "683" not in blob
+    assert "58分" in blob and "98分" in blob
+
+
+def test_scrub_h3_beat_list_remaps_sibling_and_score():
+    from app.services.gold_story.scene import scrub_h3_beat_list
+
+    beat = ["妹妹宣扬姐姐383分，妈妈责备其戳痛处"]
+    out = scrub_h3_beat_list(
+        beat,
+        story_raw="姐姐高考考了383分，妹妹到处宣扬。",
+    )
+    assert out[0] == "昭昭宣扬灿灿58分，妈妈责备其戳痛处"
+
+
+def test_sync_contract_exam_scores_follows_seed_mode():
+    from app.services.gold_story.scene import sync_contract_exam_scores
+
+    contract = {
+        "conflict": "昭昭到处说姐姐考了58分",
+        "object": "58分试卷",
+        "remap_note": "58分迁为小学量级",
+        "beat_chain": [{"speaker": "妈妈", "intent": "说姐姐83分？"}],
+    }
+    seed = [{"speaker": "妈妈", "intent": "昭昭，你满小区说姐姐83分？"}]
+    out, core, changed = sync_contract_exam_scores(
+        contract,
+        dialogue_seed=seed,
+        conflict_core=contract["conflict"],
+    )
+    assert changed
+    assert "83分" in out["conflict"]
+    assert "58分" not in out["conflict"]
+    assert "83分" in core
+
+
 def test_apply_parent_role_budget_keeps_mom_when_h3_beat_has_parent():
     contract = _sample_contract()
     contract["story_type"] = "I"

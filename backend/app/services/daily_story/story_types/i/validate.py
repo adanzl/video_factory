@@ -9,7 +9,10 @@ from app.services.daily_story.story_types import parse_story_type_code
 RE_SOUL_QUESTION = re.compile(
     r"爱学习|你爱吗|灵魂|拷问|凭啥|相同|为啥|"
     r"那你怎么|你那是.*吗|为你好|你才.*呢|"
-    r"快乐.*重要|重要.*快乐|双标|强词夺理|你自己"
+    r"快乐.*重要|重要.*快乐|双标|强词夺理|你自己|"
+    # 抽象不可答反问：换位/资格/评论类（勿绑单篇冰箱梗）
+    r"还得会|好不好|照你这么说|那照你|评论.{0,8}吗|凭啥你|"
+    r"换你|乐意吗|到处说.{0,6}乐意|你自己得行|跟你无关|也没关系"
 )
 # 语塞：明示败北 + 抽象卡壳/结巴（省略号认输），勿按单篇词表堆叠
 RE_SPEECHLESS = re.compile(
@@ -18,7 +21,8 @@ RE_SPEECHLESS = re.compile(
     r"我……|……我"
 )
 RE_WIN_STUBBORN = re.compile(
-    r"一招制敌|制敌|服不服|别跟我吵|不爱学习还|不爱学习就别|看你还说|还说啥|嘴硬"
+    r"一招制敌|制敌|服不服|别跟我吵|不爱学习还|不爱学习就别|"
+    r"看你还嘴硬|看你还说|还说啥|还嘴硬|不乐意就别|别乱说别人"
 )
 RE_A_BACKFIRE = re.compile(r"那不一样|都是听|破功|自相矛盾|你刚才说")
 _RE_CLOSING_WIN_CLAIM = re.compile(r"总结|制敌|得意|嘴硬|问倒")
@@ -171,7 +175,46 @@ def append_i_body_errors(story: dict, errors: list[str]) -> None:
     body = "".join(lines)
     tail4 = "".join(lines[-4:])
     if not RE_SOUL_QUESTION.search(body):
-        errors.append("I类：正文须有灵魂拷问/价值高地（你爱吗/爱学习等）")
+        errors.append("I类：正文须有灵魂拷问/价值高地（不可答反问等）")
+    # beat 写明家长拷问时，正文须有家长强拷问（勿只留制敌收尾）
+    chain = story.get("gold_beat_chain")
+    if isinstance(chain, list):
+        parent_soul_beat = False
+        for row in chain:
+            if not isinstance(row, dict):
+                continue
+            sp = str(row.get("speaker") or "").strip()
+            intent = str(row.get("intent") or "")
+            if sp in ("妈妈", "爸爸") and (
+                "冰箱" in intent
+                or "还得会" in intent
+                or "评论" in intent
+                or RE_SOUL_QUESTION.search(intent)
+            ):
+                parent_soul_beat = True
+                break
+        if parent_soul_beat:
+            has_parent_soul = False
+            dialogue = story.get("dialogue")
+            if isinstance(dialogue, list):
+                for item in dialogue:
+                    if not isinstance(item, dict):
+                        continue
+                    sp = str(item.get("speaker") or "").strip()
+                    line = str(item.get("line") or "")
+                    if sp not in ("妈妈", "爸爸"):
+                        continue
+                    if (
+                        RE_SOUL_QUESTION.search(line)
+                        or "冰箱" in line
+                        or "还得会" in line
+                        or "换你" in line
+                        or "乐意吗" in line
+                    ):
+                        has_parent_soul = True
+                        break
+            if not has_parent_soul:
+                errors.append("I类：beat家长拷问须在正文由家长说出")
     if not RE_SPEECHLESS.search(body):
         errors.append("I类：正文须写对方语塞/败北（说不过/看窗外等）")
     if not RE_WIN_STUBBORN.search(tail4):

@@ -620,6 +620,59 @@ def _parse_conflict_victim(text: str) -> str | None:
     return None
 
 
+def _normalize_sibling_alias(name: str) -> str | None:
+    """站外称谓 → 站内姐弟名；未知返回 None。"""
+    raw = str(name or "").strip()
+    if raw in {"昭昭", "灿灿"}:
+        return raw
+    if raw in {"妹妹", "弟弟", "弟"}:
+        return "昭昭"
+    if raw in {"姐姐", "哥哥", "姐"}:
+        return "灿灿"
+    return None
+
+
+def _parse_conflict_propaganda_roles(
+    text: str,
+) -> tuple[str, str] | None:
+    """分数宣传冲突 → (宣传方, 受害方)。
+
+    抽象模式：X 到处说/宣扬 Y 考了低分；Y 可为姐姐/灿灿等称谓。
+    """
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+    if not re.search(r"宣扬|宣传|到处说", raw):
+        return None
+    m = re.search(
+        r"(?P<a>昭昭|灿灿|妹妹|弟弟|姐姐|哥哥).{0,12}"
+        r"(?:到处说|宣扬|宣传).{0,16}"
+        r"(?P<b>昭昭|灿灿|妹妹|弟弟|姐姐|哥哥|她|他)?",
+        raw,
+    )
+    if not m:
+        return None
+    prop = _normalize_sibling_alias(m.group("a"))
+    if not prop:
+        return None
+    victim_raw = str(m.group("b") or "").strip()
+    victim = _normalize_sibling_alias(victim_raw) if victim_raw else None
+    if not victim:
+        # 「到处说姐姐考了…」类：受害方写在宣传动作之后
+        m2 = re.search(
+            r"(?:到处说|宣扬|宣传).{0,6}"
+            r"(?P<b>昭昭|灿灿|妹妹|弟弟|姐姐|哥哥)",
+            raw,
+        )
+        if m2:
+            victim = _normalize_sibling_alias(m2.group("b"))
+    if not victim:
+        victim = _sibling_partner(prop)
+    if victim == prop:
+        return None
+    return prop, victim
+
+
 def _beat_chain_initiator_defender(
     beat_chain: list[Any] | None,
 ) -> tuple[str, str]:
@@ -735,6 +788,44 @@ def _append_beat_role_issues(
                 fix="对齐 beat_chain 与 conflict：守物/受害方同一角色",
             )
         )
+
+    prop_roles = _parse_conflict_propaganda_roles(conflict_text)
+    if prop_roles:
+        propagandist, victim_p = prop_roles
+        re_prop = re.compile(
+            r"我宣传|我宣扬|宣传高分|宣传低分|到处说她|到处说他|"
+            r"低分被怪|高分.{0,8}谢我|不是我考的|跟我有啥关系"
+        )
+        re_hurt = re.compile(
+            r"同学都笑我|你到处说我|说我考|拿我.{0,6}分|笑我"
+        )
+        for i, (sp, line) in enumerate(zip(speakers, lines), 1):
+            if sp not in {"昭昭", "灿灿"}:
+                continue
+            if re_prop.search(line) and sp != propagandist:
+                issues.append(
+                    _issue(
+                        lines=[i],
+                        kind="保真-宣传方倒置",
+                        desc=(
+                            f"第{i}句宣传腔由{sp}说，"
+                            f"conflict 宣传方为{propagandist}：{line}"
+                        ),
+                        fix=f"「我宣传/宣扬」须由宣传方{propagandist}说",
+                    )
+                )
+            if re_hurt.search(line) and sp != victim_p:
+                issues.append(
+                    _issue(
+                        lines=[i],
+                        kind="保真-宣传方倒置",
+                        desc=(
+                            f"第{i}句受害腔由{sp}说，"
+                            f"conflict 受害方为{victim_p}：{line}"
+                        ),
+                        fix=f"「你到处说我/同学笑我」须由受害方{victim_p}说",
+                    )
+                )
 
 
 def _append_m5_h_issues(
