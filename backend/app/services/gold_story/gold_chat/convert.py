@@ -303,7 +303,8 @@ _RE_PAD_SUFFIX_STACK = re.compile(
     r"活该了呢|活该嘛呀|不行嘛呀|嘛不行嘛|真的呀不行|"
     r"嘛呀[！。？…!?]|了呢呀|了呢了呀|"
     r"呢呢|啊呢|吧呢|嘛呢|呀呢|你呀呢|行了吧呢|不懂你呢|听听不懂|你真是呢|你真是的呢|"
-    r"了呀呢|好不好了呀|着呢了呀",
+    r"了呀呢|好不好了呀|着呢了呀|"
+    r"真的了呢|真的了吧|不行了吧真的|了吧真的了|不行了吧|吧真的了呢",
 )
 _B_GOLD_CHAT_PAD_TAILS = ("呀", "啊", "嘛", "呢", "吧", "真的呀")
 _F_GOLD_CHAT_PAD_TAILS = ("呀", "啊", "嘛", "呢", "吧")
@@ -605,6 +606,18 @@ def _sanitize_pad_suffix_line(line: str) -> str:
         "了啊不行",
     ):
         out = out.replace(junk, "")
+    # 仅剥复合垫字尾（不行了吧+真的… 叠用 / 真的了呢），勿误伤单次「真的呀」
+    out = re.sub(
+        r"(?:不行了吧|不行了呢|不行了啊)+"
+        r"(?:真的了?[呢啊吧呀嘛]?)+[！。？…!]?$",
+        "",
+        out,
+    )
+    out = re.sub(
+        r"(?:真的了呢|了吧真的了呢|了吧真的)+[！。？…!]?$",
+        "",
+        out,
+    )
     out = re.sub(
         r"(?:不行吧|真的啊|你听着|你听着了呀|真的呀|嘛了呀){2,}([！。！？…]?)$",
         r"\1",
@@ -620,16 +633,21 @@ def _sanitize_pad_suffix_line(line: str) -> str:
 
 
 def patch_sanitize_pad_suffix(story: dict[str, Any]) -> tuple[dict[str, Any], bool]:
-    """垫字后收口：去掉呢呢/啊呢等叠字。"""
+    """垫字后收口：去掉呢呢/啊呢/复合真的了呢等叠尾。"""
     import copy
 
     out = copy.deepcopy(story)
     changed = False
+    compound_re = re.compile(r"(?:不行了吧|真的了呢|了吧真的)")
     for item in out.get("dialogue") or []:
         if not isinstance(item, dict):
             continue
         old = str(item.get("line") or "").strip()
-        if not old or not _RE_PAD_SUFFIX_STACK.search(old):
+        if not old:
+            continue
+        if not (
+            _RE_PAD_SUFFIX_STACK.search(old) or compound_re.search(old)
+        ):
             continue
         new = _sanitize_pad_suffix_line(old)
         if new != old:
@@ -4564,7 +4582,14 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
     scene_contract = payload.get("scene_contract") or {}
     if not isinstance(scene_contract, dict):
         scene_contract = {}
-    conflict_core = str(row.get("conflict_core") or "")
+    # 优先用契约 conflict（迁龄后），避免旧 conflict_core 把 383 等写回成稿
+    conflict_core = str(
+        scene_contract.get("conflict") or row.get("conflict_core") or ""
+    ).strip()
+    # 扩写口径：优先用已 remap/迁龄的 scene conflict，避免站外旧核污染标题与元数据
+    sc_conflict = str(scene_contract.get("conflict") or "").strip()
+    if sc_conflict:
+        conflict_core = sc_conflict
     mechanism = str(row.get("mechanism") or "")
     if mechanism.upper() == "M5" and structure_type == "H":
         repaired_core, core_changed = repair_m5_h_conflict_core(
@@ -5222,10 +5247,16 @@ def _rebuild_h3a_h3b_on_convert(row: dict[str, Any]) -> dict[str, Any]:
     payload.update(patch)
     out = dict(row)
     out["payload"] = payload
+    # 迁龄/remap 后以 scene conflict 为准，勿沿用站外旧 conflict_core
+    remapped_core = str(h3a.get("conflict") or "").strip()
+    if remapped_core:
+        out["conflict_core"] = remapped_core
     gid = int(row.get("id") or 0)
     if gid > 0:
         try:
             repo_gold_story.patch_story_payload(gid, patch)
+            if remapped_core:
+                repo_gold_story.update_conflict_core(gid, remapped_core)
         except Exception as exc:
             logger.warning(
                 "[GOLD_CHAT] persist rebuilt contract failed id=%s: %s",
