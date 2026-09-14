@@ -13,6 +13,7 @@ from app.services.gold_story.types import (
 )
 from app.services.gold_story.scene import (
     SEED_MIN,
+    apply_parent_role_budget,
     sanitize_banned_literals,
     seed_from_beat_chain,
     validate_scene,
@@ -245,6 +246,10 @@ _H3A_SYSTEM = (
     "characters 允许昭昭/灿灿/妈妈/爸爸；"
     "源稿是孩子与家长趣味冲突时 **保留妈妈/爸爸为配角对手**，"
     "**禁止**把戏核家长硬映成灿灿/昭昭；单孩可加另一孩旁观或联手，但勿偷换对手。\n"
+    "源稿 beat 含家长责备/反问/定责/破功等戏核拍时：**必须**把妈妈（或爸爸）留在 "
+    "characters 与 beat_chain，**禁止**为「压成两人」把家长台词并进姐弟。\n"
+    "学段与分数须按 7–10 岁迁校：中考/高考/成人考分口吻改成小学可拍量级"
+    "（百分制或两三科合计），保留高低分对比梗，禁止原样保留不可能的总分。\n"
     "能用妈妈就用妈妈，源稿爸爸且代不了才保留爸爸；beat_chain 至少 4 拍。\n"
     "只输出 JSON。"
 )
@@ -289,6 +294,11 @@ banned_literals：同 H3，仅 remap 称谓与站外真名；禁止填画画/碘
 - location：须为允许地点表中的 place；站外场景选最接近的一项（如车内→卧室，午休垫→地板）
 - 禁止无依据套用站内仪式模板（举过头顶/三秒/单脚站/金鸡独立等）
 - **禁止**把妈妈/爸爸映成灿灿或昭昭来「制造姐弟戏」；家长是对手就留在 characters
+- **禁止**因「妈妈少出场」默认就压成昭昭+灿灿两人；H3 beat 写了家长行动，
+  characters/beat_chain **必须**保留对应家长 speaker
+- **迁龄（硬）**：站外中考/高考/大学/成人职场考分 → 改写成 7–10 岁小学语境；
+  分数用小学可拍量级（如单科百分制差分 vs 高分，或两三科合计），
+  保留「差分被宣传挨骂 / 高分被宣传该谢」一类对比；禁止原样保留不可能的总分口吻
 - C类 beat_chain：争资源→双规则（每轮新判据）→三轮升级→同场回旋镖→嘴硬（至少4拍）；
   **禁止**把单方「谁赢了谁说了算」+武力压制+认输标 C；
   **禁止**把道具整蛊互整（下料→回敬→认怂）标 C（应 M14+P）
@@ -297,7 +307,8 @@ banned_literals：同 H3，仅 remap 称谓与站外真名；禁止填画画/碘
   禁止 C 回旋镖、G 暖收、F 纯口头威胁当主戏
 - J类与 C 边界：J=一锤镇住对方怂/不敢再顶；C=双规则同场回旋镖引原话
 - I类 beat_chain（**须 4–6 拍**）：争锋/互怼→立价值标准→灵魂拷问→对方语塞→赢家嘴硬总结；
-  禁止 A 末四拍反噬/破功；closing 须赢家一招制敌
+  禁止 A 末四拍反噬/破功；closing 须赢家一招制敌；
+  若灵魂拷问/冰箱类反问由家长说出，speaker 写妈妈（或爸爸），勿并给姐弟
 - J类 beat_chain（**须 4–5 拍**）：闹/求放行/试探权威→一锤威慑或否决压住
   →对方怂/不敢再顶→家长旁观或感叹（可无）；禁止 A 末四拍反噬/破功
 - K类 beat_chain（**须 4–6 拍**）：互打互骂升级→大人躲/叹/劝失败→僵持；
@@ -308,7 +319,9 @@ banned_literals：同 H3，仅 remap 称谓与站外真名；禁止填画画/碘
   → 7 妈妈问谁先动手+定责劝和 → 8 仪式性和好/碘伏/收场
   M5+H 时 object 须是 story_raw 争物（如画作），勿改成「抢秘密」替代互毁
 - **正例只允许上方金稿原文**；本稿须按 story_raw 写，禁止把金稿场景套到本稿
-- mom_lines_max：H 类 2–3；K 类 1–2（旁观叹气）；其余默认 0，最多 1
+- mom_lines_max：H 类 2–3；K 类 1–2（旁观叹气）；
+  源稿/beat 含家长戏核拍（责备/反问/定责/破功/旁观）时 **至少 2**（I/E/Q 等同类）；
+  纯姐弟无家长戏才可 0；最多 3；禁止为压两人强行写 0
 - 禁止 characters/beat_chain 出现陌生小孩/对方；爸爸仅源稿需要且妈妈代不了时保留
 - tutorial 源禁止 mechanism/conflict 含「四招/方法/应该/告诉」
 """
@@ -349,6 +362,10 @@ story_raw（背景，勿照抄）：
 - intent 须来自 scene_contract + story_raw
 - **正例只允许上方金稿原文**；本稿禁止照抄金稿 intent 到不同场景
 - speaker 允许昭昭/灿灿/妈妈/爸爸；妈妈 seed 条数 ≤ scene_contract.mom_lines_max
+- 若 mom_lines_max≥2 或 beat_chain 含妈妈/爸爸：seed **必须**保留对应家长 intent，
+  禁止把家长拍并进姐弟
+- **迁龄**：intent/setting 中的分数、学段须已是小学 7–10 岁可拍量级；
+  禁止沿用中考/高考不可能总分
 - 爸爸 seed 宜更少（能用妈不用爸）；单孩+家长须拆成双孩 intent
 - 单条 intent ≤18 字；总 seed ≥4 条
 """
@@ -540,9 +557,7 @@ def build_scene_contract(
         scene_contract=data,
         beat=h3.get("beat") if isinstance(h3.get("beat"), list) else [],
     )
-    if data.get("mom_lines_max") is None:
-        st = str(h3.get("structure_type") or "C").upper()
-        data["mom_lines_max"] = 3 if st == "H" else 0
+    data = apply_parent_role_budget(data, h3=h3)
     errors = validate_scene(data)
     if errors:
         raise ValueError(f"H3a scene_contract invalid: {'; '.join(errors[:5])}")
@@ -641,11 +656,12 @@ beat：
   **单孩对家长趣味冲突** 均可）。
   **禁止**因「有爸爸/妈妈」或「只有一个孩子」就打低分；
   只卡纯母婴育儿、无孩子对手戏、或孩子未成形。
-- age_fit：能否自然落到约 7–10 岁孩（拒绝婴语、过小）。
+- age_fit：能否自然落到约 7–10 岁孩（拒绝婴语、过小）；
+  中考/高考/成人考分未迁成小学量级须降分或判不通过。
 - conflict_usable：是否有可拍争/抢/歪理/追问/破功/以牙还牙链，不是温馨旁白。
 - mapping_fit：映射是否自然。保留戏核家长（爸爸/妈妈）为配角对手可接受；
   把必须出场的家长硬映成昭昭/灿灿应降分；家长唯一主角且孩子无戏应降分；
-  能用妈不用爸。
+  能用妈不用爸；**禁止**因「压成两人」抹掉戏核家长。
 
 pass=true 仅当四维均 ≥0.55 且无硬伤；否则 pass=false 并列出 reject_reasons。
 **reject_reasons 禁止写「非姐弟冲突」「无昭昭/须拆双孩」来挡孩子与家长的趣事。**
