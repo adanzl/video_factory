@@ -633,6 +633,12 @@ def _sanitize_pad_suffix_line(line: str) -> str:
     out = re.sub(r"嘛呀([！。？…!?])$", r"\1", out)
     out = re.sub(r"真的(?:呀|呢|吧)?([！。？…!?])$", r"\1", out)
     out = re.sub(r"不行嘛([！。？…!?])$", r"不行\1", out)
+    # 粘连垫字「不行」：知道不行/关系不行；保留「还/就/再/真/都/也不行」
+    out = re.sub(
+        r"(?<=[\u4e00-\u9fff])(?<![还就再真都也说])不行(?=[，,！!。？?…]|$)",
+        "",
+        out,
+    )
     out = re.sub(r"[，,]{2,}", "，", out).strip("，, ")
     if out and out[-1] not in "！。？…!?" and line[-1:] in "！。？…!?":
         out = out + line[-1]
@@ -646,6 +652,9 @@ def patch_sanitize_pad_suffix(story: dict[str, Any]) -> tuple[dict[str, Any], bo
     out = copy.deepcopy(story)
     changed = False
     compound_re = re.compile(r"(?:不行了吧|真的了呢|了吧真的)")
+    glued_bu_xing = re.compile(
+        r"(?<=[\u4e00-\u9fff])(?<![还就再真都也说])不行(?=[，,！!。？?…]|$)"
+    )
     for item in out.get("dialogue") or []:
         if not isinstance(item, dict):
             continue
@@ -653,7 +662,9 @@ def patch_sanitize_pad_suffix(story: dict[str, Any]) -> tuple[dict[str, Any], bo
         if not old:
             continue
         if not (
-            _RE_PAD_SUFFIX_STACK.search(old) or compound_re.search(old)
+            _RE_PAD_SUFFIX_STACK.search(old)
+            or compound_re.search(old)
+            or glued_bu_xing.search(old)
         ):
             continue
         new = _sanitize_pad_suffix_line(old)
@@ -1357,7 +1368,7 @@ _RE_PROPAGANDA_VICTIM = re.compile(
     r"同学都笑我|你到处说我|说我考|拿我.{0,8}分|笑我|"
     r"你到处说|把卷子还我|你太过分|也太过分|当笑话讲|"
     r"放下卷子|满屋子嚷嚷|告状去|别到处说|"
-    r"你.{0,4}门口喊|我同学全知道|同学会笑我"
+    r"你.{0,4}门口喊|我同学全知道|同学会笑我|你别再嚷|别再嚷"
 )
 
 
