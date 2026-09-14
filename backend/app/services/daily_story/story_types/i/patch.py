@@ -17,6 +17,8 @@ _I_CLOSING_TAIL_ALLOW = 1
 _RE_INDOOR_SETTING = re.compile(r"卧室|客厅|厨房|餐厅|书桌|餐桌|沙发")
 _ORAL_WIN_LINE = "不乐意就别乱说别人！"
 _ORAL_SPEECHLESS_LINE = "我……我……"
+# ≤24 字硬上限；留余量勿贴边
+_I_SOUL_SWAP_LINE = "换你被到处说低分，你乐意吗？"
 _RE_SOUL_WINNER = re.compile(
     r"还得会|好不好|照你这么说|那照你|评论.{0,8}吗|"
     r"爱学习|你爱吗|灵魂|拷问|换你|乐意吗|跟你无关|也没关系"
@@ -229,7 +231,12 @@ def patch_i_expand_before_soul(story: dict) -> list[str]:
         inserted += 1
         if inserted >= 8:
             break
-    # 仍不够：把拷问前短句扩到宜长（勿叠同一尾巴造成复读感）
+    # 仍不够：把拷问前短句扩到宜长（勿叠同一尾巴造成复读感；勿超单句上限）
+    from app.services.daily_story.dialogue_text import (
+        DAILY_STORY_LINE_CHARS_MAX,
+        dialogue_char_count,
+    )
+
     grow_tails = {
         prop: ["，我就这理", "，管你怎么想", "，我说定了"],
         vict: ["，你别再嚷", "，快还我卷子", "，我跟妈妈说"],
@@ -241,12 +248,15 @@ def patch_i_expand_before_soul(story: dict) -> list[str]:
                 continue
             sp = str(dialogue[i].get("speaker") or "").strip()
             line = str(dialogue[i].get("line") or "").strip()
-            if sp not in {prop, vict} or len(line) >= 22:
+            if sp not in {prop, vict} or dialogue_char_count(line) >= 20:
                 continue
             for extra in grow_tails.get(sp, []):
                 if extra[1:] in line:  # 跳过已含尾巴
                     continue
-                dialogue[i]["line"] = line.rstrip("！。？") + extra + "！"
+                cand = line.rstrip("！。？") + extra + "！"
+                if dialogue_char_count(cand) > DAILY_STORY_LINE_CHARS_MAX:
+                    continue
+                dialogue[i]["line"] = cand
                 grew = True
                 inserted += 1
                 break
@@ -311,12 +321,12 @@ def patch_i_ensure_parent_soul_from_beat(story: dict) -> list[str]:
     spoken = re.sub(r"^(责备|反问|点破|问)[:：]?", "", spoken).strip()
     if "冰箱" in intent or "制冷" in intent or "评论" in intent:
         # 抽象换位：堵「分数问题不怪我 / 跟我无关」
-        spoken = "那按你说跟你无关，换你被到处说低分也没关系？"
+        spoken = _I_SOUL_SWAP_LINE
     elif len(spoken) > 22 or not spoken.endswith(("？", "?", "吗", "嘛")):
         spoken = (
-            f"那我问你，{spoken[:16]}？"
+            f"那我问你，{spoken[:14]}？"
             if spoken
-            else "那按你说跟你无关，换你被到处说也没关系？"
+            else _I_SOUL_SWAP_LINE
         )
     # 已有家长强拷问：冰箱歧义句改写成打穿方向；换位句则过
     for item in dialogue:
@@ -562,7 +572,7 @@ def patch_i_rewrite_ambiguous_fridge_soul(story: dict) -> list[str]:
     dialogue = story.get("dialogue")
     if not isinstance(dialogue, list):
         return notes
-    swap = "那按你说跟你无关，换你被到处说低分也没关系？"
+    swap = _I_SOUL_SWAP_LINE
     for item in dialogue:
         if not isinstance(item, dict):
             continue
@@ -784,6 +794,33 @@ def patch_i_strip_mid_pad(story: dict) -> list[str]:
     return notes
 
 
+def patch_i_enforce_line_max(story: dict) -> list[str]:
+    """I 补丁后强制单句 ≤ 上限，避免 expand/注入顶破硬卡。"""
+    from app.services.daily_story.dialogue_text import (
+        DAILY_STORY_LINE_CHARS_MAX,
+        dialogue_char_count,
+        truncate_overlong_line,
+    )
+
+    notes: list[str] = []
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list):
+        return notes
+    for item in dialogue:
+        if not isinstance(item, dict):
+            continue
+        line = str(item.get("line") or "").strip()
+        if not line:
+            continue
+        if dialogue_char_count(line) <= DAILY_STORY_LINE_CHARS_MAX:
+            continue
+        item["line"] = truncate_overlong_line(
+            line, max_chars=DAILY_STORY_LINE_CHARS_MAX
+        )
+        notes.append("I截断超长句")
+    return notes
+
+
 def patch_i_body(story: dict) -> list[str]:
     notes: list[str] = []
     code = parse_story_type_code(
@@ -807,10 +844,12 @@ def patch_i_body(story: dict) -> list[str]:
     notes.extend(patch_i_fix_parent_sibling_voice(story))
     notes.extend(patch_i_dedupe_sibling_lines(story))
     notes.extend(patch_i_strip_mid_pad(story))
+    notes.extend(patch_i_enforce_line_max(story))
     notes.extend(patch_i_trim_trailing_subplot(story))
     notes.extend(patch_i_strip_meta_type_labels(story))
     notes.extend(patch_i_indoor_dialogue(story))
     notes.extend(patch_i_clean_win_line_suffix(story))
+    notes.extend(patch_i_enforce_line_max(story))
     return notes
 
 
