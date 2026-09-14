@@ -590,12 +590,11 @@ def build_dialogue_seed(
         data["dialogue_seed"] = seed
     if len(seed) < SEED_MIN:
         raise ValueError("H3b dialogue_seed too short")
-    mom_max = int(contract.get("mom_lines_max") or 0)
-    mom_in_seed = sum(
-        1 for r in seed if isinstance(r, dict) and str(r.get("speaker") or "") == "妈妈"
-    )
-    if mom_in_seed > max(1, mom_max):
-        raise ValueError(f"H3b mother-heavy seed: {mom_in_seed}>{mom_max}")
+    mom_max = max(0, int(contract.get("mom_lines_max") or 0))
+    seed = _trim_mom_dialogue_seed(seed, mom_max)
+    if len(seed) < SEED_MIN:
+        seed = seed_from_beat_chain(contract.get("beat_chain") or [])
+    data["dialogue_seed"] = seed
     confidence = float(data.get("dialogue_confidence") or 0.0)
     if confidence < 0.35:
         raise ValueError(f"H3b low dialogue_confidence={confidence:.2f}")
@@ -604,6 +603,20 @@ def build_dialogue_seed(
     if not str(data.get("speaker_map_note") or "").strip():
         data["speaker_map_note"] = str(contract.get("remap_note") or "")
     return data
+
+
+def _trim_mom_dialogue_seed(seed: list[Any], mom_max: int) -> list[Any]:
+    """妈妈 seed 超 mom_lines_max 时裁掉多余条，勿整段失败回退旧契约。"""
+    limit = max(0, int(mom_max))
+    kept_mom = 0
+    out: list[Any] = []
+    for row in seed:
+        if isinstance(row, dict) and str(row.get("speaker") or "") == "妈妈":
+            if kept_mom >= limit:
+                continue
+            kept_mom += 1
+        out.append(row)
+    return out
 
 
 _H4A_SYSTEM = (

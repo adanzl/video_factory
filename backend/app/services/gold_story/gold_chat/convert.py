@@ -5169,18 +5169,36 @@ def _rebuild_h3a_h3b_on_convert(row: dict[str, Any]) -> dict[str, Any]:
             h3=h3,
             source_type=source_type,
         )
+    except Exception as exc:
+        logger.warning(
+            "[GOLD_CHAT] H3a rebuild failed id=%s: %s; keep old contract",
+            row.get("id"),
+            exc,
+        )
+        return row
+
+    try:
         h3b = build_dialogue_seed(
             story_raw=story_raw,
             h3=h3,
             scene_contract=h3a,
         )
     except Exception as exc:
+        # H3a 已含迁龄/家长预算；H3b 失败时用 beat_chain 兜底 seed，勿整段回退
+        from app.services.gold_story.scene import seed_from_beat_chain
+
         logger.warning(
-            "[GOLD_CHAT] H3a/H3b rebuild failed id=%s: %s; keep old contract",
+            "[GOLD_CHAT] H3b rebuild failed id=%s: %s; keep H3a + beat_chain seed",
             row.get("id"),
             exc,
         )
-        return row
+        h3b = {
+            "setting": h3a.get("location"),
+            "dialogue_seed": seed_from_beat_chain(h3a.get("beat_chain") or []),
+            "closing_intent": h3a.get("closing_intent"),
+            "speaker_map_note": h3a.get("remap_note"),
+            "dialogue_confidence": 0.5,
+        }
 
     banned = sanitize_banned_literals(
         h3a.get("banned_literals") or payload.get("banned_literals"),
