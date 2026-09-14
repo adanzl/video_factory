@@ -8,6 +8,7 @@ from app.services.gold_story.gold_chat.validate import (
     validate_chat_hard,
 )
 from app.services.gold_story.scene import (
+    apply_parent_role_budget,
     format_scene_block,
     seed_from_beat_chain,
     validate_scene,
@@ -56,6 +57,37 @@ def test_seed_from_beat_chain():
     seed = seed_from_beat_chain(_sample_contract()["beat_chain"])
     assert len(seed) == 4
     assert seed[0]["speaker"] == "灿灿"
+
+
+def test_apply_parent_role_budget_keeps_mom_when_h3_beat_has_parent():
+    contract = _sample_contract()
+    contract["story_type"] = "I"
+    contract["mom_lines_max"] = 0
+    h3 = {
+        "structure_type": "I",
+        "beat": [
+            "妹妹宣扬差分，妈妈责备戳痛处",
+            "妹妹辩称宣传高分该感谢",
+            "妈妈反问冰箱逻辑，妹妹语塞",
+            "妈妈点出开好头，妹妹嘴硬",
+        ],
+    }
+    out = apply_parent_role_budget(contract, h3=h3)
+    assert int(out["mom_lines_max"]) >= 2
+    assert "妈妈" in out["characters"]
+    assert "戏核家长须保留出场" in str(out.get("remap_note") or "")
+
+
+def test_apply_parent_role_budget_pure_sibling_stays_zero():
+    contract = _sample_contract()
+    contract["story_type"] = "C"
+    h3 = {
+        "structure_type": "C",
+        "beat": ["占物", "质问", "歪理", "嘴硬"],
+    }
+    out = apply_parent_role_budget(contract, h3=h3)
+    assert int(out["mom_lines_max"]) == 0
+    assert "妈妈" not in out["characters"]
 
 
 def _long_dialogue(n: int = 14) -> list[dict[str, str]]:

@@ -88,6 +88,91 @@ def format_scene_block(contract: dict[str, Any]) -> str:
     return "\n".join(parts)
 
 
+_PARENT_SPEAKERS = frozenset({"妈妈", "爸爸"})
+
+
+def _parent_in_h3_beats(h3: dict[str, Any] | None) -> bool:
+    """H3 beat 文案是否把家长写成戏内行动者。"""
+    if not isinstance(h3, dict):
+        return False
+    for step in h3.get("beat") or []:
+        text = str(step or "")
+        if any(p in text for p in ("妈妈", "爸爸", "家长")):
+            return True
+    return False
+
+
+def _parent_in_contract(contract: dict[str, Any]) -> bool:
+    chars = {
+        str(c).strip()
+        for c in (contract.get("characters") or [])
+        if str(c).strip()
+    }
+    if chars & _PARENT_SPEAKERS:
+        return True
+    for row in contract.get("beat_chain") or []:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("speaker") or "").strip() in _PARENT_SPEAKERS:
+            return True
+    note = f"{contract.get('remap_note') or ''} {contract.get('mechanism') or ''}"
+    return any(p in note for p in ("妈妈", "爸爸", "家长"))
+
+
+def apply_parent_role_budget(
+    contract: dict[str, Any],
+    *,
+    h3: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """源稿/beat 有家长戏核时，勿把 mom_lines_max 压成 0、勿抹掉家长。
+
+    不发明家长戏；只抬预算、补角色位。beat_chain 谁说哪句由 H3a 提示词约束。
+    """
+    if not isinstance(contract, dict):
+        return contract
+    st = str(
+        contract.get("story_type")
+        or (h3 or {}).get("structure_type")
+        or "C"
+    ).upper().strip()
+    need_parent = _parent_in_h3_beats(h3) or _parent_in_contract(contract)
+
+    raw_max = contract.get("mom_lines_max")
+    if raw_max is None:
+        if st == "H":
+            contract["mom_lines_max"] = 3
+        elif st == "K":
+            contract["mom_lines_max"] = 2
+        else:
+            contract["mom_lines_max"] = 2 if need_parent else 0
+    else:
+        try:
+            mom_max = max(0, int(raw_max))
+        except (TypeError, ValueError):
+            mom_max = 0
+        contract["mom_lines_max"] = mom_max
+
+    if need_parent:
+        floor = 3 if st == "H" else 2
+        if int(contract.get("mom_lines_max") or 0) < floor:
+            contract["mom_lines_max"] = floor
+        chars = [
+            str(c).strip()
+            for c in (contract.get("characters") or [])
+            if str(c).strip()
+        ]
+        if not (set(chars) & _PARENT_SPEAKERS):
+            chars.append("妈妈")
+            contract["characters"] = chars
+        note = str(contract.get("remap_note") or "").strip()
+        marker = "戏核家长须保留出场"
+        if marker not in note:
+            contract["remap_note"] = (
+                f"{note}；{marker}".strip("；") if note else marker
+            )
+    return contract
+
+
 def validate_scene(contract: dict[str, Any] | None) -> list[str]:
     """H3a / H4a 规则：scene_contract 硬卡。"""
     errors: list[str] = []
@@ -103,7 +188,10 @@ def validate_scene(contract: dict[str, Any] | None) -> list[str]:
                 errors.append(f"scene_contract_illegal_character:{n}")
     chain = contract.get("beat_chain") or []
     if not isinstance(chain, list) or len(chain) < BEAT_CHAIN_MIN:
-        errors.append(f"beat_chain_too_short:{len(chain) if isinstance(chain, list) else 0}")
+        errors.append(
+            f"beat_chain_too_short:"
+            f"{len(chain) if isinstance(chain, list) else 0}"
+        )
     else:
         for i, row in enumerate(chain):
             if not isinstance(row, dict):
@@ -114,7 +202,11 @@ def validate_scene(contract: dict[str, Any] | None) -> list[str]:
                 errors.append(f"beat_chain[{i}]_speaker_illegal:{sp!r}")
     source_type = str(contract.get("source_type") or "").strip().lower()
     if source_type == "tutorial":
-        check_blob = f"{contract.get('conflict')} {contract.get('mechanism')} {contract.get('remap_note')}"
+        check_blob = (
+            f"{contract.get('conflict')} "
+            f"{contract.get('mechanism')} "
+            f"{contract.get('remap_note')}"
+        )
         for word in TUTORIAL_RESIDUE:
             if word in check_blob:
                 errors.append(f"tutorial_residue_in_contract:{word}")
