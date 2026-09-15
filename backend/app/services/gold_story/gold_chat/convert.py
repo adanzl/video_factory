@@ -694,8 +694,8 @@ def _strip_extra_natural_expands(line: str) -> str:
     s = str(line or "").strip()
     if not s:
         return s
-    punct = s[-1] if s[-1] in "！。？…!" else ""
-    body = s[:-1] if punct else s
+    tail_mark = s[-1] if s[-1] in "！。？…!" else ""
+    body = s[:-1] if tail_mark else s
     for soft in _GOLD_CHAT_EXPAND_SOFT_CLUTTER:
         body = body.replace(f"，{soft}", "").replace(soft, "")
     bare_all = [c.lstrip("，,") for c in _GOLD_CHAT_NATURAL_EXPAND]
@@ -706,7 +706,7 @@ def _strip_extra_natural_expands(line: str) -> str:
     hits = [(body.find(b), b) for b in bare_all if b in body]
     if len(hits) <= 1:
         body = re.sub(r"[，,]{2,}", "，", body).strip("，, ")
-        return (body + punct) if body else s
+        return (body + tail_mark) if body else s
     hits.sort(key=lambda x: x[0])
     keep = hits[0][1]
     for _, bare in hits[1:]:
@@ -714,7 +714,7 @@ def _strip_extra_natural_expands(line: str) -> str:
     body = re.sub(r"[，,]{2,}", "，", body).strip("，, ")
     if not body:
         return s
-    return body + (punct or "！")
+    return body + (tail_mark or "！")
 
 
 def patch_sanitize_natural_expand_stack(
@@ -757,8 +757,8 @@ def patch_sanitize_pad_particles(
             item["line"] = cleaned
             changed = True
             old = cleaned
-        punct = old[-1] if old[-1] in "！。？…!" else ""
-        body = old[:-1] if punct else old
+        tail_mark = old[-1] if old[-1] in "！。？…!" else ""
+        body = old[:-1] if tail_mark else old
         new_body = re.sub(r"了[呀吧啊]{2,}$", "了", body)
         new_body = re.sub(r"啊{2,}$", "啊", new_body)
         new_body = re.sub(r"吧{2,}", "吧", new_body)
@@ -774,7 +774,7 @@ def patch_sanitize_pad_particles(
             new_body = new_body.replace(f"，{soft}", "").replace(soft, "")
         new_body = re.sub(r"[，,]{2,}", "，", new_body).strip("，, ")
         if new_body != body and new_body:
-            item["line"] = new_body + (punct or "！")
+            item["line"] = new_body + (tail_mark or "！")
             changed = True
     return out, changed
 
@@ -813,15 +813,15 @@ def patch_j_cap_ya_particles(
         if not isinstance(item, dict):
             continue
         old = str(item.get("line") or "").strip()
-        punct = old[-1] if old[-1] in "！。？…!" else ""
-        body = old[:-1] if punct else old
+        tail_mark = old[-1] if old[-1] in "！。？…!" else ""
+        body = old[:-1] if tail_mark else old
         new_body = re.sub(r"来呀来呀", "来", body)
         new_body = re.sub(r"([来啦了])呀$", r"\1", new_body)
         new_body = re.sub(r"呀$", "", new_body)
         new_body = new_body.strip("，, ")
         if not new_body:
             continue
-        new = new_body + (punct or "！")
+        new = new_body + (tail_mark or "！")
         if new != old:
             item["line"] = new
             changed = True
@@ -864,8 +864,8 @@ def patch_j_cap_trailing_particles(
         if not isinstance(item, dict):
             continue
         old = str(item.get("line") or "").strip()
-        punct = old[-1] if old[-1] in "！。？…!" else ""
-        body = old[:-1] if punct else old
+        tail_mark = old[-1] if old[-1] in "！。？…!" else ""
+        body = old[:-1] if tail_mark else old
         new_body = body
         for p in particles:
             new_body = re.sub(rf"{re.escape(p)}$", "", new_body)
@@ -873,7 +873,7 @@ def patch_j_cap_trailing_particles(
         new_body = new_body.strip("，, ")
         if not new_body:
             continue
-        new = new_body + (punct or "！")
+        new = new_body + (tail_mark or "！")
         if new != old:
             item["line"] = new
             changed = True
@@ -900,10 +900,10 @@ def patch_j_dedupe_cross_line_phrases(
         old = str(item.get("line") or "").strip()
         if not old:
             continue
-        punct = old[-1] if old[-1] in "！。？…!" else ""
-        body = old[:-1] if punct else old
+        tail_mark = old[-1] if old[-1] in "！。？…!" else ""
+        body = old[:-1] if tail_mark else old
         new_body = body
-        for phr in _J_CROSS_LINE_DEDUPE_PHRASES:
+        for phr in _J_CROSS_LINE_REPEAT_PHRASES:
             if phr not in new_body:
                 continue
             if phr in seen:
@@ -914,7 +914,7 @@ def patch_j_dedupe_cross_line_phrases(
         new_body = re.sub(r"[，,]{2,}", "，", new_body).strip("，, ")
         if not new_body:
             continue
-        new = new_body + (punct or "！")
+        new = new_body + (tail_mark or "！")
         if new != old:
             item["line"] = new
             changed = True
@@ -935,8 +935,8 @@ def patch_strip_all_natural_expands(
         old = str(item.get("line") or "").strip()
         if not old:
             continue
-        punct = old[-1] if old[-1] in "！。？…!" else ""
-        body = old[:-1] if punct else old
+        tail_mark = old[-1] if old[-1] in "！。？…!" else ""
+        body = old[:-1] if tail_mark else old
         for bare in sorted(
             [c.lstrip("，,") for c in _GOLD_CHAT_NATURAL_EXPAND],
             key=len,
@@ -949,7 +949,7 @@ def patch_strip_all_natural_expands(
         body = re.sub(r"[，,]{2,}", "，", body).strip("，, ")
         if not body:
             continue
-        new = body + (punct or "！")
+        new = body + (tail_mark or "！")
         if new != old:
             item["line"] = new
             changed = True
@@ -1261,7 +1261,7 @@ _GOLD_CHAT_EXPAND_SOFT_CLUTTER: tuple[str, ...] = (
     "你听着呀",
     "你听着",
 )
-_J_CROSS_LINE_DEDUPE_PHRASES: tuple[str, ...] = (
+_J_CROSS_LINE_REPEAT_PHRASES: tuple[str, ...] = (
     "你凭什么",
     "你试试看",
     "少跟我吵",
@@ -1278,10 +1278,10 @@ def _strip_c_tone_stack_line(line: str) -> str:
     s = str(line or "").strip()
     if not s or not _RE_C_TONE_STACK.search(s):
         return s
-    punct = s[-1] if s[-1] in "！。？…!" else ""
-    body = s[:-1] if punct else s
+    tail_mark = s[-1] if s[-1] in "！。？…!" else ""
+    body = s[:-1] if tail_mark else s
     body = re.sub(r"[呢嘛呀啊吧了着的好]+$", "", body)
-    return (body + punct) if body else s
+    return (body + tail_mark) if body else s
 
 
 def patch_sanitize_c_tone_stack(story: dict[str, Any]) -> tuple[dict[str, Any], bool]:
@@ -1855,8 +1855,8 @@ def patch_j_strip_role_mismatch_expands(
         old = str(item.get("line") or "").strip()
         if not old:
             continue
-        punct = old[-1] if old[-1] in "！。？…!" else ""
-        body = old[:-1] if punct else old
+        tail_mark = old[-1] if old[-1] in "！。？…!" else ""
+        body = old[:-1] if tail_mark else old
         forbidden = (
             _J_ZHAO_FORBIDDEN_EXPAND
             if sp == "昭昭"
@@ -1869,7 +1869,7 @@ def patch_j_strip_role_mismatch_expands(
         body = re.sub(r"[，,]{2,}", "，", body).strip("，, ")
         if not body:
             continue
-        new = body + (punct or "！")
+        new = body + (tail_mark or "！")
         if new != old:
             item["line"] = new
             changed = True
@@ -2042,7 +2042,7 @@ def _pad_gold_chat_line(
         from app.services.daily_story.dialogue_text import DAILY_STORY_LINE_CHARS_MAX
 
         core = s.rstrip("！。？…!")
-        punct = s[len(core) :]
+        tail_mark = s[len(core) :]
         room = max(0, DAILY_STORY_LINE_CHARS_MAX - len(s))
         if room <= 0:
             return s, 0
@@ -2054,7 +2054,7 @@ def _pad_gold_chat_line(
                     continue
                 if used is not None:
                     used.add(tail)
-                return core + tail + punct, len(tail)
+                return core + tail + tail_mark, len(tail)
         for phr in _C_SAFE_PAD_PHRASES:
             if used is not None and phr in used:
                 continue
@@ -2064,7 +2064,7 @@ def _pad_gold_chat_line(
                 continue
             if used is not None:
                 used.add(phr)
-            return core + phr + punct, len(phr)
+            return core + phr + tail_mark, len(phr)
         return s, 0
     if st == "J":
         line_out, added = _pad_dialogue_line(
@@ -2658,7 +2658,7 @@ def _expand_short_gold_chat_lines(
                 break
             line = str(item.get("line") or "").strip()
             core = line.rstrip("！。？…!")
-            punct = line[len(core) :] or "！"
+            tail_mark = line[len(core) :] or "！"
             room = max(0, DAILY_STORY_LINE_CHARS_MAX - len(line))
             if room < 5:
                 expand_count[idx] = 1
@@ -2696,7 +2696,7 @@ def _expand_short_gold_chat_lines(
                     continue
                 if len(clause) > room or len(clause) > need + 2:
                     continue
-                item["line"] = (core + clause + punct)[:DAILY_STORY_LINE_CHARS_MAX]
+                item["line"] = (core + clause + tail_mark)[:DAILY_STORY_LINE_CHARS_MAX]
                 used.add(bare)
                 expand_count[idx] = expand_count.get(idx, 0) + 1
                 changed = True
@@ -2714,14 +2714,14 @@ def _strip_expand_clutter_line(line: str) -> str:
     s = str(line or "").strip()
     if not s:
         return s
-    punct = s[-1] if s[-1] in "！。？…!" else ""
-    body = s[:-1] if punct else s
+    tail_mark = s[-1] if s[-1] in "！。？…!" else ""
+    body = s[:-1] if tail_mark else s
     for clause in _GOLD_CHAT_EXPAND_CLUTTER:
         body = body.replace(f"，{clause}", "").replace(clause, "")
     body = re.sub(r"[，,]{2,}", "，", body).strip("，, ")
     if not body:
         return s
-    return body + (punct or "！")
+    return body + (tail_mark or "！")
 
 
 def patch_sanitize_expand_clutter(
@@ -3305,15 +3305,15 @@ def patch_j_strip_post_lose_defiant(
         old = str(item.get("line") or "").strip()
         if not old or re.search(r"长大.{0,8}算", old):
             continue
-        punct = old[-1] if old[-1] in "！。？…!" else ""
-        body = old[:-1] if punct else old
+        tail_mark = old[-1] if old[-1] in "！。？…!" else ""
+        body = old[:-1] if tail_mark else old
         new_body = body
         for bit in defiant_bits:
             new_body = new_body.replace(bit, "")
         new_body = re.sub(r"[，,]{2,}", "，", new_body).strip("，, ")
         if not new_body:
             continue
-        new = new_body + (punct or "！")
+        new = new_body + (tail_mark or "！")
         if new != old:
             item["line"] = new
             changed = True
@@ -3424,8 +3424,8 @@ def patch_j_soften_closing_grumble(
         old = str(item.get("line") or "").strip()
         if not re.search(r"长大.{0,8}算", old):
             continue
-        punct = old[-1] if old[-1] in "！。？…!" else ""
-        body = old[:-1] if punct else old
+        tail_mark = old[-1] if old[-1] in "！。？…!" else ""
+        body = old[:-1] if tail_mark else old
         new_body = re.sub(r"[，,]?你等着瞧[！。]?$", "", body)
         new_body = re.sub(r"[，,]?你等着呀[！。]?$", "", new_body)
         new_body = re.sub(r"^哼[，,]", "那个，", new_body)
@@ -3435,7 +3435,7 @@ def patch_j_soften_closing_grumble(
         new_body = new_body.strip("，, ")
         if not new_body:
             continue
-        new = new_body + (punct or "！")
+        new = new_body + (tail_mark or "！")
         if new != old:
             item["line"] = new
             changed = True
@@ -4908,10 +4908,10 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
         candidates: list[dict[str, Any]] = []
         hit_truncation = False
         hit_short = False
-        for _cand_i in range(PASS1_CANDIDATE_COUNT):
+        for attempt_no in range(PASS1_CANDIDATE_COUNT):
             logger.debug(
                 "[GOLD_CHAT] pass1 candidate %s/%s …",
-                _cand_i + 1,
+                attempt_no + 1,
                 PASS1_CANDIDATE_COUNT,
             )
             try:
@@ -4985,9 +4985,9 @@ def gold_story_to_gold_chat(row: dict[str, Any]) -> dict[str, Any]:
             patch_dialogue_narration_to_speech,
         )
 
-        narr_notes = patch_dialogue_narration_to_speech(data)
-        if narr_notes:
-            type_notes = list(type_notes) + narr_notes
+        narration_notes = patch_dialogue_narration_to_speech(data)
+        if narration_notes:
+            type_notes = list(type_notes) + narration_notes
         data, alt_changed = patch_c_force_sibling_alternate(data)
         if alt_changed:
             type_notes = list(type_notes) + ["C全篇交替"]
@@ -5748,16 +5748,18 @@ def convert_gold_chat(
             raise ValueError(f"align_export:{kinds}")
     # 终检前再清一次姐弟连说（垫字/精修可能重新制造）
     from app.services.daily_story.prompts import _patch_consecutive_speakers
+    from app.services.daily_story.review import rewrite_zhao_cancan_to_jiejie
 
     chat = dict(chat)
+    chat = rewrite_zhao_cancan_to_jiejie(chat)
     st_final = str(row.get("structure_type") or chat.get("story_type") or "").strip().upper()
     if st_final:
         chat["story_type"] = st_final
-    consec_notes = _patch_consecutive_speakers(chat)
-    if consec_notes:
+    consecutive_notes = _patch_consecutive_speakers(chat)
+    if consecutive_notes:
         logger.info(
             "gold_chat pre-score consecutive patch: %s",
-            "；".join(consec_notes[:8]),
+            "；".join(consecutive_notes[:8]),
         )
     # 连说改 speaker 可能打乱宣传/受害腔；I 类终检前必再锁
     chat, prop_final = patch_score_propaganda_speakers(
@@ -5779,8 +5781,8 @@ def convert_gold_chat(
             voice_notes = patch_i_fix_parent_sibling_voice(chat)
             premature_notes = patch_i_strip_premature_speechless(chat)
             seal_notes = patch_i_seal_after_parent_soul(chat)
-            dedupe_notes = patch_i_dedupe_sibling_lines(chat)
-            # dedupe 不得打穿语塞位：再封一次
+            sibling_repeat_notes = patch_i_dedupe_sibling_lines(chat)
+            # 去重不得打穿语塞位：再封一次
             seal_notes2 = patch_i_seal_after_parent_soul(chat)
             pad_notes = patch_i_strip_mid_pad(chat)
             chat, _ = patch_sanitize_pad_suffix(chat)
@@ -5791,7 +5793,7 @@ def convert_gold_chat(
                 or premature_notes
                 or seal_notes
                 or seal_notes2
-                or dedupe_notes
+                or sibling_repeat_notes
                 or pad_notes
                 or max_notes
             ):
@@ -5802,7 +5804,7 @@ def convert_gold_chat(
                             voice_notes
                             + premature_notes
                             + seal_notes
-                            + dedupe_notes
+                            + sibling_repeat_notes
                             + seal_notes2
                             + pad_notes
                             + max_notes
