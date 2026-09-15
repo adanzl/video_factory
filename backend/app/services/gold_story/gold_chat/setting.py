@@ -44,10 +44,25 @@ ALLOWED_SETTING_PLACES: frozenset[str] = frozenset(
 _SETTING_STRIP_RE = re.compile(
     r"妈妈开车|开车|驾驶|行驶|高速|停车|安全带|导航"
 )
+_RE_SETTING_SELF_ACTION = re.compile(
+    r"(昭昭|灿灿)(按着|按住|压着|按倒)\1"
+)
 
 _DEFAULT_CHARACTERS = ("灿灿", "昭昭")
 _DEFAULT_INDOOR_PLACE = "客厅"
 _CLASSIFY_MIN_CONFIDENCE = 0.35
+
+
+def _fix_setting_self_action(setting: str) -> str:
+    """「昭昭按着昭昭」类自指动作：施事改成另一人。"""
+    text = str(setting or "")
+
+    def _repl(m: re.Match[str]) -> str:
+        who = m.group(1)
+        other = "灿灿" if who == "昭昭" else "昭昭"
+        return f"{other}{m.group(2)}{who}"
+
+    return _RE_SETTING_SELF_ACTION.sub(_repl, text, count=1)
 
 _LLM_CLASSIFY_HOOK: Callable[[str, str], dict[str, Any]] | None = None
 
@@ -221,7 +236,10 @@ def normalize_gold_chat_setting(
 ) -> tuple[str, list[str]]:
     """无允许地点锚点 → LLM 归类并重写 setting。"""
     notes: list[str] = []
-    raw_setting = str(setting or "").strip()
+    before = str(setting or "").strip()
+    raw_setting = _fix_setting_self_action(before)
+    if raw_setting != before:
+        notes.append("setting 自指动作纠偏")
     raw_loc = str(scene_contract_location or "").strip()
     combined = f"{raw_setting} {raw_loc}".strip()
     ctx = " ".join(x for x in (activity_context, raw_loc, raw_setting) if x).strip()

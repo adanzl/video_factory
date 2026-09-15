@@ -10,9 +10,34 @@ from app.services.gold_story.gold_chat.validate import (
 from app.services.gold_story.scene import (
     apply_parent_role_budget,
     format_scene_block,
+    remap_story_raw_sibling_roles,
     seed_from_beat_chain,
     validate_scene,
 )
+
+
+def test_remap_story_raw_sibling_roles_swapped_names():
+    """源稿姐姐叫昭昭、弟弟叫灿灿时，按角色映到站内名。"""
+    raw = (
+        "客厅里，姐姐昭昭正写着作业，弟弟灿灿突然冲过来抢走了她的笔。"
+        "昭昭追着弟弟满屋子跑，逮住他按在沙发上挠痒痒。"
+        "灿灿笑出眼泪大哭。昭昭叉腰问还不哭？灿灿抽泣不敢再闹。"
+    )
+    out = remap_story_raw_sibling_roles(raw)
+    assert "姐姐昭昭" not in out
+    assert "弟弟灿灿" not in out
+    assert "满屋子跑" in out
+    assert "灿灿正写着作业" in out
+    assert "昭昭突然冲过来" in out
+    assert "灿灿追着昭昭满屋子跑" in out
+    assert "昭昭笑出眼泪大哭" in out
+    assert "灿灿叉腰问还不哭" in out
+    assert "昭昭抽泣" in out
+
+
+def test_remap_story_raw_sibling_roles_already_canonical():
+    raw = "灿灿抢回笔后把昭昭按在沙发上挠痒痒，问还不哭。"
+    assert remap_story_raw_sibling_roles(raw) == raw
 
 
 def _sample_contract() -> dict:

@@ -11,13 +11,72 @@ from app.services.daily_story.story_types.k.validate import (
     RE_STALEMATE,
 )
 
-_PARENT_FAIL_LINE = "唉，我管不了你们了。"
-# 末句勿以「哼」起笔（会触发观感「无破功软收」-20）；中段可用带哼版本
+_PARENT_FAIL_LINE = "再叫你们分开也不听，我管不了你们了。"
+_PARENT_ADVISE_LINE = "别闹了！快分开！再闹我可要生气了！"
+_KID_TOP_LINE = "妈妈你别管！"
+# 劝止与劝失败之间：原冲突续行（求饶/继续压），非纯顶妈妈
+_RE_CONFLICT_RESUME = re.compile(
+    r"松手|别挠|还敢|再挠|哭不哭|疼|痒|还嘴硬|不服|撑多久"
+)
+_RE_PURE_MOM_TOP = re.compile(r"妈妈你别管|你管不着|别管我们|别管我")
+_KID_STALEMATE_AFTER = (
+    {"speaker": "昭昭", "line": "哼，我就不理你了！"},
+    {"speaker": "灿灿", "line": "不理就不理，谁稀罕！"},
+)
+# 败方哭后禁回勇（抽象：不怕/挑衅/追跑）
+_RE_LOSER_POST_CRY_DEFIANCE = re.compile(
+    r"我才不怕|偏不还|偏不让步|追不上|来追我|略略略|你试试看|"
+    r"抓不到|扔沙发|笔归我|你别过来"
+)
+_PARENT_WATCH_LINE = "唉，我管不了你们了。"  # 薄旁观升格劝失败，审稿要「劝失败」落点
+_KID_WIN_CLOSE = "哼，再闹我也不怕！"
 _KID_STALEMATE_LAST = "我才不理你！"
 _KID_STALEMATE_MID = "哼，我才不理你！"
 _KID_STALEMATE_LINE = _KID_STALEMATE_LAST  # 兼容旧引用
 _PARENT_SPEAKERS = frozenset({"妈妈", "爸爸"})
 _KID_SPEAKERS = frozenset({"昭昭", "灿灿"})
+_RE_K_PRESS_ACTION = re.compile(
+    r"按.{0,6}沙发上?挠|按.{0,6}沙发|挠痒痒逼哭|挠痒|逼哭|继续挠"
+)
+
+
+def _k_press_roles_from_core(core: str) -> tuple[str, str]:
+    """从 conflict 取压制方/败方：动作前最近人名，避免「昭昭抢…灿灿按」误判。"""
+    text = str(core or "")
+    action = _RE_K_PRESS_ACTION.search(text)
+    if action:
+        before = text[: action.start()]
+        names = list(re.finditer(r"昭昭|灿灿", before))
+        if names:
+            winner = names[-1].group(0)
+            loser = "灿灿" if winner == "昭昭" else "昭昭"
+            return winner, loser
+    # 无明确动作时再退回短窗；先灿灿后昭昭，降低抢物主语误伤
+    if re.search(r"灿灿.{0,12}(?:挠痒|挠|逼哭|按.{0,6}沙发)", text):
+        return "灿灿", "昭昭"
+    if re.search(r"昭昭.{0,12}(?:挠痒|挠|逼哭|按.{0,6}沙发)", text):
+        return "昭昭", "灿灿"
+    return "灿灿", "昭昭"
+
+
+# 家长写成 H 式定责/劝还物（K 应旁观看戏）
+_RE_PARENT_MEDIATE = re.compile(
+    r"还给|说清楚|谁先动手|闹够了|听我的|别吵了|"
+    r"还给(?:姐姐|昭昭|灿灿|笔)|笔还给|笔还了|还了没|"
+    r"谁让你先|自己受着"
+)
+_RE_PARENT_THIN_WATCH = re.compile(
+    r"^你们闹吧，?我看着[！。]?$|"
+    r"闹吧.{0,12}看着|我在.{0,6}看着|看着呢"
+)
+_RE_K_PRESS_WIN = re.compile(r"还不哭|活该|看你还|我继续|再闹我|继续挠")
+_RE_K_MIRROR_STALE = re.compile(r"不理你|谁怕谁")
+_RE_POST_PRESS_KEEP = re.compile(
+    r"哭|告|妈妈|瞪|不服|不理|谁怕谁|管不了|劝不"
+)
+_RE_POST_PRESS_FILLER = re.compile(
+    r"推你|来吵|再吼|偏要吼|还骂|更凶|再闹我就打|试试看"
+)
 # 与 quality._LIMP_SOFT_CLOSE_MARKERS 对齐的末句软收（K 勿末句落这些）
 _LIMP_LAST_MARKERS = (
     "给你",
@@ -56,9 +115,9 @@ _RE_CROSS_J_PLEA = re.compile(
 # 成人腔威胁（抽象句式，非单篇词表）
 _RE_ADULT_THREAT = re.compile(
     r"警告你|今天.{0,8}教训|好好教训|我非要教训|说一不二|"
-    r"非治你|非收拾你|今天非.{0,6}不可|"
+    r"非治你|非收拾你|今天非.{0,10}|"
     r"不服也得挨着|也得挨着|轮不到你.{0,4}说|"
-    r"这茬我记下|记下了",
+    r"这茬我记下|记下了|我数三下|数三下|服软",
 )
 # 「越劝」应对劝架大人；对弟妹说「你越劝」属指代事故
 _RE_YUEQUAN_TO_PEER = re.compile(r"你越劝|越劝我越打")
@@ -67,7 +126,17 @@ _RE_BITE_HAND_REPLY = re.compile(r"别咬我手|咬我的手|咬我手")
 _RE_META_STALEMATE = re.compile(r"就僵着|僵着呗|谁先软谁输")
 _RE_ACTION_NARR = re.compile(
     r"(?:我躲|我躲到|我跑到|我缩到).{0,8}|"
-    r"我拧你耳朵|我拧你",
+    r"我拧你耳朵|我拧你|"
+    r"(?:松手[，,]?\s*)?叉着?腰|"
+    r"按在沙发上|按你沙发上|抓着胳膊|按着(?:他|她|你)|"
+    r"加码挠腰|加码挠|"
+    r"故意挠你(?:痒痒)?|看我挠不挠|"
+    r"我继续顶着(?:好不好)?|我手可没停(?:吧)?|"
+    r"我蹬腿|我使劲蹬|使劲蹬|"
+    r"我把你[，,]|我把你|"
+    r"我挠你腋下|抽泣抹泪|不服气瞪你|还逼我哭|"
+    r"挠他痒痒|不松手，看你|我叹口气|"
+    r"按着我胳膊|我起不来|厨房都听见",
 )
 _HAND_PAIN_LINE = "哎哟，我手好疼！"
 _RE_PAD_JUNK_LINE = re.compile(
@@ -197,6 +266,234 @@ def sanitize_k_dialogue_seed(seed: list | None) -> list:
     return out
 
 
+def patch_k_parent_advise_fail(story: dict) -> list[str]:
+    """大人劝失败须有「劝→失败」两拍：仅一句管不了太薄。"""
+    notes: list[str] = []
+    if not _is_k(story):
+        return notes
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 10:
+        return notes
+    mom_idxs = [
+        i
+        for i, item in enumerate(dialogue)
+        if isinstance(item, dict)
+        and str(item.get("speaker") or "").strip() in _PARENT_SPEAKERS
+    ]
+    if not mom_idxs:
+        return notes
+    has_try = False
+    has_fail = False
+    for i in mom_idxs:
+        line = str(dialogue[i].get("line") or "")
+        if re.search(r"别闹|别打|别吵|住手|分开|听我", line):
+            has_try = True
+        if RE_PARENT_FAIL.search(line) or "管不了" in line or "劝不了" in line:
+            has_fail = True
+    if has_try and has_fail:
+        return notes
+    # 末句家长改劝失败；其前插一句劝止（若尚无）
+    last_i = mom_idxs[-1]
+    if not has_fail:
+        dialogue[last_i]["line"] = _PARENT_FAIL_LINE
+        notes.append(f"K家长收束→劝失败[{last_i + 1}]")
+    if not has_try:
+        dialogue.insert(
+            last_i,
+            {"speaker": "妈妈", "line": "你们别闹了，快分开！"},
+        )
+        notes.append("K补劝止一拍")
+        # 劝后孩子须顶一句，否则像旁白切镜
+        insert_at = last_i + 1
+        if insert_at < len(dialogue) and str(
+            dialogue[insert_at].get("speaker") or ""
+        ).strip() in _PARENT_SPEAKERS:
+            dialogue.insert(
+                insert_at,
+                {"speaker": "灿灿", "line": "妈妈你别管，谁怕谁！"},
+            )
+            notes.append("K劝后补顶嘴")
+    story["dialogue"] = dialogue
+    return notes
+
+
+def patch_k_strip_hard_win_close(story: dict) -> list[str]:
+    """点题后禁写成夺回/结案胜利（笔归我了等），改僵持口吻。"""
+    notes: list[str] = []
+    if not _is_k(story):
+        return notes
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list):
+        return notes
+    winner, _loser = _k_press_roles_from_core(
+        str(story.get("conflict_core") or "")
+    )
+    for i, item in enumerate(dialogue):
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("speaker") or "").strip() != winner:
+            continue
+        line = str(item.get("line") or "").strip()
+        if not line:
+            continue
+        if re.search(r"笔归我了|拿回来了|东西归我|我赢了|算我赢|笔我拿回来|笔是我抢回来", line):
+            item["line"] = "哼，再闹我也不怕！"
+            notes.append(f"K硬胜利→僵持[{i + 1}]")
+    return notes
+
+
+def patch_k_dedupe_cry_and_defiance(story: dict) -> list[str]:
+    """破功哭腔只留一次；哭后勿再堆败方「不怕/偏不让」。"""
+    notes: list[str] = []
+    if not _is_k(story):
+        return notes
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 8:
+        return notes
+    _winner, loser = _k_press_roles_from_core(
+        str(story.get("conflict_core") or "")
+    )
+    cry_i = -1
+    for i, item in enumerate(dialogue):
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("speaker") or "").strip() != loser:
+            continue
+        line = str(item.get("line") or "")
+        if re.search(r"我哭了|眼泪|哇", line):
+            cry_i = i
+            break
+    if cry_i < 0:
+        return notes
+    drop: set[int] = set()
+    for i in range(cry_i + 1, len(dialogue)):
+        item = dialogue[i]
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("speaker") or "").strip() != loser:
+            continue
+        line = str(item.get("line") or "")
+        if re.search(r"我哭了|眼泪都", line):
+            drop.add(i)
+            continue
+        if re.search(r"我才不怕|偏不让步|我继续顶着", line):
+            item["line"] = "哼，我不理你！"
+            notes.append(f"K哭后不服改僵持[{i + 1}]")
+    # 哭腔句内剥顶着/不怕尾巴
+    for item in dialogue:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("speaker") or "").strip() != loser:
+            continue
+        line = str(item.get("line") or "")
+        if not re.search(r"哭了|眼泪|哇", line):
+            continue
+        cleaned = re.sub(r"[，,]?\s*我继续顶着[^！？。!?]*", "", line)
+        cleaned = re.sub(r"[，,]?\s*我才不怕[^！？。!?]*", "", cleaned)
+        cleaned = cleaned.strip("，。！？ ")
+        if cleaned and cleaned != line:
+            if cleaned[-1] not in "？！。!?":
+                cleaned = f"{cleaned}！"
+            item["line"] = cleaned
+            notes.append("K哭腔剥顶着")
+    if drop:
+        story["dialogue"] = [
+            x for i, x in enumerate(dialogue) if i not in drop
+        ]
+        notes.append(f"K去重哭腔×{len(drop)}")
+    return notes
+
+
+def patch_k_ensure_press_climax(story: dict) -> list[str]:
+    """主题含挠/逼哭时，正文须有可说的压制点题+败方破功，勿只剩追跑空喊。"""
+    notes: list[str] = []
+    if not _is_k(story):
+        return notes
+    meta = " ".join(
+        str(story.get(k) or "")
+        for k in ("key", "conflict_core", "scene_title", "punchline_explain")
+    )
+    if not re.search(r"挠|逼哭|还不哭", meta):
+        return notes
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 10:
+        return notes
+    winner, loser = _k_press_roles_from_core(str(story.get("conflict_core") or ""))
+    body = "".join(
+        str(x.get("line") or "") for x in dialogue if isinstance(x, dict)
+    )
+    need_press = "还不哭" not in body and not re.search(r"继续挠|看你哭", body)
+    need_tickle = "挠" not in body
+    need_cry = not re.search(r"哭了|眼泪", body)
+    need_gloat = not re.search(r"嘴硬|哭了还", body)
+    # 已有破功但缺得意回扣：只在哭句后补嘴硬，勿整块重插
+    if need_gloat and not need_cry and not need_press:
+        cry_i = -1
+        for i, item in enumerate(dialogue):
+            if not isinstance(item, dict):
+                continue
+            line = str(item.get("line") or "")
+            if re.search(r"我哭了|哭给你看|眼泪", line):
+                cry_i = i
+        if cry_i >= 0:
+            nxt = (
+                dialogue[cry_i + 1]
+                if cry_i + 1 < len(dialogue)
+                else None
+            )
+            nxt_line = (
+                str(nxt.get("line") or "") if isinstance(nxt, dict) else ""
+            )
+            if "嘴硬" not in nxt_line and "哭了还" not in nxt_line:
+                dialogue.insert(
+                    cry_i + 1,
+                    {
+                        "speaker": winner,
+                        "line": "哭了还嘴硬？笔在我这儿！",
+                    },
+                )
+                story["dialogue"] = dialogue
+                notes.append("K补破功后嘴硬")
+                return notes
+    if not (need_press or need_tickle or need_cry):
+        return notes
+    # 插在家长劝失败前；无家长则插在末 3 句前
+    insert_at = len(dialogue)
+    for i, item in enumerate(dialogue):
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("speaker") or "").strip() in _PARENT_SPEAKERS:
+            insert_at = i
+            break
+    insert_at = max(4, min(insert_at, len(dialogue) - 2))
+    block: list[dict] = []
+    if need_tickle or need_press:
+        block.append(
+            {
+                "speaker": winner,
+                "line": "还不哭？我继续挠，看你服不服！",
+            }
+        )
+    if need_cry or need_press:
+        block.append(
+            {
+                "speaker": loser,
+                "line": "哇，我哭了，你快松手啊！",
+            }
+        )
+        block.append(
+            {
+                "speaker": winner,
+                "line": "哭了还嘴硬？笔在我这儿！",
+            }
+        )
+    if not block:
+        return notes
+    story["dialogue"] = dialogue[:insert_at] + block + dialogue[insert_at:]
+    notes.append(f"K补压制破功{len(block)}句")
+    return notes
+
+
 def patch_k_punchline_prefix(story: dict) -> list[str]:
     """gold_chat：punchline_explain 补 K类 前缀。"""
     if not _is_k(story):
@@ -291,6 +588,64 @@ def patch_k_close_stalemate(story: dict) -> list[str]:
         if _RE_PARENT_META.search(line):
             item["line"] = _PARENT_FAIL_LINE
             notes.append(f"K家长评点→劝失败[{i + 1}]")
+
+    # 家长定责/劝还物 → 旁观看戏（勿套 H）
+    for i in idxs:
+        item = dialogue[i]
+        if not isinstance(item, dict):
+            continue
+        sp = str(item.get("speaker") or "").strip()
+        line = str(item.get("line") or "").strip()
+        if sp not in _PARENT_SPEAKERS or not line:
+            continue
+        if _RE_PARENT_MEDIATE.search(line):
+            item["line"] = _PARENT_FAIL_LINE
+            notes.append(f"K家长劝和→劝失败[{i + 1}]")
+        elif _RE_PARENT_THIN_WATCH.search(line):
+            item["line"] = _PARENT_FAIL_LINE
+            notes.append(f"K薄旁观→劝失败[{i + 1}]")
+
+    # 末段孩子「还你」软收 → 僵持（即使带哼也要剥还物）
+    for i in idxs[-4:]:
+        item = dialogue[i]
+        if not isinstance(item, dict):
+            continue
+        sp = str(item.get("speaker") or "").strip()
+        line = str(item.get("line") or "").strip()
+        if sp not in _KID_SPEAKERS or not line:
+            continue
+        if re.search(r"(?:笔)?还你|还给你", line):
+            item["line"] = (
+                _KID_STALEMATE_LAST if i == idxs[-1] else _KID_STALEMATE_MID
+            )
+            notes.append(f"K末段剥还你软收[{i + 1}]")
+
+    # 末两句孩子对称「不理你」空喊：压制方改得意僵持，勿对等赌气
+    winner = ""
+    for i in idxs:
+        item = dialogue[i]
+        if not isinstance(item, dict):
+            continue
+        sp = str(item.get("speaker") or "").strip()
+        line = str(item.get("line") or "").strip()
+        if sp in _KID_SPEAKERS and _RE_K_PRESS_WIN.search(line):
+            winner = sp
+    if not winner:
+        winner = "灿灿"
+    mirror_idxs = [
+        i
+        for i in idxs[-3:]
+        if isinstance(dialogue[i], dict)
+        and str(dialogue[i].get("speaker") or "").strip() in _KID_SPEAKERS
+        and _RE_K_MIRROR_STALE.search(str(dialogue[i].get("line") or ""))
+    ]
+    if len(mirror_idxs) >= 2:
+        for i in mirror_idxs:
+            sp = str(dialogue[i].get("speaker") or "").strip()
+            if sp == winner:
+                dialogue[i]["line"] = _KID_WIN_CLOSE
+                notes.append(f"K对称空喊→赢家压制[{i + 1}]")
+                break
 
     story["dialogue"] = dialogue
     return notes
@@ -439,6 +794,18 @@ def patch_k_strip_adult_threat(story: dict) -> list[str]:
             continue
         if not _RE_ADULT_THREAT.search(line):
             continue
+        # 仅尾挂成人腔：先剥尾巴，尽量保住现场气话
+        soft = re.sub(
+            r"[，,]?\s*(?:轮不到你说|说一不二|我数三下)[！？。!?]*",
+            "",
+            line,
+        ).strip("，。 ")
+        if soft and soft != line and not _RE_ADULT_THREAT.search(soft):
+            if soft[-1] not in "！？!?":
+                soft = f"{soft}！"
+            item["line"] = soft
+            notes.append(f"K成人腔剥尾[{i + 1}]")
+            continue
         if sp == "灿灿":
             item["line"] = "你再闹试试！"
         else:
@@ -525,7 +892,7 @@ def patch_k_break_same_speaker_run(story: dict) -> list[str]:
     if not drop:
         return notes
     kept = [x for i, x in enumerate(dialogue) if i not in drop]
-    if len(kept) < 10:
+    if len(kept) < 12:
         return notes
     story["dialogue"] = kept
     notes.append(f"K断连说×{len(drop)}")
@@ -657,8 +1024,17 @@ def patch_k_dedupe_near_lines(story: dict) -> list[str]:
     if not drop:
         return notes
     kept = [x for i, x in enumerate(dialogue) if i not in drop]
-    # 字数由下游 boost 补；此处只保结构下限，勿因短字留下脏重复
-    if len(kept) < 10:
+    # 保 ≥12 句；字数过砍交给下游 boost，但勿一次砍到不可再生
+    if len(kept) < 12:
+        return notes
+    from app.services.daily_story.prompts import (
+        DAILY_STORY_BODY_CHARS_MIN,
+        dialogue_total_chars,
+    )
+
+    probe = dict(story)
+    probe["dialogue"] = kept
+    if dialogue_total_chars(probe) < DAILY_STORY_BODY_CHARS_MIN - 40:
         return notes
     story["dialogue"] = kept
     notes.append(f"K近义句去重×{len(drop)}")
@@ -684,22 +1060,68 @@ def patch_k_strip_meta_and_action_narr(story: dict) -> list[str]:
         if _RE_META_STALEMATE.search(new_line):
             new_line = "谁怕谁！来啊！" if sp == "灿灿" else "哼，我不理你！"
         if _RE_ACTION_NARR.search(new_line):
-            # 剥动作叙述段，尽量留前半喊话
-            parts = re.split(r"[！!]", new_line)
-            kept: list[str] = []
-            for part in parts:
-                p = part.strip("，, ")
-                if not p or _RE_ACTION_NARR.search(p):
-                    continue
-                kept.append(p)
-            if kept:
-                new_line = "！".join(kept) + "！"
+            # 先剥嵌入的分镜词，尽量保住「还不哭」等可说点题
+            cleaned = _RE_ACTION_NARR.sub("", new_line)
+            cleaned = re.sub(r"[，,]{2,}", "，", cleaned).strip("，。！？ ")
+            if cleaned and not _RE_ACTION_NARR.search(cleaned):
+                new_line = cleaned
             else:
-                new_line = "你别过来！" if sp == "昭昭" else "你再闹试试！"
+                parts = re.split(r"[！!?？]", new_line)
+                kept: list[str] = []
+                for part in parts:
+                    p = part.strip("，, ")
+                    if not p or _RE_ACTION_NARR.search(p):
+                        continue
+                    kept.append(p)
+                if kept:
+                    new_line = "！".join(kept) + "！"
+                else:
+                    new_line = "你别过来！" if sp == "昭昭" else "还不哭？你服不服！"
+        # 「继续挠」偏指令：有还不哭时改成可说压迫
+        if "还不哭" in new_line and re.search(r"继续挠|我挠你", new_line):
+            new_line = "还不哭？看你能撑多久！"
+        elif re.search(r"我继续挠", new_line):
+            new_line = re.sub(
+                r"[，,]?\s*我继续挠[^！？。!?]*",
+                "",
+                new_line,
+            ).strip("，。 ") or "看你还敢不敢！"
+        # 败方口中的施压动作：改成求饶
+        if sp == "昭昭" and re.search(
+            r"伸手挠|挠你腋下|挠你痒|看你松不松手",
+            new_line,
+        ):
+            new_line = "放开我！别挠了！"
+        # 剥旁白后残留「哇，！」类空标点
+        new_line = re.sub(r"，\s*[！!?？]", "！", new_line)
+        new_line = re.sub(r"[！?]{2,}", "！", new_line)
+        new_line = re.sub(r"了{2,}", "了", new_line)
+        if re.search(r"我把你|还跑啊了", new_line):
+            new_line = "逮住你了！看你还跑不跑！"
         if new_line.startswith("呀！") or new_line.startswith("啊！"):
             new_line = new_line[2:].strip() or (
                 "你再闹试试！" if sp == "灿灿" else "我才不怕你！"
             )
+        # 追捕方说「别过来」属角色方向幻觉
+        if sp == "灿灿" and re.search(r"你别过来|别过来", new_line):
+            new_line = "你站住！把笔还我！"
+        # 拽胳膊/别按我等姿态旁白
+        if re.search(r"拽我胳膊|别按我|按着我肩膀|按着我干", new_line):
+            new_line = (
+                "放开我！别挠了！" if sp == "昭昭" else "逮住你了！看你还跑！"
+            )
+        if re.match(r"^[吧呀啊呢嘛，,\s]+", new_line) or new_line in {
+            "啊！",
+            "啊",
+            "吧！",
+            "呀！",
+            "呢！",
+        }:
+            new_line = "你再闹试试！" if sp == "灿灿" else "哼，我不理你！"
+        # 纯语气/空喊：内容字过少
+        bare = re.sub(r"[！？。!?，,\s哈呵哦嗯啊呀吧呢嘛啦]", "", new_line)
+        if len(bare) < 2:
+            new_line = "你再闹试试！" if sp == "灿灿" else "我才不怕你！"
         if new_line.startswith("哼吧"):
             new_line = "哼，我不理你！"
         if new_line != line:
@@ -789,6 +1211,8 @@ def patch_k_dedupe_stock_phrases(story: dict) -> list[str]:
         "再闹我恼",
         "你试试看啊",
         "轮不到你",
+        "拿桶",
+        "扔笔",
     )
     seen: set[str] = set()
     for i, item in enumerate(dialogue):
@@ -885,6 +1309,22 @@ def patch_k_strip_pad_junk(story: dict) -> list[str]:
         for glue in ("，我偏就不信", "我偏就不信"):
             if glue in new_line:
                 new_line = new_line.replace(glue, "").strip("，。！？ ")
+        new_line = re.sub(r"这记仇我才", "我才", new_line)
+        new_line = re.sub(r"这还不?我才", "我才", new_line)
+        new_line = re.sub(r"这你(?:等|还)我才", "我才", new_line)
+        new_line = re.sub(r"这笔还我才", "我才", new_line)
+        new_line = re.sub(r"(?:这)?我才我才", "我才", new_line)
+        new_line = re.sub(r"这那你我才", "我才", new_line)
+        new_line = re.sub(r"这那你", "那你", new_line)
+        new_line = re.sub(r"这别闹我才", "我才", new_line)
+        new_line = re.sub(r"这我瞪我才", "我才", new_line)
+        new_line = re.sub(r"这我瞪", "我", new_line)
+        new_line = re.sub(r"这我管我才", "我才", new_line)
+        new_line = re.sub(r"这我管", "", new_line)
+        new_line = re.sub(r"啦呀", "啦", new_line)
+        new_line = re.sub(r"(?:哈){2,}…+", "哈哈", new_line)
+        new_line = re.sub(r"哇——+", "哇，", new_line)
+        new_line = re.sub(r"这再闹我才", "我才", new_line)
         # 剥句尾灌上的「不行/真的」（非「就不行」实义）
         new_line = re.sub(
             r"(?<![就])不行(?:真的)?(?:呀|啊|吧|呢|嘛)?([！？。!?]*)$",
@@ -967,6 +1407,487 @@ def patch_k_trim_empty_tail(story: dict) -> list[str]:
     return notes
 
 
+def patch_k_trim_post_press_filler(story: dict) -> list[str]:
+    """压制点题（还不哭等）后勿再堆推/吼/骂空打，直接进不服→劝失败→僵持。"""
+    notes: list[str] = []
+    if not _is_k(story):
+        return notes
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 12:
+        return notes
+    punch_i = -1
+    for i, item in enumerate(dialogue):
+        if not isinstance(item, dict):
+            continue
+        line = str(item.get("line") or "")
+        if "还不哭" in line or (
+            _RE_K_PRESS_WIN.search(line)
+            and str(item.get("speaker") or "").strip() in _KID_SPEAKERS
+        ):
+            punch_i = i
+            break
+    if punch_i < 0 or punch_i >= len(dialogue) - 3:
+        return notes
+    after_items = dialogue[punch_i + 1 :]
+    drop_idxs: list[int] = []
+    for j, item in enumerate(after_items):
+        if not isinstance(item, dict):
+            continue
+        sp = str(item.get("speaker") or "").strip()
+        line = str(item.get("line") or "").strip()
+        abs_i = punch_i + 1 + j
+        if sp in _PARENT_SPEAKERS:
+            continue
+        if not line:
+            continue
+        if _RE_POST_PRESS_KEEP.search(line) and not _RE_POST_PRESS_FILLER.search(
+            line
+        ):
+            continue
+        if _RE_POST_PRESS_FILLER.search(line):
+            drop_idxs.append(abs_i)
+            continue
+        if _RE_K_MIRROR_STALE.search(line) or re.search(r"哭|告|疼|松手", line):
+            continue
+        drop_idxs.append(abs_i)
+    # 少许垫打可留；删多了会不够 12 句/240 字
+    if len(drop_idxs) < 3:
+        return notes
+    keep_min = 12
+    max_drop = max(0, len(dialogue) - keep_min)
+    drop_idxs = drop_idxs[:max_drop]
+    if not drop_idxs:
+        return notes
+    drop_set = set(drop_idxs)
+    kept = [x for i, x in enumerate(dialogue) if i not in drop_set]
+    if len(kept) >= keep_min:
+        story["dialogue"] = kept
+        notes.append(f"K剥点题后空打{len(drop_idxs)}句")
+    return notes
+
+
+def patch_k_bind_press_roles(story: dict) -> list[str]:
+    """按 conflict 锁压制方/败方：含「还不哭/继续挠」须是压制方，哭/别挠须是败方。
+
+    防止连说改 speaker 把姐弟角色拧反。
+    """
+    notes: list[str] = []
+    if not _is_k(story):
+        return notes
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 8:
+        return notes
+    core = str(story.get("conflict_core") or "")
+    winner, loser = _k_press_roles_from_core(core)
+    changed = 0
+    for item in dialogue:
+        if not isinstance(item, dict):
+            continue
+        sp = str(item.get("speaker") or "").strip()
+        if sp not in _KID_SPEAKERS:
+            continue
+        line = str(item.get("line") or "")
+        if re.search(
+            r"还不哭|继续挠|我挠你|挠到你|看你哭|看我挠|按沙发|交笔不杀|认输为止",
+            line,
+        ):
+            if sp != winner:
+                item["speaker"] = winner
+                changed += 1
+        elif re.search(
+            r"别挠|松手啊|我哭了|笑岔|再挠我|我求你|快松手|眼泪掉|放开我",
+            line,
+        ):
+            if sp != loser:
+                item["speaker"] = loser
+                changed += 1
+    if changed:
+        notes.append(f"K压制角色归位{changed}句")
+        story["dialogue"] = dialogue
+    return notes
+
+
+def patch_k_fix_consecutive_keep_press(story: dict) -> list[str]:
+    """角色归位后的同人连说：插入对方短句桥，勿再改压制/败方 speaker。"""
+    notes: list[str] = []
+    if not _is_k(story):
+        return notes
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 4:
+        return notes
+    core = str(story.get("conflict_core") or "")
+    winner, loser = _k_press_roles_from_core(core)
+    out: list = []
+    inserted = 0
+    for item in dialogue:
+        if not isinstance(item, dict):
+            continue
+        row = dict(item)
+        sp = str(row.get("speaker") or "").strip()
+        line = str(row.get("line") or "").strip()
+        if (
+            out
+            and sp in _KID_SPEAKERS
+            and str(out[-1].get("speaker") or "").strip() == sp
+        ):
+            other = loser if sp == winner else winner
+            bridge = (
+                "放开我！别挠了！"
+                if other == loser
+                else "还不哭？你服不服！"
+            )
+            out.append({"speaker": other, "line": bridge})
+            inserted += 1
+        out.append(row)
+    if inserted:
+        story["dialogue"] = out
+        notes.append(f"K连说插桥{inserted}处")
+    return notes
+
+
+def _k_advise_fail_mid_block(story: dict) -> list[dict]:
+    """劝止→冲突续行→顶嘴→劝失败→冷战（mom_max=2）。"""
+    winner, loser = _k_press_roles_from_core(
+        str(story.get("conflict_core") or "")
+    )
+    return [
+        {"speaker": "妈妈", "line": _PARENT_ADVISE_LINE},
+        {"speaker": loser, "line": "疼！快松手啊！"},
+        {"speaker": winner, "line": _KID_TOP_LINE},
+        {"speaker": "妈妈", "line": _PARENT_FAIL_LINE},
+        {"speaker": loser, "line": "哼，我就不理你了！"},
+        {"speaker": winner, "line": "不理就不理，谁稀罕！"},
+    ]
+
+
+def patch_k_pin_advise_fail_close(story: dict) -> list[str]:
+    """导出/封口共用：钉死劝失败中段冲突续行。"""
+    notes: list[str] = []
+    if not _is_k(story):
+        return notes
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 8:
+        return notes
+    parent_i = next(
+        (
+            i
+            for i, x in enumerate(dialogue)
+            if isinstance(x, dict)
+            and str(x.get("speaker") or "").strip() in _PARENT_SPEAKERS
+        ),
+        -1,
+    )
+    if parent_i < 4:
+        return notes
+    head = [dict(x) for x in dialogue[:parent_i] if isinstance(x, dict)]
+    story["dialogue"] = head + _k_advise_fail_mid_block(story)
+    notes.append("K劝失败冲突续行钉死")
+    return notes
+
+
+def patch_k_seal_after_parent_fail(story: dict) -> list[str]:
+    """劝止→冲突续行→顶嘴→劝失败后封口；中间勿再灌互顶垫句。"""
+    notes: list[str] = []
+    if not _is_k(story):
+        return notes
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 10:
+        return notes
+    advise_i = -1
+    fail_i = -1
+    for i, item in enumerate(dialogue):
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("speaker") or "").strip() not in _PARENT_SPEAKERS:
+            continue
+        line = str(item.get("line") or "")
+        if advise_i < 0 and re.search(r"别闹|别打|别吵|住手|分开|听我", line):
+            advise_i = i
+        if RE_PARENT_FAIL.search(line) or "管不了" in line or "劝不了" in line or "劝不动" in line:
+            fail_i = i
+    if fail_i < 0:
+        return notes
+    from app.services.daily_story.prompts import (
+        DAILY_STORY_BODY_CHARS_MIN,
+        dialogue_total_chars,
+    )
+
+    if advise_i >= 0 and fail_i > advise_i:
+        winner, loser = _k_press_roles_from_core(
+            str(story.get("conflict_core") or "")
+        )
+        between = dialogue[advise_i + 1 : fail_i]
+        resume = None
+        for x in between:
+            if not isinstance(x, dict):
+                continue
+            if str(x.get("speaker") or "").strip() not in _KID_SPEAKERS:
+                continue
+            line = str(x.get("line") or "").strip()
+            if _RE_PURE_MOM_TOP.search(line):
+                continue
+            if _RE_CONFLICT_RESUME.search(line):
+                resume = dict(x)
+                break
+        if resume is None:
+            resume = {"speaker": loser, "line": "疼！快松手啊！"}
+        kid_top = {"speaker": winner, "line": _KID_TOP_LINE}
+        # 劝失败后只留冷战僵持，勿再叫阵
+        after = [dict(x) for x in _KID_STALEMATE_AFTER]
+        after[0]["speaker"] = loser
+        after[1]["speaker"] = winner
+        fail_row = dict(dialogue[fail_i])
+        fail_row["line"] = _PARENT_FAIL_LINE
+        # 保留劝止前全文，但剥点题/破功后的互顶空喊
+        head = list(dialogue[:advise_i])
+        climax_i = -1
+        # 以末次破功（哭）为峰；无哭再退到末次「还不哭」
+        for i, item in enumerate(head):
+            if not isinstance(item, dict):
+                continue
+            line = str(item.get("line") or "")
+            if re.search(r"我哭了|眼泪|哭给你看", line):
+                climax_i = i
+        if climax_i < 0:
+            for i, item in enumerate(head):
+                if not isinstance(item, dict):
+                    continue
+                if "还不哭" in str(item.get("line") or ""):
+                    climax_i = i
+        if climax_i >= 0:
+            cry_item = dict(head[climax_i])
+            pre_raw = [
+                dict(x)
+                for x in head[:climax_i]
+                if isinstance(x, dict)
+            ]
+            # 哭前铺垫：去掉提前嘴硬；点题/逮住后追抢回潮丢掉；点题本身稍后统一钉
+            cleaned: list[dict] = []
+            seen_press = False
+            seen_catch = False
+            for x in pre_raw:
+                line = str(x.get("line") or "")
+                if re.search(
+                    r"逮住|逮着|按住你|按着你|追到你了|抓到你",
+                    line,
+                ):
+                    seen_catch = True
+                if "还不哭" in line:
+                    seen_press = True
+                    continue
+                if re.search(r"嘴硬|哭了还|笔在我这儿", line):
+                    continue
+                if (seen_press or seen_catch) and re.search(
+                    r"追不上|略略略|满屋子跑|这笔就是我的|"
+                    r"拿不回去|还跑啊|不服也白搭|我不服|"
+                    r"换个理由|再顶你|你别过来",
+                    line,
+                ):
+                    continue
+                cleaned.append(x)
+            press_row = {
+                "speaker": winner,
+                "line": "还不哭？看你能撑多久！",
+            }
+            # 统一用干净压迫句，勿带回成人腔/垫尾巴
+            kept_head = cleaned + [press_row, cry_item]
+            kept_head.append(
+                {
+                    "speaker": winner,
+                    "line": "哭了还嘴硬？笔在我这儿！",
+                }
+            )
+            kept_head.append({"speaker": loser, "line": "呜，你欺负人！"})
+            head = kept_head
+        # 劝止槽钉死（mom 上限 2：劝止+失败；中间=冲突续行+顶嘴）
+        advise_row = dict(dialogue[advise_i])
+        advise_row["line"] = _PARENT_ADVISE_LINE
+        candidate = (
+            head
+            + [advise_row, resume, kid_top, fail_row]
+            + after
+        )
+        dropped = len(dialogue) - len(candidate)
+        story["dialogue"] = candidate
+        if dropped > 0:
+            notes.append(f"K劝失败段封口去{dropped}句")
+        else:
+            notes.append("K劝失败后钉僵持尾")
+        return notes
+
+    after = dialogue[fail_i + 1 :]
+    kid_after = [
+        x
+        for x in after
+        if isinstance(x, dict)
+        and str(x.get("speaker") or "").strip() in _KID_SPEAKERS
+    ]
+    if len(kid_after) <= 2:
+        return notes
+    kept_tail = kid_after[:2]
+    last = kept_tail[-1]
+    if not RE_STALEMATE.search(str(last.get("line") or "")):
+        last["line"] = _KID_STALEMATE_LAST
+    candidate = dialogue[: fail_i + 1] + kept_tail
+    probe = {"dialogue": candidate}
+    if dialogue_total_chars(probe) < DAILY_STORY_BODY_CHARS_MIN - 20:
+        return notes
+    dropped = len(kid_after) - len(kept_tail)
+    if dropped <= 0:
+        return notes
+    story["dialogue"] = candidate
+    notes.append(f"K劝失败后封口去{dropped}句")
+    return notes
+
+
+def patch_k_loser_monotonic(story: dict) -> list[str]:
+    """败方状态单向：挠后/哭后不得回勇挑衅（抽象，不绑单篇）。"""
+    notes: list[str] = []
+    if not _is_k(story):
+        return notes
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list):
+        return notes
+    _, loser = _k_press_roles_from_core(str(story.get("conflict_core") or ""))
+    seen_tickle = False
+    seen_cry = False
+    changed = 0
+    for item in dialogue:
+        if not isinstance(item, dict):
+            continue
+        sp = str(item.get("speaker") or "").strip()
+        line = str(item.get("line") or "").strip()
+        if re.search(r"别挠|挠了|痒|还不哭", line):
+            seen_tickle = True
+        if re.search(r"我哭了|哭给你|眼泪", line):
+            seen_cry = True
+        if sp != loser or not line:
+            continue
+        if (seen_tickle or seen_cry) and _RE_LOSER_POST_CRY_DEFIANCE.search(line):
+            item["line"] = (
+                "呜，你欺负人！"
+                if seen_cry
+                else "放开我！别挠了！"
+            )
+            changed += 1
+    if changed:
+        notes.append(f"K败方单向×{changed}")
+    return notes
+
+
+def patch_k_ensure_advise_two_slots(story: dict) -> list[str]:
+    """妈妈劝止槽+失败槽；中间至少一句姐弟顶嘴（mom_max=2）。"""
+    notes: list[str] = []
+    if not _is_k(story):
+        return notes
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 10:
+        return notes
+    # 找现有家长句
+    parent_idxs = [
+        i
+        for i, x in enumerate(dialogue)
+        if isinstance(x, dict)
+        and str(x.get("speaker") or "").strip() in _PARENT_SPEAKERS
+    ]
+    if not parent_idxs:
+        # 无家长：在末 2 句前插入劝失败中段（含冲突续行）
+        insert_at = max(4, len(dialogue) - 2)
+        block = _k_advise_fail_mid_block(story)
+        story["dialogue"] = dialogue[:insert_at] + block + dialogue[insert_at:]
+        notes.append("K补劝失败两槽")
+        return notes
+    # 规范：最后两句家长必须是劝止→（中间孩子）→失败；若只有一句则拆
+    # 交给 seal 封口；这里只保证失败句语义与劝止语义分离
+    for i in parent_idxs:
+        item = dialogue[i]
+        line = str(item.get("line") or "")
+        if RE_PARENT_FAIL.search(line) or "管不了" in line:
+            item["line"] = _PARENT_FAIL_LINE
+        elif re.search(r"别闹|分开|别打|别吵", line):
+            item["line"] = _PARENT_ADVISE_LINE
+    story["dialogue"] = dialogue
+    notes.append("K劝失败两槽语义钉死")
+    return notes
+
+
+def patch_k_force_climax_before_parent(story: dict) -> list[str]:
+    """劝止前钉死：还不哭→哭→嘴硬→呜；并剥逮住后的追抢回潮。"""
+    notes: list[str] = []
+    if not _is_k(story):
+        return notes
+    dialogue = story.get("dialogue")
+    if not isinstance(dialogue, list) or len(dialogue) < 8:
+        return notes
+    parent_i = next(
+        (
+            i
+            for i, x in enumerate(dialogue)
+            if isinstance(x, dict)
+            and str(x.get("speaker") or "").strip() in _PARENT_SPEAKERS
+        ),
+        -1,
+    )
+    if parent_i < 6:
+        return notes
+    head = [dict(x) for x in dialogue[:parent_i] if isinstance(x, dict)]
+    tail = [dict(x) for x in dialogue[parent_i:] if isinstance(x, dict)]
+    cleaned: list[dict] = []
+    seen_catch = False
+    seen_tickle = False
+    for x in head:
+        sp = str(x.get("speaker") or "").strip()
+        line = str(x.get("line") or "")
+        if re.search(r"逮住|逮着|按住你|按着你|追到你了|抓到你", line):
+            seen_catch = True
+        if re.search(r"别挠|挠了|痒", line):
+            seen_tickle = True
+        if re.search(r"换个理由|再顶你|不收拾你|服软", line):
+            continue
+        if (seen_catch or seen_tickle) and re.search(
+            r"追不上|略略略|满屋子跑|这笔就是我的|拿不回去|"
+            r"抢我笔还嘴硬",
+            line,
+        ):
+            continue
+        # 挠后败方回勇挑衅：丢掉（单向）
+        if seen_tickle and sp in _KID_SPEAKERS and _RE_LOSER_POST_CRY_DEFIANCE.search(
+            line
+        ):
+            # 保留求饶类
+            if not re.search(r"放开|别挠|松手|疼|痒", line):
+                continue
+        # 旧压迫/破功先剥，后面统一钉
+        if re.search(
+            r"还不哭|我哭了|嘴硬|哭了还|笔在我这儿|呜，你欺负人|"
+            r"轮不到你",
+            line,
+        ):
+            continue
+        cleaned.append(x)
+    # 挠拍不足时补一轮可说互顶（专家：差字加有效冲突拍）
+    has_tickle = any(
+        re.search(r"别挠|挠了|痒", str(x.get("line") or ""))
+        for x in cleaned
+    )
+    if not has_tickle:
+        cleaned.extend(
+            [
+                {"speaker": "灿灿", "line": "抢笔就该被挠！看你还跑不跑！"},
+                {"speaker": "昭昭", "line": "放开我！别挠了！"},
+            ]
+        )
+    triad = [
+        {"speaker": "灿灿", "line": "还不哭？看你能撑多久！"},
+        {"speaker": "昭昭", "line": "哇，我哭了，你快松手啊！"},
+        {"speaker": "灿灿", "line": "哭了还嘴硬？笔在我这儿！"},
+        {"speaker": "昭昭", "line": "呜，你欺负人！"},
+    ]
+    story["dialogue"] = cleaned + triad + tail
+    notes.append("K劝止前钉破功四拍")
+    return notes
+
+
 def patch_k_body(story: dict) -> list[str]:
     notes = patch_k_punchline_prefix(story)
     notes.extend(patch_k_strip_cross_type_plea(story))
@@ -978,14 +1899,30 @@ def patch_k_body(story: dict) -> list[str]:
     notes.extend(patch_k_strip_orphan_reply(story))
     notes.extend(patch_k_yuequan_address(story))
     notes.extend(patch_k_strip_meta_and_action_narr(story))
+    notes.extend(patch_k_loser_monotonic(story))
     notes.extend(patch_k_dedupe_near_lines(story))
     notes.extend(patch_k_break_same_speaker_run(story))
     notes.extend(patch_k_hand_pain_speech(story))
     notes.extend(patch_k_strip_adult_threat(story))  # 手疼句被垫回说一不二时再剥
     notes.extend(patch_k_strip_orphan_reply(story))
     notes.extend(patch_k_break_same_speaker_run(story))
+    notes.extend(patch_k_trim_post_press_filler(story))
+    notes.extend(patch_k_ensure_press_climax(story))
+    notes.extend(patch_k_dedupe_cry_and_defiance(story))
+    notes.extend(patch_k_strip_hard_win_close(story))
+    notes.extend(patch_k_parent_advise_fail(story))
+    notes.extend(patch_k_ensure_advise_two_slots(story))
     notes.extend(patch_k_close_stalemate(story))
     notes.extend(patch_k_fix_limp_soft_close(story))
     notes.extend(patch_k_tail_anchor(story))
     notes.extend(patch_k_trim_empty_tail(story))
+    # 回扣锚点后再剥一次垫字头，避免「这我才我才」
+    notes.extend(patch_k_strip_pad_junk(story))
+    notes.extend(patch_k_bind_press_roles(story))
+    notes.extend(patch_k_fix_consecutive_keep_press(story))
+    notes.extend(patch_k_seal_after_parent_fail(story))
+    notes.extend(patch_k_force_climax_before_parent(story))
+    notes.extend(patch_k_loser_monotonic(story))
+    notes.extend(patch_k_ensure_advise_two_slots(story))
+    notes.extend(patch_k_pin_advise_fail_close(story))
     return notes

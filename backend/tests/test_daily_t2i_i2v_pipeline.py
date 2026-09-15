@@ -833,6 +833,39 @@ def test_story_container_props_locked_without_name_list():
     assert "昭昭面前有青菜" in thin
 
 
+def test_enrich_setting_rejects_pronoun_junk_props():
+    """口语残片勿当冲突物：就是我的吧→是我、昭昭那儿→那儿。"""
+    from app.services.script.visual_brief import (
+        enrich_setting_with_dialogue_props,
+        extract_story_prop_holdings,
+    )
+
+    setting = "客厅沙发前，灿灿手里攥着刚从昭昭那儿抢回来的笔"
+    dialogue = [
+        {"speaker": "灿灿", "line": "昭昭！把笔还给我，那是我写作业用的呢！"},
+        {"speaker": "昭昭", "line": "你追不上我，笔在我手里就是我的吧！"},
+    ]
+    holdings = extract_story_prop_holdings(setting, dialogue)
+    props = {p for _h, p in holdings}
+    assert "是我" not in props
+    assert "那儿" not in props
+    enriched = enrich_setting_with_dialogue_props(
+        setting, dialogue, contract_object="笔"
+    )
+    assert "面前有是我" not in enriched
+    assert "面前有那儿" not in enriched
+    assert "笔归我" not in enriched
+    assert "笔" in enriched
+
+    speechy = enrich_setting_with_dialogue_props(
+        "客厅沙发前，灿灿刚夺回笔",
+        [{"speaker": "昭昭", "line": "灿灿！你手里那支笔归我啦吧！"}],
+        contract_object="笔",
+    )
+    assert "笔归我" not in speechy
+    assert "面前有笔归我啦" not in speechy
+
+
 def test_bowl_container_lock_not_forced_into_hands():
     """桌上碗盘：肉在灿灿碗里，昭昭碗里没有肉；不要写成拿在手里。"""
     from app.services.script.image_prompt import assemble_daily_t2i_prompt

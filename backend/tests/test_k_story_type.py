@@ -32,8 +32,8 @@ def _k_stalemate_story() -> dict:
             {"speaker": "灿灿", "line": "讨厌！你推我！"},
             {"speaker": "昭昭", "line": "你还推！呜呜呜！"},
             {"speaker": "妈妈", "line": "别打了！你们别吵了！"},
+            {"speaker": "昭昭", "line": "疼！快松手啊！"},
             {"speaker": "灿灿", "line": "你管不着！"},
-            {"speaker": "昭昭", "line": "越劝越凶！哼！"},
             {"speaker": "妈妈", "line": "唉，我管不了你们了。"},
             {"speaker": "灿灿", "line": "就不理你！"},
             {"speaker": "昭昭", "line": "我也不和好！"},
@@ -165,7 +165,7 @@ def test_k_patch_tail_anchor_when_mid_filler_dominates():
 
 
 def test_k_mid_pairs_forbid_ear_twist_filler():
-    """K 中段垫句禁拧耳朵/咬手注水，避免冲掉场故事主梗。"""
+    """K 中段垫句禁拧耳朵/咬手注水，亦禁点题后推吵骂空打。"""
     from app.services.gold_story.gold_chat import convert as gc_convert
 
     blob = "\n".join(
@@ -174,10 +174,12 @@ def test_k_mid_pairs_forbid_ear_twist_filler():
     assert "拧" not in blob
     assert "耳朵" not in blob
     assert "咬定" not in blob
-    # 须能点到互骂/升级层关键词
-    assert any(k in blob for k in ("推", "吵", "骂", "打", "吼"))
-    assert any(k in blob for k in ("更凶", "还骂", "还打", "哭", "吼"))
-
+    assert "推你" not in blob
+    assert "来吵" not in blob
+    assert "偏要吼" not in blob
+    # 须能落到不服/僵持/哭口吻
+    assert any(k in blob for k in ("哭", "不服", "不理", "谁怕谁", "记仇"))
+    assert any(k in blob for k in ("笔", "松手", "瞪", "不怕"))
 
 def test_k_force_min_chars_reaches_body_floor():
     """K 短稿 force_min 须能垫到正文 hard min，不再卡在 227。"""
