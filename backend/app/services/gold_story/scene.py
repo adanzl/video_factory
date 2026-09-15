@@ -238,6 +238,36 @@ _RE_SIBLING_LABEL = (
 )
 
 
+def remap_story_raw_sibling_roles(story_raw: str) -> str:
+    """源稿把站内名反挂（姐姐昭昭/弟弟灿灿）时，按姐弟角色映回站内名。
+
+    只处理「角色标 + 昭昭/灿灿」反挂；其他站外真名仍交 H3a remap。
+    """
+    text = str(story_raw or "")
+    if not text.strip():
+        return text
+    swapped = bool(
+        re.search(r"(?:姐姐|哥哥)\s*昭昭", text)
+        or re.search(r"(?:弟弟|妹妹)\s*灿灿", text)
+    )
+    if not swapped:
+        out = re.sub(r"(?:姐姐|哥哥)\s*灿灿", "灿灿", text)
+        out = re.sub(r"(?:弟弟|妹妹)\s*昭昭", "昭昭", out)
+        return out
+
+    sis_ph, bro_ph = "<<SIS>>", "<<BRO>>"
+    out = text
+    out = re.sub(r"(?:姐姐|哥哥)\s*昭昭", sis_ph, out)
+    out = re.sub(r"(?:弟弟|妹妹)\s*灿灿", bro_ph, out)
+    out = out.replace("昭昭", sis_ph).replace("灿灿", bro_ph)
+    out = re.sub(r"姐姐|哥哥", sis_ph, out)
+    out = re.sub(r"弟弟|妹妹", bro_ph, out)
+    out = out.replace(sis_ph, "灿灿").replace(bro_ph, "昭昭")
+    out = re.sub(r"(灿灿){2,}", "灿灿", out)
+    out = re.sub(r"(昭昭){2,}", "昭昭", out)
+    return out
+
+
 def scrub_h3_beat_list(
     beat: list[Any] | None,
     *,
@@ -495,7 +525,35 @@ _NARRATION_LINE_RE = re.compile(
     r"(?:哼，)?(?:缩到|嘟囔|趴下|扭头走开)|"
     # 咀嚼/塞食动作说明（非口语；须带宾语/结果，避免误伤「看我一口吞」）
     r"一口(?:吞下|塞进|吞了)[^。！？?]{0,20}|"
-    r"(?:^|[，,])奶油都?(?:挤|溢)(?:出来|出)?"
+    r"(?:^|[，,])奶油都?(?:挤|溢)(?:出来|出)?|"
+    # 舞台指示：动作链 / 问：台词 / 纯动作收场（抽象，不绑单篇）
+    r"(?:站直了|叉着?腰站|叉腰问)|"
+    r"手指戳|"
+    r"(?:^|[，,])戳(?:着)?(?:你的?)?(?:腰侧|腰眼)|"
+    r"抽抽搭搭|"
+    r"摇摇头|"
+    r"转身回|"
+    r"探(?:出)?头|"
+    r"俯视|"
+    r"问[:：]|"
+    r"(?:不|没)说话|"
+    r"没再管|"
+    r"(?:把|将)(?:笔|东西)?举高|"
+    r"(?:按倒在|追着)(?:灿灿|昭昭|沙发)|"
+    r"(?:灿灿|昭昭)腰侧|"
+    r"笑出眼泪后|"
+    r"哇地一声|"
+    r"嘴抿紧|"
+    r"缩回[^，。]{0,6}|"
+    r"拼命扭|"
+    r"开始挠痒|"
+    r"松手叉腰|"
+    r"瞪(?:灿灿|昭昭|她|他)一眼|"
+    # 当场动作指令入对白（抽象：按/继续+肢体，非「你抓我干嘛」控诉）
+    r"按在沙发上|按沙发上|"
+    r"(?:^|[，,])继续挠|"
+    r"(?:看我)?吐舌头|"
+    r"瞪你一眼"
 )
 _RE_ACTION_CHUNK = re.compile(
     r"又?补[一二两三四五两1-5]?下|按在地上|"
@@ -503,7 +561,30 @@ _RE_ACTION_CHUNK = re.compile(
     r"(?:揪住|按住|推向)(?:昭昭|灿灿|她|他)|"
     r"被(?:灿灿|昭昭|妈妈)[^。！？]{0,16}|"
     r"缩到角落|嘟囔着|"
-    r"^(?:叹气|愣住)$"
+    r"^(?:叹气|愣住)$|"
+    r"(?:站直了|叉着?腰站|叉腰问)[^，。！？]{0,12}|"
+    r"手指戳[^，。！？]{0,12}|"
+    r"(?:^|[，,])戳(?:着)?(?:你的?)?(?:腰侧|腰眼)[^，。！？]{0,8}|"
+    r"抽抽搭搭[^，。！？]{0,12}|"
+    r"摇摇头[^，。！？]{0,16}|"
+    r"转身回[^，。！？]{0,12}|"
+    r"探(?:出)?头[^，。！？]{0,16}|"
+    r"俯视[^，。！？]{0,8}|"
+    r"(?:不|没)说话|"
+    r"没再管|"
+    r"瞪(?:灿灿|昭昭|她|他)一眼|"
+    r"(?:把|将)(?:笔|东西)?举高[^，。！？]{0,12}|"
+    r"(?:按倒在|追着)(?:灿灿|昭昭|沙发)[^，。！？]{0,12}|"
+    r"笑出眼泪后[^，。！？]{0,12}|"
+    r"哇地一声[^，。！？]{0,8}|"
+    r"嘴抿紧[^，。！？]{0,12}|"
+    r"缩回[^，。！？]{0,8}|"
+    r"拼命扭|"
+    r"开始挠痒[^，。！？]{0,8}|"
+    r"松手叉腰[^，。！？]{0,12}|"
+    r"按在沙发上|"
+    r"(?:^|[，,])继续挠[^，。！？]{0,6}|"
+    r"(?:^|[，,])吐舌头"
 )
 
 
@@ -522,6 +603,21 @@ def rewrite_narration_to_speech(text: str, *, speaker: str = "") -> str:
     # 咀嚼/塞食动作 → 可说的逞强短句（抽象，不绑具体食物）
     if re.search(r"一口(?:吞下|塞进|吞了)|奶油都?(?:挤|溢)", raw):
         return "看我一口吞！"
+    # 「…问：台词」只留冒号后口语
+    m_ask = re.search(r"问[:：]\s*(.+)$", raw)
+    if m_ask:
+        tail = m_ask.group(1).strip("，。！？ ")
+        if tail and not looks_like_narration_line(tail):
+            if tail[-1] not in "？！。!?":
+                tail = f"{tail}！"
+            return tail
+    # 家长旁观笑声 → 可说的旁观句（勿劝架）
+    if sp in {"妈妈", "爸爸"} and re.search(r"笑", raw):
+        return "你们闹吧，我看着！"
+    # 僵持/不说话收场 → 短哼
+    if re.search(r"(?:不|没)说话|不敢再闹|缩回|瞪.{0,4}一眼", raw):
+        if sp not in {"妈妈", "爸爸"}:
+            return "哼！"
     fallback = (
         "唉，我管不了你们了" if sp in {"妈妈", "爸爸"} else "你别过来！"
     )
@@ -530,21 +626,21 @@ def rewrite_narration_to_speech(text: str, *, speaker: str = "") -> str:
     for part in parts:
         # 纯动作块即使带「我」也剥掉（如「我补两下」）
         if _RE_ACTION_CHUNK.search(part) and not re.search(
-            r"[？！]|疼|怕|不服|活该|警告|别逼|松手",
+            r"[？！]|疼|怕|不服|活该|警告|别逼|松手|嘴硬|还不哭",
             part,
         ):
             cleaned = _RE_ACTION_CHUNK.sub("", part).strip("，。！？ ")
             cleaned = re.sub(r"^我$", "", cleaned).strip()
-            if cleaned and re.search(r"[我你]|疼|怕|警告|别", cleaned):
+            if cleaned and re.search(r"[我你]|疼|怕|警告|别|嘴硬|哭", cleaned):
                 spoken.append(cleaned)
             continue
         if looks_like_narration_line(part) and not re.search(
-            r"[？！]|警告|别|喊|妈|疼|怕|不服|活该|管不了",
+            r"[？！]|警告|别|喊|妈|疼|怕|不服|活该|管不了|嘴硬|还不哭",
             part,
         ):
             continue
         if re.search(
-            r"[我你]|[？！]|警告|别|喊|妈|疼|怕|不服|活该|管不了|劝不",
+            r"[我你]|[？！]|警告|别|喊|妈|疼|怕|不服|活该|管不了|劝不|嘴硬|还不哭",
             part,
         ):
             spoken.append(part)

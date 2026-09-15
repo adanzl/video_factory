@@ -320,12 +320,38 @@ def test_narration_line_detects_stage_direction():
         looks_like_narration_line,
         patch_dialogue_narration_to_speech,
         rewrite_narration_to_speech,
+        sanitize_dialogue_seed_speech,
     )
 
     assert looks_like_narration_line("一把揪住昭昭衣领，警告你别逼我呀。")
     assert looks_like_narration_line("挣扎着还手，被灿灿按在地上。")
     assert looks_like_narration_line("叹气，劝不动你们了。")
     assert not looks_like_narration_line("你松手！我喊妈了！")
+    assert not looks_like_narration_line("你别戳我腰！疼！")
+    assert not looks_like_narration_line(
+        "放开我！你挠我痒痒算什么本事！"
+    )
+
+    # 分镜入对白（抽象形态）
+    assert looks_like_narration_line(
+        "逮住你了，按在沙发上，看你还跑！"
+    )
+    assert looks_like_narration_line("不放，你抢我笔还做鬼脸，继续挠！")
+    assert not looks_like_narration_line("你抓我胳膊干嘛，放开我！")
+
+    sofa = rewrite_narration_to_speech(
+        "逮住你了，按在沙发上，看你还跑！",
+        speaker="灿灿",
+    )
+    assert "按在沙发" not in sofa
+    assert "逮住" in sofa or "还跑" in sofa
+
+    cont = rewrite_narration_to_speech(
+        "不放，你抢我笔还做鬼脸，继续挠！",
+        speaker="灿灿",
+    )
+    assert "继续挠" not in cont
+    assert "不放" in cont or "抢" in cont
 
     spoken = rewrite_narration_to_speech(
         "一把揪住昭昭衣领，警告你别逼我呀。",
@@ -334,16 +360,56 @@ def test_narration_line_detects_stage_direction():
     assert "揪住" not in spoken
     assert "别逼我" in spoken or "别过来" in spoken
 
+    ask = rewrite_narration_to_speech(
+        "站直了叉腰问：还不哭！",
+        speaker="灿灿",
+    )
+    assert "还不哭" in ask
+    assert "站直" not in ask and "叉腰" not in ask
+
+    tickle = rewrite_narration_to_speech(
+        "手指戳你腰侧，看你还嘴硬不嘴硬！",
+        speaker="灿灿",
+    )
+    assert "嘴硬" in tickle
+    assert "手指戳" not in tickle
+
+    stare = rewrite_narration_to_speech(
+        "抽抽搭搭抹眼泪，瞪灿灿一眼不说话。",
+        speaker="昭昭",
+    )
+    assert stare == "哼！"
+
+    mom_laugh = rewrite_narration_to_speech(
+        "从厨房探头看到这一幕笑出声",
+        speaker="妈妈",
+    )
+    assert "笑" in mom_laugh or "闹" in mom_laugh
+    assert "探头" not in mom_laugh
+
     story = {
         "dialogue": [
             {"speaker": "昭昭", "line": "挣扎着还手，被灿灿按在地上。"},
             {"speaker": "妈妈", "line": "叹气，劝不动你们了。"},
+            {"speaker": "灿灿", "line": "站直了叉腰问：还不哭！"},
         ]
     }
     notes = patch_dialogue_narration_to_speech(story)
     assert notes
     assert not looks_like_narration_line(story["dialogue"][0]["line"])
     assert not looks_like_narration_line(story["dialogue"][1]["line"])
+    assert "还不哭" in story["dialogue"][2]["line"]
+
+    seed = sanitize_dialogue_seed_speech(
+        [
+            {"speaker": "灿灿", "intent": "一把将昭昭按倒在沙发上"},
+            {"speaker": "灿灿", "intent": "手指戳昭昭腰侧开始挠痒痒"},
+            {"speaker": "妈妈", "intent": "从厨房探头看到这一幕笑出声"},
+        ]
+    )
+    assert "按倒" not in str(seed[0].get("intent"))
+    assert "手指戳" not in str(seed[1].get("intent"))
+    assert "探头" not in str(seed[2].get("intent"))
 
 
 def test_validate_gold_chat_rejects_narration_line():

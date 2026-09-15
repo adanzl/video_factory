@@ -546,6 +546,9 @@ def build_scene_contract(
     source_type: str = "field",
 ) -> dict[str, Any]:
     """H3a：story_raw → 可拍场景契约。"""
+    from app.services.gold_story.scene import remap_story_raw_sibling_roles
+
+    story_raw = remap_story_raw_sibling_roles(story_raw)
     base_user = _H3A_USER.format(
         h3_json=json.dumps(h3, ensure_ascii=False, indent=2),
         story_raw=story_raw[:4000],
@@ -564,7 +567,12 @@ def build_scene_contract(
     for attempt in range(2):
         user = base_user + (age_retry_hint if attempt else "")
         data = _chat_json(_H3A_SYSTEM, user)
-        data.setdefault("story_type", str(h3.get("structure_type") or "C"))
+        # 以库内 structure_type 为准，勿被 LLM 默认 C 带偏
+        target_st = str(h3.get("structure_type") or "").strip().upper()
+        if target_st:
+            data["story_type"] = target_st
+        else:
+            data.setdefault("story_type", "C")
         data["source_type"] = str(
             data.get("source_type") or source_type or "field"
         ).lower()

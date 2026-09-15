@@ -721,8 +721,21 @@ _SETTING_SURFACE_RE = re.compile(
 
 
 def _valid_activity_prop(prop: str) -> str:
-    key = _prop_key(prop)
+    raw = str(prop or "").strip()
+    # 容器后截到「攥着刚从…」这类动词短语时整段丢弃（末两字会变成那儿/是我）
+    if raw and _PROP_VERB_LEAD_RE.match(raw):
+        return ""
+    key = _prop_key(raw)
     if not key or key in _PROP_NOUN_SKIP:
+        return ""
+    if re.fullmatch(r"[我你他她它]", key):
+        return ""
+    if re.fullmatch(r"[这那][儿里边]", key):
+        return ""
+    if key.startswith("是") and len(key) <= 3:
+        return ""
+    # 台词残片「笔归我啦」等：中心语须像可拍名词
+    if re.search(r"[啦吧呀啊呢吗]|归我|还我", raw) and len(key) > 2:
         return ""
     if key in _DAILY_FIXED_FURNITURE:
         return ""
@@ -1645,18 +1658,49 @@ _MEASURE_HEAD_RE = re.compile(
     r"(?:盘|碗|块|根|袋|盒|瓶|杯|张|把|支|条|个|份|串|双|件)"
 )
 _PROP_NOUN_SKIP = frozenset(
-    {"东西", "那个", "这个", "什么", "哪里", "这样", "那样", "一下"}
+    {
+        "东西",
+        "那个",
+        "这个",
+        "什么",
+        "哪里",
+        "这样",
+        "那样",
+        "一下",
+        # 代词/指示残片，勿当冲突物（如「就是我的吧」→是我、「昭昭那儿」→那儿）
+        "我",
+        "你",
+        "他",
+        "她",
+        "它",
+        "是我",
+        "是你",
+        "是他",
+        "那儿",
+        "这儿",
+        "这里",
+        "那里",
+        "这边",
+        "那边",
+        "自己",
+        "人家",
+        "就是",
+    }
+)
+_PROP_VERB_LEAD_RE = re.compile(
+    r"^(?:攥着|端着|捧着|拿着|举着|追着|按着|刚从|就是)"
 )
 
 
 def _clip_prop_noun(raw: str) -> str:
     s = (raw or "").strip()
     s = re.split(
-        r"不香|这么|好多|好香|香得|香吗|凭什么|不能|都得|[吗呢啊呀吧哦]",
+        r"不香|这么|好多|好香|香得|香吗|凭什么|不能|都得|"
+        r"归我|还我|给我|[吗呢啊呀吧哦啦]",
         s,
         maxsplit=1,
     )[0]
-    return s.strip("的了着过呢嘛呀啊吧哦，。！？ ")
+    return s.strip("的了着过呢嘛呀啊吧哦啦，。！？ ")
 
 
 def _prop_key(prop: str) -> str:

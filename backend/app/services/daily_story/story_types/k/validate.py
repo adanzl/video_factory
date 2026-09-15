@@ -6,9 +6,15 @@ import re
 
 from app.services.daily_story.story_types import parse_story_type_code
 
-RE_FIGHT = re.compile(r"打|骂|推|吵|互骂|别吵|讨厌|滚|吼")
+RE_FIGHT = re.compile(
+    r"打|骂|推|吵|互骂|别吵|讨厌|滚|吼|"
+    # 肢体加码（挠/抢/按等同样是互打升级，不绑单篇）
+    r"抢|按|揪|抓|挠|跺|踢|咬|掐"
+)
 RE_PARENT_FAIL = re.compile(
-    r"躲|叹气|劝不了|管不了|别打了|你们别|看你们|我不管了|管不着",
+    r"躲|叹气|劝不了|管不了|劝不动|别打了|你们别|看你们|我不管了|管不着|"
+    # 旁观看戏（笑着看/闹吧），非 H 式劝和
+    r"闹吧|看着(?:你们|热闹)|我看着"
 )
 RE_STALEMATE = re.compile(r"不和好|僵持|哼|不理|别理|谁怕谁|越劝越")
 RE_H_RECONCILE = re.compile(r"拉手|(?<!不)和好|不打了|对不起|原谅|说好了|齐声")
@@ -74,3 +80,21 @@ def append_k_body_errors(story: dict, errors: list[str]) -> None:
         errors.append("K类：末段勿 H 式和好（拉手/不打了/对不起等）")
     if RE_A_BACKFIRE.search(tail4):
         errors.append("K类：末段勿 A 式反噬/破功链")
+    # 劝止与劝失败之间须有原冲突续行（非纯顶妈妈）
+    parent_idxs = [
+        i for i, sp in enumerate(speakers) if sp in ("妈妈", "爸爸")
+    ]
+    if len(parent_idxs) >= 2:
+        a_i, f_i = parent_idxs[0], parent_idxs[-1]
+        if f_i > a_i + 1:
+            mid = lines[a_i + 1 : f_i]
+            has_resume = any(
+                re.search(
+                    r"松手|别挠|还敢|再挠|哭不哭|疼|痒|还嘴硬|不服|撑多久",
+                    ln,
+                )
+                and not re.search(r"妈妈你别管|你管不着|别管我们", ln)
+                for ln in mid
+            )
+            if not has_resume:
+                errors.append("K类：劝止与劝失败之间须有原冲突续行")
