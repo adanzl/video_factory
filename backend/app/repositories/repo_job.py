@@ -29,11 +29,32 @@ def _row_to_dict(row: dict) -> dict:
     return data
 
 
+def _published_at_from_info(raw_info: Any) -> str | None:
+    """从 info.publish_result 取发布时间：优先 scheduled_at，否则 at。"""
+    if not raw_info:
+        return None
+    try:
+        info = json.loads(raw_info) if isinstance(raw_info, str) else raw_info
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(info, dict):
+        return None
+    result = info.get("publish_result")
+    if not isinstance(result, dict):
+        return None
+    for key in ("scheduled_at", "at"):
+        value = result.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
 def _normalize_list_row(row: dict) -> dict:
     data = dict(row)
     if data.get("final_path"):
         data["final_path"] = parse_final_asset(data["final_path"])
     data["publish"] = bool(data.get("publish"))
+    data["published_at"] = _published_at_from_info(data.pop("info", None))
     return data
 
 
@@ -102,7 +123,8 @@ def list_jobs(
 
     rows = sql.fetchall(
         f"""
-        SELECT id, title, stage, status, pipeline, final_path, updated_at, error_message, publish
+        SELECT id, title, stage, status, pipeline, final_path, updated_at,
+               error_message, publish, info
         FROM video_job
         {where_clause}
         ORDER BY id DESC

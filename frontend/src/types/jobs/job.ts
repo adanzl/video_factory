@@ -73,6 +73,8 @@ export interface JobListItem {
   material_id?: number | null;
   final_path?: FinalAsset | null;
   updated_at?: string | null;
+  /** info.publish_result.scheduled_at 或 .at */
+  published_at?: string | null;
   error_message?: string | null;
   publish?: boolean;
 }
