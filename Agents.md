@@ -126,6 +126,7 @@ CPU: AMD Ryzen 9 7940HS w/ Radeon 780M Graphics
 - 避免 Emphasis used instead of a heading
 - 避免代码告警 不能有basedpyright报错
 - gevent thread=False  下不要使用 threading.Lock
+- 代码修复时，如果要增加忽略项要我同意
 
 ## 审核稿子
 

@@ -891,6 +891,7 @@ _DAILY_STORY_SYSTEM_SHARED = """\
 - 妈妈：配角。可出场，但台词少；主戏仍是姐弟，妈妈不是戏核。
 - 爸爸：配角，优先级低于妈妈。默认可不写；仅妈妈代不了时出场，台词更少，不是戏核。
 - 关系：亲姐弟，住在一起；主戏是姐弟斗嘴/较真/互相带偏，不是被家长教育。
+- 称呼：昭昭口中称灿灿须用「姐姐」，禁止直呼「灿灿」（不礼貌）。
 
 【妈妈戏份（硬约束）】
 - A/C/D 默认可不写妈妈；主戏与破功优先纯姐弟完成。
@@ -4356,6 +4357,22 @@ def try_local_patch_daily_story_body(story: dict) -> tuple[dict, list[str]]:
     out = _clone_story(story)
     notes: list[str] = []
     notes.extend(_patch_speaker_aliases(out))
+    # 昭昭口中「灿灿」→「姐姐」（礼貌称呼）
+    from app.services.daily_story.review import rewrite_zhao_cancan_to_jiejie
+
+    before = [
+        str(d.get("line") or "")
+        for d in (out.get("dialogue") or [])
+        if isinstance(d, dict)
+    ]
+    rewrite_zhao_cancan_to_jiejie(out)
+    after = [
+        str(d.get("line") or "")
+        for d in (out.get("dialogue") or [])
+        if isinstance(d, dict)
+    ]
+    if before != after:
+        notes.append("昭昭口中灿灿改姐姐")
     notes.extend(_patch_overlong_lines(out))
     notes.extend(_patch_setting_parent_without_line(out))
     notes.extend(_patch_consecutive_speakers(out))
