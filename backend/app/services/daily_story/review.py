@@ -866,6 +866,7 @@ def build_wording_polish_prompts(
         "- line 只写台词本身，**不要带「昭昭：」这种说话人前缀**；\n"
         "- 灿灿除开场外禁止喊「昭昭，」；出现则直接删掉「昭昭」和后面的逗号，"
         "勿改成别的称呼；\n"
+        "- 昭昭口中禁止直呼「灿灿」，一律称「姐姐」；\n"
         "- 只改被点到的行号，勿顺手改别处，勿新增或删除行；\n"
         "- 孩子台词改成小孩会说的口语；妈妈台词只去掉书面/旁白，保持大人语气；\n"
         "- 保持原意、信息量、事实与前后句衔接；\n"
@@ -1080,6 +1081,30 @@ def strip_cancan_mid_zhaozhao_vocatives(story: dict) -> dict:
     return story
 
 
+def rewrite_zhao_cancan_to_jiejie(story: dict) -> dict:
+    """昭昭口中「灿灿」一律改「姐姐」（弟弟直呼姐姐名字不礼貌）。"""
+    for key in ("dialogue", "discovery_opening"):
+        rows = story.get(key)
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            if str(row.get("speaker") or "").strip() != "昭昭":
+                continue
+            line = str(row.get("line") or "")
+            if "灿灿" not in line:
+                continue
+            row["line"] = line.replace("灿灿", "姐姐")
+    return story
+
+
+def apply_sibling_address_rules(story: dict) -> dict:
+    """姐弟当面称呼本地硬规则。"""
+    story = strip_cancan_mid_zhaozhao_vocatives(story)
+    return rewrite_zhao_cancan_to_jiejie(story)
+
+
 def apply_local_wording_sanitization(
     story: dict,
     *,
@@ -1091,7 +1116,7 @@ def apply_local_wording_sanitization(
 
     from app.services.daily_story.prompts import validate_daily_story_json
 
-    story = strip_cancan_mid_zhaozhao_vocatives(story)
+    story = apply_sibling_address_rules(story)
     rows = _dialogue(story)
     lines = [str(r.get("line") or "").strip() for r in rows]
     n = len(lines)
@@ -1468,7 +1493,7 @@ def polish_daily_story_wording_iteratively(
     """
     polish = getattr(client, "polish_daily_story_wording", None)
     if not callable(polish):
-        return strip_cancan_mid_zhaozhao_vocatives(story), 0
+        return apply_sibling_address_rules(story), 0
 
     def _sense_drift_lines(s: dict) -> set[int]:
         return {
@@ -1515,7 +1540,7 @@ def polish_daily_story_wording_iteratively(
                 "[DAILY_STORY] wording full-scan polish accepted=%d",
                 len(accepted),
             )
-        story = strip_cancan_mid_zhaozhao_vocatives(story)
+        story = apply_sibling_address_rules(story)
         return story, total_accepted
 
     for _ in range(max(1, max_rounds)):
@@ -1548,7 +1573,7 @@ def polish_daily_story_wording_iteratively(
             len(accepted),
             total_accepted,
         )
-    story = strip_cancan_mid_zhaozhao_vocatives(story)
+    story = apply_sibling_address_rules(story)
     return story, total_accepted
 
 

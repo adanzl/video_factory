@@ -598,3 +598,26 @@ def test_assemble_three_person_layout_from_speakers():
     assert "三人同框" in prompt
     assert "米色上衣" in prompt
     assert "妈妈最高" in prompt
+
+
+def test_zhao_cancan_renamed_to_jiejie():
+    """昭昭口中「灿灿」→「姐姐」；灿灿/妈妈台词不动。"""
+    from app.services.daily_story.review import rewrite_zhao_cancan_to_jiejie
+
+    story = {
+        "dialogue": [
+            {"speaker": "昭昭", "line": "灿灿数学才考58分！"},
+            {"speaker": "灿灿", "line": "昭昭你闭嘴，别说灿灿了！"},
+            {"speaker": "妈妈", "line": "灿灿卷子给我。"},
+            {"speaker": "昭昭", "line": "我到处说灿灿低分怎么了！"},
+        ],
+        "discovery_opening": [
+            {"speaker": "昭昭", "line": "灿灿考砸了，我见人就说！"},
+        ],
+    }
+    rewrite_zhao_cancan_to_jiejie(story)
+    assert story["dialogue"][0]["line"] == "姐姐数学才考58分！"
+    assert story["dialogue"][1]["line"] == "昭昭你闭嘴，别说灿灿了！"
+    assert story["dialogue"][2]["line"] == "灿灿卷子给我。"
+    assert story["dialogue"][3]["line"] == "我到处说姐姐低分怎么了！"
+    assert story["discovery_opening"][0]["line"] == "姐姐考砸了，我见人就说！"
