@@ -339,6 +339,37 @@ def test_narration_line_detects_stage_direction():
     assert looks_like_narration_line("不放，你抢我笔还做鬼脸，继续挠！")
     assert not looks_like_narration_line("你抓我胳膊干嘛，放开我！")
 
+    # 动作/神态说明混入对白（抽象）
+    assert looks_like_narration_line("我拎起行李袋，鞋跟一踩就出门，不回头。")
+    assert looks_like_narration_line("对视一眼，气全消了，走，楼下便利店。")
+    assert looks_like_narration_line("笑出声，那你还不是跟我一路。")
+    assert looks_like_narration_line("电梯里沉默几秒，我先开口：你去哪？")
+    assert looks_like_narration_line("电梯口撞见她，我俩都愣住，谁也没动。")
+    assert not looks_like_narration_line("你去哪？我怕你一个人走！")
+
+    ask = rewrite_narration_to_speech(
+        "电梯里沉默几秒，我先开口：你去哪？",
+        speaker="灿灿",
+    )
+    assert ask.startswith("你去哪")
+    assert "沉默" not in ask
+    assert "开口" not in ask
+
+    laugh = rewrite_narration_to_speech(
+        "笑出声，那你还不是跟我一路。",
+        speaker="昭昭",
+    )
+    assert "笑出声" not in laugh
+    assert "跟我一路" in laugh or "不是" in laugh
+
+    gaze = rewrite_narration_to_speech(
+        "对视一眼，气全消了，走，楼下便利店。",
+        speaker="灿灿",
+    )
+    assert "对视" not in gaze
+    assert "气全消" not in gaze
+    assert "便利店" in gaze or "走" in gaze
+
     sofa = rewrite_narration_to_speech(
         "逮住你了，按在沙发上，看你还跑！",
         speaker="灿灿",

@@ -7,15 +7,23 @@ import re
 from app.services.daily_story.story_types import parse_story_type_code
 from app.services.daily_story.story_types.quality import RE_BOOMERANG_RULE
 
+# 去掉裸「管你」，避免「不用你管」假阳性；同路巧合允许「先问去向」类关心
 RE_PIVOT = re.compile(
-    r"护|撑腰|拼命|动你|心疼|管你|认真的|我怕|别叫我|老弟|我弟|重要|舍不得|在乎",
+    r"护|撑腰|拼命|动你|心疼|认真的|我怕|别叫我|老弟|我弟|重要|舍不得|在乎|"
+    r"你去哪|去哪儿|你一个人|一个人走|一个人回|陪你|放心不下|怕你|"
+    r"你先说|你先讲",
 )
-RE_STUNNED = re.compile(r"你说啥|你说什么|……|\.\.\.|愣|啥\？|什么\？")
+RE_STUNNED = re.compile(
+    r"你说啥|你说什么|……|\.\.\.|愣|啥\？|什么\？|笑出声|噗|忍不住笑",
+)
 RE_SOFT_CLOSE = re.compile(
-    r"擦|药|说好了|行了|过来|撑腰|嗯|笑|好\s*吧|别.*欺负|识相|饶|原谅|算了",
+    r"擦|药|说好了|行了|过来|撑腰|嗯|笑|好\s*吧|别.*欺负|识相|饶|原谅|算了|"
+    r"一起走|一起去|一起回|走吧|同路|顺路|没走成|谁也没",
 )
+# 须双方僵持结构；裸「谁也不」会误伤「谁也没走成」
 RE_F_STALE = re.compile(
-    r"不跟你玩|不跟你好了|不理你|回家.*不|谁也不|爱咋咋",
+    r"不跟你玩|不跟你好了|不理你|回家.*不|"
+    r"谁也不理谁|谁也不跟谁说话|谁也不让谁|爱咋咋",
 )
 
 
@@ -55,5 +63,6 @@ def append_g_body_errors(story: dict, errors: list[str]) -> None:
         errors.append("G类：末段须暖收或半暖（擦药/撑腰/说好了等）")
     if RE_BOOMERANG_RULE.search(tail3):
         errors.append("G类：末段勿 C 式回旋镖戳穿")
-    if RE_F_STALE.search(tail3):
+    # 末段已有暖收信号时，不把残余互呛词当 F 僵持
+    if RE_F_STALE.search(tail3) and not RE_SOFT_CLOSE.search(tail3):
         errors.append("G类：末段勿 F 式威胁僵持")
