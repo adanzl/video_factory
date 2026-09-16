@@ -536,6 +536,7 @@ _NARRATION_LINE_RE = re.compile(
     r"探(?:出)?头|"
     r"俯视|"
     r"问[:：]|"
+    r"开口[:：]|"
     r"(?:不|没)说话|"
     r"没再管|"
     r"(?:把|将)(?:笔|东西)?举高|"
@@ -553,7 +554,19 @@ _NARRATION_LINE_RE = re.compile(
     r"按在沙发上|按沙发上|"
     r"(?:^|[，,])继续挠|"
     r"(?:看我)?吐舌头|"
-    r"瞪你一眼"
+    r"瞪你一眼|"
+    # 动作/神态说明混入对白（抽象，不绑场景名词）
+    r"拎起|"
+    r"塞进(?:袋子|包)|"
+    r"拉链一拉|"
+    r"鞋跟一踩|"
+    r"换好鞋|"
+    r"(?:^|[，,])对视一眼|"
+    r"(?:^|[，,])笑出声|"
+    r"沉默几秒|沉默一会儿|"
+    r"我俩都愣住|都愣住|"
+    r"气全消了|"
+    r"撞见(?:她|他)"
 )
 _RE_ACTION_CHUNK = re.compile(
     r"又?补[一二两三四五两1-5]?下|按在地上|"
@@ -603,10 +616,27 @@ def rewrite_narration_to_speech(text: str, *, speaker: str = "") -> str:
     # 咀嚼/塞食动作 → 可说的逞强短句（抽象，不绑具体食物）
     if re.search(r"一口(?:吞下|塞进|吞了)|奶油都?(?:挤|溢)", raw):
         return "看我一口吞！"
-    # 「…问：台词」只留冒号后口语
-    m_ask = re.search(r"问[:：]\s*(.+)$", raw)
+    # 「…问：台词」/「…开口：台词」只留冒号后口语
+    m_ask = re.search(r"(?:问|开口)[:：]\s*(.+)$", raw)
     if m_ask:
         tail = m_ask.group(1).strip("，。！？ ")
+        if tail and not looks_like_narration_line(tail):
+            if tail[-1] not in "？！。!?":
+                tail = f"{tail}！"
+            return tail
+    # 「笑出声，口语尾巴」只留可说部分
+    m_laugh = re.match(r"笑出声[，,]\s*(.+)$", raw)
+    if m_laugh:
+        tail = m_laugh.group(1).strip("，。！？ ")
+        if tail and not looks_like_narration_line(tail):
+            if tail[-1] not in "？！。!?":
+                tail = f"{tail}！"
+            return tail
+    # 「对视一眼，…」剥掉神态块，留口语尾巴
+    m_gaze = re.match(r"对视一眼[，,]\s*(.+)$", raw)
+    if m_gaze:
+        tail = m_gaze.group(1).strip()
+        tail = re.sub(r"^气全消了[，,]?\s*", "", tail).strip("，。！？ ")
         if tail and not looks_like_narration_line(tail):
             if tail[-1] not in "？！。!?":
                 tail = f"{tail}！"
