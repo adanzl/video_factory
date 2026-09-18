@@ -94,6 +94,25 @@ def _append_g_authority_punchline_errors(
         errors.append("G类(权威点题)：末句须权威点题/秩序宣布")
     elif not RE_AUTH_CEDE.search("".join(lines[:-1])):
         errors.append("G类(权威点题)：权威点题前须已有认怂让渡")
+    else:
+        # 让渡 → 点题：至多 1 句过渡，禁省略号空应答占行
+        punch_i = len(lines) - 1
+        cede_before = [
+            i for i, ln in enumerate(lines[:-1]) if RE_AUTH_CEDE.search(ln)
+        ]
+        if cede_before:
+            cede_i = cede_before[-1]
+            gap = punch_i - cede_i - 1
+            if gap > 1:
+                errors.append("G类(权威点题)：让渡后至多1句过渡再到点题")
+            for j in range(cede_i + 1, punch_i):
+                mid = str(lines[j] or "").strip()
+                if re.search(r"[…⋯]", mid) and len(mid) <= 10:
+                    errors.append("G类(权威点题)：让渡后勿省略号空句占行")
+                    break
+                if re.fullmatch(r"[我你他她它]?\s*[…⋯。.！!？?\s]*", mid or ""):
+                    errors.append("G类(权威点题)：让渡后勿空应答占行")
+                    break
     if RE_BOOMERANG_RULE.search(tail4):
         errors.append("G类：末段勿 C 式回旋镖戳穿")
     if RE_F_STALE.search(tail4) and not RE_AUTH_PUNCH.search(tail4):
