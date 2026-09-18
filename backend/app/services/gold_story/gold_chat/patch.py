@@ -9,6 +9,7 @@ from app.services.gold_story.gold_chat.validate import (
     RE_AUTH_RULE_SLOT,
     RE_AUTH_VICTIM_DISTRESS,
     RE_AUTH_HIDER_DENY,
+    RE_AUTH_HIDER_ACT,
     RE_FIGHT_QUESTION,
     RE_INJURY,
     RE_IODINE_CLOSE,
@@ -2450,6 +2451,9 @@ def patch_authority_role_speakers(
             changed = True
         elif hit_distress and sp != victim:
             dlg[i] = {**row, "speaker": victim}
+            changed = True
+        elif RE_AUTH_HIDER_ACT.search(line) and sp != hider:
+            dlg[i] = {**row, "speaker": hider}
             changed = True
     if not changed:
         return story, False

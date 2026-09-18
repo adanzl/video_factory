@@ -1302,10 +1302,13 @@ def _append_seed_speaker_issues(
 
 RE_AUTH_RULE_SLOT = re.compile(r"谁先|先.+谁|立规|约好|规定|规矩|定规|说好|约定")
 RE_AUTH_VICTIM_DISTRESS = re.compile(
-    r"找不到|急死|急哭|翻遍|本子呢|作业呢|咦，.*呢"
+    r"找不到|急死|急哭|急得.*哭|想哭|翻遍|本子呢|作业呢|咦，.*呢"
 )
 RE_AUTH_HIDER_DENY = re.compile(
     r"没看见|乱放还赖|哭什么|赖我|你自己乱放|我没藏|没藏过|你自己找"
+)
+RE_AUTH_HIDER_ACT = re.compile(
+    r"塞进|藏进|塞到|藏到|冷冻层|冷藏层"
 )
 
 
@@ -1433,6 +1436,18 @@ def _append_authority_punchline_align_issues(
                         f"beat 受害方为{victim}：{line}"
                     ),
                     fix=f"急哭/找不到句须由受害方{victim}说",
+                )
+            )
+        if RE_AUTH_HIDER_ACT.search(line) and sp != hider and sp in {"昭昭", "灿灿"}:
+            issues.append(
+                _issue(
+                    lines=[i],
+                    kind="保真-权威角色",
+                    desc=(
+                        f"第{i}句藏物动作由{sp}说，"
+                        f"beat 藏物方为{hider}：{line}"
+                    ),
+                    fix=f"藏/塞本句须由藏物方{hider}说",
                 )
             )
 
