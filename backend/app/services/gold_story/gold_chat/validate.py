@@ -1401,6 +1401,10 @@ def _append_type_contract_align_issues(
     if not punch.upper().startswith(st):
         label = STORY_TYPE_LABELS.get(st, st)
         mini["punchline_explain"] = f"{st}类{label}，{punch}".strip("，")
+    # 保留旁路收束模式，供 G validate 分支
+    mode = str(story.get("closing_mode") or "").strip()
+    if mode:
+        mini["closing_mode"] = mode
 
     errors: list[str] = []
     append_type_body_validation_errors(mini, errors, for_gold_chat=True)

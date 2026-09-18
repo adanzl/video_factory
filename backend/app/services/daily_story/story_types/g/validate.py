@@ -1,4 +1,8 @@
-"""G 类正文硬卡（pivot + 暖收，非 C/F 收束）。"""
+"""G 类正文硬卡（pivot + 暖收，非 C/F 收束）。
+
+M4+G 权威点题旁路：``closing_mode=authority_punchline`` 时改用
+立规→反将→认怂让渡→权威点题槽位，不放宽标准 G 的 pivot/暖收。
+"""
 
 from __future__ import annotations
 
@@ -6,6 +10,9 @@ import re
 
 from app.services.daily_story.story_types import parse_story_type_code
 from app.services.daily_story.story_types.quality import RE_BOOMERANG_RULE
+from app.services.gold_story.structure_resolve import (
+    CLOSING_MODE_AUTHORITY_PUNCHLINE,
+)
 
 # 去掉裸「管你」，避免「不用你管」假阳性；同路巧合允许「先问去向」类关心
 RE_PIVOT = re.compile(
@@ -24,6 +31,22 @@ RE_SOFT_CLOSE = re.compile(
 RE_F_STALE = re.compile(
     r"不跟你玩|不跟你好了|不理你|回家.*不|"
     r"谁也不理谁|谁也不跟谁说话|谁也不让谁|爱咋咋",
+)
+
+# 权威点题旁路槽位（抽象，禁绑平板/巧克力等单篇词）
+RE_AUTH_RULE = re.compile(r"谁先|立规|约好|规定|规矩|定规|作业|写完")
+RE_AUTH_REVERSE = re.compile(
+    r"不罚|没发火|反而|反把|那今晚|那你负责|你负责|今晚你|负责哄|藏得"
+)
+RE_AUTH_CEDE = re.compile(
+    r"立刻.*(给|塞|让)|你玩你玩|我哄|认怂|塞给|让出|你玩"
+)
+RE_AUTH_PUNCH = re.compile(
+    r"记住|宣布|点破|并列|第[一二三]|这个家|这个班|听清楚|我说了算"
+)
+# 反将后抗拒/辩解（抽象：不会/不要/换/真不会，禁绑单篇词）
+RE_AUTH_RESIST = re.compile(
+    r"不会|不要|换件|换事|我真|凭什么|为啥|干嘛|不行吧|太难"
 )
 
 
@@ -45,12 +68,48 @@ def _lines_and_speakers(story: dict) -> tuple[list[str], list[str]]:
     return lines, speakers
 
 
+def _is_authority_punchline_mode(story: dict) -> bool:
+    mode = str(story.get("closing_mode") or "").strip()
+    return mode == CLOSING_MODE_AUTHORITY_PUNCHLINE
+
+
+def _append_g_authority_punchline_errors(
+    story: dict,
+    errors: list[str],
+    *,
+    lines: list[str],
+) -> None:
+    body = "".join(lines)
+    tail4 = "".join(lines[-4:])
+    last = lines[-1] if lines else ""
+    if not RE_AUTH_RULE.search(body):
+        errors.append("G类(权威点题)：正文须有立规/约好槽")
+    if not RE_AUTH_REVERSE.search(body):
+        errors.append("G类(权威点题)：正文须有反将任务/不罚反递槽")
+    if not RE_AUTH_RESIST.search(body):
+        errors.append("G类(权威点题)：反将后须有抗拒/辩解槽")
+    if not RE_AUTH_CEDE.search(body):
+        errors.append("G类(权威点题)：正文须有认怂让渡槽")
+    if not RE_AUTH_PUNCH.search(last):
+        errors.append("G类(权威点题)：末句须权威点题/秩序宣布")
+    elif not RE_AUTH_CEDE.search("".join(lines[:-1])):
+        errors.append("G类(权威点题)：权威点题前须已有认怂让渡")
+    if RE_BOOMERANG_RULE.search(tail4):
+        errors.append("G类：末段勿 C 式回旋镖戳穿")
+    if RE_F_STALE.search(tail4) and not RE_AUTH_PUNCH.search(tail4):
+        errors.append("G类：末段勿 F 式威胁僵持")
+
+
 def append_g_body_errors(story: dict, errors: list[str]) -> None:
     punch = str(story.get("punchline_explain") or "")
     if parse_story_type_code(punchline=punch) != "G":
         return
     lines, _speakers = _lines_and_speakers(story)
     if len(lines) < 10:
+        return
+
+    if _is_authority_punchline_mode(story):
+        _append_g_authority_punchline_errors(story, errors, lines=lines)
         return
 
     body = "".join(lines)

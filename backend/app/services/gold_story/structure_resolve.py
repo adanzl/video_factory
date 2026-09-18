@@ -1,6 +1,7 @@
 """金故事结构类型纠偏：M2+C 误判武力压制→M8+J；正经胡说→M6+N；
 目标错位→M13+O；整蛊互整→M14+P；耍赖翻车→M15+Q；暖收误标 M7+D→M4+G；
-无双规则硬套 M2+C / 假 M14+P → 降置信拒收。"""
+无双规则硬套 M2+C / 假 M14+P → 降置信拒收；
+M4+G 无真情 pivot 时旁路 closing_mode=authority_punchline。"""
 
 from __future__ import annotations
 
@@ -12,6 +13,9 @@ from app.services.gold_story.types import (
     allowed_structure_types,
     normalize_structure_type,
 )
+
+# M4+G 收束旁路：权威点题（非真情 pivot/暖收），不改 structure_type 字母
+CLOSING_MODE_AUTHORITY_PUNCHLINE = "authority_punchline"
 
 _RE_C_BOOMERANG = re.compile(
     r"你刚说|你不是说|那不一样|哪里不一样|你定的|规矩是你|"
@@ -99,6 +103,28 @@ _RE_WARM_CLOSE = re.compile(
 _RE_D_CLOSE = re.compile(
     r"叮嘱.*破|破规|原话回旋|你刚说|你不是说|规矩是你|歪读执行.*破"
 )
+# 权威点题旁路：立规→反将→认怂让渡→权威秩序点题（抽象槽位，禁绑单篇词）
+_RE_AUTH_RULE = re.compile(r"谁先|立规|约好|规定|规矩|定规")
+_RE_AUTH_REVERSE = re.compile(
+    r"不罚|没发火|反而|反把|那今晚|那你负责|你负责|今晚你|"
+    r"递.*给|把.*给.*哄|反将"
+)
+_RE_AUTH_CEDE = re.compile(
+    r"立刻.*(给|塞|让)|你玩你玩|我哄|认怂|塞给|让出|主动让"
+)
+_RE_AUTH_PUNCH = re.compile(
+    r"记住|宣布|点破|并列|第[一二三]|这个家|这个班|听清楚|我说了算|"
+    r"家庭排名|秩序"
+)
+# 真 G 关系修复证据（有则勿打权威点题旁路）
+_RE_TRUE_G_PIVOT = re.compile(
+    r"护|撑腰|拼命|动你|心疼|认真的|我怕|重要|舍不得|在乎|"
+    r"你去哪|一个人走|陪你|真心"
+)
+_RE_TRUE_G_SOFT = re.compile(
+    r"擦|药|说好了|行了|过来|撑腰|识相|饶|原谅|一起走|一起去|拉手"
+)
+
 
 def classification_blob(
     *,
@@ -350,6 +376,59 @@ def suggests_m4_g_warm_close(blob: str) -> bool:
     if _RE_D_CLOSE.search(text):
         return False
     return True
+
+
+def suggests_true_g_relational_close(blob: str) -> bool:
+    """源稿已有真情 pivot + 暖收信号 → 走标准 G，勿旁路。"""
+    text = str(blob or "")
+    return bool(_RE_TRUE_G_PIVOT.search(text) and _RE_TRUE_G_SOFT.search(text))
+
+
+def suggests_authority_punchline_close(blob: str) -> bool:
+    """立规→反将→认怂让渡→权威点题（无真情 pivot/暖收）。"""
+    text = str(blob or "")
+    if suggests_true_g_relational_close(text):
+        return False
+    return bool(
+        _RE_AUTH_RULE.search(text)
+        and _RE_AUTH_REVERSE.search(text)
+        and _RE_AUTH_CEDE.search(text)
+        and _RE_AUTH_PUNCH.search(text)
+    )
+
+
+def stamp_m4_g_closing_mode(
+    row: dict[str, Any],
+    payload: dict[str, Any],
+    blob: str,
+) -> list[str]:
+    """M4+G 无关系修复证据且命中权威点题链时，打 closing_mode 旁路。
+
+    不改 mechanism/structure_type；真 G 清掉误标旁路。
+    """
+    notes: list[str] = []
+    mech = str(row.get("mechanism") or "").strip().upper()
+    st = str(row.get("structure_type") or "").strip().upper()
+    prev = str(payload.get("closing_mode") or "").strip()
+    if mech != "M4" or st != "G":
+        if prev == CLOSING_MODE_AUTHORITY_PUNCHLINE:
+            payload["closing_mode"] = None
+            notes.append("closing_mode:clear(not-m4-g)")
+        return notes
+    if suggests_true_g_relational_close(blob):
+        if prev == CLOSING_MODE_AUTHORITY_PUNCHLINE:
+            payload["closing_mode"] = None
+            notes.append("closing_mode:clear(true-g)")
+        return notes
+    if suggests_authority_punchline_close(blob):
+        if prev != CLOSING_MODE_AUTHORITY_PUNCHLINE:
+            payload["closing_mode"] = CLOSING_MODE_AUTHORITY_PUNCHLINE
+            notes.append("closing_mode:authority_punchline")
+        return notes
+    if prev == CLOSING_MODE_AUTHORITY_PUNCHLINE:
+        payload["closing_mode"] = None
+        notes.append("closing_mode:clear(no-authority-chain)")
+    return notes
 
 
 def should_reclassify_m7_d_to_m4_g(
@@ -760,10 +839,12 @@ def resolve_structure_row(row: dict[str, Any]) -> tuple[dict[str, Any], list[str
                     f"{note}；{demote_extra}".strip("；") if note else demote_extra
                 )
             notes.append("demote:forced-m14p-not-prank")
+        notes.extend(stamp_m4_g_closing_mode(out, payload, blob))
         out["payload"] = payload
         return out, notes
 
     if target_st not in allowed_structure_types(target_mech):
+        notes.extend(stamp_m4_g_closing_mode(out, payload, blob))
         out["payload"] = payload
         return out, notes
 
@@ -779,6 +860,8 @@ def resolve_structure_row(row: dict[str, Any]) -> tuple[dict[str, Any], list[str
         )
 
     _sync_scene_contract_story_type(payload, target_st, notes)
+    # 纠偏后再用新 mechanism/structure 打旁路
+    notes.extend(stamp_m4_g_closing_mode(out, payload, blob))
     out["payload"] = payload
     return out, notes
 
