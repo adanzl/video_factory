@@ -6,6 +6,9 @@ import re
 from typing import Any
 
 from app.services.gold_story.gold_chat.validate import (
+    RE_AUTH_RULE_SLOT,
+    RE_AUTH_VICTIM_DISTRESS,
+    RE_AUTH_HIDER_DENY,
     RE_FIGHT_QUESTION,
     RE_INJURY,
     RE_IODINE_CLOSE,
@@ -2247,4 +2250,441 @@ def patch_gold_chat_c_seed_bridge(
     ]
     dlg[mom_i:mom_i] = insert
     return out, ["gold_chat补seed再堵来回"]
+
+
+def _authority_beat0(
+    beat_chain: list[Any] | None,
+) -> tuple[str, str]:
+    for item in beat_chain or []:
+        if not isinstance(item, dict):
+            continue
+        sp = str(item.get("speaker") or "").strip()
+        intent = str(item.get("intent") or "").strip()
+        if sp:
+            return sp, intent
+    return "", ""
+
+
+def _intent_to_rule_line(intent: str) -> str:
+    """beat0 intent → 可说出口的短立规句（须命中立规槽正则）。"""
+    text = str(intent or "").strip()
+    text = re.sub(r"^立规[：:]", "", text).strip()
+    text = re.sub(r"^约好[：:]", "", text).strip()
+    if not text:
+        text = "谁先完成谁先用"
+    # 无抽象立规槽时补「说好了，」保证机审可识别（不绑单篇词）
+    if not RE_AUTH_RULE_SLOT.search(text):
+        text = f"说好了，{text}"
+    if not text.endswith(("。", "！", "？", "~")):
+        text = text + "。"
+    if len(text) > 28:
+        text = text[:27] + "。"
+    # 截断后若槽位丢失，回退到稳妥短句
+    if not RE_AUTH_RULE_SLOT.search(text):
+        return "说好了，谁先完成谁先用。"
+    return text
+
+
+def patch_authority_opening_speaker(
+    story: dict[str, Any],
+    *,
+    beat_chain: list[Any] | None = None,
+) -> tuple[dict[str, Any], bool]:
+    """首句有立规槽但 speaker 错 → 重挂 beat0。"""
+    import copy
+
+    from app.services.gold_story.structure_resolve import (
+        CLOSING_MODE_AUTHORITY_PUNCHLINE,
+    )
+
+    if str(story.get("closing_mode") or "").strip() != CLOSING_MODE_AUTHORITY_PUNCHLINE:
+        return story, False
+    beat0, _ = _authority_beat0(beat_chain)
+    rows = _dialogue_rows(story)
+    if not beat0 or not rows:
+        return story, False
+    line0 = str(rows[0].get("line") or "").strip()
+    sp0 = str(rows[0].get("speaker") or "").strip()
+    if RE_AUTH_RULE_SLOT.search(line0) and sp0 != beat0:
+        out = copy.deepcopy(story)
+        out["dialogue"][0]["speaker"] = beat0
+        return out, True
+    return story, False
+
+
+def patch_authority_move_rule_to_front(
+    story: dict[str, Any],
+    *,
+    beat_chain: list[Any] | None = None,
+) -> tuple[dict[str, Any], bool]:
+    """立规句被后置：仅前移该句（speaker=beat0 优先）。"""
+    import copy
+
+    from app.services.gold_story.structure_resolve import (
+        CLOSING_MODE_AUTHORITY_PUNCHLINE,
+    )
+
+    if str(story.get("closing_mode") or "").strip() != CLOSING_MODE_AUTHORITY_PUNCHLINE:
+        return story, False
+    beat0, _ = _authority_beat0(beat_chain)
+    rows = _dialogue_rows(story)
+    if len(rows) < 2:
+        return story, False
+    # already ok
+    if RE_AUTH_RULE_SLOT.search(str(rows[0].get("line") or "")):
+        return story, False
+    hit = -1
+    for i, row in enumerate(rows):
+        line = str(row.get("line") or "")
+        sp = str(row.get("speaker") or "").strip()
+        if not RE_AUTH_RULE_SLOT.search(line):
+            continue
+        if beat0 and sp == beat0:
+            hit = i
+            break
+        if hit < 0:
+            hit = i
+    if hit <= 0:
+        return story, False
+    out = copy.deepcopy(story)
+    dlg = list(out.get("dialogue") or [])
+    item = dlg.pop(hit)
+    if beat0:
+        item = dict(item)
+        item["speaker"] = beat0
+    dlg.insert(0, item)
+    out["dialogue"] = dlg
+    return out, True
+
+
+def patch_authority_insert_rule_opening(
+    story: dict[str, Any],
+    *,
+    beat_chain: list[Any] | None = None,
+) -> tuple[dict[str, Any], bool]:
+    """首句仍无立规槽时：插入 beat0 立规句为第1句（不编新剧情）。"""
+    import copy
+
+    from app.services.gold_story.structure_resolve import (
+        CLOSING_MODE_AUTHORITY_PUNCHLINE,
+    )
+
+    if str(story.get("closing_mode") or "").strip() != CLOSING_MODE_AUTHORITY_PUNCHLINE:
+        return story, False
+    beat0, intent = _authority_beat0(beat_chain)
+    rows = _dialogue_rows(story)
+    if not beat0 or not rows:
+        return story, False
+    line0 = str(rows[0].get("line") or "")
+    sp0 = str(rows[0].get("speaker") or "").strip()
+    if RE_AUTH_RULE_SLOT.search(line0) and sp0 == beat0:
+        return story, False
+    # 首句不合格：优先改写首句，避免妈妈句数≥4被结构分 -10
+    out = copy.deepcopy(story)
+    dlg = list(out.get("dialogue") or [])
+    rule = {"speaker": beat0, "line": _intent_to_rule_line(intent)}
+    mom_n = sum(
+        1
+        for r in dlg
+        if isinstance(r, dict) and str(r.get("speaker") or "").strip() == "妈妈"
+    )
+    if mom_n >= 3:
+        dlg[0] = rule
+    else:
+        dlg.insert(0, rule)
+    out["dialogue"] = dlg
+    return out, True
+
+
+
+def patch_authority_role_speakers(
+    story: dict[str, Any],
+    *,
+    beat_chain: list[Any] | None = None,
+) -> tuple[dict[str, Any], bool]:
+    """急哭/撇清语义句 speaker 与 beat 受害/藏物方不一致时重挂（不改台词）。"""
+    import copy
+    import re as _re
+
+    from app.services.gold_story.structure_resolve import (
+        CLOSING_MODE_AUTHORITY_PUNCHLINE,
+    )
+
+    if str(story.get("closing_mode") or "").strip() != CLOSING_MODE_AUTHORITY_PUNCHLINE:
+        return story, False
+    victim = ""
+    hider = ""
+    for item in beat_chain or []:
+        if not isinstance(item, dict):
+            continue
+        sp = str(item.get("speaker") or "").strip()
+        intent = str(item.get("intent") or item.get("beat") or "")
+        if not victim and _re.search(r"急哭|找不到|急死", intent):
+            victim = sp
+        if not hider and _re.search(r"藏|占物|塞", intent):
+            hider = sp
+    if not victim or not hider or victim == hider:
+        return story, False
+    rows = _dialogue_rows(story)
+    if not rows:
+        return story, False
+    out = copy.deepcopy(story)
+    dlg = list(out.get("dialogue") or [])
+    changed = False
+    for i, row in enumerate(dlg):
+        if not isinstance(row, dict):
+            continue
+        sp = str(row.get("speaker") or "").strip()
+        line = str(row.get("line") or "").strip()
+        if sp not in {"昭昭", "灿灿"}:
+            continue
+        hit_deny = bool(RE_AUTH_HIDER_DENY.search(line))
+        hit_distress = bool(RE_AUTH_VICTIM_DISTRESS.search(line))
+        if hit_deny and hit_distress:
+            if _re.search(r"我没藏|没藏过", line):
+                hit_distress = False
+            else:
+                hit_deny = False
+        if hit_deny and sp != hider:
+            dlg[i] = {**row, "speaker": hider}
+            changed = True
+        elif hit_distress and sp != victim:
+            dlg[i] = {**row, "speaker": victim}
+            changed = True
+    if not changed:
+        return story, False
+    out["dialogue"] = dlg
+    return out, True
+
+
+
+def patch_authority_insert_resist_after_reverse(
+    story: dict[str, Any],
+    *,
+    beat_chain: list[Any] | None = None,
+) -> tuple[dict[str, Any], bool]:
+    """正文缺抗拒/辩解槽：在反将句后插入一句（抽象词，不绑单篇）。"""
+    import copy
+
+    from app.services.daily_story.story_types.g.validate import (
+        RE_AUTH_RESIST,
+        RE_AUTH_REVERSE,
+    )
+    from app.services.gold_story.structure_resolve import (
+        CLOSING_MODE_AUTHORITY_PUNCHLINE,
+    )
+
+    if str(story.get("closing_mode") or "").strip() != CLOSING_MODE_AUTHORITY_PUNCHLINE:
+        return story, False
+    rows = _dialogue_rows(story)
+    if len(rows) < 3:
+        return story, False
+    body = "".join(str(r.get("line") or "") for r in rows)
+    if RE_AUTH_RESIST.search(body):
+        return story, False
+    rev_i = -1
+    for i, row in enumerate(rows):
+        if RE_AUTH_REVERSE.search(str(row.get("line") or "")):
+            rev_i = i
+            break
+    if rev_i < 0:
+        return story, False
+    beat0, _ = _authority_beat0(beat_chain)
+    speaker = ""
+    for j in range(rev_i + 1, len(rows)):
+        sp = str(rows[j].get("speaker") or "").strip()
+        if sp and sp != beat0 and sp != "妈妈":
+            speaker = sp
+            break
+    if not speaker:
+        for j in range(rev_i):
+            sp = str(rows[j].get("speaker") or "").strip()
+            if sp and sp != beat0 and sp != "妈妈":
+                speaker = sp
+                break
+    if not speaker:
+        return story, False
+    out = copy.deepcopy(story)
+    dlg = list(out.get("dialogue") or [])
+    dlg.insert(
+        rev_i + 1,
+        {"speaker": speaker, "line": "我不会啊，换件事行不行。"},
+    )
+    out["dialogue"] = dlg
+    return out, True
+
+
+
+def patch_authority_cull_extra_mom_lines(
+    story: dict[str, Any],
+    *,
+    beat_chain: list[Any] | None = None,
+) -> tuple[dict[str, Any], bool]:
+    """妈妈句过多时，优先删非立规/反将/点题的妈妈句，压到 ≤3。"""
+    import copy
+
+    from app.services.daily_story.story_types.g.validate import (
+        RE_AUTH_PUNCH,
+        RE_AUTH_REVERSE,
+        RE_AUTH_RULE,
+    )
+    from app.services.gold_story.structure_resolve import (
+        CLOSING_MODE_AUTHORITY_PUNCHLINE,
+    )
+
+    del beat_chain  # 仅按台词槽判断
+    if str(story.get("closing_mode") or "").strip() != CLOSING_MODE_AUTHORITY_PUNCHLINE:
+        return story, False
+    rows = _dialogue_rows(story)
+    mom_idx = [
+        i
+        for i, r in enumerate(rows)
+        if str(r.get("speaker") or "").strip() == "妈妈"
+    ]
+    if len(mom_idx) <= 3:
+        return story, False
+
+    def _is_slot(i: int) -> bool:
+        line = str(rows[i].get("line") or "")
+        return bool(
+            RE_AUTH_RULE.search(line)
+            or RE_AUTH_REVERSE.search(line)
+            or RE_AUTH_PUNCH.search(line)
+        )
+
+    # 先删非槽妈妈句
+    drop = [i for i in mom_idx if not _is_slot(i)]
+    remain = len(mom_idx) - len(drop)
+    if remain > 3:
+        # 槽位也过多：从中间槽再删
+        slot_mids = [i for i in mom_idx if _is_slot(i) and i != mom_idx[0] and i != mom_idx[-1]]
+        need = remain - 3
+        drop.extend(slot_mids[:need])
+    if not drop:
+        return story, False
+    # 只删到剩 3
+    target = len(mom_idx) - 3
+    drop = sorted(drop)[:target]
+    out = copy.deepcopy(story)
+    dlg = list(out.get("dialogue") or [])
+    for i in sorted(drop, reverse=True):
+        if 0 <= i < len(dlg):
+            dlg.pop(i)
+    out["dialogue"] = dlg
+    return out, True
+
+
+
+
+def patch_authority_ensure_end_punch(
+    story: dict[str, Any],
+    *,
+    beat_chain: list[Any] | None = None,
+) -> tuple[dict[str, Any], bool]:
+    """末句缺权威点题槽：改写末句（或补一句）命中点题正则。"""
+    import copy
+
+    from app.services.daily_story.story_types.g.validate import RE_AUTH_PUNCH
+    from app.services.gold_story.structure_resolve import (
+        CLOSING_MODE_AUTHORITY_PUNCHLINE,
+    )
+
+    if str(story.get("closing_mode") or "").strip() != CLOSING_MODE_AUTHORITY_PUNCHLINE:
+        return story, False
+    rows = _dialogue_rows(story)
+    if len(rows) < 4:
+        return story, False
+    last = str(rows[-1].get("line") or "")
+    if RE_AUTH_PUNCH.search(last):
+        return story, False
+    beat0, _ = _authority_beat0(beat_chain)
+    speaker = beat0 or "妈妈"
+    # 末拍 intent → 短点题；无则稳妥抽象句
+    punch = "这个家我说了算，听清楚了。"
+    chain = beat_chain if isinstance(beat_chain, list) else []
+    if chain:
+        last_beat = chain[-1] if isinstance(chain[-1], dict) else {}
+        intent = str(last_beat.get("intent") or "").strip()
+        intent = re.sub(r"^[^：:]*[：:]", "", intent).strip() or intent
+        if intent and RE_AUTH_PUNCH.search(intent):
+            punch = intent if intent.endswith(("。", "！", "？")) else intent + "。"
+            if len(punch) > 28:
+                punch = punch[:27] + "。"
+        elif intent and any(k in intent for k in ("第", "并列", "宣布", "排名")):
+            punch = intent if intent.endswith(("。", "！", "？")) else intent + "。"
+            if not RE_AUTH_PUNCH.search(punch):
+                punch = "这个家我说了算，听清楚了。"
+    out = copy.deepcopy(story)
+    dlg = list(out.get("dialogue") or [])
+    dlg[-1] = {"speaker": speaker, "line": punch}
+    out["dialogue"] = dlg
+    return out, True
+
+
+def apply_authority_punchline_local_patches(
+    story: dict[str, Any],
+    *,
+    beat_chain: list[Any] | None = None,
+    dialogue_seed: list[Any] | None = None,
+) -> tuple[dict[str, Any], bool]:
+    """authority_punchline 结构兜底：开场立规 + 角色重挂；末尾 seed 归位。"""
+    import copy
+
+    from app.services.gold_story.structure_resolve import (
+        CLOSING_MODE_AUTHORITY_PUNCHLINE,
+    )
+
+    chain = beat_chain
+    if not isinstance(chain, list) or not chain:
+        gb = story.get("gold_beat_chain")
+        chain = gb if isinstance(gb, list) else None
+    data = copy.deepcopy(story) if story.get("closing_mode") else dict(story)
+    # 调用方偶发丢 closing_mode：有 beat 链时仍按权威开场兜底
+    if not str(data.get("closing_mode") or "").strip() and chain:
+        data["closing_mode"] = CLOSING_MODE_AUTHORITY_PUNCHLINE
+    data, c1 = patch_authority_opening_speaker(data, beat_chain=chain)
+    data, c2 = patch_authority_move_rule_to_front(data, beat_chain=chain)
+    data, c3 = patch_authority_insert_rule_opening(data, beat_chain=chain)
+    data, c4 = patch_authority_role_speakers(data, beat_chain=chain)
+    data, c5 = patch_authority_insert_resist_after_reverse(data, beat_chain=chain)
+    data, c6 = patch_authority_ensure_end_punch(data, beat_chain=chain)
+    data, c7 = patch_authority_cull_extra_mom_lines(data, beat_chain=chain)
+    # 权威改 speaker 后必须再 seed 归位（专家：嵌在本函数末尾，避免调用点漏跑）
+    c8 = False
+    seed = dialogue_seed
+    if seed is None:
+        seed = data.get("dialogue_seed")
+    if isinstance(seed, list) and seed:
+        # 不经 convert 以免循环 import；逻辑与 patch_seed_speaker_align 同构
+        from app.services.gold_story.gold_chat.validate import (
+            _seed_unique_phrase_owners,
+        )
+
+        owners = _seed_unique_phrase_owners(seed)
+        if owners:
+            import copy as _copy
+            import re as _re2
+
+            out = _copy.deepcopy(data)
+            dlg = out.get("dialogue")
+            if isinstance(dlg, list):
+                for item in dlg:
+                    if not isinstance(item, dict):
+                        continue
+                    sp = str(item.get("speaker") or "").strip()
+                    line = str(item.get("line") or "").strip()
+                    if not line or sp not in {"昭昭", "灿灿", "妈妈", "爸爸"}:
+                        continue
+                    line_han = "".join(_re2.findall(r"[\u4e00-\u9fff]", line))
+                    for phr, want in owners.items():
+                        if phr not in line and phr not in line_han:
+                            continue
+                        if sp == want:
+                            break
+                        item["speaker"] = want
+                        c8 = True
+                        break
+                if c8:
+                    data = out
+    return data, c1 or c2 or c3 or c4 or c5 or c6 or c7 or c8
 

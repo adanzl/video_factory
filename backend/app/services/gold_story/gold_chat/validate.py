@@ -86,8 +86,6 @@ STRUCTURAL_ALIGN_KINDS: frozenset[str] = frozenset(
         "保真-发起方倒置",
         "保真-垫字过密",
         "保真-seed角色",
-        "保真-权威开场",
-        "保真-权威角色",
     }
 )
 
@@ -1307,7 +1305,7 @@ RE_AUTH_VICTIM_DISTRESS = re.compile(
     r"找不到|急死|急哭|翻遍|本子呢|作业呢|咦，.*呢"
 )
 RE_AUTH_HIDER_DENY = re.compile(
-    r"没看见|乱放还赖|哭什么|赖我|你自己乱放"
+    r"没看见|乱放还赖|哭什么|赖我|你自己乱放|我没藏|没藏过|你自己找"
 )
 
 
@@ -1405,19 +1403,15 @@ def _append_authority_punchline_align_issues(
     for i, (sp, line) in enumerate(zip(speakers, lines), 1):
         if sp not in {"昭昭", "灿灿"}:
             continue
-        if RE_AUTH_VICTIM_DISTRESS.search(line) and sp != victim:
-            issues.append(
-                _issue(
-                    lines=[i],
-                    kind="保真-权威角色",
-                    desc=(
-                        f"第{i}句急哭/找不到语义由{sp}说，"
-                        f"beat 受害方为{victim}：{line}"
-                    ),
-                    fix=f"急哭/找不到句须由受害方{victim}说",
-                )
-            )
-        if RE_AUTH_HIDER_DENY.search(line) and sp != hider:
+        hit_deny = bool(RE_AUTH_HIDER_DENY.search(line))
+        hit_distress = bool(RE_AUTH_VICTIM_DISTRESS.search(line))
+        # 同句同时命中：按主语「我没藏」归藏物方，否则归急哭受害方
+        if hit_deny and hit_distress:
+            if re.search(r"我没藏|没藏过", line):
+                hit_distress = False
+            else:
+                hit_deny = False
+        if hit_deny and sp != hider:
             issues.append(
                 _issue(
                     lines=[i],
@@ -1427,6 +1421,18 @@ def _append_authority_punchline_align_issues(
                         f"beat 藏物方为{hider}：{line}"
                     ),
                     fix=f"撇清/否认句须由藏物方{hider}说",
+                )
+            )
+        elif hit_distress and sp != victim:
+            issues.append(
+                _issue(
+                    lines=[i],
+                    kind="保真-权威角色",
+                    desc=(
+                        f"第{i}句急哭/找不到语义由{sp}说，"
+                        f"beat 受害方为{victim}：{line}"
+                    ),
+                    fix=f"急哭/找不到句须由受害方{victim}说",
                 )
             )
 

@@ -788,7 +788,12 @@ def score_daily_story(
         1 for d in (dialogue or [])
         if isinstance(d, dict) and str(d.get("speaker") or "").strip() == "妈妈"
     )
-    if mom_n >= profile.mom_lines_penalty_at:
+    mom_penalty_at = profile.mom_lines_penalty_at
+    # authority_punchline 结构本身常需开场立规+反将+点题共 3 句妈妈；
+    # 偶发第 4 句不应直接打到发布线以下（仍保留 ≥5 的惩罚）
+    if str(story.get("closing_mode") or "").strip() == "authority_punchline":
+        mom_penalty_at = max(mom_penalty_at, 5)
+    if mom_n >= mom_penalty_at:
         score -= profile.mom_lines_penalty
         cons.append(f"妈妈台词偏多（{mom_n}句）")
 
